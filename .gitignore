@@ -1,0 +1,17 @@
+# Large / regenerable artifacts
+tools/ghidra/            # extracted Ghidra install (~2 GB)
+tools/ghidra-proj/       # Ghidra project (annotation DB) — large, machine-local
+*.zip
+
+# Generated, regenerable from rof.xex via the tools
+disasm/rof_mem.bin
+disasm/listing.txt
+
+# Build output
+build/
+*.o
+*.rep
+*.lock
+
+# OS
+.DS_Store

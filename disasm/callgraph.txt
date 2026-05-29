@@ -1,0 +1,545 @@
+# Function summary
+# addr  name  size_bytes  num_callers  num_callees  indirect_jumps
+
+1910  FUN_1910                         69    1 callers    0 callees  0 indirect
+195D  FUN_195d                        261    0 callers   11 callees  0 indirect
+1A62  FUN_1a62                         53    1 callers    0 callees  0 indirect
+1A97  init_1A97                        16    0 callers    1 callees  0 indirect
+1B30  code_1B30                        32    0 callers    0 callees  0 indirect
+1B50  FUN_1b50                         11    1 callers    0 callees  0 indirect
+1B5B  FUN_1b5b                        138    1 callers    1 callees  0 indirect
+1C40  FUN_1c40                        183    1 callers    0 callees  0 indirect
+1CF7  FUN_1cf7                        147    1 callers    0 callees  0 indirect
+1D9A  FUN_1d9a                         72    1 callers    1 callees  0 indirect
+1DF5  FUN_1df5                         12    1 callers    0 callees  0 indirect
+1E01  FUN_1e01                         41    0 callers    1 callees  0 indirect
+1E2A  FUN_1e2a                         79    1 callers    0 callees  0 indirect
+1E79  FUN_1e79                         59    1 callers    1 callees  0 indirect
+1EB4  FUN_1eb4                         87    1 callers    0 callees  0 indirect
+1F0B  FUN_1f0b                         37    1 callers    0 callees  0 indirect
+1F48  FUN_1f48                          9    1 callers    1 callees  0 indirect
+1F51  FUN_1f51                        146    1 callers    0 callees  0 indirect
+3C00  loader_3C00                      61    1 callers    1 callees  0 indirect
+3C3D  FUN_3c3d                         27    1 callers    2 callees  0 indirect
+3C58  FUN_3c58                          9    2 callers    0 callees  0 indirect
+3C61  FUN_3c61                         18    1 callers    0 callees  0 indirect
+3C73  FUN_3c73                          2    3 callers    0 callees  0 indirect
+3C75  FUN_3c75                          6    1 callers    0 callees  0 indirect
+3C7B  FUN_3c7b                          8    4 callers    0 callees  0 indirect
+3C83  FUN_3c83                         16    1 callers    0 callees  0 indirect
+3C93  FUN_3c93                         30    2 callers    0 callees  0 indirect
+3CB1  FUN_3cb1                         13    4 callers    0 callees  0 indirect
+3CBE  FUN_3cbe                          5    4 callers    0 callees  0 indirect
+3CC3  FUN_3cc3                          7    9 callers    0 callees  0 indirect
+3CCA  FUN_3cca                          5    7 callers    0 callees  0 indirect
+3CCF  FUN_3ccf                          5    1 callers    0 callees  0 indirect
+3CD4  FUN_3cd4                          5    3 callers    0 callees  0 indirect
+3CD9  FUN_3cd9                          5    2 callers    0 callees  0 indirect
+3CDE  game_entry                      737    0 callers   46 callees  0 indirect
+3FBF  FUN_3fbf                         14    1 callers    0 callees  0 indirect
+3FCD  FUN_3fcd                         17    1 callers    1 callees  0 indirect
+3FDE  FUN_3fde                         24    1 callers    0 callees  0 indirect
+3FFA  FUN_3ffa                        138    4 callers    3 callees  0 indirect
+4084  FUN_4084                         17    1 callers    1 callees  0 indirect
+4095  FUN_4095                          4    1 callers    0 callees  0 indirect
+4099  FUN_4099                         23    1 callers    0 callees  0 indirect
+41DA  FUN_41da                         10    1 callers    0 callees  0 indirect
+41E4  FUN_41e4                          4    1 callers    0 callees  0 indirect
+41E8  FUN_41e8                         61    1 callers    2 callees  0 indirect
+4258  FUN_4258                         14    1 callers    0 callees  0 indirect
+43CB  FUN_43cb                         99    1 callers    0 callees  0 indirect
+4430  FUN_4430                         23    0 callers    0 callees  0 indirect
+4447  FUN_4447                         16    2 callers    0 callees  0 indirect
+451D  FUN_451d                         54    1 callers    0 callees  0 indirect
+45A1  FUN_45a1                         36    1 callers    0 callees  0 indirect
+45C5  FUN_45c5                         41    1 callers    0 callees  0 indirect
+45EE  FUN_45ee                         24    1 callers    0 callees  0 indirect
+4606  FUN_4606                         36    1 callers    0 callees  0 indirect
+47B2  FUN_47b2                         89    1 callers    1 callees  0 indirect
+480B  FUN_480b                          4    3 callers    0 callees  0 indirect
+480F  FUN_480f                          7    1 callers    0 callees  0 indirect
+497D  FUN_497d                         35    1 callers    0 callees  0 indirect
+49A0  FUN_49a0                         14    1 callers    1 callees  0 indirect
+49AE  FUN_49ae                         12    1 callers    1 callees  0 indirect
+49BA  FUN_49ba                          6    1 callers    0 callees  0 indirect
+49C0  FUN_49c0                         14    1 callers    0 callees  0 indirect
+49CE  FUN_49ce                         11    2 callers    1 callees  0 indirect
+49D9  FUN_49d9                         21    1 callers    0 callees  0 indirect
+4E18  FUN_4e18                          2    1 callers    0 callees  0 indirect
+4E1A  FUN_4e1a                          2    1 callers    0 callees  0 indirect
+4E1C  FUN_4e1c                         60    2 callers    0 callees  0 indirect
+4E58  FUN_4e58                         44    1 callers    0 callees  0 indirect
+4E84  FUN_4e84                         20    5 callers    0 callees  0 indirect
+4E98  FUN_4e98                         10    1 callers    0 callees  0 indirect
+4EA5  FUN_4ea5                          6    1 callers    0 callees  0 indirect
+4EAB  FUN_4eab                         14    1 callers    1 callees  0 indirect
+4F3F  FUN_4f3f                         96    0 callers    6 callees  0 indirect
+4FCE  FUN_4fce                         18    2 callers    0 callees  0 indirect
+4FE0  FUN_4fe0                         21    2 callers    0 callees  0 indirect
+5000  stage_5000                        1    0 callers    0 callees  0 indirect
+5433  FUN_5433                         90    3 callers    0 callees  0 indirect
+55FC  FUN_55fc                         24    5 callers    0 callees  0 indirect
+5614  FUN_5614                         83    1 callers    3 callees  0 indirect
+5673  FUN_5673                         23    1 callers    0 callees  0 indirect
+568A  FUN_568a                         37    1 callers    0 callees  0 indirect
+56AF  FUN_56af                         37    1 callers    0 callees  0 indirect
+5815  FUN_5815                          7    9 callers    0 callees  0 indirect
+581C  FUN_581c                         95    2 callers    1 callees  0 indirect
+587B  FUN_587b                        466    1 callers   16 callees  0 indirect
+5A4D  FUN_5a4d                         12    1 callers    0 callees  0 indirect
+5A59  FUN_5a59                         10    1 callers    0 callees  0 indirect
+5A63  FUN_5a63                         21    1 callers    1 callees  0 indirect
+5A78  FUN_5a78                         10    2 callers    0 callees  0 indirect
+5B45  FUN_5b45                         39    1 callers    0 callees  0 indirect
+5B6C  FUN_5b6c                        315    1 callers    9 callees  0 indirect
+5CA7  FUN_5ca7                         83    1 callers    0 callees  0 indirect
+5D02  FUN_5d02                         11    2 callers    2 callees  0 indirect
+5D0D  FUN_5d0d                         28    2 callers    0 callees  0 indirect
+5D29  FUN_5d29                         18    3 callers    1 callees  0 indirect
+5D3B  FUN_5d3b                         13    1 callers    0 callees  0 indirect
+5D50  FUN_5d50                        108    2 callers    1 callees  0 indirect
+5DDB  FUN_5ddb                          5    1 callers    0 callees  0 indirect
+5EFE  FUN_5efe                         31    1 callers    0 callees  0 indirect
+5F1D  FUN_5f1d                       1656    1 callers   59 callees  0 indirect
+65A8  FUN_65a8                         40    1 callers    4 callees  0 indirect
+65D0  FUN_65d0                          2    1 callers    0 callees  0 indirect
+65D2  FUN_65d2                         13    1 callers    0 callees  0 indirect
+65DF  FUN_65df                         15    1 callers    0 callees  0 indirect
+65EE  FUN_65ee                         13    1 callers    1 callees  0 indirect
+65FB  FUN_65fb                         37    1 callers    2 callees  0 indirect
+6620  FUN_6620                         34    1 callers    2 callees  0 indirect
+6642  FUN_6642                         27    1 callers    2 callees  0 indirect
+665D  FUN_665d                         63    1 callers    0 callees  0 indirect
+669C  FUN_669c                         42    2 callers    2 callees  0 indirect
+66C6  FUN_66c6                          2    4 callers    0 callees  0 indirect
+66C8  FUN_66c8                         11    1 callers    0 callees  0 indirect
+66D3  FUN_66d3                          2    1 callers    0 callees  0 indirect
+66D5  FUN_66d5                          9    4 callers    0 callees  0 indirect
+66DE  FUN_66de                         11    1 callers    0 callees  0 indirect
+672D  FUN_672d                         35    1 callers    2 callees  0 indirect
+6750  FUN_6750                         35    1 callers    1 callees  0 indirect
+6773  FUN_6773                         80    2 callers    2 callees  0 indirect
+67C3  FUN_67c3                         63    2 callers    4 callees  0 indirect
+6802  FUN_6802                          3    1 callers    0 callees  0 indirect
+6805  FUN_6805                         12    1 callers    0 callees  0 indirect
+6811  FUN_6811                        108    1 callers    3 callees  0 indirect
+687D  FUN_687d                         19    1 callers    0 callees  0 indirect
+6890  FUN_6890                          9    1 callers    0 callees  0 indirect
+6899  FUN_6899                         20    1 callers    0 callees  0 indirect
+68AD  FUN_68ad                         34    1 callers    0 callees  0 indirect
+68CF  FUN_68cf                         91    1 callers    0 callees  0 indirect
+692A  FUN_692a                         41    1 callers    1 callees  0 indirect
+69DD  FUN_69dd                          6    1 callers    0 callees  0 indirect
+69E3  FUN_69e3                         14    1 callers    0 callees  0 indirect
+69F1  FUN_69f1                         30    1 callers    0 callees  0 indirect
+6A0F  FUN_6a0f                         24    1 callers    0 callees  0 indirect
+6AE5  FUN_6ae5                          9    1 callers    1 callees  0 indirect
+6B2E  FUN_6b2e                         25    1 callers    1 callees  0 indirect
+6B47  FUN_6b47                         24    1 callers    0 callees  0 indirect
+6B63  FUN_6b63                         14    1 callers    0 callees  0 indirect
+6B71  FUN_6b71                         15    1 callers    0 callees  0 indirect
+6B85  FUN_6b85                         35    1 callers    0 callees  0 indirect
+6BA8  FUN_6ba8                         69    1 callers    1 callees  0 indirect
+6BED  FUN_6bed                         96    1 callers    1 callees  0 indirect
+6C4D  FUN_6c4d                         69    1 callers    2 callees  0 indirect
+6C92  FUN_6c92                         27    1 callers    0 callees  0 indirect
+6DDF  FUN_6ddf                         21    2 callers    0 callees  0 indirect
+6DF4  FUN_6df4                         27    1 callers    1 callees  0 indirect
+6FBF  FUN_6fbf                        136    1 callers    2 callees  0 indirect
+7047  FUN_7047                         34    2 callers    0 callees  0 indirect
+7069  FUN_7069                         64    1 callers    2 callees  0 indirect
+70A9  FUN_70a9                         10    1 callers    0 callees  0 indirect
+70B3  FUN_70b3                         52    1 callers    0 callees  0 indirect
+70E7  FUN_70e7                         18    2 callers    0 callees  0 indirect
+712D  FUN_712d                         27    3 callers    0 callees  0 indirect
+7238  FUN_7238                         27    3 callers    0 callees  0 indirect
+73C8  FUN_73c8                        152    1 callers    5 callees  0 indirect
+7460  FUN_7460                         35    2 callers    0 callees  0 indirect
+7483  FUN_7483                         21    1 callers    0 callees  0 indirect
+7498  FUN_7498                         63    1 callers    2 callees  0 indirect
+74D7  FUN_74d7                        100    1 callers    0 callees  0 indirect
+753B  FUN_753b                         29    1 callers    0 callees  0 indirect
+7558  FUN_7558                         35    1 callers    1 callees  0 indirect
+757B  FUN_757b                         13    2 callers    1 callees  0 indirect
+7588  FUN_7588                         29    1 callers    0 callees  0 indirect
+75A5  FUN_75a5                         19    1 callers    0 callees  0 indirect
+75B8  FUN_75b8                         24    1 callers    0 callees  0 indirect
+75D0  FUN_75d0                         14    1 callers    1 callees  0 indirect
+75DE  FUN_75de                         11    1 callers    2 callees  0 indirect
+75E9  FUN_75e9                         12    1 callers    2 callees  0 indirect
+75F5  FUN_75f5                        214    1 callers    1 callees  0 indirect
+76CB  FUN_76cb                        248    1 callers    2 callees  0 indirect
+77DF  FUN_77df                         44    1 callers    0 callees  0 indirect
+7813  FUN_7813                         23    1 callers    0 callees  0 indirect
+782A  FUN_782a                         42    1 callers    0 callees  0 indirect
+7854  FUN_7854                        451    1 callers   13 callees  0 indirect
+7A17  FUN_7a17                        114    1 callers    4 callees  0 indirect
+7A89  FUN_7a89                         29    1 callers    2 callees  0 indirect
+7AA6  FUN_7aa6                          2    1 callers    0 callees  0 indirect
+7AA8  FUN_7aa8                         16    1 callers    0 callees  0 indirect
+7AB8  FUN_7ab8                         60    2 callers    2 callees  0 indirect
+7AF4  FUN_7af4                         69    1 callers    2 callees  0 indirect
+7B39  FUN_7b39                         27    2 callers    3 callees  0 indirect
+7B54  FUN_7b54                         32    2 callers    0 callees  0 indirect
+7B74  FUN_7b74                          9    3 callers    0 callees  0 indirect
+7B7D  FUN_7b7d                         23    1 callers    1 callees  0 indirect
+7B94  FUN_7b94                         50    0 callers    2 callees  0 indirect
+7C01  FUN_7c01                        153    1 callers    2 callees  0 indirect
+7C9A  FUN_7c9a                        158    1 callers    1 callees  0 indirect
+7D38  FUN_7d38                         85    1 callers    0 callees  0 indirect
+7EC7  FUN_7ec7                        153    1 callers    2 callees  0 indirect
+7F60  FUN_7f60                         26    1 callers    0 callees  0 indirect
+7F7A  FUN_7f7a                         11    1 callers    1 callees  0 indirect
+7F85  FUN_7f85                        320    2 callers    3 callees  0 indirect
+80C5  FUN_80c5                         64    1 callers    4 callees  0 indirect
+8105  FUN_8105                         26    1 callers    1 callees  0 indirect
+811F  FUN_811f                         25    1 callers    0 callees  0 indirect
+8138  FUN_8138                         48    1 callers    1 callees  0 indirect
+8168  FUN_8168                         25    1 callers    0 callees  0 indirect
+8181  FUN_8181                         33    2 callers    0 callees  0 indirect
+8237  FUN_8237                         83    0 callers    5 callees  0 indirect
+9BA0  FUN_9ba0                         59    1 callers    1 callees  0 indirect
+9BDB  FUN_9bdb                        122    1 callers    1 callees  0 indirect
+9C55  FUN_9c55                         66    1 callers    0 callees  0 indirect
+9C97  FUN_9c97                        208    1 callers    0 callees  0 indirect
+9D6F  FUN_9d6f                        237    1 callers    0 callees  0 indirect
+9E54  FUN_9e54                        591    1 callers    2 callees  0 indirect
+A0A3  FUN_a0a3                        124    1 callers    1 callees  0 indirect
+A11F  FUN_a11f                        511    1 callers    1 callees  0 indirect
+A31E  FUN_a31e                        757    1 callers    8 callees  0 indirect
+A613  FUN_a613                         40    1 callers    0 callees  0 indirect
+A63B  FUN_a63b                        145    1 callers    0 callees  0 indirect
+A6CB  FUN_a6cb                          8    3 callers    0 callees  0 indirect
+A6D3  FUN_a6d3                         38    2 callers    0 callees  0 indirect
+A822  FUN_a822                        141    0 callers    3 callees  0 indirect
+A8AF  FUN_a8af                         91    2 callers    0 callees  0 indirect
+A90A  FUN_a90a                        146    0 callers    4 callees  0 indirect
+A99C  FUN_a99c                        249    1 callers    4 callees  0 indirect
+AA95  FUN_aa95                         58    1 callers    0 callees  0 indirect
+AACF  FUN_aacf                         89    1 callers    1 callees  0 indirect
+AAD4  FUN_aad4                         83    1 callers    1 callees  0 indirect
+AB7B  FUN_ab7b                         31    2 callers    0 callees  0 indirect
+AB9A  FUN_ab9a                        160    1 callers    1 callees  0 indirect
+AC42  FUN_ac42                         81    1 callers    0 callees  0 indirect
+AC93  FUN_ac93                        152    1 callers    1 callees  0 indirect
+AD2B  FUN_ad2b                         52    1 callers    0 callees  0 indirect
+AD5F  FUN_ad5f                        244    1 callers    0 callees  0 indirect
+AE53  FUN_ae53                        799    1 callers    0 callees  0 indirect
+B172  FUN_b172                        346    1 callers    2 callees  0 indirect
+B2CC  FUN_b2cc                        113    1 callers    0 callees  0 indirect
+B33D  FUN_b33d                        555    1 callers    0 callees  0 indirect
+B800  init_B800                        50    0 callers    0 callees  0 indirect
+E45C  FUN_e45c                          1    1 callers    0 callees  0 indirect
+
+# Call edges (caller_addr -> callee_addr)
+195D -> 1B50
+195D -> 1B5B
+195D -> 1C40
+195D -> 1D9A
+195D -> 1DF5
+195D -> 1E79
+195D -> 1EB4
+195D -> 1F0B
+195D -> 1F48
+195D -> 3C3D
+195D -> E45C
+1A97 -> 1A62
+1B5B -> 1910
+1D9A -> 1CF7
+1E01 -> 1E2A
+1E79 -> 3CC3
+1F48 -> 1F51
+3C00 -> 3C93
+3C3D -> 3C58
+3C3D -> 3C61
+3CDE -> 3C00
+3CDE -> 3C73
+3CDE -> 3C75
+3CDE -> 3C7B
+3CDE -> 3CB1
+3CDE -> 3CC3
+3CDE -> 3CD4
+3CDE -> 3FBF
+3CDE -> 3FCD
+3CDE -> 3FFA
+3CDE -> 4258
+3CDE -> 43CB
+3CDE -> 4447
+3CDE -> 45A1
+3CDE -> 45EE
+3CDE -> 4606
+3CDE -> 5433
+3CDE -> 55FC
+3CDE -> 581C
+3CDE -> 587B
+3CDE -> 5D0D
+3CDE -> 5D29
+3CDE -> 5D50
+3CDE -> 5DDB
+3CDE -> 5F1D
+3CDE -> 6B63
+3CDE -> 6FBF
+3CDE -> 70B3
+3CDE -> 712D
+3CDE -> 73C8
+3CDE -> 7460
+3CDE -> 7483
+3CDE -> 7498
+3CDE -> 753B
+3CDE -> 7558
+3CDE -> 7588
+3CDE -> 76CB
+3CDE -> 77DF
+3CDE -> 7813
+3CDE -> 7854
+3CDE -> 7B54
+3CDE -> 9E54
+3CDE -> A31E
+3CDE -> A99C
+3CDE -> AD5F
+3CDE -> AE53
+3FCD -> 7AB8
+3FFA -> 4084
+3FFA -> 4095
+3FFA -> 5815
+4084 -> 4099
+41E8 -> 3CB1
+41E8 -> 41DA
+47B2 -> 480B
+49A0 -> 49C0
+49AE -> 49CE
+49CE -> 49D9
+4EAB -> 55FC
+4F3F -> 3CBE
+4F3F -> 3CCA
+4F3F -> 4FCE
+4F3F -> 4FE0
+4F3F -> 5433
+4F3F -> 55FC
+5614 -> 5673
+5614 -> 568A
+5614 -> 56AF
+581C -> 55FC
+587B -> 3CBE
+587B -> 3CCA
+587B -> 49AE
+587B -> 49BA
+587B -> 49CE
+587B -> 4E84
+587B -> 5A4D
+587B -> 5A59
+587B -> 5A63
+587B -> 5A78
+587B -> 5B45
+587B -> 5B6C
+587B -> 5D02
+587B -> 5D29
+587B -> 712D
+587B -> 7238
+5A63 -> 4E84
+5B6C -> 3C7B
+5B6C -> 3CC3
+5B6C -> 5CA7
+5B6C -> 5D02
+5B6C -> 5D0D
+5B6C -> 5D29
+5B6C -> 5D3B
+5B6C -> 5D50
+5B6C -> 7238
+5D02 -> 3CCA
+5D02 -> 70E7
+5D29 -> 3C7B
+5D50 -> 3C73
+5F1D -> 3C73
+5F1D -> 3C7B
+5F1D -> 3C83
+5F1D -> 3C93
+5F1D -> 3CB1
+5F1D -> 3CBE
+5F1D -> 3CC3
+5F1D -> 3CCA
+5F1D -> 3CCF
+5F1D -> 3CD4
+5F1D -> 3FFA
+5F1D -> 41E4
+5F1D -> 4447
+5F1D -> 47B2
+5F1D -> 480B
+5F1D -> 480F
+5F1D -> 49A0
+5F1D -> 4EA5
+5F1D -> 4EAB
+5F1D -> 5433
+5F1D -> 5614
+5F1D -> 581C
+5F1D -> 5A78
+5F1D -> 5EFE
+5F1D -> 65A8
+5F1D -> 65D0
+5F1D -> 65D2
+5F1D -> 65DF
+5F1D -> 65EE
+5F1D -> 65FB
+5F1D -> 6620
+5F1D -> 672D
+5F1D -> 67C3
+5F1D -> 6811
+5F1D -> 6890
+5F1D -> 6899
+5F1D -> 68AD
+5F1D -> 68CF
+5F1D -> 692A
+5F1D -> 69DD
+5F1D -> 69E3
+5F1D -> 6A0F
+5F1D -> 6AE5
+5F1D -> 6B71
+5F1D -> 6B85
+5F1D -> 6BA8
+5F1D -> 6DDF
+5F1D -> 6DF4
+5F1D -> 70E7
+5F1D -> 712D
+5F1D -> 7238
+5F1D -> 757B
+5F1D -> 75A5
+5F1D -> 75B8
+5F1D -> 75D0
+5F1D -> 75DE
+5F1D -> 75E9
+5F1D -> 75F5
+5F1D -> 782A
+65A8 -> 3CBE
+65A8 -> 3CCA
+65A8 -> 6750
+65A8 -> 67C3
+65EE -> 3CCA
+65FB -> 6642
+65FB -> 6DDF
+6620 -> 66C6
+6620 -> 66D5
+6642 -> 665D
+6642 -> 669C
+669C -> 66D5
+669C -> 66DE
+672D -> 66C6
+672D -> 66D5
+6750 -> 6773
+6773 -> 66C6
+6773 -> 66D3
+67C3 -> 4E84
+67C3 -> 6773
+67C3 -> 6802
+67C3 -> 6805
+6811 -> 66C8
+6811 -> 66D5
+6811 -> 687D
+692A -> 669C
+6AE5 -> 6B2E
+6B2E -> 6B47
+6BA8 -> 6BED
+6BED -> 6C4D
+6C4D -> 66C6
+6C4D -> 6C92
+6DF4 -> 3CC3
+6FBF -> 7047
+6FBF -> 7069
+7069 -> 7047
+7069 -> 70A9
+73C8 -> 3CB1
+73C8 -> 3FDE
+73C8 -> 451D
+73C8 -> 45C5
+73C8 -> 74D7
+7498 -> 4E1A
+7498 -> 4E1C
+7558 -> 757B
+757B -> 3C58
+75D0 -> 3FFA
+75DE -> 497D
+75DE -> 5815
+75E9 -> 3FFA
+75E9 -> 4E84
+75F5 -> 4E84
+76CB -> 69F1
+76CB -> 7460
+7854 -> 3CD9
+7854 -> 480B
+7854 -> 7A17
+7854 -> 7A89
+7854 -> 7AA6
+7854 -> 7AA8
+7854 -> 7AB8
+7854 -> 7AF4
+7854 -> 7B39
+7854 -> 7B74
+7854 -> 7B7D
+7854 -> 7C01
+7854 -> 7EC7
+7A17 -> 3CC3
+7A17 -> 3CD4
+7A17 -> 5815
+7A17 -> 7B39
+7A89 -> 3CC3
+7A89 -> 5815
+7AB8 -> 5815
+7AB8 -> AA95
+7AF4 -> 41E8
+7AF4 -> 7B54
+7B39 -> 4E18
+7B39 -> 4E1C
+7B39 -> 7B74
+7B7D -> 7B74
+7B94 -> 3CC3
+7B94 -> 55FC
+7C01 -> 5815
+7C01 -> 7C9A
+7C9A -> 7D38
+7EC7 -> 7F7A
+7EC7 -> 7F85
+7F7A -> 7F85
+7F85 -> 5815
+7F85 -> 7F60
+7F85 -> 80C5
+80C5 -> 8105
+80C5 -> 811F
+80C5 -> 8138
+80C5 -> 8168
+8105 -> 8181
+8138 -> 8181
+8237 -> 3CC3
+8237 -> 3CCA
+8237 -> 3CD9
+8237 -> 4FCE
+8237 -> 4FE0
+9BA0 -> 9BDB
+9BDB -> 9C55
+9E54 -> A0A3
+9E54 -> AC93
+A0A3 -> 9C97
+A11F -> 9D6F
+A31E -> 4E58
+A31E -> 5815
+A31E -> A11F
+A31E -> A613
+A31E -> A63B
+A31E -> AC42
+A31E -> AD2B
+A31E -> B172
+A822 -> A6CB
+A822 -> A8AF
+A822 -> AB7B
+A90A -> A6CB
+A90A -> A8AF
+A90A -> AB7B
+A90A -> AB9A
+A99C -> 4E98
+A99C -> 5815
+A99C -> AACF
+A99C -> AAD4
+AACF -> A6D3
+AAD4 -> A6D3
+AB9A -> A6CB
+AC93 -> 9BA0
+B172 -> B2CC
+B172 -> B33D

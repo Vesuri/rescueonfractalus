@@ -1,0 +1,272 @@
+# Rescue on Fractalus! symbol map — grows as analysis progresses
+# Format: addr,name,type,is_hw,note
+# type: func | var | data | hw | vec
+# is_hw: 1 = hardware/OS register (route through platform API)
+#
+# --- Hardware registers (Atari-specific, all is_hw=1) ---
+$D000,HPOSP0,hw,1,GTIA player 0 horizontal position
+$D001,HPOSP1,hw,1,GTIA player 1 horizontal position
+$D002,HPOSP2,hw,1,GTIA player 2 horizontal position
+$D003,HPOSP3,hw,1,GTIA player 3 horizontal position
+$D004,HPOSM0,hw,1,GTIA missile 0 horizontal position
+$D005,HPOSM1,hw,1,GTIA missile 1 horizontal position
+$D006,HPOSM2,hw,1,GTIA missile 2 horizontal position
+$D007,HPOSM3,hw,1,GTIA missile 3 horizontal position
+$D008,SIZEP0,hw,1,GTIA player 0 size
+$D009,SIZEP1,hw,1,GTIA player 1 size
+$D00A,SIZEP2,hw,1,GTIA player 2 size
+$D00B,SIZEP3,hw,1,GTIA player 3 size
+$D00C,SIZEM,hw,1,GTIA missile sizes
+$D00D,GRAFP0,hw,1,GTIA player 0 graphic (write) / collision (read)
+$D010,GRAFP3,hw,1,GTIA player 3 graphic (write) / collision read (game reads here for collision)
+$D012,COLPM0,hw,1,GTIA player 0 color
+$D013,COLPM1,hw,1,GTIA player 1 color
+$D014,COLPM2,hw,1,GTIA player 2 color
+$D015,COLPM3,hw,1,GTIA player 3 color
+$D016,COLPF0,hw,1,GTIA playfield 0 color
+$D017,COLPF1,hw,1,GTIA playfield 1 color
+$D018,COLPF2,hw,1,GTIA playfield 2 color
+$D019,COLPF3,hw,1,GTIA playfield 3 color
+$D01A,COLBK,hw,1,GTIA background color
+$D01B,PRIOR,hw,1,GTIA priority control / GTIA mode
+$D01D,GRACTL,hw,1,GTIA graphics enable (PM DMA + triggers)
+$D01E,HITCLR,hw,1,GTIA collision clear (write)
+$D01F,CONSOL,hw,1,GTIA console switches START/SELECT/OPTION (read) / speaker (write)
+$D200,AUDF1,hw,1,POKEY audio channel 1 frequency
+$D201,AUDC1,hw,1,POKEY audio channel 1 control (distortion + volume)
+$D202,AUDF2,hw,1,POKEY audio channel 2 frequency
+$D203,AUDC2,hw,1,POKEY audio channel 2 control
+$D204,AUDF3,hw,1,POKEY audio channel 3 frequency
+$D205,AUDC3,hw,1,POKEY audio channel 3 control
+$D206,AUDF4,hw,1,POKEY audio channel 4 frequency
+$D207,AUDC4,hw,1,POKEY audio channel 4 control
+$D208,AUDCTL,hw,1,POKEY audio control (clock dividers hi-pass filter)
+$D20A,RANDOM,hw,1,POKEY random number (17-bit LFSR) — 41 read sites; used pervasively for terrain and game events; must be bit-exact in SDL/Amiga implementations
+$D20E,IRQEN,hw,1,POKEY IRQ enable
+$D20F,SKCTL,hw,1,POKEY serial key control / SKSTAT read
+$D300,PORTA,hw,1,PIA joystick port A (directional bits) — only register read; no PORTB access in game logic
+$D400,DMACTL,hw,1,ANTIC DMA control (playfield + PM DMA enable + width)
+$D402,DLISTL,hw,1,ANTIC display list pointer low
+$D403,DLISTH,hw,1,ANTIC display list pointer high
+$D407,PMBASE,hw,1,ANTIC player/missile base page
+$D409,CHBASE,hw,1,ANTIC character set base page
+$D40A,WSYNC,hw,1,ANTIC wait-for-sync (halt CPU until next scanline)
+$D40B,VCOUNT,hw,1,ANTIC vertical line counter (read)
+$D40E,NMIEN,hw,1,ANTIC NMI enable (VBI=$40 DLI=$80)
+#
+# --- OS page-2 shadow registers (is_hw=1; game writes shadow, OS VBI copies to chip) ---
+$0200,VDSLST_L,hw,1,DLI vector low — set to $EE/$C2 (DLI handlers $49EE/$6CC2)
+$0201,VDSLST_H,hw,1,DLI vector high
+$0216,VIMIRQ_L,hw,1,Immediate IRQ vector low — set to $2A (IRQ handler $462A)
+$0217,VIMIRQ_H,hw,1,Immediate IRQ vector high
+$0222,VVBLKI_L,hw,1,VBI vector low — changes: $1B30 / $53CC / $4FF5 / $52D7
+$0223,VVBLKI_H,hw,1,VBI vector high
+$022F,SDMCTL,hw,1,SDMCTL shadow (DMACTL) — $22=normal / $00=disabled
+$0230,SDLSTL,hw,1,SDLSTL shadow (display list low) — init_B800 sets to $32 ($B832)
+$0231,SDLSTH,hw,1,SDLSTH shadow (display list high)
+$026F,GPRIOR,hw,1,GPRIOR shadow (PRIOR) — $11 in gameplay $71 in attract
+$02C0,PCOLR0,hw,1,Player 0 color shadow
+$02C1,PCOLR1,hw,1,Player 1 color shadow
+$02C2,PCOLR2,hw,1,Player 2 color shadow
+$02C3,PCOLR3,hw,1,Player 3 color shadow
+$02C4,COLOR0,hw,1,Playfield 0 color shadow — init_B800 sets $9C (dark blue/sky)
+$02C5,COLOR1,hw,1,Playfield 1 color shadow — init_B800 sets $08
+$02C6,COLOR2,hw,1,Playfield 2 color shadow
+$02C7,COLOR3,hw,1,Playfield 3 color shadow
+$02C8,COLOR4,hw,1,Background color shadow
+$02F4,CHBAS,hw,1,Character set base shadow — init_B800 sets page $04
+$02FC,CH,hw,1,Keyboard character shadow
+#
+# --- OS jiffy clock ---
+$0012,RTCLOK,var,0,Jiffy clock high byte (incremented each VBI)
+$0013,RTCLOK_MID,var,0,Jiffy clock middle byte
+$0014,RTCLOK_LOW,var,0,Jiffy clock low byte (fastest; used for timing waits)
+#
+# --- Functions (deduced from control flow analysis, 2026-05-29) ---
+$1910,pmg_missile_init,func,0,Initialises missile horizontal positions (HPOSM0-3)
+$195D,attract_mode_init,func,0,Main attract mode init + loop; zeros all HW; sets VVBLKI to vbi_1B30; calls display_list_build; loops polling RTCLOK/CH/CONSOL until START pressed
+$1A01,attract_loop,func,0,Attract mode main loop (inside attract_mode_init); spins until key/START; inner body calls audio_attract + attract animation subs
+$1A2F,attract_exit,func,0,Exit attract → reset: zeros GRACTL/DMA/POKEY, calls OS $E45C, does page_swap, restarts
+$1A62,screen_page_swap,func,0,Self-modifying! Swaps 5 × 256-byte pages between $40xx and $06xx (double-buffer page rotation for level loading)
+$1A97,initad_1A97,func,0,INITAD stub (segment 11): calls screen_page_swap, silences AUDF3/4, JMPs attract_mode_init
+$1B30,vbi_handler_attract,func,0,VBI handler active during attract mode (VVBLKI=$1B30 set in attract_mode_init; writes DLISTL/H + COLBK + RTCLOK)
+$1B50,audio_ch1_init,func,0,Sets AUDF1 initial frequency (called once in attract_mode_init)
+$1B5B,audio_attract,func,0,Attract-mode audio: writes AUDF/AUDC channels 1-4 with melody/effects
+$1C40,display_list_build,func,0,Builds attract-mode display list at $B800 (122 LMS entries for 40-byte rows from $0600); uses RANDOM to place up to 30 enemies/pilots randomly on screen rows (1-in-8 chance per row)
+$1CF7,display_scroll,func,0,Likely vertical scroll or DL update (reads/modifies addresses in FUN_1c40 range — self-referential)
+$1D9A,attract_anim_frame,func,0,Attract mode animation frame: calls $1CF7
+$1DF5,attract_init_small,func,0,Small init called at start of attract_mode_init
+$1E01,dli_handler_attract,func,0,Suspected DLI handler in attract mode (0 callers; 41 bytes; 1 callee)
+$1E2A,attract_sub_1E2A,func,0,Attract mode sub (called from dli_handler_attract)
+$1E79,pmg_update_attract,func,0,PMG position/graphic update during attract mode
+$1EB4,attract_sub_1EB4,func,0,Attract mode sub (called in attract_loop)
+$1F0B,pmg_colors_attract,func,0,Sets COLPM2/3, COLPF3, HPOSP2/3 (player 2/3 during attract)
+$1F48,attract_sub_1F48,func,0,Attract mode sub (called in attract_loop); calls FUN_1f51
+$1F51,attract_sub_1f51,func,0,Attract mode sub; reads RANDOM once (random visual effect)
+$3C00,loader_util,func,0,Loader utility (XEX segment loader helper); called from game_entry at $3D92
+$3C93,memset_or_copy,func,0,Utility: likely memset/memcopy (called from multiple sites)
+$3CC3,clear_colors,func,0,Clears player color shadows PCOLR0-3 + COLBK (9 callers; 7 bytes)
+$3CDE,game_entry,func,0,Game entry point (final INITAD=$3CDE); 737-byte mega-init + main game loop JMP chain
+$3FBF,clear_pm_state,func,0,Zeros $DA,$DB,$DC,$DD (player state?) + $D9; also clears PCOLR0-3 shadow
+$3FCD,enemy_check,func,0,Checks $063D (enemy active?) and $0633 (another trigger); dispatches to game_subsystem_4f3f or pmg_enemy_update
+$3FDE,terrain_lookup,func,0,Table lookup: reads $281C + index from $2836 into $3FF6 table; writes 4 bytes to $32E3 (display buffer)
+$3FFA,startup_init,func,0,Init: checks $0642 game state and $004B flag; calls display_sub if state=1 or 2
+$4258,game_sub_4258,func,0,Game subsystem (called in game_entry setup)
+$43CB,game_sub_43CB,func,0,Game subsystem (called with Y=9)
+$4430,game_sub_4430,func,0,Game subsystem (0 callers — probably IRQ/VBI handler)
+$4447,game_sub_4447,func,0,Game subsystem (called with A=8)
+$451D,game_sub_451d,func,0,Game subsystem
+$45A1,game_init_45A1,func,0,Game init (called in game_entry setup)
+$45C5,game_sub_45C5,func,0,Game subsystem
+$45EE,game_init_45EE,func,0,Game init (called in game_entry setup)
+$4606,game_sub_4606,func,0,Game subsystem (called multiple times including in game loop)
+$462A,irq_handler,func,0,Immediate IRQ handler (VIMIRQ=$462A); set in game_entry at $3D28
+$49EE,dli_handler_game,func,0,DLI handler during game (VDSLST=$49EE set at $3E6D in game_entry)
+$4F3F,game_sub_4f3f,func,0,Game subsystem (called from enemy_check when $063D≠0; 0 callers from normal flow)
+$4FF5,vbi_handler_2,func,0,Second VBI handler (VVBLKI=$4FF5 set at $3E50 in game_entry setup)
+$5433,font_display_init,func,0,Font/display character setup (called in game_entry init)
+$53CC,vbi_handler_1,func,0,First in-game VBI handler (VVBLKI=$53CC set at $3D63 in game_entry)
+$52D7,vbi_handler_game,func,0,Main game VBI handler (VVBLKI=$52D7 set in display_setup $5F50-$57)
+$5815,game_sub_5815,func,0,Game sub (called with X param from $4010)
+$581C,input_init,func,0,Input/controller init (called twice: X=$1F then X=$20)
+$587B,cockpit_display,func,0,Cockpit/instrument display or main input handler (reads PORTA/CONSOL; called if $060B≠0)
+$55FC,game_sub_55FC,func,0,Called at end of each main game loop iteration before JMP $3E0F
+$5D0D,check_sub_5D0D,func,0,Returns BEQ-testable result; called early in game_entry (checks save state?)
+$5D29,display_list_init,func,0,Display list initial setup; writes DLISTL/H (called in game_entry at $3D6B)
+$5D50,game_init_5D50,func,0,Called with Y=$52 param; sets VIMIRQ twice (attract and game IRQ vectors)
+$5DDB,game_init_first,func,0,Very first call in game_entry; large initializer
+$5F1D,display_setup,func,0,Main game display setup: sets VBI ($52D7) DLI ($6CC2) display-list ($3120/$316B) PMG bases colors; called at top of main game loop
+$6811,game_sub_6811,func,0,Game sub with 2 RANDOM reads (enemy/event randomization)
+$6B47,game_sub_6B47,func,0,Game sub with 2 RANDOM reads
+$6CC2,dli_handler_game2,func,0,Second game DLI handler (VDSLST=$6CC2 set in display_setup $5F5F-$64)
+$6FBF,intro_random_setup,func,0,Intro/startup sequence with 5 RANDOM reads; called only on fresh start ($0627=0)
+$70B3,intro_setup_70B3,func,0,Intro continuation (3 RANDOM reads); called after intro_random_setup
+$712D,audio_timer_setup,func,0,Sets up POKEY audio timers + IRQEN=$C0 (timer 1+2 IRQs)
+$7498,intro_sub_7498,func,0,Intro sub (called with intro_random_setup/$70B3 on fresh start)
+$73C8,main_loop_body,func,0,Main game loop body (1 RANDOM read); called from game_entry loop
+$7460,game_setup_7460,func,0,Game setup (called before main loop)
+$7483,game_setup_7483,func,0,Game setup (called before main loop)
+$7558,game_init_7558,func,0,Game init
+$753B,game_init_753B,func,0,Game init
+$7588,game_init_7588,func,0,Game init (called in game_entry setup sequence)
+$76CB,game_init_76CB,func,0,Game init (called in game_entry setup sequence)
+$77DF,game_init_77DF,func,0,Game init (called in game_entry setup sequence)
+$7813,game_init_7813,func,0,Game init (called in game_entry setup sequence)
+$7854,pilot_render,func,0,Pilot/rescue rendering + interaction (3 RANDOM reads; checks $288D/$288E rescue state; large function)
+$7AB8,pmg_enemy_update,func,0,PMG enemy update (1 RANDOM read; called from enemy_check when $0633≠0)
+$7B54,game_sub_7B54,func,0,Game sub (1 RANDOM read; called in main loop)
+$7EC7,game_sub_7EC7,func,0,Game sub (3 RANDOM reads)
+$7F85,game_sub_7F85,func,0,Game sub (1 RANDOM read)
+$8237,audio_irq_handler,func,0,Audio IRQ handler (0 callers; writes AUDF1-4 + AUDCTL; timer-driven sound update)
+$9E54,terrain_gen_1,func,0,Terrain/level generation step 1 (called before terrain_gen_2)
+$A31E,terrain_gen_2,func,0,Terrain/level generation step 2 (called with X=level*$30; 2 RANDOM reads)
+$A613,terrain_gen_A613,func,0,Terrain sub (2 RANDOM reads)
+$A822,terrain_sub_A822,func,0,Terrain/game sub (0 callers; 1 RANDOM read)
+$A90A,terrain_sub_A90A,func,0,Terrain/game sub (0 callers; 4 callees)
+$A99C,game_state_update,func,0,Game state update (2 RANDOM reads; called from main game loop)
+$AA95,game_sub_AA95,func,0,Game sub (1 RANDOM read)
+$AACF,game_sub_AACF,func,0,Game sub (1 RANDOM read)
+$AD5F,terrain_gen_3,func,0,Terrain/level generation step 3 (called with X=level param; 244 bytes)
+$AE53,terrain_collision,func,0,Terrain collision/render: 799 bytes; compares ship position against 8 terrain rows at $1010,$1070,$10D0,$1130,$1190,$11F0,$1250,$12B0 (spaced $60 apart); finds topmost non-empty row; JMPs to landing/crash handler at $B12F
+$B172,terrain_sub_B172,func,0,Terrain sub (calls $B33D and $B2CC)
+$B800,init_B800,func,0,INITAD stub (segment 13): sets CHBAS=$04 SDLSTL/H=$B832 COLOR0/1/2/4 SDMCTL=$22 then enables DMACTL; initial display list at $B832 (embedded in stub body)
+#
+# --- Zero page variables ---
+$0002,zp_flag_02,var,0,Zeroed in game_entry; purpose unknown
+$0003,zp_flag_03,var,0,Read in cockpit_display; written in multiple game subs
+$0004,level_or_state,var,0,Level number or game phase flag; $00=fresh start; controls game flow in game_entry and startup
+$0005,zp_flag_05,var,0,Zeroed in game_entry
+$0009,zp_flag_09,var,0,Set to $01 by XEX segment (INITAD signal)
+$000C,zp_entry_lo,var,0,XEX final entry vector low ($DE=$3CDE low byte) — game entry point
+$000D,zp_entry_hi,var,0,XEX final entry vector high ($3C)
+$0041,game_state,var,0,Global game state flag (written 11 times across many subs; key control variable)
+$0042,game_phase,var,0,Game phase (0=init 1=active 2=post-level); set to 1 or 2 at various points
+$0044,timer_or_counter,var,0,Countdown (set to $54 or $0E); used in game pacing
+$0049,joystick_raw,var,0,Joystick/input raw value (saved to $061D at game_entry start)
+$004A,joystick_saved,var,0,Joystick processed value / level sub-state
+$004B,collision_flags,var,0,Collision/event flags (BIT-tested in startup_init)
+$004C,timer_4C,var,0,Counter/timer written by many subs
+$0071,display_flags,var,0,Display mode flags ($C0 during init $00 in attract $2A in game)
+$0072,player_lives,var,0,Player lives counter (compared to 2 in main loop; X+1 stored to $4A when lives=2)
+$007E,score_or_rescued,var,0,Score or rescued-pilot counter (set $80 at game start)
+$0080,sync_flag,var,0,VBI sync flag (game_entry waits for non-zero then clears; VBI sets it)
+$0081,dl_ptr_lo,var,0,Display list pointer low (used by display_list_build as indirect ptr to $B800)
+$0082,dl_ptr_hi,var,0,Display list pointer high
+$0083,screen_ptr_lo,var,0,Screen data pointer low (used by display_list_build)
+$0084,screen_ptr_hi,var,0,Screen data pointer high
+$0085,encounter_count,var,0,Encounter placement counter (counts down from $1E=30 in display_list_build)
+$0086,row_count,var,0,Row loop counter in display_list_build ($DA=218 rows)
+$0087,vbi_phase,var,0,VBI phase counter (0 or 1)
+$0088,vbi_flags,var,0,VBI display flags
+$00B7,frame_counter,var,0,Frame counter (zeroed by attract_mode_init; ticked by VBI; used for timing)
+$00BB,dl_y1,var,0,Display region Y1 or scroll offset (set in attract_mode_init and display_setup)
+$00BC,dl_y2,var,0,Display region Y2
+$00BD,dl_y3,var,0,Display region Y3
+$00BE,dl_y4,var,0,Display region Y4
+$00C1,player_x,var,0,Player horizontal position (set $60 before main loop; $00 in display_setup)
+$00C2,player_speed,var,0,Player speed (set $10 in display_setup)
+$00C3,player_y,var,0,Player vertical/altitude (set $0F display_setup; $10 before main loop)
+$00C4,altitude_limit,var,0,Altitude limit (set $08 display_setup; $10 before main loop)
+$00CF,display_param_0,var,0,Display parameter 0 — loaded from $4DF1+0 table ($04)
+$00D0,display_param_1,var,0,Display parameter 1 — from $4DF1+1 ($26)
+$00D1,display_param_2,var,0,Display parameter 2 — from $4DF1+2 ($2C)
+$00D2,display_param_3,var,0,Display parameter 3 — from $4DF1+3 ($90)
+$00D3,display_param_4,var,0,Display parameter 4 — from $4DF1+4 ($00)
+$00D4,display_param_5,var,0,Display parameter 5 — from $4DF1+5 ($06)
+$00D5,display_param_6,var,0,Display parameter 6 — from $4DF1+6 ($44)
+$00D6,display_param_7,var,0,Display parameter 7 — from $4DF1+7 ($9A)
+$00D7,display_param_8,var,0,Display parameter 8 — from $4DF1+8 ($78)
+$00DE,anim_counter_1,var,0,Animation counter 1 (clamped to $46 from $4E in main loop)
+$00DD,anim_counter_2,var,0,Animation counter 2 (clamped to $2A from $2B)
+$00E2,attract_timer,var,0,Attract mode timer ($64=100 at game_entry start)
+$00E4,game_var_E4,var,0,Zeroed in game_entry
+$00E6,game_var_E6,var,0,Zeroed in game_entry
+#
+# --- RAM workspace ($0600 area) ---
+$0600,screen_data_start,data,0,Start of screen data (122 rows × 40 bytes = $0600-$1306); also game state at $0600-$062B
+$0600,game_state_area,data,0,First 13 bytes zeroed at game_entry ($0600-$060C)
+$060B,cockpit_flag,var,0,Non-zero → cockpit_display called in game_entry
+$060C,screen_state,var,0,Cleared to 0 at game_entry $3E3A
+$061D,joystick_saved_1,var,0,Joystick raw $0049 saved here at game_entry
+$061E,joystick_saved_2,var,0,Joystick raw $004A saved here at game_entry
+$0626,game_vars_626,data,0,7 bytes zeroed at game_entry ($0626-$062C)
+$0627,fresh_start_flag,var,0,0=first time through (run intro); non-zero=continue/skip intro
+$062F,life_counter,var,0,Life/fuel counter? — compared to $0E (14); game_entry branches on this
+$0633,alien_trigger,var,0,Alien/enemy trigger (if non-zero, enemy_check calls pmg_enemy_update)
+$063D,event_trigger,var,0,Event trigger (if non-zero, enemy_check calls game_sub_4f3f)
+$0642,game_phase_flag,var,0,Game phase (0=intro 1/2=active 3=transition); used in startup_init + display loop
+$0645,shield_or_damage,var,0,Shield/damage counter (set $80 at game_entry start)
+$0663,game_var_663,var,0,Set to $A0 at game_entry
+$0668,score_hi,var,0,Score high byte (set $80 at game_entry)
+$0669,score_lo,var,0,Score low byte (set $80 at game_entry)
+$066A,fuel_or_score2,var,0,Set to $A0 at game_entry
+$066B,fuel_or_score3,var,0,Set to $A0 at game_entry; also in loop zero-cleared before $55FC
+#
+# --- Terrain data tables ($1010+ in the loaded code segment) ---
+$1010,terrain_row0,data,0,Terrain column data row 0 ($60=96 bytes wide); loaded terrain heightmap strip
+$1070,terrain_row1,data,0,Terrain column data row 1 (offset $60 from row 0)
+$10D0,terrain_row2,data,0,Terrain column data row 2
+$1130,terrain_row3,data,0,Terrain column data row 3
+$1190,terrain_row4,data,0,Terrain column data row 4
+$11F0,terrain_row5,data,0,Terrain column data row 5
+$1250,terrain_row6,data,0,Terrain column data row 6
+$12B0,terrain_row7,data,0,Terrain column data row 7 (8 rows total; checked by terrain_collision in order)
+#
+# --- Display list RAM ($3120 / $316B — BSS, built at runtime) ---
+$3120,display_list_game,data,0,Game display list (built at runtime by display_setup; DLISTL=$20 DLISTH=$31)
+$316B,display_list_alt,data,0,Alternate game display list (second display-list address used in display_setup)
+#
+# --- Game data in main code segment ---
+$2849,level_cleared_flag,var,0,Set when $3A=1 (level-cleared condition)
+$281C,terrain_index,var,0,Terrain lookup index
+$2836,terrain_sub_index,var,0,Sub-index for terrain table $3FF6
+$283B,level_ready_flag,var,0,BPL-polled in game_entry main loop (waits for negative = level ready)
+$288D,pilot_visible,var,0,Pilot visible/alive flag
+$288E,pilot_prev,var,0,Previous pilot visible state (for edge detection in main loop)
+$288F,pilot_state,var,0,Pilot rescue state ($game_entry uses to store $0041)
+$3157,dl_param_lo,var,0,Display list parameter low (set $0D at game_entry; used by display_setup)
+$3158,dl_param_hi,var,0,Display list parameter high (set $35 → address $350D)
+$36CA,grafp_shadow,data,0,GRAFP shadow area (8 bytes zeroed alongside GTIA regs at $3D52)
+$37EE,level_progress,var,0,Level progress/distance counter (min $10; clamped)
+$37F4,game_var_37F4,var,0,Cleared to 0 in game_entry
+$4DF1,display_param_table,data,0,9-byte table copied to zero-page $CF-$D7 at game_entry ($04 $26 $2C $90 $00 $06 $44 $9A $78)
