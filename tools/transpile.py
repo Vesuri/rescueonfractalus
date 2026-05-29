@@ -160,15 +160,20 @@ def parse_operand(op, nbytes, symbols):
     if m:
         return ('imm', int(m.group(1), 16), None)
 
-    # (zp),Y
+    # (zp),Y  post-indexed
     m = re.match(r'^\(0x([0-9a-fA-F]+)\),Y$', op)
     if m:
         return ('indy', int(m.group(1), 16), 'Y')
 
-    # (zp,X)
+    # (zp,X)  pre-indexed
     m = re.match(r'^\(0x([0-9a-fA-F]+),X\)$', op)
     if m:
         return ('indx', int(m.group(1), 16), 'X')
+
+    # (abs) or (zp)  — absolute/ZP indirect, used by JMP (DLI chain pattern)
+    m = re.match(r'^\(0x([0-9a-fA-F]+)\)$', op)
+    if m:
+        return ('jmpind', int(m.group(1), 16), None)
 
     # abs,X or abs,Y or zp,X or zp,Y
     m = re.match(r'^0x([0-9a-fA-F]+),([XY])$', op)
@@ -287,12 +292,19 @@ def translate_insn(insn, func, all_funcs_by_start, symbols, local_targets,
 
     # --- JMP ---
     if mnem == 'JMP':
-        target = val
-        if target in local_targets:
-            lines.append(f'    goto L_{target:04x};')
+        if mode == 'jmpind':
+            # Indirect JMP via ZP pointer (DLI chain: JMP ($E0) etc.)
+            # Dereference ZP at runtime and dispatch via the VBI/DLI table.
+            lines.append(f'    {{ uint16_t _t = (uint16_t)(mem[0x{val:04X}] | '
+                         f'((uint16_t)mem[0x{(val+1)&0xFF:04X}] << 8)); '
+                         f'platform_indirect_jmp(_t); return; }}')
         else:
-            name = resolve_target_name(target)
-            lines.append(f'    {name}(); return;')
+            target = val
+            if target in local_targets:
+                lines.append(f'    goto L_{target:04x};')
+            else:
+                name = resolve_target_name(target)
+                lines.append(f'    {name}(); return;')
         return lines
 
     # --- JSR ---
