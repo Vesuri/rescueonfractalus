@@ -3,7 +3,7 @@
 #include <cstring>
 #include <cmath>
 
-extern uint8_t mem[65536];
+extern volatile uint8_t mem[65536];
 
 /* POKEY base clock (NTSC, ~1.79 MHz) used for audio frequency calculation. */
 static const double POKEY_CLOCK = 1789772.5;
@@ -99,8 +99,8 @@ int PlatformSDL::framesPerSecond() {
 int PlatformSDL::loadImage(const char* path) {
     FILE* f = fopen(path, "rb");
     if (!f) { fprintf(stderr, "cannot open %s\n", path); return -1; }
-    memset(mem, 0, 65536);
-    size_t n = fread(mem, 1, 65536, f);
+    memset((uint8_t*)mem, 0, 65536);
+    size_t n = fread((uint8_t*)mem, 1, 65536, f);
     fclose(f);
     printf("[rof] loaded %zu bytes from %s\n", n, path);
     /* Pick up initial display-list pointer from OS shadow. */

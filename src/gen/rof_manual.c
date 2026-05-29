@@ -12,8 +12,8 @@
 void screen_page_swap(void) {
     int page;
     for (page = 0; page < 5; page++) {
-        uint8_t *a = mem + ((0x40 + page) << 8);
-        uint8_t *b = mem + ((0x06 + page) << 8);
+        uint8_t *a = (uint8_t*)mem + ((0x40 + page) << 8);
+        uint8_t *b = (uint8_t*)mem + ((0x06 + page) << 8);
         uint8_t tmp[256];
         memcpy(tmp, a,   256);
         memcpy(a,   b,   256);

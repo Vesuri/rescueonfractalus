@@ -8,9 +8,9 @@ CXX     := clang++
 SDL_CFLAGS  := $(shell pkg-config --cflags sdl2)
 SDL_LDFLAGS := $(shell pkg-config --libs   sdl2)
 
-CFLAGS   := -std=c11   -O2 -Wall -Wno-unused-label -fsigned-char \
+CFLAGS   := -std=c11   -g -O2 -Wall -Wno-unused-label -fsigned-char \
              -Isrc -Isrc/cpu -Isrc/platform -Isrc/gen
-CXXFLAGS := -std=c++11 -O2 -Wall -Wno-reorder -fsigned-char \
+CXXFLAGS := -std=c++11 -g -O2 -Wall -Wno-reorder -fsigned-char \
              -Isrc -Isrc/cpu -Isrc/platform -Isrc/gen \
              $(SDL_CFLAGS)
 LDFLAGS  := $(SDL_LDFLAGS)
