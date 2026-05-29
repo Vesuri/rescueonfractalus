@@ -13,5 +13,9 @@ build/
 *.rep
 *.lock
 
+# Generated C (regenerate with: make gen)
+src/gen/rof_gen.c
+src/gen/rof_decl.h
+
 # OS
 .DS_Store
