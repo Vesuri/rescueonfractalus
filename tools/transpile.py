@@ -233,9 +233,19 @@ def operand_addr_expr(mode, addr, idx):
     if mode == 'indx': return f'ZP_IND_X(0x{addr:02X})'
     return '0'
 
+def needs_bus_write(addr):
+    """True for addresses that must go through bus_write() so the
+    platform layer is notified.  Hardware ($D000-$D7FF) is always
+    routed.  OS page-2 shadow registers ($0200-$02FF) must also go
+    through bus_write so platform_shadow_write() is called — without
+    this, writes to VVBLKI ($0222/$0223), VDSLST ($0200/$0201),
+    SDMCTL ($022F), SDLSTL/H ($0230/$0231) etc. are silent and the
+    VBI/DLI handler dispatch never updates."""
+    return is_hw(addr) or (0x0200 <= addr < 0x0300)
+
 def write_expr(mode, addr, idx, val_expr):
     ea = operand_addr_expr(mode, addr, idx)
-    if mode in ('zp','abs') and is_hw(addr):
+    if mode in ('zp','abs') and needs_bus_write(addr):
         return f'bus_write(0x{addr:04X}, {val_expr})'
     if mode in ('zp','abs'):
         return f'mem[0x{addr:04X}] = {val_expr}'
