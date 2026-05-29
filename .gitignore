@@ -19,3 +19,4 @@ src/gen/rof_decl.h
 
 # OS
 .DS_Store
+src/**/*.o

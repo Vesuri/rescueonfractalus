@@ -1,77 +1,71 @@
 #ifndef PLATFORM_H
 #define PLATFORM_H
-#include <stdint.h>
 
-/* Platform abstraction API.
-   Maps every hardware-register access identified in docs/hw-access.md
-   to a backend-neutral function.  The SDL (macOS) and Amiga backends
-   each provide a concrete implementation.
+#include <cstdint>
 
-   Register groups (see docs/atari-hardware.md):
-     GTIA  $D000–$D01F — sprites, colors, collision, console buttons
-     POKEY $D200–$D21F — audio, RANDOM, keyboard, timers
-     PIA   $D300–$D31F — joystick ports, XL/XE bank switching
-     ANTIC $D400–$D41F — display list, DMA control, WSYNC, NMI
-*/
+/* Abstract platform base — mirrors the pattern from PETSCIIRobots-SDL/Platform.h.
+   Each supported target (SDL, Amiga) provides a concrete subclass.
+   The global singleton pointer is used by the C bridge layer so that the
+   C-compiled 6502 transliteration can reach hardware emulation. */
 
-/* ------------------------------------------------------------------ */
-/* Raw hardware bus (called by bus.h for the $D000-$D7FF range)       */
-/* ------------------------------------------------------------------ */
-uint8_t platform_hw_read (uint16_t addr);
-void    platform_hw_write(uint16_t addr, uint8_t val);
+class Platform {
+public:
+    Platform();
+    virtual ~Platform();
 
-/* Called by bus_write for OS page-2 shadow register writes so the
-   platform can react (display-list changes, vector changes, etc.).
-   Backends may ignore writes they don't care about.               */
-void    platform_shadow_write(uint16_t addr, uint8_t val);
+    /* ------------------------------------------------------------------ */
+    /* Frame / interrupt                                                    */
+    /* ------------------------------------------------------------------ */
 
-/* ------------------------------------------------------------------ */
-/* Frame / interrupt callbacks (called by the platform run loop)      */
-/* ------------------------------------------------------------------ */
+    /* Register the VBI handler to be fired at framesPerSecond() rate.
+       The audio callback advances a sample counter and invokes fn() when
+       the interval elapses — same mechanism as PETSCIIRobots-SDL.        */
+    virtual void setInterrupt(void (*fn)(void)) = 0;
 
-/* Tick one video frame: runs the NMI VBI handler, then renders.
-   Returns 0 to continue, non-zero to quit.                        */
-int platform_frame(void);
+    virtual int  framesPerSecond() = 0;
 
-/* ------------------------------------------------------------------ */
-/* Specific hardware reads (convenience wrappers used by the game)    */
-/* ------------------------------------------------------------------ */
+    /* Blit the offscreen buffer to the window and present.                */
+    virtual void renderFrame() = 0;
 
-/* POKEY RANDOM ($D20A): must reproduce the 17-bit LFSR bit-exactly   */
-uint8_t platform_random(void);
+    /* ------------------------------------------------------------------ */
+    /* Hardware bus — called by bus_read / bus_write in bus.h             */
+    /* ------------------------------------------------------------------ */
 
-/* Joystick: PORTA ($D300) — bit 0=up 1=down 2=left 3=right (active low) */
-uint8_t platform_porta(void);
+    /* Read a hardware-range address ($D000–$D7FF).  Default: 0x00.       */
+    virtual uint8_t hwRead(uint16_t addr);
 
-/* Console buttons: CONSOL ($D01F) — bits: START=0x01 SELECT=0x02 OPTION=0x04 (active low from 0x07) */
-uint8_t platform_consol(void);
+    /* Write a hardware-range address.  Default: no-op.                   */
+    virtual void    hwWrite(uint16_t addr, uint8_t val);
 
-/* Keyboard: CH ($02FC shadow) — $FF = no key                         */
-uint8_t platform_ch(void);
+    /* Notification that the game wrote an OS page-2 shadow register.
+       ($0200–$02FF).  Used to track VVBLKI, VDSLST, etc.                 */
+    virtual void    shadowWrite(uint16_t addr, uint8_t val);
 
-/* ANTIC VCOUNT ($D40B) — current vertical scanline / 2               */
-uint8_t platform_vcount(void);
+    /* Register an Atari address → C function mapping for VBI/DLI dispatch.
+       Implemented by concrete classes that support interrupt-driven VBI. */
+    virtual void registerVBI(uint16_t /*addr*/, void (* /*fn*/)(void)) {}
 
-/* GTIA player-3 graphic / collision ($D010)                          */
-uint8_t platform_grafp3(void);
+    /* Runtime indirect JMP dispatch (DLI chain pattern: JMP ($E0)).     */
+    virtual void indirectJmp(uint16_t addr) { (void)addr; }
 
-/* ------------------------------------------------------------------ */
-/* Audio (POKEY channels 1-4)                                         */
-/* ------------------------------------------------------------------ */
-/* All audio state is written via platform_hw_write; these helpers    */
-/* provide typed access for platform implementations.                 */
-void platform_audf(int ch, uint8_t freq);   /* channel 1-4 */
-void platform_audc(int ch, uint8_t ctrl);
-void platform_audctl(uint8_t ctl);
+    /* ------------------------------------------------------------------ */
+    /* Image loading                                                        */
+    /* ------------------------------------------------------------------ */
 
-/* ------------------------------------------------------------------ */
-/* Initialisation / shutdown                                          */
-/* ------------------------------------------------------------------ */
-int  platform_init(void);
-void platform_shutdown(void);
+    /* Load the 64K post-load memory image into mem[].  Returns 0 on OK.  */
+    virtual int loadImage(const char* path) = 0;
 
-/* Load the post-load 64K ROM image into mem[] at startup.
-   Returns 0 on success.                                              */
-int  platform_load_image(const char *path);
+    /* ------------------------------------------------------------------ */
+    /* Shared state                                                         */
+    /* ------------------------------------------------------------------ */
+    bool quit;
+
+protected:
+    /* POKEY 17-bit LFSR state — concrete classes call pokeyRandomStep().  */
+    uint32_t rngState;
+    uint8_t  pokeyRandomStep();
+};
+
+extern Platform* platform;
 
 #endif /* PLATFORM_H */

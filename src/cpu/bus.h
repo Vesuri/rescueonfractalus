@@ -14,7 +14,7 @@
 */
 
 #include "cpu.h"
-#include "../platform/platform.h"
+#include "../platform/platform_c.h"
 
 static inline uint8_t bus_read(uint16_t addr) {
     if (addr >= 0xD000 && addr < 0xD800)
