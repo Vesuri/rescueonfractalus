@@ -8,9 +8,18 @@ CXX     := clang++
 SDL_CFLAGS  := $(shell pkg-config --cflags sdl2)
 SDL_LDFLAGS := $(shell pkg-config --libs   sdl2)
 
-CFLAGS   := -std=c11   -g -O2 -Wall -Wno-unused-label -fsigned-char \
+# Build mode: debug (default) or release.
+# Usage: make          → debug (-O0 -g, full lldb variable support)
+#        make RELEASE=1 → release (-O2 -g)
+ifdef RELEASE
+  OPT := -O2
+else
+  OPT := -O0
+endif
+
+CFLAGS   := -std=c11   -g $(OPT) -Wall -Wno-unused-label -fsigned-char \
              -Isrc -Isrc/cpu -Isrc/platform -Isrc/gen
-CXXFLAGS := -std=c++11 -g -O2 -Wall -Wno-reorder -fsigned-char \
+CXXFLAGS := -std=c++11 -g $(OPT) -Wall -Wno-reorder -fsigned-char \
              -Isrc -Isrc/cpu -Isrc/platform -Isrc/gen \
              $(SDL_CFLAGS)
 LDFLAGS  := $(SDL_LDFLAGS)

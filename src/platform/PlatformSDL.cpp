@@ -75,6 +75,18 @@ PlatformSDL::PlatformSDL(const char* imagePath) :
     SDL_PauseAudioDevice(audioDeviceID, 0);
 
     platform = this;
+
+    /* Pump events and show the window immediately.  On macOS, Cocoa
+       requires at least one event-loop iteration before the window
+       becomes visible, even though it was just created.  Without this,
+       the window stays invisible until renderFrame() is first called
+       (which may be hundreds of VBI ticks into game_entry()).          */
+    SDL_ShowWindow(window);
+    {
+        SDL_Event ev;
+        while (SDL_PollEvent(&ev)) {}  /* drain any queued events */
+    }
+    SDL_UpdateWindowSurface(window);    /* present the (black) buffer    */
 }
 
 PlatformSDL::~PlatformSDL() {
@@ -222,6 +234,16 @@ void PlatformSDL::audioCallback(void* userdata, uint8_t* stream, int bytes) {
         /* Reset VCOUNT at the start of each frame so scanline-wait loops
            see a naturally cycling value across frames.                  */
         p->vcountReg = 0;
+
+        /* Increment the OS jiffy clock (RTCLOK $0012-$0014).
+           On real hardware this is done by the OS deferred VBI (VVBLKD).
+           The game overrides only VVBLKI; VVBLKD would still run in the
+           OS and tick the clock.  We simulate it here so that timing
+           loops like "wait for RTCLOK to reach N" terminate.
+           $0014 = fast byte (every frame), $0013/$0012 = overflow bytes. */
+        if (++mem[0x0014] == 0)
+            if (++mem[0x0013] == 0)
+                ++mem[0x0012];
 
         if (p->interruptFn) (*p->interruptFn)();
         p->samplesSinceInterrupt -= p->interruptIntervalInSamples;
