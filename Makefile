@@ -10,7 +10,7 @@ SDL_LDFLAGS := $(shell pkg-config --libs   sdl2)
 
 CFLAGS   := -std=c11   -O2 -Wall -Wno-unused-label -fsigned-char \
              -Isrc -Isrc/cpu -Isrc/platform -Isrc/gen
-CXXFLAGS := -std=c++11 -O2 -Wall -fsigned-char \
+CXXFLAGS := -std=c++11 -O2 -Wall -Wno-reorder -fsigned-char \
              -Isrc -Isrc/cpu -Isrc/platform -Isrc/gen \
              $(SDL_CFLAGS)
 LDFLAGS  := $(SDL_LDFLAGS)

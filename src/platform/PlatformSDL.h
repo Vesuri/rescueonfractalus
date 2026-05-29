@@ -87,8 +87,10 @@ private:
 
     /* Display list pointer cached from the most recent DLISTL/H write */
     uint16_t displayListPtr;
+    int      framesPerSecond_;
+    uint8_t  vcountReg;     /* virtual VCOUNT — cycles 0-127 per frame */
 
-    int framesPerSecond_;
+    /* Audio sample counter — shared with audio callback */
 };
 
 #endif /* PLATFORMSDL_H */

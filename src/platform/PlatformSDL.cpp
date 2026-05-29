@@ -16,10 +16,11 @@ static const double POKEY_DIV   = 28.0;   /* ÷28 = ~63.9 kHz channel clock */
 PlatformSDL::PlatformSDL(const char* imagePath) :
     window(nullptr), windowSurface(nullptr), bufferSurface(nullptr),
     audioSpec{}, audioDeviceID(0),
-    interruptFn(nullptr), vbiTableCount(0),
-    audctl(0), displayListPtr(0),
-    samplesSinceInterrupt(0), interruptIntervalInSamples(0),
-    framesPerSecond_(50)          /* PAL timing; change to 60 for NTSC */
+    interruptFn(nullptr),
+    vbiTableCount(0),
+    audctl(0),
+    displayListPtr(0), framesPerSecond_(50), vcountReg(0),
+    samplesSinceInterrupt(0), interruptIntervalInSamples(0)
 {
     memset(channels, 0, sizeof(channels));
     memset(vbiTable, 0, sizeof(vbiTable));
@@ -112,10 +113,18 @@ int PlatformSDL::loadImage(const char* path) {
 /* ------------------------------------------------------------------ */
 
 uint8_t PlatformSDL::hwRead(uint16_t addr) {
-    if (addr == 0xD20A) return pokeyRandomStep();  /* POKEY RANDOM */
-    if (addr == 0xD300) return readJoystick();      /* PORTA */
-    if (addr == 0xD01F) return readConsol();        /* CONSOL */
-    if (addr == 0xD40B) return 0x00;               /* VCOUNT */
+    if (addr == 0xD20A) return pokeyRandomStep();   /* POKEY RANDOM */
+    if (addr == 0xD300) return readJoystick();       /* PORTA */
+    if (addr == 0xD01F) return readConsol();         /* CONSOL */
+    if (addr == 0xD40B) {
+        /* VCOUNT: advance by 1 each read, cycling 0-127.
+           FUN_3c75 does CMP(VCOUNT); BNE loop — waits for VCOUNT == cpu.A.
+           FUN_3c7b does LDA VCOUNT; CMP #$7A; BCC loop — waits for >= $7A.
+           An auto-incrementing register resolves both waits in at most
+           128 loop iterations instead of spinning forever.              */
+        vcountReg = (vcountReg + 1) & 0x7F;
+        return vcountReg;
+    }
     if (addr == 0xD010) return 0x00;               /* GRAFP3 collision */
     if (addr == 0xD20F) return 0x00;               /* SKSTAT */
     return 0x00;
@@ -210,6 +219,10 @@ void PlatformSDL::audioCallback(void* userdata, uint8_t* stream, int bytes) {
 
     p->samplesSinceInterrupt += words;
     while (p->samplesSinceInterrupt >= p->interruptIntervalInSamples) {
+        /* Reset VCOUNT at the start of each frame so scanline-wait loops
+           see a naturally cycling value across frames.                  */
+        p->vcountReg = 0;
+
         if (p->interruptFn) (*p->interruptFn)();
         p->samplesSinceInterrupt -= p->interruptIntervalInSamples;
     }
@@ -327,7 +340,7 @@ void PlatformSDL::renderAtariDisplay() {
     SDL_Color pf0Clr = atariColor(mem[0x02C4]);  /* COLPF0 / COLOR0 */
     SDL_Color pf1Clr = atariColor(mem[0x02C5]);  /* COLPF1 / COLOR1 */
     SDL_Color pf2Clr = atariColor(mem[0x02C6]);  /* COLPF2 / COLOR2 */
-    SDL_Color pf3Clr = atariColor(mem[0x02C7]);  /* COLPF3 / COLOR3 */
+    /* pf3Clr unused in current renderer; available for Phase 4 */
 
     uint32_t bgPx  = SDL_MapRGB(bufferSurface->format, bgClr.r,  bgClr.g,  bgClr.b);
     SDL_FillRect(bufferSurface, nullptr, bgPx);
