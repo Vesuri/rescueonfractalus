@@ -23,6 +23,21 @@ void platform_register_vbi(uint16_t addr, void (*fn)(void));
    If addr is 0 or unknown, returns without calling anything.            */
 void platform_indirect_jmp(uint16_t addr);
 
+/* Render the current display-list state to the SDL window if a new VBI
+   frame has been produced since the last call.  Safe to call from a
+   spin-wait loop — exits immediately if no new frame is pending.       */
+void platform_render_frame(void);
+
+/* Pump the platform event loop without rendering.  Call from any spin-wait
+   loop to keep macOS from marking the window as unresponsive.           */
+void platform_poll_events(void);
+
+/* Fire a VBI tick if the audio callback has accumulated enough samples.
+   Call explicitly from spin-waits that own a full frame boundary
+   (FUN_3cb1, L_656e).  Do NOT call from scanline-position waits
+   (FUN_3c7b) — VBI resets vcountReg and would prevent them from exiting. */
+void platform_tick_vbi(void);
+
 #ifdef __cplusplus
 }
 #endif

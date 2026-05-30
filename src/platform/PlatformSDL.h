@@ -16,7 +16,7 @@
 #define ROF_WINDOW_H  480
 
 /* Number of entries in the VBI address→function dispatch table. */
-#define VBI_TABLE_SIZE 16
+#define VBI_TABLE_SIZE 32
 
 struct PokeyChannel {
     float   phase;      /* oscillator phase accumulator (in samples) */
@@ -33,6 +33,8 @@ public:
     virtual void    setInterrupt(void (*fn)(void)) override;
     virtual int     framesPerSecond()              override;
     virtual void    renderFrame()                  override;
+    virtual void    pollEvents()                   override;
+    virtual void    tickVBI()                      override;
     virtual uint8_t hwRead(uint16_t addr)          override;
     virtual void    hwWrite(uint16_t addr, uint8_t val) override;
     virtual void    shadowWrite(uint16_t addr, uint8_t val) override;
@@ -61,6 +63,7 @@ private:
 
     /* Input helpers. */
     uint8_t readJoystick();
+    uint8_t readTrigger(int stick);
     uint8_t readConsol();
 
     /* SDL objects */
@@ -85,12 +88,44 @@ private:
     /* Atari NTSC palette (256 entries; bit 0 of colour byte is ignored) */
     SDL_Color palette[256];
 
+    /* Hardware colour registers — updated by hwWrite for $D012-$D01A.
+       Index: 0=COLPM0 1=COLPM1 2=COLPM2 3=COLPM3
+              4=COLPF0 5=COLPF1 6=COLPF2 7=COLPF3 8=COLBK
+       Initialised from OS shadows at the start of each renderAtariDisplay().
+       DLI handlers update these mid-scan via hwWrite so subsequent rows
+       in the renderer pick up the new values.                            */
+    uint8_t colHW[9];
+
     /* Display list pointer cached from the most recent DLISTL/H write */
     uint16_t displayListPtr;
+    /* Character set base page from CHBASE ($02F4 shadow / $D209 write).
+       Charset address = chbase << 8.  Game sets this to $04 in init_B800. */
+    uint8_t  chbase;
+    /* DMACTL ($D400 / $022F shadow): controls ANTIC DMA.
+       Bit 5 = DMA enable; bits 2-0 = playfield width.
+       If bit 5 clear, renderer skips the display list (blank screen). */
+    uint8_t  dmactl;
+    /* Smooth scroll offsets (0-15 for fine scroll) */
+    uint8_t  hscrol, vscrol;
+    /* GRACTL: bit 0 = missile enable, bit 1 = player enable, bit 2 = trigger latch */
+    uint8_t  gractl;
+    /* PMBASE shadow (page number for PM bitmaps) */
+    uint8_t  pmbase;
+    /* Player/Missile horizontal position shadows ($D000-$D007) */
+    uint8_t  hposP[4];   /* HPOSP0-3 */
+    uint8_t  hposM[4];   /* HPOSM0-3 */
+    /* Player/Missile size register ($D008-$D00B) */
+    uint8_t  sizePM[4];  /* SIZEP0-3 */
     int      framesPerSecond_;
     uint8_t  vcountReg;     /* virtual VCOUNT — cycles 0-127 per frame */
 
-    /* Audio sample counter — shared with audio callback */
+    /* Wall-clock timestamp of the last VBI tick (SDL_GetTicks units, ms).
+       tickVBI() uses this to fire at exactly framesPerSecond_ Hz without
+       any dependency on the audio device being open.                    */
+    uint32_t lastVBITicks;
+
+    /* Set by tickVBI() after firing the VBI; consumed by renderFrame(). */
+    volatile bool renderNeeded;
 };
 
 #endif /* PLATFORMSDL_H */

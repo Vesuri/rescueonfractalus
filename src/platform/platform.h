@@ -27,6 +27,14 @@ public:
     /* Blit the offscreen buffer to the window and present.                */
     virtual void renderFrame() = 0;
 
+    /* Pump the OS event loop without rendering — keeps the window
+       manager from marking the app as unresponsive during spin-waits.  */
+    virtual void pollEvents() {}
+
+    /* Fire one VBI tick if the audio callback has accumulated enough samples.
+       Call only from frame-boundary spin-waits, not scanline-position waits. */
+    virtual void tickVBI() {}
+
     /* ------------------------------------------------------------------ */
     /* Hardware bus — called by bus_read / bus_write in bus.h             */
     /* ------------------------------------------------------------------ */

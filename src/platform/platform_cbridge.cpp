@@ -32,4 +32,16 @@ void platform_indirect_jmp(uint16_t addr) {
     if (platform) platform->indirectJmp(addr);
 }
 
+void platform_render_frame(void) {
+    if (platform) platform->renderFrame();
+}
+
+void platform_tick_vbi(void) {
+    if (platform) platform->tickVBI();
+}
+
+void platform_poll_events(void) {
+    if (platform) platform->pollEvents();
+}
+
 } /* extern "C" */
