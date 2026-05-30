@@ -1658,8 +1658,7 @@ L_3cae:;
     goto L_3c95;
 }
 
-void FUN_3cb1(void) {
-    /* 3cb1 */
+void FUN_3cb1(void) {    /* 3cb1 */
     PHA();
 L_3cb2:;
     /* 3cb2 */
@@ -2107,9 +2106,7 @@ L_3e5c:;
     LDA(0x40);
     /* 3e83 */
     bus_write(0xD004, cpu.A);
-    /* 3e86 */
-    main_loop_body();
-    /* 3e89 */
+    /* 3e86 */    main_loop_body();    /* 3e89 */
     LDA(mem[0x0627]);
     /* 3e8c */
     if (!cpu.Z) goto L_3e97;
@@ -25762,9 +25759,12 @@ void FUN_3cb2(void) {
 }
 
 void FUN_3cc6(void) {
-    /* TODO: should start execution at $3CC6 inside clear_colors.
-       Currently approximated as a full call from $3CC3. */
-    clear_colors();
+    /* Entry at $3CC6 inside clear_colors — AFTER the PHA/LDA #1 preamble.
+       cpu.A already holds the tick count set by the caller (FUN_3cca/3ccf/3cd4).
+       We must NOT call clear_colors() from the start because that resets A to 1,
+       corrupting $004C and making all timing waits last only 1 tick.            */
+    mem[0x004C] = cpu.A;              /* STA $004C — store caller's tick count */
+    if (!cpu.Z) { FUN_3cb2(); }       /* BNE $3CB2 — always true (A != 0)       */
 }
 
 void FUN_3d38(void) {

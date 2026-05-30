@@ -295,11 +295,23 @@ void PlatformSDL::tickVBI() {
 
     vcountReg = 0;
 
-    /* Do NOT increment RTCLOK here — the game's own VBI handler does it at
-       $5333 (INC $0014).  On real hardware the OS VVBLKD would also tick it,
-       but our FUN_e462 is a stub, so the game handler is the only source.
-       Adding a second increment here makes $0014 advance by +2/frame and
-       skip odd $004C targets in FUN_3cb1, causing an infinite spin.       */
+    /* Seed colHW[] from OS shadows BEFORE calling the VBI handler.
+       The handler reads the shadow registers, applies transforms (e.g.
+       attract-mode EOR/AND in vbi_handler_1), and writes the result to
+       the hardware registers via bus_write → hwWrite → colHW[].
+       Doing this AFTER the handler (in renderAtariDisplay) would clobber
+       exactly those transforms and cause the 50 Hz blue/black flash.     */
+    colHW[0] = mem[0x02C0];  /* COLPM0 */
+    colHW[1] = mem[0x02C1];  /* COLPM1 */
+    colHW[2] = mem[0x02C2];  /* COLPM2 */
+    colHW[3] = mem[0x02C3];  /* COLPM3 */
+    colHW[4] = mem[0x02C4];  /* COLPF0 */
+    colHW[5] = mem[0x02C5];  /* COLPF1 */
+    colHW[6] = mem[0x02C6];  /* COLPF2 */
+    colHW[7] = mem[0x02C7];  /* COLPF3 */
+    colHW[8] = mem[0x02C8];  /* COLBK  */
+
+    /* Do NOT increment RTCLOK here — the game's own VBI handler does it.  */
     if (interruptFn) (*interruptFn)();
     renderNeeded = true;
 }
@@ -458,20 +470,10 @@ void PlatformSDL::renderAtariDisplay() {
                    : (uint16_t)(mem[0x0230] | (mem[0x0231] << 8));
     if (dlPtr == 0) return;
 
-    /* Sync hardware colour registers from OS shadows at frame start.
-       The VBI writes hardware regs FROM OS shadows (so the shadows reflect
-       the frame-start state).  DLI handlers then update colHW[] mid-scan via
-       hwWrite; the renderer reads colHW[] each row so DLI colour changes
-       take effect on the correct scanline.                              */
-    colHW[0] = mem[0x02C0]; /* COLPM0 shadow */
-    colHW[1] = mem[0x02C1]; /* COLPM1 */
-    colHW[2] = mem[0x02C2]; /* COLPM2 */
-    colHW[3] = mem[0x02C3]; /* COLPM3 */
-    colHW[4] = mem[0x02C4]; /* COLPF0 */
-    colHW[5] = mem[0x02C5]; /* COLPF1 */
-    colHW[6] = mem[0x02C6]; /* COLPF2 */
-    colHW[7] = mem[0x02C7]; /* COLPF3 */
-    colHW[8] = mem[0x02C8]; /* COLBK  */
+    /* colHW[] was seeded from OS shadows in tickVBI() before the VBI
+       handler ran.  The handler may have updated them (e.g. attract-mode
+       EOR/AND in vbi_handler_1); DLI handlers update them further mid-scan.
+       Do NOT re-seed here — that would undo the VBI's colour transforms.  */
 
     /* Initial background fill from COLBK (updated per-entry by DLI). */
     {
