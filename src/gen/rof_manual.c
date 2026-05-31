@@ -2,6 +2,7 @@
    These are NOT auto-generated; edit this file freely. */
 #include "../cpu/cpu.h"
 #include "../cpu/bus.h"
+#include "../platform/platform_c.h"
 #include "rof_decl.h"
 #include <string.h>
 
@@ -118,6 +119,84 @@ void dli_sub_6da1(void) {
     bus_write(0xD018, 0x2C);          /* COLPF2 */
     bus_write(0xD01A, 0x90);          /* COLBK  */
     mem[0x00C7] = 0xFF;               /* caller's INC wraps to 0 */
+}
+
+/* ------------------------------------------------------------------ */
+/* DLI dispatch helpers — $49EE (terrain) and $6CC2/$6CAD (cockpit)   */
+/* Each fires the sub-handler via platform_indirect_jmp then increments*/
+/* $C7 (the per-scanline slot counter).  In the 6502, sub-handlers    */
+/* tail-call $4A05 which does INC $C7; RTI; here that increment is    */
+/* done in the dispatcher so the manual sub-handler bodies just return. */
+/* ------------------------------------------------------------------ */
+
+/* Shared helper: dispatch one DLI slot and advance $C7. */
+static void dli_dispatch(uint16_t lo_table, uint16_t hi_table) {
+    uint8_t idx = mem[0x00C7];
+    uint8_t lo  = mem[lo_table + (uint16_t)idx * 2];
+    uint8_t hi  = mem[hi_table + (uint16_t)idx * 2];
+    uint16_t target = (uint16_t)lo | ((uint16_t)hi << 8);
+    platform_indirect_jmp(target);
+    mem[0x00C7]++;   /* INC $C7 — was JMP $4A05 in 6502 */
+}
+
+/* dli_handler_game ($49EE): terrain-area DLI, 5 slots max. */
+void dli_handler_game(void) {
+    uint8_t idx = mem[0x00C7];
+    if (idx < 5) {
+        dli_dispatch(0x4AD9, 0x4ADE);
+    }
+    /* when idx >= 5: no dispatch, $C7 not incremented — handler chain ends */
+}
+
+/* dli_handler_game2 ($6CC2): cockpit DLI (layout 1), uses table $6DCF/$6DD0. */
+void dli_handler_game2(void) {
+    dli_dispatch(0x6DCF, 0x6DD0);
+}
+
+/* dli_handler_cockpit ($6CAD): cockpit DLI (layout 2), uses table $6DBB/$6DBC.
+   Installed as VDSLST = $6CAD by display_setup; registered so indirectJmp
+   can dispatch to it from the renderer.                                      */
+void dli_handler_cockpit(void) {
+    dli_dispatch(0x6DBB, 0x6DBC);
+}
+
+/* ------------------------------------------------------------------ */
+/* Additional DLI sub-handlers used only by dli_handler_cockpit        */
+/* ------------------------------------------------------------------ */
+
+/* dli_sub_6cd7: set player colours + PRIOR=$94 */
+void dli_sub_6cd7(void) {
+    bus_write(0xD014, mem[0x08D8]);  /* COLPM2 */
+    bus_write(0xD013, mem[0x08D7]);  /* COLPM1 */
+    bus_write(0xD015, mem[0x08D9]);  /* COLPM3 */
+    bus_write(0xD01B, 0x94);         /* PRIOR  */
+}
+
+/* dli_sub_6cf1: WSYNC, then sky row colours */
+void dli_sub_6cf1(void) {
+    bus_write(0xD40A, 0x00);         /* WSYNC  */
+    bus_write(0xD01A, mem[0x0071]);  /* COLBK  */
+    bus_write(0xD016, mem[0x08D4]);  /* COLPF0 */
+    bus_write(0xD017, mem[0x08D5]);  /* COLPF1 */
+    bus_write(0xD018, mem[0x08D6]);  /* COLPF2 */
+}
+
+/* dli_sub_6d4f: fixed sky/land colours */
+void dli_sub_6d4f(void) {
+    bus_write(0xD017, 0x06);         /* COLPF1 */
+    bus_write(0xD016, 0x04);         /* COLPF0 */
+    bus_write(0xD018, 0x2C);         /* COLPF2 */
+    bus_write(0xD015, mem[0x08D8]);  /* COLPM3 */
+}
+
+/* dli_sub_6d7c: WSYNC, reset player/playfield colours for panel */
+void dli_sub_6d7c(void) {
+    bus_write(0xD40A, 0x04);         /* WSYNC  */
+    bus_write(0xD01B, 0x04);         /* PRIOR  */
+    bus_write(0xD01A, 0x00);         /* COLBK  */
+    bus_write(0xD012, mem[0x0071]);  /* COLPM0 */
+    bus_write(0xD013, mem[0x0071]);  /* COLPM1 */
+    bus_write(0xD019, 0x26);         /* COLPF3 */
 }
 
 /* screen_page_swap ($1A62): swaps 5 x 256-byte pages between $40xx and $06xx.

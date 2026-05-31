@@ -35,7 +35,11 @@ OUT_H    = ROOT / "src/gen/rof_decl.h"
 OUT_MAN  = ROOT / "src/gen/rof_manual.c"
 
 # Self-modifying functions: skip in generated code, provide manual impl.
-MANUAL_FUNCS = {0x1a62}   # screen_page_swap
+MANUAL_FUNCS = {
+    0x1a62,  # screen_page_swap
+    0x49EE,  # dli_handler_game   — needs INC $C7 after dispatch + cockpit variant
+    0x6CC2,  # dli_handler_game2  — same
+}
 
 HW_BASE, HW_END = 0xD000, 0xD800   # bus_read/bus_write range
 

@@ -3827,36 +3827,7 @@ L_49ec:;
     return;
 }
 
-void dli_handler_game(void) {
-    /* 49ee */
-    mem[0x00C8] = cpu.A;
-    /* 49f0 */
-    mem[0x00CA] = cpu.Y;
-    /* 49f2 */
-    LDY(mem[0x00C7]);
-    /* 49f4 */
-    CPY(0x05);
-    /* 49f6 */
-    if (cpu.C) goto L_4a07;
-    /* 49f8 */
-    LDA(mem[(0x4AD9)+cpu.Y]);
-    /* 49fb */
-    mem[0x00E0] = cpu.A;
-    /* 49fd */
-    LDA(mem[(0x4ADE)+cpu.Y]);
-    /* 4a00 */
-    mem[0x00E1] = cpu.A;
-    /* 4a02 */
-    { uint16_t _t = (uint16_t)(mem[0x00E0] | ((uint16_t)mem[0x00E1] << 8)); platform_indirect_jmp(_t); return; }
-L_4a07:;
-    /* 4a07 */
-    LDY(mem[0x00CA]);
-    /* 4a09 */
-    LDA(mem[0x00C8]);
-    /* 4a0b */
-    PLP(); return;
-}
-
+/* dli_handler_game @ $49EE: manual implementation in rof_manual.c */
 void FUN_4e18(void) {
     /* 4e18 */
     LDY(0x01);
@@ -10156,29 +10127,7 @@ L_6ca2:;
     return;
 }
 
-void dli_handler_game2(void) {
-    /* 6cc2 */
-    mem[0x00C8] = cpu.A;
-    /* 6cc4 */
-    mem[0x00CA] = cpu.Y;
-    /* 6cc6 */
-    LDA(mem[0x00C7]);
-    /* 6cc8 */
-    ASL_A();
-    /* 6cc9 */
-    TAY();
-    /* 6cca */
-    LDA(mem[(0x6DCF)+cpu.Y]);
-    /* 6ccd */
-    mem[0x00E0] = cpu.A;
-    /* 6ccf */
-    LDA(mem[(0x6DD0)+cpu.Y]);
-    /* 6cd2 */
-    mem[0x00E1] = cpu.A;
-    /* 6cd4 */
-    { uint16_t _t = (uint16_t)(mem[0x00E0] | ((uint16_t)mem[0x00E1] << 8)); platform_indirect_jmp(_t); return; }
-}
-
+/* dli_handler_game2 @ $6CC2: manual implementation in rof_manual.c */
 void FUN_6ddf(void) {
     /* 6ddf */
     LDA(0x2E);
