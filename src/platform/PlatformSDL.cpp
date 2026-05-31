@@ -1,4 +1,5 @@
 #include "PlatformSDL.h"
+#include "../cpu/cpu.h"
 #include <cstdio>
 #include <cstring>
 #include <cmath>
@@ -311,8 +312,16 @@ void PlatformSDL::tickVBI() {
     colHW[7] = mem[0x02C7];  /* COLPF3 */
     colHW[8] = mem[0x02C8];  /* COLBK  */
 
-    /* Do NOT increment RTCLOK here — the game's own VBI handler does it.  */
-    if (interruptFn) (*interruptFn)();
+    /* Do NOT increment RTCLOK here — the game's own VBI handler does it.
+       Save/restore CPU registers across the VBI call: on real hardware the
+       6502 VBI is an interrupt that pushes/pops the processor state (RTI).
+       Without this, spin-waits that load a register THEN call platform_tick_vbi
+       find their register clobbered by the handler on return.               */
+    if (interruptFn) {
+        Cpu6502 saved = cpu;
+        (*interruptFn)();
+        cpu = saved;
+    }
     renderNeeded = true;
 }
 
@@ -776,7 +785,11 @@ void PlatformSDL::pollEvents() {
    SDL_UpdateWindowSurface is only called once per VBI (50 Hz),
    so Metal's nextDrawable never accumulates pressure.               */
 void PlatformSDL::renderFrame() {
-    tickVBI();
+    /* Do NOT call tickVBI() here: all spin-wait hooks call platform_tick_vbi()
+       first, then platform_render_frame().  Calling tickVBI() again inside
+       renderFrame() would double-fire the VBI if rendering takes ≥20 ms,
+       causing RTCLOK ($14) to increment twice per loop iteration and making
+       spin-waits overshoot their target (e.g. always missing value 1).       */
     if (!renderNeeded) return;
     renderNeeded = false;
 

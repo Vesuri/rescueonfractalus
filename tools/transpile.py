@@ -61,10 +61,13 @@ SPINWAIT_HOOKS = {
     0x6478: 'platform_tick_vbi(); platform_render_frame();',
     0x656E: 'platform_tick_vbi(); platform_render_frame();',
     0x79D0: 'platform_tick_vbi(); platform_render_frame();',
-    # Attract-mode loop: $62EB/$62F6 — no VBI boundary here, but needs
-    # event polling and rendering to detect key presses and animate.
+    # Attract-mode loops: need VBI to fire for animation, audio, and input.
+    # L_62EB: outer loop entry — tick VBI to drive the game
+    # L_62F6: inner input-poll loop — tick VBI here too so audio/rtclok work
+    # L_634A: tightest inner loop (FUN_5A78 check) — poll events to detect keys
     0x62EB: 'platform_tick_vbi(); platform_render_frame();',
-    0x62F6: 'platform_poll_events();',
+    0x62F6: 'platform_tick_vbi(); platform_render_frame();',
+    0x634A: 'platform_poll_events();',
 }
 
 # ---------------------------------------------------------------------------

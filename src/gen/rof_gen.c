@@ -7678,7 +7678,7 @@ L_62ee:;
     LDA(mem[0x0004]);
     /* 62f4 */
     if (!cpu.Z) goto L_634f;
-L_62f6:; platform_poll_events();
+L_62f6:; platform_tick_vbi(); platform_render_frame();
     /* 62f6 */
     LDY(mem[0x060B]);
     /* 62f9 */
@@ -7756,7 +7756,7 @@ L_6332:;
 L_6347:;
     /* 6347 */
     goto L_622d;
-L_634a:;
+L_634a:; platform_poll_events();
     /* 634a */
     FUN_5a78();
     /* 634d */
