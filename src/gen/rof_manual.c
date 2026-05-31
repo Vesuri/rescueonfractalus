@@ -129,7 +129,9 @@ void dli_sub_6da1(void) {
 /* done in the dispatcher so the manual sub-handler bodies just return. */
 /* ------------------------------------------------------------------ */
 
-/* Shared helper: dispatch one DLI slot and advance $C7. */
+/* Shared helper for interleaved tables: lo_table and hi_table are adjacent
+   bytes in a lo0,hi0,lo1,hi1,... array.  Cockpit and game2 DLI tables use
+   this layout ($6DBB/$6DBC, $6DCF/$6DD0).  Stride = 2. */
 static void dli_dispatch(uint16_t lo_table, uint16_t hi_table) {
     uint8_t idx = mem[0x00C7];
     uint8_t lo  = mem[lo_table + (uint16_t)idx * 2];
@@ -139,11 +141,16 @@ static void dli_dispatch(uint16_t lo_table, uint16_t hi_table) {
     mem[0x00C7]++;   /* INC $C7 — was JMP $4A05 in 6502 */
 }
 
-/* dli_handler_game ($49EE): terrain-area DLI, 5 slots max. */
+/* dli_handler_game ($49EE): terrain-area DLI, 5 slots max.
+   Tables $4AD9 (lo bytes) and $4ADE (hi bytes) are two SEPARATE 5-byte
+   arrays — stride 1, unlike the interleaved cockpit tables.              */
 void dli_handler_game(void) {
     uint8_t idx = mem[0x00C7];
     if (idx < 5) {
-        dli_dispatch(0x4AD9, 0x4ADE);
+        uint8_t lo = mem[0x4AD9 + idx];   /* stride 1 in separate lo array */
+        uint8_t hi = mem[0x4ADE + idx];   /* stride 1 in separate hi array */
+        platform_indirect_jmp((uint16_t)lo | ((uint16_t)hi << 8));
+        mem[0x00C7]++;
     }
     /* when idx >= 5: no dispatch, $C7 not incremented — handler chain ends */
 }

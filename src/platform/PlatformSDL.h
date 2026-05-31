@@ -55,6 +55,7 @@ private:
     void renderAtariDisplay();
     void renderPMGraphics(uint32_t bgPx);
     SDL_Color atariColor(uint8_t c) const;
+    void saveScreenshot();
 
     /* POKEY audio helpers (called under audio lock). */
     void    updateChannelFreq(int ch, uint8_t audf);
@@ -116,6 +117,11 @@ private:
     uint8_t  hposM[4];   /* HPOSM0-3 */
     /* Player/Missile size register ($D008-$D00B) */
     uint8_t  sizePM[4];  /* SIZEP0-3 */
+    /* GTIA PRIOR ($D01B / $026F shadow): bits 7:6 select GTIA display mode.
+       00=normal, 01=mode9 (16 luma), 10=mode10 (9 colours), 11=mode11.
+       Updated by hwWrite($D01B) and shadowWrite($026F); seeded from
+       mem[$026F] in tickVBI() before the VBI handler runs.              */
+    uint8_t  gprior;
     int      framesPerSecond_;
     uint8_t  vcountReg;     /* virtual VCOUNT — cycles 0-127 per frame */
 
@@ -126,6 +132,7 @@ private:
 
     /* Set by tickVBI() after firing the VBI; consumed by renderFrame(). */
     volatile bool renderNeeded;
+    int screenshotIndex;
 };
 
 #endif /* PLATFORMSDL_H */

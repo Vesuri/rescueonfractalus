@@ -7,6 +7,8 @@ CXX     := clang++
 
 SDL_CFLAGS  := $(shell pkg-config --cflags sdl2)
 SDL_LDFLAGS := $(shell pkg-config --libs   sdl2)
+PNG_CFLAGS  := $(shell pkg-config --cflags libpng)
+PNG_LDFLAGS := $(shell pkg-config --libs   libpng)
 
 # Build mode: debug (default) or release.
 # Usage: make          → debug (-O0 -g, full lldb variable support)
@@ -21,8 +23,8 @@ CFLAGS   := -std=c11   -g $(OPT) -Wall -Wno-unused-label -fsigned-char \
              -Isrc -Isrc/cpu -Isrc/platform -Isrc/gen
 CXXFLAGS := -std=c++11 -g $(OPT) -Wall -Wno-reorder -fsigned-char \
              -Isrc -Isrc/cpu -Isrc/platform -Isrc/gen \
-             $(SDL_CFLAGS)
-LDFLAGS  := $(SDL_LDFLAGS)
+             $(SDL_CFLAGS) $(PNG_CFLAGS)
+LDFLAGS  := $(SDL_LDFLAGS) $(PNG_LDFLAGS)
 
 # C sources (generated 6502 transliteration + CPU model)
 C_SRCS := \

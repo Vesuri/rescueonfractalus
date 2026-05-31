@@ -3,6 +3,7 @@
 #include <cstdio>
 #include <cstring>
 #include <cmath>
+#include <png.h>
 
 extern volatile uint8_t mem[65536];
 
@@ -22,9 +23,10 @@ PlatformSDL::PlatformSDL(const char* imagePath) :
     audctl(0),
     displayListPtr(0), chbase(0xE0), dmactl(0x22), hscrol(0), vscrol(0), gractl(0), pmbase(0),
     hposP{}, hposM{}, sizePM{},
+    gprior(0),
     framesPerSecond_(50), vcountReg(0), colHW{},
     samplesSinceInterrupt(0), interruptIntervalInSamples(0),
-    lastVBITicks(0), renderNeeded(false)
+    lastVBITicks(0), renderNeeded(false), screenshotIndex(0)
 {
     memset(channels, 0, sizeof(channels));
     memset(vbiTable, 0, sizeof(vbiTable));
@@ -202,6 +204,8 @@ void PlatformSDL::hwWrite(uint16_t addr, uint8_t val) {
     if (addr == 0xD406 || addr == 0xD407) { pmbase = val; return; }
     /* CHBASE — character set page ($D409 ANTIC, not $D209 POKEY STIMER). */
     if (addr == 0xD409) { chbase = val; return; }
+    /* PRIOR (GTIA mode / PM priority) — track for renderer.              */
+    if (addr == 0xD01B) { gprior = val; return; }
     /* WSYNC — CPU stall until end of horizontal line; just ignore.       */
     if (addr == 0xD40A) { return; }
     /* Smooth scroll registers. */
@@ -229,6 +233,8 @@ void PlatformSDL::shadowWrite(uint16_t addr, uint8_t val) {
     if (addr == 0x02F4) chbase = val;
     /* SDMCTL shadow ($022F = DMACTL shadow). */
     if (addr == 0x022F) dmactl = val;
+    /* GPRIOR shadow ($026F). */
+    if (addr == 0x026F) gprior = val;
 }
 
 /* ------------------------------------------------------------------ */
@@ -295,6 +301,8 @@ void PlatformSDL::tickVBI() {
     if (now - lastVBITicks > msPerFrame * 4) lastVBITicks = now - msPerFrame;
 
     vcountReg = 0;
+    static int vbiCount = 0;
+    if (++vbiCount == 50) saveScreenshot();
 
     /* Seed colHW[] from OS shadows BEFORE calling the VBI handler.
        The handler reads the shadow registers, applies transforms (e.g.
@@ -311,6 +319,7 @@ void PlatformSDL::tickVBI() {
     colHW[6] = mem[0x02C6];  /* COLPF2 */
     colHW[7] = mem[0x02C7];  /* COLPF3 */
     colHW[8] = mem[0x02C8];  /* COLBK  */
+    gprior   = mem[0x026F];  /* GPRIOR shadow → seed PRIOR for this frame */
 
     /* Do NOT increment RTCLOK here — the game's own VBI handler does it.
        Save/restore CPU registers across the VBI call: on real hardware the
@@ -432,21 +441,26 @@ uint8_t PlatformSDL::readConsol() {
 /* Convert Atari colour byte (hue/luma) to SDL_Color via YIQ.
    Hue = bits 7:4 (0=grey), luma = bits 3:1 (0-7), bit 0 ignored. */
 void PlatformSDL::buildPalette() {
-    /* Approximate NTSC hue angles in degrees (hue 0 = achromatic). */
+    /* Hue angles calibrated against atari800 5.2.0 default NTSC palette.
+       Derived from known reference points: hue 2 ≈10.5°, hue 7 ≈143°,
+       hue 9 ≈196°, hue 12 ≈276°; step ≈26.5°/hue, base at hue 1 ≈344°.
+       Hue 0 = achromatic (no angle used).                                */
     static const double HUE_ANGLES[16] = {
-         0,  27,  50,  77, 105, 138, 166, 193,
-       215, 232, 248, 265, 283, 310, 333, 355
+          0,  344.0,  10.5,  37.0,  63.5,  90.0, 116.5, 143.0,
+        169.5, 196.0, 222.5, 249.0, 275.5, 302.0, 328.5, 355.0
     };
     for (int c = 0; c < 256; c++) {
         int h     = (c >> 4) & 0xF;
         int lbits = (c >> 1) & 0x7;
-        float Y   = 18.0f + lbits * 30.0f;    /* 18…228 */
+        /* Quadratic luma curve fitted to atari800 reference grey levels:
+           $00→4, $04→51, $06→79  (vs old linear 18+30k which was too bright). */
+        float Y = 1.5f * lbits * lbits + 20.5f * lbits + 4.0f;
         float r, g, b;
         if (h == 0) {
             r = g = b = Y;
         } else {
             double angle = HUE_ANGLES[h] * M_PI / 180.0;
-            float  chroma = 60.0f;
+            float  chroma = 49.0f;   /* reduced from 60 to match reference saturation */
             float  I = chroma * (float)cos(angle);
             float  Q = chroma * (float)sin(angle);
             r = Y + 0.956f * I + 0.621f * Q;
@@ -535,6 +549,14 @@ void PlatformSDL::renderAtariDisplay() {
         if ((instr & 0x80) && dliAddr != 0)
             indirectJmp(dliAddr);
 
+        /* Snapshot PRIOR after DLI — DLI may have changed gprior.
+           Bits 7:6 of PRIOR select GTIA display mode for this row:
+             00 = normal GTIA (standard ANTIC mode interpretation)
+             01 = GTIA mode 9  (80 px, 4bpp, luma only from COLBK hue)
+             10 = GTIA mode 10 (80 px, 4bpp, nibble → 9 color registers)
+             11 = GTIA mode 11 (not used in RoF, fall through to normal) */
+        uint8_t rowGprior = gprior;
+
         /* Read current colours from colHW[] — updated by DLI above.     */
         SDL_Color bgClr  = atariColor(colHW[8]);
         SDL_Color pf0Clr = atariColor(colHW[4]);
@@ -563,6 +585,50 @@ void PlatformSDL::renderAtariDisplay() {
         }
 
         if (dataAddr == 0) { scanY += scans; continue; }
+
+        /* GTIA modes 9 and 10: override all ANTIC pixel modes.
+           Both produce 80 display pixels per line, each 4 colour-clocks
+           wide (80 × 4 = 320), from 40 data bytes (2 nibbles/byte).    */
+        uint8_t gtiaMode = (rowGprior >> 6) & 0x03;
+        if (gtiaMode == 1 || gtiaMode == 2) {
+            /* Pre-build a 9-entry colour table for mode 10 (reused each row). */
+            uint32_t creg10[9];
+            if (gtiaMode == 2) {
+                for (int i = 0; i < 9; i++) {
+                    SDL_Color c = atariColor(colHW[i]);
+                    creg10[i] = SDL_MapRGB(bufferSurface->format,
+                                           c.r, c.g, c.b);
+                }
+            }
+            uint8_t hue9 = colHW[8] & 0xF0; /* COLBK hue for mode 9 */
+            for (int s = 0; s < scans && scanY < ROF_NATIVE_H; s++, scanY++) {
+                uint32_t* row = reinterpret_cast<uint32_t*>(
+                    static_cast<uint8_t*>(bufferSurface->pixels) +
+                    scanY * bufferSurface->pitch);
+                for (int b = 0; b < 40; b++) {
+                    uint8_t byte = mem[(dataAddr + b) & 0xFFFF];
+                    uint8_t nib[2] = { (uint8_t)(byte >> 4), (uint8_t)(byte & 0x0F) };
+                    for (int n = 0; n < 2; n++) {
+                        uint32_t px;
+                        if (gtiaMode == 1) {
+                            /* Mode 9: nibble = luminance, hue from COLBK */
+                            SDL_Color c = atariColor(hue9 | nib[n]);
+                            px = SDL_MapRGB(bufferSurface->format,
+                                            c.r, c.g, c.b);
+                        } else {
+                            /* Mode 10: nibble 0-8 → color register, 9-15 → COLBK */
+                            px = creg10[(nib[n] <= 8) ? nib[n] : 8];
+                        }
+                        /* Each nibble pixel = 4 colour-clock-wide display pixels */
+                        int x0 = (b * 2 + n) * 4;
+                        for (int x = x0; x < x0 + 4 && x < ROF_NATIVE_W; x++)
+                            row[x] = px;
+                    }
+                }
+                dataAddr = (dataAddr + 40) & 0xFFFF;
+            }
+            continue;
+        }
 
         if (mode == 0xF) {
             /* ANTIC mode F: 320 pixels, 1 bpp, COLBK / COLPF2.
@@ -632,17 +698,28 @@ void PlatformSDL::renderAtariDisplay() {
                     (charScan < 8 ? charScan : 7) : charScan;
                 for (int c = 0; c < charsPerRow; c++) {
                     uint8_t chByte = mem[(rowAddr + c) & 0xFFFF];
-                    bool inv = (chByte & 0x80) != 0;
-                    uint8_t ci  = chByte & 0x7F;
+                    /* Modes 2/3: bit 7=inverse, bits 6:0=char index (0-127).
+                       Modes 4/5: bits 7:6=color select, bits 5:0=char index (0-63).
+                       No inverse video in modes 4/5 — bit 7 is a colour bit.  */
+                    bool inv;
+                    uint8_t ci;
+                    if (mode == 4 || mode == 5) {
+                        inv = false;
+                        ci  = chByte & 0x3F;   /* 64-char set */
+                    } else {
+                        inv = (chByte & 0x80) != 0;
+                        ci  = chByte & 0x7F;   /* 128-char set */
+                    }
                     uint8_t bits = mem[(csBase + ci * 8 + bitmapRow) & 0xFFFF];
                     /* Select fg color: modes 2/3 use COLPF2; modes 4/5 use
                        bits[7:6] of char byte to select COLPF0-COLPF3.     */
                     SDL_Color fgClr = pf2Clr;
                     if (mode == 4 || mode == 5) {
-                        static const SDL_Color* pfTab[4] = {
-                            &pf0Clr, &pf1Clr, &pf2Clr, nullptr };
+                        SDL_Color pf3Clr = atariColor(colHW[7]);
+                        const SDL_Color* pfTab[4] = {
+                            &pf0Clr, &pf1Clr, &pf2Clr, &pf3Clr };
                         int sel = (chByte >> 6) & 3;
-                        fgClr = pfTab[sel < 3 ? sel : 0][0];
+                        fgClr = *pfTab[sel];
                     }
                     uint32_t fgPx = SDL_MapRGB(bufferSurface->format,
                                                fgClr.r, fgClr.g, fgClr.b);
@@ -720,7 +797,9 @@ void PlatformSDL::renderPMGraphics(uint32_t /*bgPx*/) {
 
     /* Single-line resolution (GRACTL bit 0 = 0): bitmap base = pmbase*256+512.
        Double-line (GRACTL bit 0 = 1): bitmap base = pmbase*256+256, stride=128. */
-    bool doubleLine  = (gractl & 0x01) != 0;
+    /* Double-line (2 scanlines per bitmap row) is controlled by DMACTL bit 4:
+       bit4=1 → 1-line resolution (single); bit4=0 → 2-line (double).     */
+    bool doubleLine  = !(dmactl & 0x10);
     int  playerStride = doubleLine ? 128 : 256;
     int  pmBaseAddr   = (int)pmbase << 8;
 
@@ -760,6 +839,77 @@ void PlatformSDL::renderPMGraphics(uint32_t /*bgPx*/) {
     }
 }
 
+/* Save a 336×240 PNG screenshot matching atari800's F10 output format:
+   8-pixel COLBK border | 320-pixel native buffer | 8-pixel COLBK border.
+   Files are named rof000.png, rof001.png, … in the working directory.  */
+void PlatformSDL::saveScreenshot() {
+    char filename[32];
+    snprintf(filename, sizeof(filename), "rof%03d.png", screenshotIndex);
+
+    FILE* fp = fopen(filename, "wb");
+    if (!fp) {
+        fprintf(stderr, "[rof] screenshot: cannot open %s\n", filename);
+        return;
+    }
+
+    png_structp png = png_create_write_struct(PNG_LIBPNG_VER_STRING,
+                                              nullptr, nullptr, nullptr);
+    if (!png) { fclose(fp); return; }
+    png_infop info = png_create_info_struct(png);
+    if (!info) { png_destroy_write_struct(&png, nullptr); fclose(fp); return; }
+
+    if (setjmp(png_jmpbuf(png))) {
+        png_destroy_write_struct(&png, &info);
+        fclose(fp);
+        fprintf(stderr, "[rof] screenshot: libpng error\n");
+        return;
+    }
+
+    png_init_io(png, fp);
+
+    /* 336×240 RGB to match atari800's screenshot geometry.             */
+    const int outW = 336;
+    png_set_IHDR(png, info, outW, ROF_NATIVE_H, 8,
+                 PNG_COLOR_TYPE_RGB, PNG_INTERLACE_NONE,
+                 PNG_COMPRESSION_TYPE_DEFAULT, PNG_FILTER_TYPE_DEFAULT);
+    png_write_info(png, info);
+
+    /* Border colour = current COLBK.                                   */
+    SDL_Color bdr = atariColor(colHW[8]);
+
+    static uint8_t row[336 * 3];
+    /* Pre-fill left and right 8-pixel borders (constant per frame).   */
+    for (int x = 0; x < 8; x++) {
+        row[x * 3 + 0] = bdr.r; row[x * 3 + 1] = bdr.g; row[x * 3 + 2] = bdr.b;
+        int rx = (8 + ROF_NATIVE_W + x) * 3;
+        row[rx + 0] = bdr.r; row[rx + 1] = bdr.g; row[rx + 2] = bdr.b;
+    }
+
+    SDL_LockSurface(bufferSurface);
+    for (int y = 0; y < ROF_NATIVE_H; y++) {
+        const uint32_t* src = reinterpret_cast<const uint32_t*>(
+            static_cast<const uint8_t*>(bufferSurface->pixels) +
+            y * bufferSurface->pitch);
+        uint8_t* dst = row + 8 * 3;  /* skip left border */
+        for (int x = 0; x < ROF_NATIVE_W; x++) {
+            uint32_t px = src[x];
+            /* bufferSurface masks: R=0x000000FF G=0x0000FF00 B=0x00FF0000 */
+            *dst++ = (uint8_t)(px & 0xFF);
+            *dst++ = (uint8_t)((px >> 8) & 0xFF);
+            *dst++ = (uint8_t)((px >> 16) & 0xFF);
+        }
+        png_write_row(png, row);
+    }
+    SDL_UnlockSurface(bufferSurface);
+
+    png_write_end(png, nullptr);
+    png_destroy_write_struct(&png, &info);
+    fclose(fp);
+
+    screenshotIndex++;
+    printf("[rof] screenshot → %s\n", filename);
+}
+
 /* Pump the SDL event queue without ticking the VBI.
    Rate-limited to 100 Hz so the joystick run-loop (reinstated via
    SDL_INIT_JOYSTICK) cannot block the main thread when called from
@@ -773,9 +923,13 @@ void PlatformSDL::pollEvents() {
     SDL_Event ev;
     while (SDL_PollEvent(&ev)) {
         if (ev.type == SDL_QUIT) quit = true;
-        if (ev.type == SDL_KEYDOWN &&
-            ev.key.keysym.scancode == SDL_SCANCODE_ESCAPE)
-            quit = true;
+        if (ev.type == SDL_KEYDOWN) {
+            switch (ev.key.keysym.scancode) {
+            case SDL_SCANCODE_ESCAPE: quit = true; break;
+            case SDL_SCANCODE_F10:   saveScreenshot(); break;
+            default: break;
+            }
+        }
     }
 }
 
