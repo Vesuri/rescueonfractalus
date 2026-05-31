@@ -61,6 +61,10 @@ SPINWAIT_HOOKS = {
     0x6478: 'platform_tick_vbi(); platform_render_frame();',
     0x656E: 'platform_tick_vbi(); platform_render_frame();',
     0x79D0: 'platform_tick_vbi(); platform_render_frame();',
+    # Attract-mode loop: $62EB/$62F6 — no VBI boundary here, but needs
+    # event polling and rendering to detect key presses and animate.
+    0x62EB: 'platform_tick_vbi(); platform_render_frame();',
+    0x62F6: 'platform_poll_events();',
 }
 
 # ---------------------------------------------------------------------------
@@ -317,11 +321,8 @@ def translate_insn(insn, func, all_funcs_by_start, symbols, local_targets,
         target = val
         flag   = BRANCH_FLAGS[mnem]
         if target in local_targets:
-            hook = SPINWAIT_HOOKS.get(target, '')
-            if hook:
-                lines.append(f'    if ({flag}) {{ {hook} goto L_{target:04x}; }}')
-            else:
-                lines.append(f'    if ({flag}) goto L_{target:04x};')
+            # Hooks are injected at the label definition; don't duplicate here.
+            lines.append(f'    if ({flag}) goto L_{target:04x};')
         else:
             # Cross-function branch → conditional tail call.
             name = resolve_target_name(target)
@@ -531,7 +532,13 @@ def translate_func(func, all_funcs_by_start, symbols,
             hit_split = True
             break   # do not translate addr or any subsequent instructions
         if addr in local_targets:
-            lines.append(f'L_{addr:04x}:;')
+            # Inject spin-wait hook at the label itself so ALL paths
+            # reaching this label (including unconditional JMPs) get it.
+            hook = SPINWAIT_HOOKS.get(addr, '')
+            if hook:
+                lines.append(f'L_{addr:04x}:; {hook}')
+            else:
+                lines.append(f'L_{addr:04x}:;')
         stmt_lines = translate_insn(insn, func, all_funcs_by_start, symbols,
                                     local_targets, external_entries, wrapper_names)
         lines.extend(stmt_lines)

@@ -1587,11 +1587,11 @@ void FUN_3c73(void) {
 }
 
 void FUN_3c75(void) {
-L_3c75:;
+L_3c75:; platform_poll_events();
     /* 3c75 */
     CMP(bus_read(0xD40B));
     /* 3c78 */
-    if (!cpu.Z) { platform_poll_events(); goto L_3c75; }
+    if (!cpu.Z) goto L_3c75;
     /* 3c7a */
     return;
 }
@@ -4037,11 +4037,11 @@ void game_sub_4f3f(void) {
     LDA(0x80);
     /* 4f41 */
     mem[0x007E] = cpu.A;
-L_4f43:;
+L_4f43:; platform_tick_vbi(); platform_render_frame();
     /* 4f43 */
     LDA(mem[0x2891]);
     /* 4f46 */
-    if (!cpu.Z) { platform_tick_vbi(); platform_render_frame(); goto L_4f43; }
+    if (!cpu.Z) goto L_4f43;
     /* 4f48 */
     font_display_init();
     /* 4f4b */
@@ -6348,11 +6348,11 @@ L_5c3d:;
     DEY();
     /* 5c49 */
     if (!cpu.N) goto L_5c3d;
-L_5c4b:;
+L_5c4b:; platform_tick_vbi(); platform_render_frame();
     /* 5c4b */
     LDA(mem[0x0655]);
     /* 5c4e */
-    if (!cpu.Z) { platform_tick_vbi(); platform_render_frame(); goto L_5c4b; }
+    if (!cpu.Z) goto L_5c4b;
     /* 5c50 */
     LDY(0x57);
     /* 5c52 */
@@ -7382,11 +7382,11 @@ L_61b7:;
     LDY(0x0B);
     /* 61c3 */
     FUN_7238();
-L_61c6:;
+L_61c6:; platform_tick_vbi(); platform_render_frame();
     /* 61c6 */
     LDA(mem[0x0655]);
     /* 61c9 */
-    if (!cpu.Z) { platform_tick_vbi(); platform_render_frame(); goto L_61c6; }
+    if (!cpu.Z) goto L_61c6;
     /* 61cb */
     LDA(mem[0x006D]);
     /* 61cd */
@@ -7666,7 +7666,7 @@ L_62e7:;
     LDA(mem[0x0090]);
     /* 62e9 */
     if (cpu.Z) goto L_62ee;
-L_62eb:;
+L_62eb:; platform_tick_vbi(); platform_render_frame();
     /* 62eb */
     FUN_70e7();
 L_62ee:;
@@ -7678,7 +7678,7 @@ L_62ee:;
     LDA(mem[0x0004]);
     /* 62f4 */
     if (!cpu.Z) goto L_634f;
-L_62f6:;
+L_62f6:; platform_poll_events();
     /* 62f6 */
     LDY(mem[0x060B]);
     /* 62f9 */
@@ -7884,11 +7884,11 @@ L_63b9:;
     input_init();
     /* 63d5 */
     LDA(0x1F);
-L_63d7:;
+L_63d7:; platform_tick_vbi(); platform_render_frame();
     /* 63d7 */
     CMP(mem[0x067E]);
     /* 63da */
-    if (!cpu.Z) { platform_tick_vbi(); platform_render_frame(); goto L_63d7; }
+    if (!cpu.Z) goto L_63d7;
     /* 63dc */
     LDA(0x00);
     /* 63de */
@@ -7995,11 +7995,11 @@ L_644c:;
     if (!cpu.Z) goto L_641b;
     /* 6459 */
     LDA(0x64);
-L_645b:;
+L_645b:; platform_tick_vbi(); platform_render_frame();
     /* 645b */
     CMP(mem[0x0684]);
     /* 645e */
-    if (!cpu.Z) { platform_tick_vbi(); platform_render_frame(); goto L_645b; }
+    if (!cpu.Z) goto L_645b;
     /* 6460 */
     LDY(0x05);
     /* 6462 */
@@ -8010,22 +8010,22 @@ L_645b:;
     FUN_5614();
     /* 646a */
     LDA(0x1D);
-L_646c:;
+L_646c:; platform_tick_vbi(); platform_render_frame();
     /* 646c */
     CMP(mem[0x0684]);
     /* 646f */
-    if (!cpu.Z) { platform_tick_vbi(); platform_render_frame(); goto L_646c; }
+    if (!cpu.Z) goto L_646c;
     /* 6471 */
     LDA(0xFF);
     /* 6473 */
     mem[0x06E6] = cpu.A;
     /* 6476 */
     LDA(0x64);
-L_6478:;
+L_6478:; platform_tick_vbi(); platform_render_frame();
     /* 6478 */
     CMP(mem[0x0686]);
     /* 647b */
-    if (!cpu.Z) { platform_tick_vbi(); platform_render_frame(); goto L_6478; }
+    if (!cpu.Z) goto L_6478;
     /* 647d */
     FUN_6ddf();
     /* 6480 */
@@ -8240,13 +8240,13 @@ L_6559:;
     LDA(0x30);
     /* 656b */
     FUN_65d2();
-L_656e:;
+L_656e:; platform_tick_vbi(); platform_render_frame();
     /* 656e */
     LDA(mem[0x0089]);
     /* 6570 */
     CMP(0x04);
     /* 6572 */
-    if (!cpu.N) { platform_tick_vbi(); platform_render_frame(); goto L_656e; }
+    if (!cpu.N) goto L_656e;
     /* 6574 */
     LDA(0x00);
     /* 6576 */
@@ -12489,11 +12489,11 @@ L_79cc:;
     LDY(mem[0x003C]);
     /* 79ce */
     if (cpu.Z) goto L_7a09;
-L_79d0:;
+L_79d0:; platform_tick_vbi(); platform_render_frame();
     /* 79d0 */
     LDA(mem[0x06FF]);
     /* 79d3 */
-    if (!cpu.Z) { platform_tick_vbi(); platform_render_frame(); goto L_79d0; }
+    if (!cpu.Z) goto L_79d0;
     /* 79d5 */
     LDA(0xFF);
     /* 79d7 */
@@ -24069,11 +24069,11 @@ void FUN_3cb2(void) {
     mem[0x0014] = cpu.A;
     /* 3cb6 */
     LDA(mem[0x004C]);
-L_3cb8:;
+L_3cb8:; platform_tick_vbi(); platform_render_frame();
     /* 3cb8 */
     CMP(mem[0x0014]);
     /* 3cba */
-    if (!cpu.Z) { platform_tick_vbi(); platform_render_frame(); goto L_3cb8; }
+    if (!cpu.Z) goto L_3cb8;
     /* 3cbc */
     PLA();
     /* 3cbd */
@@ -24582,14 +24582,14 @@ L_3f59:;
     /* 3f66 */
     CMP(0x40);
     /* 3f68 */
-    if (cpu.C) { platform_tick_vbi(); platform_render_frame(); goto L_3f6d; }
+    if (cpu.C) goto L_3f6d;
     /* 3f6a */
     goto L_3eba;
-L_3f6d:;
+L_3f6d:; platform_tick_vbi(); platform_render_frame();
     /* 3f6d */
     LDA(mem[0x283B]);
     /* 3f70 */
-    if (!cpu.N) { platform_tick_vbi(); platform_render_frame(); goto L_3f6d; }
+    if (!cpu.N) goto L_3f6d;
     /* 3f72 */
     mem[0x007E] = cpu.Y;
     /* 3f74 */
