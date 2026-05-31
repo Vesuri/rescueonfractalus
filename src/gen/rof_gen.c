@@ -2,6 +2,7 @@
 #include "../cpu/cpu.h"
 #include "../cpu/bus.h"
 #include "rof_decl.h"
+#include "../platform/platform_c.h"
 
 void pmg_missile_init(void) {
     /* 1910 */
@@ -16,7 +17,7 @@ void pmg_missile_init(void) {
     LDA(0x00);
 L_191a:;
     /* 191a */
-    bus_write((uint16_t)(0xD004u+cpu.Y), cpu.A);
+    mem[(0xD004)+cpu.Y] = cpu.A;
     /* 191d */
     DEY();
     /* 191e */
@@ -288,9 +289,9 @@ L_1a2f:;
     LDY(0x07);
 L_1a51:;
     /* 1a51 */
-    bus_write((uint16_t)(0xD000u+cpu.Y), cpu.A);
+    mem[(0xD000)+cpu.Y] = cpu.A;
     /* 1a54 */
-    bus_write((uint16_t)(0xD200u+cpu.Y), cpu.A);
+    mem[(0xD200)+cpu.Y] = cpu.A;
     /* 1a57 */
     DEY();
     /* 1a58 */
@@ -301,6 +302,7 @@ L_1a51:;
     LDA(0x03);
     /* 1a5f */
     bus_write(0xD20F, cpu.A);
+    screen_page_swap(); return;
 }
 
 /* screen_page_swap @ $1A62: manual implementation in rof_manual.c */
@@ -1159,6 +1161,7 @@ L_1ea6:;
 L_1eb2:;
     /* 1eb2 */
     if (!cpu.Z) goto L_1e8c;
+    attract_sub_1EB4(); return;
 }
 
 void attract_sub_1EB4(void) {
@@ -1548,6 +1551,7 @@ void FUN_3c58(void) {
 L_3c5f:;
     /* 3c5f */
     LDA(bus_read(ZP_IND_Y(0xBB)));
+    FUN_3c61(); return;
 }
 
 void FUN_3c61(void) {
@@ -1579,6 +1583,7 @@ L_3c72:;
 void FUN_3c73(void) {
     /* 3c73 */
     LDA(0x30);
+    FUN_3c75(); return;
 }
 
 void FUN_3c75(void) {
@@ -1620,6 +1625,7 @@ void FUN_3c83(void) {
     LDA(0x0F);
     /* 3c91 */
     mem[0x00C4] = cpu.A;
+    memset_or_copy(); return;
 }
 
 void memset_or_copy(void) {
@@ -1658,24 +1664,10 @@ L_3cae:;
     goto L_3c95;
 }
 
-void FUN_3cb1(void) {    /* 3cb1 */
+void FUN_3cb1(void) {
+    /* 3cb1 */
     PHA();
-L_3cb2:;
-    /* 3cb2 */
-    LDA(0x00);
-    /* 3cb4 */
-    mem[0x0014] = cpu.A;
-    /* 3cb6 */
-    LDA(mem[0x004C]);
-L_3cb8:;
-    /* 3cb8 */
-    CMP(mem[0x0014]);
-    /* 3cba */
-    if (!cpu.Z) { platform_tick_vbi(); platform_render_frame(); goto L_3cb8; }
-    /* 3cbc */
-    PLA();
-    /* 3cbd */
-    return;
+    FUN_3cb2(); return;
 }
 
 void FUN_3cbe(void) {
@@ -1685,6 +1677,7 @@ void FUN_3cbe(void) {
     LDA(0x3C);
     /* 3cc1 */
     if (!cpu.Z) { FUN_3cc6(); return; }
+    clear_colors(); return;
 }
 
 void clear_colors(void) {
@@ -1692,11 +1685,7 @@ void clear_colors(void) {
     PHA();
     /* 3cc4 */
     LDA(0x01);
-L_3cc6:;
-    /* 3cc6 */
-    mem[0x004C] = cpu.A;
-    /* 3cc8 */
-    if (!cpu.Z) { FUN_3cb2(); return; }
+    FUN_3cc6(); return;
 }
 
 void FUN_3cca(void) {
@@ -1706,6 +1695,7 @@ void FUN_3cca(void) {
     LDA(0x02);
     /* 3ccd */
     if (!cpu.Z) { FUN_3cc6(); return; }
+    FUN_3ccf(); return;
 }
 
 void FUN_3ccf(void) {
@@ -1715,6 +1705,7 @@ void FUN_3ccf(void) {
     LDA(0x05);
     /* 3cd2 */
     if (!cpu.Z) { FUN_3cc6(); return; }
+    FUN_3cd4(); return;
 }
 
 void FUN_3cd4(void) {
@@ -1724,6 +1715,7 @@ void FUN_3cd4(void) {
     LDA(0x0A);
     /* 3cd7 */
     if (!cpu.Z) { FUN_3cc6(); return; }
+    FUN_3cd9(); return;
 }
 
 void FUN_3cd9(void) {
@@ -1733,6 +1725,7 @@ void FUN_3cd9(void) {
     LDA(0x14);
     /* 3cdc */
     if (!cpu.Z) { FUN_3cc6(); return; }
+    game_entry(); return;
 }
 
 void game_entry(void) {
@@ -1818,577 +1811,7 @@ L_3d0e:;
     audio_timer_setup();
     /* 3d35 */
     font_display_init();
-L_3d38:;
-    /* 3d38 */
-    LDA(0x00);
-    /* 3d3a */
-    LDY(0x06);
-L_3d3c:;
-    /* 3d3c */
-    DEY();
-    /* 3d3d */
-    mem[(0x0626)+cpu.Y] = cpu.A;
-    /* 3d40 */
-    if (!cpu.Z) goto L_3d3c;
-    /* 3d42 */
-    mem[0x006C] = cpu.A;
-    /* 3d44 */
-    LDA(0x64);
-    /* 3d46 */
-    mem[0x00E2] = cpu.A;
-L_3d48:;
-    /* 3d48 */
-    LDA(0x00);
-    /* 3d4a */
-    bus_write(0x022F, cpu.A);
-    /* 3d4d */
-    bus_write(0xD01D, cpu.A);
-    /* 3d50 */
-    LDY(0x07);
-L_3d52:;
-    /* 3d52 */
-    bus_write((uint16_t)(0xD00Du+cpu.Y), cpu.A);
-    /* 3d55 */
-    mem[(0x36CA)+cpu.Y] = cpu.A;
-    /* 3d58 */
-    DEY();
-    /* 3d59 */
-    if (!cpu.N) goto L_3d52;
-    /* 3d5b */
-    bus_write(0x02C8, cpu.A);
-    /* 3d5e */
-    FUN_3c73();
-    /* 3d61 */
-    LDA(0xCC);
-    /* 3d63 */
-    bus_write(0x0222, cpu.A);
-    /* 3d66 */
-    LDA(0x53);
-    /* 3d68 */
-    bus_write(0x0223, cpu.A);
-    /* 3d6b */
-    display_list_init();
-    /* 3d6e */
-    LDA(0x00);
-    /* 3d70 */
-    mem[0x0002] = cpu.A;
-    /* 3d72 */
-    mem[0x00DC] = cpu.A;
-    /* 3d74 */
-    mem[0x0042] = cpu.A;
-    /* 3d76 */
-    mem[0x00C7] = cpu.A;
-    /* 3d78 */
-    LDY(0x19);
-L_3d7a:;
-    /* 3d7a */
-    DEY();
-    /* 3d7b */
-    mem[(0x062C)+cpu.Y] = cpu.A;
-    /* 3d7e */
-    if (!cpu.Z) goto L_3d7a;
-    /* 3d80 */
-    mem[0x062F] = cpu.A;
-    /* 3d83 */
-    LDA(0x08);
-    /* 3d85 */
-    bus_write(0xD407, cpu.A);
-    /* 3d88 */
-    LDA(0x04);
-    /* 3d8a */
-    bus_write(0xD409, cpu.A);
-    /* 3d8d */
-    LDA(0x03);
-    /* 3d8f */
-    bus_write(0xD20F, cpu.A);
-    /* 3d92 */
-    loader_util();
-    /* 3d95 */
-    game_init_7813();
-    /* 3d98 */
-    game_init_77DF();
-    /* 3d9b */
-    game_init_7588();
-    /* 3d9e */
-    game_init_76CB();
-    /* 3da1 */
-    LDA(0xC0);
-    /* 3da3 */
-    bus_write(0xD20E, cpu.A);
-    /* 3da6 */
-    LDA(mem[0x060B]);
-    /* 3da9 */
-    if (cpu.Z) goto L_3dae;
-    /* 3dab */
-    cockpit_display();
-L_3dae:;
-    /* 3dae */
-    game_sub_4258();
-    /* 3db1 */
-    LDY(0x09);
-    /* 3db3 */
-    game_sub_43CB();
-    /* 3db6 */
-    game_sub_4606();
-    /* 3db9 */
-    LDA(0x08);
-    /* 3dbb */
-    game_sub_4447();
-    /* 3dbe */
-    LDA(0x2C);
-    /* 3dc0 */
-    bus_write(0x02C6, cpu.A);
-    /* 3dc3 */
-    LDA(0x26);
-    /* 3dc5 */
-    bus_write(0x02C7, cpu.A);
-    /* 3dc8 */
-    LDY(0x08);
-L_3dca:;
-    /* 3dca */
-    LDA(mem[(0x4DF1)+cpu.Y]);
-    /* 3dcd */
-    mem[(0x00CF)+cpu.Y] = cpu.A;
-    /* 3dd0 */
-    DEY();
-    /* 3dd1 */
-    if (!cpu.N) goto L_3dca;
-    /* 3dd3 */
-    LDA(0x80);
-    /* 3dd5 */
-    LDY(0x03);
-L_3dd7:;
-    /* 3dd7 */
-    DEY();
-    /* 3dd8 */
-    mem[(0x0645)+cpu.Y] = cpu.A;
-    /* 3ddb */
-    if (!cpu.Z) goto L_3dd7;
-    /* 3ddd */
-    mem[0x007E] = cpu.A;
-    /* 3ddf */
-    mem[0x0668] = cpu.A;
-    /* 3de2 */
-    mem[0x0669] = cpu.A;
-    /* 3de5 */
-    startup_init();
-    /* 3de8 */
-    LDA(0xA0);
-    /* 3dea */
-    mem[0x0663] = cpu.A;
-    /* 3ded */
-    mem[0x066A] = cpu.A;
-    /* 3df0 */
-    mem[0x066B] = cpu.A;
-    /* 3df3 */
-    LDX(0x1F);
-    /* 3df5 */
-    input_init();
-    /* 3df8 */
-    INX();
-    /* 3df9 */
-    input_init();
-    /* 3dfc */
-    LDA(0x40);
-    /* 3dfe */
-    bus_write(0xD40E, cpu.A);
-    /* 3e01 */
-    LDA(0xC0);
-    /* 3e03 */
-    mem[0x0071] = cpu.A;
-    /* 3e05 */
-    LDA(0x0D);
-    /* 3e07 */
-    mem[0x3157] = cpu.A;
-    /* 3e0a */
-    LDA(0x35);
-    /* 3e0c */
-    mem[0x3158] = cpu.A;
-L_3e0f:;
-    /* 3e0f */
-    display_setup();
-    /* 3e12 */
-    LDA(0x2A);
-    /* 3e14 */
-    clear_pm_state();
-    /* 3e17 */
-    clear_colors();
-    /* 3e1a */
-    LDA(0x0D);
-    /* 3e1c */
-    mem[0x3157] = cpu.A;
-    /* 3e1f */
-    LDA(0x35);
-    /* 3e21 */
-    mem[0x3158] = cpu.A;
-    /* 3e24 */
-    LDA(0x00);
-    /* 3e26 */
-    mem[0x00B7] = cpu.A;
-    /* 3e28 */
-    mem[0x0005] = cpu.A;
-    /* 3e2a */
-    LDY(0x2C);
-L_3e2c:;
-    /* 3e2c */
-    DEY();
-    /* 3e2d */
-    mem[(0x0020)+cpu.Y] = cpu.A;
-    /* 3e30 */
-    if (!cpu.Z) goto L_3e2c;
-    /* 3e32 */
-    LDY(0xA6);
-L_3e34:;
-    /* 3e34 */
-    DEY();
-    /* 3e35 */
-    mem[(0x2830)+cpu.Y] = cpu.A;
-    /* 3e38 */
-    if (!cpu.Z) goto L_3e34;
-    /* 3e3a */
-    mem[0x060C] = cpu.A;
-    /* 3e3d */
-    game_init_753B();
-    /* 3e40 */
-    game_init_45A1();
-    /* 3e43 */
-    FUN_6b63();
-    /* 3e46 */
-    game_init_7558();
-    /* 3e49 */
-    LDA(0x45);
-    /* 3e4b */
-    FUN_3c75();
-    /* 3e4e */
-    LDA(0xF5);
-    /* 3e50 */
-    bus_write(0x0222, cpu.A);
-    /* 3e53 */
-    LDA(0x4F);
-    /* 3e55 */
-    bus_write(0x0223, cpu.A);
-    /* 3e58 */
-    LDA(0x00);
-    /* 3e5a */
-    LDY(0x57);
-L_3e5c:;
-    /* 3e5c */
-    DEY();
-    /* 3e5d */
-    mem[(0x0B31)+cpu.Y] = cpu.A;
-    /* 3e60 */
-    if (!cpu.Z) goto L_3e5c;
-    /* 3e62 */
-    LDA(0x11);
-    /* 3e64 */
-    bus_write(0x026F, cpu.A);
-    /* 3e67 */
-    game_init_45EE();
-    /* 3e6a */
-    FUN_3c7b();
-    /* 3e6d */
-    LDA(0xEE);
-    /* 3e6f */
-    bus_write(0x0200, cpu.A);
-    /* 3e72 */
-    LDA(0x49);
-    /* 3e74 */
-    bus_write(0x0201, cpu.A);
-    /* 3e77 */
-    LDA(0x6B);
-    /* 3e79 */
-    bus_write(0xD402, cpu.A);
-    /* 3e7c */
-    LDA(0x31);
-    /* 3e7e */
-    bus_write(0xD403, cpu.A);
-    /* 3e81 */
-    LDA(0x40);
-    /* 3e83 */
-    bus_write(0xD004, cpu.A);
-    /* 3e86 */    main_loop_body();    /* 3e89 */
-    LDA(mem[0x0627]);
-    /* 3e8c */
-    if (!cpu.Z) goto L_3e97;
-    /* 3e8e */
-    intro_random_setup();
-    /* 3e91 */
-    intro_setup_70B3();
-    /* 3e94 */
-    intro_sub_7498();
-L_3e97:;
-    /* 3e97 */
-    LDA(0x60);
-    /* 3e99 */
-    mem[0x00C1] = cpu.A;
-    /* 3e9b */
-    LDA(0x10);
-    /* 3e9d */
-    mem[0x00C3] = cpu.A;
-    /* 3e9f */
-    LDA(0x10);
-    /* 3ea1 */
-    mem[0x00C4] = cpu.A;
-    /* 3ea3 */
-    game_setup_7460();
-    /* 3ea6 */
-    game_setup_7483();
-    /* 3ea9 */
-    LDA(mem[0x0004]);
-    /* 3eab */
-    if (!cpu.Z) goto L_3eb6;
-    /* 3ead */
-    LDA(0x54);
-    /* 3eaf */
-    mem[0x0044] = cpu.A;
-    /* 3eb1 */
-    LDA(0x02);
-    /* 3eb3 */
-    goto L_3eb8;
-L_3eb6:;
-    /* 3eb6 */
-    LDA(0x01);
-L_3eb8:;
-    /* 3eb8 */
-    mem[0x004A] = cpu.A;
-L_3eba:;
-    platform_tick_vbi();
-    platform_render_frame();
-    /* 3eba */
-    terrain_gen_1();
-    /* 3ebd */
-    LDX(0x33);
-    /* 3ebf */
-    terrain_gen_3();
-    /* 3ec2 */
-    LDX(0x30);
-    /* 3ec4 */
-    terrain_gen_2();
-    /* 3ec7 */
-    LDX(0x33);
-    /* 3ec9 */
-    terrain_collision();
-    /* 3ecc */
-    LDA(mem[0x0041]);
-    /* 3ece */
-    mem[0x288F] = cpu.A;
-    /* 3ed1 */
-    game_state_update();
-    /* 3ed4 */
-    LDA(0x02);
-    /* 3ed6 */
-    mem[0x0042] = cpu.A;
-    /* 3ed8 */
-    enemy_check();
-    /* 3edb */
-    LDA(mem[0x062F]);
-    /* 3ede */
-    CMP(0x0E);
-    /* 3ee0 */
-    if (cpu.C) goto L_3ef5;
-    /* 3ee2 */
-    LDA(mem[0x0004]);
-    /* 3ee4 */
-    if (cpu.Z) goto L_3eec;
-    /* 3ee6 */
-    game_sub_7B54();
-    /* 3ee9 */
-    goto L_3ef5;
-L_3eec:;
-    /* 3eec */
-    LDA(mem[0x003A]);
-    /* 3eee */
-    CMP(0x01);
-    /* 3ef0 */
-    if (!cpu.Z) goto L_3ef5;
-    /* 3ef2 */
-    mem[0x2849] = cpu.A;
-L_3ef5:;
-    /* 3ef5 */
-    terrain_gen_1();
-    /* 3ef8 */
-    LDX(0x03);
-    /* 3efa */
-    terrain_gen_3();
-    /* 3efd */
-    LDX(0x00);
-    /* 3eff */
-    terrain_gen_2();
-    /* 3f02 */
-    LDX(0x03);
-    /* 3f04 */
-    terrain_collision();
-    /* 3f07 */
-    LDA(mem[0x0041]);
-    /* 3f09 */
-    if (cpu.Z) goto L_3f0e;
-    /* 3f0b */
-    mem[0x288F] = cpu.A;
-L_3f0e:;
-    /* 3f0e */
-    game_state_update();
-    /* 3f11 */
-    enemy_check();
-    /* 3f14 */
-    LDA(mem[0x288E]);
-    /* 3f17 */
-    if (cpu.Z) goto L_3f21;
-    /* 3f19 */
-    LDA(mem[0x288D]);
-    /* 3f1c */
-    if (cpu.Z) goto L_3f21;
-    /* 3f1e */
-    pilot_render();
-L_3f21:;
-    /* 3f21 */
-    LDA(mem[0x288D]);
-    /* 3f24 */
-    mem[0x288E] = cpu.A;
-    /* 3f27 */
-    LDA(mem[0x288F]);
-    /* 3f2a */
-    if (!cpu.Z) goto L_3f31;
-    /* 3f2c */
-    LDA(mem[0x003E]);
-    /* 3f2e */
-    goto L_3f33;
-L_3f31:;
-    /* 3f31 */
-    LDA(0x00);
-L_3f33:;
-    /* 3f33 */
-    mem[0x288D] = cpu.A;
-    /* 3f36 */
-    LDA(0x01);
-    /* 3f38 */
-    mem[0x0042] = cpu.A;
-    /* 3f3a */
-    CMP(mem[0x003E]);
-    /* 3f3c */
-    if (cpu.Z) goto L_3f50;
-    /* 3f3e */
-    LDX(mem[0x0072]);
-    /* 3f40 */
-    CPX(0x02);
-    /* 3f42 */
-    if (cpu.Z) goto L_3f50;
-    /* 3f44 */
-    LDA(mem[0x003D]);
-    /* 3f46 */
-    if (cpu.Z) goto L_3f50;
-    /* 3f48 */
-    LDA(0x02);
-    /* 3f4a */
-    mem[0x003D] = cpu.A;
-    /* 3f4c */
-    LDY(0x0E);
-    /* 3f4e */
-    mem[0x0044] = cpu.Y;
-L_3f50:;
-    /* 3f50 */
-    LDX(mem[0x0072]);
-    /* 3f52 */
-    CPX(0x02);
-    /* 3f54 */
-    if (cpu.Z) goto L_3f59;
-    /* 3f56 */
-    goto L_3eba;
-L_3f59:;
-    /* 3f59 */
-    INX();
-    /* 3f5a */
-    mem[0x004A] = cpu.X;
-    /* 3f5c */
-    LDY(0x80);
-    /* 3f5e */
-    mem[0x28D9] = cpu.Y;
-    /* 3f61 */
-    mem[0x28DA] = cpu.Y;
-    /* 3f64 */
-    LDA(mem[0x0034]);
-    /* 3f66 */
-    CMP(0x40);
-    /* 3f68 */
-    if (cpu.C) goto L_3f6d;
-    /* 3f6a */
-    goto L_3eba;
-L_3f6d:;
-    /* 3f6d */
-    LDA(mem[0x283B]);
-    /* 3f70 */
-    if (!cpu.N) { platform_tick_vbi(); platform_render_frame(); goto L_3f6d; }
-    /* 3f72 */
-    mem[0x007E] = cpu.Y;
-    /* 3f74 */
-    LDA(0x00);
-    /* 3f76 */
-    mem[0x062B] = cpu.A;
-    /* 3f79 */
-    mem[0x0642] = cpu.A;
-    /* 3f7c */
-    FUN_3cd4();
-    /* 3f7f */
-    mem[0x004A] = cpu.A;
-    /* 3f81 */
-    FUN_3cb1();
-    /* 3f84 */
-    LDY(0xA3);
-L_3f86:;
-    /* 3f86 */
-    mem[(0x0F1D)+cpu.Y] = cpu.A;
-    /* 3f89 */
-    DEY();
-    /* 3f8a */
-    if (!cpu.Z) goto L_3f86;
-    /* 3f8c */
-    LDY(0x1E);
-L_3f8e:;
-    /* 3f8e */
-    mem[(0x0E8F)+cpu.Y] = cpu.A;
-    /* 3f91 */
-    DEY();
-    /* 3f92 */
-    if (!cpu.N) goto L_3f8e;
-    /* 3f94 */
-    LDA(mem[0x00DE]);
-    /* 3f96 */
-    CMP(0x4E);
-    /* 3f98 */
-    if (!cpu.Z) goto L_3f9e;
-    /* 3f9a */
-    LDA(0x46);
-    /* 3f9c */
-    mem[0x00DE] = cpu.A;
-L_3f9e:;
-    /* 3f9e */
-    game_sub_4606();
-    /* 3fa1 */
-    LDA(mem[0x00DD]);
-    /* 3fa3 */
-    CMP(0x2B);
-    /* 3fa5 */
-    if (!cpu.C) goto L_3fab;
-    /* 3fa7 */
-    LDA(0x2A);
-    /* 3fa9 */
-    mem[0x00DD] = cpu.A;
-L_3fab:;
-    /* 3fab */
-    mem[0x0041] = cpu.A;
-    /* 3fad */
-    mem[0x0071] = cpu.A;
-    /* 3faf */
-    clear_pm_state();
-    /* 3fb2 */
-    LDA(0x00);
-    /* 3fb4 */
-    LDY(0x03);
-    /* 3fb6 */
-    mem[(0x066B)+cpu.Y] = cpu.A;
-    /* 3fb9 */
-    game_sub_55FC();
-    /* 3fbc */
-    goto L_3e0f;
+    FUN_3d38(); return;
 }
 
 void clear_pm_state(void) {
@@ -2590,6 +2013,7 @@ L_4065:;
     LDY(0x34);
     /* 4082 */
     mem[0x00BC] = cpu.Y;
+    FUN_4084(); return;
 }
 
 void FUN_4084(void) {
@@ -2613,6 +2037,7 @@ void FUN_4084(void) {
     mem[0x00BC] = cpu.A;
     /* 4094 */
     PLA();
+    FUN_4095(); return;
 }
 
 void FUN_4095(void) {
@@ -2622,6 +2047,7 @@ void FUN_4095(void) {
     ASL_A();
     /* 4098 */
     ASL_A();
+    FUN_4099(); return;
 }
 
 void FUN_4099(void) {
@@ -2651,9 +2077,7 @@ L_40ab:;
     CPY(0x32);
     /* 40ad */
     if (!cpu.Z) goto L_409c;
-L_40af:;
-    /* 40af */
-    return;
+    FUN_40af(); return;
 }
 
 void FUN_40b0(void) {
@@ -2831,127 +2255,15 @@ L_4162:;
     LDA(mem[0x003B]);
     /* 4164 */
     if (cpu.Z) { FUN_416b(); return; }
+    FUN_4166(); return;
 }
 
 void FUN_4166(void) {
     /* 4166 */
     DEC_M(0x003B);
     /* 4168 */
-    goto L_4184;
-L_416b:;
-    /* 416b */
-    LDA(0x08);
-    /* 416d */
-    SEC();
-    /* 416e */
-    SBC(mem[0x006F]);
-    /* 4170 */
-    LSR_A();
-    /* 4171 */
-    CLC();
-    /* 4172 */
-    LDY(mem[0x003E]);
-    /* 4174 */
-    if (!cpu.Z) goto L_4178;
-    /* 4176 */
-    ADC(0x01);
-L_4178:;
-    /* 4178 */
-    ADC(mem[0x2877]);
-    /* 417b */
-    ADC(mem[0x2848]);
-    /* 417e */
-    mem[0x2848] = cpu.A;
-    /* 4181 */
-    if (cpu.C) goto L_4184;
-    /* 4183 */
-    return;
-L_4184:;
-    /* 4184 */
-    LDA(mem[0x062F]);
-    /* 4187 */
-    if (cpu.Z) goto L_418c;
-    /* 4189 */
-    DEC_M(0x062F);
-L_418c:;
-    /* 418c */
-    if (!cpu.Z) goto L_41bb;
-    /* 418e */
-    LDA(mem[0x0022]);
-    /* 4190 */
-    if (cpu.Z) goto L_41a4;
-    /* 4192 */
-    LDA(mem[0x0072]);
-    /* 4194 */
-    CMP(0x02);
-    /* 4196 */
-    if (cpu.Z) goto L_41a4;
-    /* 4198 */
-    LDA(0x10);
-    /* 419a */
-    FUN_444a();
-    /* 419d */
-    LDA(0x1E);
-    /* 419f */
-    mem[0x0022] = cpu.A;
-    /* 41a1 */
-    goto L_41a7;
-L_41a4:;
-    /* 41a4 */
-    INC_M(0x062F);
-L_41a7:;
-    /* 41a7 */
-    LDA(mem[0x003B]);
-    /* 41a9 */
-    ORA(mem[0x2877]);
-    /* 41ac */
-    CMP(0x01);
-    /* 41ae */
-    if (!cpu.C) goto L_41bb;
-    /* 41b0 */
-    mem[0x063D] = cpu.A;
-    /* 41b3 */
-    LDA(0x00);
-    /* 41b5 */
-    mem[0x062F] = cpu.A;
-    /* 41b8 */
-    FUN_b786();
-L_41bb:;
-    /* 41bb */
-    FUN_41da();
-    /* 41be */
-    LSR_A();
-    /* 41bf */
-    LSR_A();
-    /* 41c0 */
-    LSR_A();
-    /* 41c1 */
-    TAX();
-    /* 41c2 */
-    LDA(0x00);
-    /* 41c4 */
-    mem[(0x0D98)+cpu.Y] = cpu.A;
-    /* 41c7 */
-    CPX(0x06);
-    /* 41c9 */
-    if (!cpu.Z) goto L_41d4;
-    /* 41cb */
-    LDA(mem[0x006E]);
-    /* 41cd */
-    if (!cpu.Z) goto L_41d1;
-    /* 41cf */
-    mem[0x006E] = cpu.X;
-L_41d1:;
-    /* 41d1 */
-    goto L_41d9;
-L_41d4:;
-    /* 41d4 */
-    LDA(mem[(0x4DEA)+cpu.X]);
-    /* 41d7 */
-    mem[0x00DE] = cpu.A;
-L_41d9:;
-    /* 41d9 */
-    return;
+    FUN_4184(); return;
+    FUN_416b(); return;
 }
 
 void FUN_41da(void) {
@@ -2976,6 +2288,7 @@ void FUN_41e4(void) {
     LDX(0x38);
     /* 41e6 */
     if (!cpu.Z) { FUN_4207(); return; }
+    FUN_41e8(); return;
 }
 
 void FUN_41e8(void) {
@@ -3009,42 +2322,7 @@ L_4201:;
     mem[0x062F] = cpu.A;
     /* 4204 */
     FUN_3cb1();
-L_4207:;
-    /* 4207 */
-    FUN_41da();
-    /* 420a */
-    LDA(0xF0);
-    /* 420c */
-    mem[(0x0D99)+cpu.Y] = cpu.A;
-    /* 420f */
-    TYA();
-    /* 4210 */
-    LSR_A();
-    /* 4211 */
-    LSR_A();
-    /* 4212 */
-    LSR_A();
-    /* 4213 */
-    TAY();
-    /* 4214 */
-    CPY(0x06);
-    /* 4216 */
-    if (cpu.C) goto L_421c;
-    /* 4218 */
-    LDA(0x00);
-    /* 421a */
-    mem[0x006E] = cpu.A;
-L_421c:;
-    /* 421c */
-    LDA(mem[(0x4DEA)+cpu.Y]);
-    /* 421f */
-    mem[0x00DE] = cpu.A;
-    /* 4221 */
-    DEX();
-    /* 4222 */
-    if (!cpu.Z) goto L_41e8;
-    /* 4224 */
-    return;
+    FUN_4207(); return;
 }
 
 void FUN_4225(void) {
@@ -3052,6 +2330,7 @@ void FUN_4225(void) {
     LDX(mem[0x0043]);
     /* 4227 */
     if (!cpu.Z) { FUN_428d(); return; }
+    FUN_4229(); return;
 }
 
 void FUN_4229(void) {
@@ -3062,7 +2341,7 @@ void FUN_4229(void) {
     /* 422d */
     CMP(0x81);
     /* 422f */
-    if (cpu.C) goto L_428e;
+    if (cpu.C) { FUN_428e(); return; }
     /* 4231 */
     DEC_M(0x00E6);
     /* 4233 */
@@ -3090,10 +2369,10 @@ L_4241:;
     mem[(0x3492)+cpu.Y] = cpu.A;
 L_424a:;
     /* 424a */
-    goto L_428d;
+    FUN_428d(); return;
 L_424d:;
     /* 424d */
-    if (!cpu.Z) goto L_4265;
+    if (!cpu.Z) { FUN_4265(); return; }
     /* 424f */
     mem[0x0048] = cpu.A;
     /* 4251 */
@@ -3102,89 +2381,7 @@ L_424d:;
     LDA(mem[0x0618]);
     /* 4256 */
     mem[0x00E6] = cpu.A;
-L_4258:;
-    /* 4258 */
-    LDA(0xA9);
-    /* 425a */
-    LDY(0x05);
-L_425c:;
-    /* 425c */
-    mem[(0x3492)+cpu.Y] = cpu.A;
-    /* 425f */
-    DEY();
-    /* 4260 */
-    if (!cpu.N) goto L_425c;
-    /* 4262 */
-    goto L_428d;
-L_4265:;
-    /* 4265 */
-    DEC_M(0x00E6);
-    /* 4267 */
-    if (!cpu.N) goto L_428d;
-    /* 4269 */
-    LDY(mem[0x0618]);
-    /* 426c */
-    mem[0x00E6] = cpu.Y;
-    /* 426e */
-    CMP(0x07);
-    /* 4270 */
-    if (!cpu.Z) goto L_4280;
-    /* 4272 */
-    LDA(mem[0x0048]);
-    /* 4274 */
-    if (!cpu.Z) goto L_427d;
-    /* 4276 */
-    LDA(0x01);
-    /* 4278 */
-    mem[0x0048] = cpu.A;
-    /* 427a */
-    mem[0x28EE] = cpu.A;
-L_427d:;
-    /* 427d */
-    goto L_428d;
-L_4280:;
-    /* 4280 */
-    INC_M(0x007E);
-    /* 4282 */
-    TAY();
-    /* 4283 */
-    LDA(0x29);
-L_4285:;
-    /* 4285 */
-    mem[(0x3491)+cpu.Y] = cpu.A;
-    /* 4288 */
-    LDX(0x12);
-    /* 428a */
-    game_sub_5815(); return;
-L_428d:;
-    /* 428d */
-    return;
-L_428e:;
-    /* 428e */
-    LSR_M(0x0631);
-    /* 4291 */
-    if (cpu.C) goto L_428d;
-    /* 4293 */
-    INC_M(0x0631);
-    /* 4296 */
-    AND(0x0F);
-    /* 4298 */
-    CMP(0x07);
-    /* 429a */
-    if (!cpu.Z) goto L_42a0;
-    /* 429c */
-    LDA(0x06);
-    /* 429e */
-    DEC_M(0x007E);
-L_42a0:;
-    /* 42a0 */
-    DEC_M(0x007E);
-    /* 42a2 */
-    TAY();
-    /* 42a3 */
-    LDA(0xA9);
-    /* 42a5 */
-    if (!cpu.Z) goto L_4285;
+    game_sub_4258(); return;
 }
 
 void FUN_42a7(void) {
@@ -3505,6 +2702,7 @@ void FUN_43c7(void) {
     LSR_A();
     /* 43ca */
     TAY();
+    game_sub_43CB(); return;
 }
 
 void game_sub_43CB(void) {
@@ -3517,12 +2715,12 @@ void game_sub_43CB(void) {
     /* 43d1 */
     CMP(mem[0x062E]);
     /* 43d4 */
-    if (cpu.Z) goto L_442d;
+    if (cpu.Z) { FUN_442d(); return; }
 L_43d6:;
     /* 43d6 */
     CPY(mem[0x062E]);
     /* 43d9 */
-    if (cpu.Z) goto L_442d;
+    if (cpu.Z) { FUN_442d(); return; }
     /* 43db */
     mem[0x062E] = cpu.Y;
     /* 43de */
@@ -3535,92 +2733,13 @@ L_43d6:;
     LDA(0x07);
     /* 43e6 */
     mem[0x00BD] = cpu.A;
-L_43e8:;
-    /* 43e8 */
-    TAX();
-    /* 43e9 */
-    ASL_A();
-    /* 43ea */
-    TAY();
-    /* 43eb */
-    LDA(mem[(0x4581)+cpu.Y]);
-    /* 43ee */
-    mem[0x00BB] = cpu.A;
-    /* 43f0 */
-    LDA(mem[(0x4582)+cpu.Y]);
-    /* 43f3 */
-    mem[0x00BC] = cpu.A;
-    /* 43f5 */
-    LDY(0x00);
-    /* 43f7 */
-    TXA();
-    /* 43f8 */
-    LSR_A();
-    /* 43f9 */
-    if (cpu.C) goto L_4402;
-    /* 43fb */
-    mem[0x00C0] = cpu.Y;
-    /* 43fd */
-    LDA(0xB4);
-    /* 43ff */
-    goto L_4406;
-L_4402:;
-    /* 4402 */
-    LDA(0xB7);
-    /* 4404 */
-    mem[0x00C0] = cpu.A;
-L_4406:;
-    /* 4406 */
-    CPX(mem[0x00BF]);
-    /* 4408 */
-    if (!cpu.C) goto L_440f;
-    /* 440a */
-    AND(0x7F);
-    /* 440c */
-    goto L_4411;
-L_440f:;
-    /* 440f */
-    ORA(0x80);
-L_4411:;
-    /* 4411 */
-    bus_write(ZP_IND_Y(0xBB), cpu.A);
-    /* 4413 */
-    LDA(mem[0x00C0]);
-    /* 4415 */
-    if (cpu.Z) goto L_4425;
-    /* 4417 */
-    INY();
-    /* 4418 */
-    CPX(mem[0x00BF]);
-    /* 441a */
-    if (!cpu.C) goto L_4421;
-    /* 441c */
-    LDA(0x38);
-    /* 441e */
-    goto L_4423;
-L_4421:;
-    /* 4421 */
-    LDA(0xB8);
-L_4423:;
-    /* 4423 */
-    bus_write(ZP_IND_Y(0xBB), cpu.A);
-L_4425:;
-    /* 4425 */
-    DEC_M(0x00BD);
-    /* 4427 */
-    LDA(mem[0x00BD]);
-    /* 4429 */
-    CMP(mem[0x00BE]);
-    /* 442b */
-    if (!cpu.Z) goto L_43e8;
-L_442d:;
-    /* 442d */
-    return;
+    FUN_43e8(); return;
 }
 
 void FUN_442e(void) {
     /* 442e */
     LDA(mem[0x006F]);
+    game_sub_4430(); return;
 }
 
 void game_sub_4430(void) {
@@ -3650,6 +2769,7 @@ L_4444:;
     mem[0x0022] = cpu.A;
     /* 4446 */
     PLA();
+    game_sub_4447(); return;
 }
 
 void game_sub_4447(void) {
@@ -3657,6 +2777,7 @@ void game_sub_4447(void) {
     CLC();
     /* 4448 */
     ADC(0x08);
+    FUN_444a(); return;
 }
 
 void FUN_444a(void) {
@@ -4161,7 +3282,7 @@ L_466a:;
     LDX(0x06);
 L_4685:;
     /* 4685 */
-    bus_write((uint16_t)(0xD201u+cpu.X), cpu.A);
+    mem[(0xD201)+cpu.X] = cpu.A;
     /* 4688 */
     DEX();
     /* 4689 */
@@ -4454,6 +3575,7 @@ L_479e:;
 L_47a1:;
     /* 47a1 */
     mem[0x0072] = cpu.Y;
+    FUN_47a3(); return;
 }
 
 void FUN_47a3(void) {
@@ -4473,6 +3595,7 @@ L_47ad:;
 L_47af:;
     /* 47af */
     bus_write(0xD016, cpu.A);
+    FUN_47b2(); return;
 }
 
 void FUN_47b2(void) {
@@ -4484,96 +3607,7 @@ void FUN_47b2(void) {
     AND(0xDF);
     /* 47b7 */
     TAY();
-L_47b8:;
-    /* 47b8 */
-    TYA();
-    /* 47b9 */
-    if (!cpu.N) goto L_47c1;
-    /* 47bb */
-    AND(0x7F);
-    /* 47bd */
-    TAY();
-    /* 47be */
-    goto L_47c4;
-L_47c1:;
-    /* 47c1 */
-    FUN_480b();
-L_47c4:;
-    /* 47c4 */
-    LDA(0x00);
-    /* 47c6 */
-    mem[0x0044] = cpu.A;
-    /* 47c8 */
-    LDA(0xFF);
-    /* 47ca */
-    mem[0x063E] = cpu.A;
-    /* 47cd */
-    CPY(0x40);
-    /* 47cf */
-    if (!cpu.C) goto L_47da;
-    /* 47d1 */
-    TYA();
-    /* 47d2 */
-    AND(0x3F);
-    /* 47d4 */
-    TAY();
-    /* 47d5 */
-    LDA(0x5A);
-    /* 47d7 */
-    mem[0x063E] = cpu.A;
-L_47da:;
-    /* 47da */
-    CPY(0x09);
-    /* 47dc */
-    if (!cpu.Z) goto L_47e2;
-    /* 47de */
-    LDA(0x38);
-    /* 47e0 */
-    mem[0x00D8] = cpu.A;
-L_47e2:;
-    /* 47e2 */
-    LDX(mem[(0x4927)+cpu.Y]);
-    /* 47e5 */
-    mem[0x00BB] = cpu.Y;
-    /* 47e7 */
-    LDY(0x00);
-L_47e9:;
-    /* 47e9 */
-    LDA(mem[0x00BB]);
-    /* 47eb */
-    CMP(0x15);
-    /* 47ed */
-    if (cpu.C) goto L_47f5;
-    /* 47ef */
-    LDA(mem[(0x481E)+cpu.X]);
-    /* 47f2 */
-    goto L_47f8;
-L_47f5:;
-    /* 47f5 */
-    LDA(mem[(0x491A)+cpu.X]);
-L_47f8:;
-    /* 47f8 */
-    if (!cpu.N) goto L_4801;
-    /* 47fa */
-    AND(0x7F);
-    /* 47fc */
-    mem[(0x32B7)+cpu.Y] = cpu.A;
-    /* 47ff */
-    if (!cpu.Z) goto L_480a;
-L_4801:;
-    /* 4801 */
-    mem[(0x32B7)+cpu.Y] = cpu.A;
-    /* 4804 */
-    INY();
-    /* 4805 */
-    INX();
-    /* 4806 */
-    CPY(0x0E);
-    /* 4808 */
-    if (!cpu.Z) goto L_47e9;
-L_480a:;
-    /* 480a */
-    return;
+    FUN_47b8(); return;
 }
 
 void FUN_480b(void) {
@@ -4581,6 +3615,7 @@ void FUN_480b(void) {
     LDX(0x0E);
     /* 480d */
     LDA(0x00);
+    FUN_480f(); return;
 }
 
 void FUN_480f(void) {
@@ -4607,7 +3642,7 @@ void FUN_493d(void) {
     /* 4945 */
     LDY(0xCD);
     /* 4947 */
-    if (!cpu.Z) goto L_4958;
+    if (!cpu.Z) { FUN_4958(); return; }
 L_4949:;
     /* 4949 */
     mem[0x00BB] = cpu.Y;
@@ -4621,16 +3656,7 @@ L_4949:;
     LDY(mem[0x00BB]);
     /* 4955 */
     TYA();
-L_4956:;
-    /* 4956 */
-    mem[0x0072] = cpu.A;
-L_4958:;
-    /* 4958 */
-    LDA(0x48);
-    /* 495a */
-    mem[0x00D8] = cpu.A;
-    /* 495c */
-    FUN_47b8(); return;
+    FUN_4956(); return;
 }
 
 void FUN_495f(void) {
@@ -4642,6 +3668,7 @@ void FUN_495f(void) {
     if (!cpu.Z) { FUN_4968(); return; }
     /* 4966 */
     mem[0x003D] = cpu.A;
+    FUN_4968(); return;
 }
 
 void FUN_4968(void) {
@@ -4702,6 +3729,7 @@ void FUN_497d(void) {
     mem[0x0600] = cpu.A;
     /* 499f */
     CLD();
+    FUN_49a0(); return;
 }
 
 void FUN_49a0(void) {
@@ -4717,6 +3745,7 @@ void FUN_49a0(void) {
     LDA(mem[0x0601]);
     /* 49ab */
     FUN_49c0();
+    FUN_49ae(); return;
 }
 
 void FUN_49ae(void) {
@@ -4737,6 +3766,7 @@ void FUN_49ba(void) {
     LDX(0x00);
     /* 49be */
     if (cpu.Z) { FUN_49c5(); return; }
+    FUN_49c0(); return;
 }
 
 void FUN_49c0(void) {
@@ -4744,15 +3774,7 @@ void FUN_49c0(void) {
     LDY(0x05);
     /* 49c2 */
     LDX(mem[0x0600]);
-L_49c5:;
-    /* 49c5 */
-    mem[0x0619] = cpu.Y;
-    /* 49c8 */
-    LDY(0x00);
-    /* 49ca */
-    mem[0x0045] = cpu.Y;
-    /* 49cc */
-    mem[0x0046] = cpu.Y;
+    FUN_49c5(); return;
 }
 
 void FUN_49ce(void) {
@@ -4772,6 +3794,7 @@ void FUN_49ce(void) {
     PLA();
     /* 49d7 */
     AND(0x0F);
+    FUN_49d9(); return;
 }
 
 void FUN_49d9(void) {
@@ -4824,11 +3847,7 @@ void dli_handler_game(void) {
     /* 4a00 */
     mem[0x00E1] = cpu.A;
     /* 4a02 */
-    { uint16_t _t = (uint16_t)(mem[0x00E0] | ((uint16_t)mem[0x00E1] << 8)); platform_indirect_jmp(_t); }
-    /* 4a05: INC $C7 — sub-functions tail-call here; simulated by incrementing
-       after the indirect dispatch returns.  The last-slot sub-function (4ACD)
-       sets $C7=0xFF so this INC wraps it to 0 (resetting for the next frame). */
-    INC_M(0x00C7);
+    { uint16_t _t = (uint16_t)(mem[0x00E0] | ((uint16_t)mem[0x00E1] << 8)); platform_indirect_jmp(_t); return; }
 L_4a07:;
     /* 4a07 */
     LDY(mem[0x00CA]);
@@ -4841,11 +3860,13 @@ L_4a07:;
 void FUN_4e18(void) {
     /* 4e18 */
     LDY(0x01);
+    FUN_4e1a(); return;
 }
 
 void FUN_4e1a(void) {
     /* 4e1a */
     LDA(0xC8);
+    FUN_4e1c(); return;
 }
 
 void FUN_4e1c(void) {
@@ -5006,6 +4027,7 @@ void FUN_4e98(void) {
 void FUN_4ea2(void) {
     /* 4ea2 */
     mem[0x0676] = cpu.A;
+    FUN_4ea5(); return;
 }
 
 void FUN_4ea5(void) {
@@ -5013,6 +4035,7 @@ void FUN_4ea5(void) {
     mem[0x0678] = cpu.A;
     /* 4ea8 */
     mem[0x0679] = cpu.A;
+    FUN_4eab(); return;
 }
 
 void FUN_4eab(void) {
@@ -5020,11 +4043,13 @@ void FUN_4eab(void) {
     LDY(0x0B);
     /* 4ead */
     game_sub_55FC();
+    FUN_4eb0(); return;
 }
 
 void FUN_4eb0(void) {
     /* 4eb0 */
     LDY(0x0D);
+    FUN_4eb2(); return;
 }
 
 void FUN_4eb2(void) {
@@ -5086,48 +4111,7 @@ L_4f70:;
     CPX(0x2B);
     /* 4f74 */
     if (!cpu.Z) goto L_4f60;
-L_4f76:;
-    /* 4f76 */
-    LDY(0x00);
-    /* 4f78 */
-    bus_write(0xD400, cpu.Y);
-    /* 4f7b */
-    FUN_3cbe();
-L_4f7e:;
-    /* 4f7e */
-    DEC_M(0x0678);
-    /* 4f81 */
-    LDY(0x0D);
-    /* 4f83 */
-    TXA();
-    /* 4f84 */
-    PHA();
-    /* 4f85 */
-    game_sub_55FC();
-    /* 4f88 */
-    PLA();
-    /* 4f89 */
-    TAX();
-    /* 4f8a */
-    mem[0x00D4] = cpu.X;
-    /* 4f8c */
-    FUN_3cca();
-    /* 4f8f */
-    DEX();
-    /* 4f90 */
-    CPX(0x1F);
-    /* 4f92 */
-    if (!cpu.Z) goto L_4f7e;
-    /* 4f94 */
-    LDA(0x00);
-    /* 4f96 */
-    mem[0x00D4] = cpu.A;
-    /* 4f98 */
-    LDY(0x05);
-    /* 4f9a */
-    mem[0x00E5] = cpu.Y;
-    /* 4f9c */
-    FUN_3d38(); return;
+    FUN_4f76(); return;
 }
 
 void FUN_4f9f(void) {
@@ -5623,7 +4607,7 @@ L_519a:;
     /* 51a0 */
     if (!cpu.Z) goto L_51a5;
     /* 51a2 */
-    goto L_52be;
+    FUN_52be(); return;
 L_51a5:;
     /* 51a5 */
     TXA();
@@ -5882,33 +4866,7 @@ L_52b4:;
     mem[0x0005] = cpu.A;
     /* 52b8 */
     FUN_e462(); return;
-L_52be:;
-    /* 52be */
-    LDA(0xB4);
-    /* 52c0 */
-    bus_write(0x0222, cpu.A);
-    /* 52c3 */
-    LDA(0x52);
-    /* 52c5 */
-    bus_write(0x0223, cpu.A);
-    /* 52c8 */
-    LDA(0x3D);
-    /* 52ca */
-    PHA();
-    /* 52cb */
-    LDA(0x1F);
-    /* 52cd */
-    PHA();
-    /* 52ce */
-    LDA(0x04);
-    /* 52d0 */
-    mem[0x00E4] = cpu.A;
-    /* 52d2 */
-    mem[0x060B] = cpu.A;
-    /* 52d5 */
-    PHA();
-    /* 52d6 */
-    PLP(); return;
+    FUN_52be(); return;
 }
 
 void vbi_handler_game(void) {
@@ -5996,34 +4954,12 @@ L_533c:;
     /* 5342 */
     LSR_M(0x0643);
     /* 5345 */
-    if (cpu.C) goto L_534d;
+    if (cpu.C) { FUN_534d(); return; }
     /* 5347 */
     FUN_4229();
     /* 534a */
     INC_M(0x0643);
-L_534d:;
-    /* 534d */
-    LDA(mem[0x00E7]);
-    /* 534f */
-    if (cpu.Z) goto L_5359;
-    /* 5351 */
-    BIT(mem[0x062D]);
-    /* 5354 */
-    if (!cpu.Z) goto L_5359;
-    /* 5356 */
-    FUN_70f9();
-L_5359:;
-    /* 5359 */
-    LDA(mem[0x0655]);
-    /* 535c */
-    if (cpu.Z) goto L_5361;
-    /* 535e */
-    FUN_7253();
-L_5361:;
-    /* 5361 */
-    FUN_548d();
-    /* 5364 */
-    FUN_e462(); return;
+    FUN_534d(); return;
 }
 
 void FUN_5367(void) {
@@ -6186,7 +5122,7 @@ L_53ef:;
     AND(0xF6);
 L_53fa:;
     /* 53fa */
-    bus_write((uint16_t)(0xD016u+cpu.X), cpu.A);
+    mem[(0xD016)+cpu.X] = cpu.A;
     /* 53fd */
     DEX();
     /* 53fe */
@@ -6253,7 +5189,7 @@ L_5469:;
     /* 546f */
     LDA(0x00);
     /* 5471 */
-    bus_write((uint16_t)(0xD1FFu+cpu.X), cpu.A);
+    mem[(0xD1FF)+cpu.X] = cpu.A;
     /* 5474 */
     DEY();
     /* 5475 */
@@ -6610,33 +5546,7 @@ void game_sub_55FC(void) {
     PHA();
     /* 55fe */
     TYA();
-L_55ff:;
-    /* 55ff */
-    LDX(mem[0x0073]);
-    /* 5601 */
-    CPX(0x20);
-    /* 5603 */
-    if (!cpu.C) goto L_5607;
-    /* 5605 */
-    LDX(0x1F);
-L_5607:;
-    /* 5607 */
-    mem[(0x0719)+cpu.X] = cpu.A;
-    /* 560a */
-    DEX();
-    /* 560b */
-    if (!cpu.N) goto L_560f;
-    /* 560d */
-    LDX(0x1F);
-L_560f:;
-    /* 560f */
-    mem[0x0073] = cpu.X;
-    /* 5611 */
-    PLA();
-    /* 5612 */
-    TAX();
-    /* 5613 */
-    return;
+    FUN_55ff(); return;
 }
 
 void FUN_5614(void) {
@@ -6724,7 +5634,7 @@ void FUN_5667(void) {
     /* 566c */
     LDA(mem[(0x0679)+cpu.Y]);
     /* 566f */
-    bus_write((uint16_t)(0xD1FEu+cpu.X), cpu.A);
+    mem[(0xD1FE)+cpu.X] = cpu.A;
 L_5672:;
     /* 5672 */
     return;
@@ -6738,7 +5648,7 @@ void FUN_5673(void) {
     /* 5678 */
     LDA(mem[(0x0679)+cpu.Y]);
     /* 567b */
-    bus_write((uint16_t)(0xD1FEu+cpu.X), cpu.A);
+    mem[(0xD1FE)+cpu.X] = cpu.A;
     /* 567e */
     LDA(mem[(0x066B)+cpu.Y]);
     /* 5681 */
@@ -6746,7 +5656,7 @@ void FUN_5673(void) {
     /* 5683 */
     ORA(mem[(0x065D)+cpu.Y]);
     /* 5686 */
-    bus_write((uint16_t)(0xD1FFu+cpu.X), cpu.A);
+    mem[(0xD1FF)+cpu.X] = cpu.A;
 L_5689:;
     /* 5689 */
     return;
@@ -7140,12 +6050,12 @@ L_595a:;
     /* 5964 */
     if (cpu.Z) goto L_5969;
     /* 5966 */
-    goto L_5a21;
+    FUN_5a21(); return;
 L_5969:;
     /* 5969 */
     LDA(mem[0x00E5]);
     /* 596b */
-    if (cpu.Z) goto L_5978;
+    if (cpu.Z) { FUN_5978(); return; }
 L_596d:;
     /* 596d */
     LDA(mem[0x00E5]);
@@ -7157,206 +6067,7 @@ L_596d:;
     LDA(0x64);
     /* 5976 */
     mem[0x00E2] = cpu.A;
-L_5978:;
-    /* 5978 */
-    LDA(mem[0x0003]);
-    /* 597a */
-    if (cpu.Z) goto L_5996;
-    /* 597c */
-    LDY(mem[0x006C]);
-    /* 597e */
-    if (cpu.Z) goto L_5996;
-    /* 5980 */
-    LDA(bus_read(0xD300));
-    /* 5983 */
-    AND(0x03);
-    /* 5985 */
-    CMP(0x03);
-    /* 5987 */
-    if (!cpu.Z) goto L_5990;
-    /* 5989 */
-    LDA(bus_read(0xD01F));
-    /* 598c */
-    AND(0x02);
-    /* 598e */
-    if (!cpu.Z) goto L_5993;
-L_5990:;
-    /* 5990 */
-    mem[0x0644] = cpu.Y;
-L_5993:;
-    /* 5993 */
-    goto L_5a0e;
-L_5996:;
-    /* 5996 */
-    LDY(mem[0x006C]);
-    /* 5998 */
-    if (cpu.Z) goto L_599d;
-    /* 599a */
-    goto L_59ed;
-L_599d:;
-    /* 599d */
-    LDA(mem[0x0049]);
-    /* 599f */
-    if (cpu.N) goto L_59a4;
-    /* 59a1 */
-    FUN_5b45();
-L_59a4:;
-    /* 59a4 */
-    DEC_M(0x00C3);
-    /* 59a6 */
-    if (!cpu.Z) goto L_59ed;
-    /* 59a8 */
-    INC_M(0x00C3);
-    /* 59aa */
-    LDA(bus_read(0xD300));
-    /* 59ad */
-    AND(0x03);
-    /* 59af */
-    CMP(0x03);
-    /* 59b1 */
-    if (!cpu.Z) goto L_59ba;
-    /* 59b3 */
-    LDA(bus_read(0xD01F));
-    /* 59b6 */
-    AND(0x02);
-    /* 59b8 */
-    if (!cpu.Z) goto L_59ed;
-L_59ba:;
-    /* 59ba */
-    LDY(0x04);
-    /* 59bc */
-    mem[0x00C3] = cpu.Y;
-    /* 59be */
-    LDA(bus_read(0xD300));
-    /* 59c1 */
-    AND(0x02);
-    /* 59c3 */
-    if (cpu.Z) goto L_59cc;
-    /* 59c5 */
-    LDA(bus_read(0xD20F));
-    /* 59c8 */
-    AND(0x08);
-    /* 59ca */
-    if (!cpu.Z) goto L_59d8;
-L_59cc:;
-    /* 59cc */
-    DEC_M(0x006D);
-    /* 59ce */
-    LDA(mem[0x006D]);
-    /* 59d0 */
-    if (!cpu.Z) goto L_59d5;
-    /* 59d2 */
-    LDA(mem[0x37EE]);
-L_59d5:;
-    /* 59d5 */
-    goto L_59e8;
-L_59d8:;
-    /* 59d8 */
-    LDA(mem[0x006D]);
-    /* 59da */
-    CMP(mem[0x37EE]);
-    /* 59dd */
-    if (!cpu.C) goto L_59e4;
-    /* 59df */
-    LDA(0x01);
-    /* 59e1 */
-    goto L_59e8;
-L_59e4:;
-    /* 59e4 */
-    INC_M(0x006D);
-    /* 59e6 */
-    LDA(mem[0x006D]);
-L_59e8:;
-    /* 59e8 */
-    mem[0x006D] = cpu.A;
-    /* 59ea */
-    FUN_5a63();
-L_59ed:;
-    /* 59ed */
-    FUN_3cca();
-    /* 59f0 */
-    LDA(mem[0x00E2]);
-    /* 59f2 */
-    if (!cpu.N) goto L_5a09;
-    /* 59f4 */
-    LDA(mem[0x0091]);
-    /* 59f6 */
-    CMP(0xC0);
-    /* 59f8 */
-    if (!cpu.Z) goto L_5a09;
-    /* 59fa */
-    LDA(0x00);
-    /* 59fc */
-    mem[0x0091] = cpu.A;
-    /* 59fe */
-    FUN_5b6c();
-    /* 5a01 */
-    LDA(mem[0x006C]);
-    /* 5a03 */
-    if (cpu.Z) goto L_5a09;
-    /* 5a05 */
-    LDA(mem[0x0049]);
-    /* 5a07 */
-    if (!cpu.N) goto L_5a0e;
-L_5a09:;
-    /* 5a09 */
-    FUN_5a78();
-    /* 5a0c */
-    if (cpu.Z) goto L_5a17;
-L_5a0e:;
-    /* 5a0e */
-    audio_timer_setup();
-    /* 5a11 */
-    bus_write(0x022F, cpu.A);
-    /* 5a14 */
-    mem[0x006C] = cpu.A;
-    /* 5a16 */
-    return;
-L_5a17:;
-    /* 5a17 */
-    LDA(bus_read(0xD01F));
-    /* 5a1a */
-    AND(0x04);
-    /* 5a1c */
-    if (cpu.Z) goto L_5a21;
-    /* 5a1e */
-    goto L_5978;
-L_5a21:;
-    /* 5a21 */
-    LDA(mem[0x00E5]);
-    /* 5a23 */
-    if (!cpu.Z) goto L_5a21;
-    /* 5a25 */
-    LDA(mem[0x060C]);
-    /* 5a28 */
-    if (!cpu.Z) goto L_5a42;
-    /* 5a2a */
-    FUN_5a4d();
-    /* 5a2d */
-    mem[0x060F] = cpu.A;
-    /* 5a30 */
-    FUN_5a4d();
-    /* 5a33 */
-    mem[0x0610] = cpu.A;
-    /* 5a36 */
-    FUN_5a59();
-    /* 5a39 */
-    mem[0x060D] = cpu.A;
-    /* 5a3c */
-    FUN_5a59();
-    /* 5a3f */
-    mem[0x060E] = cpu.A;
-L_5a42:;
-    /* 5a42 */
-    LDA(0x10);
-    /* 5a44 */
-    mem[0x006D] = cpu.A;
-    /* 5a46 */
-    mem[0x060C] = cpu.A;
-    /* 5a49 */
-    mem[0x0004] = cpu.A;
-    /* 5a4b */
-    if (!cpu.Z) goto L_5a0e;
+    FUN_5978(); return;
 }
 
 void FUN_5a4d(void) {
@@ -8073,6 +6784,7 @@ L_5f13:;
     if (!cpu.Z) goto L_5f13;
     /* 5f1b */
     if (cpu.Z) goto L_5f04;
+    display_setup(); return;
 }
 
 void display_setup(void) {
@@ -8192,7 +6904,7 @@ L_5f90:;
     TYA();
 L_5f9f:;
     /* 5f9f */
-    bus_write((uint16_t)(0xD008u+cpu.Y), cpu.A);
+    mem[(0xD008)+cpu.Y] = cpu.A;
     /* 5fa2 */
     DEY();
     /* 5fa3 */
@@ -9440,7 +8152,7 @@ L_64c4:;
     LDY(0x03);
 L_64ed:;
     /* 64ed */
-    bus_write((uint16_t)(0xD008u+cpu.Y), cpu.A);
+    mem[(0xD008)+cpu.Y] = cpu.A;
     /* 64f0 */
     DEY();
     /* 64f1 */
@@ -9641,6 +8353,7 @@ L_65aa:;
 void FUN_65d0(void) {
     /* 65d0 */
     LDA(0x2E);
+    FUN_65d2(); return;
 }
 
 void FUN_65d2(void) {
@@ -9731,6 +8444,7 @@ L_661a:;
 L_661e:;
     /* 661e */
     DEC_M(0x0094);
+    FUN_6620(); return;
 }
 
 void FUN_6620(void) {
@@ -9918,6 +8632,7 @@ L_66a7:;
 void FUN_66c6(void) {
     /* 66c6 */
     LDY(mem[0x0092]);
+    FUN_66c8(); return;
 }
 
 void FUN_66c8(void) {
@@ -9936,6 +8651,7 @@ void FUN_66c8(void) {
 void FUN_66d3(void) {
     /* 66d3 */
     LDA(mem[0x0093]);
+    FUN_66d5(); return;
 }
 
 void FUN_66d5(void) {
@@ -9952,6 +8668,7 @@ void FUN_66d5(void) {
 L_66dd:;
     /* 66dd */
     TAX();
+    FUN_66de(); return;
 }
 
 void FUN_66de(void) {
@@ -10036,6 +8753,7 @@ L_6735:;
     mem[0x0092] = cpu.A;
     /* 674e */
     if (!cpu.N) goto L_6735;
+    FUN_6750(); return;
 }
 
 void FUN_6750(void) {
@@ -10106,70 +8824,7 @@ void FUN_6773(void) {
     ADC(0xE0);
     /* 6789 */
     mem[0x0085] = cpu.A;
-L_678b:;
-    /* 678b */
-    LDA(mem[0x0095]);
-    /* 678d */
-    mem[0x0094] = cpu.A;
-    /* 678f */
-    FUN_66c6();
-    /* 6792 */
-    LDA(0x07);
-    /* 6794 */
-    mem[0x0097] = cpu.A;
-L_6796:;
-    /* 6796 */
-    LDA(mem[0x009C]);
-    /* 6798 */
-    mem[0x0093] = cpu.A;
-    /* 679a */
-    LDY(mem[0x0097]);
-    /* 679c */
-    LDA(bus_read(ZP_IND_Y(0x84)));
-L_679e:;
-    /* 679e */
-    ASL_A();
-    /* 679f */
-    PHA();
-    /* 67a0 */
-    if (!cpu.C) goto L_67a5;
-    /* 67a2 */
-    FUN_66d3();
-L_67a5:;
-    /* 67a5 */
-    INC_M(0x0093);
-    /* 67a7 */
-    PLA();
-    /* 67a8 */
-    if (!cpu.Z) goto L_679e;
-    /* 67aa */
-    SEC();
-    /* 67ab */
-    LDA(mem[0x0080]);
-    /* 67ad */
-    SBC(0x2E);
-    /* 67af */
-    mem[0x0080] = cpu.A;
-    /* 67b1 */
-    LDA(mem[0x0081]);
-    /* 67b3 */
-    SBC(0x00);
-    /* 67b5 */
-    mem[0x0081] = cpu.A;
-    /* 67b7 */
-    DEC_M(0x0097);
-    /* 67b9 */
-    if (!cpu.N) goto L_6796;
-    /* 67bb */
-    CLC();
-    /* 67bc */
-    LDA(mem[0x009C]);
-    /* 67be */
-    ADC(0x08);
-    /* 67c0 */
-    mem[0x009C] = cpu.A;
-    /* 67c2 */
-    return;
+    FUN_678b(); return;
 }
 
 void FUN_67c3(void) {
@@ -10231,6 +8886,7 @@ L_67f5:;
     PLA();
     /* 6800 */
     AND(0x0F);
+    FUN_6802(); return;
 }
 
 void FUN_6802(void) {
@@ -10240,6 +8896,7 @@ void FUN_6802(void) {
     ASL_A();
     /* 6804 */
     ASL_A();
+    FUN_6805(); return;
 }
 
 void FUN_6805(void) {
@@ -10563,6 +9220,7 @@ L_68f6:;
     ADC(mem[(0x6E0F)+cpu.Y]);
     /* 6928 */
     mem[0x00C1] = cpu.A;
+    FUN_692a(); return;
 }
 
 void FUN_692a(void) {
@@ -10780,24 +9438,13 @@ void FUN_69dd(void) {
     mem[0x008B] = cpu.A;
     /* 69e1 */
     if (cpu.Z) { FUN_69e5(); return; }
+    FUN_69e3(); return;
 }
 
 void FUN_69e3(void) {
     /* 69e3 */
     DEC_M(0x008B);
-L_69e5:;
-    /* 69e5 */
-    LDA(0x0A);
-    /* 69e7 */
-    mem[0x00C5] = cpu.A;
-    /* 69e9 */
-    LDA(0x30);
-    /* 69eb */
-    mem[0x00C6] = cpu.A;
-    /* 69ed */
-    LDA(0x56);
-    /* 69ef */
-    mem[0x0086] = cpu.A;
+    FUN_69e5(); return;
 }
 
 void FUN_69f1(void) {
@@ -10835,6 +9482,7 @@ L_69ff:;
     LDA(mem[0x008B]);
     /* 6a0d */
     if (cpu.Z) { FUN_6a26(); return; }
+    FUN_6a0f(); return;
 }
 
 void FUN_6a0f(void) {
@@ -10861,9 +9509,7 @@ L_6a13:;
     DEC_M(0x0084);
     /* 6a24 */
     if (!cpu.Z) goto L_6a13;
-L_6a26:;
-    /* 6a26 */
-    return;
+    FUN_6a26(); return;
 }
 
 void FUN_6a27(void) {
@@ -10906,64 +9552,10 @@ L_6a44:;
     /* 6a46 */
     CMP(0x90);
     /* 6a48 */
-    if (!cpu.C) goto L_6a4d;
+    if (!cpu.C) { FUN_6a4d(); return; }
     /* 6a4a */
     FUN_670d();
-L_6a4d:;
-    /* 6a4d */
-    LDA(mem[0x08D9]);
-    /* 6a50 */
-    PHA();
-    /* 6a51 */
-    LDA(mem[0x08D8]);
-    /* 6a54 */
-    mem[0x08D9] = cpu.A;
-    /* 6a57 */
-    LDA(mem[0x08D7]);
-    /* 6a5a */
-    mem[0x08D8] = cpu.A;
-    /* 6a5d */
-    LDA(mem[0x08D6]);
-    /* 6a60 */
-    mem[0x08D7] = cpu.A;
-    /* 6a63 */
-    LDA(mem[0x08D5]);
-    /* 6a66 */
-    mem[0x08D6] = cpu.A;
-    /* 6a69 */
-    LDA(mem[0x08D4]);
-    /* 6a6c */
-    mem[0x08D5] = cpu.A;
-    /* 6a6f */
-    PLA();
-    /* 6a70 */
-    mem[0x08D4] = cpu.A;
-    /* 6a73 */
-    LDA(mem[0x008D]);
-    /* 6a75 */
-    if (!cpu.N) goto L_6a7c;
-    /* 6a77 */
-    LDA(mem[0x08D8]);
-    /* 6a7a */
-    mem[0x0071] = cpu.A;
-L_6a7c:;
-    /* 6a7c */
-    LDY(0x0C);
-    /* 6a7e */
-    CLC();
-    /* 6a7f */
-    LDA(mem[(0x0679)+cpu.Y]);
-    /* 6a82 */
-    ADC(mem[0x06CC]);
-    /* 6a85 */
-    if (!cpu.Z) goto L_6a89;
-    /* 6a87 */
-    LDA(0xFF);
-L_6a89:;
-    /* 6a89 */
-    mem[(0x0679)+cpu.Y] = cpu.A;
-    /* 6a8c */
-    FUN_5614(); return;
+    FUN_6a4d(); return;
 }
 
 void FUN_6a8f(void) {
@@ -11140,6 +9732,7 @@ L_6b0f:;
     if (!cpu.Z) goto L_6b0f;
     /* 6b2c */
     LSR_M(0x008F);
+    FUN_6b2e(); return;
 }
 
 void FUN_6b2e(void) {
@@ -11583,11 +10176,7 @@ void dli_handler_game2(void) {
     /* 6cd2 */
     mem[0x00E1] = cpu.A;
     /* 6cd4 */
-    { uint16_t _t = (uint16_t)(mem[0x00E0] | ((uint16_t)mem[0x00E1] << 8)); platform_indirect_jmp(_t); }
-    INC_M(0x00C7);   /* same INC $C7 / wrap logic as dli_handler_game */
-    LDY(mem[0x00CA]);
-    LDA(mem[0x00C8]);
-    PLP(); return;
+    { uint16_t _t = (uint16_t)(mem[0x00E0] | ((uint16_t)mem[0x00E1] << 8)); platform_indirect_jmp(_t); return; }
 }
 
 void FUN_6ddf(void) {
@@ -12035,7 +10624,7 @@ L_711e:;
     /* 7127 */
     ADC(0x02);
     /* 7129 */
-    bus_write((uint16_t)(0xD1FFu+cpu.Y), cpu.A);
+    mem[(0xD1FF)+cpu.Y] = cpu.A;
 L_712c:;
     /* 712c */
     return;
@@ -12322,7 +10911,7 @@ L_72ea:;
     /* 72f3 */
     LDA(mem[(0x0650)+cpu.X]);
     /* 72f6 */
-    bus_write((uint16_t)(0xD200u+cpu.X), cpu.A);
+    mem[(0xD200)+cpu.X] = cpu.A;
 L_72f9:;
     /* 72f9 */
     TYA();
@@ -12362,7 +10951,7 @@ L_730d:;
     /* 7313 */
     EOR(mem[(0x73C1)+cpu.X]);
     /* 7316 */
-    bus_write((uint16_t)(0xD201u+cpu.X), cpu.A);
+    mem[(0xD201)+cpu.X] = cpu.A;
     /* 7319 */
     DEX();
     /* 731a */
@@ -12826,6 +11415,7 @@ void game_init_7558(void) {
     LDA(0x0D);
     /* 7579 */
     mem[0x00BE] = cpu.A;
+    FUN_757b(); return;
 }
 
 void FUN_757b(void) {
@@ -12946,6 +11536,7 @@ void FUN_75d0(void) {
     CLD();
     /* 75db */
     startup_init();
+    FUN_75de(); return;
 }
 
 void FUN_75de(void) {
@@ -14184,6 +12775,7 @@ L_7aa5:;
 void FUN_7aa6(void) {
     /* 7aa6 */
     LDA(0x4A);
+    FUN_7aa8(); return;
 }
 
 void FUN_7aa8(void) {
@@ -14337,11 +12929,13 @@ L_7b34:;
     mem[0x0046] = cpu.A;
     /* 7b36 */
     FUN_41e8();
+    FUN_7b39(); return;
 }
 
 void FUN_7b39(void) {
     /* 7b39 */
     FUN_7b74();
+    FUN_7b3c(); return;
 }
 
 void FUN_7b3c(void) {
@@ -14422,6 +13016,7 @@ void FUN_7b74(void) {
 void FUN_7b7d(void) {
     /* 7b7d */
     FUN_7b74();
+    FUN_7b80(); return;
 }
 
 void FUN_7b80(void) {
@@ -14433,6 +13028,7 @@ void FUN_7b80(void) {
     LDA(0x01);
     /* 7b86 */
     mem[0x0046] = cpu.A;
+    FUN_7b88(); return;
 }
 
 void FUN_7b88(void) {
@@ -15088,6 +13684,7 @@ L_7f51:;
     LDA(mem[0x003E]);
     /* 7f5e */
     if (!cpu.Z) goto L_7f4f;
+    FUN_7f60(); return;
 }
 
 void FUN_7f60(void) {
@@ -15105,13 +13702,7 @@ void FUN_7f60(void) {
     LDA(0x60);
     /* 7f71 */
     bus_write(0xD208, cpu.A);
-L_7f74:;
-    /* 7f74 */
-    LDA(0x00);
-    /* 7f76 */
-    mem[0x0632] = cpu.A;
-    /* 7f79 */
-    return;
+    FUN_7f74(); return;
 }
 
 void FUN_7f7a(void) {
@@ -18065,6 +16656,7 @@ L_9670:;
 L_9675:;
     /* 9675 */
     mem[0x0044] = cpu.A;
+    FUN_9677(); return;
 }
 
 void FUN_9677(void) {
@@ -21266,6 +19858,7 @@ L_a317:;
     if (cpu.N) goto L_a300;
     /* a31c */
     if (!cpu.N) goto L_a2f0;
+    terrain_gen_2(); return;
 }
 
 void terrain_gen_2(void) {
@@ -22023,9 +20616,7 @@ L_a635:;
     mem[0x0069] = cpu.Y;
     /* a637 */
     mem[0x282C] = cpu.A;
-L_a63a:;
-    /* a63a */
-    return;
+    FUN_a63a(); return;
 }
 
 void FUN_a63b(void) {
@@ -22160,54 +20751,7 @@ L_a683:;
 L_a6c8:;
     /* a6c8 */
     terrain_sub_A90A(); return;
-L_a6cb:;
-    /* a6cb */
-    TYA();
-    /* a6cc */
-    CMP(mem[(0x260E)+cpu.X]);
-    /* a6cf */
-    if (!cpu.C) goto L_a6f8;
-    /* a6d1 */
-    if (cpu.Z) goto L_a6f8;
-L_a6d3:;
-    /* a6d3 */
-    CPY(0x97);
-    /* a6d5 */
-    if (cpu.C) goto L_a6f8;
-    /* a6d7 */
-    mem[0x28E2] = cpu.Y;
-    /* a6da */
-    LDA(mem[(0x28CA)+cpu.Y]);
-    /* a6dd */
-    mem[0x0080] = cpu.A;
-    /* a6df */
-    LDA(mem[(0x28FA)+cpu.Y]);
-    /* a6e2 */
-    mem[0x0081] = cpu.A;
-    /* a6e4 */
-    LDY(mem[(0xBD00)+cpu.X]);
-    /* a6e7 */
-    LDA(mem[(0xBC00)+cpu.X]);
-    /* a6ea */
-    mem[0x00B5] = cpu.A;
-    /* a6ec */
-    LSR_A();
-    /* a6ed */
-    ORA(mem[0x00B5]);
-    /* a6ef */
-    AND(mem[0x0058]);
-    /* a6f1 */
-    ORA(bus_read(ZP_IND_Y(0x80)));
-    /* a6f3 */
-    bus_write(ZP_IND_Y(0x80), cpu.A);
-    /* a6f5 */
-    LDY(mem[0x28E2]);
-L_a6f8:;
-    /* a6f8 */
-    return;
-L_a821:;
-    /* a821 */
-    return;
+    FUN_a6cb(); return;
 }
 
 void terrain_sub_A822(void) {
@@ -22383,7 +20927,7 @@ L_a8d5:;
     /* a8d6 */
     ADC(mem[0x290D]);
     /* a8d9 */
-    if (cpu.C) goto L_a909;
+    if (cpu.C) { FUN_a909(); return; }
     /* a8db */
     mem[0x290D] = cpu.A;
     /* a8de */
@@ -22391,11 +20935,11 @@ L_a8d5:;
     /* a8df */
     ADC(mem[0x0051]);
     /* a8e1 */
-    if (cpu.C) goto L_a909;
+    if (cpu.C) { FUN_a909(); return; }
     /* a8e3 */
     CMP(mem[0x2915]);
     /* a8e6 */
-    if (cpu.C) goto L_a909;
+    if (cpu.C) { FUN_a909(); return; }
     /* a8e8 */
     mem[0x2915] = cpu.A;
     /* a8eb */
@@ -22418,9 +20962,7 @@ L_a8d5:;
     LDA(mem[0x290F]);
     /* a906 */
     mem[0x2911] = cpu.A;
-L_a909:;
-    /* a909 */
-    return;
+    FUN_a909(); return;
 }
 
 void terrain_sub_A90A(void) {
@@ -22793,6 +21335,7 @@ L_aa5c:;
     INX();
     /* aa92 */
     game_sub_5815();
+    game_sub_AA95(); return;
 }
 
 void game_sub_AA95(void) {
@@ -22871,168 +21414,8 @@ void game_sub_AACF(void) {
     /* aacf */
     LDA(bus_read(0xD20A));
     /* aad2 */
-    if (cpu.N) goto L_ab27;
-L_aad4:;
-    /* aad4 */
-    SEC();
-    /* aad5 */
-    LDA(mem[0x005B]);
-    /* aad7 */
-    SBC(0x40);
-    /* aad9 */
-    mem[0x005B] = cpu.A;
-    /* aadb */
-    if (cpu.C) goto L_aadf;
-    /* aadd */
-    DEC_M(0x005C);
-L_aadf:;
-    /* aadf */
-    LDX(mem[0x28F0]);
-    /* aae2 */
-    LDY(mem[0x28F2]);
-    /* aae5 */
-    CPY(0x6C);
-    /* aae7 */
-    if (!cpu.C) goto L_ab26;
-L_aae9:;
-    /* aae9 */
-    LDA(mem[0x28F4]);
-    /* aaec */
-    mem[0x28FA] = cpu.A;
-L_aaef:;
-    /* aaef */
-    CPX(0x2C);
-    /* aaf1 */
-    if (!cpu.C) goto L_aafa;
-    /* aaf3 */
-    CPX(0xD4);
-    /* aaf5 */
-    if (cpu.C) goto L_aafa;
-    /* aaf7 */
-    FUN_a6d3();
-L_aafa:;
-    /* aafa */
-    INX();
-    /* aafb */
-    DEC_M(0x28FA);
-    /* aafe */
-    if (!cpu.Z) goto L_aaef;
-    /* ab00 */
-    CLC();
-    /* ab01 */
-    LDA(mem[0x28F3]);
-    /* ab04 */
-    ADC(mem[0x28F9]);
-    /* ab07 */
-    mem[0x28F3] = cpu.A;
-    /* ab0a */
-    if (!cpu.C) goto L_ab10;
-    /* ab0c */
-    INC_M(0x28F4);
-    /* ab0f */
-    CLC();
-L_ab10:;
-    /* ab10 */
-    LDA(mem[0x28EF]);
-    /* ab13 */
-    ADC(mem[0x005B]);
-    /* ab15 */
-    mem[0x28EF] = cpu.A;
-    /* ab18 */
-    LDA(mem[0x28F0]);
-    /* ab1b */
-    ADC(mem[0x005C]);
-    /* ab1d */
-    mem[0x28F0] = cpu.A;
-    /* ab20 */
-    TAX();
-    /* ab21 */
-    DEY();
-    /* ab22 */
-    CPY(0x6C);
-    /* ab24 */
-    if (cpu.C) goto L_aae9;
-L_ab26:;
-    /* ab26 */
-    return;
-L_ab27:;
-    /* ab27 */
-    LDX(mem[0x28F0]);
-    /* ab2a */
-    LDY(mem[0x28F2]);
-L_ab2d:;
-    /* ab2d */
-    CPX(0x2C);
-    /* ab2f */
-    if (!cpu.C) goto L_ab26;
-    /* ab31 */
-    CPX(0xD4);
-    /* ab33 */
-    if (cpu.C) goto L_ab26;
-    /* ab35 */
-    CPY(0x6C);
-    /* ab37 */
-    if (!cpu.C) goto L_ab26;
-    /* ab39 */
-    LDA(mem[0x28F4]);
-    /* ab3c */
-    mem[0x28FA] = cpu.A;
-L_ab3f:;
-    /* ab3f */
-    FUN_a6d3();
-    /* ab42 */
-    DEY();
-    /* ab43 */
-    CPY(0x6C);
-    /* ab45 */
-    if (!cpu.C) goto L_ab4c;
-    /* ab47 */
-    DEC_M(0x28FA);
-    /* ab4a */
-    if (!cpu.Z) goto L_ab3f;
-L_ab4c:;
-    /* ab4c */
-    CLC();
-    /* ab4d */
-    LDA(mem[0x28F3]);
-    /* ab50 */
-    ADC(mem[0x28F9]);
-    /* ab53 */
-    mem[0x28F3] = cpu.A;
-    /* ab56 */
-    if (!cpu.C) goto L_ab5c;
-    /* ab58 */
-    INC_M(0x28F4);
-    /* ab5b */
-    CLC();
-L_ab5c:;
-    /* ab5c */
-    LDA(mem[0x28F1]);
-    /* ab5f */
-    ADC(mem[0x28F7]);
-    /* ab62 */
-    mem[0x28F1] = cpu.A;
-    /* ab65 */
-    LDA(mem[0x28F2]);
-    /* ab68 */
-    ADC(mem[0x28F8]);
-    /* ab6b */
-    mem[0x28F2] = cpu.A;
-    /* ab6e */
-    TAY();
-    /* ab6f */
-    LDA(mem[0x005C]);
-    /* ab71 */
-    if (cpu.N) goto L_ab77;
-    /* ab73 */
-    INX();
-    /* ab74 */
-    goto L_ab2d;
-L_ab77:;
-    /* ab77 */
-    DEX();
-    /* ab78 */
-    goto L_ab2d;
+    if (cpu.N) { FUN_ab27(); return; }
+    FUN_aad4(); return;
 }
 
 void FUN_ab7b(void) {
@@ -25611,39 +23994,17 @@ L_b744:;
     /* b749 */
     mem[0x0035] = cpu.A;
     /* b74b */
-    goto L_b756;
+    FUN_b756(); return;
 L_b74e:;
     /* b74e */
     LDA(mem[0x0014]);
     /* b750 */
     AND(0x0F);
     /* b752 */
-    if (!cpu.Z) goto L_b756;
+    if (!cpu.Z) { FUN_b756(); return; }
     /* b754 */
     DEC_M(0x0035);
-L_b756:;
-    /* b756 */
-    LDA(mem[0x0035]);
-    /* b758 */
-    mem[0x0673] = cpu.A;
-    /* b75b */
-    LDA(0xA0);
-    /* b75d */
-    mem[0x0665] = cpu.A;
-    /* b760 */
-    LDA(mem[0x0014]);
-    /* b762 */
-    AND(0x05);
-    /* b764 */
-    CLC();
-    /* b765 */
-    ADC(0x02);
-    /* b767 */
-    mem[0x0681] = cpu.A;
-    /* b76a */
-    LDY(0x08);
-    /* b76c */
-    game_sub_55FC(); return;
+    FUN_b756(); return;
 }
 
 void FUN_b76f(void) {
@@ -25750,188 +24111,1834 @@ void FUN_e462(void) {
 void FUN_00e0(void) { /* stub: no instructions found at $00E0 */ }
 void FUN_9d67(void) { /* stub: no instructions found at $9D67 */ }
 
-/* === Wrappers for cross-function branch/JMP entry points === */
-/* FIXME Phase3: these enter functions mid-body — split target functions. */
+/* === Split functions for cross-function entry points === */
+/* Each function starts at the labelled address inside its container. */
 void FUN_3cb2(void) {
-    /* TODO: should start execution at $3CB2 inside FUN_3cb1.
-       Currently approximated as a full call from $3CB1. */
-    FUN_3cb1();
+    /* 3cb2 */
+    LDA(0x00);
+    /* 3cb4 */
+    mem[0x0014] = cpu.A;
+    /* 3cb6 */
+    LDA(mem[0x004C]);
+L_3cb8:;
+    /* 3cb8 */
+    CMP(mem[0x0014]);
+    /* 3cba */
+    if (!cpu.Z) { platform_tick_vbi(); platform_render_frame(); goto L_3cb8; }
+    /* 3cbc */
+    PLA();
+    /* 3cbd */
+    return;
 }
 
 void FUN_3cc6(void) {
-    /* Entry at $3CC6 inside clear_colors — AFTER the PHA/LDA #1 preamble.
-       cpu.A already holds the tick count set by the caller (FUN_3cca/3ccf/3cd4).
-       We must NOT call clear_colors() from the start because that resets A to 1,
-       corrupting $004C and making all timing waits last only 1 tick.            */
-    mem[0x004C] = cpu.A;              /* STA $004C — store caller's tick count */
-    if (!cpu.Z) { FUN_3cb2(); }       /* BNE $3CB2 — always true (A != 0)       */
+    /* 3cc6 */
+    mem[0x004C] = cpu.A;
+    /* 3cc8 */
+    if (!cpu.Z) { FUN_3cb2(); return; }
+    FUN_3cca(); return;
 }
 
 void FUN_3d38(void) {
-    /* TODO: should start execution at $3D38 inside game_entry.
-       Currently approximated as a full call from $3CDE. */
-    game_entry();
+    /* 3d38 */
+    LDA(0x00);
+    /* 3d3a */
+    LDY(0x06);
+L_3d3c:;
+    /* 3d3c */
+    DEY();
+    /* 3d3d */
+    mem[(0x0626)+cpu.Y] = cpu.A;
+    /* 3d40 */
+    if (!cpu.Z) goto L_3d3c;
+    /* 3d42 */
+    mem[0x006C] = cpu.A;
+    /* 3d44 */
+    LDA(0x64);
+    /* 3d46 */
+    mem[0x00E2] = cpu.A;
+    FUN_3d48(); return;
 }
 
 void FUN_3d48(void) {
-    /* TODO: should start execution at $3D48 inside game_entry.
-       Currently approximated as a full call from $3CDE. */
-    game_entry();
+    /* 3d48 */
+    LDA(0x00);
+    /* 3d4a */
+    bus_write(0x022F, cpu.A);
+    /* 3d4d */
+    bus_write(0xD01D, cpu.A);
+    /* 3d50 */
+    LDY(0x07);
+L_3d52:;
+    /* 3d52 */
+    mem[(0xD00D)+cpu.Y] = cpu.A;
+    /* 3d55 */
+    mem[(0x36CA)+cpu.Y] = cpu.A;
+    /* 3d58 */
+    DEY();
+    /* 3d59 */
+    if (!cpu.N) goto L_3d52;
+    /* 3d5b */
+    bus_write(0x02C8, cpu.A);
+    /* 3d5e */
+    FUN_3c73();
+    /* 3d61 */
+    LDA(0xCC);
+    /* 3d63 */
+    bus_write(0x0222, cpu.A);
+    /* 3d66 */
+    LDA(0x53);
+    /* 3d68 */
+    bus_write(0x0223, cpu.A);
+    /* 3d6b */
+    display_list_init();
+    /* 3d6e */
+    LDA(0x00);
+    /* 3d70 */
+    mem[0x0002] = cpu.A;
+    /* 3d72 */
+    mem[0x00DC] = cpu.A;
+    /* 3d74 */
+    mem[0x0042] = cpu.A;
+    /* 3d76 */
+    mem[0x00C7] = cpu.A;
+    /* 3d78 */
+    LDY(0x19);
+L_3d7a:;
+    /* 3d7a */
+    DEY();
+    /* 3d7b */
+    mem[(0x062C)+cpu.Y] = cpu.A;
+    /* 3d7e */
+    if (!cpu.Z) goto L_3d7a;
+    /* 3d80 */
+    mem[0x062F] = cpu.A;
+    /* 3d83 */
+    LDA(0x08);
+    /* 3d85 */
+    bus_write(0xD407, cpu.A);
+    /* 3d88 */
+    LDA(0x04);
+    /* 3d8a */
+    bus_write(0xD409, cpu.A);
+    /* 3d8d */
+    LDA(0x03);
+    /* 3d8f */
+    bus_write(0xD20F, cpu.A);
+    /* 3d92 */
+    loader_util();
+    /* 3d95 */
+    game_init_7813();
+    /* 3d98 */
+    game_init_77DF();
+    /* 3d9b */
+    game_init_7588();
+    /* 3d9e */
+    game_init_76CB();
+    /* 3da1 */
+    LDA(0xC0);
+    /* 3da3 */
+    bus_write(0xD20E, cpu.A);
+    /* 3da6 */
+    LDA(mem[0x060B]);
+    /* 3da9 */
+    if (cpu.Z) goto L_3dae;
+    /* 3dab */
+    cockpit_display();
+L_3dae:;
+    /* 3dae */
+    game_sub_4258();
+    /* 3db1 */
+    LDY(0x09);
+    /* 3db3 */
+    game_sub_43CB();
+    /* 3db6 */
+    game_sub_4606();
+    /* 3db9 */
+    LDA(0x08);
+    /* 3dbb */
+    game_sub_4447();
+    /* 3dbe */
+    LDA(0x2C);
+    /* 3dc0 */
+    bus_write(0x02C6, cpu.A);
+    /* 3dc3 */
+    LDA(0x26);
+    /* 3dc5 */
+    bus_write(0x02C7, cpu.A);
+    /* 3dc8 */
+    LDY(0x08);
+L_3dca:;
+    /* 3dca */
+    LDA(mem[(0x4DF1)+cpu.Y]);
+    /* 3dcd */
+    mem[(0x00CF)+cpu.Y] = cpu.A;
+    /* 3dd0 */
+    DEY();
+    /* 3dd1 */
+    if (!cpu.N) goto L_3dca;
+    /* 3dd3 */
+    LDA(0x80);
+    /* 3dd5 */
+    LDY(0x03);
+L_3dd7:;
+    /* 3dd7 */
+    DEY();
+    /* 3dd8 */
+    mem[(0x0645)+cpu.Y] = cpu.A;
+    /* 3ddb */
+    if (!cpu.Z) goto L_3dd7;
+    /* 3ddd */
+    mem[0x007E] = cpu.A;
+    /* 3ddf */
+    mem[0x0668] = cpu.A;
+    /* 3de2 */
+    mem[0x0669] = cpu.A;
+    /* 3de5 */
+    startup_init();
+    /* 3de8 */
+    LDA(0xA0);
+    /* 3dea */
+    mem[0x0663] = cpu.A;
+    /* 3ded */
+    mem[0x066A] = cpu.A;
+    /* 3df0 */
+    mem[0x066B] = cpu.A;
+    /* 3df3 */
+    LDX(0x1F);
+    /* 3df5 */
+    input_init();
+    /* 3df8 */
+    INX();
+    /* 3df9 */
+    input_init();
+    /* 3dfc */
+    LDA(0x40);
+    /* 3dfe */
+    bus_write(0xD40E, cpu.A);
+    /* 3e01 */
+    LDA(0xC0);
+    /* 3e03 */
+    mem[0x0071] = cpu.A;
+    /* 3e05 */
+    LDA(0x0D);
+    /* 3e07 */
+    mem[0x3157] = cpu.A;
+    /* 3e0a */
+    LDA(0x35);
+    /* 3e0c */
+    mem[0x3158] = cpu.A;
+L_3e0f:;
+    /* 3e0f */
+    display_setup();
+    /* 3e12 */
+    LDA(0x2A);
+    /* 3e14 */
+    clear_pm_state();
+    /* 3e17 */
+    clear_colors();
+    /* 3e1a */
+    LDA(0x0D);
+    /* 3e1c */
+    mem[0x3157] = cpu.A;
+    /* 3e1f */
+    LDA(0x35);
+    /* 3e21 */
+    mem[0x3158] = cpu.A;
+    /* 3e24 */
+    LDA(0x00);
+    /* 3e26 */
+    mem[0x00B7] = cpu.A;
+    /* 3e28 */
+    mem[0x0005] = cpu.A;
+    /* 3e2a */
+    LDY(0x2C);
+L_3e2c:;
+    /* 3e2c */
+    DEY();
+    /* 3e2d */
+    mem[(0x0020)+cpu.Y] = cpu.A;
+    /* 3e30 */
+    if (!cpu.Z) goto L_3e2c;
+    /* 3e32 */
+    LDY(0xA6);
+L_3e34:;
+    /* 3e34 */
+    DEY();
+    /* 3e35 */
+    mem[(0x2830)+cpu.Y] = cpu.A;
+    /* 3e38 */
+    if (!cpu.Z) goto L_3e34;
+    /* 3e3a */
+    mem[0x060C] = cpu.A;
+    /* 3e3d */
+    game_init_753B();
+    /* 3e40 */
+    game_init_45A1();
+    /* 3e43 */
+    FUN_6b63();
+    /* 3e46 */
+    game_init_7558();
+    /* 3e49 */
+    LDA(0x45);
+    /* 3e4b */
+    FUN_3c75();
+    /* 3e4e */
+    LDA(0xF5);
+    /* 3e50 */
+    bus_write(0x0222, cpu.A);
+    /* 3e53 */
+    LDA(0x4F);
+    /* 3e55 */
+    bus_write(0x0223, cpu.A);
+    /* 3e58 */
+    LDA(0x00);
+    /* 3e5a */
+    LDY(0x57);
+L_3e5c:;
+    /* 3e5c */
+    DEY();
+    /* 3e5d */
+    mem[(0x0B31)+cpu.Y] = cpu.A;
+    /* 3e60 */
+    if (!cpu.Z) goto L_3e5c;
+    /* 3e62 */
+    LDA(0x11);
+    /* 3e64 */
+    bus_write(0x026F, cpu.A);
+    /* 3e67 */
+    game_init_45EE();
+    /* 3e6a */
+    FUN_3c7b();
+    /* 3e6d */
+    LDA(0xEE);
+    /* 3e6f */
+    bus_write(0x0200, cpu.A);
+    /* 3e72 */
+    LDA(0x49);
+    /* 3e74 */
+    bus_write(0x0201, cpu.A);
+    /* 3e77 */
+    LDA(0x6B);
+    /* 3e79 */
+    bus_write(0xD402, cpu.A);
+    /* 3e7c */
+    LDA(0x31);
+    /* 3e7e */
+    bus_write(0xD403, cpu.A);
+    /* 3e81 */
+    LDA(0x40);
+    /* 3e83 */
+    bus_write(0xD004, cpu.A);
+    /* 3e86 */
+    main_loop_body();
+    /* 3e89 */
+    LDA(mem[0x0627]);
+    /* 3e8c */
+    if (!cpu.Z) goto L_3e97;
+    /* 3e8e */
+    intro_random_setup();
+    /* 3e91 */
+    intro_setup_70B3();
+    /* 3e94 */
+    intro_sub_7498();
+L_3e97:;
+    /* 3e97 */
+    LDA(0x60);
+    /* 3e99 */
+    mem[0x00C1] = cpu.A;
+    /* 3e9b */
+    LDA(0x10);
+    /* 3e9d */
+    mem[0x00C3] = cpu.A;
+    /* 3e9f */
+    LDA(0x10);
+    /* 3ea1 */
+    mem[0x00C4] = cpu.A;
+    /* 3ea3 */
+    game_setup_7460();
+    /* 3ea6 */
+    game_setup_7483();
+    /* 3ea9 */
+    LDA(mem[0x0004]);
+    /* 3eab */
+    if (!cpu.Z) goto L_3eb6;
+    /* 3ead */
+    LDA(0x54);
+    /* 3eaf */
+    mem[0x0044] = cpu.A;
+    /* 3eb1 */
+    LDA(0x02);
+    /* 3eb3 */
+    goto L_3eb8;
+L_3eb6:;
+    /* 3eb6 */
+    LDA(0x01);
+L_3eb8:;
+    /* 3eb8 */
+    mem[0x004A] = cpu.A;
+L_3eba:;
+    /* 3eba */
+    terrain_gen_1();
+    /* 3ebd */
+    LDX(0x33);
+    /* 3ebf */
+    terrain_gen_3();
+    /* 3ec2 */
+    LDX(0x30);
+    /* 3ec4 */
+    terrain_gen_2();
+    /* 3ec7 */
+    LDX(0x33);
+    /* 3ec9 */
+    terrain_collision();
+    /* 3ecc */
+    LDA(mem[0x0041]);
+    /* 3ece */
+    mem[0x288F] = cpu.A;
+    /* 3ed1 */
+    game_state_update();
+    /* 3ed4 */
+    LDA(0x02);
+    /* 3ed6 */
+    mem[0x0042] = cpu.A;
+    /* 3ed8 */
+    enemy_check();
+    /* 3edb */
+    LDA(mem[0x062F]);
+    /* 3ede */
+    CMP(0x0E);
+    /* 3ee0 */
+    if (cpu.C) goto L_3ef5;
+    /* 3ee2 */
+    LDA(mem[0x0004]);
+    /* 3ee4 */
+    if (cpu.Z) goto L_3eec;
+    /* 3ee6 */
+    game_sub_7B54();
+    /* 3ee9 */
+    goto L_3ef5;
+L_3eec:;
+    /* 3eec */
+    LDA(mem[0x003A]);
+    /* 3eee */
+    CMP(0x01);
+    /* 3ef0 */
+    if (!cpu.Z) goto L_3ef5;
+    /* 3ef2 */
+    mem[0x2849] = cpu.A;
+L_3ef5:;
+    /* 3ef5 */
+    terrain_gen_1();
+    /* 3ef8 */
+    LDX(0x03);
+    /* 3efa */
+    terrain_gen_3();
+    /* 3efd */
+    LDX(0x00);
+    /* 3eff */
+    terrain_gen_2();
+    /* 3f02 */
+    LDX(0x03);
+    /* 3f04 */
+    terrain_collision();
+    /* 3f07 */
+    LDA(mem[0x0041]);
+    /* 3f09 */
+    if (cpu.Z) goto L_3f0e;
+    /* 3f0b */
+    mem[0x288F] = cpu.A;
+L_3f0e:;
+    /* 3f0e */
+    game_state_update();
+    /* 3f11 */
+    enemy_check();
+    /* 3f14 */
+    LDA(mem[0x288E]);
+    /* 3f17 */
+    if (cpu.Z) goto L_3f21;
+    /* 3f19 */
+    LDA(mem[0x288D]);
+    /* 3f1c */
+    if (cpu.Z) goto L_3f21;
+    /* 3f1e */
+    pilot_render();
+L_3f21:;
+    /* 3f21 */
+    LDA(mem[0x288D]);
+    /* 3f24 */
+    mem[0x288E] = cpu.A;
+    /* 3f27 */
+    LDA(mem[0x288F]);
+    /* 3f2a */
+    if (!cpu.Z) goto L_3f31;
+    /* 3f2c */
+    LDA(mem[0x003E]);
+    /* 3f2e */
+    goto L_3f33;
+L_3f31:;
+    /* 3f31 */
+    LDA(0x00);
+L_3f33:;
+    /* 3f33 */
+    mem[0x288D] = cpu.A;
+    /* 3f36 */
+    LDA(0x01);
+    /* 3f38 */
+    mem[0x0042] = cpu.A;
+    /* 3f3a */
+    CMP(mem[0x003E]);
+    /* 3f3c */
+    if (cpu.Z) goto L_3f50;
+    /* 3f3e */
+    LDX(mem[0x0072]);
+    /* 3f40 */
+    CPX(0x02);
+    /* 3f42 */
+    if (cpu.Z) goto L_3f50;
+    /* 3f44 */
+    LDA(mem[0x003D]);
+    /* 3f46 */
+    if (cpu.Z) goto L_3f50;
+    /* 3f48 */
+    LDA(0x02);
+    /* 3f4a */
+    mem[0x003D] = cpu.A;
+    /* 3f4c */
+    LDY(0x0E);
+    /* 3f4e */
+    mem[0x0044] = cpu.Y;
+L_3f50:;
+    /* 3f50 */
+    LDX(mem[0x0072]);
+    /* 3f52 */
+    CPX(0x02);
+    /* 3f54 */
+    if (cpu.Z) goto L_3f59;
+    /* 3f56 */
+    goto L_3eba;
+L_3f59:;
+    /* 3f59 */
+    INX();
+    /* 3f5a */
+    mem[0x004A] = cpu.X;
+    /* 3f5c */
+    LDY(0x80);
+    /* 3f5e */
+    mem[0x28D9] = cpu.Y;
+    /* 3f61 */
+    mem[0x28DA] = cpu.Y;
+    /* 3f64 */
+    LDA(mem[0x0034]);
+    /* 3f66 */
+    CMP(0x40);
+    /* 3f68 */
+    if (cpu.C) { platform_tick_vbi(); platform_render_frame(); goto L_3f6d; }
+    /* 3f6a */
+    goto L_3eba;
+L_3f6d:;
+    /* 3f6d */
+    LDA(mem[0x283B]);
+    /* 3f70 */
+    if (!cpu.N) { platform_tick_vbi(); platform_render_frame(); goto L_3f6d; }
+    /* 3f72 */
+    mem[0x007E] = cpu.Y;
+    /* 3f74 */
+    LDA(0x00);
+    /* 3f76 */
+    mem[0x062B] = cpu.A;
+    /* 3f79 */
+    mem[0x0642] = cpu.A;
+    /* 3f7c */
+    FUN_3cd4();
+    /* 3f7f */
+    mem[0x004A] = cpu.A;
+    /* 3f81 */
+    FUN_3cb1();
+    /* 3f84 */
+    LDY(0xA3);
+L_3f86:;
+    /* 3f86 */
+    mem[(0x0F1D)+cpu.Y] = cpu.A;
+    /* 3f89 */
+    DEY();
+    /* 3f8a */
+    if (!cpu.Z) goto L_3f86;
+    /* 3f8c */
+    LDY(0x1E);
+L_3f8e:;
+    /* 3f8e */
+    mem[(0x0E8F)+cpu.Y] = cpu.A;
+    /* 3f91 */
+    DEY();
+    /* 3f92 */
+    if (!cpu.N) goto L_3f8e;
+    /* 3f94 */
+    LDA(mem[0x00DE]);
+    /* 3f96 */
+    CMP(0x4E);
+    /* 3f98 */
+    if (!cpu.Z) goto L_3f9e;
+    /* 3f9a */
+    LDA(0x46);
+    /* 3f9c */
+    mem[0x00DE] = cpu.A;
+L_3f9e:;
+    /* 3f9e */
+    game_sub_4606();
+    /* 3fa1 */
+    LDA(mem[0x00DD]);
+    /* 3fa3 */
+    CMP(0x2B);
+    /* 3fa5 */
+    if (!cpu.C) goto L_3fab;
+    /* 3fa7 */
+    LDA(0x2A);
+    /* 3fa9 */
+    mem[0x00DD] = cpu.A;
+L_3fab:;
+    /* 3fab */
+    mem[0x0041] = cpu.A;
+    /* 3fad */
+    mem[0x0071] = cpu.A;
+    /* 3faf */
+    clear_pm_state();
+    /* 3fb2 */
+    LDA(0x00);
+    /* 3fb4 */
+    LDY(0x03);
+    /* 3fb6 */
+    mem[(0x066B)+cpu.Y] = cpu.A;
+    /* 3fb9 */
+    game_sub_55FC();
+    /* 3fbc */
+    goto L_3e0f;
 }
 
 void FUN_40af(void) {
-    /* TODO: should start execution at $40AF inside FUN_4099.
-       Currently approximated as a full call from $4099. */
-    FUN_4099();
+    /* 40af */
+    return;
 }
 
 void FUN_416b(void) {
-    /* TODO: should start execution at $416B inside FUN_4166.
-       Currently approximated as a full call from $4166. */
-    FUN_4166();
+    /* 416b */
+    LDA(0x08);
+    /* 416d */
+    SEC();
+    /* 416e */
+    SBC(mem[0x006F]);
+    /* 4170 */
+    LSR_A();
+    /* 4171 */
+    CLC();
+    /* 4172 */
+    LDY(mem[0x003E]);
+    /* 4174 */
+    if (!cpu.Z) goto L_4178;
+    /* 4176 */
+    ADC(0x01);
+L_4178:;
+    /* 4178 */
+    ADC(mem[0x2877]);
+    /* 417b */
+    ADC(mem[0x2848]);
+    /* 417e */
+    mem[0x2848] = cpu.A;
+    /* 4181 */
+    if (cpu.C) { FUN_4184(); return; }
+    /* 4183 */
+    return;
+    FUN_4184(); return;
+}
+
+void FUN_4184(void) {
+    /* 4184 */
+    LDA(mem[0x062F]);
+    /* 4187 */
+    if (cpu.Z) goto L_418c;
+    /* 4189 */
+    DEC_M(0x062F);
+L_418c:;
+    /* 418c */
+    if (!cpu.Z) goto L_41bb;
+    /* 418e */
+    LDA(mem[0x0022]);
+    /* 4190 */
+    if (cpu.Z) goto L_41a4;
+    /* 4192 */
+    LDA(mem[0x0072]);
+    /* 4194 */
+    CMP(0x02);
+    /* 4196 */
+    if (cpu.Z) goto L_41a4;
+    /* 4198 */
+    LDA(0x10);
+    /* 419a */
+    FUN_444a();
+    /* 419d */
+    LDA(0x1E);
+    /* 419f */
+    mem[0x0022] = cpu.A;
+    /* 41a1 */
+    goto L_41a7;
+L_41a4:;
+    /* 41a4 */
+    INC_M(0x062F);
+L_41a7:;
+    /* 41a7 */
+    LDA(mem[0x003B]);
+    /* 41a9 */
+    ORA(mem[0x2877]);
+    /* 41ac */
+    CMP(0x01);
+    /* 41ae */
+    if (!cpu.C) goto L_41bb;
+    /* 41b0 */
+    mem[0x063D] = cpu.A;
+    /* 41b3 */
+    LDA(0x00);
+    /* 41b5 */
+    mem[0x062F] = cpu.A;
+    /* 41b8 */
+    FUN_b786();
+L_41bb:;
+    /* 41bb */
+    FUN_41da();
+    /* 41be */
+    LSR_A();
+    /* 41bf */
+    LSR_A();
+    /* 41c0 */
+    LSR_A();
+    /* 41c1 */
+    TAX();
+    /* 41c2 */
+    LDA(0x00);
+    /* 41c4 */
+    mem[(0x0D98)+cpu.Y] = cpu.A;
+    /* 41c7 */
+    CPX(0x06);
+    /* 41c9 */
+    if (!cpu.Z) goto L_41d4;
+    /* 41cb */
+    LDA(mem[0x006E]);
+    /* 41cd */
+    if (!cpu.Z) goto L_41d1;
+    /* 41cf */
+    mem[0x006E] = cpu.X;
+L_41d1:;
+    /* 41d1 */
+    goto L_41d9;
+L_41d4:;
+    /* 41d4 */
+    LDA(mem[(0x4DEA)+cpu.X]);
+    /* 41d7 */
+    mem[0x00DE] = cpu.A;
+L_41d9:;
+    /* 41d9 */
+    return;
 }
 
 void FUN_4207(void) {
-    /* TODO: should start execution at $4207 inside FUN_41e8.
-       Currently approximated as a full call from $41E8. */
-    FUN_41e8();
+    /* 4207 */
+    FUN_41da();
+    /* 420a */
+    LDA(0xF0);
+    /* 420c */
+    mem[(0x0D99)+cpu.Y] = cpu.A;
+    /* 420f */
+    TYA();
+    /* 4210 */
+    LSR_A();
+    /* 4211 */
+    LSR_A();
+    /* 4212 */
+    LSR_A();
+    /* 4213 */
+    TAY();
+    /* 4214 */
+    CPY(0x06);
+    /* 4216 */
+    if (cpu.C) goto L_421c;
+    /* 4218 */
+    LDA(0x00);
+    /* 421a */
+    mem[0x006E] = cpu.A;
+L_421c:;
+    /* 421c */
+    LDA(mem[(0x4DEA)+cpu.Y]);
+    /* 421f */
+    mem[0x00DE] = cpu.A;
+    /* 4221 */
+    DEX();
+    /* 4222 */
+    if (!cpu.Z) { FUN_41e8(); return; }
+    /* 4224 */
+    return;
 }
 
 void game_sub_4258(void) {
-    /* TODO: should start execution at $4258 inside FUN_4229.
-       Currently approximated as a full call from $4229. */
-    FUN_4229();
+    /* 4258 */
+    LDA(0xA9);
+    /* 425a */
+    LDY(0x05);
+L_425c:;
+    /* 425c */
+    mem[(0x3492)+cpu.Y] = cpu.A;
+    /* 425f */
+    DEY();
+    /* 4260 */
+    if (!cpu.N) goto L_425c;
+    /* 4262 */
+    FUN_428d(); return;
+    FUN_4265(); return;
+}
+
+void FUN_4265(void) {
+    /* 4265 */
+    DEC_M(0x00E6);
+    /* 4267 */
+    if (!cpu.N) { FUN_428d(); return; }
+    /* 4269 */
+    LDY(mem[0x0618]);
+    /* 426c */
+    mem[0x00E6] = cpu.Y;
+    /* 426e */
+    CMP(0x07);
+    /* 4270 */
+    if (!cpu.Z) goto L_4280;
+    /* 4272 */
+    LDA(mem[0x0048]);
+    /* 4274 */
+    if (!cpu.Z) goto L_427d;
+    /* 4276 */
+    LDA(0x01);
+    /* 4278 */
+    mem[0x0048] = cpu.A;
+    /* 427a */
+    mem[0x28EE] = cpu.A;
+L_427d:;
+    /* 427d */
+    FUN_428d(); return;
+L_4280:;
+    /* 4280 */
+    INC_M(0x007E);
+    /* 4282 */
+    TAY();
+    /* 4283 */
+    LDA(0x29);
+    FUN_4285(); return;
+}
+
+void FUN_4285(void) {
+L_4285:;
+    /* 4285 */
+    mem[(0x3491)+cpu.Y] = cpu.A;
+    /* 4288 */
+    LDX(0x12);
+    /* 428a */
+    game_sub_5815(); return;
+    FUN_428d(); return;
 }
 
 void FUN_428d(void) {
-    /* TODO: should start execution at $428D inside FUN_4229.
-       Currently approximated as a full call from $4229. */
-    FUN_4229();
+L_428d:;
+    /* 428d */
+    return;
+    FUN_428e(); return;
+}
+
+void FUN_428e(void) {
+    /* 428e */
+    LSR_M(0x0631);
+    /* 4291 */
+    if (cpu.C) { FUN_428d(); return; }
+    /* 4293 */
+    INC_M(0x0631);
+    /* 4296 */
+    AND(0x0F);
+    /* 4298 */
+    CMP(0x07);
+    /* 429a */
+    if (!cpu.Z) goto L_42a0;
+    /* 429c */
+    LDA(0x06);
+    /* 429e */
+    DEC_M(0x007E);
+L_42a0:;
+    /* 42a0 */
+    DEC_M(0x007E);
+    /* 42a2 */
+    TAY();
+    /* 42a3 */
+    LDA(0xA9);
+    /* 42a5 */
+    if (!cpu.Z) { FUN_4285(); return; }
+    FUN_42a7(); return;
 }
 
 void FUN_43e8(void) {
-    /* TODO: should start execution at $43E8 inside game_sub_43CB.
-       Currently approximated as a full call from $43CB. */
-    game_sub_43CB();
+L_43e8:;
+    /* 43e8 */
+    TAX();
+    /* 43e9 */
+    ASL_A();
+    /* 43ea */
+    TAY();
+    /* 43eb */
+    LDA(mem[(0x4581)+cpu.Y]);
+    /* 43ee */
+    mem[0x00BB] = cpu.A;
+    /* 43f0 */
+    LDA(mem[(0x4582)+cpu.Y]);
+    /* 43f3 */
+    mem[0x00BC] = cpu.A;
+    /* 43f5 */
+    LDY(0x00);
+    /* 43f7 */
+    TXA();
+    /* 43f8 */
+    LSR_A();
+    /* 43f9 */
+    if (cpu.C) goto L_4402;
+    /* 43fb */
+    mem[0x00C0] = cpu.Y;
+    /* 43fd */
+    LDA(0xB4);
+    /* 43ff */
+    goto L_4406;
+L_4402:;
+    /* 4402 */
+    LDA(0xB7);
+    /* 4404 */
+    mem[0x00C0] = cpu.A;
+L_4406:;
+    /* 4406 */
+    CPX(mem[0x00BF]);
+    /* 4408 */
+    if (!cpu.C) goto L_440f;
+    /* 440a */
+    AND(0x7F);
+    /* 440c */
+    goto L_4411;
+L_440f:;
+    /* 440f */
+    ORA(0x80);
+L_4411:;
+    /* 4411 */
+    bus_write(ZP_IND_Y(0xBB), cpu.A);
+    /* 4413 */
+    LDA(mem[0x00C0]);
+    /* 4415 */
+    if (cpu.Z) goto L_4425;
+    /* 4417 */
+    INY();
+    /* 4418 */
+    CPX(mem[0x00BF]);
+    /* 441a */
+    if (!cpu.C) goto L_4421;
+    /* 441c */
+    LDA(0x38);
+    /* 441e */
+    goto L_4423;
+L_4421:;
+    /* 4421 */
+    LDA(0xB8);
+L_4423:;
+    /* 4423 */
+    bus_write(ZP_IND_Y(0xBB), cpu.A);
+L_4425:;
+    /* 4425 */
+    DEC_M(0x00BD);
+    /* 4427 */
+    LDA(mem[0x00BD]);
+    /* 4429 */
+    CMP(mem[0x00BE]);
+    /* 442b */
+    if (!cpu.Z) goto L_43e8;
+    FUN_442d(); return;
+}
+
+void FUN_442d(void) {
+    /* 442d */
+    return;
 }
 
 void FUN_47b8(void) {
-    /* TODO: should start execution at $47B8 inside FUN_47b2.
-       Currently approximated as a full call from $47B2. */
-    FUN_47b2();
+    /* 47b8 */
+    TYA();
+    /* 47b9 */
+    if (!cpu.N) goto L_47c1;
+    /* 47bb */
+    AND(0x7F);
+    /* 47bd */
+    TAY();
+    /* 47be */
+    goto L_47c4;
+L_47c1:;
+    /* 47c1 */
+    FUN_480b();
+L_47c4:;
+    /* 47c4 */
+    LDA(0x00);
+    /* 47c6 */
+    mem[0x0044] = cpu.A;
+    /* 47c8 */
+    LDA(0xFF);
+    /* 47ca */
+    mem[0x063E] = cpu.A;
+    /* 47cd */
+    CPY(0x40);
+    /* 47cf */
+    if (!cpu.C) goto L_47da;
+    /* 47d1 */
+    TYA();
+    /* 47d2 */
+    AND(0x3F);
+    /* 47d4 */
+    TAY();
+    /* 47d5 */
+    LDA(0x5A);
+    /* 47d7 */
+    mem[0x063E] = cpu.A;
+L_47da:;
+    /* 47da */
+    CPY(0x09);
+    /* 47dc */
+    if (!cpu.Z) goto L_47e2;
+    /* 47de */
+    LDA(0x38);
+    /* 47e0 */
+    mem[0x00D8] = cpu.A;
+L_47e2:;
+    /* 47e2 */
+    LDX(mem[(0x4927)+cpu.Y]);
+    /* 47e5 */
+    mem[0x00BB] = cpu.Y;
+    /* 47e7 */
+    LDY(0x00);
+L_47e9:;
+    /* 47e9 */
+    LDA(mem[0x00BB]);
+    /* 47eb */
+    CMP(0x15);
+    /* 47ed */
+    if (cpu.C) goto L_47f5;
+    /* 47ef */
+    LDA(mem[(0x481E)+cpu.X]);
+    /* 47f2 */
+    goto L_47f8;
+L_47f5:;
+    /* 47f5 */
+    LDA(mem[(0x491A)+cpu.X]);
+L_47f8:;
+    /* 47f8 */
+    if (!cpu.N) goto L_4801;
+    /* 47fa */
+    AND(0x7F);
+    /* 47fc */
+    mem[(0x32B7)+cpu.Y] = cpu.A;
+    /* 47ff */
+    if (!cpu.Z) goto L_480a;
+L_4801:;
+    /* 4801 */
+    mem[(0x32B7)+cpu.Y] = cpu.A;
+    /* 4804 */
+    INY();
+    /* 4805 */
+    INX();
+    /* 4806 */
+    CPY(0x0E);
+    /* 4808 */
+    if (!cpu.Z) goto L_47e9;
+L_480a:;
+    /* 480a */
+    return;
 }
 
 void FUN_4956(void) {
-    /* TODO: should start execution at $4956 inside FUN_493d.
-       Currently approximated as a full call from $493D. */
-    FUN_493d();
+    /* 4956 */
+    mem[0x0072] = cpu.A;
+    FUN_4958(); return;
+}
+
+void FUN_4958(void) {
+    /* 4958 */
+    LDA(0x48);
+    /* 495a */
+    mem[0x00D8] = cpu.A;
+    /* 495c */
+    FUN_47b8(); return;
 }
 
 void FUN_49c5(void) {
-    /* TODO: should start execution at $49C5 inside FUN_49c0.
-       Currently approximated as a full call from $49C0. */
-    FUN_49c0();
+    /* 49c5 */
+    mem[0x0619] = cpu.Y;
+    /* 49c8 */
+    LDY(0x00);
+    /* 49ca */
+    mem[0x0045] = cpu.Y;
+    /* 49cc */
+    mem[0x0046] = cpu.Y;
+    FUN_49ce(); return;
 }
 
 void FUN_4f76(void) {
-    /* TODO: should start execution at $4F76 inside game_sub_4f3f.
-       Currently approximated as a full call from $4F3F. */
-    game_sub_4f3f();
+    /* 4f76 */
+    LDY(0x00);
+    /* 4f78 */
+    bus_write(0xD400, cpu.Y);
+    /* 4f7b */
+    FUN_3cbe();
+L_4f7e:;
+    /* 4f7e */
+    DEC_M(0x0678);
+    /* 4f81 */
+    LDY(0x0D);
+    /* 4f83 */
+    TXA();
+    /* 4f84 */
+    PHA();
+    /* 4f85 */
+    game_sub_55FC();
+    /* 4f88 */
+    PLA();
+    /* 4f89 */
+    TAX();
+    /* 4f8a */
+    mem[0x00D4] = cpu.X;
+    /* 4f8c */
+    FUN_3cca();
+    /* 4f8f */
+    DEX();
+    /* 4f90 */
+    CPX(0x1F);
+    /* 4f92 */
+    if (!cpu.Z) goto L_4f7e;
+    /* 4f94 */
+    LDA(0x00);
+    /* 4f96 */
+    mem[0x00D4] = cpu.A;
+    /* 4f98 */
+    LDY(0x05);
+    /* 4f9a */
+    mem[0x00E5] = cpu.Y;
+    /* 4f9c */
+    FUN_3d38(); return;
 }
 
 void FUN_52be(void) {
-    /* TODO: should start execution at $52BE inside vbi_handler_2.
-       Currently approximated as a full call from $4FF5. */
-    vbi_handler_2();
+    /* 52be */
+    LDA(0xB4);
+    /* 52c0 */
+    bus_write(0x0222, cpu.A);
+    /* 52c3 */
+    LDA(0x52);
+    /* 52c5 */
+    bus_write(0x0223, cpu.A);
+    /* 52c8 */
+    LDA(0x3D);
+    /* 52ca */
+    PHA();
+    /* 52cb */
+    LDA(0x1F);
+    /* 52cd */
+    PHA();
+    /* 52ce */
+    LDA(0x04);
+    /* 52d0 */
+    mem[0x00E4] = cpu.A;
+    /* 52d2 */
+    mem[0x060B] = cpu.A;
+    /* 52d5 */
+    PHA();
+    /* 52d6 */
+    PLP(); return;
 }
 
 void FUN_534d(void) {
-    /* TODO: should start execution at $534D inside vbi_handler_game.
-       Currently approximated as a full call from $52D7. */
-    vbi_handler_game();
+    /* 534d */
+    LDA(mem[0x00E7]);
+    /* 534f */
+    if (cpu.Z) goto L_5359;
+    /* 5351 */
+    BIT(mem[0x062D]);
+    /* 5354 */
+    if (!cpu.Z) goto L_5359;
+    /* 5356 */
+    FUN_70f9();
+L_5359:;
+    /* 5359 */
+    LDA(mem[0x0655]);
+    /* 535c */
+    if (cpu.Z) goto L_5361;
+    /* 535e */
+    FUN_7253();
+L_5361:;
+    /* 5361 */
+    FUN_548d();
+    /* 5364 */
+    FUN_e462(); return;
 }
 
 void FUN_55ff(void) {
-    /* TODO: should start execution at $55FF inside game_sub_55FC.
-       Currently approximated as a full call from $55FC. */
-    game_sub_55FC();
+    /* 55ff */
+    LDX(mem[0x0073]);
+    /* 5601 */
+    CPX(0x20);
+    /* 5603 */
+    if (!cpu.C) goto L_5607;
+    /* 5605 */
+    LDX(0x1F);
+L_5607:;
+    /* 5607 */
+    mem[(0x0719)+cpu.X] = cpu.A;
+    /* 560a */
+    DEX();
+    /* 560b */
+    if (!cpu.N) goto L_560f;
+    /* 560d */
+    LDX(0x1F);
+L_560f:;
+    /* 560f */
+    mem[0x0073] = cpu.X;
+    /* 5611 */
+    PLA();
+    /* 5612 */
+    TAX();
+    /* 5613 */
+    return;
+}
+
+void FUN_5978(void) {
+L_5978:;
+    /* 5978 */
+    LDA(mem[0x0003]);
+    /* 597a */
+    if (cpu.Z) goto L_5996;
+    /* 597c */
+    LDY(mem[0x006C]);
+    /* 597e */
+    if (cpu.Z) goto L_5996;
+    /* 5980 */
+    LDA(bus_read(0xD300));
+    /* 5983 */
+    AND(0x03);
+    /* 5985 */
+    CMP(0x03);
+    /* 5987 */
+    if (!cpu.Z) goto L_5990;
+    /* 5989 */
+    LDA(bus_read(0xD01F));
+    /* 598c */
+    AND(0x02);
+    /* 598e */
+    if (!cpu.Z) goto L_5993;
+L_5990:;
+    /* 5990 */
+    mem[0x0644] = cpu.Y;
+L_5993:;
+    /* 5993 */
+    FUN_5a0e(); return;
+L_5996:;
+    /* 5996 */
+    LDY(mem[0x006C]);
+    /* 5998 */
+    if (cpu.Z) goto L_599d;
+    /* 599a */
+    goto L_59ed;
+L_599d:;
+    /* 599d */
+    LDA(mem[0x0049]);
+    /* 599f */
+    if (cpu.N) goto L_59a4;
+    /* 59a1 */
+    FUN_5b45();
+L_59a4:;
+    /* 59a4 */
+    DEC_M(0x00C3);
+    /* 59a6 */
+    if (!cpu.Z) goto L_59ed;
+    /* 59a8 */
+    INC_M(0x00C3);
+    /* 59aa */
+    LDA(bus_read(0xD300));
+    /* 59ad */
+    AND(0x03);
+    /* 59af */
+    CMP(0x03);
+    /* 59b1 */
+    if (!cpu.Z) goto L_59ba;
+    /* 59b3 */
+    LDA(bus_read(0xD01F));
+    /* 59b6 */
+    AND(0x02);
+    /* 59b8 */
+    if (!cpu.Z) goto L_59ed;
+L_59ba:;
+    /* 59ba */
+    LDY(0x04);
+    /* 59bc */
+    mem[0x00C3] = cpu.Y;
+    /* 59be */
+    LDA(bus_read(0xD300));
+    /* 59c1 */
+    AND(0x02);
+    /* 59c3 */
+    if (cpu.Z) goto L_59cc;
+    /* 59c5 */
+    LDA(bus_read(0xD20F));
+    /* 59c8 */
+    AND(0x08);
+    /* 59ca */
+    if (!cpu.Z) goto L_59d8;
+L_59cc:;
+    /* 59cc */
+    DEC_M(0x006D);
+    /* 59ce */
+    LDA(mem[0x006D]);
+    /* 59d0 */
+    if (!cpu.Z) goto L_59d5;
+    /* 59d2 */
+    LDA(mem[0x37EE]);
+L_59d5:;
+    /* 59d5 */
+    goto L_59e8;
+L_59d8:;
+    /* 59d8 */
+    LDA(mem[0x006D]);
+    /* 59da */
+    CMP(mem[0x37EE]);
+    /* 59dd */
+    if (!cpu.C) goto L_59e4;
+    /* 59df */
+    LDA(0x01);
+    /* 59e1 */
+    goto L_59e8;
+L_59e4:;
+    /* 59e4 */
+    INC_M(0x006D);
+    /* 59e6 */
+    LDA(mem[0x006D]);
+L_59e8:;
+    /* 59e8 */
+    mem[0x006D] = cpu.A;
+    /* 59ea */
+    FUN_5a63();
+L_59ed:;
+    /* 59ed */
+    FUN_3cca();
+    /* 59f0 */
+    LDA(mem[0x00E2]);
+    /* 59f2 */
+    if (!cpu.N) goto L_5a09;
+    /* 59f4 */
+    LDA(mem[0x0091]);
+    /* 59f6 */
+    CMP(0xC0);
+    /* 59f8 */
+    if (!cpu.Z) goto L_5a09;
+    /* 59fa */
+    LDA(0x00);
+    /* 59fc */
+    mem[0x0091] = cpu.A;
+    /* 59fe */
+    FUN_5b6c();
+    /* 5a01 */
+    LDA(mem[0x006C]);
+    /* 5a03 */
+    if (cpu.Z) goto L_5a09;
+    /* 5a05 */
+    LDA(mem[0x0049]);
+    /* 5a07 */
+    if (!cpu.N) { FUN_5a0e(); return; }
+L_5a09:;
+    /* 5a09 */
+    FUN_5a78();
+    /* 5a0c */
+    if (cpu.Z) { FUN_5a17(); return; }
+    FUN_5a0e(); return;
+}
+
+void FUN_5a0e(void) {
+L_5a0e:;
+    /* 5a0e */
+    audio_timer_setup();
+    /* 5a11 */
+    bus_write(0x022F, cpu.A);
+    /* 5a14 */
+    mem[0x006C] = cpu.A;
+    /* 5a16 */
+    return;
+    FUN_5a17(); return;
+}
+
+void FUN_5a17(void) {
+    /* 5a17 */
+    LDA(bus_read(0xD01F));
+    /* 5a1a */
+    AND(0x04);
+    /* 5a1c */
+    if (cpu.Z) { FUN_5a21(); return; }
+    /* 5a1e */
+    FUN_5978(); return;
+    FUN_5a21(); return;
 }
 
 void FUN_5a21(void) {
-    /* TODO: should start execution at $5A21 inside cockpit_display.
-       Currently approximated as a full call from $587B. */
-    cockpit_display();
+L_5a21:;
+    /* 5a21 */
+    LDA(mem[0x00E5]);
+    /* 5a23 */
+    if (!cpu.Z) goto L_5a21;
+    /* 5a25 */
+    LDA(mem[0x060C]);
+    /* 5a28 */
+    if (!cpu.Z) goto L_5a42;
+    /* 5a2a */
+    FUN_5a4d();
+    /* 5a2d */
+    mem[0x060F] = cpu.A;
+    /* 5a30 */
+    FUN_5a4d();
+    /* 5a33 */
+    mem[0x0610] = cpu.A;
+    /* 5a36 */
+    FUN_5a59();
+    /* 5a39 */
+    mem[0x060D] = cpu.A;
+    /* 5a3c */
+    FUN_5a59();
+    /* 5a3f */
+    mem[0x060E] = cpu.A;
+L_5a42:;
+    /* 5a42 */
+    LDA(0x10);
+    /* 5a44 */
+    mem[0x006D] = cpu.A;
+    /* 5a46 */
+    mem[0x060C] = cpu.A;
+    /* 5a49 */
+    mem[0x0004] = cpu.A;
+    /* 5a4b */
+    if (!cpu.Z) { FUN_5a0e(); return; }
+    FUN_5a4d(); return;
 }
 
 void FUN_678b(void) {
-    /* TODO: should start execution at $678B inside FUN_6773.
-       Currently approximated as a full call from $6773. */
-    FUN_6773();
+    /* 678b */
+    LDA(mem[0x0095]);
+    /* 678d */
+    mem[0x0094] = cpu.A;
+    /* 678f */
+    FUN_66c6();
+    /* 6792 */
+    LDA(0x07);
+    /* 6794 */
+    mem[0x0097] = cpu.A;
+L_6796:;
+    /* 6796 */
+    LDA(mem[0x009C]);
+    /* 6798 */
+    mem[0x0093] = cpu.A;
+    /* 679a */
+    LDY(mem[0x0097]);
+    /* 679c */
+    LDA(bus_read(ZP_IND_Y(0x84)));
+L_679e:;
+    /* 679e */
+    ASL_A();
+    /* 679f */
+    PHA();
+    /* 67a0 */
+    if (!cpu.C) goto L_67a5;
+    /* 67a2 */
+    FUN_66d3();
+L_67a5:;
+    /* 67a5 */
+    INC_M(0x0093);
+    /* 67a7 */
+    PLA();
+    /* 67a8 */
+    if (!cpu.Z) goto L_679e;
+    /* 67aa */
+    SEC();
+    /* 67ab */
+    LDA(mem[0x0080]);
+    /* 67ad */
+    SBC(0x2E);
+    /* 67af */
+    mem[0x0080] = cpu.A;
+    /* 67b1 */
+    LDA(mem[0x0081]);
+    /* 67b3 */
+    SBC(0x00);
+    /* 67b5 */
+    mem[0x0081] = cpu.A;
+    /* 67b7 */
+    DEC_M(0x0097);
+    /* 67b9 */
+    if (!cpu.N) goto L_6796;
+    /* 67bb */
+    CLC();
+    /* 67bc */
+    LDA(mem[0x009C]);
+    /* 67be */
+    ADC(0x08);
+    /* 67c0 */
+    mem[0x009C] = cpu.A;
+    /* 67c2 */
+    return;
 }
 
 void FUN_69e5(void) {
-    /* TODO: should start execution at $69E5 inside FUN_69e3.
-       Currently approximated as a full call from $69E3. */
-    FUN_69e3();
+    /* 69e5 */
+    LDA(0x0A);
+    /* 69e7 */
+    mem[0x00C5] = cpu.A;
+    /* 69e9 */
+    LDA(0x30);
+    /* 69eb */
+    mem[0x00C6] = cpu.A;
+    /* 69ed */
+    LDA(0x56);
+    /* 69ef */
+    mem[0x0086] = cpu.A;
+    FUN_69f1(); return;
 }
 
 void FUN_6a26(void) {
-    /* TODO: should start execution at $6A26 inside FUN_6a0f.
-       Currently approximated as a full call from $6A0F. */
-    FUN_6a0f();
+    /* 6a26 */
+    return;
 }
 
 void FUN_6a4d(void) {
-    /* TODO: should start execution at $6A4D inside FUN_6a38.
-       Currently approximated as a full call from $6A38. */
-    FUN_6a38();
+    /* 6a4d */
+    LDA(mem[0x08D9]);
+    /* 6a50 */
+    PHA();
+    /* 6a51 */
+    LDA(mem[0x08D8]);
+    /* 6a54 */
+    mem[0x08D9] = cpu.A;
+    /* 6a57 */
+    LDA(mem[0x08D7]);
+    /* 6a5a */
+    mem[0x08D8] = cpu.A;
+    /* 6a5d */
+    LDA(mem[0x08D6]);
+    /* 6a60 */
+    mem[0x08D7] = cpu.A;
+    /* 6a63 */
+    LDA(mem[0x08D5]);
+    /* 6a66 */
+    mem[0x08D6] = cpu.A;
+    /* 6a69 */
+    LDA(mem[0x08D4]);
+    /* 6a6c */
+    mem[0x08D5] = cpu.A;
+    /* 6a6f */
+    PLA();
+    /* 6a70 */
+    mem[0x08D4] = cpu.A;
+    /* 6a73 */
+    LDA(mem[0x008D]);
+    /* 6a75 */
+    if (!cpu.N) goto L_6a7c;
+    /* 6a77 */
+    LDA(mem[0x08D8]);
+    /* 6a7a */
+    mem[0x0071] = cpu.A;
+L_6a7c:;
+    /* 6a7c */
+    LDY(0x0C);
+    /* 6a7e */
+    CLC();
+    /* 6a7f */
+    LDA(mem[(0x0679)+cpu.Y]);
+    /* 6a82 */
+    ADC(mem[0x06CC]);
+    /* 6a85 */
+    if (!cpu.Z) goto L_6a89;
+    /* 6a87 */
+    LDA(0xFF);
+L_6a89:;
+    /* 6a89 */
+    mem[(0x0679)+cpu.Y] = cpu.A;
+    /* 6a8c */
+    FUN_5614(); return;
 }
 
 void FUN_7f74(void) {
-    /* TODO: should start execution at $7F74 inside FUN_7f60.
-       Currently approximated as a full call from $7F60. */
-    FUN_7f60();
+    /* 7f74 */
+    LDA(0x00);
+    /* 7f76 */
+    mem[0x0632] = cpu.A;
+    /* 7f79 */
+    return;
 }
 
 void FUN_a63a(void) {
-    /* TODO: should start execution at $A63A inside terrain_gen_A613.
-       Currently approximated as a full call from $A613. */
-    terrain_gen_A613();
+    /* a63a */
+    return;
 }
 
 void FUN_a6cb(void) {
-    /* TODO: should start execution at $A6CB inside FUN_a63b.
-       Currently approximated as a full call from $A63B. */
-    FUN_a63b();
+    /* a6cb */
+    TYA();
+    /* a6cc */
+    CMP(mem[(0x260E)+cpu.X]);
+    /* a6cf */
+    if (!cpu.C) { FUN_a6f8(); return; }
+    /* a6d1 */
+    if (cpu.Z) { FUN_a6f8(); return; }
+    FUN_a6d3(); return;
 }
 
 void FUN_a6d3(void) {
-    /* TODO: should start execution at $A6D3 inside FUN_a63b.
-       Currently approximated as a full call from $A63B. */
-    FUN_a63b();
+    /* a6d3 */
+    CPY(0x97);
+    /* a6d5 */
+    if (cpu.C) { FUN_a6f8(); return; }
+    /* a6d7 */
+    mem[0x28E2] = cpu.Y;
+    /* a6da */
+    LDA(mem[(0x28CA)+cpu.Y]);
+    /* a6dd */
+    mem[0x0080] = cpu.A;
+    /* a6df */
+    LDA(mem[(0x28FA)+cpu.Y]);
+    /* a6e2 */
+    mem[0x0081] = cpu.A;
+    /* a6e4 */
+    LDY(mem[(0xBD00)+cpu.X]);
+    /* a6e7 */
+    LDA(mem[(0xBC00)+cpu.X]);
+    /* a6ea */
+    mem[0x00B5] = cpu.A;
+    /* a6ec */
+    LSR_A();
+    /* a6ed */
+    ORA(mem[0x00B5]);
+    /* a6ef */
+    AND(mem[0x0058]);
+    /* a6f1 */
+    ORA(bus_read(ZP_IND_Y(0x80)));
+    /* a6f3 */
+    bus_write(ZP_IND_Y(0x80), cpu.A);
+    /* a6f5 */
+    LDY(mem[0x28E2]);
+    FUN_a6f8(); return;
+}
+
+void FUN_a6f8(void) {
+    /* a6f8 */
+    return;
+    FUN_a821(); return;
 }
 
 void FUN_a821(void) {
-    /* TODO: should start execution at $A821 inside FUN_a63b.
-       Currently approximated as a full call from $A63B. */
-    FUN_a63b();
+    /* a821 */
+    return;
 }
 
 void FUN_a909(void) {
-    /* TODO: should start execution at $A909 inside FUN_a8af.
-       Currently approximated as a full call from $A8AF. */
-    FUN_a8af();
+    /* a909 */
+    return;
 }
 
 void FUN_aad4(void) {
-    /* TODO: should start execution at $AAD4 inside game_sub_AACF.
-       Currently approximated as a full call from $AACF. */
-    game_sub_AACF();
+    /* aad4 */
+    SEC();
+    /* aad5 */
+    LDA(mem[0x005B]);
+    /* aad7 */
+    SBC(0x40);
+    /* aad9 */
+    mem[0x005B] = cpu.A;
+    /* aadb */
+    if (cpu.C) goto L_aadf;
+    /* aadd */
+    DEC_M(0x005C);
+L_aadf:;
+    /* aadf */
+    LDX(mem[0x28F0]);
+    /* aae2 */
+    LDY(mem[0x28F2]);
+    /* aae5 */
+    CPY(0x6C);
+    /* aae7 */
+    if (!cpu.C) { FUN_ab26(); return; }
+L_aae9:;
+    /* aae9 */
+    LDA(mem[0x28F4]);
+    /* aaec */
+    mem[0x28FA] = cpu.A;
+L_aaef:;
+    /* aaef */
+    CPX(0x2C);
+    /* aaf1 */
+    if (!cpu.C) goto L_aafa;
+    /* aaf3 */
+    CPX(0xD4);
+    /* aaf5 */
+    if (cpu.C) goto L_aafa;
+    /* aaf7 */
+    FUN_a6d3();
+L_aafa:;
+    /* aafa */
+    INX();
+    /* aafb */
+    DEC_M(0x28FA);
+    /* aafe */
+    if (!cpu.Z) goto L_aaef;
+    /* ab00 */
+    CLC();
+    /* ab01 */
+    LDA(mem[0x28F3]);
+    /* ab04 */
+    ADC(mem[0x28F9]);
+    /* ab07 */
+    mem[0x28F3] = cpu.A;
+    /* ab0a */
+    if (!cpu.C) goto L_ab10;
+    /* ab0c */
+    INC_M(0x28F4);
+    /* ab0f */
+    CLC();
+L_ab10:;
+    /* ab10 */
+    LDA(mem[0x28EF]);
+    /* ab13 */
+    ADC(mem[0x005B]);
+    /* ab15 */
+    mem[0x28EF] = cpu.A;
+    /* ab18 */
+    LDA(mem[0x28F0]);
+    /* ab1b */
+    ADC(mem[0x005C]);
+    /* ab1d */
+    mem[0x28F0] = cpu.A;
+    /* ab20 */
+    TAX();
+    /* ab21 */
+    DEY();
+    /* ab22 */
+    CPY(0x6C);
+    /* ab24 */
+    if (cpu.C) goto L_aae9;
+    FUN_ab26(); return;
+}
+
+void FUN_ab26(void) {
+L_ab26:;
+    /* ab26 */
+    return;
+    FUN_ab27(); return;
+}
+
+void FUN_ab27(void) {
+    /* ab27 */
+    LDX(mem[0x28F0]);
+    /* ab2a */
+    LDY(mem[0x28F2]);
+L_ab2d:;
+    /* ab2d */
+    CPX(0x2C);
+    /* ab2f */
+    if (!cpu.C) { FUN_ab26(); return; }
+    /* ab31 */
+    CPX(0xD4);
+    /* ab33 */
+    if (cpu.C) { FUN_ab26(); return; }
+    /* ab35 */
+    CPY(0x6C);
+    /* ab37 */
+    if (!cpu.C) { FUN_ab26(); return; }
+    /* ab39 */
+    LDA(mem[0x28F4]);
+    /* ab3c */
+    mem[0x28FA] = cpu.A;
+L_ab3f:;
+    /* ab3f */
+    FUN_a6d3();
+    /* ab42 */
+    DEY();
+    /* ab43 */
+    CPY(0x6C);
+    /* ab45 */
+    if (!cpu.C) goto L_ab4c;
+    /* ab47 */
+    DEC_M(0x28FA);
+    /* ab4a */
+    if (!cpu.Z) goto L_ab3f;
+L_ab4c:;
+    /* ab4c */
+    CLC();
+    /* ab4d */
+    LDA(mem[0x28F3]);
+    /* ab50 */
+    ADC(mem[0x28F9]);
+    /* ab53 */
+    mem[0x28F3] = cpu.A;
+    /* ab56 */
+    if (!cpu.C) goto L_ab5c;
+    /* ab58 */
+    INC_M(0x28F4);
+    /* ab5b */
+    CLC();
+L_ab5c:;
+    /* ab5c */
+    LDA(mem[0x28F1]);
+    /* ab5f */
+    ADC(mem[0x28F7]);
+    /* ab62 */
+    mem[0x28F1] = cpu.A;
+    /* ab65 */
+    LDA(mem[0x28F2]);
+    /* ab68 */
+    ADC(mem[0x28F8]);
+    /* ab6b */
+    mem[0x28F2] = cpu.A;
+    /* ab6e */
+    TAY();
+    /* ab6f */
+    LDA(mem[0x005C]);
+    /* ab71 */
+    if (cpu.N) goto L_ab77;
+    /* ab73 */
+    INX();
+    /* ab74 */
+    goto L_ab2d;
+L_ab77:;
+    /* ab77 */
+    DEX();
+    /* ab78 */
+    goto L_ab2d;
 }
 
 void FUN_b756(void) {
-    /* TODO: should start execution at $B756 inside FUN_b70c.
-       Currently approximated as a full call from $B70C. */
-    FUN_b70c();
+    /* b756 */
+    LDA(mem[0x0035]);
+    /* b758 */
+    mem[0x0673] = cpu.A;
+    /* b75b */
+    LDA(0xA0);
+    /* b75d */
+    mem[0x0665] = cpu.A;
+    /* b760 */
+    LDA(mem[0x0014]);
+    /* b762 */
+    AND(0x05);
+    /* b764 */
+    CLC();
+    /* b765 */
+    ADC(0x02);
+    /* b767 */
+    mem[0x0681] = cpu.A;
+    /* b76a */
+    LDY(0x08);
+    /* b76c */
+    game_sub_55FC(); return;
 }
 

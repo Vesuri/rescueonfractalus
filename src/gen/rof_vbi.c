@@ -3,6 +3,7 @@
    Add new handlers here as they are identified in Phase 4/5 analysis. */
 #include "../platform/platform_c.h"
 #include "rof_decl.h"
+#include "rof_manual.h"
 
 void rof_register_vbi_handlers(void) {
     /* VBI handlers */

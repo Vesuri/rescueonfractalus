@@ -180,8 +180,10 @@ void PlatformSDL::hwWrite(uint16_t addr, uint8_t val) {
         return;
     }
     /* ANTIC display-list pointer — cache it for the renderer. */
-    if (addr == 0xD402) { displayListPtr = (displayListPtr & 0xFF00) | val; return; }
-    if (addr == 0xD403) { displayListPtr = (displayListPtr & 0x00FF) | ((uint16_t)val << 8); return; }
+    if (addr == 0xD402) { displayListPtr = (displayListPtr & 0xFF00) | val;
+        if (getenv("ROF_DEBUG")) fprintf(stderr, "[dlist] D402<=%02x -> DL=%04x\n", val, displayListPtr); return; }
+    if (addr == 0xD403) { displayListPtr = (displayListPtr & 0x00FF) | ((uint16_t)val << 8);
+        if (getenv("ROF_DEBUG")) fprintf(stderr, "[dlist] D403<=%02x -> DL=%04x\n", val, displayListPtr); return; }
     /* Player/Missile H-positions and sizes (write-only hardware regs). */
     if (addr >= 0xD000 && addr <= 0xD003) { hposP[addr - 0xD000] = val; return; }
     if (addr >= 0xD004 && addr <= 0xD007) { hposM[addr - 0xD004] = val; return; }
@@ -459,8 +461,37 @@ SDL_Color PlatformSDL::atariColor(uint8_t c) const {
    Supports ANTIC modes 0 (blank), 1 (JMP), E (4-colour bitmap), F (mono).
    Other modes render as background fill; refined in Phase 4.            */
 void PlatformSDL::renderAtariDisplay() {
+    /* --- env-gated runtime diagnostics (ROF_DEBUG=1) --- */
+    static int dbgFrame = -1;
+    static bool dbgOn = (getenv("ROF_DEBUG") != nullptr);
+    dbgFrame++;
+    bool dbgNow = dbgOn && (dbgFrame < 3 || (dbgFrame % 50) == 0);
+    if (dbgNow) {
+        uint16_t dl = (displayListPtr != 0) ? displayListPtr
+                       : (uint16_t)(mem[0x0230] | (mem[0x0231] << 8));
+        fprintf(stderr,
+            "[dbg f%d] RTCLOK=%02x%02x%02x dmactl=%02x DL=%04x(shadow %02x%02x) "
+            "chbase=%02x(shadow %02x) pmbase=%02x gractl=%02x vbiFn=%p\n",
+            dbgFrame, mem[0x12], mem[0x13], mem[0x14], dmactl, dl,
+            mem[0x0231], mem[0x0230], chbase, mem[0x02F4], pmbase, gractl,
+            (void*)interruptFn);
+        fprintf(stderr, "[dbg f%d] colHW=", dbgFrame);
+        for (int i = 0; i < 9; i++) fprintf(stderr, "%02x ", colHW[i]);
+        fprintf(stderr, "| shadows 2C0..2C8=");
+        for (int i = 0; i < 9; i++) fprintf(stderr, "%02x ", mem[0x02C0 + i]);
+        fprintf(stderr, "\n[dbg f%d] DL bytes:", dbgFrame);
+        for (int i = 0; i < 128; i++) fprintf(stderr, " %02x", mem[(dl + i) & 0xFFFF]);
+        fprintf(stderr, "\n[dbg f%d] c1=%02x c2=%02x c3=%02x c4=%02x  rowaddr-lo@073D:",
+                dbgFrame, mem[0xC1], mem[0xC2], mem[0xC3], mem[0xC4]);
+        for (int i = 0; i < 24; i++) fprintf(stderr, " %02x", mem[0x073D + i]);
+        fprintf(stderr, "\n[dbg f%d] rowaddr-hi@0793:", dbgFrame);
+        for (int i = 0; i < 24; i++) fprintf(stderr, " %02x", mem[0x0793 + i]);
+        fprintf(stderr, "\n");
+    }
+
     /* If DMA is disabled (DMACTL bit 5 clear), ANTIC outputs a blank screen. */
     if (!(dmactl & 0x20)) {
+        if (dbgNow) fprintf(stderr, "[dbg f%d] DMA disabled -> blank\n", dbgFrame);
         SDL_FillRect(bufferSurface, nullptr, 0);
         return;
     }

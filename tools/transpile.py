@@ -39,6 +39,26 @@ MANUAL_FUNCS = {0x1a62}   # screen_page_swap
 
 HW_BASE, HW_END = 0xD000, 0xD800   # bus_read/bus_write range
 
+# Spin-wait hook injection.
+# When a backward branch loops back to one of these addresses, inject the
+# listed platform call(s) so the SDL event loop / VBI can fire.  Without
+# these, tight C spin-wait loops starve the platform and VBI never fires.
+# Key: 6502 address of the loop-back label. Value: C statement(s) to inject.
+SPINWAIT_HOOKS = {
+    0x3C75: 'platform_poll_events();',           # VCOUNT position wait
+    0x3CB8: 'platform_tick_vbi(); platform_render_frame();',  # RTCLOK frame wait
+    0x3F6D: 'platform_tick_vbi(); platform_render_frame();',
+    0x4F43: 'platform_tick_vbi(); platform_render_frame();',
+    0x5C4B: 'platform_tick_vbi(); platform_render_frame();',
+    0x61C6: 'platform_tick_vbi(); platform_render_frame();',
+    0x63D7: 'platform_tick_vbi(); platform_render_frame();',
+    0x645B: 'platform_tick_vbi(); platform_render_frame();',
+    0x646C: 'platform_tick_vbi(); platform_render_frame();',
+    0x6478: 'platform_tick_vbi(); platform_render_frame();',
+    0x656E: 'platform_tick_vbi(); platform_render_frame();',
+    0x79D0: 'platform_tick_vbi(); platform_render_frame();',
+}
+
 # ---------------------------------------------------------------------------
 # Parse symbols.csv → addr_int → name
 # ---------------------------------------------------------------------------
@@ -293,7 +313,11 @@ def translate_insn(insn, func, all_funcs_by_start, symbols, local_targets,
         target = val
         flag   = BRANCH_FLAGS[mnem]
         if target in local_targets:
-            lines.append(f'    if ({flag}) goto L_{target:04x};')
+            hook = SPINWAIT_HOOKS.get(target, '')
+            if hook:
+                lines.append(f'    if ({flag}) {{ {hook} goto L_{target:04x}; }}')
+            else:
+                lines.append(f'    if ({flag}) goto L_{target:04x};')
         else:
             # Cross-function branch → conditional tail call.
             name = resolve_target_name(target)
@@ -455,8 +479,15 @@ def translate_insn(insn, func, all_funcs_by_start, symbols, local_targets,
 def translate_func(func, all_funcs_by_start, symbols,
                    external_entry_labels=None,
                    external_entries=None, wrapper_names=None):
-    """external_entry_labels: addresses within this function needing L_ labels.
-    external_entries / wrapper_names: passed through to translate_insn."""
+    """Translate one 6502 function to C.
+
+    external_entry_labels: set of addresses within this function that are
+    entered from outside (e.g. JSR/JMP to a mid-body address).  These are
+    used as split-points: the function body stops at each one and emits a
+    tail-call to the corresponding wrapper, so that external callers can
+    invoke the correct code slice directly.  They are NOT emitted as goto
+    labels in the container — instead they become function calls.
+    """
     start = func['start']
     name  = func['name']
     insns = func['insns']
@@ -468,22 +499,57 @@ def translate_func(func, all_funcs_by_start, symbols,
         return [f'/* {name} @ ${start:04X}: manual implementation in rof_manual.c */']
 
     func_end = func['end']
+    # local_targets: branch/JMP targets that stay in this function's body.
+    # Exclude external entry labels — those become tail-calls, not gotos.
+    # Also exclude targets at or beyond the first split point: those are now
+    # in a different C function and cannot be reached via goto.
+    first_split = min(external_entry_labels) if external_entry_labels else None
     local_targets = set()
     for insn in insns:
         mnem, op, nbytes = insn['mnem'], insn['op'], len(insn['bytes'])
         if mnem in BRANCH_FLAGS or mnem == 'JMP':
             mode, val, idx = parse_operand(op, nbytes, symbols)
-            if start <= val <= func_end:
-                local_targets.add(val)
+            if start <= val <= func_end and val not in external_entry_labels:
+                if first_split is None or val < first_split:
+                    local_targets.add(val)
+
+    TERMINATORS = {'RTS', 'RTI', 'JMP', 'BRK'}
 
     lines = [f'void {name}(void) {{']
+    hit_split = False
+    last_insn = None
     for insn in insns:
         addr = insn['addr']
-        if addr in local_targets or addr in external_entry_labels:
+        # Split point: stop the current function and tail-call the wrapper.
+        if addr in external_entry_labels:
+            wname = wrapper_names.get(addr, f'FUN_{addr:04x}')
+            lines.append(f'    {wname}(); return;')
+            hit_split = True
+            break   # do not translate addr or any subsequent instructions
+        if addr in local_targets:
             lines.append(f'L_{addr:04x}:;')
         stmt_lines = translate_insn(insn, func, all_funcs_by_start, symbols,
                                     local_targets, external_entries, wrapper_names)
         lines.extend(stmt_lines)
+        last_insn = insn
+
+    # Fall-through detection: if the function did not end with a terminator
+    # (RTS/RTI/JMP/BRK) and was not cut by a split point, the 6502 code
+    # falls through into the next function.  Emit a tail-call to it.
+    if not hit_split and last_insn is not None:
+        last_mnem = last_insn['mnem']
+        if last_mnem not in TERMINATORS:
+            next_addr = last_insn['addr'] + len(last_insn['bytes'])
+            # Prefer a known function start; else check wrapper table.
+            next_func = all_funcs_by_start.get(next_addr)
+            if next_func and next_func['start'] not in MANUAL_FUNCS:
+                lines.append(f'    {next_func["name"]}(); return;')
+            elif next_addr in wrapper_names:
+                lines.append(f'    {wrapper_names[next_addr]}(); return;')
+            elif next_func:
+                next_name = symbols.get(next_addr, f'FUN_{next_addr:04x}')
+                lines.append(f'    {next_name}(); return;')
+
     lines.append('}')
     lines.append('')
     return lines
@@ -547,6 +613,55 @@ def main():
         wrapper_names[addr] = wname
 
     # -----------------------------------------------------------------------
+    # Cascading split fixpoint.
+    # When a function is split at address S, code in any segment before S
+    # may have branches/JMPs that target addresses inside the post-split
+    # tail (i.e. >= S within the same container).  Those target addresses
+    # also need to become split functions so they can be called by name.
+    # Iterate until no new entries are discovered.
+    # -----------------------------------------------------------------------
+    def segments_for_container(c):
+        """Return [(seg_start, seg_end)] for all segments of container c."""
+        splits = sorted(
+            a for a, cont in external_entries.items() if cont['start'] == c['start']
+        )
+        starts = [c['start']] + splits
+        ends   = splits + [c['end'] + 1]
+        return list(zip(starts, ends))
+
+    changed = True
+    while changed:
+        changed = False
+        for container in funcs:
+            for seg_start, seg_end in segments_for_container(container):
+                for insn in container['insns']:
+                    if insn['addr'] < seg_start:
+                        continue
+                    if insn['addr'] >= seg_end:
+                        break
+                    mnem, op, nbytes = insn['mnem'], insn['op'], len(insn['bytes'])
+                    if mnem not in BRANCH_FLAGS and mnem != 'JMP':
+                        continue
+                    mode, target, _ = parse_operand(op, nbytes, symbols)
+                    if target <= 0:
+                        continue
+                    # Branch/JMP from within this segment to AFTER this segment
+                    # but still within the container — needs a new split point.
+                    # Branch crosses segment boundary: target is in the container's
+                    # range but outside the current segment (forward OR backward).
+                    # Skip targets that are already Ghidra function starts — those
+                    # are handled as normal tail-calls, not split wrappers.
+                    in_container = container['start'] <= target <= container['end']
+                    in_segment   = seg_start <= target < seg_end
+                    already_func = target in funcs_by_start
+                    if in_container and not in_segment and not already_func and target not in external_entries:
+                        external_entries[target] = container
+                        external_labels_for_func[container['start']].add(target)
+                        wname = symbols.get(target, f'FUN_{target:04x}')
+                        wrapper_names[target] = wname
+                        changed = True
+
+    # -----------------------------------------------------------------------
     # Collect all branch/JMP/JSR targets that fall in no function range.
     # Ghidra sometimes misses functions for gap addresses. Generate stubs.
     # -----------------------------------------------------------------------
@@ -598,6 +713,7 @@ def main():
         '#include "../cpu/cpu.h"',
         '#include "../cpu/bus.h"',
         '#include "rof_decl.h"',
+        '#include "../platform/platform_c.h"',
         '',
     ]
     body = []
@@ -617,19 +733,47 @@ def main():
             body.append(f'void {name}(void) {{ /* stub: no instructions found at ${addr:04X} */ }}')
         body.append('')
 
-    # Emit wrappers for mid-function entry points.
-    body.append('/* === Wrappers for cross-function branch/JMP entry points === */')
-    body.append('/* FIXME Phase3: these enter functions mid-body — split target functions. */')
+    # Emit split functions for mid-function entry points.
+    # Each wrapper is the code from the entry address to the end of its
+    # container function — a faithful slice, not an approximation.
+    body.append('/* === Split functions for cross-function entry points === */')
+    body.append('/* Each function starts at the labelled address inside its container. */')
     for addr in sorted(external_entries):
-        container = external_entries[addr]
-        wname     = wrapper_names[addr]
-        cname     = container['name']
-        body.append(f'void {wname}(void) {{')
-        body.append(f'    /* TODO: should start execution at ${addr:04X} inside {cname}.')
-        body.append(f'       Currently approximated as a full call from ${container["start"]:04X}. */')
-        body.append(f'    {cname}();')
-        body.append(f'}}')
-        body.append('')
+        container  = external_entries[addr]
+        wname      = wrapper_names[addr]
+
+        # Build an instruction index for the container.
+        insns = container['insns']
+        addr_to_idx = {insn['addr']: i for i, insn in enumerate(insns)}
+        start_idx   = addr_to_idx.get(addr)
+
+        if start_idx is None:
+            # Address not found as an instruction start — emit a plain comment.
+            body.append(f'void {wname}(void) {{')
+            body.append(f'    /* entry ${addr:04X} not found in {container["name"]} */')
+            body.append(f'}}')
+            body.append('')
+            continue
+
+        # Build a synthetic function dict for the slice.
+        sliced_insns = insns[start_idx:]
+        sliced_func  = {
+            'start': addr,
+            'end':   container['end'],
+            'name':  wname,
+            'insns': sliced_insns,
+        }
+
+        # External entry labels within the slice (strictly after addr).
+        slice_ext_labels = {
+            a for a in external_labels_for_func.get(container['start'], set())
+            if a > addr
+        }
+
+        body.extend(translate_func(sliced_func, funcs_by_start, symbols,
+                                   external_entry_labels=slice_ext_labels,
+                                   external_entries=external_entries,
+                                   wrapper_names=wrapper_names))
 
     OUT_C.write_text('\n'.join(header + body) + '\n')
     print(f'Wrote {OUT_C}  ({len(header)+len(body)} lines)')
