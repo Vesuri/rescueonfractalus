@@ -858,6 +858,19 @@ void PlatformSDL::renderAtariDisplay() {
            that were active when this entry started (set by the previous DLI). */
         renderPMGraphicsRange(entryStartY, scanY - 1);
     }
+
+    /* Below the last display-list mode line, ANTIC outputs the lower border =
+       current COLBK until the frame ends. Re-fill those rows with the LIVE
+       colHW[8] (post-DLI), not the frame-start value the initial fill used —
+       otherwise they keep a stale colour. (atari800 shows black here because its
+       COLBK is $00 at frame end; ours tracks COLBK too, so it matches once the
+       cockpit COLBK is correct.) */
+    if (scanY < ROF_NATIVE_H) {
+        SDL_Rect r = { 0, scanY, ROF_NATIVE_W, ROF_NATIVE_H - scanY };
+        SDL_Color bg = atariColor(colHW[8]);
+        SDL_FillRect(bufferSurface, &r,
+                     SDL_MapRGB(bufferSurface->format, bg.r, bg.g, bg.b));
+    }
 }
 
 /* Render Player/Missile graphics for display scan lines [fromY, toY] using the
