@@ -743,15 +743,24 @@ void PlatformSDL::renderAtariDisplay() {
             }
             dataAddr = (dataAddr + rowBytes) & 0xFFFF;
         } else if (mode == 0x2 || mode == 0x3 || mode == 0x4 || mode == 0x5) {
-            /* ANTIC modes 2-5: 40-column character modes, 1-pixel-per-bit,
-               320 display pixels wide (8 bits per char * 40 chars).
-               Mode 2: 40 chars, 8 scans. Mode 3: 10 scans. Mode 4: 8 scans, 2 colors.
-               Mode 5: 16 scans.  All use CHBASE charset.                  */
+            /* ANTIC character modes, 40 chars/line (WIDE 48, NARROW 24).
+               Modes 2/3: hi-res 1-bit-per-pixel, 8 px/char, 2 colours (COLPF2 fg
+                 on COLBK), with NTSC artifact blending of adjacent differing bits.
+               Modes 4/5: 4-colour, 2 BITS per pixel → 4 px/char (each 2 buffer px).
+                 2-bit value → 00=COLBK, 01=COLPF0, 10=COLPF1, 11=COLPF2 (char bit7
+                 =0) / COLPF3 (bit7=1). Glyph index = char & 0x7F. (Matches atari800
+                 draw_antic_4: lookup2 over chdata&0xC0/0x30/0x0C/0x03.)             */
+            bool twoBpp = (mode == 4 || mode == 5);
             uint16_t csBase = (uint16_t)chbase << 8;
             int charsPerRow = renderCount;   /* WIDE=48, NORMAL=40, NARROW=24 */
             int scansPerChar = (mode == 3) ? 10 : (mode == 5) ? 16 : 8;
             int charScan = 0;
             uint16_t rowAddr = dataAddr;
+            uint32_t pf0Px = SDL_MapRGB(bufferSurface->format, pf0Clr.r, pf0Clr.g, pf0Clr.b);
+            uint32_t pf1Px = SDL_MapRGB(bufferSurface->format, pf1Clr.r, pf1Clr.g, pf1Clr.b);
+            uint32_t pf2Px = SDL_MapRGB(bufferSurface->format, pf2Clr.r, pf2Clr.g, pf2Clr.b);
+            SDL_Color pf3Clr = atariColor(colHW[7]);
+            uint32_t pf3Px = SDL_MapRGB(bufferSurface->format, pf3Clr.r, pf3Clr.g, pf3Clr.b);
             for (int s = 0; s < scans && scanY < ROF_NATIVE_H; s++, scanY++) {
                 uint32_t* row = reinterpret_cast<uint32_t*>(
                     static_cast<uint8_t*>(bufferSurface->pixels) +
@@ -760,25 +769,21 @@ void PlatformSDL::renderAtariDisplay() {
                     (charScan < 8 ? charScan : 7) : charScan;
                 for (int c = 0; c < charsPerRow; c++) {
                     uint8_t chByte = mem[(rowAddr + c) & 0xFFFF];
-                    bool inv;
-                    uint8_t ci;
-                    if (mode == 4 || mode == 5) {
-                        inv = false;
-                        ci  = chByte & 0x3F;
-                    } else {
-                        inv = (chByte & 0x80) != 0;
-                        ci  = chByte & 0x7F;
+                    if (twoBpp) {
+                        uint8_t bits = mem[(csBase + (chByte & 0x7F) * 8 + bitmapRow) & 0xFFFF];
+                        uint32_t pf3orPf2 = (chByte & 0x80) ? pf3Px : pf2Px;
+                        uint32_t tab[4] = { bgPx, pf0Px, pf1Px, pf3orPf2 };
+                        for (int pix = 0; pix < 4; pix++) {
+                            uint32_t px = tab[(bits >> (6 - pix * 2)) & 3];
+                            int x = c * 8 + pix * 2 + xOff;
+                            if (x >= 0 && x < ROF_NATIVE_W)     row[x]     = px;
+                            if (x+1 >= 0 && x+1 < ROF_NATIVE_W) row[x + 1] = px;
+                        }
+                        continue;
                     }
-                    uint8_t bits = mem[(csBase + ci * 8 + bitmapRow) & 0xFFFF];
-                    SDL_Color fgClr = pf2Clr;
-                    if (mode == 4 || mode == 5) {
-                        SDL_Color pf3Clr = atariColor(colHW[7]);
-                        const SDL_Color* pfTab[4] = {
-                            &pf0Clr, &pf1Clr, &pf2Clr, &pf3Clr };
-                        fgClr = *pfTab[(chByte >> 6) & 3];
-                    }
-                    uint32_t fgPx = SDL_MapRGB(bufferSurface->format,
-                                               fgClr.r, fgClr.g, fgClr.b);
+                    /* modes 2/3: 1 bpp + NTSC artifact blend */
+                    bool inv = (chByte & 0x80) != 0;
+                    uint8_t bits = mem[(csBase + (chByte & 0x7F) * 8 + bitmapRow) & 0xFFFF];
                     auto blended = [&](uint32_t a, uint32_t b) -> uint32_t {
                         return SDL_MapRGB(bufferSurface->format,
                             (((a)&0xFF) + ((b)&0xFF)) >> 1,
@@ -789,8 +794,8 @@ void PlatformSDL::renderAtariDisplay() {
                         int hibit = 7 - pair * 2, lobit = hibit - 1;
                         bool hi = (((bits >> hibit) & 1) != 0) != inv;
                         bool lo = (((bits >> lobit) & 1) != 0) != inv;
-                        uint32_t hiPx = hi ? fgPx : bgPx;
-                        uint32_t loPx = lo ? fgPx : bgPx;
+                        uint32_t hiPx = hi ? pf2Px : bgPx;
+                        uint32_t loPx = lo ? pf2Px : bgPx;
                         uint32_t mix  = (hi == lo) ? hiPx : blended(hiPx, loPx);
                         int px = c * 8 + pair * 2 + xOff;
                         if (px >= 0 && px < ROF_NATIVE_W)     row[px]     = mix;
@@ -802,7 +807,11 @@ void PlatformSDL::renderAtariDisplay() {
                     rowAddr = (rowAddr + charsPerRow) & 0xFFFF;
                 }
             }
-            dataAddr = (rowAddr + charsPerRow) & 0xFFFF;
+            /* rowAddr already advanced past this entry's char row(s) during the
+               loop; the ANTIC memory counter ends there. (Adding charsPerRow again
+               here double-counted, leaving a no-LMS following entry — e.g. the
+               modeD canopy rows 40-41 — reading 48 bytes too far → garbage.) */
+            dataAddr = rowAddr;
         } else if (mode == 0x6 || mode == 0x7) {
             /* ANTIC modes 6/7: 20-column colour-character modes.
                Mode 6: 8 scans/char, mode 7: 16 scans/char.
@@ -840,7 +849,7 @@ void PlatformSDL::renderAtariDisplay() {
                     rowAddr = (rowAddr + charsPerRow) & 0xFFFF;
                 }
             }
-            dataAddr = (rowAddr + charsPerRow) & 0xFFFF;
+            dataAddr = rowAddr;   /* rowAddr already advanced past this row (see mode 2-5) */
         } else {
             /* Modes 8–C not yet implemented; fill with background. */
             scanY += scans;
