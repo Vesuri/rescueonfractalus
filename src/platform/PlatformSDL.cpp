@@ -520,27 +520,28 @@ void PlatformSDL::renderAtariDisplay() {
        Only reset on an LMS instruction; otherwise auto-advances after each
        rendered row (same semantics as the real ANTIC data counter).       */
     uint16_t dataAddr = 0;
-    /* DLI fires after each entry's playfield renders, before its PM renders.
-       No pendingDLI flag needed — firing is inline at each renderPMGraphicsRange
-       call site, so HPOSM changes reach the current entry's PM immediately.   */
+    /* On real hardware, DLI fires at END of the last scanline of the entry
+       that has bit 7 set (not before).  We model this with a pendingDLI
+       flag: set when we see bit 7, fired at the start of the NEXT entry. */
+    bool pendingDLI = false;
 
     while (scanY < ROF_NATIVE_H && guard++ < 1024) {
         int entryStartY = scanY;  /* PM rendering uses HPOSM snapshot for this segment */
         uint8_t instr = mem[dp++];
         uint8_t mode  = instr & 0x0F;
         bool    lms   = (instr & 0x40) != 0;
-        /* NOTE: DLI for this entry fires AFTER its playfield renders but BEFORE
-           its PM renders (see each renderPMGraphicsRange call site below).
-           This means colour/PRIOR changes are visible in the next entry's
-           playfield snapshot, while HPOSM/HPOSP changes are visible in this
-           entry's PM — matching hardware where PM position registers are live
-           while playfield data has a one-row pipeline latency.                 */
+
+        /* Fire any DLI pending from the PREVIOUS entry (= end of that entry). */
+        if (pendingDLI && dliAddr != 0) {
+            indirectJmp(dliAddr);
+            pendingDLI = false;
+        }
 
         if (mode == 0) {
             /* Blank lines: count = bits 6:4 + 1. */
             int count = ((instr >> 4) & 0x7) + 1;
             scanY += count;
-            if ((instr & 0x80) && dliAddr != 0) indirectJmp(dliAddr);
+            if (instr & 0x80) pendingDLI = true;  /* blank can have DLI too */
             renderPMGraphicsRange(entryStartY, scanY - 1);
             continue;
         }
@@ -559,7 +560,8 @@ void PlatformSDL::renderAtariDisplay() {
             dp += 2;
         }
 
-        /* DLI fires after playfield, before PM — see renderPMGraphicsRange sites. */
+        /* Remember this entry's DLI bit — it fires after rendering. */
+        if (instr & 0x80) pendingDLI = true;
 
         /* Snapshot PRIOR — DLI from previous entry has already updated gprior.
            Bits 7:6 of PRIOR select GTIA display mode for this row:
@@ -610,12 +612,7 @@ void PlatformSDL::renderAtariDisplay() {
         int renderCount = (pfBits == 3) ? rowBytes * 6 / 5 :
                           (pfBits == 1) ? rowBytes * 3 / 5 : rowBytes;
 
-        if (dataAddr == 0) {
-            scanY += scans;
-            if ((instr & 0x80) && dliAddr != 0) indirectJmp(dliAddr);
-            renderPMGraphicsRange(entryStartY, scanY - 1);
-            continue;
-        }
+        if (dataAddr == 0) { scanY += scans; renderPMGraphicsRange(entryStartY, scanY - 1); continue; }
 
         /* GTIA modes 9 and 10: override all ANTIC pixel modes.
            Both produce 80 display pixels per line, each 4 colour-clocks
@@ -658,7 +655,6 @@ void PlatformSDL::renderAtariDisplay() {
                 /* dataAddr does NOT advance per scan; advance once after entry */
             }
             dataAddr = (dataAddr + rowBytes) & 0xFFFF;
-            if ((instr & 0x80) && dliAddr != 0) indirectJmp(dliAddr);
             renderPMGraphicsRange(entryStartY, scanY - 1);
             continue;
         }
@@ -816,10 +812,8 @@ void PlatformSDL::renderAtariDisplay() {
             /* Modes 8–C not yet implemented; fill with background. */
             scanY += scans;
         }
-        /* Fire this entry's DLI now (after playfield, before PM) so HPOSM/HPOSP
-           changes apply to this entry's PM rendering, while colour/PRIOR changes
-           become visible in the next entry's playfield snapshot.               */
-        if ((instr & 0x80) && dliAddr != 0) indirectJmp(dliAddr);
+        /* PM overlay for this entry's scan lines, with the HPOSM/HPOSP values
+           that were active when this entry started (set by the previous DLI). */
         renderPMGraphicsRange(entryStartY, scanY - 1);
     }
 }
