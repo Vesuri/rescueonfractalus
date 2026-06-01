@@ -1,4 +1,5 @@
 #include "PlatformSDL.h"
+#include "atari_os_font.h"
 #include "../cpu/cpu.h"
 #include <cstdio>
 #include <cstring>
@@ -131,6 +132,15 @@ int PlatformSDL::loadImage(const char* path) {
     size_t n = fread((uint8_t*)mem, 1, 65536, f);
     fclose(f);
     printf("[rof] loaded %zu bytes from %s\n", n, path);
+
+    /* Provide the Atari OS character set at $E000. On real XL/XE hardware $E000
+       is OS ROM (banked in when read); the game's "LEVEL nn" briefing routine
+       (FUN_6750/FUN_6773) reads glyphs from $E000+char*8. A flat rof.xex image
+       has nothing there, so the text rendered blank. The game does not store
+       data in $E000-$E3FF RAM (confirmed: that region is 0 in the reference
+       memory dump), so placing the font here is safe. */
+    memcpy((uint8_t*)mem + 0xE000, kAtariOSFont, sizeof(kAtariOSFont));
+
     /* Sync cached registers from OS shadow values in the loaded image. */
     displayListPtr = mem[0x0230] | (mem[0x0231] << 8);
     dmactl  = mem[0x022F];  /* SDMCTL shadow */
