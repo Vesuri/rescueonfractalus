@@ -837,6 +837,12 @@ void PlatformSDL::renderPMGraphicsRange(int fromY, int toY) {
     int  playerStride = doubleLine ? 128 : 256;
     int  pmBaseAddr   = (int)pmbase << 8;
     int  maxScan      = doubleLine ? 128 : 256;
+    /* PM bitmap byte B represents NTSC scan line B. Our DL scan counter starts
+       at 0 for the first DL entry, but the NTSC frame has PM_DL_OFFSET scan
+       lines before the DL starts (confirmed: game writes frame data at byte 49
+       for DL scanY 42, giving offset 49-42=7). Subtract the offset when mapping
+       bitmap byte → display scan row so byte 49 renders at scanY 42. */
+    const int PM_DL_OFFSET = 7;
 
     auto drawPMPixels = [&](uint32_t* scanRow, int px, int pixPerBit, uint32_t col) {
         for (int w = 0; w < pixPerBit; w++) {
@@ -858,14 +864,14 @@ void PlatformSDL::renderPMGraphicsRange(int fromY, int toY) {
             int x0 = ((int)hpos - 32) * 2;
 
             for (int y = 0; y < maxScan; y++) {
-                int dy = doubleLine ? y * 2 : y;
+                int dy = (doubleLine ? y * 2 : y) - PM_DL_OFFSET;
                 if (doubleLine ? (dy + 1 < fromY || dy > toY) : (dy < fromY || dy > toY)) continue;
                 uint8_t bits = mem[(bitmapBase + y) & 0xFFFF];
                 if (!bits) continue;
                 for (int rep = 0; rep <= (doubleLine ? 1 : 0); rep++) {
                     int scanRow = dy + rep;
                     if (scanRow < fromY || scanRow > toY) continue;
-                    if (scanRow >= ROF_NATIVE_H) break;
+                    if (scanRow < 0 || scanRow >= ROF_NATIVE_H) break;
                     uint32_t* row = reinterpret_cast<uint32_t*>(
                         static_cast<uint8_t*>(bufferSurface->pixels) +
                         scanRow * bufferSurface->pitch);
@@ -882,14 +888,14 @@ void PlatformSDL::renderPMGraphicsRange(int fromY, int toY) {
     if (gractl & 0x01) {
         int missileBase = pmBaseAddr + (doubleLine ? 0x180 : 0x300);
         for (int y = 0; y < maxScan; y++) {
-            int dy = doubleLine ? y * 2 : y;
+            int dy = (doubleLine ? y * 2 : y) - PM_DL_OFFSET;
             if (doubleLine ? (dy + 1 < fromY || dy > toY) : (dy < fromY || dy > toY)) continue;
             uint8_t mbyte = mem[(missileBase + y) & 0xFFFF];
             if (!mbyte) continue;
             for (int rep = 0; rep <= (doubleLine ? 1 : 0); rep++) {
                 int scanRow = dy + rep;
                 if (scanRow < fromY || scanRow > toY) continue;
-                if (scanRow >= ROF_NATIVE_H) break;
+                if (scanRow < 0 || scanRow >= ROF_NATIVE_H) break;
                 uint32_t* row = reinterpret_cast<uint32_t*>(
                     static_cast<uint8_t*>(bufferSurface->pixels) +
                     scanRow * bufferSurface->pitch);
