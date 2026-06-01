@@ -520,28 +520,40 @@ void PlatformSDL::renderAtariDisplay() {
        Only reset on an LMS instruction; otherwise auto-advances after each
        rendered row (same semantics as the real ANTIC data counter).       */
     uint16_t dataAddr = 0;
-    /* On real hardware, DLI fires at END of the last scanline of the entry
-       that has bit 7 set (not before).  We model this with a pendingDLI
-       flag: set when we see bit 7, fired at the start of the NEXT entry. */
-    bool pendingDLI = false;
+    /* DLI timing: a DLI tagged on a DL entry takes effect (its register writes
+       become visible) at display scan line  entryStartY + max(scans, 2).
+       For multi-scan entries this is the last scanline + 1 (the classic "fire at
+       the start of the next entry"); for single-scan entries (mode F/E/C) it is
+       one line further, because the handler's GTIA writes don't complete before
+       the immediately-following 1-scan line is drawn.  We schedule the fire by
+       scanline rather than "next entry" so both cases fall out of one rule.
+       Verified against atari000.png: terrain GTIA-10 covers rows 42-127, the
+       cockpit-frame HPOS step has no spike, and the title/instrument colours
+       (all multi-scan entries) are unchanged from the previous behaviour.       */
+    int dliFireY = -1;   /* scanline at which a pending DLI fires; -1 = none */
 
     while (scanY < ROF_NATIVE_H && guard++ < 1024) {
-        int entryStartY = scanY;  /* PM rendering uses HPOSM snapshot for this segment */
+        int entryStartY = scanY;
         uint8_t instr = mem[dp++];
         uint8_t mode  = instr & 0x0F;
         bool    lms   = (instr & 0x40) != 0;
 
-        /* Fire any DLI pending from the PREVIOUS entry (= end of that entry). */
-        if (pendingDLI && dliAddr != 0) {
+        /* Fire a scheduled DLI once we reach its effect scanline (see dliFireY
+           comment above).  It runs before this entry renders, so its register
+           writes apply to this entry's playfield and PM.                        */
+        if (dliFireY >= 0 && entryStartY >= dliFireY && dliAddr != 0) {
             indirectJmp(dliAddr);
-            pendingDLI = false;
+            dliFireY = -1;
         }
 
         if (mode == 0) {
             /* Blank lines: count = bits 6:4 + 1. */
             int count = ((instr >> 4) & 0x7) + 1;
             scanY += count;
-            if (instr & 0x80) pendingDLI = true;  /* blank can have DLI too */
+            if (instr & 0x80) {                    /* blank can have DLI too */
+                if (dliFireY >= 0 && dliAddr != 0) indirectJmp(dliAddr);  /* flush any still-pending (does not occur in RoF) */
+                dliFireY = entryStartY + (count >= 2 ? count : 2);
+            }
             renderPMGraphicsRange(entryStartY, scanY - 1);
             continue;
         }
@@ -560,11 +572,9 @@ void PlatformSDL::renderAtariDisplay() {
             dp += 2;
         }
 
-        /* Remember this entry's DLI bit — it fires after rendering. */
-        if (instr & 0x80) pendingDLI = true;
+        /* This entry's DLI (if any) is scheduled after `scans` is known, below. */
 
-        /* Snapshot PRIOR — DLI from previous entry has already updated gprior.
-           Bits 7:6 of PRIOR select GTIA display mode for this row:
+        /* Bits 7:6 of PRIOR select the GTIA display mode for this row:
              00 = normal GTIA (standard ANTIC mode interpretation)
              01 = GTIA mode 9  (80 px, 4bpp, luma only from COLBK hue)
              10 = GTIA mode 10 (80 px, 4bpp, nibble → 9 color registers)
@@ -599,6 +609,13 @@ void PlatformSDL::renderAtariDisplay() {
         case 0xD: scans = 2;  rowBytes = 40; break;
         case 0xE: scans = 1;  rowBytes = 40; break;
         case 0xF: scans = 1;  rowBytes = 40; break;
+        }
+
+        /* Schedule this entry's DLI now that the scan count is known
+           (effect line = entryStartY + max(scans, 2); see dliFireY comment). */
+        if (instr & 0x80) {
+            if (dliFireY >= 0 && dliAddr != 0) indirectJmp(dliAddr);  /* flush still-pending (does not occur in RoF) */
+            dliFireY = entryStartY + (scans >= 2 ? scans : 2);
         }
 
         /* Playfield width and horizontal offset.
@@ -819,9 +836,9 @@ void PlatformSDL::renderAtariDisplay() {
 }
 
 /* Render Player/Missile graphics for display scan lines [fromY, toY] using the
-   HPOSM/HPOSP values current at the time of the call.  Called once per DL entry
-   so each segment uses the HPOSM snapshot that was active for those scan lines
-   (i.e. values set by the DLI of the previous DL entry).
+   HPOSM/HPOSP values current at the time of the call.  Called once per DL entry,
+   after that entry's scheduled DLI (if any) has fired, so each segment uses the
+   register values that were live for those scan lines.
    WIDE mode: 1 colour-clock = 2 buffer pixels → x0 = (hpos−32)×2, each bit = 2px.
 
    PM bitmap layout (single-line, DMACTL bit4=1):
@@ -837,12 +854,15 @@ void PlatformSDL::renderPMGraphicsRange(int fromY, int toY) {
     int  playerStride = doubleLine ? 128 : 256;
     int  pmBaseAddr   = (int)pmbase << 8;
     int  maxScan      = doubleLine ? 128 : 256;
-    /* PM bitmap byte B represents NTSC scan line B. Our DL scan counter starts
-       at 0 for the first DL entry, but the NTSC frame has PM_DL_OFFSET scan
-       lines before the DL starts (confirmed: game writes frame data at byte 49
-       for DL scanY 42, giving offset 49-42=7). Subtract the offset when mapping
-       bitmap byte → display scan row so byte 49 renders at scanY 42. */
-    const int PM_DL_OFFSET = 7;
+    /* On hardware, PM/missile DMA fetches bitmap byte index = ANTIC_ypos (the
+       absolute scan-line counter), and the playfield for that same line is also
+       produced at ANTIC_ypos. ANTIC starts the display list at ypos 8 (the 8-line
+       vertical-blank overscan; see atari800 antic.c "do {OVERSCREEN_LINE} while
+       (ypos < 8)"). Our scanY=0 is the first DL instruction = ypos 8, so missile
+       byte N must render at scanY = N - 8. Hence the offset is 8. Verified against
+       atari000.png: this reproduces the frame line spanning rows 42-127 with the
+       slant stepping at rows 50/64/78/92/106/120, exactly matching the reference. */
+    const int PM_DL_OFFSET = 8;
 
     auto drawPMPixels = [&](uint32_t* scanRow, int px, int pixPerBit, uint32_t col) {
         for (int w = 0; w < pixPerBit; w++) {
@@ -884,8 +904,15 @@ void PlatformSDL::renderPMGraphicsRange(int fromY, int toY) {
         }
     }
 
-    /* ---- Missiles (GRACTL bit 0) ---- */
+    /* ---- Missiles (GRACTL bit 0) ----
+       Fifth-player mode: when GPRIOR bit 4 ($10) is set, all four missiles are
+       drawn in COLPF3 (colHW[7]) and act as a single 5th player, instead of each
+       missile taking its matching player colour COLPM0-3. RoF's cockpit window
+       frame uses this: during the terrain rows the DLI sets PRIOR=$94 (bit 4 set)
+       and COLPF3=$06 (grey), so the missile frame renders grey — not the black of
+       COLPM0-3=$00. (Verified against atari000.png.)                            */
     if (gractl & 0x01) {
+        bool fifthPlayer = (gprior & 0x10) != 0;
         int missileBase = pmBaseAddr + (doubleLine ? 0x180 : 0x300);
         for (int y = 0; y < maxScan; y++) {
             int dy = (doubleLine ? y * 2 : y) - PM_DL_OFFSET;
@@ -902,7 +929,7 @@ void PlatformSDL::renderPMGraphicsRange(int fromY, int toY) {
                 for (int m = 0; m < 4; m++) {
                     int szBits    = (sizeM >> (m * 2)) & 0x03;
                     int pixPerBit = (szBits == 1) ? 4 : (szBits == 3) ? 8 : 2;
-                    SDL_Color col = atariColor(colHW[m]);
+                    SDL_Color col = atariColor(fifthPlayer ? colHW[7] : colHW[m]);
                     uint32_t mCol = SDL_MapRGB(bufferSurface->format, col.r, col.g, col.b);
                     int x0      = ((int)hposM[m] - 32) * 2;
                     int hiShift = m * 2 + 1;
