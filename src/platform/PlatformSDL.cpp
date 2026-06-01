@@ -646,6 +646,12 @@ void PlatformSDL::renderAtariDisplay() {
                 }
             }
             uint8_t hue9 = colHW[8] & 0xF0; /* COLBK hue for mode 9 */
+            /* GTIA modes 9/10/11 are shifted RIGHT by one colour clock relative
+               to the ANTIC modes (GTIA delays the playfield one CC in these
+               modes). Our buffer is 2 px per colour clock, so add 2 px. Without
+               this the terrain (and its black marker dots) sits 2 px left of
+               atari800 — e.g. leftmost dot column at screenshot x60 instead of 62. */
+            const int GTIA_CC_SHIFT = 2;
             /* All scan lines of a DL entry read from the SAME 40 bytes.
                In GTIA mode, ANTIC fetches one batch; dataAddr advances once. */
             for (int s = 0; s < scans && scanY < ROF_NATIVE_H; s++, scanY++) {
@@ -664,7 +670,7 @@ void PlatformSDL::renderAtariDisplay() {
                         } else {
                             px = creg10[(nib[n] <= 8) ? nib[n] : 8];
                         }
-                        int x0 = (b * 2 + n) * 4 + xOff;
+                        int x0 = (b * 2 + n) * 4 + xOff + GTIA_CC_SHIFT;
                         for (int x = x0; x < x0 + 4 && x < ROF_NATIVE_W; x++)
                             if (x >= 0) row[x] = px;
                     }
