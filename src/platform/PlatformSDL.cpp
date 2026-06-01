@@ -839,11 +839,10 @@ void PlatformSDL::renderPMGraphicsRange(int fromY, int toY) {
     int  maxScan      = doubleLine ? 128 : 256;
     /* PM bitmap byte B represents NTSC scan line B. Our DL scan counter starts
        at 0 for the first DL entry, but the NTSC frame has PM_DL_OFFSET scan
-       lines before the DL starts. Offset=8: byte 49 → scanY 41 (one line before
-       terrain, invisible against dark modeD background), byte 135 → scanY 127
-       (last terrain row, no cockpit-panel overflow). Offset=7 caused byte 135
-       to overflow one row into the cockpit panel (scanY 128). */
-    const int PM_DL_OFFSET = 8;
+       lines before the DL starts (confirmed: game writes frame data at byte 49
+       for DL scanY 42, giving offset 49-42=7). Subtract the offset when mapping
+       bitmap byte → display scan row so byte 49 renders at scanY 42. */
+    const int PM_DL_OFFSET = 7;
 
     auto drawPMPixels = [&](uint32_t* scanRow, int px, int pixPerBit, uint32_t col) {
         for (int w = 0; w < pixPerBit; w++) {
