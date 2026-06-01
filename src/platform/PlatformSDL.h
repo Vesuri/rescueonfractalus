@@ -8,12 +8,16 @@
 #include <SDL.h>
 #include "Platform.h"
 
-/* Screen geometry.  The Atari runs ANTIC mode F at 320×(display list height)
-   internally; we present at 2× scale in the SDL window. */
-#define ROF_NATIVE_W  320
-#define ROF_NATIVE_H  240
-#define ROF_WINDOW_W  640
-#define ROF_WINDOW_H  480
+/* Screen geometry.
+   ROF_NATIVE_W = 384: the full WIDE (DMACTL bits=11) ANTIC playfield output.
+   Screenshots crop to ROF_SCREENSHOT_W = 336px (centre of the 384px frame,
+   trimming 24px per side) to match atari800's F10 capture format. */
+#define ROF_NATIVE_W      384
+#define ROF_NATIVE_H      240
+#define ROF_WINDOW_W      768   /* ROF_NATIVE_W * 2 */
+#define ROF_WINDOW_H      480
+#define ROF_SCREENSHOT_W  336   /* centre crop: x=24..359 of the 384px buffer */
+#define ROF_SCREENSHOT_X0  24   /* first column of the screenshot crop */
 
 /* Number of entries in the VBI address→function dispatch table. */
 #define VBI_TABLE_SIZE 32

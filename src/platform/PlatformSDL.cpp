@@ -576,7 +576,10 @@ void PlatformSDL::renderAtariDisplay() {
         uint32_t  bgPx   = SDL_MapRGB(bufferSurface->format,
                                       bgClr.r, bgClr.g, bgClr.b);
 
-        /* Scanlines per display-list entry and bytes per screen row. */
+        /* Scanlines per display-list entry and NORMAL-mode bytes per screen row.
+           rowBytes is the NORMAL-mode byte count; it drives the data counter
+           advance (which is always the NORMAL count on real hardware regardless
+           of DMACTL width — NARROW/WIDE re-use the same DMA pipeline).       */
         int scans = 1, rowBytes = 40;
         switch (mode) {
         case 0x2: scans = 8;  rowBytes = 40; break;
@@ -594,6 +597,17 @@ void PlatformSDL::renderAtariDisplay() {
         case 0xE: scans = 1;  rowBytes = 40; break;
         case 0xF: scans = 1;  rowBytes = 40; break;
         }
+
+        /* Playfield width and horizontal offset.
+           The 384-px buffer represents the full WIDE (192 colour-clock) output.
+           NORMAL (160cc = 320px) is centred at x=32; NARROW (128cc = 256px) at x=64.
+             WIDE  (bits=11): playfieldPx=384, xOff=  0, renderCount = rowBytes*6/5
+             NORMAL(bits=10): playfieldPx=320, xOff= 32, renderCount = rowBytes
+             NARROW(bits=01): playfieldPx=256, xOff= 64, renderCount = rowBytes*3/5  */
+        int pfBits = dmactl & 0x03;
+        int xOff = (pfBits == 3) ?  0 : (pfBits == 2) ? 32 : 64;
+        int renderCount = (pfBits == 3) ? rowBytes * 6 / 5 :
+                          (pfBits == 1) ? rowBytes * 3 / 5 : rowBytes;
 
         if (dataAddr == 0) { scanY += scans; continue; }
 
@@ -618,29 +632,26 @@ void PlatformSDL::renderAtariDisplay() {
                 uint32_t* row = reinterpret_cast<uint32_t*>(
                     static_cast<uint8_t*>(bufferSurface->pixels) +
                     scanY * bufferSurface->pitch);
-                for (int b = 0; b < 40; b++) {
+                for (int b = 0; b < renderCount; b++) {
                     uint8_t byte = mem[(dataAddr + b) & 0xFFFF];
                     uint8_t nib[2] = { (uint8_t)(byte >> 4), (uint8_t)(byte & 0x0F) };
                     for (int n = 0; n < 2; n++) {
                         uint32_t px;
                         if (gtiaMode == 1) {
-                            /* Mode 9: nibble = luminance, hue from COLBK */
                             SDL_Color c = atariColor(hue9 | nib[n]);
                             px = SDL_MapRGB(bufferSurface->format,
                                             c.r, c.g, c.b);
                         } else {
-                            /* Mode 10: nibble 0-8 → color register, 9-15 → COLBK */
                             px = creg10[(nib[n] <= 8) ? nib[n] : 8];
                         }
-                        /* Each nibble pixel = 4 colour-clock-wide display pixels */
-                        int x0 = (b * 2 + n) * 4;
+                        int x0 = (b * 2 + n) * 4 + xOff;
                         for (int x = x0; x < x0 + 4 && x < ROF_NATIVE_W; x++)
-                            row[x] = px;
+                            if (x >= 0) row[x] = px;
                     }
                 }
                 /* dataAddr does NOT advance per scan; advance once after entry */
             }
-            dataAddr = (dataAddr + 40) & 0xFFFF;
+            dataAddr = (dataAddr + rowBytes) & 0xFFFF;
             continue;
         }
 
@@ -653,18 +664,17 @@ void PlatformSDL::renderAtariDisplay() {
             /* If HSCROL is in effect (display list instruction has bit 4 set),
                use an extra byte at the start of the row data.                 */
             bool hscrolEn = (instr & 0x10) != 0;
-            int  extraBytes = hscrolEn ? 2 : 0; /* read 1–2 extra bytes at left */
-            int  shift      = hscrolEn ? hscrol : 0; /* pixel offset 0–15 */
+            int  extraBytes = hscrolEn ? 2 : 0;
+            int  shift      = hscrolEn ? hscrol : 0;
             for (int s = 0; s < scans && scanY < ROF_NATIVE_H; s++, scanY++) {
                 uint32_t* row = reinterpret_cast<uint32_t*>(
                     static_cast<uint8_t*>(bufferSurface->pixels) +
                     scanY * bufferSurface->pitch);
-                /* Build a 48-byte shifted view: normal rowBytes + extraBytes  */
-                int totalBytes = rowBytes + extraBytes;
+                int totalBytes = renderCount + extraBytes;
                 for (int b = 0; b < totalBytes; b++) {
                     uint8_t byte = mem[(dataAddr + b) & 0xFFFF];
                     for (int bit = 7; bit >= 0; bit--) {
-                        int px = b * 8 + (7 - bit) - shift;
+                        int px = b * 8 + (7 - bit) - shift + xOff;
                         if (px >= 0 && px < ROF_NATIVE_W)
                             row[px] = (byte >> bit) & 1 ? c1 : c0;
                     }
@@ -680,12 +690,12 @@ void PlatformSDL::renderAtariDisplay() {
                 uint32_t* row = reinterpret_cast<uint32_t*>(
                     static_cast<uint8_t*>(bufferSurface->pixels) +
                     scanY * bufferSurface->pitch);
-                for (int b = 0; b < rowBytes; b++) {
+                for (int b = 0; b < renderCount; b++) {
                     uint8_t byte = mem[(dataAddr + b) & 0xFFFF];
                     for (int pp = 0; pp < 4; pp++) {
                         int ci = (byte >> (6 - pp * 2)) & 3;
-                        int px = (b * 4 + pp) * 2; /* 2× stretch to 320 */
-                        if (px < ROF_NATIVE_W - 1) {
+                        int px = (b * 4 + pp) * 2 + xOff;
+                        if (px >= 0 && px < ROF_NATIVE_W - 1) {
                             uint32_t col = SDL_MapRGB(bufferSurface->format,
                                 mc[ci].r, mc[ci].g, mc[ci].b);
                             row[px] = row[px + 1] = col;
@@ -694,56 +704,44 @@ void PlatformSDL::renderAtariDisplay() {
                 }
                 /* dataAddr does NOT advance per scan */
             }
-            dataAddr = (dataAddr + rowBytes) & 0xFFFF; /* advance once per entry */
+            dataAddr = (dataAddr + rowBytes) & 0xFFFF;
         } else if (mode == 0x2 || mode == 0x3 || mode == 0x4 || mode == 0x5) {
             /* ANTIC modes 2-5: 40-column character modes, 1-pixel-per-bit,
                320 display pixels wide (8 bits per char * 40 chars).
                Mode 2: 40 chars, 8 scans. Mode 3: 10 scans. Mode 4: 8 scans, 2 colors.
                Mode 5: 16 scans.  All use CHBASE charset.                  */
             uint16_t csBase = (uint16_t)chbase << 8;
-            int charsPerRow = 40;
-            /* Scan count within a character tile (not the DL entry scans). */
+            int charsPerRow = renderCount;   /* WIDE=48, NORMAL=40, NARROW=24 */
             int scansPerChar = (mode == 3) ? 10 : (mode == 5) ? 16 : 8;
-            int charScan = 0; /* which row within the current char tile */
+            int charScan = 0;
             uint16_t rowAddr = dataAddr;
             for (int s = 0; s < scans && scanY < ROF_NATIVE_H; s++, scanY++) {
                 uint32_t* row = reinterpret_cast<uint32_t*>(
                     static_cast<uint8_t*>(bufferSurface->pixels) +
                     scanY * bufferSurface->pitch);
-                /* For mode 3 we clamp bitmap row to 8 (last 2 scans repeat row 7). */
                 int bitmapRow = (scansPerChar > 8) ?
                     (charScan < 8 ? charScan : 7) : charScan;
                 for (int c = 0; c < charsPerRow; c++) {
                     uint8_t chByte = mem[(rowAddr + c) & 0xFFFF];
-                    /* Modes 2/3: bit 7=inverse, bits 6:0=char index (0-127).
-                       Modes 4/5: bits 7:6=color select, bits 5:0=char index (0-63).
-                       No inverse video in modes 4/5 — bit 7 is a colour bit.  */
                     bool inv;
                     uint8_t ci;
                     if (mode == 4 || mode == 5) {
                         inv = false;
-                        ci  = chByte & 0x3F;   /* 64-char set */
+                        ci  = chByte & 0x3F;
                     } else {
                         inv = (chByte & 0x80) != 0;
-                        ci  = chByte & 0x7F;   /* 128-char set */
+                        ci  = chByte & 0x7F;
                     }
                     uint8_t bits = mem[(csBase + ci * 8 + bitmapRow) & 0xFFFF];
-                    /* Select fg color: modes 2/3 use COLPF2; modes 4/5 use
-                       bits[7:6] of char byte to select COLPF0-COLPF3.     */
                     SDL_Color fgClr = pf2Clr;
                     if (mode == 4 || mode == 5) {
                         SDL_Color pf3Clr = atariColor(colHW[7]);
                         const SDL_Color* pfTab[4] = {
                             &pf0Clr, &pf1Clr, &pf2Clr, &pf3Clr };
-                        int sel = (chByte >> 6) & 3;
-                        fgClr = *pfTab[sel];
+                        fgClr = *pfTab[(chByte >> 6) & 3];
                     }
                     uint32_t fgPx = SDL_MapRGB(bufferSurface->format,
                                                fgClr.r, fgClr.g, fgClr.b);
-                    /* NTSC artifact approximation: pair adjacent bits (7,6), (5,4), (3,2), (1,0).
-                       Mixed pairs (01 or 10) blend fg+bg instead of alternating 1-px each.
-                       This replicates how real NTSC hardware renders hires char bitmaps
-                       designed with artifact color patterns (e.g. $55/$AA in charset $38xx). */
                     auto blended = [&](uint32_t a, uint32_t b) -> uint32_t {
                         return SDL_MapRGB(bufferSurface->format,
                             (((a)&0xFF) + ((b)&0xFF)) >> 1,
@@ -751,16 +749,15 @@ void PlatformSDL::renderAtariDisplay() {
                             ((((a)>>16)&0xFF) + (((b)>>16)&0xFF)) >> 1);
                     };
                     for (int pair = 0; pair < 4; pair++) {
-                        /* Bit indices for this pair: high=7-2*pair, low=6-2*pair */
                         int hibit = 7 - pair * 2, lobit = hibit - 1;
                         bool hi = (((bits >> hibit) & 1) != 0) != inv;
                         bool lo = (((bits >> lobit) & 1) != 0) != inv;
                         uint32_t hiPx = hi ? fgPx : bgPx;
                         uint32_t loPx = lo ? fgPx : bgPx;
                         uint32_t mix  = (hi == lo) ? hiPx : blended(hiPx, loPx);
-                        int px = c * 8 + pair * 2;
-                        if (px < ROF_NATIVE_W)     row[px]     = mix;
-                        if (px+1 < ROF_NATIVE_W)   row[px + 1] = mix;
+                        int px = c * 8 + pair * 2 + xOff;
+                        if (px >= 0 && px < ROF_NATIVE_W)     row[px]     = mix;
+                        if (px+1 >= 0 && px+1 < ROF_NATIVE_W) row[px + 1] = mix;
                     }
                 }
                 if (++charScan >= scansPerChar) {
@@ -775,12 +772,12 @@ void PlatformSDL::renderAtariDisplay() {
                Each byte: bits[5:0]=char index (0-63), bits[7:6]=color register.
                Each bit displayed 2× wide → 20*16=320 display pixels.     */
             uint16_t csBase = (uint16_t)chbase << 8;
-            int charsPerRow = 20;
+            int charsPerRow = renderCount;   /* WIDE=24, NORMAL=20, NARROW=12 */
             int scansPerChar = (mode == 7) ? 16 : 8;
             int charScan = 0;
             uint16_t rowAddr = dataAddr;
             SDL_Color colPFn[4] = { pf0Clr, pf1Clr, pf2Clr, pf2Clr };
-            colPFn[3] = atariColor(mem[0x02C7]); /* COLPF3 */
+            colPFn[3] = atariColor(mem[0x02C7]);
             for (int s = 0; s < scans && scanY < ROF_NATIVE_H; s++, scanY++) {
                 uint32_t* row = reinterpret_cast<uint32_t*>(
                     static_cast<uint8_t*>(bufferSurface->pixels) +
@@ -796,8 +793,8 @@ void PlatformSDL::renderAtariDisplay() {
                                                fgClr.r, fgClr.g, fgClr.b);
                     for (int bit = 7; bit >= 0; bit--) {
                         bool set = ((bits >> bit) & 1) != 0;
-                        int px = (c * 8 + (7 - bit)) * 2; /* 2× stretch */
-                        if (px < ROF_NATIVE_W - 1)
+                        int px = (c * 8 + (7 - bit)) * 2 + xOff;
+                        if (px >= 0 && px < ROF_NATIVE_W - 1)
                             row[px] = row[px + 1] = set ? fgPx : bgPx;
                     }
                 }
@@ -855,10 +852,10 @@ void PlatformSDL::renderPMGraphics(uint32_t /*bgPx*/) {
                 uint32_t* row = reinterpret_cast<uint32_t*>(
                     static_cast<uint8_t*>(bufferSurface->pixels) +
                     scanRow * bufferSurface->pitch);
-                /* hpos: Atari colour-clock → display pixel.
-                   hpos 0 = leftmost colour clock; each colour clock = 1 pixel
-                   in mode F (320-wide).  Subtract 48 for left-border offset. */
-                int x0 = (int)hpos - 48;
+                /* hpos → buffer pixel.  The 384-px buffer starts at the WIDE
+                   playfield left edge (1 colour-clock from active display start).
+                   On real hardware HPOS 32 = WIDE playfield left edge.        */
+                int x0 = (int)hpos - 32;
                 for (int bit = 7; bit >= 0; bit--) {
                     if ((bits >> bit) & 1) {
                         int px = x0 + (7 - bit);
@@ -871,8 +868,10 @@ void PlatformSDL::renderPMGraphics(uint32_t /*bgPx*/) {
     }
 }
 
-/* Save a 336×240 PNG screenshot matching atari800's F10 output format:
-   8-pixel COLBK border | 320-pixel native buffer | 8-pixel COLBK border.
+/* Save a 336×240 PNG screenshot matching atari800's F10 capture format.
+   Our 384-px buffer holds the full WIDE playfield; we crop to the centre
+   336px (x=ROF_SCREENSHOT_X0 .. x=ROF_SCREENSHOT_X0+ROF_SCREENSHOT_W-1)
+   which corresponds to the area atari800 captures.
    Files are named rof000.png, rof001.png, … in the working directory.  */
 void PlatformSDL::saveScreenshot() {
     char filename[32];
@@ -899,33 +898,21 @@ void PlatformSDL::saveScreenshot() {
 
     png_init_io(png, fp);
 
-    /* 336×240 RGB to match atari800's screenshot geometry.             */
-    const int outW = 336;
-    png_set_IHDR(png, info, outW, ROF_NATIVE_H, 8,
+    png_set_IHDR(png, info, ROF_SCREENSHOT_W, ROF_NATIVE_H, 8,
                  PNG_COLOR_TYPE_RGB, PNG_INTERLACE_NONE,
                  PNG_COMPRESSION_TYPE_DEFAULT, PNG_FILTER_TYPE_DEFAULT);
     png_write_info(png, info);
 
-    /* Border colour = current COLBK.                                   */
-    SDL_Color bdr = atariColor(colHW[8]);
-
-    static uint8_t row[336 * 3];
-    /* Pre-fill left and right 8-pixel borders (constant per frame).   */
-    for (int x = 0; x < 8; x++) {
-        row[x * 3 + 0] = bdr.r; row[x * 3 + 1] = bdr.g; row[x * 3 + 2] = bdr.b;
-        int rx = (8 + ROF_NATIVE_W + x) * 3;
-        row[rx + 0] = bdr.r; row[rx + 1] = bdr.g; row[rx + 2] = bdr.b;
-    }
+    static uint8_t row[ROF_SCREENSHOT_W * 3];
 
     SDL_LockSurface(bufferSurface);
     for (int y = 0; y < ROF_NATIVE_H; y++) {
         const uint32_t* src = reinterpret_cast<const uint32_t*>(
             static_cast<const uint8_t*>(bufferSurface->pixels) +
-            y * bufferSurface->pitch);
-        uint8_t* dst = row + 8 * 3;  /* skip left border */
-        for (int x = 0; x < ROF_NATIVE_W; x++) {
+            y * bufferSurface->pitch) + ROF_SCREENSHOT_X0;
+        uint8_t* dst = row;
+        for (int x = 0; x < ROF_SCREENSHOT_W; x++) {
             uint32_t px = src[x];
-            /* bufferSurface masks: R=0x000000FF G=0x0000FF00 B=0x00FF0000 */
             *dst++ = (uint8_t)(px & 0xFF);
             *dst++ = (uint8_t)((px >> 8) & 0xFF);
             *dst++ = (uint8_t)((px >> 16) & 0xFF);
