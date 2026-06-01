@@ -493,6 +493,10 @@ void PlatformSDL::renderAtariDisplay() {
                    : (uint16_t)(mem[0x0230] | (mem[0x0231] << 8));
     if (dlPtr == 0) return;
 
+    static int dbgFrame = 0;
+    bool doDbg = (++dbgFrame == 50);  /* keep for future debugging if needed */
+    (void)doDbg;
+
     /* colHW[] was seeded from OS shadows in tickVBI() before the VBI
        handler ran.  The handler may have updated them (e.g. attract-mode
        EOR/AND in vbi_handler_1); DLI handlers update them further mid-scan.
@@ -515,16 +519,27 @@ void PlatformSDL::renderAtariDisplay() {
        Only reset on an LMS instruction; otherwise auto-advances after each
        rendered row (same semantics as the real ANTIC data counter).       */
     uint16_t dataAddr = 0;
+    /* On real hardware, DLI fires at END of the last scanline of the entry
+       that has bit 7 set (not before).  We model this with a pendingDLI
+       flag: set when we see bit 7, fired at the start of the NEXT entry. */
+    bool pendingDLI = false;
 
     while (scanY < ROF_NATIVE_H && guard++ < 1024) {
         uint8_t instr = mem[dp++];
         uint8_t mode  = instr & 0x0F;
         bool    lms   = (instr & 0x40) != 0;
 
+        /* Fire any DLI pending from the PREVIOUS entry (= end of that entry). */
+        if (pendingDLI && dliAddr != 0) {
+            indirectJmp(dliAddr);
+            pendingDLI = false;
+        }
+
         if (mode == 0) {
             /* Blank lines: count = bits 6:4 + 1. */
             int count = ((instr >> 4) & 0x7) + 1;
             scanY += count;
+            if (instr & 0x80) pendingDLI = true;  /* blank can have DLI too */
             continue;
         }
         if (mode == 1) {
@@ -542,14 +557,10 @@ void PlatformSDL::renderAtariDisplay() {
             dp += 2;
         }
 
-        /* DLI dispatch: bit 7 of the instruction fires the DLI handler BEFORE
-           rendering this row so the new colours apply to the correct scanlines.
-           On real hardware it fires at the END of the last scanline of the entry,
-           but firing before the next entry's render is functionally equivalent. */
-        if ((instr & 0x80) && dliAddr != 0)
-            indirectJmp(dliAddr);
+        /* Remember this entry's DLI bit — it fires after rendering. */
+        if (instr & 0x80) pendingDLI = true;
 
-        /* Snapshot PRIOR after DLI — DLI may have changed gprior.
+        /* Snapshot PRIOR — DLI from previous entry has already updated gprior.
            Bits 7:6 of PRIOR select GTIA display mode for this row:
              00 = normal GTIA (standard ANTIC mode interpretation)
              01 = GTIA mode 9  (80 px, 4bpp, luma only from COLBK hue)
@@ -601,6 +612,8 @@ void PlatformSDL::renderAtariDisplay() {
                 }
             }
             uint8_t hue9 = colHW[8] & 0xF0; /* COLBK hue for mode 9 */
+            /* All scan lines of a DL entry read from the SAME 40 bytes.
+               In GTIA mode, ANTIC fetches one batch; dataAddr advances once. */
             for (int s = 0; s < scans && scanY < ROF_NATIVE_H; s++, scanY++) {
                 uint32_t* row = reinterpret_cast<uint32_t*>(
                     static_cast<uint8_t*>(bufferSurface->pixels) +
@@ -625,8 +638,9 @@ void PlatformSDL::renderAtariDisplay() {
                             row[x] = px;
                     }
                 }
-                dataAddr = (dataAddr + 40) & 0xFFFF;
+                /* dataAddr does NOT advance per scan; advance once after entry */
             }
+            dataAddr = (dataAddr + 40) & 0xFFFF;
             continue;
         }
 
@@ -658,7 +672,9 @@ void PlatformSDL::renderAtariDisplay() {
                 dataAddr = (dataAddr + rowBytes) & 0xFFFF;
             }
         } else if (mode == 0xE || mode == 0xD) {
-            /* ANTIC mode E/D: 160 pixels, 2 bpp, 4 colours. */
+            /* ANTIC mode E/D: 160 pixels, 2 bpp, 4 colours.
+               All scan lines of a DL entry share the SAME 40-byte row;
+               dataAddr advances once per entry (not once per scan).   */
             SDL_Color mc[4] = { bgClr, pf0Clr, pf1Clr, pf2Clr };
             for (int s = 0; s < scans && scanY < ROF_NATIVE_H; s++, scanY++) {
                 uint32_t* row = reinterpret_cast<uint32_t*>(
@@ -676,8 +692,9 @@ void PlatformSDL::renderAtariDisplay() {
                         }
                     }
                 }
-                dataAddr = (dataAddr + rowBytes) & 0xFFFF;
+                /* dataAddr does NOT advance per scan */
             }
+            dataAddr = (dataAddr + rowBytes) & 0xFFFF; /* advance once per entry */
         } else if (mode == 0x2 || mode == 0x3 || mode == 0x4 || mode == 0x5) {
             /* ANTIC modes 2-5: 40-column character modes, 1-pixel-per-bit,
                320 display pixels wide (8 bits per char * 40 chars).
@@ -723,12 +740,27 @@ void PlatformSDL::renderAtariDisplay() {
                     }
                     uint32_t fgPx = SDL_MapRGB(bufferSurface->format,
                                                fgClr.r, fgClr.g, fgClr.b);
-                    for (int bit = 7; bit >= 0; bit--) {
-                        bool set = ((bits >> bit) & 1) != 0;
-                        if (inv) set = !set;
-                        int px = c * 8 + (7 - bit);
-                        if (px < ROF_NATIVE_W)
-                            row[px] = set ? fgPx : bgPx;
+                    /* NTSC artifact approximation: pair adjacent bits (7,6), (5,4), (3,2), (1,0).
+                       Mixed pairs (01 or 10) blend fg+bg instead of alternating 1-px each.
+                       This replicates how real NTSC hardware renders hires char bitmaps
+                       designed with artifact color patterns (e.g. $55/$AA in charset $38xx). */
+                    auto blended = [&](uint32_t a, uint32_t b) -> uint32_t {
+                        return SDL_MapRGB(bufferSurface->format,
+                            (((a)&0xFF) + ((b)&0xFF)) >> 1,
+                            ((((a)>>8)&0xFF) + (((b)>>8)&0xFF)) >> 1,
+                            ((((a)>>16)&0xFF) + (((b)>>16)&0xFF)) >> 1);
+                    };
+                    for (int pair = 0; pair < 4; pair++) {
+                        /* Bit indices for this pair: high=7-2*pair, low=6-2*pair */
+                        int hibit = 7 - pair * 2, lobit = hibit - 1;
+                        bool hi = (((bits >> hibit) & 1) != 0) != inv;
+                        bool lo = (((bits >> lobit) & 1) != 0) != inv;
+                        uint32_t hiPx = hi ? fgPx : bgPx;
+                        uint32_t loPx = lo ? fgPx : bgPx;
+                        uint32_t mix  = (hi == lo) ? hiPx : blended(hiPx, loPx);
+                        int px = c * 8 + pair * 2;
+                        if (px < ROF_NATIVE_W)     row[px]     = mix;
+                        if (px+1 < ROF_NATIVE_W)   row[px + 1] = mix;
                     }
                 }
                 if (++charScan >= scansPerChar) {
