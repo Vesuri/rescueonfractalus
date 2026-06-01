@@ -119,8 +119,9 @@ private:
     /* Player/Missile horizontal position shadows ($D000-$D007) */
     uint8_t  hposP[4];   /* HPOSP0-3 */
     uint8_t  hposM[4];   /* HPOSM0-3 */
-    /* Player/Missile size register ($D008-$D00B) */
+    /* Player/Missile size register ($D008-$D00B) and missile size ($D00C) */
     uint8_t  sizePM[4];  /* SIZEP0-3 */
+    uint8_t  sizeM;      /* SIZEM: bits 7:6=M3, 5:4=M2, 3:2=M1, 1:0=M0; 00=normal,01=double,11=quad */
     /* GTIA PRIOR ($D01B / $026F shadow): bits 7:6 select GTIA display mode.
        00=normal, 01=mode9 (16 luma), 10=mode10 (9 colours), 11=mode11.
        Updated by hwWrite($D01B) and shadowWrite($026F); seeded from
