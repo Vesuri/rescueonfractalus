@@ -57,7 +57,7 @@ private:
     static void audioCallback(void* userdata, uint8_t* stream, int bytes);
     void buildPalette();
     void renderAtariDisplay();
-    void renderPMGraphics(uint32_t bgPx);
+    void renderPMGraphicsRange(int fromY, int toY);
     SDL_Color atariColor(uint8_t c) const;
     void saveScreenshot();
 

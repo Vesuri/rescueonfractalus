@@ -526,6 +526,7 @@ void PlatformSDL::renderAtariDisplay() {
     bool pendingDLI = false;
 
     while (scanY < ROF_NATIVE_H && guard++ < 1024) {
+        int entryStartY = scanY;  /* PM rendering uses HPOSM snapshot for this segment */
         uint8_t instr = mem[dp++];
         uint8_t mode  = instr & 0x0F;
         bool    lms   = (instr & 0x40) != 0;
@@ -541,6 +542,7 @@ void PlatformSDL::renderAtariDisplay() {
             int count = ((instr >> 4) & 0x7) + 1;
             scanY += count;
             if (instr & 0x80) pendingDLI = true;  /* blank can have DLI too */
+            renderPMGraphicsRange(entryStartY, scanY - 1);
             continue;
         }
         if (mode == 1) {
@@ -610,7 +612,7 @@ void PlatformSDL::renderAtariDisplay() {
         int renderCount = (pfBits == 3) ? rowBytes * 6 / 5 :
                           (pfBits == 1) ? rowBytes * 3 / 5 : rowBytes;
 
-        if (dataAddr == 0) { scanY += scans; continue; }
+        if (dataAddr == 0) { scanY += scans; renderPMGraphicsRange(entryStartY, scanY - 1); continue; }
 
         /* GTIA modes 9 and 10: override all ANTIC pixel modes.
            Both produce 80 display pixels per line, each 4 colour-clocks
@@ -653,6 +655,7 @@ void PlatformSDL::renderAtariDisplay() {
                 /* dataAddr does NOT advance per scan; advance once after entry */
             }
             dataAddr = (dataAddr + rowBytes) & 0xFFFF;
+            renderPMGraphicsRange(entryStartY, scanY - 1);
             continue;
         }
 
@@ -809,37 +812,32 @@ void PlatformSDL::renderAtariDisplay() {
             /* Modes 8–C not yet implemented; fill with background. */
             scanY += scans;
         }
-    }
-
-    /* Player/Missile graphics overlay — use current COLBK for transparency. */
-    {
-        SDL_Color bg = atariColor(colHW[8]);
-        renderPMGraphics(SDL_MapRGB(bufferSurface->format, bg.r, bg.g, bg.b));
+        /* PM overlay for this entry's scan lines, with the HPOSM/HPOSP values
+           that were active when this entry started (set by the previous DLI). */
+        renderPMGraphicsRange(entryStartY, scanY - 1);
     }
 }
 
-/* Render ANTIC Player/Missile graphics over the current bufferSurface.
-   HPOS is in colour-clocks; WIDE mode maps 1 colour-clock → 2 buffer pixels,
-   so the formula is x0 = (hpos − 32) × 2, with each PM bit = 2 buffer pixels.
+/* Render Player/Missile graphics for display scan lines [fromY, toY] using the
+   HPOSM/HPOSP values current at the time of the call.  Called once per DL entry
+   so each segment uses the HPOSM snapshot that was active for those scan lines
+   (i.e. values set by the DLI of the previous DL entry).
+   WIDE mode: 1 colour-clock = 2 buffer pixels → x0 = (hpos−32)×2, each bit = 2px.
 
-   PM bitmap layout (DMACTL bit 4 = 1 → single-line, 256 bytes each):
-     pmBase×256 + 0x300  = missiles  (M3=bits7:6, M2=bits5:4, M1=bits3:2, M0=bits1:0)
-     pmBase×256 + 0x400  = player 0
-     pmBase×256 + 0x500  = player 1
-     pmBase×256 + 0x600  = player 2
-     pmBase×256 + 0x700  = player 3
-   Double-line layout (DMACTL bit 4 = 0, 128 bytes each):
-     pmBase×256 + 0x180  = missiles
-     pmBase×256 + 0x200  = player 0   ...+0x280, +0x300, +0x380              */
-void PlatformSDL::renderPMGraphics(uint32_t /*bgPx*/) {
+   PM bitmap layout (single-line, DMACTL bit4=1):
+     pmBase×256 + 0x300: missiles  M3=bits7:6, M2=5:4, M1=3:2, M0=1:0
+     pmBase×256 + 0x400/0x500/0x600/0x700: players 0-3
+   Double-line (DMACTL bit4=0): +0x180 missiles, +0x200/0x280/0x300/0x380 players. */
+void PlatformSDL::renderPMGraphicsRange(int fromY, int toY) {
     if (pmbase == 0) return;
+    if (fromY > toY) return;
+    toY = SDL_min(toY, ROF_NATIVE_H - 1);
 
     bool doubleLine   = !(dmactl & 0x10);
     int  playerStride = doubleLine ? 128 : 256;
     int  pmBaseAddr   = (int)pmbase << 8;
-    int  maxScan      = SDL_min(doubleLine ? 128 : 256, ROF_NATIVE_H);
+    int  maxScan      = doubleLine ? 128 : 256;
 
-    /* Helper: render one PM bit as a run of pixPerBit buffer pixels. */
     auto drawPMPixels = [&](uint32_t* scanRow, int px, int pixPerBit, uint32_t col) {
         for (int w = 0; w < pixPerBit; w++) {
             int p = px + w;
@@ -849,30 +847,28 @@ void PlatformSDL::renderPMGraphics(uint32_t /*bgPx*/) {
 
     /* ---- Players (GRACTL bit 1) ---- */
     if (gractl & 0x02) {
-        /* Single-line: players start at pmBase+0x400; double-line: pmBase+0x200. */
         int playerBase = doubleLine ? 0x200 : 0x400;
         for (int p = 0; p < 4; p++) {
             uint8_t hpos  = hposP[p];
             SDL_Color col = atariColor(colHW[p]);
             uint32_t pCol = SDL_MapRGB(bufferSurface->format, col.r, col.g, col.b);
-
-            /* SIZEP bits 1:0 for each player: 00=normal(1×), 01=double(2×), 11=quad(4×). */
-            int szBits   = sizePM[p] & 0x03;
-            int pixPerBit = (szBits == 1) ? 4 : (szBits == 3) ? 8 : 2; /* ×2: 1cc=2px */
-
+            int szBits    = sizePM[p] & 0x03;
+            int pixPerBit = (szBits == 1) ? 4 : (szBits == 3) ? 8 : 2;
             int bitmapBase = pmBaseAddr + playerBase + p * playerStride;
+            int x0 = ((int)hpos - 32) * 2;
+
             for (int y = 0; y < maxScan; y++) {
+                int dy = doubleLine ? y * 2 : y;
+                if (doubleLine ? (dy + 1 < fromY || dy > toY) : (dy < fromY || dy > toY)) continue;
                 uint8_t bits = mem[(bitmapBase + y) & 0xFFFF];
                 if (!bits) continue;
-                int dy = doubleLine ? y * 2 : y;
                 for (int rep = 0; rep <= (doubleLine ? 1 : 0); rep++) {
                     int scanRow = dy + rep;
+                    if (scanRow < fromY || scanRow > toY) continue;
                     if (scanRow >= ROF_NATIVE_H) break;
                     uint32_t* row = reinterpret_cast<uint32_t*>(
                         static_cast<uint8_t*>(bufferSurface->pixels) +
                         scanRow * bufferSurface->pitch);
-                    /* (hpos−32)×2: HPOS in colour-clocks, 1 cc = 2 buffer pixels. */
-                    int x0 = ((int)hpos - 32) * 2;
                     for (int bit = 7; bit >= 0; bit--) {
                         if ((bits >> bit) & 1)
                             drawPMPixels(row, x0 + (7 - bit) * pixPerBit, pixPerBit, pCol);
@@ -884,34 +880,31 @@ void PlatformSDL::renderPMGraphics(uint32_t /*bgPx*/) {
 
     /* ---- Missiles (GRACTL bit 0) ---- */
     if (gractl & 0x01) {
-        /* Single-line: missiles at pmBase+0x300; double-line: pmBase+0x180. */
         int missileBase = pmBaseAddr + (doubleLine ? 0x180 : 0x300);
         for (int y = 0; y < maxScan; y++) {
+            int dy = doubleLine ? y * 2 : y;
+            if (doubleLine ? (dy + 1 < fromY || dy > toY) : (dy < fromY || dy > toY)) continue;
             uint8_t mbyte = mem[(missileBase + y) & 0xFFFF];
             if (!mbyte) continue;
-            int dy = doubleLine ? y * 2 : y;
             for (int rep = 0; rep <= (doubleLine ? 1 : 0); rep++) {
                 int scanRow = dy + rep;
+                if (scanRow < fromY || scanRow > toY) continue;
                 if (scanRow >= ROF_NATIVE_H) break;
                 uint32_t* row = reinterpret_cast<uint32_t*>(
                     static_cast<uint8_t*>(bufferSurface->pixels) +
                     scanRow * bufferSurface->pitch);
                 for (int m = 0; m < 4; m++) {
-                    /* SIZEM bits 1:0 per missile: same encoding as SIZEP. */
                     int szBits    = (sizeM >> (m * 2)) & 0x03;
                     int pixPerBit = (szBits == 1) ? 4 : (szBits == 3) ? 8 : 2;
-
                     SDL_Color col = atariColor(colHW[m]);
                     uint32_t mCol = SDL_MapRGB(bufferSurface->format, col.r, col.g, col.b);
-
-                    /* Missile m: high bit at (m*2+1), low bit at (m*2). */
-                    int x0    = ((int)hposM[m] - 32) * 2;
+                    int x0      = ((int)hposM[m] - 32) * 2;
                     int hiShift = m * 2 + 1;
                     int loShift = m * 2;
                     if ((mbyte >> hiShift) & 1)
-                        drawPMPixels(row, x0,              pixPerBit, mCol);
+                        drawPMPixels(row, x0,             pixPerBit, mCol);
                     if ((mbyte >> loShift) & 1)
-                        drawPMPixels(row, x0 + pixPerBit,  pixPerBit, mCol);
+                        drawPMPixels(row, x0 + pixPerBit, pixPerBit, mCol);
                 }
             }
         }
