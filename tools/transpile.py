@@ -84,8 +84,13 @@ SPINWAIT_HOOKS = {
 # ---------------------------------------------------------------------------
 # Parse symbols.csv → addr_int → name
 # ---------------------------------------------------------------------------
+# addr_int → note (5th CSV column); populated by load_symbols, consumed when
+# emitting each function so the symbol's note becomes a C doc-comment.
+SYMBOL_NOTES = {}
+
 def load_symbols(path):
     sym = {}
+    SYMBOL_NOTES.clear()
     for line in path.read_text().splitlines():
         line = line.strip()
         if not line or line.startswith('#'): continue
@@ -93,8 +98,11 @@ def load_symbols(path):
         if len(parts) < 2: continue
         addr_s = parts[0].strip().lstrip('$')
         name   = parts[1].strip()
-        try: sym[int(addr_s, 16)] = name
-        except ValueError: pass
+        try: addr_i = int(addr_s, 16)
+        except ValueError: continue
+        sym[addr_i] = name
+        if len(parts) >= 5 and parts[4].strip():
+            SYMBOL_NOTES[addr_i] = parts[4].strip()
     return sym
 
 # ---------------------------------------------------------------------------
@@ -618,7 +626,13 @@ def translate_func(func, all_funcs_by_start, symbols,
 
     TERMINATORS = {'RTS', 'RTI', 'JMP', 'BRK'}
 
-    lines = [f'void {name}(void) {{']
+    lines = []
+    # Emit the symbol's note (symbols.csv col 5) as a doc-comment, plus the
+    # original 6502 entry address for provenance (Phase 5 traceability).
+    note = SYMBOL_NOTES.get(start)
+    if note:
+        lines.append(f'/* {name} @ ${start:04X}: {note} */')
+    lines.append(f'void {name}(void) {{')
     # Orphan-prefix functions: the named entry is mid-body, so callers must
     # skip the prefix (which is reachable only via an internal backward branch).
     if skip_to is not None:
