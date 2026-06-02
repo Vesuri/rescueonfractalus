@@ -313,7 +313,22 @@ void PlatformSDL::tickVBI() {
 
     vcountReg = 0;
     static int vbiCount = 0;
-    if (++vbiCount == 50) saveScreenshot();
+    ++vbiCount;
+    /* Screenshot timing. Default: one shot at attract frame 50. Override with
+       ROF_SHOT_FIRST=N (first frame) and ROF_SHOT_EVERY=M (then every M frames)
+       to capture a series — e.g. ROF_AUTOSTART=1 ROF_SHOT_FIRST=120 ROF_SHOT_EVERY=20
+       grabs the launch/tunnel sequence so we can pick the frame to compare.    */
+    {
+        static int first = -1, every = 0;
+        if (first < 0) {
+            const char* f = getenv("ROF_SHOT_FIRST");
+            const char* e = getenv("ROF_SHOT_EVERY");
+            first = f ? atoi(f) : 50;
+            every = e ? atoi(e) : 0;
+        }
+        if (vbiCount == first || (every > 0 && vbiCount > first && (vbiCount - first) % every == 0))
+            saveScreenshot();
+    }
 
     /* Seed colHW[] from OS shadows BEFORE calling the VBI handler.
        The handler reads the shadow registers, applies transforms (e.g.
@@ -442,6 +457,13 @@ uint8_t PlatformSDL::readConsol() {
     if (keys[SDL_SCANCODE_RETURN]) c &= ~0x01;  /* START  */
     if (keys[SDL_SCANCODE_F2])     c &= ~0x02;  /* SELECT */
     if (keys[SDL_SCANCODE_F3])     c &= ~0x04;  /* OPTION */
+    /* DEBUG: ROF_AUTOSTART=1 auto-presses START (=Enter) ~0.8-1.2s after launch
+       so the game enters from the attract with no keypress, for capturing the
+       in-game/tunnel frames. The brief window releases it before gameplay.    */
+    if (getenv("ROF_AUTOSTART")) {
+        uint32_t t = SDL_GetTicks();
+        if (t > 800 && t < 1200) c &= ~0x01;
+    }
     return c;
 }
 
@@ -943,10 +965,26 @@ void PlatformSDL::renderPMGraphicsRange(int fromY, int toY) {
        slant stepping at rows 50/64/78/92/106/120, exactly matching the reference. */
     const int PM_DL_OFFSET = 8;
 
-    auto drawPMPixels = [&](uint32_t* scanRow, int px, int pixPerBit, uint32_t col) {
+    /* GTIA priority (PRIOR/$D01B bit 2 = $04): playfield PF0-3 in front of all
+       players/missiles; PM still shows over background (COLBK). RoF uses $04 for
+       the cockpit so the dashboard masks the player "curtain"/indicator sprites —
+       without this, our always-on-top PM compositing leaves them as stray
+       rectangles. We approximate by occluding a PM pixel wherever the playfield
+       already drew a non-background colour there (every mode path writes its
+       background pixels as COLBK, so "== bakPx" reliably marks background).
+       Priority schemes other than bit 2 (e.g. $08 PF0-1 only) are not used by RoF;
+       there PM stays on top as before.                                          */
+    bool pfOverPm = (gprior & 0x04) != 0;
+    SDL_Color bakC = atariColor(colHW[8]);
+    uint32_t  bakPx = SDL_MapRGB(bufferSurface->format, bakC.r, bakC.g, bakC.b);
+
+    auto drawPMPixels = [&](uint32_t* scanRow, int px, int pixPerBit, uint32_t col,
+                            bool occlude) {
         for (int w = 0; w < pixPerBit; w++) {
             int p = px + w;
-            if (p >= 0 && p < ROF_NATIVE_W) scanRow[p] = col;
+            if (p < 0 || p >= ROF_NATIVE_W) continue;
+            if (occlude && scanRow[p] != bakPx) continue;  /* playfield wins */
+            scanRow[p] = col;
         }
     };
 
@@ -976,7 +1014,7 @@ void PlatformSDL::renderPMGraphicsRange(int fromY, int toY) {
                         scanRow * bufferSurface->pitch);
                     for (int bit = 7; bit >= 0; bit--) {
                         if ((bits >> bit) & 1)
-                            drawPMPixels(row, x0 + (7 - bit) * pixPerBit, pixPerBit, pCol);
+                            drawPMPixels(row, x0 + (7 - bit) * pixPerBit, pixPerBit, pCol, pfOverPm);
                     }
                 }
             }
@@ -1013,10 +1051,13 @@ void PlatformSDL::renderPMGraphicsRange(int fromY, int toY) {
                     int x0      = ((int)hposM[m] - 32) * 2;
                     int hiShift = m * 2 + 1;
                     int loShift = m * 2;
+                    /* 5th-player missiles act as playfield (PF3), so they are not
+                       occluded by playfield; normal missiles obey PRIOR bit 2.   */
+                    bool occ = pfOverPm && !fifthPlayer;
                     if ((mbyte >> hiShift) & 1)
-                        drawPMPixels(row, x0,             pixPerBit, mCol);
+                        drawPMPixels(row, x0,             pixPerBit, mCol, occ);
                     if ((mbyte >> loShift) & 1)
-                        drawPMPixels(row, x0 + pixPerBit, pixPerBit, mCol);
+                        drawPMPixels(row, x0 + pixPerBit, pixPerBit, mCol, occ);
                 }
             }
         }
