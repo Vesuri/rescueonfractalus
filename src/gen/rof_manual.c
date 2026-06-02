@@ -40,20 +40,25 @@ void dli_sub_4a1f(void) {
     bus_write(0xD01A, mem[0x00DC]);   /* COLBK  */
 }
 
-/* dli1s2 ($4A40): terrain row — players + colours */
+/* dli1s2 ($4A40): terrain row — players + colours.
+   Register-name comments reflect the real GTIA write map: $D00C=SIZEM,
+   $D005=HPOSM1, $D008/9/A=SIZEP0/1/2 (the original used #$01 as both the
+   player size and the missile-mask seed).  The real handler saves X (STX $C9),
+   loads X=$D4 as a scratch for the COLPF2 write, then restores X (LDX $C9) —
+   net effect X is unchanged, so we read $D4 directly and never touch cpu.X
+   (which is shared with the main-loop code our renderer interrupts). */
 void dli_sub_4a40(void) {
-    bus_write(0xD00C, 0xC0);          /* P0PL collision clear */
-    bus_write(0xD005, 0xBE);          /* HPOSP1 */
-    cpu.X = mem[0x00D4];
+    bus_write(0xD00C, 0xC0);          /* SIZEM  */
+    bus_write(0xD005, 0xBE);          /* HPOSM1 */
     bus_write(0xD012, mem[0x00CF]);   /* COLPM0 */
-    bus_write(0xD008, 0x01);          /* M0PL */
+    bus_write(0xD008, 0x01);          /* SIZEP0 */
     bus_write(0xD013, mem[0x00CF]);   /* COLPM1 */
     bus_write(0xD000, 0x30);          /* HPOSP0 */
-    bus_write(0xD018, cpu.X);         /* COLPF2 from X=$D4 */
-    bus_write(0xD01B, 0x02);          /* PRIOR */
-    bus_write(0xD009, 0x01);          /* M1PL */
+    bus_write(0xD018, mem[0x00D4]);   /* COLPF2 from $D4 (real: via X scratch) */
+    bus_write(0xD01B, 0x02);          /* PRIOR  */
+    bus_write(0xD009, 0x01);          /* SIZEP1 */
     bus_write(0xD001, 0xC0);          /* HPOSP1 */
-    bus_write(0xD00A, 0x01);          /* M2PL */
+    bus_write(0xD00A, 0x01);          /* SIZEP2 */
 }
 
 /* dli1s3 ($4A78): cockpit-panel colours, gauge player positions, and the
