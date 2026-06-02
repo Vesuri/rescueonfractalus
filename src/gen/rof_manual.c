@@ -112,13 +112,17 @@ void dli_sub_6d99(void) {
     bus_write(0xD01B, 0x04);          /* PRIOR */
 }
 
-/* dli2s6 ($6DA1): final cockpit colours — reset $C7 to 0xFF */
+/* dli2s6 ($6DA1): cockpit panel colours + throttle "empty" COLBK.
+   NOTE: the real $6DA1 ends `JMP $4A05` (INC $C7) — it does NOT reset $C7.
+   Only the final slot $4ACD resets it (LDA #$00; STA $C7).  An earlier
+   bogus `$C7=0xFF` reset here made $C7 wrap one DLI early, so cockpit slot 9
+   ($4ACD, the throttle-fill COLBK=mem[$D3]) never fired and DLI#9 mis-ran
+   slot 0.  Let the dispatcher INC normally so slot 9 is reached.            */
 void dli_sub_6da1(void) {
     bus_write(0xD001, 0x94);          /* HPOSP1 */
     bus_write(0xD013, mem[0x00DE]);   /* COLPM1 */
     bus_write(0xD018, 0x2C);          /* COLPF2 */
     bus_write(0xD01A, 0x90);          /* COLBK  */
-    mem[0x00C7] = 0xFF;               /* caller's INC wraps to 0 */
 }
 
 /* ------------------------------------------------------------------ */
