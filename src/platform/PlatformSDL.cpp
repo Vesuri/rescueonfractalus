@@ -1042,16 +1042,30 @@ void PlatformSDL::renderPMGraphicsRange(int fromY, int toY) {
        slant stepping at rows 50/64/78/92/106/120, exactly matching the reference. */
     const int PM_DL_OFFSET = 8;
 
-    /* GTIA priority (PRIOR/$D01B bit 2 = $04): playfield PF0-3 in front of all
-       players/missiles; PM still shows over background (COLBK). RoF uses $04 for
-       the cockpit so the dashboard masks the player "curtain"/indicator sprites —
-       without this, our always-on-top PM compositing leaves them as stray
-       rectangles. We approximate by occluding a PM pixel wherever the playfield
-       already drew a non-background colour there (every mode path writes its
-       background pixels as COLBK, so "== bakPx" reliably marks background).
-       Priority schemes other than bit 2 (e.g. $08 PF0-1 only) are not used by RoF;
-       there PM stays on top as before.                                          */
-    bool pfOverPm = (gprior & 0x04) != 0;
+    /* GTIA priority select (PRIOR/$D01B bits 0-3) decides, per player/missile,
+       whether the playfield draws in front of it. We approximate "playfield in
+       front" by occluding a PM pixel wherever the playfield already drew a
+       non-background colour there (every mode path writes its background pixels
+       as COLBK, so "== bakPx" reliably marks background). The four documented
+       orderings (De Re Atari):
+         $01: P0-3 > PF0-3 > BAK            (all players in front)
+         $02: P0,P1 > PF0-3 > P2,P3 > BAK   (P2,P3 behind; P0,P1 in front)
+         $04: PF0-3 > P0-3 > BAK            (all players behind)
+         $08: PF0,PF1 > P0-3 > PF2,PF3 > BAK
+       RoF uses $11/$94 (players in front / all behind) for terrain and $14 for
+       the attract cockpit, but $02 for the in-flight instrument panel: the gauge
+       contents are P2/P3 sitting BEHIND the dashboard playfield, so the bezel and
+       crosshair (non-background playfield pixels) mask them, while P0/P1 (e.g. the
+       centre crosshair) stay in front. We approximate "behind" as "occlude this
+       PM pixel wherever the playfield already drew a non-COLBK colour there".
+       $08 (PF0/PF1 vs PF2/PF3 split) isn't used by RoF; treat it as all-behind. */
+    uint8_t priSel = gprior & 0x0F;
+    auto pfOverPlayer = [priSel](int idx) -> bool {
+        if (priSel & 0x04) return true;        /* $04: all players behind PF      */
+        if (priSel & 0x08) return true;        /* $08 (unused): approximate as behind */
+        if (priSel & 0x02) return idx >= 2;    /* $02: only P2,P3 behind PF        */
+        return false;                          /* $01/none: players in front of PF */
+    };
     SDL_Color bakC = atariColor(colHW[8]);
     uint32_t  bakPx = SDL_MapRGB(bufferSurface->format, bakC.r, bakC.g, bakC.b);
 
@@ -1076,6 +1090,7 @@ void PlatformSDL::renderPMGraphicsRange(int fromY, int toY) {
             int pixPerBit = (szBits == 1) ? 4 : (szBits == 3) ? 8 : 2;
             int bitmapBase = pmBaseAddr + playerBase + p * playerStride;
             int x0 = ((int)hpos - 32) * 2;
+            bool occP = pfOverPlayer(p);
 
             for (int y = 0; y < maxScan; y++) {
                 int dy = (doubleLine ? y * 2 : y) - PM_DL_OFFSET;
@@ -1091,7 +1106,7 @@ void PlatformSDL::renderPMGraphicsRange(int fromY, int toY) {
                         scanRow * bufferSurface->pitch);
                     for (int bit = 7; bit >= 0; bit--) {
                         if ((bits >> bit) & 1)
-                            drawPMPixels(row, x0 + (7 - bit) * pixPerBit, pixPerBit, pCol, pfOverPm);
+                            drawPMPixels(row, x0 + (7 - bit) * pixPerBit, pixPerBit, pCol, occP);
                     }
                 }
             }
@@ -1129,8 +1144,9 @@ void PlatformSDL::renderPMGraphicsRange(int fromY, int toY) {
                     int hiShift = m * 2 + 1;
                     int loShift = m * 2;
                     /* 5th-player missiles act as playfield (PF3), so they are not
-                       occluded by playfield; normal missiles obey PRIOR bit 2.   */
-                    bool occ = pfOverPm && !fifthPlayer;
+                       occluded by playfield; normal missiles share their matching
+                       player's priority (M0/M1 with P0/P1, M2/M3 with P2/P3).     */
+                    bool occ = !fifthPlayer && pfOverPlayer(m);
                     if ((mbyte >> hiShift) & 1)
                         drawPMPixels(row, x0,             pixPerBit, mCol, occ);
                     if ((mbyte >> loShift) & 1)
