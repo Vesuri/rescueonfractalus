@@ -462,7 +462,9 @@ uint8_t PlatformSDL::readConsol() {
        in-game/tunnel frames. The brief window releases it before gameplay.    */
     if (getenv("ROF_AUTOSTART")) {
         uint32_t t = SDL_GetTicks();
-        if (t > 800 && t < 1200) c &= ~0x01;
+        uint32_t lo = 800, hi = 1200;
+        if (getenv("ROF_AUTOSTART_HI")) hi = (uint32_t)atoi(getenv("ROF_AUTOSTART_HI"));
+        if (t > lo && t < hi) c &= ~0x01;
     }
     return c;
 }
