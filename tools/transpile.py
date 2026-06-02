@@ -98,6 +98,78 @@ def load_symbols(path):
     return sym
 
 # ---------------------------------------------------------------------------
+# func_lo: lowest 6502 address that belongs to a function's body.
+# Normally the function start, but functions that absorbed an orphan
+# prefix run (see attach_orphan_runs) begin lower than their named entry.
+# Use this for range/containment tests so branches into the prefix resolve
+# as local labels, not stub calls.
+# ---------------------------------------------------------------------------
+def func_lo(f):
+    return f.get('body_start', f['start'])
+
+# ---------------------------------------------------------------------------
+# attach_orphan_runs: fix Ghidra function-boundary mis-detection.
+#
+# Ghidra occasionally clips a routine's entry to a later instruction (e.g. a
+# loop *test*), leaving the loop *body* that precedes it stranded in the gap
+# between two functions.  Those orphan instructions belong to no function, so
+# a backward branch into them would otherwise resolve to an empty FUN_xxxx
+# stub + return (silently dropping the loop).  The live instance is FUN_9d6f:
+# the 8-byte normalization loop at $9D67-$9D6E was orphaned before the $9D6F
+# entry, breaking the terrain projection divide.
+#
+# Fix: find each maximal run of contiguous orphan instructions that FALLS
+# THROUGH (no terminator) directly into a known function's start, and prepend
+# that run to the function as a body prefix.  The function's named entry stays
+# at its original start (callers still enter there); translate_func emits a
+# `goto L_<entry>` so a normal call skips the prefix, while an internal branch
+# into the prefix becomes a local `goto`.
+# ---------------------------------------------------------------------------
+def attach_orphan_runs(all_insns, funcs, func_ranges):
+    insns_sorted = sorted(all_insns, key=lambda i: i['addr'])
+
+    def contained(addr):
+        for s, e, n in func_ranges:
+            if s <= addr <= e:
+                return True
+        return False
+
+    funcs_by_start = {f['start']: f for f in funcs}
+    orphans = [i for i in insns_sorted if not contained(i['addr'])]
+    if not orphans:
+        return
+
+    # Group into maximal contiguous runs (each insn abuts the next).
+    runs = []
+    cur = [orphans[0]]
+    for prev, nxt in zip(orphans, orphans[1:]):
+        if prev['addr'] + len(prev['bytes']) == nxt['addr']:
+            cur.append(nxt)
+        else:
+            runs.append(cur); cur = [nxt]
+    runs.append(cur)
+
+    TERMINATORS = {'RTS', 'RTI', 'JMP', 'BRK'}
+    for run in runs:
+        last  = run[-1]
+        after = last['addr'] + len(last['bytes'])
+        lo, hi = run[0]['addr'], last['addr']
+        if last['mnem'] in TERMINATORS:
+            print(f'[orphan] run ${lo:04X}-${hi:04X} ends in {last["mnem"]} '
+                  f'(no fall-through) — left as-is')
+            continue
+        tgt = funcs_by_start.get(after)
+        if tgt is None:
+            print(f'[orphan] run ${lo:04X}-${hi:04X} falls through to ${after:04X} '
+                  f'(not a function start) — left as-is')
+            continue
+        tgt['insns']      = run + tgt['insns']
+        tgt['body_start'] = lo
+        tgt['skip_to']    = tgt['start']   # named entry; prefix runs above it
+        print(f'[orphan] attached run ${lo:04X}-${hi:04X} as prefix of '
+              f'{tgt["name"]} (entry ${tgt["start"]:04X})')
+
+# ---------------------------------------------------------------------------
 # Parse listing into a list of functions, each with instructions.
 # Returns:
 #   funcs: list of {start, end, name, insns: [{addr, bytes, mnem, op, raw}]}
@@ -130,6 +202,7 @@ def parse_listing(path, symbols):
 
     current_func = None
     func_insns   = {}   # start_addr → list of insn dicts
+    all_insns    = []   # every decoded instruction, regardless of function
 
     with open(path) as f:
         for line in f:
@@ -139,6 +212,8 @@ def parse_listing(path, symbols):
             bs    = bytes(int(x, 16) for x in m.group(2).split())
             mnem  = m.group(3)
             op    = m.group(4).strip()
+            ins   = {'addr': addr, 'bytes': bs, 'mnem': mnem, 'op': op}
+            all_insns.append(ins)
 
             # Determine enclosing function by address range.
             fn_start = None
@@ -151,10 +226,7 @@ def parse_listing(path, symbols):
 
             if fn_start not in func_insns:
                 func_insns[fn_start] = []
-            func_insns[fn_start].append({
-                'addr': addr, 'bytes': bs,
-                'mnem': mnem, 'op': op,
-            })
+            func_insns[fn_start].append(ins)
 
     # Assemble final list in address order.
     for (start, end, name) in func_ranges:
@@ -164,6 +236,10 @@ def parse_listing(path, symbols):
         final_name = symbols.get(start, name)
         funcs.append({'start': start, 'end': end,
                       'name': final_name, 'insns': insns})
+
+    # Attach orphan instruction runs (code Ghidra left in inter-function gaps)
+    # to the function they fall through into.  See attach_orphan_runs.
+    attach_orphan_runs(all_insns, funcs, func_ranges)
 
     # func_by_addr: addr → function dict
     func_by_addr = {}
@@ -518,6 +594,11 @@ def translate_func(func, all_funcs_by_start, symbols,
         return [f'/* {name} @ ${start:04X}: manual implementation in rof_manual.c */']
 
     func_end = func['end']
+    # body_lo: lowest body address (start, or lower if an orphan prefix was
+    # absorbed).  skip_to: the named entry to jump to past the prefix (None
+    # when there is no prefix).
+    body_lo = func.get('body_start', start)
+    skip_to = func.get('skip_to')
     # local_targets: branch/JMP targets that stay in this function's body.
     # Exclude external entry labels — those become tail-calls, not gotos.
     # Also exclude targets at or beyond the first split point: those are now
@@ -528,13 +609,20 @@ def translate_func(func, all_funcs_by_start, symbols,
         mnem, op, nbytes = insn['mnem'], insn['op'], len(insn['bytes'])
         if mnem in BRANCH_FLAGS or mnem == 'JMP':
             mode, val, idx = parse_operand(op, nbytes, symbols)
-            if start <= val <= func_end and val not in external_entry_labels:
+            if body_lo <= val <= func_end and val not in external_entry_labels:
                 if first_split is None or val < first_split:
                     local_targets.add(val)
+    # The named entry needs an L_ label so the prefix-skipping goto can reach it.
+    if skip_to is not None:
+        local_targets.add(skip_to)
 
     TERMINATORS = {'RTS', 'RTI', 'JMP', 'BRK'}
 
     lines = [f'void {name}(void) {{']
+    # Orphan-prefix functions: the named entry is mid-body, so callers must
+    # skip the prefix (which is reachable only via an internal backward branch).
+    if skip_to is not None:
+        lines.append(f'    goto L_{skip_to:04x};  /* enter past orphan-prefix loop body */')
     hit_split = False
     last_insn = None
     for insn in insns:
@@ -583,9 +671,10 @@ def translate_func(func, all_funcs_by_start, symbols,
 # Main
 # ---------------------------------------------------------------------------
 def find_containing_func(addr, funcs):
-    """Return the function whose address range contains addr, or None."""
+    """Return the function whose address range contains addr, or None.
+    Uses func_lo so absorbed orphan prefixes count as part of the body."""
     for f in funcs:
-        if f['start'] <= addr <= f['end']:
+        if func_lo(f) <= addr <= f['end']:
             return f
     return None
 
@@ -619,8 +708,8 @@ def main():
             mode, val, _ = parse_operand(op, nbytes, symbols)
             if val == 0:
                 continue
-            # Is target within THIS function's range?
-            if func['start'] <= val <= func['end']:
+            # Is target within THIS function's range (incl. orphan prefix)?
+            if func_lo(func) <= val <= func['end']:
                 continue
             # Target is outside. Find which function contains it.
             container = find_containing_func(val, funcs)
@@ -650,7 +739,10 @@ def main():
         splits = sorted(
             a for a, cont in external_entries.items() if cont['start'] == c['start']
         )
-        starts = [c['start']] + splits
+        # First segment starts at func_lo so an absorbed orphan prefix counts
+        # as part of segment 0 (a backward branch into it is intra-segment, not
+        # a spurious cross-segment split).
+        starts = [func_lo(c)] + splits
         ends   = splits + [c['end'] + 1]
         return list(zip(starts, ends))
 
@@ -676,7 +768,7 @@ def main():
                     # range but outside the current segment (forward OR backward).
                     # Skip targets that are already Ghidra function starts — those
                     # are handled as normal tail-calls, not split wrappers.
-                    in_container = container['start'] <= target <= container['end']
+                    in_container = func_lo(container) <= target <= container['end']
                     in_segment   = seg_start <= target < seg_end
                     already_func = target in funcs_by_start
                     if in_container and not in_segment and not already_func and target not in external_entries:
