@@ -18342,10 +18342,28 @@ L_9d66:;
 }
 
 void FUN_9d6f(void) {
+    /* HAND-PATCH: $9D67 is the normalization-loop BODY of THIS function (8 bytes
+       before the $9D6F entry), not a separate routine. The transpiler mis-resolved
+       the backward branch `BVC $9D67` into a call to an empty FUN_9d67 stub + return,
+       so when the divisor needs normalizing (bit6 of $AF clear) it bailed early and
+       left the quotient $00B2 = 0 → flat terrain. Restore the do-while normalization
+       loop ($9D67..$9D71): shift dividend $B0:$B1 and divisor $AE:$AF left until
+       bit6 of $AF is set, then fall through to the division at $9D73. */
+    goto L_9d6f_test;
+L_9d67:;
+    /* 9d67 */
+    ASL_M(0x00B0);
+    /* 9d69 */
+    ROL_M(0x00B1);
+    /* 9d6b */
+    ASL_M(0x00AE);
+    /* 9d6d */
+    ROL_M(0x00AF);
+L_9d6f_test:;
     /* 9d6f */
     BIT(mem[0x00AF]);
     /* 9d71 */
-    if (!cpu.V) { FUN_9d67(); return; }
+    if (!cpu.V) goto L_9d67;
     /* 9d73 */
     ASL_M(0x00B0);
     /* 9d75 */
