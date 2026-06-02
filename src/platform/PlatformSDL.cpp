@@ -2,7 +2,9 @@
 #include "atari_os_font.h"
 #include "../cpu/cpu.h"
 #include <cstdio>
+#include <cstdlib>      /* getenv, atoi */
 #include <cstring>
+#include <strings.h>   /* strcasecmp */
 #include <cmath>
 #include <png.h>
 
@@ -11,6 +13,51 @@ extern volatile uint8_t mem[65536];
 /* POKEY base clock (NTSC, ~1.79 MHz) used for audio frequency calculation. */
 static const double POKEY_CLOCK = 1789772.5;
 static const double POKEY_DIV   = 28.0;   /* ÷28 = ~63.9 kHz channel clock */
+
+/* ------------------------------------------------------------------ */
+/* Launch stage selection (ROF_START)                                  */
+/* ------------------------------------------------------------------ */
+
+/* Stages reachable from game_entry() ($3CDE), in the order the game flows
+   through them. The Lucasfilm logo and the space-station animation are NOT
+   here: they are drawn by rof.xex's XEX loader (INIT segments) which run
+   before game_entry(). This port loads a flat post-loader memory snapshot
+   and jumps straight to game_entry(), so it always begins at the attract
+   screen and those two loader sequences have no code to jump to.          */
+enum RofStage {
+    ROF_STAGE_ATTRACT = 0,   /* cockpit "STAND BY" + title (default)        */
+    ROF_STAGE_TUNNEL,        /* launch/descent sequence (after START)       */
+    ROF_STAGE_GAMEPLAY       /* terrain flight — fast-forward past the launch */
+};
+
+/* Parse ROF_START once and cache it. Accepts: attract | tunnel | gameplay
+   (case-insensitive; "game" is accepted as a synonym for gameplay). The
+   legacy ROF_AUTOSTART=1 toggle still works as an alias for gameplay.
+   - attract  : no input injected; stays on the standby/title screen.
+   - tunnel   : auto-presses START and runs at normal speed, so the ~30s
+                launch/landing/descent sequence plays out visibly.
+   - gameplay : auto-presses START and FAST-FORWARDS (unthrottled) through
+                that sequence, dropping straight into terrain flight (~1s).  */
+static RofStage rofStartStage() {
+    static int cached = -1;
+    if (cached < 0) {
+        cached = ROF_STAGE_ATTRACT;
+        const char* s = getenv("ROF_START");
+        if (s && *s) {
+            if      (!strcasecmp(s, "attract"))  cached = ROF_STAGE_ATTRACT;
+            else if (!strcasecmp(s, "tunnel"))   cached = ROF_STAGE_TUNNEL;
+            else if (!strcasecmp(s, "gameplay") ||
+                     !strcasecmp(s, "game"))      cached = ROF_STAGE_GAMEPLAY;
+            else fprintf(stderr, "[rof] ROF_START='%s' unrecognised; using "
+                         "attract (valid: attract, tunnel, gameplay)\n", s);
+        } else if (getenv("ROF_AUTOSTART")) {
+            cached = ROF_STAGE_GAMEPLAY;   /* legacy alias */
+        }
+        const char* names[] = { "attract", "tunnel", "gameplay" };
+        fprintf(stderr, "[rof] launch stage: %s\n", names[cached]);
+    }
+    return (RofStage)cached;
+}
 
 /* ------------------------------------------------------------------ */
 /* Constructor / Destructor                                            */
@@ -27,7 +74,8 @@ PlatformSDL::PlatformSDL(const char* imagePath) :
     gprior(0),
     framesPerSecond_(50), vcountReg(0), colHW{},
     samplesSinceInterrupt(0), interruptIntervalInSamples(0),
-    lastVBITicks(0), renderNeeded(false), screenshotIndex(0)
+    lastVBITicks(0), renderNeeded(false), screenshotIndex(0),
+    reachedFlight_(false), lastFFRender_(0), inInterrupt_(false)
 {
     memset(channels, 0, sizeof(channels));
     memset(vbiTable, 0, sizeof(vbiTable));
@@ -302,10 +350,25 @@ void PlatformSDL::audioCallback(void* userdata, uint8_t* stream, int bytes) {
    elapsed since the last tick.  Using SDL_GetTicks makes VBI timing fully
    independent of whether the audio device is open.                       */
 void PlatformSDL::tickVBI() {
+    /* Re-entrancy guard: the VBI handler's own spin-waits call
+       platform_tick_vbi() again.  The 20ms gate below used to absorb those,
+       but fast-forward drops the gate, so guard explicitly or the handler
+       recurses into itself and overflows the stack.                         */
+    if (inInterrupt_) return;
+
     uint32_t now = SDL_GetTicks();
     uint32_t msPerFrame = 1000u / (uint32_t)framesPerSecond_;   /* 20 ms */
-    if (now - lastVBITicks < msPerFrame) return;
 
+    /* ROF_START=gameplay fast-forward: until terrain flight begins
+       (reachedFlight_), shrink the per-frame interval to 1ms (~1000 Hz) so the
+       ~30s launch/landing sequence is compressed to ~1.5s.  This keeps the
+       one-VBI-per-frame cadence intact (just runs the clock ~20x faster) —
+       firing a VBI on *every* tick_vbi call instead would desync the VBI from
+       main-thread progress and corrupt game state.                          */
+    bool fastForward = (rofStartStage() == ROF_STAGE_GAMEPLAY) && !reachedFlight_;
+    if (fastForward) msPerFrame = 1;
+
+    if (now - lastVBITicks < msPerFrame) return;
     /* Advance by exactly one frame step to avoid drift.
        Cap catch-up to 4 frames so a debugger pause doesn't flood.       */
     lastVBITicks += msPerFrame;
@@ -314,6 +377,13 @@ void PlatformSDL::tickVBI() {
     vcountReg = 0;
     static int vbiCount = 0;
     ++vbiCount;
+
+    /* Latch "terrain flight has begun" for the ROF_START=gameplay fast-forward.
+       At mission start the game switches to the flight display list ($316B,
+       the "MANUAL" cockpit) and sets the flight sub-state mem[$72]≠0; both are
+       0 / a standby DL ($3000/$3120) throughout boot, title and descent.      */
+    if (!reachedFlight_ && (displayListPtr == 0x316B || mem[0x72] != 0))
+        reachedFlight_ = true;
     /* Screenshot timing. Default: one shot at attract frame 50. Override with
        ROF_SHOT_FIRST=N (first frame) and ROF_SHOT_EVERY=M (then every M frames)
        to capture a series — e.g. ROF_AUTOSTART=1 ROF_SHOT_FIRST=120 ROF_SHOT_EVERY=20
@@ -354,7 +424,9 @@ void PlatformSDL::tickVBI() {
        find their register clobbered by the handler on return.               */
     if (interruptFn) {
         Cpu6502 saved = cpu;
+        inInterrupt_ = true;
         (*interruptFn)();
+        inInterrupt_ = false;
         cpu = saved;
     }
     renderNeeded = true;
@@ -457,10 +529,14 @@ uint8_t PlatformSDL::readConsol() {
     if (keys[SDL_SCANCODE_RETURN]) c &= ~0x01;  /* START  */
     if (keys[SDL_SCANCODE_F2])     c &= ~0x02;  /* SELECT */
     if (keys[SDL_SCANCODE_F3])     c &= ~0x04;  /* OPTION */
-    /* DEBUG: ROF_AUTOSTART=1 auto-presses START (=Enter) ~0.8-1.2s after launch
-       so the game enters from the attract with no keypress, for capturing the
-       in-game/tunnel frames. The brief window releases it before gameplay.    */
-    if (getenv("ROF_AUTOSTART")) {
+    /* ROF_START=tunnel|gameplay (or legacy ROF_AUTOSTART=1) auto-presses START
+       (=Enter) over a brief wall-clock window ~0.8-1.2s after launch, so the
+       game leaves the attract screen with no keypress and begins the mission:
+       it flies the tunnel and then transitions into gameplay on its own. The
+       window releases START before gameplay so it isn't held down. The upper
+       bound is configurable via ROF_AUTOSTART_HI=<ms>. ROF_START=attract (the
+       default) injects nothing and the game stays on the attract screen.      */
+    if (rofStartStage() != ROF_STAGE_ATTRACT) {
         uint32_t t = SDL_GetTicks();
         uint32_t lo = 800, hi = 1200;
         if (getenv("ROF_AUTOSTART_HI")) hi = (uint32_t)atoi(getenv("ROF_AUTOSTART_HI"));
@@ -527,10 +603,6 @@ void PlatformSDL::renderAtariDisplay() {
                    ? displayListPtr
                    : (uint16_t)(mem[0x0230] | (mem[0x0231] << 8));
     if (dlPtr == 0) return;
-
-    static int dbgFrame = 0;
-    bool doDbg = (++dbgFrame == 50);  /* keep for future debugging if needed */
-    (void)doDbg;
 
     /* colHW[] was seeded from OS shadows in tickVBI() before the VBI
        handler ran.  The handler may have updated them (e.g. attract-mode
@@ -1166,6 +1238,16 @@ void PlatformSDL::renderFrame() {
        spin-waits overshoot their target (e.g. always missing value 1).       */
     if (!renderNeeded) return;
     renderNeeded = false;
+
+    /* During the ROF_START=gameplay fast-forward, the VBI fires every spin-loop
+       iteration (thousands/sec).  Blitting each one would bottleneck on the GPU
+       and defeat the speed-up, so pace the actual blit to ~30Hz wall-clock —
+       the launch still plays visibly, just sped up, and reaches flight in ~1s. */
+    if ((rofStartStage() == ROF_STAGE_GAMEPLAY) && !reachedFlight_) {
+        uint32_t now = SDL_GetTicks();
+        if (now - lastFFRender_ < 33u) return;
+        lastFFRender_ = now;
+    }
 
     pollEvents();
 

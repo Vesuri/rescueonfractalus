@@ -138,6 +138,18 @@ private:
     /* Set by tickVBI() after firing the VBI; consumed by renderFrame(). */
     volatile bool renderNeeded;
     int screenshotIndex;
+
+    /* ROF_START=gameplay fast-forward: latched true once the game installs the
+       in-flight VBI (VVBLKI=$53CC in FUN_3d48), i.e. terrain flight has begun.
+       Until then, tickVBI() runs unthrottled so the ~30s launch/landing
+       sequence is skipped in ~1s; renderFrame() paces the blit by wall clock. */
+    bool     reachedFlight_;
+    uint32_t lastFFRender_;   /* wall-clock of last fast-forward blit (ms) */
+    /* Re-entrancy guard for the VBI: the VBI handler's own spin-waits call
+       platform_tick_vbi(); without this, fast-forward (which drops the 20ms
+       gate that used to absorb those nested calls) would re-fire the handler
+       recursively and overflow the stack. */
+    bool     inInterrupt_;
 };
 
 #endif /* PLATFORMSDL_H */
