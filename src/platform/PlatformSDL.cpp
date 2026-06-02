@@ -542,6 +542,26 @@ void PlatformSDL::renderAtariDisplay() {
        (all multi-scan entries) are unchanged from the previous behaviour.       */
     int dliFireY = -1;   /* scanline at which a pending DLI fires; -1 = none */
 
+    /* DLI dead-window (matches real-hardware NMI behaviour, verified against
+       atari800 via a per-scanline $C7 trace of the attract screen).
+       The DLIs all dispatch through one handler that walks a slot table indexed
+       by $C7 (incremented per DLI). On real HW, in a run of SHORT (<=2-scanline)
+       display-list entries the 6502 cannot keep up: each DLI handler does WSYNC
+       + several register stores, so a DLI whose scanline arrives while the prior
+       handler is still running is MISSED and $C7 does NOT advance. In the title
+       area (multi-scanline entries) the CPU has ample slack, so no DLI is missed.
+       Our renderer runs handlers instantaneously and would fire every DLI, over-
+       advancing $C7 by 2 through the terrain — landing the cockpit "COLBK:=$00"
+       DLI on the canopy frame (turning its green edges black) instead of below it.
+       We replicate the misses: once we're in a dense run of short entries
+       (dliShortRun >= DENSE), suppress any DLI within DEAD_WINDOW scanlines of the
+       last serviced one. Trace: this drops exactly the scan122 and scan128 DLIs,
+       keeping $C7 two behind so COLBK:=$00 fires below the canopy (green edges). */
+    const int DLI_DENSE_RUN   = 3;   /* consecutive short entries => "dense" region */
+    const int DLI_DEAD_WINDOW = 6;   /* scanlines the prior handler occupies the CPU */
+    int dliShortRun       = 0;       /* run length of consecutive <=2-scanline entries */
+    int lastServicedDliY  = -1000;   /* scanline of the most recently serviced DLI    */
+
     while (scanY < ROF_NATIVE_H && guard++ < 1024) {
         int entryStartY = scanY;
         uint8_t instr = mem[dp++];
@@ -550,15 +570,22 @@ void PlatformSDL::renderAtariDisplay() {
 
         /* Fire a scheduled DLI once we reach its effect scanline (see dliFireY
            comment above).  It runs before this entry renders, so its register
-           writes apply to this entry's playfield and PM.                        */
+           writes apply to this entry's playfield and PM.  In a dense region a DLI
+           too close behind the previous one is missed (see dead-window comment). */
         if (dliFireY >= 0 && entryStartY >= dliFireY && dliAddr != 0) {
-            indirectJmp(dliAddr);
+            bool missed = (dliShortRun >= DLI_DENSE_RUN) &&
+                          (entryStartY - lastServicedDliY <= DLI_DEAD_WINDOW);
+            if (!missed) {
+                indirectJmp(dliAddr);
+                lastServicedDliY = entryStartY;
+            }
             dliFireY = -1;
         }
 
         if (mode == 0) {
             /* Blank lines: count = bits 6:4 + 1. */
             int count = ((instr >> 4) & 0x7) + 1;
+            dliShortRun = 0;   /* blanks give the CPU slack — end any dense run */
             scanY += count;
             if (instr & 0x80) {                    /* blank can have DLI too */
                 if (dliFireY >= 0 && dliAddr != 0) indirectJmp(dliAddr);  /* flush any still-pending (does not occur in RoF) */
@@ -600,9 +627,11 @@ void PlatformSDL::renderAtariDisplay() {
                                       bgClr.r, bgClr.g, bgClr.b);
 
         /* Scanlines per display-list entry and NORMAL-mode bytes per screen row.
-           rowBytes is the NORMAL-mode byte count; it drives the data counter
-           advance (which is always the NORMAL count on real hardware regardless
-           of DMACTL width — NARROW/WIDE re-use the same DMA pipeline).       */
+           rowBytes is the NORMAL-mode byte count. The ANTIC memory-scan counter
+           advances by the number of bytes ACTUALLY fetched per line, which scales
+           with playfield width (NARROW/NORMAL/WIDE) — i.e. by renderCount, not
+           rowBytes. (In WIDE, mode D/E/F fetch 48 bytes/line, not 40; advancing
+           by 40 shears the bitmap 8 bytes/row — the canopy-frame skew.)        */
         int scans = 1, rowBytes = 40;
         switch (mode) {
         case 0x2: scans = 8;  rowBytes = 40; break;
@@ -621,6 +650,10 @@ void PlatformSDL::renderAtariDisplay() {
         case 0xF: scans = 1;  rowBytes = 40; break;
         }
 
+        /* Track the run of short (<=2-scanline) entries for the DLI dead-window:
+           a long run means we're in a dense region where the CPU falls behind. */
+        dliShortRun = (scans <= 2) ? dliShortRun + 1 : 0;
+
         /* Schedule this entry's DLI now that the scan count is known
            (effect line = entryStartY + max(scans, 2); see dliFireY comment). */
         if (instr & 0x80) {
@@ -633,19 +666,27 @@ void PlatformSDL::renderAtariDisplay() {
            NORMAL (160cc = 320px) is centred at x=32; NARROW (128cc = 256px) at x=64.
              WIDE  (bits=11): playfieldPx=384, xOff=  0, renderCount = rowBytes*6/5
              NORMAL(bits=10): playfieldPx=320, xOff= 32, renderCount = rowBytes
-             NARROW(bits=01): playfieldPx=256, xOff= 64, renderCount = rowBytes*3/5  */
+             NARROW(bits=01): playfieldPx=256, xOff= 64, renderCount = rowBytes*4/5  */
         int pfBits = dmactl & 0x03;
         int xOff = (pfBits == 3) ?  0 : (pfBits == 2) ? 32 : 64;
         int renderCount = (pfBits == 3) ? rowBytes * 6 / 5 :
-                          (pfBits == 1) ? rowBytes * 3 / 5 : rowBytes;
+                          (pfBits == 1) ? rowBytes * 4 / 5 : rowBytes;
 
         if (dataAddr == 0) { scanY += scans; renderPMGraphicsRange(entryStartY, scanY - 1); continue; }
 
-        /* GTIA modes 9 and 10: override all ANTIC pixel modes.
-           Both produce 80 display pixels per line, each 4 colour-clocks
-           wide (80 × 4 = 320), from 40 data bytes (2 nibbles/byte).    */
+        /* GTIA modes 9 and 10 reinterpret ANTIC's serial output as 4-bit pixels.
+           Our GTIA path below reads each data byte as two nibbles, which is the
+           correct interpretation only for the 1-bpp hi-res stream of ANTIC mode F
+           (the terrain). The 4-colour 2-bpp modes (D/E) send a different AN-signal
+           stream, so feeding their raw bytes through the nibble path is wrong —
+           e.g. the cockpit canopy (mode D) came out green in the middle instead of
+           grey. Render those as their normal ANTIC mode instead; with COLBK left
+           green by the cockpit DLI timing, mode D then yields green frame edges
+           (colour index 0 = COLBK) over a grey body (COLPF) — matching atari800.
+           (Only mode D is excluded — the confirmed cockpit-canopy case; mode E is
+           left on the GTIA path since no observed screen needs it as plain E.)   */
         uint8_t gtiaMode = (rowGprior >> 6) & 0x03;
-        if (gtiaMode == 1 || gtiaMode == 2) {
+        if ((gtiaMode == 1 || gtiaMode == 2) && mode != 0xD) {
             /* Pre-build a 9-entry colour table for mode 10 (reused each row). */
             uint32_t creg10[9];
             if (gtiaMode == 2) {
@@ -687,7 +728,7 @@ void PlatformSDL::renderAtariDisplay() {
                 }
                 /* dataAddr does NOT advance per scan; advance once after entry */
             }
-            dataAddr = (dataAddr + rowBytes) & 0xFFFF;
+            dataAddr = (dataAddr + renderCount) & 0xFFFF;
             renderPMGraphicsRange(entryStartY, scanY - 1);
             continue;
         }
@@ -716,7 +757,7 @@ void PlatformSDL::renderAtariDisplay() {
                             row[px] = (byte >> bit) & 1 ? c1 : c0;
                     }
                 }
-                dataAddr = (dataAddr + rowBytes) & 0xFFFF;
+                dataAddr = (dataAddr + renderCount) & 0xFFFF;
             }
         } else if (mode == 0xE || mode == 0xD) {
             /* ANTIC mode E/D: 160 pixels, 2 bpp, 4 colours.
@@ -741,7 +782,7 @@ void PlatformSDL::renderAtariDisplay() {
                 }
                 /* dataAddr does NOT advance per scan */
             }
-            dataAddr = (dataAddr + rowBytes) & 0xFFFF;
+            dataAddr = (dataAddr + renderCount) & 0xFFFF;
         } else if (mode == 0x2 || mode == 0x3 || mode == 0x4 || mode == 0x5) {
             /* ANTIC character modes, 40 chars/line (WIDE 48, NARROW 24).
                Modes 2/3: hi-res 1-bit-per-pixel, 8 px/char, 2 colours (COLPF2 fg
