@@ -564,27 +564,27 @@ void PlatformSDL::renderAtariDisplay() {
        Verified against atari000.png: terrain GTIA-10 covers rows 42-127, the
        cockpit-frame HPOS step has no spike, and the title/instrument colours
        (all multi-scan entries) are unchanged from the previous behaviour.       */
-    int dliFireY = -1;   /* scanline at which a pending DLI fires; -1 = none */
-
-    /* DLI dead-window (matches real-hardware NMI behaviour, verified against
-       atari800 via a per-scanline $C7 trace of the attract screen).
-       The DLIs all dispatch through one handler that walks a slot table indexed
-       by $C7 (incremented per DLI). On real HW, in a run of SHORT (<=2-scanline)
-       display-list entries the 6502 cannot keep up: each DLI handler does WSYNC
-       + several register stores, so a DLI whose scanline arrives while the prior
-       handler is still running is MISSED and $C7 does NOT advance. In the title
-       area (multi-scanline entries) the CPU has ample slack, so no DLI is missed.
-       Our renderer runs handlers instantaneously and would fire every DLI, over-
-       advancing $C7 by 2 through the terrain — landing the cockpit "COLBK:=$00"
-       DLI on the canopy frame (turning its green edges black) instead of below it.
-       We replicate the misses: once we're in a dense run of short entries
-       (dliShortRun >= DENSE), suppress any DLI within DEAD_WINDOW scanlines of the
-       last serviced one. Trace: this drops exactly the scan122 and scan128 DLIs,
-       keeping $C7 two behind so COLBK:=$00 fires below the canopy (green edges). */
-    const int DLI_DENSE_RUN   = 3;   /* consecutive short entries => "dense" region */
-    const int DLI_DEAD_WINDOW = 6;   /* scanlines the prior handler occupies the CPU */
-    int dliShortRun       = 0;       /* run length of consecutive <=2-scanline entries */
-    int lastServicedDliY  = -1000;   /* scanline of the most recently serviced DLI    */
+    /* DLI fire scheduling with dense-region latency (verified against atari800
+       per-scanline $C7 traces of BOTH the attract and the in-game cockpit, which
+       are identical). All DLIs dispatch through one handler ($6CAD) that walks a
+       slot table indexed by $C7 (incremented per DLI). Real hardware services
+       EVERY DLI — none are missed — but in the dense cockpit region (a run of
+       short <=2-scanline entries) the main 6502 loop is busy running game logic,
+       so the DLI NMIs are serviced LATE by a roughly constant ~8 scanlines. The
+       well-spaced terrain/title DLIs fire promptly (CPU idle on WSYNC).
+       Ground truth (effect scanlines): slot6 COLBK:=$00 lands at ~136 (BELOW the
+       canopy rows 128-135, keeping its frame edges green) and slot8 HPOSP1:=$94
+       (the throttle reposition) lands at ~144. Our naive fire (entryStartY +
+       max(scans,2)) puts slot6 at 128 and slot8 at 136 — exactly 8 early — so we
+       add DENSE_DELAY in the dense region. Because up to ~5 cockpit DLIs are then
+       in flight within that window, pending fires are held in a small FIFO and
+       serviced in order (each indirectJmp advances $C7). This replaces the old
+       "dead-window" miss model, which wrongly DROPPED slots 7/8 and hid the
+       throttle.                                                                  */
+    const int DLI_SERVICE = 8;       /* per-DLI service cost (lines) for serializing  */
+    int lastDliFireY = -1000;        /* fire scanline of the most recently SCHEDULED DLI */
+    int pendFireY[16];               /* FIFO of pending DLI fire scanlines           */
+    int pendN = 0;
 
     while (scanY < ROF_NATIVE_H && guard++ < 1024) {
         int entryStartY = scanY;
@@ -592,28 +592,26 @@ void PlatformSDL::renderAtariDisplay() {
         uint8_t mode  = instr & 0x0F;
         bool    lms   = (instr & 0x40) != 0;
 
-        /* Fire a scheduled DLI once we reach its effect scanline (see dliFireY
-           comment above).  It runs before this entry renders, so its register
-           writes apply to this entry's playfield and PM.  In a dense region a DLI
-           too close behind the previous one is missed (see dead-window comment). */
-        if (dliFireY >= 0 && entryStartY >= dliFireY && dliAddr != 0) {
-            bool missed = (dliShortRun >= DLI_DENSE_RUN) &&
-                          (entryStartY - lastServicedDliY <= DLI_DEAD_WINDOW);
-            if (!missed) {
-                indirectJmp(dliAddr);
-                lastServicedDliY = entryStartY;
-            }
-            dliFireY = -1;
+        /* Service any pending DLIs whose (possibly delayed) fire scanline has
+           arrived, in FIFO order.  They run before this entry renders, so their
+           register writes apply to this entry's playfield and PM.  Each fire
+           advances $C7 via the dispatch handler.                                */
+        while (pendN > 0 && entryStartY >= pendFireY[0] && dliAddr != 0) {
+            indirectJmp(dliAddr);
+            for (int i = 1; i < pendN; i++) pendFireY[i - 1] = pendFireY[i];
+            pendN--;
         }
 
         if (mode == 0) {
             /* Blank lines: count = bits 6:4 + 1. */
             int count = ((instr >> 4) & 0x7) + 1;
-            dliShortRun = 0;   /* blanks give the CPU slack — end any dense run */
             scanY += count;
             if (instr & 0x80) {                    /* blank can have DLI too */
-                if (dliFireY >= 0 && dliAddr != 0) indirectJmp(dliAddr);  /* flush any still-pending (does not occur in RoF) */
-                dliFireY = entryStartY + (count >= 2 ? count : 2);
+                int fireY = entryStartY + (count >= 2 ? count : 2);
+                if (fireY < lastDliFireY + DLI_SERVICE) fireY = lastDliFireY + DLI_SERVICE;
+                lastDliFireY = fireY;
+                if (pendN < (int)(sizeof pendFireY / sizeof *pendFireY))
+                    pendFireY[pendN++] = fireY;
             }
             renderPMGraphicsRange(entryStartY, scanY - 1);
             continue;
@@ -674,15 +672,20 @@ void PlatformSDL::renderAtariDisplay() {
         case 0xF: scans = 1;  rowBytes = 40; break;
         }
 
-        /* Track the run of short (<=2-scanline) entries for the DLI dead-window:
-           a long run means we're in a dense region where the CPU falls behind. */
-        dliShortRun = (scans <= 2) ? dliShortRun + 1 : 0;
-
-        /* Schedule this entry's DLI now that the scan count is known
-           (effect line = entryStartY + max(scans, 2); see dliFireY comment). */
+        /* Schedule this entry's DLI now that the scan count is known.
+           Base effect line = entryStartY + max(scans, 2), but a DLI cannot be
+           serviced until DLI_SERVICE lines after the previous one was (the 6502
+           handler chain occupies the CPU). Isolated DLIs (terrain/title, far
+           apart) thus keep their natural timing, while the clustered cockpit
+           DLIs serialize and pile up — reproducing the measured real-HW effect
+           scanlines (slot6 COLBK:=$00 at ~136, below the green canopy; slot8
+           HPOSP1:=$94 throttle reposition at ~144).                              */
         if (instr & 0x80) {
-            if (dliFireY >= 0 && dliAddr != 0) indirectJmp(dliAddr);  /* flush still-pending (does not occur in RoF) */
-            dliFireY = entryStartY + (scans >= 2 ? scans : 2);
+            int fireY = entryStartY + (scans >= 2 ? scans : 2);
+            if (fireY < lastDliFireY + DLI_SERVICE) fireY = lastDliFireY + DLI_SERVICE;
+            lastDliFireY = fireY;
+            if (pendN < (int)(sizeof pendFireY / sizeof *pendFireY))
+                pendFireY[pendN++] = fireY;
         }
 
         /* Playfield width and horizontal offset.
