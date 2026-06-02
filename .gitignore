@@ -3,6 +3,12 @@ tools/ghidra/            # extracted Ghidra install (~2 GB)
 tools/ghidra-proj/       # Ghidra project (annotation DB) — large, machine-local
 *.zip
 
+# Game ROM and image artifacts — kept LOCAL only, never committed.
+# rof.xex is the copyrighted source binary; PNGs are screenshots / comparison
+# captures. Purged from history 2026-06-02; keep them out of the repo for good.
+*.xex
+*.png
+
 # Generated, regenerable from rof.xex via the tools
 disasm/rof_mem.bin
 disasm/listing.txt
