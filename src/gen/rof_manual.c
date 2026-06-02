@@ -56,18 +56,36 @@ void dli_sub_4a40(void) {
     bus_write(0xD00A, 0x01);          /* M2PL */
 }
 
-/* dli1s3 ($4A78): main terrain colours */
+/* dli1s3 ($4A78): cockpit-panel colours, gauge player positions, and the
+   panel priority switch.  Faithful transcription of the real $4A78 handler
+   (verified against rof_mem.bin $4A78-$4ACA): the earlier version was an
+   INCOMPLETE translation that stopped after COLPM3 and dropped the final six
+   writes — including `LDA #$04 / STA $D01B` ($4ABB) which sets PRIOR=$04
+   (playfield in front of ALL players) for the instrument panel.  Without it
+   the panel stayed at PRIOR=$02 (from $4A40), so P2/P3 were masked by the
+   dashboard but P0/P1 were not — the attitude-indicator (P2) gauge looked
+   right while the centre/throttle gauges (P0=$5C purple, P1=$94) drew as solid
+   sprite rectangles over the dashboard instead of showing only through the
+   playfield's transparent (COLBK) gauge channels.  $4A78 also positions P1/P3
+   and missiles M2/M3 for the panel.  The 6502 saves/restores X around the body
+   (STX $C9 / LDX $C9); that scratch isn't observable here, so it's omitted.   */
 void dli_sub_4a78(void) {
-    bus_write(0xD014, mem[0x00D0]);   /* COLPM2 */
-    bus_write(0xD40A, mem[0x00D4]);   /* WSYNC-like */
-    bus_write(0xD016, mem[0x00CF]);   /* COLPF0 */
-    bus_write(0xD017, mem[0x00D4]);   /* COLPF1 */
-    bus_write(0xD018, mem[0x00D1]);   /* COLPF2 */
-    bus_write(0xD01A, mem[0x00D2]);   /* COLBK  */
+    bus_write(0xD014, mem[0x00D0]);   /* COLPM2 = $D0 */
+    bus_write(0xD40A, mem[0x00D4]);   /* WSYNC  = $D4 */
+    bus_write(0xD016, mem[0x00CF]);   /* COLPF0 = $CF */
+    bus_write(0xD017, mem[0x00D4]);   /* COLPF1 = $D4 */
+    bus_write(0xD018, mem[0x00D1]);   /* COLPF2 = $D1 */
+    bus_write(0xD01A, mem[0x00D2]);   /* COLBK  = $D2 */
     bus_write(0xD002, 0x4C);          /* HPOSP2 */
     bus_write(0xD000, 0x5C);          /* HPOSP0 */
-    bus_write(0xD012, mem[0x00D5]);   /* COLPM0 */
-    bus_write(0xD015, mem[0x00D6]);   /* COLPM3 */
+    bus_write(0xD012, mem[0x00D5]);   /* COLPM0 = $D5 */
+    bus_write(0xD015, mem[0x00D6]);   /* COLPM3 = $D6 */
+    bus_write(0xD001, 0x94);          /* HPOSP1 */
+    bus_write(0xD013, mem[0x00DE]);   /* COLPM1 = $DE */
+    bus_write(0xD003, mem[0x00CC]);   /* HPOSP3 = $CC */
+    bus_write(0xD01B, 0x04);          /* PRIOR  = $04 (playfield over all players) */
+    bus_write(0xD007, 0x64);          /* HPOSM3 */
+    bus_write(0xD006, mem[0x00CE]);   /* HPOSM2 = $CE */
 }
 
 /* dli1s4 ($4ACD): final slot — restore COLBK, reset $C7 to 0xFF
