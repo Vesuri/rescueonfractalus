@@ -8251,7 +8251,7 @@ L_656e:; platform_tick_vbi(); platform_render_frame();
     LDA(0x00);
     /* 6576 */
     mem[0x0014] = cpu.A;
-L_6578:;
+L_6578:; platform_tick_vbi(); platform_render_frame();
     /* 6578 */
     LDA(mem[0x0014]);
     /* 657a */
@@ -24426,7 +24426,7 @@ L_3eb6:;
 L_3eb8:;
     /* 3eb8 */
     mem[0x004A] = cpu.A;
-L_3eba:;
+L_3eba:; platform_tick_vbi(); platform_render_frame();
     /* 3eba */
     terrain_gen_1();
     /* 3ebd */

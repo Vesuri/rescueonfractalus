@@ -51,6 +51,12 @@ HW_BASE, HW_END = 0xD000, 0xD800   # bus_read/bus_write range
 SPINWAIT_HOOKS = {
     0x3C75: 'platform_poll_events();',           # VCOUNT position wait
     0x3CB8: 'platform_tick_vbi(); platform_render_frame();',  # RTCLOK frame wait
+    # L_3eba: main flight loop in FUN_3d48 — one full frame of terrain gen,
+    # collision, enemy + game-state update per iteration, loops until the
+    # flight phase ($72) reaches 2. On real HW the VBI fires asynchronously;
+    # here it only fires when we tick it, so without a hook nothing renders
+    # during flight (display frozen) and VBI-driven state never advances.
+    0x3EBA: 'platform_tick_vbi(); platform_render_frame();',
     0x3F6D: 'platform_tick_vbi(); platform_render_frame();',
     0x4F43: 'platform_tick_vbi(); platform_render_frame();',
     0x5C4B: 'platform_tick_vbi(); platform_render_frame();',
@@ -60,6 +66,11 @@ SPINWAIT_HOOKS = {
     0x646C: 'platform_tick_vbi(); platform_render_frame();',
     0x6478: 'platform_tick_vbi(); platform_render_frame();',
     0x656E: 'platform_tick_vbi(); platform_render_frame();',
+    # L_6578: planet-rise loop in display_setup — paces FUN_6ba8 every 2 VBI
+    # frames off RTCLOK ($14) until $1002==$FF. Without a VBI tick here the
+    # frame counter never advances and the loop spins forever (planet never
+    # rises into view after the star scroll).
+    0x6578: 'platform_tick_vbi(); platform_render_frame();',
     0x79D0: 'platform_tick_vbi(); platform_render_frame();',
     # Attract-mode loops: need VBI to fire for animation, audio, and input.
     # L_62EB: outer loop entry — tick VBI to drive the game
