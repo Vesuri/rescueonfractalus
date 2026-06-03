@@ -4,6 +4,7 @@
 #include "rof_decl.h"
 #include "../platform/platform_c.h"
 
+/* pmg_missile_init @ $1910: Initialises missile horizontal positions (HPOSM0-3) */
 void pmg_missile_init(void) {
     /* 1910 */
     LDA(mem[0x008C]);
@@ -80,6 +81,7 @@ L_1954:;
     return;
 }
 
+/* attract_mode_init @ $195D: Main attract mode init + loop; zeros all HW; sets VVBLKI to vbi_1B30; calls display_list_build; loops polling RTCLOK/CH/CONSOL until START pressed */
 void attract_mode_init(void) {
     /* 195d */
     LDA(0x00);
@@ -166,7 +168,7 @@ void attract_mode_init(void) {
     /* 19bf */
     mem[0x00BE] = cpu.A;
     /* 19c1 */
-    FUN_3c3d();
+    rle_decompress();
     /* 19c4 */
     LDA(0x71);
     /* 19c6 */
@@ -282,7 +284,7 @@ L_1a2f:;
     /* 1a48 */
     LDY(0x5F);
     /* 1a4a */
-    FUN_e45c();
+    os_setvbv();
     /* 1a4d */
     LDA(0x00);
     /* 1a4f */
@@ -306,6 +308,7 @@ L_1a51:;
 }
 
 /* screen_page_swap @ $1A62: manual implementation in rof_manual.c */
+/* initad_1A97 @ $1A97: INITAD stub (segment 11): calls screen_page_swap, silences AUDF3/4, JMPs attract_mode_init */
 void initad_1A97(void) {
     /* 1a97 */
     screen_page_swap();
@@ -321,6 +324,7 @@ void initad_1A97(void) {
     attract_mode_init(); return;
 }
 
+/* vbi_handler_attract @ $1B30: VBI handler active during attract mode (VVBLKI=$1B30 set in attract_mode_init; writes DLISTL/H + COLBK + RTCLOK) */
 void vbi_handler_attract(void) {
     /* 1b30 */
     LDA(0x35);
@@ -363,6 +367,7 @@ L_1b47:;
     PLP(); return;
 }
 
+/* audio_ch1_init @ $1B50: Sets AUDF1 initial frequency (called once in attract_mode_init) */
 void audio_ch1_init(void) {
     /* 1b50 */
     LDA(0xFF);
@@ -376,6 +381,7 @@ void audio_ch1_init(void) {
     return;
 }
 
+/* audio_attract @ $1B5B: Attract-mode audio: writes AUDF/AUDC channels 1-4 with melody/effects */
 void audio_attract(void) {
     /* 1b5b */
     LDA(mem[0x0013]);
@@ -527,6 +533,7 @@ L_1bda:;
     return;
 }
 
+/* display_list_build @ $1C40: Builds attract-mode display list at $B800 (122 LMS entries for 40-byte rows from $0600); uses RANDOM to place up to 30 enemies/pilots randomly on screen rows (1-in-8 chance per row) */
 void display_list_build(void) {
     /* 1c40 */
     LDA(0x00);
@@ -731,6 +738,7 @@ L_1ce4:;
     return;
 }
 
+/* display_scroll @ $1CF7: Likely vertical scroll or DL update (reads/modifies addresses in display_list_build range — self-referential) */
 void display_scroll(void) {
     /* 1cf7 */
     LDA(mem[0x1C39]);
@@ -876,6 +884,7 @@ L_1d86:;
     return;
 }
 
+/* attract_anim_frame @ $1D9A: Attract mode animation frame: calls $1CF7 */
 void attract_anim_frame(void) {
     /* 1d9a */
     LDA(mem[0x008B]);
@@ -954,6 +963,7 @@ L_1dde:;
     return;
 }
 
+/* attract_init_small @ $1DF5: Small init called at start of attract_mode_init */
 void attract_init_small(void) {
     /* 1df5 */
     LDY(0x00);
@@ -969,6 +979,7 @@ void attract_init_small(void) {
     return;
 }
 
+/* dli_handler_attract @ $1E01: Suspected DLI handler in attract mode (0 callers; 41 bytes; 1 callee) */
 void dli_handler_attract(void) {
     /* 1e01 */
     LDA(mem[0x009C]);
@@ -1015,6 +1026,7 @@ L_1e29:;
     return;
 }
 
+/* attract_sub_1E2A @ $1E2A: Attract mode sub (called from dli_handler_attract) */
 void attract_sub_1E2A(void) {
     /* 1e2a */
     LDY(mem[0x009A]);
@@ -1093,6 +1105,7 @@ L_1e70:;
     return;
 }
 
+/* pmg_update_attract @ $1E79: PMG position/graphic update during attract mode */
 void pmg_update_attract(void) {
     /* 1e79 */
     LDY(0x00);
@@ -1164,6 +1177,7 @@ L_1eb2:;
     attract_sub_1EB4(); return;
 }
 
+/* attract_sub_1EB4 @ $1EB4: Attract mode sub (called in attract_loop) */
 void attract_sub_1EB4(void) {
     /* 1eb4 */
     DEC_M(0x009D);
@@ -1264,6 +1278,7 @@ L_1f05:;
     return;
 }
 
+/* pmg_colors_attract @ $1F0B: Sets COLPM2/3, COLPF3, HPOSP2/3 (player 2/3 during attract) */
 void pmg_colors_attract(void) {
     /* 1f0b */
     DEC_M(0x0096);
@@ -1300,6 +1315,7 @@ L_1f2f:;
     return;
 }
 
+/* attract_sub_1F48 @ $1F48: Attract mode sub (called in attract_loop); calls attract_sub_1f51 */
 void attract_sub_1F48(void) {
     /* 1f48 */
     LDX(0x00);
@@ -1314,6 +1330,7 @@ L_1f4a:;
     return;
 }
 
+/* attract_sub_1f51 @ $1F51: Attract mode sub; reads RANDOM once (random visual effect) */
 void attract_sub_1f51(void) {
     /* 1f51 */
     DEC_M((0x2604)+cpu.X);
@@ -1447,6 +1464,7 @@ L_1fdf:;
     return;
 }
 
+/* loader_util @ $3C00: Loader utility (XEX segment loader helper); called from game_entry at $3D92 */
 void loader_util(void) {
     /* 3c00 */
     LDA(0x00);
@@ -1508,7 +1526,8 @@ void loader_util(void) {
     memset_or_copy(); return;
 }
 
-void FUN_3c3d(void) {
+/* rle_decompress @ $3C3D: RLE unpack: src ptr $BB/$BC -> dst $BD/$BE; bytes<$C0 copied literally, >=$C0 are run markers (low 6 bits=count), $C0 terminates */
+void rle_decompress(void) {
     /* 3c3d */
     LDY(0x00);
 L_3c3f:;
@@ -1521,7 +1540,7 @@ L_3c3f:;
     /* 3c45 */
     LDX(0x01);
     /* 3c47 */
-    FUN_3c61();
+    copy_bytes_to_dst();
     /* 3c4a */
     goto L_3c55;
 L_3c4d:;
@@ -1533,13 +1552,14 @@ L_3c4d:;
     return;
 L_3c52:;
     /* 3c52 */
-    FUN_3c58();
+    rle_run_fill();
 L_3c55:;
     /* 3c55 */
     goto L_3c3f;
 }
 
-void FUN_3c58(void) {
+/* rle_run_fill @ $3C58: Advance src ptr $BB/$BC, fetch fill byte [$BB], fall into copy_bytes with run count in X */
+void rle_run_fill(void) {
     /* 3c58 */
     TAX();
     /* 3c59 */
@@ -1551,10 +1571,11 @@ void FUN_3c58(void) {
 L_3c5f:;
     /* 3c5f */
     LDA(bus_read(ZP_IND_Y(0xBB)));
-    FUN_3c61(); return;
+    copy_bytes_to_dst(); return;
 }
 
-void FUN_3c61(void) {
+/* copy_bytes_to_dst @ $3C61: Write A to dst ptr $BD/$BE X times (incrementing dst), then advance src ptr $BB/$BC by 1 */
+void copy_bytes_to_dst(void) {
 L_3c61:;
     /* 3c61 */
     bus_write(ZP_IND_Y(0xBD), cpu.A);
@@ -1580,13 +1601,15 @@ L_3c72:;
     return;
 }
 
-void FUN_3c73(void) {
+/* wait_vcount_30 @ $3C73: Load A=$30 and fall into wait_vcount_eq; busy-wait until VCOUNT($D40B)==$30 */
+void wait_vcount_30(void) {
     /* 3c73 */
     LDA(0x30);
-    FUN_3c75(); return;
+    wait_vcount_eq(); return;
 }
 
-void FUN_3c75(void) {
+/* wait_vcount_eq @ $3C75: Busy-wait (polling events) until ANTIC VCOUNT $D40B equals A */
+void wait_vcount_eq(void) {
 L_3c75:; platform_poll_events();
     /* 3c75 */
     CMP(bus_read(0xD40B));
@@ -1596,7 +1619,8 @@ L_3c75:; platform_poll_events();
     return;
 }
 
-void FUN_3c7b(void) {
+/* wait_vcount_ge_7a @ $3C7B: Busy-wait until ANTIC VCOUNT $D40B >= $7A (scanline sync) */
+void wait_vcount_ge_7a(void) {
 L_3c7b:;
     /* 3c7b */
     LDA(bus_read(0xD40B));
@@ -1608,7 +1632,8 @@ L_3c7b:;
     return;
 }
 
-void FUN_3c83(void) {
+/* fill_region_2000 @ $3C83: Set dst $C1/$C2=$2000, count $C3/$C4=$0F73, fall into memset_or_copy to fill region with byte [$B7] */
+void fill_region_2000(void) {
     /* 3c83 */
     LDA(0x00);
     /* 3c85 */
@@ -1628,6 +1653,7 @@ void FUN_3c83(void) {
     memset_or_copy(); return;
 }
 
+/* memset_or_copy @ $3C93: Utility: likely memset/memcopy (called from multiple sites) */
 void memset_or_copy(void) {
     /* 3c93 */
     LDY(0x00);
@@ -1664,70 +1690,78 @@ L_3cae:;
     goto L_3c95;
 }
 
-void FUN_3cb1(void) {
+/* push_a_thunk_3cb2 @ $3CB1: PHA then tail-call wait_frames_60; trampoline preserving A on stack */
+void push_a_thunk_3cb2(void) {
     /* 3cb1 */
     PHA();
-    FUN_3cb2(); return;
+    wait_frames_60(); return;
 }
 
-void FUN_3cbe(void) {
+/* wait_frames_save_a @ $3CBE: PHA caller A, LDA #$3C, BNE(always) to wait_setcount; delays 60 frames via timer_4C */
+void wait_frames_save_a(void) {
     /* 3cbe */
     PHA();
     /* 3cbf */
     LDA(0x3C);
     /* 3cc1 */
-    if (!cpu.Z) { FUN_3cc6(); return; }
+    if (!cpu.Z) { wait_setcount(); return; }
     clear_colors(); return;
 }
 
+/* clear_colors @ $3CC3: Clears player color shadows PCOLR0-3 + COLBK (9 callers; 7 bytes) */
 void clear_colors(void) {
     /* 3cc3 */
     PHA();
     /* 3cc4 */
     LDA(0x01);
-    FUN_3cc6(); return;
+    wait_setcount(); return;
 }
 
-void FUN_3cca(void) {
+/* wait_frames_2 @ $3CCA: PHA caller A, LDA #$02 then to wait_setcount; delay 2 frames (RTCLOK_LOW vs timer_4C) */
+void wait_frames_2(void) {
     /* 3cca */
     PHA();
     /* 3ccb */
     LDA(0x02);
     /* 3ccd */
-    if (!cpu.Z) { FUN_3cc6(); return; }
-    FUN_3ccf(); return;
+    if (!cpu.Z) { wait_setcount(); return; }
+    wait_frames_5(); return;
 }
 
-void FUN_3ccf(void) {
+/* wait_frames_5 @ $3CCF: PHA caller A, LDA #$05 then to wait_setcount; delay 5 frames (RTCLOK_LOW vs timer_4C) */
+void wait_frames_5(void) {
     /* 3ccf */
     PHA();
     /* 3cd0 */
     LDA(0x05);
     /* 3cd2 */
-    if (!cpu.Z) { FUN_3cc6(); return; }
-    FUN_3cd4(); return;
+    if (!cpu.Z) { wait_setcount(); return; }
+    wait_frames_10(); return;
 }
 
-void FUN_3cd4(void) {
+/* wait_frames_10 @ $3CD4: PHA caller A, LDA #$0A then to wait_setcount; delay 10 frames (RTCLOK_LOW vs timer_4C) */
+void wait_frames_10(void) {
     /* 3cd4 */
     PHA();
     /* 3cd5 */
     LDA(0x0A);
     /* 3cd7 */
-    if (!cpu.Z) { FUN_3cc6(); return; }
-    FUN_3cd9(); return;
+    if (!cpu.Z) { wait_setcount(); return; }
+    wait_frames_20(); return;
 }
 
-void FUN_3cd9(void) {
+/* wait_frames_20 @ $3CD9: PHA caller A, LDA #$14 then to wait_setcount; delay 20 frames; falls through to game_entry */
+void wait_frames_20(void) {
     /* 3cd9 */
     PHA();
     /* 3cda */
     LDA(0x14);
     /* 3cdc */
-    if (!cpu.Z) { FUN_3cc6(); return; }
+    if (!cpu.Z) { wait_setcount(); return; }
     game_entry(); return;
 }
 
+/* game_entry @ $3CDE: Game entry point (final INITAD=$3CDE); 737-byte mega-init + main game loop JMP chain */
 void game_entry(void) {
     /* 3cde */
     game_init_first();
@@ -1811,9 +1845,10 @@ L_3d0e:;
     audio_timer_setup();
     /* 3d35 */
     font_display_init();
-    FUN_3d38(); return;
+    init_game_vars_attract_timer(); return;
 }
 
+/* clear_pm_state @ $3FBF: Zeros $DA,$DB,$DC,$DD (player state?) + $D9; also clears PCOLR0-3 shadow */
 void clear_pm_state(void) {
     /* 3fbf */
     LDY(0x03);
@@ -1832,6 +1867,7 @@ L_3fc1:;
     return;
 }
 
+/* enemy_check @ $3FCD: Checks $063D (enemy active?) and $0633 (another trigger); dispatches to game_subsystem_4f3f or pmg_enemy_update */
 void enemy_check(void) {
     /* 3fcd */
     LDA(mem[0x063D]);
@@ -1851,6 +1887,7 @@ L_3fdd:;
     return;
 }
 
+/* terrain_lookup @ $3FDE: Table lookup: reads $281C + index from $2836 into $3FF6 table; writes 4 bytes to $32E3 (display buffer) */
 void terrain_lookup(void) {
     /* 3fde */
     CLC();
@@ -1879,6 +1916,7 @@ L_3feb:;
     return;
 }
 
+/* startup_init @ $3FFA: Init: checks $0642 game state and $004B flag; calls display_sub if state=1 or 2 */
 void startup_init(void) {
     /* 3ffa */
     LDA(0x00);
@@ -1939,7 +1977,7 @@ L_401e:;
     /* 4032 */
     mem[0x0647] = cpu.A;
     /* 4035 */
-    FUN_4095();
+    draw_digit_low_nibble();
 L_4038:;
     /* 4038 */
     LDA(mem[0x0641]);
@@ -1966,7 +2004,7 @@ L_4038:;
     /* 4051 */
     mem[0x00BC] = cpu.Y;
     /* 4053 */
-    FUN_4084();
+    draw_2digit_value();
 L_4056:;
     /* 4056 */
     LDA(mem[0x062B]);
@@ -1992,7 +2030,7 @@ L_4065:;
     /* 406b */
     CMP(mem[0x0646]);
     /* 406e */
-    if (cpu.Z) { FUN_40af(); return; }
+    if (cpu.Z) { return_stub_40af(); return; }
     /* 4070 */
     mem[0x0646] = cpu.A;
     /* 4073 */
@@ -2013,10 +2051,11 @@ L_4065:;
     LDY(0x34);
     /* 4082 */
     mem[0x00BC] = cpu.Y;
-    FUN_4084(); return;
+    draw_2digit_value(); return;
 }
 
-void FUN_4084(void) {
+/* draw_2digit_value @ $4084: Render packed 2-digit value: high nibble via $BD/$BE ptr then low nibble; glyph table $4AE3, dest ptr $00BB */
+void draw_2digit_value(void) {
     /* 4084 */
     PHA();
     /* 4085 */
@@ -2026,7 +2065,7 @@ void FUN_4084(void) {
     /* 4087 */
     AND(0x3C);
     /* 4089 */
-    FUN_4099();
+    draw_glyph_2rows();
     /* 408c */
     LDA(mem[0x00BD]);
     /* 408e */
@@ -2037,20 +2076,22 @@ void FUN_4084(void) {
     mem[0x00BC] = cpu.A;
     /* 4094 */
     PLA();
-    FUN_4095(); return;
+    draw_digit_low_nibble(); return;
 }
 
-void FUN_4095(void) {
+/* draw_digit_low_nibble @ $4095: Isolate A low nibble, *4, fall into draw_glyph: renders units digit glyph to ($00BB) screen ptr */
+void draw_digit_low_nibble(void) {
     /* 4095 */
     AND(0x0F);
     /* 4097 */
     ASL_A();
     /* 4098 */
     ASL_A();
-    FUN_4099(); return;
+    draw_glyph_2rows(); return;
 }
 
-void FUN_4099(void) {
+/* draw_glyph_2rows @ $4099: Copy 2-byte glyph from $4AE3[X] OR mask $00BF into ($00BB),Y at Y=0,1 and Y=$30,$31 (two char rows) */
+void draw_glyph_2rows(void) {
     /* 4099 */
     TAX();
     /* 409a */
@@ -2077,10 +2118,11 @@ L_40ab:;
     CPY(0x32);
     /* 40ad */
     if (!cpu.Z) goto L_409c;
-    FUN_40af(); return;
+    return_stub_40af(); return;
 }
 
-void FUN_40b0(void) {
+/* update_bar_gauge_291c @ $40B0: If $291C/$291D changed vs cache $2872/$2874, redraw 21-byte bar from $4B57 (idx $455B[$291C]) into $0E87, $FF-term */
+void update_bar_gauge_291c(void) {
     /* 40b0 */
     LDX(mem[0x291C]);
     /* 40b3 */
@@ -2132,7 +2174,8 @@ L_40e4:;
     return;
 }
 
-void FUN_40e5(void) {
+/* update_gauge_281a @ $40E5: On $281A change vs $2875: clear $0C97 row + $FF fill to col $38; on $281B change vs $2876: mask $0B96..$0B99 edge bytes */
+void update_gauge_281a(void) {
     /* 40e5 */
     LDY(mem[0x281A]);
     /* 40e8 */
@@ -2201,7 +2244,8 @@ L_4130:;
     return;
 }
 
-void FUN_4131(void) {
+/* update_blink_timer_006e @ $4131: Decr timer $006E; at 0 reload $0F, if $3E set & life_counter $062F=0 & $0063<0 fire game_sub_5815(X=$1C); toggles $00DE $4E/$46 */
+void update_blink_timer_006e(void) {
     /* 4131 */
     LDA(mem[0x006E]);
     /* 4133 */
@@ -2254,19 +2298,21 @@ L_4162:;
     /* 4162 */
     LDA(mem[0x003B]);
     /* 4164 */
-    if (cpu.Z) { FUN_416b(); return; }
-    FUN_4166(); return;
+    if (cpu.Z) { vobj_speed_accumulate(); return; }
+    vobj_update_active(); return;
 }
 
-void FUN_4166(void) {
+/* vobj_update_active @ $4166: Active-path: DEC $003B then advance vert object via vobj_advance ($4184); $003B gates which path */
+void vobj_update_active(void) {
     /* 4166 */
     DEC_M(0x003B);
     /* 4168 */
-    FUN_4184(); return;
-    FUN_416b(); return;
+    vobj_advance(); return;
+    vobj_speed_accumulate(); return;
 }
 
-void FUN_41da(void) {
+/* vobj_pos_to_pmstrip_index @ $41DA: Y = ($DC - $062F) >> 2: convert vert pos $062F to index into P/M shape strip $0D98 */
+void vobj_pos_to_pmstrip_index(void) {
     /* 41da */
     LDA(0xDC);
     /* 41dc */
@@ -2283,15 +2329,17 @@ void FUN_41da(void) {
     return;
 }
 
-void FUN_41e4(void) {
+/* vobj_draw_dispatch @ $41E4: X=$0038 (row count); if nonzero erase-loop via vobj_erase_row ($4207) else step down via vobj_step_down ($41e8) */
+void vobj_draw_dispatch(void) {
     /* 41e4 */
     LDX(0x38);
     /* 41e6 */
-    if (!cpu.Z) { FUN_4207(); return; }
-    FUN_41e8(); return;
+    if (!cpu.Z) { vobj_erase_row(); return; }
+    vobj_step_down(); return;
 }
 
-void FUN_41e8(void) {
+/* vobj_step_down @ $41E8: Set $004C=1; advance $062F by +4, wrap at $DC bottom ($004C=0,$0D98=$F0,pos=$DC); calls push_a_thunk_3cb2 then erase row */
+void vobj_step_down(void) {
 L_41e8:;
     /* 41e8 */
     LDA(0x01);
@@ -2321,19 +2369,21 @@ L_4201:;
     /* 4201 */
     mem[0x062F] = cpu.A;
     /* 4204 */
-    FUN_3cb1();
-    FUN_4207(); return;
+    push_a_thunk_3cb2();
+    vobj_erase_row(); return;
 }
 
-void FUN_4225(void) {
+/* obj_state_dispatch_0043 @ $4225: X=$0043; if nonzero jump saucer_anim_return else saucer_anim_tick (state-driven object update branch) */
+void obj_state_dispatch_0043(void) {
     /* 4225 */
     LDX(mem[0x0043]);
     /* 4227 */
-    if (!cpu.Z) { FUN_428d(); return; }
-    FUN_4229(); return;
+    if (!cpu.Z) { saucer_anim_return(); return; }
+    saucer_anim_tick(); return;
 }
 
-void FUN_4229(void) {
+/* saucer_anim_tick @ $4229: State machine on $007E: if >=$81 jumps to saucer_phase_advance ($428e); else counts down $00E6 (reload $0618), toggles bit7 of table $3492 using RANDOM ($D20A&7); seeds $0048/$00E6 on entry */
+void saucer_anim_tick(void) {
     /* 4229 */
     LDA(mem[0x007E]);
     /* 422b */
@@ -2341,7 +2391,7 @@ void FUN_4229(void) {
     /* 422d */
     CMP(0x81);
     /* 422f */
-    if (cpu.C) { FUN_428e(); return; }
+    if (cpu.C) { saucer_phase_advance(); return; }
     /* 4231 */
     DEC_M(0x00E6);
     /* 4233 */
@@ -2369,10 +2419,10 @@ L_4241:;
     mem[(0x3492)+cpu.Y] = cpu.A;
 L_424a:;
     /* 424a */
-    FUN_428d(); return;
+    saucer_anim_return(); return;
 L_424d:;
     /* 424d */
-    if (!cpu.Z) { FUN_4265(); return; }
+    if (!cpu.Z) { saucer_anim_step(); return; }
     /* 424f */
     mem[0x0048] = cpu.A;
     /* 4251 */
@@ -2384,7 +2434,8 @@ L_424d:;
     game_sub_4258(); return;
 }
 
-void FUN_42a7(void) {
+/* draw_player3_object @ $42A7: Renders player-3 sprite: sets SIZEP3 ($D00B), HPOSP3 ($D003), size/pos/shape from tables $4566/$4569/$456C/$457A/$4D11/$4D3E; fills PMG bitmap rows $0F1E/$0F71; updates $286F/$2835/$2870/$00CC */
+void draw_player3_object(void) {
     /* 42a7 */
     PHA();
     /* 42a8 */
@@ -2695,7 +2746,8 @@ L_43c4:;
     return;
 }
 
-void FUN_43c7(void) {
+/* dispatch_43cb_half_70 @ $43C7: Loads $0070, LSR to halve into Y, tail-calls game_sub_43CB with that index */
+void dispatch_43cb_half_70(void) {
     /* 43c7 */
     LDA(mem[0x0070]);
     /* 43c9 */
@@ -2705,6 +2757,7 @@ void FUN_43c7(void) {
     game_sub_43CB(); return;
 }
 
+/* game_sub_43CB @ $43CB: Game subsystem (called with Y=9) */
 void game_sub_43CB(void) {
     /* 43cb */
     CPY(0x09);
@@ -2715,12 +2768,12 @@ void game_sub_43CB(void) {
     /* 43d1 */
     CMP(mem[0x062E]);
     /* 43d4 */
-    if (cpu.Z) { FUN_442d(); return; }
+    if (cpu.Z) { draw_bar_loop_end(); return; }
 L_43d6:;
     /* 43d6 */
     CPY(mem[0x062E]);
     /* 43d9 */
-    if (cpu.Z) { FUN_442d(); return; }
+    if (cpu.Z) { draw_bar_loop_end(); return; }
     /* 43db */
     mem[0x062E] = cpu.Y;
     /* 43de */
@@ -2733,15 +2786,17 @@ L_43d6:;
     LDA(0x07);
     /* 43e6 */
     mem[0x00BD] = cpu.A;
-    FUN_43e8(); return;
+    draw_object_column(); return;
 }
 
-void FUN_442e(void) {
+/* redraw_dial_from_6f @ $442E: Loads dial value $6F then falls into game_sub_4430 to recompute $22 and redraw cockpit dial */
+void redraw_dial_from_6f(void) {
     /* 442e */
     LDA(mem[0x006F]);
     game_sub_4430(); return;
 }
 
+/* game_sub_4430 @ $4430: Game subsystem (0 callers — probably IRQ/VBI handler) */
 void game_sub_4430(void) {
     /* 4430 */
     mem[0x006F] = cpu.A;
@@ -2772,15 +2827,17 @@ L_4444:;
     game_sub_4447(); return;
 }
 
+/* game_sub_4447 @ $4447: Game subsystem (called with A=8) */
 void game_sub_4447(void) {
     /* 4447 */
     CLC();
     /* 4448 */
     ADC(0x08);
-    FUN_444a(); return;
+    setup_dial_bar_draw(); return;
 }
 
-void FUN_444a(void) {
+/* setup_dial_bar_draw @ $444A: Sets bar params $BF=A(limit),$BE=7,$BD=$0F then calls draw loop draw_object_column (writes via $BB ptr) */
+void setup_dial_bar_draw(void) {
     /* 444a */
     mem[0x00BF] = cpu.A;
     /* 444c */
@@ -2792,10 +2849,11 @@ void FUN_444a(void) {
     /* 4452 */
     mem[0x00BD] = cpu.A;
     /* 4454 */
-    FUN_43e8(); return;
+    draw_object_column(); return;
 }
 
-void FUN_4467(void) {
+/* update_p3_indicator_stripe @ $4467: Clears/rewrites PM buffer $0F98 by cursor $2845/$2846, copies 5 bytes from tbl $44C7 sel by $2839/$283A, sets $CC + SIZEP3 $D00B */
+void update_p3_indicator_stripe(void) {
     /* 4467 */
     LDY(mem[0x2846]);
     /* 446a */
@@ -2899,7 +2957,8 @@ L_44c6:;
     return;
 }
 
-void FUN_44d6(void) {
+/* update_altitude_digit_display @ $44D6: Computes $B9 from $1C-$28DA clamped, AND $CF/ORA $30 nibble-toggles digits in $0B91 buf, sets $CE from $28D9+$AB */
+void update_altitude_digit_display(void) {
     /* 44d6 */
     LDY(mem[0x00B9]);
     /* 44d8 */
@@ -2981,6 +3040,7 @@ L_451a:;
     return;
 }
 
+/* game_sub_451d @ $451D: Game subsystem */
 void game_sub_451d(void) {
     /* 451d */
     mem[0x00BB] = cpu.A;
@@ -3042,6 +3102,7 @@ L_4544:;
     return;
 }
 
+/* game_init_45A1 @ $45A1: Game init (called in game_entry setup) */
 void game_init_45A1(void) {
     /* 45a1 */
     LDA(0x98);
@@ -3087,6 +3148,7 @@ L_45af:;
     return;
 }
 
+/* game_sub_45C5 @ $45C5: Game subsystem */
 void game_sub_45C5(void) {
     /* 45c5 */
     LDA(0xBE);
@@ -3120,6 +3182,7 @@ void game_sub_45C5(void) {
     return;
 }
 
+/* game_init_45EE @ $45EE: Game init (called in game_entry setup) */
 void game_init_45EE(void) {
     /* 45ee */
     LDY(0x07);
@@ -3144,6 +3207,7 @@ L_45f0:;
     return;
 }
 
+/* game_sub_4606 @ $4606: Game subsystem (called multiple times including in game loop) */
 void game_sub_4606(void) {
     /* 4606 */
     LDY(0x03);
@@ -3182,6 +3246,7 @@ L_460a:;
     return;
 }
 
+/* irq_handler @ $462A: Immediate IRQ handler (VIMIRQ=$462A); set in game_entry at $3D28 */
 void irq_handler(void) {
     /* 462a */
     LDA(0x00);
@@ -3211,7 +3276,8 @@ L_463e:;
     PLP(); return;
 }
 
-void FUN_4644(void) {
+/* event_sequence_dispatcher @ $4644: Matches event id vs tbl $4816, dispatches by mode $0072(0-5); drives POKEY AUDF $D201, flags $43/$4A/$3C-$3E, throttle game_sub_4430 */
+void event_sequence_dispatcher(void) {
     /* 4644 */
     LDA(0x00);
     /* 4646 */
@@ -3292,7 +3358,7 @@ L_4685:;
     /* 468c */
     mem[0x0005] = cpu.A;
     /* 468e */
-    FUN_4971();
+    copy_display_params_to_buffer();
     /* 4691 */
     INC_M(0x0043);
     /* 4693 */
@@ -3330,9 +3396,9 @@ L_46a8:;
     /* 46ac */
     INY();
     /* 46ad */
-    FUN_4eb2();
+    refresh_hud_fields_0d_0e();
     /* 46b0 */
-    FUN_4eab(); return;
+    refresh_hud_field_0b(); return;
 L_46b3:;
     /* 46b3 */
     LDA(mem[0x0043]);
@@ -3361,7 +3427,7 @@ L_46b3:;
     /* 46cb */
     if (!cpu.Z) goto L_46db;
     /* 46cd */
-    FUN_4971();
+    copy_display_params_to_buffer();
     /* 46d0 */
     INC_M(0x003E);
     /* 46d2 */
@@ -3380,7 +3446,7 @@ L_46db:;
     /* 46e0 */
     LDA(0x00);
     /* 46e2 */
-    FUN_4968();
+    clear_pilot_rescue_state();
     /* 46e5 */
     LDA(0x0E);
 L_46e7:;
@@ -3457,14 +3523,14 @@ L_4727:;
     /* 4727 */
     mem[0x00DF] = cpu.X;
     /* 4729 */
-    FUN_47a3(); return;
+    set_colpf0_from_flag(); return;
 L_472c:;
     /* 472c */
     CPY(0x02);
     /* 472e */
     if (!cpu.Z) goto L_4733;
     /* 4730 */
-    FUN_493d(); return;
+    show_ace_or_message(); return;
 L_4733:;
     /* 4733 */
     LDA(mem[0x062F]);
@@ -3490,7 +3556,7 @@ L_4733:;
     mem[0x0044] = cpu.A;
 L_474b:;
     /* 474b */
-    FUN_495f();
+    reset_pilot_state_if_no_2830();
     /* 474e */
     mem[0x0025] = cpu.A;
     /* 4750 */
@@ -3509,10 +3575,10 @@ L_475a:;
     /* 475e */
     DEC_M(0x006F);
     /* 4760 */
-    FUN_442e();
+    redraw_dial_from_6f();
 L_4763:;
     /* 4763 */
-    FUN_480b(); return;
+    clear_message_buffer(); return;
 L_4766:;
     /* 4766 */
     LDA(mem[0x003D]);
@@ -3535,10 +3601,10 @@ L_4766:;
     /* 4778 */
     INC_M(0x006F);
     /* 477a */
-    FUN_442e();
+    redraw_dial_from_6f();
 L_477d:;
     /* 477d */
-    FUN_480b(); return;
+    clear_message_buffer(); return;
 L_4780:;
     /* 4780 */
     CPY(0x00);
@@ -3571,14 +3637,15 @@ L_4795:;
     LDY(0x04);
 L_479e:;
     /* 479e */
-    FUN_4956(); return;
+    show_message_id_a(); return;
 L_47a1:;
     /* 47a1 */
     mem[0x0072] = cpu.Y;
-    FUN_47a3(); return;
+    set_colpf0_from_flag(); return;
 }
 
-void FUN_47a3(void) {
+/* set_colpf0_from_flag @ $47A3: If Y bit5 set A=$CA else A=$0047, writes COLPF0 $D016, falls into save_color_clear_y_bit5 */
+void set_colpf0_from_flag(void) {
     /* 47a3 */
     TYA();
     /* 47a4 */
@@ -3595,10 +3662,11 @@ L_47ad:;
 L_47af:;
     /* 47af */
     bus_write(0xD016, cpu.A);
-    FUN_47b2(); return;
+    save_color_clear_y_bit5(); return;
 }
 
-void FUN_47b2(void) {
+/* save_color_clear_y_bit5 @ $47B2: Stores A->$D8, clears bit5 of Y (AND $DF), falls into show_cockpit_message */
+void save_color_clear_y_bit5(void) {
     /* 47b2 */
     mem[0x00D8] = cpu.A;
     /* 47b4 */
@@ -3607,18 +3675,20 @@ void FUN_47b2(void) {
     AND(0xDF);
     /* 47b7 */
     TAY();
-    FUN_47b8(); return;
+    show_cockpit_message(); return;
 }
 
-void FUN_480b(void) {
+/* clear_message_buffer @ $480B: X=$0E, A=0; falls into clear loop -> zeroes 14-byte cockpit message buffer at $32B7 */
+void clear_message_buffer(void) {
     /* 480b */
     LDX(0x0E);
     /* 480d */
     LDA(0x00);
-    FUN_480f(); return;
+    fill_message_buffer(); return;
 }
 
-void FUN_480f(void) {
+/* fill_message_buffer @ $480F: Stores A into 14 bytes $32B6+X down to $32B7 (DEX while !Z); fills/clears message buffer */
+void fill_message_buffer(void) {
 L_480f:;
     /* 480f */
     mem[(0x32B6)+cpu.X] = cpu.A;
@@ -3630,7 +3700,8 @@ L_480f:;
     return;
 }
 
-void FUN_493d(void) {
+/* show_ace_or_message @ $493D: Branch on $003A: if clear sets $00DF=$1C and shows msg ID $CD via $4958; else saves Y, calls store_676_init/reset_pilot_state_if_no_2830 then re-shows saved msg ID */
+void show_ace_or_message(void) {
     /* 493d */
     LDA(mem[0x003A]);
     /* 493f */
@@ -3642,36 +3713,38 @@ void FUN_493d(void) {
     /* 4945 */
     LDY(0xCD);
     /* 4947 */
-    if (!cpu.Z) { FUN_4958(); return; }
+    if (!cpu.Z) { show_message_with_d8(); return; }
 L_4949:;
     /* 4949 */
     mem[0x00BB] = cpu.Y;
     /* 494b */
     LDA(0x01);
     /* 494d */
-    FUN_4ea2();
+    store_676_init();
     /* 4950 */
-    FUN_495f();
+    reset_pilot_state_if_no_2830();
     /* 4953 */
     LDY(mem[0x00BB]);
     /* 4955 */
     TYA();
-    FUN_4956(); return;
+    show_message_id_a(); return;
 }
 
-void FUN_495f(void) {
+/* reset_pilot_state_if_no_2830 @ $495F: If $2830==0 also clears $003D; falls into clear_pilot_rescue_state to clear $003E and pilot flags */
+void reset_pilot_state_if_no_2830(void) {
     /* 495f */
     LDA(0x00);
     /* 4961 */
     CMP(mem[0x2830]);
     /* 4964 */
-    if (!cpu.Z) { FUN_4968(); return; }
+    if (!cpu.Z) { clear_pilot_rescue_state(); return; }
     /* 4966 */
     mem[0x003D] = cpu.A;
-    FUN_4968(); return;
+    clear_pilot_rescue_state(); return;
 }
 
-void FUN_4968(void) {
+/* clear_pilot_rescue_state @ $4968: Clears $003E, pilot_visible $288D and pilot_prev $288E (resets pilot/rescue state) */
+void clear_pilot_rescue_state(void) {
     /* 4968 */
     mem[0x003E] = cpu.A;
     /* 496a */
@@ -3682,7 +3755,8 @@ void FUN_4968(void) {
     return;
 }
 
-void FUN_4971(void) {
+/* copy_display_params_to_buffer @ $4971: Copies 16 bytes $00CF..$00DE (display_param_0+) down to $07E9..$07F8 via Y=$0F..0 loop */
+void copy_display_params_to_buffer(void) {
     /* 4971 */
     LDY(0x0F);
 L_4973:;
@@ -3698,7 +3772,8 @@ L_4973:;
     return;
 }
 
-void FUN_497d(void) {
+/* add_and_show_bcd_counter @ $497D: SED; adds 16-bit BCD delta $0045/$0046 into 4-byte BCD counter $0600-$0603 (big-endian) w/ carry, CLD, then renders via render_bcd_counter */
+void add_and_show_bcd_counter(void) {
     /* 497d */
     SED();
     /* 497e */
@@ -3729,10 +3804,11 @@ void FUN_497d(void) {
     mem[0x0600] = cpu.A;
     /* 499f */
     CLD();
-    FUN_49a0(); return;
+    render_bcd_counter(); return;
 }
 
-void FUN_49a0(void) {
+/* render_bcd_counter @ $49A0: Sets dest ptr $C5/$C6=$32C5 (screen), renders top BCD byte $0601 then digits via render_bcd_top_byte/49ae */
+void render_bcd_counter(void) {
     /* 49a0 */
     LDA(0xC5);
     /* 49a2 */
@@ -3744,40 +3820,44 @@ void FUN_49a0(void) {
     /* 49a8 */
     LDA(mem[0x0601]);
     /* 49ab */
-    FUN_49c0();
-    FUN_49ae(); return;
+    render_bcd_top_byte();
+    render_bcd_low_bytes(); return;
 }
 
-void FUN_49ae(void) {
+/* render_bcd_low_bytes @ $49AE: Renders BCD bytes $0602 then $0603 (each two digits) to screen via emit_bcd_byte_digits */
+void render_bcd_low_bytes(void) {
     /* 49ae */
     LDA(mem[0x0602]);
     /* 49b1 */
-    FUN_49ce();
+    emit_bcd_byte_digits();
     /* 49b4 */
     LDA(mem[0x0603]);
     /* 49b7 */
-    FUN_49ce(); return;
+    emit_bcd_byte_digits(); return;
 }
 
-void FUN_49ba(void) {
+/* render_bcd_digits_supp_all @ $49BA: Entry: Y=7 leading-zero threshold, X=0 (suppress on); if Z take set_zsupp_pos_clear_delta else render_bcd_top_byte */
+void render_bcd_digits_supp_all(void) {
     /* 49ba */
     LDY(0x07);
     /* 49bc */
     LDX(0x00);
     /* 49be */
-    if (cpu.Z) { FUN_49c5(); return; }
-    FUN_49c0(); return;
+    if (cpu.Z) { set_zsupp_pos_clear_delta(); return; }
+    render_bcd_top_byte(); return;
 }
 
-void FUN_49c0(void) {
+/* render_bcd_top_byte @ $49C0: Y=5 zero-suppress threshold, X=mem[$0600] first-nonzero flag, into digit emitter set_zsupp_pos_clear_delta */
+void render_bcd_top_byte(void) {
     /* 49c0 */
     LDY(0x05);
     /* 49c2 */
     LDX(mem[0x0600]);
-    FUN_49c5(); return;
+    set_zsupp_pos_clear_delta(); return;
 }
 
-void FUN_49ce(void) {
+/* emit_bcd_byte_digits @ $49CE: Splits A into hi/lo nibble, emits each digit via plot_char_bounded (high nibble then AND $0F low nibble) */
+void emit_bcd_byte_digits(void) {
     /* 49ce */
     PHA();
     /* 49cf */
@@ -3789,15 +3869,16 @@ void FUN_49ce(void) {
     /* 49d2 */
     LSR_A();
     /* 49d3 */
-    FUN_49d9();
+    plot_char_bounded();
     /* 49d6 */
     PLA();
     /* 49d7 */
     AND(0x0F);
-    FUN_49d9(); return;
+    plot_char_bounded(); return;
 }
 
-void FUN_49d9(void) {
+/* plot_char_bounded @ $49D9: If X==0 & A==0, bounds-check Y vs $0619; else write A+$50 to ($C5),Y then INY; row char plotter */
+void plot_char_bounded(void) {
     /* 49d9 */
     CPX(0x00);
     /* 49db */
@@ -3828,19 +3909,22 @@ L_49ec:;
 }
 
 /* dli_handler_game @ $49EE: manual implementation in rof_manual.c */
-void FUN_4e18(void) {
+/* obj_table_scan_y1_c8 @ $4E18: Entry: Y=$01,A=$C8 then falls to obj_table_scan; preset args for obj_table_scan_replace */
+void obj_table_scan_y1_c8(void) {
     /* 4e18 */
     LDY(0x01);
-    FUN_4e1a(); return;
+    obj_table_scan_a_c8(); return;
 }
 
-void FUN_4e1a(void) {
+/* obj_table_scan_a_c8 @ $4E1A: Entry: A=$C8 then falls to obj_table_scan (obj_table_scan_replace) with caller-supplied Y */
+void obj_table_scan_a_c8(void) {
     /* 4e1a */
     LDA(0xC8);
-    FUN_4e1c(); return;
+    obj_table_scan_replace(); return;
 }
 
-void FUN_4e1c(void) {
+/* obj_table_scan_replace @ $4E1C: Scans obj table $0900/$0A00 (stride $43) for RANDOM($D20A) count; vs $2276[0..$2C]; writes A($281D) to $0A00,X */
+void obj_table_scan_replace(void) {
     /* 4e1c */
     mem[0x281D] = cpu.A;
     /* 4e1f */
@@ -3902,7 +3986,8 @@ L_4e52:;
     return;
 }
 
-void FUN_4e58(void) {
+/* obj_table_set_active @ $4E58: Find $0A00,X slot==1 not in $2276[] table, set $0A00,X=$80 (stride $43, $281F=index) */
+void obj_table_set_active(void) {
     /* 4e58 */
     LDX(0x00);
 L_4e5a:;
@@ -3950,7 +4035,8 @@ L_4e7a:;
     return;
 }
 
-void FUN_4e84(void) {
+/* bin_to_bcd @ $4E84: Convert A (0-99) to packed BCD: Y=A/10, units A%10 in $C1, return (Y<<4)|units */
+void bin_to_bcd(void) {
     /* 4e84 */
     LDY(0xFF);
     /* 4e86 */
@@ -3982,7 +4068,8 @@ L_4e87:;
     return;
 }
 
-void FUN_4e98(void) {
+/* reset_flags_ff @ $4E98: Set $006A, $0063, $2826 all to $FF */
+void reset_flags_ff(void) {
     /* 4e98 */
     LDA(0xFF);
     /* 4e9a */
@@ -3995,35 +4082,40 @@ void FUN_4e98(void) {
     return;
 }
 
-void FUN_4ea2(void) {
+/* store_676_init @ $4EA2: Store A to $0676, tail-call set_hud_fields_678_679 init chain (zeros $0678/$0679, calls game_sub_55FC) */
+void store_676_init(void) {
     /* 4ea2 */
     mem[0x0676] = cpu.A;
-    FUN_4ea5(); return;
+    set_hud_fields_678_679(); return;
 }
 
-void FUN_4ea5(void) {
+/* set_hud_fields_678_679 @ $4EA5: Stores A into HUD slots $0678/$0679, then tail-chains to refresh chain (game_sub_55FC); entry from $4ea2 */
+void set_hud_fields_678_679(void) {
     /* 4ea5 */
     mem[0x0678] = cpu.A;
     /* 4ea8 */
     mem[0x0679] = cpu.A;
-    FUN_4eab(); return;
+    refresh_hud_field_0b(); return;
 }
 
-void FUN_4eab(void) {
+/* refresh_hud_field_0b @ $4EAB: LDY #$0B; game_sub_55FC then chains to $4eb0 — refreshes HUD/display field index $0B */
+void refresh_hud_field_0b(void) {
     /* 4eab */
     LDY(0x0B);
     /* 4ead */
     game_sub_55FC();
-    FUN_4eb0(); return;
+    refresh_hud_field_0d_entry(); return;
 }
 
-void FUN_4eb0(void) {
+/* refresh_hud_field_0d_entry @ $4EB0: LDY #$0D; falls into $4eb2 to refresh display fields $0D and $0E via game_sub_55FC */
+void refresh_hud_field_0d_entry(void) {
     /* 4eb0 */
     LDY(0x0D);
-    FUN_4eb2(); return;
+    refresh_hud_fields_0d_0e(); return;
 }
 
-void FUN_4eb2(void) {
+/* refresh_hud_fields_0d_0e @ $4EB2: game_sub_55FC at Y=$0D, INY, game_sub_55FC at Y=$0E — refreshes two adjacent display fields */
+void refresh_hud_fields_0d_0e(void) {
     /* 4eb2 */
     game_sub_55FC();
     /* 4eb5 */
@@ -4032,6 +4124,7 @@ void FUN_4eb2(void) {
     game_sub_55FC(); return;
 }
 
+/* game_sub_4f3f @ $4F3F: Game subsystem (called from enemy_check when $063D≠0; 0 callers from normal flow) */
 void game_sub_4f3f(void) {
     /* 4f3f */
     LDA(0x80);
@@ -4064,7 +4157,7 @@ L_4f43:; platform_tick_vbi(); platform_render_frame();
     mem[0x00C2] = cpu.A;
 L_4f60:;
     /* 4f60 */
-    FUN_3cca();
+    wait_frames_2();
     /* 4f63 */
     LDA(mem[0x2891]);
     /* 4f66 */
@@ -4072,9 +4165,9 @@ L_4f60:;
     /* 4f68 */
     if (cpu.C) goto L_4f70;
     /* 4f6a */
-    FUN_4fe0();
+    intro_fill_display_params();
     /* 4f6d */
-    FUN_4fce();
+    intro_reset_score_slots();
 L_4f70:;
     /* 4f70 */
     LDX(mem[0x00C2]);
@@ -4082,10 +4175,11 @@ L_4f70:;
     CPX(0x2B);
     /* 4f74 */
     if (!cpu.Z) goto L_4f60;
-    FUN_4f76(); return;
+    intro_teardown_fade_loop(); return;
 }
 
-void FUN_4f9f(void) {
+/* intro_sound_and_tick @ $4F9F: $2892 underflow: RANDOM($D20A) seeds sfx via game_sub_5815 (X=$0E,$0F); sets AUDC shadows $00DA-DD; dec $2891, clear game_state at 0 */
+void intro_sound_and_tick(void) {
     /* 4f9f */
     DEC_M(0x2892);
     /* 4fa2 */
@@ -4132,7 +4226,8 @@ L_4fcb:;
     return;
 }
 
-void FUN_4fce(void) {
+/* intro_reset_score_slots @ $4FCE: Clears $066A/$0686, sets $0678=$0C and refreshes display field Y=$0D via game_sub_55FC */
+void intro_reset_score_slots(void) {
     /* 4fce */
     LDA(0x00);
     /* 4fd0 */
@@ -4149,7 +4244,8 @@ void FUN_4fce(void) {
     game_sub_55FC(); return;
 }
 
-void FUN_4fe0(void) {
+/* intro_fill_display_params @ $4FE0: Copies $4DF1 table low nibbles OR player_speed($00C2) into display_param $00CF-D6, writes COLPF3($D019), INC $00C2 */
+void intro_fill_display_params(void) {
     /* 4fe0 */
     LDY(0x07);
 L_4fe2:;
@@ -4173,6 +4269,7 @@ L_4fe2:;
     return;
 }
 
+/* vbi_handler_2 @ $4FF5: Second VBI handler (VVBLKI=$4FF5 set at $3E50 in game_entry setup) */
 void vbi_handler_2(void) {
     /* 4ff5 */
     LDA(0x00);
@@ -4285,7 +4382,7 @@ L_505e:;
     /* 5076 */
     if (cpu.Z) goto L_507b;
     /* 5078 */
-    FUN_e462(); return;
+    os_xitvbv(); return;
 L_507b:;
     /* 507b */
     mem[0x0005] = cpu.A;
@@ -4364,14 +4461,14 @@ L_50bb:;
     /* 50c4 */
     if (!cpu.Z) goto L_50c9;
     /* 50c6 */
-    FUN_8c58();
+    build_player2_sprite();
 L_50c9:;
     /* 50c9 */
     LDA(mem[0x2891]);
     /* 50cc */
     if (cpu.Z) goto L_50d1;
     /* 50ce */
-    FUN_4f9f();
+    intro_sound_and_tick();
 L_50d1:;
     /* 50d1 */
     LDA(mem[0x004A]);
@@ -4390,12 +4487,12 @@ L_50d1:;
     /* 50e0 */
     PHA();
     /* 50e1 */
-    FUN_4467();
+    update_p3_indicator_stripe();
     /* 50e4 */
     PLA();
 L_50e5:;
     /* 50e5 */
-    FUN_42a7();
+    draw_player3_object();
     /* 50e8 */
     goto L_50f5;
 L_50eb:;
@@ -4404,10 +4501,10 @@ L_50eb:;
     /* 50ed */
     if (!cpu.Z) goto L_50f2;
     /* 50ef */
-    FUN_42a7();
+    draw_player3_object();
 L_50f2:;
     /* 50f2 */
-    FUN_4467();
+    update_p3_indicator_stripe();
 L_50f5:;
     /* 50f5 */
     DEC_M(0x004B);
@@ -4443,7 +4540,7 @@ L_5112:;
     /* 5114 */
     if (cpu.Z) goto L_5119;
     /* 5116 */
-    FUN_4166();
+    vobj_update_active();
 L_5119:;
     /* 5119 */
     LDA(mem[0x063E]);
@@ -4454,7 +4551,7 @@ L_5119:;
     /* 5121 */
     if (!cpu.N) goto L_5132;
     /* 5123 */
-    FUN_480b();
+    clear_message_buffer();
     /* 5126 */
     LDA(mem[0x0004]);
     /* 5128 */
@@ -4477,20 +4574,20 @@ L_5135:;
     if (cpu.Z) goto L_513c;
 L_5139:;
     /* 5139 */
-    FUN_47a3();
+    set_colpf0_from_flag();
 L_513c:;
     /* 513c */
     LDA(mem[0x0046]);
     /* 513e */
     if (cpu.Z) goto L_5143;
     /* 5140 */
-    FUN_497d();
+    add_and_show_bcd_counter();
 L_5143:;
     /* 5143 */
     goto L_523e;
 L_5146:;
     /* 5146 */
-    FUN_4225();
+    obj_state_dispatch_0043();
     /* 5149 */
     LDA(0x02);
     /* 514b */
@@ -4565,7 +4662,7 @@ L_5178:;
     mem[0x286C] = cpu.A;
 L_5197:;
     /* 5197 */
-    FUN_4131();
+    update_blink_timer_006e();
 L_519a:;
     /* 519a */
     LDX(0xFF);
@@ -4578,14 +4675,14 @@ L_519a:;
     /* 51a0 */
     if (!cpu.Z) goto L_51a5;
     /* 51a2 */
-    FUN_52be(); return;
+    game_loop_reset_trampoline(); return;
 L_51a5:;
     /* 51a5 */
     TXA();
     /* 51a6 */
     if (cpu.N) goto L_51b2;
     /* 51a8 */
-    FUN_4644();
+    event_sequence_dispatcher();
     /* 51ab */
     LDX(mem[0x00DF]);
     /* 51ad */
@@ -4601,9 +4698,9 @@ L_51b2:;
     goto L_523e;
 L_51b9:;
     /* 51b9 */
-    FUN_8e5b();
+    flight_control_integrate();
     /* 51bc */
-    FUN_9833();
+    update_terrain_scanline_proj();
     /* 51bf */
     LDA(mem[0x0041]);
     /* 51c1 */
@@ -4684,15 +4781,15 @@ L_51fc:;
     mem[0x08A3] = cpu.A;
 L_520f:;
     /* 520f */
-    FUN_40b0();
+    update_bar_gauge_291c();
     /* 5212 */
-    FUN_40e5();
+    update_gauge_281a();
     /* 5215 */
     terrain_lookup();
     /* 5218 */
-    FUN_43c7();
+    dispatch_43cb_half_70();
     /* 521b */
-    FUN_44d6();
+    update_altitude_digit_display();
     /* 521e */
     DEC_M(0x065D);
     /* 5221 */
@@ -4706,7 +4803,7 @@ L_520f:;
     /* 522b */
     if (!cpu.Z) goto L_5230;
     /* 522d */
-    FUN_7bc6();
+    setup_level_clear_state();
 L_5230:;
     /* 5230 */
     LDA(mem[0x0070]);
@@ -4715,7 +4812,7 @@ L_5230:;
     /* 5234 */
     INC_M(0x0045);
     /* 5236 */
-    FUN_497d();
+    add_and_show_bcd_counter();
 L_5239:;
     /* 5239 */
     LDA(0x1E);
@@ -4731,10 +4828,10 @@ L_523e:;
     /* 5244 */
     if (cpu.Z) goto L_5249;
     /* 5246 */
-    FUN_b70c();
+    compute_indicator_pos();
 L_5249:;
     /* 5249 */
-    FUN_548d();
+    update_gauge_digits();
     /* 524c */
     LDA(mem[0x0041]);
     /* 524e */
@@ -4836,10 +4933,11 @@ L_52b4:;
     /* 52b6 */
     mem[0x0005] = cpu.A;
     /* 52b8 */
-    FUN_e462(); return;
-    FUN_52be(); return;
+    os_xitvbv(); return;
+    game_loop_reset_trampoline(); return;
 }
 
+/* vbi_handler_game @ $52D7: Main game VBI handler (VVBLKI=$52D7 set in display_setup $5F50-$57) */
 void vbi_handler_game(void) {
     /* 52d7 */
     LDA(mem[0x022F]);
@@ -4919,48 +5017,49 @@ void vbi_handler_game(void) {
     INC_M(0x00E2);
 L_533c:;
     /* 533c */
-    FUN_5398();
+    check_collision_sync();
     /* 533f */
-    FUN_5367();
+    sound_event_dispatch();
     /* 5342 */
     LSR_M(0x0643);
     /* 5345 */
-    if (cpu.C) { FUN_534d(); return; }
+    if (cpu.C) { vbi_deferred_dispatch(); return; }
     /* 5347 */
-    FUN_4229();
+    saucer_anim_tick();
     /* 534a */
     INC_M(0x0643);
-    FUN_534d(); return;
+    vbi_deferred_dispatch(); return;
 }
 
-void FUN_5367(void) {
+/* sound_event_dispatch @ $5367: Tests sound flags $008D/88/89/8B then toggles $008F, $008C/8A -> sfx subs 6a8f/6a38/6aee/69e3/6a27/6953 */
+void sound_event_dispatch(void) {
     /* 5367 */
     LDA(mem[0x008D]);
     /* 5369 */
     if (cpu.Z) goto L_536e;
     /* 536b */
-    FUN_6a8f(); return;
+    step_accum_sub_7e(); return;
 L_536e:;
     /* 536e */
     LDA(mem[0x0088]);
     /* 5370 */
     if (cpu.Z) goto L_5375;
     /* 5372 */
-    FUN_6a38(); return;
+    step_accum_add_75(); return;
 L_5375:;
     /* 5375 */
     LDA(mem[0x0089]);
     /* 5377 */
     if (cpu.Z) goto L_537c;
     /* 5379 */
-    FUN_6aee(); return;
+    scroll_terrain_columns(); return;
 L_537c:;
     /* 537c */
     LDA(mem[0x008B]);
     /* 537e */
     if (cpu.Z) goto L_5383;
     /* 5380 */
-    FUN_69e3(); return;
+    dl_index_dec(); return;
 L_5383:;
     /* 5383 */
     LSR_M(0x008F);
@@ -4973,20 +5072,21 @@ L_5383:;
     /* 538b */
     if (cpu.Z) goto L_5390;
     /* 538d */
-    FUN_6a27();
+    clear_slot_0c87_0d87();
 L_5390:;
     /* 5390 */
     LDA(mem[0x008A]);
     /* 5392 */
     if (cpu.Z) goto L_5397;
     /* 5394 */
-    FUN_6953(); return;
+    scroll_terrain_dl(); return;
 L_5397:;
     /* 5397 */
     return;
 }
 
-void FUN_5398(void) {
+/* check_collision_sync @ $5398: X=$FF, CLI/SEI; if !=$80 set $0002/0003/E2; else reads collision regs $D01F,$D010,$D300, may run reset trampoline */
+void check_collision_sync(void) {
     /* 5398 */
     LDX(0xFF);
     /* 539a */
@@ -4998,7 +5098,7 @@ void FUN_5398(void) {
     /* 539e */
     if (!cpu.Z) goto L_53a3;
     /* 53a0 */
-    FUN_52be(); return;
+    game_loop_reset_trampoline(); return;
 L_53a3:;
     /* 53a3 */
     TXA();
@@ -5045,6 +5145,7 @@ L_53cb:;
     return;
 }
 
+/* vbi_handler_1 @ $53CC: First in-game VBI handler (VVBLKI=$53CC set at $3D63 in game_entry) */
 void vbi_handler_1(void) {
     /* 53cc */
     LDA(mem[0x022F]);
@@ -5099,11 +5200,12 @@ L_53fa:;
     /* 53fe */
     if (!cpu.N) goto L_53ef;
     /* 5400 */
-    FUN_5398();
+    check_collision_sync();
     /* 5403 */
-    FUN_534d(); return;
+    vbi_deferred_dispatch(); return;
 }
 
+/* font_display_init @ $5433: Font/display character setup (called in game_entry init) */
 void font_display_init(void) {
     /* 5433 */
     LDY(0x0E);
@@ -5185,13 +5287,14 @@ L_5469:;
     return;
 }
 
-void FUN_548d(void) {
+/* update_gauge_digits @ $548D: Loops Y=$0E..1 over digit arrays $06DB/E9/0679/06BF/CD/A3/B1/066B; BCD-step wrap $2D, calls 55FC/5815; sorts $0073/74 ring */
+void update_gauge_digits(void) {
     /* 548d */
     LDA(mem[0x0634]);
     /* 5490 */
     if (cpu.Z) goto L_5495;
     /* 5492 */
-    FUN_5553();
+    sfx_engine_step();
 L_5495:;
     /* 5495 */
     LDY(0x0E);
@@ -5250,7 +5353,7 @@ L_54b2:;
     INC_M(0x0718);
 L_54d2:;
     /* 54d2 */
-    FUN_5667();
+    sfx_voice_write_freq();
 L_54d5:;
     /* 54d5 */
     LDA(mem[(0x06A3)+cpu.Y]);
@@ -5360,7 +5463,7 @@ L_5543:;
     /* 5543 */
     TAY();
     /* 5544 */
-    FUN_5614();
+    reorder_sprite_slot();
 L_5547:;
     /* 5547 */
     DEC_M(0x0074);
@@ -5378,7 +5481,8 @@ L_5552:;
     return;
 }
 
-void FUN_5553(void) {
+/* sfx_engine_step @ $5553: POKEY sound engine: writes AUDF/AUDC $D200/201/204/205/208 from state $0634-$063A and table $55DC */
+void sfx_engine_step(void) {
     /* 5553 */
     CMP(0x01);
     /* 5555 */
@@ -5510,6 +5614,7 @@ L_55d3:;
     return;
 }
 
+/* game_sub_55FC @ $55FC: Called at end of each main game loop iteration before JMP $3E0F */
 void game_sub_55FC(void) {
     /* 55fc */
     TXA();
@@ -5517,16 +5622,17 @@ void game_sub_55FC(void) {
     PHA();
     /* 55fe */
     TYA();
-    FUN_55ff(); return;
+    ring_push_0719(); return;
 }
 
-void FUN_5614(void) {
+/* reorder_sprite_slot @ $5614: Swaps/moves entries in $0705 array by Y vs priority $0714/0715/0717,$066B; calls 5673/56af/568a */
+void reorder_sprite_slot(void) {
     /* 5614 */
     TYA();
     /* 5615 */
     PHA();
     /* 5616 */
-    FUN_5673();
+    sfx_voice_write_freq_ctrl();
     /* 5619 */
     TXA();
     /* 561a */
@@ -5557,7 +5663,7 @@ L_562d:;
     /* 5638 */
     mem[(0x0705)+cpu.X] = cpu.A;
     /* 563b */
-    FUN_5673();
+    sfx_voice_write_freq_ctrl();
     /* 563e */
     goto L_5661;
 L_5641:;
@@ -5566,7 +5672,7 @@ L_5641:;
     /* 5643 */
     if (cpu.C) goto L_5661;
     /* 5645 */
-    FUN_56af();
+    sfx_pick_next_voice();
     /* 5648 */
     LDX(mem[0x0715]);
     /* 564b */
@@ -5584,10 +5690,10 @@ L_5641:;
     /* 565b */
     mem[(0x0705)+cpu.X] = cpu.A;
     /* 565e */
-    FUN_5673();
+    sfx_voice_write_freq_ctrl();
 L_5661:;
     /* 5661 */
-    FUN_568a();
+    sfx_pick_top_voice();
 L_5664:;
     /* 5664 */
     PLA();
@@ -5597,7 +5703,8 @@ L_5664:;
     return;
 }
 
-void FUN_5667(void) {
+/* sfx_voice_write_freq @ $5667: Write AUDF freq ($0679+Y) to POKEY AUDFn at $D1FE+X for voice Y; X=reg index from $0705+Y; skip if 0/inactive */
+void sfx_voice_write_freq(void) {
     /* 5667 */
     LDX(mem[(0x0705)+cpu.Y]);
     /* 566a */
@@ -5611,7 +5718,8 @@ L_5672:;
     return;
 }
 
-void FUN_5673(void) {
+/* sfx_voice_write_freq_ctrl @ $5673: For voice Y write AUDF ($D1FE+X) freq and AUDC ($D1FF+X) = ($066B+Y &$0F vol/prio) | ($065D+Y distortion); skip if $0705+Y=0 */
+void sfx_voice_write_freq_ctrl(void) {
     /* 5673 */
     LDX(mem[(0x0705)+cpu.Y]);
     /* 5676 */
@@ -5633,7 +5741,8 @@ L_5689:;
     return;
 }
 
-void FUN_568a(void) {
+/* sfx_pick_top_voice @ $568A: Scan 12 voice slots $0705+X; pick active slot with max prio nibble ($066B&$0F) below $10; store val->$0714/$0716, idx->$0715 */
+void sfx_pick_top_voice(void) {
     /* 568a */
     LDA(0x10);
     /* 568c */
@@ -5670,7 +5779,8 @@ L_56aa:;
     return;
 }
 
-void FUN_56af(void) {
+/* sfx_pick_next_voice @ $56AF: Scan voice slots $0705+X for next-best prio nibble ($066B&$0F) excluding slot $0715; result val->$0716, idx->$0717 */
+void sfx_pick_next_voice(void) {
     /* 56af */
     LDX(0x00);
     /* 56b1 */
@@ -5708,6 +5818,7 @@ L_56cf:;
     return;
 }
 
+/* game_sub_5815 @ $5815: Game sub (called with X param from $4010) */
 void game_sub_5815(void) {
     /* 5815 */
     TXA();
@@ -5716,9 +5827,10 @@ void game_sub_5815(void) {
     /* 5817 */
     ORA(0x80);
     /* 5819 */
-    FUN_55ff(); return;
+    ring_push_0719(); return;
 }
 
+/* input_init @ $581C: Input/controller init (called twice: X=$1F then X=$20) */
 void input_init(void) {
     /* 581c */
     TXA();
@@ -5806,6 +5918,7 @@ L_5876:;
     return;
 }
 
+/* cockpit_display @ $587B: Cockpit/instrument display or main input handler (reads PORTA/CONSOL; called if $060B≠0) */
 void cockpit_display(void) {
     /* 587b */
     LDY(0x78);
@@ -5831,9 +5944,9 @@ L_587d:;
     /* 5890 */
     mem[0x37F4] = cpu.Y;
     /* 5893 */
-    FUN_3cbe();
+    wait_frames_save_a();
     /* 5896 */
-    FUN_7238();
+    music_init_state();
     /* 5899 */
     LDA(mem[0x0004]);
     /* 589b */
@@ -5846,7 +5959,7 @@ L_58a0:;
     /* 58a2 */
     if (!cpu.Z) goto L_58ab;
     /* 58a4 */
-    FUN_5d02();
+    restore_display_if_E7();
     /* 58a7 */
     LDA(0x00);
     /* 58a9 */
@@ -5898,9 +6011,9 @@ L_58cb:;
     /* 58d3 */
     LDA(mem[0x060A]);
     /* 58d6 */
-    FUN_4e84();
+    bin_to_bcd();
     /* 58d9 */
-    FUN_49ba();
+    render_bcd_digits_supp_all();
     /* 58dc */
     LDA(0xCB);
     /* 58de */
@@ -5912,21 +6025,21 @@ L_58cb:;
     /* 58e4 */
     LDA(mem[0x0605]);
     /* 58e7 */
-    FUN_49ba();
+    render_bcd_digits_supp_all();
     /* 58ea */
     LDA(mem[0x0606]);
     /* 58ed */
-    FUN_49ce();
+    emit_bcd_byte_digits();
     /* 58f0 */
     LDA(mem[0x0607]);
     /* 58f3 */
-    FUN_49ce();
+    emit_bcd_byte_digits();
     /* 58f6 */
     LDA(mem[0x0608]);
     /* 58f9 */
-    FUN_49ce();
+    emit_bcd_byte_digits();
     /* 58fc */
-    FUN_5a63();
+    setup_initials_ptr();
 L_58ff:;
     /* 58ff */
     LDA(0xB7);
@@ -5939,13 +6052,13 @@ L_58ff:;
     /* 5907 */
     LDA(mem[0x0600]);
     /* 590a */
-    FUN_49ba();
+    render_bcd_digits_supp_all();
     /* 590d */
     LDA(mem[0x0601]);
     /* 5910 */
-    FUN_49ce();
+    emit_bcd_byte_digits();
     /* 5913 */
-    FUN_49ae();
+    render_bcd_low_bytes();
     /* 5916 */
     LDA(0xF5);
     /* 5918 */
@@ -5966,9 +6079,9 @@ L_58ff:;
     goto L_5932;
 L_592c:;
     /* 592c */
-    FUN_4e84();
+    bin_to_bcd();
     /* 592f */
-    FUN_49ba();
+    render_bcd_digits_supp_all();
 L_5932:;
     /* 5932 */
     LDA(mem[0x006C]);
@@ -5997,7 +6110,7 @@ L_593e:;
     /* 5949 */
     if (cpu.Z) goto L_5955;
     /* 594b */
-    FUN_5b6c();
+    name_entry_loop();
     /* 594e */
     LDA(0x64);
     /* 5950 */
@@ -6008,7 +6121,7 @@ L_5955:;
     /* 5955 */
     mem[0x00E4] = cpu.A;
     /* 5957 */
-    FUN_5d02();
+    restore_display_if_E7();
 L_595a:;
     /* 595a */
     display_list_init();
@@ -6021,27 +6134,28 @@ L_595a:;
     /* 5964 */
     if (cpu.Z) goto L_5969;
     /* 5966 */
-    FUN_5a21(); return;
+    sound_retrigger_random(); return;
 L_5969:;
     /* 5969 */
     LDA(mem[0x00E5]);
     /* 596b */
-    if (cpu.Z) { FUN_5978(); return; }
+    if (cpu.Z) { engine_sound_update(); return; }
 L_596d:;
     /* 596d */
     LDA(mem[0x00E5]);
     /* 596f */
     if (!cpu.Z) goto L_596d;
     /* 5971 */
-    FUN_5b6c();
+    name_entry_loop();
     /* 5974 */
     LDA(0x64);
     /* 5976 */
     mem[0x00E2] = cpu.A;
-    FUN_5978(); return;
+    engine_sound_update(); return;
 }
 
-void FUN_5a4d(void) {
+/* random_alpha_index @ $5A4D: RANDOM $D20A & $1F, reject>=$1A, then ADC #$21; returns random value (alpha range) */
+void random_alpha_index(void) {
 L_5a4d:;
     /* 5a4d */
     LDA(bus_read(0xD20A));
@@ -6057,7 +6171,8 @@ L_5a4d:;
     return;
 }
 
-void FUN_5a59(void) {
+/* random_digit @ $5A59: RANDOM $D20A & $0F, rejection-sample until <$0A; returns random 0-9 digit */
+void random_digit(void) {
 L_5a59:;
     /* 5a59 */
     LDA(bus_read(0xD20A));
@@ -6071,7 +6186,8 @@ L_5a59:;
     return;
 }
 
-void FUN_5a63(void) {
+/* setup_initials_ptr @ $5A63: set ptr $C5/$C6=$3694, load $6D, call bin_to_bcd, zero mem[$3694+Y], tail-call render_bcd_digits_supp_all */
+void setup_initials_ptr(void) {
     /* 5a63 */
     LDA(0x94);
     /* 5a65 */
@@ -6083,16 +6199,17 @@ void FUN_5a63(void) {
     /* 5a6b */
     LDA(mem[0x006D]);
     /* 5a6d */
-    FUN_4e84();
+    bin_to_bcd();
     /* 5a70 */
     LDY(0x00);
     /* 5a72 */
     mem[0x3694] = cpu.Y;
     /* 5a75 */
-    FUN_49ba(); return;
+    render_bcd_digits_supp_all(); return;
 }
 
-void FUN_5a78(void) {
+/* read_console_trig_delta @ $5A78: (CONSOL $D01F & $01) SEC SBC $D010(collision read); signed delta of input bits */
+void read_console_trig_delta(void) {
     /* 5a78 */
     LDA(bus_read(0xD01F));
     /* 5a7b */
@@ -6105,7 +6222,8 @@ void FUN_5a78(void) {
     return;
 }
 
-void FUN_5b45(void) {
+/* match_code_sequence @ $5B45: cmp A vs table $5B3F[$063F]; on 6-byte match copy $28 bytes $5B17->$36AB, set $0049=$FF */
+void match_code_sequence(void) {
     /* 5b45 */
     LDX(mem[0x063F]);
     /* 5b48 */
@@ -6148,7 +6266,8 @@ L_5b64:;
     return;
 }
 
-void FUN_5b6c(void) {
+/* name_entry_loop @ $5B6C: initials entry: cursor $37F0-F6, buf $36B7, joystick $D01F, audio $D402/3, calls render_text_cell */
+void name_entry_loop(void) {
     /* 5b6c */
     check_sub_5D0D();
     /* 5b6f */
@@ -6167,7 +6286,7 @@ void FUN_5b6c(void) {
     if (!cpu.Z) goto L_5b81;
 L_5b7e:;
     /* 5b7e */
-    FUN_5d02(); return;
+    restore_display_if_E7(); return;
 L_5b81:;
     /* 5b81 */
     LDA(0x00);
@@ -6178,7 +6297,7 @@ L_5b81:;
     /* 5b89 */
     mem[0x37F0] = cpu.A;
     /* 5b8c */
-    FUN_3c7b();
+    wait_vcount_ge_7a();
     /* 5b8f */
     LDA(0x2E);
     /* 5b91 */
@@ -6190,7 +6309,7 @@ L_5b81:;
     /* 5b99 */
     LDX(0x03);
     /* 5b9b */
-    FUN_5d3b();
+    copy_4byte_table_to_02c4();
     /* 5b9e */
     LDA(mem[0x00E2]);
     /* 5ba0 */
@@ -6264,7 +6383,7 @@ L_5be6:;
     /* 5beb */
     LDY(0x0B);
     /* 5bed */
-    FUN_7238();
+    music_init_state();
     /* 5bf0 */
     LDA(0x06);
     /* 5bf2 */
@@ -6328,7 +6447,7 @@ L_5c23:;
     /* 5c32 */
     LDY(mem[0x37F0]);
     /* 5c35 */
-    FUN_5ca7();
+    render_text_cell();
     /* 5c38 */
     LDY(0x07);
     /* 5c3a */
@@ -6365,7 +6484,7 @@ L_5c57:;
     /* 5c59 */
     bus_write(0xD20F, cpu.A);
     /* 5c5c */
-    FUN_5d02();
+    restore_display_if_E7();
 L_5c5f:;
     /* 5c5f */
     LDY(0x00);
@@ -6409,7 +6528,7 @@ L_5c7f:;
     /* 5c86 */
     if (!cpu.Z) goto L_5c8b;
     /* 5c88 */
-    FUN_5a21(); return;
+    sound_retrigger_random(); return;
 L_5c8b:;
     /* 5c8b */
     LDA(mem[0x006C]);
@@ -6441,7 +6560,8 @@ L_5ca6:;
     return;
 }
 
-void FUN_5ca7(void) {
+/* render_text_cell @ $5CA7: expand glyph from table $5E50[$0049] into display buf $3700+X; control codes $0D/$08, $3F fill */
+void render_text_cell(void) {
     /* 5ca7 */
     LDA(0x00);
     /* 5ca9 */
@@ -6527,20 +6647,22 @@ L_5cf7:;
     goto L_5cb2;
 }
 
-void FUN_5d02(void) {
+/* restore_display_if_E7 @ $5D02: if mem[$00E7]!=0 call reset_audctl_flags then wait_frames_2 (display restore/cleanup) */
+void restore_display_if_E7(void) {
     /* 5d02 */
     LDA(mem[0x00E7]);
     /* 5d04 */
     if (!cpu.Z) goto L_5d0c;
     /* 5d06 */
-    FUN_70e7();
+    reset_audctl_flags();
     /* 5d09 */
-    FUN_3cca();
+    wait_frames_2();
 L_5d0c:;
     /* 5d0c */
     return;
 }
 
+/* check_sub_5D0D @ $5D0D: Returns BEQ-testable result; called early in game_entry (checks save state?) */
 void check_sub_5D0D(void) {
     /* 5d0d */
     LDA(mem[0x3700]);
@@ -6572,9 +6694,10 @@ L_5d28:;
     return;
 }
 
+/* display_list_init @ $5D29: Display list initial setup; writes DLISTL/H (called in game_entry at $3D6B) */
 void display_list_init(void) {
     /* 5d29 */
-    FUN_3c7b();
+    wait_vcount_ge_7a();
     /* 5d2c */
     LDA(0x82);
     /* 5d2e */
@@ -6586,10 +6709,11 @@ void display_list_init(void) {
     /* 5d36 */
     LDX(0x07);
     /* 5d38 */
-    FUN_5d3b(); return;
+    copy_4byte_table_to_02c4(); return;
 }
 
-void FUN_5d3b(void) {
+/* copy_4byte_table_to_02c4 @ $5D3B: Copies 4 bytes from table $5D48 (indexed by X) into buffer $02C4..$02C7 (Y=3..0 loop) */
+void copy_4byte_table_to_02c4(void) {
     /* 5d3b */
     LDY(0x03);
 L_5d3d:;
@@ -6607,6 +6731,7 @@ L_5d3d:;
     return;
 }
 
+/* game_init_5D50 @ $5D50: Called with Y=$52 param; sets VIMIRQ twice (attract and game IRQ vectors) */
 void game_init_5D50(void) {
     /* 5d50 */
     LDA(mem[0x0222]);
@@ -6617,7 +6742,7 @@ void game_init_5D50(void) {
     /* 5d57 */
     PHA();
     /* 5d58 */
-    FUN_3c73();
+    wait_vcount_30();
     /* 5d5b */
     LDA(0x0E);
     /* 5d5d */
@@ -6681,7 +6806,7 @@ void game_init_5D50(void) {
     /* 5d9f */
     NOP();
     /* 5da0 */
-    FUN_3c73();
+    wait_vcount_30();
     /* 5da3 */
     PLA();
     /* 5da4 */
@@ -6708,6 +6833,7 @@ void game_init_5D50(void) {
     return;
 }
 
+/* game_init_first @ $5DDB: Very first call in game_entry; large initializer */
 void game_init_first(void) {
     /* 5ddb */
     LDA(0x01);
@@ -6717,7 +6843,8 @@ void game_init_first(void) {
     return;
 }
 
-void FUN_5efe(void) {
+/* rle_unpack_to_07f9 @ $5EFE: RLE/run-length unpacker: reads $5E90 stream, ASL: hi-bit=run count else literal, writes $07F9+; then display_setup */
+void rle_unpack_to_07f9(void) {
     /* 5efe */
     LDX(0x00);
     /* 5f00 */
@@ -6758,15 +6885,16 @@ L_5f13:;
     display_setup(); return;
 }
 
+/* display_setup @ $5F1D: Main game display setup: sets VBI ($52D7) DLI ($6CC2) display-list ($3120/$316B) PMG bases colors; called at top of main game loop */
 void display_setup(void) {
     /* 5f1d */
     LDA(0x06);
     /* 5f1f */
     bus_write(0x02C7, cpu.A);
     /* 5f22 */
-    FUN_65df();
+    build_line_addr_table_2000();
     /* 5f25 */
-    FUN_69dd();
+    dl_index_dec_or_reset();
     /* 5f28 */
     LDA(0x00);
     /* 5f2a */
@@ -6803,7 +6931,7 @@ L_5f34:;
     /* 5f4a */
     memset_or_copy();
     /* 5f4d */
-    FUN_3c73();
+    wait_vcount_30();
     /* 5f50 */
     LDA(0xD7);
     /* 5f52 */
@@ -6813,7 +6941,7 @@ L_5f34:;
     /* 5f57 */
     bus_write(0x0223, cpu.A);
     /* 5f5a */
-    FUN_3c7b();
+    wait_vcount_ge_7a();
     /* 5f5d */
     LDA(0xC2);
     /* 5f5f */
@@ -6847,7 +6975,7 @@ L_5f34:;
     /* 5f7f */
     mem[0x00BE] = cpu.A;
     /* 5f81 */
-    FUN_757b();
+    process_list_via_3c58();
     /* 5f84 */
     LDA(0x14);
     /* 5f86 */
@@ -6919,9 +7047,9 @@ L_5f9f:;
     /* 5fd2 */
     mem[0x00B7] = cpu.A;
     /* 5fd4 */
-    FUN_3c83();
+    fill_region_2000();
     /* 5fd7 */
-    FUN_3c7b();
+    wait_vcount_ge_7a();
     /* 5fda */
     LDA(0xAD);
     /* 5fdc */
@@ -6939,7 +7067,7 @@ L_5f9f:;
     /* 5feb */
     bus_write(0xD403, cpu.A);
     /* 5fee */
-    FUN_6899();
+    fill_four_bufs_ff();
     /* 5ff1 */
     LDA(mem[0x006C]);
     /* 5ff3 */
@@ -6948,7 +7076,7 @@ L_5f9f:;
     goto L_6118;
 L_5ff8:;
     /* 5ff8 */
-    FUN_480b();
+    clear_message_buffer();
     /* 5ffb */
     LDY(0x04);
 L_5ffd:;
@@ -6963,7 +7091,7 @@ L_5ffd:;
     /* 6006 */
     LDA(mem[0x00DD]);
     /* 6008 */
-    FUN_6890();
+    fill_buf_08d4();
     /* 600b */
     game_sub_6811();
     /* 600e */
@@ -6974,7 +7102,7 @@ L_6012:;
     /* 6012 */
     mem[0x0071] = cpu.X;
     /* 6014 */
-    FUN_3cca();
+    wait_frames_2();
     /* 6017 */
     DEX();
     /* 6018 */
@@ -7001,7 +7129,7 @@ L_6029:;
     /* 6029 */
     TXA();
     /* 602a */
-    FUN_6890();
+    fill_buf_08d4();
     /* 602d */
     clear_colors();
     /* 6030 */
@@ -7011,7 +7139,7 @@ L_6029:;
     /* 6033 */
     if (!cpu.Z) goto L_6029;
     /* 6035 */
-    FUN_65d0();
+    build_line_addr_table_1000();
     /* 6038 */
     LDA(mem[0x0633]);
     /* 603b */
@@ -7023,12 +7151,12 @@ L_6029:;
     /* 6042 */
     LDA(0xC8);
     /* 6044 */
-    FUN_47b2();
+    save_color_clear_y_bit5();
 L_6047:;
     /* 6047 */
-    FUN_65fb();
+    draw_frame_pattern_seq();
     /* 604a */
-    FUN_6ddf();
+    init_row_coords_9c();
     /* 604d */
     mem[0x00B9] = cpu.A;
     /* 604f */
@@ -7039,7 +7167,7 @@ L_6053:;
     /* 6053 */
     LDY(mem[0x00B9]);
     /* 6055 */
-    FUN_692a();
+    plot_terrain_span();
     /* 6058 */
     DEC_M(0x00B9);
     /* 605a */
@@ -7059,7 +7187,7 @@ L_6065:;
     /* 6066 */
     mem[(0x08D4)+cpu.Y] = cpu.A;
     /* 6069 */
-    FUN_3cb1();
+    push_a_thunk_3cb2();
     /* 606c */
     DEX();
     /* 606d */
@@ -7071,7 +7199,7 @@ L_6065:;
     /* 6072 */
     if (!cpu.Z) goto L_6063;
     /* 6074 */
-    FUN_3c83();
+    fill_region_2000();
     /* 6077 */
     LDA(0x03);
     /* 6079 */
@@ -7084,7 +7212,7 @@ L_6080:;
     /* 6080 */
     mem[0x08D9] = cpu.Y;
     /* 6083 */
-    FUN_3cb1();
+    push_a_thunk_3cb2();
     /* 6086 */
     INY();
     /* 6087 */
@@ -7092,7 +7220,7 @@ L_6080:;
     /* 6089 */
     if (!cpu.Z) goto L_6080;
     /* 608b */
-    FUN_68ad();
+    init_terrain_dl();
     /* 608e */
     LDY(0x05);
 L_6090:;
@@ -7113,7 +7241,7 @@ L_6090:;
     /* 609f */
     mem[0x06CC] = cpu.A;
     /* 60a2 */
-    FUN_6ddf();
+    init_row_coords_9c();
     /* 60a5 */
     mem[0x00B9] = cpu.A;
     /* 60a7 */
@@ -7127,7 +7255,7 @@ L_6090:;
     /* 60af */
     mem[0x00C2] = cpu.A;
     /* 60b1 */
-    FUN_480b();
+    clear_message_buffer();
     /* 60b4 */
     mem[0x00C1] = cpu.A;
 L_60b6:;
@@ -7153,7 +7281,7 @@ L_60c3:;
     /* 60c9 */
     mem[0x008E] = cpu.A;
     /* 60cb */
-    FUN_68cf();
+    emit_dl_coord_pairs();
     /* 60ce */
     INC_M(0x0094);
     /* 60d0 */
@@ -7176,7 +7304,7 @@ L_60da:;
     /* 60e0 */
     mem[0x008D] = cpu.A;
     /* 60e2 */
-    FUN_6ddf();
+    init_row_coords_9c();
     /* 60e5 */
     LDY(0x08);
     /* 60e7 */
@@ -7202,7 +7330,7 @@ L_60f8:;
     /* 60fa */
     if (!cpu.Z) goto L_60f8;
     /* 60fc */
-    FUN_6620();
+    draw_shape_rows_loop();
     /* 60ff */
     LDY(0x00);
     /* 6101 */
@@ -7225,12 +7353,12 @@ L_6103:;
     /* 6112 */
     game_sub_4447();
     /* 6115 */
-    FUN_65df();
+    build_line_addr_table_2000();
 L_6118:;
     /* 6118 */
     font_display_init();
     /* 611b */
-    FUN_3ccf();
+    wait_frames_5();
     /* 611e */
     LDA(0x07);
     /* 6120 */
@@ -7240,15 +7368,15 @@ L_6118:;
     /* 6124 */
     mem[0x00B7] = cpu.A;
     /* 6126 */
-    FUN_3c83();
+    fill_region_2000();
     /* 6129 */
-    FUN_672d();
+    blit_message_block();
     /* 612c */
-    FUN_67c3();
+    blit_numeric_readout();
     /* 612f */
-    FUN_69dd();
+    dl_index_dec_or_reset();
     /* 6132 */
-    FUN_65ee();
+    delay_loop_c2_to_c9();
     /* 6135 */
     LDA(0xFF);
     /* 6137 */
@@ -7272,7 +7400,7 @@ L_6141:;
     goto L_6332;
 L_614d:;
     /* 614d */
-    FUN_3cbe();
+    wait_frames_save_a();
     /* 6150 */
     goto L_634f;
 L_6153:;
@@ -7316,13 +7444,13 @@ L_6178:;
     /* 617a */
     TYA();
     /* 617b */
-    FUN_75e9();
+    set_0628_bcd_redisplay();
     /* 617e */
     LDY(0x0C);
     /* 6180 */
     LDA(0x78);
     /* 6182 */
-    FUN_47b2();
+    save_color_clear_y_bit5();
 L_6185:;
     /* 6185 */
     LDA(0x00);
@@ -7333,7 +7461,7 @@ L_6185:;
     /* 618b */
     mem[0x0046] = cpu.A;
     /* 618d */
-    FUN_75d0();
+    decrement_bcd_0628_restart();
     /* 6190 */
     DEC_M(0x0096);
     /* 6192 */
@@ -7345,9 +7473,9 @@ L_6185:;
     /* 6198 */
     if (cpu.Z) goto L_61b7;
     /* 619a */
-    FUN_3cbe();
+    wait_frames_save_a();
     /* 619d */
-    FUN_75e9();
+    set_0628_bcd_redisplay();
     /* 61a0 */
     LDA(0x7C);
     /* 61a2 */
@@ -7362,26 +7490,26 @@ L_61a4:;
     /* 61aa */
     input_init();
     /* 61ad */
-    FUN_3ccf();
+    wait_frames_5();
     /* 61b0 */
-    FUN_75d0();
+    decrement_bcd_0628_restart();
     /* 61b3 */
     DEC_M(0x00E3);
     /* 61b5 */
     if (!cpu.Z) goto L_61a4;
 L_61b7:;
     /* 61b7 */
-    FUN_3cbe();
+    wait_frames_save_a();
     /* 61ba */
     LDA(0x2A);
     /* 61bc */
     LDY(0x83);
     /* 61be */
-    FUN_47b2();
+    save_color_clear_y_bit5();
     /* 61c1 */
     LDY(0x0B);
     /* 61c3 */
-    FUN_7238();
+    music_init_state();
 L_61c6:; platform_tick_vbi(); platform_render_frame();
     /* 61c6 */
     LDA(mem[0x0655]);
@@ -7399,7 +7527,7 @@ L_61c6:; platform_tick_vbi(); platform_render_frame();
     mem[0x060A] = cpu.A;
 L_61d7:;
     /* 61d7 */
-    FUN_75b8();
+    count_up_to_level();
     /* 61da */
     LDA(mem[0x0627]);
     /* 61dd */
@@ -7415,7 +7543,7 @@ L_61e3:;
     /* 61e5 */
     mem[0x0046] = cpu.A;
     /* 61e7 */
-    FUN_75de();
+    reinit_and_redraw_via_delay();
     /* 61ea */
     DEC_M(0x0096);
     /* 61ec */
@@ -7426,10 +7554,10 @@ L_61e3:;
     if (!cpu.Z) goto L_61df;
 L_61f2:;
     /* 61f2 */
-    FUN_3cbe();
+    wait_frames_save_a();
 L_61f5:;
     /* 61f5 */
-    FUN_480b();
+    clear_message_buffer();
 L_61f8:;
     /* 61f8 */
     LDA(mem[0x00E3]);
@@ -7512,13 +7640,13 @@ L_6244:;
     /* 6247 */
     mem[0x004C] = cpu.A;
     /* 6249 */
-    FUN_6df4();
+    audf2_sweep_clear_colors();
     /* 624c */
     LDA(mem[0x00B9]);
     /* 624e */
     mem[0x008B] = cpu.A;
     /* 6250 */
-    FUN_69e3();
+    dl_index_dec();
     /* 6253 */
     LDA(0x00);
     /* 6255 */
@@ -7534,7 +7662,7 @@ L_6244:;
     /* 625f */
     if (!cpu.Z) goto L_6244;
     /* 6261 */
-    FUN_3cb1();
+    push_a_thunk_3cb2();
     /* 6264 */
     LDA(0x53);
     /* 6266 */
@@ -7562,13 +7690,13 @@ L_626a:;
     /* 627a */
     mem[0x0095] = cpu.A;
     /* 627c */
-    FUN_67c3();
+    blit_numeric_readout();
     /* 627f */
     DEC_M(0x0095);
     /* 6281 */
     INC_M(0x006D);
     /* 6283 */
-    FUN_67c3();
+    blit_numeric_readout();
     /* 6286 */
     LDX(0x03);
 L_6288:;
@@ -7632,13 +7760,13 @@ L_62b9:;
     /* 62c0 */
     mem[0x008B] = cpu.Y;
     /* 62c2 */
-    FUN_69e3();
+    dl_index_dec();
     /* 62c5 */
     LDA(0x00);
     /* 62c7 */
     mem[0x008B] = cpu.A;
     /* 62c9 */
-    FUN_6df4();
+    audf2_sweep_clear_colors();
     /* 62cc */
     DEC_M(0x00B9);
     /* 62ce */
@@ -7646,17 +7774,17 @@ L_62b9:;
     /* 62d0 */
     INC_M(0x004C);
     /* 62d2 */
-    FUN_3cb1();
+    push_a_thunk_3cb2();
     /* 62d5 */
     LDA(0x55);
     /* 62d7 */
-    FUN_6a0f();
+    shift_object_table_up();
     /* 62da */
     ASL_M(0x004C);
     /* 62dc */
-    FUN_3cb1();
+    push_a_thunk_3cb2();
     /* 62df */
-    FUN_69dd();
+    dl_index_dec_or_reset();
     /* 62e2 */
     LDA(0x00);
     /* 62e4 */
@@ -7668,7 +7796,7 @@ L_62e7:;
     if (cpu.Z) goto L_62ee;
 L_62eb:; platform_tick_vbi(); platform_render_frame();
     /* 62eb */
-    FUN_70e7();
+    reset_audctl_flags();
 L_62ee:;
     /* 62ee */
     LDA(0x64);
@@ -7684,7 +7812,7 @@ L_62f6:; platform_tick_vbi(); platform_render_frame();
     /* 62f9 */
     if (!cpu.Z) goto L_6309;
     /* 62fb */
-    FUN_782a();
+    copy_altitude_graphic_to_screen();
     /* 62fe */
     LDA(bus_read(0xD01F));
     /* 6301 */
@@ -7715,7 +7843,7 @@ L_6311:;
     INC_M(0x060B);
 L_631b:;
     /* 631b */
-    FUN_3d48(); return;
+    game_main_loop(); return;
 L_631e:;
     /* 631e */
     LDX(mem[0x0091]);
@@ -7750,7 +7878,7 @@ L_6332:;
     /* 633f */
     if (!cpu.C) goto L_6347;
     /* 6341 */
-    FUN_65a8();
+    intro_screen_build_seq();
     /* 6344 */
     goto L_634a;
 L_6347:;
@@ -7758,14 +7886,14 @@ L_6347:;
     goto L_622d;
 L_634a:; platform_poll_events();
     /* 634a */
-    FUN_5a78();
+    read_console_trig_delta();
     /* 634d */
     if (cpu.Z) goto L_62f6;
 L_634f:;
     /* 634f */
     audio_timer_setup();
     /* 6352 */
-    FUN_5efe();
+    rle_unpack_to_07f9();
     /* 6355 */
     LDA(mem[0x060B]);
     /* 6358 */
@@ -7773,7 +7901,7 @@ L_634f:;
     /* 635a */
     LDX(0x16);
     /* 635c */
-    FUN_480f();
+    fill_message_buffer();
 L_635f:;
     /* 635f */
     LDA(0x23);
@@ -7795,7 +7923,7 @@ L_6371:;
     /* 6371 */
     LDA(0xEA);
     /* 6373 */
-    FUN_47b2();
+    save_color_clear_y_bit5();
     /* 6376 */
     LDA(0x00);
     /* 6378 */
@@ -7841,18 +7969,18 @@ L_63a1:;
     /* 63a1 */
     mem[0x0627] = cpu.A;
     /* 63a4 */
-    FUN_75f5();
+    compute_gauge_geometry_from_006D();
 L_63a7:;
     /* 63a7 */
     LDX(0x1D);
     /* 63a9 */
     input_init();
     /* 63ac */
-    FUN_41e4();
+    vobj_draw_dispatch();
     /* 63af */
-    FUN_49a0();
+    render_bcd_counter();
     /* 63b2 */
-    FUN_6b71();
+    clear_scroll_accum();
     /* 63b5 */
     LDY(0x05);
     /* 63b7 */
@@ -7875,9 +8003,9 @@ L_63b9:;
     /* 63c7 */
     startup_init();
     /* 63ca */
-    FUN_65d0();
+    build_line_addr_table_1000();
     /* 63cd */
-    FUN_65fb();
+    draw_frame_pattern_seq();
     /* 63d0 */
     LDX(0x01);
     /* 63d2 */
@@ -7944,10 +8072,10 @@ L_63d7:; platform_tick_vbi(); platform_render_frame();
     /* 6416 */
     LDA(0x01);
     /* 6418 */
-    FUN_4ea5();
+    set_hud_fields_678_679();
 L_641b:;
     /* 641b */
-    FUN_3cd4();
+    wait_frames_10();
     /* 641e */
     INC_M(0x0678);
     /* 6421 */
@@ -7986,7 +8114,7 @@ L_644c:;
     /* 644c */
     DEC_M(0x0676);
     /* 644f */
-    FUN_4eab();
+    refresh_hud_field_0b();
     /* 6452 */
     LDA(mem[0x0676]);
     /* 6455 */
@@ -8007,7 +8135,7 @@ L_645b:; platform_tick_vbi(); platform_render_frame();
     /* 6464 */
     mem[(0x066B)+cpu.Y] = cpu.A;
     /* 6467 */
-    FUN_5614();
+    reorder_sprite_slot();
     /* 646a */
     LDA(0x1D);
 L_646c:; platform_tick_vbi(); platform_render_frame();
@@ -8027,7 +8155,7 @@ L_6478:; platform_tick_vbi(); platform_render_frame();
     /* 647b */
     if (!cpu.Z) goto L_6478;
     /* 647d */
-    FUN_6ddf();
+    init_row_coords_9c();
     /* 6480 */
     LDA(0x00);
     /* 6482 */
@@ -8045,7 +8173,7 @@ L_6478:; platform_tick_vbi(); platform_render_frame();
     /* 6490 */
     mem[(0x0679)+cpu.Y] = cpu.A;
     /* 6493 */
-    FUN_5614();
+    reorder_sprite_slot();
     /* 6496 */
     LDA(0x02);
     /* 6498 */
@@ -8059,7 +8187,7 @@ L_6478:; platform_tick_vbi(); platform_render_frame();
     /* 64a3 */
     LDA(0x01);
     /* 64a5 */
-    FUN_4ea5();
+    set_hud_fields_678_679();
     /* 64a8 */
     LDA(0x01);
     /* 64aa */
@@ -8070,7 +8198,7 @@ L_6478:; platform_tick_vbi(); platform_render_frame();
     mem[0x004C] = cpu.A;
 L_64b0:;
     /* 64b0 */
-    FUN_3cb1();
+    push_a_thunk_3cb2();
     /* 64b3 */
     LDA(mem[0x0677]);
     /* 64b6 */
@@ -8104,7 +8232,7 @@ L_64c4:;
     /* 64d4 */
     mem[(0x0679)+cpu.Y] = cpu.A;
     /* 64d7 */
-    FUN_5614();
+    reorder_sprite_slot();
     /* 64da */
     LDY(0x0B);
     /* 64dc */
@@ -8116,7 +8244,7 @@ L_64c4:;
     /* 64e3 */
     mem[(0x0679)+cpu.Y] = cpu.A;
     /* 64e6 */
-    FUN_5614();
+    reorder_sprite_slot();
     /* 64e9 */
     LDA(0x01);
     /* 64eb */
@@ -8145,7 +8273,7 @@ L_64ed:;
     /* 6503 */
     bus_write(0xD003, cpu.A);
     /* 6506 */
-    FUN_6b71();
+    clear_scroll_accum();
     /* 6509 */
     LDX(0x2C);
 L_650b:;
@@ -8173,7 +8301,7 @@ L_6519:;
     /* 651f */
     if (!cpu.N) goto L_650b;
     /* 6521 */
-    FUN_75a5();
+    copy_192_to_1800();
     /* 6524 */
     LDA(0x00);
     /* 6526 */
@@ -8189,7 +8317,7 @@ L_6519:;
     /* 6531 */
     mem[0x3158] = cpu.A;
     /* 6534 */
-    FUN_3c7b();
+    wait_vcount_ge_7a();
     /* 6537 */
     LDA(0xC2);
     /* 6539 */
@@ -8207,13 +8335,13 @@ L_6519:;
     /* 6548 */
     bus_write(0xD403, cpu.A);
     /* 654b */
-    FUN_6b85();
+    init_object_positions();
     /* 654e */
     LDA(0x7F);
     /* 6550 */
     mem[0x0089] = cpu.A;
     /* 6552 */
-    FUN_6ae5();
+    fill_terrain_columns();
     /* 6555 */
     LDA(0x00);
 L_6557:;
@@ -8227,7 +8355,7 @@ L_6559:;
     /* 655d */
     if (!cpu.N) goto L_6559;
     /* 655f */
-    FUN_3cca();
+    wait_frames_2();
     /* 6562 */
     CLC();
     /* 6563 */
@@ -8239,7 +8367,7 @@ L_6559:;
     /* 6569 */
     LDA(0x30);
     /* 656b */
-    FUN_65d2();
+    build_line_addr_table_1000_stride();
 L_656e:; platform_tick_vbi(); platform_render_frame();
     /* 656e */
     LDA(mem[0x0089]);
@@ -8263,7 +8391,7 @@ L_6578:; platform_tick_vbi(); platform_render_frame();
     /* 6580 */
     mem[0x0014] = cpu.A;
     /* 6582 */
-    FUN_6ba8();
+    advance_object_positions();
     /* 6585 */
     LDA(mem[0x1002]);
     /* 6588 */
@@ -8283,12 +8411,13 @@ L_6590:;
     return;
 }
 
-void FUN_65a8(void) {
+/* intro_screen_build_seq @ $65A8: Timed build seq: delay-loop $0071->$BF via wait_frames_2, sets $0095, blit_label_row/67c3 display setup, tail delay_loop_c2_to_c9 */
+void intro_screen_build_seq(void) {
     /* 65a8 */
     LDY(mem[0x0071]);
 L_65aa:;
     /* 65aa */
-    FUN_3cca();
+    wait_frames_2();
     /* 65ad */
     mem[0x0071] = cpu.Y;
     /* 65af */
@@ -8302,9 +8431,9 @@ L_65aa:;
     /* 65b6 */
     mem[0x0095] = cpu.A;
     /* 65b8 */
-    FUN_6750();
+    blit_label_row();
     /* 65bb */
-    FUN_67c3();
+    blit_numeric_readout();
     /* 65be */
     LDA(mem[0x009B]);
     /* 65c0 */
@@ -8312,22 +8441,24 @@ L_65aa:;
     /* 65c2 */
     DEC_M(0x0095);
     /* 65c4 */
-    FUN_3cbe();
+    wait_frames_save_a();
     /* 65c7 */
-    FUN_6750();
+    blit_label_row();
     /* 65ca */
-    FUN_67c3();
+    blit_numeric_readout();
     /* 65cd */
-    FUN_65ee(); return;
+    delay_loop_c2_to_c9(); return;
 }
 
-void FUN_65d0(void) {
+/* build_line_addr_table_1000 @ $65D0: A=$2E stride; tail-calls build_line_addr_table ($65d2) -> table for graphics buffer base $1000 */
+void build_line_addr_table_1000(void) {
     /* 65d0 */
     LDA(0x2E);
-    FUN_65d2(); return;
+    build_line_addr_table_1000_stride(); return;
 }
 
-void FUN_65d2(void) {
+/* build_line_addr_table_1000_stride @ $65D2: Sets base=$00C3:$00C4=$1000, stride=$00C1=A; game_setup_7460 builds 85-entry row-addr table */
+void build_line_addr_table_1000_stride(void) {
     /* 65d2 */
     mem[0x00C1] = cpu.A;
     /* 65d4 */
@@ -8342,7 +8473,8 @@ void FUN_65d2(void) {
     game_setup_7460(); return;
 }
 
-void FUN_65df(void) {
+/* build_line_addr_table_2000 @ $65DF: Sets $00C1=$2E stride, base $00C3:$00C4=$2000; game_setup_7460 builds row-addr table for buffer $2000 */
+void build_line_addr_table_2000(void) {
     /* 65df */
     LDA(0x2E);
     /* 65e1 */
@@ -8359,12 +8491,13 @@ void FUN_65df(void) {
     game_setup_7460(); return;
 }
 
-void FUN_65ee(void) {
+/* delay_loop_c2_to_c9 @ $65EE: Counted delay: calls wait_frames_2 (2-frame wait) while Y=$C2..$C8, storing Y in $0071 each step */
+void delay_loop_c2_to_c9(void) {
     /* 65ee */
     LDY(0xC2);
 L_65f0:;
     /* 65f0 */
-    FUN_3cca();
+    wait_frames_2();
     /* 65f3 */
     mem[0x0071] = cpu.Y;
     /* 65f5 */
@@ -8377,9 +8510,10 @@ L_65f0:;
     return;
 }
 
-void FUN_65fb(void) {
+/* draw_frame_pattern_seq @ $65FB: Inits via init_row_coords_9c, loops $00A0 times reading $6E0F pattern into $0096, calls draw_symmetric_span_loop draw, cycles $0094 1..6 */
+void draw_frame_pattern_seq(void) {
     /* 65fb */
-    FUN_6ddf();
+    init_row_coords_9c();
     /* 65fe */
     LDA(0x01);
     /* 6600 */
@@ -8394,7 +8528,7 @@ L_6604:;
     /* 6609 */
     mem[0x0096] = cpu.A;
     /* 660b */
-    FUN_6642();
+    draw_symmetric_span_loop();
     /* 660e */
     INC_M(0x0094);
     /* 6610 */
@@ -8415,10 +8549,11 @@ L_661a:;
 L_661e:;
     /* 661e */
     DEC_M(0x0094);
-    FUN_6620(); return;
+    draw_shape_rows_loop(); return;
 }
 
-void FUN_6620(void) {
+/* draw_shape_rows_loop @ $6620: Sets row count $0092=0x55, $00A0=$009D+1; loops 85x: set_row_ptr_from_count then masked-plots cols $009C/$009D/$00A0 via plot_pixel_masked */
+void draw_shape_rows_loop(void) {
     /* 6620 */
     LDA(0x55);
     /* 6622 */
@@ -8433,19 +8568,19 @@ void FUN_6620(void) {
     mem[0x00A0] = cpu.A;
 L_662b:;
     /* 662b */
-    FUN_66c6();
+    set_row_ptr_from_count();
     /* 662e */
     LDA(mem[0x009C]);
     /* 6630 */
-    FUN_66d5();
+    plot_pixel_masked();
     /* 6633 */
     LDA(mem[0x009D]);
     /* 6635 */
-    FUN_66d5();
+    plot_pixel_masked();
     /* 6638 */
     LDA(mem[0x00A0]);
     /* 663a */
-    FUN_66d5();
+    plot_pixel_masked();
     /* 663d */
     DEC_M(0x0092);
     /* 663f */
@@ -8454,7 +8589,8 @@ L_662b:;
     return;
 }
 
-void FUN_6642(void) {
+/* draw_symmetric_span_loop @ $6642: ORs $0094 with mask tbl $66E9->$00B9; loops $0096x calling fill_horizontal_span/fill_vertical_span, steps coords $009C--/$009D++/$009E++/$009F-- */
+void draw_symmetric_span_loop(void) {
     /* 6642 */
     LDA(mem[0x0094]);
     /* 6644 */
@@ -8465,9 +8601,9 @@ void FUN_6642(void) {
     mem[0x00B9] = cpu.A;
 L_664a:;
     /* 664a */
-    FUN_665d();
+    fill_horizontal_span();
     /* 664d */
-    FUN_669c();
+    fill_vertical_span();
     /* 6650 */
     DEC_M(0x009C);
     /* 6652 */
@@ -8484,7 +8620,8 @@ L_664a:;
     return;
 }
 
-void FUN_665d(void) {
+/* fill_horizontal_span @ $665D: Sets two row ptrs $80/$81=tbl[$009E], $B7/$B8=tbl[$009F]; writes pattern $00B9 across Y range from ($009C>>1)..($009D>>1) into both rows */
+void fill_horizontal_span(void) {
     /* 665d */
     LDY(mem[0x009E]);
     /* 665f */
@@ -8554,7 +8691,8 @@ L_6692:;
     return;
 }
 
-void FUN_669c(void) {
+/* fill_vertical_span @ $669C: Iterates rows $009E..$009F: ptr $80/$81=tbl[$0084]; masked-plot col $009C via plot_pixel_masked and col $009D>>1 via plot_glyph_pixel_masked per row */
+void fill_vertical_span(void) {
     /* 669c */
     LDA(mem[0x009F]);
     /* 669e */
@@ -8581,7 +8719,7 @@ L_66a7:;
     /* 66b3 */
     LDA(mem[0x009C]);
     /* 66b5 */
-    FUN_66d5();
+    plot_pixel_masked();
     /* 66b8 */
     LDA(mem[0x009D]);
     /* 66ba */
@@ -8589,7 +8727,7 @@ L_66a7:;
     /* 66bb */
     TAY();
     /* 66bc */
-    FUN_66de();
+    plot_glyph_pixel_masked();
     /* 66bf */
     INC_M(0x0084);
     /* 66c1 */
@@ -8600,13 +8738,15 @@ L_66a7:;
     return;
 }
 
-void FUN_66c6(void) {
+/* set_row_ptr_from_count @ $66C6: Loads Y=$0092 (row counter), tail-calls set_row_ptr (set_row_ptr) to load $80/$81 row base from $073D/$0793 */
+void set_row_ptr_from_count(void) {
     /* 66c6 */
     LDY(mem[0x0092]);
-    FUN_66c8(); return;
+    set_row_ptr(); return;
 }
 
-void FUN_66c8(void) {
+/* set_row_ptr @ $66C8: Sets bitmap row pointer $0080=$073D[Y], $0081=$0793[Y] (per-scanline base-address table) */
+void set_row_ptr(void) {
     /* 66c8 */
     LDA(mem[(0x073D)+cpu.Y]);
     /* 66cb */
@@ -8619,13 +8759,15 @@ void FUN_66c8(void) {
     return;
 }
 
-void FUN_66d3(void) {
+/* plot_pixel_col93 @ $66D3: Loads A=$0093 (column), tail-calls plot_pixel_masked (plot_pixel_masked) */
+void plot_pixel_col93(void) {
     /* 66d3 */
     LDA(mem[0x0093]);
-    FUN_66d5(); return;
+    plot_pixel_masked(); return;
 }
 
-void FUN_66d5(void) {
+/* plot_pixel_masked @ $66D5: A=column: Y=A>>1 (byte idx), mask idx X from $0094(+8 if carry), tail-calls plot_glyph_pixel_masked to OR/AND pixel into row ptr $80 */
+void plot_pixel_masked(void) {
     /* 66d5 */
     LSR_A();
     /* 66d6 */
@@ -8639,10 +8781,11 @@ void FUN_66d5(void) {
 L_66dd:;
     /* 66dd */
     TAX();
-    FUN_66de(); return;
+    plot_glyph_pixel_masked(); return;
 }
 
-void FUN_66de(void) {
+/* plot_glyph_pixel_masked @ $66DE: OR/AND a 2-bit pixel into screen byte via ($80) using mask tables $66E9(OR)/$66FB(AND) indexed by X */
+void plot_glyph_pixel_masked(void) {
     /* 66de */
     LDA(bus_read(ZP_IND_Y(0x80)));
     /* 66e0 */
@@ -8655,7 +8798,8 @@ void FUN_66de(void) {
     return;
 }
 
-void FUN_670d(void) {
+/* advance_message_column @ $670D: reads col idx $A0; if<6 loads glyph $6E0F[Y]->$96 & calls draw_symmetric_span_loop else clears $08D8; DEC $A0, $88=$A0+1 */
+void advance_message_column(void) {
     /* 670d */
     LDY(mem[0x00A0]);
     /* 670f */
@@ -8667,7 +8811,7 @@ void FUN_670d(void) {
     /* 6716 */
     mem[0x0096] = cpu.A;
     /* 6718 */
-    FUN_6642();
+    draw_symmetric_span_loop();
     /* 671b */
     goto L_6723;
 L_671e:;
@@ -8690,7 +8834,8 @@ L_6723:;
     return;
 }
 
-void FUN_672d(void) {
+/* blit_message_block @ $672D: loop cols $92 from $54 down by 8; per col calls set_row_ptr_from_count then plots rows $15/$2E/$47 via plot_pixel_masked */
+void blit_message_block(void) {
     /* 672d */
     LDA(0x54);
     /* 672f */
@@ -8701,19 +8846,19 @@ void FUN_672d(void) {
     mem[0x0094] = cpu.A;
 L_6735:;
     /* 6735 */
-    FUN_66c6();
+    set_row_ptr_from_count();
     /* 6738 */
     LDA(0x15);
     /* 673a */
-    FUN_66d5();
+    plot_pixel_masked();
     /* 673d */
     LDA(0x2E);
     /* 673f */
-    FUN_66d5();
+    plot_pixel_masked();
     /* 6742 */
     LDA(0x47);
     /* 6744 */
-    FUN_66d5();
+    plot_pixel_masked();
     /* 6747 */
     SEC();
     /* 6748 */
@@ -8724,10 +8869,11 @@ L_6735:;
     mem[0x0092] = cpu.A;
     /* 674e */
     if (!cpu.N) goto L_6735;
-    FUN_6750(); return;
+    blit_label_row(); return;
 }
 
-void FUN_6750(void) {
+/* blit_label_row @ $6750: renders 5 glyphs from table $6E23[$C5..]; $C5 base 0 or 5 per flag $0004; col $92=$2E, row $9C=$1B */
+void blit_label_row(void) {
     /* 6750 */
     LDA(0x2E);
     /* 6752 */
@@ -8755,7 +8901,7 @@ L_6764:;
     /* 6766 */
     LDA(mem[(0x6E23)+cpu.X]);
     /* 6769 */
-    FUN_6773();
+    glyph_ptr_from_index();
     /* 676c */
     INC_M(0x00C5);
     /* 676e */
@@ -8766,7 +8912,8 @@ L_6764:;
     return;
 }
 
-void FUN_6773(void) {
+/* glyph_ptr_from_index @ $6773: computes glyph data ptr $84/$85 = $E000 + (A*8) (3x ASL with carry into hi), then blits via blit_glyph_8rows */
+void glyph_ptr_from_index(void) {
     /* 6773 */
     LDY(0x00);
     /* 6775 */
@@ -8795,10 +8942,11 @@ void FUN_6773(void) {
     ADC(0xE0);
     /* 6789 */
     mem[0x0085] = cpu.A;
-    FUN_678b(); return;
+    blit_glyph_8rows(); return;
 }
 
-void FUN_67c3(void) {
+/* blit_numeric_readout @ $67C3: col $92=$38; if $0004 set blits glyphs $60F/$60D/$610/$60E; else BCD-converts $6D(cap $63) via bin_to_bcd and blits two nibbles */
+void blit_numeric_readout(void) {
     /* 67c3 */
     LDA(0x38);
     /* 67c5 */
@@ -8814,19 +8962,19 @@ void FUN_67c3(void) {
     /* 67cf */
     LDA(mem[0x060F]);
     /* 67d2 */
-    FUN_6773();
+    glyph_ptr_from_index();
     /* 67d5 */
     LDA(mem[0x060D]);
     /* 67d8 */
-    FUN_6802();
+    glyph_ptr_shift3();
     /* 67db */
     LDA(mem[0x0610]);
     /* 67de */
-    FUN_6773();
+    glyph_ptr_from_index();
     /* 67e1 */
     LDA(mem[0x060E]);
     /* 67e4 */
-    FUN_6802(); return;
+    glyph_ptr_shift3(); return;
 L_67e7:;
     /* 67e7 */
     LDA(0x27);
@@ -8844,7 +8992,7 @@ L_67e7:;
     mem[0x006D] = cpu.A;
 L_67f5:;
     /* 67f5 */
-    FUN_4e84();
+    bin_to_bcd();
     /* 67f8 */
     PHA();
     /* 67f9 */
@@ -8852,25 +9000,27 @@ L_67f5:;
     /* 67fa */
     AND(0x78);
     /* 67fc */
-    FUN_6805();
+    set_coord_y_e0();
     /* 67ff */
     PLA();
     /* 6800 */
     AND(0x0F);
-    FUN_6802(); return;
+    glyph_ptr_shift3(); return;
 }
 
-void FUN_6802(void) {
+/* glyph_ptr_shift3 @ $6802: shifts A left 3 (A*8) then falls into set_coord_y_e0 to form glyph ptr $84/$85=$E000+(A<<3)+$80 */
+void glyph_ptr_shift3(void) {
     /* 6802 */
     ASL_A();
     /* 6803 */
     ASL_A();
     /* 6804 */
     ASL_A();
-    FUN_6805(); return;
+    set_coord_y_e0(); return;
 }
 
-void FUN_6805(void) {
+/* set_coord_y_e0 @ $6805: ADC #$80->$0084 (X coord), $0085=$E0 (Y); tails into blit_glyph_8rows; coord setup for terrain plot */
+void set_coord_y_e0(void) {
     /* 6805 */
     CLC();
     /* 6806 */
@@ -8882,9 +9032,10 @@ void FUN_6805(void) {
     /* 680c */
     mem[0x0085] = cpu.Y;
     /* 680e */
-    FUN_678b(); return;
+    blit_glyph_8rows(); return;
 }
 
+/* game_sub_6811 @ $6811: Game sub with 2 RANDOM reads (enemy/event randomization) */
 void game_sub_6811(void) {
     /* 6811 */
     LDA(0x04);
@@ -8944,11 +9095,11 @@ L_6841:;
     /* 6845 */
     LDA(mem[0x0092]);
     /* 6847 */
-    FUN_687d();
+    rng_signed_jitter();
     /* 684a */
     TAY();
     /* 684b */
-    FUN_66c8();
+    set_row_ptr();
     /* 684e */
     LDA(0x2F);
     /* 6850 */
@@ -8956,9 +9107,9 @@ L_6841:;
     /* 6852 */
     LDA(mem[0x0093]);
     /* 6854 */
-    FUN_687d();
+    rng_signed_jitter();
     /* 6857 */
-    FUN_66d5();
+    plot_pixel_masked();
     /* 685a */
     DEC_M(0x0096);
     /* 685c */
@@ -9000,7 +9151,8 @@ L_6878:;
     return;
 }
 
-void FUN_687d(void) {
+/* rng_signed_jitter @ $687D: A->$B7, reload $0085, read RANDOM $D20A bit7: if neg SBC else ADC $B7 -> signed random perturbation */
+void rng_signed_jitter(void) {
     /* 687d */
     mem[0x00B7] = cpu.A;
     /* 687f */
@@ -9025,7 +9177,8 @@ L_688f:;
     return;
 }
 
-void FUN_6890(void) {
+/* fill_buf_08d4 @ $6890: Fill 6 bytes $08D4..$08D9 with A (Y=5..0 loop) */
+void fill_buf_08d4(void) {
     /* 6890 */
     LDY(0x05);
 L_6892:;
@@ -9039,7 +9192,8 @@ L_6892:;
     return;
 }
 
-void FUN_6899(void) {
+/* fill_four_bufs_ff @ $6899: Write A=$FF to $0C87/$0D87/$0E87/$0F87 +Y (Y=8..1); clears 4 parallel buffers */
+void fill_four_bufs_ff(void) {
     /* 6899 */
     LDY(0x08);
     /* 689b */
@@ -9061,7 +9215,8 @@ L_689d:;
     return;
 }
 
-void FUN_68ad(void) {
+/* init_terrain_dl @ $68AD: Fill $2F75..$2FA3 with $88; seed display-list pairs $74/$2F into $300A/$308B strands (3-byte stride) */
+void init_terrain_dl(void) {
     /* 68ad */
     LDY(0x2F);
     /* 68af */
@@ -9100,7 +9255,8 @@ L_68b9:;
     return;
 }
 
-void FUN_68cf(void) {
+/* emit_dl_coord_pairs @ $68CF: Copy $073D/$0793 coord-pair tables into $300A/$300B fwd & $308B/$308C rev DL strands; advance ptrs $C1/$C3 by 3x step from $6E0F[Y] */
+void emit_dl_coord_pairs(void) {
     /* 68cf */
     LDA(mem[(0x6E0F)+cpu.Y]);
     /* 68d2 */
@@ -9191,10 +9347,11 @@ L_68f6:;
     ADC(mem[(0x6E0F)+cpu.Y]);
     /* 6928 */
     mem[0x00C1] = cpu.A;
-    FUN_692a(); return;
+    plot_terrain_span(); return;
 }
 
-void FUN_692a(void) {
+/* plot_terrain_span @ $692A: Loops fill_vertical_span $0096 times (count from $6E0F[Y], +2 if Y=0) advancing $009C/$009D; shrinks window $009E/$009F by $0085 */
+void plot_terrain_span(void) {
     /* 692a */
     LDA(mem[(0x6E0F)+cpu.Y]);
     /* 692d */
@@ -9212,7 +9369,7 @@ L_6937:;
     mem[0x0085] = cpu.A;
 L_6939:;
     /* 6939 */
-    FUN_669c();
+    fill_vertical_span();
     /* 693c */
     DEC_M(0x009C);
     /* 693e */
@@ -9241,15 +9398,16 @@ L_6939:;
     return;
 }
 
-void FUN_6953(void) {
+/* scroll_terrain_dl @ $6953: Dec $008A; if !=0 scroll DL halves via dl_lms_scroll_down/dl_lms_scroll_up else $008C=8; emit ship coords via dl_lms_push_bottom($0098)/dl_lms_push_top($0097) */
+void scroll_terrain_dl(void) {
     /* 6953 */
     DEC_M(0x008A);
     /* 6955 */
     if (cpu.Z) goto L_6960;
     /* 6957 */
-    FUN_69c3();
+    dl_lms_scroll_down();
     /* 695a */
-    FUN_69a9();
+    dl_lms_scroll_up();
     /* 695d */
     goto L_6964;
 L_6960:;
@@ -9261,20 +9419,21 @@ L_6964:;
     /* 6964 */
     LDY(mem[0x0098]);
     /* 6966 */
-    FUN_698e();
+    dl_lms_push_bottom();
     /* 6969 */
     mem[0x0098] = cpu.Y;
     /* 696b */
     LDX(mem[0x0097]);
     /* 696d */
-    FUN_6973();
+    dl_lms_push_top();
     /* 6970 */
     mem[0x0097] = cpu.X;
     /* 6972 */
     return;
 }
 
-void FUN_6973(void) {
+/* dl_lms_push_top @ $6973: Writes 16-bit ptr $80/$81 into top LMS entry at $300A,X (X-=3), then ptr -= $2E (46-byte row stride) */
+void dl_lms_push_top(void) {
     /* 6973 */
     LDA(mem[0x0081]);
     /* 6975 */
@@ -9307,7 +9466,8 @@ void FUN_6973(void) {
     return;
 }
 
-void FUN_698e(void) {
+/* dl_lms_push_bottom @ $698E: Writes 16-bit ptr $82/$83 into bottom LMS entry at $3089,Y (Y+=3), then ptr += $2E (46-byte row stride) */
+void dl_lms_push_bottom(void) {
     /* 698e */
     LDA(mem[0x0082]);
     /* 6990 */
@@ -9340,7 +9500,8 @@ void FUN_698e(void) {
     return;
 }
 
-void FUN_69a9(void) {
+/* dl_lms_scroll_up @ $69A9: Shifts 3-byte LMS entries from $300C,X to $3009,X (up one slot) until X==$0097 (top index) */
+void dl_lms_scroll_up(void) {
     /* 69a9 */
     LDX(0x01);
     /* 69ab */
@@ -9371,7 +9532,8 @@ L_69c2:;
     return;
 }
 
-void FUN_69c3(void) {
+/* dl_lms_scroll_down @ $69C3: Shifts 3-byte LMS entries from $3087,Y to $308A,Y (down one slot) until Y==$0098 (bottom index) */
+void dl_lms_scroll_down(void) {
     /* 69c3 */
     LDY(0x80);
     /* 69c5 */
@@ -9402,23 +9564,26 @@ L_69dc:;
     return;
 }
 
-void FUN_69dd(void) {
+/* dl_index_dec_or_reset @ $69DD: Clears $008B; if was 0 tail-calls dl_lms_build(69e5), else dl_index_dec(69e3) then rebuild */
+void dl_index_dec_or_reset(void) {
     /* 69dd */
     LDA(0x00);
     /* 69df */
     mem[0x008B] = cpu.A;
     /* 69e1 */
-    if (cpu.Z) { FUN_69e5(); return; }
-    FUN_69e3(); return;
+    if (cpu.Z) { dl_lms_build(); return; }
+    dl_index_dec(); return;
 }
 
-void FUN_69e3(void) {
+/* dl_index_dec @ $69E3: Decrements $008B (source-table index) then tail-calls dl_lms_build (69e5) */
+void dl_index_dec(void) {
     /* 69e3 */
     DEC_M(0x008B);
-    FUN_69e5(); return;
+    dl_lms_build(); return;
 }
 
-void FUN_69f1(void) {
+/* dl_lms_fill @ $69F1: Fills LMS table via ($C5)=$300A from src tables $073D(lo)/$0793(hi) at index $008B, stride 3, until X==row_count$86 */
+void dl_lms_fill(void) {
     /* 69f1 */
     LDX(mem[0x008B]);
     /* 69f3 */
@@ -9452,11 +9617,12 @@ L_69ff:;
     /* 6a0b */
     LDA(mem[0x008B]);
     /* 6a0d */
-    if (cpu.Z) { FUN_6a26(); return; }
-    FUN_6a0f(); return;
+    if (cpu.Z) { ret_stub_6a26(); return; }
+    shift_object_table_up(); return;
 }
 
-void FUN_6a0f(void) {
+/* shift_object_table_up @ $6A0F: Shifts a stride-3 record array up one slot: copies $3007/$3008 -> $300A/$300B for $0084 records (Y from $FF, DEY x3) */
+void shift_object_table_up(void) {
     /* 6a0f */
     mem[0x0084] = cpu.A;
     /* 6a11 */
@@ -9480,10 +9646,11 @@ L_6a13:;
     DEC_M(0x0084);
     /* 6a24 */
     if (!cpu.Z) goto L_6a13;
-    FUN_6a26(); return;
+    ret_stub_6a26(); return;
 }
 
-void FUN_6a27(void) {
+/* clear_slot_0c87_0d87 @ $6A27: DEC $008C, index Y=8-$008C, zeroes $0C87[Y] and $0D87[Y] in two parallel arrays */
+void clear_slot_0c87_0d87(void) {
     /* 6a27 */
     DEC_M(0x008C);
     /* 6a29 */
@@ -9504,11 +9671,12 @@ void FUN_6a27(void) {
     return;
 }
 
-void FUN_6a38(void) {
+/* step_accum_add_75 @ $6A38: Adds $75 via add_multibyte_a1, result->$00A4; if changed & store $00A5, if >=$90 call advance_message_column, then advance_history_6a4d */
+void step_accum_add_75(void) {
     /* 6a38 */
     LDA(0x75);
     /* 6a3a */
-    FUN_6ab5();
+    add_multibyte_a1();
     /* 6a3d */
     mem[0x00A4] = cpu.A;
     /* 6a3f */
@@ -9523,17 +9691,18 @@ L_6a44:;
     /* 6a46 */
     CMP(0x90);
     /* 6a48 */
-    if (!cpu.C) { FUN_6a4d(); return; }
+    if (!cpu.C) { advance_history_6a4d(); return; }
     /* 6a4a */
-    FUN_670d();
-    FUN_6a4d(); return;
+    advance_message_column();
+    advance_history_6a4d(); return;
 }
 
-void FUN_6a8f(void) {
+/* step_accum_sub_7e @ $6A8F: Subtracts $7E via sub_multibyte_a1, result->$00A4; if changed & <$14 use as idx into $6E0F->$0096 then draw_symmetric_span_loop; sets $008D, INC $008E, advance_history_6a4d */
+void step_accum_sub_7e(void) {
     /* 6a8f */
     LDA(0x7E);
     /* 6a91 */
-    FUN_6ac9();
+    sub_multibyte_a1();
     /* 6a94 */
     mem[0x00A4] = cpu.A;
     /* 6a96 */
@@ -9555,7 +9724,7 @@ void FUN_6a8f(void) {
     /* 6aa6 */
     mem[0x0096] = cpu.A;
     /* 6aa8 */
-    FUN_6642();
+    draw_symmetric_span_loop();
 L_6aab:;
     /* 6aab */
     LDA(mem[0x008D]);
@@ -9564,13 +9733,14 @@ L_6aab:;
     /* 6aaf */
     INC_M(0x008E);
     /* 6ab1 */
-    FUN_6a4d(); return;
+    advance_history_6a4d(); return;
 L_6ab4:;
     /* 6ab4 */
     return;
 }
 
-void FUN_6ab5(void) {
+/* add_multibyte_a1 @ $6AB5: Multi-byte add: A (C clear) += $00A1, carry chains into $00A2,$00A3,$00A4; returns top byte in A */
+void add_multibyte_a1(void) {
     /* 6ab5 */
     CLC();
     /* 6ab6 */
@@ -9595,7 +9765,8 @@ void FUN_6ab5(void) {
     return;
 }
 
-void FUN_6ac9(void) {
+/* sub_multibyte_a1 @ $6AC9: Multi-byte subtract: stores A to $08DA, $00A1 -= A, borrow chains through $00A2,$00A3,$00A4; mirror of add_multibyte_a1 */
+void sub_multibyte_a1(void) {
     /* 6ac9 */
     SEC();
     /* 6aca */
@@ -9626,12 +9797,13 @@ void FUN_6ac9(void) {
     return;
 }
 
-void FUN_6ae5(void) {
+/* fill_terrain_columns @ $6AE5: LDY #$59; loops 89x calling gen_terrain_column to fill all 4 parallel terrain buffers $0C32/$0D32/$0E32/$0F32 */
+void fill_terrain_columns(void) {
     /* 6ae5 */
     LDY(0x59);
 L_6ae7:;
     /* 6ae7 */
-    FUN_6b2e();
+    gen_terrain_column();
     /* 6aea */
     DEY();
     /* 6aeb */
@@ -9640,7 +9812,8 @@ L_6ae7:;
     return;
 }
 
-void FUN_6aee(void) {
+/* scroll_terrain_columns @ $6AEE: Gated by state $0089; updates $A4/$A5 via add_multibyte_a1(24-bit add), shifts $0C32-$0F32 buffers left 1 col ($59 wide), appends new col via gen_terrain_column */
+void scroll_terrain_columns(void) {
     /* 6aee */
     CMP(0x04);
     /* 6af0 */
@@ -9648,7 +9821,7 @@ void FUN_6aee(void) {
     /* 6af2 */
     LDA(0xFF);
     /* 6af4 */
-    FUN_6ab5();
+    add_multibyte_a1();
     /* 6af7 */
     CMP(0x64);
     /* 6af9 */
@@ -9703,10 +9876,11 @@ L_6b0f:;
     if (!cpu.Z) goto L_6b0f;
     /* 6b2c */
     LSR_M(0x008F);
-    FUN_6b2e(); return;
+    gen_terrain_column(); return;
 }
 
-void FUN_6b2e(void) {
+/* gen_terrain_column @ $6B2E: Fills one column (index Y) of all 4 buffers $0C32/$0D32/$0E32/$0F32 with random heights from game_sub_6B47 */
+void gen_terrain_column(void) {
     /* 6b2e */
     game_sub_6B47();
     /* 6b31 */
@@ -9727,6 +9901,7 @@ void FUN_6b2e(void) {
     return;
 }
 
+/* game_sub_6B47 @ $6B47: Game sub with 2 RANDOM reads */
 void game_sub_6B47(void) {
     /* 6b47 */
     LDA(bus_read(0xD20A));
@@ -9754,7 +9929,8 @@ L_6b5e:;
     return;
 }
 
-void FUN_6b63(void) {
+/* clear_terrain_lo_buffers @ $6B63: LDY #$5F..0: zeroes the $0E32 and $0F32 terrain buffers (96 bytes each) */
+void clear_terrain_lo_buffers(void) {
     /* 6b63 */
     LDY(0x5F);
     /* 6b65 */
@@ -9772,7 +9948,8 @@ L_6b67:;
     return;
 }
 
-void FUN_6b71(void) {
+/* clear_scroll_accum @ $6B71: Zeroes PCOLR0-3 shadow $02C0..$02C3 and 24-bit scroll accum $00A1..$00A4 plus $00A5 */
+void clear_scroll_accum(void) {
     /* 6b71 */
     LDA(0x00);
     /* 6b73 */
@@ -9792,7 +9969,8 @@ L_6b75:;
     return;
 }
 
-void FUN_6b85(void) {
+/* init_object_positions @ $6B85: Zeroes $08D1/$08D2/$08D3; for Y=$2A..0 step2 adds base $2EE0 to word table $6E2D into 22-entry word array $08A4/$08A5 */
+void init_object_positions(void) {
     /* 6b85 */
     LDA(0x00);
     /* 6b87 */
@@ -9828,7 +10006,8 @@ L_6b92:;
     return;
 }
 
-void FUN_6ba8(void) {
+/* advance_object_positions @ $6BA8: INC $08D1; adds $18 to 16-bit $08D2/$08D3; for each of 22 entries in $08A4/$08A5 computes x4 + offset then calls update_object_distance */
+void advance_object_positions(void) {
     /* 6ba8 */
     INC_M(0x08D1);
     /* 6bab */
@@ -9889,7 +10068,7 @@ L_6bbe:;
     /* 6be3 */
     mem[0x0085] = cpu.A;
     /* 6be5 */
-    FUN_6bed();
+    update_object_distance();
     /* 6be8 */
     DEX();
     /* 6be9 */
@@ -9900,7 +10079,8 @@ L_6bbe:;
     return;
 }
 
-void FUN_6bed(void) {
+/* update_object_distance @ $6BED: Clamped 16-bit subtract ($B9/$BA)-($84/$85) into $B7/$B8, stores to $08A4/$08A5[X], clamps row to <=$2E then dispatches draw_vline_pair to draw */
+void update_object_distance(void) {
     /* 6bed */
     SEC();
     /* 6bee */
@@ -9944,7 +10124,7 @@ L_6c14:;
     /* 6c14 */
     mem[0x00B7] = cpu.A;
     /* 6c16 */
-    FUN_6c4d();
+    draw_vline_pair();
     /* 6c19 */
     LDA(0xAA);
     /* 6c1b */
@@ -9969,7 +10149,7 @@ L_6c2b:;
     /* 6c2d */
     LDA(mem[0x00B7]);
     /* 6c2f */
-    FUN_6c4d();
+    draw_vline_pair();
     /* 6c32 */
     LDA(mem[0x00B8]);
     /* 6c34 */
@@ -9996,13 +10176,14 @@ L_6c46:;
     /* 6c48 */
     CMP(0x2B);
     /* 6c4a */
-    if (cpu.N) { FUN_6c4d(); return; }
+    if (cpu.N) { draw_vline_pair(); return; }
 L_6c4c:;
     /* 6c4c */
     return;
 }
 
-void FUN_6c4d(void) {
+/* draw_vline_pair @ $6C4D: Inner loop: per row (A..$00B8) gets row ptr via set_row_ptr_from_count, plots fill byte $0084 into $80-indirect buffer at col $0085 and mirror $2F-col; uses plot_pixel_2bpp for cols>=$2B */
+void draw_vline_pair(void) {
     /* 6c4d */
     mem[0x0092] = cpu.A;
     /* 6c4f */
@@ -10022,7 +10203,7 @@ L_6c5b:;
     /* 6c5b */
     PHA();
     /* 6c5c */
-    FUN_66c6();
+    set_row_ptr_from_count();
     /* 6c5f */
     TXA();
     /* 6c60 */
@@ -10042,7 +10223,7 @@ L_6c5b:;
     /* 6c6a */
     if (!cpu.C) goto L_6c7b;
     /* 6c6c */
-    FUN_6c92();
+    plot_pixel_2bpp();
     /* 6c6f */
     SEC();
     /* 6c70 */
@@ -10052,7 +10233,7 @@ L_6c5b:;
     /* 6c74 */
     TAY();
     /* 6c75 */
-    FUN_6c92();
+    plot_pixel_2bpp();
     /* 6c78 */
     goto L_6c89;
 L_6c7b:;
@@ -10086,7 +10267,8 @@ L_6c91:;
     return;
 }
 
-void FUN_6c92(void) {
+/* plot_pixel_2bpp @ $6C92: Reads byte at ($80),Y, 4x ROL packing 2bpp pixels masking $C0/ORA $C0 via BIT $0082, writes back; sets a 2-bits-per-pixel cell */
+void plot_pixel_2bpp(void) {
     /* 6c92 */
     TXA();
     /* 6c93 */
@@ -10128,7 +10310,8 @@ L_6ca2:;
 }
 
 /* dli_handler_game2 @ $6CC2: manual implementation in rof_manual.c */
-void FUN_6ddf(void) {
+/* init_row_coords_9c @ $6DDF: Loads constants $2E,$30,$2B,$2A,$13 into $009C-$00A0 (row/coordinate setup for drawing) */
+void init_row_coords_9c(void) {
     /* 6ddf */
     LDA(0x2E);
     /* 6de1 */
@@ -10153,7 +10336,8 @@ void FUN_6ddf(void) {
     return;
 }
 
-void FUN_6df4(void) {
+/* audf2_sweep_clear_colors @ $6DF4: Loops $004C times: $08DB-=$08DC, write to AUDF2 ($D202) pitch sweep, then clear_colors; preserves $004C via stack */
+void audf2_sweep_clear_colors(void) {
     /* 6df4 */
     LDY(mem[0x004C]);
     /* 6df6 */
@@ -10185,6 +10369,7 @@ L_6df8:;
     return;
 }
 
+/* intro_random_setup @ $6FBF: Intro/startup sequence with 5 RANDOM reads; called only on fresh start ($0627=0) */
 void intro_random_setup(void) {
     /* 6fbf */
     LDY(0x00);
@@ -10227,7 +10412,7 @@ L_6fe3:;
     /* 6fe5 */
     mem[0x0099] = cpu.A;
     /* 6fe7 */
-    FUN_7069();
+    scan_grid_neighbors();
     /* 6fea */
     LDA(mem[0x0098]);
     /* 6fec */
@@ -10274,7 +10459,7 @@ L_700f:;
     /* 7011 */
     mem[0x009B] = cpu.X;
     /* 7013 */
-    FUN_7047();
+    test_marked_neighbor();
     /* 7016 */
     if (!cpu.N) goto L_6ff0;
     /* 7018 */
@@ -10327,7 +10512,8 @@ L_703d:;
     goto L_6fe3;
 }
 
-void FUN_7047(void) {
+/* test_marked_neighbor @ $7047: Reads grid cell $0900[$009C+$009A]; if bit7 set tests neighbors at +$009A and +$009B; returns A (0 if none marked) */
+void test_marked_neighbor(void) {
     /* 7047 */
     LDA(mem[0x009C]);
     /* 7049 */
@@ -10372,7 +10558,8 @@ L_7068:;
     return;
 }
 
-void FUN_7069(void) {
+/* scan_grid_neighbors @ $7069: Sets 4 offset pairs in $009A/$009B (+1/+16,-1/-16,+16/-1,-16/+1), calls test_marked_neighbor each, pushes matches via push_grid_cell */
+void scan_grid_neighbors(void) {
     /* 7069 */
     LDA(0x01);
     /* 706b */
@@ -10382,11 +10569,11 @@ void FUN_7069(void) {
     /* 706f */
     mem[0x009B] = cpu.A;
     /* 7071 */
-    FUN_7047();
+    test_marked_neighbor();
     /* 7074 */
     if (!cpu.N) goto L_7079;
     /* 7076 */
-    FUN_70a9();
+    push_grid_cell();
 L_7079:;
     /* 7079 */
     LDA(0xFF);
@@ -10397,11 +10584,11 @@ L_7079:;
     /* 707f */
     mem[0x009B] = cpu.A;
     /* 7081 */
-    FUN_7047();
+    test_marked_neighbor();
     /* 7084 */
     if (!cpu.N) goto L_7089;
     /* 7086 */
-    FUN_70a9();
+    push_grid_cell();
 L_7089:;
     /* 7089 */
     LDA(0x10);
@@ -10412,11 +10599,11 @@ L_7089:;
     /* 708f */
     mem[0x009B] = cpu.A;
     /* 7091 */
-    FUN_7047();
+    test_marked_neighbor();
     /* 7094 */
     if (!cpu.N) goto L_7099;
     /* 7096 */
-    FUN_70a9();
+    push_grid_cell();
 L_7099:;
     /* 7099 */
     LDA(0xF0);
@@ -10427,17 +10614,18 @@ L_7099:;
     /* 709f */
     mem[0x009B] = cpu.A;
     /* 70a1 */
-    FUN_7047();
+    test_marked_neighbor();
     /* 70a4 */
     if (!cpu.N) goto L_70a8;
     /* 70a6 */
-    if (cpu.N) { FUN_70a9(); return; }
+    if (cpu.N) { push_grid_cell(); return; }
 L_70a8:;
     /* 70a8 */
     return;
 }
 
-void FUN_70a9(void) {
+/* push_grid_cell @ $70A9: Pushes current cell $009C onto stack at $2500[$0098], increments stack index $0098 (flood-fill queue push) */
+void push_grid_cell(void) {
     /* 70a9 */
     LDX(mem[0x0098]);
     /* 70ab */
@@ -10450,6 +10638,7 @@ void FUN_70a9(void) {
     return;
 }
 
+/* intro_setup_70B3 @ $70B3: Intro continuation (3 RANDOM reads); called after intro_random_setup */
 void intro_setup_70B3(void) {
     /* 70b3 */
     LDY(mem[0x006D]);
@@ -10509,7 +10698,8 @@ L_70e6:;
     return;
 }
 
-void FUN_70e7(void) {
+/* reset_audctl_flags @ $70E7: X=1->$00E7; clears AUDCTL ($D208)=0, $073A=0, $0090=0; sets $073C=$FF (audio/flag reset) */
+void reset_audctl_flags(void) {
     /* 70e7 */
     LDX(0x01);
     /* 70e9 */
@@ -10530,13 +10720,14 @@ void FUN_70e7(void) {
     return;
 }
 
-void FUN_70f9(void) {
+/* sfx_voice_tick @ $70F9: Decrements duration timer $073A (calls sfx_seq_step on underflow), derives note, writes AUDC1/2/3 ($D201/$D203/$D205); $073B gates mute */
+void sfx_voice_tick(void) {
     /* 70f9 */
     DEC_M(0x073A);
     /* 70fc */
     if (!cpu.N) goto L_7101;
     /* 70fe */
-    FUN_7148();
+    sfx_seq_step();
 L_7101:;
     /* 7101 */
     LDA(mem[0x073A]);
@@ -10579,6 +10770,7 @@ L_712c:;
     return;
 }
 
+/* audio_timer_setup @ $712D: Sets up POKEY audio timers + IRQEN=$C0 (timer 1+2 IRQs) */
 void audio_timer_setup(void) {
     /* 712d */
     LDA(0x00);
@@ -10604,7 +10796,8 @@ void audio_timer_setup(void) {
     return;
 }
 
-void FUN_7148(void) {
+/* sfx_seq_step @ $7148: Advances SFX sequence ptr $073C through table $71DB; loads AUDF/AUDC from tables $7191-$71C5 to POKEY $D200-$D207; sets $073A/$073B */
+void sfx_seq_step(void) {
     /* 7148 */
     LDX(mem[0x073C]);
 L_714b:;
@@ -10679,7 +10872,8 @@ L_717b:;
     return;
 }
 
-void FUN_7238(void) {
+/* music_init_state @ $7238: Copies 6-byte song header from table $731E into $0657-$065C, sets $0651=1, AUDCTL($D208)=1, $0653=$0655=2 */
+void music_init_state(void) {
     /* 7238 */
     LDX(0x05);
 L_723a:;
@@ -10709,7 +10903,8 @@ L_723a:;
     return;
 }
 
-void FUN_7253(void) {
+/* music_player_tick @ $7253: Music engine tick: counts down $0651/$0653, reads cmd stream via ptr $0099/$009A, writes AUDF $D200+X and AUDC via EOR table $73C1 */
+void music_player_tick(void) {
     /* 7253 */
     LDA(mem[0x0651]);
     /* 7256 */
@@ -10911,6 +11106,7 @@ L_730d:;
     return;
 }
 
+/* main_loop_body @ $73C8: Main game loop body (1 RANDOM read); called from game_entry loop */
 void main_loop_body(void) {
     /* 73c8 */
     LDA(0x0E);
@@ -10956,7 +11152,7 @@ L_73d9:;
     /* 73f6 */
     mem[0x004C] = cpu.A;
     /* 73f8 */
-    FUN_3cb1();
+    push_a_thunk_3cb2();
     /* 73fb */
     TAY();
     /* 73fc */
@@ -10999,17 +11195,17 @@ L_7419:;
     /* 741f */
     mem[0x004D] = cpu.A;
     /* 7421 */
-    FUN_3cb1();
+    push_a_thunk_3cb2();
     /* 7424 */
     terrain_lookup();
     /* 7427 */
-    FUN_74d7();
+    unpack_bitmap_4d3e();
     /* 742a */
-    FUN_3cb1();
+    push_a_thunk_3cb2();
     /* 742d */
     game_sub_45C5();
     /* 7430 */
-    FUN_3cb1();
+    push_a_thunk_3cb2();
     /* 7433 */
     LDA(0x00);
     /* 7435 */
@@ -11027,7 +11223,7 @@ L_7419:;
     /* 7440 */
     game_sub_451d();
     /* 7443 */
-    FUN_3cb1();
+    push_a_thunk_3cb2();
     /* 7446 */
     LDA(0xF4);
     /* 7448 */
@@ -11055,6 +11251,7 @@ L_745b:;
     game_sub_4430(); return;
 }
 
+/* game_setup_7460 @ $7460: Game setup (called before main loop) */
 void game_setup_7460(void) {
     /* 7460 */
     LDY(0x00);
@@ -11091,6 +11288,7 @@ L_746c:;
     return;
 }
 
+/* game_setup_7483 @ $7483: Game setup (called before main loop) */
 void game_setup_7483(void) {
     /* 7483 */
     LDX(0x00);
@@ -11115,6 +11313,7 @@ L_7487:;
     return;
 }
 
+/* intro_sub_7498 @ $7498: Intro sub (called with intro_random_setup/$70B3 on fresh start) */
 void intro_sub_7498(void) {
     /* 7498 */
     LDY(0x00);
@@ -11139,7 +11338,7 @@ L_749b:;
     LDY(0x10);
 L_74ab:;
     /* 74ab */
-    FUN_4e1a();
+    obj_table_scan_a_c8();
     /* 74ae */
     LDA(mem[0x006D]);
     /* 74b0 */
@@ -11151,7 +11350,7 @@ L_74ab:;
     /* 74b6 */
     LDA(0x01);
     /* 74b8 */
-    FUN_4e1c();
+    obj_table_scan_replace();
 L_74bb:;
     /* 74bb */
     LDX(0x00);
@@ -11185,7 +11384,8 @@ L_74cf:;
     return;
 }
 
-void FUN_74d7(void) {
+/* unpack_bitmap_4d3e @ $74D7: Bit-serial expand: src ptr $C1/$C2 from table $4D3E, shifts 8 bits via $0085 accumulator to dest $C3/$C4; nested loops $0080/$0081/$0082/$00DF */
+void unpack_bitmap_4d3e(void) {
     /* 74d7 */
     LDA(0x00);
     /* 74d9 */
@@ -11297,6 +11497,7 @@ L_751c:;
     return;
 }
 
+/* game_init_753B @ $753B: Game init */
 void game_init_753B(void) {
     /* 753b */
     LDY(0x00);
@@ -11329,6 +11530,7 @@ L_753f:;
     memset_or_copy(); return;
 }
 
+/* game_init_7558 @ $7558: Game init */
 void game_init_7558(void) {
     /* 7558 */
     LDA(0xFA);
@@ -11347,7 +11549,7 @@ void game_init_7558(void) {
     /* 7566 */
     mem[0x00BE] = cpu.A;
     /* 7568 */
-    FUN_757b();
+    process_list_via_3c58();
     /* 756b */
     LDA(0x09);
     /* 756d */
@@ -11364,10 +11566,11 @@ void game_init_7558(void) {
     LDA(0x0D);
     /* 7579 */
     mem[0x00BE] = cpu.A;
-    FUN_757b(); return;
+    process_list_via_3c58(); return;
 }
 
-void FUN_757b(void) {
+/* process_list_via_3c58 @ $757B: Walks bytes via ZP ptr $BB/$BC, calling rle_run_fill per non-zero byte until terminating $00 (used by game_init_7558) */
+void process_list_via_3c58(void) {
     /* 757b */
     LDY(0x00);
 L_757d:;
@@ -11379,11 +11582,12 @@ L_757d:;
     return;
 L_7582:;
     /* 7582 */
-    FUN_3c58();
+    rle_run_fill();
     /* 7585 */
     goto L_757d;
 }
 
+/* game_init_7588 @ $7588: Game init (called in game_entry setup sequence) */
 void game_init_7588(void) {
     /* 7588 */
     LDY(0x2F);
@@ -11413,10 +11617,11 @@ L_758c:;
     /* 75a0 */
     mem[0x00BC] = cpu.A;
     /* 75a2 */
-    FUN_3c3d(); return;
+    rle_decompress(); return;
 }
 
-void FUN_75a5(void) {
+/* copy_192_to_1800 @ $75A5: Copies $C0=192 bytes from table $350C to dest ptr $BB/$BC (=$1800) via ZP_IND_Y */
+void copy_192_to_1800(void) {
     /* 75a5 */
     LDA(0x0F);
     /* 75a7 */
@@ -11440,7 +11645,8 @@ L_75af:;
     return;
 }
 
-void FUN_75b8(void) {
+/* count_up_to_level @ $75B8: Increments $0604 and BCD counter $C3 in loop until $0604 reaches level/stage $006D */
+void count_up_to_level(void) {
     /* 75b8 */
     LDA(0x00);
     /* 75ba */
@@ -11470,7 +11676,8 @@ L_75bc:;
     return;
 }
 
-void FUN_75d0(void) {
+/* decrement_bcd_0628_restart @ $75D0: SED; SBC $0628-1 (BCD decrement of $0628), CLD, startup_init, tail to set_0628_redisplay ($75de) */
+void decrement_bcd_0628_restart(void) {
     /* 75d0 */
     SED();
     /* 75d1 */
@@ -11485,32 +11692,35 @@ void FUN_75d0(void) {
     CLD();
     /* 75db */
     startup_init();
-    FUN_75de(); return;
+    reinit_and_redraw_via_delay(); return;
 }
 
-void FUN_75de(void) {
+/* reinit_and_redraw_via_delay @ $75DE: add_and_show_bcd_counter; game_sub_5815 X=$10; tail wait_frames_10 (PHA+$0A delay then re-enter game_entry) */
+void reinit_and_redraw_via_delay(void) {
     /* 75de */
-    FUN_497d();
+    add_and_show_bcd_counter();
     /* 75e1 */
     LDX(0x10);
     /* 75e3 */
     game_sub_5815();
     /* 75e6 */
-    FUN_3cd4(); return;
+    wait_frames_10(); return;
 }
 
-void FUN_75e9(void) {
+/* set_0628_bcd_redisplay @ $75E9: A->packed BCD via bin_to_bcd stored $0628; startup_init; tail wait_frames_20 (delay+game_entry) */
+void set_0628_bcd_redisplay(void) {
     /* 75e9 */
-    FUN_4e84();
+    bin_to_bcd();
     /* 75ec */
     mem[0x0628] = cpu.A;
     /* 75ef */
     startup_init();
     /* 75f2 */
-    FUN_3cd9(); return;
+    wait_frames_20(); return;
 }
 
-void FUN_75f5(void) {
+/* compute_gauge_geometry_from_006D @ $75F5: Derives display/gauge coords from $006D into $061F-$0625,$0617,$0618,$061A-$061C,$062A,$08A2; $0628=BCD($006D) */
+void compute_gauge_geometry_from_006D(void) {
     /* 75f5 */
     LDX(mem[0x006D]);
     /* 75f7 */
@@ -11533,7 +11743,7 @@ L_7602:;
     /* 7603 */
     mem[0x062A] = cpu.A;
     /* 7606 */
-    FUN_4e84();
+    bin_to_bcd();
     /* 7609 */
     mem[0x0628] = cpu.A;
     /* 760c */
@@ -11762,6 +11972,7 @@ L_76c7:;
     return;
 }
 
+/* game_init_76CB @ $76CB: Game init (called in game_entry setup sequence) */
 void game_init_76CB(void) {
     /* 76cb */
     LDY(0x08);
@@ -11955,7 +12166,7 @@ L_772b:;
     /* 77a8 */
     mem[0x0086] = cpu.A;
     /* 77aa */
-    FUN_69f1();
+    dl_lms_fill();
     /* 77ad */
     LDA(0xA0);
     /* 77af */
@@ -11975,9 +12186,10 @@ L_772b:;
     /* 77be */
     mem[0x00C6] = cpu.A;
     /* 77c0 */
-    FUN_69f1(); return;
+    dl_lms_fill(); return;
 }
 
+/* game_init_77DF @ $77DF: Game init (called in game_entry setup sequence) */
 void game_init_77DF(void) {
     /* 77df */
     LDX(0x00);
@@ -12033,6 +12245,7 @@ L_77e6:;
     return;
 }
 
+/* game_init_7813 @ $7813: Game init (called in game_entry setup sequence) */
 void game_init_7813(void) {
     /* 7813 */
     LDY(0x00);
@@ -12067,7 +12280,8 @@ L_7823:;
     return;
 }
 
-void FUN_782a(void) {
+/* copy_altitude_graphic_to_screen @ $782A: If $0091>=$C0 copy 20-byte block $5A9F+X (X=$27/$13) into screen $32B6+Y; sets $00D8=$44 when $0091<$E0 */
+void copy_altitude_graphic_to_screen(void) {
     /* 782a */
     LDA(mem[0x0091]);
     /* 782c */
@@ -12117,6 +12331,7 @@ L_7853:;
     return;
 }
 
+/* pilot_render @ $7854: Pilot/rescue rendering + interaction (3 RANDOM reads; checks $288D/$288E rescue state; large function) */
 void pilot_render(void) {
     /* 7854 */
     LDA(0x80);
@@ -12277,7 +12492,7 @@ L_78f2:;
     /* 78f8 */
     if (cpu.Z) goto L_78fd;
     /* 78fa */
-    FUN_7aa6();
+    trigger_effect_4a();
 L_78fd:;
     /* 78fd */
     LDY(mem[0x003D]);
@@ -12313,7 +12528,7 @@ L_7915:;
     /* 791c */
     mem[0x0044] = cpu.A;
     /* 791e */
-    FUN_7b39();
+    mark_slot_and_countdown_char();
     /* 7921 */
     goto L_792b;
 L_7924:;
@@ -12322,10 +12537,10 @@ L_7924:;
     /* 7926 */
     mem[0x0044] = cpu.A;
     /* 7928 */
-    FUN_7b7d();
+    mark_slot_and_inc_count();
 L_792b:;
     /* 792b */
-    FUN_7b94(); return;
+    level_clear_fx_loop(); return;
 L_792e:;
     /* 792e */
     LDA(mem[0x003D]);
@@ -12500,16 +12715,16 @@ L_79d0:; platform_tick_vbi(); platform_render_frame();
     mem[0x003C] = cpu.A;
 L_79d9:;
     /* 79d9 */
-    FUN_7a89();
+    clear_colors_sweep_5x();
     /* 79dc */
     if (!cpu.Z) goto L_79e1;
     /* 79de */
     goto L_78d6;
 L_79e1:;
     /* 79e1 */
-    FUN_480b();
+    clear_message_buffer();
     /* 79e4 */
-    FUN_3cd9();
+    wait_frames_20();
     /* 79e7 */
     LDA(mem[0x003C]);
     /* 79e9 */
@@ -12517,7 +12732,7 @@ L_79e1:;
     /* 79eb */
     if (!cpu.Z) goto L_79fc;
     /* 79ed */
-    FUN_7b74();
+    mark_grid_slot_active();
     /* 79f0 */
     mem[0x0633] = cpu.A;
     /* 79f3 */
@@ -12530,19 +12745,19 @@ L_79e1:;
     goto L_7a01;
 L_79fc:;
     /* 79fc */
-    FUN_7af4();
+    bcd_oscillate_counter_0628();
     /* 79ff */
     LDA(0x0A);
 L_7a01:;
     /* 7a01 */
-    FUN_7aa8();
+    init_event_state_5815_x16();
     /* 7a04 */
     INC_M(0x003D);
     /* 7a06 */
     goto L_7a0c;
 L_7a09:;
     /* 7a09 */
-    FUN_7a17();
+    animate_clear_colors_timed();
 L_7a0c:;
     /* 7a0c */
     goto L_7a14;
@@ -12550,13 +12765,14 @@ L_7a0f:;
     /* 7a0f */
     if (cpu.C) goto L_7a14;
     /* 7a11 */
-    FUN_7c01();
+    animate_zoom_sequence();
 L_7a14:;
     /* 7a14 */
     goto L_78d6;
 }
 
-void FUN_7a17(void) {
+/* animate_clear_colors_timed @ $7A17: Gated by $0014(RTCLOK); steps $007B/$007D, reads RANDOM $D20A, runs clear_colors loops + game_sub_5815 X=$19/$1B */
+void animate_clear_colors_timed(void) {
     /* 7a17 */
     LDA(mem[0x0014]);
     /* 7a19 */
@@ -12572,7 +12788,7 @@ void FUN_7a17(void) {
     /* 7a23 */
     game_sub_5815();
     /* 7a26 */
-    FUN_3cd4();
+    wait_frames_10();
     /* 7a29 */
     ASL_M(0x007D);
     /* 7a2b */
@@ -12583,7 +12799,7 @@ L_7a30:;
     /* 7a30 */
     if (!cpu.N) goto L_7a3e;
     /* 7a32 */
-    FUN_7b39();
+    mark_slot_and_countdown_char();
     /* 7a35 */
     LDA(0x02);
     /* 7a37 */
@@ -12685,7 +12901,8 @@ L_7a88:;
     return;
 }
 
-void FUN_7a89(void) {
+/* clear_colors_sweep_5x @ $7A89: Y=5 outer loop: clear_colors X=$007D(min $14) until $003E set, then game_sub_5815 X=$1A; returns Z=done */
+void clear_colors_sweep_5x(void) {
     /* 7a89 */
     LDY(0x05);
 L_7a8b:;
@@ -12721,13 +12938,15 @@ L_7aa5:;
     return;
 }
 
-void FUN_7aa6(void) {
+/* trigger_effect_4a @ $7AA6: LDA #$4A then falls into init_event_state_5815_x16 (sets $0044=A,$3388=$B4,$003C=0,game_sub_5815 X=$16) */
+void trigger_effect_4a(void) {
     /* 7aa6 */
     LDA(0x4A);
-    FUN_7aa8(); return;
+    init_event_state_5815_x16(); return;
 }
 
-void FUN_7aa8(void) {
+/* init_event_state_5815_x16 @ $7AA8: Tail: $0044=A, $3388=$B4, $003C=0, then game_sub_5815(X=$16); inits state and triggers game sub */
+void init_event_state_5815_x16(void) {
     /* 7aa8 */
     mem[0x0044] = cpu.A;
     /* 7aaa */
@@ -12744,6 +12963,7 @@ void FUN_7aa8(void) {
     game_sub_5815(); return;
 }
 
+/* pmg_enemy_update @ $7AB8: PMG enemy update (1 RANDOM read; called from enemy_check when $0633≠0) */
 void pmg_enemy_update(void) {
     /* 7ab8 */
     LDA(bus_read(0xD20A));
@@ -12809,7 +13029,8 @@ L_7af3:;
     return;
 }
 
-void FUN_7af4(void) {
+/* bcd_oscillate_counter_0628 @ $7AF4: SED; $0628 +/-1 (dir=$062B); inc $062B/$0629; if $0629>=$061F call game_sub_7B54; BCD timer/ramp */
+void bcd_oscillate_counter_0628(void) {
     /* 7af4 */
     SED();
     /* 7af5 */
@@ -12877,17 +13098,19 @@ L_7b34:;
     /* 7b34 */
     mem[0x0046] = cpu.A;
     /* 7b36 */
-    FUN_41e8();
-    FUN_7b39(); return;
+    vobj_step_down();
+    mark_slot_and_countdown_char(); return;
 }
 
-void FUN_7b39(void) {
+/* mark_slot_and_countdown_char @ $7B39: Wrapper: mark_grid_slot_active (mark $0A00 slot) then countdown_show_char_0620 (delayed char display) */
+void mark_slot_and_countdown_char(void) {
     /* 7b39 */
-    FUN_7b74();
-    FUN_7b3c(); return;
+    mark_grid_slot_active();
+    countdown_show_char_0620(); return;
 }
 
-void FUN_7b3c(void) {
+/* countdown_show_char_0620 @ $7B3C: If $0620!=0: ==1 -> LDA $C9/obj_table_scan_replace, else obj_table_scan_y1_c8, then DEC $0620; delayed char write to display buf */
+void countdown_show_char_0620(void) {
     /* 7b3c */
     LDY(mem[0x0620]);
     /* 7b3f */
@@ -12899,12 +13122,12 @@ void FUN_7b3c(void) {
     /* 7b45 */
     LDA(0xC9);
     /* 7b47 */
-    FUN_4e1c();
+    obj_table_scan_replace();
     /* 7b4a */
     goto L_7b50;
 L_7b4d:;
     /* 7b4d */
-    FUN_4e18();
+    obj_table_scan_y1_c8();
 L_7b50:;
     /* 7b50 */
     DEC_M(0x0620);
@@ -12913,6 +13136,7 @@ L_7b53:;
     return;
 }
 
+/* game_sub_7B54 @ $7B54: Game sub (1 RANDOM read; called in main loop) */
 void game_sub_7B54(void) {
     /* 7b54 */
     LDA(mem[0x003A]);
@@ -12951,7 +13175,8 @@ L_7b73:;
     return;
 }
 
-void FUN_7b74(void) {
+/* mark_grid_slot_active @ $7B74: X=$28E6 (slot index); mem[$0A00+X]=1; marks display/grid slot active (same table obj_table_scan_replace scans) */
+void mark_grid_slot_active(void) {
     /* 7b74 */
     LDX(mem[0x28E6]);
     /* 7b77 */
@@ -12962,13 +13187,15 @@ void FUN_7b74(void) {
     return;
 }
 
-void FUN_7b7d(void) {
+/* mark_slot_and_inc_count @ $7B7D: Wrapper: mark_grid_slot_active (mark $0A00 slot) then set_place_params_inc_count (set params + BCD inc $0641) */
+void mark_slot_and_inc_count(void) {
     /* 7b7d */
-    FUN_7b74();
-    FUN_7b80(); return;
+    mark_grid_slot_active();
+    set_place_params_inc_count(); return;
 }
 
-void FUN_7b80(void) {
+/* set_place_params_inc_count @ $7B80: $0045=0, $0046=1 (placement params) then bcd_inc_counter_0641 (BCD inc $0641) */
+void set_place_params_inc_count(void) {
     /* 7b80 */
     LDA(0x00);
     /* 7b82 */
@@ -12977,10 +13204,11 @@ void FUN_7b80(void) {
     LDA(0x01);
     /* 7b86 */
     mem[0x0046] = cpu.A;
-    FUN_7b88(); return;
+    bcd_inc_counter_0641(); return;
 }
 
-void FUN_7b88(void) {
+/* bcd_inc_counter_0641 @ $7B88: SED; $0641 = $0641 + 1 (BCD); increments a placed-item/count BCD counter */
+void bcd_inc_counter_0641(void) {
     /* 7b88 */
     LDA(mem[0x0641]);
     /* 7b8b */
@@ -12997,7 +13225,8 @@ void FUN_7b88(void) {
     return;
 }
 
-void FUN_7b94(void) {
+/* level_clear_fx_loop @ $7B94: INC $283C; 15x game_sub_55FC pairs + clear_colors; then $3C-iter loop reading RANDOM $D20A|=4 -> $DB, clear_colors */
+void level_clear_fx_loop(void) {
     /* 7b94 */
     INC_M(0x283C);
     /* 7b97 */
@@ -13046,7 +13275,8 @@ L_7bb5:;
     return;
 }
 
-void FUN_7bc6(void) {
+/* setup_level_clear_state @ $7BC6: sets $3A=$FF; if level_or_state($04) set lives($72)=2; timer($44)=$52; X=$1D; tail game_sub_5815 */
+void setup_level_clear_state(void) {
     /* 7bc6 */
     LDA(0xFF);
     /* 7bc8 */
@@ -13070,7 +13300,8 @@ L_7bd2:;
     game_sub_5815(); return;
 }
 
-void FUN_7c01(void) {
+/* animate_zoom_sequence @ $7C01: 8-frame loop: wait RTCLOK_LOW($14)>=3; per-phase($291F) table $7D8D/95/9D; 16-bit accum $59/$5A,$3F/$40; calls draw_shape_7c9a */
+void animate_zoom_sequence(void) {
     /* 7c01 */
     LDA(0x00);
     /* 7c03 */
@@ -13207,7 +13438,7 @@ L_7c83:;
     mem[0x0051] = cpu.A;
 L_7c85:;
     /* 7c85 */
-    FUN_7c9a();
+    draw_scaled_shape();
     /* 7c88 */
     LDA(mem[0x003E]);
     /* 7c8a */
@@ -13228,7 +13459,8 @@ L_7c97:;
     goto L_7c06;
 }
 
-void FUN_7c9a(void) {
+/* draw_scaled_shape @ $7C9A: computes $C1/$C2 origin via $50/$51 subtract; row loop $53/$4E w/ tables $7DA9/7DBB/7DD3/7DA5; plots via plot_clipped_pixel */
+void draw_scaled_shape(void) {
     /* 7c9a */
     LDA(0x06);
     /* 7c9c */
@@ -13274,7 +13506,7 @@ L_7cc2:;
     /* 7cc2 */
     LDA(0x00);
     /* 7cc4 */
-    FUN_7d38();
+    plot_clipped_pixel();
     /* 7cc7 */
     DEC_M(0x0053);
     /* 7cc9 */
@@ -13293,7 +13525,7 @@ L_7ccd:;
     /* 7cd6 */
     mem[0x0053] = cpu.A;
     /* 7cd8 */
-    FUN_7d38();
+    plot_clipped_pixel();
 L_7cdb:;
     /* 7cdb */
     LDY(mem[0x0055]);
@@ -13349,7 +13581,7 @@ L_7d00:;
     /* 7d03 */
     LDA(mem[(0x7DA5)+cpu.X]);
     /* 7d06 */
-    FUN_7d38();
+    plot_clipped_pixel();
     /* 7d09 */
     CLC();
     /* 7d0a */
@@ -13371,11 +13603,11 @@ L_7d00:;
     /* 7d1a */
     LDA(0x00);
     /* 7d1c */
-    FUN_7d38();
+    plot_clipped_pixel();
     /* 7d1f */
     LDA(0x00);
     /* 7d21 */
-    FUN_7d38();
+    plot_clipped_pixel();
     /* 7d24 */
     DEC_M(0x004E);
     /* 7d26 */
@@ -13400,7 +13632,8 @@ L_7d00:;
     return;
 }
 
-void FUN_7d38(void) {
+/* plot_clipped_pixel @ $7D38: A=value->$58; clip Y($4E) in[$6C,$97) X($4F) in[$28,$D8); addr via $073D/$0793; mask $4F3B/$7DEB[X&3]; RMW bitmap via $C1 ptr; INC $4F */
+void plot_clipped_pixel(void) {
     /* 7d38 */
     mem[0x0058] = cpu.A;
     /* 7d3a */
@@ -13497,6 +13730,7 @@ L_7d8a:;
     return;
 }
 
+/* game_sub_7EC7 @ $7EC7: Game sub (3 RANDOM reads) */
 void game_sub_7EC7(void) {
     /* 7ec7 */
     LDX(0x01);
@@ -13561,19 +13795,19 @@ void game_sub_7EC7(void) {
     /* 7f0f */
     ADC(0x21);
     /* 7f11 */
-    FUN_7f7a();
+    sound_step_preserve_a();
     /* 7f14 */
     SBC(0x10);
     /* 7f16 */
-    FUN_7f7a();
+    sound_step_preserve_a();
     /* 7f19 */
     SBC(0x0A);
     /* 7f1b */
-    FUN_7f7a();
+    sound_step_preserve_a();
     /* 7f1e */
     SBC(0x04);
     /* 7f20 */
-    FUN_7f7a();
+    sound_step_preserve_a();
     /* 7f23 */
     SBC(0x02);
     /* 7f25 */
@@ -13581,7 +13815,7 @@ void game_sub_7EC7(void) {
     /* 7f28 */
     LDA(mem[0x003E]);
     /* 7f2a */
-    if (cpu.Z) { FUN_7f74(); return; }
+    if (cpu.Z) { clear_var_0632(); return; }
     /* 7f2c */
     LDA(bus_read(0xD20A));
     /* 7f2f */
@@ -13633,10 +13867,11 @@ L_7f51:;
     LDA(mem[0x003E]);
     /* 7f5e */
     if (!cpu.Z) goto L_7f4f;
-    FUN_7f60(); return;
+    silence_audio_channels(); return;
 }
 
-void FUN_7f60(void) {
+/* silence_audio_channels @ $7F60: A->AUDC1/2/3/4 ($D201/03/05/07); AUDCTL($D208)=$60; tail clear_$0632 */
+void silence_audio_channels(void) {
     /* 7f60 */
     mem[0x0634] = cpu.A;
     /* 7f63 */
@@ -13651,10 +13886,11 @@ void FUN_7f60(void) {
     LDA(0x60);
     /* 7f71 */
     bus_write(0xD208, cpu.A);
-    FUN_7f74(); return;
+    clear_var_0632(); return;
 }
 
-void FUN_7f7a(void) {
+/* sound_step_preserve_a @ $7F7A: saves A in $2930, calls game_sub_7F85 (INC $2924 -> table $81E8), reloads A, SEC; returns A unchanged */
+void sound_step_preserve_a(void) {
     /* 7f7a */
     mem[0x2930] = cpu.A;
     /* 7f7d */
@@ -13667,6 +13903,7 @@ void FUN_7f7a(void) {
     return;
 }
 
+/* game_sub_7F85 @ $7F85: Game sub (1 RANDOM read) */
 void game_sub_7F85(void) {
     /* 7f85 */
     INC_M(0x2924);
@@ -13904,7 +14141,7 @@ L_808d:;
     /* 808d */
     mem[0x292F] = cpu.X;
     /* 8090 */
-    FUN_80c5();
+    hud_build_text_row();
     /* 8093 */
     LDX(mem[0x292F]);
     /* 8096 */
@@ -13939,7 +14176,7 @@ L_80ac:;
     /* 80b3 */
     mem[0x004A] = cpu.A;
     /* 80b5 */
-    FUN_7f60();
+    silence_audio_channels();
     /* 80b8 */
     audio_irq_handler(); return;
 L_80bb:;
@@ -13956,7 +14193,8 @@ L_80c4:;
     return;
 }
 
-void FUN_80c5(void) {
+/* hud_build_text_row @ $80C5: Zeroes 17-byte buf $8F..$9F; calls 4 field-fillers + $8181 packer; OR-merges glyph table $BE00 masked into screen RAM via ptr $8B/$8D; advances $8B by $60 */
+void hud_build_text_row(void) {
     /* 80c5 */
     LDX(0x10);
     /* 80c7 */
@@ -13969,13 +14207,13 @@ L_80c9:;
     /* 80cc */
     if (!cpu.N) goto L_80c9;
     /* 80ce */
-    FUN_8105();
+    hud_fill_field0();
     /* 80d1 */
-    FUN_811f();
+    hud_fill_field1();
     /* 80d4 */
-    FUN_8138();
+    hud_fill_field2();
     /* 80d7 */
-    FUN_8168();
+    hud_fill_field3_font();
     /* 80da */
     LDY(0x10);
 L_80dc:;
@@ -14026,7 +14264,8 @@ L_80fa:;
     return;
 }
 
-void FUN_8105(void) {
+/* hud_fill_field0 @ $8105: Emits 5 bytes into buf+$8F[4..0] from source ptr $85, each passed through bit-packer $8181; gated by index $0080 vs limit $2927 */
+void hud_fill_field0(void) {
     /* 8105 */
     LDY(mem[0x0080]);
     /* 8107 */
@@ -14044,7 +14283,7 @@ L_8111:;
     /* 8111 */
     LDA(bus_read(ZP_IND_Y(0x85)));
     /* 8113 */
-    FUN_8181();
+    pack_byte_to_5bit_cells();
     /* 8116 */
     mem[(uint8_t)((0x8F)+cpu.X)] = cpu.A;
     /* 8118 */
@@ -14059,7 +14298,8 @@ L_8111:;
     return;
 }
 
-void FUN_811f(void) {
+/* hud_fill_field1 @ $811F: Copies 5 bytes into buf $8F[$0C..$10] from source ptr $87; gated by index $0081 vs limit $2928 */
+void hud_fill_field1(void) {
     /* 811f */
     LDY(mem[0x0081]);
     /* 8121 */
@@ -14092,7 +14332,8 @@ L_812b:;
     return;
 }
 
-void FUN_8138(void) {
+/* hud_fill_field2 @ $8138: Fills buf $8F[$05..$0B] from ptr $89; if $292D!=0 raw copy else through bit-packer $8181; gated by index $0082 vs limit $2929 */
+void hud_fill_field2(void) {
     /* 8138 */
     LDY(mem[0x0082]);
     /* 813a */
@@ -14134,7 +14375,7 @@ L_8158:;
     /* 8158 */
     LDA(bus_read(ZP_IND_Y(0x89)));
     /* 815a */
-    FUN_8181();
+    pack_byte_to_5bit_cells();
     /* 815d */
     mem[(uint8_t)((0x8F)+cpu.X)] = cpu.A;
     /* 815f */
@@ -14151,7 +14392,8 @@ L_8158:;
     return;
 }
 
-void FUN_8168(void) {
+/* hud_fill_field3_font @ $8168: Copies 7 glyph bytes into buf $8F[$05..$0B] from font table $35CD+Y; gated by index $0083 vs fixed limit $A8 */
+void hud_fill_field3_font(void) {
     /* 8168 */
     LDY(mem[0x0083]);
     /* 816a */
@@ -14184,7 +14426,8 @@ L_8173:;
     return;
 }
 
-void FUN_8181(void) {
+/* pack_byte_to_5bit_cells @ $8181: Re-distributes A's bits across cells via repeated ROL/ROR through scratch $0084 (5-bit proportional-font/glyph bit-packing) */
+void pack_byte_to_5bit_cells(void) {
     /* 8181 */
     ROL_A();
     /* 8182 */
@@ -14237,6 +14480,7 @@ void FUN_8181(void) {
     return;
 }
 
+/* audio_irq_handler @ $8237: Audio IRQ handler (0 callers; writes AUDF1-4 + AUDCTL; timer-driven sound update) */
 void audio_irq_handler(void) {
     /* 8237 */
     LDA(0x15);
@@ -14293,9 +14537,9 @@ L_824a:;
     /* 826c */
     bus_write(0xD208, cpu.A);
     /* 826f */
-    FUN_4fce();
+    intro_reset_score_slots();
     /* 8272 */
-    FUN_3cd9();
+    wait_frames_20();
     /* 8275 */
     LDA(0x20);
     /* 8277 */
@@ -14304,9 +14548,9 @@ L_824a:;
     mem[0x0041] = cpu.A;
 L_827b:;
     /* 827b */
-    FUN_4fe0();
+    intro_fill_display_params();
     /* 827e */
-    FUN_3cca();
+    wait_frames_2();
     /* 8281 */
     LDX(mem[0x00C2]);
     /* 8283 */
@@ -14314,10 +14558,11 @@ L_827b:;
     /* 8285 */
     if (!cpu.Z) goto L_827b;
     /* 8287 */
-    FUN_4f76(); return;
+    intro_teardown_fade_loop(); return;
 }
 
-void FUN_8c58(void) {
+/* build_player2_sprite @ $8C58: Builds scaled P/M sprite into strip $0E32 from depth $0038/$0039; sets HPOSP2 $D002, SIZEP2 $D014, GRAFP2 $D00A; uses tables $8DB5/$8E2B/$8E32/$8E3E/$8E4A/$8E52/$8DD0 */
+void build_player2_sprite(void) {
     /* 8c58 */
     LDA(0x00);
     /* 8c5a */
@@ -14676,7 +14921,8 @@ L_8dae:;
     goto L_8ce5;
 }
 
-void FUN_8e5b(void) {
+/* flight_control_integrate @ $8E5B: Master flight step: reads PORTA $D300 joystick + RANDOM $D20A; integrates pitch $0025/26 roll $0028/29 throttle $002D/2E & world pos $0033/34,$2885/87/89; clamps angles; updates PMG/audio */
+void flight_control_integrate(void) {
     /* 8e5b */
     LDA(mem[0x004A]);
     /* 8e5d */
@@ -14799,7 +15045,7 @@ L_8ec5:;
     /* 8ec7 */
     if (cpu.Z) goto L_8ecc;
     /* 8ec9 */
-    FUN_9713();
+    compute_target_blip_position();
 L_8ecc:;
     /* 8ecc */
     LDA(mem[0x0072]);
@@ -14853,7 +15099,7 @@ L_8ef5:;
     /* 8efb */
     if (!cpu.Z) goto L_8f03;
     /* 8efd */
-    FUN_9473();
+    step_object_along_axes();
     /* 8f00 */
     goto L_8f28;
 L_8f03:;
@@ -14880,7 +15126,7 @@ L_8f03:;
     /* 8f1b */
     LDA(0x01);
     /* 8f1d */
-    FUN_4ea2();
+    store_676_init();
 L_8f20:;
     /* 8f20 */
     LDA(mem[0x0025]);
@@ -15163,7 +15409,7 @@ L_9009:;
     /* 9028 */
     if (cpu.Z) goto L_902d;
     /* 902a */
-    FUN_4ea2();
+    store_676_init();
 L_902d:;
     /* 902d */
     CLC();
@@ -15309,7 +15555,7 @@ L_90a8:;
     /* 90ad */
     mem[0x006B] = cpu.A;
     /* 90af */
-    FUN_9821();
+    mul_u8();
     /* 90b2 */
     LDY(0x00);
     /* 90b4 */
@@ -15383,7 +15629,7 @@ L_90db:;
     /* 90f5 */
     mem[0x2886] = cpu.A;
     /* 90f8 */
-    FUN_97a0();
+    compute_obj_rel_angle_scale();
     /* 90fb */
     CLC();
     /* 90fc */
@@ -15533,7 +15779,7 @@ L_9174:;
     /* 9190 */
     mem[0x0687] = cpu.A;
     /* 9193 */
-    FUN_4eb0();
+    refresh_hud_field_0d_entry();
     /* 9196 */
     LDY(0x0C);
     /* 9198 */
@@ -15740,12 +15986,12 @@ L_9258:;
     /* 925c */
     if (!cpu.Z) goto L_9264;
     /* 925e */
-    FUN_94bf();
+    load_velocity_from_param_block();
     /* 9261 */
     goto L_9267;
 L_9264:;
     /* 9264 */
-    FUN_9552();
+    object_step_and_collide();
 L_9267:;
     /* 9267 */
     SEC();
@@ -15791,14 +16037,14 @@ L_9289:;
     /* 9295 */
     if (!cpu.Z) goto L_929d;
     /* 9297 */
-    FUN_4e98();
+    reset_flags_ff();
     /* 929a */
     goto L_92a3;
 L_929d:;
     /* 929d */
-    FUN_4e98();
+    reset_flags_ff();
     /* 92a0 */
-    FUN_93bd();
+    check_object_in_target_box();
 L_92a3:;
     /* 92a3 */
     goto L_92c7;
@@ -15838,7 +16084,7 @@ L_92c1:;
     terrain_gen_A613();
 L_92c4:;
     /* 92c4 */
-    FUN_930e();
+    object_integrate_position();
 L_92c7:;
     /* 92c7 */
     LDY(mem[0x291E]);
@@ -15897,7 +16143,8 @@ L_92d1:;
     return;
 }
 
-void FUN_930e(void) {
+/* object_integrate_position @ $930E: 16-bit signed integ: $2827/$0064/$0065 -= $2850/1; $2828/$0066/$0067 += $2852/3 then $2829/$282C; if hi bytes 0 use tbl $93F3[$0063] scaled by $282D, store screen pos $2821 & $2824, else $2824=0 */
+void object_integrate_position(void) {
     /* 930e */
     SEC();
     /* 930f */
@@ -16073,7 +16320,8 @@ L_93b7:;
     return;
 }
 
-void FUN_93bd(void) {
+/* check_object_in_target_box @ $93BD: if $0065/$0067=0 and $0064 in [$34,$AC) and $0066 in [$1A,$6A): set $3B=$20, call b786 & game_sub_AA95, clear $2892, set $3355=$34, $2891=$1E (trigger event in box) */
+void check_object_in_target_box(void) {
     /* 93bd */
     LDA(mem[0x0065]);
     /* 93bf */
@@ -16107,7 +16355,7 @@ void FUN_93bd(void) {
     /* 93db */
     mem[0x003B] = cpu.A;
     /* 93dd */
-    FUN_b786();
+    reset_indicator_event();
     /* 93e0 */
     game_sub_AA95();
     /* 93e3 */
@@ -16127,7 +16375,8 @@ L_93f2:;
     return;
 }
 
-void FUN_9473(void) {
+/* step_object_along_axes @ $9473: $0024 sign -> $0023/$0024 +=/-=$14 (clamp 0); if $0070!=0 $0033/$0034 -=$30; elif $003D=0 & $0678=0 inc $003D and (if $0063>=0) tail-call reset_flags_ff */
+void step_object_along_axes(void) {
     /* 9473 */
     LDA(mem[0x0024]);
     /* 9475 */
@@ -16208,13 +16457,14 @@ L_94ac:;
     /* 94b9 */
     if (cpu.N) goto L_94be;
     /* 94bb */
-    FUN_4e98(); return;
+    reset_flags_ff(); return;
 L_94be:;
     /* 94be */
     return;
 }
 
-void FUN_94bf(void) {
+/* load_velocity_from_param_block @ $94BF: init accum $2854-$2863 from param block $28FD-$290A: sign-extend & ASL/ROL scale ($285E,$2861), $285B=clamp($2902+8), $2863=$290A>>1-1; then game_sub_5815 X=$11 */
+void load_velocity_from_param_block(void) {
     /* 94bf */
     LDA(0x00);
     /* 94c1 */
@@ -16340,7 +16590,8 @@ L_9526:;
     game_sub_5815(); return;
 }
 
-void FUN_9552(void) {
+/* object_step_and_collide @ $9552: add vel $285C-$2863 to pos accum $2854-$285B (mirror $27FD-$2800); build cell idx $2864 into maps $0900/$0A00; altitude/bounds checks; on hit set $2843=$FC, call 96d9/7b80/7b3c, set $0044/$004D/$007E; tail reset_object_slot */
+void object_step_and_collide(void) {
     /* 9552 */
     CLC();
     /* 9553 */
@@ -16431,7 +16682,7 @@ L_95bd:;
     /* 95c2 */
     if (cpu.N) goto L_95c7;
     /* 95c4 */
-    FUN_9680();
+    check_player_proximity_hit();
 L_95c7:;
     /* 95c7 */
     LDA(mem[0x2858]);
@@ -16512,7 +16763,7 @@ L_9611:;
     goto L_9635;
 L_9614:;
     /* 9614 */
-    FUN_9a36();
+    sample_terrain_height_bilerp();
     /* 9617 */
     LDA(mem[0x0062]);
     /* 9619 */
@@ -16531,7 +16782,7 @@ L_961f:;
     /* 9626 */
     CMP(0xD0);
     /* 9628 */
-    if (!cpu.C) { FUN_9677(); return; }
+    if (!cpu.C) { reset_object_slot(); return; }
 L_962a:;
     /* 962a */
     LDA(mem[0x2858]);
@@ -16542,18 +16793,18 @@ L_962a:;
     /* 9631 */
     CMP(0xD0);
     /* 9633 */
-    if (!cpu.C) { FUN_9677(); return; }
+    if (!cpu.C) { reset_object_slot(); return; }
 L_9635:;
     /* 9635 */
     LDY(mem[0x2864]);
     /* 9638 */
     LDA(mem[(0x0A00)+cpu.Y]);
     /* 963b */
-    if (cpu.Z) { FUN_9677(); return; }
+    if (cpu.Z) { reset_object_slot(); return; }
     /* 963d */
     CMP(0xF8);
     /* 963f */
-    if (cpu.C) { FUN_9677(); return; }
+    if (cpu.C) { reset_object_slot(); return; }
     /* 9641 */
     PHA();
     /* 9642 */
@@ -16563,17 +16814,17 @@ L_9635:;
     /* 9647 */
     mem[0x2843] = cpu.A;
     /* 964a */
-    FUN_96d9();
+    trigger_object_explosion();
     /* 964d */
     PLA();
     /* 964e */
     CMP(0x64);
     /* 9650 */
-    if (!cpu.C) { FUN_9677(); return; }
+    if (!cpu.C) { reset_object_slot(); return; }
     /* 9652 */
     if (!cpu.Z) goto L_9664;
     /* 9654 */
-    FUN_7b80();
+    set_place_params_inc_count();
     /* 9657 */
     LDA(0x28);
     /* 9659 */
@@ -16585,30 +16836,31 @@ L_9635:;
     /* 965f */
     mem[0x007E] = cpu.A;
     /* 9661 */
-    FUN_9677(); return;
+    reset_object_slot(); return;
 L_9664:;
     /* 9664 */
     CMP(0x80);
     /* 9666 */
     if (!cpu.Z) goto L_9670;
     /* 9668 */
-    FUN_7b80();
+    set_place_params_inc_count();
     /* 966b */
     LDA(0x40);
     /* 966d */
     goto L_9675;
 L_9670:;
     /* 9670 */
-    FUN_7b3c();
+    countdown_show_char_0620();
     /* 9673 */
     LDA(0x49);
 L_9675:;
     /* 9675 */
     mem[0x0044] = cpu.A;
-    FUN_9677(); return;
+    reset_object_slot(); return;
 }
 
-void FUN_9677(void) {
+/* reset_object_slot @ $9677: set $0036=$80 then game_sub_5815 with X=$0E (object reset/dispatch helper) */
+void reset_object_slot(void) {
     /* 9677 */
     LDA(0x80);
     /* 9679 */
@@ -16619,7 +16871,8 @@ void FUN_9677(void) {
     game_sub_5815(); return;
 }
 
-void FUN_9680(void) {
+/* check_player_proximity_hit @ $9680: compute |$006A+4-$0036|; if <4 form dist from $0038/$0039 vs $2824/$2821, cmp tbl $96F5[$0036]; on hit clear $2826, call b786/9677/96d9, set $0045=$50 $0046=$02, 7b88 & terrain_gen */
+void check_player_proximity_hit(void) {
     /* 9680 */
     LDA(mem[0x006A]);
     /* 9682 */
@@ -16692,11 +16945,11 @@ L_96b0:;
     /* 96be */
     mem[0x2826] = cpu.A;
     /* 96c1 */
-    FUN_b786();
+    reset_indicator_event();
     /* 96c4 */
-    FUN_9677();
+    reset_object_slot();
     /* 96c7 */
-    FUN_96d9();
+    trigger_object_explosion();
     /* 96ca */
     LDA(0x50);
     /* 96cc */
@@ -16706,7 +16959,7 @@ L_96b0:;
     /* 96d0 */
     mem[0x0046] = cpu.A;
     /* 96d2 */
-    FUN_7b88();
+    bcd_inc_counter_0641();
     /* 96d5 */
     terrain_gen_A613(); return;
 L_96d8:;
@@ -16714,7 +16967,8 @@ L_96d8:;
     return;
 }
 
-void FUN_96d9(void) {
+/* trigger_object_explosion @ $96D9: inc $0041(game_state), set shape ptrs $00DA=$78 $00DB=$7E $00DC=$76 $00DD=$7C, $28EE=$02, then game_sub_5815 X=$0F (start explosion anim) */
+void trigger_object_explosion(void) {
     /* 96d9 */
     INC_M(0x0041);
     /* 96db */
@@ -16743,7 +16997,8 @@ void FUN_96d9(void) {
     game_sub_5815(); return;
 }
 
-void FUN_9713(void) {
+/* compute_target_blip_position @ $9713: From L/R range $27F7/$27F8 derives blip Y=$0021,X=$0027; tests $005D, alien masks $1027/$1057 AND $AA, $0070; adds parallax $2912/$2913 */
+void compute_target_blip_position(void) {
     /* 9713 */
     SEC();
     /* 9714 */
@@ -16900,7 +17155,8 @@ L_9797:;
     return;
 }
 
-void FUN_97a0(void) {
+/* compute_obj_rel_angle_scale @ $97A0: Builds 10-bit value from $2885/$2886, sign into $2882, indexes $4EB9 table, calls mul $9821; outputs $2881/$002B scaled coords */
+void compute_obj_rel_angle_scale(void) {
     /* 97a0 */
     LDA(mem[0x2886]);
     /* 97a3 */
@@ -16972,7 +17228,7 @@ L_97bd:;
     /* 97e3 */
     mem[0x28D6] = cpu.A;
     /* 97e6 */
-    FUN_9821();
+    mul_u8();
     /* 97e9 */
     mem[0x002B] = cpu.A;
     /* 97eb */
@@ -17004,7 +17260,7 @@ L_97fa:;
     /* 9804 */
     mem[0x28D6] = cpu.A;
     /* 9807 */
-    FUN_9821();
+    mul_u8();
     /* 980a */
     mem[0x2881] = cpu.A;
     /* 980d */
@@ -17029,7 +17285,8 @@ L_9820:;
     return;
 }
 
-void FUN_9821(void) {
+/* mul_u8 @ $9821: Unsigned shift-add multiply: multiplicand $006B, multiplier $28D6; returns product in A (used twice by $97a0) */
+void mul_u8(void) {
     /* 9821 */
     LDA(0x00);
     /* 9823 */
@@ -17052,7 +17309,8 @@ L_9829:;
     return;
 }
 
-void FUN_9833(void) {
+/* update_terrain_scanline_proj @ $9833: Builds 16-bit map coords $27FD-$2800 from $2887-$288A>>4 and depth $0034/$0033 into $2275/$2274; samples height via $9a36; advances depth, calls $992d */
+void update_terrain_scanline_proj(void) {
     /* 9833 */
     LDA(mem[0x2888]);
     /* 9836 */
@@ -17145,7 +17403,7 @@ L_9891:;
     /* 989e */
     mem[0x2274] = cpu.A;
     /* 98a1 */
-    FUN_9a36();
+    sample_terrain_height_bilerp();
     /* 98a4 */
     LDA(mem[0x0062]);
     /* 98a6 */
@@ -17186,7 +17444,7 @@ L_98b9:;
     /* 98c9 */
     if (!cpu.Z) goto L_98ce;
     /* 98cb */
-    FUN_9b4c();
+    exit_terrain_special_state();
 L_98ce:;
     /* 98ce */
     goto L_98ec;
@@ -17198,7 +17456,7 @@ L_98d1:;
     /* 98d5 */
     if (cpu.Z) goto L_98da;
     /* 98d7 */
-    FUN_9b0d();
+    enter_terrain_special_state();
 L_98da:;
     /* 98da */
     INC_M(0x0034);
@@ -17248,7 +17506,7 @@ L_9904:;
     /* 9904 */
     mem[0x281B] = cpu.A;
     /* 9907 */
-    FUN_992d();
+    update_terrain_horizon_lr();
     /* 990a */
     LDA(mem[0x066C]);
     /* 990d */
@@ -17260,7 +17518,7 @@ L_9904:;
     /* 9913 */
     mem[0x2879] = cpu.A;
     /* 9916 */
-    FUN_9b87();
+    init_proj_scratch_pointers();
     /* 9919 */
     goto L_992c;
 L_991c:;
@@ -17283,7 +17541,8 @@ L_992c:;
     return;
 }
 
-void FUN_992d(void) {
+/* update_terrain_horizon_lr @ $992D: Alternates odd/even ($2834); offsets map coords by $2805-$2808 deltas, samples $9a36, computes L/R horizon $282E/$282F vs cached $2841/$2842, calls game_sub_451d */
+void update_terrain_horizon_lr(void) {
     /* 992d */
     LSR_M(0x2834);
     /* 9930 */
@@ -17370,7 +17629,7 @@ L_9958:;
     /* 998f */
     mem[0x2800] = cpu.A;
     /* 9992 */
-    FUN_9a36();
+    sample_terrain_height_bilerp();
     /* 9995 */
     LSR_M(0x0062);
     /* 9997 */
@@ -17460,7 +17719,7 @@ L_99ce:;
     /* 99f1 */
     mem[0x2800] = cpu.A;
     /* 99f4 */
-    FUN_9a36();
+    sample_terrain_height_bilerp();
     /* 99f7 */
     LSR_M(0x0062);
     /* 99f9 */
@@ -17528,7 +17787,8 @@ L_9a35:;
     return;
 }
 
-void FUN_9a36(void) {
+/* sample_terrain_height_bilerp @ $9A36: Bilinear-samples height map at $0900 using hi-nibbles of $27FD-$2800 as 16x16 index; shift-add interpolates; height result in $0062 */
+void sample_terrain_height_bilerp(void) {
     /* 9a36 */
     LDA(mem[0x2800]);
     /* 9a39 */
@@ -17744,7 +18004,8 @@ L_9afa:;
     return;
 }
 
-void FUN_9b0d(void) {
+/* enter_terrain_special_state @ $9B0D: Sets bit6 of $002D into $2877, gated by $062F; writes flags $0688/$0689/$0696/$06A4 + $3355=$34, calls game_sub_55FC twice; decrements $002E */
+void enter_terrain_special_state(void) {
     /* 9b0d */
     LDA(mem[0x002D]);
     /* 9b0f */
@@ -17802,7 +18063,8 @@ L_9b47:;
     game_sub_5815(); return;
 }
 
-void FUN_9b4c(void) {
+/* exit_terrain_special_state @ $9B4C: Inverse of $9b0d gated by $066C/$06A4/$0696; clears $2877/$0696/$0697, $0688/$0689=$FF, $06A4/$06A5=1, $3355=$B4, calls game_sub_55FC */
+void exit_terrain_special_state(void) {
     /* 9b4c */
     LDA(mem[0x066C]);
     /* 9b4f */
@@ -17855,7 +18117,8 @@ L_9b86:;
     return;
 }
 
-void FUN_9b87(void) {
+/* init_proj_scratch_pointers @ $9B87: Sets game_state($0041)=1; writes $3C->$DD, $38->$DC, $34->$DA (init ZP scratch/ptr bytes) */
+void init_proj_scratch_pointers(void) {
     /* 9b87 */
     LDA(0x01);
     /* 9b89 */
@@ -17876,7 +18139,8 @@ void FUN_9b87(void) {
     return;
 }
 
-void FUN_9ba0(void) {
+/* compute_heading_sincos @ $9BA0: From 16-bit heading $2885/$2886 builds octant $280D; calls trig at angle and angle+$40(90deg); stores sin/cos pair to $2809-$280C */
+void compute_heading_sincos(void) {
     /* 9ba0 */
     LDA(mem[0x2886]);
     /* 9ba3 */
@@ -17904,7 +18168,7 @@ void FUN_9ba0(void) {
     /* 9bb6 */
     mem[0x280D] = cpu.A;
     /* 9bb9 */
-    FUN_9bdb();
+    trig_interp_lookup();
     /* 9bbc */
     LDA(mem[0x0077]);
     /* 9bbe */
@@ -17922,7 +18186,7 @@ void FUN_9ba0(void) {
     /* 9bcb */
     mem[0x0075] = cpu.A;
     /* 9bcd */
-    FUN_9bdb();
+    trig_interp_lookup();
     /* 9bd0 */
     LDA(mem[0x0077]);
     /* 9bd2 */
@@ -17935,11 +18199,12 @@ void FUN_9ba0(void) {
     return;
 }
 
-void FUN_9bdb(void) {
+/* trig_interp_lookup @ $9BDB: Interpolates sine table: sine_table_lookup at angle+1/-1 into $2816-$2818/$2813-$2815, blends per octant bits $280F over 3 steps */
+void trig_interp_lookup(void) {
     /* 9bdb */
     INC_M(0x0075);
     /* 9bdd */
-    FUN_9c55();
+    sine_table_lookup();
     /* 9be0 */
     LDA(mem[0x0076]);
     /* 9be2 */
@@ -17955,7 +18220,7 @@ void FUN_9bdb(void) {
     /* 9bef */
     DEC_M(0x0075);
     /* 9bf1 */
-    FUN_9c55();
+    sine_table_lookup();
     /* 9bf4 */
     LDA(mem[0x0076]);
     /* 9bf6 */
@@ -18043,7 +18308,8 @@ L_9c3f:;
     return;
 }
 
-void FUN_9c55(void) {
+/* sine_table_lookup @ $9C55: Angle $0075 *4 -> quadrant idx $280E; sign/quad tables $9B98/$9B9C, value tables $4EB9/$4EFA; signed 24-bit result $0076-$0078 */
+void sine_table_lookup(void) {
     /* 9c55 */
     LDA(0x00);
     /* 9c57 */
@@ -18110,7 +18376,8 @@ L_9c96:;
     return;
 }
 
-void FUN_9c97(void) {
+/* signed_mul_8x16 @ $9C97: Signed multiply: A * 16-bit $00AA/$00AB; abs via sign $00AD, 8-step shift-add, result $00A8/$00A9 ($00AC frac) */
+void signed_mul_8x16(void) {
     /* 9c97 */
     mem[0x00AC] = cpu.A;
     /* 9c99 */
@@ -18341,7 +18608,9 @@ L_9d66:;
     return;
 }
 
-void FUN_9d6f(void) {
+/* divide_16x16 @ $9D6F: Restoring 16-bit divide: dividend $00B0/$00B1, divisor $00AE/$00AF, quotient bits ROL into $00B2; orphan-prefix is shift loopback */
+/* faithful transliteration kept as the validation oracle; native divide_16x16() lives in rof_native.c (see VALIDATE_FUNCS) */
+void divide_16x16__t6502(void) {
     goto L_9d6f;  /* enter past orphan-prefix loop body */
 L_9d67:;
     /* 9d67 */
@@ -18617,11 +18886,12 @@ L_9e51:;
     return;
 }
 
+/* terrain_gen_1 @ $9E54: Terrain/level generation step 1 (called before terrain_gen_2) */
 void terrain_gen_1(void) {
     /* 9e54 */
-    FUN_ac93();
+    setup_projection_params();
     /* 9e57 */
-    FUN_a0a3();
+    build_view_transform_matrix();
     /* 9e5a */
     LDA(mem[0x0092]);
     /* 9e5c */
@@ -19184,7 +19454,8 @@ L_a0a2:;
     return;
 }
 
-void FUN_a0a3(void) {
+/* build_view_transform_matrix @ $A0A3: Builds rotation matrix from sin/cos $00A0-$00A3 scaled by $0089/vbi_phase$0087 via signed_mul; stores to $22A3/$22D1,$22FF/$232D; called by terrain_gen_1 */
+void build_view_transform_matrix(void) {
     /* a0a3 */
     LDA(mem[0x00A0]);
     /* a0a5 */
@@ -19196,7 +19467,7 @@ void FUN_a0a3(void) {
     /* a0ab */
     LDA(mem[0x0089]);
     /* a0ad */
-    FUN_9c97();
+    signed_mul_8x16();
     /* a0b0 */
     LDA(mem[0x00A8]);
     /* a0b2 */
@@ -19216,7 +19487,7 @@ void FUN_a0a3(void) {
     /* a0c2 */
     LDA(mem[0x0087]);
     /* a0c4 */
-    FUN_9c97();
+    signed_mul_8x16();
     /* a0c7 */
     SEC();
     /* a0c8 */
@@ -19242,7 +19513,7 @@ void FUN_a0a3(void) {
     /* a0e0 */
     LDA(mem[0x0089]);
     /* a0e2 */
-    FUN_9c97();
+    signed_mul_8x16();
     /* a0e5 */
     LDA(mem[0x00A8]);
     /* a0e7 */
@@ -19262,7 +19533,7 @@ void FUN_a0a3(void) {
     /* a0f7 */
     LDA(mem[0x0087]);
     /* a0f9 */
-    FUN_9c97();
+    signed_mul_8x16();
     /* a0fc */
     CLC();
     /* a0fd */
@@ -19295,7 +19566,8 @@ void FUN_a0a3(void) {
     return;
 }
 
-void FUN_a11f(void) {
+/* project_terrain_points @ $A11F: Per-object(X) world->screen projection: normalizes $2300/$232E,$22A4/$22D2,$235B/$2388, divides via divide_16x16, writes $2400/$242D,$245A/$2487; tail does terrain scroll w/ RANDOM $D20A + terrain_gen_A613 */
+void project_terrain_points(void) {
     /* a11f */
     LDA(mem[(0x24B4)+cpu.X]);
     /* a122 */
@@ -19394,7 +19666,7 @@ L_a187:;
     /* a187 */
     mem[0x009F] = cpu.Y;
     /* a189 */
-    FUN_9d6f();
+    divide_16x16();
     /* a18c */
     LDY(mem[0x009F]);
     /* a18e */
@@ -19620,7 +19892,7 @@ L_a262:;
     /* a262 */
     mem[0x009F] = cpu.Y;
     /* a264 */
-    FUN_9d6f();
+    divide_16x16();
     /* a267 */
     LDY(mem[0x009F]);
     /* a269 */
@@ -19821,6 +20093,7 @@ L_a317:;
     terrain_gen_2(); return;
 }
 
+/* terrain_gen_2 @ $A31E: Terrain/level generation step 2 (called with X=level*$30; 2 RANDOM reads) */
 void terrain_gen_2(void) {
     /* a31e */
     mem[0x00A7] = cpu.X;
@@ -19910,7 +20183,7 @@ L_a35e:;
     /* a374 */
     mem[0x2908] = cpu.A;
     /* a377 */
-    FUN_ad2b();
+    compute_row_xspans();
     /* a37a */
     LDA(0x80);
     /* a37c */
@@ -19991,9 +20264,9 @@ L_a3ab:;
     /* a3d2 */
     if (!cpu.Z) goto L_a3da;
     /* a3d4 */
-    FUN_a11f();
+    project_terrain_points();
     /* a3d7 */
-    FUN_a63b();
+    terrain_plot_object();
 L_a3da:;
     /* a3da */
     LDA(mem[(0x2400)+cpu.X]);
@@ -20024,9 +20297,9 @@ L_a3da:;
     /* a400 */
     if (!cpu.Z) goto L_a408;
     /* a402 */
-    FUN_a11f();
+    project_terrain_points();
     /* a405 */
-    FUN_a63b();
+    terrain_plot_object();
 L_a408:;
     /* a408 */
     LDA(mem[(0x2400)+cpu.X]);
@@ -20157,7 +20430,7 @@ L_a46c:;
     /* a495 */
     if (cpu.Z) goto L_a49a;
     /* a497 */
-    FUN_ac42();
+    check_target_in_window();
 L_a49a:;
     /* a49a */
     LDA(mem[0x28FC]);
@@ -20413,7 +20686,7 @@ L_a586:;
     /* a596 */
     if (!cpu.C) goto L_a59b;
     /* a598 */
-    FUN_4e58();
+    obj_table_set_active();
 L_a59b:;
     /* a59b */
     LDA(mem[0x2843]);
@@ -20535,6 +20808,7 @@ L_a612:;
     return;
 }
 
+/* terrain_gen_A613 @ $A613: Terrain sub (2 RANDOM reads) */
 void terrain_gen_A613(void) {
     /* a613 */
     CLC();
@@ -20576,16 +20850,17 @@ L_a635:;
     mem[0x0069] = cpu.Y;
     /* a637 */
     mem[0x282C] = cpu.A;
-    FUN_a63a(); return;
+    terrain_plot_return(); return;
 }
 
-void FUN_a63b(void) {
+/* terrain_plot_object @ $A63B: $A63B: per-object terrain raster; indexes $2276/$232E/$2300/$22D2 tables, sets $28E1..$28EA span/coords, $0059/$005A ROR width */
+void terrain_plot_object(void) {
     /* a63b */
     LDY(mem[(0x2276)+cpu.X]);
     /* a63e */
     LDA(mem[(0x0A00)+cpu.Y]);
     /* a641 */
-    if (cpu.Z) { FUN_a63a(); return; }
+    if (cpu.Z) { terrain_plot_return(); return; }
     /* a643 */
     LDA(mem[(0x232E)+cpu.X]);
     /* a646 */
@@ -20595,7 +20870,7 @@ void FUN_a63b(void) {
     /* a64b */
     CMP(0x22);
     /* a64d */
-    if (!cpu.C) { FUN_a63a(); return; }
+    if (!cpu.C) { terrain_plot_return(); return; }
 L_a64f:;
     /* a64f */
     mem[0x28E1] = cpu.X;
@@ -20711,18 +20986,19 @@ L_a683:;
 L_a6c8:;
     /* a6c8 */
     terrain_sub_A90A(); return;
-    FUN_a6cb(); return;
+    terrain_clip_row_top(); return;
 }
 
+/* terrain_sub_A822 @ $A822: Terrain/game sub (0 callers; 1 RANDOM read) */
 void terrain_sub_A822(void) {
     /* a822 */
     LDA(mem[(0x2487)+cpu.X]);
     /* a825 */
-    if (!cpu.Z) { FUN_a821(); return; }
+    if (!cpu.Z) { terrain_obj_skip_return(); return; }
     /* a827 */
     LDA(mem[(0x242D)+cpu.X]);
     /* a82a */
-    if (!cpu.Z) { FUN_a821(); return; }
+    if (!cpu.Z) { terrain_obj_skip_return(); return; }
     /* a82c */
     LDA(0xF9);
     /* a82e */
@@ -20764,7 +21040,7 @@ void terrain_sub_A822(void) {
     /* a858 */
     if (!cpu.C) goto L_a860;
     /* a85a */
-    FUN_ab7b();
+    set_plot_mask_and_halve_step();
     /* a85d */
     goto L_a8a1;
 L_a860:;
@@ -20785,11 +21061,11 @@ L_a86c:;
     /* a86c */
     LDA(0x80);
     /* a86e */
-    FUN_a8af();
+    terrain_point_distance();
     /* a871 */
     DEX();
     /* a872 */
-    FUN_a6cb();
+    terrain_clip_row_top();
     /* a875 */
     INX();
     /* a876 */
@@ -20840,10 +21116,11 @@ L_a8a1:;
     /* a8a9 */
     mem[0x28DF] = cpu.A;
     /* a8ac */
-    FUN_ab9a(); return;
+    raster_fill_region(); return;
 }
 
-void FUN_a8af(void) {
+/* terrain_point_distance @ $A8AF: $A8AF: computes |$004F-0x80|+|$004E-0x80| range into $290B-$290E (saves arg in $290E); overflow->a909 */
+void terrain_point_distance(void) {
     /* a8af */
     mem[0x290E] = cpu.A;
     /* a8b2 */
@@ -20887,7 +21164,7 @@ L_a8d5:;
     /* a8d6 */
     ADC(mem[0x290D]);
     /* a8d9 */
-    if (cpu.C) { FUN_a909(); return; }
+    if (cpu.C) { terrain_distance_clamp_return(); return; }
     /* a8db */
     mem[0x290D] = cpu.A;
     /* a8de */
@@ -20895,11 +21172,11 @@ L_a8d5:;
     /* a8df */
     ADC(mem[0x0051]);
     /* a8e1 */
-    if (cpu.C) { FUN_a909(); return; }
+    if (cpu.C) { terrain_distance_clamp_return(); return; }
     /* a8e3 */
     CMP(mem[0x2915]);
     /* a8e6 */
-    if (cpu.C) { FUN_a909(); return; }
+    if (cpu.C) { terrain_distance_clamp_return(); return; }
     /* a8e8 */
     mem[0x2915] = cpu.A;
     /* a8eb */
@@ -20922,18 +21199,19 @@ L_a8d5:;
     LDA(mem[0x290F]);
     /* a906 */
     mem[0x2911] = cpu.A;
-    FUN_a909(); return;
+    terrain_distance_clamp_return(); return;
 }
 
+/* terrain_sub_A90A @ $A90A: Terrain/game sub (0 callers; 4 callees) */
 void terrain_sub_A90A(void) {
     /* a90a */
     LDA(mem[(0x2487)+cpu.X]);
     /* a90d */
-    if (!cpu.Z) { FUN_a909(); return; }
+    if (!cpu.Z) { terrain_distance_clamp_return(); return; }
     /* a90f */
     LDA(mem[(0x242D)+cpu.X]);
     /* a912 */
-    if (!cpu.Z) { FUN_a909(); return; }
+    if (!cpu.Z) { terrain_distance_clamp_return(); return; }
     /* a914 */
     LDA(0xF1);
     /* a916 */
@@ -20975,7 +21253,7 @@ void terrain_sub_A90A(void) {
     /* a945 */
     if (!cpu.C) goto L_a94a;
     /* a947 */
-    FUN_ab7b();
+    set_plot_mask_and_halve_step();
 L_a94a:;
     /* a94a */
     LDY(mem[0x004F]);
@@ -20988,7 +21266,7 @@ L_a94a:;
     /* a953 */
     LDA(0x00);
     /* a955 */
-    FUN_a8af();
+    terrain_point_distance();
     /* a958 */
     LDA(0xAA);
     /* a95a */
@@ -21000,7 +21278,7 @@ L_a94a:;
     /* a960 */
     if (cpu.C) goto L_a965;
     /* a962 */
-    FUN_ab9a();
+    raster_fill_region();
 L_a965:;
     /* a965 */
     LDA(mem[0x00A7]);
@@ -21033,25 +21311,25 @@ L_a965:;
     /* a985 */
     TAX();
     /* a986 */
-    FUN_a6cb();
+    terrain_clip_row_top();
     /* a989 */
     DEX();
     /* a98a */
     DEY();
     /* a98b */
-    FUN_a6cb();
+    terrain_clip_row_top();
     /* a98e */
     DEX();
     /* a98f */
     INY();
     /* a990 */
-    FUN_a6cb();
+    terrain_clip_row_top();
     /* a993 */
     INX();
     /* a994 */
     INY();
     /* a995 */
-    FUN_a6cb();
+    terrain_clip_row_top();
 L_a998:;
     /* a998 */
     LDX(mem[0x28E1]);
@@ -21059,6 +21337,7 @@ L_a998:;
     return;
 }
 
+/* game_state_update @ $A99C: Game state update (2 RANDOM reads; called from main game loop) */
 void game_state_update(void) {
     /* a99c */
     DEC_M(0x28EE);
@@ -21075,7 +21354,7 @@ void game_state_update(void) {
     /* a9ad */
     if (!cpu.Z) goto L_a9b2;
     /* a9af */
-    FUN_4e98();
+    reset_flags_ff();
 L_a9b2:;
     /* a9b2 */
     LDA(mem[0x003D]);
@@ -21252,7 +21531,7 @@ L_aa5c:;
     /* aa62 */
     mem[0x28F9] = cpu.A;
     /* aa65 */
-    FUN_aad4();
+    plot_scanline_down();
     /* aa68 */
     LDA(0x10);
     /* aa6a */
@@ -21298,6 +21577,7 @@ L_aa5c:;
     game_sub_AA95(); return;
 }
 
+/* game_sub_AA95 @ $AA95: Game sub (1 RANDOM read) */
 void game_sub_AA95(void) {
     /* aa95 */
     LDY(mem[0x0029]);
@@ -21370,15 +21650,17 @@ L_aacc:;
     return;
 }
 
+/* game_sub_AACF @ $AACF: Game sub (1 RANDOM read) */
 void game_sub_AACF(void) {
     /* aacf */
     LDA(bus_read(0xD20A));
     /* aad2 */
-    if (cpu.N) { FUN_ab27(); return; }
-    FUN_aad4(); return;
+    if (cpu.N) { plot_scanline_up(); return; }
+    plot_scanline_down(); return;
 }
 
-void FUN_ab7b(void) {
+/* set_plot_mask_and_halve_step @ $AB7B: Index by A&3 into A7E9/A7ED tables -> 28DC/28DD base ptr; if idx0 set $58=$FF mask; shifts $50/$51 step right by 2 (divide by 4) */
+void set_plot_mask_and_halve_step(void) {
     /* ab7b */
     AND(0x03);
     /* ab7d */
@@ -21412,7 +21694,8 @@ L_ab91:;
     return;
 }
 
-void FUN_ab9a(void) {
+/* raster_fill_region @ $AB9A: Nested fill: computes start ptr 28DC/28DD + $55*4, walks 12x32 cells testing AC3A bitmask vs buffer at ($C3),Y; plots via a6cb when set; uses $50/$51 step, $52-$55 accumulators */
+void raster_fill_region(void) {
     /* ab9a */
     LDA(mem[0x0051]);
     /* ab9c */
@@ -21537,7 +21820,7 @@ L_abf6:;
     /* ac08 */
     LDY(mem[0x004E]);
     /* ac0a */
-    FUN_a6cb();
+    terrain_clip_row_top();
 L_ac0d:;
     /* ac0d */
     INC_M(0x004F);
@@ -21588,7 +21871,8 @@ L_ac36:;
     return;
 }
 
-void FUN_ac42(void) {
+/* check_target_in_window @ $AC42: If $36 set and $4A nonzero: tests 2912/2913 (or $64/$66 when $63 neg) against window bounds; counts 2 consecutive hits in 2837 then latches index to 2838 */
+void check_target_in_window(void) {
     /* ac42 */
     LDA(mem[0x0036]);
     /* ac44 */
@@ -21671,7 +21955,8 @@ L_ac92:;
     return;
 }
 
-void FUN_ac93(void) {
+/* setup_projection_params @ $AC93: Builds 16-bit fixed-pt scratch from 2887/2888 and 2889/288A (>>4), sign-extends $33/$34, sets $92 from 2886<<2, calls 9ba0; loads view vector 2809-280C, computes $A4/$A5/$A6 from heading $23/$24/$28/$29; clamps 2822 to 0..8 */
+void setup_projection_params(void) {
     /* ac93 */
     LDA(mem[0x2887]);
     /* ac96 */
@@ -21757,7 +22042,7 @@ L_acd8:;
     /* acdd */
     mem[0x0092] = cpu.A;
     /* acdf */
-    FUN_9ba0();
+    compute_heading_sincos();
     /* ace2 */
     LDA(mem[0x2809]);
     /* ace5 */
@@ -21838,7 +22123,8 @@ L_ad27:;
     return;
 }
 
-void FUN_ad2b(void) {
+/* compute_row_xspans @ $AD2B: Fills 271F.. (15 entries) by adding A4/A5 step to 271E seed, then fills 270E.. (downward) by subtracting A4/A5; builds per-row horizontal span endpoints */
+void compute_row_xspans(void) {
     /* ad2b */
     LDA(mem[0x00A6]);
     /* ad2d */
@@ -21895,6 +22181,7 @@ L_ad4c:;
     return;
 }
 
+/* terrain_gen_3 @ $AD5F: Terrain/level generation step 3 (called with X=level param; 244 bytes) */
 void terrain_gen_3(void) {
     /* ad5f */
     mem[0x0094] = cpu.X;
@@ -22070,6 +22357,7 @@ L_adf0:;
     return;
 }
 
+/* terrain_collision @ $AE53: Terrain collision/render: 799 bytes; compares ship position against 8 terrain rows at $1010,$1070,$10D0,$1130,$1190,$11F0,$1250,$12B0 (spaced $60 apart); finds topmost non-empty row; JMPs to landing/crash handler at $B12F */
 void terrain_collision(void) {
     /* ae53 */
     TXA();
@@ -22833,6 +23121,7 @@ L_b171:;
     return;
 }
 
+/* terrain_sub_B172 @ $B172: Terrain sub (calls $B33D and $B2CC) */
 void terrain_sub_B172(void) {
     /* b172 */
     LDA(mem[0x25D2]);
@@ -22869,7 +23158,7 @@ L_b18c:;
     /* b192 */
     if (cpu.N) goto L_b1c1;
     /* b194 */
-    FUN_b2cc();
+    terrain_midpoint_displace();
     /* b197 */
     LDA(mem[0x008E]);
     /* b199 */
@@ -22957,7 +23246,7 @@ L_b1e8:;
     /* b1ea */
     if (cpu.N) goto L_b210;
     /* b1ec */
-    FUN_b2cc();
+    terrain_midpoint_displace();
     /* b1ef */
     LDA(mem[0x008D]);
     /* b1f1 */
@@ -23145,7 +23434,7 @@ L_b29b:;
     /* b2a5 */
     mem[0x00F4] = cpu.A;
     /* b2a7 */
-    FUN_b33d();
+    terrain_column_rasterize();
 L_b2aa:;
     /* b2aa */
     CPX(0x00);
@@ -23180,7 +23469,8 @@ L_b2cb:;
     return;
 }
 
-void FUN_b2cc(void) {
+/* terrain_midpoint_displace @ $B2CC: 16-bit fixed-pt midpoint averaging of segment endpoints ($0082-86 + tables $25B4/$25D2/$25F0/$24E2/$23E2) via CMP #$80/ROR, then sign-aware SBC/ADC perturbation -> $008D-$0091; fractal midpoint step */
+void terrain_midpoint_displace(void) {
     /* b2cc */
     SEC();
     /* b2cd */
@@ -23307,7 +23597,8 @@ L_b31f:;
     return;
 }
 
-void FUN_b33d(void) {
+/* terrain_column_rasterize @ $B33D: Walks columns $0082..$D4 interpolating heights $00EA[]/$00F4[], clamps to $97, tracks max-height array $260E, OR-plots bitmap via ($80),Y using $BC00/$BD00 bit tables + $28CA/$28FA addr tables; fractal terrain fill */
+void terrain_column_rasterize(void) {
     /* b33d */
     mem[0x0060] = cpu.X;
     /* b33f */
@@ -23881,7 +24172,8 @@ L_b561:;
     goto L_b446;
 }
 
-void FUN_b70c(void) {
+/* compute_indicator_pos @ $B70C: Gated by player_lives($0072)!=2 & $0063>=0: builds gauge/indicator pos in $0035 from coords $0064/65,$0066/67 (via b76f) & $0063; jiffy-paced via $0014; tail-calls b756 */
+void compute_indicator_pos(void) {
     /* b70c */
     LDA(mem[0x0072]);
     /* b70e */
@@ -23911,7 +24203,7 @@ void FUN_b70c(void) {
     /* b723 */
     LDA(mem[0x0064]);
     /* b725 */
-    FUN_b76f();
+    abs_scaled_hi_nibble();
     /* b728 */
     mem[0x00BB] = cpu.A;
     /* b72a */
@@ -23921,7 +24213,7 @@ void FUN_b70c(void) {
     /* b72e */
     LDA(mem[0x0066]);
     /* b730 */
-    FUN_b76f();
+    abs_scaled_hi_nibble();
     /* b733 */
     CLC();
     /* b734 */
@@ -23954,20 +24246,21 @@ L_b744:;
     /* b749 */
     mem[0x0035] = cpu.A;
     /* b74b */
-    FUN_b756(); return;
+    enqueue_indicator_event(); return;
 L_b74e:;
     /* b74e */
     LDA(mem[0x0014]);
     /* b750 */
     AND(0x0F);
     /* b752 */
-    if (!cpu.Z) { FUN_b756(); return; }
+    if (!cpu.Z) { enqueue_indicator_event(); return; }
     /* b754 */
     DEC_M(0x0035);
-    FUN_b756(); return;
+    enqueue_indicator_event(); return;
 }
 
-void FUN_b76f(void) {
+/* abs_scaled_hi_nibble @ $B76F: Shifts 16-bit $00BD:A right 4 (>>4), SBC #$08, returns absolute value (EOR $FF/ADC #1 if negative); scaled-distance helper for b70c */
+void abs_scaled_hi_nibble(void) {
     /* b76f */
     LSR_M(0x00BD);
     /* b771 */
@@ -24001,15 +24294,17 @@ L_b785:;
     return;
 }
 
-void FUN_b786(void) {
+/* reset_indicator_event @ $B786: Sets $0035=0 then tail-calls b756 to enqueue indicator event 8 at position 0; called from gameplay pickup logic ($93dd) */
+void reset_indicator_event(void) {
     /* b786 */
     LDA(0x00);
     /* b788 */
     mem[0x0035] = cpu.A;
     /* b78a */
-    FUN_b756(); return;
+    enqueue_indicator_event(); return;
 }
 
+/* init_B800 @ $B800: INITAD stub (segment 13): sets CHBAS=$04 SDLSTL/H=$B832 COLOR0/1/2/4 SDMCTL=$22 then enables DMACTL; initial display list at $B832 (embedded in stub body) */
 void init_B800(void) {
     /* b800 */
     LDA(0x04);
@@ -24056,23 +24351,22 @@ L_b82a:;
     return;
 }
 
-void FUN_e45c(void) {
+/* os_setvbv @ $E45C: Atari OS ROM vector SETVBV (set VBLANK timer/handler vector). Disassembles as BRK because our flat image has no OS ROM at $E000+; in the C port VBI dispatch is handled by the platform layer so this is a no-op. Called from attract_exit ($1A2F) */
+void os_setvbv(void) {
     /* e45c */
     /* BRK: software interrupt — ignored in C translation */;
 }
 
-void FUN_e462(void) {
+/* os_xitvbv @ $E462: Atari OS ROM vector XITVBV (exit VBLANK / return from deferred VBI). Disassembles as BRK because our flat image has no OS ROM at $E000+; platform handles VBI dispatch so this is a no-op. Standard tail of a VBI handler (e.g. vbi_deferred_dispatch $534D) */
+void os_xitvbv(void) {
     /* e462 */
     /* BRK: software interrupt — ignored in C translation */;
 }
 
-/* === Stubs for JSR targets without a known function === */
-/* TODO: investigate each — may be data misidentified as code. */
-void FUN_00e0(void) { /* stub: no instructions found at $00E0 */ }
-
 /* === Split functions for cross-function entry points === */
 /* Each function starts at the labelled address inside its container. */
-void FUN_3cb2(void) {
+/* wait_frames_60 @ $3CB2: Sets RTCLOK_LOW=0, spins until RTCLOK_LOW($14)==timer_4C($4C); PLA+RTS. Entry sets $4C=$3C(60) */
+void wait_frames_60(void) {
     /* 3cb2 */
     LDA(0x00);
     /* 3cb4 */
@@ -24090,15 +24384,17 @@ L_3cb8:; platform_tick_vbi(); platform_render_frame();
     return;
 }
 
-void FUN_3cc6(void) {
+/* wait_setcount @ $3CC6: STA timer_4C($4C); BNE(always, count!=0) falls into wait_frames_60 spin loop */
+void wait_setcount(void) {
     /* 3cc6 */
     mem[0x004C] = cpu.A;
     /* 3cc8 */
-    if (!cpu.Z) { FUN_3cb2(); return; }
-    FUN_3cca(); return;
+    if (!cpu.Z) { wait_frames_60(); return; }
+    wait_frames_2(); return;
 }
 
-void FUN_3d38(void) {
+/* init_game_vars_attract_timer @ $3D38: Zeroes game_vars_626($0626-$062C) and $006C, sets attract_timer($E2)=$64(100); to game_main_loop */
+void init_game_vars_attract_timer(void) {
     /* 3d38 */
     LDA(0x00);
     /* 3d3a */
@@ -24116,10 +24412,11 @@ L_3d3c:;
     LDA(0x64);
     /* 3d46 */
     mem[0x00E2] = cpu.A;
-    FUN_3d48(); return;
+    game_main_loop(); return;
 }
 
-void FUN_3d48(void) {
+/* game_main_loop @ $3D48: Main gameplay loop: full init (DL/sound/PMG/player), flight loop terrain_gen/enemy_check, level-clear at $3F59, loops L_3e0f; $3CDE chains here */
+void game_main_loop(void) {
     /* 3d48 */
     LDA(0x00);
     /* 3d4a */
@@ -24140,7 +24437,7 @@ L_3d52:;
     /* 3d5b */
     bus_write(0x02C8, cpu.A);
     /* 3d5e */
-    FUN_3c73();
+    wait_vcount_30();
     /* 3d61 */
     LDA(0xCC);
     /* 3d63 */
@@ -24335,13 +24632,13 @@ L_3e34:;
     /* 3e40 */
     game_init_45A1();
     /* 3e43 */
-    FUN_6b63();
+    clear_terrain_lo_buffers();
     /* 3e46 */
     game_init_7558();
     /* 3e49 */
     LDA(0x45);
     /* 3e4b */
-    FUN_3c75();
+    wait_vcount_eq();
     /* 3e4e */
     LDA(0xF5);
     /* 3e50 */
@@ -24368,7 +24665,7 @@ L_3e5c:;
     /* 3e67 */
     game_init_45EE();
     /* 3e6a */
-    FUN_3c7b();
+    wait_vcount_ge_7a();
     /* 3e6d */
     LDA(0xEE);
     /* 3e6f */
@@ -24609,11 +24906,11 @@ L_3f6d:; platform_tick_vbi(); platform_render_frame();
     /* 3f79 */
     mem[0x0642] = cpu.A;
     /* 3f7c */
-    FUN_3cd4();
+    wait_frames_10();
     /* 3f7f */
     mem[0x004A] = cpu.A;
     /* 3f81 */
-    FUN_3cb1();
+    push_a_thunk_3cb2();
     /* 3f84 */
     LDY(0xA3);
 L_3f86:;
@@ -24674,12 +24971,14 @@ L_3fab:;
     goto L_3e0f;
 }
 
-void FUN_40af(void) {
+/* return_stub_40af @ $40AF: Empty RTS; tail-call target of draw_glyph_2rows and the score-update path at $406E */
+void return_stub_40af(void) {
     /* 40af */
     return;
 }
 
-void FUN_416b(void) {
+/* vobj_speed_accumulate @ $416B: Fractional speed accumulator: (8-$006F)>>1 + table($2877,$2848) into $2848; on carry calls vobj_advance */
+void vobj_speed_accumulate(void) {
     /* 416b */
     LDA(0x08);
     /* 416d */
@@ -24704,13 +25003,14 @@ L_4178:;
     /* 417e */
     mem[0x2848] = cpu.A;
     /* 4181 */
-    if (cpu.C) { FUN_4184(); return; }
+    if (cpu.C) { vobj_advance(); return; }
     /* 4183 */
     return;
-    FUN_4184(); return;
+    vobj_advance(); return;
 }
 
-void FUN_4184(void) {
+/* vobj_advance @ $4184: Decrement vert pos $062F; on reaching top resets/triggers sound ($b786); erase $0D98 row, load shape from $4DEA->$00DE */
+void vobj_advance(void) {
     /* 4184 */
     LDA(mem[0x062F]);
     /* 4187 */
@@ -24733,7 +25033,7 @@ L_418c:;
     /* 4198 */
     LDA(0x10);
     /* 419a */
-    FUN_444a();
+    setup_dial_bar_draw();
     /* 419d */
     LDA(0x1E);
     /* 419f */
@@ -24759,10 +25059,10 @@ L_41a7:;
     /* 41b5 */
     mem[0x062F] = cpu.A;
     /* 41b8 */
-    FUN_b786();
+    reset_indicator_event();
 L_41bb:;
     /* 41bb */
-    FUN_41da();
+    vobj_pos_to_pmstrip_index();
     /* 41be */
     LSR_A();
     /* 41bf */
@@ -24798,9 +25098,10 @@ L_41d9:;
     return;
 }
 
-void FUN_4207(void) {
+/* vobj_erase_row @ $4207: Erase P/M strip row: $0D99+Y=$F0; index Y>>3 into shape table $4DEA->$00DE; DEX loop back to vobj_step_down */
+void vobj_erase_row(void) {
     /* 4207 */
-    FUN_41da();
+    vobj_pos_to_pmstrip_index();
     /* 420a */
     LDA(0xF0);
     /* 420c */
@@ -24831,11 +25132,12 @@ L_421c:;
     /* 4221 */
     DEX();
     /* 4222 */
-    if (!cpu.Z) { FUN_41e8(); return; }
+    if (!cpu.Z) { vobj_step_down(); return; }
     /* 4224 */
     return;
 }
 
+/* game_sub_4258 @ $4258: Game subsystem (called in game_entry setup) */
 void game_sub_4258(void) {
     /* 4258 */
     LDA(0xA9);
@@ -24849,15 +25151,16 @@ L_425c:;
     /* 4260 */
     if (!cpu.N) goto L_425c;
     /* 4262 */
-    FUN_428d(); return;
-    FUN_4265(); return;
+    saucer_anim_return(); return;
+    saucer_anim_step(); return;
 }
 
-void FUN_4265(void) {
+/* saucer_anim_step @ $4265: Decrements $00E6, on underflow reloads from $0618; at count 7 sets $0048/$28EE=1; advances $007E and writes $29 into shape table $3491+Y via saucer_write_shape */
+void saucer_anim_step(void) {
     /* 4265 */
     DEC_M(0x00E6);
     /* 4267 */
-    if (!cpu.N) { FUN_428d(); return; }
+    if (!cpu.N) { saucer_anim_return(); return; }
     /* 4269 */
     LDY(mem[0x0618]);
     /* 426c */
@@ -24878,7 +25181,7 @@ void FUN_4265(void) {
     mem[0x28EE] = cpu.A;
 L_427d:;
     /* 427d */
-    FUN_428d(); return;
+    saucer_anim_return(); return;
 L_4280:;
     /* 4280 */
     INC_M(0x007E);
@@ -24886,10 +25189,11 @@ L_4280:;
     TAY();
     /* 4283 */
     LDA(0x29);
-    FUN_4285(); return;
+    saucer_write_shape(); return;
 }
 
-void FUN_4285(void) {
+/* saucer_write_shape @ $4285: Writes A into shape table $3491+Y, then LDX #$12 and tail-calls game_sub_5815 (sprite/object update with X=$12) */
+void saucer_write_shape(void) {
 L_4285:;
     /* 4285 */
     mem[(0x3491)+cpu.Y] = cpu.A;
@@ -24897,21 +25201,23 @@ L_4285:;
     LDX(0x12);
     /* 428a */
     game_sub_5815(); return;
-    FUN_428d(); return;
+    saucer_anim_return(); return;
 }
 
-void FUN_428d(void) {
+/* saucer_anim_return @ $428D: Empty RTS landing pad shared by saucer animation paths; falls through to saucer_phase_advance in ROM */
+void saucer_anim_return(void) {
 L_428d:;
     /* 428d */
     return;
-    FUN_428e(); return;
+    saucer_phase_advance(); return;
 }
 
-void FUN_428e(void) {
+/* saucer_phase_advance @ $428E: LSR $0631 phase flag, returns if carry; else INC $0631, masks low nibble; at phase 7 adjusts $007E and writes opcode-like $A9/$29 bytes via saucer_write_shape / draw_player3_object */
+void saucer_phase_advance(void) {
     /* 428e */
     LSR_M(0x0631);
     /* 4291 */
-    if (cpu.C) { FUN_428d(); return; }
+    if (cpu.C) { saucer_anim_return(); return; }
     /* 4293 */
     INC_M(0x0631);
     /* 4296 */
@@ -24932,11 +25238,12 @@ L_42a0:;
     /* 42a3 */
     LDA(0xA9);
     /* 42a5 */
-    if (!cpu.Z) { FUN_4285(); return; }
-    FUN_42a7(); return;
+    if (!cpu.Z) { saucer_write_shape(); return; }
+    draw_player3_object(); return;
 }
 
-void FUN_43e8(void) {
+/* draw_object_column @ $43E8: Loops X down to $00BE drawing a vertical PMG column via indirect ptr $BB/$BC from table $4581; sets bit7 ($80) on/off based on X vs threshold $00BF; uses $00C0 flag and bytes $B4/$B7/$B8/$38; tail-calls draw_bar_loop_end */
+void draw_object_column(void) {
 L_43e8:;
     /* 43e8 */
     TAX();
@@ -25015,15 +25322,17 @@ L_4425:;
     CMP(mem[0x00BE]);
     /* 442b */
     if (!cpu.Z) goto L_43e8;
-    FUN_442d(); return;
+    draw_bar_loop_end(); return;
 }
 
-void FUN_442d(void) {
+/* draw_bar_loop_end @ $442D: Bare RTS; tail/exit target of draw_dial_bar loop (draw_object_column at 442b); opaque stub */
+void draw_bar_loop_end(void) {
     /* 442d */
     return;
 }
 
-void FUN_47b8(void) {
+/* show_cockpit_message @ $47B8: Decodes msg ID (A/Y) via index tbl $4927 into 14-byte msg buffer $32B7 (+0x40 ATASCII, hi-bit term); sets flash timer $063E ($5A if ID>=$40), $00D8, $0044 */
+void show_cockpit_message(void) {
     /* 47b8 */
     TYA();
     /* 47b9 */
@@ -25036,7 +25345,7 @@ void FUN_47b8(void) {
     goto L_47c4;
 L_47c1:;
     /* 47c1 */
-    FUN_480b();
+    clear_message_buffer();
 L_47c4:;
     /* 47c4 */
     LDA(0x00);
@@ -25115,22 +25424,25 @@ L_480a:;
     return;
 }
 
-void FUN_4956(void) {
+/* show_message_id_a @ $4956: Saves message ID A->$0072 then falls into show_message_with_d8 (show_message_with_d8) */
+void show_message_id_a(void) {
     /* 4956 */
     mem[0x0072] = cpu.A;
-    FUN_4958(); return;
+    show_message_with_d8(); return;
 }
 
-void FUN_4958(void) {
+/* show_message_with_d8 @ $4958: Sets $00D8=$48 then tail-calls message decoder show_cockpit_message with current A/Y */
+void show_message_with_d8(void) {
     /* 4958 */
     LDA(0x48);
     /* 495a */
     mem[0x00D8] = cpu.A;
     /* 495c */
-    FUN_47b8(); return;
+    show_cockpit_message(); return;
 }
 
-void FUN_49c5(void) {
+/* set_zsupp_pos_clear_delta @ $49C5: Stores Y as leading-zero pos $0619, clears 16-bit delta $0045/$0046, falls into emit_bcd_byte_digits digit render */
+void set_zsupp_pos_clear_delta(void) {
     /* 49c5 */
     mem[0x0619] = cpu.Y;
     /* 49c8 */
@@ -25139,16 +25451,17 @@ void FUN_49c5(void) {
     mem[0x0045] = cpu.Y;
     /* 49cc */
     mem[0x0046] = cpu.Y;
-    FUN_49ce(); return;
+    emit_bcd_byte_digits(); return;
 }
 
-void FUN_4f76(void) {
+/* intro_teardown_fade_loop @ $4F76: DMACTL($D400)=0 to kill ANTIC DMA, wait_frames_save_a, loop dec $0678 & X from $00D4 down to $1F, wait_frames_2/init_game_vars_attract_timer */
+void intro_teardown_fade_loop(void) {
     /* 4f76 */
     LDY(0x00);
     /* 4f78 */
     bus_write(0xD400, cpu.Y);
     /* 4f7b */
-    FUN_3cbe();
+    wait_frames_save_a();
 L_4f7e:;
     /* 4f7e */
     DEC_M(0x0678);
@@ -25167,7 +25480,7 @@ L_4f7e:;
     /* 4f8a */
     mem[0x00D4] = cpu.X;
     /* 4f8c */
-    FUN_3cca();
+    wait_frames_2();
     /* 4f8f */
     DEX();
     /* 4f90 */
@@ -25183,10 +25496,11 @@ L_4f7e:;
     /* 4f9a */
     mem[0x00E5] = cpu.Y;
     /* 4f9c */
-    FUN_3d38(); return;
+    init_game_vars_attract_timer(); return;
 }
 
-void FUN_52be(void) {
+/* game_loop_reset_trampoline @ $52BE: Sets vec $0222/3=$52B4, pushes ret $3D1F+P, sets game_var_E4=$060B(cockpit_flag)=4, PLP; reentry from $5398 */
+void game_loop_reset_trampoline(void) {
     /* 52be */
     LDA(0xB4);
     /* 52c0 */
@@ -25215,7 +25529,8 @@ void FUN_52be(void) {
     PLP(); return;
 }
 
-void FUN_534d(void) {
+/* vbi_deferred_dispatch @ $534D: VBI tail: if $00E7 & BIT $062D z->sfx_voice_tick; if $0655->music_player_tick; then update_gauge_digits (gauges) + os_xitvbv */
+void vbi_deferred_dispatch(void) {
     /* 534d */
     LDA(mem[0x00E7]);
     /* 534f */
@@ -25225,22 +25540,23 @@ void FUN_534d(void) {
     /* 5354 */
     if (!cpu.Z) goto L_5359;
     /* 5356 */
-    FUN_70f9();
+    sfx_voice_tick();
 L_5359:;
     /* 5359 */
     LDA(mem[0x0655]);
     /* 535c */
     if (cpu.Z) goto L_5361;
     /* 535e */
-    FUN_7253();
+    music_player_tick();
 L_5361:;
     /* 5361 */
-    FUN_548d();
+    update_gauge_digits();
     /* 5364 */
-    FUN_e462(); return;
+    os_xitvbv(); return;
 }
 
-void FUN_55ff(void) {
+/* ring_push_0719 @ $55FF: Tail of game_sub_55FC: store A into ring buf $0719+X via head $0073, dec+wrap head mod $20, restore X */
+void ring_push_0719(void) {
     /* 55ff */
     LDX(mem[0x0073]);
     /* 5601 */
@@ -25269,7 +25585,8 @@ L_560f:;
     return;
 }
 
-void FUN_5978(void) {
+/* engine_sound_update @ $5978: Engine/SFX pitch update: ramps $006D toward target level_progress $37EE per PORTA $D300/SKCTL $D20F bits; reload $00C3=4; stop via $5a0e when $006C/console+trig */
+void engine_sound_update(void) {
 L_5978:;
     /* 5978 */
     LDA(mem[0x0003]);
@@ -25298,7 +25615,7 @@ L_5990:;
     mem[0x0644] = cpu.Y;
 L_5993:;
     /* 5993 */
-    FUN_5a0e(); return;
+    sound_stop(); return;
 L_5996:;
     /* 5996 */
     LDY(mem[0x006C]);
@@ -25312,7 +25629,7 @@ L_599d:;
     /* 599f */
     if (cpu.N) goto L_59a4;
     /* 59a1 */
-    FUN_5b45();
+    match_code_sequence();
 L_59a4:;
     /* 59a4 */
     DEC_M(0x00C3);
@@ -25383,10 +25700,10 @@ L_59e8:;
     /* 59e8 */
     mem[0x006D] = cpu.A;
     /* 59ea */
-    FUN_5a63();
+    setup_initials_ptr();
 L_59ed:;
     /* 59ed */
-    FUN_3cca();
+    wait_frames_2();
     /* 59f0 */
     LDA(mem[0x00E2]);
     /* 59f2 */
@@ -25402,7 +25719,7 @@ L_59ed:;
     /* 59fc */
     mem[0x0091] = cpu.A;
     /* 59fe */
-    FUN_5b6c();
+    name_entry_loop();
     /* 5a01 */
     LDA(mem[0x006C]);
     /* 5a03 */
@@ -25410,16 +25727,17 @@ L_59ed:;
     /* 5a05 */
     LDA(mem[0x0049]);
     /* 5a07 */
-    if (!cpu.N) { FUN_5a0e(); return; }
+    if (!cpu.N) { sound_stop(); return; }
 L_5a09:;
     /* 5a09 */
-    FUN_5a78();
+    read_console_trig_delta();
     /* 5a0c */
-    if (cpu.Z) { FUN_5a17(); return; }
-    FUN_5a0e(); return;
+    if (cpu.Z) { sound_check_trigger(); return; }
+    sound_stop(); return;
 }
 
-void FUN_5a0e(void) {
+/* sound_stop @ $5A0E: Stop sound: audio_timer_setup, write A to SDMCTL shadow $022F, clear sound-active flag $006C */
+void sound_stop(void) {
 L_5a0e:;
     /* 5a0e */
     audio_timer_setup();
@@ -25429,22 +25747,24 @@ L_5a0e:;
     mem[0x006C] = cpu.A;
     /* 5a16 */
     return;
-    FUN_5a17(); return;
+    sound_check_trigger(); return;
 }
 
-void FUN_5a17(void) {
+/* sound_check_trigger @ $5A17: Read CONSOL $D01F bit2; if set continue engine_sound_update ($5978), else fall to $5a21 retrigger */
+void sound_check_trigger(void) {
     /* 5a17 */
     LDA(bus_read(0xD01F));
     /* 5a1a */
     AND(0x04);
     /* 5a1c */
-    if (cpu.Z) { FUN_5a21(); return; }
+    if (cpu.Z) { sound_retrigger_random(); return; }
     /* 5a1e */
-    FUN_5978(); return;
-    FUN_5a21(); return;
+    engine_sound_update(); return;
+    sound_retrigger_random(); return;
 }
 
-void FUN_5a21(void) {
+/* sound_retrigger_random @ $5A21: Wait on $00E5; if $060C==0 seed random freqs $060F/$0610 (5a4d) and $060D/$060E (5a59); set $006D/$060C/$0004=$10 */
+void sound_retrigger_random(void) {
 L_5a21:;
     /* 5a21 */
     LDA(mem[0x00E5]);
@@ -25455,19 +25775,19 @@ L_5a21:;
     /* 5a28 */
     if (!cpu.Z) goto L_5a42;
     /* 5a2a */
-    FUN_5a4d();
+    random_alpha_index();
     /* 5a2d */
     mem[0x060F] = cpu.A;
     /* 5a30 */
-    FUN_5a4d();
+    random_alpha_index();
     /* 5a33 */
     mem[0x0610] = cpu.A;
     /* 5a36 */
-    FUN_5a59();
+    random_digit();
     /* 5a39 */
     mem[0x060D] = cpu.A;
     /* 5a3c */
-    FUN_5a59();
+    random_digit();
     /* 5a3f */
     mem[0x060E] = cpu.A;
 L_5a42:;
@@ -25480,17 +25800,18 @@ L_5a42:;
     /* 5a49 */
     mem[0x0004] = cpu.A;
     /* 5a4b */
-    if (!cpu.Z) { FUN_5a0e(); return; }
-    FUN_5a4d(); return;
+    if (!cpu.Z) { sound_stop(); return; }
+    random_alpha_index(); return;
 }
 
-void FUN_678b(void) {
+/* blit_glyph_8rows @ $678B: 8-row glyph blit from ($84) to screen ($80); shifts each row bit-by-bit, plot_pixel_col93 plots set bits; advances ptr -$2E */
+void blit_glyph_8rows(void) {
     /* 678b */
     LDA(mem[0x0095]);
     /* 678d */
     mem[0x0094] = cpu.A;
     /* 678f */
-    FUN_66c6();
+    set_row_ptr_from_count();
     /* 6792 */
     LDA(0x07);
     /* 6794 */
@@ -25512,7 +25833,7 @@ L_679e:;
     /* 67a0 */
     if (!cpu.C) goto L_67a5;
     /* 67a2 */
-    FUN_66d3();
+    plot_pixel_col93();
 L_67a5:;
     /* 67a5 */
     INC_M(0x0093);
@@ -25550,7 +25871,8 @@ L_67a5:;
     return;
 }
 
-void FUN_69e5(void) {
+/* dl_lms_build @ $69E5: Inits indirect ptr $C5/$C6=$300A and count row_count($86)=$56, then dl_lms_fill(69f1) */
+void dl_lms_build(void) {
     /* 69e5 */
     LDA(0x0A);
     /* 69e7 */
@@ -25563,15 +25885,17 @@ void FUN_69e5(void) {
     LDA(0x56);
     /* 69ef */
     mem[0x0086] = cpu.A;
-    FUN_69f1(); return;
+    dl_lms_fill(); return;
 }
 
-void FUN_6a26(void) {
+/* ret_stub_6a26 @ $6A26: Empty routine, immediate RTS; tail-call target/no-op stub */
+void ret_stub_6a26(void) {
     /* 6a26 */
     return;
 }
 
-void FUN_6a4d(void) {
+/* advance_history_6a4d @ $6A4D: Shifts 6-byte ring $08D4-$08D9 up one (insert old $08D9); if $008D<0 sets $0071=$08D8; bumps $0679[$0C] by $06CC; tail reorder_sprite_slot */
+void advance_history_6a4d(void) {
     /* 6a4d */
     LDA(mem[0x08D9]);
     /* 6a50 */
@@ -25625,10 +25949,11 @@ L_6a89:;
     /* 6a89 */
     mem[(0x0679)+cpu.Y] = cpu.A;
     /* 6a8c */
-    FUN_5614(); return;
+    reorder_sprite_slot(); return;
 }
 
-void FUN_7f74(void) {
+/* clear_var_0632 @ $7F74: $0632=0 */
+void clear_var_0632(void) {
     /* 7f74 */
     LDA(0x00);
     /* 7f76 */
@@ -25637,28 +25962,31 @@ void FUN_7f74(void) {
     return;
 }
 
-void FUN_a63a(void) {
+/* terrain_plot_return @ $A63A: $A63A: empty RTS; fall-through tail/return target of terrain_gen_A613 and terrain_plot_object pixel loop */
+void terrain_plot_return(void) {
     /* a63a */
     return;
 }
 
-void FUN_a6cb(void) {
+/* terrain_clip_row_top @ $A6CB: $A6CB: compares Y vs $260E[X] row limit; branches to a6f8(skip) if below/equal else falls to a6d3 plot */
+void terrain_clip_row_top(void) {
     /* a6cb */
     TYA();
     /* a6cc */
     CMP(mem[(0x260E)+cpu.X]);
     /* a6cf */
-    if (!cpu.C) { FUN_a6f8(); return; }
+    if (!cpu.C) { terrain_plot_skip_return(); return; }
     /* a6d1 */
-    if (cpu.Z) { FUN_a6f8(); return; }
-    FUN_a6d3(); return;
+    if (cpu.Z) { terrain_plot_skip_return(); return; }
+    terrain_plot_pixel(); return;
 }
 
-void FUN_a6d3(void) {
+/* terrain_plot_pixel @ $A6D3: $A6D3: clips Y<0x97, builds bitmap ptr from $28CA/$28FA tables at $80/$81, ORs $BC00/$BD00 mask into (ptr),Y */
+void terrain_plot_pixel(void) {
     /* a6d3 */
     CPY(0x97);
     /* a6d5 */
-    if (cpu.C) { FUN_a6f8(); return; }
+    if (cpu.C) { terrain_plot_skip_return(); return; }
     /* a6d7 */
     mem[0x28E2] = cpu.Y;
     /* a6da */
@@ -25687,26 +26015,30 @@ void FUN_a6d3(void) {
     bus_write(ZP_IND_Y(0x80), cpu.A);
     /* a6f5 */
     LDY(mem[0x28E2]);
-    FUN_a6f8(); return;
+    terrain_plot_skip_return(); return;
 }
 
-void FUN_a6f8(void) {
+/* terrain_plot_skip_return @ $A6F8: $A6F8: empty RTS; skip/return target after clip in terrain pixel-plot chain */
+void terrain_plot_skip_return(void) {
     /* a6f8 */
     return;
-    FUN_a821(); return;
+    terrain_obj_skip_return(); return;
 }
 
-void FUN_a821(void) {
+/* terrain_obj_skip_return @ $A821: $A821: empty RTS; early-out target from terrain_sub_A822 when $2487[X]/$242D[X] nonzero */
+void terrain_obj_skip_return(void) {
     /* a821 */
     return;
 }
 
-void FUN_a909(void) {
+/* terrain_distance_clamp_return @ $A909: $A909: empty RTS; carry-overflow exit of terrain_point_distance ($A8AF) */
+void terrain_distance_clamp_return(void) {
     /* a909 */
     return;
 }
 
-void FUN_aad4(void) {
+/* plot_scanline_down @ $AAD4: Line-plot loop: subtracts $40 from $5B/$5C step, walks X/Y via 28EF-28FA fixed-pt accumulators, calls a6d3 to plot each point; X-range gate $2C..$D4, Y>=$6C */
+void plot_scanline_down(void) {
     /* aad4 */
     SEC();
     /* aad5 */
@@ -25727,7 +26059,7 @@ L_aadf:;
     /* aae5 */
     CPY(0x6C);
     /* aae7 */
-    if (!cpu.C) { FUN_ab26(); return; }
+    if (!cpu.C) { plot_line_done(); return; }
 L_aae9:;
     /* aae9 */
     LDA(mem[0x28F4]);
@@ -25743,7 +26075,7 @@ L_aaef:;
     /* aaf5 */
     if (cpu.C) goto L_aafa;
     /* aaf7 */
-    FUN_a6d3();
+    terrain_plot_pixel();
 L_aafa:;
     /* aafa */
     INX();
@@ -25786,17 +26118,19 @@ L_ab10:;
     CPY(0x6C);
     /* ab24 */
     if (cpu.C) goto L_aae9;
-    FUN_ab26(); return;
+    plot_line_done(); return;
 }
 
-void FUN_ab26(void) {
+/* plot_line_done @ $AB26: Empty return / shared exit label for the line-plot routines (aad4/ab27); falls into ab27 only via dead tail call */
+void plot_line_done(void) {
 L_ab26:;
     /* ab26 */
     return;
-    FUN_ab27(); return;
+    plot_scanline_up(); return;
 }
 
-void FUN_ab27(void) {
+/* plot_scanline_up @ $AB27: Bresenham-style point plotter: from 28F0/28F2 walks via 28F1/28F3 + 28F7/28F9 steps, X drift by $5C sign, calls a6d3 per point; bounds X $2C..$D4, Y>=$6C */
+void plot_scanline_up(void) {
     /* ab27 */
     LDX(mem[0x28F0]);
     /* ab2a */
@@ -25805,22 +26139,22 @@ L_ab2d:;
     /* ab2d */
     CPX(0x2C);
     /* ab2f */
-    if (!cpu.C) { FUN_ab26(); return; }
+    if (!cpu.C) { plot_line_done(); return; }
     /* ab31 */
     CPX(0xD4);
     /* ab33 */
-    if (cpu.C) { FUN_ab26(); return; }
+    if (cpu.C) { plot_line_done(); return; }
     /* ab35 */
     CPY(0x6C);
     /* ab37 */
-    if (!cpu.C) { FUN_ab26(); return; }
+    if (!cpu.C) { plot_line_done(); return; }
     /* ab39 */
     LDA(mem[0x28F4]);
     /* ab3c */
     mem[0x28FA] = cpu.A;
 L_ab3f:;
     /* ab3f */
-    FUN_a6d3();
+    terrain_plot_pixel();
     /* ab42 */
     DEY();
     /* ab43 */
@@ -25876,7 +26210,8 @@ L_ab77:;
     goto L_ab2d;
 }
 
-void FUN_b756(void) {
+/* enqueue_indicator_event @ $B756: Writes indicator params $0673=$0035(pos), $0665=$A0(char), $0681=($0014&5)+2(jiffy), Y=8, then game_sub_55FC enqueues event id 8 */
+void enqueue_indicator_event(void) {
     /* b756 */
     LDA(mem[0x0035]);
     /* b758 */

@@ -31,7 +31,8 @@ C_SRCS := \
     src/cpu/cpu.c \
     src/gen/rof_gen.c \
     src/gen/rof_manual.c \
-    src/gen/rof_vbi.c
+    src/gen/rof_vbi.c \
+    src/gen/rof_native.c
 
 # C++ sources (platform layer + entry point)
 CXX_SRCS := \
@@ -45,12 +46,20 @@ CXX_OBJS := $(CXX_SRCS:.cpp=.o)
 OBJS     := $(C_OBJS) $(CXX_OBJS)
 TARGET   := build/rof
 
-.PHONY: all clean gen
+.PHONY: all clean gen validate
 
 all: $(TARGET)
 
 $(TARGET): $(OBJS) | build
 	$(CXX) $(CXXFLAGS) -o $@ $(OBJS) $(LDFLAGS)
+
+# Native-reimplementation validation harness.
+# Links the full app object graph minus main.o (for the symbol environment),
+# plus the harness, with its own main(). SDL is linked but never initialized.
+VALIDATE_OBJS := $(filter-out src/main.o,$(OBJS)) tools/validate_native.o
+validate: $(VALIDATE_OBJS) | build
+	$(CXX) $(CXXFLAGS) -o build/validate_native $(VALIDATE_OBJS) $(LDFLAGS)
+	./build/validate_native
 
 build:
 	mkdir -p build
@@ -67,4 +76,4 @@ gen:
 	python3 tools/transpile.py
 
 clean:
-	rm -f $(OBJS) $(TARGET)
+	rm -f $(OBJS) $(TARGET) tools/validate_native.o build/validate_native

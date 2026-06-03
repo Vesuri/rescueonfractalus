@@ -41,6 +41,20 @@ MANUAL_FUNCS = {
     0x6CC2,  # dli_handler_game2  — same
 }
 
+# Functions being reimplemented natively, validated against the transliteration.
+# For each address here the transpiler still emits the faithful transliterated
+# body, but DEFINES it under a `<name>__t6502` suffix instead of the plain name.
+# The plain `<name>()` — the one all call sites invoke — is provided by a
+# hand-written native version in src/gen/rof_native.c.  Both coexist so the
+# validation harness (tools/validate_native.c) can run them on the same input
+# state and diff the full machine state.  This is the regen-safe strangler-fig
+# seam: drop an address in, write the native twin, prove equivalence, ship it;
+# everything not listed here stays transliterated and fully regenerable.
+VALIDATE_FUNCS = {
+    0x9D6F,  # divide_16x16 — restoring 16-bit divide (prototype target)
+}
+VALIDATE_SUFFIX = '__t6502'
+
 HW_BASE, HW_END = 0xD000, 0xD800   # bus_read/bus_write range
 
 # Spin-wait hook injection.
@@ -632,7 +646,13 @@ def translate_func(func, all_funcs_by_start, symbols,
     note = SYMBOL_NOTES.get(start)
     if note:
         lines.append(f'/* {name} @ ${start:04X}: {note} */')
-    lines.append(f'void {name}(void) {{')
+    # When validating a native reimplementation, define the transliterated body
+    # under the `__t6502` reference name; the plain name is the native version.
+    def_name = name + VALIDATE_SUFFIX if start in VALIDATE_FUNCS else name
+    if start in VALIDATE_FUNCS:
+        lines.append(f'/* faithful transliteration kept as the validation oracle; '
+                     f'native {name}() lives in rof_native.c (see VALIDATE_FUNCS) */')
+    lines.append(f'void {def_name}(void) {{')
     # Orphan-prefix functions: the named entry is mid-body, so callers must
     # skip the prefix (which is reachable only via an internal backward branch).
     if skip_to is not None:
@@ -801,7 +821,10 @@ def main():
     for func in funcs:
         for insn in func['insns']:
             if insn['mnem'] not in all_call_mnems: continue
-            _, val, _ = parse_operand(insn['op'], len(insn['bytes']), symbols)
+            mode, val, _ = parse_operand(insn['op'], len(insn['bytes']), symbols)
+            # Indirect JMP (e.g. JMP ($E0)) is emitted as platform_indirect_jmp;
+            # the pointer address ($00E0) is data, not a call target — don't stub it.
+            if mode == 'jmpind': continue
             if val == 0: continue
             if val in funcs_by_start: continue
             if val in external_entries: continue
@@ -821,6 +844,10 @@ def main():
     ]
     for f in funcs:
         decl_lines.append(f'void {f["name"]}(void);')
+        # Validated funcs: the plain name (declared above) is the native version
+        # in rof_native.c; also declare the transliterated reference twin.
+        if f['start'] in VALIDATE_FUNCS:
+            decl_lines.append(f'void {f["name"]}{VALIDATE_SUFFIX}(void);')
     # Wrappers for mid-function entry points.
     decl_lines.append('')
     decl_lines.append('/* Wrappers for cross-function branch/JMP entry points */')
