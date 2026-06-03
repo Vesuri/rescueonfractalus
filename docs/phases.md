@@ -121,26 +121,105 @@ This is the second half of the "C-first" decision.
 
 **Tasks**
 - As routines are understood, add semantic names/types to `disasm/symbols.csv`
-  and regenerate (or refactor) so `mem[0x41]` becomes e.g. `game_state`.
-- Replace mechanical `goto`/register-shuffle patterns with idiomatic control
-  flow where it doesn't risk fidelity; add comments capturing intent.
+  and regenerate so `mem[0x41]` becomes e.g. `game_state`.
 - Keep the original-address provenance in comments for traceability.
+- ~~Replace mechanical `goto`/register-shuffle patterns with idiomatic control
+  flow.~~ **Reconsidered (2026-06-03) — see below.**
 
-**Exit** The C reads as a documented reimplementation, not a transliteration,
-while still matching the original's behavior.
+**Status (2026-06-03):** the *naming* half is effectively done. All 255 hot-path
+functions + 212 vars named; zero `FUN_xxxx` tokens remain in `symbols.csv` or
+`rof_gen.c`. The doc-comment notes carry intent + provenance. Renaming is
+regen-safe via `symbols.csv` (never hand-edit `rof_gen.c`). 35 low-confidence
+names (the speculative `saucer_*` cluster) are left as documented guesses —
+**not worth polishing in isolation**; their semantics are best resolved by a
+runtime trace, and confirmation falls out of Phase-6 work where relevant.
+
+**Idiomatic control-flow refactor — DROPPED as a standalone goal.** Analysis
+(2026-06-03): a blanket "make all the C idiomatic" pass is weeks of compiler-
+engineering (flag-liveness, goto-structuring, register→local) for a *faithful
+1:1 port* whose transliteration is valuable precisely because it's faithful-by-
+construction, and it fights the regen pipeline (`rof_gen.c` is regenerated).
+Crucially, the platform-abstraction design means the game *core* never needs to
+be human-readable to run elsewhere. What an effective Amiga port actually needs
+is **algorithmic understanding of the hardware-coupled subset**, which is Phase
+6 work — not prettified C. So readability cleanup is done per-island, on demand,
+only where you're about to reimplement.
+
+**Exit** The C is documented (names + intent notes + address provenance) and
+behaviourally faithful. Met.
 
 ---
 
 ## Phase 6 — Amiga backend
 
-**Tasks**
-- Implement `platform.h` for the Amiga:
-  - **Video**: bitplanes + Copper; Copper colour changes for the DLI splits.
-  - **Audio**: Paula 4 channels (a close match to POKEY's 4).
-  - **Sprites**: hardware sprites and/or blitter for PMG + collision.
-  - **Input**: joystick/keyboard; **Timing**: vertical-blank interrupt.
-- Set up a cross-compiler (vbcc or bebbo's m68k-amigaos-gcc) on macOS.
-- Test in WinUAE/FS-UAE, then on real hardware.
+The naive "implement `platform.h`, recompile the same generated C" model holds
+for **game logic** but breaks for code that must be *reimplemented* on alien
+hardware, not recompiled. The codebase is three tiers; only Tier 3 is hard.
+
+**Tier 1 — display rendering: already native.** The per-scanline ANTIC/GTIA/PMG
+renderer lives in `PlatformSDL.cpp` as native C++ — no 6502. The Amiga port
+*replaces this layer* (copper/blitter/bitplanes). This is the bulk of the
+rendering work and is the clean "swap the platform layer" case.
+
+**Tier 2 — DLI handlers: already a register-write schedule.** The DLIs in
+`rof_manual.c` are flat lists of annotated `bus_write(0xD01x, …)` — essentially
+"at scanline N set register R = V". Turning them into a copperlist is mostly
+transcription, the lightest hardware lift.
+
+**Tier 3 — the hardware-coupled hot path: the real work.** Terrain
+generation/projection/collision (`terrain_gen_1/2/3`, `project_terrain_points`
+`$A11F`, `terrain_collision` `$AE53`, `divide_16x16` `$9D6F`, the RANDOM/LFSR
+fractal) is transliterated 6502 that *cannot just recompile*: it fills an Atari
+GTIA-mode-10 nibble buffer (wrong shape for Amiga bitplanes) and is the per-frame
+hot path (per-instruction-macro overhead would miss frame rate on a 7 MHz 68000).
+It needs a **native rewrite driven by algorithmic understanding**, not a port of
+the transliteration.
+
+### Strategy: dual implementation, transliteration as oracle
+
+The current direct 6502→C build is kept as the **regenerable ground-truth
+oracle**; native versions replace it **piece by piece**, each proven equivalent
+before it ships. The shared `mem[]` + `cpu` state is the stable ABI seam, so any
+function can be swapped for a native one that honours the same observable
+contract — callers/callees don't notice.
+
+Mechanism (built + proven 2026-06-03, see [[native-reimpl-seam]]):
+- `transpile.py` `VALIDATE_FUNCS` emits the faithful transliteration under a
+  `<name>__t6502` twin; the plain `<name>()` is hand-written native C in
+  `src/gen/rof_native.c`. Both coexist (one shipped, one as oracle). Regen-safe;
+  everything unlisted stays transliterated.
+- `tools/validate_native.c` (`make validate`) runs both on identical randomized
+  pre-states and diffs full `mem[]` (the contract) + cpu (incidental). The
+  **contract is observable memory, not 6502 flags** — read the call sites to
+  decide what actually matters (proven on `divide_16x16`: 0 memory diffs,
+  ~200k cpu diffs that are dead because callers save/restore Y via `$009F`).
+- Climb leaf→cluster. For the terrain hot path prefer a **coarse cluster seam**:
+  validate the outer heightfield output, not each sub's exact mem effects, so the
+  native renderer is free to use an Amiga-appropriate structure.
+
+The host harness covers *logic* equivalence entirely on macOS — but *rendering*
+(copper/blitter/sprites) can only be validated on Amiga.
+
+### Tasks (rough dependency order)
+
+0. **Toolchain + minimal display first.** Cross-compiler (vbcc or bebbo's
+   m68k-amigaos-gcc) on macOS; FS-UAE/WinUAE; get a trivial bitplane fill +
+   copper colour-split running. This is the highest-unknown, critical-path
+   item — do it before writing native rendering code so toolchain bugs don't
+   masquerade as algorithm bugs. **Recommended starting point for the next
+   session.**
+1. Implement `platform.h` for Amiga: **Video** (bitplanes + Copper), **Audio**
+   (Paula 4ch ≈ POKEY 4ch), **Sprites** (hardware sprites/blitter for PMG +
+   collision), **Input** (joystick/keyboard), **Timing** (VBL).
+2. **DLI → copperlist** (Tier 2): extract the scanline/register schedule from
+   `rof_manual.c`.
+3. **Terrain renderer** (Tier 3): reverse the algorithm, write native, validate
+   the heightfield against the `__t6502` oracle, draw via blitter/bitplanes.
+4. **Sprite rework**: map Atari PMG (4 players + 4 missiles + 5th-player trick,
+   HPOS-by-DLI, scalable widths) onto Amiga's 8 hardware sprites + bobs. The
+   Phase-5 notes already record what each PM object *is* (cockpit pillars =
+   missiles, AH gauge = P2, throttle = P1 repositioned by `$6da1`, etc.).
+5. Test in emulator, then real hardware.
 
 **Deliverable** An Amiga executable.
 
