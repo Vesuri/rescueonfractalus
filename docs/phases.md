@@ -202,12 +202,15 @@ The host harness covers *logic* equivalence entirely on macOS — but *rendering
 
 ### Tasks (rough dependency order)
 
-0. **Toolchain + minimal display first.** Cross-compiler (vbcc or bebbo's
-   m68k-amigaos-gcc) on macOS; FS-UAE/WinUAE; get a trivial bitplane fill +
-   copper colour-split running. This is the highest-unknown, critical-path
-   item — do it before writing native rendering code so toolchain bugs don't
-   masquerade as algorithm bugs. **Recommended starting point for the next
-   session.**
+0. **Toolchain + minimal display first.** Cross-compiler on macOS; FS-UAE/WinUAE;
+   get a trivial bitplane fill + copper colour-split running. This is the
+   highest-unknown, critical-path item — do it before writing native rendering
+   code so toolchain bugs don't masquerade as algorithm bugs.
+   **DE-RISKED (2026-06-04): see [amiga-spike.md](amiga-spike.md).** The full
+   build→run→debug loop is proven by cross-compiling a complete dA JoRMaS
+   production (C++ engine + 68k asm + embedded assets + copper/blitter/Paula) and
+   running it in FS-UAE. Toolchain chosen: **BartmanAbyss `m68k-amiga-elf-gcc`**
+   (not bebbo — matched gcc/gdb/elf2hunk/fs-uae for debugging). Target **68000**.
 1. Implement `platform.h` for Amiga: **Video** (bitplanes + Copper), **Audio**
    (Paula 4ch ≈ POKEY 4ch), **Sprites** (hardware sprites/blitter for PMG +
    collision), **Input** (joystick/keyboard), **Timing** (VBL).
