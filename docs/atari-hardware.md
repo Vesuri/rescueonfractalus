@@ -5,6 +5,10 @@ the Atari 400/800/XL/XE architecture to recognize what the game's code is doing
 when it touches hardware, and maps each feature to its SDL and Amiga equivalent.
 These are the things `platform.h` must abstract.
 
+> For what the game *actually does* with these chips (the display-list ring, the
+> sequenced DLI, software collision, RANDOM as the fractal seed, …) see
+> `hw-techniques.md`.
+
 ## The chips
 
 The Atari 8-bit splits work across four custom chips plus the 6502 (here a

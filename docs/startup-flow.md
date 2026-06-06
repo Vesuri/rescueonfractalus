@@ -77,8 +77,10 @@ The four `INITAD` stages:
    **not return until the player dismisses the attract screen.**
 3. **`init_B800` (`$B800`)** — sets `CHBAS=$04`, points `SDLSTL/H` at the
    display list embedded in the stub (`$B832`), loads the playfield colours and
-   `SDMCTL=$22`, and enables ANTIC DMA (`DMACTL`). Prepares the screen for the
-   main code that is about to load.
+   `SDMCTL=$22`, and enables ANTIC DMA (`DMACTL`). That embedded screen is the
+   **Homesoft "LOADING 'RESCUE ON FRACTALUS!'" cracktro** — `rof.xex` is a
+   Homesoft repack, so this stage is loader chrome, not Lucasfilm code (decoded
+   in `hw-techniques.md` §1.2). It shows while the 31.5 KB main block loads.
 4. **`game_entry` (`$3CDE`)** — the final entry point; never returns (§4–§5).
 
 ---
@@ -167,7 +169,8 @@ The re-entry point after every death / level transition (the tail at `$3FBC`
 does `goto L_3e0f`). Each pass:
 - `display_setup ($5F1D)` — the **main game display**: installs the gameplay VBI
   `VVBLKI = $52D7` (`vbi_handler_game`), the DLI `VDSLST = $6CC2`, the
-  `$3120/$316B` display list, PMG bases and colours.
+  `$3120`→`$3000` display list, PMG bases and colours. The flight DL is a
+  dynamic LMS ring scrolled every frame — see `hw-techniques.md` §1.3.
 - `clear_pm_state`, `clear_colors`; zero ZP scratch (`$0020+`), zero `$2830+`.
 - `game_init_753B`, `game_init_45A1`, `clear_terrain_lo_buffers`,
   `game_init_7558`.

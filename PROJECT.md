@@ -19,6 +19,12 @@ the final entry point is **`$3CDE`**. The bulk of the game is one ~31.5 KB
 code+data block at `$3CDE–$B7FF`. See `tools/xex_map.py` output for the full
 segment table.
 
+> **Note:** this is a **Homesoft repack**, not a pristine original dump. One
+> INITAD stage (`init_B800`, display list `$B832`) is a Homesoft "LOADING" cracktro
+> shown while the main block loads — loader chrome, not Lucasfilm code, and outside
+> the "faithful 1:1" scope (the SDL port skips it). See `docs/hw-techniques.md` §1.2
+> and `docs/startup-flow.md` §2.
+
 ## Decisions (locked 2026-05-29)
 
 | Question | Decision |
