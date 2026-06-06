@@ -33,14 +33,23 @@ flowchart TD
     I --> J["INITAD $3CDE<br/>game_entry — final entry"]
     J --> K["game_entry mega-init<br/>($3CDE, 737 bytes)"]
     K --> L["game_main_loop $3D48<br/>per-life full init"]
-    L --> T["title / start screen<br/>1985 LUCASFILM LTD<br/>wait for START @ $5A78"]
-    T --> LS["launch cinematic §6<br/>STAND BY, doors, tunnel,<br/>stars, planet<br/>(mode-F viewport)"]
-    LS --> M["outer reset loop<br/>L_3e0f → display_setup"]
-    M --> N["inner flight loop<br/>L_3eba<br/>(mode-D terrain, MANUAL)"]
+    L --> M["outer reset L_3e0f<br/>calls display_setup $5F1D"]
+    M --> T["title screen @ $5A78<br/>1985 LUCASFILM LTD<br/>wait for START"]
+    T -->|START| D1["STAND BY + doors<br/>unpack_bitmap_4d3e<br/>+ scroll_terrain_dl"]
+    D1 --> D2["tunnel<br/>unpack_bitmap_4d3e<br/>+ step_accum_add_75"]
+    D2 --> D3["stars / space<br/>draw_symmetric_span_loop<br/>+ scroll_terrain_columns"]
+    D3 --> D4["planet<br/>gen_terrain_column +<br/>draw_vline_pair + P3 obj"]
+    D4 --> N["inner flight loop L_3eba<br/>mode-D terrain (MANUAL)<br/>terrain_gen_1"]
     N -->|"player_lives ($0072) == 2<br/>→ segment clear"| O["level-clear $3F59"]
     O --> M
     N -->|else| N
 ```
+
+> The launch cinematic — title → STAND BY → doors → tunnel → stars → planet
+> (the `T … D4` nodes) — all runs **inside `display_setup` ($5F1D)**, only on a
+> fresh start; on later resets `display_setup` just rebuilds the gameplay screen.
+> Each cinematic phase's viewport is **mode F** (hi-res); gameplay switches to
+> **mode D**. Per-phase render routines and how this was recovered are in §6.
 
 ---
 
@@ -257,33 +266,56 @@ which is why the table below shows it blank.
 > register) identifies the active one — a static memory image can show inactive
 > copies. See `hw-techniques.md` §1.
 
-### 6.2 Phase-by-phase (captured)
+### 6.2 The cinematic is driven by `display_setup` ($5F1D)
 
-| Phase | On screen | Active DL / viewport | mode-6 line | CPU PC |
-|---|---|---|---|---|
-| **Title** | "RESCUE ON FRACTALUS!" / "1985 LUCASFILM LTD" | `$3000` mode-F, LMS `$2000` | `1985 LUCASFILM LTD` | `$5A78` — `LDA $D01F` (poll CONSOL for START) |
-| **STAND BY / doors** | doors opening, throttle gauge max | `$3000` mode-F, LMS `$2228` | `STAND BY...` | `$3CB8` — frame-wait spin |
-| **Tunnel** | flying through the tunnel | `$3000` mode-F, LMS `$1000` | `STAND BY...` | `$3CB8` — frame-wait spin |
-| **Stars / space** | star field | `$3000` mode-F | `STAND BY...` | `$6570` — `display_setup` build loop |
-| **Planet** | planet filling the view | `$3000` mode-F | `STAND BY...` | `$6C5B` — build/DLI region |
-| **Gameplay** | terrain flight | **`$3210` mode-D** (4-colour) | "MANUAL" initially (transient), then blank — our late capture caught it blank | `$9C0E` — flight engine |
+The launch cinematic is **not** a separate routine — it runs *inside*
+`display_setup`, which `game_main_loop` calls at `$3E0F` (top of the outer reset
+loop). Every cinematic-phase call stack ends in `… → game_main_loop+$CA`
+(`$3E12`, the return from that call) **→ a `display_setup+<offset>` frame whose
+offset increases monotonically as the cinematic advances**. So `display_setup`
+walks linearly through its body (`≈$634D → $6585`), drawing one phase, waiting a
+few frames (`wait_frames_60 $3CB2`), then the next — a scripted sequence. When it
+returns, `game_main_loop` drops into the flight loop (`L_3eba`) and gameplay
+begins.
 
-The mode-F viewport's per-row LMS base cycles (`$2000` → `$2228` → `$1000` …) as
-the cinematic animates — the launch frames are rendered into the mode-F bitmap
-and the LMS operands page/scroll through it.
+Recovered by reconstructing the **6502 call stack** from each phase savestate
+(`a800dumps/launch_*.a8s`) and resolving return addresses to named functions:
 
-### 6.3 What is and isn't pinned down
+| Phase | `display_setup` position | Render routines on the stack (innermost → out) | DLI (`VDSLST`) |
+|---|---|---|---|
+| **Title** | waits for START at `$5A78` (`LDA $D01F` CONSOL poll) | static title; `dli_handler_game`/`vbi_deferred_dispatch` hold the image | `$6CAD` |
+| **STAND BY / doors** | `+$501` (`$641E`) | **`unpack_bitmap_4d3e $74D7`** (RLE-expand the door bitmap) → **`scroll_terrain_dl $6953`** (animate the LMS ring) → `audf2_sweep_clear_colors`; `wait_frames_60` | `$6CAD` |
+| **Tunnel** | `+$596` (`$64B3`) | **`unpack_bitmap_4d3e`** → `step_accum_add_75` → `copy_bytes_to_dst` → `terrain_sub_B172`; `wait_frames_60` | `$6CAD` |
+| **Stars / space** | `+$652` (`$656F`) | **`draw_symmetric_span_loop $6642`** → **`fill_vertical_span`** → **`scroll_terrain_columns`** → `game_sub_4f3f` | `$6CC2` |
+| **Planet** | `+$668` (`$6585`) | **`gen_terrain_column`** + **`draw_vline_pair $6C4D`** + **`draw_player3_object $42A7`** + `advance_object_positions`/`update_object_distance` (planet as a scaled object) | `$6CC2` |
+| **Gameplay** | — (returned; now in `L_3eba`) | **`terrain_gen_1`** → `setup_projection_params` → `compute_heading_sincos`; `update_gauge_digits`, `game_sub_4606` | `$49EE` |
 
-- **[C]** Each phase's active display list, viewport ANTIC mode, on-screen text,
-  and CPU PC (above) are from live captures.
-- **[C]** The title screen waits for START in a `CONSOL` poll at `$5A78`; the
-  fresh-start path is gated by `fresh_start_flag $0627` (§5b).
-- **[~]** The exact routine that *draws* each individual cinematic frame (doors
-  vs tunnel vs planet) is not separately isolated — during several phases the
-  main thread is parked in a frame-wait/build loop (`$3CB8`, `$6570`) while the
-  imagery is produced elsewhere (interrupt-driven and/or pre-rendered into the
-  mode-F bitmap). The savestates in `a800dumps/launch_*.a8s` are kept so this can
-  be traced later without re-capturing.
+Notes:
+- Throughout the cinematic **`VVBLKI = $52D7`** (the gameplay VBI,
+  `vbi_handler_game`) is already installed; the **DLI vector steps**
+  `$6CAD → $6CC2 → $49EE` as the sequence progresses, recolouring the cockpit/sky
+  per phase.
+- The mode-F viewport's per-row LMS base cycles (`$2000 → $2228 → $1000 …`) as
+  each phase's bitmap is unpacked/scrolled through the ring.
+- The doors and tunnel are **RLE-unpacked bitmaps** (`unpack_bitmap_4d3e`, source
+  table `$4D3E`); the stars use the **span-fill drawing primitives**
+  (`draw_symmetric_span_loop`/`fill_vertical_span`); the planet reuses the
+  **terrain-column generator + a scaled Player-3 object**.
+
+### 6.3 Confidence
+
+- **[C]** Active display list, viewport mode, on-screen text, CPU PC, and the
+  DLI/VBI vectors per phase — from live captures.
+- **[C]** The cinematic runs inside `display_setup` (the `$3E12`/`game_main_loop`
+  return frame is on every cinematic stack); the title waits for START via a
+  `CONSOL` poll at `$5A78`.
+- **[~]** The render-routine lists are reconstructed from the live call stacks,
+  so they reflect the call chain *at the captured instant*; a routine that had
+  already returned for that frame won't appear, and stale stack bytes are
+  possible. They line up with each phase's visuals and with the monotonic
+  `display_setup` progression, but treat the exact per-phase routine set as
+  strong evidence rather than a complete disassembly trace. The savestates are
+  kept in `a800dumps/launch_*.a8s` for a full static trace later.
 
 ---
 
