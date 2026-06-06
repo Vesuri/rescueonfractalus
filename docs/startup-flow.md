@@ -245,8 +245,12 @@ So the launch *is the cockpit view* — same dashboard and message line — with
 **hi-res mode-F viewport** showing the doors/tunnel/stars/planet (crisp graphics,
 which is why mode F not mode D). Reaching gameplay simply swaps the viewport to
 the **4-colour mode-D terrain** (and the active DL to `$3210`). The "STAND BY…"
-message sits in the mode-6 line for the whole cinematic; gameplay replaces it
-with "MANUAL".
+message sits in the mode-6 line for the whole cinematic; at the start of
+gameplay it becomes **"MANUAL"** (the flight-mode indicator), which is a
+**transient** cockpit message — it shows for a few seconds then clears, like the
+other timed messages (`show_cockpit_message $47B8` sets a flash timer). Our
+gameplay capture was taken late enough that it had already cleared (blank line),
+which is why the table below shows it blank.
 
 > The game keeps **several display-list copies** in the `$3000`/`$3120`/`$3210`
 > region (built/relocated as it runs), so only the *live* `DLIST` (or the ANTIC
@@ -262,7 +266,7 @@ with "MANUAL".
 | **Tunnel** | flying through the tunnel | `$3000` mode-F, LMS `$1000` | `STAND BY...` | `$3CB8` — frame-wait spin |
 | **Stars / space** | star field | `$3000` mode-F | `STAND BY...` | `$6570` — `display_setup` build loop |
 | **Planet** | planet filling the view | `$3000` mode-F | `STAND BY...` | `$6C5B` — build/DLI region |
-| **Gameplay** | terrain flight | **`$3210` mode-D** (4-colour) | (cleared → MANUAL) | `$9C0E` — flight engine |
+| **Gameplay** | terrain flight | **`$3210` mode-D** (4-colour) | "MANUAL" initially (transient), then blank — our late capture caught it blank | `$9C0E` — flight engine |
 
 The mode-F viewport's per-row LMS base cycles (`$2000` → `$2228` → `$1000` …) as
 the cinematic animates — the launch frames are rendered into the mode-F bitmap
