@@ -168,9 +168,10 @@ Runs once before each life. Highlights:
 The re-entry point after every death / level transition (the tail at `$3FBC`
 does `goto L_3e0f`). Each pass:
 - `display_setup ($5F1D)` — the **main game display**: installs the gameplay VBI
-  `VVBLKI = $52D7` (`vbi_handler_game`), the DLI `VDSLST = $6CC2`, the
-  `$3120`→`$3000` display list, PMG bases and colours. The flight DL is a
-  dynamic LMS ring scrolled every frame — see `hw-techniques.md` §1.3.
+  `VVBLKI = $52D7` (`vbi_handler_game`), the DLI `VDSLST = $6CC2`, the **`$3120`**
+  display list (final `DLISTL` write at `$6543`), PMG bases and colours. The
+  flight terrain is ANTIC mode D (GR.7) 4-colour, re-projected each frame — see
+  `hw-techniques.md` §1.3.
 - `clear_pm_state`, `clear_colors`; zero ZP scratch (`$0020+`), zero `$2830+`.
 - `game_init_753B`, `game_init_45A1`, `clear_terrain_lo_buffers`,
   `game_init_7558`.
