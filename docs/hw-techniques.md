@@ -72,9 +72,14 @@ the rendered frame (`atari002.png`):
 - Wide playfield (`SDMCTL=$3F`) → **48 bytes per row**; the terrain bitmap lives
   at **`$1000`** and the dump's row data is laid out at exactly 48-byte stride,
   matching mode-D-wide (not the mode-F ring's 46-byte stride).
-- The four colours (salmon sky, brown terrain, dark-brown shape, + the gray
-  cockpit frame) are mode D's native palette (`COLBK`+`COLPF0/1/2`), with DLIs
-  adjusting the palette between the sky band and the ground band (§2.1).
+- The terrain colours are **one constant mode-D palette** set by a single DLI at
+  the top of the terrain (slot 1, `$4A1F`): COLBK=`$14` (brown ground),
+  COLPF2=`$B8` (salmon sky), COLPF1=`$10` (dark mountain edge), COLPF0=`$2A`.
+  Sky / ground / mountain are **different 2-bit pixel values in that one
+  palette** (encoded in the bitmap) — there is **no DLI sky/ground colour split**
+  inside the terrain. (The salmon→brown boundary follows the irregular mountain
+  silhouette, not a straight raster line.) Later DLIs recolour for the cockpit,
+  not the terrain — §2.1.
 
 **Vertical motion:** the fractal terrain is re-projected/redrawn into the
 `$1000` bitmap each frame (`terrain_gen_1/2/3`, run twice per frame in the inner
@@ -115,10 +120,19 @@ Rather than one fixed mid-screen handler, the game runs a **multiplexed DLI**:
 ```
 
 Each successive DLI down the frame runs the *next* routine in the list (indexed
-by `$C7`), so different screen bands (sky / terrain / cockpit) get different
-colour-register and position changes — the classic Atari "more colours than the
-register count allows" technique. `VDSLST` (`$0200/1`) is also swapped between
-`$49EE` and `$6CC2` (`dli_handler_game2`) depending on phase.
+by `$C7`, reset to 0 each VBI). The five slots are: slot 0 `$4A11` (COLPF0);
+slot 1 `$4A1F` (sets the full **terrain** palette just above the terrain);
+slot 2 `$4A40` (begins the **cockpit** transition — COLPF2→gray, players,
+PRIOR); slot 3 `$4A78` (cockpit-panel colours, PRIOR=`$04`); slot 4 `$4ACD`
+(COLBK, wraps `$C7`).
+
+So the DLIs mostly establish the terrain palette **once** at the top and then
+recolour for the cockpit lower down — they do **not** create a sky/ground colour
+split within the terrain (that split is bitmap-encoded; §11.2). They are still
+the classic "more colours than the register count allows" technique, just across
+the terrain→cockpit boundary rather than within the terrain. `VDSLST` (`$0200/1`)
+is swapped between `$49EE` and the cockpit handlers `$6CC2`/`$6CAD` depending on
+phase.
 
 ### 2.2 VBI handlers swap by phase
 
@@ -308,11 +322,15 @@ see 11.3.
   320 hi-res), **2 scanlines per pixel row** (the visible "2×2 pixels"). Wide
   playfield (`SDMCTL=$3F`) = **48 bytes per row**; the bitmap is at **`$1000`**
   (dump rows align to 48-byte stride). `GPRIOR=$11` (no GTIA 9/10/11 mode).
-- **Colour [C]:** the four terrain colours — salmon sky, brown terrain,
-  dark-brown shape, and the gray cockpit frame — are mode D's native palette
-  (`COLBK`+`COLPF0/1/2`). **DLIs** (the sequenced dispatcher, §2.1) swap the
-  palette between the sky band and the ground band, but the multi-colour look is
-  the mode itself, not a 1-bpp trick.
+- **Colour [C]:** the terrain is **one constant 4-colour palette**, set by a
+  single DLI at the top of the terrain (slot 1, `$4A1F`): COLBK=`$14` (brown
+  ground), COLPF2=`$B8` (salmon sky), COLPF1=`$10` (dark mountain edge),
+  COLPF0=`$2A`. **Sky, ground and mountain are different 2-bit pixel values in
+  that one palette** (drawn into the bitmap) — *not* a DLI colour split. The
+  salmon→brown horizon follows the mountain silhouette (irregular), confirming
+  it is bitmap-encoded, not a raster line. Later DLIs (slot 2 `$4A40` sets
+  COLPF2=`$06` = the gray frame, slots 3–4) recolour for the **cockpit**
+  transition, not the terrain.
 - **Per-frame redraw [C]:** the fractal terrain is re-projected into the `$1000`
   bitmap each frame by `terrain_gen_1/2/3` (run twice per frame in the inner
   loop), with the single LMS operand at `$3129` rewritten (`$770B`) for coarse
@@ -326,9 +344,10 @@ see 11.3.
   not 100 % pinned from one frame.)
 
 > **Amiga:** a 2-bitplane (4-colour) terrain bitmap, ~160×94 in the view area,
-> with Copper colour changes between the sky and ground bands (the analogue of
-> the DLI palette swaps). The terrain is re-projected per frame, so a normal
-> blit/redraw fits — no hardware scroll needed.
+> using **one fixed palette** (sky/ground/mountain are just pixel values — no
+> per-band colour change needed). The terrain is re-projected per frame, so a
+> normal blit/redraw fits — no hardware scroll needed. A Copper colour change is
+> only needed at the **cockpit** boundary below the terrain.
 
 ### 11.3 The canopy frame & sprites — Player/Missile graphics
 
@@ -439,7 +458,7 @@ freely tiltable/sliding horizon line that char cells can't express. The DLI
 | Element | Atari mechanism | Suggested Amiga approach |
 |---|---|---|
 | Terrain 3-D view | mode D (GR.7) 4-colour, re-projected per frame | 2-bitplane (4-colour) bitmap, redrawn per frame |
-| Sky/mountain colours | mode-D palette + per-band DLIs | Copper list |
+| Sky/mountain colours | one constant mode-D palette (bitmap pixel values) | single fixed palette |
 | Canopy side frames | fixed-position missiles (+edge players) | static hardware sprites (or bake into panel) |
 | Enemy saucers / guns | Player 3 (moving) | moving hardware sprites |
 | Falling object / shot | P1 strip `$0D98` | sprite or blit |
