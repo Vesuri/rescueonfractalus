@@ -13,6 +13,10 @@ docs:
 
 > Cross-ref: `startup-flow.md` covers *when* these are set up (the INITAD chain,
 > `game_entry`, the main loop). This doc covers *how* they work.
+>
+> **§11 is the element-by-element screen anatomy** (terrain / canopy / cockpit /
+> gauges / enemies → which ANTIC mode + chip renders each, with an Amiga plan) —
+> jump there if you're planning the Amiga renderer.
 
 ---
 
@@ -236,3 +240,181 @@ binary assumes RAM is visible across the whole `$0000–$FFFF` space (minus the
 5. A **bit-exact `RANDOM` LFSR** — §7 (non-negotiable for terrain parity).
 6. Software collision (`terrain_collision`) needs no hardware support — §4.
 7. Input mapping: PORTA joystick, TRIG0 fire, CONSOL/CH — §5.
+
+---
+
+## 11. Screen anatomy — what renders each region (flight screen)
+
+This maps every visible part of the gameplay screen to the exact hardware
+feature that draws it, so the Amiga port can pick the right technique per
+element. Decoded from the ground-truth flight RAM dump
+(`a800dumps/flight_ram_0000_BFFF.bin`, `DLIST=$3000`) and the drawing functions.
+
+Confidence is marked: **[C]** confirmed from dump + code, **[~]** inferred /
+partially verified.
+
+### 11.1 Vertical layout (the `$3000` display list, top → bottom)
+
+| Scanlines | ANTIC mode | Screen data | What it is |
+|---|---|---|---|
+| 20 | blank | — | top centering |
+| 8 | **mode 6** (20×8, 5-colour text) | `$32B5` | **status / message line** ("MANUAL", "TRANSMITTING", …) |
+| 4 | blank | — | gap |
+| 8 | **mode 4** (40×8, 4-colour text) | `$32C9` | top label strip (charset art) |
+| 2 | mode D | — | horizon transition row |
+| **86** | **mode F** (GR.8, 320×1 hi-res) | **`$1000+`** (LMS ring) | **the terrain / 3-D view** |
+| 8 | **mode D** (GR.7, 160×2, 4-colour) | `$350D` | dashboard bitmap strip (scanner/horizon) |
+| 80 | **mode 4** (40×8, 4-colour text) | `$332D` | **the cockpit dashboard panel** |
+| — | JVB → `$3000` | — | wait for vblank, loop |
+
+Total ≈ 216 scanlines. **[C]**
+
+**Bitmap vs. character — the split:** ANTIC modes divide cleanly into two
+families, and the screen mixes both:
+
+- **Bitmap (map) modes — pixels straight from a screen buffer, no charset:**
+  - **mode F** (GR.8, 1 bpp hi-res) — the **terrain / 3-D view** (`$1000+`).
+  - **mode D** (GR.7, 2 bpp) — the horizon transition row and the **`$350D`
+    dashboard strip**.
+- **Character (text) modes — screen buffer holds glyph indices into a charset:**
+  - **mode 6** (5-colour) — the **status/message line** (`$32B5`).
+  - **mode 4** (4-colour) — the **top label strip** and the **whole cockpit
+    dashboard** (`$332D`), via the custom charset at `$3800`. The dashboard art,
+    bar gauges and numeric readouts are all *characters*, not pixels — the game
+    redraws gauges/digits by poking glyph codes into char cells, never by
+    plotting pixels there.
+
+So: **terrain and the `$350D` strip are pure bitmap; everything in the cockpit
+furniture (status line + entire dashboard, gauges, digits) is character-based.**
+The Player/Missile overlays (11.3) are a third, separate layer on top of both.
+
+Overlaid on all of the above (full frame) are the GTIA Player/Missile channels —
+see 11.3.
+
+### 11.2 The terrain / 3-D view — mode F + DLI colour bands
+
+- **Base layer [C]:** 86 rows of **ANTIC mode F** (GR.8, hi-res 320×1, 1 bit per
+  pixel). Each row is an LMS instruction whose operand points into the terrain
+  pixel buffer at `$1000+` (46-byte stride); the operands are scrolled every
+  frame (§1.3) so the terrain pans vertically. `GPRIOR=$11` → it is *normal* GR.8,
+  **not** a GTIA 9/10/11 mode, so within a scanline it is two colours
+  (COLPF2 background hue + COLPF1 luminance for set pixels).
+- **Colour [C]:** more than two colours come from **DLIs** flagged on terrain
+  rows (`$306F`, `$30ED`, `$30F9`, `$3105`) driving the sequenced DLI dispatcher
+  (§2.1) — sky band vs. mountain band vs. haze get different COLPF/COLBK. This is
+  how the famous sky-gradient-over-mountains look is produced from a 1-bpp mode.
+- **Player overlay [~]:** the four players also carry terrain data —
+  `gen_terrain_column` / `fill_terrain_columns ($6AE5)` write per-column pixels
+  into the player graphics buffers `$0C32/$0D32/$0E32/$0F32` (= P0/P1/P2/P3).
+  During flight the players sit in two edge stacks (11.3), so this appears to add
+  coloured terrain detail at the left/right margins the central hi-res field
+  doesn't cover. (Exact visual contribution not 100 % pinned from one frame.)
+
+> **Amiga:** a chunky/planar terrain bitmap with per-scanline colour changes via
+> the Copper (the natural analogue of the DLI colour bands). The LMS-pointer
+> vertical scroll maps to either a Copper-driven bitplane-pointer offset per line
+> or a normal blit/scroll. Resolution target ~320×~86 in the view area.
+
+### 11.3 The canopy frame & sprites — Player/Missile graphics
+
+PMBASE=`$08`, single-line resolution → Missiles `$0B00`, P0 `$0C00`, P1 `$0D00`,
+P2 `$0E00`, P3 `$0F00`. Positions/sizes are set in `display_setup` and re-stamped
+every frame by `vbi_handler_game ($52D7)`:
+
+| Channel | HPOS | Size | Role | Conf |
+|---|---|---|---|---|
+| **Missiles M2,M3** | `$3B`,`$39` (left edge) | — | **canopy left frame post** — fixed full-height vertical bar | [C] pos, [~] role |
+| **Missiles M0,M1** | `$C5`,`$C3` (right edge) | — | **canopy right frame post** | [C] pos, [~] role |
+| **P0** | `$2D` (left) | normal | left-edge terrain/frame column (buffer `$0C32`) | [~] |
+| **P2** | `$2D` (left) | normal | stacked with P0 at left edge | [~] |
+| **P1** | `$BE` (right) | double | right-edge terrain/frame column (buffer `$0D32`); also a **vertical falling object** drawn at `$0D98` (e.g. dropped object / shot) | [~] |
+| **P3** | `$BE` (right) / dynamic | quad | right-edge column; **also the enemy saucer/gun sprite** (`draw_player3_object $42A7`, HPOSP3 moved dynamically at `$43B2`) and the **P3 cockpit indicator stripe** (`update_p3_indicator_stripe $4467`, SIZEP3) | [C] multi-use |
+
+Key facts: the missiles are **pinned at the four screen-edge X positions every
+frame** (left ≈`$39–3B`, right ≈`$C3–C5`) — i.e. the cockpit window's vertical
+frame, not projectiles. The players are stacked at the same two edges. P3 is the
+most multiplexed channel (saucer **and** HUD duty in the same buffer at different
+vertical offsets). All P/M colours come from the `PCOLR0-3` shadows (`$02C0-3`,
+all `$2A` green in this frame) and can be re-tinted by DLI.
+
+> **Amiga:** these are all narrow, mostly-fixed vertical elements — cheapest as
+> **hardware sprites** (canopy posts = static sprites; enemy saucer = a moving
+> sprite). The "player carries terrain detail" trick is Atari-specific and need
+> not be reproduced literally — fold that detail into the terrain bitmap instead.
+
+### 11.4 Enemies & rescuable objects
+
+- **Enemy saucers / gun emplacements [C]:** rendered through **Player 3**
+  (`saucer_anim_tick $4229` animates the shape, `draw_player3_object $42A7`
+  writes the P3 buffer, HPOSP3 tracks the enemy X). Behaviour driven by
+  `enemy_check` and `game_state_update ($A99C)`.
+- **Vertical falling object [~]:** a shape strip at `$0D98` in the **P1** buffer
+  (`vobj_draw_dispatch $41E4` / `vobj_erase_row $4207`), position from `$062F`.
+- **Rescued pilot [~]:** `pilot_render` toggled by `$288D/$288E`; appears in the
+  terrain/door area — channel not definitively isolated (likely reuses a player
+  or playfield cells when the pilot is at the airlock).
+
+> **Amiga:** moving hardware sprites for saucers/shots; the pilot can be a sprite
+> or a blitter object over the terrain.
+
+### 11.5 The cockpit dashboard — mode-4 charset artwork + poked cells
+
+- **Panel artwork [C]:** the bottom ~10 rows are **ANTIC mode 4** (40×8,
+  4-colour text) reading screen data at `$332D` through a **custom character set
+  at `$3800`** (`CHBASE=$04`). The glyphs are dashboard art, not text. The static
+  panel is laid down once at init (`game_init_7588 $7588`, RLE-decompressed).
+- **Analogue bar gauges [C]:** drawn as **columns of characters poked into the
+  mode-4 dashboard cells** — `setup_dial_bar_draw ($444A)` / `draw_object_column
+  ($43E8)` plot a vertical bar via a target-address table at `$4581`, whose
+  entries point into `$33xx/$34xx` (i.e. *into the `$332D` mode-4 region* — **not**
+  P/M). These are the fuel / altitude / scan-strength style bar indicators.
+- **Numeric readouts [C]:** BCD digits (score, level, counts) rendered into the
+  same mode-4 cells via `render_bcd_digits_supp_all ($49BA)` / `render_bcd_counter`
+  / `bin_to_bcd`, with leading-zero suppression; dest pointer `$C5/$C6`.
+- **Per-frame refresh [C]:** `update_gauge_digits ($548D)` runs each VBI (from
+  `vbi_deferred_dispatch $534D`), BCD-stepping the gauge digit arrays
+  (`$0679/$06A3/$06B1/$06BF/$06CD/$06DB/$06E9/$066B`) toward their targets.
+- **Gauge geometry [~]:** `compute_gauge_geometry_from_006D` derives bar heights
+  from the level/stage (`$006D`) — gauges grow with level.
+
+> **Amiga:** the dashboard is a static image (one blit at level start) plus a
+> handful of dynamic regions. Draw bar gauges and digits as small blits into the
+> dashboard bitmap; no need to emulate the charset indirection — bake the glyph
+> art into a tile sheet or just blit rectangles.
+
+### 11.6 Status / message line — mode 6
+
+The single **mode-6** row (`$32B5`, 5-colour 20-column text) is the cockpit
+message line. `show_cockpit_message ($47B8)` decodes a message ID into the
+14-byte buffer at `$32B7` (ATASCII+`$40`, hi-bit-terminated) and sets a flash
+timer (`$063E`); `clear_message_buffer ($480B)` blanks it. Shows mode strings
+("MANUAL"), events ("TRANSMITTING", pilot pickups), etc. **[C]**
+
+> **Amiga:** ordinary text blit with a flashing colour; trivial.
+
+### 11.7 The mode-D bitmap strip (`$350D`)
+
+A short **ANTIC mode D** (GR.7, 160×2, 4-colour) band — 4 DL entries, 8
+scanlines — sits between the terrain and the dashboard, screen data at `$350D`.
+Its content is a small 4-colour bitmap; **[~]** its precise role (long-range
+scanner display vs. the dashboard's top curved graphic vs. a horizon/aim strip)
+is not yet pinned — it is the one region whose semantics need a follow-up. The
+DLI `dli_handler_game2 ($6CC2)` fires around here.
+
+> **Amiga:** small 4-colour bitmap region; decide once its role is confirmed.
+
+### 11.8 Summary — recommended Amiga technique per element
+
+| Element | Atari mechanism | Suggested Amiga approach |
+|---|---|---|
+| Terrain 3-D view | mode F hi-res + DLI colour bands + LMS scroll | terrain bitmap + Copper colour-per-line + line scroll |
+| Sky/mountain colours | per-band DLIs | Copper list |
+| Canopy side frames | fixed-position missiles (+edge players) | static hardware sprites (or bake into panel) |
+| Enemy saucers / guns | Player 3 (moving) | moving hardware sprites |
+| Falling object / shot | P1 strip `$0D98` | sprite or blit |
+| Rescued pilot | `pilot_render` (player/playfield) | sprite/blit |
+| Dashboard panel | mode-4 charset art `$332D`/`$3800` | static bitmap (blit once) |
+| Bar gauges | char-cell columns (`draw_object_column`) | small blits into panel bitmap |
+| Numeric readouts | BCD digits in mode-4 cells | digit blits |
+| Status/message line | mode 6 text `$32B5` | text blit + flash |
+| Mode-D strip `$350D` | GR.7 bitmap | 4-colour bitmap (role TBC) |
