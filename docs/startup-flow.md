@@ -11,7 +11,7 @@ Atari 6502 addresses.
 > the post-load 64K image (`disasm/rof_mem.bin`) and calls the final entry point
 > directly, so the loader chain and the load-time attract screen are bypassed.
 > This document describes the *original* design first, then where the port
-> diverges (see [§6](#6-how-the-c-port-enters)).
+> diverges (see [§8](#8-how-the-c-port-enters)).
 
 ---
 
@@ -33,8 +33,10 @@ flowchart TD
     I --> J["INITAD $3CDE<br/>game_entry — final entry"]
     J --> K["game_entry mega-init<br/>($3CDE, 737 bytes)"]
     K --> L["game_main_loop $3D48<br/>per-life full init"]
-    L --> M["outer reset loop<br/>L_3e0f"]
-    M --> N["inner flight loop<br/>L_3eba"]
+    L --> T["title / start screen<br/>1985 LUCASFILM LTD<br/>wait for START @ $5A78"]
+    T --> LS["launch cinematic §6<br/>STAND BY, doors, tunnel,<br/>stars, planet<br/>(mode-F viewport)"]
+    LS --> M["outer reset loop<br/>L_3e0f → display_setup"]
+    M --> N["inner flight loop<br/>L_3eba<br/>(mode-D terrain, MANUAL)"]
     N -->|"player_lives ($0072) == 2<br/>→ segment clear"| O["level-clear $3F59"]
     O --> M
     N -->|else| N
@@ -168,10 +170,11 @@ Runs once before each life. Highlights:
 The re-entry point after every death / level transition (the tail at `$3FBC`
 does `goto L_3e0f`). Each pass:
 - `display_setup ($5F1D)` — the **main game display**: installs the gameplay VBI
-  `VVBLKI = $52D7` (`vbi_handler_game`), the DLI `VDSLST = $6CC2`, the **`$3120`**
-  display list (final `DLISTL` write at `$6543`), PMG bases and colours. The
-  flight terrain is ANTIC mode D (GR.7) 4-colour, re-projected each frame — see
-  `hw-techniques.md` §1.3.
+  `VVBLKI = $52D7` (`vbi_handler_game`), the DLI `VDSLST = $6CC2`, the gameplay
+  display list (active **`$3210`**, confirmed live; the game keeps several DL
+  copies), PMG bases and colours. The flight terrain is ANTIC mode D (GR.7)
+  4-colour with per-row LMS, re-projected each frame — see `hw-techniques.md`
+  §1.3.
 - `clear_pm_state`, `clear_colors`; zero ZP scratch (`$0020+`), zero `$2830+`.
 - `game_init_753B`, `game_init_45A1`, `clear_terrain_lo_buffers`,
   `game_init_7558`.
@@ -214,7 +217,73 @@ segment/life.
 
 ---
 
-## 6. Interrupt-handler timeline
+## 6. The launch / intro sequence (fresh start)
+
+On a fresh start the player sees a title screen and then a launch cinematic
+before gameplay: **title (RESCUE ON FRACTALUS! / 1985 LUCASFILM LTD) → "STAND
+BY…" + space-station doors opening → tunnel → space / scrolling stars → planet
+zooming up to fill the view → flight (cockpit shows MANUAL)**.
+
+This section is reconstructed from **live emulator captures** (atari800), one
+savestate per phase in `a800dumps/launch_*.a8s`, decoded for the active ANTIC
+display list, viewport mode, on-screen text, and the CPU PC at that instant.
+
+### 6.1 The key structural fact — two display lists, one cockpit
+
+The cinematic and gameplay use **two display lists with identical cockpit
+chrome that differ only in the central viewport mode**:
+
+| | cinematic DL `$3000` | gameplay DL `$3210` |
+|---|---|---|
+| top | mode-6 text line (`$32B5`) | mode-6 text line (`$32B5`) |
+| label | 1 × mode-4 row | 1 × mode-4 row |
+| **viewport** | **86 × mode F** (GR.8 hi-res, per-row LMS, `$2E` stride) | **47 × mode D** (GR.7 4-colour, per-row LMS, `$60` stride) |
+| dashboard | 10 × mode-4 rows (`$332D`, charset `$3800`) | 10 × mode-4 rows (`$332D`) |
+| loop | `JVB → $3000` | `JVB → $3210` |
+
+So the launch *is the cockpit view* — same dashboard and message line — with a
+**hi-res mode-F viewport** showing the doors/tunnel/stars/planet (crisp graphics,
+which is why mode F not mode D). Reaching gameplay simply swaps the viewport to
+the **4-colour mode-D terrain** (and the active DL to `$3210`). The "STAND BY…"
+message sits in the mode-6 line for the whole cinematic; gameplay replaces it
+with "MANUAL".
+
+> The game keeps **several display-list copies** in the `$3000`/`$3120`/`$3210`
+> region (built/relocated as it runs), so only the *live* `DLIST` (or the ANTIC
+> register) identifies the active one — a static memory image can show inactive
+> copies. See `hw-techniques.md` §1.
+
+### 6.2 Phase-by-phase (captured)
+
+| Phase | On screen | Active DL / viewport | mode-6 line | CPU PC |
+|---|---|---|---|---|
+| **Title** | "RESCUE ON FRACTALUS!" / "1985 LUCASFILM LTD" | `$3000` mode-F, LMS `$2000` | `1985 LUCASFILM LTD` | `$5A78` — `LDA $D01F` (poll CONSOL for START) |
+| **STAND BY / doors** | doors opening, throttle gauge max | `$3000` mode-F, LMS `$2228` | `STAND BY...` | `$3CB8` — frame-wait spin |
+| **Tunnel** | flying through the tunnel | `$3000` mode-F, LMS `$1000` | `STAND BY...` | `$3CB8` — frame-wait spin |
+| **Stars / space** | star field | `$3000` mode-F | `STAND BY...` | `$6570` — `display_setup` build loop |
+| **Planet** | planet filling the view | `$3000` mode-F | `STAND BY...` | `$6C5B` — build/DLI region |
+| **Gameplay** | terrain flight | **`$3210` mode-D** (4-colour) | (cleared → MANUAL) | `$9C0E` — flight engine |
+
+The mode-F viewport's per-row LMS base cycles (`$2000` → `$2228` → `$1000` …) as
+the cinematic animates — the launch frames are rendered into the mode-F bitmap
+and the LMS operands page/scroll through it.
+
+### 6.3 What is and isn't pinned down
+
+- **[C]** Each phase's active display list, viewport ANTIC mode, on-screen text,
+  and CPU PC (above) are from live captures.
+- **[C]** The title screen waits for START in a `CONSOL` poll at `$5A78`; the
+  fresh-start path is gated by `fresh_start_flag $0627` (§5b).
+- **[~]** The exact routine that *draws* each individual cinematic frame (doors
+  vs tunnel vs planet) is not separately isolated — during several phases the
+  main thread is parked in a frame-wait/build loop (`$3CB8`, `$6570`) while the
+  imagery is produced elsewhere (interrupt-driven and/or pre-rendered into the
+  mode-F bitmap). The savestates in `a800dumps/launch_*.a8s` are kept so this can
+  be traced later without re-capturing.
+
+---
+
+## 7. Interrupt-handler timeline
 
 The game swaps the ANTIC/OS vectors several times as it moves between phases:
 
@@ -232,7 +301,7 @@ layer (`rof_register_vbi_handlers` + the SDL audio/timer callback).
 
 ---
 
-## 7. How the C port enters
+## 8. How the C port enters
 
 `src/main.cpp`:
 
@@ -251,7 +320,7 @@ INITAD order — is a possible future step if attract-mode parity is wanted.
 
 ---
 
-## 8. Quick reference — key state variables
+## 9. Quick reference — key state variables
 
 | Addr | Name | Role in the flow |
 |---|---|---|

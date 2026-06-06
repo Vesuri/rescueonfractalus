@@ -33,8 +33,16 @@ runtime by functions** — only the loader screen is static bytes in the binary.
 | Loader (INITAD) | `$B832` | **static data** (`init_B800 $B800` just points to it) | Homesoft "LOADING" screen — see §1.2 |
 | Attract | `$B800` | `display_list_build $1C40` | 122 LMS text rows from `$0600`; up to 30 sprites scattered by `RANDOM` |
 | Intro / init | `$5A82` | `display_list_init $5D29` | early text/title list in the `$5xxx` data region |
-| **Flight** | **`$3120`** | `display_setup $5F1D` (final `DLISTL` write at `$6543`) | mode-D (GR.7) 4-colour terrain + cockpit — see §1.3 |
-| (parallel) | `$3000` | `display_setup` + the `dl_lms_*` family | a mode-F LMS ring — built but **not** the on-screen gameplay terrain; role TBC (§1.3) |
+| **Title / launch cinematic** | `$3000` | `display_setup` + the `dl_lms_*` family | cockpit chrome + **mode-F (GR.8 hi-res)** per-row-LMS viewport — the title-terrain, doors, tunnel, stars, planet (see `startup-flow.md` §6) |
+| **Flight (gameplay)** | `$3210` (live) | `display_setup $5F1D` family | cockpit chrome + **mode-D (GR.7) 4-colour** per-row-LMS terrain viewport — see §1.3 |
+
+> The game keeps **several copies** of the cockpit display list (`$3000`,
+> `$3120`, `$3210`, …) and switches `DLISTL/H` between them. Only the **live**
+> ANTIC `DLIST` (captured from the running emulator) tells you which is active;
+> a static memory image or single-frame dump will show inactive copies too, and
+> the `display_setup` source writes several DLIST values in turn — so neither is
+> reliable on its own. The active DLs were confirmed live: `$3000` (mode F) for
+> title/launch, `$3210` (mode D) for gameplay.
 
 ### 1.2 The loader screen is not original game content
 
@@ -59,19 +67,24 @@ So `rof.xex` is a **Homesoft repacker release**; this is their loader cracktro,
 shown via INITAD while the 31.5 KB main block streams in. It is not Lucasfilm
 code and does not need faithful reproduction — the SDL port skips it entirely.
 
-### 1.3 The flight display list — mode D (GR.7) 4-colour
+### 1.3 The flight display list — mode D (GR.7) 4-colour, per-row LMS
 
-The on-screen flight terrain uses the **`$3120`** display list (this is the
-*final* `DLISTL/H` write in `display_setup`, at `$6543`; an earlier write to
-`$3000` is superseded). Verified against the ground-truth flight RAM dump and
-the rendered frame (`atari002.png`):
+The on-screen gameplay terrain uses the **`$3210`** display list (confirmed from
+the live ANTIC `DLIST` during flight). Its viewport is a **per-scanline LMS
+list** in mode D:
 
 - Terrain rows are **ANTIC mode D** (GR.7): **4 colours**, ~160 px wide
   (**2 colour-clocks per pixel** — *not* 320 hi-res), **2 scanlines per pixel
-  row**. Roughly 47 mode-D rows ≈ 94 scanlines, starting at scanline ~42.
-- Wide playfield (`SDMCTL=$3F`) → **48 bytes per row**; the terrain bitmap lives
-  at **`$1000`** and the dump's row data is laid out at exactly 48-byte stride,
-  matching mode-D-wide (not the mode-F ring's 46-byte stride).
+  row** (the visible "2×2 pixels"). ~47 mode-D rows ≈ 94 scanlines.
+- **Per-row LMS:** every terrain scanline is its own `4D` (mode D + LMS)
+  instruction with its own 16-bit operand — e.g. `$10A0, $1100, $1160, …` at
+  **`$60` (96-byte) stride** through the terrain buffer at **`$1000`** (the same
+  96-byte row pitch as the heightmap rows `$1010/$1070/…` read by
+  `terrain_collision`). The fractal terrain is re-projected into that buffer each
+  frame (`terrain_gen_1/2/3`, run twice per frame), and the per-row LMS operands
+  position each scanline — this *is* the "scroll the pointers" LMS technique
+  (`dl_lms_build/fill $69E5/$69F1`, `scroll_terrain_dl $6953`, base tables
+  `$073D/$0793` from `game_setup_7460`).
 - The terrain colours are **one constant mode-D palette** set by a single DLI at
   the top of the terrain (slot 1, `$4A1F`): COLBK=`$14` (brown ground),
   COLPF2=`$B8` (salmon sky), COLPF1=`$10` (dark mountain edge), COLPF0=`$2A`.
@@ -81,28 +94,26 @@ the rendered frame (`atari002.png`):
   silhouette, not a straight raster line.) Later DLIs recolour for the cockpit,
   not the terrain — §2.1.
 
-**Vertical motion:** the fractal terrain is re-projected/redrawn into the
-`$1000` bitmap each frame (`terrain_gen_1/2/3`, run twice per frame in the inner
-loop); the single LMS operand at `$3129` is also rewritten per frame (`$770B`)
-for coarse vertical positioning. It is **not** a per-line-LMS scroll.
+The **title / launch cinematic** uses a structurally identical display list at
+**`$3000`** with the same cockpit chrome but a **mode-F (GR.8 hi-res) per-row-LMS
+viewport** (86 rows, `$2E`/46-byte stride) for the crisp doors/tunnel/stars/
+planet graphics. So the viewport ANTIC mode is the only real difference between
+the cinematic and gameplay displays — see `startup-flow.md` §6.
 
-> **A correction / caveat.** A *separate* display list at `$3000` is also built
-> at runtime — a genuine **per-scanline LMS "ring"** (two strands `$300A`
-> downward / `$3089` upward, maintained by `init_terrain_dl $68AD`,
-> `dl_lms_build/fill $69E5/$69F1`, `emit_dl_coord_pairs $68CF`,
-> `scroll_terrain_dl $6953`, using the per-scanline base tables `$073D/$0793`
-> from `game_setup_7460`). But it is **mode F (46-byte stride)** and does **not**
-> match the 48-byte mode-D buffer that is actually on screen, so it is *not* the
-> visible gameplay terrain. Its role is unresolved — possibly a different
-> view/sub-mode (descent/landing?) or vestigial. (An earlier version of this doc
-> wrongly presented this ring as *the* terrain renderer; it isn't.)
+> **Two earlier mistakes, now corrected by live capture.** This doc first
+> claimed the terrain was **mode F** (it's mode D — that was the *cinematic*
+> display, `$3000`), then over-corrected to "mode D with a *single* contiguous
+> LMS, no per-line scroll" (wrong — gameplay's `$3210` viewport is genuinely
+> **per-row LMS**, `$60` stride). Both errors came from reading **inactive DL
+> copies** in static dumps (`$3000`, `$3120`) instead of the live active DL
+> (`$3210`). Lesson: confirm the active `DLIST` live.
 
 ### 1.4 No hardware fine scrolling
 
 Notably, the game writes `HSCROL`/`VSCROL` (`$D404/5`) **never**. Vertical
-terrain motion comes from re-drawing the bitmap + the coarse `$3129` LMS update
-(§1.3), not ANTIC's hardware fine-scroll. The port can move the viewport however
-it likes as long as the per-frame terrain projection matches.
+terrain motion comes from re-drawing the bitmap and updating the per-row LMS
+operands (§1.3), not ANTIC's hardware fine-scroll. The port can move the
+viewport however it likes as long as the per-frame terrain projection matches.
 
 ---
 
@@ -137,7 +148,7 @@ phase.
 ### 2.2 VBI handlers swap by phase
 
 `VVBLKI` (`$0222/3`) is repointed as the game changes state (see
-`startup-flow.md` §6 for the timeline):
+`startup-flow.md` §7 for the timeline):
 
 | Phase | VBI |
 |---|---|
@@ -272,13 +283,14 @@ This maps every visible part of the gameplay screen to the exact hardware
 feature that draws it, so the Amiga port can pick the right technique per
 element. Decoded from the ground-truth flight RAM dump
 (`a800dumps/flight_ram_0000_BFFF.bin`), the rendered frame (`atari002.png`), and
-the drawing functions. The on-screen flight DL is **`$3120`** (§1.3).
+the drawing functions. The on-screen flight DL is **`$3210`** (active, confirmed
+live; §1.3).
 
 Confidence is marked: **[C]** confirmed from dump + code, **[~]** inferred /
 partially verified. Instrument names are from the game manual's *Instrument
 Detail* (p. 6).
 
-### 11.1 Vertical layout (the `$3120` display list, top → bottom)
+### 11.1 Vertical layout (the `$3210` gameplay display list, top → bottom)
 
 | Scanlines | ANTIC mode | Screen data | What it is |
 |---|---|---|---|
@@ -287,10 +299,10 @@ Detail* (p. 6).
 | 4 | blank | — | gap |
 | 8 | **mode 4** (40×8, 4-colour text) | `$32C9` | top label strip (charset art) |
 | 2 | mode D | — | horizon transition row |
-| ~94 (≈47 rows × 2) | **mode D** (GR.7, ~160×2, **4-colour**) | **`$1000`** (48-byte rows) | **the terrain / 3-D view** |
+| ~94 (≈47 rows × 2) | **mode D** (GR.7, ~160×2, **4-colour**) | **`$1000`** (per-row LMS, `$60` stride) | **the terrain / 3-D view** |
 | 8 | **mode D** (GR.7, 160×2, 4-colour) | `$350D` | **Artificial Horizon** (bank + climb) — see 11.7 |
 | 80 | **mode 4** (40×8, 4-colour text) | `$332D` | **the cockpit dashboard panel** |
-| — | JVB → `$3120` | — | wait for vblank, loop |
+| — | JVB → `$3210` | — | wait for vblank, loop |
 
 Total ≈ 216 scanlines. **[C]**
 
@@ -319,9 +331,10 @@ see 11.3.
 
 - **Base layer [C]:** ~47 rows of **ANTIC mode D** (GR.7): 2 bits per pixel →
   **4 colours per scanline**, ~160 px wide (**2 colour-clocks per pixel**, *not*
-  320 hi-res), **2 scanlines per pixel row** (the visible "2×2 pixels"). Wide
-  playfield (`SDMCTL=$3F`) = **48 bytes per row**; the bitmap is at **`$1000`**
-  (dump rows align to 48-byte stride). `GPRIOR=$11` (no GTIA 9/10/11 mode).
+  320 hi-res), **2 scanlines per pixel row** (the visible "2×2 pixels"). The
+  active gameplay DL is **`$3210`** (confirmed live); each row is its own
+  **per-row LMS** (`4D`) instruction into the `$1000` terrain buffer at `$60`
+  (96-byte) stride. `GPRIOR=$11` (no GTIA 9/10/11 mode).
 - **Colour [C]:** the terrain is **one constant 4-colour palette**, set by a
   single DLI at the top of the terrain (slot 1, `$4A1F`): COLBK=`$14` (brown
   ground), COLPF2=`$B8` (salmon sky), COLPF1=`$10` (dark mountain edge),
@@ -333,8 +346,8 @@ see 11.3.
   transition, not the terrain.
 - **Per-frame redraw [C]:** the fractal terrain is re-projected into the `$1000`
   bitmap each frame by `terrain_gen_1/2/3` (run twice per frame in the inner
-  loop), with the single LMS operand at `$3129` rewritten (`$770B`) for coarse
-  vertical positioning. There is a separate terrain heightmap at `$1010+`
+  loop), and the per-row LMS operands position each scanline. There is a separate
+  terrain heightmap at `$1010+`
   (96-byte rows, read by `terrain_collision $AE53`).
 - **Player overlay [~]:** the four players also carry terrain data —
   `gen_terrain_column` / `fill_terrain_columns ($6AE5)` write per-column pixels
