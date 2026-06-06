@@ -251,7 +251,8 @@ element. Decoded from the ground-truth flight RAM dump
 (`a800dumps/flight_ram_0000_BFFF.bin`, `DLIST=$3000`) and the drawing functions.
 
 Confidence is marked: **[C]** confirmed from dump + code, **[~]** inferred /
-partially verified.
+partially verified. Instrument names are from the game manual's *Instrument
+Detail* (p. 6).
 
 ### 11.1 Vertical layout (the `$3000` display list, top → bottom)
 
@@ -263,7 +264,7 @@ partially verified.
 | 8 | **mode 4** (40×8, 4-colour text) | `$32C9` | top label strip (charset art) |
 | 2 | mode D | — | horizon transition row |
 | **86** | **mode F** (GR.8, 320×1 hi-res) | **`$1000+`** (LMS ring) | **the terrain / 3-D view** |
-| 8 | **mode D** (GR.7, 160×2, 4-colour) | `$350D` | dashboard bitmap strip (scanner/horizon) |
+| 8 | **mode D** (GR.7, 160×2, 4-colour) | `$350D` | **Artificial Horizon** (bank + climb) — see 11.7 |
 | 80 | **mode 4** (40×8, 4-colour text) | `$332D` | **the cockpit dashboard panel** |
 | — | JVB → `$3000` | — | wait for vblank, loop |
 
@@ -359,6 +360,12 @@ all `$2A` green in this frame) and can be re-tinted by DLI.
 
 ### 11.5 The cockpit dashboard — mode-4 charset artwork + poked cells
 
+Instrument names below are from the game manual's *Instrument Detail* (p. 6, the
+"Valkyrie Fighter Control Panel"): **1 Score, 2 Compass, 3 Wing Clearance Bars,
+4 Thrust Level, 5 Dangerous Altitude, 6 Artificial Horizon, 7 Altimeter**.
+Items 1–5, 7 live in the mode-4 char panel here; item 6 is the mode-D strip
+(11.7).
+
 - **Panel artwork [C]:** the bottom ~10 rows are **ANTIC mode 4** (40×8,
   4-colour text) reading screen data at `$332D` through a **custom character set
   at `$3800`** (`CHBASE=$04`). The glyphs are dashboard art, not text. The static
@@ -367,10 +374,17 @@ all `$2A` green in this frame) and can be re-tinted by DLI.
   mode-4 dashboard cells** — `setup_dial_bar_draw ($444A)` / `draw_object_column
   ($43E8)` plot a vertical bar via a target-address table at `$4581`, whose
   entries point into `$33xx/$34xx` (i.e. *into the `$332D` mode-4 region* — **not**
-  P/M). These are the fuel / altitude / scan-strength style bar indicators.
-- **Numeric readouts [C]:** BCD digits (score, level, counts) rendered into the
-  same mode-4 cells via `render_bcd_digits_supp_all ($49BA)` / `render_bcd_counter`
-  / `bin_to_bcd`, with leading-zero suppression; dest pointer `$C5/$C6`.
+  P/M). These are the manual's bar-style indicators: **Thrust Level (4)**,
+  **Dangerous Altitude (5)**, **Wing Clearance Bars (3)**, and the **Altimeter
+  (7)** (a dual bar — red = terrain height, light-blue = ship height; "altitude
+  above ground" = how much light-blue shows). **[~]** on which `$4581` slot is
+  which gauge.
+- **Numeric readouts [C]:** BCD digits — the **Score (1)** and level/counts —
+  rendered into the same mode-4 cells via `render_bcd_digits_supp_all ($49BA)` /
+  `render_bcd_counter` / `bin_to_bcd`, with leading-zero suppression; dest
+  pointer `$C5/$C6`.
+- **Compass (2) [~]:** a heading/direction indicator; small char-cell element in
+  the panel (exact cells not isolated).
 - **Per-frame refresh [C]:** `update_gauge_digits ($548D)` runs each VBI (from
   `vbi_deferred_dispatch $534D`), BCD-stepping the gauge digit arrays
   (`$0679/$06A3/$06B1/$06BF/$06CD/$06DB/$06E9/$066B`) toward their targets.
@@ -392,16 +406,19 @@ timer (`$063E`); `clear_message_buffer ($480B)` blanks it. Shows mode strings
 
 > **Amiga:** ordinary text blit with a flashing colour; trivial.
 
-### 11.7 The mode-D bitmap strip (`$350D`)
+### 11.7 The Artificial Horizon — mode-D bitmap strip (`$350D`)
 
 A short **ANTIC mode D** (GR.7, 160×2, 4-colour) band — 4 DL entries, 8
 scanlines — sits between the terrain and the dashboard, screen data at `$350D`.
-Its content is a small 4-colour bitmap; **[~]** its precise role (long-range
-scanner display vs. the dashboard's top curved graphic vs. a horizon/aim strip)
-is not yet pinned — it is the one region whose semantics need a follow-up. The
-DLI `dli_handler_game2 ($6CC2)` fires around here.
+This is the manual's **Artificial Horizon (6)**: "indicates your ship's current
+bank (left/right) and climb (up/down)." That is exactly why this one instrument
+is a **bitmap** while the rest of the dashboard is character cells — it needs a
+freely tiltable/sliding horizon line that char cells can't express. The DLI
+`dli_handler_game2 ($6CC2)` fires around here. **[~]** on the exact draw routine
+(identity is manual-confirmed + matches the bitmap mode and position).
 
-> **Amiga:** small 4-colour bitmap region; decide once its role is confirmed.
+> **Amiga:** small 4-colour bitmap region; draw a rotated/offset horizon line per
+> frame from the ship's bank/pitch (`$0025/26` pitch, `$0028/29` roll).
 
 ### 11.8 Summary — recommended Amiga technique per element
 
@@ -414,7 +431,8 @@ DLI `dli_handler_game2 ($6CC2)` fires around here.
 | Falling object / shot | P1 strip `$0D98` | sprite or blit |
 | Rescued pilot | `pilot_render` (player/playfield) | sprite/blit |
 | Dashboard panel | mode-4 charset art `$332D`/`$3800` | static bitmap (blit once) |
-| Bar gauges | char-cell columns (`draw_object_column`) | small blits into panel bitmap |
-| Numeric readouts | BCD digits in mode-4 cells | digit blits |
+| Bar gauges (Thrust, Dangerous Alt, Wing Clearance, Altimeter) | char-cell columns (`draw_object_column`) | small blits into panel bitmap |
+| Score + numeric readouts | BCD digits in mode-4 cells | digit blits |
+| Compass | char-cell element | small blit |
+| Artificial Horizon | GR.7 bitmap strip `$350D` | tiltable horizon line, drawn per frame |
 | Status/message line | mode 6 text `$32B5` | text blit + flash |
-| Mode-D strip `$350D` | GR.7 bitmap | 4-colour bitmap (role TBC) |
