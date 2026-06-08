@@ -31,9 +31,10 @@
 #include "PaulaAudio.h"
 
 // Native handler functions — see NativeHandlers.cpp and SfxPlayer.cpp.
-extern "C" void vbi_handler_game_native(void);        // $52D7: timer cascade
-extern "C" void update_blink_timer_006e_native(void); // $4131: cockpit blink
-extern "C" void sfx_voice_tick_native(void);          // $70F9: SFX audio
+extern "C" void vbi_handler_game_native(void);                  // $52D7: timer cascade
+extern "C" void update_blink_timer_006e_native(void);           // $4131: cockpit blink
+extern "C" void copy_altitude_graphic_to_screen_native(void);   // $782A: title text
+extern "C" void sfx_voice_tick_native(void);                    // $70F9: SFX audio
 
 extern "C" volatile uint8_t mem[65536];
 
@@ -265,16 +266,11 @@ void StandbyScene::initialize()
     mem[0x00D5] = 0x78;   // COLPF1 = blue title text
     mem[0x00D8] = 0x06;   // COLBK  = grey title background
 
-    // Initialise title text: copy Block1 ("rescue on fractalus") from $5A9F
-    // into $32B7-$32CA (20 visible chars).  On the real Atari this is written by
-    // copy_altitude_graphic_to_screen ($782A, X=$13) during the Screen 2 Station
-    // cinematic.  The snapshot captured the end state ("©1985..." = Block2); we
-    // restore the correct Standby title here.
-    static const uint8_t kTitleBlock1[20] = {
-        0x5A,0x72,0x65,0x73,0x63,0x75,0x65,0x40,0x6F,0x6E,
-        0x40,0x66,0x72,0x61,0x63,0x74,0x61,0x6C,0x75,0x73
-    };
-    for (int i = 0; i < 20; i++) mem[0x32B7 + i] = kTitleBlock1[i];
+    // Seed $0091=$C0 so copy_altitude_graphic_to_screen_native fires on the first
+    // update() call and writes Block1 ("rescue on fractalus") to $32B7.
+    // On the real Atari, $0091 is set by the SFX sequencer; we prime it once here
+    // so the title is correct before the first SFX tick produces a $C0 byte.
+    mem[0x0091] = 0xC0;
 
     // Initial render: populate all three bitmaps from mem[] once so that
     // render() called from the main loop has nothing to do until data changes.
@@ -285,7 +281,9 @@ void StandbyScene::update(uint16_t frame)
 {
     vbi_handler_game_native();           // $52D7: attract timer cascade
     update_blink_timer_006e_native();    // $4131: cockpit blink lights
-    if (mem[0x00E7] != 0) sfx_voice_tick_native();  // $70F9: SFX audio
+    if (mem[0x00E7] != 0) sfx_voice_tick_native();  // $70F9: SFX audio (sets $0091)
+    if (mem[0x060B] == 0)               // $62FB: title text (gated by $060B)
+        copy_altitude_graphic_to_screen_native();    // $782A: $0091→title string
 
     uint8_t next = 1 - active;
     buildCopperList(copperLists[next], frame);
