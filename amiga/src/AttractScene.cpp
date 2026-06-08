@@ -30,6 +30,7 @@
 // audio_attract: 6502-transpiled, kept as-is (complex + already working).
 extern "C" void audio_attract(void);
 // Native 68000 replacements for the other attract functions (attract_native.cpp).
+extern "C" void attract_mode_setup(void);    // one-time init (mirrors attract_mode_init setup)
 extern "C" void attract_anim_frame_native(void);
 extern "C" void attract_sub_1EB4_native(void);
 extern "C" void attract_sub_1F48_native(void);
@@ -205,6 +206,7 @@ void AttractScene::initialize()
 
     paula_audio_init();
     audio_ch1_init();
+    attract_mode_setup();    // must run after XEX is in mem[]: sets up DL + image data
 }
 
 void AttractScene::update(uint16_t frame)

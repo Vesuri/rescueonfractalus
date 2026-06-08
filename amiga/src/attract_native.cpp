@@ -185,11 +185,59 @@ static uint8_t attract_sub_1f51_native(uint8_t x)
 // ---- attract_sub_1F48_native ------------------------------------------------
 // Walks the linked list of animation channels starting at x=0, calling
 // attract_sub_1f51_native for each until the chain terminates (next link = 0).
+// Iteration cap prevents infinite loops on uninitialised/malformed channel data.
 
 extern "C" void attract_sub_1F48_native(void)
 {
     uint8_t x = 0;
-    do {
+    for (int guard = 0; guard < 64; guard++) {
         x = attract_sub_1f51_native(x);
-    } while (x != 0);
+        if (x == 0) break;
+    }
+}
+
+// ---- attract_mode_setup -----------------------------------------------------
+// Mirrors the one-time initialisation that attract_mode_init performs before
+// entering its attract loop.  Called once from AttractScene::initialize().
+// Hardware register writes (bus_write calls) are no-ops on the Amiga; we only
+// care about the mem[] state mutations and the two data-setup functions.
+
+extern "C" void attract_init_small(void);
+extern "C" void display_list_build(void);
+extern "C" void rle_decompress(void);
+
+extern "C" void attract_mode_setup(void)
+{
+    // Zero RTCLOK timers (mem[$0012-$0014]) and misc flag.
+    mem[0x0012] = 0;
+    mem[0x0013] = 0;
+    mem[0x0014] = 0;
+    mem[0x00B7] = 0;
+
+    // attract_init_small: sets mem[$009A]=$00, mem[$0098]=$00,
+    // mem[$009B]=mem[$276D+0].
+    attract_init_small();
+
+    // Initial timer for attract_sub_1EB4: $64 frames before first fire.
+    mem[0x009D] = 0x64;
+
+    // Frame counters used by attract_anim_frame.
+    mem[0x0088] = 2;
+    mem[0x0087] = 0;
+
+    // Build the attract display list at $B800 (Mode F rows, data at $0600).
+    // Writes to mem[$B800+] via bus_write (RAM enabled under OS ROM on Atari).
+    display_list_build();
+
+    // Decompress the attract image/data from $1BF4 into $283E.
+    // Source pointer: mem[$BB/$BC] = $1BF4.
+    // Dest pointer:   mem[$BD/$BE] = $283E.
+    mem[0x00BB] = 0xF4;
+    mem[0x00BC] = 0x1B;
+    mem[0x00BD] = 0x3E;
+    mem[0x00BE] = 0x28;
+    rle_decompress();
+
+    // Reset frame tick (VBI will set it non-zero; skip the Atari spin-wait).
+    mem[0x0080] = 0;
 }
