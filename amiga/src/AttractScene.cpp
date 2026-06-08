@@ -226,45 +226,67 @@ void AttractScene::update(uint16_t frame)
     active = next;
 }
 
+// Helper: expand 8 Mode-6 glyph bits to 16 doubled-pixel output bits (each bit → 2 bits).
+static uint16_t doubleGlyphBits(uint8_t g)
+{
+    uint16_t out = 0;
+    for (int b = 7; b >= 0; b--) {
+        if (g & (1u << b)) out |= (uint16_t)3u << (b * 2);
+    }
+    return out;
+}
+
 void AttractScene::render()
 {
-    // Mode F bitmap: 122 rows at mem[$0600], stride 40 bytes per row.
-    // display_list_build writes the attract DL to $B800 covering all 122 rows.
-    // Rows 0–41  → titleBitmap  (42 rows)
-    // Rows 42–121 → terrainBitmap rows 0–79 (last 6 rows stay zero = black)
-    //
+    // ---- terrain / door view ------------------------------------------------
+    // The attract DL at $3000 uses 86 Mode F rows starting at $2000, stride 46.
+    // ANTIC reads 40 bytes/row from there (6 bytes padding per row are ignored).
     // Layout in interleaved 2bp: 40 bytes plane1, 40 bytes plane2, per row.
-    // Plane2 stays zero (all pixels use only colour indices 0 and 1).
+    // Plane2 stays zero — all pixels use only colour indices 0 (background) and 1.
 
-    // ---- title (rows 0–41) --------------------------------------------------
-    uint8_t* tdest = (uint8_t*)titleBitmap->data;
-    for (int row = 0; row < (int)kTitleHeight; row++) {
-        const uint8_t* src = (const uint8_t*)&mem[0x0600 + row * 40];
-        uint8_t* plane1 = tdest;
-        uint8_t* plane2 = tdest + 40;
+    uint8_t* vdest = (uint8_t*)terrainBitmap->data;
+    for (int row = 0; row < (int)kTerrainHeight; row++) {
+        const uint8_t* src = (const uint8_t*)&mem[0x2000 + row * 46];
+        uint8_t* plane1 = vdest;
+        uint8_t* plane2 = vdest + 40;
         for (int b = 0; b < 40; b++) {
             plane1[b] = src[b];
             plane2[b] = 0;
         }
-        tdest += 80;
+        vdest += 80;
     }
 
-    // ---- terrain / door view (rows 42–121 of $0600, up to kTerrainHeight) ---
-    uint8_t* vdest = (uint8_t*)terrainBitmap->data;
-    const int kModeF_TerrainRows = 122 - (int)kTitleHeight;  // = 80
-    for (int row = 0; row < (int)kTerrainHeight; row++) {
-        uint8_t* plane1 = vdest;
-        uint8_t* plane2 = vdest + 40;
-        if (row < kModeF_TerrainRows) {
-            const uint8_t* src = (const uint8_t*)&mem[0x0600 + (kTitleHeight + row) * 40];
-            for (int b = 0; b < 40; b++) {
-                plane1[b] = src[b];
-                plane2[b] = 0;
-            }
-        } else {
-            for (int b = 0; b < 40; b++) { plane1[b] = 0; plane2[b] = 0; }
+    // ---- title region -------------------------------------------------------
+    // The DL's title section is Mode 6 (character mode, 20 double-wide chars,
+    // 8 scanlines tall) from screen RAM $32B5 using the custom charset at $0200.
+    // Clear the bitmap first then render Mode 6 at the right row offset.
+    // The DL has 27 blank scanlines + Mode 6 starts at DL-line 27 → in our
+    // 42-line title bitmap the Mode 6 text starts at line (27 - 6) = 21.
+    // (6-line offset because the Atari display starts 6 lines before ours.)
+    static const int kTitleTextRow = 21;
+    static const uint16_t kScreenRAM  = 0x32B5;
+    static const uint16_t kCharsetBase = 0x0200;
+
+    uint8_t* tbmp = (uint8_t*)titleBitmap->data;
+    for (int i = 0; i < (int)kTitleHeight * 80; i++) tbmp[i] = 0;
+
+    for (int col = 0; col < 20; col++) {
+        uint8_t charByte = mem[kScreenRAM + col];
+        uint8_t charIdx  = charByte & 0x3Fu;           // bits 5-0 = glyph index
+        uint16_t glyphBase = kCharsetBase + charIdx * 8u;
+
+        for (int scanline = 0; scanline < 8; scanline++) {
+            int destRow = kTitleTextRow + scanline;
+            if (destRow >= (int)kTitleHeight) break;
+
+            uint8_t  glyph   = mem[glyphBase + scanline];
+            uint16_t doubled = doubleGlyphBits(glyph);
+
+            // Each doubled character occupies 2 bytes at col*2 in plane1.
+            uint8_t* rowPtr = tbmp + destRow * 80;
+            rowPtr[col * 2]     = (uint8_t)(doubled >> 8);
+            rowPtr[col * 2 + 1] = (uint8_t)(doubled & 0xFF);
         }
-        vdest += 80;
     }
 }
 
