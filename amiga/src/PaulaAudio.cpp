@@ -1,0 +1,195 @@
+// Paula audio backend: POKEY register writes → Amiga Paula DMA.
+//
+// Frequency mapping (mirrors PlatformSDL::updateChannelFreq):
+//   POKEY clock = 1789773 Hz (NTSC), base divider = 28 (64 kHz) or 114 (15 kHz).
+//   AUDCTL bits: 0x01=15kHz, 0x08=CH0+CH1 16-bit chain, 0x10=CH2+CH3 chain,
+//                0x20=CH0 uses 1.79 MHz, 0x40=CH2 uses 1.79 MHz.
+//   Paula period for 2-sample square wave: PAULA_CLOCK / (2 * freq_hz).
+//
+// Volume mapping: AUDC[3:0] * 4 → Paula AUDxVOL (0..64); 0 if bit 4 set.
+//
+// XEX loading: the 43 KB rof.xex is embedded in .rodata (fast RAM) via incbin.s
+// and is parsed into mem[] on init, so audio_attract can read its tables.
+
+#define ECS_SPECIFIC
+#include <hardware/dmabits.h>
+#include "../framework/AmigaHardware.h"
+#include "PaulaAudio.h"
+
+// mem[] and cpu are defined in src/cpu/cpu.c (compiled for m68k as audio/cpu.o)
+extern "C" volatile uint8_t mem[65536];
+
+// XEX image embedded in incbin.s
+extern "C" uint8_t rof_xex[];
+extern "C" uint8_t rof_xex_end[];
+
+// Square wave sample buffer in chip RAM (Paula DMA must reach chip RAM)
+static __chip uint8_t paula_wave[2] = { 0x7F, 0x81 };  // +127, -127
+
+// Shadow of POKEY registers $D200..$D20F (bus_write doesn't update mem[] for
+// hardware-range writes, so we maintain our own copy here)
+static uint8_t pokey[16];   // [0]=AUDF1 [1]=AUDC1 ... [8]=AUDCTL ...
+
+// POKEY LFSR (17-bit, polynomial x^17+x^5+1; matches Platform::pokeyRandomStep)
+static uint32_t lfsr_state = 0x1FFFFu;
+
+static uint8_t pokey_random_step(void)
+{
+    uint32_t bit = ((lfsr_state >> 16) ^ (lfsr_state >> 4)) & 1u;
+    lfsr_state = ((lfsr_state << 1) | bit) & 0x1FFFFu;
+    return (uint8_t)lfsr_state;
+}
+
+// ---- Paula register helpers --------------------------------------------------
+// Layout: AUD0=$DFF0A0, AUD1=$DFF0B0, AUD2=$DFF0C0, AUD3=$DFF0D0
+// Within each: +0 PTR(32), +4 LEN(16), +6 PER(16), +8 VOL(16)
+static const uint32_t kAudioBase[4] = {
+    0xDFF0A0u, 0xDFF0B0u, 0xDFF0C0u, 0xDFF0D0u
+};
+#define AUD_PER(ch) (*(volatile uint16_t*)(kAudioBase[ch] + 6))
+#define AUD_VOL(ch) (*(volatile uint16_t*)(kAudioBase[ch] + 8))
+#define AUD_PTR(ch) (*(volatile uint32_t*)(kAudioBase[ch] + 0))
+#define AUD_LEN(ch) (*(volatile uint16_t*)(kAudioBase[ch] + 4))
+
+// ---- POKEY→Paula frequency conversion ----------------------------------------
+static uint16_t pokey_period(uint8_t ch, uint8_t audf, uint8_t audctl)
+{
+    static const uint32_t POKEY_CLOCK = 1789773u;
+    static const uint32_t PAULA_CLOCK = 3546895u;
+
+    uint32_t base_div = (audctl & 0x01u) ? 114u : 28u;
+    bool use_179 = ((ch == 0) && (audctl & 0x20u)) ||
+                   ((ch == 2) && (audctl & 0x40u));
+    bool chain_lo = (ch == 0 && (audctl & 0x08u)) ||
+                    (ch == 2 && (audctl & 0x10u));
+
+    uint32_t divider;
+    if (chain_lo) {
+        // 16-bit chain: AUDF[lo] + 256*AUDF[hi] + 1
+        uint8_t audf_hi = pokey[(ch + 1) * 2];  // next channel AUDF
+        divider = (uint32_t)audf + 256u * audf_hi + 1u;
+    } else {
+        divider = (uint32_t)audf + 1u;
+    }
+
+    uint32_t freq;
+    if (use_179) {
+        freq = POKEY_CLOCK / divider;
+    } else {
+        freq = POKEY_CLOCK / (base_div * divider);
+    }
+
+    if (freq < 50u || freq > 28000u) return 0u;  // out of range → silence
+
+    uint32_t per = PAULA_CLOCK / (2u * freq);
+    if (per < 124u)   per = 124u;   // Paula minimum period
+    if (per > 0xFFFFu) per = 0xFFFFu;
+    return (uint16_t)per;
+}
+
+static void update_paula_channel(uint8_t ch)
+{
+    uint8_t audf   = pokey[ch * 2];
+    uint8_t audc   = pokey[ch * 2 + 1];
+    uint8_t audctl = pokey[8];
+
+    uint8_t vol;
+    if (audc & 0x10u) {
+        vol = 0;  // VOL_ONLY = DC = treat as silence
+    } else {
+        vol = (audc & 0x0Fu) * 4u;  // map 0..15 → 0..60
+    }
+
+    uint16_t per = pokey_period(ch, audf, audctl);
+    if (per == 0u) vol = 0u;  // out-of-range frequency → silence
+
+    if (per != 0u) AUD_PER(ch) = per;
+    AUD_VOL(ch) = vol;
+}
+
+// ---- XEX loader --------------------------------------------------------------
+static void load_xex(void)
+{
+    const uint8_t* p = rof_xex;
+    const uint8_t* end = rof_xex_end;
+    if (p + 2 > end) return;
+    if (p[0] == 0xFFu && p[1] == 0xFFu) p += 2;
+
+    while (p + 4 <= end) {
+        if (p[0] == 0xFFu && p[1] == 0xFFu) { p += 2; continue; }
+        uint16_t seg_s = (uint16_t)p[0] | ((uint16_t)p[1] << 8);
+        uint16_t seg_e = (uint16_t)p[2] | ((uint16_t)p[3] << 8);
+        p += 4;
+        if (seg_e < seg_s) continue;
+        uint16_t len = seg_e - seg_s + 1u;
+        for (uint16_t i = 0; i < len && p < end; i++) {
+            mem[seg_s + i] = *p++;
+        }
+    }
+}
+
+// ---- public interface --------------------------------------------------------
+void paula_audio_init(void)
+{
+    load_xex();
+
+    // Clear POKEY shadow and LFSR
+    for (int i = 0; i < 16; i++) pokey[i] = 0;
+    lfsr_state = 0x1FFFFu;
+
+    // Point all Paula channels at the square wave, start silent
+    for (int ch = 0; ch < 4; ch++) {
+        AUD_PTR(ch) = (uint32_t)paula_wave;
+        AUD_LEN(ch) = 1u;   // 1 word = 2 bytes
+        AUD_PER(ch) = 256u; // default period, updated by POKEY writes
+        AUD_VOL(ch) = 0u;   // silent until AUDC writes activate channels
+    }
+
+    // Enable audio DMA for all 4 channels (DMAF_AUD0..3 = bits 0..3)
+    *dmaconPointer = (uint16_t)(DMAF_SETCLR | 0x000Fu);
+}
+
+void paula_audio_shutdown(void)
+{
+    // Silence and disable audio DMA
+    for (int ch = 0; ch < 4; ch++) AUD_VOL(ch) = 0u;
+    *dmaconPointer = 0x000Fu;  // clear AUD0..3 (no SETCLR = clear)
+}
+
+// ---- platform bridge (C linkage, called from bus.h inlines in rof_gen.c) ------
+extern "C" {
+
+uint8_t platform_hw_read(uint16_t addr)
+{
+    if (addr == 0xD20Au) return pokey_random_step();  // POKEY RANDOM register
+    if (addr >= 0xD200u && addr < 0xD210u) return pokey[addr - 0xD200u];
+    return 0u;
+}
+
+void platform_hw_write(uint16_t addr, uint8_t val)
+{
+    if (addr < 0xD200u || addr >= 0xD210u) return;  // only POKEY range
+    uint8_t reg = (uint8_t)(addr - 0xD200u);
+    pokey[reg] = val;
+
+    if (reg <= 7u) {
+        // AUDF or AUDC write — update the affected channel
+        uint8_t ch = reg >> 1u;
+        update_paula_channel(ch);
+    } else if (reg == 8u) {
+        // AUDCTL — recompute all channel periods
+        for (uint8_t ch = 0; ch < 4; ch++) update_paula_channel(ch);
+    }
+}
+
+// These platform functions are needed to compile rof_gen.c cleanly.
+// They're all no-ops on Amiga (the 6502 display/event code does nothing here).
+void platform_shadow_write(uint16_t /*addr*/, uint8_t /*val*/) {}
+void platform_register_vbi(uint16_t /*addr*/, void (*/*fn*/)(void)) {}
+void platform_indirect_jmp(uint16_t /*addr*/) {}
+void platform_render_frame(void) {}
+void platform_poll_events(void) {}
+void platform_tick_vbi(void) {}
+int  platform_load_image(const char* /*path*/) { return 0; }
+
+} // extern "C"

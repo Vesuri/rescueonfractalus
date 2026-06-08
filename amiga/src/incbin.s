@@ -16,3 +16,13 @@ attract_raw:
 	.global terrain_raw
 terrain_raw:
 	.incbin "assets/terrain.raw"
+
+| rof.xex — Atari XEX ROM image (fast RAM: CPU access only, no DMA)
+|   Loaded into mem[] at startup so audio_attract can read its tables ($1BE5 etc.)
+	.section .rodata
+	.balign 4
+	.global rof_xex
+	.global rof_xex_end
+rof_xex:
+	.incbin "../rof.xex"
+rof_xex_end:

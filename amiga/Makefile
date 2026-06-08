@@ -17,7 +17,10 @@ OBJDUMP  = m68k-amiga-elf-objdump
 SDKDIR   = $(abspath $(dir $(shell which $(CC)))../m68k-amiga-elf/sys-include)
 SUPPORT  = $(abspath $(dir $(shell which $(CC)))../../support)
 
-$(shell mkdir -p obj/framework obj/src out)
+# Repository root (parent of amiga/)
+REPO     = ..
+
+$(shell mkdir -p obj/framework obj/src obj/audio out)
 
 # C++ sources: framework hw classes + RoF application
 FW_CPPS  := $(wildcard framework/*.cpp)
@@ -26,15 +29,31 @@ FW_OBJS  := $(patsubst framework/%.cpp,obj/framework/%.o,$(FW_CPPS))
 SRC_OBJS := $(patsubst src/%.cpp,obj/src/%.o,$(SRC_CPPS))
 CPP_OBJS := $(FW_OBJS) $(SRC_OBJS)
 
+# M5 audio slice: the 6502-converted cpu/bus core + generated audio functions.
+# Compiled as plain C (not C++), with include paths into the repo src tree.
+# --gc-sections keeps only what audio_attract transitively calls.
+AUDIO_C_SRCS := $(REPO)/src/cpu/cpu.c $(REPO)/src/gen/rof_gen.c
+AUDIO_C_OBJS := obj/audio/cpu.o obj/audio/rof_gen.o
+
 # Support runtime (freestanding CRT: program entry, memset…)
 S_OBJS   := obj/gcc8_a_support.o obj/incbin.o
 C_OBJS   := obj/gcc8_c_support.o
 
-OBJECTS  := $(CPP_OBJS) $(C_OBJS) $(S_OBJS)
+OBJECTS  := $(CPP_OBJS) $(C_OBJS) $(S_OBJS) $(AUDIO_C_OBJS)
 
 WARN      = -Wall -Wno-unused-function -Wno-unused-parameter -Wno-unused-variable
 # -m68000: target is A500 68000. -msoft-float: no FPU.
 # -DNO_ASSEMBLER: use the portable C++ bodies; no *Assembler.s or vasm step.
+# Audio C flags: same base but with repo src/ include paths for cpu.h/bus.h/rof_gen.c
+AUDIO_CINCLUDES = -I"$(CURDIR)/framework/compat-include" \
+                  -I"$(REPO)/src/cpu" \
+                  -I"$(REPO)/src/gen" \
+                  -I"$(REPO)/src/platform"
+AUDIO_CFLAGS  = -g -MP -MMD -m68000 -msoft-float -O2 -nostdlib -fomit-frame-pointer \
+                -fno-tree-loop-distribution -ffunction-sections -fdata-sections \
+                -Wno-unused-function -Wno-unused-parameter -Wno-unused-variable \
+                -Wno-implicit-function-declaration -Wno-int-conversion \
+                $(AUDIO_CINCLUDES)
 CCFLAGS   = -g -MP -MMD -m68000 -msoft-float -O2 -nostdlib -fomit-frame-pointer \
             -fno-tree-loop-distribution -ffunction-sections -fdata-sections \
             -DNO_ASSEMBLER $(WARN)
@@ -78,7 +97,16 @@ obj/incbin.o : src/incbin.s
 	$(info ASM  $<)
 	@$(AS) $(ASFLAGS) -o $@ "$(CURDIR)/src/incbin.s"
 
+# Audio C translation units (rof_gen.c is large; GC sections keep only the audio slice)
+obj/audio/cpu.o : $(REPO)/src/cpu/cpu.c
+	$(info C    $< [audio])
+	@$(CC) $(AUDIO_CFLAGS) -c -o $@ "$(abspath $<)"
+
+obj/audio/rof_gen.o : $(REPO)/src/gen/rof_gen.c
+	$(info C    $< [audio — may take ~30 s])
+	@$(CC) $(AUDIO_CFLAGS) -c -o $@ "$(abspath $<)"
+
 clean:
 	@$(RM) -r obj/ out/
 
--include $(CPP_OBJS:.o=.d) $(C_OBJS:.o=.d)
+-include $(CPP_OBJS:.o=.d) $(C_OBJS:.o=.d) $(AUDIO_C_OBJS:.o=.d)

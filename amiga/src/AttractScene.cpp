@@ -1,3 +1,4 @@
+// M5: 6502-converted POKEY audio player → Paula DMA.
 // M4: cockpit chrome as hardware sprites.
 // Two sprites (0 = left canopy post, 1 = right canopy post) placed at the edges
 // of the terrain viewport. Sprites 2-7 silenced with the null sprite.
@@ -30,6 +31,13 @@
 #include "../framework/Palette.h"
 #include "../framework/Sprite.h"
 #include "AttractScene.h"
+#include "PaulaAudio.h"
+
+// 6502-converted audio functions (from src/gen/rof_gen.c compiled for m68k)
+extern "C" void audio_attract(void);
+extern "C" void audio_ch1_init(void);
+// mem[] (shared 6502 address space) — defined in audio/cpu.o
+extern "C" volatile uint8_t mem[65536];
 
 #include "../assets/attract_pal.h"
 #include "../assets/terrain_pal.h"
@@ -186,10 +194,21 @@ void AttractScene::initialize()
     buildCopperList(copperLists[1], 0);
     active = 0;
     AmigaHardware::setCopperList(*copperLists[active], true);
+
+    // M5: initialise Paula audio (loads XEX + sets up DMA) and set AUDF1/AUDF2
+    paula_audio_init();
+    audio_ch1_init();   // sets AUDF1=0xFF, AUDF2=0xFC (carry-tone frequencies)
 }
 
 void AttractScene::update(uint16_t frame)
 {
+    // M5: advance VBI counter (simulates vbi_handler_attract counter logic)
+    // mem[$0014] increments each frame; when it wraps, mem[$0013] increments.
+    // audio_attract reads these to drive its volume-envelope state machine.
+    mem[0x0014]++;
+    if (mem[0x0014] == 0) mem[0x0013]++;
+    audio_attract();
+
     uint8_t next = 1 - active;
     buildCopperList(copperLists[next], frame);
     AmigaHardware::setCopperList(*copperLists[next], false);
@@ -201,6 +220,7 @@ void AttractScene::render() {}
 void AttractScene::shutdown()
 {
     for (int i = 0; i < 2; i++) { delete copperLists[i]; copperLists[i] = nullptr; }
+    paula_audio_shutdown();
     delete bitmap;        bitmap        = nullptr;
     delete terrainBitmap; terrainBitmap = nullptr;
     delete palette;       palette       = nullptr;
