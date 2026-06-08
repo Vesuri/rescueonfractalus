@@ -205,6 +205,13 @@ void AttractScene::initialize()
     AmigaHardware::setCopperList(*copperLists[active], true);
 
     paula_audio_init();      // loads attract_mem.bin into mem[] (attract-mode snapshot)
+
+    // The snapshot was captured with $0013=4 (attract exit condition).
+    // Reset RTCLOK so audio_attract starts from the beginning of its sequence.
+    mem[0x0013] = 0;
+    mem[0x0014] = 0;
+    mem[0x0080] = 0;
+
     audio_ch1_init();
 }
 
