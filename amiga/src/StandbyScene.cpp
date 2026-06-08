@@ -287,34 +287,15 @@ static void decode2bppByte(uint8_t src, uint8_t* p1out, uint8_t* p2out)
     *p2out = p2;
 }
 
-// NTSC-blended mode-6 glyph render (2bp, 3-colour output).
-// On real Atari NTSC, adjacent differing bits ($55/$AA patterns) colour-blend
-// into a third hue via carrier phase cancellation.  We approximate this by
-// assigning adjacent same-bits → col0/col1, adjacent differing-bits → col2.
-//
-// Layout: glyph byte = 8 bits → 4 adjacent pairs (b7b6, b5b4, b3b2, b1b0).
-// Each pair → 4 Amiga pixels (doubled: 2px per bit).
-// In interleaved 2bp row (40 bytes plane1 + 40 bytes plane2):
-//   pair 0 → high nibble of plane bytes at col*2
-//   pair 1 → low  nibble of plane bytes at col*2
-//   pair 2 → high nibble of plane bytes at col*2+1
-//   pair 3 → low  nibble of plane bytes at col*2+1
-// Amiga 2bp: col0 = p1=0,p2=0 | col1 = p1=1,p2=0 | col2 = p1=0,p2=1
-static void renderNTSCGlyph(uint8_t g, uint8_t* p1, uint8_t* p2)
+
+// Mode-6 glyph expand: each of 8 bits → 2 Amiga pixels (doubled).
+// Result is 16 bits for plane1; plane2 stays 0 → only col0/col1 used.
+static uint16_t doubleGlyphBits(uint8_t g)
 {
-    p1[0] = p1[1] = p2[0] = p2[1] = 0;
-    for (int i = 0; i < 4; i++) {
-        uint8_t bit_hi = (g >> (7 - i*2)) & 1u;
-        uint8_t bit_lo = (g >> (6 - i*2)) & 1u;
-        uint8_t mask   = (i & 1) ? 0x0Fu : 0xF0u;   // even pairs → high nibble
-        uint8_t* b1    = (i < 2) ? &p1[0] : &p1[1];
-        uint8_t* b2    = (i < 2) ? &p2[0] : &p2[1];
-        if (bit_hi == bit_lo) {
-            if (bit_hi) *b1 |= mask;   // col1: plane1 set
-        } else {
-            *b2 |= mask;               // col2: plane2 set (NTSC blend)
-        }
-    }
+    uint16_t out = 0;
+    for (int b = 7; b >= 0; b--)
+        if (g & (1u << b)) out |= (uint16_t)3u << (b * 2);
+    return out;
 }
 
 // GTIA mode-10 nibble → Amiga 2bp colour index.
@@ -371,24 +352,21 @@ void StandbyScene::render()
         if (charByte == titleShadow[col]) continue;   // unchanged — skip
         titleShadow[col] = charByte;
 
-        // Clear this character's 8 scanlines in both planes
-        for (int scanline = 0; scanline < 8; scanline++) {
-            int destRow = kTitleTextRow + scanline;
-            if (destRow >= (int)kTitleHeight) break;
-            uint8_t* row = tbmp + destRow * 80;
-            row[col*2] = 0; row[col*2+1] = 0;
-            row[40+col*2] = 0; row[40+col*2+1] = 0;
-        }
-
-        // Re-render this char with NTSC blending
+        // Re-render this char: mode-6 is 1bpp — each glyph bit → col0 or col1,
+        // doubled to 2 Amiga pixels.  Result goes to plane1 only (plane2=0).
+        // (renderNTSCGlyph was wrong here — NTSC blending is for modes 2-5, not 6.)
         uint8_t charIdx    = charByte & 0x3Fu;
         uint16_t glyphBase = kCharsetBase + charIdx * 8u;
         for (int scanline = 0; scanline < 8; scanline++) {
             int destRow = kTitleTextRow + scanline;
             if (destRow >= (int)kTitleHeight) break;
             uint8_t glyph = mem[glyphBase + (uint16_t)scanline];
-            uint8_t* row  = tbmp + destRow * 80;
-            renderNTSCGlyph(glyph, &row[col*2], &row[40+col*2]);
+            uint16_t doubled = doubleGlyphBits(glyph);
+            uint8_t* row = tbmp + destRow * 80;
+            row[col*2]       = (uint8_t)(doubled >> 8);
+            row[col*2+1]     = (uint8_t)(doubled & 0xFF);
+            row[40+col*2]    = 0;   // plane2=0: only col0/col1 used
+            row[40+col*2+1]  = 0;
         }
     }
 
