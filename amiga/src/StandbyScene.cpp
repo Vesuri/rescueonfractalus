@@ -27,16 +27,6 @@
 #include "StandbyScene.h"
 #include "PaulaAudio.h"
 
-// station_audio: 6502-transpiled, kept as-is (complex + already working).
-extern "C" void station_audio(void);
-// Native 68000 replacements for the other attract functions (station_native.cpp).
-extern "C" void station_setup(void);    // one-time init (mirrors station_init setup)
-extern "C" void station_anim_frame_native(void);
-extern "C" void station_sub_1EB4_native(void);
-extern "C" void station_sub_1F48_native(void);
-// pmg_update_station and pmg_colors_station dropped: only modify PMG/GTIA
-// registers not used on the Amiga.
-extern "C" void station_audio_ch1_init(void);
 extern "C" volatile uint8_t mem[65536];
 
 #include "../assets/title_pal.h"
@@ -204,28 +194,12 @@ void StandbyScene::initialize()
     active = 0;
     AmigaHardware::setCopperList(*copperLists[active], true);
 
-    paula_audio_init();      // loads standby_mem.bin into mem[] (attract-mode snapshot)
-
-    // The snapshot was captured with $0013=4 (attract exit condition).
-    // Reset RTCLOK so station_audio starts from the beginning of its sequence.
-    mem[0x0013] = 0;
-    mem[0x0014] = 0;
-    mem[0x0080] = 0;
-
-    station_audio_ch1_init();
+    paula_audio_init();      // loads screen3_mem.bin into mem[] (Standby scene snapshot)
 }
 
 void StandbyScene::update(uint16_t frame)
 {
     blinkFrame++;
-
-    // Attract state machine — same order as the Atari attract loop.
-    // Timers (mem[$0080/$0014/$0013]) are incremented by the VBI handler.
-    // pmg_update_station / pmg_colors_station dropped (PMG/GTIA only).
-    station_anim_frame_native();
-    station_audio();
-    station_sub_1EB4_native();
-    station_sub_1F48_native();
 
     uint8_t next = 1 - active;
     buildCopperList(copperLists[next], frame);
@@ -243,13 +217,26 @@ static uint16_t doubleGlyphBits(uint8_t g)
     return out;
 }
 
+// GTIA mode-10 nibble → Amiga 2bp colour index.
+// Zones: 0→bg, 1-2→COLPF0-1 (col1), 3-4→COLPF2-3 (col2), 5-8+→COLPM0-3 (col3).
+// Each Atari byte = 2 GTIA pixels (4 Amiga pixels each); 40 bytes → 80 GTIA px → 320 Amiga px.
+// In the 2bp interleaved layout (40 bytes plane1, 40 bytes plane2 per row):
+//   byte b: high nibble covers Amiga pixels 8b..8b+3 → plane bits [7:4] of byte b
+//            low nibble covers Amiga pixels 8b+4..8b+7 → plane bits [3:0] of byte b
+static const uint8_t kNibbleColour[16] = {
+    0,           // 0  → col0 (COLBK / sky)
+    1, 1,        // 1-2 → col1 (COLPF0-1)
+    2, 2,        // 3-4 → col2 (COLPF2-3)
+    3, 3, 3, 3,  // 5-8 → col3 (COLPM0-3)
+    3, 3, 3, 3, 3, 3, 3  // 9-15 → col3
+};
+
 void StandbyScene::render()
 {
     // ---- terrain / door view ------------------------------------------------
-    // The attract DL at $3000 uses 86 Mode F rows starting at $2000, stride 46.
-    // ANTIC reads 40 bytes/row from there (6 bytes padding per row are ignored).
-    // Layout in interleaved 2bp: 40 bytes plane1, 40 bytes plane2, per row.
-    // Plane2 stays zero — all pixels use only colour indices 0 (background) and 1.
+    // DL $3000: 86 Mode-F rows from $2000, stride 46 (40 data + 6 pad), GTIA mode 10.
+    // Each byte = two 4-bit nibbles → two GTIA pixels, each 4 Amiga pixels wide.
+    // Interleaved 2bp row = 40 bytes plane1 + 40 bytes plane2.
 
     uint8_t* vdest = (uint8_t*)terrainBitmap->data;
     for (int row = 0; row < (int)kTerrainHeight; row++) {
@@ -257,8 +244,10 @@ void StandbyScene::render()
         uint8_t* plane1 = vdest;
         uint8_t* plane2 = vdest + 40;
         for (int b = 0; b < 40; b++) {
-            plane1[b] = src[b];
-            plane2[b] = 0;
+            uint8_t hi = kNibbleColour[(src[b] >> 4) & 0xF];
+            uint8_t lo = kNibbleColour[src[b] & 0xF];
+            plane1[b] = (uint8_t)(((hi & 1) ? 0xF0u : 0u) | ((lo & 1) ? 0x0Fu : 0u));
+            plane2[b] = (uint8_t)(((hi & 2) ? 0xF0u : 0u) | ((lo & 2) ? 0x0Fu : 0u));
         }
         vdest += 80;
     }
