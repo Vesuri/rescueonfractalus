@@ -15,7 +15,7 @@ public:
     void shutdown();
 private:
     void buildCopperList(CopperList* cl, uint16_t frame);
-    void fillSpriteData(Sprite* s, uint16_t sprA);
+    void fillSpriteData(Sprite* s, bool isRight);
 
     CopperList* copperLists[2] = { nullptr, nullptr };
     Bitmap*     bitmap         = nullptr;

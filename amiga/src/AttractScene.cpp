@@ -63,17 +63,29 @@ static const uint16_t kBPLCON0_2P = (uint16_t)((2 << PLNCNTSHFT) | USE_BPLCON3);
 
 // Sprite horizontal positions in raster lores-pixel units (SPRPOS HSTART, 9-bit).
 // Standard OCS PAL lores display: left edge ≈ 0x81 = 129 raster pixels from hsync.
-// Right-post starts 4 pixels before right edge: 129 + 316 = 445 (< 511 max). OK.
-static const uint16_t kSprXLeft  = 0x81;          // screen pixel 0
-static const uint16_t kSprXRight = 0x81 + 316;    // screen pixel 316 → bar to 319
+// Left post corrected +17 px from original estimate; right post -19 px.
+// Right HSTART is a further -12 px to make room for the full 12-pixel slant offset
+// at the top (see fillSpriteData): bar at HSTART+12 = 285+12 = 297 at top.
+static const uint16_t kSprXLeft  = 0x81 + 17;     // top bar at screen pixel 17
+static const uint16_t kSprXRight = 0x81 + 285;    // top bar at screen pixel 297 (+12 slant offset)
 
-// Canopy post colour (sprite 0+1 shared: COLOR17)
-static const uint16_t kPostColor = 0x5A0;  // bright green (Atari $2A analog)
+// Canopy post colour: must exactly match the attract panel background colour
+// (kAttractPalette[2] = 0x444), same OCS value → identical in the Amiga render.
+static const uint16_t kPostColor = 0x444;
 
 // M2 animation
 static const uint16_t kSkyHues[8] = {
     0x46b, 0x56b, 0x56c, 0x46c, 0x36b, 0x46a, 0x56b, 0x56a
 };
+
+// Apply the same fade (0=black .. 16=full) to a single 12-bit OCS colour.
+static uint16_t fadeColor(uint16_t color, uint16_t fade)
+{
+    uint16_t r = color >> 8;
+    uint16_t g = (color >> 4) & 0xFu;
+    uint16_t b = color & 0xFu;
+    return (uint16_t)(((fade * r >> 4) << 8) | ((fade * g >> 4) << 4) | (fade * b >> 4));
+}
 
 static void animatePalette(Palette* palette, uint16_t frame)
 {
@@ -91,12 +103,30 @@ static void animatePalette(Palette* palette, uint16_t frame)
 }
 
 // ---- sprite data helper ------------------------------------------------------
-void AttractScene::fillSpriteData(Sprite* s, uint16_t sprA)
+// Canopy posts replicate the Atari DLI missile-position staircase:
+//   rows 0..7   : initial position (no shift)
+//   rows 8..21  : +2 px inward
+//   rows 22..35 : +4 px inward
+//   ... (+2 every 14 rows, 6 steps total → 12 px maximum shift)
+//
+// Left post  (HSTART=17): bar starts at pixel 17, steps right going down.
+// Right post (HSTART=285): bar starts at pixel 297 (285+12), steps left going down.
+void AttractScene::fillSpriteData(Sprite* s, bool isRight)
 {
     uint16_t* d = s->data() + 2;  // skip 2-word position header
     for (int i = 0; i < kHT; i++) {
-        d[i * 2]     = sprA;   // plane A: determines which pixels are coloured
-        d[i * 2 + 1] = 0x0000; // plane B: 0 → colour 1 (COLOR17) where A is set
+        int shift;
+        if (i < 8) {
+            shift = isRight ? 12 : 0;
+        } else {
+            int step = (i - 8) / 14 + 1;
+            shift = isRight ? (12 - 2 * step) : (2 * step);
+            if (shift < 0) shift = 0;
+            if (shift > 12) shift = 12;
+        }
+        uint16_t sprA = (uint16_t)(0xF000u >> shift);
+        d[i * 2]     = sprA;
+        d[i * 2 + 1] = 0x0000;
     }
 }
 
@@ -115,8 +145,8 @@ void AttractScene::buildCopperList(CopperList* cl, uint16_t frame)
     idx = cl->setPalette(idx, *palette);
 
     // Sprite colour registers (in effect for the whole frame):
-    d[idx++] = copperMove(color16, 0x000);   // sprite transparency
-    d[idx++] = copperMove(color17, kPostColor);  // canopy post green
+    d[idx++] = copperMove(color16, 0x000);   // sprite transparency (stays black)
+    d[idx++] = copperMove(color17, fadeColor(kPostColor, palette->fade()));
 
     // Sprite pointers (set before display begins so DMA reads correct data):
     cl->showSprite(idx, 0, *leftPost);    idx += 2;
@@ -136,10 +166,11 @@ void AttractScene::buildCopperList(CopperList* cl, uint16_t frame)
     d[idx++] = copperMove(bpl2ptl, (uint16_t)((ta + 40) & 0xFFFF));
     d[idx++] = copperMove(bpl1mod, (uint16_t)((kBP2 - 1) * (kW >> 3)));
     d[idx++] = copperMove(bpl2mod, (uint16_t)((kBP2 - 1) * (kW >> 3)));
-    d[idx++] = copperMove(color00, kTerrainPalette[0]);
-    d[idx++] = copperMove(color01, kTerrainPalette[1]);
-    d[idx++] = copperMove(color02, kTerrainPalette[2]);
-    d[idx++] = copperMove(color03, kTerrainPalette[3]);
+    uint16_t f = palette->fade();
+    d[idx++] = copperMove(color00, fadeColor(kTerrainPalette[0], f));
+    d[idx++] = copperMove(color01, fadeColor(kTerrainPalette[1], f));
+    d[idx++] = copperMove(color02, fadeColor(kTerrainPalette[2], f));
+    d[idx++] = copperMove(color03, fadeColor(kTerrainPalette[3], f));
 
     // ---- cockpit region: restore 4-bitplane, full palette ------------------
     d[idx++] = copperWait(kCockpitLine, 0);
@@ -174,9 +205,8 @@ void AttractScene::initialize()
 
     if (!leftPost || !rightPost || !nullSprite) return;
 
-    // 4-pixel wide solid bar: sprA bits 15..12 set (MSB = leftmost pixel)
-    fillSpriteData(leftPost,  0xF000);
-    fillSpriteData(rightPost, 0xF000);
+    fillSpriteData(leftPost,  false);
+    fillSpriteData(rightPost, true);
 
     // Position: visible only during terrain region (beam 110..196)
     leftPost->setX(kSprXLeft);
