@@ -67,8 +67,8 @@ int main()
     AddIntServer(INTB_VERTB, &vbiServer);
 
     // --- attract scene -------------------------------------------------------
-    // Enable copper + raster (bitplane) DMA, then let AttractScene install its list.
-    *dmaconPointer = (uint16_t)(DMAF_SETCLR | DMAF_MASTER | DMAF_COPPER | DMAF_RASTER);
+    // Enable copper + raster + sprite DMA, then let AttractScene install its list.
+    *dmaconPointer = (uint16_t)(DMAF_SETCLR | DMAF_MASTER | DMAF_COPPER | DMAF_RASTER | DMAF_SPRITE);
 
     AttractScene scene;
     scene.initialize();

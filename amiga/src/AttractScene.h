@@ -2,12 +2,11 @@
 #include "../framework/CopperList.h"
 #include "../framework/Bitmap.h"
 #include "../framework/Palette.h"
+#include "../framework/Sprite.h"
 
-// M3: 2-bitplane terrain viewport blended with 4-bitplane title/cockpit bitmap.
-// The copper switches modes mid-frame:
-//   rows  0-41  : 4-plane attract_raw (title)
-//   rows 42-127 : 2-plane terrain_raw (terrain, copper-overridden pointers)
-//   rows128-199 : 4-plane attract_raw cockpit section (copper-restored pointers)
+// M4: canopy frame posts as OCS hardware sprites (two 4-px green vertical bars).
+//     Sprites 0+1 active during terrain region (beam 110-196), null elsewhere.
+//     Sprites 2-7 silenced via null sprite pointer to prevent garbage display.
 class AttractScene {
 public:
     void initialize();
@@ -16,10 +15,14 @@ public:
     void shutdown();
 private:
     void buildCopperList(CopperList* cl, uint16_t frame);
+    void fillSpriteData(Sprite* s, uint16_t sprA);
 
     CopperList* copperLists[2] = { nullptr, nullptr };
-    Bitmap*     bitmap         = nullptr;  // full 4-plane attract_raw
-    Bitmap*     terrainBitmap  = nullptr;  // 2-plane terrain_raw
-    Palette*    palette        = nullptr;  // full 16-colour attract palette
+    Bitmap*     bitmap         = nullptr;
+    Bitmap*     terrainBitmap  = nullptr;
+    Palette*    palette        = nullptr;
+    Sprite*     leftPost       = nullptr;  // sprite 0: left canopy post
+    Sprite*     rightPost      = nullptr;  // sprite 1: right canopy post
+    Sprite*     nullSprite     = nullptr;  // sprites 2-7: silence
     uint8_t     active         = 0;
 };
