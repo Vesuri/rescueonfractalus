@@ -11,6 +11,7 @@ extern "C" {
 
 void paula_audio_init(void);      /* load XEX + init Paula DMA; call once */
 void paula_audio_shutdown(void);  /* disable Paula DMA; call on exit */
+uint8_t paula_pokey_random(void); /* advance + return one POKEY LFSR byte */
 
 /* Platform bridge — C linkage so bus.h inlines (compiled from C rof_gen.c)
  * can reach them.  Declared in platform_c.h; defined here. */

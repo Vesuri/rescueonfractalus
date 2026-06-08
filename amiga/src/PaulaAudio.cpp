@@ -40,6 +40,8 @@ static uint8_t pokey_random_step(void)
     return (uint8_t)lfsr_state;
 }
 
+uint8_t paula_pokey_random(void) { return pokey_random_step(); }
+
 // ---- Paula register helpers --------------------------------------------------
 // Layout: AUD0=$DFF0A0, AUD1=$DFF0B0, AUD2=$DFF0C0, AUD3=$DFF0D0
 // Within each: +0 PTR(32), +4 LEN(16), +6 PER(16), +8 VOL(16)

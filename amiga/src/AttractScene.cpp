@@ -27,14 +27,14 @@
 #include "AttractScene.h"
 #include "PaulaAudio.h"
 
-// All six functions called by the Atari attract loop each frame, in order.
-// Timers (mem[0x0080/0014/0013]) are incremented by the VBI handler in main.cpp.
-extern "C" void pmg_update_attract(void);
+// audio_attract: 6502-transpiled, kept as-is (complex + already working).
 extern "C" void audio_attract(void);
-extern "C" void attract_anim_frame(void);
-extern "C" void attract_sub_1EB4(void);
-extern "C" void pmg_colors_attract(void);
-extern "C" void attract_sub_1F48(void);
+// Native 68000 replacements for the other attract functions (attract_native.cpp).
+extern "C" void attract_anim_frame_native(void);
+extern "C" void attract_sub_1EB4_native(void);
+extern "C" void attract_sub_1F48_native(void);
+// pmg_update_attract and pmg_colors_attract dropped: only modify PMG/GTIA
+// registers not used on the Amiga.
 extern "C" void audio_ch1_init(void);
 extern "C" volatile uint8_t mem[65536];
 
@@ -211,16 +211,13 @@ void AttractScene::update(uint16_t frame)
 {
     blinkFrame++;
 
-    // Run the full Atari attract state machine in the same order as the Atari
-    // attract loop.  Timers (mem[$0080/$0014/$0013]) are incremented by the VBI
-    // handler.  Bus writes to display/PMG registers inside these functions are
-    // no-ops on the Amiga side (stubbed in bus_write).
-    pmg_update_attract();
+    // Attract state machine — same order as the Atari attract loop.
+    // Timers (mem[$0080/$0014/$0013]) are incremented by the VBI handler.
+    // pmg_update_attract / pmg_colors_attract dropped (PMG/GTIA only).
+    attract_anim_frame_native();
     audio_attract();
-    attract_anim_frame();
-    attract_sub_1EB4();
-    pmg_colors_attract();
-    attract_sub_1F48();
+    attract_sub_1EB4_native();
+    attract_sub_1F48_native();
 
     uint8_t next = 1 - active;
     buildCopperList(copperLists[next], frame);
