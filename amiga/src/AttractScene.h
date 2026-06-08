@@ -4,9 +4,14 @@
 #include "../framework/Palette.h"
 #include "../framework/Sprite.h"
 
-// M4: canopy frame posts as OCS hardware sprites (two 4-px green vertical bars).
-//     Sprites 0+1 active during terrain region (beam 110-196), null elsewhere.
-//     Sprites 2-7 silenced via null sprite pointer to prevent garbage display.
+// 2-bitplane attract screen: one BPLCON0 mode for the whole frame, Copper
+// switches the 4-colour palette (and bitmap pointer) at each region boundary,
+// mirroring the Atari DLI schedule exactly.
+//
+// Regions:
+//   Title   (lines 0..kTerrainLine-1) : title.raw  + kTitlePalette
+//   Terrain (lines kTerrainLine..kCockpitLine-1) : terrain.raw + kTerrainPalette
+//   Cockpit (lines kCockpitLine..end) : cockpit.raw + kCockpitPalette (+ blink)
 class AttractScene {
 public:
     void initialize();
@@ -18,11 +23,13 @@ private:
     void fillSpriteData(Sprite* s, bool isRight);
 
     CopperList* copperLists[2] = { nullptr, nullptr };
-    Bitmap*     bitmap         = nullptr;
+    Bitmap*     titleBitmap    = nullptr;
     Bitmap*     terrainBitmap  = nullptr;
-    Palette*    palette        = nullptr;
-    Sprite*     leftPost       = nullptr;  // sprite 0: left canopy post
-    Sprite*     rightPost      = nullptr;  // sprite 1: right canopy post
-    Sprite*     nullSprite     = nullptr;  // sprites 2-7: silence
+    Bitmap*     cockpitBitmap  = nullptr;
+    Palette*    palette        = nullptr;  // drives title region + global fade
+    Sprite*     leftPost       = nullptr;
+    Sprite*     rightPost      = nullptr;
+    Sprite*     nullSprite     = nullptr;
     uint8_t     active         = 0;
+    uint16_t    blinkFrame     = 0;
 };
