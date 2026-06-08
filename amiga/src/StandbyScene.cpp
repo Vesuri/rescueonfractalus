@@ -72,7 +72,15 @@ static const uint16_t kSprXRight = 0x81 + 285;
 // Canopy post colour: must match attract panel background (kAttractPalette[2] = 0x444).
 static const uint16_t kPostColor = 0x444;
 
-// ---- fade helper -------------------------------------------------------------
+// ---- OCS colour helpers ------------------------------------------------------
+static uint16_t blendOCS(uint16_t a, uint16_t b)
+{
+    uint16_t r  = (((a >> 8) & 0xFu) + ((b >> 8) & 0xFu)) >> 1;
+    uint16_t g  = (((a >> 4) & 0xFu) + ((b >> 4) & 0xFu)) >> 1;
+    uint16_t bv = ((a & 0xFu) + (b & 0xFu)) >> 1;
+    return (uint16_t)((r << 8) | (g << 4) | bv);
+}
+
 static uint16_t fadeColor(uint16_t color, uint16_t fade)
 {
     uint16_t r = color >> 8;
@@ -127,7 +135,19 @@ void StandbyScene::buildCopperList(CopperList* cl, uint16_t frame)
                            /*hires*/false, /*interlace*/false,
                            /*dualPlayfield*/false, /*holdAndModify*/false,
                            kCenterY);
-    idx = cl->setPalette(idx, *palette);   // colours before bitmap pointers
+    // Title palette: dli_sub_4a0c fires at start of mode-6 row and sets colours
+    // from mem[$00Dx] shadow RAM.  COLBK=mem[$00D8]=bg, COLPF1=mem[$00D5]=fg.
+    // col2 = NTSC blend (avg of bg+fg), col3 = COLPF2=mem[$00D6] (colour-select).
+    {
+        uint16_t tbg   = atariToOCS(mem[0x00D8]);
+        uint16_t tfg   = atariToOCS(mem[0x00D5]);
+        uint16_t tbl   = blendOCS(tbg, tfg);
+        uint16_t tsel  = atariToOCS(mem[0x00D6]);
+        d[idx++] = copperMove(color00, fadeColor(tbg,  f));
+        d[idx++] = copperMove(color01, fadeColor(tfg,  f));
+        d[idx++] = copperMove(color02, fadeColor(tbl,  f));
+        d[idx++] = copperMove(color03, fadeColor(tsel, f));
+    }
     cl->showBitmap(idx, *titleBitmap);
     idx += 2 * kBP2;
 
@@ -258,14 +278,34 @@ void StandbyScene::update(uint16_t frame)
     active = next;
 }
 
-// Helper: expand 8 Mode-6 glyph bits to 16 doubled-pixel output bits (each bit → 2 bits).
-static uint16_t doubleGlyphBits(uint8_t g)
+// NTSC-blended mode-6 glyph render (2bp, 3-colour output).
+// On real Atari NTSC, adjacent differing bits ($55/$AA patterns) colour-blend
+// into a third hue via carrier phase cancellation.  We approximate this by
+// assigning adjacent same-bits → col0/col1, adjacent differing-bits → col2.
+//
+// Layout: glyph byte = 8 bits → 4 adjacent pairs (b7b6, b5b4, b3b2, b1b0).
+// Each pair → 4 Amiga pixels (doubled: 2px per bit).
+// In interleaved 2bp row (40 bytes plane1 + 40 bytes plane2):
+//   pair 0 → high nibble of plane bytes at col*2
+//   pair 1 → low  nibble of plane bytes at col*2
+//   pair 2 → high nibble of plane bytes at col*2+1
+//   pair 3 → low  nibble of plane bytes at col*2+1
+// Amiga 2bp: col0 = p1=0,p2=0 | col1 = p1=1,p2=0 | col2 = p1=0,p2=1
+static void renderNTSCGlyph(uint8_t g, uint8_t* p1, uint8_t* p2)
 {
-    uint16_t out = 0;
-    for (int b = 7; b >= 0; b--) {
-        if (g & (1u << b)) out |= (uint16_t)3u << (b * 2);
+    p1[0] = p1[1] = p2[0] = p2[1] = 0;
+    for (int i = 0; i < 4; i++) {
+        uint8_t bit_hi = (g >> (7 - i*2)) & 1u;
+        uint8_t bit_lo = (g >> (6 - i*2)) & 1u;
+        uint8_t mask   = (i & 1) ? 0x0Fu : 0xF0u;   // even pairs → high nibble
+        uint8_t* b1    = (i < 2) ? &p1[0] : &p1[1];
+        uint8_t* b2    = (i < 2) ? &p2[0] : &p2[1];
+        if (bit_hi == bit_lo) {
+            if (bit_hi) *b1 |= mask;   // col1: plane1 set
+        } else {
+            *b2 |= mask;               // col2: plane2 set (NTSC blend)
+        }
     }
-    return out;
 }
 
 // GTIA mode-10 nibble → Amiga 2bp colour index.
@@ -304,35 +344,29 @@ void StandbyScene::render()
     }
 
     // ---- title region -------------------------------------------------------
-    // The DL's title section is Mode 6 (character mode, 20 double-wide chars,
-    // 8 scanlines tall) from screen RAM $32B5 using the custom charset at $0200.
-    // Clear the bitmap first then render Mode 6 at the right row offset.
-    // The DL has 27 blank scanlines + Mode 6 starts at DL-line 27 → in our
-    // 42-line title bitmap the Mode 6 text starts at line (27 - 6) = 21.
-    // (6-line offset because the Atari display starts 6 lines before ours.)
-    static const int kTitleTextRow = 21;
-    static const uint16_t kScreenRAM  = 0x32B5;
-    static const uint16_t kCharsetBase = 0x0200;
+    // Mode 6: 20 visible chars at $32B7-$32C8 (LMS=$32B5; chars 0-1 are left
+    // border and off our 320px bitmap).  CHBAS=$38 set by dli_sub_4a0c (fires
+    // at the start of the mode-6 DL entry) → charset at $3800 (NTSC-artifact).
+    // DL-line 27 + 6-line clip offset → our bitmap row 21.
+    static const int     kTitleTextRow  = 21;
+    static const uint16_t kScreenRAM   = 0x32B7;   // first visible char (skip 2 border)
+    static const uint16_t kCharsetBase = 0x3800;   // CHBAS=$38 (NTSC charset)
 
     uint8_t* tbmp = (uint8_t*)titleBitmap->data;
     for (int i = 0; i < (int)kTitleHeight * 80; i++) tbmp[i] = 0;
 
     for (int col = 0; col < 20; col++) {
-        uint8_t charByte = mem[kScreenRAM + col];
-        uint8_t charIdx  = charByte & 0x3Fu;           // bits 5-0 = glyph index
+        uint8_t charByte  = mem[kScreenRAM + (uint16_t)col];
+        uint8_t charIdx   = charByte & 0x3Fu;
         uint16_t glyphBase = kCharsetBase + charIdx * 8u;
 
         for (int scanline = 0; scanline < 8; scanline++) {
             int destRow = kTitleTextRow + scanline;
             if (destRow >= (int)kTitleHeight) break;
-
-            uint8_t  glyph   = mem[glyphBase + scanline];
-            uint16_t doubled = doubleGlyphBits(glyph);
-
-            // Each doubled character occupies 2 bytes at col*2 in plane1.
-            uint8_t* rowPtr = tbmp + destRow * 80;
-            rowPtr[col * 2]     = (uint8_t)(doubled >> 8);
-            rowPtr[col * 2 + 1] = (uint8_t)(doubled & 0xFF);
+            uint8_t glyph  = mem[glyphBase + (uint16_t)scanline];
+            uint8_t* row   = tbmp + destRow * 80;
+            // NTSC blend: plane1 at col*2, plane2 at 40+col*2
+            renderNTSCGlyph(glyph, &row[col*2], &row[40+col*2]);
         }
     }
 }
