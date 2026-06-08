@@ -32,4 +32,10 @@ private:
     Sprite*     nullSprite     = nullptr;
     uint8_t     active         = 0;
     uint16_t    blinkFrame     = 0;
+
+    // Dirty-flag bitmap caching: bitmaps are rendered once on initialize() and
+    // only re-rendered when the underlying mem[] data changes.
+    bool    terrainDirty = true;   // re-render terrain rows from $2000
+    bool    cockpitDirty = true;   // re-render modeD $350D + mode4 $332D
+    uint8_t titleShadow[20] = {};  // shadow of last-rendered $32B7-$32CA
 };

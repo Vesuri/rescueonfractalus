@@ -30,11 +30,9 @@
 #include "StandbyScene.h"
 #include "PaulaAudio.h"
 
-// sfx_voice_tick: SFX sequencer that drives AUDC1-3 + calls sfx_seq_step for AUDF.
-// This is what the Atari VTIMR2 IRQ ($54C0) runs each period. Calling it each
-// Amiga VBI approximates the timer rate close enough for attract-mode music.
-// mem[$00E7]=$01 in screen3_mem.bin (SFX enabled); mem[$073C]=$02 (seq pos).
-extern "C" void sfx_voice_tick(void);
+// sfx_voice_tick_native: native 68000 replacement for the transpiled sfx_voice_tick.
+// See SfxPlayer.cpp for the implementation.
+extern "C" void sfx_voice_tick_native(void);
 
 extern "C" volatile uint8_t mem[65536];
 
@@ -238,26 +236,30 @@ void StandbyScene::initialize()
     paula_audio_init();      // loads screen3_mem.bin into mem[] (Standby scene snapshot)
 
     // R4 parity: patch key attract-mode values that differ from the SDL oracle.
+    // (Must happen before initial render() call below.)
     // screen3_mem.bin was captured mid-animation; game_entry sets these on startup.
     // mem[$0071]: COLBK source for terrain rows (DLI dli_sub_6cf1 reads it).
     //   Snapshot has $DB (mid-animation); attract init targets $C8 (green, $C8=hue12/luma4).
     //   SDL oracle (atari000.png) shows terrain as (82,140,22) = $C8.
     mem[0x0071] = 0xC8;
+
+    // Initial render: populate all three bitmaps from mem[] once so that
+    // render() called from the main loop has nothing to do until data changes.
+    render();
 }
 
 void StandbyScene::update(uint16_t frame)
 {
     blinkFrame++;
 
-    // ---- Music: SFX sequencer tick (R3) ----------------------------------------
-    // Mirrors the Atari VTIMR2 IRQ at $54C0: drives AUDF/AUDC via sfx_voice_tick,
-    // which calls sfx_seq_step when the duration counter ($073A) expires.
-    // POKEY writes route to Paula via platform_hw_write → PaulaAudio.
-    if (mem[0x00E7] != 0) sfx_voice_tick();
+    // ---- Music: SFX sequencer tick (R3 — native) --------------------------------
+    // Equivalent to Atari VTIMR2 IRQ at $54C0. Calls sfx_voice_tick_native from
+    // SfxPlayer.cpp — replaces transpiled 6502 version (~60x faster on 68000).
+    if (mem[0x00E7] != 0) sfx_voice_tick_native();
 
     // ---- VBI animation (mimics vbi_handler_game + update_blink_timer_006e) ---
-    // Increment RTCLOK ($0014) each VBI and cascade to the attract timer ($00E2).
-    mem[0x0014]++;
+    // NOTE: main.cpp's VBI interrupt server already increments mem[$0014] and
+    // mem[$0013]/$0080 each VBI — do NOT increment $0014 here again.
     mem[0x062D]++;
     if (mem[0x062D] == 0) mem[0x00E2]++;
 
@@ -343,52 +345,69 @@ static const uint8_t kNibbleColour[16] = {
 void StandbyScene::render()
 {
     // ---- terrain / door view ------------------------------------------------
+    // Only re-render when terrainDirty (set in initialize(); cleared here).
+    // During static Standby the terrain is constant ($88 = closed door).
     // DL $3000: 86 Mode-F rows from $2000, stride 46 (40 data + 6 pad), GTIA mode 10.
     // Each byte = two 4-bit nibbles → two GTIA pixels, each 4 Amiga pixels wide.
     // Interleaved 2bp row = 40 bytes plane1 + 40 bytes plane2.
 
-    uint8_t* vdest = (uint8_t*)terrainBitmap->data;
-    for (int row = 0; row < (int)kTerrainHeight; row++) {
-        const uint8_t* src = (const uint8_t*)&mem[0x2000 + row * 46];
-        uint8_t* plane1 = vdest;
-        uint8_t* plane2 = vdest + 40;
-        for (int b = 0; b < 40; b++) {
-            uint8_t hi = kNibbleColour[(src[b] >> 4) & 0xF];
-            uint8_t lo = kNibbleColour[src[b] & 0xF];
-            plane1[b] = (uint8_t)(((hi & 1) ? 0xF0u : 0u) | ((lo & 1) ? 0x0Fu : 0u));
-            plane2[b] = (uint8_t)(((hi & 2) ? 0xF0u : 0u) | ((lo & 2) ? 0x0Fu : 0u));
+    if (terrainDirty) {
+        terrainDirty = false;
+        uint8_t* vdest = (uint8_t*)terrainBitmap->data;
+        for (int row = 0; row < (int)kTerrainHeight; row++) {
+            const uint8_t* src = (const uint8_t*)&mem[0x2000 + row * 46];
+            uint8_t* plane1 = vdest;
+            uint8_t* plane2 = vdest + 40;
+            for (int b = 0; b < 40; b++) {
+                uint8_t hi = kNibbleColour[(src[b] >> 4) & 0xF];
+                uint8_t lo = kNibbleColour[src[b] & 0xF];
+                plane1[b] = (uint8_t)(((hi & 1) ? 0xF0u : 0u) | ((lo & 1) ? 0x0Fu : 0u));
+                plane2[b] = (uint8_t)(((hi & 2) ? 0xF0u : 0u) | ((lo & 2) ? 0x0Fu : 0u));
+            }
+            vdest += 80;
         }
-        vdest += 80;
     }
 
     // ---- title region -------------------------------------------------------
-    // Mode 6: 20 visible chars at $32B7-$32C8 (LMS=$32B5; chars 0-1 are left
-    // border and off our 320px bitmap).  CHBAS=$38 set by dli_sub_4a0c (fires
-    // at the start of the mode-6 DL entry) → charset at $3800 (NTSC-artifact).
-    // DL-line 27 + 6-line clip offset → our bitmap row 21.
-    static const int     kTitleTextRow  = 21;
-    static const uint16_t kScreenRAM   = 0x32B7;   // first visible char (skip 2 border)
-    static const uint16_t kCharsetBase = 0x3800;   // CHBAS=$38 (NTSC charset)
+    // Shadow-compare: re-render only chars whose byte changed since last frame.
+    // titleShadow[] mirrors $32B7-$32CA; updated here on change.
+    // Chars start at $32B7 (skip $32B5/$32B6 left-border), charset $3800 (NTSC).
+    static const int      kTitleTextRow  = 21;
+    static const uint16_t kScreenRAM    = 0x32B7;
+    static const uint16_t kCharsetBase  = 0x3800;
 
     uint8_t* tbmp = (uint8_t*)titleBitmap->data;
-    for (int i = 0; i < (int)kTitleHeight * 80; i++) tbmp[i] = 0;
-
     for (int col = 0; col < 20; col++) {
-        uint8_t charByte  = mem[kScreenRAM + (uint16_t)col];
-        uint8_t charIdx   = charByte & 0x3Fu;
-        uint16_t glyphBase = kCharsetBase + charIdx * 8u;
+        uint8_t charByte = mem[kScreenRAM + (uint16_t)col];
+        if (charByte == titleShadow[col]) continue;   // unchanged — skip
+        titleShadow[col] = charByte;
 
+        // Clear this character's 8 scanlines in both planes
         for (int scanline = 0; scanline < 8; scanline++) {
             int destRow = kTitleTextRow + scanline;
             if (destRow >= (int)kTitleHeight) break;
-            uint8_t glyph  = mem[glyphBase + (uint16_t)scanline];
-            uint8_t* row   = tbmp + destRow * 80;
-            // NTSC blend: plane1 at col*2, plane2 at 40+col*2
+            uint8_t* row = tbmp + destRow * 80;
+            row[col*2] = 0; row[col*2+1] = 0;
+            row[40+col*2] = 0; row[40+col*2+1] = 0;
+        }
+
+        // Re-render this char with NTSC blending
+        uint8_t charIdx    = charByte & 0x3Fu;
+        uint16_t glyphBase = kCharsetBase + charIdx * 8u;
+        for (int scanline = 0; scanline < 8; scanline++) {
+            int destRow = kTitleTextRow + scanline;
+            if (destRow >= (int)kTitleHeight) break;
+            uint8_t glyph = mem[glyphBase + (uint16_t)scanline];
+            uint8_t* row  = tbmp + destRow * 80;
             renderNTSCGlyph(glyph, &row[col*2], &row[40+col*2]);
         }
     }
 
     // ---- cockpit region ------------------------------------------------------
+    // Only re-render when cockpitDirty (set in initialize(); cleared here).
+    // During static Standby the cockpit data is constant.
+    if (!cockpitDirty) return;
+    cockpitDirty = false;
     // ModeD $350D: 4 DL entries × 2 identical scan lines = 8 rows.
     //   Each entry reads 40 bytes of raw 2bpp bitmap; same data for both scans.
     // Mode4 $332D: 9 DL entries × 8 scan lines = 72 rows.
