@@ -1,19 +1,22 @@
-// Attract screen — always 2 bitplanes, Copper colour splits at region boundaries.
+// Standby screen (scene 3) — 2 bitplanes, Copper colour splits at region boundaries.
+//
+// Terrain colours are read dynamically each frame from mem[]:
+//   - Atari GTIA mode-10 nibble 8 (dominant closed-door fill) → colHW[8] = COLBK
+//   - DLI dli_sub_6cf1 sets COLBK = mem[$0071] during terrain rows.
+//   → Amiga terrain col3 = atariToOCS(mem[$0071]).
 //
 // Copper list structure:
 //   [preamble]  setPlayfield (2bp, 320x216)
 //               showBitmap(titleBitmap)  + title palette (4 colours)
 //               sprite colours (COLOR16/17) + sprite pointers (8 sprites)
 //   WAIT(kTerrainLine-1, 0xE0)   ← end of previous line, in overscan
-//               bpl1/2 ptr → terrainBitmap, terrain palette (4 colours)
+//               bpl1/2 ptr → terrainBitmap, terrain palette (dynamic from mem[])
 //   WAIT(kCockpitLine-1, 0xE0)
 //               bpl1/2 ptr → cockpit_raw, cockpit palette (4 colours + blink)
 //
 // Colour-register writes are IMMEDIATE on OCS.  The correct split technique is
 // a single WAIT at the end of the line before the boundary (in the H-blank /
-// overscan area).  Bitplane pointers go first (timing-critical: a missed
-// pointer corrupts the whole display); colours follow (a late colour is just a
-// cosmetic edge artefact at worst).
+// overscan area).  Bitplane pointers go first (timing-critical); colours follow.
 
 #define ECS_SPECIFIC
 #include <hardware/dmabits.h>
@@ -32,6 +35,7 @@ extern "C" volatile uint8_t mem[65536];
 #include "../assets/title_pal.h"
 #include "../assets/terrain_pal.h"
 #include "../assets/cockpit_pal.h"
+#include "../assets/atari_pal.h"
 
 extern "C" uint8_t cockpit_raw[];
 
@@ -143,10 +147,15 @@ void StandbyScene::buildCopperList(CopperList* cl, uint16_t frame)
     d[idx++] = copperMove(bpl1ptl, (uint16_t)(ta & 0xFFFF));
     d[idx++] = copperMove(bpl2pth, (uint16_t)((ta + 40) >> 16));
     d[idx++] = copperMove(bpl2ptl, (uint16_t)((ta + 40) & 0xFFFF));
-    d[idx++] = copperMove(color00, fadeColor(kTerrainPalette[0], f));
-    d[idx++] = copperMove(color01, fadeColor(kTerrainPalette[1], f));
-    d[idx++] = copperMove(color02, fadeColor(kTerrainPalette[2], f));
-    d[idx++] = copperMove(color03, fadeColor(kTerrainPalette[3], f));
+    // Terrain palette derived from Atari colour registers (via kNibbleColour zones):
+    //   col0 = nibble 0 → colHW[0] = COLPM0 = mem[$02C0]
+    //   col1 = nibbles 1-2 → COLPM1/2 zone = mem[$08D7] (DLI override)
+    //   col2 = nibbles 3-6 → COLPF0-3 zone = mem[$08D4] (DLI override)
+    //   col3 = nibbles 5-8 → COLBK zone    = mem[$0071] (DLI dli_sub_6cf1)
+    d[idx++] = copperMove(color00, fadeColor(atariToOCS(mem[0x02C0]), f));
+    d[idx++] = copperMove(color01, fadeColor(atariToOCS(mem[0x08D7]), f));
+    d[idx++] = copperMove(color02, fadeColor(atariToOCS(mem[0x08D4]), f));
+    d[idx++] = copperMove(color03, fadeColor(atariToOCS(mem[0x0071]), f));
 
     // ---- cockpit region — same pattern --------------------------------------
     d[idx++] = copperWait(kCockpitLine - 1, 0xE0);
@@ -155,10 +164,15 @@ void StandbyScene::buildCopperList(CopperList* cl, uint16_t frame)
     d[idx++] = copperMove(bpl1ptl, (uint16_t)(ca & 0xFFFF));
     d[idx++] = copperMove(bpl2pth, (uint16_t)((ca + 40) >> 16));
     d[idx++] = copperMove(bpl2ptl, (uint16_t)((ca + 40) & 0xFFFF));
-    d[idx++] = copperMove(color00, fadeColor(kCockpitPalette[0], f));
-    d[idx++] = copperMove(color01, fadeColor(kCockpitPalette[1], f));
-    d[idx++] = copperMove(color02, fadeColor(kCockpitPalette[2], f));
-    uint16_t litColor = ((blinkFrame / 25) & 1) ? 0x000 : fadeColor(kCockpitPalette[3], f);
+    // Cockpit palette from Atari shadow RAM:
+    //   col0 = COLBK (panel background) = mem[$02C8]
+    //   col1 = COLPF1 (panel body)      = mem[$02C5]
+    //   col2 = COLPF2 (mid grey)        = mem[$02C6]
+    //   col3 = cockpit light (blinks)   = mem[$00DE] drives COLPM3 on Atari
+    d[idx++] = copperMove(color00, fadeColor(atariToOCS(mem[0x02C8]), f));
+    d[idx++] = copperMove(color01, fadeColor(atariToOCS(mem[0x02C5]), f));
+    d[idx++] = copperMove(color02, fadeColor(atariToOCS(mem[0x02C6]), f));
+    uint16_t litColor = (mem[0x00DE] >= 0x4E) ? fadeColor(atariToOCS(mem[0x00D8]), f) : 0x000;
     d[idx++] = copperMove(color03, litColor);
 }
 
@@ -200,6 +214,24 @@ void StandbyScene::initialize()
 void StandbyScene::update(uint16_t frame)
 {
     blinkFrame++;
+
+    // ---- VBI animation (mimics vbi_handler_game + update_blink_timer_006e) ---
+    // Increment RTCLOK ($0014) each VBI and cascade to the attract timer ($00E2).
+    mem[0x0014]++;
+    mem[0x062D]++;
+    if (mem[0x062D] == 0) mem[0x00E2]++;
+
+    // Blink timer (update_blink_timer_006e @ $4131):
+    //   mem[$006E] counts down from $0F; at 0 it reloads and turns lights ON ($4E);
+    //   when below $0A, lights go OFF ($46).  mem[$00DE] drives cockpit light colour.
+    if (mem[0x006E] == 0) {
+        mem[0x006E] = 0x0F;
+        mem[0x00DE] = 0x4E;   // lights ON
+    } else {
+        mem[0x006E]--;
+        if (mem[0x006E] < 0x0A)
+            mem[0x00DE] = 0x46;   // lights OFF
+    }
 
     uint8_t next = 1 - active;
     buildCopperList(copperLists[next], frame);
