@@ -128,25 +128,31 @@ void AttractScene::buildCopperList(CopperList* cl, uint16_t frame)
         cl->showSprite(idx, s, *nullSprite); idx += 2;
     }
 
-    // ---- terrain region — colours first, then pointers ---------------------
-    d[idx++] = copperWait(kTerrainLine, 0);
-
+    // ---- terrain region -------------------------------------------------------
+    // Write the terrain palette one line before switching the bitmap pointer.
+    // The OCS colour pipeline has a one-scanline latency: colour register writes
+    // at line N are not visible until line N+1.  Setting colours at kTerrainLine-1
+    // ensures the terrain palette is live when terrain.raw DMA begins at kTerrainLine.
+    d[idx++] = copperWait(kTerrainLine - 1, 0);
     d[idx++] = copperMove(color00, fadeColor(kTerrainPalette[0], f));
     d[idx++] = copperMove(color01, fadeColor(kTerrainPalette[1], f));
     d[idx++] = copperMove(color02, fadeColor(kTerrainPalette[2], f));
     d[idx++] = copperMove(color03, fadeColor(kTerrainPalette[3], f));
+
+    d[idx++] = copperWait(kTerrainLine, 0);
     uint32_t ta = (uint32_t)terrain_raw;
     d[idx++] = copperMove(bpl1pth, (uint16_t)(ta >> 16));
     d[idx++] = copperMove(bpl1ptl, (uint16_t)(ta & 0xFFFF));
     d[idx++] = copperMove(bpl2pth, (uint16_t)((ta + 40) >> 16));
     d[idx++] = copperMove(bpl2ptl, (uint16_t)((ta + 40) & 0xFFFF));
 
-    // ---- cockpit region — colours first, then pointers ---------------------
-    d[idx++] = copperWait(kCockpitLine, 0);
-
+    // ---- cockpit region — same one-line-early colour pattern ----------------
+    d[idx++] = copperWait(kCockpitLine - 1, 0);
     d[idx++] = copperMove(color00, fadeColor(kCockpitPalette[0], f));
     d[idx++] = copperMove(color01, fadeColor(kCockpitPalette[1], f));
     d[idx++] = copperMove(color02, fadeColor(kCockpitPalette[2], f));
+
+    d[idx++] = copperWait(kCockpitLine, 0);
     uint32_t ca = (uint32_t)cockpit_raw;
     d[idx++] = copperMove(bpl1pth, (uint16_t)(ca >> 16));
     d[idx++] = copperMove(bpl1ptl, (uint16_t)(ca & 0xFFFF));
@@ -163,7 +169,7 @@ void AttractScene::initialize()
 {
     Palette::initialize();
     palette       = new Palette(kTitlePalette, 4, /*fade*/0);
-    titleBitmap   = new Bitmap(title_raw,   kW, 62,  kBP2, true);
+    titleBitmap   = new Bitmap(title_raw,   kW, 42,  kBP2, true);
     terrainBitmap = new Bitmap(terrain_raw, kW, kHT, kBP2, true);
     cockpitBitmap = new Bitmap(cockpit_raw, kW, 104, kBP2, true);
 
