@@ -12,7 +12,7 @@
 //   WAIT(kTerrainLine-1, 0xE0)   ← end of previous line, in overscan
 //               bpl1/2 ptr → terrainBitmap, terrain palette (dynamic from mem[])
 //   WAIT(kCockpitLine-1, 0xE0)
-//               bpl1/2 ptr → cockpit_raw, cockpit palette (4 colours + blink)
+//               bpl1/2 ptr → cockpitBitmap (modeD $350D + mode4 $332D from mem[])
 //
 // Colour-register writes are IMMEDIATE on OCS.  The correct split technique is
 // a single WAIT at the end of the line before the boundary (in the H-blank /
@@ -40,10 +40,9 @@ extern "C" volatile uint8_t mem[65536];
 
 #include "../assets/title_pal.h"
 #include "../assets/terrain_pal.h"
-#include "../assets/cockpit_pal.h"
 #include "../assets/atari_pal.h"
-
-extern "C" uint8_t cockpit_raw[];
+// cockpit_pal.h and cockpit_raw removed: cockpit palette is now fully dynamic
+// from mem[] via atariToOCS(), cockpit bitmap decoded each frame in render().
 
 static const uint16_t kW   = 320;
 static const uint16_t kH   = 216;   // Atari attract = 216 visible scanlines
@@ -59,6 +58,8 @@ static const uint16_t kTitleHeight   = 42;                 // title region displ
 static const uint16_t kTerrainHeight = kHT;                // terrain region (placeholder, see kHT)
 static const uint16_t kTerrainLine   = kDisplayTop + kTitleHeight;   // = 0x56 (86)
 static const uint16_t kCockpitLine   = kTerrainLine + kTerrainHeight; // = 172
+// Cockpit height: 4 modeD DL entries × 2 scan lines + 9 mode4 DL entries × 8 scans
+static const uint16_t kCockpitH     = 4 * 2 + 9 * 8;                // = 80
 // centerY so that DIWSTRT.y = kDisplayTop: centerY = kDisplayTop + kH/2 = 0x2c + 108 = 0x98
 static const uint16_t kCenterY       = kDisplayTop + kH / 2;
 
@@ -185,7 +186,7 @@ void StandbyScene::buildCopperList(CopperList* cl, uint16_t frame)
 
     // ---- cockpit region — same pattern --------------------------------------
     d[idx++] = copperWait(kCockpitLine - 1, 0xE0);
-    uint32_t ca = (uint32_t)cockpit_raw;
+    uint32_t ca = (uint32_t)cockpitBitmap->data;
     d[idx++] = copperMove(bpl1pth, (uint16_t)(ca >> 16));
     d[idx++] = copperMove(bpl1ptl, (uint16_t)(ca & 0xFFFF));
     d[idx++] = copperMove(bpl2pth, (uint16_t)((ca + 40) >> 16));
@@ -209,7 +210,7 @@ void StandbyScene::initialize()
     palette       = new Palette(kTitlePalette, 4, /*fade*/0);
     titleBitmap   = Bitmap::allocate(kW, kTitleHeight,   kBP2, true);
     terrainBitmap = Bitmap::allocate(kW, kTerrainHeight, kBP2, true);
-    cockpitBitmap = new Bitmap(cockpit_raw, kW, 104, kBP2, true);
+    cockpitBitmap = Bitmap::allocate(kW, kCockpitH, kBP2, true);
 
     leftPost   = Sprite::allocate(kHT);
     rightPost  = Sprite::allocate(kHT);
@@ -276,6 +277,23 @@ void StandbyScene::update(uint16_t frame)
     buildCopperList(copperLists[next], frame);
     AmigaHardware::setCopperList(*copperLists[next], false);
     active = next;
+}
+
+// ---- cockpit helpers ---------------------------------------------------------
+// Decode one 2bpp byte (modeD raw or mode4 glyph) → Amiga 2bp byte pair.
+// Each byte contains 4 × 2-bit Atari pixels; each pixel expands to 2 Amiga pixels.
+// Amiga colour index = {p2_bit, p1_bit} — same layout as terrain kNibbleColour.
+static void decode2bppByte(uint8_t src, uint8_t* p1out, uint8_t* p2out)
+{
+    uint8_t p1 = 0, p2 = 0;
+    for (int i = 0; i < 4; i++) {
+        uint8_t pixel = (src >> (6 - i*2)) & 3u;
+        uint8_t mask  = (uint8_t)(0xC0u >> (i*2));  // 0xC0, 0x30, 0x0C, 0x03
+        if (pixel & 1u) p1 |= mask;   // plane1 = bit 0 of colour index
+        if (pixel & 2u) p2 |= mask;   // plane2 = bit 1 of colour index
+    }
+    *p1out = p1;
+    *p2out = p2;
 }
 
 // NTSC-blended mode-6 glyph render (2bp, 3-colour output).
@@ -367,6 +385,40 @@ void StandbyScene::render()
             uint8_t* row   = tbmp + destRow * 80;
             // NTSC blend: plane1 at col*2, plane2 at 40+col*2
             renderNTSCGlyph(glyph, &row[col*2], &row[40+col*2]);
+        }
+    }
+
+    // ---- cockpit region ------------------------------------------------------
+    // ModeD $350D: 4 DL entries × 2 identical scan lines = 8 rows.
+    //   Each entry reads 40 bytes of raw 2bpp bitmap; same data for both scans.
+    // Mode4 $332D: 9 DL entries × 8 scan lines = 72 rows.
+    //   40 chars/row, glyph per scanline from charset $3800 (set by dli_sub_4a0c).
+    //   Glyph byte = 4 × 2-bit pixels (COLBK/COLPF0/COLPF1/COLPF2).
+    uint8_t* cdest = (uint8_t*)cockpitBitmap->data;
+
+    // ModeD rows 0-7
+    for (int entry = 0; entry < 4; entry++) {
+        const uint8_t* src = (const uint8_t*)&mem[0x350D + (uint16_t)(entry * 40)];
+        for (int scan = 0; scan < 2; scan++) {
+            int row = entry * 2 + scan;
+            uint8_t* p1 = cdest + row * 80;
+            uint8_t* p2 = p1 + 40;
+            for (int b = 0; b < 40; b++) decode2bppByte(src[b], &p1[b], &p2[b]);
+        }
+    }
+
+    // Mode4 rows 8-79
+    for (int entry = 0; entry < 9; entry++) {
+        const uint8_t* chars = (const uint8_t*)&mem[0x332D + (uint16_t)(entry * 40)];
+        for (int scan = 0; scan < 8; scan++) {
+            int row = 8 + entry * 8 + scan;
+            uint8_t* p1 = cdest + row * 80;
+            uint8_t* p2 = p1 + 40;
+            for (int col = 0; col < 40; col++) {
+                uint8_t glyphIdx  = chars[col] & 0x3Fu;
+                uint8_t glyphData = mem[0x3800u + glyphIdx * 8u + (uint16_t)scan];
+                decode2bppByte(glyphData, &p1[col], &p2[col]);
+            }
         }
     }
 }
