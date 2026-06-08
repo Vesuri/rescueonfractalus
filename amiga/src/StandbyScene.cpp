@@ -30,9 +30,10 @@
 #include "StandbyScene.h"
 #include "PaulaAudio.h"
 
-// sfx_voice_tick_native: native 68000 replacement for the transpiled sfx_voice_tick.
-// See SfxPlayer.cpp for the implementation.
-extern "C" void sfx_voice_tick_native(void);
+// Native handler functions — see NativeHandlers.cpp and SfxPlayer.cpp.
+extern "C" void vbi_handler_game_native(void);        // $52D7: timer cascade
+extern "C" void update_blink_timer_006e_native(void); // $4131: cockpit blink
+extern "C" void sfx_voice_tick_native(void);          // $70F9: SFX audio
 
 extern "C" volatile uint8_t mem[65536];
 
@@ -257,28 +258,9 @@ void StandbyScene::initialize()
 
 void StandbyScene::update(uint16_t frame)
 {
-    // ---- Music: SFX sequencer tick (R3 — native) --------------------------------
-    // Equivalent to Atari VTIMR2 IRQ at $54C0. Calls sfx_voice_tick_native from
-    // SfxPlayer.cpp — replaces transpiled 6502 version (~60x faster on 68000).
-    if (mem[0x00E7] != 0) sfx_voice_tick_native();
-
-    // ---- VBI animation (mimics vbi_handler_game + update_blink_timer_006e) ---
-    // NOTE: main.cpp's VBI interrupt server already increments mem[$0014] and
-    // mem[$0013]/$0080 each VBI — do NOT increment $0014 here again.
-    mem[0x062D]++;
-    if (mem[0x062D] == 0) mem[0x00E2]++;
-
-    // Blink timer (update_blink_timer_006e @ $4131):
-    //   mem[$006E] counts down from $0F; at 0 it reloads and turns lights ON ($4E);
-    //   when below $0A, lights go OFF ($46).  mem[$00DE] drives cockpit light colour.
-    if (mem[0x006E] == 0) {
-        mem[0x006E] = 0x0F;
-        mem[0x00DE] = 0x4E;   // lights ON
-    } else {
-        mem[0x006E]--;
-        if (mem[0x006E] < 0x0A)
-            mem[0x00DE] = 0x46;   // lights OFF
-    }
+    vbi_handler_game_native();           // $52D7: attract timer cascade
+    update_blink_timer_006e_native();    // $4131: cockpit blink lights
+    if (mem[0x00E7] != 0) sfx_voice_tick_native();  // $70F9: SFX audio
 
     uint8_t next = 1 - active;
     buildCopperList(copperLists[next], frame);
