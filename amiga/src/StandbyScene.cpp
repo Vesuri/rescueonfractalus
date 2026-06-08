@@ -250,8 +250,6 @@ void StandbyScene::initialize()
 
 void StandbyScene::update(uint16_t frame)
 {
-    blinkFrame++;
-
     // ---- Music: SFX sequencer tick (R3 — native) --------------------------------
     // Equivalent to Atari VTIMR2 IRQ at $54C0. Calls sfx_voice_tick_native from
     // SfxPlayer.cpp — replaces transpiled 6502 version (~60x faster on 68000).

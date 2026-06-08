@@ -31,7 +31,6 @@ private:
     Sprite*     rightPost      = nullptr;
     Sprite*     nullSprite     = nullptr;
     uint8_t     active         = 0;
-    uint16_t    blinkFrame     = 0;
 
     // Dirty-flag bitmap caching: bitmaps are rendered once on initialize() and
     // only re-rendered when the underlying mem[] data changes.
