@@ -37,6 +37,10 @@ extern "C" void sfx_voice_tick_native(void);          // $70F9: SFX audio
 
 extern "C" volatile uint8_t mem[65536];
 
+// Lookup table: byte → 16-bit doubled glyph pattern (each bit → 2 pixels).
+// Filled once in initialize(); used by title render for mode-6 1bpp doubling.
+static uint16_t kDoubleGlyph[256];
+
 #include "../assets/title_pal.h"
 #include "../assets/terrain_pal.h"
 #include "../assets/atari_pal.h"
@@ -234,6 +238,14 @@ void StandbyScene::initialize()
     active = 0;
     AmigaHardware::setCopperList(*copperLists[active], true);
 
+    // Precompute glyph doubling table: each byte → 16-bit pattern (each bit → 2 bits).
+    for (int i = 0; i < 256; i++) {
+        uint16_t out = 0;
+        for (int b = 7; b >= 0; b--)
+            if (i & (1 << b)) out |= (uint16_t)3u << (b * 2);
+        kDoubleGlyph[i] = out;
+    }
+
     paula_audio_init();      // loads screen3_mem.bin into mem[] (Standby scene snapshot)
 
     // Patch mem[] values that are mid-animation in the snapshot.
@@ -288,15 +300,6 @@ static void decode2bppByte(uint8_t src, uint8_t* p1out, uint8_t* p2out)
 }
 
 
-// Mode-6 glyph expand: each of 8 bits → 2 Amiga pixels (doubled).
-// Result is 16 bits for plane1; plane2 stays 0 → only col0/col1 used.
-static uint16_t doubleGlyphBits(uint8_t g)
-{
-    uint16_t out = 0;
-    for (int b = 7; b >= 0; b--)
-        if (g & (1u << b)) out |= (uint16_t)3u << (b * 2);
-    return out;
-}
 
 // GTIA mode-10 nibble → Amiga 2bp colour index.
 // Zones: 0→bg, 1-2→COLPF0-1 (col1), 3-4→COLPF2-3 (col2), 5-8+→COLPM0-3 (col3).
@@ -344,7 +347,9 @@ void StandbyScene::render()
     // Chars start at $32B7 (skip $32B5/$32B6 left-border), charset $3800 (NTSC).
     static const int      kTitleTextRow  = 21;
     static const uint16_t kScreenRAM    = 0x32B7;
-    static const uint16_t kCharsetBase  = 0x3800;
+    // CHBAS=$04 ($0400): vbi_handler_game sets this each VBI. dli_sub_4a0c fires
+    // at scanY=28 (after title scanlines 20-27) → title uses $0400 for all 8 scans.
+    static const uint16_t kCharsetBase  = 0x0400;
 
     uint8_t* tbmp = (uint8_t*)titleBitmap->data;
     for (int col = 0; col < 20; col++) {
@@ -361,7 +366,7 @@ void StandbyScene::render()
             int destRow = kTitleTextRow + scanline;
             if (destRow >= (int)kTitleHeight) break;
             uint8_t glyph = mem[glyphBase + (uint16_t)scanline];
-            uint16_t doubled = doubleGlyphBits(glyph);
+            uint16_t doubled = kDoubleGlyph[glyph];
             uint8_t* row = tbmp + destRow * 80;
             row[col*2]       = (uint8_t)(doubled >> 8);
             row[col*2+1]     = (uint8_t)(doubled & 0xFF);
