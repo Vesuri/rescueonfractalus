@@ -10,16 +10,14 @@
 cockpit_raw:
 	.incbin "assets/cockpit.raw"
 
-| rof_mem.bin — flat 64 KB post-loader memory snapshot (fast RAM: CPU only, no DMA)
-|   Loaded verbatim into mem[] at startup.  This is the game's memory state
-|   immediately after the Atari OS loader finished, at the entry to game_entry().
-|   All attract-mode tables ($2603 channel table, $0600 bitmap, audio state) are
-|   already in their correct initial state — no XEX parsing or attract_mode_init
-|   emulation required.
+| attract_mem.bin — flat 64 KB RAM extracted from attract.a8s Atari800 snapshot
+|   Captured during attract mode: all state is correct ($2603 channel table,
+|   $0600 bitmap, $2313/$231B source tables, audio state).  Loaded verbatim into
+|   mem[] at startup so attract functions run with the right initial conditions.
 	.section .rodata
 	.balign 4
 	.global rof_mem_bin
 	.global rof_mem_bin_end
 rof_mem_bin:
-	.incbin "../disasm/rof_mem.bin"
+	.incbin "../disasm/attract_mem.bin"
 rof_mem_bin_end:

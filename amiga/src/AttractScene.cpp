@@ -204,9 +204,8 @@ void AttractScene::initialize()
     active = 0;
     AmigaHardware::setCopperList(*copperLists[active], true);
 
-    paula_audio_init();      // loads rof_mem.bin into mem[] (post-loader snapshot)
+    paula_audio_init();      // loads attract_mem.bin into mem[] (attract-mode snapshot)
     audio_ch1_init();
-    attract_mode_setup();    // mirrors attract_mode_init setup steps (rle_decompress etc.)
 }
 
 void AttractScene::update(uint16_t frame)
