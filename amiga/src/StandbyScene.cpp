@@ -189,14 +189,14 @@ void StandbyScene::buildCopperList(CopperList* cl, uint16_t frame)
     d[idx++] = copperMove(bpl1ptl, (uint16_t)(ca & 0xFFFF));
     d[idx++] = copperMove(bpl2pth, (uint16_t)((ca + 40) >> 16));
     d[idx++] = copperMove(bpl2ptl, (uint16_t)((ca + 40) & 0xFFFF));
-    // Cockpit palette from Atari shadow RAM:
-    //   col0 = COLBK (panel background) = mem[$02C8]
-    //   col1 = COLPF1 (panel body)      = mem[$02C5]
-    //   col2 = COLPF2 (mid grey)        = mem[$02C6]
-    //   col3 = cockpit light (blinks)   = mem[$00DE] drives COLPM3 on Atari
+    // Cockpit palette — mode-4 2bpp pixel encoding:
+    //   pixel 00 = COLBK  → col0 = mem[$02C8]
+    //   pixel 01 = COLPF0 → col1 = mem[$02C4]  (black dots, near-$00)
+    //   pixel 10 = COLPF1 → col2 = mem[$02C5]  (panel body colour)
+    //   pixel 11 = COLPF2 → col3 = blink light
     d[idx++] = copperMove(color00, fadeColor(atariToOCS(mem[0x02C8]), f));
-    d[idx++] = copperMove(color01, fadeColor(atariToOCS(mem[0x02C5]), f));
-    d[idx++] = copperMove(color02, fadeColor(atariToOCS(mem[0x02C6]), f));
+    d[idx++] = copperMove(color01, fadeColor(atariToOCS(mem[0x02C4]), f));
+    d[idx++] = copperMove(color02, fadeColor(atariToOCS(mem[0x02C5]), f));
     uint16_t litColor = (mem[0x00DE] >= 0x4E) ? fadeColor(atariToOCS(mem[0x00D8]), f) : 0x000;
     d[idx++] = copperMove(color03, litColor);
 }
@@ -235,13 +235,20 @@ void StandbyScene::initialize()
 
     paula_audio_init();      // loads screen3_mem.bin into mem[] (Standby scene snapshot)
 
-    // R4 parity: patch key attract-mode values that differ from the SDL oracle.
+    // Patch mem[] values that are mid-animation in the snapshot.
     // (Must happen before initial render() call below.)
     // screen3_mem.bin was captured mid-animation; game_entry sets these on startup.
     // mem[$0071]: COLBK source for terrain rows (DLI dli_sub_6cf1 reads it).
     //   Snapshot has $DB (mid-animation); attract init targets $C8 (green, $C8=hue12/luma4).
     //   SDL oracle (atari000.png) shows terrain as (82,140,22) = $C8.
-    mem[0x0071] = 0xC8;
+    mem[0x0071] = 0xC8;   // COLBK source for terrain DLI → green
+
+    // Title region colours (dli_sub_4a0c shadow $00D5/$00D8):
+    // Snapshot captured mid-animation with bg/fg swapped. vbi_handler_game
+    // hardcodes COLPF1=$78 (blue), which the DLI overrides from mem[$00D5].
+    // Correct standby: grey bg ($00D8=$06) + blue text ($00D5=$78).
+    mem[0x00D5] = 0x78;   // COLPF1 = blue title text
+    mem[0x00D8] = 0x06;   // COLBK  = grey title background
 
     // Initial render: populate all three bitmaps from mem[] once so that
     // render() called from the main loop has nothing to do until data changes.
