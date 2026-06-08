@@ -265,6 +265,17 @@ void StandbyScene::initialize()
     mem[0x00D5] = 0x78;   // COLPF1 = blue title text
     mem[0x00D8] = 0x06;   // COLBK  = grey title background
 
+    // Initialise title text: copy Block1 ("rescue on fractalus") from $5A9F
+    // into $32B7-$32CA (20 visible chars).  On the real Atari this is written by
+    // copy_altitude_graphic_to_screen ($782A, X=$13) during the Screen 2 Station
+    // cinematic.  The snapshot captured the end state ("©1985..." = Block2); we
+    // restore the correct Standby title here.
+    static const uint8_t kTitleBlock1[20] = {
+        0x5A,0x72,0x65,0x73,0x63,0x75,0x65,0x40,0x6F,0x6E,
+        0x40,0x66,0x72,0x61,0x63,0x74,0x61,0x6C,0x75,0x73
+    };
+    for (int i = 0; i < 20; i++) mem[0x32B7 + i] = kTitleBlock1[i];
+
     // Initial render: populate all three bitmaps from mem[] once so that
     // render() called from the main loop has nothing to do until data changes.
     render();
