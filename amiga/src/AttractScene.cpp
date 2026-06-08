@@ -101,13 +101,21 @@ void AttractScene::buildCopperList(CopperList* cl, uint16_t frame)
     uint16_t f = palette->fade();
 
     uint32_t* d   = cl->data();
+
+    // d[0]: safe preamble wait — chip RAM is not guaranteed zero; without this
+    // the Copper may execute a garbage instruction before setPlayfield's entries.
+    d[0] = copperWait(16, 0);
     uint32_t  idx = 1;
 
     // ---- title region -------------------------------------------------------
+    // Colours FIRST, then bitmap pointers — this order is critical at every
+    // region boundary: if pointers are written before colours the DMA starts
+    // feeding new-bitmap pixels while the old palette is still active, producing
+    // a one-line colour artefact (the "blue stripe" on terrain row 0).
     idx = cl->setPlayfield(idx, kW, kH, kBP2, /*interleaved*/true);
+    idx = cl->setPalette(idx, *palette);   // colours before bitmap pointers
     cl->showBitmap(idx, *titleBitmap);
     idx += 2 * kBP2;
-    idx = cl->setPalette(idx, *palette);   // 4-colour title palette (faded)
 
     // Sprite colour registers:
     d[idx++] = copperMove(color16, 0x000);
@@ -120,30 +128,30 @@ void AttractScene::buildCopperList(CopperList* cl, uint16_t frame)
         cl->showSprite(idx, s, *nullSprite); idx += 2;
     }
 
-    // ---- terrain region -----------------------------------------------------
+    // ---- terrain region — colours first, then pointers ---------------------
     d[idx++] = copperWait(kTerrainLine, 0);
 
+    d[idx++] = copperMove(color00, fadeColor(kTerrainPalette[0], f));
+    d[idx++] = copperMove(color01, fadeColor(kTerrainPalette[1], f));
+    d[idx++] = copperMove(color02, fadeColor(kTerrainPalette[2], f));
+    d[idx++] = copperMove(color03, fadeColor(kTerrainPalette[3], f));
     uint32_t ta = (uint32_t)terrain_raw;
     d[idx++] = copperMove(bpl1pth, (uint16_t)(ta >> 16));
     d[idx++] = copperMove(bpl1ptl, (uint16_t)(ta & 0xFFFF));
     d[idx++] = copperMove(bpl2pth, (uint16_t)((ta + 40) >> 16));
     d[idx++] = copperMove(bpl2ptl, (uint16_t)((ta + 40) & 0xFFFF));
-    d[idx++] = copperMove(color00, fadeColor(kTerrainPalette[0], f));
-    d[idx++] = copperMove(color01, fadeColor(kTerrainPalette[1], f));
-    d[idx++] = copperMove(color02, fadeColor(kTerrainPalette[2], f));
-    d[idx++] = copperMove(color03, fadeColor(kTerrainPalette[3], f));
 
-    // ---- cockpit region -----------------------------------------------------
+    // ---- cockpit region — colours first, then pointers ---------------------
     d[idx++] = copperWait(kCockpitLine, 0);
 
+    d[idx++] = copperMove(color00, fadeColor(kCockpitPalette[0], f));
+    d[idx++] = copperMove(color01, fadeColor(kCockpitPalette[1], f));
+    d[idx++] = copperMove(color02, fadeColor(kCockpitPalette[2], f));
     uint32_t ca = (uint32_t)cockpit_raw;
     d[idx++] = copperMove(bpl1pth, (uint16_t)(ca >> 16));
     d[idx++] = copperMove(bpl1ptl, (uint16_t)(ca & 0xFFFF));
     d[idx++] = copperMove(bpl2pth, (uint16_t)((ca + 40) >> 16));
     d[idx++] = copperMove(bpl2ptl, (uint16_t)((ca + 40) & 0xFFFF));
-    d[idx++] = copperMove(color00, fadeColor(kCockpitPalette[0], f));
-    d[idx++] = copperMove(color01, fadeColor(kCockpitPalette[1], f));
-    d[idx++] = copperMove(color02, fadeColor(kCockpitPalette[2], f));
 
     // Blink: lights are palette entry 3 (0x832 orange-red).
     uint16_t litColor = ((blinkFrame / 25) & 1) ? 0x000 : fadeColor(kCockpitPalette[3], f);
