@@ -215,6 +215,13 @@ void StandbyScene::initialize()
     AmigaHardware::setCopperList(*copperLists[active], true);
 
     paula_audio_init();      // loads screen3_mem.bin into mem[] (Standby scene snapshot)
+
+    // R4 parity: patch key attract-mode values that differ from the SDL oracle.
+    // screen3_mem.bin was captured mid-animation; game_entry sets these on startup.
+    // mem[$0071]: COLBK source for terrain rows (DLI dli_sub_6cf1 reads it).
+    //   Snapshot has $DB (mid-animation); attract init targets $C8 (green, $C8=hue12/luma4).
+    //   SDL oracle (atari000.png) shows terrain as (82,140,22) = $C8.
+    mem[0x0071] = 0xC8;
 }
 
 void StandbyScene::update(uint16_t frame)
