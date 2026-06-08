@@ -8,3 +8,11 @@
 	.global attract_raw
 attract_raw:
 	.incbin "assets/attract.raw"
+
+| terrain.raw — interleaved 2-bitplane 320x86 terrain viewport (rows 42-127)
+|   3 colours: black (idx 0), grey sky (idx 1), green mountains (idx 2)
+	.section .MEMF_CHIP,"a"
+	.balign 4
+	.global terrain_raw
+terrain_raw:
+	.incbin "assets/terrain.raw"

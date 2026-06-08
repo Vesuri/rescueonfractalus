@@ -1,22 +1,24 @@
 #!/usr/bin/env python3
-"""Convert an indexed-colour PNG to Amiga OCS interleaved 4-bitplane raw.
+"""Convert an indexed-colour PNG to Amiga OCS interleaved N-bitplane raw.
 
 Output:
   <dst>.raw       — interleaved bitplane data (goes into .MEMF_CHIP via incbin.s)
-  <dst>_pal.h     — C++ OCS 12-bit palette array (include in AttractScene.cpp)
+  <dst>_pal.h     — C++ OCS 12-bit palette array
 
 Usage:
   python3 tools/png2raw.py <src.png> <dst-base>
     e.g.  python3 tools/png2raw.py ../atari000.png assets/attract
 
-Crop/size flags (edit below or pass as env vars):
+Env vars:
   CROP_X  — pixels to remove from each horizontal side (default 8, 336→320)
-  CROP_Y  — pixels to remove from the top (default 0)
+  CROP_Y  — first row to include, i.e. top crop (default 0)
+  CROP_Y1 — last row to exclude (default: source height, no bottom crop)
   WIDTH   — output width in pixels (must be multiple of 16; default 320)
-  HEIGHT  — output height in pixels (default 200)
+  PLANES  — number of bitplanes 1..6 (default 4); ≤16 colours needed for 4-plane,
+             ≤4 for 2-plane, ≤2 for 1-plane
 
 The output format matches the dA JoRMaS Bitmap interleaved layout:
-  For each row y: plane0_row | plane1_row | plane2_row | plane3_row
+  For each row y: plane0_row | plane1_row | ... | planeN_row
   Each plane row is WIDTH/8 bytes (word-aligned).
 """
 
@@ -25,36 +27,40 @@ import sys
 from PIL import Image
 
 def png_to_raw(src_path, dst_base,
-               crop_x=8, crop_y=0, width=320, height=200):
+               crop_x=8, crop_y=0, crop_y1=None, width=320, planes=4):
 
     img = Image.open(src_path)
     print(f"Source: {img.size} {img.mode}")
 
-    # Ensure palette mode with <=16 colours
+    max_colours = 1 << planes
+
+    # Ensure palette mode
     if img.mode != 'P':
-        img = img.convert('P', palette=Image.ADAPTIVE, colors=16)
+        img = img.convert('P', palette=Image.ADAPTIVE, colors=max_colours)
     # Crop to target size
+    src_h = img.size[1]
+    y1 = crop_y1 if crop_y1 is not None else src_h
+    height = y1 - crop_y
     img = img.crop((crop_x, crop_y, crop_x + width, crop_y + height))
     print(f"Cropped to: {img.size}")
 
     pixels = list(img.getdata())
     unique_sorted = sorted(set(pixels))
     n_colors = len(unique_sorted)
-    if n_colors > 16:
-        # Re-quantise to 16
-        img = img.quantize(16)
+    if n_colors > max_colours:
+        img = img.quantize(max_colours)
         pixels = list(img.getdata())
         unique_sorted = sorted(set(pixels))
         n_colors = len(unique_sorted)
-        print(f"Re-quantised to {n_colors} colours")
+        print(f"Re-quantised to {n_colors} colours ({planes}-plane)")
     else:
-        print(f"Colours used: {n_colors}")
+        print(f"Colours used: {n_colors} (fits in {planes} planes)")
 
     # Compact remap: ensure indices are 0..n_colors-1
     remap = {old: new for new, old in enumerate(unique_sorted)}
     pixels_r = [remap[p] for p in pixels]
 
-    # Build OCS palette (12-bit 0xRGB per entry, R/G/B are top 4 bits of 8-bit)
+    # Build OCS palette (12-bit 0xRGB)
     pal_raw = img.getpalette()
     ocs_pal = []
     for idx in unique_sorted:
@@ -62,42 +68,45 @@ def png_to_raw(src_path, dst_base,
         g = pal_raw[idx * 3 + 1] >> 4
         b = pal_raw[idx * 3 + 2] >> 4
         ocs_pal.append((r << 8) | (g << 4) | b)
-    while len(ocs_pal) < 16:
-        ocs_pal.append(0x000)  # unused entries = black
+    while len(ocs_pal) < max_colours:
+        ocs_pal.append(0x000)
 
     # Build interleaved bitplane data
-    bpr = width >> 3                  # bytes per plane row (40 for 320)
-    row_stride = 4 * bpr              # interleaved row = 4 planes × bpr
+    bpr = width >> 3               # bytes per plane row (40 for 320)
+    row_stride = planes * bpr      # interleaved row = planes × bpr
     data = bytearray(height * row_stride)
 
     for y in range(height):
         for x in range(width):
             v = pixels_r[y * width + x]
             bx = x >> 3
-            bit = 7 - (x & 7)        # MSB = leftmost pixel (Amiga convention)
-            for p in range(4):
+            bit = 7 - (x & 7)    # MSB = leftmost pixel (Amiga convention)
+            for p in range(planes):
                 if (v >> p) & 1:
                     data[y * row_stride + p * bpr + bx] |= (1 << bit)
 
     raw_path = dst_base + '.raw'
     with open(raw_path, 'wb') as f:
         f.write(data)
-    print(f"Wrote {len(data)} bytes → {raw_path}  ({width}×{height} px, 4 planes interleaved)")
+    print(f"Wrote {len(data)} bytes → {raw_path}  ({width}×{height} px, {planes} planes interleaved)")
 
+    # Palette header — array name from dst_base filename
+    import os as _os
+    base_name = _os.path.basename(dst_base)
+    var_name = 'k' + base_name[0].upper() + base_name[1:] + 'Palette'
     pal_path = dst_base + '_pal.h'
     with open(pal_path, 'w') as f:
-        f.write('// Attract-screen OCS palette — generated by tools/png2raw.py\n')
-        f.write('// 16 entries, 12-bit 0x0RGB each (top nibble unused on OCS).\n')
-        f.write('static const uint16_t kAttractPalette[16] = {\n')
+        f.write(f'// {base_name} OCS palette — generated by tools/png2raw.py\n')
+        f.write(f'// {max_colours} entries, 12-bit 0x0RGB each.\n')
+        f.write(f'static const uint16_t {var_name}[{max_colours}] = {{\n')
         for i, c in enumerate(ocs_pal):
-            src_rgb = ''
             if i < n_colors:
                 idx = unique_sorted[i]
                 r8, g8, b8 = pal_raw[idx*3:idx*3+3]
-                src_rgb = f'  // #{r8:02x}{g8:02x}{b8:02x}'
+                comment = f'  // #{r8:02x}{g8:02x}{b8:02x}'
             else:
-                src_rgb = '  // (unused)'
-            f.write(f'    0x{c:03x},{src_rgb}\n')
+                comment = '  // (unused)'
+            f.write(f'    0x{c:03x},{comment}\n')
         f.write('};\n')
     print(f"Wrote palette → {pal_path}")
 
@@ -106,8 +115,10 @@ if __name__ == '__main__':
     if len(sys.argv) < 3:
         print(__doc__)
         sys.exit(1)
-    cx = int(os.getenv('CROP_X', '8'))
-    cy = int(os.getenv('CROP_Y', '0'))
-    w  = int(os.getenv('WIDTH',  '320'))
-    h  = int(os.getenv('HEIGHT', '200'))
-    png_to_raw(sys.argv[1], sys.argv[2], crop_x=cx, crop_y=cy, width=w, height=h)
+    cx  = int(os.getenv('CROP_X', '8'))
+    cy  = int(os.getenv('CROP_Y', '0'))
+    cy1_s = os.getenv('CROP_Y1', '')
+    cy1 = int(cy1_s) if cy1_s else None
+    w   = int(os.getenv('WIDTH',  '320'))
+    pl  = int(os.getenv('PLANES', '4'))
+    png_to_raw(sys.argv[1], sys.argv[2], crop_x=cx, crop_y=cy, crop_y1=cy1, width=w, planes=pl)
