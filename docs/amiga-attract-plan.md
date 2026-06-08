@@ -730,3 +730,63 @@ exactly as the 6502 code dictates), terrain bitmap, cockpit panel with blinking
 lights — with Copper colour splits, sprite canopy posts, and Paula audio. Parity
 with the SDL build is exact for timing and content; residuals are limited to the
 OCS 12-bit palette quantisation documented in `PARITY.md`.
+
+---
+
+## SESSION STATUS (2026-06-08/09) — ACTUAL IMPLEMENTATION STATE
+
+The plan above (M6a-M6e) is largely superseded by the Option-B rework. Here
+is the accurate current state.
+
+### What is working
+
+All render for the Standby scene (scene 3, `$3000` DL) is complete and
+visually verified on real FS-UAE:
+
+- **Terrain** (`$2000`, stride 46): GTIA mode-10 nibble decode → 2bp bitmap.
+  Colour 0=COLPM0 (black dots, $02C0=$00 patched), col3=COLBK (green, $0071=$C8).
+- **Title** (`$32B7`-`$32CA`, 20 chars): mode-6 1bpp, charset `$0400`
+  (CHBAS=$04 from VBI; DLI fires at scanY=28 = after title). `kDoubleGlyph[256]`
+  lookup table. Palette: col0=COLBK (grey), col1=COLPF1 (blue).
+  Pre-initialised with Block1 "rescue on fractalus" text from `$5A9F`.
+- **Cockpit** (modeD `$350D` + mode4 `$332D`): `decode2bppByte()` for both.
+  Palette: col0=COLBK, col1=COLPF0 (black dots), col2=COLPF1 (pink body).
+- **Sprites**: canopy posts (Sprite 0/1, slanted staircase).
+- **All palettes**: dynamic from `mem[]` via `atariToOCS()` (YIQ formula).
+- **Music**: `sfx_voice_tick_native()` / `sfx_seq_step_native()` — fully native
+  68000, no transpiled code (GC'd). SFX sequence drives Paula via POKEY→PaulaAudio.
+- **Blink lights**: `update_blink_timer_006e_native()` drives `mem[$00DE]`.
+- **VBI timers**: main.cpp interrupt server (RTCLOK), `vbi_handler_game_native()`
+  ($062D cascade), blink timer.
+- **Performance**: terrain+cockpit dirty-flag (render once); title 20-byte shadow
+  compare; no full reconvert per frame.
+
+### Architecture
+
+`amiga/src/` files:
+- `StandbyScene.cpp/.h` — scene lifecycle, render, update, copper list
+- `SfxPlayer.cpp` — `sfx_voice_tick_native`, `sfx_seq_step_native`
+- `NativeHandlers.cpp` — `vbi_handler_game_native`, `update_blink_timer_006e_native`
+- `PaulaAudio.cpp` — POKEY→Paula bridge
+- `main.cpp` — VBI interrupt server, main loop
+
+### Snapshot patches (applied in initialize())
+
+All from `music_playing.a8s` being mid-animation vs the correct standby state:
+- `mem[$0071]=$C8` — terrain COLBK (green)
+- `mem[$00D5]=$78` — title COLPF1 (blue text)
+- `mem[$00D8]=$06` — title COLBK (grey background)
+- `mem[$02C0]=$00` — terrain COLPM0 (black dots)
+- `$32B7-$32CA` = Block1 — "RESCUE ON FRACTALUS!" title text
+
+### Open items
+
+1. **Standby animation**: `vbi_handler_2` ($4FF5) calls `startup_init` ($3FFA)
+   and `vbi_deferred_dispatch` ($534D) each VBI — not called. Needed for cockpit
+   digit updates, instrument animation. update() should call all standby-loop
+   functions as named native functions.
+2. **Title alternation**: Static. $0091 only incremented by `pmg_update_station`
+   ($1E79, Screen-2 function). Screen-3 standby is always static.
+3. **R3b music timing**: sfx runs at 50Hz VBI, not POKEY timer rate.
+4. **Scene 3b Scoreboard**: `attract_timer $00E2` → hi-score screen. Not analysed.
+5. **Descent / door-open sequence**: next major feature after standby is complete.
