@@ -8,8 +8,9 @@
 //
 // Volume mapping: AUDC[3:0] * 4 → Paula AUDxVOL (0..64); 0 if bit 4 set.
 //
-// XEX loading: the 43 KB rof.xex is embedded in .rodata (fast RAM) via incbin.s
-// and is parsed into mem[] on init, so audio_attract can read its tables.
+// Memory snapshot: disasm/rof_mem.bin (64 KB flat) is embedded in .rodata via
+// incbin.s and copied verbatim into mem[] on init.  It is the post-loader state
+// captured at game_entry() — all attract tables are already correctly initialised.
 
 #define ECS_SPECIFIC
 #include <hardware/dmabits.h>
@@ -19,9 +20,9 @@
 // mem[] and cpu are defined in src/cpu/cpu.c (compiled for m68k as audio/cpu.o)
 extern "C" volatile uint8_t mem[65536];
 
-// XEX image embedded in incbin.s
-extern "C" uint8_t rof_xex[];
-extern "C" uint8_t rof_xex_end[];
+// 64 KB flat memory snapshot embedded in incbin.s
+extern "C" uint8_t rof_mem_bin[];
+extern "C" uint8_t rof_mem_bin_end[];
 
 // Square wave sample buffer in chip RAM (Paula DMA must reach chip RAM)
 static __chip uint8_t paula_wave[2] = { 0x7F, 0x81 };  // +127, -127
@@ -110,30 +111,19 @@ static void update_paula_channel(uint8_t ch)
 }
 
 // ---- XEX loader --------------------------------------------------------------
-static void load_xex(void)
+static void load_mem_snapshot(void)
 {
-    const uint8_t* p = rof_xex;
-    const uint8_t* end = rof_xex_end;
-    if (p + 2 > end) return;
-    if (p[0] == 0xFFu && p[1] == 0xFFu) p += 2;
-
-    while (p + 4 <= end) {
-        if (p[0] == 0xFFu && p[1] == 0xFFu) { p += 2; continue; }
-        uint16_t seg_s = (uint16_t)p[0] | ((uint16_t)p[1] << 8);
-        uint16_t seg_e = (uint16_t)p[2] | ((uint16_t)p[3] << 8);
-        p += 4;
-        if (seg_e < seg_s) continue;
-        uint16_t len = seg_e - seg_s + 1u;
-        for (uint16_t i = 0; i < len && p < end; i++) {
-            mem[seg_s + i] = *p++;
-        }
+    // Flat 64 KB copy — rof_mem.bin is the post-loader state, ready to run.
+    const uint8_t* src = rof_mem_bin;
+    for (uint32_t i = 0; i < 65536u; i++) {
+        mem[i] = src[i];
     }
 }
 
 // ---- public interface --------------------------------------------------------
 void paula_audio_init(void)
 {
-    load_xex();
+    load_mem_snapshot();
 
     // Clear POKEY shadow and LFSR
     for (int i = 0; i < 16; i++) pokey[i] = 0;

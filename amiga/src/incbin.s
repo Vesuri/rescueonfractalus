@@ -10,12 +10,16 @@
 cockpit_raw:
 	.incbin "assets/cockpit.raw"
 
-| rof.xex — Atari XEX ROM image (fast RAM: CPU access only, no DMA)
-|   Loaded into mem[] at startup so audio_attract can read its tables ($1BE5 etc.)
+| rof_mem.bin — flat 64 KB post-loader memory snapshot (fast RAM: CPU only, no DMA)
+|   Loaded verbatim into mem[] at startup.  This is the game's memory state
+|   immediately after the Atari OS loader finished, at the entry to game_entry().
+|   All attract-mode tables ($2603 channel table, $0600 bitmap, audio state) are
+|   already in their correct initial state — no XEX parsing or attract_mode_init
+|   emulation required.
 	.section .rodata
 	.balign 4
-	.global rof_xex
-	.global rof_xex_end
-rof_xex:
-	.incbin "../rof.xex"
-rof_xex_end:
+	.global rof_mem_bin
+	.global rof_mem_bin_end
+rof_mem_bin:
+	.incbin "../disasm/rof_mem.bin"
+rof_mem_bin_end:
