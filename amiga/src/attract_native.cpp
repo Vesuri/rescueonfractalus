@@ -238,6 +238,16 @@ extern "C" void attract_mode_setup(void)
     mem[0x00BE] = 0x28;
     rle_decompress();
 
+    // Source tables for attract_sub_1EB4: both must be all $88, pointing every
+    // entry to address $8888 which holds the real attract door-animation bitmap
+    // data in ROM.  In rof_mem.bin (game_entry state) these tables have wrong
+    // values; game_main_loop's init functions fix them before attract_mode_init
+    // runs.  We do it here instead of running game_main_loop.
+    for (int i = 0; i < 8; i++) {
+        mem[0x2313 + i] = 0x88;   // source lo bytes → $8888
+        mem[0x231B + i] = 0x88;   // source hi bytes → $8888
+    }
+
     // Reset frame tick (VBI will set it non-zero; skip the Atari spin-wait).
     mem[0x0080] = 0;
 }
