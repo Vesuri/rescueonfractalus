@@ -225,7 +225,47 @@ void AttractScene::update(uint16_t frame)
     active = next;
 }
 
-void AttractScene::render() {}
+void AttractScene::render()
+{
+    // Mode F bitmap: 122 rows at mem[$0600], stride 40 bytes per row.
+    // display_list_build writes the attract DL to $B800 covering all 122 rows.
+    // Rows 0–41  → titleBitmap  (42 rows)
+    // Rows 42–121 → terrainBitmap rows 0–79 (last 6 rows stay zero = black)
+    //
+    // Layout in interleaved 2bp: 40 bytes plane1, 40 bytes plane2, per row.
+    // Plane2 stays zero (all pixels use only colour indices 0 and 1).
+
+    // ---- title (rows 0–41) --------------------------------------------------
+    uint8_t* tdest = (uint8_t*)titleBitmap->data;
+    for (int row = 0; row < (int)kTitleHeight; row++) {
+        const uint8_t* src = (const uint8_t*)&mem[0x0600 + row * 40];
+        uint8_t* plane1 = tdest;
+        uint8_t* plane2 = tdest + 40;
+        for (int b = 0; b < 40; b++) {
+            plane1[b] = src[b];
+            plane2[b] = 0;
+        }
+        tdest += 80;
+    }
+
+    // ---- terrain / door view (rows 42–121 of $0600, up to kTerrainHeight) ---
+    uint8_t* vdest = (uint8_t*)terrainBitmap->data;
+    const int kModeF_TerrainRows = 122 - (int)kTitleHeight;  // = 80
+    for (int row = 0; row < (int)kTerrainHeight; row++) {
+        uint8_t* plane1 = vdest;
+        uint8_t* plane2 = vdest + 40;
+        if (row < kModeF_TerrainRows) {
+            const uint8_t* src = (const uint8_t*)&mem[0x0600 + (kTitleHeight + row) * 40];
+            for (int b = 0; b < 40; b++) {
+                plane1[b] = src[b];
+                plane2[b] = 0;
+            }
+        } else {
+            for (int b = 0; b < 40; b++) { plane1[b] = 0; plane2[b] = 0; }
+        }
+        vdest += 80;
+    }
+}
 
 void AttractScene::shutdown()
 {
