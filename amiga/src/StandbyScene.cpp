@@ -243,6 +243,8 @@ void StandbyScene::initialize()
     //   Snapshot has $DB (mid-animation); attract init targets $C8 (green, $C8=hue12/luma4).
     //   SDL oracle (atari000.png) shows terrain as (82,140,22) = $C8.
     mem[0x0071] = 0xC8;   // COLBK source for terrain DLI → green
+    mem[0x02C0] = 0x00;   // COLPM0 → nibble-0 terrain dots; $00=black matches SDL oracle
+                           // (music_playing.a8s has $18=orange from mid-animation)
 
     // Title region colours (dli_sub_4a0c shadow $00D5/$00D8):
     // Snapshot captured mid-animation with bg/fg swapped. vbi_handler_game
