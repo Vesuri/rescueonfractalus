@@ -10,14 +10,17 @@
 cockpit_raw:
 	.incbin "assets/cockpit.raw"
 
-| attract_mem.bin — flat 64 KB RAM extracted from attract.a8s Atari800 snapshot
-|   Captured during attract mode: all state is correct ($2603 channel table,
-|   $0600 bitmap, $2313/$231B source tables, audio state).  Loaded verbatim into
-|   mem[] at startup so attract functions run with the right initial conditions.
+| standby_mem.bin — flat 64 KB RAM extracted from a800dumps/attract.a8s, which is
+|   the STANDBY screen (scene 3: RESCUE ON FRACTALUS title + LEVEL 04 doors-closed
+|   + cockpit; the $3000 DL). NOTE: this is a doors-closed capture — $2000=$88 flat
+|   fill, and the Station-cinematic tables ($283E/$1BF4/$1BE5/$2313/$2603) are empty
+|   filler here (they belong to scene 2, the Station cinematic). Per the Option-B
+|   rework (docs/amiga-attract-plan.md, R1) this is to be replaced by a screen-3
+|   snapshot from music_playing.a8s. Loaded verbatim into mem[] at startup.
 	.section .rodata
 	.balign 4
 	.global rof_mem_bin
 	.global rof_mem_bin_end
 rof_mem_bin:
-	.incbin "../disasm/attract_mem.bin"
+	.incbin "../disasm/standby_mem.bin"
 rof_mem_bin_end:

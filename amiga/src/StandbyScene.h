@@ -12,7 +12,7 @@
 //   Title   (lines 0..kTerrainLine-1) : title.raw  + kTitlePalette
 //   Terrain (lines kTerrainLine..kCockpitLine-1) : terrain.raw + kTerrainPalette
 //   Cockpit (lines kCockpitLine..end) : cockpit.raw + kCockpitPalette (+ blink)
-class AttractScene {
+class StandbyScene {
 public:
     void initialize();
     void update(uint16_t frame);

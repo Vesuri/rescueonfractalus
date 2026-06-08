@@ -24,19 +24,19 @@
 #include "../framework/Bitmap.h"
 #include "../framework/Palette.h"
 #include "../framework/Sprite.h"
-#include "AttractScene.h"
+#include "StandbyScene.h"
 #include "PaulaAudio.h"
 
-// audio_attract: 6502-transpiled, kept as-is (complex + already working).
-extern "C" void audio_attract(void);
-// Native 68000 replacements for the other attract functions (attract_native.cpp).
-extern "C" void attract_mode_setup(void);    // one-time init (mirrors attract_mode_init setup)
-extern "C" void attract_anim_frame_native(void);
-extern "C" void attract_sub_1EB4_native(void);
-extern "C" void attract_sub_1F48_native(void);
-// pmg_update_attract and pmg_colors_attract dropped: only modify PMG/GTIA
+// station_audio: 6502-transpiled, kept as-is (complex + already working).
+extern "C" void station_audio(void);
+// Native 68000 replacements for the other attract functions (station_native.cpp).
+extern "C" void station_setup(void);    // one-time init (mirrors station_init setup)
+extern "C" void station_anim_frame_native(void);
+extern "C" void station_sub_1EB4_native(void);
+extern "C" void station_sub_1F48_native(void);
+// pmg_update_station and pmg_colors_station dropped: only modify PMG/GTIA
 // registers not used on the Amiga.
-extern "C" void audio_ch1_init(void);
+extern "C" void station_audio_ch1_init(void);
 extern "C" volatile uint8_t mem[65536];
 
 #include "../assets/title_pal.h"
@@ -92,7 +92,7 @@ static void animatePalette(Palette* palette, uint16_t frame)
 }
 
 // ---- sprite data (staircase slant, see commit history for derivation) --------
-void AttractScene::fillSpriteData(Sprite* s, bool isRight)
+void StandbyScene::fillSpriteData(Sprite* s, bool isRight)
 {
     uint16_t* d = s->data() + 2;
     for (int i = 0; i < kHT; i++) {
@@ -112,7 +112,7 @@ void AttractScene::fillSpriteData(Sprite* s, bool isRight)
 }
 
 // ---- copper list builder -----------------------------------------------------
-void AttractScene::buildCopperList(CopperList* cl, uint16_t frame)
+void StandbyScene::buildCopperList(CopperList* cl, uint16_t frame)
 {
     animatePalette(palette, frame);
     uint16_t f = palette->fade();
@@ -173,7 +173,7 @@ void AttractScene::buildCopperList(CopperList* cl, uint16_t frame)
 }
 
 // ---- public interface --------------------------------------------------------
-void AttractScene::initialize()
+void StandbyScene::initialize()
 {
     Palette::initialize();
     palette       = new Palette(kTitlePalette, 4, /*fade*/0);
@@ -204,28 +204,28 @@ void AttractScene::initialize()
     active = 0;
     AmigaHardware::setCopperList(*copperLists[active], true);
 
-    paula_audio_init();      // loads attract_mem.bin into mem[] (attract-mode snapshot)
+    paula_audio_init();      // loads standby_mem.bin into mem[] (attract-mode snapshot)
 
     // The snapshot was captured with $0013=4 (attract exit condition).
-    // Reset RTCLOK so audio_attract starts from the beginning of its sequence.
+    // Reset RTCLOK so station_audio starts from the beginning of its sequence.
     mem[0x0013] = 0;
     mem[0x0014] = 0;
     mem[0x0080] = 0;
 
-    audio_ch1_init();
+    station_audio_ch1_init();
 }
 
-void AttractScene::update(uint16_t frame)
+void StandbyScene::update(uint16_t frame)
 {
     blinkFrame++;
 
     // Attract state machine — same order as the Atari attract loop.
     // Timers (mem[$0080/$0014/$0013]) are incremented by the VBI handler.
-    // pmg_update_attract / pmg_colors_attract dropped (PMG/GTIA only).
-    attract_anim_frame_native();
-    audio_attract();
-    attract_sub_1EB4_native();
-    attract_sub_1F48_native();
+    // pmg_update_station / pmg_colors_station dropped (PMG/GTIA only).
+    station_anim_frame_native();
+    station_audio();
+    station_sub_1EB4_native();
+    station_sub_1F48_native();
 
     uint8_t next = 1 - active;
     buildCopperList(copperLists[next], frame);
@@ -243,7 +243,7 @@ static uint16_t doubleGlyphBits(uint8_t g)
     return out;
 }
 
-void AttractScene::render()
+void StandbyScene::render()
 {
     // ---- terrain / door view ------------------------------------------------
     // The attract DL at $3000 uses 86 Mode F rows starting at $2000, stride 46.
@@ -297,7 +297,7 @@ void AttractScene::render()
     }
 }
 
-void AttractScene::shutdown()
+void StandbyScene::shutdown()
 {
     for (int i = 0; i < 2; i++) { delete copperLists[i]; copperLists[i] = nullptr; }
     paula_audio_shutdown();

@@ -21,13 +21,13 @@ Atari 6502 addresses.
 flowchart TD
     A["XEX loader<br/>(segments load in order)"] --> B["INITAD $5000<br/>stage_5000: prime GTIA<br/>from page-2 shadows"]
     B --> C["more segments load"]
-    C --> D["INITAD $1A97<br/>initad_1A97 → attract_mode_init"]
+    C --> D["INITAD $1A97<br/>initad_1A97 → station_init"]
     D --> E{"Attract loop<br/>$1A01"}
     E -->|"~17 s timeout<br/>(RTCLOK_MID ≥ 4)"| F
     E -->|"START pressed<br/>(CONSOL == $06)"| F
     E -->|"any key<br/>(CH ≠ $FF)"| F
     E -->|else: animate +<br/>play melody| E
-    F["attract_exit $1A2F<br/>zero HW, SETVBV,<br/>screen_page_swap, RTS"] --> G["loader resumes"]
+    F["station_exit $1A2F<br/>zero HW, SETVBV,<br/>screen_page_swap, RTS"] --> G["loader resumes"]
     G --> H["INITAD $B800<br/>init_B800: display list +<br/>DMA enable"]
     H --> I["main code block loads<br/>$3CDE–$B7FF (31.5 KB)"]
     I --> J["INITAD $3CDE<br/>game_entry — final entry"]
@@ -84,7 +84,7 @@ The four `INITAD` stages:
    the hardware to a known state. (The same routine doubles as a display-refresh
    helper later.)
 2. **`initad_1A97` (`$1A97`)** — `screen_page_swap()`, silences POKEY
-   `AUDF3/AUDF4`, then **jumps into `attract_mode_init`** (§3). This call does
+   `AUDF3/AUDF4`, then **jumps into `station_init`** (§3). This call does
    **not return until the player dismisses the attract screen.**
 3. **`init_B800` (`$B800`)** — sets `CHBAS=$04`, points `SDLSTL/H` at the
    display list embedded in the stub (`$B832`), loads the playfield colours and
@@ -96,14 +96,14 @@ The four `INITAD` stages:
 
 ---
 
-## 3. Attract mode (`attract_mode_init $195D`)
+## 3. Attract mode (`station_init $195D`)
 
 Reached as INITAD stage 2. It is a self-contained init **plus an infinite loop**
 running inside the loader's `JSR`.
 
 **Init (`$195D`):**
 - Zero ANTIC/GTIA/POKEY: `GRACTL`, `DMACTL`, `AUDC1/2/3/4`, `RTCLOK`.
-- Install the attract VBI: `VVBLKI ($0222/3) = $1B30` (`vbi_handler_attract`),
+- Install the attract VBI: `VVBLKI ($0222/3) = $1B30` (`vbi_handler_station`),
   which on every frame rewrites `DLISTL/H` + `COLBK` and advances `RTCLOK` and
   the `$0080` frame flag.
 - `display_list_build ($1C40)` builds the attract display list at `$B800`
@@ -111,7 +111,7 @@ running inside the loader's `JSR`.
   screen rows (`RANDOM`, 1-in-8 per row).
 - Enable players/missiles, set PM colours/positions, `CLI`.
 
-**Loop (`attract_loop $1A01`)** — each iteration checks the three exit
+**Loop (`station_loop $1A01`)** — each iteration checks the three exit
 conditions, then animates and plays the melody:
 
 ```c
@@ -119,10 +119,10 @@ L_1a01:
     if (RTCLOK_MID >= 4)        goto exit;   // ~17 s demo timeout
     if (CH        != 0xFF)      goto exit;   // any key pressed
     if (CONSOL    == 0x06)      goto exit;   // START pressed (bit0 low)
-    audio_attract();                          // melody/SFX (POKEY)
+    station_audio();                          // melody/SFX (POKEY)
     wait for VBI frame flag $0080;
-    attract_anim_frame();  attract_sub_1EB4();
-    pmg_colors_attract();  attract_sub_1F48();
+    station_anim_frame();  station_sub_1EB4();
+    pmg_colors_station();  station_sub_1F48();
     goto L_1a01;
 ```
 
@@ -130,7 +130,7 @@ L_1a01:
 - `CH` (`$02FC`) is the keyboard shadow, seeded to `$FF`; any keystroke ≠ `$FF`.
 - `RTCLOK_MID` (`$0013`) crossing 4 ≈ 4×256 jiffies ≈ 17 s auto-advance.
 
-**Exit (`attract_exit $1A2F`):** re-seed `CH=$FF`, clear `GRACTL`/`DMACTL`/
+**Exit (`station_exit $1A2F`):** re-seed `CH=$FF`, clear `GRACTL`/`DMACTL`/
 `POKEY`, `SETVBV` (`os_setvbv $E45C`) to restore the OS VBI, zero all
 `HPOSx`/`AUDFx`, then **`screen_page_swap()` and `RTS`** — control returns to the
 XEX loader, which proceeds to load the remaining segments (stage 3–4). So
@@ -325,7 +325,7 @@ The game swaps the ANTIC/OS vectors several times as it moves between phases:
 
 | Phase | `VVBLKI` (VBI) | `VDSLST` (DLI) | `VIMIRQ` (IRQ) |
 |---|---|---|---|
-| Attract | `$1B30` `vbi_handler_attract` | `$1E01` (suspected) | — |
+| Attract | `$1B30` `vbi_handler_station` | `$1E01` (suspected) | — |
 | `game_entry` init | `$53CC` `vbi_handler_1` | — | `$462A` `irq_handler` |
 | Gameplay (`display_setup`) | `$52D7` `vbi_handler_game` | `$6CC2` | `$462A` |
 | Outer reset hand-off | `$4FF5` `vbi_handler_2` | `$49EE` `dli_handler_game` | `$462A` |
@@ -348,10 +348,10 @@ game_entry();                      // jump straight to the final INITAD
 ```
 
 So the port **skips the loader/INITAD chain and the load-time attract screen**
-and begins at `game_entry` (§4). The attract code (`attract_mode_init` and
+and begins at `game_entry` (§4). The attract code (`station_init` and
 friends) is fully transpiled and present in `rof_gen.c`, but nothing calls it on
 the SDL path yet. Wiring up a faithful boot — run `stage_5000`, then
-`attract_mode_init`, then `init_B800`, then `game_entry`, mirroring the real
+`station_init`, then `init_B800`, then `game_entry`, mirroring the real
 INITAD order — is a possible future step if attract-mode parity is wanted.
 
 ---

@@ -152,7 +152,7 @@ phase.
 
 | Phase | VBI |
 |---|---|
-| Attract | `vbi_handler_attract $1B30` — rewrites DLIST + COLBK, ticks RTCLOK |
+| Attract | `vbi_handler_station $1B30` — rewrites DLIST + COLBK, ticks RTCLOK |
 | `game_entry` init | `vbi_handler_1 $53CC` |
 | Gameplay | `vbi_handler_game $52D7` → tail `vbi_deferred_dispatch $534D` |
 | Outer reset hand-off | `vbi_handler_2 $4FF5` |
@@ -170,7 +170,7 @@ set to `$C0` to enable both VBI and DLI NMIs.
 - The four players + missiles are used for moving sprites over the terrain
   playfield: the ship's gunsight/reticle, enemy saucers/gun emplacements, and
   the rescued pilot. `pmg_missile_init $1910` sets missile X positions;
-  `pmg_colors_attract $1F0B` and the `display_setup` block set `HPOSPx`,
+  `pmg_colors_station $1F0B` and the `display_setup` block set `HPOSPx`,
   `SIZEPx`, `COLPMx`/`PCOLRx`.
 - Horizontal position is set directly via `HPOSP0-3` / `HPOSM0-3`
   (`$D000–$D007`); vertical position is by where the shape bytes sit in the P/M
@@ -217,7 +217,7 @@ combined input poll. (`$D010` is GTIA's TRIG0 on *read*; it is `GRAFP3` only on
      `IRQEN=$C0` (timer 1+2 IRQs); `audio_irq_handler $8237` rewrites `AUDF1-4`
      + `AUDCTL` from the interrupt for tighter-timed audio.
 - `music_init_state $7238` loads a 6-byte song header and sets `AUDCTL=1`
-  (clock config). The attract melody is `audio_attract $1B5B`.
+  (clock config). The attract melody is `station_audio $1B5B`.
 - Engine pitch tracks gameplay: `engine_sound_update $5978` ramps a pitch value
   toward `level_progress $37EE` based on throttle/trigger bits.
 
@@ -246,7 +246,7 @@ RNG sequence.
 
 A **self-modifying** routine that swaps 5 × 256-byte pages between `$40xx` and
 `$06xx`, rotating double-buffer pages. Used at level/screen transitions (called
-from `initad_1A97` and `attract_exit`) so a freshly built screen can be swapped
+from `initad_1A97` and `station_exit`) so a freshly built screen can be swapped
 in without tearing. Self-modification means the port can't just transliterate it
 naively — it's a candidate for the native-reimplementation seam (see
 `native-reimpl-seam` / `rof_native.c`).

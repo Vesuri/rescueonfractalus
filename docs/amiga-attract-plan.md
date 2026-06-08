@@ -15,12 +15,12 @@ working, committed build**.
 >   animation, text switching, cockpit state: nothing is guessed. The m68k slice of
 >   `rof_gen.c` runs the real attract logic each frame; the Amiga hardware renders
 >   what `mem[]` says. Specific split:
->   - **Amiga VBI interrupt** does only what `vbi_handler_attract $1B30` does:
+>   - **Amiga VBI interrupt** does only what `vbi_handler_station $1B30` does:
 >     increment timers (`$0080`, `$0014`/`$0013`). Lightweight, no rendering.
 >   - **Amiga main loop** calls every attract animation function in the same order
->     as the Atari attract loop: `pmg_update_attract`, `audio_attract`,
->     `attract_anim_frame`, `attract_sub_1EB4`, `pmg_colors_attract`,
->     `attract_sub_1F48`. These update `mem[]`.
+>     as the Atari attract loop: `pmg_update_station`, `station_audio`,
+>     `station_anim_frame`, `station_sub_1EB4`, `pmg_colors_station`,
+>     `station_sub_1F48`. These update `mem[]`.
 >   - **After each frame**, the Amiga renderer reads from `mem[]` to produce
 >     display output (blitter copies, character rendering, colour splits).
 > - **Audio** runs the 6502-converted player. The transpiled POKEY-poking routines
@@ -43,6 +43,95 @@ working, committed build**.
 > (cf. `atari000.png`): title message line, terrain viewport showing green
 > fractal mountains, instrument-panel dashboard. See `hw-techniques.md` §11 for
 > the element-by-element anatomy and `startup-flow.md` §6 for the cinematic.
+>
+> **⚠️ PARTIALLY SUPERSEDED — see "CRITICAL REVISION (2026-06-08c)" immediately
+> below.** The per-frame function list above (`pmg_update_station`, `station_audio`,
+> `station_anim_frame`, `station_sub_1EB4`, `pmg_colors_station`, `station_sub_1F48`)
+> is the **`station_init $195D` loop — which is the SPACE-STATION CINEMATIC,
+> not the target attract screen.** The target ("RESCUE ON FRACTALUS!" + LEVEL-04
+> doors + cockpit) is a *different* code path. Rework approach changed to **Option B
+> (surgical native)**.
+
+---
+
+## CRITICAL REVISION (2026-06-08c) — wrong screen + wrong code path
+
+Live atari800 capture (FIFO monitor, user pressed Fn+F8; PC + `DLIST` + `.a8s`
+savestates) proved the Amiga attract was built on a **screen/code-path confusion**.
+There are **three distinct screens**, not one:
+
+| # | Screen | Active DL | Main region | GTIA | Audio | Driving code |
+|---|---|---|---|---|---|---|
+| 1 | Lucasfilm Games logo | `$6000` | mode-F bitmap `$60A3` | — | — | (boot) |
+| 2 | **Space-station cinematic** | `$1C35`→`$B800` | ~190 mode-F rows from **`$0600`** stride 40 | **mode 9** | `station_audio` (dual-oscillator fade) | **`station_init $195D`** (PC caught at `$1A18`) |
+| 3 | **TARGET attract** ("RESCUE ON FRACTALUS!", LEVEL 04, cockpit) | **`$3000`** | mode-6 title `$32B5` + ~86 mode-F `$2000` stride **46** + modeD `$350D` + mode4 `$332D` | **mode 10** | timer-IRQ music (`$54C0`/`$54EA`) | game/standby loop (PC `~$5A7E`) |
+| 3b | **Scoreboard** (⚠ not yet investigated) | TBD | TBD | TBD | TBD | black high-score/stats text screen after a long idle on Standby: title + ©1985 + STARTING/RANKING LEVEL + LAST/HIGH SCORE (all caps); likely via `attract_timer $00E2` |
+
+> **Note (2026-06-08, user):** scenes 1–3 are NOT a simple auto-cycle. Standby is
+> the resting screen; a long idle (no START) brings up the **Scoreboard (3b)** —
+> an unexamined black stats screen. The exact idle/attract cycle order is TBD.
+
+**What was wrong in this plan:**
+- The architecture decision + **M6b** run screen-2's functions (`station_audio`,
+  `station_anim_frame`, `station_sub_*` = the `$195D` *cinematic*). That's why the
+  Amiga plays the oscillator-fade cinematic audio and animates wrongly. **These are
+  the wrong routines for the target.**
+- **M6c** treats the mode-F terrain as **1bpp** — but on screen 3 it's **GTIA mode
+  10** (each byte → two 4-bit nibbles → colour index). Rendering it 1bpp is exactly
+  the "vertical stripes / colours off" in the door/LEVEL-04 region.
+- **C6 audio note** (below) is half-right (SDL is the oracle) but mis-diagnosed it
+  as "segment selection in `mem[]`". The real cause is the **wrong screen/code
+  path** entirely.
+- `station_audio`'s melody (phase `$0013=3`, table `$283E`) is moot for the target —
+  it belongs to screen 2; the linked `standby_mem.bin` has `$283E`/`$1BF4`/`$1BE5`
+  empty anyway. **`attract.a8s` == screen 3** captured "doors closed" (`$2000=$88`
+  = flat GTIA-10 fill); not corrupt, just the wrong code running on it.
+
+**What M6a got RIGHT (keep):** the `$3000` DL it audited *is* screen 3's DL,
+confirmed live: `$3003 mode6 LMS $32B5` (title) → mode4/modeD → ~86× `mode-F LMS
+$2000 stride $2E=46` (terrain, GTIA-10) → modeD `$350D` + mode4 `$332D` (cockpit).
+The geometry/row-count work stands. (Note the `$026F` GPRIOR + `$0230` SDLSTL RAM
+shadows read STALE in attract — the code writes `$D01B`/`$D402` directly; trust the
+live `DLIST` / GTIA chunk, not the shadows.)
+
+### Ground-truth captures (committed in `a800dumps/`)
+- `logo.a8s` (+ `logo_6000_6FFF.bin`) — screen 1.
+- `attract_target.a8s` (+ `_ram.bin`) — screen 3, doors closed.
+- `music_playing.a8s` (+ `_ram.bin`) — screen 3, music live. **Use this as the boot
+  snapshot.** (RAM base in the gunzipped `.a8s` = `0x85`; `ram = data[0x85:0x85+65536]`.)
+- Audio finding: at the music frame, the VBI music engine is idle (`$0655/$0651/`
+  `$0653=0`) and `station_audio` phase is static — the attract music is the
+  **POKEY timer-IRQ** routine (`VTIMR1=$54EA`, `VTIMR2/4=$54C0`; song data near
+  `$731E`). POKEY AUDF/AUDC are write-only (not in flat RAM) — parse the `.a8s`
+  POKEY chunk if literal notes are needed.
+
+### Rework approach — OPTION B (surgical native), user-confirmed 2026-06-08
+Keep the native/snapshot architecture (do **not** run the full transpiled standby
+loop). Target screen 3. Supersedes M6b–M6e below.
+
+**R1 — Static screen-3 render** (no animation, no audio yet)
+- New boot snapshot: extract screen-3 RAM from `music_playing.a8s` →
+  `disasm/screen3_mem.bin`; point `incbin.s` at it; drop `standby_mem.bin` + the
+  RTCLOK-reset hack; stop calling `station_audio`/`station_sub_*`.
+- Render the `$3000` DL natively: terrain/door = **GTIA mode 10** (`$2000`/46,
+  nibble→palette, ~4 bitplanes + Copper colour splits per the DLI schedule);
+  title = mode-6 `$32B5` (already correct); cockpit = modeD `$350D` (2bpp) + mode4
+  `$332D` (charset `$3800`). Validate static frame vs `attract_target.a8s`.
+
+**R2 — Animation (native reimpl)**
+- Reverse-engineer the screen-3 drivers near `$5A78`/`display_setup`: title flip
+  (RESCUE ↔ ©1985 LUCASFILM + palette change), door open/close, blinking lights
+  (NOT `station_anim_frame`, which is `$195D`). Native-C reimpl mutating `mem[]`.
+
+**R3 — Music (extract + native Paula)**
+- Reverse-engineer the timer-IRQ routine `$54C0`/`$54EA` + song format (data near
+  `$731E`); extract the attract song stream; build a native Paula sequencer →
+  existing POKEY→Paula backend (NOT IRQ emulation).
+
+**R4 — Integration + parity** vs the captures.
+
+**Recommended start: R1** (mostly understood; reuses the SDL GTIA-10/cockpit
+analysis in the `rof-project` memory; immediate visual confirmation).
 
 ---
 
@@ -54,7 +143,7 @@ working, committed build**.
 | `dA JoRMaS/Productions/JRm-bS75/Source` (`GameCopperList`, `GamePart` sprite code) | the **serious copper + sprite pattern**: subclass `CopperList` → `GameCopperList` with a `writeCopperlist(...)` that **rebuilds the per-scanline copper every frame** (`showScroller`/`showHorizonBack`/`showObjects`/`showHorizonParallax`/`showRoad`/`showSprites`), per-scanline `WAIT` colour/mode changes, **all 8 hardware sprites** driven together (`showSprites(s0..s7)`, grouped as `BikeSprite`; `setBikeSpritePosition`/`showCurrentBikeSprite`), double-buffered copperlists | the racing-game logic (road geometry, bike physics) |
 | `tmp/attackofthepetsciirobots` (`Platform.h`, `PlatformAmiga.cpp`, `petrobots.cpp` main loop) | the **app skeleton**: `main()` → system setup → install VBI int server (`AddIntServer(INTB_VERTB,…)`) → game-style state-machine loop; non-blocking `readKeyboard`/`readJoystick`; `renderFrame(waitForNextFrame)` = `WaitTOF`; chip-RAM alloc + interleaved bitplane bitmap; blitter tile/rect ops | its tile/map engine, gzip/Bin2Hunk specifics (we use `incbin`) |
 | `dA JoRMaS/Utilities/WHDLoadMenu` (`WHDLoadMenuAnimated.cpp`, `AmigaView`, `AmigaCopperList`, `MenuView` loop, `Joystick`/`Keyboard`) | the **animated-copperlist idioms**: double-buffered copper lists swapped per frame (`LOFlist = copperList->data()`), per-frame copper edits (`setFade`/`setColor`/sprite-pointer swap/`setXOffset`), palette-fade infra, `WaitTOF`+poll loop, sprite-frame animation (the bouncing-ball pattern) | the WHDLoad menu logic itself |
-| RoF repo: `src/gen/rof_gen.c` attract + audio routines + `cpu`/`bus`/`mem[]`, `PlatformSDL.cpp` POKEY synth | **attract state machine**: `vbi_handler_attract`, `attract_anim_frame`, `attract_sub_1EB4`, `pmg_update_attract`, `pmg_colors_attract`, `attract_sub_1F48` compiled for m68k — these update `mem[]` each frame; **audio**: `audio_attract` + song/SFX data → Paula via POKEY→Paula backend; `PlatformSDL`'s `audioCallback` algorithm as the spec | the rendering/terrain core (native instead); the full game loop (game routines only added when needed) |
+| RoF repo: `src/gen/rof_gen.c` attract + audio routines + `cpu`/`bus`/`mem[]`, `PlatformSDL.cpp` POKEY synth | **attract state machine**: `vbi_handler_station`, `station_anim_frame`, `station_sub_1EB4`, `pmg_update_station`, `pmg_colors_station`, `station_sub_1F48` compiled for m68k — these update `mem[]` each frame; **audio**: `station_audio` + song/SFX data → Paula via POKEY→Paula backend; `PlatformSDL`'s `audioCallback` algorithm as the spec | the rendering/terrain core (native instead); the full game loop (game routines only added when needed) |
 | RoF repo (`atari000.png`, `tools/compare.py`, docs) | the **parity oracle** + the per-element Amiga technique map (`hw-techniques.md` §11.8) | running the 6502 rendering core on Amiga |
 
 > **One skeleton, OS-friendly vs takeover — decide at M0.** PETSCII is
@@ -103,7 +192,7 @@ working, committed build**.
 
 ## Current-state corrections (2026-06-08b) — fix these before resuming M6
 
-The M2–M5 code (`amiga/src/AttractScene.cpp`, `amiga/framework/CopperList.cpp`)
+The M2–M5 code (`amiga/src/StandbyScene.cpp`, `amiga/framework/CopperList.cpp`)
 shipped with several incorrect assumptions. They must be corrected first because
 every later milestone (M6a–M6e) builds raster splits and blits on top of this
 geometry and timing model. Each item below is a concrete edit with the *why*.
@@ -111,7 +200,7 @@ geometry and timing model. Each item below is a concrete edit with the *why*.
 ### C1 — Colour-register writes are IMMEDIATE, not one-scanline-latent ★ root error
 
 The previous "one-line-early colours, pointers next line" scheme
-(`AttractScene::buildCopperList`, the two-WAIT pattern at `kTerrainLine-1` /
+(`StandbyScene::buildCopperList`, the two-WAIT pattern at `kTerrainLine-1` /
 `kTerrainLine` and `kCockpitLine-1` / `kCockpitLine`) is based on a **false
 premise**. There is **no one-scanline pipeline latency** on OCS colour registers
 — a Copper `MOVE` to `COLORxx` takes effect immediately, at the very next pixel
@@ -158,7 +247,7 @@ d[idx++] = copperMove(color03, ...);
 
 ### C2 — Total display height is 216, not 200; top is 0x2c, not 0x44
 
-`AttractScene.cpp:38` has `kH = 200`. The Atari attract frame is **216 visible
+`StandbyScene.cpp:38` has `kH = 200`. The Atari attract frame is **216 visible
 scanlines** (confirm against `atari000.png`; cf. `hw-techniques.md` §11.1
 "Total ≈ 216 scanlines"). Set `kH = 216`.
 
@@ -179,7 +268,7 @@ confirm it still does for 260).
 
 ### C3 — Region boundary lines must be DERIVED constants, not magic numbers
 
-`AttractScene.cpp:45-46` hardcodes `kTerrainLine = 110`, `kCockpitLine = 196`.
+`StandbyScene.cpp:45-46` hardcodes `kTerrainLine = 110`, `kCockpitLine = 196`.
 These happened to be self-consistent with the *wrong* top (0x44) but are wrong
 for 0x2c. Replace the magic numbers with derived constants so the geometry is
 self-documenting and re-anchoring the top can't desync them:
@@ -215,7 +304,7 @@ introduce the asm path later if a profiled hot spot demands it.
 
 ### C5 — Drop the redundant `d[0] = copperWait(16, 0)` preamble
 
-`AttractScene::buildCopperList` writes `d[0] = copperWait(16, 0)` then starts at
+`StandbyScene::buildCopperList` writes `d[0] = copperWait(16, 0)` then starts at
 `idx = 1`. This is redundant: `CopperList::CopperList` (`CopperList.cpp:24-27`)
 already initialises `data_[0] = copperWait(16, 0)` (and the terminating
 `data_[length-1] = copperWait(255, 254)`) at allocation. Remove the manual `d[0]`
@@ -225,6 +314,12 @@ by the constructor — don't re-do it per frame.)
 
 ### C6 — Wrong audio segment: use the SDL build as the working oracle
 
+> **⚠️ RE-DIAGNOSED in CRITICAL REVISION (2026-06-08c).** Root cause is NOT segment
+> selection in `mem[]` — it's the **wrong code path**: the Amiga runs the `$195D`
+> cinematic (`station_audio`), not the target screen 3's timer-IRQ music. See the
+> revision's R3. Keep the "SDL is the oracle" principle below; ignore the
+> "segment-selection state" hypothesis.
+
 The Amiga attract currently plays the wrong segment (pre-attract cinematic music,
 not the attract melody). **The SDL build (`build/rof` + `atari800`) plays the
 *correct* attract music** — so it's the ground-truth oracle for what the audio
@@ -233,16 +328,16 @@ state machine must do, exactly like `atari000.png` is the visual oracle.
 Don't guess the Amiga side from scratch — trace the working SDL path first:
 - Run the SDL build into the attract (`ROF_START=attract`) and capture the call
   sequence / `mem[]` state that precedes correct attract music: which init runs
-  before `audio_attract`, what selects the melody segment vs the cinematic, and
+  before `station_audio`, what selects the melody segment vs the cinematic, and
   the values of the relevant POKEY shadow / song-pointer locations at that point.
   Use the `atari800` debugger (FIFO mode) to diff the working segment-select
   state against what the Amiga has when it plays the wrong one.
 - The likely culprit is **initialization / segment-selection state in `mem[]`**,
   not the POKEY→Paula backend (M5) itself: the Amiga loads the XEX into `mem[]`
-  but may not run the same pre-attract init the Atari does, so `audio_attract`
+  but may not run the same pre-attract init the Atari does, so `station_audio`
   reads a stale/default song pointer and plays the cinematic. Mirror whatever
   the SDL build does to reach the attract-music state before the first
-  `audio_attract` call.
+  `station_audio` call.
 - This ties into **M6b** (running the full 6502 attract loop on m68k): once the
   real attract state machine runs in order, the correct segment selection should
   fall out — verify the song-pointer `mem[]` bytes match the SDL build's at the
@@ -302,7 +397,7 @@ PETSCII-style skeleton (no demo `ProductionRunner`).
       OS-friendly `OpenScreen` per ARCH.md), `AddIntServer(INTB_VERTB, …)` for a
       VBI server that ticks a frame counter, then
       `while (!quit) { pollInput(); update(); render(); WaitTOF(); }`. A tiny
-      `AttractScene` object owns the per-frame `update()`/`render()`. Exit on left
+      `StandbyScene` object owns the per-frame `update()`/`render()`. Exit on left
       mouse / joystick fire (WHDLoadMenu `Joystick`/`Keyboard` polling pattern).
 - [x] Build the `CopperList` to set background `COLOR00` to a recognisable blue.
 - [x] `make NO_ASSEMBLER=1`; `./run.sh`. Confirm the blue screen + clean exit.
@@ -326,7 +421,7 @@ silhouette + terrain block visible (colours approximate; refined in M2).
       committed `atari000.png`) to **320×256** (PAL lores), quantise to ≤16
       colours (4 bitplanes). Convert → `amiga/assets/attract.raw`.
 - [ ] Embed via `incbin.s` (`.incbin "assets/attract.raw"`), chip-RAM section.
-- [ ] In `AttractScene::initialize()`: a `Bitmap` over the incbin'd data, a
+- [ ] In `StandbyScene::initialize()`: a `Bitmap` over the incbin'd data, a
       `CopperList` with `setPlayfield(320,256,4,interleaved=true)` +
       `showBitmap()` + a flat 16-colour `Palette`; enable bitplane DMA.
 - [ ] Build, run, screenshot, `compare.py`. **Commit:**
@@ -414,7 +509,7 @@ player, so the attract jingle is bit-faithful by construction.
 
 - [ ] **Compile the RoF audio-core slice for m68k.** Bring `cpu`/`bus`/`mem[]`
       (`src/cpu/`) + the converted audio functions from `rof_gen.c` into the
-      Amiga build. For the attract that's `audio_attract $1B5B` (+ whatever it
+      Amiga build. For the attract that's `station_audio $1B5B` (+ whatever it
       calls) and its data tables; the game path later adds `music_player_tick`,
       `audio_timer_setup`/`audio_irq_handler`, `engine_sound_update`. Keep this a
       *narrow* slice — link only what the player references.
@@ -428,11 +523,11 @@ player, so the attract jingle is bit-faithful by construction.
       `÷28`/`÷114`, the `0x20`/`0x40` 1.79 MHz bits, the `0x08`/`0x10` 16-bit
       chains) — that's the spec, just emit Paula registers instead of summing
       samples.
-- [ ] **Port the POKEY RANDOM LFSR.** `audio_attract` reads `$D20A` (17-bit LFSR)
+- [ ] **Port the POKEY RANDOM LFSR.** `station_audio` reads `$D20A` (17-bit LFSR)
       for volumes — port `Platform::pokeyRandomStep` so `bus_read($D20A)` is
       bit-exact (small; also future-proofs terrain parity).
 - [ ] **Drive it per frame from the VBI server.** The attract loop calls
-      `audio_attract` each frame — call the converted function from the VBI
+      `station_audio` each frame — call the converted function from the VBI
       handler (or main loop), then let the Paula backend hold the tones until the
       next update.
 - [ ] Build, run (listen vs the SDL build). **Commit:**
@@ -457,7 +552,7 @@ list from the memory dumps. Every subsequent milestone depends on this.
       The title/terrain section is **ANTIC mode F** (1bpp bitmap, 320 px, 1
       scanline/entry, 40 bytes/row), 122 entries pointing into `$0600`. Title text
       and terrain texture are **pre-rendered pixels** stored in ROM source buffers;
-      `attract_sub_1EB4` copies them into `$0600`. No font needed for this section.
+      `station_sub_1EB4` copies them into `$0600`. No font needed for this section.
 - [ ] Identify the cockpit section: expected to be ANTIC mode 2 (40-column
       character mode, 8×8 glyphs, 8 scanlines/row) or similar. Record the CHBASE
       register value (screen RAM for charset pointer is at `$D409`; check the
@@ -483,6 +578,12 @@ list from the memory dumps. Every subsequent milestone depends on this.
 - Cockpit screen RAM: $332D; bitmap screen RAM: $2000 (stride 46, not 40 — ANTIC ignores 6 padding bytes)
 
 ### M6b — Full 6502 attract loop on m68k
+> **⚠️ SUPERSEDED by CRITICAL REVISION (2026-06-08c).** The functions wired up here
+> (`station_audio`, `station_anim_frame`, `station_sub_1EB4/1F48`, `pmg_*_attract`)
+> are the **`$195D` space-station CINEMATIC**, not the target attract screen. This is
+> the core bug. Replaced by Option-B R1 (drop these calls) + R2 (native reimpl of
+> screen-3's own drivers near `$5A78`). Kept below for history.
+
 **Goal:** the m68k runs every attract-state-machine function the Atari runs each
 frame. After this milestone `mem[]` is updated correctly every frame, making all
 subsequent rendering accurate.
@@ -490,11 +591,11 @@ subsequent rendering accurate.
 - [x] **VBI interrupt**: `main.cpp` `vbiHandler()` now increments
       `mem[0x0080]`, `mem[0x0014]` + carry into `mem[0x0013]`. DLIST/COLBK
       writes from the Atari VBI skipped — Copper owns those.
-- [x] **Main loop (expanded `AttractScene::update`)**: calls in order:
-      `pmg_update_attract()`, `audio_attract()`, `attract_anim_frame()`,
-      `attract_sub_1EB4()`, `pmg_colors_attract()`, `attract_sub_1F48()`.
+- [x] **Main loop (expanded `StandbyScene::update`)**: calls in order:
+      `pmg_update_station()`, `station_audio()`, `station_anim_frame()`,
+      `station_sub_1EB4()`, `pmg_colors_station()`, `station_sub_1F48()`.
 - [x] Removed manual timer increment from `update()` and standalone
-      `audio_attract()` call (subsumed into the ordered sequence).
+      `station_audio()` call (subsumed into the ordered sequence).
 - [x] Fixed missing `mem[0x0080]++` (was never incremented before — animation
       state machine was stalled).
 - [ ] Verify `mem[$0600..$06FF+]` changes each frame as the attract animation
@@ -502,12 +603,18 @@ subsequent rendering accurate.
       state at the same frame).
 - [ ] **Commit:** `feat(amiga): full attract state machine running on m68k`.
 
-**Gotchas:** `attract_sub_1EB4` accesses tables at `$2313`/`$231B` — these must
+**Gotchas:** `station_sub_1EB4` accesses tables at `$2313`/`$231B` — these must
 be loaded into `mem[]` from the XEX. Verify the XEX loader populates them.
-`pmg_update_attract` / `pmg_colors_attract` write PMG RAM at `$3400–$3500` and
+`pmg_update_station` / `pmg_colors_station` write PMG RAM at `$3400–$3500` and
 POKEY/GTIA registers — stub those bus writes; we drive sprite positions separately.
 
 ### M6c — Bitmap region: blit `mem[$0600]` to title+terrain bitplane
+> **⚠️ SUPERSEDED by CRITICAL REVISION (2026-06-08c).** Two errors: (1) the terrain
+> source for the *target* (screen 3) is `$2000` stride 46, **not `$0600`** (`$0600`
+> is the cinematic's source); (2) it must be decoded as **GTIA mode 10** (4-bit
+> nibble → colour), **not 1bpp** — the 1bpp read is the "vertical stripes". Replaced
+> by Option-B R1. Kept below for history.
+
 **Goal:** the Amiga title/terrain region shows exactly what the Atari's mode-F
 bitmap shows: the pre-rendered title text and terrain texture driven by the
 running 6502 attract routines.
@@ -521,7 +628,7 @@ running 6502 attract routines.
       color00 (background) — just leave those rows zeroed. Effective content rows
       within the 42-line title bitmap: ~rows 0-27 black, rows 28-35 title text,
       rows 36-41 subtitle/separator.
-- [ ] **Terrain region (86 lines):** `attract_sub_1EB4()` writes 1bpp pixels into
+- [ ] **Terrain region (86 lines):** `station_sub_1EB4()` writes 1bpp pixels into
       the Mode F screen RAM at `mem[$2000]` (stride 46 bytes/row; ANTIC ignores
       6 padding bytes). CPU-copy 40 bytes per row from `mem[0x2000 + row * 46]`
       into `terrainBitmap->data` (interleaved stride = 80 bytes per row: 40 bytes

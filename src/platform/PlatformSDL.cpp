@@ -25,35 +25,42 @@ static const double POKEY_DIV   = 28.0;   /* ÷28 = ~63.9 kHz channel clock */
    and jumps straight to game_entry(), so it always begins at the attract
    screen and those two loader sequences have no code to jump to.          */
 enum RofStage {
-    ROF_STAGE_ATTRACT = 0,   /* cockpit "STAND BY" + title (default)        */
-    ROF_STAGE_TUNNEL,        /* launch/descent sequence (after START)       */
-    ROF_STAGE_GAMEPLAY       /* terrain flight — fast-forward past the launch */
+    ROF_STAGE_STANDBY = 0,   /* cockpit "STAND BY" + title (default)        */
+    ROF_STAGE_LAUNCH,        /* launch/descent sequence (after START)       */
+    ROF_STAGE_FLIGHT       /* terrain flight — fast-forward past the launch */
 };
 
-/* Parse ROF_START once and cache it. Accepts: attract | tunnel | gameplay
-   (case-insensitive; "game" is accepted as a synonym for gameplay). The
-   legacy ROF_AUTOSTART=1 toggle still works as an alias for gameplay.
-   - attract  : no input injected; stays on the standby/title screen.
-   - tunnel   : auto-presses START and runs at normal speed, so the ~30s
-                launch/landing/descent sequence plays out visibly.
-   - gameplay : auto-presses START and FAST-FORWARDS (unthrottled) through
-                that sequence, dropping straight into terrain flight (~1s).  */
+/* Parse ROF_START once and cache it. Canonical values (case-insensitive):
+   standby | launch | flight. Legacy aliases kept so nothing breaks:
+   attract->standby, tunnel->launch, gameplay/game->flight. The legacy
+   ROF_AUTOSTART=1 toggle still works as an alias for flight.
+   - standby (default) : no input injected; stays on the Standby screen
+                         (cockpit "STAND BY" + RESCUE ON FRACTALUS title).
+   - launch  : auto-presses START and runs at normal speed, so the ~30s
+               Launch sequence (Doors -> Tunnel -> Planet) plays out visibly.
+   - flight  : auto-presses START and FAST-FORWARDS (unthrottled) through the
+               Launch sequence, dropping straight into terrain Flight (~1s).
+   (See docs/amiga-attract-plan.md "CRITICAL REVISION" for the 7-scene vocab:
+    Logo, Station, Standby, Doors, Tunnel, Planet, Flight.)                   */
 static RofStage rofStartStage() {
     static int cached = -1;
     if (cached < 0) {
-        cached = ROF_STAGE_ATTRACT;
+        cached = ROF_STAGE_STANDBY;
         const char* s = getenv("ROF_START");
         if (s && *s) {
-            if      (!strcasecmp(s, "attract"))  cached = ROF_STAGE_ATTRACT;
-            else if (!strcasecmp(s, "tunnel"))   cached = ROF_STAGE_TUNNEL;
-            else if (!strcasecmp(s, "gameplay") ||
-                     !strcasecmp(s, "game"))      cached = ROF_STAGE_GAMEPLAY;
+            if      (!strcasecmp(s, "standby") ||
+                     !strcasecmp(s, "attract"))  cached = ROF_STAGE_STANDBY;
+            else if (!strcasecmp(s, "launch")  ||
+                     !strcasecmp(s, "tunnel"))   cached = ROF_STAGE_LAUNCH;
+            else if (!strcasecmp(s, "flight")   ||
+                     !strcasecmp(s, "gameplay") ||
+                     !strcasecmp(s, "game"))      cached = ROF_STAGE_FLIGHT;
             else fprintf(stderr, "[rof] ROF_START='%s' unrecognised; using "
-                         "attract (valid: attract, tunnel, gameplay)\n", s);
+                         "standby (valid: standby, launch, flight)\n", s);
         } else if (getenv("ROF_AUTOSTART")) {
-            cached = ROF_STAGE_GAMEPLAY;   /* legacy alias */
+            cached = ROF_STAGE_FLIGHT;   /* legacy alias */
         }
-        const char* names[] = { "attract", "tunnel", "gameplay" };
+        const char* names[] = { "standby", "launch", "flight" };
         fprintf(stderr, "[rof] launch stage: %s\n", names[cached]);
     }
     return (RofStage)cached;
@@ -365,7 +372,7 @@ void PlatformSDL::tickVBI() {
        one-VBI-per-frame cadence intact (just runs the clock ~20x faster) —
        firing a VBI on *every* tick_vbi call instead would desync the VBI from
        main-thread progress and corrupt game state.                          */
-    bool fastForward = (rofStartStage() == ROF_STAGE_GAMEPLAY) && !reachedFlight_;
+    bool fastForward = (rofStartStage() == ROF_STAGE_FLIGHT) && !reachedFlight_;
     if (fastForward) msPerFrame = 1;
 
     if (now - lastVBITicks < msPerFrame) return;
@@ -536,7 +543,7 @@ uint8_t PlatformSDL::readConsol() {
        window releases START before gameplay so it isn't held down. The upper
        bound is configurable via ROF_AUTOSTART_HI=<ms>. ROF_START=attract (the
        default) injects nothing and the game stays on the attract screen.      */
-    if (rofStartStage() != ROF_STAGE_ATTRACT) {
+    if (rofStartStage() != ROF_STAGE_STANDBY) {
         uint32_t t = SDL_GetTicks();
         uint32_t lo = 800, hi = 1200;
         if (getenv("ROF_AUTOSTART_HI")) hi = (uint32_t)atoi(getenv("ROF_AUTOSTART_HI"));
@@ -1259,7 +1266,7 @@ void PlatformSDL::renderFrame() {
        iteration (thousands/sec).  Blitting each one would bottleneck on the GPU
        and defeat the speed-up, so pace the actual blit to ~30Hz wall-clock —
        the launch still plays visibly, just sped up, and reaches flight in ~1s. */
-    if ((rofStartStage() == ROF_STAGE_GAMEPLAY) && !reachedFlight_) {
+    if ((rofStartStage() == ROF_STAGE_FLIGHT) && !reachedFlight_) {
         uint32_t now = SDL_GetTicks();
         if (now - lastFFRender_ < 33u) return;
         lastFFRender_ = now;

@@ -1,6 +1,6 @@
 #pragma once
 /* Paula audio backend for RoF Amiga.
- * Routes POKEY register writes (from the 6502-converted audio_attract)
+ * Routes POKEY register writes (from the 6502-converted station_audio)
  * to Amiga Paula hardware via DMACON-driven square-wave DMA.
  * Also implements the platform_c.h bridge (all stubs except the POKEY ones).
  */

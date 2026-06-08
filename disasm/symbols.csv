@@ -84,25 +84,25 @@ $0014,RTCLOK_LOW,var,0,Jiffy clock low byte (fastest; used for timing waits)
 #
 # --- Functions (deduced from control flow analysis, 2026-05-29) ---
 $1910,pmg_missile_init,func,0,Initialises missile horizontal positions (HPOSM0-3)
-$195D,attract_mode_init,func,0,Main attract mode init + loop; zeros all HW; sets VVBLKI to vbi_1B30; calls display_list_build; loops polling RTCLOK/CH/CONSOL until START pressed
-$1A01,attract_loop,func,0,Attract mode main loop (inside attract_mode_init); spins until key/START; inner body calls audio_attract + attract animation subs
-$1A2F,attract_exit,func,0,Exit attract → reset: zeros GRACTL/DMA/POKEY, calls OS $E45C, does page_swap, restarts
+$195D,station_init,func,0,Main attract mode init + loop; zeros all HW; sets VVBLKI to vbi_1B30; calls display_list_build; loops polling RTCLOK/CH/CONSOL until START pressed
+$1A01,station_loop,func,0,Attract mode main loop (inside station_init); spins until key/START; inner body calls station_audio + attract animation subs
+$1A2F,station_exit,func,0,Exit attract → reset: zeros GRACTL/DMA/POKEY, calls OS $E45C, does page_swap, restarts
 $1A62,screen_page_swap,func,0,Self-modifying! Swaps 5 × 256-byte pages between $40xx and $06xx (double-buffer page rotation for level loading)
-$1A97,initad_1A97,func,0,INITAD stub (segment 11): calls screen_page_swap, silences AUDF3/4, JMPs attract_mode_init
-$1B30,vbi_handler_attract,func,0,VBI handler active during attract mode (VVBLKI=$1B30 set in attract_mode_init; writes DLISTL/H + COLBK + RTCLOK)
-$1B50,audio_ch1_init,func,0,Sets AUDF1 initial frequency (called once in attract_mode_init)
-$1B5B,audio_attract,func,0,Attract-mode audio: writes AUDF/AUDC channels 1-4 with melody/effects
+$1A97,initad_1A97,func,0,INITAD stub (segment 11): calls screen_page_swap, silences AUDF3/4, JMPs station_init
+$1B30,vbi_handler_station,func,0,VBI handler active during attract mode (VVBLKI=$1B30 set in station_init; writes DLISTL/H + COLBK + RTCLOK)
+$1B50,station_audio_ch1_init,func,0,Sets AUDF1 initial frequency (called once in station_init)
+$1B5B,station_audio,func,0,Attract-mode audio: writes AUDF/AUDC channels 1-4 with melody/effects
 $1C40,display_list_build,func,0,Builds attract-mode display list at $B800 (122 LMS entries for 40-byte rows from $0600); uses RANDOM to place up to 30 enemies/pilots randomly on screen rows (1-in-8 chance per row)
 $1CF7,display_scroll,func,0,Likely vertical scroll or DL update (reads/modifies addresses in display_list_build range — self-referential)
-$1D9A,attract_anim_frame,func,0,Attract mode animation frame: calls $1CF7
-$1DF5,attract_init_small,func,0,Small init called at start of attract_mode_init
-$1E01,dli_handler_attract,func,0,Suspected DLI handler in attract mode (0 callers; 41 bytes; 1 callee)
-$1E2A,attract_sub_1E2A,func,0,Attract mode sub (called from dli_handler_attract)
-$1E79,pmg_update_attract,func,0,PMG position/graphic update during attract mode
-$1EB4,attract_sub_1EB4,func,0,Attract mode sub (called in attract_loop)
-$1F0B,pmg_colors_attract,func,0,Sets COLPM2/3, COLPF3, HPOSP2/3 (player 2/3 during attract)
-$1F48,attract_sub_1F48,func,0,Attract mode sub (called in attract_loop); calls attract_sub_1f51
-$1F51,attract_sub_1f51,func,0,Attract mode sub; reads RANDOM once (random visual effect)
+$1D9A,station_anim_frame,func,0,Attract mode animation frame: calls $1CF7
+$1DF5,station_init_small,func,0,Small init called at start of station_init
+$1E01,dli_handler_station,func,0,Suspected DLI handler in attract mode (0 callers; 41 bytes; 1 callee)
+$1E2A,station_sub_1E2A,func,0,Attract mode sub (called from dli_handler_station)
+$1E79,pmg_update_station,func,0,PMG position/graphic update during attract mode
+$1EB4,station_sub_1EB4,func,0,Attract mode sub (called in station_loop)
+$1F0B,pmg_colors_station,func,0,Sets COLPM2/3, COLPF3, HPOSP2/3 (player 2/3 during attract)
+$1F48,station_sub_1F48,func,0,Attract mode sub (called in station_loop); calls station_sub_1f51
+$1F51,station_sub_1f51,func,0,Attract mode sub; reads RANDOM once (random visual effect)
 $3C00,loader_util,func,0,Loader utility (XEX segment loader helper); called from game_entry at $3D92
 $3C93,memset_or_copy,func,0,Utility: likely memset/memcopy (called from multiple sites)
 $3CC3,clear_colors,func,0,Clears player color shadows PCOLR0-3 + COLBK (9 callers; 7 bytes)
@@ -198,8 +198,8 @@ $0085,encounter_count,var,0,Encounter placement counter (counts down from $1E=30
 $0086,row_count,var,0,Row loop counter in display_list_build ($DA=218 rows)
 $0087,vbi_phase,var,0,VBI phase counter (0 or 1)
 $0088,vbi_flags,var,0,VBI display flags
-$00B7,frame_counter,var,0,Frame counter (zeroed by attract_mode_init; ticked by VBI; used for timing)
-$00BB,dl_y1,var,0,Display region Y1 or scroll offset (set in attract_mode_init and display_setup)
+$00B7,frame_counter,var,0,Frame counter (zeroed by station_init; ticked by VBI; used for timing)
+$00BB,dl_y1,var,0,Display region Y1 or scroll offset (set in station_init and display_setup)
 $00BC,dl_y2,var,0,Display region Y2
 $00BD,dl_y3,var,0,Display region Y3
 $00BE,dl_y4,var,0,Display region Y4
@@ -528,7 +528,7 @@ $B70C,compute_indicator_pos,func,0,Gated by player_lives($0072)!=2 & $0063>=0: b
 $B756,enqueue_indicator_event,func,0,Writes indicator params $0673=$0035(pos), $0665=$A0(char), $0681=($0014&5)+2(jiffy), Y=8, then game_sub_55FC enqueues event id 8
 $B76F,abs_scaled_hi_nibble,func,0,Shifts 16-bit $00BD:A right 4 (>>4), SBC #$08, returns absolute value (EOR $FF/ADC #1 if negative); scaled-distance helper for b70c
 $B786,reset_indicator_event,func,0,Sets $0035=0 then tail-calls b756 to enqueue indicator event 8 at position 0; called from gameplay pickup logic ($93dd)
-$E45C,os_setvbv,func,0,Atari OS ROM vector SETVBV (set VBLANK timer/handler vector). Disassembles as BRK because our flat image has no OS ROM at $E000+; in the C port VBI dispatch is handled by the platform layer so this is a no-op. Called from attract_exit ($1A2F)
+$E45C,os_setvbv,func,0,Atari OS ROM vector SETVBV (set VBLANK timer/handler vector). Disassembles as BRK because our flat image has no OS ROM at $E000+; in the C port VBI dispatch is handled by the platform layer so this is a no-op. Called from station_exit ($1A2F)
 $E45F,os_sysvbv,func,0,Atari OS ROM vector SYSVBV (immediate system VBLANK entry). No OS ROM in our image; platform handles VBI so this is a no-op in C
 $E462,os_xitvbv,func,0,Atari OS ROM vector XITVBV (exit VBLANK / return from deferred VBI). Disassembles as BRK because our flat image has no OS ROM at $E000+; platform handles VBI dispatch so this is a no-op. Standard tail of a VBI handler (e.g. vbi_deferred_dispatch $534D)
 

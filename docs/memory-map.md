@@ -87,7 +87,7 @@ $C000–$FFFF   OS ROM area     — OS ROM + hardware registers ($D000–$D7FF)
 | `$022F` | SDMCTL | $22 (normal) / $00 (disabled) | Playfield + PM DMA control shadow |
 | `$0230/$31` | SDLSTL/H | $B832→$3120/$316B | Display list pointer shadow |
 | `$026F` | GPRIOR | $71 (attract) / $11 (game) | GTIA priority mode |
-| `$02C0–$C3` | PCOLR0–3 | varies | Player 0–3 colors (attract: set by pmg_colors_attract) |
+| `$02C0–$C3` | PCOLR0–3 | varies | Player 0–3 colors (attract: set by pmg_colors_station) |
 | `$02C4–$C8` | COLOR0–4 | $9C $08 varies | Playfield 0–4 colors (init_B800: COLOR0=$9C sky blue, COLOR1=$08 dark) |
 | `$02F4` | CHBAS | $04 | Character set base = page 4 ($0400–$04FF = custom font) |
 | `$02FC` | CH | $FF (no key) | Keyboard shadow |
@@ -166,7 +166,7 @@ Loaded/referenced at page `$04` (address `$0400`). `CHBAS = $04` set by
 | Handler | Address | Set by | Trigger |
 |---|---|---|---|
 | `irq_handler` | `$462A` | game_entry ($3D28) | POKEY IRQ (timer 1+2) |
-| `vbi_handler_attract` | `$1B30` | attract_mode_init | VBI during attract |
+| `vbi_handler_station` | `$1B30` | station_init | VBI during attract |
 | `vbi_handler_1` | `$53CC` | game_entry ($3D63) | VBI early in-game init |
 | `vbi_handler_2` | `$4FF5` | game_entry ($3E50) | VBI mid-game-entry setup |
 | `vbi_handler_game` | `$52D7` | display_setup ($5F50) | VBI during gameplay |

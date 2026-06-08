@@ -5,10 +5,10 @@
 // do the same mem[] mutations in plain C with no emulation overhead.
 //
 // Functions dropped entirely (Amiga doesn't need them):
-//   pmg_update_attract  — only modifies PMG RAM ($B82C area), not displayed
-//   pmg_colors_attract  — only writes GTIA player-colour registers (all stubbed)
+//   pmg_update_station  — only modifies PMG RAM ($B82C area), not displayed
+//   pmg_colors_station  — only writes GTIA player-colour registers (all stubbed)
 //
-// audio_attract is NOT replaced here; it is complex and already working via
+// station_audio is NOT replaced here; it is complex and already working via
 // the 6502 transpile + POKEY→Paula backend.
 
 #include "PaulaAudio.h"
@@ -17,7 +17,7 @@ extern "C" volatile uint8_t mem[65536];
 
 // ---- display_scroll ---------------------------------------------------------
 // Advances the title-text scroll pointer (mem[$1C39/$1C3A]) and increments the
-// global phase counter (mem[$008B]).  Called by attract_anim_frame_native.
+// global phase counter (mem[$008B]).  Called by station_anim_frame_native.
 // Atari DLIST LMS writes and character-screen updates are skipped; the Amiga
 // renders from mem[] state (mem[$008B], mem[$1C39/$1C3A]) directly.
 
@@ -36,12 +36,12 @@ static void display_scroll_native(void)
     // Atari: update Mode-6/4 character screen RAM at $3300/$3600 — not needed on Amiga.
 }
 
-// ---- attract_anim_frame_native ----------------------------------------------
+// ---- station_anim_frame_native ----------------------------------------------
 // Title-text scroll state machine.  Manages countdown timers (mem[$008A]),
 // phase index (mem[$0089]), and global phase counter (mem[$008B]).
 // Table at $1DE2+X holds hold-times for each animation phase (0x12 entries).
 
-extern "C" void attract_anim_frame_native(void)
+extern "C" void station_anim_frame_native(void)
 {
     uint8_t phase = mem[0x008B];
     if (phase == 0x94) return;          // animation complete, idle
@@ -77,14 +77,14 @@ extern "C" void attract_anim_frame_native(void)
     }
 }
 
-// ---- attract_sub_1EB4_native -------------------------------------------------
+// ---- station_sub_1EB4_native -------------------------------------------------
 // Every 3rd frame: copies a 102-byte column-stripe of bitmap data from one of
 // 8 ROM source buffers (addressed via tables at $2313/$231B) into the attract
 // screen RAM at $077A or $077C, with a +40-byte stride (one column per ANTIC row).
 // Alternates between forward ($077A, index $009F) and reverse ($077C, $00A0)
 // on each firing.
 
-extern "C" void attract_sub_1EB4_native(void)
+extern "C" void station_sub_1EB4_native(void)
 {
     if (mem[0x009D] != 0) { mem[0x009D]--; return; }
     mem[0x009D] = 2;                       // reload: fires every 3rd frame
@@ -114,7 +114,7 @@ extern "C" void attract_sub_1EB4_native(void)
     }
 }
 
-// ---- attract_sub_1f51_native -------------------------------------------------
+// ---- station_sub_1f51_native -------------------------------------------------
 // Processes one animation channel rooted at offset x in the channel table at
 // $2603.  Each channel has a countdown timer, a frame-cycle counter, source and
 // destination pointers, and a row-copy size.  When the timer fires it copies
@@ -137,7 +137,7 @@ extern "C" void attract_sub_1EB4_native(void)
 //   $2610+x : destination lo (fixed)
 //   $2611+x : destination hi (fixed)
 
-static uint8_t attract_sub_1f51_native(uint8_t x)
+static uint8_t station_sub_1f51_native(uint8_t x)
 {
     // Decrement countdown; if not yet zero, skip to tail (return next link).
     if (mem[0x2604 + x] != 0) {
@@ -182,31 +182,31 @@ static uint8_t attract_sub_1f51_native(uint8_t x)
     return mem[0x2609 + x];   // return next channel link
 }
 
-// ---- attract_sub_1F48_native ------------------------------------------------
+// ---- station_sub_1F48_native ------------------------------------------------
 // Walks the linked list of animation channels starting at x=0, calling
-// attract_sub_1f51_native for each until the chain terminates (next link = 0).
+// station_sub_1f51_native for each until the chain terminates (next link = 0).
 // Iteration cap prevents infinite loops on uninitialised/malformed channel data.
 
-extern "C" void attract_sub_1F48_native(void)
+extern "C" void station_sub_1F48_native(void)
 {
     uint8_t x = 0;
     for (int guard = 0; guard < 64; guard++) {
-        x = attract_sub_1f51_native(x);
+        x = station_sub_1f51_native(x);
         if (x == 0) break;
     }
 }
 
-// ---- attract_mode_setup -----------------------------------------------------
-// Mirrors the one-time initialisation that attract_mode_init performs before
-// entering its attract loop.  Called once from AttractScene::initialize().
+// ---- station_setup -----------------------------------------------------
+// Mirrors the one-time initialisation that station_init performs before
+// entering its attract loop.  Called once from StandbyScene::initialize().
 // Hardware register writes (bus_write calls) are no-ops on the Amiga; we only
 // care about the mem[] state mutations and the two data-setup functions.
 
-extern "C" void attract_init_small(void);
+extern "C" void station_init_small(void);
 extern "C" void display_list_build(void);
 extern "C" void rle_decompress(void);
 
-extern "C" void attract_mode_setup(void)
+extern "C" void station_setup(void)
 {
     // Zero RTCLOK timers (mem[$0012-$0014]) and misc flag.
     mem[0x0012] = 0;
@@ -214,14 +214,14 @@ extern "C" void attract_mode_setup(void)
     mem[0x0014] = 0;
     mem[0x00B7] = 0;
 
-    // attract_init_small: sets mem[$009A]=$00, mem[$0098]=$00,
+    // station_init_small: sets mem[$009A]=$00, mem[$0098]=$00,
     // mem[$009B]=mem[$276D+0].
-    attract_init_small();
+    station_init_small();
 
-    // Initial timer for attract_sub_1EB4: $64 frames before first fire.
+    // Initial timer for station_sub_1EB4: $64 frames before first fire.
     mem[0x009D] = 0x64;
 
-    // Frame counters used by attract_anim_frame.
+    // Frame counters used by station_anim_frame.
     mem[0x0088] = 2;
     mem[0x0087] = 0;
 
@@ -238,10 +238,10 @@ extern "C" void attract_mode_setup(void)
     mem[0x00BE] = 0x28;
     rle_decompress();
 
-    // Source tables for attract_sub_1EB4: both must be all $88, pointing every
+    // Source tables for station_sub_1EB4: both must be all $88, pointing every
     // entry to address $8888 which holds the real attract door-animation bitmap
     // data in ROM.  In rof_mem.bin (game_entry state) these tables have wrong
-    // values; game_main_loop's init functions fix them before attract_mode_init
+    // values; game_main_loop's init functions fix them before station_init
     // runs.  We do it here instead of running game_main_loop.
     for (int i = 0; i < 8; i++) {
         mem[0x2313 + i] = 0x88;   // source lo bytes → $8888

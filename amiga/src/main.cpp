@@ -15,7 +15,7 @@
 #include <hardware/intbits.h>
 
 #include "../framework/AmigaHardware.h"
-#include "AttractScene.h"
+#include "StandbyScene.h"
 
 // GfxBase defined in GCCRuntime.cpp; set after OpenLibrary.
 extern struct GfxBase* GfxBase;
@@ -24,7 +24,7 @@ extern struct GfxBase* GfxBase;
 extern "C" volatile uint8_t mem[65536];
 
 // ---- VBI interrupt server ---------------------------------------------------
-// Mirrors vbi_handler_attract $1B30: increments the three Atari timer locations
+// Mirrors vbi_handler_station $1B30: increments the three Atari timer locations
 // that the attract state machine reads each frame.  DLIST/COLBK writes from the
 // Atari VBI are skipped — the Copper handles those on the Amiga side.
 static volatile uint16_t vbiCount = 0;
@@ -74,10 +74,10 @@ int main()
     AddIntServer(INTB_VERTB, &vbiServer);
 
     // --- attract scene -------------------------------------------------------
-    // Enable copper + raster + sprite DMA, then let AttractScene install its list.
+    // Enable copper + raster + sprite DMA, then let StandbyScene install its list.
     *dmaconPointer = (uint16_t)(DMAF_SETCLR | DMAF_MASTER | DMAF_COPPER | DMAF_RASTER | DMAF_SPRITE);
 
-    AttractScene scene;
+    StandbyScene scene;
     scene.initialize();
 
     // --- main loop -----------------------------------------------------------

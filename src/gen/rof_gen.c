@@ -81,8 +81,8 @@ L_1954:;
     return;
 }
 
-/* attract_mode_init @ $195D: Main attract mode init + loop; zeros all HW; sets VVBLKI to vbi_1B30; calls display_list_build; loops polling RTCLOK/CH/CONSOL until START pressed */
-void attract_mode_init(void) {
+/* station_init @ $195D: Main attract mode init + loop; zeros all HW; sets VVBLKI to vbi_1B30; calls display_list_build; loops polling RTCLOK/CH/CONSOL until START pressed */
+void station_init(void) {
     /* 195d */
     LDA(0x00);
     /* 195f */
@@ -112,7 +112,7 @@ void attract_mode_init(void) {
     /* 1980 */
     mem[0x00B7] = cpu.A;
     /* 1982 */
-    attract_init_small();
+    station_init_small();
     /* 1985 */
     LDA(0x64);
     /* 1987 */
@@ -148,7 +148,7 @@ void attract_mode_init(void) {
     /* 19aa */
     CLI();
     /* 19ab */
-    audio_ch1_init();
+    station_audio_ch1_init();
     /* 19ae */
     display_list_build();
     /* 19b1 */
@@ -211,7 +211,7 @@ L_19cd:;
     /* 19f1 */
     bus_write(0xD001, cpu.A);
     /* 19f4 */
-    pmg_update_attract();
+    pmg_update_station();
     /* 19f7 */
     LDA(0xFF);
     /* 19f9 */
@@ -240,24 +240,24 @@ L_1a01:;
     /* 1a13 */
     if (cpu.Z) goto L_1a2f;
     /* 1a15 */
-    audio_attract();
+    station_audio();
 L_1a18:;
     /* 1a18 */
     LDA(mem[0x0080]);
     /* 1a1a */
     if (cpu.Z) goto L_1a18;
     /* 1a1c */
-    attract_anim_frame();
+    station_anim_frame();
     /* 1a1f */
     LDA(0x00);
     /* 1a21 */
     mem[0x0080] = cpu.A;
     /* 1a23 */
-    attract_sub_1EB4();
+    station_sub_1EB4();
     /* 1a26 */
-    pmg_colors_attract();
+    pmg_colors_station();
     /* 1a29 */
-    attract_sub_1F48();
+    station_sub_1F48();
     /* 1a2c */
     goto L_1a01;
 L_1a2f:;
@@ -308,7 +308,7 @@ L_1a51:;
 }
 
 /* screen_page_swap @ $1A62: manual implementation in rof_manual.c */
-/* initad_1A97 @ $1A97: INITAD stub (segment 11): calls screen_page_swap, silences AUDF3/4, JMPs attract_mode_init */
+/* initad_1A97 @ $1A97: INITAD stub (segment 11): calls screen_page_swap, silences AUDF3/4, JMPs station_init */
 void initad_1A97(void) {
     /* 1a97 */
     screen_page_swap();
@@ -321,11 +321,11 @@ void initad_1A97(void) {
     /* 1aa1 */
     bus_write(0xD206, cpu.A);
     /* 1aa4 */
-    attract_mode_init(); return;
+    station_init(); return;
 }
 
-/* vbi_handler_attract @ $1B30: VBI handler active during attract mode (VVBLKI=$1B30 set in attract_mode_init; writes DLISTL/H + COLBK + RTCLOK) */
-void vbi_handler_attract(void) {
+/* vbi_handler_station @ $1B30: VBI handler active during attract mode (VVBLKI=$1B30 set in station_init; writes DLISTL/H + COLBK + RTCLOK) */
+void vbi_handler_station(void) {
     /* 1b30 */
     LDA(0x35);
     /* 1b32 */
@@ -367,8 +367,8 @@ L_1b47:;
     PLP(); return;
 }
 
-/* audio_ch1_init @ $1B50: Sets AUDF1 initial frequency (called once in attract_mode_init) */
-void audio_ch1_init(void) {
+/* station_audio_ch1_init @ $1B50: Sets AUDF1 initial frequency (called once in station_init) */
+void station_audio_ch1_init(void) {
     /* 1b50 */
     LDA(0xFF);
     /* 1b52 */
@@ -381,8 +381,8 @@ void audio_ch1_init(void) {
     return;
 }
 
-/* audio_attract @ $1B5B: Attract-mode audio: writes AUDF/AUDC channels 1-4 with melody/effects */
-void audio_attract(void) {
+/* station_audio @ $1B5B: Attract-mode audio: writes AUDF/AUDC channels 1-4 with melody/effects */
+void station_audio(void) {
     /* 1b5b */
     LDA(mem[0x0013]);
     /* 1b5d */
@@ -519,7 +519,7 @@ L_1bc4:;
     /* 1bd4 */
     bus_write(0xD203, cpu.A);
     /* 1bd7 */
-    dli_handler_attract(); return;
+    dli_handler_station(); return;
 L_1bda:;
     /* 1bda */
     LDA(0xFC);
@@ -884,8 +884,8 @@ L_1d86:;
     return;
 }
 
-/* attract_anim_frame @ $1D9A: Attract mode animation frame: calls $1CF7 */
-void attract_anim_frame(void) {
+/* station_anim_frame @ $1D9A: Attract mode animation frame: calls $1CF7 */
+void station_anim_frame(void) {
     /* 1d9a */
     LDA(mem[0x008B]);
     /* 1d9c */
@@ -963,8 +963,8 @@ L_1dde:;
     return;
 }
 
-/* attract_init_small @ $1DF5: Small init called at start of attract_mode_init */
-void attract_init_small(void) {
+/* station_init_small @ $1DF5: Small init called at start of station_init */
+void station_init_small(void) {
     /* 1df5 */
     LDY(0x00);
     /* 1df7 */
@@ -979,14 +979,14 @@ void attract_init_small(void) {
     return;
 }
 
-/* dli_handler_attract @ $1E01: Suspected DLI handler in attract mode (0 callers; 41 bytes; 1 callee) */
-void dli_handler_attract(void) {
+/* dli_handler_station @ $1E01: Suspected DLI handler in attract mode (0 callers; 41 bytes; 1 callee) */
+void dli_handler_station(void) {
     /* 1e01 */
     LDA(mem[0x009C]);
     /* 1e03 */
     if (cpu.Z) goto L_1e29;
     /* 1e05 */
-    attract_sub_1E2A();
+    station_sub_1E2A();
     /* 1e08 */
     INC_M(0x0098);
     /* 1e0a */
@@ -1026,8 +1026,8 @@ L_1e29:;
     return;
 }
 
-/* attract_sub_1E2A @ $1E2A: Attract mode sub (called from dli_handler_attract) */
-void attract_sub_1E2A(void) {
+/* station_sub_1E2A @ $1E2A: Attract mode sub (called from dli_handler_station) */
+void station_sub_1E2A(void) {
     /* 1e2a */
     LDY(mem[0x009A]);
     /* 1e2c */
@@ -1105,8 +1105,8 @@ L_1e70:;
     return;
 }
 
-/* pmg_update_attract @ $1E79: PMG position/graphic update during attract mode */
-void pmg_update_attract(void) {
+/* pmg_update_station @ $1E79: PMG position/graphic update during attract mode */
+void pmg_update_station(void) {
     /* 1e79 */
     LDY(0x00);
     /* 1e7b */
@@ -1174,11 +1174,11 @@ L_1ea6:;
 L_1eb2:;
     /* 1eb2 */
     if (!cpu.Z) goto L_1e8c;
-    attract_sub_1EB4(); return;
+    station_sub_1EB4(); return;
 }
 
-/* attract_sub_1EB4 @ $1EB4: Attract mode sub (called in attract_loop) */
-void attract_sub_1EB4(void) {
+/* station_sub_1EB4 @ $1EB4: Attract mode sub (called in station_loop) */
+void station_sub_1EB4(void) {
     /* 1eb4 */
     DEC_M(0x009D);
     /* 1eb6 */
@@ -1278,8 +1278,8 @@ L_1f05:;
     return;
 }
 
-/* pmg_colors_attract @ $1F0B: Sets COLPM2/3, COLPF3, HPOSP2/3 (player 2/3 during attract) */
-void pmg_colors_attract(void) {
+/* pmg_colors_station @ $1F0B: Sets COLPM2/3, COLPF3, HPOSP2/3 (player 2/3 during attract) */
+void pmg_colors_station(void) {
     /* 1f0b */
     DEC_M(0x0096);
     /* 1f0d */
@@ -1315,13 +1315,13 @@ L_1f2f:;
     return;
 }
 
-/* attract_sub_1F48 @ $1F48: Attract mode sub (called in attract_loop); calls attract_sub_1f51 */
-void attract_sub_1F48(void) {
+/* station_sub_1F48 @ $1F48: Attract mode sub (called in station_loop); calls station_sub_1f51 */
+void station_sub_1F48(void) {
     /* 1f48 */
     LDX(0x00);
 L_1f4a:;
     /* 1f4a */
-    attract_sub_1f51();
+    station_sub_1f51();
     /* 1f4d */
     TAX();
     /* 1f4e */
@@ -1330,8 +1330,8 @@ L_1f4a:;
     return;
 }
 
-/* attract_sub_1f51 @ $1F51: Attract mode sub; reads RANDOM once (random visual effect) */
-void attract_sub_1f51(void) {
+/* station_sub_1f51 @ $1F51: Attract mode sub; reads RANDOM once (random visual effect) */
+void station_sub_1f51(void) {
     /* 1f51 */
     DEC_M((0x2604)+cpu.X);
     /* 1f54 */
@@ -24351,7 +24351,7 @@ L_b82a:;
     return;
 }
 
-/* os_setvbv @ $E45C: Atari OS ROM vector SETVBV (set VBLANK timer/handler vector). Disassembles as BRK because our flat image has no OS ROM at $E000+; in the C port VBI dispatch is handled by the platform layer so this is a no-op. Called from attract_exit ($1A2F) */
+/* os_setvbv @ $E45C: Atari OS ROM vector SETVBV (set VBLANK timer/handler vector). Disassembles as BRK because our flat image has no OS ROM at $E000+; in the C port VBI dispatch is handled by the platform layer so this is a no-op. Called from station_exit ($1A2F) */
 void os_setvbv(void) {
     /* e45c */
     /* BRK: software interrupt — ignored in C translation */;

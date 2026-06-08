@@ -31,7 +31,7 @@ CPP_OBJS := $(FW_OBJS) $(SRC_OBJS)
 
 # M5 audio slice: the 6502-converted cpu/bus core + generated audio functions.
 # Compiled as plain C (not C++), with include paths into the repo src tree.
-# --gc-sections keeps only what audio_attract transitively calls.
+# --gc-sections keeps only what station_audio transitively calls.
 AUDIO_C_SRCS := $(REPO)/src/cpu/cpu.c $(REPO)/src/gen/rof_gen.c
 AUDIO_C_OBJS := obj/audio/cpu.o obj/audio/rof_gen.o
 
