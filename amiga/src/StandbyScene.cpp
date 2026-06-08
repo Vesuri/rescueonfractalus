@@ -30,6 +30,12 @@
 #include "StandbyScene.h"
 #include "PaulaAudio.h"
 
+// sfx_voice_tick: SFX sequencer that drives AUDC1-3 + calls sfx_seq_step for AUDF.
+// This is what the Atari VTIMR2 IRQ ($54C0) runs each period. Calling it each
+// Amiga VBI approximates the timer rate close enough for attract-mode music.
+// mem[$00E7]=$01 in screen3_mem.bin (SFX enabled); mem[$073C]=$02 (seq pos).
+extern "C" void sfx_voice_tick(void);
+
 extern "C" volatile uint8_t mem[65536];
 
 #include "../assets/title_pal.h"
@@ -214,6 +220,12 @@ void StandbyScene::initialize()
 void StandbyScene::update(uint16_t frame)
 {
     blinkFrame++;
+
+    // ---- Music: SFX sequencer tick (R3) ----------------------------------------
+    // Mirrors the Atari VTIMR2 IRQ at $54C0: drives AUDF/AUDC via sfx_voice_tick,
+    // which calls sfx_seq_step when the duration counter ($073A) expires.
+    // POKEY writes route to Paula via platform_hw_write → PaulaAudio.
+    if (mem[0x00E7] != 0) sfx_voice_tick();
 
     // ---- VBI animation (mimics vbi_handler_game + update_blink_timer_006e) ---
     // Increment RTCLOK ($0014) each VBI and cascade to the attract timer ($00E2).
