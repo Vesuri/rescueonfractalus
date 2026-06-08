@@ -101,6 +101,172 @@ working, committed build**.
 
 ---
 
+## Current-state corrections (2026-06-08b) — fix these before resuming M6
+
+The M2–M5 code (`amiga/src/AttractScene.cpp`, `amiga/framework/CopperList.cpp`)
+shipped with several incorrect assumptions. They must be corrected first because
+every later milestone (M6a–M6e) builds raster splits and blits on top of this
+geometry and timing model. Each item below is a concrete edit with the *why*.
+
+### C1 — Colour-register writes are IMMEDIATE, not one-scanline-latent ★ root error
+
+The previous "one-line-early colours, pointers next line" scheme
+(`AttractScene::buildCopperList`, the two-WAIT pattern at `kTerrainLine-1` /
+`kTerrainLine` and `kCockpitLine-1` / `kCockpitLine`) is based on a **false
+premise**. There is **no one-scanline pipeline latency** on OCS colour registers
+— a Copper `MOVE` to `COLORxx` takes effect immediately, at the very next pixel
+the beam draws.
+
+**The real technique for a clean horizontal colour split:** make the Copper
+`WAIT` for the **end of the *previous* scanline** (a horizontal position out in
+the right border / horizontal-blank, i.e. the overscan area), then issue the
+colour `MOVE`s there. The writes land during H-blank so the new palette is
+already active for the first visible pixel of the target line. No artefact, no
+"blue stripe", and no wasted scanline.
+
+Replace the two-WAIT-per-boundary pattern with a **single WAIT in the overscan of
+the line before the boundary**, doing bitplane pointers *and* colours together —
+**pointers FIRST, colours after**:
+
+```c
+// Switch to region B starting at raster line R (= kTerrainLine / kCockpitLine).
+// Wait until late on line R-1 (out in the right border / H-blank), then write.
+d[idx++] = copperWait(R - 1, 0xE0);          // end of previous line, in overscan
+d[idx++] = copperMove(bpl1pth, ...);          // bitplane pointers FIRST
+d[idx++] = copperMove(bpl1ptl, ...);
+d[idx++] = copperMove(bpl2pth, ...);
+d[idx++] = copperMove(bpl2ptl, ...);
+d[idx++] = copperMove(color00, fadeColor(..., f));   // colours after — immediate
+d[idx++] = copperMove(color01, ...);
+d[idx++] = copperMove(color02, ...);
+d[idx++] = copperMove(color03, ...);
+```
+
+- **Pointers before colours, deliberately.** The two register groups are not
+  equally timing-critical. If the **bitplane pointers** miss their H-blank window,
+  bitplane DMA fetches from the wrong address and the *entire* display goes off
+  (catastrophic). If a **colour** MOVE slips a little late, it just applies a few
+  pixels into the line (a cosmetic edge artefact). So give the pointers the
+  earliest slots in the WAIT block and let colours take whatever follows. (This is
+  the opposite of the old code's colours-first ordering, which was rationalised by
+  the now-debunked latency premise.)
+- `0xE0` is a horizontal position in the right border; tune within ~0xC0–0xE2 if
+  needed, but it must be a position the beam actually reaches on line `R-1`
+  (a value past the max H-count makes the Copper hang until line wrap).
+- Delete the comments in `buildCopperList` that explain the bogus "OCS colour
+  pipeline has a one-scanline latency" — they document a non-existent effect.
+
+### C2 — Total display height is 216, not 200; top is 0x2c, not 0x44
+
+`AttractScene.cpp:38` has `kH = 200`. The Atari attract frame is **216 visible
+scanlines** (confirm against `atari000.png`; cf. `hw-techniques.md` §11.1
+"Total ≈ 216 scanlines"). Set `kH = 216`.
+
+The display window must begin at the standard PAL top **scanline 0x2c (44)**.
+`CopperList::setPlayfield` computes `DIWSTRT.y = centerY - height/2`. With the
+default `centerY = 0xa8` and the old `kH = 200`, the top came out at
+`168 - 100 = 0x44` — wrong. To anchor the top at `0x2c` with `kH = 216`:
+
+```
+centerY = kDisplayTop + kH/2 = 0x2c + 108 = 152 = 0x98
+```
+
+Pass `centerY` explicitly to `setPlayfield` (don't rely on the `0xa8` default).
+Then verify the resulting `DIWSTRT`/`DIWSTOP`/`DIWHIGH` actually place the top at
+0x2c in FS-UAE (`DIWSTOP.y` = 260 > 256, so the V8 bit in `DIWHIGH` must be set —
+the framework's hardcoded `diwhigh = 0x2100` already carried the old 268 case, so
+confirm it still does for 260).
+
+### C3 — Region boundary lines must be DERIVED constants, not magic numbers
+
+`AttractScene.cpp:45-46` hardcodes `kTerrainLine = 110`, `kCockpitLine = 196`.
+These happened to be self-consistent with the *wrong* top (0x44) but are wrong
+for 0x2c. Replace the magic numbers with derived constants so the geometry is
+self-documenting and re-anchoring the top can't desync them:
+
+```c
+static const uint16_t kDisplayTop    = 0x2c;                      // DIWSTRT.y (PAL std top)
+static const uint16_t kTitleHeight   = 42;                        // title region (display lines)
+static const uint16_t kTerrainHeight = /* from M6a audit */;      // terrain region
+static const uint16_t kTerrainLine   = kDisplayTop + kTitleHeight;        // = 0x56 (86)
+static const uint16_t kCockpitLine   = kTerrainLine + kTerrainHeight;
+```
+
+So with the display starting at `0x2c`, the green terrain region begins at
+`0x2c + 42 = 0x56` exactly. Sprite Y (`leftPost/rightPost->setY`) and the Copper
+WAITs all reference these constants.
+
+> **Open: reconcile region heights to sum to 216.** title 42 + terrain + cockpit
+> must equal **216**. The current bitmaps are `title 42`, `terrain 86` (`kHT`),
+> `cockpit 104` — that sums to **232**, inconsistent with 216. `kTitleHeight = 42`
+> is correct (matches `title.raw`). Derive `kTerrainHeight` and the cockpit height
+> from the **M6a ANTIC display-list audit** of the *attract* DL (not the gameplay
+> `$3210` DL), then regenerate `terrain.raw`/`cockpit.raw` to those exact row
+> counts. **Each bitmap's row count must equal its region's display-line count.**
+
+### C4 — Use C++ implementations only (do NOT define ASSEMBLER)
+
+Keep building with `NO_ASSEMBLER` (the whole-plan build, per M0). The
+`#if defined(ASSEMBLER)` register-marshalling wrappers in
+`CopperList.cpp:51-78` are bypassed; the pure-C++ `showSprite`/`showBitmap`
+bodies (`CopperList.cpp:80-105`) are used. This keeps stepping in gdb
+straightforward (no asm thunks, runtime PCs resolve to C++ symbols). Only
+introduce the asm path later if a profiled hot spot demands it.
+
+### C5 — Drop the redundant `d[0] = copperWait(16, 0)` preamble
+
+`AttractScene::buildCopperList` writes `d[0] = copperWait(16, 0)` then starts at
+`idx = 1`. This is redundant: `CopperList::CopperList` (`CopperList.cpp:24-27`)
+already initialises `data_[0] = copperWait(16, 0)` (and the terminating
+`data_[length-1] = copperWait(255, 254)`) at allocation. Remove the manual `d[0]`
+write from `buildCopperList`; keep `idx = 1` so the constructor's preamble is
+preserved. (The earlier `amiga-copper-lessons` "d[0] preamble" note is satisfied
+by the constructor — don't re-do it per frame.)
+
+### C6 — Wrong audio segment: use the SDL build as the working oracle
+
+The Amiga attract currently plays the wrong segment (pre-attract cinematic music,
+not the attract melody). **The SDL build (`build/rof` + `atari800`) plays the
+*correct* attract music** — so it's the ground-truth oracle for what the audio
+state machine must do, exactly like `atari000.png` is the visual oracle.
+
+Don't guess the Amiga side from scratch — trace the working SDL path first:
+- Run the SDL build into the attract (`ROF_START=attract`) and capture the call
+  sequence / `mem[]` state that precedes correct attract music: which init runs
+  before `audio_attract`, what selects the melody segment vs the cinematic, and
+  the values of the relevant POKEY shadow / song-pointer locations at that point.
+  Use the `atari800` debugger (FIFO mode) to diff the working segment-select
+  state against what the Amiga has when it plays the wrong one.
+- The likely culprit is **initialization / segment-selection state in `mem[]`**,
+  not the POKEY→Paula backend (M5) itself: the Amiga loads the XEX into `mem[]`
+  but may not run the same pre-attract init the Atari does, so `audio_attract`
+  reads a stale/default song pointer and plays the cinematic. Mirror whatever
+  the SDL build does to reach the attract-music state before the first
+  `audio_attract` call.
+- This ties into **M6b** (running the full 6502 attract loop on m68k): once the
+  real attract state machine runs in order, the correct segment selection should
+  fall out — verify the song-pointer `mem[]` bytes match the SDL build's at the
+  same frame.
+
+### Correction checklist
+- [ ] C1: replace two-WAIT colour scheme with single end-of-previous-line WAIT
+      (overscan); colours + pointers together; immediate writes; delete latency
+      comments. Applies to both terrain and cockpit boundaries.
+- [ ] C2: `kH = 216`; pass explicit `centerY = 0x98` to `setPlayfield`; verify
+      top renders at 0x2c and DIWHIGH covers `DIWSTOP.y = 260`.
+- [ ] C3: replace magic `kTerrainLine`/`kCockpitLine` with derived constants from
+      `kDisplayTop`/`kTitleHeight`/`kTerrainHeight`.
+- [ ] C3-open: confirm region heights sum to 216 via M6a; regenerate
+      `terrain.raw`/`cockpit.raw` to the audited row counts.
+- [ ] C4: confirm build stays `NO_ASSEMBLER`; C++ bodies in use.
+- [ ] C5: remove redundant `d[0]` write in `buildCopperList`.
+- [ ] C6: trace the SDL build's working attract-music path; mirror its
+      init/segment-selection `mem[]` state on the Amiga (verify in M6b).
+- [ ] Rebuild, run in FS-UAE, `tools/compare.py` vs `atari000.png` — terrain top
+      at 0x56, no boundary stripe, full 216-line frame.
+
+---
+
 ## Milestones
 
 Each milestone ends in a **single commit** with a green build that **runs in
