@@ -27,7 +27,14 @@
 #include "AttractScene.h"
 #include "PaulaAudio.h"
 
+// All six functions called by the Atari attract loop each frame, in order.
+// Timers (mem[0x0080/0014/0013]) are incremented by the VBI handler in main.cpp.
+extern "C" void pmg_update_attract(void);
 extern "C" void audio_attract(void);
+extern "C" void attract_anim_frame(void);
+extern "C" void attract_sub_1EB4(void);
+extern "C" void pmg_colors_attract(void);
+extern "C" void attract_sub_1F48(void);
 extern "C" void audio_ch1_init(void);
 extern "C" volatile uint8_t mem[65536];
 
@@ -204,9 +211,16 @@ void AttractScene::update(uint16_t frame)
 {
     blinkFrame++;
 
-    mem[0x0014]++;
-    if (mem[0x0014] == 0) mem[0x0013]++;
+    // Run the full Atari attract state machine in the same order as the Atari
+    // attract loop.  Timers (mem[$0080/$0014/$0013]) are incremented by the VBI
+    // handler.  Bus writes to display/PMG registers inside these functions are
+    // no-ops on the Amiga side (stubbed in bus_write).
+    pmg_update_attract();
     audio_attract();
+    attract_anim_frame();
+    attract_sub_1EB4();
+    pmg_colors_attract();
+    attract_sub_1F48();
 
     uint8_t next = 1 - active;
     buildCopperList(copperLists[next], frame);

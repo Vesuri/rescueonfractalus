@@ -20,14 +20,21 @@
 // GfxBase defined in GCCRuntime.cpp; set after OpenLibrary.
 extern struct GfxBase* GfxBase;
 
+// mem[] lives in audio/rof_gen.c; also written by the VBI handler.
+extern "C" volatile uint8_t mem[65536];
+
 // ---- VBI interrupt server ---------------------------------------------------
-// Runs at interrupt level: only increments a counter. Returns 0 so exec
-// continues the server chain (letting other VBI servers — CIA timer etc — run).
+// Mirrors vbi_handler_attract $1B30: increments the three Atari timer locations
+// that the attract state machine reads each frame.  DLIST/COLBK writes from the
+// Atari VBI are skipped — the Copper handles those on the Amiga side.
 static volatile uint16_t vbiCount = 0;
 static struct Interrupt vbiServer;
 
 static uint32_t vbiHandler()
 {
+    mem[0x0080]++;               // RTCLOK[2] — primary frame tick
+    mem[0x0014]++;               // RTCLOK[1] — secondary tick
+    if (!mem[0x0014]) mem[0x0013]++;  // RTCLOK[0] — carry
     vbiCount++;
     return 0;
 }

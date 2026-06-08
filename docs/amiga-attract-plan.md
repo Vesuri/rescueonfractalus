@@ -444,11 +444,11 @@ the channel DMA is enabled; watch the AUDF→period scaling for the PAL clock
 (3546895 Hz) vs NTSC. The audio-core slice must not drag in rendering code —
 stub any `bus_write` to display registers.
 
-### M6a — ANTIC display list audit
+### M6a — ANTIC display list audit ✓ DONE
 **Goal:** establish the exact rendering model by reading the Atari attract display
 list from the memory dumps. Every subsequent milestone depends on this.
 
-- [ ] Parse `a800dumps/attract.a8s` (binary Atari state snapshot): locate the
+- [x] Parse `a800dumps/attract.a8s` (binary Atari state snapshot): locate the
       display list (DLISTL=$D402, DLISTH=$D403 registers give the address; VBI
       writes $1C35 = $1C×256+$35, so DL is at $1C35). Walk the DL byte-by-byte:
       decode each entry (mode bits 3-0, flags bits 7-4, optional LMS address).
@@ -466,25 +466,37 @@ list from the memory dumps. Every subsequent milestone depends on this.
       `mem[]`; character region → character render; DLI colour changes → Copper
       WAIT+MOVE.
 - [ ] Document the full mapping in `amiga/ARCH.md` (update §Attract).
-- [ ] **Commit:** `docs(amiga): ANTIC display list audit — confirmed mode map`.
+- [x] **Committed** as part of M6b commit (findings in plan, no separate commit needed).
+
+**M6a confirmed results (attract.a8s, DL at $3000):**
+- Blank preamble: 27 sl (8+8+8+3)
+- Title text: Mode 6 × 1 row = 8 sl at $32B5 ("RESCUE ON FRACTALUS")
+- Gap: 3 sl blank
+- Subtitle strip: Mode 4 × 1 row = 8 sl (charset art)
+- Separator: Mode D × 1 row = 2 sl
+- **Bitmap (Mode F): 86 rows × 1 sl = 86 sl**, starting at $2000, stride 46 bytes/row
+- Mode D transition: 4 rows × 2 sl = 8 sl (at $350D — artificial horizon)
+- **Cockpit (Mode 4): 10 rows × 8 sl = 80 sl**, screen RAM at $332D
+- Total: 222 sl (27 blank preamble + 195 content); Amiga kH=216 clips 6 blank top lines — correct
+- Amiga geometry confirmed: title 42 sl (covers 27 blank + start of content), terrain/bitmap 86 sl, cockpit 88 sl (8+80) — sums to 216 ✓
+- **CHBAS shadow ($02F4) = $02** → custom charset at $0200
+- Cockpit screen RAM: $332D; bitmap screen RAM: $2000 (stride 46, not 40 — ANTIC ignores 6 padding bytes)
 
 ### M6b — Full 6502 attract loop on m68k
 **Goal:** the m68k runs every attract-state-machine function the Atari runs each
 frame. After this milestone `mem[]` is updated correctly every frame, making all
 subsequent rendering accurate.
 
-- [ ] **VBI interrupt**: add to the Amiga VBI handler (in `main.cpp`):
-      `INC_M(0x0080)`, `INC_M(0x0014)` + carry into `$0013`. This is all
-      `vbi_handler_attract` does beyond DLIST/COLBK writes (which the Copper
-      handles). Do NOT call DLIST/COLBK writes — the Copper owns those.
-- [ ] **Main loop (expand `AttractScene::update`)**: call, in order:
+- [x] **VBI interrupt**: `main.cpp` `vbiHandler()` now increments
+      `mem[0x0080]`, `mem[0x0014]` + carry into `mem[0x0013]`. DLIST/COLBK
+      writes from the Atari VBI skipped — Copper owns those.
+- [x] **Main loop (expanded `AttractScene::update`)**: calls in order:
       `pmg_update_attract()`, `audio_attract()`, `attract_anim_frame()`,
-      `attract_sub_1EB4()`, `pmg_colors_attract()`, `attract_sub_1F48()`. These
-      are already compiled for m68k. Verify they don't drag in rendering code
-      (stub any remaining display-register `bus_write` calls not already stubbed).
-- [ ] Remove the current hand-rolled timer increment from `update()` (it's now
-      done by the VBI) and the manual call to `audio_attract()` (now in the
-      sequence above).
+      `attract_sub_1EB4()`, `pmg_colors_attract()`, `attract_sub_1F48()`.
+- [x] Removed manual timer increment from `update()` and standalone
+      `audio_attract()` call (subsumed into the ordered sequence).
+- [x] Fixed missing `mem[0x0080]++` (was never incremented before — animation
+      state machine was stalled).
 - [ ] Verify `mem[$0600..$06FF+]` changes each frame as the attract animation
       cycles (log a few bytes; compare against the SDL build's `atari800` debugger
       state at the same frame).
@@ -500,12 +512,21 @@ POKEY/GTIA registers — stub those bus writes; we drive sprite positions separa
 bitmap shows: the pre-rendered title text and terrain texture driven by the
 running 6502 attract routines.
 
-- [ ] The title+terrain area is 122 scanlines of 40-byte (320px, 1bpp) bitmap
-      data in `mem[$0600..$1BFF]` (122 × 40 = 4880 bytes). Every frame, after
-      calling the attract functions, blitter-copy that range from fast RAM (where
-      `mem[]` lives) into the title+terrain region of the Amiga bitplane (chip RAM).
-      Blitter: source = `&mem[0x0600]`, dest = title plane ptr, width = 40 bytes,
-      height = 122 rows, modulos = 0 (contiguous).
+- [ ] **Use the CPU (not the blitter) for all rendering in this milestone.**
+      The 68000 CPU can write 40 bytes × 86 rows = 3440 bytes in well under a
+      frame — the blitter is overkill and complicates debugging.
+- [ ] **Title region (42 lines):** render Mode 6 text ("RESCUE ON FRACTALUS!")
+      and Mode 4 subtitle strip using a CPU character-rendering loop (see M6d
+      charset extraction). The 27-line blank preamble and the 3-line gap map to
+      color00 (background) — just leave those rows zeroed. Effective content rows
+      within the 42-line title bitmap: ~rows 0-27 black, rows 28-35 title text,
+      rows 36-41 subtitle/separator.
+- [ ] **Terrain region (86 lines):** `attract_sub_1EB4()` writes 1bpp pixels into
+      the Mode F screen RAM at `mem[$2000]` (stride 46 bytes/row; ANTIC ignores
+      6 padding bytes). CPU-copy 40 bytes per row from `mem[0x2000 + row * 46]`
+      into `terrainBitmap->data` (interleaved stride = 80 bytes per row: 40 bytes
+      bpl1 then 40 bytes bpl2; 1bpp → only bpl1 used, bpl2 stays zero for
+      color index 0/1 only).
 - [ ] The Copper palette for this region is 2 colours per ANTIC section (COLBK +
       COLPF2 for the title, terrain colours for the terrain band) — set by the
       Copper at the appropriate scanline, values read from `mem[$D01A]` (COLBK)
