@@ -155,7 +155,7 @@ void AttractScene::initialize()
 {
     Palette::initialize();
     palette       = new Palette(kTitlePalette, 4, /*fade*/0);
-    titleBitmap   = new Bitmap(title_raw,   kW, 28,  kBP2, true);
+    titleBitmap   = new Bitmap(title_raw,   kW, 62,  kBP2, true);
     terrainBitmap = new Bitmap(terrain_raw, kW, kHT, kBP2, true);
     cockpitBitmap = new Bitmap(cockpit_raw, kW, 104, kBP2, true);
 
