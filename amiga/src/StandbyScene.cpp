@@ -36,6 +36,7 @@ extern "C" void update_blink_timer_006e_native(void);           // $4131: cockpi
 extern "C" void copy_altitude_graphic_to_screen_native(void);   // $782A: title text
 extern "C" void startup_init_native(void);                      // $3FFA: cockpit digit update
 extern "C" void update_gauge_digits_native(void);               // $4229: cockpit counter animation
+extern "C" void tunnel_ring_tick_native(void);                  // $6A38/$6A4D: tunnel ring cycle ($0088 gate)
 
 extern "C" volatile uint8_t mem[65536];
 
@@ -211,9 +212,9 @@ void StandbyScene::buildCopperList(CopperList* cl, uint16_t frame)
     const uint16_t terr2 = fadeColor(atariToOCS(mem[0x08D4]), f);
     const uint16_t terr3 = fadeColor(atariToOCS(mem[0x0071]), f);
     auto emitRing = [&]() {                                    // tunnel pens 1-3
-        d[idx++] = copperMove(color01, fadeColor(atariToOCS(ring[0]), f));
-        d[idx++] = copperMove(color02, fadeColor(atariToOCS(ring[1]), f));
-        d[idx++] = copperMove(color03, fadeColor(atariToOCS(ring[2]), f));
+        d[idx++] = copperMove(color01, fadeColor(atariToOCS(mem[0x08D4]), f));
+        d[idx++] = copperMove(color02, fadeColor(atariToOCS(mem[0x08D5]), f));
+        d[idx++] = copperMove(color03, fadeColor(atariToOCS(mem[0x08D6]), f));
     };
     auto emitTerrCols = [&]() {                                // terrain pens 1-3
         d[idx++] = copperMove(color01, terr1);
@@ -230,9 +231,9 @@ void StandbyScene::buildCopperList(CopperList* cl, uint16_t frame)
     d[idx++] = copperMove(color00, terr0);                     // pen 0 = black (terrain & tunnel)
     if (tunnelFirst) emitRing(); else emitTerrCols();
     if (door) {                                                // ring upper half (pens 4-6),
-        d[idx++] = copperMove(color04, fadeColor(atariToOCS(ring[3]), f));  // unused by terrain
-        d[idx++] = copperMove(color05, fadeColor(atariToOCS(ring[4]), f));
-        d[idx++] = copperMove(color06, fadeColor(atariToOCS(ring[5]), f));
+        d[idx++] = copperMove(color04, fadeColor(atariToOCS(mem[0x08D7]), f));  // unused by terrain
+        d[idx++] = copperMove(color05, fadeColor(atariToOCS(mem[0x08D8]), f));
+        d[idx++] = copperMove(color06, fadeColor(atariToOCS(mem[0x08D9]), f));
     }
 
     // ---- mid-screen bands (only when partially open; each on its own WAIT) ----
@@ -391,7 +392,21 @@ void StandbyScene::initialize()
 
 void StandbyScene::openDoors()
 {
-    if (phase == Phase::Standby) { phase = Phase::DoorsOpening; doorGap = 0; }
+    if (phase != Phase::Standby) return;
+    phase = Phase::DoorsOpening;
+    doorGap = 0;
+
+    // Arm the tunnel-ring cycle the way the 6502 game does: the ring colours live
+    // in mem[$08D4-$08D9] (feeding COLOR01-06) and are rotated by step_accum_add_75
+    // ($6A38) when the $5367 dispatcher sees gate $0088 != 0.  The Standby snapshot
+    // has all of this zeroed (the accumulator is normally seeded from live flight
+    // state, absent here), so we seed: the visible blue ring ramp, a zero $A1-$A5
+    // accumulator (literal-$75 / zero-seed fidelity choice), and the $0088 gate.
+    static const uint8_t kRingRamp[6] = { 0x30, 0x32, 0x34, 0x36, 0x38, 0x3A };
+    for (int i = 0; i < 6; i++) mem[0x08D4u + (uint16_t)i] = kRingRamp[i];
+    mem[0x00A1] = mem[0x00A2] = mem[0x00A3] = mem[0x00A4] = mem[0x00A5] = 0u;
+    mem[0x008D] = 0u;     // forward cycle (step_accum_add_75, not _sub_7e)
+    mem[0x0088] = 1u;     // gate: dispatcher routes to the tunnel-ring branch
 }
 
 void StandbyScene::update(uint16_t frame)
@@ -402,17 +417,11 @@ void StandbyScene::update(uint16_t frame)
         doorGap = (uint16_t)(doorGap + 2);
         if (doorGap > kTerrainHeight) doorGap = kTerrainHeight;
     }
-    // Tunnel palette cycle: rotate the 6-colour ring one slot per integer tick of
-    // a +$75/frame accumulator (Atari step_accum_add_75 $6A38).  ring[0]=old top.
-    if (phase == Phase::DoorsOpening) {
-        ringAcc = (uint16_t)(ringAcc + 0x75);
-        if (ringAcc & 0x100) {
-            ringAcc &= 0xFF;
-            uint8_t top = ring[5];
-            for (int i = 5; i > 0; i--) ring[i] = ring[i - 1];
-            ring[0] = top;
-        }
-    }
+    // Tunnel palette cycle: the genuine $5367-dispatcher $0088 branch — add $75
+    // into the $A1-$A4 accumulator and, when its top byte changes, rotate the
+    // 6-colour ring in mem[$08D4-$08D9].  Seeded zero in openDoors(), so the
+    // rotation cadence is whatever the verbatim 6502 algorithm produces.
+    tunnel_ring_tick_native();
 
     vbi_handler_game_native();           // $52D7: attract timer cascade
     update_blink_timer_006e_native();    // $4131: cockpit blink lights

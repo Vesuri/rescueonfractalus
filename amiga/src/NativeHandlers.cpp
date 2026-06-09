@@ -202,3 +202,72 @@ extern "C" void update_blink_timer_006e_native(void)
         mem[0x00DE] = 0x46;        // lights OFF (last 9 ticks of cycle)
     }
 }
+
+// --- Tunnel-ring cycle: faithful ports of the $5367 dispatcher's $0088 branch ---
+//
+// The original per-frame driver is sound_event_dispatch ($5367), a strict
+// priority dispatcher that runs exactly ONE action per frame:
+//     if   $008D != 0  -> step_accum_sub_7e   (ring reverse — NOT ported)
+//     elif $0088 != 0  -> step_accum_add_75   (tunnel ring cycle — ported below)
+//     elif $0089 != 0  -> scroll_terrain_columns
+//     elif $008B != 0  -> dl_index_dec
+//     else (via $008F toggle) $008A != 0 -> scroll_terrain_dl  (door scroll)
+// Only the $0088 ring branch is ported here; the lower-priority branches drive
+// the ANTIC display-list machinery and are deferred to the (not-yet-done) DL pass.
+
+// add_multibyte_a1 @ $6AB5: A (carry clear) += $00A1, carry chaining up through
+// $00A2,$00A3,$00A4; returns the top byte (the caller stores it to $00A4).
+// NOTE: the $A3 step reuses the freshly-written $A2 as its operand (no LDA #0
+// between them) — a quirk of the original that is reproduced verbatim.
+static uint8_t add_multibyte_a1(uint8_t a)
+{
+    uint16_t r = (uint16_t)a + mem[0x00A1];                 // CLC; ADC $A1
+    mem[0x00A1] = (uint8_t)r;
+    r = (uint16_t)mem[0x00A2] + (r >> 8);                   // LDA #0; ADC $A2
+    mem[0x00A2] = (uint8_t)r;
+    r = (uint16_t)mem[0x00A2] + mem[0x00A3] + (r >> 8);     // ADC $A3 (A = new $A2!)
+    mem[0x00A3] = (uint8_t)r;
+    r = (uint16_t)mem[0x00A4] + (r >> 8);                   // LDA #0; ADC $A4
+    return (uint8_t)r;                                      // top byte
+}
+
+// advance_history_6a4d @ $6A4D: rotate the 6-byte colour ring $08D4-$08D9 up one
+// slot (old $08D9 wraps back into $08D4 — feeds COLOR01-06); if $008D is negative
+// copy $08D8 -> $0071; bump $0679[$0C] by $06CC, saturating to $FF on wrap-to-0.
+// The tail-call to reorder_sprite_slot ($5629, PMG slot reordering) is irrelevant
+// to the Standby tunnel and is omitted (same convention as the handlers above).
+static void advance_history_6a4d(void)
+{
+    uint8_t top = mem[0x08D9];
+    mem[0x08D9] = mem[0x08D8];
+    mem[0x08D8] = mem[0x08D7];
+    mem[0x08D7] = mem[0x08D6];
+    mem[0x08D6] = mem[0x08D5];
+    mem[0x08D5] = mem[0x08D4];
+    mem[0x08D4] = top;
+    if ((int8_t)mem[0x008D] < 0) mem[0x0071] = mem[0x08D8];     // $008D < 0
+    uint8_t s = (uint8_t)(mem[0x0679 + 0x0C] + mem[0x06CC]);    // CLC; ADC $06CC
+    mem[0x0679 + 0x0C] = s ? s : 0xFF;                          // BNE keep; else LDA #$FF
+}
+
+// step_accum_add_75 @ $6A38: add $75 into the accumulator; if the resulting top
+// byte ($A4) is unchanged, do nothing; otherwise store it and rotate the ring.
+// The advance_message_column call (top byte >= $90) drives scrolling message
+// text not present in the attract tunnel — unreached at this step rate, omitted.
+static void step_accum_add_75(void)
+{
+    uint8_t a = add_multibyte_a1(0x75);
+    mem[0x00A4] = a;
+    if (a == mem[0x00A5]) return;     // CMP $A5; BEQ -> top byte unchanged
+    mem[0x00A5] = a;
+    // CMP #$90; BCS advance_message_column  (unreached in attract; omitted)
+    advance_history_6a4d();
+}
+
+// tunnel_ring_tick_native: the $0088 branch of sound_event_dispatch ($5367) —
+// the per-frame tunnel-ring driver.  Forward cinematic only ($008D stays 0).
+extern "C" void tunnel_ring_tick_native(void)
+{
+    if (mem[0x008D]) return;          // $008D!=0 -> step_accum_sub_7e (reverse, not ported)
+    if (mem[0x0088]) step_accum_add_75();
+}
