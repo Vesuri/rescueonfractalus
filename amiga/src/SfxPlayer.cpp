@@ -61,7 +61,9 @@ extern "C" void sfx_seq_step_native(void)
 }
 
 // ---- sfx_voice_tick_native ($70F9) ------------------------------------------
-// Called each VBI (50 Hz) when mem[$00E7] != 0.
+// Driven by CIA-B Timer A (main.cpp) when mem[$00E7] != 0.  On the Atari this
+// runs from vbi_deferred_dispatch ($534D) every *other* VBI — gated by
+// BIT $062D bit 0 with $00E7=1 — i.e. 25 Hz on PAL, which the CIA timer matches.
 // Decrements the duration counter; on underflow calls sfx_seq_step_native.
 // Computes an AUDC amplitude value and writes it to POKEY channels 1-3.
 //

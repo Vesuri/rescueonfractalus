@@ -38,10 +38,10 @@ extern "C" void copy_altitude_graphic_to_screen_native(void)
     mem[0x0091] = 0;                                                // reset (Y=0 in original)
     uint16_t src;
     if (alt >= 0xE0u) {
-        src = 0x5AB4u;          // Block2: copyright string (screen3_mem.bin layout)
+        src = 0x5AB3u;          // Block2: copyright string ($5A9F+$13, per $7845)
         mem[0x00D8] = 0x44u;    // title text colour for copyright path
     } else {
-        src = 0x5AA0u;          // Block1: rescue string (screen3_mem.bin layout)
+        src = 0x5A9Fu;          // Block1: rescue string ($5A9F+$00, per $7849)
     }
     for (int i = 0; i < 20; i++)
         mem[0x32B7u + (uint16_t)i] = mem[src + (uint16_t)i];

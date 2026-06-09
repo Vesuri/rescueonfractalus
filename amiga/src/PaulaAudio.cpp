@@ -24,8 +24,64 @@ extern "C" volatile uint8_t mem[65536];
 extern "C" uint8_t rof_mem_bin[];
 extern "C" uint8_t rof_mem_bin_end[];
 
-// Square wave sample buffer in chip RAM (Paula DMA must reach chip RAM)
-static __chip uint8_t paula_wave[2] = { 0x7F, 0x81 };  // +127, -127
+// POKEY distortion waveforms in chip RAM (Paula DMA must reach chip RAM).
+// POKEY runs each channel's clock through a polynomial counter selected by the
+// AUDC distortion bits (NOTPOLY5 $80, POLY4 $40, PURETONE $20).  A plain square
+// only reproduces the pure-tone voices (melody, AUDC $A0); the Standby "bass"
+// uses poly4 ($C0) and poly5-gated tone ($20), which have a different waveform
+// and fundamental — rendering them as a square plays them off-key.
+//
+// The poly waveform is generated per note: POKEY's poly counters free-run at the
+// base clock while the channel samples them every Div_n_max=(AUDF+1)*baseDiv
+// ticks (atari800 pokeysnd.c), so the stride through the poly table is
+// AUDF-dependent.  A fixed-stride table mistunes notes (e.g. poly4 at AUDF=215
+// strides P4 by 3 → true period 5 fires, not 15).  We replay pokeysnd's toggle
+// rule with the correct stride into a per-channel scratch buffer.  One captured
+// byte = one channel fire, played by the same pokey_period() as the pure-tone
+// path; bipolar ±127, AUDC volume scales amplitude via AUDxVOL.
+static __chip uint8_t wave_pure[2]      = { 0x7F, 0x81 }; // pure tone (square)
+static __chip uint8_t wave_buf[4][2][64];                // per-channel poly, ping-pong
+static uint8_t        wave_idx[4]       = { 0, 0, 0, 0 }; // index Paula is pointed at
+
+// POKEY poly patterns (1 bit/entry) and AUDC distortion bits (atari800 pokeysnd.c/pokey.h)
+static const uint8_t kBit4[15] = { 1,1,1,1,0,0,0,1,0,0,1,1,0,1,0 };
+static const uint8_t kBit5[31] = { 1,1,1,1,0,1,1,0,1,0,0,1,1,0,0,0,0,0,1,1,1,0,0,1,0,0,0,1,0,1,0 };
+#define POKEY_NOTPOLY5  0x80u
+#define POKEY_POLY4     0x40u
+#define POKEY_PURETONE  0x20u
+
+// Build channel ch's poly waveform and return LEN in words (0 = pure tone /
+// unmodelled mode → caller uses wave_pure).  Writes into the ping-pong buffer
+// Paula is NOT currently reading, then advances wave_idx[ch] to it, so the
+// playing waveform is never overwritten mid-DMA (avoids a click at note change).
+// Captures 2x the poly period (30 or 62 bytes) — a clean, even-length loop
+// regardless of stride.
+static uint16_t build_poly_wave(uint8_t ch, uint8_t audc, uint8_t audf, uint8_t audctl)
+{
+    bool poly5tone = (audc & POKEY_PURETONE) && !(audc & POKEY_NOTPOLY5);                       // $20
+    bool poly4     = !(audc & POKEY_PURETONE) && (audc & POKEY_NOTPOLY5) && (audc & POKEY_POLY4); // $C0
+    if (!poly5tone && !poly4) return 0u;
+
+    uint16_t baseDiv  = (audctl & 0x01u) ? 114u : 28u;
+    uint32_t stride   = (uint32_t)(audf + 1u) * baseDiv;
+    uint8_t  s4       = (uint8_t)(stride % 15u);
+    uint8_t  s5       = (uint8_t)(stride % 31u);
+    uint16_t lenBytes = poly4 ? 30u : 62u;
+
+    uint8_t  next = wave_idx[ch] ^ 1u;       // the buffer Paula is not playing
+    uint8_t* dst  = wave_buf[ch][next];
+    uint8_t  out = 0, p4 = 0, p5 = 0;
+    for (uint16_t i = 0; i < lenBytes; i++) {
+        p4 = (uint8_t)((p4 + s4) % 15u);   // advance polys by stride, then sample
+        p5 = (uint8_t)((p5 + s5) % 31u);
+        bool toggle = poly4 ? (kBit4[p4] == (out ^ 1u))  // flip per poly4 vs current output
+                            : (kBit5[p5] != 0);          // poly5-gated pure tone: flip when gate passes
+        if (toggle) out ^= 1u;
+        dst[i] = out ? 0x7Fu : 0x81u;
+    }
+    wave_idx[ch] = next;
+    return (uint16_t)(lenBytes >> 1);
+}
 
 // Shadow of POKEY registers $D200..$D20F (bus_write doesn't update mem[] for
 // hardware-range writes, so we maintain our own copy here)
@@ -106,6 +162,17 @@ static void update_paula_channel(uint8_t ch)
     uint16_t per = pokey_period(ch, audf, audctl);
     if (per == 0u) vol = 0u;  // out-of-range frequency → silence
 
+    // Point the channel at the waveform for its distortion mode.  Paula latches
+    // PTR/LEN at the next DMA loop wrap, so the change takes effect promptly.
+    uint16_t len_words = build_poly_wave(ch, audc, audf, audctl);
+    if (len_words == 0u) {
+        AUD_PTR(ch) = (uint32_t)wave_pure;   // pure tone / unmodelled
+        AUD_LEN(ch) = 1u;
+    } else {
+        AUD_PTR(ch) = (uint32_t)wave_buf[ch][wave_idx[ch]];
+        AUD_LEN(ch) = len_words;
+    }
+
     if (per != 0u) AUD_PER(ch) = per;
     AUD_VOL(ch) = vol;
 }
@@ -136,9 +203,10 @@ void paula_audio_init(void)
     // the snapshot has $0090=1, so the first update() call resets $073C/$073A
     // to start the sequence from note 0 — no replay needed here.
 
-    // Point all Paula channels at the square wave, start silent
+    // Point all Paula channels at the pure-tone wave, start silent.
+    // update_paula_channel() re-points each channel per its AUDC distortion.
     for (int ch = 0; ch < 4; ch++) {
-        AUD_PTR(ch) = (uint32_t)paula_wave;
+        AUD_PTR(ch) = (uint32_t)wave_pure;
         AUD_LEN(ch) = 1u;   // 1 word = 2 bytes
         AUD_PER(ch) = 256u; // default period, updated by POKEY writes
         AUD_VOL(ch) = 0u;   // silent until AUDC writes activate channels

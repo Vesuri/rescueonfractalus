@@ -93,7 +93,12 @@ obj/gcc8_a_support.o : $(SUPPORT)/gcc8_a_support.s
 	$(info ASM  $<)
 	@$(AS) $(ASFLAGS) -o $@ "$<"
 
-obj/incbin.o : src/incbin.s
+# NOTE: .incbin dependencies are invisible to gcc -MMD, so list them explicitly.
+# Without this, editing/regenerating an embedded dump leaves a stale blob in the
+# binary while the on-disk file looks correct (this exact trap shifted the SFX
+# music + title data by one byte and cost a long debugging session).
+INCBIN_DEPS := assets/cockpit.raw ../disasm/screen3_mem.bin
+obj/incbin.o : src/incbin.s $(INCBIN_DEPS)
 	$(info ASM  $<)
 	@$(AS) $(ASFLAGS) -o $@ "$(CURDIR)/src/incbin.s"
 
