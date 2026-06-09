@@ -322,21 +322,18 @@ void StandbyScene::update(uint16_t frame)
     // $004A: LSR $0643 / BCS skip / JSR $4229 / INC $0643 ($5342).  (Our earlier
     // $004A gate suppressed the Standby blink entirely.)
     {
-        uint8_t prev[8];
-        for (int i = 0; i < 8; i++) prev[i] = mem[0x3491u + (uint16_t)i];
         uint8_t g = mem[0x0643u];
         mem[0x0643u] = (uint8_t)(g >> 1);          // LSR $0643
         if (!(g & 1u)) {                           // carry clear → run, then INC
             update_gauge_digits_native();
             mem[0x0643u]++;
         }
-        for (int i = 0; i < 8; i++)
-            if (mem[0x3491u + (uint16_t)i] != prev[i]) { cockpitDirty = true; break; }
+        // Any cockpit RAM changes (e.g. the centre-bottom indicator-light blink
+        // at $3491-$3498) are picked up by render()'s per-cell shadow compare.
     }
 
     if (mem[0x004A] != 0) {             // $004A set when game starts (door sequence)
         startup_init_native();          // $3FFA: cockpit digit update
-        cockpitDirty = true;
     }
 
     uint8_t next = 1 - active;
@@ -459,10 +456,12 @@ void StandbyScene::render()
     }
 
     // ---- cockpit region ------------------------------------------------------
-    // Only re-render when cockpitDirty (set in initialize(); cleared here).
-    // During static Standby the cockpit data is constant.
-    if (!cockpitDirty) return;
-    cockpitDirty = false;
+    // Per-cell shadow compare (like the title region above): re-decode only the
+    // cells whose Atari source byte changed since last frame.  A single Atari
+    // write therefore costs 6 Amiga writes (modeD: 2 rows × 3 planes) or 24
+    // (mode4: 8 scanlines × 3 planes) — never a full-region re-decode.
+    const bool cockpitFull = cockpitForceFull;
+    cockpitForceFull = false;
     // The cockpit shares the terrain's WIDE playfield (48 bytes/line).  Both the
     // modeD and mode4 blocks are sequential DL entries (LMS only on the first
     // line), so each successive row advances by ANTIC's fetch width = 48 bytes,
@@ -481,34 +480,43 @@ void StandbyScene::render()
     // 3bp interleaved row = plane1(40) + plane2(40) + plane3(40) = 120 bytes.
     static const int kRowBytes = 120;
 
-    // ModeD rows 0-7 (raw bitmap, no bit-7 colour swap → plane3 = 0)
+    // ModeD rows 0-7 (raw bitmap, no bit-7 colour swap → plane3 = 0).  Each
+    // source byte feeds the same column of 2 identical scan lines.
     for (int entry = 0; entry < 4; entry++) {
         const uint8_t* src = (const uint8_t*)&mem[0x350D + (uint16_t)(entry * kCockpitStride + kCockpitXByteCrop)];
-        for (int scan = 0; scan < 2; scan++) {
-            int row = entry * 2 + scan;
-            uint8_t* p1 = cdest + row * kRowBytes;
-            uint8_t* p2 = p1 + 40;
-            uint8_t* p3 = p1 + 80;
-            for (int b = 0; b < 40; b++) { decode2bppByte(src[b], &p1[b], &p2[b]); p3[b] = 0; }
+        for (int b = 0; b < 40; b++) {
+            uint8_t s = src[b];
+            int sh = entry * 40 + b;
+            if (!cockpitFull && s == cockpitModeDShadow[sh]) continue;
+            cockpitModeDShadow[sh] = s;
+            uint8_t p1v, p2v;
+            decode2bppByte(s, &p1v, &p2v);
+            for (int scan = 0; scan < 2; scan++) {
+                uint8_t* p1 = cdest + (entry * 2 + scan) * kRowBytes;
+                p1[b] = p1v; p1[40 + b] = p2v; p1[80 + b] = 0;
+            }
         }
     }
 
     // Mode4 rows 8-87.  Char bit-7 → plane3 = 0xFF for that cell, shifting its
     // pixels to colours 4-7 (col7 = red); bit-7 clear → plane3 = 0 (cols 0-3).
+    // One changed char re-decodes its 8 scanlines × 3 planes = 24 writes.
     for (int entry = 0; entry < 10; entry++) {
         const uint8_t* chars = (const uint8_t*)&mem[0x332D + (uint16_t)(entry * kCockpitStride + kCockpitXByteCrop)];
-        for (int scan = 0; scan < 8; scan++) {
-            int row = 8 + entry * 8 + scan;
-            uint8_t* p1 = cdest + row * kRowBytes;
-            uint8_t* p2 = p1 + 40;
-            uint8_t* p3 = p1 + 80;
-            for (int col = 0; col < 40; col++) {
-                uint8_t ch        = chars[col];
-                // Mode-4 glyph index is bits 0-6 (128 glyphs); bit 7 is the
-                // COLPF2/PF3 colour flag (handled via plane3 below).
+        for (int col = 0; col < 40; col++) {
+            uint8_t ch = chars[col];
+            int sh = entry * 40 + col;
+            if (!cockpitFull && ch == cockpitMode4Shadow[sh]) continue;
+            cockpitMode4Shadow[sh] = ch;
+            // Mode-4 glyph index is bits 0-6 (128 glyphs); bit 7 is the
+            // COLPF2/PF3 colour flag (handled via plane3).
+            uint8_t plane3 = (ch & 0x80u) ? 0xFFu : 0x00u;
+            for (int scan = 0; scan < 8; scan++) {
+                uint8_t* p1 = cdest + (8 + entry * 8 + scan) * kRowBytes;
                 uint8_t glyphData = mem[0x3800u + (ch & 0x7Fu) * 8u + (uint16_t)scan];
-                decode2bppByte(glyphData, &p1[col], &p2[col]);
-                p3[col] = (ch & 0x80u) ? 0xFFu : 0x00u;
+                uint8_t p1v, p2v;
+                decode2bppByte(glyphData, &p1v, &p2v);
+                p1[col] = p1v; p1[40 + col] = p2v; p1[80 + col] = plane3;
             }
         }
     }

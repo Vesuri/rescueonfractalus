@@ -35,6 +35,14 @@ private:
     // Dirty-flag bitmap caching: bitmaps are rendered once on initialize() and
     // only re-rendered when the underlying mem[] data changes.
     bool    terrainDirty = true;   // re-render terrain rows from $2000
-    bool    cockpitDirty = true;   // re-render modeD $350D + mode4 $332D
     uint8_t titleShadow[20] = {};  // shadow of last-rendered $32B7-$32CA
+
+    // Per-cell shadow caching for the cockpit (mirrors titleShadow): a single
+    // changed Atari source byte re-decodes only that cell — modeD: 2 rows × 3
+    // planes = 6 writes; mode4: 8 scanlines × 3 planes = 24 writes — never the
+    // whole 88-row region.  cockpitForceFull makes the first render() populate
+    // every cell regardless of shadow contents.
+    bool    cockpitForceFull = true;
+    uint8_t cockpitModeDShadow[4 * 40] = {};   // shadow of modeD source ($350D region)
+    uint8_t cockpitMode4Shadow[10 * 40] = {};  // shadow of mode4 source ($332D region)
 };
