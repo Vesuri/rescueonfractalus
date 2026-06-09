@@ -19,7 +19,7 @@ cp -f out/RoF.exe "$DH1/RoF"
 
 pkill -9 fs-uae 2>/dev/null || true; sleep 1
 "$FSUAE" \
-  --amiga_model=A500 --chip_memory=1024 --fast_memory=8192 \
+  --amiga_model=A500+ --chip_memory=1024 --fast_memory=8192 \
   --kickstart_file="$ROM" \
   --hard_drive_0="$DH0" --hard_drive_1="$DH1" \
   --automatic_input_grab=0 --fullscreen=0 --window_width=720 --window_height=568 \

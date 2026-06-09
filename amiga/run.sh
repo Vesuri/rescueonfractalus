@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Run the Amiga RoF build in FS-UAE as an OCS A500.
+# Run the Amiga RoF build in FS-UAE as an ECS A500+ (ECS Denise needed for
+# BPLCON3 border-blanking; OCS A500 ignores it).
 #   ./run.sh [path-to-kickstart-rom]
 # Use KS 3.1 (auto-boots directory HDs). Left mouse button quits.
 # Override ROM via $1 or $KICKSTART.
@@ -18,7 +19,7 @@ cp -f out/RoF.exe "$DH1/RoF"
 
 pkill -9 fs-uae 2>/dev/null || true; sleep 1
 exec "$FSUAE" \
-  --amiga_model=A500 \
+  --amiga_model=A500+ \
   --chip_memory=1024 --fast_memory=8192 \
   --kickstart_file="$ROM" \
   --hard_drive_0="$DH0" --hard_drive_1="$DH1" \
