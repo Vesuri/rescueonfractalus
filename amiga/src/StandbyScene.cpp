@@ -374,11 +374,9 @@ void StandbyScene::initialize()
     // mem[$00D8] is the title TEXT colour (COLPF0); snapshot has $78 (blue). Leave as-is.
     // mem[$02C8] is the title BACKGROUND (COLBK); snapshot has $06 (grey). Leave as-is.
 
-    // vbi_handler_2 attract path: steady-state has $0044=0 (FUN_47A3 already ran)
-    // and $063E=$FF (BMI path taken, no further timer expiry).  The snapshot captured
-    // these mid-animation; patch to steady-state to avoid spurious $480B/FUN_47A3 firing.
-    mem[0x0044] = 0x00;   // prevent FUN_47A3 one-shot (would set $00D8=$CA = yellow)
-    mem[0x063E] = 0xFF;   // prevent $480B title-clear on first frame
+    // (Removed: $0044/$063E patches that used to placate vbi_handler_2's FUN_47A3 /
+    // $480B paths — neither handler is ported on the Amiga, so nothing reads those
+    // bytes here; the writes were dead.)
 
     // Seed $0091=$C0 so copy_text_block_to_screen_native fires on the first
     // update() call and writes Block1 ("rescue on fractalus") to $32B7.
