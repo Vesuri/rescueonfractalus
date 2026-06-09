@@ -53,6 +53,7 @@ static const uint16_t kW   = 320;
 static const uint16_t kH   = 216;   // Atari attract = 216 visible scanlines
 static const uint16_t kHT  = 86;    // terrain sprite/bitmap height (placeholder; M6a audit may revise)
 static const uint8_t  kBP2 = 2;
+static const uint8_t  kBP3 = 3;   // cockpit only — 3rd plane carries bit-7 chars (red)
 
 static const uint32_t kCopperLen = 128;
 
@@ -190,22 +191,39 @@ void StandbyScene::buildCopperList(CopperList* cl, uint16_t frame)
     d[idx++] = copperMove(color02, fadeColor(atariToOCS(mem[0x08D4]), f));
     d[idx++] = copperMove(color03, fadeColor(atariToOCS(mem[0x0071]), f));
 
-    // ---- cockpit region — same pattern --------------------------------------
+    // ---- cockpit region ------------------------------------------------------
+    // The cockpit runs at 3 bitplanes (title/terrain stay 2bp): mode-4's bit-7
+    // chars swap pixel-11 from COLPF2 (salmon) to COLPF3 (red), which can't be
+    // expressed in 2bp since salmon and red share scanlines.  We give those chars
+    // plane3 = 0xFF (render()), shifting their pixels from colours 0-3 to 4-7;
+    // colours 4-6 mirror 0-2, and colour 7 = red, so a bit-7 char matches a normal
+    // one except its pixel-11 is red.
     d[idx++] = copperWait(kCockpitLine - 1, 0xE0);
     uint32_t ca = (uint32_t)cockpitBitmap->data;
     d[idx++] = copperMove(bpl1pth, (uint16_t)(ca >> 16));
     d[idx++] = copperMove(bpl1ptl, (uint16_t)(ca & 0xFFFF));
     d[idx++] = copperMove(bpl2pth, (uint16_t)((ca + 40) >> 16));
     d[idx++] = copperMove(bpl2ptl, (uint16_t)((ca + 40) & 0xFFFF));
-    // Cockpit palette — mode-4 2bpp pixel encoding:
-    //   pixel 00 = COLBK  → col0 = mem[$02C8]
-    //   pixel 01 = COLPF0 → col1 = mem[$02C4]  (black dots, near-$00)
-    //   pixel 10 = COLPF1 → col2 = mem[$02C5]  (panel body colour)
-    //   pixel 11 = COLPF2 → col3 = blink light
-    d[idx++] = copperMove(color00, fadeColor(atariToOCS(mem[0x02C8]), f));
-    d[idx++] = copperMove(color01, fadeColor(atariToOCS(mem[0x02C4]), f));
-    d[idx++] = copperMove(color02, fadeColor(atariToOCS(mem[0x02C5]), f));
-    d[idx++] = copperMove(color03, fadeColor(atariToOCS(mem[0x00DE]), f));
+    d[idx++] = copperMove(bpl3pth, (uint16_t)((ca + 80) >> 16));
+    d[idx++] = copperMove(bpl3ptl, (uint16_t)((ca + 80) & 0xFFFF));
+    // Switch to 3 bitplanes + 3bp interleaved modulo (= (3-1)*40) for the cockpit.
+    d[idx++] = copperMove(bplcon0, (uint16_t)((3 << PLNCNTSHFT) | USE_BPLCON3));
+    d[idx++] = copperMove(bpl1mod, 80);
+    d[idx++] = copperMove(bpl2mod, 80);
+    // Cockpit palette — cockpit DLIs ($6D4F/$6D67/$6D7C) reload the registers for
+    // these scanlines with hardcoded immediates (NOT the $02C4-$02C8 title/terrain
+    // shadows), so we use the same constants:
+    //   pixel 00 = COLBK  = $00 (black);   01 = COLPF0 = $04 (dark gray)
+    //   pixel 10 = COLPF1 = $06 (gray);    11 = COLPF2 = $2C (salmon)
+    //   bit-7 char pixel 11 = COLPF3 = $26 (red), via plane3 → colour 7.
+    d[idx++] = copperMove(color00, fadeColor(atariToOCS(0x00), f));
+    d[idx++] = copperMove(color01, fadeColor(atariToOCS(0x04), f));
+    d[idx++] = copperMove(color02, fadeColor(atariToOCS(0x06), f));
+    d[idx++] = copperMove(color03, fadeColor(atariToOCS(0x2C), f));
+    d[idx++] = copperMove(color04, fadeColor(atariToOCS(0x00), f));  // = col0 (black)
+    d[idx++] = copperMove(color05, fadeColor(atariToOCS(0x04), f));  // = col1 (dark gray)
+    d[idx++] = copperMove(color06, fadeColor(atariToOCS(0x06), f));  // = col2 (gray)
+    d[idx++] = copperMove(color07, fadeColor(atariToOCS(0x26), f));  // red (COLPF3)
 }
 
 // ---- public interface --------------------------------------------------------
@@ -215,7 +233,7 @@ void StandbyScene::initialize()
     palette       = new Palette(kTitlePalette, 4, /*fade*/0);
     titleBitmap   = Bitmap::allocate(kW, kTitleHeight,   kBP2, true);
     terrainBitmap = Bitmap::allocate(kW, kTerrainHeight, kBP2, true);
-    cockpitBitmap = Bitmap::allocate(kW, kCockpitH, kBP2, true);
+    cockpitBitmap = Bitmap::allocate(kW, kCockpitH, kBP3, true);  // 3bp: bit-7 chars → red
 
     leftPost   = Sprite::allocate(kHT);
     rightPost  = Sprite::allocate(kHT);
@@ -443,28 +461,35 @@ void StandbyScene::render()
     static const int kCockpitXByteCrop = 4;    // skip 4 left overscan bytes (= terrain)
     uint8_t* cdest = (uint8_t*)cockpitBitmap->data;
 
-    // ModeD rows 0-7
+    // 3bp interleaved row = plane1(40) + plane2(40) + plane3(40) = 120 bytes.
+    static const int kRowBytes = 120;
+
+    // ModeD rows 0-7 (raw bitmap, no bit-7 colour swap → plane3 = 0)
     for (int entry = 0; entry < 4; entry++) {
         const uint8_t* src = (const uint8_t*)&mem[0x350D + (uint16_t)(entry * kCockpitStride + kCockpitXByteCrop)];
         for (int scan = 0; scan < 2; scan++) {
             int row = entry * 2 + scan;
-            uint8_t* p1 = cdest + row * 80;
+            uint8_t* p1 = cdest + row * kRowBytes;
             uint8_t* p2 = p1 + 40;
-            for (int b = 0; b < 40; b++) decode2bppByte(src[b], &p1[b], &p2[b]);
+            uint8_t* p3 = p1 + 80;
+            for (int b = 0; b < 40; b++) { decode2bppByte(src[b], &p1[b], &p2[b]); p3[b] = 0; }
         }
     }
 
-    // Mode4 rows 8-87
+    // Mode4 rows 8-87.  Char bit-7 → plane3 = 0xFF for that cell, shifting its
+    // pixels to colours 4-7 (col7 = red); bit-7 clear → plane3 = 0 (cols 0-3).
     for (int entry = 0; entry < 10; entry++) {
         const uint8_t* chars = (const uint8_t*)&mem[0x332D + (uint16_t)(entry * kCockpitStride + kCockpitXByteCrop)];
         for (int scan = 0; scan < 8; scan++) {
             int row = 8 + entry * 8 + scan;
-            uint8_t* p1 = cdest + row * 80;
+            uint8_t* p1 = cdest + row * kRowBytes;
             uint8_t* p2 = p1 + 40;
+            uint8_t* p3 = p1 + 80;
             for (int col = 0; col < 40; col++) {
-                uint8_t glyphIdx  = chars[col] & 0x3Fu;
-                uint8_t glyphData = mem[0x3800u + glyphIdx * 8u + (uint16_t)scan];
+                uint8_t ch        = chars[col];
+                uint8_t glyphData = mem[0x3800u + (ch & 0x3Fu) * 8u + (uint16_t)scan];
                 decode2bppByte(glyphData, &p1[col], &p2[col]);
+                p3[col] = (ch & 0x80u) ? 0xFFu : 0x00u;
             }
         }
     }
