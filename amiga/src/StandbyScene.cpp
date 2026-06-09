@@ -34,7 +34,6 @@
 extern "C" void vbi_handler_game_native(void);                  // $52D7: timer cascade
 extern "C" void update_blink_timer_006e_native(void);           // $4131: cockpit blink
 extern "C" void copy_altitude_graphic_to_screen_native(void);   // $782A: title text
-extern "C" void sfx_voice_tick_native(void);                    // $70F9: SFX audio
 extern "C" void startup_init_native(void);                      // $3FFA: cockpit digit update
 extern "C" void update_gauge_digits_native(void);               // $4229: cockpit counter animation
 
@@ -288,7 +287,7 @@ void StandbyScene::update(uint16_t frame)
 {
     vbi_handler_game_native();           // $52D7: attract timer cascade
     update_blink_timer_006e_native();    // $4131: cockpit blink lights
-    if (mem[0x00E7] != 0) sfx_voice_tick_native();  // $70F9: SFX audio (sets $0091)
+    // sfx_voice_tick_native() is now driven by CIA-B Timer A at ~100 Hz (main.cpp).
     if (mem[0x060B] == 0)               // $62FB: title text (gated by $060B)
         copy_altitude_graphic_to_screen_native();    // $782A: $0091→title string
     if (mem[0x004A] != 0) {             // $004A set when game starts (door sequence)

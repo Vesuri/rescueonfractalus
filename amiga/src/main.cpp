@@ -6,6 +6,7 @@
 #define ECS_SPECIFIC
 #include <proto/exec.h>
 #include <proto/graphics.h>
+#include <proto/cia.h>
 #include <exec/interrupts.h>
 #include <exec/nodes.h>
 #include <exec/memory.h>
@@ -13,6 +14,8 @@
 #include <graphics/view.h>
 #include <hardware/dmabits.h>
 #include <hardware/intbits.h>
+#include <resources/cia.h>
+#include <hardware/cia.h>
 
 #include "../framework/AmigaHardware.h"
 #include "StandbyScene.h"
@@ -23,10 +26,12 @@ extern struct GfxBase* GfxBase;
 // mem[] lives in audio/rof_gen.c; also written by the VBI handler.
 extern "C" volatile uint8_t mem[65536];
 
+// sfx_voice_tick_native: driven by CIA-B Timer A (see below), not the main loop.
+extern "C" void sfx_voice_tick_native(void);
+
 // ---- VBI interrupt server ---------------------------------------------------
-// Mirrors vbi_handler_station $1B30: increments the three Atari timer locations
-// that the attract state machine reads each frame.  DLIST/COLBK writes from the
-// Atari VBI are skipped — the Copper handles those on the Amiga side.
+// Mirrors the Atari RTCLOK increment from vbi_handler_1 ($53CC).
+// DLIST/colour writes are handled by the Copper on the Amiga side.
 static volatile uint16_t vbiCount = 0;
 static struct Interrupt vbiServer;
 
@@ -36,6 +41,20 @@ static uint32_t vbiHandler()
     mem[0x0014]++;               // RTCLOK[1] — secondary tick
     if (!mem[0x0014]) mem[0x0013]++;  // RTCLOK[0] — carry
     vbiCount++;
+    return 0;
+}
+
+// ---- CIA-B Timer A interrupt — SFX music tick --------------------------------
+// The Atari SFX sequencer is driven by the POKEY timer IRQ.  On the Amiga we
+// replicate this with CIA-B Timer A firing at ~100 Hz (2× PAL VBI rate).
+// CIA-B uses the Amiga E-clock (≈ 709379 Hz on PAL); period = 709379/100 = 7094.
+// The interrupt fires through INTB_EXTER (level 6) via the ciab.resource.
+static struct Library    *CIABBase;
+static struct Interrupt   sfxTimer;
+
+static uint32_t sfxTimerHandler()
+{
+    if (mem[0x00E7]) sfx_voice_tick_native();
     return 0;
 }
 
@@ -73,6 +92,31 @@ int main()
     vbiServer.is_Code = (void(*)())vbiHandler;
     AddIntServer(INTB_VERTB, &vbiServer);
 
+    // --- CIA-B Timer A — SFX music at ~100 Hz --------------------------------
+    // Use ciab.resource so the CIA ICR is demultiplexed for us.
+    CIABBase = (struct Library*)OpenResource((UBYTE*)CIABNAME);
+    if (CIABBase) {
+        sfxTimer.is_Node.ln_Type = NT_INTERRUPT;
+        sfxTimer.is_Node.ln_Pri  = 0;
+        sfxTimer.is_Node.ln_Name = (char*)"RoF SFX";
+        sfxTimer.is_Data = NULL;
+        sfxTimer.is_Code = (void(*)())sfxTimerHandler;
+        if (!AddICRVector(CIABBase, CIAICRB_TA, &sfxTimer)) {
+            Disable();
+            // Stop timer, load period (7094 = 0x1BB6 for 100 Hz on PAL E-clock)
+            *((volatile uint8_t*)(ciab + ciacra)) &= (uint8_t)~CIACRAF_START;
+            *((volatile uint8_t*)(ciab + ciatalo)) = (uint8_t)(7094 & 0xFF);
+            *((volatile uint8_t*)(ciab + ciatahi)) = (uint8_t)(7094 >> 8);
+            // Continuous mode (RUNMODE=0); START=1 auto-loads latch into counter
+            *((volatile uint8_t*)(ciab + ciacra)) =
+                (uint8_t)((*((volatile uint8_t*)(ciab + ciacra))
+                           & ~(CIACRAF_RUNMODE | CIACRAF_PBON | CIACRAF_OUTMODE
+                               | CIACRAF_SPMODE | CIACRAF_TODIN))
+                          | CIACRAF_START);
+            Enable();
+        }
+    }
+
     // --- attract scene -------------------------------------------------------
     // Enable copper + raster + sprite DMA, then let StandbyScene install its list.
     *dmaconPointer = (uint16_t)(DMAF_SETCLR | DMAF_MASTER | DMAF_COPPER | DMAF_RASTER | DMAF_SPRITE);
@@ -102,6 +146,14 @@ int main()
     scene.shutdown();
 
     // --- restore system ------------------------------------------------------
+    // Stop CIA-B Timer A and release ICR vector before removing VBI server.
+    if (CIABBase) {
+        Disable();
+        *((volatile uint8_t*)(ciab + ciacra)) &= (uint8_t)~CIACRAF_START;
+        Enable();
+        RemICRVector(CIABBase, CIAICRB_TA, &sfxTimer);
+    }
+
     RemIntServer(INTB_VERTB, &vbiServer);
 
     // Disable our display DMA before handing back.
