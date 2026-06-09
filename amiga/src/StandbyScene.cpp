@@ -29,13 +29,14 @@
 #include "../framework/Sprite.h"
 #include "StandbyScene.h"
 #include "PaulaAudio.h"
+#include "AtariZp.h"      // zp:: named Atari memory offsets
 
 // Native handler functions — see NativeHandlers.cpp and SfxPlayer.cpp.
-extern "C" void vbi_handler_game_native(void);                  // $52D7: timer cascade
-extern "C" void update_blink_timer_006e_native(void);           // $4131: cockpit blink
-extern "C" void copy_altitude_graphic_to_screen_native(void);   // $782A: title text
-extern "C" void startup_init_native(void);                      // $3FFA: cockpit digit update
-extern "C" void update_gauge_digits_native(void);               // $4229: cockpit counter animation
+extern "C" void vbi_attract_timer_native(void);                  // $52D7: timer cascade
+extern "C" void update_indicator_blink_native(void);           // $4131: cockpit blink
+extern "C" void copy_text_block_to_screen_native(void);   // $782A: title text
+extern "C" void update_cockpit_digits_native(void);                      // $3FFA: cockpit digit update
+extern "C" void saucer_anim_tick_native(void);               // $4229: cockpit counter animation
 extern "C" void tunnel_ring_tick_native(void);                  // $6A38/$6A4D: tunnel ring cycle ($0088 gate)
 
 extern "C" volatile uint8_t mem[65536];
@@ -145,7 +146,7 @@ void StandbyScene::buildCopperList(CopperList* cl, uint16_t frame)
     //   COLPF0 ($D016) = mem[$00D8]  — title text colour (mode-6 col=1 chars)
     //   COLBK  ($D01A) = mem[$02C8]  — title background
     //   COLPF1 ($D017) = $78         — hardcoded blue (same role on real hw)
-    // copy_altitude_graphic_to_screen_native sets mem[$00D8]=$44 for the
+    // copy_text_block_to_screen_native sets mem[$00D8]=$44 for the
     // copyright block so the text colour changes per alternation.
     // Mode-6 selects the per-char text colour from the byte's top 2 bits:
     //   hi2=0 → COLPF0 = mem[$00D8]   (copyright block, e.g. $44)
@@ -154,7 +155,7 @@ void StandbyScene::buildCopperList(CopperList* cl, uint16_t frame)
     // (plane2); "off" pixels use col0 = COLBK.
     {
         uint16_t tbg   = atariToOCS(mem[0x02C8]);  // COLBK = background
-        uint16_t tpf0  = atariToOCS(mem[0x00D8]);  // COLPF0 = hi2=0 text
+        uint16_t tpf0  = atariToOCS(mem[zp::textColorPf0]);  // COLPF0 = hi2=0 text
         uint16_t tpf1  = atariToOCS(0x78);         // COLPF1 = hi2=1 text (blue)
         d[idx++] = copperMove(color00, fadeColor(tbg,  f));
         d[idx++] = copperMove(color01, fadeColor(tpf0, f));
@@ -209,12 +210,12 @@ void StandbyScene::buildCopperList(CopperList* cl, uint16_t frame)
     // pen 0), col1 LEVEL-04 text, col3 green background.  Ring feeds pens 1-6.
     const uint16_t terr0 = fadeColor(atariToOCS(mem[0x02C0]), f);
     const uint16_t terr1 = fadeColor(atariToOCS(mem[0x02C7]), f);
-    const uint16_t terr2 = fadeColor(atariToOCS(mem[0x08D4]), f);
-    const uint16_t terr3 = fadeColor(atariToOCS(mem[0x0071]), f);
+    const uint16_t terr2 = fadeColor(atariToOCS(mem[zp::colorRing]), f);
+    const uint16_t terr3 = fadeColor(atariToOCS(mem[zp::displayFlags]), f);
     auto emitRing = [&]() {                                    // tunnel pens 1-3
-        d[idx++] = copperMove(color01, fadeColor(atariToOCS(mem[0x08D4]), f));
-        d[idx++] = copperMove(color02, fadeColor(atariToOCS(mem[0x08D5]), f));
-        d[idx++] = copperMove(color03, fadeColor(atariToOCS(mem[0x08D6]), f));
+        d[idx++] = copperMove(color01, fadeColor(atariToOCS(mem[zp::colorRing]), f));
+        d[idx++] = copperMove(color02, fadeColor(atariToOCS(mem[zp::colorRing + 1]), f));
+        d[idx++] = copperMove(color03, fadeColor(atariToOCS(mem[zp::colorRing + 2]), f));
     };
     auto emitTerrCols = [&]() {                                // terrain pens 1-3
         d[idx++] = copperMove(color01, terr1);
@@ -231,9 +232,9 @@ void StandbyScene::buildCopperList(CopperList* cl, uint16_t frame)
     d[idx++] = copperMove(color00, terr0);                     // pen 0 = black (terrain & tunnel)
     if (tunnelFirst) emitRing(); else emitTerrCols();
     if (door) {                                                // ring upper half (pens 4-6),
-        d[idx++] = copperMove(color04, fadeColor(atariToOCS(mem[0x08D7]), f));  // unused by terrain
-        d[idx++] = copperMove(color05, fadeColor(atariToOCS(mem[0x08D8]), f));
-        d[idx++] = copperMove(color06, fadeColor(atariToOCS(mem[0x08D9]), f));
+        d[idx++] = copperMove(color04, fadeColor(atariToOCS(mem[zp::colorRing + 3]), f));  // unused by terrain
+        d[idx++] = copperMove(color05, fadeColor(atariToOCS(mem[zp::colorRing + 4]), f));
+        d[idx++] = copperMove(color06, fadeColor(atariToOCS(mem[zp::colorRing + 5]), f));
     }
 
     // ---- mid-screen bands (only when partially open; each on its own WAIT) ----
@@ -366,7 +367,7 @@ void StandbyScene::initialize()
     // mem[$0071]: COLBK source for terrain rows (DLI dli_sub_6cf1 reads it).
     //   Snapshot has $DB (mid-animation); attract init targets $C8 (green, $C8=hue12/luma4).
     //   SDL oracle (atari000.png) shows terrain as (82,140,22) = $C8.
-    mem[0x0071] = 0xC8;   // COLBK source for terrain DLI → green
+    mem[zp::displayFlags] = 0xC8;   // COLBK source for terrain DLI → green
     mem[0x02C0] = 0x00;   // COLPM0 → nibble-0 terrain dots; $00=black matches SDL oracle
                            // (music_playing.a8s has $18=orange from mid-animation)
 
@@ -379,11 +380,11 @@ void StandbyScene::initialize()
     mem[0x0044] = 0x00;   // prevent FUN_47A3 one-shot (would set $00D8=$CA = yellow)
     mem[0x063E] = 0xFF;   // prevent $480B title-clear on first frame
 
-    // Seed $0091=$C0 so copy_altitude_graphic_to_screen_native fires on the first
+    // Seed $0091=$C0 so copy_text_block_to_screen_native fires on the first
     // update() call and writes Block1 ("rescue on fractalus") to $32B7.
     // On the real Atari, $0091 is set by the SFX sequencer; we prime it once here
     // so the title is correct before the first SFX tick produces a $C0 byte.
-    mem[0x0091] = 0xC0;
+    mem[zp::altitudeThreshold] = 0xC0;
 
     // Initial render: populate all three bitmaps from mem[] once so that
     // render() called from the main loop has nothing to do until data changes.
@@ -403,10 +404,10 @@ void StandbyScene::openDoors()
     // state, absent here), so we seed: the visible blue ring ramp, a zero $A1-$A5
     // accumulator (literal-$75 / zero-seed fidelity choice), and the $0088 gate.
     static const uint8_t kRingRamp[6] = { 0x30, 0x32, 0x34, 0x36, 0x38, 0x3A };
-    for (int i = 0; i < 6; i++) mem[0x08D4u + (uint16_t)i] = kRingRamp[i];
-    mem[0x00A1] = mem[0x00A2] = mem[0x00A3] = mem[0x00A4] = mem[0x00A5] = 0u;
-    mem[0x008D] = 0u;     // forward cycle (step_accum_add_75, not _sub_7e)
-    mem[0x0088] = 1u;     // gate: dispatcher routes to the tunnel-ring branch
+    for (int i = 0; i < 6; i++) mem[zp::colorRing + (uint16_t)i] = kRingRamp[i];
+    mem[zp::scrollAccum0] = mem[zp::scrollAccum1] = mem[zp::scrollAccum2] = mem[zp::scrollAccum3] = mem[zp::scrollAccumPrev] = 0u;
+    mem[zp::stepModeFlag] = 0u;     // forward cycle (step_accum_add_75, not _sub_7e)
+    mem[zp::vbiFlags] = 1u;     // gate: dispatcher routes to the tunnel-ring branch
 }
 
 void StandbyScene::update(uint16_t frame)
@@ -423,21 +424,21 @@ void StandbyScene::update(uint16_t frame)
     // rotation cadence is whatever the verbatim 6502 algorithm produces.
     tunnel_ring_tick_native();
 
-    vbi_handler_game_native();           // $52D7: attract timer cascade
-    update_blink_timer_006e_native();    // $4131: cockpit blink lights
+    vbi_attract_timer_native();           // $52D7: attract timer cascade
+    update_indicator_blink_native();    // $4131: cockpit blink lights
     // sfx_voice_tick_native() is now driven by CIA-B Timer A at ~100 Hz (main.cpp).
 
     // Mirror $62E7 SFX-reinit gate: when mem[$0090] is non-zero the attract loop
     // calls JSR $70E7 (sfx init) which resets the sequence to index 0.
     // mem[$0090] = 1 in the snapshot; cleared here after first reinit.
-    if (mem[0x0090u]) {
+    if (mem[zp::sfxReinitGate]) {
         mem[0x073Au] = 0u;    // immediate underflow → next CIA tick loads note[0]
         mem[0x073Cu] = 0xFFu; // sequence ptr before index 0
-        mem[0x0090u] = 0u;    // clear flag (as $70E7 does via STX $0090)
+        mem[zp::sfxReinitGate] = 0u;    // clear flag (as $70E7 does via STX $0090)
     }
 
     if (mem[0x060B] == 0)               // $62FB: title text (gated by $060B)
-        copy_altitude_graphic_to_screen_native();    // $782A: $0091→title string
+        copy_text_block_to_screen_native();    // $782A: $0091→title string
 
     // FUN_4229 ($4229): gauge/counter animation AND — when mem[$007E]==$80 — the
     // random blink of the centre-bottom indicator lights ($3492-$3497).  The
@@ -445,18 +446,18 @@ void StandbyScene::update(uint16_t frame)
     // $004A: LSR $0643 / BCS skip / JSR $4229 / INC $0643 ($5342).  (Our earlier
     // $004A gate suppressed the Standby blink entirely.)
     {
-        uint8_t g = mem[0x0643u];
-        mem[0x0643u] = (uint8_t)(g >> 1);          // LSR $0643
+        uint8_t g = mem[zp::saucerTickParity];
+        mem[zp::saucerTickParity] = (uint8_t)(g >> 1);          // LSR $0643
         if (!(g & 1u)) {                           // carry clear → run, then INC
-            update_gauge_digits_native();
-            mem[0x0643u]++;
+            saucer_anim_tick_native();
+            mem[zp::saucerTickParity]++;
         }
         // Any cockpit RAM changes (e.g. the centre-bottom indicator-light blink
         // at $3491-$3498) are picked up by render()'s per-cell shadow compare.
     }
 
-    if (mem[0x004A] != 0) {             // $004A set when game starts (door sequence)
-        startup_init_native();          // $3FFA: cockpit digit update
+    if (mem[zp::joystickSaved] != 0) {             // $004A set when game starts (door sequence)
+        update_cockpit_digits_native();          // $3FFA: cockpit digit update
     }
 
     uint8_t next = 1 - active;

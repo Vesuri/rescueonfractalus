@@ -216,11 +216,11 @@ $00D4,display_param_5,var,0,Display parameter 5 — from $4DF1+5 ($06)
 $00D5,display_param_6,var,0,Display parameter 6 — from $4DF1+6 ($44)
 $00D6,display_param_7,var,0,Display parameter 7 — from $4DF1+7 ($9A)
 $00D7,display_param_8,var,0,Display parameter 8 — from $4DF1+8 ($78)
-$00DE,anim_counter_1,var,0,Animation counter 1 (clamped to $46 from $4E in main loop)
+$00DE,indicator_light_state,var,0,Animation counter 1 (clamped to $46 from $4E in main loop)
 $00DD,anim_counter_2,var,0,Animation counter 2 (clamped to $2A from $2B)
 $00E2,attract_timer,var,0,Attract mode timer ($64=100 at game_entry start)
 $00E4,game_var_E4,var,0,Zeroed in game_entry
-$00E6,game_var_E6,var,0,Zeroed in game_entry
+$00E6,anim_step_timer,var,0,Zeroed in game_entry
 #
 # --- RAM workspace ($0600 area) ---
 $0600,screen_data_start,data,0,Start of screen data (122 rows × 40 bytes = $0600-$1306); also game state at $0600-$062B
@@ -576,7 +576,7 @@ $006C,sound_active_flag,var,0,Sound-engine active flag gating the engine_sound_u
 $006D,level_stage,var,0,Level/stage counter (read 26x, written 5x): CMP #1/#4 branches in game_setup_7460/unpack_bitmap_4d3e, loop limit in count_up_to_level; also feeds compute_gauge_geometry_from_006D gauge/display geometry and the engine-sound pitch ramp toward level_progress $37EE.
 $006E,blink_timer,var,0,Down-counter in update_blink_timer_006e ($4131); reloads to $0F, drives anim_counter_1 $00DE between $4E/$46
 $006F,dial_value,var,0,Cockpit dial/gauge value; loaded by redraw_dial_from_6f, stored+clamped in game_sub_4430, inc/dec in event_sequence_dispatcher ($475e/$4778)
-$0073,ring_head_0719,var,0,Head index into $0719 ring buffer; wrapped mod $20 in ring_push_0719; clamped/sorted in update_gauge_digits & font_display_init
+$0073,alt_ring_head,var,0,Head index into $0719 ring buffer; wrapped mod $20 in ring_push_0719; clamped/sorted in update_gauge_digits & font_display_init
 $0074,ring_tail_0719,var,0,Tail/drain index of $0719 ring; iterated down to $0073 in update_gauge_digits, wraps to $1F
 $0075,trig_angle,var,0,Angle accumulator for sine_table_lookup/trig_interp_lookup (sine_table_lookup/9bdb); INC/DEC and ADC $40 for 90deg
 $0076,trig_result_lo,var,0,Low byte of 24-bit signed sine result from sine_table_lookup ($0076-$0078)
@@ -588,7 +588,7 @@ $008B,dl_src_index,var,0,Index into LMS source tables $073D/$0793 used by dl_lms
 $008C,terrain_scroll_reload,var,0,Reload value (8) set when $008A expires in scroll_terrain_dl
 $008D,step_mode_flag,var,0,Selects step routine in sound_event_dispatch (nonzero->step_accum_sub_7e); set/tested by step_accum_sub_7e and advance_history_6a4d
 $008F,sfx_toggle_8F,var,0,Alternating flag in sound_event_dispatch: LSR then INC gates every-other-frame sfx ($008C/$008A)
-$0091,altitude_threshold_0091,var,0,Compared to $C0/$E0 in copy_altitude_graphic_to_screen to pick which 20-byte graphic block to copy into screen $32B6
+$0091,altitude_threshold,var,0,Compared to $C0/$E0 in copy_altitude_graphic_to_screen to pick which 20-byte graphic block to copy into screen $32B6
 $0092,draw_row,var,0,Current row counter for the draw loop: init 0x55 (85) in draw_shape_rows_loop, used as index into the row_base tables via set_row_ptr_from_count; also stepped by 8 as the glyph blitter pixel-column ($54/$2E/$38) in blit_message_block.
 $0093,blit_pixel_x,var,0,per-pixel X within row, passed to plot_pixel_masked (LSR->plane index), INC each shifted bit in blit_glyph_8rows
 $0094,draw_color_idx,var,0,2-bit pixel colour/pattern selector in draw_frame_pattern_seq/draw_symmetric_span_loop/plot_pixel_masked/plot_glyph_pixel_masked: cycled 1..6, ORed with mask table $66E9 (into $00B9), and used to pick the AND/OR mask masked into the screen byte.
@@ -604,8 +604,8 @@ $009E,draw_row_top,var,0,Top row index (into row_base tables) of a symmetric spa
 $009F,draw_row_bottom,var,0,Bottom row index (into row_base tables) of a symmetric span, decremented each step in draw_symmetric_span_loop; plot_terrain_span subtracts $0085 each span (window bottom) and it also saves the Y shift-count across divide_16x16 calls in project_terrain_points.
 $00A0,draw_iter_count,var,0,Outer iteration count in draw_frame_pattern_seq (init $13 by init_row_coords_9c), decremented per drawn frame; also reused as the message column index counted down in advance_message_column (CPY #$06).
 $00A1,scroll_accum_b0,var,0,LSB (byte 0) of the multi-byte scroll/distance accumulator ($00A1..$00A4); add_multibyte_a1 adds A into it, sub_multibyte_a1 subtracts.
-$00A2,accum_byte1,var,0,Byte 1 of multi-byte accumulator; carry/borrow propagation in add/sub_multibyte_a1
-$00A3,accum_byte2,var,0,Byte 2 of multi-byte accumulator (add_multibyte_a1/sub_multibyte_a1)
+$00A2,scroll_accum_b1,var,0,Byte 1 of multi-byte accumulator; carry/borrow propagation in add/sub_multibyte_a1
+$00A3,scroll_accum_b2,var,0,Byte 2 of multi-byte accumulator (add_multibyte_a1/sub_multibyte_a1)
 $00A4,scroll_accum_b3,var,0,Top byte (byte 3) of the multi-byte scroll/distance accumulator; result of step_accum_add_75/sub_7e; also the per-row X-span increment high byte (from heading $24) used by ad2b.
 $00A5,scroll_accum_prev,var,0,Previous top byte of the scroll accumulator, compared against $00A4 to detect a column step in scroll_terrain_columns/6a38/6a8f; also the per-row X-span increment low byte (from heading $23) used by ad2b.
 $00A6,horizon_row_index,var,0,Horizon/center row index = 6 - (signextend $28<<2); seeds 271E span table in ad2b
@@ -629,11 +629,11 @@ $060E,sfx_rand_freq_lo2,var,0,Random freq value (random_digit) for SFX retrigger
 $060F,sfx_rand_freq_hi1,var,0,Random freq value (random_alpha_index, RANDOM $D20A &$1F+$21) for SFX retrigger
 $0610,sfx_rand_freq_hi2,var,0,Random freq value (random_alpha_index) for SFX retrigger
 $0617,gauge_field_0617,var,0,Display geometry output of compute_gauge_geometry_from_006D (cleared 0 or derived from $006D-$10 path)
-$0618,gauge_field_0618,var,0,Geometry output of compute_gauge_geometry_from_006D: clamp(($2A-X)/2, min 4); reload value copied into $00E6 when the saucer animation counter underflows (saucer_anim_tick/saucer_anim_step).
+$0618,gauge_step_reload,var,0,Geometry output of compute_gauge_geometry_from_006D: clamp(($2A-X)/2, min 4); reload value copied into $00E6 when the saucer animation counter underflows (saucer_anim_tick/saucer_anim_step).
 $0619,zero_suppress_pos,var,0,Leading-zero suppression / column limit in plot_char_bounded: digit position Y compared (CPY) below which zeros stay blank, gating the char write via ($C5),Y.
 $061F,gauge_field_061F,var,0,Geometry output of compute_gauge_geometry_from_006D (($062A/2)+1); also compared against $0629 in $7AF4 as the oscillation step threshold gating the game_sub_7B54 call.
 $0620,gauge_field_0620,var,0,Geometry output of compute_gauge_geometry_from_006D ($062A-5, clamp >=0); also used in $7B3C as a countdown that shows char $C9 via obj_table_scan_replace when ==1 (else obj_table_scan_y1_c8).
-$0628,score_bcd_0628,var,0,Packed BCD counter set by the binary->BCD conversion (bin_to_bcd), BCD-decremented in decrement_bcd_0628_restart, and stepped +/-1 each call by bcd_oscillate_counter_0628 ($7AF4) with direction in $062B.
+$0628,score_bcd,var,0,Packed BCD counter set by the binary->BCD conversion (bin_to_bcd), BCD-decremented in decrement_bcd_0628_restart, and stepped +/-1 each call by bcd_oscillate_counter_0628 ($7AF4) with direction in $062B.
 $0629,osc_step_counter,var,0,Step counter incremented in $7AF4; when >= threshold $061F triggers game_sub_7B54
 $062A,gauge_height_062A,var,0,Geometry value = clamp(($006D/2)+2,$14); pushed/reused for derived coords in compute_gauge_geometry_from_006D
 $062B,bcd_osc_dir,var,0,Direction flag for $0628 BCD osc: nonzero=decrement, 0=increment ($7AF4); incremented on carry
@@ -747,3 +747,8 @@ $4927,cockpit_msg_index,var,0,Per-message-ID byte-offset index into msg string t
 $4DEA,vobj_shape_table,var,0,Shape/pattern byte lookup table indexed by strip row (Y/X>>3) in $4184 and $4207, stored to $00DE
 $66E9,pixel_or_mask_tbl,var,0,Bit-set (OR) mask table indexed by pixel sub-byte position; used by plot_glyph_pixel_masked/draw_symmetric_span_loop for masked plotting
 $66FB,pixel_and_mask_tbl,var,0,Bit-clear (AND) mask table paired with pixel_or_mask_tbl; used by plot_glyph_pixel_masked to set 2-bit pixel value
+$0090,sfx_reinit_gate,var,0,Non-zero -> the attract loop re-inits the SFX sequence via $70E7 (sound_init); cleared after one reinit.
+$00D8,text_color_pf0,var,0,Title/text colour shadow (COLPF0); set to $44 by copy_text_block_to_screen on the copyright block.
+$062D,attract_timer_sub,var,0,Attract-timer sub-counter incremented each VBI by vbi_handler_game; 256-wrap increments attract_timer $00E2.
+$0643,saucer_tick_parity,var,0,Every-other-frame gate (LSR/INC) controlling whether vbi_handler_game runs saucer_anim_tick this frame.
+$06CC,history_ring_step,var,0,Increment added to $0679[$0C] by advance_history_6a4d (saturates to $FF on wrap-to-0).
