@@ -63,8 +63,9 @@ static const uint16_t kTitleHeight   = 42;                 // title region displ
 static const uint16_t kTerrainHeight = kHT;                // terrain region (placeholder, see kHT)
 static const uint16_t kTerrainLine   = kDisplayTop + kTitleHeight;   // = 0x56 (86)
 static const uint16_t kCockpitLine   = kTerrainLine + kTerrainHeight; // = 172
-// Cockpit height: 4 modeD DL entries × 2 scan lines + 9 mode4 DL entries × 8 scans
-static const uint16_t kCockpitH     = 4 * 2 + 9 * 8;                // = 80
+// Cockpit height: 4 modeD DL entries × 2 scan lines + 10 mode4 DL entries × 8 scans
+// (title 42 + terrain 86 + cockpit 88 = 216 = kH).
+static const uint16_t kCockpitH     = 4 * 2 + 10 * 8;               // = 88
 // centerY so that DIWSTRT.y = kDisplayTop: centerY = kDisplayTop + kH/2 = 0x2c + 108 = 0x98
 static const uint16_t kCenterY       = kDisplayTop + kH / 2;
 
@@ -427,16 +428,24 @@ void StandbyScene::render()
     // During static Standby the cockpit data is constant.
     if (!cockpitDirty) return;
     cockpitDirty = false;
-    // ModeD $350D: 4 DL entries × 2 identical scan lines = 8 rows.
-    //   Each entry reads 40 bytes of raw 2bpp bitmap; same data for both scans.
-    // Mode4 $332D: 9 DL entries × 8 scan lines = 72 rows.
-    //   40 chars/row, glyph per scanline from charset $3800 (set by dli_sub_4a0c).
+    // The cockpit shares the terrain's WIDE playfield (48 bytes/line).  Both the
+    // modeD and mode4 blocks are sequential DL entries (LMS only on the first
+    // line), so each successive row advances by ANTIC's fetch width = 48 bytes,
+    // NOT 40.  As with the terrain we render the central 40 bytes of each line
+    // (+4-byte crop) so the content centres.  Using stride 40 / offset 0 mis-reads
+    // every row past the first → the garbled "modulo" shear.
+    //
+    // ModeD $350D: 4 DL entries × 2 identical scan lines = 8 rows (raw 2bpp).
+    // Mode4 $332D: 10 DL entries × 8 scan lines = 80 rows ($332D..$350D = 10×48).
+    //   40 chars/row, glyph per scanline from charset $3800.
     //   Glyph byte = 4 × 2-bit pixels (COLBK/COLPF0/COLPF1/COLPF2).
+    static const int kCockpitStride    = 48;   // wide-playfield bytes per line
+    static const int kCockpitXByteCrop = 4;    // skip 4 left overscan bytes (= terrain)
     uint8_t* cdest = (uint8_t*)cockpitBitmap->data;
 
     // ModeD rows 0-7
     for (int entry = 0; entry < 4; entry++) {
-        const uint8_t* src = (const uint8_t*)&mem[0x350D + (uint16_t)(entry * 40)];
+        const uint8_t* src = (const uint8_t*)&mem[0x350D + (uint16_t)(entry * kCockpitStride + kCockpitXByteCrop)];
         for (int scan = 0; scan < 2; scan++) {
             int row = entry * 2 + scan;
             uint8_t* p1 = cdest + row * 80;
@@ -445,9 +454,9 @@ void StandbyScene::render()
         }
     }
 
-    // Mode4 rows 8-79
-    for (int entry = 0; entry < 9; entry++) {
-        const uint8_t* chars = (const uint8_t*)&mem[0x332D + (uint16_t)(entry * 40)];
+    // Mode4 rows 8-87
+    for (int entry = 0; entry < 10; entry++) {
+        const uint8_t* chars = (const uint8_t*)&mem[0x332D + (uint16_t)(entry * kCockpitStride + kCockpitXByteCrop)];
         for (int scan = 0; scan < 8; scan++) {
             int row = 8 + entry * 8 + scan;
             uint8_t* p1 = cdest + row * 80;
