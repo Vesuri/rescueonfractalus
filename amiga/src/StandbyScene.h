@@ -18,7 +18,16 @@ public:
     void update(uint16_t frame);
     void render();
     void shutdown();
+
+    // Launch cinematic: start the doors-open transition (Atari START press).
+    // The terrain image (green/dots/LEVEL 04 = the "closed doors") splits from
+    // the middle, halves sliding apart, revealing the tunnel in the gap.
+    void openDoors();
 private:
+    enum class Phase { Standby, DoorsOpening };
+    Phase    phase   = Phase::Standby;
+    uint16_t doorGap = 0;   // middle gap height in rows (0 = closed)
+
     void buildCopperList(CopperList* cl, uint16_t frame);
     void fillSpriteData(Sprite* s, bool isRight);
 

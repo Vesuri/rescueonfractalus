@@ -148,10 +148,9 @@ int main()
         if (AmigaHardware::isLeftMouseButtonPressed())
             quit = true;
 
-        // TEMPORARY smoke test for the CIA-A SP keyboard: RETURN quits.
-        // Becomes the Standby->doors cinematic trigger once DoorsScene exists.
+        // RETURN (START) opens the doors → launch cinematic.
         if (keyboard.returnPressed())
-            quit = true;
+            scene.openDoors();
 
         scene.update(frame);
         scene.render();

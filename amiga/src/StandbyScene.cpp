@@ -174,12 +174,18 @@ void StandbyScene::buildCopperList(CopperList* cl, uint16_t frame)
     // Colour writes are immediate on OCS, so everything written during H-blank is
     // live for the first pixel of kTerrainLine.  Bitplane pointers go first
     // (timing-critical); colours follow.
+    // Door open: the terrain image (green/dots/LEVEL 04 = closed doors) is split
+    // from its vertical centre — the top half slides up, the bottom half slides
+    // down — opening a gap that reveals the tunnel (for now: background colour).
+    // Top half's load address advances by g2 rows so its content scrolls up.
     d[idx++] = copperWait(kTerrainLine - 1, 0xE0);
     uint32_t ta = (uint32_t)terrainBitmap->data;
-    d[idx++] = copperMove(bpl1pth, (uint16_t)(ta >> 16));
-    d[idx++] = copperMove(bpl1ptl, (uint16_t)(ta & 0xFFFF));
-    d[idx++] = copperMove(bpl2pth, (uint16_t)((ta + 40) >> 16));
-    d[idx++] = copperMove(bpl2ptl, (uint16_t)((ta + 40) & 0xFFFF));
+    uint16_t g2 = (uint16_t)(doorGap >> 1);          // half-gap in rows
+    uint32_t topBase = ta + (uint32_t)g2 * 80u;      // 2bp interleaved = 80 B/row
+    d[idx++] = copperMove(bpl1pth, (uint16_t)(topBase >> 16));
+    d[idx++] = copperMove(bpl1ptl, (uint16_t)(topBase & 0xFFFF));
+    d[idx++] = copperMove(bpl2pth, (uint16_t)((topBase + 40) >> 16));
+    d[idx++] = copperMove(bpl2ptl, (uint16_t)((topBase + 40) & 0xFFFF));
     // Terrain palette derived from the GTIA mode-10 colour registers actually
     // used by the bitmap (nibbles 0 / 7 / 8 — see kNibbleColour):
     //   col0 = nibble 0 → COLPM0 = mem[$02C0]  (road dots, black)
@@ -190,6 +196,26 @@ void StandbyScene::buildCopperList(CopperList* cl, uint16_t frame)
     d[idx++] = copperMove(color01, fadeColor(atariToOCS(mem[0x02C7]), f));
     d[idx++] = copperMove(color02, fadeColor(atariToOCS(mem[0x08D4]), f));
     d[idx++] = copperMove(color03, fadeColor(atariToOCS(mem[0x0071]), f));
+
+    // Door gap + bottom half.  The gap band disables bitplanes (0 planes) so the
+    // background (COLOR00) shows through — the eventual tunnel reveal slots in
+    // here.  The bottom band re-enables 2 planes and reloads the pointer to the
+    // terrain's bottom half (anchored at row kTerrainHeight/2, sliding down).
+    if (phase == Phase::DoorsOpening && doorGap > 0) {
+        const uint16_t half  = kTerrainHeight / 2;                 // = 43
+        const uint16_t topH  = (uint16_t)(half - g2);              // top band rows
+        d[idx++] = copperWait((uint16_t)(kTerrainLine + topH - 1), 0xE0);
+        d[idx++] = copperMove(bplcon0, 0);                         // gap: bitplanes off
+
+        const uint16_t botY   = (uint16_t)(kTerrainLine + half + g2);
+        const uint32_t botBase = ta + (uint32_t)half * 80u;
+        d[idx++] = copperWait((uint16_t)(botY - 1), 0xE0);
+        d[idx++] = copperMove(bplcon0, kBPLCON0_2P);               // bottom: 2 planes
+        d[idx++] = copperMove(bpl1pth, (uint16_t)(botBase >> 16));
+        d[idx++] = copperMove(bpl1ptl, (uint16_t)(botBase & 0xFFFF));
+        d[idx++] = copperMove(bpl2pth, (uint16_t)((botBase + 40) >> 16));
+        d[idx++] = copperMove(bpl2ptl, (uint16_t)((botBase + 40) & 0xFFFF));
+    }
 
     // ---- cockpit region ------------------------------------------------------
     // The cockpit runs at 3 bitplanes (title/terrain stay 2bp): mode-4's bit-7
@@ -298,8 +324,20 @@ void StandbyScene::initialize()
     render();
 }
 
+void StandbyScene::openDoors()
+{
+    if (phase == Phase::Standby) { phase = Phase::DoorsOpening; doorGap = 0; }
+}
+
 void StandbyScene::update(uint16_t frame)
 {
+    // Advance the doors-open transition: gap grows 2 rows/frame (~43 frames to
+    // fully open, matching the Atari $008A=$2B counter), then holds open.
+    if (phase == Phase::DoorsOpening && doorGap < kTerrainHeight) {
+        doorGap = (uint16_t)(doorGap + 2);
+        if (doorGap > kTerrainHeight) doorGap = kTerrainHeight;
+    }
+
     vbi_handler_game_native();           // $52D7: attract timer cascade
     update_blink_timer_006e_native();    // $4131: cockpit blink lights
     // sfx_voice_tick_native() is now driven by CIA-B Timer A at ~100 Hz (main.cpp).
