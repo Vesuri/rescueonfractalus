@@ -75,9 +75,6 @@ static const uint16_t kBPLCON0_2P = (uint16_t)((2 << PLNCNTSHFT) | USE_BPLCON3);
 static const uint16_t kSprXLeft  = 0x81 + 17;
 static const uint16_t kSprXRight = 0x81 + 285;
 
-// Canopy post colour: must match attract panel background (kAttractPalette[2] = 0x444).
-static const uint16_t kPostColor = 0x444;
-
 // ---- OCS colour helpers ------------------------------------------------------
 static uint16_t blendOCS(uint16_t a, uint16_t b)
 {
@@ -161,9 +158,11 @@ void StandbyScene::buildCopperList(CopperList* cl, uint16_t frame)
     cl->showBitmap(idx, *titleBitmap);
     idx += 2 * kBP2;
 
-    // Sprite colour registers:
+    // Sprite colour registers.  The canopy posts must match the top/bottom
+    // background grey (COLBK = mem[$02C8] = atariToOCS($06) = 0x555), so read
+    // the same source rather than a hardcoded constant.
     d[idx++] = copperMove(color16, 0x000);
-    d[idx++] = copperMove(color17, fadeColor(kPostColor, f));
+    d[idx++] = copperMove(color17, fadeColor(atariToOCS(mem[0x02C8]), f));
 
     // Sprite pointers:
     cl->showSprite(idx, 0, *leftPost);  idx += 2;
