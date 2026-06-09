@@ -55,7 +55,7 @@ static const uint16_t kHT  = 86;    // terrain sprite/bitmap height (placeholder
 static const uint8_t  kBP2 = 2;
 static const uint8_t  kBP3 = 3;   // cockpit only — 3rd plane carries bit-7 chars (red)
 
-static const uint32_t kCopperLen = 128;
+static const uint32_t kCopperLen = 160;
 
 // Display geometry: anchored at the standard PAL display-window top (0x2c).
 // All boundary lines are derived so changing the top can't desync them.
@@ -72,6 +72,10 @@ static const uint16_t kCenterY       = kDisplayTop + kH / 2;
 
 // BPLCON0: 2 bitplanes, lores.
 static const uint16_t kBPLCON0_2P = (uint16_t)((2 << PLNCNTSHFT) | USE_BPLCON3);
+// Terrain + cockpit run at 3 bitplanes: the cockpit needs the 3rd plane for its
+// bit-7 red chars, and the terrain/doors run 3bp too (3rd plane zeroed) so the
+// tunnel reveal slots into the door gap with no mid-screen plane-count switch.
+static const uint16_t kBPLCON0_3P = (uint16_t)((3 << PLNCNTSHFT) | USE_BPLCON3);
 
 // Sprite horizontal positions (see fillSpriteData for slant details).
 static const uint16_t kSprXLeft  = 0x81 + 17;
@@ -181,11 +185,18 @@ void StandbyScene::buildCopperList(CopperList* cl, uint16_t frame)
     d[idx++] = copperWait(kTerrainLine - 1, 0xE0);
     uint32_t ta = (uint32_t)terrainBitmap->data;
     uint16_t g2 = (uint16_t)(doorGap >> 1);          // half-gap in rows
-    uint32_t topBase = ta + (uint32_t)g2 * 80u;      // 2bp interleaved = 80 B/row
+    uint32_t topBase = ta + (uint32_t)g2 * 120u;     // 3bp interleaved = 120 B/row
+    // Switch to 3 bitplanes + 3bp interleaved modulo here (carries through the
+    // cockpit).  BPL1MOD covers odd planes 1&3, BPL2MOD plane 2, so 80/80 sets all.
+    d[idx++] = copperMove(bplcon0, kBPLCON0_3P);
+    d[idx++] = copperMove(bpl1mod, 80);
+    d[idx++] = copperMove(bpl2mod, 80);
     d[idx++] = copperMove(bpl1pth, (uint16_t)(topBase >> 16));
     d[idx++] = copperMove(bpl1ptl, (uint16_t)(topBase & 0xFFFF));
     d[idx++] = copperMove(bpl2pth, (uint16_t)((topBase + 40) >> 16));
     d[idx++] = copperMove(bpl2ptl, (uint16_t)((topBase + 40) & 0xFFFF));
+    d[idx++] = copperMove(bpl3pth, (uint16_t)((topBase + 80) >> 16));
+    d[idx++] = copperMove(bpl3ptl, (uint16_t)((topBase + 80) & 0xFFFF));
     // Terrain palette derived from the GTIA mode-10 colour registers actually
     // used by the bitmap (nibbles 0 / 7 / 8 — see kNibbleColour):
     //   col0 = nibble 0 → COLPM0 = mem[$02C0]  (road dots, black)
@@ -199,8 +210,9 @@ void StandbyScene::buildCopperList(CopperList* cl, uint16_t frame)
 
     // Door gap + bottom half.  The gap band disables bitplanes (0 planes) so the
     // background (COLOR00) shows through — the eventual tunnel reveal slots in
-    // here.  The bottom band re-enables 2 planes and reloads the pointer to the
-    // terrain's bottom half (anchored at row kTerrainHeight/2, sliding down).
+    // here as a 3bp band (no plane-count change once it carries content).  The
+    // bottom band restores 3 planes and reloads the pointers to the terrain's
+    // bottom half (anchored at row kTerrainHeight/2, sliding down).
     if (phase == Phase::DoorsOpening && doorGap > 0) {
         const uint16_t half  = kTerrainHeight / 2;                 // = 43
         const uint16_t topH  = (uint16_t)(half - g2);              // top band rows
@@ -208,13 +220,15 @@ void StandbyScene::buildCopperList(CopperList* cl, uint16_t frame)
         d[idx++] = copperMove(bplcon0, 0);                         // gap: bitplanes off
 
         const uint16_t botY   = (uint16_t)(kTerrainLine + half + g2);
-        const uint32_t botBase = ta + (uint32_t)half * 80u;
+        const uint32_t botBase = ta + (uint32_t)half * 120u;
         d[idx++] = copperWait((uint16_t)(botY - 1), 0xE0);
-        d[idx++] = copperMove(bplcon0, kBPLCON0_2P);               // bottom: 2 planes
+        d[idx++] = copperMove(bplcon0, kBPLCON0_3P);               // bottom: 3 planes
         d[idx++] = copperMove(bpl1pth, (uint16_t)(botBase >> 16));
         d[idx++] = copperMove(bpl1ptl, (uint16_t)(botBase & 0xFFFF));
         d[idx++] = copperMove(bpl2pth, (uint16_t)((botBase + 40) >> 16));
         d[idx++] = copperMove(bpl2ptl, (uint16_t)((botBase + 40) & 0xFFFF));
+        d[idx++] = copperMove(bpl3pth, (uint16_t)((botBase + 80) >> 16));
+        d[idx++] = copperMove(bpl3ptl, (uint16_t)((botBase + 80) & 0xFFFF));
     }
 
     // ---- cockpit region ------------------------------------------------------
@@ -258,7 +272,7 @@ void StandbyScene::initialize()
     Palette::initialize();
     palette       = new Palette(kTitlePalette, 4, /*fade*/0);
     titleBitmap   = Bitmap::allocate(kW, kTitleHeight,   kBP2, true);
-    terrainBitmap = Bitmap::allocate(kW, kTerrainHeight, kBP2, true);
+    terrainBitmap = Bitmap::allocate(kW, kTerrainHeight, kBP3, true);  // 3bp: tunnel reveal uses pens 4-7
     cockpitBitmap = Bitmap::allocate(kW, kCockpitH, kBP3, true);  // 3bp: bit-7 chars → red
 
     leftPost   = Sprite::allocate(kHT);
@@ -427,7 +441,8 @@ void StandbyScene::render()
     // During static Standby the terrain is constant ($88 = closed door).
     // DL $3000: 86 Mode-F rows from $2000, stride 46 (40 data + 6 pad), GTIA mode 10.
     // Each byte = two 4-bit nibbles → two GTIA pixels, each 4 Amiga pixels wide.
-    // Interleaved 2bp row = 40 bytes plane1 + 40 bytes plane2.
+    // Interleaved 3bp row = 40 bytes plane1 + 40 plane2 + 40 plane3 (plane3 = 0
+    // for the doors; the tunnel reveal fills it for pens 4-7).
 
     // Wide-playfield crop: the terrain region runs in a GTIA-10 *wide* playfield
     // (48 bytes / 192 colour clocks — SDMCTL bit set, DMACTL rewritten per region
@@ -443,13 +458,15 @@ void StandbyScene::render()
             const uint8_t* src = (const uint8_t*)&mem[0x2000 + row * 46 + kTerrainXByteOffset];
             uint8_t* plane1 = vdest;
             uint8_t* plane2 = vdest + 40;
+            uint8_t* plane3 = vdest + 80;
             for (int b = 0; b < 40; b++) {
                 uint8_t hi = kNibbleColour[(src[b] >> 4) & 0xF];
                 uint8_t lo = kNibbleColour[src[b] & 0xF];
                 plane1[b] = (uint8_t)(((hi & 1) ? 0xF0u : 0u) | ((lo & 1) ? 0x0Fu : 0u));
                 plane2[b] = (uint8_t)(((hi & 2) ? 0xF0u : 0u) | ((lo & 2) ? 0x0Fu : 0u));
+                plane3[b] = 0;
             }
-            vdest += 80;
+            vdest += 120;
         }
     }
 
