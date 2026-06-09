@@ -86,7 +86,8 @@ extern "C" void sfx_voice_tick_native(void)
         platform_hw_write(0xD201, audc);
         platform_hw_write(0xD203, audc);
         platform_hw_write(0xD205, audc);
-        // Scratch write to POKEY shadow area (no effect on Amiga)
-        mem[0xD1FFu + gate] = (uint8_t)(audc + 2u);
+        // Original: STA $D1FF,Y (Y=gate) — writes audc+2 to a POKEY register.
+        // Route through platform_hw_write so Paula + mem[] both see it.
+        platform_hw_write((uint16_t)(0xD1FFu + gate), (uint8_t)(audc + 2u));
     }
 }

@@ -163,6 +163,7 @@ void platform_hw_write(uint16_t addr, uint8_t val)
     if (addr < 0xD200u || addr >= 0xD210u) return;  // only POKEY range
     uint8_t reg = (uint8_t)(addr - 0xD200u);
     pokey[reg] = val;
+    mem[addr]  = val;   // keep Atari-RAM mirror in sync (matches transpile bus_write)
 
     if (reg <= 7u) {
         // AUDF or AUDC write — update the affected channel
