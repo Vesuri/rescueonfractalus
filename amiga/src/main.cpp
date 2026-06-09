@@ -103,10 +103,12 @@ int main()
         sfxTimer.is_Code = (void(*)())sfxTimerHandler;
         if (!AddICRVector(CIABBase, CIAICRB_TA, &sfxTimer)) {
             Disable();
-            // Stop timer, load period (7094 = 0x1BB6 for 100 Hz on PAL E-clock)
+            // Stop timer, load period.
+            // Atari fires sfx_voice_tick every other VBI (BIT $062D gate, $00E7=1) = 25 Hz.
+            // 25 Hz on PAL E-clock (709379 Hz): period = 709379/25 = 28375 = 0x6EC7.
             *((volatile uint8_t*)(ciab + ciacra)) &= (uint8_t)~CIACRAF_START;
-            *((volatile uint8_t*)(ciab + ciatalo)) = (uint8_t)(7094 & 0xFF);
-            *((volatile uint8_t*)(ciab + ciatahi)) = (uint8_t)(7094 >> 8);
+            *((volatile uint8_t*)(ciab + ciatalo)) = (uint8_t)(28375 & 0xFF);
+            *((volatile uint8_t*)(ciab + ciatahi)) = (uint8_t)(28375 >> 8);
             // Continuous mode (RUNMODE=0); START=1 auto-loads latch into counter
             *((volatile uint8_t*)(ciab + ciacra)) =
                 (uint8_t)((*((volatile uint8_t*)(ciab + ciacra))
