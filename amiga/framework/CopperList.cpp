@@ -145,8 +145,13 @@ uint32_t CopperList::setPlayfield(uint32_t listIndex, uint16_t width, uint16_t h
     data_[listIndex++] = copperMove(bplcon2, 0x0024);
     data_[listIndex++] = copperMove(bplcon1, 0);
     data_[listIndex++] = copperMove(bplcon0, (uint16_t)((bitplaneCount << PLNCNTSHFT) | (hires ? MODE_640 : 0) | (dualPlayfield ? DBLPF : 0) | (holdAndModify ? HOLDNMODIFY : 0) | USE_BPLCON3));
-    data_[listIndex++] = copperMove(diwstrt, (uint16_t)(((centerY - halfHeight) << 8) | 0x71));
-    data_[listIndex++] = copperMove(diwstop, (uint16_t)(((centerY + halfHeight) << 8) | 0xd1));
+    // DIW must bound the data fetch exactly, or the inside-window/outside-data
+    // strips show COLOR0 instead of (blank-able) border.  DDFSTRT=0x38/DDFSTOP=0xD0
+    // put the 320px lores playfield at hpos 0x81..0x1C1, so the matched window is
+    // H=0x81..0x1C1 (was 0x71/0xd1 = 16px too wide each side → right border never
+    // blanked under BPLCON3 BRDNBLNK).
+    data_[listIndex++] = copperMove(diwstrt, (uint16_t)(((centerY - halfHeight) << 8) | 0x81));
+    data_[listIndex++] = copperMove(diwstop, (uint16_t)(((centerY + halfHeight) << 8) | 0xc1));
     data_[listIndex++] = copperMove(diwhigh, 0x2100);
     if (AmigaHardware::hasAGAChipSet) {
         if (hires) {
