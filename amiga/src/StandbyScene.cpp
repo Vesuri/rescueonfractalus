@@ -205,8 +205,7 @@ void StandbyScene::buildCopperList(CopperList* cl, uint16_t frame)
     d[idx++] = copperMove(color00, fadeColor(atariToOCS(mem[0x02C8]), f));
     d[idx++] = copperMove(color01, fadeColor(atariToOCS(mem[0x02C4]), f));
     d[idx++] = copperMove(color02, fadeColor(atariToOCS(mem[0x02C5]), f));
-    uint16_t litColor = (mem[0x00DE] >= 0x4E) ? fadeColor(atariToOCS(mem[0x00D8]), f) : 0x000;
-    d[idx++] = copperMove(color03, litColor);
+    d[idx++] = copperMove(color03, fadeColor(atariToOCS(mem[0x00DE]), f));
 }
 
 // ---- public interface --------------------------------------------------------
