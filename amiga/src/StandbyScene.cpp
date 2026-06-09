@@ -487,7 +487,9 @@ void StandbyScene::render()
             uint8_t* p3 = p1 + 80;
             for (int col = 0; col < 40; col++) {
                 uint8_t ch        = chars[col];
-                uint8_t glyphData = mem[0x3800u + (ch & 0x3Fu) * 8u + (uint16_t)scan];
+                // Mode-4 glyph index is bits 0-6 (128 glyphs); bit 7 is the
+                // COLPF2/PF3 colour flag (handled via plane3 below).
+                uint8_t glyphData = mem[0x3800u + (ch & 0x7Fu) * 8u + (uint16_t)scan];
                 decode2bppByte(glyphData, &p1[col], &p2[col]);
                 p3[col] = (ch & 0x80u) ? 0xFFu : 0x00u;
             }
