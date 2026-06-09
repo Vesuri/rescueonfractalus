@@ -315,10 +315,27 @@ void StandbyScene::update(uint16_t frame)
 
     if (mem[0x060B] == 0)               // $62FB: title text (gated by $060B)
         copy_altitude_graphic_to_screen_native();    // $782A: $0091→title string
+
+    // FUN_4229 ($4229): gauge/counter animation AND — when mem[$007E]==$80 — the
+    // random blink of the centre-bottom indicator lights ($3492-$3497).  The
+    // original vbi_handler_game calls it EVERY OTHER FRAME and is NOT gated by
+    // $004A: LSR $0643 / BCS skip / JSR $4229 / INC $0643 ($5342).  (Our earlier
+    // $004A gate suppressed the Standby blink entirely.)
+    {
+        uint8_t prev[8];
+        for (int i = 0; i < 8; i++) prev[i] = mem[0x3491u + (uint16_t)i];
+        uint8_t g = mem[0x0643u];
+        mem[0x0643u] = (uint8_t)(g >> 1);          // LSR $0643
+        if (!(g & 1u)) {                           // carry clear → run, then INC
+            update_gauge_digits_native();
+            mem[0x0643u]++;
+        }
+        for (int i = 0; i < 8; i++)
+            if (mem[0x3491u + (uint16_t)i] != prev[i]) { cockpitDirty = true; break; }
+    }
+
     if (mem[0x004A] != 0) {             // $004A set when game starts (door sequence)
         startup_init_native();          // $3FFA: cockpit digit update
-        // FUN_4229 called every other frame via LSR $0643 gate in vbi_handler_game
-        if (!(mem[0x0643u] & 1u)) update_gauge_digits_native();  // $4229: counter anim
         cockpitDirty = true;
     }
 
