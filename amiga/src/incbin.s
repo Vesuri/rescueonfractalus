@@ -21,3 +21,13 @@ cockpit_raw:
 rof_mem_bin:
 	.incbin "../disasm/screen3_mem.bin"
 rof_mem_bin_end:
+
+| tunnel.raw — launch-cinematic tunnel: 86 rows x 40 bytes of GTIA mode-10
+|   nibbles (pens 1-6, concentric rectangles).  CPU-read here; StandbyScene
+|   decodes it to an interleaved 3-bitplane chip bitmap at init.  See
+|   tools/extract_tunnel.py.
+	.section .rodata
+	.balign 4
+	.global tunnel_raw
+tunnel_raw:
+	.incbin "assets/tunnel.raw"

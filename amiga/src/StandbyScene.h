@@ -28,6 +28,13 @@ private:
     Phase    phase   = Phase::Standby;
     uint16_t doorGap = 0;   // middle gap height in rows (0 = closed)
 
+    // Tunnel reveal: a 3bp concentric-rectangle bitmap shown in the door gap.
+    // Motion is palette cycling — the 6-entry ring (Atari $08D4-$08D9, feeding
+    // COLOR01-06) rotates one slot per tick (Atari +$75/frame accumulator).
+    Bitmap*  tunnelBitmap = nullptr;
+    uint8_t  ring[6]      = { 0x30, 0x32, 0x34, 0x36, 0x38, 0x3A };  // seed = $6E68 ramp
+    uint16_t ringAcc      = 0;   // fixed-point cycle-rate accumulator
+
     void buildCopperList(CopperList* cl, uint16_t frame);
     void fillSpriteData(Sprite* s, bool isRight);
 

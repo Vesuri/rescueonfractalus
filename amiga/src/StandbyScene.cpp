@@ -39,6 +39,9 @@ extern "C" void update_gauge_digits_native(void);               // $4229: cockpi
 
 extern "C" volatile uint8_t mem[65536];
 
+// tunnel.raw — 86 rows x 40 bytes of GTIA mode-10 nibbles (pens 1-6); see incbin.s.
+extern "C" const uint8_t tunnel_raw[];
+
 // Lookup table: byte → 16-bit doubled glyph pattern (each bit → 2 pixels).
 // Filled once in initialize(); used by title render for mode-6 1bpp doubling.
 static uint16_t kDoubleGlyph[256];
@@ -178,57 +181,79 @@ void StandbyScene::buildCopperList(CopperList* cl, uint16_t frame)
     // Colour writes are immediate on OCS, so everything written during H-blank is
     // live for the first pixel of kTerrainLine.  Bitplane pointers go first
     // (timing-critical); colours follow.
-    // Door open: the terrain image (green/dots/LEVEL 04 = closed doors) is split
-    // from its vertical centre — the top half slides up, the bottom half slides
-    // down — opening a gap that reveals the tunnel (for now: background colour).
-    // Top half's load address advances by g2 rows so its content scrolls up.
+    // In Standby this is one full-height terrain band.  When the doors open it
+    // splits into a sliding top half, the tunnel reveal, and a sliding bottom half.
+    // Bitplane pointers go FIRST after every WAIT (timing-critical: they must land
+    // in H-blank before display fetch); the 2bp->3bp switch + colours follow.  Zero-
+    // height bands are skipped so we never emit two WAITs for the same scanline —
+    // a second WAIT on a line already reached would run its pointer writes late,
+    // into the visible area (the fully-open frame: top/bottom collapse to 0 rows).
+    const uint32_t ta   = (uint32_t)terrainBitmap->data;
+    const uint16_t half = kTerrainHeight / 2;                 // = 43
+    const bool     door = (phase == Phase::DoorsOpening && doorGap > 0);
+    const uint16_t g2   = door ? (uint16_t)(doorGap >> 1) : 0;  // half-gap in rows
+    const uint16_t topH = (uint16_t)(half - g2);               // == bottom-band rows
+    const bool tunnelFirst = door && (topH == 0);              // fully open: tunnel fills region
+    const uint32_t tun  = (uint32_t)tunnelBitmap->data + (uint32_t)(half - g2) * 120u;
+
+    auto emitBpl = [&](uint32_t base) {                        // 3bp interleaved = 120 B/row
+        d[idx++] = copperMove(bpl1pth, (uint16_t)(base >> 16));
+        d[idx++] = copperMove(bpl1ptl, (uint16_t)(base & 0xFFFF));
+        d[idx++] = copperMove(bpl2pth, (uint16_t)((base + 40) >> 16));
+        d[idx++] = copperMove(bpl2ptl, (uint16_t)((base + 40) & 0xFFFF));
+        d[idx++] = copperMove(bpl3pth, (uint16_t)((base + 80) >> 16));
+        d[idx++] = copperMove(bpl3ptl, (uint16_t)((base + 80) & 0xFFFF));
+    };
+    // Terrain palette (GTIA mode-10 nibbles 0/7/8): col0 black (also the tunnel's
+    // pen 0), col1 LEVEL-04 text, col3 green background.  Ring feeds pens 1-6.
+    const uint16_t terr0 = fadeColor(atariToOCS(mem[0x02C0]), f);
+    const uint16_t terr1 = fadeColor(atariToOCS(mem[0x02C7]), f);
+    const uint16_t terr2 = fadeColor(atariToOCS(mem[0x08D4]), f);
+    const uint16_t terr3 = fadeColor(atariToOCS(mem[0x0071]), f);
+    auto emitRing = [&]() {                                    // tunnel pens 1-3
+        d[idx++] = copperMove(color01, fadeColor(atariToOCS(ring[0]), f));
+        d[idx++] = copperMove(color02, fadeColor(atariToOCS(ring[1]), f));
+        d[idx++] = copperMove(color03, fadeColor(atariToOCS(ring[2]), f));
+    };
+    auto emitTerrCols = [&]() {                                // terrain pens 1-3
+        d[idx++] = copperMove(color01, terr1);
+        d[idx++] = copperMove(color02, terr2);
+        d[idx++] = copperMove(color03, terr3);
+    };
+
+    // ---- region WAIT: pointers first, then the 2bp->3bp switch, then colours ----
     d[idx++] = copperWait(kTerrainLine - 1, 0xE0);
-    uint32_t ta = (uint32_t)terrainBitmap->data;
-    uint16_t g2 = (uint16_t)(doorGap >> 1);          // half-gap in rows
-    uint32_t topBase = ta + (uint32_t)g2 * 120u;     // 3bp interleaved = 120 B/row
-    // Switch to 3 bitplanes + 3bp interleaved modulo here (carries through the
-    // cockpit).  BPL1MOD covers odd planes 1&3, BPL2MOD plane 2, so 80/80 sets all.
+    emitBpl(tunnelFirst ? tun : (ta + (uint32_t)g2 * 120u));   // top half slides up (g2 rows)
     d[idx++] = copperMove(bplcon0, kBPLCON0_3P);
-    d[idx++] = copperMove(bpl1mod, 80);
-    d[idx++] = copperMove(bpl2mod, 80);
-    d[idx++] = copperMove(bpl1pth, (uint16_t)(topBase >> 16));
-    d[idx++] = copperMove(bpl1ptl, (uint16_t)(topBase & 0xFFFF));
-    d[idx++] = copperMove(bpl2pth, (uint16_t)((topBase + 40) >> 16));
-    d[idx++] = copperMove(bpl2ptl, (uint16_t)((topBase + 40) & 0xFFFF));
-    d[idx++] = copperMove(bpl3pth, (uint16_t)((topBase + 80) >> 16));
-    d[idx++] = copperMove(bpl3ptl, (uint16_t)((topBase + 80) & 0xFFFF));
-    // Terrain palette derived from the GTIA mode-10 colour registers actually
-    // used by the bitmap (nibbles 0 / 7 / 8 — see kNibbleColour):
-    //   col0 = nibble 0 → COLPM0 = mem[$02C0]  (road dots, black)
-    //   col1 = nibble 7 → COLPF3 = mem[$02C7]  ("LEVEL 04" text, grey)
-    //   col2 = (unused in this scene)
-    //   col3 = nibble 8 → COLBK  = mem[$0071]  (background, DLI dli_sub_6cf1 = green)
-    d[idx++] = copperMove(color00, fadeColor(atariToOCS(mem[0x02C0]), f));
-    d[idx++] = copperMove(color01, fadeColor(atariToOCS(mem[0x02C7]), f));
-    d[idx++] = copperMove(color02, fadeColor(atariToOCS(mem[0x08D4]), f));
-    d[idx++] = copperMove(color03, fadeColor(atariToOCS(mem[0x0071]), f));
+    d[idx++] = copperMove(bpl1mod, 80);                        // BPL1MOD = odd planes 1&3
+    d[idx++] = copperMove(bpl2mod, 80);                        // BPL2MOD = plane 2
+    d[idx++] = copperMove(color00, terr0);                     // pen 0 = black (terrain & tunnel)
+    if (tunnelFirst) emitRing(); else emitTerrCols();
+    if (door) {                                                // ring upper half (pens 4-6),
+        d[idx++] = copperMove(color04, fadeColor(atariToOCS(ring[3]), f));  // unused by terrain
+        d[idx++] = copperMove(color05, fadeColor(atariToOCS(ring[4]), f));
+        d[idx++] = copperMove(color06, fadeColor(atariToOCS(ring[5]), f));
+    }
 
-    // Door gap + bottom half.  The gap band disables bitplanes (0 planes) so the
-    // background (COLOR00) shows through — the eventual tunnel reveal slots in
-    // here as a 3bp band (no plane-count change once it carries content).  The
-    // bottom band restores 3 planes and reloads the pointers to the terrain's
-    // bottom half (anchored at row kTerrainHeight/2, sliding down).
-    if (phase == Phase::DoorsOpening && doorGap > 0) {
-        const uint16_t half  = kTerrainHeight / 2;                 // = 43
-        const uint16_t topH  = (uint16_t)(half - g2);              // top band rows
+    // ---- mid-screen bands (only when partially open; each on its own WAIT) ----
+    if (door && topH > 0) {
+        // Tunnel reveal, centred on its vanishing point (row 43): the gap shows the
+        // deepest part first and widens outward.  The tunnel band has no end WAIT,
+        // so if the bottom band is dropped below it simply extends to the cockpit.
         d[idx++] = copperWait((uint16_t)(kTerrainLine + topH - 1), 0xE0);
-        d[idx++] = copperMove(bplcon0, 0);                         // gap: bitplanes off
-
-        const uint16_t botY   = (uint16_t)(kTerrainLine + half + g2);
-        const uint32_t botBase = ta + (uint32_t)half * 120u;
-        d[idx++] = copperWait((uint16_t)(botY - 1), 0xE0);
-        d[idx++] = copperMove(bplcon0, kBPLCON0_3P);               // bottom: 3 planes
-        d[idx++] = copperMove(bpl1pth, (uint16_t)(botBase >> 16));
-        d[idx++] = copperMove(bpl1ptl, (uint16_t)(botBase & 0xFFFF));
-        d[idx++] = copperMove(bpl2pth, (uint16_t)((botBase + 40) >> 16));
-        d[idx++] = copperMove(bpl2ptl, (uint16_t)((botBase + 40) & 0xFFFF));
-        d[idx++] = copperMove(bpl3pth, (uint16_t)((botBase + 80) >> 16));
-        d[idx++] = copperMove(bpl3ptl, (uint16_t)((botBase + 80) & 0xFFFF));
+        emitBpl(tun);
+        emitRing();
+        // Bottom door half (slides down): terrain from row kTerrainHeight/2.  Emit
+        // it only while its WAIT clears the cockpit WAIT by a margin — otherwise two
+        // WAITs land on the same/adjacent line and the second one's pointer writes
+        // run into the visible area (the near-fully-open frames).  When skipped, the
+        // tunnel covers the last 1-2 rows of the gap, which is imperceptible.
+        const uint16_t botWaitY = (uint16_t)(kTerrainLine + half + g2 - 1);
+        if (botWaitY + 2 <= (uint16_t)(kCockpitLine - 1)) {
+            d[idx++] = copperWait(botWaitY, 0xE0);
+            emitBpl(ta + (uint32_t)half * 120u);
+            emitTerrCols();
+        }
     }
 
     // ---- cockpit region ------------------------------------------------------
@@ -264,6 +289,13 @@ void StandbyScene::buildCopperList(CopperList* cl, uint16_t frame)
     d[idx++] = copperMove(color05, fadeColor(atariToOCS(0x04), f));  // = col1 (dark gray)
     d[idx++] = copperMove(color06, fadeColor(atariToOCS(0x06), f));  // = col2 (gray)
     d[idx++] = copperMove(color07, fadeColor(atariToOCS(0x26), f));  // red (COLPF3)
+
+    // Terminate the list right after the content.  The instruction count varies
+    // per frame (the door split adds/removes bands), and the two double-buffered
+    // lists are rebuilt at different gaps — without a terminator here the copper
+    // runs into each buffer's stale trailing instructions (old band WAITs/pointer
+    // writes), which differ between buffers and flicker the display every frame.
+    d[idx++] = copperWait(255, 254);
 }
 
 // ---- public interface --------------------------------------------------------
@@ -274,6 +306,25 @@ void StandbyScene::initialize()
     titleBitmap   = Bitmap::allocate(kW, kTitleHeight,   kBP2, true);
     terrainBitmap = Bitmap::allocate(kW, kTerrainHeight, kBP3, true);  // 3bp: tunnel reveal uses pens 4-7
     cockpitBitmap = Bitmap::allocate(kW, kCockpitH, kBP3, true);  // 3bp: bit-7 chars → red
+    tunnelBitmap  = Bitmap::allocate(kW, kTerrainHeight, kBP3, true);  // door-gap reveal
+
+    // Decode the static tunnel image (tunnel.raw, GTIA-10 nibbles = pens 1-6) into
+    // the 3bp interleaved bitmap once.  Each byte = 2 GTIA pixels (4 Amiga px each);
+    // pen bit b -> plane(b+1).  Motion comes from cycling COLOR01-06, not the bitmap.
+    if (tunnelBitmap) {
+        uint8_t* vdest = (uint8_t*)tunnelBitmap->data;
+        for (int row = 0; row < (int)kTerrainHeight; row++) {
+            const uint8_t* src = &tunnel_raw[row * 40];
+            uint8_t* p1 = vdest; uint8_t* p2 = vdest + 40; uint8_t* p3 = vdest + 80;
+            for (int b = 0; b < 40; b++) {
+                uint8_t ph = (uint8_t)((src[b] >> 4) & 0xF), pl = (uint8_t)(src[b] & 0xF);
+                p1[b] = (uint8_t)(((ph & 1) ? 0xF0u : 0u) | ((pl & 1) ? 0x0Fu : 0u));
+                p2[b] = (uint8_t)(((ph & 2) ? 0xF0u : 0u) | ((pl & 2) ? 0x0Fu : 0u));
+                p3[b] = (uint8_t)(((ph & 4) ? 0xF0u : 0u) | ((pl & 4) ? 0x0Fu : 0u));
+            }
+            vdest += 120;
+        }
+    }
 
     leftPost   = Sprite::allocate(kHT);
     rightPost  = Sprite::allocate(kHT);
@@ -350,6 +401,17 @@ void StandbyScene::update(uint16_t frame)
     if (phase == Phase::DoorsOpening && doorGap < kTerrainHeight) {
         doorGap = (uint16_t)(doorGap + 2);
         if (doorGap > kTerrainHeight) doorGap = kTerrainHeight;
+    }
+    // Tunnel palette cycle: rotate the 6-colour ring one slot per integer tick of
+    // a +$75/frame accumulator (Atari step_accum_add_75 $6A38).  ring[0]=old top.
+    if (phase == Phase::DoorsOpening) {
+        ringAcc = (uint16_t)(ringAcc + 0x75);
+        if (ringAcc & 0x100) {
+            ringAcc &= 0xFF;
+            uint8_t top = ring[5];
+            for (int i = 5; i > 0; i--) ring[i] = ring[i - 1];
+            ring[0] = top;
+        }
     }
 
     vbi_handler_game_native();           // $52D7: attract timer cascade
@@ -584,6 +646,7 @@ void StandbyScene::shutdown()
     delete titleBitmap;   titleBitmap   = nullptr;
     delete terrainBitmap; terrainBitmap = nullptr;
     delete cockpitBitmap; cockpitBitmap = nullptr;
+    delete tunnelBitmap;  tunnelBitmap  = nullptr;
     delete palette;       palette       = nullptr;
     delete leftPost;      leftPost      = nullptr;
     delete rightPost;     rightPost     = nullptr;
