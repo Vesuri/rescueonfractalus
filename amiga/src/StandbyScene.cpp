@@ -183,13 +183,14 @@ void StandbyScene::buildCopperList(CopperList* cl, uint16_t frame)
     d[idx++] = copperMove(bpl1ptl, (uint16_t)(ta & 0xFFFF));
     d[idx++] = copperMove(bpl2pth, (uint16_t)((ta + 40) >> 16));
     d[idx++] = copperMove(bpl2ptl, (uint16_t)((ta + 40) & 0xFFFF));
-    // Terrain palette derived from Atari colour registers (via kNibbleColour zones):
-    //   col0 = nibble 0 → colHW[0] = COLPM0 = mem[$02C0]
-    //   col1 = nibbles 1-2 → COLPM1/2 zone = mem[$08D7] (DLI override)
-    //   col2 = nibbles 3-6 → COLPF0-3 zone = mem[$08D4] (DLI override)
-    //   col3 = nibbles 5-8 → COLBK zone    = mem[$0071] (DLI dli_sub_6cf1)
+    // Terrain palette derived from the GTIA mode-10 colour registers actually
+    // used by the bitmap (nibbles 0 / 7 / 8 — see kNibbleColour):
+    //   col0 = nibble 0 → COLPM0 = mem[$02C0]  (road dots, black)
+    //   col1 = nibble 7 → COLPF3 = mem[$02C7]  ("LEVEL 04" text, grey)
+    //   col2 = (unused in this scene)
+    //   col3 = nibble 8 → COLBK  = mem[$0071]  (background, DLI dli_sub_6cf1 = green)
     d[idx++] = copperMove(color00, fadeColor(atariToOCS(mem[0x02C0]), f));
-    d[idx++] = copperMove(color01, fadeColor(atariToOCS(mem[0x08D7]), f));
+    d[idx++] = copperMove(color01, fadeColor(atariToOCS(mem[0x02C7]), f));
     d[idx++] = copperMove(color02, fadeColor(atariToOCS(mem[0x08D4]), f));
     d[idx++] = copperMove(color03, fadeColor(atariToOCS(mem[0x0071]), f));
 
@@ -338,12 +339,19 @@ static void decode2bppByte(uint8_t src, uint8_t* p1out, uint8_t* p2out)
 // In the 2bp interleaved layout (40 bytes plane1, 40 bytes plane2 per row):
 //   byte b: high nibble covers Amiga pixels 8b..8b+3 → plane bits [7:4] of byte b
 //            low nibble covers Amiga pixels 8b+4..8b+7 → plane bits [3:0] of byte b
+// In this scene only three nibble values occur: 0 (road dots → COLPM0),
+// 7 ("LEVEL 04" text → COLPF3) and 8 (background → COLBK).  GTIA mode-10 maps
+// nibble→register as 0-3:COLPM0-3, 4-7:COLPF0-3, 8:COLBK.  We collapse to our
+// 4 Amiga colours: col0=COLPM0 (road), col1=COLPF3 (text), col3=COLBK (bg);
+// col2 is unused here.  Nibble 7 MUST be distinct from 8 or the level text
+// (baked into the bitmap as COLPF3 pixels) vanishes into the green background.
 static const uint8_t kNibbleColour[16] = {
-    0,           // 0  → col0 (COLBK / sky)
-    1, 1,        // 1-2 → col1 (COLPF0-1)
-    2, 2,        // 3-4 → col2 (COLPF2-3)
-    3, 3, 3, 3,  // 5-8 → col3 (COLPM0-3)
-    3, 3, 3, 3, 3, 3, 3  // 9-15 → col3
+    0,           // 0   → COLPM0 → col0 (road dots / black)
+    3, 3, 3,     // 1-3 → (unused) → bg
+    3, 3, 3,     // 4-6 → (unused) → bg
+    1,           // 7   → COLPF3 → col1 ("LEVEL 04" text)
+    3,           // 8   → COLBK  → col3 (green background)
+    3, 3, 3, 3, 3, 3, 3  // 9-15 → bg
 };
 
 void StandbyScene::render()
@@ -355,11 +363,18 @@ void StandbyScene::render()
     // Each byte = two 4-bit nibbles → two GTIA pixels, each 4 Amiga pixels wide.
     // Interleaved 2bp row = 40 bytes plane1 + 40 bytes plane2.
 
+    // Wide-playfield crop: the terrain region runs in a GTIA-10 *wide* playfield
+    // (48 bytes / 192 colour clocks — SDMCTL bit set, DMACTL rewritten per region
+    // by the DLI at $4F78).  The road/door content is centred for the 48-byte
+    // field (centre dash at byte 23 ≈ wide centre), so the TV-visible 320px window
+    // is the central 40 bytes — skip the 4 left overscan bytes (pure green fill).
+    // This matches the title region, which already crops 2 mode-6 chars (= 16cc).
+    static const int kTerrainXByteOffset = 4;
     if (terrainDirty) {
         terrainDirty = false;
         uint8_t* vdest = (uint8_t*)terrainBitmap->data;
         for (int row = 0; row < (int)kTerrainHeight; row++) {
-            const uint8_t* src = (const uint8_t*)&mem[0x2000 + row * 46];
+            const uint8_t* src = (const uint8_t*)&mem[0x2000 + row * 46 + kTerrainXByteOffset];
             uint8_t* plane1 = vdest;
             uint8_t* plane2 = vdest + 40;
             for (int b = 0; b < 40; b++) {
