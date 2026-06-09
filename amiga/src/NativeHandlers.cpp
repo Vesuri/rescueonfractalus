@@ -122,6 +122,70 @@ extern "C" void startup_init_native(void)
     }
 }
 
+// update_gauge_digits_native: direct translation of FUN_4229 @ $4229.
+// Called from vbi_handler_game ($52D7) every other frame (LSR $0643 gate).
+// Drives the cockpit score/counter animation at $3491-$3497 (mode-4 chars).
+// State machine in mem[$007E]:
+//   0       — init: fill $3492-$3497 with $A9 (coloured glyph), advance to 1
+//   1-6     — each call (after timer $00E6 expires): blank $3491+state with $29,
+//             advance state; state 6→7 on final step
+//   7       — done: set mem[$0048]=1 / mem[$28EE]=1
+//   $80     — random blink: toggle colour of one $3492-$3497 char each tick
+//   $81+    — reverse fill: restore $A9 at $3491+state, decrement state
+// mem[$0618] = per-step timer reload (0 = advance every call).
+// game_sub_5815 ring-buffer push is inlined (ring at $0719, ptr at $0073).
+extern "C" void update_gauge_digits_native(void)
+{
+    auto pushRingBuf = [](uint8_t val) {
+        uint8_t ptr = mem[0x0073u];
+        if (ptr >= 0x20u) ptr = 0x1Fu;
+        mem[0x0719u + ptr] = val | 0x80u;
+        mem[0x0073u] = (ptr == 0u) ? 0x1Fu : (uint8_t)(ptr - 1u);
+    };
+
+    uint8_t s = mem[0x007Eu];
+
+    if ((int8_t)s < 0) {        // s >= $80
+        if (s >= 0x81u) {
+            // Reverse-fill path: restore $A9 glyphs one by one.
+            // LSR $0631 / BCS skip: rate-limit alternate calls.
+            if (mem[0x0631u] & 1u) { mem[0x0631u] >>= 1u; return; }
+            mem[0x0631u] = (uint8_t)((mem[0x0631u] >> 1u) + 1u);
+            uint8_t n = (uint8_t)(s & 0x0Fu);
+            uint8_t newS = (n == 7u) ? (uint8_t)(s - 2u) : (uint8_t)(s - 1u);
+            mem[0x007Eu] = newS;
+            mem[0x3491u + newS] = 0xA9u;
+            pushRingBuf(0xA9u);
+        } else {    // s == $80: random blink
+            if (mem[0x00E6u] > 0u) { mem[0x00E6u]--; return; }
+            // Atari: LDA $D20A (RANDOM); Amiga: use RTCLOK low byte as proxy.
+            uint8_t r = mem[0x0014u] & 7u;
+            mem[0x00E6u] = (r >= 6u) ? (uint8_t)(r >> 1u) : r;   // mirror $36→3, $37→3
+            uint8_t y = (r >= 6u) ? (uint8_t)(r >> 1u) : r;
+            mem[0x3492u + y] ^= 0x80u;   // toggle colour bit
+        }
+        return;
+    }
+
+    if (s != 0u) {              // s = 1-7
+        if (mem[0x00E6u] > 0u) { mem[0x00E6u]--; return; }
+        mem[0x00E6u] = mem[0x0618u];
+        if (s == 7u) {
+            if (mem[0x0048u] == 0u) { mem[0x0048u] = 1u; mem[0x28EEu] = 1u; }
+            return;
+        }
+        mem[0x007Eu]++;
+        uint8_t newS = mem[0x007Eu];
+        mem[0x3491u + newS] = 0x29u;
+        pushRingBuf(0x29u);     // pushes $A9 = $29|$80
+    } else {                    // s == 0: initialise
+        mem[0x0048u] = 0u;
+        mem[0x007Eu] = 1u;
+        mem[0x00E6u] = mem[0x0618u];
+        for (int i = 5; i >= 0; i--) mem[0x3492u + (uint16_t)i] = 0xA9u;
+    }
+}
+
 // update_blink_timer_006e_native: direct translation of update_blink_timer_006e
 // @ $4131, called via vbi_handler_2 ($4FF5) during Standby.
 // Counts down mem[$006E]; on expiry reloads to $0F and sets mem[$00DE]=$4E (ON);

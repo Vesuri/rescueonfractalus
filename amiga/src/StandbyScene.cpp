@@ -36,6 +36,7 @@ extern "C" void update_blink_timer_006e_native(void);           // $4131: cockpi
 extern "C" void copy_altitude_graphic_to_screen_native(void);   // $782A: title text
 extern "C" void sfx_voice_tick_native(void);                    // $70F9: SFX audio
 extern "C" void startup_init_native(void);                      // $3FFA: cockpit digit update
+extern "C" void update_gauge_digits_native(void);               // $4229: cockpit counter animation
 
 extern "C" volatile uint8_t mem[65536];
 
@@ -267,6 +268,12 @@ void StandbyScene::initialize()
     mem[0x00D5] = 0x78;   // COLPF1 = blue title text
     mem[0x00D8] = 0x06;   // COLBK  = grey title background
 
+    // vbi_handler_2 attract path: steady-state has $0044=0 (FUN_47A3 already ran)
+    // and $063E=$FF (BMI path taken, no further timer expiry).  The snapshot captured
+    // these mid-animation; patch to steady-state to avoid spurious $480B/FUN_47A3 firing.
+    mem[0x0044] = 0x00;   // prevent FUN_47A3 one-shot (would set $00D8=$CA = yellow)
+    mem[0x063E] = 0xFF;   // prevent $480B title-clear on first frame
+
     // Seed $0091=$C0 so copy_altitude_graphic_to_screen_native fires on the first
     // update() call and writes Block1 ("rescue on fractalus") to $32B7.
     // On the real Atari, $0091 is set by the SFX sequencer; we prime it once here
@@ -287,6 +294,8 @@ void StandbyScene::update(uint16_t frame)
         copy_altitude_graphic_to_screen_native();    // $782A: $0091→title string
     if (mem[0x004A] != 0) {             // $004A set when game starts (door sequence)
         startup_init_native();          // $3FFA: cockpit digit update
+        // FUN_4229 called every other frame via LSR $0643 gate in vbi_handler_game
+        if (!(mem[0x0643u] & 1u)) update_gauge_digits_native();  // $4229: counter anim
         cockpitDirty = true;
     }
 
