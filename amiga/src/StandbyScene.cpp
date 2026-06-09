@@ -76,14 +76,6 @@ static const uint16_t kSprXLeft  = 0x81 + 17;
 static const uint16_t kSprXRight = 0x81 + 285;
 
 // ---- OCS colour helpers ------------------------------------------------------
-static uint16_t blendOCS(uint16_t a, uint16_t b)
-{
-    uint16_t r  = (((a >> 8) & 0xFu) + ((b >> 8) & 0xFu)) >> 1;
-    uint16_t g  = (((a >> 4) & 0xFu) + ((b >> 4) & 0xFu)) >> 1;
-    uint16_t bv = ((a & 0xFu) + (b & 0xFu)) >> 1;
-    return (uint16_t)((r << 8) | (g << 4) | bv);
-}
-
 static uint16_t fadeColor(uint16_t color, uint16_t fade)
 {
     uint16_t r = color >> 8;
@@ -145,15 +137,19 @@ void StandbyScene::buildCopperList(CopperList* cl, uint16_t frame)
     //   COLPF1 ($D017) = $78         — hardcoded blue (same role on real hw)
     // copy_altitude_graphic_to_screen_native sets mem[$00D8]=$44 for the
     // copyright block so the text colour changes per alternation.
+    // Mode-6 selects the per-char text colour from the byte's top 2 bits:
+    //   hi2=0 → COLPF0 = mem[$00D8]   (copyright block, e.g. $44)
+    //   hi2=1 → COLPF1 = $78 (blue)   (RESCUE ON FRACTALUS!, hardcoded by vbi $52F7)
+    // render() routes hi2=0 chars to col1 (plane1) and hi2=1 chars to col2
+    // (plane2); "off" pixels use col0 = COLBK.
     {
-        uint16_t tbg   = atariToOCS(mem[0x02C8]);  // COLBK shadow
-        uint16_t tfg   = atariToOCS(mem[0x00D8]);  // COLPF0 = title text colour
-        uint16_t tbl   = blendOCS(tbg, tfg);
-        uint16_t tsel  = atariToOCS(mem[0x00D6]);
+        uint16_t tbg   = atariToOCS(mem[0x02C8]);  // COLBK = background
+        uint16_t tpf0  = atariToOCS(mem[0x00D8]);  // COLPF0 = hi2=0 text
+        uint16_t tpf1  = atariToOCS(0x78);         // COLPF1 = hi2=1 text (blue)
         d[idx++] = copperMove(color00, fadeColor(tbg,  f));
-        d[idx++] = copperMove(color01, fadeColor(tfg,  f));
-        d[idx++] = copperMove(color02, fadeColor(tbl,  f));
-        d[idx++] = copperMove(color03, fadeColor(tsel, f));
+        d[idx++] = copperMove(color01, fadeColor(tpf0, f));
+        d[idx++] = copperMove(color02, fadeColor(tpf1, f));
+        d[idx++] = copperMove(color03, fadeColor(tbg,  f));
     }
     cl->showBitmap(idx, *titleBitmap);
     idx += 2 * kBP2;
@@ -402,21 +398,27 @@ void StandbyScene::render()
         if (charByte == titleShadow[col]) continue;   // unchanged — skip
         titleShadow[col] = charByte;
 
-        // Re-render this char: mode-6 is 1bpp — each glyph bit → col0 or col1,
-        // doubled to 2 Amiga pixels.  Result goes to plane1 only (plane2=0).
-        // (renderNTSCGlyph was wrong here — NTSC blending is for modes 2-5, not 6.)
+        // Re-render this char: mode-6 is 1bpp, but the byte's top 2 bits select
+        // the text colour register.  We support the two cases that occur here:
+        //   hi2=0 → COLPF0 → col1 (plane1)   — copyright block
+        //   hi2=1 → COLPF1 → col2 (plane2)   — RESCUE ON FRACTALUS! (blue)
+        // "off" pixels stay col0 (COLBK).  Each glyph bit is doubled to 2 px.
         uint8_t charIdx    = charByte & 0x3Fu;
+        bool    usePF1     = ((charByte >> 6) & 3u) == 1u;   // hi2=1 → COLPF1/blue
         uint16_t glyphBase = kCharsetBase + charIdx * 8u;
         for (int scanline = 0; scanline < 8; scanline++) {
             int destRow = kTitleTextRow + scanline;
             if (destRow >= (int)kTitleHeight) break;
             uint8_t glyph = mem[glyphBase + (uint16_t)scanline];
             uint16_t doubled = kDoubleGlyph[glyph];
+            uint8_t hb = (uint8_t)(doubled >> 8);
+            uint8_t lb = (uint8_t)(doubled & 0xFF);
             uint8_t* row = tbmp + destRow * 80;
-            row[col*2]       = (uint8_t)(doubled >> 8);
-            row[col*2+1]     = (uint8_t)(doubled & 0xFF);
-            row[40+col*2]    = 0;   // plane2=0: only col0/col1 used
-            row[40+col*2+1]  = 0;
+            // plane1 carries COLPF0 chars, plane2 carries COLPF1 chars.
+            row[col*2]       = usePF1 ? 0 : hb;
+            row[col*2+1]     = usePF1 ? 0 : lb;
+            row[40+col*2]    = usePF1 ? hb : 0;
+            row[40+col*2+1]  = usePF1 ? lb : 0;
         }
     }
 
