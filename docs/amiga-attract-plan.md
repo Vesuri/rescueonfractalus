@@ -790,3 +790,16 @@ All from `music_playing.a8s` being mid-animation vs the correct standby state:
 3. **R3b music timing**: sfx runs at 50Hz VBI, not POKEY timer rate.
 4. **Scene 3b Scoreboard**: `attract_timer $00E2` → hi-score screen. Not analysed.
 5. **Descent / door-open sequence**: next major feature after standby is complete.
+
+### Title alternation (added 2026-06-09)
+
+**Mechanism discovered:** `sfx_seq_step_native` writes SFX voice-param command bytes
+from `$71DB` to `mem[$0091]` as a side effect. Bytes `$C0`/`$C4` (in `[$C0,$E0)`)
+→ Block1 "rescue on fractalus"; `$E2` (≥`$E0`) → Block2 "©1985 LUCASFILM LTD".
+`copy_altitude_graphic_to_screen_native` ($782A) fires when `$0091≥$C0`, copies the
+20-char block to `$32B7-$32CA`, resets `$0091=0`. The SFX music loop drives the
+alternation — `$C0` appears at seq[1], `$E2` at seq[12], `$C4` at seq[24].
+
+**Implementation:** `copy_altitude_graphic_to_screen_native()` added to NativeHandlers.cpp.
+Called from `update()` when `mem[$060B]==0` (cleared on START press). `mem[$0091]=$C0`
+seeded in `initialize()` so the title is correct on frame 1.
