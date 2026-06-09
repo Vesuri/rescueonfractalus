@@ -35,6 +35,7 @@ extern "C" void vbi_handler_game_native(void);                  // $52D7: timer 
 extern "C" void update_blink_timer_006e_native(void);           // $4131: cockpit blink
 extern "C" void copy_altitude_graphic_to_screen_native(void);   // $782A: title text
 extern "C" void sfx_voice_tick_native(void);                    // $70F9: SFX audio
+extern "C" void startup_init_native(void);                      // $3FFA: cockpit digit update
 
 extern "C" volatile uint8_t mem[65536];
 
@@ -284,6 +285,10 @@ void StandbyScene::update(uint16_t frame)
     if (mem[0x00E7] != 0) sfx_voice_tick_native();  // $70F9: SFX audio (sets $0091)
     if (mem[0x060B] == 0)               // $62FB: title text (gated by $060B)
         copy_altitude_graphic_to_screen_native();    // $782A: $0091→title string
+    if (mem[0x004A] != 0) {             // $004A set when game starts (door sequence)
+        startup_init_native();          // $3FFA: cockpit digit update
+        cockpitDirty = true;
+    }
 
     uint8_t next = 1 - active;
     buildCopperList(copperLists[next], frame);
