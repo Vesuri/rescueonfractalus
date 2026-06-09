@@ -19,6 +19,7 @@
 
 #include "../framework/AmigaHardware.h"
 #include "StandbyScene.h"
+#include "Keyboard.h"
 
 // GfxBase defined in GCCRuntime.cpp; set after OpenLibrary.
 extern struct GfxBase* GfxBase;
@@ -128,6 +129,10 @@ int main()
     StandbyScene scene;
     scene.initialize();
 
+    // RETURN = START button for the launch cinematic (CIA-A SP keyboard).
+    Keyboard keyboard;
+    keyboard.initialize();
+
     // --- main loop -----------------------------------------------------------
     uint16_t frame    = 0;
     uint16_t lastVBI  = vbiCount;
@@ -143,10 +148,16 @@ int main()
         if (AmigaHardware::isLeftMouseButtonPressed())
             quit = true;
 
+        // TEMPORARY smoke test for the CIA-A SP keyboard: RETURN quits.
+        // Becomes the Standby->doors cinematic trigger once DoorsScene exists.
+        if (keyboard.returnPressed())
+            quit = true;
+
         scene.update(frame);
         scene.render();
     }
 
+    keyboard.shutdown();
     scene.shutdown();
 
     // --- restore system ------------------------------------------------------
