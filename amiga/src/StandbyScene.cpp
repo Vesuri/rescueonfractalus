@@ -141,12 +141,16 @@ void StandbyScene::buildCopperList(CopperList* cl, uint16_t frame)
                            /*hires*/false, /*interlace*/false,
                            /*dualPlayfield*/false, /*holdAndModify*/false,
                            kCenterY);
-    // Title palette: dli_sub_4a0c fires at start of mode-6 row and sets colours
-    // from mem[$00Dx] shadow RAM.  COLBK=mem[$00D8]=bg, COLPF1=mem[$00D5]=fg.
-    // col2 = NTSC blend (avg of bg+fg), col3 = COLPF2=mem[$00D6] (colour-select).
+    // Title palette.
+    // vbi_handler_game ($52D7) sets every frame:
+    //   COLPF0 ($D016) = mem[$00D8]  — title text colour (mode-6 col=1 chars)
+    //   COLBK  ($D01A) = mem[$02C8]  — title background
+    //   COLPF1 ($D017) = $78         — hardcoded blue (same role on real hw)
+    // copy_altitude_graphic_to_screen_native sets mem[$00D8]=$44 for the
+    // copyright block so the text colour changes per alternation.
     {
-        uint16_t tbg   = atariToOCS(mem[0x00D8]);
-        uint16_t tfg   = atariToOCS(mem[0x00D5]);
+        uint16_t tbg   = atariToOCS(mem[0x02C8]);  // COLBK shadow
+        uint16_t tfg   = atariToOCS(mem[0x00D8]);  // COLPF0 = title text colour
         uint16_t tbl   = blendOCS(tbg, tfg);
         uint16_t tsel  = atariToOCS(mem[0x00D6]);
         d[idx++] = copperMove(color00, fadeColor(tbg,  f));
@@ -259,12 +263,8 @@ void StandbyScene::initialize()
     mem[0x02C0] = 0x00;   // COLPM0 → nibble-0 terrain dots; $00=black matches SDL oracle
                            // (music_playing.a8s has $18=orange from mid-animation)
 
-    // Title region colours (dli_sub_4a0c shadow $00D5/$00D8):
-    // Snapshot captured mid-animation with bg/fg swapped. vbi_handler_game
-    // hardcodes COLPF1=$78 (blue), which the DLI overrides from mem[$00D5].
-    // Correct standby: grey bg ($00D8=$06) + blue text ($00D5=$78).
-    mem[0x00D5] = 0x78;   // COLPF1 = blue title text
-    mem[0x00D8] = 0x06;   // COLBK  = grey title background
+    // mem[$00D8] is the title TEXT colour (COLPF0); snapshot has $78 (blue). Leave as-is.
+    // mem[$02C8] is the title BACKGROUND (COLBK); snapshot has $06 (grey). Leave as-is.
 
     // vbi_handler_2 attract path: steady-state has $0044=0 (FUN_47A3 already ran)
     // and $063E=$FF (BMI path taken, no further timer expiry).  The snapshot captured

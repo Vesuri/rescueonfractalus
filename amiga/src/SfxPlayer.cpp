@@ -19,13 +19,13 @@
 extern "C" volatile uint8_t mem[65536];
 // platform_hw_write declared in PaulaAudio.h (extern "C")
 
-// ---- sfx_seq_step_native ($7148) --------------------------------------------
+// ---- sfx_seq_step_native ($7148) — also called from paula_audio_init() ------
 // Advances the sequence pointer and loads the next note.
 //   Negative bytes (0x80-0xFF): voice-param command — write AUDF1-4+AUDC4,
 //     continue if AUDC4 != 0, else fall through with note=0.
 //   Zero: reset pointer to 0 and re-read (sequence loop).
 //   Positive (0x01-0x7F): note byte — decode duration+gate and stop.
-static void sfx_seq_step_native(void)
+extern "C" void sfx_seq_step_native(void)
 {
     uint8_t x = mem[0x073C];
     uint8_t note;
