@@ -45,9 +45,11 @@ static uint32_t vbiHandler()
 }
 
 // ---- CIA-B Timer A interrupt — SFX music tick --------------------------------
-// The Atari SFX sequencer is driven by the POKEY timer IRQ.  On the Amiga we
-// replicate this with CIA-B Timer A firing at ~100 Hz (2× PAL VBI rate).
-// CIA-B uses the Amiga E-clock (≈ 709379 Hz on PAL); period = 709379/100 = 7094.
+// The Atari SFX sequencer ticks every other VBI (the BIT $062D gate, $00E7=1) =
+// 25 Hz.  On the Amiga we drive it from CIA-B Timer A at that exact rate, off a
+// dedicated hardware interrupt rather than the VBI/render loop, so the music
+// tempo is independent of frame timing.  CIA-B uses the Amiga E-clock
+// (≈ 709379 Hz on PAL); period = 709379/25 = 28375 (see below).
 // The interrupt fires through INTB_EXTER (level 6) via the ciab.resource.
 static struct Library    *CIABBase;
 static struct Interrupt   sfxTimer;
@@ -92,7 +94,7 @@ int main()
     vbiServer.is_Code = (void(*)())vbiHandler;
     AddIntServer(INTB_VERTB, &vbiServer);
 
-    // --- CIA-B Timer A — SFX music at ~100 Hz --------------------------------
+    // --- CIA-B Timer A — SFX music at 25 Hz ----------------------------------
     // Use ciab.resource so the CIA ICR is demultiplexed for us.
     CIABBase = (struct Library*)OpenResource((UBYTE*)CIABNAME);
     if (CIABBase) {
