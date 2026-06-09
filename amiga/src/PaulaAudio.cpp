@@ -132,17 +132,9 @@ void paula_audio_init(void)
     for (int i = 0; i < 16; i++) pokey[i] = 0;
     lfsr_state = 0x1FFFFu;
 
-    // Replay SFX sequence from index 0 to the snapshot position (mem[$073C]=2).
-    // The snapshot was captured mid-sequence: voice-param $C0 at index 1 (which
-    // initialises AUDF1-4 for voice 0) has already been processed on the Atari
-    // but our pokey[] was just cleared.  Replaying restores the AUDF state so
-    // all three audio channels start in sync.
-    {
-        uint8_t target = mem[0x073Cu];   // = 2 from snapshot
-        mem[0x073Cu]   = 0xFFu;          // reset to one-before-start
-        while (mem[0x073Cu] != target)
-            sfx_seq_step_native();
-    }
+    // SFX is initialised by the mem[$0090] gate in StandbyScene::update():
+    // the snapshot has $0090=1, so the first update() call resets $073C/$073A
+    // to start the sequence from note 0 — no replay needed here.
 
     // Point all Paula channels at the square wave, start silent
     for (int ch = 0; ch < 4; ch++) {

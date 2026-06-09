@@ -288,6 +288,16 @@ void StandbyScene::update(uint16_t frame)
     vbi_handler_game_native();           // $52D7: attract timer cascade
     update_blink_timer_006e_native();    // $4131: cockpit blink lights
     // sfx_voice_tick_native() is now driven by CIA-B Timer A at ~100 Hz (main.cpp).
+
+    // Mirror $62E7 SFX-reinit gate: when mem[$0090] is non-zero the attract loop
+    // calls JSR $70E7 (sfx init) which resets the sequence to index 0.
+    // mem[$0090] = 1 in the snapshot; cleared here after first reinit.
+    if (mem[0x0090u]) {
+        mem[0x073Au] = 0u;    // immediate underflow → next CIA tick loads note[0]
+        mem[0x073Cu] = 0xFFu; // sequence ptr before index 0
+        mem[0x0090u] = 0u;    // clear flag (as $70E7 does via STX $0090)
+    }
+
     if (mem[0x060B] == 0)               // $62FB: title text (gated by $060B)
         copy_altitude_graphic_to_screen_native();    // $782A: $0091→title string
     if (mem[0x004A] != 0) {             // $004A set when game starts (door sequence)
