@@ -68,6 +68,12 @@ public:
     /* ------------------------------------------------------------------ */
     bool quit;
 
+    /* POKEY LFSR seed/peek — used by the native-reimplementation validation
+       harness to give both runs an identical RANDOM ($D20A) stream.  Not used
+       by the game itself.  17-bit state; 0 is a lockup value, avoid seeding it. */
+    void     rngSeed(uint32_t s) { rngState = s; }
+    uint32_t rngGet() const      { return rngState; }
+
 protected:
     /* POKEY 17-bit LFSR state — concrete classes call pokeyRandomStep().  */
     uint32_t rngState;
