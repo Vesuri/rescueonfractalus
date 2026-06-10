@@ -396,3 +396,75 @@ void ring_push_0719(void) {
     cpu.X = cpu.A;                              /* 5612 TAX */
     cpu.N = (cpu.A >> 7) & 1; cpu.Z = (cpu.A == 0) ? 1 : 0;
 }
+
+/* compute_heading_sincos @ $9BA0 — sin/cos of the 16-bit heading $2885/$2886.
+ *
+ * Forms an 8-bit angle in $0075 = ($2886 << 2) | ($2885 >> 6) and the octant
+ * fraction $280D = ($2885 >> 3) & 7, then calls trig_interp_lookup at the angle
+ * (sin -> $2809/$280A) and at angle+$40 = +90deg (cos -> $280B/$280C).
+ * Contract: memory only (callers reload A).  Calls native trig_interp_lookup.
+ */
+void compute_heading_sincos(void) {
+    uint8_t a75 = mem[0x2886], h = mem[0x2885], c;
+    c = h >> 7; h = (uint8_t)(h << 1); a75 = (uint8_t)((a75 << 1) | c);   /* ASL;ROL $75 */
+    c = h >> 7;                          a75 = (uint8_t)((a75 << 1) | c); /* ASL;ROL $75 */
+    mem[0x0075] = a75;
+    mem[0x280D] = (uint8_t)((mem[0x2885] >> 3) & 0x07);
+
+    trig_interp_lookup();                /* sin */
+    mem[0x2809] = mem[0x0077];
+    mem[0x280A] = mem[0x0078];
+
+    mem[0x0075] = (uint8_t)(mem[0x0075] + 0x40);   /* +90 deg */
+    trig_interp_lookup();                /* cos */
+    mem[0x280B] = mem[0x0077];
+    mem[0x280C] = mem[0x0078];
+}
+
+/* build_view_transform_matrix @ $A0A3 — two rotated view-space components.
+ *
+ * With sin/cos in $0089/$0087 and a 16-bit vector in $00A0:$00A1 / $00A2:$00A3,
+ * computes (via four signed_mul_8x16 calls and 16-bit add/sub/negate):
+ *   $22A3:$22D1 = [A1:A0]*$89 - [A3:A2]*$87
+ *   $22FF:$232D = -([A3:A2]*$89 + [A1:A0]*$87)
+ *
+ * CARRY THREADING: native signed_mul_8x16 reads the entry carry (-> its $AC byte)
+ * and does NOT modify cpu.C.  The 6502 here leaves carry untouched before the
+ * first two muls (so they see build_view's entry carry) and feeds the step-2
+ * subtract's carry into the last two muls.  We mirror that exactly by writing
+ * cpu.C after each add/sub block.  Contract: memory (caller reloads A; final
+ * carry is incidental).  Calls native signed_mul_8x16.
+ */
+void build_view_transform_matrix(void) {
+    mem[0x00AA] = mem[0x00A0]; mem[0x00AB] = mem[0x00A1];
+    cpu.A = mem[0x0089]; signed_mul_8x16();
+    mem[0x22A3] = mem[0x00A8]; mem[0x22D1] = mem[0x00A9];
+
+    mem[0x00AA] = mem[0x00A2]; mem[0x00AB] = mem[0x00A3];
+    cpu.A = mem[0x0087]; signed_mul_8x16();
+    {   /* SEC; $22A3:$22D1 -= $A8:$A9 */
+        uint8_t c = 1; uint16_t t;
+        t = (uint16_t)mem[0x22A3] + (uint8_t)~mem[0x00A8] + c; c = t >> 8; mem[0x22A3] = (uint8_t)t;
+        t = (uint16_t)mem[0x22D1] + (uint8_t)~mem[0x00A9] + c; c = t >> 8; mem[0x22D1] = (uint8_t)t;
+        cpu.C = c & 1;                   /* feeds the next signed_mul's $AC byte */
+    }
+
+    mem[0x00AA] = mem[0x00A2]; mem[0x00AB] = mem[0x00A3];
+    cpu.A = mem[0x0089]; signed_mul_8x16();
+    mem[0x22FF] = mem[0x00A8]; mem[0x232D] = mem[0x00A9];
+
+    mem[0x00AA] = mem[0x00A0]; mem[0x00AB] = mem[0x00A1];
+    cpu.A = mem[0x0087]; signed_mul_8x16();
+    {   /* CLC; $22FF:$232D += $A8:$A9 */
+        uint8_t c = 0; uint16_t t;
+        t = (uint16_t)mem[0x00A8] + mem[0x22FF] + c; c = t >> 8; mem[0x22FF] = (uint8_t)t;
+        t = (uint16_t)mem[0x00A9] + mem[0x232D] + c; c = t >> 8; mem[0x232D] = (uint8_t)t;
+        cpu.C = c & 1;
+    }
+    {   /* SEC; $22FF:$232D = 0 - $22FF:$232D (16-bit negate) */
+        uint8_t c = 1; uint16_t t;
+        t = (uint16_t)0 + (uint8_t)~mem[0x22FF] + c; c = t >> 8; mem[0x22FF] = (uint8_t)t;
+        t = (uint16_t)0 + (uint8_t)~mem[0x232D] + c; c = t >> 8; mem[0x232D] = (uint8_t)t;
+        cpu.C = c & 1;
+    }
+}

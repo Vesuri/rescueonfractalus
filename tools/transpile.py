@@ -60,6 +60,8 @@ VALIDATE_FUNCS = {
     0xAC42,  # check_target_in_window — 2-consecutive-hit target latch (flight leaf #5)
     0x4E58,  # obj_table_set_active — promote first eligible object slot (flight leaf #6)
     0x55FF,  # ring_push_0719 — push to event ring + restore caller X (flight leaf #7)
+    0x9BA0,  # compute_heading_sincos — sin/cos of 16-bit heading (flight mid #1)
+    0xA0A3,  # build_view_transform_matrix — rotated view components (flight mid #2)
 }
 VALIDATE_SUFFIX = '__t6502'
 

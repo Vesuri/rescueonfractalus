@@ -216,6 +216,8 @@ int main(void) {
     fails += test_mem_contract("check_target_in_window", check_target_in_window, check_target_in_window__t6502);
     fails += test_mem_contract("obj_table_set_active", obj_table_set_active, obj_table_set_active__t6502);
     fails += test_ring_push_0719();
+    fails += test_mem_contract("compute_heading_sincos", compute_heading_sincos, compute_heading_sincos__t6502);
+    fails += test_mem_contract("build_view_transform_matrix", build_view_transform_matrix, build_view_transform_matrix__t6502);
 
     printf("\n%s\n", fails == 0
         ? "PASS — all native reimplementations are memory-equivalent to their 6502 oracles."
