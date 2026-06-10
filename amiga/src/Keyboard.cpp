@@ -10,13 +10,26 @@
 #include "../framework/AmigaHardware.h"   // ciaasdrPointer / ciaacraPointer + int types
 #include "Keyboard.h"
 
+// The Atari read CONSOL ($D01F / 53279) to see whether START was pressed; we
+// reproduce that register here so the unmodified attract-loop poll (the native
+// port of station_init's CONSOL read, station_poll_start_native) works exactly
+// as on the 6502.  This handler IS the hardware abstraction: it maps the Amiga
+// RETURN key onto the START console switch.
+//
+// CONSOL switches read active-low in bits 0-2 (START / SELECT / OPTION).  Idle
+// (no switch down) reads $07; START down clears bit0 → $06, the value the loop
+// tests for (CMP #$06 / BEQ).  We never touch SELECT/OPTION, so they stay high.
+extern "C" volatile uint8_t mem[65536];
+static const uint16_t kConsol      = 0xD01F;
+static const uint8_t  kConsolIdle  = 0x07;
+static const uint8_t  kConsolStart = 0x06;
+
 // RETURN rawkey code (cf. DanceDiverse3 Input.cpp: RETURN=$44, ESC=$45).
 static const uint8_t kRawReturn = 0x44;
 
 static struct Library*   s_ciaaBase    = nullptr;
 static struct Interrupt  s_kbInterrupt;
 static struct Interrupt* s_savedVector = nullptr;   // keyboard.device's vector, restored on exit
-static volatile uint8_t  s_returnLatch = 0;         // RETURN went down since last poll
 
 // CIA-A SP interrupt: a full keycode has shifted into the serial register.
 // ciaa.resource has already read+cleared the ICR before dispatching us, so we
@@ -41,7 +54,11 @@ static uint32_t keyboardHandler()
     uint8_t raw  = (uint8_t)(code & 0x7Fu);
     bool    down = (code & 0x80u) == 0u;
 
-    if (raw == kRawReturn && down) s_returnLatch = 1u;
+    // Drive the CONSOL START switch (bit0) from RETURN's down/up edges, so the
+    // register continuously reflects the key's level — just like the real GTIA
+    // switch the attract loop polls.
+    if (raw == kRawReturn)
+        mem[kConsol] = down ? kConsolStart : kConsolIdle;
     return 0;
 }
 
@@ -49,6 +66,9 @@ bool Keyboard::initialize()
 {
     s_ciaaBase = (struct Library*)OpenResource((UBYTE*)CIAANAME);
     if (!s_ciaaBase) return false;
+
+    // Power-on CONSOL state: no switch down (START up).
+    mem[kConsol] = kConsolIdle;
 
     s_kbInterrupt.is_Node.ln_Type = NT_INTERRUPT;
     s_kbInterrupt.is_Node.ln_Pri  = 0;
@@ -76,10 +96,4 @@ void Keyboard::shutdown()
         s_savedVector = nullptr;
     }
     s_ciaaBase = nullptr;
-}
-
-bool Keyboard::returnPressed()
-{
-    if (s_returnLatch) { s_returnLatch = 0u; return true; }
-    return false;
 }

@@ -11,13 +11,13 @@
 // (saving the previous vector) and shutdown() restores it, leaving the OS
 // keyboard working after we hand control back.
 //
-// Usage mirrors DanceDiverse3's Input class: poll a latching "was it pressed"
-// query once per frame.  RETURN is the START button for the launch cinematic.
+// This handler IS the Atari console-switch hardware abstraction: it maps the
+// RETURN key onto the START switch in CONSOL ($D01F / 53279), writing $06 while
+// RETURN is held and $07 when idle.  The launch cinematic is triggered by
+// polling that register with the native port of station_init's CONSOL read
+// (station_poll_start_native), exactly as the original 6502 attract loop did.
 class Keyboard {
 public:
     bool initialize();        // steal CIA-A SP vector; false if ciaa.resource missing
     void shutdown();          // restore the previous (keyboard.device) vector
-
-    // True once per RETURN key-down since the last call (latched, then cleared).
-    bool returnPressed();
 };

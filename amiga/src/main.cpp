@@ -30,6 +30,9 @@ extern "C" volatile uint8_t mem[65536];
 // sfx_voice_tick_native: driven by CIA-B Timer A (see below), not the main loop.
 extern "C" void sfx_voice_tick_native(void);
 
+// Native port of station_init's CONSOL ($D01F) read: true while START is down.
+extern "C" bool station_poll_start_native(void);
+
 // ---- VBI interrupt server ---------------------------------------------------
 // Mirrors the Atari RTCLOK increment from vbi_handler_1 ($53CC).
 // DLIST/colour writes are handled by the Copper on the Amiga side.
@@ -151,8 +154,11 @@ int main()
         if (AmigaHardware::isLeftMouseButtonPressed())
             quit = true;
 
-        // RETURN (START) opens the doors → launch cinematic.
-        if (keyboard.returnPressed())
+        // START opens the doors → launch cinematic.  The keyboard ISR maps the
+        // RETURN key onto the CONSOL START switch ($D01F); we detect the press
+        // with the native port of station_init's CONSOL read — the same poll the
+        // original 6502 attract loop used.
+        if (station_poll_start_native())
             scene.openDoors();
 
         scene.update(frame);

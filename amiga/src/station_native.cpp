@@ -15,6 +15,23 @@
 
 extern "C" volatile uint8_t mem[65536];
 
+// ---- station_poll_start_native ----------------------------------------------
+// Faithful port of the CONSOL (53279 / $D01F) read in station_init's attract
+// loop.  The original idles the register with a write of $08 ($19FC: LDA #$08 /
+// STA CONSOL), then on every pass round the loop reads it back and breaks out to
+// the launch path when it reads exactly $06 — START down (bit0=0) with SELECT
+// and OPTION up (bits 1-2 = 1):
+//   1A0E:  LDA CONSOL      ; $D01F
+//   1A11:  CMP #$06
+//   1A13:  BEQ launch
+// On the Amiga the keyboard ISR maintains CONSOL (mem[$D01F]) from the RETURN
+// key (see Keyboard.cpp), so this reads identically to the 6502 original.
+// Returns true when START is pressed.
+extern "C" bool station_poll_start_native(void)
+{
+    return mem[0xD01F] == 0x06u;   // LDA CONSOL / CMP #$06 / BEQ
+}
+
 // ---- display_scroll ---------------------------------------------------------
 // Advances the title-text scroll pointer (mem[$1C39/$1C3A]) and increments the
 // global phase counter (mem[$008B]).  Called by station_anim_frame_native.
