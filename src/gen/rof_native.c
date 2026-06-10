@@ -106,3 +106,77 @@ void terrain_gen_3(void) {
     cpu.A = 0x00; cpu.Y = 0x00; cpu.X = x0;
     cpu.Z = (x0 == 0) ? 1 : 0; cpu.N = (x0 >> 7) & 1;
 }
+
+/* signed_mul_8x16 @ $9C97 — fixed-point signed multiply.
+ *
+ * Inputs : cpu.A      = 8-bit multiplier (treated as an unsigned fraction),
+ *          $00AA/$00AB = 16-bit signed multiplicand (lo/hi).
+ *          cpu.C      = entry carry (see note below).
+ * Outputs: $00A8/$00A9 = signed 16-bit product (lo/hi), $00AC = fractional byte,
+ *          $00AA/$00AB = |multiplicand| (negated in place when input was < 0),
+ *          $00AD = original sign byte (= input $00AB).
+ *
+ * Algorithm (faithful to the 6502): take |multiplicand| via $00AB's sign, then an
+ * 8-step shift-add where the multiplier byte lives in $00AC and is rotated out one
+ * bit per step into a 24-bit {A9:A8:AC} register; re-apply the sign at the end.
+ *
+ * ENTRY CARRY: the first `ROR $AC` ($9CB2) rotates the caller's carry into bit7 of
+ * $00AC.  That injected bit is shifted back out across the 8 rotations and never
+ * reaches an add decision, so it does NOT affect $00A8/$00A9 — but it does land in
+ * the (functionally dead) final $00AC, so we thread it to stay byte-identical.
+ *
+ * Contract: memory only.  All four call sites (a0ad/a0c4/a0e2/a0f9) reload A and
+ * the flags immediately after the call, so the 6502 exit register state is dead.
+ */
+void signed_mul_8x16(void) {
+    uint8_t c = cpu.C;                    /* entry carry feeds the first ROR $AC */
+
+    /* 6502-faithful, carry-threaded primitives over the local carry `c`. */
+    #define M_ADC(acc, v) do { uint16_t _t = (uint16_t)(acc) + (uint8_t)(v) + c; \
+                               c = (_t > 0xFF) ? 1 : 0; (acc) = (uint8_t)_t; } while (0)
+    #define M_SBC(acc, v) M_ADC(acc, (uint8_t)~(uint8_t)(v))
+    #define M_RORM(a)     do { uint8_t _v = mem[a], _nc = _v & 1; \
+                               mem[a] = (uint8_t)((_v >> 1) | (c << 7)); c = _nc; } while (0)
+    #define M_LSRM(a)     do { uint8_t _v = mem[a]; c = _v & 1; mem[a] = (uint8_t)(_v >> 1); } while (0)
+
+    mem[0x00AC] = cpu.A;                  /* 9C97: multiplier -> shift register   */
+    mem[0x00A9] = 0x00;                   /* 9C9B: clear 16-bit accumulator       */
+    mem[0x00A8] = 0x00;                   /* 9C9D                                  */
+    mem[0x00AD] = mem[0x00AB];            /* 9C9F/9CA1: save sign byte (= hi)      */
+
+    if (mem[0x00AB] & 0x80) {             /* 9CA3 BMI: negate multiplicand -> |x|  */
+        uint8_t acc;
+        c = 1;                            /* 9CA5 SEC                              */
+        acc = 0x00; M_SBC(acc, mem[0x00AA]); mem[0x00AA] = acc;   /* 9CA6-9CAA */
+        acc = 0x00; M_SBC(acc, mem[0x00AB]); mem[0x00AB] = acc;   /* 9CAC-9CB0 */
+    }
+
+    /* 9CB2: first step LOADS the accumulator (it is still zero) instead of adding. */
+    M_RORM(0x00AC);
+    if (c) { mem[0x00A8] = mem[0x00AA]; mem[0x00A9] = mem[0x00AB]; }
+
+    /* 9CBE..9D3C: 7 shift-add steps (multiplier bits 1..7). */
+    for (int step = 0; step < 7; step++) {
+        M_LSRM(0x00A9); M_RORM(0x00A8); M_RORM(0x00AC);
+        if (c) {
+            uint8_t acc;
+            c = 0;                                                    /* CLC */
+            acc = mem[0x00A8]; M_ADC(acc, mem[0x00AA]); mem[0x00A8] = acc;
+            acc = mem[0x00A9]; M_ADC(acc, mem[0x00AB]); mem[0x00A9] = acc;
+        }
+    }
+
+    /* 9D51: final shift, then re-apply the original sign. */
+    M_LSRM(0x00A9); M_RORM(0x00A8);
+    if (mem[0x00AD] & 0x80) {             /* 9D55 BIT / 9D57 BMI */
+        uint8_t acc;
+        c = 1;                            /* SEC */
+        acc = 0x00; M_SBC(acc, mem[0x00A8]); mem[0x00A8] = acc;
+        acc = 0x00; M_SBC(acc, mem[0x00A9]); mem[0x00A9] = acc;
+    }
+
+    #undef M_ADC
+    #undef M_SBC
+    #undef M_RORM
+    #undef M_LSRM
+}

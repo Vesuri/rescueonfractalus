@@ -53,6 +53,7 @@ MANUAL_FUNCS = {
 VALIDATE_FUNCS = {
     0x9D6F,  # divide_16x16 — restoring 16-bit divide (prototype target)
     0xAD5F,  # terrain_gen_3 — clear a terrain column band + object-table cells (flight leaf #1)
+    0x9C97,  # signed_mul_8x16 — fixed-point signed 8x16 multiply (flight leaf #2)
 }
 VALIDATE_SUFFIX = '__t6502'
 

@@ -111,10 +111,37 @@ static int test_terrain_gen_3(void) {
     return mem_fail;
 }
 
+/* --- signed_mul_8x16 @ $9C97: random fixed-point multiplies. ---
+ * Full random mem[] (catches stray writes); random multiplier A, 16-bit signed
+ * multiplicand $AA/$AB, and entry carry (which threads into the final $AC). */
+static int test_signed_mul_8x16(void) {
+    enum { N = 100000 };
+    static uint8_t pre[65536];
+    int mem_fail = 0, cpu_diff = 0, printed = 0;
+
+    for (int t = 0; t < N; t++) {
+        for (int i = 0; i < 65536; i++) pre[i] = (uint8_t)(xs() & 0xFF);
+        pre[0x00AA] = (uint8_t)(xs() & 0xFF);   /* multiplicand lo */
+        pre[0x00AB] = (uint8_t)(xs() & 0xFF);   /* multiplicand hi (sign) */
+        Cpu6502 c = zero_cpu();
+        c.A = (uint8_t)(xs() & 0xFF);           /* multiplier */
+        c.C = (uint8_t)(xs() & 1);              /* entry carry -> first ROR $AC */
+
+        mem_fail += diff_run("signed_mul_8x16", pre, c,
+                             signed_mul_8x16, signed_mul_8x16__t6502, t, &printed, &cpu_diff);
+    }
+
+    printf("signed_mul_8x16: %d cases, %d mem mismatch (must be 0), %d cpu diffs "
+           "(incidental — callers reload A/flags after the call)\n",
+           N, mem_fail, cpu_diff);
+    return mem_fail;
+}
+
 int main(void) {
     int fails = 0;
     fails += test_divide_16x16();
     fails += test_terrain_gen_3();
+    fails += test_signed_mul_8x16();
 
     printf("\n%s\n", fails == 0
         ? "PASS — all native reimplementations are memory-equivalent to their 6502 oracles."
