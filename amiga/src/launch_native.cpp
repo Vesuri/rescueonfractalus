@@ -216,3 +216,14 @@ extern "C" uint8_t launch_planet_step_native(void)
     }
     return 1u;
 }
+
+// During the planet zoom the Atari VBI keeps dispatching scroll_terrain_columns
+// via the $0089 branch ($5367), so the starfield keeps drifting up — but with
+// $0089 == 2 (< 4) the routine takes the scroll-only path (shift up by one
+// scanline, NO new dots appended).  launch_planet_step_native runs only every
+// other frame; this scroll must run EVERY frame to match the VBI cadence.
+extern "C" void launch_planet_scroll_native(void)
+{
+    cpu.A = mem[0x0089];                          // == 2: A < 4 -> $6AEE scroll-only branch
+    scroll_terrain_columns();                     // $6AEE
+}

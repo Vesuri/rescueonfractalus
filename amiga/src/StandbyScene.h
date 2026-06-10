@@ -42,6 +42,14 @@ private:
     void startDoors();                   // door-scroll state (display_setup $63DC)
     void buildGaugeSprite();             // $0D98 strip -> gaugeSprite lines
 
+    // Stars/space starfield: the 3 Atari players P0/P2/P3 ($0C32/$0E32/$0F32),
+    // scrolled + sparsely seeded by the genuine scroll_terrain_columns ($6AEE),
+    // rendered as Amiga hardware sprites 4/5/6.  (P1 = $0D32 is the throttle gauge
+    // player and stays on sprite 2; sprite 3 would share the gauge's colour
+    // registers, so the stars use sprites 4/5/6 for an independent grey COLPM.)
+    Sprite*  starSprite[3] = { nullptr, nullptr, nullptr };
+    void buildStarSprites();             // $0C32/$0E32/$0F32 player buffers -> star sprites
+
     // Launch state lives in mem[] now: the door-open progress is the $008A
     // scroll counter (decremented by the native scroll_terrain_dl via the $5367
     // dispatcher), and the ring animates once $0088 is armed.  `launched` only

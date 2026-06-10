@@ -50,6 +50,7 @@ extern "C" volatile uint8_t g_tunRowLo, g_tunRowHi;            // row extent of 
 extern "C" void launch_stars_init_native(void);                // $64C8: stars setup (mode-D $1000 viewport)
 extern "C" uint8_t launch_stars_step_native(void);             // $6557: one scroll step; 0 when -> planet
 extern "C" uint8_t launch_planet_step_native(void);            // $6574: one planet-zoom step; 0 when done
+extern "C" void    launch_planet_scroll_native(void);          // $6AEE scroll-only: keep starfield drifting
 
 extern "C" volatile uint8_t mem[65536];
 
@@ -162,6 +163,43 @@ void StandbyScene::buildGaugeSprite()
     }
 }
 
+// ---- starfield sprites -------------------------------------------------------
+// During the stars phase display_setup positions players P0/P2/P3 as a sparse
+// scrolling starfield (game_sub_6B47 $6B47: POKEY RANDOM, 1/32 chance of a dot
+// from table $6B5F = [$80,$20,$04,$01]; scroll_terrain_columns $6AEE shifts each
+// player up one scanline/frame and appends a new bottom byte).  The genuine
+// transpiled scroll_terrain_columns already maintains those player buffers in
+// mem[], so we just map the 89-byte visible strip ($..32..$..8A, player scanlines
+// $32..$8A) of each into an Amiga sprite.  Each Atari player bit → 2 Amiga lores
+// px (matches the gauge mapping); a single 1-bit star dot lands at one of 4 sub-x.
+static const uint16_t kStarSrc[3]  = { 0x0C32, 0x0E32, 0x0F32 };  // P0, P2, P3
+// First-guess Amiga X: the mode-D viewport's visible window is the central 40 of
+// 48 bytes → Atari colour clock $32 maps to the left display edge (0x81), scale 2
+// (320 px / 160 cc).  HPOSP0=$38, HPOSP2=$8E, HPOSP3=$B8 (display_setup $64F3-$6503).
+static const uint16_t kStarX[3]    = { 0x81 + (0x38 - 0x32) * 2,    // P0 = 141
+                                       0x81 + (0x8E - 0x32) * 2,    // P2 = 313
+                                       0x81 + (0xB8 - 0x32) * 2 };  // P3 = 397
+static const int       kStarRows   = 89;   // visible strip $..32..$..8A ($59 bytes)
+
+void StandbyScene::buildStarSprites()
+{
+    for (int c = 0; c < 3; c++) {
+        uint16_t* d = starSprite[c]->data() + 2;   // skip the 2 control words
+        const uint8_t* src = (const uint8_t*)&mem[kStarSrc[c]];
+        for (int i = 0; i < kStarRows; i++) {
+            uint8_t v = src[i];
+            // Double each set player bit to 2 Amiga px: player bit b (b7 = leftmost)
+            // → sprite word bits (2b+1, 2b).  All 4 star sub-positions ($80/$20/$04/
+            // $01 = bits 7/5/2/0) land inside the 16 px sprite this way.
+            uint16_t w = 0;
+            for (int b = 0; b < 8; b++)
+                if (v & (1u << b)) w |= (uint16_t)(3u << (2 * b));
+            d[i * 2]     = w;        // plane A (colour bit 0 = pen 01)
+            d[i * 2 + 1] = 0x0000;   // plane B
+        }
+    }
+}
+
 // ---- copper list builder -----------------------------------------------------
 void StandbyScene::buildCopperList(CopperList* cl, uint16_t frame)
 {
@@ -221,13 +259,25 @@ void StandbyScene::buildCopperList(CopperList* cl, uint16_t frame)
     // Sprite 2 = throttle gauge bar (vobj player strip), only once the launch
     // begins (its data is built from $0D98 from then on); 3..7 stay null.
     cl->showSprite(idx, 2, launchPhase != kLaunchNone ? *gaugeSprite : *nullSprite); idx += 2;
-    for (uint16_t s = 3; s <= 7; s++) {
-        cl->showSprite(idx, s, *nullSprite); idx += 2;
-    }
+    // Sprite 3 stays null (it shares the gauge's colour registers).  Sprites 4/5/6
+    // carry the starfield (players P0/P2/P3) during the stars + planet phases.
+    const bool stars = (launchPhase == kLaunchStars || launchPhase == kLaunchPlanet);
+    cl->showSprite(idx, 3, *nullSprite); idx += 2;
+    cl->showSprite(idx, 4, stars ? *starSprite[0] : *nullSprite); idx += 2;
+    cl->showSprite(idx, 5, stars ? *starSprite[1] : *nullSprite); idx += 2;
+    cl->showSprite(idx, 6, stars ? *starSprite[2] : *nullSprite); idx += 2;
+    cl->showSprite(idx, 7, *nullSprite); idx += 2;
     // Gauge bar colour (sprite pair 2/3, colour 01 = COLOR21 = $1AA).  The
     // original ramps player 1's colour through the $4DEA table as it fills,
     // ending at $D6 = #560; launch_gauge_step_native tracks that in $00DE.
     d[idx++] = copperMove(0x1AA, fadeColor(atariToOCS(mem[0x00DE]), f));
+    // Star colour: COLPM (mem[$02C0]) faded in 0→$0C grey (display_setup $6555).
+    // Sprites 4/5 share COLOR25 ($1B2); sprites 6/7 share COLOR29 ($1BA).
+    if (stars) {
+        const uint16_t starCol = fadeColor(atariToOCS(mem[0x02C0]), f);
+        d[idx++] = copperMove(0x1B2, starCol);   // COLOR25 (sprite pair 4/5 pen 01)
+        d[idx++] = copperMove(0x1BA, starCol);   // COLOR29 (sprite pair 6/7 pen 01)
+    }
 
     // ---- terrain region -------------------------------------------------------
     // Wait until the end of the previous line (in the right border / H-blank).
@@ -388,6 +438,15 @@ void StandbyScene::initialize()
     nullSprite = Sprite::allocate(0);
     gaugeSprite = Sprite::allocate(57);    // throttle bar: 57 vobj-strip rows ($0D98..$0DD0)
     if (!leftPost || !rightPost || !nullSprite || !gaugeSprite) return;
+    // Starfield sprites (P0/P2/P3): 89-row strips, all at the windscreen top
+    // (player scanline $32 → Amiga Y = kTerrainLine, the +36 offset that maps the
+    // gauge strip $0D98/scanline $98 to Amiga Y 0x2c+144).
+    for (int c = 0; c < 3; c++) {
+        starSprite[c] = Sprite::allocate(kStarRows);
+        if (!starSprite[c]) return;
+        starSprite[c]->setX(kStarX[c]);
+        starSprite[c]->setY(kTerrainLine);
+    }
     // Player 1 is the throttle gauge: original HPOSP1 = mem[$00B5] = $BE, single-
     // line PMG strip at $0D98 (P1+$98).  The Atari-HPOS / PM-scanline -> Amiga-pixel
     // transform isn't 1:1 (wide-playfield crop + DIWSTRT), so the on-screen XY here
@@ -606,6 +665,7 @@ void StandbyScene::startStars()
 {
     launchPhase   = kLaunchStars;
     launch_stars_init_native();   // $64C8-$6552 setup + $1000 row-addr table (clears $1000)
+    for (int i = 0; i < 4; i++) mem[0x02C0 + (uint16_t)i] = 0u;  // $6555: COLPM fade starts at 0
     viewportActive    = true;     // viewport now decodes mem[$1000] as mode-D 2bpp
     viewportForceFull = true;     // first decode must clear the stale door image (the
                                   // shadow would otherwise match the freshly-cleared $1000)
@@ -625,7 +685,9 @@ void StandbyScene::startStars()
 void StandbyScene::startPlanet()
 {
     launchPhase = kLaunchPlanet;
-    for (int i = 0; i < 4; i++) mem[0x02C0 + (uint16_t)i] = 0u;   // $6557-$6567
+    // (The $6555-$6567 COLPM ramp belongs to the stars setup — it fades the star
+    // players in to $0C, not a planet-start clear; we leave $02C0-3 at $0C here so
+    // the starfield stays lit behind the zooming planet, matching the Atari.)
     mem[0x0014] = 0u;                                              // $6574 frame gate
     planetTick  = 0;
 }
@@ -672,10 +734,17 @@ void StandbyScene::update(uint16_t frame)
     } else if (launchPhase == kLaunchStars) {
         // Scroll the fractal terrain-column buffers each frame until the scroll
         // accumulator marks the phase done ($0089 drops below 4 → planet).
+        // Fade the star players in (display_setup $6555: COLPM 0→$0C over 13 frames).
+        if (mem[0x02C0] < 0x0Cu) {
+            uint8_t cv = (uint8_t)(mem[0x02C0] + 1u);
+            for (int i = 0; i < 4; i++) mem[0x02C0 + (uint16_t)i] = cv;
+        }
         if (launch_stars_step_native() == 0)
             startPlanet();
     } else if (launchPhase == kLaunchPlanet) {
-        // Planet zoom runs every other frame ($6578: $0014 >= 2 gate).
+        // Planet zoom runs every other frame ($6578: $0014 >= 2 gate), but the
+        // starfield keeps drifting up every frame (the VBI's $0089=2 scroll-only path).
+        launch_planet_scroll_native();
         planetTick ^= 1u;
         if (!planetRisen && planetTick && launch_planet_step_native() == 0)
             planetRisen = true;   // planet fully risen — display_setup would hand
@@ -719,6 +788,10 @@ void StandbyScene::update(uint16_t frame)
     }
 
     if (launchPhase != kLaunchNone) buildGaugeSprite();
+    // Starfield: the player buffers $0C32/$0E32/$0F32 are scrolled+seeded by
+    // launch_stars_step_native (scroll_terrain_columns) during the stars phase and
+    // sit static (no re-scroll) through the planet zoom, so map them both phases.
+    if (launchPhase == kLaunchStars || launchPhase == kLaunchPlanet) buildStarSprites();
 
     uint8_t next = 1 - active;
     buildCopperList(copperLists[next], frame);
@@ -926,4 +999,5 @@ void StandbyScene::shutdown()
     delete rightPost;     rightPost     = nullptr;
     delete nullSprite;    nullSprite    = nullptr;
     delete gaugeSprite;   gaugeSprite   = nullptr;
+    for (int c = 0; c < 3; c++) { delete starSprite[c]; starSprite[c] = nullptr; }
 }
