@@ -45,3 +45,34 @@ void platform_poll_events(void) {
 }
 
 } /* extern "C" */
+
+/* ---------------------------------------------------------------------------
+   Test-only headless platform for the native-reimplementation validation
+   harness (tools/validate_native.c).  The harness links the platform objects
+   but never creates a window; it needs a Platform whose hwRead routes the
+   POKEY RANDOM register ($D20A) to the LFSR so RANDOM-reading terrain routines
+   can be diffed, with a seedable LFSR so both runs share an identical stream.
+   None of this is referenced by the real game build.
+   --------------------------------------------------------------------------- */
+namespace {
+struct HeadlessPlatform : Platform {
+    void    setInterrupt(void (*)(void)) override {}
+    int     framesPerSecond() override { return 50; }
+    void    renderFrame() override {}
+    int     loadImage(const char*) override { return -1; }
+    uint8_t hwRead(uint16_t addr) override {
+        return addr == 0xD20A ? pokeyRandomStep() : 0x00;
+    }
+};
+} /* namespace */
+
+extern "C" {
+
+void platform_test_init_headless(void) {
+    if (!platform) platform = new HeadlessPlatform();
+}
+
+void     platform_test_seed_rng(uint32_t s) { if (platform) platform->rngSeed(s); }
+uint32_t platform_test_get_rng(void)        { return platform ? platform->rngGet() : 0; }
+
+} /* extern "C" */

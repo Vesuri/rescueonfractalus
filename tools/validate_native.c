@@ -24,6 +24,14 @@
 static uint32_t rng = 0x9D6F1234u;
 static uint32_t xs(void) { uint32_t x = rng; x ^= x << 13; x ^= x >> 17; x ^= x << 5; return rng = x; }
 
+/* Test-only platform bridge (platform_cbridge.cpp): a headless Platform whose
+   hwRead routes POKEY RANDOM ($D20A) to a seedable LFSR.  Seeding both runs of
+   a case identically gives them the same RANDOM stream so RANDOM-reading
+   terrain routines diff deterministically. */
+void     platform_test_init_headless(void);
+void     platform_test_seed_rng(uint32_t s);
+uint32_t platform_test_get_rng(void);
+
 /* Fill a 64 KB buffer with random bytes, 32 bits at a time (4x fewer PRNG calls
    than a per-byte loop — the dominant cost of the full-random-mem tests). */
 static void fill_random(uint8_t *buf) {
@@ -43,11 +51,17 @@ static int diff_run(const char *name, const uint8_t *pre, Cpu6502 pre_cpu,
                     int t, int *printed, int *cpu_diff_cases) {
     static uint8_t ref_mem[65536];
 
+    /* Give both runs an identical POKEY RANDOM ($D20A) stream.  Harmless for
+       routines that never read it.  17-bit nonzero (0 is an LFSR lockup). */
+    uint32_t rseed = (xs() & 0x1FFFF); if (rseed == 0) rseed = 1;
+
+    platform_test_seed_rng(rseed);
     memcpy((void *)mem, pre, 65536); cpu = pre_cpu;
     t6502();
     memcpy(ref_mem, (void *)mem, sizeof ref_mem);
     Cpu6502 ref_cpu = cpu;
 
+    platform_test_seed_rng(rseed);
     memcpy((void *)mem, pre, 65536); cpu = pre_cpu;
     native();
 
@@ -206,6 +220,8 @@ static int test_ring_push_0719(void) {
 }
 
 int main(void) {
+    platform_test_init_headless();   /* enable seedable RANDOM ($D20A) for both runs */
+
     int fails = 0;
     fails += test_divide_16x16();
     fails += test_terrain_gen_3();
