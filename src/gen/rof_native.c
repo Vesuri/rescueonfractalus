@@ -468,3 +468,78 @@ void build_view_transform_matrix(void) {
         cpu.C = c & 1;
     }
 }
+
+/* setup_projection_params @ $AC93 — per-frame projection/view setup.
+ *
+ * Builds {$0088:$0087}={$2888:$2887}>>4 and {$008A:$0089}={$288A:$2889}>>4
+ * (16-bit logical >>4); sign-extends/<<2 the pitch delta {$0034:$0033} into
+ * {$008C:$008B} (clamped to $FF when $0034>=$40); forms $0092=$2886<<2; calls
+ * compute_heading_sincos and loads the sin/cos view vector into $00A0-$00A3;
+ * derives the row step {$00A4:$00A5} = signed({$0024:$0023})>>1, the span seed
+ * $00A6 = 6 - ({$0028:$0029}<<2 hi), and clamps an altitude index to $2822 in 0..8.
+ *
+ * Faithful transliteration: carry is threaded through a local `c` (the result
+ * bytes $0092/$00A6 depend on it).  The PHA;PLA pair is replayed against the
+ * 6502 stack (it leaves the pushed $0024 byte at mem[$0100+S]) for byte-identity.
+ * Native compute_heading_sincos leaves carry untouched (matches the 6502 here).
+ * Contract: memory only (the sole caller, terrain_gen_1, reloads A via build_view).
+ */
+void setup_projection_params(void) {
+    uint8_t A, c = cpu.C;
+    #define LSRA()  do { c = A & 1; A = (uint8_t)(A >> 1); } while (0)
+    #define RORM(a) do { uint8_t v = mem[a], nc = v & 1; mem[a] = (uint8_t)((v >> 1) | (c << 7)); c = nc; } while (0)
+    #define ASLM(a) do { uint8_t v = mem[a]; c = v >> 7; mem[a] = (uint8_t)(v << 1); } while (0)
+    #define ROLA()  do { uint8_t nc = A >> 7; A = (uint8_t)((A << 1) | c); c = nc; } while (0)
+    #define ROLM(a) do { uint8_t v = mem[a], nc = v >> 7; mem[a] = (uint8_t)((v << 1) | c); c = nc; } while (0)
+    #define RORA()  do { uint8_t nc = A & 1; A = (uint8_t)((A >> 1) | (c << 7)); c = nc; } while (0)
+
+    A = mem[0x2887]; mem[0x0087] = A;            /* {0088:0087} = {2888:2887} >> 4 */
+    A = mem[0x2888];
+    LSRA(); RORM(0x0087); LSRA(); RORM(0x0087);
+    LSRA(); RORM(0x0087); LSRA(); RORM(0x0087);
+    mem[0x0088] = A;
+
+    A = mem[0x2889]; mem[0x0089] = A;            /* {008A:0089} = {288A:2889} >> 4 */
+    A = mem[0x288A];
+    LSRA(); RORM(0x0089); LSRA(); RORM(0x0089);
+    LSRA(); RORM(0x0089); LSRA(); RORM(0x0089);
+    mem[0x008A] = A;
+
+    mem[0x008B] = mem[0x0033];                   /* {008C:008B} = sign/<<2 of {0034:0033} */
+    A = mem[0x0034];
+    c = (A >= 0x40) ? 1 : 0;                     /* CMP #$40 */
+    if (A >= 0x40) { mem[0x008C] = 0xFF; }       /* >=$40: clamp hi to $FF (negative) */
+    else { ASLM(0x008B); ROLA(); ROLM(0x008B); ROLA(); mem[0x008C] = A; }
+
+    A = mem[0x2886]; ROLA(); ROLA();             /* $0092 = $2886 <<2 (carry-threaded) */
+    mem[0x0092] = A;
+
+    compute_heading_sincos();
+    mem[0x00A0] = mem[0x2809]; mem[0x00A1] = mem[0x280A];   /* sin/cos view vector */
+    mem[0x00A2] = mem[0x280B]; mem[0x00A3] = mem[0x280C];
+
+    mem[0x00A6] = mem[0x0029];                   /* $00A6 = 6 - ({0028:0029}<<2 hi) */
+    A = mem[0x0028]; ROLA(); ROLM(0x00A6); ROLA(); ROLM(0x00A6);
+    A = 0x06; c = 1;                             /* SEC; SBC $00A6 */
+    { uint16_t t = (uint16_t)A + (uint8_t)~mem[0x00A6] + c; c = t >> 8; A = (uint8_t)t; }
+    mem[0x00A6] = A;
+
+    A = mem[0x0024];                             /* {00A4:00A5} = signed({0024:0023})>>1 */
+    mem[0x0100 | cpu.S] = A; cpu.S--;            /* PHA (leaves the byte at $0100+S) */
+    c = (A >= 0x80) ? 1 : 0;                     /* CMP #$80 -> sign bit into carry */
+    RORA(); mem[0x00A4] = A;                     /* ROR A (arithmetic >>1, hi) */
+    A = mem[0x0023]; RORA(); mem[0x00A5] = A;    /* ROR A (lo, carry from hi) */
+    c = 0;                                       /* CLC */
+    cpu.S++; A = mem[0x0100 | cpu.S];            /* PLA -> A = original $0024 */
+    { uint16_t t = (uint16_t)A + 0x04 + c; c = t >> 8; A = (uint8_t)t; }   /* ADC #$04 */
+    if (A & 0x80) A = 0x00;                      /* BPL: negative -> 0 */
+    else if (A >= 0x09) A = 0x08;                /* else clamp >=9 -> 8 */
+    mem[0x2822] = A;
+
+    #undef LSRA
+    #undef RORM
+    #undef ASLM
+    #undef ROLA
+    #undef ROLM
+    #undef RORA
+}

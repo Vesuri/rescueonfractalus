@@ -62,6 +62,7 @@ VALIDATE_FUNCS = {
     0x55FF,  # ring_push_0719 — push to event ring + restore caller X (flight leaf #7)
     0x9BA0,  # compute_heading_sincos — sin/cos of 16-bit heading (flight mid #1)
     0xA0A3,  # build_view_transform_matrix — rotated view components (flight mid #2)
+    0xAC93,  # setup_projection_params — per-frame projection/view setup (flight mid #3)
 }
 VALIDATE_SUFFIX = '__t6502'
 
