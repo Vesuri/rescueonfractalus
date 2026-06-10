@@ -39,6 +39,7 @@ extern "C" void update_cockpit_digits_native(void);                      // $3FF
 extern "C" void saucer_anim_tick_native(void);               // $4229: cockpit counter animation
 extern "C" void sound_event_dispatch_native(void);              // $5367: ring ($0088) vs door scroll ($008A)
 extern "C" void draw_tunnel_rings_native(void);                 // $65FB: draw concentric tunnel rings into $2000
+extern "C" void launch_show_standby_native(void);               // display_setup $635F: "STAND BY..." + score
 
 extern "C" volatile uint8_t mem[65536];
 
@@ -404,6 +405,10 @@ void StandbyScene::openDoors()
 {
     if (launched) return;
     launched = true;
+
+    // Cinematic effect 1: switch the message line from the attract title scroll
+    // to "STAND BY..." + score (display_setup $635F, genuine 6502 routines).
+    launch_show_standby_native();
 
     // Set the launch state the way display_setup ($5F1D) does, then let the $5367
     // dispatcher drive it.  The doors open FIRST (ring gate $0088 = 0, so the tunnel
