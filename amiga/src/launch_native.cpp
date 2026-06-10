@@ -3,7 +3,7 @@
 // The post-START launch cinematic ("STAND BY" + score, throttle gauge, doors,
 // tunnel) runs LINEARLY inside the Atari display_setup ($5F1D), which draws each
 // phase then busy-waits (wait_frames_60) before the next.  The Amiga is frame-
-// driven (StandbyScene::update per VBI), so we reproduce display_setup as a set
+// driven (RescueOnFractalus::update per VBI), so we reproduce display_setup as a set
 // of one-shot phase steps invoked at the right moments rather than one blocking
 // routine.
 //
@@ -54,7 +54,7 @@ void draw_player3_object(void);                 // $42A7: the planet as a scaled
 //   $63A1  STA $0627 (A=0)
 //   $63AF  render_bcd_counter  (writes "     0")
 //
-// Setting $060B=$23 makes StandbyScene::update() stop calling the attract title
+// Setting $060B=$23 makes RescueOnFractalus::update() stop calling the attract title
 // writer (copy_text_block_to_screen_native is gated on $060B==0), so the
 // RESCUE/(C)1985 toggle ceases and "STAND BY..." persists.
 extern "C" void launch_show_standby_native(void)

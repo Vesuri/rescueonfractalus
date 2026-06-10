@@ -27,7 +27,7 @@
 #include "../framework/Bitmap.h"
 #include "../framework/Palette.h"
 #include "../framework/Sprite.h"
-#include "StandbyScene.h"
+#include "RescueOnFractalus.h"
 #include "PaulaAudio.h"
 #include "AtariZp.h"      // zp:: named Atari memory offsets
 
@@ -127,7 +127,7 @@ static void animatePalette(Palette* palette, uint16_t frame)
 }
 
 // ---- sprite data (staircase slant, see commit history for derivation) --------
-void StandbyScene::fillSpriteData(Sprite* s, bool isRight)
+void RescueOnFractalus::fillSpriteData(Sprite* s, bool isRight)
 {
     uint16_t* d = s->data() + 2;
     for (int i = 0; i < kHT; i++) {
@@ -150,7 +150,7 @@ void StandbyScene::fillSpriteData(Sprite* s, bool isRight)
 // Build the player-1 throttle bar from the vobj strip mem[$0D98..].  Each strip
 // byte is one Atari player scanline ($F0 = leftmost 4px on); we map a filled row
 // to the leftmost 4 px (colour 01) of an Amiga sprite line.
-void StandbyScene::buildGaugeSprite()
+void RescueOnFractalus::buildGaugeSprite()
 {
     // 57-row strip $0D98..$0DD0 (the original vobj player extent).  Each Atari
     // player bit is one colour clock = 2 Amiga lores px, so the 4-bit $F0 segment
@@ -181,7 +181,7 @@ static const uint16_t kStarX[3]    = { 0x81 + (0x38 - 0x32) * 2,    // P0 = 141
                                        0x81 + (0xB8 - 0x32) * 2 };  // P3 = 397
 static const int       kStarRows   = 89;   // visible strip $..32..$..8A ($59 bytes)
 
-void StandbyScene::buildStarSprites()
+void RescueOnFractalus::buildStarSprites()
 {
     for (int c = 0; c < 3; c++) {
         uint16_t* d = starSprite[c]->data() + 2;   // skip the 2 control words
@@ -201,7 +201,7 @@ void StandbyScene::buildStarSprites()
 }
 
 // ---- copper list builder -----------------------------------------------------
-void StandbyScene::buildCopperList(CopperList* cl, uint16_t frame)
+void RescueOnFractalus::buildCopperList(CopperList* cl, uint16_t frame)
 {
     animatePalette(palette, frame);
     uint16_t f = palette->fade();
@@ -421,7 +421,7 @@ void StandbyScene::buildCopperList(CopperList* cl, uint16_t frame)
 }
 
 // ---- public interface --------------------------------------------------------
-void StandbyScene::initialize()
+void RescueOnFractalus::initialize()
 {
     Palette::initialize();
     palette       = new Palette(kTitlePalette, 4, /*fade*/0);
@@ -533,7 +533,7 @@ void StandbyScene::initialize()
     decodeTunnelRings();
 }
 
-void StandbyScene::decodeTunnelRings()
+void RescueOnFractalus::decodeTunnelRings()
 {
     if (!tunnelBitmap) return;
     draw_tunnel_rings_native();   // $65FB: render concentric frames into mem[$2000]
@@ -547,7 +547,7 @@ void StandbyScene::decodeTunnelRings()
 // even passing the full new row extent [botAfter..topAfter] here touches only the
 // outline bytes — covering the vertical pieces a horizontal-only band would miss,
 // while staying far under one PAL frame (GTIA-10 byte→plane decode via tables).
-void StandbyScene::decodeTunnelField(int rowLo, int rowHi)
+void RescueOnFractalus::decodeTunnelField(int rowLo, int rowHi)
 {
     if (!tunnelBitmap) return;
     if (rowLo < 0) rowLo = 0;
@@ -572,7 +572,7 @@ void StandbyScene::decodeTunnelField(int rowLo, int rowHi)
 // central 40 displayed (+4 crop, as terrain/cockpit); each mode-D row is 2 display
 // scanlines, so 43*2 = 86 = kTerrainHeight.  mode-D is 2bpp: byte = 4 pixels (2
 // bits each) -> Amiga colour 0-3 (plane1=bit0, plane2=bit1); plane3 unused (0).
-void StandbyScene::renderViewportModeD()
+void RescueOnFractalus::renderViewportModeD()
 {
     if (!terrainBitmap) return;
     static const int kStride = 48;   // wide-playfield bytes/row
@@ -598,7 +598,7 @@ void StandbyScene::renderViewportModeD()
     }
 }
 
-void StandbyScene::openDoors()
+void RescueOnFractalus::openDoors()
 {
     if (launchPhase != kLaunchNone) return;   // launch already begun
     // NOTE: `launched` is set in startDoors, NOT here — during the gauge phase the
@@ -620,7 +620,7 @@ void StandbyScene::openDoors()
 
 // startDoors: the door-scroll launch state (display_setup $63DC-$63FB), run once
 // the gauge has filled.  Drives the existing native scroll_terrain_dl dispatcher.
-void StandbyScene::startDoors()
+void RescueOnFractalus::startDoors()
 {
     launchPhase = kLaunchDoors;
     launched    = true;   // doors now scrolling: buildCopperList tracks the gap via $008A
@@ -661,7 +661,7 @@ void StandbyScene::startDoors()
 // tunnel ring auto-clears $0088.  Switches the viewport to ANTIC mode-D from
 // $1000 (rendered by renderViewportModeD); the per-frame scroll is driven by
 // launch_stars_step_native from update().
-void StandbyScene::startStars()
+void RescueOnFractalus::startStars()
 {
     launchPhase   = kLaunchStars;
     launch_stars_init_native();   // $64C8-$6552 setup + $1000 row-addr table (clears $1000)
@@ -682,7 +682,7 @@ void StandbyScene::startStars()
 // already seeded the object table and the $1000 row-addr table; here we clear the
 // player-colour shadows ($6557 loop) and reset the frame gate, then the planet
 // loop (launch_planet_step_native) zooms the sphere into $1000 each step.
-void StandbyScene::startPlanet()
+void RescueOnFractalus::startPlanet()
 {
     launchPhase = kLaunchPlanet;
     // (The $6555-$6567 COLPM ramp belongs to the stars setup — it fades the star
@@ -692,7 +692,7 @@ void StandbyScene::startPlanet()
     planetTick  = 0;
 }
 
-void StandbyScene::update(uint16_t frame)
+void RescueOnFractalus::update(uint16_t frame)
 {
     // Launch cinematic: drive the doors + tunnel via the genuine $5367 priority
     // dispatcher.  While $0088 == 0 it scrolls the door DL ($008A: $2B->0, every
@@ -839,7 +839,7 @@ static const uint8_t kNibbleColour[16] = {
     3, 3, 3, 3, 3, 3, 3  // 9-15 → bg
 };
 
-void StandbyScene::render()
+void RescueOnFractalus::render()
 {
     // ---- terrain / door view ------------------------------------------------
     // Only re-render when terrainDirty (set in initialize(); cleared here).
@@ -986,7 +986,7 @@ void StandbyScene::render()
     }
 }
 
-void StandbyScene::shutdown()
+void RescueOnFractalus::shutdown()
 {
     for (int i = 0; i < 2; i++) { delete copperLists[i]; copperLists[i] = nullptr; }
     paula_audio_shutdown();

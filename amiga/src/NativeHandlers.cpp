@@ -1,4 +1,4 @@
-// Native 68000 translations of Atari VBI handler fragments used by StandbyScene.
+// Native 68000 translations of Atari VBI handler fragments used by RescueOnFractalus.
 //
 // The full vbi_handler_game ($52D7) and vbi_handler_2 ($4FF5) do many things:
 // hardware register writes (DMACTL, CHBASE, COLPF0-3, HPOSP, PRIOR), display-list
@@ -273,10 +273,10 @@ static void advance_history_6a4d(void)
 static void draw_symmetric_span_loop(void);   // fwd decl (defined below)
 
 // Set by advance_message_column when it draws into the GTIA field at $2000, with the
-// touched row range, so StandbyScene re-decodes ONLY those rows of the tunnel bitmap
+// touched row range, so RescueOnFractalus re-decodes ONLY those rows of the tunnel bitmap
 // (a black ring band) — not the whole 86-row field, which costs > 1 PAL frame on the
-// 68000 and freezes the ring cycle.  Cleared by StandbyScene after it re-decodes.
-// Report the row extent [$009F..$009E] the just-drawn black frame spans; StandbyScene
+// 68000 and freezes the ring cycle.  Cleared by RescueOnFractalus after it re-decodes.
+// Report the row extent [$009F..$009E] the just-drawn black frame spans; RescueOnFractalus
 // re-decodes that extent of the field, but PER-BYTE shadow-gated, so only the thin
 // frame outline (horizontal edges + vertical side pieces) is actually re-decoded —
 // fast enough to stay under one PAL frame (no tearing, stays synced to the palette).
@@ -388,7 +388,7 @@ static void scroll_terrain_dl(void)
 // that runs exactly ONE action.  $0088 (ring) outranks $008A (door scroll), so the
 // two are sequential — the doors scroll with a static tunnel while $0088==0, and
 // the ring only animates once $0088 is armed (after the doors finish opening; the
-// hand-off lives in StandbyScene::update).  The $008C/clear_slot and the unused
+// hand-off lives in RescueOnFractalus::update).  The $008C/clear_slot and the unused
 // $0089/$008B branches are documented but inert in the Standby scene.
 extern "C" void sound_event_dispatch_native(void)
 {
@@ -516,7 +516,7 @@ extern "C" void tunnel_ring_arm_native(void)
 // draw_frame_pattern_seq @ $65FB: draw 20 concentric frame groups (thickness from
 // the $6E0F table, pen cycling 1..6), then the vanishing-point verticals.
 // draw_tunnel_rings_native clears the $2000 GTIA field first so the rings land on
-// a black background (pen 0); StandbyScene decodes the result into the tunnel bitmap.
+// a black background (pen 0); RescueOnFractalus decodes the result into the tunnel bitmap.
 extern "C" void draw_tunnel_rings_native(void)
 {
     for (uint16_t i = 0; i < 86u * 46u; i++) mem[0x2000 + i] = 0u;   // clear screen field

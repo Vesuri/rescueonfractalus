@@ -215,7 +215,7 @@ extern "C" void station_sub_1F48_native(void)
 
 // ---- station_setup -----------------------------------------------------
 // Mirrors the one-time initialisation that station_init performs before
-// entering its attract loop.  Called once from StandbyScene::initialize().
+// entering its attract loop.  Called once from RescueOnFractalus::initialize().
 // Hardware register writes (bus_write calls) are no-ops on the Amiga; we only
 // care about the mem[] state mutations and the two data-setup functions.
 

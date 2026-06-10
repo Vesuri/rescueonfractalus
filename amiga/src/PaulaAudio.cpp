@@ -199,7 +199,7 @@ void paula_audio_init(void)
     for (int i = 0; i < 16; i++) pokey[i] = 0;
     lfsr_state = 0x1FFFFu;
 
-    // SFX is initialised by the mem[$0090] gate in StandbyScene::update():
+    // SFX is initialised by the mem[$0090] gate in RescueOnFractalus::update():
     // the snapshot has $0090=1, so the first update() call resets $073C/$073A
     // to start the sequence from note 0 — no replay needed here.
 
