@@ -56,6 +56,10 @@ VALIDATE_FUNCS = {
     0x9C97,  # signed_mul_8x16 — fixed-point signed 8x16 multiply (flight leaf #2)
     0x9C55,  # sine_table_lookup — quarter-wave sine/cos table lookup (flight leaf #3a)
     0x9BDB,  # trig_interp_lookup — sine interpolation angle..angle+1 (flight leaf #3b)
+    0xAD2B,  # compute_row_xspans — per-row horizontal span endpoints (flight leaf #4)
+    0xAC42,  # check_target_in_window — 2-consecutive-hit target latch (flight leaf #5)
+    0x4E58,  # obj_table_set_active — promote first eligible object slot (flight leaf #6)
+    0x55FF,  # ring_push_0719 — push to event ring + restore caller X (flight leaf #7)
 }
 VALIDATE_SUFFIX = '__t6502'
 
@@ -857,6 +861,11 @@ def main():
     decl_lines.append('/* Wrappers for cross-function branch/JMP entry points */')
     for addr, wname in sorted(wrapper_names.items()):
         decl_lines.append(f'void {wname}(void);')
+        # A validated mid-function entry: its split body is emitted under the
+        # `__t6502` twin (translate_func, def_name) with the plain name native;
+        # declare the twin too so the validation harness can reach it.
+        if addr in VALIDATE_FUNCS:
+            decl_lines.append(f'void {wname}{VALIDATE_SUFFIX}(void);')
     # Stubs for unlisted JSR targets.
     decl_lines.append('')
     decl_lines.append('/* Stubs for JSR targets without a Ghidra-detected function */')

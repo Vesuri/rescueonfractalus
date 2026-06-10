@@ -273,3 +273,126 @@ void trig_interp_lookup(void) {
         #undef T_SHL
     }
 }
+
+/* compute_row_xspans @ $AD2B — per-row horizontal span endpoints.
+ *
+ * Inputs : $00A6 = centre seed, $00A4/$00A5 = 16-bit step (int/frac).
+ * Outputs: $271E = seed; $271F..$272D (15 entries) = seed + cumulative +step
+ *          going up; $270E..$271D (16 entries) = seed - cumulative step going
+ *          down.  $00B5 = fractional accumulator (scratch).
+ *
+ * Two fixed-point ramps from the seed: a 16-bit {A4:A5} step is accumulated in
+ * {value:B5}, the integer byte stored per row.  Contract: memory only (the
+ * caller reloads A immediately; the exit X=$FF is dead).
+ */
+void compute_row_xspans(void) {
+    mem[0x271E] = mem[0x00A6];                 /* AD2B: centre seed */
+
+    uint8_t b5 = 0x00; mem[0x00B5] = 0x00;     /* AD30-AD32 */
+    for (uint8_t x = 0; x < 0x0F; x++) {       /* AD34: upward, X=0..0x0E */
+        uint16_t t = (uint16_t)b5 + mem[0x00A5];          /* CLC; B5 += A5 */
+        uint8_t c = (t > 0xFF) ? 1 : 0; b5 = (uint8_t)t; mem[0x00B5] = b5;
+        t = (uint16_t)mem[0x271E + x] + mem[0x00A4] + c;  /* (271E+X) + A4 + carry */
+        mem[0x271F + x] = (uint8_t)t;
+    }
+
+    b5 = 0x00; mem[0x00B5] = 0x00;             /* AD48-AD4A */
+    for (int xi = 0x0F; xi >= 0; xi--) {       /* AD4C: downward, X=0x0F..0 */
+        uint8_t x = (uint8_t)xi;
+        uint16_t t = (uint16_t)b5 + (uint8_t)~mem[0x00A5] + 1;   /* SEC; B5 -= A5 */
+        uint8_t c = (t > 0xFF) ? 1 : 0; b5 = (uint8_t)t; mem[0x00B5] = b5;
+        t = (uint16_t)mem[0x270F + x] + (uint8_t)~mem[0x00A4] + c;  /* (270F+X) - A4 - borrow */
+        mem[0x270E + x] = (uint8_t)t;
+    }
+}
+
+/* check_target_in_window @ $AC42 — latch a target index after 2 consecutive hits.
+ *
+ * Gated on $0036==0 and $004A!=0.  When $0063 is negative it range-tests the
+ * screen coords $2912/$2913 (a wrap-around [0x0C,0xF5) band); otherwise it tests
+ * world coords $0064 in [0x48,0x98) and $0066 in [0x24,0x60).  A passing frame
+ * increments the hit counter $2837; the second consecutive hit latches the index
+ * ($2910 in the negative branch, else 1) into $2838 and resets the counter.  Any
+ * failing frame resets $2837.  Contract: memory only (caller reloads A).
+ */
+void check_target_in_window(void) {
+    if (mem[0x0036] != 0) return;              /* AC42 BNE end */
+    if (mem[0x004A] == 0) return;              /* AC46 BEQ end */
+
+    uint8_t x = 0;
+    int latch = 0, reset = 0;
+
+    if (mem[0x0063] & 0x80) {                  /* AC4A BPL -> positive; here negative */
+        uint8_t a = mem[0x2912];
+        if (a >= 0x0C && a < 0xF5) reset = 1;
+        else {
+            a = mem[0x2913];
+            if (a >= 0x0C && a < 0xF5) reset = 1;
+            else { x = mem[0x2910]; latch = 1; }       /* AC64 */
+        }
+    } else {                                   /* AC6A: $0063 >= 0 */
+        uint8_t a = mem[0x0064];
+        if (a < 0x48 || a >= 0x98) reset = 1;
+        else {
+            a = mem[0x0066];
+            if (a < 0x24 || a >= 0x60) reset = 1;
+            else { x = 0x01; latch = 1; }              /* AC7E */
+        }
+    }
+
+    if (latch) {                               /* AC80 */
+        uint8_t cnt = (uint8_t)(mem[0x2837] + 1); mem[0x2837] = cnt;
+        if (cnt < 0x02) return;                /* AC88 BCC end (counter kept) */
+        mem[0x2838] = x;                       /* AC8A latch, then fall through to reset */
+        reset = 1;
+    }
+    if (reset) mem[0x2837] = 0x00;             /* AC8D */
+}
+
+/* obj_table_set_active @ $4E58 — activate the first eligible object slot.
+ *
+ * Scans all 256 entries of the object-flag table $0A00 in steps of $43 (which,
+ * being coprime to 256, visits every index exactly once).  The first entry that
+ * equals 1 AND whose index does not appear in the active-index table $2276..$22A2
+ * (45 entries) is promoted to $80 and the scan returns.  $281F holds the current
+ * index (scratch).  Contract: memory only (caller reloads A; exit X dead).
+ */
+void obj_table_set_active(void) {
+    uint8_t idx = 0x00;
+    do {
+        mem[0x281F] = idx;                     /* 4E5A */
+        if (mem[0x0A00 + idx] == 0x01) {       /* 4E5D-4E62 */
+            int found = 0;
+            for (int xi = 0x2C; xi >= 0; xi--) /* 4E66: search active table */
+                if (mem[0x2276 + xi] == mem[0x281F]) { found = 1; break; }
+            if (!found) { mem[0x0A00 + idx] = 0x80; return; }   /* 4E71-4E79 */
+        }
+        idx = (uint8_t)(idx + 0x43);           /* 4E7A: CLC; ADC #$43; TAX */
+    } while (idx != 0x00);                     /* 4E81 BNE */
+}
+
+/* ring_push_0719 @ $55FF — push A into the $0719 ring buffer; restore caller's X.
+ *
+ * The tail of game_sub_55FC: store A at $0719+head, decrement the head modulo
+ * $20 (wrapping $00->$1F, clamping a head >= $20 to $1F first), then PULL the X
+ * that game_sub_55FC saved off the 6502 stack (PLA; TAX) before its RTS.
+ *
+ * Inputs : cpu.A = byte to push, $0073 = ring head, and the 6502 stack
+ *          (cpu.S + mem[$0100+S]) holding the saved X.
+ * Outputs: mem[$0719+head], $0073 = new head; cpu.A = cpu.X = pulled value;
+ *          cpu.S incremented.  UNLIKE the other leaves the CPU state IS part of
+ *          the contract here — the pulled X is handed back to game_sub_55FC's
+ *          caller — so the harness checks cpu.A/X/S, not just mem[].
+ */
+void ring_push_0719(void) {
+    uint8_t x = mem[0x0073];                   /* 55FF LDX $0073 */
+    if (x >= 0x20) x = 0x1F;                   /* 5601 CPX #$20; BCC; LDX #$1F  */
+    mem[0x0719 + x] = cpu.A;                    /* 5607 STA $0719,X */
+    x = (uint8_t)(x - 1);                       /* 560A DEX */
+    if (x & 0x80) x = 0x1F;                     /* 560B BPL; LDX #$1F (wrap $FF) */
+    mem[0x0073] = x;                            /* 560F STX $0073 */
+
+    cpu.S++; cpu.A = mem[0x0100 | cpu.S];       /* 5611 PLA */
+    cpu.X = cpu.A;                              /* 5612 TAX */
+    cpu.N = (cpu.A >> 7) & 1; cpu.Z = (cpu.A == 0) ? 1 : 0;
+}

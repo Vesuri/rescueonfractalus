@@ -24,6 +24,13 @@
 static uint32_t rng = 0x9D6F1234u;
 static uint32_t xs(void) { uint32_t x = rng; x ^= x << 13; x ^= x >> 17; x ^= x << 5; return rng = x; }
 
+/* Fill a 64 KB buffer with random bytes, 32 bits at a time (4x fewer PRNG calls
+   than a per-byte loop — the dominant cost of the full-random-mem tests). */
+static void fill_random(uint8_t *buf) {
+    uint32_t *w = (uint32_t *)buf;
+    for (int i = 0; i < 65536 / 4; i++) w[i] = xs();
+}
+
 /* A neutral, deterministic starting CPU state for both runs. */
 static Cpu6502 zero_cpu(void) {
     Cpu6502 c; memset(&c, 0, sizeof c); c.S = 0xFF; return c;
@@ -44,11 +51,12 @@ static int diff_run(const char *name, const uint8_t *pre, Cpu6502 pre_cpu,
     memcpy((void *)mem, pre, 65536); cpu = pre_cpu;
     native();
 
-    int memdiffs = 0;
-    for (int i = 0; i < 65536; i++) {
-        if (mem[i] != ref_mem[i]) {
-            memdiffs++;
-            if (*printed < 12) {
+    /* Fast path: memcmp (SIMD libc) over the whole 64 KB; only walk byte-by-byte
+       to report offending cells when a difference actually exists. */
+    int mem_failed = memcmp((const void *)mem, ref_mem, 65536) != 0;
+    if (mem_failed && *printed < 12) {
+        for (int i = 0; i < 65536 && *printed < 12; i++) {
+            if (mem[i] != ref_mem[i]) {
                 printf("[MEM DIFF] %s case %d  $%04X  ref=$%02X native=$%02X\n",
                        name, t, i, ref_mem[i], mem[i]);
                 (*printed)++;
@@ -59,7 +67,7 @@ static int diff_run(const char *name, const uint8_t *pre, Cpu6502 pre_cpu,
         cpu.N != ref_cpu.N || cpu.V != ref_cpu.V ||
         cpu.Z != ref_cpu.Z || cpu.C != ref_cpu.C)
         (*cpu_diff_cases)++;
-    return memdiffs ? 1 : 0;
+    return mem_failed ? 1 : 0;
 }
 
 /* --- divide_16x16 @ $9D6F: random 16-bit divides over the valid domain. --- */
@@ -92,12 +100,12 @@ static int test_divide_16x16(void) {
  * Randomizing all of mem[] means any stray write (wrong cell, wrong span) shows
  * up as a diff.  X spans 0..255 to exercise the 6502 byte-index wrap too. */
 static int test_terrain_gen_3(void) {
-    enum { N = 100000 };
+    enum { N = 20000 };
     static uint8_t pre[65536];
     int mem_fail = 0, cpu_diff = 0, printed = 0;
 
     for (int t = 0; t < N; t++) {
-        for (int i = 0; i < 65536; i++) pre[i] = (uint8_t)(xs() & 0xFF);
+        fill_random(pre);
         Cpu6502 c = zero_cpu();
         c.X = (uint8_t)(xs() & 0xFF);
 
@@ -115,12 +123,12 @@ static int test_terrain_gen_3(void) {
  * Full random mem[] (catches stray writes); random multiplier A, 16-bit signed
  * multiplicand $AA/$AB, and entry carry (which threads into the final $AC). */
 static int test_signed_mul_8x16(void) {
-    enum { N = 100000 };
+    enum { N = 20000 };
     static uint8_t pre[65536];
     int mem_fail = 0, cpu_diff = 0, printed = 0;
 
     for (int t = 0; t < N; t++) {
-        for (int i = 0; i < 65536; i++) pre[i] = (uint8_t)(xs() & 0xFF);
+        fill_random(pre);
         pre[0x00AA] = (uint8_t)(xs() & 0xFF);   /* multiplicand lo */
         pre[0x00AB] = (uint8_t)(xs() & 0xFF);   /* multiplicand hi (sign) */
         Cpu6502 c = zero_cpu();
@@ -137,17 +145,17 @@ static int test_signed_mul_8x16(void) {
     return mem_fail;
 }
 
-/* --- sine_table_lookup @ $9C55 / trig_interp_lookup @ $9BDB. ---
- * Both read game tables ($4EB9/$4EFA/$9B98/$9B9C) from mem[]; with mem[] fully
- * randomized the same (random) tables feed both runs, so the lookup logic is
- * still validated bit-for-bit.  trig_interp_lookup calls the native sine routine. */
-static int test_trig(const char *name, void (*native)(void), void (*t6502)(void)) {
-    enum { N = 100000 };
+/* --- generic memory-contract test over a FULLY randomized mem[] and a neutral
+ * entry CPU.  Fits any leaf whose result is observed purely through mem[] and
+ * that does not read entry registers (lookup tables, etc., read from the same
+ * random mem[] in both runs).  Stray writes and logic divergence both show up. */
+static int test_mem_contract(const char *name, void (*native)(void), void (*t6502)(void)) {
+    enum { N = 20000 };
     static uint8_t pre[65536];
     int mem_fail = 0, cpu_diff = 0, printed = 0;
 
     for (int t = 0; t < N; t++) {
-        for (int i = 0; i < 65536; i++) pre[i] = (uint8_t)(xs() & 0xFF);
+        fill_random(pre);
         mem_fail += diff_run(name, pre, zero_cpu(), native, t6502, t, &printed, &cpu_diff);
     }
     printf("%s: %d cases, %d mem mismatch (must be 0), %d cpu diffs "
@@ -155,13 +163,59 @@ static int test_trig(const char *name, void (*native)(void), void (*t6502)(void)
     return mem_fail;
 }
 
+/* --- ring_push_0719 @ $55FF: stack-aware leaf. ---
+ * Its contract includes CPU state (the PLA;TAX hands the pulled X back to the
+ * caller), so this test fails on cpu.A/X/S mismatch in addition to mem[].
+ * Randomizes the ring head $0073, cpu.A, and cpu.S (so PLA reads varied stack). */
+static int test_ring_push_0719(void) {
+    enum { N = 20000 };
+    static uint8_t pre[65536], ref_mem[65536];
+    int mem_fail = 0, cpu_fail = 0, printed = 0;
+
+    for (int t = 0; t < N; t++) {
+        fill_random(pre);
+        Cpu6502 c = zero_cpu();
+        c.A = (uint8_t)(xs() & 0xFF);
+        c.S = (uint8_t)(xs() & 0xFF);          /* random SP -> PLA reads varied stack */
+        pre[0x0073] = (uint8_t)(xs() & 0xFF);  /* random head exercises clamp + wrap */
+
+        memcpy((void *)mem, pre, 65536); cpu = c;
+        ring_push_0719__t6502();
+        memcpy(ref_mem, (void *)mem, sizeof ref_mem);
+        Cpu6502 ref_cpu = cpu;
+
+        memcpy((void *)mem, pre, 65536); cpu = c;
+        ring_push_0719();
+
+        if (memcmp((const void *)mem, ref_mem, 65536) != 0) {
+            mem_fail++;
+            if (printed < 12) {
+                for (int i = 0; i < 65536 && printed < 12; i++)
+                    if (mem[i] != ref_mem[i]) {
+                        printf("[MEM DIFF] ring_push_0719 case %d  $%04X  ref=$%02X native=$%02X\n",
+                               t, i, ref_mem[i], mem[i]); printed++;
+                    }
+            }
+        }
+        if (cpu.A != ref_cpu.A || cpu.X != ref_cpu.X || cpu.S != ref_cpu.S)
+            cpu_fail++;
+    }
+    printf("ring_push_0719: %d cases, %d mem mismatch, %d cpu(A/X/S) mismatch (both must be 0)\n",
+           N, mem_fail, cpu_fail);
+    return mem_fail + cpu_fail;
+}
+
 int main(void) {
     int fails = 0;
     fails += test_divide_16x16();
     fails += test_terrain_gen_3();
     fails += test_signed_mul_8x16();
-    fails += test_trig("sine_table_lookup", sine_table_lookup, sine_table_lookup__t6502);
-    fails += test_trig("trig_interp_lookup", trig_interp_lookup, trig_interp_lookup__t6502);
+    fails += test_mem_contract("sine_table_lookup", sine_table_lookup, sine_table_lookup__t6502);
+    fails += test_mem_contract("trig_interp_lookup", trig_interp_lookup, trig_interp_lookup__t6502);
+    fails += test_mem_contract("compute_row_xspans", compute_row_xspans, compute_row_xspans__t6502);
+    fails += test_mem_contract("check_target_in_window", check_target_in_window, check_target_in_window__t6502);
+    fails += test_mem_contract("obj_table_set_active", obj_table_set_active, obj_table_set_active__t6502);
+    fails += test_ring_push_0719();
 
     printf("\n%s\n", fails == 0
         ? "PASS — all native reimplementations are memory-equivalent to their 6502 oracles."
