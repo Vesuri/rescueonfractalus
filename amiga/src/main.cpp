@@ -38,9 +38,12 @@ static struct Interrupt vbiServer;
 
 static uint32_t vbiHandler()
 {
-    mem[0x0080]++;               // RTCLOK[2] — primary frame tick
-    mem[0x0014]++;               // RTCLOK[1] — secondary tick
-    if (!mem[0x0014]) mem[0x0013]++;  // RTCLOK[0] — carry
+    // Mirror vbi_handler_1 ($53CC): bump RTCLOK ($0014 low, carry into $0013).
+    // (Do NOT touch $0080 — that is sync_flag, which the 6502 drawing/scroll
+    // routines reuse as the $80/$81 zero-page pointer pair; incrementing it here
+    // each frame corrupted mid-draw pointer writes, e.g. dropped tunnel pixels.)
+    mem[0x0014]++;               // RTCLOK_LOW
+    if (!mem[0x0014]) mem[0x0013]++;  // RTCLOK_MID carry
     vbiCount++;
     return 0;
 }
