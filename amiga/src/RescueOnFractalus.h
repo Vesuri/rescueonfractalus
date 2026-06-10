@@ -23,6 +23,11 @@ public:
     // The terrain image (green/dots/LEVEL 04 = the "closed doors") splits from
     // the middle, halves sliding apart, revealing the tunnel in the gap.
     void openDoors();
+
+    // Dev shortcut (F key): skip the whole launch cinematic and jump straight to
+    // the in-game flight stage.  flight_init_native re-initialises the game state,
+    // so this is safe to call from the standby screen or mid-cinematic.
+    void skipToFlight();
 private:
     // Launch phases, mirroring display_setup's linear walk: after START we fill
     // the throttle gauge, open the doors, run the tunnel (ring cycle) until it
@@ -30,11 +35,13 @@ private:
     // step of the cinematic body $5F1D..$6594 driven one-per-frame.
     enum LaunchPhase : uint8_t {
         kLaunchNone, kLaunchGauge, kLaunchDoors, kLaunchTunnel,
-        kLaunchStars, kLaunchPlanet
+        kLaunchStars, kLaunchPlanet, kFlight
     };
     uint8_t  launchPhase  = kLaunchNone;
     void startStars();                   // display_setup $64C8-$6552 stars setup
     void startPlanet();                  // display_setup $6555-$6574 planet setup
+    void startFlight();                  // game_entry $3E12-$3EB8 flight init (after planet)
+    uint16_t flightFrameLines = 0;       // F0 perf probe: scanlines spent in flight_frame_native()
     uint16_t gaugeTick     = 0;          // frame counter pacing the gauge fill
     uint8_t  planetTick    = 0;          // every-other-frame gate for the planet zoom ($6578)
     bool     planetRisen   = false;      // set once the planet loop finishes ($1002==$FF)
@@ -66,7 +73,7 @@ private:
     void fillSpriteData(Sprite* s, bool isRight);
     void decodeTunnelRings();   // draw $65FB rings into $2000, decode to tunnelBitmap
     void decodeTunnelField(int rowLo, int rowHi);  // decode mem[$2000] rows [lo,hi] -> tunnelBitmap
-    void renderViewportModeD(); // decode CHANGED mem[$1000] bytes (stars/planet) as mode-D -> terrainBitmap
+    void renderViewportModeD(uint16_t srcBase, int stride, int rows); // decode CHANGED mode-D bytes -> terrainBitmap (stars: $1000/48/43; flight: $1070/96)
 
     // Stars/planet phase: when true, the viewport region renders mem[$1000] as an
     // ANTIC mode-D 2bpp field (43 rows x 48 bytes, central 40 shown) instead of the

@@ -33,6 +33,9 @@ extern "C" void sfx_voice_tick_native(void);
 // Native port of station_init's CONSOL ($D01F) read: true while START is down.
 extern "C" bool station_poll_start_native(void);
 
+// Set by the keyboard ISR on the 'F' key-down edge: skip to the flight stage.
+extern "C" volatile uint8_t g_skipToFlight;
+
 // ---- VBI interrupt server ---------------------------------------------------
 // Mirrors the Atari RTCLOK increment from vbi_handler_1 ($53CC).
 // DLIST/colour writes are handled by the Copper on the Amiga side.
@@ -162,6 +165,13 @@ int main()
         // original 6502 attract loop used.
         if (station_poll_start_native())
             scene.openDoors();
+
+        // Dev shortcut: 'F' skips the cinematic and jumps straight to flight (the
+        // keyboard ISR sets g_skipToFlight on the key-down edge).
+        if (g_skipToFlight) {
+            g_skipToFlight = 0;
+            scene.skipToFlight();
+        }
 
         scene.update(frame);
         scene.render();

@@ -51,6 +51,9 @@ extern "C" void launch_stars_init_native(void);                // $64C8: stars s
 extern "C" uint8_t launch_stars_step_native(void);             // $6557: one scroll step; 0 when -> planet
 extern "C" uint8_t launch_planet_step_native(void);            // $6574: one planet-zoom step; 0 when done
 extern "C" void    launch_planet_scroll_native(void);          // $6AEE scroll-only: keep starfield drifting
+extern "C" void    flight_init_native(void);                   // game_entry $3E12-$3EB8 flight init
+extern "C" void    flight_reset_parity_native(void);           // reset double-buffer pass parity
+extern "C" uint8_t flight_frame_native(void);                  // one flight heavy pass; returns $0072 (==2 done)
 
 extern "C" volatile uint8_t mem[65536];
 
@@ -262,8 +265,11 @@ void RescueOnFractalus::buildCopperList(CopperList* cl, uint16_t frame)
     // Sprite 3 stays null (it shares the gauge's colour registers).  Sprites 4/5/6
     // carry the starfield (players P0/P2/P3) during the stars + planet phases.
     const bool stars = (launchPhase == kLaunchStars || launchPhase == kLaunchPlanet);
+    // F0 flight perf probe: in flight, sprite 4 (idle starfield sprite) is reused
+    // as a vertical bar whose length ∝ flight_frame_native()'s scanline cost.
+    const bool flightProbe = (launchPhase == kFlight);
     cl->showSprite(idx, 3, *nullSprite); idx += 2;
-    cl->showSprite(idx, 4, stars ? *starSprite[0] : *nullSprite); idx += 2;
+    cl->showSprite(idx, 4, (stars || flightProbe) ? *starSprite[0] : *nullSprite); idx += 2;
     cl->showSprite(idx, 5, stars ? *starSprite[1] : *nullSprite); idx += 2;
     cl->showSprite(idx, 6, stars ? *starSprite[2] : *nullSprite); idx += 2;
     cl->showSprite(idx, 7, *nullSprite); idx += 2;
@@ -273,7 +279,9 @@ void RescueOnFractalus::buildCopperList(CopperList* cl, uint16_t frame)
     d[idx++] = copperMove(0x1AA, fadeColor(atariToOCS(mem[0x00DE]), f));
     // Star colour: COLPM (mem[$02C0]) faded in 0→$0C grey (display_setup $6555).
     // Sprites 4/5 share COLOR25 ($1B2); sprites 6/7 share COLOR29 ($1BA).
-    if (stars) {
+    if (flightProbe) {
+        d[idx++] = copperMove(0x1B2, 0xF0F);     // COLOR25 = magenta probe bar (sprite 4)
+    } else if (stars) {
         const uint16_t starCol = fadeColor(atariToOCS(mem[0x02C0]), f);
         d[idx++] = copperMove(0x1B2, starCol);   // COLOR25 (sprite pair 4/5 pen 01)
         d[idx++] = copperMove(0x1BA, starCol);   // COLOR29 (sprite pair 6/7 pen 01)
@@ -572,16 +580,21 @@ void RescueOnFractalus::decodeTunnelField(int rowLo, int rowHi)
 // central 40 displayed (+4 crop, as terrain/cockpit); each mode-D row is 2 display
 // scanlines, so 43*2 = 86 = kTerrainHeight.  mode-D is 2bpp: byte = 4 pixels (2
 // bits each) -> Amiga colour 0-3 (plane1=bit0, plane2=bit1); plane3 unused (0).
-void RescueOnFractalus::renderViewportModeD()
+// srcBase/stride/rows parameterise the source: stars/planet = ($1000, 48, 43);
+// flight = ($1070, 96, 43) — flight's mode-D rows are stride 96 (two 48-byte
+// double-buffer halves; offset 0 is the displayed half) LMS'd from $1070 (= the
+// $1010 row-addr base + one off-screen scroll-margin row).  The +4 crop centres
+// the displayed 40 of 48 either way; the per-byte viewportShadow is shared (the
+// stride/base change between phases re-fills it via viewportForceFull).
+void RescueOnFractalus::renderViewportModeD(uint16_t srcBase, int stride, int rows)
 {
     if (!terrainBitmap) return;
-    static const int kStride = 48;   // wide-playfield bytes/row
     static const int kCrop   = 4;    // central 40 of 48 (centres content)
     const bool full = viewportForceFull;
     viewportForceFull = false;
     uint8_t* base = (uint8_t*)terrainBitmap->data;
-    for (int row = 0; row < 43; row++) {
-        const uint8_t* src = (const uint8_t*)&mem[0x1000 + row * kStride + kCrop];
+    for (int row = 0; row < rows; row++) {
+        const uint8_t* src = (const uint8_t*)&mem[srcBase + row * stride + kCrop];
         for (int b = 0; b < 40; b++) {
             // Per-byte shadow: the planet sphere only grows a few bytes/frame, so
             // re-decode just the bytes that changed (each = 2 scanlines × 3 planes).
@@ -616,6 +629,17 @@ void RescueOnFractalus::openDoors()
     launchPhase = kLaunchGauge;
     gaugeTick   = 0;
     launch_gauge_init_native();
+}
+
+// skipToFlight: dev shortcut (F key) — jump straight to the in-game flight stage
+// from anywhere in the standby/cinematic.  startFlight() runs the genuine flight
+// init (game_entry $3E12-$3EB8), which re-initialises the game state, so no
+// cinematic state is required first.  No-op once already flying.
+void RescueOnFractalus::skipToFlight()
+{
+    if (launchPhase == kFlight) return;
+    launched = true;          // mark the cinematic as begun (stops the attract title toggle)
+    startFlight();
 }
 
 // startDoors: the door-scroll launch state (display_setup $63DC-$63FB), run once
@@ -675,7 +699,7 @@ void RescueOnFractalus::startStars()
     // which show tunnelBitmap) for a frame in the stars palette.  The live display is
     // still showing tunnelBitmap here, so this rewrite of terrainBitmap is invisible
     // until the switch takes effect next vblank — no mid-screen tearing.
-    renderViewportModeD();
+    renderViewportModeD(0x1000, 48, 43);
 }
 
 // startPlanet: the planet setup (display_setup $6555-$6574).  The stars setup
@@ -690,6 +714,21 @@ void RescueOnFractalus::startPlanet()
     // the starfield stays lit behind the zooming planet, matching the Atari.)
     mem[0x0014] = 0u;                                              // $6574 frame gate
     planetTick  = 0;
+}
+
+// startFlight: hand off from the launch cinematic to the in-game flight loop.
+// On the Atari, display_setup ($5F1D) RTSes into game_entry, which runs the
+// flight init ($3E12-$3EB8) then loops at $3EBA.  flight_init_native ports the
+// mem[]-state subset (and repoints the terrain row-addr table from the stars'
+// $1000/stride-48 to flight's $1010/stride-96).  The viewport stays active and
+// is force-redecoded once (stride/base changed → the per-byte shadow is stale).
+void RescueOnFractalus::startFlight()
+{
+    flight_reset_parity_native();
+    flight_init_native();         // game_entry $3E12-$3EB8 (mem[] subset; HW writes skipped)
+    launchPhase       = kFlight;
+    viewportActive    = true;
+    viewportForceFull = true;     // re-decode the whole viewport (now $1070 stride 96)
 }
 
 void RescueOnFractalus::update(uint16_t frame)
@@ -746,9 +785,19 @@ void RescueOnFractalus::update(uint16_t frame)
         // starfield keeps drifting up every frame (the VBI's $0089=2 scroll-only path).
         launch_planet_scroll_native();
         planetTick ^= 1u;
-        if (!planetRisen && planetTick && launch_planet_step_native() == 0)
-            planetRisen = true;   // planet fully risen — display_setup would hand
-                                  // off to flight (not yet ported on the Amiga)
+        if (planetTick && launch_planet_step_native() == 0) {
+            planetRisen = true;   // planet fully risen — display_setup RTSes to flight
+            startFlight();        // hand off to the in-game flight loop (game_entry $3E12-)
+        }
+    } else if (launchPhase == kFlight) {
+        // One flight main-loop heavy pass per frame (the Atari runs two passes per
+        // loop iteration for double buffering; one Amiga frame = one pass).  F0 perf
+        // probe: bracket the call with the raster beam position so we can see how
+        // much of the frame the transpiled terrain set consumes (-> top-border bar).
+        uint16_t l0 = (uint16_t)(((*vposrPointer & 1u) << 8) | (*vhposrPointer >> 8));
+        flight_frame_native();
+        uint16_t l1 = (uint16_t)(((*vposrPointer & 1u) << 8) | (*vhposrPointer >> 8));
+        flightFrameLines = (uint16_t)((l1 - l0) & 0x1FFu);
     }
 
     vbi_attract_timer_native();           // $52D7: attract timer cascade
@@ -792,6 +841,15 @@ void RescueOnFractalus::update(uint16_t frame)
     // launch_stars_step_native (scroll_terrain_columns) during the stars phase and
     // sit static (no re-scroll) through the planet zoom, so map them both phases.
     if (launchPhase == kLaunchStars || launchPhase == kLaunchPlanet) buildStarSprites();
+    // F0 perf probe: a vertical magenta bar in sprite 4 whose length ∝ the
+    // scanlines flight_frame_native() consumed (÷4 so a full PAL frame ≈ 78 of the
+    // 89 sprite rows).  Bar near full height ⇒ flight is at/over one frame.
+    if (launchPhase == kFlight && starSprite[0]) {
+        int h = (int)(flightFrameLines >> 2);
+        if (h > kStarRows) h = kStarRows;
+        uint16_t* d = starSprite[0]->data() + 2;
+        for (int i = 0; i < kStarRows; i++) { d[i * 2] = (i < h) ? 0xFFFFu : 0u; d[i * 2 + 1] = 0u; }
+    }
 
     uint8_t next = 1 - active;
     buildCopperList(copperLists[next], frame);
@@ -857,9 +915,11 @@ void RescueOnFractalus::render()
     // This matches the title region, which already crops 2 mode-6 chars (= 16cc).
     static const int kTerrainXByteOffset = 4;
     if (viewportActive) {
-        // Stars/planet: the viewport content (mem[$1000]) changes every frame as
-        // the planet zooms, so re-decode the mode-D field each render().
-        renderViewportModeD();
+        // Stars/planet (mem[$1000], stride 48) or flight (mem[$1070], stride 96 —
+        // displayed offset-0 half).  Content changes every frame, so re-decode each
+        // render(); the per-byte shadow keeps it cheap.
+        if (launchPhase == kFlight) renderViewportModeD(0x1070, 96, 43);
+        else                        renderViewportModeD(0x1000, 48, 43);
     } else if (terrainDirty) {
         terrainDirty = false;
         uint8_t* vdest = (uint8_t*)terrainBitmap->data;

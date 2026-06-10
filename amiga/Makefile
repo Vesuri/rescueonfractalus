@@ -32,8 +32,8 @@ CPP_OBJS := $(FW_OBJS) $(SRC_OBJS)
 # M5 audio slice: the 6502-converted cpu/bus core + generated audio functions.
 # Compiled as plain C (not C++), with include paths into the repo src tree.
 # --gc-sections keeps only what station_audio transitively calls.
-AUDIO_C_SRCS := $(REPO)/src/cpu/cpu.c $(REPO)/src/gen/rof_gen.c
-AUDIO_C_OBJS := obj/audio/cpu.o obj/audio/rof_gen.o
+AUDIO_C_SRCS := $(REPO)/src/cpu/cpu.c $(REPO)/src/gen/rof_gen.c $(REPO)/src/gen/rof_native.c
+AUDIO_C_OBJS := obj/audio/cpu.o obj/audio/rof_gen.o obj/audio/rof_native.o
 
 # Support runtime (freestanding CRT: program entry, memset…)
 S_OBJS   := obj/gcc8_a_support.o obj/incbin.o
@@ -109,6 +109,12 @@ obj/audio/cpu.o : $(REPO)/src/cpu/cpu.c
 
 obj/audio/rof_gen.o : $(REPO)/src/gen/rof_gen.c
 	$(info C    $< [audio — may take ~30 s])
+	@$(CC) $(AUDIO_CFLAGS) -c -o $@ "$(abspath $<)"
+
+# rof_native.c: hand-written native twins (divide_16x16, …) the transpile leaves
+# unimplemented (VALIDATE_FUNCS seam) — required once flight code references them.
+obj/audio/rof_native.o : $(REPO)/src/gen/rof_native.c
+	$(info C    $< [audio])
 	@$(CC) $(AUDIO_CFLAGS) -c -o $@ "$(abspath $<)"
 
 clean:

@@ -26,6 +26,11 @@ static const uint8_t  kConsolStart = 0x06;
 
 // RETURN rawkey code (cf. DanceDiverse3 Input.cpp: RETURN=$44, ESC=$45).
 static const uint8_t kRawReturn = 0x44;
+// 'F' rawkey ($23) — dev shortcut: skip the launch cinematic and jump straight
+// to the in-game flight stage (mirrors the SDL build booting from a flight
+// snapshot).  Polled by main.cpp via g_skipToFlight.
+static const uint8_t kRawSkipFlight = 0x23;
+extern "C" volatile uint8_t g_skipToFlight = 0;
 
 static struct Library*   s_ciaaBase    = nullptr;
 static struct Interrupt  s_kbInterrupt;
@@ -59,6 +64,8 @@ static uint32_t keyboardHandler()
     // switch the attract loop polls.
     if (raw == kRawReturn)
         mem[kConsol] = down ? kConsolStart : kConsolIdle;
+    else if (raw == kRawSkipFlight && down)
+        g_skipToFlight = 1;          // edge-triggered; main.cpp consumes + clears it
     return 0;
 }
 
