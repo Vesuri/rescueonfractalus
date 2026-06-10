@@ -24,11 +24,20 @@ public:
     // the middle, halves sliding apart, revealing the tunnel in the gap.
     void openDoors();
 private:
-    // Launch phases, mirroring display_setup's linear walk: after START we first
-    // fill the throttle gauge (vobj player strip), THEN open the doors / tunnel.
-    enum LaunchPhase : uint8_t { kLaunchNone, kLaunchGauge, kLaunchDoors };
+    // Launch phases, mirroring display_setup's linear walk: after START we fill
+    // the throttle gauge, open the doors, run the tunnel (ring cycle) until it
+    // auto-clears $0088, then the stars/space scroll and the planet zoom — each a
+    // step of the cinematic body $5F1D..$6594 driven one-per-frame.
+    enum LaunchPhase : uint8_t {
+        kLaunchNone, kLaunchGauge, kLaunchDoors, kLaunchTunnel,
+        kLaunchStars, kLaunchPlanet
+    };
     uint8_t  launchPhase  = kLaunchNone;
+    void startStars();                   // display_setup $64C8-$6552 stars setup
+    void startPlanet();                  // display_setup $6555-$6574 planet setup
     uint16_t gaugeTick     = 0;          // frame counter pacing the gauge fill
+    uint8_t  planetTick    = 0;          // every-other-frame gate for the planet zoom ($6578)
+    bool     planetRisen   = false;      // set once the planet loop finishes ($1002==$FF)
     Sprite*  gaugeSprite   = nullptr;    // player-strip throttle bar ($0D98)
     void startDoors();                   // door-scroll state (display_setup $63DC)
     void buildGaugeSprite();             // $0D98 strip -> gaugeSprite lines
@@ -48,6 +57,13 @@ private:
     void buildCopperList(CopperList* cl, uint16_t frame);
     void fillSpriteData(Sprite* s, bool isRight);
     void decodeTunnelRings();   // draw $65FB rings into $2000, decode to tunnelBitmap
+    void decodeTunnelField(int rowLo, int rowHi);  // decode mem[$2000] rows [lo,hi] -> tunnelBitmap
+    void renderViewportModeD(); // decode CHANGED mem[$1000] bytes (stars/planet) as mode-D -> terrainBitmap
+
+    // Stars/planet phase: when true, the viewport region renders mem[$1000] as an
+    // ANTIC mode-D 2bpp field (43 rows x 48 bytes, central 40 shown) instead of the
+    // GTIA-10 terrain/door image, and uses the $6CC2 DLI viewport palette.
+    bool viewportActive = false;
 
     CopperList* copperLists[2] = { nullptr, nullptr };
     Bitmap*     titleBitmap    = nullptr;
@@ -63,6 +79,18 @@ private:
     // only re-rendered when the underlying mem[] data changes.
     bool    terrainDirty = true;   // re-render terrain rows from $2000
     uint8_t titleShadow[20] = {};  // shadow of last-rendered $32B7-$32CA
+
+    // Per-byte shadow for the stars/planet mode-D viewport: renderViewportModeD
+    // re-decodes only the $1000 source bytes that changed since last frame (the
+    // planet sphere grows a few bytes/frame), not the whole 43×40 field.
+    bool    viewportForceFull = true;          // first viewport render populates all cells
+    uint8_t viewportShadow[43 * 40] = {};      // shadow of the central-40 $1000 bytes
+
+    // Per-byte shadow for the tunnel field at $2000: the exit clear draws a thin
+    // black frame outline (horizontal edges + vertical side pieces) each step, so
+    // decodeTunnelField re-decodes only the bytes that changed — covering the
+    // vertical pieces a row-band would miss, while staying well under a frame.
+    uint8_t tunnelShadow[86 * 40] = {};
 
     // Per-cell shadow caching for the cockpit (mirrors titleShadow): a single
     // changed Atari source byte re-decodes only that cell — modeD: 2 rows × 3

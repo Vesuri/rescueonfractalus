@@ -132,7 +132,9 @@ int main()
     // Enable copper + raster + sprite DMA, then let StandbyScene install its list.
     *dmaconPointer = (uint16_t)(DMAF_SETCLR | DMAF_MASTER | DMAF_COPPER | DMAF_RASTER | DMAF_SPRITE);
 
-    StandbyScene scene;
+    // static (BSS), NOT a stack local: the scene holds several KB of shadow buffers
+    // (tunnel/viewport/cockpit per-byte caches), which would overflow the program stack.
+    static StandbyScene scene;
     scene.initialize();
 
     // RETURN = START button for the launch cinematic (CIA-A SP keyboard).

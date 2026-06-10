@@ -253,18 +253,67 @@ static void advance_history_6a4d(void)
     mem[0x0679 + 0x0C] = s ? s : 0xFF;                          // BNE keep; else LDA #$FF
 }
 
-// step_accum_add_75 @ $6A38: add $75 into the accumulator; if the resulting top
-// byte ($A4) is unchanged, do nothing; otherwise store it and rotate the ring.
-// The advance_message_column call (top byte >= $90) drives scrolling message
-// text not present in the attract tunnel — unreached at this step rate, omitted.
+// advance_message_column @ $670D: the tunnel ring's "top byte >= $90" branch.
+// It is the FAITHFUL tunnel→stars trigger: each invocation steps the column
+// index $00A0 down by one and sets $0088 = $00A0 + 1, so once $00A0 wraps from
+// $00 to $FF the gate $0088 becomes 0 and the ring stops cycling — display_setup
+// then advances to the stars/space phase.  init_row_coords_9c seeds $00A0 = $13
+// (=19), so the tunnel runs for 20 threshold crossings before it ends.
+//
+//   $670D  LDY $00A0
+//   $670F  CPY #$06 / BMI $671E   ; $00A0 < 6 (signed) -> clear $08D8, else DRAW
+//   $6713  LDA $6E0F,Y / STA $0096 / JSR draw_symmetric_span_loop ($6642)
+//   $671E  (else) LDA #$00 / STA $08D8
+//   $6723  DEC $00A0 / CLC / LDA $00A0 / ADC #$01 / STA $0088
+//
+// So the GEOMETRIC clear (expanding black frames from the centre) runs for the FIRST
+// 14 crossings ($00A0 19->6); the $08D8 palette touch is only the last 6 ($00A0 5->0).
+// The draw writes black (pen $0094=0) into the GTIA field at $2000, which the Amiga
+// re-decodes (g_tunnelFieldDirty) so the rings visibly clear from the middle out.
+static void draw_symmetric_span_loop(void);   // fwd decl (defined below)
+
+// Set by advance_message_column when it draws into the GTIA field at $2000, with the
+// touched row range, so StandbyScene re-decodes ONLY those rows of the tunnel bitmap
+// (a black ring band) — not the whole 86-row field, which costs > 1 PAL frame on the
+// 68000 and freezes the ring cycle.  Cleared by StandbyScene after it re-decodes.
+// Report the row extent [$009F..$009E] the just-drawn black frame spans; StandbyScene
+// re-decodes that extent of the field, but PER-BYTE shadow-gated, so only the thin
+// frame outline (horizontal edges + vertical side pieces) is actually re-decoded —
+// fast enough to stay under one PAL frame (no tearing, stays synced to the palette).
+extern "C" volatile uint8_t g_tunnelFieldDirty = 0;
+extern "C" volatile uint8_t g_tunRowLo = 0, g_tunRowHi = 0;   // $009F .. $009E after the draw
+
+static void advance_message_column(void)
+{
+    uint8_t a0 = mem[0x00A0];
+    if ((int8_t)a0 >= 6) {                          // CPY #$06; BMI -> $00A0 >= 6 = DRAW
+        mem[0x0096] = mem[0x6E0F + a0];             // LDA $6E0F,Y; STA $0096
+        draw_symmetric_span_loop();                 // JSR $6642 (steps $009E++/$009F--)
+        g_tunRowLo = mem[0x009F];                   // full new extent (bottom .. top)
+        g_tunRowHi = mem[0x009E];
+        g_tunnelFieldDirty = 1;
+    } else {
+        mem[0x08D8] = 0u;                           // $671E: LDA #$00; STA $08D8
+    }
+    mem[0x00A0]--;                                  // DEC $00A0
+    mem[zp::vbiFlags] = (uint8_t)(mem[0x00A0] + 1u);   // CLC; LDA $00A0; ADC #$01; STA $0088
+}
+
+// step_accum_add_75 @ $6A38: add $75 into the accumulator; if the resulting top byte
+// ($A4) is unchanged, do nothing; otherwise store it, and — when the top byte >= $90
+// — step the message column (advance_message_column, the tunnel-exit clear + the
+// stars trigger), then ALWAYS rotate the ring (advance_history_6a4d).  Per the real
+// $6A38: `CMP #$90 / BCC $6A4D / JSR $670D` falls THROUGH into the rotation at $6A4D
+// — the two are additive, NOT exclusive, so the palette keeps cycling while the
+// tunnel clears.  (The earlier if/else port froze the cycle during the clear.)
 static void step_accum_add_75(void)
 {
     uint8_t a = add_multibyte_a1(0x75);
     mem[zp::scrollAccum3] = a;
     if (a == mem[zp::scrollAccumPrev]) return;     // CMP $A5; BEQ -> top byte unchanged
     mem[zp::scrollAccumPrev] = a;
-    // CMP #$90; BCS advance_message_column  (unreached in attract; omitted)
-    advance_history_6a4d();
+    if (a >= 0x90u) advance_message_column();      // CMP #$90; BCS -> JSR $670D
+    advance_history_6a4d();                        // $6A4D: ring rotation, ALWAYS runs
 }
 
 // ---- door display-list scroll: native ports of the $6953 family -------------
@@ -448,6 +497,20 @@ static void init_row_coords_9c(void)
     mem[0x009C] = 0x2E; mem[0x009D] = 0x30;
     mem[0x009E] = 0x2B; mem[0x009F] = 0x2A;
     mem[0x00A0] = 0x13;
+}
+
+// tunnel_ring_arm_native: reseed the message-column / span coordinates the way the
+// Atari tunnel setup does at $647D-$6480 (JSR init_row_coords_9c; $0094=0) just
+// before it arms $0088=1 at $64A8.  The Amiga ran init_row_coords_9c earlier (in
+// decodeTunnelRings, which left $00A0=$FF), so we re-seed here when arming the ring
+// — otherwise advance_message_column would start from $FF and never clear $0088 in
+// the expected 20 crossings.
+extern "C" void tunnel_ring_arm_native(void)
+{
+    mem[0x009C] = 0x2E; mem[0x009D] = 0x30;
+    mem[0x009E] = 0x2B; mem[0x009F] = 0x2A;
+    mem[0x00A0] = 0x13;     // 19 → 20 message-column crossings before $0088 clears
+    mem[0x0094] = 0x00;     // pen index reset ($6480)
 }
 
 // draw_frame_pattern_seq @ $65FB: draw 20 concentric frame groups (thickness from

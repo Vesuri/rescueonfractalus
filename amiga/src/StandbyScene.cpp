@@ -44,12 +44,29 @@ extern "C" void launch_gauge_init_native(void);                 // vobj strip in
 extern "C" uint8_t launch_gauge_step_native(void);              // one vobj fill step; 0 when full
 extern "C" void launch_light_doorstart_native(void);           // $63FD: bottom-left light on
 extern "C" void launch_light_all_native(void);                 // $6482: all left lights on
+extern "C" void tunnel_ring_arm_native(void);                  // $647D: reseed message-column coords
+extern "C" volatile uint8_t g_tunnelFieldDirty;                // set when advance_message_column draws into $2000
+extern "C" volatile uint8_t g_tunRowLo, g_tunRowHi;            // row extent of the expanding black clear
+extern "C" void launch_stars_init_native(void);                // $64C8: stars setup (mode-D $1000 viewport)
+extern "C" uint8_t launch_stars_step_native(void);             // $6557: one scroll step; 0 when -> planet
+extern "C" uint8_t launch_planet_step_native(void);            // $6574: one planet-zoom step; 0 when done
 
 extern "C" volatile uint8_t mem[65536];
 
 // Lookup table: byte → 16-bit doubled glyph pattern (each bit → 2 pixels).
 // Filled once in initialize(); used by title render for mode-6 1bpp doubling.
 static uint16_t kDoubleGlyph[256];
+
+// Precomputed decode tables (filled in initialize()) — convert one source byte
+// straight to its output bitplane bytes, replacing the per-byte bit loops.
+//   mode-D (2bpp, stars/planet viewport): byte = 4 pixels (2 bits) → 8 Amiga px.
+//     kModeDP1[s] = plane1 (colour bit0 of each pixel), kModeDP2[s] = plane2 (bit1).
+static uint8_t kModeDP1[256];
+static uint8_t kModeDP2[256];
+//   GTIA mode-10 (tunnel field at $2000): byte = 2 nibbles; nibble bit k → 4px.
+static uint8_t kGtia10P1[256];   // nibble bit0
+static uint8_t kGtia10P2[256];   // nibble bit1
+static uint8_t kGtia10P3[256];   // nibble bit2
 
 #include "../assets/title_pal.h"
 #include "../assets/terrain_pal.h"
@@ -262,6 +279,21 @@ void StandbyScene::buildCopperList(CopperList* cl, uint16_t frame)
 
     // ---- region WAIT: pointers first, then the 2bp->3bp switch, then colours ----
     d[idx++] = copperWait(kTerrainLine - 1, 0xE0);
+    if (viewportActive) {
+        // Stars / planet: one full-height mode-D viewport band from terrainBitmap,
+        // with the $6CC2 DLI viewport palette.  Upper zone (slot1 $6D0E): COLBK =
+        // mem[$00DC] (black space), COLPF0=$24, COLPF1=$28, COLPF2=$2A — the star /
+        // planet tones.  (The slot4 $6D67 lower-greys split near the horizon is a
+        // follow-up; one palette renders the whole viewport for now.)
+        emitBpl((uint32_t)terrainBitmap->data);
+        d[idx++] = copperMove(bplcon0, kBPLCON0_3P);
+        d[idx++] = copperMove(bpl1mod, 80);
+        d[idx++] = copperMove(bpl2mod, 80);
+        d[idx++] = copperMove(color00, fadeColor(atariToOCS(mem[0x00DC]), f));  // COLBK
+        d[idx++] = copperMove(color01, fadeColor(atariToOCS(0x24), f));         // COLPF0
+        d[idx++] = copperMove(color02, fadeColor(atariToOCS(0x28), f));         // COLPF1
+        d[idx++] = copperMove(color03, fadeColor(atariToOCS(0x2A), f));         // COLPF2
+    } else {
     emitBpl(tunnelFirst ? tun : (ta + (uint32_t)g2 * 120u));   // top half slides up (g2 rows)
     d[idx++] = copperMove(bplcon0, kBPLCON0_3P);
     d[idx++] = copperMove(bpl1mod, 80);                        // BPL1MOD = odd planes 1&3
@@ -294,6 +326,7 @@ void StandbyScene::buildCopperList(CopperList* cl, uint16_t frame)
             emitTerrCols();
         }
     }
+    }   // end !viewportActive
 
     // ---- cockpit region ------------------------------------------------------
     // The cockpit runs at 3 bitplanes (title/terrain stay 2bp): mode-4's bit-7
@@ -388,6 +421,22 @@ void StandbyScene::initialize()
         kDoubleGlyph[i] = out;
     }
 
+    // Precompute the mode-D (2bpp) and GTIA-10 (nibble) byte→bitplane decode tables.
+    for (int s = 0; s < 256; s++) {
+        uint8_t pa = 0, pc = 0;                       // mode-D: 4 pixels × 2 bits
+        for (int i = 0; i < 4; i++) {
+            uint8_t px   = (uint8_t)((s >> (6 - i * 2)) & 3u);
+            uint8_t mask = (uint8_t)(0xC0u >> (i * 2));   // 0xC0,0x30,0x0C,0x03
+            if (px & 1u) pa |= mask;
+            if (px & 2u) pc |= mask;
+        }
+        kModeDP1[s] = pa; kModeDP2[s] = pc;
+        uint8_t ph = (uint8_t)((s >> 4) & 0xF), pl = (uint8_t)(s & 0xF);   // GTIA-10
+        kGtia10P1[s] = (uint8_t)(((ph & 1) ? 0xF0u : 0u) | ((pl & 1) ? 0x0Fu : 0u));
+        kGtia10P2[s] = (uint8_t)(((ph & 2) ? 0xF0u : 0u) | ((pl & 2) ? 0x0Fu : 0u));
+        kGtia10P3[s] = (uint8_t)(((ph & 4) ? 0xF0u : 0u) | ((pl & 4) ? 0x0Fu : 0u));
+    }
+
     paula_audio_init();      // loads screen3_mem.bin into mem[] (Standby scene snapshot)
 
     // Patch mem[] values that are mid-animation in the snapshot.
@@ -429,24 +478,74 @@ void StandbyScene::decodeTunnelRings()
 {
     if (!tunnelBitmap) return;
     draw_tunnel_rings_native();   // $65FB: render concentric frames into mem[$2000]
-    uint8_t* vdest = (uint8_t*)tunnelBitmap->data;
-    for (int row = 0; row < (int)kTerrainHeight; row++) {
+    decodeTunnelField(0, (int)kTerrainHeight - 1);
+}
+
+// decodeTunnelField: decode rows [rowLo..rowHi] of the GTIA-10 field at mem[$2000]
+// into the tunnel bitmap, PER-BYTE shadow-gated so only the bytes that actually
+// changed are re-decoded.  The exit clear draws a thin black frame OUTLINE each step
+// (horizontal edges full-width + left/right VERTICAL pieces down the inner rows), so
+// even passing the full new row extent [botAfter..topAfter] here touches only the
+// outline bytes — covering the vertical pieces a horizontal-only band would miss,
+// while staying far under one PAL frame (GTIA-10 byte→plane decode via tables).
+void StandbyScene::decodeTunnelField(int rowLo, int rowHi)
+{
+    if (!tunnelBitmap) return;
+    if (rowLo < 0) rowLo = 0;
+    if (rowHi > (int)kTerrainHeight - 1) rowHi = (int)kTerrainHeight - 1;
+    uint8_t* bm = (uint8_t*)tunnelBitmap->data;
+    for (int row = rowLo; row <= rowHi; row++) {
         const uint8_t* src = (const uint8_t*)&mem[0x2000 + row * 46 + 4];  // +4: wide-field crop
-        uint8_t* p1 = vdest; uint8_t* p2 = vdest + 40; uint8_t* p3 = vdest + 80;
+        uint8_t* p1 = bm + row * 120; uint8_t* p2 = p1 + 40; uint8_t* p3 = p1 + 80;
+        uint8_t* shadow = &tunnelShadow[row * 40];
         for (int b = 0; b < 40; b++) {
-            uint8_t ph = (uint8_t)((src[b] >> 4) & 0xF), pl = (uint8_t)(src[b] & 0xF);
-            p1[b] = (uint8_t)(((ph & 1) ? 0xF0u : 0u) | ((pl & 1) ? 0x0Fu : 0u));
-            p2[b] = (uint8_t)(((ph & 2) ? 0xF0u : 0u) | ((pl & 2) ? 0x0Fu : 0u));
-            p3[b] = (uint8_t)(((ph & 4) ? 0xF0u : 0u) | ((pl & 4) ? 0x0Fu : 0u));
+            uint8_t s = src[b];
+            if (s == shadow[b]) continue;          // unchanged byte — skip
+            shadow[b] = s;
+            p1[b] = kGtia10P1[s]; p2[b] = kGtia10P2[s]; p3[b] = kGtia10P3[s];
         }
-        vdest += 120;
+    }
+}
+
+// renderViewportModeD: decode the stars/planet viewport buffer mem[$1000] as an
+// ANTIC mode-D field into terrainBitmap.  Layout (verified vs launch_5_planet.a8s
+// row-addr table $073D/$0793): 43 mode-D rows, 48 bytes/row (WIDE playfield), the
+// central 40 displayed (+4 crop, as terrain/cockpit); each mode-D row is 2 display
+// scanlines, so 43*2 = 86 = kTerrainHeight.  mode-D is 2bpp: byte = 4 pixels (2
+// bits each) -> Amiga colour 0-3 (plane1=bit0, plane2=bit1); plane3 unused (0).
+void StandbyScene::renderViewportModeD()
+{
+    if (!terrainBitmap) return;
+    static const int kStride = 48;   // wide-playfield bytes/row
+    static const int kCrop   = 4;    // central 40 of 48 (centres content)
+    const bool full = viewportForceFull;
+    viewportForceFull = false;
+    uint8_t* base = (uint8_t*)terrainBitmap->data;
+    for (int row = 0; row < 43; row++) {
+        const uint8_t* src = (const uint8_t*)&mem[0x1000 + row * kStride + kCrop];
+        for (int b = 0; b < 40; b++) {
+            // Per-byte shadow: the planet sphere only grows a few bytes/frame, so
+            // re-decode just the bytes that changed (each = 2 scanlines × 3 planes).
+            int sh = row * 40 + b;
+            uint8_t s = src[b];
+            if (!full && s == viewportShadow[sh]) continue;
+            viewportShadow[sh] = s;
+            uint8_t pa = kModeDP1[s], pc = kModeDP2[s];       // precomputed decode
+            for (int scan = 0; scan < 2; scan++) {            // mode-D = 2 scanlines/row
+                uint8_t* p1 = base + (row * 2 + scan) * 120;  // 3bp interleaved = 120 B/row
+                p1[b] = pa; p1[40 + b] = pc; p1[80 + b] = 0;
+            }
+        }
     }
 }
 
 void StandbyScene::openDoors()
 {
-    if (launched) return;
-    launched = true;
+    if (launchPhase != kLaunchNone) return;   // launch already begun
+    // NOTE: `launched` is set in startDoors, NOT here — during the gauge phase the
+    // viewport must still show the FULLY-CLOSED doors.  buildCopperList derives the
+    // door gap g2 from `launched` (= $2B - $008A); leaving it false keeps g2 = 0
+    // (closed) until the door scroll actually starts.
 
     // Cinematic effect 1: switch the message line from the attract title scroll
     // to "STAND BY..." + score (display_setup $635F, genuine 6502 routines).
@@ -465,6 +564,7 @@ void StandbyScene::openDoors()
 void StandbyScene::startDoors()
 {
     launchPhase = kLaunchDoors;
+    launched    = true;   // doors now scrolling: buildCopperList tracks the gap via $008A
 
     // Cinematic effect 3: as the doors start, light the bottom-left indicator
     // (display_setup $63FD: game_sub_4447 with A=7 -> dial-bar threshold $0F).
@@ -498,6 +598,38 @@ void StandbyScene::startDoors()
         mem[zp::scrollAccum3] = mem[zp::scrollAccumPrev] = 0u;
 }
 
+// startStars: the stars/space setup (display_setup $64C8-$6552), run once the
+// tunnel ring auto-clears $0088.  Switches the viewport to ANTIC mode-D from
+// $1000 (rendered by renderViewportModeD); the per-frame scroll is driven by
+// launch_stars_step_native from update().
+void StandbyScene::startStars()
+{
+    launchPhase   = kLaunchStars;
+    launch_stars_init_native();   // $64C8-$6552 setup + $1000 row-addr table (clears $1000)
+    viewportActive    = true;     // viewport now decodes mem[$1000] as mode-D 2bpp
+    viewportForceFull = true;     // first decode must clear the stale door image (the
+                                  // shadow would otherwise match the freshly-cleared $1000)
+    // Decode the (now-cleared) $1000 into terrainBitmap NOW, before update() rebuilds
+    // the copper to point the viewport at it.  Otherwise the copper would display the
+    // stale closed-door image (terrainBitmap is untouched all through doors/tunnel,
+    // which show tunnelBitmap) for a frame in the stars palette.  The live display is
+    // still showing tunnelBitmap here, so this rewrite of terrainBitmap is invisible
+    // until the switch takes effect next vblank — no mid-screen tearing.
+    renderViewportModeD();
+}
+
+// startPlanet: the planet setup (display_setup $6555-$6574).  The stars setup
+// already seeded the object table and the $1000 row-addr table; here we clear the
+// player-colour shadows ($6557 loop) and reset the frame gate, then the planet
+// loop (launch_planet_step_native) zooms the sphere into $1000 each step.
+void StandbyScene::startPlanet()
+{
+    launchPhase = kLaunchPlanet;
+    for (int i = 0; i < 4; i++) mem[0x02C0 + (uint16_t)i] = 0u;   // $6557-$6567
+    mem[0x0014] = 0u;                                              // $6574 frame gate
+    planetTick  = 0;
+}
+
 void StandbyScene::update(uint16_t frame)
 {
     // Launch cinematic: drive the doors + tunnel via the genuine $5367 priority
@@ -516,11 +648,38 @@ void StandbyScene::update(uint16_t frame)
         sound_event_dispatch_native();
         if (mem[zp::vbiFlags] == 0 && mem[zp::terrainScrollCounter] == 0) {
             // Cinematic effect 4: doors fully open → light the whole left column
-            // (display_setup $6482: game_sub_4447 with A=0 -> threshold $08), THEN
-            // start the tunnel ring cycle.
+            // (display_setup $6482: game_sub_4447 with A=0 -> threshold $08), reseed
+            // the ring's message-column coords ($647D), THEN start the tunnel ring.
             launch_light_all_native();
+            tunnel_ring_arm_native();
             mem[zp::vbiFlags] = 1u;
+            launchPhase = kLaunchTunnel;
         }
+    } else if (launchPhase == kLaunchTunnel) {
+        // The ring cycles via the $5367 dispatcher's $0088 branch; once the
+        // accumulator's top byte crosses $90 enough times, advance_message_column
+        // counts $00A0 down and clears $0088 (the faithful tunnel→stars trigger).
+        // advance_message_column also draws expanding black frames into $2000 from
+        // the centre out ("entering space"), so re-decode the field each frame for
+        // the tunnel to visibly go black from the middle, not just via a palette tweak.
+        sound_event_dispatch_native();
+        if (g_tunnelFieldDirty) {       // decode the new extent; shadow skips unchanged bytes
+            decodeTunnelField((int)g_tunRowLo, (int)g_tunRowHi);
+            g_tunnelFieldDirty = 0;
+        }
+        if (mem[zp::vbiFlags] == 0)
+            startStars();
+    } else if (launchPhase == kLaunchStars) {
+        // Scroll the fractal terrain-column buffers each frame until the scroll
+        // accumulator marks the phase done ($0089 drops below 4 → planet).
+        if (launch_stars_step_native() == 0)
+            startPlanet();
+    } else if (launchPhase == kLaunchPlanet) {
+        // Planet zoom runs every other frame ($6578: $0014 >= 2 gate).
+        planetTick ^= 1u;
+        if (!planetRisen && planetTick && launch_planet_step_native() == 0)
+            planetRisen = true;   // planet fully risen — display_setup would hand
+                                  // off to flight (not yet ported on the Amiga)
     }
 
     vbi_attract_timer_native();           // $52D7: attract timer cascade
@@ -624,7 +783,11 @@ void StandbyScene::render()
     // is the central 40 bytes — skip the 4 left overscan bytes (pure green fill).
     // This matches the title region, which already crops 2 mode-6 chars (= 16cc).
     static const int kTerrainXByteOffset = 4;
-    if (terrainDirty) {
+    if (viewportActive) {
+        // Stars/planet: the viewport content (mem[$1000]) changes every frame as
+        // the planet zooms, so re-decode the mode-D field each render().
+        renderViewportModeD();
+    } else if (terrainDirty) {
         terrainDirty = false;
         uint8_t* vdest = (uint8_t*)terrainBitmap->data;
         for (int row = 0; row < (int)kTerrainHeight; row++) {

@@ -30,6 +30,16 @@ extern Cpu6502 cpu;
 void save_color_clear_y_bit5(void);   // $47B2: $00D8=A, Y&=$DF, -> show_cockpit_message ($47B8)
 void render_bcd_counter(void);        // $49A0: render 6-digit BCD score ($0600-3) to $32C5-$32CA
 void game_sub_4447(void);             // $4447: $00BF=A+8 -> setup_dial_bar_draw -> draw_object_column
+
+// Stars/planet phase (display_setup $64C8-$6594):
+void clear_scroll_accum(void);                  // $6B71: zero $02C0-3 + scroll accum $A1-A5
+void copy_192_to_1800(void);                    // $75A5: seed the $1810 lower viewport bank
+void build_line_addr_table_1000_stride(void);   // $65D2: $073D/$0793 row-addr table, $1000 stride $C1
+void init_object_positions(void);               // $6B85: seed planet object table $08A4..
+void fill_terrain_columns(void);                // $6AE5: fill height buffers $0C32-$0F32 (POKEY RANDOM)
+void scroll_terrain_columns(void);              // $6AEE: one column scroll step (A = $0089 on entry)
+void advance_object_positions(void);            // $6BA8: one planet zoom step -> draw_vline_pair to $1000
+void draw_player3_object(void);                 // $42A7: the planet as a scaled Player-3 object
 }
 
 // launch_show_standby_native: port of display_setup $635F-$63AF (cinematic
@@ -141,4 +151,68 @@ extern "C" void launch_light_all_native(void)
 {
     cpu.A = 0x00;
     game_sub_4447();
+}
+
+// ---- stars / space phase (display_setup $64C8-$6552 setup) ------------------
+// Once the tunnel ring auto-clears $0088 (advance_message_column, NativeHandlers),
+// the cinematic switches the viewport to ANTIC mode-D from $1000 (VDSLST $6CC2),
+// pre-fills the fractal terrain-column buffers, and scrolls them while the planet
+// builds.  We port the mem[]-state subset of $64C8-$6552 (HW register writes —
+// SIZEM/HPOSP/DLIST — are the Amiga's copper/sprite job) and call the genuine
+// transpiled setup routines.  build_line_addr_table_1000 points the draw row-addr
+// table $073D/$0793 at $1000 stride $30 (=48, wide playfield) so the planet's
+// draw_vline_pair writes land in the displayed buffer.
+extern "C" void launch_stars_init_native(void)
+{
+    clear_scroll_accum();                       // $6506 ($6B71)
+    mem[0x00B5] = 0x62;                          // $64F8
+
+    // Clear the mode-D viewport buffer $1000..$1810 (43 rows * 48 bytes).
+    for (uint16_t i = 0; i < 43u * 48u; i++) mem[0x1000 + i] = 0u;   // $650B loop equiv
+    copy_192_to_1800();                          // $6521 ($75A5): seed lower bank $1810
+
+    mem[0x00DC] = 0x00;                          // $6524: viewport COLBK source = black
+    mem[0x0071] = 0x00;                          // $6528
+    mem[0x3157] = 0x10; mem[0x3158] = 0x18;      // $652A: DL LMS bytes (-> $1810; copper ignores)
+    mem[0x0200] = 0xC2; mem[0x0201] = 0x6C;      // $6537: VDSLST = $6CC2 (stars/planet DLI)
+
+    init_object_positions();                     // $654B ($6B85): seed planet object table
+    mem[0x0089] = 0x7F;                          // $654E: arm scroll_terrain_columns
+    fill_terrain_columns();                      // $6552 ($6AE5): fill height buffers
+
+    cpu.A = 0x30;                                // $6569: stride $30 (48, wide)
+    build_line_addr_table_1000_stride();         // $65D2 -> $073D/$0793 point at $1000
+}
+
+// One stars-scroll step (the $6557-$656E warm-up + spin, frame-driven): the VBI
+// dispatcher's $0089 branch is JMP $6AEE with A = $0089, so set A then call it.
+// scroll_terrain_columns sets $0089 = 2 when the scroll accumulator reaches its
+// mark; display_setup leaves the stars phase once $0089 < 4 (i.e. == 2).  Returns
+// 1 while still scrolling, 0 once $0089 has dropped below 4 (advance to planet).
+extern "C" uint8_t launch_stars_step_native(void)
+{
+    cpu.A = mem[0x0089];
+    scroll_terrain_columns();                    // $6AEE
+    return (mem[0x0089] >= 4u) ? 1u : 0u;        // $656E: CMP #4 / BPL spin
+}
+
+// ---- planet phase (display_setup $6574-$6594) -------------------------------
+// The planet "zooms up" as advance_object_positions ($6BA8) steps its scaled
+// object table and draw_vline_pair writes the growing sphere into $1000, plus
+// draw_player3_object ($42A7) renders it as a scaled Player-3 sprite.  The loop
+// runs every other frame ($6578: $0014 >= 2) until $1002 == $FF, then $0089 = 0
+// and display_setup returns to flight.  Returns 1 while zooming, 0 when done.
+extern "C" uint8_t launch_planet_step_native(void)
+{
+    advance_object_positions();                  // $6BA8 -> update_object_distance -> draw_vline_pair
+    // draw_player3_object ($42A7) renders the planet as Player-3 — a heavy TRANSPILED
+    // 6502 routine.  We don't render P3 as an Amiga sprite (sprite 3 stays null), so
+    // its output is invisible; skipping it removes the dominant per-step cost.  The
+    // visible sphere comes entirely from advance_object_positions -> draw_vline_pair
+    // into $1000, and the $1002==$FF "risen" mark is set there, not by P3.
+    if (mem[0x1002] == 0xFFu) {                   // $6585: planet fully risen
+        mem[0x0089] = 0x00;                       // $658C
+        return 0u;
+    }
+    return 1u;
 }
