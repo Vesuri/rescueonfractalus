@@ -27,8 +27,12 @@ constexpr uint16_t saucerTickParity = 0x0643;  // every-other-frame gate for sau
 constexpr uint16_t vbiFlags         = 0x0088;  // gate: routes the dispatcher to the tunnel-ring step
 constexpr uint16_t stepModeFlag     = 0x008D;  // <0 selects the reverse ring step (step_accum_sub_7e)
 
-// --- terrain / display-list scroll (door split; DL port still deferred) ---
-constexpr uint16_t terrainScrollReload = 0x008C;  // reload value (8) when the scroll counter expires
+// --- terrain / display-list scroll (door split) ---
+constexpr uint16_t terrainScrollCounter = 0x008A;  // door/terrain scroll step counter (launch: $2B-> 0)
+constexpr uint16_t terrainScrollReload  = 0x008C;  // reload value (8) when the scroll counter expires
+constexpr uint16_t terrainScrollPhase   = 0x008F;  // every-other-frame toggle gating scroll_terrain_dl
+constexpr uint16_t scrollColumnsGate    = 0x0089;  // dispatcher gate: scroll_terrain_columns (unused in Standby)
+constexpr uint16_t dlIndexGate          = 0x008B;  // dispatcher gate: dl_index_dec (unused in Standby)
 
 // --- tunnel ring colour cycle ---
 constexpr uint16_t colorRing      = 0x08D4;  // base of the 6-byte colour ring $08D4-$08D9 (feeds COLOR01-06)

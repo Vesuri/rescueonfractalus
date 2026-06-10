@@ -24,9 +24,11 @@ public:
     // the middle, halves sliding apart, revealing the tunnel in the gap.
     void openDoors();
 private:
-    enum class Phase { Standby, DoorsOpening };
-    Phase    phase   = Phase::Standby;
-    uint16_t doorGap = 0;   // middle gap height in rows (0 = closed)
+    // Launch state lives in mem[] now: the door-open progress is the $008A
+    // scroll counter (decremented by the native scroll_terrain_dl via the $5367
+    // dispatcher), and the ring animates once $0088 is armed.  `launched` only
+    // distinguishes pre-launch Standby (doors shut) from the running cinematic.
+    bool launched = false;
 
     // Tunnel reveal: a 3bp concentric-rectangle bitmap shown in the door gap.
     // Motion is palette cycling — the 6-entry ring lives in mem[$08D4-$08D9]

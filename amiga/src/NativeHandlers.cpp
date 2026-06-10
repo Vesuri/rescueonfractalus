@@ -267,10 +267,90 @@ static void step_accum_add_75(void)
     advance_history_6a4d();
 }
 
-// tunnel_ring_tick_native: the $0088 branch of sound_event_dispatch ($5367) —
-// the per-frame tunnel-ring driver.  Forward cinematic only ($008D stays 0).
-extern "C" void tunnel_ring_tick_native(void)
+// ---- door display-list scroll: native ports of the $6953 family -------------
+// The "doors" open by scrolling the ANTIC display list at $3000: each scanline's
+// 3-byte LMS entry (mode byte + 16-bit source address) is shifted one slot, then a
+// fresh leading row pointer is pushed at each edge.  These run on the live DL in
+// mem[$3000+]; the door-open progress is the $008A counter they decrement.
+// (Raw $00xx / $30xx literals kept here to mirror the 6502 DL layout 1:1.)
+
+// dl_lms_scroll_up @ $69A9: shift top-half LMS entries from $300C,X up to $3009,X
+// (3-byte stride) until X reaches the top index $0097.
+static void dl_lms_scroll_up(void)
 {
-    if (mem[zp::stepModeFlag]) return;          // $008D!=0 -> step_accum_sub_7e (reverse, not ported)
-    if (mem[zp::vbiFlags]) step_accum_add_75();
+    uint8_t x = 1, top = mem[0x0097];
+    while (x != top) {
+        mem[0x3009 + x] = mem[0x300C + x]; x++;
+        mem[0x3009 + x] = mem[0x300C + x]; x += 2;
+    }
+}
+
+// dl_lms_scroll_down @ $69C3: shift bottom-half LMS entries from $3087,Y down to
+// $308A,Y until Y reaches the bottom index $0098.
+static void dl_lms_scroll_down(void)
+{
+    uint8_t y = 0x80, bot = mem[0x0098];
+    while (y != bot) {
+        mem[0x308A + y] = mem[0x3087 + y]; y--;
+        mem[0x308A + y] = mem[0x3087 + y]; y -= 2;
+    }
+}
+
+// dl_lms_push_top @ $6973: write the 16-bit top push pointer $0080/$0081 into the
+// top LMS entry at $300A,X (net X -= 3), then advance the pointer up one row (-$2E).
+static uint8_t dl_lms_push_top(uint8_t x)
+{
+    mem[0x300A + x] = mem[0x0081]; x--;
+    mem[0x300A + x] = mem[0x0080];
+    uint16_t p = (uint16_t)(mem[0x0080] | (mem[0x0081] << 8));
+    p = (uint16_t)(p - 0x2E);
+    mem[0x0080] = (uint8_t)p; mem[0x0081] = (uint8_t)(p >> 8);
+    return (uint8_t)(x - 2);
+}
+
+// dl_lms_push_bottom @ $698E: write the 16-bit bottom push pointer $0082/$0083 into
+// the bottom LMS entry at $3089,Y (net Y += 3), then advance the pointer down (+$2E).
+static uint8_t dl_lms_push_bottom(uint8_t y)
+{
+    mem[0x3089 + y] = mem[0x0082]; y++;
+    mem[0x3089 + y] = mem[0x0083];
+    uint16_t p = (uint16_t)(mem[0x0082] | (mem[0x0083] << 8));
+    p = (uint16_t)(p + 0x2E);
+    mem[0x0082] = (uint8_t)p; mem[0x0083] = (uint8_t)(p >> 8);
+    return (uint8_t)(y + 2);
+}
+
+// scroll_terrain_dl @ $6953: one door-open step.  Decrement $008A; while it is
+// still non-zero scroll both DL halves apart; on the step that reaches 0 set the
+// reload $008C=8 instead.  Then push the leading row into each half.
+static void scroll_terrain_dl(void)
+{
+    if (--mem[zp::terrainScrollCounter] != 0) {     // DEC $008A; BNE
+        dl_lms_scroll_down();
+        dl_lms_scroll_up();
+    } else {
+        mem[zp::terrainScrollReload] = 8;            // $008C = 8
+    }
+    mem[0x0098] = dl_lms_push_bottom(mem[0x0098]);   // LDY $0098 / push / STY $0098
+    mem[0x0097] = dl_lms_push_top(mem[0x0097]);      // LDX $0097 / push / STX $0097
+}
+
+// sound_event_dispatch @ $5367 (Standby subset): the per-frame priority dispatcher
+// that runs exactly ONE action.  $0088 (ring) outranks $008A (door scroll), so the
+// two are sequential — the doors scroll with a static tunnel while $0088==0, and
+// the ring only animates once $0088 is armed (after the doors finish opening; the
+// hand-off lives in StandbyScene::update).  The $008C/clear_slot and the unused
+// $0089/$008B branches are documented but inert in the Standby scene.
+extern "C" void sound_event_dispatch_native(void)
+{
+    if (mem[zp::stepModeFlag]) return;                       // $008D: reverse ring (unused here)
+    if (mem[zp::vbiFlags]) { step_accum_add_75(); return; }  // $0088: tunnel ring cycle
+    if (mem[zp::scrollColumnsGate]) return;                  // $0089: scroll_terrain_columns (unused)
+    if (mem[zp::dlIndexGate]) return;                        // $008B: dl_index_dec (unused)
+    uint8_t ph = mem[zp::terrainScrollPhase];                // $008F every-other-frame toggle
+    mem[zp::terrainScrollPhase] = (uint8_t)(ph >> 1);        // LSR $008F
+    if (ph & 1u) return;                                     // carry set -> skip this frame
+    mem[zp::terrainScrollPhase]++;                           // INC $008F
+    if (mem[zp::terrainScrollCounter] == 0) return;          // $008A: doors already fully open
+    scroll_terrain_dl();
 }

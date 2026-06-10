@@ -37,7 +37,7 @@ extern "C" void update_indicator_blink_native(void);           // $4131: cockpit
 extern "C" void copy_text_block_to_screen_native(void);   // $782A: title text
 extern "C" void update_cockpit_digits_native(void);                      // $3FFA: cockpit digit update
 extern "C" void saucer_anim_tick_native(void);               // $4229: cockpit counter animation
-extern "C" void tunnel_ring_tick_native(void);                  // $6A38/$6A4D: tunnel ring cycle ($0088 gate)
+extern "C" void sound_event_dispatch_native(void);              // $5367: ring ($0088) vs door scroll ($008A)
 
 extern "C" volatile uint8_t mem[65536];
 
@@ -192,8 +192,11 @@ void StandbyScene::buildCopperList(CopperList* cl, uint16_t frame)
     // into the visible area (the fully-open frame: top/bottom collapse to 0 rows).
     const uint32_t ta   = (uint32_t)terrainBitmap->data;
     const uint16_t half = kTerrainHeight / 2;                 // = 43
-    const bool     door = (phase == Phase::DoorsOpening && doorGap > 0);
-    const uint16_t g2   = door ? (uint16_t)(doorGap >> 1) : 0;  // half-gap in rows
+    // Door-open progress = steps the native scroll_terrain_dl has taken, read from
+    // the $008A counter it decrements ($2B closed -> 0 fully open).  Half-gap g2 in
+    // rows grows 0 -> half as the doors part; the split "arises from $008A".
+    const uint16_t g2   = launched ? (uint16_t)(0x2Bu - mem[zp::terrainScrollCounter]) : 0;
+    const bool     door = (g2 > 0);
     const uint16_t topH = (uint16_t)(half - g2);               // == bottom-band rows
     const bool tunnelFirst = door && (topH == 0);              // fully open: tunnel fills region
     const uint32_t tun  = (uint32_t)tunnelBitmap->data + (uint32_t)(half - g2) * 120u;
@@ -391,36 +394,49 @@ void StandbyScene::initialize()
 
 void StandbyScene::openDoors()
 {
-    if (phase != Phase::Standby) return;
-    phase = Phase::DoorsOpening;
-    doorGap = 0;
+    if (launched) return;
+    launched = true;
 
-    // Arm the tunnel-ring cycle the way the 6502 game does: the ring colours live
-    // in mem[$08D4-$08D9] (feeding COLOR01-06) and are rotated by step_accum_add_75
-    // ($6A38) when the $5367 dispatcher sees gate $0088 != 0.  The Standby snapshot
-    // has all of this zeroed (the accumulator is normally seeded from live flight
-    // state, absent here), so we seed: the visible blue ring ramp, a zero $A1-$A5
-    // accumulator (literal-$75 / zero-seed fidelity choice), and the $0088 gate.
+    // Set the launch state the way display_setup ($5F1D) does, then let the $5367
+    // dispatcher drive it.  The doors open FIRST (ring gate $0088 = 0, so the tunnel
+    // is static): scroll_terrain_dl decrements $008A from $2B to 0 over its run.
+    // Only when the doors are fully open does update() arm $0088 so the ring starts
+    // cycling — matching the hangar→launch sequence.
+    mem[zp::terrainScrollCounter] = 0x2Bu;   // $008A: 43 door-scroll steps
+    mem[zp::terrainScrollReload]  = 0x00u;   // $008C
+    mem[zp::terrainScrollPhase]   = 0x00u;   // $008F (every-other-frame toggle)
+    mem[zp::vbiFlags]             = 0x00u;   // $0088: ring OFF until doors finish
+    mem[zp::stepModeFlag]         = 0x00u;   // $008D: forward ring
+    mem[zp::scrollColumnsGate]    = 0x00u;   // $0089
+    mem[zp::dlIndexGate]          = 0x00u;   // $008B
+
+    // DL push pointers + edge indices, per display_setup ($63E1-$63F7).
+    mem[0x0080] = 0x8Cu; mem[0x0081] = 0x17u;  // top push pointer    = $178C
+    mem[0x0082] = 0xBAu; mem[0x0083] = 0x17u;  // bottom push pointer = $17BA
+    mem[0x0097] = 0x7Fu;                       // top LMS edge index
+    mem[0x0098] = 0x02u;                       // bottom LMS edge index
+
+    // Tunnel ring colours (mem[$08D4-$08D9], feeding COLOR01-06): seed the blue
+    // ramp once, statically — they sit still until $0088 is armed, then rotate.
+    // Accumulator $A1-$A5 zeroed (literal-$75 / zero-seed fidelity choice).
     static const uint8_t kRingRamp[6] = { 0x30, 0x32, 0x34, 0x36, 0x38, 0x3A };
     for (int i = 0; i < 6; i++) mem[zp::colorRing + (uint16_t)i] = kRingRamp[i];
-    mem[zp::scrollAccum0] = mem[zp::scrollAccum1] = mem[zp::scrollAccum2] = mem[zp::scrollAccum3] = mem[zp::scrollAccumPrev] = 0u;
-    mem[zp::stepModeFlag] = 0u;     // forward cycle (step_accum_add_75, not _sub_7e)
-    mem[zp::vbiFlags] = 1u;     // gate: dispatcher routes to the tunnel-ring branch
+    mem[zp::scrollAccum0] = mem[zp::scrollAccum1] = mem[zp::scrollAccum2] =
+        mem[zp::scrollAccum3] = mem[zp::scrollAccumPrev] = 0u;
 }
 
 void StandbyScene::update(uint16_t frame)
 {
-    // Advance the doors-open transition: gap grows 2 rows/frame (~43 frames to
-    // fully open, matching the Atari $008A=$2B counter), then holds open.
-    if (phase == Phase::DoorsOpening && doorGap < kTerrainHeight) {
-        doorGap = (uint16_t)(doorGap + 2);
-        if (doorGap > kTerrainHeight) doorGap = kTerrainHeight;
+    // Launch cinematic: drive the doors + tunnel via the genuine $5367 priority
+    // dispatcher.  While $0088 == 0 it scrolls the door DL ($008A: $2B->0, every
+    // other frame); the tunnel sits static.  Once the doors are fully open
+    // ($008A == 0) we arm $0088 so the ring branch takes over and the tunnel
+    // animates — the sequential hangar→launch behaviour (doors first, then fly out).
+    if (launched) {
+        sound_event_dispatch_native();
+        if (mem[zp::vbiFlags] == 0 && mem[zp::terrainScrollCounter] == 0)
+            mem[zp::vbiFlags] = 1u;   // doors fully open → start the tunnel ring cycle
     }
-    // Tunnel palette cycle: the genuine $5367-dispatcher $0088 branch — add $75
-    // into the $A1-$A4 accumulator and, when its top byte changes, rotate the
-    // 6-colour ring in mem[$08D4-$08D9].  Seeded zero in openDoors(), so the
-    // rotation cadence is whatever the verbatim 6502 algorithm produces.
-    tunnel_ring_tick_native();
 
     vbi_attract_timer_native();           // $52D7: attract timer cascade
     update_indicator_blink_native();    // $4131: cockpit blink lights
