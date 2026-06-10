@@ -64,3 +64,45 @@ void divide_16x16(void) {
     mem[0x00B0] = b0; mem[0x00B1] = b1; mem[0x00B2] = b2;
     mem[0x00AE] = ae; mem[0x00AF] = af;
 }
+
+/* terrain_gen_3 @ $AD5F — clear one terrain column band + its object-table cells.
+ *
+ * Inputs : cpu.X = starting column offset into the terrain/object buffers.
+ * Effect : zeroes 44 terrain rows (base $1010, stride $60) across 42 columns
+ *          starting at X (the X index runs as a 6502 byte, so it WRAPS at $FF —
+ *          replicated here for bit-identity), then zeroes a scattered set of
+ *          object-table cells indexed by the ORIGINAL X (restored from $0094).
+ * Outputs: mem[$0094] = original X; the 42x44 terrain band and the listed object
+ *          cells set to 0.
+ * Contract: memory only.  Both call sites (flight loop $3EBF / $3EFA) reload X
+ *          and A immediately after the call, so the 6502 exit register/flag state
+ *          is dead.  We still reproduce it (A=0, Y=0, X=original, N/Z per LDX X)
+ *          so the validation harness shows zero incidental CPU drift.
+ */
+void terrain_gen_3(void) {
+    uint8_t x0 = mem[0x0094] = cpu.X;            /* $AD5F: STX $0094 (save column) */
+
+    /* $AD61-$ADEF: 42 columns ($2A) x 44 rows (base $1010, stride $60), all 0. */
+    for (uint8_t i = 0; i < 0x2A; i++) {
+        uint8_t x = (uint8_t)(x0 + i);           /* INX wraps as a byte */
+        for (uint16_t row = 0x1010; row <= 0x2030; row += 0x60)
+            mem[row + x] = 0x00;
+    }
+
+    /* $ADF0-$AE52: scattered object-table cells, indexed by the ORIGINAL X. */
+    static const uint16_t cells[] = {
+        0x2090, 0x2091, 0x2092, 0x2093, 0x2094,
+        0x20BA, 0x20B9, 0x20B8, 0x20B7, 0x20B6, 0x20B5,
+        0x20F0, 0x20F1, 0x20F2, 0x20F3,
+        0x211A, 0x2119, 0x2118, 0x2117, 0x2116,
+        0x2150, 0x2151, 0x2152,
+        0x217A, 0x2179, 0x2178, 0x2177,
+        0x21B0, 0x21DA, 0x21B1, 0x21D9, 0x21D8,
+    };
+    for (unsigned k = 0; k < sizeof cells / sizeof cells[0]; k++)
+        mem[cells[k] + x0] = 0x00;
+
+    /* Incidental exit state (dead at all call sites; matched for a clean diff). */
+    cpu.A = 0x00; cpu.Y = 0x00; cpu.X = x0;
+    cpu.Z = (x0 == 0) ? 1 : 0; cpu.N = (x0 >> 7) & 1;
+}

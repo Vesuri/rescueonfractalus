@@ -52,6 +52,7 @@ MANUAL_FUNCS = {
 # everything not listed here stays transliterated and fully regenerable.
 VALIDATE_FUNCS = {
     0x9D6F,  # divide_16x16 — restoring 16-bit divide (prototype target)
+    0xAD5F,  # terrain_gen_3 — clear a terrain column band + object-table cells (flight leaf #1)
 }
 VALIDATE_SUFFIX = '__t6502'
 

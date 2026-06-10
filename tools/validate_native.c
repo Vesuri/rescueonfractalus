@@ -7,7 +7,8 @@
  * This harness runs both on the SAME randomized pre-state and diffs the full
  * machine state (all 64 KB of mem[] + the CPU registers/flags). Memory diffs
  * are failures (the contract); CPU-register diffs are reported separately as
- * "incidental" because for divide_16x16 the callers don't read them.
+ * "incidental" — for these leaf routines the callers reload the registers
+ * before reading them (verified at each call site).
  *
  * Build:  make validate     Run:  ./build/validate_native
  *
@@ -28,16 +29,47 @@ static Cpu6502 zero_cpu(void) {
     Cpu6502 c; memset(&c, 0, sizeof c); c.S = 0xFF; return c;
 }
 
-int main(void) {
-    enum { N = 200000 };
-    static uint8_t pre[65536], ref_mem[65536];
-    const int out_addrs[] = { 0x00B0, 0x00B1, 0x00B2, 0x00AE, 0x00AF };
+/* Run native vs __t6502 on the SAME pre-state; diff full mem[] + cpu.
+ * Returns the number of cases with a memory-contract mismatch. */
+static int diff_run(const char *name, const uint8_t *pre, Cpu6502 pre_cpu,
+                    void (*native)(void), void (*t6502)(void),
+                    int t, int *printed, int *cpu_diff_cases) {
+    static uint8_t ref_mem[65536];
 
-    int mem_fail_cases = 0, cpu_diff_cases = 0, printed = 0;
+    memcpy((void *)mem, pre, 65536); cpu = pre_cpu;
+    t6502();
+    memcpy(ref_mem, (void *)mem, sizeof ref_mem);
+    Cpu6502 ref_cpu = cpu;
+
+    memcpy((void *)mem, pre, 65536); cpu = pre_cpu;
+    native();
+
+    int memdiffs = 0;
+    for (int i = 0; i < 65536; i++) {
+        if (mem[i] != ref_mem[i]) {
+            memdiffs++;
+            if (*printed < 12) {
+                printf("[MEM DIFF] %s case %d  $%04X  ref=$%02X native=$%02X\n",
+                       name, t, i, ref_mem[i], mem[i]);
+                (*printed)++;
+            }
+        }
+    }
+    if (cpu.A != ref_cpu.A || cpu.X != ref_cpu.X || cpu.Y != ref_cpu.Y ||
+        cpu.N != ref_cpu.N || cpu.V != ref_cpu.V ||
+        cpu.Z != ref_cpu.Z || cpu.C != ref_cpu.C)
+        (*cpu_diff_cases)++;
+    return memdiffs ? 1 : 0;
+}
+
+/* --- divide_16x16 @ $9D6F: random 16-bit divides over the valid domain. --- */
+static int test_divide_16x16(void) {
+    enum { N = 200000 };
+    static uint8_t pre[65536];
+    int mem_fail = 0, cpu_diff = 0, printed = 0;
 
     for (int t = 0; t < N; t++) {
-        /* Domain: divisor in [1, 0x7FFF] so normalization terminates. */
-        uint16_t divisor  = (uint16_t)(xs() % 0x7FFF) + 1;
+        uint16_t divisor  = (uint16_t)(xs() % 0x7FFF) + 1;   /* [1, 0x7FFF] */
         uint16_t dividend = (uint16_t)(xs() & 0xFFFF);
         uint8_t  q0       = (uint8_t)(xs() & 0xFF);
 
@@ -45,52 +77,47 @@ int main(void) {
         pre[0x00B0] = dividend & 0xFF; pre[0x00B1] = dividend >> 8;
         pre[0x00AE] = divisor  & 0xFF; pre[0x00AF] = divisor  >> 8;
         pre[0x00B2] = q0;
-        Cpu6502 pre_cpu = zero_cpu();
 
-        /* ---- reference: transliterated 6502 ---- */
-        memcpy((void *)mem, pre, sizeof pre);
-        cpu = pre_cpu;
-        divide_16x16__t6502();
-        memcpy(ref_mem, (void *)mem, sizeof ref_mem);
-        Cpu6502 ref_cpu = cpu;
-
-        /* ---- candidate: native ---- */
-        memcpy((void *)mem, pre, sizeof pre);
-        cpu = pre_cpu;
-        divide_16x16();
-
-        /* full-memory diff (the contract) */
-        int memdiffs = 0;
-        for (int i = 0; i < 65536; i++) {
-            if (mem[i] != ref_mem[i]) {
-                memdiffs++;
-                if (printed < 12) {
-                    printf("[MEM DIFF] case %d  $%04X  ref=$%02X native=$%02X   "
-                           "(divisor=%u dividend=%u q0=%u)\n",
-                           t, i, ref_mem[i], mem[i], divisor, dividend, q0);
-                    printed++;
-                }
-            }
-        }
-        if (memdiffs) mem_fail_cases++;
-
-        /* CPU register/flag diff (incidental for this function) */
-        if (cpu.A != ref_cpu.A || cpu.X != ref_cpu.X || cpu.Y != ref_cpu.Y ||
-            cpu.N != ref_cpu.N || cpu.V != ref_cpu.V ||
-            cpu.Z != ref_cpu.Z || cpu.C != ref_cpu.C)
-            cpu_diff_cases++;
+        mem_fail += diff_run("divide_16x16", pre, zero_cpu(),
+                             divide_16x16, divide_16x16__t6502, t, &printed, &cpu_diff);
     }
 
-    printf("\ndivide_16x16: ran %d random cases\n", N);
-    printf("  memory-contract mismatches : %d  (must be 0)\n", mem_fail_cases);
-    printf("  cpu-register diffs         : %d  (incidental — callers save Y via $009F,\n"
-           "                                     overwrite A/flags immediately)\n", cpu_diff_cases);
-    printf("  contract output cells diffed: ");
-    for (size_t k = 0; k < sizeof out_addrs / sizeof out_addrs[0]; k++)
-        printf("$%04X ", out_addrs[k]);
-    printf("\n\n%s\n", mem_fail_cases == 0
-        ? "PASS — native divide_16x16 is memory-equivalent to the transliteration."
-        : "FAIL — native version diverges from the 6502 oracle (see diffs above).");
+    printf("divide_16x16 : %d cases, %d mem mismatch (must be 0), %d cpu diffs "
+           "(incidental — callers save Y via $009F, overwrite A/flags)\n",
+           N, mem_fail, cpu_diff);
+    return mem_fail;
+}
 
-    return mem_fail_cases == 0 ? 0 : 1;
+/* --- terrain_gen_3 @ $AD5F: clear-column over a FULLY randomized mem[]. ---
+ * Randomizing all of mem[] means any stray write (wrong cell, wrong span) shows
+ * up as a diff.  X spans 0..255 to exercise the 6502 byte-index wrap too. */
+static int test_terrain_gen_3(void) {
+    enum { N = 100000 };
+    static uint8_t pre[65536];
+    int mem_fail = 0, cpu_diff = 0, printed = 0;
+
+    for (int t = 0; t < N; t++) {
+        for (int i = 0; i < 65536; i++) pre[i] = (uint8_t)(xs() & 0xFF);
+        Cpu6502 c = zero_cpu();
+        c.X = (uint8_t)(xs() & 0xFF);
+
+        mem_fail += diff_run("terrain_gen_3", pre, c,
+                             terrain_gen_3, terrain_gen_3__t6502, t, &printed, &cpu_diff);
+    }
+
+    printf("terrain_gen_3: %d cases, %d mem mismatch (must be 0), %d cpu diffs "
+           "(incidental — callers reload X/A after the call)\n",
+           N, mem_fail, cpu_diff);
+    return mem_fail;
+}
+
+int main(void) {
+    int fails = 0;
+    fails += test_divide_16x16();
+    fails += test_terrain_gen_3();
+
+    printf("\n%s\n", fails == 0
+        ? "PASS — all native reimplementations are memory-equivalent to their 6502 oracles."
+        : "FAIL — a native version diverges from its 6502 oracle (see diffs above).");
+    return fails == 0 ? 0 : 1;
 }
