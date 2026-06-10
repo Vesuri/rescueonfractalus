@@ -42,6 +42,8 @@ extern "C" void draw_tunnel_rings_native(void);                 // $65FB: draw c
 extern "C" void launch_show_standby_native(void);               // display_setup $635F: "STAND BY..." + score
 extern "C" void launch_gauge_init_native(void);                 // vobj strip init ($062F/$0D98)
 extern "C" uint8_t launch_gauge_step_native(void);              // one vobj fill step; 0 when full
+extern "C" void launch_light_doorstart_native(void);           // $63FD: bottom-left light on
+extern "C" void launch_light_all_native(void);                 // $6482: all left lights on
 
 extern "C" volatile uint8_t mem[65536];
 
@@ -464,6 +466,10 @@ void StandbyScene::startDoors()
 {
     launchPhase = kLaunchDoors;
 
+    // Cinematic effect 3: as the doors start, light the bottom-left indicator
+    // (display_setup $63FD: game_sub_4447 with A=7 -> dial-bar threshold $0F).
+    launch_light_doorstart_native();
+
     // Set the launch state the way display_setup ($5F1D) does, then let the $5367
     // dispatcher drive it.  The doors open FIRST (ring gate $0088 = 0, so the tunnel
     // is static): scroll_terrain_dl decrements $008A from $2B to 0 over its run.
@@ -508,8 +514,13 @@ void StandbyScene::update(uint16_t frame)
             startDoors();
     } else if (launchPhase == kLaunchDoors) {
         sound_event_dispatch_native();
-        if (mem[zp::vbiFlags] == 0 && mem[zp::terrainScrollCounter] == 0)
-            mem[zp::vbiFlags] = 1u;   // doors fully open → start the tunnel ring cycle
+        if (mem[zp::vbiFlags] == 0 && mem[zp::terrainScrollCounter] == 0) {
+            // Cinematic effect 4: doors fully open → light the whole left column
+            // (display_setup $6482: game_sub_4447 with A=0 -> threshold $08), THEN
+            // start the tunnel ring cycle.
+            launch_light_all_native();
+            mem[zp::vbiFlags] = 1u;
+        }
     }
 
     vbi_attract_timer_native();           // $52D7: attract timer cascade

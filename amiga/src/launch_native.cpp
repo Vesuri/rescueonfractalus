@@ -29,6 +29,7 @@ extern Cpu6502 cpu;
 // Genuine transpiled launch routines (src/gen/rof_gen.c):
 void save_color_clear_y_bit5(void);   // $47B2: $00D8=A, Y&=$DF, -> show_cockpit_message ($47B8)
 void render_bcd_counter(void);        // $49A0: render 6-digit BCD score ($0600-3) to $32C5-$32CA
+void game_sub_4447(void);             // $4447: $00BF=A+8 -> setup_dial_bar_draw -> draw_object_column
 }
 
 // launch_show_standby_native: port of display_setup $635F-$63AF (cinematic
@@ -117,4 +118,27 @@ extern "C" uint8_t launch_gauge_step_native(void)
     mem[0x0D99 + y] = 0xF0;
     mem[0x00DE] = mem[0x4DEA + (y >> 3)];        // $421C: $00DE = $4DEA[Y>>3]
     return done ? 0u : 1u;
+}
+
+// ---- effects 3 & 4: left indicator-light column -----------------------------
+// The left lights are the lower half (rows 8..15) of the cockpit dial-bar drawn
+// by game_sub_4447 -> setup_dial_bar_draw -> draw_object_column ($43E8): for each
+// row X (=$00BD, $0F..$08) it writes cell $4581[X] with bit7 = lit/unlit set by
+// X >= $00BF (lit) vs X < $00BF (unlit).  $00BF = A+8.  Lit = $34/$37/$38 (COLPF2),
+// unlit = $B4/$B7/$B8 (COLPF3).  The existing render() draws these cockpit cells.
+
+// Effect 3: when the doors start, light the bottom-left indicator only.
+//   display_setup $63FD: LDA #$07 / game_sub_4447  ($00BF=$0F -> only row 15 = $34E5 lit)
+extern "C" void launch_light_doorstart_native(void)
+{
+    cpu.A = 0x07;
+    game_sub_4447();
+}
+
+// Effect 4: before the tunnel animates, light the whole left column.
+//   display_setup $6482: LDA #$00 / game_sub_4447  ($00BF=$08 -> rows 8..15 all lit)
+extern "C" void launch_light_all_native(void)
+{
+    cpu.A = 0x00;
+    game_sub_4447();
 }
