@@ -803,3 +803,32 @@ alternation — `$C0` appears at seq[1], `$E2` at seq[12], `$C4` at seq[24].
 **Implementation:** `copy_altitude_graphic_to_screen_native()` added to NativeHandlers.cpp.
 Called from `update()` when `mem[$060B]==0` (cleared on START press). `mem[$0091]=$C0`
 seeded in `initialize()` so the title is correct on frame 1.
+
+---
+
+## SESSION STATUS (2026-06-10) — launch cinematic through stars/planet
+
+The full post-START **launch cinematic now runs on the Amiga**, continuing past the
+Standby screen all the way to the planet zoom. Built incrementally, each beat a commit
+on `main`; verified in FS-UAE. (Open item 5 "Descent / door-open sequence" above is
+DONE; items 1–4 superseded by the 2026-06-09 sessions.)
+
+Done & committed:
+- **Doors + Tunnel** reveal — native `scroll_terrain_dl` + ring palette cycle via the
+  `$5367` dispatcher; tunnel rings drawn in code (`draw_frame_pattern_seq`).
+- **Launch effects 1–4** — STAND BY + score, throttle-gauge fill (vobj→sprite), left
+  indicator lights — faithful ports calling the linked transpile.
+- **Stars/space + Planet** (`3c1e4ca`) — faithful tunnel→stars trigger
+  (`advance_message_column $670D` + the corrected always-rotate `step_accum_add_75`);
+  new **mode-D-from-`$1000` viewport** render path (DL `$3120`, VDSLST `$6CC2`, 43×48B
+  wide, central 40, 2bpp, `$6D0E`/`$6D67` palette) decoded via precomputed byte→bitplane
+  tables; stars setup + native scroll; planet zoom via `advance_object_positions`
+  (`$6BA8`); per-byte incremental decodes for the `$1000`/`$2000` fields.
+
+Open (tracked in memory `rof-stars-planet-phase`):
+1. Tunnel-clear/palette **sync drift** near the very end of the tunnel exit.
+2. **Star sprites** — the dots are event-queue/PMG-driven (`$5614`/`$548D`/`$5667`);
+   that system isn't ported yet, so the stars beat is currently black space + planet.
+3. **Flight hand-off** (`$6594` RTS → gameplay) — the flight terrain renderer is not
+   yet on the Amiga, so the cinematic currently ends on the risen planet.
+4. **Scene 3b Scoreboard** — still not analysed.
