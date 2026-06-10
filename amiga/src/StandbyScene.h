@@ -24,6 +24,15 @@ public:
     // the middle, halves sliding apart, revealing the tunnel in the gap.
     void openDoors();
 private:
+    // Launch phases, mirroring display_setup's linear walk: after START we first
+    // fill the throttle gauge (vobj player strip), THEN open the doors / tunnel.
+    enum LaunchPhase : uint8_t { kLaunchNone, kLaunchGauge, kLaunchDoors };
+    uint8_t  launchPhase  = kLaunchNone;
+    uint16_t gaugeTick     = 0;          // frame counter pacing the gauge fill
+    Sprite*  gaugeSprite   = nullptr;    // player-strip throttle bar ($0D98)
+    void startDoors();                   // door-scroll state (display_setup $63DC)
+    void buildGaugeSprite();             // $0D98 strip -> gaugeSprite lines
+
     // Launch state lives in mem[] now: the door-open progress is the $008A
     // scroll counter (decremented by the native scroll_terrain_dl via the $5367
     // dispatcher), and the ring animates once $0088 is armed.  `launched` only

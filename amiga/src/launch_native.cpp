@@ -72,3 +72,49 @@ extern "C" void launch_show_standby_native(void)
     // so they are added when the gauge fill is ported.)
     render_bcd_counter();               // "     0" -> $32C5-$32CA
 }
+
+// ---- effect 2: throttle gauge fill (vobj vertical object) -------------------
+// The throttle gauge is the Atari "vertical object": a player-1 P/M strip at
+// $0D98 that fills downward as the object steps to the bottom ($DC).  Each step
+// (vobj_step_down $41E8 / vobj_erase_row $4207) advances the vert position $062F
+// by +4 and writes $F0 (a 4px-wide bar segment) into the strip row indexed by
+// ($DC - $062F) >> 2, with a per-step frame wait.  On the frame-driven Amiga we
+// run ONE step per call (the 6502's wait becomes the caller's frame cadence) and
+// report when the bar has reached the bottom.
+//
+// The fill writes $0D99+index (index 0..55, 56 rows) plus $0D98 on the wrap, so
+// the strip spans $0D98..$0DD0 (the door savestate shows 57 contiguous $F0).
+// $062F runs 0 -> $DC (step +4); index = ($DC - $062F) >> 2 goes 55 -> 0, i.e.
+// the bar fills bottom (index 55) to top (index 0).  The colour for each segment
+// is $4DEA[index>>3] (the "shape" table is actually a colour ramp), ending at
+// $4DEA[0]=$D6 (#560) when full — see vobj_erase_row ($4207) / vobj_advance.
+
+static const uint8_t kVobjBottom = 0xDC;   // $00DC bottom limit
+
+extern "C" void launch_gauge_init_native(void)
+{
+    mem[0x062F] = 0x00;                      // vert position at the top of travel
+    for (uint16_t i = 0; i < 57; i++)        // clear the strip ($0D98..$0DD0)
+        mem[0x0D98 + i] = 0x00;
+    mem[0x00DE] = mem[0x4DEA + 6];           // initial (bottom) segment colour
+}
+
+// One vobj_step_down ($41E8) + vobj_erase_row ($4207) iteration, minus the 6502
+// 1-frame wait (the caller paces it).  Returns 1 while filling, 0 once full.
+extern "C" uint8_t launch_gauge_step_native(void)
+{
+    uint16_t pos = (uint16_t)mem[0x062F] + 4u;   // $41ED: LDA #4 / ADC $062F
+    uint8_t done = 0;
+    if (pos >= kVobjBottom) {                    // $41F4: CMP $DC, reached bottom
+        mem[0x0D98] = 0xF0;                      // $41FA
+        mem[0x062F] = kVobjBottom;               // $4201
+        done = 1;
+    } else {
+        mem[0x062F] = (uint8_t)pos;              // $4201
+    }
+    // vobj_erase_row: index Y = ($DC - $062F) >> 2 ; $0D99+Y = $F0 ; colour ramp
+    uint8_t y = (uint8_t)((kVobjBottom - mem[0x062F]) >> 2);
+    mem[0x0D99 + y] = 0xF0;
+    mem[0x00DE] = mem[0x4DEA + (y >> 3)];        // $421C: $00DE = $4DEA[Y>>3]
+    return done ? 0u : 1u;
+}

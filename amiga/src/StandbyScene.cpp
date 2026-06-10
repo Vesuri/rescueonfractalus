@@ -40,6 +40,8 @@ extern "C" void saucer_anim_tick_native(void);               // $4229: cockpit c
 extern "C" void sound_event_dispatch_native(void);              // $5367: ring ($0088) vs door scroll ($008A)
 extern "C" void draw_tunnel_rings_native(void);                 // $65FB: draw concentric tunnel rings into $2000
 extern "C" void launch_show_standby_native(void);               // display_setup $635F: "STAND BY..." + score
+extern "C" void launch_gauge_init_native(void);                 // vobj strip init ($062F/$0D98)
+extern "C" uint8_t launch_gauge_step_native(void);              // one vobj fill step; 0 when full
 
 extern "C" volatile uint8_t mem[65536];
 
@@ -124,6 +126,23 @@ void StandbyScene::fillSpriteData(Sprite* s, bool isRight)
     }
 }
 
+// ---- throttle gauge sprite ---------------------------------------------------
+// Build the player-1 throttle bar from the vobj strip mem[$0D98..].  Each strip
+// byte is one Atari player scanline ($F0 = leftmost 4px on); we map a filled row
+// to the leftmost 4 px (colour 01) of an Amiga sprite line.
+void StandbyScene::buildGaugeSprite()
+{
+    // 57-row strip $0D98..$0DD0 (the original vobj player extent).  Each Atari
+    // player bit is one colour clock = 2 Amiga lores px, so the 4-bit $F0 segment
+    // is 8 px wide -> 0xFF00 (matches SIZEP1=0, normal width).
+    uint16_t* d = gaugeSprite->data() + 2;   // skip the 2 control words
+    for (int i = 0; i < 57; i++) {
+        uint16_t on = (mem[0x0D98 + i] & 0xF0u) ? 0xFF00u : 0x0000u;
+        d[i * 2]     = on;     // plane A (colour bit 0)
+        d[i * 2 + 1] = 0x0000; // plane B
+    }
+}
+
 // ---- copper list builder -----------------------------------------------------
 void StandbyScene::buildCopperList(CopperList* cl, uint16_t frame)
 {
@@ -140,6 +159,13 @@ void StandbyScene::buildCopperList(CopperList* cl, uint16_t frame)
                            /*hires*/false, /*interlace*/false,
                            /*dualPlayfield*/false, /*holdAndModify*/false,
                            kCenterY);
+    // Sprite/playfield priority: the original runs GPRIOR=$14 (players behind the
+    // foreground PF2/PF3).  setPlayfield already emitted bplcon2 (=0x0024 = PF
+    // behind all sprites) 10 moves before the index it returned; patch that entry
+    // in place to PF priority slot 1, so the playfield sits in front of sprite
+    // pair 1+ (the throttle gauge on sprite 2) but behind pair 0 (the canopy
+    // posts on sprites 0/1) — the gauge ends up behind the cockpit colours.
+    d[idx - 10] = copperMove(bplcon2, (uint16_t)((1u << 3) | 1u));   // PF1P=PF2P=1
     // Title palette.
     // vbi_handler_game ($52D7) sets every frame:
     //   COLPF0 ($D016) = mem[$00D8]  — title text colour (mode-6 col=1 chars)
@@ -173,9 +199,16 @@ void StandbyScene::buildCopperList(CopperList* cl, uint16_t frame)
     // Sprite pointers:
     cl->showSprite(idx, 0, *leftPost);  idx += 2;
     cl->showSprite(idx, 1, *rightPost); idx += 2;
-    for (uint16_t s = 2; s <= 7; s++) {
+    // Sprite 2 = throttle gauge bar (vobj player strip), only once the launch
+    // begins (its data is built from $0D98 from then on); 3..7 stay null.
+    cl->showSprite(idx, 2, launchPhase != kLaunchNone ? *gaugeSprite : *nullSprite); idx += 2;
+    for (uint16_t s = 3; s <= 7; s++) {
         cl->showSprite(idx, s, *nullSprite); idx += 2;
     }
+    // Gauge bar colour (sprite pair 2/3, colour 01 = COLOR21 = $1AA).  The
+    // original ramps player 1's colour through the $4DEA table as it fills,
+    // ending at $D6 = #560; launch_gauge_step_native tracks that in $00DE.
+    d[idx++] = copperMove(0x1AA, fadeColor(atariToOCS(mem[0x00DE]), f));
 
     // ---- terrain region -------------------------------------------------------
     // Wait until the end of the previous line (in the right border / H-blank).
@@ -318,7 +351,14 @@ void StandbyScene::initialize()
     leftPost   = Sprite::allocate(kHT);
     rightPost  = Sprite::allocate(kHT);
     nullSprite = Sprite::allocate(0);
-    if (!leftPost || !rightPost || !nullSprite) return;
+    gaugeSprite = Sprite::allocate(57);    // throttle bar: 57 vobj-strip rows ($0D98..$0DD0)
+    if (!leftPost || !rightPost || !nullSprite || !gaugeSprite) return;
+    // Player 1 is the throttle gauge: original HPOSP1 = mem[$00B5] = $BE, single-
+    // line PMG strip at $0D98 (P1+$98).  The Atari-HPOS / PM-scanline -> Amiga-pixel
+    // transform isn't 1:1 (wide-playfield crop + DIWSTRT), so the on-screen XY here
+    // is a starting estimate to calibrate visually.
+    gaugeSprite->setX(0x81 + 203);
+    gaugeSprite->setY(0x2c + 144);
 
     fillSpriteData(leftPost,  false);
     fillSpriteData(rightPost, true);
@@ -410,6 +450,20 @@ void StandbyScene::openDoors()
     // to "STAND BY..." + score (display_setup $635F, genuine 6502 routines).
     launch_show_standby_native();
 
+    // Cinematic effect 2: BEFORE the doors open, fill the throttle gauge (the
+    // vobj player-1 strip).  Enter the gauge phase; startDoors() runs only once
+    // it completes — matching display_setup's order ($63FF gauge, then $641E doors).
+    launchPhase = kLaunchGauge;
+    gaugeTick   = 0;
+    launch_gauge_init_native();
+}
+
+// startDoors: the door-scroll launch state (display_setup $63DC-$63FB), run once
+// the gauge has filled.  Drives the existing native scroll_terrain_dl dispatcher.
+void StandbyScene::startDoors()
+{
+    launchPhase = kLaunchDoors;
+
     // Set the launch state the way display_setup ($5F1D) does, then let the $5367
     // dispatcher drive it.  The doors open FIRST (ring gate $0088 = 0, so the tunnel
     // is static): scroll_terrain_dl decrements $008A from $2B to 0 over its run.
@@ -445,7 +499,14 @@ void StandbyScene::update(uint16_t frame)
     // other frame); the tunnel sits static.  Once the doors are fully open
     // ($008A == 0) we arm $0088 so the ring branch takes over and the tunnel
     // animates — the sequential hangar→launch behaviour (doors first, then fly out).
-    if (launched) {
+    if (launchPhase == kLaunchGauge) {
+        // Fill the throttle gauge one vobj step per frame (original cadence:
+        // vobj_step_down sets $004C=1 -> a 1-frame wait per row).  When the bar
+        // reaches the bottom ($062F==$DC) start the doors.
+        (void)gaugeTick;
+        if (launch_gauge_step_native() == 0)
+            startDoors();
+    } else if (launchPhase == kLaunchDoors) {
         sound_event_dispatch_native();
         if (mem[zp::vbiFlags] == 0 && mem[zp::terrainScrollCounter] == 0)
             mem[zp::vbiFlags] = 1u;   // doors fully open → start the tunnel ring cycle
@@ -486,6 +547,8 @@ void StandbyScene::update(uint16_t frame)
     if (mem[zp::joystickSaved] != 0) {             // $004A set when game starts (door sequence)
         update_cockpit_digits_native();          // $3FFA: cockpit digit update
     }
+
+    if (launchPhase != kLaunchNone) buildGaugeSprite();
 
     uint8_t next = 1 - active;
     buildCopperList(copperLists[next], frame);
@@ -688,4 +751,5 @@ void StandbyScene::shutdown()
     delete leftPost;      leftPost      = nullptr;
     delete rightPost;     rightPost     = nullptr;
     delete nullSprite;    nullSprite    = nullptr;
+    delete gaugeSprite;   gaugeSprite   = nullptr;
 }
