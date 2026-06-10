@@ -54,6 +54,8 @@ VALIDATE_FUNCS = {
     0x9D6F,  # divide_16x16 — restoring 16-bit divide (prototype target)
     0xAD5F,  # terrain_gen_3 — clear a terrain column band + object-table cells (flight leaf #1)
     0x9C97,  # signed_mul_8x16 — fixed-point signed 8x16 multiply (flight leaf #2)
+    0x9C55,  # sine_table_lookup — quarter-wave sine/cos table lookup (flight leaf #3a)
+    0x9BDB,  # trig_interp_lookup — sine interpolation angle..angle+1 (flight leaf #3b)
 }
 VALIDATE_SUFFIX = '__t6502'
 

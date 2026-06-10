@@ -180,3 +180,96 @@ void signed_mul_8x16(void) {
     #undef M_RORM
     #undef M_LSRM
 }
+
+/* sine_table_lookup @ $9C55 — quarter-wave sine/cosine table lookup.
+ *
+ * Inputs : $0075 = angle (0..255 = full circle).  Tables in mem[]:
+ *          $9B98[quad] = sign flag (0 = positive, else negate the result),
+ *          $9B9C[quad] = index-reflect mask (EOR) for the descending quadrants,
+ *          $4EB9[idx]  = result hi byte, $4EFA[idx] = result lo byte.
+ * Outputs: $280E = quadrant (angle >> 6), $0076/$0077/$0078 = signed 24-bit value.
+ *
+ * The angle's top 2 bits select the quadrant; the low 6 bits index a 64-entry
+ * quarter-wave table, reflected (idx ^ mask) for the two descending quadrants.
+ * Negative quadrants two's-complement the 24-bit {0078:0077:0076} value.
+ *
+ * Contract: memory only.  Its only callers (inside trig_interp_lookup) reload
+ * A/flags from $0076.. immediately after, so the 6502 exit registers are dead.
+ */
+void sine_table_lookup(void) {
+    uint8_t angle = mem[0x0075];
+    uint8_t quad  = (uint8_t)(angle >> 6);            /* ASL;ROL x2 -> top 2 bits */
+    uint8_t idx   = (uint8_t)(angle & 0x3F);          /* ASLx2;LSRx2 -> low 6 bits */
+    mem[0x280E] = quad;
+
+    uint8_t y    = (uint8_t)(idx ^ mem[0x9B9C + quad]);   /* reflect per quadrant */
+    uint8_t sign = mem[0x9B98 + quad];
+
+    if (sign == 0) {                                  /* 9C70 BNE not taken: positive */
+        mem[0x0078] = 0x00;
+        mem[0x0077] = mem[0x4EB9 + y];
+        mem[0x0076] = mem[0x4EFA + y];
+    } else {                                          /* negate 24-bit (SEC; 0-x...) */
+        uint8_t c = 1, acc;
+        #define N_SBC(v) do { uint16_t _t = (uint16_t)acc + (uint8_t)~(uint8_t)(v) + c; \
+                              c = (_t > 0xFF) ? 1 : 0; acc = (uint8_t)_t; } while (0)
+        acc = 0x00; N_SBC(mem[0x4EFA + y]); mem[0x0076] = acc;
+        acc = 0x00; N_SBC(mem[0x4EB9 + y]); mem[0x0077] = acc;
+        acc = 0x00; N_SBC(0x00);            mem[0x0078] = acc;
+        #undef N_SBC
+    }
+}
+
+/* trig_interp_lookup @ $9BDB — interpolate the sine table between angle & angle+1.
+ *
+ * Inputs : $0075 = angle, $280D = 3-bit octant fraction.
+ * Outputs: $0076/$0077/$0078 = interpolated signed 24-bit value.  Scratch:
+ *          $2813-$2815 (angle sample, doubled each step), $2816-$2818 (angle+1
+ *          sample, doubled each step), $280E/$280F.
+ *
+ * Looks up sine at angle+1 ($2816-) and at angle ($2813-, also the running
+ * accumulator $0076-), then blends over 3 fraction bits: each step adds whichever
+ * sample the next bit selects, then doubles both samples (24-bit <<1).
+ *
+ * Contract: memory only (both callers reload A/flags from $0077 after the call).
+ * Calls the native sine_table_lookup (above), itself validated byte-identical.
+ */
+void trig_interp_lookup(void) {
+    mem[0x0075]++;                       /* INC $0075 — sample angle+1 */
+    sine_table_lookup();
+    mem[0x2816] = mem[0x0076];
+    mem[0x2817] = mem[0x0077];
+    mem[0x2818] = mem[0x0078];
+
+    mem[0x0075]--;                       /* DEC $0075 — sample angle (the base) */
+    sine_table_lookup();
+    mem[0x2813] = mem[0x0076];
+    mem[0x2814] = mem[0x0077];
+    mem[0x2815] = mem[0x0078];
+
+    mem[0x280F] = mem[0x280D];           /* octant fraction bits, consumed lo->hi */
+
+    for (int step = 3; step > 0; step--) {
+        uint8_t bit = mem[0x280F] & 1;   /* LSR $280F -> carry = fraction bit */
+        mem[0x280F] >>= 1;
+        uint16_t src = bit ? 0x2816 : 0x2813;   /* select angle+1 or angle sample */
+
+        /* CLC; 24-bit ADC chain: $0076-$0078 += sample. */
+        uint8_t c = 0;
+        #define T_ADC(dst, v) do { uint16_t _t = (uint16_t)mem[dst] + (uint8_t)(v) + c; \
+                                   c = (_t > 0xFF) ? 1 : 0; mem[dst] = (uint8_t)_t; } while (0)
+        T_ADC(0x0076, mem[src + 0]);
+        T_ADC(0x0077, mem[src + 1]);
+        T_ADC(0x0078, mem[src + 2]);
+        #undef T_ADC
+
+        /* Double both samples: ASL lo; ROL mid; ROL hi (24-bit <<1). */
+        #define T_SHL(lo) do { uint8_t _c = mem[lo] >> 7; \
+            mem[lo] = (uint8_t)(mem[lo] << 1); \
+            { uint8_t _n = mem[(lo)+1] >> 7; mem[(lo)+1] = (uint8_t)((mem[(lo)+1] << 1) | _c); _c = _n; } \
+            mem[(lo)+2] = (uint8_t)((mem[(lo)+2] << 1) | _c); } while (0)
+        T_SHL(0x2813);
+        T_SHL(0x2816);
+        #undef T_SHL
+    }
+}

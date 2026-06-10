@@ -137,11 +137,31 @@ static int test_signed_mul_8x16(void) {
     return mem_fail;
 }
 
+/* --- sine_table_lookup @ $9C55 / trig_interp_lookup @ $9BDB. ---
+ * Both read game tables ($4EB9/$4EFA/$9B98/$9B9C) from mem[]; with mem[] fully
+ * randomized the same (random) tables feed both runs, so the lookup logic is
+ * still validated bit-for-bit.  trig_interp_lookup calls the native sine routine. */
+static int test_trig(const char *name, void (*native)(void), void (*t6502)(void)) {
+    enum { N = 100000 };
+    static uint8_t pre[65536];
+    int mem_fail = 0, cpu_diff = 0, printed = 0;
+
+    for (int t = 0; t < N; t++) {
+        for (int i = 0; i < 65536; i++) pre[i] = (uint8_t)(xs() & 0xFF);
+        mem_fail += diff_run(name, pre, zero_cpu(), native, t6502, t, &printed, &cpu_diff);
+    }
+    printf("%s: %d cases, %d mem mismatch (must be 0), %d cpu diffs "
+           "(incidental — callers reload A/flags)\n", name, N, mem_fail, cpu_diff);
+    return mem_fail;
+}
+
 int main(void) {
     int fails = 0;
     fails += test_divide_16x16();
     fails += test_terrain_gen_3();
     fails += test_signed_mul_8x16();
+    fails += test_trig("sine_table_lookup", sine_table_lookup, sine_table_lookup__t6502);
+    fails += test_trig("trig_interp_lookup", trig_interp_lookup, trig_interp_lookup__t6502);
 
     printf("\n%s\n", fails == 0
         ? "PASS — all native reimplementations are memory-equivalent to their 6502 oracles."
