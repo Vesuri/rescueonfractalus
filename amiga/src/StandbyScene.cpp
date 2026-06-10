@@ -38,11 +38,9 @@ extern "C" void copy_text_block_to_screen_native(void);   // $782A: title text
 extern "C" void update_cockpit_digits_native(void);                      // $3FFA: cockpit digit update
 extern "C" void saucer_anim_tick_native(void);               // $4229: cockpit counter animation
 extern "C" void sound_event_dispatch_native(void);              // $5367: ring ($0088) vs door scroll ($008A)
+extern "C" void draw_tunnel_rings_native(void);                 // $65FB: draw concentric tunnel rings into $2000
 
 extern "C" volatile uint8_t mem[65536];
-
-// tunnel.raw — 86 rows x 40 bytes of GTIA mode-10 nibbles (pens 1-6); see incbin.s.
-extern "C" const uint8_t tunnel_raw[];
 
 // Lookup table: byte → 16-bit doubled glyph pattern (each bit → 2 pixels).
 // Filled once in initialize(); used by title render for mode-6 1bpp doubling.
@@ -313,23 +311,8 @@ void StandbyScene::initialize()
     cockpitBitmap = Bitmap::allocate(kW, kCockpitH, kBP3, true);  // 3bp: bit-7 chars → red
     tunnelBitmap  = Bitmap::allocate(kW, kTerrainHeight, kBP3, true);  // door-gap reveal
 
-    // Decode the static tunnel image (tunnel.raw, GTIA-10 nibbles = pens 1-6) into
-    // the 3bp interleaved bitmap once.  Each byte = 2 GTIA pixels (4 Amiga px each);
-    // pen bit b -> plane(b+1).  Motion comes from cycling COLOR01-06, not the bitmap.
-    if (tunnelBitmap) {
-        uint8_t* vdest = (uint8_t*)tunnelBitmap->data;
-        for (int row = 0; row < (int)kTerrainHeight; row++) {
-            const uint8_t* src = &tunnel_raw[row * 40];
-            uint8_t* p1 = vdest; uint8_t* p2 = vdest + 40; uint8_t* p3 = vdest + 80;
-            for (int b = 0; b < 40; b++) {
-                uint8_t ph = (uint8_t)((src[b] >> 4) & 0xF), pl = (uint8_t)(src[b] & 0xF);
-                p1[b] = (uint8_t)(((ph & 1) ? 0xF0u : 0u) | ((pl & 1) ? 0x0Fu : 0u));
-                p2[b] = (uint8_t)(((ph & 2) ? 0xF0u : 0u) | ((pl & 2) ? 0x0Fu : 0u));
-                p3[b] = (uint8_t)(((ph & 4) ? 0xF0u : 0u) | ((pl & 4) ? 0x0Fu : 0u));
-            }
-            vdest += 120;
-        }
-    }
+    // (Tunnel rings are decoded in decodeTunnelRings(), called after the first
+    // render() below captures the closed-door terrain — see initialize() tail.)
 
     leftPost   = Sprite::allocate(kHT);
     rightPost  = Sprite::allocate(kHT);
@@ -389,7 +372,32 @@ void StandbyScene::initialize()
 
     // Initial render: populate all three bitmaps from mem[] once so that
     // render() called from the main loop has nothing to do until data changes.
+    // This captures the closed-door terrain image from $2000 into terrainBitmap.
     render();
+
+    // Now draw the tunnel rings procedurally (native port of $65FB) INTO $2000 —
+    // this overwrites the door image, which terrainBitmap has already captured —
+    // and decode that GTIA-10 field into the 3bp tunnel bitmap (pens 1-6).  Motion
+    // later comes from cycling COLOR01-06; the ring pattern itself is static.
+    decodeTunnelRings();
+}
+
+void StandbyScene::decodeTunnelRings()
+{
+    if (!tunnelBitmap) return;
+    draw_tunnel_rings_native();   // $65FB: render concentric frames into mem[$2000]
+    uint8_t* vdest = (uint8_t*)tunnelBitmap->data;
+    for (int row = 0; row < (int)kTerrainHeight; row++) {
+        const uint8_t* src = (const uint8_t*)&mem[0x2000 + row * 46 + 4];  // +4: wide-field crop
+        uint8_t* p1 = vdest; uint8_t* p2 = vdest + 40; uint8_t* p3 = vdest + 80;
+        for (int b = 0; b < 40; b++) {
+            uint8_t ph = (uint8_t)((src[b] >> 4) & 0xF), pl = (uint8_t)(src[b] & 0xF);
+            p1[b] = (uint8_t)(((ph & 1) ? 0xF0u : 0u) | ((pl & 1) ? 0x0Fu : 0u));
+            p2[b] = (uint8_t)(((ph & 2) ? 0xF0u : 0u) | ((pl & 2) ? 0x0Fu : 0u));
+            p3[b] = (uint8_t)(((ph & 4) ? 0xF0u : 0u) | ((pl & 4) ? 0x0Fu : 0u));
+        }
+        vdest += 120;
+    }
 }
 
 void StandbyScene::openDoors()

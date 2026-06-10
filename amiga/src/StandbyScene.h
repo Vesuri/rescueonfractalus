@@ -38,6 +38,7 @@ private:
 
     void buildCopperList(CopperList* cl, uint16_t frame);
     void fillSpriteData(Sprite* s, bool isRight);
+    void decodeTunnelRings();   // draw $65FB rings into $2000, decode to tunnelBitmap
 
     CopperList* copperLists[2] = { nullptr, nullptr };
     Bitmap*     titleBitmap    = nullptr;
