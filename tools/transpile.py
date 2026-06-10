@@ -63,6 +63,9 @@ VALIDATE_FUNCS = {
     0x9BA0,  # compute_heading_sincos — sin/cos of 16-bit heading (flight mid #1)
     0xA0A3,  # build_view_transform_matrix — rotated view components (flight mid #2)
     0xAC93,  # setup_projection_params — per-frame projection/view setup (flight mid #3)
+    0xAB7B,  # set_plot_mask_and_halve_step — plot base ptr + step/4 (flight mid #4)
+    0xA8AF,  # terrain_point_distance — Manhattan dist, nearest-point latch (flight mid #5)
+    0xB2CC,  # terrain_midpoint_displace — fractal midpoint subdivision (flight mid #6)
 }
 VALIDATE_SUFFIX = '__t6502'
 

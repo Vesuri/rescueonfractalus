@@ -13,6 +13,7 @@
  */
 #include <stdint.h>
 #include "../cpu/cpu.h"
+#include "rof_decl.h"   /* declarations for transpiled routines native code calls */
 
 /* divide_16x16 @ $9D6F — restoring 16-bit divide.
  *
@@ -542,4 +543,123 @@ void setup_projection_params(void) {
     #undef ROLA
     #undef ROLM
     #undef RORA
+}
+
+/* set_plot_mask_and_halve_step @ $AB7B — pick a plot base ptr + quarter the step.
+ *
+ * Inputs : cpu.A (low 2 bits select an entry in tables $A7E9/$A7ED).
+ * Effect : $28DC/$28DD = base ptr from the tables; if the index is 0, $0058=$FF
+ *          (full plot mask); {$0051:$0050} >>= 2 (step / 4).
+ * Contract: memory only (callers reload A/flags).
+ */
+void set_plot_mask_and_halve_step(void) {
+    uint8_t x = cpu.A & 0x03;
+    mem[0x28DC] = mem[0xA7E9 + x];
+    mem[0x28DD] = mem[0xA7ED + x];
+    uint8_t a = x;                             /* TXA */
+    if (x == 0) { mem[0x0058] = 0xFF; a = 0xFF; }   /* idx 0: full mask, A=$FF */
+    uint8_t c = 0;
+    for (int i = 0; i < 2; i++) {              /* LSR $51; ROR $50 (x2) = >>2 */
+        c = mem[0x0051] & 1; mem[0x0051] = (uint8_t)(mem[0x0051] >> 1);
+        uint8_t v = mem[0x0050]; uint8_t nc = v & 1;
+        mem[0x0050] = (uint8_t)((v >> 1) | (c << 7));
+        c = nc;
+    }
+    /* Replicate the transpiled exit registers: unlike the other leaves a caller
+       (terrain_sub_A822 path) may use the index X without reloading it. */
+    cpu.X = x; cpu.A = a; cpu.C = c;
+    cpu.N = (mem[0x0050] >> 7) & 1; cpu.Z = (mem[0x0050] == 0) ? 1 : 0;
+}
+
+/* terrain_point_distance @ $A8AF — Manhattan distance of a point to screen centre.
+ *
+ * Inputs : cpu.A (saved to $290E), $004F/$004E (point), $0051 (bias), $2915 (best).
+ * Effect : computes |$004F-$80| + |$80-$004E| (+$0051); if it overflows, exceeds
+ *          $2915, or carries, returns early (via terrain_distance_clamp_return,
+ *          left transpiled — an empty RTS).  Otherwise latches the new nearest
+ *          point into $2912-$2915 + $2910/$2911 and its distance into $2914.
+ * Contract: memory only (callers reload A; SEC/CLC set carry before each op so
+ *           entry carry is irrelevant).
+ */
+void terrain_point_distance(void) {
+    uint8_t A, c;
+    mem[0x290E] = cpu.A;
+
+    A = mem[0x004F]; c = 1;                    /* SEC; SBC #$80 */
+    { uint16_t t = (uint16_t)A + (uint8_t)~0x80 + c; c = t >> 8; A = (uint8_t)t; }
+    mem[0x290B] = A;
+    if (A & 0x80) {                            /* negate -> |$004F-$80| */
+        c = 1; uint16_t t = (uint16_t)0 + (uint8_t)~mem[0x290B] + c; c = t >> 8; A = (uint8_t)t;
+    }
+    mem[0x290D] = A;
+
+    A = 0x80; c = 1;                           /* SEC; A=$80; SBC $004E */
+    { uint16_t t = (uint16_t)A + (uint8_t)~mem[0x004E] + c; c = t >> 8; A = (uint8_t)t; }
+    mem[0x290C] = A;
+    if (A & 0x80) {                            /* negate -> |$80-$004E| */
+        c = 1; uint16_t t = (uint16_t)0 + (uint8_t)~mem[0x290C] + c; c = t >> 8; A = (uint8_t)t;
+    }
+
+    c = 0; { uint16_t t = (uint16_t)A + mem[0x290D] + c; c = t >> 8; A = (uint8_t)t; }  /* CLC; ADC $290D */
+    if (c) { terrain_distance_clamp_return(); return; }
+    mem[0x290D] = A;
+    c = 0; { uint16_t t = (uint16_t)A + mem[0x0051] + c; c = t >> 8; A = (uint8_t)t; }  /* CLC; ADC $0051 */
+    if (c) { terrain_distance_clamp_return(); return; }
+    if (A >= mem[0x2915]) { terrain_distance_clamp_return(); return; }  /* CMP $2915; BCS */
+
+    mem[0x2915] = A;
+    mem[0x2914] = mem[0x290D];
+    mem[0x2912] = mem[0x290B];
+    mem[0x2913] = mem[0x290C];
+    mem[0x2910] = mem[0x290E];
+    mem[0x2911] = mem[0x290F];
+    terrain_distance_clamp_return();
+}
+
+/* terrain_midpoint_displace @ $B2CC — midpoint of two view-space points (the
+ * fractal subdivision step).  Indexed by cpu.X into delta tables $25B4/$25D2/
+ * $25F0/$24E2/$23E2; adds them to $0082-$0086, halves with sign-extension into
+ * {$008E:$008D} and {$0090:$008F}, and (when the $0086 sum is negative) offsets
+ * {$0090:$008F} by +-((midpoint-$0082:$0083)>>1) depending on the final carry.
+ * Contract: memory only.  Faithful carry threading (the ROR/CMP idioms and the
+ * 16-bit add/sub borrow chains are carry-sensitive).
+ */
+void terrain_midpoint_displace(void) {
+    uint8_t A, c;
+    uint8_t x = cpu.X;
+    #define D_ADC(v)  do { uint16_t _t = (uint16_t)A + (uint8_t)(v) + c; c = _t >> 8; A = (uint8_t)_t; } while (0)
+    #define D_SBC(v)  D_ADC((uint8_t)~(uint8_t)(v))
+    #define D_RORA()  do { uint8_t _n = A & 1; A = (uint8_t)((A >> 1) | (c << 7)); c = _n; } while (0)
+    #define D_RORM(a) do { uint8_t _v = mem[a], _n = _v & 1; mem[a] = (uint8_t)((_v >> 1) | (c << 7)); c = _n; } while (0)
+    #define D_LSRA()  do { c = A & 1; A = (uint8_t)(A >> 1); } while (0)
+
+    c = 1; A = mem[0x0082]; D_ADC(mem[0x25B4 + x]); mem[0x008D] = A;   /* B2CC */
+    A = mem[0x0083]; D_ADC(mem[0x25D2 + x]);
+    c = (A >= 0x80) ? 1 : 0; D_RORA(); mem[0x008E] = A; D_RORM(0x008D); /* CMP #$80; ROR */
+
+    c = 1; A = mem[0x0084]; D_ADC(mem[0x25F0 + x]); mem[0x008F] = A;   /* B2E0 */
+    A = mem[0x0085]; D_ADC(mem[0x24E2 + x]);
+    c = (A >= 0x80) ? 1 : 0; D_RORA(); mem[0x0090] = A; D_RORM(0x008F);
+
+    A = mem[0x0086]; c = 1; D_ADC(mem[0x23E2 + x]); mem[0x0091] = A;   /* B2F4 */
+
+    if (!(A & 0x80)) goto done;                /* B2FC BPL: return */
+    if (c) {                                   /* B2FF BCS -> add branch (B31F) */
+        A = mem[0x008D]; c = 1; D_SBC(mem[0x0082]); mem[0x00B5] = A;
+        A = mem[0x008E]; D_SBC(mem[0x0083]); D_LSRA(); mem[0x00B6] = A; D_RORM(0x00B5);
+        A = mem[0x008F]; c = 0; D_ADC(mem[0x00B5]); mem[0x008F] = A;
+        A = mem[0x0090]; D_ADC(mem[0x00B6]); mem[0x0090] = A;
+    } else {                                   /* subtract branch (B301) */
+        A = mem[0x008D]; c = 1; D_SBC(mem[0x0082]); mem[0x00B5] = A;
+        A = mem[0x008E]; D_SBC(mem[0x0083]); D_LSRA(); mem[0x00B6] = A; D_RORM(0x00B5);
+        A = mem[0x008F]; c = 1; D_SBC(mem[0x00B5]); mem[0x008F] = A;
+        A = mem[0x0090]; D_SBC(mem[0x00B6]); mem[0x0090] = A;
+    }
+done:
+    #undef D_ADC
+    #undef D_SBC
+    #undef D_RORA
+    #undef D_RORM
+    #undef D_LSRA
+    return;
 }
