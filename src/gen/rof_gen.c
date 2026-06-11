@@ -4938,8 +4938,8 @@ L_52b4:;
     game_loop_reset_trampoline(); return;
 }
 
-/* vbi_handler_game @ $52D7: Main game VBI handler (VVBLKI=$52D7 set in display_setup $5F50-$57) */
-void vbi_handler_game(void) {
+/* vbi_handler_standby @ $52D7: Standby + launch-cinematic VBI handler (VVBLKI=$52D7 set in display_setup $5F50); active from the Standby screen through the doors/tunnel/stars/planet cinematic, until flight init swaps in vbi_handler_flight ($4FF5). Per-frame: attract timer, attract input poll ($5398), sound_event_dispatch ($5367), saucer_anim_tick every other frame, SFX/music tick, update_gauge_digits. Was vbi_handler_standby. */
+void vbi_handler_standby(void) {
     /* 52d7 */
     LDA(mem[0x022F]);
     /* 52da */

@@ -1,6 +1,6 @@
 // Native 68000 translations of Atari VBI handler fragments used by RescueOnFractalus.
 //
-// The full vbi_handler_game ($52D7) and vbi_handler_flight ($4FF5) do many things:
+// The full vbi_handler_standby ($52D7) and vbi_handler_flight ($4FF5) do many things:
 // hardware register writes (DMACTL, CHBASE, COLPF0-3, HPOSP, PRIOR), display-list
 // management, sound dispatch, and object animation.  On the Amiga:
 //   • Copper handles all hardware register writes.
@@ -12,7 +12,7 @@
 #include "AtariZp.h"      // zp:: named Atari memory offsets
 extern "C" volatile uint8_t mem[65536];
 
-// vbi_attract_timer_native: fragment of vbi_handler_game @ $52D7 relevant to
+// vbi_attract_timer_native: fragment of vbi_handler_standby @ $52D7 relevant to
 // Standby.  The full handler also writes DMACTL/CHBASE/colour/HPOS registers
 // (handled by Copper) and increments $0014 (handled by main.cpp VBI server).
 // This fragment is lines $5335-$533A:
@@ -126,7 +126,7 @@ extern "C" void update_cockpit_digits_native(void)
 // saucer_anim_tick_native: direct translation of saucer_anim_tick @ $4229.
 // (Previously mislabelled update_gauge_digits — that is a different routine at
 // $548D; the canonical name for $4229 in disasm/symbols.csv is saucer_anim_tick.)
-// Called from vbi_handler_game ($52D7) every other frame (LSR $0643 gate).
+// Called from vbi_handler_standby ($52D7) every other frame (LSR $0643 gate).
 // Drives the cockpit score/counter animation at $3491-$3497 (mode-4 chars).
 // State machine in mem[$007E]:
 //   0       — init: fill $3492-$3497 with $A9 (coloured glyph), advance to 1
@@ -529,4 +529,31 @@ extern "C" void draw_tunnel_rings_native(void)
     } while (((int8_t)--mem[0x00A0]) >= 0);
     mem[0x0094]--;
     draw_shape_rows_loop();
+}
+
+// standby_vbi_native: the faithful per-frame body of vbi_handler_standby ($52D7),
+// run from the real INTB_VERTB interrupt via game_vbi_isr() during the Standby
+// screen + the launch cinematic (the Atari ran $52D7 in the VBI throughout).
+// HW-display writes ($52D7-$5332: PMG positions, colours, GRAFP, HPOS) are SKIPPED —
+// the Amiga copper owns the display.  Order mirrors $5333 onward:
+//   $5333  INC $0014 (RTCLOK)            -> done by the ISR before this call
+//   $5335  attract-timer cascade         -> vbi_attract_timer_native
+//   $5398  attract input poll            -> SKIPPED: Atari $D01F/$D010/$D300 reads
+//          (resets the attract timeout on input) return neutral on the Amiga, where
+//          input is the keyboard ISR, so it would only ever no-op.
+//   $5367  sound_event_dispatch          -> the door/tunnel/scroll cinematic driver
+//          (self-gated on $0088/$0089/$008A/$008B/$008D — inert on the static screen)
+//   $5342  saucer_anim_tick every other frame (LSR/INC $0643 gate)
+//   $534D  SFX tick ($70F9)              -> runs on CIA-B Timer A instead (main.cpp)
+//          update_gauge_digits ($548D) / music_player_tick ($7253) -> never ported.
+extern "C" void standby_vbi_native(void)
+{
+    vbi_attract_timer_native();              // $5335
+    sound_event_dispatch_native();           // $5367
+    uint8_t g = mem[zp::saucerTickParity];   // $5342: LSR $0643 / BCS skip / ... / INC
+    mem[zp::saucerTickParity] = (uint8_t)(g >> 1);
+    if (!(g & 1u)) {                         // carry clear -> run, then INC
+        saucer_anim_tick_native();           // $4229
+        mem[zp::saucerTickParity]++;
+    }
 }

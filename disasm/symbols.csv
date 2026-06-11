@@ -126,7 +126,7 @@ $4F3F,game_sub_4f3f,func,0,Game subsystem (called from enemy_check when $063D≠
 $4FF5,vbi_handler_flight,func,0,In-flight VBI handler (VVBLKI=$4FF5 set at $3E50 during flight init); $51B9 block = flight_control_integrate + terrain projection, mirrored by flight_vbi_native
 $5433,font_display_init,func,0,Font/display character setup (called in game_entry init)
 $53CC,vbi_handler_1,func,0,First in-game VBI handler (VVBLKI=$53CC set at $3D63 in game_entry)
-$52D7,vbi_handler_game,func,0,Main game VBI handler (VVBLKI=$52D7 set in display_setup $5F50-$57)
+$52D7,vbi_handler_standby,func,0,Standby + launch-cinematic VBI handler (VVBLKI=$52D7 set in display_setup $5F50); active from the Standby screen through the doors/tunnel/stars/planet cinematic, until flight init swaps in vbi_handler_flight ($4FF5). Per-frame: attract timer, attract input poll ($5398), sound_event_dispatch ($5367), saucer_anim_tick every other frame, SFX/music tick, update_gauge_digits. Was vbi_handler_standby.
 $5815,ring_push_marked,func,0,TXA;ORA #$80;JMP ring_push_0719 — push object index X marked with bit7 ($80=active) into the $0719 event ring
 $581C,input_init,func,0,Input/controller init (called twice: X=$1F then X=$20)
 $587B,cockpit_display,func,0,Cockpit/instrument display or main input handler (reads PORTA/CONSOL; called if $060B≠0)
@@ -756,6 +756,6 @@ $66E9,pixel_or_mask_tbl,var,0,Bit-set (OR) mask table indexed by pixel sub-byte 
 $66FB,pixel_and_mask_tbl,var,0,Bit-clear (AND) mask table paired with pixel_or_mask_tbl; used by plot_glyph_pixel_masked to set 2-bit pixel value
 $0090,sfx_reinit_gate,var,0,Non-zero -> the attract loop re-inits the SFX sequence via $70E7 (sound_init); cleared after one reinit.
 $00D8,text_color_pf0,var,0,Title/text colour shadow (COLPF0); set to $44 by copy_text_block_to_screen on the copyright block.
-$062D,attract_timer_sub,var,0,Attract-timer sub-counter incremented each VBI by vbi_handler_game; 256-wrap increments attract_timer $00E2.
-$0643,saucer_tick_parity,var,0,Every-other-frame gate (LSR/INC) controlling whether vbi_handler_game runs saucer_anim_tick this frame.
+$062D,attract_timer_sub,var,0,Attract-timer sub-counter incremented each VBI by vbi_handler_standby; 256-wrap increments attract_timer $00E2.
+$0643,saucer_tick_parity,var,0,Every-other-frame gate (LSR/INC) controlling whether vbi_handler_standby runs saucer_anim_tick this frame.
 $06CC,history_ring_step,var,0,Increment added to $0679[$0C] by advance_history_6a4d (saturates to $FF on wrap-to-0).

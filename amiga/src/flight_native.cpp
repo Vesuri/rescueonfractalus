@@ -76,25 +76,31 @@ extern "C" void flight_vbi_native(void)
     render_bcd_counter();                // top-bar score: BCD $0601 -> text line $32C5
 }
 
-// g_flightVbiActive: set by startFlight() once flight init has completed; the real
-// INTB_VERTB server gates flight_vbi_isr on it so the flight motion core runs ONLY
-// in flight (never during attract/launch, where $004A may be nonzero for other reasons).
-extern "C" volatile uint8_t g_flightVbiActive = 0;
+// g_activeVbi: which VBI body the real INTB_VERTB ISR runs, mirroring how the Atari
+// swaps the VVBLKI vector by phase.  0 = none (during scene init), 1 = standby/launch
+// ($52D7 vbi_handler_standby), 2 = flight ($4FF5 vbi_handler_flight).  Set by the
+// scene (initialize() -> 1, startFlight() -> 2) only AFTER that phase's state is ready.
+extern "C" volatile uint8_t g_activeVbi = 0;
 
-// flight_vbi_isr: the wrapper the real Amiga vertical-blank interrupt server calls.
-// This is where the Atari's $4FF5 VBI work actually belongs — run in the VBI, not
-// the main loop.  On the Atari the 6502 registers are saved/restored by the OS
-// VBLANK entry/exit (SYSVBV/XITVBV).  Our transpile funnels all 6502 register state
-// through one shared global `cpu`, so we replicate that hardware save/restore here:
-// the main-loop pass (flight_frame_native) may be mid-instruction using `cpu` when
-// this interrupt preempts it.  mem[] needs no saving — it is the shared "RAM", and
-// the faithful VBI body touches scratch disjoint from the main loop (as on the Atari).
-extern "C" void flight_vbi_isr(void)
+// standby_vbi_native: the faithful $52D7 per-frame body (defined in NativeHandlers.cpp).
+extern "C" void standby_vbi_native(void);
+
+// game_vbi_isr: the dispatcher the real Amiga vertical-blank interrupt calls.  This is
+// where the Atari's per-frame VBI work belongs — run in the VBI, not the main loop —
+// and it swaps body by phase exactly as the Atari swaps VVBLKI between $52D7 and $4FF5.
+// On the Atari the 6502 registers are saved/restored by the OS VBLANK entry/exit
+// (SYSVBV/XITVBV).  Our transpile funnels ALL 6502 register state through one shared
+// global `cpu`, so we replicate that hardware save/restore here: the main-loop pass
+// (flight_frame_native, or the cinematic native drivers) may be mid-instruction using
+// `cpu` when this interrupt preempts it.  mem[] needs no saving — it is the shared
+// "RAM", and the VBI bodies touch scratch disjoint from the main loop (as on the
+// Atari, where $52D7/$4FF5 ran concurrently with the main loop and it worked).
+extern "C" void game_vbi_isr(void)
 {
-    if (!g_flightVbiActive) return;
-    Cpu6502 saved = cpu;     // == the OS VBLANK's PHA;TXA;PHA;TYA;PHA register save
-    flight_vbi_native();
-    cpu = saved;             // == XITVBV's PLA;TAY;PLA;TAX;PLA register restore
+    Cpu6502 saved = cpu;                            // == OS VBLANK PHA;TXA;PHA;TYA;PHA
+    if      (g_activeVbi == 2) flight_vbi_native();  // $4FF5 in-flight VBI
+    else if (g_activeVbi == 1) standby_vbi_native(); // $52D7 standby/launch VBI
+    cpu = saved;                                    // == XITVBV PLA;TAY;PLA;TAX;PLA
 }
 
 // flight_init_native: port the mem[]-state subset of game_entry $3E12-$3EA6.

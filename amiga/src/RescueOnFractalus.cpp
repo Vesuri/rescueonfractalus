@@ -53,7 +53,7 @@ extern "C" uint8_t launch_planet_step_native(void);            // $6574: one pla
 extern "C" void    launch_planet_scroll_native(void);          // $6AEE scroll-only: keep starfield drifting
 extern "C" void    flight_init_native(void);                   // game_entry $3E12-$3EB8 flight init
 extern "C" void    flight_reset_parity_native(void);           // reset double-buffer pass parity
-extern "C" volatile uint8_t g_flightVbiActive;                 // gates the flight VBI in the real INTB_VERTB ISR
+extern "C" volatile uint8_t g_activeVbi;                       // 0=none 1=standby($52D7) 2=flight($4FF5); read by game_vbi_isr
 extern "C" uint8_t flight_frame_native(void);                  // one flight heavy pass; returns $0072 (==2 done)
 
 extern "C" volatile uint8_t mem[65536];
@@ -228,7 +228,7 @@ void RescueOnFractalus::buildCopperList(CopperList* cl, uint16_t frame)
     // posts on sprites 0/1) — the gauge ends up behind the cockpit colours.
     d[idx - 10] = copperMove(bplcon2, (uint16_t)((1u << 3) | 1u));   // PF1P=PF2P=1
     // Title palette.
-    // vbi_handler_game ($52D7) sets every frame:
+    // vbi_handler_standby ($52D7) sets every frame:
     //   COLPF0 ($D016) = mem[$00D8]  — title text colour (mode-6 col=1 chars)
     //   COLBK  ($D01A) = mem[$02C8]  — title background
     //   COLPF1 ($D017) = $78         — hardcoded blue (same role on real hw)
@@ -553,6 +553,11 @@ void RescueOnFractalus::initialize()
     // and decode that GTIA-10 field into the 3bp tunnel bitmap (pens 1-6).  Motion
     // later comes from cycling COLOR01-06; the ring pattern itself is static.
     decodeTunnelRings();
+
+    // Init complete — arm the standby/launch VBI ($52D7) in the real INTB_VERTB ISR.
+    // (The ISR has been firing since AddIntServer in main(), but g_activeVbi was 0
+    // so it only bumped RTCLOK; now standby_vbi_native runs each vblank.)
+    g_activeVbi = 1;
 }
 
 void RescueOnFractalus::decodeTunnelRings()
@@ -748,9 +753,10 @@ void RescueOnFractalus::startFlight()
     // render_bcd_counter then draws the score on the right (visible at $32CA).
     for (uint16_t i = 0x32B5; i <= 0x32CC; i++) mem[i] = 0x00;
     for (int i = 0; i < 20; i++) titleShadow[i] = 0xFF;
-    // Arm the flight VBI LAST — only now (init complete) may the real INTB_VERTB
-    // ISR start running the flight motion core (flight_vbi_isr gates on this).
-    g_flightVbiActive = 1;
+    // Swap the active VBI body to flight LAST — only now (init complete) may the real
+    // INTB_VERTB ISR (game_vbi_isr) start running the flight VBI ($4FF5) instead of
+    // the standby/launch VBI ($52D7).  Mirrors the Atari swapping VVBLKI at $3E50.
+    g_activeVbi = 2;
 }
 
 void RescueOnFractalus::update(uint16_t frame)
@@ -768,7 +774,8 @@ void RescueOnFractalus::update(uint16_t frame)
         if (launch_gauge_step_native() == 0)
             startDoors();
     } else if (launchPhase == kLaunchDoors) {
-        sound_event_dispatch_native();
+        // sound_event_dispatch ($5367) now scrolls the doors in the ISR
+        // (standby_vbi_native); here we just poll the flags it updates.
         if (mem[zp::vbiFlags] == 0 && mem[zp::terrainScrollCounter] == 0) {
             // Cinematic effect 4: doors fully open → light the whole left column
             // (display_setup $6482: game_sub_4447 with A=0 -> threshold $08), reseed
@@ -785,7 +792,7 @@ void RescueOnFractalus::update(uint16_t frame)
         // advance_message_column also draws expanding black frames into $2000 from
         // the centre out ("entering space"), so re-decode the field each frame for
         // the tunnel to visibly go black from the middle, not just via a palette tweak.
-        sound_event_dispatch_native();
+        // ($5367 now runs in the ISR; it sets g_tunnelFieldDirty, we re-decode here.)
         if (g_tunnelFieldDirty) {       // decode the new extent; shadow skips unchanged bytes
             decodeTunnelField((int)g_tunRowLo, (int)g_tunRowHi);
             g_tunnelFieldDirty = 0;
@@ -815,17 +822,17 @@ void RescueOnFractalus::update(uint16_t frame)
         // One flight main-loop heavy pass per frame (the Atari runs two passes per
         // loop iteration for double buffering; one Amiga frame = one pass).  The
         // flight VBI ($4FF5) motion core is NO LONGER called here — it runs in the
-        // real INTB_VERTB interrupt (main.cpp -> flight_vbi_isr), where the Atari
+        // real INTB_VERTB interrupt (main.cpp -> game_vbi_isr), where the Atari
         // ran it.  By the time this main-loop pass runs, the ISR has already
         // advanced the world position for this frame (the loop is VBI-paced).
         flight_frame_native();
     }
 
-    // The attract/Standby per-frame timer belongs to vbi_handler_game ($52D7); in
-    // flight the active VBI is vbi_handler_flight ($4FF5), so skip it once in kFlight.
-    if (launchPhase != kFlight)
-        vbi_attract_timer_native();       // $52D7: attract timer cascade
-    update_indicator_blink_native();    // $4131: cockpit blink lights
+    // The $52D7 VBI body (attract timer + sound_event_dispatch + every-other-frame
+    // saucer_anim_tick) now runs in the real INTB_VERTB interrupt (main.cpp ->
+    // game_vbi_isr -> standby_vbi_native), where the Atari ran it — no longer here.
+    update_indicator_blink_native();    // $4131: cockpit blink lights (NOT part of $52D7;
+                                        // a flight-VBI routine, left here pending that port)
     // sfx_voice_tick_native() is now driven by CIA-B Timer A at ~100 Hz (main.cpp).
 
     // Mirror $62E7 SFX-reinit gate: when mem[$0090] is non-zero the attract loop
@@ -842,21 +849,10 @@ void RescueOnFractalus::update(uint16_t frame)
     if (launchPhase != kFlight && mem[0x060B] == 0)   // $62FB: title text (gated by $060B)
         copy_text_block_to_screen_native();    // $782A: $0091→title string
 
-    // FUN_4229 ($4229): gauge/counter animation AND — when mem[$007E]==$80 — the
-    // random blink of the centre-bottom indicator lights ($3492-$3497).  The
-    // original vbi_handler_game calls it EVERY OTHER FRAME and is NOT gated by
-    // $004A: LSR $0643 / BCS skip / JSR $4229 / INC $0643 ($5342).  (Our earlier
-    // $004A gate suppressed the Standby blink entirely.)
-    {
-        uint8_t g = mem[zp::saucerTickParity];
-        mem[zp::saucerTickParity] = (uint8_t)(g >> 1);          // LSR $0643
-        if (!(g & 1u)) {                           // carry clear → run, then INC
-            saucer_anim_tick_native();
-            mem[zp::saucerTickParity]++;
-        }
-        // Any cockpit RAM changes (e.g. the centre-bottom indicator-light blink
-        // at $3491-$3498) are picked up by render()'s per-cell shadow compare.
-    }
+    // (The every-other-frame saucer_anim_tick $4229 — the $5342 LSR/INC $0643 gate
+    // and the Standby centre-bottom indicator-light blink — now runs in the ISR via
+    // standby_vbi_native.  render()'s per-cell shadow compare still picks up any
+    // cockpit RAM the blink changes at $3491-$3498.)
 
     if (mem[zp::joystickSaved] != 0) {             // $004A set when game starts (door sequence)
         update_cockpit_digits_native();          // $3FFA: cockpit digit update
@@ -966,7 +962,7 @@ void RescueOnFractalus::render()
     // $32B7..$32CA — same window the Standby title uses.  The score's right-most
     // digit lands at $32CA = col 19, so this window already covers it.
     static const uint16_t kScreenRAM = 0x32B7;
-    // CHBAS=$04 ($0400): vbi_handler_game sets this each VBI. dli_sub_4a0c fires
+    // CHBAS=$04 ($0400): vbi_handler_standby sets this each VBI. dli_sub_4a0c fires
     // at scanY=28 (after title scanlines 20-27) → title uses $0400 for all 8 scans.
     static const uint16_t kCharsetBase  = 0x0400;
 
