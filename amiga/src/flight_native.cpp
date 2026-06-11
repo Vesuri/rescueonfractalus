@@ -18,6 +18,7 @@
 
 #include "PaulaAudio.h"   // mem[] + int types (matches the other native modules)
 #include "AtariZp.h"      // zp:: named mem[] offsets (heading/world pos/game state/...)
+#include "../../src/gen/rof_native.h"  // typed C cores (clear_terrain_column_at, ...)
 extern "C" volatile uint8_t mem[65536];
 
 // The transpile's 6502 register file (src/cpu/cpu.h: `Cpu6502 cpu`) — mirrored
@@ -43,7 +44,8 @@ void init_gameplay_state(void);       // $73C8: per-game/level gameplay init (ru
 
 // Flight main-loop heavy set ($3EBA pass A / $3EF5 pass B):
 void terrain_frame_setup(void);       // $9E54: per-frame view-transform setup
-void clear_terrain_column(void);      // $AD5F: clear a terrain column band (X = start column)
+// clear_terrain_column ($AD5F) is reached via its typed core clear_terrain_column_core()
+// (rof_native.h) instead of the cpu.X = N; clear_terrain_column() 6502-ABI form.
 void terrain_draw_frame(void);        // $A31E: main per-frame terrain draw driver (X = half)
 void terrain_collision(void);         // $AE53: terrain collision + final column fill (X)
 void game_state_update(void);         // $A99C: game state machine
@@ -165,7 +167,7 @@ extern "C" uint8_t flight_frame_native(void)
 {
     terrain_frame_setup();                                         // $9E54 / $3EF5
     if (flightParity == 0) {
-        cpu.X = 0x33; clear_terrain_column();                       // $3EBD
+        clear_terrain_column_core(0x33);                            // $3EBD
         cpu.X = 0x30; terrain_draw_frame();                       // $3EC2 (offset-48 half)
         cpu.X = 0x33; terrain_collision();                   // $3EC9
         mem[zp::pilotState] = mem[zp::gameState];                           // $3ECC: LDA $0041 / STA $288F
@@ -173,7 +175,7 @@ extern "C" uint8_t flight_frame_native(void)
         mem[zp::gamePhase] = 0x02;                                  // $3ED4
         enemy_check();                                       // $3ED8
     } else {
-        cpu.X = 0x03; clear_terrain_column();                       // $3EFA
+        clear_terrain_column_core(0x03);                            // $3EFA
         cpu.X = 0x00; terrain_draw_frame();                       // $3EFF (offset-0 half, displayed)
         cpu.X = 0x03; terrain_collision();                   // $3F04
         if (mem[zp::gameState]) mem[zp::pilotState] = mem[zp::gameState];          // $3F07: conditional

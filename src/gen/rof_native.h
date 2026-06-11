@@ -1,0 +1,41 @@
+/* rof_native.h — typed C cores of the natively-reimplemented 6502 routines.
+ *
+ * These are the idiomatic-C halves of the VALIDATE_FUNCS routines: real
+ * parameters and return values, no dependence on mem[]/cpu for argument
+ * passing.  NAMING: each core is `<canonical>_core`, where <canonical> is the
+ * matching `void <canonical>(void)` 6502-ABI shim (in rof_native.c) that the
+ * transpiler/validate/register-convention boundary binds to and that just
+ * marshals mem[]/cpu into the core.
+ *
+ * Both the C transpile (rof_native.c) and the hand-written C++ Amiga ports
+ * include this header, so it carries C linkage for C++.
+ *
+ * Type source: includers must already provide uint8_t/uint16_t (rof_native.c
+ * via <stdint.h>; the Amiga ports via the framework headers).  This header does
+ * NOT pull <stdint.h> itself — the Amiga framework's SASCCompat.h defines the
+ * fixed-width types incompatibly (int8_t == char), so a second definition clashes.
+ */
+#pragma once
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+/* divide_16x16 @ $9D6F core — unsigned restoring 16-bit divide.
+ * Domain: divisor in [1, 0x7FFF] and dividend < divisor (the in-game caller
+ * scales the divisor above the dividend first).  See rof_native.c for the
+ * derivation of the normalization-shifted remainder/divisor outputs. */
+typedef struct {
+    uint8_t  quotient;         /* (dividend * 256) / divisor, always < 256   */
+    uint16_t remainder;        /* ((dividend * 256) % divisor) << k          */
+    uint16_t shifted_divisor;  /* divisor << k (k = normalization shift count) */
+} DivResult;
+DivResult divide_16x16_core(uint16_t dividend, uint16_t divisor);
+
+/* clear_terrain_column @ $AD5F core — clear one terrain column band + its
+ * scattered object-table cells, starting at column offset startCol. */
+void clear_terrain_column_core(uint8_t startCol);
+
+#ifdef __cplusplus
+}
+#endif

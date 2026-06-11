@@ -24,6 +24,17 @@
 static uint32_t rng = 0x9D6F1234u;
 static uint32_t xs(void) { uint32_t x = rng; x ^= x << 13; x ^= x >> 17; x ^= x << 5; return rng = x; }
 
+/* Per-test contract mask: addresses excluded from the mem[] diff.  Use ONLY for
+ * cells PROVEN dead after the function returns (no reader before the next write),
+ * so the native version is free not to reproduce them.  e.g. project_terrain_points
+ * leaves divide_16x16's $AE/$AF/$B0/$B1/$B2 scratch behind — those cells are touched
+ * by NO routine other than divide_16x16 + project_terrain_points (verified via
+ * disasm/zeropage.csv), so their exit value is dead.  Scoped: set before a test,
+ * clear (n=0) after, so it never relaxes another function's contract. */
+static const uint16_t *g_ignore = 0;
+static int             g_ignore_n = 0;
+static void set_ignore(const uint16_t *addrs, int n) { g_ignore = addrs; g_ignore_n = n; }
+
 /* Test-only platform bridge (platform_cbridge.cpp): a headless Platform whose
    hwRead routes POKEY RANDOM ($D20A) to a seedable LFSR.  Seeding both runs of
    a case identically gives them the same RANDOM stream so RANDOM-reading
@@ -64,6 +75,10 @@ static int diff_run(const char *name, const uint8_t *pre, Cpu6502 pre_cpu,
     platform_test_seed_rng(rseed);
     memcpy((void *)mem, pre, 65536); cpu = pre_cpu;
     native();
+
+    /* Neutralize the masked (proven-dead) cells in both buffers so they compare
+       equal — excludes them from the contract for this test only. */
+    for (int i = 0; i < g_ignore_n; i++) ref_mem[g_ignore[i]] = mem[g_ignore[i]];
 
     /* Fast path: memcmp (SIMD libc) over the whole 64 KB; only walk byte-by-byte
        to report offending cells when a difference actually exists. */
@@ -379,9 +394,17 @@ int main(void) {
     fails += test_mem_contract_regs("terrain_frame_setup", terrain_frame_setup, terrain_frame_setup__t6502);
     /* project_terrain_points: snapshot-driven (random mem can make divide_16x16's
        normalize loop spin forever on a pathological divisor — same hang in both
-       runs, so a timeout can't diff them).  X masked to the real column range. */
+       runs, so a timeout can't diff them).  X masked to the real column range.
+       Excludes divide_16x16's scratch ($AE/$AF/$B0/$B1/$B2) from the contract:
+       proven dead after return (no reader before the next overwrite — only
+       divide_16x16 + project_terrain_points touch those cells), so the native
+       version calls divide_16x16_core() and need not leave the 6502 remainder/
+       shifted-divisor residue behind. */
+    static const uint16_t ptp_dead_scratch[] = { 0x00AE, 0x00AF, 0x00B0, 0x00B1, 0x00B2 };
+    set_ignore(ptp_dead_scratch, 5);
     fails += test_from_snapshot("project_terrain_points", project_terrain_points,
                                 project_terrain_points__t6502, 4000, 0x3F);
+    set_ignore(0, 0);
     /* terrain_collision: the $B141 column-raster loop only terminates on real
        terrain tables (random mem can chain forever via $BE00).  Snapshot-driven;
        entry X (column start) masked 0..$3F — all verified hang-free. */

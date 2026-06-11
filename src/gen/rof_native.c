@@ -15,6 +15,25 @@
 #include "../cpu/cpu.h"
 #include "../cpu/bus.h"  /* bus_read/bus_write + ZP_IND_Y for indirect bitmap access */
 #include "rof_decl.h"   /* declarations for transpiled routines native code calls */
+#include "rof_native.h" /* typed cores shared with the hand-written Amiga ports */
+
+/* ---------------------------------------------------------------------------
+ * Idiomatic-C migration seam.
+ *
+ * Each VALIDATE_FUNCS routine is split into two halves:
+ *   - a TYPED CORE `<canonical>_core` (e.g. divide_16x16_core,
+ *     clear_terrain_column_core) that takes real C parameters / returns real
+ *     values — the form we want all native code to converge on; and
+ *   - a 6502-ABI SHIM keeping the transpiler-mandated `void name(void)` symbol
+ *     that transpiled callers (rof_gen.c), the validate harness, and the
+ *     register/memory calling convention bind to.  The shim just marshals
+ *     mem[]/cpu <-> the core.
+ * Hand-written native callers (the Amiga C++ ports, and the cores here) call
+ * the TYPED CORE directly.  When a routine's last transpiled caller is shed, its
+ * shim + VALIDATE_FUNCS entry can be deleted, leaving pure C.
+ * ------------------------------------------------------------------------- */
+static inline uint16_t rd16(uint16_t a) { return (uint16_t)(mem[a] | (mem[a + 1] << 8)); }
+static inline void     wr16(uint16_t a, uint16_t v) { mem[a] = (uint8_t)v; mem[a + 1] = (uint8_t)(v >> 8); }
 
 /* divide_16x16 @ $9D6F — restoring 16-bit divide, expressed as one native divide.
  *
@@ -44,22 +63,28 @@
  * exit state is intentionally NOT reproduced — both call sites save Y through
  * $009F and overwrite A/flags immediately (verified incidental/dead).
  */
-void divide_16x16(void) {
-    uint16_t dividend = (uint16_t)(mem[0x00B0] | (mem[0x00B1] << 8));
-    uint16_t divisor  = (uint16_t)(mem[0x00AE] | (mem[0x00AF] << 8));
-
+/* Typed core: see rof_native.h for the contract. */
+DivResult divide_16x16_core(uint16_t dividend, uint16_t divisor) {
     /* Normalization count k: divisor << k brings its top set bit to bit14. */
     unsigned k = 0;
     while (!((divisor << k) & 0x4000)) k++;
-    uint16_t shifted_divisor = (uint16_t)(divisor << k);
 
     uint32_t numerator = (uint32_t)dividend << 8;
-    uint8_t  quotient  = (uint8_t)(numerator / divisor);              /* < 256 */
-    uint16_t remainder = (uint16_t)((numerator % divisor) << k);
+    DivResult r;
+    r.quotient        = (uint8_t)(numerator / divisor);            /* < 256 */
+    r.remainder       = (uint16_t)((numerator % divisor) << k);
+    r.shifted_divisor = (uint16_t)(divisor << k);
+    return r;
+}
 
-    mem[0x00B0] = (uint8_t)remainder;        mem[0x00B1] = (uint8_t)(remainder >> 8);
-    mem[0x00B2] = quotient;
-    mem[0x00AE] = (uint8_t)shifted_divisor;  mem[0x00AF] = (uint8_t)(shifted_divisor >> 8);
+/* 6502-ABI shim: dividend $B0/$B1, divisor $AE/$AF in; remainder -> $B0/$B1,
+ * quotient -> $B2, shifted divisor -> $AE/$AF out.  (Exit cpu state is dead at
+ * both call sites — see header note above — so it is intentionally untouched.) */
+void divide_16x16(void) {
+    DivResult r = divide_16x16_core(rd16(0x00B0), rd16(0x00AE));
+    wr16(0x00B0, r.remainder);
+    mem[0x00B2] = r.quotient;
+    wr16(0x00AE, r.shifted_divisor);
 }
 
 /* clear_terrain_column @ $AD5F — clear one terrain column band + its object-table cells.
@@ -76,17 +101,18 @@ void divide_16x16(void) {
  *          is dead.  We still reproduce it (A=0, Y=0, X=original, N/Z per LDX X)
  *          so the validation harness shows zero incidental CPU drift.
  */
-void clear_terrain_column(void) {
-    uint8_t x0 = mem[0x0094] = cpu.X;            /* $AD5F: STX $0094 (save column) */
+/* Typed core: see rof_native.h. */
+void clear_terrain_column_core(uint8_t startCol) {
+    mem[0x0094] = startCol;                       /* $AD5F: STX $0094 (save column) */
 
     /* $AD61-$ADEF: 42 columns ($2A) x 44 rows (base $1010, stride $60), all 0. */
     for (uint8_t i = 0; i < 0x2A; i++) {
-        uint8_t x = (uint8_t)(x0 + i);           /* INX wraps as a byte */
+        uint8_t x = (uint8_t)(startCol + i);      /* INX wraps as a byte */
         for (uint16_t row = 0x1010; row <= 0x2030; row += 0x60)
             mem[row + x] = 0x00;
     }
 
-    /* $ADF0-$AE52: scattered object-table cells, indexed by the ORIGINAL X. */
+    /* $ADF0-$AE52: scattered object-table cells, indexed by the ORIGINAL column. */
     static const uint16_t cells[] = {
         0x2090, 0x2091, 0x2092, 0x2093, 0x2094,
         0x20BA, 0x20B9, 0x20B8, 0x20B7, 0x20B6, 0x20B5,
@@ -97,9 +123,15 @@ void clear_terrain_column(void) {
         0x21B0, 0x21DA, 0x21B1, 0x21D9, 0x21D8,
     };
     for (unsigned k = 0; k < sizeof cells / sizeof cells[0]; k++)
-        mem[cells[k] + x0] = 0x00;
+        mem[cells[k] + startCol] = 0x00;
+}
 
-    /* Incidental exit state (dead at all call sites; matched for a clean diff). */
+/* 6502-ABI shim: cpu.X = starting column in.  Exit cpu state (A=0, Y=0,
+ * X=original, N/Z per LDX X) is dead at both call sites but reproduced so the
+ * validation harness shows zero incidental CPU drift. */
+void clear_terrain_column(void) {
+    uint8_t x0 = cpu.X;
+    clear_terrain_column_core(x0);
     cpu.A = 0x00; cpu.Y = 0x00; cpu.X = x0;
     cpu.Z = (x0 == 0) ? 1 : 0; cpu.N = (x0 >> 7) & 1;
 }
@@ -1463,6 +1495,15 @@ void terrain_frame_setup(void) {
  * divide_16x16 is pure-memory (preserves cpu.X), so the entry X threads through as
  * a constant local; Y is saved/restored via $009F around the divide (as the 6502
  * does).  Contract: memory only (caller reloads regs).
+ *
+ * This calls the typed divide_16x16_core(): only the QUOTIENT feeds the coordinate
+ * fold below (written to $B2, which the fold reads/RMWs).  The 6502 divide also left
+ * a remainder in $B0/$B1 and the shifted divisor in $AE/$AF, but those — like $B2's
+ * final value — are DEAD after this function: disasm/zeropage.csv shows $AE/$AF/$B0/
+ * $B1/$B2 are touched by no routine except divide_16x16 + this one, so nothing reads
+ * them before the next call overwrites them.  The validate harness excludes those 5
+ * cells from this function's contract (see set_ignore in validate_native.c), so the
+ * core's results don't need to be marshalled back into 6502 divide scratch.
  */
 void project_terrain_points(void) {
     uint8_t A, Y, c, X = cpu.X;
@@ -1508,9 +1549,11 @@ void project_terrain_points(void) {
         if (A & 0x80) { mem[0x242D + X] = 0xC0; mem[0x2400 + X] = 0x00; }  /* a17a */
         else          { mem[0x242D + X] = 0x40; mem[0x2400 + X] = 0x00; }  /* a16d */
     } else {
-        /* a187 — divide and fold quotient into the screen coordinate */
+        /* a187 — divide and fold quotient into the screen coordinate.  $9F save/
+           restore kept (it is shared scratch, in the contract); the core preserves
+           our local Y anyway.  Only the quotient ($B2) feeds the fold. */
         mem[0x009F] = Y;                                 /* a187 STY $9F */
-        divide_16x16();                                  /* a189 */
+        mem[0x00B2] = divide_16x16_core(rd16(0x00B0), rd16(0x00AE)).quotient;  /* a189 */
         Y = mem[0x009F];                                 /* a18c LDY $9F */
         Y = (uint8_t)(Y - 1);                            /* a18e DEY */
         if (Y & 0x80) {                                  /* a18f BMI -> a1d9 */
@@ -1579,9 +1622,9 @@ void project_terrain_points(void) {
         if (A & 0x80) { mem[0x2487 + X] = 0xC0; mem[0x245A + X] = 0x00; }  /* a255 */
         else          { mem[0x2487 + X] = 0x40; mem[0x245A + X] = 0x00; }  /* a248 */
     } else {
-        /* a262 — divide */
+        /* a262 — divide (see half-1 note: only the quotient feeds the fold) */
         mem[0x009F] = Y;                                 /* a262 */
-        divide_16x16();                                  /* a264 */
+        mem[0x00B2] = divide_16x16_core(rd16(0x00B0), rd16(0x00AE)).quotient;  /* a264 */
         Y = mem[0x009F];                                 /* a267 */
         Y = (uint8_t)(Y - 1);                            /* a269 DEY */
         if (Y & 0x80) {                                  /* a26a BMI -> a2b4 */
