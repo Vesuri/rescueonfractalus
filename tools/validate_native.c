@@ -348,6 +348,11 @@ int main(void) {
        runs, so a timeout can't diff them).  X masked to the real column range. */
     fails += test_from_snapshot("project_terrain_points", project_terrain_points,
                                 project_terrain_points__t6502, 4000, 0x3F);
+    /* terrain_collision: the $B141 column-raster loop only terminates on real
+       terrain tables (random mem can chain forever via $BE00).  Snapshot-driven;
+       entry X (column start) masked 0..$3F — all verified hang-free. */
+    fails += test_from_snapshot("terrain_collision", terrain_collision,
+                                terrain_collision__t6502, 2000, 0x3F);
 
     printf("\n%s\n", fails == 0
         ? "PASS — all native reimplementations are memory-equivalent to their 6502 oracles."

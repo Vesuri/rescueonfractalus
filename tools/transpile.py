@@ -77,6 +77,7 @@ VALIDATE_FUNCS = {
     0xA613,  # terrain_gen_A613 — per-frame random terrain jitter (flight top #1)
     0x9E54,  # terrain_gen_1 — terrain gen step 1: view setup + per-column transform (flight top #2)
     0xA11F,  # project_terrain_points — per-object world->screen projection via divide_16x16 (flight top #3)
+    0xAE53,  # terrain_collision — collision row scan + silhouette fill + column raster (flight top #4)
 }
 VALIDATE_SUFFIX = '__t6502'
 

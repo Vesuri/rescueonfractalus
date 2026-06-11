@@ -22377,7 +22377,8 @@ L_adf0:;
 }
 
 /* terrain_collision @ $AE53: Terrain collision/render: 799 bytes; compares ship position against 8 terrain rows at $1010,$1070,$10D0,$1130,$1190,$11F0,$1250,$12B0 (spaced $60 apart); finds topmost non-empty row; JMPs to landing/crash handler at $B12F */
-void terrain_collision(void) {
+/* faithful transliteration kept as the validation oracle; native terrain_collision() lives in rof_native.c (see VALIDATE_FUNCS) */
+void terrain_collision__t6502(void) {
     /* ae53 */
     TXA();
     /* ae54 */

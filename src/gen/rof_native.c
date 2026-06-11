@@ -1636,3 +1636,66 @@ L_a317:
     #undef RORA_
     #undef LSRA_
 }
+
+/* terrain_collision @ $AE53 — terrain collision/silhouette fill (flight top #4).
+ *
+ * Input: cpu.X = starting column.  Iterates 42 columns (Y = X..X+41), and for each:
+ *  - CASCADE: scan the 48 terrain rows ($1010, stride $60) top-to-bottom for the
+ *    first non-empty cell; its index k (0..$2F, or $30 if all empty) is the
+ *    collision row.
+ *  - WATERFALL: paint $55 into rows k-1..1 (everything above the hit; row 0 is left
+ *    alone — the original jumps into a fall-through chain of stores that does
+ *    exactly this).  k=0/1 paint nothing.
+ *  - RASTER ($B12F): walk the column's bitmap downward from base ptr {$0793:$073D}[k]
+ *    via ($80),Y stepping $60, OR-ing in the voxel masks ($BF00[]) and chaining the
+ *    fill mask $96 through the $BE00[] table until $BE00[X]&$96 == 0.
+ *
+ * The cascade/waterfall are written as plain loops (byte-equivalent to the 6502's
+ * unrolled compare ladder + store fall-through, confirmed by the harness); the
+ * raster loop is a faithful transliteration.  The $B141 loop only terminates on
+ * real terrain tables, so it is validated against a flight RAM snapshot.
+ * Contract: memory only (caller reloads regs).
+ */
+void terrain_collision(void) {
+    uint8_t A, X, Y, c;
+    Y = cpu.X;                                           /* ae53 TXA; ae54 TAY */
+    mem[0x009F] = 0x2A;                                  /* ae55-ae57 (42 columns) */
+
+    for (;;) {                                           /* L_ae59 — one column */
+        int k = 0x30;                                    /* all-empty -> $30 */
+        for (int i = 0; i < 0x30; i++)                   /* LDA #0; CMP $ROW,Y ladder */
+            if (mem[(0x1010 + i * 0x60) + Y] != 0) { k = i; break; }
+        for (int i = k - 1; i >= 1; i--)                 /* waterfall: $55 into rows k-1..1 */
+            mem[(0x1010 + i * 0x60) + Y] = 0x55;
+
+        X = (uint8_t)k;                                  /* b12f */
+        mem[0x0080] = mem[0x073D + X];                   /* b12f-b132 */
+        mem[0x0081] = mem[0x0793 + X];                   /* b134-b137 */
+        mem[0x0095] = 0x00;                              /* b139-b13b */
+        mem[0x0096] = 0x55;                              /* b13d-b13f */
+        for (;;) {                                       /* L_b141 */
+            uint16_t addr = (uint16_t)(mem[0x0080] | (mem[0x0081] << 8)) + Y;
+            A = bus_read(addr);                          /* b141 LDA ($80),Y */
+            X = A;                                        /* b143 TAX */
+            A &= mem[0x0095];                            /* b144 AND $95 */
+            A |= mem[0x0096];                            /* b146 ORA $96 */
+            A |= mem[0xBF00 + X];                        /* b148 ORA $BF00,X */
+            bus_write(addr, A);                          /* b14b STA ($80),Y */
+            A = mem[0xBE00 + X];                         /* b14d LDA $BE00,X */
+            A &= mem[0x0096];                            /* b150 AND $96 */
+            if (A == 0) break;                            /* b152 BEQ b169 */
+            mem[0x0096] = A;                             /* b154 STA $96 */
+            X = A;                                        /* b156 TAX */
+            mem[0x0095] = mem[0xBE00 + X];               /* b157-b15a */
+            c = 0; A = mem[0x0080];                      /* b15c CLC; b15d LDA $80 */
+            { uint16_t t = (uint16_t)A + 0x60 + c; c = (uint8_t)(t >> 8); A = (uint8_t)t; }  /* b15f ADC #$60 */
+            mem[0x0080] = A;                             /* b161 */
+            if (!c) continue;                             /* b163 BCC b141 */
+            mem[0x0081] = (uint8_t)(mem[0x0081] + 1);    /* b165 INC $81 (C unchanged) */
+            /* b167 BCS b141 — C still set here, so always loops */
+        }
+        Y = (uint8_t)(Y + 1);                            /* b169 INY */
+        mem[0x009F] = (uint8_t)(mem[0x009F] - 1);        /* b16a DEC $9F */
+        if (mem[0x009F] == 0) return;                     /* b16c BEQ b171 */
+    }                                                    /* b16e goto ae59 */
+}
