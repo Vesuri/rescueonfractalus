@@ -19574,7 +19574,8 @@ void build_view_transform_matrix__t6502(void) {
 }
 
 /* project_terrain_points @ $A11F: Per-object(X) world->screen projection: normalizes $2300/$232E,$22A4/$22D2,$235B/$2388, divides via divide_16x16, writes $2400/$242D,$245A/$2487; tail does terrain scroll w/ RANDOM $D20A + terrain_gen_A613 */
-void project_terrain_points(void) {
+/* faithful transliteration kept as the validation oracle; native project_terrain_points() lives in rof_native.c (see VALIDATE_FUNCS) */
+void project_terrain_points__t6502(void) {
     /* a11f */
     LDA(mem[(0x24B4)+cpu.X]);
     /* a122 */

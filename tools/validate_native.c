@@ -343,6 +343,11 @@ int main(void) {
                                 terrain_sub_B172__t6502, 2000, 0x0F);
     fails += test_mem_contract("terrain_gen_A613", terrain_gen_A613, terrain_gen_A613__t6502);
     fails += test_mem_contract_regs("terrain_gen_1", terrain_gen_1, terrain_gen_1__t6502);
+    /* project_terrain_points: snapshot-driven (random mem can make divide_16x16's
+       normalize loop spin forever on a pathological divisor — same hang in both
+       runs, so a timeout can't diff them).  X masked to the real column range. */
+    fails += test_from_snapshot("project_terrain_points", project_terrain_points,
+                                project_terrain_points__t6502, 4000, 0x3F);
 
     printf("\n%s\n", fails == 0
         ? "PASS — all native reimplementations are memory-equivalent to their 6502 oracles."

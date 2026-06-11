@@ -1431,3 +1431,208 @@ L_a09b:
     #undef ROLM_
     #undef RORM_
 }
+
+/* project_terrain_points @ $A11F — per-object world->screen projection (flight top #3).
+ *
+ * Input: cpu.X = object/column index.  Two near-identical halves each normalize a
+ * 16-bit numerator (the doubling loop that scales {$AF:$AE} until it exceeds the
+ * value), call divide_16x16, then fold the quotient ($B2) into a screen coordinate:
+ *   - half 1: {$22A4:$22D2}[X] / {$2300:$232E}[X]  ->  {$2400:$242D}[X]
+ *   - half 2: {$235B:$2388}[X] / {$2300:$232E}[X]  ->  {$245A:$2487}[X]
+ * Tail ($A2DD): add a per-screen-band scroll offset ($270E[]/$272D) into the
+ * {$245A:$2487}[X] pair.  The $A31C fall-through into terrain_gen_2 is dead code
+ * (the preceding BMI/BPL are exhaustive) but kept to mirror the oracle.
+ *
+ * divide_16x16 is pure-memory (preserves cpu.X), so the entry X threads through as
+ * a constant local; Y is saved/restored via $009F around the divide (as the 6502
+ * does).  Contract: memory only (caller reloads regs).
+ */
+void project_terrain_points(void) {
+    uint8_t A, Y, c, X = cpu.X;
+    #define ADC_(v)  do { uint16_t _t=(uint16_t)A+(uint8_t)(v)+c; c=(uint8_t)(_t>>8); A=(uint8_t)_t; } while(0)
+    #define SBC_(v)  ADC_((uint8_t)~(uint8_t)(v))
+    #define ASLM_(a) do { uint8_t _v=mem[a]; c=_v>>7; mem[a]=(uint8_t)(_v<<1); } while(0)
+    #define ROLM_(a) do { uint8_t _v=mem[a],_n=_v>>7; mem[a]=(uint8_t)((_v<<1)|c); c=_n; } while(0)
+    #define RORM_(a) do { uint8_t _v=mem[a],_n=_v&1; mem[a]=(uint8_t)((_v>>1)|(c<<7)); c=_n; } while(0)
+    #define ROLA_()  do { uint8_t _n=A>>7; A=(uint8_t)((A<<1)|c); c=_n; } while(0)
+    #define RORA_()  do { uint8_t _n=A&1; A=(uint8_t)((A>>1)|(c<<7)); c=_n; } while(0)
+    #define LSRA_()  do { c=A&1; A=(uint8_t)(A>>1); } while(0)
+
+    A = mem[0x24B4 + X]; A |= 0x10; mem[0x24B4 + X] = A;  /* a11f-a124 */
+    Y = 0x00;                                            /* a127 */
+    A = mem[0x2300 + X]; mem[0x00AE] = A;                /* a129-a12c */
+    A = mem[0x232E + X]; mem[0x00AF] = A;                /* a12e-a131 */
+    A = mem[0x22D2 + X];                                /* a133 */
+    if (A & 0x80) goto L_a142;                           /* a136 BMI */
+    mem[0x00B1] = A;                                     /* a138 */
+    A = mem[0x22A4 + X]; mem[0x00B0] = A;                /* a13a-a13d */
+    goto L_a151;                                         /* a13f */
+L_a142:
+    A = 0x00; c = 1; SBC_(mem[0x22A4 + X]); mem[0x00B0] = A;  /* a142-a148 */
+    A = 0x00; SBC_(mem[0x22D2 + X]); mem[0x00B1] = A;         /* a14a-a14f */
+L_a151:
+    A = mem[0x00B1];                                     /* a151 */
+    if (A < mem[0x00AF]) goto L_a187;                    /* a153 CMP; a155 BCC */
+    if (A == mem[0x00AF]) {                              /* a157 BNE -> skip */
+        A = mem[0x00B0];                                 /* a159 */
+        if (A < mem[0x00AE]) goto L_a187;                /* a15b CMP; a15d BCC */
+    }
+    ASLM_(0x00AE); ROLM_(0x00AF);                        /* a15f-a161 */
+    Y = (uint8_t)(Y + 1);                                /* a163 INY */
+    if (Y != 0x08) goto L_a151;                          /* a164 CPY #8; a166 BNE */
+    A = mem[0x22D2 + X];                                /* a168 */
+    if (A & 0x80) goto L_a17a;                           /* a16b BMI */
+    mem[0x242D + X] = 0x40;                              /* a16d-a16f */
+    mem[0x2400 + X] = 0x00;                              /* a172-a174 */
+    goto L_a202;                                         /* a177 */
+L_a17a:
+    mem[0x242D + X] = 0xC0;                              /* a17a-a17c */
+    mem[0x2400 + X] = 0x00;                              /* a17f-a181 */
+    goto L_a202;                                         /* a184 */
+L_a187:
+    mem[0x009F] = Y;                                     /* a187 STY $9F */
+    divide_16x16();                                      /* a189 */
+    Y = mem[0x009F];                                     /* a18c LDY $9F */
+    Y = (uint8_t)(Y - 1);                                /* a18e DEY */
+    if (Y & 0x80) goto L_a1d9;                            /* a18f BMI */
+    A = 0x00;                                            /* a191 */
+L_a193:
+    ASLM_(0x00B2); ROLA_();                              /* a193-a195 */
+    Y = (uint8_t)(Y - 1);                                /* a196 DEY */
+    if (!(Y & 0x80)) goto L_a193;                        /* a197 BPL */
+    mem[0x00B5] = A;                                     /* a199 */
+    LSRA_(); Y = A;                                      /* a19b-a19c (LSR;TAY) */
+    A = mem[0x00B2]; RORA_();                            /* a19d-a19f */
+    c = 0; ADC_(mem[0x00B2]); mem[0x00B2] = A;            /* a1a0-a1a3 */
+    A = Y; ADC_(mem[0x00B5]);                            /* a1a5-a1a6 (TYA;ADC, carry threads) */
+    LSRA_(); RORM_(0x00B2);                              /* a1a8-a1a9 */
+    LSRA_(); RORM_(0x00B2);                              /* a1ab-a1ac */
+    mem[0x00B5] = A;                                     /* a1ae */
+    A = mem[0x22D2 + X];                                /* a1b0 */
+    if (A & 0x80) goto L_a1c7;                            /* a1b3 BMI */
+    A = 0x80; c = 0; ADC_(mem[0x00B2]); mem[0x2400 + X] = A;  /* a1b5-a1ba */
+    A = mem[0x00B5]; ADC_(0x00); mem[0x242D + X] = A;    /* a1bd-a1c1 */
+    goto L_a202;                                         /* a1c4 */
+L_a1c7:
+    A = 0x80; c = 1; SBC_(mem[0x00B2]); mem[0x2400 + X] = A;  /* a1c7-a1cc */
+    A = 0x00; SBC_(mem[0x00B5]); mem[0x242D + X] = A;    /* a1cf-a1d3 */
+    goto L_a202;                                         /* a1d6 */
+L_a1d9:
+    mem[0x242D + X] = 0x00;                              /* a1d9-a1db */
+    A = mem[0x22D2 + X];                                /* a1de */
+    if (A & 0x80) goto L_a1f2;                            /* a1e1 BMI */
+    A = mem[0x00B2]; LSRA_(); c = 1; ADC_(mem[0x00B2]);  /* a1e3-a1e7 (LSR;SEC;ADC) */
+    RORA_(); LSRA_(); A |= 0x80; mem[0x2400 + X] = A;    /* a1e9-a1ed */
+    if (A != 0) goto L_a202;                             /* a1f0 BNE (always) */
+L_a1f2:
+    A = mem[0x00B2]; LSRA_(); c = 1; ADC_(mem[0x00B2]);  /* a1f2-a1f6 */
+    RORA_(); LSRA_(); A ^= 0xFF;                         /* a1f8-a1fa */
+    c = 1; ADC_(0x80); mem[0x2400 + X] = A;              /* a1fc-a1ff */
+L_a202:
+    /* --- half 2: {$235B:$2388}/{$2300:$232E} -> {$245A:$2487} --- */
+    Y = 0x00;                                            /* a202 */
+    A = mem[0x2300 + X]; mem[0x00AE] = A;                /* a204-a207 */
+    A = mem[0x232E + X]; mem[0x00AF] = A;                /* a209-a20c */
+    A = mem[0x2388 + X];                                /* a20e */
+    if (A & 0x80) goto L_a21d;                            /* a211 BMI */
+    mem[0x00B1] = A;                                     /* a213 */
+    A = mem[0x235B + X]; mem[0x00B0] = A;                /* a215-a218 */
+    goto L_a22c;                                         /* a21a */
+L_a21d:
+    A = 0x00; c = 1; SBC_(mem[0x235B + X]); mem[0x00B0] = A;  /* a21d-a223 */
+    A = 0x00; SBC_(mem[0x2388 + X]); mem[0x00B1] = A;        /* a225-a22a */
+L_a22c:
+    A = mem[0x00B1];                                     /* a22c */
+    if (A < mem[0x00AF]) goto L_a262;                    /* a22e CMP; a230 BCC */
+    if (A == mem[0x00AF]) {                              /* a232 BNE */
+        A = mem[0x00B0];                                 /* a234 */
+        if (A < mem[0x00AE]) goto L_a262;                /* a236 CMP; a238 BCC */
+    }
+    ASLM_(0x00AE); ROLM_(0x00AF);                        /* a23a-a23c */
+    Y = (uint8_t)(Y + 1);                                /* a23e INY */
+    if (Y != 0x08) goto L_a22c;                          /* a23f CPY #8; a241 BNE */
+    A = mem[0x2388 + X];                                /* a243 */
+    if (A & 0x80) goto L_a255;                            /* a246 BMI */
+    mem[0x2487 + X] = 0x40;                              /* a248-a24a */
+    mem[0x245A + X] = 0x00;                              /* a24d-a24f */
+    goto L_a2dd;                                         /* a252 */
+L_a255:
+    mem[0x2487 + X] = 0xC0;                              /* a255-a257 */
+    mem[0x245A + X] = 0x00;                              /* a25a-a25c */
+    goto L_a2dd;                                         /* a25f */
+L_a262:
+    mem[0x009F] = Y;                                     /* a262 */
+    divide_16x16();                                      /* a264 */
+    Y = mem[0x009F];                                     /* a267 */
+    Y = (uint8_t)(Y - 1);                                /* a269 DEY */
+    if (Y & 0x80) goto L_a2b4;                            /* a26a BMI */
+    A = 0x00;                                            /* a26c */
+L_a26e:
+    ASLM_(0x00B2); ROLA_();                              /* a26e-a270 */
+    Y = (uint8_t)(Y - 1);                                /* a271 DEY */
+    if (!(Y & 0x80)) goto L_a26e;                        /* a272 BPL */
+    mem[0x00B5] = A;                                     /* a274 */
+    LSRA_(); Y = A;                                      /* a276-a277 */
+    A = mem[0x00B2]; RORA_();                            /* a278-a27a */
+    c = 0; ADC_(mem[0x00B2]); mem[0x00B2] = A;            /* a27b-a27e */
+    A = Y; ADC_(mem[0x00B5]);                            /* a280-a281 */
+    LSRA_(); RORM_(0x00B2);                              /* a283-a284 */
+    LSRA_(); RORM_(0x00B2);                              /* a286-a287 */
+    mem[0x00B5] = A;                                     /* a289 */
+    A = mem[0x2388 + X];                                /* a28b */
+    if (A & 0x80) goto L_a2a2;                            /* a28e BMI */
+    A = 0x80; c = 0; ADC_(mem[0x00B2]); mem[0x245A + X] = A;  /* a290-a295 */
+    A = mem[0x00B5]; ADC_(0x00); mem[0x2487 + X] = A;    /* a298-a29c */
+    goto L_a2dd;                                         /* a29f */
+L_a2a2:
+    A = 0x80; c = 1; SBC_(mem[0x00B2]); mem[0x245A + X] = A;  /* a2a2-a2a7 */
+    A = 0x00; SBC_(mem[0x00B5]); mem[0x2487 + X] = A;    /* a2aa-a2ae */
+    goto L_a2dd;                                         /* a2b1 */
+L_a2b4:
+    mem[0x2487 + X] = 0x00;                              /* a2b4-a2b6 */
+    A = mem[0x2388 + X];                                /* a2b9 */
+    if (A & 0x80) goto L_a2cd;                            /* a2bc BMI */
+    A = mem[0x00B2]; LSRA_(); c = 1; ADC_(mem[0x00B2]);  /* a2be-a2c2 */
+    RORA_(); LSRA_(); A |= 0x80; mem[0x245A + X] = A;    /* a2c4-a2c8 */
+    if (A != 0) goto L_a2dd;                             /* a2cb BNE (always) */
+L_a2cd:
+    A = mem[0x00B2]; LSRA_(); c = 1; ADC_(mem[0x00B2]);  /* a2cd-a2d1 */
+    RORA_(); LSRA_(); A ^= 0xFF;                         /* a2d3-a2d5 */
+    c = 1; ADC_(0x80); mem[0x245A + X] = A;              /* a2d7-a2da */
+L_a2dd:
+    /* --- tail: add per-band scroll offset into {$245A:$2487}[X] --- */
+    A = mem[0x242D + X];                                /* a2dd */
+    if (A & 0x80) goto L_a310;                            /* a2e0 BMI */
+    if (A != 0) goto L_a317;                              /* a2e2 BNE */
+    A = mem[0x2400 + X];                                /* a2e4 */
+    LSRA_(); LSRA_(); LSRA_();                            /* a2e7-a2e9 (>>3) */
+    Y = A;                                               /* a2ea TAY */
+    A = mem[0x270E + Y];                                /* a2eb */
+    if (A & 0x80) goto L_a300;                            /* a2ee BMI */
+L_a2f0:
+    c = 0; ADC_(mem[0x245A + X]); mem[0x245A + X] = A;   /* a2f0-a2f4 */
+    A = mem[0x2487 + X]; ADC_(0x00); mem[0x2487 + X] = A; /* a2f7-a2fc */
+    return;                                              /* a2ff */
+L_a300:
+    c = 0; ADC_(mem[0x245A + X]); mem[0x245A + X] = A;   /* a300-a304 */
+    A = mem[0x2487 + X]; ADC_(0xFF); mem[0x2487 + X] = A; /* a307-a30c */
+    return;                                              /* a30f */
+L_a310:
+    A = mem[0x270E];                                    /* a310 */
+    if (A & 0x80) goto L_a300;                            /* a313 BMI */
+    goto L_a2f0;                                         /* a315 BPL (always) */
+L_a317:
+    A = mem[0x272D];                                    /* a317 */
+    if (A & 0x80) goto L_a300;                            /* a31a BMI */
+    goto L_a2f0;                                         /* a31c BPL (always) */
+    /* a31e fall-through into terrain_gen_2 is unreachable (a31a/a31c exhaust N) */
+
+    #undef ADC_
+    #undef SBC_
+    #undef ASLM_
+    #undef ROLM_
+    #undef RORM_
+    #undef ROLA_
+    #undef RORA_
+    #undef LSRA_
+}
