@@ -30,6 +30,7 @@
 #include "RescueOnFractalus.h"
 #include "PaulaAudio.h"
 #include "AtariZp.h"      // zp:: named Atari memory offsets
+#include "FlightProf.h"   // per-frame VBI-count profiler (g_flightProf / flight_vbi_tick)
 
 // Native handler functions — see NativeHandlers.cpp and SfxPlayer.cpp.
 extern "C" void vbi_attract_timer_native(void);                  // $52D7: timer cascade
@@ -744,6 +745,7 @@ void RescueOnFractalus::startPlanet()
 void RescueOnFractalus::startFlight()
 {
     flight_reset_parity_native();
+    flight_prof_reset();          // zero the per-frame profiler counters for this flight
     flight_init_native();         // game_entry $3E12-$3EB8 (mem[] subset; HW writes skipped)
     launchPhase       = kFlight;
     viewportActive    = true;
@@ -761,6 +763,7 @@ void RescueOnFractalus::startFlight()
 
 void RescueOnFractalus::update(uint16_t frame)
 {
+    unsigned short profU0 = flight_vbi_tick();   // whole-update() timer (flight only)
     // Launch cinematic: drive the doors + tunnel via the genuine $5367 priority
     // dispatcher.  While $0088 == 0 it scrolls the door DL ($008A: $2B->0, every
     // other frame); the tunnel sits static.  Once the doors are fully open
@@ -865,9 +868,12 @@ void RescueOnFractalus::update(uint16_t frame)
     if (launchPhase == kLaunchStars || launchPhase == kLaunchPlanet) buildStarSprites();
 
     uint8_t next = 1 - active;
+    unsigned short c0 = flight_vbi_tick();
     buildCopperList(copperLists[next], frame);
+    if (launchPhase == kFlight) g_flightProf.copper += (unsigned short)(flight_vbi_tick() - c0);
     AmigaHardware::setCopperList(*copperLists[next], false);
     active = next;
+    if (launchPhase == kFlight) g_flightProf.updateTot += (unsigned short)(flight_vbi_tick() - profU0);
 }
 
 // ---- cockpit helpers ---------------------------------------------------------
@@ -912,6 +918,7 @@ static const uint8_t kNibbleColour[16] = {
 
 void RescueOnFractalus::render()
 {
+    unsigned short profR0 = flight_vbi_tick();   // whole-render() timer (flight only)
     // ---- terrain / door view ------------------------------------------------
     // Only re-render when terrainDirty (set in initialize(); cleared here).
     // During static Standby the terrain is constant ($88 = closed door).
@@ -931,7 +938,11 @@ void RescueOnFractalus::render()
         // Stars/planet (mem[$1000], stride 48) or flight (mem[$1070], stride 96 —
         // displayed offset-0 half).  Content changes every frame, so re-decode each
         // render(); the per-byte shadow keeps it cheap.
-        if (launchPhase == kFlight) renderViewportModeD(0x1070, 96, 43);
+        if (launchPhase == kFlight) {
+            unsigned short r0 = flight_vbi_tick();
+            renderViewportModeD(0x1070, 96, 43);
+            g_flightProf.render += (unsigned short)(flight_vbi_tick() - r0);
+        }
         else                        renderViewportModeD(0x1000, 48, 43);
     } else if (terrainDirty) {
         terrainDirty = false;
@@ -1061,6 +1072,7 @@ void RescueOnFractalus::render()
             }
         }
     }
+    if (launchPhase == kFlight) g_flightProf.renderTot += (unsigned short)(flight_vbi_tick() - profR0);
 }
 
 void RescueOnFractalus::shutdown()

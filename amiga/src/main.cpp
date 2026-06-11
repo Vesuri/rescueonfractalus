@@ -162,6 +162,13 @@ int main()
     uint16_t lastVBI  = vbiCount;
     bool     quit     = false;
 
+#ifdef ROF_AUTOFLIGHT
+    // Dev/profiling build (make EXTRA_DEFINES=-DROF_AUTOFLIGHT): enter flight
+    // immediately without the F key or a debugger write — the same call the
+    // loop's g_skipToFlight poll would make on the F-key edge.
+    scene.skipToFlight();
+#endif
+
     while (!quit) {
         // Wait for next VBI tick (volatile spin — -O2 safe).
         while (vbiCount == lastVBI) { /* wait */ }

@@ -19,7 +19,27 @@
 #include "PaulaAudio.h"   // mem[] + int types (matches the other native modules)
 #include "AtariZp.h"      // zp:: named mem[] offsets (heading/world pos/game state/...)
 #include "../../src/gen/rof_native.h"  // typed C cores (clear_terrain_column_at, ...)
+#include "FlightProf.h"   // per-frame VBI-count profiler
 extern "C" volatile uint8_t mem[65536];
+
+// ---- per-frame profiler ------------------------------------------------------
+// g_flightProf accumulates per-phase deltas; read it from the debugger.
+volatile struct FlightProf g_flightProf = { 0, 0, 0, 0, 0, 0, 0, 0, 0 };
+extern "C" unsigned short flight_vbi_tick(void) {
+    return (unsigned short)((mem[0x0013] << 8) | mem[0x0014]);  // RTCLOK $0013:$0014
+}
+extern "C" void flight_prof_reset(void) {
+    g_flightProf.terrain = g_flightProf.stateEnemy = g_flightProf.render =
+        g_flightProf.copper = g_flightProf.frames = g_flightProf.updateTot =
+        g_flightProf.renderTot = g_flightProf.isrLines = g_flightProf.isrCalls = 0;
+}
+// Raster-beam line counter (0..~312 PAL), ~63.56us/line — a sub-frame clock the
+// VBI ISR can use (RTCLOK is frozen for the whole ISR).  VPOSR bit0 = line bit 8.
+static inline unsigned short beam_line(void) {
+    unsigned short vpos  = *(volatile unsigned short*)0xDFF004;  // bit0 = V8
+    unsigned short vhpos = *(volatile unsigned short*)0xDFF006;  // hi byte = V7..V0
+    return (unsigned short)(((vpos & 1) << 8) | (vhpos >> 8));
+}
 
 // The transpile's 6502 register file (src/cpu/cpu.h: `Cpu6502 cpu`) — mirrored
 // as a POD (see launch_native.cpp for why we don't #include cpu.h).
@@ -73,9 +93,14 @@ extern volatile uint8_t g_fastForwardFrames;
 extern "C" void flight_vbi_native(void)
 {
     if (mem[zp::joystickSaved] == 0) return;        // $51B2: LDA $004A / BEQ (skip when not flying)
-    flight_control_integrate();          // $51B9 ($8E5B): joystick + throttle -> world pos
-    update_terrain_scanline_proj();      // $51BC: project pitch/altitude for the new frame
-    render_bcd_counter();                // top-bar score: BCD $0601 -> text line $32C5
+    unsigned short a = beam_line();      // sub-frame timer: RTCLOK is frozen for the whole ISR
+    flight_control_integrate();          // $51B9 ($8E5B): joystick + throttle -> world pos (TRANSPILED)
+    update_terrain_scanline_proj();      // $51BC ($9833): project pitch/altitude (TRANSPILED)
+    render_bcd_counter();                // top-bar score: BCD $0601 -> text line $32C5 (TRANSPILED)
+    unsigned short b = beam_line();
+    g_flightProf.isrLines += (b >= a) ? (unsigned short)(b - a)
+                                      : (unsigned short)(b + 313 - a);  // PAL wrap (~313 lines)
+    g_flightProf.isrCalls++;
 }
 
 // g_activeVbi: which VBI body the real INTB_VERTB ISR runs, mirroring how the Atari
@@ -165,24 +190,33 @@ extern "C" void flight_reset_parity_native(void) { flightParity = 0; }
 
 extern "C" uint8_t flight_frame_native(void)
 {
+    unsigned short t0 = flight_vbi_tick();
     terrain_frame_setup();                                         // $9E54 / $3EF5
+    unsigned short t1, t2;                                          // t1: terrain done; t2: state+enemy done
     if (flightParity == 0) {
         clear_terrain_column_core(0x33);                            // $3EBD
         cpu.X = 0x30; terrain_draw_frame();                       // $3EC2 (offset-48 half)
         cpu.X = 0x33; terrain_collision();                   // $3EC9
         mem[zp::pilotState] = mem[zp::gameState];                           // $3ECC: LDA $0041 / STA $288F
-        game_state_update();                                 // $3ED1
+        t1 = flight_vbi_tick();
+        game_state_update();                                 // $3ED1 (TRANSPILED)
         mem[zp::gamePhase] = 0x02;                                  // $3ED4
-        enemy_check();                                       // $3ED8
+        enemy_check();                                       // $3ED8 (TRANSPILED)
+        t2 = flight_vbi_tick();
     } else {
         clear_terrain_column_core(0x03);                            // $3EFA
         cpu.X = 0x00; terrain_draw_frame();                       // $3EFF (offset-0 half, displayed)
         cpu.X = 0x03; terrain_collision();                   // $3F04
         if (mem[zp::gameState]) mem[zp::pilotState] = mem[zp::gameState];          // $3F07: conditional
-        game_state_update();                                 // $3F0E
-        enemy_check();                                       // $3F11
+        t1 = flight_vbi_tick();
+        game_state_update();                                 // $3F0E (TRANSPILED)
+        enemy_check();                                       // $3F11 (TRANSPILED)
+        t2 = flight_vbi_tick();
         mem[zp::gamePhase] = 0x01;                                  // $3F36
     }
+    g_flightProf.terrain    += (unsigned short)(t1 - t0);          // native terrain pass
+    g_flightProf.stateEnemy += (unsigned short)(t2 - t1);          // transpiled state+enemy
+    g_flightProf.frames++;
     flightParity ^= 1u;
     return mem[zp::playerLives];                                      // $3F50: ==2 -> level complete
 }

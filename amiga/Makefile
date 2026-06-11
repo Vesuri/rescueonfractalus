@@ -56,7 +56,7 @@ AUDIO_CFLAGS  = -g -MP -MMD -m68000 -msoft-float -O2 -nostdlib -fomit-frame-poin
                 $(AUDIO_CINCLUDES)
 CCFLAGS   = -g -MP -MMD -m68000 -msoft-float -O2 -nostdlib -fomit-frame-pointer \
             -fno-tree-loop-distribution -ffunction-sections -fdata-sections \
-            -DNO_ASSEMBLER $(WARN)
+            -DNO_ASSEMBLER $(WARN) $(EXTRA_DEFINES)
 CPPFLAGS  = $(CCFLAGS) -fno-rtti -fno-exceptions -fno-use-cxa-atexit -std=gnu++17 \
             -fpermissive -Wno-write-strings -Wno-pointer-arith \
             -include "$(CURDIR)/framework/SASCCompat.h" \
