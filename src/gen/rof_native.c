@@ -16,55 +16,50 @@
 #include "../cpu/bus.h"  /* bus_read/bus_write + ZP_IND_Y for indirect bitmap access */
 #include "rof_decl.h"   /* declarations for transpiled routines native code calls */
 
-/* divide_16x16 @ $9D6F — restoring 16-bit divide.
+/* divide_16x16 @ $9D6F — restoring 16-bit divide, expressed as one native divide.
  *
  * Inputs : dividend $00B0(lo)/$00B1(hi), divisor $00AE(lo)/$00AF(hi),
  *          quotient accumulator $00B2 (its 8 bits are fully shifted out).
  * Outputs: remainder -> $00B0/$00B1, quotient -> $00B2,
  *          divisor left shifted by the normalization count -> $00AE/$00AF.
- * Domain : divisor in [0x0001, 0x7FFF] (the normalization shifts the divisor's
- *          top set bit to bit14; divisor 0 or >=0x8000 would not terminate —
- *          the original game never calls it outside this range).
+ * Domain : divisor in [0x0001, 0x7FFF] AND dividend < divisor.  The sole caller
+ *          (project_terrain_points) scales the divisor up until it strictly
+ *          exceeds the dividend before calling, so this always holds in-game; it
+ *          is also exactly the domain in which the 8-bit quotient does not overflow.
  *
- * This mirrors the 6502 shift-subtract structure in clean C so the memory
- * effects are bit-identical to the transliteration; the 6502 register/flag
- * exit state is intentionally NOT reproduced because both call sites save Y
- * through $009F and overwrite A/flags immediately (verified — incidental/dead).
+ * The 6502 routine normalizes by shifting BOTH operands left k times until the
+ * divisor's top set bit reaches bit14, then runs 8 ROL-quotient (restoring
+ * shift-subtract) steps.  Because dividend < divisor, the normalization scales
+ * both by 2^k with no bit loss, so the whole thing reduces to:
+ *
+ *     quotient  $B2      = (dividend * 256) / divisor          (< 256)
+ *     remainder $B0/$B1  = ((dividend * 256) % divisor) << k   (the 6502 leaves
+ *                          the remainder still scaled by the normalization count)
+ *     divisor   $AE/$AF  = divisor << k                        (shifted in place)
+ *
+ * Both operands are non-negative (divisor in [1,0x7FFF]; the caller pre-absolutes
+ * the dividend and tracks sign separately), so this is an UNSIGNED divide: the
+ * division/modulo is a single 68000 DIVU (not DIVS).  Only the tiny normalization
+ * count loop remains (it just positions the side outputs).  The 6502 register/flag
+ * exit state is intentionally NOT reproduced — both call sites save Y through
+ * $009F and overwrite A/flags immediately (verified incidental/dead).
  */
 void divide_16x16(void) {
-    uint8_t b0 = mem[0x00B0], b1 = mem[0x00B1];   /* dividend lo / hi */
-    uint8_t ae = mem[0x00AE], af = mem[0x00AF];   /* divisor  lo / hi */
-    uint8_t b2 = mem[0x00B2];                     /* quotient accumulator */
+    uint16_t dividend = (uint16_t)(mem[0x00B0] | (mem[0x00B1] << 8));
+    uint16_t divisor  = (uint16_t)(mem[0x00AE] | (mem[0x00AF] << 8));
 
-    /* Normalize: shift dividend and divisor left until bit14 (bit6 of the
-       high byte) of the divisor is set — matches BIT $AF / loop. */
-    while (!(af & 0x40)) {
-        b1 = (uint8_t)((b1 << 1) | (b0 >> 7)); b0 = (uint8_t)(b0 << 1);
-        af = (uint8_t)((af << 1) | (ae >> 7)); ae = (uint8_t)(ae << 1);
-    }
+    /* Normalization count k: divisor << k brings its top set bit to bit14. */
+    unsigned k = 0;
+    while (!((divisor << k) & 0x4000)) k++;
+    uint16_t shifted_divisor = (uint16_t)(divisor << k);
 
-    for (int i = 0; i < 8; i++) {
-        /* dividend <<= 1; carry-out (old bit15) is the quotient bit used when
-           the subtract is skipped — same as the carry left by ROL $B1. */
-        uint8_t c = b1 >> 7;
-        b1 = (uint8_t)((b1 << 1) | (b0 >> 7));
-        b0 = (uint8_t)(b0 << 1);
+    uint32_t numerator = (uint32_t)dividend << 8;
+    uint8_t  quotient  = (uint8_t)(numerator / divisor);              /* < 256 */
+    uint16_t remainder = (uint16_t)((numerator % divisor) << k);
 
-        /* Attempt the subtract only when bit15 or bit14 of the dividend is set
-           (the BIT $B1 / branch optimization — divisor's top bit is bit14). */
-        if (b1 & 0xC0) {
-            uint8_t borrow = (b0 < ae) ? 1 : 0;
-            uint8_t nb0 = (uint8_t)(b0 - ae);
-            uint8_t nb1 = (uint8_t)(b1 - af - borrow);
-            c = (b1 >= (uint8_t)(af + borrow)) ? 1 : 0;   /* no borrow -> C=1 */
-            if (c) { b0 = nb0; b1 = nb1; }                /* restoring: keep iff success */
-        }
-
-        b2 = (uint8_t)((b2 << 1) | c);                    /* ROL quotient, bit0 = C */
-    }
-
-    mem[0x00B0] = b0; mem[0x00B1] = b1; mem[0x00B2] = b2;
-    mem[0x00AE] = ae; mem[0x00AF] = af;
+    mem[0x00B0] = (uint8_t)remainder;        mem[0x00B1] = (uint8_t)(remainder >> 8);
+    mem[0x00B2] = quotient;
+    mem[0x00AE] = (uint8_t)shifted_divisor;  mem[0x00AF] = (uint8_t)(shifted_divisor >> 8);
 }
 
 /* clear_terrain_column @ $AD5F — clear one terrain column band + its object-table cells.
@@ -131,56 +126,41 @@ void clear_terrain_column(void) {
  * the flags immediately after the call, so the 6502 exit register state is dead.
  */
 void signed_mul_8x16(void) {
-    uint8_t c = cpu.C;                    /* entry carry feeds the first ROR $AC */
+    uint8_t  m       = cpu.A;                 /* 9C97: multiplier                      */
+    uint8_t  signhi  = mem[0x00AB];           /* entry hi byte = sign byte             */
+    mem[0x00AD] = signhi;                     /* 9C9F/9CA1: save sign byte             */
 
-    /* 6502-faithful, carry-threaded primitives over the local carry `c`. */
-    #define M_ADC(acc, v) do { uint16_t _t = (uint16_t)(acc) + (uint8_t)(v) + c; \
-                               c = (_t > 0xFF) ? 1 : 0; (acc) = (uint8_t)_t; } while (0)
-    #define M_SBC(acc, v) M_ADC(acc, (uint8_t)~(uint8_t)(v))
-    #define M_RORM(a)     do { uint8_t _v = mem[a], _nc = _v & 1; \
-                               mem[a] = (uint8_t)((_v >> 1) | (c << 7)); c = _nc; } while (0)
-    #define M_LSRM(a)     do { uint8_t _v = mem[a]; c = _v & 1; mem[a] = (uint8_t)(_v >> 1); } while (0)
-
-    mem[0x00AC] = cpu.A;                  /* 9C97: multiplier -> shift register   */
-    mem[0x00A9] = 0x00;                   /* 9C9B: clear 16-bit accumulator       */
-    mem[0x00A8] = 0x00;                   /* 9C9D                                  */
-    mem[0x00AD] = mem[0x00AB];            /* 9C9F/9CA1: save sign byte (= hi)      */
-
-    if (mem[0x00AB] & 0x80) {             /* 9CA3 BMI: negate multiplicand -> |x|  */
-        uint8_t acc;
-        c = 1;                            /* 9CA5 SEC                              */
-        acc = 0x00; M_SBC(acc, mem[0x00AA]); mem[0x00AA] = acc;   /* 9CA6-9CAA */
-        acc = 0x00; M_SBC(acc, mem[0x00AB]); mem[0x00AB] = acc;   /* 9CAC-9CB0 */
+    /* |multiplicand|: the 6502 negates {$AA:$AB} in place when it is negative.  A
+       16-bit two's-complement negate of a negative value always leaves the carry
+       clear, so the bit the first `ROR $AC` injects into $AC is 0 in that case;
+       for a non-negative multiplicand it is the caller's entry carry. */
+    uint16_t mag;
+    uint8_t  ac_bit0;
+    if (signhi & 0x80) {                      /* 9CA3 BMI */
+        mag = (uint16_t)(-(int)(uint16_t)(mem[0x00AA] | (signhi << 8)));
+        mem[0x00AA] = (uint8_t)mag; mem[0x00AB] = (uint8_t)(mag >> 8);
+        ac_bit0 = 0;
+    } else {
+        mag = (uint16_t)(mem[0x00AA] | (signhi << 8));
+        ac_bit0 = cpu.C;                      /* entry carry -> first ROR $AC          */
     }
 
-    /* 9CB2: first step LOADS the accumulator (it is still zero) instead of adding. */
-    M_RORM(0x00AC);
-    if (c) { mem[0x00A8] = mem[0x00AA]; mem[0x00A9] = mem[0x00AB]; }
+    /* Although this is a signed multiply, the 6502 does NOT do it with a signed
+       product: the multiplier ($AC, the entry A) is an UNSIGNED 8-bit fraction
+       (0..255), so a signed multiply would mis-handle multipliers >= 0x80.  It
+       multiplies the magnitudes and re-applies the sign separately.  Hence the
+       core is an unsigned 8x16 product (one 68000 MULU, NOT MULS):
+           P = multiplier * |multiplicand|   (24-bit)
+       $A9/$A8 hold P>>8.  The fractional byte $AC ends up as the product's low 7
+       bits (P bits 6..0) shifted up into bits 7..1, with the injected carry left
+       in bit0 (P's bit7 is shifted out, never stored).  The original sign is then
+       re-applied to the 16-bit {$A9:$A8}. */
+    uint32_t P      = (uint32_t)m * mag;
+    uint16_t prod16 = (uint16_t)(P >> 8);
+    if (signhi & 0x80) prod16 = (uint16_t)(-(int)prod16);   /* 9D55/9D57 re-apply sign */
 
-    /* 9CBE..9D3C: 7 shift-add steps (multiplier bits 1..7). */
-    for (int step = 0; step < 7; step++) {
-        M_LSRM(0x00A9); M_RORM(0x00A8); M_RORM(0x00AC);
-        if (c) {
-            uint8_t acc;
-            c = 0;                                                    /* CLC */
-            acc = mem[0x00A8]; M_ADC(acc, mem[0x00AA]); mem[0x00A8] = acc;
-            acc = mem[0x00A9]; M_ADC(acc, mem[0x00AB]); mem[0x00A9] = acc;
-        }
-    }
-
-    /* 9D51: final shift, then re-apply the original sign. */
-    M_LSRM(0x00A9); M_RORM(0x00A8);
-    if (mem[0x00AD] & 0x80) {             /* 9D55 BIT / 9D57 BMI */
-        uint8_t acc;
-        c = 1;                            /* SEC */
-        acc = 0x00; M_SBC(acc, mem[0x00A8]); mem[0x00A8] = acc;
-        acc = 0x00; M_SBC(acc, mem[0x00A9]); mem[0x00A9] = acc;
-    }
-
-    #undef M_ADC
-    #undef M_SBC
-    #undef M_RORM
-    #undef M_LSRM
+    mem[0x00A8] = (uint8_t)prod16;  mem[0x00A9] = (uint8_t)(prod16 >> 8);
+    mem[0x00AC] = (uint8_t)(((P & 0x7F) << 1) | ac_bit0);
 }
 
 /* sine_table_lookup @ $9C55 — quarter-wave sine/cosine table lookup.

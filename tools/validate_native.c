@@ -84,7 +84,12 @@ static int diff_run(const char *name, const uint8_t *pre, Cpu6502 pre_cpu,
     return mem_failed ? 1 : 0;
 }
 
-/* --- divide_16x16 @ $9D6F: random 16-bit divides over the valid domain. --- */
+/* --- divide_16x16 @ $9D6F: random 16-bit divides over the valid domain. ---
+ * Domain is divisor in [1, 0x7FFF] AND dividend < divisor: the only caller
+ * (project_terrain_points) scales the divisor up until it exceeds the dividend
+ * before calling, and that is also the domain in which the 6502's 8-bit quotient
+ * does not overflow (dividend >= divisor would shift quotient bits off the top).
+ * The native divide is exact across this whole domain. */
 static int test_divide_16x16(void) {
     enum { N = 200000 };
     static uint8_t pre[65536];
@@ -92,7 +97,7 @@ static int test_divide_16x16(void) {
 
     for (int t = 0; t < N; t++) {
         uint16_t divisor  = (uint16_t)(xs() % 0x7FFF) + 1;   /* [1, 0x7FFF] */
-        uint16_t dividend = (uint16_t)(xs() & 0xFFFF);
+        uint16_t dividend = (uint16_t)(xs() % divisor);      /* < divisor (caller's contract) */
         uint8_t  q0       = (uint8_t)(xs() & 0xFF);
 
         memset(pre, 0, sizeof pre);
