@@ -866,3 +866,63 @@ void terrain_sub_A90A(void) {
     /* L_a998 */
     cpu.X = mem[0x28E1];
 }
+
+/* terrain_plot_object @ $A63B — per-object terrain raster dispatch.
+ *
+ * Indexed by entry cpu.X.  Early-outs on an empty object ($0A00[$2276[X]]==0) or
+ * a too-near zero-distance object.  Saves X to $28E1.  If the object's $0900 flag
+ * is negative it routes to the A822 plotter; otherwise (for object codes in
+ * [2,$F8) with $00A7==0) it computes the half-width into $0059/$005A (ABS via the
+ * sign bit, rounded) and the span coords $28E4-$28EA/$0079, then falls through to
+ * the A90A plotter.  Tail-calls native terrain_sub_A90A (the trailing
+ * terrain_clip_row_top in the transpile is dead code after the return).
+ * Contract: memory; carry threaded through the width arithmetic.
+ */
+void terrain_plot_object(void) {
+    uint8_t A, c;
+    cpu.Y = mem[0x2276 + cpu.X];                              /* LDY $2276,X */
+    if (mem[0x0A00 + cpu.Y] == 0) { terrain_plot_return(); return; }   /* a641 BEQ */
+    if (mem[0x232E + cpu.X] == 0 && mem[0x2300 + cpu.X] < 0x22) {      /* a646/a64b */
+        terrain_plot_return(); return;
+    }
+    mem[0x28E1] = cpu.X;                                      /* a64f STX $28E1 */
+    if (mem[0x0900 + cpu.Y] & 0x80) { terrain_sub_A822(); return; }    /* a655 BPL -> N set: A822 */
+
+    int go = 0;                                              /* a65a: take the a66c path? */
+    if (mem[0x00A7] == 0) {
+        uint8_t v = mem[0x0A00 + cpu.Y];
+        if (v >= 0x02 && v < 0xF8) go = 1;                   /* CMP #2 BCC; CMP #$F8 BCC a66c */
+    }
+    if (go) {
+        A = mem[0x22D2 + cpu.X];                             /* a66c half-width */
+        mem[0x0059] = A; mem[0x005A] = A;
+        c = A >> 7;                                          /* ASL A -> carry = sign bit */
+        if (c) {                                             /* negative: $5A = $FF - $5A */
+            uint16_t t = (uint16_t)0xFF + (uint8_t)~mem[0x005A] + c; c = t >> 8; mem[0x005A] = (uint8_t)t;
+            c = 1;                                           /* SEC */
+        }
+        { uint8_t v = mem[0x0059], nc = v & 1;               /* ROR $59 */
+          mem[0x0059] = (uint8_t)((v >> 1) | (c << 7)); c = nc; }
+        if (c) mem[0x0059]++;                                /* round */
+
+        A = mem[0x232E + cpu.X]; mem[0x28E4] = A;            /* a683 */
+        if (A >= mem[0x005A]) {                              /* CMP $5A; BCC a6c8 */
+            c = 0; { uint16_t t = (uint16_t)A + mem[0x005A] + c; c = t >> 8; A = (uint8_t)t; }  /* CLC ADC $5A */
+            if (A < mem[0x28EA]) {                            /* CMP $28EA; BCS a6c8 */
+                mem[0x28EA] = A;
+                mem[0x005A] = (uint8_t)(mem[0x005A] >> 1);    /* LSR $5A */
+                c = 1; { uint16_t t = (uint16_t)A + (uint8_t)~mem[0x005A] + c; c = t >> 8; A = (uint8_t)t; }
+                mem[0x0079] = A;                              /* SEC; SBC $5A; STA $79 */
+                mem[0x28E7] = mem[0x0059];
+                mem[0x28E8] = mem[0x28E4];
+                mem[0x28E6] = mem[0x2276 + cpu.X];
+                mem[0x0040] = 0x64;
+                if (mem[0x242D + cpu.X] == 0 && mem[0x2487 + cpu.X] == 0) {   /* both BNE a6c8 */
+                    mem[0x003F] = mem[0x2400 + cpu.X];
+                    mem[0x0040] = mem[0x245A + cpu.X];
+                }
+            }
+        }
+    }
+    terrain_sub_A90A();                                      /* a6c8 tail */
+}

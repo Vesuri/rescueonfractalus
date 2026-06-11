@@ -306,6 +306,7 @@ int main(void) {
     fails += test_raster_fill_region();
     fails += test_terrain_sub_obj("terrain_sub_A822", terrain_sub_A822, terrain_sub_A822__t6502);
     fails += test_terrain_sub_obj("terrain_sub_A90A", terrain_sub_A90A, terrain_sub_A90A__t6502);
+    fails += test_terrain_sub_obj("terrain_plot_object", terrain_plot_object, terrain_plot_object__t6502);
 
     printf("\n%s\n", fails == 0
         ? "PASS — all native reimplementations are memory-equivalent to their 6502 oracles."
