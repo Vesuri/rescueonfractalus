@@ -33,6 +33,10 @@ extern "C" void sfx_voice_tick_native(void);
 // Native port of station_init's CONSOL ($D01F) read: true while START is down.
 extern "C" bool station_poll_start_native(void);
 
+// flight_vbi_isr: the flight VBI ($4FF5) motion core, run from the real vertical-
+// blank interrupt below.  Self-gates on g_flightVbiActive and saves/restores `cpu`.
+extern "C" void flight_vbi_isr(void);
+
 // Set by the keyboard ISR on the 'F' key-down edge: skip to the flight stage.
 extern "C" volatile uint8_t g_skipToFlight;
 
@@ -51,6 +55,14 @@ static uint32_t vbiHandler()
     mem[0x0014]++;               // RTCLOK_LOW
     if (!mem[0x0014]) mem[0x0013]++;  // RTCLOK_MID carry
     vbiCount++;
+
+    // Flight VBI ($4FF5) motion core — run in the REAL vertical-blank interrupt,
+    // where the Atari ran it (not from the main loop).  flight_vbi_isr() gates on
+    // g_flightVbiActive (set once flight init completes) and brackets the work in a
+    // save/restore of the shared 6502 register file, mirroring the Atari OS VBLANK's
+    // hardware register save/restore — the main-loop heavy pass (flight_frame_native)
+    // may be mid-instruction using `cpu` when this interrupt preempts it.
+    flight_vbi_isr();
     return 0;
 }
 

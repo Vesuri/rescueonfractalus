@@ -76,6 +76,27 @@ extern "C" void flight_vbi_native(void)
     render_bcd_counter();                // top-bar score: BCD $0601 -> text line $32C5
 }
 
+// g_flightVbiActive: set by startFlight() once flight init has completed; the real
+// INTB_VERTB server gates flight_vbi_isr on it so the flight motion core runs ONLY
+// in flight (never during attract/launch, where $004A may be nonzero for other reasons).
+extern "C" volatile uint8_t g_flightVbiActive = 0;
+
+// flight_vbi_isr: the wrapper the real Amiga vertical-blank interrupt server calls.
+// This is where the Atari's $4FF5 VBI work actually belongs — run in the VBI, not
+// the main loop.  On the Atari the 6502 registers are saved/restored by the OS
+// VBLANK entry/exit (SYSVBV/XITVBV).  Our transpile funnels all 6502 register state
+// through one shared global `cpu`, so we replicate that hardware save/restore here:
+// the main-loop pass (flight_frame_native) may be mid-instruction using `cpu` when
+// this interrupt preempts it.  mem[] needs no saving — it is the shared "RAM", and
+// the faithful VBI body touches scratch disjoint from the main loop (as on the Atari).
+extern "C" void flight_vbi_isr(void)
+{
+    if (!g_flightVbiActive) return;
+    Cpu6502 saved = cpu;     // == the OS VBLANK's PHA;TXA;PHA;TYA;PHA register save
+    flight_vbi_native();
+    cpu = saved;             // == XITVBV's PLA;TAY;PLA;TAX;PLA register restore
+}
+
 // flight_init_native: port the mem[]-state subset of game_entry $3E12-$3EA6.
 // The terrain row-addr table is rebuilt for the FLIGHT viewport: base $1010,
 // stride $60=96 (verified vs the flight DL $316B, which LMSes mode-D rows from

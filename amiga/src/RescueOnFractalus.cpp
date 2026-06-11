@@ -53,7 +53,7 @@ extern "C" uint8_t launch_planet_step_native(void);            // $6574: one pla
 extern "C" void    launch_planet_scroll_native(void);          // $6AEE scroll-only: keep starfield drifting
 extern "C" void    flight_init_native(void);                   // game_entry $3E12-$3EB8 flight init
 extern "C" void    flight_reset_parity_native(void);           // reset double-buffer pass parity
-extern "C" void    flight_vbi_native(void);                    // flight VBI $4FF5 motion core (advances world pos)
+extern "C" volatile uint8_t g_flightVbiActive;                 // gates the flight VBI in the real INTB_VERTB ISR
 extern "C" uint8_t flight_frame_native(void);                  // one flight heavy pass; returns $0072 (==2 done)
 
 extern "C" volatile uint8_t mem[65536];
@@ -748,6 +748,9 @@ void RescueOnFractalus::startFlight()
     // render_bcd_counter then draws the score on the right (visible at $32CA).
     for (uint16_t i = 0x32B5; i <= 0x32CC; i++) mem[i] = 0x00;
     for (int i = 0; i < 20; i++) titleShadow[i] = 0xFF;
+    // Arm the flight VBI LAST — only now (init complete) may the real INTB_VERTB
+    // ISR start running the flight motion core (flight_vbi_isr gates on this).
+    g_flightVbiActive = 1;
 }
 
 void RescueOnFractalus::update(uint16_t frame)
@@ -810,8 +813,11 @@ void RescueOnFractalus::update(uint16_t frame)
         }
     } else if (launchPhase == kFlight) {
         // One flight main-loop heavy pass per frame (the Atari runs two passes per
-        // loop iteration for double buffering; one Amiga frame = one pass).
-        flight_vbi_native();    // flight VBI ($4FF5) motion core: advance world position first
+        // loop iteration for double buffering; one Amiga frame = one pass).  The
+        // flight VBI ($4FF5) motion core is NO LONGER called here — it runs in the
+        // real INTB_VERTB interrupt (main.cpp -> flight_vbi_isr), where the Atari
+        // ran it.  By the time this main-loop pass runs, the ISR has already
+        // advanced the world position for this frame (the loop is VBI-paced).
         flight_frame_native();
     }
 
