@@ -2373,17 +2373,17 @@ L_4201:;
     vobj_erase_row(); return;
 }
 
-/* obj_state_dispatch_0043 @ $4225: X=$0043; if nonzero jump saucer_anim_return else saucer_anim_tick (state-driven object update branch) */
+/* obj_state_dispatch_0043 @ $4225: X=$0043; if nonzero jump lock_on_indicator_return else lock_on_indicator_tick (state-driven object update branch) */
 void obj_state_dispatch_0043(void) {
     /* 4225 */
     LDX(mem[0x0043]);
     /* 4227 */
-    if (!cpu.Z) { saucer_anim_return(); return; }
-    saucer_anim_tick(); return;
+    if (!cpu.Z) { lock_on_indicator_return(); return; }
+    lock_on_indicator_tick(); return;
 }
 
-/* saucer_anim_tick @ $4229: State machine on $007E: if >=$81 jumps to saucer_phase_advance ($428e); else counts down $00E6 (reload $0618), toggles bit7 of table $3492 using RANDOM ($D20A&7); seeds $0048/$00E6 on entry */
-void saucer_anim_tick(void) {
+/* lock_on_indicator_tick @ $4229: State machine on $007E: if >=$81 jumps to lock_on_indicator_phase_advance ($428e); else counts down $00E6 (reload $0618), toggles bit7 of table $3492 using RANDOM ($D20A&7); seeds $0048/$00E6 on entry */
+void lock_on_indicator_tick(void) {
     /* 4229 */
     LDA(mem[0x007E]);
     /* 422b */
@@ -2391,7 +2391,7 @@ void saucer_anim_tick(void) {
     /* 422d */
     CMP(0x81);
     /* 422f */
-    if (cpu.C) { saucer_phase_advance(); return; }
+    if (cpu.C) { lock_on_indicator_phase_advance(); return; }
     /* 4231 */
     DEC_M(0x00E6);
     /* 4233 */
@@ -2419,10 +2419,10 @@ L_4241:;
     mem[(0x3492)+cpu.Y] = cpu.A;
 L_424a:;
     /* 424a */
-    saucer_anim_return(); return;
+    lock_on_indicator_return(); return;
 L_424d:;
     /* 424d */
-    if (!cpu.Z) { saucer_anim_step(); return; }
+    if (!cpu.Z) { lock_on_indicator_step(); return; }
     /* 424f */
     mem[0x0048] = cpu.A;
     /* 4251 */
@@ -4938,7 +4938,7 @@ L_52b4:;
     game_loop_reset_trampoline(); return;
 }
 
-/* vbi_handler_standby @ $52D7: Standby + launch-cinematic VBI handler (VVBLKI=$52D7 set in display_setup $5F50); active from the Standby screen through the doors/tunnel/stars/planet cinematic, until flight init swaps in vbi_handler_flight ($4FF5). Per-frame: attract timer, attract input poll ($5398), sound_event_dispatch ($5367), saucer_anim_tick every other frame, SFX/music tick, update_gauge_digits. Was vbi_handler_standby. */
+/* vbi_handler_standby @ $52D7: Standby + launch-cinematic VBI handler (VVBLKI=$52D7 set in display_setup $5F50); active from the Standby screen through the doors/tunnel/stars/planet cinematic, until flight init swaps in vbi_handler_flight ($4FF5). Per-frame: attract timer, attract input poll ($5398), sound_event_dispatch ($5367), lock_on_indicator_tick every other frame, SFX/music tick, update_gauge_digits. Was vbi_handler_standby. */
 void vbi_handler_standby(void) {
     /* 52d7 */
     LDA(mem[0x022F]);
@@ -5026,7 +5026,7 @@ L_533c:;
     /* 5345 */
     if (cpu.C) { vbi_deferred_dispatch(); return; }
     /* 5347 */
-    saucer_anim_tick();
+    lock_on_indicator_tick();
     /* 534a */
     INC_M(0x0643);
     vbi_deferred_dispatch(); return;
@@ -25175,16 +25175,16 @@ L_425c:;
     /* 4260 */
     if (!cpu.N) goto L_425c;
     /* 4262 */
-    saucer_anim_return(); return;
-    saucer_anim_step(); return;
+    lock_on_indicator_return(); return;
+    lock_on_indicator_step(); return;
 }
 
-/* saucer_anim_step @ $4265: Decrements $00E6, on underflow reloads from $0618; at count 7 sets $0048/$28EE=1; advances $007E and writes $29 into shape table $3491+Y via saucer_write_shape */
-void saucer_anim_step(void) {
+/* lock_on_indicator_step @ $4265: Decrements $00E6, on underflow reloads from $0618; at count 7 sets $0048/$28EE=1; advances $007E and writes $29 into shape table $3491+Y via lock_on_indicator_write_cell */
+void lock_on_indicator_step(void) {
     /* 4265 */
     DEC_M(0x00E6);
     /* 4267 */
-    if (!cpu.N) { saucer_anim_return(); return; }
+    if (!cpu.N) { lock_on_indicator_return(); return; }
     /* 4269 */
     LDY(mem[0x0618]);
     /* 426c */
@@ -25205,7 +25205,7 @@ void saucer_anim_step(void) {
     mem[0x28EE] = cpu.A;
 L_427d:;
     /* 427d */
-    saucer_anim_return(); return;
+    lock_on_indicator_return(); return;
 L_4280:;
     /* 4280 */
     INC_M(0x007E);
@@ -25213,11 +25213,11 @@ L_4280:;
     TAY();
     /* 4283 */
     LDA(0x29);
-    saucer_write_shape(); return;
+    lock_on_indicator_write_cell(); return;
 }
 
-/* saucer_write_shape @ $4285: Writes A into shape table $3491+Y, then LDX #$12 and tail-calls ring_push_marked (sprite/object update with X=$12) */
-void saucer_write_shape(void) {
+/* lock_on_indicator_write_cell @ $4285: Writes A into shape table $3491+Y, then LDX #$12 and tail-calls ring_push_marked (sprite/object update with X=$12) */
+void lock_on_indicator_write_cell(void) {
 L_4285:;
     /* 4285 */
     mem[(0x3491)+cpu.Y] = cpu.A;
@@ -25225,23 +25225,23 @@ L_4285:;
     LDX(0x12);
     /* 428a */
     ring_push_marked(); return;
-    saucer_anim_return(); return;
+    lock_on_indicator_return(); return;
 }
 
-/* saucer_anim_return @ $428D: Empty RTS landing pad shared by saucer animation paths; falls through to saucer_phase_advance in ROM */
-void saucer_anim_return(void) {
+/* lock_on_indicator_return @ $428D: Empty RTS landing pad shared by lock-on indicator animation paths; falls through to lock_on_indicator_phase_advance in ROM */
+void lock_on_indicator_return(void) {
 L_428d:;
     /* 428d */
     return;
-    saucer_phase_advance(); return;
+    lock_on_indicator_phase_advance(); return;
 }
 
-/* saucer_phase_advance @ $428E: LSR $0631 phase flag, returns if carry; else INC $0631, masks low nibble; at phase 7 adjusts $007E and writes opcode-like $A9/$29 bytes via saucer_write_shape / draw_player3_object */
-void saucer_phase_advance(void) {
+/* lock_on_indicator_phase_advance @ $428E: LSR $0631 phase flag, returns if carry; else INC $0631, masks low nibble; at phase 7 adjusts $007E and writes opcode-like $A9/$29 bytes via lock_on_indicator_write_cell / draw_player3_object */
+void lock_on_indicator_phase_advance(void) {
     /* 428e */
     LSR_M(0x0631);
     /* 4291 */
-    if (cpu.C) { saucer_anim_return(); return; }
+    if (cpu.C) { lock_on_indicator_return(); return; }
     /* 4293 */
     INC_M(0x0631);
     /* 4296 */
@@ -25262,7 +25262,7 @@ L_42a0:;
     /* 42a3 */
     LDA(0xA9);
     /* 42a5 */
-    if (!cpu.Z) { saucer_write_shape(); return; }
+    if (!cpu.Z) { lock_on_indicator_write_cell(); return; }
     draw_player3_object(); return;
 }
 

@@ -123,9 +123,9 @@ extern "C" void update_cockpit_digits_native(void)
     }
 }
 
-// saucer_anim_tick_native: direct translation of saucer_anim_tick @ $4229.
+// lock_on_indicator_tick_native: direct translation of lock_on_indicator_tick @ $4229.
 // (Previously mislabelled update_gauge_digits — that is a different routine at
-// $548D; the canonical name for $4229 in disasm/symbols.csv is saucer_anim_tick.)
+// $548D; the canonical name for $4229 in disasm/symbols.csv is lock_on_indicator_tick.)
 // Called from vbi_handler_standby ($52D7) every other frame (LSR $0643 gate).
 // Drives the cockpit score/counter animation at $3491-$3497 (mode-4 chars).
 // State machine in mem[$007E]:
@@ -137,7 +137,7 @@ extern "C" void update_cockpit_digits_native(void)
 //   $81+    — reverse fill: restore $A9 at $3491+state, decrement state
 // mem[$0618] = per-step timer reload (0 = advance every call).
 // ring_push_marked ring-buffer push is inlined (ring at $0719, ptr at $0073).
-extern "C" void saucer_anim_tick_native(void)
+extern "C" void lock_on_indicator_tick_native(void)
 {
     auto pushRingBuf = [](uint8_t val) {
         uint8_t ptr = mem[zp::altRingHead];
@@ -146,17 +146,17 @@ extern "C" void saucer_anim_tick_native(void)
         mem[zp::altRingHead] = (ptr == 0u) ? 0x1Fu : (uint8_t)(ptr - 1u);
     };
 
-    uint8_t s = mem[zp::scoreOrRescued];
+    uint8_t s = mem[zp::lockOnIndicatorState];
 
     if ((int8_t)s < 0) {        // s >= $80
         if (s >= 0x81u) {
             // Reverse-fill path: restore $A9 glyphs one by one.
             // LSR $0631 / BCS skip: rate-limit alternate calls.
-            if (mem[zp::saucerPhaseFlag] & 1u) { mem[zp::saucerPhaseFlag] >>= 1u; return; }
-            mem[zp::saucerPhaseFlag] = (uint8_t)((mem[zp::saucerPhaseFlag] >> 1u) + 1u);
+            if (mem[zp::lockOnIndicatorPhase] & 1u) { mem[zp::lockOnIndicatorPhase] >>= 1u; return; }
+            mem[zp::lockOnIndicatorPhase] = (uint8_t)((mem[zp::lockOnIndicatorPhase] >> 1u) + 1u);
             uint8_t n = (uint8_t)(s & 0x0Fu);
             uint8_t newS = (n == 7u) ? (uint8_t)(s - 2u) : (uint8_t)(s - 1u);
-            mem[zp::scoreOrRescued] = newS;
+            mem[zp::lockOnIndicatorState] = newS;
             mem[0x3491u + newS] = 0xA9u;
             pushRingBuf(0xA9u);
         } else {    // s == $80: random blink (faithful port of $4235-$4247)
@@ -177,16 +177,16 @@ extern "C" void saucer_anim_tick_native(void)
         if (mem[zp::animStepTimer] > 0u) { mem[zp::animStepTimer]--; return; }
         mem[zp::animStepTimer] = mem[zp::gaugeStepReload];
         if (s == 7u) {
-            if (mem[zp::saucerActiveFlag] == 0u) { mem[zp::saucerActiveFlag] = 1u; mem[0x28EEu] = 1u; }
+            if (mem[zp::lockOnIndicatorActive] == 0u) { mem[zp::lockOnIndicatorActive] = 1u; mem[0x28EEu] = 1u; }
             return;
         }
-        mem[zp::scoreOrRescued]++;
-        uint8_t newS = mem[zp::scoreOrRescued];
+        mem[zp::lockOnIndicatorState]++;
+        uint8_t newS = mem[zp::lockOnIndicatorState];
         mem[0x3491u + newS] = 0x29u;
         pushRingBuf(0x29u);     // pushes $A9 = $29|$80
     } else {                    // s == 0: initialise
-        mem[zp::saucerActiveFlag] = 0u;
-        mem[zp::scoreOrRescued] = 1u;
+        mem[zp::lockOnIndicatorActive] = 0u;
+        mem[zp::lockOnIndicatorState] = 1u;
         mem[zp::animStepTimer] = mem[zp::gaugeStepReload];
         for (int i = 5; i >= 0; i--) mem[0x3492u + (uint16_t)i] = 0xA9u;
     }
@@ -546,17 +546,17 @@ extern "C" void draw_tunnel_rings_native(void)
 //          input is the keyboard ISR, so it would only ever no-op.
 //   $5367  sound_event_dispatch          -> the door/tunnel/scroll cinematic driver
 //          (self-gated on $0088/$0089/$008A/$008B/$008D — inert on the static screen)
-//   $5342  saucer_anim_tick every other frame (LSR/INC $0643 gate)
+//   $5342  lock_on_indicator_tick every other frame (LSR/INC $0643 gate)
 //   $534D  SFX tick ($70F9)              -> runs on CIA-B Timer A instead (main.cpp)
 //          update_gauge_digits ($548D) / music_player_tick ($7253) -> never ported.
 extern "C" void standby_vbi_native(void)
 {
     vbi_attract_timer_native();              // $5335
     sound_event_dispatch_native();           // $5367
-    uint8_t g = mem[zp::saucerTickParity];   // $5342: LSR $0643 / BCS skip / ... / INC
-    mem[zp::saucerTickParity] = (uint8_t)(g >> 1);
+    uint8_t g = mem[zp::lockOnIndicatorTickParity];   // $5342: LSR $0643 / BCS skip / ... / INC
+    mem[zp::lockOnIndicatorTickParity] = (uint8_t)(g >> 1);
     if (!(g & 1u)) {                         // carry clear -> run, then INC
-        saucer_anim_tick_native();           // $4229
-        mem[zp::saucerTickParity]++;
+        lock_on_indicator_tick_native();           // $4229
+        mem[zp::lockOnIndicatorTickParity]++;
     }
 }

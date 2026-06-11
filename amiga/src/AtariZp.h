@@ -20,8 +20,8 @@ constexpr uint16_t blinkTimer       = 0x006E;  // down-counter driving the indic
 constexpr uint16_t indicatorLightState = 0x00DE;  // cockpit indicator light: $4E on / $46 off
 constexpr uint16_t attractTimer     = 0x00E2;  // attract-mode timer
 constexpr uint16_t attractTimerSub  = 0x062D;  // attract-timer sub-counter (256-wrap -> attractTimer)
-constexpr uint16_t animStepTimer    = 0x00E6;  // per-step delay for the saucer/gauge animation
-constexpr uint16_t saucerTickParity = 0x0643;  // every-other-frame gate for saucer_anim_tick
+constexpr uint16_t animStepTimer    = 0x00E6;  // per-step delay for the lock-on-indicator/gauge animation
+constexpr uint16_t lockOnIndicatorTickParity = 0x0643;  // every-other-frame gate for lock_on_indicator_tick
 
 // --- dispatcher gates (read by sound_event_dispatch $5367) ---
 constexpr uint16_t vbiFlags         = 0x0088;  // gate: routes the dispatcher to the tunnel-ring step
@@ -49,17 +49,17 @@ constexpr uint16_t altitudeThreshold = 0x0091;  // selects which 20-byte block c
 constexpr uint16_t textColorPf0   = 0x00D8;  // title text colour shadow (COLPF0)
 constexpr uint16_t displayFlags   = 0x0071;  // display-mode flags ($C0 init / $00 attract / $2A game)
 
-// --- cockpit digit / gauge / saucer state ---
+// --- cockpit digit / gauge / lock-on indicator state ---
 constexpr uint16_t playerLives    = 0x0072;  // player life count (gates the altitude ring push)
 constexpr uint16_t altRingHead    = 0x0073;  // head index of the altitude ring buffer at $0719
-constexpr uint16_t scoreOrRescued = 0x007E;  // saucer/gauge state machine selector
-constexpr uint16_t saucerActiveFlag = 0x0048; // set when the saucer animation completes
+constexpr uint16_t lockOnIndicatorState = 0x007E;  // lock-on-indicator/gauge state machine selector
+constexpr uint16_t lockOnIndicatorActive = 0x0048; // set when the lock-on indicator animation completes
 constexpr uint16_t joystickSaved  = 0x004A;  // saved joystick / active-game flag
 constexpr uint16_t collisionFlags = 0x004B;  // collision / mode flags (BIT-tested in cockpit digits)
 constexpr uint16_t barColThreshold = 0x00BF; // cockpit bar-column threshold scratch
 constexpr uint16_t gaugeStepReload = 0x0618; // per-step timer reload for the gauge counter
 constexpr uint16_t scoreBcd        = 0x0628; // packed-BCD score counter
-constexpr uint16_t saucerPhaseFlag = 0x0631; // saucer reverse-fill phase rate gate
+constexpr uint16_t lockOnIndicatorPhase = 0x0631; // lock-on indicator reverse-fill phase rate gate
 constexpr uint16_t placedItemCountBcd = 0x0641; // BCD count of placed items
 constexpr uint16_t gamePhaseFlag   = 0x0642; // game phase (0=intro 1/2=active 3=transition)
 constexpr uint16_t shieldOrDamage  = 0x0645; // BCD digit-cache (digit 2 change detect)

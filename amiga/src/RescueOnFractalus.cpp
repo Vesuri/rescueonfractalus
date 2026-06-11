@@ -36,7 +36,7 @@ extern "C" void vbi_attract_timer_native(void);                  // $52D7: timer
 extern "C" void update_indicator_blink_native(void);           // $4131: cockpit blink
 extern "C" void copy_text_block_to_screen_native(void);   // $782A: title text
 extern "C" void update_cockpit_digits_native(void);                      // $3FFA: cockpit digit update
-extern "C" void saucer_anim_tick_native(void);               // $4229: cockpit counter animation
+extern "C" void lock_on_indicator_tick_native(void);               // $4229: cockpit counter animation
 extern "C" void sound_event_dispatch_native(void);              // $5367: ring ($0088) vs door scroll ($008A)
 extern "C" void draw_tunnel_rings_native(void);                 // $65FB: draw concentric tunnel rings into $2000
 extern "C" void launch_show_standby_native(void);               // display_setup $635F: "STAND BY..." + score
@@ -829,7 +829,7 @@ void RescueOnFractalus::update(uint16_t frame)
     }
 
     // The $52D7 VBI body (attract timer + sound_event_dispatch + every-other-frame
-    // saucer_anim_tick) now runs in the real INTB_VERTB interrupt (main.cpp ->
+    // lock_on_indicator_tick) now runs in the real INTB_VERTB interrupt (main.cpp ->
     // game_vbi_isr -> standby_vbi_native), where the Atari ran it — no longer here.
     update_indicator_blink_native();    // $4131: cockpit blink lights (NOT part of $52D7;
                                         // a flight-VBI routine, left here pending that port)
@@ -849,7 +849,7 @@ void RescueOnFractalus::update(uint16_t frame)
     if (launchPhase != kFlight && mem[0x060B] == 0)   // $62FB: title text (gated by $060B)
         copy_text_block_to_screen_native();    // $782A: $0091→title string
 
-    // (The every-other-frame saucer_anim_tick $4229 — the $5342 LSR/INC $0643 gate
+    // (The every-other-frame lock_on_indicator_tick $4229 — the $5342 LSR/INC $0643 gate
     // and the Standby centre-bottom indicator-light blink — now runs in the ISR via
     // standby_vbi_native.  render()'s per-cell shadow compare still picks up any
     // cockpit RAM the blink changes at $3491-$3498.)

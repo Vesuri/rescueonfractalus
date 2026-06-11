@@ -126,7 +126,7 @@ $4F3F,game_sub_4f3f,func,0,Game subsystem (called from enemy_check when $063D≠
 $4FF5,vbi_handler_flight,func,0,In-flight VBI handler (VVBLKI=$4FF5 set at $3E50 during flight init); $51B9 block = flight_control_integrate + terrain projection, mirrored by flight_vbi_native
 $5433,font_display_init,func,0,Font/display character setup (called in game_entry init)
 $53CC,vbi_handler_1,func,0,First in-game VBI handler (VVBLKI=$53CC set at $3D63 in game_entry)
-$52D7,vbi_handler_standby,func,0,Standby + launch-cinematic VBI handler (VVBLKI=$52D7 set in display_setup $5F50); active from the Standby screen through the doors/tunnel/stars/planet cinematic, until flight init swaps in vbi_handler_flight ($4FF5). Per-frame: attract timer, attract input poll ($5398), sound_event_dispatch ($5367), saucer_anim_tick every other frame, SFX/music tick, update_gauge_digits. Was vbi_handler_standby.
+$52D7,vbi_handler_standby,func,0,Standby + launch-cinematic VBI handler (VVBLKI=$52D7 set in display_setup $5F50); active from the Standby screen through the doors/tunnel/stars/planet cinematic, until flight init swaps in vbi_handler_flight ($4FF5). Per-frame: attract timer, attract input poll ($5398), sound_event_dispatch ($5367), lock_on_indicator_tick every other frame, SFX/music tick, update_gauge_digits. Was vbi_handler_standby.
 $5815,ring_push_marked,func,0,TXA;ORA #$80;JMP ring_push_0719 — push object index X marked with bit7 ($80=active) into the $0719 event ring
 $581C,input_init,func,0,Input/controller init (called twice: X=$1F then X=$20)
 $587B,cockpit_display,func,0,Cockpit/instrument display or main input handler (reads PORTA/CONSOL; called if $060B≠0)
@@ -188,7 +188,7 @@ $004B,collision_flags,var,0,Collision/event flags (BIT-tested in startup_init)
 $004C,timer_4C,var,0,Counter/timer written by many subs
 $0071,display_flags,var,0,Display mode flags ($C0 during init $00 in attract $2A in game)
 $0072,player_lives,var,0,Player lives counter (compared to 2 in main loop; X+1 stored to $4A when lives=2)
-$007E,score_or_rescued,var,0,Score or rescued-pilot counter (set $80 at game start)
+$007E,lock_on_indicator_state,var,0,Score or rescued-pilot counter (set $80 at game start)
 $0080,sync_flag,var,0,VBI sync flag (game_entry waits for non-zero then clears; VBI sets it)
 $0081,dl_ptr_lo,var,0,Display list pointer low (used by display_list_build as indirect ptr to $B800)
 $0082,dl_ptr_hi,var,0,Display list pointer high
@@ -311,12 +311,12 @@ $41DA,vobj_pos_to_pmstrip_index,func,0,Y = ($DC - $062F) >> 2: convert vert pos 
 $41E4,vobj_draw_dispatch,func,0,X=$0038 (row count); if nonzero erase-loop via vobj_erase_row ($4207) else step down via vobj_step_down ($41e8)
 $41E8,vobj_step_down,func,0,Set $004C=1; advance $062F by +4, wrap at $DC bottom ($004C=0,$0D98=$F0,pos=$DC); calls push_a_thunk_3cb2 then erase row
 $4207,vobj_erase_row,func,0,Erase P/M strip row: $0D99+Y=$F0; index Y>>3 into shape table $4DEA->$00DE; DEX loop back to vobj_step_down
-$4225,obj_state_dispatch_0043,func,0,X=$0043; if nonzero jump saucer_anim_return else saucer_anim_tick (state-driven object update branch)
-$4229,saucer_anim_tick,func,0,State machine on $007E: if >=$81 jumps to saucer_phase_advance ($428e); else counts down $00E6 (reload $0618), toggles bit7 of table $3492 using RANDOM ($D20A&7); seeds $0048/$00E6 on entry
-$4265,saucer_anim_step,func,0,Decrements $00E6, on underflow reloads from $0618; at count 7 sets $0048/$28EE=1; advances $007E and writes $29 into shape table $3491+Y via saucer_write_shape
-$4285,saucer_write_shape,func,0,Writes A into shape table $3491+Y, then LDX #$12 and tail-calls ring_push_marked (sprite/object update with X=$12)
-$428D,saucer_anim_return,func,0,Empty RTS landing pad shared by saucer animation paths; falls through to saucer_phase_advance in ROM
-$428E,saucer_phase_advance,func,0,LSR $0631 phase flag, returns if carry; else INC $0631, masks low nibble; at phase 7 adjusts $007E and writes opcode-like $A9/$29 bytes via saucer_write_shape / draw_player3_object
+$4225,obj_state_dispatch_0043,func,0,X=$0043; if nonzero jump lock_on_indicator_return else lock_on_indicator_tick (state-driven object update branch)
+$4229,lock_on_indicator_tick,func,0,State machine on $007E: if >=$81 jumps to lock_on_indicator_phase_advance ($428e); else counts down $00E6 (reload $0618), toggles bit7 of table $3492 using RANDOM ($D20A&7); seeds $0048/$00E6 on entry
+$4265,lock_on_indicator_step,func,0,Decrements $00E6, on underflow reloads from $0618; at count 7 sets $0048/$28EE=1; advances $007E and writes $29 into shape table $3491+Y via lock_on_indicator_write_cell
+$4285,lock_on_indicator_write_cell,func,0,Writes A into shape table $3491+Y, then LDX #$12 and tail-calls ring_push_marked (sprite/object update with X=$12)
+$428D,lock_on_indicator_return,func,0,Empty RTS landing pad shared by lock-on indicator animation paths; falls through to lock_on_indicator_phase_advance in ROM
+$428E,lock_on_indicator_phase_advance,func,0,LSR $0631 phase flag, returns if carry; else INC $0631, masks low nibble; at phase 7 adjusts $007E and writes opcode-like $A9/$29 bytes via lock_on_indicator_write_cell / draw_player3_object
 $42A7,draw_player3_object,func,0,Renders player-3 sprite: sets SIZEP3 ($D00B), HPOSP3 ($D003), size/pos/shape from tables $4566/$4569/$456C/$457A/$4D11/$4D3E; fills PMG bitmap rows $0F1E/$0F71; updates $286F/$2835/$2870/$00CC
 $43C7,dispatch_43cb_half_70,func,0,Loads $0070, LSR to halve into Y, tail-calls game_sub_43CB with that index
 $43E8,draw_object_column,func,0,Loops X down to $00BE drawing a vertical PMG column via indirect ptr $BB/$BC from table $4581; sets bit7 ($80) on/off based on X vs threshold $00BF; uses $00C0 flag and bytes $B4/$B7/$B8/$38; tail-calls draw_bar_loop_end
@@ -562,7 +562,7 @@ $0043,event_active_flag,var,0,event_sequence_dispatcher gating flag for mode 0/d
 $0045,bcd_delta_lo,var,0,16-bit BCD increment low byte added to bcd_counter $0603 in SED mode; cleared by set_zsupp_pos_clear_delta
 $0046,bcd_delta_hi,var,0,16-bit BCD increment high byte added to bcd_counter $0602; cleared by set_zsupp_pos_clear_delta
 $0047,colpf0_value,var,0,Cockpit playfield color; loaded into COLPF0 $D016 by set_colpf0_from_flag (set_colpf0_from_flag)
-$0048,saucer_active_flag,var,0,Set to 1 (also $28EE=1) when saucer animation reaches count 7 (saucer_anim_step); seeded by A in saucer_anim_tick
+$0048,lock_on_indicator_active,var,0,Set to 1 (also $28EE=1) when lock-on indicator animation reaches count 7 (lock_on_indicator_step); seeded by A in lock_on_indicator_tick
 $004E,terrain_pt_coord_b,var,0,coord component used in terrain_point_distance $A8AF (abs(0x80-$004E)); set from $245A[X] in terrain_plot_object_a
 $004F,terrain_pt_coord_a,var,0,coord component in terrain_point_distance $A8AF (abs($004F-0x80)); set from $2400[X], also index into $260E[X]
 $0050,plot_step_lo,var,0,Fixed-point plot/scan step low byte; halved by ab7b, used as X/Y increment in ab9a fill loop
@@ -636,7 +636,7 @@ $060E,sfx_rand_freq_lo2,var,0,Random freq value (random_digit) for SFX retrigger
 $060F,sfx_rand_freq_hi1,var,0,Random freq value (random_alpha_index, RANDOM $D20A &$1F+$21) for SFX retrigger
 $0610,sfx_rand_freq_hi2,var,0,Random freq value (random_alpha_index) for SFX retrigger
 $0617,gauge_field_0617,var,0,Display geometry output of compute_gauge_geometry_from_006D (cleared 0 or derived from $006D-$10 path)
-$0618,gauge_step_reload,var,0,Geometry output of compute_gauge_geometry_from_006D: clamp(($2A-X)/2, min 4); reload value copied into $00E6 when the saucer animation counter underflows (saucer_anim_tick/saucer_anim_step).
+$0618,gauge_step_reload,var,0,Geometry output of compute_gauge_geometry_from_006D: clamp(($2A-X)/2, min 4); reload value copied into $00E6 when the lock-on indicator animation counter underflows (lock_on_indicator_tick/lock_on_indicator_step).
 $0619,zero_suppress_pos,var,0,Leading-zero suppression / column limit in plot_char_bounded: digit position Y compared (CPY) below which zeros stay blank, gating the char write via ($C5),Y.
 $061F,gauge_field_061F,var,0,Geometry output of compute_gauge_geometry_from_006D (($062A/2)+1); also compared against $0629 in $7AF4 as the oscillation step threshold gating the game_sub_7B54 call.
 $0620,gauge_field_0620,var,0,Geometry output of compute_gauge_geometry_from_006D ($062A-5, clamp >=0); also used in $7B3C as a countdown that shows char $C9 via obj_table_scan_replace when ==1 (else obj_table_scan_y1_c8).
@@ -645,7 +645,7 @@ $0629,osc_step_counter,var,0,Step counter incremented in $7AF4; when >= threshol
 $062A,gauge_height_062A,var,0,Geometry value = clamp(($006D/2)+2,$14); pushed/reused for derived coords in compute_gauge_geometry_from_006D
 $062B,bcd_osc_dir,var,0,Direction flag for $0628 BCD osc: nonzero=decrement, 0=increment ($7AF4); incremented on carry
 $0630,saved_joy_4a,var,0,event_sequence_dispatcher saves $4A here ($467d) and restores it ($46a1) around event takeover
-$0631,saucer_phase_flag,var,0,Player-3 object phase counter/flag: LSR/INC in saucer_phase_advance, low nibble compared to 7 to gate phase changes
+$0631,lock_on_indicator_phase,var,0,Player-3 object phase counter/flag: LSR/INC in lock_on_indicator_phase_advance, low nibble compared to 7 to gate phase changes
 $0632,var_0632,var,0,flag/counter cleared to 0 by clear_var_0632 (called after silence_audio_channels)
 $0634,sfx_state_0634,var,0,sfx_engine_step state: nonzero selects descending-pitch branch ($5585); set via INC at $55c9
 $0636,sfx_timer_0636,var,0,sfx_engine_step countdown; on underflow reseeds from RANDOM $D20A and writes AUDC $D204/AUDF $D200
@@ -735,7 +735,7 @@ $28E1,terrain_cur_obj_idx,var,0,saved X (object index) in terrain_plot_object $A
 $28E2,terrain_plot_row,var,0,saved Y (raster row) across pixel write in terrain_plot_pixel $A6D3 ($A6D7 store, $A6F5 reload)
 $28E6,grid_slot_index,var,0,Index into $0A00 active-slot table; $7B74 writes mem[$0A00+X]=1
 $28EA,terrain_span_max,var,0,running max span/extent compared+updated in terrain_plot_object $A690/$A695
-$28EE,saucer_spawn_flag,var,0,Set to 1 alongside $0048 when saucer animation completes (saucer_anim_step $427a)
+$28EE,lock_on_indicator_complete,var,0,Set to 1 alongside $0048 when lock-on indicator animation completes (lock_on_indicator_step $427a)
 $290D,terrain_distance_acc,var,0,Manhattan distance accumulator in terrain_point_distance $A8AF (|dx|+|dy|)
 $291F,anim_phase,var,0,animation phase/frame counter in animate_zoom_sequence; reset 0, INC then AND #7 to wrap 8 frames; indexes tables $7D8D/$7D95/$7D9D
 $2924,sound_table_idx,var,0,index into table $81E8 in game_sub_7F85; INC'd each call (stepped sound/random sequence)
@@ -757,5 +757,5 @@ $66FB,pixel_and_mask_tbl,var,0,Bit-clear (AND) mask table paired with pixel_or_m
 $0090,sfx_reinit_gate,var,0,Non-zero -> the attract loop re-inits the SFX sequence via $70E7 (sound_init); cleared after one reinit.
 $00D8,text_color_pf0,var,0,Title/text colour shadow (COLPF0); set to $44 by copy_text_block_to_screen on the copyright block.
 $062D,attract_timer_sub,var,0,Attract-timer sub-counter incremented each VBI by vbi_handler_standby; 256-wrap increments attract_timer $00E2.
-$0643,saucer_tick_parity,var,0,Every-other-frame gate (LSR/INC) controlling whether vbi_handler_standby runs saucer_anim_tick this frame.
+$0643,lock_on_indicator_tick_parity,var,0,Every-other-frame gate (LSR/INC) controlling whether vbi_handler_standby runs lock_on_indicator_tick this frame.
 $06CC,history_ring_step,var,0,Increment added to $0679[$0C] by advance_history_6a4d (saturates to $FF on wrap-to-0).
