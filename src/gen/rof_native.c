@@ -1225,3 +1225,209 @@ void terrain_gen_A613(void) {
     mem[0x282C] = A;
     terrain_plot_return();
 }
+
+/* terrain_gen_1 @ $9E54 — terrain/level generation step 1 (flight top #2).
+ *
+ * Calls native setup_projection_params + build_view_transform_matrix, then runs
+ * two loops over the per-column transform tables ($22A3/$22D1/$22FF/$232D etc.):
+ *  - LOOP 1 (Y=0..$2C): per terrain map cell read via ($80),Y, rotate the cell's
+ *    bit pattern ($B5) to pick one of six rotate/translate updates of the column
+ *    vectors, derive the screen-X ($2388/$235B) and visibility class ($24B4).
+ *  - LOOP 2 (Y=0..$0B): walk the object draw order $B67C[], collapse adjacent
+ *    visible/hidden pairs (clear $232E/set $2300=$20/clear $24B4) per the class.
+ *
+ * Goto-faithful transliteration: locals A/X/Y/c; X carries cross-iteration state
+ * in loop 1 (rebuilt at $9FB9 as (X&$0F)|$B6).  Carry into the top ROL A chain and
+ * into ROL $B5 is irrelevant (masked / discarded low bits) but threaded anyway.
+ * Contract: memory only (the main flight loop reloads regs after the call).
+ */
+void terrain_gen_1(void) {
+    uint8_t A, X, Y, c;
+    #define ADC_(v)  do { uint16_t _t=(uint16_t)A+(uint8_t)(v)+c; c=(uint8_t)(_t>>8); A=(uint8_t)_t; } while(0)
+    #define SBC_(v)  ADC_((uint8_t)~(uint8_t)(v))
+    #define ROLA_()  do { uint8_t _n=A>>7; A=(uint8_t)((A<<1)|c); c=_n; } while(0)
+    #define LSRA_()  do { c=A&1; A=(uint8_t)(A>>1); } while(0)
+    #define ROLM_(a) do { uint8_t _v=mem[a],_n=_v>>7; mem[a]=(uint8_t)((_v<<1)|c); c=_n; } while(0)
+    #define RORM_(a) do { uint8_t _v=mem[a],_n=_v&1; mem[a]=(uint8_t)((_v>>1)|(c<<7)); c=_n; } while(0)
+
+    setup_projection_params();                           /* 9e54 */
+    build_view_transform_matrix();                       /* 9e57 */
+    c = cpu.C;
+    A = mem[0x0092];                                     /* 9e5a */
+    if (A & 0x80) goto L_9e85;                            /* 9e5c BMI */
+    ROLA_();                                             /* 9e5e */
+    if (A & 0x80) goto L_9e7f;                            /* 9e5f BMI */
+    mem[0x22A4] = mem[0x22A3];                            /* 9e61 (only this bit7=0,bit6=0 path copies) */
+    mem[0x22D2] = mem[0x22D1];
+    mem[0x2300] = mem[0x22FF];
+    mem[0x232E] = mem[0x232D];
+    X = 0x22; Y = 0xB6;                                  /* 9e79/9e7b */
+    goto L_9e92;                                         /* 9e7d BNE (always) */
+L_9e7f:
+    X = 0x4F; Y = 0xB6;                                  /* 9e7f/9e81 */
+    goto L_9e92;                                         /* 9e83 BNE */
+L_9e85:
+    ROLA_();                                             /* 9e85 */
+    if (A & 0x80) goto L_9e8e;                            /* 9e86 BMI */
+    X = 0xF5; Y = 0xB5;                                  /* 9e88/9e8a */
+    goto L_9e92;                                         /* 9e8c BNE */
+L_9e8e:
+    X = 0xC8; Y = 0xB5;                                  /* 9e8e/9e90 */
+L_9e92:
+    mem[0x0080] = X; mem[0x0081] = Y;                    /* 9e92/9e94 (ptr for ($80),Y) */
+    A = mem[0x008A]; ROLA_(); ROLA_(); ROLA_(); ROLA_(); /* 9e96-9e9b */
+    A &= 0xF0; mem[0x00B6] = A;                          /* 9e9c/9e9e */
+    A = mem[0x0088]; A &= 0x0F; X = A;                   /* 9ea0-9ea4 (TAX) */
+    A |= mem[0x00B5]; mem[0x00B4] = A;                   /* 9ea5/9ea7 */
+    Y = 0x00;                                            /* 9ea9 */
+L_9eab:
+    A = bus_read((uint16_t)(mem[0x0080] | (mem[0x0081] << 8)) + Y);  /* 9eab LDA ($80),Y */
+    mem[0x00B5] = A;                                     /* 9ead */
+    if (!(A & 0x80)) goto L_9edd;                         /* 9eaf BPL */
+    A = mem[0x00B6]; c = 0; ADC_(0xF0); mem[0x00B6] = A;  /* 9eb1-9eb6 */
+    c = 0; A = mem[0x22A3 + Y]; ADC_(mem[0x00A0]); mem[0x22A4 + Y] = A;  /* 9eb8-9ebe */
+    A = mem[0x22D1 + Y]; ADC_(mem[0x00A1]); mem[0x22D2 + Y] = A;         /* 9ec1-9ec6 */
+    c = 1; A = mem[0x22FF + Y]; SBC_(mem[0x00A2]); mem[0x2300 + Y] = A;  /* 9ec9-9ecf */
+    A = mem[0x232D + Y]; SBC_(mem[0x00A3]); mem[0x232E + Y] = A;         /* 9ed2-9ed7 */
+    goto L_9f61;                                         /* 9eda */
+L_9edd:
+    ROLM_(0x00B5);                                       /* 9edd */
+    if (!(mem[0x00B5] & 0x80)) goto L_9f0d;               /* 9edf BPL */
+    A = mem[0x00B6]; c = 0; ADC_(0x10); mem[0x00B6] = A;  /* 9ee1-9ee6 */
+    c = 1; A = mem[0x22A3 + Y]; SBC_(mem[0x00A0]); mem[0x22A4 + Y] = A;  /* 9ee8-9eee */
+    A = mem[0x22D1 + Y]; SBC_(mem[0x00A1]); mem[0x22D2 + Y] = A;         /* 9ef1-9ef6 */
+    c = 0; A = mem[0x22FF + Y]; ADC_(mem[0x00A2]); mem[0x2300 + Y] = A;  /* 9ef9-9eff */
+    A = mem[0x232D + Y]; ADC_(mem[0x00A3]); mem[0x232E + Y] = A;         /* 9f02-9f07 */
+    goto L_9f61;                                         /* 9f0a */
+L_9f0d:
+    ROLM_(0x00B5);                                       /* 9f0d */
+    if (!(mem[0x00B5] & 0x80)) goto L_9f37;               /* 9f0f BPL */
+    X = (uint8_t)(X - 1);                                /* 9f11 DEX */
+    c = 1; A = mem[0x22A3 + Y]; SBC_(mem[0x00A2]); mem[0x22A4 + Y] = A;  /* 9f12-9f18 */
+    A = mem[0x22D1 + Y]; SBC_(mem[0x00A3]); mem[0x22D2 + Y] = A;         /* 9f1b-9f20 */
+    c = 1; A = mem[0x22FF + Y]; SBC_(mem[0x00A0]); mem[0x2300 + Y] = A;  /* 9f23-9f29 */
+    A = mem[0x232D + Y]; SBC_(mem[0x00A1]); mem[0x232E + Y] = A;         /* 9f2c-9f31 */
+    goto L_9fb2;                                         /* 9f34 */
+L_9f37:
+    ROLM_(0x00B5);                                       /* 9f37 */
+    if (!(mem[0x00B5] & 0x80)) goto L_9fb2;               /* 9f39 BPL */
+    X = (uint8_t)(X + 1);                                /* 9f3b INX */
+    c = 0; A = mem[0x22A3 + Y]; ADC_(mem[0x00A2]); mem[0x22A4 + Y] = A;  /* 9f3c-9f42 */
+    A = mem[0x22D1 + Y]; ADC_(mem[0x00A3]); mem[0x22D2 + Y] = A;         /* 9f45-9f4a */
+    c = 0; A = mem[0x22FF + Y]; ADC_(mem[0x00A0]); mem[0x2300 + Y] = A;  /* 9f4d-9f53 */
+    A = mem[0x232D + Y]; ADC_(mem[0x00A1]); mem[0x232E + Y] = A;         /* 9f56-9f5b */
+    goto L_9fb2;                                         /* 9f5e */
+L_9f61:
+    ROLM_(0x00B5);                                       /* 9f61 */
+    if (!(mem[0x00B5] & 0x80)) goto L_9f8b;               /* 9f63 BPL */
+    X = (uint8_t)(X - 1);                                /* 9f65 DEX */
+    c = 1; A = mem[0x22A4 + Y]; SBC_(mem[0x00A2]); mem[0x22A4 + Y] = A;  /* 9f66-9f6c */
+    A = mem[0x22D2 + Y]; SBC_(mem[0x00A3]); mem[0x22D2 + Y] = A;         /* 9f6f-9f74 */
+    c = 1; A = mem[0x2300 + Y]; SBC_(mem[0x00A0]); mem[0x2300 + Y] = A;  /* 9f77-9f7d */
+    A = mem[0x232E + Y]; SBC_(mem[0x00A1]); mem[0x232E + Y] = A;         /* 9f80-9f85 */
+    goto L_9fb2;                                         /* 9f88 */
+L_9f8b:
+    ROLM_(0x00B5);                                       /* 9f8b */
+    if (!(mem[0x00B5] & 0x80)) goto L_9fb2;               /* 9f8d BPL */
+    X = (uint8_t)(X + 1);                                /* 9f8f INX */
+    c = 0; A = mem[0x22A4 + Y]; ADC_(mem[0x00A2]); mem[0x22A4 + Y] = A;  /* 9f90-9f96 */
+    A = mem[0x22D2 + Y]; ADC_(mem[0x00A3]); mem[0x22D2 + Y] = A;         /* 9f99-9f9e */
+    c = 0; A = mem[0x2300 + Y]; ADC_(mem[0x00A0]); mem[0x2300 + Y] = A;  /* 9fa1-9fa7 */
+    A = mem[0x232E + Y]; ADC_(mem[0x00A1]); mem[0x232E + Y] = A;         /* 9faa-9faf */
+L_9fb2:
+    c = 1; A = 0x00; SBC_(mem[0x008B]); mem[0x00B5] = A;  /* 9fb2-9fb7 */
+    A = X; A &= 0x0F; A |= mem[0x00B6]; X = A;            /* 9fb9-9fbe (TXA;AND;ORA;TAX) */
+    A = mem[0x0900 + X]; mem[0x23B5 + Y] = A;             /* 9fbf-9fc2 */
+    SBC_(mem[0x008C]);                                   /* 9fc5 (carry from 9fb2 chain) */
+    if (!c) goto L_9fd8;                                  /* 9fc7 BCC */
+    LSRA_(); RORM_(0x00B5); LSRA_(); RORM_(0x00B5);       /* 9fc9-9fcd */
+    LSRA_(); RORM_(0x00B5); LSRA_(); RORM_(0x00B5);       /* 9fcf-9fd3 */
+    goto L_9fe6;                                          /* 9fd5 */
+L_9fd8:
+    LSRA_(); RORM_(0x00B5); LSRA_(); RORM_(0x00B5);       /* 9fd8-9fdc */
+    LSRA_(); RORM_(0x00B5); LSRA_(); RORM_(0x00B5);       /* 9fde-9fe2 */
+    A ^= 0xF0;                                            /* 9fe4 */
+L_9fe6:
+    mem[0x2388 + Y] = A;                                 /* 9fe6 */
+    A = mem[0x00B5]; mem[0x235B + Y] = A;                /* 9fe9-9feb */
+    A = X; mem[0x2276 + Y] = A;                          /* 9fee (TXA) */
+    A = mem[0x232E + Y];                                 /* 9ff2 */
+    if (A & 0x80) goto L_a03b;                            /* 9ff5 BMI */
+    if (A != 0) goto L_a000;                              /* 9ff7 BNE */
+    A = mem[0x2300 + Y];                                 /* 9ff9 */
+    if (A < 0x20) goto L_a03b;                            /* 9ffc CMP #$20; 9ffe BCC */
+L_a000:
+    A = mem[0x22D2 + Y];                                 /* a000 */
+    if (!(A & 0x80)) goto L_a024;                         /* a003 BPL */
+    A = 0x00; c = 1; SBC_(mem[0x22A4 + Y]); mem[0x00B5] = A;  /* a005-a00b */
+    A = 0x00; SBC_(mem[0x22D2 + Y]);                     /* a00d-a00f */
+    {   uint8_t m = mem[0x232E + Y];                     /* a012 CMP $232E,Y */
+        if (A < m) goto L_a037;                          /* a015 BCC */
+        if (A != m) goto L_a020;                         /* a017 BNE */
+    }
+    A = mem[0x00B5];                                     /* a019 */
+    if (A < mem[0x2300 + Y]) goto L_a037;                /* a01b CMP; a01e BCC */
+L_a020:
+    A = 0x40; goto L_a03d;                                /* a020/a022 */
+L_a024:
+    {   uint8_t m = mem[0x232E + Y];                     /* a024 CMP $232E,Y (A = $22D2,Y) */
+        if (A < m) goto L_a037;                          /* a027 BCC */
+        if (A != m) goto L_a033;                         /* a029 BNE */
+    }
+    A = mem[0x22A4 + Y];                                 /* a02b */
+    if (A < mem[0x2300 + Y]) goto L_a037;                /* a02e CMP; a031 BCC */
+L_a033:
+    A = 0x20; goto L_a03d;                                /* a033/a035 */
+L_a037:
+    A = 0x00; goto L_a03d;                                /* a037/a039 (BEQ always) */
+L_a03b:
+    A = 0x80;                                             /* a03b */
+L_a03d:
+    mem[0x24B4 + Y] = A;                                 /* a03d */
+    Y = (uint8_t)(Y + 1);                                /* a040 INY */
+    if (Y != 0x2D) goto L_9eab;                           /* a041 CPY #$2D; a043 BEQ a048 */
+
+    Y = 0x00;                                            /* a048 */
+L_a04a:
+    X = mem[0xB67C + Y];                                 /* a04a LDX $B67C,Y */
+    mem[0x28DB] = X;                                     /* a04d */
+    Y = (uint8_t)(Y + 1);                                /* a050 INY */
+    A = mem[0x24B4 + X];                                 /* a051 */
+    if (A & 0x80) goto L_a079;                            /* a054 BMI */
+    if (A != 0) goto L_a09a;                              /* a056 BNE */
+    X = mem[0xB67C + Y];                                 /* a058 */
+    Y = (uint8_t)(Y + 1);                                /* a05b INY */
+    A = mem[0x24B4 + X];                                 /* a05c */
+    if (!(A & 0x80)) goto L_a09b;                         /* a05f BPL */
+    mem[0x00B5] = Y;                                     /* a061 STY $B5 */
+    Y = mem[0x28DB];                                     /* a063 */
+    mem[0x232E + X] = 0x00;                              /* a066-a068 */
+    mem[0x2300 + X] = 0x20;                              /* a06b-a06d */
+    mem[0x24B4 + X] = 0x00;                              /* a070-a072 */
+    Y = mem[0x00B5];                                     /* a075 */
+    if (Y != 0) goto L_a09b;                              /* a077 BNE */
+L_a079:
+    X = mem[0xB67C + Y];                                 /* a079 */
+    Y = (uint8_t)(Y + 1);                                /* a07c INY */
+    A = mem[0x24B4 + X];                                 /* a07d */
+    if (A != 0) goto L_a09b;                              /* a080 BNE */
+    mem[0x00B5] = Y;                                     /* a082 STY $B5 */
+    Y = mem[0x28DB];                                     /* a084 */
+    mem[0x232E + Y] = 0x00;                              /* a087-a089 (indexed by Y=$28DB) */
+    mem[0x2300 + Y] = 0x20;                              /* a08c-a08e */
+    mem[0x24B4 + Y] = 0x00;                              /* a091-a093 */
+    Y = mem[0x00B5];                                     /* a096 */
+    if (Y != 0) goto L_a09b;                              /* a098 BNE */
+L_a09a:
+    Y = (uint8_t)(Y + 1);                                /* a09a INY */
+L_a09b:
+    if (Y >= 0x0C) return;                                /* a09b CPY #$0C; a09d BCS a0a2 */
+    goto L_a04a;                                         /* a09f */
+
+    #undef ADC_
+    #undef SBC_
+    #undef ROLA_
+    #undef LSRA_
+    #undef ROLM_
+    #undef RORM_
+}

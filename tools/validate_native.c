@@ -342,6 +342,7 @@ int main(void) {
     fails += test_from_snapshot("terrain_sub_B172", terrain_sub_B172,
                                 terrain_sub_B172__t6502, 2000, 0x0F);
     fails += test_mem_contract("terrain_gen_A613", terrain_gen_A613, terrain_gen_A613__t6502);
+    fails += test_mem_contract_regs("terrain_gen_1", terrain_gen_1, terrain_gen_1__t6502);
 
     printf("\n%s\n", fails == 0
         ? "PASS — all native reimplementations are memory-equivalent to their 6502 oracles."

@@ -3987,7 +3987,8 @@ L_4e52:;
 }
 
 /* obj_table_set_active @ $4E58: Find $0A00,X slot==1 not in $2276[] table, set $0A00,X=$80 (stride $43, $281F=index) */
-void obj_table_set_active(void) {
+/* faithful transliteration kept as the validation oracle; native obj_table_set_active() lives in rof_native.c (see VALIDATE_FUNCS) */
+void obj_table_set_active__t6502(void) {
     /* 4e58 */
     LDX(0x00);
 L_4e5a:;
@@ -18140,7 +18141,8 @@ void init_proj_scratch_pointers(void) {
 }
 
 /* compute_heading_sincos @ $9BA0: From 16-bit heading $2885/$2886 builds octant $280D; calls trig at angle and angle+$40(90deg); stores sin/cos pair to $2809-$280C */
-void compute_heading_sincos(void) {
+/* faithful transliteration kept as the validation oracle; native compute_heading_sincos() lives in rof_native.c (see VALIDATE_FUNCS) */
+void compute_heading_sincos__t6502(void) {
     /* 9ba0 */
     LDA(mem[0x2886]);
     /* 9ba3 */
@@ -18200,7 +18202,8 @@ void compute_heading_sincos(void) {
 }
 
 /* trig_interp_lookup @ $9BDB: Interpolates sine table: sine_table_lookup at angle+1/-1 into $2816-$2818/$2813-$2815, blends per octant bits $280F over 3 steps */
-void trig_interp_lookup(void) {
+/* faithful transliteration kept as the validation oracle; native trig_interp_lookup() lives in rof_native.c (see VALIDATE_FUNCS) */
+void trig_interp_lookup__t6502(void) {
     /* 9bdb */
     INC_M(0x0075);
     /* 9bdd */
@@ -18309,7 +18312,8 @@ L_9c3f:;
 }
 
 /* sine_table_lookup @ $9C55: Angle $0075 *4 -> quadrant idx $280E; sign/quad tables $9B98/$9B9C, value tables $4EB9/$4EFA; signed 24-bit result $0076-$0078 */
-void sine_table_lookup(void) {
+/* faithful transliteration kept as the validation oracle; native sine_table_lookup() lives in rof_native.c (see VALIDATE_FUNCS) */
+void sine_table_lookup__t6502(void) {
     /* 9c55 */
     LDA(0x00);
     /* 9c57 */
@@ -18377,7 +18381,8 @@ L_9c96:;
 }
 
 /* signed_mul_8x16 @ $9C97: Signed multiply: A * 16-bit $00AA/$00AB; abs via sign $00AD, 8-step shift-add, result $00A8/$00A9 ($00AC frac) */
-void signed_mul_8x16(void) {
+/* faithful transliteration kept as the validation oracle; native signed_mul_8x16() lives in rof_native.c (see VALIDATE_FUNCS) */
+void signed_mul_8x16__t6502(void) {
     /* 9c97 */
     mem[0x00AC] = cpu.A;
     /* 9c99 */
@@ -18887,7 +18892,8 @@ L_9e51:;
 }
 
 /* terrain_gen_1 @ $9E54: Terrain/level generation step 1 (called before terrain_gen_2) */
-void terrain_gen_1(void) {
+/* faithful transliteration kept as the validation oracle; native terrain_gen_1() lives in rof_native.c (see VALIDATE_FUNCS) */
+void terrain_gen_1__t6502(void) {
     /* 9e54 */
     setup_projection_params();
     /* 9e57 */
@@ -19455,7 +19461,8 @@ L_a0a2:;
 }
 
 /* build_view_transform_matrix @ $A0A3: Builds rotation matrix from sin/cos $00A0-$00A3 scaled by $0089/vbi_phase$0087 via signed_mul; stores to $22A3/$22D1,$22FF/$232D; called by terrain_gen_1 */
-void build_view_transform_matrix(void) {
+/* faithful transliteration kept as the validation oracle; native build_view_transform_matrix() lives in rof_native.c (see VALIDATE_FUNCS) */
+void build_view_transform_matrix__t6502(void) {
     /* a0a3 */
     LDA(mem[0x00A0]);
     /* a0a5 */
@@ -20809,7 +20816,8 @@ L_a612:;
 }
 
 /* terrain_gen_A613 @ $A613: Terrain sub (2 RANDOM reads) */
-void terrain_gen_A613(void) {
+/* faithful transliteration kept as the validation oracle; native terrain_gen_A613() lives in rof_native.c (see VALIDATE_FUNCS) */
+void terrain_gen_A613__t6502(void) {
     /* a613 */
     CLC();
     /* a614 */
@@ -20854,7 +20862,8 @@ L_a635:;
 }
 
 /* terrain_plot_object @ $A63B: $A63B: per-object terrain raster; indexes $2276/$232E/$2300/$22D2 tables, sets $28E1..$28EA span/coords, $0059/$005A ROR width */
-void terrain_plot_object(void) {
+/* faithful transliteration kept as the validation oracle; native terrain_plot_object() lives in rof_native.c (see VALIDATE_FUNCS) */
+void terrain_plot_object__t6502(void) {
     /* a63b */
     LDY(mem[(0x2276)+cpu.X]);
     /* a63e */
@@ -20990,7 +20999,8 @@ L_a6c8:;
 }
 
 /* terrain_sub_A822 @ $A822: Terrain/game sub (0 callers; 1 RANDOM read) */
-void terrain_sub_A822(void) {
+/* faithful transliteration kept as the validation oracle; native terrain_sub_A822() lives in rof_native.c (see VALIDATE_FUNCS) */
+void terrain_sub_A822__t6502(void) {
     /* a822 */
     LDA(mem[(0x2487)+cpu.X]);
     /* a825 */
@@ -21120,7 +21130,8 @@ L_a8a1:;
 }
 
 /* terrain_point_distance @ $A8AF: $A8AF: computes |$004F-0x80|+|$004E-0x80| range into $290B-$290E (saves arg in $290E); overflow->a909 */
-void terrain_point_distance(void) {
+/* faithful transliteration kept as the validation oracle; native terrain_point_distance() lives in rof_native.c (see VALIDATE_FUNCS) */
+void terrain_point_distance__t6502(void) {
     /* a8af */
     mem[0x290E] = cpu.A;
     /* a8b2 */
@@ -21203,7 +21214,8 @@ L_a8d5:;
 }
 
 /* terrain_sub_A90A @ $A90A: Terrain/game sub (0 callers; 4 callees) */
-void terrain_sub_A90A(void) {
+/* faithful transliteration kept as the validation oracle; native terrain_sub_A90A() lives in rof_native.c (see VALIDATE_FUNCS) */
+void terrain_sub_A90A__t6502(void) {
     /* a90a */
     LDA(mem[(0x2487)+cpu.X]);
     /* a90d */
@@ -21660,7 +21672,8 @@ void game_sub_AACF(void) {
 }
 
 /* set_plot_mask_and_halve_step @ $AB7B: Index by A&3 into A7E9/A7ED tables -> 28DC/28DD base ptr; if idx0 set $58=$FF mask; shifts $50/$51 step right by 2 (divide by 4) */
-void set_plot_mask_and_halve_step(void) {
+/* faithful transliteration kept as the validation oracle; native set_plot_mask_and_halve_step() lives in rof_native.c (see VALIDATE_FUNCS) */
+void set_plot_mask_and_halve_step__t6502(void) {
     /* ab7b */
     AND(0x03);
     /* ab7d */
@@ -21695,7 +21708,8 @@ L_ab91:;
 }
 
 /* raster_fill_region @ $AB9A: Nested fill: computes start ptr 28DC/28DD + $55*4, walks 12x32 cells testing AC3A bitmask vs buffer at ($C3),Y; plots via a6cb when set; uses $50/$51 step, $52-$55 accumulators */
-void raster_fill_region(void) {
+/* faithful transliteration kept as the validation oracle; native raster_fill_region() lives in rof_native.c (see VALIDATE_FUNCS) */
+void raster_fill_region__t6502(void) {
     /* ab9a */
     LDA(mem[0x0051]);
     /* ab9c */
@@ -21872,7 +21886,8 @@ L_ac36:;
 }
 
 /* check_target_in_window @ $AC42: If $36 set and $4A nonzero: tests 2912/2913 (or $64/$66 when $63 neg) against window bounds; counts 2 consecutive hits in 2837 then latches index to 2838 */
-void check_target_in_window(void) {
+/* faithful transliteration kept as the validation oracle; native check_target_in_window() lives in rof_native.c (see VALIDATE_FUNCS) */
+void check_target_in_window__t6502(void) {
     /* ac42 */
     LDA(mem[0x0036]);
     /* ac44 */
@@ -21956,7 +21971,8 @@ L_ac92:;
 }
 
 /* setup_projection_params @ $AC93: Builds 16-bit fixed-pt scratch from 2887/2888 and 2889/288A (>>4), sign-extends $33/$34, sets $92 from 2886<<2, calls 9ba0; loads view vector 2809-280C, computes $A4/$A5/$A6 from heading $23/$24/$28/$29; clamps 2822 to 0..8 */
-void setup_projection_params(void) {
+/* faithful transliteration kept as the validation oracle; native setup_projection_params() lives in rof_native.c (see VALIDATE_FUNCS) */
+void setup_projection_params__t6502(void) {
     /* ac93 */
     LDA(mem[0x2887]);
     /* ac96 */
@@ -22124,7 +22140,8 @@ L_ad27:;
 }
 
 /* compute_row_xspans @ $AD2B: Fills 271F.. (15 entries) by adding A4/A5 step to 271E seed, then fills 270E.. (downward) by subtracting A4/A5; builds per-row horizontal span endpoints */
-void compute_row_xspans(void) {
+/* faithful transliteration kept as the validation oracle; native compute_row_xspans() lives in rof_native.c (see VALIDATE_FUNCS) */
+void compute_row_xspans__t6502(void) {
     /* ad2b */
     LDA(mem[0x00A6]);
     /* ad2d */
@@ -22182,7 +22199,8 @@ L_ad4c:;
 }
 
 /* terrain_gen_3 @ $AD5F: Terrain/level generation step 3 (called with X=level param; 244 bytes) */
-void terrain_gen_3(void) {
+/* faithful transliteration kept as the validation oracle; native terrain_gen_3() lives in rof_native.c (see VALIDATE_FUNCS) */
+void terrain_gen_3__t6502(void) {
     /* ad5f */
     mem[0x0094] = cpu.X;
     /* ad61 */
@@ -23122,7 +23140,8 @@ L_b171:;
 }
 
 /* terrain_sub_B172 @ $B172: Terrain sub (calls $B33D and $B2CC) */
-void terrain_sub_B172(void) {
+/* faithful transliteration kept as the validation oracle; native terrain_sub_B172() lives in rof_native.c (see VALIDATE_FUNCS) */
+void terrain_sub_B172__t6502(void) {
     /* b172 */
     LDA(mem[0x25D2]);
     /* b175 */
@@ -23470,7 +23489,8 @@ L_b2cb:;
 }
 
 /* terrain_midpoint_displace @ $B2CC: 16-bit fixed-pt midpoint averaging of segment endpoints ($0082-86 + tables $25B4/$25D2/$25F0/$24E2/$23E2) via CMP #$80/ROR, then sign-aware SBC/ADC perturbation -> $008D-$0091; fractal midpoint step */
-void terrain_midpoint_displace(void) {
+/* faithful transliteration kept as the validation oracle; native terrain_midpoint_displace() lives in rof_native.c (see VALIDATE_FUNCS) */
+void terrain_midpoint_displace__t6502(void) {
     /* b2cc */
     SEC();
     /* b2cd */
@@ -23598,7 +23618,8 @@ L_b31f:;
 }
 
 /* terrain_column_rasterize @ $B33D: Walks columns $0082..$D4 interpolating heights $00EA[]/$00F4[], clamps to $97, tracks max-height array $260E, OR-plots bitmap via ($80),Y using $BC00/$BD00 bit tables + $28CA/$28FA addr tables; fractal terrain fill */
-void terrain_column_rasterize(void) {
+/* faithful transliteration kept as the validation oracle; native terrain_column_rasterize() lives in rof_native.c (see VALIDATE_FUNCS) */
+void terrain_column_rasterize__t6502(void) {
     /* b33d */
     mem[0x0060] = cpu.X;
     /* b33f */
@@ -25556,7 +25577,8 @@ L_5361:;
 }
 
 /* ring_push_0719 @ $55FF: Tail of game_sub_55FC: store A into ring buf $0719+X via head $0073, dec+wrap head mod $20, restore X */
-void ring_push_0719(void) {
+/* faithful transliteration kept as the validation oracle; native ring_push_0719() lives in rof_native.c (see VALIDATE_FUNCS) */
+void ring_push_0719__t6502(void) {
     /* 55ff */
     LDX(mem[0x0073]);
     /* 5601 */
@@ -25969,7 +25991,8 @@ void terrain_plot_return(void) {
 }
 
 /* terrain_clip_row_top @ $A6CB: $A6CB: compares Y vs $260E[X] row limit; branches to a6f8(skip) if below/equal else falls to a6d3 plot */
-void terrain_clip_row_top(void) {
+/* faithful transliteration kept as the validation oracle; native terrain_clip_row_top() lives in rof_native.c (see VALIDATE_FUNCS) */
+void terrain_clip_row_top__t6502(void) {
     /* a6cb */
     TYA();
     /* a6cc */
@@ -25982,7 +26005,8 @@ void terrain_clip_row_top(void) {
 }
 
 /* terrain_plot_pixel @ $A6D3: $A6D3: clips Y<0x97, builds bitmap ptr from $28CA/$28FA tables at $80/$81, ORs $BC00/$BD00 mask into (ptr),Y */
-void terrain_plot_pixel(void) {
+/* faithful transliteration kept as the validation oracle; native terrain_plot_pixel() lives in rof_native.c (see VALIDATE_FUNCS) */
+void terrain_plot_pixel__t6502(void) {
     /* a6d3 */
     CPY(0x97);
     /* a6d5 */
