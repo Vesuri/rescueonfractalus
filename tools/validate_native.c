@@ -201,6 +201,39 @@ static int test_render_bcd_counter(void) {
     return mem_fail;
 }
 
+/* --- stack-aware push helpers (ring_push_marked $5815, game_sub_55FC $55FC). ---
+ * Like ring_push_0719, the contract includes cpu.A/X/S (the 6502 PHAs the index
+ * and ring_push_0719's PLA;TAX hands it back).  Randomize entry A/X/Y/S + ring
+ * head $0073.  Both runs use the real 6502 stack ops, so the $01xx stack byte
+ * matches without masking. */
+static int test_stack_push(const char *name, void (*nat)(void), void (*t6502)(void)) {
+    enum { N = 20000 };
+    static uint8_t pre[65536], ref[65536];
+    int mem_fail = 0, cpu_fail = 0, printed = 0;
+    for (int t = 0; t < N; t++) {
+        fill_random(pre);
+        Cpu6502 c = zero_cpu();
+        c.A = (uint8_t)xs(); c.X = (uint8_t)xs(); c.Y = (uint8_t)xs(); c.S = (uint8_t)xs();
+        pre[0x0073] = (uint8_t)xs();
+        memcpy((void *)mem, pre, 65536); cpu = c; t6502();
+        memcpy(ref, (void *)mem, sizeof ref); Cpu6502 rc = cpu;
+        memcpy((void *)mem, pre, 65536); cpu = c; nat();
+        if (memcmp((const void *)mem, ref, 65536) != 0) {
+            mem_fail++;
+            if (printed < 12)
+                for (int i = 0; i < 65536 && printed < 12; i++)
+                    if (mem[i] != ref[i]) {
+                        printf("[MEM DIFF] %s case %d  $%04X  ref=$%02X native=$%02X\n",
+                               name, t, i, ref[i], mem[i]); printed++;
+                    }
+        }
+        if (cpu.A != rc.A || cpu.X != rc.X || cpu.S != rc.S) cpu_fail++;
+    }
+    printf("%s: %d cases, %d mem mismatch, %d cpu(A/X/S) mismatch (both must be 0)\n",
+           name, N, mem_fail, cpu_fail);
+    return mem_fail + cpu_fail;
+}
+
 /* --- generic memory-contract test over a FULLY randomized mem[] and a neutral
  * entry CPU.  Fits any leaf whose result is observed purely through mem[] and
  * that does not read entry registers (lookup tables, etc., read from the same
@@ -389,6 +422,9 @@ int main(void) {
     int fails = 0;
     fails += test_divide_16x16();
     fails += test_render_bcd_counter();
+    fails += test_mem_contract("init_proj_scratch_pointers", init_proj_scratch_pointers, init_proj_scratch_pointers__t6502);
+    fails += test_stack_push("ring_push_marked", ring_push_marked, ring_push_marked__t6502);
+    fails += test_stack_push("game_sub_55FC", game_sub_55FC, game_sub_55FC__t6502);
     fails += test_clear_terrain_column();
     fails += test_signed_mul_8x16();
     fails += test_mem_contract("sine_table_lookup", sine_table_lookup, sine_table_lookup__t6502);

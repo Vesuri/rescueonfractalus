@@ -83,6 +83,10 @@ VALIDATE_FUNCS = {
     #     per-frame VBI path.  Small subtrees first; the flight_control_integrate
     #     tree (~27 fns) is deferred. ---
     0x49A0,  # render_bcd_counter — score BCD render (self-contained $49A0-$49ED fall-through chain)
+    # update_terrain_scanline_proj subtree, leaves first:
+    0x9B87,  # init_proj_scratch_pointers — set game_state + 3 ZP ptr bytes (trivial leaf)
+    0x5815,  # ring_push_marked — push X|$80 to the $0719 event ring (tail to ring_push_0719)
+    0x55FC,  # game_sub_55FC — push Y to the $0719 event ring (falls into ring_push_0719)
 }
 VALIDATE_SUFFIX = '__t6502'
 

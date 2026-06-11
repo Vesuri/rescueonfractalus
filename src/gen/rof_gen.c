@@ -5617,7 +5617,8 @@ L_55d3:;
 }
 
 /* game_sub_55FC @ $55FC: Called at end of each main game loop iteration before JMP $3E0F */
-void game_sub_55FC(void) {
+/* faithful transliteration kept as the validation oracle; native game_sub_55FC() lives in rof_native.c (see VALIDATE_FUNCS) */
+void game_sub_55FC__t6502(void) {
     /* 55fc */
     TXA();
     /* 55fd */
@@ -5821,7 +5822,8 @@ L_56cf:;
 }
 
 /* ring_push_marked @ $5815: TXA;ORA #$80;JMP ring_push_0719 — push object index X marked with bit7 ($80=active) into the $0719 event ring */
-void ring_push_marked(void) {
+/* faithful transliteration kept as the validation oracle; native ring_push_marked() lives in rof_native.c (see VALIDATE_FUNCS) */
+void ring_push_marked__t6502(void) {
     /* 5815 */
     TXA();
     /* 5816 */
@@ -18120,7 +18122,8 @@ L_9b86:;
 }
 
 /* init_proj_scratch_pointers @ $9B87: Sets game_state($0041)=1; writes $3C->$DD, $38->$DC, $34->$DA (init ZP scratch/ptr bytes) */
-void init_proj_scratch_pointers(void) {
+/* faithful transliteration kept as the validation oracle; native init_proj_scratch_pointers() lives in rof_native.c (see VALIDATE_FUNCS) */
+void init_proj_scratch_pointers__t6502(void) {
     /* 9b87 */
     LDA(0x01);
     /* 9b89 */

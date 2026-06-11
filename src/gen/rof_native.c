@@ -172,6 +172,28 @@ void render_bcd_counter(void) {
     }
 }
 
+/* init_proj_scratch_pointers @ $9B87 — set game_state=1 and 3 ZP scratch/ptr bytes.
+ * Trivial leaf of the update_terrain_scanline_proj subtree.  Memory-only contract. */
+void init_proj_scratch_pointers(void) {
+    mem[0x0041] = 0x01;   /* game_state = 1 */
+    mem[0x00DD] = 0x3C;
+    mem[0x00DC] = 0x38;
+    mem[0x00DA] = 0x34;
+}
+
+/* ring_push_marked @ $5815 — push (entry X)|$80 into the $0719 event ring; X preserved.
+ * game_sub_55FC @ $55FC — push entry Y into the ring; X preserved.
+ * Both are stack-aware: the 6502 PHAs the saved index, then ring_push_0719 (native)
+ * does PLA;TAX to hand it back, so cpu.A/X/S AND the $01xx stack byte are part of the
+ * contract.  Mirroring the exact 6502 ops via the cpu.h macros keeps them bit-identical
+ * (these are 3-7 byte routines — the perf win is in the larger subtree members). */
+void ring_push_marked(void) {
+    TXA(); PHA(); ORA(0x80); ring_push_0719();   /* $5815-$5819 */
+}
+void game_sub_55FC(void) {
+    TXA(); PHA(); TYA(); ring_push_0719();        /* $55FC-$55FE -> $55FF */
+}
+
 /* signed_mul_8x16 @ $9C97 — fixed-point signed multiply.
  *
  * Inputs : cpu.A      = 8-bit multiplier (treated as an unsigned fraction),
