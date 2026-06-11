@@ -260,6 +260,28 @@ static int test_raster_fill_region(void) {
     return mem_fail;
 }
 
+/* terrain_sub_A822/A90A @ $A822/$A90A: plot one terrain object indexed by entry
+ * X.  Force the two slot-guard cells ($2487/$242D[X]) to 0 so the body runs every
+ * case (the nonzero early-out is a trivial empty return), and seed a realistic
+ * step ($232E[X] in 0..$3F -> $0051) so the raster_fill_region loops terminate. */
+static int test_terrain_sub_obj(const char *name, void (*nat)(void), void (*t6502)(void)) {
+    enum { N = 20000 };
+    static uint8_t pre[65536];
+    int mem_fail = 0, cpu_diff = 0, printed = 0;
+
+    for (int t = 0; t < N; t++) {
+        fill_random(pre);
+        uint8_t x = (uint8_t)(xs() & 0xFF);
+        pre[0x2487 + x] = 0x00;                  /* pass both slot guards -> run the body */
+        pre[0x242D + x] = 0x00;
+        pre[0x232E + x] = (uint8_t)(xs() % 0x40); /* realistic step ($0051) */
+        Cpu6502 c = zero_cpu(); c.X = x;
+        mem_fail += diff_run(name, pre, c, nat, t6502, t, &printed, &cpu_diff);
+    }
+    printf("%s: %d cases, %d mem mismatch (must be 0), %d cpu diffs\n", name, N, mem_fail, cpu_diff);
+    return mem_fail;
+}
+
 int main(void) {
     platform_test_init_headless();   /* enable seedable RANDOM ($D20A) for both runs */
 
@@ -282,6 +304,8 @@ int main(void) {
     fails += test_mem_contract_regs("terrain_plot_pixel", terrain_plot_pixel, terrain_plot_pixel__t6502);
     fails += test_mem_contract_regs("terrain_clip_row_top", terrain_clip_row_top, terrain_clip_row_top__t6502);
     fails += test_raster_fill_region();
+    fails += test_terrain_sub_obj("terrain_sub_A822", terrain_sub_A822, terrain_sub_A822__t6502);
+    fails += test_terrain_sub_obj("terrain_sub_A90A", terrain_sub_A90A, terrain_sub_A90A__t6502);
 
     printf("\n%s\n", fails == 0
         ? "PASS — all native reimplementations are memory-equivalent to their 6502 oracles."

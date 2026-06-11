@@ -768,3 +768,101 @@ void raster_fill_region(void) {
 
     cpu.X = mem[0x28E1];                                          /* AC36: LDX $28E1 */
 }
+
+/* terrain_sub_A822 @ $A822 — plot one terrain object (gun tower etc.), variant A.
+ *
+ * Indexed by cpu.X into the object tables.  Early-outs if the slot is busy
+ * ($2487/$242D nonzero).  Sets the source ptr $28DC/$28DD, step {$0051:$0050},
+ * screen pos $004E/$004F; if the object's flag byte $0A00[$2276[X]] >= $FA it is
+ * a "mask" object (set_plot_mask), else it plots a marker pixel (point_distance +
+ * clip_row_top) and may latch a targeting record (gated on $0034/$006A/$003E/
+ * RANDOM/$28ED).  Finally, when the step's hi byte < $0D, fills via
+ * raster_fill_region.  Reads POKEY RANDOM once.  All callees native/empty.
+ * Contract: memory; exit X=$28E1 (restored by the tail raster_fill_region or the
+ * explicit a868 path); other regs dead.
+ */
+void terrain_sub_A822(void) {
+    if (mem[0x2487 + cpu.X] != 0) { terrain_obj_skip_return(); return; }   /* A822 */
+    if (mem[0x242D + cpu.X] != 0) { terrain_obj_skip_return(); return; }   /* A827 */
+    mem[0x28DC] = 0xF9; mem[0x28DD] = 0xA6;
+    mem[0x0058] = 0xFF;
+    mem[0x0051] = mem[0x232E + cpu.X];
+    mem[0x0050] = mem[0x2300 + cpu.X];
+    mem[0x004E] = mem[0x245A + cpu.X];
+    cpu.Y = mem[0x004E];                          /* TAY */
+    mem[0x004F] = mem[0x2400 + cpu.X];
+    cpu.X = mem[0x2276 + cpu.X];                  /* LDA $2276,X; TAX */
+    cpu.A = mem[0x0A00 + cpu.X];
+
+    if (cpu.A >= 0xFA) {                           /* CMP #$FA; BCC a860 */
+        set_plot_mask_and_halve_step();
+    } else {                                       /* a860 */
+        cpu.A = cpu.Y;                             /* TYA */
+        cpu.X = mem[0x004F];                       /* LDX $4F */
+        if (cpu.A < mem[0x260E + cpu.X]) { cpu.X = mem[0x28E1]; return; }  /* CMP 260E,X; BCC a868 */
+        cpu.A = 0x80; terrain_point_distance();    /* a86c-a86e */
+        cpu.X--; terrain_clip_row_top(); cpu.X++;  /* DEX; a872; INX */
+        if (mem[0x0034] < 0x37) {                  /* CMP #$37; BCS a8a1 */
+            mem[0x28FC] = 0x01; mem[0x28FB] = 0x01;
+            /* gates: $6A negative, $3E==0, RANDOM negative, $28ED==0 (short-circuit
+               matches the 6502: the $D20A read only happens if the prior gates pass) */
+            if ((mem[0x006A] & 0x80) && mem[0x003E] == 0 &&
+                (bus_read(0xD20A) & 0x80) && mem[0x28ED] == 0) {
+                mem[0x28EB] = cpu.X; mem[0x28EC] = cpu.Y;
+                mem[0x28ED] = mem[0x0051];
+            }
+        }
+    }
+    /* L_a8a1 */
+    if (mem[0x0051] >= 0x0D) { cpu.X = mem[0x28E1]; return; }   /* CMP #$0D; BCS a868 */
+    mem[0x28DF] = 0x00;
+    raster_fill_region();
+}
+
+/* terrain_sub_A90A @ $A90A — plot one terrain object, variant B (4 plot points).
+ *
+ * Like A822 but: column-reflect flag $28DF/$290F from $23B5[X]&1; uses point at
+ * ($004E vs $260E[$004F]); after the fill it may additionally stamp a 2x2 cross of
+ * pixels (clip_row_top x4 around $2400[X]/$245A[X]) when $00A7==0 && $003E==0 and
+ * the object flag is in [2,$F8).  No RANDOM read.  All callees native/empty.
+ * Contract: memory; exit X=$28E1; other regs dead.
+ */
+void terrain_sub_A90A(void) {
+    if (mem[0x2487 + cpu.X] != 0) { terrain_distance_clamp_return(); return; }   /* A90A */
+    if (mem[0x242D + cpu.X] != 0) { terrain_distance_clamp_return(); return; }   /* A90F */
+    mem[0x28DC] = 0xF1; mem[0x28DD] = 0xA7;
+    cpu.A = (uint8_t)(mem[0x23B5 + cpu.X] & 0x01);            /* LDA $23B5,X; AND #1 */
+    mem[0x290F] = cpu.A; mem[0x28DF] = cpu.A;
+    mem[0x004F] = mem[0x2400 + cpu.X];
+    mem[0x004E] = mem[0x245A + cpu.X];
+    mem[0x0051] = mem[0x232E + cpu.X];
+    mem[0x0050] = mem[0x2300 + cpu.X];
+    cpu.Y = mem[0x2276 + cpu.X];                  /* LDY $2276,X */
+    cpu.A = mem[0x0A00 + cpu.Y];
+    if (cpu.A >= 0xFA) set_plot_mask_and_halve_step();         /* CMP #$FA; BCC a94a */
+
+    cpu.Y = mem[0x004F];                          /* L_a94a: LDY $4F */
+    cpu.A = mem[0x004E];                          /* LDA $4E */
+    if (cpu.A >= mem[0x260E + cpu.Y]) {           /* CMP 260E,Y; BCC a965 */
+        cpu.A = 0x00; terrain_point_distance();   /* a953-a955 */
+        mem[0x0058] = 0xAA;
+        if (mem[0x0051] < 0x0D) raster_fill_region();          /* CMP #$0D; BCS a965 */
+    }
+
+    /* L_a965 */
+    if (mem[0x00A7] == 0 && mem[0x003E] == 0) {   /* BNE a998 (both) */
+        cpu.Y = mem[0x2276 + cpu.X];              /* LDY $2276,X */
+        cpu.A = mem[0x0A00 + cpu.Y];
+        if (cpu.A >= 0x02 && cpu.A < 0xF8) {      /* CMP #2 BCC; CMP #$F8 BCS -> [2,$F8) */
+            mem[0x0058] = 0xFF;
+            cpu.Y = mem[0x245A + cpu.X];          /* LDY $245A,X */
+            cpu.X = mem[0x2400 + cpu.X];          /* LDA $2400,X; TAX */
+            terrain_clip_row_top();               /* a986 */
+            cpu.X--; cpu.Y--; terrain_clip_row_top();   /* DEX; DEY; a98b */
+            cpu.X--; cpu.Y++; terrain_clip_row_top();   /* DEX; INY; a990 */
+            cpu.X++; cpu.Y++; terrain_clip_row_top();   /* INX; INY; a995 */
+        }
+    }
+    /* L_a998 */
+    cpu.X = mem[0x28E1];
+}

@@ -69,6 +69,8 @@ VALIDATE_FUNCS = {
     0xA6D3,  # terrain_plot_pixel — OR voxel mask into terrain bitmap (flight raster #1)
     0xA6CB,  # terrain_clip_row_top — clip column top vs row limit (flight raster #2)
     0xAB9A,  # raster_fill_region — nested 12x32 cell fill via terrain_clip_row_top (flight raster #3)
+    0xA822,  # terrain_sub_A822 — plot one terrain object, variant A (flight raster #4)
+    0xA90A,  # terrain_sub_A90A — plot one terrain object, variant B (flight raster #5)
 }
 VALIDATE_SUFFIX = '__t6502'
 
