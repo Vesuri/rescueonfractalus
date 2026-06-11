@@ -89,6 +89,8 @@ VALIDATE_FUNCS = {
     0x55FC,  # game_sub_55FC — push Y to the $0719 event ring (falls into ring_push_0719)
     0x9A36,  # sample_terrain_height_bilerp — bilinear height sample over the $0900 map (leaf)
     0x451D,  # game_sub_451d — 14-iter table-fill into $2159/$2189 (leaf; called by update_terrain_horizon_lr)
+    0x9B0D,  # enter_terrain_special_state — set flags + ring events (calls game_sub_55FC/ring_push_marked)
+    0x9B4C,  # exit_terrain_special_state — inverse of enter (calls game_sub_55FC)
 }
 VALIDATE_SUFFIX = '__t6502'
 

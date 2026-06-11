@@ -427,6 +427,8 @@ int main(void) {
     fails += test_stack_push("game_sub_55FC", game_sub_55FC, game_sub_55FC__t6502);
     fails += test_mem_contract("sample_terrain_height_bilerp", sample_terrain_height_bilerp, sample_terrain_height_bilerp__t6502);
     fails += test_mem_contract_regs("game_sub_451d", game_sub_451d, game_sub_451d__t6502);
+    fails += test_mem_contract_regs("enter_terrain_special_state", enter_terrain_special_state, enter_terrain_special_state__t6502);
+    fails += test_mem_contract_regs("exit_terrain_special_state", exit_terrain_special_state, exit_terrain_special_state__t6502);
     fails += test_clear_terrain_column();
     fails += test_signed_mul_8x16();
     fails += test_mem_contract("sine_table_lookup", sine_table_lookup, sine_table_lookup__t6502);

@@ -18011,7 +18011,8 @@ L_9afa:;
 }
 
 /* enter_terrain_special_state @ $9B0D: Sets bit6 of $002D into $2877, gated by $062F; writes flags $0688/$0689/$0696/$06A4 + $3355=$34, calls game_sub_55FC twice; decrements $002E */
-void enter_terrain_special_state(void) {
+/* faithful transliteration kept as the validation oracle; native enter_terrain_special_state() lives in rof_native.c (see VALIDATE_FUNCS) */
+void enter_terrain_special_state__t6502(void) {
     /* 9b0d */
     LDA(mem[0x002D]);
     /* 9b0f */
@@ -18070,7 +18071,8 @@ L_9b47:;
 }
 
 /* exit_terrain_special_state @ $9B4C: Inverse of $9b0d gated by $066C/$06A4/$0696; clears $2877/$0696/$0697, $0688/$0689=$FF, $06A4/$06A5=1, $3355=$B4, calls game_sub_55FC */
-void exit_terrain_special_state(void) {
+/* faithful transliteration kept as the validation oracle; native exit_terrain_special_state() lives in rof_native.c (see VALIDATE_FUNCS) */
+void exit_terrain_special_state__t6502(void) {
     /* 9b4c */
     LDA(mem[0x066C]);
     /* 9b4f */

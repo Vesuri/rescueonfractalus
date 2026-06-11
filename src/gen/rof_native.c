@@ -277,6 +277,40 @@ void game_sub_451d(void) {
     } while (mem[0x00BF] != 0);                        /* $4550 BNE */
 }
 
+/* enter_terrain_special_state @ $9B0D — set $2877/$3355 + (gated on $062F/$066C)
+ * seed flags $0688/$0689/$0696/$0697/$06A4/$06A5 and push 2 ring events, then
+ * tail ring_push_marked(X=$13).  exit_terrain_special_state @ $9B4C is the inverse.
+ * Both call the native game_sub_55FC/ring_push_marked (cpu.X preserved across them,
+ * ring content = cpu.Y).  Memory contract; validated with random entry regs + mem. */
+void enter_terrain_special_state(void) {
+    mem[0x2877] = (uint8_t)(mem[0x002D] | 0x40);          /* $9B0D */
+    if (mem[0x062F] == 0) return;                         /* $9B14 BNE; else RTS */
+    mem[0x3355] = 0x34;                                   /* $9B1A */
+    if (mem[0x066C] != 0x0A) {                            /* $9B1F CMP $066C; BEQ skip */
+        mem[0x0696] = 0x0A; mem[0x0697] = 0x0A;           /* $9B26 */
+        mem[0x0688] = 1; mem[0x0689] = 1;                 /* $9B2E */
+        mem[0x06A4] = 1; mem[0x06A5] = 1;                 /* $9B34 */
+        cpu.Y = 1; game_sub_55FC();                       /* $9B3A push Y=1 */
+        cpu.Y = (uint8_t)(cpu.Y + 1); game_sub_55FC();    /* $9B3D INY; $9B3E push Y=2 */
+    }
+    if (mem[0x002E] != 0) mem[0x002E] = (uint8_t)(mem[0x002E] - 1);  /* $9B41 */
+    cpu.X = 0x13; ring_push_marked();                     /* $9B47 LDX #$13; JMP $5815 */
+}
+void exit_terrain_special_state(void) {
+    uint8_t s = mem[0x066C];                              /* $9B4C */
+    if (s == 0) return;                                   /* BEQ RTS */
+    if (s < 0x02) {                                       /* $9B51 CMP #2; BCS skip-gate */
+        if (mem[0x06A4] == 0) return;                     /* $9B55 */
+        if (mem[0x0696] == 0) return;                     /* $9B5A */
+    }
+    mem[0x3355] = 0xB4;                                   /* $9B5F */
+    mem[0x2877] = 0; mem[0x0696] = 0; mem[0x0697] = 0;    /* $9B64 */
+    mem[0x0688] = 0xFF; mem[0x0689] = 0xFF;               /* $9B6F */
+    mem[0x06A4] = 1; mem[0x06A5] = 1;                     /* $9B77 */
+    cpu.Y = 1; game_sub_55FC();                           /* $9B7F push Y=1 */
+    cpu.Y = (uint8_t)(cpu.Y + 1); game_sub_55FC();        /* $9B82 INY; $9B83 push Y=2 */
+}
+
 /* signed_mul_8x16 @ $9C97 — fixed-point signed multiply.
  *
  * Inputs : cpu.A      = 8-bit multiplier (treated as an unsigned fraction),
