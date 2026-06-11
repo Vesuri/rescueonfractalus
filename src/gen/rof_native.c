@@ -704,3 +704,67 @@ void terrain_clip_row_top(void) {
     if (y == lim) { terrain_plot_skip_return(); return; }   /* BEQ skip */
     terrain_plot_pixel();
 }
+
+/* raster_fill_region @ $AB9A — fill a 12x32 cell grid, plotting set bits.
+ *
+ * Ensures the step {$0051:$0050} is nonzero; subtracts it from $1000 (counting
+ * into $004F) to find the start row; then walks 12 rows x 32 columns, advancing
+ * the {$0053:$0052}/{$0055:$0054} fixed-point accumulators by the step.  For each
+ * cell it tests the bit AC3A[col&7] in the source buffer at ($00C3),col>>3 (the
+ * column index reflected via $1F-col when $28DF is set) and, when set, plots it
+ * through terrain_clip_row_top (native) at ($004F,$004E).
+ *
+ * Contract: memory (the bitmap writes + the accumulators).  Exit X=$28E1 is
+ * restored (callers read it); A/Y/flags are dead.  Faithful carry threading:
+ * the start-row subtract chains carry ACROSS iterations (one SEC before the
+ * loop, none inside), a 6502 quirk reproduced exactly.
+ */
+void raster_fill_region(void) {
+    uint8_t A, c;
+
+    if (mem[0x0051] == 0) { mem[0x0050] = 0x00; mem[0x0051]++; }   /* AB9A nonzero step */
+
+    mem[0x00C4] = 0x10; mem[0x00C3] = 0x00;                        /* ABA4: $C4:$C3 = $1000 */
+    c = 1;                                                         /* SEC (once, chains) */
+    do {                                                           /* ABAD subtract loop */
+        uint16_t t;
+        t = (uint16_t)mem[0x00C3] + (uint8_t)~mem[0x0050] + c; c = t >> 8; mem[0x00C3] = (uint8_t)t;
+        t = (uint16_t)mem[0x00C4] + (uint8_t)~mem[0x0051] + c; c = t >> 8; mem[0x00C4] = (uint8_t)t;
+        mem[0x004F]--;                                            /* DEC $4F (no carry effect) */
+    } while (c);                                                  /* BCS */
+
+    mem[0x28DE] = mem[0x004F];                                    /* ABBD */
+    mem[0x0054] = 0x00; mem[0x0055] = 0x00;
+
+    do {                                                          /* ABC8 outer (12 rows) */
+        mem[0x0052] = 0x00; mem[0x0053] = 0x00; mem[0x00C4] = 0x00;
+        A = mem[0x0055];                                          /* {$C4:A} = $55 << 2 */
+        c = A >> 7; A = (uint8_t)(A << 1); mem[0x00C4] = (uint8_t)((mem[0x00C4] << 1) | c);
+        c = A >> 7; A = (uint8_t)(A << 1); mem[0x00C4] = (uint8_t)((mem[0x00C4] << 1) | c);
+        c = 0; { uint16_t t = (uint16_t)A + mem[0x28DC] + c; c = t >> 8; A = (uint8_t)t; } mem[0x00C3] = A;
+        { uint16_t t = (uint16_t)mem[0x00C4] + mem[0x28DD] + c; mem[0x00C4] = (uint8_t)t; }
+        mem[0x004F] = mem[0x28DE];
+
+        do {                                                      /* ABEA inner (32 cols) */
+            A = mem[0x0053];                                      /* LDA $53 */
+            if (mem[0x28DF] != 0) {                               /* LDX $28DF; BNE -> reflect */
+                c = 1; uint16_t t = (uint16_t)0x1F + (uint8_t)~mem[0x0053] + c; c = t >> 8; A = (uint8_t)t;
+            }
+            uint8_t bx = (uint8_t)(A & 0x07);                     /* bit within byte */
+            cpu.Y = (uint8_t)(A >> 3);                            /* byte offset (for ($C3),Y) */
+            if (bus_read(ZP_IND_Y(0xC3)) & mem[0xAC3A + bx]) {    /* cell bit set? */
+                cpu.X = mem[0x004F]; cpu.Y = mem[0x004E];
+                terrain_clip_row_top();
+            }
+            mem[0x004F]++;                                        /* INC $4F */
+            c = 0; { uint16_t t = (uint16_t)mem[0x0052] + mem[0x0050] + c; c = t >> 8; mem[0x0052] = (uint8_t)t; }
+            { uint16_t t = (uint16_t)mem[0x0053] + mem[0x0051] + c; mem[0x0053] = (uint8_t)t; }
+        } while (mem[0x0053] < 0x20);                             /* CMP #$20; BCC */
+
+        mem[0x004E]--;                                            /* DEC $4E */
+        c = 0; { uint16_t t = (uint16_t)mem[0x0054] + mem[0x0050] + c; c = t >> 8; mem[0x0054] = (uint8_t)t; }
+        { uint16_t t = (uint16_t)mem[0x0055] + mem[0x0051] + c; mem[0x0055] = (uint8_t)t; }
+    } while (mem[0x0055] < 0x0C);                                 /* CMP #$0C; BCS done */
+
+    cpu.X = mem[0x28E1];                                          /* AC36: LDX $28E1 */
+}

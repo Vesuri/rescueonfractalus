@@ -239,6 +239,27 @@ static int test_mem_contract_regs(const char *name, void (*native)(void), void (
     return mem_fail;
 }
 
+/* raster_fill_region @ $AB9A: nested fill driven by the fixed-point step
+ * {$0051:$0050}.  The game's step is a sub-pixel increment (high byte $0051 is
+ * small — set_plot_mask_and_halve_step divides by 4); a fully random $0051 could
+ * make the accumulator loops run pathologically long, so seed a realistic step
+ * ($0051 in 0..$3F).  Both runs share it, so the logic is still fully diffed. */
+static int test_raster_fill_region(void) {
+    enum { N = 20000 };
+    static uint8_t pre[65536];
+    int mem_fail = 0, cpu_diff = 0, printed = 0;
+
+    for (int t = 0; t < N; t++) {
+        fill_random(pre);
+        pre[0x0051] = (uint8_t)(xs() % 0x40);   /* realistic step high byte (0..$3F) */
+        mem_fail += diff_run("raster_fill_region", pre, zero_cpu(),
+                             raster_fill_region, raster_fill_region__t6502, t, &printed, &cpu_diff);
+    }
+    printf("raster_fill_region: %d cases, %d mem mismatch (must be 0), %d cpu diffs\n",
+           N, mem_fail, cpu_diff);
+    return mem_fail;
+}
+
 int main(void) {
     platform_test_init_headless();   /* enable seedable RANDOM ($D20A) for both runs */
 
@@ -260,6 +281,7 @@ int main(void) {
     fails += test_mem_contract_regs("terrain_midpoint_displace", terrain_midpoint_displace, terrain_midpoint_displace__t6502);
     fails += test_mem_contract_regs("terrain_plot_pixel", terrain_plot_pixel, terrain_plot_pixel__t6502);
     fails += test_mem_contract_regs("terrain_clip_row_top", terrain_clip_row_top, terrain_clip_row_top__t6502);
+    fails += test_raster_fill_region();
 
     printf("\n%s\n", fails == 0
         ? "PASS — all native reimplementations are memory-equivalent to their 6502 oracles."
