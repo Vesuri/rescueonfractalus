@@ -20102,7 +20102,8 @@ L_a317:;
 }
 
 /* terrain_gen_2 @ $A31E: Terrain/level generation step 2 (called with X=level*$30; 2 RANDOM reads) */
-void terrain_gen_2(void) {
+/* faithful transliteration kept as the validation oracle; native terrain_gen_2() lives in rof_native.c (see VALIDATE_FUNCS) */
+void terrain_gen_2__t6502(void) {
     /* a31e */
     mem[0x00A7] = cpu.X;
     /* a320 */

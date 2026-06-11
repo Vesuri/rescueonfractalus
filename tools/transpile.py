@@ -78,6 +78,7 @@ VALIDATE_FUNCS = {
     0x9E54,  # terrain_gen_1 — terrain gen step 1: view setup + per-column transform (flight top #2)
     0xA11F,  # project_terrain_points — per-object world->screen projection via divide_16x16 (flight top #3)
     0xAE53,  # terrain_collision — collision row scan + silhouette fill + column raster (flight top #4)
+    0xA31E,  # terrain_gen_2 — main per-frame terrain driver (flight top #5, the last)
 }
 VALIDATE_SUFFIX = '__t6502'
 

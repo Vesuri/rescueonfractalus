@@ -312,6 +312,35 @@ static int test_from_snapshot(const char *name, void (*nat)(void), void (*t6502)
     return mem_fail;
 }
 
+/* terrain_gen_2 @ $A31E: snapshot-driven (its object loop drives terrain_sub_B172 /
+ * terrain_column_rasterize, which only terminate on real terrain arrays).  Entry X
+ * is the level base index — the two real call-site values are $00 and $30, which
+ * also exercise both sides of the $A7-zero check; alternate them.  RANDOM ($D20A)
+ * is read several times and seeded identically per case by diff_run. */
+static int test_terrain_gen_2(void) {
+    static uint8_t snap[65536], pre[65536];
+    const char *path = "a800dumps/flight_ram_0000_BFFF.bin";
+    FILE *f = fopen(path, "rb");
+    if (!f) { printf("terrain_gen_2: SKIP (%s not found)\n", path); return 0; }
+    memset(snap, 0, sizeof snap);
+    size_t got = fread(snap, 1, 0xC000, f);
+    fclose(f);
+    if (got != 0xC000) { printf("terrain_gen_2: SKIP (short read %zu)\n", got); return 0; }
+
+    enum { N = 2000 };
+    int mem_fail = 0, cpu_diff = 0, printed = 0;
+    for (int t = 0; t < N; t++) {
+        memcpy(pre, snap, sizeof pre);
+        Cpu6502 c = zero_cpu();
+        c.X = (t & 1) ? 0x30 : 0x00;
+        mem_fail += diff_run("terrain_gen_2", pre, c, terrain_gen_2,
+                             terrain_gen_2__t6502, t, &printed, &cpu_diff);
+    }
+    printf("terrain_gen_2: %d cases (real flight snapshot, X in {0,$30}), %d mem mismatch (must be 0), %d cpu diffs\n",
+           N, mem_fail, cpu_diff);
+    return mem_fail;
+}
+
 int main(void) {
     platform_test_init_headless();   /* enable seedable RANDOM ($D20A) for both runs */
 
@@ -353,6 +382,7 @@ int main(void) {
        entry X (column start) masked 0..$3F — all verified hang-free. */
     fails += test_from_snapshot("terrain_collision", terrain_collision,
                                 terrain_collision__t6502, 2000, 0x3F);
+    fails += test_terrain_gen_2();
 
     printf("\n%s\n", fails == 0
         ? "PASS — all native reimplementations are memory-equivalent to their 6502 oracles."
