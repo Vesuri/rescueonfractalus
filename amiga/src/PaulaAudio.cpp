@@ -264,7 +264,7 @@ void platform_poll_events(void) {}
 
 // When set (by flight_init_native), advance RTCLOK ($0014) inside transpiled
 // frame-wait spin loops so they resolve in compute time instead of waiting on the
-// real Amiga VBI.  flight init's main_loop_body calls wait_frames_60 six times
+// real Amiga VBI.  flight init's init_gameplay_state calls wait_frames_60 six times
 // (~5s of launch-sequence pacing we don't want on the dev F-skip).  Steady-state
 // flight leaves this 0, so $0014 advances at the real one-per-frame VBI rate.
 volatile uint8_t g_fastForwardFrames = 0;

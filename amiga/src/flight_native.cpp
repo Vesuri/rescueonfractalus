@@ -29,17 +29,17 @@ extern Cpu6502 cpu;
 // Flight init subroutines (game_entry $3E12-$3EA6) — genuine transpiled:
 void clear_pm_state(void);            // $3FBF: zero player/missile state + PCOLR shadows
 void clear_colors(void);              // $3CC3: zero colour shadows
-void game_init_753B(void);            // $753B
-void game_init_45A1(void);            // $45A1
+void init_terrain_render_buffers(void); // $753B: prime height-max ($250F-$260E=$FF) + clear $1070 terrain bitmap
+void fill_buffer2_region_ff(void);    // $45A1: fill 8x32 (stride 48) region at $2098 in the $2000 buffer with $FF
 void clear_terrain_lo_buffers(void);  // $6B63: zero $0E32/$0F32 buffers
-void game_init_7558(void);            // $7558
-void game_init_45EE(void);            // $45EE
+void unpack_terrain_seed_cols(void);  // $7558: RLE-unpack $4DFA->$0C32, $4E09->$0D32 terrain column buffers
+void copy_terrain_seed_rows(void);    // $45EE: copy 8-byte seed rows ($4DD2->$0C88, $4DDA->$0D88, $4DE2->$0B88)
 void intro_random_setup(void);        // $6FBF: fresh-start RANDOM seeding ($0627==0)
-void intro_setup_70B3(void);          // $70B3
-void intro_sub_7498(void);            // $7498
-void game_setup_7460(void);           // $7460: build row-addr table $073D/$0793 (C3/C4 base, C1 stride)
-void game_setup_7483(void);           // $7483
-void main_loop_body(void);            // $73C8: initial main-loop frame setup
+void intro_unmark_random_cells(void); // $70B3: randomly clear bit7 of $0900 grid cells
+void intro_seed_object_map(void);     // $7498: clear $0A00, seed object markers from marked $0900 cells
+void build_row_addr_table(void);      // $7460: build 85-entry row-addr table $073D/$0793 (C3/C4 base, C1 stride)
+void copy_row_addr_subset(void);      // $7483: copy first 48 row-addr entries (reversed) -> $2932/$2962
+void init_gameplay_state(void);       // $73C8: per-game/level gameplay init (run once from game_entry)
 
 // Flight main-loop heavy set ($3EBA pass A / $3EF5 pass B):
 void terrain_frame_setup(void);       // $9E54: per-frame view-transform setup
@@ -61,7 +61,7 @@ void update_terrain_scanline_proj(void); // $9833 (the JSR is at $51BC inside vb
 void render_bcd_counter(void);           // $49A0: draw BCD score ($0601) to top line $32C5
 
 // Set during flight_init_native so transpiled frame-wait spin loops (wait_frames_60
-// via main_loop_body) advance RTCLOK in compute time instead of waiting on the real
+// via init_gameplay_state) advance RTCLOK in compute time instead of waiting on the real
 // VBI — kills the ~5s launch-pacing delay on the dev F-skip.  (Defined in PaulaAudio.cpp.)
 extern volatile uint8_t g_fastForwardFrames;
 }
@@ -109,7 +109,7 @@ extern "C" void game_vbi_isr(void)
 // $1070=$1010+96 onward at +$60 each — row 0 is the off-screen scroll margin).
 extern "C" void flight_init_native(void)
 {
-    g_fastForwardFrames = 1;     // resolve main_loop_body's wait_frames_60 calls instantly
+    g_fastForwardFrames = 1;     // resolve init_gameplay_state's wait_frames_60 calls instantly
     cpu.A = 0x2A; clear_pm_state();                          // $3E12: LDA #$2A / JSR $3FBF
     clear_colors();                                          // $3E17: $3CC3
     mem[0x3157] = 0x0D; mem[0x3158] = 0x35;                  // $3E1A: cinematic-DL LMS bytes ($350D)
@@ -117,28 +117,28 @@ extern "C" void flight_init_native(void)
     for (uint16_t i = 0x20; i <= 0x4B; i++) mem[i] = 0;      // $3E2A: clear zp $20-$4B
     for (uint16_t i = 0; i < 0xA6; i++) mem[0x2830 + i] = 0; // $3E32: clear $2830-$28D5
     mem[zp::screenState] = 0x00;                                      // $3E3A
-    game_init_753B();                                        // $3E3D
-    game_init_45A1();                                        // $3E40
+    init_terrain_render_buffers();                           // $3E3D ($753B)
+    fill_buffer2_region_ff();                                // $3E40 ($45A1)
     clear_terrain_lo_buffers();                              // $3E43 ($6B63)
-    game_init_7558();                                        // $3E46
+    unpack_terrain_seed_cols();                              // $3E46 ($7558)
     // $3E49 LDA #$45 / JSR $3C75 (wait_vcount_eq) — SKIP (VCOUNT busy-wait)
     // $3E4E-$3E55 VBI vector $0222/$0223=$4FF5 — SKIP (Amiga VBI)
     for (uint16_t i = 0; i < 0x57; i++) mem[0x0B31 + i] = 0; // $3E58: clear $0B31-$0B87
     mem[zp::gpriorShadow] = 0x11;                                      // $3E62: GPRIOR/PRIOR shadow
-    game_init_45EE();                                        // $3E67
+    copy_terrain_seed_rows();                                // $3E67 ($45EE)
     // $3E6A JSR $3C7B (wait_vcount_ge_7a) — SKIP (VCOUNT busy-wait)
     // $3E6D-$3E74 DLI vector $0200/$0201=$49EE — SKIP (Amiga copper DLI)
     // $3E77-$3E83 DLISTL/H=$316B, DMACTL $D004=$40 — SKIP (Amiga copper)
-    main_loop_body();                                        // $3E86 ($73C8)
+    init_gameplay_state();                                   // $3E86 ($73C8)
     if (mem[zp::freshStartFlag] == 0) {                                  // $3E89: fresh start
         intro_random_setup();                                // $3E8E ($6FBF)
-        intro_setup_70B3();                                  // $3E91
-        intro_sub_7498();                                    // $3E94
+        intro_unmark_random_cells();                         // $3E91 ($70B3)
+        intro_seed_object_map();                             // $3E94 ($7498)
     }
     mem[zp::rowTableStride] = 0x60;                                      // $3E97: stride $60 = 96
     mem[zp::rowTableBaseLo] = 0x10; mem[zp::rowTableBaseHi] = 0x10;                  // $3E9B/$3E9F: base $1010
-    game_setup_7460();                                       // $3EA3: build $073D/$0793 row-addr table
-    game_setup_7483();                                       // $3EA6
+    build_row_addr_table();                                  // $3EA3 ($7460): build $073D/$0793 row-addr table
+    copy_row_addr_subset();                                  // $3EA6 ($7483): -> $2932/$2962
     if (mem[zp::levelOrState] == 0) {                                  // $3EA9
         mem[zp::timerOrCounter] = 0x54; mem[zp::joystickSaved] = 0x02;              // $3EAD/$3EB8 (A=2 path)
     } else {

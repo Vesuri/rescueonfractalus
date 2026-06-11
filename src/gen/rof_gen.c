@@ -3102,8 +3102,8 @@ L_4544:;
     return;
 }
 
-/* game_init_45A1 @ $45A1: Game init (called in game_entry setup) */
-void game_init_45A1(void) {
+/* fill_buffer2_region_ff @ $45A1: Fills 8 rows x 32 bytes (stride 48) at $2098 in the $2000 terrain buffer with $FF; called in game_entry setup */
+void fill_buffer2_region_ff(void) {
     /* 45a1 */
     LDA(0x98);
     /* 45a3 */
@@ -3182,8 +3182,8 @@ void game_sub_45C5(void) {
     return;
 }
 
-/* game_init_45EE @ $45EE: Game init (called in game_entry setup) */
-void game_init_45EE(void) {
+/* copy_terrain_seed_rows @ $45EE: Copies three 8-byte blocks $4DD2->$0C88, $4DDA->$0D88, $4DE2->$0B88 (seed rows in the terrain/cockpit buffers); called in game_entry setup */
+void copy_terrain_seed_rows(void) {
     /* 45ee */
     LDY(0x07);
 L_45f0:;
@@ -8471,7 +8471,7 @@ void build_line_addr_table_1000_stride(void) {
     /* 65da */
     mem[0x00C4] = cpu.A;
     /* 65dc */
-    game_setup_7460(); return;
+    build_row_addr_table(); return;
 }
 
 /* build_line_addr_table_2000 @ $65DF: Sets $00C1=$2E stride, base $00C3:$00C4=$2000; game_setup_7460 builds row-addr table for buffer $2000 */
@@ -8489,7 +8489,7 @@ void build_line_addr_table_2000(void) {
     /* 65e9 */
     mem[0x00C4] = cpu.A;
     /* 65eb */
-    game_setup_7460(); return;
+    build_row_addr_table(); return;
 }
 
 /* delay_loop_c2_to_c9 @ $65EE: Counted delay: calls wait_frames_2 (2-frame wait) while Y=$C2..$C8, storing Y in $0071 each step */
@@ -10639,8 +10639,8 @@ void push_grid_cell(void) {
     return;
 }
 
-/* intro_setup_70B3 @ $70B3: Intro continuation (3 RANDOM reads); called after intro_random_setup */
-void intro_setup_70B3(void) {
+/* intro_unmark_random_cells @ $70B3: Randomly clears bit7 (marked flag) of $0900 grid/height-map cells below a RANDOM($D20A) threshold; intro continuation after intro_random_setup (3 RANDOM reads) */
+void intro_unmark_random_cells(void) {
     /* 70b3 */
     LDY(mem[0x006D]);
     /* 70b5 */
@@ -11107,8 +11107,8 @@ L_730d:;
     return;
 }
 
-/* main_loop_body @ $73C8: Main game loop body (1 RANDOM read); called from game_entry loop */
-void main_loop_body(void) {
+/* init_gameplay_state @ $73C8: Per-game/level gameplay init: seeds heading $2886, clears object/timer arrays ($0E94/$2210), sets lives $0072, plots via game_sub_451d, calls unpack_bitmap_4d3e + game_sub_45C5, seeds RANDOM, tail-calls game_sub_4430; run once from game_entry */
+void init_gameplay_state(void) {
     /* 73c8 */
     LDA(0x0E);
     /* 73ca */
@@ -11252,8 +11252,8 @@ L_745b:;
     game_sub_4430(); return;
 }
 
-/* game_setup_7460 @ $7460: Game setup (called before main loop) */
-void game_setup_7460(void) {
+/* build_row_addr_table @ $7460: Builds the 85-entry ($55) per-scanline screen base-address table $073D/$0793 from $C3:$C4 base + $C1 stride; called before main loop */
+void build_row_addr_table(void) {
     /* 7460 */
     LDY(0x00);
     /* 7462 */
@@ -11289,8 +11289,8 @@ L_746c:;
     return;
 }
 
-/* game_setup_7483 @ $7483: Game setup (called before main loop) */
-void game_setup_7483(void) {
+/* copy_row_addr_subset @ $7483: Copies the first 48 entries of $073D/$0793 (reversed, Y=$2F..0) into the secondary row-addr tables $2932/$2962; called before main loop */
+void copy_row_addr_subset(void) {
     /* 7483 */
     LDX(0x00);
     /* 7485 */
@@ -11314,8 +11314,8 @@ L_7487:;
     return;
 }
 
-/* intro_sub_7498 @ $7498: Intro sub (called with intro_random_setup/$70B3 on fresh start) */
-void intro_sub_7498(void) {
+/* intro_seed_object_map @ $7498: Clears $0A00 object map, scans obj table (obj_table_scan_a_c8/replace), then places $64 markers into $0A00 for marked $0900 cells below a RANDOM($D20A) threshold; fresh-start object seeding */
+void intro_seed_object_map(void) {
     /* 7498 */
     LDY(0x00);
     /* 749a */
@@ -11498,8 +11498,8 @@ L_751c:;
     return;
 }
 
-/* game_init_753B @ $753B: Game init */
-void game_init_753B(void) {
+/* init_terrain_render_buffers @ $753B: Fills the height-max array region $250F-$260E with $FF, sets row-table params ($C1=$70 stride, base $119F), then JMP memset_or_copy to clear the $1070 terrain bitmap buffer ($119F bytes) to [$B7] */
+void init_terrain_render_buffers(void) {
     /* 753b */
     LDY(0x00);
     /* 753d */
@@ -11531,8 +11531,8 @@ L_753f:;
     memset_or_copy(); return;
 }
 
-/* game_init_7558 @ $7558: Game init */
-void game_init_7558(void) {
+/* unpack_terrain_seed_cols @ $7558: RLE-unpacks (via process_list_via_3c58) $4DFA->$0C32 and $4E09->$0D32, seeding two of the four terrain column buffers */
+void unpack_terrain_seed_cols(void) {
     /* 7558 */
     LDA(0xFA);
     /* 755a */
@@ -12149,7 +12149,7 @@ L_772b:;
     /* 7795 */
     mem[0x00C4] = cpu.A;
     /* 7797 */
-    game_setup_7460();
+    build_row_addr_table();
     /* 779a */
     LDA(0x75);
     /* 779c */
@@ -12177,7 +12177,7 @@ L_772b:;
     /* 77b3 */
     mem[0x00C4] = cpu.A;
     /* 77b5 */
-    game_setup_7460();
+    build_row_addr_table();
     /* 77b8 */
     LDA(0x1A);
     /* 77ba */
@@ -24652,13 +24652,13 @@ L_3e34:;
     /* 3e3a */
     mem[0x060C] = cpu.A;
     /* 3e3d */
-    game_init_753B();
+    init_terrain_render_buffers();
     /* 3e40 */
-    game_init_45A1();
+    fill_buffer2_region_ff();
     /* 3e43 */
     clear_terrain_lo_buffers();
     /* 3e46 */
-    game_init_7558();
+    unpack_terrain_seed_cols();
     /* 3e49 */
     LDA(0x45);
     /* 3e4b */
@@ -24687,7 +24687,7 @@ L_3e5c:;
     /* 3e64 */
     bus_write(0x026F, cpu.A);
     /* 3e67 */
-    game_init_45EE();
+    copy_terrain_seed_rows();
     /* 3e6a */
     wait_vcount_ge_7a();
     /* 3e6d */
@@ -24711,7 +24711,7 @@ L_3e5c:;
     /* 3e83 */
     bus_write(0xD004, cpu.A);
     /* 3e86 */
-    main_loop_body();
+    init_gameplay_state();
     /* 3e89 */
     LDA(mem[0x0627]);
     /* 3e8c */
@@ -24719,9 +24719,9 @@ L_3e5c:;
     /* 3e8e */
     intro_random_setup();
     /* 3e91 */
-    intro_setup_70B3();
+    intro_unmark_random_cells();
     /* 3e94 */
-    intro_sub_7498();
+    intro_seed_object_map();
 L_3e97:;
     /* 3e97 */
     LDA(0x60);
@@ -24736,9 +24736,9 @@ L_3e97:;
     /* 3ea1 */
     mem[0x00C4] = cpu.A;
     /* 3ea3 */
-    game_setup_7460();
+    build_row_addr_table();
     /* 3ea6 */
-    game_setup_7483();
+    copy_row_addr_subset();
     /* 3ea9 */
     LDA(mem[0x0004]);
     /* 3eab */

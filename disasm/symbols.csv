@@ -116,9 +116,9 @@ $43CB,game_sub_43CB,func,0,Game subsystem (called with Y=9)
 $4430,game_sub_4430,func,0,Game subsystem (0 callers — probably IRQ/VBI handler)
 $4447,game_sub_4447,func,0,Game subsystem (called with A=8)
 $451D,game_sub_451d,func,0,Game subsystem
-$45A1,game_init_45A1,func,0,Game init (called in game_entry setup)
+$45A1,fill_buffer2_region_ff,func,0,Fills 8 rows x 32 bytes (stride 48) at $2098 in the $2000 terrain buffer with $FF; called in game_entry setup
 $45C5,game_sub_45C5,func,0,Game subsystem
-$45EE,game_init_45EE,func,0,Game init (called in game_entry setup)
+$45EE,copy_terrain_seed_rows,func,0,Copies three 8-byte blocks $4DD2->$0C88, $4DDA->$0D88, $4DE2->$0B88 (seed rows in the terrain/cockpit buffers); called in game_entry setup
 $4606,game_sub_4606,func,0,Game subsystem (called multiple times including in game loop)
 $462A,irq_handler,func,0,Immediate IRQ handler (VIMIRQ=$462A); set in game_entry at $3D28
 $49EE,dli_handler_game,func,0,DLI handler during game (VDSLST=$49EE set at $3E6D in game_entry)
@@ -140,14 +140,14 @@ $6811,game_sub_6811,func,0,Game sub with 2 RANDOM reads (enemy/event randomizati
 $6B47,game_sub_6B47,func,0,Game sub with 2 RANDOM reads
 $6CC2,dli_handler_game2,func,0,Second game DLI handler (VDSLST=$6CC2 set in display_setup $5F5F-$64)
 $6FBF,intro_random_setup,func,0,Intro/startup sequence with 5 RANDOM reads; called only on fresh start ($0627=0)
-$70B3,intro_setup_70B3,func,0,Intro continuation (3 RANDOM reads); called after intro_random_setup
+$70B3,intro_unmark_random_cells,func,0,Randomly clears bit7 (marked flag) of $0900 grid/height-map cells below a RANDOM($D20A) threshold; intro continuation after intro_random_setup (3 RANDOM reads)
 $712D,audio_timer_setup,func,0,Sets up POKEY audio timers + IRQEN=$C0 (timer 1+2 IRQs)
-$7498,intro_sub_7498,func,0,Intro sub (called with intro_random_setup/$70B3 on fresh start)
-$73C8,main_loop_body,func,0,Main game loop body (1 RANDOM read); called from game_entry loop
-$7460,game_setup_7460,func,0,Game setup (called before main loop)
-$7483,game_setup_7483,func,0,Game setup (called before main loop)
-$7558,game_init_7558,func,0,Game init
-$753B,game_init_753B,func,0,Game init
+$7498,intro_seed_object_map,func,0,Clears $0A00 object map, scans obj table (obj_table_scan_a_c8/replace), then places $64 markers into $0A00 for marked $0900 cells below a RANDOM($D20A) threshold; fresh-start object seeding
+$73C8,init_gameplay_state,func,0,Per-game/level gameplay init: seeds heading $2886, clears object/timer arrays ($0E94/$2210), sets lives $0072, plots via game_sub_451d, calls unpack_bitmap_4d3e + game_sub_45C5, seeds RANDOM, tail-calls game_sub_4430; run once from game_entry
+$7460,build_row_addr_table,func,0,Builds the 85-entry ($55) per-scanline screen base-address table $073D/$0793 from $C3:$C4 base + $C1 stride; called before main loop
+$7483,copy_row_addr_subset,func,0,Copies the first 48 entries of $073D/$0793 (reversed, Y=$2F..0) into the secondary row-addr tables $2932/$2962; called before main loop
+$7558,unpack_terrain_seed_cols,func,0,RLE-unpacks (via process_list_via_3c58) $4DFA->$0C32 and $4E09->$0D32, seeding two of the four terrain column buffers
+$753B,init_terrain_render_buffers,func,0,Fills the height-max array region $250F-$260E with $FF, sets row-table params ($C1=$70 stride, base $119F), then JMP memset_or_copy to clear the $1070 terrain bitmap buffer ($119F bytes) to [$B7]
 $7588,game_init_7588,func,0,Game init (called in game_entry setup sequence)
 $76CB,game_init_76CB,func,0,Game init (called in game_entry setup sequence)
 $77DF,game_init_77DF,func,0,Game init (called in game_entry setup sequence)
