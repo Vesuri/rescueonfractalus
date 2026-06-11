@@ -926,3 +926,159 @@ void terrain_plot_object(void) {
     }
     terrain_sub_A90A();                                      /* a6c8 tail */
 }
+
+/* terrain_column_rasterize @ $B33D — THE fractal column renderer.
+ *
+ * Walks columns from $0082 up to $D4, interpolating per-segment heights ($00EA[]/
+ * $00F4[]) and midpoint-refining the column position toward $0095[Y]; for each
+ * column it clamps the height to $97, updates the max-height array $260E[X], and
+ * OR-plots the silhouette pixel into the bitmap at ($0080),$BD00[X] using the
+ * $BC00 bit table and the $28CA/$28FA row-address tables.
+ *
+ * Self-contained (no calls), so transliterated goto-faithfully with purely local
+ * A/X/Y + carry c; the bitmap pointer is computed manually (= ZP_IND_Y($80)).
+ * Contract: memory; cpu.X is preserved (saved to $0060, restored on exit — and
+ * since we never touch cpu.X it stays at entry anyway).  Validated against a real
+ * in-flight RAM snapshot (random mem[] would not terminate — $0095[] must be a
+ * realistic increasing column array, else the midpoint loop has a fixed point).
+ */
+void terrain_column_rasterize(void) {
+    uint8_t A, X, Y, c = 0;
+    #define ADC_(v)  do { uint16_t _t=(uint16_t)A+(uint8_t)(v)+c; c=(uint8_t)(_t>>8); A=(uint8_t)_t; } while(0)
+    #define SBC_(v)  ADC_((uint8_t)~(uint8_t)(v))
+    #define RORA_()  do { uint8_t _n=A&1; A=(uint8_t)((A>>1)|(c<<7)); c=_n; } while(0)
+    #define LSRA_()  do { c=A&1; A=(uint8_t)(A>>1); } while(0)
+    #define PLOT()   do { mem[0x00B5]=Y; uint8_t _ai=A; \
+        mem[0x0080]=mem[0x28CA+_ai]; mem[0x0081]=mem[0x28FA+_ai]; \
+        uint8_t _bo=mem[0xBD00+X]; \
+        uint16_t _ad=(uint16_t)(mem[0x0080]|(mem[0x0081]<<8))+_bo; \
+        bus_write(_ad,(uint8_t)(bus_read(_ad)|mem[0xBC00+X])); \
+        Y=mem[0x00B5]; } while(0)
+
+    X = cpu.X; mem[0x0060] = X;                          /* b33d STX $60 */
+    A = mem[0x0095];                                     /* b33f */
+    if (A < 0x2D) goto done;                             /* b341 CMP #$2D; BCC b37f */
+    if (A < mem[0x0082]) goto done;                      /* b345 CMP $82; BCC b37f */
+    if (A != mem[0x0082]) goto L_b380;                   /* b349 BNE b380 */
+    X = mem[0x0095];                                     /* b34b LDX $95 */
+    A = mem[0x00EA];                                     /* b34d */
+    if (A < mem[0x260E + X]) goto done;                  /* b352 BCC b37d (->LDX$60;ret) */
+    if (A == mem[0x260E + X]) goto done;                 /* b354 BEQ b37d */
+    mem[0x260E + X] = A;
+    if (A >= 0x97) { mem[0x260E + X] = 0xFF; A = 0x97; } /* b359 CMP #$97; BCC b364 */
+    PLOT();                                              /* b364 */
+    goto done;                                           /* b37d LDX $60; b37f return */
+
+L_b380:
+    Y = 0x00;                                            /* b380 LDY #0 */
+L_b382:
+    A = mem[0x0082];                                     /* b382 */
+    if (A < 0x2C) goto L_b38c;                           /* CMP #$2C; BCC b38c */
+    X = A; goto L_b446;                                  /* TAX; goto b446 */
+L_b38c:
+    c = 0; ADC_(mem[0x0095 + Y]); RORA_();               /* CLC; ADC $95,Y; ROR */
+    if (A < 0x2C) goto L_b397;                           /* CMP #$2C; BCC b397 */
+    if (A != 0x2C) goto L_b3e9;                          /* BNE b3e9 */
+L_b397:
+    mem[0x0082] = A;                                     /* b397 STA $82 */
+    A = mem[0x0086]; c = 1; ADC_(mem[0x00F4 + Y]); mem[0x0086] = A;  /* LDA $86; SEC; ADC F4,Y */
+    if (A & 0x80) goto L_b3af;                           /* BMI b3af */
+    c = 0; A = mem[0x0084]; ADC_(mem[0x00EA + Y]); RORA_(); mem[0x0084] = A;  /* CLC LDA84 ADC EA,Y ROR */
+    goto L_b382;
+L_b3af:
+    if (c) goto L_b3cd;                                  /* BCS b3cd (c from the $86 ADC) */
+    A = mem[0x0095 + Y]; c = 1; SBC_(mem[0x0082]); LSRA_(); mem[0x00B5] = A;
+    c = 0; A = mem[0x0084]; ADC_(mem[0x00EA + Y]); RORA_(); c = 1; SBC_(mem[0x00B5]);
+    if (!c) A = 0x00;                                    /* b3c4 BCC b3c8 (skip LDA#0) */
+    mem[0x0084] = A; goto L_b382;
+L_b3cd:
+    A = mem[0x0095 + Y]; c = 1; SBC_(mem[0x0082]); LSRA_(); mem[0x00B5] = A;
+    c = 0; A = mem[0x0084]; ADC_(mem[0x00EA + Y]); RORA_(); c = 0; ADC_(mem[0x00B5]);
+    if (c) A = 0xFF;                                     /* b3e0 BCC b3e4 (skip LDA#$FF) */
+    mem[0x0084] = A; goto L_b382;
+L_b3e9:
+    mem[0x0096 + Y] = A;                                 /* b3e9 STA $96,Y */
+    A = mem[0x0086]; c = 1; ADC_(mem[0x00F4 + Y]); mem[0x00F5 + Y] = A;  /* LDA $86; SEC; ADC F4,Y; STA F5,Y */
+    if (A & 0x80) goto L_b405;                           /* BMI b405 */
+    c = 0; A = mem[0x0084]; ADC_(mem[0x00EA + Y]); RORA_(); mem[0x00EB + Y] = A;
+    Y++; goto L_b382;                                    /* INY */
+L_b405:
+    if (c) goto L_b425;                                  /* BCS b425 (c from the $86 ADC) */
+    A = mem[0x0096 + Y]; c = 1; SBC_(mem[0x0082]); LSRA_(); mem[0x00B5] = A;
+    c = 0; A = mem[0x0084]; ADC_(mem[0x00EA + Y]); RORA_(); c = 1; SBC_(mem[0x00B5]);
+    if (!c) A = 0x00;                                    /* b41a BCC b41e */
+    mem[0x00EB + Y] = A; Y++; goto L_b382;
+L_b425:
+    A = mem[0x0096 + Y]; c = 1; SBC_(mem[0x0082]); LSRA_(); mem[0x00B5] = A;
+    c = 0; A = mem[0x0084]; ADC_(mem[0x00EA + Y]); RORA_(); c = 0; ADC_(mem[0x00B5]);
+    if (c) A = 0xFF;                                     /* b438 BCC b43c */
+    mem[0x00EB + Y] = A; Y++; goto L_b382;
+
+L_b443:
+    goto done;                                           /* b443 LDX $60; return */
+L_b446:
+    if (X >= 0xD4) goto L_b443;                          /* CPX #$D4; BCS b443 */
+    A = X; mem[0x0082] = X;                              /* TXA; STX $82 */
+    c = 1; SBC_(mem[0x0095 + Y]);                        /* SEC; SBC $95,Y */
+    c = (A >= 0xFE) ? 1 : 0;                             /* CMP #$FE (carry used at b4cc) */
+    if (A != 0xFE) goto L_b4cc;                          /* BNE b4cc */
+    A = mem[0x00EA + Y]; ADC_(mem[0x0084]); RORA_();     /* LDA EA,Y; ADC $84 (c=1); ROR */
+    if (A < mem[0x260E + X]) goto L_b489;                /* CMP 260E,X; BCC b489 */
+    if (A == mem[0x260E + X]) goto L_b489;               /* BEQ b489 */
+    mem[0x260E + X] = A;
+    if (A >= 0x97) { mem[0x260E + X] = 0xFF; A = 0x97; } /* CMP #$97; BCC b470 */
+    PLOT();                                              /* b470 */
+L_b489:
+    X++;                                                 /* INX */
+    A = mem[0x00EA + Y]; mem[0x0084] = A;                /* LDA EA,Y; STA $84 */
+    if (A < mem[0x260E + X]) goto L_b4bd;                /* CMP 260E,X; BCC b4bd */
+    if (A == mem[0x260E + X]) goto L_b4bd;               /* BEQ b4bd */
+    mem[0x260E + X] = A;
+    if (A >= 0x97) { mem[0x260E + X] = 0xFF; A = 0x97; }
+    PLOT();                                              /* b4a4 */
+L_b4bd:
+    Y--; if (Y & 0x80) goto L_b4c9;                      /* DEY; BMI b4c9 */
+    X++;                                                 /* INX */
+    A = mem[0x00F5 + Y]; mem[0x0086] = A;                /* LDA F5,Y; STA $86 */
+    goto L_b446;
+L_b4c9:
+    goto done;                                           /* b4c9 LDX $60; return */
+L_b4cc:
+    if (!c) goto L_b50d;                                 /* BCC b50d (c from CMP #$FE) */
+    A = mem[0x00EA + Y]; mem[0x0084] = A;                /* LDA EA,Y; STA $84 */
+    if (A < mem[0x260E + X]) goto L_b501;                /* CMP 260E,X; BCC b501 */
+    if (A == mem[0x260E + X]) goto L_b501;               /* BEQ b501 */
+    mem[0x260E + X] = A;
+    if (A >= 0x97) { mem[0x260E + X] = 0xFF; A = 0x97; }
+    PLOT();                                              /* b4e8 */
+L_b501:
+    Y--; if (Y & 0x80) goto L_b4c9;                      /* DEY; BMI b4c9 */
+    X++;                                                 /* INX */
+    A = mem[0x00F5 + Y]; mem[0x0086] = A;                /* LDA F5,Y; STA $86 */
+    goto L_b446;
+L_b50d:
+    A = X; ADC_(mem[0x0095 + Y]); RORA_(); mem[0x0096 + Y] = A;  /* TXA; ADC $95,Y (c=0); ROR; STA 96,Y */
+    A = mem[0x0086]; c = 1; ADC_(mem[0x00F4 + Y]); mem[0x00F5 + Y] = A;  /* LDA $86; SEC; ADC F4,Y; STA F5,Y */
+    if (A & 0x80) goto L_b52e;                           /* BMI b52e */
+    c = 0; A = mem[0x0084]; ADC_(mem[0x00EA + Y]); RORA_(); mem[0x00EB + Y] = A;
+    Y++; goto L_b446;                                    /* INY */
+L_b52e:
+    if (c) goto L_b54c;                                  /* BCS b54c (c from the $86 ADC) */
+    A = mem[0x0096 + Y]; SBC_(mem[0x0082]); LSRA_(); mem[0x00B5] = A;   /* SBC $82 (c=0, no SEC); LSR */
+    c = 0; A = mem[0x0084]; ADC_(mem[0x00EA + Y]); RORA_(); SBC_(mem[0x00B5]);  /* CLC ADC EA,Y ROR; SBC B5 (c from ROR) */
+    if (!c) A = 0x00;                                    /* b541 BCC b545 */
+    mem[0x00EB + Y] = A; Y++; goto L_b446;
+L_b54c:
+    A = mem[0x0096 + Y]; SBC_(mem[0x0082]); LSRA_(); mem[0x00B5] = A;   /* SBC $82 (c=1, no SEC); LSR */
+    c = 0; A = mem[0x0084]; ADC_(mem[0x00EA + Y]); RORA_(); ADC_(mem[0x00B5]);  /* CLC ADC EA,Y ROR; ADC B5 (c from ROR) */
+    if (c) A = 0xFF;                                     /* b55d BCC b561 */
+    mem[0x00EB + Y] = A; Y++; goto L_b446;
+
+done:
+    #undef ADC_
+    #undef SBC_
+    #undef RORA_
+    #undef LSRA_
+    #undef PLOT
+    return;
+}

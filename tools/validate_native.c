@@ -282,6 +282,36 @@ static int test_terrain_sub_obj(const char *name, void (*nat)(void), void (*t650
     return mem_fail;
 }
 
+/* terrain_column_rasterize @ $B33D: the fractal column renderer.  Random mem[]
+ * would NOT terminate (its midpoint loop needs realistic $0095[] columns >= $2C),
+ * so seed the pre-state from a real in-flight RAM capture and vary entry X/Y.
+ * Run from the repo root (the Makefile launches ./build/validate_native there). */
+static int test_terrain_column_rasterize(void) {
+    enum { N = 4000 };
+    static uint8_t snap[65536], pre[65536];
+    const char *path = "a800dumps/flight_ram_0000_BFFF.bin";
+
+    FILE *f = fopen(path, "rb");
+    if (!f) { printf("terrain_column_rasterize: SKIP (%s not found)\n", path); return 0; }
+    memset(snap, 0, sizeof snap);
+    size_t got = fread(snap, 1, 0xC000, f);
+    fclose(f);
+    if (got != 0xC000) { printf("terrain_column_rasterize: SKIP (short read %zu)\n", got); return 0; }
+
+    int mem_fail = 0, cpu_diff = 0, printed = 0;
+    for (int t = 0; t < N; t++) {
+        memcpy(pre, snap, sizeof pre);
+        Cpu6502 c = zero_cpu();
+        c.X = (uint8_t)(xs() & 0xFF);
+        c.Y = (uint8_t)(xs() & 0xFF);
+        mem_fail += diff_run("terrain_column_rasterize", pre, c,
+                             terrain_column_rasterize, terrain_column_rasterize__t6502, t, &printed, &cpu_diff);
+    }
+    printf("terrain_column_rasterize: %d cases (real flight snapshot), %d mem mismatch (must be 0), %d cpu diffs\n",
+           N, mem_fail, cpu_diff);
+    return mem_fail;
+}
+
 int main(void) {
     platform_test_init_headless();   /* enable seedable RANDOM ($D20A) for both runs */
 
@@ -307,6 +337,7 @@ int main(void) {
     fails += test_terrain_sub_obj("terrain_sub_A822", terrain_sub_A822, terrain_sub_A822__t6502);
     fails += test_terrain_sub_obj("terrain_sub_A90A", terrain_sub_A90A, terrain_sub_A90A__t6502);
     fails += test_terrain_sub_obj("terrain_plot_object", terrain_plot_object, terrain_plot_object__t6502);
+    fails += test_terrain_column_rasterize();
 
     printf("\n%s\n", fails == 0
         ? "PASS — all native reimplementations are memory-equivalent to their 6502 oracles."
