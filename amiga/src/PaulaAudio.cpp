@@ -261,7 +261,19 @@ void platform_register_vbi(uint16_t /*addr*/, void (*/*fn*/)(void)) {}
 void platform_indirect_jmp(uint16_t /*addr*/) {}
 void platform_render_frame(void) {}
 void platform_poll_events(void) {}
-void platform_tick_vbi(void) {}
+
+// When set (by flight_init_native), advance RTCLOK ($0014) inside transpiled
+// frame-wait spin loops so they resolve in compute time instead of waiting on the
+// real Amiga VBI.  flight init's main_loop_body calls wait_frames_60 six times
+// (~5s of launch-sequence pacing we don't want on the dev F-skip).  Steady-state
+// flight leaves this 0, so $0014 advances at the real one-per-frame VBI rate.
+volatile uint8_t g_fastForwardFrames = 0;
+void platform_tick_vbi(void) {
+    if (g_fastForwardFrames) {
+        mem[0x0014]++;                      // RTCLOK_LOW (mirrors vbiHandler)
+        if (!mem[0x0014]) mem[0x0013]++;    // RTCLOK_MID carry
+    }
+}
 int  platform_load_image(const char* /*path*/) { return 0; }
 
 } // extern "C"

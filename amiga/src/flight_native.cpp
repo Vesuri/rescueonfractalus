@@ -57,6 +57,11 @@ void enemy_check(void);               // $3FCD: enemy/event dispatch
 // TERRAIN SCROLL.  update_terrain_scanline_proj projects the new pitch/altitude.
 void flight_control_integrate(void);     // $8E5B
 void update_terrain_scanline_proj(void); // $51BC
+
+// Set during flight_init_native so transpiled frame-wait spin loops (wait_frames_60
+// via main_loop_body) advance RTCLOK in compute time instead of waiting on the real
+// VBI — kills the ~5s launch-pacing delay on the dev F-skip.  (Defined in PaulaAudio.cpp.)
+extern volatile uint8_t g_fastForwardFrames;
 }
 
 // flight_vbi_native: the motion half of one flight frame (flight VBI $4FF5,
@@ -74,6 +79,7 @@ extern "C" void flight_vbi_native(void)
 // $1070=$1010+96 onward at +$60 each — row 0 is the off-screen scroll margin).
 extern "C" void flight_init_native(void)
 {
+    g_fastForwardFrames = 1;     // resolve main_loop_body's wait_frames_60 calls instantly
     cpu.A = 0x2A; clear_pm_state();                          // $3E12: LDA #$2A / JSR $3FBF
     clear_colors();                                          // $3E17: $3CC3
     mem[0x3157] = 0x0D; mem[0x3158] = 0x35;                  // $3E1A: cinematic-DL LMS bytes ($350D)
@@ -108,6 +114,7 @@ extern "C" void flight_init_native(void)
     } else {
         mem[0x004A] = 0x01;                                  // $3EB6/$3EB8 (A=1 path)
     }
+    g_fastForwardFrames = 0;     // back to real-time frame pacing for steady-state flight
 }
 
 // flight_frame_native: one pass of the flight main-loop heavy set.  The Atari
