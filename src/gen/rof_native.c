@@ -136,6 +136,42 @@ void clear_terrain_column(void) {
     cpu.Z = (x0 == 0) ? 1 : 0; cpu.N = (x0 >> 7) & 1;
 }
 
+/* render_bcd_counter @ $49A0 — render the 3-byte packed-BCD score ($0601-$0603,
+ * 6 digits) to the top text line $32C5..$32CA with leading-zero suppression.
+ * Flight ISR routine; the first transpiled-on-the-VBI-path fn ported native.
+ *
+ * Faithfully reproduces the self-contained fall-through chain $49A0-$49ED
+ * (render_bcd_top_byte/_low_bytes/emit_bcd_byte_digits/plot_char_bounded): a
+ * running X flag ($0600 entry) suppresses leading zeros until the first nonzero
+ * digit; digit column Y < threshold $0619(=5) keeps a zero blank, else it is
+ * forced (so a zero score still shows one "0").  Char code = digit + $50.
+ * Contract: memory only — exit cpu is dead (called from flight_vbi_native).  The
+ * 6502's emit_bcd_byte_digits PHA/PLA leaves a dead scribble at $01FF (S=$FF in
+ * the harness); excluded from this fn's contract via set_ignore (validate_native.c).
+ */
+void render_bcd_counter(void) {
+    mem[0x00C5] = 0xC5; mem[0x00C6] = 0x32;      /* $49A0: dest ptr $32C5 */
+    uint8_t x = mem[0x0600];                      /* $49C2: LDX $0600 (running suppress flag) */
+    mem[0x0619] = 0x05;                           /* $49C5: STY $0619 (zero-suppress threshold) */
+    mem[0x0045] = 0x00; mem[0x0046] = 0x00;       /* $49C8-$49CC: clear 16-bit delta */
+    uint8_t y = 0;
+    static const uint16_t bcd[3] = { 0x0601, 0x0602, 0x0603 };
+    for (int i = 0; i < 3; i++) {
+        uint8_t v = mem[bcd[i]];
+        uint8_t nib[2] = { (uint8_t)(v >> 4), (uint8_t)(v & 0x0F) };  /* hi then lo nibble */
+        for (int n = 0; n < 2; n++) {
+            uint8_t a = nib[n];
+            int write;                            /* plot_char_bounded $49D9 */
+            if      (x != 0)              write = 1;            /* nonzero seen -> always write */
+            else if (a != 0)           { x++; write = 1; }      /* first nonzero digit */
+            else if (y < mem[0x0619])    write = 0;             /* leading zero below thresh -> blank */
+            else                       { x++; write = 1; }      /* forced write at/after thresh */
+            if (write) mem[0x32C5 + y] = (uint8_t)(a + 0x50);
+            y++;
+        }
+    }
+}
+
 /* signed_mul_8x16 @ $9C97 — fixed-point signed multiply.
  *
  * Inputs : cpu.A      = 8-bit multiplier (treated as an unsigned fraction),

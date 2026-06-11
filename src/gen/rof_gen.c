@@ -3808,7 +3808,8 @@ void add_and_show_bcd_counter(void) {
 }
 
 /* render_bcd_counter @ $49A0: Sets dest ptr $C5/$C6=$32C5 (screen), renders top BCD byte $0601 then digits via render_bcd_top_byte/49ae */
-void render_bcd_counter(void) {
+/* faithful transliteration kept as the validation oracle; native render_bcd_counter() lives in rof_native.c (see VALIDATE_FUNCS) */
+void render_bcd_counter__t6502(void) {
     /* 49a0 */
     LDA(0xC5);
     /* 49a2 */

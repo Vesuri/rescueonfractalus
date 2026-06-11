@@ -79,6 +79,10 @@ VALIDATE_FUNCS = {
     0xA11F,  # project_terrain_points — per-object world->screen projection via divide_16x16 (flight top #3)
     0xAE53,  # terrain_collision — collision row scan + silhouette fill + column raster (flight top #4)
     0xA31E,  # terrain_draw_frame — main per-frame terrain driver (flight top #5, the last)
+    # --- flight ISR de-transpile (2026-06-11): eliminate transpiled code on the
+    #     per-frame VBI path.  Small subtrees first; the flight_control_integrate
+    #     tree (~27 fns) is deferred. ---
+    0x49A0,  # render_bcd_counter — score BCD render (self-contained $49A0-$49ED fall-through chain)
 }
 VALIDATE_SUFFIX = '__t6502'
 

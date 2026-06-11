@@ -179,6 +179,28 @@ static int test_signed_mul_8x16(void) {
     return mem_fail;
 }
 
+/* --- render_bcd_counter @ $49A0: BCD score render over FULLY randomized mem[]. ---
+ * Random mem exercises arbitrary BCD bytes ($0601-$0603), suppress flag ($0600),
+ * and prior screen content at $32C5.. (suppressed leading zeros must leave it
+ * untouched).  emit_bcd_byte_digits' PHA/PLA leaves a dead scribble at $01FF
+ * (S=$FF here) that the nibble-extracting native doesn't make — excluded. */
+static int test_render_bcd_counter(void) {
+    enum { N = 20000 };
+    static uint8_t pre[65536];
+    static const uint16_t ignore[] = { 0x01FF };
+    int mem_fail = 0, cpu_diff = 0, printed = 0;
+    set_ignore(ignore, 1);
+    for (int t = 0; t < N; t++) {
+        fill_random(pre);
+        mem_fail += diff_run("render_bcd_counter", pre, zero_cpu(),
+                             render_bcd_counter, render_bcd_counter__t6502, t, &printed, &cpu_diff);
+    }
+    set_ignore(0, 0);
+    printf("render_bcd_counter: %d cases, %d mem mismatch (must be 0), %d cpu diffs\n",
+           N, mem_fail, cpu_diff);
+    return mem_fail;
+}
+
 /* --- generic memory-contract test over a FULLY randomized mem[] and a neutral
  * entry CPU.  Fits any leaf whose result is observed purely through mem[] and
  * that does not read entry registers (lookup tables, etc., read from the same
@@ -366,6 +388,7 @@ int main(void) {
 
     int fails = 0;
     fails += test_divide_16x16();
+    fails += test_render_bcd_counter();
     fails += test_clear_terrain_column();
     fails += test_signed_mul_8x16();
     fails += test_mem_contract("sine_table_lookup", sine_table_lookup, sine_table_lookup__t6502);
