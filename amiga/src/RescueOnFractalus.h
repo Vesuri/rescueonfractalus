@@ -41,7 +41,6 @@ private:
     void startStars();                   // display_setup $64C8-$6552 stars setup
     void startPlanet();                  // display_setup $6555-$6574 planet setup
     void startFlight();                  // game_entry $3E12-$3EB8 flight init (after planet)
-    uint16_t flightFrameLines = 0;       // F0 perf probe: scanlines spent in flight_frame_native()
     uint16_t gaugeTick     = 0;          // frame counter pacing the gauge fill
     uint8_t  planetTick    = 0;          // every-other-frame gate for the planet zoom ($6578)
     bool     planetRisen   = false;      // set once the planet loop finishes ($1002==$FF)

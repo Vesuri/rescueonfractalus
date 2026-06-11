@@ -792,14 +792,9 @@ void RescueOnFractalus::update(uint16_t frame)
         }
     } else if (launchPhase == kFlight) {
         // One flight main-loop heavy pass per frame (the Atari runs two passes per
-        // loop iteration for double buffering; one Amiga frame = one pass).  F0 perf
-        // probe: bracket the call with the raster beam position so we can see how
-        // much of the frame the transpiled terrain set consumes (-> top-border bar).
+        // loop iteration for double buffering; one Amiga frame = one pass).
         flight_vbi_native();    // flight VBI ($4FF5) motion core: advance world position first
-        uint16_t l0 = (uint16_t)(((*vposrPointer & 1u) << 8) | (*vhposrPointer >> 8));
         flight_frame_native();
-        uint16_t l1 = (uint16_t)(((*vposrPointer & 1u) << 8) | (*vhposrPointer >> 8));
-        flightFrameLines = (uint16_t)((l1 - l0) & 0x1FFu);
     }
 
     // The attract/Standby per-frame timer belongs to vbi_handler_game ($52D7); in
@@ -848,15 +843,6 @@ void RescueOnFractalus::update(uint16_t frame)
     // launch_stars_step_native (scroll_terrain_columns) during the stars phase and
     // sit static (no re-scroll) through the planet zoom, so map them both phases.
     if (launchPhase == kLaunchStars || launchPhase == kLaunchPlanet) buildStarSprites();
-    // F0 perf probe: a vertical magenta bar in sprite 4 whose length ∝ the
-    // scanlines flight_frame_native() consumed (÷4 so a full PAL frame ≈ 78 of the
-    // 89 sprite rows).  Bar near full height ⇒ flight is at/over one frame.
-    if (launchPhase == kFlight && starSprite[0]) {
-        int h = (int)(flightFrameLines >> 2);
-        if (h > kStarRows) h = kStarRows;
-        uint16_t* d = starSprite[0]->data() + 2;
-        for (int i = 0; i < kStarRows; i++) { d[i * 2] = (i < h) ? 0xFFFFu : 0u; d[i * 2 + 1] = 0u; }
-    }
 
     uint8_t next = 1 - active;
     buildCopperList(copperLists[next], frame);
