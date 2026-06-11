@@ -613,21 +613,29 @@ void RescueOnFractalus::renderViewportModeD(uint16_t srcBase, int stride, int ro
     const bool full = viewportForceFull;
     viewportForceFull = false;
     uint8_t* base = (uint8_t*)terrainBitmap->data;
-    for (int row = 0; row < rows; row++) {
-        const uint8_t* src = (const uint8_t*)&mem[srcBase + row * stride + kCrop];
-        for (int b = 0; b < 40; b++) {
-            // Per-byte shadow: the planet sphere only grows a few bytes/frame, so
-            // re-decode just the bytes that changed (each = 2 scanlines × 3 planes).
-            int sh = row * 40 + b;
-            uint8_t s = src[b];
-            if (!full && s == viewportShadow[sh]) continue;
-            viewportShadow[sh] = s;
+
+    // Walk the destination, source, and shadow with running pointers instead of
+    // recomputing base + (row*2+scan)*120 and row*40+b per byte.  p1 tracks plane1 of
+    // the current mode-D row's FIRST scanline; plane2/plane3 sit at +40/+80, and the
+    // duplicated SECOND scanline (mode-D = 2 display lines/row) at +120/+160/+200.
+    // ALL THREE pointers advance in the for-increment — even when the shadow-skip
+    // `continue`s — so they stay column-aligned; per row p1 walks 40, then += 200 to
+    // reach the next row (240 = two 120-byte interleaved scanlines).  Per-byte shadow:
+    // the planet sphere only grows a few bytes/frame, so re-decode just what changed.
+    const uint8_t* src = (const uint8_t*)&mem[srcBase + kCrop];
+    uint8_t* p1  = base;
+    uint8_t* shp = viewportShadow;                            // walking shadow pointer
+    for (int row = 0; row < rows; row++, src += stride) {
+        const uint8_t* rowSrc = src;
+        for (int b = 0; b < 40; b++, rowSrc++, shp++, p1++) {
+            uint8_t s = *rowSrc;
+            if (!full && s == *shp) continue;
+            *shp = s;
             uint8_t pa = kModeDP1[s], pc = kModeDP2[s];       // precomputed decode
-            for (int scan = 0; scan < 2; scan++) {            // mode-D = 2 scanlines/row
-                uint8_t* p1 = base + (row * 2 + scan) * 120;  // 3bp interleaved = 120 B/row
-                p1[b] = pa; p1[40 + b] = pc; p1[80 + b] = 0;
-            }
+            p1[0]   = pa; p1[40]  = pc; p1[80]  = 0;          // scanline 2*row
+            p1[120] = pa; p1[160] = pc; p1[200] = 0;          // scanline 2*row+1
         }
+        p1 += 200;                                            // 40 walked -> 240 = two scanlines
     }
 }
 
