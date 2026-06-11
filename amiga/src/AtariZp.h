@@ -66,4 +66,25 @@ constexpr uint16_t shieldOrDamage  = 0x0645; // BCD digit-cache (digit 2 change 
 constexpr uint16_t digitCache646   = 0x0646; // digit-cache slot (digit 3 change detect)
 constexpr uint16_t digitCache647   = 0x0647; // digit-cache slot (digit 1 change detect)
 
+// --- flight: world state + per-frame loop (flight_native.cpp / flight VBI $4FF5) ---
+constexpr uint16_t headingLo      = 0x2885;  // ship heading low byte (16-bit); drives compute_heading_sincos
+constexpr uint16_t headingHi      = 0x2886;  // ship heading high byte
+constexpr uint16_t worldXLo       = 0x2887;  // ground-plane world X low; {worldXHi:worldXLo}>>4 -> view vector
+constexpr uint16_t worldXHi       = 0x2888;  // ground-plane world X high
+constexpr uint16_t worldZLo       = 0x2889;  // ground-plane world Z low
+constexpr uint16_t worldZHi       = 0x288A;  // ground-plane world Z high
+constexpr uint16_t pilotState     = 0x288F;  // pilot rescue state; flight loop stores game_state ($0041) here
+constexpr uint16_t gameState      = 0x0041;  // global game-state flag
+constexpr uint16_t gamePhase      = 0x0042;  // game phase (0=init 1=active 2=post-level); flight pass selector
+constexpr uint16_t timerOrCounter = 0x0044;  // game-pacing countdown ($54/$0E)
+constexpr uint16_t levelOrState   = 0x0004;  // level number / fresh-start flag ($00=fresh start)
+constexpr uint16_t freshStartFlag = 0x0627;  // 0=first time through (run intro), nonzero=continue/skip
+constexpr uint16_t screenState    = 0x060C;  // cleared at flight init ($3E3A)
+constexpr uint16_t frameCounter   = 0x00B7;  // frame counter (ticked by VBI)
+constexpr uint16_t gpriorShadow   = 0x026F;  // GPRIOR/PRIOR shadow (=$11 in flight)
+constexpr uint16_t rowTableStride = 0x00C1;  // per-scanline base-addr table stride (=$60=96 in flight)
+constexpr uint16_t rowTableBaseLo = 0x00C3;  // row base-addr table base low (=$10 -> base $1010)
+constexpr uint16_t rowTableBaseHi = 0x00C4;  // row base-addr table base high (=$10)
+constexpr uint16_t scoreDisplay   = 0x0601;  // displayed score, 3-byte packed BCD $0601-$0603
+
 } // namespace zp

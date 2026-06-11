@@ -1,6 +1,6 @@
 // Native 68000 translations of Atari VBI handler fragments used by RescueOnFractalus.
 //
-// The full vbi_handler_game ($52D7) and vbi_handler_2 ($4FF5) do many things:
+// The full vbi_handler_game ($52D7) and vbi_handler_flight ($4FF5) do many things:
 // hardware register writes (DMACTL, CHBASE, COLPF0-3, HPOSP, PRIOR), display-list
 // management, sound dispatch, and object animation.  On the Amiga:
 //   • Copper handles all hardware register writes.
@@ -81,7 +81,7 @@ extern "C" void update_cockpit_digits_native(void)
 
     if (a >= 1u && a < 3u && (a & mem[zp::collisionFlags]) == 0u) {
         if (mem[zp::playerLives] != 0u) {
-            // game_sub_5815(X=$14): push (a|$80) into altitude ring buffer at $0719
+            // ring_push_marked(X=$14): push (a|$80) into altitude ring buffer at $0719
             uint8_t ptr = mem[zp::altRingHead];
             if (ptr >= 0x20u) ptr = 0x1Fu;
             mem[0x0719u + ptr] = a | 0x80u;
@@ -136,7 +136,7 @@ extern "C" void update_cockpit_digits_native(void)
 //   $80     — random blink: toggle colour of one $3492-$3497 char each tick
 //   $81+    — reverse fill: restore $A9 at $3491+state, decrement state
 // mem[$0618] = per-step timer reload (0 = advance every call).
-// game_sub_5815 ring-buffer push is inlined (ring at $0719, ptr at $0073).
+// ring_push_marked ring-buffer push is inlined (ring at $0719, ptr at $0073).
 extern "C" void saucer_anim_tick_native(void)
 {
     auto pushRingBuf = [](uint8_t val) {
@@ -190,7 +190,7 @@ extern "C" void saucer_anim_tick_native(void)
 }
 
 // update_indicator_blink_native: direct translation of update_blink_timer_006e
-// @ $4131, called via vbi_handler_2 ($4FF5) during Standby.
+// @ $4131, called via vbi_handler_flight ($4FF5) during Standby.
 // Counts down mem[$006E]; on expiry reloads to $0F and sets mem[$00DE]=$4E (ON);
 // when counter drops below $0A sets mem[$00DE]=$46 (OFF).
 // Tail calls to vobj_* (in-game object animation) are skipped for Standby.

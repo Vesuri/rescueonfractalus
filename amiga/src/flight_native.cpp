@@ -17,6 +17,7 @@
 //     would hang.  The frame-driven loop provides the cadence instead.
 
 #include "PaulaAudio.h"   // mem[] + int types (matches the other native modules)
+#include "AtariZp.h"      // zp:: named mem[] offsets (heading/world pos/game state/...)
 extern "C" volatile uint8_t mem[65536];
 
 // The transpile's 6502 register file (src/cpu/cpu.h: `Cpu6502 cpu`) — mirrored
@@ -41,9 +42,9 @@ void game_setup_7483(void);           // $7483
 void main_loop_body(void);            // $73C8: initial main-loop frame setup
 
 // Flight main-loop heavy set ($3EBA pass A / $3EF5 pass B):
-void terrain_gen_1(void);             // $9E54: world->screen transform prep
-void terrain_gen_3(void);             // $AD5F: clear a terrain column (X = which)
-void terrain_gen_2(void);             // $A31E: per-column fractal terrain raster -> $1010 buffer (X = half)
+void terrain_frame_setup(void);       // $9E54: per-frame view-transform setup
+void clear_terrain_column(void);      // $AD5F: clear a terrain column band (X = start column)
+void terrain_draw_frame(void);        // $A31E: main per-frame terrain draw driver (X = half)
 void terrain_collision(void);         // $AE53: terrain collision + final column fill (X)
 void game_state_update(void);         // $A99C: game state machine
 void enemy_check(void);               // $3FCD: enemy/event dispatch
@@ -56,7 +57,7 @@ void enemy_check(void);               // $3FCD: enemy/event dispatch
 // the world position $2885/$2887/$2889 + heading — i.e. it is what MAKES THE
 // TERRAIN SCROLL.  update_terrain_scanline_proj projects the new pitch/altitude.
 void flight_control_integrate(void);     // $8E5B
-void update_terrain_scanline_proj(void); // $51BC
+void update_terrain_scanline_proj(void); // $9833 (the JSR is at $51BC inside vbi_handler_flight)
 void render_bcd_counter(void);           // $49A0: draw BCD score ($0601) to top line $32C5
 
 // Set during flight_init_native so transpiled frame-wait spin loops (wait_frames_60
@@ -69,7 +70,7 @@ extern volatile uint8_t g_fastForwardFrames;
 // $004A-gated subset).  Cockpit/HUD gauges from that block ($520F+) are deferred.
 extern "C" void flight_vbi_native(void)
 {
-    if (mem[0x004A] == 0) return;        // $51B2: LDA $004A / BEQ (skip when not flying)
+    if (mem[zp::joystickSaved] == 0) return;        // $51B2: LDA $004A / BEQ (skip when not flying)
     flight_control_integrate();          // $51B9 ($8E5B): joystick + throttle -> world pos
     update_terrain_scanline_proj();      // $51BC: project pitch/altitude for the new frame
     render_bcd_counter();                // top-bar score: BCD $0601 -> text line $32C5
@@ -85,10 +86,10 @@ extern "C" void flight_init_native(void)
     cpu.A = 0x2A; clear_pm_state();                          // $3E12: LDA #$2A / JSR $3FBF
     clear_colors();                                          // $3E17: $3CC3
     mem[0x3157] = 0x0D; mem[0x3158] = 0x35;                  // $3E1A: cinematic-DL LMS bytes ($350D)
-    mem[0x00B7] = 0x00; mem[0x0005] = 0x00;                  // $3E24
+    mem[zp::frameCounter] = 0x00; mem[0x0005] = 0x00;                  // $3E24
     for (uint16_t i = 0x20; i <= 0x4B; i++) mem[i] = 0;      // $3E2A: clear zp $20-$4B
     for (uint16_t i = 0; i < 0xA6; i++) mem[0x2830 + i] = 0; // $3E32: clear $2830-$28D5
-    mem[0x060C] = 0x00;                                      // $3E3A
+    mem[zp::screenState] = 0x00;                                      // $3E3A
     game_init_753B();                                        // $3E3D
     game_init_45A1();                                        // $3E40
     clear_terrain_lo_buffers();                              // $3E43 ($6B63)
@@ -96,25 +97,25 @@ extern "C" void flight_init_native(void)
     // $3E49 LDA #$45 / JSR $3C75 (wait_vcount_eq) — SKIP (VCOUNT busy-wait)
     // $3E4E-$3E55 VBI vector $0222/$0223=$4FF5 — SKIP (Amiga VBI)
     for (uint16_t i = 0; i < 0x57; i++) mem[0x0B31 + i] = 0; // $3E58: clear $0B31-$0B87
-    mem[0x026F] = 0x11;                                      // $3E62: GPRIOR/PRIOR shadow
+    mem[zp::gpriorShadow] = 0x11;                                      // $3E62: GPRIOR/PRIOR shadow
     game_init_45EE();                                        // $3E67
     // $3E6A JSR $3C7B (wait_vcount_ge_7a) — SKIP (VCOUNT busy-wait)
     // $3E6D-$3E74 DLI vector $0200/$0201=$49EE — SKIP (Amiga copper DLI)
     // $3E77-$3E83 DLISTL/H=$316B, DMACTL $D004=$40 — SKIP (Amiga copper)
     main_loop_body();                                        // $3E86 ($73C8)
-    if (mem[0x0627] == 0) {                                  // $3E89: fresh start
+    if (mem[zp::freshStartFlag] == 0) {                                  // $3E89: fresh start
         intro_random_setup();                                // $3E8E ($6FBF)
         intro_setup_70B3();                                  // $3E91
         intro_sub_7498();                                    // $3E94
     }
-    mem[0x00C1] = 0x60;                                      // $3E97: stride $60 = 96
-    mem[0x00C3] = 0x10; mem[0x00C4] = 0x10;                  // $3E9B/$3E9F: base $1010
+    mem[zp::rowTableStride] = 0x60;                                      // $3E97: stride $60 = 96
+    mem[zp::rowTableBaseLo] = 0x10; mem[zp::rowTableBaseHi] = 0x10;                  // $3E9B/$3E9F: base $1010
     game_setup_7460();                                       // $3EA3: build $073D/$0793 row-addr table
     game_setup_7483();                                       // $3EA6
-    if (mem[0x0004] == 0) {                                  // $3EA9
-        mem[0x0044] = 0x54; mem[0x004A] = 0x02;              // $3EAD/$3EB8 (A=2 path)
+    if (mem[zp::levelOrState] == 0) {                                  // $3EA9
+        mem[zp::timerOrCounter] = 0x54; mem[zp::joystickSaved] = 0x02;              // $3EAD/$3EB8 (A=2 path)
     } else {
-        mem[0x004A] = 0x01;                                  // $3EB6/$3EB8 (A=1 path)
+        mem[zp::joystickSaved] = 0x01;                                  // $3EB6/$3EB8 (A=1 path)
     }
     g_fastForwardFrames = 0;     // back to real-time frame pacing for steady-state flight
 }
@@ -135,24 +136,24 @@ extern "C" void flight_reset_parity_native(void) { flightParity = 0; }
 
 extern "C" uint8_t flight_frame_native(void)
 {
-    terrain_gen_1();                                         // $9E54 / $3EF5
+    terrain_frame_setup();                                         // $9E54 / $3EF5
     if (flightParity == 0) {
-        cpu.X = 0x33; terrain_gen_3();                       // $3EBD
-        cpu.X = 0x30; terrain_gen_2();                       // $3EC2 (offset-48 half)
+        cpu.X = 0x33; clear_terrain_column();                       // $3EBD
+        cpu.X = 0x30; terrain_draw_frame();                       // $3EC2 (offset-48 half)
         cpu.X = 0x33; terrain_collision();                   // $3EC9
-        mem[0x288F] = mem[0x0041];                           // $3ECC: LDA $0041 / STA $288F
+        mem[zp::pilotState] = mem[zp::gameState];                           // $3ECC: LDA $0041 / STA $288F
         game_state_update();                                 // $3ED1
-        mem[0x0042] = 0x02;                                  // $3ED4
+        mem[zp::gamePhase] = 0x02;                                  // $3ED4
         enemy_check();                                       // $3ED8
     } else {
-        cpu.X = 0x03; terrain_gen_3();                       // $3EFA
-        cpu.X = 0x00; terrain_gen_2();                       // $3EFF (offset-0 half, displayed)
+        cpu.X = 0x03; clear_terrain_column();                       // $3EFA
+        cpu.X = 0x00; terrain_draw_frame();                       // $3EFF (offset-0 half, displayed)
         cpu.X = 0x03; terrain_collision();                   // $3F04
-        if (mem[0x0041]) mem[0x288F] = mem[0x0041];          // $3F07: conditional
+        if (mem[zp::gameState]) mem[zp::pilotState] = mem[zp::gameState];          // $3F07: conditional
         game_state_update();                                 // $3F0E
         enemy_check();                                       // $3F11
-        mem[0x0042] = 0x01;                                  // $3F36
+        mem[zp::gamePhase] = 0x01;                                  // $3F36
     }
     flightParity ^= 1u;
-    return mem[0x0072];                                      // $3F50: ==2 -> level complete
+    return mem[zp::playerLives];                                      // $3F50: ==2 -> level complete
 }

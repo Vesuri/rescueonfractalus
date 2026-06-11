@@ -9,7 +9,7 @@ void rof_register_vbi_handlers(void) {
     /* VBI handlers */
     platform_register_vbi(0x1B30, vbi_handler_station);
     platform_register_vbi(0x53CC, vbi_handler_1);
-    platform_register_vbi(0x4FF5, vbi_handler_2);
+    platform_register_vbi(0x4FF5, vbi_handler_flight);
     platform_register_vbi(0x52D7, vbi_handler_game);
 
     /* DLI top-level handlers (called by renderer on DL entries with bit 7) */

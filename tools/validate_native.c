@@ -110,10 +110,10 @@ static int test_divide_16x16(void) {
     return mem_fail;
 }
 
-/* --- terrain_gen_3 @ $AD5F: clear-column over a FULLY randomized mem[]. ---
+/* --- clear_terrain_column @ $AD5F: clear-column over a FULLY randomized mem[]. ---
  * Randomizing all of mem[] means any stray write (wrong cell, wrong span) shows
  * up as a diff.  X spans 0..255 to exercise the 6502 byte-index wrap too. */
-static int test_terrain_gen_3(void) {
+static int test_clear_terrain_column(void) {
     enum { N = 20000 };
     static uint8_t pre[65536];
     int mem_fail = 0, cpu_diff = 0, printed = 0;
@@ -123,11 +123,11 @@ static int test_terrain_gen_3(void) {
         Cpu6502 c = zero_cpu();
         c.X = (uint8_t)(xs() & 0xFF);
 
-        mem_fail += diff_run("terrain_gen_3", pre, c,
-                             terrain_gen_3, terrain_gen_3__t6502, t, &printed, &cpu_diff);
+        mem_fail += diff_run("clear_terrain_column", pre, c,
+                             clear_terrain_column, clear_terrain_column__t6502, t, &printed, &cpu_diff);
     }
 
-    printf("terrain_gen_3: %d cases, %d mem mismatch (must be 0), %d cpu diffs "
+    printf("clear_terrain_column: %d cases, %d mem mismatch (must be 0), %d cpu diffs "
            "(incidental — callers reload X/A after the call)\n",
            N, mem_fail, cpu_diff);
     return mem_fail;
@@ -260,7 +260,7 @@ static int test_raster_fill_region(void) {
     return mem_fail;
 }
 
-/* terrain_sub_A822/A90A @ $A822/$A90A: plot one terrain object indexed by entry
+/* terrain_plot_object_a/A90A @ $A822/$A90A: plot one terrain object indexed by entry
  * X.  Force the two slot-guard cells ($2487/$242D[X]) to 0 so the body runs every
  * case (the nonzero early-out is a trivial empty return), and seed a realistic
  * step ($232E[X] in 0..$3F -> $0051) so the raster_fill_region loops terminate. */
@@ -312,20 +312,20 @@ static int test_from_snapshot(const char *name, void (*nat)(void), void (*t6502)
     return mem_fail;
 }
 
-/* terrain_gen_2 @ $A31E: snapshot-driven (its object loop drives terrain_sub_B172 /
+/* terrain_draw_frame @ $A31E: snapshot-driven (its object loop drives terrain_subdivide_column /
  * terrain_column_rasterize, which only terminate on real terrain arrays).  Entry X
  * is the level base index — the two real call-site values are $00 and $30, which
  * also exercise both sides of the $A7-zero check; alternate them.  RANDOM ($D20A)
  * is read several times and seeded identically per case by diff_run. */
-static int test_terrain_gen_2(void) {
+static int test_terrain_draw_frame(void) {
     static uint8_t snap[65536], pre[65536];
     const char *path = "a800dumps/flight_ram_0000_BFFF.bin";
     FILE *f = fopen(path, "rb");
-    if (!f) { printf("terrain_gen_2: SKIP (%s not found)\n", path); return 0; }
+    if (!f) { printf("terrain_draw_frame: SKIP (%s not found)\n", path); return 0; }
     memset(snap, 0, sizeof snap);
     size_t got = fread(snap, 1, 0xC000, f);
     fclose(f);
-    if (got != 0xC000) { printf("terrain_gen_2: SKIP (short read %zu)\n", got); return 0; }
+    if (got != 0xC000) { printf("terrain_draw_frame: SKIP (short read %zu)\n", got); return 0; }
 
     enum { N = 2000 };
     int mem_fail = 0, cpu_diff = 0, printed = 0;
@@ -333,10 +333,10 @@ static int test_terrain_gen_2(void) {
         memcpy(pre, snap, sizeof pre);
         Cpu6502 c = zero_cpu();
         c.X = (t & 1) ? 0x30 : 0x00;
-        mem_fail += diff_run("terrain_gen_2", pre, c, terrain_gen_2,
-                             terrain_gen_2__t6502, t, &printed, &cpu_diff);
+        mem_fail += diff_run("terrain_draw_frame", pre, c, terrain_draw_frame,
+                             terrain_draw_frame__t6502, t, &printed, &cpu_diff);
     }
-    printf("terrain_gen_2: %d cases (real flight snapshot, X in {0,$30}), %d mem mismatch (must be 0), %d cpu diffs\n",
+    printf("terrain_draw_frame: %d cases (real flight snapshot, X in {0,$30}), %d mem mismatch (must be 0), %d cpu diffs\n",
            N, mem_fail, cpu_diff);
     return mem_fail;
 }
@@ -346,7 +346,7 @@ int main(void) {
 
     int fails = 0;
     fails += test_divide_16x16();
-    fails += test_terrain_gen_3();
+    fails += test_clear_terrain_column();
     fails += test_signed_mul_8x16();
     fails += test_mem_contract("sine_table_lookup", sine_table_lookup, sine_table_lookup__t6502);
     fails += test_mem_contract("trig_interp_lookup", trig_interp_lookup, trig_interp_lookup__t6502);
@@ -363,15 +363,15 @@ int main(void) {
     fails += test_mem_contract_regs("terrain_plot_pixel", terrain_plot_pixel, terrain_plot_pixel__t6502);
     fails += test_mem_contract_regs("terrain_clip_row_top", terrain_clip_row_top, terrain_clip_row_top__t6502);
     fails += test_raster_fill_region();
-    fails += test_terrain_sub_obj("terrain_sub_A822", terrain_sub_A822, terrain_sub_A822__t6502);
-    fails += test_terrain_sub_obj("terrain_sub_A90A", terrain_sub_A90A, terrain_sub_A90A__t6502);
+    fails += test_terrain_sub_obj("terrain_plot_object_a", terrain_plot_object_a, terrain_plot_object_a__t6502);
+    fails += test_terrain_sub_obj("terrain_plot_object_b", terrain_plot_object_b, terrain_plot_object_b__t6502);
     fails += test_terrain_sub_obj("terrain_plot_object", terrain_plot_object, terrain_plot_object__t6502);
     fails += test_from_snapshot("terrain_column_rasterize", terrain_column_rasterize,
                                 terrain_column_rasterize__t6502, 4000, 0xFF);
-    fails += test_from_snapshot("terrain_sub_B172", terrain_sub_B172,
-                                terrain_sub_B172__t6502, 2000, 0x0F);
-    fails += test_mem_contract("terrain_gen_A613", terrain_gen_A613, terrain_gen_A613__t6502);
-    fails += test_mem_contract_regs("terrain_gen_1", terrain_gen_1, terrain_gen_1__t6502);
+    fails += test_from_snapshot("terrain_subdivide_column", terrain_subdivide_column,
+                                terrain_subdivide_column__t6502, 2000, 0x0F);
+    fails += test_mem_contract("terrain_jitter_column", terrain_jitter_column, terrain_jitter_column__t6502);
+    fails += test_mem_contract_regs("terrain_frame_setup", terrain_frame_setup, terrain_frame_setup__t6502);
     /* project_terrain_points: snapshot-driven (random mem can make divide_16x16's
        normalize loop spin forever on a pathological divisor — same hang in both
        runs, so a timeout can't diff them).  X masked to the real column range. */
@@ -382,7 +382,7 @@ int main(void) {
        entry X (column start) masked 0..$3F — all verified hang-free. */
     fails += test_from_snapshot("terrain_collision", terrain_collision,
                                 terrain_collision__t6502, 2000, 0x3F);
-    fails += test_terrain_gen_2();
+    fails += test_terrain_draw_frame();
 
     printf("\n%s\n", fails == 0
         ? "PASS — all native reimplementations are memory-equivalent to their 6502 oracles."

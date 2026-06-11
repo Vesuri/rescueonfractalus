@@ -67,7 +67,7 @@ void divide_16x16(void) {
     mem[0x00AE] = ae; mem[0x00AF] = af;
 }
 
-/* terrain_gen_3 @ $AD5F — clear one terrain column band + its object-table cells.
+/* clear_terrain_column @ $AD5F — clear one terrain column band + its object-table cells.
  *
  * Inputs : cpu.X = starting column offset into the terrain/object buffers.
  * Effect : zeroes 44 terrain rows (base $1010, stride $60) across 42 columns
@@ -81,7 +81,7 @@ void divide_16x16(void) {
  *          is dead.  We still reproduce it (A=0, Y=0, X=original, N/Z per LDX X)
  *          so the validation harness shows zero incidental CPU drift.
  */
-void terrain_gen_3(void) {
+void clear_terrain_column(void) {
     uint8_t x0 = mem[0x0094] = cpu.X;            /* $AD5F: STX $0094 (save column) */
 
     /* $AD61-$ADEF: 42 columns ($2A) x 44 rows (base $1010, stride $60), all 0. */
@@ -484,7 +484,7 @@ void build_view_transform_matrix(void) {
  * bytes $0092/$00A6 depend on it).  The PHA;PLA pair is replayed against the
  * 6502 stack (it leaves the pushed $0024 byte at mem[$0100+S]) for byte-identity.
  * Native compute_heading_sincos leaves carry untouched (matches the 6502 here).
- * Contract: memory only (the sole caller, terrain_gen_1, reloads A via build_view).
+ * Contract: memory only (the sole caller, terrain_frame_setup, reloads A via build_view).
  */
 void setup_projection_params(void) {
     uint8_t A, c = cpu.C;
@@ -567,7 +567,7 @@ void set_plot_mask_and_halve_step(void) {
         c = nc;
     }
     /* Replicate the transpiled exit registers: unlike the other leaves a caller
-       (terrain_sub_A822 path) may use the index X without reloading it. */
+       (terrain_plot_object_a path) may use the index X without reloading it. */
     cpu.X = x; cpu.A = a; cpu.C = c;
     cpu.N = (mem[0x0050] >> 7) & 1; cpu.Z = (mem[0x0050] == 0) ? 1 : 0;
 }
@@ -769,7 +769,7 @@ void raster_fill_region(void) {
     cpu.X = mem[0x28E1];                                          /* AC36: LDX $28E1 */
 }
 
-/* terrain_sub_A822 @ $A822 — plot one terrain object (gun tower etc.), variant A.
+/* terrain_plot_object_a @ $A822 — plot one terrain object (gun tower etc.), variant A.
  *
  * Indexed by cpu.X into the object tables.  Early-outs if the slot is busy
  * ($2487/$242D nonzero).  Sets the source ptr $28DC/$28DD, step {$0051:$0050},
@@ -781,7 +781,7 @@ void raster_fill_region(void) {
  * Contract: memory; exit X=$28E1 (restored by the tail raster_fill_region or the
  * explicit a868 path); other regs dead.
  */
-void terrain_sub_A822(void) {
+void terrain_plot_object_a(void) {
     if (mem[0x2487 + cpu.X] != 0) { terrain_obj_skip_return(); return; }   /* A822 */
     if (mem[0x242D + cpu.X] != 0) { terrain_obj_skip_return(); return; }   /* A827 */
     mem[0x28DC] = 0xF9; mem[0x28DD] = 0xA6;
@@ -819,7 +819,7 @@ void terrain_sub_A822(void) {
     raster_fill_region();
 }
 
-/* terrain_sub_A90A @ $A90A — plot one terrain object, variant B (4 plot points).
+/* terrain_plot_object_b @ $A90A — plot one terrain object, variant B (4 plot points).
  *
  * Like A822 but: column-reflect flag $28DF/$290F from $23B5[X]&1; uses point at
  * ($004E vs $260E[$004F]); after the fill it may additionally stamp a 2x2 cross of
@@ -827,7 +827,7 @@ void terrain_sub_A822(void) {
  * the object flag is in [2,$F8).  No RANDOM read.  All callees native/empty.
  * Contract: memory; exit X=$28E1; other regs dead.
  */
-void terrain_sub_A90A(void) {
+void terrain_plot_object_b(void) {
     if (mem[0x2487 + cpu.X] != 0) { terrain_distance_clamp_return(); return; }   /* A90A */
     if (mem[0x242D + cpu.X] != 0) { terrain_distance_clamp_return(); return; }   /* A90F */
     mem[0x28DC] = 0xF1; mem[0x28DD] = 0xA7;
@@ -874,7 +874,7 @@ void terrain_sub_A90A(void) {
  * is negative it routes to the A822 plotter; otherwise (for object codes in
  * [2,$F8) with $00A7==0) it computes the half-width into $0059/$005A (ABS via the
  * sign bit, rounded) and the span coords $28E4-$28EA/$0079, then falls through to
- * the A90A plotter.  Tail-calls native terrain_sub_A90A (the trailing
+ * the A90A plotter.  Tail-calls native terrain_plot_object_b (the trailing
  * terrain_clip_row_top in the transpile is dead code after the return).
  * Contract: memory; carry threaded through the width arithmetic.
  */
@@ -886,7 +886,7 @@ void terrain_plot_object(void) {
         terrain_plot_return(); return;
     }
     mem[0x28E1] = cpu.X;                                      /* a64f STX $28E1 */
-    if (mem[0x0900 + cpu.Y] & 0x80) { terrain_sub_A822(); return; }    /* a655 BPL -> N set: A822 */
+    if (mem[0x0900 + cpu.Y] & 0x80) { terrain_plot_object_a(); return; }    /* a655 BPL -> N set: A822 */
 
     int go = 0;                                              /* a65a: take the a66c path? */
     if (mem[0x00A7] == 0) {
@@ -924,7 +924,7 @@ void terrain_plot_object(void) {
             }
         }
     }
-    terrain_sub_A90A();                                      /* a6c8 tail */
+    terrain_plot_object_b();                                      /* a6c8 tail */
 }
 
 /* terrain_column_rasterize @ $B33D — THE fractal column renderer.
@@ -1083,7 +1083,7 @@ done:
     return;
 }
 
-/* terrain_sub_B172 @ $B172 — fractal terrain subdivision driver.
+/* terrain_subdivide_column @ $B172 — fractal terrain subdivision driver.
  *
  * Recursively midpoint-subdivides a span (calling native terrain_midpoint_displace
  * per split, storing the 5-byte sub-point into the $25B5/$25D3/$25F1/$24E3/$23E3[X]
@@ -1097,7 +1097,7 @@ done:
  * Contract: memory.  Validated with the real flight snapshot (it tail-drives
  * terrain_column_rasterize, which random mem[] can't terminate).
  */
-void terrain_sub_B172(void) {
+void terrain_subdivide_column(void) {
     uint8_t A, c;
     #define ADC_(v) do { uint16_t _t=(uint16_t)A+(uint8_t)(v)+c; c=(uint8_t)(_t>>8); A=(uint8_t)_t; } while(0)
     #define SBC_(v) ADC_((uint8_t)~(uint8_t)(v))
@@ -1202,14 +1202,14 @@ L_b2aa:
     #undef SBC_
 }
 
-/* terrain_gen_A613 @ $A613 — per-frame random terrain/object jitter (2+1 RANDOM).
+/* terrain_jitter_column @ $A613 — per-frame random terrain/object jitter (2+1 RANDOM).
  *
  * $2829 = RANDOM + RANDOM (with the add's carry rolled into $0068, EOR'd $FF when
  * the ship column $0064 >= $6C); $282C = RANDOM - $80 with $0069 = -1 on borrow
  * (a signed offset).  Tail-calls the empty terrain_plot_return.
  * Contract: memory.  Reads POKEY RANDOM (harness seeds it identically per run).
  */
-void terrain_gen_A613(void) {
+void terrain_jitter_column(void) {
     uint8_t A, c, Y;
     c = 0; A = bus_read(0xD20A);                          /* CLC; LDA $D20A */
     { uint16_t t = (uint16_t)A + bus_read(0xD20A) + c; c = (uint8_t)(t >> 8); A = (uint8_t)t; }  /* ADC $D20A */
@@ -1226,7 +1226,7 @@ void terrain_gen_A613(void) {
     terrain_plot_return();
 }
 
-/* terrain_gen_1 @ $9E54 — terrain/level generation step 1 (flight top #2).
+/* terrain_frame_setup @ $9E54 — terrain/level generation step 1 (flight top #2).
  *
  * Calls native setup_projection_params + build_view_transform_matrix, then runs
  * two loops over the per-column transform tables ($22A3/$22D1/$22FF/$232D etc.):
@@ -1241,7 +1241,7 @@ void terrain_gen_A613(void) {
  * into ROL $B5 is irrelevant (masked / discarded low bits) but threaded anyway.
  * Contract: memory only (the main flight loop reloads regs after the call).
  */
-void terrain_gen_1(void) {
+void terrain_frame_setup(void) {
     uint8_t A, X, Y, c;
     #define ADC_(v)  do { uint16_t _t=(uint16_t)A+(uint8_t)(v)+c; c=(uint8_t)(_t>>8); A=(uint8_t)_t; } while(0)
     #define SBC_(v)  ADC_((uint8_t)~(uint8_t)(v))
@@ -1440,7 +1440,7 @@ L_a09b:
  *   - half 1: {$22A4:$22D2}[X] / {$2300:$232E}[X]  ->  {$2400:$242D}[X]
  *   - half 2: {$235B:$2388}[X] / {$2300:$232E}[X]  ->  {$245A:$2487}[X]
  * Tail ($A2DD): add a per-screen-band scroll offset ($270E[]/$272D) into the
- * {$245A:$2487}[X] pair.  The $A31C fall-through into terrain_gen_2 is dead code
+ * {$245A:$2487}[X] pair.  The $A31C fall-through into terrain_draw_frame is dead code
  * (the preceding BMI/BPL are exhaustive) but kept to mirror the oracle.
  *
  * divide_16x16 is pure-memory (preserves cpu.X), so the entry X threads through as
@@ -1625,7 +1625,7 @@ L_a317:
     A = mem[0x272D];                                    /* a317 */
     if (A & 0x80) goto L_a300;                            /* a31a BMI */
     goto L_a2f0;                                         /* a31c BPL (always) */
-    /* a31e fall-through into terrain_gen_2 is unreachable (a31a/a31c exhaust N) */
+    /* a31e fall-through into terrain_draw_frame is unreachable (a31a/a31c exhaust N) */
 
     #undef ADC_
     #undef SBC_
@@ -1700,25 +1700,25 @@ void terrain_collision(void) {
     }                                                    /* b16e goto ae59 */
 }
 
-/* terrain_gen_2 @ $A31E — main per-frame terrain driver (flight top #5, the last).
+/* terrain_draw_frame @ $A31E — main per-frame terrain driver (flight top #5, the last).
  *
  * Input: cpu.X = level base index (saved to $00A7).  Phases:
  *  1. INIT: fill the $BD00 column-id table (2 ids x 8 cells, Y=$20..$D0 step 8),
  *     and the $263A/$26CE and $264E/$266F/$2690/$26B1 work arrays.
  *  2. SETUP: stash $0028/$0029, compute_row_xspans, seed span/clip accumulators.
  *  3. OBJECT LOOP ($A3AB, Y over the $B67C draw order until $90): per active pair,
- *     project_terrain_points + terrain_plot_object, then terrain_sub_B172 (the
+ *     project_terrain_points + terrain_plot_object, then terrain_subdivide_column (the
  *     fractal subdivision/column renderer).  All callees native.
  *  4. TAIL: altitude/pitch/scroll game-state math, check_target_in_window,
  *     obj_table_set_active, the $0A00 object bump, the random enemy-spawn path
- *     (terrain_gen_A613), reading POKEY RANDOM $D20A several times.
+ *     (terrain_jitter_column), reading POKEY RANDOM $D20A several times.
  *
  * Faithful goto transliteration (locals A/X/Y/c).  Native callees that consume a
  * register get cpu.X set first: project_terrain_points/terrain_plot_object take the
- * object index, terrain_sub_B172 takes 0, the transpiled game_sub_5815 takes $14.
+ * object index, terrain_subdivide_column takes 0, the transpiled ring_push_marked takes $14.
  * Reads $D20A (harness seeds it identically per case).  Contract: memory only.
  */
-void terrain_gen_2(void) {
+void terrain_draw_frame(void) {
     uint8_t A, X, Y, c = 0;
     #define ADC_(v)  do { uint16_t _t=(uint16_t)A+(uint8_t)(v)+c; c=(uint8_t)(_t>>8); A=(uint8_t)_t; } while(0)
     #define SBC_(v)  ADC_((uint8_t)~(uint8_t)(v))
@@ -1784,7 +1784,7 @@ L_a3da:
 L_a408:
     mem[0x0082]=mem[0x2400+X]; mem[0x0083]=mem[0x242D+X]; mem[0x0084]=mem[0x245A+X];  /* a408-a415 */
     mem[0x0085]=mem[0x2487+X]; mem[0x0086]=mem[0x23B5+X];  /* a417-a41f */
-    cpu.X = 0x00; terrain_sub_B172();                    /* a421-a423 */
+    cpu.X = 0x00; terrain_subdivide_column();                    /* a421-a423 */
     Y = mem[0x272E];                                     /* a426 */
     if (Y != 0) goto L_a42c;                             /* a429 BNE */
 L_a42b:
@@ -1806,7 +1806,7 @@ L_a433:
         mem[0x283F] = A;                                 /* a45e */
         if (c) goto L_a46c;                              /* a461 BCS */
         if (mem[0x003D] != 0) goto L_a46c;               /* a463 LDA $3D; a465 BNE */
-        cpu.X = 0x14; game_sub_5815();                   /* a467-a469 */
+        cpu.X = 0x14; ring_push_marked();                   /* a467-a469 */
     } else {
         mem[0x0642] = 0x00;                              /* a443-a445 */
     }                                                    /* a448 goto a46c */
@@ -1903,7 +1903,7 @@ L_a5b5:
     ASLA_(); c = 0; ADC_(0x42); mem[0x0066] = A;         /* a5e7-a5eb */
     A = X; c = 1; SBC_(0x10); mem[0x0064] = A;           /* a5ed-a5f1 TXA; SEC; SBC #$10 */
     A = 0x00; mem[0x0065]=A; mem[0x0067]=A; mem[0x0068]=A; mem[0x0069]=A;  /* a5f3-a5fb */
-    terrain_gen_A613();                                  /* a5fd */
+    terrain_jitter_column();                                  /* a5fd */
     A = 0x7F; mem[0x006A]=A; mem[0x0063]=A; mem[0x2845]=A;  /* a600-a606 */
     mem[0x0035] = 0x01;                                  /* a609-a60b */
     mem[0x282D] = mem[0x0034];                           /* a60d-a60f */

@@ -1949,7 +1949,7 @@ void startup_init(void) {
     /* 4016 */
     LDX(0x14);
     /* 4018 */
-    game_sub_5815();
+    ring_push_marked();
 L_401b:;
     /* 401b */
     PLA();
@@ -2244,7 +2244,7 @@ L_4130:;
     return;
 }
 
-/* update_blink_timer_006e @ $4131: Decr timer $006E; at 0 reload $0F, if $3E set & life_counter $062F=0 & $0063<0 fire game_sub_5815(X=$1C); toggles $00DE $4E/$46 */
+/* update_blink_timer_006e @ $4131: Decr timer $006E; at 0 reload $0F, if $3E set & life_counter $062F=0 & $0063<0 fire ring_push_marked(X=$1C); toggles $00DE $4E/$46 */
 void update_blink_timer_006e(void) {
     /* 4131 */
     LDA(mem[0x006E]);
@@ -2275,7 +2275,7 @@ void update_blink_timer_006e(void) {
     /* 414c */
     LDX(0x1C);
     /* 414e */
-    game_sub_5815();
+    ring_push_marked();
 L_4151:;
     /* 4151 */
     LDA(0x4E);
@@ -4179,7 +4179,7 @@ L_4f70:;
     intro_teardown_fade_loop(); return;
 }
 
-/* intro_sound_and_tick @ $4F9F: $2892 underflow: RANDOM($D20A) seeds sfx via game_sub_5815 (X=$0E,$0F); sets AUDC shadows $00DA-DD; dec $2891, clear game_state at 0 */
+/* intro_sound_and_tick @ $4F9F: $2892 underflow: RANDOM($D20A) seeds sfx via ring_push_marked (X=$0E,$0F); sets AUDC shadows $00DA-DD; dec $2891, clear game_state at 0 */
 void intro_sound_and_tick(void) {
     /* 4f9f */
     DEC_M(0x2892);
@@ -4196,11 +4196,11 @@ void intro_sound_and_tick(void) {
     /* 4fae */
     LDX(0x0E);
     /* 4fb0 */
-    game_sub_5815();
+    ring_push_marked();
     /* 4fb3 */
     INX();
     /* 4fb4 */
-    game_sub_5815();
+    ring_push_marked();
 L_4fb7:;
     /* 4fb7 */
     LDA(bus_read(0xD20A));
@@ -4270,8 +4270,8 @@ L_4fe2:;
     return;
 }
 
-/* vbi_handler_2 @ $4FF5: Second VBI handler (VVBLKI=$4FF5 set at $3E50 in game_entry setup) */
-void vbi_handler_2(void) {
+/* vbi_handler_flight @ $4FF5: In-flight VBI handler (VVBLKI=$4FF5 set at $3E50 during flight init); $51B9 block = flight_control_integrate + terrain projection, mirrored by flight_vbi_native */
+void vbi_handler_flight(void) {
     /* 4ff5 */
     LDA(0x00);
     /* 4ff7 */
@@ -4689,7 +4689,7 @@ L_51a5:;
     /* 51ad */
     if (cpu.Z) goto L_51b2;
     /* 51af */
-    game_sub_5815();
+    ring_push_marked();
 L_51b2:;
     /* 51b2 */
     LDA(mem[0x004A]);
@@ -5417,7 +5417,7 @@ L_5510:;
     /* 5515 */
     LDX(mem[(0x06F7)+cpu.Y]);
     /* 5518 */
-    game_sub_5815();
+    ring_push_marked();
 L_551b:;
     /* 551b */
     DEY();
@@ -5819,8 +5819,8 @@ L_56cf:;
     return;
 }
 
-/* game_sub_5815 @ $5815: Game sub (called with X param from $4010) */
-void game_sub_5815(void) {
+/* ring_push_marked @ $5815: TXA;ORA #$80;JMP ring_push_0719 — push object index X marked with bit7 ($80=active) into the $0719 event ring */
+void ring_push_marked(void) {
     /* 5815 */
     TXA();
     /* 5816 */
@@ -11696,14 +11696,14 @@ void decrement_bcd_0628_restart(void) {
     reinit_and_redraw_via_delay(); return;
 }
 
-/* reinit_and_redraw_via_delay @ $75DE: add_and_show_bcd_counter; game_sub_5815 X=$10; tail wait_frames_10 (PHA+$0A delay then re-enter game_entry) */
+/* reinit_and_redraw_via_delay @ $75DE: add_and_show_bcd_counter; ring_push_marked X=$10; tail wait_frames_10 (PHA+$0A delay then re-enter game_entry) */
 void reinit_and_redraw_via_delay(void) {
     /* 75de */
     add_and_show_bcd_counter();
     /* 75e1 */
     LDX(0x10);
     /* 75e3 */
-    game_sub_5815();
+    ring_push_marked();
     /* 75e6 */
     wait_frames_10(); return;
 }
@@ -12772,7 +12772,7 @@ L_7a14:;
     goto L_78d6;
 }
 
-/* animate_clear_colors_timed @ $7A17: Gated by $0014(RTCLOK); steps $007B/$007D, reads RANDOM $D20A, runs clear_colors loops + game_sub_5815 X=$19/$1B */
+/* animate_clear_colors_timed @ $7A17: Gated by $0014(RTCLOK); steps $007B/$007D, reads RANDOM $D20A, runs clear_colors loops + ring_push_marked X=$19/$1B */
 void animate_clear_colors_timed(void) {
     /* 7a17 */
     LDA(mem[0x0014]);
@@ -12787,13 +12787,13 @@ void animate_clear_colors_timed(void) {
     /* 7a21 */
     LDX(0x19);
     /* 7a23 */
-    game_sub_5815();
+    ring_push_marked();
     /* 7a26 */
     wait_frames_10();
     /* 7a29 */
     ASL_M(0x007D);
     /* 7a2b */
-    game_sub_5815();
+    ring_push_marked();
     /* 7a2e */
     if (!cpu.Z) goto L_7a84;
 L_7a30:;
@@ -12851,7 +12851,7 @@ L_7a58:;
     /* 7a5c */
     LDX(0x1B);
     /* 7a5e */
-    game_sub_5815();
+    ring_push_marked();
     /* 7a61 */
     LDX(mem[0x00C1]);
 L_7a63:;
@@ -12902,7 +12902,7 @@ L_7a88:;
     return;
 }
 
-/* clear_colors_sweep_5x @ $7A89: Y=5 outer loop: clear_colors X=$007D(min $14) until $003E set, then game_sub_5815 X=$1A; returns Z=done */
+/* clear_colors_sweep_5x @ $7A89: Y=5 outer loop: clear_colors X=$007D(min $14) until $003E set, then ring_push_marked X=$1A; returns Z=done */
 void clear_colors_sweep_5x(void) {
     /* 7a89 */
     LDY(0x05);
@@ -12929,7 +12929,7 @@ L_7a93:;
     /* 7a9d */
     LDX(0x1A);
     /* 7a9f */
-    game_sub_5815();
+    ring_push_marked();
     /* 7aa2 */
     DEY();
     /* 7aa3 */
@@ -12939,14 +12939,14 @@ L_7aa5:;
     return;
 }
 
-/* trigger_effect_4a @ $7AA6: LDA #$4A then falls into init_event_state_5815_x16 (sets $0044=A,$3388=$B4,$003C=0,game_sub_5815 X=$16) */
+/* trigger_effect_4a @ $7AA6: LDA #$4A then falls into init_event_state_5815_x16 (sets $0044=A,$3388=$B4,$003C=0,ring_push_marked X=$16) */
 void trigger_effect_4a(void) {
     /* 7aa6 */
     LDA(0x4A);
     init_event_state_5815_x16(); return;
 }
 
-/* init_event_state_5815_x16 @ $7AA8: Tail: $0044=A, $3388=$B4, $003C=0, then game_sub_5815(X=$16); inits state and triggers game sub */
+/* init_event_state_5815_x16 @ $7AA8: Tail: $0044=A, $3388=$B4, $003C=0, then ring_push_marked(X=$16); inits state and triggers game sub */
 void init_event_state_5815_x16(void) {
     /* 7aa8 */
     mem[0x0044] = cpu.A;
@@ -12961,7 +12961,7 @@ void init_event_state_5815_x16(void) {
     /* 7ab3 */
     LDX(0x16);
     /* 7ab5 */
-    game_sub_5815(); return;
+    ring_push_marked(); return;
 }
 
 /* pmg_enemy_update @ $7AB8: PMG enemy update (1 RANDOM read; called from enemy_check when $0633≠0) */
@@ -13000,7 +13000,7 @@ L_7acb:;
     /* 7ad8 */
     mem[0x0047] = cpu.Y;
     /* 7ada */
-    game_sub_AA95();
+    jitter_roll_pitch();
 L_7add:;
     /* 7add */
     LDA(mem[0x0072]);
@@ -13020,11 +13020,11 @@ L_7aea:;
     /* 7aea */
     LDX(0x1A);
     /* 7aec */
-    game_sub_5815();
+    ring_push_marked();
     /* 7aef */
     INX();
     /* 7af0 */
-    game_sub_5815(); return;
+    ring_push_marked(); return;
 L_7af3:;
     /* 7af3 */
     return;
@@ -13276,7 +13276,7 @@ L_7bb5:;
     return;
 }
 
-/* setup_level_clear_state @ $7BC6: sets $3A=$FF; if level_or_state($04) set lives($72)=2; timer($44)=$52; X=$1D; tail game_sub_5815 */
+/* setup_level_clear_state @ $7BC6: sets $3A=$FF; if level_or_state($04) set lives($72)=2; timer($44)=$52; X=$1D; tail ring_push_marked */
 void setup_level_clear_state(void) {
     /* 7bc6 */
     LDA(0xFF);
@@ -13298,7 +13298,7 @@ L_7bd2:;
     /* 7bd6 */
     LDX(0x1D);
     /* 7bd8 */
-    game_sub_5815(); return;
+    ring_push_marked(); return;
 }
 
 /* animate_zoom_sequence @ $7C01: 8-frame loop: wait RTCLOK_LOW($14)>=3; per-phase($291F) table $7D8D/95/9D; 16-bit accum $59/$5A,$3F/$40; calls draw_shape_7c9a */
@@ -13333,7 +13333,7 @@ L_7c1b:;
     /* 7c1b */
     LDX(0x19);
     /* 7c1d */
-    game_sub_5815();
+    ring_push_marked();
 L_7c20:;
     /* 7c20 */
     LDA(mem[(0x7D8D)+cpu.Y]);
@@ -14184,11 +14184,11 @@ L_80bb:;
     /* 80bb */
     LDX(0x1A);
     /* 80bd */
-    game_sub_5815();
+    ring_push_marked();
     /* 80c0 */
     INX();
     /* 80c1 */
-    game_sub_5815(); return;
+    ring_push_marked(); return;
 L_80c4:;
     /* 80c4 */
     return;
@@ -16082,7 +16082,7 @@ L_92a6:;
     if (!cpu.Z) goto L_92c4;
 L_92c1:;
     /* 92c1 */
-    terrain_gen_A613();
+    terrain_jitter_column();
 L_92c4:;
     /* 92c4 */
     object_integrate_position();
@@ -16321,7 +16321,7 @@ L_93b7:;
     return;
 }
 
-/* check_object_in_target_box @ $93BD: if $0065/$0067=0 and $0064 in [$34,$AC) and $0066 in [$1A,$6A): set $3B=$20, call b786 & game_sub_AA95, clear $2892, set $3355=$34, $2891=$1E (trigger event in box) */
+/* check_object_in_target_box @ $93BD: if $0065/$0067=0 and $0064 in [$34,$AC) and $0066 in [$1A,$6A): set $3B=$20, call b786 & jitter_roll_pitch, clear $2892, set $3355=$34, $2891=$1E (trigger event in box) */
 void check_object_in_target_box(void) {
     /* 93bd */
     LDA(mem[0x0065]);
@@ -16358,7 +16358,7 @@ void check_object_in_target_box(void) {
     /* 93dd */
     reset_indicator_event();
     /* 93e0 */
-    game_sub_AA95();
+    jitter_roll_pitch();
     /* 93e3 */
     LDA(0x00);
     /* 93e5 */
@@ -16464,7 +16464,7 @@ L_94be:;
     return;
 }
 
-/* load_velocity_from_param_block @ $94BF: init accum $2854-$2863 from param block $28FD-$290A: sign-extend & ASL/ROL scale ($285E,$2861), $285B=clamp($2902+8), $2863=$290A>>1-1; then game_sub_5815 X=$11 */
+/* load_velocity_from_param_block @ $94BF: init accum $2854-$2863 from param block $28FD-$290A: sign-extend & ASL/ROL scale ($285E,$2861), $285B=clamp($2902+8), $2863=$290A>>1-1; then ring_push_marked X=$11 */
 void load_velocity_from_param_block(void) {
     /* 94bf */
     LDA(0x00);
@@ -16588,7 +16588,7 @@ L_9526:;
     /* 954d */
     LDX(0x11);
     /* 954f */
-    game_sub_5815(); return;
+    ring_push_marked(); return;
 }
 
 /* object_step_and_collide @ $9552: add vel $285C-$2863 to pos accum $2854-$285B (mirror $27FD-$2800); build cell idx $2864 into maps $0900/$0A00; altitude/bounds checks; on hit set $2843=$FC, call 96d9/7b80/7b3c, set $0044/$004D/$007E; tail reset_object_slot */
@@ -16860,7 +16860,7 @@ L_9675:;
     reset_object_slot(); return;
 }
 
-/* reset_object_slot @ $9677: set $0036=$80 then game_sub_5815 with X=$0E (object reset/dispatch helper) */
+/* reset_object_slot @ $9677: set $0036=$80 then ring_push_marked with X=$0E (object reset/dispatch helper) */
 void reset_object_slot(void) {
     /* 9677 */
     LDA(0x80);
@@ -16869,7 +16869,7 @@ void reset_object_slot(void) {
     /* 967b */
     LDX(0x0E);
     /* 967d */
-    game_sub_5815(); return;
+    ring_push_marked(); return;
 }
 
 /* check_player_proximity_hit @ $9680: compute |$006A+4-$0036|; if <4 form dist from $0038/$0039 vs $2824/$2821, cmp tbl $96F5[$0036]; on hit clear $2826, call b786/9677/96d9, set $0045=$50 $0046=$02, 7b88 & terrain_gen */
@@ -16962,13 +16962,13 @@ L_96b0:;
     /* 96d2 */
     bcd_inc_counter_0641();
     /* 96d5 */
-    terrain_gen_A613(); return;
+    terrain_jitter_column(); return;
 L_96d8:;
     /* 96d8 */
     return;
 }
 
-/* trigger_object_explosion @ $96D9: inc $0041(game_state), set shape ptrs $00DA=$78 $00DB=$7E $00DC=$76 $00DD=$7C, $28EE=$02, then game_sub_5815 X=$0F (start explosion anim) */
+/* trigger_object_explosion @ $96D9: inc $0041(game_state), set shape ptrs $00DA=$78 $00DB=$7E $00DC=$76 $00DD=$7C, $28EE=$02, then ring_push_marked X=$0F (start explosion anim) */
 void trigger_object_explosion(void) {
     /* 96d9 */
     INC_M(0x0041);
@@ -16995,7 +16995,7 @@ void trigger_object_explosion(void) {
     /* 96f0 */
     LDX(0x0F);
     /* 96f2 */
-    game_sub_5815(); return;
+    ring_push_marked(); return;
 }
 
 /* compute_target_blip_position @ $9713: From L/R range $27F7/$27F8 derives blip Y=$0021,X=$0027; tests $005D, alien masks $1027/$1057 AND $AA, $0070; adds parallax $2912/$2913 */
@@ -18061,7 +18061,7 @@ L_9b47:;
     /* 9b47 */
     LDX(0x13);
     /* 9b49 */
-    game_sub_5815(); return;
+    ring_push_marked(); return;
 }
 
 /* exit_terrain_special_state @ $9B4C: Inverse of $9b0d gated by $066C/$06A4/$0696; clears $2877/$0696/$0697, $0688/$0689=$FF, $06A4/$06A5=1, $3355=$B4, calls game_sub_55FC */
@@ -18891,9 +18891,9 @@ L_9e51:;
     return;
 }
 
-/* terrain_gen_1 @ $9E54: Terrain/level generation step 1 (called before terrain_gen_2) */
-/* faithful transliteration kept as the validation oracle; native terrain_gen_1() lives in rof_native.c (see VALIDATE_FUNCS) */
-void terrain_gen_1__t6502(void) {
+/* terrain_frame_setup @ $9E54: Per-frame terrain view-transform setup: calls setup_projection_params + build_view_transform_matrix, then two loops over the per-column transform tables (was terrain_gen_1) */
+/* faithful transliteration kept as the validation oracle; native terrain_frame_setup() lives in rof_native.c (see VALIDATE_FUNCS) */
+void terrain_frame_setup__t6502(void) {
     /* 9e54 */
     setup_projection_params();
     /* 9e57 */
@@ -19460,7 +19460,7 @@ L_a0a2:;
     return;
 }
 
-/* build_view_transform_matrix @ $A0A3: Builds rotation matrix from sin/cos $00A0-$00A3 scaled by $0089/vbi_phase$0087 via signed_mul; stores to $22A3/$22D1,$22FF/$232D; called by terrain_gen_1 */
+/* build_view_transform_matrix @ $A0A3: Builds rotation matrix from sin/cos $00A0-$00A3 scaled by $0089/vbi_phase$0087 via signed_mul; stores to $22A3/$22D1,$22FF/$232D; called by terrain_frame_setup */
 /* faithful transliteration kept as the validation oracle; native build_view_transform_matrix() lives in rof_native.c (see VALIDATE_FUNCS) */
 void build_view_transform_matrix__t6502(void) {
     /* a0a3 */
@@ -19573,7 +19573,7 @@ void build_view_transform_matrix__t6502(void) {
     return;
 }
 
-/* project_terrain_points @ $A11F: Per-object(X) world->screen projection: normalizes $2300/$232E,$22A4/$22D2,$235B/$2388, divides via divide_16x16, writes $2400/$242D,$245A/$2487; tail does terrain scroll w/ RANDOM $D20A + terrain_gen_A613 */
+/* project_terrain_points @ $A11F: Per-object(X) world->screen projection: normalizes $2300/$232E,$22A4/$22D2,$235B/$2388, divides via divide_16x16, writes $2400/$242D,$245A/$2487; tail does terrain scroll w/ RANDOM $D20A + terrain_jitter_column */
 /* faithful transliteration kept as the validation oracle; native project_terrain_points() lives in rof_native.c (see VALIDATE_FUNCS) */
 void project_terrain_points__t6502(void) {
     /* a11f */
@@ -20098,12 +20098,12 @@ L_a317:;
     if (cpu.N) goto L_a300;
     /* a31c */
     if (!cpu.N) goto L_a2f0;
-    terrain_gen_2(); return;
+    terrain_draw_frame(); return;
 }
 
-/* terrain_gen_2 @ $A31E: Terrain/level generation step 2 (called with X=level*$30; 2 RANDOM reads) */
-/* faithful transliteration kept as the validation oracle; native terrain_gen_2() lives in rof_native.c (see VALIDATE_FUNCS) */
-void terrain_gen_2__t6502(void) {
+/* terrain_draw_frame @ $A31E: Main per-frame terrain draw driver (X=half*$30): row-xspans + object loop (project_terrain_points/terrain_plot_object/terrain_subdivide_column) + game-state tail; 2 RANDOM reads (was terrain_gen_2) */
+/* faithful transliteration kept as the validation oracle; native terrain_draw_frame() lives in rof_native.c (see VALIDATE_FUNCS) */
+void terrain_draw_frame__t6502(void) {
     /* a31e */
     mem[0x00A7] = cpu.X;
     /* a320 */
@@ -20333,7 +20333,7 @@ L_a408:;
     /* a421 */
     LDX(0x00);
     /* a423 */
-    terrain_sub_B172();
+    terrain_subdivide_column();
     /* a426 */
     LDY(mem[0x272E]);
     /* a429 */
@@ -20400,7 +20400,7 @@ L_a456:;
     /* a467 */
     LDX(0x14);
     /* a469 */
-    game_sub_5815();
+    ring_push_marked();
 L_a46c:;
     /* a46c */
     LDA(mem[0x2912]);
@@ -20795,7 +20795,7 @@ L_a5b5:;
     /* a5fb */
     mem[0x0069] = cpu.A;
     /* a5fd */
-    terrain_gen_A613();
+    terrain_jitter_column();
     /* a600 */
     LDA(0x7F);
     /* a602 */
@@ -20817,9 +20817,9 @@ L_a612:;
     return;
 }
 
-/* terrain_gen_A613 @ $A613: Terrain sub (2 RANDOM reads) */
-/* faithful transliteration kept as the validation oracle; native terrain_gen_A613() lives in rof_native.c (see VALIDATE_FUNCS) */
-void terrain_gen_A613__t6502(void) {
+/* terrain_jitter_column @ $A613: Random-jitters the freshly-scrolled terrain column (RANDOM reads); tail of the scroll in project_terrain_points (was terrain_gen_A613) */
+/* faithful transliteration kept as the validation oracle; native terrain_jitter_column() lives in rof_native.c (see VALIDATE_FUNCS) */
+void terrain_jitter_column__t6502(void) {
     /* a613 */
     CLC();
     /* a614 */
@@ -20890,7 +20890,7 @@ L_a64f:;
     /* a655 */
     if (!cpu.N) goto L_a65a;
     /* a657 */
-    terrain_sub_A822(); return;
+    terrain_plot_object_a(); return;
 L_a65a:;
     /* a65a */
     LDA(mem[0x00A7]);
@@ -20996,13 +20996,13 @@ L_a683:;
     mem[0x0040] = cpu.A;
 L_a6c8:;
     /* a6c8 */
-    terrain_sub_A90A(); return;
+    terrain_plot_object_b(); return;
     terrain_clip_row_top(); return;
 }
 
-/* terrain_sub_A822 @ $A822: Terrain/game sub (0 callers; 1 RANDOM read) */
-/* faithful transliteration kept as the validation oracle; native terrain_sub_A822() lives in rof_native.c (see VALIDATE_FUNCS) */
-void terrain_sub_A822__t6502(void) {
+/* terrain_plot_object_a @ $A822: Plot one terrain object, variant A (reached indirectly from terrain_plot_object; 1 RANDOM read) (was terrain_sub_A822) */
+/* faithful transliteration kept as the validation oracle; native terrain_plot_object_a() lives in rof_native.c (see VALIDATE_FUNCS) */
+void terrain_plot_object_a__t6502(void) {
     /* a822 */
     LDA(mem[(0x2487)+cpu.X]);
     /* a825 */
@@ -21215,9 +21215,9 @@ L_a8d5:;
     terrain_distance_clamp_return(); return;
 }
 
-/* terrain_sub_A90A @ $A90A: Terrain/game sub (0 callers; 4 callees) */
-/* faithful transliteration kept as the validation oracle; native terrain_sub_A90A() lives in rof_native.c (see VALIDATE_FUNCS) */
-void terrain_sub_A90A__t6502(void) {
+/* terrain_plot_object_b @ $A90A: Plot one terrain object, variant B (reached indirectly from terrain_plot_object; 4 callees) (was terrain_sub_A90A) */
+/* faithful transliteration kept as the validation oracle; native terrain_plot_object_b() lives in rof_native.c (see VALIDATE_FUNCS) */
+void terrain_plot_object_b__t6502(void) {
     /* a90a */
     LDA(mem[(0x2487)+cpu.X]);
     /* a90d */
@@ -21492,7 +21492,7 @@ L_aa13:;
     /* aa2d */
     mem[0x28F9] = cpu.A;
     /* aa30 */
-    game_sub_AACF();
+    plot_scanline_rand_dir();
     /* aa33 */
     LDA(0xBE);
     /* aa35 */
@@ -21511,11 +21511,11 @@ L_aa3f:;
     /* aa41 */
     LDX(0x07);
     /* aa43 */
-    game_sub_5815();
+    ring_push_marked();
     /* aa46 */
     LDX(0x02);
     /* aa48 */
-    game_sub_5815(); return;
+    ring_push_marked(); return;
 L_aa4b:;
     /* aa4b */
     LDA(0x00);
@@ -21575,24 +21575,24 @@ L_aa5c:;
     /* aa83 */
     LDX(0x03);
     /* aa85 */
-    game_sub_5815();
+    ring_push_marked();
     /* aa88 */
     INX();
     /* aa89 */
-    game_sub_5815();
+    ring_push_marked();
     /* aa8c */
     LDX(0x0A);
     /* aa8e */
-    game_sub_5815();
+    ring_push_marked();
     /* aa91 */
     INX();
     /* aa92 */
-    game_sub_5815();
-    game_sub_AA95(); return;
+    ring_push_marked();
+    jitter_roll_pitch(); return;
 }
 
-/* game_sub_AA95 @ $AA95: Game sub (1 RANDOM read) */
-void game_sub_AA95(void) {
+/* jitter_roll_pitch @ $AA95: Random-walks roll $0029 and pitch $0026 accumulators toward limits via RANDOM $D20A; called from pmg_enemy_update (was game_sub_AA95) */
+void jitter_roll_pitch(void) {
     /* aa95 */
     LDY(mem[0x0029]);
     /* aa97 */
@@ -21664,8 +21664,8 @@ L_aacc:;
     return;
 }
 
-/* game_sub_AACF @ $AACF: Game sub (1 RANDOM read) */
-void game_sub_AACF(void) {
+/* plot_scanline_rand_dir @ $AACF: Reads RANDOM $D20A: branches to plot_scanline_up else falls through to plot_scanline_down — random-direction scanline plot (was game_sub_AACF) */
+void plot_scanline_rand_dir(void) {
     /* aacf */
     LDA(bus_read(0xD20A));
     /* aad2 */
@@ -22200,9 +22200,9 @@ L_ad4c:;
     return;
 }
 
-/* terrain_gen_3 @ $AD5F: Terrain/level generation step 3 (called with X=level param; 244 bytes) */
-/* faithful transliteration kept as the validation oracle; native terrain_gen_3() lives in rof_native.c (see VALIDATE_FUNCS) */
-void terrain_gen_3__t6502(void) {
+/* clear_terrain_column @ $AD5F: Clears one terrain column band (X=start column): 42 cols x 44 rows from base $1010 stride $60, plus scattered object-table cells (was terrain_gen_3) */
+/* faithful transliteration kept as the validation oracle; native clear_terrain_column() lives in rof_native.c (see VALIDATE_FUNCS) */
+void clear_terrain_column__t6502(void) {
     /* ad5f */
     mem[0x0094] = cpu.X;
     /* ad61 */
@@ -23142,9 +23142,9 @@ L_b171:;
     return;
 }
 
-/* terrain_sub_B172 @ $B172: Terrain sub (calls $B33D and $B2CC) */
-/* faithful transliteration kept as the validation oracle; native terrain_sub_B172() lives in rof_native.c (see VALIDATE_FUNCS) */
-void terrain_sub_B172__t6502(void) {
+/* terrain_subdivide_column @ $B172: Fractal subdivision driver: calls terrain_column_rasterize ($B33D) + terrain_midpoint_displace ($B2CC) (was terrain_sub_B172) */
+/* faithful transliteration kept as the validation oracle; native terrain_subdivide_column() lives in rof_native.c (see VALIDATE_FUNCS) */
+void terrain_subdivide_column__t6502(void) {
     /* b172 */
     LDA(mem[0x25D2]);
     /* b175 */
@@ -24759,15 +24759,15 @@ L_3eb8:;
     mem[0x004A] = cpu.A;
 L_3eba:; platform_tick_vbi(); platform_render_frame();
     /* 3eba */
-    terrain_gen_1();
+    terrain_frame_setup();
     /* 3ebd */
     LDX(0x33);
     /* 3ebf */
-    terrain_gen_3();
+    clear_terrain_column();
     /* 3ec2 */
     LDX(0x30);
     /* 3ec4 */
-    terrain_gen_2();
+    terrain_draw_frame();
     /* 3ec7 */
     LDX(0x33);
     /* 3ec9 */
@@ -24809,15 +24809,15 @@ L_3eec:;
     mem[0x2849] = cpu.A;
 L_3ef5:;
     /* 3ef5 */
-    terrain_gen_1();
+    terrain_frame_setup();
     /* 3ef8 */
     LDX(0x03);
     /* 3efa */
-    terrain_gen_3();
+    clear_terrain_column();
     /* 3efd */
     LDX(0x00);
     /* 3eff */
-    terrain_gen_2();
+    terrain_draw_frame();
     /* 3f02 */
     LDX(0x03);
     /* 3f04 */
@@ -25216,7 +25216,7 @@ L_4280:;
     saucer_write_shape(); return;
 }
 
-/* saucer_write_shape @ $4285: Writes A into shape table $3491+Y, then LDX #$12 and tail-calls game_sub_5815 (sprite/object update with X=$12) */
+/* saucer_write_shape @ $4285: Writes A into shape table $3491+Y, then LDX #$12 and tail-calls ring_push_marked (sprite/object update with X=$12) */
 void saucer_write_shape(void) {
 L_4285:;
     /* 4285 */
@@ -25224,7 +25224,7 @@ L_4285:;
     /* 4288 */
     LDX(0x12);
     /* 428a */
-    game_sub_5815(); return;
+    ring_push_marked(); return;
     saucer_anim_return(); return;
 }
 
@@ -25987,7 +25987,7 @@ void clear_var_0632(void) {
     return;
 }
 
-/* terrain_plot_return @ $A63A: $A63A: empty RTS; fall-through tail/return target of terrain_gen_A613 and terrain_plot_object pixel loop */
+/* terrain_plot_return @ $A63A: $A63A: empty RTS; fall-through tail/return target of terrain_jitter_column and terrain_plot_object pixel loop */
 void terrain_plot_return(void) {
     /* a63a */
     return;
@@ -26052,7 +26052,7 @@ void terrain_plot_skip_return(void) {
     terrain_obj_skip_return(); return;
 }
 
-/* terrain_obj_skip_return @ $A821: $A821: empty RTS; early-out target from terrain_sub_A822 when $2487[X]/$242D[X] nonzero */
+/* terrain_obj_skip_return @ $A821: $A821: empty RTS; early-out target from terrain_plot_object_a when $2487[X]/$242D[X] nonzero */
 void terrain_obj_skip_return(void) {
     /* a821 */
     return;

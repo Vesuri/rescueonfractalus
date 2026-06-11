@@ -52,7 +52,7 @@ MANUAL_FUNCS = {
 # everything not listed here stays transliterated and fully regenerable.
 VALIDATE_FUNCS = {
     0x9D6F,  # divide_16x16 — restoring 16-bit divide (prototype target)
-    0xAD5F,  # terrain_gen_3 — clear a terrain column band + object-table cells (flight leaf #1)
+    0xAD5F,  # clear_terrain_column — clear a terrain column band + object-table cells (flight leaf #1)
     0x9C97,  # signed_mul_8x16 — fixed-point signed 8x16 multiply (flight leaf #2)
     0x9C55,  # sine_table_lookup — quarter-wave sine/cos table lookup (flight leaf #3a)
     0x9BDB,  # trig_interp_lookup — sine interpolation angle..angle+1 (flight leaf #3b)
@@ -69,16 +69,16 @@ VALIDATE_FUNCS = {
     0xA6D3,  # terrain_plot_pixel — OR voxel mask into terrain bitmap (flight raster #1)
     0xA6CB,  # terrain_clip_row_top — clip column top vs row limit (flight raster #2)
     0xAB9A,  # raster_fill_region — nested 12x32 cell fill via terrain_clip_row_top (flight raster #3)
-    0xA822,  # terrain_sub_A822 — plot one terrain object, variant A (flight raster #4)
-    0xA90A,  # terrain_sub_A90A — plot one terrain object, variant B (flight raster #5)
+    0xA822,  # terrain_plot_object_a — plot one terrain object, variant A (flight raster #4)
+    0xA90A,  # terrain_plot_object_b — plot one terrain object, variant B (flight raster #5)
     0xA63B,  # terrain_plot_object — per-object raster dispatch (flight raster #6)
     0xB33D,  # terrain_column_rasterize — fractal column renderer (flight raster #7, the big one)
-    0xB172,  # terrain_sub_B172 — fractal subdivision driver (flight raster #8)
-    0xA613,  # terrain_gen_A613 — per-frame random terrain jitter (flight top #1)
-    0x9E54,  # terrain_gen_1 — terrain gen step 1: view setup + per-column transform (flight top #2)
+    0xB172,  # terrain_subdivide_column — fractal subdivision driver (flight raster #8)
+    0xA613,  # terrain_jitter_column — per-frame random terrain jitter (flight top #1)
+    0x9E54,  # terrain_frame_setup — terrain gen step 1: view setup + per-column transform (flight top #2)
     0xA11F,  # project_terrain_points — per-object world->screen projection via divide_16x16 (flight top #3)
     0xAE53,  # terrain_collision — collision row scan + silhouette fill + column raster (flight top #4)
-    0xA31E,  # terrain_gen_2 — main per-frame terrain driver (flight top #5, the last)
+    0xA31E,  # terrain_draw_frame — main per-frame terrain driver (flight top #5, the last)
 }
 VALIDATE_SUFFIX = '__t6502'
 

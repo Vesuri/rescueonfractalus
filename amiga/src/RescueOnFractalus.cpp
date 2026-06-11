@@ -533,7 +533,7 @@ void RescueOnFractalus::initialize()
     // mem[$00D8] is the title TEXT colour (COLPF0); snapshot has $78 (blue). Leave as-is.
     // mem[$02C8] is the title BACKGROUND (COLBK); snapshot has $06 (grey). Leave as-is.
 
-    // (Removed: $0044/$063E patches that used to placate vbi_handler_2's FUN_47A3 /
+    // (Removed: $0044/$063E patches that used to placate vbi_handler_flight's FUN_47A3 /
     // $480B paths — neither handler is ported on the Amiga, so nothing reads those
     // bytes here; the writes were dead.)
 
@@ -816,7 +816,7 @@ void RescueOnFractalus::update(uint16_t frame)
     }
 
     // The attract/Standby per-frame timer belongs to vbi_handler_game ($52D7); in
-    // flight the active VBI is vbi_handler_2 ($4FF5), so skip it once in kFlight.
+    // flight the active VBI is vbi_handler_flight ($4FF5), so skip it once in kFlight.
     if (launchPhase != kFlight)
         vbi_attract_timer_native();       // $52D7: attract timer cascade
     update_indicator_blink_native();    // $4131: cockpit blink lights

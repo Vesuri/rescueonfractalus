@@ -123,11 +123,11 @@ $4606,game_sub_4606,func,0,Game subsystem (called multiple times including in ga
 $462A,irq_handler,func,0,Immediate IRQ handler (VIMIRQ=$462A); set in game_entry at $3D28
 $49EE,dli_handler_game,func,0,DLI handler during game (VDSLST=$49EE set at $3E6D in game_entry)
 $4F3F,game_sub_4f3f,func,0,Game subsystem (called from enemy_check when $063D≠0; 0 callers from normal flow)
-$4FF5,vbi_handler_2,func,0,Second VBI handler (VVBLKI=$4FF5 set at $3E50 in game_entry setup)
+$4FF5,vbi_handler_flight,func,0,In-flight VBI handler (VVBLKI=$4FF5 set at $3E50 during flight init); $51B9 block = flight_control_integrate + terrain projection, mirrored by flight_vbi_native
 $5433,font_display_init,func,0,Font/display character setup (called in game_entry init)
 $53CC,vbi_handler_1,func,0,First in-game VBI handler (VVBLKI=$53CC set at $3D63 in game_entry)
 $52D7,vbi_handler_game,func,0,Main game VBI handler (VVBLKI=$52D7 set in display_setup $5F50-$57)
-$5815,game_sub_5815,func,0,Game sub (called with X param from $4010)
+$5815,ring_push_marked,func,0,TXA;ORA #$80;JMP ring_push_0719 — push object index X marked with bit7 ($80=active) into the $0719 event ring
 $581C,input_init,func,0,Input/controller init (called twice: X=$1F then X=$20)
 $587B,cockpit_display,func,0,Cockpit/instrument display or main input handler (reads PORTA/CONSOL; called if $060B≠0)
 $55FC,game_sub_55FC,func,0,Called at end of each main game loop iteration before JMP $3E0F
@@ -158,17 +158,17 @@ $7B54,game_sub_7B54,func,0,Game sub (1 RANDOM read; called in main loop)
 $7EC7,game_sub_7EC7,func,0,Game sub (3 RANDOM reads)
 $7F85,game_sub_7F85,func,0,Game sub (1 RANDOM read)
 $8237,audio_irq_handler,func,0,Audio IRQ handler (0 callers; writes AUDF1-4 + AUDCTL; timer-driven sound update)
-$9E54,terrain_gen_1,func,0,Terrain/level generation step 1 (called before terrain_gen_2)
-$A31E,terrain_gen_2,func,0,Terrain/level generation step 2 (called with X=level*$30; 2 RANDOM reads)
-$A613,terrain_gen_A613,func,0,Terrain sub (2 RANDOM reads)
-$A822,terrain_sub_A822,func,0,Terrain/game sub (0 callers; 1 RANDOM read)
-$A90A,terrain_sub_A90A,func,0,Terrain/game sub (0 callers; 4 callees)
+$9E54,terrain_frame_setup,func,0,Per-frame terrain view-transform setup: calls setup_projection_params + build_view_transform_matrix, then two loops over the per-column transform tables (was terrain_gen_1)
+$A31E,terrain_draw_frame,func,0,Main per-frame terrain draw driver (X=half*$30): row-xspans + object loop (project_terrain_points/terrain_plot_object/terrain_subdivide_column) + game-state tail; 2 RANDOM reads (was terrain_gen_2)
+$A613,terrain_jitter_column,func,0,Random-jitters the freshly-scrolled terrain column (RANDOM reads); tail of the scroll in project_terrain_points (was terrain_gen_A613)
+$A822,terrain_plot_object_a,func,0,Plot one terrain object, variant A (reached indirectly from terrain_plot_object; 1 RANDOM read) (was terrain_sub_A822)
+$A90A,terrain_plot_object_b,func,0,Plot one terrain object, variant B (reached indirectly from terrain_plot_object; 4 callees) (was terrain_sub_A90A)
 $A99C,game_state_update,func,0,Game state update (2 RANDOM reads; called from main game loop)
-$AA95,game_sub_AA95,func,0,Game sub (1 RANDOM read)
-$AACF,game_sub_AACF,func,0,Game sub (1 RANDOM read)
-$AD5F,terrain_gen_3,func,0,Terrain/level generation step 3 (called with X=level param; 244 bytes)
+$AA95,jitter_roll_pitch,func,0,Random-walks roll $0029 and pitch $0026 accumulators toward limits via RANDOM $D20A; called from pmg_enemy_update (was game_sub_AA95)
+$AACF,plot_scanline_rand_dir,func,0,Reads RANDOM $D20A: branches to plot_scanline_up else falls through to plot_scanline_down — random-direction scanline plot (was game_sub_AACF)
+$AD5F,clear_terrain_column,func,0,Clears one terrain column band (X=start column): 42 cols x 44 rows from base $1010 stride $60, plus scattered object-table cells (was terrain_gen_3)
 $AE53,terrain_collision,func,0,Terrain collision/render: 799 bytes; compares ship position against 8 terrain rows at $1010,$1070,$10D0,$1130,$1190,$11F0,$1250,$12B0 (spaced $60 apart); finds topmost non-empty row; JMPs to landing/crash handler at $B12F
-$B172,terrain_sub_B172,func,0,Terrain sub (calls $B33D and $B2CC)
+$B172,terrain_subdivide_column,func,0,Fractal subdivision driver: calls terrain_column_rasterize ($B33D) + terrain_midpoint_displace ($B2CC) (was terrain_sub_B172)
 $B800,init_B800,func,0,INITAD stub (segment 13): sets CHBAS=$04 SDLSTL/H=$B832 COLOR0/1/2/4 SDMCTL=$22 then enables DMACTL; initial display list at $B832 (embedded in stub body)
 #
 # --- Zero page variables ---
@@ -203,10 +203,10 @@ $00BB,dl_y1,var,0,Display region Y1 or scroll offset (set in station_init and di
 $00BC,dl_y2,var,0,Display region Y2
 $00BD,dl_y3,var,0,Display region Y3
 $00BE,dl_y4,var,0,Display region Y4
-$00C1,player_x,var,0,Player horizontal position (set $60 before main loop; $00 in display_setup)
+$00C1,row_table_stride,var,0,Per-scanline screen base-address table STRIDE used by game_setup_7460 to build $073D/$0793 (=$60=96 in flight; $00 in display_setup). Was misnamed player_x.
 $00C2,player_speed,var,0,Player speed (set $10 in display_setup)
-$00C3,player_y,var,0,Player vertical/altitude (set $0F display_setup; $10 before main loop)
-$00C4,altitude_limit,var,0,Altitude limit (set $08 display_setup; $10 before main loop)
+$00C3,row_table_base_lo,var,0,Row base-address table BASE low byte for game_setup_7460 (=$10 flight -> base $1010; $0F display_setup). Was misnamed player_y.
+$00C4,row_table_base_hi,var,0,Row base-address table BASE high byte for game_setup_7460 (=$10 flight -> base $1010; $08 display_setup). Was misnamed altitude_limit.
 $00CF,display_param_0,var,0,Display parameter 0 — loaded from $4DF1+0 table ($04)
 $00D0,display_param_1,var,0,Display parameter 1 — from $4DF1+1 ($26)
 $00D1,display_param_2,var,0,Display parameter 2 — from $4DF1+2 ($2C)
@@ -261,6 +261,12 @@ $2849,level_cleared_flag,var,0,Set when $3A=1 (level-cleared condition)
 $281C,terrain_index,var,0,Terrain lookup index
 $2836,terrain_sub_index,var,0,Sub-index for terrain table $3FF6
 $283B,level_ready_flag,var,0,BPL-polled in game_entry main loop (waits for negative = level ready)
+$2885,heading_lo,var,0,Ship heading low byte (16-bit); compute_heading_sincos forms the angle from $2885/$2886; integrated each frame in flight_control_integrate
+$2886,heading_hi,var,0,Ship heading high byte (16-bit); paired with heading_lo $2885
+$2887,world_x_lo,var,0,Ground-plane world position X low byte; {$2888:$2887}>>4 -> view vector in setup_projection_params; integrated in flight_control_integrate
+$2888,world_x_hi,var,0,Ground-plane world position X high byte (paired with world_x_lo $2887)
+$2889,world_z_lo,var,0,Ground-plane world position Z low byte; {$288A:$2889}>>4 -> view vector in setup_projection_params; integrated in flight_control_integrate
+$288A,world_z_hi,var,0,Ground-plane world position Z high byte (paired with world_z_lo $2889)
 $288D,pilot_visible,var,0,Pilot visible/alive flag
 $288E,pilot_prev,var,0,Previous pilot visible state (for edge detection in main loop)
 $288F,pilot_state,var,0,Pilot rescue state ($game_entry uses to store $0041)
@@ -297,7 +303,7 @@ $4099,draw_glyph_2rows,func,0,Copy 2-byte glyph from $4AE3[X] OR mask $00BF into
 $40AF,return_stub_40af,func,0,Empty RTS; tail-call target of draw_glyph_2rows and the score-update path at $406E
 $40B0,update_bar_gauge_291c,func,0,If $291C/$291D changed vs cache $2872/$2874, redraw 21-byte bar from $4B57 (idx $455B[$291C]) into $0E87, $FF-term
 $40E5,update_gauge_281a,func,0,On $281A change vs $2875: clear $0C97 row + $FF fill to col $38; on $281B change vs $2876: mask $0B96..$0B99 edge bytes
-$4131,update_blink_timer_006e,func,0,Decr timer $006E; at 0 reload $0F, if $3E set & life_counter $062F=0 & $0063<0 fire game_sub_5815(X=$1C); toggles $00DE $4E/$46
+$4131,update_blink_timer_006e,func,0,Decr timer $006E; at 0 reload $0F, if $3E set & life_counter $062F=0 & $0063<0 fire ring_push_marked(X=$1C); toggles $00DE $4E/$46
 $4166,vobj_update_active,func,0,Active-path: DEC $003B then advance vert object via vobj_advance ($4184); $003B gates which path
 $416B,vobj_speed_accumulate,func,0,Fractional speed accumulator: (8-$006F)>>1 + table($2877,$2848) into $2848; on carry calls vobj_advance
 $4184,vobj_advance,func,0,Decrement vert pos $062F; on reaching top resets/triggers sound ($b786); erase $0D98 row, load shape from $4DEA->$00DE
@@ -308,7 +314,7 @@ $4207,vobj_erase_row,func,0,Erase P/M strip row: $0D99+Y=$F0; index Y>>3 into sh
 $4225,obj_state_dispatch_0043,func,0,X=$0043; if nonzero jump saucer_anim_return else saucer_anim_tick (state-driven object update branch)
 $4229,saucer_anim_tick,func,0,State machine on $007E: if >=$81 jumps to saucer_phase_advance ($428e); else counts down $00E6 (reload $0618), toggles bit7 of table $3492 using RANDOM ($D20A&7); seeds $0048/$00E6 on entry
 $4265,saucer_anim_step,func,0,Decrements $00E6, on underflow reloads from $0618; at count 7 sets $0048/$28EE=1; advances $007E and writes $29 into shape table $3491+Y via saucer_write_shape
-$4285,saucer_write_shape,func,0,Writes A into shape table $3491+Y, then LDX #$12 and tail-calls game_sub_5815 (sprite/object update with X=$12)
+$4285,saucer_write_shape,func,0,Writes A into shape table $3491+Y, then LDX #$12 and tail-calls ring_push_marked (sprite/object update with X=$12)
 $428D,saucer_anim_return,func,0,Empty RTS landing pad shared by saucer animation paths; falls through to saucer_phase_advance in ROM
 $428E,saucer_phase_advance,func,0,LSR $0631 phase flag, returns if carry; else INC $0631, masks low nibble; at phase 7 adjusts $007E and writes opcode-like $A9/$29 bytes via saucer_write_shape / draw_player3_object
 $42A7,draw_player3_object,func,0,Renders player-3 sprite: sets SIZEP3 ($D00B), HPOSP3 ($D003), size/pos/shape from tables $4566/$4569/$456C/$457A/$4D11/$4D3E; fills PMG bitmap rows $0F1E/$0F71; updates $286F/$2835/$2870/$00CC
@@ -351,7 +357,7 @@ $4EAB,refresh_hud_field_0b,func,0,LDY #$0B; game_sub_55FC then chains to $4eb0 �
 $4EB0,refresh_hud_field_0d_entry,func,0,LDY #$0D; falls into $4eb2 to refresh display fields $0D and $0E via game_sub_55FC
 $4EB2,refresh_hud_fields_0d_0e,func,0,game_sub_55FC at Y=$0D, INY, game_sub_55FC at Y=$0E — refreshes two adjacent display fields
 $4F76,intro_teardown_fade_loop,func,0,DMACTL($D400)=0 to kill ANTIC DMA, wait_frames_save_a, loop dec $0678 & X from $00D4 down to $1F, wait_frames_2/init_game_vars_attract_timer
-$4F9F,intro_sound_and_tick,func,0,$2892 underflow: RANDOM($D20A) seeds sfx via game_sub_5815 (X=$0E,$0F); sets AUDC shadows $00DA-DD; dec $2891, clear game_state at 0
+$4F9F,intro_sound_and_tick,func,0,$2892 underflow: RANDOM($D20A) seeds sfx via ring_push_marked (X=$0E,$0F); sets AUDC shadows $00DA-DD; dec $2891, clear game_state at 0
 $4FCE,intro_reset_score_slots,func,0,Clears $066A/$0686, sets $0678=$0C and refreshes display field Y=$0D via game_sub_55FC
 $4FE0,intro_fill_display_params,func,0,Copies $4DF1 table low nibbles OR player_speed($00C2) into display_param $00CF-D6, writes COLPF3($D019), INC $00C2
 $52BE,game_loop_reset_trampoline,func,0,Sets vec $0222/3=$52B4, pushes ret $3D1F+P, sets game_var_E4=$060B(cockpit_flag)=4, PLP; reentry from $5398
@@ -451,14 +457,14 @@ $757B,process_list_via_3c58,func,0,Walks bytes via ZP ptr $BB/$BC, calling rle_r
 $75A5,copy_192_to_1800,func,0,Copies $C0=192 bytes from table $350C to dest ptr $BB/$BC (=$1800) via ZP_IND_Y
 $75B8,count_up_to_level,func,0,Increments $0604 and BCD counter $C3 in loop until $0604 reaches level/stage $006D
 $75D0,decrement_bcd_0628_restart,func,0,SED; SBC $0628-1 (BCD decrement of $0628), CLD, startup_init, tail to set_0628_redisplay ($75de)
-$75DE,reinit_and_redraw_via_delay,func,0,add_and_show_bcd_counter; game_sub_5815 X=$10; tail wait_frames_10 (PHA+$0A delay then re-enter game_entry)
+$75DE,reinit_and_redraw_via_delay,func,0,add_and_show_bcd_counter; ring_push_marked X=$10; tail wait_frames_10 (PHA+$0A delay then re-enter game_entry)
 $75E9,set_0628_bcd_redisplay,func,0,A->packed BCD via bin_to_bcd stored $0628; startup_init; tail wait_frames_20 (delay+game_entry)
 $75F5,compute_gauge_geometry_from_006D,func,0,Derives display/gauge coords from $006D into $061F-$0625,$0617,$0618,$061A-$061C,$062A,$08A2; $0628=BCD($006D)
 $782A,copy_altitude_graphic_to_screen,func,0,If $0091>=$C0 copy 20-byte block $5A9F+X (X=$27/$13) into screen $32B6+Y; sets $00D8=$44 when $0091<$E0
-$7A17,animate_clear_colors_timed,func,0,Gated by $0014(RTCLOK); steps $007B/$007D, reads RANDOM $D20A, runs clear_colors loops + game_sub_5815 X=$19/$1B
-$7A89,clear_colors_sweep_5x,func,0,Y=5 outer loop: clear_colors X=$007D(min $14) until $003E set, then game_sub_5815 X=$1A; returns Z=done
-$7AA6,trigger_effect_4a,func,0,LDA #$4A then falls into init_event_state_5815_x16 (sets $0044=A,$3388=$B4,$003C=0,game_sub_5815 X=$16)
-$7AA8,init_event_state_5815_x16,func,0,Tail: $0044=A, $3388=$B4, $003C=0, then game_sub_5815(X=$16); inits state and triggers game sub
+$7A17,animate_clear_colors_timed,func,0,Gated by $0014(RTCLOK); steps $007B/$007D, reads RANDOM $D20A, runs clear_colors loops + ring_push_marked X=$19/$1B
+$7A89,clear_colors_sweep_5x,func,0,Y=5 outer loop: clear_colors X=$007D(min $14) until $003E set, then ring_push_marked X=$1A; returns Z=done
+$7AA6,trigger_effect_4a,func,0,LDA #$4A then falls into init_event_state_5815_x16 (sets $0044=A,$3388=$B4,$003C=0,ring_push_marked X=$16)
+$7AA8,init_event_state_5815_x16,func,0,Tail: $0044=A, $3388=$B4, $003C=0, then ring_push_marked(X=$16); inits state and triggers game sub
 $7AF4,bcd_oscillate_counter_0628,func,0,SED; $0628 +/-1 (dir=$062B); inc $062B/$0629; if $0629>=$061F call game_sub_7B54; BCD timer/ramp
 $7B39,mark_slot_and_countdown_char,func,0,Wrapper: mark_grid_slot_active (mark $0A00 slot) then countdown_show_char_0620 (delayed char display)
 $7B3C,countdown_show_char_0620,func,0,If $0620!=0: ==1 -> LDA $C9/obj_table_scan_replace, else obj_table_scan_y1_c8, then DEC $0620; delayed char write to display buf
@@ -467,7 +473,7 @@ $7B7D,mark_slot_and_inc_count,func,0,Wrapper: mark_grid_slot_active (mark $0A00 
 $7B80,set_place_params_inc_count,func,0,$0045=0, $0046=1 (placement params) then bcd_inc_counter_0641 (BCD inc $0641)
 $7B88,bcd_inc_counter_0641,func,0,SED; $0641 = $0641 + 1 (BCD); increments a placed-item/count BCD counter
 $7B94,level_clear_fx_loop,func,0,INC $283C; 15x game_sub_55FC pairs + clear_colors; then $3C-iter loop reading RANDOM $D20A|=4 -> $DB, clear_colors
-$7BC6,setup_level_clear_state,func,0,sets $3A=$FF; if level_or_state($04) set lives($72)=2; timer($44)=$52; X=$1D; tail game_sub_5815
+$7BC6,setup_level_clear_state,func,0,sets $3A=$FF; if level_or_state($04) set lives($72)=2; timer($44)=$52; X=$1D; tail ring_push_marked
 $7C01,animate_zoom_sequence,func,0,8-frame loop: wait RTCLOK_LOW($14)>=3; per-phase($291F) table $7D8D/95/9D; 16-bit accum $59/$5A,$3F/$40; calls draw_shape_7c9a
 $7C9A,draw_scaled_shape,func,0,computes $C1/$C2 origin via $50/$51 subtract; row loop $53/$4E w/ tables $7DA9/7DBB/7DD3/7DA5; plots via plot_clipped_pixel
 $7D38,plot_clipped_pixel,func,0,A=value->$58; clip Y($4E) in[$6C,$97) X($4F) in[$28,$D8); addr via $073D/$0793; mask $4F3B/$7DEB[X&3]; RMW bitmap via $C1 ptr; INC $4F
@@ -483,13 +489,13 @@ $8181,pack_byte_to_5bit_cells,func,0,Re-distributes A's bits across cells via re
 $8C58,build_player2_sprite,func,0,Builds scaled P/M sprite into strip $0E32 from depth $0038/$0039; sets HPOSP2 $D002, SIZEP2 $D014, GRAFP2 $D00A; uses tables $8DB5/$8E2B/$8E32/$8E3E/$8E4A/$8E52/$8DD0
 $8E5B,flight_control_integrate,func,0,Master flight step: reads PORTA $D300 joystick + RANDOM $D20A; integrates pitch $0025/26 roll $0028/29 throttle $002D/2E & world pos $0033/34,$2885/87/89; clamps angles; updates PMG/audio
 $930E,object_integrate_position,func,0,16-bit signed integ: $2827/$0064/$0065 -= $2850/1; $2828/$0066/$0067 += $2852/3 then $2829/$282C; if hi bytes 0 use tbl $93F3[$0063] scaled by $282D, store screen pos $2821 & $2824, else $2824=0
-$93BD,check_object_in_target_box,func,0,if $0065/$0067=0 and $0064 in [$34,$AC) and $0066 in [$1A,$6A): set $3B=$20, call b786 & game_sub_AA95, clear $2892, set $3355=$34, $2891=$1E (trigger event in box)
+$93BD,check_object_in_target_box,func,0,if $0065/$0067=0 and $0064 in [$34,$AC) and $0066 in [$1A,$6A): set $3B=$20, call b786 & jitter_roll_pitch, clear $2892, set $3355=$34, $2891=$1E (trigger event in box)
 $9473,step_object_along_axes,func,0,$0024 sign -> $0023/$0024 +=/-=$14 (clamp 0); if $0070!=0 $0033/$0034 -=$30; elif $003D=0 & $0678=0 inc $003D and (if $0063>=0) tail-call reset_flags_ff
-$94BF,load_velocity_from_param_block,func,0,init accum $2854-$2863 from param block $28FD-$290A: sign-extend & ASL/ROL scale ($285E,$2861), $285B=clamp($2902+8), $2863=$290A>>1-1; then game_sub_5815 X=$11
+$94BF,load_velocity_from_param_block,func,0,init accum $2854-$2863 from param block $28FD-$290A: sign-extend & ASL/ROL scale ($285E,$2861), $285B=clamp($2902+8), $2863=$290A>>1-1; then ring_push_marked X=$11
 $9552,object_step_and_collide,func,0,add vel $285C-$2863 to pos accum $2854-$285B (mirror $27FD-$2800); build cell idx $2864 into maps $0900/$0A00; altitude/bounds checks; on hit set $2843=$FC, call 96d9/7b80/7b3c, set $0044/$004D/$007E; tail reset_object_slot
-$9677,reset_object_slot,func,0,set $0036=$80 then game_sub_5815 with X=$0E (object reset/dispatch helper)
+$9677,reset_object_slot,func,0,set $0036=$80 then ring_push_marked with X=$0E (object reset/dispatch helper)
 $9680,check_player_proximity_hit,func,0,compute |$006A+4-$0036|; if <4 form dist from $0038/$0039 vs $2824/$2821, cmp tbl $96F5[$0036]; on hit clear $2826, call b786/9677/96d9, set $0045=$50 $0046=$02, 7b88 & terrain_gen
-$96D9,trigger_object_explosion,func,0,inc $0041(game_state), set shape ptrs $00DA=$78 $00DB=$7E $00DC=$76 $00DD=$7C, $28EE=$02, then game_sub_5815 X=$0F (start explosion anim)
+$96D9,trigger_object_explosion,func,0,inc $0041(game_state), set shape ptrs $00DA=$78 $00DB=$7E $00DC=$76 $00DD=$7C, $28EE=$02, then ring_push_marked X=$0F (start explosion anim)
 $9713,compute_target_blip_position,func,0,From L/R range $27F7/$27F8 derives blip Y=$0021,X=$0027; tests $005D, alien masks $1027/$1057 AND $AA, $0070; adds parallax $2912/$2913
 $97A0,compute_obj_rel_angle_scale,func,0,Builds 10-bit value from $2885/$2886, sign into $2882, indexes $4EB9 table, calls mul $9821; outputs $2881/$002B scaled coords
 $9821,mul_u8,func,0,Unsigned shift-add multiply: multiplicand $006B, multiplier $28D6; returns product in A (used twice by $97a0)
@@ -504,14 +510,14 @@ $9BDB,trig_interp_lookup,func,0,Interpolates sine table: sine_table_lookup at an
 $9C55,sine_table_lookup,func,0,Angle $0075 *4 -> quadrant idx $280E; sign/quad tables $9B98/$9B9C, value tables $4EB9/$4EFA; signed 24-bit result $0076-$0078
 $9C97,signed_mul_8x16,func,0,Signed multiply: A * 16-bit $00AA/$00AB; abs via sign $00AD, 8-step shift-add, result $00A8/$00A9 ($00AC frac)
 $9D6F,divide_16x16,func,0,Restoring 16-bit divide: dividend $00B0/$00B1, divisor $00AE/$00AF, quotient bits ROL into $00B2; orphan-prefix is shift loopback
-$A0A3,build_view_transform_matrix,func,0,Builds rotation matrix from sin/cos $00A0-$00A3 scaled by $0089/vbi_phase$0087 via signed_mul; stores to $22A3/$22D1,$22FF/$232D; called by terrain_gen_1
-$A11F,project_terrain_points,func,0,Per-object(X) world->screen projection: normalizes $2300/$232E,$22A4/$22D2,$235B/$2388, divides via divide_16x16, writes $2400/$242D,$245A/$2487; tail does terrain scroll w/ RANDOM $D20A + terrain_gen_A613
-$A63A,terrain_plot_return,func,0,$A63A: empty RTS; fall-through tail/return target of terrain_gen_A613 and terrain_plot_object pixel loop
+$A0A3,build_view_transform_matrix,func,0,Builds rotation matrix from sin/cos $00A0-$00A3 scaled by $0089/vbi_phase$0087 via signed_mul; stores to $22A3/$22D1,$22FF/$232D; called by terrain_frame_setup
+$A11F,project_terrain_points,func,0,Per-object(X) world->screen projection: normalizes $2300/$232E,$22A4/$22D2,$235B/$2388, divides via divide_16x16, writes $2400/$242D,$245A/$2487; tail does terrain scroll w/ RANDOM $D20A + terrain_jitter_column
+$A63A,terrain_plot_return,func,0,$A63A: empty RTS; fall-through tail/return target of terrain_jitter_column and terrain_plot_object pixel loop
 $A63B,terrain_plot_object,func,0,$A63B: per-object terrain raster; indexes $2276/$232E/$2300/$22D2 tables, sets $28E1..$28EA span/coords, $0059/$005A ROR width
 $A6CB,terrain_clip_row_top,func,0,$A6CB: compares Y vs $260E[X] row limit; branches to a6f8(skip) if below/equal else falls to a6d3 plot
 $A6D3,terrain_plot_pixel,func,0,$A6D3: clips Y<0x97, builds bitmap ptr from $28CA/$28FA tables at $80/$81, ORs $BC00/$BD00 mask into (ptr),Y
 $A6F8,terrain_plot_skip_return,func,0,$A6F8: empty RTS; skip/return target after clip in terrain pixel-plot chain
-$A821,terrain_obj_skip_return,func,0,$A821: empty RTS; early-out target from terrain_sub_A822 when $2487[X]/$242D[X] nonzero
+$A821,terrain_obj_skip_return,func,0,$A821: empty RTS; early-out target from terrain_plot_object_a when $2487[X]/$242D[X] nonzero
 $A8AF,terrain_point_distance,func,0,$A8AF: computes |$004F-0x80|+|$004E-0x80| range into $290B-$290E (saves arg in $290E); overflow->a909
 $A909,terrain_distance_clamp_return,func,0,$A909: empty RTS; carry-overflow exit of terrain_point_distance ($A8AF)
 $AAD4,plot_scanline_down,func,0,Line-plot loop: subtracts $40 from $5B/$5C step, walks X/Y via 28EF-28FA fixed-pt accumulators, calls a6d3 to plot each point; X-range gate $2C..$D4, Y>=$6C
@@ -557,7 +563,7 @@ $0045,bcd_delta_lo,var,0,16-bit BCD increment low byte added to bcd_counter $060
 $0046,bcd_delta_hi,var,0,16-bit BCD increment high byte added to bcd_counter $0602; cleared by set_zsupp_pos_clear_delta
 $0047,colpf0_value,var,0,Cockpit playfield color; loaded into COLPF0 $D016 by set_colpf0_from_flag (set_colpf0_from_flag)
 $0048,saucer_active_flag,var,0,Set to 1 (also $28EE=1) when saucer animation reaches count 7 (saucer_anim_step); seeded by A in saucer_anim_tick
-$004E,terrain_pt_coord_b,var,0,coord component used in terrain_point_distance $A8AF (abs(0x80-$004E)); set from $245A[X] in terrain_sub_A822
+$004E,terrain_pt_coord_b,var,0,coord component used in terrain_point_distance $A8AF (abs(0x80-$004E)); set from $245A[X] in terrain_plot_object_a
 $004F,terrain_pt_coord_a,var,0,coord component in terrain_point_distance $A8AF (abs($004F-0x80)); set from $2400[X], also index into $260E[X]
 $0050,plot_step_lo,var,0,Fixed-point plot/scan step low byte; halved by ab7b, used as X/Y increment in ab9a fill loop
 $0051,plot_step_hi,var,0,Fixed-point plot/scan step high byte; paired with $0050, incremented if zero in ab9a
@@ -623,6 +629,7 @@ $00CC,player3_bottom_y,var,0,Player-3 object bottom-Y clamp result (draw_player3
 $00CE,altitude_color_or_glyph,var,0,update_altitude_digit_display sets from $28D9+$AB clamped to [$A3,$B4) else $B5
 $00DA,audc_shadow_0,var,0,RANDOM($D20A)|4 written to $00DA-$00DD in $4f9f; staged POKEY audio control bytes
 $00DF,span_pixel_count,var,0,Down-counter for pixels/rows within a single span in fill_horizontal_span/fill_vertical_span (loop ends when negative); also holds the current event glyph id output by event_sequence_dispatcher.
+$0601,score_display,var,0,Displayed score, 3-byte packed BCD $0601-$0603 (6 digits); rendered to the top text line $32C5 by render_bcd_counter
 $0604,level_count_acc,var,0,Counter incremented in count_up_to_level($75B8) until it equals level_stage $006D
 $060D,sfx_rand_freq_lo1,var,0,Random freq value (random_digit, RANDOM $D20A &$0F<$0A) for SFX retrigger
 $060E,sfx_rand_freq_lo2,var,0,Random freq value (random_digit) for SFX retrigger
@@ -719,7 +726,7 @@ $2877,vobj_speed_frac,var,0,Per-frame fractional speed added into accumulator $2
 $288B,obj_scan_start_idx,var,0,Saved RANDOM($D20A) start index in obj_table_scan_replace; inner scan loops until X wraps to it
 $288C,obj_scan_pass_count,var,0,Outer pass counter in obj_table_scan_replace (Y arg), DEC'd to 0 at $4e52
 $2891,intro_phase_counter,var,0,Intro step counter: init $42 at $4f59, gated at $4f43, DEC at $4fc4, clears game_state at 0; also set to $1E by 93bd as an event countdown when an object enters the target box.
-$2892,intro_sfx_delay,var,0,Down-counter for intro sound timing; underflow at $4f9f reseeds from RANDOM&7|1 and triggers sfx via game_sub_5815
+$2892,intro_sfx_delay,var,0,Down-counter for intro sound timing; underflow at $4f9f reseeds from RANDOM&7|1 and triggers sfx via ring_push_marked
 $28DC,plot_base_ptr_lo,var,0,Plot fill base pointer low, selected from A7E9 table by ab7b; used as ADC base in ab9a
 $28DD,plot_base_ptr_hi,var,0,Plot fill base pointer high, from A7ED table by ab7b
 $28DE,shape_row_width,var,0,Saved copy of $4F (row width / inner-loop count) in draw_scaled_shape (draw_scaled_shape), reloaded each row for the ab9a row fill.
