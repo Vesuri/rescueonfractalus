@@ -73,6 +73,7 @@ VALIDATE_FUNCS = {
     0xA90A,  # terrain_sub_A90A — plot one terrain object, variant B (flight raster #5)
     0xA63B,  # terrain_plot_object — per-object raster dispatch (flight raster #6)
     0xB33D,  # terrain_column_rasterize — fractal column renderer (flight raster #7, the big one)
+    0xB172,  # terrain_sub_B172 — fractal subdivision driver (flight raster #8)
 }
 VALIDATE_SUFFIX = '__t6502'
 

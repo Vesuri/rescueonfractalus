@@ -1082,3 +1082,122 @@ done:
     #undef PLOT
     return;
 }
+
+/* terrain_sub_B172 @ $B172 — fractal terrain subdivision driver.
+ *
+ * Recursively midpoint-subdivides a span (calling native terrain_midpoint_displace
+ * per split, storing the 5-byte sub-point into the $25B5/$25D3/$25F1/$24E3/$23E3[X]
+ * stacks), bottoming out into a column rasterize (native terrain_column_rasterize)
+ * per leaf segment, then unwinds (b2aa: DEX, reload span from the stacks).  The
+ * recursion depth is bounded by the $009F budget (=$14) and X < $0F.
+ *
+ * cpu.X is the working stack index (threaded through the native sub-calls, which
+ * preserve it); cpu.Y is left untouched (terrain_column_rasterize reads it as the
+ * caller's value).  Carry threaded locally; most branches re-derive from CMP.
+ * Contract: memory.  Validated with the real flight snapshot (it tail-drives
+ * terrain_column_rasterize, which random mem[] can't terminate).
+ */
+void terrain_sub_B172(void) {
+    uint8_t A, c;
+    #define ADC_(v) do { uint16_t _t=(uint16_t)A+(uint8_t)(v)+c; c=(uint8_t)(_t>>8); A=(uint8_t)_t; } while(0)
+    #define SBC_(v) ADC_((uint8_t)~(uint8_t)(v))
+
+    uint8_t b5 = (uint8_t)(mem[0x25D2] ^ 0x80); mem[0x00B5] = b5;   /* b172 (signed cmp) */
+    A = (uint8_t)(mem[0x0083] ^ 0x80);
+    c = (A >= b5) ? 1 : 0;                                /* CMP $B5 */
+    if (A == b5) { A = mem[0x0082]; c = (A >= mem[0x25B4]) ? 1 : 0; }   /* BNE b186; else CMP 25B4 */
+    if (c) return;                                        /* b186 BCS b1c1 */
+    mem[0x009F] = 0x14;                                   /* b188 */
+
+L_b18c:
+    if (!(mem[0x0083] & 0x80)) goto L_b1d9;               /* LDA $83; BPL b1d9 */
+    mem[0x009F]--; if (mem[0x009F] & 0x80) return;        /* DEC $9F; BMI b1c1 */
+    terrain_midpoint_displace();                          /* b194 (uses cpu.X) */
+    A = mem[0x008E];
+    if (A & 0x80) goto L_b1c2;                            /* BMI b1c2 */
+    if (A == 0 && mem[0x008D] < 0x28) goto L_b1c2;        /* BNE b1a3; else $8D<$28 -> b1c2 */
+    mem[0x25B5 + cpu.X] = mem[0x008D];                    /* b1a3 store sub-point */
+    mem[0x25D3 + cpu.X] = mem[0x008E];
+    mem[0x25F1 + cpu.X] = mem[0x008F];
+    mem[0x24E3 + cpu.X] = mem[0x0090];
+    mem[0x23E3 + cpu.X] = mem[0x0091];
+    cpu.X++;
+    if (cpu.X < 0x0F) goto L_b18c;                        /* CPX #$0F; BCC b18c */
+    return;
+L_b1c2:
+    mem[0x0082] = mem[0x008D]; mem[0x0083] = mem[0x008E];
+    mem[0x0084] = mem[0x008F]; mem[0x0085] = mem[0x0090]; mem[0x0086] = mem[0x0091];
+    goto L_b18c;
+L_b1d9:
+    if (mem[0x0083] != 0) return;                         /* LDA $83; BNE b1c1 */
+    if (mem[0x0082] >= 0xD8) return;                      /* CMP #$D8; BCS b1c1 */
+L_b1e3:
+    if (mem[0x25D2 + cpu.X] == 0) goto L_b211;            /* LDA 25D2,X; BEQ b211 */
+L_b1e8:
+    mem[0x009F]--; if (mem[0x009F] & 0x80) return;        /* DEC $9F; BMI b210 */
+    terrain_midpoint_displace();
+    mem[0x25B5 + cpu.X] = mem[0x008D];
+    mem[0x25D3 + cpu.X] = mem[0x008E];
+    mem[0x25F1 + cpu.X] = mem[0x008F];
+    mem[0x24E3 + cpu.X] = mem[0x0090];
+    mem[0x23E3 + cpu.X] = mem[0x0091];
+    cpu.X++;
+    if (cpu.X >= 0x0F) return;                            /* CPX #$0F; BCS b210 */
+    goto L_b1e3;
+L_b211:
+    A = mem[0x0085];
+    if (A & 0x80) goto L_b21d;                            /* BMI b21d */
+    if (A != 0) goto L_b22d;                              /* BNE b22d */
+    if (mem[0x0084] >= 0x6C) goto L_b22d;                 /* CMP #$6C; BCS b22d */
+L_b21d:
+    A = mem[0x24E2 + cpu.X];
+    if (A & 0x80) goto L_b23e;                            /* BMI b23e */
+    if (A != 0) goto L_b241;                              /* BNE b241 */
+    if (mem[0x25F0 + cpu.X] < 0x6C) goto L_b23e;          /* CMP #$6C; BCC b23e */
+    goto L_b241;
+L_b22d:
+    A = mem[0x24E2 + cpu.X];
+    if (A & 0x80) goto L_b25d;                            /* BMI b25d */
+    if (A != 0) goto L_b27b;                              /* BNE b27b */
+    if (mem[0x25F0 + cpu.X] < 0x6C) goto L_b25d;          /* CMP #$6C; BCC b25d */
+    goto L_b27b;
+L_b23e:
+    goto L_b2aa;
+L_b241:
+    c = 1; A = mem[0x25B4 + cpu.X]; SBC_(mem[0x0082]);    /* SEC; LDA 25B4,X; SBC $82 */
+    if (A < 0x14) goto L_b27b;                            /* CMP #$14; BCC b27b */
+    A = (uint8_t)(A >> 2); mem[0x00B5] = A;               /* LSR;LSR; STA $B5 */
+    A = mem[0x0084]; c = 1; SBC_(mem[0x00B5]);            /* LDA $84; SEC; SBC $B5 */
+    A = mem[0x0085]; SBC_(0x00);                          /* LDA $85; SBC #0 (16-bit) */
+    if (!(A & 0x80)) goto L_b27b;                         /* BPL b27b */
+    goto L_b1e8;
+L_b25d:
+    c = 1; A = mem[0x25B4 + cpu.X]; SBC_(mem[0x0082]);
+    if (A < 0x14) goto L_b27b;
+    A = (uint8_t)(A >> 2); mem[0x00B5] = A;
+    A = mem[0x25F0 + cpu.X]; c = 1; SBC_(mem[0x00B5]);
+    A = mem[0x24E2 + cpu.X]; SBC_(0x00);
+    if (!(A & 0x80)) goto L_b27b;
+    goto L_b1e8;
+L_b27b:
+    A = mem[0x0085];                                      /* clamp $84 by $85 sign */
+    if (A != 0) mem[0x0084] = (A & 0x80) ? 0x00 : 0xFF;
+    A = mem[0x24E2 + cpu.X];                              /* select/clamp $EA */
+    if (A == 0) A = mem[0x25F0 + cpu.X];
+    else A = (A & 0x80) ? 0x00 : 0xFF;
+    mem[0x00EA] = A;
+    mem[0x0095] = mem[0x25B4 + cpu.X];
+    mem[0x00F4] = mem[0x23E2 + cpu.X];
+    terrain_column_rasterize();                           /* b2a7 (uses cpu.X, cpu.Y) */
+L_b2aa:
+    if (cpu.X == 0) return;                               /* CPX #0; BEQ b2cb */
+    mem[0x0082] = mem[0x25B4 + cpu.X];                    /* reload span from the stacks */
+    mem[0x0083] = mem[0x25D2 + cpu.X];
+    mem[0x0084] = mem[0x25F0 + cpu.X];
+    mem[0x0085] = mem[0x24E2 + cpu.X];
+    mem[0x0086] = mem[0x23E2 + cpu.X];
+    cpu.X--;                                              /* DEX */
+    goto L_b1d9;
+    #undef ADC_
+    #undef SBC_
+}
