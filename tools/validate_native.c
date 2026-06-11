@@ -429,6 +429,8 @@ int main(void) {
     fails += test_mem_contract_regs("game_sub_451d", game_sub_451d, game_sub_451d__t6502);
     fails += test_mem_contract_regs("enter_terrain_special_state", enter_terrain_special_state, enter_terrain_special_state__t6502);
     fails += test_mem_contract_regs("exit_terrain_special_state", exit_terrain_special_state, exit_terrain_special_state__t6502);
+    fails += test_mem_contract("update_terrain_horizon_lr", update_terrain_horizon_lr, update_terrain_horizon_lr__t6502);
+    fails += test_mem_contract("update_terrain_scanline_proj", update_terrain_scanline_proj, update_terrain_scanline_proj__t6502);
     fails += test_clear_terrain_column();
     fails += test_signed_mul_8x16();
     fails += test_mem_contract("sine_table_lookup", sine_table_lookup, sine_table_lookup__t6502);

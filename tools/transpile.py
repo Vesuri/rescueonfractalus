@@ -91,6 +91,8 @@ VALIDATE_FUNCS = {
     0x451D,  # game_sub_451d — 14-iter table-fill into $2159/$2189 (leaf; called by update_terrain_horizon_lr)
     0x9B0D,  # enter_terrain_special_state — set flags + ring events (calls game_sub_55FC/ring_push_marked)
     0x9B4C,  # exit_terrain_special_state — inverse of enter (calls game_sub_55FC)
+    0x992D,  # update_terrain_horizon_lr — L/R horizon update (calls sample_terrain_height_bilerp + game_sub_451d)
+    0x9833,  # update_terrain_scanline_proj — TOP of subtree: map coords + depth + horizon (calls all the above)
 }
 VALIDATE_SUFFIX = '__t6502'
 

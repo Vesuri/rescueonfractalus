@@ -17315,7 +17315,8 @@ L_9829:;
 }
 
 /* update_terrain_scanline_proj @ $9833: Builds 16-bit map coords $27FD-$2800 from $2887-$288A>>4 and depth $0034/$0033 into $2275/$2274; samples height via $9a36; advances depth, calls $992d */
-void update_terrain_scanline_proj(void) {
+/* faithful transliteration kept as the validation oracle; native update_terrain_scanline_proj() lives in rof_native.c (see VALIDATE_FUNCS) */
+void update_terrain_scanline_proj__t6502(void) {
     /* 9833 */
     LDA(mem[0x2888]);
     /* 9836 */
@@ -17547,7 +17548,8 @@ L_992c:;
 }
 
 /* update_terrain_horizon_lr @ $992D: Alternates odd/even ($2834); offsets map coords by $2805-$2808 deltas, samples $9a36, computes L/R horizon $282E/$282F vs cached $2841/$2842, calls game_sub_451d */
-void update_terrain_horizon_lr(void) {
+/* faithful transliteration kept as the validation oracle; native update_terrain_horizon_lr() lives in rof_native.c (see VALIDATE_FUNCS) */
+void update_terrain_horizon_lr__t6502(void) {
     /* 992d */
     LSR_M(0x2834);
     /* 9930 */

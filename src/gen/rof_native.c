@@ -311,6 +311,158 @@ void exit_terrain_special_state(void) {
     cpu.Y = (uint8_t)(cpu.Y + 1); game_sub_55FC();        /* $9B82 INY; $9B83 push Y=2 */
 }
 
+/* {hi:mem[lo]} = signed({hi:mem[lo]}) >> 4 (arithmetic), via 4x (CMP #$80; ROR A;
+ * ROR lo) — the 6502 sign-extending shift used by update_terrain_horizon_lr. */
+static uint8_t asr16_4(uint8_t hi, uint16_t lo) {
+    for (int i = 0; i < 4; i++) {
+        uint8_t cin  = (hi >= 0x80) ? 1 : 0;        /* CMP #$80 -> C = sign */
+        uint8_t cout = (uint8_t)(hi & 1);           /* ROR A: bit0 out */
+        hi = (uint8_t)((cin << 7) | (hi >> 1));     /* ROR A */
+        uint8_t l = mem[lo];
+        mem[lo] = (uint8_t)((cout << 7) | (l >> 1)); /* ROR lo */
+    }
+    return hi;
+}
+
+/* update_terrain_horizon_lr @ $992D — alternately ($2834/$2833 toggles) update the
+ * left ($282E) or right ($282F) horizon: build map coords {$27FD..$2800} from
+ * {$2801..$2804} +/- the >>4 deltas {$2805..$2808} (from $2809-$280C), sample the
+ * height map, derive the horizon row, and on a change cache it ($2841/$2842) and
+ * repaint via game_sub_451d.  All callees native; bounded loops -> random mem safe. */
+void update_terrain_horizon_lr(void) {
+    /* $992D: $2834 every-other gate */
+    uint8_t v = mem[0x2834], c = (uint8_t)(v & 1);
+    mem[0x2834] = (uint8_t)(v >> 1);
+    if (!c) { mem[0x2834] = (uint8_t)(mem[0x2834] + 1); return; }
+
+    /* $9936: {$2806:$2805} = asr4({$280A:$2809}); {$2808:$2807} = asr4({$280C:$280B}) */
+    mem[0x2805] = mem[0x2809]; mem[0x2806] = asr16_4(mem[0x280A], 0x2805);
+    mem[0x2807] = mem[0x280B]; mem[0x2808] = asr16_4(mem[0x280C], 0x2807);
+
+    /* $9964: $2833 toggle -> second (right) half if odd */
+    uint8_t v2 = mem[0x2833], c2 = (uint8_t)(v2 & 1);
+    mem[0x2833] = (uint8_t)(v2 >> 1);
+    int second = c2;
+    if (!second) mem[0x2833] = (uint8_t)(mem[0x2833] + 1);
+
+    uint16_t c2801 = (uint16_t)(mem[0x2801] | (mem[0x2802] << 8));
+    uint16_t c2803 = (uint16_t)(mem[0x2803] | (mem[0x2804] << 8));
+    uint16_t d05   = (uint16_t)(mem[0x2805] | (mem[0x2806] << 8));
+    uint16_t d07   = (uint16_t)(mem[0x2807] | (mem[0x2808] << 8));
+
+    if (!second) {
+        /* $996C: coords = {2801}-{d07}, {2803}+{d05} */
+        uint16_t m = (uint16_t)(c2801 - d07), p = (uint16_t)(c2803 + d05);
+        mem[0x27FD] = (uint8_t)m; mem[0x27FE] = (uint8_t)(m >> 8);
+        mem[0x27FF] = (uint8_t)p; mem[0x2800] = (uint8_t)(p >> 8);
+        sample_terrain_height_bilerp();                 /* $9992 */
+        mem[0x0062] = (uint8_t)(mem[0x0062] >> 1);       /* $9995 LSR $0062 */
+        mem[0x27F7] = (uint8_t)(mem[0x0062] >> 1);       /* $27F7 = $0062>>1 */
+        uint8_t A = (uint8_t)(mem[0x2275] >> 1);         /* $999D */
+        A = (uint8_t)(A + mem[0x0024]);                  /* CLC; ADC $0024 */
+        A = (uint8_t)(A + 0x0F);                         /* CLC; ADC #$0F */
+        uint8_t sub = mem[0x0062];
+        uint8_t r = (A >= sub) ? (uint8_t)(A - sub) : 0; /* SEC; SBC $0062; BCS/clamp0 */
+        mem[0x27F6] = r;
+        uint8_t h = (0x38 >= r) ? (uint8_t)(0x38 - r) : 0;  /* $38 - $27F6, clamp0 */
+        mem[0x282E] = h;
+        if (h == mem[0x2841]) return;                    /* $99BE CMP $2841; BEQ */
+        mem[0x2841] = h;
+        cpu.A = h; cpu.X = 0; cpu.Y = 0; game_sub_451d(); /* $99C6 X=0,Y=0; JMP $451D */
+    } else {
+        /* $99CE: coords = {2801}+{d07}, {2803}-{d05} */
+        uint16_t m = (uint16_t)(c2801 + d07), p = (uint16_t)(c2803 - d05);
+        mem[0x27FD] = (uint8_t)m; mem[0x27FE] = (uint8_t)(m >> 8);
+        mem[0x27FF] = (uint8_t)p; mem[0x2800] = (uint8_t)(p >> 8);
+        sample_terrain_height_bilerp();                 /* $99F4 */
+        mem[0x0062] = (uint8_t)(mem[0x0062] >> 1);       /* $99F7 LSR $0062 */
+        mem[0x27F8] = (uint8_t)(mem[0x0062] >> 1);       /* $27F8 = $0062>>1 */
+        uint8_t A = (uint8_t)(mem[0x2275] >> 1);         /* $99FF */
+        A = (uint8_t)(A - mem[0x0024]);                  /* SEC; SBC $0024 */
+        A = (uint8_t)(A + 0x0F);                         /* CLC; ADC #$0F */
+        uint8_t sub = mem[0x0062];
+        uint8_t r = (A >= sub) ? (uint8_t)(A - sub) : 0; /* SEC; SBC $0062; clamp0 */
+        mem[0x27F6] = r;
+        uint8_t h = (0x38 >= r) ? (uint8_t)(0x38 - r) : 0;
+        mem[0x282F] = h;
+        if (h == mem[0x2842]) return;                    /* $9A20 CMP $2842; BEQ */
+        mem[0x2842] = h;
+        cpu.X = 4; cpu.Y = 0x10;                          /* $9A28 X=4,Y=$10 */
+        cpu.A = (uint8_t)(0x38 - mem[0x282F]);            /* SEC; LDA #$38; SBC $282F */
+        game_sub_451d();                                  /* JMP $451D */
+    }
+}
+
+/* update_terrain_scanline_proj @ $9833 — TOP of the flight-VBI projection subtree.
+ * Build 16-bit map coords {$27FD..$2800}/{$2801..$2804} from world pos $2887-$288A
+ * (>>4) and depth $0033/$0034 (<<2 into $2274/$2275), sample the height, advance the
+ * depth row with enter/exit terrain-special-state transitions, finalize the visible
+ * span $281A/$281B, update the L/R horizon, and run the $066C-gated state machine.
+ * All callees native; bounded -> random mem safe.  Memory contract (no entry regs read). */
+void update_terrain_scanline_proj(void) {
+    /* $9833: map X = {$2888:$2887} >> 4 ; map Z = {$288A:$2889} >> 4 (logical) */
+    uint16_t sx = (uint16_t)((mem[0x2887] | (mem[0x2888] << 8)) >> 4);
+    uint8_t sx_lo = (uint8_t)sx, sx_hi = (uint8_t)(sx >> 8);
+    mem[0x2270] = sx_lo; mem[0x27FD] = sx_lo; mem[0x2801] = sx_lo;
+    mem[0x2271] = sx_hi; mem[0x27FE] = sx_hi; mem[0x2802] = sx_hi;
+    uint16_t sz = (uint16_t)((mem[0x2889] | (mem[0x288A] << 8)) >> 4);
+    uint8_t sz_lo = (uint8_t)sz, sz_hi = (uint8_t)(sz >> 8);
+    mem[0x2272] = sz_lo; mem[0x27FF] = sz_lo; mem[0x2803] = sz_lo;
+    mem[0x2273] = sz_hi; mem[0x2800] = sz_hi; mem[0x2804] = sz_hi;
+
+    /* $9889: depth {$2275:$2274} = ({clamp($0034,$3F)}:$0033) << 2 */
+    uint8_t d34 = mem[0x0034]; if (d34 >= 0x40) d34 = 0x3F;
+    uint8_t a33 = mem[0x0033], cc;
+    cc = (uint8_t)(a33 >> 7); a33 = (uint8_t)(a33 << 1); d34 = (uint8_t)((d34 << 1) | cc);
+    cc = (uint8_t)(a33 >> 7); a33 = (uint8_t)(a33 << 1); d34 = (uint8_t)((d34 << 1) | cc);
+    mem[0x2275] = d34; mem[0x2274] = a33;
+
+    /* $98A1: sample + $27F9 = round(round($0062/2)/2) */
+    sample_terrain_height_bilerp();
+    { uint8_t a = mem[0x0062];
+      a = (uint8_t)((a >> 1) + (a & 1));
+      a = (uint8_t)((a >> 1) + (a & 1));
+      mem[0x27F9] = a; }
+    { uint8_t r9 = mem[0x27F9]; mem[0x281A] = (0x37 >= r9) ? (uint8_t)(0x37 - r9) : 0; }
+
+    /* $98BC: depth advance + special-state transitions */
+    uint8_t v2275 = mem[0x2275], v62 = mem[0x0062];
+    if (v2275 >= v62) {                                  /* no borrow */
+        mem[0x0070] = (uint8_t)(v2275 - v62);
+        if (mem[0x283C] == 0) exit_terrain_special_state();   /* $98C9 BNE skip */
+    } else {                                             /* $98D1 borrow */
+        if (mem[0x0072] != 0) enter_terrain_special_state();  /* $98D5 BEQ skip */
+        mem[0x0034] = (uint8_t)(mem[0x0034] + 1);
+        mem[0x0033] = 0; mem[0x0070] = 0;
+        uint8_t a29 = mem[0x0029];
+        if (a29 & 0x80) { mem[0x0029] = (uint8_t)(a29 + 1); mem[0x0028] = 0; }
+    }
+
+    /* $98EC: visible span $281A/$281B from depth $0034 */
+    { uint8_t d = mem[0x0034];
+      if (0x37 >= d) {
+          mem[0x281B] = (uint8_t)(0x37 - d);
+      } else {
+          uint8_t A = (uint8_t)(~(uint8_t)(0x37 - d));          /* EOR #$FF of wrapped SBC */
+          A = (uint8_t)((uint16_t)A + mem[0x281A] + 1);          /* SEC; ADC $281A */
+          if (A >= 0x38) A = 0x38;
+          mem[0x281A] = A; mem[0x281B] = 0;
+      } }
+
+    update_terrain_horizon_lr();                          /* $9907 */
+
+    /* $990A: $066C-gated state machine */
+    uint8_t v66c = mem[0x066C];
+    if (v66c >= 0x08) {                                   /* CMP #8; >=8 */
+        mem[0x2879] = 1;
+        init_proj_scratch_pointers();                     /* sets $0041=1 */
+        return;
+    }
+    if (mem[0x2879] == 0) return;                         /* LDY $2879; BEQ */
+    if (v66c >= 0x04) return;                             /* CMP #4; BCS */
+    mem[0x2879] = 0; mem[0x0041] = 0;
+}
+
 /* signed_mul_8x16 @ $9C97 — fixed-point signed multiply.
  *
  * Inputs : cpu.A      = 8-bit multiplier (treated as an unsigned fraction),
