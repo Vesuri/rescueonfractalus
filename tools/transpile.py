@@ -66,6 +66,8 @@ VALIDATE_FUNCS = {
     0xAB7B,  # set_plot_mask_and_halve_step — plot base ptr + step/4 (flight mid #4)
     0xA8AF,  # terrain_point_distance — Manhattan dist, nearest-point latch (flight mid #5)
     0xB2CC,  # terrain_midpoint_displace — fractal midpoint subdivision (flight mid #6)
+    0xA6D3,  # terrain_plot_pixel — OR voxel mask into terrain bitmap (flight raster #1)
+    0xA6CB,  # terrain_clip_row_top — clip column top vs row limit (flight raster #2)
 }
 VALIDATE_SUFFIX = '__t6502'
 

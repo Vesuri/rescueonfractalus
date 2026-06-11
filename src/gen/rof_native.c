@@ -13,6 +13,7 @@
  */
 #include <stdint.h>
 #include "../cpu/cpu.h"
+#include "../cpu/bus.h"  /* bus_read/bus_write + ZP_IND_Y for indirect bitmap access */
 #include "rof_decl.h"   /* declarations for transpiled routines native code calls */
 
 /* divide_16x16 @ $9D6F — restoring 16-bit divide.
@@ -662,4 +663,44 @@ done:
     #undef D_RORM
     #undef D_LSRA
     return;
+}
+
+/* terrain_plot_pixel @ $A6D3 — OR a 2-bit voxel mask into the terrain bitmap.
+ *
+ * Inputs : cpu.Y = scanline (clipped to < $97), cpu.X = mask index.
+ * Effect : bitmap ptr {$0081:$0080} from row tables $28FA/$28CA[Y]; mask from
+ *          $BC00[X] | ($BC00[X]>>1) ANDed with the plot-mask $0058, ORed into
+ *          (ptr),$BD00[X].  Restores Y from $28E2.
+ * Contract: memory (the bitmap write).  X and Y are preserved (callers read
+ *           them via INX/DEY); exit A/flags are dead at every call site, so
+ *           left incidental.  Calls the empty transpiled terrain_plot_skip_return.
+ */
+void terrain_plot_pixel(void) {
+    if (cpu.Y >= 0x97) { terrain_plot_skip_return(); return; }   /* CPY #$97; BCS skip */
+    uint8_t savedY = cpu.Y;
+    mem[0x28E2] = savedY;
+    mem[0x0080] = mem[0x28CA + savedY];
+    mem[0x0081] = mem[0x28FA + savedY];
+    cpu.Y = mem[0xBD00 + cpu.X];            /* LDY $BD00,X (the sub-x within the byte) */
+    uint8_t a = mem[0xBC00 + cpu.X];        /* LDA $BC00,X (pixel mask) */
+    mem[0x00B5] = a;
+    a = (uint8_t)(a >> 1);                  /* LSR A */
+    a |= mem[0x00B5];                       /* ORA $B5 -> 2-bit mask */
+    a &= mem[0x0058];                       /* AND plot mask */
+    a |= bus_read(ZP_IND_Y(0x80));          /* ORA ($80),Y */
+    bus_write(ZP_IND_Y(0x80), a);           /* STA ($80),Y */
+    cpu.Y = savedY;                         /* LDY $28E2 (restore) */
+    terrain_plot_skip_return();
+}
+
+/* terrain_clip_row_top @ $A6CB — clip a column's top against the per-column row
+ * limit $260E[X]; plot the pixel only when the scanline Y is strictly above it.
+ * Contract: memory.  X/Y preserved; exit A/flags dead (callers reload).
+ */
+void terrain_clip_row_top(void) {
+    uint8_t y = cpu.Y;                       /* TYA */
+    uint8_t lim = mem[0x260E + cpu.X];       /* CMP $260E,X */
+    if (y < lim)  { terrain_plot_skip_return(); return; }   /* BCC skip */
+    if (y == lim) { terrain_plot_skip_return(); return; }   /* BEQ skip */
+    terrain_plot_pixel();
 }

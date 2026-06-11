@@ -219,7 +219,7 @@ static int test_ring_push_0719(void) {
     return mem_fail + cpu_fail;
 }
 
-/* Like test_mem_contract but with random entry A/X/C — for routines that read
+/* Like test_mem_contract but with random entry A/X/Y/C — for routines that read
  * an entry register as input (a table index, a value to store, an entry carry). */
 static int test_mem_contract_regs(const char *name, void (*native)(void), void (*t6502)(void)) {
     enum { N = 20000 };
@@ -231,6 +231,7 @@ static int test_mem_contract_regs(const char *name, void (*native)(void), void (
         Cpu6502 c = zero_cpu();
         c.A = (uint8_t)(xs() & 0xFF);
         c.X = (uint8_t)(xs() & 0xFF);
+        c.Y = (uint8_t)(xs() & 0xFF);
         c.C = (uint8_t)(xs() & 1);
         mem_fail += diff_run(name, pre, c, native, t6502, t, &printed, &cpu_diff);
     }
@@ -257,6 +258,8 @@ int main(void) {
     fails += test_mem_contract_regs("set_plot_mask_and_halve_step", set_plot_mask_and_halve_step, set_plot_mask_and_halve_step__t6502);
     fails += test_mem_contract_regs("terrain_point_distance", terrain_point_distance, terrain_point_distance__t6502);
     fails += test_mem_contract_regs("terrain_midpoint_displace", terrain_midpoint_displace, terrain_midpoint_displace__t6502);
+    fails += test_mem_contract_regs("terrain_plot_pixel", terrain_plot_pixel, terrain_plot_pixel__t6502);
+    fails += test_mem_contract_regs("terrain_clip_row_top", terrain_clip_row_top, terrain_clip_row_top__t6502);
 
     printf("\n%s\n", fails == 0
         ? "PASS — all native reimplementations are memory-equivalent to their 6502 oracles."
