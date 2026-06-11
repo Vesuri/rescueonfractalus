@@ -1201,3 +1201,27 @@ L_b2aa:
     #undef ADC_
     #undef SBC_
 }
+
+/* terrain_gen_A613 @ $A613 — per-frame random terrain/object jitter (2+1 RANDOM).
+ *
+ * $2829 = RANDOM + RANDOM (with the add's carry rolled into $0068, EOR'd $FF when
+ * the ship column $0064 >= $6C); $282C = RANDOM - $80 with $0069 = -1 on borrow
+ * (a signed offset).  Tail-calls the empty terrain_plot_return.
+ * Contract: memory.  Reads POKEY RANDOM (harness seeds it identically per run).
+ */
+void terrain_gen_A613(void) {
+    uint8_t A, c, Y;
+    c = 0; A = bus_read(0xD20A);                          /* CLC; LDA $D20A */
+    { uint16_t t = (uint16_t)A + bus_read(0xD20A) + c; c = (uint8_t)(t >> 8); A = (uint8_t)t; }  /* ADC $D20A */
+    mem[0x2829] = A;
+    A = c;                                                /* LDA #0; ROL A -> A = carry */
+    if (mem[0x0064] < 0x6C) A ^= 0xFF;                    /* LDY $64; CPY #$6C; BCS skip; EOR #$FF when <$6C */
+    mem[0x0068] = A;
+
+    c = 1; Y = 0x00; A = bus_read(0xD20A);                /* SEC; LDY #0; LDA $D20A */
+    { uint16_t t = (uint16_t)A + (uint8_t)~0x80 + c; c = (uint8_t)(t >> 8); A = (uint8_t)t; }  /* SBC #$80 */
+    if (!c) Y = (uint8_t)(Y - 1);                         /* BCS skip; DEY (borrow -> -1) */
+    mem[0x0069] = Y;
+    mem[0x282C] = A;
+    terrain_plot_return();
+}

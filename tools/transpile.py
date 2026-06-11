@@ -74,6 +74,7 @@ VALIDATE_FUNCS = {
     0xA63B,  # terrain_plot_object — per-object raster dispatch (flight raster #6)
     0xB33D,  # terrain_column_rasterize — fractal column renderer (flight raster #7, the big one)
     0xB172,  # terrain_sub_B172 — fractal subdivision driver (flight raster #8)
+    0xA613,  # terrain_gen_A613 — per-frame random terrain jitter (flight top #1)
 }
 VALIDATE_SUFFIX = '__t6502'
 

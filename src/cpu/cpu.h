@@ -49,10 +49,15 @@ static inline void P_unpack(uint8_t p) {
 #define TXS()   do { cpu.S=cpu.X; } while(0)  /* TXS: no flag change */
 
 /* ---------- arithmetic -------------------------------------------- */
-/* ADC: A = A + v + C */
+/* ADC: A = A + v + C
+ * NOTE: evaluate the operand EXACTLY ONCE — `v` may have side effects (e.g.
+ * bus_read(0xD20A) steps the POKEY RANDOM LFSR).  Double-evaluating it (the old
+ * macro referenced (v) in both the sum and the overflow calc) made `ADC <hwreg>`
+ * read the register twice, desyncing the RANDOM stream from the real 6502. */
 #define ADC(v) do { \
-    uint16_t _t = (uint16_t)cpu.A + (uint8_t)(v) + cpu.C; \
-    cpu.V = ((~(cpu.A ^ (uint8_t)(v)) & (cpu.A ^ (uint8_t)_t)) >> 7) & 1; \
+    uint8_t _v = (uint8_t)(v); \
+    uint16_t _t = (uint16_t)cpu.A + _v + cpu.C; \
+    cpu.V = ((~(cpu.A ^ _v) & (cpu.A ^ (uint8_t)_t)) >> 7) & 1; \
     cpu.C = (_t > 0xFF) ? 1 : 0; \
     cpu.A = (uint8_t)_t; \
     UPD_NZ(cpu.A); \
