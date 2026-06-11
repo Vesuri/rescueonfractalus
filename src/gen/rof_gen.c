@@ -3041,7 +3041,8 @@ L_451a:;
 }
 
 /* game_sub_451d @ $451D: Game subsystem */
-void game_sub_451d(void) {
+/* faithful transliteration kept as the validation oracle; native game_sub_451d() lives in rof_native.c (see VALIDATE_FUNCS) */
+void game_sub_451d__t6502(void) {
     /* 451d */
     mem[0x00BB] = cpu.A;
     /* 451f */
@@ -17792,7 +17793,8 @@ L_9a35:;
 }
 
 /* sample_terrain_height_bilerp @ $9A36: Bilinear-samples height map at $0900 using hi-nibbles of $27FD-$2800 as 16x16 index; shift-add interpolates; height result in $0062 */
-void sample_terrain_height_bilerp(void) {
+/* faithful transliteration kept as the validation oracle; native sample_terrain_height_bilerp() lives in rof_native.c (see VALIDATE_FUNCS) */
+void sample_terrain_height_bilerp__t6502(void) {
     /* 9a36 */
     LDA(mem[0x2800]);
     /* 9a39 */

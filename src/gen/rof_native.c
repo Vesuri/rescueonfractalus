@@ -194,6 +194,89 @@ void game_sub_55FC(void) {
     TXA(); PHA(); TYA(); ring_push_0719();        /* $55FC-$55FE -> $55FF */
 }
 
+/* sample_terrain_height_bilerp @ $9A36 — bilinear-sample the 16x16 height map $0900.
+ *
+ * Fetch 4 corner heights into $27F0-$27F3 (row = $2800<<4, col = $27FE low nibble,
+ * X wraps within the nibble, row +$10 for the second), then 3 bit-serial fractional
+ * blends ($27FD horizontally twice -> $27F4/$27F5, then $27FF vertically -> R), then
+ * scale R += R>>4 + R>>5 into $0062.  $27F0-$27F5/$27FA/$27FB are shifted in place
+ * (scratch, part of the mem contract).  Bounded 8-iter loops -> random mem is safe.
+ *
+ * The blend's ADC adds the byte AFTER an in-place LSR plus the bit that LSR shifted
+ * out (rounding) — reproduced exactly. */
+static uint8_t terr_blend(uint16_t fa, uint16_t lo, uint16_t hi) {
+    uint8_t A = 0;
+    for (int i = 0; i < 8; i++) {
+        uint8_t f = mem[fa];
+        uint8_t bit = (uint8_t)(f >> 7);
+        mem[fa] = (uint8_t)(f << 1);                 /* ASL fraction -> carry=bit */
+        if (bit) {                                    /* B1: LSR lo; LSR hi; ADC hi */
+            mem[lo] = (uint8_t)(mem[lo] >> 1);        /* LSR lo (carry discarded) */
+            uint8_t h = mem[hi], c = (uint8_t)(h & 1);
+            mem[hi] = (uint8_t)(h >> 1);
+            A = (uint8_t)(A + mem[hi] + c);           /* ADC hi (+ shifted-out bit) */
+        } else {                                      /* bit0: LSR hi; LSR lo; ADC lo */
+            mem[hi] = (uint8_t)(mem[hi] >> 1);
+            uint8_t l = mem[lo], c = (uint8_t)(l & 1);
+            mem[lo] = (uint8_t)(l >> 1);
+            A = (uint8_t)(A + mem[lo] + c);           /* ADC lo */
+        }
+    }
+    return A;
+}
+void sample_terrain_height_bilerp(void) {
+    uint8_t row = (uint8_t)(mem[0x2800] << 4);                       /* $9A36: $0061 */
+    mem[0x0061] = row;
+    uint8_t y = (uint8_t)((mem[0x27FE] & 0x0F) | row);
+    mem[0x27F0] = mem[0x0900 + y];
+    y = (uint8_t)(((uint8_t)(y + 1) & 0x0F) | row);
+    mem[0x27F1] = mem[0x0900 + y];
+    row = (uint8_t)(row + 0x10); mem[0x0061] = row;                  /* $0061 += $10 */
+    y = (uint8_t)((mem[0x27FE] & 0x0F) | row);
+    mem[0x27F2] = mem[0x0900 + y];
+    y = (uint8_t)(((uint8_t)(y + 1) & 0x0F) | row);
+    mem[0x27F3] = mem[0x0900 + y];
+
+    mem[0x27FA] = mem[0x27FD]; mem[0x27F4] = terr_blend(0x27FA, 0x27F0, 0x27F1);
+    mem[0x27FA] = mem[0x27FD]; mem[0x27F5] = terr_blend(0x27FA, 0x27F2, 0x27F3);
+    mem[0x27FB] = mem[0x27FF]; uint8_t R = terr_blend(0x27FB, 0x27F4, 0x27F5);
+
+    mem[0x0062] = R;                                                 /* $9AFA */
+    uint8_t hi4 = (uint8_t)(R >> 4);                                 /* LSRx4 / TAY */
+    mem[0x0062] = (uint8_t)(hi4 + mem[0x0062]);                      /* CLC; ADC $0062 */
+    uint8_t c = (uint8_t)(hi4 & 1);                                  /* TYA; LSR -> carry */
+    mem[0x0062] = (uint8_t)((hi4 >> 1) + mem[0x0062] + c);           /* ADC $0062 */
+}
+
+/* game_sub_451d @ $451D — fill 14 cells of $2159+Y / $2189+Y from table $4553[X],
+ * with X/$BD evolving per the $BB threshold.  Self-contained loop (no callees).
+ * Inputs: cpu.A/X/Y.  Memory-only contract (validated with random entry regs).
+ */
+void game_sub_451d(void) {
+    uint8_t A = cpu.A, X = cpu.X, Y = cpu.Y;
+    mem[0x00BB] = A;                                   /* $451D STA $BB (entry A) */
+    mem[0x00BD] = X;                                   /* $451F STX $BD */
+    A = (uint8_t)((A & 0x03) | mem[0x00BD]);           /* $4521 AND#3; ORA $BD */
+    mem[0x00BD] = A;                                   /* $4525 STA $BD */
+    A = (uint8_t)((A & 0x04) ^ 0x04);                  /* $4527 AND#4; EOR#4 */
+    X = A;                                             /* $452B TAX */
+    mem[0x00BB] = (uint8_t)(mem[0x00BB] >> 2);         /* $452C LSR $BB; LSR $BB */
+    A = (uint8_t)(Y | mem[0x00BB]);                    /* $4530 TYA; ORA $BB */
+    mem[0x00BB] = A;                                   /* $4533 STA $BB */
+    mem[0x00BF] = 0x0E;                                /* $4535 loop count 14 */
+    do {
+        if (Y >= mem[0x00BB]) {                        /* $4539 CPY $BB; BCC skip */
+            X = mem[0x00BD];                           /* $453D LDX $BD */
+            mem[0x00BD] = (uint8_t)(X & 0x04);         /* $453F TXA; AND#4; STA $BD */
+        }
+        uint8_t v = mem[0x4553 + X];                   /* $4544 LDA $4553,X */
+        mem[0x2159 + Y] = v;                           /* $4547 STA $2159,Y */
+        mem[0x2189 + Y] = v;                           /* $454A STA $2189,Y */
+        Y = (uint8_t)(Y + 1);                          /* $454D INY */
+        mem[0x00BF] = (uint8_t)(mem[0x00BF] - 1);      /* $454E DEC $BF */
+    } while (mem[0x00BF] != 0);                        /* $4550 BNE */
+}
+
 /* signed_mul_8x16 @ $9C97 — fixed-point signed multiply.
  *
  * Inputs : cpu.A      = 8-bit multiplier (treated as an unsigned fraction),

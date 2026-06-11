@@ -87,6 +87,8 @@ VALIDATE_FUNCS = {
     0x9B87,  # init_proj_scratch_pointers — set game_state + 3 ZP ptr bytes (trivial leaf)
     0x5815,  # ring_push_marked — push X|$80 to the $0719 event ring (tail to ring_push_0719)
     0x55FC,  # game_sub_55FC — push Y to the $0719 event ring (falls into ring_push_0719)
+    0x9A36,  # sample_terrain_height_bilerp — bilinear height sample over the $0900 map (leaf)
+    0x451D,  # game_sub_451d — 14-iter table-fill into $2159/$2189 (leaf; called by update_terrain_horizon_lr)
 }
 VALIDATE_SUFFIX = '__t6502'
 
