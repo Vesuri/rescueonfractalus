@@ -431,6 +431,9 @@ int main(void) {
     fails += test_mem_contract_regs("exit_terrain_special_state", exit_terrain_special_state, exit_terrain_special_state__t6502);
     fails += test_mem_contract("update_terrain_horizon_lr", update_terrain_horizon_lr, update_terrain_horizon_lr__t6502);
     fails += test_mem_contract("update_terrain_scanline_proj", update_terrain_scanline_proj, update_terrain_scanline_proj__t6502);
+    /* flight_control_integrate subtree (leaves first) */
+    fails += test_mem_contract("reset_flags_ff", reset_flags_ff, reset_flags_ff__t6502);
+    fails += test_mem_contract("load_velocity_from_param_block", load_velocity_from_param_block, load_velocity_from_param_block__t6502);
     fails += test_clear_terrain_column();
     fails += test_signed_mul_8x16();
     fails += test_mem_contract("sine_table_lookup", sine_table_lookup, sine_table_lookup__t6502);

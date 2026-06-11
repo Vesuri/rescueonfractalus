@@ -93,6 +93,10 @@ VALIDATE_FUNCS = {
     0x9B4C,  # exit_terrain_special_state — inverse of enter (calls game_sub_55FC)
     0x992D,  # update_terrain_horizon_lr — L/R horizon update (calls sample_terrain_height_bilerp + game_sub_451d)
     0x9833,  # update_terrain_scanline_proj — TOP of subtree: map coords + depth + horizon (calls all the above)
+    # --- flight_control_integrate subtree (2026-06-12): the last transpiled code on
+    #     the flight VBI path (~31 fns). Leaves-first. ---
+    0x4E98,  # reset_flags_ff — set $006A/$0063/$2826 = $FF (leaf, mem-only)
+    0x94BF,  # load_velocity_from_param_block — seed vel accums $2854-$2863 from param block (tail ring_push_marked)
 }
 VALIDATE_SUFFIX = '__t6502'
 
