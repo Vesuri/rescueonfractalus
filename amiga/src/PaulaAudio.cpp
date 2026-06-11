@@ -230,6 +230,10 @@ uint8_t platform_hw_read(uint16_t addr)
 {
     if (addr == 0xD20Au) return pokey_random_step();  // POKEY RANDOM register
     if (addr >= 0xD200u && addr < 0xD210u) return pokey[addr - 0xD200u];
+    // PIA PORTA ($D300): Atari joysticks are ACTIVE-LOW (1 = open/neutral).  With
+    // no Amiga joystick wired in yet, report neutral ($FF) so flight_control_integrate
+    // reads "stick centred, no fire" — the ship flies straight instead of jamming.
+    if (addr == 0xD300u) return 0xFFu;
     return 0u;
 }
 

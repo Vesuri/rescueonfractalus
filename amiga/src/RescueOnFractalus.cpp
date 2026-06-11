@@ -53,6 +53,7 @@ extern "C" uint8_t launch_planet_step_native(void);            // $6574: one pla
 extern "C" void    launch_planet_scroll_native(void);          // $6AEE scroll-only: keep starfield drifting
 extern "C" void    flight_init_native(void);                   // game_entry $3E12-$3EB8 flight init
 extern "C" void    flight_reset_parity_native(void);           // reset double-buffer pass parity
+extern "C" void    flight_vbi_native(void);                    // flight VBI $4FF5 motion core (advances world pos)
 extern "C" uint8_t flight_frame_native(void);                  // one flight heavy pass; returns $0072 (==2 done)
 
 extern "C" volatile uint8_t mem[65536];
@@ -794,13 +795,17 @@ void RescueOnFractalus::update(uint16_t frame)
         // loop iteration for double buffering; one Amiga frame = one pass).  F0 perf
         // probe: bracket the call with the raster beam position so we can see how
         // much of the frame the transpiled terrain set consumes (-> top-border bar).
+        flight_vbi_native();    // flight VBI ($4FF5) motion core: advance world position first
         uint16_t l0 = (uint16_t)(((*vposrPointer & 1u) << 8) | (*vhposrPointer >> 8));
         flight_frame_native();
         uint16_t l1 = (uint16_t)(((*vposrPointer & 1u) << 8) | (*vhposrPointer >> 8));
         flightFrameLines = (uint16_t)((l1 - l0) & 0x1FFu);
     }
 
-    vbi_attract_timer_native();           // $52D7: attract timer cascade
+    // The attract/Standby per-frame timer belongs to vbi_handler_game ($52D7); in
+    // flight the active VBI is vbi_handler_2 ($4FF5), so skip it once in kFlight.
+    if (launchPhase != kFlight)
+        vbi_attract_timer_native();       // $52D7: attract timer cascade
     update_indicator_blink_native();    // $4131: cockpit blink lights
     // sfx_voice_tick_native() is now driven by CIA-B Timer A at ~100 Hz (main.cpp).
 
@@ -813,7 +818,9 @@ void RescueOnFractalus::update(uint16_t frame)
         mem[zp::sfxReinitGate] = 0u;    // clear flag (as $70E7 does via STX $0090)
     }
 
-    if (mem[0x060B] == 0)               // $62FB: title text (gated by $060B)
+    // Title text ("RESCUE ON FRACTALUS!" / copyright) is the Standby attract
+    // banner — don't draw it over the flight cockpit/viewport.
+    if (launchPhase != kFlight && mem[0x060B] == 0)   // $62FB: title text (gated by $060B)
         copy_text_block_to_screen_native();    // $782A: $0091→title string
 
     // FUN_4229 ($4229): gauge/counter animation AND — when mem[$007E]==$80 — the

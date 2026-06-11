@@ -47,6 +47,25 @@ void terrain_gen_2(void);             // $A31E: per-column fractal terrain raste
 void terrain_collision(void);         // $AE53: terrain collision + final column fill (X)
 void game_state_update(void);         // $A99C: game state machine
 void enemy_check(void);               // $3FCD: enemy/event dispatch
+
+// Flight VBI ($4FF5) per-frame motion core — the $004A-gated block at $51B9.
+// On the Atari these run in the VBI (asynchronous, once/frame); the Amiga is
+// frame-driven so we run them once per kFlight update, BEFORE the heavy render
+// pass.  flight_control_integrate reads PORTA $D300 (the Amiga HW read returns
+// $FF = neutral stick, so the ship flies straight) and integrates throttle into
+// the world position $2885/$2887/$2889 + heading — i.e. it is what MAKES THE
+// TERRAIN SCROLL.  update_terrain_scanline_proj projects the new pitch/altitude.
+void flight_control_integrate(void);     // $8E5B
+void update_terrain_scanline_proj(void); // $51BC
+}
+
+// flight_vbi_native: the motion half of one flight frame (flight VBI $4FF5,
+// $004A-gated subset).  Cockpit/HUD gauges from that block ($520F+) are deferred.
+extern "C" void flight_vbi_native(void)
+{
+    if (mem[0x004A] == 0) return;        // $51B2: LDA $004A / BEQ (skip when not flying)
+    flight_control_integrate();          // $51B9 ($8E5B): joystick + throttle -> world pos
+    update_terrain_scanline_proj();      // $51BC: project pitch/altitude for the new frame
 }
 
 // flight_init_native: port the mem[]-state subset of game_entry $3E12-$3EA6.
