@@ -348,10 +348,23 @@ void RescueOnFractalus::buildCopperList(CopperList* cl, uint16_t frame)
         d[idx++] = copperMove(bplcon0, kBPLCON0_3P);
         d[idx++] = copperMove(bpl1mod, 80);
         d[idx++] = copperMove(bpl2mod, 80);
-        d[idx++] = copperMove(color00, fadeColor(atariToOCS(mem[0x00DC]), f));  // COLBK
-        d[idx++] = copperMove(color01, fadeColor(atariToOCS(0x24), f));         // COLPF0
-        d[idx++] = copperMove(color02, fadeColor(atariToOCS(0x28), f));         // COLPF1
-        d[idx++] = copperMove(color03, fadeColor(atariToOCS(0x2A), f));         // COLPF2
+        if (launchPhase == kFlight) {
+            // Flight terrain palette (the F-skip bypasses the planet-entry colour
+            // setup + the dynamic atmosphere pipeline, so render a fixed authentic
+            // Fractalus palette here).  Empirically the terrain bitmap encodes
+            // pen0 = terrain body, pen1 = sky, pen2 = dots (NOT the conventional
+            // 0=background).  Nearest authentic Atari palette entries (the real
+            // hardware can only produce these 256 colours):
+            d[idx++] = copperMove(color00, fadeColor(atariToOCS(0x14), f));  // pen0 = terrain body (brown #530)
+            d[idx++] = copperMove(color01, fadeColor(atariToOCS(0x2A), f));  // pen1 = sky (salmon #c76)
+            d[idx++] = copperMove(color02, fadeColor(atariToOCS(0x20), f));  // pen2 = dots (dark #300)
+            d[idx++] = copperMove(color03, fadeColor(atariToOCS(0x18), f));  // pen3 = terrain highlight (#962)
+        } else {
+            d[idx++] = copperMove(color00, fadeColor(atariToOCS(mem[0x00DC]), f));  // COLBK
+            d[idx++] = copperMove(color01, fadeColor(atariToOCS(0x24), f));         // COLPF0
+            d[idx++] = copperMove(color02, fadeColor(atariToOCS(0x28), f));         // COLPF1
+            d[idx++] = copperMove(color03, fadeColor(atariToOCS(0x2A), f));         // COLPF2
+        }
     } else {
     emitBpl(tunnelFirst ? tun : (ta + (uint32_t)g2 * 120u));   // top half slides up (g2 rows)
     d[idx++] = copperMove(bplcon0, kBPLCON0_3P);
