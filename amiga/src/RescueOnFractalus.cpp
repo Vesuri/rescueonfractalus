@@ -240,9 +240,9 @@ void RescueOnFractalus::buildCopperList(CopperList* cl, uint16_t frame)
     // render() routes hi2=0 chars to col1 (plane1) and hi2=1 chars to col2
     // (plane2); "off" pixels use col0 = COLBK.
     {
-        uint16_t tbg   = atariToOCS(mem[0x02C8]);  // COLBK = background
+        uint16_t tbg   = atariToOCS(mem[0x02C8]);  // COLBK = background (grey)
         uint16_t tpf0  = atariToOCS(mem[zp::textColorPf0]);  // COLPF0 = hi2=0 text
-        uint16_t tpf1  = atariToOCS(0x78);         // COLPF1 = hi2=1 text (blue)
+        uint16_t tpf1  = atariToOCS(0x78);         // COLPF1 = hi2=1 text (blue) — score digits
         d[idx++] = copperMove(color00, fadeColor(tbg,  f));
         d[idx++] = copperMove(color01, fadeColor(tpf0, f));
         d[idx++] = copperMove(color02, fadeColor(tpf1, f));
@@ -743,6 +743,11 @@ void RescueOnFractalus::startFlight()
     launchPhase       = kFlight;
     viewportActive    = true;
     viewportForceFull = true;     // re-decode the whole viewport (now $1070 stride 96)
+    // Flight top bar: clear the stale Standby banner from the whole wide (24-char)
+    // mode-6 line $32B5..$32CC and force a full title re-render; the per-frame
+    // render_bcd_counter then draws the score on the right (visible at $32CA).
+    for (uint16_t i = 0x32B5; i <= 0x32CC; i++) mem[i] = 0x00;
+    for (int i = 0; i < 20; i++) titleShadow[i] = 0xFF;
 }
 
 void RescueOnFractalus::update(uint16_t frame)
@@ -950,7 +955,11 @@ void RescueOnFractalus::render()
     // titleShadow[] mirrors $32B7-$32CA; updated here on change.
     // Chars start at $32B7 (skip $32B5/$32B6 left-border), charset $3800 (NTSC).
     static const int      kTitleTextRow  = 21;
-    static const uint16_t kScreenRAM    = 0x32B7;
+    // The flight top-bar mode-6 line (flight DL $3123) is at $32B5 but the screen
+    // runs WIDE playfield (24 chars, $32B5..$32CC); the visible central 20 are
+    // $32B7..$32CA — same window the Standby title uses.  The score's right-most
+    // digit lands at $32CA = col 19, so this window already covers it.
+    static const uint16_t kScreenRAM = 0x32B7;
     // CHBAS=$04 ($0400): vbi_handler_game sets this each VBI. dli_sub_4a0c fires
     // at scanY=28 (after title scanlines 20-27) → title uses $0400 for all 8 scans.
     static const uint16_t kCharsetBase  = 0x0400;

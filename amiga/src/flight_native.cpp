@@ -57,6 +57,7 @@ void enemy_check(void);               // $3FCD: enemy/event dispatch
 // TERRAIN SCROLL.  update_terrain_scanline_proj projects the new pitch/altitude.
 void flight_control_integrate(void);     // $8E5B
 void update_terrain_scanline_proj(void); // $51BC
+void render_bcd_counter(void);           // $49A0: draw BCD score ($0601) to top line $32C5
 
 // Set during flight_init_native so transpiled frame-wait spin loops (wait_frames_60
 // via main_loop_body) advance RTCLOK in compute time instead of waiting on the real
@@ -71,6 +72,7 @@ extern "C" void flight_vbi_native(void)
     if (mem[0x004A] == 0) return;        // $51B2: LDA $004A / BEQ (skip when not flying)
     flight_control_integrate();          // $51B9 ($8E5B): joystick + throttle -> world pos
     update_terrain_scanline_proj();      // $51BC: project pitch/altitude for the new frame
+    render_bcd_counter();                // top-bar score: BCD $0601 -> text line $32C5
 }
 
 // flight_init_native: port the mem[]-state subset of game_entry $3E12-$3EA6.
