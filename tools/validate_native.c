@@ -477,6 +477,7 @@ int main(void) {
     fails += test_mem_contract("object_integrate_position", object_integrate_position, object_integrate_position__t6502);
     fails += test_mem_contract("jitter_roll_pitch", jitter_roll_pitch, jitter_roll_pitch__t6502);
     fails += test_mul_u8();
+    fails += test_mem_contract("compute_target_blip_position", compute_target_blip_position, compute_target_blip_position__t6502);
     fails += test_clear_terrain_column();
     fails += test_signed_mul_8x16();
     fails += test_mem_contract("sine_table_lookup", sine_table_lookup, sine_table_lookup__t6502);

@@ -105,6 +105,7 @@ VALIDATE_FUNCS = {
     0x930E,  # object_integrate_position — 24-bit world-pos integrate + blip $2821/$2824 (mem-only)
     0xAA95,  # jitter_roll_pitch — random-walk pitch/roll accums $0029/$0026 + decay $002E (RANDOM, mem-only)
     0x9821,  # mul_u8 — shift-add multiply, result in cpu.A (consumes $006B/$28D6)
+    0x9713,  # compute_target_blip_position — derive blip $0021/$0027 from range/depth/parallax (mem-only)
 }
 VALIDATE_SUFFIX = '__t6502'
 

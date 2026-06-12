@@ -2531,3 +2531,75 @@ check:                                          /* 9829 */
     if (mem[0x006B] != 0) goto check;           /* 9830 BNE (Z from the shifted result) */
     cpu.A = A;                                  /* 9832 RTS — result in A */
 }
+
+/* compute_target_blip_position @ $9713 — derive the target-blip screen coords $0021/$0027
+ * from the nearest-point range latch $27F7/$27F8, the depth $0034, sensor masks
+ * $1027/$1057, and the parallax samples $2912/$2913.  Several early returns.  mem-only
+ * (starts SEC; all inputs from mem; no entry regs).  NOTE the $976b SBC reads a
+ * PATH-DEPENDENT carry (0 when reached via the $975f BCC, 1 via the $9763 BMI). */
+void compute_target_blip_position(void) {
+    uint8_t A, X, c;
+    #define ADC_(v)  do { uint16_t _t=(uint16_t)A+(uint8_t)(v)+c; c=(uint8_t)(_t>>8); A=(uint8_t)_t; } while(0)
+    #define SBC_(v)  ADC_((uint8_t)~(uint8_t)(v))
+    #define ASLA_()  do { c=(uint8_t)(A>>7); A=(uint8_t)(A<<1); } while(0)
+    #define RORA_()  do { uint8_t _n=A&1; A=(uint8_t)((A>>1)|(c<<7)); c=_n; } while(0)
+    #define LSRA_()  do { c=A&1; A=(uint8_t)(A>>1); } while(0)
+
+    c = 1; A = mem[0x27F7]; SBC_(mem[0x27F8]); mem[0x0021] = A;   /* 9713-971a */
+    c = 0; A = mem[0x27F7]; ADC_(mem[0x27F8]); LSRA_();           /* 971c-9723 */
+    c = (A >= mem[0x0034]) ? 1 : 0;                              /* 9724 CMP $0034 */
+    if (!c) {                                                    /* 9726 BCS L_9738 */
+        A = mem[0x0021];                                        /* 9728 */
+        if (A & 0x80) { A ^= 0xFF; ADC_(0x01); }                /* 972a BPL; 972c EOR; 972e ADC#1 (c=0) -> abs */
+        c = (A >= 0x10) ? 1 : 0;                                /* 9730 CMP #$10 */
+        if (!c) mem[0x0021] = 0x00;                             /* 9732 BCS; 9734-9736 */
+    }
+    /* L_9738 */
+    if (mem[0x005D] == 0) {                                     /* 9738 LDA $005D; 973a BNE L_9741 */
+        mem[0x0027] = 0xC8;                                     /* 973c-973e */
+        goto out;
+    }
+    /* L_9741 */
+    X = 0x38;                                                  /* 9741 */
+    if ((mem[0x1027] & 0xAA) == 0 &&                            /* 9743-9748 */
+        (mem[0x1057] & 0xAA) == 0 &&                            /* 974a-974f */
+        mem[0x0070] >= 0x2A)                                   /* 9751-9755 BCC (C set => >=) */
+        X = 0x00;                                              /* 9757 */
+    mem[0x0027] = X;                                           /* 9759 STX $0027 */
+
+    A = mem[0x0034];                                          /* 975b */
+    c = (A >= 0x2A) ? 1 : 0;                                  /* 975d CMP #$2A */
+    int useBlk2;
+    if (!c) useBlk2 = 1;                                      /* 975f BCC L_9769 (c=0) */
+    else {
+        A = mem[0x0029];                                     /* 9761 */
+        if (A & 0x80) useBlk2 = 1;                           /* 9763 BMI L_9769 (c stays 1) */
+        else { A = 0xC8; useBlk2 = 0; }                      /* 9765 LDA #$C8; 9767 BNE L_9774 */
+    }
+    if (useBlk2) {                                            /* L_9769 */
+        A = 0x20; SBC_(mem[0x0034]);                          /* 9769-976b (path-dependent c) */
+        c = (A >= 0x80) ? 1 : 0;                              /* 976d CMP #$80 */
+        RORA_();                                             /* 976f ROR A */
+        if (!(A & 0x80)) A = 0x00;                           /* 9770 BMI L_9774; 9772 LDA #0 */
+    }
+    /* L_9774 */
+    c = 0; ADC_(mem[0x0027]); mem[0x0027] = A;                /* 9774-9777 */
+
+    A = mem[0x2912];                                         /* 9779 */
+    if (A >= 0x30 && A < 0xD1) goto out;                     /* 977c-9784 in-band -> RTS */
+    ASLA_();                                                 /* 9785 */
+    c = 0; ADC_(mem[0x0021]); mem[0x0021] = A;                /* 9786-9789 */
+
+    A = mem[0x2913];                                         /* 978b */
+    if (A >= 0x20 && A < 0xE1) goto out;                     /* 978e-9796 in-band -> RTS */
+    ASLA_();                                                 /* 9797 */
+    A ^= 0xFF;                                               /* 9798 EOR #$FF */
+    c = 0; ADC_(mem[0x0027]); mem[0x0027] = A;                /* 979a-979d */
+out:
+    #undef ADC_
+    #undef SBC_
+    #undef ASLA_
+    #undef RORA_
+    #undef LSRA_
+    return;
+}
