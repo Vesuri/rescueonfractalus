@@ -2670,3 +2670,84 @@ void store_676_init(void) {                      /* $4EA2 */
     mem[0x0676] = cpu.A;                          /* 4ea2 */
     set_hud_fields_678_679();
 }
+
+/* step_object_along_axes @ $9473 — step the object's screen pos $0023/$0024 by ±$14
+ * along the sign of $0024 (decrement clamps to 0), then either decrement depth
+ * $0033/$0034 by $30 (when $0070 != 0) or, on first settle ($003D==0 && $0678==0),
+ * bump $003D and (if $0063 >= 0) reset the gameplay flags.  mem-only contract. */
+void step_object_along_axes(void) {
+    uint8_t A, Y, c;
+    #define ADC_(v) do { uint16_t _t=(uint16_t)A+(uint8_t)(v)+c; c=(uint8_t)(_t>>8); A=(uint8_t)_t; } while(0)
+    #define SBC_(v) ADC_((uint8_t)~(uint8_t)(v))
+    if (mem[0x0024] & 0x80) {                              /* 9473-9475 BPL: neg -> increment */
+        c = 0; A = mem[0x0023]; ADC_(0x14); mem[0x0023] = A;  /* 9477-947c */
+        if (c) mem[0x0024]++;                              /* 947e-9480 */
+    } else {                                               /* L_9485 decrement, clamp 0 */
+        c = 1; A = mem[0x0023]; SBC_(0x14); Y = A;         /* 9485-948a SEC;SBC;TAY */
+        A = mem[0x0024]; SBC_(0x00);                       /* 948b-948d */
+        if (!c) { A = 0x00; Y = 0x00; }                    /* 948f BCS; 9491-9493 */
+        mem[0x0024] = A; mem[0x0023] = Y;                  /* 9494-9496 */
+    }
+    if (mem[0x0070] != 0) {                                /* 9498-949a BEQ L_94ac */
+        c = 1; A = mem[0x0033]; SBC_(0x30); mem[0x0033] = A;  /* 949c-94a1 */
+        A = mem[0x0034]; SBC_(0x00); mem[0x0034] = A;      /* 94a3-94a7 */
+    } else if (mem[0x003D] == 0 && mem[0x0678] == 0) {     /* 94ac-94b3 */
+        mem[0x003D]++;                                     /* 94b5 INC $003D */
+        if (!(mem[0x0063] & 0x80)) reset_flags_ff();       /* 94b7-94bb BMI; tail (native) */
+    }
+    #undef ADC_
+    #undef SBC_
+}
+
+/* reset_indicator_event @ $B786 — clear $0035, then enqueue the indicator event. */
+void reset_indicator_event(void) {
+    mem[0x0035] = 0x00;            /* b786-b788 */
+    enqueue_indicator_event();     /* b78a (native) */
+}
+
+/* compute_obj_rel_angle_scale @ $97A0 — build a 10-bit relative angle from $2885/$2886,
+ * derive sign/quadrant ($2882, $28D7/$28D8 indices), look up scale factors in $4EB9, and
+ * multiply by $002E (two mul_u8 passes) to produce the scaled coords $002B and $2881.
+ * NOTE: the first ROL A rotates in the ENTRY CARRY -> contract includes entry C. */
+void compute_obj_rel_angle_scale(void) {
+    uint8_t A, X, c, n, v;
+    #define ASLA_()  do { c=(uint8_t)(A>>7); A=(uint8_t)(A<<1); } while(0)
+    #define ROLA_()  do { n=(uint8_t)(A>>7); A=(uint8_t)((A<<1)|c); c=n; } while(0)
+    #define ROLM_(a) do { v=mem[a]; n=(uint8_t)(v>>7); mem[a]=(uint8_t)((v<<1)|c); c=n; } while(0)
+    #define SBC_(x)  do { uint16_t _t=(uint16_t)A+(uint8_t)~(uint8_t)(x)+c; c=(uint8_t)(_t>>8); A=(uint8_t)_t; } while(0)
+
+    c = cpu.C;                              /* ENTRY CARRY -> first ROL A */
+    mem[0x006B] = mem[0x2886];              /* 97a0-97a3 */
+    A = mem[0x2885];                        /* 97a5 */
+    ROLA_(); ROLM_(0x006B); ROLA_(); ROLM_(0x006B);   /* 97a8-97ad build 10-bit */
+    X = 0x00; mem[0x002C] = 0x00;           /* 97ae-97b0 */
+    A = mem[0x006B];                        /* 97b2 */
+    ASLA_(); if (c) mem[0x002C] = (uint8_t)(mem[0x002C] - 1);   /* 97b4-97b7 */
+    ASLA_(); if (c) X--;                    /* 97b9-97bc */
+    A = (uint8_t)(X ^ mem[0x002C]); mem[0x2882] = A;           /* 97bd-97c0 TXA;EOR;STA */
+    A = 0x00; ROLA_(); X = A;               /* 97c3-97c6 LDA#0;ROL A;TAX (X = last carry) */
+    A = (uint8_t)(mem[0x006B] & 0x3F);      /* 97c7-97c9 */
+    mem[0x28D7] = A; mem[0x28D8] = A;       /* 97cb-97ce */
+    A ^= 0x3F; mem[0x28D7 + X] = A;         /* 97d1-97d3 EOR #$3F; STA $28D7,X */
+    mem[0x28D7 + X] = (uint8_t)(mem[0x28D7 + X] + 1);          /* 97d6 INC $28D7,X */
+    X = mem[0x28D8];                        /* 97d9 */
+    mem[0x006B] = mem[0x4EB9 + X];          /* 97dc-97df scale factor */
+    mem[0x28D6] = mem[0x002E];              /* 97e1-97e3 multiplier */
+    mul_u8(); A = cpu.A;                    /* 97e6 (native; product in cpu.A) */
+    mem[0x002B] = A;                        /* 97e9 */
+    if (A == 0) mem[0x002C] = A;            /* 97eb-97ef */
+    A = mem[0x002C];                        /* 97f1 */
+    if (A != 0) { c = 0; SBC_(mem[0x002B]); mem[0x002B] = A; }  /* 97f3 BEQ; 97f5 CLC;SBC;STA */
+    X = mem[0x28D7];                        /* 97fa */
+    mem[0x006B] = mem[0x4EB9 + X];          /* 97fd-9800 */
+    mem[0x28D6] = mem[0x002E];              /* 9802-9804 */
+    mul_u8(); A = cpu.A;                    /* 9807 */
+    mem[0x2881] = A;                        /* 980a */
+    if (A == 0) mem[0x2882] = A;            /* 980d-9811 */
+    A = mem[0x2882];                        /* 9814 */
+    if (A != 0) { c = 0; SBC_(mem[0x2881]); mem[0x2881] = A; }  /* 9817-981d */
+    #undef ASLA_
+    #undef ROLA_
+    #undef ROLM_
+    #undef SBC_
+}

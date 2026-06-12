@@ -16393,7 +16393,8 @@ L_93f2:;
 }
 
 /* step_object_along_axes @ $9473: $0024 sign -> $0023/$0024 +=/-=$14 (clamp 0); if $0070!=0 $0033/$0034 -=$30; elif $003D=0 & $0678=0 inc $003D and (if $0063>=0) tail-call reset_flags_ff */
-void step_object_along_axes(void) {
+/* faithful transliteration kept as the validation oracle; native step_object_along_axes() lives in rof_native.c (see VALIDATE_FUNCS) */
+void step_object_along_axes__t6502(void) {
     /* 9473 */
     LDA(mem[0x0024]);
     /* 9475 */
@@ -17177,7 +17178,8 @@ L_9797:;
 }
 
 /* compute_obj_rel_angle_scale @ $97A0: Builds 10-bit value from $2885/$2886, sign into $2882, indexes $4EB9 table, calls mul $9821; outputs $2881/$002B scaled coords */
-void compute_obj_rel_angle_scale(void) {
+/* faithful transliteration kept as the validation oracle; native compute_obj_rel_angle_scale() lives in rof_native.c (see VALIDATE_FUNCS) */
+void compute_obj_rel_angle_scale__t6502(void) {
     /* 97a0 */
     LDA(mem[0x2886]);
     /* 97a3 */
@@ -24347,7 +24349,8 @@ L_b785:;
 }
 
 /* reset_indicator_event @ $B786: Sets $0035=0 then tail-calls b756 to enqueue indicator event 8 at position 0; called from gameplay pickup logic ($93dd) */
-void reset_indicator_event(void) {
+/* faithful transliteration kept as the validation oracle; native reset_indicator_event() lives in rof_native.c (see VALIDATE_FUNCS) */
+void reset_indicator_event__t6502(void) {
     /* b786 */
     LDA(0x00);
     /* b788 */

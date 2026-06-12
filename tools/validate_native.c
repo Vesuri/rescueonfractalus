@@ -516,6 +516,9 @@ int main(int argc, char **argv) {
     fails += test_mem_contract_regs("refresh_hud_field_0b", refresh_hud_field_0b, refresh_hud_field_0b__t6502);
     fails += test_mem_contract_regs("refresh_hud_field_0d_entry", refresh_hud_field_0d_entry, refresh_hud_field_0d_entry__t6502);
     fails += test_mem_contract_regs("refresh_hud_fields_0d_0e", refresh_hud_fields_0d_0e, refresh_hud_fields_0d_0e__t6502);
+    fails += test_mem_contract("step_object_along_axes", step_object_along_axes, step_object_along_axes__t6502);
+    fails += test_mem_contract("reset_indicator_event", reset_indicator_event, reset_indicator_event__t6502);
+    fails += test_mem_contract_regs("compute_obj_rel_angle_scale", compute_obj_rel_angle_scale, compute_obj_rel_angle_scale__t6502);
     fails += test_clear_terrain_column();
     fails += test_signed_mul_8x16();
     fails += test_mem_contract("sine_table_lookup", sine_table_lookup, sine_table_lookup__t6502);
