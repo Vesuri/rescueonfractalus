@@ -138,6 +138,7 @@ extern "C" void game_vbi_isr(void)
     if      (g_activeVbi == 2) flight_vbi_native();  // $4FF5 in-flight VBI
     else if (g_activeVbi == 1) standby_vbi_native(); // $52D7 standby/launch VBI
     cpu = saved;                                    // == XITVBV PLA;TAY;PLA;TAX;PLA
+    paula_noise_tick();                             // refresh poly17 noise sample (no cpu use)
 }
 
 // sfx_engine_reset_native: faithful replica of the SFX engine reset $5433 (mislabelled
@@ -145,8 +146,9 @@ extern "C" void game_vbi_isr(void)
 // launch ($6118).  Clears the $0719 event ring (head/tail $0073/$0074) and the 14 voice-
 // slot envelope arrays, assigns the 4 physical POKEY channels to voice slots 1..4
 // ($0705 = {2,4,6,8}) and mutes their AUDC, seeds the mixer scratch, and sets AUDCTL=$60.
-// Run once per flight entry so update_gauge_digits starts from a clean, silent state.
-static void sfx_engine_reset_native(void)
+// Run once per flight entry (and at launch start, openDoors) so update_gauge_digits
+// starts from a clean, silent state.
+extern "C" void sfx_engine_reset_native(void)
 {
     mem[0x0073] = 0x00;                       // ring head
     mem[0x0074] = 0x00;                       // ring tail

@@ -549,10 +549,17 @@ extern "C" void draw_tunnel_rings_native(void)
 //   $5342  lock_on_indicator_tick every other frame (LSR/INC $0643 gate)
 //   $534D  SFX tick ($70F9)              -> runs on CIA-B Timer A instead (main.cpp)
 //          update_gauge_digits ($548D) / music_player_tick ($7253) -> never ported.
+extern "C" void update_gauge_digits(void);   // $548D: SFX voice engine + $0719 ring drain
+
 extern "C" void standby_vbi_native(void)
 {
     vbi_attract_timer_native();              // $5335
     sound_event_dispatch_native();           // $5367
+    // $548D SFX voice engine — the Atari ran it in this VBI tail too.  Gate on
+    // $060B (=$23 once the launch cinematic begins, 0 during pure attract) so the
+    // attract music (CIA-B sequencer) is undisturbed but the START/doors/tunnel
+    // launch effects get drained from the $0719 ring to POKEY -> Paula.
+    if (mem[0x060B]) update_gauge_digits();
     uint8_t g = mem[zp::lockOnIndicatorTickParity];   // $5342: LSR $0643 / BCS skip / ... / INC
     mem[zp::lockOnIndicatorTickParity] = (uint8_t)(g >> 1);
     if (!(g & 1u)) {                         // carry clear -> run, then INC

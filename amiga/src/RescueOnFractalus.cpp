@@ -41,6 +41,7 @@ extern "C" void lock_on_indicator_tick_native(void);               // $4229: coc
 extern "C" void sound_event_dispatch_native(void);              // $5367: ring ($0088) vs door scroll ($008A)
 extern "C" void draw_tunnel_rings_native(void);                 // $65FB: draw concentric tunnel rings into $2000
 extern "C" void audio_stop_native(void);                        // $712D: stop music + mute POKEY (START press)
+extern "C" void sfx_engine_reset_native(void);                  // $5433: clean SFX voice engine for the launch
 extern "C" void launch_show_standby_native(void);               // display_setup $635F: "STAND BY..." + score
 extern "C" void launch_gauge_init_native(void);                 // vobj strip init ($062F/$0D98)
 extern "C" uint8_t launch_gauge_step_native(void);              // one vobj fill step; 0 when full
@@ -663,6 +664,10 @@ void RescueOnFractalus::openDoors()
     // SFX-sequencer melody must not carry into the launch cinematic or flight.
     // (Faithful fix for the "music keeps playing in flight" bug.)
     audio_stop_native();
+    // Launch begins: reset the SFX voice engine to a clean state (Atari display_setup
+    // $6118 -> $5433) so the standby VBI's update_gauge_digits can play the START/
+    // doors/tunnel launch effects from a known-good baseline.
+    sfx_engine_reset_native();
 
     // NOTE: `launched` is set in startDoors, NOT here — during the gauge phase the
     // viewport must still show the FULLY-CLOSED doors.  buildCopperList derives the

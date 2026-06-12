@@ -43,6 +43,37 @@ static __chip uint8_t wave_pure[2]      = { 0x7F, 0x81 }; // pure tone (square)
 static __chip uint8_t wave_buf[4][2][64];                // per-channel poly, ping-pong
 static uint8_t        wave_idx[4]       = { 0, 0, 0, 0 }; // index Paula is pointed at
 
+// POKEY "noise" distortion (AUDC with NOTPOLY5/POLY4/PURE all giving the poly17
+// source — i.e. PURE clear AND POLY4 clear: $80 ungated, $00 poly5-gated) is true
+// pseudo-random noise (the 17-bit poly), which Paula cannot synthesise.  We DMA a
+// long pre-rendered poly17 noise sample instead: each byte is one POKEY channel-
+// clock sample (so it plays at the same pokey_period() as a tone would), and the
+// buffer is long enough that the DMA loop period is a sub-audible rumble rather
+// than a pitched tone — the engine drone (event 8: AUDC $00, AUDF $FF) and the
+// explosion tails read as noise instead of a square.  1 KB chip RAM.
+#define NOISE_LEN 1024
+static __chip uint8_t noise_buf[NOISE_LEN];
+static uint32_t       noise_lfsr = 0x1FFFFu;   // PERSISTENT — carries across refills so the
+                                               // stream never repeats (true continuous noise)
+static bool           noiseOn[4] = { false, false, false, false };
+// Refill the shared noise sample with the NEXT poly17 run (continues noise_lfsr).
+static void fill_noise_buf(void)
+{
+    for (int i = 0; i < NOISE_LEN; i++) {
+        uint32_t bit = ((noise_lfsr >> 16) ^ (noise_lfsr >> 4)) & 1u;
+        noise_lfsr = ((noise_lfsr << 1) | bit) & 0x1FFFFu;
+        noise_buf[i] = (noise_lfsr & 1u) ? 0x7Fu : 0x81u;   // bipolar ±127
+    }
+}
+// Called once per VBI: while any channel is in noise mode, regenerate the sample
+// with fresh poly17 so a low-rate noise voice (the engine drone) doesn't audibly
+// loop the 1 KB buffer.  Overwriting the buffer Paula is mid-DMA on is inaudible
+// for noise (random over random).  No active noise channel → skip (cheap).
+extern "C" void paula_noise_tick(void)
+{
+    if (noiseOn[0] || noiseOn[1] || noiseOn[2] || noiseOn[3]) fill_noise_buf();
+}
+
 // POKEY poly patterns (1 bit/entry) and AUDC distortion bits (atari800 pokeysnd.c/pokey.h)
 static const uint8_t kBit4[15] = { 1,1,1,1,0,0,0,1,0,0,1,1,0,1,0 };
 static const uint8_t kBit5[31] = { 1,1,1,1,0,1,1,0,1,0,0,1,1,0,0,0,0,0,1,1,1,0,0,1,0,0,0,1,0,1,0 };
@@ -160,6 +191,22 @@ static void update_paula_channel(uint8_t ch)
     }
 
     uint16_t per = pokey_period(ch, audf, audctl);
+
+    // POKEY noise distortion (PURE clear AND POLY4 clear → poly17 source: $00 / $80):
+    // play the long poly17 noise sample.  Noise is not a pitched tone, so an
+    // "out-of-range" frequency (per == 0, e.g. AUDF 0) must NOT silence it — clamp
+    // to Paula's fastest rate instead so the engine drone/explosions still hiss.
+    bool is_noise = !(audc & POKEY_PURETONE) && !(audc & POKEY_POLY4) && !(audc & 0x10u);
+    noiseOn[ch] = is_noise && (vol != 0u);
+    if (is_noise) {
+        if (per == 0u) per = 124u;        // out-of-range → fastest Paula rate (still noise)
+        AUD_PTR(ch) = (uint32_t)noise_buf;
+        AUD_LEN(ch) = (uint16_t)(NOISE_LEN / 2);   // words
+        AUD_PER(ch) = per;
+        AUD_VOL(ch) = vol;
+        return;
+    }
+
     if (per == 0u) vol = 0u;  // out-of-range frequency → silence
 
     // Point the channel at the waveform for its distortion mode.  Paula latches
@@ -198,6 +245,7 @@ void paula_audio_init(void)
     // Clear POKEY shadow and LFSR
     for (int i = 0; i < 16; i++) pokey[i] = 0;
     lfsr_state = 0x1FFFFu;
+    fill_noise_buf();   // pre-render the poly17 noise sample for noise-distortion voices
 
     // SFX is initialised by the mem[$0090] gate in RescueOnFractalus::update():
     // the snapshot has $0090=1, so the first update() call resets $073C/$073A
