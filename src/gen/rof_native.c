@@ -2493,3 +2493,22 @@ done:
     #undef RORA_
     return;
 }
+
+/* jitter_roll_pitch @ $AA95 — per-frame random walk of the pitch ($0029) and roll
+ * ($0026) accumulators, plus a decay of $002E.  $0029 drifts toward $F4 (down up to
+ * 2, never past); $0026 walks toward $FB (down) when RANDOM is negative or toward $05
+ * (up) when positive, up to 2 and never past; $002E -= 8 with a floor of 0.
+ * Reads POKEY RANDOM $D20A once (harness seeds it identically).  mem-only contract. */
+void jitter_roll_pitch(void) {
+    uint8_t A, Y;
+    Y = mem[0x0029];                                   /* aa95 */
+    if (Y != 0xF4) { Y--; if (Y != 0xF4) Y--; }        /* aa97-aaa0 */
+    mem[0x0029] = Y;                                   /* aaa1 */
+    Y = mem[0x0026];                                   /* aaa3 */
+    A = bus_read(0xD20A);                              /* aaa5 LDA $D20A */
+    if (A & 0x80) { if (Y != 0xFB) { Y--; if (Y != 0xFB) Y--; } }  /* aaa8 BPL -> neg: toward $FB */
+    else          { if (Y != 0x05) { Y++; if (Y != 0x05) Y++; } }  /*           pos: toward $05 */
+    mem[0x0026] = Y;                                   /* aac1 */
+    A = mem[0x002E];                                   /* aac4 SEC; SBC #$08; clamp 0 */
+    mem[0x002E] = (A >= 0x08) ? (uint8_t)(A - 0x08) : 0x00;
+}
