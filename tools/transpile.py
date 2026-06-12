@@ -128,6 +128,18 @@ VALIDATE_FUNCS = {
     # batch 4 — apex:
     0x9552,  # object_step_and_collide — integrate pos + terrain/obj collision + pickup dispatch (PHA/PLA stack)
     0x8E5B,  # flight_control_integrate — THE flight VBI root: joystick+throttle integrate, HUD, ring rotate
+    # --- flight main-loop de-transpile (2026-06-12): the last transpiled code on
+    #     the flight per-frame path (game_state_update + enemy_check, called by
+    #     flight_frame_native).  Leaves-first.  plot_line_done $AB26 is a bare RTS
+    #     and is ABSORBED (native callers just return); game_sub_4f3f $4F3F is the
+    #     0-callers event/teardown closure (reaches the whole program) and is NOT
+    #     ported — enemy_check's $063D branch tail-calls it transpiled. ---
+    0xAB27,  # plot_scanline_up — Bresenham point plotter, walks up (calls native terrain_plot_pixel)
+    0xAAD4,  # plot_scanline_down — line-plot loop walking down (calls native terrain_plot_pixel)
+    0xAACF,  # plot_scanline_rand_dir — RANDOM picks up vs down
+    0xA99C,  # game_state_update — flight state machine (scanline plots + ring events)
+    0x7AB8,  # pmg_enemy_update — enemy PMG update (RANDOM; tail ring_push_marked + jitter_roll_pitch)
+    0x3FCD,  # enemy_check — event dispatch ($063D->game_sub_4f3f [transpiled] / $0633->pmg_enemy_update)
 }
 VALIDATE_SUFFIX = '__t6502'
 

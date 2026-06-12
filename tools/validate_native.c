@@ -546,6 +546,92 @@ static int test_terrain_draw_frame(void) {
     return mem_fail;
 }
 
+/* --- flight main-loop batch (game_state_update + enemy_check) --- */
+
+/* The scanline plotters (plot_scanline_up/down/rand_dir) walk via terrain_plot_pixel,
+ * which writes through bitmap pointers from the $28CA/$28FA row tables.  With fully
+ * random mem[] a write could alias the inner counter $28FA and spin forever; seed the
+ * real flight snapshot (sane row tables -> writes land in the $1010 bitmap, far from
+ * the $28xx accumulators) so the loops terminate.  Entry regs are loaded from mem[] at
+ * entry (irrelevant), and RANDOM is seeded identically per case by diff_run. */
+static int test_scanline(const char *name, void (*nat)(void), void (*t6502)(void)) {
+    if (!want(name)) return 0;
+    static uint8_t snap[65536], pre[65536];
+    const char *path = "a800dumps/flight_ram_0000_BFFF.bin";
+    FILE *f = fopen(path, "rb");
+    if (!f) { printf("%s: SKIP (%s not found)\n", name, path); return 0; }
+    memset(snap, 0, sizeof snap);
+    size_t got = fread(snap, 1, 0xC000, f); fclose(f);
+    if (got != 0xC000) { printf("%s: SKIP (short read %zu)\n", name, got); return 0; }
+    int mem_fail = 0, cpu_diff = 0, printed = 0;
+    enum { N = 4000 };
+    for (int t = 0; t < N; t++) {
+        memcpy(pre, snap, sizeof pre);
+        mem_fail += diff_run(name, pre, zero_cpu(), nat, t6502, t, &printed, &cpu_diff);
+    }
+    printf("%s: %d cases (flight snapshot), %d mem mismatch (must be 0), %d cpu diffs\n",
+           name, N, mem_fail, cpu_diff);
+    return mem_fail;
+}
+
+/* game_state_update @ $A99C: snapshot-driven (it drives the scanline plotters, which
+ * need the real row tables).  Randomize the control bytes that gate its branches so
+ * all paths are covered — half the cases force $28EE=1 (so the DEC reaches 0 and the
+ * line-plot path runs with $28ED!=0), and $007E hits both the ==7 special branch and
+ * the normal branch.  $28EB/$28EC (-> plot start X/Y) and the step seeds vary too. */
+static int test_game_state_update(void) {
+    if (!want("game_state_update")) return 0;
+    static uint8_t snap[65536], pre[65536];
+    const char *path = "a800dumps/flight_ram_0000_BFFF.bin";
+    FILE *f = fopen(path, "rb");
+    if (!f) { printf("game_state_update: SKIP (%s not found)\n", path); return 0; }
+    memset(snap, 0, sizeof snap);
+    size_t got = fread(snap, 1, 0xC000, f); fclose(f);
+    if (got != 0xC000) { printf("game_state_update: SKIP (short read %zu)\n", got); return 0; }
+    int mem_fail = 0, cpu_diff = 0, printed = 0;
+    enum { N = 8000 };
+    for (int t = 0; t < N; t++) {
+        memcpy(pre, snap, sizeof pre);
+        pre[0x28EE] = (xs() & 1) ? 0x01 : (uint8_t)(xs() & 0xFF);  /* 50% -> DEC hits 0 */
+        pre[0x28ED] = (uint8_t)(xs() | 0x01);                      /* event queued (nonzero) */
+        pre[0x007E] = (xs() & 1) ? 0x07 : (uint8_t)(xs() & 0xFF);  /* both special + normal */
+        pre[0x004D] = (uint8_t)(xs() & 0xFF);
+        pre[0x2826] = (uint8_t)(xs() & 0xFF);
+        pre[0x003D] = (uint8_t)(xs() & 0xFF);
+        pre[0x291A] = (uint8_t)(xs() & 0xFF);
+        pre[0x0624] = (uint8_t)(xs() & 0xFF);
+        pre[0x0041] = (uint8_t)(xs() & 0xFF);
+        pre[0x28EB] = (uint8_t)(xs() & 0xFF);
+        pre[0x28EC] = (uint8_t)(xs() & 0xFF);
+        mem_fail += diff_run("game_state_update", pre, zero_cpu(),
+                             game_state_update, game_state_update__t6502, t, &printed, &cpu_diff);
+    }
+    printf("game_state_update: %d cases (snapshot + control bytes), %d mem mismatch (must be 0), %d cpu diffs\n",
+           N, mem_fail, cpu_diff);
+    return mem_fail;
+}
+
+/* enemy_check @ $3FCD: force $063D=0 so it dispatches down the $0633->pmg_enemy_update
+ * branch (the $063D!=0 branch tail-calls the still-transpiled game_sub_4f3f, whose
+ * closure spins on VCOUNT busy-waits the harness can't advance — and it is a trivial
+ * identical tail-call to unchanged transpiled code, so it needs no diff).  Random mem
+ * otherwise; pmg_enemy_update + its native callees have no unbounded loops. */
+static int test_enemy_check(void) {
+    if (!want("enemy_check")) return 0;
+    enum { N = 20000 };
+    static uint8_t pre[65536];
+    int mem_fail = 0, cpu_diff = 0, printed = 0;
+    for (int t = 0; t < N; t++) {
+        fill_random(pre);
+        pre[0x063D] = 0x00;                       /* avoid the transpiled game_sub_4f3f branch */
+        mem_fail += diff_run("enemy_check", pre, zero_cpu(),
+                             enemy_check, enemy_check__t6502, t, &printed, &cpu_diff);
+    }
+    printf("enemy_check: %d cases ($063D=0 -> pmg branch), %d mem mismatch (must be 0), %d cpu diffs\n",
+           N, mem_fail, cpu_diff);
+    return mem_fail;
+}
+
 int main(int argc, char **argv) {
     g_filter = argv + 1; g_nfilter = argc - 1;   /* optional name-substring filters */
     platform_test_init_headless();   /* enable seedable RANDOM ($D20A) for both runs */
@@ -597,6 +683,13 @@ int main(int argc, char **argv) {
     /* batch 4 — apex */
     fails += test_mem_contract("object_step_and_collide", object_step_and_collide, object_step_and_collide__t6502);
     fails += test_flight_control_integrate();
+    /* flight main-loop batch (game_state_update + enemy_check) */
+    fails += test_scanline("plot_scanline_down", plot_scanline_down, plot_scanline_down__t6502);
+    fails += test_scanline("plot_scanline_up", plot_scanline_up, plot_scanline_up__t6502);
+    fails += test_scanline("plot_scanline_rand_dir", plot_scanline_rand_dir, plot_scanline_rand_dir__t6502);
+    fails += test_game_state_update();
+    fails += test_mem_contract("pmg_enemy_update", pmg_enemy_update, pmg_enemy_update__t6502);
+    fails += test_enemy_check();
     fails += test_clear_terrain_column();
     fails += test_signed_mul_8x16();
     fails += test_mem_contract("sine_table_lookup", sine_table_lookup, sine_table_lookup__t6502);

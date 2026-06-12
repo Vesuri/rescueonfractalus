@@ -3246,3 +3246,205 @@ L_92c7:
     #undef RORM_
     #undef ASLM_
 }
+
+/* ===========================================================================
+ * Flight main-loop de-transpile (2026-06-12): game_state_update + enemy_check
+ * and their callees — the last transpiled code on the flight per-frame path
+ * (flight_frame_native).  Leaves first.
+ * ------------------------------------------------------------------------- */
+
+/* plot_scanline_down @ $AAD4 — line-plot loop walking DOWN the screen.
+ * Walks the {$28EF:$28F0} fixed-point X position by the step {$5B:$5C} (which is
+ * first decremented by $40) and the sub-step {$28F3:$28F4}; for each scanline Y
+ * (from $28F2 down to $6C) it draws $28FA pixels across, advancing X by 1 and
+ * plotting via terrain_plot_pixel (native) when the column X is in [$2C,$D4).
+ * Inputs: $28EF-$28F4 position/step, $5B/$5C step, $58 plot mask (all set by the
+ * caller).  Contract: memory (the bitmap + the accumulators); exit cpu dead.
+ * plot_line_done $AB26 is a bare RTS -> absorbed as `return`. */
+void plot_scanline_down(void) {
+    /* aad4 SEC; LDA $5B; SBC #$40; STA $5B; BCC -> DEC $5C */
+    uint8_t step = mem[0x005B];
+    int borrow = (step < 0x40);                  /* SBC #$40 with C=1 */
+    mem[0x005B] = (uint8_t)(step - 0x40);
+    if (borrow) mem[0x005C]--;                    /* BCC L_aadf else DEC $5C */
+    cpu.X = mem[0x28F0];                          /* LDX $28F0 */
+    cpu.Y = mem[0x28F2];                          /* LDY $28F2 */
+    if (cpu.Y < 0x6C) return;                     /* CPY #$6C; BCC plot_line_done */
+    for (;;) {                                    /* L_aae9 (per scanline) */
+        mem[0x28FA] = mem[0x28F4];                /* LDA $28F4; STA $28FA */
+        do {                                      /* L_aaef (across the row) */
+            if (cpu.X >= 0x2C && cpu.X < 0xD4)    /* CPX #$2C BCC; CPX #$D4 BCS */
+                terrain_plot_pixel();             /* aaf7 (preserves X/Y) */
+            cpu.X++;                              /* INX */
+            mem[0x28FA]--;                        /* DEC $28FA */
+        } while (mem[0x28FA] != 0);               /* BNE L_aaef */
+        /* ab00 CLC; LDA $28F3; ADC $28F9; STA $28F3; BCC; INC $28F4; CLC */
+        { uint16_t t = (uint16_t)mem[0x28F3] + mem[0x28F9];
+          mem[0x28F3] = (uint8_t)t; if (t & 0x100) mem[0x28F4]++; }
+        /* ab10 LDA $28EF; ADC $5B (C=0); STA $28EF; LDA $28F0; ADC $5C; STA $28F0; TAX */
+        { uint16_t t = (uint16_t)mem[0x28EF] + mem[0x005B];
+          mem[0x28EF] = (uint8_t)t; int c = (t >> 8) & 1;
+          uint16_t u = (uint16_t)mem[0x28F0] + mem[0x005C] + c;
+          mem[0x28F0] = (uint8_t)u; cpu.X = (uint8_t)u; }   /* TAX */
+        cpu.Y--;                                  /* DEY */
+        if (cpu.Y < 0x6C) return;                 /* CPY #$6C; BCS L_aae9 else done */
+    }
+}
+
+/* plot_scanline_up @ $AB27 — Bresenham-style point plotter walking UP the screen.
+ * From {$28F1:$28F2} (Y) and X=$28F0, walks via the {$28F1:$28F3}/{$28F7:$28F9}
+ * step accumulators, drifting X by ±1 per scanline by the sign of $5C; plots
+ * $28FA pixels up each column via terrain_plot_pixel (native).  Bounds: X in
+ * [$2C,$D4), Y >= $6C.  Contract: memory; exit cpu dead.  plot_line_done absorbed. */
+void plot_scanline_up(void) {
+    cpu.X = mem[0x28F0];                          /* LDX $28F0 */
+    cpu.Y = mem[0x28F2];                          /* LDY $28F2 */
+    for (;;) {                                    /* L_ab2d */
+        if (cpu.X < 0x2C) return;                 /* CPX #$2C; BCC done */
+        if (cpu.X >= 0xD4) return;                /* CPX #$D4; BCS done */
+        if (cpu.Y < 0x6C) return;                 /* CPY #$6C; BCC done */
+        mem[0x28FA] = mem[0x28F4];                /* LDA $28F4; STA $28FA */
+        do {                                      /* L_ab3f (up the column) */
+            terrain_plot_pixel();                 /* ab3f (preserves X/Y) */
+            cpu.Y--;                              /* DEY */
+            if (cpu.Y < 0x6C) break;              /* CPY #$6C; BCC L_ab4c */
+            mem[0x28FA]--;                        /* DEC $28FA */
+        } while (mem[0x28FA] != 0);               /* BNE L_ab3f */
+        /* L_ab4c CLC; LDA $28F3; ADC $28F9; STA $28F3; BCC; INC $28F4; CLC */
+        { uint16_t t = (uint16_t)mem[0x28F3] + mem[0x28F9];
+          mem[0x28F3] = (uint8_t)t; if (t & 0x100) mem[0x28F4]++; }
+        /* L_ab5c LDA $28F1; ADC $28F7 (C=0); STA $28F1; LDA $28F2; ADC $28F8; STA $28F2; TAY */
+        { uint16_t t = (uint16_t)mem[0x28F1] + mem[0x28F7];
+          mem[0x28F1] = (uint8_t)t; int c = (t >> 8) & 1;
+          uint16_t u = (uint16_t)mem[0x28F2] + mem[0x28F8] + c;
+          mem[0x28F2] = (uint8_t)u; cpu.Y = (uint8_t)u; }   /* TAY */
+        /* ab6f LDA $5C; BPL -> INX else DEX */
+        if (mem[0x005C] & 0x80) cpu.X--;          /* DEX (X drift) */
+        else                    cpu.X++;          /* INX */
+    }
+}
+
+/* plot_scanline_rand_dir @ $AACF — RANDOM picks the walk direction. */
+void plot_scanline_rand_dir(void) {
+    if (bus_read(0xD20A) & 0x80) { plot_scanline_up(); return; }  /* BMI */
+    plot_scanline_down();
+}
+
+/* game_state_update @ $A99C — the flight state machine.  Counts down $28EE; on
+ * timeout reseeds it ($0624 & RANDOM) and resets state.  When the counter hits 0
+ * with a queued event ($28ED!=0) it sets up the target-blip line-plot ($28EF-$28F9
+ * seeded from RANDOM + the target column $28EB/$28EC) and draws it via the scanline
+ * plotters, then pushes ring events ($0041 explosion-frame counter).  $007E==7 is
+ * the special (impact?) branch with its own geometry + jitter_roll_pitch.
+ * Contract: memory; exit cpu dead.  All callees native. */
+void game_state_update(void) {
+    uint8_t a;
+    /* a99c DEC $28EE; BPL L_a9c3 */
+    mem[0x28EE]--;
+    if (mem[0x28EE] & 0x80) {                     /* N set: counter went negative */
+        /* a9a1 LDA $0624; AND $D20A; STA $28EE */
+        mem[0x28EE] = mem[0x0624] & bus_read(0xD20A);
+        if (mem[0x2826] == 0) reset_flags_ff();   /* a9aa LDA $2826; BNE skip */
+        if (mem[0x003D] == 0) mem[0x3355] = 0xB4; /* a9b2 LDA $003D; BNE skip */
+        mem[0x0041] = 0x00;                       /* a9bb */
+        mem[0x28ED] = 0x00;
+        return;
+    }
+    /* L_a9c3: BPL taken — proceed only when the counter is exactly 0 with an event */
+    if (mem[0x28EE] != 0) return;                 /* a9c3 BNE L_a9c2 */
+    if (mem[0x28ED] == 0) return;                 /* a9c5 LDA $28ED; BEQ L_a9c2 */
+    /* a9ca seed the line-plot from the target column $28EB/$28EC */
+    mem[0x28F0] = mem[0x28EB];
+    mem[0x28F2] = mem[0x28EC];
+    mem[0x28F4] = 0x01;
+    mem[0x28EF] = 0x80;
+    mem[0x28F1] = 0x80;
+    mem[0x28F3] = 0x80;
+    mem[0x0058] = 0xFF;                            /* plot mask */
+    mem[0x005C] = 0x00;
+    mem[0x28F8] = 0x00;
+    /* a9f1 LDA $D20A; ASL A; STA $5B; BCC; DEC $5C */
+    a = bus_read(0xD20A);
+    { int c = (a >> 7) & 1; mem[0x005B] = (uint8_t)(a << 1); if (c) mem[0x005C]--; }
+    /* a9fb LDA $291A; BPL L_aa0b */
+    a = mem[0x291A];
+    if (a & 0x80) {                               /* N set */
+        if (a < 0xFF) mem[0x005C] = 0x00;         /* aa00 CMP #$FF; BCS skip */
+    } else {                                      /* L_aa0b */
+        if (a >= 0x02) mem[0x005C] = 0xFF;        /* aa0b CMP #$02; BCC skip */
+    }
+    /* L_aa13 LDA $D20A; ASL A; STA $28F7; DEC $28F8 */
+    mem[0x28F7] = (uint8_t)(bus_read(0xD20A) << 1);
+    mem[0x28F8]--;
+    if (mem[0x007E] == 0x07) {                     /* aa1d CMP #$07; BEQ L_aa4b */
+        /* L_aa4b — special-state geometry */
+        mem[0x005C] = 0x00;                        /* aa4b */
+        /* aa4f SEC; LDA #$67; SBC $28EB; ASL A; STA $5B; BCC; DEC $5C */
+        a = (uint8_t)(0x67 - mem[0x28EB]);
+        { int c = (a >> 7) & 1; mem[0x005B] = (uint8_t)(a << 1); if (c) mem[0x005C]--; }
+        /* aa5c SEC; LDA #$6B; SBC $28EC; STA $28F9 */
+        mem[0x28F9] = (uint8_t)(0x6B - mem[0x28EC]);
+        plot_scanline_down();                      /* aa65 */
+        mem[0x003B] = 0x10;                        /* aa68 */
+        mem[0x0041]++;                             /* aa6c INC $0041 */
+        mem[0x00DB] = 0xBE;                        /* aa6e */
+        mem[0x00DD] = 0xBC;                        /* aa72 */
+        mem[0x00DC] = 0xB6;                        /* aa76 */
+        mem[0x00DA] = 0xB8;                        /* aa7a */
+        mem[0x3355] = 0x34;                        /* aa7e */
+        cpu.X = 0x03; ring_push_marked();          /* aa83 LDX #$03 */
+        cpu.X++;      ring_push_marked();          /* aa88 INX (X=$04) */
+        cpu.X = 0x0A; ring_push_marked();          /* aa8c LDX #$0A */
+        cpu.X++;      ring_push_marked();          /* aa91 INX (X=$0B) */
+        jitter_roll_pitch();                       /* aa94 */
+        return;
+    }
+    /* aa23 LDA $004D; EOR #$FF; LSR;LSR;LSR; CLC; ADC #$0C; STA $28F9 */
+    mem[0x28F9] = (uint8_t)(((uint8_t)(mem[0x004D] ^ 0xFF) >> 3) + 0x0C);
+    plot_scanline_rand_dir();                      /* aa30 */
+    mem[0x00DB] = 0xBE;                            /* aa33 */
+    if (mem[0x0041] == 0) mem[0x00DD] = 0x28;      /* aa37 LDA $0041; BNE skip */
+    mem[0x0041]++;                                 /* aa3f INC $0041 */
+    cpu.X = 0x07; ring_push_marked();              /* aa41 LDX #$07 */
+    cpu.X = 0x02; ring_push_marked();              /* aa46 LDX #$02 */
+}
+
+/* pmg_enemy_update @ $7AB8 — per-frame enemy PMG update.  When RANDOM is negative,
+ * occasionally repositions the enemy ($0044/$0047 to $6D or $70, $283D phase) and
+ * jitters roll/pitch; then advances $003B unless level-clear ($0072==2); finally
+ * pushes ring events $1A/$1B.  Reads RANDOM once.  Contract: memory; exit cpu dead. */
+void pmg_enemy_update(void) {
+    uint8_t a = bus_read(0xD20A);                 /* 7ab8 LDA $D20A */
+    if (a & 0x80) {                               /* 7abb BPL L_7af3 (return) */
+        if ((a & 0x0F) != 0) {                    /* 7abd AND #$0F; BEQ L_7add */
+            a &= 0x0F;
+            if (!(mem[0x003A] & 0x80)) {          /* 7ac1 LDY $003A; BMI L_7acb */
+                mem[0x0044] = 0x6D;               /* 7ac5 LDY #$6D; STY $44 */
+                mem[0x0047] = 0x6D;               /* STY $47 */
+            }
+            if ((a & 0x03) != 0) {                /* 7acb AND #$03; BEQ L_7add */
+                mem[0x283D] = (uint8_t)(a & 0x01);/* 7acf AND #$01; STA $283D */
+                mem[0x0044] = 0x70;               /* 7ad4 LDY #$70; STY $44 */
+                mem[0x0047] = 0x70;               /* STY $47 */
+                jitter_roll_pitch();              /* 7ada */
+            }
+        }
+        /* L_7add LDA $0072; CMP #$02; BEQ L_7aea */
+        if (mem[0x0072] != 0x02) {
+            mem[0x003B] = (uint8_t)(mem[0x003B] + 0x04);   /* 7ae3 CLC; LDA $3B; ADC #$04; STA $3B */
+        }
+        /* L_7aea LDX #$1A; ring; INX; ring */
+        cpu.X = 0x1A; ring_push_marked();         /* 7aea */
+        cpu.X++;      ring_push_marked();         /* 7aef INX (X=$1B) */
+    }
+    /* L_7af3: RANDOM was positive -> nothing */
+}
+
+/* enemy_check @ $3FCD — event dispatch.  $063D (event trigger) -> game_sub_4f3f
+ * (LEFT TRANSPILED: its closure reaches the whole-program init/teardown; it has
+ * 0 callers in steady flight); else $0633 (alien trigger) -> pmg_enemy_update.
+ * Contract: memory; exit cpu dead. */
+void enemy_check(void) {
+    if (mem[0x063D] != 0) { game_sub_4f3f(); return; }   /* 3fcd LDA $063D; BNE */
+    if (mem[0x0633] != 0) pmg_enemy_update();            /* 3fd5 LDA $0633; BEQ skip */
+}
