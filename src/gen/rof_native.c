@@ -2750,6 +2750,77 @@ void reset_indicator_event(void) {
     enqueue_indicator_event();     /* b78a (native) */
 }
 
+/* countdown_show_char_0620 @ $7B3C — when the countdown $0620 is running, place the
+ * countdown glyph into a free object slot (value $C9 with 1 retry when $0620==1, else
+ * the default $C8 via obj_table_scan_y1_c8), then decrement $0620.  mem-only. */
+void countdown_show_char_0620(void) {
+    uint8_t Y = mem[0x0620];                          /* 7b3c */
+    if (Y == 0) return;                               /* 7b3f BEQ */
+    if (Y == 1) { cpu.A = 0xC9; cpu.Y = Y; obj_table_scan_replace(); }  /* 7b41-7b47 */
+    else        { obj_table_scan_y1_c8(); }           /* 7b4d (sets Y=1, A=$C8) */
+    mem[0x0620] = (uint8_t)(mem[0x0620] - 1);         /* 7b50 DEC $0620 */
+}
+
+/* check_object_in_target_box @ $93BD — if the object has settled ($0065==0 && $0067==0)
+ * and its screen pos is inside the target box ($0064 in [$34,$AC), $0066 in [$1A,$6A)),
+ * trigger the in-box event: set $003B=$20, enqueue the indicator, jitter, and arm the
+ * box markers $2892/$3355/$2891.  mem-only. */
+void check_object_in_target_box(void) {
+    if (mem[0x0065] != 0 || mem[0x0067] != 0) return;          /* 93bd-93c3 */
+    uint8_t a = mem[0x0064];
+    if (a < 0x34 || a >= 0xAC) return;                         /* 93c5-93cd */
+    a = mem[0x0066];
+    if (a < 0x1A || a >= 0x6A) return;                         /* 93cf-93d7 */
+    mem[0x003B] = 0x20;                                        /* 93d9-93db */
+    reset_indicator_event();                                  /* 93dd (native) */
+    jitter_roll_pitch();                                      /* 93e0 (native) */
+    mem[0x2892] = 0x00;                                       /* 93e3-93e5 */
+    mem[0x3355] = 0x34;                                       /* 93e8-93ea */
+    mem[0x2891] = 0x1E;                                       /* 93ed-93ef */
+}
+
+/* check_player_proximity_hit @ $9680 — test whether object slot $0036 is within hit
+ * range of the player: |($006A+4)-$0036| < 4, then a Manhattan-ish distance from
+ * ($0038,$0039) vs ($2824,$2821) (folded via >>1>>1) compared to the per-shape
+ * threshold $96F5[$0036].  On a hit: clear $2826 and fire the pickup/explosion chain.
+ * Reads ENTRY CARRY ($9682 ADC #$04).  mem-only contract. */
+void check_player_proximity_hit(void) {
+    uint8_t A, X, c;
+    #define ADC_(v) do { uint16_t _t=(uint16_t)A+(uint8_t)(v)+c; c=(uint8_t)(_t>>8); A=(uint8_t)_t; } while(0)
+    #define SBC_(v) ADC_((uint8_t)~(uint8_t)(v))
+    #define RORA_() do { uint8_t _n=A&1; A=(uint8_t)((A>>1)|(c<<7)); c=_n; } while(0)
+    #define LSRA_() do { c=A&1; A=(uint8_t)(A>>1); } while(0)
+
+    c = cpu.C;                                  /* ENTRY CARRY */
+    A = mem[0x006A]; ADC_(0x04);                /* 9680-9682 */
+    c = 1; SBC_(mem[0x0036]);                   /* 9684-9685 SEC; SBC $0036 */
+    if (!c) { A ^= 0xFF; ADC_(0x01); }          /* 9687 BCS; 9689-968b abs */
+    if (A >= 0x04) return;                      /* 968d CMP #$04; 968f BCS L_96d8 */
+    c = 1; A = mem[0x0038]; SBC_(0x0C); SBC_(mem[0x2824]);   /* 9691-9696 SEC;SBC #$0C;SBC $2824 */
+    if (!c) { A ^= 0xFF; ADC_(0x01); }          /* 9699-969d abs */
+    mem[0x00BB] = A;                            /* 969f */
+    c = 0; A = mem[0x0039]; ADC_(0x42);         /* 96a1-96a4 CLC;LDA $0039;ADC #$42 */
+    c = 1; SBC_(mem[0x2821]);                   /* 96a6-96a7 SEC; SBC $2821 */
+    if (!c) { A ^= 0xFF; ADC_(0x01); }          /* 96aa-96ae abs */
+    c = 0; ADC_(mem[0x00BB]);                   /* 96b0-96b1 CLC; ADC $00BB */
+    RORA_(); LSRA_();                           /* 96b3 ROR A; 96b4 LSR A */
+    X = mem[0x0036];                            /* 96b5 */
+    if (A >= mem[0x96F5 + X]) return;           /* 96b7 CMP $96F5,X; 96ba BCS L_96d8 */
+    /* HIT */
+    mem[0x2826] = 0x00;                         /* 96bc-96be */
+    reset_indicator_event();                    /* 96c1 (native) */
+    reset_object_slot();                        /* 96c4 (native) */
+    trigger_object_explosion();                 /* 96c7 (native) */
+    mem[0x0045] = 0x50;                         /* 96ca-96cc */
+    mem[0x0046] = 0x02;                         /* 96ce-96d0 */
+    bcd_inc_counter_0641();                     /* 96d2 (native) */
+    terrain_jitter_column();                    /* 96d5 (native) */
+    #undef ADC_
+    #undef SBC_
+    #undef RORA_
+    #undef LSRA_
+}
+
 /* compute_obj_rel_angle_scale @ $97A0 — build a 10-bit relative angle from $2885/$2886,
  * derive sign/quadrant ($2882, $28D7/$28D8 indices), look up scale factors in $4EB9, and
  * multiply by $002E (two mul_u8 passes) to produce the scaled coords $002B and $2881.

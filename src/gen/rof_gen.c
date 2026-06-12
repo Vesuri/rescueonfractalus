@@ -13126,7 +13126,8 @@ void mark_slot_and_countdown_char(void) {
 }
 
 /* countdown_show_char_0620 @ $7B3C: If $0620!=0: ==1 -> LDA $C9/obj_table_scan_replace, else obj_table_scan_y1_c8, then DEC $0620; delayed char write to display buf */
-void countdown_show_char_0620(void) {
+/* faithful transliteration kept as the validation oracle; native countdown_show_char_0620() lives in rof_native.c (see VALIDATE_FUNCS) */
+void countdown_show_char_0620__t6502(void) {
     /* 7b3c */
     LDY(mem[0x0620]);
     /* 7b3f */
@@ -16340,7 +16341,8 @@ L_93b7:;
 }
 
 /* check_object_in_target_box @ $93BD: if $0065/$0067=0 and $0064 in [$34,$AC) and $0066 in [$1A,$6A): set $3B=$20, call b786 & jitter_roll_pitch, clear $2892, set $3355=$34, $2891=$1E (trigger event in box) */
-void check_object_in_target_box(void) {
+/* faithful transliteration kept as the validation oracle; native check_object_in_target_box() lives in rof_native.c (see VALIDATE_FUNCS) */
+void check_object_in_target_box__t6502(void) {
     /* 93bd */
     LDA(mem[0x0065]);
     /* 93bf */
@@ -16894,7 +16896,8 @@ void reset_object_slot__t6502(void) {
 }
 
 /* check_player_proximity_hit @ $9680: compute |$006A+4-$0036|; if <4 form dist from $0038/$0039 vs $2824/$2821, cmp tbl $96F5[$0036]; on hit clear $2826, call b786/9677/96d9, set $0045=$50 $0046=$02, 7b88 & terrain_gen */
-void check_player_proximity_hit(void) {
+/* faithful transliteration kept as the validation oracle; native check_player_proximity_hit() lives in rof_native.c (see VALIDATE_FUNCS) */
+void check_player_proximity_hit__t6502(void) {
     /* 9680 */
     LDA(mem[0x006A]);
     /* 9682 */

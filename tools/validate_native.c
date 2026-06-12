@@ -550,6 +550,10 @@ int main(int argc, char **argv) {
     fails += test_dial_bar("draw_object_column", draw_object_column, draw_object_column__t6502, 0x0F);
     fails += test_dial_bar("setup_dial_bar_draw", setup_dial_bar_draw, setup_dial_bar_draw__t6502, 0x3F);
     fails += test_dial_bar("game_sub_4447", game_sub_4447, game_sub_4447__t6502, 0x3F);
+    /* batch 3 — mid drivers */
+    fails += test_mem_contract("countdown_show_char_0620", countdown_show_char_0620, countdown_show_char_0620__t6502);
+    fails += test_mem_contract("check_object_in_target_box", check_object_in_target_box, check_object_in_target_box__t6502);
+    fails += test_mem_contract_regs("check_player_proximity_hit", check_player_proximity_hit, check_player_proximity_hit__t6502);
     fails += test_clear_terrain_column();
     fails += test_signed_mul_8x16();
     fails += test_mem_contract("sine_table_lookup", sine_table_lookup, sine_table_lookup__t6502);

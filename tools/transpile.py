@@ -121,6 +121,10 @@ VALIDATE_FUNCS = {
     0x43E8,  # draw_object_column — draw PMG dial-bar column via $4581 ptr table (absorbs bare-RTS draw_bar_loop_end $442D)
     0x444A,  # setup_dial_bar_draw — set bar params, tail draw_object_column
     0x4447,  # game_sub_4447 — A+=8, tail setup_dial_bar_draw
+    # batch 3 — mid drivers:
+    0x7B3C,  # countdown_show_char_0620 — place countdown glyph in obj slot + DEC $0620
+    0x93BD,  # check_object_in_target_box — in-box trigger ($003B/$2892/$3355/$2891)
+    0x9680,  # check_player_proximity_hit — hit test vs player -> pickup/explosion (reads ENTRY CARRY)
 }
 VALIDATE_SUFFIX = '__t6502'
 
