@@ -57,9 +57,11 @@ $(TARGET): $(OBJS) | build
 # Links the full app object graph minus main.o (for the symbol environment),
 # plus the harness, with its own main(). SDL is linked but never initialized.
 VALIDATE_OBJS := $(filter-out src/main.o,$(OBJS)) tools/validate_native.o
+# `make validate` runs the whole suite; `make validate FN="name ..."` runs only the
+# tests whose name contains one of the given substrings (e.g. FN=mul_u8, FN=terrain).
 validate: $(VALIDATE_OBJS) | build
 	$(CXX) $(CXXFLAGS) -o build/validate_native $(VALIDATE_OBJS) $(LDFLAGS)
-	./build/validate_native
+	./build/validate_native $(FN)
 
 build:
 	mkdir -p build

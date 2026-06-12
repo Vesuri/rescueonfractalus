@@ -24,6 +24,20 @@
 static uint32_t rng = 0x9D6F1234u;
 static uint32_t xs(void) { uint32_t x = rng; x ^= x << 13; x ^= x >> 17; x ^= x << 5; return rng = x; }
 
+/* Test filter: `make validate FN="name ..."` (or run ./build/validate_native name ...)
+ * runs only the tests whose name CONTAINS one of the given substrings — so FN=terrain
+ * runs all terrain_*, FN=mul_u8 runs just that.  No args (g_nfilter==0) runs everything.
+ * Each test gates itself via want(<its name>) and returns 0 (skipped) when filtered out.
+ * Lets you validate only the function(s) you just changed instead of the full suite. */
+static char **g_filter = 0;
+static int    g_nfilter = 0;
+static int want(const char *name) {
+    if (g_nfilter == 0) return 1;
+    for (int i = 0; i < g_nfilter; i++)
+        if (strstr(name, g_filter[i])) return 1;
+    return 0;
+}
+
 /* Per-test contract mask: addresses excluded from the mem[] diff.  Use ONLY for
  * cells PROVEN dead after the function returns (no reader before the next write),
  * so the native version is free not to reproduce them.  e.g. project_terrain_points
@@ -106,6 +120,7 @@ static int diff_run(const char *name, const uint8_t *pre, Cpu6502 pre_cpu,
  * does not overflow (dividend >= divisor would shift quotient bits off the top).
  * The native divide is exact across this whole domain. */
 static int test_divide_16x16(void) {
+    if (!want("divide_16x16")) return 0;
     enum { N = 200000 };
     static uint8_t pre[65536];
     int mem_fail = 0, cpu_diff = 0, printed = 0;
@@ -134,6 +149,7 @@ static int test_divide_16x16(void) {
  * Randomizing all of mem[] means any stray write (wrong cell, wrong span) shows
  * up as a diff.  X spans 0..255 to exercise the 6502 byte-index wrap too. */
 static int test_clear_terrain_column(void) {
+    if (!want("clear_terrain_column")) return 0;
     enum { N = 20000 };
     static uint8_t pre[65536];
     int mem_fail = 0, cpu_diff = 0, printed = 0;
@@ -157,6 +173,7 @@ static int test_clear_terrain_column(void) {
  * Full random mem[] (catches stray writes); random multiplier A, 16-bit signed
  * multiplicand $AA/$AB, and entry carry (which threads into the final $AC). */
 static int test_signed_mul_8x16(void) {
+    if (!want("signed_mul_8x16")) return 0;
     enum { N = 20000 };
     static uint8_t pre[65536];
     int mem_fail = 0, cpu_diff = 0, printed = 0;
@@ -185,6 +202,7 @@ static int test_signed_mul_8x16(void) {
  * untouched).  emit_bcd_byte_digits' PHA/PLA leaves a dead scribble at $01FF
  * (S=$FF here) that the nibble-extracting native doesn't make — excluded. */
 static int test_render_bcd_counter(void) {
+    if (!want("render_bcd_counter")) return 0;
     enum { N = 20000 };
     static uint8_t pre[65536];
     static const uint16_t ignore[] = { 0x01FF };
@@ -207,6 +225,7 @@ static int test_render_bcd_counter(void) {
  * head $0073.  Both runs use the real 6502 stack ops, so the $01xx stack byte
  * matches without masking. */
 static int test_stack_push(const char *name, void (*nat)(void), void (*t6502)(void)) {
+    if (!want(name)) return 0;
     enum { N = 20000 };
     static uint8_t pre[65536], ref[65536];
     int mem_fail = 0, cpu_fail = 0, printed = 0;
@@ -239,6 +258,7 @@ static int test_stack_push(const char *name, void (*nat)(void), void (*t6502)(vo
  * that does not read entry registers (lookup tables, etc., read from the same
  * random mem[] in both runs).  Stray writes and logic divergence both show up. */
 static int test_mem_contract(const char *name, void (*native)(void), void (*t6502)(void)) {
+    if (!want(name)) return 0;
     enum { N = 20000 };
     static uint8_t pre[65536];
     int mem_fail = 0, cpu_diff = 0, printed = 0;
@@ -257,6 +277,7 @@ static int test_mem_contract(const char *name, void (*native)(void), void (*t650
  * caller), so this test fails on cpu.A/X/S mismatch in addition to mem[].
  * Randomizes the ring head $0073, cpu.A, and cpu.S (so PLA reads varied stack). */
 static int test_ring_push_0719(void) {
+    if (!want("ring_push_0719")) return 0;
     enum { N = 20000 };
     static uint8_t pre[65536], ref_mem[65536];
     int mem_fail = 0, cpu_fail = 0, printed = 0;
@@ -297,6 +318,7 @@ static int test_ring_push_0719(void) {
 /* --- mul_u8 @ $9821: returns its product in cpu.A (the caller reads A, e.g. via a
  * following BIT), so the contract is mem[] AND cpu.A.  $006B/$28D6 are consumed. --- */
 static int test_mul_u8(void) {
+    if (!want("mul_u8")) return 0;
     enum { N = 20000 };
     static uint8_t pre[65536], ref_mem[65536];
     int mem_fail = 0, cpu_fail = 0, printed = 0;
@@ -332,6 +354,7 @@ static int test_mul_u8(void) {
 /* Like test_mem_contract but with random entry A/X/Y/C — for routines that read
  * an entry register as input (a table index, a value to store, an entry carry). */
 static int test_mem_contract_regs(const char *name, void (*native)(void), void (*t6502)(void)) {
+    if (!want(name)) return 0;
     enum { N = 20000 };
     static uint8_t pre[65536];
     int mem_fail = 0, cpu_diff = 0, printed = 0;
@@ -355,6 +378,7 @@ static int test_mem_contract_regs(const char *name, void (*native)(void), void (
  * make the accumulator loops run pathologically long, so seed a realistic step
  * ($0051 in 0..$3F).  Both runs share it, so the logic is still fully diffed. */
 static int test_raster_fill_region(void) {
+    if (!want("raster_fill_region")) return 0;
     enum { N = 20000 };
     static uint8_t pre[65536];
     int mem_fail = 0, cpu_diff = 0, printed = 0;
@@ -375,6 +399,7 @@ static int test_raster_fill_region(void) {
  * case (the nonzero early-out is a trivial empty return), and seed a realistic
  * step ($232E[X] in 0..$3F -> $0051) so the raster_fill_region loops terminate. */
 static int test_terrain_sub_obj(const char *name, void (*nat)(void), void (*t6502)(void)) {
+    if (!want(name)) return 0;
     enum { N = 20000 };
     static uint8_t pre[65536];
     int mem_fail = 0, cpu_diff = 0, printed = 0;
@@ -399,6 +424,7 @@ static int test_terrain_sub_obj(const char *name, void (*nat)(void), void (*t650
  * ./build/validate_native from the repo root, so the relative path resolves. */
 static int test_from_snapshot(const char *name, void (*nat)(void), void (*t6502)(void),
                               int N, uint8_t xmask) {
+    if (!want(name)) return 0;
     static uint8_t snap[65536], pre[65536];
     const char *path = "a800dumps/flight_ram_0000_BFFF.bin";
 
@@ -428,6 +454,7 @@ static int test_from_snapshot(const char *name, void (*nat)(void), void (*t6502)
  * also exercise both sides of the $A7-zero check; alternate them.  RANDOM ($D20A)
  * is read several times and seeded identically per case by diff_run. */
 static int test_terrain_draw_frame(void) {
+    if (!want("terrain_draw_frame")) return 0;
     static uint8_t snap[65536], pre[65536];
     const char *path = "a800dumps/flight_ram_0000_BFFF.bin";
     FILE *f = fopen(path, "rb");
@@ -451,8 +478,10 @@ static int test_terrain_draw_frame(void) {
     return mem_fail;
 }
 
-int main(void) {
+int main(int argc, char **argv) {
+    g_filter = argv + 1; g_nfilter = argc - 1;   /* optional name-substring filters */
     platform_test_init_headless();   /* enable seedable RANDOM ($D20A) for both runs */
+    if (g_nfilter) { printf("filter:"); for (int i = 0; i < g_nfilter; i++) printf(" %s", g_filter[i]); printf("\n"); }
 
     int fails = 0;
     fails += test_divide_16x16();
@@ -478,6 +507,7 @@ int main(void) {
     fails += test_mem_contract("jitter_roll_pitch", jitter_roll_pitch, jitter_roll_pitch__t6502);
     fails += test_mul_u8();
     fails += test_mem_contract("compute_target_blip_position", compute_target_blip_position, compute_target_blip_position__t6502);
+    fails += test_mem_contract_regs("obj_table_scan_replace", obj_table_scan_replace, obj_table_scan_replace__t6502);
     fails += test_clear_terrain_column();
     fails += test_signed_mul_8x16();
     fails += test_mem_contract("sine_table_lookup", sine_table_lookup, sine_table_lookup__t6502);
@@ -524,8 +554,10 @@ int main(void) {
                                 terrain_collision__t6502, 2000, 0x3F);
     fails += test_terrain_draw_frame();
 
-    printf("\n%s\n", fails == 0
-        ? "PASS — all native reimplementations are memory-equivalent to their 6502 oracles."
-        : "FAIL — a native version diverges from its 6502 oracle (see diffs above).");
+    printf("\n%s%s\n", fails == 0 ? "PASS — " : "FAIL — ",
+        fails == 0
+        ? (g_nfilter ? "selected native reimplementations are memory-equivalent to their 6502 oracles."
+                     : "all native reimplementations are memory-equivalent to their 6502 oracles.")
+        : "a native version diverges from its 6502 oracle (see diffs above).");
     return fails == 0 ? 0 : 1;
 }

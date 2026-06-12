@@ -2603,3 +2603,30 @@ out:
     #undef LSRA_
     return;
 }
+
+/* obj_table_scan_replace @ $4E1C — place the entry value (cpu.A) into a free object
+ * slot.  Retries up to cpu.Y times ($288C): each pass picks a RANDOM start index, then
+ * scans with stride $43 (coprime to 256 -> visits all indices, returns to start) for a
+ * slot with $0900,X < $30 and $0A00,X == 0 whose index isn't already in the $2276[0..$2C]
+ * table; the first match gets the entry value written to $0A00,X.  Reads entry A/Y and
+ * POKEY RANDOM $D20A (harness seeds it); mem-only effects ($281D/$288B/$288C/$0A00,X). */
+void obj_table_scan_replace(void) {
+    uint8_t X;
+    mem[0x281D] = cpu.A;                          /* 4e1c entry value */
+    mem[0x288C] = cpu.Y;                           /* 4e1f retry count */
+    do {                                           /* L_4e22 */
+        X = bus_read(0xD20A);                      /* 4e22 LDX $D20A */
+        mem[0x288B] = X;                           /* 4e25 */
+        for (;;) {                                 /* L_4e28 scan with stride $43 */
+            if (mem[0x0900 + X] < 0x30 && mem[0x0A00 + X] == 0) {  /* 4e28-4e32 */
+                uint8_t inTable = 0;
+                for (int y = 0x2C; y >= 0; y--)    /* L_4e37: X already in $2276[]? */
+                    if (X == mem[0x2276 + y]) { inTable = 1; break; }
+                if (!inTable) { mem[0x0A00 + X] = mem[0x281D]; break; }  /* 4e3f-4e45 write + done */
+            }
+            X = (uint8_t)(X + 0x43);               /* 4e48 X += $43 */
+            if (X == mem[0x288B]) break;           /* 4e4d-4e50 full cycle -> stop */
+        }
+        mem[0x288C] = (uint8_t)(mem[0x288C] - 1);  /* 4e52 DEC $288C */
+    } while (mem[0x288C] != 0);                    /* 4e55 BNE L_4e22 */
+}

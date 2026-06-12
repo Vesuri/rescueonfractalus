@@ -106,6 +106,7 @@ VALIDATE_FUNCS = {
     0xAA95,  # jitter_roll_pitch — random-walk pitch/roll accums $0029/$0026 + decay $002E (RANDOM, mem-only)
     0x9821,  # mul_u8 — shift-add multiply, result in cpu.A (consumes $006B/$28D6)
     0x9713,  # compute_target_blip_position — derive blip $0021/$0027 from range/depth/parallax (mem-only)
+    0x4E1C,  # obj_table_scan_replace — random-start stride-$43 scan to place entry val in a free obj slot (RANDOM)
 }
 VALIDATE_SUFFIX = '__t6502'
 
