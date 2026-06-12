@@ -554,6 +554,8 @@ int main(int argc, char **argv) {
     fails += test_mem_contract("countdown_show_char_0620", countdown_show_char_0620, countdown_show_char_0620__t6502);
     fails += test_mem_contract("check_object_in_target_box", check_object_in_target_box, check_object_in_target_box__t6502);
     fails += test_mem_contract_regs("check_player_proximity_hit", check_player_proximity_hit, check_player_proximity_hit__t6502);
+    /* batch 4 — apex */
+    fails += test_mem_contract("object_step_and_collide", object_step_and_collide, object_step_and_collide__t6502);
     fails += test_clear_terrain_column();
     fails += test_signed_mul_8x16();
     fails += test_mem_contract("sine_table_lookup", sine_table_lookup, sine_table_lookup__t6502);

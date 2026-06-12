@@ -2744,6 +2744,86 @@ void game_sub_4447(void) {
     setup_dial_bar_draw();             /* 444a (native) */
 }
 
+/* object_step_and_collide @ $9552 — advance an object's position accumulators by its
+ * velocity ($2854-$285B += $285C-$2863, 3-byte chained adds with the 12-bit map coords
+ * mirrored to $27FD-$2800 and the altitude $285B clamped on overflow), run the player
+ * hit test, then resolve terrain/object collision at the derived cell index $2864:
+ * sample the terrain height, and on a real collision explode the occupant and dispatch
+ * the pickup type ($64/$80/other -> $0044/$004D/$007E + counters).  Straight-line (no
+ * loops).  PHA/PLA at $9641/$964d use the real 6502 stack (cpu.S) because the nested
+ * trigger_object_explosion -> ring_push consumes it; the same native chain runs in both
+ * the native and oracle paths, so it stays equivalent.  mem-only contract. */
+void object_step_and_collide(void) {
+    uint8_t A, Y, c;
+    #define ADC_(v) do { uint16_t _t=(uint16_t)A+(uint8_t)(v)+c; c=(uint8_t)(_t>>8); A=(uint8_t)_t; } while(0)
+    #define ASLA_() do { c=(uint8_t)(A>>7); A=(uint8_t)(A<<1); } while(0)
+
+    c = 0; A = mem[0x2854]; ADC_(mem[0x285C]); mem[0x2854] = A;             /* 9552-9559 */
+    A = mem[0x2855]; ADC_(mem[0x285D]); mem[0x2855] = A; mem[0x27FD] = A;   /* 955c-9565 */
+    A = mem[0x2856]; ADC_(mem[0x285E]); A &= 0x0F; mem[0x2856] = A; mem[0x27FE] = A; /* 9568-9573 */
+    c = 0; A = mem[0x2857]; ADC_(mem[0x285F]); mem[0x2857] = A;             /* 9576-957d */
+    A = mem[0x2858]; ADC_(mem[0x2860]); mem[0x2858] = A; mem[0x27FF] = A;   /* 9580-9589 */
+    A = mem[0x2859]; ADC_(mem[0x2861]); A &= 0x0F; mem[0x2859] = A; mem[0x2800] = A; /* 958c-9597 */
+    c = 0; A = mem[0x285A]; ADC_(mem[0x2862]); mem[0x285A] = A;             /* 959a-95a1 */
+    A = mem[0x285B]; ADC_(mem[0x2863]);                                     /* 95a4-95a7 */
+    if (c) { if (!(mem[0x2863] & 0x80)) A = 0xFF; }                         /* 95aa-95b1 BMI: $FF on +overflow */
+    else   { if (mem[0x2863] & 0x80) A = 0x00; }                            /* 95b6-95bb */
+    mem[0x285B] = A;                                                        /* 95bd */
+    /* check_player_proximity_hit reads ENTRY CARRY; at $95c4 that carry is the
+       overflow out of the $95a7 ADC $2863 (BIT/LDA in the clamp don't touch C). */
+    cpu.C = c;
+    if (!(mem[0x0063] & 0x80)) check_player_proximity_hit();                /* 95c0-95c4 */
+
+    A = mem[0x2858]; ASLA_();                  /* 95c7-95ca */
+    A = mem[0x2859]; ADC_(0x00);               /* 95cb-95ce */
+    ASLA_(); ASLA_(); ASLA_(); ASLA_();        /* 95d0-95d3 (x16) */
+    mem[0x00BB] = A;                           /* 95d4 */
+    A = mem[0x2855]; ASLA_();                  /* 95d6-95d9 */
+    A = mem[0x2856]; ADC_(0x00); A &= 0x0F;    /* 95da-95df */
+    A |= mem[0x00BB]; mem[0x2864] = A;         /* 95e1-95e3 */
+    Y = A;                                     /* 95e6 TAY */
+
+    if (mem[0x0A00 + Y] != 0) {                 /* 95e7-95ea BEQ L_9614 */
+        A = mem[0x0900 + Y]; c = 0; ADC_(0x10); if (c) A = 0xFF;   /* 95ec-95f4 */
+        if (A >= mem[0x285B]) {                 /* 95f6-95f9 BCC L_9614 */
+            A = mem[0x2855];
+            if (!(A >= 0x30 && A < 0xD0)) {      /* 95fb-9604 not in X-band -> L_9606 */
+                A = mem[0x2858];
+                if (!(A >= 0x30 && A < 0xD0)) goto L_9635;   /* 9606-960f / L_9611 */
+            }
+        }
+    }
+    /* L_9614 */
+    sample_terrain_height_bilerp();             /* 9614 (native) */
+    if (mem[0x0062] < mem[0x285B]) return;      /* 9617-961e */
+    A = mem[0x2855];
+    if (A >= 0x30 && A < 0xD0) { reset_object_slot(); return; }   /* 961f-9628 */
+    A = mem[0x2858];
+    if (A >= 0x30 && A < 0xD0) { reset_object_slot(); return; }   /* 962a-9633 */
+L_9635:
+    Y = mem[0x2864];                            /* 9635 */
+    A = mem[0x0A00 + Y];                        /* 9638 */
+    if (A == 0) { reset_object_slot(); return; }        /* 963b BEQ */
+    if (A >= 0xF8) { reset_object_slot(); return; }     /* 963d-963f CMP #$F8; BCS */
+    mem[0x0100 | cpu.S] = A; cpu.S--;           /* 9641 PHA */
+    mem[0x0A00 + Y] = 0xFC;                      /* 9642-9644 */
+    mem[0x2843] = 0xFC;                          /* 9647 */
+    trigger_object_explosion();                  /* 964a (native; touches the stack) */
+    cpu.S++; A = mem[0x0100 | cpu.S];           /* 964d PLA */
+    if (A < 0x64) { reset_object_slot(); return; }      /* 964e-9650 CMP #$64; BCC */
+    if (A != 0x64) {                             /* 9652 BNE L_9664 */
+        if (A == 0x80) { set_place_params_inc_count(); A = 0x40; }   /* 9664-966d */
+        else           { countdown_show_char_0620(); A = 0x49; }     /* 9670-9673 */
+        mem[0x0044] = A; reset_object_slot(); return;                /* 9675 */
+    }
+    set_place_params_inc_count();                /* 9654 (A == $64) */
+    mem[0x004D] = 0x28;                          /* 9657-9659 */
+    mem[0x007E] = (uint8_t)(mem[0x007E] | 0x80); /* 965b-965f */
+    reset_object_slot();                         /* 9661 */
+    #undef ADC_
+    #undef ASLA_
+}
+
 /* reset_indicator_event @ $B786 — clear $0035, then enqueue the indicator event. */
 void reset_indicator_event(void) {
     mem[0x0035] = 0x00;            /* b786-b788 */

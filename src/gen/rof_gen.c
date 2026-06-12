@@ -16614,7 +16614,8 @@ L_9526:;
 }
 
 /* object_step_and_collide @ $9552: add vel $285C-$2863 to pos accum $2854-$285B (mirror $27FD-$2800); build cell idx $2864 into maps $0900/$0A00; altitude/bounds checks; on hit set $2843=$FC, call 96d9/7b80/7b3c, set $0044/$004D/$007E; tail reset_object_slot */
-void object_step_and_collide(void) {
+/* faithful transliteration kept as the validation oracle; native object_step_and_collide() lives in rof_native.c (see VALIDATE_FUNCS) */
+void object_step_and_collide__t6502(void) {
     /* 9552 */
     CLC();
     /* 9553 */

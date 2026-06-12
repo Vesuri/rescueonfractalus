@@ -125,6 +125,8 @@ VALIDATE_FUNCS = {
     0x7B3C,  # countdown_show_char_0620 — place countdown glyph in obj slot + DEC $0620
     0x93BD,  # check_object_in_target_box — in-box trigger ($003B/$2892/$3355/$2891)
     0x9680,  # check_player_proximity_hit — hit test vs player -> pickup/explosion (reads ENTRY CARRY)
+    # batch 4 — apex:
+    0x9552,  # object_step_and_collide — integrate pos + terrain/obj collision + pickup dispatch (PHA/PLA stack)
 }
 VALIDATE_SUFFIX = '__t6502'
 
