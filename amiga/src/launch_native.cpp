@@ -57,6 +57,34 @@ void draw_player3_object(void);                 // $42A7: the planet as a scaled
 // Setting $060B=$23 makes RescueOnFractalus::update() stop calling the attract title
 // writer (copy_text_block_to_screen_native is gated on $060B==0), so the
 // RESCUE/(C)1985 toggle ceases and "STAND BY..." persists.
+// audio_stop_native: port of audio_timer_setup ($712D) — the Atari "stop all
+// sound" routine the launch path runs (display_setup $6337/$634F) the instant
+// START is pressed ($0004 set → the attract loop branches to $634F).  It
+// silences BOTH audio engines and all four POKEY voices:
+//   712d  LDA #0 / STA $00E7   stop the SFX-sequencer tick (= the Standby music;
+//                              the CIA-B Timer A ISR gates on mem[$00E7])
+//         STA $0655            stop music_player_tick
+//         STA $00E5
+//         STA $D201/3/5/7      AUDC1-4 = 0  (mute all four voices)
+//   7142  LDY #$60 / STY $D208 AUDCTL = $60
+// On the Amiga, clearing mem[$00E7] makes the CIA-B ISR (sfxTimerHandler) stop
+// ticking the sequencer; the AUDC writes must go through platform_hw_write so
+// update_paula_channel drops each Paula channel's volume to 0 — otherwise the
+// last waveform would keep sounding even though the sequencer is no longer
+// updating it.  Clear the $00E7 gate FIRST so the ISR can't fire a fresh voice
+// between here and the mutes.
+extern "C" void audio_stop_native(void)
+{
+    mem[0x00E7] = 0x00;   // SFX-sequencer gate (Standby music) — clear first
+    mem[0x0655] = 0x00;   // music_player_tick gate
+    mem[0x00E5] = 0x00;
+    platform_hw_write(0xD201, 0x00);   // AUDC1
+    platform_hw_write(0xD203, 0x00);   // AUDC2
+    platform_hw_write(0xD205, 0x00);   // AUDC3
+    platform_hw_write(0xD207, 0x00);   // AUDC4
+    platform_hw_write(0xD208, 0x60);   // AUDCTL
+}
+
 extern "C" void launch_show_standby_native(void)
 {
     mem[0x08A3] = 0x23;

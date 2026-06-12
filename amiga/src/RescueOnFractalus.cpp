@@ -40,6 +40,7 @@ extern "C" void update_cockpit_digits_native(void);                      // $3FF
 extern "C" void lock_on_indicator_tick_native(void);               // $4229: cockpit counter animation
 extern "C" void sound_event_dispatch_native(void);              // $5367: ring ($0088) vs door scroll ($008A)
 extern "C" void draw_tunnel_rings_native(void);                 // $65FB: draw concentric tunnel rings into $2000
+extern "C" void audio_stop_native(void);                        // $712D: stop music + mute POKEY (START press)
 extern "C" void launch_show_standby_native(void);               // display_setup $635F: "STAND BY..." + score
 extern "C" void launch_gauge_init_native(void);                 // vobj strip init ($062F/$0D98)
 extern "C" uint8_t launch_gauge_step_native(void);              // one vobj fill step; 0 when full
@@ -656,6 +657,13 @@ void RescueOnFractalus::renderViewportModeD(uint16_t srcBase, int stride, int ro
 void RescueOnFractalus::openDoors()
 {
     if (launchPhase != kLaunchNone) return;   // launch already begun
+
+    // The instant START is pressed the Atari launch path calls audio_timer_setup
+    // ($712D) to STOP the attract music (display_setup $6337/$634F): the Standby
+    // SFX-sequencer melody must not carry into the launch cinematic or flight.
+    // (Faithful fix for the "music keeps playing in flight" bug.)
+    audio_stop_native();
+
     // NOTE: `launched` is set in startDoors, NOT here — during the gauge phase the
     // viewport must still show the FULLY-CLOSED doors.  buildCopperList derives the
     // door gap g2 from `launched` (= $2B - $008A); leaving it false keeps g2 = 0
@@ -681,6 +689,7 @@ void RescueOnFractalus::skipToFlight()
 {
     if (launchPhase == kFlight) return;
     launched = true;          // mark the cinematic as begun (stops the attract title toggle)
+    audio_stop_native();      // F-skip bypasses openDoors() — still stop the attract music
     startFlight();
 }
 
