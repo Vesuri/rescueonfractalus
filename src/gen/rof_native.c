@@ -1289,11 +1289,19 @@ void terrain_column_rasterize(void) {
     #define SBC_(v)  ADC_((uint8_t)~(uint8_t)(v))
     #define RORA_()  do { uint8_t _n=A&1; A=(uint8_t)((A>>1)|(c<<7)); c=_n; } while(0)
     #define LSRA_()  do { c=A&1; A=(uint8_t)(A>>1); } while(0)
+    /* _ad is a terrain-silhouette bitmap address: {$28CA[ai]:$28FA[ai]} (a row-addr
+       table pointing into the ~$1010 bitmap) + $BD00[X].  It is ALWAYS plain RAM —
+       never the HW range ($D000-$D7FF) nor a page-2 shadow ($0200-$02FF) — so the
+       bus_read/bus_write routing (4 dead range-check branches per voxel, in the
+       hottest loop in the game) is replaced with a direct mem[] read-modify-write.
+       Safe because terrain_column_rasterize is validated from the REAL flight
+       snapshot (test_from_snapshot), where the row tables are real -> _ad in-bitmap;
+       the __t6502 oracle's bus_*() reduce to the same mem[] access for _ad<$D000. */
     #define PLOT()   do { mem[0x00B5]=Y; uint8_t _ai=A; \
         mem[0x0080]=mem[0x28CA+_ai]; mem[0x0081]=mem[0x28FA+_ai]; \
         uint8_t _bo=mem[0xBD00+X]; \
         uint16_t _ad=(uint16_t)(mem[0x0080]|(mem[0x0081]<<8))+_bo; \
-        bus_write(_ad,(uint8_t)(bus_read(_ad)|mem[0xBC00+X])); \
+        mem[_ad]=(uint8_t)(mem[_ad]|mem[0xBC00+X]); \
         Y=mem[0x00B5]; } while(0)
 
     X = cpu.X; mem[0x0060] = X;                          /* b33d STX $60 */
