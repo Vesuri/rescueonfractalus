@@ -97,6 +97,11 @@ VALIDATE_FUNCS = {
     #     the flight VBI path (~31 fns). Leaves-first. ---
     0x4E98,  # reset_flags_ff — set $006A/$0063/$2826 = $FF (leaf, mem-only)
     0x94BF,  # load_velocity_from_param_block — seed vel accums $2854-$2863 from param block (tail ring_push_marked)
+    0x7B88,  # bcd_inc_counter_0641 — $0641 += 1 (binary; cpu core ignores decimal mode)
+    0x7B80,  # set_place_params_inc_count — $0045=0,$0046=1, tail bcd_inc_counter_0641
+    0x96D9,  # trigger_object_explosion — set explosion sprite ptrs + INC $0041, tail ring_push_marked X=$0F
+    0x9677,  # reset_object_slot — $0036=$80, tail ring_push_marked X=$0E
+    0xB756,  # enqueue_indicator_event — write indicator HUD params, tail game_sub_55FC Y=$08
 }
 VALIDATE_SUFFIX = '__t6502'
 

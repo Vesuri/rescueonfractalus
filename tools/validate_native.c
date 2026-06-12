@@ -434,6 +434,11 @@ int main(void) {
     /* flight_control_integrate subtree (leaves first) */
     fails += test_mem_contract("reset_flags_ff", reset_flags_ff, reset_flags_ff__t6502);
     fails += test_mem_contract("load_velocity_from_param_block", load_velocity_from_param_block, load_velocity_from_param_block__t6502);
+    fails += test_mem_contract("bcd_inc_counter_0641", bcd_inc_counter_0641, bcd_inc_counter_0641__t6502);
+    fails += test_mem_contract("set_place_params_inc_count", set_place_params_inc_count, set_place_params_inc_count__t6502);
+    fails += test_mem_contract("trigger_object_explosion", trigger_object_explosion, trigger_object_explosion__t6502);
+    fails += test_mem_contract("reset_object_slot", reset_object_slot, reset_object_slot__t6502);
+    fails += test_mem_contract("enqueue_indicator_event", enqueue_indicator_event, enqueue_indicator_event__t6502);
     fails += test_clear_terrain_column();
     fails += test_signed_mul_8x16();
     fails += test_mem_contract("sine_table_lookup", sine_table_lookup, sine_table_lookup__t6502);

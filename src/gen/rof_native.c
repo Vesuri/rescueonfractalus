@@ -2389,3 +2389,47 @@ void load_velocity_from_param_block(void) {
     #undef ROLM_
     #undef RORM_
 }
+
+/* bcd_inc_counter_0641 @ $7B88 — CLC; SED; ADC #1; CLD.  The cpu core ignores
+ * decimal mode ("decimal ignored in game"), so the oracle does a plain BINARY +1;
+ * match it (the whole transpiled game runs binary here). mem-only contract. */
+void bcd_inc_counter_0641(void) {
+    mem[0x0641] = (uint8_t)(mem[0x0641] + 1);
+}
+
+/* set_place_params_inc_count @ $7B80 — $0045=0, $0046=1, then bump the counter. */
+void set_place_params_inc_count(void) {
+    mem[0x0045] = 0x00;
+    mem[0x0046] = 0x01;
+    bcd_inc_counter_0641();                   /* 7b8d tail (native) */
+}
+
+/* trigger_object_explosion @ $96D9 — INC $0041, seed the explosion sprite/anim
+ * pointers ($00DA-$00DD, $28EE), then push X=$0F to the event ring. */
+void trigger_object_explosion(void) {
+    mem[0x0041] = (uint8_t)(mem[0x0041] + 1);  /* 96d9 INC $0041 */
+    mem[0x00DB] = 0x7E;                        /* 96db-96dd */
+    mem[0x00DD] = 0x7C;                        /* 96df-96e1 */
+    mem[0x00DC] = 0x76;                        /* 96e3-96e5 */
+    mem[0x00DA] = 0x78;                        /* 96e7-96e9 */
+    mem[0x28EE] = 0x02;                        /* 96eb-96ed */
+    cpu.X = 0x0F;                              /* 96f0 LDX #$0F */
+    ring_push_marked();                        /* 96f2 (native; reads cpu.X) */
+}
+
+/* reset_object_slot @ $9677 — mark object slot $0036=$80, push X=$0E to the ring. */
+void reset_object_slot(void) {
+    mem[0x0036] = 0x80;                        /* 9677-9679 */
+    cpu.X = 0x0E;                              /* 967b LDX #$0E */
+    ring_push_marked();                        /* 967d (native; reads cpu.X) */
+}
+
+/* enqueue_indicator_event @ $B756 — write indicator HUD params ($0673 from $0035,
+ * $0665=$A0, $0681 = ($0014 & 5) + 2), then refresh display field Y=$08. */
+void enqueue_indicator_event(void) {
+    mem[0x0673] = mem[0x0035];                 /* b756-b758 */
+    mem[0x0665] = 0xA0;                        /* b75b-b75d */
+    mem[0x0681] = (uint8_t)((mem[0x0014] & 0x05) + 0x02);  /* b760-b767 (AND#5 max 5, +2 no carry) */
+    cpu.Y = 0x08;                              /* b76a LDY #$08 */
+    game_sub_55FC();                           /* b76c (native; reads cpu.Y) */
+}
