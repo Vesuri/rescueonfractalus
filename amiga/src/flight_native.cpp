@@ -89,6 +89,7 @@ void enemy_check(void);               // $3FCD: enemy/event dispatch
 void flight_control_integrate(void);     // $8E5B
 void update_terrain_scanline_proj(void); // $9833 (the JSR is at $51BC inside vbi_handler_flight)
 void render_bcd_counter(void);           // $49A0: draw BCD score ($0601) to top line $32C5
+void update_gauge_digits(void);          // $548D: in-game SFX voice engine + ring drain (Atari VBI tail $534D)
 
 // Set during flight_init_native so transpiled frame-wait spin loops (wait_frames_60
 // via init_gameplay_state) advance RTCLOK in compute time instead of waiting on the real
@@ -102,9 +103,10 @@ extern "C" void flight_vbi_native(void)
 {
     if (mem[zp::joystickSaved] == 0) return;        // $51B2: LDA $004A / BEQ (skip when not flying)
     unsigned short a = beam_line();      // sub-frame timer: RTCLOK is frozen for the whole ISR
-    flight_control_integrate();          // $51B9 ($8E5B): joystick + throttle -> world pos (TRANSPILED)
-    update_terrain_scanline_proj();      // $51BC ($9833): project pitch/altitude (TRANSPILED)
-    render_bcd_counter();                // top-bar score: BCD $0601 -> text line $32C5 (TRANSPILED)
+    flight_control_integrate();          // $51B9 ($8E5B): joystick + throttle -> world pos
+    update_terrain_scanline_proj();      // $51BC ($9833): project pitch/altitude
+    render_bcd_counter();                // top-bar score: BCD $0601 -> text line $32C5
+    update_gauge_digits();               // $548D: drain the SFX event ring -> POKEY/Paula (Atari VBI tail $534D)
     unsigned short b = beam_line();
     g_flightProf.isrLines += (b >= a) ? (unsigned short)(b - a)
                                       : (unsigned short)(b + 313 - a);  // PAL wrap (~313 lines)
@@ -138,6 +140,34 @@ extern "C" void game_vbi_isr(void)
     cpu = saved;                                    // == XITVBV PLA;TAY;PLA;TAX;PLA
 }
 
+// sfx_engine_reset_native: faithful replica of the SFX engine reset $5433 (mislabelled
+// font_display_init in symbols.csv), called on the Atari during game init ($3D35) and at
+// launch ($6118).  Clears the $0719 event ring (head/tail $0073/$0074) and the 14 voice-
+// slot envelope arrays, assigns the 4 physical POKEY channels to voice slots 1..4
+// ($0705 = {2,4,6,8}) and mutes their AUDC, seeds the mixer scratch, and sets AUDCTL=$60.
+// Run once per flight entry so update_gauge_digits starts from a clean, silent state.
+static void sfx_engine_reset_native(void)
+{
+    mem[0x0073] = 0x00;                       // ring head
+    mem[0x0074] = 0x00;                       // ring tail
+    for (int y = 1; y <= 0x0E; y++) {         // $543b: clear voice-slot arrays, slots 1..14
+        mem[0x066B + y] = 0; mem[0x0705 + y] = 0; mem[0x0687 + y] = 0;
+        mem[0x0695 + y] = 0; mem[0x06A3 + y] = 0; mem[0x06B1 + y] = 0;
+        mem[0x06BF + y] = 0; mem[0x06CD + y] = 0; mem[0x06DB + y] = 0;
+        mem[0x06E9 + y] = 0; mem[0x06F7 + y] = 0;
+    }
+    mem[0x0714] = 0x00;                        // $545f mixer "top priority" value
+    mem[0x0715] = 0x02;                        // $5462 mixer "top slot" index
+    for (int y = 4; y >= 1; y--) {             // $5467: assign POKEY channels to slots 4..1
+        uint8_t a = (uint8_t)(y << 1);         // TYA; ASL -> 8,6,4,2
+        mem[0x0705 + y] = a;                   // voice slot y -> POKEY reg index a
+        platform_hw_write((uint16_t)(0xD1FF + a), 0x00);  // mute AUDCn
+    }
+    mem[0x0706] = 0x00; mem[0x0708] = 0x00;    // $5477/$547a mixer scratch
+    mem[0x0712] = 0x02; mem[0x0713] = 0x06;    // $547d/$5482
+    platform_hw_write(0xD208, 0x60);           // $5487 AUDCTL = $60
+}
+
 // flight_init_native: port the mem[]-state subset of game_entry $3E12-$3EA6.
 // The terrain row-addr table is rebuilt for the FLIGHT viewport: base $1010,
 // stride $60=96 (verified vs the flight DL $316B, which LMSes mode-D rows from
@@ -145,6 +175,7 @@ extern "C" void game_vbi_isr(void)
 extern "C" void flight_init_native(void)
 {
     g_fastForwardFrames = 1;     // resolve init_gameplay_state's wait_frames_60 calls instantly
+    sfx_engine_reset_native();                              // $5433: clean SFX engine state for flight
     cpu.A = 0x2A; clear_pm_state();                          // $3E12: LDA #$2A / JSR $3FBF
     clear_colors();                                          // $3E17: $3CC3
     mem[0x3157] = 0x0D; mem[0x3158] = 0x35;                  // $3E1A: cinematic-DL LMS bytes ($350D)
