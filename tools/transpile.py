@@ -118,6 +118,9 @@ VALIDATE_FUNCS = {
     0x9473,  # step_object_along_axes — step $0023/$0024 by $14, depth dec / tail reset_flags_ff (mem-only)
     0xB786,  # reset_indicator_event — $0035=0, tail enqueue_indicator_event
     0x97A0,  # compute_obj_rel_angle_scale — 10-bit angle build + 2x mul_u8 -> $002B/$2881 (reads ENTRY CARRY)
+    0x43E8,  # draw_object_column — draw PMG dial-bar column via $4581 ptr table (absorbs bare-RTS draw_bar_loop_end $442D)
+    0x444A,  # setup_dial_bar_draw — set bar params, tail draw_object_column
+    0x4447,  # game_sub_4447 — A+=8, tail setup_dial_bar_draw
 }
 VALIDATE_SUFFIX = '__t6502'
 

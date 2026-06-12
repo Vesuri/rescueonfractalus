@@ -2699,6 +2699,51 @@ void step_object_along_axes(void) {
     #undef SBC_
 }
 
+/* draw_object_column @ $43E8 — draw a vertical PMG dial-bar column.  Loops the counter
+ * $00BD down to $00BE; for each value X it loads a column pointer from $4581[2*X] into
+ * $BB/$BC, writes a body byte ($B4/$B7 with bit7 set when X<$00BF, the lit threshold)
+ * via ($BB),Y=0, and when $00C0!=0 a second byte ($B8/$38) via ($BB),Y=1.  Entry A is
+ * the initial column index.  Tail draw_bar_loop_end ($442D) is a bare RTS (absorbed). */
+void draw_object_column(void) {
+    uint8_t A = cpu.A, X, Y;
+    for (;;) {
+        X = A;                                   /* 43e8 TAX */
+        Y = (uint8_t)(A << 1);                   /* 43e9 ASL A; 43ea TAY */
+        mem[0x00BB] = mem[0x4581 + Y];           /* 43eb-43ee */
+        mem[0x00BC] = mem[0x4582 + Y];           /* 43f0-43f3 */
+        Y = 0x00;                                /* 43f5 */
+        if (X & 1) { A = 0xB7; mem[0x00C0] = A; }        /* 43f9 BCS L_4402: odd column */
+        else       { mem[0x00C0] = 0x00; A = 0xB4; }     /* 43fb even column ($00C0=0) */
+        if (X >= mem[0x00BF]) A &= 0x7F;          /* 4406-440c X>=thresh -> clear bit7 */
+        else                  A |= 0x80;          /* 440f X<thresh -> lit (bit7) */
+        bus_write((uint16_t)(mem[0x00BB] | (mem[0x00BC] << 8)) + Y, A);   /* 4411 ($BB),Y=0 */
+        if (mem[0x00C0] != 0) {                   /* 4413-4415 */
+            Y = 0x01;                             /* 4417 INY */
+            A = (X >= mem[0x00BF]) ? 0x38 : 0xB8; /* 4418-4421 */
+            bus_write((uint16_t)(mem[0x00BB] | (mem[0x00BC] << 8)) + Y, A);  /* 4423 ($BB),Y=1 */
+        }
+        mem[0x00BD] = (uint8_t)(mem[0x00BD] - 1); /* 4425 DEC $00BD */
+        A = mem[0x00BD];                          /* 4427 */
+        if (A == mem[0x00BE]) break;              /* 4429-442b loop while != $00BE */
+    }
+}
+
+/* setup_dial_bar_draw @ $444A — set the dial-bar params ($BF=limit from A, $BE=7, $BD=$0F)
+ * then draw the column from index $0F. */
+void setup_dial_bar_draw(void) {
+    mem[0x00BF] = cpu.A;          /* 444a (limit) */
+    mem[0x00BE] = 0x07;           /* 444c-444e */
+    mem[0x00BD] = 0x0F;           /* 4450-4452 */
+    cpu.A = 0x0F;                 /* draw_object_column's entry index */
+    draw_object_column();         /* 4454 (native) */
+}
+
+/* game_sub_4447 @ $4447 — A += 8 (the lit threshold), then draw the dial bar. */
+void game_sub_4447(void) {
+    cpu.A = (uint8_t)(cpu.A + 0x08);   /* 4447 CLC; 4448 ADC #$08 */
+    setup_dial_bar_draw();             /* 444a (native) */
+}
+
 /* reset_indicator_event @ $B786 — clear $0035, then enqueue the indicator event. */
 void reset_indicator_event(void) {
     mem[0x0035] = 0x00;            /* b786-b788 */

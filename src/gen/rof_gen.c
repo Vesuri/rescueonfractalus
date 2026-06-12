@@ -2828,7 +2828,8 @@ L_4444:;
 }
 
 /* game_sub_4447 @ $4447: Game subsystem (called with A=8) */
-void game_sub_4447(void) {
+/* faithful transliteration kept as the validation oracle; native game_sub_4447() lives in rof_native.c (see VALIDATE_FUNCS) */
+void game_sub_4447__t6502(void) {
     /* 4447 */
     CLC();
     /* 4448 */
@@ -2837,7 +2838,8 @@ void game_sub_4447(void) {
 }
 
 /* setup_dial_bar_draw @ $444A: Sets bar params $BF=A(limit),$BE=7,$BD=$0F then calls draw loop draw_object_column (writes via $BB ptr) */
-void setup_dial_bar_draw(void) {
+/* faithful transliteration kept as the validation oracle; native setup_dial_bar_draw() lives in rof_native.c (see VALIDATE_FUNCS) */
+void setup_dial_bar_draw__t6502(void) {
     /* 444a */
     mem[0x00BF] = cpu.A;
     /* 444c */
@@ -25298,7 +25300,8 @@ L_42a0:;
 }
 
 /* draw_object_column @ $43E8: Loops X down to $00BE drawing a vertical PMG column via indirect ptr $BB/$BC from table $4581; sets bit7 ($80) on/off based on X vs threshold $00BF; uses $00C0 flag and bytes $B4/$B7/$B8/$38; tail-calls draw_bar_loop_end */
-void draw_object_column(void) {
+/* faithful transliteration kept as the validation oracle; native draw_object_column() lives in rof_native.c (see VALIDATE_FUNCS) */
+void draw_object_column__t6502(void) {
 L_43e8:;
     /* 43e8 */
     TAX();

@@ -448,6 +448,34 @@ static int test_from_snapshot(const char *name, void (*nat)(void), void (*t6502)
     return mem_fail;
 }
 
+/* Dial-bar trio (game_sub_4447 / setup_dial_bar_draw / draw_object_column): the draw loop
+ * reads column pointers from the $4581 table and writes via them, so it needs the REAL
+ * table (random mem could point a write at the loop counter $00BD -> same infinite loop in
+ * both runs, undiffable).  Seed from the flight snapshot, force the real loop bounds
+ * $00BD=$0F/$00BE=$07 (keeps the $4581 index in the valid 16-entry range), and vary entry A
+ * (the dial value / column index) within a safe mask. */
+static int test_dial_bar(const char *name, void (*nat)(void), void (*t6502)(void), uint8_t amask) {
+    if (!want(name)) return 0;
+    static uint8_t snap[65536], pre[65536];
+    const char *path = "a800dumps/flight_ram_0000_BFFF.bin";
+    FILE *f = fopen(path, "rb");
+    if (!f) { printf("%s: SKIP (%s not found)\n", name, path); return 0; }
+    memset(snap, 0, sizeof snap);
+    size_t got = fread(snap, 1, 0xC000, f); fclose(f);
+    if (got != 0xC000) { printf("%s: SKIP (short read %zu)\n", name, got); return 0; }
+    int mem_fail = 0, cpu_diff = 0, printed = 0;
+    for (int t = 0; t < 20000; t++) {
+        memcpy(pre, snap, sizeof pre);
+        pre[0x00BD] = 0x0F; pre[0x00BE] = 0x07;          /* real dial loop bounds */
+        Cpu6502 c = zero_cpu();
+        c.A = (uint8_t)(xs() & amask);
+        mem_fail += diff_run(name, pre, c, nat, t6502, t, &printed, &cpu_diff);
+    }
+    printf("%s: %d cases (dial snapshot), %d mem mismatch (must be 0), %d cpu diffs\n",
+           name, 20000, mem_fail, cpu_diff);
+    return mem_fail;
+}
+
 /* terrain_draw_frame @ $A31E: snapshot-driven (its object loop drives terrain_subdivide_column /
  * terrain_column_rasterize, which only terminate on real terrain arrays).  Entry X
  * is the level base index — the two real call-site values are $00 and $30, which
@@ -519,6 +547,9 @@ int main(int argc, char **argv) {
     fails += test_mem_contract("step_object_along_axes", step_object_along_axes, step_object_along_axes__t6502);
     fails += test_mem_contract("reset_indicator_event", reset_indicator_event, reset_indicator_event__t6502);
     fails += test_mem_contract_regs("compute_obj_rel_angle_scale", compute_obj_rel_angle_scale, compute_obj_rel_angle_scale__t6502);
+    fails += test_dial_bar("draw_object_column", draw_object_column, draw_object_column__t6502, 0x0F);
+    fails += test_dial_bar("setup_dial_bar_draw", setup_dial_bar_draw, setup_dial_bar_draw__t6502, 0x3F);
+    fails += test_dial_bar("game_sub_4447", game_sub_4447, game_sub_4447__t6502, 0x3F);
     fails += test_clear_terrain_column();
     fails += test_signed_mul_8x16();
     fails += test_mem_contract("sine_table_lookup", sine_table_lookup, sine_table_lookup__t6502);
