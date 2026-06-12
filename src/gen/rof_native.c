@@ -2512,3 +2512,22 @@ void jitter_roll_pitch(void) {
     A = mem[0x002E];                                   /* aac4 SEC; SBC #$08; clamp 0 */
     mem[0x002E] = (A >= 0x08) ? (uint8_t)(A - 0x08) : 0x00;
 }
+
+/* mul_u8 @ $9821 — shift-add multiply driven by the multiplicand bits in $28D6: while
+ * $006B != 0, shift $28D6 left and, for each 1 bit shifted out, add (the LSR'd) $006B
+ * into the accumulator.  Both $006B and $28D6 are consumed (shifted to 0/out).  RESULT
+ * IS RETURNED IN cpu.A — the caller reads it (e.g. BIT right after) — so the contract
+ * is mem[$006B]/mem[$28D6] AND cpu.A. */
+void mul_u8(void) {
+    uint8_t A = 0x00, c = 0;                    /* 9821 LDA #0 */
+    goto check;                                 /* 9823 BEQ (A==0) */
+add:                                            /* 9825 */
+    c = mem[0x006B] & 1; mem[0x006B] >>= 1;     /* LSR $006B */
+    { uint16_t t = (uint16_t)A + mem[0x006B] + c; c = (uint8_t)(t >> 8); A = (uint8_t)t; }  /* ADC $006B */
+check:                                          /* 9829 */
+    { uint8_t v = mem[0x28D6]; c = (uint8_t)(v >> 7); mem[0x28D6] = (uint8_t)(v << 1); }    /* ASL $28D6 */
+    if (c) goto add;                            /* 982c BCS */
+    c = mem[0x006B] & 1; mem[0x006B] >>= 1;     /* 982e LSR $006B */
+    if (mem[0x006B] != 0) goto check;           /* 9830 BNE (Z from the shifted result) */
+    cpu.A = A;                                  /* 9832 RTS — result in A */
+}

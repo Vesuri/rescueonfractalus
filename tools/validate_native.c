@@ -294,6 +294,41 @@ static int test_ring_push_0719(void) {
     return mem_fail + cpu_fail;
 }
 
+/* --- mul_u8 @ $9821: returns its product in cpu.A (the caller reads A, e.g. via a
+ * following BIT), so the contract is mem[] AND cpu.A.  $006B/$28D6 are consumed. --- */
+static int test_mul_u8(void) {
+    enum { N = 20000 };
+    static uint8_t pre[65536], ref_mem[65536];
+    int mem_fail = 0, cpu_fail = 0, printed = 0;
+
+    for (int t = 0; t < N; t++) {
+        fill_random(pre);
+        Cpu6502 c = zero_cpu();
+
+        memcpy((void *)mem, pre, 65536); cpu = c;
+        mul_u8__t6502();
+        memcpy(ref_mem, (void *)mem, sizeof ref_mem);
+        Cpu6502 ref_cpu = cpu;
+
+        memcpy((void *)mem, pre, 65536); cpu = c;
+        mul_u8();
+
+        if (memcmp((const void *)mem, ref_mem, 65536) != 0) {
+            mem_fail++;
+            if (printed < 12)
+                for (int i = 0; i < 65536 && printed < 12; i++)
+                    if (mem[i] != ref_mem[i]) {
+                        printf("[MEM DIFF] mul_u8 case %d  $%04X  ref=$%02X native=$%02X\n",
+                               t, i, ref_mem[i], mem[i]); printed++;
+                    }
+        }
+        if (cpu.A != ref_cpu.A) cpu_fail++;
+    }
+    printf("mul_u8: %d cases, %d mem mismatch, %d cpu(A) mismatch (both must be 0)\n",
+           N, mem_fail, cpu_fail);
+    return mem_fail + cpu_fail;
+}
+
 /* Like test_mem_contract but with random entry A/X/Y/C — for routines that read
  * an entry register as input (a table index, a value to store, an entry carry). */
 static int test_mem_contract_regs(const char *name, void (*native)(void), void (*t6502)(void)) {
@@ -441,6 +476,7 @@ int main(void) {
     fails += test_mem_contract("enqueue_indicator_event", enqueue_indicator_event, enqueue_indicator_event__t6502);
     fails += test_mem_contract("object_integrate_position", object_integrate_position, object_integrate_position__t6502);
     fails += test_mem_contract("jitter_roll_pitch", jitter_roll_pitch, jitter_roll_pitch__t6502);
+    fails += test_mul_u8();
     fails += test_clear_terrain_column();
     fails += test_signed_mul_8x16();
     fails += test_mem_contract("sine_table_lookup", sine_table_lookup, sine_table_lookup__t6502);
