@@ -3912,14 +3912,16 @@ L_49ec:;
 
 /* dli_handler_game @ $49EE: manual implementation in rof_manual.c */
 /* obj_table_scan_y1_c8 @ $4E18: Entry: Y=$01,A=$C8 then falls to obj_table_scan; preset args for obj_table_scan_replace */
-void obj_table_scan_y1_c8(void) {
+/* faithful transliteration kept as the validation oracle; native obj_table_scan_y1_c8() lives in rof_native.c (see VALIDATE_FUNCS) */
+void obj_table_scan_y1_c8__t6502(void) {
     /* 4e18 */
     LDY(0x01);
     obj_table_scan_a_c8(); return;
 }
 
 /* obj_table_scan_a_c8 @ $4E1A: Entry: A=$C8 then falls to obj_table_scan (obj_table_scan_replace) with caller-supplied Y */
-void obj_table_scan_a_c8(void) {
+/* faithful transliteration kept as the validation oracle; native obj_table_scan_a_c8() lives in rof_native.c (see VALIDATE_FUNCS) */
+void obj_table_scan_a_c8__t6502(void) {
     /* 4e1a */
     LDA(0xC8);
     obj_table_scan_replace(); return;
@@ -4088,14 +4090,16 @@ void reset_flags_ff__t6502(void) {
 }
 
 /* store_676_init @ $4EA2: Store A to $0676, tail-call set_hud_fields_678_679 init chain (zeros $0678/$0679, calls game_sub_55FC) */
-void store_676_init(void) {
+/* faithful transliteration kept as the validation oracle; native store_676_init() lives in rof_native.c (see VALIDATE_FUNCS) */
+void store_676_init__t6502(void) {
     /* 4ea2 */
     mem[0x0676] = cpu.A;
     set_hud_fields_678_679(); return;
 }
 
 /* set_hud_fields_678_679 @ $4EA5: Stores A into HUD slots $0678/$0679, then tail-chains to refresh chain (game_sub_55FC); entry from $4ea2 */
-void set_hud_fields_678_679(void) {
+/* faithful transliteration kept as the validation oracle; native set_hud_fields_678_679() lives in rof_native.c (see VALIDATE_FUNCS) */
+void set_hud_fields_678_679__t6502(void) {
     /* 4ea5 */
     mem[0x0678] = cpu.A;
     /* 4ea8 */
@@ -4104,7 +4108,8 @@ void set_hud_fields_678_679(void) {
 }
 
 /* refresh_hud_field_0b @ $4EAB: LDY #$0B; game_sub_55FC then chains to $4eb0 — refreshes HUD/display field index $0B */
-void refresh_hud_field_0b(void) {
+/* faithful transliteration kept as the validation oracle; native refresh_hud_field_0b() lives in rof_native.c (see VALIDATE_FUNCS) */
+void refresh_hud_field_0b__t6502(void) {
     /* 4eab */
     LDY(0x0B);
     /* 4ead */
@@ -4113,14 +4118,16 @@ void refresh_hud_field_0b(void) {
 }
 
 /* refresh_hud_field_0d_entry @ $4EB0: LDY #$0D; falls into $4eb2 to refresh display fields $0D and $0E via game_sub_55FC */
-void refresh_hud_field_0d_entry(void) {
+/* faithful transliteration kept as the validation oracle; native refresh_hud_field_0d_entry() lives in rof_native.c (see VALIDATE_FUNCS) */
+void refresh_hud_field_0d_entry__t6502(void) {
     /* 4eb0 */
     LDY(0x0D);
     refresh_hud_fields_0d_0e(); return;
 }
 
 /* refresh_hud_fields_0d_0e @ $4EB2: game_sub_55FC at Y=$0D, INY, game_sub_55FC at Y=$0E — refreshes two adjacent display fields */
-void refresh_hud_fields_0d_0e(void) {
+/* faithful transliteration kept as the validation oracle; native refresh_hud_fields_0d_0e() lives in rof_native.c (see VALIDATE_FUNCS) */
+void refresh_hud_fields_0d_0e__t6502(void) {
     /* 4eb2 */
     game_sub_55FC();
     /* 4eb5 */

@@ -2630,3 +2630,43 @@ void obj_table_scan_replace(void) {
         mem[0x288C] = (uint8_t)(mem[0x288C] - 1);  /* 4e52 DEC $288C */
     } while (mem[0x288C] != 0);                    /* 4e55 BNE L_4e22 */
 }
+
+/* obj_table_scan_a_c8 @ $4E1A — preset A=$C8, then place it via obj_table_scan_replace
+ * (caller supplies Y = retry count). */
+void obj_table_scan_a_c8(void) {
+    cpu.A = 0xC8;                /* 4e1a */
+    obj_table_scan_replace();    /* native; reads cpu.A/Y */
+}
+
+/* obj_table_scan_y1_c8 @ $4E18 — preset Y=1 (single pass), tail to obj_table_scan_a_c8. */
+void obj_table_scan_y1_c8(void) {
+    cpu.Y = 0x01;                /* 4e18 */
+    obj_table_scan_a_c8();       /* native */
+}
+
+/* HUD display-field refresh chain ($4EA2-$4EB7).  Each link stores the entry value
+ * and/or sets the field index Y, then tail-chains; game_sub_55FC (native) pushes the
+ * indexed field to the display.  store_676_init/set_hud_fields read entry cpu.A. */
+void refresh_hud_fields_0d_0e(void) {            /* $4EB2 (Y set by caller) */
+    game_sub_55FC();                             /* 4eb2 */
+    cpu.Y++;                                     /* 4eb5 INY */
+    game_sub_55FC();                             /* 4eb6 */
+}
+void refresh_hud_field_0d_entry(void) {          /* $4EB0 */
+    cpu.Y = 0x0D;                                /* 4eb0 */
+    refresh_hud_fields_0d_0e();
+}
+void refresh_hud_field_0b(void) {                /* $4EAB */
+    cpu.Y = 0x0B;                                /* 4eab */
+    game_sub_55FC();                             /* 4ead */
+    refresh_hud_field_0d_entry();
+}
+void set_hud_fields_678_679(void) {              /* $4EA5 */
+    mem[0x0678] = cpu.A;                          /* 4ea5 */
+    mem[0x0679] = cpu.A;                          /* 4ea8 */
+    refresh_hud_field_0b();
+}
+void store_676_init(void) {                      /* $4EA2 */
+    mem[0x0676] = cpu.A;                          /* 4ea2 */
+    set_hud_fields_678_679();
+}

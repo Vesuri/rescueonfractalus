@@ -107,6 +107,14 @@ VALIDATE_FUNCS = {
     0x9821,  # mul_u8 — shift-add multiply, result in cpu.A (consumes $006B/$28D6)
     0x9713,  # compute_target_blip_position — derive blip $0021/$0027 from range/depth/parallax (mem-only)
     0x4E1C,  # obj_table_scan_replace — random-start stride-$43 scan to place entry val in a free obj slot (RANDOM)
+    # batch 2 — shallow drivers (1 transpiled callee each):
+    0x4E18,  # obj_table_scan_y1_c8 — set Y=1, tail obj_table_scan_a_c8
+    0x4E1A,  # obj_table_scan_a_c8 — set A=$C8, tail obj_table_scan_replace
+    0x4EA2,  # store_676_init — $0676=A, tail set_hud_fields_678_679
+    0x4EA5,  # set_hud_fields_678_679 — $0678/$0679=A, tail refresh_hud_field_0b
+    0x4EAB,  # refresh_hud_field_0b — Y=$0B game_sub_55FC, tail refresh_hud_field_0d_entry
+    0x4EB0,  # refresh_hud_field_0d_entry — Y=$0D, tail refresh_hud_fields_0d_0e
+    0x4EB2,  # refresh_hud_fields_0d_0e — game_sub_55FC at Y, INY, game_sub_55FC
 }
 VALIDATE_SUFFIX = '__t6502'
 

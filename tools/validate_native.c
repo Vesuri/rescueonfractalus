@@ -508,6 +508,14 @@ int main(int argc, char **argv) {
     fails += test_mul_u8();
     fails += test_mem_contract("compute_target_blip_position", compute_target_blip_position, compute_target_blip_position__t6502);
     fails += test_mem_contract_regs("obj_table_scan_replace", obj_table_scan_replace, obj_table_scan_replace__t6502);
+    /* batch 2 — shallow drivers */
+    fails += test_mem_contract_regs("obj_table_scan_y1_c8", obj_table_scan_y1_c8, obj_table_scan_y1_c8__t6502);
+    fails += test_mem_contract_regs("obj_table_scan_a_c8", obj_table_scan_a_c8, obj_table_scan_a_c8__t6502);
+    fails += test_mem_contract_regs("store_676_init", store_676_init, store_676_init__t6502);
+    fails += test_mem_contract_regs("set_hud_fields_678_679", set_hud_fields_678_679, set_hud_fields_678_679__t6502);
+    fails += test_mem_contract_regs("refresh_hud_field_0b", refresh_hud_field_0b, refresh_hud_field_0b__t6502);
+    fails += test_mem_contract_regs("refresh_hud_field_0d_entry", refresh_hud_field_0d_entry, refresh_hud_field_0d_entry__t6502);
+    fails += test_mem_contract_regs("refresh_hud_fields_0d_0e", refresh_hud_fields_0d_0e, refresh_hud_fields_0d_0e__t6502);
     fails += test_clear_terrain_column();
     fails += test_signed_mul_8x16();
     fails += test_mem_contract("sine_table_lookup", sine_table_lookup, sine_table_lookup__t6502);
