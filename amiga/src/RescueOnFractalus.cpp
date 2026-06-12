@@ -86,7 +86,10 @@ static const uint16_t kHT  = 86;    // terrain sprite/bitmap height (placeholder
 static const uint8_t  kBP2 = 2;
 static const uint8_t  kBP3 = 3;   // cockpit only — 3rd plane carries bit-7 chars (red)
 
-static const uint32_t kCopperLen = 160;
+// 160 sufficed for the single-band terrain; the flight/stars viewport now does
+// per-scanline bitplane-modulo line-doubling (~2 MOVEs + 1 WAIT per displayed
+// scanline over the 86-line region), so the list needs ~3x the headroom.
+static const uint32_t kCopperLen = 420;
 
 // Display geometry: anchored at the standard PAL display-window top (0x2c).
 // All boundary lines are derived so changing the top can't desync them.
@@ -347,8 +350,6 @@ void RescueOnFractalus::buildCopperList(CopperList* cl, uint16_t frame)
         // follow-up; one palette renders the whole viewport for now.)
         emitBpl((uint32_t)terrainBitmap->data);
         d[idx++] = copperMove(bplcon0, kBPLCON0_3P);
-        d[idx++] = copperMove(bpl1mod, 80);
-        d[idx++] = copperMove(bpl2mod, 80);
         if (launchPhase == kFlight) {
             // Flight terrain palette (the F-skip bypasses the planet-entry colour
             // setup + the dynamic atmosphere pipeline, so render a fixed authentic
@@ -365,6 +366,21 @@ void RescueOnFractalus::buildCopperList(CopperList* cl, uint16_t frame)
             d[idx++] = copperMove(color01, fadeColor(atariToOCS(0x24), f));         // COLPF0
             d[idx++] = copperMove(color02, fadeColor(atariToOCS(0x28), f));         // COLPF1
             d[idx++] = copperMove(color03, fadeColor(atariToOCS(0x2A), f));         // COLPF2
+        }
+        // Vertical line-doubling in the copper: the bitmap holds 43 mode-D rows
+        // (single height — renderViewportModeD writes each row ONCE).  Each 120-byte
+        // interleaved row is re-displayed on 2 scanlines by toggling the bitplane
+        // modulo at end-of-line: -40 rewinds plane1's fetch back to the same row (so
+        // the next scanline repeats it), +80 advances to the next row.  The modulo
+        // set during scanline Sk's h-blank applies at Sk's end; V(Sk) = -40 (k even)
+        // / +80 (k odd).  S0's -40 is set here; S1..S(kTerrainHeight-1) below.
+        d[idx++] = copperMove(bpl1mod, (uint16_t)-40);
+        d[idx++] = copperMove(bpl2mod, (uint16_t)-40);
+        for (uint16_t k = 1; k < kTerrainHeight; k++) {
+            d[idx++] = copperWait((uint16_t)(kTerrainLine + k - 1), 0xE0);  // S(k) h-blank
+            const uint16_t v = (k & 1) ? (uint16_t)80 : (uint16_t)-40;       // odd: advance, even: rewind
+            d[idx++] = copperMove(bpl1mod, v);
+            d[idx++] = copperMove(bpl2mod, v);
         }
     } else {
     emitBpl(tunnelFirst ? tun : (ta + (uint32_t)g2 * 120u));   // top half slides up (g2 rows)
@@ -614,14 +630,14 @@ void RescueOnFractalus::renderViewportModeD(uint16_t srcBase, int stride, int ro
     viewportForceFull = false;
     uint8_t* base = (uint8_t*)terrainBitmap->data;
 
-    // Walk the destination, source, and shadow with running pointers instead of
-    // recomputing base + (row*2+scan)*120 and row*40+b per byte.  p1 tracks plane1 of
-    // the current mode-D row's FIRST scanline; plane2/plane3 sit at +40/+80, and the
-    // duplicated SECOND scanline (mode-D = 2 display lines/row) at +120/+160/+200.
-    // ALL THREE pointers advance in the for-increment — even when the shadow-skip
-    // `continue`s — so they stay column-aligned; per row p1 walks 40, then += 200 to
-    // reach the next row (240 = two 120-byte interleaved scanlines).  Per-byte shadow:
-    // the planet sphere only grows a few bytes/frame, so re-decode just what changed.
+    // Write each mode-D row to ONE interleaved scanline; the copper line-doubles the
+    // region vertically (buildCopperList's viewport band toggles the bitplane modulo
+    // -40/+80 per scanline, re-displaying each row twice).  This halves the per-byte
+    // store work here vs the old CPU doubling (which wrote both scanlines).  p1 tracks
+    // plane1; plane2/plane3 at +40/+80; per row p1 walks 40 then += 80 (= one 120-byte
+    // interleaved scanline).  ALL pointers advance in the for-increment — even on the
+    // shadow-skip `continue` — so they stay column-aligned.  Per-byte shadow: the
+    // planet sphere / scrolling terrain only changes some bytes, so re-decode just those.
     const uint8_t* src = (const uint8_t*)&mem[srcBase + kCrop];
     uint8_t* p1  = base;
     uint8_t* shp = viewportShadow;                            // walking shadow pointer
@@ -631,11 +647,9 @@ void RescueOnFractalus::renderViewportModeD(uint16_t srcBase, int stride, int ro
             uint8_t s = *rowSrc;
             if (!full && s == *shp) continue;
             *shp = s;
-            uint8_t pa = kModeDP1[s], pc = kModeDP2[s];       // precomputed decode
-            p1[0]   = pa; p1[40]  = pc; p1[80]  = 0;          // scanline 2*row
-            p1[120] = pa; p1[160] = pc; p1[200] = 0;          // scanline 2*row+1
+            p1[0] = kModeDP1[s]; p1[40] = kModeDP2[s]; p1[80] = 0;   // one scanline; copper repeats it
         }
-        p1 += 200;                                            // 40 walked -> 240 = two scanlines
+        p1 += 80;                                             // 40 walked -> 120 = one interleaved scanline
     }
 }
 
