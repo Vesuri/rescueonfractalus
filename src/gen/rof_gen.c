@@ -3926,7 +3926,8 @@ void obj_table_scan_a_c8(void) {
 }
 
 /* obj_table_scan_replace @ $4E1C: Scans obj table $0900/$0A00 (stride $43) for RANDOM($D20A) count; vs $2276[0..$2C]; writes A($281D) to $0A00,X */
-void obj_table_scan_replace(void) {
+/* faithful transliteration kept as the validation oracle; native obj_table_scan_replace() lives in rof_native.c (see VALIDATE_FUNCS) */
+void obj_table_scan_replace__t6502(void) {
     /* 4e1c */
     mem[0x281D] = cpu.A;
     /* 4e1f */
@@ -4072,7 +4073,8 @@ L_4e87:;
 }
 
 /* reset_flags_ff @ $4E98: Set $006A, $0063, $2826 all to $FF */
-void reset_flags_ff(void) {
+/* faithful transliteration kept as the validation oracle; native reset_flags_ff() lives in rof_native.c (see VALIDATE_FUNCS) */
+void reset_flags_ff__t6502(void) {
     /* 4e98 */
     LDA(0xFF);
     /* 4e9a */
@@ -13200,7 +13202,8 @@ void mark_slot_and_inc_count(void) {
 }
 
 /* set_place_params_inc_count @ $7B80: $0045=0, $0046=1 (placement params) then bcd_inc_counter_0641 (BCD inc $0641) */
-void set_place_params_inc_count(void) {
+/* faithful transliteration kept as the validation oracle; native set_place_params_inc_count() lives in rof_native.c (see VALIDATE_FUNCS) */
+void set_place_params_inc_count__t6502(void) {
     /* 7b80 */
     LDA(0x00);
     /* 7b82 */
@@ -13213,7 +13216,8 @@ void set_place_params_inc_count(void) {
 }
 
 /* bcd_inc_counter_0641 @ $7B88: SED; $0641 = $0641 + 1 (BCD); increments a placed-item/count BCD counter */
-void bcd_inc_counter_0641(void) {
+/* faithful transliteration kept as the validation oracle; native bcd_inc_counter_0641() lives in rof_native.c (see VALIDATE_FUNCS) */
+void bcd_inc_counter_0641__t6502(void) {
     /* 7b88 */
     LDA(mem[0x0641]);
     /* 7b8b */
@@ -16149,7 +16153,8 @@ L_92d1:;
 }
 
 /* object_integrate_position @ $930E: 16-bit signed integ: $2827/$0064/$0065 -= $2850/1; $2828/$0066/$0067 += $2852/3 then $2829/$282C; if hi bytes 0 use tbl $93F3[$0063] scaled by $282D, store screen pos $2821 & $2824, else $2824=0 */
-void object_integrate_position(void) {
+/* faithful transliteration kept as the validation oracle; native object_integrate_position() lives in rof_native.c (see VALIDATE_FUNCS) */
+void object_integrate_position__t6502(void) {
     /* 930e */
     SEC();
     /* 930f */
@@ -16469,7 +16474,8 @@ L_94be:;
 }
 
 /* load_velocity_from_param_block @ $94BF: init accum $2854-$2863 from param block $28FD-$290A: sign-extend & ASL/ROL scale ($285E,$2861), $285B=clamp($2902+8), $2863=$290A>>1-1; then ring_push_marked X=$11 */
-void load_velocity_from_param_block(void) {
+/* faithful transliteration kept as the validation oracle; native load_velocity_from_param_block() lives in rof_native.c (see VALIDATE_FUNCS) */
+void load_velocity_from_param_block__t6502(void) {
     /* 94bf */
     LDA(0x00);
     /* 94c1 */
@@ -16865,7 +16871,8 @@ L_9675:;
 }
 
 /* reset_object_slot @ $9677: set $0036=$80 then ring_push_marked with X=$0E (object reset/dispatch helper) */
-void reset_object_slot(void) {
+/* faithful transliteration kept as the validation oracle; native reset_object_slot() lives in rof_native.c (see VALIDATE_FUNCS) */
+void reset_object_slot__t6502(void) {
     /* 9677 */
     LDA(0x80);
     /* 9679 */
@@ -16973,7 +16980,8 @@ L_96d8:;
 }
 
 /* trigger_object_explosion @ $96D9: inc $0041(game_state), set shape ptrs $00DA=$78 $00DB=$7E $00DC=$76 $00DD=$7C, $28EE=$02, then ring_push_marked X=$0F (start explosion anim) */
-void trigger_object_explosion(void) {
+/* faithful transliteration kept as the validation oracle; native trigger_object_explosion() lives in rof_native.c (see VALIDATE_FUNCS) */
+void trigger_object_explosion__t6502(void) {
     /* 96d9 */
     INC_M(0x0041);
     /* 96db */
@@ -17003,7 +17011,8 @@ void trigger_object_explosion(void) {
 }
 
 /* compute_target_blip_position @ $9713: From L/R range $27F7/$27F8 derives blip Y=$0021,X=$0027; tests $005D, alien masks $1027/$1057 AND $AA, $0070; adds parallax $2912/$2913 */
-void compute_target_blip_position(void) {
+/* faithful transliteration kept as the validation oracle; native compute_target_blip_position() lives in rof_native.c (see VALIDATE_FUNCS) */
+void compute_target_blip_position__t6502(void) {
     /* 9713 */
     SEC();
     /* 9714 */
@@ -17291,7 +17300,8 @@ L_9820:;
 }
 
 /* mul_u8 @ $9821: Unsigned shift-add multiply: multiplicand $006B, multiplier $28D6; returns product in A (used twice by $97a0) */
-void mul_u8(void) {
+/* faithful transliteration kept as the validation oracle; native mul_u8() lives in rof_native.c (see VALIDATE_FUNCS) */
+void mul_u8__t6502(void) {
     /* 9821 */
     LDA(0x00);
     /* 9823 */
@@ -21602,7 +21612,8 @@ L_aa5c:;
 }
 
 /* jitter_roll_pitch @ $AA95: Random-walks roll $0029 and pitch $0026 accumulators toward limits via RANDOM $D20A; called from pmg_enemy_update (was game_sub_AA95) */
-void jitter_roll_pitch(void) {
+/* faithful transliteration kept as the validation oracle; native jitter_roll_pitch() lives in rof_native.c (see VALIDATE_FUNCS) */
+void jitter_roll_pitch__t6502(void) {
     /* aa95 */
     LDY(mem[0x0029]);
     /* aa97 */
@@ -26248,7 +26259,8 @@ L_ab77:;
 }
 
 /* enqueue_indicator_event @ $B756: Writes indicator params $0673=$0035(pos), $0665=$A0(char), $0681=($0014&5)+2(jiffy), Y=8, then game_sub_55FC enqueues event id 8 */
-void enqueue_indicator_event(void) {
+/* faithful transliteration kept as the validation oracle; native enqueue_indicator_event() lives in rof_native.c (see VALIDATE_FUNCS) */
+void enqueue_indicator_event__t6502(void) {
     /* b756 */
     LDA(mem[0x0035]);
     /* b758 */
