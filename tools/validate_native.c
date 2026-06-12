@@ -632,6 +632,80 @@ static int test_enemy_check(void) {
     return mem_fail;
 }
 
+/* --- in-game SFX engine ($548D subtree) -----------------------------------
+ * The voice writers emit POKEY AUDF/AUDC at $D1FE+X / $D1FF+X where X is the
+ * per-voice register index mem[$0705+Y].  Seed those indices with realistic
+ * POKEY pairs {0,2,4,6,8} (0 = inactive slot) so the writes land in $D200-$D207,
+ * and MASK $D200-$D20F: the native uses bus_write (-> Paula on the Amiga) while
+ * the __t6502 twin writes raw mem[] there, so the POKEY range is a hardware side
+ * effect, not part of the mem[] contract.  (Static AUDF/AUDC/AUDCTL writes use
+ * bus_write in BOTH twins, so those need no mask.) */
+static void seed_voice_regs(uint8_t *pre) {
+    static const uint8_t regidx[5] = { 0, 2, 4, 6, 8 };
+    for (int s = 0; s <= 15; s++) pre[0x0705 + s] = regidx[xs() % 5];
+}
+/* Combined contract mask for the stack-aware / POKEY-writing SFX fns: the 6502
+ * stack page $0100-$01FF (PHA/PLA transient — the native uses C locals, no stack)
+ * plus the POKEY range $D200-$D20F (hardware side effect via bus_write). */
+static int build_sfx_mask(uint16_t *buf) {
+    int n = 0;
+    for (int a = 0x0100; a <= 0x01FF; a++) buf[n++] = (uint16_t)a;
+    for (int a = 0xD200; a <= 0xD20F; a++) buf[n++] = (uint16_t)a;
+    return n;
+}
+/* Voice writers, the mixer, and input_init: random entry A/X/C, entry Y a real
+ * voice slot 1..14.  Mask stack + POKEY. */
+static int test_sfx_voice(const char *name, void (*nat)(void), void (*t6502)(void)) {
+    if (!want(name)) return 0;
+    enum { N = 20000 };
+    static uint8_t pre[65536];
+    static uint16_t mask[272];
+    int mem_fail = 0, cpu_diff = 0, printed = 0;
+    set_ignore(mask, build_sfx_mask(mask));
+    for (int t = 0; t < N; t++) {
+        fill_random(pre);
+        seed_voice_regs(pre);
+        for (int i = 0; i < 128; i++) pre[0x56D4 + i] = (uint8_t)(1 + (xs() % 14)); /* valid slots (input_init) */
+        Cpu6502 c = zero_cpu();
+        c.A = (uint8_t)(xs() & 0xFF);
+        c.X = (uint8_t)(xs() & 0xFF);
+        c.Y = (uint8_t)(1 + (xs() % 14));        /* voice slot 1..14 */
+        c.C = (uint8_t)(xs() & 1);
+        mem_fail += diff_run(name, pre, c, nat, t6502, t, &printed, &cpu_diff);
+    }
+    set_ignore(0, 0);
+    printf("%s: %d cases, %d mem mismatch (must be 0), %d cpu diffs\n", name, N, mem_fail, cpu_diff);
+    return mem_fail;
+}
+/* update_gauge_digits @ $548D — the apex.  The ring drain ($0719, head $0073 /
+ * tail $0074, both decremented & wrapped at $1F) only terminates when the SFX
+ * event-table $56D4 holds VALID voice-slot indices (1..14, bit7 clear): a bit7-set
+ * ring entry runs input_init, whose tail game_sub_55FC re-pushes mem[$56D4+i] — if
+ * that were bit7-set garbage it would re-dispatch input_init forever (the __t6502
+ * twin hangs identically, so timeout can't diff it).  Seed $56D4 valid, the voice
+ * register indices, and head/tail in 0..$1F; mask the POKEY range. */
+static int test_update_gauge_digits(void) {
+    if (!want("update_gauge_digits")) return 0;
+    enum { N = 5000 };
+    static uint8_t pre[65536];
+    static uint16_t mask[272];
+    int mem_fail = 0, cpu_diff = 0, printed = 0;
+    set_ignore(mask, build_sfx_mask(mask));   /* stack page + POKEY */
+    for (int t = 0; t < N; t++) {
+        fill_random(pre);
+        seed_voice_regs(pre);
+        for (int i = 0; i < 128; i++) pre[0x56D4 + i] = (uint8_t)(1 + (xs() % 14)); /* valid slots */
+        pre[0x0073] = (uint8_t)(xs() % 0x20);    /* ring head 0..$1F */
+        pre[0x0074] = (uint8_t)(xs() % 0x20);    /* ring tail 0..$1F */
+        mem_fail += diff_run("update_gauge_digits", pre, zero_cpu(),
+                             update_gauge_digits, update_gauge_digits__t6502, t, &printed, &cpu_diff);
+    }
+    set_ignore(0, 0);
+    printf("update_gauge_digits: %d cases, %d mem mismatch (must be 0), %d cpu diffs\n",
+           N, mem_fail, cpu_diff);
+    return mem_fail;
+}
+
 int main(int argc, char **argv) {
     g_filter = argv + 1; g_nfilter = argc - 1;   /* optional name-substring filters */
     platform_test_init_headless();   /* enable seedable RANDOM ($D20A) for both runs */
@@ -690,6 +764,17 @@ int main(int argc, char **argv) {
     fails += test_game_state_update();
     fails += test_mem_contract("pmg_enemy_update", pmg_enemy_update, pmg_enemy_update__t6502);
     fails += test_enemy_check();
+
+    /* in-game SFX engine ($548D subtree, run each flight VBI) */
+    fails += test_mem_contract_regs("sfx_pick_top_voice", sfx_pick_top_voice, sfx_pick_top_voice__t6502);
+    fails += test_mem_contract_regs("sfx_pick_next_voice", sfx_pick_next_voice, sfx_pick_next_voice__t6502);
+    fails += test_mem_contract_regs("sfx_engine_step", sfx_engine_step, sfx_engine_step__t6502);
+    fails += test_sfx_voice("input_init", input_init, input_init__t6502);
+    fails += test_sfx_voice("sfx_voice_write_freq", sfx_voice_write_freq, sfx_voice_write_freq__t6502);
+    fails += test_sfx_voice("sfx_voice_write_freq_ctrl", sfx_voice_write_freq_ctrl, sfx_voice_write_freq_ctrl__t6502);
+    fails += test_sfx_voice("reorder_sprite_slot", reorder_sprite_slot, reorder_sprite_slot__t6502);
+    fails += test_update_gauge_digits();
+
     fails += test_clear_terrain_column();
     fails += test_signed_mul_8x16();
     fails += test_mem_contract("sine_table_lookup", sine_table_lookup, sine_table_lookup__t6502);

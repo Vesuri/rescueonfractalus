@@ -140,6 +140,18 @@ VALIDATE_FUNCS = {
     0xA99C,  # game_state_update — flight state machine (scanline plots + ring events)
     0x7AB8,  # pmg_enemy_update — enemy PMG update (RANDOM; tail ring_push_marked + jitter_roll_pitch)
     0x3FCD,  # enemy_check — event dispatch ($063D->game_sub_4f3f [transpiled] / $0633->pmg_enemy_update)
+    # --- in-game SFX engine (2026-06-12): the $548D voice/gauge engine, run each
+    #     flight VBI (Atari VBI tail $534D), drains the $0719 event ring the native
+    #     flight code already fills.  Leaves-first.  POKEY writes via bus_write ->
+    #     Paula on Amiga (the indexed $D1FE+X writes are masked in validation). ---
+    0x5667,  # sfx_voice_write_freq — write AUDF for voice Y to POKEY $D1FE+X (skip if reg idx 0)
+    0x5673,  # sfx_voice_write_freq_ctrl — write AUDF + AUDC (prio|distortion) for voice Y
+    0x568A,  # sfx_pick_top_voice — scan 12 slots, latch max-priority active voice -> $0714/0715/0716
+    0x56AF,  # sfx_pick_next_voice — scan for next-best priority excluding $0715 -> $0716/0717
+    0x5553,  # sfx_engine_step — explosion/noise engine (RANDOM x2, descending-pitch via $55DC); entry A=$0634
+    0x5614,  # reorder_sprite_slot — voice-priority mixer (calls 5673/568a/56af); entry X/Y, Y restored
+    0x581C,  # input_init — load a new voice from event tables $56D4..$57F4 (stack-aware; tail game_sub_55FC)
+    0x548D,  # update_gauge_digits — APEX: per-frame voice/gauge envelope engine + ring drain (Atari VBI tail)
 }
 VALIDATE_SUFFIX = '__t6502'
 

@@ -5303,7 +5303,8 @@ L_5469:;
 }
 
 /* update_gauge_digits @ $548D: Loops Y=$0E..1 over digit arrays $06DB/E9/0679/06BF/CD/A3/B1/066B; BCD-step wrap $2D, calls 55FC/5815; sorts $0073/74 ring */
-void update_gauge_digits(void) {
+/* faithful transliteration kept as the validation oracle; native update_gauge_digits() lives in rof_native.c (see VALIDATE_FUNCS) */
+void update_gauge_digits__t6502(void) {
     /* 548d */
     LDA(mem[0x0634]);
     /* 5490 */
@@ -5497,7 +5498,8 @@ L_5552:;
 }
 
 /* sfx_engine_step @ $5553: POKEY sound engine: writes AUDF/AUDC $D200/201/204/205/208 from state $0634-$063A and table $55DC */
-void sfx_engine_step(void) {
+/* faithful transliteration kept as the validation oracle; native sfx_engine_step() lives in rof_native.c (see VALIDATE_FUNCS) */
+void sfx_engine_step__t6502(void) {
     /* 5553 */
     CMP(0x01);
     /* 5555 */
@@ -5642,7 +5644,8 @@ void game_sub_55FC__t6502(void) {
 }
 
 /* reorder_sprite_slot @ $5614: Swaps/moves entries in $0705 array by Y vs priority $0714/0715/0717,$066B; calls 5673/56af/568a */
-void reorder_sprite_slot(void) {
+/* faithful transliteration kept as the validation oracle; native reorder_sprite_slot() lives in rof_native.c (see VALIDATE_FUNCS) */
+void reorder_sprite_slot__t6502(void) {
     /* 5614 */
     TYA();
     /* 5615 */
@@ -5720,7 +5723,8 @@ L_5664:;
 }
 
 /* sfx_voice_write_freq @ $5667: Write AUDF freq ($0679+Y) to POKEY AUDFn at $D1FE+X for voice Y; X=reg index from $0705+Y; skip if 0/inactive */
-void sfx_voice_write_freq(void) {
+/* faithful transliteration kept as the validation oracle; native sfx_voice_write_freq() lives in rof_native.c (see VALIDATE_FUNCS) */
+void sfx_voice_write_freq__t6502(void) {
     /* 5667 */
     LDX(mem[(0x0705)+cpu.Y]);
     /* 566a */
@@ -5735,7 +5739,8 @@ L_5672:;
 }
 
 /* sfx_voice_write_freq_ctrl @ $5673: For voice Y write AUDF ($D1FE+X) freq and AUDC ($D1FF+X) = ($066B+Y &$0F vol/prio) | ($065D+Y distortion); skip if $0705+Y=0 */
-void sfx_voice_write_freq_ctrl(void) {
+/* faithful transliteration kept as the validation oracle; native sfx_voice_write_freq_ctrl() lives in rof_native.c (see VALIDATE_FUNCS) */
+void sfx_voice_write_freq_ctrl__t6502(void) {
     /* 5673 */
     LDX(mem[(0x0705)+cpu.Y]);
     /* 5676 */
@@ -5758,7 +5763,8 @@ L_5689:;
 }
 
 /* sfx_pick_top_voice @ $568A: Scan 12 voice slots $0705+X; pick active slot with max prio nibble ($066B&$0F) below $10; store val->$0714/$0716, idx->$0715 */
-void sfx_pick_top_voice(void) {
+/* faithful transliteration kept as the validation oracle; native sfx_pick_top_voice() lives in rof_native.c (see VALIDATE_FUNCS) */
+void sfx_pick_top_voice__t6502(void) {
     /* 568a */
     LDA(0x10);
     /* 568c */
@@ -5796,7 +5802,8 @@ L_56aa:;
 }
 
 /* sfx_pick_next_voice @ $56AF: Scan voice slots $0705+X for next-best prio nibble ($066B&$0F) excluding slot $0715; result val->$0716, idx->$0717 */
-void sfx_pick_next_voice(void) {
+/* faithful transliteration kept as the validation oracle; native sfx_pick_next_voice() lives in rof_native.c (see VALIDATE_FUNCS) */
+void sfx_pick_next_voice__t6502(void) {
     /* 56af */
     LDX(0x00);
     /* 56b1 */
@@ -5848,7 +5855,8 @@ void ring_push_marked__t6502(void) {
 }
 
 /* input_init @ $581C: Input/controller init (called twice: X=$1F then X=$20) */
-void input_init(void) {
+/* faithful transliteration kept as the validation oracle; native input_init() lives in rof_native.c (see VALIDATE_FUNCS) */
+void input_init__t6502(void) {
     /* 581c */
     TXA();
     /* 581d */

@@ -3471,3 +3471,294 @@ void enemy_check(void) {
     if (mem[0x063D] != 0) { game_sub_4f3f(); return; }   /* 3fcd LDA $063D; BNE */
     if (mem[0x0633] != 0) pmg_enemy_update();            /* 3fd5 LDA $0633; BEQ skip */
 }
+
+/* ===========================================================================
+ * IN-GAME SFX ENGINE — the $548D voice/gauge engine and its subtree.
+ *
+ * Run once per flight VBI (the Atari VBI tail $534D -> $548D).  These drain the
+ * $0719 event ring that the native flight code (enemy_check / pmg_enemy_update /
+ * ring_push_marked / the apex below) fills, advance per-voice envelopes, and
+ * write POKEY AUDF/AUDC — which on the Amiga route through bus_write ->
+ * platform_hw_write -> Paula, so the effects are audible automatically.
+ *
+ * They use the shared `cpu` register file for entry/exit registers exactly as
+ * the 6502 ABI / their __t6502 twins do, so $548D threads X/Y/A into its callees
+ * faithfully.  This is RACE-SAFE in flight: game_vbi_isr() save/restores `cpu`
+ * around the whole VBI body (mirroring the OS VBLANK), and the only other `cpu`
+ * users (the main-loop natives) are bracketed by that save/restore.  POKEY
+ * register writes ($D1FE+X / $D1FF+X) are masked in validation (hardware side
+ * effect, not mem[] state); the static AUDF/AUDC/AUDCTL writes already go through
+ * bus_write in the oracle too, so those need no mask.
+ * ========================================================================= */
+
+/* sfx_voice_write_freq @ $5667 — write AUDF for voice (cpu.Y) to POKEY $D1FE+X,
+ * where X = the POKEY register index mem[$0705+Y]; skip if 0 (inactive slot). */
+void sfx_voice_write_freq(void) {
+    uint8_t y = cpu.Y;
+    uint8_t x = mem[0x0705 + y];
+    cpu.X = x;
+    if (x == 0) return;
+    cpu.A = mem[0x0679 + y];
+    bus_write((uint16_t)(0xD1FE + x), cpu.A);            /* AUDFn */
+}
+
+/* sfx_voice_write_freq_ctrl @ $5673 — write AUDF ($D1FE+X) freq AND AUDC ($D1FF+X)
+ * = (prio/vol nibble $066B+Y & $0F) | (distortion $065D+Y) for voice cpu.Y. */
+void sfx_voice_write_freq_ctrl(void) {
+    uint8_t y = cpu.Y;
+    uint8_t x = mem[0x0705 + y];
+    cpu.X = x;
+    if (x == 0) return;
+    bus_write((uint16_t)(0xD1FE + x), mem[0x0679 + y]);  /* AUDFn freq */
+    cpu.A = (uint8_t)((mem[0x066B + y] & 0x0F) | mem[0x065D + y]);
+    bus_write((uint16_t)(0xD1FF + x), cpu.A);            /* AUDCn ctrl */
+}
+
+/* sfx_pick_top_voice @ $568A — scan slots X=1..12; latch the active slot
+ * ($0705+X != 0) with the smallest priority nibble below $10 into
+ * $0716 (running min) / $0714 (value) / $0715 (index). */
+void sfx_pick_top_voice(void) {
+    mem[0x0716] = 0x10;
+    uint8_t x = 0;
+    do {
+        x++;                                             /* INX */
+        if (mem[0x0705 + x] != 0) {                      /* LDA $0705+X; BEQ skip */
+            uint8_t a = (uint8_t)(mem[0x066B + x] & 0x0F);
+            if (a < mem[0x0716]) {                       /* CMP $0716; BCS skip (a>=M) */
+                mem[0x0716] = a;
+                mem[0x0714] = a;
+                mem[0x0715] = x;
+            }
+        }
+    } while (x < 0x0C);                                  /* CPX #$0C; BCC loop */
+    cpu.X = x;
+}
+
+/* sfx_pick_next_voice @ $56AF — scan slots X=1..12; among EMPTY slots and the
+ * excluded slot $0715, latch the largest priority nibble into $0716 / index
+ * $0717.  (Faithful to the code: BEQ considers empty slots, else only X==$0715.) */
+void sfx_pick_next_voice(void) {
+    mem[0x0716] = 0x00;
+    uint8_t x = 0;
+    do {
+        x++;                                             /* INX */
+        int consider = (mem[0x0705 + x] == 0)            /* BEQ -> consider */
+                     || (x == mem[0x0715]);              /* else only the $0715 slot */
+        if (consider) {
+            uint8_t a = (uint8_t)(mem[0x066B + x] & 0x0F);
+            if (a >= mem[0x0716]) {                      /* CMP $0716; BCC skip (a<M) */
+                mem[0x0716] = a;
+                mem[0x0717] = x;
+            }
+        }
+    } while (x < 0x0C);                                  /* CPX #$0C; BCC loop */
+    cpu.X = x;
+}
+
+/* sfx_engine_step @ $5553 — the explosion/noise voice.  Entry cpu.A = mem[$0634]
+ * (the engine state, set by the $548D caller): A==1 -> the descending-pitch
+ * branch ($5585); else the RANDOM-reseeded noise branch.  Reads POKEY RANDOM
+ * ($D20A) twice on reseed; writes AUDF1/AUDF3/AUDC1/AUDC3/AUDCTL. */
+void sfx_engine_step(void) {
+    if (cpu.A != 0x01) {
+        /* L_555a: noise branch */
+        uint8_t v = (uint8_t)(mem[0x0636] - 1);          /* DEC $0636 */
+        mem[0x0636] = v;
+        if (v & 0x80) {                                  /* BPL skip; underflow -> reseed */
+            mem[0x0636] = (uint8_t)((bus_read(0xD20A) & 0x03) + 1);   /* RANDOM&3 +1 */
+            uint8_t r = bus_read(0xD20A);
+            bus_write(0xD204, (uint8_t)(r | 0x70));      /* AUDC3 */
+            bus_write(0xD200, (uint8_t)((r & 0x7F) | 0x17)); /* AUDF1 */
+        }
+        /* L_557b */
+        bus_write(0xD208, 0x04);                         /* AUDCTL */
+        cpu.A = (uint8_t)(0x03 | 0xA0);                  /* A=3 -> L_55d3 ORA #$A0 */
+        bus_write(0xD201, cpu.A);                        /* AUDC1 */
+        bus_write(0xD205, cpu.A);                        /* AUDC3 */
+        return;                                          /* (Y/$0637 untouched on this path) */
+    }
+    /* L_5585: descending-pitch branch */
+    uint8_t y = (uint8_t)(mem[0x0635] - 1);              /* DEY */
+    if (y & 0x80) y = 0x07;                              /* BPL skip; LDY #7 */
+    mem[0x0635] = y;
+    uint8_t d = mem[0x55DC + y];
+    uint8_t a1 = (uint8_t)(mem[0x0638] - d);             /* SEC; SBC $55DC,Y */
+    mem[0x0638] = a1; bus_write(0xD200, a1);             /* AUDF1 */
+    uint8_t a3 = (uint8_t)(mem[0x0639] - d);             /* SEC; SBC */
+    mem[0x0639] = a3; bus_write(0xD204, a3);             /* AUDF3 */
+    uint8_t yy = mem[0x0637];
+    uint8_t g  = (uint8_t)(mem[0x063A] - 1);             /* DEC $063A */
+    mem[0x063A] = g;
+    if (g & 0x80) {                                      /* BPL fails -> underflow */
+        yy = (uint8_t)(yy + 2);                          /* INY; INY */
+        if (yy >= 0x0F) {                                /* CPY #$0F; BCC skip */
+            yy = 0x0F;
+            mem[0x063A] = 0x32;
+        }
+    } else if (g == 0) {                                 /* BNE L_55cf; (g==0) */
+        yy = (uint8_t)(yy - 1);                          /* DEY */
+        if (yy == 0x06) mem[0x0634]++;                   /* CPY #6; BNE skip; INC $0634 */
+        mem[0x063A]++;                                   /* INC $063A */
+    }
+    /* L_55cf */
+    mem[0x0637] = yy;
+    cpu.A = (uint8_t)(yy | 0xA0);                        /* TYA; ORA #$A0 */
+    bus_write(0xD201, cpu.A);                            /* AUDC1 */
+    bus_write(0xD205, cpu.A);                            /* AUDC3 */
+    cpu.Y = yy;
+}
+
+/* input_init @ $581C — load a new voice into slot mem[$56D4+(X-1)] from the event
+ * tables, where the entry cpu.X is the event id (1-based; X==0 is a no-op).  Saves
+ * and restores X/Y (PHA/PLA).  Tail-calls game_sub_55FC (push the slot to the ring). */
+void input_init(void) {
+    uint8_t savedX = cpu.X, savedY = cpu.Y;
+    uint8_t i = (uint8_t)(cpu.X - 1);                    /* DEX */
+    if (!(i & 0x80)) {                                   /* BMI L_5876: skip when (X-1) negative */
+        uint8_t y = mem[0x56D4 + i];                     /* voice slot */
+        uint8_t ctl = mem[0x56F5 + i];
+        mem[0x065D + y] = (uint8_t)(ctl & 0xF0);         /* distortion */
+        mem[0x066B + y] = (uint8_t)(ctl & 0x0F);         /* prio/vol */
+        mem[0x0679 + y] = mem[0x5716 + i];               /* freq */
+        mem[0x06A3 + y] = mem[0x5737 + i];               /* duration */
+        mem[0x0687 + y] = mem[0x5758 + i];
+        mem[0x0695 + y] = mem[0x5779 + i];
+        mem[0x06B1 + y] = mem[0x579A + i];
+        uint8_t e = mem[0x57BB + i];
+        mem[0x06DB + y] = e;
+        if (e != 0) {                                    /* BEQ L_586d (skip these 3) */
+            mem[0x06BF + y] = mem[0x57DC + i];
+            mem[0x06CD + y] = mem[0x57E4 + i];
+            mem[0x06E9 + y] = mem[0x57EC + i];
+        }
+        mem[0x06F7 + y] = mem[0x57F4 + i];               /* L_586d */
+        cpu.Y = y;
+        game_sub_55FC();                                 /* push slot Y to the ring */
+    }
+    cpu.Y = savedY; cpu.X = savedX;                      /* PLA;TAY; PLA;TAX */
+    cpu.A = savedX;
+}
+
+/* reorder_sprite_slot @ $5614 — the voice-priority mixer.  Entry cpu.Y = the voice
+ * slot just touched, cpu.X = a selector (0 -> promote/compact an empty slot via
+ * sfx_pick_next_voice; !=0 -> demote a lower-priority slot under the current top).
+ * Writes the moved voice (sfx_voice_write_freq_ctrl) and re-latches the top voice
+ * (sfx_pick_top_voice).  Y is saved/restored (PHA/PLA); X is clobbered. */
+void reorder_sprite_slot(void) {
+    uint8_t savedY = cpu.Y;                              /* TYA; PHA */
+    sfx_voice_write_freq_ctrl();                         /* 5616 (writes voice cpu.Y) */
+    cpu.Y = savedY;
+    int do_pick_top = 1;
+    if (cpu.X == 0) {                                    /* TXA; BNE L_5641 -> here X==0 */
+        uint8_t a = (uint8_t)(mem[0x066B + cpu.Y] & 0x0F);
+        if (a < mem[0x0714]) {                           /* CMP $0714; BCC L_5664 */
+            do_pick_top = 0;
+        } else {
+            int move = (a != mem[0x0714])                /* BNE L_562d */
+                     || (cpu.Y >= mem[0x0715]);          /* equal: CPY $0715; BCC L_5664 else move */
+            if (move) {                                  /* L_562d */
+                uint8_t tx = mem[0x0715];
+                mem[0x0705 + cpu.Y] = mem[0x0705 + tx];
+                mem[0x0705 + tx] = 0x00;
+                sfx_voice_write_freq_ctrl();             /* 563b (re-uses cpu.Y) */
+            } else {
+                do_pick_top = 0;                         /* a==top && Y<topidx -> L_5664 */
+            }
+        }
+    } else {                                             /* L_5641: X!=0 */
+        if (cpu.Y < 0x0D) {                              /* CPY #$0D; BCS L_5661 */
+            sfx_pick_next_voice();
+            uint8_t tx = mem[0x0715];
+            if (tx != mem[0x0717]) {                     /* LDX $0715; CPX $0717; BEQ L_5661 */
+                cpu.Y = mem[0x0717];                     /* LDY $0717 */
+                mem[0x0705 + cpu.Y] = mem[0x0705 + tx];
+                mem[0x0705 + tx] = 0x00;
+                sfx_voice_write_freq_ctrl();             /* 565e */
+            }
+        }
+    }
+    if (do_pick_top) sfx_pick_top_voice();               /* L_5661 */
+    cpu.Y = savedY;                                      /* L_5664: PLA; TAY */
+    cpu.A = savedY;
+}
+
+/* update_gauge_digits @ $548D — APEX: the per-frame voice/gauge envelope engine.
+ * Runs sfx_engine_step (when $0634 armed), advances the 14 voice/gauge slots'
+ * frequency/duration/priority envelopes (BCD-step wrap $2D, gated by table
+ * $5406; emits AUDF via sfx_voice_write_freq; re-queues finished slots via
+ * game_sub_55FC / ring_push_marked), then drains the $0719 event ring:
+ * bit7-set entries -> input_init (a new voice), bit7-clear -> reorder_sprite_slot. */
+void update_gauge_digits(void) {
+    if (mem[0x0634] != 0) {                              /* 548d LDA $0634; BEQ skip */
+        cpu.A = mem[0x0634];                             /* sfx_engine_step reads entry A */
+        sfx_engine_step();                               /* 5492 */
+    }
+    /* envelope loop: Y = $0E down to 1 */
+    cpu.Y = 0x0E;
+    do {
+        uint8_t y = cpu.Y;
+        mem[0x0718] = 0x00;                              /* 5497 per-slot "expired" flag */
+        /* --- frequency-step block ($549c) --- */
+        if (mem[0x06DB + y] != 0) {                      /* LDA $06DB+Y; BEQ L_54d5 */
+            uint16_t s = (uint16_t)mem[0x06DB + y] + mem[0x06E9 + y];  /* CLC; ADC $06E9+Y */
+            uint8_t a = (uint8_t)s;
+            if (a & 0x80) a = (uint8_t)(a + 0x0A + (s >> 8)); /* BPL skip; ADC #$0A (+ prior carry) */
+            else if (a >= 0x2D) a = 0x2C;                /* CMP #$2D; BCC skip; LDA #$2C */
+            mem[0x06E9 + y] = a;
+            if (mem[0x5406 + a] != 0) {                  /* TAX; LDA $5406,X; BEQ L_54d5 */
+                uint8_t f = (uint8_t)(mem[0x0679 + y] + mem[0x06BF + y]);  /* CLC; ADC $06BF+Y */
+                mem[0x0679 + y] = f;
+                if (f == mem[0x06CD + y]) {              /* CMP $06CD+Y; BNE skip */
+                    mem[0x06DB + y] = 0x00;
+                    mem[0x0718]++;                       /* INC $0718 */
+                }
+                cpu.Y = y;
+                sfx_voice_write_freq();                  /* 54d2 */
+            }
+        }
+        /* --- duration/priority-step block ($54d5) --- */
+        if (mem[0x06A3 + y] != 0) {                      /* LDA $06A3+Y; BEQ L_5510 */
+            uint16_t s = (uint16_t)mem[0x06A3 + y] + mem[0x06B1 + y];  /* CLC; ADC $06B1+Y */
+            uint8_t a = (uint8_t)s;
+            if (a & 0x80) a = (uint8_t)(a + 0x0A + (s >> 8)); /* BPL skip; ADC #$0A (+ prior carry) */
+            else if (a >= 0x2D) a = 0x2C;                /* CMP #$2D; BCC skip; LDA #$2C */
+            mem[0x06B1 + y] = a;
+            if (mem[0x5406 + a] != 0) {                  /* TAX; LDA $5406,X; BEQ L_5510 */
+                uint8_t p = (uint8_t)((mem[0x066B + y] + mem[0x0687 + y]) & 0x0F); /* ADC; AND #$0F */
+                mem[0x066B + y] = p;
+                if (p == mem[0x0695 + y]) {              /* CMP $0695+Y; BNE skip */
+                    mem[0x06A3 + y] = 0x00;
+                    mem[0x0718]++;                       /* INC $0718 */
+                }
+                cpu.Y = y;
+                game_sub_55FC();                         /* 550d (push slot Y to ring) */
+            }
+        }
+        /* --- L_5510: if a slot expired this pass, re-queue its event id --- */
+        if (mem[0x0718] != 0) {                          /* LDA $0718; BEQ L_551b */
+            cpu.X = mem[0x06F7 + y];                     /* LDX $06F7+Y */
+            ring_push_marked();                          /* 5518 (push X|$80) */
+        }
+        cpu.Y = (uint8_t)(y - 1);                        /* DEY */
+    } while (cpu.Y != 0);                                /* BNE L_5497 (stop after Y=1) */
+
+    /* --- clamp the ring head/tail to <= $1F ($5521) --- */
+    if (mem[0x0073] > 0x1F) mem[0x0073] = 0x1F;          /* LDA #$1F; CMP $0073; BCS keep; STA */
+    if (mem[0x0074] > 0x1F) mem[0x0074] = 0x1F;
+    /* --- drain loop ($552F): walk tail $0074 down to head $0073, wrapping at $1F --- */
+    for (;;) {
+        cpu.Y = mem[0x0074];                             /* LDY $0074 */
+        if (cpu.Y == mem[0x0073]) break;                 /* CPY $0073; BEQ done */
+        cpu.A = mem[0x0719 + cpu.Y];                     /* LDA $0719,Y */
+        if (cpu.A & 0x80) {                              /* BPL -> reorder; here bit7 set -> input */
+            cpu.X = (uint8_t)(cpu.A & 0x7F);             /* AND #$7F; TAX */
+            input_init();                                /* 553d */
+        } else {
+            cpu.Y = cpu.A;                               /* TAY (ring value = slot index) */
+            reorder_sprite_slot();                       /* 5544 (entry cpu.X = leftover) */
+        }
+        uint8_t t = (uint8_t)(mem[0x0074] - 1);          /* DEC $0074 */
+        if (t & 0x80) t = 0x1F;                          /* BPL skip; LDA #$1F; STA $0074 */
+        mem[0x0074] = t;
+    }
+}
