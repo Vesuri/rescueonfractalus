@@ -2947,3 +2947,302 @@ void compute_obj_rel_angle_scale(void) {
     #undef ROLM_
     #undef SBC_
 }
+
+/* flight_control_integrate @ $8E5B — THE flight VBI root (the last transpiled fn on the
+ * per-frame VBI path).  Reads the joystick (PORTA $D300) + throttle, integrates the
+ * ship's pitch/roll/heading and 24-bit world position, clamps the angles, drives the
+ * HUD/audio refresh + the per-object scratch ring rotation, and steps the active object
+ * (load_velocity_from_param_block / object_step_and_collide).  Bounded loops only; reads
+ * RANDOM $D20A.  Ported goto-faithfully (huge maze).  mem-only contract (reads no entry
+ * regs/carry at $8e5b).  Native-call cpu setup: game_sub_55FC needs cpu.Y; game_sub_4447
+ * / store_676_init need cpu.A; compute_obj_rel_angle_scale reads ENTRY CARRY ($90f8). */
+void flight_control_integrate(void) {
+    uint8_t A, X, Y, c = 0, n, v;
+    #define ADC_(x) do { uint16_t _t=(uint16_t)A+(uint8_t)(x)+c; c=(uint8_t)(_t>>8); A=(uint8_t)_t; } while(0)
+    #define SBC_(x) ADC_((uint8_t)~(uint8_t)(x))
+    #define ASLA_() do { c=(uint8_t)(A>>7); A=(uint8_t)(A<<1); } while(0)
+    #define ROLA_() do { n=(uint8_t)(A>>7); A=(uint8_t)((A<<1)|c); c=n; } while(0)
+    #define RORA_() do { n=A&1; A=(uint8_t)((A>>1)|(c<<7)); c=n; } while(0)
+    #define LSRA_() do { c=A&1; A=(uint8_t)(A>>1); } while(0)
+    #define ROLM_(a) do { v=mem[a]; n=(uint8_t)(v>>7); mem[a]=(uint8_t)((v<<1)|c); c=n; } while(0)
+    #define RORM_(a) do { v=mem[a]; n=v&1; mem[a]=(uint8_t)((v>>1)|(c<<7)); c=n; } while(0)
+    #define ASLM_(a) do { v=mem[a]; c=(uint8_t)(v>>7); mem[a]=(uint8_t)(v<<1); } while(0)
+
+    if (mem[0x004A] != 0x02) goto L_8ec5;          /* 8e5b-8e5f */
+    if (mem[0x003E] != 0)    goto L_8ec5;          /* 8e61-8e63 */
+    A = mem[0x0022]; LSRA_(); LSRA_(); ADC_(0x20); mem[0x0021] = A;  /* 8e68-8e6e */
+    X = bus_read(0xD300);                          /* 8e70-8e73 */
+    if ((X & 0x04) == 0) { mem[0x0021] ^= 0xFF; }  /* 8e74-8e7c */
+    else if (X & 0x08)   { mem[0x0021] = 0x00; }   /* 8e81-8e88 */
+    /* L_8e8a */
+    if (mem[0x005D] != 0) { A = 0xD0; }            /* 8e8a-8e90 */
+    else if (X & 0x01) {                           /* 8e93-8e96 */
+        A = 0xD0;                                  /* 8e98 */
+        if (mem[0x0029] == 0xF4 && mem[0x0028] == 0) A = 0xFF;   /* 8e9a-8ea4 */
+    } else if (X & 0x02) {                         /* 8ea9-8eac */
+        A = 0x30;                                  /* 8eae */
+        if (mem[0x0029] == 0x0B && mem[0x0028] == 0xFF) A = 0x01; /* 8eb0-8ebc */
+    } else { A = 0x00; }                           /* 8ec1 */
+    mem[0x0027] = A;                               /* 8ec3 */
+L_8ec5:
+    if (mem[0x0004] != 0) compute_target_blip_position();   /* 8ec5-8ec9 */
+    if (mem[0x0072] == 0x02) {                     /* 8ecc-8ed0 */
+        mem[0x0027] = 0x30;                        /* 8ed2-8ed4 */
+        mem[0x0021] = mem[0x0026];                 /* 8ed6-8ed8 */
+        A = mem[0x0025]; ASLA_(); ROLM_(0x0021); ASLA_(); ROLM_(0x0021);   /* 8eda-8ee0 */
+        c = 1; A = 0x00; SBC_(mem[0x0021]); mem[0x0021] = A;   /* 8ee2-8ee7 */
+        mem[0x0022] = 0xF0;                        /* 8ee9-8eeb */
+        cpu.A = 0x00; game_sub_4447();             /* 8eed-8eef */
+        goto L_8f49;                               /* 8ef2 */
+    }
+    /* L_8ef5 */
+    if (mem[0x003D] != 0) goto L_8f2b;             /* 8ef5-8ef7 */
+    if (mem[0x0072] == 0) { step_object_along_axes(); goto L_8f28; }   /* 8ef9-8f00 */
+    if (mem[0x0676] != 0x01) {                     /* 8f03-8f08 */
+        mem[0x066C] = 0x00; mem[0x066D] = 0x00;    /* 8f0a-8f0f */
+        cpu.Y = 0x01; game_sub_55FC();             /* 8f12-8f14 */
+        cpu.Y++;       game_sub_55FC();            /* 8f17-8f18 */
+        cpu.A = 0x01; store_676_init();            /* 8f1b-8f1d */
+    }
+    /* L_8f20 */
+    mem[0x0023] = mem[0x0025];                     /* 8f20-8f22 */
+    mem[0x0024] = mem[0x0026];                     /* 8f24-8f26 */
+L_8f28:
+    goto L_8f49;
+L_8f2b:
+    if (mem[0x283C] != 0) goto L_8f49;             /* 8f2b-8f2e */
+    if (mem[0x066C] == 0x01) goto L_8f49;          /* 8f30-8f35 */
+    mem[0x066C] = 0x01; mem[0x066D] = 0x01;        /* 8f37-8f3a */
+    cpu.Y = 0x01; game_sub_55FC();                 /* 8f3d */
+    cpu.Y++;       game_sub_55FC();                /* 8f40-8f41 */
+    mem[0x3355] = 0x34;                            /* 8f44-8f46 */
+L_8f49:
+    if (mem[0x003E] != 0) {                        /* 8f49-8f4b */
+        if (mem[0x066C] != 0x00) {                 /* 8f4d-8f52 */
+            mem[0x066C] = 0x00; mem[0x066D] = 0x00; /* 8f54-8f57 */
+            cpu.Y = 0x01; game_sub_55FC();         /* 8f5a-8f5c */
+            cpu.Y++;       game_sub_55FC();        /* 8f5f-8f60 */
+            mem[0x3355] = 0xB4;                    /* 8f63-8f65 */
+        }
+        return;                                    /* 8f68 */
+    }
+    /* L_8f69: roll integration */
+    if (mem[0x0021] != 0) goto L_8f9a;             /* 8f69-8f6b */
+    mem[0x00BB] = mem[0x0026];                     /* 8f6d-8f6f */
+    A = mem[0x0025]; Y = 0x05;                     /* 8f71-8f73 */
+L_8f75:
+    ASLA_(); ROLM_(0x00BB); if (--Y != 0) goto L_8f75;   /* 8f75-8f79 */
+    if (!c) goto L_8f8a;                           /* 8f7b */
+    A = mem[0x0025]; SBC_(mem[0x00BB]); mem[0x0025] = A;  /* 8f7d-8f81 */
+    if (c) mem[0x0026]++;                           /* 8f83-8f85 */
+    goto L_8f98;                                   /* 8f87 */
+L_8f8a:
+    A = mem[0x0025]; SBC_(mem[0x00BB]);            /* 8f8a-8f8c */
+    if (!c) {                                      /* 8f8e BCS L_8f98 */
+        mem[0x0026] = (uint8_t)(mem[0x0026] - 1);  /* 8f90 DEC */
+        if (mem[0x0026] & 0x80) { A = 0x00; mem[0x0026] = 0x00; }   /* 8f92-8f96 */
+    }
+L_8f98:
+    mem[0x0025] = A;                               /* 8f98 */
+L_8f9a:
+    /* pitch integration */
+    if (mem[0x003D] != 0) goto L_8fcd;             /* 8f9a-8f9c */
+    if (mem[0x0027] != 0) goto L_8fcd;             /* 8f9e-8fa0 */
+    mem[0x00BB] = mem[0x0029];                     /* 8fa2-8fa4 */
+    A = mem[0x0028]; ASLA_(); ROLM_(0x00BB); ASLA_(); ROLM_(0x00BB);   /* 8fa6-8fac */
+    if (!c) goto L_8fbd;                           /* 8fae */
+    A = mem[0x0028]; SBC_(mem[0x00BB]); mem[0x0028] = A;  /* 8fb0-8fb4 */
+    if (c) mem[0x0029]++;                           /* 8fb6-8fb8 */
+    goto L_8fcd;                                   /* 8fba */
+L_8fbd:
+    A = mem[0x0028]; SBC_(mem[0x00BB]);            /* 8fbd-8fbf */
+    if (!c) {                                      /* 8fc1 BCS L_8fcb */
+        mem[0x0029] = (uint8_t)(mem[0x0029] - 1);  /* 8fc3 DEC */
+        if (mem[0x0029] & 0x80) { A = 0x00; mem[0x0029] = 0x00; }   /* 8fc5-8fc9 */
+    }
+    mem[0x0028] = A;                               /* 8fcb */
+L_8fcd:
+    Y = 0x01;                                      /* 8fcd LDY #$01 */
+    if (mem[0x0022] == 0) { Y = 0x03; goto L_8ff7; }   /* 8fcf-8fd5 BNE L_8fd8: run block when $0022!=0 */
+    c = 1; A = mem[0x0022]; SBC_(mem[0x0029]); SBC_(mem[0x0029]); mem[0x00BB] = A;   /* 8fd8-8fdd */
+    c = 0; A = mem[0x0022]; LSRA_(); A |= 0x07; A &= bus_read(0xD20A); ADC_(mem[0x00BB]);   /* 8fdf-8fe8 */
+    if (c) A = 0xFF;                               /* 8fea-8fec */
+    c = 0; ADC_(mem[0x002D]); mem[0x002D] = A;     /* 8fee-8ff1 */
+    if (c) mem[0x002E]++;                          /* 8ff3-8ff5 */
+L_8ff7:
+    if (mem[0x005D] == 0) goto L_902d;             /* 8ff7-8ff9 */
+    c = 0; A = mem[0x002E]; ADC_(0x02); mem[0x00BB] = A;   /* 8ffb-9000 */
+    A = 0x00; ROLA_(); mem[0x00BC] = A;            /* 9002-9005 */
+    A = mem[0x002D];                               /* 9007 */
+L_9009:
+    ASLA_(); ROLM_(0x00BB); ROLM_(0x00BC); if (--Y != 0) goto L_9009;   /* 9009-900f */
+    A = mem[0x002D]; SBC_(mem[0x00BB]); mem[0x002D] = A;   /* 9011-9015 */
+    A = mem[0x002E]; SBC_(mem[0x00BC]); mem[0x002E] = A;   /* 9017-901b */
+    if (c) goto L_902d;                            /* 901d BCS */
+    A = 0x00; mem[0x002D] = 0x00; mem[0x002E] = 0x00;   /* 901f-9023 */
+    if (A != mem[0x0676]) { cpu.A = A; store_676_init(); }   /* 9025-902a (A=0) */
+L_902d:
+    c = 0; A = mem[0x0025]; ADC_(mem[0x0021]); mem[0x0025] = A;   /* 902d-9032 */
+    if (mem[0x0021] & 0x80) { if (!c) mem[0x0026]--; }   /* 9034-903a BIT;BPL;BCC;DEC */
+    else                    { if (c)  mem[0x0026]++; }   /* 903f-9041 */
+    /* L_9043: clamp roll $0026 to [$FB,$04] */
+    A = mem[0x0026];                               /* 9043 */
+    if (!(A & 0x80)) {                             /* 9045 BMI L_9054 */
+        if (A >= 0x05) { mem[0x0025] = 0xFF; A = 0x04; }   /* 9047-904f */
+    } else {
+        if (A < 0xFB) { mem[0x0025] = 0x00; A = 0xFB; }    /* 9054-905c */
+    }
+    mem[0x0026] = A;                               /* 905e */
+    c = 0; A = mem[0x0028]; ADC_(mem[0x0027]); mem[0x0028] = A;   /* 9060-9065 */
+    if (mem[0x0027] & 0x80) { if (!c) mem[0x0029]--; }   /* 9067-906d */
+    else                    { if (c)  mem[0x0029]++; }   /* 9072-9074 */
+    /* L_9076: clamp pitch $0029 to [$F4,$0B] */
+    A = mem[0x0029];                               /* 9076 */
+    if (!(A & 0x80)) {                             /* 9078 BMI L_9087 */
+        if (A >= 0x0C) { mem[0x0028] = 0xFF; A = 0x0B; }   /* 907a-9082 */
+    } else {
+        if (A < 0xF4) { mem[0x0028] = 0x00; A = 0xF4; }    /* 9087-908f */
+    }
+    mem[0x0029] = A; mem[0x0020] = A;              /* 9091-9093 */
+    A = mem[0x0028]; ASLA_(); ROLM_(0x0020); ASLA_(); ROLM_(0x0020); ASLA_(); ROLM_(0x0020);  /* 9095-909e */
+    A = mem[0x0020];                               /* 90a0 */
+    if (c) { A ^= 0xFF; ADC_(0x00); }              /* 90a2-90a6 BCC L_90a8; EOR;ADC */
+    mem[0x28D6] = A;                               /* 90a8 */
+    mem[0x006B] = mem[0x002E];                     /* 90ab-90ad */
+    mul_u8(); A = cpu.A;                           /* 90af */
+    Y = 0x00;                                      /* 90b2 */
+    if (mem[0x0020] & 0x80) {                      /* 90b4-90b6 BIT;BPL L_90c1 */
+        Y--;                                       /* 90b8 DEY */
+        A ^= 0xFF; c = 0; ADC_(0x01);              /* 90b9-90bc EOR;CLC;ADC #1 */
+        if (c) Y++;                                /* 90be-90c0 */
+    }
+    mem[0x2884] = Y;                               /* 90c1 STY $2884 */
+    ASLA_(); ROLM_(0x2884); ASLA_(); ROLM_(0x2884); ASLA_(); ROLM_(0x2884);   /* 90c4-90cd */
+    mem[0x2883] = A;                               /* 90d0 */
+    mem[0x00BB] = mem[0x0025];                     /* 90d3-90d5 */
+    A = mem[0x0026]; Y = 0x04;                     /* 90d7-90d9 */
+L_90db:
+    c = (A >= 0x80) ? 1 : 0; RORA_(); RORM_(0x00BB); if (--Y != 0) goto L_90db;   /* 90db-90e1 */
+    mem[0x00BC] = A;                               /* 90e3 */
+    c = 0; A = mem[0x2885]; ADC_(mem[0x00BB]); mem[0x2885] = A;   /* 90e5-90eb */
+    A = mem[0x2886]; ADC_(mem[0x00BC]); A &= 0x3F; mem[0x2886] = A;   /* 90ee-90f5 */
+    cpu.C = c; compute_obj_rel_angle_scale();      /* 90f8 (reads ENTRY CARRY) */
+    c = 0; A = mem[0x2887]; ADC_(mem[0x002B]); mem[0x2887] = A;   /* 90fb-9101 */
+    A = mem[0x2888]; ADC_(mem[0x002C]); mem[0x2888] = A;   /* 9104-9109 */
+    c = 0; A = mem[0x2889]; ADC_(mem[0x2881]); mem[0x2889] = A;   /* 910c-9115 (910c LDA $002C dead) */
+    A = mem[0x288A]; ADC_(mem[0x2882]); mem[0x288A] = A;   /* 9118-911e */
+    c = 0; A = mem[0x0033]; ADC_(mem[0x2883]); mem[0x0033] = A;   /* 9121-9127 */
+    A = mem[0x0034]; ADC_(mem[0x2884]);            /* 9129-912b */
+    if (A == 0xFF) A = 0x00;                        /* 912e-9132 */
+    if (A >= 0x50) {                               /* 9134-9136 BCC L_914e */
+        Y = 0xFF;                                  /* 9138 */
+        if (mem[0x0072] == 0x02) {                 /* 913a-913e */
+            if (A >= 0x60) mem[0x283B] = Y;        /* 9140-9144 BCC L_9147 */
+        } else { mem[0x0033] = Y; A = 0x4F; }      /* 914a-914c */
+    }
+    mem[0x0034] = A;                               /* 914e */
+    c = mem[0x0028] >> 7; A = mem[0x0029]; ADC_(0x0C); mem[0x2873] = A;   /* 9150-9157 */
+    c = mem[0x0023] >> 7; A = mem[0x0024]; ADC_(0x05); mem[0x2871] = A;   /* 915a-9161 */
+    c = 1; A = 0x3A;                               /* 9164-9165 */
+    if (mem[0x283D] != 0) SBC_(mem[0x0014]);       /* 9167-916a BNE L_9172: SBC $0014 */
+    else                  SBC_(mem[0x2886]);       /* 916c SBC $2886 */
+    A &= 0x3F; Y = A;                              /* 9174-9176 TAY */
+    mem[0x2836] = (uint8_t)(A & 0x03);             /* 9177-9179 */
+    A = Y; LSRA_(); LSRA_(); mem[0x281C] = A;      /* 917c-917f */
+    A = mem[0x002D]; ASLA_(); A = mem[0x002E]; ROLA_(); A ^= 0xFF; mem[0x0686] = A;   /* 9182-918a */
+    c = 1; SBC_(0x04); mem[0x0687] = A;            /* 918d-9190 */
+    refresh_hud_field_0d_entry();                  /* 9193 (sets own Y) */
+    Y = 0x0C;                                      /* 9196 */
+    A = mem[0x0022];                               /* 9198 */
+    if (A == 0xF0) goto L_91bc;                    /* 919a-919c (A=$F0) */
+    A = mem[0x062F];                               /* 919e */
+    if (A != 0) { mem[0x2917] = 0xFF; A = 0xFF; goto L_91bc; }   /* 91a1 BNE L_91b7; 91b7-91b9 */
+    mem[0x005D] = A;                               /* 91a3 (A=0) */
+    X = mem[0x2917];                               /* 91a5 */
+    if (X == 0) goto L_91dc;                       /* 91a8 (A=0) */
+    mem[0x2917] = (uint8_t)(mem[0x2917] - 1);      /* 91aa DEC */
+    if (X < bus_read(0xD20A)) goto L_91dc;         /* 91ad-91b0 CPX $D20A; BCC (A=0) */
+    A = 0xFF;                                      /* 91b2 (fall to L_91bc) */
+L_91bc:
+    mem[0x005D] = A;                               /* 91bc */
+    X = mem[0x0022];                               /* 91be */
+    if (X == 0) { A = 0x00; goto L_91dc; }         /* 91c0 BNE L_91c6; 91c2 TXA (A=0) */
+    if (X < 0xF0) { A = 0x04; goto L_91dc; }       /* 91c6-91cc CPX #$F0; BCS L_91cf */
+    A = mem[0x0034]; LSRA_(); LSRA_(); LSRA_(); A ^= 0x0F;   /* 91cf-91d4 */
+    if (A < 0x04) A = 0x04;                        /* 91d6-91da CMP #$04; BCS L_91dc; LDA #$04 */
+L_91dc:
+    mem[0x066B + Y] = A;                           /* 91dc STA $066B,Y */
+    A = mem[0x002D]; ASLA_(); A = mem[0x002E]; ROLA_(); A ^= 0xFF;   /* 91df-91e5 */
+    if (A < 0x0C) A = 0x0C;                        /* 91e7-91eb */
+    mem[0x0679 + Y] = A;                           /* 91ed STA $0679,Y */
+    cpu.Y = Y; game_sub_55FC();                    /* 91f0 */
+    mem[0x2850] = mem[0x2919];                     /* 91f3-91f6 */
+    A = mem[0x291A]; c = (A >= 0x80) ? 1 : 0; RORA_(); RORM_(0x2850); mem[0x2851] = A;   /* 91f9-9202 */
+    Y = 0x00; A = mem[0x291B]; mem[0x2852] = A;    /* 9205-920a */
+    if (A & 0x80) Y--;                             /* 920d-920f BPL L_9210; DEY */
+    A = Y; Y = 0x03;                               /* 9210-9211 TYA; LDY #$03 */
+L_9213:
+    ASLM_(0x2852); ROLA_(); if (--Y != 0) goto L_9213;   /* 9213-9218 */
+    mem[0x2853] = A;                               /* 921a */
+    Y = 0x00; A = mem[0x291A]; c = (A >= 0x80) ? 1 : 0; RORA_();   /* 921d-9224 */
+    if (A & 0x80) Y--;                             /* 9225-9227 BPL L_9228; DEY */
+    /* L_9228 */
+    c = 0; ADC_(mem[0x2829]); mem[0x2829] = A;     /* 9228-922c */
+    A = Y; ADC_(mem[0x0068]); mem[0x0068] = A;     /* 922e-9232 TYA; ADC $0068 */
+    Y = 0x00; A = mem[0x291B];                     /* 9234-9236 */
+    c = (A >= 0x80) ? 1 : 0; RORA_(); c = (A >= 0x80) ? 1 : 0; RORA_(); c = (A >= 0x80) ? 1 : 0; RORA_();   /* 9239-9241 */
+    if (A & 0x80) Y--;                             /* 9242-9244 BPL L_9245; DEY */
+    /* L_9245 */
+    c = 0; ADC_(mem[0x282C]); mem[0x282C] = A;     /* 9245-9249 */
+    A = Y; ADC_(mem[0x0069]); mem[0x0069] = A;     /* 924c-924f TYA; ADC $0069 */
+    /* 9251: step the active object */
+    A = mem[0x0036];                               /* 9251 */
+    if (A == 0) goto L_9289;                       /* 9253 BNE L_9258; 9255 goto L_9289 */
+    if (!(A & 0x80)) {                             /* 9258 BMI L_9267 */
+        if (A == 0x01) load_velocity_from_param_block();   /* 925a-925e */
+        else           object_step_and_collide();          /* 9264 */
+    }
+    /* L_9267 */
+    c = 1; A = mem[0x284E]; SBC_(mem[0x2850]); mem[0x284E] = A;   /* 9267-926e */
+    A = mem[0x0038]; SBC_(mem[0x2851]); mem[0x0038] = A;   /* 9271-9276 */
+    c = 0; A = mem[0x284F]; ADC_(mem[0x2852]); mem[0x284F] = A;   /* 9278-927f */
+    A = mem[0x0039]; ADC_(mem[0x2853]); mem[0x0039] = A;   /* 9282-9287 */
+L_9289:
+    Y = mem[0x0063];                               /* 9289 */
+    if (Y & 0x80) goto L_92c7;                      /* 928b BMI L_92c7 */
+    Y = (uint8_t)(Y - 1); mem[0x0063] = Y;         /* 928d-928e DEY; STY $0063 */
+    if (!(Y & 0x80)) goto L_92a6;                  /* 9290 BPL L_92a6 */
+    if (mem[0x2826] != 0) { reset_flags_ff(); goto L_92a3; }   /* 9292-929a BNE L_929d */
+    reset_flags_ff(); check_object_in_target_box();            /* 929d-92a0 */
+L_92a3:
+    goto L_92c7;
+L_92a6:
+    A = Y; LSRA_(); LSRA_(); mem[0x006A] = A;      /* 92a6-92a9 TYA;LSR;LSR */
+    if (Y == 0x5A) goto L_92c1;                    /* 92ab-92ad CPY #$5A; BEQ */
+    A = mem[0x006D];                               /* 92af */
+    if (A < 0x1F) goto L_92c4;                      /* 92b1-92b3 CMP #$1F; BCC L_92c4 */
+    if (Y == 0x3C) goto L_92c1;                     /* 92b5-92b7 CPY #$3C; BEQ */
+    if (A < 0x3D) goto L_92c4;                      /* 92b9-92bb CMP #$3D; BCC L_92c4 */
+    if (Y != 0x28) goto L_92c4;                     /* 92bd-92bf CPY #$28; BNE L_92c4 */
+L_92c1:
+    terrain_jitter_column();                        /* 92c1 */
+L_92c4:
+    object_integrate_position();                    /* 92c4 */
+L_92c7:
+    Y = mem[0x291E]; Y++; if (Y >= 0x07) Y = 0x00;  /* 92c7-92cf INY; CPY #$07; BCC; LDY #0 */
+    mem[0x291E] = Y;                                /* 92d1 */
+    mem[0x2919] = mem[0x2893 + Y]; mem[0x2893 + Y] = mem[0x0025];   /* 92d4-92dc */
+    mem[0x291A] = mem[0x289A + Y]; mem[0x289A + Y] = mem[0x0026];   /* 92df-92e7 */
+    mem[0x291B] = mem[0x28A1 + Y]; mem[0x28A1 + Y] = mem[0x0027];   /* 92ea-92f2 */
+    mem[0x291C] = mem[0x28A8 + Y]; mem[0x28A8 + Y] = mem[0x2871];   /* 92f5-92fe */
+    mem[0x291D] = mem[0x28AF + Y]; mem[0x28AF + Y] = mem[0x2873];   /* 9301-930a */
+    #undef ADC_
+    #undef SBC_
+    #undef ASLA_
+    #undef ROLA_
+    #undef RORA_
+    #undef LSRA_
+    #undef ROLM_
+    #undef RORM_
+    #undef ASLM_
+}

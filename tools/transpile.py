@@ -127,6 +127,7 @@ VALIDATE_FUNCS = {
     0x9680,  # check_player_proximity_hit — hit test vs player -> pickup/explosion (reads ENTRY CARRY)
     # batch 4 — apex:
     0x9552,  # object_step_and_collide — integrate pos + terrain/obj collision + pickup dispatch (PHA/PLA stack)
+    0x8E5B,  # flight_control_integrate — THE flight VBI root: joystick+throttle integrate, HUD, ring rotate
 }
 VALIDATE_SUFFIX = '__t6502'
 

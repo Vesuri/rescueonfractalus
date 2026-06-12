@@ -14941,7 +14941,8 @@ L_8dae:;
 }
 
 /* flight_control_integrate @ $8E5B: Master flight step: reads PORTA $D300 joystick + RANDOM $D20A; integrates pitch $0025/26 roll $0028/29 throttle $002D/2E & world pos $0033/34,$2885/87/89; clamps angles; updates PMG/audio */
-void flight_control_integrate(void) {
+/* faithful transliteration kept as the validation oracle; native flight_control_integrate() lives in rof_native.c (see VALIDATE_FUNCS) */
+void flight_control_integrate__t6502(void) {
     /* 8e5b */
     LDA(mem[0x004A]);
     /* 8e5d */

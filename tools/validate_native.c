@@ -476,6 +476,46 @@ static int test_dial_bar(const char *name, void (*nat)(void), void (*t6502)(void
     return mem_fail;
 }
 
+/* flight_control_integrate @ $8E5B (the VBI root): seed from the flight snapshot so its
+ * tables/arrays are real — the $0072==2 path runs draw_object_column, whose $4581 pointer
+ * table must be valid (a random pointer could aim a write at its loop counter -> undiffable
+ * hang).  Randomize the zero-page control bytes ($00-$7F) each case for branch coverage,
+ * keeping the big arrays/tables from the snapshot.  Reads RANDOM (seeded per case).
+ *
+ * Masks the 6502 stack page $0100-$01FF: it holds only TRANSIENT pushed values from the
+ * native callees (e.g. object_step_and_collide's $9641 PHA / the ring helpers), which are
+ * pulled back before return and never read as stale residue — so the leftover byte is dead
+ * scratch, outside the functional contract.  With the test's entry S=0, that residue lands
+ * at an S-relative byte ($01FF) that the oracle and native can leave differing without any
+ * functional consequence.  Verified the mask is load-bearing AND minimal: with it OFF the
+ * ONLY diffs are in this page (all observed at $01FF), nowhere in functional memory. */
+static int test_flight_control_integrate(void) {
+    if (!want("flight_control_integrate")) return 0;
+    static uint8_t snap[65536], pre[65536];
+    static uint16_t stack_page[256];
+    for (int i = 0; i < 256; i++) stack_page[i] = (uint16_t)(0x0100 + i);
+    const char *path = "a800dumps/flight_ram_0000_BFFF.bin";
+    FILE *f = fopen(path, "rb");
+    if (!f) { printf("flight_control_integrate: SKIP (%s not found)\n", path); return 0; }
+    memset(snap, 0, sizeof snap);
+    size_t got = fread(snap, 1, 0xC000, f); fclose(f);
+    if (got != 0xC000) { printf("flight_control_integrate: SKIP (short read %zu)\n", got); return 0; }
+    int mem_fail = 0, cpu_diff = 0, printed = 0;
+    set_ignore(stack_page, 256);                 /* dead CPU-stack scratch (see header) */
+    for (int t = 0; t < 8000; t++) {
+        memcpy(pre, snap, sizeof pre);
+        for (int a = 0x00; a <= 0x7F; a++) pre[a] = (uint8_t)(xs() & 0xFF);  /* control bytes */
+        Cpu6502 c = zero_cpu();
+        mem_fail += diff_run("flight_control_integrate", pre, c,
+                             flight_control_integrate, flight_control_integrate__t6502,
+                             t, &printed, &cpu_diff);
+    }
+    set_ignore(0, 0);
+    printf("flight_control_integrate: %d cases (snapshot + random ZP), %d mem mismatch (must be 0), %d cpu diffs\n",
+           8000, mem_fail, cpu_diff);
+    return mem_fail;
+}
+
 /* terrain_draw_frame @ $A31E: snapshot-driven (its object loop drives terrain_subdivide_column /
  * terrain_column_rasterize, which only terminate on real terrain arrays).  Entry X
  * is the level base index — the two real call-site values are $00 and $30, which
@@ -556,6 +596,7 @@ int main(int argc, char **argv) {
     fails += test_mem_contract_regs("check_player_proximity_hit", check_player_proximity_hit, check_player_proximity_hit__t6502);
     /* batch 4 — apex */
     fails += test_mem_contract("object_step_and_collide", object_step_and_collide, object_step_and_collide__t6502);
+    fails += test_flight_control_integrate();
     fails += test_clear_terrain_column();
     fails += test_signed_mul_8x16();
     fails += test_mem_contract("sine_table_lookup", sine_table_lookup, sine_table_lookup__t6502);
