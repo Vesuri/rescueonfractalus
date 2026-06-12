@@ -1868,7 +1868,8 @@ L_3fc1:;
 }
 
 /* enemy_check @ $3FCD: Checks $063D (enemy active?) and $0633 (another trigger); dispatches to game_subsystem_4f3f or pmg_enemy_update */
-void enemy_check(void) {
+/* faithful transliteration kept as the validation oracle; native enemy_check() lives in rof_native.c (see VALIDATE_FUNCS) */
+void enemy_check__t6502(void) {
     /* 3fcd */
     LDA(mem[0x063D]);
     /* 3fd0 */
@@ -12980,7 +12981,8 @@ void init_event_state_5815_x16(void) {
 }
 
 /* pmg_enemy_update @ $7AB8: PMG enemy update (1 RANDOM read; called from enemy_check when $0633≠0) */
-void pmg_enemy_update(void) {
+/* faithful transliteration kept as the validation oracle; native pmg_enemy_update() lives in rof_native.c (see VALIDATE_FUNCS) */
+void pmg_enemy_update__t6502(void) {
     /* 7ab8 */
     LDA(bus_read(0xD20A));
     /* 7abb */
@@ -21388,7 +21390,8 @@ L_a998:;
 }
 
 /* game_state_update @ $A99C: Game state update (2 RANDOM reads; called from main game loop) */
-void game_state_update(void) {
+/* faithful transliteration kept as the validation oracle; native game_state_update() lives in rof_native.c (see VALIDATE_FUNCS) */
+void game_state_update__t6502(void) {
     /* a99c */
     DEC_M(0x28EE);
     /* a99f */
@@ -21702,7 +21705,8 @@ L_aacc:;
 }
 
 /* plot_scanline_rand_dir @ $AACF: Reads RANDOM $D20A: branches to plot_scanline_up else falls through to plot_scanline_down — random-direction scanline plot (was game_sub_AACF) */
-void plot_scanline_rand_dir(void) {
+/* faithful transliteration kept as the validation oracle; native plot_scanline_rand_dir() lives in rof_native.c (see VALIDATE_FUNCS) */
+void plot_scanline_rand_dir__t6502(void) {
     /* aacf */
     LDA(bus_read(0xD20A));
     /* aad2 */
@@ -26104,7 +26108,8 @@ void terrain_distance_clamp_return(void) {
 }
 
 /* plot_scanline_down @ $AAD4: Line-plot loop: subtracts $40 from $5B/$5C step, walks X/Y via 28EF-28FA fixed-pt accumulators, calls a6d3 to plot each point; X-range gate $2C..$D4, Y>=$6C */
-void plot_scanline_down(void) {
+/* faithful transliteration kept as the validation oracle; native plot_scanline_down() lives in rof_native.c (see VALIDATE_FUNCS) */
+void plot_scanline_down__t6502(void) {
     /* aad4 */
     SEC();
     /* aad5 */
@@ -26196,7 +26201,8 @@ L_ab26:;
 }
 
 /* plot_scanline_up @ $AB27: Bresenham-style point plotter: from 28F0/28F2 walks via 28F1/28F3 + 28F7/28F9 steps, X drift by $5C sign, calls a6d3 per point; bounds X $2C..$D4, Y>=$6C */
-void plot_scanline_up(void) {
+/* faithful transliteration kept as the validation oracle; native plot_scanline_up() lives in rof_native.c (see VALIDATE_FUNCS) */
+void plot_scanline_up__t6502(void) {
     /* ab27 */
     LDX(mem[0x28F0]);
     /* ab2a */
