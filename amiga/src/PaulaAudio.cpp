@@ -18,7 +18,7 @@
 #include "PaulaAudio.h"
 
 // mem[] and cpu are defined in src/cpu/cpu.c (compiled for m68k as audio/cpu.o)
-extern "C" uint8_t mem[65536];
+extern "C" volatile uint8_t mem[65536];
 
 // 64 KB flat memory snapshot embedded in incbin.s
 extern "C" uint8_t rof_mem_bin[];

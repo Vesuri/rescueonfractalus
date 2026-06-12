@@ -10,7 +10,7 @@
 
 #include "PaulaAudio.h"   // for mem[] + uint types
 #include "AtariZp.h"      // zp:: named Atari memory offsets
-extern "C" uint8_t mem[65536];
+extern "C" volatile uint8_t mem[65536];
 
 // vbi_attract_timer_native: fragment of vbi_handler_standby @ $52D7 relevant to
 // Standby.  The full handler also writes DMACTL/CHBASE/colour/HPOS registers

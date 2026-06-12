@@ -2,7 +2,7 @@
 #include <cstdio>
 #include <cstring>
 
-extern uint8_t mem[65536];
+extern volatile uint8_t mem[65536];
 
 Platform* platform = nullptr;
 

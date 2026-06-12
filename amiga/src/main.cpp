@@ -25,7 +25,7 @@
 extern struct GfxBase* GfxBase;
 
 // mem[] lives in audio/rof_gen.c; also written by the VBI handler.
-extern "C" uint8_t mem[65536];
+extern "C" volatile uint8_t mem[65536];
 
 // sfx_voice_tick_native: driven by CIA-B Timer A (see below), not the main loop.
 extern "C" void sfx_voice_tick_native(void);

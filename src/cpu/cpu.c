@@ -5,4 +5,4 @@ Cpu6502 cpu;
    callback thread (VBI handler).  Without volatile, -O2 proves that
    spin-wait conditions like "while (mem[0x8E] == 0)" never change in
    the loop body and folds them to infinite loops.                    */
-uint8_t mem[65536];
+volatile uint8_t mem[65536];

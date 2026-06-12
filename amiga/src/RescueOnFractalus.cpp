@@ -57,7 +57,7 @@ extern "C" void    flight_reset_parity_native(void);           // reset double-b
 extern "C" volatile uint8_t g_activeVbi;                       // 0=none 1=standby($52D7) 2=flight($4FF5); read by game_vbi_isr
 extern "C" uint8_t flight_frame_native(void);                  // one flight heavy pass; returns $0072 (==2 done)
 
-extern "C" uint8_t mem[65536];
+extern "C" volatile uint8_t mem[65536];
 
 // Lookup table: byte → 16-bit doubled glyph pattern (each bit → 2 pixels).
 // Filled once in initialize(); used by title render for mode-6 1bpp doubling.

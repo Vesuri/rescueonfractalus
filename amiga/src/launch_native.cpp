@@ -16,7 +16,7 @@
 // struct, so driving cpu-based transpiled code from the main loop is race-free.
 
 #include "PaulaAudio.h"   // mem[] + int types (matches the other native modules)
-extern "C" uint8_t mem[65536];
+extern "C" volatile uint8_t mem[65536];
 
 // The transpile's 6502 register file (src/cpu/cpu.h: `Cpu6502 cpu`).  We mirror
 // its POD layout here rather than #include cpu.h, which drags in the real

@@ -19,7 +19,7 @@
 // CONSOL switches read active-low in bits 0-2 (START / SELECT / OPTION).  Idle
 // (no switch down) reads $07; START down clears bit0 → $06, the value the loop
 // tests for (CMP #$06 / BEQ).  We never touch SELECT/OPTION, so they stay high.
-extern "C" uint8_t mem[65536];
+extern "C" volatile uint8_t mem[65536];
 static const uint16_t kConsol      = 0xD01F;
 static const uint8_t  kConsolIdle  = 0x07;
 static const uint8_t  kConsolStart = 0x06;

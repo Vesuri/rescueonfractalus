@@ -14,7 +14,7 @@ typedef struct {
 } Cpu6502;
 
 extern Cpu6502 cpu;
-extern uint8_t mem[65536]; /* shared between main thread and VBI audio thread */
+extern volatile uint8_t mem[65536]; /* shared between main thread and VBI audio thread */
 
 /* ---------- flag helpers ------------------------------------------ */
 #define UPD_NZ(v)  do { uint8_t _nzv=(uint8_t)(v); cpu.N=_nzv>>7; cpu.Z=(_nzv==0); } while(0)

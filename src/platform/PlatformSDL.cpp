@@ -8,7 +8,7 @@
 #include <cmath>
 #include <png.h>
 
-extern uint8_t mem[65536];
+extern volatile uint8_t mem[65536];
 
 /* POKEY base clock (NTSC, ~1.79 MHz) used for audio frequency calculation. */
 static const double POKEY_CLOCK = 1789772.5;
