@@ -25,6 +25,9 @@ extern "C" uint8_t mem[65536];
 // ---- per-frame profiler ------------------------------------------------------
 // g_flightProf accumulates per-phase deltas; read it from the debugger.
 volatile struct FlightProf g_flightProf = { 0 };
+// terrain_draw_frame object-loop sub-phase probe (rof_native.c, -DROF_TDRAW_PROF):
+// beam lines spent in the fractal subdivision vs the projection+object-plot.
+extern "C" unsigned long g_tdSubdiv = 0, g_tdProjPlot = 0;
 extern "C" unsigned short flight_vbi_tick(void) {
     return (unsigned short)((mem[0x0013] << 8) | mem[0x0014]);  // RTCLOK $0013:$0014
 }
@@ -34,6 +37,7 @@ extern "C" void flight_prof_reset(void) {
         g_flightProf.renderTot = g_flightProf.isrLines = g_flightProf.isrCalls = 0;
     g_flightProf.tFrameSetup = g_flightProf.tClear = g_flightProf.tDraw =
         g_flightProf.tCollision = 0;
+    g_tdSubdiv = g_tdProjPlot = 0;
 }
 // Raster-beam line counter (0..~312 PAL), ~63.56us/line — a sub-frame clock the
 // VBI ISR can use (RTCLOK is frozen for the whole ISR).  VPOSR bit0 = line bit 8.
@@ -42,6 +46,8 @@ static inline unsigned short beam_line(void) {
     unsigned short vhpos = *(volatile unsigned short*)0xDFF006;  // hi byte = V7..V0
     return (unsigned short)(((vpos & 1) << 8) | (vhpos >> 8));
 }
+
+extern "C" unsigned short rof_beam_line(void) { return beam_line(); }
 
 // The transpile's 6502 register file (src/cpu/cpu.h: `Cpu6502 cpu`) — mirrored
 // as a POD (see launch_native.cpp for why we don't #include cpu.h).

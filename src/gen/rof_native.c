@@ -2112,6 +2112,21 @@ void terrain_collision(void) {
  * object index, terrain_subdivide_column takes 0, the transpiled ring_push_marked takes $14.
  * Reads $D20A (harness seeds it identically per case).  Contract: memory only.
  */
+/* Optional sub-phase probe (Amiga autoflight only; -DROF_TDRAW_PROF): split the
+ * terrain_draw_frame object loop's cost into the fractal subdivision vs the
+ * projection+object-plot, via the raster beam line.  Desktop builds compile these
+ * to no-ops (no HW beam there).  Read g_tdSubdiv / g_tdProjPlot from the debugger. */
+#ifdef ROF_TDRAW_PROF
+extern unsigned short rof_beam_line(void);
+extern unsigned long g_tdSubdiv, g_tdProjPlot;
+#define PB(v) unsigned short v = rof_beam_line()
+#define PE(v,acc) do { unsigned short _e = rof_beam_line(); \
+    (acc) += (_e >= (v)) ? (unsigned long)(_e - (v)) : (unsigned long)(_e + 313 - (v)); } while (0)
+#else
+#define PB(v) ((void)0)
+#define PE(v,acc) ((void)0)
+#endif
+
 void terrain_draw_frame(void) {
     uint8_t A, X, Y, c = 0;
     #define ADC_(v)  do { uint16_t _t=(uint16_t)A+(uint8_t)(v)+c; c=(uint8_t)(_t>>8); A=(uint8_t)_t; } while(0)
@@ -2168,19 +2183,19 @@ void terrain_draw_frame(void) {
             A = mem[0x24B4+X];                           /* a3c4 */
             if (!((A & 0x80) || (A & 0x40))) {           /* a3c7 BMI / a3c9 AND#$40 -> L_a42c */
                 if (!(mem[0x24B4+X] & 0x10)) {           /* a3cd BNE L_a3da -> else project */
-                    cpu.X = X; project_terrain_points(); cpu.X = X; terrain_plot_object();  /* a3d4-a3d7 */
+                    PB(_pp1); cpu.X = X; project_terrain_points(); cpu.X = X; terrain_plot_object(); PE(_pp1, g_tdProjPlot);  /* a3d4-a3d7 */
                 }
                 /* a3da */
                 mem[0x25B4]=mem[0x2400+X]; mem[0x25D2]=mem[0x242D+X]; mem[0x25F0]=mem[0x245A+X];  /* a3da-a3ec */
                 mem[0x24E2]=mem[0x2487+X]; mem[0x23E2]=mem[0x23B5+X];  /* a3ef-a3f5 */
                 X = mem[0x28DB];                         /* a3f8 */
                 if (!(mem[0x24B4+X] & 0x10)) {           /* a3fb BNE L_a408 -> else project */
-                    cpu.X = X; project_terrain_points(); cpu.X = X; terrain_plot_object();  /* a402-a405 */
+                    PB(_pp2); cpu.X = X; project_terrain_points(); cpu.X = X; terrain_plot_object(); PE(_pp2, g_tdProjPlot);  /* a402-a405 */
                 }
                 /* a408 */
                 mem[0x0082]=mem[0x2400+X]; mem[0x0083]=mem[0x242D+X]; mem[0x0084]=mem[0x245A+X];  /* a408-a415 */
                 mem[0x0085]=mem[0x2487+X]; mem[0x0086]=mem[0x23B5+X];  /* a417-a41f */
-                cpu.X = 0x00; terrain_subdivide_column();             /* a421-a423 */
+                PB(_sd); cpu.X = 0x00; terrain_subdivide_column(); PE(_sd, g_tdSubdiv);  /* a421-a423 */
                 Y = mem[0x272E];                         /* a426 */
                 if (Y == 0) Y = (uint8_t)(Y+1);          /* a429 BNE L_a42c; else a42b INY */
             }

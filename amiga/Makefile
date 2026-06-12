@@ -53,7 +53,7 @@ AUDIO_CFLAGS  = -g -MP -MMD -m68000 -msoft-float -O2 -nostdlib -fomit-frame-poin
                 -fno-tree-loop-distribution -ffunction-sections -fdata-sections \
                 -Wno-unused-function -Wno-unused-parameter -Wno-unused-variable \
                 -Wno-implicit-function-declaration -Wno-int-conversion \
-                $(AUDIO_CINCLUDES)
+                $(AUDIO_CINCLUDES) $(EXTRA_DEFINES)
 CCFLAGS   = -g -MP -MMD -m68000 -msoft-float -O2 -nostdlib -fomit-frame-pointer \
             -fno-tree-loop-distribution -ffunction-sections -fdata-sections \
             -DNO_ASSEMBLER $(WARN) $(EXTRA_DEFINES)
@@ -114,8 +114,8 @@ obj/audio/rof_gen.o : $(REPO)/src/gen/rof_gen.c
 # rof_native.c: hand-written native twins (divide_16x16, …) the transpile leaves
 # unimplemented (VALIDATE_FUNCS seam) — required once flight code references them.
 obj/audio/rof_native.o : $(REPO)/src/gen/rof_native.c
-	$(info C    $< [audio])
-	@$(CC) $(AUDIO_CFLAGS) -c -o $@ "$(abspath $<)"
+	$(info C    $< [audio, -O3])
+	@$(CC) $(AUDIO_CFLAGS) -O3 -funroll-loops -c -o $@ "$(abspath $<)"
 
 clean:
 	@$(RM) -r obj/ out/
