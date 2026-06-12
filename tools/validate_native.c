@@ -439,6 +439,7 @@ int main(void) {
     fails += test_mem_contract("trigger_object_explosion", trigger_object_explosion, trigger_object_explosion__t6502);
     fails += test_mem_contract("reset_object_slot", reset_object_slot, reset_object_slot__t6502);
     fails += test_mem_contract("enqueue_indicator_event", enqueue_indicator_event, enqueue_indicator_event__t6502);
+    fails += test_mem_contract("object_integrate_position", object_integrate_position, object_integrate_position__t6502);
     fails += test_clear_terrain_column();
     fails += test_signed_mul_8x16();
     fails += test_mem_contract("sine_table_lookup", sine_table_lookup, sine_table_lookup__t6502);

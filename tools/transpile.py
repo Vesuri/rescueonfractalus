@@ -102,6 +102,7 @@ VALIDATE_FUNCS = {
     0x96D9,  # trigger_object_explosion — set explosion sprite ptrs + INC $0041, tail ring_push_marked X=$0F
     0x9677,  # reset_object_slot — $0036=$80, tail ring_push_marked X=$0E
     0xB756,  # enqueue_indicator_event — write indicator HUD params, tail game_sub_55FC Y=$08
+    0x930E,  # object_integrate_position — 24-bit world-pos integrate + blip $2821/$2824 (mem-only)
 }
 VALIDATE_SUFFIX = '__t6502'
 

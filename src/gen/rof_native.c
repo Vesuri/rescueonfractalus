@@ -2433,3 +2433,63 @@ void enqueue_indicator_event(void) {
     cpu.Y = 0x08;                              /* b76a LDY #$08 */
     game_sub_55FC();                           /* b76c (native; reads cpu.Y) */
 }
+
+/* object_integrate_position @ $930E — integrate an object's 24-bit world position.
+ * Four add/subtract blocks update {$2827,$0064,$0065} and {$2828,$0066,$0067}: subtract
+ * the velocity $2850/$2851 and decel $2829/$0068; add velocity $2852/$2853 and $282C/$0069.
+ * Each block sign-extends its operand's high byte into the 3rd byte via a carry-conditional
+ * INC/DEC.  Tail: if both high bytes settled to 0, derive the screen blip $2821 from a
+ * heading table $93F3[$0063] (arith >>1 gated by $282D) + $0066, and $2824 from $0064;
+ * else $2824 = 0.  mem-only contract (starts SEC; X/Y loaded from mem; no RANDOM). */
+void object_integrate_position(void) {
+    uint8_t A, X, Y, c;
+    #define ADC_(v) do { uint16_t _t=(uint16_t)A+(uint8_t)(v)+c; c=(uint8_t)(_t>>8); A=(uint8_t)_t; } while(0)
+    #define SBC_(v) ADC_((uint8_t)~(uint8_t)(v))
+    #define RORA_() do { uint8_t _n=A&1; A=(uint8_t)((A>>1)|(c<<7)); c=_n; } while(0)
+
+    /* block 1: subtract velocity $2850/$2851 (BPL form) */
+    c = 1; A = mem[0x2827]; SBC_(mem[0x2850]); mem[0x2827] = A;   /* 930e-9315 */
+    A = mem[0x0064]; SBC_(mem[0x2851]); mem[0x0064] = A;          /* 9318-931d */
+    A = mem[0x2851];                                             /* 931f */
+    if (A & 0x80) { if (c)  mem[0x0065]++; }                     /* 9322 BPL: N set -> if c INC */
+    else          { if (!c) mem[0x0065]--; }                     /*          N clear -> if !c DEC */
+
+    /* block 2: add velocity $2852/$2853 (BMI form) */
+    c = 0; A = mem[0x2828]; ADC_(mem[0x2852]); mem[0x2828] = A;   /* 932f-9336 */
+    A = mem[0x0066]; ADC_(mem[0x2853]); mem[0x0066] = A;          /* 9339-933e */
+    A = mem[0x2853];                                             /* 9340 */
+    if (A & 0x80) { if (!c) mem[0x0067]--; }                     /* 9343 BMI: N set -> if !c DEC */
+    else          { if (c)  mem[0x0067]++; }                     /*          N clear -> if c INC */
+
+    /* block 3: subtract decel $2829/$0068 (BPL form) */
+    c = 1; A = mem[0x2827]; SBC_(mem[0x2829]); mem[0x2827] = A;   /* 9350-9357 */
+    A = mem[0x0064]; SBC_(mem[0x0068]); mem[0x0064] = A;          /* 935a-935e */
+    A = mem[0x0068];                                             /* 9360 */
+    if (A & 0x80) { if (c)  mem[0x0065]++; }                     /* 9362 BPL */
+    else          { if (!c) mem[0x0065]--; }
+
+    /* block 4: add $282C/$0069 (BMI form) */
+    c = 0; A = mem[0x2828]; ADC_(mem[0x282C]); mem[0x2828] = A;   /* 936f-9376 */
+    A = mem[0x0066]; ADC_(mem[0x0069]); mem[0x0066] = A;          /* 9379-937d */
+    A = mem[0x0069];                                             /* 937f */
+    if (A & 0x80) { if (!c) mem[0x0067]--; }                     /* 9381 BMI */
+    else          { if (c)  mem[0x0067]++; }
+
+    /* tail: settled? */
+    if (mem[0x0065] != 0 || mem[0x0067] != 0) {                  /* 938e/9392 BNE L_93b7 */
+        mem[0x2824] = 0x00;                                      /* 93b7-93b9 */
+        goto done;
+    }
+    X = mem[0x0063];                                            /* 9396 */
+    A = mem[0x93F3 + X];                                        /* 9398 heading table */
+    Y = mem[0x282D];                                           /* 939b */
+    if (Y >= 0x30) A = 0x00;                                    /* 939e CPY#$30; BCC; LDA#0 */
+    if (Y >= 0x20) { c = (A >= 0x80) ? 1 : 0; RORA_(); }        /* 93a4 CPY#$20; CMP#$80; ROR A */
+    c = 0; ADC_(mem[0x0066]); mem[0x2821] = A;                  /* 93ab CLC; ADC $0066; STA $2821 */
+    mem[0x2824] = mem[0x0064];                                  /* 93b1-93b4 */
+done:
+    #undef ADC_
+    #undef SBC_
+    #undef RORA_
+    return;
+}
