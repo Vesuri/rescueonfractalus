@@ -20,7 +20,7 @@
 #include "AtariZp.h"      // zp:: named mem[] offsets (heading/world pos/game state/...)
 #include "../../src/gen/rof_native.h"  // typed C cores (clear_terrain_column_at, ...)
 #include "FlightProf.h"   // per-frame VBI-count profiler
-extern "C" volatile uint8_t mem[65536];
+extern "C" uint8_t mem[65536];
 
 // ---- per-frame profiler ------------------------------------------------------
 // g_flightProf accumulates per-phase deltas; read it from the debugger.

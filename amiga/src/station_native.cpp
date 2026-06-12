@@ -13,7 +13,7 @@
 
 #include "PaulaAudio.h"
 
-extern "C" volatile uint8_t mem[65536];
+extern "C" uint8_t mem[65536];
 
 // ---- station_poll_start_native ----------------------------------------------
 // Faithful port of the CONSOL (53279 / $D01F) read in station_init's attract

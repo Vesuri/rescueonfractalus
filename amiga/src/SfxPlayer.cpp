@@ -16,7 +16,7 @@
 
 #include "PaulaAudio.h"
 
-extern "C" volatile uint8_t mem[65536];
+extern "C" uint8_t mem[65536];
 // platform_hw_write declared in PaulaAudio.h (extern "C")
 
 // ---- sfx_seq_step_native ($7148) — also called from paula_audio_init() ------
