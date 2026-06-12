@@ -24,7 +24,7 @@ extern "C" volatile uint8_t mem[65536];
 
 // ---- per-frame profiler ------------------------------------------------------
 // g_flightProf accumulates per-phase deltas; read it from the debugger.
-volatile struct FlightProf g_flightProf = { 0, 0, 0, 0, 0, 0, 0, 0, 0 };
+volatile struct FlightProf g_flightProf = { 0 };
 extern "C" unsigned short flight_vbi_tick(void) {
     return (unsigned short)((mem[0x0013] << 8) | mem[0x0014]);  // RTCLOK $0013:$0014
 }
@@ -32,6 +32,8 @@ extern "C" void flight_prof_reset(void) {
     g_flightProf.terrain = g_flightProf.stateEnemy = g_flightProf.render =
         g_flightProf.copper = g_flightProf.frames = g_flightProf.updateTot =
         g_flightProf.renderTot = g_flightProf.isrLines = g_flightProf.isrCalls = 0;
+    g_flightProf.tFrameSetup = g_flightProf.tClear = g_flightProf.tDraw =
+        g_flightProf.tCollision = 0;
 }
 // Raster-beam line counter (0..~312 PAL), ~63.56us/line — a sub-frame clock the
 // VBI ISR can use (RTCLOK is frozen for the whole ISR).  VPOSR bit0 = line bit 8.
@@ -192,28 +194,37 @@ extern "C" uint8_t flight_frame_native(void)
 {
     unsigned short t0 = flight_vbi_tick();
     terrain_frame_setup();                                         // $9E54 / $3EF5
-    unsigned short t1, t2;                                          // t1: terrain done; t2: state+enemy done
+    unsigned short tA = flight_vbi_tick();                          // terrain_frame_setup done
+    unsigned short t1, t2, tB, tC;                                  // tB: clear done; tC: draw done; t1: terrain done; t2: state+enemy done
     if (flightParity == 0) {
         clear_terrain_column_core(0x33);                            // $3EBD
+        tB = flight_vbi_tick();
         cpu.X = 0x30; terrain_draw_frame();                       // $3EC2 (offset-48 half)
+        tC = flight_vbi_tick();
         cpu.X = 0x33; terrain_collision();                   // $3EC9
         mem[zp::pilotState] = mem[zp::gameState];                           // $3ECC: LDA $0041 / STA $288F
         t1 = flight_vbi_tick();
-        game_state_update();                                 // $3ED1 (TRANSPILED)
+        game_state_update();                                 // $3ED1 (now native)
         mem[zp::gamePhase] = 0x02;                                  // $3ED4
-        enemy_check();                                       // $3ED8 (TRANSPILED)
+        enemy_check();                                       // $3ED8 (now native)
         t2 = flight_vbi_tick();
     } else {
         clear_terrain_column_core(0x03);                            // $3EFA
+        tB = flight_vbi_tick();
         cpu.X = 0x00; terrain_draw_frame();                       // $3EFF (offset-0 half, displayed)
+        tC = flight_vbi_tick();
         cpu.X = 0x03; terrain_collision();                   // $3F04
         if (mem[zp::gameState]) mem[zp::pilotState] = mem[zp::gameState];          // $3F07: conditional
         t1 = flight_vbi_tick();
-        game_state_update();                                 // $3F0E (TRANSPILED)
-        enemy_check();                                       // $3F11 (TRANSPILED)
+        game_state_update();                                 // $3F0E (now native)
+        enemy_check();                                       // $3F11 (now native)
         t2 = flight_vbi_tick();
         mem[zp::gamePhase] = 0x01;                                  // $3F36
     }
+    g_flightProf.tFrameSetup += (unsigned short)(tA - t0);
+    g_flightProf.tClear      += (unsigned short)(tB - tA);
+    g_flightProf.tDraw       += (unsigned short)(tC - tB);
+    g_flightProf.tCollision  += (unsigned short)(t1 - tC);
     g_flightProf.terrain    += (unsigned short)(t1 - t0);          // native terrain pass
     g_flightProf.stateEnemy += (unsigned short)(t2 - t1);          // transpiled state+enemy
     g_flightProf.frames++;

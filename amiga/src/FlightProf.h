@@ -30,6 +30,12 @@ struct FlightProf {
     unsigned long renderTot;   /* RTCLOK: whole scene.render()                                    */
     unsigned long isrLines;    /* BEAM: raster lines elapsed across flight_vbi_native invocations */
     unsigned long isrCalls;    /* number of flight_vbi_native invocations (VBIs while flying)     */
+    /* terrain sub-phase breakdown (RTCLOK, accumulated over frames) — locates the
+       dominant cost within the ~218 ms terrain bucket.  terrain == sum of these.    */
+    unsigned long tFrameSetup; /* RTCLOK: terrain_frame_setup $9E54                               */
+    unsigned long tClear;      /* RTCLOK: clear_terrain_column_core $AD5F                          */
+    unsigned long tDraw;       /* RTCLOK: terrain_draw_frame $A31E (fractal/projection/object loop)*/
+    unsigned long tCollision;  /* RTCLOK: terrain_collision $AE53                                  */
 };
 extern volatile struct FlightProf g_flightProf;
 
