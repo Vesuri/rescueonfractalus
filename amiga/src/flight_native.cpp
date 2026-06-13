@@ -90,6 +90,7 @@ void flight_control_integrate(void);     // $8E5B
 void update_terrain_scanline_proj(void); // $9833 (the JSR is at $51BC inside vbi_handler_flight)
 void render_bcd_counter(void);           // $49A0: draw BCD score ($0601) to top line $32C5
 void update_gauge_digits(void);          // $548D: in-game SFX voice engine + ring drain (Atari VBI tail $534D)
+void reorder_sprite_slot(void);          // $5614: voice-priority mixer — assigns a POKEY channel ($0705) to slot cpu.Y
 
 // Set during flight_init_native so transpiled frame-wait spin loops (wait_frames_60
 // via init_gameplay_state) advance RTCLOK in compute time instead of waiting on the real
@@ -170,6 +171,46 @@ extern "C" void sfx_engine_reset_native(void)
     platform_hw_write(0xD208, 0x60);           // $5487 AUDCTL = $60
 }
 
+// seed_engine_drone_native: install the continuous engine-drone voices for flight.
+//
+// GROUND TRUTH (atari800 -pokeyrec of real played flight + host build/rof voice dump,
+// 2026-06-13): the steady-flight engine is THREE voice slots 12/13/14 ($0C/$0D/$0E):
+//   slot 12: distort $80 (NOISE)  prio 4 -> POKEY ch2 (AUDC2=$84) — the engine body
+//   slot 13: distort $A0 (pure)   prio 1 -> POKEY ch1 (AUDC1=$A1) — a tracking whine
+//   slot 14: distort $A0 (pure)   prio 1 -> POKEY ch3 (AUDC3=$A1) — a tracking whine
+// Their FREQUENCY is rewritten every frame by flight_control_integrate ($8E5B @ $91DC:
+// $0679+$0C/$0D/$0E from the ship pitch $002D/$002E) — which already runs in
+// flight_vbi_native — so the engine pitch tracks throttle.  All the Atari does to START
+// it is set the distortion (cold-init $3DE2/$3DE8), the priorities, and run the launch
+// engine-ramp ($63FF-$64E8) whose end-state hands these three voices their POKEY channels
+// via reorder_sprite_slot ($5614).  flight_init_native never replayed any of this, so the
+// Amiga had no engine drone.  We install the launch end-state directly here, then let the
+// mixer + flight_control_integrate + update_gauge_digits (all ported) sustain it.
+//
+// Voice-array layout (base + slot index): distort $065D+Y, priority $066B+Y, freq $0679+Y.
+extern "C" void seed_engine_drone_native(void)
+{
+    mem[0x006C] = 0x23;                   // sound_active_flag (launch $6367; flight steady = $23)
+    // distortion (the cold-init $3DE2/$3DE8 writes): slot12 noise, slots13/14 pure
+    mem[0x065D + 0x0C] = 0x80;            // $0669 slot 12 distort = NOISE
+    mem[0x065D + 0x0D] = 0xA0;            // $066A slot 13 distort = pure
+    mem[0x065D + 0x0E] = 0xA0;            // $066B slot 14 distort = pure
+    // priorities (launch end-state): slot12=4, slots13/14=1.  flight_control_integrate
+    // rewrites slot12's each frame; 13/14 stay as seeded.
+    mem[0x066B + 0x0C] = 0x04;            // $0677 slot 12 priority
+    mem[0x066B + 0x0D] = 0x01;            // $0678 slot 13 priority
+    mem[0x066B + 0x0E] = 0x01;            // $0679 slot 14 priority
+    // initial freqs (flight_control_integrate overwrites these next frame from pitch)
+    mem[0x0679 + 0x0C] = 0x65;            // $0685 slot 12 freq
+    mem[0x0679 + 0x0D] = 0x64;            // $0686 slot 13 freq
+    mem[0x0679 + 0x0E] = 0x68;            // $0687 slot 14 freq
+    // hand each voice a POKEY channel via the priority mixer (launch does this with the
+    // $5614 calls at $6493/$64D7/$64E6).  X=0 = the "newly active voice" promote path.
+    cpu.X = 0x00; cpu.Y = 0x0C; reorder_sprite_slot();   // slot 12 -> a channel (noise body)
+    cpu.X = 0x00; cpu.Y = 0x0D; reorder_sprite_slot();   // slot 13 -> a channel
+    cpu.X = 0x00; cpu.Y = 0x0E; reorder_sprite_slot();   // slot 14 -> a channel
+}
+
 // flight_init_native: port the mem[]-state subset of game_entry $3E12-$3EA6.
 // The terrain row-addr table is rebuilt for the FLIGHT viewport: base $1010,
 // stride $60=96 (verified vs the flight DL $316B, which LMSes mode-D rows from
@@ -212,6 +253,7 @@ extern "C" void flight_init_native(void)
     } else {
         mem[zp::joystickSaved] = 0x01;                                  // $3EB6/$3EB8 (A=1 path)
     }
+    seed_engine_drone_native();  // install the 3 engine-drone voices (slots 12/13/14) — see above
     g_fastForwardFrames = 0;     // back to real-time frame pacing for steady-state flight
 }
 
