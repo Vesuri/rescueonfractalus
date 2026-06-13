@@ -46,6 +46,7 @@ extern "C" void launch_show_standby_native(void);               // display_setup
 extern "C" void launch_gauge_init_native(void);                 // vobj strip init ($062F/$0D98)
 extern "C" uint8_t launch_gauge_step_native(void);              // one vobj fill step; 0 when full
 extern "C" void launch_light_doorstart_native(void);           // $63FD: bottom-left light on
+extern "C" void launch_doors_sound_native(void);               // $6235-$62E4: door-open AUDF2 sweep (blocking port)
 extern "C" void launch_light_all_native(void);                 // $6482: all left lights on
 extern "C" void tunnel_ring_arm_native(void);                  // $647D: reseed message-column coords
 extern "C" volatile uint8_t g_tunnelFieldDirty;                // set when advance_message_column draws into $2000
@@ -735,6 +736,12 @@ void RescueOnFractalus::startDoors()
     for (int i = 0; i < 6; i++) mem[zp::colorRing + (uint16_t)i] = kRingRamp[i];
     mem[zp::scrollAccum0] = mem[zp::scrollAccum1] = mem[zp::scrollAccum2] =
         mem[zp::scrollAccum3] = mem[zp::scrollAccumPrev] = 0u;
+
+    // NOTE: the door/launch sound is NOT the audf2_sweep_clear_colors ($622D) colour
+    // sweep — that was the wrong component.  The real launch audio is a multi-engine,
+    // event-driven sound (SFX sequencer sfx_seq_step $7148 + noise voice sfx_engine_step
+    // $5553 + engine_sound_update $5978), triggered off the launch lights/throttle.
+    // launch_doors_sound_native() is left in place but NOT called pending that rework.
 }
 
 // startStars: the stars/space setup (display_setup $64C8-$6552), run once the
@@ -814,7 +821,9 @@ void RescueOnFractalus::update(uint16_t frame)
             startDoors();
     } else if (launchPhase == kLaunchDoors) {
         // sound_event_dispatch ($5367) now scrolls the doors in the ISR
-        // (standby_vbi_native); here we just poll the flags it updates.
+        // (standby_vbi_native); here we just poll the flags it updates.  (The door
+        // sound itself ran as a blocking port inside startDoors() — see
+        // launch_doors_sound_native — so by here it has already played.)
         if (mem[zp::vbiFlags] == 0 && mem[zp::terrainScrollCounter] == 0) {
             // Cinematic effect 4: doors fully open → light the whole left column
             // (display_setup $6482: game_sub_4447 with A=0 -> threshold $08), reseed

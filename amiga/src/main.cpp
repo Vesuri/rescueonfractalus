@@ -41,11 +41,34 @@ extern "C" void game_vbi_isr(void);
 // Set by the keyboard ISR on the 'F' key-down edge: skip to the flight stage.
 extern "C" volatile uint8_t g_skipToFlight;
 
+// Set while the launch cinematic runs a transpiled blocking frame-wait; gates the
+// VBI ISR's RTCLOK bump off (platform_tick_vbi advances it in lockstep instead).
+extern "C" volatile uint8_t g_launchBlocking;
+
 // ---- VBI interrupt server ---------------------------------------------------
 // Mirrors the Atari RTCLOK increment from vbi_handler_1 ($53CC).
 // DLIST/colour writes are handled by the Copper on the Amiga side.
 static volatile uint16_t vbiCount = 0;
 static struct Interrupt vbiServer;
+
+// --- launch-cinematic blocking frame pump ------------------------------------
+// Installed into PaulaAudio's blocking-wait hooks (rof_set_frame_pump): while
+// rof_launch_blocking(1) is set, the transpiled launch/audio code's frame-waits
+// call this once per spin iteration.  It waits one REAL VBI (so the ISR advances
+// RTCLOK and the native door/tunnel visuals animate), repaints, and polls quit —
+// letting the genuine 6502 audio code (e.g. the doors' audf2_sweep_clear_colors)
+// run at the original frame cadence without freezing the screen.
+extern "C" void rof_set_frame_pump(void (*fn)(void));
+extern "C" void rof_launch_blocking(uint8_t on);
+static class RescueOnFractalus* g_scenePtr = 0;
+static volatile bool            g_pumpQuit = false;
+static void launchFramePump(void)
+{
+    uint16_t last = vbiCount;
+    while (vbiCount == last) { /* wait for next real VBI */ }
+    if (g_scenePtr) g_scenePtr->render();
+    if (AmigaHardware::isLeftMouseButtonPressed()) g_pumpQuit = true;
+}
 
 static uint32_t vbiHandler()
 {
@@ -53,8 +76,14 @@ static uint32_t vbiHandler()
     // (Do NOT touch $0080 — that is sync_flag, which the 6502 drawing/scroll
     // routines reuse as the $80/$81 zero-page pointer pair; incrementing it here
     // each frame corrupted mid-draw pointer writes, e.g. dropped tunnel pixels.)
-    mem[0x0014]++;               // RTCLOK_LOW
-    if (!mem[0x0014]) mem[0x0013]++;  // RTCLOK_MID carry
+    // While the launch cinematic blocks on a transpiled frame-wait, RTCLOK is
+    // advanced synchronously by platform_tick_vbi (in lockstep with the wait loop)
+    // — bumping it here too would desync/hang the loop.  vbiCount still ticks so the
+    // frame pump can pace one repaint per real VBI.
+    if (!g_launchBlocking) {
+        mem[0x0014]++;               // RTCLOK_LOW
+        if (!mem[0x0014]) mem[0x0013]++;  // RTCLOK_MID carry
+    }
     vbiCount++;
 
     // Per-frame VBI body — run in the REAL vertical-blank interrupt, where the Atari
@@ -157,6 +186,11 @@ int main()
     Keyboard keyboard;
     keyboard.initialize();
 
+    // Install the launch-cinematic frame pump so the transpiled audio code's
+    // blocking frame-waits drive a real one-VBI repaint (see launchFramePump).
+    g_scenePtr = &scene;
+    rof_set_frame_pump(&launchFramePump);
+
     // --- main loop -----------------------------------------------------------
     uint16_t frame    = 0;
     uint16_t lastVBI  = vbiCount;
@@ -175,8 +209,9 @@ int main()
         lastVBI = vbiCount;
         frame++;
 
-        // Input: left mouse button quits.
-        if (AmigaHardware::isLeftMouseButtonPressed())
+        // Input: left mouse button quits (g_pumpQuit catches a click during a
+        // blocking launch frame-wait).
+        if (AmigaHardware::isLeftMouseButtonPressed() || g_pumpQuit)
             quit = true;
 
         // START opens the doors → launch cinematic.  The keyboard ISR maps the

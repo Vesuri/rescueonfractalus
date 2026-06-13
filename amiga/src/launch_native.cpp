@@ -40,7 +40,15 @@ void fill_terrain_columns(void);                // $6AE5: fill height buffers $0
 void scroll_terrain_columns(void);              // $6AEE: one column scroll step (A = $0089 on entry)
 void advance_object_positions(void);            // $6BA8: one planet zoom step -> draw_vline_pair to $1000
 void draw_player3_object(void);                 // $42A7: the planet as a scaled Player-3 object
+
+// Door-opening sound ($6DF4): sweeps AUDF2 ($D202) by $08DB-=$08DC, $004C times,
+// with a 1-frame wait (clear_colors) between — the genuine per-frame pitch sweep.
+void audf2_sweep_clear_colors(void);
 }
+
+// Launch-cinematic blocking frame pump toggle (PaulaAudio.cpp): while on, the
+// transpiled frame-waits drive a real one-VBI repaint (see main.cpp launchFramePump).
+extern "C" void rof_launch_blocking(uint8_t on);
 
 // launch_show_standby_native: port of display_setup $635F-$63AF (cinematic
 // effect 1).  Replaces the attract title scroll with the static "STAND BY..."
@@ -83,6 +91,44 @@ extern "C" void audio_stop_native(void)
     platform_hw_write(0xD205, 0x00);   // AUDC3
     platform_hw_write(0xD207, 0x00);   // AUDC4
     platform_hw_write(0xD208, 0x60);   // AUDCTL
+}
+
+// launch_doors_sound_native: faithful port of the display_setup doors-opening
+// sound ($6235-$62E4).  Runs the GENUINE transpiled audf2_sweep_clear_colors
+// ($6DF4) for each door row, paced by real frame-waits — rof_launch_blocking(1)
+// turns the transpiled wait hooks into a one-VBI repaint pump (main.cpp), so the
+// AUDF2 pitch sweep on voice 2 (AUDC2=$44 poly4 buzz) plays at the original
+// cadence while the native scroll_terrain_dl animates the doors in the VBI.  The
+// interleaved gauge/throttle readout ($6268-$62B2) is handled natively and omitted.
+//   $6237  AUDC2 ($D203) = $44                     poly4 buzz, vol 4
+//   $623A  $08DB = $52 (start pitch)   $623F  $08DC = $01 (down-step)
+//   $6244  phase 1: B7 = 0..$12, $004C = $6595[B7]; audf2_sweep_clear_colors
+//   $6295  $00B9 = $0F                 $62B4  $08DC = $FF (SBC #$FF = +1, up-step)
+//   $62B9  phase 2: B9 = $0F..1,       $004C = $6598[B9]; audf2_sweep_clear_colors
+//   $62E4  AUDC2 = 0
+extern "C" void launch_doors_sound_native(void)
+{
+    rof_launch_blocking(1);
+
+    platform_hw_write(0xD203, 0x44);            // $6237 AUDC2 = poly4 buzz, vol 4
+    mem[0x08DB] = 0x52;                         // $623A start pitch
+    mem[0x08DC] = 0x01;                         // $623F down-step
+
+    for (uint8_t b7 = 0; b7 < 0x13; b7++) {     // $6244 phase 1 (19 door rows)
+        mem[0x004C] = mem[0x6595 + b7];
+        audf2_sweep_clear_colors();
+    }
+
+    mem[0x00B9] = 0x0F;                         // $6295
+    mem[0x08DC] = 0xFF;                         // $62B4 up-step (SBC #$FF = +1)
+    for (uint8_t b9 = 0x0F; b9 != 0; b9--) {    // $62B9 phase 2
+        mem[0x004C] = mem[0x6598 + b9];
+        audf2_sweep_clear_colors();
+    }
+
+    platform_hw_write(0xD203, 0x00);            // $62E4 silence voice 2
+
+    rof_launch_blocking(0);
 }
 
 extern "C" void launch_show_standby_native(void)

@@ -307,8 +307,30 @@ void platform_hw_write(uint16_t addr, uint8_t val)
 void platform_shadow_write(uint16_t /*addr*/, uint8_t /*val*/) {}
 void platform_register_vbi(uint16_t /*addr*/, void (*/*fn*/)(void)) {}
 void platform_indirect_jmp(uint16_t /*addr*/) {}
-void platform_render_frame(void) {}
 void platform_poll_events(void) {}
+
+// --- launch-cinematic blocking frame pump -----------------------------------
+// The transpiled launch/audio code paces itself with blocking frame-waits
+// (wait_frames_60 etc.), spinning on RTCLOK ($0014) and calling
+// platform_tick_vbi()/platform_render_frame() each iteration.  When launch
+// blocking mode is on, we turn those hooks into a REAL one-frame pump so the
+// actual 6502 audio code (e.g. audf2_sweep_clear_colors for the doors) runs at
+// the original cadence: tick advances RTCLOK once, render waits for the next
+// real VBI and repaints the screen (so the native door/tunnel visuals keep
+// animating while the transpiled code blocks).  main.cpp installs the pump.
+static void (*s_framePump)(void) = 0;          // wait 1 VBI + render + poll quit
+// Non-static so main.cpp's vbiHandler can read it: while launch-blocking, the ISR
+// must NOT bump RTCLOK ($0014) — platform_tick_vbi advances it synchronously, once
+// per transpiled spin iteration, to stay in lockstep with the wait loop (an async
+// ISR bump racing the loop's RTCLOK reset would desync and hang ~256 frames).
+volatile uint8_t g_launchBlocking = 0;
+
+extern "C" void rof_set_frame_pump(void (*fn)(void)) { s_framePump = fn; }
+extern "C" void rof_launch_blocking(uint8_t on)      { g_launchBlocking = on; }
+
+void platform_render_frame(void) {
+    if (g_launchBlocking && s_framePump) s_framePump();
+}
 
 // When set (by flight_init_native), advance RTCLOK ($0014) inside transpiled
 // frame-wait spin loops so they resolve in compute time instead of waiting on the
@@ -317,7 +339,11 @@ void platform_poll_events(void) {}
 // flight leaves this 0, so $0014 advances at the real one-per-frame VBI rate.
 volatile uint8_t g_fastForwardFrames = 0;
 void platform_tick_vbi(void) {
-    if (g_fastForwardFrames) {
+    // In launch-blocking mode the ISR's RTCLOK bump is gated OFF (see g_launchBlocking
+    // in main.cpp's vbiHandler); we advance RTCLOK here instead — exactly once per
+    // transpiled spin iteration — so it stays in lockstep with the wait loop while
+    // platform_render_frame() (s_framePump) still waits one real VBI for pacing.
+    if (g_fastForwardFrames || g_launchBlocking) {
         mem[0x0014]++;                      // RTCLOK_LOW (mirrors vbiHandler)
         if (!mem[0x0014]) mem[0x0013]++;    // RTCLOK_MID carry
     }
