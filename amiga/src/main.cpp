@@ -65,7 +65,10 @@ static struct Interrupt vbiServer;
 extern "C" void rof_set_frame_pump(void (*fn)(void));
 extern "C" void rof_launch_blocking(uint8_t on);
 static class RescueOnFractalus* g_scenePtr = 0;
-static volatile bool            g_pumpQuit = false;
+// g_pumpQuit: shared "user wants out" flag.  Set here by the frame pump (left mouse)
+// and by PaulaAudio's platform_poll_events (the transpiled non-frame spin hooks);
+// exported (non-static) so both translation units write the one flag.
+extern "C" volatile uint8_t    g_pumpQuit = 0;
 static void launchFramePump(void)
 {
     uint16_t last = g_vbiCount;

@@ -278,6 +278,10 @@ void paula_audio_shutdown(void)
 // ---- platform bridge (C linkage, called from bus.h inlines in rof_gen.c) ------
 extern "C" {
 
+// Real Amiga vertical beam line (VPOSR/VHPOSR), defined in flight_native.cpp; used to
+// derive a faithful ANTIC VCOUNT ($D40B) below.
+unsigned short rof_beam_line(void);
+
 uint8_t platform_hw_read(uint16_t addr)
 {
     if (addr == 0xD20Au) return pokey_random_step();  // POKEY RANDOM register
@@ -286,6 +290,15 @@ uint8_t platform_hw_read(uint16_t addr)
     // no Amiga joystick wired in yet, report neutral ($FF) so flight_control_integrate
     // reads "stick centred, no fire" — the ship flies straight instead of jamming.
     if (addr == 0xD300u) return 0xFFu;
+    // ANTIC VCOUNT ($D40B): the transpiled init code busy-waits on the beam position
+    // (wait_vcount_eq $3C75, wait_vcount_ge_7a $3C7B) — spin until VCOUNT == a target or
+    // >= $7A.  VCOUNT reflects the vertical scan counter at TWO-LINE resolution (bits
+    // 1-8; bit 0 unconnected), counting 0..$9B on PAL.  Derive it faithfully from the
+    // real Amiga vertical beam (VPOSR/VHPOSR via rof_beam_line): VCOUNT = beam_line >> 1.
+    // Because the hardware beam advances on its own, these spins terminate naturally —
+    // including the un-hooked wait_vcount_ge_7a — and any other VCOUNT reader gets a
+    // physically meaningful value, not a per-read fiction.
+    if (addr == 0xD40Bu) return (uint8_t)(rof_beam_line() >> 1);
     return 0u;
 }
 
@@ -311,7 +324,20 @@ void platform_hw_write(uint16_t addr, uint8_t val)
 void platform_shadow_write(uint16_t /*addr*/, uint8_t /*val*/) {}
 void platform_register_vbi(uint16_t /*addr*/, void (*/*fn*/)(void)) {}
 void platform_indirect_jmp(uint16_t /*addr*/) {}
-void platform_poll_events(void) {}
+
+// g_pumpQuit: the shared "user wants out" flag (defined in main.cpp, also set by the
+// frame pump there on left-mouse).  Polled by the main loop to tear down.
+extern "C" volatile uint8_t g_pumpQuit;
+
+// platform_poll_events: called from the transpiled spin-wait hooks (SPINWAIT_HOOKS in
+// transpile.py) at the VCOUNT/CONSOL poll points that do NOT pace a frame.  Poll the
+// quit control (left mouse) so the player can always abort even while the transpiled
+// code spins in a tight non-frame wait.  Unlike platform_render_frame this must NOT
+// wait for a VBI.  (F-key skip is handled separately by the keyboard ISR via
+// g_skipToFlight.)
+void platform_poll_events(void) {
+    if (AmigaHardware::isLeftMouseButtonPressed()) g_pumpQuit = 1;
+}
 
 // --- launch-cinematic blocking frame pump -----------------------------------
 // The transpiled launch/audio code paces itself with blocking frame-waits
