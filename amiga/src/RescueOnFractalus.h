@@ -15,9 +15,17 @@
 class RescueOnFractalus {
 public:
     void initialize();
-    void update(uint16_t frame);
     void render();
     void shutdown();
+
+    // run(): the whole game as a faithful straight-line transcription of the
+    // Atari control flow — station_init's attract loop (wait for START) ->
+    // display_setup's launch cinematic (gauge/doors/tunnel/stars/planet, each
+    // phase set up then blocked-on with REAL frame-waits) -> game_entry's flight
+    // loop.  Replaces the old per-frame update() launchPhase state machine: the
+    // original is straight-line code that busy-waits, so this is too.  Returns
+    // when the user quits (left mouse button).
+    void run();
 
     // Launch cinematic: start the doors-open transition (Atari START press).
     // The terrain image (green/dots/LEVEL 04 = the "closed doors") splits from
@@ -29,6 +37,22 @@ public:
     // so this is safe to call from the standby screen or mid-cinematic.
     void skipToFlight();
 private:
+    // frameStep(): the REAL per-frame busy-wait that backs every wait point in
+    // the original straight-line code (wait_frames_2/5/10/60 etc.).  Spins until
+    // the real INTB_VERTB VBI ISR signals the next frame (the ISR ran the Atari
+    // VBI body + bumped RTCLOK $0014 once), then does the per-frame non-phase work
+    // and repaints (render() + Copper rebuild) on the main thread — exactly where
+    // the Atari's ANTIC would have regenerated the display for that frame.
+    enum FrameResult : uint8_t { kFrameContinue, kFrameQuit, kFrameSkip };
+    FrameResult frameStep();
+    // cinematicFrame(): one cinematic frame-wait.  Returns true if the cinematic
+    // should abort — either the user quit, or the F-key skip-to-flight fired (in
+    // which case it has already handed off to flightLoop()).
+    bool cinematicFrame();
+    void perFrameWork();    // per-frame non-phase work (title/blink/digits/sprites)
+    void flightLoop();      // game_entry $3EBA flight loop: frameStep + flight_frame_native
+
+    uint16_t frameCounter = 0;   // frames elapsed (drives buildCopperList fade-in)
     // Launch phases, mirroring display_setup's linear walk: after START we fill
     // the throttle gauge, open the doors, run the tunnel (ring cycle) until it
     // auto-clears $0088, then the stars/space scroll and the planet zoom — each a
@@ -41,9 +65,6 @@ private:
     void startStars();                   // display_setup $64C8-$6552 stars setup
     void startPlanet();                  // display_setup $6555-$6574 planet setup
     void startFlight();                  // game_entry $3E12-$3EB8 flight init (after planet)
-    uint16_t gaugeTick     = 0;          // frame counter pacing the gauge fill
-    uint8_t  planetTick    = 0;          // every-other-frame gate for the planet zoom ($6578)
-    bool     planetRisen   = false;      // set once the planet loop finishes ($1002==$FF)
     Sprite*  gaugeSprite   = nullptr;    // player-strip throttle bar ($0D98)
     void startDoors();                   // door-scroll state (display_setup $63DC)
     void buildGaugeSprite();             // $0D98 strip -> gaugeSprite lines

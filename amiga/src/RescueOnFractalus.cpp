@@ -43,6 +43,9 @@ extern "C" void draw_tunnel_rings_native(void);                 // $65FB: draw c
 extern "C" void audio_stop_native(void);                        // $712D: stop music + mute POKEY (START press)
 extern "C" void sfx_engine_reset_native(void);                  // $5433: clean SFX voice engine for the launch
 extern "C" void launch_show_standby_native(void);               // display_setup $635F: "STAND BY..." + score
+extern "C" void launch_start_arpeggio_native(void);             // display_setup $63A7: START 3-blip arpeggio (id $1D)
+extern "C" void launch_door_swoosh_native(void);                // display_setup $63D0: door-open swoosh (id $01)
+extern "C" void launch_door_swoosh_stop_native(void);           // silence the door voice when the doors finish
 extern "C" void launch_gauge_init_native(void);                 // vobj strip init ($062F/$0D98)
 extern "C" uint8_t launch_gauge_step_native(void);              // one vobj fill step; 0 when full
 extern "C" void launch_light_doorstart_native(void);           // $63FD: bottom-left light on
@@ -59,6 +62,11 @@ extern "C" void    flight_init_native(void);                   // game_entry $3E
 extern "C" void    flight_reset_parity_native(void);           // reset double-buffer pass parity
 extern "C" volatile uint8_t g_activeVbi;                       // 0=none 1=standby($52D7) 2=flight($4FF5); read by game_vbi_isr
 extern "C" uint8_t flight_frame_native(void);                  // one flight heavy pass; returns $0072 (==2 done)
+
+// Real-VBI frame clock + input, used by the straight-line driver (run/frameStep).
+extern "C" volatile uint16_t g_vbiCount;                       // bumped by the real INTB_VERTB ISR (main.cpp)
+extern "C" bool    station_poll_start_native(void);            // station_init CONSOL ($D01F) START poll
+extern "C" volatile uint8_t g_skipToFlight;                    // F-key edge: dev skip-to-flight
 
 extern "C" volatile uint8_t mem[65536];
 
@@ -679,11 +687,16 @@ void RescueOnFractalus::openDoors()
     // to "STAND BY..." + score (display_setup $635F, genuine 6502 routines).
     launch_show_standby_native();
 
+    // Launch SFX: seed the START 3-blip arpeggio ($63A7, id $1D) the instant START is
+    // pressed.  Plays via the standby/launch VBI's update_gauge_digits voice engine;
+    // must follow sfx_engine_reset_native + launch_show_standby_native ($060B=$23).
+    // The door swoosh is seeded later (startDoors) so it doesn't mask the arpeggio.
+    launch_start_arpeggio_native();
+
     // Cinematic effect 2: BEFORE the doors open, fill the throttle gauge (the
     // vobj player-1 strip).  Enter the gauge phase; startDoors() runs only once
     // it completes — matching display_setup's order ($63FF gauge, then $641E doors).
     launchPhase = kLaunchGauge;
-    gaugeTick   = 0;
     launch_gauge_init_native();
 }
 
@@ -709,6 +722,11 @@ void RescueOnFractalus::startDoors()
     // Cinematic effect 3: as the doors start, light the bottom-left indicator
     // (display_setup $63FD: game_sub_4447 with A=7 -> dial-bar threshold $0F).
     launch_light_doorstart_native();
+
+    // Door-open swoosh ($63D0, id $01): seed it now (as the doors begin scrolling)
+    // rather than at START, so it doesn't mask the START arpeggio.  Silenced when the
+    // doors finish (kLaunchDoors -> kLaunchTunnel below), since id $01 never expires.
+    launch_door_swoosh_native();
 
     // Set the launch state the way display_setup ($5F1D) does, then let the $5367
     // dispatcher drive it.  The doors open FIRST (ring gate $0088 = 0, so the tunnel
@@ -776,7 +794,6 @@ void RescueOnFractalus::startPlanet()
     // players in to $0C, not a planet-start clear; we leave $02C0-3 at $0C here so
     // the starfield stays lit behind the zooming planet, matching the Atari.)
     mem[0x0014] = 0u;                                              // $6574 frame gate
-    planetTick  = 0;
 }
 
 // startFlight: hand off from the launch cinematic to the in-game flight loop.
@@ -804,121 +821,173 @@ void RescueOnFractalus::startFlight()
     g_activeVbi = 2;
 }
 
-void RescueOnFractalus::update(uint16_t frame)
+// run(): the whole game as a faithful straight-line transcription of the Atari
+// control flow.  The Atari ran station_init -> display_setup -> game_entry as
+// straight-line code that busy-waits between phases while its VBI/DLI interrupts
+// animate the screen; this mirrors that exactly — each original wait point becomes
+// a real frame-wait (cinematicFrame/frameStep) backed by the INTB_VERTB VBI ISR.
+// No per-frame launchPhase dispatch: the call FLOW drives progression, the phase
+// field is only a render-mode tag set by the startX() helpers below.
+void RescueOnFractalus::run()
 {
-    unsigned short profU0 = flight_vbi_tick();   // whole-update() timer (flight only)
-    // Launch cinematic: drive the doors + tunnel via the genuine $5367 priority
-    // dispatcher.  While $0088 == 0 it scrolls the door DL ($008A: $2B->0, every
-    // other frame); the tunnel sits static.  Once the doors are fully open
-    // ($008A == 0) we arm $0088 so the ring branch takes over and the tunnel
-    // animates — the sequential hangar→launch behaviour (doors first, then fly out).
-    if (launchPhase == kLaunchGauge) {
-        // Fill the throttle gauge one vobj step per frame (original cadence:
-        // vobj_step_down sets $004C=1 -> a 1-frame wait per row).  When the bar
-        // reaches the bottom ($062F==$DC) start the doors.
-        (void)gaugeTick;
-        if (launch_gauge_step_native() == 0)
-            startDoors();
-    } else if (launchPhase == kLaunchDoors) {
-        // sound_event_dispatch ($5367) now scrolls the doors in the ISR
-        // (standby_vbi_native); here we just poll the flags it updates.  (The door
-        // sound itself ran as a blocking port inside startDoors() — see
-        // launch_doors_sound_native — so by here it has already played.)
-        if (mem[zp::vbiFlags] == 0 && mem[zp::terrainScrollCounter] == 0) {
-            // Cinematic effect 4: doors fully open → light the whole left column
-            // (display_setup $6482: game_sub_4447 with A=0 -> threshold $08), reseed
-            // the ring's message-column coords ($647D), THEN start the tunnel ring.
-            launch_light_all_native();
-            tunnel_ring_arm_native();
-            mem[zp::vbiFlags] = 1u;
-            launchPhase = kLaunchTunnel;
-        }
-    } else if (launchPhase == kLaunchTunnel) {
-        // The ring cycles via the $5367 dispatcher's $0088 branch; once the
-        // accumulator's top byte crosses $90 enough times, advance_message_column
-        // counts $00A0 down and clears $0088 (the faithful tunnel→stars trigger).
-        // advance_message_column also draws expanding black frames into $2000 from
-        // the centre out ("entering space"), so re-decode the field each frame for
-        // the tunnel to visibly go black from the middle, not just via a palette tweak.
-        // ($5367 now runs in the ISR; it sets g_tunnelFieldDirty, we re-decode here.)
-        if (g_tunnelFieldDirty) {       // decode the new extent; shadow skips unchanged bytes
-            decodeTunnelField((int)g_tunRowLo, (int)g_tunRowHi);
-            g_tunnelFieldDirty = 0;
-        }
-        if (mem[zp::vbiFlags] == 0)
-            startStars();
-    } else if (launchPhase == kLaunchStars) {
-        // Scroll the fractal terrain-column buffers each frame until the scroll
-        // accumulator marks the phase done ($0089 drops below 4 → planet).
-        // Fade the star players in (display_setup $6555: COLPM 0→$0C over 13 frames).
+#ifdef ROF_AUTOFLIGHT
+    // Dev/profiling build (-DROF_AUTOFLIGHT): jump straight to flight, as the old
+    // loop's startup did, then run game_entry's flight loop.
+    skipToFlight();
+    flightLoop();
+    return;
+#endif
+
+    // ---- station_init: attract loop — wait for START ($D01F CONSOL) ----------
+    // The Atari attract loop ($1A01) spins one animation frame per VBI flag until
+    // START changes CONSOL.  station_poll_start_native ports that CONSOL read.
+    for (;;) {
+        if (g_skipToFlight) { g_skipToFlight = 0; skipToFlight(); flightLoop(); return; }
+        if (station_poll_start_native()) break;   // START pressed -> launch
+        if (cinematicFrame()) return;             // one attract frame (ISR runs the $52D7 VBI)
+    }
+
+    // ---- display_setup: launch cinematic (straight-line, real frame-waits) ----
+    openDoors();    // audio_stop + sfx reset + STAND BY/score + START arpeggio + gauge init
+
+    // Throttle gauge fill ($63FF): one vobj step per frame until the bar bottoms out.
+    while (launch_gauge_step_native()) if (cinematicFrame()) return;
+
+    // Doors ($641E): startDoors() arms the $008A door-scroll; the $5367 dispatcher
+    // scrolls it in the standby VBI ISR.  Block until fully open — exactly as
+    // display_setup busy-waits (wait_frames_2 loop) while the VBI animates the doors.
+    startDoors();
+    while (!(mem[zp::vbiFlags] == 0 && mem[zp::terrainScrollCounter] == 0))
+        if (cinematicFrame()) return;
+
+    // Doors fully open ($6482): light the whole left column, silence the swoosh,
+    // reseed the ring coords, arm the tunnel ring ($0088=1).  Then block while the
+    // ring cycles (ISR) until advance_message_column clears $0088 (tunnel->stars),
+    // re-decoding the expanding black-clear field as it changes.
+    launch_light_all_native();
+    launch_door_swoosh_stop_native();
+    tunnel_ring_arm_native();
+    mem[zp::vbiFlags] = 1u;
+    while (mem[zp::vbiFlags] != 0) {
+        if (g_tunnelFieldDirty) { decodeTunnelField((int)g_tunRowLo, (int)g_tunRowHi); g_tunnelFieldDirty = 0; }
+        if (cinematicFrame()) return;
+    }
+
+    // Stars/space ($64C8): scroll the fractal column buffers each frame, fading the
+    // star players in (COLPM 0->$0C), until the scroll accumulator marks it done.
+    startStars();
+    while (launch_stars_step_native()) {
         if (mem[0x02C0] < 0x0Cu) {
             uint8_t cv = (uint8_t)(mem[0x02C0] + 1u);
             for (int i = 0; i < 4; i++) mem[0x02C0 + (uint16_t)i] = cv;
         }
-        if (launch_stars_step_native() == 0)
-            startPlanet();
-    } else if (launchPhase == kLaunchPlanet) {
-        // Planet zoom runs every other frame ($6578: $0014 >= 2 gate), but the
-        // starfield keeps drifting up every frame (the VBI's $0089=2 scroll-only path).
-        launch_planet_scroll_native();
-        planetTick ^= 1u;
-        if (planetTick && launch_planet_step_native() == 0) {
-            planetRisen = true;   // planet fully risen — display_setup RTSes to flight
-            startFlight();        // hand off to the in-game flight loop (game_entry $3E12-)
-        }
-    } else if (launchPhase == kFlight) {
-        // One flight main-loop heavy pass per frame (the Atari runs two passes per
-        // loop iteration for double buffering; one Amiga frame = one pass).  The
-        // flight VBI ($4FF5) motion core is NO LONGER called here — it runs in the
-        // real INTB_VERTB interrupt (main.cpp -> game_vbi_isr), where the Atari
-        // ran it.  By the time this main-loop pass runs, the ISR has already
-        // advanced the world position for this frame (the loop is VBI-paced).
-        flight_frame_native();
+        if (cinematicFrame()) return;
     }
 
-    // The $52D7 VBI body (attract timer + sound_event_dispatch + every-other-frame
-    // lock_on_indicator_tick) now runs in the real INTB_VERTB interrupt (main.cpp ->
-    // game_vbi_isr -> standby_vbi_native), where the Atari ran it — no longer here.
-    update_indicator_blink_native();    // $4131: cockpit blink lights (NOT part of $52D7;
-                                        // a flight-VBI routine, left here pending that port)
-    // sfx_voice_tick_native() is now driven by CIA-B Timer A at ~100 Hz (main.cpp).
+    // Planet zoom ($6574): the sphere grows every OTHER frame ($6578: $0014>=2 gate),
+    // but the starfield drifts up every frame (the $0089=2 scroll-only VBI path).
+    startPlanet();
+    uint8_t planetGate = 0;
+    for (;;) {
+        launch_planet_scroll_native();
+        planetGate ^= 1u;
+        bool done = planetGate && (launch_planet_step_native() == 0);
+        if (cinematicFrame()) return;
+        if (done) break;          // planet risen -> display_setup RTSes into flight
+    }
 
-    // Mirror $62E7 SFX-reinit gate: when mem[$0090] is non-zero the attract loop
-    // calls JSR $70E7 (sfx init) which resets the sequence to index 0.
-    // mem[$0090] = 1 in the snapshot; cleared here after first reinit.
+    // ---- game_entry: flight ($3E12 init then $3EBA loop) ----------------------
+    startFlight();
+    flightLoop();
+}
+
+// flightLoop(): game_entry's per-frame flight loop ($3EBA).  The flight motion VBI
+// ($4FF5) runs in the real INTB_VERTB ISR (frameStep's wait lets one fire each
+// frame); flight_frame_native is the heavy main-loop pass (the Atari runs two passes
+// per iteration for double-buffering — one Amiga frame = one pass).
+void RescueOnFractalus::flightLoop()
+{
+    for (;;) {
+        flight_frame_native();
+        if (frameStep() == kFrameQuit) return;
+    }
+}
+
+// cinematicFrame(): one cinematic frame-wait.  Returns true if the cinematic should
+// abort — the user quit, or the F-key skip fired (handed off to flightLoop already).
+bool RescueOnFractalus::cinematicFrame()
+{
+    switch (frameStep()) {
+        case kFrameQuit: return true;
+        case kFrameSkip: flightLoop(); return true;
+        default:         return false;
+    }
+}
+
+// frameStep(): the REAL per-frame busy-wait that backs every wait point in the
+// original straight-line code.  Spin until the next INTB_VERTB VBI (the ISR ran the
+// Atari per-frame VBI body for this phase + bumped RTCLOK $0014 once), then do the
+// per-frame non-phase work and repaint on the main thread.  This is the matching
+// Amiga construct for the Atari frame-wait loops (wait_frames_*): the real vertical-
+// blank interrupt is the frame clock, exactly as it was on the Atari.
+RescueOnFractalus::FrameResult RescueOnFractalus::frameStep()
+{
+    unsigned short profU0 = flight_vbi_tick();   // whole-frame timer (flight only)
+
+    uint16_t last = g_vbiCount;
+    while (g_vbiCount == last) { /* wait one real VBI */ }
+    frameCounter++;
+
+    if (AmigaHardware::isLeftMouseButtonPressed()) return kFrameQuit;
+
+    // F-key dev skip (keyboard ISR edge): hand off to flight from anywhere in the
+    // standby/cinematic.  Only meaningful before flight; in flight it's ignored.
+    if (g_skipToFlight && launchPhase != kFlight) {
+        g_skipToFlight = 0;
+        skipToFlight();
+        return kFrameSkip;
+    }
+
+    perFrameWork();
+    render();
+
+    uint8_t next = 1 - active;
+    unsigned short c0 = flight_vbi_tick();
+    buildCopperList(copperLists[next], frameCounter);
+    if (launchPhase == kFlight) g_flightProf.copper += (unsigned short)(flight_vbi_tick() - c0);
+    AmigaHardware::setCopperList(*copperLists[next], false);
+    active = next;
+    if (launchPhase == kFlight) g_flightProf.updateTot += (unsigned short)(flight_vbi_tick() - profU0);
+    return kFrameContinue;
+}
+
+// perFrameWork(): per-frame non-phase work (the tail of the old update()).  These
+// ran every frame regardless of cinematic phase, driven by the standby/flight VBI
+// body + the main loop on the Atari; here they run once per frameStep.
+void RescueOnFractalus::perFrameWork()
+{
+    update_indicator_blink_native();    // $4131: cockpit blink lights (flight-VBI routine)
+    // sfx_voice_tick_native() is driven by CIA-B Timer A at 25 Hz (main.cpp).
+
+    // $62E7 SFX-reinit gate: when $0090 is non-zero the loop reinits the SFX sequence.
     if (mem[zp::sfxReinitGate]) {
         mem[0x073Au] = 0u;    // immediate underflow → next CIA tick loads note[0]
         mem[0x073Cu] = 0xFFu; // sequence ptr before index 0
         mem[zp::sfxReinitGate] = 0u;    // clear flag (as $70E7 does via STX $0090)
     }
 
-    // Title text ("RESCUE ON FRACTALUS!" / copyright) is the Standby attract
-    // banner — don't draw it over the flight cockpit/viewport.
-    if (launchPhase != kFlight && mem[0x060B] == 0)   // $62FB: title text (gated by $060B)
-        copy_text_block_to_screen_native();    // $782A: $0091→title string
+    // Title text ("RESCUE ON FRACTALUS!" / copyright) — the Standby attract banner;
+    // don't draw it over the flight cockpit/viewport ($62FB, gated by $060B).
+    if (launchPhase != kFlight && mem[0x060B] == 0)
+        copy_text_block_to_screen_native();    // $782A: $0091 → title string
 
-    // (The every-other-frame lock_on_indicator_tick $4229 — the $5342 LSR/INC $0643 gate
-    // and the Standby centre-bottom indicator-light blink — now runs in the ISR via
-    // standby_vbi_native.  render()'s per-cell shadow compare still picks up any
-    // cockpit RAM the blink changes at $3491-$3498.)
-
-    if (mem[zp::joystickSaved] != 0) {             // $004A set when game starts (door sequence)
+    if (mem[zp::joystickSaved] != 0)            // $004A set when the game starts
         update_cockpit_digits_native();          // $3FFA: cockpit digit update
-    }
 
     if (launchPhase != kLaunchNone) buildGaugeSprite();
-    // Starfield: the player buffers $0C32/$0E32/$0F32 are scrolled+seeded by
-    // launch_stars_step_native (scroll_terrain_columns) during the stars phase and
-    // sit static (no re-scroll) through the planet zoom, so map them both phases.
+    // Starfield players $0C32/$0E32/$0F32: scrolled+seeded during stars, static
+    // through the planet zoom, so map them both phases.
     if (launchPhase == kLaunchStars || launchPhase == kLaunchPlanet) buildStarSprites();
-
-    uint8_t next = 1 - active;
-    unsigned short c0 = flight_vbi_tick();
-    buildCopperList(copperLists[next], frame);
-    if (launchPhase == kFlight) g_flightProf.copper += (unsigned short)(flight_vbi_tick() - c0);
-    AmigaHardware::setCopperList(*copperLists[next], false);
-    active = next;
-    if (launchPhase == kFlight) g_flightProf.updateTot += (unsigned short)(flight_vbi_tick() - profU0);
 }
 
 // ---- cockpit helpers ---------------------------------------------------------

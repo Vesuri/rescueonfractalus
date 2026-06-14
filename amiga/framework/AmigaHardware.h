@@ -39,6 +39,11 @@ public:
     __inline static void clearInterruptRequests(uint16_t interrupts);
     __inline static bool isLeftMouseButtonPressed();
     __inline static bool isRightMouseButtonPressed();
+    // Busy-wait until the raster beam reaches (>=) the given PAL scanline, by
+    // polling VPOSR/VHPOSR (the real beam-position registers).  This is the
+    // matching Amiga construct for the Atari's VCOUNT polls (wait_vcount_eq /
+    // wait_vcount_ge_7a, $D40B): a genuine hardware raster sync, not a frame wait.
+    static void waitBeamLine(uint16_t line);
 #if defined(ASSEMBLER) && defined(__SASC)
     __asm static bool isLongFrame();
     __asm static bool isBlitterBusy();

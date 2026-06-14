@@ -48,7 +48,11 @@ extern "C" volatile uint8_t g_launchBlocking;
 // ---- VBI interrupt server ---------------------------------------------------
 // Mirrors the Atari RTCLOK increment from vbi_handler_1 ($53CC).
 // DLIST/colour writes are handled by the Copper on the Amiga side.
-static volatile uint16_t vbiCount = 0;
+// g_vbiCount: bumped once per REAL vertical-blank interrupt (vbiHandler below).
+// RescueOnFractalus::frameStep() spins on it as the matching Amiga construct for
+// the Atari's frame-wait busy-loops (wait_frames_2/5/10/60) — the real VBI is the
+// frame clock, exactly as it was on the Atari.  Non-static so the scene can read it.
+extern "C" volatile uint16_t g_vbiCount = 0;
 static struct Interrupt vbiServer;
 
 // --- launch-cinematic blocking frame pump ------------------------------------
@@ -64,8 +68,8 @@ static class RescueOnFractalus* g_scenePtr = 0;
 static volatile bool            g_pumpQuit = false;
 static void launchFramePump(void)
 {
-    uint16_t last = vbiCount;
-    while (vbiCount == last) { /* wait for next real VBI */ }
+    uint16_t last = g_vbiCount;
+    while (g_vbiCount == last) { /* wait for next real VBI */ }
     if (g_scenePtr) g_scenePtr->render();
     if (AmigaHardware::isLeftMouseButtonPressed()) g_pumpQuit = true;
 }
@@ -84,7 +88,7 @@ static uint32_t vbiHandler()
         mem[0x0014]++;               // RTCLOK_LOW
         if (!mem[0x0014]) mem[0x0013]++;  // RTCLOK_MID carry
     }
-    vbiCount++;
+    g_vbiCount++;
 
     // Per-frame VBI body — run in the REAL vertical-blank interrupt, where the Atari
     // ran its VBI (not from the main loop).  game_vbi_isr() dispatches by phase
@@ -192,45 +196,14 @@ int main()
     rof_set_frame_pump(&launchFramePump);
 
     // --- main loop -----------------------------------------------------------
-    uint16_t frame    = 0;
-    uint16_t lastVBI  = vbiCount;
-    bool     quit     = false;
-
-#ifdef ROF_AUTOFLIGHT
-    // Dev/profiling build (make EXTRA_DEFINES=-DROF_AUTOFLIGHT): enter flight
-    // immediately without the F key or a debugger write — the same call the
-    // loop's g_skipToFlight poll would make on the F-key edge.
-    scene.skipToFlight();
-#endif
-
-    while (!quit) {
-        // Wait for next VBI tick (volatile spin — -O2 safe).
-        while (vbiCount == lastVBI) { /* wait */ }
-        lastVBI = vbiCount;
-        frame++;
-
-        // Input: left mouse button quits (g_pumpQuit catches a click during a
-        // blocking launch frame-wait).
-        if (AmigaHardware::isLeftMouseButtonPressed() || g_pumpQuit)
-            quit = true;
-
-        // START opens the doors → launch cinematic.  The keyboard ISR maps the
-        // RETURN key onto the CONSOL START switch ($D01F); we detect the press
-        // with the native port of station_init's CONSOL read — the same poll the
-        // original 6502 attract loop used.
-        if (station_poll_start_native())
-            scene.openDoors();
-
-        // Dev shortcut: 'F' skips the cinematic and jumps straight to flight (the
-        // keyboard ISR sets g_skipToFlight on the key-down edge).
-        if (g_skipToFlight) {
-            g_skipToFlight = 0;
-            scene.skipToFlight();
-        }
-
-        scene.update(frame);
-        scene.render();
-    }
+    // The whole game is a faithful straight-line transcription of the Atari
+    // control flow inside RescueOnFractalus::run(): station_init's attract loop
+    // (wait for START), display_setup's launch cinematic, then game_entry's
+    // flight loop — each original busy-wait backed by the REAL INTB_VERTB VBI
+    // (frameStep spins on g_vbiCount).  No per-frame state-machine dispatch here.
+    // run() returns when the user quits (left mouse button); START / F-key are
+    // polled inside its frame-waits via station_poll_start_native / g_skipToFlight.
+    scene.run();
 
     keyboard.shutdown();
     scene.shutdown();

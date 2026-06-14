@@ -148,6 +148,21 @@ bool AmigaHardware::isRightMouseButtonPressed()
     return !(*potinpPointer & (1 << 10));
 }
 
+void AmigaHardware::waitBeamLine(uint16_t line)
+{
+    // Vertical beam position = VPOSR bit0 (V8) << 8 | VHPOSR high byte (V0..7).
+    // Spin until it reaches the target line.  If we're already past it this frame,
+    // first wait for the beam to wrap (back above the line) so the sync lands on
+    // the upcoming line, not returns immediately mid-frame.
+    line &= 0x1ffu;
+    auto beamY = []() -> uint16_t {
+        return (uint16_t)(((*vposrPointer & 1u) << 8) | (*vhposrPointer >> 8));
+    };
+    if (beamY() >= line)
+        while (beamY() >= line) { /* wait for vertical wrap */ }
+    while (beamY() < line) { /* wait for the target line */ }
+}
+
 #ifndef ASSEMBLER
 void AmigaHardware::blitterClear(uint16_t* data, uint16_t width, uint16_t height, int16_t modulo)
 {
