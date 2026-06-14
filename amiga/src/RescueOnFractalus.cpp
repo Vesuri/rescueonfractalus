@@ -962,18 +962,39 @@ void RescueOnFractalus::pumpFrame()
 
 // deriveRenderSignals(): recompute the renderer's phase-gating signals from mem[]
 // hardware state, once per frame.  These replace the C++ launchPhase enum as the
-// renderer's source of truth (validated bit-for-bit against the enum in Commit 3), so
-// buildCopperList/render/perFrameWork keep working once the transpiled display_setup/
-// game_entry drive the program and the enum is gone.  Each cites the maintaining flag:
-//   flight   : $004A (joystickSaved) != 0          — set at flight init ($3EB8)
-//   stars    : VDSLST $0200 == $C2 ($6CC2 mode-D DLI) && !flight  — stars AND planet
+// renderer's source of truth, so buildCopperList/render/perFrameWork keep working as
+// the transpiled game_entry/game_main_loop/display_setup drive the program.
+//
+// Scene identity comes from the LIVE VVBLKI vector ($0222/$0223) the genuine flow
+// installs per scene — NOT the raw DLI byte $0200.  game_main_loop loops over
+// display_setup; while display_setup BUILDS the Standby display it sets $0200 to many
+// DLI handlers in turn (including the $6CC2 mode-D one), so the old `$0200==$C2` test
+// faked "stars" during Standby and drew an empty mode-D viewport (the black-middle bug).
+//   $53CC  game_main_loop init / transitional (screen rebuilding)
+//   $52D7  Standby + the launch cinematic (Doors/Tunnel/Planet)
+//   $4FF5  in-flight
+// Within the $52D7 scene, the launch sub-state distinguishes the phases.  $060B
+// (cockpit_flag) takes several values: 0/1 during the Standby/attract churn (the idle
+// loop INCs it; the $52D2 cockpit-setup writes $04), but the genuine LAUNCH sets it to
+// $23 ($6364, the START-pressed path).  So $060B==$23 cleanly means "launch underway":
+//   flight   : VVBLKI == $4FF5
+//   stars    : VVBLKI == $52D7 && $060B == $23 (launch) && $0200 == $C2 (mode-D DLI
+//              installed) — i.e. the genuine stars/planet viewport phase.  Gating on
+//              $060B==$23 (not !=0) rejects the transient $6CC2 the Standby build sets
+//              while $060B is 0/1 (the old $0200==$C2 test drew an empty viewport then —
+//              the black-middle bug).
 //   viewport : stars || flight                      — the mode-D viewport band is active
-//   gauge    : $060B (cockpit_flag) != 0            — set the instant the cinematic begins
-// (The door-gap signal `launched` stays the C++ bool until Commit 6; see g2 below.)
+//   gauge    : $060B != 0                            — cinematic/cockpit active (gauge strip)
+// NOTE: the $060B==$23 stars gate is verified to fix Standby (where $060B is 0/1/4);
+// the stars/planet sub-phase value must be reconfirmed once a START launch is reached.
 void RescueOnFractalus::deriveRenderSignals()
 {
-    rsFlight   = (mem[0x004A] != 0);
-    rsStars    = (mem[0x0200] == 0xC2u) && !rsFlight;
+    const uint16_t vvblki = (uint16_t)(mem[0x0222] | (mem[0x0223] << 8));
+    const bool standbyVbi = (vvblki == 0x52D7u);   // Standby + launch cinematic
+    const bool flightVbi  = (vvblki == 0x4FF5u);   // in-flight
+
+    rsFlight   = flightVbi;
+    rsStars    = standbyVbi && (mem[0x060B] == 0x23u) && (mem[0x0200] == 0xC2u);
     rsViewport = rsStars || rsFlight;
     rsGauge    = (mem[0x060B] != 0);
     // launched = doors scroll armed / ring armed / viewport active.  Safe to derive
