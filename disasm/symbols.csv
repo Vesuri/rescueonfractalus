@@ -112,17 +112,17 @@ $3FCD,enemy_check,func,0,Checks $063D (enemy active?) and $0633 (another trigger
 $3FDE,terrain_lookup,func,0,Table lookup: reads $281C + index from $2836 into $3FF6 table; writes 4 bytes to $32E3 (display buffer)
 $3FFA,startup_init,func,0,Init: checks $0642 game state and $004B flag; calls display_sub if state=1 or 2
 $4258,game_sub_4258,func,0,Game subsystem (called in game_entry setup)
-$43CB,game_sub_43CB,func,0,Game subsystem (called with Y=9)
-$4430,game_sub_4430,func,0,Game subsystem (0 callers — probably IRQ/VBI handler)
-$4447,game_sub_4447,func,0,Game subsystem (called with A=8)
+$43CB,draw_dial_bar_column,func,0,Renders one cockpit dial-bar column (validates Y vs $062E, sets $BF/$BE/$BD, calls draw_object_column)
+$4430,cockpit_dial_update,func,0,Stores dial value $6F, computes bar offset from table into $0022, redraws via draw_cockpit_dial_bar
+$4447,draw_cockpit_dial_bar,func,0,A+=8 (lit threshold) -> setup_dial_bar_draw -> draw_object_column; draws cockpit dial / left-indicator-light bar (native twin in rof_native.c)
 $451D,game_sub_451d,func,0,Game subsystem
 $45A1,fill_buffer2_region_ff,func,0,Fills 8 rows x 32 bytes (stride 48) at $2098 in the $2000 terrain buffer with $FF; called in game_entry setup
-$45C5,game_sub_45C5,func,0,Game subsystem
+$45C5,init_cockpit_bar_cells,func,0,Fills cockpit digit/bar init cells ($2107-$2198 with $BE, $2167-$2198 with $AA)
 $45EE,copy_terrain_seed_rows,func,0,Copies three 8-byte blocks $4DD2->$0C88, $4DDA->$0D88, $4DE2->$0B88 (seed rows in the terrain/cockpit buffers); called in game_entry setup
 $4606,game_sub_4606,func,0,Game subsystem (called multiple times including in game loop)
 $462A,irq_handler,func,0,Immediate IRQ handler (VIMIRQ=$462A); set in game_entry at $3D28
 $49EE,dli_handler_game,func,0,DLI handler during game (VDSLST=$49EE set at $3E6D in game_entry)
-$4F3F,game_sub_4f3f,func,0,Game subsystem (called from enemy_check when $063D≠0; 0 callers from normal flow)
+$4F3F,intro_cinematic_loop,func,0,Intro/cinematic blocking loop (spins on $2891 via tick_vbi/render, runs intro then flight); reached from enemy_check when $063D≠0
 $4FF5,vbi_handler_flight,func,0,In-flight VBI handler (VVBLKI=$4FF5 set at $3E50 during flight init); $51B9 block = flight_control_integrate + terrain projection, mirrored by flight_vbi_native
 $5433,font_display_init,func,0,Font/display character setup (called in game_entry init)
 $53CC,vbi_handler_1,func,0,First in-game VBI handler (VVBLKI=$53CC set at $3D63 in game_entry)
@@ -131,22 +131,22 @@ $5815,ring_push_marked,func,0,TXA;ORA #$80;JMP ring_push_0719 — push object in
 $581C,input_init,func,0,Input/controller init (called twice: X=$1F then X=$20)
 $587B,cockpit_display,func,0,Cockpit/instrument display or main input handler (reads PORTA/CONSOL; called if $060B≠0)
 $55FC,game_sub_55FC,func,0,Called at end of each main game loop iteration before JMP $3E0F
-$5D0D,check_sub_5D0D,func,0,Returns BEQ-testable result; called early in game_entry (checks save state?)
+$5D0D,validate_save_state,func,0,Compares save-state blocks ($3700/$3714 vs $28/$EE, 39 bytes $7BDA vs $37C7); returns Z=1 if all match; called early in game_entry
 $5D29,display_list_init,func,0,Display list initial setup; writes DLISTL/H (called in game_entry at $3D6B)
 $5D50,game_init_5D50,func,0,Called with Y=$52 param; sets VIMIRQ twice (attract and game IRQ vectors)
 $5DDB,game_init_first,func,0,Very first call in game_entry; large initializer
 $5F1D,display_setup,func,0,Main game display setup: sets VBI ($52D7) DLI ($6CC2) display-list ($3120/$316B) PMG bases colors; called at top of main game loop
 $6811,game_sub_6811,func,0,Game sub with 2 RANDOM reads (enemy/event randomization)
-$6B47,game_sub_6B47,func,0,Game sub with 2 RANDOM reads
+$6B47,random_terrain_height,func,0,Generates one random terrain-height value (2 RANDOM reads, masks $1F/$03); called 4x per column by gen_terrain_column
 $6CC2,dli_handler_game2,func,0,Second game DLI handler (VDSLST=$6CC2 set in display_setup $5F5F-$64)
 $6FBF,intro_random_setup,func,0,Intro/startup sequence with 5 RANDOM reads; called only on fresh start ($0627=0)
 $70B3,intro_unmark_random_cells,func,0,Randomly clears bit7 (marked flag) of $0900 grid/height-map cells below a RANDOM($D20A) threshold; intro continuation after intro_random_setup (3 RANDOM reads)
 $712D,audio_timer_setup,func,0,Sets up POKEY audio timers + IRQEN=$C0 (timer 1+2 IRQs)
 $7498,intro_seed_object_map,func,0,Clears $0A00 object map, scans obj table (obj_table_scan_a_c8/replace), then places $64 markers into $0A00 for marked $0900 cells below a RANDOM($D20A) threshold; fresh-start object seeding
-$73C8,init_gameplay_state,func,0,Per-game/level gameplay init: seeds heading $2886, clears object/timer arrays ($0E94/$2210), sets lives $0072, plots via game_sub_451d, calls unpack_bitmap_4d3e + game_sub_45C5, seeds RANDOM, tail-calls game_sub_4430; run once from game_entry
+$73C8,init_gameplay_state,func,0,Per-game/level gameplay init: seeds heading $2886, clears object/timer arrays ($0E94/$2210), sets lives $0072, plots via game_sub_451d, calls unpack_bitmap_4d3e + init_cockpit_bar_cells, seeds RANDOM, tail-calls cockpit_dial_update; run once from game_entry
 $7460,build_row_addr_table,func,0,Builds the 85-entry ($55) per-scanline screen base-address table $073D/$0793 from $C3:$C4 base + $C1 stride; called before main loop
 $7483,copy_row_addr_subset,func,0,Copies the first 48 entries of $073D/$0793 (reversed, Y=$2F..0) into the secondary row-addr tables $2932/$2962; called before main loop
-$7558,unpack_terrain_seed_cols,func,0,RLE-unpacks (via process_list_via_3c58) $4DFA->$0C32 and $4E09->$0D32, seeding two of the four terrain column buffers
+$7558,unpack_terrain_seed_cols,func,0,RLE-unpacks (via rle_expand_list) $4DFA->$0C32 and $4E09->$0D32, seeding two of the four terrain column buffers
 $753B,init_terrain_render_buffers,func,0,Fills the height-max array region $250F-$260E with $FF, sets row-table params ($C1=$70 stride, base $119F), then JMP memset_or_copy to clear the $1070 terrain bitmap buffer ($119F bytes) to [$B7]
 $7588,game_init_7588,func,0,Game init (called in game_entry setup sequence)
 $76CB,game_init_76CB,func,0,Game init (called in game_entry setup sequence)
@@ -172,11 +172,11 @@ $B172,terrain_subdivide_column,func,0,Fractal subdivision driver: calls terrain_
 $B800,init_B800,func,0,INITAD stub (segment 13): sets CHBAS=$04 SDLSTL/H=$B832 COLOR0/1/2/4 SDMCTL=$22 then enables DMACTL; initial display list at $B832 (embedded in stub body)
 #
 # --- Zero page variables ---
-$0002,zp_flag_02,var,0,Zeroed in game_entry; purpose unknown
+$0002,rtclok_frac,var,0,Jiffy-clock fraction byte (INC'd each VBI in vbi_handler_1, clamped to $80); finer companion to RTCLOK $0012-$0014
 $0003,zp_flag_03,var,0,Read in cockpit_display; written in multiple game subs
 $0004,level_or_state,var,0,Level number or game phase flag; $00=fresh start; controls game flow in game_entry and startup
 $0005,zp_flag_05,var,0,Zeroed in game_entry
-$0009,zp_flag_09,var,0,Set to $01 by XEX segment (INITAD signal)
+$0009,initad_signal,var,0,XEX INITAD signal flag — set to $01 by an XEX segment to mark init-address dispatch
 $000C,zp_entry_lo,var,0,XEX final entry vector low ($DE=$3CDE low byte) — game entry point
 $000D,zp_entry_hi,var,0,XEX final entry vector high ($3C)
 $0041,game_state,var,0,Global game state flag (written 11 times across many subs; key control variable)
@@ -233,14 +233,14 @@ $0626,game_vars_626,data,0,7 bytes zeroed at game_entry ($0626-$062C)
 $0627,fresh_start_flag,var,0,0=first time through (run intro); non-zero=continue/skip intro
 $062F,life_counter,var,0,Life/fuel counter? — compared to $0E (14); game_entry branches on this
 $0633,alien_trigger,var,0,Alien/enemy trigger (if non-zero, enemy_check calls pmg_enemy_update)
-$063D,event_trigger,var,0,Event trigger (if non-zero, enemy_check calls game_sub_4f3f)
+$063D,event_trigger,var,0,Event trigger (if non-zero, enemy_check calls intro_cinematic_loop)
 $0642,game_phase_flag,var,0,Game phase (0=intro 1/2=active 3=transition); used in startup_init + display loop
 $0645,shield_or_damage,var,0,Shield/damage counter (set $80 at game_entry start)
-$0663,game_var_663,var,0,Set to $A0 at game_entry
-$0668,score_hi,var,0,Score high byte (set $80 at game_entry)
-$0669,score_lo,var,0,Score low byte (set $80 at game_entry)
-$066A,fuel_or_score2,var,0,Set to $A0 at game_entry
-$066B,fuel_or_score3,var,0,Set to $A0 at game_entry; also in loop zero-cleared before $55FC
+$0663,sfx_voice_distort_06,var,0,SFX voice slot 6 distortion ($065D+6); =$A0 pure at cold-init $3DEA; read via mem[$065D+Y] by the voice engine
+$0668,sfx_voice_distort_0b,var,0,SFX voice slot 11 distortion ($065D+$0B); =$80 NOISE at cold-init $3DDF; read via mem[$065D+Y] (NOT score)
+$0669,sfx_voice_distort_0c,var,0,SFX voice slot 12 distortion ($065D+$0C); =$80 NOISE (engine body) at cold-init $3DE2; read via mem[$065D+Y] (NOT score)
+$066A,sfx_voice_distort_0d,var,0,SFX voice slot 13 distortion ($065D+$0D); =$A0 pure at cold-init $3DED; read via mem[$065D+Y]
+$066B,sfx_voice_distort_0e,var,0,SFX voice slot 14 distortion ($065D+$0E); =$A0 pure at cold-init $3DF0; read via mem[$065D+Y]
 #
 # --- Terrain data tables ($1010+ in the loaded code segment) ---
 $1010,terrain_row0,data,0,Terrain column data row 0 ($60=96 bytes wide); loaded terrain heightmap strip
@@ -318,14 +318,14 @@ $4285,lock_on_indicator_write_cell,func,0,Writes A into shape table $3491+Y, the
 $428D,lock_on_indicator_return,func,0,Empty RTS landing pad shared by lock-on indicator animation paths; falls through to lock_on_indicator_phase_advance in ROM
 $428E,lock_on_indicator_phase_advance,func,0,LSR $0631 phase flag, returns if carry; else INC $0631, masks low nibble; at phase 7 adjusts $007E and writes opcode-like $A9/$29 bytes via lock_on_indicator_write_cell / draw_player3_object
 $42A7,draw_player3_object,func,0,Renders player-3 sprite: sets SIZEP3 ($D00B), HPOSP3 ($D003), size/pos/shape from tables $4566/$4569/$456C/$457A/$4D11/$4D3E; fills PMG bitmap rows $0F1E/$0F71; updates $286F/$2835/$2870/$00CC
-$43C7,dispatch_43cb_half_70,func,0,Loads $0070, LSR to halve into Y, tail-calls game_sub_43CB with that index
+$43C7,dispatch_43cb_half_70,func,0,Loads $0070, LSR to halve into Y, tail-calls draw_dial_bar_column with that index
 $43E8,draw_object_column,func,0,Loops X down to $00BE drawing a vertical PMG column via indirect ptr $BB/$BC from table $4581; sets bit7 ($80) on/off based on X vs threshold $00BF; uses $00C0 flag and bytes $B4/$B7/$B8/$38; tail-calls draw_bar_loop_end
 $442D,draw_bar_loop_end,func,0,Bare RTS; tail/exit target of draw_dial_bar loop (draw_object_column at 442b); opaque stub
-$442E,redraw_dial_from_6f,func,0,Loads dial value $6F then falls into game_sub_4430 to recompute $22 and redraw cockpit dial
+$442E,redraw_dial_from_6f,func,0,Loads dial value $6F then falls into cockpit_dial_update to recompute $22 and redraw cockpit dial
 $444A,setup_dial_bar_draw,func,0,Sets bar params $BF=A(limit),$BE=7,$BD=$0F then calls draw loop draw_object_column (writes via $BB ptr)
 $4467,update_p3_indicator_stripe,func,0,Clears/rewrites PM buffer $0F98 by cursor $2845/$2846, copies 5 bytes from tbl $44C7 sel by $2839/$283A, sets $CC + SIZEP3 $D00B
 $44D6,update_altitude_digit_display,func,0,Computes $B9 from $1C-$28DA clamped, AND $CF/ORA $30 nibble-toggles digits in $0B91 buf, sets $CE from $28D9+$AB
-$4644,event_sequence_dispatcher,func,0,Matches event id vs tbl $4816, dispatches by mode $0072(0-5); drives POKEY AUDF $D201, flags $43/$4A/$3C-$3E, throttle game_sub_4430
+$4644,event_sequence_dispatcher,func,0,Matches event id vs tbl $4816, dispatches by mode $0072(0-5); drives POKEY AUDF $D201, flags $43/$4A/$3C-$3E, throttle cockpit_dial_update
 $47A3,set_colpf0_from_flag,func,0,If Y bit5 set A=$CA else A=$0047, writes COLPF0 $D016, falls into save_color_clear_y_bit5
 $47B2,save_color_clear_y_bit5,func,0,Stores A->$D8, clears bit5 of Y (AND $DF), falls into show_cockpit_message
 $47B8,show_cockpit_message,func,0,Decodes msg ID (A/Y) via index tbl $4927 into 14-byte msg buffer $32B7 (+0x40 ATASCII, hi-bit term); sets flash timer $063E ($5A if ID>=$40), $00D8, $0044
@@ -434,7 +434,7 @@ $6AB5,add_multibyte_a1,func,0,Multi-byte add: A (C clear) += $00A1, carry chains
 $6AC9,sub_multibyte_a1,func,0,Multi-byte subtract: stores A to $08DA, $00A1 -= A, borrow chains through $00A2,$00A3,$00A4; mirror of add_multibyte_a1
 $6AE5,fill_terrain_columns,func,0,LDY #$59; loops 89x calling gen_terrain_column to fill all 4 parallel terrain buffers $0C32/$0D32/$0E32/$0F32
 $6AEE,scroll_terrain_columns,func,0,Gated by state $0089; updates $A4/$A5 via add_multibyte_a1(24-bit add), shifts $0C32-$0F32 buffers left 1 col ($59 wide), appends new col via gen_terrain_column
-$6B2E,gen_terrain_column,func,0,Fills one column (index Y) of all 4 buffers $0C32/$0D32/$0E32/$0F32 with random heights from game_sub_6B47
+$6B2E,gen_terrain_column,func,0,Fills one column (index Y) of all 4 buffers $0C32/$0D32/$0E32/$0F32 with random heights from random_terrain_height
 $6B63,clear_terrain_lo_buffers,func,0,LDY #$5F..0: zeroes the $0E32 and $0F32 terrain buffers (96 bytes each)
 $6B71,clear_scroll_accum,func,0,Zeroes PCOLR0-3 shadow $02C0..$02C3 and 24-bit scroll accum $00A1..$00A4 plus $00A5
 $6B85,init_object_positions,func,0,Zeroes $08D1/$08D2/$08D3; for Y=$2A..0 step2 adds base $2EE0 to word table $6E2D into 22-entry word array $08A4/$08A5
@@ -453,7 +453,7 @@ $7148,sfx_seq_step,func,0,Advances SFX sequence ptr $073C through table $71DB; l
 $7238,music_init_state,func,0,Copies 6-byte song header from table $731E into $0657-$065C, sets $0651=1, AUDCTL($D208)=1, $0653=$0655=2
 $7253,music_player_tick,func,0,Music engine tick: counts down $0651/$0653, reads cmd stream via ptr $0099/$009A, writes AUDF $D200+X and AUDC via EOR table $73C1
 $74D7,unpack_bitmap_4d3e,func,0,Bit-serial expand: src ptr $C1/$C2 from table $4D3E, shifts 8 bits via $0085 accumulator to dest $C3/$C4; nested loops $0080/$0081/$0082/$00DF
-$757B,process_list_via_3c58,func,0,Walks bytes via ZP ptr $BB/$BC, calling rle_run_fill per non-zero byte until terminating $00 (used by game_init_7558)
+$757B,rle_expand_list,func,0,Walks bytes via ZP ptr $BB/$BC, calling rle_run_fill per non-zero byte until terminating $00 (used by unpack_terrain_seed_cols)
 $75A5,copy_192_to_1800,func,0,Copies $C0=192 bytes from table $350C to dest ptr $BB/$BC (=$1800) via ZP_IND_Y
 $75B8,count_up_to_level,func,0,Increments $0604 and BCD counter $C3 in loop until $0604 reaches level/stage $006D
 $75D0,decrement_bcd_0628_restart,func,0,SED; SBC $0628-1 (BCD decrement of $0628), CLD, startup_init, tail to set_0628_redisplay ($75de)
@@ -542,7 +542,7 @@ $E462,os_xitvbv,func,0,Atari OS ROM vector XITVBV (exit VBLANK / return from def
 $00E0,dli_jmp_ptr_lo,var,0,Low byte of the DLI/dispatch indirect-jump pointer. Handler dispatchers store a table address here ($49F8 STA $E0 from $4AD9; $6CCD STA $E0 from $6DCF) then JMP ($E0); emitted as platform_indirect_jmp. Not a function (was the spurious dli_jmp_ptr_lo stub)
 $00E1,dli_jmp_ptr_hi,var,0,High byte of the DLI/dispatch indirect-jump pointer paired with $00E0; set by STA $E1 just before JMP ($E0)
 $0021,pitch_velocity,var,0,Flight pitch delta/velocity; also reused as the vertical blip delta from the L/R range difference in compute_target_blip_position (combined with $2912 parallax).
-$0022,dial_draw_index,var,0,game_sub_4430 stores table $4457[Y] (Y=A+$0625) here; consumed by dial bar draw setup
+$0022,dial_draw_index,var,0,cockpit_dial_update stores table $4457[Y] (Y=A+$0625) here; consumed by dial bar draw setup
 $0025,pitch_pos_lo,var,0,Pitch angle accumulator low byte; clamped $00..$FB/$04..$FF in flight_control_integrate
 $0026,pitch_pos_hi,var,0,Pitch angle accumulator high byte; clamped to $04/$FB range in flight_control_integrate
 $0027,roll_velocity,var,0,Roll-axis velocity/delta integrated into roll $0028/$0029 in flight_control_integrate; also reused as the horizontal blip position computed in compute_target_blip_position (from masks/$0070 and $2913 parallax).
@@ -581,7 +581,7 @@ $006B,mul_multiplicand,var,0,Multiplicand for shift-add multiply mul_u8; LSR'd e
 $006C,sound_active_flag,var,0,Sound-engine active flag gating the engine_sound_update path; cleared by sound_stop ($5a0e) and zeroed alongside game_vars_626 at init_game_vars (init_game_vars_attract_timer).
 $006D,level_stage,var,0,Level/stage counter (read 26x, written 5x): CMP #1/#4 branches in game_setup_7460/unpack_bitmap_4d3e, loop limit in count_up_to_level; also feeds compute_gauge_geometry_from_006D gauge/display geometry and the engine-sound pitch ramp toward level_progress $37EE.
 $006E,blink_timer,var,0,Down-counter in update_blink_timer_006e ($4131); reloads to $0F, drives anim_counter_1 $00DE between $4E/$46
-$006F,dial_value,var,0,Cockpit dial/gauge value; loaded by redraw_dial_from_6f, stored+clamped in game_sub_4430, inc/dec in event_sequence_dispatcher ($475e/$4778)
+$006F,dial_value,var,0,Cockpit dial/gauge value; loaded by redraw_dial_from_6f, stored+clamped in cockpit_dial_update, inc/dec in event_sequence_dispatcher ($475e/$4778)
 $0073,alt_ring_head,var,0,Head index into $0719 ring buffer; wrapped mod $20 in ring_push_0719; clamped/sorted in update_gauge_digits & font_display_init
 $0074,ring_tail_0719,var,0,Tail/drain index of $0719 ring; iterated down to $0073 in update_gauge_digits, wraps to $1F
 $0075,trig_angle,var,0,Angle accumulator for sine_table_lookup/trig_interp_lookup (sine_table_lookup/9bdb); INC/DEC and ADC $40 for 90deg
@@ -625,7 +625,7 @@ $00BF,bar_col_threshold,var,0,Column/fill threshold compared via CPX in draw_pla
 $00C0,object_col_flag,var,0,Two-byte-tall flag for column draw: nonzero adds a second PMG byte ($38/$B8) (draw_object_column)
 $00C5,digit_dst_ptr_lo,var,0,Low byte of 16-bit screen-destination pointer ($C5/$C6) for BCD digit / label-glyph writes via ($C5),Y; set to $32C5 by render_bcd_counter and to $0A (ptr=$300A) for dl_lms_fill.
 $00C6,digit_dst_ptr_hi,var,0,High byte paired with $C5 (digit_dst_ptr_lo): set to $30 so the dest pointer = $300A for dl_lms_fill; also the countdown of glyphs to blit (init 5) in the blit_label_row label loop.
-$00CC,player3_bottom_y,var,0,Player-3 object bottom-Y clamp result (draw_player3_object $43c4) from $2870 vs $8D/$00BF; game_sub_4f3f also sets it from $2847 (in [$6C,$8D) else 0) paired with the SIZEP3 $D00B write.
+$00CC,player3_bottom_y,var,0,Player-3 object bottom-Y clamp result (draw_player3_object $43c4) from $2870 vs $8D/$00BF; intro_cinematic_loop also sets it from $2847 (in [$6C,$8D) else 0) paired with the SIZEP3 $D00B write.
 $00CE,altitude_color_or_glyph,var,0,update_altitude_digit_display sets from $28D9+$AB clamped to [$A3,$B4) else $B5
 $00DA,audc_shadow_0,var,0,RANDOM($D20A)|4 written to $00DA-$00DD in $4f9f; staged POKEY audio control bytes
 $00DF,span_pixel_count,var,0,Down-counter for pixels/rows within a single span in fill_horizontal_span/fill_vertical_span (loop ends when negative); also holds the current event glyph id output by event_sequence_dispatcher.

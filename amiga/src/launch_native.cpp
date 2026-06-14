@@ -29,7 +29,7 @@ extern Cpu6502 cpu;
 // Genuine transpiled launch routines (src/gen/rof_gen.c):
 void save_color_clear_y_bit5(void);   // $47B2: $00D8=A, Y&=$DF, -> show_cockpit_message ($47B8)
 void render_bcd_counter(void);        // $49A0: render 6-digit BCD score ($0600-3) to $32C5-$32CA
-void game_sub_4447(void);             // $4447: $00BF=A+8 -> setup_dial_bar_draw -> draw_object_column
+void draw_cockpit_dial_bar(void);             // $4447: $00BF=A+8 -> setup_dial_bar_draw -> draw_object_column
 
 // Stars/planet phase (display_setup $64C8-$6594):
 void clear_scroll_accum(void);                  // $6B71: zero $02C0-3 + scroll accum $A1-A5
@@ -45,6 +45,7 @@ void draw_player3_object(void);                 // $42A7: the planet as a scaled
 // with a 1-frame wait (clear_colors) between — the genuine per-frame pitch sweep.
 void audf2_sweep_clear_colors(void);
 void input_init(void);                // $581C: load a voice (sound id in cpu.X) from the SFX param tables
+void reorder_sprite_slot(void);       // $5614: SFX priority mixer — seat voice (cpu.Y) onto a POKEY channel
 }
 
 // Launch-cinematic blocking frame pump toggle (PaulaAudio.cpp): while on, the
@@ -204,6 +205,65 @@ extern "C" void launch_door_swoosh_stop_native(void)
     mem[0x0705 + 5] = 0x00;   // release the channel
 }
 
+// ---- launch engine-ramp (display_setup $3DD3-$3DF9 cold-init + $6460-$64E8) -----
+// Faithful port of the Atari engine "spin-up": the engine voices' distortion is set
+// once (cold-init), then as the doors finish and the tunnel plays, the engine BODY
+// voice (slot 12 = $0C, noise) is seeded LOUD (priority $0F) and ramped down to its
+// steady priority ($04) while its companion (slot 11 = $0B) is seeded — so the engine
+// audibly spins up across the launch.  update_gauge_digits ($548D, running in the
+// standby/launch VBI gated on $060B=$23) drains these onto POKEY/Paula.  In flight,
+// flight_control_integrate ($8E5B @ $91DC, Y=$0C) rewrites slot 12's priority + freq
+// every frame from the ship pitch, so the drone then tracks the throttle.
+//
+// Faithful to the engine-VOICE operations of $6460-$64E8; the gauge-readout spins
+// ($645B/$646C/$6478, on slot freqs $0684/$0686) and HUD digit writes interleaved
+// there belong to the throttle-gauge phase, which the Amiga sequences natively, so
+// they are not reproduced here (the doors/lights/tunnel order is preserved).
+
+// $3DD3-$3DF9 (voice subset): the engine voices' distortion + the two persistent
+// cold-seed sounds.  Run once at launch start, AFTER sfx_engine_reset (which would
+// otherwise wipe these), so the voices have a waveform before the ramp seeds them.
+extern "C" void launch_engine_voice_init(void)
+{
+    mem[0x0668] = 0x80;   // $3DDF slot 11 distort = NOISE
+    mem[0x0669] = 0x80;   // $3DE2 slot 12 distort = NOISE (the engine body)
+    mem[0x0663] = 0xA0;   // $3DEA slot  6 distort = pure
+    mem[0x066A] = 0xA0;   // $3DED slot 13 distort = pure
+    mem[0x066B] = 0xA0;   // $3DF0 slot 14 distort = pure
+    cpu.X = 0x1F; input_init();   // $3DF5 seed persistent voice id $1F
+    cpu.X = 0x20; input_init();   // $3DF9 seed persistent voice id $20
+}
+
+// $6487-$6493: seed the engine body voice (slot 12) at a loud onset priority and
+// seat it on a POKEY channel.  Called once the doors are fully open + lights lit.
+extern "C" void launch_engine_seed_start(void)
+{
+    mem[0x066B + 0x0C] = 0x0F;   // $6487 slot 12 priority = $0F (loud onset)
+    mem[0x0679 + 0x0C] = 0xB4;   // $6490 slot 12 frequency
+    cpu.Y = 0x0C; reorder_sprite_slot();   // $6493 seat slot 12 on a POKEY channel
+}
+
+// $64B0-$64C6 body (one tunnel-ring step): ramp the engine body voice's priority
+// $0F -> $08 as the tunnel plays — the engine settling from its loud onset.
+extern "C" void launch_engine_ramp_step(void)
+{
+    if (mem[0x066B + 0x0C] != 0x08) mem[0x066B + 0x0C]--;   // $64B3-$64BD
+}
+
+// $64C8-$64E6: engine steady-state once the tunnel clears.  Engine body (slot 12)
+// settles to priority $04 / freq $65; companion (slot 11) to priority $01 / freq $0E;
+// each re-seated on a POKEY channel.  ($64CD draw_cockpit_dial_bar(A=4) redraws the dial bar.)
+extern "C" void launch_engine_steady(void)
+{
+    mem[0x066B + 0x0C] = 0x04;             // $64C8 slot 12 priority = 4
+    cpu.A = 0x04; draw_cockpit_dial_bar();         // $64CD redraw the dial bar at level 4
+    mem[0x0679 + 0x0C] = 0x65;             // $64D2 slot 12 frequency
+    cpu.Y = 0x0C; reorder_sprite_slot();   // $64D7
+    mem[0x066B + 0x0B] = 0x01;             // $64DA-$64DE slot 11 priority = 1
+    mem[0x0679 + 0x0B] = 0x0E;             // $64E1-$64E3 slot 11 frequency
+    cpu.Y = 0x0B; reorder_sprite_slot();   // $64E6
+}
+
 // ---- effect 2: throttle gauge fill (vobj vertical object) -------------------
 // The throttle gauge is the Atari "vertical object": a player-1 P/M strip at
 // $0D98 that fills downward as the object steps to the bottom ($DC).  Each step
@@ -252,25 +312,25 @@ extern "C" uint8_t launch_gauge_step_native(void)
 
 // ---- effects 3 & 4: left indicator-light column -----------------------------
 // The left lights are the lower half (rows 8..15) of the cockpit dial-bar drawn
-// by game_sub_4447 -> setup_dial_bar_draw -> draw_object_column ($43E8): for each
+// by draw_cockpit_dial_bar -> setup_dial_bar_draw -> draw_object_column ($43E8): for each
 // row X (=$00BD, $0F..$08) it writes cell $4581[X] with bit7 = lit/unlit set by
 // X >= $00BF (lit) vs X < $00BF (unlit).  $00BF = A+8.  Lit = $34/$37/$38 (COLPF2),
 // unlit = $B4/$B7/$B8 (COLPF3).  The existing render() draws these cockpit cells.
 
 // Effect 3: when the doors start, light the bottom-left indicator only.
-//   display_setup $63FD: LDA #$07 / game_sub_4447  ($00BF=$0F -> only row 15 = $34E5 lit)
+//   display_setup $63FD: LDA #$07 / draw_cockpit_dial_bar  ($00BF=$0F -> only row 15 = $34E5 lit)
 extern "C" void launch_light_doorstart_native(void)
 {
     cpu.A = 0x07;
-    game_sub_4447();
+    draw_cockpit_dial_bar();
 }
 
 // Effect 4: before the tunnel animates, light the whole left column.
-//   display_setup $6482: LDA #$00 / game_sub_4447  ($00BF=$08 -> rows 8..15 all lit)
+//   display_setup $6482: LDA #$00 / draw_cockpit_dial_bar  ($00BF=$08 -> rows 8..15 all lit)
 extern "C" void launch_light_all_native(void)
 {
     cpu.A = 0x00;
-    game_sub_4447();
+    draw_cockpit_dial_bar();
 }
 
 // ---- stars / space phase (display_setup $64C8-$6552 setup) ------------------

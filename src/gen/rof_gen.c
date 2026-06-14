@@ -1784,7 +1784,7 @@ void game_entry(void) {
     /* 3cf3 */
     game_init_5D50();
     /* 3cf6 */
-    check_sub_5D0D();
+    validate_save_state();
     /* 3cf9 */
     if (cpu.Z) goto L_3d00;
     /* 3cfb */
@@ -1875,7 +1875,7 @@ void enemy_check__t6502(void) {
     /* 3fd0 */
     if (cpu.Z) goto L_3fd5;
     /* 3fd2 */
-    game_sub_4f3f(); return;
+    intro_cinematic_loop(); return;
 L_3fd5:;
     /* 3fd5 */
     LDA(mem[0x0633]);
@@ -2747,7 +2747,7 @@ L_43c4:;
     return;
 }
 
-/* dispatch_43cb_half_70 @ $43C7: Loads $0070, LSR to halve into Y, tail-calls game_sub_43CB with that index */
+/* dispatch_43cb_half_70 @ $43C7: Loads $0070, LSR to halve into Y, tail-calls draw_dial_bar_column with that index */
 void dispatch_43cb_half_70(void) {
     /* 43c7 */
     LDA(mem[0x0070]);
@@ -2755,11 +2755,11 @@ void dispatch_43cb_half_70(void) {
     LSR_A();
     /* 43ca */
     TAY();
-    game_sub_43CB(); return;
+    draw_dial_bar_column(); return;
 }
 
-/* game_sub_43CB @ $43CB: Game subsystem (called with Y=9) */
-void game_sub_43CB(void) {
+/* draw_dial_bar_column @ $43CB: Renders one cockpit dial-bar column (validates Y vs $062E, sets $BF/$BE/$BD, calls draw_object_column) */
+void draw_dial_bar_column(void) {
     /* 43cb */
     CPY(0x09);
     /* 43cd */
@@ -2790,15 +2790,15 @@ L_43d6:;
     draw_object_column(); return;
 }
 
-/* redraw_dial_from_6f @ $442E: Loads dial value $6F then falls into game_sub_4430 to recompute $22 and redraw cockpit dial */
+/* redraw_dial_from_6f @ $442E: Loads dial value $6F then falls into cockpit_dial_update to recompute $22 and redraw cockpit dial */
 void redraw_dial_from_6f(void) {
     /* 442e */
     LDA(mem[0x006F]);
-    game_sub_4430(); return;
+    cockpit_dial_update(); return;
 }
 
-/* game_sub_4430 @ $4430: Game subsystem (0 callers — probably IRQ/VBI handler) */
-void game_sub_4430(void) {
+/* cockpit_dial_update @ $4430: Stores dial value $6F, computes bar offset from table into $0022, redraws via draw_cockpit_dial_bar */
+void cockpit_dial_update(void) {
     /* 4430 */
     mem[0x006F] = cpu.A;
     /* 4432 */
@@ -2825,12 +2825,12 @@ L_4444:;
     mem[0x0022] = cpu.A;
     /* 4446 */
     PLA();
-    game_sub_4447(); return;
+    draw_cockpit_dial_bar(); return;
 }
 
-/* game_sub_4447 @ $4447: Game subsystem (called with A=8) */
-/* faithful transliteration kept as the validation oracle; native game_sub_4447() lives in rof_native.c (see VALIDATE_FUNCS) */
-void game_sub_4447__t6502(void) {
+/* draw_cockpit_dial_bar @ $4447: A+=8 (lit threshold) -> setup_dial_bar_draw -> draw_object_column; draws cockpit dial / left-indicator-light bar (native twin in rof_native.c) */
+/* faithful transliteration kept as the validation oracle; native draw_cockpit_dial_bar() lives in rof_native.c (see VALIDATE_FUNCS) */
+void draw_cockpit_dial_bar__t6502(void) {
     /* 4447 */
     CLC();
     /* 4448 */
@@ -3152,8 +3152,8 @@ L_45af:;
     return;
 }
 
-/* game_sub_45C5 @ $45C5: Game subsystem */
-void game_sub_45C5(void) {
+/* init_cockpit_bar_cells @ $45C5: Fills cockpit digit/bar init cells ($2107-$2198 with $BE, $2167-$2198 with $AA) */
+void init_cockpit_bar_cells(void) {
     /* 45c5 */
     LDA(0xBE);
     /* 45c7 */
@@ -3280,7 +3280,7 @@ L_463e:;
     PLP(); return;
 }
 
-/* event_sequence_dispatcher @ $4644: Matches event id vs tbl $4816, dispatches by mode $0072(0-5); drives POKEY AUDF $D201, flags $43/$4A/$3C-$3E, throttle game_sub_4430 */
+/* event_sequence_dispatcher @ $4644: Matches event id vs tbl $4816, dispatches by mode $0072(0-5); drives POKEY AUDF $D201, flags $43/$4A/$3C-$3E, throttle cockpit_dial_update */
 void event_sequence_dispatcher(void) {
     /* 4644 */
     LDA(0x00);
@@ -3568,7 +3568,7 @@ L_474b:;
     /* 4752 */
     LDA(0x07);
     /* 4754 */
-    game_sub_4430();
+    cockpit_dial_update();
     /* 4757 */
     goto L_4763;
 L_475a:;
@@ -3634,7 +3634,7 @@ L_4795:;
     /* 4795 */
     LDA(0x08);
     /* 4797 */
-    game_sub_4430();
+    cockpit_dial_update();
     /* 479a */
     LDA(0x00);
     /* 479c */
@@ -4139,8 +4139,8 @@ void refresh_hud_fields_0d_0e__t6502(void) {
     game_sub_55FC(); return;
 }
 
-/* game_sub_4f3f @ $4F3F: Game subsystem (called from enemy_check when $063D≠0; 0 callers from normal flow) */
-void game_sub_4f3f(void) {
+/* intro_cinematic_loop @ $4F3F: Intro/cinematic blocking loop (spins on $2891 via tick_vbi/render, runs intro then flight); reached from enemy_check when $063D≠0 */
+void intro_cinematic_loop(void) {
     /* 4f3f */
     LDA(0x80);
     /* 4f41 */
@@ -6294,7 +6294,7 @@ L_5b64:;
 /* name_entry_loop @ $5B6C: initials entry: cursor $37F0-F6, buf $36B7, joystick $D01F, audio $D402/3, calls render_text_cell */
 void name_entry_loop(void) {
     /* 5b6c */
-    check_sub_5D0D();
+    validate_save_state();
     /* 5b6f */
     if (!cpu.Z) goto L_5b7e;
     /* 5b71 */
@@ -6687,8 +6687,8 @@ L_5d0c:;
     return;
 }
 
-/* check_sub_5D0D @ $5D0D: Returns BEQ-testable result; called early in game_entry (checks save state?) */
-void check_sub_5D0D(void) {
+/* validate_save_state @ $5D0D: Compares save-state blocks ($3700/$3714 vs $28/$EE, 39 bytes $7BDA vs $37C7); returns Z=1 if all match; called early in game_entry */
+void validate_save_state(void) {
     /* 5d0d */
     LDA(mem[0x3700]);
     /* 5d10 */
@@ -7000,7 +7000,7 @@ L_5f34:;
     /* 5f7f */
     mem[0x00BE] = cpu.A;
     /* 5f81 */
-    process_list_via_3c58();
+    rle_expand_list();
     /* 5f84 */
     LDA(0x14);
     /* 5f86 */
@@ -7200,7 +7200,7 @@ L_6053:;
     /* 605c */
     LDA(0x07);
     /* 605e */
-    game_sub_4447();
+    draw_cockpit_dial_bar();
     /* 6061 */
     LDY(0x00);
 L_6063:;
@@ -7376,7 +7376,7 @@ L_6103:;
     /* 6111 */
     TYA();
     /* 6112 */
-    game_sub_4447();
+    draw_cockpit_dial_bar();
     /* 6115 */
     build_line_addr_table_2000();
 L_6118:;
@@ -8077,7 +8077,7 @@ L_63d7:; platform_tick_vbi(); platform_render_frame();
     /* 63fd */
     LDA(0x07);
     /* 63ff */
-    game_sub_4447();
+    draw_cockpit_dial_bar();
     /* 6402 */
     LDA(0x7F);
     /* 6404 */
@@ -8186,7 +8186,7 @@ L_6478:; platform_tick_vbi(); platform_render_frame();
     /* 6482 */
     mem[0x0094] = cpu.A;
     /* 6484 */
-    game_sub_4447();
+    draw_cockpit_dial_bar();
     /* 6487 */
     LDY(0x0C);
     /* 6489 */
@@ -8249,7 +8249,7 @@ L_64c4:;
     /* 64ca */
     mem[0x0677] = cpu.A;
     /* 64cd */
-    game_sub_4447();
+    draw_cockpit_dial_bar();
     /* 64d0 */
     LDY(0x0C);
     /* 64d2 */
@@ -9904,30 +9904,30 @@ L_6b0f:;
     gen_terrain_column(); return;
 }
 
-/* gen_terrain_column @ $6B2E: Fills one column (index Y) of all 4 buffers $0C32/$0D32/$0E32/$0F32 with random heights from game_sub_6B47 */
+/* gen_terrain_column @ $6B2E: Fills one column (index Y) of all 4 buffers $0C32/$0D32/$0E32/$0F32 with random heights from random_terrain_height */
 void gen_terrain_column(void) {
     /* 6b2e */
-    game_sub_6B47();
+    random_terrain_height();
     /* 6b31 */
     mem[(0x0C32)+cpu.Y] = cpu.A;
     /* 6b34 */
-    game_sub_6B47();
+    random_terrain_height();
     /* 6b37 */
     mem[(0x0D32)+cpu.Y] = cpu.A;
     /* 6b3a */
-    game_sub_6B47();
+    random_terrain_height();
     /* 6b3d */
     mem[(0x0E32)+cpu.Y] = cpu.A;
     /* 6b40 */
-    game_sub_6B47();
+    random_terrain_height();
     /* 6b43 */
     mem[(0x0F32)+cpu.Y] = cpu.A;
     /* 6b46 */
     return;
 }
 
-/* game_sub_6B47 @ $6B47: Game sub with 2 RANDOM reads */
-void game_sub_6B47(void) {
+/* random_terrain_height @ $6B47: Generates one random terrain-height value (2 RANDOM reads, masks $1F/$03); called 4x per column by gen_terrain_column */
+void random_terrain_height(void) {
     /* 6b47 */
     LDA(bus_read(0xD20A));
     /* 6b4a */
@@ -11131,7 +11131,7 @@ L_730d:;
     return;
 }
 
-/* init_gameplay_state @ $73C8: Per-game/level gameplay init: seeds heading $2886, clears object/timer arrays ($0E94/$2210), sets lives $0072, plots via game_sub_451d, calls unpack_bitmap_4d3e + game_sub_45C5, seeds RANDOM, tail-calls game_sub_4430; run once from game_entry */
+/* init_gameplay_state @ $73C8: Per-game/level gameplay init: seeds heading $2886, clears object/timer arrays ($0E94/$2210), sets lives $0072, plots via game_sub_451d, calls unpack_bitmap_4d3e + init_cockpit_bar_cells, seeds RANDOM, tail-calls cockpit_dial_update; run once from game_entry */
 void init_gameplay_state(void) {
     /* 73c8 */
     LDA(0x0E);
@@ -11228,7 +11228,7 @@ L_7419:;
     /* 742a */
     push_a_thunk_3cb2();
     /* 742d */
-    game_sub_45C5();
+    init_cockpit_bar_cells();
     /* 7430 */
     push_a_thunk_3cb2();
     /* 7433 */
@@ -11273,7 +11273,7 @@ L_745b:;
     /* 745b */
     LDA(0x07);
     /* 745d */
-    game_sub_4430(); return;
+    cockpit_dial_update(); return;
 }
 
 /* build_row_addr_table @ $7460: Builds the 85-entry ($55) per-scanline screen base-address table $073D/$0793 from $C3:$C4 base + $C1 stride; called before main loop */
@@ -11555,7 +11555,7 @@ L_753f:;
     memset_or_copy(); return;
 }
 
-/* unpack_terrain_seed_cols @ $7558: RLE-unpacks (via process_list_via_3c58) $4DFA->$0C32 and $4E09->$0D32, seeding two of the four terrain column buffers */
+/* unpack_terrain_seed_cols @ $7558: RLE-unpacks (via rle_expand_list) $4DFA->$0C32 and $4E09->$0D32, seeding two of the four terrain column buffers */
 void unpack_terrain_seed_cols(void) {
     /* 7558 */
     LDA(0xFA);
@@ -11574,7 +11574,7 @@ void unpack_terrain_seed_cols(void) {
     /* 7566 */
     mem[0x00BE] = cpu.A;
     /* 7568 */
-    process_list_via_3c58();
+    rle_expand_list();
     /* 756b */
     LDA(0x09);
     /* 756d */
@@ -11591,11 +11591,11 @@ void unpack_terrain_seed_cols(void) {
     LDA(0x0D);
     /* 7579 */
     mem[0x00BE] = cpu.A;
-    process_list_via_3c58(); return;
+    rle_expand_list(); return;
 }
 
-/* process_list_via_3c58 @ $757B: Walks bytes via ZP ptr $BB/$BC, calling rle_run_fill per non-zero byte until terminating $00 (used by game_init_7558) */
-void process_list_via_3c58(void) {
+/* rle_expand_list @ $757B: Walks bytes via ZP ptr $BB/$BC, calling rle_run_fill per non-zero byte until terminating $00 (used by unpack_terrain_seed_cols) */
+void rle_expand_list(void) {
     /* 757b */
     LDY(0x00);
 L_757d:;
@@ -15116,7 +15116,7 @@ L_8ecc:;
     /* 8eed */
     LDA(0x00);
     /* 8eef */
-    game_sub_4447();
+    draw_cockpit_dial_bar();
     /* 8ef2 */
     goto L_8f49;
 L_8ef5:;
@@ -24581,13 +24581,13 @@ L_3dae:;
     /* 3db1 */
     LDY(0x09);
     /* 3db3 */
-    game_sub_43CB();
+    draw_dial_bar_column();
     /* 3db6 */
     game_sub_4606();
     /* 3db9 */
     LDA(0x08);
     /* 3dbb */
-    game_sub_4447();
+    draw_cockpit_dial_bar();
     /* 3dbe */
     LDA(0x2C);
     /* 3dc0 */

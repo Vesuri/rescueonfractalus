@@ -46,6 +46,10 @@ extern "C" void launch_show_standby_native(void);               // display_setup
 extern "C" void launch_start_arpeggio_native(void);             // display_setup $63A7: START 3-blip arpeggio (id $1D)
 extern "C" void launch_door_swoosh_native(void);                // display_setup $63D0: door-open swoosh (id $01)
 extern "C" void launch_door_swoosh_stop_native(void);           // silence the door voice when the doors finish
+extern "C" void launch_engine_voice_init(void);                 // $3DD3: engine-voice distorts + $1F/$20 cold-seeds
+extern "C" void launch_engine_seed_start(void);                 // $6487: seed engine body voice (slot 12) loud
+extern "C" void launch_engine_ramp_step(void);                  // $64B0: ramp engine body priority $0F->$08
+extern "C" void launch_engine_steady(void);                     // $64C8: engine steady-state (slots 12/11)
 extern "C" void launch_gauge_init_native(void);                 // vobj strip init ($062F/$0D98)
 extern "C" uint8_t launch_gauge_step_native(void);              // one vobj fill step; 0 when full
 extern "C" void launch_light_doorstart_native(void);           // $63FD: bottom-left light on
@@ -184,7 +188,7 @@ void RescueOnFractalus::buildGaugeSprite()
 
 // ---- starfield sprites -------------------------------------------------------
 // During the stars phase display_setup positions players P0/P2/P3 as a sparse
-// scrolling starfield (game_sub_6B47 $6B47: POKEY RANDOM, 1/32 chance of a dot
+// scrolling starfield (random_terrain_height $6B47: POKEY RANDOM, 1/32 chance of a dot
 // from table $6B5F = [$80,$20,$04,$01]; scroll_terrain_columns $6AEE shifts each
 // player up one scanline/frame and appends a new bottom byte).  The genuine
 // transpiled scroll_terrain_columns already maintains those player buffers in
@@ -720,7 +724,7 @@ void RescueOnFractalus::startDoors()
     launched    = true;   // doors now scrolling: buildCopperList tracks the gap via $008A
 
     // Cinematic effect 3: as the doors start, light the bottom-left indicator
-    // (display_setup $63FD: game_sub_4447 with A=7 -> dial-bar threshold $0F).
+    // (display_setup $63FD: draw_cockpit_dial_bar with A=7 -> dial-bar threshold $0F).
     launch_light_doorstart_native();
 
     // Door-open swoosh ($63D0, id $01): seed it now (as the doors begin scrolling)
@@ -849,6 +853,11 @@ void RescueOnFractalus::run()
 
     // ---- display_setup: launch cinematic (straight-line, real frame-waits) ----
     openDoors();    // audio_stop + sfx reset + STAND BY/score + START arpeggio + gauge init
+    // Engine-voice cold-init ($3DD3-$3DF9): set the engine voices' distortion + the two
+    // persistent cold-seeds NOW (after openDoors's sfx_engine_reset), so the launch
+    // engine-ramp below has a waveform to spin up.  update_gauge_digits (standby VBI)
+    // then plays it across the whole cinematic.
+    launch_engine_voice_init();
 
     // Throttle gauge fill ($63FF): one vobj step per frame until the bar bottoms out.
     while (launch_gauge_step_native()) if (cinematicFrame()) return;
@@ -864,14 +873,22 @@ void RescueOnFractalus::run()
     // reseed the ring coords, arm the tunnel ring ($0088=1).  Then block while the
     // ring cycles (ISR) until advance_message_column clears $0088 (tunnel->stars),
     // re-decoding the expanding black-clear field as it changes.
-    launch_light_all_native();
-    launch_door_swoosh_stop_native();
-    tunnel_ring_arm_native();
-    mem[zp::vbiFlags] = 1u;
+    // Faithful display_setup $6460-$64E8 engine-ramp order: silence the door swoosh
+    // ($6460), reseed the ring coords ($647D), light the column ($6482), seed the
+    // engine body voice loud ($6487), arm the tunnel ring ($64AA); then ramp the
+    // engine priority down while the tunnel cycles ($64B0), and settle to the engine
+    // steady-state once it clears ($64C8).
+    launch_door_swoosh_stop_native();   // $6460: drop the door-swoosh voice
+    tunnel_ring_arm_native();           // $647D: init_row_coords_9c (reseed ring cols)
+    launch_light_all_native();          // $6482: all left lights
+    launch_engine_seed_start();         // $6487-$6493: engine body voice loud onset
+    mem[zp::vbiFlags] = 1u;             // $64AA: arm the tunnel ring ($0088=1)
     while (mem[zp::vbiFlags] != 0) {
+        launch_engine_ramp_step();      // $64B0: ramp engine priority $0F -> $08
         if (g_tunnelFieldDirty) { decodeTunnelField((int)g_tunRowLo, (int)g_tunRowHi); g_tunnelFieldDirty = 0; }
         if (cinematicFrame()) return;
     }
+    launch_engine_steady();             // $64C8-$64E6: engine steady-state
 
     // Stars/space ($64C8): scroll the fractal column buffers each frame, fading the
     // star players in (COLPM 0->$0C), until the scroll accumulator marks it done.

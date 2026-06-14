@@ -2761,8 +2761,8 @@ void setup_dial_bar_draw(void) {
     draw_object_column();         /* 4454 (native) */
 }
 
-/* game_sub_4447 @ $4447 — A += 8 (the lit threshold), then draw the dial bar. */
-void game_sub_4447(void) {
+/* draw_cockpit_dial_bar @ $4447 — A += 8 (the lit threshold), then draw the dial bar. */
+void draw_cockpit_dial_bar(void) {
     cpu.A = (uint8_t)(cpu.A + 0x08);   /* 4447 CLC; 4448 ADC #$08 */
     setup_dial_bar_draw();             /* 444a (native) */
 }
@@ -2977,7 +2977,7 @@ void compute_obj_rel_angle_scale(void) {
  * HUD/audio refresh + the per-object scratch ring rotation, and steps the active object
  * (load_velocity_from_param_block / object_step_and_collide).  Bounded loops only; reads
  * RANDOM $D20A.  Ported goto-faithfully (huge maze).  mem-only contract (reads no entry
- * regs/carry at $8e5b).  Native-call cpu setup: game_sub_55FC needs cpu.Y; game_sub_4447
+ * regs/carry at $8e5b).  Native-call cpu setup: game_sub_55FC needs cpu.Y; draw_cockpit_dial_bar
  * / store_676_init need cpu.A; compute_obj_rel_angle_scale reads ENTRY CARRY ($90f8). */
 void flight_control_integrate(void) {
     uint8_t A, X, Y, c = 0, n, v;
@@ -3015,7 +3015,7 @@ L_8ec5:
         A = mem[0x0025]; ASLA_(); ROLM_(0x0021); ASLA_(); ROLM_(0x0021);   /* 8eda-8ee0 */
         c = 1; A = 0x00; SBC_(mem[0x0021]); mem[0x0021] = A;   /* 8ee2-8ee7 */
         mem[0x0022] = 0xF0;                        /* 8ee9-8eeb */
-        cpu.A = 0x00; game_sub_4447();             /* 8eed-8eef */
+        cpu.A = 0x00; draw_cockpit_dial_bar();             /* 8eed-8eef */
         goto L_8f49;                               /* 8ef2 */
     }
     /* L_8ef5 */
@@ -3463,12 +3463,12 @@ void pmg_enemy_update(void) {
     /* L_7af3: RANDOM was positive -> nothing */
 }
 
-/* enemy_check @ $3FCD — event dispatch.  $063D (event trigger) -> game_sub_4f3f
+/* enemy_check @ $3FCD — event dispatch.  $063D (event trigger) -> intro_cinematic_loop
  * (LEFT TRANSPILED: its closure reaches the whole-program init/teardown; it has
  * 0 callers in steady flight); else $0633 (alien trigger) -> pmg_enemy_update.
  * Contract: memory; exit cpu dead. */
 void enemy_check(void) {
-    if (mem[0x063D] != 0) { game_sub_4f3f(); return; }   /* 3fcd LDA $063D; BNE */
+    if (mem[0x063D] != 0) { intro_cinematic_loop(); return; }   /* 3fcd LDA $063D; BNE */
     if (mem[0x0633] != 0) pmg_enemy_update();            /* 3fd5 LDA $0633; BEQ skip */
 }
 
