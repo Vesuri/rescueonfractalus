@@ -278,6 +278,20 @@ uint8_t platform_hw_read(uint16_t addr)
     // no Amiga joystick wired in yet, report neutral ($FF) so flight_control_integrate
     // reads "stick centred, no fire" — the ship flies straight instead of jamming.
     if (addr == 0xD300u) return 0xFFu;
+    // CONSOL ($D01F): console keys (START/SELECT/OPTION), ACTIVE-LOW (bit clear =
+    // pressed).  The Amiga keyboard handler maintains it in mem[$D01F] (idle $07;
+    // RETURN clears a bit for START).  Reflect that — falling through to 0 reads as
+    // "all console keys held", so the genuine attract idle loop sees START/launch
+    // pressed and auto-starts the DEMO DROID demo within seconds.  ($D01F writes go
+    // through platform_hw_write, which drops non-POKEY addresses, so the keyboard's
+    // mem[$D01F] is never clobbered by genuine code.)
+    if (addr == 0xD01Fu) return mem[0xD01Fu];
+    // TRIG0-3 ($D010-$D013): joystick fire buttons, ACTIVE-LOW ($01 = released,
+    // $00 = pressed).  No Amiga fire wired in yet → report released ($01).  Falling
+    // through to 0 reads as "fire held": read_console_trig_delta ($5A78) computes
+    // (CONSOL&$01) - TRIG0, so TRIG0=0 makes the Standby idle loop think fire is down
+    // and auto-launch the game.  (Wire real Amiga fire here when adding flight input.)
+    if (addr >= 0xD010u && addr <= 0xD013u) return 0x01u;
     // ANTIC VCOUNT ($D40B): the transpiled init code busy-waits on the beam position
     // (wait_vcount_eq $3C75, wait_vcount_ge_7a $3C7B) — spin until VCOUNT == a target or
     // >= $7A.  VCOUNT reflects the vertical scan counter at TWO-LINE resolution (bits
