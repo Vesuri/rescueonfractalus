@@ -262,7 +262,10 @@ void RescueOnFractalus::buildCopperList(CopperList* cl, uint16_t frame)
         uint16_t tbg   = atariToOCS(mem[0x02C8]);  // COLBK = background (grey)
         uint16_t tpf0  = atariToOCS(mem[zp::textColorPf0]);  // COLPF0 = hi2=0 text
         uint16_t tpf1  = atariToOCS(0x78);         // COLPF1 = hi2=1 text (blue) — score digits
-        d[idx++] = copperMove(color00, fadeColor(tbg,  f));
+        // Commit-3 scaffold: if any mem[]-derived render signal disagreed with the
+        // enum this run, paint the title-region background bright red so it's obvious
+        // on FS-UAE which phase the derivation got wrong.  Removed in Commit 4.
+        d[idx++] = copperMove(color00, phaseMismatch ? 0xF00 : fadeColor(tbg,  f));
         d[idx++] = copperMove(color01, fadeColor(tpf0, f));
         d[idx++] = copperMove(color02, fadeColor(tpf1, f));
         d[idx++] = copperMove(color03, fadeColor(tbg,  f));
@@ -976,6 +979,7 @@ RescueOnFractalus::FrameResult RescueOnFractalus::frameStep()
 void RescueOnFractalus::pumpFrame()
 {
     frameCounter++;
+    checkDerivedPhase();   // Commit-3 scaffold: verify mem[]-derived signals vs the enum
     perFrameWork();
     render();
 
@@ -985,6 +989,48 @@ void RescueOnFractalus::pumpFrame()
     if (launchPhase == kFlight) g_flightProf.copper += (unsigned short)(flight_vbi_tick() - c0);
     AmigaHardware::setCopperList(*copperLists[next], false);
     active = next;
+}
+
+// checkDerivedPhase(): Commit-3 realignment scaffold.  Recompute the renderer's gating
+// signals purely from mem[] hardware state — the values buildCopperList/perFrameWork
+// will key off once the transpiled display_setup/game_entry drive the program and the
+// C++ launchPhase enum no longer exists — and compare them against the enum/bools the
+// startX() helpers still set.  Any disagreement latches phaseMismatch (a bitmask) so
+// buildCopperList can flag it visibly (red title border) during an FS-UAE playthrough.
+// Derivations (each cites the mem[] flag the transpiled code maintains):
+//   flight   : $004A (joystickSaved) != 0          — set at flight init ($3EB8)
+//   stars    : VDSLST $0200 == $C2 ($6CC2 mode-D DLI) && !flight  — stars AND planet
+//   viewport : stars || flight                      — the mode-D viewport band is active
+//   gauge    : $060B (cockpit_flag) != 0            — set the instant the cinematic begins
+//   launched : doors armed ($008A!=0 || ring $0088!=0) || viewport — startDoors..flight
+void RescueOnFractalus::checkDerivedPhase()
+{
+    const bool dFlight   = (mem[0x004A] != 0);
+    const bool dStars    = (mem[0x0200] == 0xC2u) && !dFlight;
+    const bool dViewport = dStars || dFlight;
+    const bool dGauge    = (mem[0x060B] != 0);
+    const bool dDoor     = (mem[zp::terrainScrollCounter] != 0) || (mem[zp::vbiFlags] != 0);
+    const bool dLaunched = dDoor || dViewport;
+
+    const bool aGauge  = (launchPhase != kLaunchNone);
+    const bool aStars  = (launchPhase == kLaunchStars || launchPhase == kLaunchPlanet);
+    const bool aFlight = (launchPhase == kFlight);
+
+    uint8_t m = 0;
+    if (dGauge    != aGauge)         m |= 0x01;
+    if (dStars    != aStars)         m |= 0x02;
+    if (dFlight   != aFlight)        m |= 0x04;
+    if (dViewport != viewportActive) m |= 0x08;
+    // launched is correct in every frame that RENDERS in the target, but the current
+    // run() renders one stray frame at doors-fully-open ($008A==0 && $0088==0, ring not
+    // yet armed) where launched is true and neither flag is set.  That frame disappears
+    // once the transpiled display_setup drives (it arms the ring before the next
+    // platform_render_frame), so don't latch the launched mismatch in that exact benign
+    // state — and g2's only consumer is the !viewport door path anyway.
+    const bool launchedDontCare = (!dViewport && mem[zp::terrainScrollCounter] == 0 &&
+                                   mem[zp::vbiFlags] == 0);
+    if (dLaunched != launched && !launchedDontCare) m |= 0x10;
+    if (m) phaseMismatch = m;   // latch any mismatch this run (red title border flags it)
 }
 
 // perFrameWork(): per-frame non-phase work (the tail of the old update()).  These

@@ -68,6 +68,17 @@ private:
         kLaunchStars, kLaunchPlanet, kFlight
     };
     uint8_t  launchPhase  = kLaunchNone;
+
+    // Commit-3 scaffold (realignment step): recompute the renderer's gating signals
+    // (gauge/stars/flight/launched/viewport) purely from mem[] hardware state and
+    // compare them against the C++ launchPhase/launched/viewportActive the startX()
+    // helpers still set.  Any disagreement latches phaseMismatch, which buildCopperList
+    // flags as a red title-region border on FS-UAE (there's no console).  Once a full
+    // playthrough is clean, Commit 4 switches the renderer to the derived signals and
+    // drops the enum reads.
+    void    checkDerivedPhase();
+    uint8_t phaseMismatch = 0;           // bitmask of which signal disagreed (0 = all matched)
+
     void startStars();                   // display_setup $64C8-$6552 stars setup
     void startPlanet();                  // display_setup $6555-$6574 planet setup
     void startFlight();                  // game_entry $3E12-$3EB8 flight init (after planet)
