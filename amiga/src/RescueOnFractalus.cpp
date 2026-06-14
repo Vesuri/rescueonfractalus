@@ -262,10 +262,7 @@ void RescueOnFractalus::buildCopperList(CopperList* cl, uint16_t frame)
         uint16_t tbg   = atariToOCS(mem[0x02C8]);  // COLBK = background (grey)
         uint16_t tpf0  = atariToOCS(mem[zp::textColorPf0]);  // COLPF0 = hi2=0 text
         uint16_t tpf1  = atariToOCS(0x78);         // COLPF1 = hi2=1 text (blue) — score digits
-        // Commit-3 scaffold: if any mem[]-derived render signal disagreed with the
-        // enum this run, paint the title-region background bright red so it's obvious
-        // on FS-UAE which phase the derivation got wrong.  Removed in Commit 4.
-        d[idx++] = copperMove(color00, phaseMismatch ? 0xF00 : fadeColor(tbg,  f));
+        d[idx++] = copperMove(color00, fadeColor(tbg,  f));
         d[idx++] = copperMove(color01, fadeColor(tpf0, f));
         d[idx++] = copperMove(color02, fadeColor(tpf1, f));
         d[idx++] = copperMove(color03, fadeColor(tbg,  f));
@@ -284,13 +281,13 @@ void RescueOnFractalus::buildCopperList(CopperList* cl, uint16_t frame)
     cl->showSprite(idx, 1, *rightPost); idx += 2;
     // Sprite 2 = throttle gauge bar (vobj player strip), only once the launch
     // begins (its data is built from $0D98 from then on); 3..7 stay null.
-    cl->showSprite(idx, 2, launchPhase != kLaunchNone ? *gaugeSprite : *nullSprite); idx += 2;
+    cl->showSprite(idx, 2, rsGauge ? *gaugeSprite : *nullSprite); idx += 2;
     // Sprite 3 stays null (it shares the gauge's colour registers).  Sprites 4/5/6
     // carry the starfield (players P0/P2/P3) during the stars + planet phases.
-    const bool stars = (launchPhase == kLaunchStars || launchPhase == kLaunchPlanet);
+    const bool stars = rsStars;
     // F0 flight perf probe: in flight, sprite 4 (idle starfield sprite) is reused
     // as a vertical bar whose length ∝ flight_frame_native()'s scanline cost.
-    const bool flightProbe = (launchPhase == kFlight);
+    const bool flightProbe = rsFlight;
     cl->showSprite(idx, 3, *nullSprite); idx += 2;
     cl->showSprite(idx, 4, (stars || flightProbe) ? *starSprite[0] : *nullSprite); idx += 2;
     cl->showSprite(idx, 5, stars ? *starSprite[1] : *nullSprite); idx += 2;
@@ -327,6 +324,11 @@ void RescueOnFractalus::buildCopperList(CopperList* cl, uint16_t frame)
     // Door-open progress = steps the native scroll_terrain_dl has taken, read from
     // the $008A counter it decrements ($2B closed -> 0 fully open).  Half-gap g2 in
     // rows grows 0 -> half as the doors part; the split "arises from $008A".
+    // `launched` stays the C++ bool (not a mem[]-derived signal) until Commit 6: under
+    // the current run(), one stray frame renders at doors-fully-open ($008A==0 && ring
+    // not yet armed) where a pure mem[] derivation can't tell "closed (gauge)" from
+    // "fully open", which would flash closed doors.  When the transpiled display_setup
+    // drives, that frame stops rendering and g2 migrates to mem[] (rsViewport/$008A/$0088).
     const uint16_t g2   = launched ? (uint16_t)(0x2Bu - mem[zp::terrainScrollCounter]) : 0;
     const bool     door = (g2 > 0);
     const uint16_t topH = (uint16_t)(half - g2);               // == bottom-band rows
@@ -360,7 +362,7 @@ void RescueOnFractalus::buildCopperList(CopperList* cl, uint16_t frame)
 
     // ---- region WAIT: pointers first, then the 2bp->3bp switch, then colours ----
     d[idx++] = copperWait(kTerrainLine - 1, 0xE0);
-    if (viewportActive) {
+    if (rsViewport) {
         // Stars / planet: one full-height mode-D viewport band from terrainBitmap,
         // with the $6CC2 DLI viewport palette.  Upper zone (slot1 $6D0E): COLBK =
         // mem[$00DC] (black space), COLPF0=$24, COLPF1=$28, COLPF2=$2A — the star /
@@ -368,7 +370,7 @@ void RescueOnFractalus::buildCopperList(CopperList* cl, uint16_t frame)
         // follow-up; one palette renders the whole viewport for now.)
         emitBpl((uint32_t)terrainBitmap->data);
         d[idx++] = copperMove(bplcon0, kBPLCON0_3P);
-        if (launchPhase == kFlight) {
+        if (rsFlight) {
             // Flight terrain palette (the F-skip bypasses the planet-entry colour
             // setup + the dynamic atmosphere pipeline, so render a fixed authentic
             // Fractalus palette here).  Empirically the terrain bitmap encodes
@@ -433,7 +435,7 @@ void RescueOnFractalus::buildCopperList(CopperList* cl, uint16_t frame)
             emitTerrCols();
         }
     }
-    }   // end !viewportActive
+    }   // end !rsViewport
 
     // ---- cockpit region ------------------------------------------------------
     // The cockpit runs at 3 bitplanes (title/terrain stay 2bp): mode-4's bit-7
@@ -524,6 +526,7 @@ void RescueOnFractalus::initialize()
     }
     if (!copperLists[0] || !copperLists[1]) return;
 
+    deriveRenderSignals();   // seed the render signals from the initial mem[] (standby) state
     buildCopperList(copperLists[0], 0);
     buildCopperList(copperLists[1], 0);
     active = 0;
@@ -968,7 +971,7 @@ RescueOnFractalus::FrameResult RescueOnFractalus::frameStep()
     }
 
     pumpFrame();   // the shared repaint body (also used by the transpiled frame pump)
-    if (launchPhase == kFlight) g_flightProf.updateTot += (unsigned short)(flight_vbi_tick() - profU0);
+    if (rsFlight) g_flightProf.updateTot += (unsigned short)(flight_vbi_tick() - profU0);
     return kFrameContinue;
 }
 
@@ -979,58 +982,34 @@ RescueOnFractalus::FrameResult RescueOnFractalus::frameStep()
 void RescueOnFractalus::pumpFrame()
 {
     frameCounter++;
-    checkDerivedPhase();   // Commit-3 scaffold: verify mem[]-derived signals vs the enum
+    deriveRenderSignals();   // recompute the mem[]-derived render-gating signals for this frame
     perFrameWork();
     render();
 
     uint8_t next = 1 - active;
     unsigned short c0 = flight_vbi_tick();
     buildCopperList(copperLists[next], frameCounter);
-    if (launchPhase == kFlight) g_flightProf.copper += (unsigned short)(flight_vbi_tick() - c0);
+    if (rsFlight) g_flightProf.copper += (unsigned short)(flight_vbi_tick() - c0);
     AmigaHardware::setCopperList(*copperLists[next], false);
     active = next;
 }
 
-// checkDerivedPhase(): Commit-3 realignment scaffold.  Recompute the renderer's gating
-// signals purely from mem[] hardware state — the values buildCopperList/perFrameWork
-// will key off once the transpiled display_setup/game_entry drive the program and the
-// C++ launchPhase enum no longer exists — and compare them against the enum/bools the
-// startX() helpers still set.  Any disagreement latches phaseMismatch (a bitmask) so
-// buildCopperList can flag it visibly (red title border) during an FS-UAE playthrough.
-// Derivations (each cites the mem[] flag the transpiled code maintains):
+// deriveRenderSignals(): recompute the renderer's phase-gating signals from mem[]
+// hardware state, once per frame.  These replace the C++ launchPhase enum as the
+// renderer's source of truth (validated bit-for-bit against the enum in Commit 3), so
+// buildCopperList/render/perFrameWork keep working once the transpiled display_setup/
+// game_entry drive the program and the enum is gone.  Each cites the maintaining flag:
 //   flight   : $004A (joystickSaved) != 0          — set at flight init ($3EB8)
 //   stars    : VDSLST $0200 == $C2 ($6CC2 mode-D DLI) && !flight  — stars AND planet
 //   viewport : stars || flight                      — the mode-D viewport band is active
 //   gauge    : $060B (cockpit_flag) != 0            — set the instant the cinematic begins
-//   launched : doors armed ($008A!=0 || ring $0088!=0) || viewport — startDoors..flight
-void RescueOnFractalus::checkDerivedPhase()
+// (The door-gap signal `launched` stays the C++ bool until Commit 6; see g2 below.)
+void RescueOnFractalus::deriveRenderSignals()
 {
-    const bool dFlight   = (mem[0x004A] != 0);
-    const bool dStars    = (mem[0x0200] == 0xC2u) && !dFlight;
-    const bool dViewport = dStars || dFlight;
-    const bool dGauge    = (mem[0x060B] != 0);
-    const bool dDoor     = (mem[zp::terrainScrollCounter] != 0) || (mem[zp::vbiFlags] != 0);
-    const bool dLaunched = dDoor || dViewport;
-
-    const bool aGauge  = (launchPhase != kLaunchNone);
-    const bool aStars  = (launchPhase == kLaunchStars || launchPhase == kLaunchPlanet);
-    const bool aFlight = (launchPhase == kFlight);
-
-    uint8_t m = 0;
-    if (dGauge    != aGauge)         m |= 0x01;
-    if (dStars    != aStars)         m |= 0x02;
-    if (dFlight   != aFlight)        m |= 0x04;
-    if (dViewport != viewportActive) m |= 0x08;
-    // launched is correct in every frame that RENDERS in the target, but the current
-    // run() renders one stray frame at doors-fully-open ($008A==0 && $0088==0, ring not
-    // yet armed) where launched is true and neither flag is set.  That frame disappears
-    // once the transpiled display_setup drives (it arms the ring before the next
-    // platform_render_frame), so don't latch the launched mismatch in that exact benign
-    // state — and g2's only consumer is the !viewport door path anyway.
-    const bool launchedDontCare = (!dViewport && mem[zp::terrainScrollCounter] == 0 &&
-                                   mem[zp::vbiFlags] == 0);
-    if (dLaunched != launched && !launchedDontCare) m |= 0x10;
-    if (m) phaseMismatch = m;   // latch any mismatch this run (red title border flags it)
+    rsFlight   = (mem[0x004A] != 0);
+    rsStars    = (mem[0x0200] == 0xC2u) && !rsFlight;
+    rsViewport = rsStars || rsFlight;
+    rsGauge    = (mem[0x060B] != 0);
 }
 
 // perFrameWork(): per-frame non-phase work (the tail of the old update()).  These
@@ -1050,16 +1029,16 @@ void RescueOnFractalus::perFrameWork()
 
     // Title text ("RESCUE ON FRACTALUS!" / copyright) — the Standby attract banner;
     // don't draw it over the flight cockpit/viewport ($62FB, gated by $060B).
-    if (launchPhase != kFlight && mem[0x060B] == 0)
+    if (!rsFlight && mem[0x060B] == 0)
         copy_text_block_to_screen_native();    // $782A: $0091 → title string
 
     if (mem[zp::joystickSaved] != 0)            // $004A set when the game starts
         update_cockpit_digits_native();          // $3FFA: cockpit digit update
 
-    if (launchPhase != kLaunchNone) buildGaugeSprite();
+    if (rsGauge) buildGaugeSprite();
     // Starfield players $0C32/$0E32/$0F32: scrolled+seeded during stars, static
     // through the planet zoom, so map them both phases.
-    if (launchPhase == kLaunchStars || launchPhase == kLaunchPlanet) buildStarSprites();
+    if (rsStars) buildStarSprites();
 }
 
 // ---- cockpit helpers ---------------------------------------------------------
@@ -1120,11 +1099,11 @@ void RescueOnFractalus::render()
     // is the central 40 bytes — skip the 4 left overscan bytes (pure green fill).
     // This matches the title region, which already crops 2 mode-6 chars (= 16cc).
     static const int kTerrainXByteOffset = 4;
-    if (viewportActive) {
+    if (rsViewport) {
         // Stars/planet (mem[$1000], stride 48) or flight (mem[$1070], stride 96 —
         // displayed offset-0 half).  Content changes every frame, so re-decode each
         // render(); the per-byte shadow keeps it cheap.
-        if (launchPhase == kFlight) {
+        if (rsFlight) {
             unsigned short r0 = flight_vbi_tick();
             renderViewportModeD(0x1070, 96, 43);
             g_flightProf.render += (unsigned short)(flight_vbi_tick() - r0);
@@ -1258,7 +1237,7 @@ void RescueOnFractalus::render()
             }
         }
     }
-    if (launchPhase == kFlight) g_flightProf.renderTot += (unsigned short)(flight_vbi_tick() - profR0);
+    if (rsFlight) g_flightProf.renderTot += (unsigned short)(flight_vbi_tick() - profR0);
 }
 
 void RescueOnFractalus::shutdown()

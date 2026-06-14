@@ -69,15 +69,17 @@ private:
     };
     uint8_t  launchPhase  = kLaunchNone;
 
-    // Commit-3 scaffold (realignment step): recompute the renderer's gating signals
-    // (gauge/stars/flight/launched/viewport) purely from mem[] hardware state and
-    // compare them against the C++ launchPhase/launched/viewportActive the startX()
-    // helpers still set.  Any disagreement latches phaseMismatch, which buildCopperList
-    // flags as a red title-region border on FS-UAE (there's no console).  Once a full
-    // playthrough is clean, Commit 4 switches the renderer to the derived signals and
-    // drops the enum reads.
-    void    checkDerivedPhase();
-    uint8_t phaseMismatch = 0;           // bitmask of which signal disagreed (0 = all matched)
+    // Render-gating signals derived from mem[] hardware state each frame (validated in
+    // Commit 3 against the launchPhase enum, now the source of truth for rendering).
+    // buildCopperList/render/perFrameWork key off these instead of the enum, so the
+    // renderer keeps working once the transpiled display_setup drives the cinematic and
+    // the enum is gone.  (`launched`, which gates only the door gap, stays the C++ bool
+    // until Commit 6 — see the g2 comment in buildCopperList.)
+    void deriveRenderSignals();
+    bool rsGauge    = false;   // $060B != 0          — cinematic begun (gauge sprite on)
+    bool rsStars    = false;   // VDSLST $0200==$C2    — stars/planet viewport (sprites/colours)
+    bool rsFlight   = false;   // $004A != 0           — in-game flight (palette/probe/profiler)
+    bool rsViewport = false;   // stars || flight      — mode-D viewport band active
 
     void startStars();                   // display_setup $64C8-$6552 stars setup
     void startPlanet();                  // display_setup $6555-$6574 planet setup
