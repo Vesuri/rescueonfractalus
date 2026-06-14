@@ -997,11 +997,18 @@ void RescueOnFractalus::deriveRenderSignals()
     rsStars    = standbyVbi && (mem[0x060B] == 0x23u) && (mem[0x0200] == 0xC2u);
     rsViewport = rsStars || rsFlight;
     rsGauge    = (mem[0x060B] != 0);
+
     // launched = doors scroll armed / ring armed / viewport active.  Safe to derive
     // now that the transpiled display_setup drives: it arms the ring before the next
     // platform_render_frame, so no frame renders in the doors-fully-open gap where this
     // would briefly read false (the artifact that kept this as a C++ bool through C4).
     rsLaunched = (mem[zp::terrainScrollCounter] != 0) || (mem[zp::vbiFlags] != 0) || rsViewport;
+
+    // Re-arm the one-time Standby door capture (render() does it once when the doors
+    // are built, gated on $00E7!=0) whenever the scene is NOT a settled Standby —
+    // music off (building / not yet there), launched, or a viewport scene.  So each
+    // fresh entry into Standby re-decodes the doors exactly once and then idles.
+    if (mem[0x00E7] == 0u || rsLaunched || rsViewport) terrainDirty = true;
 }
 
 // perFrameWork(): per-frame non-phase work (the tail of the old update()).  These
@@ -1101,7 +1108,15 @@ void RescueOnFractalus::render()
             g_flightProf.render += (unsigned short)(flight_vbi_tick() - r0);
         }
         else                        renderViewportModeD(0x1000, 48, 43);
-    } else if (terrainDirty) {
+    } else if (terrainDirty && mem[0x00E7] != 0u && !rsLaunched) {
+        // Standby doors: decode the GTIA mode-10 door field at $2000 to the bitplanes
+        // ONCE, then leave it.  The genuine display_setup builds $2000 AFTER
+        // initialize() ran (so a capture at init grabbed the empty pristine RAM — the
+        // garbled-doors bug) and finishes by the time it reaches the idle loop and
+        // starts the music.  $00E7!=0 (music gate set by $70E7) is that "$2000 is
+        // built" signal — decode once here, clear terrainDirty, and do no per-frame
+        // work on the static Standby.  deriveRenderSignals re-arms terrainDirty when
+        // the scene leaves Standby, so re-entering it re-captures the doors once.
         terrainDirty = false;
         uint8_t* vdest = (uint8_t*)terrainBitmap->data;
         for (int row = 0; row < (int)kTerrainHeight; row++) {
