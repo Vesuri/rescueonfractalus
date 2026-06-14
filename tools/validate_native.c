@@ -448,7 +448,7 @@ static int test_from_snapshot(const char *name, void (*nat)(void), void (*t6502)
     return mem_fail;
 }
 
-/* Dial-bar trio (game_sub_4447 / setup_dial_bar_draw / draw_object_column): the draw loop
+/* Dial-bar trio (draw_cockpit_dial_bar / setup_dial_bar_draw / draw_object_column): the draw loop
  * reads column pointers from the $4581 table and writes via them, so it needs the REAL
  * table (random mem could point a write at the loop counter $00BD -> same infinite loop in
  * both runs, undiffable).  Seed from the flight snapshot, force the real loop bounds
@@ -612,7 +612,7 @@ static int test_game_state_update(void) {
 }
 
 /* enemy_check @ $3FCD: force $063D=0 so it dispatches down the $0633->pmg_enemy_update
- * branch (the $063D!=0 branch tail-calls the still-transpiled game_sub_4f3f, whose
+ * branch (the $063D!=0 branch tail-calls the still-transpiled intro_cinematic_loop, whose
  * closure spins on VCOUNT busy-waits the harness can't advance — and it is a trivial
  * identical tail-call to unchanged transpiled code, so it needs no diff).  Random mem
  * otherwise; pmg_enemy_update + its native callees have no unbounded loops. */
@@ -623,7 +623,7 @@ static int test_enemy_check(void) {
     int mem_fail = 0, cpu_diff = 0, printed = 0;
     for (int t = 0; t < N; t++) {
         fill_random(pre);
-        pre[0x063D] = 0x00;                       /* avoid the transpiled game_sub_4f3f branch */
+        pre[0x063D] = 0x00;                       /* avoid the transpiled intro_cinematic_loop branch */
         mem_fail += diff_run("enemy_check", pre, zero_cpu(),
                              enemy_check, enemy_check__t6502, t, &printed, &cpu_diff);
     }
@@ -749,7 +749,7 @@ int main(int argc, char **argv) {
     fails += test_mem_contract_regs("compute_obj_rel_angle_scale", compute_obj_rel_angle_scale, compute_obj_rel_angle_scale__t6502);
     fails += test_dial_bar("draw_object_column", draw_object_column, draw_object_column__t6502, 0x0F);
     fails += test_dial_bar("setup_dial_bar_draw", setup_dial_bar_draw, setup_dial_bar_draw__t6502, 0x3F);
-    fails += test_dial_bar("game_sub_4447", game_sub_4447, game_sub_4447__t6502, 0x3F);
+    fails += test_dial_bar("draw_cockpit_dial_bar", draw_cockpit_dial_bar, draw_cockpit_dial_bar__t6502, 0x3F);
     /* batch 3 — mid drivers */
     fails += test_mem_contract("countdown_show_char_0620", countdown_show_char_0620, countdown_show_char_0620__t6502);
     fails += test_mem_contract("check_object_in_target_box", check_object_in_target_box, check_object_in_target_box__t6502);
