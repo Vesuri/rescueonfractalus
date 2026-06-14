@@ -72,6 +72,20 @@ extern "C" volatile uint16_t g_vbiCount;                       // bumped by the 
 extern "C" bool    station_poll_start_native(void);            // station_init CONSOL ($D01F) START poll
 extern "C" volatile uint8_t g_skipToFlight;                    // F-key edge: dev skip-to-flight
 
+// The genuine transpiled launch cinematic ($5F1D, src/gen/rof_gen.c) and the blocking-
+// pump gate (PaulaAudio.cpp): while rof_launch_blocking(1) is set, display_setup()'s
+// frame-wait spin loops drive real frames through platform_render_frame and RTCLOK is
+// owned by platform_tick_vbi (the ISR's bump is gated off).
+extern "C" void display_setup(void);
+extern "C" void rof_launch_blocking(uint8_t on);
+// The genuine boot chain (src/gen/rof_gen.c): station_init = attract ($195D, returns on
+// START); game_entry = $3CDE -> game_main_loop (game-display setup -> display_setup
+// cinematic -> flight loop, never returns).  g_quitJmp = the __builtin_setjmp buffer
+// (defined in main.cpp) the pump longjmps to on quit, unwinding the transpiled chain.
+extern "C" void station_init(void);
+extern "C" void game_entry(void);
+extern "C" void* g_quitJmp[];   // definition (sized) lives in main.cpp
+
 extern "C" volatile uint8_t mem[65536];
 
 // Lookup table: byte → 16-bit doubled glyph pattern (each bit → 2 pixels).
@@ -324,12 +338,7 @@ void RescueOnFractalus::buildCopperList(CopperList* cl, uint16_t frame)
     // Door-open progress = steps the native scroll_terrain_dl has taken, read from
     // the $008A counter it decrements ($2B closed -> 0 fully open).  Half-gap g2 in
     // rows grows 0 -> half as the doors part; the split "arises from $008A".
-    // `launched` stays the C++ bool (not a mem[]-derived signal) until Commit 6: under
-    // the current run(), one stray frame renders at doors-fully-open ($008A==0 && ring
-    // not yet armed) where a pure mem[] derivation can't tell "closed (gauge)" from
-    // "fully open", which would flash closed doors.  When the transpiled display_setup
-    // drives, that frame stops rendering and g2 migrates to mem[] (rsViewport/$008A/$0088).
-    const uint16_t g2   = launched ? (uint16_t)(0x2Bu - mem[zp::terrainScrollCounter]) : 0;
+    const uint16_t g2   = rsLaunched ? (uint16_t)(0x2Bu - mem[zp::terrainScrollCounter]) : 0;
     const bool     door = (g2 > 0);
     const uint16_t topH = (uint16_t)(half - g2);               // == bottom-band rows
     const bool tunnelFirst = door && (topH == 0);              // fully open: tunnel fills region
@@ -592,9 +601,12 @@ void RescueOnFractalus::initialize()
     // later comes from cycling COLOR01-06; the ring pattern itself is static.
     decodeTunnelRings();
 
-    // Init complete — arm the standby/launch VBI ($52D7) in the real INTB_VERTB ISR.
-    // (The ISR has been firing since AddIntServer in main(), but g_activeVbi was 0
-    // so it only bumped RTCLOK; now standby_vbi_native runs each vblank.)
+    // Init complete — release the ISR's "scene ready" gate (g_activeVbi != 0).  The ISR
+    // dispatches on the live VVBLKI vector ($0222/$0223), so seed it to $52D7 (standby)
+    // for the brief window before run()->station_init installs the $1B30 attract vector;
+    // otherwise the snapshot's stale VVBLKI could pick the wrong body for a few frames.
+    mem[0x0222] = 0xD7u;   // VVBLKI lo
+    mem[0x0223] = 0x52u;   // VVBLKI hi  -> $52D7 standby VBI
     g_activeVbi = 1;
 }
 
@@ -848,80 +860,29 @@ void RescueOnFractalus::run()
     return;
 #endif
 
-    // ---- station_init: attract loop — wait for START ($D01F CONSOL) ----------
-    // The Atari attract loop ($1A01) spins one animation frame per VBI flag until
-    // START changes CONSOL.  station_poll_start_native ports that CONSOL read.
-    for (;;) {
-        if (g_skipToFlight) { g_skipToFlight = 0; skipToFlight(); flightLoop(); return; }
-        if (station_poll_start_native()) break;   // START pressed -> launch
-        if (cinematicFrame()) return;             // one attract frame (ISR runs the $52D7 VBI)
-    }
+    // ---- the genuine transpiled boot chain drives EVERYTHING --------------------
+    // mem[] is the pristine rof.xex image (load_xex_image in paula_audio_init): every
+    // segment at its load address, all runtime state at genuine power-on values
+    // ($00E7 music gate = 0, etc.).  rof.xex boots via a chain of INITAD stubs run by
+    // the OS loader: $5000 (Logo) -> $1A97 (Station cinematic) -> $B800 (display setup)
+    // -> $3CDE (game_entry, the final INITAD = the real program entry).
+    //
+    // FOUNDATION SCOPE (parts 1+2): our port begins at Standby (the hangar), so we skip
+    // the Logo + Station-cinematic INITADs ($5000/$1A97 — deferred: they need their own
+    // screenmodes + native twins for the heavy transpiled animation) and enter directly
+    // at game_entry ($3CDE).  game_entry's 737-byte mega-init establishes the genuine
+    // game state itself — including calling $70E7 to start the Standby music (setting
+    // $00E7) at the right moment — instead of inheriting it from a hand-crafted snapshot.
+    //
+    // game_main_loop's flight loop never returns; the user-quit path unwinds the whole
+    // transpiled call stack back here via __builtin_longjmp (armed below).  Each frame-
+    // wait spin loop is a SPINWAIT_HOOK driving a real Amiga frame through the pump
+    // (platform_render_frame -> pumpFrame); the VBI body follows the live VVBLKI vector
+    // game_entry installs (game_vbi_isr dispatches $52D7/$4FF5 automatically).
+    if (__builtin_setjmp(g_quitJmp) != 0) return;   // quit: unwound here from the pump/poll hook
 
-    // ---- display_setup: launch cinematic (straight-line, real frame-waits) ----
-    openDoors();    // audio_stop + sfx reset + STAND BY/score + START arpeggio + gauge init
-    // Engine-voice cold-init ($3DD3-$3DF9): set the engine voices' distortion + the two
-    // persistent cold-seeds NOW (after openDoors's sfx_engine_reset), so the launch
-    // engine-ramp below has a waveform to spin up.  update_gauge_digits (standby VBI)
-    // then plays it across the whole cinematic.
-    launch_engine_voice_init();
-
-    // Throttle gauge fill ($63FF): one vobj step per frame until the bar bottoms out.
-    while (launch_gauge_step_native()) if (cinematicFrame()) return;
-
-    // Doors ($641E): startDoors() arms the $008A door-scroll; the $5367 dispatcher
-    // scrolls it in the standby VBI ISR.  Block until fully open — exactly as
-    // display_setup busy-waits (wait_frames_2 loop) while the VBI animates the doors.
-    startDoors();
-    while (!(mem[zp::vbiFlags] == 0 && mem[zp::terrainScrollCounter] == 0))
-        if (cinematicFrame()) return;
-
-    // Doors fully open ($6482): light the whole left column, silence the swoosh,
-    // reseed the ring coords, arm the tunnel ring ($0088=1).  Then block while the
-    // ring cycles (ISR) until advance_message_column clears $0088 (tunnel->stars),
-    // re-decoding the expanding black-clear field as it changes.
-    // Faithful display_setup $6460-$64E8 engine-ramp order: silence the door swoosh
-    // ($6460), reseed the ring coords ($647D), light the column ($6482), seed the
-    // engine body voice loud ($6487), arm the tunnel ring ($64AA); then ramp the
-    // engine priority down while the tunnel cycles ($64B0), and settle to the engine
-    // steady-state once it clears ($64C8).
-    launch_door_swoosh_stop_native();   // $6460: drop the door-swoosh voice
-    tunnel_ring_arm_native();           // $647D: init_row_coords_9c (reseed ring cols)
-    launch_light_all_native();          // $6482: all left lights
-    launch_engine_seed_start();         // $6487-$6493: engine body voice loud onset
-    mem[zp::vbiFlags] = 1u;             // $64AA: arm the tunnel ring ($0088=1)
-    while (mem[zp::vbiFlags] != 0) {
-        launch_engine_ramp_step();      // $64B0: ramp engine priority $0F -> $08
-        if (g_tunnelFieldDirty) { decodeTunnelField((int)g_tunRowLo, (int)g_tunRowHi); g_tunnelFieldDirty = 0; }
-        if (cinematicFrame()) return;
-    }
-    launch_engine_steady();             // $64C8-$64E6: engine steady-state
-
-    // Stars/space ($64C8): scroll the fractal column buffers each frame, fading the
-    // star players in (COLPM 0->$0C), until the scroll accumulator marks it done.
-    startStars();
-    while (launch_stars_step_native()) {
-        if (mem[0x02C0] < 0x0Cu) {
-            uint8_t cv = (uint8_t)(mem[0x02C0] + 1u);
-            for (int i = 0; i < 4; i++) mem[0x02C0 + (uint16_t)i] = cv;
-        }
-        if (cinematicFrame()) return;
-    }
-
-    // Planet zoom ($6574): the sphere grows every OTHER frame ($6578: $0014>=2 gate),
-    // but the starfield drifts up every frame (the $0089=2 scroll-only VBI path).
-    startPlanet();
-    uint8_t planetGate = 0;
-    for (;;) {
-        launch_planet_scroll_native();
-        planetGate ^= 1u;
-        bool done = planetGate && (launch_planet_step_native() == 0);
-        if (cinematicFrame()) return;
-        if (done) break;          // planet risen -> display_setup RTSes into flight
-    }
-
-    // ---- game_entry: flight ($3E12 init then $3EBA loop) ----------------------
-    startFlight();
-    flightLoop();
+    rof_launch_blocking(1);
+    game_entry();     // $3CDE: mega-init -> game_main_loop (Standby -> cinematic -> flight); never returns
 }
 
 // flightLoop(): game_entry's per-frame flight loop ($3EBA).  The flight motion VBI
@@ -983,6 +944,11 @@ void RescueOnFractalus::pumpFrame()
 {
     frameCounter++;
     deriveRenderSignals();   // recompute the mem[]-derived render-gating signals for this frame
+    // Tunnel reveal: the $52D7 VBI's advance_message_column draws the expanding black
+    // clear into mem[$2000] and flags g_tunnelFieldDirty with its row extent; re-decode
+    // those rows into tunnelBitmap here (was in run()'s tunnel loop, now that the
+    // transpiled display_setup drives the cinematic).
+    if (g_tunnelFieldDirty) { decodeTunnelField((int)g_tunRowLo, (int)g_tunRowHi); g_tunnelFieldDirty = 0; }
     perFrameWork();
     render();
 
@@ -1010,6 +976,11 @@ void RescueOnFractalus::deriveRenderSignals()
     rsStars    = (mem[0x0200] == 0xC2u) && !rsFlight;
     rsViewport = rsStars || rsFlight;
     rsGauge    = (mem[0x060B] != 0);
+    // launched = doors scroll armed / ring armed / viewport active.  Safe to derive
+    // now that the transpiled display_setup drives: it arms the ring before the next
+    // platform_render_frame, so no frame renders in the doors-fully-open gap where this
+    // would briefly read false (the artifact that kept this as a C++ bool through C4).
+    rsLaunched = (mem[zp::terrainScrollCounter] != 0) || (mem[zp::vbiFlags] != 0) || rsViewport;
 }
 
 // perFrameWork(): per-frame non-phase work (the tail of the old update()).  These

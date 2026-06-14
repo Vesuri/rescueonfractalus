@@ -27,6 +27,9 @@ extern struct GfxBase* GfxBase;
 // mem[] lives in audio/rof_gen.c; also written by the VBI handler.
 extern "C" volatile uint8_t mem[65536];
 
+// load_xex_image (XexImage.cpp): populate mem[] with the pristine rof.xex boot image.
+extern "C" void load_xex_image(void);
+
 // sfx_voice_tick_native: driven by CIA-B Timer A (see below), not the main loop.
 extern "C" void sfx_voice_tick_native(void);
 
@@ -69,25 +72,31 @@ static class RescueOnFractalus* g_scenePtr = 0;
 // and by PaulaAudio's platform_poll_events (the transpiled non-frame spin hooks);
 // exported (non-static) so both translation units write the one flag.
 extern "C" volatile uint8_t    g_pumpQuit = 0;
+// g_quitJmp: the transpiled chain (station_init -> game_entry) never returns — the
+// flight loop spins forever.  RescueOnFractalus::run() arms this with __builtin_setjmp;
+// when the user quits, the pump / poll hook __builtin_longjmp's back to it, unwinding
+// the transpiled call stack (plain C, no destructors).  5 words per the GCC builtin.
+extern "C" void* g_quitJmp[5] = { 0, 0, 0, 0, 0 };   // definition (initializer forces it)
 static void launchFramePump(void)
 {
     uint16_t last = g_vbiCount;
     while (g_vbiCount == last) { /* wait for next real VBI */ }
     if (g_scenePtr) g_scenePtr->pumpFrame();   // full repaint body (shared with frameStep)
     if (AmigaHardware::isLeftMouseButtonPressed()) g_pumpQuit = 1;
+    if (g_pumpQuit) __builtin_longjmp(g_quitJmp, 1);   // escape the never-returning chain
 }
 
 static uint32_t vbiHandler()
 {
-    // Mirror vbi_handler_1 ($53CC): bump RTCLOK ($0014 low, carry into $0013).
-    // (Do NOT touch $0080 — that is sync_flag, which the 6502 drawing/scroll
-    // routines reuse as the $80/$81 zero-page pointer pair; incrementing it here
-    // each frame corrupted mid-draw pointer writes, e.g. dropped tunnel pixels.)
-    // While the launch cinematic blocks on a transpiled frame-wait, RTCLOK is
-    // advanced synchronously by platform_tick_vbi (in lockstep with the wait loop)
-    // — bumping it here too would desync/hang the loop.  vbiCount still ticks so the
-    // frame pump can pace one repaint per real VBI.
-    if (!g_launchBlocking) {
+    // RTCLOK ($0014 low, carry $0013) is owned by the ISR — bumped once per real VBI,
+    // exactly as the Atari OS / in-game VBI did.  The transpiled frame-wait spin loops
+    // pace on it via platform_render_frame (which waits one real VBI per iteration), so
+    // platform_tick_vbi no longer bumps it.  EXCEPTION: the attract VBI ($1B30) bumps
+    // RTCLOK itself in its own transpiled body, so skip here when it's the active vector
+    // (else double).  (Do NOT touch $0080 — sync_flag, reused as the $80/$81 zp pointer
+    // by draw routines; $1B30 sets it for the attract instead.)
+    uint16_t vbiVec = (uint16_t)(mem[0x0222] | (mem[0x0223] << 8));
+    if (vbiVec != 0x1B30u) {
         mem[0x0014]++;               // RTCLOK_LOW
         if (!mem[0x0014]) mem[0x0013]++;  // RTCLOK_MID carry
     }
@@ -183,6 +192,10 @@ int main()
     // --- attract scene -------------------------------------------------------
     // Enable copper + raster + sprite DMA, then let RescueOnFractalus install its list.
     *dmaconPointer = (uint16_t)(DMAF_SETCLR | DMAF_MASTER | DMAF_COPPER | DMAF_RASTER | DMAF_SPRITE);
+
+    // Load the faithful boot memory image (pristine rof.xex) into mem[] before anything
+    // reads it — this is the genuine power-on RAM the original setup code expects.
+    load_xex_image();
 
     // static (BSS), NOT a stack local: the scene holds several KB of shadow buffers
     // (tunnel/viewport/cockpit per-byte caches), which would overflow the program stack.

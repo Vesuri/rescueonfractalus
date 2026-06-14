@@ -39,6 +39,15 @@ MANUAL_FUNCS = {
     0x1a62,  # screen_page_swap
     0x49EE,  # dli_handler_game   — needs INC $C7 after dispatch + cockpit variant
     0x6CC2,  # dli_handler_game2  — same
+    # Attract per-frame leaves: the genuine station_init control FLOW runs, but these
+    # heavy animation routines must be native (the transpiled CPU-emulation is ~60x too
+    # slow on the 68000).  Native versions in rof_manual.c do the same mem[] mutations
+    # in plain C.  (display_scroll $1CF7 + station_sub_1f51 $1F51 are folded into these
+    # as private helpers — their only callers are these three, so the transpiled copies
+    # are dead.)
+    0x1D9A,  # station_anim_frame  (calls display_scroll)
+    0x1EB4,  # station_sub_1EB4
+    0x1F48,  # station_sub_1F48    (walks channels via station_sub_1f51)
 }
 
 # Functions being reimplemented natively, validated against the transliteration.
@@ -163,6 +172,10 @@ HW_BASE, HW_END = 0xD000, 0xD800   # bus_read/bus_write range
 # these, tight C spin-wait loops starve the platform and VBI never fires.
 # Key: 6502 address of the loop-back label. Value: C statement(s) to inject.
 SPINWAIT_HOOKS = {
+    # L_1A18: station_init attract loop — spins on the $0080 sync flag set by the
+    # attract VBI ($1B30).  Drive a frame each iteration so the attract animates and
+    # the VBI fires (sets $0080 + RTCLOK); without it the loop is a frozen tight spin.
+    0x1A18: 'platform_tick_vbi(); platform_render_frame();',
     0x3C75: 'platform_poll_events();',           # VCOUNT position wait
     0x3CB8: 'platform_tick_vbi(); platform_render_frame();',  # RTCLOK frame wait
     # L_3eba: main flight loop in FUN_3d48 — one full frame of terrain gen,

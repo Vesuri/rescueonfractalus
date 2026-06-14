@@ -114,14 +114,17 @@ extern "C" void flight_vbi_native(void)
     g_flightProf.isrCalls++;
 }
 
-// g_activeVbi: which VBI body the real INTB_VERTB ISR runs, mirroring how the Atari
-// swaps the VVBLKI vector by phase.  0 = none (during scene init), 1 = standby/launch
-// ($52D7 vbi_handler_standby), 2 = flight ($4FF5 vbi_handler_flight).  Set by the
-// scene (initialize() -> 1, startFlight() -> 2) only AFTER that phase's state is ready.
+// g_activeVbi: now only a "scene ready" gate (0 = scene still initialising, ISR does
+// nothing — the snapshot's VVBLKI may be stale; nonzero = ready, dispatch on VVBLKI).
+// The genuine transpiled chain swaps the real VVBLKI vector ($0222/$0223) per phase, and
+// game_vbi_isr dispatches on THAT (see below), so this no longer selects the body.
 extern "C" volatile uint8_t g_activeVbi = 0;
 
 // standby_vbi_native: the faithful $52D7 per-frame body (defined in NativeHandlers.cpp).
 extern "C" void standby_vbi_native(void);
+// vbi_handler_station ($1B30): the attract-mode VBI (transpiled).  It sets the $0080
+// sync flag the station_init attract loop spins on, and bumps RTCLOK itself.
+extern "C" void vbi_handler_station(void);
 
 // game_vbi_isr: the dispatcher the real Amiga vertical-blank interrupt calls.  This is
 // where the Atari's per-frame VBI work belongs — run in the VBI, not the main loop —
@@ -135,9 +138,18 @@ extern "C" void standby_vbi_native(void);
 // Atari, where $52D7/$4FF5 ran concurrently with the main loop and it worked).
 extern "C" void game_vbi_isr(void)
 {
+    if (!g_activeVbi) return;                        // scene still initialising — stay inert
+    // Dispatch on the LIVE VVBLKI vector ($0222/$0223), exactly as the Atari OS VBLANK
+    // jumps through it.  The genuine station_init/display_setup/game_main_loop install
+    // $1B30 (attract) / $52D7 (standby+cinematic) / $4FF5 (flight) in turn, so the right
+    // body runs automatically — including across the internal cinematic->flight switch
+    // inside game_main_loop.  An unknown or half-written vector falls back to standby
+    // (harmless for the odd frame during a two-byte vector update).
+    uint16_t vbi = (uint16_t)(mem[0x0222] | (mem[0x0223] << 8));
     Cpu6502 saved = cpu;                            // == OS VBLANK PHA;TXA;PHA;TYA;PHA
-    if      (g_activeVbi == 2) flight_vbi_native();  // $4FF5 in-flight VBI
-    else if (g_activeVbi == 1) standby_vbi_native(); // $52D7 standby/launch VBI
+    if      (vbi == 0x4FF5) flight_vbi_native();     // $4FF5 in-flight VBI
+    else if (vbi == 0x1B30) vbi_handler_station();   // $1B30 attract VBI (sets $0080 + RTCLOK)
+    else                    standby_vbi_native();    // $52D7 standby/launch VBI (and fallback)
     cpu = saved;                                    // == XITVBV PLA;TAY;PLA;TAX;PLA
     paula_noise_tick();                             // refresh poly17 noise sample (no cpu use)
 }

@@ -8,9 +8,8 @@
 //
 // Volume mapping: AUDC[3:0] * 4 → Paula AUDxVOL (0..64); 0 if bit 4 set.
 //
-// Memory snapshot: disasm/rof_mem.bin (64 KB flat) is embedded in .rodata via
-// incbin.s and copied verbatim into mem[] on init.  It is the post-loader state
-// captured at game_entry() — all attract tables are already correctly initialised.
+// Memory image: mem[] is populated by load_xex_image() (XexImage.cpp) from the
+// pristine rof.xex before the scene initialises; this file only drives Paula.
 
 #define ECS_SPECIFIC
 #include <hardware/dmabits.h>
@@ -20,9 +19,8 @@
 // mem[] and cpu are defined in src/cpu/cpu.c (compiled for m68k as audio/cpu.o)
 extern "C" volatile uint8_t mem[65536];
 
-// 64 KB flat memory snapshot embedded in incbin.s
-extern "C" uint8_t rof_mem_bin[];
-extern "C" uint8_t rof_mem_bin_end[];
+// The boot memory image (pristine rof.xex) is loaded by load_xex_image() in
+// XexImage.cpp, called from main() before the scene initialises.
 
 // POKEY distortion waveforms in chip RAM (Paula DMA must reach chip RAM).
 // POKEY runs each channel's clock through a polynomial counter selected by the
@@ -228,24 +226,14 @@ static void update_paula_channel(uint8_t ch)
     AUD_VOL(ch) = vol;
 }
 
-// ---- XEX loader --------------------------------------------------------------
-static void load_mem_snapshot(void)
-{
-    // Flat 64 KB copy — rof_mem.bin is the post-loader state, ready to run.
-    const uint8_t* src = rof_mem_bin;
-    for (uint32_t i = 0; i < 65536u; i++) {
-        mem[i] = src[i];
-    }
-}
-
 // Forward declaration — defined in SfxPlayer.cpp
 extern "C" void sfx_seq_step_native(void);
 
 // ---- public interface --------------------------------------------------------
+// mem[] has already been populated (load_xex_image, called from main before the scene
+// initialises); this only sets up the Paula side.
 void paula_audio_init(void)
 {
-    load_mem_snapshot();
-
     // Clear POKEY shadow and LFSR
     for (int i = 0; i < 16; i++) pokey[i] = 0;
     lfsr_state = 0x1FFFFu;
@@ -326,17 +314,20 @@ void platform_register_vbi(uint16_t /*addr*/, void (*/*fn*/)(void)) {}
 void platform_indirect_jmp(uint16_t /*addr*/) {}
 
 // g_pumpQuit: the shared "user wants out" flag (defined in main.cpp, also set by the
-// frame pump there on left-mouse).  Polled by the main loop to tear down.
+// frame pump there on left-mouse).  g_quitJmp: the __builtin_setjmp buffer armed by
+// RescueOnFractalus::run() so we can unwind the never-returning transpiled chain on quit.
 extern "C" volatile uint8_t g_pumpQuit;
+extern "C" void* g_quitJmp[];
 
 // platform_poll_events: called from the transpiled spin-wait hooks (SPINWAIT_HOOKS in
 // transpile.py) at the VCOUNT/CONSOL poll points that do NOT pace a frame.  Poll the
 // quit control (left mouse) so the player can always abort even while the transpiled
-// code spins in a tight non-frame wait.  Unlike platform_render_frame this must NOT
-// wait for a VBI.  (F-key skip is handled separately by the keyboard ISR via
-// g_skipToFlight.)
+// code spins in a tight non-frame wait, and unwind to run() if so.  Unlike
+// platform_render_frame this must NOT wait for a VBI.  (F-key skip is handled separately
+// by the keyboard ISR via g_skipToFlight.)
 void platform_poll_events(void) {
     if (AmigaHardware::isLeftMouseButtonPressed()) g_pumpQuit = 1;
+    if (g_pumpQuit) __builtin_longjmp(g_quitJmp, 1);   // escape the never-returning chain
 }
 
 // --- launch-cinematic blocking frame pump -----------------------------------
@@ -373,7 +364,12 @@ void platform_tick_vbi(void) {
     // in main.cpp's vbiHandler); we advance RTCLOK here instead — exactly once per
     // transpiled spin iteration — so it stays in lockstep with the wait loop while
     // platform_render_frame() (s_framePump) still waits one real VBI for pacing.
-    if (g_fastForwardFrames || g_launchBlocking) {
+    // RTCLOK is owned by the real-VBI ISR (vbiHandler), which bumps it once per frame;
+    // platform_render_frame paces the transpiled spin loops on that, so we do NOT bump
+    // here during the normal chain.  The sole remaining use is flight_init's fast-forward
+    // (g_fastForwardFrames): there the F-skip wants wait_frames_60 to resolve in compute
+    // time, with no real VBI wait, so advance RTCLOK synthetically.
+    if (g_fastForwardFrames) {
         mem[0x0014]++;                      // RTCLOK_LOW (mirrors vbiHandler)
         if (!mem[0x0014]) mem[0x0013]++;    // RTCLOK_MID carry
     }

@@ -32,8 +32,8 @@ CPP_OBJS := $(FW_OBJS) $(SRC_OBJS)
 # M5 audio slice: the 6502-converted cpu/bus core + generated audio functions.
 # Compiled as plain C (not C++), with include paths into the repo src tree.
 # --gc-sections keeps only what station_audio transitively calls.
-AUDIO_C_SRCS := $(REPO)/src/cpu/cpu.c $(REPO)/src/gen/rof_gen.c $(REPO)/src/gen/rof_native.c
-AUDIO_C_OBJS := obj/audio/cpu.o obj/audio/rof_gen.o obj/audio/rof_native.o
+AUDIO_C_SRCS := $(REPO)/src/cpu/cpu.c $(REPO)/src/gen/rof_gen.c $(REPO)/src/gen/rof_native.c $(REPO)/src/gen/rof_manual.c
+AUDIO_C_OBJS := obj/audio/cpu.o obj/audio/rof_gen.o obj/audio/rof_native.o obj/audio/rof_manual.o
 
 # Support runtime (freestanding CRT: program entry, memset…)
 S_OBJS   := obj/gcc8_a_support.o obj/incbin.o
@@ -49,12 +49,16 @@ AUDIO_CINCLUDES = -I"$(CURDIR)/framework/compat-include" \
                   -I"$(REPO)/src/cpu" \
                   -I"$(REPO)/src/gen" \
                   -I"$(REPO)/src/platform"
-AUDIO_CFLAGS  = -g -MP -MMD -m68000 -msoft-float -O2 -nostdlib -fomit-frame-pointer \
+# Optimization level — overridable for debug builds, e.g.
+#   make OPT='-O0' NATIVE_OPT='-O0'   (also drops -fomit-frame-pointer for clean backtraces)
+OPT       ?= -O2 -fomit-frame-pointer
+NATIVE_OPT ?= -O3 -funroll-loops
+AUDIO_CFLAGS  = -g -MP -MMD -m68000 -msoft-float $(OPT) -nostdlib \
                 -fno-tree-loop-distribution -ffunction-sections -fdata-sections \
                 -Wno-unused-function -Wno-unused-parameter -Wno-unused-variable \
                 -Wno-implicit-function-declaration -Wno-int-conversion \
                 $(AUDIO_CINCLUDES) $(EXTRA_DEFINES)
-CCFLAGS   = -g -MP -MMD -m68000 -msoft-float -O2 -nostdlib -fomit-frame-pointer \
+CCFLAGS   = -g -MP -MMD -m68000 -msoft-float $(OPT) -nostdlib \
             -fno-tree-loop-distribution -ffunction-sections -fdata-sections \
             -DNO_ASSEMBLER $(WARN) $(EXTRA_DEFINES)
 CPPFLAGS  = $(CCFLAGS) -fno-rtti -fno-exceptions -fno-use-cxa-atexit -std=gnu++17 \
@@ -97,7 +101,7 @@ obj/gcc8_a_support.o : $(SUPPORT)/gcc8_a_support.s
 # Without this, editing/regenerating an embedded dump leaves a stale blob in the
 # binary while the on-disk file looks correct (this exact trap shifted the SFX
 # music + title data by one byte and cost a long debugging session).
-INCBIN_DEPS := assets/cockpit.raw ../disasm/screen3_mem.bin
+INCBIN_DEPS := assets/cockpit.raw ../disasm/screen3_mem.bin ../rof.xex
 obj/incbin.o : src/incbin.s $(INCBIN_DEPS)
 	$(info ASM  $<)
 	@$(AS) $(ASFLAGS) -o $@ "$(CURDIR)/src/incbin.s"
@@ -114,8 +118,15 @@ obj/audio/rof_gen.o : $(REPO)/src/gen/rof_gen.c
 # rof_native.c: hand-written native twins (divide_16x16, …) the transpile leaves
 # unimplemented (VALIDATE_FUNCS seam) — required once flight code references them.
 obj/audio/rof_native.o : $(REPO)/src/gen/rof_native.c
-	$(info C    $< [audio, -O3])
-	@$(CC) $(AUDIO_CFLAGS) -O3 -funroll-loops -c -o $@ "$(abspath $<)"
+	$(info C    $< [audio, native])
+	@$(CC) $(AUDIO_CFLAGS) $(NATIVE_OPT) -c -o $@ "$(abspath $<)"
+
+# rof_manual.c: hand-written replacements for self-modifying routines (screen_page_swap,
+# the DLI handlers).  Needed now that the genuine station_init/game_main_loop chain is
+# linked (station_init tail-calls screen_page_swap).  GC-sections keeps only what's used.
+obj/audio/rof_manual.o : $(REPO)/src/gen/rof_manual.c
+	$(info C    $< [audio])
+	@$(CC) $(AUDIO_CFLAGS) -c -o $@ "$(abspath $<)"
 
 clean:
 	@$(RM) -r obj/ out/

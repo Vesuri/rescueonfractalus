@@ -241,7 +241,7 @@ L_1a01:;
     if (cpu.Z) goto L_1a2f;
     /* 1a15 */
     station_audio();
-L_1a18:;
+L_1a18:; platform_tick_vbi(); platform_render_frame();
     /* 1a18 */
     LDA(mem[0x0080]);
     /* 1a1a */
@@ -884,85 +884,7 @@ L_1d86:;
     return;
 }
 
-/* station_anim_frame @ $1D9A: Attract mode animation frame: calls $1CF7 */
-void station_anim_frame(void) {
-    /* 1d9a */
-    LDA(mem[0x008B]);
-    /* 1d9c */
-    CMP(0x94);
-    /* 1d9e */
-    if (cpu.Z) goto L_1dcd;
-    /* 1da0 */
-    CMP(0x82);
-    /* 1da2 */
-    if (!cpu.C) goto L_1dad;
-    /* 1da4 */
-    if (!cpu.Z) goto L_1dce;
-    /* 1da6 */
-    LDX(0x11);
-    /* 1da8 */
-    mem[0x0089] = cpu.X;
-    /* 1daa */
-    goto L_1dce;
-L_1dad:;
-    /* 1dad */
-    LDX(mem[0x0089]);
-    /* 1daf */
-    CPX(0x12);
-    /* 1db1 */
-    if (cpu.C) goto L_1dc2;
-    /* 1db3 */
-    DEC_M(0x008A);
-    /* 1db5 */
-    if (!cpu.N) goto L_1dcd;
-    /* 1db7 */
-    LDA(mem[(0x1DE2)+cpu.X]);
-    /* 1dba */
-    mem[0x008A] = cpu.A;
-    /* 1dbc */
-    INC_M(0x0089);
-    /* 1dbe */
-    display_scroll();
-    /* 1dc1 */
-    return;
-L_1dc2:;
-    /* 1dc2 */
-    DEC_M(0x008A);
-    /* 1dc4 */
-    if (!cpu.N) goto L_1dcd;
-    /* 1dc6 */
-    LDA(0x01);
-    /* 1dc8 */
-    mem[0x008A] = cpu.A;
-    /* 1dca */
-    display_scroll();
-L_1dcd:;
-    /* 1dcd */
-    return;
-L_1dce:;
-    /* 1dce */
-    DEC_M(0x008A);
-    /* 1dd0 */
-    if (!cpu.N) goto L_1dcd;
-    /* 1dd2 */
-    LDX(mem[0x0089]);
-    /* 1dd4 */
-    LDA(mem[(0x1DE2)+cpu.X]);
-    /* 1dd7 */
-    mem[0x008A] = cpu.A;
-    /* 1dd9 */
-    DEX();
-    /* 1dda */
-    if (cpu.N) goto L_1dde;
-    /* 1ddc */
-    mem[0x0089] = cpu.X;
-L_1dde:;
-    /* 1dde */
-    display_scroll();
-    /* 1de1 */
-    return;
-}
-
+/* station_anim_frame @ $1D9A: manual implementation in rof_manual.c */
 /* station_init_small @ $1DF5: Small init called at start of station_init */
 void station_init_small(void) {
     /* 1df5 */
@@ -1177,107 +1099,7 @@ L_1eb2:;
     station_sub_1EB4(); return;
 }
 
-/* station_sub_1EB4 @ $1EB4: Attract mode sub (called in station_loop) */
-void station_sub_1EB4(void) {
-    /* 1eb4 */
-    DEC_M(0x009D);
-    /* 1eb6 */
-    if (cpu.N) goto L_1eb9;
-    /* 1eb8 */
-    return;
-L_1eb9:;
-    /* 1eb9 */
-    LDA(0x02);
-    /* 1ebb */
-    mem[0x009D] = cpu.A;
-    /* 1ebd */
-    LDA(mem[0x009E]);
-    /* 1ebf */
-    EOR(0x80);
-    /* 1ec1 */
-    mem[0x009E] = cpu.A;
-    /* 1ec3 */
-    if (cpu.N) goto L_1ed6;
-    /* 1ec5 */
-    LDA(mem[0x009F]);
-    /* 1ec7 */
-    CLC();
-    /* 1ec8 */
-    ADC(0x01);
-    /* 1eca */
-    AND(0x07);
-    /* 1ecc */
-    mem[0x009F] = cpu.A;
-    /* 1ece */
-    TAY();
-    /* 1ecf */
-    LDA(0x7A);
-    /* 1ed1 */
-    LDX(0x07);
-    /* 1ed3 */
-    goto L_1ee4;
-L_1ed6:;
-    /* 1ed6 */
-    LDA(mem[0x00A0]);
-    /* 1ed8 */
-    SEC();
-    /* 1ed9 */
-    SBC(0x01);
-    /* 1edb */
-    AND(0x07);
-    /* 1edd */
-    mem[0x00A0] = cpu.A;
-    /* 1edf */
-    TAY();
-    /* 1ee0 */
-    LDA(0x7C);
-    /* 1ee2 */
-    LDX(0x07);
-L_1ee4:;
-    /* 1ee4 */
-    mem[0x0083] = cpu.A;
-    /* 1ee6 */
-    mem[0x0084] = cpu.X;
-    /* 1ee8 */
-    LDA(mem[(0x231B)+cpu.Y]);
-    /* 1eeb */
-    mem[0x0081] = cpu.A;
-    /* 1eed */
-    LDA(mem[(0x2313)+cpu.Y]);
-    /* 1ef0 */
-    mem[0x0082] = cpu.A;
-    /* 1ef2 */
-    LDY(0x00);
-    /* 1ef4 */
-    LDX(0x00);
-L_1ef6:;
-    /* 1ef6 */
-    LDA(bus_read(ZP_IND_Y(0x81)));
-    /* 1ef8 */
-    bus_write(ZP_IND_X(0x83), cpu.A);
-    /* 1efa */
-    LDA(mem[0x0083]);
-    /* 1efc */
-    CLC();
-    /* 1efd */
-    ADC(0x28);
-    /* 1eff */
-    mem[0x0083] = cpu.A;
-    /* 1f01 */
-    if (!cpu.C) goto L_1f05;
-    /* 1f03 */
-    INC_M(0x0084);
-L_1f05:;
-    /* 1f05 */
-    INY();
-    /* 1f06 */
-    CPY(0x66);
-    /* 1f08 */
-    if (!cpu.C) goto L_1ef6;
-    /* 1f0a */
-    return;
-}
-
+/* station_sub_1EB4 @ $1EB4: manual implementation in rof_manual.c */
 /* pmg_colors_station @ $1F0B: Sets COLPM2/3, COLPF3, HPOSP2/3 (player 2/3 during attract) */
 void pmg_colors_station(void) {
     /* 1f0b */
@@ -1315,21 +1137,7 @@ L_1f2f:;
     return;
 }
 
-/* station_sub_1F48 @ $1F48: Attract mode sub (called in station_loop); calls station_sub_1f51 */
-void station_sub_1F48(void) {
-    /* 1f48 */
-    LDX(0x00);
-L_1f4a:;
-    /* 1f4a */
-    station_sub_1f51();
-    /* 1f4d */
-    TAX();
-    /* 1f4e */
-    if (!cpu.Z) goto L_1f4a;
-    /* 1f50 */
-    return;
-}
-
+/* station_sub_1F48 @ $1F48: manual implementation in rof_manual.c */
 /* station_sub_1f51 @ $1F51: Attract mode sub; reads RANDOM once (random visual effect) */
 void station_sub_1f51(void) {
     /* 1f51 */

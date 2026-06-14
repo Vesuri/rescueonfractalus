@@ -80,6 +80,7 @@ private:
     bool rsStars    = false;   // VDSLST $0200==$C2    — stars/planet viewport (sprites/colours)
     bool rsFlight   = false;   // $004A != 0           — in-game flight (palette/probe/profiler)
     bool rsViewport = false;   // stars || flight      — mode-D viewport band active
+    bool rsLaunched = false;   // doors armed || viewport — door-gap g2 (doors..flight)
 
     void startStars();                   // display_setup $64C8-$6552 stars setup
     void startPlanet();                  // display_setup $6555-$6574 planet setup

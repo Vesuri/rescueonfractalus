@@ -248,3 +248,124 @@ void screen_page_swap(void) {
         memcpy(b,   tmp, 256);
     }
 }
+
+/* ------------------------------------------------------------------ */
+/* Attract per-frame leaves ($1D9A / $1EB4 / $1F48).  The genuine      */
+/* station_init control FLOW calls these every attract frame; the      */
+/* transpiled 6502-emulation bodies are ~60x too slow on a 7 MHz       */
+/* 68000, so we do the identical mem[] mutations natively here (ported  */
+/* from the former amiga/src/station_native.cpp reimpls).  These do NOT */
+/* drive the Amiga display directly — they mutate the same mem[] state  */
+/* (scroll pointers $1C39/$1C3A, phase $008B, the $077A/$077C attract   */
+/* stripes, the $2603 channel table) the renderer already reads.        */
+/* ------------------------------------------------------------------ */
+
+/* display_scroll ($1CF7): advance the title-text scroll pointer + phase
+   counter.  Atari DLIST-LMS / character-screen writes are intentionally
+   skipped (the Amiga renders from this mem[] state, not Atari screen RAM).
+   Folded in as a private helper — its only caller is station_anim_frame. */
+static void station_display_scroll(void) {
+    if (mem[0x1C39] == 0 && mem[0x1C3A] == 0xB8) return;
+    mem[0x008B]++;
+    uint16_t ptr = (uint16_t)mem[0x1C39] | ((uint16_t)mem[0x1C3A] << 8);
+    ptr -= 3;
+    mem[0x1C39] = (uint8_t)ptr;
+    mem[0x1C3A] = (uint8_t)(ptr >> 8);
+}
+
+/* station_anim_frame ($1D9A): title-text scroll state machine — countdown
+   timer ($008A), phase index ($0089), global phase counter ($008B); hold
+   times from the table at $1DE2. */
+void station_anim_frame(void) {
+    uint8_t phase = mem[0x008B];
+    if (phase == 0x94) return;                 /* animation complete, idle */
+    uint8_t timer = mem[0x008A];
+
+    if (phase >= 0x82) {                        /* reverse-scroll region */
+        if (phase == 0x82) mem[0x0089] = 0x11;  /* enter reverse: reset index */
+        if (timer != 0) { mem[0x008A] = timer - 1; return; }
+        uint8_t x = mem[0x0089];
+        mem[0x008A] = mem[0x1DE2 + x];
+        if (x != 0) mem[0x0089] = x - 1;
+        station_display_scroll();
+        return;
+    }
+
+    uint8_t x = mem[0x0089];                    /* forward-scroll region */
+    if (x < 0x12) {
+        if (timer != 0) { mem[0x008A] = timer - 1; return; }
+        mem[0x008A] = mem[0x1DE2 + x];
+        mem[0x0089] = x + 1;
+        station_display_scroll();
+    } else {
+        if (timer != 0) { mem[0x008A] = timer - 1; return; }
+        mem[0x008A] = 1;
+        station_display_scroll();
+    }
+}
+
+/* station_sub_1EB4 ($1EB4): every 3rd frame, copy a 102-byte column stripe
+   from one of 8 ROM source buffers (tables $2313/$231B) into the attract
+   screen stripes at $077A (forward, $009F) / $077C (reverse, $00A0),
+   stride +40 per row. */
+void station_sub_1EB4(void) {
+    if (mem[0x009D] != 0) { mem[0x009D]--; return; }
+    mem[0x009D] = 2;                            /* reload: fires every 3rd frame */
+    mem[0x009E] ^= 0x80;                        /* toggle direction bit */
+
+    uint8_t  idx;
+    uint16_t dest;
+    if (mem[0x009E] & 0x80) {                   /* reverse: decrement index (wrap 0-7) */
+        mem[0x00A0] = (uint8_t)((mem[0x00A0] - 1) & 0x07);
+        idx = mem[0x00A0]; dest = 0x077C;
+    } else {                                    /* forward: increment index (wrap 0-7) */
+        mem[0x009F] = (uint8_t)((mem[0x009F] + 1) & 0x07);
+        idx = mem[0x009F]; dest = 0x077A;
+    }
+    uint16_t src = (uint16_t)mem[0x231B + idx] | ((uint16_t)mem[0x2313 + idx] << 8);
+    int i;
+    for (i = 0; i < 0x66; i++, dest += 0x28) mem[dest] = mem[src + i];
+}
+
+/* station_sub_1f51 ($1F51): process one animation channel rooted at offset x
+   in the channel table at $2603 (see field map in the old station_native.cpp).
+   Folded in as a private helper — only station_sub_1F48 calls it. */
+static uint8_t station_chan_step(uint8_t x) {
+    if (mem[0x2604 + x] != 0) { mem[0x2604 + x]--; return mem[0x2609 + x]; }
+    mem[0x2604 + x] = mem[0x2603 + x];
+    mem[0x2606 + x]++;
+    uint16_t src = (uint16_t)mem[0x260E + x] | ((uint16_t)mem[0x260F + x] << 8);
+    src += mem[0x260A + x];
+    mem[0x260E + x] = (uint8_t)src;
+    mem[0x260F + x] = (uint8_t)(src >> 8);
+    if (mem[0x2606 + x] == mem[0x2605 + x]) {   /* cycle complete: reset src, new timer */
+        mem[0x2606 + x] = 0;
+        mem[0x260E + x] = mem[0x260C + x];
+        mem[0x260F + x] = mem[0x260D + x];
+        src = (uint16_t)mem[0x260E + x] | ((uint16_t)mem[0x260F + x] << 8);
+        uint8_t reload = mem[0x260B + x];
+        if ((signed char)reload < 0) reload = bus_read(0xD20A);  /* POKEY RANDOM */
+        mem[0x2604 + x] = reload;
+    }
+    uint16_t dest    = (uint16_t)mem[0x2610 + x] | ((uint16_t)mem[0x2611 + x] << 8);
+    uint8_t  rowSize  = mem[0x2607 + x];
+    uint8_t  rowCount = mem[0x2608 + x];
+    uint8_t  row, b;
+    for (row = 0; row < rowCount; row++) {
+        for (b = 0; b < rowSize; b++) mem[dest + b] = mem[src + b];
+        src  += rowSize;
+        dest += 0x28;
+    }
+    return mem[0x2609 + x];                      /* next channel link */
+}
+
+/* station_sub_1F48 ($1F48): walk the linked list of animation channels from
+   x=0 until the chain terminates (next link 0).  Guarded against bad data. */
+void station_sub_1F48(void) {
+    uint8_t x = 0;
+    int guard;
+    for (guard = 0; guard < 64; guard++) {
+        x = station_chan_step(x);
+        if (x == 0) break;
+    }
+}
