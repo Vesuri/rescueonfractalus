@@ -73,8 +73,8 @@ static void launchFramePump(void)
 {
     uint16_t last = g_vbiCount;
     while (g_vbiCount == last) { /* wait for next real VBI */ }
-    if (g_scenePtr) g_scenePtr->render();
-    if (AmigaHardware::isLeftMouseButtonPressed()) g_pumpQuit = true;
+    if (g_scenePtr) g_scenePtr->pumpFrame();   // full repaint body (shared with frameStep)
+    if (AmigaHardware::isLeftMouseButtonPressed()) g_pumpQuit = 1;
 }
 
 static uint32_t vbiHandler()

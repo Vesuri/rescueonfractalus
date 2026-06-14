@@ -953,7 +953,6 @@ RescueOnFractalus::FrameResult RescueOnFractalus::frameStep()
 
     uint16_t last = g_vbiCount;
     while (g_vbiCount == last) { /* wait one real VBI */ }
-    frameCounter++;
 
     if (AmigaHardware::isLeftMouseButtonPressed()) return kFrameQuit;
 
@@ -965,6 +964,18 @@ RescueOnFractalus::FrameResult RescueOnFractalus::frameStep()
         return kFrameSkip;
     }
 
+    pumpFrame();   // the shared repaint body (also used by the transpiled frame pump)
+    if (launchPhase == kFlight) g_flightProf.updateTot += (unsigned short)(flight_vbi_tick() - profU0);
+    return kFrameContinue;
+}
+
+// pumpFrame(): the per-frame repaint body shared by frameStep() and the transpiled
+// frame pump (launchFramePump in main.cpp).  The caller has already waited one real
+// VBI; this does the non-phase per-frame work, repaints the bitmaps, rebuilds the back
+// copper list and flips to it — one implementation so both drivers match exactly.
+void RescueOnFractalus::pumpFrame()
+{
+    frameCounter++;
     perFrameWork();
     render();
 
@@ -974,8 +985,6 @@ RescueOnFractalus::FrameResult RescueOnFractalus::frameStep()
     if (launchPhase == kFlight) g_flightProf.copper += (unsigned short)(flight_vbi_tick() - c0);
     AmigaHardware::setCopperList(*copperLists[next], false);
     active = next;
-    if (launchPhase == kFlight) g_flightProf.updateTot += (unsigned short)(flight_vbi_tick() - profU0);
-    return kFrameContinue;
 }
 
 // perFrameWork(): per-frame non-phase work (the tail of the old update()).  These

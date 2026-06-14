@@ -16,6 +16,12 @@ class RescueOnFractalus {
 public:
     void initialize();
     void render();
+    // pumpFrame(): the per-frame repaint body — per-frame non-phase work + render +
+    // back copper-list rebuild + flip.  Assumes the caller has already waited one real
+    // VBI.  Shared by frameStep() (run()-driven) and the transpiled frame pump
+    // (platform_render_frame -> launchFramePump in main.cpp) so both produce identical
+    // frames; public because the free-function pump calls it through g_scenePtr.
+    void pumpFrame();
     void shutdown();
 
     // run(): the whole game as a faithful straight-line transcription of the
