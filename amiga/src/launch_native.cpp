@@ -44,6 +44,7 @@ void draw_player3_object(void);                 // $42A7: the planet as a scaled
 // Door-opening sound ($6DF4): sweeps AUDF2 ($D202) by $08DB-=$08DC, $004C times,
 // with a 1-frame wait (clear_colors) between — the genuine per-frame pitch sweep.
 void audf2_sweep_clear_colors(void);
+void input_init(void);                // $581C: load a voice (sound id in cpu.X) from the SFX param tables
 }
 
 // Launch-cinematic blocking frame pump toggle (PaulaAudio.cpp): while on, the
@@ -156,6 +157,51 @@ extern "C" void launch_show_standby_native(void)
     // vobj_draw_dispatch here; those drive the gauge PMG and belong to effect 2,
     // so they are added when the gauge fill is ported.)
     render_bcd_counter();               // "     0" -> $32C5-$32CA
+}
+
+// The Atari display_setup seeds two launch SFX with direct input_init calls (the
+// standby port had deferred them).  Both play through the standby/launch VBI's
+// update_gauge_digits voice engine (gated on $060B = $23, set by launch_show_standby).
+// Ground-truthed against an atari800 -pokeyrec capture + the host build voice engine.
+//
+// The Atari seeds BOTH the instant START is pressed ($63A7, $63D0), but the door
+// voice can't grab a POKEY channel until the doors actually open (~67 frames later) —
+// the engine/other voices hold all four channels until then.  The Amiga, freshly
+// reset, has no such competition, so seeding the door at START makes it play AT ONCE
+// (bending up then holding forever) and mask the arpeggio.  So we split them: the
+// arpeggio at START (openDoors), the door swoosh when the doors begin scrolling
+// (startDoors), and we silence the door when the doors finish (it has dur $06A3=0, so
+// it never self-terminates — on the Atari the tunnel SFX supersede it).
+
+// launch_start_arpeggio_native: the START bleep — sound id $1D, which self-chains
+// $1D -> $1E -> $12 (rising 3-blip arpeggio an octave apart, distort $A0, freq
+// $3F/$1F/$0F, ~0.2s) via update_gauge_digits' $06F7 loop.  ($63A7)  Must run after
+// sfx_engine_reset_native (openDoors order) or the reset would wipe the seed.
+extern "C" void launch_start_arpeggio_native(void)
+{
+    cpu.X = 0x1D; input_init();          // $63A7: START arpeggio
+}
+
+// launch_door_swoosh_native: the door-open swoosh — sound id $01, a poly-buzz on a
+// voice (AUDC distort $40, vol 4) whose pitch sweeps $3A->$1F then holds (rate
+// $06DB=1, target $06CD=$1F).  ($63D0)  Seeded into voice slot 5 ($56D4[0]).
+extern "C" void launch_door_swoosh_native(void)
+{
+    cpu.X = 0x01; input_init();          // $63D0: door-open swoosh
+}
+
+// launch_door_swoosh_stop_native: silence the door voice (slot 5) once the doors are
+// fully open.  $01 has dur=0 so update_gauge_digits would replay it forever; clear its
+// envelope arrays and zero its assigned POKEY channel's AUDC so it actually goes quiet.
+extern "C" void launch_door_swoosh_stop_native(void)
+{
+    uint8_t reg = mem[0x0705 + 5];                 // POKEY reg index the mixer gave slot 5
+    if (reg) platform_hw_write((uint16_t)(0xD1FF + reg), 0x00);  // AUDCn = 0 (silence)
+    mem[0x065D + 5] = 0x00;   // distort
+    mem[0x066B + 5] = 0x00;   // priority -> mixer drops the voice
+    mem[0x06A3 + 5] = 0x00;   // duration
+    mem[0x06DB + 5] = 0x00;   // rate
+    mem[0x0705 + 5] = 0x00;   // release the channel
 }
 
 // ---- effect 2: throttle gauge fill (vobj vertical object) -------------------

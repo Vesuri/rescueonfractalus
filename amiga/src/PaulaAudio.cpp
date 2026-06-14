@@ -90,7 +90,11 @@ static const uint8_t kBit5[31] = { 1,1,1,1,0,1,1,0,1,0,0,1,1,0,0,0,0,0,1,1,1,0,0
 static uint16_t build_poly_wave(uint8_t ch, uint8_t audc, uint8_t audf, uint8_t audctl)
 {
     bool poly5tone = (audc & POKEY_PURETONE) && !(audc & POKEY_NOTPOLY5);                       // $20
-    bool poly4     = !(audc & POKEY_PURETONE) && (audc & POKEY_NOTPOLY5) && (audc & POKEY_POLY4); // $C0
+    // POLY4 set, PURE clear → poly4 buzz: $C0 (poly5 bypassed) and $40 (the launch door
+    // swoosh, poly5-gated).  The full poly5×poly4 period (465) can't fit the 64-byte
+    // buffer, so $40 is rendered as ungated poly4 — same raspy buzz, close enough that
+    // the door reads as a buzz rather than a clean tone.
+    bool poly4     = !(audc & POKEY_PURETONE) && (audc & POKEY_POLY4);                          // $C0, $40
     if (!poly5tone && !poly4) return 0u;
 
     uint16_t baseDiv  = (audctl & 0x01u) ? 114u : 28u;
