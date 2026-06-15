@@ -516,6 +516,54 @@ static int test_plot_char_bounded(void) {
     return mem_fail + cpu_fail;
 }
 
+/* --- blit_glyph_8rows @ $678B: 8-row glyph blitter.  Needs a realistic fixture: the
+ * row-addr table $073D/$0793 points into safe bitmap RAM ($2000 + row*$28); the row
+ * index $0092 is mid-range so the up-walk ($2E/row) stays in RAM; the glyph source ptr
+ * $0084/$0085 -> $3000 (disjoint from the write region); mask base $0095 and column base
+ * $009C are bounded.  The PHA/PLA inner loop scribbles the stack page, so neutralize
+ * $0100-$01FF before comparing.  Both runs share the fixture; result observed via mem[]. --- */
+static int test_blit_glyph_8rows(void) {
+    if (!want("blit_glyph_8rows")) return 0;
+    enum { N = 8000 };
+    static uint8_t pre[65536], ref_mem[65536];
+    int mem_fail = 0, cpu_diff = 0, printed = 0;
+    for (int t = 0; t < N; t++) {
+        fill_random(pre);
+        for (int i = 0; i <= 0x54; i++) {                 /* row addr table -> $2000 + row*$28 */
+            uint16_t a = (uint16_t)(0x2000 + i * 0x28);
+            pre[0x073D + i] = (uint8_t)a; pre[0x0793 + i] = (uint8_t)(a >> 8);
+        }
+        pre[0x0084] = 0x00; pre[0x0085] = 0x30;           /* glyph source -> $3000 */
+        pre[0x0092] = (uint8_t)(0x20 + (xs() % 0x30));    /* row index $20..$4F */
+        pre[0x0095] = (uint8_t)(xs() % 8);                /* mask base 0..7 */
+        pre[0x009C] = (uint8_t)(xs() % 0x20);             /* column base 0..$1F */
+        Cpu6502 c = zero_cpu();
+
+        platform_test_seed_rng(1);
+        memcpy((void *)mem, pre, 65536); cpu = c;
+        blit_glyph_8rows__t6502();
+        memcpy(ref_mem, (void *)mem, sizeof ref_mem);
+
+        platform_test_seed_rng(1);
+        memcpy((void *)mem, pre, 65536); cpu = c;
+        blit_glyph_8rows();
+
+        for (int i = 0x0100; i <= 0x01FF; i++) ref_mem[i] = mem[i];  /* neutralize stack page */
+        if (memcmp((const void *)mem, ref_mem, 65536) != 0) {
+            mem_fail++;
+            if (printed < 12)
+                for (int i = 0; i < 65536 && printed < 12; i++)
+                    if (mem[i] != ref_mem[i]) {
+                        printf("[MEM DIFF] blit_glyph_8rows case %d  $%04X  ref=$%02X native=$%02X\n",
+                               t, i, ref_mem[i], mem[i]); printed++;
+                    }
+        }
+        (void)cpu_diff;
+    }
+    printf("blit_glyph_8rows: %d cases, %d mem mismatch (must be 0)\n", N, mem_fail);
+    return mem_fail;
+}
+
 /* --- rle_run_fill @ $3C58: RLE run expansion through copy_bytes_to_dst.  Seed the
  * source pointer $00BB/$00BC -> $2000 and the dest pointer $00BD/$00BE -> $2400 (both
  * safe RAM, disjoint), a bounded run length (entry A 1..64) and small offset (entry Y),
@@ -1305,6 +1353,7 @@ int main(int argc, char **argv) {
     fails += test_mem_contract_regs("intro_reset_score_slots", intro_reset_score_slots, intro_reset_score_slots__t6502);
     fails += test_mem_contract_regs("init_event_state_5815_x16", init_event_state_5815_x16, init_event_state_5815_x16__t6502);
     fails += test_rle_run_fill();
+    fails += test_blit_glyph_8rows();
     fails += test_mem_contract_regs("mark_slot_and_countdown_char", mark_slot_and_countdown_char, mark_slot_and_countdown_char__t6502);
     fails += test_mem_contract_regs("mark_slot_and_inc_count", mark_slot_and_inc_count, mark_slot_and_inc_count__t6502);
     fails += test_mem_contract("return_stub_40af", return_stub_40af, return_stub_40af__t6502);

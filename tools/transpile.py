@@ -252,6 +252,7 @@ VALIDATE_FUNCS = {
     0x4FCE,  # intro_reset_score_slots — clear $066A/$0686, $0678=$0C, tail game_sub_55FC (Y=$0D)
     0x7AA8,  # init_event_state_5815_x16 — seed $0044/$3388/$003C, tail ring_push_marked (X=$16, entry A)
     0x3C58,  # rle_run_fill — bump src $BB/$BC, read run byte ($BB)+Y, tail copy_bytes_to_dst (entry A/Y)
+    0x678B,  # blit_glyph_8rows — blit 8-row glyph; row ptr walks up $2E/row, bits -> plot_pixel_col93
 }
 VALIDATE_SUFFIX = '__t6502'
 

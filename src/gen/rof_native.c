@@ -1127,6 +1127,35 @@ void rle_run_fill(void) {
     copy_bytes_to_dst();
 }
 
+/* blit_glyph_8rows @ $678B — blit an 8-row glyph into the bitmap.  The initial row
+ * pointer $0080/$0081 comes from the row-addr table (set_row_ptr_from_count via $0092),
+ * then walks UP one screen row ($2E bytes) per glyph row.  For each of rows 7..0 the
+ * glyph byte ($0084[Y]) is shifted left bit-by-bit; each set bit plots a pixel at the
+ * running column $0093 (base $009C) via plot_pixel_col93 (mask index from $0094=$0095).
+ * Finally the column base $009C advances by 8.  The 6502 PHA/PLA preserves the shifted
+ * byte across the plot call — reproduced here with a local. */
+void blit_glyph_8rows(void) {
+    mem[0x0094] = mem[0x0095];
+    set_row_ptr_from_count();                       /* $80/$81 = table[$0092] */
+    mem[0x0097] = 0x07;
+    do {
+        mem[0x0093] = mem[0x009C];                  /* column base for this row */
+        cpu.Y = mem[0x0097];
+        uint8_t a = bus_read(ZP_IND_Y(0x84));       /* glyph byte for row $0097 */
+        do {
+            uint8_t carry = (uint8_t)(a >> 7);      /* ASL A: bit shifted out */
+            a = (uint8_t)(a << 1);
+            if (carry) plot_pixel_col93();          /* plot at column $0093 */
+            mem[0x0093] = (uint8_t)(mem[0x0093] + 1);
+        } while (a != 0x00);                        /* loop while bits remain */
+        uint16_t p = (uint16_t)(mem[0x0080] | (mem[0x0081] << 8));
+        p = (uint16_t)(p - 0x2E);                   /* row pointer up one screen row */
+        mem[0x0080] = (uint8_t)p; mem[0x0081] = (uint8_t)(p >> 8);
+        mem[0x0097] = (uint8_t)(mem[0x0097] - 1);
+    } while (!(mem[0x0097] & 0x80));                /* BPL: loop while $0097 >= 0 */
+    mem[0x009C] = (uint8_t)(mem[0x009C] + 0x08);
+}
+
 /* render_bcd_counter @ $49A0 — render the 3-byte packed-BCD score ($0601-$0603,
  * 6 digits) to the top text line $32C5..$32CA with leading-zero suppression.
  * Flight ISR routine; the first transpiled-on-the-VBI-path fn ported native.
