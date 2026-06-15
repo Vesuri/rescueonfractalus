@@ -319,6 +319,10 @@ VALIDATE_FUNCS = {
     0x5A78,  # read_console_trig_delta — A = (CONSOL & 1) - TRIG0 (HW $D01F/$D010 via bus_read; result in A)
     0x5D0D,  # validate_save_state — compare $3700/$3714 + 38-byte $37C7 vs $7BDA; result in Z (no mem writes)
     0x4430,  # cockpit_dial_update — $006F=A, derive $0022 (0 or $4457[A+$0625]), tail draw_cockpit_dial_bar
+    # batch — HUD fill fields (unblocked by pack_byte_to_5bit_cells):
+    0x8105,  # hud_fill_field0 — pack 5 bytes ($85)+Y via pack_byte_to_5bit_cells into $8F-$93 (or INC $0080)
+    0x8138,  # hud_fill_field2 — copy/pack ($89)+Y into $8F-$9A per $292D flag (or INC $0082)
+    0x80C5,  # hud_build_text_row — clear $8F-$9F, fill 4 fields, compose cells via $BE00 + ($8B)/($8D), advance ptrs
 }
 VALIDATE_SUFFIX = '__t6502'
 

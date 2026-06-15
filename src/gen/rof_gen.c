@@ -14145,7 +14145,8 @@ L_80c4:;
 }
 
 /* hud_build_text_row @ $80C5: Zeroes 17-byte buf $8F..$9F; calls 4 field-fillers + $8181 packer; OR-merges glyph table $BE00 masked into screen RAM via ptr $8B/$8D; advances $8B by $60 */
-void hud_build_text_row(void) {
+/* faithful transliteration kept as the validation oracle; native hud_build_text_row() lives in rof_native.c (see VALIDATE_FUNCS) */
+void hud_build_text_row__t6502(void) {
     /* 80c5 */
     LDX(0x10);
     /* 80c7 */
@@ -14216,7 +14217,8 @@ L_80fa:;
 }
 
 /* hud_fill_field0 @ $8105: Emits 5 bytes into buf+$8F[4..0] from source ptr $85, each passed through bit-packer $8181; gated by index $0080 vs limit $2927 */
-void hud_fill_field0(void) {
+/* faithful transliteration kept as the validation oracle; native hud_fill_field0() lives in rof_native.c (see VALIDATE_FUNCS) */
+void hud_fill_field0__t6502(void) {
     /* 8105 */
     LDY(mem[0x0080]);
     /* 8107 */
@@ -14285,7 +14287,8 @@ L_812b:;
 }
 
 /* hud_fill_field2 @ $8138: Fills buf $8F[$05..$0B] from ptr $89; if $292D!=0 raw copy else through bit-packer $8181; gated by index $0082 vs limit $2929 */
-void hud_fill_field2(void) {
+/* faithful transliteration kept as the validation oracle; native hud_fill_field2() lives in rof_native.c (see VALIDATE_FUNCS) */
+void hud_fill_field2__t6502(void) {
     /* 8138 */
     LDY(mem[0x0082]);
     /* 813a */

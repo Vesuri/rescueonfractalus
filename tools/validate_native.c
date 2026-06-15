@@ -2097,6 +2097,9 @@ int main(int argc, char **argv) {
     fails += test_ret_a("read_console_trig_delta", read_console_trig_delta, read_console_trig_delta__t6502);
     fails += test_validate_save_state();
     fails += test_cockpit_dial_update();
+    fails += test_mem_contract("hud_fill_field0", hud_fill_field0, hud_fill_field0__t6502);
+    fails += test_mem_contract("hud_fill_field2", hud_fill_field2, hud_fill_field2__t6502);
+    fails += test_mem_contract("hud_build_text_row", hud_build_text_row, hud_build_text_row__t6502);
     fails += test_mem_contract_regs("show_cockpit_message", show_cockpit_message, show_cockpit_message__t6502);
     fails += test_mem_contract_regs("mark_slot_and_countdown_char", mark_slot_and_countdown_char, mark_slot_and_countdown_char__t6502);
     fails += test_mem_contract_regs("mark_slot_and_inc_count", mark_slot_and_inc_count, mark_slot_and_inc_count__t6502);

@@ -2293,6 +2293,81 @@ void cockpit_dial_update(void) {
     draw_cockpit_dial_bar();
 }
 
+/* hud_fill_field0 @ $8105 — if $0080 has reached $2927 just bump it; otherwise pack 5 source
+ * bytes (($85)+Y) through pack_byte_to_5bit_cells into the cell bytes $93..$8F (X=4..0) and
+ * advance $0080 by 5. */
+void hud_fill_field0(void) {
+    uint8_t y = mem[0x0080];
+    if (y >= mem[0x2927]) { mem[0x0080] = (uint8_t)(y + 1); return; }
+    for (uint8_t x = 0x04; ; x--) {
+        cpu.Y = y;
+        cpu.A = bus_read(ZP_IND_Y(0x85));
+        pack_byte_to_5bit_cells();
+        mem[(uint8_t)(0x8F + x)] = cpu.A;
+        y = (uint8_t)(y + 1);
+        if (x == 0x00) break;                 /* DEX; BPL */
+    }
+    mem[0x0080] = y;
+}
+
+/* hud_fill_field2 @ $8138 — if $0082 reached $2929 just bump it; else fill $8F-$9A from
+ * ($89)+Y.  When $292D==0 do a plain ascending copy (X=5..$0B); otherwise pack each byte via
+ * pack_byte_to_5bit_cells descending (X=$0B..5).  Advance $0082 by the 7 bytes consumed. */
+void hud_fill_field2(void) {
+    uint8_t y = mem[0x0082];
+    if (y >= mem[0x2929]) { mem[0x0082] = (uint8_t)(y + 1); return; }
+    if (mem[0x292D] == 0x00) {
+        for (uint8_t x = 0x05; x < 0x0C; x++) {       /* INX; CPX #$0C; BCC */
+            cpu.Y = y;
+            mem[(uint8_t)(0x8F + x)] = bus_read(ZP_IND_Y(0x89));
+            y = (uint8_t)(y + 1);
+        }
+    } else {
+        for (uint8_t x = 0x0B; ; x--) {               /* DEX; CPX #5; BCS */
+            cpu.Y = y;
+            cpu.A = bus_read(ZP_IND_Y(0x89));
+            pack_byte_to_5bit_cells();
+            mem[(uint8_t)(0x8F + x)] = cpu.A;
+            y = (uint8_t)(y + 1);
+            if (x == 0x05) break;
+        }
+    }
+    mem[0x0082] = y;
+}
+
+/* hud_build_text_row @ $80C5 — assemble one HUD text row.  Clear the 17 cell bytes
+ * $008F-$009F, fill them from the four fields (hud_fill_field0..3), then for each cell map
+ * it through the $BE00 PMG bit table, AND with the mask row (($8B)+Y) and OR the raw cell,
+ * writing the result via the dest row (($8D)+Y).  Finally advance the mask pointer $8B/$8C
+ * by $60 and set the dest pointer $8D/$8E = $8B/$8C + $30. */
+void hud_build_text_row(void) {
+    for (uint8_t x = 0x10; ; x--) {              /* clear $8F..$9F */
+        mem[(uint8_t)(0x8F + x)] = 0x00;
+        if (x == 0x00) break;
+    }
+    hud_fill_field0();
+    hud_fill_field1();
+    hud_fill_field2();
+    hud_fill_field3_font();
+    for (uint8_t y = 0x10; ; y--) {
+        cpu.Y = y;
+        uint8_t cell = mem[0x008F + y];
+        mem[0x0084] = cell;
+        cpu.A = mem[0xBE00 + cell];              /* TAX; LDA $BE00,X */
+        cpu.A &= bus_read(ZP_IND_Y(0x8B));       /* AND ($8B)+Y */
+        cpu.A |= mem[0x0084];                    /* ORA $0084 */
+        bus_write(ZP_IND_Y(0x8D), cpu.A);        /* STA ($8D)+Y */
+        if (y == 0x00) break;
+    }
+    /* advance $8B/$8C += $60; $8D/$8E = $8B/$8C + $30 */
+    unsigned s = (unsigned)mem[0x008B] + 0x60;
+    mem[0x008B] = (uint8_t)s;
+    if (s > 0xFF) mem[0x008C] = (uint8_t)(mem[0x008C] + 1);
+    unsigned s2 = (unsigned)mem[0x008B] + 0x30;
+    mem[0x008D] = (uint8_t)s2;
+    mem[0x008E] = (uint8_t)(mem[0x008C] + (s2 > 0xFF ? 1 : 0));
+}
+
 /* render_bcd_counter @ $49A0 — render the 3-byte packed-BCD score ($0601-$0603,
  * 6 digits) to the top text line $32C5..$32CA with leading-zero suppression.
  * Flight ISR routine; the first transpiled-on-the-VBI-path fn ported native.
