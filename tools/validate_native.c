@@ -767,6 +767,60 @@ static int test_rle_run_fill(void) {
     return mem_fail;
 }
 
+/* --- rle_expand_list @ $757B: expand a (count,value) run list.  Build a small stream at
+ * $2000 (counts 1..16) ending in a 0 terminator; src ptr $BB -> $2000, dest ptr $BD -> $2800.
+ * Both runs share it; result observed via mem[]. --- */
+static int test_rle_expand_list(void) {
+    if (!want("rle_expand_list")) return 0;
+    enum { N = 20000 };
+    static uint8_t pre[65536];
+    int mem_fail = 0, cpu_diff = 0, printed = 0;
+    for (int t = 0; t < N; t++) {
+        fill_random(pre);
+        int p = 0x2000, npairs = 1 + (int)(xs() % 6);
+        for (int k = 0; k < npairs; k++) {
+            pre[p++] = (uint8_t)(1 + (xs() % 16));   /* count 1..16 */
+            pre[p++] = (uint8_t)(xs() & 0xFF);       /* value */
+        }
+        pre[p] = 0x00;                               /* terminator */
+        pre[0x00BB] = 0x00; pre[0x00BC] = 0x20;
+        pre[0x00BD] = 0x00; pre[0x00BE] = 0x28;
+        mem_fail += diff_run("rle_expand_list", pre, zero_cpu(),
+                             rle_expand_list, rle_expand_list__t6502, t, &printed, &cpu_diff);
+    }
+    printf("rle_expand_list: %d cases, %d mem mismatch (must be 0), %d cpu diffs\n", N, mem_fail, cpu_diff);
+    return mem_fail;
+}
+
+/* --- rle_decompress @ $3C3D: literal/run RLE decompressor.  Build a small stream at $2000
+ * mixing literals (<$C0) and runs ($C0|len, value; len 1..16), ending in a $C0 terminator;
+ * src ptr $BB -> $2000, dest ptr $BD -> $2800.  Result observed via mem[]. --- */
+static int test_rle_decompress(void) {
+    if (!want("rle_decompress")) return 0;
+    enum { N = 20000 };
+    static uint8_t pre[65536];
+    int mem_fail = 0, cpu_diff = 0, printed = 0;
+    for (int t = 0; t < N; t++) {
+        fill_random(pre);
+        int p = 0x2000, nitems = 1 + (int)(xs() % 6);
+        for (int k = 0; k < nitems; k++) {
+            if (xs() & 1) {
+                pre[p++] = (uint8_t)(xs() % 0xC0);              /* literal < $C0 */
+            } else {
+                pre[p++] = (uint8_t)(0xC0 | (1 + (xs() % 16))); /* run marker */
+                pre[p++] = (uint8_t)(xs() & 0xFF);             /* value */
+            }
+        }
+        pre[p] = 0xC0;                                          /* terminator (len 0) */
+        pre[0x00BB] = 0x00; pre[0x00BC] = 0x20;
+        pre[0x00BD] = 0x00; pre[0x00BE] = 0x28;
+        mem_fail += diff_run("rle_decompress", pre, zero_cpu(),
+                             rle_decompress, rle_decompress__t6502, t, &printed, &cpu_diff);
+    }
+    printf("rle_decompress: %d cases, %d mem mismatch (must be 0), %d cpu diffs\n", N, mem_fail, cpu_diff);
+    return mem_fail;
+}
+
 /* --- emit_bcd_byte_digits @ $49CE: plots two digits via plot_char_bounded.  Same
  * dest-ptr ($00C5/$00C6 -> $2000) fixture as plot_char_bounded; entry A is a packed-BCD
  * byte, X the suppress flag, Y the column.  The 6502 PHA leaves a dead scribble on the
@@ -1552,6 +1606,8 @@ int main(int argc, char **argv) {
     fails += test_blit_chain("set_coord_y_e0", set_coord_y_e0, set_coord_y_e0__t6502);
     fails += test_blit_chain("glyph_ptr_from_index", glyph_ptr_from_index, glyph_ptr_from_index__t6502);
     fails += test_draw_glyph_2rows();
+    fails += test_rle_expand_list();
+    fails += test_rle_decompress();
     fails += test_mem_contract_regs("show_cockpit_message", show_cockpit_message, show_cockpit_message__t6502);
     fails += test_mem_contract_regs("mark_slot_and_countdown_char", mark_slot_and_countdown_char, mark_slot_and_countdown_char__t6502);
     fails += test_mem_contract_regs("mark_slot_and_inc_count", mark_slot_and_inc_count, mark_slot_and_inc_count__t6502);

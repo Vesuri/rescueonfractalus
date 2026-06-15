@@ -1403,6 +1403,37 @@ void draw_glyph_2rows(void) {
     }
 }
 
+/* rle_expand_list @ $757B — expand a list of RLE runs from the source pointer $00BB: each
+ * (count,value) pair is expanded into the dest via the (native) rle_run_fill; a count of 0
+ * terminates. */
+void rle_expand_list(void) {
+    cpu.Y = 0x00;
+    for (;;) {
+        cpu.A = bus_read(ZP_IND_Y(0x00BB));   /* ($BB)+0 = run length */
+        if (cpu.A == 0x00) return;
+        rle_run_fill();
+    }
+}
+
+/* rle_decompress @ $3C3D — decompress an RLE stream from the source pointer $00BB into the
+ * dest $00BD/$00BE.  A byte < $C0 is a literal (copied once via copy_bytes_to_dst); a byte
+ * >= $C0 is a run marker whose low 6 bits are the length (length 0 = $C0 terminator), with
+ * the following byte the repeated value (via rle_run_fill). */
+void rle_decompress(void) {
+    cpu.Y = 0x00;
+    for (;;) {
+        cpu.A = bus_read(ZP_IND_Y(0x00BB));
+        if (cpu.A < 0xC0) {                   /* CMP #$C0; BCC literal */
+            cpu.X = 0x01;
+            copy_bytes_to_dst();
+        } else {
+            cpu.A = (uint8_t)(cpu.A & 0x3F);
+            if (cpu.A == 0x00) return;        /* $C0 terminator */
+            rle_run_fill();
+        }
+    }
+}
+
 /* render_bcd_counter @ $49A0 — render the 3-byte packed-BCD score ($0601-$0603,
  * 6 digits) to the top text line $32C5..$32CA with leading-zero suppression.
  * Flight ISR routine; the first transpiled-on-the-VBI-path fn ported native.

@@ -272,6 +272,9 @@ VALIDATE_FUNCS = {
     0x6805,  # set_coord_y_e0 — glyph src $0084/$0085 = $E0(A+$80), tail blit_glyph_8rows
     0x6773,  # glyph_ptr_from_index — glyph src = $E000 + (A<<3), tail blit_glyph_8rows
     0x4099,  # draw_glyph_2rows — 2x2 glyph from $4AE3[A..A+3] | $00BF via ($BB) at cols 0,1,$30,$31
+    # batch — RLE expanders:
+    0x757B,  # rle_expand_list — expand (count,value) run list via rle_run_fill; 0 count terminates
+    0x3C3D,  # rle_decompress — literal/run RLE decompressor ($C0 markers); the 60x-slow cinematic one
 }
 VALIDATE_SUFFIX = '__t6502'
 
