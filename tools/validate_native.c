@@ -767,6 +767,25 @@ static int test_rle_run_fill(void) {
     return mem_fail;
 }
 
+/* --- unpack_bitmap_4d3e @ $74D7: bit-reversal unpacker through pointers read from the $4D3E
+ * word table.  With a random table the pointers would be garbage (corrupt ZP / HW), so seed
+ * EVERY table word to $2000: all reads/writes then stay in $2000..$207F (in-place reversal,
+ * deterministic for both runs).  Input-less; result observed via mem[]. --- */
+static int test_unpack_bitmap_4d3e(void) {
+    if (!want("unpack_bitmap_4d3e")) return 0;
+    enum { N = 4000 };
+    static uint8_t pre[65536];
+    int mem_fail = 0, cpu_diff = 0, printed = 0;
+    for (int t = 0; t < N; t++) {
+        fill_random(pre);
+        for (int i = 0; i < 0x100; i++) pre[0x4D3E + i] = (i & 1) ? 0x20 : 0x00;  /* words -> $2000 */
+        mem_fail += diff_run("unpack_bitmap_4d3e", pre, zero_cpu(),
+                             unpack_bitmap_4d3e, unpack_bitmap_4d3e__t6502, t, &printed, &cpu_diff);
+    }
+    printf("unpack_bitmap_4d3e: %d cases, %d mem mismatch (must be 0), %d cpu diffs\n", N, mem_fail, cpu_diff);
+    return mem_fail;
+}
+
 /* --- plot_clipped_pixel @ $7D38: clipped masked pixel.  Plots through row pointers from the
  * row-addr table $073D/$0793, so seed it -> $2000 + row*$28; the coords $004E/$004F are kept
  * inside the clip window and $00B3 high so the plot path runs; mask tables $4F3B/$7DEB and the
@@ -1686,6 +1705,7 @@ int main(int argc, char **argv) {
     fails += test_loader_util();
     fails += test_game_init_77DF();
     fails += test_plot_clipped_pixel();
+    fails += test_unpack_bitmap_4d3e();
     fails += test_mem_contract_regs("show_cockpit_message", show_cockpit_message, show_cockpit_message__t6502);
     fails += test_mem_contract_regs("mark_slot_and_countdown_char", mark_slot_and_countdown_char, mark_slot_and_countdown_char__t6502);
     fails += test_mem_contract_regs("mark_slot_and_inc_count", mark_slot_and_inc_count, mark_slot_and_inc_count__t6502);

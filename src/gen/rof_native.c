@@ -1509,6 +1509,45 @@ void plot_clipped_pixel(void) {
     mem[0x004F] = (uint8_t)(mem[0x004F] + 1);
 }
 
+/* unpack_bitmap_4d3e @ $74D7 — unpack a bitmap by bit-reversing bytes between buffers whose
+ * pointers come from the $4D3E word table.  Outer 8 passes x middle 4 passes: src ptr $00C1 =
+ * table[$0084], dst ptr $00C3 = table[$0080-$0081]; the byte loop reads ($C1)+Y, reverses its
+ * bits (8x ASL/ROR into $0085), writes ($C3)+Y, stopping when a reversed byte is 0 or Y reaches
+ * $80.  Indices step $0084/$0081 by 2 (middle) and $0080/$0084 by $12/$0A (outer). */
+void unpack_bitmap_4d3e(void) {
+    mem[0x0084] = 0x00;
+    mem[0x0080] = 0x10;
+    mem[0x00DF] = 0x08;
+    do {
+        mem[0x0081] = 0x00;
+        mem[0x0082] = 0x04;
+        do {
+            uint8_t ys = mem[0x0084];
+            mem[0x00C1] = mem[0x4D3E + ys]; mem[0x00C2] = mem[0x4D3F + ys];
+            uint8_t yd = (uint8_t)(mem[0x0080] - mem[0x0081]);
+            mem[0x00C3] = mem[0x4D3E + yd]; mem[0x00C4] = mem[0x4D3F + yd];
+            uint8_t y = 0x00;
+            for (;;) {
+                cpu.Y = y;
+                cpu.A = bus_read(ZP_IND_Y(0x00C1));
+                for (int k = 0; k < 8; k++) { ASL_A(); ROR_M(0x0085); }  /* reverse bits */
+                cpu.A = mem[0x0085];
+                cpu.Y = y;
+                bus_write(ZP_IND_Y(0x00C3), cpu.A);
+                if (cpu.A == 0x00) break;            /* BEQ */
+                y = (uint8_t)(y + 1);
+                if (y & 0x80) break;                 /* BPL: loop while Y < $80 */
+            }
+            mem[0x0084] = (uint8_t)(mem[0x0084] + 2);
+            mem[0x0081] = (uint8_t)(mem[0x0081] + 2);
+            mem[0x0082] = (uint8_t)(mem[0x0082] - 1);
+        } while (mem[0x0082] != 0x00);
+        mem[0x0080] = (uint8_t)(mem[0x0080] + 0x12);
+        mem[0x0084] = (uint8_t)(mem[0x0084] + 0x0A);
+        mem[0x00DF] = (uint8_t)(mem[0x00DF] - 1);
+    } while (mem[0x00DF] != 0x00);
+}
+
 /* render_bcd_counter @ $49A0 — render the 3-byte packed-BCD score ($0601-$0603,
  * 6 digits) to the top text line $32C5..$32CA with leading-zero suppression.
  * Flight ISR routine; the first transpiled-on-the-VBI-path fn ported native.

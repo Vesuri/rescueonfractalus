@@ -279,6 +279,7 @@ VALIDATE_FUNCS = {
     0x3C00,  # loader_util — clear $32B5/$1000/$0B00 regions via 3x memset_or_copy (pure)
     0x77DF,  # game_init_77DF — build $BE00/$BF00 256-entry bit tables (pure; PHA/PLA -> mask stack)
     0x7D38,  # plot_clipped_pixel — clipped masked HUD/radar pixel via row table + ($C1)+col RMW
+    0x74D7,  # unpack_bitmap_4d3e — bit-reversal bitmap unpacker via $4D3E ptr table (8x4 passes)
 }
 VALIDATE_SUFFIX = '__t6502'
 
