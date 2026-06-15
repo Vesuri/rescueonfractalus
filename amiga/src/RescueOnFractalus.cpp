@@ -156,11 +156,14 @@ static uint16_t fadeColor(uint16_t color, uint16_t fade)
 // ---- palette animation -------------------------------------------------------
 static void animatePalette(Palette* palette, uint16_t frame)
 {
-    if (frame < 64) {
-        palette->setFade((frame * 17) >> 6);
-    } else {
-        if (palette->fade() < 16) palette->setFade(16);
-    }
+    // FAITHFUL: the original NEVER fades the cockpit/HUD up from black — all colours
+    // are immediate.  Hold the palette at full intensity (fadeColor(c,16) == c) so the
+    // renderer shows the live genuine mem[] colours directly.  The real dark->bright
+    // fades (the Standby terrain green ramp $0071 $C2->$C8 via delay_loop_c2_to_c9, the
+    // START-launch colour ramps) come from the mem[] colour BYTES themselves changing
+    // over the build, which still animate correctly at a fixed full fade.
+    (void)frame;
+    palette->setFade(16);
 }
 
 // ---- sprite data (staircase slant, see commit history for derivation) --------
