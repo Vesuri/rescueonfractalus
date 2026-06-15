@@ -162,6 +162,28 @@ void bin_to_bcd(void) {
     LDA(bcd);
 }
 
+/* copy_altitude_graphic_to_screen @ $782A — Standby per-frame altitude banner.
+ *
+ * 6502: A=$0091; if A<$C0 return; if A==$C0 and $00E2 has bit7 set return;
+ * $0091=Y(entry); X=($A>=$E0 ? $27 [also $00D8=$44] : $13); then copy 20 bytes
+ * $5A9F+X -> $32B6+Y for Y=$14..$01 (X and Y decrementing together).  Exit
+ * A/X/Y are dead at the Standby-loop call site (incidental in validation). */
+void copy_altitude_graphic_to_screen_core(uint8_t entryY) {
+    uint8_t a = mem[0x0091];
+    if (a < 0xC0) return;
+    if (a == 0xC0 && (mem[0x00E2] & 0x80)) return;
+    mem[0x0091] = entryY;
+    uint8_t x = (a >= 0xE0) ? 0x27 : 0x13;
+    if (a >= 0xE0) mem[0x00D8] = 0x44;
+    for (uint8_t y = 0x14; y != 0; y--, x--)
+        mem[0x32B6 + y] = mem[0x5A9F + x];
+}
+
+/* 6502-ABI shim: entry cpu.Y is the new $0091 gate value. */
+void copy_altitude_graphic_to_screen(void) {
+    copy_altitude_graphic_to_screen_core(cpu.Y);
+}
+
 /* render_bcd_counter @ $49A0 — render the 3-byte packed-BCD score ($0601-$0603,
  * 6 digits) to the top text line $32C5..$32CA with leading-zero suppression.
  * Flight ISR routine; the first transpiled-on-the-VBI-path fn ported native.

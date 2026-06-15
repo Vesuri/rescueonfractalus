@@ -165,6 +165,7 @@ VALIDATE_FUNCS = {
     #     subtree that drives the Standby + Doors/Tunnel/Planet cinematic — the
     #     slow part of boot (the flight loop is already native).  Leaves-first. ---
     0x4E84,  # bin_to_bcd — A(0-99)->packed BCD; units->$00C1, tens->Y, BCD->A (pure leaf)
+    0x782A,  # copy_altitude_graphic_to_screen — Standby per-frame: copy 20-byte $5A9F+X block to $32B7..$32CA (leaf, entry Y)
 }
 VALIDATE_SUFFIX = '__t6502'
 

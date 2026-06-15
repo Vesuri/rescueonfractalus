@@ -42,6 +42,13 @@ void clear_terrain_column_core(uint8_t startCol);
  * *tens (the shim maps units->$00C1 and tens->cpu.Y). */
 uint8_t bin_to_bcd_core(uint8_t a, uint8_t *units, uint8_t *tens);
 
+/* copy_altitude_graphic_to_screen @ $782A core — Standby per-frame altitude
+ * banner update.  entryY is the 6502 entry Y (stored to $0091 as the new gate).
+ * Gated on $0091 (>= $C0, with an $00E2 sign check at exactly $C0); when it fires
+ * it copies a 20-byte graphic from $5A9F+X (X=$27 if $0091 >= $E0 else $13, the
+ * former also setting $00D8=$44) into the title line $32B7..$32CA. */
+void copy_altitude_graphic_to_screen_core(uint8_t entryY);
+
 #ifdef __cplusplus
 }
 #endif

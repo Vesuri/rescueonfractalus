@@ -774,6 +774,9 @@ int main(int argc, char **argv) {
     fails += test_mem_contract("jitter_roll_pitch", jitter_roll_pitch, jitter_roll_pitch__t6502);
     fails += test_mul_u8();
     fails += test_bin_to_bcd();
+    fails += test_mem_contract_regs("copy_altitude_graphic_to_screen",
+                                    copy_altitude_graphic_to_screen,
+                                    copy_altitude_graphic_to_screen__t6502);
     fails += test_mem_contract("compute_target_blip_position", compute_target_blip_position, compute_target_blip_position__t6502);
     fails += test_mem_contract_regs("obj_table_scan_replace", obj_table_scan_replace, obj_table_scan_replace__t6502);
     /* batch 2 — shallow drivers */

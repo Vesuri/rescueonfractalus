@@ -12115,7 +12115,8 @@ L_7823:;
 }
 
 /* copy_altitude_graphic_to_screen @ $782A: If $0091>=$C0 copy 20-byte block $5A9F+X (X=$27/$13) into screen $32B6+Y; sets $00D8=$44 when $0091<$E0 */
-void copy_altitude_graphic_to_screen(void) {
+/* faithful transliteration kept as the validation oracle; native copy_altitude_graphic_to_screen() lives in rof_native.c (see VALIDATE_FUNCS) */
+void copy_altitude_graphic_to_screen__t6502(void) {
     /* 782a */
     LDA(mem[0x0091]);
     /* 782c */
