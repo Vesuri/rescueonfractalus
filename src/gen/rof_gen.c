@@ -10034,7 +10034,8 @@ L_6c4c:;
 }
 
 /* draw_vline_pair @ $6C4D: Inner loop: per row (A..$00B8) gets row ptr via set_row_ptr_from_count, plots fill byte $0084 into $80-indirect buffer at col $0085 and mirror $2F-col; uses plot_pixel_2bpp for cols>=$2B */
-void draw_vline_pair(void) {
+/* faithful transliteration kept as the validation oracle; native draw_vline_pair() lives in rof_native.c (see VALIDATE_FUNCS) */
+void draw_vline_pair__t6502(void) {
     /* 6c4d */
     mem[0x0092] = cpu.A;
     /* 6c4f */

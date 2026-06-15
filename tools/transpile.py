@@ -188,6 +188,7 @@ VALIDATE_FUNCS = {
     0x6AE5,  # fill_terrain_columns — 89x gen_terrain_column over Y=$59..1 (RNG; direct buffer writes)
     0x6620,  # draw_shape_rows_loop — 86 rows: set_row_ptr_from_count + masked-plot cols $9C/$9D/$A0 (screen ptr)
     0x65FB,  # draw_frame_pattern_seq — per-frame doors/tunnel drawer: 20x draw_symmetric_span_loop + tail draw_shape_rows_loop
+    0x6C4D,  # draw_vline_pair — plot a symmetric pair of vertical lines (rows A..$00B8) via plot_pixel_2bpp/bus_write
 }
 VALIDATE_SUFFIX = '__t6502'
 

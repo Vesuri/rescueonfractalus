@@ -488,6 +488,38 @@ void draw_frame_pattern_seq(void) {
     draw_shape_rows_loop();                                /* tail */
 }
 
+/* draw_vline_pair @ $6C4D — plot a symmetric pair of vertical lines.  Entry A is the
+ * start row, $00B8 the end row; the loop walks A down to $00B8 ($0092 = row counter).
+ * Per row: set the row pointer; the plot column is col = (entryX>>1)+2 and its mirror
+ * $2F-col.  For rows >= $2B the two columns are written via plot_pixel_2bpp (2bpp pack,
+ * carry-sensitive — the entry carry is whatever CMP/SBC last set), otherwise the fill
+ * byte $0084 is stored directly.  cpu.X (entryX) is preserved across the loop. */
+void draw_vline_pair(void) {
+    mem[0x0092] = cpu.A;
+    if ((uint8_t)(cpu.A - mem[0x00B8]) & 0x80) return;     /* CMP $00B8; BMI -> return */
+    uint8_t entryX = cpu.X;
+    for (;;) {
+        uint8_t a = mem[0x0092];
+        if (a & 0x80) { a = 0x00; mem[0x0092] = 0x00; }    /* CMP #0; BPL skips; clamp negative to 0 */
+        set_row_ptr_from_count();                          /* Y=$0092 -> $80/$81 (preserves X) */
+        uint8_t col = (uint8_t)((entryX >> 1) + 2);        /* TXA; LSR; CLC; ADC #$02 */
+        mem[0x0085] = col;
+        uint8_t y2 = (uint8_t)(0x2F - col);                /* mirror column */
+        if (a >= 0x2B) {                                   /* CMP #$2B; BCC -> else (bus_write) path */
+            cpu.Y = col; cpu.C = 1;                        /* C set by the CMP (a >= $2B) */
+            plot_pixel_2bpp();
+            cpu.Y = y2;  cpu.C = (uint8_t)(0x2F >= col);   /* C from SEC; SBC $0085 */
+            plot_pixel_2bpp();
+        } else {
+            cpu.Y = col; bus_write(ZP_IND_Y(0x80), mem[0x0084]);
+            cpu.Y = y2;  bus_write(ZP_IND_Y(0x80), mem[0x0084]);
+        }
+        uint8_t n = (uint8_t)(mem[0x0092] - 1);            /* DEC $0092 */
+        mem[0x0092] = n;
+        if ((uint8_t)(n - mem[0x00B8]) & 0x80) break;      /* CMP $00B8; BPL loops; break when N set */
+    }
+}
+
 /* render_bcd_counter @ $49A0 — render the 3-byte packed-BCD score ($0601-$0603,
  * 6 digits) to the top text line $32C5..$32CA with leading-zero suppression.
  * Flight ISR routine; the first transpiled-on-the-VBI-path fn ported native.

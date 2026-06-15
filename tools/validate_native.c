@@ -517,6 +517,40 @@ static int test_draw_frame_pattern_seq(void) {
     return mem_fail;
 }
 
+/* --- draw_vline_pair @ $6C4D: plots a vertical line pair, walking the row counter
+ * $0092 from entry A down to $00B8.  Needs (a) the addr table in safe bitmap RAM,
+ * (b) entry A >= $00B8 with both small so the loop terminates without the negative-row
+ * clamp spinning, and (c) the stack page masked (the routine PHA/PLAs the row value).
+ * Entry X drives the plotted column; entry carry is set internally per call. --- */
+static int test_draw_vline_pair(void) {
+    if (!want("draw_vline_pair")) return 0;
+    enum { N = 6000 };
+    static uint8_t pre[65536];
+    static uint16_t stack_pg[256];
+    for (int i = 0; i < 256; i++) stack_pg[i] = (uint16_t)(0x0100 + i);
+    int mem_fail = 0, cpu_diff = 0, printed = 0;
+    set_ignore(stack_pg, 256);
+    for (int t = 0; t < N; t++) {
+        fill_random(pre);
+        for (int i = 0; i <= 0x55; i++) {
+            uint16_t p = (uint16_t)(0x2000 + i * 0x28);
+            pre[0x073D + i] = (uint8_t)p;
+            pre[0x0793 + i] = (uint8_t)(p >> 8);
+        }
+        uint8_t b8 = (uint8_t)(xs() & 0x1F);
+        pre[0x00B8] = b8;
+        Cpu6502 c = zero_cpu();
+        c.A = (uint8_t)(b8 + (xs() & 0x1F));               /* start row >= end row */
+        c.X = (uint8_t)(xs() & 0xFF);
+        mem_fail += diff_run("draw_vline_pair", pre, c,
+                             draw_vline_pair, draw_vline_pair__t6502, t, &printed, &cpu_diff);
+    }
+    set_ignore(0, 0);
+    printf("draw_vline_pair: %d cases, %d mem mismatch (must be 0), %d cpu diffs\n",
+           N, mem_fail, cpu_diff);
+    return mem_fail;
+}
+
 /* Like test_mem_contract but with random entry A/X/Y/C — for routines that read
  * an entry register as input (a table index, a value to store, an entry carry). */
 static int test_mem_contract_regs(const char *name, void (*native)(void), void (*t6502)(void)) {
@@ -935,6 +969,7 @@ int main(int argc, char **argv) {
     fails += test_mem_contract("fill_terrain_columns", fill_terrain_columns, fill_terrain_columns__t6502);
     fails += test_draw_shape_rows_loop();
     fails += test_draw_frame_pattern_seq();
+    fails += test_draw_vline_pair();
     fails += test_mem_contract("compute_target_blip_position", compute_target_blip_position, compute_target_blip_position__t6502);
     fails += test_mem_contract_regs("obj_table_scan_replace", obj_table_scan_replace, obj_table_scan_replace__t6502);
     /* batch 2 — shallow drivers */
