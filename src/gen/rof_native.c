@@ -520,6 +520,92 @@ void draw_vline_pair(void) {
     }
 }
 
+/* update_object_distance @ $6BED — compute an object's clamped 16-bit screen distance
+ * {$00B7:$00B8} = {$00B9:$00BA} - {$0084:$0085} (clamped to >= 0), store it to the
+ * object position arrays $08A4/$08A5[X], then draw up to three vertical line pairs
+ * (top edge at row <= $2E, then two more stepping the row/fill byte) via draw_vline_pair,
+ * with early-outs when the row counter $00B7 goes negative.  Entry cpu.X selects the
+ * object slot and is the column source for the draws (draw_vline_pair preserves it). */
+void update_object_distance(void) {
+    uint8_t x = cpu.X;
+
+    uint16_t lo = (uint16_t)mem[0x00B9] - mem[0x0084];     /* SEC; SBC $0084 */
+    mem[0x00B7] = (uint8_t)lo;
+    uint8_t borrow = (lo & 0x100) ? 1 : 0;
+    uint8_t hi = (uint8_t)(mem[0x00BA] - mem[0x0085] - borrow);  /* SBC $0085 */
+    if (hi & 0x80) hi = 0x00;                              /* BPL skips; clamp negative to 0 */
+    mem[0x00B8] = hi;
+
+    mem[0x08A4 + x] = mem[0x00B7];
+    mem[0x08A5 + x] = mem[0x00B8];
+    mem[0x0084] = 0xFF;
+
+    mem[0x00B7] = (mem[0x00BA] < 0x2F) ? mem[0x00BA] : 0x2E;  /* CMP #$2F; BCC skips; else $2E */
+    cpu.A = mem[0x00B7]; cpu.X = x; draw_vline_pair();
+    mem[0x0084] = 0xAA;
+
+    {   /* DEC $00B7; BMI -> return */
+        uint8_t d = (uint8_t)(mem[0x00B7] - 1);
+        mem[0x00B7] = d;
+        if (d & 0x80) return;
+    }
+
+    {   /* SEC; LDA $00B8; SBC $08D3; BPL skips; clamp negative */
+        uint8_t s = (uint8_t)(mem[0x00B8] - mem[0x08D3]);
+        if (s & 0x80) s = 0x00;
+        mem[0x00B8] = s;
+    }
+    cpu.A = mem[0x00B7]; cpu.X = x; draw_vline_pair();
+    mem[0x00B7] = mem[0x00B8];
+    mem[0x0084] = 0x55;
+
+    {   /* DEC $00B7; BMI -> return */
+        uint8_t d = (uint8_t)(mem[0x00B7] - 1);
+        mem[0x00B7] = d;
+        if (d & 0x80) return;
+    }
+
+    {   /* DEC $00B8; BPL skips; clamp negative to 0 */
+        uint8_t d = (uint8_t)(mem[0x00B8] - 1);
+        mem[0x00B8] = (d & 0x80) ? 0x00 : d;
+    }
+    if ((uint8_t)(mem[0x00B7] - 0x2B) & 0x80) {            /* CMP #$2B; BMI -> draw + return */
+        cpu.A = mem[0x00B7]; cpu.X = x; draw_vline_pair();
+    }
+}
+
+/* advance_object_positions @ $6BA8 — advance the scroll counters ($08D1++, the
+ * 16-bit $08D2/$08D3 += $18) then, for each of the 22 object slots (X=$2A..$00 step 2),
+ * build {$0085:$0084} = ($08A5[X] << 2) + $08D3 (and $00B9/$00BA = the slot's raw
+ * lo/hi), and call update_object_distance to recompute + redraw that object. */
+void advance_object_positions(void) {
+    mem[0x08D1] = (uint8_t)(mem[0x08D1] + 1);              /* INC $08D1 */
+    uint16_t s = (uint16_t)mem[0x08D2] + 0x18;             /* CLC; ADC #$18 */
+    mem[0x08D2] = (uint8_t)s;
+    mem[0x08D3] = (uint8_t)(mem[0x08D3] + (s >> 8));       /* ADC #$00 + carry */
+
+    for (int x = 0x2A; x >= 0; x -= 2) {
+        uint8_t lo = mem[0x08A4 + x];
+        mem[0x00B9] = lo;
+        mem[0x0084] = lo;
+        uint8_t hi = mem[0x08A5 + x];
+        mem[0x00BA] = hi;
+        mem[0x0085] = hi;
+        /* {$85:$84} = hi << 2 (via ASL $84; ROL into $85, twice) */
+        uint8_t c0 = (uint8_t)((hi >> 7) & 1);             /* ASL A (=hi); $84 = hi<<1 */
+        mem[0x0084] = (uint8_t)(hi << 1);
+        uint8_t a = c0;                                    /* LDA #0; ROL A -> c0 */
+        uint8_t c1 = (uint8_t)((mem[0x0084] >> 7) & 1);    /* ASL $0084 */
+        mem[0x0084] = (uint8_t)(mem[0x0084] << 1);
+        mem[0x0085] = (uint8_t)((a << 1) | c1);            /* ROL A -> $85 */
+        uint16_t t = (uint16_t)mem[0x0084] + mem[0x08D3];  /* CLC; ADC $08D3 */
+        mem[0x0084] = (uint8_t)t;
+        mem[0x0085] = (uint8_t)(mem[0x0085] + (t >> 8));   /* ADC #$00 + carry */
+        cpu.X = (uint8_t)x;
+        update_object_distance();
+    }
+}
+
 /* render_bcd_counter @ $49A0 — render the 3-byte packed-BCD score ($0601-$0603,
  * 6 digits) to the top text line $32C5..$32CA with leading-zero suppression.
  * Flight ISR routine; the first transpiled-on-the-VBI-path fn ported native.

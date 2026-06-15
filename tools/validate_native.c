@@ -551,6 +551,64 @@ static int test_draw_vline_pair(void) {
     return mem_fail;
 }
 
+/* --- update_object_distance @ $6BED: clamped distance + up to 3 draw_vline_pair draws.
+ * draw_vline_pair self-bounds (its start row $00B7 is clamped <= $2E and its end row
+ * $00B8 stays in 0..$7F), so only draw_vline_pair's pointer safety needs the addr-table
+ * fixture; the stack page is masked (draw_vline_pair PHA/PLAs).  Entry X = object slot. --- */
+static int test_update_object_distance(void) {
+    if (!want("update_object_distance")) return 0;
+    enum { N = 6000 };
+    static uint8_t pre[65536];
+    static uint16_t stack_pg[256];
+    for (int i = 0; i < 256; i++) stack_pg[i] = (uint16_t)(0x0100 + i);
+    int mem_fail = 0, cpu_diff = 0, printed = 0;
+    set_ignore(stack_pg, 256);
+    for (int t = 0; t < N; t++) {
+        fill_random(pre);
+        for (int i = 0; i <= 0x55; i++) {
+            uint16_t p = (uint16_t)(0x2000 + i * 0x28);
+            pre[0x073D + i] = (uint8_t)p;
+            pre[0x0793 + i] = (uint8_t)(p >> 8);
+        }
+        Cpu6502 c = zero_cpu();
+        c.X = (uint8_t)(xs() & 0xFF);
+        mem_fail += diff_run("update_object_distance", pre, c,
+                             update_object_distance, update_object_distance__t6502, t, &printed, &cpu_diff);
+    }
+    set_ignore(0, 0);
+    printf("update_object_distance: %d cases, %d mem mismatch (must be 0), %d cpu diffs\n",
+           N, mem_fail, cpu_diff);
+    return mem_fail;
+}
+
+/* --- advance_object_positions @ $6BA8: scroll-counter bump + 22x update_object_distance.
+ * No entry registers (X is set internally); needs the same addr-table fixture + stack
+ * mask as update_object_distance (reached via its draw_vline_pair calls). --- */
+static int test_advance_object_positions(void) {
+    if (!want("advance_object_positions")) return 0;
+    enum { N = 4000 };
+    static uint8_t pre[65536];
+    static uint16_t stack_pg[256];
+    for (int i = 0; i < 256; i++) stack_pg[i] = (uint16_t)(0x0100 + i);
+    int mem_fail = 0, cpu_diff = 0, printed = 0;
+    set_ignore(stack_pg, 256);
+    for (int t = 0; t < N; t++) {
+        fill_random(pre);
+        for (int i = 0; i <= 0x55; i++) {
+            uint16_t p = (uint16_t)(0x2000 + i * 0x28);
+            pre[0x073D + i] = (uint8_t)p;
+            pre[0x0793 + i] = (uint8_t)(p >> 8);
+        }
+        mem_fail += diff_run("advance_object_positions", pre, zero_cpu(),
+                             advance_object_positions, advance_object_positions__t6502,
+                             t, &printed, &cpu_diff);
+    }
+    set_ignore(0, 0);
+    printf("advance_object_positions: %d cases, %d mem mismatch (must be 0), %d cpu diffs\n",
+           N, mem_fail, cpu_diff);
+    return mem_fail;
+}
+
 /* Like test_mem_contract but with random entry A/X/Y/C — for routines that read
  * an entry register as input (a table index, a value to store, an entry carry). */
 static int test_mem_contract_regs(const char *name, void (*native)(void), void (*t6502)(void)) {
@@ -970,6 +1028,8 @@ int main(int argc, char **argv) {
     fails += test_draw_shape_rows_loop();
     fails += test_draw_frame_pattern_seq();
     fails += test_draw_vline_pair();
+    fails += test_update_object_distance();
+    fails += test_advance_object_positions();
     fails += test_mem_contract("compute_target_blip_position", compute_target_blip_position, compute_target_blip_position__t6502);
     fails += test_mem_contract_regs("obj_table_scan_replace", obj_table_scan_replace, obj_table_scan_replace__t6502);
     /* batch 2 — shallow drivers */

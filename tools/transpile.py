@@ -189,6 +189,8 @@ VALIDATE_FUNCS = {
     0x6620,  # draw_shape_rows_loop — 86 rows: set_row_ptr_from_count + masked-plot cols $9C/$9D/$A0 (screen ptr)
     0x65FB,  # draw_frame_pattern_seq — per-frame doors/tunnel drawer: 20x draw_symmetric_span_loop + tail draw_shape_rows_loop
     0x6C4D,  # draw_vline_pair — plot a symmetric pair of vertical lines (rows A..$00B8) via plot_pixel_2bpp/bus_write
+    0x6BED,  # update_object_distance — clamped 16-bit dist subtract -> $08A4/$08A5[X]; up to 3 draw_vline_pair draws
+    0x6BA8,  # advance_object_positions — INC $08D1, +$18 to $08D2/$08D3, then per slot (X=$2A..0 step2) update_object_distance
 }
 VALIDATE_SUFFIX = '__t6502'
 

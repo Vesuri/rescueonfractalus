@@ -9858,7 +9858,8 @@ L_6b92:;
 }
 
 /* advance_object_positions @ $6BA8: INC $08D1; adds $18 to 16-bit $08D2/$08D3; for each of 22 entries in $08A4/$08A5 computes x4 + offset then calls update_object_distance */
-void advance_object_positions(void) {
+/* faithful transliteration kept as the validation oracle; native advance_object_positions() lives in rof_native.c (see VALIDATE_FUNCS) */
+void advance_object_positions__t6502(void) {
     /* 6ba8 */
     INC_M(0x08D1);
     /* 6bab */
@@ -9931,7 +9932,8 @@ L_6bbe:;
 }
 
 /* update_object_distance @ $6BED: Clamped 16-bit subtract ($B9/$BA)-($84/$85) into $B7/$B8, stores to $08A4/$08A5[X], clamps row to <=$2E then dispatches draw_vline_pair to draw */
-void update_object_distance(void) {
+/* faithful transliteration kept as the validation oracle; native update_object_distance() lives in rof_native.c (see VALIDATE_FUNCS) */
+void update_object_distance__t6502(void) {
     /* 6bed */
     SEC();
     /* 6bee */
