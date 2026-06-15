@@ -175,6 +175,10 @@ VALIDATE_FUNCS = {
     0x65D0,  # build_line_addr_table_1000 — A=$2E, tail build_line_addr_table_1000_stride
     0x6B85,  # init_object_positions — zero $08D1-$08D3, build 22-entry word array $08A4/$08A5 = $6E2D table + $2EE0 (pure leaf)
     0x712D,  # audio_timer_setup — zero $00E7/$0655/$00E5 + POKEY timers $D201-$D207, AUDCTL=$60 (leaf; POKEY via bus_write)
+    0x6B47,  # random_terrain_height — 2 RANDOM reads -> sparse height (result in A; seeded-LFSR test)
+    0x665D,  # fill_horizontal_span — write pattern $00B9 across a row span into two row ptrs (leaf)
+    0x66DE,  # plot_glyph_pixel_masked — OR/AND a 2-bit pixel into ($80)+Y via mask tbls $66E9/$66FB (leaf, entry X/Y)
+    0x66D5,  # plot_pixel_masked — A=col -> Y/X mask index, tail plot_glyph_pixel_masked (entry A)
 }
 VALIDATE_SUFFIX = '__t6502'
 

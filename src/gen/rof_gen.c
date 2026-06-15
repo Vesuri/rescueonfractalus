@@ -8458,7 +8458,8 @@ L_664a:;
 }
 
 /* fill_horizontal_span @ $665D: Sets two row ptrs $80/$81=tbl[$009E], $B7/$B8=tbl[$009F]; writes pattern $00B9 across Y range from ($009C>>1)..($009D>>1) into both rows */
-void fill_horizontal_span(void) {
+/* faithful transliteration kept as the validation oracle; native fill_horizontal_span() lives in rof_native.c (see VALIDATE_FUNCS) */
+void fill_horizontal_span__t6502(void) {
     /* 665d */
     LDY(mem[0x009E]);
     /* 665f */
@@ -8604,7 +8605,8 @@ void plot_pixel_col93(void) {
 }
 
 /* plot_pixel_masked @ $66D5: A=column: Y=A>>1 (byte idx), mask idx X from $0094(+8 if carry), tail-calls plot_glyph_pixel_masked to OR/AND pixel into row ptr $80 */
-void plot_pixel_masked(void) {
+/* faithful transliteration kept as the validation oracle; native plot_pixel_masked() lives in rof_native.c (see VALIDATE_FUNCS) */
+void plot_pixel_masked__t6502(void) {
     /* 66d5 */
     LSR_A();
     /* 66d6 */
@@ -8622,7 +8624,8 @@ L_66dd:;
 }
 
 /* plot_glyph_pixel_masked @ $66DE: OR/AND a 2-bit pixel into screen byte via ($80) using mask tables $66E9(OR)/$66FB(AND) indexed by X */
-void plot_glyph_pixel_masked(void) {
+/* faithful transliteration kept as the validation oracle; native plot_glyph_pixel_masked() lives in rof_native.c (see VALIDATE_FUNCS) */
+void plot_glyph_pixel_masked__t6502(void) {
     /* 66de */
     LDA(bus_read(ZP_IND_Y(0x80)));
     /* 66e0 */
@@ -9739,7 +9742,8 @@ void gen_terrain_column(void) {
 }
 
 /* random_terrain_height @ $6B47: Generates one random terrain-height value (2 RANDOM reads, masks $1F/$03); called 4x per column by gen_terrain_column */
-void random_terrain_height(void) {
+/* faithful transliteration kept as the validation oracle; native random_terrain_height() lives in rof_native.c (see VALIDATE_FUNCS) */
+void random_terrain_height__t6502(void) {
     /* 6b47 */
     LDA(bus_read(0xD20A));
     /* 6b4a */

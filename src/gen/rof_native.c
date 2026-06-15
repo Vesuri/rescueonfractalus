@@ -283,6 +283,75 @@ void audio_timer_setup(void) {
     bus_write(0xD208, 0x60);
 }
 
+/* random_terrain_height @ $6B47 — produce one sparse terrain-height value.
+ * Reads POKEY RANDOM ($D20A): if (r & $1F) != 0 the height is 0; only when the
+ * low 5 bits are all zero (1/32) does it take a second RANDOM read and index the
+ * 4-entry table $6B5F[r2 & 3].  Result is returned in cpu.A (no mem writes); both
+ * branches advance the RANDOM LFSR by exactly the reads the 6502 made. */
+void random_terrain_height(void) {
+    uint8_t r = (uint8_t)(bus_read(0xD20A) & 0x1F);
+    if (r != 0) {                       /* CMP #1 -> BPL taken (r >= 1): height 0 */
+        LDA(0x00);
+        return;
+    }
+    uint8_t x = (uint8_t)(bus_read(0xD20A) & 0x03);
+    LDA(mem[0x6B5F + x]);
+}
+
+/* fill_horizontal_span @ $665D — fill pattern $00B9 across a horizontal run on
+ * two scanlines.  Row pointers $80/$81 = addr-table[$009E], $B7/$B8 = table[$009F].
+ * The column endpoints come from $009C>>1 and $009D>>1 (one adjusted by +/-1 per
+ * the shifted-out bit of $009D), giving the inclusive count $00DF = hi - lo and the
+ * start index Y = hi.  Writes the pattern to ($80)+Y and ($B7)+Y down to lo.  Leaf. */
+void fill_horizontal_span(void) {
+    uint8_t y1 = mem[0x009E];
+    mem[0x0080] = mem[0x073D + y1];
+    mem[0x0081] = mem[0x0793 + y1];
+    uint8_t y2 = mem[0x009F];
+    mem[0x00B7] = mem[0x073D + y2];
+    mem[0x00B8] = mem[0x0793 + y2];
+
+    mem[0x0082] = (uint8_t)(mem[0x009C] >> 1);            /* lo  = $9C>>1 */
+    uint8_t c2  = (uint8_t)(mem[0x009D] & 1);             /* shifted-out bit of $9D */
+    mem[0x0083] = (uint8_t)(mem[0x009D] >> 1);            /* hi  = $9D>>1 */
+    if (!c2) mem[0x0083] = (uint8_t)(mem[0x0083] - 1);    /* BCC: DEC hi */
+    else     mem[0x0082] = (uint8_t)(mem[0x0082] + 1);    /*      INC lo */
+
+    uint8_t y = mem[0x0083];                              /* Y = hi (before SBC) */
+    mem[0x00DF] = (uint8_t)(mem[0x0083] - mem[0x0082]);   /* SEC SBC: count = hi - lo */
+    uint8_t pat = mem[0x00B9];
+    for (;;) {
+        cpu.Y = y;
+        bus_write(ZP_IND_Y(0x80), pat);
+        bus_write(ZP_IND_Y(0xB7), pat);
+        y = (uint8_t)(y - 1);
+        uint8_t df = (uint8_t)(mem[0x00DF] - 1);
+        mem[0x00DF] = df;
+        if (df & 0x80) break;                            /* BPL: loop while N clear */
+    }
+}
+
+/* plot_glyph_pixel_masked @ $66DE — OR/AND a 2-bit pixel into the screen byte at
+ * ($80)+Y using the OR mask $66E9[X] and AND mask $66FB[X].  Leaf (entry X/Y). */
+void plot_glyph_pixel_masked(void) {
+    uint8_t v = bus_read(ZP_IND_Y(0x80));
+    v |= mem[0x66E9 + cpu.X];
+    v &= mem[0x66FB + cpu.X];
+    bus_write(ZP_IND_Y(0x80), v);
+}
+
+/* plot_pixel_masked @ $66D5 — entry A = column.  Y = A>>1 (byte index); the mask
+ * index X = $0094, plus 9 (ADC #$08 with the LSR's shifted-out carry) for odd
+ * columns; tail-calls plot_glyph_pixel_masked. */
+void plot_pixel_masked(void) {
+    uint8_t col = cpu.A;
+    cpu.Y = (uint8_t)(col >> 1);
+    uint8_t x = mem[0x0094];
+    if (col & 1) x = (uint8_t)(x + 0x09);   /* ADC #$08 with carry=1 from LSR */
+    cpu.X = x;
+    plot_glyph_pixel_masked();
+}
+
 /* render_bcd_counter @ $49A0 — render the 3-byte packed-BCD score ($0601-$0603,
  * 6 digits) to the top text line $32C5..$32CA with leading-zero suppression.
  * Flight ISR routine; the first transpiled-on-the-VBI-path fn ported native.

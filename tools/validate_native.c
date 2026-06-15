@@ -390,6 +390,46 @@ static int test_bin_to_bcd(void) {
     return mem_fail + cpu_fail;
 }
 
+/* --- random_terrain_height @ $6B47: result is cpu.A only (no mem writes), driven
+ * by 1-2 POKEY RANDOM reads.  Seed the RANDOM LFSR identically per case (as
+ * diff_run does) so both runs see the same stream; assert cpu.A. --- */
+static int test_random_terrain_height(void) {
+    if (!want("random_terrain_height")) return 0;
+    enum { N = 50000 };
+    static uint8_t pre[65536], ref_mem[65536];
+    int mem_fail = 0, cpu_fail = 0, printed = 0;
+
+    for (int t = 0; t < N; t++) {
+        fill_random(pre);
+        uint32_t rseed = (xs() & 0x1FFFF); if (rseed == 0) rseed = 1;
+        Cpu6502 c = zero_cpu();
+
+        platform_test_seed_rng(rseed);
+        memcpy((void *)mem, pre, 65536); cpu = c;
+        random_terrain_height__t6502();
+        memcpy(ref_mem, (void *)mem, sizeof ref_mem);
+        Cpu6502 ref_cpu = cpu;
+
+        platform_test_seed_rng(rseed);
+        memcpy((void *)mem, pre, 65536); cpu = c;
+        random_terrain_height();
+
+        if (memcmp((const void *)mem, ref_mem, 65536) != 0) {
+            mem_fail++;
+            if (printed < 12)
+                for (int i = 0; i < 65536 && printed < 12; i++)
+                    if (mem[i] != ref_mem[i]) {
+                        printf("[MEM DIFF] random_terrain_height case %d  $%04X  ref=$%02X native=$%02X\n",
+                               t, i, ref_mem[i], mem[i]); printed++;
+                    }
+        }
+        if (cpu.A != ref_cpu.A) cpu_fail++;
+    }
+    printf("random_terrain_height: %d cases, %d mem mismatch, %d cpu(A) mismatch (both must be 0)\n",
+           N, mem_fail, cpu_fail);
+    return mem_fail + cpu_fail;
+}
+
 /* Like test_mem_contract but with random entry A/X/Y/C — for routines that read
  * an entry register as input (a table index, a value to store, an entry carry). */
 static int test_mem_contract_regs(const char *name, void (*native)(void), void (*t6502)(void)) {
@@ -787,6 +827,10 @@ int main(int argc, char **argv) {
     fails += test_mem_contract("build_line_addr_table_1000", build_line_addr_table_1000, build_line_addr_table_1000__t6502);
     fails += test_mem_contract("init_object_positions", init_object_positions, init_object_positions__t6502);
     fails += test_mem_contract("audio_timer_setup", audio_timer_setup, audio_timer_setup__t6502);
+    fails += test_random_terrain_height();
+    fails += test_mem_contract("fill_horizontal_span", fill_horizontal_span, fill_horizontal_span__t6502);
+    fails += test_mem_contract_regs("plot_glyph_pixel_masked", plot_glyph_pixel_masked, plot_glyph_pixel_masked__t6502);
+    fails += test_mem_contract_regs("plot_pixel_masked", plot_pixel_masked, plot_pixel_masked__t6502);
     fails += test_mem_contract("compute_target_blip_position", compute_target_blip_position, compute_target_blip_position__t6502);
     fails += test_mem_contract_regs("obj_table_scan_replace", obj_table_scan_replace, obj_table_scan_replace__t6502);
     /* batch 2 — shallow drivers */
