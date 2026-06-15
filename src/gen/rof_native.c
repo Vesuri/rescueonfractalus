@@ -184,6 +184,75 @@ void copy_altitude_graphic_to_screen(void) {
     copy_altitude_graphic_to_screen_core(cpu.Y);
 }
 
+/* init_row_coords_9c @ $6DDF — load 5 row/coordinate constants into $009C-$00A0.
+ * Pure leaf; exit regs (A=$13) dead at call sites (incidental in validation). */
+void init_row_coords_9c(void) {
+    mem[0x009C] = 0x2E;
+    mem[0x009D] = 0x30;
+    mem[0x009E] = 0x2B;
+    mem[0x009F] = 0x2A;
+    mem[0x00A0] = 0x13;
+}
+
+/* clear_scroll_accum @ $6B71 — zero the PCOLR0-3 shadow $02C0-$02C3 and the
+ * 24-bit scroll accumulator $00A1-$00A4 (plus $00A5).  Pure leaf. */
+void clear_scroll_accum(void) {
+    for (int i = 0; i < 4; i++) {       /* 6502: X = 3..0 */
+        mem[0x02C0 + i] = 0x00;
+        mem[0x00A1 + i] = 0x00;
+    }
+    mem[0x00A5] = 0x00;
+}
+
+/* copy_192_to_1800 @ $75A5 — set the $00BB/$00BC dest pointer to $180F and copy
+ * 192 bytes $350C+Y -> $180F+Y for Y=$C0..$01 (i.e. $1810..$18CF).  The 6502
+ * writes via bus_write(ZP_IND_Y($BB)); the dest is RAM, so this is a plain mem[]
+ * copy.  Pure leaf. */
+void copy_192_to_1800(void) {
+    mem[0x00BB] = 0x0F;
+    mem[0x00BC] = 0x18;
+    for (uint8_t y = 0xC0; y != 0x00; y--)
+        mem[0x180F + y] = mem[0x350C + y];
+}
+
+/* build_row_addr_table @ $7460 — build the 85-entry ($55) per-scanline base-
+ * address table at $073D (lo) / $0793 (hi) from base $00C4:$00C3 and 8-bit stride
+ * $00C1: entry[0] = base, entry[i+1] = entry[i] + stride (16-bit accumulate).
+ * Pure leaf (mem-only; exit regs dead). */
+void build_row_addr_table(void) {
+    mem[0x073D] = mem[0x00C3];
+    mem[0x0793] = mem[0x00C4];
+    uint8_t stride = mem[0x00C1];
+    for (uint8_t y = 0x00; y != 0x55; y++) {
+        uint16_t lo = (uint16_t)mem[0x073D + y] + stride;   /* CLC; ADC stride */
+        mem[0x073E + y] = (uint8_t)lo;
+        mem[0x0794 + y] = (uint8_t)(mem[0x0793 + y] + (lo >> 8));  /* ADC #0 + carry */
+    }
+}
+
+/* build_line_addr_table_2000 @ $65DF — base $2000, stride $2E; tail build_row_addr_table. */
+void build_line_addr_table_2000(void) {
+    mem[0x00C1] = 0x2E;
+    mem[0x00C3] = 0x00;
+    mem[0x00C4] = 0x20;
+    build_row_addr_table();
+}
+
+/* build_line_addr_table_1000_stride @ $65D2 — base $1000, stride = entry cpu.A;
+ * tail build_row_addr_table. */
+void build_line_addr_table_1000_stride(void) {
+    mem[0x00C1] = cpu.A;
+    mem[0x00C3] = 0x00;
+    mem[0x00C4] = 0x10;
+    build_row_addr_table();
+}
+
+/* build_line_addr_table_1000 @ $65D0 — A=$2E, tail build_line_addr_table_1000_stride. */
+void build_line_addr_table_1000(void) {
+    cpu.A = 0x2E;
+    build_line_addr_table_1000_stride();
+}
+
 /* render_bcd_counter @ $49A0 — render the 3-byte packed-BCD score ($0601-$0603,
  * 6 digits) to the top text line $32C5..$32CA with leading-zero suppression.
  * Flight ISR routine; the first transpiled-on-the-VBI-path fn ported native.

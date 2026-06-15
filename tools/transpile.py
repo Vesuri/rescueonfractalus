@@ -166,6 +166,13 @@ VALIDATE_FUNCS = {
     #     slow part of boot (the flight loop is already native).  Leaves-first. ---
     0x4E84,  # bin_to_bcd — A(0-99)->packed BCD; units->$00C1, tens->Y, BCD->A (pure leaf)
     0x782A,  # copy_altitude_graphic_to_screen — Standby per-frame: copy 20-byte $5A9F+X block to $32B7..$32CA (leaf, entry Y)
+    0x6DDF,  # init_row_coords_9c — store 5 constants into $009C-$00A0 (pure leaf)
+    0x6B71,  # clear_scroll_accum — zero $02C0-$02C3, $00A1-$00A5 (pure leaf)
+    0x75A5,  # copy_192_to_1800 — copy 192 bytes $350C->$1810..$18CF via $BB/$BC ptr (leaf)
+    0x7460,  # build_row_addr_table — build 85-entry $073D/$0793 addr table from $C3:$C4 base + $C1 stride (leaf)
+    0x65DF,  # build_line_addr_table_2000 — set base $2000/stride $2E, tail build_row_addr_table
+    0x65D2,  # build_line_addr_table_1000_stride — set base $1000/stride=A, tail build_row_addr_table (entry A)
+    0x65D0,  # build_line_addr_table_1000 — A=$2E, tail build_line_addr_table_1000_stride
 }
 VALIDATE_SUFFIX = '__t6502'
 

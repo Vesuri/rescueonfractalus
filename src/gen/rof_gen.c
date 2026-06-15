@@ -8285,14 +8285,16 @@ L_65aa:;
 }
 
 /* build_line_addr_table_1000 @ $65D0: A=$2E stride; tail-calls build_line_addr_table ($65d2) -> table for graphics buffer base $1000 */
-void build_line_addr_table_1000(void) {
+/* faithful transliteration kept as the validation oracle; native build_line_addr_table_1000() lives in rof_native.c (see VALIDATE_FUNCS) */
+void build_line_addr_table_1000__t6502(void) {
     /* 65d0 */
     LDA(0x2E);
     build_line_addr_table_1000_stride(); return;
 }
 
 /* build_line_addr_table_1000_stride @ $65D2: Sets base=$00C3:$00C4=$1000, stride=$00C1=A; game_setup_7460 builds 85-entry row-addr table */
-void build_line_addr_table_1000_stride(void) {
+/* faithful transliteration kept as the validation oracle; native build_line_addr_table_1000_stride() lives in rof_native.c (see VALIDATE_FUNCS) */
+void build_line_addr_table_1000_stride__t6502(void) {
     /* 65d2 */
     mem[0x00C1] = cpu.A;
     /* 65d4 */
@@ -8308,7 +8310,8 @@ void build_line_addr_table_1000_stride(void) {
 }
 
 /* build_line_addr_table_2000 @ $65DF: Sets $00C1=$2E stride, base $00C3:$00C4=$2000; game_setup_7460 builds row-addr table for buffer $2000 */
-void build_line_addr_table_2000(void) {
+/* faithful transliteration kept as the validation oracle; native build_line_addr_table_2000() lives in rof_native.c (see VALIDATE_FUNCS) */
+void build_line_addr_table_2000__t6502(void) {
     /* 65df */
     LDA(0x2E);
     /* 65e1 */
@@ -9783,7 +9786,8 @@ L_6b67:;
 }
 
 /* clear_scroll_accum @ $6B71: Zeroes PCOLR0-3 shadow $02C0..$02C3 and 24-bit scroll accum $00A1..$00A4 plus $00A5 */
-void clear_scroll_accum(void) {
+/* faithful transliteration kept as the validation oracle; native clear_scroll_accum() lives in rof_native.c (see VALIDATE_FUNCS) */
+void clear_scroll_accum__t6502(void) {
     /* 6b71 */
     LDA(0x00);
     /* 6b73 */
@@ -10145,7 +10149,8 @@ L_6ca2:;
 
 /* dli_handler_game2 @ $6CC2: manual implementation in rof_manual.c */
 /* init_row_coords_9c @ $6DDF: Loads constants $2E,$30,$2B,$2A,$13 into $009C-$00A0 (row/coordinate setup for drawing) */
-void init_row_coords_9c(void) {
+/* faithful transliteration kept as the validation oracle; native init_row_coords_9c() lives in rof_native.c (see VALIDATE_FUNCS) */
+void init_row_coords_9c__t6502(void) {
     /* 6ddf */
     LDA(0x2E);
     /* 6de1 */
@@ -11086,7 +11091,8 @@ L_745b:;
 }
 
 /* build_row_addr_table @ $7460: Builds the 85-entry ($55) per-scanline screen base-address table $073D/$0793 from $C3:$C4 base + $C1 stride; called before main loop */
-void build_row_addr_table(void) {
+/* faithful transliteration kept as the validation oracle; native build_row_addr_table() lives in rof_native.c (see VALIDATE_FUNCS) */
+void build_row_addr_table__t6502(void) {
     /* 7460 */
     LDY(0x00);
     /* 7462 */
@@ -11455,7 +11461,8 @@ L_758c:;
 }
 
 /* copy_192_to_1800 @ $75A5: Copies $C0=192 bytes from table $350C to dest ptr $BB/$BC (=$1800) via ZP_IND_Y */
-void copy_192_to_1800(void) {
+/* faithful transliteration kept as the validation oracle; native copy_192_to_1800() lives in rof_native.c (see VALIDATE_FUNCS) */
+void copy_192_to_1800__t6502(void) {
     /* 75a5 */
     LDA(0x0F);
     /* 75a7 */

@@ -777,6 +777,14 @@ int main(int argc, char **argv) {
     fails += test_mem_contract_regs("copy_altitude_graphic_to_screen",
                                     copy_altitude_graphic_to_screen,
                                     copy_altitude_graphic_to_screen__t6502);
+    fails += test_mem_contract("init_row_coords_9c", init_row_coords_9c, init_row_coords_9c__t6502);
+    fails += test_mem_contract("clear_scroll_accum", clear_scroll_accum, clear_scroll_accum__t6502);
+    fails += test_mem_contract("copy_192_to_1800", copy_192_to_1800, copy_192_to_1800__t6502);
+    fails += test_mem_contract("build_row_addr_table", build_row_addr_table, build_row_addr_table__t6502);
+    fails += test_mem_contract("build_line_addr_table_2000", build_line_addr_table_2000, build_line_addr_table_2000__t6502);
+    fails += test_mem_contract_regs("build_line_addr_table_1000_stride",
+                                    build_line_addr_table_1000_stride, build_line_addr_table_1000_stride__t6502);
+    fails += test_mem_contract("build_line_addr_table_1000", build_line_addr_table_1000, build_line_addr_table_1000__t6502);
     fails += test_mem_contract("compute_target_blip_position", compute_target_blip_position, compute_target_blip_position__t6502);
     fails += test_mem_contract_regs("obj_table_scan_replace", obj_table_scan_replace, obj_table_scan_replace__t6502);
     /* batch 2 — shallow drivers */
