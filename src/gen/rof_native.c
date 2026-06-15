@@ -1087,6 +1087,46 @@ void terrain_plot_return(void) { }
 void terrain_distance_clamp_return(void) { }
 void plot_line_done(void) { }
 
+/* scan_grid_neighbors @ $7069 — probe the four diagonal neighbours of the current grid
+ * cell (offset pairs in $009A/$009B) via test_marked_neighbor; for each one that comes
+ * back marked (negative), push the cell with push_grid_cell.  Both callees are native. */
+void scan_grid_neighbors(void) {
+    static const uint8_t off[4][2] = { {0x01,0x10}, {0xFF,0xF0}, {0x10,0xFF}, {0xF0,0x01} };
+    for (int i = 0; i < 4; i++) {
+        mem[0x009A] = off[i][0];
+        mem[0x009B] = off[i][1];
+        test_marked_neighbor();
+        if (cpu.N) push_grid_cell();
+    }
+}
+
+/* intro_reset_score_slots @ $4FCE — clear two score slots ($066A/$0686 = 0), set $0678
+ * = $0C, and enqueue event Y=$0D via the (native) game_sub_55FC. */
+void intro_reset_score_slots(void) {
+    mem[0x066A] = 0x00; mem[0x0686] = 0x00; mem[0x0678] = 0x0C;
+    cpu.Y = 0x0D;
+    game_sub_55FC();
+}
+
+/* init_event_state_5815_x16 @ $7AA8 — seed event state ($0044 = entry A, $3388 = $B4,
+ * $003C = 0) and enqueue marked event X=$16 via the (native) ring_push_marked. */
+void init_event_state_5815_x16(void) {
+    mem[0x0044] = cpu.A; mem[0x3388] = 0xB4; mem[0x003C] = 0x00;
+    cpu.X = 0x16;
+    ring_push_marked();
+}
+
+/* rle_run_fill @ $3C58 — RLE run expansion: entry A = run length (-> X), bump the source
+ * pointer $00BB/$00BC, read the run byte at ($00BB)+Y, and replicate it A times into the
+ * dest pointer $00BD/$00BE via the (native) copy_bytes_to_dst. */
+void rle_run_fill(void) {
+    cpu.X = cpu.A;                                  /* TAX — run length */
+    mem[0x00BB] = (uint8_t)(mem[0x00BB] + 1);
+    if (mem[0x00BB] == 0x00) mem[0x00BC] = (uint8_t)(mem[0x00BC] + 1);
+    cpu.A = bus_read(ZP_IND_Y(0x00BB));             /* the run byte (uses entry cpu.Y) */
+    copy_bytes_to_dst();
+}
+
 /* render_bcd_counter @ $49A0 — render the 3-byte packed-BCD score ($0601-$0603,
  * 6 digits) to the top text line $32C5..$32CA with leading-zero suppression.
  * Flight ISR routine; the first transpiled-on-the-VBI-path fn ported native.

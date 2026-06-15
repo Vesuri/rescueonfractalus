@@ -247,6 +247,11 @@ VALIDATE_FUNCS = {
     0xA63A,  # terrain_plot_return — bare RTS (no-op)
     0xA909,  # terrain_distance_clamp_return — bare RTS (no-op)
     0xAB26,  # plot_line_done — bare RTS (no-op)
+    # batch — grid-neighbor scan, ring-push drivers, RLE run fill:
+    0x7069,  # scan_grid_neighbors — 4 diagonal test_marked_neighbor probes + push_grid_cell
+    0x4FCE,  # intro_reset_score_slots — clear $066A/$0686, $0678=$0C, tail game_sub_55FC (Y=$0D)
+    0x7AA8,  # init_event_state_5815_x16 — seed $0044/$3388/$003C, tail ring_push_marked (X=$16, entry A)
+    0x3C58,  # rle_run_fill — bump src $BB/$BC, read run byte ($BB)+Y, tail copy_bytes_to_dst (entry A/Y)
 }
 VALIDATE_SUFFIX = '__t6502'
 

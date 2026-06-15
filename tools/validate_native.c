@@ -516,6 +516,29 @@ static int test_plot_char_bounded(void) {
     return mem_fail + cpu_fail;
 }
 
+/* --- rle_run_fill @ $3C58: RLE run expansion through copy_bytes_to_dst.  Seed the
+ * source pointer $00BB/$00BC -> $2000 and the dest pointer $00BD/$00BE -> $2400 (both
+ * safe RAM, disjoint), a bounded run length (entry A 1..64) and small offset (entry Y),
+ * so the up-to-64-byte fill stays in RAM.  Result is observed through mem[]. --- */
+static int test_rle_run_fill(void) {
+    if (!want("rle_run_fill")) return 0;
+    enum { N = 30000 };
+    static uint8_t pre[65536];
+    int mem_fail = 0, cpu_diff = 0, printed = 0;
+    for (int t = 0; t < N; t++) {
+        fill_random(pre);
+        pre[0x00BB] = 0x00; pre[0x00BC] = 0x20;        /* src -> $2000 */
+        pre[0x00BD] = 0x00; pre[0x00BE] = 0x24;        /* dest -> $2400 */
+        Cpu6502 c = zero_cpu();
+        c.A = (uint8_t)(1 + (xs() % 64));              /* run length 1..64 */
+        c.Y = (uint8_t)(xs() & 0x0F);                  /* offset 0..15 */
+        mem_fail += diff_run("rle_run_fill", pre, c,
+                             rle_run_fill, rle_run_fill__t6502, t, &printed, &cpu_diff);
+    }
+    printf("rle_run_fill: %d cases, %d mem mismatch (must be 0), %d cpu diffs\n", N, mem_fail, cpu_diff);
+    return mem_fail;
+}
+
 /* --- emit_bcd_byte_digits @ $49CE: plots two digits via plot_char_bounded.  Same
  * dest-ptr ($00C5/$00C6 -> $2000) fixture as plot_char_bounded; entry A is a packed-BCD
  * byte, X the suppress flag, Y the column.  The 6502 PHA leaves a dead scribble on the
@@ -1277,6 +1300,11 @@ int main(int argc, char **argv) {
     fails += test_plot_char_bounded();
     /* batch — BCD digit-pair, slot drivers, bare-RTS stubs */
     fails += test_emit_bcd_byte_digits();
+    /* batch — grid-neighbor scan, ring-push drivers, RLE run fill */
+    fails += test_mem_contract("scan_grid_neighbors", scan_grid_neighbors, scan_grid_neighbors__t6502);
+    fails += test_mem_contract_regs("intro_reset_score_slots", intro_reset_score_slots, intro_reset_score_slots__t6502);
+    fails += test_mem_contract_regs("init_event_state_5815_x16", init_event_state_5815_x16, init_event_state_5815_x16__t6502);
+    fails += test_rle_run_fill();
     fails += test_mem_contract_regs("mark_slot_and_countdown_char", mark_slot_and_countdown_char, mark_slot_and_countdown_char__t6502);
     fails += test_mem_contract_regs("mark_slot_and_inc_count", mark_slot_and_inc_count, mark_slot_and_inc_count__t6502);
     fails += test_mem_contract("return_stub_40af", return_stub_40af, return_stub_40af__t6502);
