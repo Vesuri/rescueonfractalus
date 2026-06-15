@@ -465,6 +465,29 @@ void draw_shape_rows_loop(void) {
     }
 }
 
+/* draw_frame_pattern_seq @ $65FB — the per-frame doors/tunnel frame drawer.  After
+ * init_row_coords_9c seeds the edge coords, loop $00A0+1 (=20) times: read the next
+ * span count from the $6E0F pattern table into $0096, draw one symmetric span pair,
+ * and cycle the pattern selector $0094 through 1..6.  Finally DEC $0094 and tail
+ * draw_shape_rows_loop.  (Entry A=$01 is positive so the $6602 BMI never fires.) */
+void draw_frame_pattern_seq(void) {
+    init_row_coords_9c();
+    mem[0x0094] = 0x01;
+    for (;;) {
+        cpu.Y = mem[0x00A0];
+        mem[0x0096] = mem[0x6E0F + cpu.Y];
+        draw_symmetric_span_loop();
+        uint8_t v = (uint8_t)(mem[0x0094] + 1);           /* INC $0094 */
+        if (v == 0x07) v = 0x01;                          /* CMP #7; BEQ -> wrap to 1 */
+        mem[0x0094] = v;
+        uint8_t a0 = (uint8_t)(mem[0x00A0] - 1);          /* DEC $00A0 */
+        mem[0x00A0] = a0;
+        if (a0 & 0x80) break;                             /* BPL: loop while N clear */
+    }
+    mem[0x0094] = (uint8_t)(mem[0x0094] - 1);             /* DEC $0094 */
+    draw_shape_rows_loop();                                /* tail */
+}
+
 /* render_bcd_counter @ $49A0 — render the 3-byte packed-BCD score ($0601-$0603,
  * 6 digits) to the top text line $32C5..$32CA with leading-zero suppression.
  * Flight ISR routine; the first transpiled-on-the-VBI-path fn ported native.

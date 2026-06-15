@@ -8348,7 +8348,8 @@ L_65f0:;
 }
 
 /* draw_frame_pattern_seq @ $65FB: Inits via init_row_coords_9c, loops $00A0 times reading $6E0F pattern into $0096, calls draw_symmetric_span_loop draw, cycles $0094 1..6 */
-void draw_frame_pattern_seq(void) {
+/* faithful transliteration kept as the validation oracle; native draw_frame_pattern_seq() lives in rof_native.c (see VALIDATE_FUNCS) */
+void draw_frame_pattern_seq__t6502(void) {
     /* 65fb */
     init_row_coords_9c();
     /* 65fe */

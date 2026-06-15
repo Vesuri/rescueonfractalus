@@ -490,6 +490,33 @@ static int test_draw_shape_rows_loop(void) {
     return mem_fail;
 }
 
+/* --- draw_frame_pattern_seq @ $65FB: the doors/tunnel drawer.  init_row_coords_9c
+ * seeds the coords, so only the addr table and the $6E0F span-count pattern need a
+ * fixture: point the table into bitmap RAM ($2000+) and bound the span counts to 1..2
+ * so the inner draw_symmetric_span_loop keeps $009E within the 85-row table (a larger
+ * count would run the row index off the table into garbage/ZP and hang both runs). --- */
+static int test_draw_frame_pattern_seq(void) {
+    if (!want("draw_frame_pattern_seq")) return 0;
+    enum { N = 3000 };
+    static uint8_t pre[65536];
+    int mem_fail = 0, cpu_diff = 0, printed = 0;
+    for (int t = 0; t < N; t++) {
+        fill_random(pre);
+        for (int i = 0; i <= 0x55; i++) {
+            uint16_t p = (uint16_t)(0x2000 + i * 0x28);
+            pre[0x073D + i] = (uint8_t)p;
+            pre[0x0793 + i] = (uint8_t)(p >> 8);
+        }
+        for (int i = 0; i <= 0x14; i++) pre[0x6E0F + i] = (uint8_t)((xs() & 1) + 1);  /* span counts 1..2 */
+        mem_fail += diff_run("draw_frame_pattern_seq", pre, zero_cpu(),
+                             draw_frame_pattern_seq, draw_frame_pattern_seq__t6502,
+                             t, &printed, &cpu_diff);
+    }
+    printf("draw_frame_pattern_seq: %d cases, %d mem mismatch (must be 0), %d cpu diffs\n",
+           N, mem_fail, cpu_diff);
+    return mem_fail;
+}
+
 /* Like test_mem_contract but with random entry A/X/Y/C — for routines that read
  * an entry register as input (a table index, a value to store, an entry carry). */
 static int test_mem_contract_regs(const char *name, void (*native)(void), void (*t6502)(void)) {
@@ -907,6 +934,7 @@ int main(int argc, char **argv) {
     fails += test_mem_contract_regs("gen_terrain_column", gen_terrain_column, gen_terrain_column__t6502);
     fails += test_mem_contract("fill_terrain_columns", fill_terrain_columns, fill_terrain_columns__t6502);
     fails += test_draw_shape_rows_loop();
+    fails += test_draw_frame_pattern_seq();
     fails += test_mem_contract("compute_target_blip_position", compute_target_blip_position, compute_target_blip_position__t6502);
     fails += test_mem_contract_regs("obj_table_scan_replace", obj_table_scan_replace, obj_table_scan_replace__t6502);
     /* batch 2 — shallow drivers */
