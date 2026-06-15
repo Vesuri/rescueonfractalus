@@ -3853,7 +3853,8 @@ L_4e7a:;
 }
 
 /* bin_to_bcd @ $4E84: Convert A (0-99) to packed BCD: Y=A/10, units A%10 in $C1, return (Y<<4)|units */
-void bin_to_bcd(void) {
+/* faithful transliteration kept as the validation oracle; native bin_to_bcd() lives in rof_native.c (see VALIDATE_FUNCS) */
+void bin_to_bcd__t6502(void) {
     /* 4e84 */
     LDY(0xFF);
     /* 4e86 */

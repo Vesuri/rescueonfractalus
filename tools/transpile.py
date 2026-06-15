@@ -161,6 +161,10 @@ VALIDATE_FUNCS = {
     0x5614,  # reorder_sprite_slot — voice-priority mixer (calls 5673/568a/56af); entry X/Y, Y restored
     0x581C,  # input_init — load a new voice from event tables $56D4..$57F4 (stack-aware; tail game_sub_55FC)
     0x548D,  # update_gauge_digits — APEX: per-frame voice/gauge envelope engine + ring drain (Atari VBI tail)
+    # --- startup/cinematic de-transpile (2026-06-15): the display_setup ($5F1D)
+    #     subtree that drives the Standby + Doors/Tunnel/Planet cinematic — the
+    #     slow part of boot (the flight loop is already native).  Leaves-first. ---
+    0x4E84,  # bin_to_bcd — A(0-99)->packed BCD; units->$00C1, tens->Y, BCD->A (pure leaf)
 }
 VALIDATE_SUFFIX = '__t6502'
 

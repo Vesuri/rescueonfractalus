@@ -36,6 +36,12 @@ DivResult divide_16x16_core(uint16_t dividend, uint16_t divisor);
  * scattered object-table cells, starting at column offset startCol. */
 void clear_terrain_column_core(uint8_t startCol);
 
+/* bin_to_bcd @ $4E84 core — convert a binary byte to packed BCD by repeated
+ * subtraction (faithful to the 6502: 8-bit (tens<<4) truncation when a >= 100).
+ * Returns the packed BCD byte; writes the ones digit to *units and the tens to
+ * *tens (the shim maps units->$00C1 and tens->cpu.Y). */
+uint8_t bin_to_bcd_core(uint8_t a, uint8_t *units, uint8_t *tens);
+
 #ifdef __cplusplus
 }
 #endif

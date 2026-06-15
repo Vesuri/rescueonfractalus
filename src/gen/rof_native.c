@@ -136,6 +136,32 @@ void clear_terrain_column(void) {
     cpu.Z = (x0 == 0) ? 1 : 0; cpu.N = (x0 >> 7) & 1;
 }
 
+/* bin_to_bcd @ $4E84 — convert binary A (0-99) to packed BCD.
+ *
+ * The 6502 does this by repeated subtraction: Y counts how many times 10 fits
+ * (= the tens digit), the leftover after one over-subtract is the ones digit
+ * (stored to $00C1), and the result A = (tens << 4) | ones.  For A >= 100 the
+ * tens digit exceeds 9 and the ASL x4 truncates to 8 bits — faithfully replicated
+ * by the (uint8_t) cast on (tens << 4).  Callers consume the BCD byte in cpu.A
+ * and the tens digit in cpu.Y; $00C1 holds the ones digit. */
+uint8_t bin_to_bcd_core(uint8_t a, uint8_t *units, uint8_t *tens) {
+    uint8_t t = (uint8_t)(a / 10);
+    uint8_t u = (uint8_t)(a % 10);
+    *units = u;
+    *tens  = t;
+    return (uint8_t)((uint8_t)(t << 4) | u);
+}
+
+/* 6502-ABI shim: entry A = value.  Exit: A = packed BCD, Y = tens, $00C1 = ones.
+ * N/Z reflect the final A (the 6502's terminal ORA sets them from the result). */
+void bin_to_bcd(void) {
+    uint8_t units, tens;
+    uint8_t bcd = bin_to_bcd_core(cpu.A, &units, &tens);
+    mem[0x00C1] = units;
+    cpu.Y = tens;
+    LDA(bcd);
+}
+
 /* render_bcd_counter @ $49A0 — render the 3-byte packed-BCD score ($0601-$0603,
  * 6 digits) to the top text line $32C5..$32CA with leading-zero suppression.
  * Flight ISR routine; the first transpiled-on-the-VBI-path fn ported native.

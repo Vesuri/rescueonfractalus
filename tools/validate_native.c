@@ -351,6 +351,45 @@ static int test_mul_u8(void) {
     return mem_fail + cpu_fail;
 }
 
+/* --- bin_to_bcd @ $4E84: binary A -> packed BCD.  Contract is mem[] (the ones
+ * digit lands in $00C1) AND cpu.A (the packed BCD, consumed directly by callers)
+ * AND cpu.Y (the tens digit, used as an index by setup_initials_ptr).  Entry A is
+ * fully randomized 0..255 to cover the >= 100 truncation path. --- */
+static int test_bin_to_bcd(void) {
+    if (!want("bin_to_bcd")) return 0;
+    enum { N = 20000 };
+    static uint8_t pre[65536], ref_mem[65536];
+    int mem_fail = 0, cpu_fail = 0, printed = 0;
+
+    for (int t = 0; t < N; t++) {
+        fill_random(pre);
+        Cpu6502 c = zero_cpu();
+        c.A = (uint8_t)(xs() & 0xFF);
+
+        memcpy((void *)mem, pre, 65536); cpu = c;
+        bin_to_bcd__t6502();
+        memcpy(ref_mem, (void *)mem, sizeof ref_mem);
+        Cpu6502 ref_cpu = cpu;
+
+        memcpy((void *)mem, pre, 65536); cpu = c;
+        bin_to_bcd();
+
+        if (memcmp((const void *)mem, ref_mem, 65536) != 0) {
+            mem_fail++;
+            if (printed < 12)
+                for (int i = 0; i < 65536 && printed < 12; i++)
+                    if (mem[i] != ref_mem[i]) {
+                        printf("[MEM DIFF] bin_to_bcd case %d  $%04X  ref=$%02X native=$%02X\n",
+                               t, i, ref_mem[i], mem[i]); printed++;
+                    }
+        }
+        if (cpu.A != ref_cpu.A || cpu.Y != ref_cpu.Y) cpu_fail++;
+    }
+    printf("bin_to_bcd: %d cases, %d mem mismatch, %d cpu(A/Y) mismatch (both must be 0)\n",
+           N, mem_fail, cpu_fail);
+    return mem_fail + cpu_fail;
+}
+
 /* Like test_mem_contract but with random entry A/X/Y/C — for routines that read
  * an entry register as input (a table index, a value to store, an entry carry). */
 static int test_mem_contract_regs(const char *name, void (*native)(void), void (*t6502)(void)) {
@@ -734,6 +773,7 @@ int main(int argc, char **argv) {
     fails += test_mem_contract("object_integrate_position", object_integrate_position, object_integrate_position__t6502);
     fails += test_mem_contract("jitter_roll_pitch", jitter_roll_pitch, jitter_roll_pitch__t6502);
     fails += test_mul_u8();
+    fails += test_bin_to_bcd();
     fails += test_mem_contract("compute_target_blip_position", compute_target_blip_position, compute_target_blip_position__t6502);
     fails += test_mem_contract_regs("obj_table_scan_replace", obj_table_scan_replace, obj_table_scan_replace__t6502);
     /* batch 2 — shallow drivers */
