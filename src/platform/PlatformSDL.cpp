@@ -181,22 +181,68 @@ int PlatformSDL::framesPerSecond() {
 }
 
 int PlatformSDL::loadImage(const char* path) {
-    FILE* f = fopen(path, "rb");
-    if (!f) { fprintf(stderr, "cannot open %s\n", path); return -1; }
     memset((uint8_t*)mem, 0, 65536);
-    size_t n = fread((uint8_t*)mem, 1, 65536, f);
-    fclose(f);
-    printf("[rof] loaded %zu bytes from %s\n", n, path);
 
-    /* Provide the Atari OS character set at $E000. On real XL/XE hardware $E000
-       is OS ROM (banked in when read); the game's "LEVEL nn" briefing routine
-       (FUN_6750/FUN_6773) reads glyphs from $E000+char*8. A flat rof.xex image
-       has nothing there, so the text rendered blank. The game does not store
-       data in $E000-$E3FF RAM (confirmed: that region is 0 in the reference
-       memory dump), so placing the font here is safe. */
-    memcpy((uint8_t*)mem + 0xE000, kAtariOSFont, sizeof(kAtariOSFont));
+    /* Pristine boot: a ".xex" path loads the genuine Atari segmented load file the
+       SAME way the Amiga does (XexImage.cpp load_xex_image) — zero RAM, place each
+       XEX segment at its load address, then overlay the Atari OS ROM — so the SDL
+       build runs the identical pristine game_entry code path as the Amiga (instead of
+       a hand-captured mid-Standby RAM snapshot).  Lets SDL be a faithful, fast-iterate
+       mirror of the Amiga boot. */
+    size_t plen = strlen(path);
+    bool isXex = plen >= 4 && strcasecmp(path + plen - 4, ".xex") == 0;
+    if (isXex) {
+        FILE* f = fopen(path, "rb");
+        if (!f) { fprintf(stderr, "cannot open %s\n", path); return -1; }
+        static uint8_t xex[65536];
+        size_t len = fread(xex, 1, sizeof(xex), f);
+        fclose(f);
 
-    /* Sync cached registers from OS shadow values in the loaded image. */
+        size_t i = 0;
+        if (i + 1 < len && xex[i] == 0xFF && xex[i + 1] == 0xFF) i += 2;   /* $FFFF magic */
+        while (i + 4 <= len) {
+            if (xex[i] == 0xFF && xex[i + 1] == 0xFF) { i += 2; continue; } /* seg marker */
+            uint16_t s = (uint16_t)(xex[i] | (xex[i + 1] << 8));
+            uint16_t e = (uint16_t)(xex[i + 2] | (xex[i + 3] << 8));
+            i += 4;
+            uint32_t seglen = (uint32_t)e - (uint32_t)s + 1u;
+            for (uint32_t k = 0; k < seglen && i < len; k++, i++)
+                mem[(uint16_t)(s + k)] = xex[i];
+        }
+
+        /* Overlay the Atari OS ROM (same asset + layout as the Amiga): the asset is
+           [0..$1000) -> $C000-$CFFF, [$1000..$3800) -> $D800-$FFFF (the $D000-$D7FF
+           hardware range is skipped, so hwRead/hwWrite stay authoritative there). */
+        const char* romPaths[] = { "amiga/assets/atari_osrom.bin", "assets/atari_osrom.bin" };
+        FILE* r = 0;
+        for (size_t p = 0; p < sizeof(romPaths)/sizeof(romPaths[0]) && !r; p++)
+            r = fopen(romPaths[p], "rb");
+        if (r) {
+            static uint8_t rom[0x3800];
+            size_t rn = fread(rom, 1, sizeof(rom), r);
+            fclose(r);
+            for (uint32_t k = 0; k < 0x1000u && k < rn; k++)        mem[(uint16_t)(0xC000u + k)] = rom[k];
+            for (uint32_t k = 0; k < 0x2800u && 0x1000u + k < rn; k++) mem[(uint16_t)(0xD800u + k)] = rom[0x1000u + k];
+            printf("[rof] loaded pristine XEX %s + OS ROM (%zu bytes)\n", path, rn);
+        } else {
+            fprintf(stderr, "[rof] WARNING: atari_osrom.bin not found; $E000 charset (LEVEL text) will be blank\n");
+            printf("[rof] loaded pristine XEX %s (no OS ROM)\n", path);
+        }
+    } else {
+        FILE* f = fopen(path, "rb");
+        if (!f) { fprintf(stderr, "cannot open %s\n", path); return -1; }
+        size_t n = fread((uint8_t*)mem, 1, 65536, f);
+        fclose(f);
+        printf("[rof] loaded %zu bytes from %s\n", n, path);
+
+        /* Flat snapshot image: provide the Atari OS character set at $E000 (a flat
+           snapshot may not include it).  The game does not store data in $E000-$E3FF
+           RAM, so placing the font here is safe. */
+        memcpy((uint8_t*)mem + 0xE000, kAtariOSFont, sizeof(kAtariOSFont));
+    }
+
+    /* Sync cached registers from OS shadow values in the loaded image (0 on a
+       pristine XEX — game_entry sets them as it runs, re-read per frame). */
     displayListPtr = mem[0x0230] | (mem[0x0231] << 8);
     dmactl  = mem[0x022F];  /* SDMCTL shadow */
     chbase  = mem[0x02F4];  /* CHBAS shadow  */
@@ -1237,10 +1283,15 @@ void PlatformSDL::pollEvents() {
 
     SDL_Event ev;
     while (SDL_PollEvent(&ev)) {
-        if (ev.type == SDL_QUIT) quit = true;
+        // Act on quit immediately: the boot runs in transpiled spin-waits that never
+        // return to a top-level loop, so a `quit` flag would never be checked.  exit(0)
+        // here makes window-close, ESC, and Ctrl-C (SDL posts SDL_QUIT for SIGINT) all
+        // terminate the process.  renderFrame() calls pollEvents() every frame, so this
+        // is reached each frame during the build.
+        if (ev.type == SDL_QUIT) { quit = true; exit(0); }
         if (ev.type == SDL_KEYDOWN) {
             switch (ev.key.keysym.scancode) {
-            case SDL_SCANCODE_ESCAPE: quit = true; break;
+            case SDL_SCANCODE_ESCAPE: quit = true; exit(0); break;
             case SDL_SCANCODE_F10:   saveScreenshot(); break;
             default: break;
             }

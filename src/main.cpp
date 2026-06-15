@@ -18,7 +18,10 @@ static void handleSigInt(int) { exit(0); }
 int main(int argc, char* argv[]) {
     signal(SIGINT, handleSigInt);   /* ensure Ctrl-C works before SDL events run */
 
-    const char* image = (argc > 1) ? argv[1] : "disasm/rof_mem.bin";
+    /* Default to the pristine rof.xex so the SDL build boots the SAME initial state
+       and game_entry code path as the Amiga (load_xex_image).  Pass a ".bin" path to
+       boot a flat 64 KB RAM snapshot instead (e.g. disasm/rof_mem.bin). */
+    const char* image = (argc > 1) ? argv[1] : "rof.xex";
 
     /* Creating PlatformSDL initialises SDL, loads the memory image,
        starts the audio device, and sets the global Platform* pointer. */
@@ -27,6 +30,13 @@ int main(int argc, char* argv[]) {
     if (plt.quit) {
         return 1;
     }
+
+    /* SDL_Init (in the PlatformClass ctor above) reinstalls its own SIGINT/SIGTERM
+       handlers, clobbering the one set before main()'s SDL setup and turning Ctrl-C
+       into an SDL_QUIT event that the spin-wait-driven boot never gets to act on.
+       Re-arm our plain exit handler AFTER SDL is up so Ctrl-C always kills the app. */
+    signal(SIGINT,  handleSigInt);
+    signal(SIGTERM, handleSigInt);
 
     /* Populate the VBI address → C-function dispatch table so the audio
        callback can fire the right handler when the game installs it. */
