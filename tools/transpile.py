@@ -287,6 +287,11 @@ VALIDATE_FUNCS = {
     # batch — the message-text blitters (display_setup front):
     0x6750,  # blit_label_row — blit 5 glyphs ($6E23[$00C5..] codes) via glyph_ptr_from_index; index base 0/5 from $0004
     0x672D,  # blit_message_block — 11 rows of 3 pixels ($15/$2E/$47) via set_row_ptr_from_count/plot_pixel_masked, tail blit_label_row
+    # batch — tail-call wrappers on the display_setup front (compose native callees):
+    0x4095,  # draw_digit_low_nibble — A=(A&$0F)<<2, tail draw_glyph_2rows
+    0x4084,  # draw_2digit_value — draw hi nibble glyph, advance dest ptr $BD/$BE->$BB/$BC, tail draw_digit_low_nibble
+    0x6802,  # glyph_ptr_shift3 — A<<3, tail set_coord_y_e0
+    0x49C0,  # render_bcd_top_byte — Y=5, X=$0600, tail set_zsupp_pos_clear_delta (renders entry-A byte via emit chain)
 }
 VALIDATE_SUFFIX = '__t6502'
 

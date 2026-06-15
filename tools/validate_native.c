@@ -744,6 +744,50 @@ static int test_draw_glyph_2rows(void) {
     return mem_fail;
 }
 
+/* --- draw_digit_low_nibble @ $4095: A=(A&$0F)<<2 then draw_glyph_2rows through the
+ * dest pointer $00BB -> seed it to $2000; entry A random. --- */
+static int test_draw_digit_low_nibble(void) {
+    if (!want("draw_digit_low_nibble")) return 0;
+    enum { N = 50000 };
+    static uint8_t pre[65536];
+    int mem_fail = 0, cpu_diff = 0, printed = 0;
+    for (int t = 0; t < N; t++) {
+        fill_random(pre);
+        pre[0x00BB] = 0x00; pre[0x00BC] = 0x20;        /* dest ptr -> $2000 */
+        Cpu6502 c = zero_cpu();
+        c.A = (uint8_t)(xs() & 0xFF);
+        mem_fail += diff_run("draw_digit_low_nibble", pre, c,
+                             draw_digit_low_nibble, draw_digit_low_nibble__t6502, t, &printed, &cpu_diff);
+    }
+    printf("draw_digit_low_nibble: %d cases, %d mem mismatch (must be 0), %d cpu diffs\n", N, mem_fail, cpu_diff);
+    return mem_fail;
+}
+
+/* --- draw_2digit_value @ $4084: draws the high nibble at dest $BB ($2000), repoints
+ * $BB <- $BD/$BE, then draws the low nibble there -> seed $BD/$BE to $2100 so both 2x2
+ * draws land in disjoint safe RAM.  The PHA/PLA that preserves the entry byte scribbles
+ * $01FF (masked); entry A random. --- */
+static int test_draw_2digit_value(void) {
+    if (!want("draw_2digit_value")) return 0;
+    enum { N = 50000 };
+    static uint8_t pre[65536];
+    static const uint16_t ignore[] = { 0x01FF };
+    int mem_fail = 0, cpu_diff = 0, printed = 0;
+    set_ignore(ignore, 1);
+    for (int t = 0; t < N; t++) {
+        fill_random(pre);
+        pre[0x00BB] = 0x00; pre[0x00BC] = 0x20;        /* hi-nibble dest -> $2000 */
+        pre[0x00BD] = 0x00; pre[0x00BE] = 0x21;        /* lo-nibble dest -> $2100 */
+        Cpu6502 c = zero_cpu();
+        c.A = (uint8_t)(xs() & 0xFF);
+        mem_fail += diff_run("draw_2digit_value", pre, c,
+                             draw_2digit_value, draw_2digit_value__t6502, t, &printed, &cpu_diff);
+    }
+    set_ignore(0, 0);
+    printf("draw_2digit_value: %d cases, %d mem mismatch (must be 0), %d cpu diffs\n", N, mem_fail, cpu_diff);
+    return mem_fail;
+}
+
 /* --- rle_run_fill @ $3C58: RLE run expansion through copy_bytes_to_dst.  Seed the
  * source pointer $00BB/$00BC -> $2000 and the dest pointer $00BD/$00BE -> $2400 (both
  * safe RAM, disjoint), a bounded run length (entry A 1..64) and small offset (entry Y),
@@ -1802,6 +1846,10 @@ int main(int argc, char **argv) {
     fails += test_compute_gauge_geometry_from_006D();
     fails += test_blit_chain("blit_label_row", blit_label_row, blit_label_row__t6502);
     fails += test_blit_chain("blit_message_block", blit_message_block, blit_message_block__t6502);
+    fails += test_draw_digit_low_nibble();
+    fails += test_draw_2digit_value();
+    fails += test_blit_chain("glyph_ptr_shift3", glyph_ptr_shift3, glyph_ptr_shift3__t6502);
+    fails += test_emit_chain("render_bcd_top_byte", render_bcd_top_byte, render_bcd_top_byte__t6502);
     fails += test_mem_contract_regs("show_cockpit_message", show_cockpit_message, show_cockpit_message__t6502);
     fails += test_mem_contract_regs("mark_slot_and_countdown_char", mark_slot_and_countdown_char, mark_slot_and_countdown_char__t6502);
     fails += test_mem_contract_regs("mark_slot_and_inc_count", mark_slot_and_inc_count, mark_slot_and_inc_count__t6502);

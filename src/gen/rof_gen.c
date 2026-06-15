@@ -1872,7 +1872,8 @@ L_4065:;
 }
 
 /* draw_2digit_value @ $4084: Render packed 2-digit value: high nibble via $BD/$BE ptr then low nibble; glyph table $4AE3, dest ptr $00BB */
-void draw_2digit_value(void) {
+/* faithful transliteration kept as the validation oracle; native draw_2digit_value() lives in rof_native.c (see VALIDATE_FUNCS) */
+void draw_2digit_value__t6502(void) {
     /* 4084 */
     PHA();
     /* 4085 */
@@ -1897,7 +1898,8 @@ void draw_2digit_value(void) {
 }
 
 /* draw_digit_low_nibble @ $4095: Isolate A low nibble, *4, fall into draw_glyph: renders units digit glyph to ($00BB) screen ptr */
-void draw_digit_low_nibble(void) {
+/* faithful transliteration kept as the validation oracle; native draw_digit_low_nibble() lives in rof_native.c (see VALIDATE_FUNCS) */
+void draw_digit_low_nibble__t6502(void) {
     /* 4095 */
     AND(0x0F);
     /* 4097 */
@@ -3680,7 +3682,8 @@ void render_bcd_digits_supp_all(void) {
 }
 
 /* render_bcd_top_byte @ $49C0: Y=5 zero-suppress threshold, X=mem[$0600] first-nonzero flag, into digit emitter set_zsupp_pos_clear_delta */
-void render_bcd_top_byte(void) {
+/* faithful transliteration kept as the validation oracle; native render_bcd_top_byte() lives in rof_native.c (see VALIDATE_FUNCS) */
+void render_bcd_top_byte__t6502(void) {
     /* 49c0 */
     LDY(0x05);
     /* 49c2 */
@@ -8888,7 +8891,8 @@ L_67f5:;
 }
 
 /* glyph_ptr_shift3 @ $6802: shifts A left 3 (A*8) then falls into set_coord_y_e0 to form glyph ptr $84/$85=$E000+(A<<3)+$80 */
-void glyph_ptr_shift3(void) {
+/* faithful transliteration kept as the validation oracle; native glyph_ptr_shift3() lives in rof_native.c (see VALIDATE_FUNCS) */
+void glyph_ptr_shift3__t6502(void) {
     /* 6802 */
     ASL_A();
     /* 6803 */

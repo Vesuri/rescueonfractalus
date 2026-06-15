@@ -1766,6 +1766,45 @@ void blit_message_block(void) {
     blit_label_row();
 }
 
+/* draw_digit_low_nibble @ $4095 — A = (A & $0F) << 2, then tail draw_glyph_2rows
+ * (the 2x2 glyph for that index).  Macros keep the N/Z/C flags identical to the
+ * 6502 at the draw_glyph_2rows entry. */
+void draw_digit_low_nibble(void) {
+    AND(0x0F); ASL_A(); ASL_A();
+    draw_glyph_2rows();
+}
+
+/* draw_2digit_value @ $4084 — render a packed-BCD byte as two 2x2 glyphs: draw the
+ * high nibble ((A>>2)&$3C) at dest $BB/$BC, advance the dest pointer ($BD/$BE ->
+ * $BB/$BC), then tail draw_digit_low_nibble for the low nibble.  PHA/PLA preserves
+ * the entry byte across the first draw (kept in a local; the $01FF scribble is masked). */
+void draw_2digit_value(void) {
+    uint8_t saved = cpu.A;                 /* PHA */
+    LSR_A(); LSR_A(); AND(0x3C);
+    draw_glyph_2rows();
+    mem[0x00BB] = mem[0x00BD];
+    mem[0x00BC] = mem[0x00BE];
+    LDA(saved);                            /* PLA */
+    draw_digit_low_nibble();
+}
+
+/* glyph_ptr_shift3 @ $6802 — A <<= 3, then tail set_coord_y_e0 (builds the $E0xx
+ * glyph source pointer from A and blits via blit_glyph_8rows). */
+void glyph_ptr_shift3(void) {
+    ASL_A(); ASL_A(); ASL_A();
+    set_coord_y_e0();
+}
+
+/* render_bcd_top_byte @ $49C0 — entry point of the score render chain for the top
+ * (most-significant) BCD byte: Y=5 (zero-suppress threshold), X=$0600 (running
+ * suppress flag), then tail set_zsupp_pos_clear_delta (-> emit_bcd_byte_digits emits
+ * the two nibbles of the entry-A byte). */
+void render_bcd_top_byte(void) {
+    LDY(0x05);
+    LDX(mem[0x0600]);
+    set_zsupp_pos_clear_delta();
+}
+
 /* render_bcd_counter @ $49A0 — render the 3-byte packed-BCD score ($0601-$0603,
  * 6 digits) to the top text line $32C5..$32CA with leading-zero suppression.
  * Flight ISR routine; the first transpiled-on-the-VBI-path fn ported native.
