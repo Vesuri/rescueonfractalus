@@ -1052,6 +1052,41 @@ void plot_char_bounded(void) {
     cpu.Y = (uint8_t)(y + 1);                     /* INY */
 }
 
+/* emit_bcd_byte_digits @ $49CE — plot both digits of a packed-BCD byte (entry A) via
+ * plot_char_bounded: high nibble (A>>4) then low nibble (A&$0F), sharing the running
+ * suppress flag X and column Y across the two calls. */
+void emit_bcd_byte_digits(void) {
+    uint8_t a = cpu.A;
+    cpu.A = (uint8_t)(a >> 4);
+    plot_char_bounded();
+    cpu.A = (uint8_t)(a & 0x0F);
+    plot_char_bounded();
+}
+
+/* mark_slot_and_countdown_char @ $7B39 — mark the active grid slot then show the
+ * countdown glyph (both native). */
+void mark_slot_and_countdown_char(void) {
+    mark_grid_slot_active();
+    countdown_show_char_0620();
+}
+
+/* mark_slot_and_inc_count @ $7B7D — mark the active grid slot then set place params +
+ * bump the count (both native). */
+void mark_slot_and_inc_count(void) {
+    mark_grid_slot_active();
+    set_place_params_inc_count();
+}
+
+/* Bare-RTS / no-op stubs (each a standalone RTS in the 6502; native = empty).  Porting
+ * them removes them from the transpiled set and lets their tail-callers go native. */
+void return_stub_40af(void) { }
+void terrain_obj_skip_return(void) { }
+void ret_stub_6a26(void) { }
+void draw_bar_loop_end(void) { }
+void terrain_plot_return(void) { }
+void terrain_distance_clamp_return(void) { }
+void plot_line_done(void) { }
+
 /* render_bcd_counter @ $49A0 — render the 3-byte packed-BCD score ($0601-$0603,
  * 6 digits) to the top text line $32C5..$32CA with leading-zero suppression.
  * Flight ISR routine; the first transpiled-on-the-VBI-path fn ported native.

@@ -236,6 +236,17 @@ VALIDATE_FUNCS = {
     0x45C5,  # init_cockpit_bar_cells — seed cockpit bar graphic cells $2107.. = $BE/$AA (pure)
     0x497D,  # add_and_show_bcd_counter — score += delta $0045/$0046 (binary), tail render_bcd_counter
     0x49D9,  # plot_char_bounded — zero-suppress digit plotter via ($C5)+Y; X=suppress flag (entry A/X/Y)
+    # batch — BCD digit-pair, slot drivers, and bare-RTS stubs:
+    0x49CE,  # emit_bcd_byte_digits — plot hi+lo nibble of packed-BCD A via plot_char_bounded (PHA/PLA)
+    0x7B39,  # mark_slot_and_countdown_char — mark_grid_slot_active + countdown_show_char_0620
+    0x7B7D,  # mark_slot_and_inc_count — mark_grid_slot_active + set_place_params_inc_count
+    0x40AF,  # return_stub_40af — bare RTS (no-op)
+    0xA821,  # terrain_obj_skip_return — bare RTS (no-op)
+    0x6A26,  # ret_stub_6a26 — bare RTS (no-op)
+    0x442D,  # draw_bar_loop_end — bare RTS (no-op)
+    0xA63A,  # terrain_plot_return — bare RTS (no-op)
+    0xA909,  # terrain_distance_clamp_return — bare RTS (no-op)
+    0xAB26,  # plot_line_done — bare RTS (no-op)
 }
 VALIDATE_SUFFIX = '__t6502'
 

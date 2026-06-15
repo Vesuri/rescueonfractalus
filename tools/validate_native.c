@@ -516,6 +516,50 @@ static int test_plot_char_bounded(void) {
     return mem_fail + cpu_fail;
 }
 
+/* --- emit_bcd_byte_digits @ $49CE: plots two digits via plot_char_bounded.  Same
+ * dest-ptr ($00C5/$00C6 -> $2000) fixture as plot_char_bounded; entry A is a packed-BCD
+ * byte, X the suppress flag, Y the column.  The 6502 PHA leaves a dead scribble on the
+ * stack page (the native twin has no stack), so neutralize $0100-$01FF before comparing.
+ * Assert mem[] + cpu.A/X/Y (X/Y carry forward to the caller's next digit). --- */
+static int test_emit_bcd_byte_digits(void) {
+    if (!want("emit_bcd_byte_digits")) return 0;
+    enum { N = 50000 };
+    static uint8_t pre[65536], ref_mem[65536];
+    int mem_fail = 0, cpu_fail = 0, printed = 0;
+
+    for (int t = 0; t < N; t++) {
+        fill_random(pre);
+        pre[0x00C5] = 0x00; pre[0x00C6] = 0x20;        /* dest ptr -> $2000 (safe RAM) */
+        Cpu6502 c = zero_cpu();
+        c.A = (uint8_t)(xs() & 0xFF);                  /* packed-BCD byte */
+        c.X = (uint8_t)(xs() & 1);                     /* suppress flag */
+        c.Y = (uint8_t)(xs() & 0xFF);                  /* column */
+
+        memcpy((void *)mem, pre, 65536); cpu = c;
+        emit_bcd_byte_digits__t6502();
+        memcpy(ref_mem, (void *)mem, sizeof ref_mem);
+        Cpu6502 ref_cpu = cpu;
+
+        memcpy((void *)mem, pre, 65536); cpu = c;
+        emit_bcd_byte_digits();
+
+        for (int i = 0x0100; i <= 0x01FF; i++) ref_mem[i] = mem[i];  /* neutralize stack page */
+        if (memcmp((const void *)mem, ref_mem, 65536) != 0) {
+            mem_fail++;
+            if (printed < 12)
+                for (int i = 0; i < 65536 && printed < 12; i++)
+                    if (mem[i] != ref_mem[i]) {
+                        printf("[MEM DIFF] emit_bcd_byte_digits case %d  $%04X  ref=$%02X native=$%02X\n",
+                               t, i, ref_mem[i], mem[i]); printed++;
+                    }
+        }
+        if (cpu.A != ref_cpu.A || cpu.X != ref_cpu.X || cpu.Y != ref_cpu.Y) cpu_fail++;
+    }
+    printf("emit_bcd_byte_digits: %d cases, %d mem mismatch, %d cpu(A/X/Y) mismatch (both must be 0)\n",
+           N, mem_fail, cpu_fail);
+    return mem_fail + cpu_fail;
+}
+
 /* --- draw_symmetric_span_loop @ $6642: nested span fill, $0096 outer iterations.
  * The inner span fills write via the per-scanline address table ($073D lo/$0793 hi).
  * With fully random mem those pointers are garbage and the writes land on the routine's
@@ -1231,6 +1275,17 @@ int main(int argc, char **argv) {
     fails += test_mem_contract("init_cockpit_bar_cells", init_cockpit_bar_cells, init_cockpit_bar_cells__t6502);
     fails += test_mem_contract("add_and_show_bcd_counter", add_and_show_bcd_counter, add_and_show_bcd_counter__t6502);
     fails += test_plot_char_bounded();
+    /* batch — BCD digit-pair, slot drivers, bare-RTS stubs */
+    fails += test_emit_bcd_byte_digits();
+    fails += test_mem_contract_regs("mark_slot_and_countdown_char", mark_slot_and_countdown_char, mark_slot_and_countdown_char__t6502);
+    fails += test_mem_contract_regs("mark_slot_and_inc_count", mark_slot_and_inc_count, mark_slot_and_inc_count__t6502);
+    fails += test_mem_contract("return_stub_40af", return_stub_40af, return_stub_40af__t6502);
+    fails += test_mem_contract("terrain_obj_skip_return", terrain_obj_skip_return, terrain_obj_skip_return__t6502);
+    fails += test_mem_contract("ret_stub_6a26", ret_stub_6a26, ret_stub_6a26__t6502);
+    fails += test_mem_contract("draw_bar_loop_end", draw_bar_loop_end, draw_bar_loop_end__t6502);
+    fails += test_mem_contract("terrain_plot_return", terrain_plot_return, terrain_plot_return__t6502);
+    fails += test_mem_contract("terrain_distance_clamp_return", terrain_distance_clamp_return, terrain_distance_clamp_return__t6502);
+    fails += test_mem_contract("plot_line_done", plot_line_done, plot_line_done__t6502);
     fails += test_mem_contract("compute_target_blip_position", compute_target_blip_position, compute_target_blip_position__t6502);
     fails += test_mem_contract_regs("obj_table_scan_replace", obj_table_scan_replace, obj_table_scan_replace__t6502);
     /* batch 2 — shallow drivers */
