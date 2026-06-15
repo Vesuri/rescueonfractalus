@@ -878,6 +878,53 @@ void hud_fill_field3_font(void) {
     mem[0x0083] = y;
 }
 
+/* clear_message_buffer @ $480B — clear the 14-byte message buffer: set X=$0E, A=$00
+ * and tail-call the (native) fill_message_buffer, zeroing $32B7..$32C4. */
+void clear_message_buffer(void) {
+    cpu.X = 0x0E;
+    cpu.A = 0x00;
+    fill_message_buffer();
+}
+
+/* plot_pixel_col93 @ $66D3 — plot the pixel whose column index is $0093: load A=$0093
+ * and tail-call the (native) plot_pixel_masked. */
+void plot_pixel_col93(void) {
+    cpu.A = mem[0x0093];
+    plot_pixel_masked();
+}
+
+/* random_digit @ $5A59 — POKEY RANDOM rejection-sampled to a decimal digit 0-9
+ * (re-roll the low nibble while it is >= $0A).  Result in cpu.A. */
+void random_digit(void) {
+    uint8_t a;
+    do { a = (uint8_t)(bus_read(0xD20A) & 0x0F); } while (a >= 0x0A);
+    cpu.A = a; CMP(0x0A);                 /* exit flags from the accepting CMP */
+}
+
+/* random_alpha_index @ $5A4D — POKEY RANDOM rejection-sampled to a letter index:
+ * re-roll (RANDOM & $1F) while >= $1A (26 letters), then + $21 (carry clear from the
+ * accepting CMP) giving a code in $21..$3A.  Result in cpu.A. */
+void random_alpha_index(void) {
+    uint8_t a;
+    do { a = (uint8_t)(bus_read(0xD20A) & 0x1F); } while (a >= 0x1A);
+    cpu.A = a; cpu.C = 0; ADC(0x21);
+}
+
+/* test_marked_neighbor @ $7047 — probe the $0900 marker map for a marked (negative)
+ * cell at three offsets from the base index $009C+$009A: the base, base+$009A, and
+ * base+$009B.  Returns the third cell's value in cpu.A iff all three are marked,
+ * else 0.  Indices wrap 8-bit ($0900..$09FF). */
+void test_marked_neighbor(void) {
+    uint8_t fx = (uint8_t)(mem[0x009C] + mem[0x009A]);
+    if (!(mem[0x0900 + fx] & 0x80)) { LDA(0x00); return; }
+    uint8_t idx2 = (uint8_t)(fx + mem[0x009A]);
+    if (!(mem[0x0900 + idx2] & 0x80)) { LDA(0x00); return; }
+    uint8_t idx3 = (uint8_t)(fx + mem[0x009B]);
+    uint8_t a3 = mem[0x0900 + idx3];
+    if (a3 & 0x80) { LDA(a3); return; }
+    LDA(0x00);
+}
+
 /* render_bcd_counter @ $49A0 — render the 3-byte packed-BCD score ($0601-$0603,
  * 6 digits) to the top text line $32C5..$32CA with leading-zero suppression.
  * Flight ISR routine; the first transpiled-on-the-VBI-path fn ported native.

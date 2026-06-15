@@ -217,8 +217,14 @@ VALIDATE_FUNCS = {
     0x68AD,  # init_terrain_dl — fill $2F75..$2FA3=$88 + LMS ptr pairs $300A/$308B = $2F74 every 3rd entry
     0x7238,  # music_init_state — copy 6 bytes $731E[Y..]-> $0657[5..0]; clear $0651/$D208; $0653/$0655=1 (entry Y)
     0x75B8,  # count_up_to_level — bump $0604 + binary counter $C3 until $0604 == $006D
-    0x811F,  # hud_fill_field1 — INC $0081 when $0081 >= $2928
-    0x8168,  # hud_fill_field3_font — INC $0083 when $0083 >= $A8
+    0x811F,  # hud_fill_field1 — INC $0081 when $0081 >= $2928 (+ 5-byte copy in the else path)
+    0x8168,  # hud_fill_field3_font — INC $0083 when $0083 >= $A8 (+ 7-byte font copy in the else path)
+    # batch — tail-wrappers + RANDOM/compute A-returning leaves:
+    0x480B,  # clear_message_buffer — X=$0E,A=0, tail fill_message_buffer (zero $32B7..$32C4)
+    0x66D3,  # plot_pixel_col93 — A=$0093, tail plot_pixel_masked
+    0x5A59,  # random_digit — POKEY RANDOM -> decimal digit 0-9 (rejection sample; result in A)
+    0x5A4D,  # random_alpha_index — POKEY RANDOM -> letter code $21..$3A (rejection sample; result in A)
+    0x7047,  # test_marked_neighbor — $0900 marker-map 3-neighbor probe; result in A
 }
 VALIDATE_SUFFIX = '__t6502'
 

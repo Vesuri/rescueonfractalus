@@ -430,6 +430,46 @@ static int test_random_terrain_height(void) {
     return mem_fail + cpu_fail;
 }
 
+/* --- generic A-returning leaf test: random mem[] + seeded RANDOM stream, assert
+ * both mem[] (catches stray writes) AND cpu.A (the return value the caller reads).
+ * Fits leaves whose observable result is cpu.A and that take no entry registers. --- */
+static int test_ret_a(const char *name, void (*native)(void), void (*t6502)(void)) {
+    if (!want(name)) return 0;
+    enum { N = 50000 };
+    static uint8_t pre[65536], ref_mem[65536];
+    int mem_fail = 0, cpu_fail = 0, printed = 0;
+
+    for (int t = 0; t < N; t++) {
+        fill_random(pre);
+        uint32_t rseed = (xs() & 0x1FFFF); if (rseed == 0) rseed = 1;
+        Cpu6502 c = zero_cpu();
+
+        platform_test_seed_rng(rseed);
+        memcpy((void *)mem, pre, 65536); cpu = c;
+        t6502();
+        memcpy(ref_mem, (void *)mem, sizeof ref_mem);
+        Cpu6502 ref_cpu = cpu;
+
+        platform_test_seed_rng(rseed);
+        memcpy((void *)mem, pre, 65536); cpu = c;
+        native();
+
+        if (memcmp((const void *)mem, ref_mem, 65536) != 0) {
+            mem_fail++;
+            if (printed < 12)
+                for (int i = 0; i < 65536 && printed < 12; i++)
+                    if (mem[i] != ref_mem[i]) {
+                        printf("[MEM DIFF] %s case %d  $%04X  ref=$%02X native=$%02X\n",
+                               name, t, i, ref_mem[i], mem[i]); printed++;
+                    }
+        }
+        if (cpu.A != ref_cpu.A) cpu_fail++;
+    }
+    printf("%s: %d cases, %d mem mismatch, %d cpu(A) mismatch (both must be 0)\n",
+           name, N, mem_fail, cpu_fail);
+    return mem_fail + cpu_fail;
+}
+
 /* --- draw_symmetric_span_loop @ $6642: nested span fill, $0096 outer iterations.
  * The inner span fills write via the per-scanline address table ($073D lo/$0793 hi).
  * With fully random mem those pointers are garbage and the writes land on the routine's
@@ -1128,6 +1168,12 @@ int main(int argc, char **argv) {
     fails += test_mem_contract("count_up_to_level", count_up_to_level, count_up_to_level__t6502);
     fails += test_mem_contract("hud_fill_field1", hud_fill_field1, hud_fill_field1__t6502);
     fails += test_mem_contract("hud_fill_field3_font", hud_fill_field3_font, hud_fill_field3_font__t6502);
+    /* batch — tail-wrappers + A-returning RANDOM/compute leaves */
+    fails += test_mem_contract("clear_message_buffer", clear_message_buffer, clear_message_buffer__t6502);
+    fails += test_mem_contract("plot_pixel_col93", plot_pixel_col93, plot_pixel_col93__t6502);
+    fails += test_ret_a("random_digit", random_digit, random_digit__t6502);
+    fails += test_ret_a("random_alpha_index", random_alpha_index, random_alpha_index__t6502);
+    fails += test_ret_a("test_marked_neighbor", test_marked_neighbor, test_marked_neighbor__t6502);
     fails += test_mem_contract("compute_target_blip_position", compute_target_blip_position, compute_target_blip_position__t6502);
     fails += test_mem_contract_regs("obj_table_scan_replace", obj_table_scan_replace, obj_table_scan_replace__t6502);
     /* batch 2 — shallow drivers */
