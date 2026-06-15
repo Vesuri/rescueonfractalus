@@ -2256,7 +2256,8 @@ L_424d:;
 }
 
 /* draw_player3_object @ $42A7: Renders player-3 sprite: sets SIZEP3 ($D00B), HPOSP3 ($D003), size/pos/shape from tables $4566/$4569/$456C/$457A/$4D11/$4D3E; fills PMG bitmap rows $0F1E/$0F71; updates $286F/$2835/$2870/$00CC */
-void draw_player3_object(void) {
+/* faithful transliteration kept as the validation oracle; native draw_player3_object() lives in rof_native.c (see VALIDATE_FUNCS) */
+void draw_player3_object__t6502(void) {
     /* 42a7 */
     PHA();
     /* 42a8 */
@@ -6052,7 +6053,8 @@ L_5a59:;
 }
 
 /* setup_initials_ptr @ $5A63: set ptr $C5/$C6=$3694, load $6D, call bin_to_bcd, zero mem[$3694+Y], tail-call render_bcd_digits_supp_all */
-void setup_initials_ptr(void) {
+/* faithful transliteration kept as the validation oracle; native setup_initials_ptr() lives in rof_native.c (see VALIDATE_FUNCS) */
+void setup_initials_ptr__t6502(void) {
     /* 5a63 */
     LDA(0x94);
     /* 5a65 */
@@ -11899,7 +11901,8 @@ L_76c7:;
 }
 
 /* game_init_76CB @ $76CB: Game init (called in game_entry setup sequence) */
-void game_init_76CB(void) {
+/* faithful transliteration kept as the validation oracle; native game_init_76CB() lives in rof_native.c (see VALIDATE_FUNCS) */
+void game_init_76CB__t6502(void) {
     /* 76cb */
     LDY(0x08);
 L_76cd:;
@@ -25867,7 +25870,8 @@ L_67a5:;
 }
 
 /* dl_lms_build @ $69E5: Inits indirect ptr $C5/$C6=$300A and count row_count($86)=$56, then dl_lms_fill(69f1) */
-void dl_lms_build(void) {
+/* faithful transliteration kept as the validation oracle; native dl_lms_build() lives in rof_native.c (see VALIDATE_FUNCS) */
+void dl_lms_build__t6502(void) {
     /* 69e5 */
     LDA(0x0A);
     /* 69e7 */

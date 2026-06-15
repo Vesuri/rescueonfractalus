@@ -955,6 +955,24 @@ static int test_dl_lms_fill(void) {
     return mem_fail;
 }
 
+/* --- dl_lms_build @ $69E5: sets the DL dest ptr/end ($C5/$C6=$300A, $0086=$56) itself,
+ * then dl_lms_fill, so only the X start $008B needs bounding -> seed it just below $56 so
+ * the fill is a short forward run into safe DL RAM (and nonzero -> the shift tail). --- */
+static int test_dl_lms_build(void) {
+    if (!want("dl_lms_build")) return 0;
+    enum { N = 20000 };
+    static uint8_t pre[65536];
+    int mem_fail = 0, cpu_diff = 0, printed = 0;
+    for (int t = 0; t < N; t++) {
+        fill_random(pre);
+        pre[0x008B] = (uint8_t)(0x56 - (1 + (xs() % 0x20)));   /* forward run, 1..32 iters */
+        mem_fail += diff_run("dl_lms_build", pre, zero_cpu(),
+                             dl_lms_build, dl_lms_build__t6502, t, &printed, &cpu_diff);
+    }
+    printf("dl_lms_build: %d cases, %d mem mismatch (must be 0), %d cpu diffs\n", N, mem_fail, cpu_diff);
+    return mem_fail;
+}
+
 /* --- draw_dial_bar_column @ $43CB: gates on entry Y then tail-calls draw_object_column,
  * whose $4581 pointer table must be real (random ptrs -> undiffable hang) -> seed from the
  * flight snapshot.  Vary entry Y (the dial value / threshold); A is set internally. --- */
@@ -976,6 +994,39 @@ static int test_draw_dial_bar_column(void) {
                              draw_dial_bar_column, draw_dial_bar_column__t6502, t, &printed, &cpu_diff);
     }
     printf("draw_dial_bar_column: %d cases (dial snapshot), %d mem mismatch (must be 0), %d cpu diffs\n",
+           20000, mem_fail, cpu_diff);
+    return mem_fail;
+}
+
+/* --- draw_player3_object @ $42A7: the lock-on sprite drawer.  Reads many fixed tables
+ * ($4566/$4569/$456C/$457A/$4D11/$4D3E/$4D3F + the $BB mask data) so seed from the flight
+ * snapshot; vary entry A (the object selector — covers the A>=3 fixed path and the A<3
+ * table path, plus the $03..$1F draw range after PLA) and $2826 (0 -> the RANDOM-dithered
+ * mask source, !=0 -> the fixed source).  RANDOM ($D20A) is seeded per case by diff_run, so
+ * both runs read the same stream regardless of where $BB points.  HW writes ($D00B/$D003) go
+ * through bus_write in both.  The entry PHA/PLA leaves a dead $01FF byte the native skips. */
+static int test_draw_player3_object(void) {
+    if (!want("draw_player3_object")) return 0;
+    static uint8_t snap[65536], pre[65536];
+    static const uint16_t ignore[] = { 0x01FF };
+    const char *path = "a800dumps/flight_ram_0000_BFFF.bin";
+    FILE *f = fopen(path, "rb");
+    if (!f) { printf("draw_player3_object: SKIP (%s not found)\n", path); return 0; }
+    memset(snap, 0, sizeof snap);
+    size_t got = fread(snap, 1, 0xC000, f); fclose(f);
+    if (got != 0xC000) { printf("draw_player3_object: SKIP (short read %zu)\n", got); return 0; }
+    int mem_fail = 0, cpu_diff = 0, printed = 0;
+    set_ignore(ignore, 1);
+    for (int t = 0; t < 20000; t++) {
+        memcpy(pre, snap, sizeof pre);
+        if (xs() & 1) pre[0x2826] = 0x00;            /* exercise the RANDOM mask source */
+        Cpu6502 c = zero_cpu();
+        c.A = (uint8_t)(xs() & 0xFF);                /* object selector */
+        mem_fail += diff_run("draw_player3_object", pre, c,
+                             draw_player3_object, draw_player3_object__t6502, t, &printed, &cpu_diff);
+    }
+    set_ignore(0, 0);
+    printf("draw_player3_object: %d cases (flight snapshot), %d mem mismatch (must be 0), %d cpu diffs\n",
            20000, mem_fail, cpu_diff);
     return mem_fail;
 }
@@ -1951,6 +2002,10 @@ int main(int argc, char **argv) {
     fails += test_blit_chain("blit_numeric_readout", blit_numeric_readout, blit_numeric_readout__t6502);
     fails += test_dl_lms_fill();
     fails += test_draw_dial_bar_column();
+    fails += test_draw_player3_object();
+    fails += test_dl_lms_build();
+    fails += test_mem_contract("game_init_76CB", game_init_76CB, game_init_76CB__t6502);
+    fails += test_emit_chain("setup_initials_ptr", setup_initials_ptr, setup_initials_ptr__t6502);
     fails += test_mem_contract_regs("show_cockpit_message", show_cockpit_message, show_cockpit_message__t6502);
     fails += test_mem_contract_regs("mark_slot_and_countdown_char", mark_slot_and_countdown_char, mark_slot_and_countdown_char__t6502);
     fails += test_mem_contract_regs("mark_slot_and_inc_count", mark_slot_and_inc_count, mark_slot_and_inc_count__t6502);

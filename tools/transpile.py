@@ -301,6 +301,12 @@ VALIDATE_FUNCS = {
     # batch — DL LMS fill + cockpit dial-bar column (display_setup front):
     0x69F1,  # dl_lms_fill — copy $073D/$0793[X=$8B..$0086] pairs into ($C5)+Y (Y+=3), tail shift_object_table_up/ret_stub
     0x43CB,  # draw_dial_bar_column — gate on Y vs $062E/8, set bar params, tail draw_object_column (entry Y)
+    # batch — the big lock-on indicator sprite drawer (display_setup front, 311 bytes):
+    0x42A7,  # draw_player3_object — player-3 lock-on sprite: HPOS/size via bus_write, mask blit $0F1E/$0F71, RANDOM
+    # batch — DL-build wrappers + initials BCD (now unblocked by dl_lms_fill/render_bcd_digits_supp_all):
+    0x69E5,  # dl_lms_build — set $C5/$C6=$300A, $0086=$56, tail dl_lms_fill
+    0x76CB,  # game_init_76CB — build the flight display list ($30xx-$32xx) + 2x build_row_addr_table/dl_lms_fill
+    0x5A63,  # setup_initials_ptr — $C5/$C6=$3694, BCD of $006D, $3694=0, tail render_bcd_digits_supp_all
 }
 VALIDATE_SUFFIX = '__t6502'
 

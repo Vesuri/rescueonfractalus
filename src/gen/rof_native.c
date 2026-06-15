@@ -1906,6 +1906,193 @@ void draw_dial_bar_column(void) {
     draw_object_column();
 }
 
+/* draw_player3_object @ $42A7 — render the player-3 "lock-on" indicator sprite.  Entry A
+ * selects the object: A>=3 uses a fixed config (HPOSP3=0, size $0C, col $6C); A<3 looks up
+ * HPOS/size from $4566/$4569 and derives the column/size index from $2824 via $456C/$457A.
+ * Then (if $2835!=0) clears a strip of the PMG buffers $0F1E/$0F71, and finally — for the
+ * original entry A in $03..$1F — computes a screen position and blits the sprite mask
+ * (bytes via the $4D3E/$4D3F pointer; RANDOM-dithered when $2826==0) into $0F1E/$0F71,
+ * writing HPOSP3 ($D003) and the size clamp $00CC.
+ *
+ * Faithful transliteration.  HW touched via bus_read/bus_write ($D00B HPOSP3 hi?, $D003,
+ * $D20A RANDOM — seeded identically in both runs).  Indexed RAM stores ($0F1E/$0F71,Y/X)
+ * are plain mem[].  GOTCHA reproduced: the SBC #$55 at $42D3 inherits its borrow from
+ * which CMP #$8B branch was taken (the $8C clamp path carries C=1, the fall-through C=0).
+ * Contract: mem[] (exit regs dead); the entry PHA/PLA scribble at $01FF is masked. */
+void draw_player3_object(void) {
+    uint8_t entryA = cpu.A;                 /* PHA */
+    uint8_t a, x, y = 0;
+
+    if (cpu.A >= 0x03) {                     /* CMP #3; BCC L_42bc */
+        bus_write(0xD00B, 0x00);
+        mem[0x2823] = 0x0C;
+        x = 0xFF;
+        a = 0x6C;                            /* BNE L_42ef (always) */
+    } else {
+        /* L_42bc: A in {0,1,2} */
+        y = cpu.A;                           /* TAY */
+        bus_write(0xD00B, mem[0x4566 + y]);
+        mem[0x2823] = mem[0x4569 + y];
+        /* SEC; LDA $2824; CMP #$8B; (>= -> A=$8C,C=1) (< -> A=$2824,C=0); SBC #$55 */
+        uint8_t v = mem[0x2824], carry;
+        if (v >= 0x8B) { a = 0x8C; carry = 1; }
+        else           { a = v;    carry = 0; }
+        a = (uint8_t)((int)a - 0x55 - (1 - carry));
+        if (a & 0x80) a = 0x00;              /* BPL skip; else LDA #0 */
+        a >>= 2;                             /* LSR; LSR */
+        if (y == 0x00) {                     /* CPY #1; BMI L_42e9 (Y==0) */
+            y = a; x = mem[0x456C + y]; a = 0x54;
+        } else {
+            a >>= 1;                         /* LSR */
+            y = a; x = mem[0x457A + y]; a = 0x5E;
+        }
+    }
+    /* L_42ef */
+    mem[0x2825] = x;
+    mem[0x00BF] = a;
+    x = mem[0x2835];
+    if (x != 0x00) {                         /* clear strip */
+        y = mem[0x286F];
+        if (y < 0x14) y = 0x14;
+        do {
+            mem[0x0F1E + y] = 0x00;
+            if (y < 0x4F) mem[0x0F71 + y] = 0x00;
+            y++;
+            x--;
+        } while (x != 0x00);
+    }
+    /* L_4312: PLA */
+    a = entryA;
+    if (a & 0x80) { mem[0x006A]--; return; } /* BPL L_4318; else DEC $006A */
+    if (a >= 0x20) return;                    /* CMP #$20; BCS return */
+    if (a >= 0x15) {
+        y = 0x49;
+    } else if (a >= 0x0C) {
+        y = 0x48;
+    } else {
+        uint8_t chainval;
+        if (a >= 9)      chainval = 7;
+        else if (a >= 7) chainval = 6;
+        else if (a >= 5) chainval = 5;
+        else             chainval = a;       /* a in 0..4 */
+        y = (uint8_t)(mem[0x2822] + 9 * chainval);
+    }
+    /* L_4352 */
+    a = mem[0x2821];
+    if (a < 0x07) a = 0x07;
+    if (a >= 0x71) a = 0x71;
+    if (y < 0x2D) a = (uint8_t)(a - mem[0x4D11 + y]);   /* CPY #$2D; BCS skip; SEC; SBC */
+    mem[0x286F] = a;
+    x = a;                                   /* TAX */
+    y = (uint8_t)(y << 1);                   /* TYA; ASL; TAY */
+    mem[0x00BB] = mem[0x4D3E + y];
+    mem[0x00BC] = mem[0x4D3F + y];
+    y = 0x00;
+    for (;;) {                               /* L_437c */
+        uint8_t aa = (mem[0x2826] != 0) ? mem[0x2826] : bus_read(0xD20A);
+        uint16_t bb = (uint16_t)(mem[0x00BB] | (mem[0x00BC] << 8));
+        aa &= bus_read((uint16_t)(bb + y));
+        if (aa == 0x00) break;               /* BEQ L_43a5 */
+        if (x >= 0x14) {
+            if (x < 0x73) mem[0x0F1E + x] = aa;
+            y++;                             /* INY (only when x>=$14) */
+            if (x >= 0x2E && x < 0x4F) {
+                aa &= mem[0x2825];
+                mem[0x0F71 + x] = aa;
+            }
+        }
+        x++;                                 /* INX */
+        if (x & 0x80) break;                 /* BPL L_437c (loop while x<$80) */
+    }
+    /* L_43a5 */
+    mem[0x2835] = y;
+    {
+        uint8_t s = (uint8_t)(mem[0x2823] + mem[0x2824]);   /* CLC; ADC */
+        mem[0x2870] = s;
+        bus_write(0xD003, s);
+        if (s >= 0x8E) s = 0x8D;             /* CMP #$8E; BCC L_43be; LDA #$8D */
+        else if (s < mem[0x00BF]) s = mem[0x00BF];   /* CMP $BF; BCS skip; LDA $BF */
+        mem[0x00CC] = s;
+    }
+}
+
+/* dl_lms_build @ $69E5 — set the DL-fill dest pointer ($C5/$C6=$300A) and end index
+ * ($0086=$56), then tail dl_lms_fill. */
+void dl_lms_build(void) {
+    mem[0x00C5] = 0x0A; mem[0x00C6] = 0x30;
+    mem[0x0086] = 0x56;
+    dl_lms_fill();
+}
+
+/* game_init_76CB @ $76CB — build the flight-mode display list and LMS tables in $30xx-$32xx.
+ * Copies header bytes from $77C3/$77C9/$77D2 into the DL mirrors, fills mode lines/blanks,
+ * pokes the fixed LMS/scroll constants, then builds two row-address tables (stride $60 from
+ * $1070 / $10A0) and emits them into the DL via dl_lms_fill.  All-native callees, all writes
+ * land in safe RAM. */
+void game_init_76CB(void) {
+    uint8_t a, y;
+    for (y = 0x08; ; y--) {                      /* L_76cd */
+        a = mem[0x77C9 + y];
+        mem[0x3000 + y] = a; mem[0x3120 + y] = a; mem[0x316B + y] = a; mem[0x3210 + y] = a;
+        a = mem[0x77C3 + y];
+        mem[0x310B + y] = a; mem[0x3156 + y] = a;
+        if (y == 0) break;
+    }
+    for (y = 0x0E; ; y--) {                      /* L_76ea */
+        a = mem[0x77D2 + y];
+        mem[0x3111 + y] = a; mem[0x315C + y] = a; mem[0x3201 + y] = a; mem[0x32A6 + y] = a;
+        if (y == 0) break;
+    }
+    y = 0x87;                                    /* L_7700 */
+    for (;;) {
+        mem[0x3174 + y] = 0x4D; mem[0x3219 + y] = 0x4D;
+        y--;
+        if (y == 0xFF) break;
+    }
+    mem[0x3129] = 0x4D;
+    mem[0x312A] = 0x00;
+    mem[0x312B] = 0x10;
+    y = 0x7E;                                    /* L_771c (step -3) */
+    for (;;) {
+        mem[0x3009 + y] = 0x4F; mem[0x308A + y] = 0x4F;
+        y = (uint8_t)(y - 3);
+        if (y & 0x80) break;
+    }
+    for (y = 0x28; ; y--) {                      /* L_772b */
+        mem[0x312C + y] = 0x0D;
+        if (y == 0) break;
+    }
+    mem[0x306F] = 0xCF; mem[0x30ED] = 0xCF; mem[0x30F9] = 0xCF; mem[0x3105] = 0xCF;
+    mem[0x3008] = 0x8D; mem[0x3128] = 0x8D; mem[0x313C] = 0x8D; mem[0x3151] = 0x8D; mem[0x3155] = 0x8D;
+    mem[0x3007] = 0x84;
+    mem[0x31F2] = 0xCD; mem[0x31FE] = 0xCD; mem[0x3297] = 0xCD; mem[0x32A3] = 0xCD;
+    mem[0x311E] = 0x00; mem[0x311F] = 0x30;
+    mem[0x3169] = 0x20; mem[0x316A] = 0x31;
+    mem[0x320E] = 0x6B; mem[0x320F] = 0x31;
+    mem[0x32B3] = 0x10; mem[0x32B4] = 0x32;
+    mem[0x00C1] = 0x60;
+    mem[0x00C3] = 0x70; mem[0x00C4] = 0x10;      /* base $1070 */
+    build_row_addr_table();
+    mem[0x00C5] = 0x75; mem[0x00C6] = 0x31;      /* dest $3175 */
+    mem[0x008B] = 0x00; mem[0x0086] = 0x2F;
+    dl_lms_fill();
+    mem[0x00C3] = 0xA0; mem[0x00C4] = 0x10;      /* base $10A0 */
+    build_row_addr_table();
+    mem[0x00C5] = 0x1A; mem[0x00C6] = 0x32;      /* dest $321A */
+    dl_lms_fill();
+}
+
+/* setup_initials_ptr @ $5A63 — point the digit dest at $3694, render $006D as zero-suppressed
+ * BCD ($3694=0 clears the running suppress flag), via bin_to_bcd + render_bcd_digits_supp_all. */
+void setup_initials_ptr(void) {
+    mem[0x00C5] = 0x94; mem[0x00C6] = 0x36;
+    cpu.A = mem[0x006D];
+    bin_to_bcd();
+    cpu.Y = 0x00;
+    mem[0x3694] = 0x00;
+    render_bcd_digits_supp_all();
+}
+
 /* render_bcd_counter @ $49A0 — render the 3-byte packed-BCD score ($0601-$0603,
  * 6 digits) to the top text line $32C5..$32CA with leading-zero suppression.
  * Flight ISR routine; the first transpiled-on-the-VBI-path fn ported native.
