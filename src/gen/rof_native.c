@@ -1254,6 +1254,45 @@ void show_cockpit_message(void) {
     }
 }
 
+/* game_sub_6811 @ $6811 — scatter random dots (6 outer passes, growing mask $0082 and
+ * threshold $0084).  Each dot: re-roll two coords ($0093/$0092 = RANDOM & $0082) until at
+ * least one reaches the threshold $0084, then plot it at a jittered row/col — row via
+ * rng_signed_jitter($2A)+set_row_ptr, col via rng_signed_jitter($2F)+plot_pixel_masked.
+ * The mask index $0094 cycles 4..6 then 1..6.  All callees are native. */
+void game_sub_6811(void) {
+    mem[0x0094] = 0x04;
+    mem[0x00DF] = 0x06;
+    mem[0x0082] = 0x07;
+    mem[0x0084] = 0x00;
+    do {
+        mem[0x0096] = (uint8_t)((mem[0x0082] | 0x07) >> 2);   /* ORA #7; LSR; LSR */
+        do {
+            for (;;) {                                        /* re-roll until accepted */
+                mem[0x0093] = (uint8_t)(bus_read(0xD20A) & mem[0x0082]);
+                uint8_t v92 = (uint8_t)(bus_read(0xD20A) & mem[0x0082]);
+                mem[0x0092] = v92;
+                if (v92 >= mem[0x0084]) break;                /* BCS accept */
+                if (mem[0x0093] >= mem[0x0084]) break;        /* BCC retry inverted */
+            }
+            mem[0x0085] = 0x2A;
+            cpu.A = mem[0x0092];
+            rng_signed_jitter();                              /* jittered row in A */
+            cpu.Y = cpu.A;
+            set_row_ptr();
+            mem[0x0085] = 0x2F;
+            cpu.A = mem[0x0093];
+            rng_signed_jitter();                              /* jittered col in A */
+            plot_pixel_masked();
+            mem[0x0096] = (uint8_t)(mem[0x0096] - 1);
+        } while (mem[0x0096] != 0x00);
+        mem[0x0082] = (uint8_t)(mem[0x0082] + 0x07);
+        mem[0x0084] = (uint8_t)(mem[0x0084] + 0x06);
+        mem[0x0094] = (uint8_t)(mem[0x0094] + 1);
+        if (mem[0x0094] == 0x07) mem[0x0094] = 0x01;
+        mem[0x00DF] = (uint8_t)(mem[0x00DF] - 1);
+    } while (mem[0x00DF] != 0x00);
+}
+
 /* render_bcd_counter @ $49A0 — render the 3-byte packed-BCD score ($0601-$0603,
  * 6 digits) to the top text line $32C5..$32CA with leading-zero suppression.
  * Flight ISR routine; the first transpiled-on-the-VBI-path fn ported native.

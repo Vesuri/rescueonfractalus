@@ -259,6 +259,7 @@ VALIDATE_FUNCS = {
     # batch — font/voice init + cockpit message renderer:
     0x5433,  # font_display_init — clear music/voice tables + seed slots/timers (POKEY via bus_write)
     0x47B8,  # show_cockpit_message — render HUD message (entry Y id) into $32B7 from glyph tables
+    0x6811,  # game_sub_6811 — scatter random jittered dots via rng_signed_jitter/set_row_ptr/plot_pixel_masked
 }
 VALIDATE_SUFFIX = '__t6502'
 

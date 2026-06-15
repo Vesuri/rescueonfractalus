@@ -516,6 +516,28 @@ static int test_plot_char_bounded(void) {
     return mem_fail + cpu_fail;
 }
 
+/* --- game_sub_6811 @ $6811: scatter random dots.  Plots through set_row_ptr (row-addr
+ * table $073D/$0793 -> $80/$81) + plot_pixel_masked, so seed the table into safe bitmap
+ * RAM ($2000 + row*$28); the jittered row stays within 0..$54 by construction.  diff_run
+ * seeds the RANDOM stream identically for both runs. --- */
+static int test_game_sub_6811(void) {
+    if (!want("game_sub_6811")) return 0;
+    enum { N = 4000 };
+    static uint8_t pre[65536];
+    int mem_fail = 0, cpu_diff = 0, printed = 0;
+    for (int t = 0; t < N; t++) {
+        fill_random(pre);
+        for (int i = 0; i <= 0x54; i++) {
+            uint16_t a = (uint16_t)(0x2000 + i * 0x28);
+            pre[0x073D + i] = (uint8_t)a; pre[0x0793 + i] = (uint8_t)(a >> 8);
+        }
+        mem_fail += diff_run("game_sub_6811", pre, zero_cpu(),
+                             game_sub_6811, game_sub_6811__t6502, t, &printed, &cpu_diff);
+    }
+    printf("game_sub_6811: %d cases, %d mem mismatch (must be 0), %d cpu diffs\n", N, mem_fail, cpu_diff);
+    return mem_fail;
+}
+
 /* --- font_display_init @ $5433: clears the music/voice state tables and seeds a few
  * slots/timers.  The 6502 STA $D1FF,X (indexed) writes are rendered by the transpiler as
  * DIRECT mem[] stores, but the native twin routes POKEY writes through bus_write (-> Paula
@@ -1381,6 +1403,7 @@ int main(int argc, char **argv) {
     fails += test_mem_contract("intro_unmark_random_cells", intro_unmark_random_cells, intro_unmark_random_cells__t6502);
     /* batch — font/voice init + cockpit message renderer */
     fails += test_font_display_init();
+    fails += test_game_sub_6811();
     fails += test_mem_contract_regs("show_cockpit_message", show_cockpit_message, show_cockpit_message__t6502);
     fails += test_mem_contract_regs("mark_slot_and_countdown_char", mark_slot_and_countdown_char, mark_slot_and_countdown_char__t6502);
     fails += test_mem_contract_regs("mark_slot_and_inc_count", mark_slot_and_inc_count, mark_slot_and_inc_count__t6502);
