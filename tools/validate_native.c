@@ -983,6 +983,61 @@ static int test_draw_scaled_shape(void) {
     return mem_fail;
 }
 
+/* --- validate_save_state @ $5D0D: a pure comparator (no mem writes) whose result is the Z
+ * flag, so assert cpu.A/Z/C/N rather than mem.  Seed the header bytes ($3700=$28, $3714=$EE)
+ * and copy the 38-byte reference into the candidate region in ~half the cases each, so both
+ * the early-out and full-match (Z set) paths are exercised. --- */
+static int test_validate_save_state(void) {
+    if (!want("validate_save_state")) return 0;
+    enum { N = 50000 };
+    static uint8_t pre[65536], ref_mem[65536];
+    int mem_fail = 0, cpu_fail = 0, printed = 0; (void)printed;
+    for (int t = 0; t < N; t++) {
+        fill_random(pre);
+        if (xs() & 1) pre[0x3700] = 0x28;
+        if (xs() & 1) pre[0x3714] = 0xEE;
+        if (xs() & 1) for (int i = 1; i <= 0x26; i++) pre[0x37C7 + i] = pre[0x7BDA + i];
+        Cpu6502 c = zero_cpu();
+        memcpy((void *)mem, pre, 65536); cpu = c; validate_save_state__t6502();
+        Cpu6502 ref = cpu; memcpy(ref_mem, (void *)mem, sizeof ref_mem);
+        memcpy((void *)mem, pre, 65536); cpu = c; validate_save_state();
+        if (memcmp((const void *)mem, ref_mem, 65536) != 0) mem_fail++;
+        if (cpu.A != ref.A || cpu.Z != ref.Z || cpu.C != ref.C || cpu.N != ref.N) cpu_fail++;
+    }
+    printf("validate_save_state: %d cases, %d mem mismatch, %d cpu(A/Z/C/N) mismatch (both must be 0)\n",
+           N, mem_fail, cpu_fail);
+    return mem_fail + cpu_fail;
+}
+
+/* --- cockpit_dial_update @ $4430: derives $0022 then tail-calls draw_cockpit_dial_bar, whose
+ * draw loop needs the real $4581 table + valid bounds -> flight snapshot + forced $00BD=$0F/
+ * $00BE=$07; vary entry A (the dial value, masked $3F).  The PHA/PLA leaves a dead $01FF. --- */
+static int test_cockpit_dial_update(void) {
+    if (!want("cockpit_dial_update")) return 0;
+    static uint8_t snap[65536], pre[65536];
+    static const uint16_t ignore[] = { 0x01FF };
+    const char *path = "a800dumps/flight_ram_0000_BFFF.bin";
+    FILE *f = fopen(path, "rb");
+    if (!f) { printf("cockpit_dial_update: SKIP (%s not found)\n", path); return 0; }
+    memset(snap, 0, sizeof snap);
+    size_t got = fread(snap, 1, 0xC000, f); fclose(f);
+    if (got != 0xC000) { printf("cockpit_dial_update: SKIP (short read %zu)\n", got); return 0; }
+    int mem_fail = 0, cpu_diff = 0, printed = 0;
+    set_ignore(ignore, 1);
+    for (int t = 0; t < 20000; t++) {
+        memcpy(pre, snap, sizeof pre);
+        pre[0x00BD] = 0x0F; pre[0x00BE] = 0x07;
+        Cpu6502 c = zero_cpu();
+        c.A = (uint8_t)(xs() & 0x3F);
+        mem_fail += diff_run("cockpit_dial_update", pre, c,
+                             cockpit_dial_update, cockpit_dial_update__t6502, t, &printed, &cpu_diff);
+    }
+    set_ignore(0, 0);
+    printf("cockpit_dial_update: %d cases (dial snapshot), %d mem mismatch (must be 0), %d cpu diffs\n",
+           20000, mem_fail, cpu_diff);
+    return mem_fail;
+}
+
 /* --- dl_lms_build @ $69E5: sets the DL dest ptr/end ($C5/$C6=$300A, $0086=$56) itself,
  * then dl_lms_fill, so only the X start $008B needs bounding -> seed it just below $56 so
  * the fill is a short forward run into safe DL RAM (and nonzero -> the shift tail). --- */
@@ -2038,6 +2093,10 @@ int main(int argc, char **argv) {
     fails += test_mem_contract("dl_index_dec", dl_index_dec, dl_index_dec__t6502);
     fails += test_mem_contract("dl_index_dec_or_reset", dl_index_dec_or_reset, dl_index_dec_or_reset__t6502);
     fails += test_draw_scaled_shape();
+    fails += test_ret_a("pack_byte_to_5bit_cells", pack_byte_to_5bit_cells, pack_byte_to_5bit_cells__t6502);
+    fails += test_ret_a("read_console_trig_delta", read_console_trig_delta, read_console_trig_delta__t6502);
+    fails += test_validate_save_state();
+    fails += test_cockpit_dial_update();
     fails += test_mem_contract_regs("show_cockpit_message", show_cockpit_message, show_cockpit_message__t6502);
     fails += test_mem_contract_regs("mark_slot_and_countdown_char", mark_slot_and_countdown_char, mark_slot_and_countdown_char__t6502);
     fails += test_mem_contract_regs("mark_slot_and_inc_count", mark_slot_and_inc_count, mark_slot_and_inc_count__t6502);

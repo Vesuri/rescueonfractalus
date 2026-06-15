@@ -2621,7 +2621,8 @@ void redraw_dial_from_6f(void) {
 }
 
 /* cockpit_dial_update @ $4430: Stores dial value $6F, computes bar offset from table into $0022, redraws via draw_cockpit_dial_bar */
-void cockpit_dial_update(void) {
+/* faithful transliteration kept as the validation oracle; native cockpit_dial_update() lives in rof_native.c (see VALIDATE_FUNCS) */
+void cockpit_dial_update__t6502(void) {
     /* 4430 */
     mem[0x006F] = cpu.A;
     /* 4432 */
@@ -6077,7 +6078,8 @@ void setup_initials_ptr__t6502(void) {
 }
 
 /* read_console_trig_delta @ $5A78: (CONSOL $D01F & $01) SEC SBC $D010(collision read); signed delta of input bits */
-void read_console_trig_delta(void) {
+/* faithful transliteration kept as the validation oracle; native read_console_trig_delta() lives in rof_native.c (see VALIDATE_FUNCS) */
+void read_console_trig_delta__t6502(void) {
     /* 5a78 */
     LDA(bus_read(0xD01F));
     /* 5a7b */
@@ -6532,7 +6534,8 @@ L_5d0c:;
 }
 
 /* validate_save_state @ $5D0D: Compares save-state blocks ($3700/$3714 vs $28/$EE, 39 bytes $7BDA vs $37C7); returns Z=1 if all match; called early in game_entry */
-void validate_save_state(void) {
+/* faithful transliteration kept as the validation oracle; native validate_save_state() lives in rof_native.c (see VALIDATE_FUNCS) */
+void validate_save_state__t6502(void) {
     /* 5d0d */
     LDA(mem[0x3700]);
     /* 5d10 */
@@ -14377,7 +14380,8 @@ L_8173:;
 }
 
 /* pack_byte_to_5bit_cells @ $8181: Re-distributes A's bits across cells via repeated ROL/ROR through scratch $0084 (5-bit proportional-font/glyph bit-packing) */
-void pack_byte_to_5bit_cells(void) {
+/* faithful transliteration kept as the validation oracle; native pack_byte_to_5bit_cells() lives in rof_native.c (see VALIDATE_FUNCS) */
+void pack_byte_to_5bit_cells__t6502(void) {
     /* 8181 */
     ROL_A();
     /* 8182 */

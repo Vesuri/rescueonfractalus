@@ -2232,6 +2232,67 @@ void draw_scaled_shape(void) {
     } while (mem[0x0055] < 0x12);
 }
 
+/* pack_byte_to_5bit_cells @ $8181 — interleave the bits of A with the running cell byte
+ * $0084 via a ROL/ROR carry chain, returning the packed result in A.  Faithfully reproduced
+ * with the op-macros (the carry threads through every rotate, so an idiomatic rewrite would
+ * be no faster and far more error-prone). */
+void pack_byte_to_5bit_cells(void) {
+    ROL_A(); ROL_A();
+    ROR_M(0x0084); ROR_A(); ROR_M(0x0084);
+    ROL_A(); ROL_A(); ROL_A();
+    ROR_M(0x0084); ROR_A(); ROR_M(0x0084);
+    ROL_A(); ROL_A(); ROL_A();
+    ROR_M(0x0084); ROR_A(); ROR_M(0x0084);
+    ROL_A(); ROL_A(); ROL_A();
+    ROR_M(0x0084); ROR_A();
+    LDA(mem[0x0084]); ROR_A();
+}
+
+/* read_console_trig_delta @ $5A78 — A = (CONSOL & 1) - TRIG0, reading the two active-low HW
+ * inputs through bus_read ($D01F START bit, $D010 trigger 0). */
+void read_console_trig_delta(void) {
+    LDA(bus_read(0xD01F));
+    AND(0x01);
+    SEC();
+    SBC(bus_read(0xD010));
+}
+
+/* validate_save_state @ $5D0D — verify the saved-state header: $3700==$28, $3714==$EE, and
+ * the 38 bytes $37C7+$26..+1 match the reference $7BDA+$26..+1.  Sets the Z flag (valid =>
+ * Z set from the final DEY; any mismatch => Z clear from the failing CMP).  No memory writes. */
+void validate_save_state(void) {
+    LDA(mem[0x3700]); CMP(0x28);
+    if (!cpu.Z) return;
+    LDA(mem[0x3714]); CMP(0xEE);
+    if (!cpu.Z) return;
+    cpu.Y = 0x26;
+    for (;;) {
+        LDA(mem[0x7BDA + cpu.Y]); CMP(mem[0x37C7 + cpu.Y]);
+        if (!cpu.Z) return;
+        DEY();
+        if (cpu.Z) return;          /* BNE: loop while Y!=0 */
+    }
+}
+
+/* cockpit_dial_update @ $4430 — set the dial source $006F=A, derive the bar value $0022
+ * (0 when A==8, else $4457[A + $0625]) and draw it via the native draw_cockpit_dial_bar.
+ * The PHA/PLA preserving the entry A across the derivation is reproduced with the op-macros
+ * (its $01FF byte is masked in the test). */
+void cockpit_dial_update(void) {
+    mem[0x006F] = cpu.A;
+    PHA();
+    CMP(0x08);
+    if (cpu.Z) {
+        LDA(0x00);
+    } else {
+        CLC(); ADC(mem[0x0625]); cpu.Y = cpu.A;
+        LDA(mem[0x4457 + cpu.Y]);
+    }
+    mem[0x0022] = cpu.A;
+    PLA();
+    draw_cockpit_dial_bar();
+}
+
 /* render_bcd_counter @ $49A0 — render the 3-byte packed-BCD score ($0601-$0603,
  * 6 digits) to the top text line $32C5..$32CA with leading-zero suppression.
  * Flight ISR routine; the first transpiled-on-the-VBI-path fn ported native.
