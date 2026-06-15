@@ -788,6 +788,53 @@ static int test_draw_2digit_value(void) {
     return mem_fail;
 }
 
+/* --- unpack_terrain_seed_cols @ $7558: runs native rle_expand_list twice from the fixed
+ * source addrs $4DFA / $4E09 (it sets all ptrs itself).  Seed a short terminating
+ * (count,value) list at each source so the shared native expander returns quickly; the
+ * expansion itself is already covered by test_rle_expand_list.  Result via mem[]. --- */
+static int test_unpack_terrain_seed_cols(void) {
+    if (!want("unpack_terrain_seed_cols")) return 0;
+    enum { N = 20000 };
+    static uint8_t pre[65536];
+    int mem_fail = 0, cpu_diff = 0, printed = 0;
+    for (int t = 0; t < N; t++) {
+        fill_random(pre);
+        int p = 0x4DFA, n1 = 1 + (int)(xs() % 3);      /* <=6 bytes, ends before $4E09 */
+        for (int k = 0; k < n1; k++) { pre[p++] = (uint8_t)(1 + (xs() % 16)); pre[p++] = (uint8_t)(xs() & 0xFF); }
+        pre[p] = 0x00;
+        p = 0x4E09; int n2 = 1 + (int)(xs() % 3);
+        for (int k = 0; k < n2; k++) { pre[p++] = (uint8_t)(1 + (xs() % 16)); pre[p++] = (uint8_t)(xs() & 0xFF); }
+        pre[p] = 0x00;
+        mem_fail += diff_run("unpack_terrain_seed_cols", pre, zero_cpu(),
+                             unpack_terrain_seed_cols, unpack_terrain_seed_cols__t6502, t, &printed, &cpu_diff);
+    }
+    printf("unpack_terrain_seed_cols: %d cases, %d mem mismatch (must be 0), %d cpu diffs\n", N, mem_fail, cpu_diff);
+    return mem_fail;
+}
+
+/* --- game_init_7588 @ $7588: $AA fill of $32FD..$332C, then native rle_decompress from
+ * $6E6E -> $332D.  Seed a short terminating literal/run stream at $6E6E (ending in a $C0
+ * marker) to bound the shared native decompressor.  Result via mem[]. --- */
+static int test_game_init_7588(void) {
+    if (!want("game_init_7588")) return 0;
+    enum { N = 20000 };
+    static uint8_t pre[65536];
+    int mem_fail = 0, cpu_diff = 0, printed = 0;
+    for (int t = 0; t < N; t++) {
+        fill_random(pre);
+        int p = 0x6E6E, nitems = 1 + (int)(xs() % 4);
+        for (int k = 0; k < nitems; k++) {
+            if (xs() & 1) { pre[p++] = (uint8_t)(xs() % 0xC0); }
+            else { pre[p++] = (uint8_t)(0xC0 | (1 + (xs() % 16))); pre[p++] = (uint8_t)(xs() & 0xFF); }
+        }
+        pre[p] = 0xC0;
+        mem_fail += diff_run("game_init_7588", pre, zero_cpu(),
+                             game_init_7588, game_init_7588__t6502, t, &printed, &cpu_diff);
+    }
+    printf("game_init_7588: %d cases, %d mem mismatch (must be 0), %d cpu diffs\n", N, mem_fail, cpu_diff);
+    return mem_fail;
+}
+
 /* --- rle_run_fill @ $3C58: RLE run expansion through copy_bytes_to_dst.  Seed the
  * source pointer $00BB/$00BC -> $2000 and the dest pointer $00BD/$00BE -> $2400 (both
  * safe RAM, disjoint), a bounded run length (entry A 1..64) and small offset (entry Y),
@@ -1850,6 +1897,8 @@ int main(int argc, char **argv) {
     fails += test_draw_2digit_value();
     fails += test_blit_chain("glyph_ptr_shift3", glyph_ptr_shift3, glyph_ptr_shift3__t6502);
     fails += test_emit_chain("render_bcd_top_byte", render_bcd_top_byte, render_bcd_top_byte__t6502);
+    fails += test_unpack_terrain_seed_cols();
+    fails += test_game_init_7588();
     fails += test_mem_contract_regs("show_cockpit_message", show_cockpit_message, show_cockpit_message__t6502);
     fails += test_mem_contract_regs("mark_slot_and_countdown_char", mark_slot_and_countdown_char, mark_slot_and_countdown_char__t6502);
     fails += test_mem_contract_regs("mark_slot_and_inc_count", mark_slot_and_inc_count, mark_slot_and_inc_count__t6502);

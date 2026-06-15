@@ -11447,7 +11447,8 @@ L_753f:;
 }
 
 /* unpack_terrain_seed_cols @ $7558: RLE-unpacks (via rle_expand_list) $4DFA->$0C32 and $4E09->$0D32, seeding two of the four terrain column buffers */
-void unpack_terrain_seed_cols(void) {
+/* faithful transliteration kept as the validation oracle; native unpack_terrain_seed_cols() lives in rof_native.c (see VALIDATE_FUNCS) */
+void unpack_terrain_seed_cols__t6502(void) {
     /* 7558 */
     LDA(0xFA);
     /* 755a */
@@ -11505,7 +11506,8 @@ L_7582:;
 }
 
 /* game_init_7588 @ $7588: Game init (called in game_entry setup sequence) */
-void game_init_7588(void) {
+/* faithful transliteration kept as the validation oracle; native game_init_7588() lives in rof_native.c (see VALIDATE_FUNCS) */
+void game_init_7588__t6502(void) {
     /* 7588 */
     LDY(0x2F);
     /* 758a */

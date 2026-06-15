@@ -292,6 +292,9 @@ VALIDATE_FUNCS = {
     0x4084,  # draw_2digit_value — draw hi nibble glyph, advance dest ptr $BD/$BE->$BB/$BC, tail draw_digit_low_nibble
     0x6802,  # glyph_ptr_shift3 — A<<3, tail set_coord_y_e0
     0x49C0,  # render_bcd_top_byte — Y=5, X=$0600, tail set_zsupp_pos_clear_delta (renders entry-A byte via emit chain)
+    # batch — RLE-composer init wrappers (display_setup front; compose native RLE):
+    0x7558,  # unpack_terrain_seed_cols — set src/dst ptrs, 2x rle_expand_list ($4DFA->$0C32, $4E09->$0D32)
+    0x7588,  # game_init_7588 — fill $32FD..$332C=$AA, then rle_decompress $6E6E -> $332D
 }
 VALIDATE_SUFFIX = '__t6502'
 

@@ -1805,6 +1805,30 @@ void render_bcd_top_byte(void) {
     set_zsupp_pos_clear_delta();
 }
 
+/* unpack_terrain_seed_cols @ $7558 — seed the two terrain seed columns by running the
+ * native rle_expand_list twice: source $4DFA -> dest $0C32, then source $4E09 -> $0D32.
+ * Pure pointer setup + two native calls. */
+void unpack_terrain_seed_cols(void) {
+    mem[0x00BB] = 0xFA; mem[0x00BC] = 0x4D;   /* src $4DFA */
+    mem[0x00BD] = 0x32; mem[0x00BE] = 0x0C;   /* dst $0C32 */
+    rle_expand_list();
+    mem[0x00BB] = 0x09; mem[0x00BC] = 0x4E;   /* src $4E09 */
+    mem[0x00BD] = 0x32; mem[0x00BE] = 0x0D;   /* dst $0D32 */
+    rle_expand_list();
+}
+
+/* game_init_7588 @ $7588 — fill $32FD..$332C (Y=$2F..0) with $AA, then decompress the
+ * shape stream at $6E6E into $332D via the native rle_decompress. */
+void game_init_7588(void) {
+    for (uint8_t y = 0x2F; ; y--) {
+        mem[0x32FD + y] = 0xAA;
+        if (y == 0) break;
+    }
+    mem[0x00BD] = 0x2D; mem[0x00BE] = 0x33;   /* dst $332D */
+    mem[0x00BB] = 0x6E; mem[0x00BC] = 0x6E;   /* src $6E6E */
+    rle_decompress();
+}
+
 /* render_bcd_counter @ $49A0 — render the 3-byte packed-BCD score ($0601-$0603,
  * 6 digits) to the top text line $32C5..$32CA with leading-zero suppression.
  * Flight ISR routine; the first transpiled-on-the-VBI-path fn ported native.
