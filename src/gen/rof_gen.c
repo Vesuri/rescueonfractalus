@@ -1273,7 +1273,8 @@ L_1fdf:;
 }
 
 /* loader_util @ $3C00: Loader utility (XEX segment loader helper); called from game_entry at $3D92 */
-void loader_util(void) {
+/* faithful transliteration kept as the validation oracle; native loader_util() lives in rof_native.c (see VALIDATE_FUNCS) */
+void loader_util__t6502(void) {
     /* 3c00 */
     LDA(0x00);
     /* 3c02 */
@@ -1335,7 +1336,8 @@ void loader_util(void) {
 }
 
 /* rle_decompress @ $3C3D: RLE unpack: src ptr $BB/$BC -> dst $BD/$BE; bytes<$C0 copied literally, >=$C0 are run markers (low 6 bits=count), $C0 terminates */
-void rle_decompress(void) {
+/* faithful transliteration kept as the validation oracle; native rle_decompress() lives in rof_native.c (see VALIDATE_FUNCS) */
+void rle_decompress__t6502(void) {
     /* 3c3d */
     LDY(0x00);
 L_3c3f:;
@@ -1367,7 +1369,8 @@ L_3c55:;
 }
 
 /* rle_run_fill @ $3C58: Advance src ptr $BB/$BC, fetch fill byte [$BB], fall into copy_bytes with run count in X */
-void rle_run_fill(void) {
+/* faithful transliteration kept as the validation oracle; native rle_run_fill() lives in rof_native.c (see VALIDATE_FUNCS) */
+void rle_run_fill__t6502(void) {
     /* 3c58 */
     TAX();
     /* 3c59 */
@@ -1442,7 +1445,8 @@ L_3c7b:;
 }
 
 /* fill_region_2000 @ $3C83: Set dst $C1/$C2=$2000, count $C3/$C4=$0F73, fall into memset_or_copy to fill region with byte [$B7] */
-void fill_region_2000(void) {
+/* faithful transliteration kept as the validation oracle; native fill_region_2000() lives in rof_native.c (see VALIDATE_FUNCS) */
+void fill_region_2000__t6502(void) {
     /* 3c83 */
     LDA(0x00);
     /* 3c85 */
@@ -1904,7 +1908,8 @@ void draw_digit_low_nibble(void) {
 }
 
 /* draw_glyph_2rows @ $4099: Copy 2-byte glyph from $4AE3[X] OR mask $00BF into ($00BB),Y at Y=0,1 and Y=$30,$31 (two char rows) */
-void draw_glyph_2rows(void) {
+/* faithful transliteration kept as the validation oracle; native draw_glyph_2rows() lives in rof_native.c (see VALIDATE_FUNCS) */
+void draw_glyph_2rows__t6502(void) {
     /* 4099 */
     TAX();
     /* 409a */
@@ -2967,7 +2972,8 @@ L_45af:;
 }
 
 /* init_cockpit_bar_cells @ $45C5: Fills cockpit digit/bar init cells ($2107-$2198 with $BE, $2167-$2198 with $AA) */
-void init_cockpit_bar_cells(void) {
+/* faithful transliteration kept as the validation oracle; native init_cockpit_bar_cells() lives in rof_native.c (see VALIDATE_FUNCS) */
+void init_cockpit_bar_cells__t6502(void) {
     /* 45c5 */
     LDA(0xBE);
     /* 45c7 */
@@ -3486,7 +3492,8 @@ L_47af:;
 }
 
 /* save_color_clear_y_bit5 @ $47B2: Stores A->$D8, clears bit5 of Y (AND $DF), falls into show_cockpit_message */
-void save_color_clear_y_bit5(void) {
+/* faithful transliteration kept as the validation oracle; native save_color_clear_y_bit5() lives in rof_native.c (see VALIDATE_FUNCS) */
+void save_color_clear_y_bit5__t6502(void) {
     /* 47b2 */
     mem[0x00D8] = cpu.A;
     /* 47b4 */
@@ -3499,7 +3506,8 @@ void save_color_clear_y_bit5(void) {
 }
 
 /* clear_message_buffer @ $480B: X=$0E, A=0; falls into clear loop -> zeroes 14-byte cockpit message buffer at $32B7 */
-void clear_message_buffer(void) {
+/* faithful transliteration kept as the validation oracle; native clear_message_buffer() lives in rof_native.c (see VALIDATE_FUNCS) */
+void clear_message_buffer__t6502(void) {
     /* 480b */
     LDX(0x0E);
     /* 480d */
@@ -3594,7 +3602,8 @@ L_4973:;
 }
 
 /* add_and_show_bcd_counter @ $497D: SED; adds 16-bit BCD delta $0045/$0046 into 4-byte BCD counter $0600-$0603 (big-endian) w/ carry, CLD, then renders via render_bcd_counter */
-void add_and_show_bcd_counter(void) {
+/* faithful transliteration kept as the validation oracle; native add_and_show_bcd_counter() lives in rof_native.c (see VALIDATE_FUNCS) */
+void add_and_show_bcd_counter__t6502(void) {
     /* 497d */
     SED();
     /* 497e */
@@ -3647,7 +3656,8 @@ void render_bcd_counter__t6502(void) {
 }
 
 /* render_bcd_low_bytes @ $49AE: Renders BCD bytes $0602 then $0603 (each two digits) to screen via emit_bcd_byte_digits */
-void render_bcd_low_bytes(void) {
+/* faithful transliteration kept as the validation oracle; native render_bcd_low_bytes() lives in rof_native.c (see VALIDATE_FUNCS) */
+void render_bcd_low_bytes__t6502(void) {
     /* 49ae */
     LDA(mem[0x0602]);
     /* 49b1 */
@@ -3679,7 +3689,8 @@ void render_bcd_top_byte(void) {
 }
 
 /* emit_bcd_byte_digits @ $49CE: Splits A into hi/lo nibble, emits each digit via plot_char_bounded (high nibble then AND $0F low nibble) */
-void emit_bcd_byte_digits(void) {
+/* faithful transliteration kept as the validation oracle; native emit_bcd_byte_digits() lives in rof_native.c (see VALIDATE_FUNCS) */
+void emit_bcd_byte_digits__t6502(void) {
     /* 49ce */
     PHA();
     /* 49cf */
@@ -3700,7 +3711,8 @@ void emit_bcd_byte_digits(void) {
 }
 
 /* plot_char_bounded @ $49D9: If X==0 & A==0, bounds-check Y vs $0619; else write A+$50 to ($C5),Y then INY; row char plotter */
-void plot_char_bounded(void) {
+/* faithful transliteration kept as the validation oracle; native plot_char_bounded() lives in rof_native.c (see VALIDATE_FUNCS) */
+void plot_char_bounded__t6502(void) {
     /* 49d9 */
     CPX(0x00);
     /* 49db */
@@ -4060,7 +4072,8 @@ L_4fcb:;
 }
 
 /* intro_reset_score_slots @ $4FCE: Clears $066A/$0686, sets $0678=$0C and refreshes display field Y=$0D via game_sub_55FC */
-void intro_reset_score_slots(void) {
+/* faithful transliteration kept as the validation oracle; native intro_reset_score_slots() lives in rof_native.c (see VALIDATE_FUNCS) */
+void intro_reset_score_slots__t6502(void) {
     /* 4fce */
     LDA(0x00);
     /* 4fd0 */
@@ -5040,7 +5053,8 @@ L_53fa:;
 }
 
 /* font_display_init @ $5433: Font/display character setup (called in game_entry init) */
-void font_display_init(void) {
+/* faithful transliteration kept as the validation oracle; native font_display_init() lives in rof_native.c (see VALIDATE_FUNCS) */
+void font_display_init__t6502(void) {
     /* 5433 */
     LDY(0x0E);
     /* 5435 */
@@ -5999,7 +6013,8 @@ L_596d:;
 }
 
 /* random_alpha_index @ $5A4D: RANDOM $D20A & $1F, reject>=$1A, then ADC #$21; returns random value (alpha range) */
-void random_alpha_index(void) {
+/* faithful transliteration kept as the validation oracle; native random_alpha_index() lives in rof_native.c (see VALIDATE_FUNCS) */
+void random_alpha_index__t6502(void) {
 L_5a4d:;
     /* 5a4d */
     LDA(bus_read(0xD20A));
@@ -6016,7 +6031,8 @@ L_5a4d:;
 }
 
 /* random_digit @ $5A59: RANDOM $D20A & $0F, rejection-sample until <$0A; returns random 0-9 digit */
-void random_digit(void) {
+/* faithful transliteration kept as the validation oracle; native random_digit() lives in rof_native.c (see VALIDATE_FUNCS) */
+void random_digit__t6502(void) {
 L_5a59:;
     /* 5a59 */
     LDA(bus_read(0xD20A));
@@ -8617,7 +8633,8 @@ void set_row_ptr__t6502(void) {
 }
 
 /* plot_pixel_col93 @ $66D3: Loads A=$0093 (column), tail-calls plot_pixel_masked (plot_pixel_masked) */
-void plot_pixel_col93(void) {
+/* faithful transliteration kept as the validation oracle; native plot_pixel_col93() lives in rof_native.c (see VALIDATE_FUNCS) */
+void plot_pixel_col93__t6502(void) {
     /* 66d3 */
     LDA(mem[0x0093]);
     plot_pixel_masked(); return;
@@ -8772,7 +8789,8 @@ L_6764:;
 }
 
 /* glyph_ptr_from_index @ $6773: computes glyph data ptr $84/$85 = $E000 + (A*8) (3x ASL with carry into hi), then blits via blit_glyph_8rows */
-void glyph_ptr_from_index(void) {
+/* faithful transliteration kept as the validation oracle; native glyph_ptr_from_index() lives in rof_native.c (see VALIDATE_FUNCS) */
+void glyph_ptr_from_index__t6502(void) {
     /* 6773 */
     LDY(0x00);
     /* 6775 */
@@ -8879,7 +8897,8 @@ void glyph_ptr_shift3(void) {
 }
 
 /* set_coord_y_e0 @ $6805: ADC #$80->$0084 (X coord), $0085=$E0 (Y); tails into blit_glyph_8rows; coord setup for terrain plot */
-void set_coord_y_e0(void) {
+/* faithful transliteration kept as the validation oracle; native set_coord_y_e0() lives in rof_native.c (see VALIDATE_FUNCS) */
+void set_coord_y_e0__t6502(void) {
     /* 6805 */
     CLC();
     /* 6806 */
@@ -8895,7 +8914,8 @@ void set_coord_y_e0(void) {
 }
 
 /* game_sub_6811 @ $6811: Game sub with 2 RANDOM reads (enemy/event randomization) */
-void game_sub_6811(void) {
+/* faithful transliteration kept as the validation oracle; native game_sub_6811() lives in rof_native.c (see VALIDATE_FUNCS) */
+void game_sub_6811__t6502(void) {
     /* 6811 */
     LDA(0x04);
     /* 6813 */
@@ -9011,7 +9031,8 @@ L_6878:;
 }
 
 /* rng_signed_jitter @ $687D: A->$B7, reload $0085, read RANDOM $D20A bit7: if neg SBC else ADC $B7 -> signed random perturbation */
-void rng_signed_jitter(void) {
+/* faithful transliteration kept as the validation oracle; native rng_signed_jitter() lives in rof_native.c (see VALIDATE_FUNCS) */
+void rng_signed_jitter__t6502(void) {
     /* 687d */
     mem[0x00B7] = cpu.A;
     /* 687f */
@@ -9118,7 +9139,8 @@ L_68b9:;
 }
 
 /* emit_dl_coord_pairs @ $68CF: Copy $073D/$0793 coord-pair tables into $300A/$300B fwd & $308B/$308C rev DL strands; advance ptrs $C1/$C3 by 3x step from $6E0F[Y] */
-void emit_dl_coord_pairs(void) {
+/* faithful transliteration kept as the validation oracle; native emit_dl_coord_pairs() lives in rof_native.c (see VALIDATE_FUNCS) */
+void emit_dl_coord_pairs__t6502(void) {
     /* 68cf */
     LDA(mem[(0x6E0F)+cpu.Y]);
     /* 68d2 */
@@ -9213,7 +9235,8 @@ L_68f6:;
 }
 
 /* plot_terrain_span @ $692A: Loops fill_vertical_span $0096 times (count from $6E0F[Y], +2 if Y=0) advancing $009C/$009D; shrinks window $009E/$009F by $0085 */
-void plot_terrain_span(void) {
+/* faithful transliteration kept as the validation oracle; native plot_terrain_span() lives in rof_native.c (see VALIDATE_FUNCS) */
+void plot_terrain_span__t6502(void) {
     /* 692a */
     LDA(mem[(0x6E0F)+cpu.Y]);
     /* 692d */
@@ -9484,7 +9507,8 @@ L_69ff:;
 }
 
 /* shift_object_table_up @ $6A0F: Shifts a stride-3 record array up one slot: copies $3007/$3008 -> $300A/$300B for $0084 records (Y from $FF, DEY x3) */
-void shift_object_table_up(void) {
+/* faithful transliteration kept as the validation oracle; native shift_object_table_up() lives in rof_native.c (see VALIDATE_FUNCS) */
+void shift_object_table_up__t6502(void) {
     /* 6a0f */
     mem[0x0084] = cpu.A;
     /* 6a11 */
@@ -10243,7 +10267,8 @@ L_6df8:;
 }
 
 /* intro_random_setup @ $6FBF: Intro/startup sequence with 5 RANDOM reads; called only on fresh start ($0627=0) */
-void intro_random_setup(void) {
+/* faithful transliteration kept as the validation oracle; native intro_random_setup() lives in rof_native.c (see VALIDATE_FUNCS) */
+void intro_random_setup__t6502(void) {
     /* 6fbf */
     LDY(0x00);
     /* 6fc1 */
@@ -10386,7 +10411,8 @@ L_703d:;
 }
 
 /* test_marked_neighbor @ $7047: Reads grid cell $0900[$009C+$009A]; if bit7 set tests neighbors at +$009A and +$009B; returns A (0 if none marked) */
-void test_marked_neighbor(void) {
+/* faithful transliteration kept as the validation oracle; native test_marked_neighbor() lives in rof_native.c (see VALIDATE_FUNCS) */
+void test_marked_neighbor__t6502(void) {
     /* 7047 */
     LDA(mem[0x009C]);
     /* 7049 */
@@ -10432,7 +10458,8 @@ L_7068:;
 }
 
 /* scan_grid_neighbors @ $7069: Sets 4 offset pairs in $009A/$009B (+1/+16,-1/-16,+16/-1,-16/+1), calls test_marked_neighbor each, pushes matches via push_grid_cell */
-void scan_grid_neighbors(void) {
+/* faithful transliteration kept as the validation oracle; native scan_grid_neighbors() lives in rof_native.c (see VALIDATE_FUNCS) */
+void scan_grid_neighbors__t6502(void) {
     /* 7069 */
     LDA(0x01);
     /* 706b */
@@ -10513,7 +10540,8 @@ void push_grid_cell__t6502(void) {
 }
 
 /* intro_unmark_random_cells @ $70B3: Randomly clears bit7 (marked flag) of $0900 grid/height-map cells below a RANDOM($D20A) threshold; intro continuation after intro_random_setup (3 RANDOM reads) */
-void intro_unmark_random_cells(void) {
+/* faithful transliteration kept as the validation oracle; native intro_unmark_random_cells() lives in rof_native.c (see VALIDATE_FUNCS) */
+void intro_unmark_random_cells__t6502(void) {
     /* 70b3 */
     LDY(mem[0x006D]);
     /* 70b5 */
@@ -11193,7 +11221,8 @@ L_7487:;
 }
 
 /* intro_seed_object_map @ $7498: Clears $0A00 object map, scans obj table (obj_table_scan_a_c8/replace), then places $64 markers into $0A00 for marked $0900 cells below a RANDOM($D20A) threshold; fresh-start object seeding */
-void intro_seed_object_map(void) {
+/* faithful transliteration kept as the validation oracle; native intro_seed_object_map() lives in rof_native.c (see VALIDATE_FUNCS) */
+void intro_seed_object_map__t6502(void) {
     /* 7498 */
     LDY(0x00);
     /* 749a */
@@ -11264,7 +11293,8 @@ L_74cf:;
 }
 
 /* unpack_bitmap_4d3e @ $74D7: Bit-serial expand: src ptr $C1/$C2 from table $4D3E, shifts 8 bits via $0085 accumulator to dest $C3/$C4; nested loops $0080/$0081/$0082/$00DF */
-void unpack_bitmap_4d3e(void) {
+/* faithful transliteration kept as the validation oracle; native unpack_bitmap_4d3e() lives in rof_native.c (see VALIDATE_FUNCS) */
+void unpack_bitmap_4d3e__t6502(void) {
     /* 74d7 */
     LDA(0x00);
     /* 74d9 */
@@ -11377,7 +11407,8 @@ L_751c:;
 }
 
 /* init_terrain_render_buffers @ $753B: Fills the height-max array region $250F-$260E with $FF, sets row-table params ($C1=$70 stride, base $119F), then JMP memset_or_copy to clear the $1070 terrain bitmap buffer ($119F bytes) to [$B7] */
-void init_terrain_render_buffers(void) {
+/* faithful transliteration kept as the validation oracle; native init_terrain_render_buffers() lives in rof_native.c (see VALIDATE_FUNCS) */
+void init_terrain_render_buffers__t6502(void) {
     /* 753b */
     LDY(0x00);
     /* 753d */
@@ -11449,7 +11480,8 @@ void unpack_terrain_seed_cols(void) {
 }
 
 /* rle_expand_list @ $757B: Walks bytes via ZP ptr $BB/$BC, calling rle_run_fill per non-zero byte until terminating $00 (used by unpack_terrain_seed_cols) */
-void rle_expand_list(void) {
+/* faithful transliteration kept as the validation oracle; native rle_expand_list() lives in rof_native.c (see VALIDATE_FUNCS) */
+void rle_expand_list__t6502(void) {
     /* 757b */
     LDY(0x00);
 L_757d:;
@@ -12071,7 +12103,8 @@ L_772b:;
 }
 
 /* game_init_77DF @ $77DF: Game init (called in game_entry setup sequence) */
-void game_init_77DF(void) {
+/* faithful transliteration kept as the validation oracle; native game_init_77DF() lives in rof_native.c (see VALIDATE_FUNCS) */
+void game_init_77DF__t6502(void) {
     /* 77df */
     LDX(0x00);
 L_77e1:;
@@ -12127,7 +12160,8 @@ L_77e6:;
 }
 
 /* game_init_7813 @ $7813: Game init (called in game_entry setup sequence) */
-void game_init_7813(void) {
+/* faithful transliteration kept as the validation oracle; native game_init_7813() lives in rof_native.c (see VALIDATE_FUNCS) */
+void game_init_7813__t6502(void) {
     /* 7813 */
     LDY(0x00);
     /* 7815 */
@@ -12821,14 +12855,16 @@ L_7aa5:;
 }
 
 /* trigger_effect_4a @ $7AA6: LDA #$4A then falls into init_event_state_5815_x16 (sets $0044=A,$3388=$B4,$003C=0,ring_push_marked X=$16) */
-void trigger_effect_4a(void) {
+/* faithful transliteration kept as the validation oracle; native trigger_effect_4a() lives in rof_native.c (see VALIDATE_FUNCS) */
+void trigger_effect_4a__t6502(void) {
     /* 7aa6 */
     LDA(0x4A);
     init_event_state_5815_x16(); return;
 }
 
 /* init_event_state_5815_x16 @ $7AA8: Tail: $0044=A, $3388=$B4, $003C=0, then ring_push_marked(X=$16); inits state and triggers game sub */
-void init_event_state_5815_x16(void) {
+/* faithful transliteration kept as the validation oracle; native init_event_state_5815_x16() lives in rof_native.c (see VALIDATE_FUNCS) */
+void init_event_state_5815_x16__t6502(void) {
     /* 7aa8 */
     mem[0x0044] = cpu.A;
     /* 7aaa */
@@ -12986,7 +13022,8 @@ L_7b34:;
 }
 
 /* mark_slot_and_countdown_char @ $7B39: Wrapper: mark_grid_slot_active (mark $0A00 slot) then countdown_show_char_0620 (delayed char display) */
-void mark_slot_and_countdown_char(void) {
+/* faithful transliteration kept as the validation oracle; native mark_slot_and_countdown_char() lives in rof_native.c (see VALIDATE_FUNCS) */
+void mark_slot_and_countdown_char__t6502(void) {
     /* 7b39 */
     mark_grid_slot_active();
     countdown_show_char_0620(); return;
@@ -13021,7 +13058,8 @@ L_7b53:;
 }
 
 /* game_sub_7B54 @ $7B54: Game sub (1 RANDOM read; called in main loop) */
-void game_sub_7B54(void) {
+/* faithful transliteration kept as the validation oracle; native game_sub_7B54() lives in rof_native.c (see VALIDATE_FUNCS) */
+void game_sub_7B54__t6502(void) {
     /* 7b54 */
     LDA(mem[0x003A]);
     /* 7b56 */
@@ -13073,7 +13111,8 @@ void mark_grid_slot_active__t6502(void) {
 }
 
 /* mark_slot_and_inc_count @ $7B7D: Wrapper: mark_grid_slot_active (mark $0A00 slot) then set_place_params_inc_count (set params + BCD inc $0641) */
-void mark_slot_and_inc_count(void) {
+/* faithful transliteration kept as the validation oracle; native mark_slot_and_inc_count() lives in rof_native.c (see VALIDATE_FUNCS) */
+void mark_slot_and_inc_count__t6502(void) {
     /* 7b7d */
     mark_grid_slot_active();
     set_place_params_inc_count(); return;
@@ -13520,7 +13559,8 @@ L_7d00:;
 }
 
 /* plot_clipped_pixel @ $7D38: A=value->$58; clip Y($4E) in[$6C,$97) X($4F) in[$28,$D8); addr via $073D/$0793; mask $4F3B/$7DEB[X&3]; RMW bitmap via $C1 ptr; INC $4F */
-void plot_clipped_pixel(void) {
+/* faithful transliteration kept as the validation oracle; native plot_clipped_pixel() lives in rof_native.c (see VALIDATE_FUNCS) */
+void plot_clipped_pixel__t6502(void) {
     /* 7d38 */
     mem[0x0058] = cpu.A;
     /* 7d3a */
@@ -13758,7 +13798,8 @@ L_7f51:;
 }
 
 /* silence_audio_channels @ $7F60: A->AUDC1/2/3/4 ($D201/03/05/07); AUDCTL($D208)=$60; tail clear_$0632 */
-void silence_audio_channels(void) {
+/* faithful transliteration kept as the validation oracle; native silence_audio_channels() lives in rof_native.c (see VALIDATE_FUNCS) */
+void silence_audio_channels__t6502(void) {
     /* 7f60 */
     mem[0x0634] = cpu.A;
     /* 7f63 */
@@ -24906,7 +24947,8 @@ L_3fab:;
 }
 
 /* return_stub_40af @ $40AF: Empty RTS; tail-call target of draw_glyph_2rows and the score-update path at $406E */
-void return_stub_40af(void) {
+/* faithful transliteration kept as the validation oracle; native return_stub_40af() lives in rof_native.c (see VALIDATE_FUNCS) */
+void return_stub_40af__t6502(void) {
     /* 40af */
     return;
 }
@@ -25261,13 +25303,15 @@ L_4425:;
 }
 
 /* draw_bar_loop_end @ $442D: Bare RTS; tail/exit target of draw_dial_bar loop (draw_object_column at 442b); opaque stub */
-void draw_bar_loop_end(void) {
+/* faithful transliteration kept as the validation oracle; native draw_bar_loop_end() lives in rof_native.c (see VALIDATE_FUNCS) */
+void draw_bar_loop_end__t6502(void) {
     /* 442d */
     return;
 }
 
 /* show_cockpit_message @ $47B8: Decodes msg ID (A/Y) via index tbl $4927 into 14-byte msg buffer $32B7 (+0x40 ATASCII, hi-bit term); sets flash timer $063E ($5A if ID>=$40), $00D8, $0044 */
-void show_cockpit_message(void) {
+/* faithful transliteration kept as the validation oracle; native show_cockpit_message() lives in rof_native.c (see VALIDATE_FUNCS) */
+void show_cockpit_message__t6502(void) {
     /* 47b8 */
     TYA();
     /* 47b9 */
@@ -25377,7 +25421,8 @@ void show_message_with_d8(void) {
 }
 
 /* set_zsupp_pos_clear_delta @ $49C5: Stores Y as leading-zero pos $0619, clears 16-bit delta $0045/$0046, falls into emit_bcd_byte_digits digit render */
-void set_zsupp_pos_clear_delta(void) {
+/* faithful transliteration kept as the validation oracle; native set_zsupp_pos_clear_delta() lives in rof_native.c (see VALIDATE_FUNCS) */
+void set_zsupp_pos_clear_delta__t6502(void) {
     /* 49c5 */
     mem[0x0619] = cpu.Y;
     /* 49c8 */
@@ -25741,7 +25786,8 @@ L_5a42:;
 }
 
 /* blit_glyph_8rows @ $678B: 8-row glyph blit from ($84) to screen ($80); shifts each row bit-by-bit, plot_pixel_col93 plots set bits; advances ptr -$2E */
-void blit_glyph_8rows(void) {
+/* faithful transliteration kept as the validation oracle; native blit_glyph_8rows() lives in rof_native.c (see VALIDATE_FUNCS) */
+void blit_glyph_8rows__t6502(void) {
     /* 678b */
     LDA(mem[0x0095]);
     /* 678d */
@@ -25825,7 +25871,8 @@ void dl_lms_build(void) {
 }
 
 /* ret_stub_6a26 @ $6A26: Empty routine, immediate RTS; tail-call target/no-op stub */
-void ret_stub_6a26(void) {
+/* faithful transliteration kept as the validation oracle; native ret_stub_6a26() lives in rof_native.c (see VALIDATE_FUNCS) */
+void ret_stub_6a26__t6502(void) {
     /* 6a26 */
     return;
 }
@@ -25900,7 +25947,8 @@ void clear_var_0632__t6502(void) {
 }
 
 /* terrain_plot_return @ $A63A: $A63A: empty RTS; fall-through tail/return target of terrain_jitter_column and terrain_plot_object pixel loop */
-void terrain_plot_return(void) {
+/* faithful transliteration kept as the validation oracle; native terrain_plot_return() lives in rof_native.c (see VALIDATE_FUNCS) */
+void terrain_plot_return__t6502(void) {
     /* a63a */
     return;
 }
@@ -25958,20 +26006,23 @@ void terrain_plot_pixel__t6502(void) {
 }
 
 /* terrain_plot_skip_return @ $A6F8: $A6F8: empty RTS; skip/return target after clip in terrain pixel-plot chain */
-void terrain_plot_skip_return(void) {
+/* faithful transliteration kept as the validation oracle; native terrain_plot_skip_return() lives in rof_native.c (see VALIDATE_FUNCS) */
+void terrain_plot_skip_return__t6502(void) {
     /* a6f8 */
     return;
     terrain_obj_skip_return(); return;
 }
 
 /* terrain_obj_skip_return @ $A821: $A821: empty RTS; early-out target from terrain_plot_object_a when $2487[X]/$242D[X] nonzero */
-void terrain_obj_skip_return(void) {
+/* faithful transliteration kept as the validation oracle; native terrain_obj_skip_return() lives in rof_native.c (see VALIDATE_FUNCS) */
+void terrain_obj_skip_return__t6502(void) {
     /* a821 */
     return;
 }
 
 /* terrain_distance_clamp_return @ $A909: $A909: empty RTS; carry-overflow exit of terrain_point_distance ($A8AF) */
-void terrain_distance_clamp_return(void) {
+/* faithful transliteration kept as the validation oracle; native terrain_distance_clamp_return() lives in rof_native.c (see VALIDATE_FUNCS) */
+void terrain_distance_clamp_return__t6502(void) {
     /* a909 */
     return;
 }
@@ -26062,7 +26113,8 @@ L_ab10:;
 }
 
 /* plot_line_done @ $AB26: Empty return / shared exit label for the line-plot routines (aad4/ab27); falls into ab27 only via dead tail call */
-void plot_line_done(void) {
+/* faithful transliteration kept as the validation oracle; native plot_line_done() lives in rof_native.c (see VALIDATE_FUNCS) */
+void plot_line_done__t6502(void) {
 L_ab26:;
     /* ab26 */
     return;
