@@ -1591,6 +1591,43 @@ void intro_random_setup(void) {
     }
 }
 
+/* emit_dl_coord_pairs @ $68CF — emit display-list LMS coordinate pairs.  Copy $0096 (=$6E0F[Y])
+ * row-addr table entries into the DL region $300A/$300B (Y descending from $00C3, X descending
+ * from $00C4), then the same count into $308B/$308C (Y ascending from $00C1, X ascending from
+ * $00C2).  Advance $00C3/$00C1 by +-3*$6E0F[$00B9], then tail-call the (native) plot_terrain_span. */
+void emit_dl_coord_pairs(void) {
+    cpu.A = mem[0x6E0F + cpu.Y];
+    mem[0x0096] = cpu.A;
+    uint8_t count = cpu.A;                          /* PHA */
+    uint8_t xi = mem[0x00C4], yi = mem[0x00C3];
+    do {
+        mem[0x300A + yi] = mem[0x073D + xi];
+        mem[0x300B + yi] = mem[0x0793 + xi];
+        yi = (uint8_t)(yi - 3);
+        xi = (uint8_t)(xi - 1);
+        mem[0x0096] = (uint8_t)(mem[0x0096] - 1);
+    } while (mem[0x0096] != 0x00);
+    mem[0x00C4] = xi;
+    mem[0x0096] = count;                            /* PLA */
+    xi = mem[0x00C2]; yi = mem[0x00C1];
+    do {
+        mem[0x308B + yi] = mem[0x073D + xi];
+        mem[0x308C + yi] = mem[0x0793 + xi];
+        yi = (uint8_t)(yi + 3);
+        xi = (uint8_t)(xi + 1);
+        mem[0x0096] = (uint8_t)(mem[0x0096] - 1);
+    } while (mem[0x0096] != 0x00);
+    mem[0x00C2] = xi;
+    cpu.Y = mem[0x00B9];
+    cpu.C = 1; cpu.A = mem[0x00C3];
+    SBC(mem[0x6E0F + cpu.Y]); SBC(mem[0x6E0F + cpu.Y]); SBC(mem[0x6E0F + cpu.Y]);
+    mem[0x00C3] = cpu.A;
+    cpu.C = 0; cpu.A = mem[0x00C1];
+    ADC(mem[0x6E0F + cpu.Y]); ADC(mem[0x6E0F + cpu.Y]); ADC(mem[0x6E0F + cpu.Y]);
+    mem[0x00C1] = cpu.A;
+    plot_terrain_span();
+}
+
 /* render_bcd_counter @ $49A0 — render the 3-byte packed-BCD score ($0601-$0603,
  * 6 digits) to the top text line $32C5..$32CA with leading-zero suppression.
  * Flight ISR routine; the first transpiled-on-the-VBI-path fn ported native.

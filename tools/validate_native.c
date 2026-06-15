@@ -767,6 +767,56 @@ static int test_rle_run_fill(void) {
     return mem_fail;
 }
 
+/* --- emit_dl_coord_pairs @ $68CF: copies row-addr table entries into the $300A/$308B DL
+ * regions then tail-calls plot_terrain_span.  Union fixture: row table -> $2000+row*$28;
+ * bounded DL Y-indices ($00C3/$00C1) and table X-indices ($00C4/$00C2); small counts
+ * ($6E0F[entry Y] and $6E0F[$00B9]); plot_terrain_span's fixed row window $08..$28 + column
+ * starts.  PHA scribbles the stack (native uses none) -> neutralize $0100-$01FF.  Result via mem[]. --- */
+static int test_emit_dl_coord_pairs(void) {
+    if (!want("emit_dl_coord_pairs")) return 0;
+    enum { N = 8000 };
+    static uint8_t pre[65536], ref_mem[65536];
+    int mem_fail = 0, printed = 0;
+    for (int t = 0; t < N; t++) {
+        fill_random(pre);
+        for (int i = 0; i <= 0x54; i++) {
+            uint16_t a = (uint16_t)(0x2000 + i * 0x28);
+            pre[0x073D + i] = (uint8_t)a; pre[0x0793 + i] = (uint8_t)(a >> 8);
+        }
+        uint8_t ey = (uint8_t)(xs() % 0x10);         /* entry Y -> first count */
+        uint8_t bv = (uint8_t)(xs() % 0x10);         /* $00B9 value -> step / span count */
+        pre[0x6E0F + ey] = (uint8_t)(1 + (xs() % 6));
+        pre[0x6E0F + bv] = (uint8_t)(1 + (xs() % 4));
+        pre[0x00B9] = bv;
+        pre[0x00C3] = 0x60; pre[0x00C4] = 0x40;      /* first loop Y(desc)/X(desc) */
+        pre[0x00C1] = 0x08; pre[0x00C2] = 0x20;      /* second loop Y(asc)/X(asc) */
+        pre[0x009F] = 0x08; pre[0x009E] = 0x28;      /* plot_terrain_span row window */
+        pre[0x009C] = 0x60; pre[0x009D] = 0x10;
+        Cpu6502 c = zero_cpu();
+        c.Y = ey;
+
+        memcpy((void *)mem, pre, 65536); cpu = c;
+        emit_dl_coord_pairs__t6502();
+        memcpy(ref_mem, (void *)mem, sizeof ref_mem);
+
+        memcpy((void *)mem, pre, 65536); cpu = c;
+        emit_dl_coord_pairs();
+
+        for (int i = 0x0100; i <= 0x01FF; i++) ref_mem[i] = mem[i];
+        if (memcmp((const void *)mem, ref_mem, 65536) != 0) {
+            mem_fail++;
+            if (printed < 12)
+                for (int i = 0; i < 65536 && printed < 12; i++)
+                    if (mem[i] != ref_mem[i]) {
+                        printf("[MEM DIFF] emit_dl_coord_pairs case %d  $%04X  ref=$%02X native=$%02X\n",
+                               t, i, ref_mem[i], mem[i]); printed++;
+                    }
+        }
+    }
+    printf("emit_dl_coord_pairs: %d cases, %d mem mismatch (must be 0)\n", N, mem_fail);
+    return mem_fail;
+}
+
 /* --- intro_random_setup @ $6FBF: RANDOM-driven DFS maze generator on the $0900 map (+$2500
  * stack).  Self-contained (no entry regs / fixture); diff_run seeds the RANDOM stream so both
  * runs trace the same maze.  Fewer cases (each is hundreds of RANDOM reads). --- */
@@ -1724,6 +1774,7 @@ int main(int argc, char **argv) {
     fails += test_plot_clipped_pixel();
     fails += test_unpack_bitmap_4d3e();
     fails += test_intro_random_setup();
+    fails += test_emit_dl_coord_pairs();
     fails += test_mem_contract_regs("show_cockpit_message", show_cockpit_message, show_cockpit_message__t6502);
     fails += test_mem_contract_regs("mark_slot_and_countdown_char", mark_slot_and_countdown_char, mark_slot_and_countdown_char__t6502);
     fails += test_mem_contract_regs("mark_slot_and_inc_count", mark_slot_and_inc_count, mark_slot_and_inc_count__t6502);
