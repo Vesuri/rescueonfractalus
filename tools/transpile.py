@@ -275,6 +275,9 @@ VALIDATE_FUNCS = {
     # batch — RLE expanders:
     0x757B,  # rle_expand_list — expand (count,value) run list via rle_run_fill; 0 count terminates
     0x3C3D,  # rle_decompress — literal/run RLE decompressor ($C0 markers); the 60x-slow cinematic one
+    # batch — region-clear loader + PMG bit-table init:
+    0x3C00,  # loader_util — clear $32B5/$1000/$0B00 regions via 3x memset_or_copy (pure)
+    0x77DF,  # game_init_77DF — build $BE00/$BF00 256-entry bit tables (pure; PHA/PLA -> mask stack)
 }
 VALIDATE_SUFFIX = '__t6502'
 

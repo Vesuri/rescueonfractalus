@@ -767,6 +767,54 @@ static int test_rle_run_fill(void) {
     return mem_fail;
 }
 
+/* --- loader_util @ $3C00: clears three fixed regions via memset_or_copy.  Input-less and
+ * deterministic, so a small N fully exercises it (random pre[] outside the cleared regions is
+ * preserved identically by both runs). --- */
+static int test_loader_util(void) {
+    if (!want("loader_util")) return 0;
+    enum { N = 500 };
+    static uint8_t pre[65536];
+    int mem_fail = 0, cpu_diff = 0, printed = 0;
+    for (int t = 0; t < N; t++) {
+        fill_random(pre);
+        mem_fail += diff_run("loader_util", pre, zero_cpu(),
+                             loader_util, loader_util__t6502, t, &printed, &cpu_diff);
+    }
+    printf("loader_util: %d cases, %d mem mismatch (must be 0), %d cpu diffs\n", N, mem_fail, cpu_diff);
+    return mem_fail;
+}
+
+/* --- game_init_77DF @ $77DF: builds the $BE00/$BF00 bit tables.  Input-less; the PHA/PLA
+ * scribbles the stack page (native uses no stack), so neutralize $0100-$01FF before compare. --- */
+static int test_game_init_77DF(void) {
+    if (!want("game_init_77DF")) return 0;
+    enum { N = 2000 };
+    static uint8_t pre[65536], ref_mem[65536];
+    int mem_fail = 0, printed = 0;
+    for (int t = 0; t < N; t++) {
+        fill_random(pre);
+        memcpy((void *)mem, pre, 65536); cpu = zero_cpu();
+        game_init_77DF__t6502();
+        memcpy(ref_mem, (void *)mem, sizeof ref_mem);
+
+        memcpy((void *)mem, pre, 65536); cpu = zero_cpu();
+        game_init_77DF();
+
+        for (int i = 0x0100; i <= 0x01FF; i++) ref_mem[i] = mem[i];
+        if (memcmp((const void *)mem, ref_mem, 65536) != 0) {
+            mem_fail++;
+            if (printed < 12)
+                for (int i = 0; i < 65536 && printed < 12; i++)
+                    if (mem[i] != ref_mem[i]) {
+                        printf("[MEM DIFF] game_init_77DF case %d  $%04X  ref=$%02X native=$%02X\n",
+                               t, i, ref_mem[i], mem[i]); printed++;
+                    }
+        }
+    }
+    printf("game_init_77DF: %d cases, %d mem mismatch (must be 0)\n", N, mem_fail);
+    return mem_fail;
+}
+
 /* --- rle_expand_list @ $757B: expand a (count,value) run list.  Build a small stream at
  * $2000 (counts 1..16) ending in a 0 terminator; src ptr $BB -> $2000, dest ptr $BD -> $2800.
  * Both runs share it; result observed via mem[]. --- */
@@ -1608,6 +1656,8 @@ int main(int argc, char **argv) {
     fails += test_draw_glyph_2rows();
     fails += test_rle_expand_list();
     fails += test_rle_decompress();
+    fails += test_loader_util();
+    fails += test_game_init_77DF();
     fails += test_mem_contract_regs("show_cockpit_message", show_cockpit_message, show_cockpit_message__t6502);
     fails += test_mem_contract_regs("mark_slot_and_countdown_char", mark_slot_and_countdown_char, mark_slot_and_countdown_char__t6502);
     fails += test_mem_contract_regs("mark_slot_and_inc_count", mark_slot_and_inc_count, mark_slot_and_inc_count__t6502);

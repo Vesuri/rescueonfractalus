@@ -1434,6 +1434,45 @@ void rle_decompress(void) {
     }
 }
 
+/* loader_util @ $3C00 — clear three regions with byte $00B7=0 via the (native) memset_or_copy:
+ * $32B5..$32FC ($48 bytes), $1000..$2FFF ($2000 bytes), and $0B00..$0FFF ($500 bytes). */
+void loader_util(void) {
+    mem[0x00B7] = 0x00;
+    mem[0x00C1] = 0xB5; mem[0x00C2] = 0x32; mem[0x00C3] = 0x47; mem[0x00C4] = 0x00;
+    memset_or_copy();
+    mem[0x00C1] = 0x00; mem[0x00C2] = 0x10; mem[0x00C3] = 0xFF; mem[0x00C4] = 0x1F;
+    memset_or_copy();
+    mem[0x00C1] = 0x00; mem[0x00C2] = 0x0B; mem[0x00C3] = 0xFF; mem[0x00C4] = 0x04;
+    memset_or_copy();
+}
+
+/* game_init_77DF @ $77DF — build the 256-entry PMG/strip bit tables $BE00 and $BF00: for
+ * each X (0..255) a rolling value seeded from X feeds, over 4 inner passes, 2 bits at a time
+ * (via $780B[]/$780F[] lookups and LSR/ROR) into $BE00[X] and $BF00[X].  Pure; the carry-chain
+ * ROR-into-memory is reproduced with the cpu macros. */
+void game_init_77DF(void) {
+    uint8_t x = 0x00;
+    do {
+        cpu.A = x;                                  /* TXA */
+        mem[0x00C1] = 0x04;
+        do {
+            uint8_t saved = cpu.A;                  /* PHA */
+            cpu.A &= 0x03;
+            uint8_t y = cpu.A;                      /* TAY */
+            cpu.A = mem[0x780B + y];
+            LSR_A(); ROR_M(0xBE00 + x);
+            LSR_A(); ROR_M(0xBE00 + x);
+            cpu.A = mem[0x780F + y];
+            LSR_A(); ROR_M(0xBF00 + x);
+            LSR_A(); ROR_M(0xBF00 + x);
+            cpu.A = saved;                          /* PLA */
+            LSR_A(); LSR_A();
+            mem[0x00C1] = (uint8_t)(mem[0x00C1] - 1);
+        } while (mem[0x00C1] != 0x00);
+        x = (uint8_t)(x + 1);                       /* INX */
+    } while (x != 0x00);
+}
+
 /* render_bcd_counter @ $49A0 — render the 3-byte packed-BCD score ($0601-$0603,
  * 6 digits) to the top text line $32C5..$32CA with leading-zero suppression.
  * Flight ISR routine; the first transpiled-on-the-VBI-path fn ported native.
