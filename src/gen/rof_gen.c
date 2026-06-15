@@ -2579,7 +2579,8 @@ void dispatch_43cb_half_70(void) {
 }
 
 /* draw_dial_bar_column @ $43CB: Renders one cockpit dial-bar column (validates Y vs $062E, sets $BF/$BE/$BD, calls draw_object_column) */
-void draw_dial_bar_column(void) {
+/* faithful transliteration kept as the validation oracle; native draw_dial_bar_column() lives in rof_native.c (see VALIDATE_FUNCS) */
+void draw_dial_bar_column__t6502(void) {
     /* 43cb */
     CPY(0x09);
     /* 43cd */
@@ -3671,7 +3672,8 @@ void render_bcd_low_bytes__t6502(void) {
 }
 
 /* render_bcd_digits_supp_all @ $49BA: Entry: Y=7 leading-zero threshold, X=0 (suppress on); if Z take set_zsupp_pos_clear_delta else render_bcd_top_byte */
-void render_bcd_digits_supp_all(void) {
+/* faithful transliteration kept as the validation oracle; native render_bcd_digits_supp_all() lives in rof_native.c (see VALIDATE_FUNCS) */
+void render_bcd_digits_supp_all__t6502(void) {
     /* 49ba */
     LDY(0x07);
     /* 49bc */
@@ -8828,7 +8830,8 @@ void glyph_ptr_from_index__t6502(void) {
 }
 
 /* blit_numeric_readout @ $67C3: col $92=$38; if $0004 set blits glyphs $60F/$60D/$610/$60E; else BCD-converts $6D(cap $63) via bin_to_bcd and blits two nibbles */
-void blit_numeric_readout(void) {
+/* faithful transliteration kept as the validation oracle; native blit_numeric_readout() lives in rof_native.c (see VALIDATE_FUNCS) */
+void blit_numeric_readout__t6502(void) {
     /* 67c3 */
     LDA(0x38);
     /* 67c5 */
@@ -9474,7 +9477,8 @@ void dl_index_dec(void) {
 }
 
 /* dl_lms_fill @ $69F1: Fills LMS table via ($C5)=$300A from src tables $073D(lo)/$0793(hi) at index $008B, stride 3, until X==row_count$86 */
-void dl_lms_fill(void) {
+/* faithful transliteration kept as the validation oracle; native dl_lms_fill() lives in rof_native.c (see VALIDATE_FUNCS) */
+void dl_lms_fill__t6502(void) {
     /* 69f1 */
     LDX(mem[0x008B]);
     /* 69f3 */

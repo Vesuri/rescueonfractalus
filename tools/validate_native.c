@@ -932,6 +932,54 @@ static int test_compute_gauge_geometry_from_006D(void) {
     return mem_fail;
 }
 
+/* --- dl_lms_fill @ $69F1: writes pairs into ($C5/$C6)+Y, so seed the dest ptr to safe
+ * DL RAM ($3000) and bound the X span ($008B..$0086, small forward count) so Y/dest stay
+ * within $3000+ and the loop is short.  $073D/$0793 source random; $008B is 0 in some
+ * cases (-> the ret_stub tail) and nonzero in others (-> native shift_object_table_up). */
+static int test_dl_lms_fill(void) {
+    if (!want("dl_lms_fill")) return 0;
+    enum { N = 20000 };
+    static uint8_t pre[65536];
+    int mem_fail = 0, cpu_diff = 0, printed = 0;
+    for (int t = 0; t < N; t++) {
+        fill_random(pre);
+        pre[0x00C5] = 0x00; pre[0x00C6] = 0x30;             /* dest ptr -> $3000 */
+        uint8_t start = (uint8_t)(xs() % 0x20);             /* $008B (0 some cases) */
+        uint8_t count = (uint8_t)(1 + (xs() % 0x20));       /* 1..32 X-iterations */
+        pre[0x008B] = start;
+        pre[0x0086] = (uint8_t)(start + count);             /* forward end (no wrap) */
+        mem_fail += diff_run("dl_lms_fill", pre, zero_cpu(),
+                             dl_lms_fill, dl_lms_fill__t6502, t, &printed, &cpu_diff);
+    }
+    printf("dl_lms_fill: %d cases, %d mem mismatch (must be 0), %d cpu diffs\n", N, mem_fail, cpu_diff);
+    return mem_fail;
+}
+
+/* --- draw_dial_bar_column @ $43CB: gates on entry Y then tail-calls draw_object_column,
+ * whose $4581 pointer table must be real (random ptrs -> undiffable hang) -> seed from the
+ * flight snapshot.  Vary entry Y (the dial value / threshold); A is set internally. --- */
+static int test_draw_dial_bar_column(void) {
+    if (!want("draw_dial_bar_column")) return 0;
+    static uint8_t snap[65536], pre[65536];
+    const char *path = "a800dumps/flight_ram_0000_BFFF.bin";
+    FILE *f = fopen(path, "rb");
+    if (!f) { printf("draw_dial_bar_column: SKIP (%s not found)\n", path); return 0; }
+    memset(snap, 0, sizeof snap);
+    size_t got = fread(snap, 1, 0xC000, f); fclose(f);
+    if (got != 0xC000) { printf("draw_dial_bar_column: SKIP (short read %zu)\n", got); return 0; }
+    int mem_fail = 0, cpu_diff = 0, printed = 0;
+    for (int t = 0; t < 20000; t++) {
+        memcpy(pre, snap, sizeof pre);
+        Cpu6502 c = zero_cpu();
+        c.Y = (uint8_t)(xs() & 0xFF);                       /* dial value / column threshold */
+        mem_fail += diff_run("draw_dial_bar_column", pre, c,
+                             draw_dial_bar_column, draw_dial_bar_column__t6502, t, &printed, &cpu_diff);
+    }
+    printf("draw_dial_bar_column: %d cases (dial snapshot), %d mem mismatch (must be 0), %d cpu diffs\n",
+           20000, mem_fail, cpu_diff);
+    return mem_fail;
+}
+
 /* --- intro_random_setup @ $6FBF: RANDOM-driven DFS maze generator on the $0900 map (+$2500
  * stack).  Self-contained (no entry regs / fixture); diff_run seeds the RANDOM stream so both
  * runs trace the same maze.  Fewer cases (each is hundreds of RANDOM reads). --- */
@@ -1899,6 +1947,10 @@ int main(int argc, char **argv) {
     fails += test_emit_chain("render_bcd_top_byte", render_bcd_top_byte, render_bcd_top_byte__t6502);
     fails += test_unpack_terrain_seed_cols();
     fails += test_game_init_7588();
+    fails += test_emit_chain("render_bcd_digits_supp_all", render_bcd_digits_supp_all, render_bcd_digits_supp_all__t6502);
+    fails += test_blit_chain("blit_numeric_readout", blit_numeric_readout, blit_numeric_readout__t6502);
+    fails += test_dl_lms_fill();
+    fails += test_draw_dial_bar_column();
     fails += test_mem_contract_regs("show_cockpit_message", show_cockpit_message, show_cockpit_message__t6502);
     fails += test_mem_contract_regs("mark_slot_and_countdown_char", mark_slot_and_countdown_char, mark_slot_and_countdown_char__t6502);
     fails += test_mem_contract_regs("mark_slot_and_inc_count", mark_slot_and_inc_count, mark_slot_and_inc_count__t6502);

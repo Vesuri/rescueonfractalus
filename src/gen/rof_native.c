@@ -1829,6 +1829,83 @@ void game_init_7588(void) {
     rle_decompress();
 }
 
+/* render_bcd_digits_supp_all @ $49BA — Y=7 (zero-suppress threshold), X=0 (suppress
+ * flag), then set_zsupp_pos_clear_delta.  The 6502 does LDX #0 then BEQ, so the branch
+ * to set_zsupp_pos_clear_delta is unconditional (the render_bcd_top_byte tail is dead). */
+void render_bcd_digits_supp_all(void) {
+    LDY(0x07);
+    LDX(0x00);
+    set_zsupp_pos_clear_delta();
+}
+
+/* blit_numeric_readout @ $67C3 — render the cockpit numeric readout.  Row $0092=$38.
+ * If $0004!=0: draw 4 glyphs (codes $060F/$060D/$0610/$060E) via glyph_ptr_from_index /
+ * glyph_ptr_shift3 at column $009C=$1F.  Else: clamp $006D to $63, BCD it, and draw the
+ * tens ((BCD>>1)&$78 via set_coord_y_e0) and units ((BCD&$0F)<<3 via glyph_ptr_shift3) at
+ * column $009C=$27.  The PHA/PLA across the tens draw is kept in a local (the $01FF
+ * scribble is masked in the test). */
+void blit_numeric_readout(void) {
+    mem[0x0092] = 0x38;
+    if (mem[0x0004] != 0) {
+        mem[0x009C] = 0x1F;
+        cpu.A = mem[0x060F]; glyph_ptr_from_index();
+        cpu.A = mem[0x060D]; glyph_ptr_shift3();
+        cpu.A = mem[0x0610]; glyph_ptr_from_index();
+        cpu.A = mem[0x060E]; glyph_ptr_shift3();
+        return;
+    }
+    mem[0x009C] = 0x27;
+    cpu.A = mem[0x006D];
+    if (cpu.A >= 0x63) { cpu.A = 0x63; mem[0x006D] = 0x63; }
+    bin_to_bcd();                       /* A = packed BCD */
+    uint8_t bcd = cpu.A;                /* PHA */
+    LSR_A(); AND(0x78);                 /* tens index */
+    set_coord_y_e0();
+    LDA(bcd);                           /* PLA */
+    AND(0x0F);                          /* units index */
+    glyph_ptr_shift3();
+}
+
+/* dl_lms_fill @ $69F1 — build display-list LMS coordinate words.  For X=$008B up to
+ * (but excluding) $0086, copy the pair ($073D[X], $0793[X]) into ($C5/$C6)+Y with Y
+ * advancing by 3 per X-step; only the first INY's wrap bumps the high byte $00C6 (the
+ * faithful 6502 quirk — the trailing INY INY is unchecked).  Then if $008B!=0 shift the
+ * object table up, else no-op.  Dest is RAM (DL region $30xx) so a plain mem[] store
+ * matches the 6502's STA ($C5),Y (rendered bus_write, non-HW -> mem[]). */
+void dl_lms_fill(void) {
+    uint8_t x = mem[0x008B];
+    uint8_t y = 0x00;
+    do {
+        uint16_t base = (uint16_t)(mem[0x00C5] | (mem[0x00C6] << 8));
+        mem[(uint16_t)(base + y)] = mem[0x073D + x];
+        y++;                                       /* INY */
+        if (y == 0x00) mem[0x00C6]++;              /* BNE skip; INC $C6 on wrap */
+        base = (uint16_t)(mem[0x00C5] | (mem[0x00C6] << 8));
+        mem[(uint16_t)(base + y)] = mem[0x0793 + x];
+        y = (uint8_t)(y + 2);                      /* INY INY (unchecked) */
+        x++;                                       /* INX */
+    } while (x != mem[0x0086]);
+    if (mem[0x008B] == 0x00) return;               /* ret_stub_6a26 (no-op) */
+    cpu.A = mem[0x008B];
+    shift_object_table_up();
+}
+
+/* draw_dial_bar_column @ $43CB — update one cockpit dial-bar column to value Y.
+ * No-op if (Y>=9 && $062E==8) or Y already == $062E; otherwise latch $062E=Y, set the
+ * bar params ($00BF=Y threshold, $00BE=$FF loop end, $00BD=$07 start) and draw via the
+ * native draw_object_column (entry A=$07). */
+void draw_dial_bar_column(void) {
+    uint8_t y = cpu.Y;
+    if (y >= 0x09 && mem[0x062E] == 0x08) return;
+    if (y == mem[0x062E]) return;
+    mem[0x062E] = y;
+    mem[0x00BF] = y;
+    mem[0x00BE] = 0xFF;
+    mem[0x00BD] = 0x07;
+    cpu.A = 0x07;
+    draw_object_column();
+}
+
 /* render_bcd_counter @ $49A0 — render the 3-byte packed-BCD score ($0601-$0603,
  * 6 digits) to the top text line $32C5..$32CA with leading-zero suppression.
  * Flight ISR routine; the first transpiled-on-the-VBI-path fn ported native.

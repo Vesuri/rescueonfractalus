@@ -295,6 +295,12 @@ VALIDATE_FUNCS = {
     # batch — RLE-composer init wrappers (display_setup front; compose native RLE):
     0x7558,  # unpack_terrain_seed_cols — set src/dst ptrs, 2x rle_expand_list ($4DFA->$0C32, $4E09->$0D32)
     0x7588,  # game_init_7588 — fill $32FD..$332C=$AA, then rle_decompress $6E6E -> $332D
+    # batch — score/HUD digit renderers (display_setup front; compose native glyph/bcd):
+    0x49BA,  # render_bcd_digits_supp_all — Y=7,X=0 -> set_zsupp_pos_clear_delta (LDX#0 makes BEQ unconditional)
+    0x67C3,  # blit_numeric_readout — $0004!=0: 4 glyphs from $060D-$0610; else BCD of $006D (clamp $63) as 2 glyphs
+    # batch — DL LMS fill + cockpit dial-bar column (display_setup front):
+    0x69F1,  # dl_lms_fill — copy $073D/$0793[X=$8B..$0086] pairs into ($C5)+Y (Y+=3), tail shift_object_table_up/ret_stub
+    0x43CB,  # draw_dial_bar_column — gate on Y vs $062E/8, set bar params, tail draw_object_column (entry Y)
 }
 VALIDATE_SUFFIX = '__t6502'
 
