@@ -253,6 +253,9 @@ VALIDATE_FUNCS = {
     0x7AA8,  # init_event_state_5815_x16 — seed $0044/$3388/$003C, tail ring_push_marked (X=$16, entry A)
     0x3C58,  # rle_run_fill — bump src $BB/$BC, read run byte ($BB)+Y, tail copy_bytes_to_dst (entry A/Y)
     0x678B,  # blit_glyph_8rows — blit 8-row glyph; row ptr walks up $2E/row, bits -> plot_pixel_col93
+    # batch — RANDOM-driven intro object-map seeders:
+    0x7498,  # intro_seed_object_map — clear $0A00, scan-place entries, stride-$43 RANDOM $64 markers
+    0x70B3,  # intro_unmark_random_cells — RANDOM-gated $0900 marker sweep (clear bit7)
 }
 VALIDATE_SUFFIX = '__t6502'
 

@@ -1354,6 +1354,9 @@ int main(int argc, char **argv) {
     fails += test_mem_contract_regs("init_event_state_5815_x16", init_event_state_5815_x16, init_event_state_5815_x16__t6502);
     fails += test_rle_run_fill();
     fails += test_blit_glyph_8rows();
+    /* batch — RANDOM-driven intro object-map seeders */
+    fails += test_mem_contract("intro_seed_object_map", intro_seed_object_map, intro_seed_object_map__t6502);
+    fails += test_mem_contract("intro_unmark_random_cells", intro_unmark_random_cells, intro_unmark_random_cells__t6502);
     fails += test_mem_contract_regs("mark_slot_and_countdown_char", mark_slot_and_countdown_char, mark_slot_and_countdown_char__t6502);
     fails += test_mem_contract_regs("mark_slot_and_inc_count", mark_slot_and_inc_count, mark_slot_and_inc_count__t6502);
     fails += test_mem_contract("return_stub_40af", return_stub_40af, return_stub_40af__t6502);

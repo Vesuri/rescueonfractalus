@@ -1156,6 +1156,49 @@ void blit_glyph_8rows(void) {
     mem[0x009C] = (uint8_t)(mem[0x009C] + 0x08);
 }
 
+/* intro_seed_object_map @ $7498 — seed the intro object map.  Clear $0A00[0..255], place
+ * a $C8 entry (slot Y = $10 if $006D==1 else $08) via obj_table_scan_a_c8, optionally place
+ * a value-1 entry (slot Y=4) via obj_table_scan_replace when $006D >= 4, then sprinkle $64
+ * markers across $0A00 at stride-$43 offsets where RANDOM < $0623 and $0900[X] is marked.
+ * All scan callees are native and consume RANDOM identically on both sides. */
+void intro_seed_object_map(void) {
+    for (int i = 0; i < 256; i++) mem[0x0A00 + i] = 0x00;
+    cpu.Y = (mem[0x006D] == 0x01) ? 0x10 : 0x08;
+    obj_table_scan_a_c8();
+    if (mem[0x006D] >= 0x04) {
+        cpu.Y = 0x04; cpu.A = 0x01;
+        obj_table_scan_replace();
+    }
+    uint8_t x = 0x00;
+    do {
+        if (bus_read(0xD20A) < mem[0x0623]) {        /* CMP $0623; BCS skip */
+            if (mem[0x0900 + x] & 0x80)              /* BPL skip; act when marked */
+                mem[0x0A00 + x] = 0x64;
+        }
+        x = (uint8_t)(x + 0x43);
+    } while (x != 0x00);
+}
+
+/* intro_unmark_random_cells @ $70B3 — sometimes (always if $006D==1, else 1/8 on RANDOM&7==0)
+ * sweep the $0900 marker map and clear the marked bit ($7F mask) of cells whose index has
+ * bits 7 and 3 clear, gated on RANDOM < a per-pass threshold $00C3 = (RANDOM&$70)|$80.
+ * RANDOM read counts are matched to the 6502 exactly (none on the $006D==1 early path). */
+void intro_unmark_random_cells(void) {
+    uint8_t y = (uint8_t)(mem[0x006D] - 1);          /* LDY $006D; DEY */
+    if (y != 0x00) {                                 /* BEQ skips the RANDOM&7 gate */
+        if ((bus_read(0xD20A) & 0x07) != 0x00) return;  /* BNE -> return */
+    }
+    mem[0x00C3] = (uint8_t)((bus_read(0xD20A) & 0x70) | 0x80);
+    uint8_t i = 0x00;
+    do {
+        if (!(i & 0x80) && !(i & 0x08)) {
+            if (bus_read(0xD20A) < mem[0x00C3])
+                mem[0x0900 + i] = (uint8_t)(mem[0x0900 + i] & 0x7F);
+        }
+        i = (uint8_t)(i + 1);
+    } while (i != 0x00);
+}
+
 /* render_bcd_counter @ $49A0 — render the 3-byte packed-BCD score ($0601-$0603,
  * 6 digits) to the top text line $32C5..$32CA with leading-zero suppression.
  * Flight ISR routine; the first transpiled-on-the-VBI-path fn ported native.
