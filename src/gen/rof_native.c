@@ -606,6 +606,59 @@ void advance_object_positions(void) {
     }
 }
 
+/* clear_var_0632 @ $7F74 — $0632 = 0. */
+void clear_var_0632(void) { mem[0x0632] = 0x00; }
+
+/* clear_pm_state @ $3FBF — fill $00DA-$00DD, $02C0-$02C3 and $00D9 with entry cpu.A. */
+void clear_pm_state(void) {
+    uint8_t a = cpu.A;
+    for (int y = 0; y < 4; y++) { mem[0x00DA + y] = a; mem[0x02C0 + y] = a; }
+    mem[0x00D9] = a;
+}
+
+/* clear_terrain_lo_buffers @ $6B63 — zero the two low terrain buffers $0E32/$0F32 (96 bytes). */
+void clear_terrain_lo_buffers(void) {
+    for (int y = 0x5F; y >= 0; y--) { mem[0x0E32 + y] = 0x00; mem[0x0F32 + y] = 0x00; }
+}
+
+/* fill_four_bufs_ff @ $6899 — $FF into the four buffers $0C87/$0D87/$0E87/$0F87 at +8..+1. */
+void fill_four_bufs_ff(void) {
+    for (uint8_t y = 0x08; y != 0x00; y--) {
+        mem[0x0C87 + y] = 0xFF; mem[0x0D87 + y] = 0xFF;
+        mem[0x0E87 + y] = 0xFF; mem[0x0F87 + y] = 0xFF;
+    }
+}
+
+/* fill_buf_08d4 @ $6890 — fill $08D4-$08D9 with entry cpu.A. */
+void fill_buf_08d4(void) {
+    uint8_t a = cpu.A;
+    for (int y = 5; y >= 0; y--) mem[0x08D4 + y] = a;
+}
+
+/* copy_4byte_table_to_02c4 @ $5D3B — copy from $5D48+X downward into $02C4+Y.
+ * The loop branch (BPL) tests the flag from DEX, so it is X-CONTROLLED, not a fixed
+ * 4 iterations: it runs until X (decrementing from entry X) goes negative, with Y
+ * decrementing and wrapping in parallel.  In-game entry X is 3 (the intended 4-byte
+ * copy), but the faithful port reproduces the full X-bounded, Y-wrapping behaviour. */
+void copy_4byte_table_to_02c4(void) {
+    uint8_t x = cpu.X, y = 0x03;
+    do {
+        mem[0x02C4 + y] = mem[0x5D48 + x];
+        y = (uint8_t)(y - 1);   /* DEY */
+        x = (uint8_t)(x - 1);   /* DEX (sets the N tested by BPL) */
+    } while (!(x & 0x80));      /* BPL: loop while X >= 0 */
+}
+
+/* reset_audctl_flags @ $70E7 — $00E7=1 (music gate on), AUDCTL($D208)=0, $073A=0,
+ * $0090=0, $073C=$FF. */
+void reset_audctl_flags(void) {
+    mem[0x00E7] = 0x01;
+    bus_write(0xD208, 0x00);
+    mem[0x073A] = 0x00;
+    mem[0x0090] = 0x00;
+    mem[0x073C] = 0xFF;
+}
+
 /* render_bcd_counter @ $49A0 — render the 3-byte packed-BCD score ($0601-$0603,
  * 6 digits) to the top text line $32C5..$32CA with leading-zero suppression.
  * Flight ISR routine; the first transpiled-on-the-VBI-path fn ported native.

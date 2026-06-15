@@ -191,6 +191,14 @@ VALIDATE_FUNCS = {
     0x6C4D,  # draw_vline_pair — plot a symmetric pair of vertical lines (rows A..$00B8) via plot_pixel_2bpp/bus_write
     0x6BED,  # update_object_distance — clamped 16-bit dist subtract -> $08A4/$08A5[X]; up to 3 draw_vline_pair draws
     0x6BA8,  # advance_object_positions — INC $08D1, +$18 to $08D2/$08D3, then per slot (X=$2A..0 step2) update_object_distance
+    # batch — clean pure-mem init/clear/fill/copy leaves:
+    0x7F74,  # clear_var_0632 — $0632 = 0
+    0x3FBF,  # clear_pm_state — fill $00DA-$00DD/$02C0-$02C3/$00D9 with entry A
+    0x6B63,  # clear_terrain_lo_buffers — zero $0E32-$0E91/$0F32-$0F91
+    0x6899,  # fill_four_bufs_ff — $FF into $0C87/$0D87/$0E87/$0F87 +8..+1
+    0x6890,  # fill_buf_08d4 — fill $08D4-$08D9 with entry A
+    0x5D3B,  # copy_4byte_table_to_02c4 — copy 4 bytes $5D48+X down into $02C4-$02C7 (entry X)
+    0x70E7,  # reset_audctl_flags — $00E7=1, AUDCTL=0, $073A/$0090=0, $073C=$FF
 }
 VALIDATE_SUFFIX = '__t6502'
 

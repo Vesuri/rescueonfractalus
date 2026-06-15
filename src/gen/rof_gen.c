@@ -1657,7 +1657,8 @@ L_3d0e:;
 }
 
 /* clear_pm_state @ $3FBF: Zeros $DA,$DB,$DC,$DD (player state?) + $D9; also clears PCOLR0-3 shadow */
-void clear_pm_state(void) {
+/* faithful transliteration kept as the validation oracle; native clear_pm_state() lives in rof_native.c (see VALIDATE_FUNCS) */
+void clear_pm_state__t6502(void) {
     /* 3fbf */
     LDY(0x03);
 L_3fc1:;
@@ -6547,7 +6548,8 @@ void display_list_init(void) {
 }
 
 /* copy_4byte_table_to_02c4 @ $5D3B: Copies 4 bytes from table $5D48 (indexed by X) into buffer $02C4..$02C7 (Y=3..0 loop) */
-void copy_4byte_table_to_02c4(void) {
+/* faithful transliteration kept as the validation oracle; native copy_4byte_table_to_02c4() lives in rof_native.c (see VALIDATE_FUNCS) */
+void copy_4byte_table_to_02c4__t6502(void) {
     /* 5d3b */
     LDY(0x03);
 L_5d3d:;
@@ -9024,7 +9026,8 @@ L_688f:;
 }
 
 /* fill_buf_08d4 @ $6890: Fill 6 bytes $08D4..$08D9 with A (Y=5..0 loop) */
-void fill_buf_08d4(void) {
+/* faithful transliteration kept as the validation oracle; native fill_buf_08d4() lives in rof_native.c (see VALIDATE_FUNCS) */
+void fill_buf_08d4__t6502(void) {
     /* 6890 */
     LDY(0x05);
 L_6892:;
@@ -9039,7 +9042,8 @@ L_6892:;
 }
 
 /* fill_four_bufs_ff @ $6899: Write A=$FF to $0C87/$0D87/$0E87/$0F87 +Y (Y=8..1); clears 4 parallel buffers */
-void fill_four_bufs_ff(void) {
+/* faithful transliteration kept as the validation oracle; native fill_four_bufs_ff() lives in rof_native.c (see VALIDATE_FUNCS) */
+void fill_four_bufs_ff__t6502(void) {
     /* 6899 */
     LDY(0x08);
     /* 689b */
@@ -9779,7 +9783,8 @@ L_6b5e:;
 }
 
 /* clear_terrain_lo_buffers @ $6B63: LDY #$5F..0: zeroes the $0E32 and $0F32 terrain buffers (96 bytes each) */
-void clear_terrain_lo_buffers(void) {
+/* faithful transliteration kept as the validation oracle; native clear_terrain_lo_buffers() lives in rof_native.c (see VALIDATE_FUNCS) */
+void clear_terrain_lo_buffers__t6502(void) {
     /* 6b63 */
     LDY(0x5F);
     /* 6b65 */
@@ -10555,7 +10560,8 @@ L_70e6:;
 }
 
 /* reset_audctl_flags @ $70E7: X=1->$00E7; clears AUDCTL ($D208)=0, $073A=0, $0090=0; sets $073C=$FF (audio/flag reset) */
-void reset_audctl_flags(void) {
+/* faithful transliteration kept as the validation oracle; native reset_audctl_flags() lives in rof_native.c (see VALIDATE_FUNCS) */
+void reset_audctl_flags__t6502(void) {
     /* 70e7 */
     LDX(0x01);
     /* 70e9 */
@@ -25864,7 +25870,8 @@ L_6a89:;
 }
 
 /* clear_var_0632 @ $7F74: $0632=0 */
-void clear_var_0632(void) {
+/* faithful transliteration kept as the validation oracle; native clear_var_0632() lives in rof_native.c (see VALIDATE_FUNCS) */
+void clear_var_0632__t6502(void) {
     /* 7f74 */
     LDA(0x00);
     /* 7f76 */

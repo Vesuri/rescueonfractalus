@@ -1030,6 +1030,13 @@ int main(int argc, char **argv) {
     fails += test_draw_vline_pair();
     fails += test_update_object_distance();
     fails += test_advance_object_positions();
+    fails += test_mem_contract("clear_var_0632", clear_var_0632, clear_var_0632__t6502);
+    fails += test_mem_contract_regs("clear_pm_state", clear_pm_state, clear_pm_state__t6502);
+    fails += test_mem_contract("clear_terrain_lo_buffers", clear_terrain_lo_buffers, clear_terrain_lo_buffers__t6502);
+    fails += test_mem_contract("fill_four_bufs_ff", fill_four_bufs_ff, fill_four_bufs_ff__t6502);
+    fails += test_mem_contract_regs("fill_buf_08d4", fill_buf_08d4, fill_buf_08d4__t6502);
+    fails += test_mem_contract_regs("copy_4byte_table_to_02c4", copy_4byte_table_to_02c4, copy_4byte_table_to_02c4__t6502);
+    fails += test_mem_contract("reset_audctl_flags", reset_audctl_flags, reset_audctl_flags__t6502);
     fails += test_mem_contract("compute_target_blip_position", compute_target_blip_position, compute_target_blip_position__t6502);
     fails += test_mem_contract_regs("obj_table_scan_replace", obj_table_scan_replace, obj_table_scan_replace__t6502);
     /* batch 2 — shallow drivers */
