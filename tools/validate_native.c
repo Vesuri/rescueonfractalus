@@ -679,6 +679,71 @@ static int test_blit_glyph_8rows(void) {
     return mem_fail;
 }
 
+/* --- generic test for blit_glyph_8rows-chain wrappers (set_coord_y_e0, glyph_ptr_from_index):
+ * they set the glyph source ptr $0084/$0085 themselves then tail-call blit_glyph_8rows, which
+ * plots through the row-addr table.  Seed the table -> $2000 + row*$28 and bound the blit's
+ * inputs ($0092 row index, $0095 mask base, $009C column base); the glyph source they compute
+ * points into $E0xx (random mem, read identically by both).  Neutralize the PHA stack scribble;
+ * assert mem[]. --- */
+static int test_blit_chain(const char *name, void (*native)(void), void (*t6502)(void)) {
+    if (!want(name)) return 0;
+    enum { N = 8000 };
+    static uint8_t pre[65536], ref_mem[65536];
+    int mem_fail = 0, printed = 0;
+    for (int t = 0; t < N; t++) {
+        fill_random(pre);
+        for (int i = 0; i <= 0x54; i++) {
+            uint16_t a = (uint16_t)(0x2000 + i * 0x28);
+            pre[0x073D + i] = (uint8_t)a; pre[0x0793 + i] = (uint8_t)(a >> 8);
+        }
+        pre[0x0092] = (uint8_t)(0x20 + (xs() % 0x30));
+        pre[0x0095] = (uint8_t)(xs() % 8);
+        pre[0x009C] = (uint8_t)(xs() % 0x20);
+        Cpu6502 c = zero_cpu();
+        c.A = (uint8_t)(xs() & 0xFF);
+        c.Y = (uint8_t)(xs() & 0xFF);
+
+        memcpy((void *)mem, pre, 65536); cpu = c;
+        t6502();
+        memcpy(ref_mem, (void *)mem, sizeof ref_mem);
+
+        memcpy((void *)mem, pre, 65536); cpu = c;
+        native();
+
+        for (int i = 0x0100; i <= 0x01FF; i++) ref_mem[i] = mem[i];
+        if (memcmp((const void *)mem, ref_mem, 65536) != 0) {
+            mem_fail++;
+            if (printed < 12)
+                for (int i = 0; i < 65536 && printed < 12; i++)
+                    if (mem[i] != ref_mem[i]) {
+                        printf("[MEM DIFF] %s case %d  $%04X  ref=$%02X native=$%02X\n",
+                               name, t, i, ref_mem[i], mem[i]); printed++;
+                    }
+        }
+    }
+    printf("%s: %d cases, %d mem mismatch (must be 0)\n", name, N, mem_fail);
+    return mem_fail;
+}
+
+/* --- draw_glyph_2rows @ $4099: 2x2 glyph draw through the dest pointer $00BB.  Seed it
+ * into $2000 (writes land at $2000/$2001/$2030/$2031); entry A is the glyph index. --- */
+static int test_draw_glyph_2rows(void) {
+    if (!want("draw_glyph_2rows")) return 0;
+    enum { N = 50000 };
+    static uint8_t pre[65536];
+    int mem_fail = 0, cpu_diff = 0, printed = 0;
+    for (int t = 0; t < N; t++) {
+        fill_random(pre);
+        pre[0x00BB] = 0x00; pre[0x00BC] = 0x20;        /* dest ptr -> $2000 */
+        Cpu6502 c = zero_cpu();
+        c.A = (uint8_t)(xs() & 0xFF);
+        mem_fail += diff_run("draw_glyph_2rows", pre, c,
+                             draw_glyph_2rows, draw_glyph_2rows__t6502, t, &printed, &cpu_diff);
+    }
+    printf("draw_glyph_2rows: %d cases, %d mem mismatch (must be 0), %d cpu diffs\n", N, mem_fail, cpu_diff);
+    return mem_fail;
+}
+
 /* --- rle_run_fill @ $3C58: RLE run expansion through copy_bytes_to_dst.  Seed the
  * source pointer $00BB/$00BC -> $2000 and the dest pointer $00BD/$00BE -> $2400 (both
  * safe RAM, disjoint), a bounded run length (entry A 1..64) and small offset (entry Y),
@@ -1483,6 +1548,10 @@ int main(int argc, char **argv) {
     fails += test_emit_chain("set_zsupp_pos_clear_delta", set_zsupp_pos_clear_delta, set_zsupp_pos_clear_delta__t6502);
     fails += test_mem_contract_regs("save_color_clear_y_bit5", save_color_clear_y_bit5, save_color_clear_y_bit5__t6502);
     fails += test_mem_contract_regs("shift_object_table_up", shift_object_table_up, shift_object_table_up__t6502);
+    /* batch — glyph blit wrappers + 2x2 glyph draw */
+    fails += test_blit_chain("set_coord_y_e0", set_coord_y_e0, set_coord_y_e0__t6502);
+    fails += test_blit_chain("glyph_ptr_from_index", glyph_ptr_from_index, glyph_ptr_from_index__t6502);
+    fails += test_draw_glyph_2rows();
     fails += test_mem_contract_regs("show_cockpit_message", show_cockpit_message, show_cockpit_message__t6502);
     fails += test_mem_contract_regs("mark_slot_and_countdown_char", mark_slot_and_countdown_char, mark_slot_and_countdown_char__t6502);
     fails += test_mem_contract_regs("mark_slot_and_inc_count", mark_slot_and_inc_count, mark_slot_and_inc_count__t6502);

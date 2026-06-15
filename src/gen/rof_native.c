@@ -1363,6 +1363,46 @@ void shift_object_table_up(void) {
     } while (mem[0x0084] != 0x00);
 }
 
+/* set_coord_y_e0 @ $6805 — set the glyph source pointer $0084/$0085 = $E0(entry A + $80)
+ * and blit it via the (native) blit_glyph_8rows. */
+void set_coord_y_e0(void) {
+    cpu.C = 0; ADC(0x80);                 /* CLC; ADC #$80 (entry A) */
+    mem[0x0084] = cpu.A;
+    cpu.Y = 0xE0;
+    mem[0x0085] = cpu.Y;
+    blit_glyph_8rows();
+}
+
+/* glyph_ptr_from_index @ $6773 — compute the glyph source pointer for index (entry A):
+ * $0084/$0085 = $E000 + (index << 3) (with the 6502's single-ROL carry capture), then blit
+ * via the (native) blit_glyph_8rows.  Reproduced with the cpu shift/ADC macros. */
+void glyph_ptr_from_index(void) {
+    cpu.Y = 0x00;
+    mem[0x0085] = cpu.Y;
+    ASL_A(); ASL_A(); ASL_A();            /* index << 3 (carry from last shift) */
+    mem[0x0084] = cpu.A;
+    ROL_M(0x0085);                        /* capture the last carry */
+    cpu.C = 0; cpu.A = mem[0x0084]; ADC(0x00); mem[0x0084] = cpu.A;
+    cpu.A = mem[0x0085]; ADC(0xE0); mem[0x0085] = cpu.A;   /* + $E000 */
+    blit_glyph_8rows();
+}
+
+/* draw_glyph_2rows @ $4099 — draw a 2x2-byte glyph (rows $30 apart) from the table
+ * $4AE3[index..index+3] (entry A), OR'd with $00BF, through the dest pointer $00BB at
+ * column offsets 0,1,$30,$31. */
+void draw_glyph_2rows(void) {
+    uint8_t x = cpu.A;
+    uint8_t y = 0x00;
+    for (;;) {
+        cpu.Y = y;
+        bus_write(ZP_IND_Y(0x00BB), (uint8_t)(mem[0x4AE3 + x] | mem[0x00BF]));
+        x = (uint8_t)(x + 1);
+        y = (uint8_t)(y + 1);
+        if (y == 0x02) y = 0x30;          /* CPY #2; BNE; LDY #$30 */
+        if (y == 0x32) break;             /* CPY #$32; BNE loop */
+    }
+}
+
 /* render_bcd_counter @ $49A0 — render the 3-byte packed-BCD score ($0601-$0603,
  * 6 digits) to the top text line $32C5..$32CA with leading-zero suppression.
  * Flight ISR routine; the first transpiled-on-the-VBI-path fn ported native.

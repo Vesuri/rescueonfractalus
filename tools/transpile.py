@@ -268,6 +268,10 @@ VALIDATE_FUNCS = {
     0x49C5,  # set_zsupp_pos_clear_delta — set $0619=Y, clear $0045/$0046, tail emit_bcd_byte_digits
     0x47B2,  # save_color_clear_y_bit5 — $00D8=A, clear Y bit5, tail show_cockpit_message
     0x6A0F,  # shift_object_table_up — shift DL LMS pairs $3007/$3008 -> $300A/$300B up by 3 (entry A count)
+    # batch — glyph blit wrappers + 2x2 glyph draw:
+    0x6805,  # set_coord_y_e0 — glyph src $0084/$0085 = $E0(A+$80), tail blit_glyph_8rows
+    0x6773,  # glyph_ptr_from_index — glyph src = $E000 + (A<<3), tail blit_glyph_8rows
+    0x4099,  # draw_glyph_2rows — 2x2 glyph from $4AE3[A..A+3] | $00BF via ($BB) at cols 0,1,$30,$31
 }
 VALIDATE_SUFFIX = '__t6502'
 
