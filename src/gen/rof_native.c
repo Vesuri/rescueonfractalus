@@ -1548,6 +1548,49 @@ void unpack_bitmap_4d3e(void) {
     } while (mem[0x00DF] != 0x00);
 }
 
+/* intro_random_setup @ $6FBF — depth-first maze/grid generation on the $0900 16x16 cell map.
+ * Fill all 256 cells with RANDOM&$3F|$80 (bit7 = unvisited), seed a start cell, then DFS: at
+ * each step scan_grid_neighbors pushes marked neighbours onto the $2500 stack ($0098); pick a
+ * random marked direction (BIT RANDOM -> one of 4 offset pairs matching scan_grid_neighbors,
+ * retried until test_marked_neighbor confirms it), carve through the wall + next cell (bit7
+ * cleared), advance; when a cell has no marked neighbours, pop the stack until it empties. */
+void intro_random_setup(void) {
+    uint8_t x = 0x00, y = 0x00;
+    do {                                            /* fill $0900[0..255] = RANDOM&$3F|$80 */
+        mem[0x0900 + x] = (uint8_t)((bus_read(0xD20A) & 0x3F) | 0x80);
+        x = (uint8_t)(x + 1);
+        y = (uint8_t)(y - 1);
+    } while (y != 0x00);
+    mem[0x0098] = 0x01;
+    cpu.A = bus_read(0xD20A); mem[0x009C] = cpu.A;
+    mem[0x0900 + cpu.A] = (uint8_t)(bus_read(0xD20A) & 0x3F);
+    for (;;) {                                      /* L_6fe3 */
+        mem[0x0099] = mem[0x0098];
+        scan_grid_neighbors();
+        if (mem[0x0098] == mem[0x0099]) {           /* no neighbours pushed -> backtrack */
+            mem[0x0098] = (uint8_t)(mem[0x0098] - 1);
+            if (mem[0x0098] == 0x00) return;
+            mem[0x009C] = mem[0x2500 + mem[0x0098]];
+            continue;
+        }
+        for (;;) {                                  /* L_6ff0: pick a marked direction */
+            uint8_t r = bus_read(0xD20A);           /* BIT: N=bit7, V=bit6 */
+            uint8_t a, b;
+            int V = (r >> 6) & 1, Nf = (r >> 7) & 1;
+            if (V) { if (Nf) { a = 0xF0; b = 0x01; } else { a = 0x10; b = 0xFF; } }
+            else   { if (Nf) { a = 0xFF; b = 0xF0; } else { a = 0x01; b = 0x10; } }
+            mem[0x009A] = a; mem[0x009B] = b;
+            test_marked_neighbor();
+            if (cpu.N) break;                       /* BPL retry inverted: proceed when marked */
+        }
+        uint8_t cx = (uint8_t)(mem[0x009C] + mem[0x009A]);
+        mem[0x0900 + cx] = (uint8_t)(bus_read(0xD20A) & 0x3F);
+        cx = (uint8_t)(cx + mem[0x009A]);
+        mem[0x0900 + cx] = (uint8_t)(bus_read(0xD20A) & 0x3F);
+        mem[0x009C] = cx;
+    }
+}
+
 /* render_bcd_counter @ $49A0 — render the 3-byte packed-BCD score ($0601-$0603,
  * 6 digits) to the top text line $32C5..$32CA with leading-zero suppression.
  * Flight ISR routine; the first transpiled-on-the-VBI-path fn ported native.

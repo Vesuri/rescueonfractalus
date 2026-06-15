@@ -280,6 +280,7 @@ VALIDATE_FUNCS = {
     0x77DF,  # game_init_77DF — build $BE00/$BF00 256-entry bit tables (pure; PHA/PLA -> mask stack)
     0x7D38,  # plot_clipped_pixel — clipped masked HUD/radar pixel via row table + ($C1)+col RMW
     0x74D7,  # unpack_bitmap_4d3e — bit-reversal bitmap unpacker via $4D3E ptr table (8x4 passes)
+    0x6FBF,  # intro_random_setup — DFS maze gen on $0900 grid (RANDOM; scan_grid_neighbors/test_marked_neighbor)
 }
 VALIDATE_SUFFIX = '__t6502'
 
