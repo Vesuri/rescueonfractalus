@@ -1116,6 +1116,18 @@ int main(int argc, char **argv) {
     fails += test_mem_contract("copy_row_addr_subset", copy_row_addr_subset, copy_row_addr_subset__t6502);
     fails += test_memset_or_copy();
     fails += test_copy_bytes_to_dst();
+    /* batch — display_setup-subtree mem-effect leaves */
+    fails += test_mem_contract("terrain_lookup", terrain_lookup, terrain_lookup__t6502);
+    fails += test_mem_contract("fill_buffer2_region_ff", fill_buffer2_region_ff, fill_buffer2_region_ff__t6502);
+    fails += test_mem_contract("game_sub_4606", game_sub_4606, game_sub_4606__t6502);
+    fails += test_mem_contract_regs("fill_message_buffer", fill_message_buffer, fill_message_buffer__t6502);
+    fails += test_mem_contract("intro_fill_display_params", intro_fill_display_params, intro_fill_display_params__t6502);
+    fails += test_mem_contract_regs("match_code_sequence", match_code_sequence, match_code_sequence__t6502);
+    fails += test_mem_contract("init_terrain_dl", init_terrain_dl, init_terrain_dl__t6502);
+    fails += test_mem_contract_regs("music_init_state", music_init_state, music_init_state__t6502);
+    fails += test_mem_contract("count_up_to_level", count_up_to_level, count_up_to_level__t6502);
+    fails += test_mem_contract("hud_fill_field1", hud_fill_field1, hud_fill_field1__t6502);
+    fails += test_mem_contract("hud_fill_field3_font", hud_fill_field3_font, hud_fill_field3_font__t6502);
     fails += test_mem_contract("compute_target_blip_position", compute_target_blip_position, compute_target_blip_position__t6502);
     fails += test_mem_contract_regs("obj_table_scan_replace", obj_table_scan_replace, obj_table_scan_replace__t6502);
     /* batch 2 — shallow drivers */

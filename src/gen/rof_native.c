@@ -735,6 +735,149 @@ void copy_bytes_to_dst(void) {
     if (mem[0x00BB] == 0x00) mem[0x00BC] = (uint8_t)(mem[0x00BC] + 1);  /* INC $BC on carry */
 }
 
+/* --- display_setup-subtree leaves (batch 2026-06-15): pure mem-effect leaves. --- */
+
+/* terrain_lookup @ $3FDE — copy 4 bytes from the table $4B0B (descending) into
+ * $32E3[3..0].  The base index is ($281C + $3FF6[$2836]) & $FF; the 6502 $4B0B,Y
+ * lookup uses an 8-bit Y, so the source addresses span $4B0B..$4C0A. */
+void terrain_lookup(void) {
+    uint8_t y = (uint8_t)(mem[0x281C] + mem[0x3FF6 + mem[0x2836]]);
+    for (int x = 3; x >= 0; x--) {
+        mem[0x32E3 + x] = mem[0x4B0B + y];
+        y = (uint8_t)(y - 1);
+    }
+}
+
+/* fill_buffer2_region_ff @ $45A1 — fill 8 runs of 32 bytes ($FF) starting at $2098
+ * with stride $30 (so $2098.., $20C8.., ... covers the 256-byte field region). */
+void fill_buffer2_region_ff(void) {
+    mem[0x00C1] = 0x98; mem[0x00C2] = 0x20;
+    for (int blk = 8; blk > 0; blk--) {
+        for (int y = 0x1F; y >= 0; y--) {
+            cpu.Y = (uint8_t)y;
+            bus_write(ZP_IND_Y(0x00C1), 0xFF);
+        }
+        uint16_t p = (uint16_t)(mem[0x00C1] | (mem[0x00C2] << 8));
+        p = (uint16_t)(p + 0x30);                     /* ADC #$30 / ADC #$00 (16-bit) */
+        mem[0x00C1] = (uint8_t)p; mem[0x00C2] = (uint8_t)(p >> 8);
+    }
+}
+
+/* game_sub_4606 @ $4606 — init the target-state cells: $32E3[0..3]=1, the trio
+ * $3355/$3356/$3357 = $B4/$B5/$B6, $3388 = $B4, and $33DF/$33E0 = $1E/$1D. */
+void game_sub_4606(void) {
+    for (int y = 3; y >= 0; y--) mem[0x32E3 + y] = 0x01;
+    mem[0x3388] = 0xB4;
+    mem[0x3355] = 0xB4; mem[0x3356] = 0xB5; mem[0x3357] = 0xB6;
+    mem[0x33DF] = 0x1E; mem[0x33E0] = 0x1D;
+}
+
+/* fill_message_buffer @ $480F — store entry cpu.A into the message buffer at
+ * $32B6+X down to $32B6+1 (DEX;BNE — entry X=0 wraps to a full 256-byte fill). */
+void fill_message_buffer(void) {
+    uint8_t a = cpu.A, x = cpu.X;
+    do {
+        mem[0x32B6 + x] = a;
+        x = (uint8_t)(x - 1);
+    } while (x != 0);
+}
+
+/* intro_fill_display_params @ $4FE0 — build 8 display params $00CF..$00D6 from the
+ * low nibble of $4DF1[Y] OR'd with the current colour phase $00C2; then poke the
+ * last value to GTIA HITCLR $D019 (ignored on host/Amiga) and bump $00C2. */
+void intro_fill_display_params(void) {
+    uint8_t a = 0;
+    for (int y = 7; y >= 0; y--) {
+        a = (uint8_t)((mem[0x4DF1 + y] & 0x0F) | mem[0x00C2]);
+        mem[0x00CF + y] = a;
+    }
+    bus_write(0xD019, a);
+    mem[0x00C2] = (uint8_t)(mem[0x00C2] + 1);
+}
+
+/* match_code_sequence @ $5B45 — cheat/code matcher.  Entry cpu.A is the next typed
+ * code; $063F is the match position.  On a match advance the position; when it
+ * reaches 6 copy the 40-byte payload $5B17..$5B3E into $36AB..$36D2 and reset the
+ * position.  Any mismatch resets the position.  Always sets $0049 = $FF. */
+void match_code_sequence(void) {
+    uint8_t x = mem[0x063F];
+    if (cpu.A == mem[0x5B3F + x]) {
+        x = (uint8_t)(x + 1);
+        if (x == 6) {
+            for (int y = 0x27; y >= 0; y--) mem[0x36AB + y] = mem[0x5B17 + y];
+            x = 0;
+        }
+    } else {
+        x = 0;
+    }
+    mem[0x063F] = x;
+    mem[0x0049] = 0xFF;
+}
+
+/* init_terrain_dl @ $68AD — fill the terrain display-list region: $2F75..$2FA3 = $88
+ * (47 bytes), then every 3rd entry of $300A.. / $308B.. (LMS address pairs) gets the
+ * pointer $2F74 (lo=$74, hi=$2F) for Y = $7E,$7B,...,3,0. */
+void init_terrain_dl(void) {
+    for (int y = 0x2F; y >= 1; y--) mem[0x2F74 + y] = 0x88;
+    for (int y = 0x7E; y >= 0; y -= 3) {
+        mem[0x300A + y] = 0x74; mem[0x308B + y] = 0x74;
+        mem[0x300B + y] = 0x2F; mem[0x308C + y] = 0x2F;
+    }
+}
+
+/* music_init_state @ $7238 — copy 6 bytes $731E[Y..Y-5] (entry Y) into $0657[5..0],
+ * clear $0651 + POKEY AUDCTL ($D208), and set $0653/$0655 = 1. */
+void music_init_state(void) {
+    uint8_t y = cpu.Y;
+    for (int x = 5; x >= 0; x--) {
+        mem[0x0657 + x] = mem[0x731E + y];
+        y = (uint8_t)(y - 1);
+    }
+    mem[0x0651] = 0x00;
+    bus_write(0xD208, 0x00);
+    mem[0x0653] = 0x01;
+    mem[0x0655] = 0x01;
+}
+
+/* count_up_to_level @ $75B8 — bump $0604 (and a parallel counter $00C3) until $0604
+ * reaches the target $006D.  The 6502 wraps $C3 in SED/ADC but our ADC ignores the
+ * decimal flag (matching the transliterated oracle), so $C3 counts in binary. */
+void count_up_to_level(void) {
+    mem[0x00C3] = 0x00;
+    do {
+        mem[0x0604] = (uint8_t)(mem[0x0604] + 1);
+        mem[0x00C3] = (uint8_t)(mem[0x00C3] + 1);
+    } while (mem[0x0604] != mem[0x006D]);
+}
+
+/* hud_fill_field1 @ $811F — HUD field-1 advance.  Cursor Y = $0081: if it has
+ * reached/passed the limit $2928, just INC $0081 and return.  Otherwise copy 5
+ * bytes from the source ($0087)+Y into $009B..$009F (cells $8F+$0C..$8F+$10) and
+ * store the advanced cursor (Y+5) back to $0081. */
+void hud_fill_field1(void) {
+    uint8_t y = mem[0x0081];
+    if (y >= mem[0x2928]) { mem[0x0081] = (uint8_t)(y + 1); return; }
+    for (uint8_t x = 0x0C; x < 0x11; x++) {
+        cpu.Y = y;
+        mem[(uint8_t)(0x8F + x)] = bus_read(ZP_IND_Y(0x87));
+        y = (uint8_t)(y + 1);
+    }
+    mem[0x0081] = y;
+}
+
+/* hud_fill_field3_font @ $8168 — HUD field-3 advance.  Cursor Y = $0083: if >= $A8,
+ * INC $0083 and return.  Otherwise copy 7 font bytes from $35CD[Y] into $0094..$009A
+ * (cells $8F+$05..$8F+$0B) and store the advanced cursor (Y+7) to $0083. */
+void hud_fill_field3_font(void) {
+    uint8_t y = mem[0x0083];
+    if (y >= 0xA8) { mem[0x0083] = (uint8_t)(y + 1); return; }
+    for (uint8_t x = 0x05; x < 0x0C; x++) {
+        mem[(uint8_t)(0x8F + x)] = mem[0x35CD + y];
+        y = (uint8_t)(y + 1);
+    }
+    mem[0x0083] = y;
+}
+
 /* render_bcd_counter @ $49A0 — render the 3-byte packed-BCD score ($0601-$0603,
  * 6 digits) to the top text line $32C5..$32CA with leading-zero suppression.
  * Flight ISR routine; the first transpiled-on-the-VBI-path fn ported native.

@@ -207,6 +207,18 @@ VALIDATE_FUNCS = {
     0x7483,  # copy_row_addr_subset — copy 48 row-addr entries $073D/$0793[Y] -> $2932/$2962[X]
     0x3C93,  # memset_or_copy — fill $00B7 to dest ptr $C1/$C2, 16-bit count $C3/$C4 (pointer fill)
     0x3C61,  # copy_bytes_to_dst — write entry A to dest ptr $BD/$BE, X times; then INC $BB/$BC (pointer fill)
+    # batch — display_setup-subtree mem-effect leaves:
+    0x3FDE,  # terrain_lookup — copy 4 bytes $4B0B[base..base-3] -> $32E3[3..0] (base from $281C/$2836/$3FF6)
+    0x45A1,  # fill_buffer2_region_ff — 8x 32-byte $FF runs from $2098 stride $30
+    0x4606,  # game_sub_4606 — init target-state cells $32E3[0..3]/$3355-$3357/$3388/$33DF/$33E0
+    0x480F,  # fill_message_buffer — store entry A into $32B6+X down to +1 (entry A/X; X=0 => 256 fill)
+    0x4FE0,  # intro_fill_display_params — build $00CF..$00D6 from $4DF1 nibble | $00C2; poke $D019; INC $C2
+    0x5B45,  # match_code_sequence — cheat-code matcher; advance/reset $063F, copy payload $5B17->$36AB at 6
+    0x68AD,  # init_terrain_dl — fill $2F75..$2FA3=$88 + LMS ptr pairs $300A/$308B = $2F74 every 3rd entry
+    0x7238,  # music_init_state — copy 6 bytes $731E[Y..]-> $0657[5..0]; clear $0651/$D208; $0653/$0655=1 (entry Y)
+    0x75B8,  # count_up_to_level — bump $0604 + binary counter $C3 until $0604 == $006D
+    0x811F,  # hud_fill_field1 — INC $0081 when $0081 >= $2928
+    0x8168,  # hud_fill_field3_font — INC $0083 when $0083 >= $A8
 }
 VALIDATE_SUFFIX = '__t6502'
 

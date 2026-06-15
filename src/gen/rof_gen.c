@@ -1700,7 +1700,8 @@ L_3fdd:;
 }
 
 /* terrain_lookup @ $3FDE: Table lookup: reads $281C + index from $2836 into $3FF6 table; writes 4 bytes to $32E3 (display buffer) */
-void terrain_lookup(void) {
+/* faithful transliteration kept as the validation oracle; native terrain_lookup() lives in rof_native.c (see VALIDATE_FUNCS) */
+void terrain_lookup__t6502(void) {
     /* 3fde */
     CLC();
     /* 3fdf */
@@ -2919,7 +2920,8 @@ L_4544:;
 }
 
 /* fill_buffer2_region_ff @ $45A1: Fills 8 rows x 32 bytes (stride 48) at $2098 in the $2000 terrain buffer with $FF; called in game_entry setup */
-void fill_buffer2_region_ff(void) {
+/* faithful transliteration kept as the validation oracle; native fill_buffer2_region_ff() lives in rof_native.c (see VALIDATE_FUNCS) */
+void fill_buffer2_region_ff__t6502(void) {
     /* 45a1 */
     LDA(0x98);
     /* 45a3 */
@@ -3025,7 +3027,8 @@ L_45f0:;
 }
 
 /* game_sub_4606 @ $4606: Game subsystem (called multiple times including in game loop) */
-void game_sub_4606(void) {
+/* faithful transliteration kept as the validation oracle; native game_sub_4606() lives in rof_native.c (see VALIDATE_FUNCS) */
+void game_sub_4606__t6502(void) {
     /* 4606 */
     LDY(0x03);
     /* 4608 */
@@ -3505,7 +3508,8 @@ void clear_message_buffer(void) {
 }
 
 /* fill_message_buffer @ $480F: Stores A into 14 bytes $32B6+X down to $32B7 (DEX while !Z); fills/clears message buffer */
-void fill_message_buffer(void) {
+/* faithful transliteration kept as the validation oracle; native fill_message_buffer() lives in rof_native.c (see VALIDATE_FUNCS) */
+void fill_message_buffer__t6502(void) {
 L_480f:;
     /* 480f */
     mem[(0x32B6)+cpu.X] = cpu.A;
@@ -4074,7 +4078,8 @@ void intro_reset_score_slots(void) {
 }
 
 /* intro_fill_display_params @ $4FE0: Copies $4DF1 table low nibbles OR player_speed($00C2) into display_param $00CF-D6, writes COLPF3($D019), INC $00C2 */
-void intro_fill_display_params(void) {
+/* faithful transliteration kept as the validation oracle; native intro_fill_display_params() lives in rof_native.c (see VALIDATE_FUNCS) */
+void intro_fill_display_params__t6502(void) {
     /* 4fe0 */
     LDY(0x07);
 L_4fe2:;
@@ -6062,7 +6067,8 @@ void read_console_trig_delta(void) {
 }
 
 /* match_code_sequence @ $5B45: cmp A vs table $5B3F[$063F]; on 6-byte match copy $28 bytes $5B17->$36AB, set $0049=$FF */
-void match_code_sequence(void) {
+/* faithful transliteration kept as the validation oracle; native match_code_sequence() lives in rof_native.c (see VALIDATE_FUNCS) */
+void match_code_sequence__t6502(void) {
     /* 5b45 */
     LDX(mem[0x063F]);
     /* 5b48 */
@@ -9071,7 +9077,8 @@ L_689d:;
 }
 
 /* init_terrain_dl @ $68AD: Fill $2F75..$2FA3 with $88; seed display-list pairs $74/$2F into $300A/$308B strands (3-byte stride) */
-void init_terrain_dl(void) {
+/* faithful transliteration kept as the validation oracle; native init_terrain_dl() lives in rof_native.c (see VALIDATE_FUNCS) */
+void init_terrain_dl__t6502(void) {
     /* 68ad */
     LDY(0x2F);
     /* 68af */
@@ -10742,7 +10749,8 @@ L_717b:;
 }
 
 /* music_init_state @ $7238: Copies 6-byte song header from table $731E into $0657-$065C, sets $0651=1, AUDCTL($D208)=1, $0653=$0655=2 */
-void music_init_state(void) {
+/* faithful transliteration kept as the validation oracle; native music_init_state() lives in rof_native.c (see VALIDATE_FUNCS) */
+void music_init_state__t6502(void) {
     /* 7238 */
     LDX(0x05);
 L_723a:;
@@ -11518,7 +11526,8 @@ L_75af:;
 }
 
 /* count_up_to_level @ $75B8: Increments $0604 and BCD counter $C3 in loop until $0604 reaches level/stage $006D */
-void count_up_to_level(void) {
+/* faithful transliteration kept as the validation oracle; native count_up_to_level() lives in rof_native.c (see VALIDATE_FUNCS) */
+void count_up_to_level__t6502(void) {
     /* 75b8 */
     LDA(0x00);
     /* 75ba */
@@ -14177,7 +14186,8 @@ L_8111:;
 }
 
 /* hud_fill_field1 @ $811F: Copies 5 bytes into buf $8F[$0C..$10] from source ptr $87; gated by index $0081 vs limit $2928 */
-void hud_fill_field1(void) {
+/* faithful transliteration kept as the validation oracle; native hud_fill_field1() lives in rof_native.c (see VALIDATE_FUNCS) */
+void hud_fill_field1__t6502(void) {
     /* 811f */
     LDY(mem[0x0081]);
     /* 8121 */
@@ -14271,7 +14281,8 @@ L_8158:;
 }
 
 /* hud_fill_field3_font @ $8168: Copies 7 glyph bytes into buf $8F[$05..$0B] from font table $35CD+Y; gated by index $0083 vs fixed limit $A8 */
-void hud_fill_field3_font(void) {
+/* faithful transliteration kept as the validation oracle; native hud_fill_field3_font() lives in rof_native.c (see VALIDATE_FUNCS) */
+void hud_fill_field3_font__t6502(void) {
     /* 8168 */
     LDY(mem[0x0083]);
     /* 816a */
