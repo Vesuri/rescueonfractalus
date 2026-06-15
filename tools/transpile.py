@@ -261,6 +261,13 @@ VALIDATE_FUNCS = {
     0x47B8,  # show_cockpit_message — render HUD message (entry Y id) into $32B7 from glyph tables
     0x6811,  # game_sub_6811 — scatter random jittered dots via rng_signed_jitter/set_row_ptr/plot_pixel_masked
     0x692A,  # plot_terrain_span — run of vertical spans via fill_vertical_span; steps cols, shifts row window
+    # batch — event/score/message wrappers + object-table shift:
+    0x7AA6,  # trigger_effect_4a — A=$4A, tail init_event_state_5815_x16
+    0xA6F8,  # terrain_plot_skip_return — bare RTS (no-op)
+    0x49AE,  # render_bcd_low_bytes — emit $0602/$0603 digit pairs via emit_bcd_byte_digits
+    0x49C5,  # set_zsupp_pos_clear_delta — set $0619=Y, clear $0045/$0046, tail emit_bcd_byte_digits
+    0x47B2,  # save_color_clear_y_bit5 — $00D8=A, clear Y bit5, tail show_cockpit_message
+    0x6A0F,  # shift_object_table_up — shift DL LMS pairs $3007/$3008 -> $300A/$300B up by 3 (entry A count)
 }
 VALIDATE_SUFFIX = '__t6502'
 

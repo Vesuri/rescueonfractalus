@@ -1315,6 +1315,54 @@ void plot_terrain_span(void) {
     mem[0x009F] = (uint8_t)(mem[0x009F] - mem[0x0085]);
 }
 
+/* trigger_effect_4a @ $7AA6 — fire event effect $4A via init_event_state_5815_x16. */
+void trigger_effect_4a(void) {
+    cpu.A = 0x4A;
+    init_event_state_5815_x16();
+}
+
+/* terrain_plot_skip_return @ $A6F8 — bare RTS (no-op). */
+void terrain_plot_skip_return(void) { }
+
+/* render_bcd_low_bytes @ $49AE — render the two low score bytes $0602/$0603 as digit
+ * pairs via the (native) emit_bcd_byte_digits. */
+void render_bcd_low_bytes(void) {
+    cpu.A = mem[0x0602]; emit_bcd_byte_digits();
+    cpu.A = mem[0x0603]; emit_bcd_byte_digits();
+}
+
+/* set_zsupp_pos_clear_delta @ $49C5 — set the zero-suppress threshold $0619 = entry Y,
+ * clear the 16-bit delta $0045/$0046, then render a digit pair via emit_bcd_byte_digits
+ * (entry A = the BCD byte). */
+void set_zsupp_pos_clear_delta(void) {
+    mem[0x0619] = cpu.Y;
+    cpu.Y = 0x00;
+    mem[0x0045] = cpu.Y;
+    mem[0x0046] = cpu.Y;
+    emit_bcd_byte_digits();
+}
+
+/* save_color_clear_y_bit5 @ $47B2 — stash colour $00D8 = entry A, clear bit5 of the
+ * message id (entry Y), and render it via the (native) show_cockpit_message. */
+void save_color_clear_y_bit5(void) {
+    mem[0x00D8] = cpu.A;
+    cpu.Y = (uint8_t)(cpu.Y & 0xDF);
+    show_cockpit_message();
+}
+
+/* shift_object_table_up @ $6A0F — shift the display-list LMS address pairs up by 3 bytes
+ * ($3007/$3008[Y] -> $300A/$300B[Y]) for entry-A iterations, stepping Y down by 3. */
+void shift_object_table_up(void) {
+    mem[0x0084] = cpu.A;
+    uint8_t y = 0xFF;
+    do {
+        mem[0x300A + y] = mem[0x3007 + y];
+        mem[0x300B + y] = mem[0x3008 + y];
+        y = (uint8_t)(y - 3);
+        mem[0x0084] = (uint8_t)(mem[0x0084] - 1);
+    } while (mem[0x0084] != 0x00);
+}
+
 /* render_bcd_counter @ $49A0 — render the 3-byte packed-BCD score ($0601-$0603,
  * 6 digits) to the top text line $32C5..$32CA with leading-zero suppression.
  * Flight ISR routine; the first transpiled-on-the-VBI-path fn ported native.

@@ -474,6 +474,49 @@ static int test_ret_a(const char *name, void (*native)(void), void (*t6502)(void
     return mem_fail + cpu_fail;
 }
 
+/* --- generic test for emit_bcd_byte_digits-chain wrappers (render_bcd_low_bytes,
+ * set_zsupp_pos_clear_delta): they plot digits through plot_char_bounded via the dest
+ * pointer $00C5/$00C6, so seed it into $2000; entry A/X/Y are randomized.  The PHA in
+ * emit_bcd_byte_digits scribbles the stack, neutralized before compare.  Assert mem[] +
+ * cpu.A/X/Y. --- */
+static int test_emit_chain(const char *name, void (*native)(void), void (*t6502)(void)) {
+    if (!want(name)) return 0;
+    enum { N = 50000 };
+    static uint8_t pre[65536], ref_mem[65536];
+    int mem_fail = 0, cpu_fail = 0, printed = 0;
+    for (int t = 0; t < N; t++) {
+        fill_random(pre);
+        pre[0x00C5] = 0x00; pre[0x00C6] = 0x20;        /* dest ptr -> $2000 */
+        Cpu6502 c = zero_cpu();
+        c.A = (uint8_t)(xs() & 0xFF);
+        c.X = (uint8_t)(xs() & 1);
+        c.Y = (uint8_t)(xs() & 0xFF);
+
+        memcpy((void *)mem, pre, 65536); cpu = c;
+        t6502();
+        memcpy(ref_mem, (void *)mem, sizeof ref_mem);
+        Cpu6502 ref_cpu = cpu;
+
+        memcpy((void *)mem, pre, 65536); cpu = c;
+        native();
+
+        for (int i = 0x0100; i <= 0x01FF; i++) ref_mem[i] = mem[i];
+        if (memcmp((const void *)mem, ref_mem, 65536) != 0) {
+            mem_fail++;
+            if (printed < 12)
+                for (int i = 0; i < 65536 && printed < 12; i++)
+                    if (mem[i] != ref_mem[i]) {
+                        printf("[MEM DIFF] %s case %d  $%04X  ref=$%02X native=$%02X\n",
+                               name, t, i, ref_mem[i], mem[i]); printed++;
+                    }
+        }
+        if (cpu.A != ref_cpu.A || cpu.X != ref_cpu.X || cpu.Y != ref_cpu.Y) cpu_fail++;
+    }
+    printf("%s: %d cases, %d mem mismatch, %d cpu(A/X/Y) mismatch (both must be 0)\n",
+           name, N, mem_fail, cpu_fail);
+    return mem_fail + cpu_fail;
+}
+
 /* --- plot_char_bounded @ $49D9: zero-suppress digit plotter.  Writes one char through
  * the dest pointer $00C5/$00C6, so seed it into safe bitmap RAM ($2000); entry A (digit),
  * X (suppress flag), Y (column) and the threshold $0619 are randomized.  The observable
@@ -1433,6 +1476,13 @@ int main(int argc, char **argv) {
     fails += test_font_display_init();
     fails += test_game_sub_6811();
     fails += test_plot_terrain_span();
+    /* batch — event/score/message wrappers + object-table shift */
+    fails += test_mem_contract("trigger_effect_4a", trigger_effect_4a, trigger_effect_4a__t6502);
+    fails += test_mem_contract("terrain_plot_skip_return", terrain_plot_skip_return, terrain_plot_skip_return__t6502);
+    fails += test_emit_chain("render_bcd_low_bytes", render_bcd_low_bytes, render_bcd_low_bytes__t6502);
+    fails += test_emit_chain("set_zsupp_pos_clear_delta", set_zsupp_pos_clear_delta, set_zsupp_pos_clear_delta__t6502);
+    fails += test_mem_contract_regs("save_color_clear_y_bit5", save_color_clear_y_bit5, save_color_clear_y_bit5__t6502);
+    fails += test_mem_contract_regs("shift_object_table_up", shift_object_table_up, shift_object_table_up__t6502);
     fails += test_mem_contract_regs("show_cockpit_message", show_cockpit_message, show_cockpit_message__t6502);
     fails += test_mem_contract_regs("mark_slot_and_countdown_char", mark_slot_and_countdown_char, mark_slot_and_countdown_char__t6502);
     fails += test_mem_contract_regs("mark_slot_and_inc_count", mark_slot_and_inc_count, mark_slot_and_inc_count__t6502);
