@@ -8427,7 +8427,8 @@ L_662b:;
 }
 
 /* draw_symmetric_span_loop @ $6642: ORs $0094 with mask tbl $66E9->$00B9; loops $0096x calling fill_horizontal_span/fill_vertical_span, steps coords $009C--/$009D++/$009E++/$009F-- */
-void draw_symmetric_span_loop(void) {
+/* faithful transliteration kept as the validation oracle; native draw_symmetric_span_loop() lives in rof_native.c (see VALIDATE_FUNCS) */
+void draw_symmetric_span_loop__t6502(void) {
     /* 6642 */
     LDA(mem[0x0094]);
     /* 6644 */
@@ -9723,7 +9724,8 @@ L_6b0f:;
 }
 
 /* gen_terrain_column @ $6B2E: Fills one column (index Y) of all 4 buffers $0C32/$0D32/$0E32/$0F32 with random heights from random_terrain_height */
-void gen_terrain_column(void) {
+/* faithful transliteration kept as the validation oracle; native gen_terrain_column() lives in rof_native.c (see VALIDATE_FUNCS) */
+void gen_terrain_column__t6502(void) {
     /* 6b2e */
     random_terrain_height();
     /* 6b31 */

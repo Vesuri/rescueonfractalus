@@ -407,6 +407,38 @@ void plot_pixel_2bpp(void) {
     cpu.X = savedX;
 }
 
+/* draw_symmetric_span_loop @ $6642 — draw $0096 nested span pairs.  The fill
+ * pattern $00B9 = $0094 | maskTbl[$0094].  Each iteration draws one horizontal and
+ * one vertical span, then steps the four edge coordinates inward ($9C--, $9D++,
+ * $9E++, $9F--).  Loops $0096 times (DEC; BNE). */
+void draw_symmetric_span_loop(void) {
+    uint8_t v94 = mem[0x0094];
+    mem[0x00B9] = (uint8_t)(v94 | mem[0x66E9 + v94]);
+    for (;;) {
+        fill_horizontal_span();
+        fill_vertical_span();
+        mem[0x009C] = (uint8_t)(mem[0x009C] - 1);
+        mem[0x009D] = (uint8_t)(mem[0x009D] + 1);
+        mem[0x009E] = (uint8_t)(mem[0x009E] + 1);
+        mem[0x009F] = (uint8_t)(mem[0x009F] - 1);
+        uint8_t n = (uint8_t)(mem[0x0096] - 1);
+        mem[0x0096] = n;
+        if (n == 0) break;                                /* DEC $0096; BNE */
+    }
+}
+
+/* gen_terrain_column @ $6B2E — fill column (entry cpu.Y) of all four parallel
+ * terrain buffers $0C32/$0D32/$0E32/$0F32 with sparse random heights.  Each of the
+ * four random_terrain_height calls advances the POKEY RANDOM LFSR; cpu.Y is
+ * preserved across them (neither this routine nor random_terrain_height touch Y). */
+void gen_terrain_column(void) {
+    uint8_t y = cpu.Y;
+    random_terrain_height(); mem[0x0C32 + y] = cpu.A;
+    random_terrain_height(); mem[0x0D32 + y] = cpu.A;
+    random_terrain_height(); mem[0x0E32 + y] = cpu.A;
+    random_terrain_height(); mem[0x0F32 + y] = cpu.A;
+}
+
 /* render_bcd_counter @ $49A0 — render the 3-byte packed-BCD score ($0601-$0603,
  * 6 digits) to the top text line $32C5..$32CA with leading-zero suppression.
  * Flight ISR routine; the first transpiled-on-the-VBI-path fn ported native.

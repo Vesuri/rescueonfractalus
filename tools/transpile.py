@@ -183,6 +183,8 @@ VALIDATE_FUNCS = {
     0x66C6,  # set_row_ptr_from_count — Y=$0092, tail set_row_ptr
     0x669C,  # fill_vertical_span — per-row masked plot of cols $9C/$9D via plot_pixel_masked/plot_glyph_pixel_masked
     0x6C92,  # plot_pixel_2bpp — 4x ROL 2bpp pack of ($80)+Y, mask via BIT $0082 (leaf, entry Y+carry; preserves X)
+    0x6642,  # draw_symmetric_span_loop — $0096x {fill_horizontal_span + fill_vertical_span}, steps coords $9C-$9F
+    0x6B2E,  # gen_terrain_column — fill one column (Y) of 4 buffers $0C32/$0D32/$0E32/$0F32 via random_terrain_height
 }
 VALIDATE_SUFFIX = '__t6502'
 

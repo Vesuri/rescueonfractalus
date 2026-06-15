@@ -430,6 +430,39 @@ static int test_random_terrain_height(void) {
     return mem_fail + cpu_fail;
 }
 
+/* --- draw_symmetric_span_loop @ $6642: nested span fill, $0096 outer iterations.
+ * The inner span fills write via the per-scanline address table ($073D lo/$0793 hi).
+ * With fully random mem those pointers are garbage and the writes land on the routine's
+ * own zero-page loop counters ($00DF/$0096) — hanging BOTH runs.  So seed a realistic
+ * fixture: the address table points into safe bitmap RAM ($2000 + row*$28, the real
+ * mode-F layout), the outer count is small, and the edge coordinates are bounded to the
+ * table's valid row range.  Both runs share it, so the per-pass logic is fully diffed. --- */
+static int test_draw_symmetric_span_loop(void) {
+    if (!want("draw_symmetric_span_loop")) return 0;
+    enum { N = 4000 };
+    static uint8_t pre[65536];
+    int mem_fail = 0, cpu_diff = 0, printed = 0;
+    for (int t = 0; t < N; t++) {
+        fill_random(pre);
+        for (int i = 0; i <= 0x54; i++) {                 /* row addr table -> $2000.. */
+            uint16_t p = (uint16_t)(0x2000 + i * 0x28);
+            pre[0x073D + i] = (uint8_t)p;
+            pre[0x0793 + i] = (uint8_t)(p >> 8);
+        }
+        pre[0x0096] = (uint8_t)((xs() & 3) + 1);           /* small outer count */
+        pre[0x009C] = (uint8_t)(0x20 + (xs() & 0x1F));     /* column endpoints */
+        pre[0x009D] = (uint8_t)(0x20 + (xs() & 0x1F));
+        pre[0x009E] = (uint8_t)(0x30 + (xs() & 0x0F));     /* row range (stays < $54) */
+        pre[0x009F] = (uint8_t)(0x28 + (xs() & 0x0F));
+        mem_fail += diff_run("draw_symmetric_span_loop", pre, zero_cpu(),
+                             draw_symmetric_span_loop, draw_symmetric_span_loop__t6502,
+                             t, &printed, &cpu_diff);
+    }
+    printf("draw_symmetric_span_loop: %d cases, %d mem mismatch (must be 0), %d cpu diffs\n",
+           N, mem_fail, cpu_diff);
+    return mem_fail;
+}
+
 /* Like test_mem_contract but with random entry A/X/Y/C — for routines that read
  * an entry register as input (a table index, a value to store, an entry carry). */
 static int test_mem_contract_regs(const char *name, void (*native)(void), void (*t6502)(void)) {
@@ -843,6 +876,8 @@ int main(int argc, char **argv) {
         fails += test_mem_contract_regs("plot_pixel_2bpp", plot_pixel_2bpp, plot_pixel_2bpp__t6502);
         set_ignore(0, 0);
     }
+    fails += test_draw_symmetric_span_loop();
+    fails += test_mem_contract_regs("gen_terrain_column", gen_terrain_column, gen_terrain_column__t6502);
     fails += test_mem_contract("compute_target_blip_position", compute_target_blip_position, compute_target_blip_position__t6502);
     fails += test_mem_contract_regs("obj_table_scan_replace", obj_table_scan_replace, obj_table_scan_replace__t6502);
     /* batch 2 — shallow drivers */
