@@ -659,6 +659,48 @@ void reset_audctl_flags(void) {
     mem[0x073C] = 0xFF;
 }
 
+/* game_init_first @ $5DDB — $0043 = 1. */
+void game_init_first(void) { mem[0x0043] = 0x01; }
+
+/* mark_grid_slot_active @ $7B74 — $0A00[$28E6] = 1. */
+void mark_grid_slot_active(void) { mem[0x0A00 + mem[0x28E6]] = 0x01; }
+
+/* push_grid_cell @ $70A9 — store $009C into $2500[$0098], then INC $0098. */
+void push_grid_cell(void) {
+    mem[0x2500 + mem[0x0098]] = mem[0x009C];
+    mem[0x0098] = (uint8_t)(mem[0x0098] + 1);
+}
+
+/* vobj_pos_to_pmstrip_index @ $41DA — Y = ($DC - $062F) >> 2 (also left in A).
+ * Maps a vertical object position to a PMG strip index; result consumed via cpu.Y. */
+void vobj_pos_to_pmstrip_index(void) {
+    uint8_t a = (uint8_t)(0xDC - mem[0x062F]);   /* SEC; SBC $062F */
+    a = (uint8_t)(a >> 2);                       /* LSR; LSR */
+    cpu.A = a;
+    cpu.Y = a;                                   /* TAY */
+}
+
+/* copy_terrain_seed_rows @ $45EE — copy three 8-byte seed rows from $4DD2/$4DDA/$4DE2
+ * into the terrain buffers $0C88/$0D88/$0B88. */
+void copy_terrain_seed_rows(void) {
+    for (int y = 7; y >= 0; y--) {
+        mem[0x0C88 + y] = mem[0x4DD2 + y];
+        mem[0x0D88 + y] = mem[0x4DDA + y];
+        mem[0x0B88 + y] = mem[0x4DE2 + y];
+    }
+}
+
+/* copy_row_addr_subset @ $7483 — copy 48 entries of the row-addr table $073D(lo)/$0793(hi)
+ * (Y=$2F..$00) into $2932(lo)/$2962(hi) (X=$00..$2F, reversed). */
+void copy_row_addr_subset(void) {
+    uint8_t x = 0x00;
+    for (int y = 0x2F; y >= 0; y--) {
+        mem[0x2932 + x] = mem[0x073D + y];
+        mem[0x2962 + x] = mem[0x0793 + y];
+        x++;
+    }
+}
+
 /* render_bcd_counter @ $49A0 — render the 3-byte packed-BCD score ($0601-$0603,
  * 6 digits) to the top text line $32C5..$32CA with leading-zero suppression.
  * Flight ISR routine; the first transpiled-on-the-VBI-path fn ported native.

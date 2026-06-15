@@ -199,6 +199,12 @@ VALIDATE_FUNCS = {
     0x6890,  # fill_buf_08d4 — fill $08D4-$08D9 with entry A
     0x5D3B,  # copy_4byte_table_to_02c4 — copy 4 bytes $5D48+X down into $02C4-$02C7 (entry X)
     0x70E7,  # reset_audctl_flags — $00E7=1, AUDCTL=0, $073A/$0090=0, $073C=$FF
+    0x5DDB,  # game_init_first — $0043 = 1
+    0x7B74,  # mark_grid_slot_active — $0A00[$28E6] = 1
+    0x70A9,  # push_grid_cell — $2500[$0098] = $009C, INC $0098
+    0x41DA,  # vobj_pos_to_pmstrip_index — Y = ($DC - $062F) >> 2 (result in Y/A)
+    0x45EE,  # copy_terrain_seed_rows — copy 3x8 seed rows $4DD2/$4DDA/$4DE2 -> $0C88/$0D88/$0B88
+    0x7483,  # copy_row_addr_subset — copy 48 row-addr entries $073D/$0793[Y] -> $2932/$2962[X]
 }
 VALIDATE_SUFFIX = '__t6502'
 

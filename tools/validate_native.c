@@ -609,6 +609,37 @@ static int test_advance_object_positions(void) {
     return mem_fail;
 }
 
+/* --- vobj_pos_to_pmstrip_index @ $41DA: result is cpu.Y (and A), no mem writes. --- */
+static int test_vobj_pos_to_pmstrip_index(void) {
+    if (!want("vobj_pos_to_pmstrip_index")) return 0;
+    enum { N = 20000 };
+    static uint8_t pre[65536], ref_mem[65536];
+    int mem_fail = 0, cpu_fail = 0, printed = 0;
+    for (int t = 0; t < N; t++) {
+        fill_random(pre);
+        Cpu6502 c = zero_cpu();
+        memcpy((void *)mem, pre, 65536); cpu = c;
+        vobj_pos_to_pmstrip_index__t6502();
+        memcpy(ref_mem, (void *)mem, sizeof ref_mem);
+        Cpu6502 ref_cpu = cpu;
+        memcpy((void *)mem, pre, 65536); cpu = c;
+        vobj_pos_to_pmstrip_index();
+        if (memcmp((const void *)mem, ref_mem, 65536) != 0) {
+            mem_fail++;
+            if (printed < 12)
+                for (int i = 0; i < 65536 && printed < 12; i++)
+                    if (mem[i] != ref_mem[i]) {
+                        printf("[MEM DIFF] vobj_pos_to_pmstrip_index case %d  $%04X  ref=$%02X native=$%02X\n",
+                               t, i, ref_mem[i], mem[i]); printed++;
+                    }
+        }
+        if (cpu.A != ref_cpu.A || cpu.Y != ref_cpu.Y) cpu_fail++;
+    }
+    printf("vobj_pos_to_pmstrip_index: %d cases, %d mem mismatch, %d cpu(A/Y) mismatch (both must be 0)\n",
+           N, mem_fail, cpu_fail);
+    return mem_fail + cpu_fail;
+}
+
 /* Like test_mem_contract but with random entry A/X/Y/C — for routines that read
  * an entry register as input (a table index, a value to store, an entry carry). */
 static int test_mem_contract_regs(const char *name, void (*native)(void), void (*t6502)(void)) {
@@ -1037,6 +1068,12 @@ int main(int argc, char **argv) {
     fails += test_mem_contract_regs("fill_buf_08d4", fill_buf_08d4, fill_buf_08d4__t6502);
     fails += test_mem_contract_regs("copy_4byte_table_to_02c4", copy_4byte_table_to_02c4, copy_4byte_table_to_02c4__t6502);
     fails += test_mem_contract("reset_audctl_flags", reset_audctl_flags, reset_audctl_flags__t6502);
+    fails += test_mem_contract("game_init_first", game_init_first, game_init_first__t6502);
+    fails += test_mem_contract("mark_grid_slot_active", mark_grid_slot_active, mark_grid_slot_active__t6502);
+    fails += test_mem_contract("push_grid_cell", push_grid_cell, push_grid_cell__t6502);
+    fails += test_vobj_pos_to_pmstrip_index();
+    fails += test_mem_contract("copy_terrain_seed_rows", copy_terrain_seed_rows, copy_terrain_seed_rows__t6502);
+    fails += test_mem_contract("copy_row_addr_subset", copy_row_addr_subset, copy_row_addr_subset__t6502);
     fails += test_mem_contract("compute_target_blip_position", compute_target_blip_position, compute_target_blip_position__t6502);
     fails += test_mem_contract_regs("obj_table_scan_replace", obj_table_scan_replace, obj_table_scan_replace__t6502);
     /* batch 2 — shallow drivers */

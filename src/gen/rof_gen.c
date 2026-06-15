@@ -2122,7 +2122,8 @@ void vobj_update_active(void) {
 }
 
 /* vobj_pos_to_pmstrip_index @ $41DA: Y = ($DC - $062F) >> 2: convert vert pos $062F to index into P/M shape strip $0D98 */
-void vobj_pos_to_pmstrip_index(void) {
+/* faithful transliteration kept as the validation oracle; native vobj_pos_to_pmstrip_index() lives in rof_native.c (see VALIDATE_FUNCS) */
+void vobj_pos_to_pmstrip_index__t6502(void) {
     /* 41da */
     LDA(0xDC);
     /* 41dc */
@@ -2996,7 +2997,8 @@ void init_cockpit_bar_cells(void) {
 }
 
 /* copy_terrain_seed_rows @ $45EE: Copies three 8-byte blocks $4DD2->$0C88, $4DDA->$0D88, $4DE2->$0B88 (seed rows in the terrain/cockpit buffers); called in game_entry setup */
-void copy_terrain_seed_rows(void) {
+/* faithful transliteration kept as the validation oracle; native copy_terrain_seed_rows() lives in rof_native.c (see VALIDATE_FUNCS) */
+void copy_terrain_seed_rows__t6502(void) {
     /* 45ee */
     LDY(0x07);
 L_45f0:;
@@ -6670,7 +6672,8 @@ void game_init_5D50(void) {
 }
 
 /* game_init_first @ $5DDB: Very first call in game_entry; large initializer */
-void game_init_first(void) {
+/* faithful transliteration kept as the validation oracle; native game_init_first() lives in rof_native.c (see VALIDATE_FUNCS) */
+void game_init_first__t6502(void) {
     /* 5ddb */
     LDA(0x01);
     /* 5ddd */
@@ -10486,7 +10489,8 @@ L_70a8:;
 }
 
 /* push_grid_cell @ $70A9: Pushes current cell $009C onto stack at $2500[$0098], increments stack index $0098 (flood-fill queue push) */
-void push_grid_cell(void) {
+/* faithful transliteration kept as the validation oracle; native push_grid_cell() lives in rof_native.c (see VALIDATE_FUNCS) */
+void push_grid_cell__t6502(void) {
     /* 70a9 */
     LDX(mem[0x0098]);
     /* 70ab */
@@ -11153,7 +11157,8 @@ L_746c:;
 }
 
 /* copy_row_addr_subset @ $7483: Copies the first 48 entries of $073D/$0793 (reversed, Y=$2F..0) into the secondary row-addr tables $2932/$2962; called before main loop */
-void copy_row_addr_subset(void) {
+/* faithful transliteration kept as the validation oracle; native copy_row_addr_subset() lives in rof_native.c (see VALIDATE_FUNCS) */
+void copy_row_addr_subset__t6502(void) {
     /* 7483 */
     LDX(0x00);
     /* 7485 */
@@ -13044,7 +13049,8 @@ L_7b73:;
 }
 
 /* mark_grid_slot_active @ $7B74: X=$28E6 (slot index); mem[$0A00+X]=1; marks display/grid slot active (same table obj_table_scan_replace scans) */
-void mark_grid_slot_active(void) {
+/* faithful transliteration kept as the validation oracle; native mark_grid_slot_active() lives in rof_native.c (see VALIDATE_FUNCS) */
+void mark_grid_slot_active__t6502(void) {
     /* 7b74 */
     LDX(mem[0x28E6]);
     /* 7b77 */
