@@ -35,6 +35,19 @@ rof_xex:
 	.incbin "../rof.xex"
 rof_xex_end:
 
+| atari_osrom.bin — the Atari OS ROM the game depends on (the platform ROM, like the
+|   Amiga kickstart): $C000-$CFFF (4 KB) then $D800-$FFFF (10 KB), skipping the
+|   $D000-$D7FF hardware range.  Includes the internal character set at $E000 that the
+|   message/label renderer (glyph_ptr_from_index $6773 reads $E000+code*8) uses for the
+|   "LEVEL 04" text.  load_xex_image() copies it into mem[] after the XEX segments.
+	.section .rodata
+	.balign 4
+	.global atari_osrom
+	.global atari_osrom_end
+atari_osrom:
+	.incbin "assets/atari_osrom.bin"
+atari_osrom_end:
+
 | (tunnel.raw removed: the concentric tunnel rings are now drawn procedurally by
 |  draw_tunnel_rings_native ($65FB port) into mem[$2000] at scene init, then
 |  decoded — no pre-baked bitmap.)

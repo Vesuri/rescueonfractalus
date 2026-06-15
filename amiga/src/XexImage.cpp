@@ -18,6 +18,12 @@ extern "C" volatile uint8_t mem[65536];
 extern "C" uint8_t rof_xex[];
 extern "C" uint8_t rof_xex_end[];
 
+// The Atari OS ROM (platform ROM), embedded by incbin.s: $C000-$CFFF (4 KB) then
+// $D800-$FFFF (10 KB) — the $D000-$D7FF hardware range is skipped.  Includes the
+// internal character set at $E000 the game's text renderer reads.
+extern "C" uint8_t atari_osrom[];
+extern "C" uint8_t atari_osrom_end[];
+
 // XEX format: optional leading $FFFF magic, then segments of
 //   [startLo, startHi, endLo, endHi, data...]
 // A repeated $FFFF before a segment is a (skippable) header marker.  The INITAD
@@ -40,4 +46,13 @@ extern "C" void load_xex_image(void)
         for (uint32_t k = 0; k < seglen && i < len; k++, i++)
             mem[(uint16_t)(s + k)] = d[i];
     }
+
+    // Overlay the Atari OS ROM (the platform ROM the game reads — e.g. the $E000
+    // character set the "LEVEL nn" text renderer uses).  Layout in the asset:
+    // [0..$1000) -> $C000-$CFFF, [$1000..$3800) -> $D800-$FFFF.  The $D000-$D7FF
+    // hardware range is intentionally NOT covered, so it never overwrites mem[$D01F]
+    // (the keyboard-maintained CONSOL) or other HW shadows.
+    const uint8_t* rom = atari_osrom;
+    for (uint32_t k = 0; k < 0x1000u; k++) mem[(uint16_t)(0xC000u + k)] = rom[k];
+    for (uint32_t k = 0; k < 0x2800u; k++) mem[(uint16_t)(0xD800u + k)] = rom[0x1000u + k];
 }
