@@ -328,6 +328,7 @@ VALIDATE_FUNCS = {
     #     the harness) — verified on FS-UAE by behaviour.  Its __t6502 oracle is kept for
     #     reference; the native twin replaces the spin-wait SPINWAIT-hooks with ds_frame().
     0x5F1D,  # display_setup — main display setup + Standby/attract idle loop + launch cinematic driver
+    0x3D48,  # game_main_loop — one-time game init + L_3e0f display_setup + the in-game flight loop (never returns)
 }
 VALIDATE_SUFFIX = '__t6502'
 

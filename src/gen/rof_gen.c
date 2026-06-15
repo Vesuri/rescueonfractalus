@@ -24419,7 +24419,8 @@ L_3d3c:;
 }
 
 /* game_main_loop @ $3D48: Main gameplay loop: full init (DL/sound/PMG/player), flight loop terrain_gen/enemy_check, level-clear at $3F59, loops L_3e0f; $3CDE chains here */
-void game_main_loop(void) {
+/* faithful transliteration kept as the validation oracle; native game_main_loop() lives in rof_native.c (see VALIDATE_FUNCS) */
+void game_main_loop__t6502(void) {
     /* 3d48 */
     LDA(0x00);
     /* 3d4a */

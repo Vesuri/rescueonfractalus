@@ -6847,3 +6847,316 @@ L_6590:
     if (!cpu.Z) goto L_6578;
     return;
 }
+
+/* game_main_loop @ $3D48 — the second half of the orchestration apex.  game_entry
+ * (-> init_game_vars_attract_timer) chains here; it does the one-time game init
+ * (display list, sound, PMG, player, cockpit gated on $060B), then loops:
+ *   L_3e0f  display_setup()      (Standby/attract + launch cinematic; RTSes after launch)
+ *           flight init ($3e12)  (clear PMG/colours, VVBLKI=$4FF5, terrain seed, gameplay state)
+ *   L_3eba  the in-game flight loop (two terrain passes/iteration for double-buffering),
+ *           level-clear handoff at L_3f59, then back to L_3eba or L_3e0f.
+ * The flight loop never returns (the user-quit path longjmps out of the pump); the
+ * L_631b display_setup->game_main_loop tail call and the L_3e0f display_setup() call
+ * mirror the genuine mutual structure (both are TCO'd / return-normally, as in the
+ * shipped transpiled build — no unbounded recursion).
+ *
+ * Same seam/contract as display_setup: NOT in `make validate` (it spin-waits on VBI
+ * state, and never returns), verified on FS-UAE.  Faithful transcription preserving
+ * cpu/mem so the (mostly-native) leaf callees behave identically; the two hooked
+ * spin labels L_3eba/L_3f6d become one real Amiga frame via ds_frame(); the
+ * wait_vcount_30/wait_frames_10/clear_colors/push_a_thunk_3cb2 frame primitives drive
+ * frames internally and are called as-is.  No leaf exit-register is consumed here
+ * (every post-call read reloads from mem), so no fidelity fix-ups are needed. */
+void game_main_loop(void) {
+    LDA(0x00);
+    bus_write(0x022F, cpu.A);
+    bus_write(0xD01D, cpu.A);
+    LDY(0x07);
+L_3d52:
+    mem[(0xD00D)+cpu.Y] = cpu.A;
+    mem[(0x36CA)+cpu.Y] = cpu.A;
+    DEY();
+    if (!cpu.N) goto L_3d52;
+    bus_write(0x02C8, cpu.A);
+    wait_vcount_30();
+    LDA(0xCC);
+    bus_write(0x0222, cpu.A);
+    LDA(0x53);
+    bus_write(0x0223, cpu.A);
+    display_list_init();
+    LDA(0x00);
+    mem[0x0002] = cpu.A;
+    mem[0x00DC] = cpu.A;
+    mem[0x0042] = cpu.A;
+    mem[0x00C7] = cpu.A;
+    LDY(0x19);
+L_3d7a:
+    DEY();
+    mem[(0x062C)+cpu.Y] = cpu.A;
+    if (!cpu.Z) goto L_3d7a;
+    mem[0x062F] = cpu.A;
+    LDA(0x08);
+    bus_write(0xD407, cpu.A);
+    LDA(0x04);
+    bus_write(0xD409, cpu.A);
+    LDA(0x03);
+    bus_write(0xD20F, cpu.A);
+    loader_util();
+    game_init_7813();
+    game_init_77DF();
+    game_init_7588();
+    game_init_76CB();
+    LDA(0xC0);
+    bus_write(0xD20E, cpu.A);
+    LDA(mem[0x060B]);
+    if (cpu.Z) goto L_3dae;
+    cockpit_display();
+L_3dae:
+    game_sub_4258();
+    LDY(0x09);
+    draw_dial_bar_column();
+    game_sub_4606();
+    LDA(0x08);
+    draw_cockpit_dial_bar();
+    LDA(0x2C);
+    bus_write(0x02C6, cpu.A);
+    LDA(0x26);
+    bus_write(0x02C7, cpu.A);
+    LDY(0x08);
+L_3dca:
+    LDA(mem[(0x4DF1)+cpu.Y]);
+    mem[(0x00CF)+cpu.Y] = cpu.A;
+    DEY();
+    if (!cpu.N) goto L_3dca;
+    LDA(0x80);
+    LDY(0x03);
+L_3dd7:
+    DEY();
+    mem[(0x0645)+cpu.Y] = cpu.A;
+    if (!cpu.Z) goto L_3dd7;
+    mem[0x007E] = cpu.A;
+    mem[0x0668] = cpu.A;
+    mem[0x0669] = cpu.A;
+    startup_init();
+    LDA(0xA0);
+    mem[0x0663] = cpu.A;
+    mem[0x066A] = cpu.A;
+    mem[0x066B] = cpu.A;
+    LDX(0x1F);
+    input_init();
+    INX();
+    input_init();
+    LDA(0x40);
+    bus_write(0xD40E, cpu.A);
+    LDA(0xC0);
+    mem[0x0071] = cpu.A;
+    LDA(0x0D);
+    mem[0x3157] = cpu.A;
+    LDA(0x35);
+    mem[0x3158] = cpu.A;
+L_3e0f:
+    display_setup();
+    LDA(0x2A);
+    clear_pm_state();
+    clear_colors();
+    LDA(0x0D);
+    mem[0x3157] = cpu.A;
+    LDA(0x35);
+    mem[0x3158] = cpu.A;
+    LDA(0x00);
+    mem[0x00B7] = cpu.A;
+    mem[0x0005] = cpu.A;
+    LDY(0x2C);
+L_3e2c:
+    DEY();
+    mem[(0x0020)+cpu.Y] = cpu.A;
+    if (!cpu.Z) goto L_3e2c;
+    LDY(0xA6);
+L_3e34:
+    DEY();
+    mem[(0x2830)+cpu.Y] = cpu.A;
+    if (!cpu.Z) goto L_3e34;
+    mem[0x060C] = cpu.A;
+    init_terrain_render_buffers();
+    fill_buffer2_region_ff();
+    clear_terrain_lo_buffers();
+    unpack_terrain_seed_cols();
+    LDA(0x45);
+    wait_vcount_eq();
+    LDA(0xF5);
+    bus_write(0x0222, cpu.A);
+    LDA(0x4F);
+    bus_write(0x0223, cpu.A);
+    LDA(0x00);
+    LDY(0x57);
+L_3e5c:
+    DEY();
+    mem[(0x0B31)+cpu.Y] = cpu.A;
+    if (!cpu.Z) goto L_3e5c;
+    LDA(0x11);
+    bus_write(0x026F, cpu.A);
+    copy_terrain_seed_rows();
+    wait_vcount_ge_7a();
+    LDA(0xEE);
+    bus_write(0x0200, cpu.A);
+    LDA(0x49);
+    bus_write(0x0201, cpu.A);
+    LDA(0x6B);
+    bus_write(0xD402, cpu.A);
+    LDA(0x31);
+    bus_write(0xD403, cpu.A);
+    LDA(0x40);
+    bus_write(0xD004, cpu.A);
+    init_gameplay_state();
+    LDA(mem[0x0627]);
+    if (!cpu.Z) goto L_3e97;
+    intro_random_setup();
+    intro_unmark_random_cells();
+    intro_seed_object_map();
+L_3e97:
+    LDA(0x60);
+    mem[0x00C1] = cpu.A;
+    LDA(0x10);
+    mem[0x00C3] = cpu.A;
+    LDA(0x10);
+    mem[0x00C4] = cpu.A;
+    build_row_addr_table();
+    copy_row_addr_subset();
+    LDA(mem[0x0004]);
+    if (!cpu.Z) goto L_3eb6;
+    LDA(0x54);
+    mem[0x0044] = cpu.A;
+    LDA(0x02);
+    goto L_3eb8;
+L_3eb6:
+    LDA(0x01);
+L_3eb8:
+    mem[0x004A] = cpu.A;
+L_3eba:
+    ds_frame();
+    terrain_frame_setup();
+    LDX(0x33);
+    clear_terrain_column();
+    LDX(0x30);
+    terrain_draw_frame();
+    LDX(0x33);
+    terrain_collision();
+    LDA(mem[0x0041]);
+    mem[0x288F] = cpu.A;
+    game_state_update();
+    LDA(0x02);
+    mem[0x0042] = cpu.A;
+    enemy_check();
+    LDA(mem[0x062F]);
+    CMP(0x0E);
+    if (cpu.C) goto L_3ef5;
+    LDA(mem[0x0004]);
+    if (cpu.Z) goto L_3eec;
+    game_sub_7B54();
+    goto L_3ef5;
+L_3eec:
+    LDA(mem[0x003A]);
+    CMP(0x01);
+    if (!cpu.Z) goto L_3ef5;
+    mem[0x2849] = cpu.A;
+L_3ef5:
+    terrain_frame_setup();
+    LDX(0x03);
+    clear_terrain_column();
+    LDX(0x00);
+    terrain_draw_frame();
+    LDX(0x03);
+    terrain_collision();
+    LDA(mem[0x0041]);
+    if (cpu.Z) goto L_3f0e;
+    mem[0x288F] = cpu.A;
+L_3f0e:
+    game_state_update();
+    enemy_check();
+    LDA(mem[0x288E]);
+    if (cpu.Z) goto L_3f21;
+    LDA(mem[0x288D]);
+    if (cpu.Z) goto L_3f21;
+    pilot_render();
+L_3f21:
+    LDA(mem[0x288D]);
+    mem[0x288E] = cpu.A;
+    LDA(mem[0x288F]);
+    if (!cpu.Z) goto L_3f31;
+    LDA(mem[0x003E]);
+    goto L_3f33;
+L_3f31:
+    LDA(0x00);
+L_3f33:
+    mem[0x288D] = cpu.A;
+    LDA(0x01);
+    mem[0x0042] = cpu.A;
+    CMP(mem[0x003E]);
+    if (cpu.Z) goto L_3f50;
+    LDX(mem[0x0072]);
+    CPX(0x02);
+    if (cpu.Z) goto L_3f50;
+    LDA(mem[0x003D]);
+    if (cpu.Z) goto L_3f50;
+    LDA(0x02);
+    mem[0x003D] = cpu.A;
+    LDY(0x0E);
+    mem[0x0044] = cpu.Y;
+L_3f50:
+    LDX(mem[0x0072]);
+    CPX(0x02);
+    if (cpu.Z) goto L_3f59;
+    goto L_3eba;
+L_3f59:
+    INX();
+    mem[0x004A] = cpu.X;
+    LDY(0x80);
+    mem[0x28D9] = cpu.Y;
+    mem[0x28DA] = cpu.Y;
+    LDA(mem[0x0034]);
+    CMP(0x40);
+    if (cpu.C) goto L_3f6d;
+    goto L_3eba;
+L_3f6d:
+    ds_frame();
+    LDA(mem[0x283B]);
+    if (!cpu.N) goto L_3f6d;
+    mem[0x007E] = cpu.Y;
+    LDA(0x00);
+    mem[0x062B] = cpu.A;
+    mem[0x0642] = cpu.A;
+    wait_frames_10();
+    mem[0x004A] = cpu.A;
+    push_a_thunk_3cb2();
+    LDY(0xA3);
+L_3f86:
+    mem[(0x0F1D)+cpu.Y] = cpu.A;
+    DEY();
+    if (!cpu.Z) goto L_3f86;
+    LDY(0x1E);
+L_3f8e:
+    mem[(0x0E8F)+cpu.Y] = cpu.A;
+    DEY();
+    if (!cpu.N) goto L_3f8e;
+    LDA(mem[0x00DE]);
+    CMP(0x4E);
+    if (!cpu.Z) goto L_3f9e;
+    LDA(0x46);
+    mem[0x00DE] = cpu.A;
+L_3f9e:
+    game_sub_4606();
+    LDA(mem[0x00DD]);
+    CMP(0x2B);
+    if (!cpu.C) goto L_3fab;
+    LDA(0x2A);
+    mem[0x00DD] = cpu.A;
+L_3fab:
+    mem[0x0041] = cpu.A;
+    mem[0x0071] = cpu.A;
+    clear_pm_state();
+    LDA(0x00);
+    LDY(0x03);
+    mem[(0x066B)+cpu.Y] = cpu.A;
+    game_sub_55FC();
+    goto L_3e0f;
+}
