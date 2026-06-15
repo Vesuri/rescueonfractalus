@@ -173,6 +173,8 @@ VALIDATE_FUNCS = {
     0x65DF,  # build_line_addr_table_2000 — set base $2000/stride $2E, tail build_row_addr_table
     0x65D2,  # build_line_addr_table_1000_stride — set base $1000/stride=A, tail build_row_addr_table (entry A)
     0x65D0,  # build_line_addr_table_1000 — A=$2E, tail build_line_addr_table_1000_stride
+    0x6B85,  # init_object_positions — zero $08D1-$08D3, build 22-entry word array $08A4/$08A5 = $6E2D table + $2EE0 (pure leaf)
+    0x712D,  # audio_timer_setup — zero $00E7/$0655/$00E5 + POKEY timers $D201-$D207, AUDCTL=$60 (leaf; POKEY via bus_write)
 }
 VALIDATE_SUFFIX = '__t6502'
 

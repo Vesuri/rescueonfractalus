@@ -253,6 +253,36 @@ void build_line_addr_table_1000(void) {
     build_line_addr_table_1000_stride();
 }
 
+/* init_object_positions @ $6B85 — zero the scroll counters $08D1/$08D2/$08D3,
+ * then build the 22-entry world-position word array $08A4(lo)/$08A5(hi) by adding
+ * the 16-bit base $2EE0 to each word of the $6E2D source table (Y=$2A..$00 step 2).
+ * Pure leaf. */
+void init_object_positions(void) {
+    mem[0x08D2] = 0x00;
+    mem[0x08D3] = 0x00;
+    mem[0x08D1] = 0x00;
+    for (int y = 0x2A; y >= 0; y -= 2) {
+        uint16_t lo = (uint16_t)mem[0x6E2D + y] + 0xE0;        /* CLC; ADC #$E0 */
+        mem[0x08A4 + y] = (uint8_t)lo;
+        mem[0x08A5 + y] = (uint8_t)(mem[0x6E2E + y] + 0x2E + (lo >> 8));  /* ADC #$2E + carry */
+    }
+}
+
+/* audio_timer_setup @ $712D — silence the music gate ($00E7), $0655 and $00E5,
+ * clear the POKEY audio timers ($D201/$D203/$D205/$D207) and set AUDCTL=$60.
+ * The POKEY writes go through bus_write (Paula/ignored on Amiga; not in mem[], so
+ * identical side effect in both runs).  Leaf. */
+void audio_timer_setup(void) {
+    mem[0x00E7] = 0x00;
+    mem[0x0655] = 0x00;
+    mem[0x00E5] = 0x00;
+    bus_write(0xD201, 0x00);
+    bus_write(0xD203, 0x00);
+    bus_write(0xD205, 0x00);
+    bus_write(0xD207, 0x00);
+    bus_write(0xD208, 0x60);
+}
+
 /* render_bcd_counter @ $49A0 — render the 3-byte packed-BCD score ($0601-$0603,
  * 6 digits) to the top text line $32C5..$32CA with leading-zero suppression.
  * Flight ISR routine; the first transpiled-on-the-VBI-path fn ported native.

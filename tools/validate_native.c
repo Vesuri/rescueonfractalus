@@ -785,6 +785,8 @@ int main(int argc, char **argv) {
     fails += test_mem_contract_regs("build_line_addr_table_1000_stride",
                                     build_line_addr_table_1000_stride, build_line_addr_table_1000_stride__t6502);
     fails += test_mem_contract("build_line_addr_table_1000", build_line_addr_table_1000, build_line_addr_table_1000__t6502);
+    fails += test_mem_contract("init_object_positions", init_object_positions, init_object_positions__t6502);
+    fails += test_mem_contract("audio_timer_setup", audio_timer_setup, audio_timer_setup__t6502);
     fails += test_mem_contract("compute_target_blip_position", compute_target_blip_position, compute_target_blip_position__t6502);
     fails += test_mem_contract_regs("obj_table_scan_replace", obj_table_scan_replace, obj_table_scan_replace__t6502);
     /* batch 2 — shallow drivers */

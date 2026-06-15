@@ -9808,7 +9808,8 @@ L_6b75:;
 }
 
 /* init_object_positions @ $6B85: Zeroes $08D1/$08D2/$08D3; for Y=$2A..0 step2 adds base $2EE0 to word table $6E2D into 22-entry word array $08A4/$08A5 */
-void init_object_positions(void) {
+/* faithful transliteration kept as the validation oracle; native init_object_positions() lives in rof_native.c (see VALIDATE_FUNCS) */
+void init_object_positions__t6502(void) {
     /* 6b85 */
     LDA(0x00);
     /* 6b87 */
@@ -10610,7 +10611,8 @@ L_712c:;
 }
 
 /* audio_timer_setup @ $712D: Sets up POKEY audio timers + IRQEN=$C0 (timer 1+2 IRQs) */
-void audio_timer_setup(void) {
+/* faithful transliteration kept as the validation oracle; native audio_timer_setup() lives in rof_native.c (see VALIDATE_FUNCS) */
+void audio_timer_setup__t6502(void) {
     /* 712d */
     LDA(0x00);
     /* 712f */
