@@ -307,6 +307,8 @@ VALIDATE_FUNCS = {
     0x69E5,  # dl_lms_build — set $C5/$C6=$300A, $0086=$56, tail dl_lms_fill
     0x76CB,  # game_init_76CB — build the flight display list ($30xx-$32xx) + 2x build_row_addr_table/dl_lms_fill
     0x5A63,  # setup_initials_ptr — $C5/$C6=$3694, BCD of $006D, $3694=0, tail render_bcd_digits_supp_all
+    # batch — the score/level HUD refresh driver:
+    0x3FFA,  # startup_init — refresh level/score/lives HUD digits (draw_digit_low_nibble/draw_2digit_value, ring_push)
 }
 VALIDATE_SUFFIX = '__t6502'
 

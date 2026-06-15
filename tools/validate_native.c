@@ -2006,6 +2006,7 @@ int main(int argc, char **argv) {
     fails += test_dl_lms_build();
     fails += test_mem_contract("game_init_76CB", game_init_76CB, game_init_76CB__t6502);
     fails += test_emit_chain("setup_initials_ptr", setup_initials_ptr, setup_initials_ptr__t6502);
+    fails += test_mem_contract("startup_init", startup_init, startup_init__t6502);
     fails += test_mem_contract_regs("show_cockpit_message", show_cockpit_message, show_cockpit_message__t6502);
     fails += test_mem_contract_regs("mark_slot_and_countdown_char", mark_slot_and_countdown_char, mark_slot_and_countdown_char__t6502);
     fails += test_mem_contract_regs("mark_slot_and_inc_count", mark_slot_and_inc_count, mark_slot_and_inc_count__t6502);

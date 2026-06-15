@@ -2093,6 +2093,65 @@ void setup_initials_ptr(void) {
     render_bcd_digits_supp_all();
 }
 
+/* startup_init @ $3FFA — refresh the level/score HUD digits when their source values
+ * change.  When $0642 is 1 or 2 and ($0642 & $004B)==0, optionally push event $14 (if
+ * $0072!=0) and select the $9E vs $1E indicator base.  Then: redraw the level digit
+ * ($0647, into $33B4) if changed; redraw the 2-digit field ($0641, into $3413/$3445) if
+ * changed; and redraw the score field ($0628 | $00BF, into $3472/$34A4) if changed —
+ * $00BF gets bit7 when $062B!=0 and ($0C & $004B)==0.
+ *
+ * The PHA/ring_push_marked/PLA bracket is reproduced with the real op-macros + native
+ * ring_push_marked so the CPU stack page matches the oracle exactly (ring_push's internal
+ * PLA reads the byte this PHA pushed — eliminating the PHA would diverge mem[$01FF] and the
+ * pulled index).  Digit dests are fixed safe screen RAM.  Contract: mem[]. */
+void startup_init(void) {
+    mem[0x00BF] = 0x00;
+    cpu.Y = 0x1E;
+    LDA(mem[0x0642]);
+    uint8_t v = cpu.A;
+    int skip = (v < 0x01) || (v >= 0x03) || ((v & mem[0x004B]) != 0);
+    if (!skip) {
+        PHA();
+        if (mem[0x0072] != 0x00) {            /* LDA $0072; CMP #0; BEQ skips ring_push */
+            cpu.X = 0x14;
+            ring_push_marked();
+        }
+        PLA();
+        cpu.Y = 0x9E;
+    }
+    /* L_401e */
+    mem[0x33DF] = cpu.Y;
+    cpu.Y = (uint8_t)(cpu.Y - 1);             /* DEY */
+    mem[0x33E0] = cpu.Y;
+    if (cpu.A != mem[0x0647]) {                /* CMP $0647; BEQ L_4038 */
+        mem[0x00BB] = 0xB4; mem[0x00BC] = 0x33;
+        mem[0x0647] = cpu.A;
+        draw_digit_low_nibble();
+    }
+    /* L_4038 */
+    LDA(mem[0x0641]);
+    if (cpu.A != mem[0x0645]) {                /* CMP $0645; BEQ L_4056 */
+        mem[0x0645] = cpu.A;
+        mem[0x00BD] = 0x45; mem[0x00BE] = 0x34;
+        mem[0x00BB] = 0x13; mem[0x00BC] = 0x34;
+        draw_2digit_value();
+    }
+    /* L_4056 */
+    if (mem[0x062B] != 0x00) {
+        if ((0x0C & mem[0x004B]) == 0) mem[0x00BF] = 0x80;   /* LDA #$0C; BIT $004B; BNE skips */
+    }
+    /* L_4065 */
+    LDA(mem[0x0628]);
+    cpu.Y = cpu.A;                             /* TAY */
+    ORA(mem[0x00BF]);
+    if (cpu.A == mem[0x0646]) return;          /* CMP $0646; BEQ return_stub_40af */
+    mem[0x0646] = cpu.A;
+    cpu.A = cpu.Y;                             /* TYA (the raw $0628 value) */
+    mem[0x00BD] = 0xA4; mem[0x00BE] = 0x34;
+    mem[0x00BB] = 0x72; mem[0x00BC] = 0x34;
+    draw_2digit_value();
+}
+
 /* render_bcd_counter @ $49A0 — render the 3-byte packed-BCD score ($0601-$0603,
  * 6 digits) to the top text line $32C5..$32CA with leading-zero suppression.
  * Flight ISR routine; the first transpiled-on-the-VBI-path fn ported native.

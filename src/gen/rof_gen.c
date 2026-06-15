@@ -1734,7 +1734,8 @@ L_3feb:;
 }
 
 /* startup_init @ $3FFA: Init: checks $0642 game state and $004B flag; calls display_sub if state=1 or 2 */
-void startup_init(void) {
+/* faithful transliteration kept as the validation oracle; native startup_init() lives in rof_native.c (see VALIDATE_FUNCS) */
+void startup_init__t6502(void) {
     /* 3ffa */
     LDA(0x00);
     /* 3ffc */
