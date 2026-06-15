@@ -925,6 +925,85 @@ void test_marked_neighbor(void) {
     LDA(0x00);
 }
 
+/* fill_region_2000 @ $3C83 — fill the byte $00B7 across $2000..$2F73 (count $0F73+1
+ * = $0F74 bytes): seed the dest ptr $C1/$C2 = $2000 and the 16-bit count $C4:$C3 =
+ * $0F73, then tail-call the (native) memset_or_copy. */
+void fill_region_2000(void) {
+    mem[0x00C1] = 0x00; mem[0x00C2] = 0x20;   /* dest $2000 */
+    mem[0x00C3] = 0x73; mem[0x00C4] = 0x0F;   /* count $0F73 */
+    memset_or_copy();
+}
+
+/* silence_audio_channels @ $7F60 — write entry A to the SFX gate $0634 and POKEY
+ * AUDF1/2/3/4 ($D201/$D203/$D205/$D207), set AUDCTL ($D208) = $60, then tail-call
+ * the (native) clear_var_0632.  POKEY writes go through bus_write (HW, no mem[]). */
+void silence_audio_channels(void) {
+    mem[0x0634] = cpu.A;
+    bus_write(0xD201, cpu.A); bus_write(0xD203, cpu.A);
+    bus_write(0xD205, cpu.A); bus_write(0xD207, cpu.A);
+    cpu.A = 0x60;
+    bus_write(0xD208, cpu.A);
+    clear_var_0632();
+}
+
+/* init_terrain_render_buffers @ $753B — set the whole terrain boundary table
+ * $260E..$270D = $FF (256 bytes), then fill $00B7 across $1070..$220F (count $11A0)
+ * by seeding the dest ptr $C1/$C2 = $1070 + count $C4:$C3 = $119F and tail-calling
+ * the (native) memset_or_copy. */
+void init_terrain_render_buffers(void) {
+    for (int i = 0; i < 256; i++) mem[0x260E + i] = 0xFF;
+    mem[0x00C1] = 0x70; mem[0x00C2] = 0x10;   /* dest $1070 */
+    mem[0x00C3] = 0x9F; mem[0x00C4] = 0x11;   /* count $119F */
+    memset_or_copy();
+}
+
+/* game_init_7813 @ $7813 — fill $BC00[0..255] with a rotating bit pattern (seed $80,
+ * each step >>2 then ROR if the 2nd shifted-out bit was set) and clear $BD00[0..255].
+ * Pure (no input); the rotate carry chain is reproduced with the cpu shift macros. */
+void game_init_7813(void) {
+    cpu.A = 0x80;
+    uint8_t y = 0x00;
+    do {
+        mem[0xBC00 + y] = cpu.A;
+        LSR_A(); LSR_A();
+        if (cpu.C) ROR_A();
+        y = (uint8_t)(y + 1);
+    } while (y != 0x00);
+    cpu.A = y;                                 /* TYA — y wrapped to 0 */
+    do {
+        mem[0xBD00 + y] = cpu.A;
+        y = (uint8_t)(y + 1);
+    } while (y != 0x00);
+}
+
+/* game_sub_7B54 @ $7B54 — maybe seed the wind/drift cell $2849 with a random value.
+ * Bails if $003A is negative or $2849 already nonzero.  Otherwise a = (RANDOM|$08)&$3F,
+ * shifted right by 1 ($0004 nonzero), 3 ($0004==0 && $062B nonzero), or 0 (both zero). */
+void game_sub_7B54(void) {
+    if (mem[0x003A] & 0x80) return;
+    if (mem[0x2849] != 0x00) return;
+    uint8_t a = (uint8_t)((bus_read(0xD20A) | 0x08) & 0x3F);
+    if (mem[0x0004] != 0x00) {
+        a = (uint8_t)(a >> 1);
+    } else if (mem[0x062B] != 0x00) {
+        a = (uint8_t)(a >> 3);
+    }
+    mem[0x2849] = a;
+}
+
+/* rng_signed_jitter @ $687D — add or subtract the entry magnitude (cpu.A, saved to
+ * $00B7) from the base $0085, choosing the sign from the high bit of a POKEY RANDOM
+ * read: negative => $0085 - mag, else $0085 + mag.  Result in cpu.A. */
+void rng_signed_jitter(void) {
+    mem[0x00B7] = cpu.A;
+    uint8_t base = mem[0x0085];
+    uint8_t r = bus_read(0xD20A);
+    cpu.Y = r;                                 /* LDY sets N from the RANDOM byte */
+    cpu.A = base;
+    if (r & 0x80) { cpu.C = 1; SBC(mem[0x00B7]); }
+    else          { cpu.C = 0; ADC(mem[0x00B7]); }
+}
+
 /* render_bcd_counter @ $49A0 — render the 3-byte packed-BCD score ($0601-$0603,
  * 6 digits) to the top text line $32C5..$32CA with leading-zero suppression.
  * Flight ISR routine; the first transpiled-on-the-VBI-path fn ported native.

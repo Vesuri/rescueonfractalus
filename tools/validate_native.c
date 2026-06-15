@@ -443,6 +443,10 @@ static int test_ret_a(const char *name, void (*native)(void), void (*t6502)(void
         fill_random(pre);
         uint32_t rseed = (xs() & 0x1FFFF); if (rseed == 0) rseed = 1;
         Cpu6502 c = zero_cpu();
+        c.A = (uint8_t)(xs() & 0xFF);   /* entry A matters for some (e.g. rng_signed_jitter); */
+        c.X = (uint8_t)(xs() & 0xFF);   /* the RANDOM-only leaves ignore entry regs, so seeding */
+        c.Y = (uint8_t)(xs() & 0xFF);   /* is harmless for them and diffed identically in both runs. */
+        c.C = (uint8_t)(xs() & 1);
 
         platform_test_seed_rng(rseed);
         memcpy((void *)mem, pre, 65536); cpu = c;
@@ -1174,6 +1178,13 @@ int main(int argc, char **argv) {
     fails += test_ret_a("random_digit", random_digit, random_digit__t6502);
     fails += test_ret_a("random_alpha_index", random_alpha_index, random_alpha_index__t6502);
     fails += test_ret_a("test_marked_neighbor", test_marked_neighbor, test_marked_neighbor__t6502);
+    /* batch — fill-region wrappers + RANDOM/compute leaves */
+    fails += test_mem_contract("fill_region_2000", fill_region_2000, fill_region_2000__t6502);
+    fails += test_mem_contract_regs("silence_audio_channels", silence_audio_channels, silence_audio_channels__t6502);
+    fails += test_mem_contract("init_terrain_render_buffers", init_terrain_render_buffers, init_terrain_render_buffers__t6502);
+    fails += test_mem_contract("game_init_7813", game_init_7813, game_init_7813__t6502);
+    fails += test_mem_contract("game_sub_7B54", game_sub_7B54, game_sub_7B54__t6502);
+    fails += test_ret_a("rng_signed_jitter", rng_signed_jitter, rng_signed_jitter__t6502);
     fails += test_mem_contract("compute_target_blip_position", compute_target_blip_position, compute_target_blip_position__t6502);
     fails += test_mem_contract_regs("obj_table_scan_replace", obj_table_scan_replace, obj_table_scan_replace__t6502);
     /* batch 2 — shallow drivers */
