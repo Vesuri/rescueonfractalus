@@ -8530,7 +8530,8 @@ L_6692:;
 }
 
 /* fill_vertical_span @ $669C: Iterates rows $009E..$009F: ptr $80/$81=tbl[$0084]; masked-plot col $009C via plot_pixel_masked and col $009D>>1 via plot_glyph_pixel_masked per row */
-void fill_vertical_span(void) {
+/* faithful transliteration kept as the validation oracle; native fill_vertical_span() lives in rof_native.c (see VALIDATE_FUNCS) */
+void fill_vertical_span__t6502(void) {
     /* 669c */
     LDA(mem[0x009F]);
     /* 669e */
@@ -8577,14 +8578,16 @@ L_66a7:;
 }
 
 /* set_row_ptr_from_count @ $66C6: Loads Y=$0092 (row counter), tail-calls set_row_ptr (set_row_ptr) to load $80/$81 row base from $073D/$0793 */
-void set_row_ptr_from_count(void) {
+/* faithful transliteration kept as the validation oracle; native set_row_ptr_from_count() lives in rof_native.c (see VALIDATE_FUNCS) */
+void set_row_ptr_from_count__t6502(void) {
     /* 66c6 */
     LDY(mem[0x0092]);
     set_row_ptr(); return;
 }
 
 /* set_row_ptr @ $66C8: Sets bitmap row pointer $0080=$073D[Y], $0081=$0793[Y] (per-scanline base-address table) */
-void set_row_ptr(void) {
+/* faithful transliteration kept as the validation oracle; native set_row_ptr() lives in rof_native.c (see VALIDATE_FUNCS) */
+void set_row_ptr__t6502(void) {
     /* 66c8 */
     LDA(mem[(0x073D)+cpu.Y]);
     /* 66cb */
@@ -10111,7 +10114,8 @@ L_6c91:;
 }
 
 /* plot_pixel_2bpp @ $6C92: Reads byte at ($80),Y, 4x ROL packing 2bpp pixels masking $C0/ORA $C0 via BIT $0082, writes back; sets a 2-bits-per-pixel cell */
-void plot_pixel_2bpp(void) {
+/* faithful transliteration kept as the validation oracle; native plot_pixel_2bpp() lives in rof_native.c (see VALIDATE_FUNCS) */
+void plot_pixel_2bpp__t6502(void) {
     /* 6c92 */
     TXA();
     /* 6c93 */

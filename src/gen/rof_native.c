@@ -352,6 +352,61 @@ void plot_pixel_masked(void) {
     plot_glyph_pixel_masked();
 }
 
+/* set_row_ptr @ $66C8 — load the bitmap row pointer $0080/$0081 from the per-
+ * scanline base-address table $073D(lo)/$0793(hi) indexed by entry cpu.Y. */
+void set_row_ptr(void) {
+    mem[0x0080] = mem[0x073D + cpu.Y];
+    mem[0x0081] = mem[0x0793 + cpu.Y];
+}
+
+/* set_row_ptr_from_count @ $66C6 — Y = row counter $0092, tail set_row_ptr. */
+void set_row_ptr_from_count(void) {
+    cpu.Y = mem[0x0092];
+    set_row_ptr();
+}
+
+/* fill_vertical_span @ $669C — plot a vertical run of pixels down rows $009F..$009E.
+ * Per row: set the row pointer $80/$81 from the addr table, then masked-plot column
+ * $009C (plot_pixel_masked, which also leaves the mask index in cpu.X) and the glyph
+ * column $009D>>1 reusing that mask (plot_glyph_pixel_masked).  $00DF = $009E-$009F
+ * is the inclusive row count; $0084 walks the row index. */
+void fill_vertical_span(void) {
+    mem[0x0084] = mem[0x009F];
+    mem[0x00DF] = (uint8_t)(mem[0x009E] - mem[0x009F]);   /* SEC SBC */
+    for (;;) {
+        cpu.Y = mem[0x0084];
+        mem[0x0080] = mem[0x073D + cpu.Y];
+        mem[0x0081] = mem[0x0793 + cpu.Y];
+        cpu.A = mem[0x009C];
+        plot_pixel_masked();                              /* sets cpu.X = mask index */
+        cpu.Y = (uint8_t)(mem[0x009D] >> 1);
+        plot_glyph_pixel_masked();                        /* reuses cpu.X, new cpu.Y */
+        mem[0x0084] = (uint8_t)(mem[0x0084] + 1);
+        uint8_t df = (uint8_t)(mem[0x00DF] - 1);
+        mem[0x00DF] = df;
+        if (df & 0x80) break;                             /* BPL */
+    }
+}
+
+/* plot_pixel_2bpp @ $6C92 — pack the screen byte at ($80)+Y into a 2-bits-per-pixel
+ * cell: read it, then 4 rounds of {force both top bits if either is set; ROL twice}
+ * through the carry chain (seeded by the entry carry), a final ROL, and write back.
+ * Preserves cpu.X (the 6502 saves/restores it on the stack). */
+void plot_pixel_2bpp(void) {
+    uint8_t savedX = cpu.X;
+    uint8_t c = (uint8_t)(cpu.C & 1);                     /* carry into the first ROL = entry C */
+    uint8_t acc = bus_read(ZP_IND_Y(0x80));
+    mem[0x0082] = 0xC0;                                   /* BIT mask, set once */
+    for (int i = 0; i < 4; i++) {
+        if ((acc & 0xC0) == 0) acc |= 0xC0;               /* BIT $0082; BNE skips -> ORA #$C0 only when top bits clear */
+        uint8_t nc = (uint8_t)((acc >> 7) & 1); acc = (uint8_t)((acc << 1) | c); c = nc;  /* ROL */
+        nc = (uint8_t)((acc >> 7) & 1);          acc = (uint8_t)((acc << 1) | c); c = nc;  /* ROL */
+    }
+    acc = (uint8_t)((acc << 1) | c);                      /* final ROL */
+    bus_write(ZP_IND_Y(0x80), acc);
+    cpu.X = savedX;
+}
+
 /* render_bcd_counter @ $49A0 — render the 3-byte packed-BCD score ($0601-$0603,
  * 6 digits) to the top text line $32C5..$32CA with leading-zero suppression.
  * Flight ISR routine; the first transpiled-on-the-VBI-path fn ported native.

@@ -179,6 +179,10 @@ VALIDATE_FUNCS = {
     0x665D,  # fill_horizontal_span — write pattern $00B9 across a row span into two row ptrs (leaf)
     0x66DE,  # plot_glyph_pixel_masked — OR/AND a 2-bit pixel into ($80)+Y via mask tbls $66E9/$66FB (leaf, entry X/Y)
     0x66D5,  # plot_pixel_masked — A=col -> Y/X mask index, tail plot_glyph_pixel_masked (entry A)
+    0x66C8,  # set_row_ptr — $80/$81 = addr-table[Y] (leaf, entry Y)
+    0x66C6,  # set_row_ptr_from_count — Y=$0092, tail set_row_ptr
+    0x669C,  # fill_vertical_span — per-row masked plot of cols $9C/$9D via plot_pixel_masked/plot_glyph_pixel_masked
+    0x6C92,  # plot_pixel_2bpp — 4x ROL 2bpp pack of ($80)+Y, mask via BIT $0082 (leaf, entry Y+carry; preserves X)
 }
 VALIDATE_SUFFIX = '__t6502'
 

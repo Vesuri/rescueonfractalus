@@ -831,6 +831,18 @@ int main(int argc, char **argv) {
     fails += test_mem_contract("fill_horizontal_span", fill_horizontal_span, fill_horizontal_span__t6502);
     fails += test_mem_contract_regs("plot_glyph_pixel_masked", plot_glyph_pixel_masked, plot_glyph_pixel_masked__t6502);
     fails += test_mem_contract_regs("plot_pixel_masked", plot_pixel_masked, plot_pixel_masked__t6502);
+    fails += test_mem_contract_regs("set_row_ptr", set_row_ptr, set_row_ptr__t6502);
+    fails += test_mem_contract("set_row_ptr_from_count", set_row_ptr_from_count, set_row_ptr_from_count__t6502);
+    fails += test_mem_contract("fill_vertical_span", fill_vertical_span, fill_vertical_span__t6502);
+    /* plot_pixel_2bpp: the 6502 PHA/PLAs X through the stack; the native version
+       keeps it in a local, so the dead stack scratch ($0100-$01FF) is masked. */
+    {
+        static uint16_t stack_pg[256];
+        for (int i = 0; i < 256; i++) stack_pg[i] = (uint16_t)(0x0100 + i);
+        set_ignore(stack_pg, 256);
+        fails += test_mem_contract_regs("plot_pixel_2bpp", plot_pixel_2bpp, plot_pixel_2bpp__t6502);
+        set_ignore(0, 0);
+    }
     fails += test_mem_contract("compute_target_blip_position", compute_target_blip_position, compute_target_blip_position__t6502);
     fails += test_mem_contract_regs("obj_table_scan_replace", obj_table_scan_replace, obj_table_scan_replace__t6502);
     /* batch 2 — shallow drivers */
