@@ -282,6 +282,8 @@ VALIDATE_FUNCS = {
     0x74D7,  # unpack_bitmap_4d3e — bit-reversal bitmap unpacker via $4D3E ptr table (8x4 passes)
     0x6FBF,  # intro_random_setup — DFS maze gen on $0900 grid (RANDOM; scan_grid_neighbors/test_marked_neighbor)
     0x68CF,  # emit_dl_coord_pairs — emit DL LMS coord pairs into $300A/$308B from row table, tail plot_terrain_span
+    # batch — the largest remaining display_setup leaf:
+    0x75F5,  # compute_gauge_geometry_from_006D — derive gauge param block $0617-$062A from $006D (branchy clamps; native bin_to_bcd)
 }
 VALIDATE_SUFFIX = '__t6502'
 

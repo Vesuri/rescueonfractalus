@@ -1628,6 +1628,109 @@ void emit_dl_coord_pairs(void) {
     plot_terrain_span();
 }
 
+/* compute_gauge_geometry_from_006D @ $75F5 — derive the throttle/speed gauge
+ * parameter block from the current gauge value $006D (held in X throughout).
+ * Pure-compute leaf: a chain of clamps/shifts of X writing the gauge geometry
+ * cells $0617-$062A (+ $08A2, scratch $00C1), with the displayed value run
+ * through the native bin_to_bcd for $0628.  No loops.  Contract: mem[] — exit
+ * regs are dead at the display_setup call site; the PHA/PLA byte at $01FF that
+ * the 6502 leaves behind (S=$FF in the harness) is masked in validate_native.c. */
+void compute_gauge_geometry_from_006D(void) {
+    uint8_t x = mem[0x006D];
+
+    /* $75F5-$7600: P = min((X>>1)+2, $14) */
+    uint8_t p = (uint8_t)((x >> 1) + 2);
+    if (p >= 0x14) p = 0x14;
+
+    /* $7602-$7609: $062A = P; $0628 = BCD(P) via native bin_to_bcd */
+    mem[0x062A] = p;
+    cpu.A = p;
+    bin_to_bcd();                       /* sets $00C1=ones, cpu.Y=tens, cpu.A=BCD */
+    mem[0x0628] = cpu.A;
+
+    /* $760d-$7612: $061F = (P>>1)+1 */
+    mem[0x061F] = (uint8_t)((p >> 1) + 1);
+
+    /* $7615-$761d: $0620 = (P>=5) ? P-5 : 0 */
+    mem[0x0620] = (p >= 5) ? (uint8_t)(p - 5) : 0;
+
+    /* $7620-$7632: $0623 = (X==1) ? 0 : (min(X,$2B) << 2) */
+    mem[0x0623] = (x == 1) ? 0 : (uint8_t)(((x >= 0x2B) ? 0x2B : x) << 2);
+
+    /* $7635-$7650: $0621 = $0622 = (X<4) ? 0 : $58 - 2*min(X,$22) */
+    {
+        uint8_t v;
+        if (x < 4) {
+            v = 0;
+        } else {
+            uint8_t c = (x >= 0x23) ? 0x22 : x;
+            mem[0x00C1] = (uint8_t)(c << 1);
+            v = (uint8_t)(0x58 - mem[0x00C1]);
+        }
+        mem[0x0621] = v;
+        mem[0x0622] = v;
+    }
+
+    /* $7653-$7662: $0624 = ($2C - min(X,$28)) >> 1 */
+    {
+        uint8_t c = (x >= 0x28) ? 0x28 : x;
+        mem[0x00C1] = c;
+        mem[0x0624] = (uint8_t)((0x2C - c) >> 1);
+    }
+
+    /* $7665: $00C1 = X (raw) — base for the next two derivations */
+    mem[0x00C1] = x;
+
+    /* $7667-$7675: r=$2A-X (8-bit); if r bit7 set -> 4, else max(r>>1, 4).
+     * BMI/CMP test bit7 of the 8-bit SBC result, not the true sign. */
+    {
+        uint8_t r = (uint8_t)(0x2A - x);
+        uint8_t v;
+        if (r & 0x80) {
+            v = 4;
+        } else {
+            v = (uint8_t)(r >> 1);
+            if (v < 4) v = 4;
+        }
+        mem[0x0618] = v;
+    }
+
+    /* $7678-$7699: r=$1A-X (8-bit) -> $061A, then clamp/scale into $061B.
+     * BMI tests bit7 of the 8-bit result (skips the LSR when set). */
+    {
+        uint8_t r = (uint8_t)(0x1A - x);
+        uint8_t a;
+        if (r & 0x80) {
+            a = r;                          /* bit7 set, no LSR */
+        } else {
+            a = (uint8_t)(r >> 1);
+        }
+        mem[0x061A] = a;
+        if ((a & 0x80) || a < 2) a = 2;     /* $7683-$768a: clamp min 2 */
+        a = (a >= 8) ? 0xFF : (uint8_t)(a << 5);   /* $768b-$7698 */
+        mem[0x061B] = a;
+    }
+
+    /* $769c-$76a2: $061C = (X>>2)+5 */
+    mem[0x061C] = (uint8_t)((x >> 2) + 5);
+
+    /* $76a5-$76b2: $00C1 = X>>2; $0625 = (X>>2 <= 8) ? 8-(X>>2) : 0 */
+    {
+        uint8_t v = (uint8_t)(x >> 2);
+        mem[0x00C1] = v;
+        mem[0x0625] = (v <= 8) ? (uint8_t)(8 - v) : 0;
+    }
+
+    /* $76b5-$76c7: X>=$10 -> $08A2 = min(X-$10,$17), $0617 = 0; else $0617 = X */
+    if (x >= 0x10) {
+        uint8_t d = (uint8_t)(x - 0x10);
+        mem[0x08A2] = (d >= 0x18) ? 0x17 : d;
+        mem[0x0617] = 0;
+    } else {
+        mem[0x0617] = x;
+    }
+}
+
 /* render_bcd_counter @ $49A0 — render the 3-byte packed-BCD score ($0601-$0603,
  * 6 digits) to the top text line $32C5..$32CA with leading-zero suppression.
  * Flight ISR routine; the first transpiled-on-the-VBI-path fn ported native.

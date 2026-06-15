@@ -817,6 +817,30 @@ static int test_emit_dl_coord_pairs(void) {
     return mem_fail;
 }
 
+/* --- compute_gauge_geometry_from_006D @ $75F5: derive the gauge param block from
+ * $006D over fully randomized mem[] (so X = $006D spans 0..255, covering every
+ * clamp branch, and any stray write shows as a diff).  Calls the native bin_to_bcd,
+ * whose PHA/PLA in the 6502 oracle leaves a dead byte at $01FF (S=$FF) that the
+ * native twin doesn't reproduce — masked. */
+static int test_compute_gauge_geometry_from_006D(void) {
+    if (!want("compute_gauge_geometry_from_006D")) return 0;
+    enum { N = 20000 };
+    static uint8_t pre[65536];
+    static const uint16_t ignore[] = { 0x01FF };
+    int mem_fail = 0, cpu_diff = 0, printed = 0;
+    set_ignore(ignore, 1);
+    for (int t = 0; t < N; t++) {
+        fill_random(pre);
+        mem_fail += diff_run("compute_gauge_geometry_from_006D", pre, zero_cpu(),
+                             compute_gauge_geometry_from_006D,
+                             compute_gauge_geometry_from_006D__t6502, t, &printed, &cpu_diff);
+    }
+    set_ignore(0, 0);
+    printf("compute_gauge_geometry_from_006D: %d cases, %d mem mismatch (must be 0), %d cpu diffs\n",
+           N, mem_fail, cpu_diff);
+    return mem_fail;
+}
+
 /* --- intro_random_setup @ $6FBF: RANDOM-driven DFS maze generator on the $0900 map (+$2500
  * stack).  Self-contained (no entry regs / fixture); diff_run seeds the RANDOM stream so both
  * runs trace the same maze.  Fewer cases (each is hundreds of RANDOM reads). --- */
@@ -1775,6 +1799,7 @@ int main(int argc, char **argv) {
     fails += test_unpack_bitmap_4d3e();
     fails += test_intro_random_setup();
     fails += test_emit_dl_coord_pairs();
+    fails += test_compute_gauge_geometry_from_006D();
     fails += test_mem_contract_regs("show_cockpit_message", show_cockpit_message, show_cockpit_message__t6502);
     fails += test_mem_contract_regs("mark_slot_and_countdown_char", mark_slot_and_countdown_char, mark_slot_and_countdown_char__t6502);
     fails += test_mem_contract_regs("mark_slot_and_inc_count", mark_slot_and_inc_count, mark_slot_and_inc_count__t6502);

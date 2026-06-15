@@ -11633,7 +11633,8 @@ void set_0628_bcd_redisplay(void) {
 }
 
 /* compute_gauge_geometry_from_006D @ $75F5: Derives display/gauge coords from $006D into $061F-$0625,$0617,$0618,$061A-$061C,$062A,$08A2; $0628=BCD($006D) */
-void compute_gauge_geometry_from_006D(void) {
+/* faithful transliteration kept as the validation oracle; native compute_gauge_geometry_from_006D() lives in rof_native.c (see VALIDATE_FUNCS) */
+void compute_gauge_geometry_from_006D__t6502(void) {
     /* 75f5 */
     LDX(mem[0x006D]);
     /* 75f7 */
