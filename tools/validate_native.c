@@ -1800,6 +1800,8 @@ int main(int argc, char **argv) {
     fails += test_intro_random_setup();
     fails += test_emit_dl_coord_pairs();
     fails += test_compute_gauge_geometry_from_006D();
+    fails += test_blit_chain("blit_label_row", blit_label_row, blit_label_row__t6502);
+    fails += test_blit_chain("blit_message_block", blit_message_block, blit_message_block__t6502);
     fails += test_mem_contract_regs("show_cockpit_message", show_cockpit_message, show_cockpit_message__t6502);
     fails += test_mem_contract_regs("mark_slot_and_countdown_char", mark_slot_and_countdown_char, mark_slot_and_countdown_char__t6502);
     fails += test_mem_contract_regs("mark_slot_and_inc_count", mark_slot_and_inc_count, mark_slot_and_inc_count__t6502);

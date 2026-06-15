@@ -1731,6 +1731,41 @@ void compute_gauge_geometry_from_006D(void) {
     }
 }
 
+/* blit_label_row @ $6750 — blit a 5-glyph label row.  Index base = (mem[$0004]!=0)
+ * ? 5 : 0; for the 5 codes mem[$6E23+base..base+4] call native glyph_ptr_from_index
+ * (-> $E000 charset glyph -> blit_glyph_8rows) at fixed row $0092=$2E, column $009C=$1B.
+ * Contract: mem[] (blit chain writes the $073D/$0793 row-addr-table bitmap; the
+ * blit_glyph_8rows PHA/PLA stack scribble is masked in validate_native.c). */
+void blit_label_row(void) {
+    mem[0x0092] = 0x2E;
+    mem[0x00C5] = (mem[0x0004] != 0) ? 0x05 : 0x00;   /* LDX $0004; BEQ -> keep, else 5 */
+    mem[0x009C] = 0x1B;
+    mem[0x00C6] = 0x05;                                /* loop count */
+    do {
+        cpu.A = mem[0x6E23 + mem[0x00C5]];
+        glyph_ptr_from_index();
+        mem[0x00C5]++;
+        mem[0x00C6]--;
+    } while (mem[0x00C6] != 0x00);
+}
+
+/* blit_message_block @ $672D — draw the message frame: from row $0092=$54 stepping
+ * up by 8 while non-negative, set the row ptr ($80/$81 = table[$0092]) and plot the
+ * three frame pixels at columns $15/$2E/$47; then tail-call blit_label_row.  $0094=0
+ * (the plot_pixel_masked column-page base).  Contract: mem[] (same row-table bitmap). */
+void blit_message_block(void) {
+    mem[0x0092] = 0x54;
+    mem[0x0094] = 0x00;
+    do {
+        set_row_ptr_from_count();
+        cpu.A = 0x15; plot_pixel_masked();
+        cpu.A = 0x2E; plot_pixel_masked();
+        cpu.A = 0x47; plot_pixel_masked();
+        mem[0x0092] = (uint8_t)(mem[0x0092] - 0x08);
+    } while (!(mem[0x0092] & 0x80));                  /* BPL: loop while bit7 clear */
+    blit_label_row();
+}
+
 /* render_bcd_counter @ $49A0 — render the 3-byte packed-BCD score ($0601-$0603,
  * 6 digits) to the top text line $32C5..$32CA with leading-zero suppression.
  * Flight ISR routine; the first transpiled-on-the-VBI-path fn ported native.

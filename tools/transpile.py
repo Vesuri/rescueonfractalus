@@ -284,6 +284,9 @@ VALIDATE_FUNCS = {
     0x68CF,  # emit_dl_coord_pairs — emit DL LMS coord pairs into $300A/$308B from row table, tail plot_terrain_span
     # batch — the largest remaining display_setup leaf:
     0x75F5,  # compute_gauge_geometry_from_006D — derive gauge param block $0617-$062A from $006D (branchy clamps; native bin_to_bcd)
+    # batch — the message-text blitters (display_setup front):
+    0x6750,  # blit_label_row — blit 5 glyphs ($6E23[$00C5..] codes) via glyph_ptr_from_index; index base 0/5 from $0004
+    0x672D,  # blit_message_block — 11 rows of 3 pixels ($15/$2E/$47) via set_row_ptr_from_count/plot_pixel_masked, tail blit_label_row
 }
 VALIDATE_SUFFIX = '__t6502'
 

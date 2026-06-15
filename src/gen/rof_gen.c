@@ -8711,7 +8711,8 @@ L_6723:;
 }
 
 /* blit_message_block @ $672D: loop cols $92 from $54 down by 8; per col calls set_row_ptr_from_count then plots rows $15/$2E/$47 via plot_pixel_masked */
-void blit_message_block(void) {
+/* faithful transliteration kept as the validation oracle; native blit_message_block() lives in rof_native.c (see VALIDATE_FUNCS) */
+void blit_message_block__t6502(void) {
     /* 672d */
     LDA(0x54);
     /* 672f */
@@ -8749,7 +8750,8 @@ L_6735:;
 }
 
 /* blit_label_row @ $6750: renders 5 glyphs from table $6E23[$C5..]; $C5 base 0 or 5 per flag $0004; col $92=$2E, row $9C=$1B */
-void blit_label_row(void) {
+/* faithful transliteration kept as the validation oracle; native blit_label_row() lives in rof_native.c (see VALIDATE_FUNCS) */
+void blit_label_row__t6502(void) {
     /* 6750 */
     LDA(0x2E);
     /* 6752 */
