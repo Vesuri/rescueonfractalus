@@ -2152,6 +2152,20 @@ void startup_init(void) {
     draw_2digit_value();
 }
 
+/* dl_index_dec @ $69E3 — DEC $008B, then tail dl_lms_build (rebuild the DL from the
+ * decremented index). */
+void dl_index_dec(void) {
+    mem[0x008B] = (uint8_t)(mem[0x008B] - 1);
+    dl_lms_build();
+}
+
+/* dl_index_dec_or_reset @ $69DD — reset $008B=0, then dl_lms_build.  The 6502 does LDA #0
+ * then BEQ, so the branch is unconditional (the dl_index_dec tail is dead). */
+void dl_index_dec_or_reset(void) {
+    mem[0x008B] = 0x00;
+    dl_lms_build();
+}
+
 /* render_bcd_counter @ $49A0 — render the 3-byte packed-BCD score ($0601-$0603,
  * 6 digits) to the top text line $32C5..$32CA with leading-zero suppression.
  * Flight ISR routine; the first transpiled-on-the-VBI-path fn ported native.

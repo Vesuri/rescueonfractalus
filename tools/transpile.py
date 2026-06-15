@@ -309,6 +309,9 @@ VALIDATE_FUNCS = {
     0x5A63,  # setup_initials_ptr — $C5/$C6=$3694, BCD of $006D, $3694=0, tail render_bcd_digits_supp_all
     # batch — the score/level HUD refresh driver:
     0x3FFA,  # startup_init — refresh level/score/lives HUD digits (draw_digit_low_nibble/draw_2digit_value, ring_push)
+    # batch — DL index wrappers (now unblocked by dl_lms_build):
+    0x69E3,  # dl_index_dec — DEC $8B, tail dl_lms_build
+    0x69DD,  # dl_index_dec_or_reset — $8B=0 (LDA#0 makes BEQ unconditional), tail dl_lms_build
 }
 VALIDATE_SUFFIX = '__t6502'
 

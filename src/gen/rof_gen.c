@@ -9462,7 +9462,8 @@ L_69dc:;
 }
 
 /* dl_index_dec_or_reset @ $69DD: Clears $008B; if was 0 tail-calls dl_lms_build(69e5), else dl_index_dec(69e3) then rebuild */
-void dl_index_dec_or_reset(void) {
+/* faithful transliteration kept as the validation oracle; native dl_index_dec_or_reset() lives in rof_native.c (see VALIDATE_FUNCS) */
+void dl_index_dec_or_reset__t6502(void) {
     /* 69dd */
     LDA(0x00);
     /* 69df */
@@ -9473,7 +9474,8 @@ void dl_index_dec_or_reset(void) {
 }
 
 /* dl_index_dec @ $69E3: Decrements $008B (source-table index) then tail-calls dl_lms_build (69e5) */
-void dl_index_dec(void) {
+/* faithful transliteration kept as the validation oracle; native dl_index_dec() lives in rof_native.c (see VALIDATE_FUNCS) */
+void dl_index_dec__t6502(void) {
     /* 69e3 */
     DEC_M(0x008B);
     dl_lms_build(); return;
