@@ -1199,6 +1199,61 @@ void intro_unmark_random_cells(void) {
     } while (i != 0x00);
 }
 
+/* font_display_init @ $5433 — clear the music/voice state tables ($066B..$06F7 in 11
+ * parallel 14-entry columns + $0705 block + $0714) and the ring head $0073/$0074, then
+ * seed the voice-priority slots ($0705[2..8] / POKEY AUDF via $D1FF+X) and the music
+ * timer fields $0712/$0713 = 2/6, AUDCTL ($D208) = $60.  Pure init (POKEY via bus_write). */
+void font_display_init(void) {
+    mem[0x0073] = 0x00; mem[0x0074] = 0x00;
+    static const uint16_t cols[11] = { 0x066B, 0x0705, 0x0687, 0x0695, 0x06A3, 0x06B1,
+                                        0x06BF, 0x06CD, 0x06DB, 0x06E9, 0x06F7 };
+    for (int y = 0x0E; y >= 1; y--)                 /* DEY;BNE: Y=$0E..1 */
+        for (int c = 0; c < 11; c++) mem[cols[c] + y] = 0x00;
+    mem[0x0714] = 0x00;
+    mem[0x0715] = 0x02;
+    for (int y = 4; y >= 1; y--) {                  /* DEY;BNE: Y=4..1 */
+        uint8_t a = (uint8_t)(y << 1);              /* TYA; ASL */
+        mem[0x0705 + y] = a;
+        bus_write(0xD1FF + a, 0x00);                /* TAX; STA $D1FF,X (POKEY) */
+    }
+    mem[0x0706] = 0x00; mem[0x0708] = 0x00;
+    mem[0x0712] = 0x02; mem[0x0713] = 0x06;
+    bus_write(0xD208, 0x60);                        /* AUDCTL */
+}
+
+/* show_cockpit_message @ $47B8 — render a HUD message (entry Y = message id, bit7 set
+ * suppresses the buffer clear, bit6 selects the alt colour $5A in $063E) into the message
+ * buffer $32B7+ from the glyph tables $481E / $491A (indexed by $4927[id]+offset).  Y==9
+ * also sets the colour $00D8=$38.  A glyph with bit7 set is the end marker: stored masked,
+ * and if nonzero terminates the string. */
+void show_cockpit_message(void) {
+    uint8_t y = cpu.Y;
+    if (y & 0x80) y = (uint8_t)(y & 0x7F);          /* bit7: skip clear */
+    else clear_message_buffer();
+    mem[0x0044] = 0x00;
+    mem[0x063E] = 0xFF;
+    if (y >= 0x40) {                                /* bit6: alt colour */
+        y = (uint8_t)(y & 0x3F);
+        mem[0x063E] = 0x5A;
+    }
+    if (y == 0x09) mem[0x00D8] = 0x38;
+    uint8_t x = mem[0x4927 + y];
+    mem[0x00BB] = y;
+    uint8_t pos = 0x00;
+    for (;;) {
+        uint8_t a = (mem[0x00BB] >= 0x15) ? mem[0x491A + x] : mem[0x481E + x];
+        if (a & 0x80) {                             /* end marker */
+            a = (uint8_t)(a & 0x7F);
+            mem[0x32B7 + pos] = a;
+            if (a != 0) return;
+        }
+        mem[0x32B7 + pos] = a;
+        pos = (uint8_t)(pos + 1);
+        x = (uint8_t)(x + 1);
+        if (pos == 0x0E) return;
+    }
+}
+
 /* render_bcd_counter @ $49A0 — render the 3-byte packed-BCD score ($0601-$0603,
  * 6 digits) to the top text line $32C5..$32CA with leading-zero suppression.
  * Flight ISR routine; the first transpiled-on-the-VBI-path fn ported native.

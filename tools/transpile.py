@@ -256,6 +256,9 @@ VALIDATE_FUNCS = {
     # batch — RANDOM-driven intro object-map seeders:
     0x7498,  # intro_seed_object_map — clear $0A00, scan-place entries, stride-$43 RANDOM $64 markers
     0x70B3,  # intro_unmark_random_cells — RANDOM-gated $0900 marker sweep (clear bit7)
+    # batch — font/voice init + cockpit message renderer:
+    0x5433,  # font_display_init — clear music/voice tables + seed slots/timers (POKEY via bus_write)
+    0x47B8,  # show_cockpit_message — render HUD message (entry Y id) into $32B7 from glyph tables
 }
 VALIDATE_SUFFIX = '__t6502'
 

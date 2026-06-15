@@ -516,6 +516,28 @@ static int test_plot_char_bounded(void) {
     return mem_fail + cpu_fail;
 }
 
+/* --- font_display_init @ $5433: clears the music/voice state tables and seeds a few
+ * slots/timers.  The 6502 STA $D1FF,X (indexed) writes are rendered by the transpiler as
+ * DIRECT mem[] stores, but the native twin routes POKEY writes through bus_write (-> Paula
+ * on Amiga), so the four AUDF addresses $D201/$D203/$D205/$D207 are excluded from the
+ * contract (same masking the sfx engine uses for its indexed POKEY writes). --- */
+static int test_font_display_init(void) {
+    if (!want("font_display_init")) return 0;
+    enum { N = 20000 };
+    static uint8_t pre[65536];
+    static const uint16_t ignore[] = { 0xD201, 0xD203, 0xD205, 0xD207 };
+    int mem_fail = 0, cpu_diff = 0, printed = 0;
+    set_ignore(ignore, 4);
+    for (int t = 0; t < N; t++) {
+        fill_random(pre);
+        mem_fail += diff_run("font_display_init", pre, zero_cpu(),
+                             font_display_init, font_display_init__t6502, t, &printed, &cpu_diff);
+    }
+    set_ignore(0, 0);
+    printf("font_display_init: %d cases, %d mem mismatch (must be 0), %d cpu diffs\n", N, mem_fail, cpu_diff);
+    return mem_fail;
+}
+
 /* --- blit_glyph_8rows @ $678B: 8-row glyph blitter.  Needs a realistic fixture: the
  * row-addr table $073D/$0793 points into safe bitmap RAM ($2000 + row*$28); the row
  * index $0092 is mid-range so the up-walk ($2E/row) stays in RAM; the glyph source ptr
@@ -1357,6 +1379,9 @@ int main(int argc, char **argv) {
     /* batch — RANDOM-driven intro object-map seeders */
     fails += test_mem_contract("intro_seed_object_map", intro_seed_object_map, intro_seed_object_map__t6502);
     fails += test_mem_contract("intro_unmark_random_cells", intro_unmark_random_cells, intro_unmark_random_cells__t6502);
+    /* batch — font/voice init + cockpit message renderer */
+    fails += test_font_display_init();
+    fails += test_mem_contract_regs("show_cockpit_message", show_cockpit_message, show_cockpit_message__t6502);
     fails += test_mem_contract_regs("mark_slot_and_countdown_char", mark_slot_and_countdown_char, mark_slot_and_countdown_char__t6502);
     fails += test_mem_contract_regs("mark_slot_and_inc_count", mark_slot_and_inc_count, mark_slot_and_inc_count__t6502);
     fails += test_mem_contract("return_stub_40af", return_stub_40af, return_stub_40af__t6502);
