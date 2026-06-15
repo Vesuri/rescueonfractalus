@@ -1473,6 +1473,42 @@ void game_init_77DF(void) {
     } while (x != 0x00);
 }
 
+/* plot_clipped_pixel @ $7D38 — plot one clipped HUD/radar pixel.  Entry A = source value
+ * ($0058; 0 means "read the existing screen byte").  The pixel at ($004F,$004E) is plotted
+ * only inside the window Y∈[$6C,$97) and X∈[$28,$D8) and when its packed column index stays
+ * below $00B3.  The screen row pointers $0080 / $00C1 come from the row-addr table indexed by
+ * $97-$004E; the pixel is masked into ($00C1)+col via $4F3B[X&3]/$7DEB[X&3].  $004F is always
+ * incremented. */
+void plot_clipped_pixel(void) {
+    mem[0x0058] = cpu.A;
+    uint8_t x = mem[0x004F];
+    uint8_t y = mem[0x004E];
+    if (y >= 0x6C && y < 0x97 && x >= 0x28 && x < 0xD8) {
+        uint8_t ry = (uint8_t)(0x97 - mem[0x004E]);
+        cpu.C = 0;
+        cpu.A = mem[0x073D + ry]; mem[0x0080] = cpu.A; ADC(0x30); mem[0x00C1] = cpu.A;
+        cpu.A = mem[0x0793 + ry]; mem[0x0081] = cpu.A; ADC(0x00); mem[0x00C2] = cpu.A;
+        cpu.A = x;
+        LSR_A(); LSR_A();
+        cpu.C = 0; ADC(0xF8);
+        uint8_t col = cpu.A;
+        CMP(mem[0x00B3]);
+        if (!cpu.C) {                               /* BCS skip => plot when col < $00B3 */
+            cpu.Y = col;
+            uint8_t mx = (uint8_t)(x & 0x03);
+            uint8_t a = mem[0x0058];
+            if (a == 0x00) a = bus_read(ZP_IND_Y(0x0080));
+            a &= mem[0x4F3B + mx];
+            mem[0x0095] = a;
+            uint8_t b = bus_read(ZP_IND_Y(0x00C1));
+            b &= mem[0x7DEB + mx];
+            b |= mem[0x0095];
+            bus_write(ZP_IND_Y(0x00C1), b);
+        }
+    }
+    mem[0x004F] = (uint8_t)(mem[0x004F] + 1);
+}
+
 /* render_bcd_counter @ $49A0 — render the 3-byte packed-BCD score ($0601-$0603,
  * 6 digits) to the top text line $32C5..$32CA with leading-zero suppression.
  * Flight ISR routine; the first transpiled-on-the-VBI-path fn ported native.

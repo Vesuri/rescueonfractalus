@@ -767,6 +767,33 @@ static int test_rle_run_fill(void) {
     return mem_fail;
 }
 
+/* --- plot_clipped_pixel @ $7D38: clipped masked pixel.  Plots through row pointers from the
+ * row-addr table $073D/$0793, so seed it -> $2000 + row*$28; the coords $004E/$004F are kept
+ * inside the clip window and $00B3 high so the plot path runs; mask tables $4F3B/$7DEB and the
+ * source $0058 are random.  Both runs share it; result observed via mem[]. --- */
+static int test_plot_clipped_pixel(void) {
+    if (!want("plot_clipped_pixel")) return 0;
+    enum { N = 50000 };
+    static uint8_t pre[65536];
+    int mem_fail = 0, cpu_diff = 0, printed = 0;
+    for (int t = 0; t < N; t++) {
+        fill_random(pre);
+        for (int i = 0; i <= 0x54; i++) {
+            uint16_t a = (uint16_t)(0x2000 + i * 0x28);
+            pre[0x073D + i] = (uint8_t)a; pre[0x0793 + i] = (uint8_t)(a >> 8);
+        }
+        pre[0x004E] = (uint8_t)(0x6C + (xs() % 0x2B));   /* Y in [$6C,$97) */
+        pre[0x004F] = (uint8_t)(0x28 + (xs() % 0xB0));   /* X in [$28,$D8) */
+        pre[0x00B3] = 0x80;                              /* high limit so col passes */
+        Cpu6502 c = zero_cpu();
+        c.A = (uint8_t)(xs() & 0xFF);                    /* source value $0058 */
+        mem_fail += diff_run("plot_clipped_pixel", pre, c,
+                             plot_clipped_pixel, plot_clipped_pixel__t6502, t, &printed, &cpu_diff);
+    }
+    printf("plot_clipped_pixel: %d cases, %d mem mismatch (must be 0), %d cpu diffs\n", N, mem_fail, cpu_diff);
+    return mem_fail;
+}
+
 /* --- loader_util @ $3C00: clears three fixed regions via memset_or_copy.  Input-less and
  * deterministic, so a small N fully exercises it (random pre[] outside the cleared regions is
  * preserved identically by both runs). --- */
@@ -1658,6 +1685,7 @@ int main(int argc, char **argv) {
     fails += test_rle_decompress();
     fails += test_loader_util();
     fails += test_game_init_77DF();
+    fails += test_plot_clipped_pixel();
     fails += test_mem_contract_regs("show_cockpit_message", show_cockpit_message, show_cockpit_message__t6502);
     fails += test_mem_contract_regs("mark_slot_and_countdown_char", mark_slot_and_countdown_char, mark_slot_and_countdown_char__t6502);
     fails += test_mem_contract_regs("mark_slot_and_inc_count", mark_slot_and_inc_count, mark_slot_and_inc_count__t6502);
