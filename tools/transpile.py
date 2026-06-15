@@ -232,6 +232,10 @@ VALIDATE_FUNCS = {
     0x7813,  # game_init_7813 — $BC00 rotating bit pattern + $BD00=0 (pure)
     0x7B54,  # game_sub_7B54 — maybe-seed $2849 from (RANDOM|$08)&$3F shifted by 0/1/3
     0x687D,  # rng_signed_jitter — $0085 +/- entry-A magnitude, sign from RANDOM bit7; result in A
+    # batch — cockpit/score init + the zero-suppress char plotter:
+    0x45C5,  # init_cockpit_bar_cells — seed cockpit bar graphic cells $2107.. = $BE/$AA (pure)
+    0x497D,  # add_and_show_bcd_counter — score += delta $0045/$0046 (binary), tail render_bcd_counter
+    0x49D9,  # plot_char_bounded — zero-suppress digit plotter via ($C5)+Y; X=suppress flag (entry A/X/Y)
 }
 VALIDATE_SUFFIX = '__t6502'
 

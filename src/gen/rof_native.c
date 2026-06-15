@@ -1004,6 +1004,54 @@ void rng_signed_jitter(void) {
     else          { cpu.C = 0; ADC(mem[0x00B7]); }
 }
 
+/* init_cockpit_bar_cells @ $45C5 — seed the cockpit bar graphic cells: $BE into the
+ * four corner pairs ($2107/8, $2137/8, $21C7/8, $21F7/8) and $AA into the two middle
+ * pairs ($2167/8, $2197/8).  Pure (no input). */
+void init_cockpit_bar_cells(void) {
+    mem[0x2107] = 0xBE; mem[0x2108] = 0xBE; mem[0x2137] = 0xBE; mem[0x2138] = 0xBE;
+    mem[0x21C7] = 0xBE; mem[0x21C8] = 0xBE; mem[0x21F7] = 0xBE; mem[0x21F8] = 0xBE;
+    mem[0x2167] = 0xAA; mem[0x2168] = 0xAA; mem[0x2197] = 0xAA; mem[0x2198] = 0xAA;
+}
+
+/* add_and_show_bcd_counter @ $497D — add the 16-bit delta $0045/$0046 into the 4-byte
+ * score $0600-$0603 (big-endian, $0603 = low) and re-render it.  The 6502 uses SED but
+ * our ADC ignores the decimal flag (matching the transliterated oracle), so the add is
+ * binary; tail-calls the (native) render_bcd_counter (which then clears $0045/$0046). */
+void add_and_show_bcd_counter(void) {
+    cpu.A = mem[0x0603]; cpu.C = 0; ADC(mem[0x0045]); mem[0x0603] = cpu.A;
+    cpu.A = mem[0x0602];            ADC(mem[0x0046]); mem[0x0602] = cpu.A;
+    cpu.A = mem[0x0601];            ADC(0x00);        mem[0x0601] = cpu.A;
+    cpu.A = mem[0x0600];            ADC(0x00);        mem[0x0600] = cpu.A;
+    render_bcd_counter();
+}
+
+/* plot_char_bounded @ $49D9 — plot one score/HUD digit at column Y through the dest
+ * pointer $00C5/$00C6, with leading-zero suppression.  X is the running "seen a nonzero
+ * digit" flag: plot unconditionally if X!=0; else if the digit A!=0 plot and set X;
+ * else (a leading zero) plot only when the column Y has reached the threshold $0619
+ * (forcing at least one "0").  The char code is digit + $50.  Y is always advanced. */
+void plot_char_bounded(void) {
+    uint8_t a = cpu.A, x = cpu.X, y = cpu.Y;
+    int plot = 1;
+    if (x == 0) {
+        if (a != 0) {
+            x = (uint8_t)(x + 1);                 /* INX — first nonzero digit */
+        } else if (y < mem[0x0619]) {
+            plot = 0;                             /* leading zero below threshold: blank */
+        } else {
+            x = (uint8_t)(x + 1);                 /* INX — forced zero at/after threshold */
+        }
+    }
+    if (plot) {
+        a = (uint8_t)(a + 0x50);                  /* CLC; ADC #$50 (char code) */
+        cpu.Y = y;
+        bus_write(ZP_IND_Y(0x00C5), a);
+    }
+    cpu.A = a;
+    cpu.X = x;
+    cpu.Y = (uint8_t)(y + 1);                     /* INY */
+}
+
 /* render_bcd_counter @ $49A0 — render the 3-byte packed-BCD score ($0601-$0603,
  * 6 digits) to the top text line $32C5..$32CA with leading-zero suppression.
  * Flight ISR routine; the first transpiled-on-the-VBI-path fn ported native.

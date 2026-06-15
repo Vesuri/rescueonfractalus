@@ -474,6 +474,48 @@ static int test_ret_a(const char *name, void (*native)(void), void (*t6502)(void
     return mem_fail + cpu_fail;
 }
 
+/* --- plot_char_bounded @ $49D9: zero-suppress digit plotter.  Writes one char through
+ * the dest pointer $00C5/$00C6, so seed it into safe bitmap RAM ($2000); entry A (digit),
+ * X (suppress flag), Y (column) and the threshold $0619 are randomized.  The observable
+ * result is mem[] AND the returned cpu.X (suppress flag) / cpu.A / cpu.Y, so assert all. --- */
+static int test_plot_char_bounded(void) {
+    if (!want("plot_char_bounded")) return 0;
+    enum { N = 50000 };
+    static uint8_t pre[65536], ref_mem[65536];
+    int mem_fail = 0, cpu_fail = 0, printed = 0;
+
+    for (int t = 0; t < N; t++) {
+        fill_random(pre);
+        pre[0x00C5] = 0x00; pre[0x00C6] = 0x20;        /* dest ptr -> $2000 (safe RAM) */
+        Cpu6502 c = zero_cpu();
+        c.A = (uint8_t)(xs() % 0x0A);                  /* digit 0-9 */
+        c.X = (uint8_t)(xs() & 1);                     /* suppress flag 0/1 */
+        c.Y = (uint8_t)(xs() & 0xFF);                  /* column (any; $2000+Y stays in RAM) */
+
+        memcpy((void *)mem, pre, 65536); cpu = c;
+        plot_char_bounded__t6502();
+        memcpy(ref_mem, (void *)mem, sizeof ref_mem);
+        Cpu6502 ref_cpu = cpu;
+
+        memcpy((void *)mem, pre, 65536); cpu = c;
+        plot_char_bounded();
+
+        if (memcmp((const void *)mem, ref_mem, 65536) != 0) {
+            mem_fail++;
+            if (printed < 12)
+                for (int i = 0; i < 65536 && printed < 12; i++)
+                    if (mem[i] != ref_mem[i]) {
+                        printf("[MEM DIFF] plot_char_bounded case %d  $%04X  ref=$%02X native=$%02X\n",
+                               t, i, ref_mem[i], mem[i]); printed++;
+                    }
+        }
+        if (cpu.A != ref_cpu.A || cpu.X != ref_cpu.X || cpu.Y != ref_cpu.Y) cpu_fail++;
+    }
+    printf("plot_char_bounded: %d cases, %d mem mismatch, %d cpu(A/X/Y) mismatch (both must be 0)\n",
+           N, mem_fail, cpu_fail);
+    return mem_fail + cpu_fail;
+}
+
 /* --- draw_symmetric_span_loop @ $6642: nested span fill, $0096 outer iterations.
  * The inner span fills write via the per-scanline address table ($073D lo/$0793 hi).
  * With fully random mem those pointers are garbage and the writes land on the routine's
@@ -1185,6 +1227,10 @@ int main(int argc, char **argv) {
     fails += test_mem_contract("game_init_7813", game_init_7813, game_init_7813__t6502);
     fails += test_mem_contract("game_sub_7B54", game_sub_7B54, game_sub_7B54__t6502);
     fails += test_ret_a("rng_signed_jitter", rng_signed_jitter, rng_signed_jitter__t6502);
+    /* batch — cockpit/score init + zero-suppress char plotter */
+    fails += test_mem_contract("init_cockpit_bar_cells", init_cockpit_bar_cells, init_cockpit_bar_cells__t6502);
+    fails += test_mem_contract("add_and_show_bcd_counter", add_and_show_bcd_counter, add_and_show_bcd_counter__t6502);
+    fails += test_plot_char_bounded();
     fails += test_mem_contract("compute_target_blip_position", compute_target_blip_position, compute_target_blip_position__t6502);
     fails += test_mem_contract_regs("obj_table_scan_replace", obj_table_scan_replace, obj_table_scan_replace__t6502);
     /* batch 2 — shallow drivers */
