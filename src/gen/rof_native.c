@@ -1293,6 +1293,28 @@ void game_sub_6811(void) {
     } while (mem[0x00DF] != 0x00);
 }
 
+/* plot_terrain_span @ $692A — draw a run of vertical spans.  The span count $0096 comes
+ * from $6E0F[Y] (entry Y; +2 when Y==0); each pass calls the (native) fill_vertical_span
+ * and steps the column pair $009C--/$009D++.  Afterwards the row window is shifted by the
+ * span value $0085 (=$6E0F[Y]): $009E += $0085, $009F -= $0085. */
+void plot_terrain_span(void) {
+    uint8_t a = mem[0x6E0F + cpu.Y];
+    mem[0x0096] = a;
+    if (cpu.Y == 0x00) {
+        mem[0x0096] = (uint8_t)(mem[0x0096] + 1);
+        mem[0x0096] = (uint8_t)(mem[0x0096] + 1);
+    }
+    mem[0x0085] = a;
+    do {
+        fill_vertical_span();
+        mem[0x009C] = (uint8_t)(mem[0x009C] - 1);
+        mem[0x009D] = (uint8_t)(mem[0x009D] + 1);
+        mem[0x0096] = (uint8_t)(mem[0x0096] - 1);
+    } while (mem[0x0096] != 0x00);
+    mem[0x009E] = (uint8_t)(mem[0x009E] + mem[0x0085]);
+    mem[0x009F] = (uint8_t)(mem[0x009F] - mem[0x0085]);
+}
+
 /* render_bcd_counter @ $49A0 — render the 3-byte packed-BCD score ($0601-$0603,
  * 6 digits) to the top text line $32C5..$32CA with leading-zero suppression.
  * Flight ISR routine; the first transpiled-on-the-VBI-path fn ported native.

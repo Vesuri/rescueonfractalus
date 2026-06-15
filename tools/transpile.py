@@ -260,6 +260,7 @@ VALIDATE_FUNCS = {
     0x5433,  # font_display_init — clear music/voice tables + seed slots/timers (POKEY via bus_write)
     0x47B8,  # show_cockpit_message — render HUD message (entry Y id) into $32B7 from glyph tables
     0x6811,  # game_sub_6811 — scatter random jittered dots via rng_signed_jitter/set_row_ptr/plot_pixel_masked
+    0x692A,  # plot_terrain_span — run of vertical spans via fill_vertical_span; steps cols, shifts row window
 }
 VALIDATE_SUFFIX = '__t6502'
 

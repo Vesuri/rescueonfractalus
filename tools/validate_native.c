@@ -516,6 +516,34 @@ static int test_plot_char_bounded(void) {
     return mem_fail + cpu_fail;
 }
 
+/* --- plot_terrain_span @ $692A: run of vertical spans via fill_vertical_span (plots
+ * through the row-addr table $073D/$0793).  Fixture: table -> $2000 + row*$28; a FIXED
+ * row window $009F=$08..$009E=$28 (valid table indices, unchanged during the inner loop);
+ * column starts $009C/$009D mid-range; the span count $6E0F[Y] bounded small (1..16) to
+ * keep the column walk in-row and the test fast.  Both runs share it. --- */
+static int test_plot_terrain_span(void) {
+    if (!want("plot_terrain_span")) return 0;
+    enum { N = 4000 };
+    static uint8_t pre[65536];
+    int mem_fail = 0, cpu_diff = 0, printed = 0;
+    for (int t = 0; t < N; t++) {
+        fill_random(pre);
+        for (int i = 0; i <= 0x54; i++) {
+            uint16_t a = (uint16_t)(0x2000 + i * 0x28);
+            pre[0x073D + i] = (uint8_t)a; pre[0x0793 + i] = (uint8_t)(a >> 8);
+        }
+        pre[0x009F] = 0x08; pre[0x009E] = 0x28;       /* fixed row window (valid indices) */
+        pre[0x009C] = 0x60; pre[0x009D] = 0x10;       /* column starts */
+        Cpu6502 c = zero_cpu();
+        c.Y = (uint8_t)(xs() % 0x21);                 /* entry Y 0..$20 (indexes $6E0F) */
+        pre[0x6E0F + c.Y] = (uint8_t)(1 + (xs() % 16));/* span count 1..16 */
+        mem_fail += diff_run("plot_terrain_span", pre, c,
+                             plot_terrain_span, plot_terrain_span__t6502, t, &printed, &cpu_diff);
+    }
+    printf("plot_terrain_span: %d cases, %d mem mismatch (must be 0), %d cpu diffs\n", N, mem_fail, cpu_diff);
+    return mem_fail;
+}
+
 /* --- game_sub_6811 @ $6811: scatter random dots.  Plots through set_row_ptr (row-addr
  * table $073D/$0793 -> $80/$81) + plot_pixel_masked, so seed the table into safe bitmap
  * RAM ($2000 + row*$28); the jittered row stays within 0..$54 by construction.  diff_run
@@ -1404,6 +1432,7 @@ int main(int argc, char **argv) {
     /* batch — font/voice init + cockpit message renderer */
     fails += test_font_display_init();
     fails += test_game_sub_6811();
+    fails += test_plot_terrain_span();
     fails += test_mem_contract_regs("show_cockpit_message", show_cockpit_message, show_cockpit_message__t6502);
     fails += test_mem_contract_regs("mark_slot_and_countdown_char", mark_slot_and_countdown_char, mark_slot_and_countdown_char__t6502);
     fails += test_mem_contract_regs("mark_slot_and_inc_count", mark_slot_and_inc_count, mark_slot_and_inc_count__t6502);
