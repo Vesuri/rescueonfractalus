@@ -701,6 +701,40 @@ void copy_row_addr_subset(void) {
     }
 }
 
+/* memset_or_copy @ $3C93 — fill the byte $00B7 across [dest .. dest+count], where dest
+ * is the 16-bit pointer $00C1/$00C2 (post-incremented) and count is the 16-bit value
+ * $00C4:$00C3 + 1 (each underflow of $00C3 borrows from $00C4; loop ends when both
+ * reach $FF).  Writes through bus_write; $00B7 is re-read each pass (faithful). */
+void memset_or_copy(void) {
+    for (;;) {
+        cpu.Y = 0x00;
+        bus_write(ZP_IND_Y(0x00C1), mem[0x00B7]);
+        mem[0x00C1] = (uint8_t)(mem[0x00C1] + 1);             /* INC $C1 */
+        if (mem[0x00C1] == 0x00) mem[0x00C2] = (uint8_t)(mem[0x00C2] + 1);  /* INC $C2 on carry */
+        mem[0x00C3] = (uint8_t)(mem[0x00C3] - 1);             /* DEC $C3 */
+        if (mem[0x00C3] != 0xFF) continue;                    /* loop while no underflow */
+        mem[0x00C4] = (uint8_t)(mem[0x00C4] - 1);             /* DEC $C4 */
+        if (mem[0x00C4] != 0xFF) continue;
+        return;
+    }
+}
+
+/* copy_bytes_to_dst @ $3C61 — write entry cpu.A to the dest pointer $00BD/$00BE
+ * (post-incremented), X times (entry cpu.X, 0 => 256), at offset cpu.Y; then bump the
+ * source pointer $00BB/$00BC once. */
+void copy_bytes_to_dst(void) {
+    uint8_t a = cpu.A;
+    uint8_t x = cpu.X;
+    do {
+        bus_write(ZP_IND_Y(0x00BD), a);
+        mem[0x00BD] = (uint8_t)(mem[0x00BD] + 1);             /* INC $BD */
+        if (mem[0x00BD] == 0x00) mem[0x00BE] = (uint8_t)(mem[0x00BE] + 1);  /* INC $BE on carry */
+        x = (uint8_t)(x - 1);                                 /* DEX */
+    } while (x != 0);                                         /* BNE */
+    mem[0x00BB] = (uint8_t)(mem[0x00BB] + 1);                 /* INC $BB */
+    if (mem[0x00BB] == 0x00) mem[0x00BC] = (uint8_t)(mem[0x00BC] + 1);  /* INC $BC on carry */
+}
+
 /* render_bcd_counter @ $49A0 — render the 3-byte packed-BCD score ($0601-$0603,
  * 6 digits) to the top text line $32C5..$32CA with leading-zero suppression.
  * Flight ISR routine; the first transpiled-on-the-VBI-path fn ported native.

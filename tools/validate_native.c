@@ -640,6 +640,46 @@ static int test_vobj_pos_to_pmstrip_index(void) {
     return mem_fail + cpu_fail;
 }
 
+/* --- memset_or_copy @ $3C93: pointer fill.  Seed dest $C1/$C2 -> $2000 and a small
+ * 16-bit count ($C3 = 0..$3F, $C4 = 0) so the fill stays in safe bitmap RAM and the
+ * loop is short; a random dest/count could fill 64 KB over its own ZP counters. --- */
+static int test_memset_or_copy(void) {
+    if (!want("memset_or_copy")) return 0;
+    enum { N = 8000 };
+    static uint8_t pre[65536];
+    int mem_fail = 0, cpu_diff = 0, printed = 0;
+    for (int t = 0; t < N; t++) {
+        fill_random(pre);
+        pre[0x00C1] = 0x00; pre[0x00C2] = 0x20;            /* dest = $2000 */
+        pre[0x00C3] = (uint8_t)(xs() & 0x3F); pre[0x00C4] = 0x00;  /* small count */
+        mem_fail += diff_run("memset_or_copy", pre, zero_cpu(),
+                             memset_or_copy, memset_or_copy__t6502, t, &printed, &cpu_diff);
+    }
+    printf("memset_or_copy: %d cases, %d mem mismatch (must be 0), %d cpu diffs\n", N, mem_fail, cpu_diff);
+    return mem_fail;
+}
+
+/* --- copy_bytes_to_dst @ $3C61: pointer fill, count = entry X (<=256).  Seed dest
+ * $BD/$BE -> $2000; entry A (value), X (count), Y (offset) are randomized. --- */
+static int test_copy_bytes_to_dst(void) {
+    if (!want("copy_bytes_to_dst")) return 0;
+    enum { N = 8000 };
+    static uint8_t pre[65536];
+    int mem_fail = 0, cpu_diff = 0, printed = 0;
+    for (int t = 0; t < N; t++) {
+        fill_random(pre);
+        pre[0x00BD] = 0x00; pre[0x00BE] = 0x20;            /* dest = $2000 */
+        Cpu6502 c = zero_cpu();
+        c.A = (uint8_t)(xs() & 0xFF);
+        c.X = (uint8_t)(xs() & 0xFF);
+        c.Y = (uint8_t)(xs() & 0xFF);
+        mem_fail += diff_run("copy_bytes_to_dst", pre, c,
+                             copy_bytes_to_dst, copy_bytes_to_dst__t6502, t, &printed, &cpu_diff);
+    }
+    printf("copy_bytes_to_dst: %d cases, %d mem mismatch (must be 0), %d cpu diffs\n", N, mem_fail, cpu_diff);
+    return mem_fail;
+}
+
 /* Like test_mem_contract but with random entry A/X/Y/C — for routines that read
  * an entry register as input (a table index, a value to store, an entry carry). */
 static int test_mem_contract_regs(const char *name, void (*native)(void), void (*t6502)(void)) {
@@ -1074,6 +1114,8 @@ int main(int argc, char **argv) {
     fails += test_vobj_pos_to_pmstrip_index();
     fails += test_mem_contract("copy_terrain_seed_rows", copy_terrain_seed_rows, copy_terrain_seed_rows__t6502);
     fails += test_mem_contract("copy_row_addr_subset", copy_row_addr_subset, copy_row_addr_subset__t6502);
+    fails += test_memset_or_copy();
+    fails += test_copy_bytes_to_dst();
     fails += test_mem_contract("compute_target_blip_position", compute_target_blip_position, compute_target_blip_position__t6502);
     fails += test_mem_contract_regs("obj_table_scan_replace", obj_table_scan_replace, obj_table_scan_replace__t6502);
     /* batch 2 — shallow drivers */

@@ -205,6 +205,8 @@ VALIDATE_FUNCS = {
     0x41DA,  # vobj_pos_to_pmstrip_index — Y = ($DC - $062F) >> 2 (result in Y/A)
     0x45EE,  # copy_terrain_seed_rows — copy 3x8 seed rows $4DD2/$4DDA/$4DE2 -> $0C88/$0D88/$0B88
     0x7483,  # copy_row_addr_subset — copy 48 row-addr entries $073D/$0793[Y] -> $2932/$2962[X]
+    0x3C93,  # memset_or_copy — fill $00B7 to dest ptr $C1/$C2, 16-bit count $C3/$C4 (pointer fill)
+    0x3C61,  # copy_bytes_to_dst — write entry A to dest ptr $BD/$BE, X times; then INC $BB/$BC (pointer fill)
 }
 VALIDATE_SUFFIX = '__t6502'
 

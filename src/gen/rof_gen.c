@@ -1383,7 +1383,8 @@ L_3c5f:;
 }
 
 /* copy_bytes_to_dst @ $3C61: Write A to dst ptr $BD/$BE X times (incrementing dst), then advance src ptr $BB/$BC by 1 */
-void copy_bytes_to_dst(void) {
+/* faithful transliteration kept as the validation oracle; native copy_bytes_to_dst() lives in rof_native.c (see VALIDATE_FUNCS) */
+void copy_bytes_to_dst__t6502(void) {
 L_3c61:;
     /* 3c61 */
     bus_write(ZP_IND_Y(0xBD), cpu.A);
@@ -1462,7 +1463,8 @@ void fill_region_2000(void) {
 }
 
 /* memset_or_copy @ $3C93: Utility: likely memset/memcopy (called from multiple sites) */
-void memset_or_copy(void) {
+/* faithful transliteration kept as the validation oracle; native memset_or_copy() lives in rof_native.c (see VALIDATE_FUNCS) */
+void memset_or_copy__t6502(void) {
     /* 3c93 */
     LDY(0x00);
 L_3c95:;
