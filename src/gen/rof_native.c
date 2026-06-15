@@ -439,6 +439,32 @@ void gen_terrain_column(void) {
     random_terrain_height(); mem[0x0F32 + y] = cpu.A;
 }
 
+/* fill_terrain_columns @ $6AE5 — fill all 89 columns (Y=$59..$01) of the four
+ * parallel terrain buffers by calling gen_terrain_column per column. */
+void fill_terrain_columns(void) {
+    for (uint8_t y = 0x59; y != 0x00; y--) {
+        cpu.Y = y;
+        gen_terrain_column();
+    }
+}
+
+/* draw_shape_rows_loop @ $6620 — for 86 rows ($0092=$55..$00) set the row pointer
+ * from the row counter, then masked-plot three columns ($009C, $009D, and
+ * $00A0=$009D+1) into that row.  Tail of draw_frame_pattern_seq. */
+void draw_shape_rows_loop(void) {
+    mem[0x0092] = 0x55;
+    mem[0x00A0] = (uint8_t)(mem[0x009D] + 1);             /* CLC; ADC #1 */
+    for (;;) {
+        set_row_ptr_from_count();                         /* $80/$81 = table[$0092] */
+        cpu.A = mem[0x009C]; plot_pixel_masked();
+        cpu.A = mem[0x009D]; plot_pixel_masked();
+        cpu.A = mem[0x00A0]; plot_pixel_masked();
+        uint8_t n = (uint8_t)(mem[0x0092] - 1);
+        mem[0x0092] = n;
+        if (n & 0x80) break;                              /* DEC $0092; BPL */
+    }
+}
+
 /* render_bcd_counter @ $49A0 — render the 3-byte packed-BCD score ($0601-$0603,
  * 6 digits) to the top text line $32C5..$32CA with leading-zero suppression.
  * Flight ISR routine; the first transpiled-on-the-VBI-path fn ported native.

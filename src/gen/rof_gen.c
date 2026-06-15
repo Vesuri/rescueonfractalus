@@ -8390,7 +8390,8 @@ L_661e:;
 }
 
 /* draw_shape_rows_loop @ $6620: Sets row count $0092=0x55, $00A0=$009D+1; loops 85x: set_row_ptr_from_count then masked-plots cols $009C/$009D/$00A0 via plot_pixel_masked */
-void draw_shape_rows_loop(void) {
+/* faithful transliteration kept as the validation oracle; native draw_shape_rows_loop() lives in rof_native.c (see VALIDATE_FUNCS) */
+void draw_shape_rows_loop__t6502(void) {
     /* 6620 */
     LDA(0x55);
     /* 6622 */
@@ -9642,7 +9643,8 @@ void sub_multibyte_a1(void) {
 }
 
 /* fill_terrain_columns @ $6AE5: LDY #$59; loops 89x calling gen_terrain_column to fill all 4 parallel terrain buffers $0C32/$0D32/$0E32/$0F32 */
-void fill_terrain_columns(void) {
+/* faithful transliteration kept as the validation oracle; native fill_terrain_columns() lives in rof_native.c (see VALIDATE_FUNCS) */
+void fill_terrain_columns__t6502(void) {
     /* 6ae5 */
     LDY(0x59);
 L_6ae7:;

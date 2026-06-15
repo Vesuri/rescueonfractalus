@@ -463,6 +463,33 @@ static int test_draw_symmetric_span_loop(void) {
     return mem_fail;
 }
 
+/* --- draw_shape_rows_loop @ $6620: 86-row masked plot via the row-addr table.
+ * Same hazard as draw_symmetric_span_loop — random row pointers make plot_pixel_masked
+ * overwrite the $0092 loop counter and hang both runs.  Seed the addr table into safe
+ * bitmap RAM ($2000 + row*$28) and bound the plotted columns ($009C/$009D). --- */
+static int test_draw_shape_rows_loop(void) {
+    if (!want("draw_shape_rows_loop")) return 0;
+    enum { N = 8000 };
+    static uint8_t pre[65536];
+    int mem_fail = 0, cpu_diff = 0, printed = 0;
+    for (int t = 0; t < N; t++) {
+        fill_random(pre);
+        for (int i = 0; i <= 0x55; i++) {
+            uint16_t p = (uint16_t)(0x2000 + i * 0x28);
+            pre[0x073D + i] = (uint8_t)p;
+            pre[0x0793 + i] = (uint8_t)(p >> 8);
+        }
+        pre[0x009C] = (uint8_t)(0x20 + (xs() & 0x1F));     /* plotted columns */
+        pre[0x009D] = (uint8_t)(0x20 + (xs() & 0x1F));
+        mem_fail += diff_run("draw_shape_rows_loop", pre, zero_cpu(),
+                             draw_shape_rows_loop, draw_shape_rows_loop__t6502,
+                             t, &printed, &cpu_diff);
+    }
+    printf("draw_shape_rows_loop: %d cases, %d mem mismatch (must be 0), %d cpu diffs\n",
+           N, mem_fail, cpu_diff);
+    return mem_fail;
+}
+
 /* Like test_mem_contract but with random entry A/X/Y/C — for routines that read
  * an entry register as input (a table index, a value to store, an entry carry). */
 static int test_mem_contract_regs(const char *name, void (*native)(void), void (*t6502)(void)) {
@@ -878,6 +905,8 @@ int main(int argc, char **argv) {
     }
     fails += test_draw_symmetric_span_loop();
     fails += test_mem_contract_regs("gen_terrain_column", gen_terrain_column, gen_terrain_column__t6502);
+    fails += test_mem_contract("fill_terrain_columns", fill_terrain_columns, fill_terrain_columns__t6502);
+    fails += test_draw_shape_rows_loop();
     fails += test_mem_contract("compute_target_blip_position", compute_target_blip_position, compute_target_blip_position__t6502);
     fails += test_mem_contract_regs("obj_table_scan_replace", obj_table_scan_replace, obj_table_scan_replace__t6502);
     /* batch 2 — shallow drivers */
