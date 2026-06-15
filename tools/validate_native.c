@@ -955,6 +955,34 @@ static int test_dl_lms_fill(void) {
     return mem_fail;
 }
 
+/* --- draw_scaled_shape @ $7C9A: 2D scaled blitter with divide-by-subtraction + nested
+ * accum loops whose bounds come from the step $0051:$0050 (zero step -> infinite loops) and
+ * the $7DA9/$7DBB/$7DD3/$7DA5 tables + ($C3) mask pointer.  Seed from the flight snapshot for
+ * the real tables, and force a nonzero step ($0051 in 1..4, $0050 random) so every loop
+ * terminates quickly; plot_clipped_pixel clips OOB.  Both runs share the native plotter and
+ * the same seed, so results match regardless of where ($C3) points. --- */
+static int test_draw_scaled_shape(void) {
+    if (!want("draw_scaled_shape")) return 0;
+    static uint8_t snap[65536], pre[65536];
+    const char *path = "a800dumps/flight_ram_0000_BFFF.bin";
+    FILE *f = fopen(path, "rb");
+    if (!f) { printf("draw_scaled_shape: SKIP (%s not found)\n", path); return 0; }
+    memset(snap, 0, sizeof snap);
+    size_t got = fread(snap, 1, 0xC000, f); fclose(f);
+    if (got != 0xC000) { printf("draw_scaled_shape: SKIP (short read %zu)\n", got); return 0; }
+    int mem_fail = 0, cpu_diff = 0, printed = 0;
+    for (int t = 0; t < 8000; t++) {
+        memcpy(pre, snap, sizeof pre);
+        pre[0x0050] = (uint8_t)(xs() & 0xFF);
+        pre[0x0051] = (uint8_t)(1 + (xs() % 4));        /* nonzero step -> bounded loops */
+        mem_fail += diff_run("draw_scaled_shape", pre, zero_cpu(),
+                             draw_scaled_shape, draw_scaled_shape__t6502, t, &printed, &cpu_diff);
+    }
+    printf("draw_scaled_shape: %d cases (flight snapshot), %d mem mismatch (must be 0), %d cpu diffs\n",
+           8000, mem_fail, cpu_diff);
+    return mem_fail;
+}
+
 /* --- dl_lms_build @ $69E5: sets the DL dest ptr/end ($C5/$C6=$300A, $0086=$56) itself,
  * then dl_lms_fill, so only the X start $008B needs bounding -> seed it just below $56 so
  * the fill is a short forward run into safe DL RAM (and nonzero -> the shift tail). --- */
@@ -2009,6 +2037,7 @@ int main(int argc, char **argv) {
     fails += test_mem_contract("startup_init", startup_init, startup_init__t6502);
     fails += test_mem_contract("dl_index_dec", dl_index_dec, dl_index_dec__t6502);
     fails += test_mem_contract("dl_index_dec_or_reset", dl_index_dec_or_reset, dl_index_dec_or_reset__t6502);
+    fails += test_draw_scaled_shape();
     fails += test_mem_contract_regs("show_cockpit_message", show_cockpit_message, show_cockpit_message__t6502);
     fails += test_mem_contract_regs("mark_slot_and_countdown_char", mark_slot_and_countdown_char, mark_slot_and_countdown_char__t6502);
     fails += test_mem_contract_regs("mark_slot_and_inc_count", mark_slot_and_inc_count, mark_slot_and_inc_count__t6502);

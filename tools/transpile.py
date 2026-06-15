@@ -312,6 +312,8 @@ VALIDATE_FUNCS = {
     # batch — DL index wrappers (now unblocked by dl_lms_build):
     0x69E3,  # dl_index_dec — DEC $8B, tail dl_lms_build
     0x69DD,  # dl_index_dec_or_reset — $8B=0 (LDA#0 makes BEQ unconditional), tail dl_lms_build
+    # batch — the 2D scaled-shape blitter (last portable display_setup-front leaf):
+    0x7C9A,  # draw_scaled_shape — scale/blit a shape: div-by-subtraction count, nested row/col accum, mask bits -> plot_clipped_pixel
 }
 VALIDATE_SUFFIX = '__t6502'
 

@@ -2166,6 +2166,72 @@ void dl_index_dec_or_reset(void) {
     dl_lms_build();
 }
 
+/* draw_scaled_shape @ $7C9A — scale and blit a 2-bit shape into the HUD via the clipped
+ * plotter.  First a divide-by-repeated-subtraction: $C2:$C1=$0600, subtract the step
+ * $0051:$0050 until it borrows, decrementing $004F each pass; the leftover $004F (->$28DE)
+ * is the per-row inner count reload.  Then 14 blank plots, and the nested row(outer,$0055
+ * accum to $12)/col(inner,$0053 accum to $0C) loop: each cell derives a mask-byte offset via
+ * the $7DA9/$7DBB/$7DD3 tables + the ($C3) mask pointer, extracts a 2-bit field (X from
+ * $7DD3 selects how many >>2 steps — DEX/BMI: 0 for X==0 or X>=$81, else min(X,3)), maps it
+ * through $7DA5 and plots it.  plot_clipped_pixel is native (clips OOB).  HW-free except the
+ * mask read through ($C3) routed via bus_read.  Step must be nonzero or the loops never end. */
+void draw_scaled_shape(void) {
+    mem[0x00C2] = 0x06;
+    mem[0x00C1] = 0x00;
+    {
+        uint8_t carry = 1;                              /* SEC */
+        do {
+            int r = (int)mem[0x00C1] - mem[0x0050] - (1 - carry);
+            mem[0x00C1] = (uint8_t)r; carry = (r >= 0);
+            r = (int)mem[0x00C2] - mem[0x0051] - (1 - carry);
+            mem[0x00C2] = (uint8_t)r; carry = (r >= 0);
+            mem[0x004F] = (uint8_t)(mem[0x004F] - 1);   /* DEC (carry unaffected) */
+        } while (carry);
+    }
+    mem[0x28DE] = mem[0x004F];
+
+    mem[0x0054] = 0x00; mem[0x0055] = 0x00;
+    mem[0x0053] = 0x0E;
+    do {                                                /* L_7cc2: 14 blank plots */
+        cpu.A = 0x00; plot_clipped_pixel();
+        mem[0x0053] = (uint8_t)(mem[0x0053] - 1);
+    } while (mem[0x0053] != 0x00);
+    mem[0x004E] = (uint8_t)(mem[0x004E] - 1);
+
+    do {                                                /* L_7ccd (rows) */
+        mem[0x004F] = mem[0x28DE];
+        mem[0x0052] = 0x00; mem[0x0053] = 0x00;
+        cpu.A = 0x00; plot_clipped_pixel();
+        do {                                            /* L_7cdb (cols) */
+            uint8_t y = mem[0x0055];
+            unsigned t = (unsigned)mem[0x0053] + mem[0x28DF];   /* CLC; ADC $28DF */
+            uint8_t x = (uint8_t)t;
+            unsigned t2 = (unsigned)mem[0x7DA9 + y] + mem[0x7DBB + x] + (t > 0xFF ? 1 : 0);
+            y = (uint8_t)t2;
+            x = mem[0x7DD3 + x];
+            uint16_t c3 = (uint16_t)(mem[0x00C3] | (mem[0x00C4] << 8));
+            uint8_t a = bus_read((uint16_t)(c3 + y));
+            for (int i = 0; i < 3; i++) {               /* DEX; BMI; LSR;LSR */
+                x = (uint8_t)(x - 1);
+                if (x & 0x80) break;
+                a = (uint8_t)(a >> 2);
+            }
+            a &= 0x03;
+            cpu.A = mem[0x7DA5 + a];
+            plot_clipped_pixel();
+            unsigned s = (unsigned)mem[0x0052] + mem[0x0050];
+            mem[0x0052] = (uint8_t)s;
+            mem[0x0053] = (uint8_t)((unsigned)mem[0x0053] + mem[0x0051] + (s > 0xFF ? 1 : 0));
+        } while (mem[0x0053] < 0x0C);
+        cpu.A = 0x00; plot_clipped_pixel();
+        cpu.A = 0x00; plot_clipped_pixel();
+        mem[0x004E] = (uint8_t)(mem[0x004E] - 1);
+        unsigned u = (unsigned)mem[0x0054] + mem[0x0050];
+        mem[0x0054] = (uint8_t)u;
+        mem[0x0055] = (uint8_t)((unsigned)mem[0x0055] + mem[0x0051] + (u > 0xFF ? 1 : 0));
+    } while (mem[0x0055] < 0x12);
+}
+
 /* render_bcd_counter @ $49A0 — render the 3-byte packed-BCD score ($0601-$0603,
  * 6 digits) to the top text line $32C5..$32CA with leading-zero suppression.
  * Flight ISR routine; the first transpiled-on-the-VBI-path fn ported native.

@@ -13405,7 +13405,8 @@ L_7c97:;
 }
 
 /* draw_scaled_shape @ $7C9A: computes $C1/$C2 origin via $50/$51 subtract; row loop $53/$4E w/ tables $7DA9/7DBB/7DD3/7DA5; plots via plot_clipped_pixel */
-void draw_scaled_shape(void) {
+/* faithful transliteration kept as the validation oracle; native draw_scaled_shape() lives in rof_native.c (see VALIDATE_FUNCS) */
+void draw_scaled_shape__t6502(void) {
     /* 7c9a */
     LDA(0x06);
     /* 7c9c */
