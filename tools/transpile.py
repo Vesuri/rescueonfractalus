@@ -323,6 +323,11 @@ VALIDATE_FUNCS = {
     0x8105,  # hud_fill_field0 — pack 5 bytes ($85)+Y via pack_byte_to_5bit_cells into $8F-$93 (or INC $0080)
     0x8138,  # hud_fill_field2 — copy/pack ($89)+Y into $8F-$9A per $292D flag (or INC $0082)
     0x80C5,  # hud_build_text_row — clear $8F-$9F, fill 4 fields, compose cells via $BE00 + ($8B)/($8D), advance ptrs
+    # --- NATIVE APEX (2026-06-15): the orchestration apex, hand-written in rof_native.c.
+    #     NOT validated by `make validate` (spin-waits on VBI state / live input would hang
+    #     the harness) — verified on FS-UAE by behaviour.  Its __t6502 oracle is kept for
+    #     reference; the native twin replaces the spin-wait SPINWAIT-hooks with ds_frame().
+    0x5F1D,  # display_setup — main display setup + Standby/attract idle loop + launch cinematic driver
 }
 VALIDATE_SUFFIX = '__t6502'
 

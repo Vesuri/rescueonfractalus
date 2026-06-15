@@ -16,6 +16,7 @@
 #include "../cpu/bus.h"  /* bus_read/bus_write + ZP_IND_Y for indirect bitmap access */
 #include "rof_decl.h"   /* declarations for transpiled routines native code calls */
 #include "rof_native.h" /* typed cores shared with the hand-written Amiga ports */
+#include "../platform/platform_c.h" /* platform_tick_vbi/render_frame/poll_events for the apex spin-waits */
 
 /* ---------------------------------------------------------------------------
  * Idiomatic-C migration seam.
@@ -5993,4 +5994,856 @@ void update_gauge_digits(void) {
         if (t & 0x80) t = 0x1F;                          /* BPL skip; LDA #$1F; STA $0074 */
         mem[0x0074] = t;
     }
+}
+
+/* display_setup @ $5F1D — the orchestration APEX: main game display setup + the
+ * Standby/attract idle loop + the launch (doors/tunnel/stars/planet) cinematic
+ * driver.  game_main_loop ($3D48) calls it at the top of every game pass; it RTSes
+ * back into game_main_loop's flight setup once START (or the demo timeout) fires.
+ *
+ * NOT validated by `make validate`: the body busy-waits on VBI-updated state
+ * ($0655/$0089/$0014/$067E/$0684/$0686), the attract timer and live HW input,
+ * which would hang the equivalence harness.  Correctness is verified on FS-UAE by
+ * behaviour, exactly like RescueOnFractalus::run().  This is a FAITHFUL
+ * transcription of the $5F1D transliteration: cpu/mem state is preserved bit-for-
+ * bit so the (still-transpiled) leaf callees and the wait_frames_NN / clear_colors /
+ * push_a_thunk_3cb2 frame primitives behave identically.  Each original spin-wait
+ * SPINWAIT-hook point becomes one real Amiga frame via ds_frame() (the same
+ * platform_tick_vbi + platform_render_frame the transpiler injected); the PHA-based
+ * frame primitives drive frames internally and are called as-is.
+ *
+ * The only deviation from a verbatim copy is fidelity: where the 6502 consumes the
+ * exit A of init_row_coords_9c (a pure-mem native leaf that does not set cpu.A),
+ * the faithful exit value A=$13 is loaded explicitly before it is stored to $00B9. */
+static inline void ds_frame(void) { platform_tick_vbi(); platform_render_frame(); }
+
+void display_setup(void) {
+    /* 5f1d */
+    LDA(0x06);
+    bus_write(0x02C7, cpu.A);
+    build_line_addr_table_2000();
+    dl_index_dec_or_reset();
+    LDA(0x00);
+    mem[0x00B7] = cpu.A;
+    mem[0x08A2] = cpu.A;
+    mem[0x062C] = cpu.A;
+    LDY(0x0A);
+L_5f34:
+    DEY();
+    mem[(0x0088)+cpu.Y] = cpu.A;
+    if (!cpu.Z) goto L_5f34;
+    LDA(0x00);
+    mem[0x00C1] = cpu.A;
+    LDA(0x10);
+    mem[0x00C2] = cpu.A;
+    LDA(0x0F);
+    mem[0x00C3] = cpu.A;
+    LDA(0x08);
+    mem[0x00C4] = cpu.A;
+    memset_or_copy();
+    wait_vcount_30();
+    LDA(0xD7);
+    bus_write(0x0222, cpu.A);
+    LDA(0x52);
+    bus_write(0x0223, cpu.A);
+    wait_vcount_ge_7a();
+    LDA(0xC2);
+    bus_write(0x0200, cpu.A);
+    LDA(0x6C);
+    bus_write(0x0201, cpu.A);
+    LDA(0x20);
+    bus_write(0xD402, cpu.A);
+    LDA(0x31);
+    bus_write(0xD403, cpu.A);
+    LDA(0x59);
+    mem[0x00BB] = cpu.A;
+    LDA(0x6E);
+    mem[0x00BC] = cpu.A;
+    LDA(0x31);
+    mem[0x00BD] = cpu.A;
+    LDA(0x0B);
+    mem[0x00BE] = cpu.A;
+    rle_expand_list();
+    LDA(0x14);
+    bus_write(0x026F, cpu.A);
+    bus_write(0xD01B, cpu.A);
+    LDY(0x56);
+    LDA(0x00);
+L_5f90:
+    mem[(0x0C31)+cpu.Y] = cpu.A;
+    mem[(0x0D31)+cpu.Y] = cpu.A;
+    DEY();
+    if (!cpu.N) goto L_5f90;
+    bus_write(0xD00C, cpu.A);
+    LDY(0x03);
+    TYA();
+L_5f9f:
+    mem[(0xD008)+cpu.Y] = cpu.A;
+    DEY();
+    if (!cpu.N) goto L_5f9f;
+    LDA(0x2D);
+    bus_write(0xD000, cpu.A);
+    bus_write(0xD002, cpu.A);
+    LDA(0xBE);
+    mem[0x00B5] = cpu.A;
+    bus_write(0xD003, cpu.A);
+    clear_colors();
+    LDA(0xC0);
+    bus_write(0xD40E, cpu.A);
+    LDA(0x3F);
+    bus_write(0x022F, cpu.A);
+    LDA(0x03);
+    bus_write(0xD01D, cpu.A);
+    LDA(0x00);
+    bus_write(0x02C0, cpu.A);
+    LDA(0x06);
+    bus_write(0x02C8, cpu.A);
+    LDA(0x88);
+    mem[0x00B7] = cpu.A;
+    fill_region_2000();
+    wait_vcount_ge_7a();
+    LDA(0xAD);
+    bus_write(0x0200, cpu.A);
+    LDA(0x6C);
+    bus_write(0x0201, cpu.A);
+    LDA(0x00);
+    bus_write(0xD402, cpu.A);
+    LDA(0x30);
+    bus_write(0xD403, cpu.A);
+    fill_four_bufs_ff();
+    LDA(mem[0x006C]);
+    if (!cpu.Z) goto L_5ff8;
+    goto L_6118;
+L_5ff8:
+    clear_message_buffer();
+    LDY(0x04);
+L_5ffd:
+    LDA(mem[(0x6B80)+cpu.Y]);
+    mem[(0x00A1)+cpu.Y] = cpu.A;
+    DEY();
+    if (!cpu.N) goto L_5ffd;
+    LDA(mem[0x00DD]);
+    fill_buf_08d4();
+    game_sub_6811();
+    LDX(mem[0x00DD]);
+    if (cpu.Z) goto L_601c;
+L_6012:
+    mem[0x0071] = cpu.X;
+    wait_frames_2();
+    DEX();
+    CPX(0x1F);
+    if (!cpu.Z) goto L_6012;
+L_601c:
+    LDA(0x00);
+    mem[0x0071] = cpu.A;
+    LDA(mem[0x00DD]);
+    AND(0x0F);
+    if (!cpu.Z) goto L_6028;
+    ORA(0x02);
+L_6028:
+    TAX();
+L_6029:
+    TXA();
+    fill_buf_08d4();
+    clear_colors();
+    INX();
+    CPX(0x0F);
+    if (!cpu.Z) goto L_6029;
+    build_line_addr_table_1000();
+    LDA(mem[0x0633]);
+    if (cpu.Z) goto L_6047;
+    LDY(0x00);
+    mem[0x0633] = cpu.Y;
+    LDA(0xC8);
+    save_color_clear_y_bit5();
+L_6047:
+    draw_frame_pattern_seq();
+    init_row_coords_9c();
+    LDA(0x13);                 /* init_row_coords_9c exit A=$13 (faithful; native leaf leaves cpu.A untouched) */
+    mem[0x00B9] = cpu.A;
+    LDA(0x08);
+    mem[0x0094] = cpu.A;
+L_6053:
+    LDY(mem[0x00B9]);
+    plot_terrain_span();
+    DEC_M(0x00B9);
+    if (!cpu.N) goto L_6053;
+    LDA(0x07);
+    draw_cockpit_dial_bar();
+    LDY(0x00);
+L_6063:
+    LDX(0x0E);
+L_6065:
+    TXA();
+    mem[(0x08D4)+cpu.Y] = cpu.A;
+    push_a_thunk_3cb2();
+    DEX();
+    if (!cpu.N) goto L_6065;
+    INY();
+    CPY(0x06);
+    if (!cpu.Z) goto L_6063;
+    fill_region_2000();
+    LDA(0x03);
+    mem[0x004C] = cpu.A;
+    mem[0x27A3] = cpu.A;
+    LDY(0x90);
+L_6080:
+    mem[0x08D9] = cpu.Y;
+    push_a_thunk_3cb2();
+    INY();
+    CPY(0x9B);
+    if (!cpu.Z) goto L_6080;
+    init_terrain_dl();
+    LDY(0x05);
+L_6090:
+    LDA(mem[(0x6E68)+cpu.Y]);
+    mem[(0x08D4)+cpu.Y] = cpu.A;
+    DEY();
+    if (!cpu.N) goto L_6090;
+    LDA(0x01);
+    mem[0x008D] = cpu.A;
+    mem[0x0094] = cpu.A;
+    mem[0x06CC] = cpu.A;
+    init_row_coords_9c();
+    LDA(0x13);                 /* init_row_coords_9c exit A=$13 (faithful) */
+    mem[0x00B9] = cpu.A;
+    LDA(0x7E);
+    mem[0x00C3] = cpu.A;
+    LDA(0x2A);
+    mem[0x00C4] = cpu.A;
+    mem[0x00C2] = cpu.A;
+    clear_message_buffer();
+    mem[0x00C1] = cpu.A;
+L_60b6:
+    LDY(mem[0x00B9]);
+    if (!cpu.Z) goto L_60c3;
+    LDA(0xFF);
+    mem[0x008D] = cpu.A;
+    LDA(mem[0x08D8]);
+    mem[0x0071] = cpu.A;
+L_60c3:
+    /* spin: wait for the standby/launch VBI to clear $008E (one Amiga frame/iter) */
+    LDA(mem[0x008E]);
+    if (cpu.Z) { ds_frame(); goto L_60c3; }
+    LDA(0x00);
+    mem[0x008E] = cpu.A;
+    emit_dl_coord_pairs();
+    INC_M(0x0094);
+    LDA(mem[0x0094]);
+    CMP(0x07);
+    if (!cpu.Z) goto L_60da;
+    LDA(0x01);
+    mem[0x0094] = cpu.A;
+L_60da:
+    DEC_M(0x00B9);
+    if (!cpu.N) goto L_60b6;
+    LDA(0x01);
+    mem[0x008D] = cpu.A;
+    init_row_coords_9c();
+    LDY(0x08);
+    mem[0x0094] = cpu.Y;
+    LDA(0x00);
+L_60eb:
+    mem[(0x0C87)+cpu.Y] = cpu.A;
+    mem[(0x0D87)+cpu.Y] = cpu.A;
+    DEY();
+    if (!cpu.Z) goto L_60eb;
+    LDA(0xC0);
+    mem[0x0071] = cpu.A;
+L_60f8:
+    /* spin: wait for the VBI to clear $008D (one frame/iter) */
+    LDA(mem[0x008D]);
+    if (!cpu.Z) { ds_frame(); goto L_60f8; }
+    draw_shape_rows_loop();
+    LDY(0x00);
+    LDA(0xFF);
+L_6103:
+    clear_colors();
+    mem[(0x0C88)+cpu.Y] = cpu.A;
+    mem[(0x0D88)+cpu.Y] = cpu.A;
+    INY();
+    CPY(0x08);
+    if (!cpu.Z) goto L_6103;
+    TYA();
+    draw_cockpit_dial_bar();
+    build_line_addr_table_2000();
+L_6118:
+    font_display_init();
+    wait_frames_5();
+    LDA(0x07);
+    mem[0x0095] = cpu.A;
+    LDA(0x88);
+    mem[0x00B7] = cpu.A;
+    fill_region_2000();
+    blit_message_block();
+    blit_numeric_readout();
+    dl_index_dec_or_reset();
+    delay_loop_c2_to_c9();
+    LDA(0xFF);
+    mem[0x00E3] = cpu.A;
+    LDA(mem[0x060B]);
+    if (!cpu.Z) goto L_6141;
+    goto L_62eb;
+L_6141:
+    LDA(mem[0x006C]);
+    if (!cpu.Z) goto L_6153;
+    LDY(mem[0x0644]);
+    if (cpu.Z) goto L_614d;
+    goto L_6332;
+L_614d:
+    wait_frames_save_a();
+    goto L_634f;
+L_6153:
+    LDA(mem[0x0629]);
+    if (!cpu.Z) goto L_615b;
+    goto L_61f8;
+L_615b:
+    SEC();
+    SBC(mem[0x062A]);
+    mem[0x00E3] = cpu.A;
+    if (!cpu.N) goto L_6174;
+    LDY(mem[0x062A]);
+    SEC();
+    TYA();
+    SBC(mem[0x0629]);
+    mem[0x062A] = cpu.A;
+    LDA(mem[0x0629]);
+    goto L_6178;
+L_6174:
+    LDA(mem[0x062A]);
+    TAY();
+L_6178:
+    mem[0x0096] = cpu.A;
+    TYA();
+    set_0628_bcd_redisplay();
+    LDY(0x0C);
+    LDA(0x78);
+    save_color_clear_y_bit5();
+L_6185:
+    LDA(0x00);
+    mem[0x0045] = cpu.A;
+    LDA(0x05);
+    mem[0x0046] = cpu.A;
+    decrement_bcd_0628_restart();
+    DEC_M(0x0096);
+    if (!cpu.Z) goto L_6185;
+    LDA(mem[0x00E3]);
+    if (cpu.N) goto L_61f2;
+    if (cpu.Z) goto L_61b7;
+    wait_frames_save_a();
+    set_0628_bcd_redisplay();
+    LDA(0x7C);
+    mem[0x00D8] = cpu.A;
+L_61a4:
+    LDA(0x10);
+    mem[0x0046] = cpu.A;
+    LDX(0x10);
+    input_init();
+    wait_frames_5();
+    decrement_bcd_0628_restart();
+    DEC_M(0x00E3);
+    if (!cpu.Z) goto L_61a4;
+L_61b7:
+    wait_frames_save_a();
+    LDA(0x2A);
+    LDY(0x83);
+    save_color_clear_y_bit5();
+    LDY(0x0B);
+    music_init_state();
+L_61c6:
+    /* spin: wait for the music/VBI to clear $0655 (one frame/iter) */
+    ds_frame();
+    LDA(mem[0x0655]);
+    if (!cpu.Z) goto L_61c6;
+    LDA(mem[0x006D]);
+    mem[0x00C1] = cpu.A;
+    CMP(mem[0x060A]);
+    if (!cpu.C) goto L_61d7;
+    mem[0x060A] = cpu.A;
+L_61d7:
+    count_up_to_level();
+    LDA(mem[0x0627]);
+    if (!cpu.Z) goto L_61f5;
+L_61df:
+    LDA(0x02);
+    mem[0x0096] = cpu.A;
+L_61e3:
+    LDA(mem[0x00C3]);
+    mem[0x0046] = cpu.A;
+    reinit_and_redraw_via_delay();
+    DEC_M(0x0096);
+    if (!cpu.Z) goto L_61e3;
+    DEC_M(0x00C1);
+    if (!cpu.Z) goto L_61df;
+L_61f2:
+    wait_frames_save_a();
+L_61f5:
+    clear_message_buffer();
+L_61f8:
+    LDA(mem[0x00E3]);
+    if (!cpu.N) goto L_6219;
+    LDA(mem[0x006D]);
+    CMP(0x05);
+    if (cpu.C) goto L_620e;
+    LDA(0x01);
+    mem[0x009B] = cpu.A;
+    LDA(0x04);
+    mem[0x0609] = cpu.A;
+    goto L_6216;
+L_620e:
+    mem[0x0609] = cpu.A;
+    SEC();
+    SBC(0x03);
+    mem[0x009B] = cpu.A;
+L_6216:
+    goto L_62e7;
+L_6219:
+    LDA(mem[0x006D]);
+    mem[0x009B] = cpu.A;
+    INC_M(0x009B);
+    CLC();
+    ADC(0x04);
+    CMP(0x64);
+    if (!cpu.C) goto L_6228;
+    LDA(0x63);
+L_6228:
+    mem[0x0609] = cpu.A;
+    mem[0x0090] = cpu.A;
+L_622d:
+    LDY(0x00);
+    mem[0x00B7] = cpu.Y;
+    LDA(0x4F);
+    mem[0x00B9] = cpu.A;
+    LDA(0x44);
+    bus_write(0xD203, cpu.A);
+    LDA(0x52);
+    mem[0x08DB] = cpu.A;
+    LDA(0x01);
+    mem[0x08DC] = cpu.A;
+L_6244:
+    LDA(mem[(0x6595)+cpu.Y]);
+    mem[0x004C] = cpu.A;
+    audf2_sweep_clear_colors();
+    LDA(mem[0x00B9]);
+    mem[0x008B] = cpu.A;
+    dl_index_dec();
+    LDA(0x00);
+    mem[0x008B] = cpu.A;
+    DEC_M(0x00B9);
+    INC_M(0x00B7);
+    LDY(mem[0x00B7]);
+    CPY(0x13);
+    if (!cpu.Z) goto L_6244;
+    push_a_thunk_3cb2();
+    LDA(0x53);
+    mem[0x008B] = cpu.A;
+L_6268:
+    LDX(0x05);
+L_626a:
+    LDA(mem[0x008B]);
+    CMP(0x3E);
+    if (!cpu.Z) goto L_6289;
+    LDA(0x56);
+    mem[0x008B] = cpu.A;
+    CPX(0x03);
+    if (!cpu.Z) goto L_6288;
+    LDA(0x08);
+    mem[0x0095] = cpu.A;
+    blit_numeric_readout();
+    DEC_M(0x0095);
+    INC_M(0x006D);
+    blit_numeric_readout();
+    LDX(0x03);
+L_6288:
+    DEX();
+L_6289:
+    if (!cpu.Z) goto L_626a;
+    LDA(0x56);
+    mem[0x008B] = cpu.A;
+L_628f:
+    LDA(mem[0x008B]);
+    CMP(0x0F);
+    if (!cpu.Z) goto L_628f;
+    mem[0x00B9] = cpu.A;
+    LDA(0x00);
+    mem[0x008B] = cpu.A;
+    LDA(bus_read(0xD300));
+    AND(0x01);
+    if (cpu.Z) goto L_62a9;
+    LDA(bus_read(0xD01F));
+    AND(0x02);
+    if (!cpu.Z) goto L_62b4;
+L_62a9:
+    LDA(0x56);
+    mem[0x008B] = cpu.A;
+    LDY(mem[0x006D]);
+    CPY(mem[0x0609]);
+    if (!cpu.C) goto L_6268;
+L_62b4:
+    LDA(0xFF);
+    mem[0x08DC] = cpu.A;
+L_62b9:
+    LDY(mem[0x00B9]);
+    LDA(mem[(0x6598)+cpu.Y]);
+    mem[0x004C] = cpu.A;
+    mem[0x008B] = cpu.Y;
+    dl_index_dec();
+    LDA(0x00);
+    mem[0x008B] = cpu.A;
+    audf2_sweep_clear_colors();
+    DEC_M(0x00B9);
+    if (!cpu.Z) goto L_62b9;
+    INC_M(0x004C);
+    push_a_thunk_3cb2();
+    LDA(0x55);
+    shift_object_table_up();
+    ASL_M(0x004C);
+    push_a_thunk_3cb2();
+    dl_index_dec_or_reset();
+    LDA(0x00);
+    bus_write(0xD203, cpu.A);
+L_62e7:
+    LDA(mem[0x0090]);
+    if (cpu.Z) goto L_62ee;
+L_62eb:
+    ds_frame();
+    reset_audctl_flags();
+L_62ee:
+    LDA(0x64);
+    mem[0x00E2] = cpu.A;
+    LDA(mem[0x0004]);
+    if (!cpu.Z) goto L_634f;
+L_62f6:
+    ds_frame();
+    LDY(mem[0x060B]);
+    if (!cpu.Z) goto L_6309;
+    copy_altitude_graphic_to_screen();
+    LDA(bus_read(0xD01F));
+    AND(0x04);
+    if (!cpu.Z) goto L_6309;
+    INC_M(0x0004);
+    if (!cpu.Z) goto L_6311;
+L_6309:
+    LDA(mem[0x00E2]);
+    if (!cpu.N) goto L_6324;
+    LDX(mem[0x00E7]);
+    if (!cpu.Z) goto L_631e;
+L_6311:
+    LDY(mem[0x060B]);
+    mem[0x006C] = cpu.Y;
+    if (!cpu.Z) goto L_631b;
+    INC_M(0x060B);
+L_631b:
+    game_main_loop(); return;
+L_631e:
+    LDX(mem[0x0091]);
+    CPX(0xC0);
+    if (cpu.Z) goto L_6311;
+L_6324:
+    LDA(bus_read(0xD300));
+    AND(0x01);
+    if (cpu.Z) goto L_6332;
+    LDA(bus_read(0xD01F));
+    AND(0x02);
+    if (!cpu.Z) goto L_634a;
+L_6332:
+    LDY(mem[0x060B]);
+    if (cpu.Z) goto L_6311;
+    audio_timer_setup();
+    LDA(mem[0x006D]);
+    CMP(mem[0x0609]);
+    if (!cpu.C) goto L_6347;
+    intro_screen_build_seq();
+    goto L_634a;
+L_6347:
+    goto L_622d;
+L_634a:
+    platform_poll_events();
+    read_console_trig_delta();
+    if (cpu.Z) goto L_62f6;
+L_634f:
+    audio_timer_setup();
+    rle_unpack_to_07f9();
+    LDA(mem[0x060B]);
+    if (!cpu.Z) goto L_635f;
+    LDX(0x16);
+    fill_message_buffer();
+L_635f:
+    LDA(0x23);
+    mem[0x08A3] = cpu.A;
+    mem[0x060B] = cpu.A;
+    mem[0x006C] = cpu.A;
+    LDY(0x0B);
+    LDA(mem[0x0004]);
+    if (cpu.Z) goto L_6371;
+    LDY(0x13);
+L_6371:
+    LDA(0xEA);
+    save_color_clear_y_bit5();
+    LDA(0x00);
+    mem[0x0629] = cpu.A;
+    LDY(mem[0x0004]);
+    if (!cpu.Z) goto L_63a1;
+    LDY(mem[0x006D]);
+    CPY(mem[0x0626]);
+    mem[0x0626] = cpu.Y;
+    if (!cpu.Z) goto L_638f;
+    INC_M(0x0627);
+    goto L_63a7;
+L_638f:
+    if (cpu.C) goto L_63a1;
+    LDY(0x04);
+L_6393:
+    mem[(0x0600)+cpu.Y] = cpu.A;
+    DEY();
+    if (!cpu.N) goto L_6393;
+    LDY(0x05);
+L_639b:
+    mem[(0x32C5)+cpu.Y] = cpu.A;
+    DEY();
+    if (!cpu.N) goto L_639b;
+L_63a1:
+    mem[0x0627] = cpu.A;
+    compute_gauge_geometry_from_006D();
+L_63a7:
+    LDX(0x1D);
+    input_init();
+    vobj_draw_dispatch();
+    render_bcd_counter();
+    clear_scroll_accum();
+    LDY(0x05);
+    LDA(0x3A);
+L_63b9:
+    mem[(0x08D4)+cpu.Y] = cpu.A;
+    SEC();
+    SBC(0x02);
+    DEY();
+    if (!cpu.N) goto L_63b9;
+    LDA(0x00);
+    mem[0x0641] = cpu.A;
+    startup_init();
+    build_line_addr_table_1000();
+    draw_frame_pattern_seq();
+    LDX(0x01);
+    input_init();
+    LDA(0x1F);
+L_63d7:
+    /* spin: wait for the door VBI counter $067E to reach $1F */
+    ds_frame();
+    CMP(mem[0x067E]);
+    if (!cpu.Z) goto L_63d7;
+    LDA(0x00);
+    mem[0x06E0] = cpu.A;
+    LDA(0x8C);
+    mem[0x0080] = cpu.A;
+    LDA(0x17);
+    mem[0x0081] = cpu.A;
+    LDA(0xBA);
+    mem[0x0082] = cpu.A;
+    LDA(0x17);
+    mem[0x0083] = cpu.A;
+    LDA(0x02);
+    mem[0x0098] = cpu.A;
+    LDA(0x7F);
+    mem[0x0097] = cpu.A;
+    LDA(0x2B);
+    mem[0x008A] = cpu.A;
+    LDA(0x07);
+    draw_cockpit_dial_bar();
+    LDA(0x7F);
+    mem[0x0684] = cpu.A;
+    LDA(0x09);
+    mem[0x0676] = cpu.A;
+    LDA(0xFB);
+    mem[0x0686] = cpu.A;
+    LDA(0xFF);
+    mem[0x0687] = cpu.A;
+    LDA(0x01);
+    set_hud_fields_678_679();
+L_641b:
+    wait_frames_10();
+    INC_M(0x0678);
+    INC_M(0x0679);
+    LDA(mem[0x0678]);
+    CMP(0x03);
+    if (!cpu.Z) goto L_644c;
+    LDA(0xFF);
+    mem[0x06CA] = cpu.A;
+    mem[0x06CC] = cpu.A;
+    mem[0x06CD] = cpu.A;
+    LDA(0x01);
+    mem[0x06E6] = cpu.A;
+    mem[0x06E8] = cpu.A;
+    mem[0x06E9] = cpu.A;
+    LDA(0x00);
+    mem[0x06F4] = cpu.A;
+    mem[0x06F6] = cpu.A;
+    mem[0x06F7] = cpu.A;
+L_644c:
+    DEC_M(0x0676);
+    refresh_hud_field_0b();
+    LDA(mem[0x0676]);
+    CMP(0x04);
+    if (!cpu.Z) goto L_641b;
+    LDA(0x64);
+L_645b:
+    /* spin: wait for the gauge-fill VBI counter $0684 to reach $64 */
+    ds_frame();
+    CMP(mem[0x0684]);
+    if (!cpu.Z) goto L_645b;
+    LDY(0x05);
+    LDA(0x00);
+    mem[(0x066B)+cpu.Y] = cpu.A;
+    reorder_sprite_slot();
+    LDA(0x1D);
+L_646c:
+    /* spin: wait for $0684 to reach $1D */
+    ds_frame();
+    CMP(mem[0x0684]);
+    if (!cpu.Z) goto L_646c;
+    LDA(0xFF);
+    mem[0x06E6] = cpu.A;
+    LDA(0x64);
+L_6478:
+    /* spin: wait for the door-swoosh VBI counter $0686 to reach $64 */
+    ds_frame();
+    CMP(mem[0x0686]);
+    if (!cpu.Z) goto L_6478;
+    init_row_coords_9c();
+    LDA(0x00);
+    mem[0x0094] = cpu.A;
+    draw_cockpit_dial_bar();
+    LDY(0x0C);
+    LDA(0x0F);
+    mem[(0x066B)+cpu.Y] = cpu.A;
+    LDA(0xB4);
+    mem[(0x0679)+cpu.Y] = cpu.A;
+    reorder_sprite_slot();
+    LDA(0x02);
+    mem[0x0676] = cpu.A;
+    LDA(0x00);
+    mem[0x06E8] = cpu.A;
+    mem[0x06E9] = cpu.A;
+    LDA(0x01);
+    set_hud_fields_678_679();
+    LDA(0x01);
+    mem[0x0088] = cpu.A;
+    LDA(0x0F);
+    mem[0x004C] = cpu.A;
+L_64b0:
+    push_a_thunk_3cb2();
+    LDA(mem[0x0677]);
+    CMP(0x08);
+    if (cpu.Z) goto L_64c0;
+    DEC_M(0x0677);
+    goto L_64c4;
+L_64c0:
+    LDA(0x01);
+    mem[0x004C] = cpu.A;
+L_64c4:
+    LDA(mem[0x0088]);
+    if (!cpu.Z) goto L_64b0;
+    LDA(0x04);
+    mem[0x0677] = cpu.A;
+    draw_cockpit_dial_bar();
+    LDY(0x0C);
+    LDA(0x65);
+    mem[(0x0679)+cpu.Y] = cpu.A;
+    reorder_sprite_slot();
+    LDY(0x0B);
+    LDA(0x01);
+    mem[(0x066B)+cpu.Y] = cpu.A;
+    LDA(0x0E);
+    mem[(0x0679)+cpu.Y] = cpu.A;
+    reorder_sprite_slot();
+    LDA(0x01);
+    LDY(0x03);
+L_64ed:
+    mem[(0xD008)+cpu.Y] = cpu.A;
+    DEY();
+    if (!cpu.N) goto L_64ed;
+    LDA(0x38);
+    bus_write(0xD000, cpu.A);
+    LDA(0x62);
+    mem[0x00B5] = cpu.A;
+    LDA(0x8E);
+    bus_write(0xD002, cpu.A);
+    LDA(0xB8);
+    bus_write(0xD003, cpu.A);
+    clear_scroll_accum();
+    LDX(0x2C);
+L_650b:
+    LDA(mem[(0x073D)+cpu.X]);
+    mem[0x00C1] = cpu.A;
+    LDA(mem[(0x0793)+cpu.X]);
+    mem[0x00C2] = cpu.A;
+    LDY(0x2D);
+    LDA(0x00);
+L_6519:
+    bus_write(ZP_IND_Y(0xC1), cpu.A);
+    DEY();
+    if (!cpu.N) goto L_6519;
+    DEX();
+    if (!cpu.N) goto L_650b;
+    copy_192_to_1800();
+    LDA(0x00);
+    mem[0x00DC] = cpu.A;
+    mem[0x0071] = cpu.A;
+    LDA(0x10);
+    mem[0x3157] = cpu.A;
+    LDA(0x18);
+    mem[0x3158] = cpu.A;
+    wait_vcount_ge_7a();
+    LDA(0xC2);
+    bus_write(0x0200, cpu.A);
+    LDA(0x6C);
+    bus_write(0x0201, cpu.A);
+    LDA(0x20);
+    bus_write(0xD402, cpu.A);
+    LDA(0x31);
+    bus_write(0xD403, cpu.A);
+    init_object_positions();
+    LDA(0x7F);
+    mem[0x0089] = cpu.A;
+    fill_terrain_columns();
+    LDA(0x00);
+L_6557:
+    LDX(0x03);
+L_6559:
+    mem[(0x02C0)+cpu.X] = cpu.A;
+    DEX();
+    if (!cpu.N) goto L_6559;
+    wait_frames_2();
+    CLC();
+    ADC(0x01);
+    CMP(0x0D);
+    if (!cpu.Z) goto L_6557;
+    LDA(0x30);
+    build_line_addr_table_1000_stride();
+L_656e:
+    /* spin: wait until the planet-approach VBI drops $0089 below $04 */
+    ds_frame();
+    LDA(mem[0x0089]);
+    CMP(0x04);
+    if (!cpu.N) goto L_656e;
+    LDA(0x00);
+    mem[0x0014] = cpu.A;
+L_6578:
+    /* spin: every other frame ($0014 reaching 2) advance the object positions */
+    ds_frame();
+    LDA(mem[0x0014]);
+    CMP(0x02);
+    if (!cpu.C) goto L_6590;
+    LDA(0x00);
+    mem[0x0014] = cpu.A;
+    advance_object_positions();
+    LDA(mem[0x1002]);
+    CMP(0xFF);
+    if (!cpu.Z) goto L_6590;
+    LDA(0x00);
+    mem[0x0089] = cpu.A;
+L_6590:
+    LDA(mem[0x0089]);
+    if (!cpu.Z) goto L_6578;
+    return;
 }

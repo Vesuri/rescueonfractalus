@@ -6760,7 +6760,8 @@ L_5f13:;
 }
 
 /* display_setup @ $5F1D: Main game display setup: sets VBI ($52D7) DLI ($6CC2) display-list ($3120/$316B) PMG bases colors; called at top of main game loop */
-void display_setup(void) {
+/* faithful transliteration kept as the validation oracle; native display_setup() lives in rof_native.c (see VALIDATE_FUNCS) */
+void display_setup__t6502(void) {
     /* 5f1d */
     LDA(0x06);
     /* 5f1f */
