@@ -111,6 +111,10 @@ to hardware is largely ignored on Amiga.
 
 - **Commit directly to `main`** (no feature branches). Commit each fix as soon as the user
   confirms it works — one logical change per commit.
+- **Misnamed functions:** whenever you encounter a function whose name clearly contradicts
+  what it does, append it to `docs/rename.md` immediately (address, current name, actual
+  behaviour, suggested name). Do not rename piecemeal in generated files — `disasm/symbols.csv`
+  is the source of truth; batch-rename later via the transpiler.
 - Ask the user at genuine decision points (they're an experienced retro-porter and want to
   steer architecture/scope choices).
 - Persistent cross-session notes live in the auto-memory at
