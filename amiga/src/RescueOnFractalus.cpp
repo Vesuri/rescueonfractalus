@@ -82,6 +82,11 @@ extern "C" void rof_launch_blocking(uint8_t on);
 // Black-until-ready reveal gate, latched on at display_setup entry (rof_native.c); read by
 // animatePalette to hold the screen black until the cockpit + sprites are set up.
 extern "C" volatile unsigned char g_standbyRevealReady;
+// Door-field-ready gate, latched on in display_setup once the doors/dots/LEVEL field has been
+// drawn into $2000 but BEFORE delay_loop_c2_to_c9 ramps the green colour $0071 (rof_native.c).
+// render() decodes $2000 -> terrainBitmap once when this rises, so the door pixels exist before
+// the fade and the per-frame color03 ramp shows the dark->bright green build on them.
+extern "C" volatile unsigned char g_doorFieldReady;
 // The genuine boot chain (src/gen/rof_gen.c): station_init = attract ($195D, returns on
 // START); game_entry = $3CDE -> game_main_loop (game-display setup -> display_setup
 // cinematic -> flight loop, never returns).  g_quitJmp = the __builtin_setjmp buffer
@@ -1047,7 +1052,7 @@ void RescueOnFractalus::deriveRenderSignals()
     // are built, gated on $00E7!=0) whenever the scene is NOT a settled Standby —
     // music off (building / not yet there), launched, or a viewport scene.  So each
     // fresh entry into Standby re-decodes the doors exactly once and then idles.
-    if (mem[0x00E7] == 0u || rsLaunched || rsViewport) terrainDirty = true;
+    if (g_doorFieldReady == 0u || rsLaunched || rsViewport) terrainDirty = true;
 }
 
 // perFrameWork(): per-frame non-phase work (the tail of the old update()).  These
@@ -1124,15 +1129,19 @@ void RescueOnFractalus::render()
             g_flightProf.render += (unsigned short)(flight_vbi_tick() - r0);
         }
         else                        renderViewportModeD(0x1000, 48, 43);
-    } else if (terrainDirty && mem[0x00E7] != 0u && !rsLaunched) {
+    } else if (terrainDirty && g_doorFieldReady != 0u && !rsLaunched) {
         // Standby doors: decode the GTIA mode-10 door field at $2000 to the bitplanes
         // ONCE, then leave it.  The genuine display_setup builds $2000 AFTER
         // initialize() ran (so a capture at init grabbed the empty pristine RAM — the
-        // garbled-doors bug) and finishes by the time it reaches the idle loop and
-        // starts the music.  $00E7!=0 (music gate set by $70E7) is that "$2000 is
-        // built" signal — decode once here, clear terrainDirty, and do no per-frame
-        // work on the static Standby.  deriveRenderSignals re-arms terrainDirty when
-        // the scene leaves Standby, so re-entering it re-captures the doors once.
+        // garbled-doors bug).  g_doorFieldReady (latched in display_setup right after
+        // blit_message_block/blit_numeric_readout draw the doors into $2000, BEFORE the
+        // green fade delay_loop_c2_to_c9) is that "$2000 is built" signal — decode once
+        // here, BEFORE the fade, so the live color03 (= mem[$0071]) ramp animates the
+        // dark->bright green build on the real door pixels (was gated on $00E7 = the
+        // music/build-END gate, AFTER the fade, so the doors popped in already-green).
+        // Clear terrainDirty and do no per-frame work on the static Standby.
+        // deriveRenderSignals re-arms terrainDirty when the scene leaves Standby, so
+        // re-entering it re-captures the doors once.
         terrainDirty = false;
         // GTIA mode-10 nibble field → 3bp interleaved bitplanes via the precomputed
         // kDoorP1/kDoorP2 tables (one lookup per byte, no per-byte nibble math).  Read the

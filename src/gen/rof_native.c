@@ -25,6 +25,16 @@
  * Harmless on SDL (nothing reads it there). */
 volatile unsigned char g_standbyRevealReady = 0;
 
+/* Amiga door-field-ready gate (read by render() in RescueOnFractalus.cpp).  Latched on in
+ * display_setup once the doors/dots/LEVEL field has been drawn into $2000 (after
+ * blit_message_block/blit_numeric_readout) but BEFORE delay_loop_c2_to_c9 ramps the green
+ * background colour $0071.  The Amiga decodes $2000 -> terrainBitmap once when this rises, so
+ * the door shapes exist before the fade and the live color03 (= atariToOCS(mem[$0071])) ramp
+ * shows the dark->bright green build on the real door pixels (was gated on $00E7 = build end,
+ * AFTER the fade -> doors popped in already-green).  Latches like g_standbyRevealReady so the
+ * launch re-run of display_setup doesn't transiently re-arm it.  Harmless on SDL. */
+volatile unsigned char g_doorFieldReady = 0;
+
 /* ---------------------------------------------------------------------------
  * Idiomatic-C migration seam.
  *
@@ -6310,6 +6320,7 @@ L_6118:
     fill_region_2000();
     blit_message_block();
     blit_numeric_readout();
+    g_doorFieldReady = 1;   /* Amiga: doors/LEVEL drawn into $2000 — decode now, before the green fade */
     dl_index_dec_or_reset();
     delay_loop_c2_to_c9();
     LDA(0xFF);
