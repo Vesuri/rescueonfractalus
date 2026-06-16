@@ -68,35 +68,55 @@ static __chip uint8_t wave_pure[2]      = { 0x7F, 0x81 }; // pure tone (square)
 static __chip uint8_t wave_buf[4][2][64];                // per-channel poly, ping-pong
 static uint8_t        wave_idx[4]       = { 0, 0, 0, 0 }; // index Paula is pointed at
 
-// POKEY "noise" distortion (AUDC with NOTPOLY5/POLY4/PURE all giving the poly17
-// source — i.e. PURE clear AND POLY4 clear: $80 ungated, $00 poly5-gated) is true
-// pseudo-random noise (the 17-bit poly), which Paula cannot synthesise.  We DMA a
-// long pre-rendered poly17 noise sample instead: each byte is one POKEY channel-
-// clock sample (so it plays at the same pokey_period() as a tone would), and the
-// buffer is long enough that the DMA loop period is a sub-audible rumble rather
-// than a pitched tone — the engine drone (event 8: AUDC $00, AUDF $FF) and the
-// explosion tails read as noise instead of a square.  1 KB chip RAM.
-#define NOISE_LEN 1024
-static __chip uint8_t noise_buf[NOISE_LEN];
-static uint32_t       noise_lfsr = 0x1FFFFu;   // PERSISTENT — carries across refills so the
-                                               // stream never repeats (true continuous noise)
+// POKEY "noise" distortion (AUDC with PURE clear AND POLY4 clear: $80 ungated,
+// $00 poly5-gated) is pseudo-random noise, which Paula cannot synthesise.  We DMA a
+// long pre-rendered white-noise sample instead: it plays at the same pokey_period()
+// as a tone would, and the buffer is long enough that the DMA loop period is a
+// sub-audible rumble (~3.5 Hz at the worst-case 28.6 kB/s playback rate) rather than
+// a pitched tone — the engine drone (event 8: AUDC $00, AUDF $FF) and explosion tails
+// read as noise.  8 KB chip RAM.
+//
+// Generation: a 32-bit xorshift PRNG written one LONGWORD at a time (4 sample bytes
+// per step), so the fill is ~4x cheaper than a per-bit poly17 LFSR — both fewer steps
+// and `move.l` stores.  POKEY's own noise is 2-level (±vol square), but full-range
+// uniform bytes are a valid white-noise source; the trade is a smoother hiss vs POKEY's
+// harsher buzz.  noise_buf is 4-byte aligned for the longword writes (68000 even-addr).
+#define NOISE_LEN 8192
+static __chip __attribute__((aligned(4))) uint8_t noise_buf[NOISE_LEN];
+static uint32_t       noise_rng = 0x13579BDFu;   // PERSISTENT xorshift state — carries across
+                                                 // refills so the stream keeps evolving
 static bool           noiseOn[4] = { false, false, false, false };
-// Refill the shared noise sample with the NEXT poly17 run (continues noise_lfsr).
-static void fill_noise_buf(void)
+
+// Fill `words` longwords (4 bytes each) at byte offset `off` with fresh white noise.
+static void fill_noise_words(int off, int words)
 {
-    for (int i = 0; i < NOISE_LEN; i++) {
-        uint32_t bit = ((noise_lfsr >> 16) ^ (noise_lfsr >> 4)) & 1u;
-        noise_lfsr = ((noise_lfsr << 1) | bit) & 0x1FFFFu;
-        noise_buf[i] = (noise_lfsr & 1u) ? 0x7Fu : 0x81u;   // bipolar ±127
+    uint32_t* p = (uint32_t*)(noise_buf + off);
+    uint32_t  x = noise_rng;
+    for (int i = 0; i < words; i++) {
+        x ^= x << 13;
+        x ^= x >> 17;
+        x ^= x << 5;          // xorshift32 (Marsaglia 13/17/5) — full period, fast
+        p[i] = x;             // 4 sample bytes per step
     }
+    noise_rng = x;
 }
-// Called once per VBI: while any channel is in noise mode, regenerate the sample
-// with fresh poly17 so a low-rate noise voice (the engine drone) doesn't audibly
-// loop the 1 KB buffer.  Overwriting the buffer Paula is mid-DMA on is inaudible
-// for noise (random over random).  No active noise channel → skip (cheap).
+// Refill the whole buffer (init / channel-start prime).
+static void fill_noise_buf(void) { fill_noise_words(0, NOISE_LEN / 4); }
+
+// Called once per VBI: while any channel is in noise mode, refill a small slice
+// (128 bytes = 32 longwords, ~0.7 ms or less) round-robin through the buffer so the
+// noise texture slowly evolves (full cycle ~1.3 s) without ever statically repeating.
+// The buffer LENGTH (not the refill) is what keeps the DMA loop sub-audible, so this
+// is cheap insurance, not a per-frame full regeneration — that full regen in the VBI
+// ISR overran the 20 ms vblank budget and dropped the launch cinematic to 25 Hz.
+// Overwriting bytes Paula is mid-DMA on is inaudible for noise (random over random).
 void PlatformAmiga::noiseTick()
 {
-    if (noiseOn[0] || noiseOn[1] || noiseOn[2] || noiseOn[3]) fill_noise_buf();
+    if (!(noiseOn[0] || noiseOn[1] || noiseOn[2] || noiseOn[3])) return;
+    static int off = 0;
+    fill_noise_words(off, 32);          // 128 bytes / VBI
+    off += 128;
+    if (off >= NOISE_LEN) off = 0;
 }
 
 // POKEY poly patterns (1 bit/entry) and AUDC distortion bits (atari800 pokeysnd.c/pokey.h)

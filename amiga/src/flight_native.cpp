@@ -146,7 +146,7 @@ extern "C" void game_vbi_isr(void)
     else if (vbi == 0x1B30) vbi_handler_station();   // $1B30 attract VBI (sets $0080 + RTCLOK)
     else                    standby_vbi_native();    // $52D7 standby/launch VBI (and fallback)
     cpu = saved;                                    // == XITVBV PLA;TAY;PLA;TAX;PLA
-    PlatformAmiga::noiseTick();                     // refresh poly17 noise sample (no cpu use)
+    PlatformAmiga::noiseTick();                     // refresh a 128-byte slice of the noise sample (cheap)
 }
 
 // sfx_engine_reset_native: faithful replica of the SFX engine reset $5433 (mislabelled
