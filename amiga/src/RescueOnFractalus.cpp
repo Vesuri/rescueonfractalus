@@ -580,6 +580,15 @@ void RescueOnFractalus::initialize()
     active = 0;
     AmigaHardware::setCopperList(*copperLists[active], true);
 
+    // Static-Standby fixed copper list: built once here (bitmaps + sprites now exist),
+    // its dynamic colour/sprite slots refreshed each frame by updateStandbyCopper.
+    // pumpFrame installs it once the doors are decoded and the scene settles into
+    // Standby; until then the double-buffered buildCopperList path drives the build.
+    standbyCopper = new StandbyCopperList();
+    if (standbyCopper && standbyCopper->data())
+        standbyCopper->buildLayout(*titleBitmap, *terrainBitmap, *cockpitBitmap,
+                                   *leftPost, *rightPost, *nullSprite);
+
     // Precompute glyph doubling table: each byte → 16-bit pattern (each bit → 2 bits).
     for (int i = 0; i < 256; i++) {
         uint16_t out = 0;
@@ -996,12 +1005,69 @@ void RescueOnFractalus::pumpFrame()
     perFrameWork();
     render();
 
+    // Static Standby (incl. the gauge-fill sub-phase before the doors scroll): the
+    // copper layout buildCopperList would emit is FIXED here (!rsViewport, doors not
+    // parting), so drive the single fixed StandbyCopperList by poking only changed
+    // colour/sprite slots — no per-frame full rebuild, no double-buffer flip.  Gated
+    // on g_doorFieldReady (doors decoded, fade reveal done -> global fade is 16).
+    const bool staticStandby = standbyCopper && rsStandby && g_doorFieldReady
+                               && !rsViewport && !rsLaunched;
+    if (staticStandby) {
+        if (!standbyCopperInstalled) {
+            updateStandbyCopper(true);   // seed every dynamic slot from current mem[]
+            AmigaHardware::setCopperList(*standbyCopper, false);
+            standbyCopperInstalled = true;
+        } else {
+            updateStandbyCopper(false);  // poke only the slots whose value changed
+        }
+        return;
+    }
+
+    // Dynamic phases (door-open cinematic, stars, planet, flight): the layout varies
+    // per frame, so keep the double-buffered full rebuild + flip.
     uint8_t next = 1 - active;
     unsigned short c0 = flight_vbi_tick();
     buildCopperList(copperLists[next], frameCounter);
     if (rsFlight) g_flightProf.copper += (unsigned short)(flight_vbi_tick() - c0);
     AmigaHardware::setCopperList(*copperLists[next], false);
     active = next;
+    standbyCopperInstalled = false;   // left Standby — next static entry re-seeds + re-installs
+}
+
+// updateStandbyCopper(): refresh the StandbyCopperList's per-frame-varying colour and
+// sprite slots from mem[].  The global fade is 16 throughout this list's life (it's
+// only used once g_doorFieldReady is latched, which is AFTER g_standbyRevealReady), so
+// fadeColor is the identity and the OCS colour is just atariToOCS(byte).  Each slot is
+// poked only when its value changed since last frame (force = poke all, on install).
+void RescueOnFractalus::updateStandbyCopper(bool force)
+{
+    const uint16_t titleBg  = atariToOCS(mem[0x02C8]);             // COLBK = title bg / canopy posts
+    const uint16_t titlePf0 = atariToOCS(mem[zp::textColorPf0]);   // COLPF0 = title text ($00D8)
+    const uint16_t gaugeCol = atariToOCS(mem[0x00DE]);             // gauge bar colour ramp
+    const uint16_t terr0    = atariToOCS(mem[0x02C0]);             // terrain pen0 (road dots)
+    const uint16_t terr1    = atariToOCS(mem[0x02C7]);             // terrain pen1 (LEVEL text)
+    const uint16_t terr2    = atariToOCS(mem[zp::colorRing]);      // terrain pen2 ($08D4)
+    const uint16_t terr3    = atariToOCS(mem[zp::displayFlags]);   // terrain pen3 (green bg, $0071)
+    const int8_t   gauge    = (int8_t)(rsGauge ? 1 : 0);
+
+    if (force || titleBg != sbTitleBg || titlePf0 != sbTitlePf0) {
+        standbyCopper->setTitlePalette(titleBg, titlePf0, atariToOCS(0x78));  // pf1 = blue (const)
+        standbyCopper->setSpritePostColor(titleBg);
+        sbTitleBg = titleBg; sbTitlePf0 = titlePf0;
+    }
+    if (force || gaugeCol != sbGaugeCol) {
+        standbyCopper->setGaugeColor(gaugeCol);
+        sbGaugeCol = gaugeCol;
+    }
+    if (force || terr0 != sbTerr0 || terr1 != sbTerr1 || terr2 != sbTerr2 || terr3 != sbTerr3) {
+        // Any terrain pen changed: rewrite all four (terr3 is the dark->bright green fade).
+        standbyCopper->setTerrainPalette(terr0, terr1, terr2, terr3);
+        sbTerr0 = terr0; sbTerr1 = terr1; sbTerr2 = terr2; sbTerr3 = terr3;
+    }
+    if (force || gauge != sbGauge) {
+        standbyCopper->setSprite2(gauge ? *gaugeSprite : *nullSprite);
+        sbGauge = gauge;
+    }
 }
 
 // deriveRenderSignals(): recompute the renderer's phase-gating signals from mem[]
@@ -1037,6 +1103,7 @@ void RescueOnFractalus::deriveRenderSignals()
     const bool standbyVbi = (vvblki == 0x52D7u);   // Standby + launch cinematic
     const bool flightVbi  = (vvblki == 0x4FF5u);   // in-flight
 
+    rsStandby  = standbyVbi;
     rsFlight   = flightVbi;
     rsStars    = standbyVbi && (mem[0x060B] == 0x23u) && (mem[0x0200] == 0xC2u);
     rsViewport = rsStars || rsFlight;
@@ -1287,6 +1354,7 @@ void RescueOnFractalus::render()
 void RescueOnFractalus::shutdown()
 {
     for (int i = 0; i < 2; i++) { delete copperLists[i]; copperLists[i] = nullptr; }
+    delete standbyCopper; standbyCopper = nullptr;
     paula_audio_shutdown();
     delete titleBitmap;   titleBitmap   = nullptr;
     delete terrainBitmap; terrainBitmap = nullptr;

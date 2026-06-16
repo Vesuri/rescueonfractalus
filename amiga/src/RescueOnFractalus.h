@@ -3,6 +3,7 @@
 #include "../framework/Bitmap.h"
 #include "../framework/Palette.h"
 #include "../framework/Sprite.h"
+#include "StandbyCopperList.h"
 
 // 2-bitplane attract screen: one BPLCON0 mode for the whole frame, Copper
 // switches the 4-colour palette (and bitmap pointer) at each region boundary,
@@ -76,6 +77,7 @@ private:
     // the enum is gone.  (`launched`, which gates only the door gap, stays the C++ bool
     // until Commit 6 — see the g2 comment in buildCopperList.)
     void deriveRenderSignals();
+    bool rsStandby  = false;   // VVBLKI $52D7        — Standby + launch cinematic VBI
     bool rsGauge    = false;   // $060B != 0          — cinematic begun (gauge sprite on)
     bool rsStars    = false;   // VDSLST $0200==$C2    — stars/planet viewport (sprites/colours)
     bool rsFlight   = false;   // $004A != 0           — in-game flight (palette/probe/profiler)
@@ -121,6 +123,20 @@ private:
     bool viewportActive = false;
 
     CopperList* copperLists[2] = { nullptr, nullptr };
+
+    // Static-Standby fixed copper list (built once, poked in place — see
+    // StandbyCopperList).  Used while in the settled Standby/gauge-fill state
+    // (rsStandby && g_doorFieldReady && !rsViewport && !rsLaunched): no per-frame
+    // full rebuild, no double-buffer flip.  pumpFrame switches back to the
+    // double-buffered buildCopperList path for the dynamic phases.
+    StandbyCopperList* standbyCopper = nullptr;
+    bool standbyCopperInstalled = false;   // is standbyCopper the currently-installed list?
+    void updateStandbyCopper(bool force);  // poke changed colour/sprite slots (force = all)
+    // Last-poked values, so updateStandbyCopper only writes a MOVE when it changed.
+    uint16_t sbTitleBg = 0xFFFF, sbTitlePf0 = 0xFFFF, sbGaugeCol = 0xFFFF;
+    uint16_t sbTerr0 = 0xFFFF, sbTerr1 = 0xFFFF, sbTerr2 = 0xFFFF, sbTerr3 = 0xFFFF;
+    int8_t   sbGauge = -1;   // sprite-2 = gauge(1)/null(0); -1 = unset
+
     Bitmap*     titleBitmap    = nullptr;
     Bitmap*     terrainBitmap  = nullptr;
     Bitmap*     cockpitBitmap  = nullptr;
