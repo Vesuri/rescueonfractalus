@@ -290,14 +290,16 @@ void PlatformAmiga::audioShutdown()
     *dmaconPointer = 0x000Fu;  // clear AUD0..3 (no SETCLR = clear)
 }
 
-// ---- platform bridge (C linkage, called from bus.h inlines in rof_gen.c) ------
-extern "C" {
+// ============================================================================
+//  Platform interface — the bus/frame methods the C-compiled 6502 transliteration
+//  reaches through the shared platform_cbridge.cpp (platform->hwRead etc.).
+// ============================================================================
 
 // Real Amiga vertical beam line (VPOSR/VHPOSR), defined in flight_native.cpp; used to
 // derive a faithful ANTIC VCOUNT ($D40B) below.
-unsigned short rof_beam_line(void);
+extern "C" unsigned short rof_beam_line(void);
 
-uint8_t platform_hw_read(uint16_t addr)
+uint8_t PlatformAmiga::hwRead(uint16_t addr)
 {
     if (addr == 0xD20Au) return pokey_random_step();  // POKEY RANDOM register
     if (addr >= 0xD200u && addr < 0xD210u) return pokey[addr - 0xD200u];
@@ -331,7 +333,7 @@ uint8_t platform_hw_read(uint16_t addr)
     return 0u;
 }
 
-void platform_hw_write(uint16_t addr, uint8_t val)
+void PlatformAmiga::hwWrite(uint16_t addr, uint8_t val)
 {
     if (addr < 0xD200u || addr >= 0xD210u) return;  // only POKEY range
     uint8_t reg = (uint8_t)(addr - 0xD200u);
@@ -348,50 +350,35 @@ void platform_hw_write(uint16_t addr, uint8_t val)
     }
 }
 
-// These platform functions are needed to compile rof_gen.c cleanly.
-// They're all no-ops on Amiga (the 6502 display/event code does nothing here).
-void platform_shadow_write(uint16_t /*addr*/, uint8_t /*val*/) {}
-void platform_register_vbi(uint16_t /*addr*/, void (*/*fn*/)(void)) {}
-void platform_indirect_jmp(uint16_t /*addr*/) {}
+// shadowWrite / registerVBI / indirectJmp / setInterrupt are no-ops on Amiga (the 6502
+// display/event code does nothing here, and the VBI is the real INTB_VERTB server) —
+// shadowWrite/registerVBI/indirectJmp inherit the Platform base defaults.
+void PlatformAmiga::setInterrupt(void (*/*fn*/)(void)) {}
+int  PlatformAmiga::framesPerSecond() { return 50; }   // PAL
+int  PlatformAmiga::loadImage(const char* /*path*/) { return 0; }  // image is embedded (incbin)
 
-// g_pumpQuit: the shared "user wants out" flag — set by the frame pump and the poll
-// hook on left-mouse.  g_quitJmp: the __builtin_setjmp buffer armed by
-// RescueOnFractalus::run() so we can unwind the never-returning transpiled chain on quit
-// (5 words per the GCC builtin; initializer forces the definition).  g_vbiCount: bumped
-// once per REAL vertical-blank interrupt (vbiHandler below); the frame pump spins on it
-// as the matching Amiga construct for the Atari frame-wait busy-loops.
-volatile uint8_t  g_pumpQuit   = 0;
-void*             g_quitJmp[5]  = { 0, 0, 0, 0, 0 };
-volatile uint16_t g_vbiCount   = 0;
+// --- launch-cinematic frame pump + quit --------------------------------------
+// g_pumpQuit: the "user wants out" flag — set by the frame pump and pollEvents on
+// left-mouse.  g_vbiCount: bumped once per REAL vertical-blank interrupt (vbiHandler
+// below); the frame pump spins on it.  g_launchBlocking: gate for the pump — while on,
+// vbiHandler must NOT bump RTCLOK ($0014); tickVBI advances it synchronously in lockstep
+// with the wait loop instead.  All file-local.
+static volatile uint8_t  g_pumpQuit      = 0;
+static volatile uint16_t g_vbiCount      = 0;
+static volatile uint8_t  g_launchBlocking = 0;
+static RescueOnFractalus* s_scene        = 0;   // running scene; set by run(), repainted by the pump
 
-// g_launchBlocking: gate for the launch-cinematic frame pump.  While on, vbiHandler must
-// NOT bump RTCLOK ($0014) — platform_tick_vbi advances it synchronously, once per
-// transpiled spin iteration, to stay in lockstep with the wait loop (an async ISR bump
-// racing the loop's RTCLOK reset would desync and hang ~256 frames).
-volatile uint8_t g_launchBlocking = 0;
+// g_quitJmp: the __builtin_setjmp buffer armed by RescueOnFractalus::run() so we can
+// unwind the never-returning transpiled chain on quit (5 words per the GCC builtin;
+// initializer forces the definition).  extern "C" — RescueOnFractalus.cpp references it.
+extern "C" void* g_quitJmp[5] = { 0, 0, 0, 0, 0 };
 
-// s_scene: the running scene, set by PlatformAmiga::run; the frame pump repaints through it.
-static RescueOnFractalus* s_scene = 0;
-
-// platform_poll_events: called from the transpiled spin-wait hooks (SPINWAIT_HOOKS in
-// transpile.py) at the VCOUNT/CONSOL poll points that do NOT pace a frame.  Poll the
-// quit control (left mouse) so the player can always abort even while the transpiled
-// code spins in a tight non-frame wait, and unwind to run() if so.  Unlike
-// platform_render_frame this must NOT wait for a VBI.
-void platform_poll_events(void) {
-    if (AmigaHardware::isLeftMouseButtonPressed()) g_pumpQuit = 1;
-    if (g_pumpQuit) __builtin_longjmp(g_quitJmp, 1);   // escape the never-returning chain
-}
-
-// --- launch-cinematic blocking frame pump -----------------------------------
-// The transpiled launch/audio code paces itself with blocking frame-waits
-// (wait_frames_60 etc.), spinning on RTCLOK ($0014) and calling
-// platform_tick_vbi()/platform_render_frame() each iteration.  When launch
-// blocking mode is on, we turn those hooks into a REAL one-frame pump so the
-// actual 6502 audio code (e.g. audf2_sweep_clear_colors for the doors) runs at
-// the original cadence: render() waits for the next real VBI (so the ISR advances
-// RTCLOK and the native door/tunnel visuals animate), repaints the screen via the
-// scene, and polls quit — escaping the never-returning chain on left-mouse.
+// The launch/audio code paces itself with blocking frame-waits (wait_frames_60 etc.),
+// spinning on RTCLOK ($0014) and calling tickVBI()/renderFrame() each iteration.  While
+// launch-blocking, renderFrame() turns those into a REAL one-frame pump so the genuine
+// 6502 audio code runs at the original cadence: wait the next real VBI (so the ISR
+// advances RTCLOK and the native door/tunnel visuals animate), repaint via the scene,
+// and poll quit — escaping the never-returning chain on left-mouse.
 static void launchFramePump(void) {
     uint16_t last = g_vbiCount;
     while (g_vbiCount == last) { /* wait for next real VBI */ }
@@ -400,20 +387,28 @@ static void launchFramePump(void) {
     if (g_pumpQuit) __builtin_longjmp(g_quitJmp, 1);   // escape the never-returning chain
 }
 
-void rof_launch_blocking(uint8_t on) { g_launchBlocking = on; }
+extern "C" void rof_launch_blocking(uint8_t on) { g_launchBlocking = on; }
 
-void platform_render_frame(void) {
+// renderFrame: called from the transpiled frame-wait hooks (platform_render_frame).
+void PlatformAmiga::renderFrame() {
     if (g_launchBlocking) launchFramePump();
 }
 
-void platform_tick_vbi(void) {
-    // In LAUNCH-BLOCKING mode the ISR's RTCLOK bump is gated OFF (see g_launchBlocking in
-    // vbiHandler below); we advance RTCLOK here instead — exactly once per transpiled
-    // spin iteration — so it stays in LOCKSTEP with the wait loop while platform_render_frame()
-    // (launchFramePump) still waits one real VBI for real-time pacing.  This is essential: the
-    // wait_setcount/wait_frames_N spin ($3CB2) waits for RTCLOK_LOW to *equal* a target, so a
-    // free-running ISR bump (racing a slow pumpFrame that spans >1 frame) would overshoot the
-    // target and hang a full 256-tick wrap.  Mirrors the SDL platform's gated tickVBI exactly.
+// pollEvents: called from the non-frame spin-wait hooks (VCOUNT/CONSOL polls that don't
+// pace a frame).  Poll the quit control so the player can always abort, and unwind to
+// run() if so.  Unlike renderFrame this must NOT wait for a VBI.
+void PlatformAmiga::pollEvents() {
+    if (AmigaHardware::isLeftMouseButtonPressed()) g_pumpQuit = 1;
+    if (g_pumpQuit) __builtin_longjmp(g_quitJmp, 1);   // escape the never-returning chain
+}
+
+void PlatformAmiga::tickVBI() {
+    // In LAUNCH-BLOCKING mode the ISR's RTCLOK bump is gated OFF (see vbiHandler below); we
+    // advance RTCLOK here instead — exactly once per transpiled spin iteration — so it stays
+    // in LOCKSTEP with the wait loop while renderFrame() (launchFramePump) still waits one
+    // real VBI.  Essential: the wait_setcount/wait_frames_N spin ($3CB2) waits for RTCLOK_LOW
+    // to *equal* a target, so a free-running ISR bump (racing a slow pumpFrame that spans >1
+    // frame) would overshoot the target and hang a full 256-tick wrap.
     if (g_launchBlocking) {
         mem[0x0014]++;                      // RTCLOK_LOW (mirrors vbiHandler)
         if (!mem[0x0014]) mem[0x0013]++;    // RTCLOK_MID carry
@@ -422,18 +417,15 @@ void platform_tick_vbi(void) {
 
 // The tunnel-ring "dirty field" flags advance_message_column already uses to stream the
 // ring-clear frames from the $1000 GTIA field into the tunnel bitmap (NativeHandlers.cpp).
-extern volatile uint8_t g_tunnelFieldDirty;
-extern volatile uint8_t g_tunRowLo, g_tunRowHi;
-void platform_tunnel_rings_drawn(void) {
+extern "C" volatile uint8_t g_tunnelFieldDirty;
+extern "C" volatile uint8_t g_tunRowLo, g_tunRowHi;
+void PlatformAmiga::tunnelRingsDrawn() {
     // display_setup's draw_frame_pattern_seq just rendered the full ring pattern into the
     // $1000 field.  Flag the whole field dirty so the next pumpFrame decodes it once into
     // the tunnel bitmap (then advance_message_column streams the per-frame clear updates).
     g_tunRowLo = 0; g_tunRowHi = 85;
     g_tunnelFieldDirty = 1;
 }
-int  platform_load_image(const char* /*path*/) { return 0; }
-
-} // extern "C"
 
 // ============================================================================
 //  CIA-A serial-port keyboard — RETURN -> Atari START switch (CONSOL $D01F)
@@ -575,10 +567,33 @@ static uint32_t sfxTimerHandler()
 }
 
 // ============================================================================
-//  PlatformAmiga::run — display takeover, install interrupts, run scene, restore
+//  PlatformAmiga construction + run — takeover, install interrupts, run scene, restore
 // ============================================================================
-void PlatformAmiga::run(RescueOnFractalus& scene)
+PlatformAmiga::PlatformAmiga(const char* /*imagePath*/)
 {
+    // Bring up the platform (mirrors PlatformSDL's ctor doing SDL_Init): open
+    // graphics.library so run()'s display takeover can reach GfxBase.  On failure set
+    // quit so main() bails (it checks plt.quit) instead of dereferencing a null GfxBase.
+    // The Amiga image is embedded (incbin) and loaded in run() via load_xex_image(), so
+    // the path argument is ignored.
+    GfxBase = (struct GfxBase*)OpenLibrary((UBYTE*)"graphics.library", 33);
+    quit = (GfxBase == 0);
+
+    // Publish the global Platform* the C bridge (platform_cbridge.cpp) dispatches through.
+    platform = this;
+}
+
+PlatformAmiga::~PlatformAmiga()
+{
+    if (GfxBase) { CloseLibrary((struct Library*)GfxBase); GfxBase = 0; }
+}
+
+void PlatformAmiga::run()
+{
+    // The scene holds several KB of shadow buffers; keep it in BSS (static), NOT on the
+    // stack (which the PlatformAmiga instance lives on in main), to avoid stack overflow.
+    static RescueOnFractalus scene;
+
     // --- takeover: save system state, disable OS display ---------------------
     struct View* savedView = GfxBase->ActiView;
     LoadView(NULL);

@@ -1,34 +1,50 @@
 #pragma once
-/* PlatformAmiga — the Amiga-specific platform layer for Rescue on Fractalus.
+/* PlatformAmiga — the Amiga concrete implementation of the abstract Platform.
  *
- * Owns everything Amiga-hardware-specific that sits below the RescueOnFractalus
- * scene: the display takeover (LoadView/DMACON/display window), the real
- * INTB_VERTB VBI server, the CIA-B Timer A music tick, the CIA-A serial-port
- * keyboard (RETURN -> Atari START switch), the POKEY->Paula audio backend, and
- * the launch-cinematic frame pump.  Static-method class (one platform per run),
- * matching the framework's AmigaHardware idiom.
+ * Owns everything Amiga-hardware-specific below the RescueOnFractalus scene: the
+ * display takeover (LoadView/DMACON/display window), the real INTB_VERTB VBI server,
+ * the CIA-B Timer A music tick, the CIA-A serial-port keyboard (RETURN -> Atari START),
+ * the POKEY->Paula audio backend, and the launch-cinematic frame pump.
  *
- * It also implements the platform_c.h bridge that the C-compiled 6502
- * transliteration calls (kept as extern "C" free functions; see PlatformAmiga.cpp).
+ * It implements the Platform interface the C-compiled 6502 transliteration reaches
+ * through the shared platform_cbridge.cpp (hwRead/hwWrite/renderFrame/tickVBI/...).
  */
-#include "../framework/Util.h"  // provides uint8_t, uint16_t, uint32_t
+#include "Platform.h"           // the abstract base (src/platform, on the build -I path)
+#include "platform_c.h"         // the extern "C" bridge decls (platform_hw_write etc.)
+#include "../framework/Util.h"  // uint8_t, uint16_t, uint32_t
+
+// PETSCIIRobots-SDL convention: main.cpp instantiates PlatformClass(image) without
+// knowing the concrete type; the build define selects which header is included.
+#define PlatformClass PlatformAmiga
 
 class RescueOnFractalus;
 
-class PlatformAmiga {
+class PlatformAmiga : public Platform {
 public:
+    explicit PlatformAmiga(const char* imagePath);   // imagePath ignored (image is embedded)
+    virtual ~PlatformAmiga();
+
     // run(): the whole Amiga lifecycle.  Takes over the display, installs the VBI
     // server + CIA-B music tick + CIA-A keyboard, loads the boot image, runs the
-    // scene (the genuine transpiled/native boot chain), then restores the system.
-    // main() opens graphics.library, constructs the scene, and calls this; it
-    // returns when the user quits (left mouse button).
-    static void run(RescueOnFractalus& scene);
+    // RescueOnFractalus scene (the genuine transpiled/native boot chain under the
+    // launch frame pump), then restores the system.  Returns when the user quits.
+    virtual void run() override;
 
-    // POKEY->Paula audio backend.  The 6502-converted station_audio writes POKEY
-    // registers (via platform_hw_write below); these route them to Amiga Paula DMA.
-    //   audioInit/audioShutdown : bracket Paula audio DMA.
-    //   pokeyRandom             : advance + return one POKEY LFSR byte (read by the
-    //                             attract/noise/star code, as the Atari read $D20A).
+    // Platform bus + frame interface (reached via platform_cbridge.cpp).
+    virtual uint8_t hwRead(uint16_t addr)            override;
+    virtual void    hwWrite(uint16_t addr, uint8_t val) override;
+    virtual void    renderFrame()                    override;   // drive one launch-pump frame
+    virtual void    pollEvents()                     override;   // poll quit (left mouse)
+    virtual void    tickVBI()                        override;   // advance RTCLOK in launch lockstep
+    virtual void    tunnelRingsDrawn()               override;   // flag the $1000 ring field dirty
+    virtual int     loadImage(const char* path)      override;   // image is embedded -> no-op
+    virtual void    setInterrupt(void (*fn)(void))   override;   // Amiga uses the real VBI -> no-op
+    virtual int     framesPerSecond()                override;   // 50 (PAL)
+
+    // POKEY->Paula audio backend (static — no instance state; the 6502-converted
+    // station_audio writes POKEY registers via hwWrite, these route them to Paula DMA).
+    //   audioInit/audioShutdown : bracket Paula audio DMA (called by RescueOnFractalus).
+    //   pokeyRandom             : advance + return one POKEY LFSR byte (attract/noise/stars).
     //   noiseTick               : per-VBI refresh of the continuous poly17 noise sample.
     static void audioInit();
     static void audioShutdown();
@@ -39,25 +55,11 @@ public:
 #ifdef __cplusplus
 extern "C" {
 #endif
-
-/* Platform bridge — C linkage so the bus.h inlines (compiled from C rof_gen.c)
- * can reach them.  Declared in platform_c.h; defined in PlatformAmiga.cpp.
- * (platform_hw_write is also called from the C++ SfxPlayer.) */
-uint8_t platform_hw_read (uint16_t addr);
-void    platform_hw_write(uint16_t addr, uint8_t val);
-void    platform_shadow_write(uint16_t addr, uint8_t val);
-void    platform_register_vbi(uint16_t addr, void (*fn)(void));
-void    platform_indirect_jmp(uint16_t addr);
-void    platform_render_frame(void);
-void    platform_poll_events(void);
-void    platform_tick_vbi(void);
-int     platform_load_image(const char* path);
-
-/* Gate the launch-cinematic frame pump (set by RescueOnFractalus::run): while on,
- * the transpiled frame-wait spin loops drive a real one-VBI repaint and RTCLOK is
- * advanced in lockstep by platform_tick_vbi instead of the free-running ISR. */
+/* Gate the launch-cinematic frame pump (set by RescueOnFractalus::run): while on, the
+ * transpiled frame-wait spin loops drive a real one-VBI repaint and RTCLOK is advanced in
+ * lockstep by tickVBI() instead of the free-running ISR.  Amiga-specific (not in the
+ * shared platform_c.h bridge). */
 void rof_launch_blocking(uint8_t on);
-
 #ifdef __cplusplus
 }
 #endif

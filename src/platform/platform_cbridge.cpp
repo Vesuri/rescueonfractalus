@@ -44,8 +44,9 @@ void platform_poll_events(void) {
     if (platform) platform->pollEvents();
 }
 
-/* SDL renders mem[] directly, so the tunnel rings need no bitplane conversion. */
-void platform_tunnel_rings_drawn(void) {}
+void platform_tunnel_rings_drawn(void) {
+    if (platform) platform->tunnelRingsDrawn();
+}
 
 } /* extern "C" */
 
@@ -59,6 +60,7 @@ void platform_tunnel_rings_drawn(void) {}
    --------------------------------------------------------------------------- */
 namespace {
 struct HeadlessPlatform : Platform {
+    void    run() override {}
     void    setInterrupt(void (*)(void)) override {}
     int     framesPerSecond() override { return 50; }
     void    renderFrame() override {}

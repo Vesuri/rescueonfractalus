@@ -3,6 +3,7 @@
 #include "../cpu/cpu.h"
 #include <cstdio>
 #include <cstdlib>      /* getenv, atoi */
+#include <csignal>      /* signal, SIGINT, SIGTERM (Ctrl-C handling in run()) */
 #include <cstring>
 #include <strings.h>   /* strcasecmp */
 #include <cmath>
@@ -166,6 +167,33 @@ PlatformSDL::~PlatformSDL() {
     if (bufferSurface) SDL_FreeSurface(bufferSurface);
     if (window)        SDL_DestroyWindow(window);
     SDL_Quit();
+}
+
+/* ------------------------------------------------------------------ */
+/* Lifecycle                                                            */
+/* ------------------------------------------------------------------ */
+
+extern "C" {
+    void rof_register_vbi_handlers(void);
+    void game_entry(void);
+}
+
+/* SDL may swallow SIGINT on macOS; reinstall a plain exit handler so Ctrl-C
+   always works, even when the game is stuck in a spin-wait loop before the SDL
+   event loop runs.  (SDL_Init in our ctor installs its own SIGINT/SIGTERM
+   handlers, so we re-arm ours here, after SDL is up.) */
+static void handleSigInt(int) { exit(0); }
+
+void PlatformSDL::run() {
+    signal(SIGINT,  handleSigInt);
+    signal(SIGTERM, handleSigInt);
+
+    /* Populate the VBI address -> C-function dispatch table so the audio callback
+       can fire the right handler when the game installs it. */
+    rof_register_vbi_handlers();
+
+    /* Run the game — loops forever (or until ESC / window close). */
+    game_entry();
 }
 
 /* ------------------------------------------------------------------ */

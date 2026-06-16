@@ -1,7 +1,10 @@
 #ifndef PLATFORM_H
 #define PLATFORM_H
 
-#include <cstdint>
+#if !defined(ROF_PLATFORM_AMIGA)
+#include <cstdint>   /* SDL/host build.  The Amiga build has no libstdc++ and gets the
+                        integer types from the force-included framework/SASCCompat.h. */
+#endif
 
 /* Abstract platform base — mirrors the pattern from PETSCIIRobots-SDL/Platform.h.
    Each supported target (SDL, Amiga) provides a concrete subclass.
@@ -12,6 +15,18 @@ class Platform {
 public:
     Platform();
     virtual ~Platform();
+
+    /* ------------------------------------------------------------------ */
+    /* Lifecycle                                                            */
+    /* ------------------------------------------------------------------ */
+
+    /* Run the game.  Each platform sets up whatever it needs (interrupts,
+       scene, signal handlers) and drives the genuine boot chain (game_entry).
+       main() constructs the concrete PlatformClass and calls this; it returns
+       when the user quits.  SDL: game_entry() directly (PlatformSDL renders
+       mem[] each VBI).  Amiga: game_entry() inside the RescueOnFractalus scene
+       under the launch frame pump, unwound on quit via setjmp/longjmp.       */
+    virtual void run() = 0;
 
     /* ------------------------------------------------------------------ */
     /* Frame / interrupt                                                    */
@@ -55,6 +70,12 @@ public:
 
     /* Runtime indirect JMP dispatch (DLI chain pattern: JMP ($E0)).     */
     virtual void indirectJmp(uint16_t addr) { (void)addr; }
+
+    /* Notification that display_setup just drew the launch tunnel rings into the
+       $1000 GTIA field.  A platform that mirrors mem[] into its own framebuffer
+       (the Amiga copper/bitplane backend) converts them to bitplanes here.
+       No-op on platforms that render mem[] directly (SDL).                */
+    virtual void tunnelRingsDrawn() {}
 
     /* ------------------------------------------------------------------ */
     /* Image loading                                                        */

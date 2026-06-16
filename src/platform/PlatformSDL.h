@@ -34,6 +34,7 @@ public:
     explicit PlatformSDL(const char* imagePath);
     virtual ~PlatformSDL();
 
+    virtual void    run()                          override;
     virtual void    setInterrupt(void (*fn)(void)) override;
     virtual int     framesPerSecond()              override;
     virtual void    renderFrame()                  override;

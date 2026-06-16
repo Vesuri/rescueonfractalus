@@ -20,14 +20,22 @@ SUPPORT  = $(abspath $(dir $(shell which $(CC)))../../support)
 # Repository root (parent of amiga/)
 REPO     = ..
 
-$(shell mkdir -p obj/framework obj/src obj/audio out)
+$(shell mkdir -p obj/framework obj/src obj/platform obj/audio out)
 
 # C++ sources: framework hw classes + RoF application
 FW_CPPS  := $(wildcard framework/*.cpp)
 SRC_CPPS := $(wildcard src/*.cpp)
 FW_OBJS  := $(patsubst framework/%.cpp,obj/framework/%.o,$(FW_CPPS))
 SRC_OBJS := $(patsubst src/%.cpp,obj/src/%.o,$(SRC_CPPS))
-CPP_OBJS := $(FW_OBJS) $(SRC_OBJS)
+
+# Shared platform layer (repo src/): the abstract Platform base, the C bridge that
+# dispatches the transpiled code's platform_* calls to the Platform singleton, and the
+# common entry point.  Built with the SAME C++ flags + -DROF_PLATFORM_AMIGA (so main.cpp
+# selects PlatformAmiga) and -I src/platform (CPPFLAGS below).
+PLATFORM_CPPS := $(REPO)/src/platform/Platform.cpp $(REPO)/src/platform/platform_cbridge.cpp $(REPO)/src/main.cpp
+PLATFORM_OBJS := obj/platform/Platform.o obj/platform/platform_cbridge.o obj/platform/main.o
+
+CPP_OBJS := $(FW_OBJS) $(SRC_OBJS) $(PLATFORM_OBJS)
 
 # M5 audio slice: the 6502-converted cpu/bus core + generated audio functions.
 # Compiled as plain C (not C++), with include paths into the repo src tree.
@@ -63,10 +71,12 @@ CCFLAGS   = -g -MP -MMD -m68000 -msoft-float $(OPT) -nostdlib \
             -DNO_ASSEMBLER $(WARN) $(EXTRA_DEFINES)
 CPPFLAGS  = $(CCFLAGS) -fno-rtti -fno-exceptions -fno-use-cxa-atexit -std=gnu++17 \
             -fpermissive -Wno-write-strings -Wno-pointer-arith \
+            -DROF_PLATFORM_AMIGA \
             -include "$(CURDIR)/framework/SASCCompat.h" \
             -I"$(CURDIR)/framework" \
             -I"$(CURDIR)/framework/compat-include" \
-            -I"$(CURDIR)/src"
+            -I"$(CURDIR)/src" \
+            -I"$(REPO)/src/platform"
 ASFLAGS   = -mcpu=68000 -g --register-prefix-optional -I"$(SDKDIR)"
 LDFLAGS   = -Wl,--emit-relocs,--gc-sections,-Ttext=0,-Map=$(OUT).map
 
@@ -88,6 +98,17 @@ obj/framework/%.o : framework/%.cpp
 obj/src/%.o : src/%.cpp
 	$(info C++  $<)
 	@$(CC) $(CPPFLAGS) -c -o $@ "$(CURDIR)/$<"
+
+# Shared platform layer (repo src/ + src/platform/): same C++ flags as the Amiga src.
+obj/platform/Platform.o : $(REPO)/src/platform/Platform.cpp
+	$(info C++  $< [platform])
+	@$(CC) $(CPPFLAGS) -c -o $@ "$(abspath $<)"
+obj/platform/platform_cbridge.o : $(REPO)/src/platform/platform_cbridge.cpp
+	$(info C++  $< [platform])
+	@$(CC) $(CPPFLAGS) -c -o $@ "$(abspath $<)"
+obj/platform/main.o : $(REPO)/src/main.cpp
+	$(info C++  $< [platform])
+	@$(CC) $(CPPFLAGS) -c -o $@ "$(abspath $<)"
 
 obj/gcc8_c_support.o : $(SUPPORT)/gcc8_c_support.c
 	$(info C    $<)

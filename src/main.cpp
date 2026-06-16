@@ -1,49 +1,36 @@
-/* Rescue on Fractalus! — SDL entry point.
-   Follows the PETSCIIRobots-SDL pattern: instantiate PlatformClass, register
-   platform-specific handlers, then hand control to the game. */
-#include "platform/PlatformSDL.h"
-#include <csignal>
-#include <cstdlib>
+/* Rescue on Fractalus! — shared entry point.
+ *
+ * One main() for every target: it constructs the concrete PlatformClass (selected
+ * by a build define), then hands control to Platform::run(), which owns all the
+ * platform-specific setup and drives the genuine boot chain (game_entry).
+ *
+ *   ROF_PLATFORM_AMIGA  -> PlatformAmiga  (amiga/src, m68k cross-build)
+ *   default             -> PlatformSDL    (macOS dev build)
+ */
+#if defined(ROF_PLATFORM_AMIGA)
+  #include "PlatformAmiga.h"          /* amiga/src — on the cross-build's -I path */
+#else
+  #include "platform/PlatformSDL.h"
+#endif
 
-extern "C" {
-    void rof_register_vbi_handlers(void);
-    void game_entry(void);
-}
-
-/* SDL may swallow SIGINT on macOS; reinstall a plain exit handler so
-   Ctrl-C always works, even when the game is stuck in a spin-wait loop
-   before the SDL event loop gets a chance to run.                     */
-static void handleSigInt(int) { exit(0); }
-
+/* Default to the pristine rof.xex so every build boots the SAME initial state and
+   game_entry code path.  Pass a path to boot a different image where the platform
+   supports it (SDL: a flat 64 KB .bin; Amiga ignores it — the image is embedded).
+   NOTE: the Amiga freestanding CRT (_start) calls main() with NO arguments, so the
+   Amiga main takes none (a mismatched signature reads garbage off the stack). */
+#if defined(ROF_PLATFORM_AMIGA)
+int main(void) {
+    const char* image = "rof.xex";
+#else
 int main(int argc, char* argv[]) {
-    signal(SIGINT, handleSigInt);   /* ensure Ctrl-C works before SDL events run */
-
-    /* Default to the pristine rof.xex so the SDL build boots the SAME initial state
-       and game_entry code path as the Amiga (load_xex_image).  Pass a ".bin" path to
-       boot a flat 64 KB RAM snapshot instead (e.g. disasm/rof_mem.bin). */
     const char* image = (argc > 1) ? argv[1] : "rof.xex";
+#endif
 
-    /* Creating PlatformSDL initialises SDL, loads the memory image,
-       starts the audio device, and sets the global Platform* pointer. */
+    /* Constructing PlatformClass brings up the platform (window/DMA/audio, loads
+       the memory image) and sets the global Platform* pointer the C bridge uses. */
     PlatformClass plt(image);
+    if (plt.quit) return 1;
 
-    if (plt.quit) {
-        return 1;
-    }
-
-    /* SDL_Init (in the PlatformClass ctor above) reinstalls its own SIGINT/SIGTERM
-       handlers, clobbering the one set before main()'s SDL setup and turning Ctrl-C
-       into an SDL_QUIT event that the spin-wait-driven boot never gets to act on.
-       Re-arm our plain exit handler AFTER SDL is up so Ctrl-C always kills the app. */
-    signal(SIGINT,  handleSigInt);
-    signal(SIGTERM, handleSigInt);
-
-    /* Populate the VBI address → C-function dispatch table so the audio
-       callback can fire the right handler when the game installs it. */
-    rof_register_vbi_handlers();
-
-    /* Run the game — this loops forever (or until ESC / window close). */
-    game_entry();
-
+    plt.run();   /* runs the game; returns when the user quits */
     return 0;
 }

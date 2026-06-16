@@ -1,6 +1,4 @@
 #include "Platform.h"
-#include <cstdio>
-#include <cstring>
 
 extern volatile uint8_t mem[65536];
 

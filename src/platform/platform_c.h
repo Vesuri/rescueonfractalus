@@ -3,7 +3,10 @@
 /* C-compatible bridge header — included by src/cpu/bus.h so the
    C-compiled 6502 transliteration can reach hardware emulation.
    Implemented in platform_cbridge.cpp which calls the C++ Platform singleton. */
-#include <stdint.h>
+#if !defined(ROF_PLATFORM_AMIGA)
+#include <stdint.h>   /* Amiga C++ build gets the integer types from the force-included
+                         framework/SASCCompat.h; its compat <stdint.h> would clash. */
+#endif
 
 #ifdef __cplusplus
 extern "C" {
