@@ -707,6 +707,31 @@ void copy_row_addr_subset(void) {
  * $00C4:$00C3 + 1 (each underflow of $00C3 borrows from $00C4; loop ends when both
  * reach $FF).  Writes through bus_write; $00B7 is re-read each pass (faithful). */
 void memset_or_copy(void) {
+    /* Fast path: the byte $00B7 is filled to [dest, dest+count) where dest=$C1/$C2 and
+       count = ($C4:$C3)+1.  The per-byte bus_write below is pure overhead for plain RAM
+       (its function call + two range checks + (zp),Y recompute per byte made loader_util's
+       ~9.5 KB clear cost ~23 VBIs / ~0.46s of the boot path).  bus_write only differs from
+       a direct mem[] store for the hardware range ($D000-$D7FF) and the page-2 OS shadows
+       ($0200-$02FF, which notify the platform).  All real callers (loader_util,
+       fill_region_2000, init_terrain_render_buffers, display_setup) target plain RAM, so
+       fill mem[] directly there and fall back to the faithful loop only when the region
+       overlaps those ranges (or wraps $FFFF).  Leaves $C1-$C4/Y exactly as the loop would. */
+    uint16_t start = (uint16_t)(mem[0x00C1] | (mem[0x00C2] << 8));
+    uint32_t count = (uint32_t)(((uint32_t)mem[0x00C4] << 8) | mem[0x00C3]) + 1u;
+    uint32_t end   = (uint32_t)start + count;                 /* unwrapped, for overlap test */
+    int hw     = (start < 0xD800u) && (end > 0xD000u);
+    int shadow = (start < 0x0300u) && (end > 0x0200u);
+    if (!hw && !shadow && end <= 0x10000u) {
+        uint8_t  val = mem[0x00B7];
+        uint16_t a   = start;
+        for (uint32_t k = 0; k < count; k++) { mem[a] = val; a = (uint16_t)(a + 1); }
+        mem[0x00C1] = (uint8_t)(end & 0xFF);
+        mem[0x00C2] = (uint8_t)((end >> 8) & 0xFF);
+        mem[0x00C3] = 0xFF;
+        mem[0x00C4] = 0xFF;
+        cpu.Y = 0x00;
+        return;
+    }
     for (;;) {
         cpu.Y = 0x00;
         bus_write(ZP_IND_Y(0x00C1), mem[0x00B7]);
