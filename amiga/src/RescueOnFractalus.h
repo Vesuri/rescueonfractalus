@@ -47,6 +47,8 @@ private:
     bool rsFlight   = false;   // $004A != 0           — in-game flight (palette/probe/profiler)
     bool rsViewport = false;   // stars || flight      — mode-D viewport band active
     bool rsLaunched = false;   // doors armed || viewport — door-gap g2 (doors..flight)
+    bool doorsOpenedLatch = false;  // door scroll finished; hold the tunnel view through the
+    uint8_t prevScrollCtr = 0;      // gap before the ring/viewport arms (see deriveRenderSignals)
 
     Sprite*  gaugeSprite   = nullptr;    // player-strip throttle bar ($0D98)
     void buildGaugeSprite();             // $0D98 strip -> gaugeSprite lines

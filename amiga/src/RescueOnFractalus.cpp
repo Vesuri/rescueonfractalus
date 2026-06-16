@@ -879,6 +879,22 @@ void RescueOnFractalus::deriveRenderSignals()
     // would briefly read false (the artifact that kept this as a C++ bool through C4).
     rsLaunched = (mem[zp::terrainScrollCounter] != 0) || (mem[zp::vbiFlags] != 0) || rsViewport;
 
+    // Door-fully-open latch.  When the door scroll completes ($008A counts $2B->0) there
+    // is a multi-frame gap before the tunnel-ring dispatcher arms ($0088 set) / the
+    // viewport takes over.  In that gap all of $008A/$0088/rsViewport are 0, so rsLaunched
+    // would read false and the terrain region collapses back to the full closed-door
+    // bitmap (the doors visibly "snap shut" for a beat, until ring cycling starts).  Latch
+    // it: once the door has fully opened, keep rsLaunched true (so g2 stays at the full gap
+    // and the tunnel bitmap is shown) until the cinematic leaves launch or a viewport scene
+    // begins.  (The old comment here wrongly assumed the ring arms before the next frame.)
+    {
+        const uint8_t scroll = mem[zp::terrainScrollCounter];
+        if (mem[0x060B] != 0x23u || rsViewport) doorsOpenedLatch = false;  // left launch / viewport took over
+        else if (prevScrollCtr != 0u && scroll == 0u) doorsOpenedLatch = true;  // door just reached fully open
+        prevScrollCtr = scroll;
+        if (doorsOpenedLatch) rsLaunched = true;
+    }
+
     // Re-arm the one-time Standby door capture (render() does it once when the doors
     // are built, gated on $00E7!=0) whenever the scene is NOT a settled Standby —
     // music off (building / not yet there), launched, or a viewport scene.  So each
