@@ -12,6 +12,12 @@
 #include "AtariZp.h"      // zp:: named Atari memory offsets
 extern "C" volatile uint8_t mem[65536];
 
+// Screen-RAM dirty flags (defined in RescueOnFractalus.cpp): set when a writer stores into
+// the title ($32B7) / cockpit ($332D mode4, $350D modeD) regions so render() re-scans that
+// region; otherwise its per-cell shadow scan is skipped (the static-Standby cost saver).
+extern "C" volatile uint8_t g_titleDirty;
+extern "C" volatile uint8_t g_cockpitDirty;
+
 // vbi_attract_timer_native: fragment of vbi_handler_standby @ $52D7 relevant to
 // Standby.  The full handler also writes DMACTL/CHBASE/colour/HPOS registers
 // (handled by Copper) and increments $0014 (handled by main.cpp VBI server).
@@ -46,6 +52,7 @@ extern "C" void copy_text_block_to_screen_native(void)
     }
     for (int i = 0; i < 20; i++)
         mem[0x32B7u + (uint16_t)i] = mem[src + (uint16_t)i];
+    g_titleDirty = 1;   // title $32B7-$32CA rewritten → render() must re-scan
 }
 
 // update_cockpit_digits_native: direct translation of startup_init @ $3FFA.
@@ -73,6 +80,7 @@ extern "C" void update_cockpit_digits_native(void)
         mem[dest + 1u]     = mem[t + 1u] | flag;
         mem[dest + 0x30u]  = mem[t + 2u] | flag;
         mem[dest + 0x31u]  = mem[t + 3u] | flag;
+        g_cockpitDirty = 1;   // cockpit mode-4 cell changed → render() must re-scan
     };
 
     mem[zp::barColThreshold] = 0u;
@@ -89,8 +97,9 @@ extern "C" void update_cockpit_digits_native(void)
         }
         y = 0x9Eu;
     }
-    mem[0x33DFu] = y;
-    mem[0x33E0u] = (uint8_t)(y - 1u);
+    // $33DF/$33E0 are in the scanned mode-4 region; only dirty when the value actually
+    // changes (this runs every call, so an unconditional dirty would defeat the skip).
+    if (mem[0x33DFu] != y) { mem[0x33DFu] = y; mem[0x33E0u] = (uint8_t)(y - 1u); g_cockpitDirty = 1; }
 
     // Digit 1: lower nibble of mem[$0642], change-detected against mem[$0647]
     if (a != mem[zp::digitCache647]) {
@@ -158,6 +167,7 @@ extern "C" void lock_on_indicator_tick_native(void)
             uint8_t newS = (n == 7u) ? (uint8_t)(s - 2u) : (uint8_t)(s - 1u);
             mem[zp::lockOnIndicatorState] = newS;
             mem[0x3491u + newS] = 0xA9u;
+            g_cockpitDirty = 1;
             pushRingBuf(0xA9u);
         } else {    // s == $80: random blink (faithful port of $4235-$4247)
             if (mem[zp::animStepTimer] > 0u) { mem[zp::animStepTimer]--; return; }
@@ -169,6 +179,7 @@ extern "C" void lock_on_indicator_tick_native(void)
             mem[zp::animStepTimer] = r;                       // $423A STA $E6 (full r)
             uint8_t y = (r >= 6u) ? (uint8_t)(r >> 1u) : r;   // $423C CMP #6 / BCC / LSR A
             mem[0x3492u + y] ^= 0x80u;                        // $4242-$4247 toggle colour bit
+            g_cockpitDirty = 1;
         }
         return;
     }
@@ -183,12 +194,14 @@ extern "C" void lock_on_indicator_tick_native(void)
         mem[zp::lockOnIndicatorState]++;
         uint8_t newS = mem[zp::lockOnIndicatorState];
         mem[0x3491u + newS] = 0x29u;
+        g_cockpitDirty = 1;
         pushRingBuf(0x29u);     // pushes $A9 = $29|$80
     } else {                    // s == 0: initialise
         mem[zp::lockOnIndicatorActive] = 0u;
         mem[zp::lockOnIndicatorState] = 1u;
         mem[zp::animStepTimer] = mem[zp::gaugeStepReload];
         for (int i = 5; i >= 0; i--) mem[0x3492u + (uint16_t)i] = 0xA9u;
+        g_cockpitDirty = 1;
     }
 }
 

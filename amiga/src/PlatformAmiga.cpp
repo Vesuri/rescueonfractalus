@@ -357,63 +357,48 @@ void PlatformAmiga::setInterrupt(void (*/*fn*/)(void)) {}
 int  PlatformAmiga::framesPerSecond() { return 50; }   // PAL
 int  PlatformAmiga::loadImage(const char* /*path*/) { return 0; }  // image is embedded (incbin)
 
-// --- launch-cinematic frame pump + quit --------------------------------------
-// g_pumpQuit: the "user wants out" flag — set by the frame pump and pollEvents on
+// --- frame rendering + quit --------------------------------------------------
+// g_pumpQuit: the "user wants out" flag — set by renderFrame and pollEvents on
 // left-mouse.  g_vbiCount: bumped once per REAL vertical-blank interrupt (vbiHandler
-// below); the frame pump spins on it.  g_launchBlocking: gate for the pump — while on,
-// vbiHandler must NOT bump RTCLOK ($0014); tickVBI advances it synchronously in lockstep
-// with the wait loop instead.  All file-local.
-static volatile uint8_t  g_pumpQuit      = 0;
-static volatile uint16_t g_vbiCount      = 0;
-static volatile uint8_t  g_launchBlocking = 0;
-static RescueOnFractalus* s_scene        = 0;   // running scene; set by run(), repainted by the pump
+// below); renderFrame spins on it.  All file-local.
+static volatile uint8_t  g_pumpQuit = 0;
+static volatile uint16_t g_vbiCount = 0;
+static RescueOnFractalus* s_scene   = 0;   // running scene; set by run()
 
 // g_quitJmp: the __builtin_setjmp buffer armed by RescueOnFractalus::run() so we can
 // unwind the never-returning transpiled chain on quit (5 words per the GCC builtin;
 // initializer forces the definition).  extern "C" — RescueOnFractalus.cpp references it.
 extern "C" void* g_quitJmp[5] = { 0, 0, 0, 0, 0 };
 
-// The launch/audio code paces itself with blocking frame-waits (wait_frames_60 etc.),
-// spinning on RTCLOK ($0014) and calling tickVBI()/renderFrame() each iteration.  While
-// launch-blocking, renderFrame() turns those into a REAL one-frame pump so the genuine
-// 6502 audio code runs at the original cadence: wait the next real VBI (so the ISR
-// advances RTCLOK and the native door/tunnel visuals animate), repaint via the scene,
-// and poll quit — escaping the never-returning chain on left-mouse.
-static void launchFramePump(void) {
-    uint16_t last = g_vbiCount;
-    while (g_vbiCount == last) { /* wait for next real VBI */ }
-    if (s_scene) s_scene->pumpFrame();   // full repaint body
-    if (AmigaHardware::isLeftMouseButtonPressed()) g_pumpQuit = 1;
-    if (g_pumpQuit) __builtin_longjmp(g_quitJmp, 1);   // escape the never-returning chain
-}
-
-extern "C" void rof_launch_blocking(uint8_t on) { g_launchBlocking = on; }
-
 // renderFrame: called from the transpiled frame-wait hooks (platform_render_frame).
+// Render first so the display reflects the state the spin-wait just advanced, then
+// wait for the next real VBI (or return immediately if one already fired during
+// rendering).  After the wait, advance RTCLOK by exactly one — owned here rather
+// than in the ISR so the equality spin (wait_setcount $3CB2) always gets one advance
+// per iteration regardless of how long rendering takes.
+// Exception: ATTRACT VBI ($1B30) bumps RTCLOK in its own transpiled body; skip here.
 void PlatformAmiga::renderFrame() {
-    if (g_launchBlocking) launchFramePump();
+    uint16_t last = g_vbiCount;
+    if (s_scene) s_scene->renderFrame();
+    while (g_vbiCount == last) { /* wait for next real VBI */ }
+    uint16_t vbiVec = (uint16_t)(mem[0x0222] | (mem[0x0223] << 8));
+    if (vbiVec != 0x1B30u) {
+        mem[0x0014]++;
+        if (!mem[0x0014]) mem[0x0013]++;
+    }
+    if (AmigaHardware::isLeftMouseButtonPressed()) g_pumpQuit = 1;
+    if (g_pumpQuit) __builtin_longjmp(g_quitJmp, 1);
 }
 
 // pollEvents: called from the non-frame spin-wait hooks (VCOUNT/CONSOL polls that don't
-// pace a frame).  Poll the quit control so the player can always abort, and unwind to
-// run() if so.  Unlike renderFrame this must NOT wait for a VBI.
+// pace a frame).  Poll the quit control so the player can always abort.
 void PlatformAmiga::pollEvents() {
     if (AmigaHardware::isLeftMouseButtonPressed()) g_pumpQuit = 1;
-    if (g_pumpQuit) __builtin_longjmp(g_quitJmp, 1);   // escape the never-returning chain
+    if (g_pumpQuit) __builtin_longjmp(g_quitJmp, 1);
 }
 
-void PlatformAmiga::tickVBI() {
-    // In LAUNCH-BLOCKING mode the ISR's RTCLOK bump is gated OFF (see vbiHandler below); we
-    // advance RTCLOK here instead — exactly once per transpiled spin iteration — so it stays
-    // in LOCKSTEP with the wait loop while renderFrame() (launchFramePump) still waits one
-    // real VBI.  Essential: the wait_setcount/wait_frames_N spin ($3CB2) waits for RTCLOK_LOW
-    // to *equal* a target, so a free-running ISR bump (racing a slow pumpFrame that spans >1
-    // frame) would overshoot the target and hang a full 256-tick wrap.
-    if (g_launchBlocking) {
-        mem[0x0014]++;                      // RTCLOK_LOW (mirrors vbiHandler)
-        if (!mem[0x0014]) mem[0x0013]++;    // RTCLOK_MID carry
-    }
-}
+// tickVBI: no-op — RTCLOK is advanced by renderFrame() after each VBI wait.
+void PlatformAmiga::tickVBI() {}
 
 // The tunnel-ring "dirty field" flags advance_message_column already uses to stream the
 // ring-clear frames from the $1000 GTIA field into the tunnel bitmap (NativeHandlers.cpp).
@@ -421,7 +406,7 @@ extern "C" volatile uint8_t g_tunnelFieldDirty;
 extern "C" volatile uint8_t g_tunRowLo, g_tunRowHi;
 void PlatformAmiga::tunnelRingsDrawn() {
     // display_setup's draw_frame_pattern_seq just rendered the full ring pattern into the
-    // $1000 field.  Flag the whole field dirty so the next pumpFrame decodes it once into
+    // $1000 field.  Flag the whole field dirty so the next renderFrame decodes it once into
     // the tunnel bitmap (then advance_message_column streams the per-frame clear updates).
     g_tunRowLo = 0; g_tunRowHi = 85;
     g_tunnelFieldDirty = 1;
@@ -522,22 +507,10 @@ static struct Interrupt vbiServer;
 
 static uint32_t vbiHandler()
 {
-    // RTCLOK ($0014 low, carry $0013) ownership depends on the phase:
-    //  * LAUNCH-BLOCKING (g_launchBlocking=1): the transpiled frame-waits use an EXACT-
-    //    equality spin (wait_setcount/wait_frames_N $3CB2 waits for RTCLOK_LOW to *equal*
-    //    a target).  RTCLOK must advance by EXACTLY ONE per spin iteration (platform_tick_vbi
-    //    does that); if the free ISR ALSO bumped it, a slow pumpFrame (>1 frame) would
-    //    overshoot the target and hang a full 256-tick wrap.  So the ISR must NOT bump
-    //    RTCLOK here while launch-blocking (lockstep, exactly as the SDL gated tickVBI).
-    //  * FLIGHT / steady state (g_launchBlocking=0): the ISR owns RTCLOK, bumped once per
-    //    real VBI as the Atari OS / in-game VBI did.
-    //  * ATTRACT VBI ($1B30): bumps RTCLOK itself in its own transpiled body, so skip here
-    //    (else double).  (Do NOT touch $0080 — sync_flag, reused as the $80/$81 zp pointer.)
-    uint16_t vbiVec = (uint16_t)(mem[0x0222] | (mem[0x0223] << 8));
-    if (vbiVec != 0x1B30u && !g_launchBlocking) {
-        mem[0x0014]++;                    // RTCLOK_LOW
-        if (!mem[0x0014]) mem[0x0013]++;  // RTCLOK_MID carry
-    }
+    // RTCLOK is owned by renderFrame() in the main thread (advanced exactly once per
+    // spin-wait iteration, immune to ISR timing races with the equality spin).
+    // Exception: ATTRACT VBI ($1B30) bumps RTCLOK in its own transpiled body.
+    // (Do NOT touch $0080 — sync_flag, reused as the $80/$81 zp pointer.)
     g_vbiCount++;
 
     // Per-frame VBI body — run in the REAL vertical-blank interrupt, where the Atari ran
@@ -658,8 +631,8 @@ void PlatformAmiga::run()
 
     // --- run -----------------------------------------------------------------
     // The whole game runs inside scene.run(): the genuine transpiled/native boot chain,
-    // whose frame-wait spin loops each drive one real Amiga frame through launchFramePump
-    // (the pump spins on g_vbiCount).  Returns when the user quits (left mouse button).
+    // whose frame-wait spin loops each call platform_render_frame (render + wait on
+    // g_vbiCount).  Returns when the user quits (left mouse button).
     scene.run();
 
     // --- restore system ------------------------------------------------------

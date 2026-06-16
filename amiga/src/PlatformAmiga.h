@@ -33,9 +33,9 @@ public:
     // Platform bus + frame interface (reached via platform_cbridge.cpp).
     virtual uint8_t hwRead(uint16_t addr)            override;
     virtual void    hwWrite(uint16_t addr, uint8_t val) override;
-    virtual void    renderFrame()                    override;   // drive one launch-pump frame
+    virtual void    renderFrame()                    override;   // render + wait for next VBI
     virtual void    pollEvents()                     override;   // poll quit (left mouse)
-    virtual void    tickVBI()                        override;   // advance RTCLOK in launch lockstep
+    virtual void    tickVBI()                        override;   // no-op (ISR owns RTCLOK)
     virtual void    tunnelRingsDrawn()               override;   // flag the $1000 ring field dirty
     virtual int     loadImage(const char* path)      override;   // image is embedded -> no-op
     virtual void    setInterrupt(void (*fn)(void))   override;   // Amiga uses the real VBI -> no-op
@@ -52,14 +52,3 @@ public:
     static void noiseTick();
 };
 
-#ifdef __cplusplus
-extern "C" {
-#endif
-/* Gate the launch-cinematic frame pump (set by RescueOnFractalus::run): while on, the
- * transpiled frame-wait spin loops drive a real one-VBI repaint and RTCLOK is advanced in
- * lockstep by tickVBI() instead of the free-running ISR.  Amiga-specific (not in the
- * shared platform_c.h bridge). */
-void rof_launch_blocking(uint8_t on);
-#ifdef __cplusplus
-}
-#endif

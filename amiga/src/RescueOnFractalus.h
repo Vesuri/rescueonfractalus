@@ -17,12 +17,10 @@ class RescueOnFractalus {
 public:
     void initialize();
     void render();
-    // pumpFrame(): the per-frame repaint body — per-frame non-phase work + render +
-    // back copper-list rebuild + flip.  Assumes the caller has already waited one real
-    // VBI.  Called once per real VBI by the transpiled frame pump (platform_render_frame
-    // -> launchFramePump in PlatformAmiga.cpp); public because the pump calls it through
-    // the s_scene pointer PlatformAmiga::run set.
-    void pumpFrame();
+    // renderFrame(): the per-frame repaint body — per-frame non-phase work + render +
+    // back copper-list rebuild + flip.  Called from PlatformAmiga::renderFrame() at each
+    // transpiled frame-wait hook; public because the caller reaches it through s_scene.
+    void renderFrame();
     void shutdown();
 
     // run(): the whole game as a faithful straight-line transcription of the
@@ -77,7 +75,7 @@ private:
     // Static-Standby fixed copper list (built once, poked in place — see
     // StandbyCopperList).  Used while in the settled Standby/gauge-fill state
     // (rsStandby && g_doorFieldReady && !rsViewport && !rsLaunched): no per-frame
-    // full rebuild, no double-buffer flip.  pumpFrame switches back to the
+    // full rebuild, no double-buffer flip.  renderFrame switches back to the
     // double-buffered buildCopperList path for the dynamic phases.
     StandbyCopperList* standbyCopper = nullptr;
     bool standbyCopperInstalled = false;   // is standbyCopper the currently-installed list?

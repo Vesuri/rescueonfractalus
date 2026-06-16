@@ -43,10 +43,8 @@ extern "C" volatile uint8_t g_tunnelFieldDirty;                // set when advan
 extern "C" volatile uint8_t g_tunRowLo, g_tunRowHi;            // row extent of the expanding black clear
 extern "C" volatile uint8_t g_activeVbi;                       // 0=none 1=standby($52D7) 2=flight($4FF5); read by game_vbi_isr
 
-// The genuine transpiled launch cinematic ($5F1D, src/gen/rof_gen.c) and the blocking-
-// pump gate (PlatformAmiga.cpp, declared in PlatformAmiga.h): while rof_launch_blocking(1)
-// is set, display_setup()'s frame-wait spin loops drive real frames through
-// platform_render_frame and RTCLOK is owned by platform_tick_vbi (the ISR's bump is gated off).
+// The genuine transpiled launch cinematic ($5F1D, src/gen/rof_gen.c): display_setup()'s
+// frame-wait spin loops call platform_render_frame, which renders then waits for a real VBI.
 extern "C" void display_setup(void);
 
 // Black-until-ready reveal gate, latched on at display_setup entry (rof_native.c); read by
@@ -57,6 +55,16 @@ extern "C" volatile unsigned char g_standbyRevealReady;
 // render() decodes $2000 -> terrainBitmap once when this rises, so the door pixels exist before
 // the fade and the per-frame color03 ramp shows the dark->bright green build on them.
 extern "C" volatile unsigned char g_doorFieldReady;
+// Screen-RAM dirty flags: render() scans the title ($32B7) + cockpit ($332D mode4 / $350D
+// modeD) regions only when these are set, instead of re-scanning all ~580 cells every
+// frame.  During the static doors/standby phases nothing changes, so the scan was pure
+// overhead (~7 ms/frame, the dominant door-cinematic cost).  Set by the three writers
+// (copy_text_block / update_cockpit_digits / lock_on_indicator_tick) at their store sites,
+// and force-set at phase transitions in deriveRenderSignals() so the initial cockpit build
+// (built by the transpiled display_setup, not those writers) + flight updates are never
+// missed.
+extern "C" volatile unsigned char g_titleDirty   = 1;
+extern "C" volatile unsigned char g_cockpitDirty = 1;
 // The genuine boot chain (src/gen/rof_gen.c): station_init = attract ($195D, returns on
 // START); game_entry = $3CDE -> game_main_loop (game-display setup -> display_setup
 // cinematic -> flight loop, never returns).  g_quitJmp = the __builtin_setjmp buffer
@@ -560,7 +568,7 @@ void RescueOnFractalus::initialize()
 
     // Static-Standby fixed copper list: built once here (bitmaps + sprites now exist),
     // its dynamic colour/sprite slots refreshed each frame by updateStandbyCopper.
-    // pumpFrame installs it once the doors are decoded and the scene settles into
+    // renderFrame installs it once the doors are decoded and the scene settles into
     // Standby; until then the double-buffered buildCopperList path drives the build.
     standbyCopper = new StandbyCopperList();
     if (standbyCopper && standbyCopper->data())
@@ -715,7 +723,7 @@ void RescueOnFractalus::renderViewportModeD(uint16_t srcBase, int stride, int ro
 // (game_entry -> game_main_loop -> display_setup -> flight).  That chain is
 // straight-line 6502 control flow that busy-waits between phases while its VBI/DLI
 // interrupts animate the screen; each original wait point is a SPINWAIT_HOOK that
-// drives one real Amiga frame through the pump (platform_render_frame -> pumpFrame),
+// calls platform_render_frame -> renderFrame (render + wait for next VBI),
 // and the VBI body follows the live VVBLKI vector the chain installs per scene
 // (game_vbi_isr dispatches $1B30/$52D7/$4FF5 automatically).  Returns when the user
 // quits (left mouse button), unwound here via __builtin_longjmp.
@@ -738,19 +746,18 @@ void RescueOnFractalus::run()
     // game_main_loop's flight loop never returns; the user-quit path unwinds the whole
     // transpiled call stack back here via __builtin_longjmp (armed below).  Each frame-
     // wait spin loop is a SPINWAIT_HOOK driving a real Amiga frame through the pump
-    // (platform_render_frame -> pumpFrame); the VBI body follows the live VVBLKI vector
+    // (platform_render_frame); the VBI body follows the live VVBLKI vector
     // game_entry installs (game_vbi_isr dispatches $52D7/$4FF5 automatically).
-    if (__builtin_setjmp(g_quitJmp) != 0) return;   // quit: unwound here from the pump/poll hook
+    if (__builtin_setjmp(g_quitJmp) != 0) return;   // quit: unwound here from renderFrame/pollEvents
 
-    rof_launch_blocking(1);
     game_entry();     // $3CDE: mega-init -> game_main_loop (Standby -> cinematic -> flight); never returns
 }
 
-// pumpFrame(): the per-frame repaint body, driven by the transpiled frame pump
-// (launchFramePump in main.cpp) once per real VBI.  The caller has already waited one
-// real VBI; this does the non-phase per-frame work, repaints the bitmaps, rebuilds the
-// back copper list and flips to it.
-void RescueOnFractalus::pumpFrame()
+// renderFrame(): the per-frame repaint body, called from PlatformAmiga::renderFrame()
+// at each transpiled frame-wait hook.  Does the non-phase per-frame work, repaints the
+// bitmaps, rebuilds the back copper list and flips to it.  The VBI has not yet fired
+// when this is entered; rendering happens first, then the caller waits for the VBI.
+void RescueOnFractalus::renderFrame()
 {
     frameCounter++;
     deriveRenderSignals();   // recompute the mem[]-derived render-gating signals for this frame
@@ -771,11 +778,11 @@ void RescueOnFractalus::pumpFrame()
                                && !rsViewport && !rsLaunched;
     if (staticStandby) {
         if (!standbyCopperInstalled) {
-            updateStandbyCopper(true);   // seed every dynamic slot from current mem[]
+            updateStandbyCopper(true);
             AmigaHardware::setCopperList(*standbyCopper, false);
             standbyCopperInstalled = true;
         } else {
-            updateStandbyCopper(false);  // poke only the slots whose value changed
+            updateStandbyCopper(false);
         }
         return;
     }
@@ -877,11 +884,22 @@ void RescueOnFractalus::deriveRenderSignals()
     // music off (building / not yet there), launched, or a viewport scene.  So each
     // fresh entry into Standby re-decodes the doors exactly once and then idles.
     if (g_doorFieldReady == 0u || rsLaunched || rsViewport) terrainDirty = true;
+
+    // Force a full title + cockpit rescan while the scene is transitional (boot/building),
+    // a viewport scene, or in flight — so the initial cockpit build (written by the
+    // transpiled display_setup, not the three perFrameWork/VBI writers) and the per-frame
+    // flight cockpit updates are never missed.  In the settled doors/standby phases these
+    // stay clean and only the three writers set them, so the ~580-cell scan is skipped on
+    // the frames where nothing changed.  (The cockpit RAM is built before g_doorFieldReady
+    // latches, so the g_doorFieldReady==0 window covers its one-time capture.)
+    if (g_doorFieldReady == 0u || rsViewport || rsFlight) {
+        g_titleDirty = 1; g_cockpitDirty = 1;
+    }
 }
 
 // perFrameWork(): per-frame non-phase work (the tail of the old update()).  These
 // ran every frame regardless of cinematic phase, driven by the standby/flight VBI
-// body + the main loop on the Atari; here they run once per pumpFrame.
+// body + the main loop on the Atari; here they run once per renderFrame.
 void RescueOnFractalus::perFrameWork()
 {
     update_indicator_blink_native();    // $4131: cockpit blink lights (flight-VBI routine)
@@ -1014,6 +1032,9 @@ void RescueOnFractalus::render()
     // cell hot path is just `*src++ == *shadow++` — no 68000 muls.  68000 muls (~70cy) are
     // kept out of the per-cell path entirely: the changed-cell decode uses a row pointer
     // pre-offset once (kTitleTextRow*80 computed before the loop) and `*8`/`*2` are shifts.
+    // Skip the whole title scan unless a writer (copy_text_block) dirtied $32B7-$32CA or a
+    // full repaint is forced.  Cleared after the scan.
+    if (g_titleDirty || cockpitForceFull) {
     uint8_t* tbmp = (uint8_t*)titleBitmap->data;
     uint8_t* const titleBase = tbmp + kTitleTextRow * 80;     // first text scanline row (once)
     const uint8_t* tsrc    = (const uint8_t*)mem + kScreenRAM;  // non-volatile walk (RAM static this frame)
@@ -1043,6 +1064,8 @@ void RescueOnFractalus::render()
             row[41] = usePF1 ? lb : 0;
         }
     }
+    g_titleDirty = 0;
+    }
 
     // ---- cockpit region ------------------------------------------------------
     // Per-cell shadow compare (like the title region above): re-decode only the
@@ -1069,6 +1092,9 @@ void RescueOnFractalus::render()
     // 3bp interleaved row = plane1(40) + plane2(40) + plane3(40) = 120 bytes.
     static const int kRowBytes = 120;
 
+    // Skip both cockpit scans unless a writer (update_cockpit_digits / lock_on_indicator)
+    // dirtied $332D-$352C or a full repaint is forced.  Cleared after the scans.
+    if (cockpitFull || g_cockpitDirty) {
     // ModeD rows 0-7 (raw bitmap, no bit-7 colour swap → plane3 = 0).  Each
     // source byte feeds the same column of 2 identical scan lines.
     // Walk source/shadow/dest with pointers: the per-cell hot path is `*src++ == *shadow++`
@@ -1127,6 +1153,8 @@ void RescueOnFractalus::render()
             chars += kCockpitStride - 40;
             drow  += 8 * kRowBytes;
         }
+    }
+    g_cockpitDirty = 0;
     }
     if (rsFlight) g_flightProf.renderTot += (unsigned short)(flight_vbi_tick() - profR0);
 }
