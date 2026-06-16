@@ -88,15 +88,24 @@ static void launchFramePump(void)
 
 static uint32_t vbiHandler()
 {
-    // RTCLOK ($0014 low, carry $0013) is owned by the ISR — bumped once per real VBI,
-    // exactly as the Atari OS / in-game VBI did.  The transpiled frame-wait spin loops
-    // pace on it via platform_render_frame (which waits one real VBI per iteration), so
-    // platform_tick_vbi no longer bumps it.  EXCEPTION: the attract VBI ($1B30) bumps
-    // RTCLOK itself in its own transpiled body, so skip here when it's the active vector
-    // (else double).  (Do NOT touch $0080 — sync_flag, reused as the $80/$81 zp pointer
-    // by draw routines; $1B30 sets it for the attract instead.)
+    // RTCLOK ($0014 low, carry $0013) ownership depends on the phase:
+    //
+    //  * LAUNCH-BLOCKING (Standby + launch cinematic, g_launchBlocking=1): the transpiled
+    //    frame-waits use an EXACT-equality spin — wait_setcount/wait_frames_N ($3CB2) does
+    //    `STA $14=0; LDA $4C(target); loop: tick;render; CMP $14; BNE loop`, i.e. it waits
+    //    for RTCLOK_LOW to *equal* a target.  RTCLOK must therefore advance by EXACTLY ONE
+    //    per spin iteration (done in platform_tick_vbi).  If the free ISR ALSO bumped it,
+    //    a slow pumpFrame (>1 frame) would let the ISR overshoot the target between checks,
+    //    missing the exact value and hanging a full 256-tick wrap (~5s) — the Standby/doors
+    //    slowness bug.  So the ISR must NOT bump RTCLOK while launch-blocking (lockstep,
+    //    exactly as the SDL platform's gated tickVBI does).
+    //  * FLIGHT / steady state (g_launchBlocking=0): the ISR owns RTCLOK, bumped once per
+    //    real VBI as the Atari OS / in-game VBI did (frame waits there pace on g_vbiCount).
+    //  * ATTRACT VBI ($1B30): bumps RTCLOK itself in its own transpiled body, so skip here
+    //    (else double).  (Do NOT touch $0080 — sync_flag, reused as the $80/$81 zp pointer
+    //    by draw routines; $1B30 sets it for the attract instead.)
     uint16_t vbiVec = (uint16_t)(mem[0x0222] | (mem[0x0223] << 8));
-    if (vbiVec != 0x1B30u) {
+    if (vbiVec != 0x1B30u && !g_launchBlocking) {
         mem[0x0014]++;               // RTCLOK_LOW
         if (!mem[0x0014]) mem[0x0013]++;  // RTCLOK_MID carry
     }

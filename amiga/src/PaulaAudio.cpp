@@ -374,16 +374,17 @@ void platform_render_frame(void) {
 // flight leaves this 0, so $0014 advances at the real one-per-frame VBI rate.
 volatile uint8_t g_fastForwardFrames = 0;
 void platform_tick_vbi(void) {
-    // In launch-blocking mode the ISR's RTCLOK bump is gated OFF (see g_launchBlocking
-    // in main.cpp's vbiHandler); we advance RTCLOK here instead — exactly once per
-    // transpiled spin iteration — so it stays in lockstep with the wait loop while
-    // platform_render_frame() (s_framePump) still waits one real VBI for pacing.
-    // RTCLOK is owned by the real-VBI ISR (vbiHandler), which bumps it once per frame;
-    // platform_render_frame paces the transpiled spin loops on that, so we do NOT bump
-    // here during the normal chain.  The sole remaining use is flight_init's fast-forward
-    // (g_fastForwardFrames): there the F-skip wants wait_frames_60 to resolve in compute
-    // time, with no real VBI wait, so advance RTCLOK synthetically.
-    if (g_fastForwardFrames) {
+    // In LAUNCH-BLOCKING mode the ISR's RTCLOK bump is gated OFF (see g_launchBlocking in
+    // main.cpp's vbiHandler); we advance RTCLOK here instead — exactly once per transpiled
+    // spin iteration — so it stays in LOCKSTEP with the wait loop while platform_render_frame()
+    // (s_framePump) still waits one real VBI for real-time pacing.  This is essential: the
+    // wait_setcount/wait_frames_N spin ($3CB2) waits for RTCLOK_LOW to *equal* a target, so a
+    // free-running ISR bump (racing a slow pumpFrame that spans >1 frame) would overshoot the
+    // target and hang a full 256-tick wrap.  Mirrors the SDL platform's gated tickVBI exactly.
+    //
+    // g_fastForwardFrames is the dev F-skip path (flight_init's six wait_frames_60s): advance
+    // RTCLOK synthetically there too, with no real VBI wait, so they resolve in compute time.
+    if (g_launchBlocking || g_fastForwardFrames) {
         mem[0x0014]++;                      // RTCLOK_LOW (mirrors vbiHandler)
         if (!mem[0x0014]) mem[0x0013]++;    // RTCLOK_MID carry
     }
