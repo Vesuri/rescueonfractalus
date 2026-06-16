@@ -345,7 +345,14 @@ SPINWAIT_HOOKS = {
     # the VBI fires (sets $0080 + RTCLOK); without it the loop is a frozen tight spin.
     0x1A18: 'platform_tick_vbi(); platform_render_frame();',
     0x3C75: 'platform_poll_events();',           # VCOUNT position wait
-    0x3CB8: 'platform_tick_vbi(); platform_render_frame();',  # RTCLOK frame wait
+    # RTCLOK frame wait (wait_frames_60 $3CB2): spin until RTCLOK_LOW($14)==target(A=$4C).
+    # FAITHFUL poll-then-advance: tick ONLY when the target isn't already met — matching the
+    # 6502 (CMP $14 at the loop top, RTCLOK advanced by the async VBI).  A blind tick-first
+    # hook overshoots a target of 0 (vobj_step_down's gauge-wrap row sets $4C=0): it ticks
+    # $14 0->1, misses 0, and waits a full 256-tick wrap (~5s) — the gauge "one pixel short"
+    # stall.  cpu.A holds the target throughout this spin (CMP doesn't change A).
+    0x3CB8: 'if (cpu.A != mem[0x0014]) { platform_tick_vbi(); platform_render_frame(); }',  # RTCLOK frame wait
+
     # L_3eba: main flight loop in FUN_3d48 — one full frame of terrain gen,
     # collision, enemy + game-state update per iteration, loops until the
     # flight phase ($72) reaches 2. On real HW the VBI fires asynchronously;
