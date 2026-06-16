@@ -662,17 +662,22 @@ void RescueOnFractalus::decodeTunnelField(int rowLo, int rowHi)
     if (!tunnelBitmap) return;
     if (rowLo < 0) rowLo = 0;
     if (rowHi > (int)kTerrainHeight - 1) rowHi = (int)kTerrainHeight - 1;
-    uint8_t* bm = (uint8_t*)tunnelBitmap->data;
+    // Pointer-walk (no per-row 68000 multiplies — row*46/*120/*40 would be __mulsi3
+    // soft-multiplies each row).  Compute the row-0 bases once, then += stride per row,
+    // as render()/renderViewportModeD() do.
+    const uint8_t* src   = (const uint8_t*)&mem[0x1000 + rowLo * 46 + 4];  // +4: wide-field crop
+    uint8_t*       p1     = (uint8_t*)tunnelBitmap->data + rowLo * 120;
+    uint8_t*       shadow = &tunnelShadow[rowLo * 40];
     for (int row = rowLo; row <= rowHi; row++) {
-        const uint8_t* src = (const uint8_t*)&mem[0x1000 + row * 46 + 4];  // +4: wide-field crop
-        uint8_t* p1 = bm + row * 120; uint8_t* p2 = p1 + 40; uint8_t* p3 = p1 + 80;
-        uint8_t* shadow = &tunnelShadow[row * 40];
+        uint8_t* pp2 = p1 + 40; uint8_t* pp3 = p1 + 80;
         for (int b = 0; b < 40; b++) {
             uint8_t s = src[b];
-            if (s == shadow[b]) continue;          // unchanged byte — skip
-            shadow[b] = s;
-            p1[b] = kGtia10P1[s]; p2[b] = kGtia10P2[s]; p3[b] = kGtia10P3[s];
+            if (s != shadow[b]) {                  // changed byte — re-decode 3 planes
+                shadow[b] = s;
+                p1[b] = kGtia10P1[s]; pp2[b] = kGtia10P2[s]; pp3[b] = kGtia10P3[s];
+            }
         }
+        src += 46; p1 += 120; shadow += 40;        // walk to next row
     }
 }
 
@@ -765,7 +770,9 @@ void RescueOnFractalus::renderFrame()
     // clear into mem[$2000] and flags g_tunnelFieldDirty with its row extent; re-decode
     // those rows into tunnelBitmap here (was in run()'s tunnel loop, now that the
     // transpiled display_setup drives the cinematic).
-    if (g_tunnelFieldDirty) { decodeTunnelField((int)g_tunRowLo, (int)g_tunRowHi); g_tunnelFieldDirty = 0; }
+    if (g_tunnelFieldDirty) {
+        decodeTunnelField((int)g_tunRowLo, (int)g_tunRowHi); g_tunnelFieldDirty = 0;
+    }
     perFrameWork();
     render();
 

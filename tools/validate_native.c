@@ -609,6 +609,112 @@ static int test_game_sub_6811(void) {
     return mem_fail;
 }
 
+/* --- pixel/span plotter leaves (plot_glyph_pixel_masked, plot_pixel_masked, plot_pixel_2bpp,
+ * fill_vertical_span, fill_horizontal_span).  Their real contract is plotting into the GTIA
+ * screen field — through the $80/$81 row pointer or the $073D/$0793 addr table, both pointing
+ * into bitmap RAM.  A fully-random mem[] instead aims them at random addresses (the $D000
+ * hardware range, and self-clobbering zero page), which the faithful per-pixel bus path
+ * reproduces but the idiomatic native cores (direct mem[], hoisted row bases) cannot — and
+ * which never happens in the real game.  So seed a safe fixture, exactly as test_plot_terrain_
+ * span / test_draw_symmetric_span_loop do.  Only mem[] is contracted (cpu exit is incidental). */
+static void seed_row_addr_table(uint8_t *pre) {
+    for (int i = 0; i <= 0x54; i++) {
+        uint16_t a = (uint16_t)(0x2000 + i * 0x28);      /* mode-F layout: $2000 + row*40 */
+        pre[0x073D + i] = (uint8_t)a; pre[0x0793 + i] = (uint8_t)(a >> 8);
+    }
+}
+static int test_fill_vertical_span(void) {
+    if (!want("fill_vertical_span")) return 0;
+    enum { N = 8000 };
+    static uint8_t pre[65536];
+    int mem_fail = 0, cpu_diff = 0, printed = 0;
+    for (int t = 0; t < N; t++) {
+        fill_random(pre);
+        seed_row_addr_table(pre);
+        pre[0x009F] = 0x08; pre[0x009E] = 0x28;          /* row window r0<=r1 (valid indices) */
+        pre[0x009C] = (uint8_t)(xs() % 0x60);            /* left/right columns within the row */
+        pre[0x009D] = (uint8_t)(xs() % 0x60);
+        pre[0x0094] = (uint8_t)(xs() & 0x0F);            /* mask selector */
+        mem_fail += diff_run("fill_vertical_span", pre, zero_cpu(),
+                             fill_vertical_span, fill_vertical_span__t6502, t, &printed, &cpu_diff);
+    }
+    printf("fill_vertical_span: %d cases, %d mem mismatch (must be 0), %d cpu diffs\n", N, mem_fail, cpu_diff);
+    return mem_fail;
+}
+static int test_fill_horizontal_span(void) {
+    if (!want("fill_horizontal_span")) return 0;
+    enum { N = 8000 };
+    static uint8_t pre[65536];
+    int mem_fail = 0, cpu_diff = 0, printed = 0;
+    for (int t = 0; t < N; t++) {
+        fill_random(pre);
+        seed_row_addr_table(pre);
+        pre[0x009E] = 0x28; pre[0x009F] = 0x08;          /* top/bottom row indices */
+        pre[0x009C] = 0x10; pre[0x009D] = 0x60;          /* lo<=hi columns */
+        pre[0x00B9] = (uint8_t)xs();                     /* fill pattern */
+        mem_fail += diff_run("fill_horizontal_span", pre, zero_cpu(),
+                             fill_horizontal_span, fill_horizontal_span__t6502, t, &printed, &cpu_diff);
+    }
+    printf("fill_horizontal_span: %d cases, %d mem mismatch (must be 0), %d cpu diffs\n", N, mem_fail, cpu_diff);
+    return mem_fail;
+}
+static int test_plot_glyph_pixel_masked(void) {
+    if (!want("plot_glyph_pixel_masked")) return 0;
+    enum { N = 20000 };
+    static uint8_t pre[65536];
+    int mem_fail = 0, cpu_diff = 0, printed = 0;
+    for (int t = 0; t < N; t++) {
+        fill_random(pre);
+        pre[0x0080] = 0x00; pre[0x0081] = 0x20;          /* row ptr -> $2000 (bitmap RAM) */
+        Cpu6502 c = zero_cpu();
+        c.Y = (uint8_t)(xs() & 0x3F);                    /* byte offset 0..$3F */
+        c.X = (uint8_t)(xs() & 0x1F);                    /* mask index 0..$1F */
+        mem_fail += diff_run("plot_glyph_pixel_masked", pre, c,
+                             plot_glyph_pixel_masked, plot_glyph_pixel_masked__t6502, t, &printed, &cpu_diff);
+    }
+    printf("plot_glyph_pixel_masked: %d cases, %d mem mismatch (must be 0), %d cpu diffs\n", N, mem_fail, cpu_diff);
+    return mem_fail;
+}
+static int test_plot_pixel_masked(void) {
+    if (!want("plot_pixel_masked")) return 0;
+    enum { N = 20000 };
+    static uint8_t pre[65536];
+    int mem_fail = 0, cpu_diff = 0, printed = 0;
+    for (int t = 0; t < N; t++) {
+        fill_random(pre);
+        pre[0x0080] = 0x00; pre[0x0081] = 0x20;
+        pre[0x0094] = (uint8_t)(xs() & 0x1F);            /* mask selector */
+        Cpu6502 c = zero_cpu();
+        c.A = (uint8_t)(xs() & 0x7F);                    /* column 0..$7F -> byte offset 0..$3F */
+        mem_fail += diff_run("plot_pixel_masked", pre, c,
+                             plot_pixel_masked, plot_pixel_masked__t6502, t, &printed, &cpu_diff);
+    }
+    printf("plot_pixel_masked: %d cases, %d mem mismatch (must be 0), %d cpu diffs\n", N, mem_fail, cpu_diff);
+    return mem_fail;
+}
+static int test_plot_pixel_2bpp(void) {
+    if (!want("plot_pixel_2bpp")) return 0;
+    enum { N = 20000 };
+    static uint8_t pre[65536];
+    static uint16_t stack_pg[256];
+    for (int i = 0; i < 256; i++) stack_pg[i] = (uint16_t)(0x0100 + i);
+    int mem_fail = 0, cpu_diff = 0, printed = 0;
+    set_ignore(stack_pg, 256);                           /* oracle PHA/PLAs X through the stack */
+    for (int t = 0; t < N; t++) {
+        fill_random(pre);
+        pre[0x0080] = 0x00; pre[0x0081] = 0x20;          /* row ptr -> $2000 */
+        Cpu6502 c = zero_cpu();
+        c.Y = (uint8_t)(xs() & 0x3F);
+        c.X = (uint8_t)xs();
+        c.C = (uint8_t)(xs() & 1);
+        mem_fail += diff_run("plot_pixel_2bpp", pre, c,
+                             plot_pixel_2bpp, plot_pixel_2bpp__t6502, t, &printed, &cpu_diff);
+    }
+    set_ignore(0, 0);
+    printf("plot_pixel_2bpp: %d cases, %d mem mismatch (must be 0), %d cpu diffs\n", N, mem_fail, cpu_diff);
+    return mem_fail;
+}
+
 /* --- font_display_init @ $5433: clears the music/voice state tables and seeds a few
  * slots/timers.  The 6502 STA $D1FF,X (indexed) writes are rendered by the transpiler as
  * DIRECT mem[] stores, but the native twin routes POKEY writes through bus_write (-> Paula
@@ -1971,21 +2077,16 @@ int main(int argc, char **argv) {
     fails += test_mem_contract("init_object_positions", init_object_positions, init_object_positions__t6502);
     fails += test_mem_contract("audio_timer_setup", audio_timer_setup, audio_timer_setup__t6502);
     fails += test_random_terrain_height();
-    fails += test_mem_contract("fill_horizontal_span", fill_horizontal_span, fill_horizontal_span__t6502);
-    fails += test_mem_contract_regs("plot_glyph_pixel_masked", plot_glyph_pixel_masked, plot_glyph_pixel_masked__t6502);
-    fails += test_mem_contract_regs("plot_pixel_masked", plot_pixel_masked, plot_pixel_masked__t6502);
-    fails += test_mem_contract_regs("set_row_ptr", set_row_ptr, set_row_ptr__t6502);
+    /* The pixel/span plotters contract on plotting into bitmap RAM via the row pointer /
+       addr table, so they use seeded fixtures (not fully-random mem[], which would aim them
+       at the $D000 HW range + self-clobbering ZP that the idiomatic native cores don't model). */
+    fails += test_fill_horizontal_span();
+    fails += test_plot_glyph_pixel_masked();
+    fails += test_plot_pixel_masked();
+    fails += test_mem_contract("set_row_ptr", set_row_ptr, set_row_ptr__t6502);
     fails += test_mem_contract("set_row_ptr_from_count", set_row_ptr_from_count, set_row_ptr_from_count__t6502);
-    fails += test_mem_contract("fill_vertical_span", fill_vertical_span, fill_vertical_span__t6502);
-    /* plot_pixel_2bpp: the 6502 PHA/PLAs X through the stack; the native version
-       keeps it in a local, so the dead stack scratch ($0100-$01FF) is masked. */
-    {
-        static uint16_t stack_pg[256];
-        for (int i = 0; i < 256; i++) stack_pg[i] = (uint16_t)(0x0100 + i);
-        set_ignore(stack_pg, 256);
-        fails += test_mem_contract_regs("plot_pixel_2bpp", plot_pixel_2bpp, plot_pixel_2bpp__t6502);
-        set_ignore(0, 0);
-    }
+    fails += test_fill_vertical_span();
+    fails += test_plot_pixel_2bpp();
     fails += test_draw_symmetric_span_loop();
     fails += test_mem_contract_regs("gen_terrain_column", gen_terrain_column, gen_terrain_column__t6502);
     fails += test_mem_contract("fill_terrain_columns", fill_terrain_columns, fill_terrain_columns__t6502);

@@ -335,27 +335,35 @@ void fill_horizontal_span(void) {
     if (!c2) mem[0x0083] = (uint8_t)(mem[0x0083] - 1);    /* BCC: DEC hi */
     else     mem[0x0082] = (uint8_t)(mem[0x0082] + 1);    /*      INC lo */
 
-    uint8_t y = mem[0x0083];                              /* Y = hi (before SBC) */
-    mem[0x00DF] = (uint8_t)(mem[0x0083] - mem[0x0082]);   /* SEC SBC: count = hi - lo */
+    uint8_t y  = mem[0x0083];                             /* Y = hi (before SBC) */
+    uint8_t lo = mem[0x0082];
+    uint8_t cnt = (uint8_t)(mem[0x0083] - mem[0x0082]);   /* SEC SBC: count = hi - lo */
+    mem[0x00DF] = cnt;
     uint8_t pat = mem[0x00B9];
+    /* Both row bases are loop-invariant (set above from the addr table) and the screen
+     * field is RAM, so hoist them and write mem[] directly — no per-byte bus dispatch /
+     * ZP_IND_Y volatile re-read. */
+    uint16_t base1 = (uint16_t)(mem[0x0080] | (mem[0x0081] << 8));
+    uint16_t base2 = (uint16_t)(mem[0x00B7] | (mem[0x00B8] << 8));
     for (;;) {
-        cpu.Y = y;
-        bus_write(ZP_IND_Y(0x80), pat);
-        bus_write(ZP_IND_Y(0xB7), pat);
+        mem[(uint16_t)(base1 + y)] = pat;
+        mem[(uint16_t)(base2 + y)] = pat;
         y = (uint8_t)(y - 1);
-        uint8_t df = (uint8_t)(mem[0x00DF] - 1);
-        mem[0x00DF] = df;
-        if (df & 0x80) break;                            /* BPL: loop while N clear */
+        if (((uint8_t)(cnt - 1)) & 0x80) break;           /* BPL: loop while N clear */
+        cnt = (uint8_t)(cnt - 1);
     }
+    mem[0x00DF] = 0xFF;                                    /* faithful exit: count ran to -1 */
+    cpu.Y = lo;                                           /* last Y set at loop top (incidental) */
 }
 
 /* plot_glyph_pixel_masked @ $66DE — OR/AND a 2-bit pixel into the screen byte at
  * ($80)+Y using the OR mask $66E9[X] and AND mask $66FB[X].  Leaf (entry X/Y). */
 void plot_glyph_pixel_masked(void) {
-    uint8_t v = bus_read(ZP_IND_Y(0x80));
+    uint16_t a = ZP_IND_Y(0x80);          /* screen field ($1000/$2000) is RAM: direct mem[] */
+    uint8_t v = mem[a];                   /* (bus_read/write would HW-range-check every pixel) */
     v |= mem[0x66E9 + cpu.X];
     v &= mem[0x66FB + cpu.X];
-    bus_write(ZP_IND_Y(0x80), v);
+    mem[a] = v;
 }
 
 /* plot_pixel_masked @ $66D5 — entry A = column.  Y = A>>1 (byte index); the mask
@@ -387,23 +395,48 @@ void set_row_ptr_from_count(void) {
  * Per row: set the row pointer $80/$81 from the addr table, then masked-plot column
  * $009C (plot_pixel_masked, which also leaves the mask index in cpu.X) and the glyph
  * column $009D>>1 reusing that mask (plot_glyph_pixel_masked).  $00DF = $009E-$009F
- * is the inclusive row count; $0084 walks the row index. */
-void fill_vertical_span(void) {
-    mem[0x0084] = mem[0x009F];
-    mem[0x00DF] = (uint8_t)(mem[0x009E] - mem[0x009F]);   /* SEC SBC */
+ * is the inclusive row count; $0084 walks the row index.
+ *
+ * Typed core: within one call the two columns, the (shared) mask index and its OR/AND
+ * mask bytes, and the byte offsets within a row are all loop-invariant — only the row
+ * base changes.  Hoist them into locals so the per-row body is two addr-table reads +
+ * two direct RAM read-modify-writes, instead of re-reading volatile zero page + the
+ * mask tables on every pixel via plot_pixel_masked/plot_glyph_pixel_masked.  The screen
+ * field ($1000/$2000) is RAM, so the plots go straight to mem[].  Domain: rows r0<=r1
+ * indexing the $073D/$0793 table into bitmap RAM (the real caller's contract — see the
+ * fixture in tools/validate_native.c).  This was the bulk of the pre-door ring-draw
+ * freeze on the 68000. */
+static void fill_vertical_span_core(uint8_t r0, uint8_t r1, uint8_t colL, uint8_t colR, uint8_t maskSel) {
+    uint8_t x    = (colL & 1u) ? (uint8_t)(maskSel + 9u) : maskSel;  /* mask index (both edges) */
+    uint8_t orm  = mem[0x66E9 + x];
+    uint8_t am   = mem[0x66FB + x];
+    uint8_t offL = (uint8_t)(colL >> 1);
+    uint8_t offR = (uint8_t)(colR >> 1);
+    uint8_t cnt  = (uint8_t)(r1 - r0);               /* $00DF; loop runs cnt+1 rows */
+    uint8_t row  = r0;
     for (;;) {
-        cpu.Y = mem[0x0084];
-        mem[0x0080] = mem[0x073D + cpu.Y];
-        mem[0x0081] = mem[0x0793 + cpu.Y];
-        cpu.A = mem[0x009C];
-        plot_pixel_masked();                              /* sets cpu.X = mask index */
-        cpu.Y = (uint8_t)(mem[0x009D] >> 1);
-        plot_glyph_pixel_masked();                        /* reuses cpu.X, new cpu.Y */
-        mem[0x0084] = (uint8_t)(mem[0x0084] + 1);
-        uint8_t df = (uint8_t)(mem[0x00DF] - 1);
-        mem[0x00DF] = df;
-        if (df & 0x80) break;                             /* BPL */
+        uint16_t base = (uint16_t)(mem[0x073D + row] | (mem[0x0793 + row] << 8));
+        uint16_t aL = (uint16_t)(base + offL);
+        uint16_t aR = (uint16_t)(base + offR);
+        mem[aL] = (uint8_t)((mem[aL] | orm) & am);
+        mem[aR] = (uint8_t)((mem[aR] | orm) & am);
+        row++;
+        if (((uint8_t)(cnt - 1)) & 0x80) break;      /* BPL: stop after cnt+1 rows */
+        cnt = (uint8_t)(cnt - 1);
     }
+}
+void fill_vertical_span(void) {
+    uint8_t r0 = mem[0x009F], r1 = mem[0x009E];
+    uint8_t colL = mem[0x009C], colR = mem[0x009D], maskSel = mem[0x0094];
+    fill_vertical_span_core(r0, r1, colL, colR, maskSel);
+    /* Faithful exit state: $0084 = last row + 1; $80/$81 = addr table[last row];
+     * $00DF = $FF; cpu.X = mask index, cpu.Y = colR>>1 (cpu state is incidental). */
+    mem[0x0084] = (uint8_t)(r1 + 1);
+    mem[0x0080] = mem[0x073D + r1];
+    mem[0x0081] = mem[0x0793 + r1];
+    mem[0x00DF] = 0xFF;
+    cpu.X = (colL & 1u) ? (uint8_t)(maskSel + 9u) : maskSel;
+    cpu.Y = (uint8_t)(colR >> 1);
 }
 
 /* plot_pixel_2bpp @ $6C92 — pack the screen byte at ($80)+Y into a 2-bits-per-pixel
@@ -413,7 +446,8 @@ void fill_vertical_span(void) {
 void plot_pixel_2bpp(void) {
     uint8_t savedX = cpu.X;
     uint8_t c = (uint8_t)(cpu.C & 1);                     /* carry into the first ROL = entry C */
-    uint8_t acc = bus_read(ZP_IND_Y(0x80));
+    uint16_t a = ZP_IND_Y(0x80);                          /* screen field is RAM: direct mem[] */
+    uint8_t acc = mem[a];
     mem[0x0082] = 0xC0;                                   /* BIT mask, set once */
     for (int i = 0; i < 4; i++) {
         if ((acc & 0xC0) == 0) acc |= 0xC0;               /* BIT $0082; BNE skips -> ORA #$C0 only when top bits clear */
@@ -421,7 +455,7 @@ void plot_pixel_2bpp(void) {
         nc = (uint8_t)((acc >> 7) & 1);          acc = (uint8_t)((acc << 1) | c); c = nc;  /* ROL */
     }
     acc = (uint8_t)((acc << 1) | c);                      /* final ROL */
-    bus_write(ZP_IND_Y(0x80), acc);
+    mem[a] = acc;
     cpu.X = savedX;
 }
 
@@ -529,8 +563,8 @@ void draw_vline_pair(void) {
             cpu.Y = y2;  cpu.C = (uint8_t)(0x2F >= col);   /* C from SEC; SBC $0085 */
             plot_pixel_2bpp();
         } else {
-            cpu.Y = col; bus_write(ZP_IND_Y(0x80), mem[0x0084]);
-            cpu.Y = y2;  bus_write(ZP_IND_Y(0x80), mem[0x0084]);
+            cpu.Y = col; mem[ZP_IND_Y(0x80)] = mem[0x0084];   /* screen field is RAM: direct mem[] */
+            cpu.Y = y2;  mem[ZP_IND_Y(0x80)] = mem[0x0084];
         }
         uint8_t n = (uint8_t)(mem[0x0092] - 1);            /* DEC $0092 */
         mem[0x0092] = n;
