@@ -8,7 +8,7 @@
 //   • SfxPlayer handles the audio (sfx_voice_tick_native).
 // Only the pure mem[]-state fragments below remain.
 
-#include "PaulaAudio.h"   // for mem[] + uint types
+#include "PlatformAmiga.h"   // PlatformAmiga::pokeyRandom + uint types
 #include "AtariZp.h"      // zp:: named Atari memory offsets
 extern "C" volatile uint8_t mem[65536];
 
@@ -164,8 +164,8 @@ extern "C" void lock_on_indicator_tick_native(void)
             // $4235 LDA $D20A / AND #7 — MUST be the POKEY RANDOM LFSR, not RTCLOK.
             // (RTCLOK is monotonic; once this runs in the ISR locked to the $0014++
             // tick, RTCLOK&7 at blink time aliases to one value -> only one light
-            // blinks.  paula_pokey_random() is the real LFSR, as the Atari read.)
-            uint8_t r = paula_pokey_random() & 7u;
+            // blinks.  PlatformAmiga::pokeyRandom() is the real LFSR, as the Atari read.)
+            uint8_t r = PlatformAmiga::pokeyRandom() & 7u;
             mem[zp::animStepTimer] = r;                       // $423A STA $E6 (full r)
             uint8_t y = (r >= 6u) ? (uint8_t)(r >> 1u) : r;   // $423C CMP #6 / BCC / LSR A
             mem[0x3492u + y] ^= 0x80u;                        // $4242-$4247 toggle colour bit

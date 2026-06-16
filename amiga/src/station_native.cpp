@@ -11,7 +11,7 @@
 // station_audio is NOT replaced here; it is complex and already working via
 // the 6502 transpile + POKEY→Paula backend.
 
-#include "PaulaAudio.h"
+#include "PlatformAmiga.h"
 
 extern "C" volatile uint8_t mem[65536];
 
@@ -179,7 +179,7 @@ static uint8_t station_sub_1f51_native(uint8_t x)
         mem[0x260F + x] = mem[0x260D + x];
         src = (uint16_t)mem[0x260E + x] | ((uint16_t)mem[0x260F + x] << 8);
         uint8_t reload = mem[0x260B + x];
-        if ((int8_t)reload < 0) reload = paula_pokey_random();  // RANDOM path
+        if ((int8_t)reload < 0) reload = PlatformAmiga::pokeyRandom();  // RANDOM path
         mem[0x2604 + x] = reload;
     }
 

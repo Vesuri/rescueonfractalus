@@ -28,7 +28,7 @@
 #include "../framework/Palette.h"
 #include "../framework/Sprite.h"
 #include "RescueOnFractalus.h"
-#include "PaulaAudio.h"
+#include "PlatformAmiga.h"
 #include "AtariZp.h"      // zp:: named Atari memory offsets
 #include "FlightProf.h"   // per-frame VBI-count profiler (g_flightProf / flight_vbi_tick)
 
@@ -43,15 +43,11 @@ extern "C" volatile uint8_t g_tunnelFieldDirty;                // set when advan
 extern "C" volatile uint8_t g_tunRowLo, g_tunRowHi;            // row extent of the expanding black clear
 extern "C" volatile uint8_t g_activeVbi;                       // 0=none 1=standby($52D7) 2=flight($4FF5); read by game_vbi_isr
 
-// Real-VBI frame clock used by the pump.
-extern "C" volatile uint16_t g_vbiCount;                       // bumped by the real INTB_VERTB ISR (main.cpp)
-
 // The genuine transpiled launch cinematic ($5F1D, src/gen/rof_gen.c) and the blocking-
-// pump gate (PaulaAudio.cpp): while rof_launch_blocking(1) is set, display_setup()'s
-// frame-wait spin loops drive real frames through platform_render_frame and RTCLOK is
-// owned by platform_tick_vbi (the ISR's bump is gated off).
+// pump gate (PlatformAmiga.cpp, declared in PlatformAmiga.h): while rof_launch_blocking(1)
+// is set, display_setup()'s frame-wait spin loops drive real frames through
+// platform_render_frame and RTCLOK is owned by platform_tick_vbi (the ISR's bump is gated off).
 extern "C" void display_setup(void);
-extern "C" void rof_launch_blocking(uint8_t on);
 
 // Black-until-ready reveal gate, latched on at display_setup entry (rof_native.c); read by
 // animatePalette to hold the screen black until the cockpit + sprites are set up.
@@ -64,10 +60,10 @@ extern "C" volatile unsigned char g_doorFieldReady;
 // The genuine boot chain (src/gen/rof_gen.c): station_init = attract ($195D, returns on
 // START); game_entry = $3CDE -> game_main_loop (game-display setup -> display_setup
 // cinematic -> flight loop, never returns).  g_quitJmp = the __builtin_setjmp buffer
-// (defined in main.cpp) the pump longjmps to on quit, unwinding the transpiled chain.
+// (defined in PlatformAmiga.cpp) the pump longjmps to on quit, unwinding the transpiled chain.
 extern "C" void station_init(void);
 extern "C" void game_entry(void);
-extern "C" void* g_quitJmp[];   // definition (sized) lives in main.cpp
+extern "C" void* g_quitJmp[];   // definition (sized) lives in PlatformAmiga.cpp
 
 extern "C" volatile uint8_t mem[65536];
 
@@ -593,7 +589,7 @@ void RescueOnFractalus::initialize()
         kDoorP2[s] = (uint8_t)(((ch & 2) ? 0xF0u : 0u) | ((cl & 2) ? 0x0Fu : 0u));
     }
 
-    paula_audio_init();      // loads screen3_mem.bin into mem[] (Standby scene snapshot)
+    PlatformAmiga::audioInit();   // init Paula audio DMA (mem[] already loaded by run())
 
     // Patch mem[] values that are mid-animation in the snapshot.
     // (Must happen before initial render() call below.)
@@ -719,7 +715,7 @@ void RescueOnFractalus::renderViewportModeD(uint16_t srcBase, int stride, int ro
 void RescueOnFractalus::run()
 {
     // ---- the genuine transpiled boot chain drives EVERYTHING --------------------
-    // mem[] is the pristine rof.xex image (load_xex_image in paula_audio_init): every
+    // mem[] is the pristine rof.xex image (load_xex_image in PlatformAmiga::run): every
     // segment at its load address, all runtime state at genuine power-on values
     // ($00E7 music gate = 0, etc.).  rof.xex boots via a chain of INITAD stubs run by
     // the OS loader: $5000 (Logo) -> $1A97 (Station cinematic) -> $B800 (display setup)
@@ -1109,7 +1105,7 @@ void RescueOnFractalus::shutdown()
 {
     for (int i = 0; i < 2; i++) { delete copperLists[i]; copperLists[i] = nullptr; }
     delete standbyCopper; standbyCopper = nullptr;
-    paula_audio_shutdown();
+    PlatformAmiga::audioShutdown();
     delete titleBitmap;   titleBitmap   = nullptr;
     delete terrainBitmap; terrainBitmap = nullptr;
     delete cockpitBitmap; cockpitBitmap = nullptr;

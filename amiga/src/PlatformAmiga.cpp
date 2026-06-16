@@ -1,26 +1,53 @@
-// Paula audio backend: POKEY register writes → Amiga Paula DMA.
+// PlatformAmiga — the Amiga-specific platform layer (see PlatformAmiga.h).
 //
-// Frequency mapping (mirrors PlatformSDL::updateChannelFreq):
+// This translation unit holds, in order:
+//   1. the POKEY->Paula audio backend (the bulk of the file),
+//   2. the platform_c.h bridge the C-compiled 6502 transliteration calls,
+//   3. the launch-cinematic frame pump + quit handling,
+//   4. the CIA-A serial-port keyboard (RETURN -> Atari START switch),
+//   5. the real INTB_VERTB VBI server + CIA-B Timer A music tick,
+//   6. PlatformAmiga::run() — display takeover, install (1)/(4)/(5), run the scene,
+//      then restore the system.
+//
+// AUDIO — frequency mapping (mirrors PlatformSDL::updateChannelFreq):
 //   POKEY clock = 1789773 Hz (NTSC), base divider = 28 (64 kHz) or 114 (15 kHz).
 //   AUDCTL bits: 0x01=15kHz, 0x08=CH0+CH1 16-bit chain, 0x10=CH2+CH3 chain,
 //                0x20=CH0 uses 1.79 MHz, 0x40=CH2 uses 1.79 MHz.
 //   Paula period for 2-sample square wave: PAULA_CLOCK / (2 * freq_hz).
-//
-// Volume mapping: AUDC[3:0] * 4 → Paula AUDxVOL (0..64); 0 if bit 4 set.
+//   Volume mapping: AUDC[3:0] * 4 -> Paula AUDxVOL (0..64); 0 if bit 4 set.
 //
 // Memory image: mem[] is populated by load_xex_image() (XexImage.cpp) from the
-// pristine rof.xex before the scene initialises; this file only drives Paula.
+// pristine rof.xex before the scene initialises; the audio code only drives Paula.
 
 #define ECS_SPECIFIC
+#include <proto/exec.h>
+#include <proto/graphics.h>
+#include <proto/cia.h>
+#include <exec/interrupts.h>
+#include <exec/nodes.h>
+#include <exec/memory.h>
+#include <graphics/gfxbase.h>
+#include <graphics/view.h>
 #include <hardware/dmabits.h>
+#include <hardware/intbits.h>
+#include <resources/cia.h>
+#include <hardware/cia.h>
 #include "../framework/AmigaHardware.h"
-#include "PaulaAudio.h"
+#include "PlatformAmiga.h"
+#include "RescueOnFractalus.h"
 
 // mem[] and cpu are defined in src/cpu/cpu.c (compiled for m68k as audio/cpu.o)
 extern "C" volatile uint8_t mem[65536];
 
-// The boot memory image (pristine rof.xex) is loaded by load_xex_image() in
-// XexImage.cpp, called from main() before the scene initialises.
+// GfxBase is opened in main() (GCCRuntime.cpp defines it); set before run() is called.
+extern struct GfxBase* GfxBase;
+
+// load_xex_image (XexImage.cpp): populate mem[] with the pristine rof.xex boot image.
+extern "C" void load_xex_image(void);
+// sfx_voice_tick_native (SfxPlayer.cpp): the SFX music tick, driven by CIA-B Timer A.
+extern "C" void sfx_voice_tick_native(void);
+// game_vbi_isr (flight_native.cpp): the per-frame VBI body, run from the real VBI below.
+extern "C" void game_vbi_isr(void);
 
 // POKEY distortion waveforms in chip RAM (Paula DMA must reach chip RAM).
 // POKEY runs each channel's clock through a polynomial counter selected by the
@@ -67,7 +94,7 @@ static void fill_noise_buf(void)
 // with fresh poly17 so a low-rate noise voice (the engine drone) doesn't audibly
 // loop the 1 KB buffer.  Overwriting the buffer Paula is mid-DMA on is inaudible
 // for noise (random over random).  No active noise channel → skip (cheap).
-extern "C" void paula_noise_tick(void)
+void PlatformAmiga::noiseTick()
 {
     if (noiseOn[0] || noiseOn[1] || noiseOn[2] || noiseOn[3]) fill_noise_buf();
 }
@@ -130,7 +157,7 @@ static uint8_t pokey_random_step(void)
     return (uint8_t)lfsr_state;
 }
 
-uint8_t paula_pokey_random(void) { return pokey_random_step(); }
+uint8_t PlatformAmiga::pokeyRandom() { return pokey_random_step(); }
 
 // ---- Paula register helpers --------------------------------------------------
 // Layout: AUD0=$DFF0A0, AUD1=$DFF0B0, AUD2=$DFF0C0, AUD3=$DFF0D0
@@ -232,7 +259,7 @@ extern "C" void sfx_seq_step_native(void);
 // ---- public interface --------------------------------------------------------
 // mem[] has already been populated (load_xex_image, called from main before the scene
 // initialises); this only sets up the Paula side.
-void paula_audio_init(void)
+void PlatformAmiga::audioInit()
 {
     // Clear POKEY shadow and LFSR
     for (int i = 0; i < 16; i++) pokey[i] = 0;
@@ -256,7 +283,7 @@ void paula_audio_init(void)
     *dmaconPointer = (uint16_t)(DMAF_SETCLR | 0x000Fu);
 }
 
-void paula_audio_shutdown(void)
+void PlatformAmiga::audioShutdown()
 {
     // Silence and disable audio DMA
     for (int ch = 0; ch < 4; ch++) AUD_VOL(ch) = 0u;
@@ -327,11 +354,24 @@ void platform_shadow_write(uint16_t /*addr*/, uint8_t /*val*/) {}
 void platform_register_vbi(uint16_t /*addr*/, void (*/*fn*/)(void)) {}
 void platform_indirect_jmp(uint16_t /*addr*/) {}
 
-// g_pumpQuit: the shared "user wants out" flag (defined in main.cpp, also set by the
-// frame pump there on left-mouse).  g_quitJmp: the __builtin_setjmp buffer armed by
-// RescueOnFractalus::run() so we can unwind the never-returning transpiled chain on quit.
-extern "C" volatile uint8_t g_pumpQuit;
-extern "C" void* g_quitJmp[];
+// g_pumpQuit: the shared "user wants out" flag — set by the frame pump and the poll
+// hook on left-mouse.  g_quitJmp: the __builtin_setjmp buffer armed by
+// RescueOnFractalus::run() so we can unwind the never-returning transpiled chain on quit
+// (5 words per the GCC builtin; initializer forces the definition).  g_vbiCount: bumped
+// once per REAL vertical-blank interrupt (vbiHandler below); the frame pump spins on it
+// as the matching Amiga construct for the Atari frame-wait busy-loops.
+volatile uint8_t  g_pumpQuit   = 0;
+void*             g_quitJmp[5]  = { 0, 0, 0, 0, 0 };
+volatile uint16_t g_vbiCount   = 0;
+
+// g_launchBlocking: gate for the launch-cinematic frame pump.  While on, vbiHandler must
+// NOT bump RTCLOK ($0014) — platform_tick_vbi advances it synchronously, once per
+// transpiled spin iteration, to stay in lockstep with the wait loop (an async ISR bump
+// racing the loop's RTCLOK reset would desync and hang ~256 frames).
+volatile uint8_t g_launchBlocking = 0;
+
+// s_scene: the running scene, set by PlatformAmiga::run; the frame pump repaints through it.
+static RescueOnFractalus* s_scene = 0;
 
 // platform_poll_events: called from the transpiled spin-wait hooks (SPINWAIT_HOOKS in
 // transpile.py) at the VCOUNT/CONSOL poll points that do NOT pace a frame.  Poll the
@@ -349,28 +389,28 @@ void platform_poll_events(void) {
 // platform_tick_vbi()/platform_render_frame() each iteration.  When launch
 // blocking mode is on, we turn those hooks into a REAL one-frame pump so the
 // actual 6502 audio code (e.g. audf2_sweep_clear_colors for the doors) runs at
-// the original cadence: tick advances RTCLOK once, render waits for the next
-// real VBI and repaints the screen (so the native door/tunnel visuals keep
-// animating while the transpiled code blocks).  main.cpp installs the pump.
-static void (*s_framePump)(void) = 0;          // wait 1 VBI + render + poll quit
-// Non-static so main.cpp's vbiHandler can read it: while launch-blocking, the ISR
-// must NOT bump RTCLOK ($0014) — platform_tick_vbi advances it synchronously, once
-// per transpiled spin iteration, to stay in lockstep with the wait loop (an async
-// ISR bump racing the loop's RTCLOK reset would desync and hang ~256 frames).
-volatile uint8_t g_launchBlocking = 0;
+// the original cadence: render() waits for the next real VBI (so the ISR advances
+// RTCLOK and the native door/tunnel visuals animate), repaints the screen via the
+// scene, and polls quit — escaping the never-returning chain on left-mouse.
+static void launchFramePump(void) {
+    uint16_t last = g_vbiCount;
+    while (g_vbiCount == last) { /* wait for next real VBI */ }
+    if (s_scene) s_scene->pumpFrame();   // full repaint body
+    if (AmigaHardware::isLeftMouseButtonPressed()) g_pumpQuit = 1;
+    if (g_pumpQuit) __builtin_longjmp(g_quitJmp, 1);   // escape the never-returning chain
+}
 
-extern "C" void rof_set_frame_pump(void (*fn)(void)) { s_framePump = fn; }
-extern "C" void rof_launch_blocking(uint8_t on)      { g_launchBlocking = on; }
+void rof_launch_blocking(uint8_t on) { g_launchBlocking = on; }
 
 void platform_render_frame(void) {
-    if (g_launchBlocking && s_framePump) s_framePump();
+    if (g_launchBlocking) launchFramePump();
 }
 
 void platform_tick_vbi(void) {
     // In LAUNCH-BLOCKING mode the ISR's RTCLOK bump is gated OFF (see g_launchBlocking in
-    // main.cpp's vbiHandler); we advance RTCLOK here instead — exactly once per transpiled
+    // vbiHandler below); we advance RTCLOK here instead — exactly once per transpiled
     // spin iteration — so it stays in LOCKSTEP with the wait loop while platform_render_frame()
-    // (s_framePump) still waits one real VBI for real-time pacing.  This is essential: the
+    // (launchFramePump) still waits one real VBI for real-time pacing.  This is essential: the
     // wait_setcount/wait_frames_N spin ($3CB2) waits for RTCLOK_LOW to *equal* a target, so a
     // free-running ISR bump (racing a slow pumpFrame that spans >1 frame) would overshoot the
     // target and hang a full 256-tick wrap.  Mirrors the SDL platform's gated tickVBI exactly.
@@ -394,3 +434,235 @@ void platform_tunnel_rings_drawn(void) {
 int  platform_load_image(const char* /*path*/) { return 0; }
 
 } // extern "C"
+
+// ============================================================================
+//  CIA-A serial-port keyboard — RETURN -> Atari START switch (CONSOL $D01F)
+// ============================================================================
+// The Amiga keyboard shifts each keycode into CIA-A's serial data register, raising
+// the CIA-A SP interrupt (CIAICRB_SP, via INTB_PORTS).  We hang a handler on that
+// vector through ciaa.resource (the same AddICRVector mechanism the CIA-B music tick
+// uses).  keyboard.device normally owns the vector, so we steal it (saving the
+// previous) and restore it on shutdown, leaving the OS keyboard working afterwards.
+//
+// This handler IS the Atari console-switch hardware abstraction: it maps RETURN onto
+// the START switch in CONSOL ($D01F / 53279), writing $06 while RETURN is held and
+// $07 when idle.  CONSOL reads active-low in bits 0-2 (START/SELECT/OPTION); idle = $07,
+// START down clears bit0 -> $06, the value the genuine attract poll
+// (station_poll_start_native) tests for.  We never touch SELECT/OPTION.
+static const uint16_t kConsol      = 0xD01F;
+static const uint8_t  kConsolIdle  = 0x07;
+static const uint8_t  kConsolStart = 0x06;
+static const uint8_t  kRawReturn   = 0x44;   // RETURN rawkey (cf. RETURN=$44, ESC=$45)
+
+static struct Library*   s_ciaaBase    = 0;
+static struct Interrupt  s_kbInterrupt;
+static struct Interrupt* s_savedVector = 0;   // keyboard.device's vector, restored on exit
+
+// CIA-A SP interrupt: a full keycode has shifted into the serial register.  ciaa.resource
+// has already read+cleared the ICR before dispatching us, so we only touch the serial data
+// register (read the code) and CRA (handshake).
+static uint32_t keyboardHandler()
+{
+    uint8_t sdr = *ciaasdrPointer;
+
+    // Acknowledge: pulse SP to output mode (drives KDAT low) then back to input, so the
+    // keyboard releases the next keycode.  HRM Appendix G (node G-2): "Software MUST pulse
+    // the line low for 85 microseconds"; resync timeout is 143 ms, so this ~2 ms busy-wait
+    // is safe.
+    *ciaacraPointer |= CIACRAF_SPMODE;
+    for (volatile uint16_t d = 0; d < 1500; d++) { /* >=85us handshake */ }
+    *ciaacraPointer &= (uint8_t)~CIACRAF_SPMODE;
+
+    // Wire protocol (HRM Appendix G): the keycode is sent ROL'd one bit and KDAT is
+    // active-low, so SDR holds ~(keycode ROL 1).  Recover by inverting then ROR 1.  Bit 7
+    // of the result = key-up flag (0 = down).
+    uint8_t code = (uint8_t)~sdr;
+    code = (uint8_t)((code >> 1) | (code << 7));   // ROR 1
+    uint8_t raw  = (uint8_t)(code & 0x7Fu);
+    bool    down = (code & 0x80u) == 0u;
+
+    // Drive the CONSOL START switch (bit0) from RETURN's down/up edges, so the register
+    // continuously reflects the key's level — just like the real GTIA switch.
+    if (raw == kRawReturn)
+        mem[kConsol] = down ? kConsolStart : kConsolIdle;
+    return 0;
+}
+
+static bool keyboardInit()
+{
+    s_ciaaBase = (struct Library*)OpenResource((UBYTE*)CIAANAME);
+    if (!s_ciaaBase) return false;
+
+    mem[kConsol] = kConsolIdle;   // power-on CONSOL state: no switch down (START up)
+
+    s_kbInterrupt.is_Node.ln_Type = NT_INTERRUPT;
+    s_kbInterrupt.is_Node.ln_Pri  = 0;
+    s_kbInterrupt.is_Node.ln_Name = (char*)"RoF KB";
+    s_kbInterrupt.is_Data = 0;
+    s_kbInterrupt.is_Code = (void(*)())keyboardHandler;
+
+    // AddICRVector returns NULL on success, or the already-installed (keyboard.device)
+    // vector on conflict.  On conflict, steal it: remove theirs, install ours, remember
+    // theirs to restore in shutdown.
+    s_savedVector = AddICRVector(s_ciaaBase, CIAICRB_SP, &s_kbInterrupt);
+    if (s_savedVector) {
+        RemICRVector(s_ciaaBase, CIAICRB_SP, s_savedVector);
+        AddICRVector(s_ciaaBase, CIAICRB_SP, &s_kbInterrupt);
+    }
+    return true;
+}
+
+static void keyboardShutdown()
+{
+    if (!s_ciaaBase) return;
+    RemICRVector(s_ciaaBase, CIAICRB_SP, &s_kbInterrupt);
+    if (s_savedVector) {
+        AddICRVector(s_ciaaBase, CIAICRB_SP, s_savedVector);
+        s_savedVector = 0;
+    }
+    s_ciaaBase = 0;
+}
+
+// ============================================================================
+//  Real INTB_VERTB VBI server — the per-frame VBI body + RTCLOK clock
+// ============================================================================
+static struct Interrupt vbiServer;
+
+static uint32_t vbiHandler()
+{
+    // RTCLOK ($0014 low, carry $0013) ownership depends on the phase:
+    //  * LAUNCH-BLOCKING (g_launchBlocking=1): the transpiled frame-waits use an EXACT-
+    //    equality spin (wait_setcount/wait_frames_N $3CB2 waits for RTCLOK_LOW to *equal*
+    //    a target).  RTCLOK must advance by EXACTLY ONE per spin iteration (platform_tick_vbi
+    //    does that); if the free ISR ALSO bumped it, a slow pumpFrame (>1 frame) would
+    //    overshoot the target and hang a full 256-tick wrap.  So the ISR must NOT bump
+    //    RTCLOK here while launch-blocking (lockstep, exactly as the SDL gated tickVBI).
+    //  * FLIGHT / steady state (g_launchBlocking=0): the ISR owns RTCLOK, bumped once per
+    //    real VBI as the Atari OS / in-game VBI did.
+    //  * ATTRACT VBI ($1B30): bumps RTCLOK itself in its own transpiled body, so skip here
+    //    (else double).  (Do NOT touch $0080 — sync_flag, reused as the $80/$81 zp pointer.)
+    uint16_t vbiVec = (uint16_t)(mem[0x0222] | (mem[0x0223] << 8));
+    if (vbiVec != 0x1B30u && !g_launchBlocking) {
+        mem[0x0014]++;                    // RTCLOK_LOW
+        if (!mem[0x0014]) mem[0x0013]++;  // RTCLOK_MID carry
+    }
+    g_vbiCount++;
+
+    // Per-frame VBI body — run in the REAL vertical-blank interrupt, where the Atari ran
+    // its VBI.  game_vbi_isr() dispatches by the live VVBLKI vector to the standby ($52D7)
+    // or flight ($4FF5) body — as the Atari swaps VVBLKI — bracketing the work in a
+    // save/restore of the shared 6502 register file (the main loop may be mid-instruction
+    // using `cpu` when this interrupt preempts it).
+    game_vbi_isr();
+    return 0;
+}
+
+// ============================================================================
+//  CIA-B Timer A interrupt — SFX music tick at 25 Hz
+// ============================================================================
+// The Atari SFX sequencer ticks every other VBI (the BIT $062D gate, $00E7=1) = 25 Hz.
+// On the Amiga we drive it from CIA-B Timer A at that exact rate, off a dedicated
+// hardware interrupt rather than the VBI/render loop, so the music tempo is independent
+// of frame timing.  CIA-B uses the Amiga E-clock (~709379 Hz PAL); period = 709379/25 =
+// 28375.  The interrupt fires through INTB_EXTER (level 6) via the ciab.resource.
+static struct Library  *CIABBase;
+static struct Interrupt sfxTimer;
+
+static uint32_t sfxTimerHandler()
+{
+    if (mem[0x00E7]) sfx_voice_tick_native();
+    return 0;
+}
+
+// ============================================================================
+//  PlatformAmiga::run — display takeover, install interrupts, run scene, restore
+// ============================================================================
+void PlatformAmiga::run(RescueOnFractalus& scene)
+{
+    // --- takeover: save system state, disable OS display ---------------------
+    struct View* savedView = GfxBase->ActiView;
+    LoadView(NULL);
+    WaitTOF();
+    WaitTOF();
+
+    // Disable raster (bitplane) and sprite DMA so old state doesn't leak through.  Keep
+    // exec's disk/blitter/audio DMA as-is; copper DMA gets re-enabled below.
+    *dmaconPointer = (uint16_t)(DMAF_RASTER | DMAF_SPRITE | DMAF_COPPER);
+
+    // Display window — standard PAL lores 320x200 visible area.  No bitplanes (bplcon0=0):
+    // the whole area shows COLOR00 (copper-set background).
+    *diwstrtPointer = 0x2c81;   // VSTRT=44, HSTRT=0x81
+    *diwstopPointer = 0xf4c1;   // VSTOP=244, HSTOP=0xc1 (+256 implicit)
+    *ddfstrtPointer = 0x0038;
+    *ddfstopPointer = 0x00d0;
+    *bplcon0Pointer = 0x0000;   // 0 bitplanes
+    *bplcon1Pointer = 0x0000;
+    *bplcon2Pointer = 0x0000;
+
+    // --- VBI interrupt server ------------------------------------------------
+    vbiServer.is_Node.ln_Type = NT_INTERRUPT;
+    vbiServer.is_Node.ln_Pri  = 0;
+    vbiServer.is_Node.ln_Name = (char*)"RoF VBI";
+    vbiServer.is_Data = 0;
+    vbiServer.is_Code = (void(*)())vbiHandler;
+    AddIntServer(INTB_VERTB, &vbiServer);
+
+    // --- CIA-B Timer A — SFX music at 25 Hz ----------------------------------
+    // Use ciab.resource so the CIA ICR is demultiplexed for us.
+    CIABBase = (struct Library*)OpenResource((UBYTE*)CIABNAME);
+    if (CIABBase) {
+        sfxTimer.is_Node.ln_Type = NT_INTERRUPT;
+        sfxTimer.is_Node.ln_Pri  = 0;
+        sfxTimer.is_Node.ln_Name = (char*)"RoF SFX";
+        sfxTimer.is_Data = 0;
+        sfxTimer.is_Code = (void(*)())sfxTimerHandler;
+        if (!AddICRVector(CIABBase, CIAICRB_TA, &sfxTimer)) {
+            Disable();
+            // Stop timer, load period (28375 = 0x6EC7 = 709379/25), continuous mode.
+            *((volatile uint8_t*)(ciab + ciacra)) &= (uint8_t)~CIACRAF_START;
+            *((volatile uint8_t*)(ciab + ciatalo)) = (uint8_t)(28375 & 0xFF);
+            *((volatile uint8_t*)(ciab + ciatahi)) = (uint8_t)(28375 >> 8);
+            *((volatile uint8_t*)(ciab + ciacra)) =
+                (uint8_t)((*((volatile uint8_t*)(ciab + ciacra))
+                           & ~(CIACRAF_RUNMODE | CIACRAF_PBON | CIACRAF_OUTMODE
+                               | CIACRAF_SPMODE | CIACRAF_TODIN))
+                          | CIACRAF_START);
+            Enable();
+        }
+    }
+
+    // --- bring up the scene --------------------------------------------------
+    // Enable copper + raster + sprite DMA, then load the faithful boot memory image
+    // (pristine rof.xex) into mem[] before anything reads it — the genuine power-on RAM.
+    *dmaconPointer = (uint16_t)(DMAF_SETCLR | DMAF_MASTER | DMAF_COPPER | DMAF_RASTER | DMAF_SPRITE);
+    load_xex_image();
+
+    s_scene = &scene;
+    scene.initialize();   // builds bitmaps/copper; calls PlatformAmiga::audioInit
+    keyboardInit();       // RETURN = START for the launch cinematic
+
+    // --- run -----------------------------------------------------------------
+    // The whole game runs inside scene.run(): the genuine transpiled/native boot chain,
+    // whose frame-wait spin loops each drive one real Amiga frame through launchFramePump
+    // (the pump spins on g_vbiCount).  Returns when the user quits (left mouse button).
+    scene.run();
+
+    // --- restore system ------------------------------------------------------
+    keyboardShutdown();
+    scene.shutdown();     // calls PlatformAmiga::audioShutdown
+
+    if (CIABBase) {
+        Disable();
+        *((volatile uint8_t*)(ciab + ciacra)) &= (uint8_t)~CIACRAF_START;
+        Enable();
+        RemICRVector(CIABBase, CIAICRB_TA, &sfxTimer);
+    }
+    RemIntServer(INTB_VERTB, &vbiServer);
+
+    // Disable our display DMA before handing back.
+    *dmaconPointer = (uint16_t)(DMAF_COPPER | DMAF_RASTER | DMAF_SPRITE);
+
+    LoadView(savedView);
+    WaitTOF();
+    WaitTOF();
+}

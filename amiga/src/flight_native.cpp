@@ -16,7 +16,7 @@
 //     they spin on ANTIC VCOUNT $D40B, which the Amiga never advances → they
 //     would hang.  The frame-driven loop provides the cadence instead.
 
-#include "PaulaAudio.h"   // mem[] + int types (matches the other native modules)
+#include "PlatformAmiga.h"   // PlatformAmiga::noiseTick + int types (matches the other native modules)
 #include "AtariZp.h"      // zp:: named mem[] offsets (heading/world pos/game state/...)
 #include "../../src/gen/rof_native.h"  // typed C cores (clear_terrain_column_at, ...)
 #include "FlightProf.h"   // per-frame VBI-count profiler
@@ -146,7 +146,7 @@ extern "C" void game_vbi_isr(void)
     else if (vbi == 0x1B30) vbi_handler_station();   // $1B30 attract VBI (sets $0080 + RTCLOK)
     else                    standby_vbi_native();    // $52D7 standby/launch VBI (and fallback)
     cpu = saved;                                    // == XITVBV PLA;TAY;PLA;TAX;PLA
-    paula_noise_tick();                             // refresh poly17 noise sample (no cpu use)
+    PlatformAmiga::noiseTick();                     // refresh poly17 noise sample (no cpu use)
 }
 
 // sfx_engine_reset_native: faithful replica of the SFX engine reset $5433 (mislabelled

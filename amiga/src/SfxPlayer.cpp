@@ -14,12 +14,12 @@
 //   $71AB/$719E/$7191/$71B8  — AUDF1-4 per voice index
 //   $71C5  — AUDC4 per voice index
 
-#include "PaulaAudio.h"
+#include "PlatformAmiga.h"
 
 extern "C" volatile uint8_t mem[65536];
-// platform_hw_write declared in PaulaAudio.h (extern "C")
+// platform_hw_write declared in PlatformAmiga.h (extern "C")
 
-// ---- sfx_seq_step_native ($7148) — also called from paula_audio_init() ------
+// ---- sfx_seq_step_native ($7148) — also called from PlatformAmiga::audioInit() ------
 // Advances the sequence pointer and loads the next note.
 //   Negative bytes (0x80-0xFF): voice-param command — write AUDF1-4+AUDC4,
 //     continue if AUDC4 != 0, else fall through with note=0.

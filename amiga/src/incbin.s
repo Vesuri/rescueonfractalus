@@ -23,7 +23,7 @@ rof_mem_bin:
 rof_mem_bin_end:
 
 | rof.xex — the original Atari 8-bit segmented load file (read-only).  This is the
-|   faithful initial memory image: load_xex_image() (PaulaAudio.cpp) zeroes mem[] and
+|   faithful initial memory image: load_xex_image() (XexImage.cpp) zeroes mem[] and
 |   places each XEX segment at its load address, so $00E7 (music gate) and all runtime
 |   state start at genuine power-on values and the original setup code (game_entry
 |   $3CDE) establishes them — instead of booting from a mid-Standby snapshot.
