@@ -50,8 +50,26 @@ extern "C" void load_xex_image(void)
         uint16_t e = (uint16_t)(d[i + 2] | (d[i + 3] << 8));
         i += 4;
         uint32_t seglen = (uint32_t)e - (uint32_t)s + 1u;
-        for (uint32_t k = 0; k < seglen && i < len; k++, i++)
-            mem[(uint16_t)(s + k)] = d[i];
+        uint32_t cnt = seglen;
+        if (cnt > len - i) cnt = len - i;             // truncated segment guard (was i<len)
+        const uint8_t* src = d + i;
+        if ((uint32_t)s + cnt <= 0x10000u) {
+            // mem[] is even-aligned, so long writes are legal on the 68000 at any even Atari
+            // address (only ODD faults).  Align the dest to even (≤1 head byte), then store
+            // the body 4 bytes at a time — 4x fewer volatile stores than the per-byte loop.
+            // The XEX data (src) is read by bytes (arbitrary alignment) and packed big-endian
+            // (68000) so mem[s+k]=src[k].
+            uint32_t k = 0;
+            if (cnt && (s & 1u)) { mem[s] = src[0]; k = 1; }
+            for (; k + 4u <= cnt; k += 4u)
+                *(volatile uint32_t*)(mem + (uint16_t)(s + k)) =
+                    ((uint32_t)src[k] << 24) | ((uint32_t)src[k + 1] << 16) |
+                    ((uint32_t)src[k + 2] << 8) | (uint32_t)src[k + 3];
+            for (; k < cnt; k++) mem[(uint16_t)(s + k)] = src[k];
+        } else {
+            for (uint32_t k = 0; k < cnt; k++) mem[(uint16_t)(s + k)] = src[k];  // wraps $FFFF
+        }
+        i += cnt;
     }
 
     // Overlay the Atari OS ROM (the platform ROM the game reads — e.g. the $E000
