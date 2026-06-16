@@ -31,7 +31,14 @@ extern "C" uint8_t atari_osrom_end[];
 // from C (RescueOnFractalus::run -> game_entry) rather than honoured here.
 extern "C" void load_xex_image(void)
 {
-    for (uint32_t i = 0; i < 65536u; i++) mem[i] = 0u;
+    // Zero RAM.  mem[] is even-aligned (see RoF.map) so 32-bit writes are legal on the
+    // 68000 (only ODD addresses fault) — clear by longs, 4x fewer iterations than the old
+    // per-byte loop.  This runs on the boot path before anything is visible, so its cost
+    // is directly the user-visible black-screen startup delay.  64 KB = whole # of longs.
+    {
+        volatile uint32_t* m32 = (volatile uint32_t*)mem;
+        for (uint32_t i = 0; i < 65536u / 4u; i++) m32[i] = 0u;
+    }
 
     const uint8_t* d   = rof_xex;
     const uint32_t len = (uint32_t)(rof_xex_end - rof_xex);
@@ -52,7 +59,14 @@ extern "C" void load_xex_image(void)
     // [0..$1000) -> $C000-$CFFF, [$1000..$3800) -> $D800-$FFFF.  The $D000-$D7FF
     // hardware range is intentionally NOT covered, so it never overwrites mem[$D01F]
     // (the keyboard-maintained CONSOL) or other HW shadows.
-    const uint8_t* rom = atari_osrom;
-    for (uint32_t k = 0; k < 0x1000u; k++) mem[(uint16_t)(0xC000u + k)] = rom[k];
-    for (uint32_t k = 0; k < 0x2800u; k++) mem[(uint16_t)(0xD800u + k)] = rom[0x1000u + k];
+    // atari_osrom is .balign 4 (incbin.s) and the dest offsets ($C000/$D800) are even, so
+    // copy by longs (both blocks are whole # of longs).
+    {
+        const uint32_t*   rs = (const uint32_t*)atari_osrom;
+        volatile uint32_t* d0 = (volatile uint32_t*)(mem + 0xC000u);
+        for (uint32_t k = 0; k < 0x1000u / 4u; k++) d0[k] = rs[k];
+        volatile uint32_t* d1 = (volatile uint32_t*)(mem + 0xD800u);
+        const uint32_t*    r1 = (const uint32_t*)(atari_osrom + 0x1000u);
+        for (uint32_t k = 0; k < 0x2800u / 4u; k++) d1[k] = r1[k];
+    }
 }
