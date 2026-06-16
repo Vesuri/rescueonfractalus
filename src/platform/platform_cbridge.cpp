@@ -44,6 +44,9 @@ void platform_poll_events(void) {
     if (platform) platform->pollEvents();
 }
 
+/* SDL renders mem[] directly, so the tunnel rings need no bitplane conversion. */
+void platform_tunnel_rings_drawn(void) {}
+
 } /* extern "C" */
 
 /* ---------------------------------------------------------------------------

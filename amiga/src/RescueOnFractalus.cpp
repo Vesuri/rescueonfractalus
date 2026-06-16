@@ -39,7 +39,6 @@ extern "C" void copy_text_block_to_screen_native(void);   // $782A: title text
 extern "C" void update_cockpit_digits_native(void);                      // $3FFA: cockpit digit update
 extern "C" void lock_on_indicator_tick_native(void);               // $4229: cockpit counter animation
 extern "C" void sound_event_dispatch_native(void);              // $5367: ring ($0088) vs door scroll ($008A)
-extern "C" void draw_tunnel_rings_native(void);                 // $65FB: draw concentric tunnel rings into $2000
 extern "C" void audio_stop_native(void);                        // $712D: stop music + mute POKEY (START press)
 extern "C" void sfx_engine_reset_native(void);                  // $5433: clean SFX voice engine for the launch
 extern "C" void launch_show_standby_native(void);               // display_setup $635F: "STAND BY..." + score
@@ -537,8 +536,9 @@ void RescueOnFractalus::initialize()
     cockpitBitmap = Bitmap::allocate(kW, kCockpitH, kBP3, true);  // 3bp: bit-7 chars → red
     tunnelBitmap  = Bitmap::allocate(kW, kTerrainHeight, kBP3, true);  // door-gap reveal
 
-    // (Tunnel rings are decoded in decodeTunnelRings(), called after the first
-    // render() below captures the closed-door terrain — see initialize() tail.)
+    // (The tunnel rings are decoded into tunnelBitmap from the $1000 field by
+    // decodeTunnelField, triggered by the platform_tunnel_rings_drawn() hook when the
+    // genuine display_setup draws them — not at init; see decodeTunnelField.)
 
     leftPost   = Sprite::allocate(kHT);
     rightPost  = Sprite::allocate(kHT);
@@ -648,11 +648,10 @@ void RescueOnFractalus::initialize()
     // This captures the closed-door terrain image from $2000 into terrainBitmap.
     render();
 
-    // Now draw the tunnel rings procedurally (native port of $65FB) INTO $2000 —
-    // this overwrites the door image, which terrainBitmap has already captured —
-    // and decode that GTIA-10 field into the 3bp tunnel bitmap (pens 1-6).  Motion
-    // later comes from cycling COLOR01-06; the ring pattern itself is static.
-    decodeTunnelRings();
+    // The tunnel bitmap is NOT decoded here: the genuine display_setup draws the ring
+    // pattern into the $1000 field via draw_frame_pattern_seq, and the platform_tunnel_
+    // rings_drawn() hook flags it for decode then (advance_message_column streams the
+    // per-frame ring-clear updates).  Decoding at init would capture an empty $1000.
 
     // Init complete — release the ISR's "scene ready" gate (g_activeVbi != 0).  The ISR
     // dispatches on the live VVBLKI vector ($0222/$0223), so seed it to $52D7 (standby)
@@ -663,20 +662,15 @@ void RescueOnFractalus::initialize()
     g_activeVbi = 1;
 }
 
-void RescueOnFractalus::decodeTunnelRings()
-{
-    if (!tunnelBitmap) return;
-    draw_tunnel_rings_native();   // $65FB: render concentric frames into mem[$2000]
-    decodeTunnelField(0, (int)kTerrainHeight - 1);
-}
-
-// decodeTunnelField: decode rows [rowLo..rowHi] of the GTIA-10 field at mem[$2000]
-// into the tunnel bitmap, PER-BYTE shadow-gated so only the bytes that actually
-// changed are re-decoded.  The exit clear draws a thin black frame OUTLINE each step
-// (horizontal edges full-width + left/right VERTICAL pieces down the inner rows), so
-// even passing the full new row extent [botAfter..topAfter] here touches only the
-// outline bytes — covering the vertical pieces a horizontal-only band would miss,
-// while staying far under one PAL frame (GTIA-10 byte→plane decode via tables).
+// decodeTunnelField: decode rows [rowLo..rowHi] of the GTIA-10 tunnel-ring field at
+// mem[$1000] into the tunnel bitmap, PER-BYTE shadow-gated so only the bytes that actually
+// changed are re-decoded.  $1000 (NOT $2000, which holds the door field) is where the
+// genuine display_setup renders the rings — draw_frame_pattern_seq plots through the
+// $073D/$0793 row-address table built for base $1000, and advance_message_column streams
+// its expanding black ring-clear frames into the same buffer.  The exit clear draws a thin
+// black frame OUTLINE each step (horizontal edges full-width + left/right VERTICAL pieces
+// down the inner rows), so even passing the full new row extent [botAfter..topAfter] here
+// touches only the outline bytes — staying far under one PAL frame (GTIA-10 decode tables).
 void RescueOnFractalus::decodeTunnelField(int rowLo, int rowHi)
 {
     if (!tunnelBitmap) return;
@@ -684,7 +678,7 @@ void RescueOnFractalus::decodeTunnelField(int rowLo, int rowHi)
     if (rowHi > (int)kTerrainHeight - 1) rowHi = (int)kTerrainHeight - 1;
     uint8_t* bm = (uint8_t*)tunnelBitmap->data;
     for (int row = rowLo; row <= rowHi; row++) {
-        const uint8_t* src = (const uint8_t*)&mem[0x2000 + row * 46 + 4];  // +4: wide-field crop
+        const uint8_t* src = (const uint8_t*)&mem[0x1000 + row * 46 + 4];  // +4: wide-field crop
         uint8_t* p1 = bm + row * 120; uint8_t* p2 = p1 + 40; uint8_t* p3 = p1 + 80;
         uint8_t* shadow = &tunnelShadow[row * 40];
         for (int b = 0; b < 40; b++) {

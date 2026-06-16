@@ -389,6 +389,18 @@ void platform_tick_vbi(void) {
         if (!mem[0x0014]) mem[0x0013]++;    // RTCLOK_MID carry
     }
 }
+
+// The tunnel-ring "dirty field" flags advance_message_column already uses to stream the
+// ring-clear frames from the $1000 GTIA field into the tunnel bitmap (NativeHandlers.cpp).
+extern volatile uint8_t g_tunnelFieldDirty;
+extern volatile uint8_t g_tunRowLo, g_tunRowHi;
+void platform_tunnel_rings_drawn(void) {
+    // display_setup's draw_frame_pattern_seq just rendered the full ring pattern into the
+    // $1000 field.  Flag the whole field dirty so the next pumpFrame decodes it once into
+    // the tunnel bitmap (then advance_message_column streams the per-frame clear updates).
+    g_tunRowLo = 0; g_tunRowHi = 85;
+    g_tunnelFieldDirty = 1;
+}
 int  platform_load_image(const char* /*path*/) { return 0; }
 
 } // extern "C"

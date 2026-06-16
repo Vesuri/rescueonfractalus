@@ -6201,6 +6201,7 @@ L_6029:
     save_color_clear_y_bit5();
 L_6047:
     draw_frame_pattern_seq();
+    platform_tunnel_rings_drawn();   /* hook: convert the freshly-drawn $1000 ring field to bitplanes */
     init_row_coords_9c();
     LDA(0x13);                 /* init_row_coords_9c exit A=$13 (faithful; native leaf leaves cpu.A untouched) */
     mem[0x00B9] = cpu.A;
@@ -6668,6 +6669,7 @@ L_63b9:
     startup_init();
     build_line_addr_table_1000();
     draw_frame_pattern_seq();
+    platform_tunnel_rings_drawn();   /* hook: convert the freshly-drawn $1000 ring field to bitplanes */
     LDX(0x01);
     input_init();
     LDA(0x1F);

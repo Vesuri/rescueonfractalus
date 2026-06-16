@@ -38,6 +38,13 @@ void platform_poll_events(void);
    (FUN_3c7b) — VBI resets vcountReg and would prevent them from exiting. */
 void platform_tick_vbi(void);
 
+/* Called by display_setup right after draw_frame_pattern_seq() has rendered the
+   launch tunnel rings into the $1000 GTIA field, so a platform that mirrors mem[]
+   into its own framebuffer (the Amiga copper/bitplane backend) can convert the
+   freshly-drawn rings to bitplanes.  No-op on the host/SDL build, which renders
+   mem[] directly. */
+void platform_tunnel_rings_drawn(void);
+
 #ifdef __cplusplus
 }
 #endif
