@@ -45,6 +45,29 @@ make            # build out/RoF.exe (+ RoF.elf for debug)
 Toolchain lives at `~/.local`. `OPT=-O2`/`NATIVE_OPT=-O3` by default; override for debug
 backtraces with `make OPT='-O0' NATIVE_OPT='-O0'`.
 
+### Headless FS-UAE measure→fix→verify loop (works great — use it instead of guessing)
+The agent can drive FS-UAE + gdb itself, with no display interaction, to measure real
+runtime state. This loop diagnosed several timing/render bugs precisely where static
+reasoning kept failing — **measure, don't theorize.**
+- **`. ./env.sh` MUST be sourced in the SAME shell command** as the run — it puts BOTH
+  `fs-uae` (`~/.local/fs-uae`) and `m68k-amiga-elf-gdb` on PATH. The Bash tool doesn't
+  persist a separate `. env.sh`, so `fs-uae` looks "not found" otherwise.
+- **`amiga/diag_run.sh [delay]`** = the batch harness: boots `out/RoF.exe` under the
+  FS-UAE gdb stub, runs `[delay]` seconds, SIGINTs gdb (breaks its `continue`), runs the
+  print commands in **`amiga/diag_timing.gdb`**, and writes everything to
+  `amiga/.run/gdb-out.log` (also echoes a filtered tail). Edit `diag_timing.gdb` to print
+  whatever globals/`mem[0xNNNN]` you need (a `while $i < N ... end` loop dumps arrays).
+  `-g` is always on (AUDIO_CFLAGS), so all globals are readable by name.
+- **Auto-launch (reach the launch cinematic with no keypress):** in `main.cpp`'s
+  `vbiHandler`, gate on `g_vbiCount` to replicate a real RETURN press —
+  `if (g_vbiCount==350) mem[0xD01Fu]=0x06;` (START down) then `=0x07` (up). ⚠ `0x00` (all
+  console keys) triggers the DEMO DROID path, NOT a clean START.
+- **Probe pattern:** add `volatile` globals, stamp `g_vbiCount` at milestones or log state
+  transitions into ring buffers, print via `diag_timing.gdb`. Pure-compute stretches show
+  up as `g_vbiCount` deltas (the real VBI ISR bumps the counter even during compute).
+- These probes + auto-launch + the `diag_timing.gdb` edits are **temporary** — strip them
+  all and restore `diag_timing.gdb` before committing (the fix itself is the only diff).
+
 ### Atari reference (ground truth)
 Drive the `atari800` debugger in **FIFO mode**. Always `kill -9` stray `atari800`/`fs-uae`
 processes (avoids stale copies). RAM dumps: `tools/extract_a8s_ram.py` (RAM base is `0x86`).
