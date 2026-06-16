@@ -8,7 +8,7 @@
  *
  * Accumulated across all flight frames into g_flightProf; per-frame value =
  * field / frames.  isrLines is in raster lines (×63.56 us = time); isr per frame
- * = isrLines * 63.56us / frames.  flight_prof_reset() (called in startFlight)
+ * = isrLines * 63.56us / frames.  flight_prof_reset() (call when entering flight)
  * zeroes it.  Read from the gdb stub: `x/9wu &g_flightProf`.
  *
  * No <stdint.h> (clashes with the framework's SASCCompat.h); C linkage for C++.

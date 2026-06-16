@@ -337,8 +337,7 @@ extern "C" void* g_quitJmp[];
 // transpile.py) at the VCOUNT/CONSOL poll points that do NOT pace a frame.  Poll the
 // quit control (left mouse) so the player can always abort even while the transpiled
 // code spins in a tight non-frame wait, and unwind to run() if so.  Unlike
-// platform_render_frame this must NOT wait for a VBI.  (F-key skip is handled separately
-// by the keyboard ISR via g_skipToFlight.)
+// platform_render_frame this must NOT wait for a VBI.
 void platform_poll_events(void) {
     if (AmigaHardware::isLeftMouseButtonPressed()) g_pumpQuit = 1;
     if (g_pumpQuit) __builtin_longjmp(g_quitJmp, 1);   // escape the never-returning chain
@@ -367,12 +366,6 @@ void platform_render_frame(void) {
     if (g_launchBlocking && s_framePump) s_framePump();
 }
 
-// When set (by flight_init_native), advance RTCLOK ($0014) inside transpiled
-// frame-wait spin loops so they resolve in compute time instead of waiting on the
-// real Amiga VBI.  flight init's init_gameplay_state calls wait_frames_60 six times
-// (~5s of launch-sequence pacing we don't want on the dev F-skip).  Steady-state
-// flight leaves this 0, so $0014 advances at the real one-per-frame VBI rate.
-volatile uint8_t g_fastForwardFrames = 0;
 void platform_tick_vbi(void) {
     // In LAUNCH-BLOCKING mode the ISR's RTCLOK bump is gated OFF (see g_launchBlocking in
     // main.cpp's vbiHandler); we advance RTCLOK here instead — exactly once per transpiled
@@ -381,10 +374,7 @@ void platform_tick_vbi(void) {
     // wait_setcount/wait_frames_N spin ($3CB2) waits for RTCLOK_LOW to *equal* a target, so a
     // free-running ISR bump (racing a slow pumpFrame that spans >1 frame) would overshoot the
     // target and hang a full 256-tick wrap.  Mirrors the SDL platform's gated tickVBI exactly.
-    //
-    // g_fastForwardFrames is the dev F-skip path (flight_init's six wait_frames_60s): advance
-    // RTCLOK synthetically there too, with no real VBI wait, so they resolve in compute time.
-    if (g_launchBlocking || g_fastForwardFrames) {
+    if (g_launchBlocking) {
         mem[0x0014]++;                      // RTCLOK_LOW (mirrors vbiHandler)
         if (!mem[0x0014]) mem[0x0013]++;    // RTCLOK_MID carry
     }

@@ -413,7 +413,8 @@ extern "C" void sound_event_dispatch_native(void)
 // $073D lo / $0793 hi, 46-byte stride), with the pen cycling 1..6.  Run once at
 // scene init; the $2000 image is then decoded to the tunnel bitmap, the same path
 // the terrain uses.  All scratch is in zero page ($0080-84/$0092/$0094/$0096/
-// $009C-A0/$00B7-B9/$00DF) — re-seeded by openDoors() before the door scroll runs.
+// $009C-A0/$00B7-B9/$00DF) — re-seeded by the genuine display_setup launch path
+// before the door scroll runs.
 
 // plot_glyph_pixel_masked @ $66DE: OR then AND a pen into the screen byte at
 // ($0080)+yByte using the mask tables $66E9 (set) / $66FB (clear), indexed by x.

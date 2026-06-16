@@ -33,49 +33,15 @@ public:
     // original is straight-line code that busy-waits, so this is too.  Returns
     // when the user quits (left mouse button).
     void run();
-
-    // Launch cinematic: start the doors-open transition (Atari START press).
-    // The terrain image (green/dots/LEVEL 04 = the "closed doors") splits from
-    // the middle, halves sliding apart, revealing the tunnel in the gap.
-    void openDoors();
-
-    // Dev shortcut (F key): skip the whole launch cinematic and jump straight to
-    // the in-game flight stage.  flight_init_native re-initialises the game state,
-    // so this is safe to call from the standby screen or mid-cinematic.
-    void skipToFlight();
 private:
-    // frameStep(): the REAL per-frame busy-wait that backs every wait point in
-    // the original straight-line code (wait_frames_2/5/10/60 etc.).  Spins until
-    // the real INTB_VERTB VBI ISR signals the next frame (the ISR ran the Atari
-    // VBI body + bumped RTCLOK $0014 once), then does the per-frame non-phase work
-    // and repaints (render() + Copper rebuild) on the main thread — exactly where
-    // the Atari's ANTIC would have regenerated the display for that frame.
-    enum FrameResult : uint8_t { kFrameContinue, kFrameQuit, kFrameSkip };
-    FrameResult frameStep();
-    // cinematicFrame(): one cinematic frame-wait.  Returns true if the cinematic
-    // should abort — either the user quit, or the F-key skip-to-flight fired (in
-    // which case it has already handed off to flightLoop()).
-    bool cinematicFrame();
     void perFrameWork();    // per-frame non-phase work (title/blink/digits/sprites)
-    void flightLoop();      // game_entry $3EBA flight loop: frameStep + flight_frame_native
 
     uint16_t frameCounter = 0;   // frames elapsed (drives buildCopperList fade-in)
-    // Launch phases, mirroring display_setup's linear walk: after START we fill
-    // the throttle gauge, open the doors, run the tunnel (ring cycle) until it
-    // auto-clears $0088, then the stars/space scroll and the planet zoom — each a
-    // step of the cinematic body $5F1D..$6594 driven one-per-frame.
-    enum LaunchPhase : uint8_t {
-        kLaunchNone, kLaunchGauge, kLaunchDoors, kLaunchTunnel,
-        kLaunchStars, kLaunchPlanet, kFlight
-    };
-    uint8_t  launchPhase  = kLaunchNone;
 
-    // Render-gating signals derived from mem[] hardware state each frame (validated in
-    // Commit 3 against the launchPhase enum, now the source of truth for rendering).
-    // buildCopperList/render/perFrameWork key off these instead of the enum, so the
-    // renderer keeps working once the transpiled display_setup drives the cinematic and
-    // the enum is gone.  (`launched`, which gates only the door gap, stays the C++ bool
-    // until Commit 6 — see the g2 comment in buildCopperList.)
+    // Render-gating signals derived from mem[] hardware state each frame: the genuine
+    // transpiled/native game_entry -> game_main_loop -> display_setup drives the program
+    // and swaps the live VVBLKI vector per scene; buildCopperList/render/perFrameWork key
+    // off these mem[]-derived signals to pick the render mode for the current phase.
     void deriveRenderSignals();
     bool rsStandby  = false;   // VVBLKI $52D7        — Standby + launch cinematic VBI
     bool rsGauge    = false;   // $060B != 0          — cinematic begun (gauge sprite on)
@@ -84,11 +50,7 @@ private:
     bool rsViewport = false;   // stars || flight      — mode-D viewport band active
     bool rsLaunched = false;   // doors armed || viewport — door-gap g2 (doors..flight)
 
-    void startStars();                   // display_setup $64C8-$6552 stars setup
-    void startPlanet();                  // display_setup $6555-$6574 planet setup
-    void startFlight();                  // game_entry $3E12-$3EB8 flight init (after planet)
     Sprite*  gaugeSprite   = nullptr;    // player-strip throttle bar ($0D98)
-    void startDoors();                   // door-scroll state (display_setup $63DC)
     void buildGaugeSprite();             // $0D98 strip -> gaugeSprite lines
 
     // Stars/space starfield: the 3 Atari players P0/P2/P3 ($0C32/$0E32/$0F32),
@@ -98,12 +60,6 @@ private:
     // registers, so the stars use sprites 4/5/6 for an independent grey COLPM.)
     Sprite*  starSprite[3] = { nullptr, nullptr, nullptr };
     void buildStarSprites();             // $0C32/$0E32/$0F32 player buffers -> star sprites
-
-    // Launch state lives in mem[] now: the door-open progress is the $008A
-    // scroll counter (decremented by the native scroll_terrain_dl via the $5367
-    // dispatcher), and the ring animates once $0088 is armed.  `launched` only
-    // distinguishes pre-launch Standby (doors shut) from the running cinematic.
-    bool launched = false;
 
     // Tunnel reveal: a 3bp concentric-rectangle bitmap shown in the door gap.
     // Motion is palette cycling — the 6-entry ring lives in mem[$08D4-$08D9]
@@ -115,11 +71,6 @@ private:
     void fillSpriteData(Sprite* s, bool isRight);
     void decodeTunnelField(int rowLo, int rowHi);  // decode mem[$2000] rows [lo,hi] -> tunnelBitmap
     void renderViewportModeD(uint16_t srcBase, int stride, int rows); // decode CHANGED mode-D bytes -> terrainBitmap (stars: $1000/48/43; flight: $1070/96)
-
-    // Stars/planet phase: when true, the viewport region renders mem[$1000] as an
-    // ANTIC mode-D 2bpp field (43 rows x 48 bytes, central 40 shown) instead of the
-    // GTIA-10 terrain/door image, and uses the $6CC2 DLI viewport palette.
-    bool viewportActive = false;
 
     CopperList* copperLists[2] = { nullptr, nullptr };
 

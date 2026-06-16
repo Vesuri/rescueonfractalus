@@ -41,9 +41,6 @@ extern "C" bool station_poll_start_native(void);
 // VBI body, exactly as the Atari swaps VVBLKI, and saves/restores the shared `cpu`.
 extern "C" void game_vbi_isr(void);
 
-// Set by the keyboard ISR on the 'F' key-down edge: skip to the flight stage.
-extern "C" volatile uint8_t g_skipToFlight;
-
 // Set while the launch cinematic runs a transpiled blocking frame-wait; gates the
 // VBI ISR's RTCLOK bump off (platform_tick_vbi advances it in lockstep instead).
 extern "C" volatile uint8_t g_launchBlocking;
@@ -52,8 +49,8 @@ extern "C" volatile uint8_t g_launchBlocking;
 // Mirrors the Atari RTCLOK increment from vbi_handler_1 ($53CC).
 // DLIST/colour writes are handled by the Copper on the Amiga side.
 // g_vbiCount: bumped once per REAL vertical-blank interrupt (vbiHandler below).
-// RescueOnFractalus::frameStep() spins on it as the matching Amiga construct for
-// the Atari's frame-wait busy-loops (wait_frames_2/5/10/60) — the real VBI is the
+// The launch frame pump (launchFramePump) spins on it as the matching Amiga construct
+// for the Atari's frame-wait busy-loops (wait_frames_2/5/10/60) — the real VBI is the
 // frame clock, exactly as it was on the Atari.  Non-static so the scene can read it.
 extern "C" volatile uint16_t g_vbiCount = 0;
 static struct Interrupt vbiServer;
@@ -221,13 +218,12 @@ int main()
     rof_set_frame_pump(&launchFramePump);
 
     // --- main loop -----------------------------------------------------------
-    // The whole game is a faithful straight-line transcription of the Atari
-    // control flow inside RescueOnFractalus::run(): station_init's attract loop
-    // (wait for START), display_setup's launch cinematic, then game_entry's
-    // flight loop — each original busy-wait backed by the REAL INTB_VERTB VBI
-    // (frameStep spins on g_vbiCount).  No per-frame state-machine dispatch here.
-    // run() returns when the user quits (left mouse button); START / F-key are
-    // polled inside its frame-waits via station_poll_start_native / g_skipToFlight.
+    // The whole game runs inside RescueOnFractalus::run(): the genuine transpiled/native
+    // boot chain (game_entry -> game_main_loop -> display_setup -> flight), whose frame-
+    // wait spin loops each drive one real Amiga frame through the pump (launchFramePump),
+    // backed by the REAL INTB_VERTB VBI (the pump spins on g_vbiCount).  run() returns
+    // when the user quits (left mouse button); START (RETURN) is read via the keyboard
+    // ISR's CONSOL ($D01F) shadow, polled inside the boot chain's attract loop.
     scene.run();
 
     keyboard.shutdown();

@@ -91,11 +91,6 @@ void update_terrain_scanline_proj(void); // $9833 (the JSR is at $51BC inside vb
 void render_bcd_counter(void);           // $49A0: draw BCD score ($0601) to top line $32C5
 void update_gauge_digits(void);          // $548D: in-game SFX voice engine + ring drain (Atari VBI tail $534D)
 void reorder_sprite_slot(void);          // $5614: voice-priority mixer — assigns a POKEY channel ($0705) to slot cpu.Y
-
-// Set during flight_init_native so transpiled frame-wait spin loops (wait_frames_60
-// via init_gameplay_state) advance RTCLOK in compute time instead of waiting on the real
-// VBI — kills the ~5s launch-pacing delay on the dev F-skip.  (Defined in PaulaAudio.cpp.)
-extern volatile uint8_t g_fastForwardFrames;
 }
 
 // flight_vbi_native: the motion half of one flight frame (flight VBI $4FF5,
@@ -132,7 +127,7 @@ extern "C" void vbi_handler_station(void);
 // On the Atari the 6502 registers are saved/restored by the OS VBLANK entry/exit
 // (SYSVBV/XITVBV).  Our transpile funnels ALL 6502 register state through one shared
 // global `cpu`, so we replicate that hardware save/restore here: the main-loop pass
-// (flight_frame_native, or the cinematic native drivers) may be mid-instruction using
+// (game_main_loop's terrain_draw_frame, or the cinematic native drivers) may be mid-instruction using
 // `cpu` when this interrupt preempts it.  mem[] needs no saving — it is the shared
 // "RAM", and the VBI bodies touch scratch disjoint from the main loop (as on the
 // Atari, where $52D7/$4FF5 ran concurrently with the main loop and it worked).
@@ -159,8 +154,10 @@ extern "C" void game_vbi_isr(void)
 // launch ($6118).  Clears the $0719 event ring (head/tail $0073/$0074) and the 14 voice-
 // slot envelope arrays, assigns the 4 physical POKEY channels to voice slots 1..4
 // ($0705 = {2,4,6,8}) and mutes their AUDC, seeds the mixer scratch, and sets AUDCTL=$60.
-// Run once per flight entry (and at launch start, openDoors) so update_gauge_digits
+// On the Atari this runs at game init ($3D35) and launch ($6118) so update_gauge_digits
 // starts from a clean, silent state.
+// ⚠ CURRENTLY UNWIRED on the Amiga (the genuine native game_main_loop chain does its own
+// init); kept for wiring into the native flight/launch path alongside seed_engine_drone_native.
 extern "C" void sfx_engine_reset_native(void)
 {
     mem[0x0073] = 0x00;                       // ring head
@@ -195,9 +192,12 @@ extern "C" void sfx_engine_reset_native(void)
 // flight_vbi_native — so the engine pitch tracks throttle.  All the Atari does to START
 // it is set the distortion (cold-init $3DE2/$3DE8), the priorities, and run the launch
 // engine-ramp ($63FF-$64E8) whose end-state hands these three voices their POKEY channels
-// via reorder_sprite_slot ($5614).  flight_init_native never replayed any of this, so the
-// Amiga had no engine drone.  We install the launch end-state directly here, then let the
-// mixer + flight_control_integrate + update_gauge_digits (all ported) sustain it.
+// via reorder_sprite_slot ($5614).  We install the launch end-state directly here, then let
+// the mixer + flight_control_integrate + update_gauge_digits (all ported) sustain it.
+//
+// ⚠ CURRENTLY UNWIRED: the genuine flight path (native game_main_loop's inline $3E12-$3EB8
+// flight init) does not yet call this, so genuine-flight has no engine drone.  Wire it into
+// the native game_main_loop flight init when verifying in-flight audio.
 //
 // Voice-array layout (base + slot index): distort $065D+Y, priority $066B+Y, freq $0679+Y.
 extern "C" void seed_engine_drone_native(void)
@@ -221,106 +221,4 @@ extern "C" void seed_engine_drone_native(void)
     cpu.X = 0x00; cpu.Y = 0x0C; reorder_sprite_slot();   // slot 12 -> a channel (noise body)
     cpu.X = 0x00; cpu.Y = 0x0D; reorder_sprite_slot();   // slot 13 -> a channel
     cpu.X = 0x00; cpu.Y = 0x0E; reorder_sprite_slot();   // slot 14 -> a channel
-}
-
-// flight_init_native: port the mem[]-state subset of game_entry $3E12-$3EA6.
-// The terrain row-addr table is rebuilt for the FLIGHT viewport: base $1010,
-// stride $60=96 (verified vs the flight DL $316B, which LMSes mode-D rows from
-// $1070=$1010+96 onward at +$60 each — row 0 is the off-screen scroll margin).
-extern "C" void flight_init_native(void)
-{
-    g_fastForwardFrames = 1;     // resolve init_gameplay_state's wait_frames_60 calls instantly
-    sfx_engine_reset_native();                              // $5433: clean SFX engine state for flight
-    cpu.A = 0x2A; clear_pm_state();                          // $3E12: LDA #$2A / JSR $3FBF
-    clear_colors();                                          // $3E17: $3CC3
-    mem[0x3157] = 0x0D; mem[0x3158] = 0x35;                  // $3E1A: cinematic-DL LMS bytes ($350D)
-    mem[zp::frameCounter] = 0x00; mem[0x0005] = 0x00;                  // $3E24
-    for (uint16_t i = 0x20; i <= 0x4B; i++) mem[i] = 0;      // $3E2A: clear zp $20-$4B
-    for (uint16_t i = 0; i < 0xA6; i++) mem[0x2830 + i] = 0; // $3E32: clear $2830-$28D5
-    mem[zp::screenState] = 0x00;                                      // $3E3A
-    init_terrain_render_buffers();                           // $3E3D ($753B)
-    fill_buffer2_region_ff();                                // $3E40 ($45A1)
-    clear_terrain_lo_buffers();                              // $3E43 ($6B63)
-    unpack_terrain_seed_cols();                              // $3E46 ($7558)
-    // $3E49 LDA #$45 / JSR $3C75 (wait_vcount_eq) — SKIP (VCOUNT busy-wait)
-    // $3E4E-$3E55 VBI vector $0222/$0223=$4FF5 — SKIP (Amiga VBI)
-    for (uint16_t i = 0; i < 0x57; i++) mem[0x0B31 + i] = 0; // $3E58: clear $0B31-$0B87
-    mem[zp::gpriorShadow] = 0x11;                                      // $3E62: GPRIOR/PRIOR shadow
-    copy_terrain_seed_rows();                                // $3E67 ($45EE)
-    // $3E6A JSR $3C7B (wait_vcount_ge_7a) — SKIP (VCOUNT busy-wait)
-    // $3E6D-$3E74 DLI vector $0200/$0201=$49EE — SKIP (Amiga copper DLI)
-    // $3E77-$3E83 DLISTL/H=$316B, DMACTL $D004=$40 — SKIP (Amiga copper)
-    init_gameplay_state();                                   // $3E86 ($73C8)
-    if (mem[zp::freshStartFlag] == 0) {                                  // $3E89: fresh start
-        intro_random_setup();                                // $3E8E ($6FBF)
-        intro_unmark_random_cells();                         // $3E91 ($70B3)
-        intro_seed_object_map();                             // $3E94 ($7498)
-    }
-    mem[zp::rowTableStride] = 0x60;                                      // $3E97: stride $60 = 96
-    mem[zp::rowTableBaseLo] = 0x10; mem[zp::rowTableBaseHi] = 0x10;                  // $3E9B/$3E9F: base $1010
-    build_row_addr_table();                                  // $3EA3 ($7460): build $073D/$0793 row-addr table
-    copy_row_addr_subset();                                  // $3EA6 ($7483): -> $2932/$2962
-    if (mem[zp::levelOrState] == 0) {                                  // $3EA9
-        mem[zp::timerOrCounter] = 0x54; mem[zp::joystickSaved] = 0x02;              // $3EAD/$3EB8 (A=2 path)
-    } else {
-        mem[zp::joystickSaved] = 0x01;                                  // $3EB6/$3EB8 (A=1 path)
-    }
-    seed_engine_drone_native();  // install the 3 engine-drone voices (slots 12/13/14) — see above
-    g_fastForwardFrames = 0;     // back to real-time frame pacing for steady-state flight
-}
-
-// flight_frame_native: one pass of the flight main-loop heavy set.  The Atari
-// $3EBA loop runs the set TWICE per iteration for double buffering — pass A
-// ($3EBA: X=$33/$30, $0042=2) writes the offset-48 half of the stride-96 buffer;
-// pass B ($3EF5: X=$03/$00, $0042=1) writes the offset-0 half (the one the F0
-// renderer displays).  One Amiga frame = one pass; we alternate each call, the
-// natural double-buffer cadence.  Returns mem[$0072] (==2 -> level complete).
-//
-// NOTE (F0 scope): the per-pass HUD/pilot tail ($3EDB game_sub_7B54, $3F14
-// pilot_render) is deferred to milestone F3; this runs the terrain + state +
-// enemy set, which is the dominant per-frame cost being measured.
-static uint8_t flightParity = 0;   // 0 = pass A (offset-48 half), 1 = pass B (offset-0 half)
-
-extern "C" void flight_reset_parity_native(void) { flightParity = 0; }
-
-extern "C" uint8_t flight_frame_native(void)
-{
-    unsigned short t0 = flight_vbi_tick();
-    terrain_frame_setup();                                         // $9E54 / $3EF5
-    unsigned short tA = flight_vbi_tick();                          // terrain_frame_setup done
-    unsigned short t1, t2, tB, tC;                                  // tB: clear done; tC: draw done; t1: terrain done; t2: state+enemy done
-    if (flightParity == 0) {
-        clear_terrain_column_core(0x33);                            // $3EBD
-        tB = flight_vbi_tick();
-        cpu.X = 0x30; terrain_draw_frame();                       // $3EC2 (offset-48 half)
-        tC = flight_vbi_tick();
-        cpu.X = 0x33; terrain_collision();                   // $3EC9
-        mem[zp::pilotState] = mem[zp::gameState];                           // $3ECC: LDA $0041 / STA $288F
-        t1 = flight_vbi_tick();
-        game_state_update();                                 // $3ED1 (now native)
-        mem[zp::gamePhase] = 0x02;                                  // $3ED4
-        enemy_check();                                       // $3ED8 (now native)
-        t2 = flight_vbi_tick();
-    } else {
-        clear_terrain_column_core(0x03);                            // $3EFA
-        tB = flight_vbi_tick();
-        cpu.X = 0x00; terrain_draw_frame();                       // $3EFF (offset-0 half, displayed)
-        tC = flight_vbi_tick();
-        cpu.X = 0x03; terrain_collision();                   // $3F04
-        if (mem[zp::gameState]) mem[zp::pilotState] = mem[zp::gameState];          // $3F07: conditional
-        t1 = flight_vbi_tick();
-        game_state_update();                                 // $3F0E (now native)
-        enemy_check();                                       // $3F11 (now native)
-        t2 = flight_vbi_tick();
-        mem[zp::gamePhase] = 0x01;                                  // $3F36
-    }
-    g_flightProf.tFrameSetup += (unsigned short)(tA - t0);
-    g_flightProf.tClear      += (unsigned short)(tB - tA);
-    g_flightProf.tDraw       += (unsigned short)(tC - tB);
-    g_flightProf.tCollision  += (unsigned short)(t1 - tC);
-    g_flightProf.terrain    += (unsigned short)(t1 - t0);          // native terrain pass
-    g_flightProf.stateEnemy += (unsigned short)(t2 - t1);          // transpiled state+enemy
-    g_flightProf.frames++;
-    flightParity ^= 1u;
-    return mem[zp::playerLives];                                      // $3F50: ==2 -> level complete
 }
