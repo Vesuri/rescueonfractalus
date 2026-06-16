@@ -25,9 +25,11 @@ static const uint16_t kCenterY      = kDisplayTop + kH / 2;           // = 0x98
 static const uint16_t kBPLCON0_3P   = (uint16_t)((3 << PLNCNTSHFT) | USE_BPLCON3);
 
 // ---- fixed list layout (indices into data_, in 32-bit MOVE/WAIT words) -------
-// d[0] = copperWait(16,0) (CopperList ctor).  setPlayfield emits 12 words.
+// d[0] = copperWait(16,0) (CopperList ctor).  setPlayfield now emits 3 words
+// (BPLCON0 + BPL1MOD/BPL2MOD — the per-region-varying regs); the constant playfield
+// registers are set once by AmigaHardware::setPlayfield (see RescueOnFractalus::initialize).
 #define INDEX_PLAYFIELD       1
-#define INDEX_TITLE_PAL       (INDEX_PLAYFIELD + 12)   // 13: color00..03 (4)
+#define INDEX_TITLE_PAL       (INDEX_PLAYFIELD + 3)    // color00..03 (4)
 #define INDEX_TITLE_BPL       (INDEX_TITLE_PAL + 4)    // 17: title bitmap ptrs (2bp = 4)
 #define INDEX_SPRITE_COL      (INDEX_TITLE_BPL + 4)    // 21: color16,color17 (2)
 #define INDEX_SPRITES         (INDEX_SPRITE_COL + 2)   // 23: 8 sprite ptrs (16)
@@ -56,12 +58,11 @@ void StandbyCopperList::buildLayout(const Bitmap& title, const Bitmap& terrain, 
     uint32_t* d = data_;
 
     // ---- title region: playfield (2bp interleaved) ----
+    // Emits BPLCON0 (2bp) + BPL1MOD/BPL2MOD for the title band; the constant playfield
+    // registers (incl. BPLCON2 = PF priority) are set once in RescueOnFractalus::initialize.
     setPlayfield(INDEX_PLAYFIELD, kW, kH, kBP2, /*interleaved*/true,
                  /*hires*/false, /*interlace*/false, /*dualPlayfield*/false,
                  /*holdAndModify*/false, kCenterY);
-    // GPRIOR=$14: PF in front of sprite pair 1+ (gauge), behind pair 0 (canopy posts).
-    // setPlayfield emitted bplcon2 as its 3rd word (INDEX_PLAYFIELD+2).
-    d[INDEX_PLAYFIELD + 2] = copperMove(bplcon2, (uint16_t)((1u << 3) | 1u));
 
     // Title palette + bitmap pointers (palette refreshed each frame via setters).
     setTitlePalette(0, 0, 0);                  // seeded; caller refreshes

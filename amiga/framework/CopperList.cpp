@@ -135,41 +135,21 @@ void CopperList::setColor(uint32_t listIndex, uint16_t color, uint16_t count)
     }
 }
 
+// Emit ONLY the per-region-varying playfield registers: BPLCON0 (bitplane count /
+// mode) and the interleaved-modulo pair (BPL1MOD/BPL2MOD).  These genuinely change
+// down the screen — e.g. a 2-bitplane title band above a 3-bitplane terrain band —
+// so each region re-emits them.  The rest of the playfield setup (FMODE, BPLCON3,
+// BPLCON2, BPLCON1, DIWSTRT/STOP/HIGH, DDFSTRT/STOP) is CONSTANT for the whole frame;
+// set it ONCE up front via AmigaHardware::setPlayfield() instead of re-running those
+// nine MOVEs in the copper every frame.  (Width/height/centerY are accepted for a
+// signature compatible with AmigaHardware::setPlayfield but only the bitplane geometry
+// is used here.)
 uint32_t CopperList::setPlayfield(uint32_t listIndex, uint16_t width, uint16_t height, uint8_t bitplaneCount, bool interleaved, bool hires, bool interlace, bool dualPlayfield, bool holdAndModify, uint16_t centerY)
 {
-    uint16_t halfHeight = height >> 1;
+    (void)height; (void)interlace; (void)centerY;
     uint16_t bitplaneWidth = width >> 3;
     uint16_t alignedWidth = AmigaHardware::hasAGAChipSet ? (bitplaneWidth & 0xfffc) : bitplaneWidth;
-    data_[listIndex++] = copperMove(fmode, (uint16_t)(AmigaHardware::hasAGAChipSet ? 3 : 0));
-    data_[listIndex++] = copperMove(bplcon3, 0x0c00 | BPLCON3_BRDNBLNK | BPLCON3_BRDNTRAN);
-    data_[listIndex++] = copperMove(bplcon2, 0x0024);
-    data_[listIndex++] = copperMove(bplcon1, 0);
     data_[listIndex++] = copperMove(bplcon0, (uint16_t)((bitplaneCount << PLNCNTSHFT) | (hires ? MODE_640 : 0) | (dualPlayfield ? DBLPF : 0) | (holdAndModify ? HOLDNMODIFY : 0) | USE_BPLCON3));
-    // DIW must bound the data fetch exactly, or the inside-window/outside-data
-    // strips show COLOR0 instead of (blank-able) border.  DDFSTRT=0x38/DDFSTOP=0xD0
-    // put the 320px lores playfield at hpos 0x81..0x1C1, so the matched window is
-    // H=0x81..0x1C1 (was 0x71/0xd1 = 16px too wide each side → right border never
-    // blanked under BPLCON3 BRDNBLNK).
-    data_[listIndex++] = copperMove(diwstrt, (uint16_t)(((centerY - halfHeight) << 8) | 0x81));
-    data_[listIndex++] = copperMove(diwstop, (uint16_t)(((centerY + halfHeight) << 8) | 0xc1));
-    data_[listIndex++] = copperMove(diwhigh, 0x2100);
-    if (AmigaHardware::hasAGAChipSet) {
-        if (hires) {
-            data_[listIndex++] = copperMove(ddfstrt, (uint16_t)(0x88 - alignedWidth));
-            data_[listIndex++] = copperMove(ddfstop, (uint16_t)(0x94 + (alignedWidth >> 1)));
-        } else {
-            data_[listIndex++] = copperMove(ddfstrt, (uint16_t)(0x88 - (alignedWidth << 1)));
-            data_[listIndex++] = copperMove(ddfstop, (uint16_t)(0x90 + alignedWidth));
-        }
-    } else {
-        if (hires) {
-            data_[listIndex++] = copperMove(ddfstrt, (uint16_t)(0x88 - bitplaneWidth));
-            data_[listIndex++] = copperMove(ddfstop, (uint16_t)(0x80 + bitplaneWidth));
-        } else {
-            data_[listIndex++] = copperMove(ddfstrt, (uint16_t)(0x88 - (bitplaneWidth << 1)));
-            data_[listIndex++] = copperMove(ddfstop, (uint16_t)(0x80 + (bitplaneWidth << 1)));
-        }
-    }
     data_[listIndex++] = copperMove(bpl1mod, (uint16_t)(interleaved ? (bitplaneCount * bitplaneWidth - alignedWidth) : 0));
     data_[listIndex++] = copperMove(bpl2mod, (uint16_t)(interleaved ? (bitplaneCount * bitplaneWidth - alignedWidth) : 0));
 

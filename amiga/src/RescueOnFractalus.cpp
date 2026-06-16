@@ -258,17 +258,13 @@ void RescueOnFractalus::buildCopperList(CopperList* cl, uint16_t frame)
     uint32_t  idx = 1;
 
     // ---- title region -------------------------------------------------------
+    // Emits BPLCON0 (2bp) + BPL1MOD/BPL2MOD for the title band; the constant playfield
+    // registers — including BPLCON2 = the GPRIOR=$14 priority (PF in front of sprite pair
+    // 1+ / the gauge, behind pair 0 / the canopy posts) — are set once in initialize().
     idx = cl->setPlayfield(idx, kW, kH, kBP2, /*interleaved*/true,
                            /*hires*/false, /*interlace*/false,
                            /*dualPlayfield*/false, /*holdAndModify*/false,
                            kCenterY);
-    // Sprite/playfield priority: the original runs GPRIOR=$14 (players behind the
-    // foreground PF2/PF3).  setPlayfield already emitted bplcon2 (=0x0024 = PF
-    // behind all sprites) 10 moves before the index it returned; patch that entry
-    // in place to PF priority slot 1, so the playfield sits in front of sprite
-    // pair 1+ (the throttle gauge on sprite 2) but behind pair 0 (the canopy
-    // posts on sprites 0/1) — the gauge ends up behind the cockpit colours.
-    d[idx - 10] = copperMove(bplcon2, (uint16_t)((1u << 3) | 1u));   // PF1P=PF2P=1
     // Title palette.
     // vbi_handler_standby ($52D7) sets every frame:
     //   COLPF0 ($D016) = mem[$00D8]  — title text colour (mode-6 col=1 chars)
@@ -544,6 +540,17 @@ void RescueOnFractalus::initialize()
         copperLists[i] = CopperList::allocate(kCopperLen);
     }
     if (!copperLists[0] || !copperLists[1]) return;
+
+    // One-time playfield setup: the constant display registers (FMODE, BPLCON3/2/1,
+    // DIWSTRT/STOP/HIGH, DDFSTRT/STOP) never change, so set them ONCE here via the CPU
+    // instead of re-running those MOVEs in every frame's copper list.  The copper lists
+    // only emit the per-region-varying BPLCON0 + BPL1MOD/BPL2MOD (via CopperList::setPlayfield).
+    // BPLCON2 is then overridden to the game's GPRIOR=$14 priority (PF1P=PF2P=1: playfield
+    // in front of sprite pair 1+ / the throttle gauge, behind pair 0 / the canopy posts).
+    AmigaHardware::setPlayfield(kW, kH, kBP2, /*interleaved*/true, /*hires*/false,
+                                /*interlace*/false, /*dualPlayfield*/false,
+                                /*holdAndModify*/false, kCenterY);
+    *bplcon2Pointer = (uint16_t)((1u << 3) | 1u);
 
     deriveRenderSignals();   // seed the render signals from the initial mem[] (standby) state
     buildCopperList(copperLists[0], 0);
