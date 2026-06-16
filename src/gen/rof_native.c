@@ -18,6 +18,13 @@
 #include "rof_native.h" /* typed cores shared with the hand-written Amiga ports */
 #include "../platform/platform_c.h" /* platform_tick_vbi/render_frame/poll_events for the apex spin-waits */
 
+/* Amiga black-until-ready reveal gate (read by animatePalette in RescueOnFractalus.cpp).
+ * Set at display_setup entry — by then game_main_loop has drawn the cockpit + top bar and
+ * scene.initialize has set up the sprites, so the window build is about to begin: the point
+ * the user wants the screen to appear (cockpit pops in, then the window builds visibly).
+ * Harmless on SDL (nothing reads it there). */
+volatile unsigned char g_standbyRevealReady = 0;
+
 /* ---------------------------------------------------------------------------
  * Idiomatic-C migration seam.
  *
@@ -6044,6 +6051,7 @@ static inline void ds_frame(void) { platform_tick_vbi(); platform_render_frame()
 
 void display_setup(void) {
     /* 5f1d */
+    g_standbyRevealReady = 1;   /* Amiga: cockpit/top-bar drawn + sprites up — reveal (latched) */
     LDA(0x06);
     bus_write(0x02C7, cpu.A);
     build_line_addr_table_2000();

@@ -78,6 +78,10 @@ extern "C" volatile uint8_t g_skipToFlight;                    // F-key edge: de
 // owned by platform_tick_vbi (the ISR's bump is gated off).
 extern "C" void display_setup(void);
 extern "C" void rof_launch_blocking(uint8_t on);
+
+// Black-until-ready reveal gate, latched on at display_setup entry (rof_native.c); read by
+// animatePalette to hold the screen black until the cockpit + sprites are set up.
+extern "C" volatile unsigned char g_standbyRevealReady;
 // The genuine boot chain (src/gen/rof_gen.c): station_init = attract ($195D, returns on
 // START); game_entry = $3CDE -> game_main_loop (game-display setup -> display_setup
 // cinematic -> flight loop, never returns).  g_quitJmp = the __builtin_setjmp buffer
@@ -102,6 +106,24 @@ static uint8_t kModeDP2[256];
 static uint8_t kGtia10P1[256];   // nibble bit0
 static uint8_t kGtia10P2[256];   // nibble bit1
 static uint8_t kGtia10P3[256];   // nibble bit2
+//   Standby door field at $2000: like GTIA-10 but each nibble is first mapped through
+//   kNibbleColour (collapsing the 16 GTIA registers to pens 0/1/3) — so this is a
+//   distinct table.  kDoorP1[s]=plane1 byte, kDoorP2[s]=plane2 byte (plane3 always 0).
+static uint8_t kDoorP1[256];
+static uint8_t kDoorP2[256];
+// GTIA mode-10 nibble → Amiga pen for the Standby door field.  In this scene only three
+// nibble values occur: 0 (road dots → COLPM0 → pen0), 7 ("LEVEL 04" text → COLPF3 → pen1)
+// and 8 (background → COLBK → pen3).  Nibble 7 MUST differ from 8 or the level text (baked
+// into the bitmap as COLPF3 pixels) vanishes into the green background.  Used only to build
+// kDoorP1/kDoorP2 in initialize().
+static const uint8_t kNibbleColour[16] = {
+    0,                   // 0   → COLPM0 → pen0 (road dots / black)
+    3, 3, 3,             // 1-3 → bg
+    3, 3, 3,             // 4-6 → bg
+    1,                   // 7   → COLPF3 → pen1 ("LEVEL 04" text)
+    3,                   // 8   → COLBK  → pen3 (green background)
+    3, 3, 3, 3, 3, 3, 3  // 9-15 → bg
+};
 
 #include "../assets/title_pal.h"
 #include "../assets/terrain_pal.h"
@@ -156,14 +178,23 @@ static uint16_t fadeColor(uint16_t color, uint16_t fade)
 // ---- palette animation -------------------------------------------------------
 static void animatePalette(Palette* palette, uint16_t frame)
 {
-    // FAITHFUL: the original NEVER fades the cockpit/HUD up from black — all colours
-    // are immediate.  Hold the palette at full intensity (fadeColor(c,16) == c) so the
-    // renderer shows the live genuine mem[] colours directly.  The real dark->bright
-    // fades (the Standby terrain green ramp $0071 $C2->$C8 via delay_loop_c2_to_c9, the
-    // START-launch colour ramps) come from the mem[] colour BYTES themselves changing
-    // over the build, which still animate correctly at a fixed full fade.
+    // BLACK-UNTIL-READY: on the real Atari the boot→Standby build is near-instant, so the
+    // screen just appears.  On the Amiga the one-time setup (load_xex_image, scene.initialize,
+    // the game_entry mega-init) spans a couple of seconds during which the screen would
+    // otherwise show a piecemeal, janky build.  Hold the whole display black (fade 0 →
+    // fadeColor(c,0)=$000 for every copper colour) until the cockpit + top bar are drawn and
+    // the sprites are set up, then reveal at full intensity — the cockpit pops in and the
+    // window build (green fill / LEVEL / fade / title) animates visibly, as on the Atari.
+    //
+    // Ready signal: g_standbyRevealReady, LATCHED on at display_setup entry (rof_native.c) —
+    // by then game_main_loop has drawn the cockpit/top bar and scene.initialize has set up the
+    // sprites.  It LATCHES (never clears) on purpose: the launch sequence re-runs display_setup
+    // and transiently clears the music gate $00E7 (audio_timer_setup $712D), so gating on $00E7
+    // would black the screen out again when START is pressed — the latch keeps it revealed
+    // through the cinematic and flight.  (FAITHFUL: this only gates the one-time initial reveal;
+    // the live mem[] colour bytes still drive every in-scene ramp at full fade.)
     (void)frame;
-    palette->setFade(16);
+    palette->setFade(g_standbyRevealReady ? 16 : 0);
 }
 
 // ---- sprite data (staircase slant, see commit history for derivation) --------
@@ -566,6 +597,11 @@ void RescueOnFractalus::initialize()
         kGtia10P1[s] = (uint8_t)(((ph & 1) ? 0xF0u : 0u) | ((pl & 1) ? 0x0Fu : 0u));
         kGtia10P2[s] = (uint8_t)(((ph & 2) ? 0xF0u : 0u) | ((pl & 2) ? 0x0Fu : 0u));
         kGtia10P3[s] = (uint8_t)(((ph & 4) ? 0xF0u : 0u) | ((pl & 4) ? 0x0Fu : 0u));
+        // Standby door field: map each nibble through kNibbleColour first, then split
+        // the resulting pen into plane1 (bit0) / plane2 (bit1) bytes.
+        uint8_t ch = kNibbleColour[ph], cl = kNibbleColour[pl];
+        kDoorP1[s] = (uint8_t)(((ch & 1) ? 0xF0u : 0u) | ((cl & 1) ? 0x0Fu : 0u));
+        kDoorP2[s] = (uint8_t)(((ch & 2) ? 0xF0u : 0u) | ((cl & 2) ? 0x0Fu : 0u));
     }
 
     paula_audio_init();      // loads screen3_mem.bin into mem[] (Standby scene snapshot)
@@ -1060,29 +1096,6 @@ static void decode2bppByte(uint8_t src, uint8_t* p1out, uint8_t* p2out)
     *p2out = p2;
 }
 
-
-
-// GTIA mode-10 nibble → Amiga 2bp colour index.
-// Zones: 0→bg, 1-2→COLPF0-1 (col1), 3-4→COLPF2-3 (col2), 5-8+→COLPM0-3 (col3).
-// Each Atari byte = 2 GTIA pixels (4 Amiga pixels each); 40 bytes → 80 GTIA px → 320 Amiga px.
-// In the 2bp interleaved layout (40 bytes plane1, 40 bytes plane2 per row):
-//   byte b: high nibble covers Amiga pixels 8b..8b+3 → plane bits [7:4] of byte b
-//            low nibble covers Amiga pixels 8b+4..8b+7 → plane bits [3:0] of byte b
-// In this scene only three nibble values occur: 0 (road dots → COLPM0),
-// 7 ("LEVEL 04" text → COLPF3) and 8 (background → COLBK).  GTIA mode-10 maps
-// nibble→register as 0-3:COLPM0-3, 4-7:COLPF0-3, 8:COLBK.  We collapse to our
-// 4 Amiga colours: col0=COLPM0 (road), col1=COLPF3 (text), col3=COLBK (bg);
-// col2 is unused here.  Nibble 7 MUST be distinct from 8 or the level text
-// (baked into the bitmap as COLPF3 pixels) vanishes into the green background.
-static const uint8_t kNibbleColour[16] = {
-    0,           // 0   → COLPM0 → col0 (road dots / black)
-    3, 3, 3,     // 1-3 → (unused) → bg
-    3, 3, 3,     // 4-6 → (unused) → bg
-    1,           // 7   → COLPF3 → col1 ("LEVEL 04" text)
-    3,           // 8   → COLBK  → col3 (green background)
-    3, 3, 3, 3, 3, 3, 3  // 9-15 → bg
-};
-
 void RescueOnFractalus::render()
 {
     unsigned short profR0 = flight_vbi_tick();   // whole-render() timer (flight only)
@@ -1121,18 +1134,30 @@ void RescueOnFractalus::render()
         // work on the static Standby.  deriveRenderSignals re-arms terrainDirty when
         // the scene leaves Standby, so re-entering it re-captures the doors once.
         terrainDirty = false;
+        // GTIA mode-10 nibble field → 3bp interleaved bitplanes via the precomputed
+        // kDoorP1/kDoorP2 tables (one lookup per byte, no per-byte nibble math).  Read the
+        // source through a non-volatile pointer — display_setup has finished writing $2000 by
+        // now ($00E7 is set), so the volatile per-byte reloads the old loop forced were pure
+        // overhead.  plane3 is always 0 for the doors, so clear it once per row by longs.
+        // The plane bytes go to CHIP RAM (DMA-contended), so throughput is dominated by the
+        // number of stores, not the arithmetic.  Pack 4 source bytes into one 32-bit store
+        // per plane (10 longs/plane/row instead of 40 byte writes) and use *p++ post-increment
+        // (the 68000's (An)+ mode).  vdest is chip-aligned; +40/+80 keep each plane long-
+        // aligned.  Big-endian packing so plane[4k+n] = kDoorPx[src[4k+n]].  plane3 = 0.
+        const uint8_t* sbase = (const uint8_t*)mem + 0x2000 + kTerrainXByteOffset;
         uint8_t* vdest = (uint8_t*)terrainBitmap->data;
         for (int row = 0; row < (int)kTerrainHeight; row++) {
-            const uint8_t* src = (const uint8_t*)&mem[0x2000 + row * 46 + kTerrainXByteOffset];
-            uint8_t* plane1 = vdest;
-            uint8_t* plane2 = vdest + 40;
-            uint8_t* plane3 = vdest + 80;
-            for (int b = 0; b < 40; b++) {
-                uint8_t hi = kNibbleColour[(src[b] >> 4) & 0xF];
-                uint8_t lo = kNibbleColour[src[b] & 0xF];
-                plane1[b] = (uint8_t)(((hi & 1) ? 0xF0u : 0u) | ((lo & 1) ? 0x0Fu : 0u));
-                plane2[b] = (uint8_t)(((hi & 2) ? 0xF0u : 0u) | ((lo & 2) ? 0x0Fu : 0u));
-                plane3[b] = 0;
+            const uint8_t* src = sbase + row * 46;
+            uint32_t* p1 = (uint32_t*)vdest;
+            uint32_t* p2 = (uint32_t*)(vdest + 40);
+            uint32_t* p3 = (uint32_t*)(vdest + 80);
+            for (int b = 0; b < 10; b++) {                 // 10 longs = 40 bytes
+                uint8_t s0 = *src++, s1 = *src++, s2 = *src++, s3 = *src++;
+                *p1++ = ((uint32_t)kDoorP1[s0] << 24) | ((uint32_t)kDoorP1[s1] << 16) |
+                        ((uint32_t)kDoorP1[s2] <<  8) |  (uint32_t)kDoorP1[s3];
+                *p2++ = ((uint32_t)kDoorP2[s0] << 24) | ((uint32_t)kDoorP2[s1] << 16) |
+                        ((uint32_t)kDoorP2[s2] <<  8) |  (uint32_t)kDoorP2[s3];
+                *p3++ = 0u;
             }
             vdest += 120;
         }
