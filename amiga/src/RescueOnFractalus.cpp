@@ -1010,33 +1010,37 @@ void RescueOnFractalus::render()
     // at scanY=28 (after title scanlines 20-27) → title uses $0400 for all 8 scans.
     static const uint16_t kCharsetBase  = 0x0400;
 
+    // Walk the screen RAM + shadow with pointers (no per-col indexing).  The unchanged-
+    // cell hot path is just `*src++ == *shadow++` — no 68000 muls.  68000 muls (~70cy) are
+    // kept out of the per-cell path entirely: the changed-cell decode uses a row pointer
+    // pre-offset once (kTitleTextRow*80 computed before the loop) and `*8`/`*2` are shifts.
     uint8_t* tbmp = (uint8_t*)titleBitmap->data;
+    uint8_t* const titleBase = tbmp + kTitleTextRow * 80;     // first text scanline row (once)
+    const uint8_t* tsrc    = (const uint8_t*)mem + kScreenRAM;  // non-volatile walk (RAM static this frame)
+    uint8_t*       tshadow = titleShadow;
     for (int col = 0; col < 20; col++) {
-        uint8_t charByte = mem[kScreenRAM + (uint16_t)col];
-        if (charByte == titleShadow[col]) continue;   // unchanged — skip
-        titleShadow[col] = charByte;
+        uint8_t charByte = *tsrc++;
+        if (charByte == *tshadow++) continue;   // unchanged — skip (shadow already advanced)
+        tshadow[-1] = charByte;
 
         // Re-render this char: mode-6 is 1bpp, but the byte's top 2 bits select
         // the text colour register.  We support the two cases that occur here:
         //   hi2=0 → COLPF0 → col1 (plane1)   — copyright block
         //   hi2=1 → COLPF1 → col2 (plane2)   — RESCUE ON FRACTALUS! (blue)
         // "off" pixels stay col0 (COLBK).  Each glyph bit is doubled to 2 px.
-        uint8_t charIdx    = charByte & 0x3Fu;
-        bool    usePF1     = ((charByte >> 6) & 3u) == 1u;   // hi2=1 → COLPF1/blue
-        uint16_t glyphBase = kCharsetBase + charIdx * 8u;
-        for (int scanline = 0; scanline < 8; scanline++) {
-            int destRow = kTitleTextRow + scanline;
-            if (destRow >= (int)kTitleHeight) break;
-            uint8_t glyph = mem[glyphBase + (uint16_t)scanline];
-            uint16_t doubled = kDoubleGlyph[glyph];
+        const uint8_t* glyph = (const uint8_t*)mem + kCharsetBase + (charByte & 0x3Fu) * 8u;
+        const bool usePF1 = ((charByte >> 6) & 3u) == 1u;     // hi2=1 → COLPF1/blue
+        uint8_t* row = titleBase + col * 2;                   // col*2 = shift; titleBase const
+        for (int scanline = 0; scanline < 8; scanline++, row += 80) {
+            if (kTitleTextRow + scanline >= (int)kTitleHeight) break;
+            uint16_t doubled = kDoubleGlyph[*glyph++];
             uint8_t hb = (uint8_t)(doubled >> 8);
             uint8_t lb = (uint8_t)(doubled & 0xFF);
-            uint8_t* row = tbmp + destRow * 80;
             // plane1 carries COLPF0 chars, plane2 carries COLPF1 chars.
-            row[col*2]       = usePF1 ? 0 : hb;
-            row[col*2+1]     = usePF1 ? 0 : lb;
-            row[40+col*2]    = usePF1 ? hb : 0;
-            row[40+col*2+1]  = usePF1 ? lb : 0;
+            row[0]  = usePF1 ? 0 : hb;
+            row[1]  = usePF1 ? 0 : lb;
+            row[40] = usePF1 ? hb : 0;
+            row[41] = usePF1 ? lb : 0;
         }
     }
 
@@ -1067,42 +1071,61 @@ void RescueOnFractalus::render()
 
     // ModeD rows 0-7 (raw bitmap, no bit-7 colour swap → plane3 = 0).  Each
     // source byte feeds the same column of 2 identical scan lines.
-    for (int entry = 0; entry < 4; entry++) {
-        const uint8_t* src = (const uint8_t*)&mem[0x350D + (uint16_t)(entry * kCockpitStride + kCockpitXByteCrop)];
-        for (int b = 0; b < 40; b++) {
-            uint8_t s = src[b];
-            int sh = entry * 40 + b;
-            if (!cockpitFull && s == cockpitModeDShadow[sh]) continue;
-            cockpitModeDShadow[sh] = s;
-            uint8_t p1v, p2v;
-            decode2bppByte(s, &p1v, &p2v);
-            for (int scan = 0; scan < 2; scan++) {
-                uint8_t* p1 = cdest + (entry * 2 + scan) * kRowBytes;
-                p1[b] = p1v; p1[40 + b] = p2v; p1[80 + b] = 0;
+    // Walk source/shadow/dest with pointers: the per-cell hot path is `*src++ == *shadow++`
+    // with NO muls (the old `entry*40+b` shadow index and `(entry*2+scan)*kRowBytes` dest
+    // offset were a 68000 muls per cell).  src advances +1/cell then skips the wide-field
+    // overscan (+kCockpitStride-40) per entry; dest advances 2 rows (240B) per entry.
+    {
+        const uint8_t* src    = (const uint8_t*)mem + 0x350D + kCockpitXByteCrop;
+        uint8_t*       shadow = cockpitModeDShadow;
+        uint8_t*       drow   = cdest;
+        for (int entry = 0; entry < 4; entry++) {
+            uint8_t* d0 = drow;               // scan line 0 of this entry
+            uint8_t* d1 = drow + kRowBytes;   // scan line 1 (identical content)
+            for (int b = 0; b < 40; b++) {
+                uint8_t s = *src++;
+                uint8_t old = *shadow++;            // always advance shadow (cockpitFull-safe)
+                if (!cockpitFull && s == old) continue;
+                shadow[-1] = s;
+                uint8_t p1v, p2v;
+                decode2bppByte(s, &p1v, &p2v);
+                d0[b] = p1v; d0[40 + b] = p2v; d0[80 + b] = 0;
+                d1[b] = p1v; d1[40 + b] = p2v; d1[80 + b] = 0;
             }
+            src  += kCockpitStride - 40;
+            drow += 2 * kRowBytes;
         }
     }
 
     // Mode4 rows 8-87.  Char bit-7 → plane3 = 0xFF for that cell, shifting its
     // pixels to colours 4-7 (col7 = red); bit-7 clear → plane3 = 0 (cols 0-3).
     // One changed char re-decodes its 8 scanlines × 3 planes = 24 writes.
-    for (int entry = 0; entry < 10; entry++) {
-        const uint8_t* chars = (const uint8_t*)&mem[0x332D + (uint16_t)(entry * kCockpitStride + kCockpitXByteCrop)];
-        for (int col = 0; col < 40; col++) {
-            uint8_t ch = chars[col];
-            int sh = entry * 40 + col;
-            if (!cockpitFull && ch == cockpitMode4Shadow[sh]) continue;
-            cockpitMode4Shadow[sh] = ch;
-            // Mode-4 glyph index is bits 0-6 (128 glyphs); bit 7 is the
-            // COLPF2/PF3 colour flag (handled via plane3).
-            uint8_t plane3 = (ch & 0x80u) ? 0xFFu : 0x00u;
-            for (int scan = 0; scan < 8; scan++) {
-                uint8_t* p1 = cdest + (8 + entry * 8 + scan) * kRowBytes;
-                uint8_t glyphData = mem[0x3800u + (ch & 0x7Fu) * 8u + (uint16_t)scan];
-                uint8_t p1v, p2v;
-                decode2bppByte(glyphData, &p1v, &p2v);
-                p1[col] = p1v; p1[40 + col] = p2v; p1[80 + col] = plane3;
+    // Same pointer-walk as modeD: per-cell hot path is `*chars++ == *shadow++`, no muls
+    // (the old `entry*40+col` shadow index and `(8+entry*8+scan)*kRowBytes` dest offset
+    // were per-cell muls).  dest starts at row 8 and advances 8 rows (8*120B) per entry.
+    {
+        const uint8_t* chars  = (const uint8_t*)mem + 0x332D + kCockpitXByteCrop;
+        uint8_t*       shadow = cockpitMode4Shadow;
+        uint8_t*       drow   = cdest + 8 * kRowBytes;   // mode4 begins after the 8 modeD rows
+        for (int entry = 0; entry < 10; entry++) {
+            for (int col = 0; col < 40; col++) {
+                uint8_t ch  = *chars++;
+                uint8_t old = *shadow++;               // always advance shadow (cockpitFull-safe)
+                if (!cockpitFull && ch == old) continue;
+                shadow[-1] = ch;
+                // Mode-4 glyph index is bits 0-6 (128 glyphs); bit 7 is the
+                // COLPF2/PF3 colour flag (handled via plane3).  *8 is a shift.
+                uint8_t plane3 = (ch & 0x80u) ? 0xFFu : 0x00u;
+                const uint8_t* glyph = (const uint8_t*)mem + 0x3800u + (ch & 0x7Fu) * 8u;
+                uint8_t* p = drow + col;                 // col = add; drow already row-offset
+                for (int scan = 0; scan < 8; scan++, p += kRowBytes) {
+                    uint8_t p1v, p2v;
+                    decode2bppByte(*glyph++, &p1v, &p2v);
+                    p[0] = p1v; p[40] = p2v; p[80] = plane3;
+                }
             }
+            chars += kCockpitStride - 40;
+            drow  += 8 * kRowBytes;
         }
     }
     if (rsFlight) g_flightProf.renderTot += (unsigned short)(flight_vbi_tick() - profR0);
