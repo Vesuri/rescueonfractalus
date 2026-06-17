@@ -241,6 +241,25 @@ static void update_paula_channel(uint8_t ch)
 
     uint16_t per = pokey_period(ch, audf, audctl);
 
+    // A silent channel's waveform is inaudible, so never re-point PTR/LEN while
+    // vol==0.  This matters because POKEY's reset/idle AUDC value is $00, which
+    // decodes as the NOISE distortion (PURE clear + POLY4 clear).  The SFX/music
+    // engine writes a voice's AUDF (frequency) BEFORE its AUDC (distortion|volume)
+    // — e.g. sfx_seq_step writes $D200/$D202/$D204, then sfx_voice_tick writes
+    // $D201/$D203/$D205 — so on the first note each AUDF write recomputes the
+    // channel against the stale, zeroed AUDC and would point it at the long
+    // noise_buf.  When the real AUDC (pure, with volume) then arrives, AUD_VOL
+    // rises immediately but Paula only latches the new PTR/LEN at the next DMA
+    // loop wrap (~280 ms for the 8 KB noise_buf), so the note's onset plays as
+    // noise instead of a square — intermittently, depending on the DMA phase.
+    // Leaving PTR/LEN alone while silent keeps the channel on wave_pure until a
+    // single AUDC-with-volume write sets distortion + period + volume together.
+    if (vol == 0u) {
+        noiseOn[ch] = false;
+        AUD_VOL(ch) = 0u;
+        return;
+    }
+
     // POKEY noise distortion (PURE clear AND POLY4 clear → poly17 source: $00 / $80):
     // play the long poly17 noise sample.  Noise is not a pitched tone, so an
     // "out-of-range" frequency (per == 0, e.g. AUDF 0) must NOT silence it — clamp
