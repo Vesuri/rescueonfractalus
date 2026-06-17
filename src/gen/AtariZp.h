@@ -1,12 +1,18 @@
 #pragma once
-#include "framework/Util.h"  // uint16_t
 
 // Named Atari zero-page / RAM offsets into the shared mem[65536] snapshot.
 //
 // These mirror the canonical reverse-engineered names in disasm/symbols.csv
 // (camelCased here).  The Atari 6502 code addresses these by raw hex; the
-// hand-written native ports in this directory use these names instead so the
-// control logic reads as variables (mem[zp::vbiFlags]) rather than mem[0x0088].
+// hand-written native ports use these names instead so the control logic reads
+// as variables (mem[zp::vbiFlags]) rather than mem[0x0088].
+//
+// Platform-neutral: this is just the Atari memory map, usable by any C++ backend
+// (it is C++-only — namespace + constexpr — so the generated C in rof_gen.c /
+// rof_native.c can't include it).  Type source follows the rof_native.h
+// convention: includers must already provide uint16_t (the Amiga C++ build via
+// the force-included framework headers, SDL via the C++ stdlib) — this header does
+// NOT pull <stdint.h>, which the Amiga's SASCCompat.h defines incompatibly.
 //
 // Scope: the zero-page control/state variables touched by the native handlers,
 // plus the colour-ring base.  Screen-buffer, glyph-table and colour-shadow

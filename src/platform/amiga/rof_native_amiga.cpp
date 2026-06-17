@@ -17,7 +17,7 @@
 // per-file banner comments are preserved as the section headers below.
 
 #include "PlatformAmiga.h"          // PlatformAmiga::pokeyRandom / noiseTick + uint types
-#include "AtariZp.h"                // zp:: named Atari mem[] offsets
+#include "../../gen/AtariZp.h"                // zp:: named Atari mem[] offsets
 #include "FlightProf.h"             // per-frame VBI-count profiler (g_flightProf)
 #include "../../gen/rof_native.h"   // typed C cores (clear_terrain_column_core, ...)
 

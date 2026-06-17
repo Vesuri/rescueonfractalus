@@ -29,7 +29,7 @@
 #include "framework/Sprite.h"
 #include "RescueOnFractalus.h"
 #include "PlatformAmiga.h"
-#include "AtariZp.h"      // zp:: named Atari memory offsets
+#include "../../gen/AtariZp.h"      // zp:: named Atari memory offsets
 #include "FlightProf.h"   // per-frame VBI-count profiler (g_flightProf / flight_vbi_tick)
 
 // Native handler functions — see NativeHandlers.cpp and SfxPlayer.cpp.

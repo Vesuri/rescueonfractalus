@@ -1,5 +1,4 @@
 #include "PlatformSDL.h"
-#include "atari_os_font.h"
 #include "../../cpu/cpu.h"
 #include "../../xex_load.h"   /* shared XEX-format walk (xex_parse / xex_overlay_osrom) */
 #include <cstdio>
@@ -218,52 +217,36 @@ static void sdl_mem_write(uint16_t s, const uint8_t* src, uint32_t cnt) {
 int PlatformSDL::loadImage(const char* path) {
     memset((uint8_t*)mem, 0, 65536);
 
-    /* Pristine boot: a ".xex" path loads the genuine Atari segmented load file the
-       SAME way the Amiga does (XexImage.cpp load_xex_image) — zero RAM, place each
-       XEX segment at its load address, then overlay the Atari OS ROM — so the SDL
-       build runs the identical pristine game_entry code path as the Amiga (instead of
-       a hand-captured mid-Standby RAM snapshot).  Lets SDL be a faithful, fast-iterate
-       mirror of the Amiga boot. */
-    size_t plen = strlen(path);
-    bool isXex = plen >= 4 && strcasecmp(path + plen - 4, ".xex") == 0;
-    if (isXex) {
-        FILE* f = fopen(path, "rb");
-        if (!f) { fprintf(stderr, "cannot open %s\n", path); return -1; }
-        static uint8_t xex[65536];
-        size_t len = fread(xex, 1, sizeof(xex), f);
-        fclose(f);
+    /* Pristine boot: load the genuine Atari segmented load file (.xex) the SAME way
+       the Amiga does (XexImage.cpp load_xex_image) — zero RAM, place each XEX segment
+       at its load address, then overlay the Atari OS ROM — so the SDL build runs the
+       identical pristine game_entry code path as the Amiga.  (The legacy flat 64 KB
+       RAM-snapshot boot was retired; SDL now boots only .xex, like the Amiga.) */
+    FILE* f = fopen(path, "rb");
+    if (!f) { fprintf(stderr, "cannot open %s\n", path); return -1; }
+    static uint8_t xex[65536];
+    size_t len = fread(xex, 1, sizeof(xex), f);
+    fclose(f);
 
-        /* Place each XEX segment via the shared format walk (see xex_load.h). */
-        xex_parse(xex, (uint32_t)len, sdl_mem_write);
+    /* Place each XEX segment via the shared format walk (see xex_load.h). */
+    xex_parse(xex, (uint32_t)len, sdl_mem_write);
 
-        /* Overlay the Atari OS ROM (same asset + layout as the Amiga, applied by the
-           shared xex_overlay_osrom: [0..$1000)->$C000, [$1000..$3800)->$D800; the
-           $D000-$D7FF hardware range is skipped so hwRead/hwWrite stay authoritative). */
-        const char* romPaths[] = { "amiga/assets/atari_osrom.bin", "assets/atari_osrom.bin" };
-        FILE* r = 0;
-        for (size_t p = 0; p < sizeof(romPaths)/sizeof(romPaths[0]) && !r; p++)
-            r = fopen(romPaths[p], "rb");
-        if (r) {
-            static uint8_t rom[0x3800];
-            size_t rn = fread(rom, 1, sizeof(rom), r);
-            fclose(r);
-            xex_overlay_osrom(rom, (uint32_t)rn, sdl_mem_write);
-            printf("[rof] loaded pristine XEX %s + OS ROM (%zu bytes)\n", path, rn);
-        } else {
-            fprintf(stderr, "[rof] WARNING: atari_osrom.bin not found; $E000 charset (LEVEL text) will be blank\n");
-            printf("[rof] loaded pristine XEX %s (no OS ROM)\n", path);
-        }
+    /* Overlay the Atari OS ROM (same asset + layout as the Amiga, applied by the
+       shared xex_overlay_osrom: [0..$1000)->$C000, [$1000..$3800)->$D800; the
+       $D000-$D7FF hardware range is skipped so hwRead/hwWrite stay authoritative). */
+    const char* romPaths[] = { "amiga/assets/atari_osrom.bin", "assets/atari_osrom.bin" };
+    FILE* r = 0;
+    for (size_t p = 0; p < sizeof(romPaths)/sizeof(romPaths[0]) && !r; p++)
+        r = fopen(romPaths[p], "rb");
+    if (r) {
+        static uint8_t rom[0x3800];
+        size_t rn = fread(rom, 1, sizeof(rom), r);
+        fclose(r);
+        xex_overlay_osrom(rom, (uint32_t)rn, sdl_mem_write);
+        printf("[rof] loaded pristine XEX %s + OS ROM (%zu bytes)\n", path, rn);
     } else {
-        FILE* f = fopen(path, "rb");
-        if (!f) { fprintf(stderr, "cannot open %s\n", path); return -1; }
-        size_t n = fread((uint8_t*)mem, 1, 65536, f);
-        fclose(f);
-        printf("[rof] loaded %zu bytes from %s\n", n, path);
-
-        /* Flat snapshot image: provide the Atari OS character set at $E000 (a flat
-           snapshot may not include it).  The game does not store data in $E000-$E3FF
-           RAM, so placing the font here is safe. */
-        memcpy((uint8_t*)mem + 0xE000, kAtariOSFont, sizeof(kAtariOSFont));
+        fprintf(stderr, "[rof] WARNING: atari_osrom.bin not found; $E000 charset (LEVEL text) will be blank\n");
+        printf("[rof] loaded pristine XEX %s (no OS ROM)\n", path);
     }
 
     /* Sync cached registers from OS shadow values in the loaded image (0 on a
