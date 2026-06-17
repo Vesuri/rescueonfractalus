@@ -9719,7 +9719,8 @@ L_6ae7:;
 }
 
 /* scroll_terrain_columns @ $6AEE: Gated by state $0089; updates $A4/$A5 via add_multibyte_a1(24-bit add), shifts $0C32-$0F32 buffers left 1 col ($59 wide), appends new col via gen_terrain_column */
-void scroll_terrain_columns(void) {
+/* faithful transliteration kept as the validation oracle; native scroll_terrain_columns() lives in rof_native.c (see VALIDATE_FUNCS) */
+void scroll_terrain_columns__t6502(void) {
     /* 6aee */
     CMP(0x04);
     /* 6af0 */

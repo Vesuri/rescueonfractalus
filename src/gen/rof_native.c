@@ -501,6 +501,60 @@ void fill_terrain_columns(void) {
     }
 }
 
+/* add_multibyte_a1 with entry A=$FF @ $6AB5 — the exact carry chain the transpile runs
+ * for scroll_terrain_columns: A1 += $FF (carry chains), then the quirky $A2/$A3 fold the
+ * transliteration performs (A is NOT reloaded before ADC $A3, so it adds A2new+A3+carry),
+ * finally $A4 + carry is returned as the top byte ($A4 itself is NOT stored here). */
+static uint8_t scroll_accum_add_ff(void) {
+    uint16_t t = (uint16_t)0xFF + mem[0x00A1];   /* CLC; ADC $A1 */
+    mem[0x00A1] = (uint8_t)t;
+    uint8_t c = (uint8_t)(t >> 8);
+    t = (uint16_t)mem[0x00A2] + c;               /* LDA #0; ADC $A2 */
+    mem[0x00A2] = (uint8_t)t;
+    c = (uint8_t)(t >> 8);
+    t = (uint16_t)mem[0x00A2] + mem[0x00A3] + c; /* ADC $A3 (A still = A2new) */
+    mem[0x00A3] = (uint8_t)t;
+    c = (uint8_t)(t >> 8);
+    t = (uint16_t)mem[0x00A4] + c;               /* LDA #0; ADC $A4 -> return */
+    return (uint8_t)t;
+}
+
+/* scroll_terrain_columns @ $6AEE — the $0089-gated stars/planet column scroll, run every
+ * VBI during the launch cinematic.  Entry cpu.A = $0089 (the gate value).  When the gate
+ * is >= 4 (BMI on A-4 clear) it advances the 24-bit step accumulator via the $FF add; on
+ * reaching $64 it resets the gate to 2, otherwise it commits the new step into $A4/$A5 and
+ * skips the scroll on a frame whose step is unchanged.  Then it shifts all four parallel
+ * height buffers $0C32/$0D32/$0E32/$0F32 left one column (89 wide), halves the $008F
+ * every-other-frame toggle, and appends a fresh column (Y=$59) via gen_terrain_column. */
+void scroll_terrain_columns_core(uint8_t gate) {
+    /* CMP #$04; BMI L_6b0d -> only run the accumulator when (gate-4) has bit7 clear */
+    if (!((uint8_t)(gate - 0x04) & 0x80)) {
+        uint8_t top = scroll_accum_add_ff();          /* LDA #$FF; JSR add_multibyte_a1 */
+        if (top == 0x64) {                            /* CMP #$64; BEQ */
+            mem[0x0089] = 0x02;                       /* reset gate; BNE falls to the shift */
+        } else {
+            mem[0x00A4] = top;                        /* STA $A4 */
+            if ((uint8_t)(mem[0x00A4] - mem[0x00A5]) == 0) return;  /* SEC;SBC $A5; BEQ -> no scroll */
+            mem[0x00A5] = mem[0x00A4];                /* A5 = A4 */
+        }
+    }
+    /* L_6b0d: shift each 89-byte buffer left one column (dst[y] = src[y+1]) */
+    for (uint8_t y = 0; y < 0x59; y++) {
+        mem[0x0C32 + y] = mem[0x0C33 + y];
+        mem[0x0D32 + y] = mem[0x0D33 + y];
+        mem[0x0E32 + y] = mem[0x0E33 + y];
+        mem[0x0F32 + y] = mem[0x0F33 + y];
+    }
+    mem[0x008F] >>= 1;                                /* LSR $008F */
+    cpu.Y = 0x59;                                     /* Y left at $59 by the CPY #$59 loop exit */
+    gen_terrain_column();                             /* append the new rightmost column */
+}
+
+/* 6502-ABI shim: entry gate value arrives in cpu.A (sound_event_dispatch sets A = $0089). */
+void scroll_terrain_columns(void) {
+    scroll_terrain_columns_core(cpu.A);
+}
+
 /* draw_shape_rows_loop @ $6620 — for 86 rows ($0092=$55..$00) set the row pointer
  * from the row counter, then masked-plot three columns ($009C, $009D, and
  * $00A0=$009D+1) into that row.  Tail of draw_frame_pattern_seq. */
