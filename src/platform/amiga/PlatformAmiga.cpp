@@ -237,8 +237,9 @@ static void wait_rasterlines(uint8_t lines)
 }
 
 // Apply all channels recorded since the last flush.  Waveform changes are batched through a
-// single DMA off → wait → on so the rasterline wait is paid once.  Called at the end of the
-// music tick (sfx_voice_tick_native).
+// single DMA off → wait → on so the rasterline wait is paid once.  Called once per frame from
+// game_vbi_isr, after both audio engines have recorded their POKEY writes for the frame: the
+// CIA-B music tick (sfx_voice_tick_native) and the in-game SFX engine (update_gauge_digits).
 extern "C" void flush_paula(void)
 {
     uint8_t valid = want_valid;

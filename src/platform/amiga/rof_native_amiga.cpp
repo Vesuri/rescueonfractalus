@@ -99,8 +99,13 @@ extern "C" void sfx_seq_step_native(void)
 //   half = mem[$073A] >> 1
 //   if half < 3:  audc = half + 0xA0  (CMP carry = 0)
 //   if half >= 3: audc = 0xA3         (CMP carry = 1 → LDA #2 + ADC #0xA0 + C)
-// flush_paula (PlatformAmiga.cpp): apply this tick's batched POKEY→Paula register changes,
+// flush_paula (PlatformAmiga.cpp): apply the frame's batched POKEY→Paula register changes,
 // paying the single DMA-restart rasterline wait once for all channels that changed waveform.
+// Called once per frame from game_vbi_isr (NOT here): this SFX tick only RECORDS its POKEY
+// writes into the want[] table (via platform_hw_write → update_paula_channel), and the
+// in-game SFX engine update_gauge_digits ($548D) records into the same table from the VBI.
+// Flushing in one place (the VBI) applies whichever engine wrote this frame and keeps the
+// DMA-restart sequence on a single interrupt level (no CIA-B vs VBI DMACON race).
 extern "C" void flush_paula(void);
 
 extern "C" void sfx_voice_tick_native(void)
@@ -124,10 +129,8 @@ extern "C" void sfx_voice_tick_native(void)
         // Route through platform_hw_write so Paula + mem[] both see it.
         platform_hw_write((uint16_t)(0xD1FFu + gate), (uint8_t)(audc + 2u));
     }
-
-    // All POKEY writes for this tick are in; apply them to Paula in one batch (one
-    // rasterline wait for all the channels whose waveform changed — see flush_paula).
-    flush_paula();
+    // POKEY writes are now recorded in the want[] table; game_vbi_isr flushes them once
+    // per frame (see flush_paula above) along with any in-game SFX writes.
 }
 
 // ============================================================================
@@ -1118,6 +1121,11 @@ extern "C" void game_vbi_isr(void)
     else if (vbi == 0x1B30) vbi_handler_station();   // $1B30 attract VBI (sets $0080 + RTCLOK)
     else                    standby_vbi_native();    // $52D7 standby/launch VBI (and fallback)
     cpu = saved;                                    // == XITVBV PLA;TAY;PLA;TAX;PLA
+    // Apply this frame's batched POKEY→Paula writes — from the CIA-B music tick
+    // (sfx_voice_tick) AND the in-game SFX engine (update_gauge_digits, run in the VBI
+    // bodies above).  One flush per frame: it silences released channels (vol=0) and
+    // starts new notes/SFX, so without it stuck notes never stop and SFX never sound.
+    flush_paula();
     PlatformAmiga::noiseTick();                     // refresh a 128-byte slice of the noise sample (cheap)
 }
 
