@@ -371,10 +371,16 @@ void RescueOnFractalus::buildCopperList(CopperList* cl, uint16_t frame)
     const uint16_t terr1 = fadeColor(atariToOCS(mem[0x02C7]), f);
     const uint16_t terr2 = fadeColor(atariToOCS(mem[zp::colorRing]), f);
     const uint16_t terr3 = fadeColor(atariToOCS(mem[zp::displayFlags]), f);
-    auto emitRing = [&]() {                                    // tunnel pens 1-3
-        d[idx++] = copperMove(color01, fadeColor(atariToOCS(mem[zp::colorRing]), f));
-        d[idx++] = copperMove(color02, fadeColor(atariToOCS(mem[zp::colorRing + 1]), f));
-        d[idx++] = copperMove(color03, fadeColor(atariToOCS(mem[zp::colorRing + 2]), f));
+    // Tunnel ring colours. The GTIA mode-10 pixel value -> ring-slot mapping is ROTATED +3,
+    // per the Atari tunnel DLI ($6CD7/$6CF1): pixels 1-3 = COLPM1-3 <- $08D7/$08D8/$08D9
+    // (ring[3..5]); pixels 4-6 = COLPF0-2 <- $08D4/$08D5/$08D6 (ring[0..2]).  The Amiga
+    // bitmap pen == GTIA pixel value, so pen k <- colorRing[(k+2)%6].  This offset is
+    // invisible during the rotating-ramp cycle, but it decides WHICH ring the clear's
+    // $08D8=0 blackens — getting it wrong drops a black ring between still-lit rings.
+    auto emitRing = [&]() {                                    // tunnel pens 1-3 (pixels 1-3)
+        d[idx++] = copperMove(color01, fadeColor(atariToOCS(mem[zp::colorRing + 3]), f));
+        d[idx++] = copperMove(color02, fadeColor(atariToOCS(mem[zp::colorRing + 4]), f));
+        d[idx++] = copperMove(color03, fadeColor(atariToOCS(mem[zp::colorRing + 5]), f));
     };
     auto emitTerrCols = [&]() {                                // terrain pens 1-3
         d[idx++] = copperMove(color01, terr1);
@@ -431,10 +437,10 @@ void RescueOnFractalus::buildCopperList(CopperList* cl, uint16_t frame)
     d[idx++] = copperMove(bpl2mod, 80);                        // BPL2MOD = plane 2
     d[idx++] = copperMove(color00, terr0);                     // pen 0 = black (terrain & tunnel)
     if (tunnelFirst) emitRing(); else emitTerrCols();
-    if (door) {                                                // ring upper half (pens 4-6),
-        d[idx++] = copperMove(color04, fadeColor(atariToOCS(mem[zp::colorRing + 3]), f));  // unused by terrain
-        d[idx++] = copperMove(color05, fadeColor(atariToOCS(mem[zp::colorRing + 4]), f));
-        d[idx++] = copperMove(color06, fadeColor(atariToOCS(mem[zp::colorRing + 5]), f));
+    if (door) {                                                // ring pens 4-6 (pixels 4-6)
+        d[idx++] = copperMove(color04, fadeColor(atariToOCS(mem[zp::colorRing + 0]), f));  // pen4 = COLPF0 <- $08D4
+        d[idx++] = copperMove(color05, fadeColor(atariToOCS(mem[zp::colorRing + 1]), f));  // pen5 = COLPF1 <- $08D5
+        d[idx++] = copperMove(color06, fadeColor(atariToOCS(mem[zp::colorRing + 2]), f));  // pen6 = COLPF2 <- $08D6
     }
 
     // ---- mid-screen bands (only when partially open; each on its own WAIT) ----
