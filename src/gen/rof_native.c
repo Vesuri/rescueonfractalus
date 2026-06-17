@@ -2482,6 +2482,7 @@ void render_bcd_counter(void) {
             y++;
         }
     }
+    platform_title_changed();   /* hook: score digits rendered into $32C5-$32CA -> flag title dirty */
 }
 
 /* init_proj_scratch_pointers @ $9B87 — set game_state=1 and 3 ZP scratch/ptr bytes.
