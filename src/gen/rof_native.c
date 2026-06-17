@@ -858,6 +858,7 @@ void fill_message_buffer(void) {
         mem[0x32B6 + x] = a;
         x = (uint8_t)(x - 1);
     } while (x != 0);
+    platform_title_changed();   /* hook: message buffer $32B7 cleared/filled -> flag title dirty */
 }
 
 /* intro_fill_display_params @ $4FE0 — build 8 display params $00CF..$00D6 from the
@@ -1323,13 +1324,14 @@ void show_cockpit_message(void) {
         if (a & 0x80) {                             /* end marker */
             a = (uint8_t)(a & 0x7F);
             mem[0x32B7 + pos] = a;
-            if (a != 0) return;
+            if (a != 0) break;
         }
         mem[0x32B7 + pos] = a;
         pos = (uint8_t)(pos + 1);
         x = (uint8_t)(x + 1);
-        if (pos == 0x0E) return;
+        if (pos == 0x0E) break;
     }
+    platform_title_changed();   /* hook: HUD message rendered into $32B7 -> flag title dirty */
 }
 
 /* game_sub_6811 @ $6811 — scatter random dots (6 outer passes, growing mask $0082 and
