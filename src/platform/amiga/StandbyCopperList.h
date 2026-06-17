@@ -1,5 +1,5 @@
 #pragma once
-#include "../framework/CopperList.h"
+#include "framework/CopperList.h"
 
 class Bitmap;
 class Sprite;

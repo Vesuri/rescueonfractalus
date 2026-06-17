@@ -1,7 +1,7 @@
 #include "PlatformSDL.h"
 #include "atari_os_font.h"
-#include "../cpu/cpu.h"
-#include "../xex_load.h"   /* shared XEX-format walk (xex_parse / xex_overlay_osrom) */
+#include "../../cpu/cpu.h"
+#include "../../xex_load.h"   /* shared XEX-format walk (xex_parse / xex_overlay_osrom) */
 #include <cstdio>
 #include <cstdlib>      /* getenv, atoi */
 #include <csignal>      /* signal, SIGINT, SIGTERM (Ctrl-C handling in run()) */

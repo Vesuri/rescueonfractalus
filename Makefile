@@ -37,7 +37,7 @@ C_SRCS := \
 # C++ sources (platform layer + entry point)
 CXX_SRCS := \
     src/platform/Platform.cpp \
-    src/platform/PlatformSDL.cpp \
+    src/platform/sdl/PlatformSDL.cpp \
     src/platform/platform_cbridge.cpp \
     src/main.cpp
 

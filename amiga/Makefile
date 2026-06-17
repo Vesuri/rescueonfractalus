@@ -22,11 +22,15 @@ REPO     = ..
 
 $(shell mkdir -p obj/framework obj/src obj/platform obj/audio out)
 
-# C++ sources: framework hw classes + RoF application
-FW_CPPS  := $(wildcard framework/*.cpp)
-SRC_CPPS := $(wildcard src/*.cpp)
-FW_OBJS  := $(patsubst framework/%.cpp,obj/framework/%.o,$(FW_CPPS))
-SRC_OBJS := $(patsubst src/%.cpp,obj/src/%.o,$(SRC_CPPS))
+# C++ sources: framework hw classes + RoF application.  The code now lives in the
+# unified source tree under $(REPO)/src/platform/amiga (and .../amiga/framework); this
+# amiga/ directory holds only build infrastructure (this Makefile, env.sh, run.sh,
+# assets/, the diag scripts).
+AMIGA_SRC := $(REPO)/src/platform/amiga
+FW_CPPS  := $(wildcard $(AMIGA_SRC)/framework/*.cpp)
+SRC_CPPS := $(wildcard $(AMIGA_SRC)/*.cpp)
+FW_OBJS  := $(patsubst $(AMIGA_SRC)/framework/%.cpp,obj/framework/%.o,$(FW_CPPS))
+SRC_OBJS := $(patsubst $(AMIGA_SRC)/%.cpp,obj/src/%.o,$(SRC_CPPS))
 
 # Shared platform layer (repo src/): the abstract Platform base, the C bridge that
 # dispatches the transpiled code's platform_* calls to the Platform singleton, and the
@@ -53,7 +57,7 @@ WARN      = -Wall -Wno-unused-function -Wno-unused-parameter -Wno-unused-variabl
 # -m68000: target is A500 68000. -msoft-float: no FPU.
 # -DNO_ASSEMBLER: use the portable C++ bodies; no *Assembler.s or vasm step.
 # Audio C flags: same base but with repo src/ include paths for cpu.h/bus.h/rof_gen.c
-AUDIO_CINCLUDES = -I"$(CURDIR)/framework/compat-include" \
+AUDIO_CINCLUDES = -I"$(AMIGA_SRC)/framework/compat-include" \
                   -I"$(REPO)/src/cpu" \
                   -I"$(REPO)/src/gen" \
                   -I"$(REPO)/src/platform"
@@ -72,12 +76,13 @@ CCFLAGS   = -g -MP -MMD -m68000 -msoft-float $(OPT) -nostdlib \
 CPPFLAGS  = $(CCFLAGS) -fno-rtti -fno-exceptions -fno-use-cxa-atexit -std=gnu++17 \
             -fpermissive -Wno-write-strings -Wno-pointer-arith \
             -DROF_PLATFORM_AMIGA \
-            -include "$(CURDIR)/framework/SASCCompat.h" \
-            -I"$(CURDIR)/framework" \
-            -I"$(CURDIR)/framework/compat-include" \
-            -I"$(CURDIR)/src" \
-            -I"$(REPO)/src/platform"
-ASFLAGS   = -mcpu=68000 -g --register-prefix-optional -I"$(SDKDIR)"
+            -include "$(AMIGA_SRC)/framework/SASCCompat.h" \
+            -I"$(AMIGA_SRC)/framework" \
+            -I"$(AMIGA_SRC)/framework/compat-include" \
+            -I"$(AMIGA_SRC)" \
+            -I"$(REPO)/src/platform" \
+            -I"$(CURDIR)"
+ASFLAGS   = -mcpu=68000 -g --register-prefix-optional -I"$(SDKDIR)" -I"$(CURDIR)"
 LDFLAGS   = -Wl,--emit-relocs,--gc-sections,-Ttext=0,-Map=$(OUT).map
 
 all: $(OUT).exe
@@ -91,13 +96,13 @@ $(OUT).elf: $(OBJECTS)
 	@$(CC) $(CCFLAGS) $(LDFLAGS) $(OBJECTS) -o $@
 	@$(OBJDUMP) --disassemble --no-show-raw-ins -S $@ > $(OUT).s 2>/dev/null || true
 
-obj/framework/%.o : framework/%.cpp
+obj/framework/%.o : $(AMIGA_SRC)/framework/%.cpp
 	$(info C++  $<)
-	@$(CC) $(CPPFLAGS) -c -o $@ "$(CURDIR)/$<"
+	@$(CC) $(CPPFLAGS) -c -o $@ "$(abspath $<)"
 
-obj/src/%.o : src/%.cpp
+obj/src/%.o : $(AMIGA_SRC)/%.cpp
 	$(info C++  $<)
-	@$(CC) $(CPPFLAGS) -c -o $@ "$(CURDIR)/$<"
+	@$(CC) $(CPPFLAGS) -c -o $@ "$(abspath $<)"
 
 # Shared platform layer (repo src/ + src/platform/): same C++ flags as the Amiga src.
 obj/platform/Platform.o : $(REPO)/src/platform/Platform.cpp
@@ -122,10 +127,13 @@ obj/gcc8_a_support.o : $(SUPPORT)/gcc8_a_support.s
 # Without this, editing/regenerating an embedded dump leaves a stale blob in the
 # binary while the on-disk file looks correct (this exact trap shifted the SFX
 # music + title data by one byte and cost a long debugging session).
+# incbin.s lives in the unified tree ($(AMIGA_SRC)) but its .incbin paths are resolved
+# relative to this amiga/ build dir (where assets/ and ../rof.xex live) via ASFLAGS
+# -I"$(CURDIR)"; INCBIN_DEPS are likewise listed relative to amiga/.
 INCBIN_DEPS := assets/cockpit.raw ../disasm/screen3_mem.bin ../rof.xex assets/atari_osrom.bin
-obj/incbin.o : src/incbin.s $(INCBIN_DEPS)
+obj/incbin.o : $(AMIGA_SRC)/incbin.s $(INCBIN_DEPS)
 	$(info ASM  $<)
-	@$(AS) $(ASFLAGS) -o $@ "$(CURDIR)/src/incbin.s"
+	@$(AS) $(ASFLAGS) -o $@ "$(abspath $(AMIGA_SRC)/incbin.s)"
 
 # Audio C translation units (rof_gen.c is large; GC sections keep only the audio slice)
 obj/audio/cpu.o : $(REPO)/src/cpu/cpu.c

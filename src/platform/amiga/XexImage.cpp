@@ -16,7 +16,7 @@
 // xex_load.h; this TU supplies the Amiga data source (incbin'd .rodata) and the
 // mem[] writer (endian-specific 32-bit block stores — a boot-speed win).
 
-#include "../../src/xex_load.h"   // xex_parse / xex_overlay_osrom (shared format walk)
+#include "../../xex_load.h"   // xex_parse / xex_overlay_osrom (shared format walk)
 
 extern "C" volatile uint8_t mem[65536];
 

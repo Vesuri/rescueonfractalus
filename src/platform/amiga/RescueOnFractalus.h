@@ -1,8 +1,8 @@
 #pragma once
-#include "../framework/CopperList.h"
-#include "../framework/Bitmap.h"
-#include "../framework/Palette.h"
-#include "../framework/Sprite.h"
+#include "framework/CopperList.h"
+#include "framework/Bitmap.h"
+#include "framework/Palette.h"
+#include "framework/Sprite.h"
 #include "StandbyCopperList.h"
 
 // 2-bitplane attract screen: one BPLCON0 mode for the whole frame, Copper

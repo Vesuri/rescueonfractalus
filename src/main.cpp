@@ -4,13 +4,13 @@
  * by a build define), then hands control to Platform::run(), which owns all the
  * platform-specific setup and drives the genuine boot chain (game_entry).
  *
- *   ROF_PLATFORM_AMIGA  -> PlatformAmiga  (amiga/src, m68k cross-build)
+ *   ROF_PLATFORM_AMIGA  -> PlatformAmiga  (src/platform/amiga, m68k cross-build)
  *   default             -> PlatformSDL    (macOS dev build)
  */
 #if defined(ROF_PLATFORM_AMIGA)
-  #include "PlatformAmiga.h"          /* amiga/src — on the cross-build's -I path */
+  #include "PlatformAmiga.h"          /* src/platform/amiga — on the cross-build's -I path */
 #else
-  #include "platform/PlatformSDL.h"
+  #include "platform/sdl/PlatformSDL.h"
 #endif
 
 /* Default to the pristine rof.xex so every build boots the SAME initial state and

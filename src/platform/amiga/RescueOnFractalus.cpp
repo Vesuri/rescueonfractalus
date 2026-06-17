@@ -22,11 +22,11 @@
 #include <hardware/dmabits.h>
 #include <hardware/custom.h>
 #include <graphics/display.h>
-#include "../framework/AmigaHardware.h"
-#include "../framework/CopperList.h"
-#include "../framework/Bitmap.h"
-#include "../framework/Palette.h"
-#include "../framework/Sprite.h"
+#include "framework/AmigaHardware.h"
+#include "framework/CopperList.h"
+#include "framework/Bitmap.h"
+#include "framework/Palette.h"
+#include "framework/Sprite.h"
 #include "RescueOnFractalus.h"
 #include "PlatformAmiga.h"
 #include "AtariZp.h"      // zp:: named Atari memory offsets
@@ -108,9 +108,9 @@ static const uint8_t kNibbleColour[16] = {
     3, 3, 3, 3, 3, 3, 3  // 9-15 → bg
 };
 
-#include "../assets/title_pal.h"
-#include "../assets/terrain_pal.h"
-#include "../assets/atari_pal.h"
+#include "assets/title_pal.h"
+#include "assets/terrain_pal.h"
+#include "assets/atari_pal.h"
 // cockpit_pal.h and cockpit_raw removed: cockpit palette is now fully dynamic
 // from mem[] via atariToOCS(), cockpit bitmap decoded each frame in render().
 

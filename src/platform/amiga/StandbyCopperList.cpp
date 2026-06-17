@@ -4,10 +4,10 @@
 #include <proto/exec.h>
 #include <exec/memory.h>
 #include "StandbyCopperList.h"
-#include "../framework/AmigaHardware.h"
-#include "../framework/Bitmap.h"
-#include "../framework/Sprite.h"
-#include "../assets/atari_pal.h"   // atariToOCS() for the constant cockpit palette
+#include "framework/AmigaHardware.h"
+#include "framework/Bitmap.h"
+#include "framework/Sprite.h"
+#include "assets/atari_pal.h"   // atariToOCS() for the constant cockpit palette
 
 // ---- display geometry --------------------------------------------------------
 // MUST match the constants in RescueOnFractalus.cpp (same derivation).  The

@@ -32,7 +32,7 @@
 #include <hardware/intbits.h>
 #include <resources/cia.h>
 #include <hardware/cia.h>
-#include "../framework/AmigaHardware.h"
+#include "framework/AmigaHardware.h"
 #include "PlatformAmiga.h"
 #include "RescueOnFractalus.h"
 
