@@ -195,6 +195,7 @@ void copy_altitude_graphic_to_screen_core(uint8_t entryY) {
     if (a >= 0xE0) mem[0x00D8] = 0x44;
     for (uint8_t y = 0x14; y != 0; y--, x--)
         mem[0x32B6 + y] = mem[0x5A9F + x];
+    platform_title_changed();   /* hook: $32B7 banner rewritten -> flag the title region dirty */
 }
 
 /* 6502-ABI shim: entry cpu.Y is the new $0091 gate value. */

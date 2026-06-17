@@ -410,10 +410,10 @@ extern "C" void station_setup(void)
 // Only the pure mem[]-state fragments below remain.
 
 
-// Screen-RAM dirty flags (defined in RescueOnFractalus.cpp): set when a writer stores into
-// the title ($32B7) / cockpit ($332D mode4, $350D modeD) regions so render() re-scans that
-// region; otherwise its per-cell shadow scan is skipped (the static-Standby cost saver).
-extern "C" volatile uint8_t g_titleDirty;
+// Cockpit dirty flag (defined in RescueOnFractalus.cpp): set when a writer stores into the
+// cockpit ($332D mode4, $350D modeD) region so render() re-scans it; otherwise its per-cell
+// shadow scan is skipped (the static-Standby cost saver).  The title region ($32B7) has no
+// dirty flag — its 20-cell scan runs unconditionally (the genuine $782A writer doesn't flag).
 extern "C" volatile uint8_t g_cockpitDirty;
 
 // vbi_attract_timer_native: fragment of vbi_handler_standby @ $52D7 relevant to
@@ -428,30 +428,10 @@ extern "C" void vbi_attract_timer_native(void)
     if (mem[zp::attractTimerSub] == 0) mem[zp::attractTimer]++;
 }
 
-// copy_text_block_to_screen_native: direct translation of $782A.
-// Fires when mem[$0091] >= $C0; the SFX sequencer (sfx_seq_step_native) writes
-// negative sequence bytes — $C0/$C4 = Block1 ("rescue on fractalus"), $E2 =
-// Block2 ("©1985...") — to mem[$0091] as a side effect of voice-param processing.
-// Gate at $0091==$C0 exactly: only fires when mem[$00E2] is non-negative (< $80).
-// Copies 20 chars from $5A9F (Block1) or $5AB3 (Block2) into $32B7-$32CA.
-// Also writes mem[$00D8]=$44 (title COLBK) for the copyright path.
-extern "C" void copy_text_block_to_screen_native(void)
-{
-    uint8_t alt = mem[zp::altitudeThreshold];
-    if (alt < 0xC0u) return;                                        // CMP $C0, BCC
-    if (alt == 0xC0u && (int8_t)mem[zp::attractTimer] < 0) return;           // attract-timer gate
-    mem[zp::altitudeThreshold] = 0;                                                // reset (Y=0 in original)
-    uint16_t src;
-    if (alt >= 0xE0u) {
-        src = 0x5AB3u;          // Block2: copyright string ($5A9F+$13, per $7845)
-        mem[zp::textColorPf0] = 0x44u;    // title text colour for copyright path
-    } else {
-        src = 0x5A9Fu;          // Block1: rescue string ($5A9F+$00, per $7849)
-    }
-    for (int i = 0; i < 20; i++)
-        mem[0x32B7u + (uint16_t)i] = mem[src + (uint16_t)i];
-    g_titleDirty = 1;   // title $32B7-$32CA rewritten → render() must re-scan
-}
+// The Standby title banner ($782A copy_altitude_graphic_to_screen) is NOT reimplemented
+// here: the genuine transpiled standby loop ($62FB) calls it directly (native twin in
+// src/gen/rof_native.c), copying the SFX-selected block ($0091 → $5A9F/$5AB3) into screen
+// RAM $32B7-$32CA every frame.  render() picks up the alternation by shadow-comparing $32B7.
 
 // update_cockpit_digits_native: direct translation of startup_init @ $3FFA.
 // Updates three cockpit digit displays based on mem[$0642], mem[$0641], mem[$0628].

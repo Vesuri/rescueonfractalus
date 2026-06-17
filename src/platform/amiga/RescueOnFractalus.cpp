@@ -35,7 +35,6 @@
 // Native handler functions — see NativeHandlers.cpp and SfxPlayer.cpp.
 extern "C" void vbi_attract_timer_native(void);                  // $52D7: timer cascade
 extern "C" void update_indicator_blink_native(void);           // $4131: cockpit blink
-extern "C" void copy_text_block_to_screen_native(void);   // $782A: title text
 extern "C" void update_cockpit_digits_native(void);                      // $3FFA: cockpit digit update
 extern "C" void lock_on_indicator_tick_native(void);               // $4229: cockpit counter animation
 extern "C" void sound_event_dispatch_native(void);              // $5367: ring ($0088) vs door scroll ($008A)
@@ -58,11 +57,12 @@ extern "C" volatile unsigned char g_doorFieldReady;
 // Screen-RAM dirty flags: render() scans the title ($32B7) + cockpit ($332D mode4 / $350D
 // modeD) regions only when these are set, instead of re-scanning all ~580 cells every
 // frame.  During the static doors/standby phases nothing changes, so the scan was pure
-// overhead (~7 ms/frame, the dominant door-cinematic cost).  Set by the three writers
-// (copy_text_block / update_cockpit_digits / lock_on_indicator_tick) at their store sites,
-// and force-set at phase transitions in deriveRenderSignals() so the initial cockpit build
-// (built by the transpiled display_setup, not those writers) + flight updates are never
-// missed.
+// overhead (~7 ms/frame, the dominant door-cinematic cost).  g_titleDirty is set by the
+// genuine $782A title writer (copy_altitude_graphic_to_screen) via the platform_title_
+// changed() hook; g_cockpitDirty by update_cockpit_digits / lock_on_indicator_tick at their
+// store sites.  Both are force-set at phase transitions in deriveRenderSignals() so the
+// initial build (by the transpiled display_setup, not those writers) + flight updates are
+// never missed.
 extern "C" volatile unsigned char g_titleDirty   = 1;
 extern "C" volatile unsigned char g_cockpitDirty = 1;
 // The genuine boot chain (src/gen/rof_gen.c): station_init = attract ($195D, returns on
@@ -278,7 +278,7 @@ void RescueOnFractalus::buildCopperList(CopperList* cl, uint16_t frame)
     //   COLPF0 ($D016) = mem[$00D8]  — title text colour (mode-6 col=1 chars)
     //   COLBK  ($D01A) = mem[$02C8]  — title background
     //   COLPF1 ($D017) = $78         — hardcoded blue (same role on real hw)
-    // copy_text_block_to_screen_native sets mem[$00D8]=$44 for the
+    // copy_altitude_graphic_to_screen ($782A) sets mem[$00D8]=$44 for the
     // copyright block so the text colour changes per alternation.
     // Mode-6 selects the per-char text colour from the byte's top 2 bits:
     //   hi2=0 → COLPF0 = mem[$00D8]   (copyright block, e.g. $44)
@@ -623,12 +623,6 @@ void RescueOnFractalus::initialize()
     // $480B paths — neither handler is ported on the Amiga, so nothing reads those
     // bytes here; the writes were dead.)
 
-    // Seed $0091=$C0 so copy_text_block_to_screen_native fires on the first
-    // update() call and writes Block1 ("rescue on fractalus") to $32B7.
-    // On the real Atari, $0091 is set by the SFX sequencer; we prime it once here
-    // so the title is correct before the first SFX tick produces a $C0 byte.
-    mem[zp::altitudeThreshold] = 0xC0;
-
     // Initial render: populate all three bitmaps from mem[] once so that
     // render() called from the main loop has nothing to do until data changes.
     // This captures the closed-door terrain image from $2000 into terrainBitmap.
@@ -910,10 +904,10 @@ void RescueOnFractalus::deriveRenderSignals()
 
     // Force a full title + cockpit rescan while the scene is transitional (boot/building),
     // a viewport scene, or in flight — so the initial cockpit build (written by the
-    // transpiled display_setup, not the three perFrameWork/VBI writers) and the per-frame
+    // transpiled display_setup, not the perFrameWork/VBI writers) and the per-frame
     // flight cockpit updates are never missed.  In the settled doors/standby phases these
-    // stay clean and only the three writers set them, so the ~580-cell scan is skipped on
-    // the frames where nothing changed.  (The cockpit RAM is built before g_doorFieldReady
+    // stay clean and only the writers set them, so the ~580-cell scan is skipped on the
+    // frames where nothing changed.  (The cockpit RAM is built before g_doorFieldReady
     // latches, so the g_doorFieldReady==0 window covers its one-time capture.)
     if (g_doorFieldReady == 0u || rsViewport || rsFlight) {
         g_titleDirty = 1; g_cockpitDirty = 1;
@@ -935,10 +929,10 @@ void RescueOnFractalus::perFrameWork()
         mem[zp::sfxReinitGate] = 0u;    // clear flag (as $70E7 does via STX $0090)
     }
 
-    // Title text ("RESCUE ON FRACTALUS!" / copyright) — the Standby attract banner;
-    // don't draw it over the flight cockpit/viewport ($62FB, gated by $060B).
-    if (!rsFlight && mem[0x060B] == 0)
-        copy_text_block_to_screen_native();    // $782A: $0091 → title string
+    // Title text ("RESCUE ON FRACTALUS!" / copyright): the genuine standby loop
+    // ($62FB) drives it — copy_altitude_graphic_to_screen ($782A) copies the block
+    // the SFX sequencer selects (via $0091) into screen RAM $32B7 every frame.  We
+    // don't re-copy it here; render() picks up the change by shadow-comparing $32B7.
 
     if (mem[zp::joystickSaved] != 0)            // $004A set when the game starts
         update_cockpit_digits_native();          // $3FFA: cockpit digit update
@@ -1055,8 +1049,9 @@ void RescueOnFractalus::render()
     // cell hot path is just `*src++ == *shadow++` — no 68000 muls.  68000 muls (~70cy) are
     // kept out of the per-cell path entirely: the changed-cell decode uses a row pointer
     // pre-offset once (kTitleTextRow*80 computed before the loop) and `*8`/`*2` are shifts.
-    // Skip the whole title scan unless a writer (copy_text_block) dirtied $32B7-$32CA or a
-    // full repaint is forced.  Cleared after the scan.
+    // Skip the whole title scan unless the genuine $782A writer (copy_altitude_graphic_to_
+    // screen) rewrote $32B7-$32CA — it flags g_titleDirty through the platform_title_changed()
+    // hook on each copy — or a full repaint is forced.  Cleared after the scan.
     if (g_titleDirty || cockpitForceFull) {
     uint8_t* tbmp = (uint8_t*)titleBitmap->data;
     uint8_t* const titleBase = tbmp + kTitleTextRow * 80;     // first text scanline row (once)

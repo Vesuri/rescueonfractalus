@@ -451,6 +451,15 @@ void PlatformAmiga::tunnelRingsDrawn() {
     g_tunnelFieldDirty = 1;
 }
 
+extern "C" volatile unsigned char g_titleDirty;
+void PlatformAmiga::titleChanged() {
+    // copy_altitude_graphic_to_screen ($782A) just rewrote the banner text in $32B7-$32CA
+    // (the SFX sequencer alternates the block via $0091).  Flag the title region so the next
+    // renderFrame re-scans it; the per-cell shadow compare then re-decodes only the glyphs
+    // that actually changed between "RESCUE ON FRACTALUS!" and the copyright line.
+    g_titleDirty = 1;
+}
+
 // ============================================================================
 //  CIA-A serial-port keyboard — RETURN -> Atari START switch (CONSOL $D01F)
 // ============================================================================

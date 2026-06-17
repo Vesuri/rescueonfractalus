@@ -48,6 +48,10 @@ void platform_tunnel_rings_drawn(void) {
     if (platform) platform->tunnelRingsDrawn();
 }
 
+void platform_title_changed(void) {
+    if (platform) platform->titleChanged();
+}
+
 } /* extern "C" */
 
 /* ---------------------------------------------------------------------------

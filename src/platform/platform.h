@@ -77,6 +77,13 @@ public:
        No-op on platforms that render mem[] directly (SDL).                */
     virtual void tunnelRingsDrawn() {}
 
+    /* Notification that the genuine $782A title writer (copy_altitude_graphic_to_
+       screen) just rewrote the Standby banner text in screen RAM $32B7-$32CA (the
+       SFX sequencer alternates "RESCUE ON FRACTALUS!" / copyright via $0091).  A
+       platform mirroring mem[] into bitplanes flags the title region for re-scan
+       here.  No-op on platforms that render mem[] directly (SDL).          */
+    virtual void titleChanged() {}
+
     /* ------------------------------------------------------------------ */
     /* Image loading                                                        */
     /* ------------------------------------------------------------------ */

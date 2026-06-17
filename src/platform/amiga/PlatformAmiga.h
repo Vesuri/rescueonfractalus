@@ -37,6 +37,7 @@ public:
     virtual void    pollEvents()                     override;   // poll quit (left mouse)
     virtual void    tickVBI()                        override;   // no-op (ISR owns RTCLOK)
     virtual void    tunnelRingsDrawn()               override;   // flag the $1000 ring field dirty
+    virtual void    titleChanged()                   override;   // flag the $32B7 title region dirty
     virtual int     loadImage(const char* path)      override;   // image is embedded -> no-op
     virtual void    setInterrupt(void (*fn)(void))   override;   // Amiga uses the real VBI -> no-op
     virtual int     framesPerSecond()                override;   // 50 (PAL)

@@ -48,6 +48,13 @@ void platform_tick_vbi(void);
    mem[] directly. */
 void platform_tunnel_rings_drawn(void);
 
+/* Called by copy_altitude_graphic_to_screen ($782A) right after it rewrites the
+   Standby banner text in screen RAM $32B7-$32CA (the SFX sequencer alternates
+   "RESCUE ON FRACTALUS!" / copyright via $0091), so a platform that mirrors mem[]
+   into bitplanes (the Amiga backend) can flag the title region for re-scan.  No-op
+   on the host/SDL build, which renders mem[] directly. */
+void platform_title_changed(void);
+
 #ifdef __cplusplus
 }
 #endif
