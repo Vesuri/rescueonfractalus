@@ -49,6 +49,7 @@ private:
     bool rsLaunched = false;   // doors armed || viewport — door-gap g2 (doors..flight)
     bool doorsOpenedLatch = false;  // door scroll finished; hold the tunnel view through the
     uint8_t prevScrollCtr = 0;      // gap before the ring/viewport arms (see deriveRenderSignals)
+    bool    prevRsStars = false;    // rising edge → one-time title/cockpit rescan on stars entry
 
     Sprite*  gaugeSprite   = nullptr;    // player-strip throttle bar ($0D98)
     void buildGaugeSprite();             // $0D98 strip -> gaugeSprite lines
@@ -101,11 +102,14 @@ private:
     bool    terrainDirty = true;   // re-render terrain rows from $2000
     uint8_t titleShadow[20] = {};  // shadow of last-rendered $32B7-$32CA
 
-    // Per-byte shadow for the stars/planet mode-D viewport: renderViewportModeD
-    // re-decodes only the $1000 source bytes that changed since last frame (the
-    // planet sphere grows a few bytes/frame), not the whole 43×40 field.
-    bool    viewportForceFull = true;          // first viewport render populates all cells
-    uint8_t viewportShadow[43 * 40] = {};      // shadow of the central-40 $1000 bytes
+    // Long-granular shadow for the stars/planet/flight mode-D viewport.  Holds the last
+    // decoded source as 430 longs (43 rows × 10 longs of 4 packed bytes); renderViewportModeD
+    // re-decodes only the 4-byte groups that changed (the planet zoom / star scroll leaves
+    // much of the field static frame-to-frame).  forceFull re-decodes everything (and clears
+    // plane3) on the first frame and whenever the source base changes (stars↔flight).
+    bool     viewportForceFull = true;
+    uint16_t viewportLastBase  = 0;
+    uint32_t viewportShadow[43 * 10] = {};
 
     // Per-byte shadow for the tunnel field at $2000: the exit clear draws a thin
     // black frame outline (horizontal edges + vertical side pieces) each step, so

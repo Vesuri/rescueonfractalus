@@ -240,16 +240,16 @@ void RescueOnFractalus::buildStarSprites()
     for (int c = 0; c < 3; c++) {
         uint16_t* d = starSprite[c]->data() + 2;   // skip the 2 control words
         const uint8_t* src = (const uint8_t*)&mem[kStarSrc[c]];
-        for (int i = 0; i < kStarRows; i++) {
-            uint8_t v = src[i];
-            // Double each set player bit to 2 Amiga px: player bit b (b7 = leftmost)
-            // → sprite word bits (2b+1, 2b).  All 4 star sub-positions ($80/$20/$04/
-            // $01 = bits 7/5/2/0) land inside the 16 px sprite this way.
-            uint16_t w = 0;
-            for (int b = 0; b < 8; b++)
-                if (v & (1u << b)) w |= (uint16_t)(3u << (2 * b));
-            d[i * 2]     = w;        // plane A (colour bit 0 = pen 01)
-            d[i * 2 + 1] = 0x0000;   // plane B
+        const uint8_t* end = src + kStarRows;
+        // Double each set player bit to 2 Amiga px: player bit b (b7 = leftmost) → sprite
+        // word bits (2b+1, 2b).  All 4 star sub-positions ($80/$20/$04/$01 = bits 7/5/2/0)
+        // land inside the 16 px sprite this way.  kDoubleGlyph is the precomputed byte→
+        // doubled-word table (built in initialize()), so the per-row 8-iteration bit loop
+        // becomes one lookup — that loop was ~22 ms of the stars/planet frame on the A500.
+        // Post-increment pointers (the 68000 (An)+ mode), no per-row index multiplies.
+        while (src < end) {
+            *d++ = kDoubleGlyph[*src++];   // plane A (colour bit 0 = pen 01)
+            *d++ = 0x0000;                 // plane B
         }
     }
 }
@@ -691,36 +691,51 @@ void RescueOnFractalus::decodeTunnelField(int rowLo, int rowHi)
 // flight = ($1070, 96, 43) — flight's mode-D rows are stride 96 (two 48-byte
 // double-buffer halves; offset 0 is the displayed half) LMS'd from $1070 (= the
 // $1010 row-addr base + one off-screen scroll-margin row).  The +4 crop centres
-// the displayed 40 of 48 either way; the per-byte viewportShadow is shared (the
-// stride/base change between phases re-fills it via viewportForceFull).
+// the displayed 40 of 48 either way.
 void RescueOnFractalus::renderViewportModeD(uint16_t srcBase, int stride, int rows)
 {
     if (!terrainBitmap) return;
     static const int kCrop   = 4;    // central 40 of 48 (centres content)
-    const bool full = viewportForceFull;
-    viewportForceFull = false;
-    uint8_t* base = (uint8_t*)terrainBitmap->data;
 
     // Write each mode-D row to ONE interleaved scanline; the copper line-doubles the
     // region vertically (buildCopperList's viewport band toggles the bitplane modulo
-    // -40/+80 per scanline, re-displaying each row twice).  This halves the per-byte
-    // store work here vs the old CPU doubling (which wrote both scanlines).  p1 tracks
-    // plane1; plane2/plane3 at +40/+80; per row p1 walks 40 then += 80 (= one 120-byte
-    // interleaved scanline).  ALL pointers advance in the for-increment — even on the
-    // shadow-skip `continue` — so they stay column-aligned.  Per-byte shadow: the
-    // planet sphere / scrolling terrain only changes some bytes, so re-decode just those.
+    // -40/+80 per scanline, re-displaying each row twice).  Layout per row: 40 plane1
+    // bytes, plane2 at +40, plane3 (always 0) at +80, then +120 to the next scanline.
+    //
+    // Decode 4 source bytes at a time into one 32-bit store per plane (the 68000 (An)+
+    // mode), as the Standby door decoder does: the plane bytes go to DMA-contended CHIP
+    // RAM, so throughput is dominated by the store count and longs roughly halve it vs
+    // byte writes.  But the planet zoom / star scroll leaves much of the field static
+    // frame-to-frame, so guard each long with a long-granular shadow: skip the (q1,q2)
+    // stores when the 4-byte source group is unchanged.  plane3 is always 0 in mode-D —
+    // clear it only on a forceFull frame (entry / source-base change); nothing writes it
+    // during the viewport, so it stays 0 thereafter.  vdest is chip-aligned and the
+    // +40/+80/120 offsets keep every long aligned.
+    const bool full = viewportForceFull || (srcBase != viewportLastBase);
+    viewportForceFull = false;
+    viewportLastBase  = srcBase;
+
     const uint8_t* src = (const uint8_t*)&mem[srcBase + kCrop];
-    uint8_t* p1  = base;
-    uint8_t* shp = viewportShadow;                            // walking shadow pointer
+    uint8_t* vdest    = (uint8_t*)terrainBitmap->data;
+    uint32_t* shadow  = viewportShadow;
     for (int row = 0; row < rows; row++, src += stride) {
-        const uint8_t* rowSrc = src;
-        for (int b = 0; b < 40; b++, rowSrc++, shp++, p1++) {
-            uint8_t s = *rowSrc;
-            if (!full && s == *shp) continue;
-            *shp = s;
-            p1[0] = kModeDP1[s]; p1[40] = kModeDP2[s]; p1[80] = 0;   // one scanline; copper repeats it
+        const uint8_t* rs = src;
+        uint32_t* q1 = (uint32_t*)vdest;
+        uint32_t* q2 = (uint32_t*)(vdest + 40);
+        uint32_t* q3 = (uint32_t*)(vdest + 80);
+        for (int b = 0; b < 10; b++, q1++, q2++, q3++, shadow++) {   // 10 longs = 40 bytes
+            uint8_t s0 = rs[0], s1 = rs[1], s2 = rs[2], s3 = rs[3]; rs += 4;
+            uint32_t key = ((uint32_t)s0 << 24) | ((uint32_t)s1 << 16) |
+                           ((uint32_t)s2 <<  8) |  (uint32_t)s3;
+            if (!full && key == *shadow) continue;           // 4-byte group unchanged
+            *shadow = key;
+            *q1 = ((uint32_t)kModeDP1[s0] << 24) | ((uint32_t)kModeDP1[s1] << 16) |
+                  ((uint32_t)kModeDP1[s2] <<  8) |  (uint32_t)kModeDP1[s3];
+            *q2 = ((uint32_t)kModeDP2[s0] << 24) | ((uint32_t)kModeDP2[s1] << 16) |
+                  ((uint32_t)kModeDP2[s2] <<  8) |  (uint32_t)kModeDP2[s3];
+            if (full) *q3 = 0u;                              // plane3 unused; clear once on entry
         }
-        p1 += 80;                                             // 40 walked -> 120 = one interleaved scanline
+        vdest += 120;                                        // one interleaved scanline
     }
 }
 
@@ -908,16 +923,18 @@ void RescueOnFractalus::deriveRenderSignals()
     // fresh entry into Standby re-decodes the doors exactly once and then idles.
     if (g_doorFieldReady == 0u || rsLaunched || rsViewport) terrainDirty = true;
 
-    // Force a full title + cockpit rescan while the scene is transitional (boot/building),
-    // a viewport scene, or in flight — so the initial cockpit build (written by the
-    // transpiled display_setup, not the perFrameWork/VBI writers) and the per-frame
-    // flight cockpit updates are never missed.  In the settled doors/standby phases these
-    // stay clean and only the writers set them, so the ~580-cell scan is skipped on the
-    // frames where nothing changed.  (The cockpit RAM is built before g_doorFieldReady
-    // latches, so the g_doorFieldReady==0 window covers its one-time capture.)
-    if (g_doorFieldReady == 0u || rsViewport || rsFlight) {
+    // Force a full title + cockpit rescan while the scene is transitional (boot/building)
+    // or in flight, plus ONCE on entry to the stars/planet viewport — so the initial
+    // cockpit build (written by the transpiled display_setup, not the native writers) and
+    // the per-frame flight cockpit updates are never missed.  During the settled stars/
+    // planet phase the cockpit is static ($004A clear → update_cockpit_digits doesn't run),
+    // so re-scanning ~580 cells EVERY frame was pure cost (~10 ms/frame on the A500); after
+    // the one-time entry scan we rely on the writers' dirty flags (title alternation flags
+    // g_titleDirty via the $782A copy hook).  (The g_doorFieldReady==0 window covers boot.)
+    if (g_doorFieldReady == 0u || rsFlight || (rsStars && !prevRsStars)) {
         g_titleDirty = 1; g_cockpitDirty = 1;
     }
+    prevRsStars = rsStars;
 }
 
 // perFrameWork(): per-frame non-phase work (the tail of the old update()).  These
