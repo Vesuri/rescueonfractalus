@@ -65,8 +65,19 @@ extern "C" void game_vbi_isr(void);
 // byte = one channel fire, played by the same pokey_period() as the pure-tone
 // path; bipolar ±127, AUDC volume scales amplitude via AUDxVOL.
 static __chip uint8_t wave_pure[2]      = { 0x7F, 0x81 }; // pure tone (square)
-static __chip uint8_t wave_buf[4][2][64];                // per-channel poly, ping-pong
-static uint8_t        wave_idx[4]       = { 0, 0, 0, 0 }; // index Paula is pointed at
+// Precomputed POKEY poly distortion waveforms.  A poly waveform's SHAPE depends only
+// on the stride residue through the poly counter (s4 = stride%15 for the poly4 buzz,
+// s5 = stride%31 for the poly5-gated tone) and the distortion mode — NOT on the channel
+// or absolute pitch (pitch is carried separately by AUD_PER).  So there are only 15
+// distinct poly4 waveforms and 31 distinct poly5-tone waveforms; build_poly_tables()
+// builds all of them once at init and update_paula_channel just re-points Paula at the
+// matching immutable buffer per note.  Generating on the fly (the old per-note ping-pong)
+// glitched at note onset: the engine writes AUDF before AUDC, so a note's first repoint
+// could land on a half-built or wrong-mode buffer that Paula then latched at the next DMA
+// loop wrap.  Selecting from a static table removes that hazard.
+// poly4 = 30 bytes (15 words); poly5tone = 62 bytes (31 words).
+static __chip uint8_t poly4_wave[15][30];
+static __chip uint8_t poly5_wave[31][62];
 
 // POKEY "noise" distortion (AUDC with PURE clear AND POLY4 clear: $80 ungated,
 // $00 poly5-gated) is pseudo-random noise, which Paula cannot synthesise.  We DMA a
@@ -126,31 +137,14 @@ static const uint8_t kBit5[31] = { 1,1,1,1,0,1,1,0,1,0,0,1,1,0,0,0,0,0,1,1,1,0,0
 #define POKEY_POLY4     0x40u
 #define POKEY_PURETONE  0x20u
 
-// Build channel ch's poly waveform and return LEN in words (0 = pure tone /
-// unmodelled mode → caller uses wave_pure).  Writes into the ping-pong buffer
-// Paula is NOT currently reading, then advances wave_idx[ch] to it, so the
-// playing waveform is never overwritten mid-DMA (avoids a click at note change).
-// Captures 2x the poly period (30 or 62 bytes) — a clean, even-length loop
-// regardless of stride.
-static uint16_t build_poly_wave(uint8_t ch, uint8_t audc, uint8_t audf, uint8_t audctl)
+// Build one poly waveform of `lenBytes` bytes into dst.  poly4: flip output per kBit4
+// vs the current output; poly5tone: poly5-gated pure-tone flip.  Phase starts at p4=p5=0.
+// Captures 2x the poly period (30 or 62 bytes) — a clean, even-length loop regardless of
+// stride.  ($40 poly5-gated poly4 is rendered as ungated poly4 — the full poly5×poly4
+// period 465 won't fit — a close-enough raspy buzz for the launch-door swoosh.)
+static void build_poly_one(uint8_t* dst, bool poly4, uint8_t s4, uint8_t s5, uint16_t lenBytes)
 {
-    bool poly5tone = (audc & POKEY_PURETONE) && !(audc & POKEY_NOTPOLY5);                       // $20
-    // POLY4 set, PURE clear → poly4 buzz: $C0 (poly5 bypassed) and $40 (the launch door
-    // swoosh, poly5-gated).  The full poly5×poly4 period (465) can't fit the 64-byte
-    // buffer, so $40 is rendered as ungated poly4 — same raspy buzz, close enough that
-    // the door reads as a buzz rather than a clean tone.
-    bool poly4     = !(audc & POKEY_PURETONE) && (audc & POKEY_POLY4);                          // $C0, $40
-    if (!poly5tone && !poly4) return 0u;
-
-    uint16_t baseDiv  = (audctl & 0x01u) ? 114u : 28u;
-    uint32_t stride   = (uint32_t)(audf + 1u) * baseDiv;
-    uint8_t  s4       = (uint8_t)(stride % 15u);
-    uint8_t  s5       = (uint8_t)(stride % 31u);
-    uint16_t lenBytes = poly4 ? 30u : 62u;
-
-    uint8_t  next = wave_idx[ch] ^ 1u;       // the buffer Paula is not playing
-    uint8_t* dst  = wave_buf[ch][next];
-    uint8_t  out = 0, p4 = 0, p5 = 0;
+    uint8_t out = 0, p4 = 0, p5 = 0;
     for (uint16_t i = 0; i < lenBytes; i++) {
         p4 = (uint8_t)((p4 + s4) % 15u);   // advance polys by stride, then sample
         p5 = (uint8_t)((p5 + s5) % 31u);
@@ -159,8 +153,14 @@ static uint16_t build_poly_wave(uint8_t ch, uint8_t audc, uint8_t audf, uint8_t 
         if (toggle) out ^= 1u;
         dst[i] = out ? 0x7Fu : 0x81u;
     }
-    wave_idx[ch] = next;
-    return (uint16_t)(lenBytes >> 1);
+}
+
+// Precompute every distinct poly waveform — one per stride residue — into the static
+// tables.  Called once from audioInit; the tables are immutable thereafter.
+static void build_poly_tables(void)
+{
+    for (uint8_t s4 = 0; s4 < 15u; s4++) build_poly_one(poly4_wave[s4], true,  s4, 0, 30u);
+    for (uint8_t s5 = 0; s5 < 31u; s5++) build_poly_one(poly5_wave[s5], false, 0, s5, 62u);
 }
 
 // Shadow of POKEY registers $D200..$D20F (bus_write doesn't update mem[] for
@@ -189,6 +189,99 @@ static const uint32_t kAudioBase[4] = {
 #define AUD_VOL(ch) (*(volatile uint16_t*)(kAudioBase[ch] + 8))
 #define AUD_PTR(ch) (*(volatile uint32_t*)(kAudioBase[ch] + 0))
 #define AUD_LEN(ch) (*(volatile uint16_t*)(kAudioBase[ch] + 4))
+
+// Changing a channel's WAVEFORM (PTR/LEN) — a real note/instrument change — requires a DMA
+// restart, because writing AUD_PER takes effect immediately but the new AUD_PTR is only
+// latched by Paula at the next loop wrap.  Without a restart the OLD waveform plays at the
+// NEW period for up to a full loop (~100 ms on a big bass pitch drop) — the audible
+// "squelch" between notes.  A restart must hold the channel OFF for >2 sample periods or
+// the hardware "stays on and continues from where it left off" (HW manual §5-2-7); FS-UAE
+// models this, so an immediate off→on is a no-op.  The fix is the classic ProTracker dance:
+// DMA off → wait ~7 rasterlines → set registers → DMA on.
+//
+// Per-channel updates are DEFERRED into a "want" table during the music tick and applied
+// once by flush_paula() at the tick's end, so the ~7-line wait is paid ONCE for ALL the
+// channels that changed waveform (not once per channel).  Same-waveform updates (the
+// melody's per-tick volume envelope) take the no-wait live-write path and never restart,
+// so they don't click.
+static uint32_t cur_ptr[4] = { 0, 0, 0, 0 };  // waveform Paula is currently pointed at
+static uint16_t cur_len[4] = { 0, 0, 0, 0 };
+static uint16_t cur_per[4] = { 0, 0, 0, 0 };  // period currently loaded (= the one in effect
+                                              // during the off window → sizes the reset wait)
+static uint32_t want_ptr[4];
+static uint16_t want_len[4], want_per[4];
+static uint8_t  want_vol[4];
+static uint8_t  want_valid = 0;               // bitmask of channels written this tick
+
+// Record a channel's desired Paula state; applied by flush_paula().
+static void want_set(uint8_t ch, uint32_t ptr, uint16_t len, uint16_t per, uint8_t vol)
+{
+    want_ptr[ch] = ptr; want_len[ch] = len; want_per[ch] = per; want_vol[ch] = vol;
+    want_valid |= (uint8_t)(1u << ch);
+}
+
+// Busy-wait `lines` rasterline transitions by watching the VHPOSR ($DFF006) vertical beam
+// byte (V7..V0).  PAL has 312 lines, so that byte wraps 255→0; counting *transitions*
+// (now != prev) handles the wrap with no special case — the bug that hung the old
+// wait-on-exact-value loop.  A hard iteration cap guarantees we can never spin forever
+// even if the beam were somehow stuck.
+static void wait_rasterlines(uint8_t lines)
+{
+    uint8_t  prev  = (uint8_t)(*vhposrPointer >> 8);
+    uint32_t guard = 0;
+    while (lines) {
+        uint8_t now = (uint8_t)(*vhposrPointer >> 8);
+        if (now != prev) { prev = now; lines--; }
+        if (++guard > 200000u) break;   // ~hundreds of lines worth — escape hatch, never hang
+    }
+}
+
+// Apply all channels recorded since the last flush.  Waveform changes are batched through a
+// single DMA off → wait → on so the rasterline wait is paid once.  Called at the end of the
+// music tick (sfx_voice_tick_native).
+extern "C" void flush_paula(void)
+{
+    uint8_t valid = want_valid;
+    want_valid = 0;
+    if (!valid) return;
+
+    // Split into "restart" (waveform changed) and "live" (same waveform → just VOL/PER).
+    uint8_t restart = 0;
+    for (uint8_t ch = 0; ch < 4; ch++) {
+        if (!(valid & (1u << ch))) continue;
+        if (want_ptr[ch] != cur_ptr[ch] || want_len[ch] != cur_len[ch])
+            restart |= (uint8_t)(1u << ch);
+        else { AUD_PER(ch) = want_per[ch]; AUD_VOL(ch) = want_vol[ch];     // live, no click
+               cur_per[ch] = want_per[ch]; }
+    }
+    if (!restart) return;
+
+    // The channel must stay OFF for >2 sample periods of the period STILL LOADED (the old
+    // note's) or it "stays on and continues" (§5-2-7).  A PAL rasterline is ~227 Paula
+    // ticks, so size the wait from the slowest old period among the restarting channels:
+    // 2*per/227 lines, plus margin.  Fast old notes wait the ~7-line floor; a slow old bass
+    // note (per~6011) needs ~53 lines (~3.4 ms) — fine on the title screen.
+    uint16_t max_per = 0;
+    for (uint8_t ch = 0; ch < 4; ch++)
+        if ((restart & (1u << ch)) && cur_per[ch] > max_per) max_per = cur_per[ch];
+    uint16_t wl = (uint16_t)((2u * (uint32_t)max_per) / 227u + 4u);
+    if (wl < 7u)  wl = 7u;
+    if (wl > 110u) wl = 110u;
+
+    *dmaconPointer = (uint16_t)restart;            // AUDxEN off for all changed channels
+    wait_rasterlines((uint8_t)wl);                 // hold off >2 OLD sample periods → resets
+    for (uint8_t ch = 0; ch < 4; ch++) {
+        if (!(restart & (1u << ch))) continue;
+        AUD_PTR(ch) = want_ptr[ch];
+        AUD_LEN(ch) = want_len[ch];
+        AUD_PER(ch) = want_per[ch];
+        AUD_VOL(ch) = want_vol[ch];
+        cur_ptr[ch] = want_ptr[ch];
+        cur_len[ch] = want_len[ch];
+        cur_per[ch] = want_per[ch];
+    }
+    *dmaconPointer = (uint16_t)(0x8000u | restart); // AUDxEN on — all at once, one wait paid
+}
 
 // ---- POKEY→Paula frequency conversion ----------------------------------------
 static uint16_t pokey_period(uint8_t ch, uint8_t audf, uint8_t audctl)
@@ -256,7 +349,10 @@ static void update_paula_channel(uint8_t ch)
     // single AUDC-with-volume write sets distortion + period + volume together.
     if (vol == 0u) {
         noiseOn[ch] = false;
-        AUD_VOL(ch) = 0u;
+        // Silence with NO waveform change (want_ptr = current) so flush just drops VOL to 0
+        // and never restarts.  Routing through want_set (rather than a live AUD_VOL write)
+        // ensures this overrides any earlier want recorded for this channel this tick.
+        want_set(ch, cur_ptr[ch], cur_len[ch], per ? per : 124u, 0u);
         return;
     }
 
@@ -268,28 +364,30 @@ static void update_paula_channel(uint8_t ch)
     noiseOn[ch] = is_noise && (vol != 0u);
     if (is_noise) {
         if (per == 0u) per = 124u;        // out-of-range → fastest Paula rate (still noise)
-        AUD_PTR(ch) = (uint32_t)noise_buf;
-        AUD_LEN(ch) = (uint16_t)(NOISE_LEN / 2);   // words
-        AUD_PER(ch) = per;
-        AUD_VOL(ch) = vol;
+        want_set(ch, (uint32_t)noise_buf, (uint16_t)(NOISE_LEN / 2), per, vol);
         return;
     }
 
     if (per == 0u) vol = 0u;  // out-of-range frequency → silence
 
-    // Point the channel at the waveform for its distortion mode.  Paula latches
-    // PTR/LEN at the next DMA loop wrap, so the change takes effect promptly.
-    uint16_t len_words = build_poly_wave(ch, audc, audf, audctl);
-    if (len_words == 0u) {
-        AUD_PTR(ch) = (uint32_t)wave_pure;   // pure tone / unmodelled
-        AUD_LEN(ch) = 1u;
+    // Point the channel at the precomputed waveform for its distortion mode + stride
+    // residue (shapes built once at init; Paula latches PTR/LEN at the next DMA loop
+    // wrap, so the change takes effect promptly).
+    bool poly5tone = (audc & POKEY_PURETONE) && !(audc & POKEY_NOTPOLY5);   // $20
+    bool poly4     = !(audc & POKEY_PURETONE) && (audc & POKEY_POLY4);      // $C0, $40
+    uint32_t sel_ptr; uint16_t sel_len;
+    if (!poly5tone && !poly4) {
+        sel_ptr = (uint32_t)wave_pure; sel_len = 1u;       // pure tone / unmodelled
     } else {
-        AUD_PTR(ch) = (uint32_t)wave_buf[ch][wave_idx[ch]];
-        AUD_LEN(ch) = len_words;
+        uint16_t baseDiv = (audctl & 0x01u) ? 114u : 28u;
+        uint32_t stride  = (uint32_t)(audf + 1u) * baseDiv;
+        if (poly4) {
+            sel_ptr = (uint32_t)poly4_wave[stride % 15u]; sel_len = 15u;   // 30 bytes
+        } else {
+            sel_ptr = (uint32_t)poly5_wave[stride % 31u]; sel_len = 31u;   // 62 bytes
+        }
     }
-
-    if (per != 0u) AUD_PER(ch) = per;
-    AUD_VOL(ch) = vol;
+    want_set(ch, sel_ptr, sel_len, per ? per : 124u, vol);
 }
 
 // Forward declaration — defined in SfxPlayer.cpp
@@ -304,6 +402,7 @@ void PlatformAmiga::audioInit()
     for (int i = 0; i < 16; i++) pokey[i] = 0;
     lfsr_state = 0x1FFFFu;
     fill_noise_buf();   // pre-render the poly17 noise sample for noise-distortion voices
+    build_poly_tables(); // pre-render every distinct poly distortion waveform (immutable)
 
     // SFX is initialised by the mem[$0090] gate in RescueOnFractalus::update():
     // the snapshot has $0090=1, so the first update() call resets $073C/$073A

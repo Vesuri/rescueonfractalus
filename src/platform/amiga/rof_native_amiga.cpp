@@ -99,6 +99,10 @@ extern "C" void sfx_seq_step_native(void)
 //   half = mem[$073A] >> 1
 //   if half < 3:  audc = half + 0xA0  (CMP carry = 0)
 //   if half >= 3: audc = 0xA3         (CMP carry = 1 → LDA #2 + ADC #0xA0 + C)
+// flush_paula (PlatformAmiga.cpp): apply this tick's batched POKEY→Paula register changes,
+// paying the single DMA-restart rasterline wait once for all channels that changed waveform.
+extern "C" void flush_paula(void);
+
 extern "C" void sfx_voice_tick_native(void)
 {
     mem[0x073A]--;
@@ -120,6 +124,10 @@ extern "C" void sfx_voice_tick_native(void)
         // Route through platform_hw_write so Paula + mem[] both see it.
         platform_hw_write((uint16_t)(0xD1FFu + gate), (uint8_t)(audc + 2u));
     }
+
+    // All POKEY writes for this tick are in; apply them to Paula in one batch (one
+    // rasterline wait for all the channels whose waveform changed — see flush_paula).
+    flush_paula();
 }
 
 // ============================================================================
