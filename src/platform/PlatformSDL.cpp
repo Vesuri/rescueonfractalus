@@ -1,6 +1,7 @@
 #include "PlatformSDL.h"
 #include "atari_os_font.h"
 #include "../cpu/cpu.h"
+#include "../xex_load.h"   /* shared XEX-format walk (xex_parse / xex_overlay_osrom) */
 #include <cstdio>
 #include <cstdlib>      /* getenv, atoi */
 #include <csignal>      /* signal, SIGINT, SIGTERM (Ctrl-C handling in run()) */
@@ -208,6 +209,12 @@ int PlatformSDL::framesPerSecond() {
     return framesPerSecond_;
 }
 
+/* SDL mem[] writer for the shared XEX parser: a plain byte copy (the host is fast
+   and the Amiga's endian-specific 32-bit block store would byte-swap here). */
+static void sdl_mem_write(uint16_t s, const uint8_t* src, uint32_t cnt) {
+    for (uint32_t k = 0; k < cnt; k++) mem[(uint16_t)(s + k)] = src[k];
+}
+
 int PlatformSDL::loadImage(const char* path) {
     memset((uint8_t*)mem, 0, 65536);
 
@@ -226,21 +233,12 @@ int PlatformSDL::loadImage(const char* path) {
         size_t len = fread(xex, 1, sizeof(xex), f);
         fclose(f);
 
-        size_t i = 0;
-        if (i + 1 < len && xex[i] == 0xFF && xex[i + 1] == 0xFF) i += 2;   /* $FFFF magic */
-        while (i + 4 <= len) {
-            if (xex[i] == 0xFF && xex[i + 1] == 0xFF) { i += 2; continue; } /* seg marker */
-            uint16_t s = (uint16_t)(xex[i] | (xex[i + 1] << 8));
-            uint16_t e = (uint16_t)(xex[i + 2] | (xex[i + 3] << 8));
-            i += 4;
-            uint32_t seglen = (uint32_t)e - (uint32_t)s + 1u;
-            for (uint32_t k = 0; k < seglen && i < len; k++, i++)
-                mem[(uint16_t)(s + k)] = xex[i];
-        }
+        /* Place each XEX segment via the shared format walk (see xex_load.h). */
+        xex_parse(xex, (uint32_t)len, sdl_mem_write);
 
-        /* Overlay the Atari OS ROM (same asset + layout as the Amiga): the asset is
-           [0..$1000) -> $C000-$CFFF, [$1000..$3800) -> $D800-$FFFF (the $D000-$D7FF
-           hardware range is skipped, so hwRead/hwWrite stay authoritative there). */
+        /* Overlay the Atari OS ROM (same asset + layout as the Amiga, applied by the
+           shared xex_overlay_osrom: [0..$1000)->$C000, [$1000..$3800)->$D800; the
+           $D000-$D7FF hardware range is skipped so hwRead/hwWrite stay authoritative). */
         const char* romPaths[] = { "amiga/assets/atari_osrom.bin", "assets/atari_osrom.bin" };
         FILE* r = 0;
         for (size_t p = 0; p < sizeof(romPaths)/sizeof(romPaths[0]) && !r; p++)
@@ -249,8 +247,7 @@ int PlatformSDL::loadImage(const char* path) {
             static uint8_t rom[0x3800];
             size_t rn = fread(rom, 1, sizeof(rom), r);
             fclose(r);
-            for (uint32_t k = 0; k < 0x1000u && k < rn; k++)        mem[(uint16_t)(0xC000u + k)] = rom[k];
-            for (uint32_t k = 0; k < 0x2800u && 0x1000u + k < rn; k++) mem[(uint16_t)(0xD800u + k)] = rom[0x1000u + k];
+            xex_overlay_osrom(rom, (uint32_t)rn, sdl_mem_write);
             printf("[rof] loaded pristine XEX %s + OS ROM (%zu bytes)\n", path, rn);
         } else {
             fprintf(stderr, "[rof] WARNING: atari_osrom.bin not found; $E000 charset (LEVEL text) will be blank\n");

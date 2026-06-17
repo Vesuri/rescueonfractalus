@@ -11,8 +11,34 @@
 //
 // Integer types come from the project's force-included framework/SASCCompat.h
 // (CPPFLAGS -include), like the other Amiga TUs — no <stdint.h> here.
+//
+// The XEX-format walk + OS-ROM layout are shared with the SDL backend in
+// xex_load.h; this TU supplies the Amiga data source (incbin'd .rodata) and the
+// mem[] writer (endian-specific 32-bit block stores — a boot-speed win).
+
+#include "../../src/xex_load.h"   // xex_parse / xex_overlay_osrom (shared format walk)
 
 extern "C" volatile uint8_t mem[65536];
+
+// Amiga mem[] writer: mem[] is even-aligned (see RoF.map) so 32-bit writes are legal on
+// the 68000 (only ODD addresses fault).  Align the dest to even (≤1 head byte), then store
+// the body 4 bytes at a time — 4x fewer volatile stores than a per-byte loop, on the boot
+// path whose cost is directly the user-visible black-screen startup delay.  The source is
+// read by bytes (arbitrary alignment) and packed big-endian (68000), so mem[start+k]=src[k].
+static void amiga_mem_write(uint16_t s, const uint8_t* src, uint32_t cnt)
+{
+    if ((uint32_t)s + cnt <= 0x10000u) {
+        uint32_t k = 0;
+        if (cnt && (s & 1u)) { mem[s] = src[0]; k = 1; }
+        for (; k + 4u <= cnt; k += 4u)
+            *(volatile uint32_t*)(mem + (uint16_t)(s + k)) =
+                ((uint32_t)src[k] << 24) | ((uint32_t)src[k + 1] << 16) |
+                ((uint32_t)src[k + 2] << 8) | (uint32_t)src[k + 3];
+        for (; k < cnt; k++) mem[(uint16_t)(s + k)] = src[k];
+    } else {
+        for (uint32_t k = 0; k < cnt; k++) mem[(uint16_t)(s + k)] = src[k];  // wraps $FFFF
+    }
+}
 
 // The original Atari 8-bit segmented load file, embedded by incbin.s.
 extern "C" uint8_t rof_xex[];
@@ -24,11 +50,8 @@ extern "C" uint8_t rof_xex_end[];
 extern "C" uint8_t atari_osrom[];
 extern "C" uint8_t atari_osrom_end[];
 
-// XEX format: optional leading $FFFF magic, then segments of
-//   [startLo, startHi, endLo, endHi, data...]
-// A repeated $FFFF before a segment is a (skippable) header marker.  The INITAD
-// pseudo-segments ($02E2-$02E3) are loaded harmlessly; the entry point is invoked
-// from C (RescueOnFractalus::run -> game_entry) rather than honoured here.
+// (XEX format + OS-ROM layout documented in xex_load.h.)  The entry point is
+// invoked from C (RescueOnFractalus::run -> game_entry), not honoured here.
 extern "C" void load_xex_image(void)
 {
     // Zero RAM.  mem[] is even-aligned (see RoF.map) so 32-bit writes are legal on the
@@ -40,51 +63,8 @@ extern "C" void load_xex_image(void)
         for (uint32_t i = 0; i < 65536u / 4u; i++) m32[i] = 0u;
     }
 
-    const uint8_t* d   = rof_xex;
-    const uint32_t len = (uint32_t)(rof_xex_end - rof_xex);
-    uint32_t i = 0;
-    if (i + 1 < len && d[i] == 0xFF && d[i + 1] == 0xFF) i += 2;   // skip $FFFF magic
-    while (i + 4 <= len) {
-        if (d[i] == 0xFF && d[i + 1] == 0xFF) { i += 2; continue; } // segment-header marker
-        uint16_t s = (uint16_t)(d[i] | (d[i + 1] << 8));
-        uint16_t e = (uint16_t)(d[i + 2] | (d[i + 3] << 8));
-        i += 4;
-        uint32_t seglen = (uint32_t)e - (uint32_t)s + 1u;
-        uint32_t cnt = seglen;
-        if (cnt > len - i) cnt = len - i;             // truncated segment guard (was i<len)
-        const uint8_t* src = d + i;
-        if ((uint32_t)s + cnt <= 0x10000u) {
-            // mem[] is even-aligned, so long writes are legal on the 68000 at any even Atari
-            // address (only ODD faults).  Align the dest to even (≤1 head byte), then store
-            // the body 4 bytes at a time — 4x fewer volatile stores than the per-byte loop.
-            // The XEX data (src) is read by bytes (arbitrary alignment) and packed big-endian
-            // (68000) so mem[s+k]=src[k].
-            uint32_t k = 0;
-            if (cnt && (s & 1u)) { mem[s] = src[0]; k = 1; }
-            for (; k + 4u <= cnt; k += 4u)
-                *(volatile uint32_t*)(mem + (uint16_t)(s + k)) =
-                    ((uint32_t)src[k] << 24) | ((uint32_t)src[k + 1] << 16) |
-                    ((uint32_t)src[k + 2] << 8) | (uint32_t)src[k + 3];
-            for (; k < cnt; k++) mem[(uint16_t)(s + k)] = src[k];
-        } else {
-            for (uint32_t k = 0; k < cnt; k++) mem[(uint16_t)(s + k)] = src[k];  // wraps $FFFF
-        }
-        i += cnt;
-    }
-
-    // Overlay the Atari OS ROM (the platform ROM the game reads — e.g. the $E000
-    // character set the "LEVEL nn" text renderer uses).  Layout in the asset:
-    // [0..$1000) -> $C000-$CFFF, [$1000..$3800) -> $D800-$FFFF.  The $D000-$D7FF
-    // hardware range is intentionally NOT covered, so it never overwrites mem[$D01F]
-    // (the keyboard-maintained CONSOL) or other HW shadows.
-    // atari_osrom is .balign 4 (incbin.s) and the dest offsets ($C000/$D800) are even, so
-    // copy by longs (both blocks are whole # of longs).
-    {
-        const uint32_t*   rs = (const uint32_t*)atari_osrom;
-        volatile uint32_t* d0 = (volatile uint32_t*)(mem + 0xC000u);
-        for (uint32_t k = 0; k < 0x1000u / 4u; k++) d0[k] = rs[k];
-        volatile uint32_t* d1 = (volatile uint32_t*)(mem + 0xD800u);
-        const uint32_t*    r1 = (const uint32_t*)(atari_osrom + 0x1000u);
-        for (uint32_t k = 0; k < 0x2800u / 4u; k++) d1[k] = r1[k];
-    }
+    // Place each XEX segment, then overlay the OS ROM — both via the shared walk in
+    // xex_load.h, with amiga_mem_write doing the 68000 block stores.
+    xex_parse(rof_xex, (uint32_t)(rof_xex_end - rof_xex), amiga_mem_write);
+    xex_overlay_osrom(atari_osrom, (uint32_t)(atari_osrom_end - atari_osrom), amiga_mem_write);
 }
