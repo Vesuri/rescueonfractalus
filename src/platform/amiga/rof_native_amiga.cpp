@@ -787,16 +787,24 @@ static void scroll_terrain_dl(void)
 }
 
 // sound_event_dispatch @ $5367 (Standby subset): the per-frame priority dispatcher
-// that runs exactly ONE action.  $0088 (ring) outranks $008A (door scroll), so the
-// two are sequential — the doors scroll with a static tunnel while $0088==0, and
-// the ring only animates once $0088 is armed (after the doors finish opening; the
-// hand-off lives in RescueOnFractalus::update).  The $008C/clear_slot and the unused
-// $0089/$008B branches are documented but inert in the Standby scene.
+// that runs exactly ONE action.  $0088 (ring) outranks $0089 (column scroll) outranks
+// $008A (door scroll), so they are sequential — the doors scroll with a static tunnel
+// while $0088==0, the ring animates once $0088 is armed (after the doors finish
+// opening; the hand-off lives in RescueOnFractalus::update), and once the tunnel ends
+// ($0088 wraps to 0) the $0089 column scroll drives the stars/planet phase.
+// The $008C/clear_slot and $008B branches are documented but inert in Standby.
+// The transpile's 6502 register file (src/cpu/cpu.h: `Cpu6502 cpu`) — mirrored
+// as a POD (see launch_native.cpp for why we don't #include cpu.h).
+extern "C" { typedef struct { uint8_t A, X, Y, S, N, V, Z, C, I, D; } Cpu6502; extern Cpu6502 cpu; }
+extern "C" void scroll_terrain_columns(void);  // $6AEE transpiled (entered with A = $0089)
 extern "C" void sound_event_dispatch_native(void)
 {
     if (mem[zp::stepModeFlag]) return;                       // $008D: reverse ring (unused here)
     if (mem[zp::vbiFlags]) { step_accum_add_75(); return; }  // $0088: tunnel ring cycle
-    if (mem[zp::scrollColumnsGate]) return;                  // $0089: scroll_terrain_columns (unused)
+    if (uint8_t g = mem[zp::scrollColumnsGate]) {            // $0089: scroll star/planet columns
+        cpu.A = g; scroll_terrain_columns();                 // $6AEE: $0089 gate in A (>=4 advances accum)
+        return;
+    }
     if (mem[zp::dlIndexGate]) return;                        // $008B: dl_index_dec (unused)
     uint8_t ph = mem[zp::terrainScrollPhase];                // $008F every-other-frame toggle
     mem[zp::terrainScrollPhase] = (uint8_t)(ph >> 1);        // LSR $008F
@@ -1018,12 +1026,7 @@ static inline unsigned short beam_line(void) {
 
 extern "C" unsigned short rof_beam_line(void) { return beam_line(); }
 
-// The transpile's 6502 register file (src/cpu/cpu.h: `Cpu6502 cpu`) — mirrored
-// as a POD (see launch_native.cpp for why we don't #include cpu.h).
 extern "C" {
-typedef struct { uint8_t A, X, Y, S, N, V, Z, C, I, D; } Cpu6502;
-extern Cpu6502 cpu;
-
 // Flight init subroutines (game_entry $3E12-$3EA6) — genuine transpiled:
 void clear_pm_state(void);            // $3FBF: zero player/missile state + PCOLR shadows
 void clear_colors(void);              // $3CC3: zero colour shadows
