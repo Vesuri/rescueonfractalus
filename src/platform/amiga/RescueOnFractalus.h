@@ -5,6 +5,7 @@
 #include "framework/Sprite.h"
 #include "StandbyCopperList.h"
 #include "ViewportCopperList.h"
+#include "EmptyCopperList.h"
 
 // 2-bitplane attract screen: one BPLCON0 mode for the whole frame, Copper
 // switches the 4-colour palette (and bitmap pointer) at each region boundary,
@@ -103,7 +104,10 @@ private:
     Bitmap*     titleBitmap    = nullptr;
     Bitmap*     terrainBitmap  = nullptr;
     Bitmap*     cockpitBitmap  = nullptr;
-    Palette*    palette        = nullptr;  // drives title region + global fade
+    // Blank black list shown until g_standbyRevealReady latches (boot/standby build in
+    // progress) — switched to the real lists in renderFrame once ready.
+    EmptyCopperList* emptyCopper = nullptr;
+    bool emptyCopperInstalled = false;
     Sprite*     leftPost       = nullptr;
     Sprite*     rightPost      = nullptr;
     Sprite*     nullSprite     = nullptr;

@@ -46,8 +46,8 @@ extern "C" volatile uint8_t g_activeVbi;                       // 0=none 1=stand
 // frame-wait spin loops call platform_render_frame, which renders then waits for a real VBI.
 extern "C" void display_setup(void);
 
-// Black-until-ready reveal gate, latched on at display_setup entry (rof_native.c); read by
-// animatePalette to hold the screen black until the cockpit + sprites are set up.
+// Black-until-ready reveal gate, latched on at display_setup entry (rof_native.c); renderFrame
+// holds the EmptyCopperList on screen until it sets, then switches to the real lists.
 extern "C" volatile unsigned char g_standbyRevealReady;
 // Door-field-ready gate, latched on in display_setup once the doors/dots/LEVEL field has been
 // drawn into $2000 but BEFORE delay_loop_c2_to_c9 ramps the green colour $0071 (rof_native.c).
@@ -108,7 +108,6 @@ static const uint8_t kNibbleColour[16] = {
     3, 3, 3, 3, 3, 3, 3  // 9-15 → bg
 };
 
-#include "assets/title_pal.h"
 #include "assets/terrain_pal.h"
 #include "assets/atari_pal.h"
 // cockpit_pal.h and cockpit_raw removed: cockpit palette is now fully dynamic
@@ -149,36 +148,18 @@ static const uint16_t kBPLCON0_3P = (uint16_t)((3 << PLNCNTSHFT) | USE_BPLCON3);
 static const uint16_t kSprXLeft  = 0x81 + 17;
 static const uint16_t kSprXRight = 0x81 + 285;
 
-// ---- OCS colour helpers ------------------------------------------------------
-static uint16_t fadeColor(uint16_t color, uint16_t fade)
-{
-    uint16_t r = color >> 8;
-    uint16_t g = (color >> 4) & 0xFu;
-    uint16_t b = color & 0xFu;
-    return (uint16_t)(((fade * r >> 4) << 8) | ((fade * g >> 4) << 4) | (fade * b >> 4));
-}
-
-// ---- palette animation -------------------------------------------------------
-static void animatePalette(Palette* palette, uint16_t frame)
-{
-    // BLACK-UNTIL-READY: on the real Atari the boot→Standby build is near-instant, so the
-    // screen just appears.  On the Amiga the one-time setup (load_xex_image, scene.initialize,
-    // the game_entry mega-init) spans a couple of seconds during which the screen would
-    // otherwise show a piecemeal, janky build.  Hold the whole display black (fade 0 →
-    // fadeColor(c,0)=$000 for every copper colour) until the cockpit + top bar are drawn and
-    // the sprites are set up, then reveal at full intensity — the cockpit pops in and the
-    // window build (green fill / LEVEL / fade / title) animates visibly, as on the Atari.
-    //
-    // Ready signal: g_standbyRevealReady, LATCHED on at display_setup entry (rof_native.c) —
-    // by then game_main_loop has drawn the cockpit/top bar and scene.initialize has set up the
-    // sprites.  It LATCHES (never clears) on purpose: the launch sequence re-runs display_setup
-    // and transiently clears the music gate $00E7 (audio_timer_setup $712D), so gating on $00E7
-    // would black the screen out again when START is pressed — the latch keeps it revealed
-    // through the cinematic and flight.  (FAITHFUL: this only gates the one-time initial reveal;
-    // the live mem[] colour bytes still drive every in-scene ramp at full fade.)
-    (void)frame;
-    palette->setFade(g_standbyRevealReady ? 16 : 0);
-}
+// BLACK-UNTIL-READY: on the real Atari the boot→Standby build is near-instant, so the
+// screen just appears.  On the Amiga the one-time setup (load_xex_image, scene.initialize,
+// the game_entry mega-init) spans a couple of seconds during which the screen would
+// otherwise show a piecemeal, janky build.  We hold an EmptyCopperList (black, no
+// playfield/sprites) on screen until g_standbyRevealReady latches, then switch to the real
+// lists — see renderFrame.  (Previously this was a palette fade-to-black; the fade is gone.)
+//
+// g_standbyRevealReady LATCHES on at display_setup entry (rof_native.c) — by then
+// game_main_loop has drawn the cockpit/top bar and scene.initialize has set up the sprites.
+// It latches (never clears) on purpose: the launch sequence re-runs display_setup and
+// transiently clears the music gate $00E7, so gating on $00E7 would black the screen out
+// again when START is pressed — the latch keeps it revealed through the cinematic and flight.
 
 // ---- sprite data (staircase slant, see commit history for derivation) --------
 void RescueOnFractalus::fillSpriteData(Sprite* s, bool isRight)
@@ -257,9 +238,7 @@ void RescueOnFractalus::buildStarSprites()
 // ---- copper list builder -----------------------------------------------------
 void RescueOnFractalus::buildCopperList(CopperList* cl, uint16_t frame)
 {
-    animatePalette(palette, frame);
-    uint16_t f = palette->fade();
-
+    (void)frame;
     uint32_t* d   = cl->data();
 
     // d[0] is already copperWait(16,0) from the CopperList constructor; start at 1.
@@ -289,10 +268,10 @@ void RescueOnFractalus::buildCopperList(CopperList* cl, uint16_t frame)
         uint16_t tbg   = atariToOCS(mem[0x02C8]);  // COLBK = background (grey)
         uint16_t tpf0  = atariToOCS(mem[zp::textColorPf0]);  // COLPF0 = hi2=0 text
         uint16_t tpf1  = atariToOCS(0x78);         // COLPF1 = hi2=1 text (blue) — score digits
-        d[idx++] = copperMove(color00, fadeColor(tbg,  f));
-        d[idx++] = copperMove(color01, fadeColor(tpf0, f));
-        d[idx++] = copperMove(color02, fadeColor(tpf1, f));
-        d[idx++] = copperMove(color03, fadeColor(tbg,  f));
+        d[idx++] = copperMove(color00, tbg);
+        d[idx++] = copperMove(color01, tpf0);
+        d[idx++] = copperMove(color02, tpf1);
+        d[idx++] = copperMove(color03, tbg);
     }
     cl->showBitmap(idx, *titleBitmap);
     idx += 2 * kBP2;
@@ -301,7 +280,7 @@ void RescueOnFractalus::buildCopperList(CopperList* cl, uint16_t frame)
     // background grey (COLBK = mem[$02C8] = atariToOCS($06) = 0x555), so read
     // the same source rather than a hardcoded constant.
     d[idx++] = copperMove(color16, 0x000);
-    d[idx++] = copperMove(color17, fadeColor(atariToOCS(mem[0x02C8]), f));
+    d[idx++] = copperMove(color17, atariToOCS(mem[0x02C8]));
 
     // Sprite pointers:
     cl->showSprite(idx, 0, *leftPost);  idx += 2;
@@ -323,13 +302,13 @@ void RescueOnFractalus::buildCopperList(CopperList* cl, uint16_t frame)
     // Gauge bar colour (sprite pair 2/3, colour 01 = COLOR21 = $1AA).  The
     // original ramps player 1's colour through the $4DEA table as it fills,
     // ending at $D6 = #560; launch_gauge_step_native tracks that in $00DE.
-    d[idx++] = copperMove(0x1AA, fadeColor(atariToOCS(mem[0x00DE]), f));
+    d[idx++] = copperMove(0x1AA, atariToOCS(mem[0x00DE]));
     // Star colour: COLPM (mem[$02C0]) faded in 0→$0C grey (display_setup $6555).
     // Sprites 4/5 share COLOR25 ($1B2); sprites 6/7 share COLOR29 ($1BA).
     if (flightProbe) {
         d[idx++] = copperMove(0x1B2, 0xF0F);     // COLOR25 = magenta probe bar (sprite 4)
     } else if (stars) {
-        const uint16_t starCol = fadeColor(atariToOCS(mem[0x02C0]), f);
+        const uint16_t starCol = atariToOCS(mem[0x02C0]);
         d[idx++] = copperMove(0x1B2, starCol);   // COLOR25 (sprite pair 4/5 pen 01)
         d[idx++] = copperMove(0x1BA, starCol);   // COLOR29 (sprite pair 6/7 pen 01)
     }
@@ -367,10 +346,10 @@ void RescueOnFractalus::buildCopperList(CopperList* cl, uint16_t frame)
     };
     // Terrain palette (GTIA mode-10 nibbles 0/7/8): col0 black (also the tunnel's
     // pen 0), col1 LEVEL-04 text, col3 green background.  Ring feeds pens 1-6.
-    const uint16_t terr0 = fadeColor(atariToOCS(mem[0x02C0]), f);
-    const uint16_t terr1 = fadeColor(atariToOCS(mem[0x02C7]), f);
-    const uint16_t terr2 = fadeColor(atariToOCS(mem[zp::colorRing]), f);
-    const uint16_t terr3 = fadeColor(atariToOCS(mem[zp::displayFlags]), f);
+    const uint16_t terr0 = atariToOCS(mem[0x02C0]);
+    const uint16_t terr1 = atariToOCS(mem[0x02C7]);
+    const uint16_t terr2 = atariToOCS(mem[zp::colorRing]);
+    const uint16_t terr3 = atariToOCS(mem[zp::displayFlags]);
     // Tunnel ring colours. The GTIA mode-10 pixel value -> ring-slot mapping is ROTATED +3,
     // per the Atari tunnel DLI ($6CD7/$6CF1): pixels 1-3 = COLPM1-3 <- $08D7/$08D8/$08D9
     // (ring[3..5]); pixels 4-6 = COLPF0-2 <- $08D4/$08D5/$08D6 (ring[0..2]).  The Amiga
@@ -378,9 +357,9 @@ void RescueOnFractalus::buildCopperList(CopperList* cl, uint16_t frame)
     // invisible during the rotating-ramp cycle, but it decides WHICH ring the clear's
     // $08D8=0 blackens — getting it wrong drops a black ring between still-lit rings.
     auto emitRing = [&]() {                                    // tunnel pens 1-3 (pixels 1-3)
-        d[idx++] = copperMove(color01, fadeColor(atariToOCS(mem[zp::colorRing + 3]), f));
-        d[idx++] = copperMove(color02, fadeColor(atariToOCS(mem[zp::colorRing + 4]), f));
-        d[idx++] = copperMove(color03, fadeColor(atariToOCS(mem[zp::colorRing + 5]), f));
+        d[idx++] = copperMove(color01, atariToOCS(mem[zp::colorRing + 3]));
+        d[idx++] = copperMove(color02, atariToOCS(mem[zp::colorRing + 4]));
+        d[idx++] = copperMove(color03, atariToOCS(mem[zp::colorRing + 5]));
     };
     auto emitTerrCols = [&]() {                                // terrain pens 1-3
         d[idx++] = copperMove(color01, terr1);
@@ -405,15 +384,15 @@ void RescueOnFractalus::buildCopperList(CopperList* cl, uint16_t frame)
             // pen0 = terrain body, pen1 = sky, pen2 = dots (NOT the conventional
             // 0=background).  Nearest authentic Atari palette entries (the real
             // hardware can only produce these 256 colours):
-            d[idx++] = copperMove(color00, fadeColor(atariToOCS(0x14), f));  // pen0 = terrain body (brown #530)
-            d[idx++] = copperMove(color01, fadeColor(atariToOCS(0x2A), f));  // pen1 = sky (salmon #c76)
-            d[idx++] = copperMove(color02, fadeColor(atariToOCS(0x20), f));  // pen2 = dots (dark #300)
-            d[idx++] = copperMove(color03, fadeColor(atariToOCS(0x18), f));  // pen3 = terrain highlight (#962)
+            d[idx++] = copperMove(color00, atariToOCS(0x14));  // pen0 = terrain body (brown #530)
+            d[idx++] = copperMove(color01, atariToOCS(0x2A));  // pen1 = sky (salmon #c76)
+            d[idx++] = copperMove(color02, atariToOCS(0x20));  // pen2 = dots (dark #300)
+            d[idx++] = copperMove(color03, atariToOCS(0x18));  // pen3 = terrain highlight (#962)
         } else {
-            d[idx++] = copperMove(color00, fadeColor(atariToOCS(mem[0x00DC]), f));  // COLBK
-            d[idx++] = copperMove(color01, fadeColor(atariToOCS(0x24), f));         // COLPF0
-            d[idx++] = copperMove(color02, fadeColor(atariToOCS(0x28), f));         // COLPF1
-            d[idx++] = copperMove(color03, fadeColor(atariToOCS(0x2A), f));         // COLPF2
+            d[idx++] = copperMove(color00, atariToOCS(mem[0x00DC]));  // COLBK
+            d[idx++] = copperMove(color01, atariToOCS(0x24));         // COLPF0
+            d[idx++] = copperMove(color02, atariToOCS(0x28));         // COLPF1
+            d[idx++] = copperMove(color03, atariToOCS(0x2A));         // COLPF2
         }
         // Vertical line-doubling in the copper: the bitmap holds 43 mode-D rows
         // (single height — renderViewportModeD writes each row ONCE).  Each 120-byte
@@ -438,9 +417,9 @@ void RescueOnFractalus::buildCopperList(CopperList* cl, uint16_t frame)
     d[idx++] = copperMove(color00, terr0);                     // pen 0 = black (terrain & tunnel)
     if (tunnelFirst) emitRing(); else emitTerrCols();
     if (door) {                                                // ring pens 4-6 (pixels 4-6)
-        d[idx++] = copperMove(color04, fadeColor(atariToOCS(mem[zp::colorRing + 0]), f));  // pen4 = COLPF0 <- $08D4
-        d[idx++] = copperMove(color05, fadeColor(atariToOCS(mem[zp::colorRing + 1]), f));  // pen5 = COLPF1 <- $08D5
-        d[idx++] = copperMove(color06, fadeColor(atariToOCS(mem[zp::colorRing + 2]), f));  // pen6 = COLPF2 <- $08D6
+        d[idx++] = copperMove(color04, atariToOCS(mem[zp::colorRing + 0]));  // pen4 = COLPF0 <- $08D4
+        d[idx++] = copperMove(color05, atariToOCS(mem[zp::colorRing + 1]));  // pen5 = COLPF1 <- $08D5
+        d[idx++] = copperMove(color06, atariToOCS(mem[zp::colorRing + 2]));  // pen6 = COLPF2 <- $08D6
     }
 
     // ---- mid-screen bands (only when partially open; each on its own WAIT) ----
@@ -490,14 +469,14 @@ void RescueOnFractalus::buildCopperList(CopperList* cl, uint16_t frame)
     //   pixel 00 = COLBK  = $00 (black);   01 = COLPF0 = $04 (dark gray)
     //   pixel 10 = COLPF1 = $06 (gray);    11 = COLPF2 = $2C (salmon)
     //   bit-7 char pixel 11 = COLPF3 = $26 (red), via plane3 → colour 7.
-    d[idx++] = copperMove(color00, fadeColor(atariToOCS(0x00), f));
-    d[idx++] = copperMove(color01, fadeColor(atariToOCS(0x04), f));
-    d[idx++] = copperMove(color02, fadeColor(atariToOCS(0x06), f));
-    d[idx++] = copperMove(color03, fadeColor(atariToOCS(0x2C), f));
-    d[idx++] = copperMove(color04, fadeColor(atariToOCS(0x00), f));  // = col0 (black)
-    d[idx++] = copperMove(color05, fadeColor(atariToOCS(0x04), f));  // = col1 (dark gray)
-    d[idx++] = copperMove(color06, fadeColor(atariToOCS(0x06), f));  // = col2 (gray)
-    d[idx++] = copperMove(color07, fadeColor(atariToOCS(0x26), f));  // red (COLPF3)
+    d[idx++] = copperMove(color00, atariToOCS(0x00));
+    d[idx++] = copperMove(color01, atariToOCS(0x04));
+    d[idx++] = copperMove(color02, atariToOCS(0x06));
+    d[idx++] = copperMove(color03, atariToOCS(0x2C));
+    d[idx++] = copperMove(color04, atariToOCS(0x00));  // = col0 (black)
+    d[idx++] = copperMove(color05, atariToOCS(0x04));  // = col1 (dark gray)
+    d[idx++] = copperMove(color06, atariToOCS(0x06));  // = col2 (gray)
+    d[idx++] = copperMove(color07, atariToOCS(0x26));  // red (COLPF3)
 
     // Terminate the list right after the content.  The instruction count varies
     // per frame (the door split adds/removes bands), and the two double-buffered
@@ -510,8 +489,6 @@ void RescueOnFractalus::buildCopperList(CopperList* cl, uint16_t frame)
 // ---- public interface --------------------------------------------------------
 void RescueOnFractalus::initialize()
 {
-    Palette::initialize();
-    palette       = new Palette(kTitlePalette, 4, /*fade*/0);
     titleBitmap   = Bitmap::allocate(kW, kTitleHeight,   kBP2, true);
     terrainBitmap = Bitmap::allocate(kW, kTerrainHeight, kBP3, true);  // 3bp: tunnel reveal uses pens 4-7
     cockpitBitmap = Bitmap::allocate(kW, kCockpitH, kBP3, true);  // 3bp: bit-7 chars → red
@@ -570,7 +547,18 @@ void RescueOnFractalus::initialize()
     buildCopperList(copperLists[0], 0);
     buildCopperList(copperLists[1], 0);
     active = 0;
-    AmigaHardware::setCopperList(*copperLists[active], true);
+
+    // Show a blank black display until the boot/standby build is ready (g_standbyRevealReady).
+    // The real lists point at bitmaps that are still being built during the multi-second boot;
+    // holding the EmptyCopperList avoids showing that piecemeal build (replaces the fade-to-black).
+    emptyCopper = new EmptyCopperList();
+    if (emptyCopper && emptyCopper->data()) {
+        emptyCopper->buildLayout(*nullSprite);
+        AmigaHardware::setCopperList(*emptyCopper, true);
+        emptyCopperInstalled = true;
+    } else {
+        AmigaHardware::setCopperList(*copperLists[active], true);
+    }
 
     // Static-Standby fixed copper list: built once here (bitmaps + sprites now exist),
     // its dynamic colour/sprite slots refreshed each frame by updateStandbyCopper.
@@ -805,6 +793,20 @@ void RescueOnFractalus::run()
 // when this is entered; rendering happens first, then the caller waits for the VBI.
 void RescueOnFractalus::renderFrame()
 {
+    // Black-until-ready: while the boot/standby build is still in progress, keep the blank
+    // EmptyCopperList on screen and do no rendering — the bitmaps are mid-build and the real
+    // lists would show garbage.  When g_standbyRevealReady latches, fall through and the copper
+    // path below installs the real (standby / viewport / dynamic) list for this frame.
+    if (emptyCopper && !g_standbyRevealReady) {
+        if (!emptyCopperInstalled) {
+            AmigaHardware::setCopperList(*emptyCopper, false);
+            emptyCopperInstalled = true;
+            standbyCopperInstalled = false; viewportCopperInstalled = false;
+        }
+        return;
+    }
+    emptyCopperInstalled = false;
+
     frameCounter++;
     deriveRenderSignals();   // recompute the mem[]-derived render-gating signals for this frame
     // Tunnel reveal: the $52D7 VBI's advance_message_column draws the expanding black
@@ -866,10 +868,10 @@ void RescueOnFractalus::renderFrame()
 }
 
 // updateStandbyCopper(): refresh the StandbyCopperList's per-frame-varying colour and
-// sprite slots from mem[].  The global fade is 16 throughout this list's life (it's
-// only used once g_doorFieldReady is latched, which is AFTER g_standbyRevealReady), so
-// fadeColor is the identity and the OCS colour is just atariToOCS(byte).  Each slot is
-// poked only when its value changed since last frame (force = poke all, on install).
+// sprite slots from mem[].  Colours are written straight as atariToOCS(byte) — there is no
+// fade (the screen is held black by the EmptyCopperList until g_standbyRevealReady, after
+// which colours show at full intensity).  Each slot is poked only when its value changed
+// since last frame (force = poke all, on install).
 void RescueOnFractalus::updateStandbyCopper(bool force)
 {
     const uint16_t titleBg  = atariToOCS(mem[0x02C8]);             // COLBK = title bg / canopy posts
@@ -1281,12 +1283,12 @@ void RescueOnFractalus::shutdown()
     for (int i = 0; i < 2; i++) { delete copperLists[i]; copperLists[i] = nullptr; }
     delete standbyCopper; standbyCopper = nullptr;
     delete viewportCopper; viewportCopper = nullptr;
+    delete emptyCopper;   emptyCopper   = nullptr;
     PlatformAmiga::audioShutdown();
     delete titleBitmap;   titleBitmap   = nullptr;
     delete terrainBitmap; terrainBitmap = nullptr;
     delete cockpitBitmap; cockpitBitmap = nullptr;
     delete tunnelBitmap;  tunnelBitmap  = nullptr;
-    delete palette;       palette       = nullptr;
     delete leftPost;      leftPost      = nullptr;
     delete rightPost;     rightPost     = nullptr;
     delete nullSprite;    nullSprite    = nullptr;
