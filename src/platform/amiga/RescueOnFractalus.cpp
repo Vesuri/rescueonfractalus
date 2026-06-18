@@ -122,11 +122,6 @@ static const uint16_t kHT  = 86;    // terrain sprite/bitmap height (placeholder
 static const uint8_t  kBP2 = 2;
 static const uint8_t  kBP3 = 3;   // cockpit only — 3rd plane carries bit-7 chars (red)
 
-// 160 sufficed for the single-band terrain; the flight/stars viewport now does
-// per-scanline bitplane-modulo line-doubling (~2 MOVEs + 1 WAIT per displayed
-// scanline over the 86-line region), so the list needs ~3x the headroom.
-static const uint32_t kCopperLen = 420;
-
 // Display geometry: anchored at the standard PAL display-window top (0x2c).
 // All boundary lines are derived so changing the top can't desync them.
 static const uint16_t kDisplayTop    = 0x2c;               // DIWSTRT.y (PAL standard)
@@ -249,257 +244,6 @@ void RescueOnFractalus::buildStarSprites()
     }
 }
 
-// ---- copper list builder -----------------------------------------------------
-void RescueOnFractalus::buildCopperList(CopperList* cl, uint16_t frame)
-{
-    (void)frame;
-    uint32_t* d   = cl->data();
-
-    // d[0] is already copperWait(16,0) from the CopperList constructor; start at 1.
-    uint32_t  idx = 1;
-
-    // ---- title region -------------------------------------------------------
-    // Emits BPLCON0 (2bp) + BPL1MOD/BPL2MOD for the title band; the constant playfield
-    // registers — including BPLCON2 = the GPRIOR=$14 priority (PF in front of sprite pair
-    // 1+ / the gauge, behind pair 0 / the canopy posts) — are set once in initialize().
-    idx = cl->setPlayfield(idx, kW, kH, kBP2, /*interleaved*/true,
-                           /*hires*/false, /*interlace*/false,
-                           /*dualPlayfield*/false, /*holdAndModify*/false,
-                           kCenterY);
-    // Title palette.
-    // vbi_handler_standby ($52D7) sets every frame:
-    //   COLPF0 ($D016) = mem[$00D8]  — title text colour (mode-6 col=1 chars)
-    //   COLBK  ($D01A) = mem[$02C8]  — title background
-    //   COLPF1 ($D017) = $78         — hardcoded blue (same role on real hw)
-    // copy_altitude_graphic_to_screen ($782A) sets mem[$00D8]=$44 for the
-    // copyright block so the text colour changes per alternation.
-    // Mode-6 selects the per-char text colour from the byte's top 2 bits:
-    //   hi2=0 → COLPF0 = mem[$00D8]   (copyright block, e.g. $44)
-    //   hi2=1 → COLPF1 = $78 (blue)   (RESCUE ON FRACTALUS!, hardcoded by vbi $52F7)
-    // render() routes hi2=0 chars to col1 (plane1) and hi2=1 chars to col2
-    // (plane2); "off" pixels use col0 = COLBK.
-    {
-        uint16_t tbg   = atariToOCS(mem[0x02C8]);  // COLBK = background (grey)
-        uint16_t tpf0  = atariToOCS(mem[zp::textColorPf0]);  // COLPF0 = hi2=0 text
-        uint16_t tpf1  = atariToOCS(0x78);         // COLPF1 = hi2=1 text (blue) — score digits
-        d[idx++] = copperMove(color00, tbg);
-        d[idx++] = copperMove(color01, tpf0);
-        d[idx++] = copperMove(color02, tpf1);
-        d[idx++] = copperMove(color03, tbg);
-    }
-    cl->showBitmap(idx, *titleBitmap);
-    idx += 2 * kBP2;
-
-    // Sprite colour registers.  The canopy posts must match the top/bottom
-    // background grey (COLBK = mem[$02C8] = atariToOCS($06) = 0x555), so read
-    // the same source rather than a hardcoded constant.
-    d[idx++] = copperMove(color16, 0x000);
-    d[idx++] = copperMove(color17, atariToOCS(mem[0x02C8]));
-
-    // Sprite pointers:
-    cl->showSprite(idx, 0, *leftPost);  idx += 2;
-    cl->showSprite(idx, 1, *rightPost); idx += 2;
-    // Sprite 2 = throttle gauge bar (vobj player strip), only once the launch
-    // begins (its data is built from $0D98 from then on); 3..7 stay null.
-    cl->showSprite(idx, 2, rsGauge ? *gaugeSprite : *nullSprite); idx += 2;
-    // Sprite 3 stays null (it shares the gauge's colour registers).  Sprites 4/5/6
-    // carry the starfield (players P0/P2/P3) during the stars + planet phases.
-    const bool stars = rsStars;
-    // F0 flight perf probe: in flight, sprite 4 (idle starfield sprite) is reused
-    // as a vertical bar whose length ∝ the flight render pass's scanline cost.
-    const bool flightProbe = rsFlight;
-    cl->showSprite(idx, 3, *nullSprite); idx += 2;
-    cl->showSprite(idx, 4, (stars || flightProbe) ? *starSprite[0] : *nullSprite); idx += 2;
-    cl->showSprite(idx, 5, stars ? *starSprite[1] : *nullSprite); idx += 2;
-    cl->showSprite(idx, 6, stars ? *starSprite[2] : *nullSprite); idx += 2;
-    cl->showSprite(idx, 7, *nullSprite); idx += 2;
-    // Gauge bar colour (sprite pair 2/3, colour 01 = COLOR21 = $1AA).  The
-    // original ramps player 1's colour through the $4DEA table as it fills,
-    // ending at $D6 = #560; launch_gauge_step_native tracks that in $00DE.
-    d[idx++] = copperMove(0x1AA, atariToOCS(mem[0x00DE]));
-    // Star colour: COLPM (mem[$02C0]) faded in 0→$0C grey (display_setup $6555).
-    // Sprites 4/5 share COLOR25 ($1B2); sprites 6/7 share COLOR29 ($1BA).
-    if (flightProbe) {
-        d[idx++] = copperMove(0x1B2, 0xF0F);     // COLOR25 = magenta probe bar (sprite 4)
-    } else if (stars) {
-        const uint16_t starCol = atariToOCS(mem[0x02C0]);
-        d[idx++] = copperMove(0x1B2, starCol);   // COLOR25 (sprite pair 4/5 pen 01)
-        d[idx++] = copperMove(0x1BA, starCol);   // COLOR29 (sprite pair 6/7 pen 01)
-    }
-
-    // ---- terrain region -------------------------------------------------------
-    // Wait until the end of the previous line (in the right border / H-blank).
-    // Colour writes are immediate on OCS, so everything written during H-blank is
-    // live for the first pixel of kTerrainLine.  Bitplane pointers go first
-    // (timing-critical); colours follow.
-    // In Standby this is one full-height terrain band.  When the doors open it
-    // splits into a sliding top half, the tunnel reveal, and a sliding bottom half.
-    // Bitplane pointers go FIRST after every WAIT (timing-critical: they must land
-    // in H-blank before display fetch); the 2bp->3bp switch + colours follow.  Zero-
-    // height bands are skipped so we never emit two WAITs for the same scanline —
-    // a second WAIT on a line already reached would run its pointer writes late,
-    // into the visible area (the fully-open frame: top/bottom collapse to 0 rows).
-    const uint32_t ta   = (uint32_t)terrainBitmap->data;
-    const uint16_t half = kTerrainHeight / 2;                 // = 43
-    // Door-open progress = steps the native scroll_terrain_dl has taken, read from
-    // the $008A counter it decrements ($2B closed -> 0 fully open).  Half-gap g2 in
-    // rows grows 0 -> half as the doors part; the split "arises from $008A".
-    const uint16_t g2   = rsLaunched ? (uint16_t)(0x2Bu - mem[zp::terrainScrollCounter]) : 0;
-    const bool     door = (g2 > 0);
-    const uint16_t topH = (uint16_t)(half - g2);               // == bottom-band rows
-    const bool tunnelFirst = door && (topH == 0);              // fully open: tunnel fills region
-    const uint32_t tun  = (uint32_t)tunnelBitmap->data + (uint32_t)(half - g2) * 120u;
-
-    auto emitBpl = [&](uint32_t base) {                        // 3bp interleaved = 120 B/row
-        d[idx++] = copperMove(bpl1pth, (uint16_t)(base >> 16));
-        d[idx++] = copperMove(bpl1ptl, (uint16_t)(base & 0xFFFF));
-        d[idx++] = copperMove(bpl2pth, (uint16_t)((base + 40) >> 16));
-        d[idx++] = copperMove(bpl2ptl, (uint16_t)((base + 40) & 0xFFFF));
-        d[idx++] = copperMove(bpl3pth, (uint16_t)((base + 80) >> 16));
-        d[idx++] = copperMove(bpl3ptl, (uint16_t)((base + 80) & 0xFFFF));
-    };
-    // Terrain palette (GTIA mode-10 nibbles 0/7/8): col0 black (also the tunnel's
-    // pen 0), col1 LEVEL-04 text, col3 green background.  Ring feeds pens 1-6.
-    const uint16_t terr0 = atariToOCS(mem[0x02C0]);
-    const uint16_t terr1 = atariToOCS(mem[0x02C7]);
-    const uint16_t terr2 = atariToOCS(mem[zp::colorRing]);
-    const uint16_t terr3 = atariToOCS(mem[zp::displayFlags]);
-    // Tunnel ring colours. The GTIA mode-10 pixel value -> ring-slot mapping is ROTATED +3,
-    // per the Atari tunnel DLI ($6CD7/$6CF1): pixels 1-3 = COLPM1-3 <- $08D7/$08D8/$08D9
-    // (ring[3..5]); pixels 4-6 = COLPF0-2 <- $08D4/$08D5/$08D6 (ring[0..2]).  The Amiga
-    // bitmap pen == GTIA pixel value, so pen k <- colorRing[(k+2)%6].  This offset is
-    // invisible during the rotating-ramp cycle, but it decides WHICH ring the clear's
-    // $08D8=0 blackens — getting it wrong drops a black ring between still-lit rings.
-    auto emitRing = [&]() {                                    // tunnel pens 1-3 (pixels 1-3)
-        d[idx++] = copperMove(color01, atariToOCS(mem[zp::colorRing + 3]));
-        d[idx++] = copperMove(color02, atariToOCS(mem[zp::colorRing + 4]));
-        d[idx++] = copperMove(color03, atariToOCS(mem[zp::colorRing + 5]));
-    };
-    auto emitTerrCols = [&]() {                                // terrain pens 1-3
-        d[idx++] = copperMove(color01, terr1);
-        d[idx++] = copperMove(color02, terr2);
-        d[idx++] = copperMove(color03, terr3);
-    };
-
-    // ---- region WAIT: pointers first, then the 2bp->3bp switch, then colours ----
-    d[idx++] = copperWait(kTerrainLine - 1, 0xE0);
-    if (rsViewport) {
-        // Stars / planet: one full-height mode-D viewport band from terrainBitmap,
-        // with the $6CC2 DLI viewport palette.  Upper zone (slot1 $6D0E): COLBK =
-        // mem[$00DC] (black space), COLPF0=$24, COLPF1=$28, COLPF2=$2A — the star /
-        // planet tones.  (The slot4 $6D67 lower-greys split near the horizon is a
-        // follow-up; one palette renders the whole viewport for now.)
-        emitBpl((uint32_t)terrainBitmap->data);
-        d[idx++] = copperMove(bplcon0, kBPLCON0_3P);
-        if (rsFlight) {
-            // Flight terrain palette (the F-skip bypasses the planet-entry colour
-            // setup + the dynamic atmosphere pipeline, so render a fixed authentic
-            // Fractalus palette here).  Empirically the terrain bitmap encodes
-            // pen0 = terrain body, pen1 = sky, pen2 = dots (NOT the conventional
-            // 0=background).  Nearest authentic Atari palette entries (the real
-            // hardware can only produce these 256 colours):
-            d[idx++] = copperMove(color00, atariToOCS(0x14));  // pen0 = terrain body (brown #530)
-            d[idx++] = copperMove(color01, atariToOCS(0x2A));  // pen1 = sky (salmon #c76)
-            d[idx++] = copperMove(color02, atariToOCS(0x20));  // pen2 = dots (dark #300)
-            d[idx++] = copperMove(color03, atariToOCS(0x18));  // pen3 = terrain highlight (#962)
-        } else {
-            d[idx++] = copperMove(color00, atariToOCS(mem[0x00DC]));  // COLBK
-            d[idx++] = copperMove(color01, atariToOCS(0x24));         // COLPF0
-            d[idx++] = copperMove(color02, atariToOCS(0x28));         // COLPF1
-            d[idx++] = copperMove(color03, atariToOCS(0x2A));         // COLPF2
-        }
-        // Vertical line-doubling in the copper: the bitmap holds 43 mode-D rows
-        // (single height — renderViewportModeD writes each row ONCE).  Each 120-byte
-        // interleaved row is re-displayed on 2 scanlines by toggling the bitplane
-        // modulo at end-of-line: -40 rewinds plane1's fetch back to the same row (so
-        // the next scanline repeats it), +80 advances to the next row.  The modulo
-        // set during scanline Sk's h-blank applies at Sk's end; V(Sk) = -40 (k even)
-        // / +80 (k odd).  S0's -40 is set here; S1..S(kTerrainHeight-1) below.
-        d[idx++] = copperMove(bpl1mod, (uint16_t)-40);
-        d[idx++] = copperMove(bpl2mod, (uint16_t)-40);
-        for (uint16_t k = 1; k < kTerrainHeight; k++) {
-            d[idx++] = copperWait((uint16_t)(kTerrainLine + k - 1), 0xE0);  // S(k) h-blank
-            const uint16_t v = (k & 1) ? (uint16_t)80 : (uint16_t)-40;       // odd: advance, even: rewind
-            d[idx++] = copperMove(bpl1mod, v);
-            d[idx++] = copperMove(bpl2mod, v);
-        }
-    } else {
-    emitBpl(tunnelFirst ? tun : (ta + (uint32_t)g2 * 120u));   // top half slides up (g2 rows)
-    d[idx++] = copperMove(bplcon0, kBPLCON0_3P);
-    d[idx++] = copperMove(bpl1mod, 80);                        // BPL1MOD = odd planes 1&3
-    d[idx++] = copperMove(bpl2mod, 80);                        // BPL2MOD = plane 2
-    d[idx++] = copperMove(color00, terr0);                     // pen 0 = black (terrain & tunnel)
-    if (tunnelFirst) emitRing(); else emitTerrCols();
-    if (door) {                                                // ring pens 4-6 (pixels 4-6)
-        d[idx++] = copperMove(color04, atariToOCS(mem[zp::colorRing + 0]));  // pen4 = COLPF0 <- $08D4
-        d[idx++] = copperMove(color05, atariToOCS(mem[zp::colorRing + 1]));  // pen5 = COLPF1 <- $08D5
-        d[idx++] = copperMove(color06, atariToOCS(mem[zp::colorRing + 2]));  // pen6 = COLPF2 <- $08D6
-    }
-
-    // ---- mid-screen bands (only when partially open; each on its own WAIT) ----
-    if (door && topH > 0) {
-        // Tunnel reveal, centred on its vanishing point (row 43): the gap shows the
-        // deepest part first and widens outward.  The tunnel band has no end WAIT,
-        // so if the bottom band is dropped below it simply extends to the cockpit.
-        d[idx++] = copperWait((uint16_t)(kTerrainLine + topH - 1), 0xE0);
-        emitBpl(tun);
-        emitRing();
-        // Bottom door half (slides down): terrain from row kTerrainHeight/2.  Emit
-        // it only while its WAIT clears the cockpit WAIT by a margin — otherwise two
-        // WAITs land on the same/adjacent line and the second one's pointer writes
-        // run into the visible area (the near-fully-open frames).  When skipped, the
-        // tunnel covers the last 1-2 rows of the gap, which is imperceptible.
-        const uint16_t botWaitY = (uint16_t)(kTerrainLine + half + g2 - 1);
-        if (botWaitY + 2 <= (uint16_t)(kCockpitLine - 1)) {
-            d[idx++] = copperWait(botWaitY, 0xE0);
-            emitBpl(ta + (uint32_t)half * 120u);
-            emitTerrCols();
-        }
-    }
-    }   // end !rsViewport
-
-    // ---- cockpit region ------------------------------------------------------
-    // The cockpit runs at 3 bitplanes (title/terrain stay 2bp): mode-4's bit-7
-    // chars swap pixel-11 from COLPF2 (salmon) to COLPF3 (red), which can't be
-    // expressed in 2bp since salmon and red share scanlines.  We give those chars
-    // plane3 = 0xFF (render()), shifting their pixels from colours 0-3 to 4-7;
-    // colours 4-6 mirror 0-2, and colour 7 = red, so a bit-7 char matches a normal
-    // one except its pixel-11 is red.
-    d[idx++] = copperWait(kCockpitLine - 1, 0xE0);
-    uint32_t ca = (uint32_t)cockpitBitmap->data;
-    d[idx++] = copperMove(bpl1pth, (uint16_t)(ca >> 16));
-    d[idx++] = copperMove(bpl1ptl, (uint16_t)(ca & 0xFFFF));
-    d[idx++] = copperMove(bpl2pth, (uint16_t)((ca + 40) >> 16));
-    d[idx++] = copperMove(bpl2ptl, (uint16_t)((ca + 40) & 0xFFFF));
-    d[idx++] = copperMove(bpl3pth, (uint16_t)((ca + 80) >> 16));
-    d[idx++] = copperMove(bpl3ptl, (uint16_t)((ca + 80) & 0xFFFF));
-    // Switch to 3 bitplanes + 3bp interleaved modulo (= (3-1)*40) for the cockpit.
-    d[idx++] = copperMove(bplcon0, (uint16_t)((3 << PLNCNTSHFT) | USE_BPLCON3));
-    d[idx++] = copperMove(bpl1mod, 80);
-    d[idx++] = copperMove(bpl2mod, 80);
-    // Cockpit palette — cockpit DLIs ($6D4F/$6D67/$6D7C) reload the registers for
-    // these scanlines with hardcoded immediates (NOT the $02C4-$02C8 title/terrain
-    // shadows), so we use the same constants:
-    //   pixel 00 = COLBK  = $00 (black);   01 = COLPF0 = $04 (dark gray)
-    //   pixel 10 = COLPF1 = $06 (gray);    11 = COLPF2 = $2C (salmon)
-    //   bit-7 char pixel 11 = COLPF3 = $26 (red), via plane3 → colour 7.
-    d[idx++] = copperMove(color00, atariToOCS(0x00));
-    d[idx++] = copperMove(color01, atariToOCS(0x04));
-    d[idx++] = copperMove(color02, atariToOCS(0x06));
-    d[idx++] = copperMove(color03, atariToOCS(0x2C));
-    d[idx++] = copperMove(color04, atariToOCS(0x00));  // = col0 (black)
-    d[idx++] = copperMove(color05, atariToOCS(0x04));  // = col1 (dark gray)
-    d[idx++] = copperMove(color06, atariToOCS(0x06));  // = col2 (gray)
-    d[idx++] = copperMove(color07, atariToOCS(0x26));  // red (COLPF3)
-
-    // Terminate the list right after the content.  The instruction count varies
-    // per frame (the door split adds/removes bands), and the two double-buffered
-    // lists are rebuilt at different gaps — without a terminator here the copper
-    // runs into each buffer's stale trailing instructions (old band WAITs/pointer
-    // writes), which differ between buffers and flicker the display every frame.
-    d[idx++] = copperWait(255, 254);
-}
-
 // ---- public interface --------------------------------------------------------
 void RescueOnFractalus::initialize()
 {
@@ -540,11 +284,6 @@ void RescueOnFractalus::initialize()
     rightPost->setX(kSprXRight);
     rightPost->setY(kTerrainLine);
 
-    for (int i = 0; i < 2; i++) {
-        copperLists[i] = CopperList::allocate(kCopperLen);
-    }
-    if (!copperLists[0] || !copperLists[1]) return;
-
     // One-time playfield setup: the constant display registers (FMODE, BPLCON3/2/1,
     // DIWSTRT/STOP/HIGH, DDFSTRT/STOP) never change, so set them ONCE here via the CPU
     // instead of re-running those MOVEs in every frame's copper list.  The copper lists
@@ -557,9 +296,6 @@ void RescueOnFractalus::initialize()
     *bplcon2Pointer = (uint16_t)((1u << 3) | 1u);
 
     deriveRenderSignals();   // seed the render signals from the initial mem[] (standby) state
-    buildCopperList(copperLists[0], 0);
-    buildCopperList(copperLists[1], 0);
-    active = 0;
 
     // Show a blank black display until the boot/standby build is ready (g_standbyRevealReady).
     // The real lists point at bitmaps that are still being built during the multi-second boot;
@@ -569,14 +305,12 @@ void RescueOnFractalus::initialize()
         emptyCopper->buildLayout(*nullSprite);
         AmigaHardware::setCopperList(*emptyCopper, true);
         emptyCopperInstalled = true;
-    } else {
-        AmigaHardware::setCopperList(*copperLists[active], true);
     }
 
     // Static-Standby fixed copper list: built once here (bitmaps + sprites now exist),
     // its dynamic colour/sprite slots refreshed each frame by updateStandbyCopper.
     // renderFrame installs it once the doors are decoded and the scene settles into
-    // Standby; until then the double-buffered buildCopperList path drives the build.
+    // Standby; until then the EmptyCopperList holds the screen black.
     standbyCopper = new StandbyCopperList();
     if (standbyCopper && standbyCopper->data())
         standbyCopper->buildLayout(*titleBitmap, *terrainBitmap, *cockpitBitmap,
@@ -596,6 +330,21 @@ void RescueOnFractalus::initialize()
     flightCopper = new FlightCopperList();
     if (flightCopper && flightCopper->data())
         flightCopper->buildLayout(*titleBitmap, *terrainBitmap, *cockpitBitmap,
+                                  *leftPost, *rightPost, *gaugeSprite, *nullSprite);
+
+    // Launch-cinematic fixed copper lists (scene 4 doors / scene 5 tunnel), same
+    // build-once scheme; renderFrame installs them during the launch cinematic.  Doors
+    // points at the terrain + tunnel bitmaps (its sliding bands draw from both); Tunnel
+    // points at the tunnel bitmap.  updateDoorsCopper/updateTunnelCopper poke the rest.
+    for (int i = 0; i < 2; i++) {
+        doorsCopper[i] = new DoorsCopperList();
+        if (doorsCopper[i] && doorsCopper[i]->data())
+            doorsCopper[i]->buildLayout(*titleBitmap, *cockpitBitmap,
+                                        *leftPost, *rightPost, *gaugeSprite, *nullSprite);
+    }
+    tunnelCopper = new TunnelCopperList();
+    if (tunnelCopper && tunnelCopper->data())
+        tunnelCopper->buildLayout(*titleBitmap, *tunnelBitmap, *cockpitBitmap,
                                   *leftPost, *rightPost, *gaugeSprite, *nullSprite);
 
     // Precompute glyph doubling table: each byte → 16-bit pattern (each bit → 2 bits).
@@ -823,12 +572,13 @@ void RescueOnFractalus::renderFrame()
             AmigaHardware::setCopperList(*emptyCopper, false);
             emptyCopperInstalled = true;
             standbyCopperInstalled = false; planetCopperInstalled = false;
+            flightCopperInstalled = false;
+            tunnelCopperInstalled = false;
         }
         return;
     }
     emptyCopperInstalled = false;
 
-    frameCounter++;
     deriveRenderSignals();   // recompute the mem[]-derived render-gating signals for this frame
     // Tunnel reveal: the $52D7 VBI's advance_message_column draws the expanding black
     // clear into mem[$2000] and flags g_tunnelFieldDirty with its row extent; re-decode
@@ -855,7 +605,8 @@ void RescueOnFractalus::renderFrame()
         } else {
             updateStandbyCopper(false);
         }
-        planetCopperInstalled = false;
+        planetCopperInstalled = false; flightCopperInstalled = false;
+        tunnelCopperInstalled = false;
         return;
     }
 
@@ -874,6 +625,7 @@ void RescueOnFractalus::renderFrame()
         }
         standbyCopperInstalled = false;
         flightCopperInstalled = false;
+        tunnelCopperInstalled = false;
         return;
     }
 
@@ -892,16 +644,36 @@ void RescueOnFractalus::renderFrame()
         }
         standbyCopperInstalled = false;
         planetCopperInstalled = false;
+        tunnelCopperInstalled = false;
         return;
     }
 
-    // Dynamic phases (door-open + tunnel cinematic): the layout varies per frame, so keep
-    // the double-buffered full rebuild + flip for now (DoorsCopperList/TunnelCopperList to
-    // come).  Flight and stars/planet are handled by their fixed lists above.
-    uint8_t next = 1 - active;
-    buildCopperList(copperLists[next], frameCounter);
-    AmigaHardware::setCopperList(*copperLists[next], false);
-    active = next;
+    // Launch cinematic (the only phase left for the fixed Doors/Tunnel lists): the hangar
+    // doors part (scene 4) then the tunnel fills the screen (scene 5).  Door-scroll progress
+    // g2 = 0x2B - $008A grows 0 -> kTerrainHeight/2 as the doors open; once it reaches the
+    // half-height the doors are fully open and the single full tunnel band takes over.
+    const uint16_t half = (uint16_t)(kTerrainHeight / 2);
+    const uint16_t g2   = rsLaunched ? (uint16_t)(0x2Bu - mem[zp::terrainScrollCounter]) : 0;
+    if (tunnelCopper && g2 >= half) {
+        // ---- scene 5: tunnel descent (doors fully open) ----
+        if (!tunnelCopperInstalled) {
+            updateTunnelCopper(true);
+            AmigaHardware::setCopperList(*tunnelCopper, false);
+            tunnelCopperInstalled = true;
+        } else {
+            updateTunnelCopper(false);
+        }
+    } else if (doorsCopper[0]) {
+        // ---- scene 4: hangar doors parting (also the closed g2==0 first frame) ----
+        // Populate the BACK buffer fully (geometry + colours), then swap it in — the swap
+        // latches at the next vblank, so the displayed buffer is never modified mid-frame
+        // (avoids the ±1px tunnel-reveal jitter an in-place poke of the live list causes).
+        const uint8_t back = (uint8_t)(1 - doorsActive);
+        updateDoorsCopper(doorsCopper[back]);
+        AmigaHardware::setCopperList(*doorsCopper[back], false);
+        doorsActive = back;
+        tunnelCopperInstalled = false;
+    }
     standbyCopperInstalled = false;   // left Standby — next static entry re-seeds + re-installs
     planetCopperInstalled = false;
     flightCopperInstalled = false;
@@ -1022,6 +794,81 @@ void RescueOnFractalus::updateFlightCopper(bool force)
     if (force || terr0 != flTerr0 || terr1 != flTerr1) {
         flightCopper->setTerrainPalette(terr0, terr1, atariToOCS(0x20), atariToOCS(0x18));
         flTerr0 = terr0; flTerr1 = terr1;
+    }
+}
+
+// updateDoorsCopper(): fully populate one DoorsCopperList buffer for the hangar-doors-
+// parting phase (scene 4) — the title/gauge/compass colours and the sliding-door geometry
+// (the 3 terrain bands).  The bands' WAIT lines + bitplane pointers move as the
+// doors open.  Because the list is double-buffered (the caller swaps the back buffer in at
+// vblank), every slot is written unconditionally — the back buffer is two frames stale, so
+// there is no poke-on-change fast path.  Reproduces the legacy buildCopperList non-viewport
+// / door path.
+void RescueOnFractalus::updateDoorsCopper(DoorsCopperList* dc)
+{
+    const uint16_t titleBg  = atariToOCS(mem[0x02C8]);            // COLBK = title bg / canopy posts
+    const uint16_t titlePf0 = atariToOCS(mem[zp::textColorPf0]);  // COLPF0 = title text ($00D8)
+    const uint16_t gaugeCol = atariToOCS(mem[0x00DE]);            // gauge bar colour ramp
+    const uint16_t compassCol = atariToOCS(mem[0x00CF]);          // compass band COLPF0
+
+    dc->setTitlePalette(titleBg, titlePf0, atariToOCS(0x78));     // pf1 = blue (const)
+    dc->setSpritePostColor(titleBg);
+    dc->setGaugeColor(gaugeCol);
+    dc->setCompassColor(compassCol);
+
+    // Sliding-door geometry.  topBase = terrain row g2 (slides up); tunBase = tunnel row
+    // (half - g2) (the reveal centred on the vanishing point); botBase = terrain row half.
+    const uint16_t half = (uint16_t)(kTerrainHeight / 2);
+    const uint16_t g2   = rsLaunched ? (uint16_t)(0x2Bu - mem[zp::terrainScrollCounter]) : 0;
+    const uint32_t ta   = (uint32_t)terrainBitmap->data;
+    dc->update(g2,
+                        ta + (uint32_t)g2 * 120u,
+                        (uint32_t)tunnelBitmap->data + (uint32_t)(half - g2) * 120u,
+                        ta + (uint32_t)half * 120u,
+                        atariToOCS(mem[0x02C0]),                 // pen0 = black
+                        atariToOCS(mem[0x02C7]),                 // terrain pen1
+                        atariToOCS(mem[zp::colorRing]),          // terrain pen2 ($08D4)
+                        atariToOCS(mem[zp::displayFlags]),       // terrain pen3 ($0071)
+                        atariToOCS(mem[zp::colorRing + 0]),      // ring pen4 ($08D4)
+                        atariToOCS(mem[zp::colorRing + 1]),      // ring pen5 ($08D5)
+                        atariToOCS(mem[zp::colorRing + 2]),      // ring pen6 ($08D6)
+                        atariToOCS(mem[zp::colorRing + 3]),      // tunnel pen1 ($08D7)
+                        atariToOCS(mem[zp::colorRing + 4]),      // tunnel pen2 ($08D8)
+                        atariToOCS(mem[zp::colorRing + 5]));     // tunnel pen3 ($08D9)
+}
+
+// updateTunnelCopper(): refresh the TunnelCopperList for the full tunnel descent (scene 5,
+// doors fully open).  Constant title/gauge/compass via poke-on-change; the tunnel ring
+// palette (pen0 black + pens 1-6 fed by the rotating $08D4-$08D9 ring, +3 rotated as the
+// Atari tunnel DLI applies) is poked when any entry changed.  Reproduces buildCopperList's
+// tunnelFirst path.
+void RescueOnFractalus::updateTunnelCopper(bool force)
+{
+    const uint16_t titleBg  = atariToOCS(mem[0x02C8]);
+    const uint16_t titlePf0 = atariToOCS(mem[zp::textColorPf0]);
+    const uint16_t gaugeCol = atariToOCS(mem[0x00DE]);
+    const uint16_t compassCol = atariToOCS(mem[0x00CF]);
+
+    if (force || titleBg != tnTitleBg || titlePf0 != tnTitlePf0) {
+        tunnelCopper->setTitlePalette(titleBg, titlePf0, atariToOCS(0x78));
+        tunnelCopper->setSpritePostColor(titleBg);
+        tnTitleBg = titleBg; tnTitlePf0 = titlePf0;
+    }
+    if (force || gaugeCol != tnGaugeCol)   { tunnelCopper->setGaugeColor(gaugeCol);   tnGaugeCol = gaugeCol; }
+    if (force || compassCol != tnCompassCol) { tunnelCopper->setCompassColor(compassCol); tnCompassCol = compassCol; }
+
+    const uint16_t pen0 = atariToOCS(mem[0x02C0]);               // tunnel pen0 = black
+    uint16_t ring[6];
+    bool ringChanged = (pen0 != tnPen0);
+    for (int i = 0; i < 6; i++) {
+        ring[i] = atariToOCS(mem[zp::colorRing + i]);
+        if (ring[i] != tnRing[i]) ringChanged = true;
+    }
+    if (force || ringChanged) {
+        // pens 1-3 = ring[3..5] ($08D7-$08D9); pens 4-6 = ring[0..2] ($08D4-$08D6).
+        tunnelCopper->setTunnelColors(pen0, ring[3], ring[4], ring[5], ring[0], ring[1], ring[2]);
+        tnPen0 = pen0;
+        for (int i = 0; i < 6; i++) tnRing[i] = ring[i];
     }
 }
 
@@ -1411,10 +1258,11 @@ void RescueOnFractalus::render()
 
 void RescueOnFractalus::shutdown()
 {
-    for (int i = 0; i < 2; i++) { delete copperLists[i]; copperLists[i] = nullptr; }
     delete standbyCopper; standbyCopper = nullptr;
     delete planetCopper; planetCopper = nullptr;
     delete flightCopper; flightCopper = nullptr;
+    for (int i = 0; i < 2; i++) { delete doorsCopper[i]; doorsCopper[i] = nullptr; }
+    delete tunnelCopper; tunnelCopper = nullptr;
     delete emptyCopper;   emptyCopper   = nullptr;
     PlatformAmiga::audioShutdown();
     delete titleBitmap;   titleBitmap   = nullptr;

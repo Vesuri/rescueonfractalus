@@ -6,6 +6,8 @@
 #include "StandbyCopperList.h"
 #include "PlanetCopperList.h"
 #include "FlightCopperList.h"
+#include "DoorsCopperList.h"
+#include "TunnelCopperList.h"
 #include "EmptyCopperList.h"
 
 // 2-bitplane attract screen: one BPLCON0 mode for the whole frame, Copper
@@ -37,11 +39,9 @@ public:
 private:
     void perFrameWork();    // per-frame non-phase work (title/blink/digits/sprites)
 
-    uint16_t frameCounter = 0;   // frames elapsed (drives buildCopperList fade-in)
-
     // Render-gating signals derived from mem[] hardware state each frame: the genuine
     // transpiled/native game_entry -> game_main_loop -> display_setup drives the program
-    // and swaps the live VVBLKI vector per scene; buildCopperList/render/perFrameWork key
+    // and swaps the live VVBLKI vector per scene; render/perFrameWork key
     // off these mem[]-derived signals to pick the render mode for the current phase.
     void deriveRenderSignals();
     bool rsStandby  = false;   // VVBLKI $52D7        — Standby + launch cinematic VBI
@@ -71,20 +71,17 @@ private:
     // ($6A38) -> advance_history_6a4d ($6A4D), gated by $0088 (tunnel_ring_tick_native).
     Bitmap*  tunnelBitmap = nullptr;
 
-    void buildCopperList(CopperList* cl, uint16_t frame);
     void buildPostSprites();   // decode RLE tables $4DFA/$4E09 -> leftPost/rightPost (once)
     bool postsBuilt = false;   // canopy posts are constant: decode them a single time
     void decodeCompass();      // decode the 4 compass cells $32E3-$32E6 -> title bitmap (16 longwords)
     void decodeTunnelField(int rowLo, int rowHi);  // decode mem[$2000] rows [lo,hi] -> tunnelBitmap
     void renderViewportModeD(uint16_t srcBase, int stride, int rows); // decode CHANGED mode-D bytes -> terrainBitmap (stars: $1000/48/43; flight: $1070/96)
 
-    CopperList* copperLists[2] = { nullptr, nullptr };
-
     // Static-Standby fixed copper list (built once, poked in place — see
     // StandbyCopperList).  Used while in the settled Standby/gauge-fill state
     // (rsStandby && g_doorFieldReady && !rsViewport && !rsLaunched): no per-frame
-    // full rebuild, no double-buffer flip.  renderFrame switches back to the
-    // double-buffered buildCopperList path for the dynamic phases.
+    // full rebuild.  renderFrame switches to the Doors/Tunnel lists for the launch
+    // cinematic phases.
     StandbyCopperList* standbyCopper = nullptr;
     bool standbyCopperInstalled = false;   // is standbyCopper the currently-installed list?
     void updateStandbyCopper(bool force);  // poke changed colour/sprite slots (force = all)
@@ -116,6 +113,31 @@ private:
     uint16_t flTitleBg = 0xFFFF, flTitlePf0 = 0xFFFF, flGaugeCol = 0xFFFF, flCompassCol = 0xFFFF;
     uint16_t flTerr0 = 0xFFFF, flTerr1 = 0xFFFF;   // terrain pen0/pen1 (atmosphere ramp $00DC/$00DD)
 
+    // Launch-cinematic fixed copper lists (replace the old per-frame buildCopperList):
+    //   DoorsCopperList (scene 4) — hangar doors parting, sliding 3-band geometry poked
+    //     each frame from the door-scroll counter (g2 = 0x2B - $008A).
+    //   TunnelCopperList (scene 5) — doors fully open (g2 == kTerrainHeight/2), one full
+    //     tunnel band with the cycling $08D4-$08D9 ring palette.
+    // Both share the constant title + cockpit regions; only their terrain region differs.
+    //
+    // DoorsCopperList is DOUBLE-BUFFERED: its band WAIT lines + bitplane pointers move
+    // every frame, and poking those in place on the live (displayed) list races the
+    // copper — the beam can read a half-updated band and the tunnel reveal jitters ±1px
+    // (render() runs before the poke, so the beam is usually already past the top border).
+    // So updateDoorsCopper() fully populates the BACK buffer and setCopperList swaps it at
+    // the next vblank (atomic), exactly as the old buildCopperList double buffer did.  The
+    // Tunnel list has FIXED geometry (one band, constant pointers) so its in-place colour
+    // pokes are safe (a one-frame torn colour is invisible) — single-buffered.
+    DoorsCopperList*  doorsCopper[2] = { nullptr, nullptr };
+    uint8_t doorsActive = 0;
+    void updateDoorsCopper(DoorsCopperList* dc);  // fully populate one buffer (colours + geometry)
+    TunnelCopperList* tunnelCopper = nullptr;
+    bool tunnelCopperInstalled = false;
+    void updateTunnelCopper(bool force);  // poke title/gauge/compass + the ring palette
+    // Last-poked colour values (tn* — poke-on-change for the single-buffered tunnel list).
+    uint16_t tnTitleBg = 0xFFFF, tnTitlePf0 = 0xFFFF, tnGaugeCol = 0xFFFF, tnCompassCol = 0xFFFF;
+    uint16_t tnPen0 = 0xFFFF, tnRing[6] = { 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF };
+
     Bitmap*     titleBitmap    = nullptr;
     Bitmap*     terrainBitmap  = nullptr;
     Bitmap*     cockpitBitmap  = nullptr;
@@ -126,7 +148,6 @@ private:
     Sprite*     leftPost       = nullptr;
     Sprite*     rightPost      = nullptr;
     Sprite*     nullSprite     = nullptr;
-    uint8_t     active         = 0;
 
     // Dirty-flag bitmap caching: bitmaps are rendered once on initialize() and
     // only re-rendered when the underlying mem[] data changes.
