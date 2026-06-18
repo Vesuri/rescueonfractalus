@@ -577,6 +577,14 @@ void RescueOnFractalus::initialize()
                                     *leftPost, *rightPost, *gaugeSprite, *nullSprite,
                                     *starSprite[0], *starSprite[1], *starSprite[2]);
 
+    // Static flight fixed copper list (scene 7), same build-once + poke scheme;
+    // renderFrame installs it during rsFlight.  HUD sprites are poked in later by the
+    // ported flight VBI; buildLayout seeds posts + gauge + nulls.
+    flightCopper = new FlightCopperList();
+    if (flightCopper && flightCopper->data())
+        flightCopper->buildLayout(*titleBitmap, *terrainBitmap, *cockpitBitmap,
+                                  *leftPost, *rightPost, *gaugeSprite, *nullSprite);
+
     // Precompute glyph doubling table: each byte → 16-bit pattern (each bit → 2 bits).
     for (int i = 0; i < 256; i++) {
         uint16_t out = 0;
@@ -852,19 +860,38 @@ void RescueOnFractalus::renderFrame()
             updatePlanetCopper(false);
         }
         standbyCopperInstalled = false;
+        flightCopperInstalled = false;
         return;
     }
 
-    // Dynamic phases (door-open cinematic, flight): the layout varies per frame, so keep
-    // the double-buffered full rebuild + flip.
+    // Static flight: the flight copper layout is FIXED too (same line-doubled mode-D band,
+    // flight palette + HUD sprites — see FlightCopperList).  render() refreshes the terrain
+    // bitmap content (constant pointer); the ported flight VBI pokes the per-frame colours/
+    // sprites via updateFlightCopper.  No full rebuild/flip.
+    const bool staticFlight = flightCopper && rsFlight;
+    if (staticFlight) {
+        if (!flightCopperInstalled) {
+            updateFlightCopper(true);
+            AmigaHardware::setCopperList(*flightCopper, false);
+            flightCopperInstalled = true;
+        } else {
+            updateFlightCopper(false);
+        }
+        standbyCopperInstalled = false;
+        planetCopperInstalled = false;
+        return;
+    }
+
+    // Dynamic phases (door-open + tunnel cinematic): the layout varies per frame, so keep
+    // the double-buffered full rebuild + flip for now (DoorsCopperList/TunnelCopperList to
+    // come).  Flight and stars/planet are handled by their fixed lists above.
     uint8_t next = 1 - active;
-    unsigned short c0 = flight_vbi_tick();
     buildCopperList(copperLists[next], frameCounter);
-    if (rsFlight) g_flightProf.copper += (unsigned short)(flight_vbi_tick() - c0);
     AmigaHardware::setCopperList(*copperLists[next], false);
     active = next;
     standbyCopperInstalled = false;   // left Standby — next static entry re-seeds + re-installs
     planetCopperInstalled = false;
+    flightCopperInstalled = false;
 }
 
 // updateStandbyCopper(): refresh the StandbyCopperList's per-frame-varying colour and
@@ -931,6 +958,28 @@ void RescueOnFractalus::updatePlanetCopper(bool force)
     if (force || bgCol != plBg) {
         planetCopper->setPlanetBgColor(bgCol);
         plBg = bgCol;
+    }
+}
+
+// updateFlightCopper(): refresh the FlightCopperList's per-frame-varying slots from mem[].
+// Same poke-only-on-change scheme.  The terrain pens are baked constant in buildLayout
+// (the salmon→brown fade will poke setTerrainPen0 from the native atmosphere code); the
+// HUD sprite pointers are poked by the ported flight VBI.  Here we keep the top-bar / gauge
+// colours live, matching the flight branch of the legacy buildCopperList.
+void RescueOnFractalus::updateFlightCopper(bool force)
+{
+    const uint16_t titleBg  = atariToOCS(mem[0x02C8]);             // COLBK = top-bar bg / canopy posts
+    const uint16_t titlePf0 = atariToOCS(mem[zp::textColorPf0]);   // COLPF0 = top-bar text ($00D8)
+    const uint16_t gaugeCol = atariToOCS(mem[0x00DE]);             // gauge bar colour
+
+    if (force || titleBg != flTitleBg || titlePf0 != flTitlePf0) {
+        flightCopper->setTitlePalette(titleBg, titlePf0, atariToOCS(0x78));  // pf1 = blue (const)
+        flightCopper->setSpritePostColor(titleBg);
+        flTitleBg = titleBg; flTitlePf0 = titlePf0;
+    }
+    if (force || gaugeCol != flGaugeCol) {
+        flightCopper->setGaugeColor(gaugeCol);
+        flGaugeCol = gaugeCol;
     }
 }
 
@@ -1283,6 +1332,7 @@ void RescueOnFractalus::shutdown()
     for (int i = 0; i < 2; i++) { delete copperLists[i]; copperLists[i] = nullptr; }
     delete standbyCopper; standbyCopper = nullptr;
     delete planetCopper; planetCopper = nullptr;
+    delete flightCopper; flightCopper = nullptr;
     delete emptyCopper;   emptyCopper   = nullptr;
     PlatformAmiga::audioShutdown();
     delete titleBitmap;   titleBitmap   = nullptr;

@@ -5,6 +5,7 @@
 #include "framework/Sprite.h"
 #include "StandbyCopperList.h"
 #include "PlanetCopperList.h"
+#include "FlightCopperList.h"
 #include "EmptyCopperList.h"
 
 // 2-bitplane attract screen: one BPLCON0 mode for the whole frame, Copper
@@ -100,6 +101,17 @@ private:
     // Last-poked values (vp* — separate from sb* so a phase switch always force-refreshes).
     uint16_t plTitleBg = 0xFFFF, plTitlePf0 = 0xFFFF, plGaugeCol = 0xFFFF,
              plStarCol = 0xFFFF, plBg = 0xFFFF;
+
+    // Static flight fixed copper list (scene 7 — same line-doubled mode-D band, with the
+    // flight terrain palette + HUD sprites).  Same build-once + poke-in-place scheme:
+    // renderViewportModeD updates the terrain bitmap content, the ported flight VBI pokes
+    // the per-frame colours/sprites via updateFlightCopper.  Replaces the old per-frame
+    // buildCopperList full rebuild for flight.
+    FlightCopperList* flightCopper = nullptr;
+    bool flightCopperInstalled = false;  // is flightCopper the currently-installed list?
+    void updateFlightCopper(bool force); // poke changed colour/sprite slots (force = all)
+    // Last-poked values (fl* — separate from sb*/pl* so a phase switch force-refreshes).
+    uint16_t flTitleBg = 0xFFFF, flTitlePf0 = 0xFFFF, flGaugeCol = 0xFFFF;
 
     Bitmap*     titleBitmap    = nullptr;
     Bitmap*     terrainBitmap  = nullptr;
