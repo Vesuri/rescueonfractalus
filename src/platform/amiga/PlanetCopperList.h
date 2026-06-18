@@ -4,7 +4,7 @@
 class Bitmap;
 class Sprite;
 
-// ViewportCopperList — the fixed-layout copper list for the stars/planet launch
+// PlanetCopperList — the fixed-layout copper list for the stars/planet launch
 // viewport (scene 6, rsStars): title + a line-doubled mode-D viewport band +
 // cockpit, the layout buildCopperList() in RescueOnFractalus.cpp emits on the
 // rsViewport (non-flight) path.
@@ -21,9 +21,9 @@ class Sprite;
 // Used only after g_standbyRevealReady has latched (display_setup entry), so the
 // global fade is always 16 (identity): the setters take already-OCS colours
 // (= atariToOCS(byte)) with no fade, and the constant palette slots are baked.
-class ViewportCopperList : public CopperList {
+class PlanetCopperList : public CopperList {
 public:
-    ViewportCopperList();
+    PlanetCopperList();
 
     // One-time layout: emit the whole fixed list.  Sprite pointers (canopy posts,
     // throttle gauge, the three starfield sprites) are all constant for this phase —
@@ -39,5 +39,5 @@ public:
     void setSpritePostColor(uint16_t c);                           // color17 (canopy posts)
     void setGaugeColor(uint16_t c);                                // COLOR21 ($1AA) gauge bar
     void setStarColor(uint16_t c);                                 // COLOR25/29 ($1B2/$1BA) starfield
-    void setViewportBgColor(uint16_t c);                           // viewport color00 (COLBK, space)
+    void setPlanetBgColor(uint16_t c);                           // viewport color00 (COLBK, space)
 };

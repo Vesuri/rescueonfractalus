@@ -3,7 +3,7 @@
 #include <graphics/display.h>
 #include <proto/exec.h>
 #include <exec/memory.h>
-#include "ViewportCopperList.h"
+#include "PlanetCopperList.h"
 #include "framework/AmigaHardware.h"
 #include "framework/Bitmap.h"
 #include "framework/Sprite.h"
@@ -51,12 +51,12 @@ static const uint16_t kColor29 = 0x1BA;   // sprite pair 6/7 pen 01 (starfield)
 #define INDEX_TERMINATOR      (INDEX_COCKPIT_PAL + 8)      // 320: copperWait(255,254)
 #define LIST_LENGTH           (INDEX_TERMINATOR + 1)       // 321
 
-ViewportCopperList::ViewportCopperList()
+PlanetCopperList::PlanetCopperList()
     : CopperList((uint32_t*)AllocMem(LIST_LENGTH << 2, MEMF_CHIP | MEMF_CLEAR), LIST_LENGTH, true)
 {
 }
 
-void ViewportCopperList::buildLayout(const Bitmap& title, const Bitmap& terrain, const Bitmap& cockpit,
+void PlanetCopperList::buildLayout(const Bitmap& title, const Bitmap& terrain, const Bitmap& cockpit,
                                      const Sprite& leftPost, const Sprite& rightPost, const Sprite& gauge,
                                      const Sprite& nullSprite, const Sprite& star0, const Sprite& star1,
                                      const Sprite& star2)
@@ -129,7 +129,7 @@ void ViewportCopperList::buildLayout(const Bitmap& title, const Bitmap& terrain,
 }
 
 // ---- per-frame setters -------------------------------------------------------
-void ViewportCopperList::setTitlePalette(uint16_t bg, uint16_t pf0, uint16_t pf1)
+void PlanetCopperList::setTitlePalette(uint16_t bg, uint16_t pf0, uint16_t pf1)
 {
     data_[INDEX_TITLE_PAL + 0] = copperMove(color00, bg);
     data_[INDEX_TITLE_PAL + 1] = copperMove(color01, pf0);
@@ -137,23 +137,23 @@ void ViewportCopperList::setTitlePalette(uint16_t bg, uint16_t pf0, uint16_t pf1
     data_[INDEX_TITLE_PAL + 3] = copperMove(color03, bg);
 }
 
-void ViewportCopperList::setSpritePostColor(uint16_t c)
+void PlanetCopperList::setSpritePostColor(uint16_t c)
 {
     data_[INDEX_SPRITE_COL + 1] = copperMove(color17, c);
 }
 
-void ViewportCopperList::setGaugeColor(uint16_t c)
+void PlanetCopperList::setGaugeColor(uint16_t c)
 {
     data_[INDEX_GAUGE_COL] = copperMove(kColor21, c);
 }
 
-void ViewportCopperList::setStarColor(uint16_t c)
+void PlanetCopperList::setStarColor(uint16_t c)
 {
     data_[INDEX_STAR_COL + 0] = copperMove(kColor25, c);
     data_[INDEX_STAR_COL + 1] = copperMove(kColor29, c);
 }
 
-void ViewportCopperList::setViewportBgColor(uint16_t c)
+void PlanetCopperList::setPlanetBgColor(uint16_t c)
 {
     data_[INDEX_VP_PAL] = copperMove(color00, c);
 }

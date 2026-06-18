@@ -571,9 +571,9 @@ void RescueOnFractalus::initialize()
 
     // Static stars/planet viewport fixed copper list (the line-doubled mode-D band),
     // same build-once + poke-in-place scheme; renderFrame installs it during rsStars.
-    viewportCopper = new ViewportCopperList();
-    if (viewportCopper && viewportCopper->data())
-        viewportCopper->buildLayout(*titleBitmap, *terrainBitmap, *cockpitBitmap,
+    planetCopper = new PlanetCopperList();
+    if (planetCopper && planetCopper->data())
+        planetCopper->buildLayout(*titleBitmap, *terrainBitmap, *cockpitBitmap,
                                     *leftPost, *rightPost, *gaugeSprite, *nullSprite,
                                     *starSprite[0], *starSprite[1], *starSprite[2]);
 
@@ -801,7 +801,7 @@ void RescueOnFractalus::renderFrame()
         if (!emptyCopperInstalled) {
             AmigaHardware::setCopperList(*emptyCopper, false);
             emptyCopperInstalled = true;
-            standbyCopperInstalled = false; viewportCopperInstalled = false;
+            standbyCopperInstalled = false; planetCopperInstalled = false;
         }
         return;
     }
@@ -834,22 +834,22 @@ void RescueOnFractalus::renderFrame()
         } else {
             updateStandbyCopper(false);
         }
-        viewportCopperInstalled = false;
+        planetCopperInstalled = false;
         return;
     }
 
     // Static stars/planet viewport: the rsViewport (non-flight) copper layout is FIXED
-    // (one line-doubled mode-D band — see ViewportCopperList).  render() has already
+    // (one line-doubled mode-D band — see PlanetCopperList).  render() has already
     // refreshed the bitmap content and buildStarSprites the sprite data, both at constant
     // pointers, so only a few colours change — poke them in place, no full rebuild/flip.
-    const bool staticViewport = viewportCopper && rsStars;
-    if (staticViewport) {
-        if (!viewportCopperInstalled) {
-            updateViewportCopper(true);
-            AmigaHardware::setCopperList(*viewportCopper, false);
-            viewportCopperInstalled = true;
+    const bool staticPlanet = planetCopper && rsStars;
+    if (staticPlanet) {
+        if (!planetCopperInstalled) {
+            updatePlanetCopper(true);
+            AmigaHardware::setCopperList(*planetCopper, false);
+            planetCopperInstalled = true;
         } else {
-            updateViewportCopper(false);
+            updatePlanetCopper(false);
         }
         standbyCopperInstalled = false;
         return;
@@ -864,7 +864,7 @@ void RescueOnFractalus::renderFrame()
     AmigaHardware::setCopperList(*copperLists[next], false);
     active = next;
     standbyCopperInstalled = false;   // left Standby — next static entry re-seeds + re-installs
-    viewportCopperInstalled = false;
+    planetCopperInstalled = false;
 }
 
 // updateStandbyCopper(): refresh the StandbyCopperList's per-frame-varying colour and
@@ -903,11 +903,11 @@ void RescueOnFractalus::updateStandbyCopper(bool force)
     }
 }
 
-// updateViewportCopper(): refresh the ViewportCopperList's per-frame-varying colour
+// updatePlanetCopper(): refresh the PlanetCopperList's per-frame-varying colour
 // slots from mem[].  Same fade-16-identity / poke-only-on-change scheme as
 // updateStandbyCopper.  The structural slots (bitmap + sprite pointers, line-doubling
 // band) are constant, set once in buildLayout — only these colours move per frame.
-void RescueOnFractalus::updateViewportCopper(bool force)
+void RescueOnFractalus::updatePlanetCopper(bool force)
 {
     const uint16_t titleBg  = atariToOCS(mem[0x02C8]);             // COLBK = title bg / canopy posts
     const uint16_t titlePf0 = atariToOCS(mem[zp::textColorPf0]);   // COLPF0 = title text ($00D8)
@@ -915,22 +915,22 @@ void RescueOnFractalus::updateViewportCopper(bool force)
     const uint16_t starCol  = atariToOCS(mem[0x02C0]);             // starfield grey ($02C0)
     const uint16_t bgCol    = atariToOCS(mem[0x00DC]);             // viewport COLBK (space, $00DC)
 
-    if (force || titleBg != vpTitleBg || titlePf0 != vpTitlePf0) {
-        viewportCopper->setTitlePalette(titleBg, titlePf0, atariToOCS(0x78));  // pf1 = blue (const)
-        viewportCopper->setSpritePostColor(titleBg);
-        vpTitleBg = titleBg; vpTitlePf0 = titlePf0;
+    if (force || titleBg != plTitleBg || titlePf0 != plTitlePf0) {
+        planetCopper->setTitlePalette(titleBg, titlePf0, atariToOCS(0x78));  // pf1 = blue (const)
+        planetCopper->setSpritePostColor(titleBg);
+        plTitleBg = titleBg; plTitlePf0 = titlePf0;
     }
-    if (force || gaugeCol != vpGaugeCol) {
-        viewportCopper->setGaugeColor(gaugeCol);
-        vpGaugeCol = gaugeCol;
+    if (force || gaugeCol != plGaugeCol) {
+        planetCopper->setGaugeColor(gaugeCol);
+        plGaugeCol = gaugeCol;
     }
-    if (force || starCol != vpStarCol) {
-        viewportCopper->setStarColor(starCol);
-        vpStarCol = starCol;
+    if (force || starCol != plStarCol) {
+        planetCopper->setStarColor(starCol);
+        plStarCol = starCol;
     }
-    if (force || bgCol != vpBg) {
-        viewportCopper->setViewportBgColor(bgCol);
-        vpBg = bgCol;
+    if (force || bgCol != plBg) {
+        planetCopper->setPlanetBgColor(bgCol);
+        plBg = bgCol;
     }
 }
 
@@ -1282,7 +1282,7 @@ void RescueOnFractalus::shutdown()
 {
     for (int i = 0; i < 2; i++) { delete copperLists[i]; copperLists[i] = nullptr; }
     delete standbyCopper; standbyCopper = nullptr;
-    delete viewportCopper; viewportCopper = nullptr;
+    delete planetCopper; planetCopper = nullptr;
     delete emptyCopper;   emptyCopper   = nullptr;
     PlatformAmiga::audioShutdown();
     delete titleBitmap;   titleBitmap   = nullptr;
