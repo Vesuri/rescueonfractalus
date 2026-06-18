@@ -4,6 +4,7 @@
 #include "framework/Palette.h"
 #include "framework/Sprite.h"
 #include "StandbyCopperList.h"
+#include "ViewportCopperList.h"
 
 // 2-bitplane attract screen: one BPLCON0 mode for the whole frame, Copper
 // switches the 4-colour palette (and bitmap pointer) at each region boundary,
@@ -87,6 +88,17 @@ private:
     uint16_t sbTitleBg = 0xFFFF, sbTitlePf0 = 0xFFFF, sbGaugeCol = 0xFFFF;
     uint16_t sbTerr0 = 0xFFFF, sbTerr1 = 0xFFFF, sbTerr2 = 0xFFFF, sbTerr3 = 0xFFFF;
     int8_t   sbGauge = -1;   // sprite-2 = gauge(1)/null(0); -1 = unset
+
+    // Static stars/planet viewport fixed copper list (the rsViewport non-flight layout —
+    // line-doubled mode-D band).  Same build-once + poke-in-place scheme as standbyCopper:
+    // renderViewportModeD updates the bitmap content (constant pointer), buildStarSprites
+    // updates the sprite data (constant pointers), so only a few colours change per frame.
+    ViewportCopperList* viewportCopper = nullptr;
+    bool viewportCopperInstalled = false;  // is viewportCopper the currently-installed list?
+    void updateViewportCopper(bool force); // poke changed colour slots (force = all)
+    // Last-poked values (vp* — separate from sb* so a phase switch always force-refreshes).
+    uint16_t vpTitleBg = 0xFFFF, vpTitlePf0 = 0xFFFF, vpGaugeCol = 0xFFFF,
+             vpStarCol = 0xFFFF, vpBg = 0xFFFF;
 
     Bitmap*     titleBitmap    = nullptr;
     Bitmap*     terrainBitmap  = nullptr;
