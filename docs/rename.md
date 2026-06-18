@@ -13,7 +13,36 @@ and regenerate. Each entry: address, current name, what it really does, suggeste
 | `$5433` | `font_display_init` | flight_native.cpp comment: "**sfx_engine_reset** $5433 (mislabelled font_display_init in symbols.csv)". It resets the SFX engine, not fonts. | `sfx_engine_reset` |
 | `$5367` | `sound_event_dispatch` | Named "sound event" but is the per-frame **scroll/animation priority dispatcher**: fires `step_accum_add_75` (tunnel ring), `scroll_terrain_columns`, `dl_index_dec`, or `scroll_terrain_dl` (door scroll) in priority order. Not a sound dispatcher. | `scroll_event_dispatch` |
 | `$782A` | `copy_altitude_graphic_to_screen` | Copies the **Standby title text banner** — a 20-byte block selected by `$0091` (`$5A9F` "RESCUE ON FRACTALUS!" or `$5AB3` "©1985 LUCASFILM LTD") — into screen RAM `$32B7-$32CA`, and sets `$00D8=$44` for the copyright block. Nothing to do with "altitude": the name derives from `$0091` (`altitude_threshold`), which the SFX sequencer repurposes as the title-block selector during Standby. | `copy_title_text_block_to_screen` |
+| `$40B0` | `update_bar_gauge_291c` | On `$291C`/`$291D` change (vs caches `$2872`/`$2874`), redraws a 21-byte `$FF`-terminated bar from table `$4B57` (index `$455B[$291C]`) into the **player buffer `$0E87`**. A HUD bar, but "gauge" is the wrong vocabulary — needs mapping to an instrument (the `$0E..` player-buffer region holds the **Altimeter #7** P2 strip `$0E32`; confirm whether this is the Altimeter or another player-strip readout). | `redraw_<instrument>_bar_291c` (confirm instrument; NOT the Energy/Thrust gauge) |
+| `$40E5` | `update_gauge_281a` | On `$281A` change (vs `$2875`): clears the `$0C97` row + `$FF`-fills to col `$38`; on `$281B` change (vs `$2876`): masks the **`$0B96..$0B99` edge bytes** — `$0B..` is the **missile buffer** that backs the **Wing Clearance Bars #3** (M1/M2/M3). Likely the wing-clearance bar redraw, not a generic "gauge". | `redraw_wing_clearance_bars_281a` (confirm = Wing Clearance #3) |
+| `$75F5` | `compute_gauge_geometry_from_006D` | Derives a set of **display coordinates from `level_stage` `$006D`** into `$061F-$0625,$0617,$0618,$061A-$061C,$062A,$08A2` (`$0628 = BCD($006D)`). Feeds the engine-sound pitch ramp and the lock-on-indicator animation step — i.e. **level-stage-driven display geometry, not a gauge readout**. | `compute_stage_display_geometry` (confirm; drop "gauge") |
+
+## "Gauge" naming — variables (symbols.csv)
+These zero-page / RAM vars carry "gauge" in their **name** but are not the cockpit
+Energy/Thrust gauge. Rename alongside the functions above.
+- `$2872` `bar_gauge_x_cache`, `$2874` `bar_gauge_y_cache` — change-detect caches for `update_bar_gauge_291c` (`$40B0`); rename to match whatever that bar turns out to be.
+- `$2875` `gauge_281a_cache`, `$2876` `gauge_281b_cache` — change-detect caches for `update_gauge_281a` (`$40E5`); → `wing_clearance_*_cache` if `$40E5` is confirmed as Wing Clearance #3.
+- `$0617` `gauge_field_0617`, `$0618` `gauge_step_reload`, `$061F` `gauge_field_061F`, `$0620` `gauge_field_0620`, `$062A` `gauge_height_062A` — **outputs of `compute_gauge_geometry_from_006D`** (`$75F5`), i.e. stage-derived display geometry, not gauge state. Note `$0618` is specifically the **lock-on indicator #11** animation step reload (copied into `$00E6`/`animStepTimer` on underflow) — rename toward `lockon_*`/`stage_geom_*`, not `gauge_*`.
+- "gauge" also appears only in the *description* (not the name) of `$0035` `indicator_pos`, `$006D` `level_stage`, `$006F` `dial_value`, `$0073` `alt_ring_head`, `$0074` `ring_tail_0719`, `$0719` `event_ring_0719`, `$00E6` `animStepTimer`, `$007E` `lockOnIndicatorState` — those names are fine; only the prose should stop calling them "gauge".
+
+## "Gauge" naming — Amiga platform layer (hand-written C++, NOT symbols.csv)
+The hand-written Amiga identifiers named `gauge*` all refer to the **Energy Level
+Indicator (#12)** — the P1 strip `$0D98` (`pm_shape_strip`, driven by the `vobj_*`
+functions `$4184`/`$41DA`/`$41E8`), HPOSP1 = `$00B5`, colour ramp `$00DE` (← table
+`$4DEA`), shown as Amiga sprite 2 (COLOR21 = `$1AA`). CLAUDE.md's instrument table maps
+that exact source to #12; the code's "throttle gauge" wording predates that vocabulary.
+Rename toward `energyLevelIndicator*` (these are manual edits, not a transpiler regen):
+- `RescueOnFractalus`: `gaugeSprite`, `buildGaugeSprite()`, `rsGauge`, `sbGauge` →
+  `energyIndicatorSprite` / `buildEnergyIndicatorSprite()` / `rsEnergyIndicator` / …
+- copper-list setters `setGaugeColor()` + last-poked shadows `sbGaugeCol`/`plGaugeCol`/
+  `flGaugeCol`/`drGaugeCol`/`tnGaugeCol`, and the `INDEX_GAUGE_COL` slot (COLOR21) →
+  `setEnergyIndicatorColor()` / `*EnergyCol` / `INDEX_ENERGY_COL`.
+- ⚠ EXCEPTION: `AtariZp.h` `gaugeStepReload` (= `$0618`) is the **lock-on #11** step
+  reload (see the variable note above), NOT the energy indicator — rename separately.
 
 ## Notes
 - `$4229` `lock_on_indicator_tick` was *previously* mislabelled `update_gauge_digits`
   (already corrected in symbols.csv) — kept here only as context for the `$548D` confusion.
+- `$548D` `update_gauge_digits` (SFX engine, row above) is the other big "gauge" misnomer;
+  it surfaces in the VBI descriptions of `$52D7`/`$534D` ("update_gauge_digits") and in the
+  Amiga comments — all resolve once `$548D` → `sfx_voice_envelope_tick`.
