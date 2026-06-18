@@ -885,6 +885,7 @@ void terrain_lookup(void) {
         mem[0x32E3 + x] = mem[0x4B0B + y];
         y = (uint8_t)(y - 1);
     }
+    platform_compass_changed();   /* hook: compass heading cells $32E3-$32E6 rewritten */
 }
 
 /* fill_buffer2_region_ff @ $45A1 — fill 8 runs of 32 bytes ($FF) starting at $2098
@@ -906,6 +907,7 @@ void fill_buffer2_region_ff(void) {
  * $3355/$3356/$3357 = $B4/$B5/$B6, $3388 = $B4, and $33DF/$33E0 = $1E/$1D. */
 void game_sub_4606(void) {
     for (int y = 3; y >= 0; y--) mem[0x32E3 + y] = 0x01;
+    platform_compass_changed();   /* hook: compass housing cells $32E3-$32E6 initialised */
     mem[0x3388] = 0xB4;
     mem[0x3355] = 0xB4; mem[0x3356] = 0xB5; mem[0x3357] = 0xB6;
     mem[0x33DF] = 0x1E; mem[0x33E0] = 0x1D;

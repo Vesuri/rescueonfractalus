@@ -55,6 +55,11 @@ void platform_tunnel_rings_drawn(void);
    on the host/SDL build, which renders mem[] directly. */
 void platform_title_changed(void);
 
+/* Notification that the compass heading cells $32E3-$32E6 (the mode-4 line below the
+   title) were rewritten — by game_sub_4606 (housing $01) or the compass updater $3FDE.
+   The Amiga backend re-decodes just those 4 cells; no-op on the host/SDL build. */
+void platform_compass_changed(void);
+
 #ifdef __cplusplus
 }
 #endif

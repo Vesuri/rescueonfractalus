@@ -34,7 +34,9 @@ static const uint16_t kBPLCON0_3P   = (uint16_t)((3 << PLNCNTSHFT) | USE_BPLCON3
 #define INDEX_SPRITE_COL      (INDEX_TITLE_BPL + 4)    // 21: color16,color17 (2)
 #define INDEX_SPRITES         (INDEX_SPRITE_COL + 2)   // 23: 8 sprite ptrs (16)
 #define INDEX_GAUGE_COL       (INDEX_SPRITES + 16)     // 39: COLOR21 ($1AA) (1)
-#define INDEX_TERRAIN_WAIT    (INDEX_GAUGE_COL + 1)    // 40: WAIT(kTerrainLine-1) (1)
+#define INDEX_COMPASS_WAIT    (INDEX_GAUGE_COL + 1)    // 40: WAIT(compass scanline) (1)
+#define INDEX_COMPASS_COL     (INDEX_COMPASS_WAIT + 1) // 41: color01 = compass COLPF0 (1)
+#define INDEX_TERRAIN_WAIT    (INDEX_COMPASS_COL + 1)  // 42: WAIT(kTerrainLine-1) (1)
 #define INDEX_TERRAIN_BPL     (INDEX_TERRAIN_WAIT + 1) // 41: terrain bitmap ptrs (3bp = 6)
 #define INDEX_TERRAIN_BPLCON0 (INDEX_TERRAIN_BPL + 6)  // 47: bplcon0 3P (1)
 #define INDEX_TERRAIN_MOD     (INDEX_TERRAIN_BPLCON0 + 1) // 48: bpl1mod,bpl2mod (2)
@@ -82,6 +84,10 @@ void StandbyCopperList::buildLayout(const Bitmap& title, const Bitmap& terrain, 
     showSprite(INDEX_SPRITES + 12, 6, nullSprite);
     showSprite(INDEX_SPRITES + 14, 7, nullSprite);
     setGaugeColor(0);                          // COLOR21 gauge bar (setter)
+
+    // ---- compass band: color01 = compass COLPF0 ($00CF) for the mode-4 compass line ----
+    d[INDEX_COMPASS_WAIT] = copperWait(kDisplayTop + 33 - 1, 0xE0);
+    setCompassColor(0);                        // poked from $00CF
 
     // ---- terrain region: WAIT (end of prev line), pointers, 2bp->3bp, modulo ----
     d[INDEX_TERRAIN_WAIT] = copperWait(kTerrainLine - 1, 0xE0);
@@ -136,6 +142,11 @@ void StandbyCopperList::setSprite2(const Sprite& s)
 void StandbyCopperList::setGaugeColor(uint16_t c)
 {
     data_[INDEX_GAUGE_COL] = copperMove(0x1AA, c);   // COLOR21 (sprite pair 2/3 pen 01)
+}
+
+void StandbyCopperList::setCompassColor(uint16_t c)
+{
+    data_[INDEX_COMPASS_COL] = copperMove(color01, c);
 }
 
 void StandbyCopperList::setTerrainPalette(uint16_t p0, uint16_t p1, uint16_t p2, uint16_t p3)

@@ -7,6 +7,7 @@ and regenerate. Each entry: address, current name, what it really does, suggeste
 
 | Addr | Current name | What it actually does | Suggested |
 |------|--------------|------------------------|-----------|
+| `$3FDE` | `terrain_lookup` | Draws the **compass heading indicator**: copies 4 glyph bytes from table `$4B0B` (indexed by heading `($281C + $3FF6[$2836]) & $FF`) into the compass cells `$32E3-$32E6` (the mode-4 line below the title text, screen x=144 y=32). Nothing to do with terrain. | `draw_compass_heading` |
 | `$548D` | `update_gauge_digits` | Per-frame **SFX voice/gauge envelope engine**: runs `sfx_engine_step`, advances the 14 voice/gauge slots' freq/duration/priority envelopes (emits AUDF via `sfx_voice_write_freq`, re-queues finished slots), then **drains the `$0719` event ring** (`input_init` / `reorder_sprite_slot`). Has nothing to do with "digits". | `sfx_voice_envelope_tick` |
 | `$3FFA` | `update_cockpit_digits_native` | Comment in NativeHandlers.cpp says it's a direct translation of **`startup_init` @ `$3FFA`** — name/address mismatch; it writes the cockpit 2×2 digit blocks but the canonical label is `startup_init`. Verify which is correct. | (confirm `$3FFA` identity) |
 | `$5433` | `font_display_init` | flight_native.cpp comment: "**sfx_engine_reset** $5433 (mislabelled font_display_init in symbols.csv)". It resets the SFX engine, not fonts. | `sfx_engine_reset` |

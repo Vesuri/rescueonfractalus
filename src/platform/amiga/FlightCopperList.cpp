@@ -33,7 +33,12 @@ static const uint16_t kColor21 = 0x1AA;   // sprite pair 2/3 pen 01 (gauge bar)
 #define INDEX_SPRITE_COL      (INDEX_TITLE_BPL + 4)        // 12: color16,color17 (2)
 #define INDEX_SPRITES         (INDEX_SPRITE_COL + 2)       // 14: 8 sprite ptrs (16)
 #define INDEX_GAUGE_COL       (INDEX_SPRITES + 16)         // 30: COLOR21 (1)
-#define INDEX_VP_WAIT         (INDEX_GAUGE_COL + 1)        // 31: WAIT(kTerrainLine-1) (1)
+// Compass band: between the title text and the viewport, re-point color01 to the compass
+// COLPF0 ($00CF, dark grey) for the mode-4 compass line — the $49EE slot-0 DLI's colour.
+#define INDEX_COMPASS_WAIT    (INDEX_GAUGE_COL + 1)        // 31: WAIT(compass scanline) (1)
+#define INDEX_COMPASS_COL     (INDEX_COMPASS_WAIT + 1)     // 32: color01 = compass COLPF0 (housing) (1)
+#define INDEX_COMPASS_COL3    (INDEX_COMPASS_COL + 1)      // 33: color03 = compass COLPF2 (needle salmon) (1)
+#define INDEX_VP_WAIT         (INDEX_COMPASS_COL3 + 1)     // 34: WAIT(kTerrainLine-1) (1)
 #define INDEX_VP_BPL          (INDEX_VP_WAIT + 1)          // 32: viewport 3bp ptrs (6)
 #define INDEX_VP_BPLCON0      (INDEX_VP_BPL + 6)           // 38: bplcon0 3P (1)
 #define INDEX_VP_PAL          (INDEX_VP_BPLCON0 + 1)       // 39: color00..03 (4)
@@ -79,6 +84,13 @@ void FlightCopperList::buildLayout(const Bitmap& title, const Bitmap& terrain, c
     showSprite(INDEX_SPRITES + 12, 6, nullSprite);
     showSprite(INDEX_SPRITES + 14, 7, nullSprite);
     setGaugeColor(0);                          // COLOR21 (setter)
+
+    // ---- compass band: re-point color01 to the compass COLPF0 for the mode-4 compass
+    // line (title-bitmap row 33 = scanline kDisplayTop+33).  Title text above it keeps the
+    // frame-top color01 (titlePf0); the viewport WAIT below resets the palette. ----
+    d[INDEX_COMPASS_WAIT] = copperWait(kDisplayTop + 33 - 1, 0xE0);
+    setCompassColor(0);                        // color01 = housing (poked from $00CF)
+    setCompassNeedleColor(0);                  // color03 = needle/heading-letter (salmon)
 
     // ---- viewport region: WAIT, pointers, 2bp->3bp, palette, line-doubling band ----
     d[INDEX_VP_WAIT] = copperWait(kTerrainLine - 1, 0xE0);
@@ -136,6 +148,16 @@ void FlightCopperList::setSpritePostColor(uint16_t c)
 void FlightCopperList::setGaugeColor(uint16_t c)
 {
     data_[INDEX_GAUGE_COL] = copperMove(kColor21, c);
+}
+
+void FlightCopperList::setCompassColor(uint16_t c)
+{
+    data_[INDEX_COMPASS_COL] = copperMove(color01, c);
+}
+
+void FlightCopperList::setCompassNeedleColor(uint16_t c)
+{
+    data_[INDEX_COMPASS_COL3] = copperMove(color03, c);
 }
 
 void FlightCopperList::setTerrainPalette(uint16_t pen0, uint16_t pen1, uint16_t pen2, uint16_t pen3)

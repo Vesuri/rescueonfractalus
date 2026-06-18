@@ -33,6 +33,7 @@ public:
     void setSpritePostColor(uint16_t c);                           // color17 (canopy posts)
     void setSprite2(const Sprite& s);                              // sprite-2 ptr (gauge or null)
     void setGaugeColor(uint16_t c);                                // COLOR21 ($1AA) gauge bar
+    void setCompassColor(uint16_t c);                              // color01 over the compass band (COLPF0 $00CF)
     void setTerrainPalette(uint16_t p0, uint16_t p1, uint16_t p2, uint16_t p3);  // terrain color00..03
     void setTerrainBgColor(uint16_t c);                            // terrain color03 only (green fade)
 };

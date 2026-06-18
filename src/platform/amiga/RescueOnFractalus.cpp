@@ -65,6 +65,9 @@ extern "C" volatile unsigned char g_doorFieldReady;
 // never missed.
 extern "C" volatile unsigned char g_titleDirty   = 1;
 extern "C" volatile unsigned char g_cockpitDirty = 1;
+// Compass (#2): the heading cells $32E3-$32E6 (mode-4 line below the title) — flagged by
+// platform_compass_changed() from the housing init (game_sub_4606) / heading updater ($3FDE).
+extern "C" volatile unsigned char g_compassDirty = 1;
 // The genuine boot chain (src/gen/rof_gen.c): station_init = attract ($195D, returns on
 // START); game_entry = $3CDE -> game_main_loop (game-display setup -> display_setup
 // cinematic -> flight loop, never returns).  g_quitJmp = the __builtin_setjmp buffer
@@ -929,6 +932,11 @@ void RescueOnFractalus::updateStandbyCopper(bool force)
         standbyCopper->setGaugeColor(gaugeCol);
         sbGaugeCol = gaugeCol;
     }
+    const uint16_t compassCol = atariToOCS(mem[0x00CF]);   // compass band COLPF0 (dark grey)
+    if (force || compassCol != sbCompassCol) {
+        standbyCopper->setCompassColor(compassCol);
+        sbCompassCol = compassCol;
+    }
     if (force || terr0 != sbTerr0 || terr1 != sbTerr1 || terr2 != sbTerr2 || terr3 != sbTerr3) {
         // Any terrain pen changed: rewrite all four (terr3 is the dark->bright green fade).
         standbyCopper->setTerrainPalette(terr0, terr1, terr2, terr3);
@@ -991,6 +999,17 @@ void RescueOnFractalus::updateFlightCopper(bool force)
         flightCopper->setGaugeColor(gaugeCol);
         flGaugeCol = gaugeCol;
     }
+
+    // Compass band colour: the $49EE slot-0 DLI sets COLPF0 = mem[$00CF] (dark grey) for the
+    // mode-4 compass line — poke it into the band's color01 so the housing/heading show in
+    // the compass's own colour rather than the title text colour.
+    const uint16_t compassCol = atariToOCS(mem[0x00CF]);
+    if (force || compassCol != flCompassCol) {
+        flightCopper->setCompassColor(compassCol);
+        flCompassCol = compassCol;
+    }
+    // Compass needle / heading letters (value-3 = COLPF2) are salmon ($2A); set once.
+    if (force) flightCopper->setCompassNeedleColor(atariToOCS(0x2A));
 
     // Terrain salmon→brown fade (#2): the flight VBI computes the atmosphere colours
     // each frame from altitude — pen0 = terrain body ($00DC), pen1 = sky ($00DD).  Poke
@@ -1137,6 +1156,35 @@ static void decode2bppByte(uint8_t src, uint8_t* p1out, uint8_t* p2out)
     *p2out = p2;
 }
 
+// Compass (#2): the heading indicator is 4 mode-4 cells $32E3-$32E6 on the mode-4 line at
+// display y=32 (below the title text) — drawn by the compass updater ($3FDE, mislabelled
+// "terrain_lookup") from glyph table $4B0B, or the housing $01 by game_sub_4606.  Its
+// background/pens are the frame-top colours, which are exactly the title-region palette
+// (COLBK=$00D4=$02C8, COLPF0=$00D8, COLPF1=$00D7), so it renders into the title bitmap with
+// no extra palette band; charset is $0400 (CHBAS, before the $3FDE/$49EE DLI switches it to
+// $3800 for the viewport below).  The mode-4 cells decode to the 2 title bitplanes via
+// decode2bppByte.  We touch only these 4 cells × 8 scanlines × 2 planes = 16 longwords.
+void RescueOnFractalus::decodeCompass()
+{
+    static const uint16_t kCompassRAM     = 0x32E3;   // 4 mode-4 cells (heading / housing)
+    static const uint16_t kCompassCharset = 0x3800;   // cockpit font (the $49EE DLI sets CHBASE=$38
+                                                       // for this line; char $01 = 0x55 solid housing)
+    static const int       kCompassRow    = 33;       // title-bitmap row for display y=32
+    static const int       kCompassByteX  = 18;       // x=144 → byte 144/8 (plane stride 80)
+    uint8_t* tbmp = (uint8_t*)titleBitmap->data;
+    const uint8_t* src = (const uint8_t*)mem + kCompassRAM;
+    for (int cell = 0; cell < 4; cell++) {
+        const uint8_t* glyph = (const uint8_t*)mem + kCompassCharset + (src[cell] & 0x7Fu) * 8u;
+        for (int s = 0; s < 8; s++) {
+            uint8_t p1v, p2v;
+            decode2bppByte(glyph[s], &p1v, &p2v);
+            uint8_t* row = tbmp + (kCompassRow + s) * 80;   // 80 = 40 plane1 + 40 plane2 (interleaved)
+            row[kCompassByteX + cell]      = p1v;
+            row[40 + kCompassByteX + cell] = p2v;
+        }
+    }
+}
+
 void RescueOnFractalus::render()
 {
     unsigned short profR0 = flight_vbi_tick();   // whole-render() timer (flight only)
@@ -1260,6 +1308,13 @@ void RescueOnFractalus::render()
         }
     }
     g_titleDirty = 0;
+    }
+
+    // Compass (#2): re-decode the 4 heading cells when flagged (housing/heading rewritten)
+    // or on a forced full repaint — targeted 16-longword decode into the title bitmap.
+    if (g_compassDirty || cockpitForceFull) {
+        decodeCompass();
+        g_compassDirty = 0;
     }
 
     // ---- cockpit region ------------------------------------------------------

@@ -52,6 +52,10 @@ void platform_title_changed(void) {
     if (platform) platform->titleChanged();
 }
 
+void platform_compass_changed(void) {
+    if (platform) platform->compassChanged();
+}
+
 } /* extern "C" */
 
 /* ---------------------------------------------------------------------------

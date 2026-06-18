@@ -554,6 +554,13 @@ void PlatformAmiga::tunnelRingsDrawn() {
     g_tunnelFieldDirty = 1;
 }
 
+extern "C" volatile unsigned char g_compassDirty;
+void PlatformAmiga::compassChanged() {
+    // The compass heading cells $32E3-$32E6 were rewritten (housing or heading glyph).
+    // Flag them so the next renderFrame re-decodes just those 4 mode-4 cells.
+    g_compassDirty = 1;
+}
+
 extern "C" volatile unsigned char g_titleDirty;
 void PlatformAmiga::titleChanged() {
     // copy_altitude_graphic_to_screen ($782A) just rewrote the banner text in $32B7-$32CA

@@ -24,6 +24,38 @@ The boot→flight sequence has 7 canonical scenes (user-approved). Code ids are 
 The Amiga app's main class is `RescueOnFractalus` (flight is a continuation of it, not a
 separate scene). Atari entry is `game_entry $3CDE`; main blob `$3CDE–$B7FF`.
 
+## Instrument vocabulary — "Valkyrie Fighter Control Panel" (use these names everywhere)
+
+The 19 cockpit instruments (game manual p.6), with their Amiga-screen position `x,y` and
+`WxH` (user-supplied 2026-06-18). Use these names in code/comments/commits. Positions are
+in the 320×216 display space; use them to identify each instrument's Atari hardware source
+(player P0–P3 / missile M0–M3 / mode-4·mode-D cockpit cell range).
+
+| # | Instrument | x,y | WxH | Notes / source (✓=confirmed, ?=to verify) |
+|---|---|---|---|---|
+| 1 | **Score** | 304,20 | 16×8 | top-bar mode-6 text ~`$32E3` ✓ |
+| 2 | **Compass** | 144,32 | 32×8 | top-bar mode-6 cells `$32C9-$32CA`, varies with heading octant `$280D` ✓ |
+| 3 | **Wing Clearance Bars** | 40,128 | 240×10 | **missiles M1/M2/M3**, HPOSM3=`$2840`(+`$0C`/+`$11`), SIZEM=`$CC`, GRAFM=`$00CD` ✓ |
+| 4 | **Thrust Level** | 8,152 | 40×60 | mode-4 dial-bar cells (x≈8-16), drawn via `$4581`/`draw_object_column` ✓ |
+| 5 | **Dangerous Altitude** | 24,144 | 40×60 | mode-4 dial-bar cells (x≈24-32, e.g. `$3394`), lights near ground ✓ |
+| 6 | **Artificial Horizon** | 56,138 | 32×28 | mode-4 cells cols ~11-14 (x56-88); bank+climb — only changes when rolling |
+| 7 | **Altimeter** | 108,144 | 8×56 | **Player P3** cyan bar COLPM3=`$00D9`(`$9x`) ship-height + P2 (COLPM2=`$0037`) terrain-height; HPOSP3=`$2870`, HPOSP2=`$00CB` |
+| 8 | **Targeting Scope** | 136,151 | 50×33 | centre-lower mode-4 cells (x≈136) |
+| 9 | **Main Window** | — | — | the terrain viewport |
+| 10 | **Cross Hairs** | 136,69 | 50×37 | centre of Main Window |
+| 11 | **Enemy Lock-On Indicator** | 136,193 | 48×6 | mode-4 cells `$3492-$3496` (`lock_on_indicator_tick $4229`, state `$007E`) ✓ |
+| 12 | **Energy Level Indicator** | 204,144 | 8×56 | **P1 strip `$0D98`** gauge sprite, HPOSP1=`$00B5` (the working "right gauge") ✓ |
+| 13 | **Long Range Scanner** | 232,138 | 32×28 | mode-4 cells (x≈232) |
+| 14 | **Shields On** | 288,136 | 6×4 | tiny status light |
+| 15 | **Mother Ship** | 300,140 | 6×4 | tiny status light |
+| 16 | **Air Lock Open** | 312,144 | 6×4 | tiny status light |
+| 17 | **Range To Pilot** | 284,155 | 8×10 | small digit |
+| 18 | **Enemies Destroyed** | 276,171 | 8×10 | small digit |
+| 19 | **Pilot Quota/Rescued** | 268,187 | 8×10 | small digit |
+
+The **canopy posts** (cockpit window A-pillars) are a separate frame element = Atari players
+P0 (`$0C32`, left) / P1 (`$0D32`, right), RLE-decoded from tables `$4DFA`/`$4E09`.
+
 ## Build / run / debug
 
 ### SDL (macOS dev + profiling)  — from repo root

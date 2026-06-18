@@ -74,6 +74,7 @@ private:
     void buildCopperList(CopperList* cl, uint16_t frame);
     void buildPostSprites();   // decode RLE tables $4DFA/$4E09 -> leftPost/rightPost (once)
     bool postsBuilt = false;   // canopy posts are constant: decode them a single time
+    void decodeCompass();      // decode the 4 compass cells $32E3-$32E6 -> title bitmap (16 longwords)
     void decodeTunnelField(int rowLo, int rowHi);  // decode mem[$2000] rows [lo,hi] -> tunnelBitmap
     void renderViewportModeD(uint16_t srcBase, int stride, int rows); // decode CHANGED mode-D bytes -> terrainBitmap (stars: $1000/48/43; flight: $1070/96)
 
@@ -88,7 +89,7 @@ private:
     bool standbyCopperInstalled = false;   // is standbyCopper the currently-installed list?
     void updateStandbyCopper(bool force);  // poke changed colour/sprite slots (force = all)
     // Last-poked values, so updateStandbyCopper only writes a MOVE when it changed.
-    uint16_t sbTitleBg = 0xFFFF, sbTitlePf0 = 0xFFFF, sbGaugeCol = 0xFFFF;
+    uint16_t sbTitleBg = 0xFFFF, sbTitlePf0 = 0xFFFF, sbGaugeCol = 0xFFFF, sbCompassCol = 0xFFFF;
     uint16_t sbTerr0 = 0xFFFF, sbTerr1 = 0xFFFF, sbTerr2 = 0xFFFF, sbTerr3 = 0xFFFF;
     int8_t   sbGauge = -1;   // sprite-2 = gauge(1)/null(0); -1 = unset
 
@@ -112,7 +113,7 @@ private:
     bool flightCopperInstalled = false;  // is flightCopper the currently-installed list?
     void updateFlightCopper(bool force); // poke changed colour/sprite slots (force = all)
     // Last-poked values (fl* — separate from sb*/pl* so a phase switch force-refreshes).
-    uint16_t flTitleBg = 0xFFFF, flTitlePf0 = 0xFFFF, flGaugeCol = 0xFFFF;
+    uint16_t flTitleBg = 0xFFFF, flTitlePf0 = 0xFFFF, flGaugeCol = 0xFFFF, flCompassCol = 0xFFFF;
     uint16_t flTerr0 = 0xFFFF, flTerr1 = 0xFFFF;   // terrain pen0/pen1 (atmosphere ramp $00DC/$00DD)
 
     Bitmap*     titleBitmap    = nullptr;

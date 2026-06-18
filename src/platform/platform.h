@@ -84,6 +84,12 @@ public:
        here.  No-op on platforms that render mem[] directly (SDL).          */
     virtual void titleChanged() {}
 
+    /* Notification that the compass heading cells ($32E3-$32E6, the mode-4 line
+       below the title) were rewritten — the housing ($01) by game_sub_4606 or the
+       heading glyph by the compass updater ($3FDE).  A bitplane-mirroring platform
+       re-decodes just those 4 cells.  No-op on direct-mem[] platforms (SDL).     */
+    virtual void compassChanged() {}
+
     /* ------------------------------------------------------------------ */
     /* Image loading                                                        */
     /* ------------------------------------------------------------------ */
