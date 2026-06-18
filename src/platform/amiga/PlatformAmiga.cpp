@@ -521,7 +521,10 @@ void PlatformAmiga::renderFrame() {
     if (s_scene) s_scene->renderFrame();
     while (g_vbiCount == last) { /* wait for next real VBI */ }
     uint16_t vbiVec = (uint16_t)(mem[0x0222] | (mem[0x0223] << 8));
-    if (vbiVec != 0x1B30u) {
+    // RTCLOK ownership: the ATTRACT ($1B30) and full flight ($4FF5) VBIs advance RTCLOK
+    // ($0014) in their own transpiled bodies, so skip here to avoid double-counting.  The
+    // standby/cinematic ($52D7) body does not, so renderFrame owns it there.
+    if (vbiVec != 0x1B30u && vbiVec != 0x4FF5u) {
         mem[0x0014]++;
         if (!mem[0x0014]) mem[0x0013]++;
     }

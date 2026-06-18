@@ -1065,19 +1065,27 @@ void flight_control_integrate(void);     // $8E5B
 void update_terrain_scanline_proj(void); // $9833 (the JSR is at $51BC inside vbi_handler_flight)
 void render_bcd_counter(void);           // $49A0: draw BCD score ($0601) to top line $32C5
 void update_gauge_digits(void);          // $548D: in-game SFX voice engine + ring drain (Atari VBI tail $534D)
+// Full in-flight VBI ($4FF5).  Faithful transpiled handler; its calls to
+// flight_control_integrate / update_terrain_scanline_proj resolve to the native twins
+// (same symbol), so running it verbatim IS "full faithful VBI, native motion spliced in":
+// PMG setup, instrument drawing (build_player2_sprite / draw_player3_object / the P3
+// indicator stripe), the atmosphere colour ramp ($51C8: altitude→$00DA/$00DC/$00DB/$00DD),
+// the cockpit message dispatch (MANUAL), the gauges and the score all run as on the Atari.
+void vbi_handler_flight(void);           // $4FF5
 void reorder_sprite_slot(void);          // $5614: voice-priority mixer — assigns a POKEY channel ($0705) to slot cpu.Y
 }
 
-// flight_vbi_native: the motion half of one flight frame (flight VBI $4FF5,
-// $004A-gated subset).  Cockpit/HUD gauges from that block ($520F+) are deferred.
+// flight_vbi_native: one in-flight VBI frame ($4FF5).  Runs the FULL faithful transpiled
+// handler — its flight_control_integrate / update_terrain_scanline_proj calls resolve to
+// the native twins, so this is "full faithful VBI, native motion spliced in".  This draws
+// the cockpit HUD (player gauges, P3 indicator, missiles/wing bars), the atmosphere colour
+// ramp, the MANUAL message and the score, none of which the old curated subset did.  RTCLOK
+// ($0014/$0012) is advanced here (as on the Atari); PlatformAmiga::renderFrame skips its
+// own RTCLOK advance for $4FF5 so the clock is not double-counted.
 extern "C" void flight_vbi_native(void)
 {
-    if (mem[zp::joystickSaved] == 0) return;        // $51B2: LDA $004A / BEQ (skip when not flying)
-    unsigned short a = beam_line();      // sub-frame timer: RTCLOK is frozen for the whole ISR
-    flight_control_integrate();          // $51B9 ($8E5B): joystick + throttle -> world pos
-    update_terrain_scanline_proj();      // $51BC ($9833): project pitch/altitude
-    render_bcd_counter();                // top-bar score: BCD $0601 -> text line $32C5
-    update_gauge_digits();               // $548D: drain the SFX event ring -> POKEY/Paula (Atari VBI tail $534D)
+    unsigned short a = beam_line();      // sub-frame profiler timer
+    vbi_handler_flight();                // $4FF5 — the whole handler
     unsigned short b = beam_line();
     g_flightProf.isrLines += (b >= a) ? (unsigned short)(b - a)
                                       : (unsigned short)(b + 313 - a);  // PAL wrap (~313 lines)
