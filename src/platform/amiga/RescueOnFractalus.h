@@ -104,8 +104,7 @@ private:
     // Static flight fixed copper list (scene 7 — same line-doubled mode-D band, with the
     // flight terrain palette + HUD sprites).  Same build-once + poke-in-place scheme:
     // renderViewportModeD updates the terrain bitmap content, the ported flight VBI pokes
-    // the per-frame colours/sprites via updateFlightCopper.  Replaces the old per-frame
-    // buildCopperList full rebuild for flight.
+    // the per-frame colours/sprites via updateFlightCopper.
     FlightCopperList* flightCopper = nullptr;
     bool flightCopperInstalled = false;  // is flightCopper the currently-installed list?
     void updateFlightCopper(bool force); // poke changed colour/sprite slots (force = all)
@@ -113,7 +112,7 @@ private:
     uint16_t flTitleBg = 0xFFFF, flTitlePf0 = 0xFFFF, flGaugeCol = 0xFFFF, flCompassCol = 0xFFFF;
     uint16_t flTerr0 = 0xFFFF, flTerr1 = 0xFFFF;   // terrain pen0/pen1 (atmosphere ramp $00DC/$00DD)
 
-    // Launch-cinematic fixed copper lists (replace the old per-frame buildCopperList):
+    // Launch-cinematic fixed copper lists:
     //   DoorsCopperList (scene 4) — hangar doors parting, sliding 3-band geometry poked
     //     each frame from the door-scroll counter (g2 = 0x2B - $008A).
     //   TunnelCopperList (scene 5) — doors fully open (g2 == kTerrainHeight/2), one full
@@ -125,9 +124,9 @@ private:
     // copper — the beam can read a half-updated band and the tunnel reveal jitters ±1px
     // (render() runs before the poke, so the beam is usually already past the top border).
     // So updateDoorsCopper() fully populates the BACK buffer and setCopperList swaps it at
-    // the next vblank (atomic), exactly as the old buildCopperList double buffer did.  The
-    // Tunnel list has FIXED geometry (one band, constant pointers) so its in-place colour
-    // pokes are safe (a one-frame torn colour is invisible) — single-buffered.
+    // the next vblank (atomic).  The Tunnel list has FIXED geometry (one band, constant
+    // pointers) so its in-place colour pokes are safe (a one-frame torn colour is
+    // invisible) — single-buffered.
     DoorsCopperList*  doorsCopper[2] = { nullptr, nullptr };
     uint8_t doorsActive = 0;
     void updateDoorsCopper(DoorsCopperList* dc);  // fully populate one buffer (colours + geometry)

@@ -6,10 +6,9 @@ class Sprite;
 
 // TunnelCopperList — the fixed-layout copper list for the full tunnel descent
 // (scene 5): the launch cinematic frames where the hangar doors have fully parted
-// (g2 == kTerrainHeight/2) and a single tunnel band fills the whole terrain region.
-// This is the layout the per-frame buildCopperList() used to emit on its `tunnelFirst`
-// path (door && topH == 0): one 3bp tunnel band from tunnelBitmap, with the cycling
-// ring palette (pens 1-6 fed by the rotating $08D4-$08D9 colour ring).
+// (g2 == kTerrainHeight/2) and a single tunnel band fills the whole terrain region:
+// one 3bp tunnel band from tunnelBitmap, with the cycling ring palette (pens 1-6 fed by
+// the rotating $08D4-$08D9 colour ring).
 //
 // Built ONCE in buildLayout() (geometry, bitmap/sprite pointers, the constant cockpit
 // palette), then the per-frame-varying colours are poked in place via the setters — no

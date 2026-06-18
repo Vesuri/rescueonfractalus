@@ -5,8 +5,8 @@ class Bitmap;
 class Sprite;
 
 // StandbyCopperList — the fixed-layout copper list for the static Standby screen
-// (scene 3): title + terrain/doors + cockpit, the layout the per-frame
-// buildCopperList() in RescueOnFractalus.cpp emits when !rsViewport && !rsLaunched.
+// (scene 3): title + terrain/doors + cockpit — the layout used while !rsViewport &&
+// !rsLaunched (the settled Standby/gauge-fill state).
 //
 // Built ONCE in buildLayout() (geometry, bitmap pointers, sprite pointers, the
 // constant cockpit palette), then the few per-frame-varying colours/sprite are

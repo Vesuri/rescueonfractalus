@@ -6,9 +6,9 @@ class Sprite;
 
 // DoorsCopperList — the fixed-structure copper list for the hangar doors parting
 // (scene 4): the launch cinematic frames before the doors fully open (door-scroll
-// g2 = 0..kTerrainHeight/2 - 1).  This is the layout the per-frame buildCopperList()
-// used to emit on its `door` path: a top terrain band that slides up, a tunnel reveal
-// in the widening gap, and a bottom terrain band that slides down.
+// g2 = 0..kTerrainHeight/2 - 1).  The terrain region is three bands: a top terrain band
+// that slides up, a tunnel reveal in the widening gap, and a bottom terrain band that
+// slides down.
 //
 // Unlike the other scene lists, the doors' GEOMETRY moves every frame, so this list
 // can't be pure colour-poke.  Instead the list is allocated ONCE for the maximal

@@ -10,8 +10,7 @@
 #include "assets/atari_pal.h"   // atariToOCS() for the constant cockpit palette
 
 // ---- display geometry --------------------------------------------------------
-// MUST match the constants in RescueOnFractalus.cpp (same derivation).  The
-// Standby copper layout buildCopperList() emits is reproduced here byte-for-byte.
+// MUST match the constants in RescueOnFractalus.cpp (same derivation).
 static const uint16_t kW            = 320;
 static const uint16_t kH            = 216;
 static const uint8_t  kBP2          = 2;

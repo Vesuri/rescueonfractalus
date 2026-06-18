@@ -206,8 +206,7 @@ void DoorsCopperList::update(uint16_t g2,
 
     // ---- band 2: bottom terrain (slides down) ----
     // Emit only while its WAIT clears the cockpit WAIT by a margin; otherwise the
-    // tunnel band above simply extends over the last 1-2 rows (imperceptible) —
-    // exactly the legacy buildCopperList rule.
+    // tunnel band above simply extends over the last 1-2 rows (imperceptible).
     const uint16_t botWaitY = (uint16_t)(kTerrainLine + half + g2 - 1);
     if (door && topH > 0 && botWaitY + 2 <= (uint16_t)(kCockpitLine - 1)) {
         d[INDEX_B2_WAIT] = copperWait(botWaitY, 0xE0);

@@ -464,7 +464,7 @@ void RescueOnFractalus::renderViewportModeD(uint16_t srcBase, int stride, int ro
     static const int kCrop   = 4;    // central 40 of 48 (centres content)
 
     // Write each mode-D row to ONE interleaved scanline; the copper line-doubles the
-    // region vertically (buildCopperList's viewport band toggles the bitplane modulo
+    // region vertically (the Planet/Flight viewport band toggles the bitplane modulo
     // -40/+80 per scanline, re-displaying each row twice).  Layout per row: 40 plane1
     // bytes, plane2 at +40, plane3 (always 0) at +80, then +120 to the next scanline.
     //
@@ -591,7 +591,7 @@ void RescueOnFractalus::renderFrame()
     render();
 
     // Static Standby (incl. the gauge-fill sub-phase before the doors scroll): the
-    // copper layout buildCopperList would emit is FIXED here (!rsViewport, doors not
+    // copper layout is FIXED here (!rsViewport, doors not
     // parting), so drive the single fixed StandbyCopperList by poking only changed
     // colour/sprite slots — no per-frame full rebuild, no double-buffer flip.  Gated
     // on g_doorFieldReady (doors decoded, fade reveal done -> global fade is 16).
@@ -760,7 +760,7 @@ void RescueOnFractalus::updatePlanetCopper(bool force)
 // Same poke-only-on-change scheme.  The terrain pens are baked constant in buildLayout
 // (the salmon→brown fade will poke setTerrainPen0 from the native atmosphere code); the
 // HUD sprite pointers are poked by the ported flight VBI.  Here we keep the top-bar / gauge
-// colours live, matching the flight branch of the legacy buildCopperList.
+// colours live.
 void RescueOnFractalus::updateFlightCopper(bool force)
 {
     const uint16_t titleBg  = atariToOCS(mem[0x02C8]);             // COLBK = top-bar bg / canopy posts
@@ -807,8 +807,7 @@ void RescueOnFractalus::updateFlightCopper(bool force)
 // (the 3 terrain bands).  The bands' WAIT lines + bitplane pointers move as the
 // doors open.  Because the list is double-buffered (the caller swaps the back buffer in at
 // vblank), every slot is written unconditionally — the back buffer is two frames stale, so
-// there is no poke-on-change fast path.  Reproduces the legacy buildCopperList non-viewport
-// / door path.
+// there is no poke-on-change fast path.
 void RescueOnFractalus::updateDoorsCopper(DoorsCopperList* dc)
 {
     const uint16_t titleBg  = atariToOCS(mem[0x02C8]);            // COLBK = title bg / canopy posts
@@ -845,8 +844,7 @@ void RescueOnFractalus::updateDoorsCopper(DoorsCopperList* dc)
 // updateTunnelCopper(): refresh the TunnelCopperList for the full tunnel descent (scene 5,
 // doors fully open).  Constant title/gauge/compass via poke-on-change; the tunnel ring
 // palette (pen0 black + pens 1-6 fed by the rotating $08D4-$08D9 ring, +3 rotated as the
-// Atari tunnel DLI applies) is poked when any entry changed.  Reproduces buildCopperList's
-// tunnelFirst path.
+// Atari tunnel DLI applies) is poked when any entry changed.
 void RescueOnFractalus::updateTunnelCopper(bool force)
 {
     const uint16_t titleBg  = atariToOCS(mem[0x02C8]);
@@ -879,8 +877,8 @@ void RescueOnFractalus::updateTunnelCopper(bool force)
 
 // deriveRenderSignals(): recompute the renderer's phase-gating signals from mem[]
 // hardware state, once per frame.  These replace the C++ launchPhase enum as the
-// renderer's source of truth, so buildCopperList/render/perFrameWork keep working as
-// the transpiled game_entry/game_main_loop/display_setup drive the program.
+// renderer's source of truth, so the copper-list selection/render/perFrameWork keep
+// working as the transpiled game_entry/game_main_loop/display_setup drive the program.
 //
 // Scene identity comes from the LIVE VVBLKI vector ($0222/$0223) the genuine flow
 // installs per scene — NOT the raw DLI byte $0200.  game_main_loop loops over

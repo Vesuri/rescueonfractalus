@@ -6,8 +6,7 @@ class Sprite;
 
 // PlanetCopperList — the fixed-layout copper list for the stars/planet launch
 // viewport (scene 6, rsStars): title + a line-doubled mode-D viewport band +
-// cockpit, the layout buildCopperList() in RescueOnFractalus.cpp emits on the
-// rsViewport (non-flight) path.
+// cockpit — the layout used on the rsViewport (non-flight) path.
 //
 // The viewport band is the reason this needs its own class rather than reusing
 // StandbyCopperList: the 43 mode-D rows are each re-displayed on two scanlines by

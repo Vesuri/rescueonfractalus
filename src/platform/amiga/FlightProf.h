@@ -24,7 +24,7 @@ struct FlightProf {
     unsigned long terrain;     /* RTCLOK: native terrain pass (frame_setup+clear+draw+collision) */
     unsigned long stateEnemy;  /* RTCLOK: TRANSPILED game_state_update + enemy_check              */
     unsigned long render;      /* RTCLOK: renderViewportModeD (bitplane conversion) only          */
-    unsigned long copper;      /* RTCLOK: buildCopperList                                         */
+    unsigned long copper;      /* RTCLOK: per-frame copper-list build/update                      */
     unsigned long frames;      /* main-loop flight frames accumulated                             */
     unsigned long updateTot;   /* RTCLOK: whole scene.update()                                    */
     unsigned long renderTot;   /* RTCLOK: whole scene.render()                                    */

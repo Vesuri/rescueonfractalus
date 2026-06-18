@@ -21,7 +21,7 @@ static const uint16_t kCockpitLine  = kTerrainLine + kTerrainHeight;  // = 172
 static const uint16_t kCenterY      = kDisplayTop + kH / 2;           // = 0x98
 static const uint16_t kBPLCON0_3P   = (uint16_t)((3 << PLNCNTSHFT) | USE_BPLCON3);
 
-// Sprite colour-register addresses (custom-chip offsets), as in buildCopperList.
+// Sprite colour-register addresses (custom-chip offsets).
 static const uint16_t kColor21 = 0x1AA;   // sprite pair 2/3 pen 01 (gauge bar)
 static const uint16_t kColor25 = 0x1B2;   // sprite pair 4/5 pen 01 (starfield)
 static const uint16_t kColor29 = 0x1BA;   // sprite pair 6/7 pen 01 (starfield)
