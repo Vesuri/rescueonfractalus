@@ -112,6 +112,7 @@ private:
     void updateFlightCopper(bool force); // poke changed colour/sprite slots (force = all)
     // Last-poked values (fl* — separate from sb*/pl* so a phase switch force-refreshes).
     uint16_t flTitleBg = 0xFFFF, flTitlePf0 = 0xFFFF, flGaugeCol = 0xFFFF;
+    uint16_t flTerr0 = 0xFFFF, flTerr1 = 0xFFFF;   // terrain pen0/pen1 (atmosphere ramp $00DC/$00DD)
 
     Bitmap*     titleBitmap    = nullptr;
     Bitmap*     terrainBitmap  = nullptr;

@@ -981,6 +981,19 @@ void RescueOnFractalus::updateFlightCopper(bool force)
         flightCopper->setGaugeColor(gaugeCol);
         flGaugeCol = gaugeCol;
     }
+
+    // Terrain salmon→brown fade (#2): the flight VBI computes the atmosphere colours
+    // each frame from altitude — pen0 = terrain body ($00DC), pen1 = sky ($00DD).  Poke
+    // them into the copper as they ramp (the "native computes, callback updates the
+    // copper" model).  pen2 (dots) / pen3 (highlight) stay the baked constants.  At flight
+    // entry pen0 starts near the sky tone and ramps to brown as the ship descends, so the
+    // view no longer snaps from the planet's salmon straight to brown.
+    const uint16_t terr0 = atariToOCS(mem[0x00DC]);
+    const uint16_t terr1 = atariToOCS(mem[0x00DD]);
+    if (force || terr0 != flTerr0 || terr1 != flTerr1) {
+        flightCopper->setTerrainPalette(terr0, terr1, atariToOCS(0x20), atariToOCS(0x18));
+        flTerr0 = terr0; flTerr1 = terr1;
+    }
 }
 
 // deriveRenderSignals(): recompute the renderer's phase-gating signals from mem[]
