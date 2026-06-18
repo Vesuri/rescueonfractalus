@@ -715,10 +715,28 @@ void RescueOnFractalus::renderViewportModeD(uint16_t srcBase, int stride, int ro
     viewportForceFull = false;
     viewportLastBase  = srcBase;
 
-    const uint8_t* src = (const uint8_t*)&mem[srcBase + kCrop];
-    uint8_t* vdest    = (uint8_t*)terrainBitmap->data;
-    uint32_t* shadow  = viewportShadow;
-    for (int row = 0; row < rows; row++, src += stride) {
+    // Dirty-row band.  For the stars/planet source ($1000) the planet renderer
+    // (draw_vline_pair, the only writer of this field — validated: every shadow-detected
+    // change lay inside its reported extent) records the rows it touched in
+    // g_planetRowLo/Hi.  Decode only that band instead of scanning all 43 rows: the field
+    // lives in DMA-contended CHIP RAM, so the full per-frame scan cost ~17 ms even though
+    // only ~3 rows change.  full frames (entry) still decode everything (and clear plane3).
+    // The flight source ($1070) has a different writer, so it keeps the full scan + shadow.
+    extern volatile unsigned long g_planetRowLo, g_planetRowHi;
+    int rStart = 0, rEnd = rows - 1;
+    if (srcBase == 0x1000u && !full) {
+        rStart = (int)g_planetRowLo;
+        rEnd   = (int)g_planetRowHi;
+        g_planetRowLo = 9999; g_planetRowHi = 0;             // consume for next frame
+        if (rEnd < rStart) return;                           // nothing drawn this frame
+        if (rStart < 0) rStart = 0;
+        if (rEnd >= rows) rEnd = rows - 1;
+    }
+
+    const uint8_t* src = (const uint8_t*)&mem[srcBase + kCrop] + (unsigned)rStart * stride;
+    uint8_t* vdest    = (uint8_t*)terrainBitmap->data + (unsigned)rStart * 120;
+    uint32_t* shadow  = viewportShadow + rStart * 10;
+    for (int row = rStart; row <= rEnd; row++, src += stride) {
         const uint8_t* rs = src;
         uint32_t* q1 = (uint32_t*)vdest;
         uint32_t* q2 = (uint32_t*)(vdest + 40);

@@ -601,6 +601,11 @@ void draw_frame_pattern_seq(void) {
  * $2F-col.  For rows >= $2B the two columns are written via plot_pixel_2bpp (2bpp pack,
  * carry-sensitive — the entry carry is whatever CMP/SBC last set), otherwise the fill
  * byte $0084 is stored directly.  cpu.X (entryX) is preserved across the loop. */
+/* Planet dirty-row extent: draw_vline_pair is the only writer of the $1000 stars/planet
+ * field, so it records the min/max field row it touches here; the Amiga
+ * renderViewportModeD (RescueOnFractalus.cpp) decodes only that band, then resets it.
+ * Defined here (the writer's TU) so every build that links the native twins resolves it. */
+volatile unsigned long g_planetRowLo = 9999, g_planetRowHi = 0;
 void draw_vline_pair(void) {
     mem[0x0092] = cpu.A;
     if ((uint8_t)(cpu.A - mem[0x00B8]) & 0x80) return;     /* CMP $00B8; BMI -> return */
@@ -608,6 +613,8 @@ void draw_vline_pair(void) {
     for (;;) {
         uint8_t a = mem[0x0092];
         if (a & 0x80) { a = 0x00; mem[0x0092] = 0x00; }    /* CMP #0; BPL skips; clamp negative to 0 */
+        if (a < g_planetRowLo) g_planetRowLo = a;          /* widen the dirty-row extent */
+        if (a > g_planetRowHi) g_planetRowHi = a;
         set_row_ptr_from_count();                          /* Y=$0092 -> $80/$81 (preserves X) */
         uint8_t col = (uint8_t)((entryX >> 1) + 2);        /* TXA; LSR; CLC; ADC #$02 */
         mem[0x0085] = col;
