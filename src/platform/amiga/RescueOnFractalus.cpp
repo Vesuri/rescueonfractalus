@@ -161,24 +161,35 @@ static const uint16_t kSprXRight = 0x81 + 285;
 // transiently clears the music gate $00E7, so gating on $00E7 would black the screen out
 // again when START is pressed — the latch keeps it revealed through the cinematic and flight.
 
-// ---- sprite data (staircase slant, see commit history for derivation) --------
-void RescueOnFractalus::fillSpriteData(Sprite* s, bool isRight)
+// ---- canopy posts (cockpit window A-pillars) ---------------------------------
+// The posts are the real Atari players P0 (left) / P1 (right).  The genuine game decodes
+// them with unpack_terrain_seed_cols ($7558), RLE-expanding the static source tables
+// $4DFA (left) / $4E09 (right) into the player buffers $0C32/$0D32 — but only at gameplay
+// init, so the LIVE buffers don't hold the frame pre-flight (and are repurposed as the
+// station/stars starfield).  The post graphic itself is constant, so we decode it ONCE
+// straight from the same source tables here, independent of phase, and never rebuild —
+// faithful (real game data) and replacing the old hand-approximated 0xF000>>shift slant.
+//
+// RLE format (rle_expand_list $757B): (count, value) byte pairs, 0x00 terminator.  Each
+// Atari player byte → 2 Amiga lores px via the kDoubleGlyph LUT (as the starfield maps).
+static void decodePostRLE(const uint8_t* tbl, uint16_t* dst)
 {
-    uint16_t* d = s->data() + 2;
-    for (int i = 0; i < kHT; i++) {
-        int shift;
-        if (i < 8) {
-            shift = isRight ? 12 : 0;
-        } else {
-            int step = (i - 8) / 14 + 1;
-            shift = isRight ? (12 - 2 * step) : (2 * step);
-            if (shift < 0) shift = 0;
-            if (shift > 12) shift = 12;
+    int row = 0;
+    while (row < kHT) {
+        uint8_t count = *tbl++;
+        if (count == 0) break;                 // terminator
+        uint16_t doubled = kDoubleGlyph[*tbl++];
+        for (uint8_t k = 0; k < count && row < kHT; k++, row++) {
+            dst[row * 2] = doubled; dst[row * 2 + 1] = 0x0000;
         }
-        uint16_t sprA = (uint16_t)(0xF000u >> shift);
-        d[i * 2]     = sprA;
-        d[i * 2 + 1] = 0x0000;
     }
+    for (; row < kHT; row++) { dst[row * 2] = 0x0000; dst[row * 2 + 1] = 0x0000; }
+}
+
+void RescueOnFractalus::buildPostSprites()
+{
+    decodePostRLE((const uint8_t*)&mem[0x4DFA], leftPost->data()  + 2);   // P0 left
+    decodePostRLE((const uint8_t*)&mem[0x4E09], rightPost->data() + 2);   // P1 right
 }
 
 // ---- throttle gauge sprite ---------------------------------------------------
@@ -519,9 +530,8 @@ void RescueOnFractalus::initialize()
     gaugeSprite->setX(0x81 + 203);
     gaugeSprite->setY(0x2c + 144);
 
-    fillSpriteData(leftPost,  false);
-    fillSpriteData(rightPost, true);
-
+    // Post graphics are decoded once from the real RLE source tables (buildPostSprites,
+    // triggered on the first perFrameWork frame); nothing to fill here.  Position/Y below.
     leftPost->setX(kSprXLeft);
     leftPost->setY(kTerrainLine);
     rightPost->setX(kSprXRight);
@@ -1101,6 +1111,10 @@ void RescueOnFractalus::perFrameWork()
         update_cockpit_digits_native();          // $3FFA: cockpit digit update
 
     if (rsGauge) buildGaugeSprite();
+    // Canopy posts: constant graphic, decoded once from the real RLE source tables — shown
+    // in every screen (independent of the live $0C32/$0D32 buffers, which only hold the
+    // frame at gameplay init and are the starfield otherwise).
+    if (!postsBuilt) { buildPostSprites(); postsBuilt = true; }
     // Starfield players $0C32/$0E32/$0F32: scrolled+seeded during stars, static
     // through the planet zoom, so map them both phases.
     if (rsStars) buildStarSprites();

@@ -72,7 +72,8 @@ private:
     Bitmap*  tunnelBitmap = nullptr;
 
     void buildCopperList(CopperList* cl, uint16_t frame);
-    void fillSpriteData(Sprite* s, bool isRight);
+    void buildPostSprites();   // decode RLE tables $4DFA/$4E09 -> leftPost/rightPost (once)
+    bool postsBuilt = false;   // canopy posts are constant: decode them a single time
     void decodeTunnelField(int rowLo, int rowHi);  // decode mem[$2000] rows [lo,hi] -> tunnelBitmap
     void renderViewportModeD(uint16_t srcBase, int stride, int rows); // decode CHANGED mode-D bytes -> terrainBitmap (stars: $1000/48/43; flight: $1070/96)
 
