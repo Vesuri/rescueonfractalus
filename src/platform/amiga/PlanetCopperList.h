@@ -39,5 +39,6 @@ public:
     void setSpritePostColor(uint16_t c);                           // color17 (canopy posts)
     void setGaugeColor(uint16_t c);                                // COLOR21 ($1AA) gauge bar
     void setStarColor(uint16_t c);                                 // COLOR25/29 ($1B2/$1BA) starfield
+    void setCompassColor(uint16_t c);                              // color01 over the compass band (COLPF0 $00CF)
     void setPlanetBgColor(uint16_t c);                           // viewport color00 (COLBK, space)
 };

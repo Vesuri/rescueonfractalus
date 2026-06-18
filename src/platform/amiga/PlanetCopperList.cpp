@@ -37,7 +37,9 @@ static const uint16_t kColor29 = 0x1BA;   // sprite pair 6/7 pen 01 (starfield)
 #define INDEX_SPRITES         (INDEX_SPRITE_COL + 2)       // 14: 8 sprite ptrs (16)
 #define INDEX_GAUGE_COL       (INDEX_SPRITES + 16)         // 30: COLOR21 (1)
 #define INDEX_STAR_COL        (INDEX_GAUGE_COL + 1)        // 31: COLOR25,COLOR29 (2)
-#define INDEX_VP_WAIT         (INDEX_STAR_COL + 2)         // 33: WAIT(kTerrainLine-1) (1)
+#define INDEX_COMPASS_WAIT    (INDEX_STAR_COL + 2)         // 33: WAIT(compass scanline) (1)
+#define INDEX_COMPASS_COL     (INDEX_COMPASS_WAIT + 1)     // 34: color01 = compass COLPF0 (1)
+#define INDEX_VP_WAIT         (INDEX_COMPASS_COL + 1)      // 35: WAIT(kTerrainLine-1) (1)
 #define INDEX_VP_BPL          (INDEX_VP_WAIT + 1)          // 34: viewport 3bp ptrs (6)
 #define INDEX_VP_BPLCON0      (INDEX_VP_BPL + 6)           // 40: bplcon0 3P (1)
 #define INDEX_VP_PAL          (INDEX_VP_BPLCON0 + 1)       // 41: color00..03 (4)
@@ -84,6 +86,12 @@ void PlanetCopperList::buildLayout(const Bitmap& title, const Bitmap& terrain, c
     showSprite(INDEX_SPRITES + 14, 7, nullSprite);
     setGaugeColor(0);                          // COLOR21 (setter)
     setStarColor(0);                           // COLOR25/29 (setter)
+
+    // ---- compass band: color01 = compass COLPF0 ($00CF) for the mode-4 compass line ----
+    // (the compass glyph is decoded into the title bitmap rows ~33-40; without this band
+    // its value-1 pixels show in the title text colour — the "yellow compass" bug.)
+    d[INDEX_COMPASS_WAIT] = copperWait(kDisplayTop + 33 - 1, 0xE0);
+    setCompassColor(0);                        // poked from $00CF
 
     // ---- viewport region: WAIT, pointers, 2bp->3bp, palette, line-doubling band ----
     d[INDEX_VP_WAIT] = copperWait(kTerrainLine - 1, 0xE0);
@@ -151,6 +159,11 @@ void PlanetCopperList::setStarColor(uint16_t c)
 {
     data_[INDEX_STAR_COL + 0] = copperMove(kColor25, c);
     data_[INDEX_STAR_COL + 1] = copperMove(kColor29, c);
+}
+
+void PlanetCopperList::setCompassColor(uint16_t c)
+{
+    data_[INDEX_COMPASS_COL] = copperMove(color01, c);
 }
 
 void PlanetCopperList::setPlanetBgColor(uint16_t c)

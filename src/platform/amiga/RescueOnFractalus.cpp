@@ -745,6 +745,11 @@ void RescueOnFractalus::updatePlanetCopper(bool force)
         planetCopper->setStarColor(starCol);
         plStarCol = starCol;
     }
+    const uint16_t compassCol = atariToOCS(mem[0x00CF]);   // compass band COLPF0 (dark grey)
+    if (force || compassCol != plCompassCol) {
+        planetCopper->setCompassColor(compassCol);
+        plCompassCol = compassCol;
+    }
     if (force || bgCol != plBg) {
         planetCopper->setPlanetBgColor(bgCol);
         plBg = bgCol;

@@ -99,7 +99,7 @@ private:
     void updatePlanetCopper(bool force); // poke changed colour slots (force = all)
     // Last-poked values (vp* — separate from sb* so a phase switch always force-refreshes).
     uint16_t plTitleBg = 0xFFFF, plTitlePf0 = 0xFFFF, plGaugeCol = 0xFFFF,
-             plStarCol = 0xFFFF, plBg = 0xFFFF;
+             plStarCol = 0xFFFF, plBg = 0xFFFF, plCompassCol = 0xFFFF;
 
     // Static flight fixed copper list (scene 7 — same line-doubled mode-D band, with the
     // flight terrain palette + HUD sprites).  Same build-once + poke-in-place scheme:
