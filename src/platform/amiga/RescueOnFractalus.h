@@ -56,6 +56,7 @@ private:
 
     Sprite*  gaugeSprite   = nullptr;    // player-strip throttle bar ($0D98)
     void buildGaugeSprite();             // $0D98 strip -> gaugeSprite lines
+    Sprite*  altimeterSprite = nullptr;  // P0 $0C98 terrain-height bar (flight altimeter)
 
     // Stars/space starfield: the 3 Atari players P0/P2/P3 ($0C32/$0E32/$0F32),
     // scrolled + sparsely seeded by the genuine scroll_terrain_columns ($6AEE),
@@ -72,6 +73,7 @@ private:
     Bitmap*  tunnelBitmap = nullptr;
 
     void buildPostSprites();   // decode RLE tables $4DFA/$4E09 -> leftPost/rightPost (once)
+    void buildAltimeterSprite();   // mirror the live P0 $0C98 terrain-height bar -> altimeterSprite (flight)
     bool postsBuilt = false;   // canopy posts are constant: decode them a single time
     void decodeCompass();      // decode the 4 compass cells $32E3-$32E6 -> title bitmap (16 longwords)
     void decodeTunnelField(int rowLo, int rowHi);  // decode mem[$2000] rows [lo,hi] -> tunnelBitmap

@@ -207,6 +207,24 @@ void RescueOnFractalus::buildGaugeSprite()
     }
 }
 
+// ---- altimeter terrain-height bar (flight) -----------------------------------
+// The altimeter's terrain-height indicator is the Atari player P0 strip $0C98: a solid
+// 8px-wide bar that update_gauge_281a ($40E5) fills with $FF from offset $281A (the bar
+// top, which tracks terrain height $0062) down to a fixed bottom ($0C98+$37).  Mirror the
+// live buffer into the sprite each flight frame, exactly as buildGaugeSprite mirrors the
+// energy indicator's $0D98 — each Atari player bit → 2 Amiga lores px via kDoubleGlyph,
+// so a solid $FF row becomes a full 16px sprite line.  (The P3 ship-height bar at $0F98 is
+// parked until triggered; not built yet.)
+static const int kAltimRows = 56;   // $0C98..$0CCF (bar top $281A varies, bottom fixed $37)
+void RescueOnFractalus::buildAltimeterSprite()
+{
+    uint16_t* d = altimeterSprite->data() + 2;   // skip the 2 control words
+    for (int i = 0; i < kAltimRows; i++) {
+        d[i * 2]     = kDoubleGlyph[mem[0x0C98 + i]];   // plane A (pen 01)
+        d[i * 2 + 1] = 0x0000;                          // plane B
+    }
+}
+
 // ---- starfield sprites -------------------------------------------------------
 // During the stars phase display_setup positions players P0/P2/P3 as a sparse
 // scrolling starfield (random_terrain_height $6B47: POKEY RANDOM, 1/32 chance of a dot
@@ -260,7 +278,8 @@ void RescueOnFractalus::initialize()
     rightPost  = Sprite::allocate(kHT);
     nullSprite = Sprite::allocate(0);
     gaugeSprite = Sprite::allocate(57);    // throttle bar: 57 vobj-strip rows ($0D98..$0DD0)
-    if (!leftPost || !rightPost || !nullSprite || !gaugeSprite) return;
+    altimeterSprite = Sprite::allocate(kAltimRows);   // P0 $0C98 terrain-height bar (flight)
+    if (!leftPost || !rightPost || !nullSprite || !gaugeSprite || !altimeterSprite) return;
     // Starfield sprites (P0/P2/P3): 89-row strips, all at the windscreen top
     // (player scanline $32 → Amiga Y = kTerrainLine, the +36 offset that maps the
     // gauge strip $0D98/scanline $98 to Amiga Y 0x2c+144).
@@ -276,6 +295,11 @@ void RescueOnFractalus::initialize()
     // is a starting estimate to calibrate visually.
     gaugeSprite->setX(0x81 + 203);
     gaugeSprite->setY(0x2c + 144);
+    // Altimeter terrain-height bar (P0 $0C98): same cockpit scanline band as the energy
+    // indicator (both are player strips at buffer offset $98 → Amiga Y 0x2c+144), placed
+    // left of it (CLAUDE.md instrument x≈108).  Starting estimate — calibrate visually.
+    altimeterSprite->setX(0x81 + 107);
+    altimeterSprite->setY(0x2c + 144);
 
     // Post graphics are decoded once from the real RLE source tables (buildPostSprites,
     // triggered on the first perFrameWork frame); nothing to fill here.  Position/Y below.
@@ -777,6 +801,15 @@ void RescueOnFractalus::updateFlightCopper(bool force)
         flGaugeCol = gaugeCol;
     }
 
+    // Altimeter terrain-height bar (P0 $0C98) on sprite 4: pointer + colour are constant
+    // (the live buffer content is refreshed in buildAltimeterSprite), so install once on
+    // force.  COLPM0 for the cockpit bar is cyan ($A9 — the DLI value, distinct from the
+    // grey it uses for the left canopy pillar at the top of the same player).
+    if (force) {
+        flightCopper->setHudSprite(4, *altimeterSprite);
+        flightCopper->setAltimeterColor(atariToOCS(0xA9));
+    }
+
     // Compass band colour: the $49EE slot-0 DLI sets COLPF0 = mem[$00CF] (dark grey) for the
     // mode-4 compass line — poke it into the band's color01 so the housing/heading show in
     // the compass's own colour rather than the title text colour.
@@ -987,6 +1020,8 @@ void RescueOnFractalus::perFrameWork()
     // Starfield players $0C32/$0E32/$0F32: scrolled+seeded during stars, static
     // through the planet zoom, so map them both phases.
     if (rsStars) buildStarSprites();
+    // Flight altimeter terrain-height bar: mirror the live P0 $0C98 strip each frame.
+    if (rsFlight) buildAltimeterSprite();
 }
 
 // ---- cockpit helpers ---------------------------------------------------------
@@ -1276,5 +1311,6 @@ void RescueOnFractalus::shutdown()
     delete rightPost;     rightPost     = nullptr;
     delete nullSprite;    nullSprite    = nullptr;
     delete gaugeSprite;   gaugeSprite   = nullptr;
+    delete altimeterSprite; altimeterSprite = nullptr;
     for (int c = 0; c < 3; c++) { delete starSprite[c]; starSprite[c] = nullptr; }
 }
