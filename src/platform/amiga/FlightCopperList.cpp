@@ -25,6 +25,7 @@ static const uint16_t kBPLCON0_3P   = (uint16_t)((3 << PLNCNTSHFT) | USE_BPLCON3
 static const uint16_t kColor21 = 0x1AA;   // sprite pair 2/3 pen 01 (energy-indicator bar)
 static const uint16_t kColor25 = 0x1B2;   // sprite pair 4/5 pen 01 (altimeter terrain-height bar, P0)
 static const uint16_t kColor29 = 0x1BA;   // sprite pair 6/7 pen 01 (altimeter ship-height bar, M3)
+static const uint16_t kColor26 = 0x1B4;   // sprite pair 4/5 pen 10 (wing-clearance centre symbol, sprite 5)
 
 // ---- fixed list layout (indices into data_, in 32-bit MOVE/WAIT words) -------
 // d[0] = copperWait(16,0) (CopperList ctor).  The line-doubling band is 85 rows ×
@@ -37,9 +38,10 @@ static const uint16_t kColor29 = 0x1BA;   // sprite pair 6/7 pen 01 (altimeter s
 #define INDEX_ENERGY_COL       (INDEX_SPRITES + 16)         // 30: COLOR21 (1)
 #define INDEX_ALTIM_COL       (INDEX_ENERGY_COL + 1)        // 31: COLOR25 (altimeter terrain-height bar P0) (1)
 #define INDEX_SHIP_COL        (INDEX_ALTIM_COL + 1)        // 32: COLOR29 (altimeter ship-height bar M3) (1)
+#define INDEX_SYM_COL         (INDEX_SHIP_COL + 1)         // 33: COLOR26 (wing-clearance centre symbol, sprite 5 pen 10) (1)
 // Compass band: between the title text and the viewport, re-point color01 to the compass
 // COLPF0 ($00CF, dark grey) for the mode-4 compass line — the $49EE slot-0 DLI's colour.
-#define INDEX_COMPASS_WAIT    (INDEX_SHIP_COL + 1)         // 33: WAIT(compass scanline) (1)
+#define INDEX_COMPASS_WAIT    (INDEX_SYM_COL + 1)          // 34: WAIT(compass scanline) (1)
 #define INDEX_COMPASS_COL     (INDEX_COMPASS_WAIT + 1)     // 32: color01 = compass COLPF0 (housing) (1)
 #define INDEX_COMPASS_COL3    (INDEX_COMPASS_COL + 1)      // 33: color03 = compass COLPF2 (needle salmon) (1)
 #define INDEX_VP_WAIT         (INDEX_COMPASS_COL3 + 1)     // 34: WAIT(kTerrainLine-1) (1)
@@ -53,8 +55,16 @@ static const uint16_t kColor29 = 0x1BA;   // sprite pair 6/7 pen 01 (altimeter s
 #define INDEX_COCKPIT_BPLCON0 (INDEX_COCKPIT_BPL + 6)      // 307: bplcon0 3P (1)
 #define INDEX_COCKPIT_MOD     (INDEX_COCKPIT_BPLCON0 + 1)  // 308: bpl1mod,bpl2mod (2)
 #define INDEX_COCKPIT_PAL     (INDEX_COCKPIT_MOD + 2)      // 310: color00..07 (8)
-#define INDEX_TERMINATOR      (INDEX_COCKPIT_PAL + 8)      // 318: copperWait(255,254)
-#define LIST_LENGTH           (INDEX_TERMINATOR + 1)       // 319
+// Wing-clearance band priority: the HUD sprites sit BEHIND the cockpit playfield
+// (BPLCON2 PF1P=PF2P=1, set once at init).  For the 8-scanline wing band the centre
+// plane symbol (sprite 5, pair 4/5) must be IN FRONT, so raise the playfield-priority
+// code to 3 (PF behind sprite pairs 0/1, 2/3, 4/5) for the band, then restore 1 below
+// so the altimeter (sprite 4, same pair, at raster ~188) stays behind the cockpit.
+#define INDEX_PRIO_HI         (INDEX_COCKPIT_PAL + 8)      // 318: BPLCON2 = 0x1B (sprites 4/5 in front) (1)
+#define INDEX_PRIO_WAIT       (INDEX_PRIO_HI + 1)          // 319: WAIT(kCockpitLine+7) (1)
+#define INDEX_PRIO_LO         (INDEX_PRIO_WAIT + 1)        // 320: BPLCON2 = 0x09 (restore) (1)
+#define INDEX_TERMINATOR      (INDEX_PRIO_LO + 1)          // 321: copperWait(255,254)
+#define LIST_LENGTH           (INDEX_TERMINATOR + 1)       // 322
 
 FlightCopperList::FlightCopperList()
     : CopperList((uint32_t*)AllocMem(LIST_LENGTH << 2, MEMF_CHIP | MEMF_CLEAR), LIST_LENGTH, true)
@@ -90,6 +100,7 @@ void FlightCopperList::buildLayout(const Bitmap& title, const Bitmap& terrain, c
     setEnergyIndicatorColor(0);                          // COLOR21 (setter)
     setAltimeterColor(0);                       // COLOR25 (setter) — altimeter terrain bar (sprite pair 4/5)
     setAltimeterShipColor(0);                   // COLOR29 (setter) — altimeter ship bar M3 (sprite pair 6/7)
+    setWingSymbolColor(0);                       // COLOR26 (setter) — wing-clearance centre symbol (sprite 5 pen 10)
 
     // ---- compass band: re-point color01 to the compass COLPF0 for the mode-4 compass
     // line (title-bitmap row 33 = scanline kDisplayTop+33).  Title text above it keeps the
@@ -134,6 +145,13 @@ void FlightCopperList::buildLayout(const Bitmap& title, const Bitmap& terrain, c
     d[INDEX_COCKPIT_PAL + 6] = copperMove(color06, atariToOCS(0x06));
     d[INDEX_COCKPIT_PAL + 7] = copperMove(color07, atariToOCS(0x26));
 
+    // Wing-clearance band: sprite pair 4/5 in front of the cockpit playfield (PF1P=PF2P=3)
+    // for the 8 band scanlines, then restore PF1P=PF2P=1 so the altimeter/gauge below stay
+    // behind the cockpit.  Constant — never poked.
+    d[INDEX_PRIO_HI]   = copperMove(bplcon2, (uint16_t)((3u << 3) | 3u));   // 0x1B
+    d[INDEX_PRIO_WAIT] = copperWait(kCockpitLine + 8 - 1, 0xE0);
+    d[INDEX_PRIO_LO]   = copperMove(bplcon2, (uint16_t)((1u << 3) | 1u));   // 0x09
+
     d[INDEX_TERMINATOR] = copperWait(255, 254);
 }
 
@@ -164,6 +182,11 @@ void FlightCopperList::setAltimeterColor(uint16_t c)
 void FlightCopperList::setAltimeterShipColor(uint16_t c)
 {
     data_[INDEX_SHIP_COL] = copperMove(kColor29, c);    // COLOR29 = sprite pair 6/7 pen 01
+}
+
+void FlightCopperList::setWingSymbolColor(uint16_t c)
+{
+    data_[INDEX_SYM_COL] = copperMove(kColor26, c);     // COLOR26 = sprite pair 4/5 pen 10
 }
 
 void FlightCopperList::setCompassColor(uint16_t c)

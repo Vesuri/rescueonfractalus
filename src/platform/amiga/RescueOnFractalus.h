@@ -58,6 +58,7 @@ private:
     void buildEnergyIndicatorSprite();             // $0D98 strip -> energyIndicatorSprite lines
     Sprite*  altimeterSprite = nullptr;  // P0 $0C98 terrain-height bar (flight altimeter)
     Sprite*  altimeterShipSprite = nullptr;  // M3 $0B98 ship-height bar (flight altimeter)
+    Sprite*  wingSymbolSprite = nullptr;     // wing-clearance centre plane symbol (one 16x6 sprite, pen 10 = COLOR26)
 
     // Stars/space starfield: the 3 Atari players P0/P2/P3 ($0C32/$0E32/$0F32),
     // scrolled + sparsely seeded by the genuine scroll_terrain_columns ($6AEE),
@@ -76,6 +77,7 @@ private:
     void buildPostSprites();   // decode RLE tables $4DFA/$4E09 -> leftPost/rightPost (once)
     void buildAltimeterSprite();   // mirror the live P0 $0C98 terrain-height bar -> altimeterSprite (flight)
     void buildAltimeterShipSprite();   // mirror the live M3 $0B98 ship-height bar -> altimeterShipSprite (flight)
+    void buildWingSymbolSprite();      // fill the 16x6 wing-clearance centre plane glyph -> wingSymbolSprite (flight)
     bool postsBuilt = false;   // canopy posts are constant: decode them a single time
     void decodeCompass();      // decode the 4 compass cells $32E3-$32E6 -> title bitmap (16 longwords)
     void decodeTunnelField(int rowLo, int rowHi);  // decode mem[$2000] rows [lo,hi] -> tunnelBitmap
@@ -115,6 +117,7 @@ private:
     // Last-poked values (fl* — separate from sb*/pl* so a phase switch force-refreshes).
     uint16_t flTitleBg = 0xFFFF, flTitlePf0 = 0xFFFF, flEnergyCol = 0xFFFF, flCompassCol = 0xFFFF;
     uint16_t flTerr0 = 0xFFFF, flTerr1 = 0xFFFF;   // terrain pen0/pen1 (atmosphere ramp $00DC/$00DD)
+    uint16_t flWingSymCol = 0xFFFF;                // wing-clearance centre symbol colour (COLOR26 ← $00D4)
 
     // Launch-cinematic fixed copper lists:
     //   DoorsCopperList (scene 4) — hangar doors parting, sliding 3-band geometry poked
