@@ -90,15 +90,20 @@ reasoning kept failing — **measure, don't theorize.**
   `amiga/.run/gdb-out.log` (also echoes a filtered tail). Edit `diag_timing.gdb` to print
   whatever globals/`mem[0xNNNN]` you need (a `while $i < N ... end` loop dumps arrays).
   `-g` is always on (AUDIO_CFLAGS), so all globals are readable by name.
-- **Auto-launch (reach the launch cinematic with no keypress):** in `main.cpp`'s
-  `vbiHandler`, gate on `g_vbiCount` to replicate a real RETURN press —
+- **Build with probes:** `cd amiga && make PROBES=1` (→ `-DROF_FLIGHT_PROBE -DROF_TDRAW_PROF`).
+  This is OFF by default — the probes + auto-launch + timing accumulators are now PERMANENT,
+  guarded code (committed), not throwaway edits. With probes off, the SDL build + `make validate`
+  link cleanly. ⚠ `diag_run.sh`/`diag_sample.sh` need an `out/RoF.exe` built with `PROBES=1`.
+- **Auto-launch (reach the launch cinematic with no keypress):** `PlatformAmiga.cpp`'s
+  `vbiHandler` (under `ROF_FLIGHT_PROBE`) replicates a real RETURN press —
   `if (g_vbiCount==350) mem[0xD01Fu]=0x06;` (START down) then `=0x07` (up). ⚠ `0x00` (all
   console keys) triggers the DEMO DROID path, NOT a clean START.
-- **Probe pattern:** add `volatile` globals, stamp `g_vbiCount` at milestones or log state
-  transitions into ring buffers, print via `diag_timing.gdb`. Pure-compute stretches show
-  up as `g_vbiCount` deltas (the real VBI ISR bumps the counter even during compute).
-- These probes + auto-launch + the `diag_timing.gdb` edits are **temporary** — strip them
-  all and restore `diag_timing.gdb` before committing (the fix itself is the only diff).
+- **Probe pattern:** for one-off probes add `volatile` globals under `#ifdef ROF_FLIGHT_PROBE`
+  (defs in `PlatformAmiga.cpp`, hooks via the `FP_*` macros in `rof_native.c`), stamp
+  `g_vbiCount`/`rof_subclock()` at milestones, and print them from `diag_timing.gdb`. Edit
+  `diag_timing.gdb` freely to print whatever globals/`mem[0xNNNN]` you need (a
+  `while $i < N ... end` loop dumps arrays); `-g` is always on so all globals are readable.
+  Pure-compute stretches show up as `g_vbiCount` deltas (the real VBI ISR bumps the counter).
 
 ### Atari reference (ground truth)
 Drive the `atari800` debugger in **FIFO mode**. Always `kill -9` stray `atari800`/`fs-uae`
