@@ -239,7 +239,7 @@ static void wait_rasterlines(uint8_t lines)
 // Apply all channels recorded since the last flush.  Waveform changes are batched through a
 // single DMA off → wait → on so the rasterline wait is paid once.  Called once per frame from
 // game_vbi_isr, after both audio engines have recorded their POKEY writes for the frame: the
-// CIA-B music tick (sfx_voice_tick_native) and the in-game SFX engine (update_gauge_digits).
+// CIA-B music tick (sfx_voice_tick_native) and the in-game SFX engine (sfx_voice_envelope_tick).
 extern "C" void flush_paula(void)
 {
     uint8_t valid = want_valid;
@@ -504,6 +504,29 @@ static volatile uint8_t  g_pumpQuit = 0;
 static volatile uint16_t g_vbiCount = 0;
 static RescueOnFractalus* s_scene   = 0;   // running scene; set by run()
 
+// Flight/init timing probes (enable with `make PROBES=1` → -DROF_FLIGHT_PROBE).  Sub-frame
+// clock rof_subclock() = g_vbiCount*313 + beam_line, plus the accumulators that rof_native.c's
+// FP_* macros and the renderFrame/atmosphere probes below write into.  All read from the gdb
+// stub (amiga/diag_timing.gdb).  Compiled out by default so the SDL/release builds don't carry
+// (or need to link) any of these symbols.
+#ifdef ROF_FLIGHT_PROBE
+extern "C" unsigned long rof_subclock(void) {
+    return (unsigned long)g_vbiCount * 313u + (unsigned long)rof_beam_line();
+}
+extern "C" volatile unsigned long g_probeDispSetup = 0, g_probeGameInit = 0,
+    g_probeIntro = 0, g_probeRowAddr = 0, g_probeInitTotal = 0;
+extern "C" volatile unsigned short g_probeFlightVbi = 0;  // g_vbiCount at flight VBI install
+// renderFrame() no-yield-gap probe:
+extern "C" volatile unsigned short g_maxRenderGap = 0, g_maxGapAtVbi = 0, g_maxGapVvblki = 0;
+extern "C" volatile unsigned char g_maxGap060B = 0, g_maxGap004A = 0;
+// game_main_loop per-iteration + flight phase split (written by rof_native.c FP_* macros):
+extern "C" volatile unsigned long g_iterMax = 0, g_iterLast = 0, g_iterPostDs = 0;
+extern "C" volatile unsigned short g_iterCount = 0, g_iterMaxAt = 0;
+extern "C" volatile unsigned long g_fSetup=0,g_fClear=0,g_fDraw=0,g_fColl=0,g_fState=0,g_fEnemy=0;
+// atmosphere terrain-pen range during flight ($00DC/$00DD salmon→brown fade):
+extern "C" volatile unsigned char g_dcMin=0xFF, g_dcMax=0, g_ddMin=0xFF, g_ddMax=0;
+#endif
+
 // g_quitJmp: the __builtin_setjmp buffer armed by RescueOnFractalus::run() so we can
 // unwind the never-returning transpiled chain on quit (5 words per the GCC builtin;
 // initializer forces the definition).  extern "C" — RescueOnFractalus.cpp references it.
@@ -517,6 +540,24 @@ extern "C" void* g_quitJmp[5] = { 0, 0, 0, 0, 0 };
 // per iteration regardless of how long rendering takes.
 // Exception: ATTRACT VBI ($1B30) bumps RTCLOK in its own transpiled body; skip here.
 void PlatformAmiga::renderFrame() {
+#ifdef ROF_FLIGHT_PROBE
+    // Probe: track the largest gap (in real VBI frames) between successive renderFrame
+    // calls — a long gap = a no-yield compute stretch where the display (and blink lights)
+    // freeze.  Snapshot phase state at the max.
+    {
+        static uint16_t s_lastEntryVbi = 0;
+        uint16_t nowVbi = g_vbiCount;
+        uint16_t gap = (uint16_t)(nowVbi - s_lastEntryVbi);
+        if (nowVbi > 360 && gap > g_maxRenderGap) {
+            g_maxRenderGap   = gap;
+            g_maxGapAtVbi    = nowVbi;
+            g_maxGapVvblki   = (uint16_t)(mem[0x0222] | (mem[0x0223] << 8));
+            g_maxGap060B     = mem[0x060B];
+            g_maxGap004A     = mem[0x004A];
+        }
+        s_lastEntryVbi = nowVbi;
+    }
+#endif
     uint16_t last = g_vbiCount;
     if (s_scene) s_scene->renderFrame();
     while (g_vbiCount == last) { /* wait for next real VBI */ }
@@ -563,7 +604,7 @@ void PlatformAmiga::compassChanged() {
 
 extern "C" volatile unsigned char g_titleDirty;
 void PlatformAmiga::titleChanged() {
-    // copy_altitude_graphic_to_screen ($782A) just rewrote the banner text in $32B7-$32CA
+    // copy_title_text_block_to_screen ($782A) just rewrote the banner text in $32B7-$32CA
     // (the SFX sequencer alternates the block via $0091).  Flag the title region so the next
     // renderFrame re-scans it; the per-cell shadow compare then re-decodes only the glyphs
     // that actually changed between "RESCUE ON FRACTALUS!" and the copyright line.
@@ -663,6 +704,11 @@ static void keyboardShutdown()
 // ============================================================================
 static struct Interrupt vbiServer;
 
+// Real vertical-blank frame counter (50 Hz PAL), exposed to the scene so time-based
+// animations (e.g. the flight terrain colour fade) run at wall-clock rate regardless of
+// how fast the main render loop iterates.
+extern "C" unsigned short platform_frame_count(void) { return g_vbiCount; }
+
 static uint32_t vbiHandler()
 {
     // RTCLOK is owned by renderFrame() in the main thread (advanced exactly once per
@@ -670,6 +716,24 @@ static uint32_t vbiHandler()
     // Exception: ATTRACT VBI ($1B30) bumps RTCLOK in its own transpiled body.
     // (Do NOT touch $0080 — sync_flag, reused as the $80/$81 zp pointer.)
     g_vbiCount++;
+
+#ifdef ROF_FLIGHT_PROBE
+    // Probe: track the range of the atmosphere terrain pens ($00DC/$00DD) during flight to
+    // confirm they ramp (salmon→brown fade) vs stay frozen.
+    {
+        extern volatile unsigned char g_dcMin, g_dcMax, g_ddMin, g_ddMax;
+        if ((mem[0x0222] | (mem[0x0223] << 8)) == 0x4FF5u) {
+            uint8_t dc = mem[0x00DC], dd = mem[0x00DD];
+            if (dc < g_dcMin) g_dcMin = dc; if (dc > g_dcMax) g_dcMax = dc;
+            if (dd < g_ddMin) g_ddMin = dd; if (dd > g_ddMax) g_ddMax = dd;
+        }
+    }
+
+    // Auto-launch: replicate a RETURN/START press once Standby is settled, so the headless
+    // harness reaches the launch cinematic + flight with no keyboard input.
+    if (g_vbiCount == 350) mem[0xD01Fu] = 0x06;   // START down
+    else if (g_vbiCount == 360) mem[0xD01Fu] = 0x07;  // release
+#endif
 
     // Per-frame VBI body — run in the REAL vertical-blank interrupt, where the Atari ran
     // its VBI.  game_vbi_isr() dispatches by the live VVBLKI vector to the standby ($52D7)

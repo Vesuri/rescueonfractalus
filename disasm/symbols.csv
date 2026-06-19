@@ -109,7 +109,7 @@ $3CC3,clear_colors,func,0,Clears player color shadows PCOLR0-3 + COLBK (9 caller
 $3CDE,game_entry,func,0,Game entry point (final INITAD=$3CDE); 737-byte mega-init + main game loop JMP chain
 $3FBF,clear_pm_state,func,0,Zeros $DA,$DB,$DC,$DD (player state?) + $D9; also clears PCOLR0-3 shadow
 $3FCD,enemy_check,func,0,Checks $063D (enemy active?) and $0633 (another trigger); dispatches to game_subsystem_4f3f or pmg_enemy_update
-$3FDE,terrain_lookup,func,0,Table lookup: reads $281C + index from $2836 into $3FF6 table; writes 4 bytes to $32E3 (display buffer)
+$3FDE,draw_compass_heading,func,0,Table lookup: reads $281C + index from $2836 into $3FF6 table; writes 4 bytes to $32E3 (display buffer)
 $3FFA,startup_init,func,0,Init: checks $0642 game state and $004B flag; calls display_sub if state=1 or 2
 $4258,game_sub_4258,func,0,Game subsystem (called in game_entry setup)
 $43CB,draw_dial_bar_column,func,0,Renders one cockpit dial-bar column (validates Y vs $062E, sets $BF/$BE/$BD, calls draw_object_column)
@@ -124,9 +124,9 @@ $462A,irq_handler,func,0,Immediate IRQ handler (VIMIRQ=$462A); set in game_entry
 $49EE,dli_handler_game,func,0,DLI handler during game (VDSLST=$49EE set at $3E6D in game_entry)
 $4F3F,intro_cinematic_loop,func,0,Intro/cinematic blocking loop (spins on $2891 via tick_vbi/render, runs intro then flight); reached from enemy_check when $063D≠0
 $4FF5,vbi_handler_flight,func,0,In-flight VBI handler (VVBLKI=$4FF5 set at $3E50 during flight init); $51B9 block = flight_control_integrate + terrain projection, mirrored by flight_vbi_native
-$5433,font_display_init,func,0,Font/display character setup (called in game_entry init)
+$5433,sfx_engine_reset,func,0,Font/display character setup (called in game_entry init)
 $53CC,vbi_handler_1,func,0,First in-game VBI handler (VVBLKI=$53CC set at $3D63 in game_entry)
-$52D7,vbi_handler_standby,func,0,Standby + launch-cinematic VBI handler (VVBLKI=$52D7 set in display_setup $5F50); active from the Standby screen through the doors/tunnel/stars/planet cinematic, until flight init swaps in vbi_handler_flight ($4FF5). Per-frame: attract timer, attract input poll ($5398), sound_event_dispatch ($5367), lock_on_indicator_tick every other frame, SFX/music tick, update_gauge_digits. Was vbi_handler_standby.
+$52D7,vbi_handler_standby,func,0,Standby + launch-cinematic VBI handler (VVBLKI=$52D7 set in display_setup $5F50); active from the Standby screen through the doors/tunnel/stars/planet cinematic, until flight init swaps in vbi_handler_flight ($4FF5). Per-frame: attract timer, attract input poll ($5398), scroll_event_dispatch ($5367), lock_on_indicator_tick every other frame, SFX/music tick, sfx_voice_envelope_tick. Was vbi_handler_standby.
 $5815,ring_push_marked,func,0,TXA;ORA #$80;JMP ring_push_0719 — push object index X marked with bit7 ($80=active) into the $0719 event ring
 $581C,input_init,func,0,Input/controller init (called twice: X=$1F then X=$20)
 $587B,cockpit_display,func,0,Cockpit/instrument display or main input handler (reads PORTA/CONSOL; called if $060B≠0)
@@ -301,8 +301,8 @@ $4084,draw_2digit_value,func,0,Render packed 2-digit value: high nibble via $BD/
 $4095,draw_digit_low_nibble,func,0,Isolate A low nibble, *4, fall into draw_glyph: renders units digit glyph to ($00BB) screen ptr
 $4099,draw_glyph_2rows,func,0,Copy 2-byte glyph from $4AE3[X] OR mask $00BF into ($00BB),Y at Y=0,1 and Y=$30,$31 (two char rows)
 $40AF,return_stub_40af,func,0,Empty RTS; tail-call target of draw_glyph_2rows and the score-update path at $406E
-$40B0,update_bar_gauge_291c,func,0,If $291C/$291D changed vs cache $2872/$2874, redraw 21-byte bar from $4B57 (idx $455B[$291C]) into $0E87, $FF-term
-$40E5,update_gauge_281a,func,0,On $281A change vs $2875: clear $0C97 row + $FF fill to col $38; on $281B change vs $2876: mask $0B96..$0B99 edge bytes
+$40B0,draw_canopy_pillar_p2,func,0,If $291C/$291D changed vs cache $2872/$2874, redraw 21-byte bar from $4B57 (idx $455B[$291C]) into $0E87, $FF-term
+$40E5,draw_altimeter_bars,func,0,On $281A change vs $2875: clear $0C97 row + $FF fill to col $38; on $281B change vs $2876: mask $0B96..$0B99 edge bytes
 $4131,update_blink_timer_006e,func,0,Decr timer $006E; at 0 reload $0F, if $3E set & life_counter $062F=0 & $0063<0 fire ring_push_marked(X=$1C); toggles $00DE $4E/$46
 $4166,vobj_update_active,func,0,Active-path: DEC $003B then advance vert object via vobj_advance ($4184); $003B gates which path
 $416B,vobj_speed_accumulate,func,0,Fractional speed accumulator: (8-$006F)>>1 + table($2877,$2848) into $2848; on carry calls vobj_advance
@@ -361,10 +361,10 @@ $4F9F,intro_sound_and_tick,func,0,$2892 underflow: RANDOM($D20A) seeds sfx via r
 $4FCE,intro_reset_score_slots,func,0,Clears $066A/$0686, sets $0678=$0C and refreshes display field Y=$0D via game_sub_55FC
 $4FE0,intro_fill_display_params,func,0,Copies $4DF1 table low nibbles OR player_speed($00C2) into display_param $00CF-D6, writes COLPF3($D019), INC $00C2
 $52BE,game_loop_reset_trampoline,func,0,Sets vec $0222/3=$52B4, pushes ret $3D1F+P, sets game_var_E4=$060B(cockpit_flag)=4, PLP; reentry from $5398
-$534D,vbi_deferred_dispatch,func,0,VBI tail: if $00E7 & BIT $062D z->sfx_voice_tick; if $0655->music_player_tick; then update_gauge_digits (gauges) + os_xitvbv
-$5367,sound_event_dispatch,func,0,Tests sound flags $008D/88/89/8B then toggles $008F, $008C/8A -> sfx subs 6a8f/6a38/6aee/69e3/6a27/6953
+$534D,vbi_deferred_dispatch,func,0,VBI tail: if $00E7 & BIT $062D z->sfx_voice_tick; if $0655->music_player_tick; then sfx_voice_envelope_tick (gauges) + os_xitvbv
+$5367,scroll_event_dispatch,func,0,Tests sound flags $008D/88/89/8B then toggles $008F, $008C/8A -> sfx subs 6a8f/6a38/6aee/69e3/6a27/6953
 $5398,check_collision_sync,func,0,X=$FF, CLI/SEI; if !=$80 set $0002/0003/E2; else reads collision regs $D01F,$D010,$D300, may run reset trampoline
-$548D,update_gauge_digits,func,0,Loops Y=$0E..1 over digit arrays $06DB/E9/0679/06BF/CD/A3/B1/066B; BCD-step wrap $2D, calls 55FC/5815; sorts $0073/74 ring
+$548D,sfx_voice_envelope_tick,func,0,Loops Y=$0E..1 over digit arrays $06DB/E9/0679/06BF/CD/A3/B1/066B; BCD-step wrap $2D, calls 55FC/5815; sorts $0073/74 ring
 $5553,sfx_engine_step,func,0,POKEY sound engine: writes AUDF/AUDC $D200/201/204/205/208 from state $0634-$063A and table $55DC
 $55FF,ring_push_0719,func,0,Tail of game_sub_55FC: store A into ring buf $0719+X via head $0073, dec+wrap head mod $20, restore X
 $5614,reorder_sprite_slot,func,0,Swaps/moves entries in $0705 array by Y vs priority $0714/0715/0717,$066B; calls 5673/56af/568a
@@ -459,8 +459,8 @@ $75B8,count_up_to_level,func,0,Increments $0604 and BCD counter $C3 in loop unti
 $75D0,decrement_bcd_0628_restart,func,0,SED; SBC $0628-1 (BCD decrement of $0628), CLD, startup_init, tail to set_0628_redisplay ($75de)
 $75DE,reinit_and_redraw_via_delay,func,0,add_and_show_bcd_counter; ring_push_marked X=$10; tail wait_frames_10 (PHA+$0A delay then re-enter game_entry)
 $75E9,set_0628_bcd_redisplay,func,0,A->packed BCD via bin_to_bcd stored $0628; startup_init; tail wait_frames_20 (delay+game_entry)
-$75F5,compute_gauge_geometry_from_006D,func,0,Derives display/gauge coords from $006D into $061F-$0625,$0617,$0618,$061A-$061C,$062A,$08A2; $0628=BCD($006D)
-$782A,copy_altitude_graphic_to_screen,func,0,If $0091>=$C0 copy 20-byte block $5A9F+X (X=$27/$13) into screen $32B6+Y; sets $00D8=$44 when $0091<$E0
+$75F5,compute_stage_display_geometry,func,0,Derives display/gauge coords from $006D into $061F-$0625,$0617,$0618,$061A-$061C,$062A,$08A2; $0628=BCD($006D)
+$782A,copy_title_text_block_to_screen,func,0,If $0091>=$C0 copy 20-byte block $5A9F+X (X=$27/$13) into screen $32B6+Y; sets $00D8=$44 when $0091<$E0
 $7A17,animate_clear_colors_timed,func,0,Gated by $0014(RTCLOK); steps $007B/$007D, reads RANDOM $D20A, runs clear_colors loops + ring_push_marked X=$19/$1B
 $7A89,clear_colors_sweep_5x,func,0,Y=5 outer loop: clear_colors X=$007D(min $14) until $003E set, then ring_push_marked X=$1A; returns Z=done
 $7AA6,trigger_effect_4a,func,0,LDA #$4A then falls into init_event_state_5815_x16 (sets $0044=A,$3388=$B4,$003C=0,ring_push_marked X=$16)
@@ -579,11 +579,11 @@ $0066,object_pos_y_lo,var,0,16-bit object Y accumulator low (with $0067 hi); int
 $0067,object_pos_y_hi,var,0,High/overflow byte of object Y; zero means on-screen (gates 930e, 93bd)
 $006B,mul_multiplicand,var,0,Multiplicand for shift-add multiply mul_u8; LSR'd each step
 $006C,sound_active_flag,var,0,Sound-engine active flag gating the engine_sound_update path; cleared by sound_stop ($5a0e) and zeroed alongside game_vars_626 at init_game_vars (init_game_vars_attract_timer).
-$006D,level_stage,var,0,Level/stage counter (read 26x, written 5x): CMP #1/#4 branches in game_setup_7460/unpack_bitmap_4d3e, loop limit in count_up_to_level; also feeds compute_gauge_geometry_from_006D gauge/display geometry and the engine-sound pitch ramp toward level_progress $37EE.
+$006D,level_stage,var,0,Level/stage counter (read 26x, written 5x): CMP #1/#4 branches in game_setup_7460/unpack_bitmap_4d3e, loop limit in count_up_to_level; also feeds compute_stage_display_geometry gauge/display geometry and the engine-sound pitch ramp toward level_progress $37EE.
 $006E,blink_timer,var,0,Down-counter in update_blink_timer_006e ($4131); reloads to $0F, drives anim_counter_1 $00DE between $4E/$46
 $006F,dial_value,var,0,Cockpit dial/gauge value; loaded by redraw_dial_from_6f, stored+clamped in cockpit_dial_update, inc/dec in event_sequence_dispatcher ($475e/$4778)
-$0073,alt_ring_head,var,0,Head index into $0719 ring buffer; wrapped mod $20 in ring_push_0719; clamped/sorted in update_gauge_digits & font_display_init
-$0074,ring_tail_0719,var,0,Tail/drain index of $0719 ring; iterated down to $0073 in update_gauge_digits, wraps to $1F
+$0073,alt_ring_head,var,0,Head index into $0719 ring buffer; wrapped mod $20 in ring_push_0719; clamped/sorted in sfx_voice_envelope_tick & sfx_engine_reset
+$0074,ring_tail_0719,var,0,Tail/drain index of $0719 ring; iterated down to $0073 in sfx_voice_envelope_tick, wraps to $1F
 $0075,trig_angle,var,0,Angle accumulator for sine_table_lookup/trig_interp_lookup (sine_table_lookup/9bdb); INC/DEC and ADC $40 for 90deg
 $0076,trig_result_lo,var,0,Low byte of 24-bit signed sine result from sine_table_lookup ($0076-$0078)
 $007B,anim_counter_007B,var,0,Animation step counter decremented in animate_clear_colors_timed sweep loops
@@ -592,9 +592,9 @@ $0089,terrain_state,var,0,Terrain scroll state flag; gates scroll_terrain_column
 $008A,terrain_scroll_counter,var,0,Per-call countdown in scroll_terrain_dl (scroll_terrain_dl); at 0 resets $008C=8
 $008B,dl_src_index,var,0,Index into LMS source tables $073D/$0793 used by dl_lms_fill; reset/dec by 69dd/69e3
 $008C,terrain_scroll_reload,var,0,Reload value (8) set when $008A expires in scroll_terrain_dl
-$008D,step_mode_flag,var,0,Selects step routine in sound_event_dispatch (nonzero->step_accum_sub_7e); set/tested by step_accum_sub_7e and advance_history_6a4d
-$008F,sfx_toggle_8F,var,0,Alternating flag in sound_event_dispatch: LSR then INC gates every-other-frame sfx ($008C/$008A)
-$0091,altitude_threshold,var,0,Compared to $C0/$E0 in copy_altitude_graphic_to_screen to pick which 20-byte graphic block to copy into screen $32B6
+$008D,step_mode_flag,var,0,Selects step routine in scroll_event_dispatch (nonzero->step_accum_sub_7e); set/tested by step_accum_sub_7e and advance_history_6a4d
+$008F,sfx_toggle_8F,var,0,Alternating flag in scroll_event_dispatch: LSR then INC gates every-other-frame sfx ($008C/$008A)
+$0091,altitude_threshold,var,0,Compared to $C0/$E0 in copy_title_text_block_to_screen to pick which 20-byte graphic block to copy into screen $32B6
 $0092,draw_row,var,0,Current row counter for the draw loop: init 0x55 (85) in draw_shape_rows_loop, used as index into the row_base tables via set_row_ptr_from_count; also stepped by 8 as the glyph blitter pixel-column ($54/$2E/$38) in blit_message_block.
 $0093,blit_pixel_x,var,0,per-pixel X within row, passed to plot_pixel_masked (LSR->plane index), INC each shifted bit in blit_glyph_8rows
 $0094,draw_color_idx,var,0,2-bit pixel colour/pattern selector in draw_frame_pattern_seq/draw_symmetric_span_loop/plot_pixel_masked/plot_glyph_pixel_masked: cycled 1..6, ORed with mask table $66E9 (into $00B9), and used to pick the AND/OR mask masked into the screen byte.
@@ -635,14 +635,14 @@ $060D,sfx_rand_freq_lo1,var,0,Random freq value (random_digit, RANDOM $D20A &$0F
 $060E,sfx_rand_freq_lo2,var,0,Random freq value (random_digit) for SFX retrigger
 $060F,sfx_rand_freq_hi1,var,0,Random freq value (random_alpha_index, RANDOM $D20A &$1F+$21) for SFX retrigger
 $0610,sfx_rand_freq_hi2,var,0,Random freq value (random_alpha_index) for SFX retrigger
-$0617,gauge_field_0617,var,0,Display geometry output of compute_gauge_geometry_from_006D (cleared 0 or derived from $006D-$10 path)
-$0618,gauge_step_reload,var,0,Geometry output of compute_gauge_geometry_from_006D: clamp(($2A-X)/2, min 4); reload value copied into $00E6 when the lock-on indicator animation counter underflows (lock_on_indicator_tick/lock_on_indicator_step).
+$0617,stage_geom_0617,var,0,Display geometry output of compute_stage_display_geometry (cleared 0 or derived from $006D-$10 path)
+$0618,lockon_step_reload,var,0,Geometry output of compute_stage_display_geometry: clamp(($2A-X)/2, min 4); reload value copied into $00E6 when the lock-on indicator animation counter underflows (lock_on_indicator_tick/lock_on_indicator_step).
 $0619,zero_suppress_pos,var,0,Leading-zero suppression / column limit in plot_char_bounded: digit position Y compared (CPY) below which zeros stay blank, gating the char write via ($C5),Y.
-$061F,gauge_field_061F,var,0,Geometry output of compute_gauge_geometry_from_006D (($062A/2)+1); also compared against $0629 in $7AF4 as the oscillation step threshold gating the game_sub_7B54 call.
-$0620,gauge_field_0620,var,0,Geometry output of compute_gauge_geometry_from_006D ($062A-5, clamp >=0); also used in $7B3C as a countdown that shows char $C9 via obj_table_scan_replace when ==1 (else obj_table_scan_y1_c8).
+$061F,stage_geom_061F,var,0,Geometry output of compute_stage_display_geometry (($062A/2)+1); also compared against $0629 in $7AF4 as the oscillation step threshold gating the game_sub_7B54 call.
+$0620,stage_geom_0620,var,0,Geometry output of compute_stage_display_geometry ($062A-5, clamp >=0); also used in $7B3C as a countdown that shows char $C9 via obj_table_scan_replace when ==1 (else obj_table_scan_y1_c8).
 $0628,score_bcd,var,0,Packed BCD counter set by the binary->BCD conversion (bin_to_bcd), BCD-decremented in decrement_bcd_0628_restart, and stepped +/-1 each call by bcd_oscillate_counter_0628 ($7AF4) with direction in $062B.
 $0629,osc_step_counter,var,0,Step counter incremented in $7AF4; when >= threshold $061F triggers game_sub_7B54
-$062A,gauge_height_062A,var,0,Geometry value = clamp(($006D/2)+2,$14); pushed/reused for derived coords in compute_gauge_geometry_from_006D
+$062A,stage_geom_height_062A,var,0,Geometry value = clamp(($006D/2)+2,$14); pushed/reused for derived coords in compute_stage_display_geometry
 $062B,bcd_osc_dir,var,0,Direction flag for $0628 BCD osc: nonzero=decrement, 0=increment ($7AF4); incremented on carry
 $0630,saved_joy_4a,var,0,event_sequence_dispatcher saves $4A here ($467d) and restores it ($46a1) around event takeover
 $0631,lock_on_indicator_phase,var,0,Player-3 object phase counter/flag: LSR/INC in lock_on_indicator_phase_advance, low nibble compared to 7 to gate phase changes
@@ -674,7 +674,7 @@ $0714,sfx_top_prio_val,var,0,Selected top voice priority nibble value from sfx_p
 $0715,sfx_top_voice_idx,var,0,Selected top voice slot index from $568a; excluded in $56af next-voice scan
 $0716,sfx_scan_prio,var,0,SFX voice-scan threshold/min priority accumulator ($10 init in 568a, 0 in 56af)
 $0717,sfx_next_voice_idx,var,0,Second/next selected voice slot index from sfx_pick_next_voice ($56af)
-$0719,event_ring_0719,var,0,32-entry ($20) circular buffer; pushed by ring_push_0719, drained in update_gauge_digits (input_init/reorder_sprite_slot per entry)
+$0719,event_ring_0719,var,0,32-entry ($20) circular buffer; pushed by ring_push_0719, drained in sfx_voice_envelope_tick (input_init/reorder_sprite_slot per entry)
 $073A,sfx_note_timer,var,0,SFX note/duration countdown; decremented each tick in sfx_voice_tick($70F9), reloaded from table $71D2 by sfx_seq_step
 $073B,sfx_voice_mute,var,0,SFX play/mute selector; nonzero -> write Y(=0) to AUDC1/2/3 silencing; set from note high-nibble in sfx_seq_step ($718D)
 $073C,sfx_seq_ptr,var,0,SFX sequence index into table $71DB; advanced by sfx_seq_step($7148), init 0 in reset_audctl_flags
@@ -718,10 +718,10 @@ $285B,vel_z_clamp_hi,var,0,High byte of Z/depth accumulator, saturating-clamped 
 $2864,map_cell_index,var,0,Computed cell index from object pos ($2855/$2858 nibbles) into terrain maps $0900 (height) & $0A00 (type) in 9552
 $286F,player3_draw_y,var,0,Current draw Y/row index for player-3 object (draw_player3_object $4369), clamped/derived via $4D11 table
 $2870,player3_hpos,var,0,Player-3 horizontal position = $2823+$2824, written to HPOSP3 ($D003) in draw_player3_object
-$2872,bar_gauge_x_cache,var,0,Cached last $291C drawn by update_bar_gauge_291c ($40b0); change-detect to skip redraw
-$2874,bar_gauge_y_cache,var,0,Cached last $291D ($40c7); row offset base into $0E87 buffer in update_bar_gauge_291c
-$2875,gauge_281a_cache,var,0,Cached last $281A drawn by update_gauge_281a ($40e5); change-detect for $0C97 bar fill
-$2876,gauge_281b_cache,var,0,Cached last $281B drawn by update_gauge_281a ($40e5); gates $0B96 edge-byte masking
+$2872,canopy_pillar_x_cache,var,0,Cached last $291C drawn by draw_canopy_pillar_p2 ($40b0); change-detect to skip redraw
+$2874,canopy_pillar_y_cache,var,0,Cached last $291D ($40c7); row offset base into $0E87 buffer in draw_canopy_pillar_p2
+$2875,altimeter_terrain_cache,var,0,Cached last $281A drawn by draw_altimeter_bars ($40e5); change-detect for $0C97 bar fill
+$2876,altimeter_ship_cache,var,0,Cached last $281B drawn by draw_altimeter_bars ($40e5); gates $0B96 edge-byte masking
 $2877,vobj_speed_frac,var,0,Per-frame fractional speed added into accumulator $2848 in $416b and OR'd with $003B in $4184.
 $288B,obj_scan_start_idx,var,0,Saved RANDOM($D20A) start index in obj_table_scan_replace; inner scan loops until X wraps to it
 $288C,obj_scan_pass_count,var,0,Outer pass counter in obj_table_scan_replace (Y arg), DEC'd to 0 at $4e52

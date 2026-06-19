@@ -27,7 +27,7 @@ public:
     // One-time layout: emit the whole fixed list.  Sprite pointers (canopy posts,
     // throttle gauge, the three starfield sprites) are all constant for this phase —
     // only their pixel data changes frame-to-frame, which is written to the sprite
-    // buffers directly (buildStarSprites/buildGaugeSprite), not via the copper.
+    // buffers directly (buildStarSprites/buildEnergyIndicatorSprite), not via the copper.
     void buildLayout(const Bitmap& title, const Bitmap& terrain, const Bitmap& cockpit,
                      const Sprite& leftPost, const Sprite& rightPost, const Sprite& gauge,
                      const Sprite& nullSprite, const Sprite& star0, const Sprite& star1,
@@ -36,7 +36,7 @@ public:
     // ---- per-frame setters (each pokes one MOVE) ----
     void setTitlePalette(uint16_t bg, uint16_t pf0, uint16_t pf1);  // color00..03 (col0=col3=bg)
     void setSpritePostColor(uint16_t c);                           // color17 (canopy posts)
-    void setGaugeColor(uint16_t c);                                // COLOR21 ($1AA) gauge bar
+    void setEnergyIndicatorColor(uint16_t c);                                // COLOR21 ($1AA) gauge bar
     void setStarColor(uint16_t c);                                 // COLOR25/29 ($1B2/$1BA) starfield
     void setCompassColor(uint16_t c);                              // color01 over the compass band (COLPF0 $00CF)
     void setPlanetBgColor(uint16_t c);                           // viewport color00 (COLBK, space)

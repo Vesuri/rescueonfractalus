@@ -160,12 +160,12 @@ VALIDATE_FUNCS = {
     0x5553,  # sfx_engine_step — explosion/noise engine (RANDOM x2, descending-pitch via $55DC); entry A=$0634
     0x5614,  # reorder_sprite_slot — voice-priority mixer (calls 5673/568a/56af); entry X/Y, Y restored
     0x581C,  # input_init — load a new voice from event tables $56D4..$57F4 (stack-aware; tail game_sub_55FC)
-    0x548D,  # update_gauge_digits — APEX: per-frame voice/gauge envelope engine + ring drain (Atari VBI tail)
+    0x548D,  # sfx_voice_envelope_tick — APEX: per-frame voice/gauge envelope engine + ring drain (Atari VBI tail)
     # --- startup/cinematic de-transpile (2026-06-15): the display_setup ($5F1D)
     #     subtree that drives the Standby + Doors/Tunnel/Planet cinematic — the
     #     slow part of boot (the flight loop is already native).  Leaves-first. ---
     0x4E84,  # bin_to_bcd — A(0-99)->packed BCD; units->$00C1, tens->Y, BCD->A (pure leaf)
-    0x782A,  # copy_altitude_graphic_to_screen — Standby per-frame: copy 20-byte $5A9F+X block to $32B7..$32CA (leaf, entry Y)
+    0x782A,  # copy_title_text_block_to_screen — Standby per-frame: copy 20-byte $5A9F+X block to $32B7..$32CA (leaf, entry Y)
     0x6DDF,  # init_row_coords_9c — store 5 constants into $009C-$00A0 (pure leaf)
     0x6B71,  # clear_scroll_accum — zero $02C0-$02C3, $00A1-$00A5 (pure leaf)
     0x75A5,  # copy_192_to_1800 — copy 192 bytes $350C->$1810..$18CF via $BB/$BC ptr (leaf)
@@ -209,7 +209,7 @@ VALIDATE_FUNCS = {
     0x3C93,  # memset_or_copy — fill $00B7 to dest ptr $C1/$C2, 16-bit count $C3/$C4 (pointer fill)
     0x3C61,  # copy_bytes_to_dst — write entry A to dest ptr $BD/$BE, X times; then INC $BB/$BC (pointer fill)
     # batch — display_setup-subtree mem-effect leaves:
-    0x3FDE,  # terrain_lookup — copy 4 bytes $4B0B[base..base-3] -> $32E3[3..0] (base from $281C/$2836/$3FF6)
+    0x3FDE,  # draw_compass_heading — copy 4 bytes $4B0B[base..base-3] -> $32E3[3..0] (base from $281C/$2836/$3FF6)
     0x45A1,  # fill_buffer2_region_ff — 8x 32-byte $FF runs from $2098 stride $30
     0x4606,  # game_sub_4606 — init target-state cells $32E3[0..3]/$3355-$3357/$3388/$33DF/$33E0
     0x480F,  # fill_message_buffer — store entry A into $32B6+X down to +1 (entry A/X; X=0 => 256 fill)
@@ -258,7 +258,7 @@ VALIDATE_FUNCS = {
     0x7498,  # intro_seed_object_map — clear $0A00, scan-place entries, stride-$43 RANDOM $64 markers
     0x70B3,  # intro_unmark_random_cells — RANDOM-gated $0900 marker sweep (clear bit7)
     # batch — font/voice init + cockpit message renderer:
-    0x5433,  # font_display_init — clear music/voice tables + seed slots/timers (POKEY via bus_write)
+    0x5433,  # sfx_engine_reset — clear music/voice tables + seed slots/timers (POKEY via bus_write)
     0x47B8,  # show_cockpit_message — render HUD message (entry Y id) into $32B7 from glyph tables
     0x6811,  # game_sub_6811 — scatter random jittered dots via rng_signed_jitter/set_row_ptr/plot_pixel_masked
     0x692A,  # plot_terrain_span — run of vertical spans via fill_vertical_span; steps cols, shifts row window
@@ -284,7 +284,7 @@ VALIDATE_FUNCS = {
     0x6FBF,  # intro_random_setup — DFS maze gen on $0900 grid (RANDOM; scan_grid_neighbors/test_marked_neighbor)
     0x68CF,  # emit_dl_coord_pairs — emit DL LMS coord pairs into $300A/$308B from row table, tail plot_terrain_span
     # batch — the largest remaining display_setup leaf:
-    0x75F5,  # compute_gauge_geometry_from_006D — derive gauge param block $0617-$062A from $006D (branchy clamps; native bin_to_bcd)
+    0x75F5,  # compute_stage_display_geometry — derive gauge param block $0617-$062A from $006D (branchy clamps; native bin_to_bcd)
     # batch — the message-text blitters (display_setup front):
     0x6750,  # blit_label_row — blit 5 glyphs ($6E23[$00C5..] codes) via glyph_ptr_from_index; index base 0/5 from $0004
     0x672D,  # blit_message_block — 11 rows of 3 pixels ($15/$2E/$47) via set_row_ptr_from_count/plot_pixel_masked, tail blit_label_row

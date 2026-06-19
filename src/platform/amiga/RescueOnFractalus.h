@@ -45,7 +45,7 @@ private:
     // off these mem[]-derived signals to pick the render mode for the current phase.
     void deriveRenderSignals();
     bool rsStandby  = false;   // VVBLKI $52D7        — Standby + launch cinematic VBI
-    bool rsGauge    = false;   // $060B != 0          — cinematic begun (gauge sprite on)
+    bool rsEnergyIndicator    = false;   // $060B != 0          — cinematic begun (gauge sprite on)
     bool rsStars    = false;   // VDSLST $0200==$C2    — stars/planet viewport (sprites/colours)
     bool rsFlight   = false;   // $004A != 0           — in-game flight (palette/probe/profiler)
     bool rsViewport = false;   // stars || flight      — mode-D viewport band active
@@ -54,8 +54,8 @@ private:
     uint8_t prevScrollCtr = 0;      // gap before the ring/viewport arms (see deriveRenderSignals)
     bool    prevRsStars = false;    // rising edge → one-time title/cockpit rescan on stars entry
 
-    Sprite*  gaugeSprite   = nullptr;    // player-strip throttle bar ($0D98)
-    void buildGaugeSprite();             // $0D98 strip -> gaugeSprite lines
+    Sprite*  energyIndicatorSprite   = nullptr;    // player-strip throttle bar ($0D98)
+    void buildEnergyIndicatorSprite();             // $0D98 strip -> energyIndicatorSprite lines
     Sprite*  altimeterSprite = nullptr;  // P0 $0C98 terrain-height bar (flight altimeter)
     Sprite*  altimeterShipSprite = nullptr;  // M3 $0B98 ship-height bar (flight altimeter)
 
@@ -90,9 +90,9 @@ private:
     bool standbyCopperInstalled = false;   // is standbyCopper the currently-installed list?
     void updateStandbyCopper(bool force);  // poke changed colour/sprite slots (force = all)
     // Last-poked values, so updateStandbyCopper only writes a MOVE when it changed.
-    uint16_t sbTitleBg = 0xFFFF, sbTitlePf0 = 0xFFFF, sbGaugeCol = 0xFFFF, sbCompassCol = 0xFFFF;
+    uint16_t sbTitleBg = 0xFFFF, sbTitlePf0 = 0xFFFF, sbEnergyCol = 0xFFFF, sbCompassCol = 0xFFFF;
     uint16_t sbTerr0 = 0xFFFF, sbTerr1 = 0xFFFF, sbTerr2 = 0xFFFF, sbTerr3 = 0xFFFF;
-    int8_t   sbGauge = -1;   // sprite-2 = gauge(1)/null(0); -1 = unset
+    int8_t   sbEnergyIndicator = -1;   // sprite-2 = gauge(1)/null(0); -1 = unset
 
     // Static stars/planet viewport fixed copper list (the rsViewport non-flight layout —
     // line-doubled mode-D band).  Same build-once + poke-in-place scheme as standbyCopper:
@@ -102,7 +102,7 @@ private:
     bool planetCopperInstalled = false;  // is planetCopper the currently-installed list?
     void updatePlanetCopper(bool force); // poke changed colour slots (force = all)
     // Last-poked values (vp* — separate from sb* so a phase switch always force-refreshes).
-    uint16_t plTitleBg = 0xFFFF, plTitlePf0 = 0xFFFF, plGaugeCol = 0xFFFF,
+    uint16_t plTitleBg = 0xFFFF, plTitlePf0 = 0xFFFF, plEnergyCol = 0xFFFF,
              plStarCol = 0xFFFF, plBg = 0xFFFF, plCompassCol = 0xFFFF;
 
     // Static flight fixed copper list (scene 7 — same line-doubled mode-D band, with the
@@ -113,7 +113,7 @@ private:
     bool flightCopperInstalled = false;  // is flightCopper the currently-installed list?
     void updateFlightCopper(bool force); // poke changed colour/sprite slots (force = all)
     // Last-poked values (fl* — separate from sb*/pl* so a phase switch force-refreshes).
-    uint16_t flTitleBg = 0xFFFF, flTitlePf0 = 0xFFFF, flGaugeCol = 0xFFFF, flCompassCol = 0xFFFF;
+    uint16_t flTitleBg = 0xFFFF, flTitlePf0 = 0xFFFF, flEnergyCol = 0xFFFF, flCompassCol = 0xFFFF;
     uint16_t flTerr0 = 0xFFFF, flTerr1 = 0xFFFF;   // terrain pen0/pen1 (atmosphere ramp $00DC/$00DD)
 
     // Launch-cinematic fixed copper lists:
@@ -138,7 +138,7 @@ private:
     bool tunnelCopperInstalled = false;
     void updateTunnelCopper(bool force);  // poke title/gauge/compass + the ring palette
     // Last-poked colour values (tn* — poke-on-change for the single-buffered tunnel list).
-    uint16_t tnTitleBg = 0xFFFF, tnTitlePf0 = 0xFFFF, tnGaugeCol = 0xFFFF, tnCompassCol = 0xFFFF;
+    uint16_t tnTitleBg = 0xFFFF, tnTitlePf0 = 0xFFFF, tnEnergyCol = 0xFFFF, tnCompassCol = 0xFFFF;
     uint16_t tnPen0 = 0xFFFF, tnRing[6] = { 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF };
 
     Bitmap*     titleBitmap    = nullptr;

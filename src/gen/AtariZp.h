@@ -29,7 +29,7 @@ constexpr uint16_t attractTimerSub  = 0x062D;  // attract-timer sub-counter (256
 constexpr uint16_t animStepTimer    = 0x00E6;  // per-step delay for the lock-on-indicator/gauge animation
 constexpr uint16_t lockOnIndicatorTickParity = 0x0643;  // every-other-frame gate for lock_on_indicator_tick
 
-// --- dispatcher gates (read by sound_event_dispatch $5367) ---
+// --- dispatcher gates (read by scroll_event_dispatch $5367) ---
 constexpr uint16_t vbiFlags         = 0x0088;  // gate: routes the dispatcher to the tunnel-ring step
 constexpr uint16_t stepModeFlag     = 0x008D;  // <0 selects the reverse ring step (step_accum_sub_7e)
 
@@ -63,7 +63,7 @@ constexpr uint16_t lockOnIndicatorActive = 0x0048; // set when the lock-on indic
 constexpr uint16_t joystickSaved  = 0x004A;  // saved joystick / active-game flag
 constexpr uint16_t collisionFlags = 0x004B;  // collision / mode flags (BIT-tested in cockpit digits)
 constexpr uint16_t barColThreshold = 0x00BF; // cockpit bar-column threshold scratch
-constexpr uint16_t gaugeStepReload = 0x0618; // per-step timer reload for the gauge counter
+constexpr uint16_t lockonStepReload = 0x0618; // per-step timer reload for the lock-on indicator (#11)
 constexpr uint16_t scoreBcd        = 0x0628; // packed-BCD score counter
 constexpr uint16_t lockOnIndicatorPhase = 0x0631; // lock-on indicator reverse-fill phase rate gate
 constexpr uint16_t placedItemCountBcd = 0x0641; // BCD count of placed items

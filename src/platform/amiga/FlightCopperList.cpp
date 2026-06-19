@@ -34,8 +34,8 @@ static const uint16_t kColor29 = 0x1BA;   // sprite pair 6/7 pen 01 (altimeter s
 #define INDEX_TITLE_BPL       (INDEX_TITLE_PAL + 4)        // 8:  title 2bp ptrs (4)
 #define INDEX_SPRITE_COL      (INDEX_TITLE_BPL + 4)        // 12: color16,color17 (2)
 #define INDEX_SPRITES         (INDEX_SPRITE_COL + 2)       // 14: 8 sprite ptrs (16)
-#define INDEX_GAUGE_COL       (INDEX_SPRITES + 16)         // 30: COLOR21 (1)
-#define INDEX_ALTIM_COL       (INDEX_GAUGE_COL + 1)        // 31: COLOR25 (altimeter terrain-height bar P0) (1)
+#define INDEX_ENERGY_COL       (INDEX_SPRITES + 16)         // 30: COLOR21 (1)
+#define INDEX_ALTIM_COL       (INDEX_ENERGY_COL + 1)        // 31: COLOR25 (altimeter terrain-height bar P0) (1)
 #define INDEX_SHIP_COL        (INDEX_ALTIM_COL + 1)        // 32: COLOR29 (altimeter ship-height bar M3) (1)
 // Compass band: between the title text and the viewport, re-point color01 to the compass
 // COLPF0 ($00CF, dark grey) for the mode-4 compass line — the $49EE slot-0 DLI's colour.
@@ -87,7 +87,7 @@ void FlightCopperList::buildLayout(const Bitmap& title, const Bitmap& terrain, c
     showSprite(INDEX_SPRITES + 10, 5, nullSprite);
     showSprite(INDEX_SPRITES + 12, 6, nullSprite);
     showSprite(INDEX_SPRITES + 14, 7, nullSprite);
-    setGaugeColor(0);                          // COLOR21 (setter)
+    setEnergyIndicatorColor(0);                          // COLOR21 (setter)
     setAltimeterColor(0);                       // COLOR25 (setter) — altimeter terrain bar (sprite pair 4/5)
     setAltimeterShipColor(0);                   // COLOR29 (setter) — altimeter ship bar M3 (sprite pair 6/7)
 
@@ -151,9 +151,9 @@ void FlightCopperList::setSpritePostColor(uint16_t c)
     data_[INDEX_SPRITE_COL + 1] = copperMove(color17, c);
 }
 
-void FlightCopperList::setGaugeColor(uint16_t c)
+void FlightCopperList::setEnergyIndicatorColor(uint16_t c)
 {
-    data_[INDEX_GAUGE_COL] = copperMove(kColor21, c);
+    data_[INDEX_ENERGY_COL] = copperMove(kColor21, c);
 }
 
 void FlightCopperList::setAltimeterColor(uint16_t c)

@@ -103,7 +103,7 @@ extern "C" void sfx_seq_step_native(void)
 // paying the single DMA-restart rasterline wait once for all channels that changed waveform.
 // Called once per frame from game_vbi_isr (NOT here): this SFX tick only RECORDS its POKEY
 // writes into the want[] table (via platform_hw_write → update_paula_channel), and the
-// in-game SFX engine update_gauge_digits ($548D) records into the same table from the VBI.
+// in-game SFX engine sfx_voice_envelope_tick ($548D) records into the same table from the VBI.
 // Flushing in one place (the VBI) applies whichever engine wrote this frame and keeps the
 // DMA-restart sequence on a single interrupt level (no CIA-B vs VBI DMACON race).
 extern "C" void flush_paula(void);
@@ -439,12 +439,12 @@ extern "C" void vbi_attract_timer_native(void)
     if (mem[zp::attractTimerSub] == 0) mem[zp::attractTimer]++;
 }
 
-// The Standby title banner ($782A copy_altitude_graphic_to_screen) is NOT reimplemented
+// The Standby title banner ($782A copy_title_text_block_to_screen) is NOT reimplemented
 // here: the genuine transpiled standby loop ($62FB) calls it directly (native twin in
 // src/gen/rof_native.c), copying the SFX-selected block ($0091 → $5A9F/$5AB3) into screen
 // RAM $32B7-$32CA every frame.  render() picks up the alternation by shadow-comparing $32B7.
 
-// update_cockpit_digits_native: direct translation of startup_init @ $3FFA.
+// startup_init_native: direct translation of startup_init @ $3FFA.
 // Updates three cockpit digit displays based on mem[$0642], mem[$0641], mem[$0628].
 // Each digit is a 2×2 block of mode-4 chars from the $4AE3 glyph table (10 entries,
 // 4 bytes each: top-left, top-right, bottom-left, bottom-right).  Writes go to
@@ -460,7 +460,7 @@ extern "C" void vbi_attract_timer_native(void)
 //
 // Additionally writes mem[$33DF]/$33E0 (display-list stride control) as $9E/$9D
 // when mem[$0642] is 1 or 2 and mem[$004B] passes the BIT test; otherwise $1E/$1D.
-extern "C" void update_cockpit_digits_native(void)
+extern "C" void startup_init_native(void)
 {
     // helper: write a 2×2 digit block from table $4AE3[idx*4] to dest, OR'ing flag
     auto writeDigit = [](uint16_t dest, uint8_t idx, uint8_t flag) {
@@ -522,7 +522,7 @@ extern "C" void update_cockpit_digits_native(void)
 }
 
 // lock_on_indicator_tick_native: direct translation of lock_on_indicator_tick @ $4229.
-// (Previously mislabelled update_gauge_digits — that is a different routine at
+// (Previously mislabelled sfx_voice_envelope_tick — that is a different routine at
 // $548D; the canonical name for $4229 in disasm/symbols.csv is lock_on_indicator_tick.)
 // Called from vbi_handler_standby ($52D7) every other frame (LSR $0643 gate).
 // Drives the cockpit score/counter animation at $3491-$3497 (mode-4 chars).
@@ -575,7 +575,7 @@ extern "C" void lock_on_indicator_tick_native(void)
 
     if (s != 0u) {              // s = 1-7
         if (mem[zp::animStepTimer] > 0u) { mem[zp::animStepTimer]--; return; }
-        mem[zp::animStepTimer] = mem[zp::gaugeStepReload];
+        mem[zp::animStepTimer] = mem[zp::lockonStepReload];
         if (s == 7u) {
             if (mem[zp::lockOnIndicatorActive] == 0u) { mem[zp::lockOnIndicatorActive] = 1u; mem[0x28EEu] = 1u; }
             return;
@@ -588,7 +588,7 @@ extern "C" void lock_on_indicator_tick_native(void)
     } else {                    // s == 0: initialise
         mem[zp::lockOnIndicatorActive] = 0u;
         mem[zp::lockOnIndicatorState] = 1u;
-        mem[zp::animStepTimer] = mem[zp::gaugeStepReload];
+        mem[zp::animStepTimer] = mem[zp::lockonStepReload];
         for (int i = 5; i >= 0; i--) mem[0x3492u + (uint16_t)i] = 0xA9u;
         g_cockpitDirty = 1;
     }
@@ -613,7 +613,7 @@ extern "C" void update_indicator_blink_native(void)
 
 // --- Tunnel-ring cycle: faithful ports of the $5367 dispatcher's $0088 branch ---
 //
-// The original per-frame driver is sound_event_dispatch ($5367), a strict
+// The original per-frame driver is scroll_event_dispatch ($5367), a strict
 // priority dispatcher that runs exactly ONE action per frame:
 //     if   $008D != 0  -> step_accum_sub_7e   (ring reverse — NOT ported)
 //     elif $0088 != 0  -> step_accum_add_75   (tunnel ring cycle — ported below)
@@ -789,7 +789,7 @@ static void scroll_terrain_dl(void)
     mem[0x0097] = dl_lms_push_top(mem[0x0097]);      // LDX $0097 / push / STX $0097
 }
 
-// sound_event_dispatch @ $5367 (Standby subset): the per-frame priority dispatcher
+// scroll_event_dispatch @ $5367 (Standby subset): the per-frame priority dispatcher
 // that runs exactly ONE action.  $0088 (ring) outranks $0089 (column scroll) outranks
 // $008A (door scroll), so they are sequential — the doors scroll with a static tunnel
 // while $0088==0, the ring animates once $0088 is armed (after the doors finish
@@ -800,7 +800,7 @@ static void scroll_terrain_dl(void)
 // as a POD (see launch_native.cpp for why we don't #include cpu.h).
 extern "C" { typedef struct { uint8_t A, X, Y, S, N, V, Z, C, I, D; } Cpu6502; extern Cpu6502 cpu; }
 extern "C" void scroll_terrain_columns(void);  // $6AEE transpiled (entered with A = $0089)
-extern "C" void sound_event_dispatch_native(void)
+extern "C" void scroll_event_dispatch_native(void)
 {
     if (mem[zp::stepModeFlag]) return;                       // $008D: reverse ring (unused here)
     if (mem[zp::vbiFlags]) { step_accum_add_75(); return; }  // $0088: tunnel ring cycle
@@ -955,22 +955,22 @@ extern "C" void draw_tunnel_rings_native(void)
 //   $5398  attract input poll            -> SKIPPED: Atari $D01F/$D010/$D300 reads
 //          (resets the attract timeout on input) return neutral on the Amiga, where
 //          input is the keyboard ISR, so it would only ever no-op.
-//   $5367  sound_event_dispatch          -> the door/tunnel/scroll cinematic driver
+//   $5367  scroll_event_dispatch          -> the door/tunnel/scroll cinematic driver
 //          (self-gated on $0088/$0089/$008A/$008B/$008D — inert on the static screen)
 //   $5342  lock_on_indicator_tick every other frame (LSR/INC $0643 gate)
 //   $534D  SFX tick ($70F9)              -> runs on CIA-B Timer A instead (main.cpp)
-//          update_gauge_digits ($548D) / music_player_tick ($7253) -> never ported.
-extern "C" void update_gauge_digits(void);   // $548D: SFX voice engine + $0719 ring drain
+//          sfx_voice_envelope_tick ($548D) / music_player_tick ($7253) -> never ported.
+extern "C" void sfx_voice_envelope_tick(void);   // $548D: SFX voice engine + $0719 ring drain
 
 extern "C" void standby_vbi_native(void)
 {
     vbi_attract_timer_native();              // $5335
-    sound_event_dispatch_native();           // $5367
+    scroll_event_dispatch_native();           // $5367
     // $548D SFX voice engine — the Atari ran it in this VBI tail too.  Gate on
     // $060B (=$23 once the launch cinematic begins, 0 during pure attract) so the
     // attract music (CIA-B sequencer) is undisturbed but the START/doors/tunnel
     // launch effects get drained from the $0719 ring to POKEY -> Paula.
-    if (mem[0x060B]) update_gauge_digits();
+    if (mem[0x060B]) sfx_voice_envelope_tick();
     uint8_t g = mem[zp::lockOnIndicatorTickParity];   // $5342: LSR $0643 / BCS skip / ... / INC
     mem[zp::lockOnIndicatorTickParity] = (uint8_t)(g >> 1);
     if (!(g & 1u)) {                         // carry clear -> run, then INC
@@ -1064,7 +1064,7 @@ void enemy_check(void);               // $3FCD: enemy/event dispatch
 void flight_control_integrate(void);     // $8E5B
 void update_terrain_scanline_proj(void); // $9833 (the JSR is at $51BC inside vbi_handler_flight)
 void render_bcd_counter(void);           // $49A0: draw BCD score ($0601) to top line $32C5
-void update_gauge_digits(void);          // $548D: in-game SFX voice engine + ring drain (Atari VBI tail $534D)
+void sfx_voice_envelope_tick(void);          // $548D: in-game SFX voice engine + ring drain (Atari VBI tail $534D)
 // Full in-flight VBI ($4FF5).  Faithful transpiled handler; its calls to
 // flight_control_integrate / update_terrain_scanline_proj resolve to the native twins
 // (same symbol), so running it verbatim IS "full faithful VBI, native motion spliced in":
@@ -1130,7 +1130,7 @@ extern "C" void game_vbi_isr(void)
     else                    standby_vbi_native();    // $52D7 standby/launch VBI (and fallback)
     cpu = saved;                                    // == XITVBV PLA;TAY;PLA;TAX;PLA
     // Apply this frame's batched POKEY→Paula writes — from the CIA-B music tick
-    // (sfx_voice_tick) AND the in-game SFX engine (update_gauge_digits, run in the VBI
+    // (sfx_voice_tick) AND the in-game SFX engine (sfx_voice_envelope_tick, run in the VBI
     // bodies above).  One flush per frame: it silences released channels (vol=0) and
     // starts new notes/SFX, so without it stuck notes never stop and SFX never sound.
     flush_paula();
@@ -1138,11 +1138,11 @@ extern "C" void game_vbi_isr(void)
 }
 
 // sfx_engine_reset_native: faithful replica of the SFX engine reset $5433 (mislabelled
-// font_display_init in symbols.csv), called on the Atari during game init ($3D35) and at
+// sfx_engine_reset in symbols.csv), called on the Atari during game init ($3D35) and at
 // launch ($6118).  Clears the $0719 event ring (head/tail $0073/$0074) and the 14 voice-
 // slot envelope arrays, assigns the 4 physical POKEY channels to voice slots 1..4
 // ($0705 = {2,4,6,8}) and mutes their AUDC, seeds the mixer scratch, and sets AUDCTL=$60.
-// On the Atari this runs at game init ($3D35) and launch ($6118) so update_gauge_digits
+// On the Atari this runs at game init ($3D35) and launch ($6118) so sfx_voice_envelope_tick
 // starts from a clean, silent state.
 // ⚠ CURRENTLY UNWIRED on the Amiga (the genuine native game_main_loop chain does its own
 // init); kept for wiring into the native flight/launch path alongside seed_engine_drone_native.
@@ -1181,7 +1181,7 @@ extern "C" void sfx_engine_reset_native(void)
 // it is set the distortion (cold-init $3DE2/$3DE8), the priorities, and run the launch
 // engine-ramp ($63FF-$64E8) whose end-state hands these three voices their POKEY channels
 // via reorder_sprite_slot ($5614).  We install the launch end-state directly here, then let
-// the mixer + flight_control_integrate + update_gauge_digits (all ported) sustain it.
+// the mixer + flight_control_integrate + sfx_voice_envelope_tick (all ported) sustain it.
 //
 // ⚠ CURRENTLY UNWIRED: the genuine flight path (native game_main_loop's inline $3E12-$3EB8
 // flight init) does not yet call this, so genuine-flight has no engine drone.  Wire it into

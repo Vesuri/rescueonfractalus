@@ -18,6 +18,30 @@
 #include "rof_native.h" /* typed cores shared with the hand-written Amiga ports */
 #include "../platform/platform_c.h" /* platform_tick_vbi/render_frame/poll_events for the apex spin-waits */
 
+/* Optional flight/init timing probes (Amiga autoflight only; -DROF_FLIGHT_PROBE, i.e.
+ * `make PROBES=1`).  Accumulate sub-frame timings of game_main_loop's flight init + the
+ * per-frame phase split into the g_* globals (defined in PlatformAmiga.cpp, read from the
+ * gdb stub via amiga/diag_timing.gdb).  Desktop/release builds compile these to no-ops, so
+ * none of the probe globals are referenced there (keeps the SDL link clean).  The clock is
+ * rof_subclock() = g_vbiCount*313 + beam_line (sub-frame resolution; see PlatformAmiga.cpp). */
+#ifdef ROF_FLIGHT_PROBE
+extern unsigned long rof_subclock(void);
+extern volatile unsigned long g_probeDispSetup, g_probeGameInit, g_probeIntro,
+    g_probeInitTotal, g_probeRowAddr;
+extern volatile unsigned long g_iterMax, g_iterLast, g_iterPostDs,
+    g_fSetup, g_fClear, g_fDraw, g_fColl, g_fState, g_fEnemy;
+extern volatile unsigned short g_probeFlightVbi, g_iterCount, g_iterMaxAt;
+#define FP_TIME(stmt, acc) do { unsigned long _p = rof_subclock(); stmt; (acc) += rof_subclock() - _p; } while (0)
+#define FP_ITER()      do { if (g_iterPostDs) { unsigned long _g = rof_subclock() - g_iterPostDs; \
+                                g_iterLast = _g; if (_g > g_iterMax) { g_iterMax = _g; g_iterMaxAt = g_iterCount; } } \
+                            g_iterCount++; } while (0)
+#define FP_ITER_MARK() (g_iterPostDs = rof_subclock())
+#else
+#define FP_TIME(stmt, acc) do { stmt; } while (0)
+#define FP_ITER()      ((void)0)
+#define FP_ITER_MARK() ((void)0)
+#endif
+
 /* Amiga black-until-ready reveal gate (read by animatePalette in RescueOnFractalus.cpp).
  * Set at display_setup entry — by then game_main_loop has drawn the cockpit + top bar and
  * scene.initialize has set up the sprites, so the window build is about to begin: the point
@@ -180,13 +204,13 @@ void bin_to_bcd(void) {
     LDA(bcd);
 }
 
-/* copy_altitude_graphic_to_screen @ $782A — Standby per-frame altitude banner.
+/* copy_title_text_block_to_screen @ $782A — Standby per-frame altitude banner.
  *
  * 6502: A=$0091; if A<$C0 return; if A==$C0 and $00E2 has bit7 set return;
  * $0091=Y(entry); X=($A>=$E0 ? $27 [also $00D8=$44] : $13); then copy 20 bytes
  * $5A9F+X -> $32B6+Y for Y=$14..$01 (X and Y decrementing together).  Exit
  * A/X/Y are dead at the Standby-loop call site (incidental in validation). */
-void copy_altitude_graphic_to_screen_core(uint8_t entryY) {
+void copy_title_text_block_to_screen_core(uint8_t entryY) {
     uint8_t a = mem[0x0091];
     if (a < 0xC0) return;
     if (a == 0xC0 && (mem[0x00E2] & 0x80)) return;
@@ -199,8 +223,8 @@ void copy_altitude_graphic_to_screen_core(uint8_t entryY) {
 }
 
 /* 6502-ABI shim: entry cpu.Y is the new $0091 gate value. */
-void copy_altitude_graphic_to_screen(void) {
-    copy_altitude_graphic_to_screen_core(cpu.Y);
+void copy_title_text_block_to_screen(void) {
+    copy_title_text_block_to_screen_core(cpu.Y);
 }
 
 /* init_row_coords_9c @ $6DDF — load 5 row/coordinate constants into $009C-$00A0.
@@ -550,7 +574,7 @@ void scroll_terrain_columns_core(uint8_t gate) {
     gen_terrain_column();                             /* append the new rightmost column */
 }
 
-/* 6502-ABI shim: entry gate value arrives in cpu.A (sound_event_dispatch sets A = $0089). */
+/* 6502-ABI shim: entry gate value arrives in cpu.A (scroll_event_dispatch sets A = $0089). */
 void scroll_terrain_columns(void) {
     scroll_terrain_columns_core(cpu.A);
 }
@@ -876,10 +900,10 @@ void copy_bytes_to_dst(void) {
 
 /* --- display_setup-subtree leaves (batch 2026-06-15): pure mem-effect leaves. --- */
 
-/* terrain_lookup @ $3FDE — copy 4 bytes from the table $4B0B (descending) into
+/* draw_compass_heading @ $3FDE — copy 4 bytes from the table $4B0B (descending) into
  * $32E3[3..0].  The base index is ($281C + $3FF6[$2836]) & $FF; the 6502 $4B0B,Y
  * lookup uses an 8-bit Y, so the source addresses span $4B0B..$4C0A. */
-void terrain_lookup(void) {
+void draw_compass_heading(void) {
     uint8_t y = (uint8_t)(mem[0x281C] + mem[0x3FF6 + mem[0x2836]]);
     for (int x = 3; x >= 0; x--) {
         mem[0x32E3 + x] = mem[0x4B0B + y];
@@ -1341,11 +1365,11 @@ void intro_unmark_random_cells(void) {
     } while (i != 0x00);
 }
 
-/* font_display_init @ $5433 — clear the music/voice state tables ($066B..$06F7 in 11
+/* sfx_engine_reset @ $5433 — clear the music/voice state tables ($066B..$06F7 in 11
  * parallel 14-entry columns + $0705 block + $0714) and the ring head $0073/$0074, then
  * seed the voice-priority slots ($0705[2..8] / POKEY AUDF via $D1FF+X) and the music
  * timer fields $0712/$0713 = 2/6, AUDCTL ($D208) = $60.  Pure init (POKEY via bus_write). */
-void font_display_init(void) {
+void sfx_engine_reset(void) {
     mem[0x0073] = 0x00; mem[0x0074] = 0x00;
     static const uint16_t cols[11] = { 0x066B, 0x0705, 0x0687, 0x0695, 0x06A3, 0x06B1,
                                         0x06BF, 0x06CD, 0x06DB, 0x06E9, 0x06F7 };
@@ -1771,14 +1795,14 @@ void emit_dl_coord_pairs(void) {
     plot_terrain_span();
 }
 
-/* compute_gauge_geometry_from_006D @ $75F5 — derive the throttle/speed gauge
+/* compute_stage_display_geometry @ $75F5 — derive the throttle/speed gauge
  * parameter block from the current gauge value $006D (held in X throughout).
  * Pure-compute leaf: a chain of clamps/shifts of X writing the gauge geometry
  * cells $0617-$062A (+ $08A2, scratch $00C1), with the displayed value run
  * through the native bin_to_bcd for $0628.  No loops.  Contract: mem[] — exit
  * regs are dead at the display_setup call site; the PHA/PLA byte at $01FF that
  * the 6502 leaves behind (S=$FF in the harness) is masked in validate_native.c. */
-void compute_gauge_geometry_from_006D(void) {
+void compute_stage_display_geometry(void) {
     uint8_t x = mem[0x006D];
 
     /* $75F5-$7600: P = min((X>>1)+2, $14) */
@@ -6058,13 +6082,13 @@ void reorder_sprite_slot(void) {
     cpu.A = savedY;
 }
 
-/* update_gauge_digits @ $548D — APEX: the per-frame voice/gauge envelope engine.
+/* sfx_voice_envelope_tick @ $548D — APEX: the per-frame voice/gauge envelope engine.
  * Runs sfx_engine_step (when $0634 armed), advances the 14 voice/gauge slots'
  * frequency/duration/priority envelopes (BCD-step wrap $2D, gated by table
  * $5406; emits AUDF via sfx_voice_write_freq; re-queues finished slots via
  * game_sub_55FC / ring_push_marked), then drains the $0719 event ring:
  * bit7-set entries -> input_init (a new voice), bit7-clear -> reorder_sprite_slot. */
-void update_gauge_digits(void) {
+void sfx_voice_envelope_tick(void) {
     if (mem[0x0634] != 0) {                              /* 548d LDA $0634; BEQ skip */
         cpu.A = mem[0x0634];                             /* sfx_engine_step reads entry A */
         sfx_engine_step();                               /* 5492 */
@@ -6413,7 +6437,7 @@ L_6103:
     draw_cockpit_dial_bar();
     build_line_addr_table_2000();
 L_6118:
-    font_display_init();
+    sfx_engine_reset();
     wait_frames_5();
     LDA(0x07);
     mem[0x0095] = cpu.A;
@@ -6663,7 +6687,7 @@ L_62f6:
     ds_frame();
     LDY(mem[0x060B]);
     if (!cpu.Z) goto L_6309;
-    copy_altitude_graphic_to_screen();
+    copy_title_text_block_to_screen();
     LDA(bus_read(0xD01F));
     AND(0x04);
     if (!cpu.Z) goto L_6309;
@@ -6750,7 +6774,7 @@ L_639b:
     if (!cpu.N) goto L_639b;
 L_63a1:
     mem[0x0627] = cpu.A;
-    compute_gauge_geometry_from_006D();
+    compute_stage_display_geometry();
 L_63a7:
     LDX(0x1D);
     input_init();
@@ -7102,7 +7126,11 @@ L_3dd7:
     LDA(0x35);
     mem[0x3158] = cpu.A;
 L_3e0f:
+#ifdef ROF_FLIGHT_PROBE
+    { unsigned long _ds = rof_subclock(); display_setup(); g_probeDispSetup = rof_subclock() - _ds; }
+#else
     display_setup();
+#endif
     LDA(0x2A);
     clear_pm_state();
     clear_colors();
@@ -7154,12 +7182,27 @@ L_3e5c:
     bus_write(0xD403, cpu.A);
     LDA(0x40);
     bus_write(0xD004, cpu.A);
+#ifdef ROF_FLIGHT_PROBE
+    { g_probeFlightVbi = (unsigned short)(rof_subclock() / 313u);
+      unsigned long _t0 = rof_subclock();
+    init_gameplay_state();
+      unsigned long _t1 = rof_subclock(); g_probeGameInit = _t1 - _t0;
+    LDA(mem[0x0627]);
+    if (!cpu.Z) goto L_3e97_probe;
+    intro_random_setup();
+    intro_unmark_random_cells();
+    intro_seed_object_map();
+L_3e97_probe:
+      g_probeIntro = rof_subclock() - _t1;
+      g_probeInitTotal = rof_subclock() - _t0; }
+#else
     init_gameplay_state();
     LDA(mem[0x0627]);
     if (!cpu.Z) goto L_3e97;
     intro_random_setup();
     intro_unmark_random_cells();
     intro_seed_object_map();
+#endif
 L_3e97:
     LDA(0x60);
     mem[0x00C1] = cpu.A;
@@ -7167,8 +7210,13 @@ L_3e97:
     mem[0x00C3] = cpu.A;
     LDA(0x10);
     mem[0x00C4] = cpu.A;
+#ifdef ROF_FLIGHT_PROBE
+    { unsigned long _r = rof_subclock(); build_row_addr_table(); copy_row_addr_subset();
+      g_probeRowAddr = rof_subclock() - _r; }
+#else
     build_row_addr_table();
     copy_row_addr_subset();
+#endif
     LDA(mem[0x0004]);
     if (!cpu.Z) goto L_3eb6;
     LDA(0x54);
@@ -7180,20 +7228,22 @@ L_3eb6:
 L_3eb8:
     mem[0x004A] = cpu.A;
 L_3eba:
+    FP_ITER();
     ds_frame();
-    terrain_frame_setup();
+    FP_ITER_MARK();
+    FP_TIME(terrain_frame_setup(), g_fSetup);
     LDX(0x33);
-    clear_terrain_column();
+    FP_TIME(clear_terrain_column(), g_fClear);
     LDX(0x30);
-    terrain_draw_frame();
+    FP_TIME(terrain_draw_frame(), g_fDraw);
     LDX(0x33);
-    terrain_collision();
+    FP_TIME(terrain_collision(), g_fColl);
     LDA(mem[0x0041]);
     mem[0x288F] = cpu.A;
-    game_state_update();
+    FP_TIME(game_state_update(), g_fState);
     LDA(0x02);
     mem[0x0042] = cpu.A;
-    enemy_check();
+    FP_TIME(enemy_check(), g_fEnemy);
     LDA(mem[0x062F]);
     CMP(0x0E);
     if (cpu.C) goto L_3ef5;

@@ -35,9 +35,9 @@
 // Native handler functions — see NativeHandlers.cpp and SfxPlayer.cpp.
 extern "C" void vbi_attract_timer_native(void);                  // $52D7: timer cascade
 extern "C" void update_indicator_blink_native(void);           // $4131: cockpit blink
-extern "C" void update_cockpit_digits_native(void);                      // $3FFA: cockpit digit update
+extern "C" void startup_init_native(void);                      // $3FFA: cockpit digit update
 extern "C" void lock_on_indicator_tick_native(void);               // $4229: cockpit counter animation
-extern "C" void sound_event_dispatch_native(void);              // $5367: ring ($0088) vs door scroll ($008A)
+extern "C" void scroll_event_dispatch_native(void);              // $5367: ring ($0088) vs door scroll ($008A)
 extern "C" volatile uint8_t g_tunnelFieldDirty;                // set when advance_message_column draws into $2000
 extern "C" volatile uint8_t g_tunRowLo, g_tunRowHi;            // row extent of the expanding black clear
 extern "C" volatile uint8_t g_activeVbi;                       // 0=none 1=standby($52D7) 2=flight($4FF5); read by game_vbi_isr
@@ -58,7 +58,7 @@ extern "C" volatile unsigned char g_doorFieldReady;
 // modeD) regions only when these are set, instead of re-scanning all ~580 cells every
 // frame.  During the static doors/standby phases nothing changes, so the scan was pure
 // overhead (~7 ms/frame, the dominant door-cinematic cost).  g_titleDirty is set by the
-// genuine $782A title writer (copy_altitude_graphic_to_screen) via the platform_title_
+// genuine $782A title writer (copy_title_text_block_to_screen) via the platform_title_
 // changed() hook; g_cockpitDirty by update_cockpit_digits / lock_on_indicator_tick at their
 // store sites.  Both are force-set at phase transitions in deriveRenderSignals() so the
 // initial build (by the transpiled display_setup, not those writers) + flight updates are
@@ -194,12 +194,12 @@ void RescueOnFractalus::buildPostSprites()
 // Build the player-1 throttle bar from the vobj strip mem[$0D98..].  Each strip
 // byte is one Atari player scanline ($F0 = leftmost 4px on); we map a filled row
 // to the leftmost 4 px (colour 01) of an Amiga sprite line.
-void RescueOnFractalus::buildGaugeSprite()
+void RescueOnFractalus::buildEnergyIndicatorSprite()
 {
     // 57-row strip $0D98..$0DD0 (the original vobj player extent).  Each Atari
     // player bit is one colour clock = 2 Amiga lores px, so the 4-bit $F0 segment
     // is 8 px wide -> 0xFF00 (matches SIZEP1=0, normal width).
-    uint16_t* d = gaugeSprite->data() + 2;   // skip the 2 control words
+    uint16_t* d = energyIndicatorSprite->data() + 2;   // skip the 2 control words
     for (int i = 0; i < 57; i++) {
         uint16_t on = (mem[0x0D98 + i] & 0xF0u) ? 0xFF00u : 0x0000u;
         d[i * 2]     = on;     // plane A (colour bit 0)
@@ -209,9 +209,9 @@ void RescueOnFractalus::buildGaugeSprite()
 
 // ---- altimeter terrain-height bar (flight) -----------------------------------
 // The altimeter's terrain-height indicator is the Atari player P0 strip $0C98: a solid
-// 8px-wide bar that update_gauge_281a ($40E5) fills with $FF from offset $281A (the bar
+// 8px-wide bar that draw_altimeter_bars ($40E5) fills with $FF from offset $281A (the bar
 // top, which tracks terrain height $0062) down to a fixed bottom ($0C98+$37).  Mirror the
-// live buffer into the sprite each flight frame, exactly as buildGaugeSprite mirrors the
+// live buffer into the sprite each flight frame, exactly as buildEnergyIndicatorSprite mirrors the
 // energy indicator's $0D98 — each Atari player bit → 2 Amiga lores px via kDoubleGlyph,
 // so a solid $FF row becomes a full 16px sprite line.  (The P3 ship-height bar at $0F98 is
 // parked until triggered; not built yet.)
@@ -227,7 +227,7 @@ void RescueOnFractalus::buildAltimeterSprite()
 
 // ---- altimeter ship-height bar (flight) --------------------------------------
 // The ship-height indicator is the Atari missile M3 (bits 6-7 of the shared missile
-// buffer $0B00): update_gauge_281a ($40E5) steps its top edge at $0B98+$281B (which tracks
+// buffer $0B00): draw_altimeter_bars ($40E5) steps its top edge at $0B98+$281B (which tracks
 // ship altitude $0034) down to a fixed bottom ($0BCF).  SIZEM expands the 2px missile to
 // 8px (quad width) = a full 16px Amiga sprite line, so a set M3 row → 0xFFFF.  Mask bits
 // 6-7 to ignore the other missiles (M0-M2, e.g. the wing-clearance bars) sharing $0B00.
@@ -292,10 +292,10 @@ void RescueOnFractalus::initialize()
     leftPost   = Sprite::allocate(kHT);
     rightPost  = Sprite::allocate(kHT);
     nullSprite = Sprite::allocate(0);
-    gaugeSprite = Sprite::allocate(57);    // throttle bar: 57 vobj-strip rows ($0D98..$0DD0)
+    energyIndicatorSprite = Sprite::allocate(57);    // throttle bar: 57 vobj-strip rows ($0D98..$0DD0)
     altimeterSprite = Sprite::allocate(kAltimRows);   // P0 $0C98 terrain-height bar (flight)
     altimeterShipSprite = Sprite::allocate(kAltimRows);   // M3 $0B98 ship-height bar (flight)
-    if (!leftPost || !rightPost || !nullSprite || !gaugeSprite || !altimeterSprite
+    if (!leftPost || !rightPost || !nullSprite || !energyIndicatorSprite || !altimeterSprite
         || !altimeterShipSprite) return;
     // Starfield sprites (P0/P2/P3): 89-row strips, all at the windscreen top
     // (player scanline $32 → Amiga Y = kTerrainLine, the +36 offset that maps the
@@ -310,8 +310,8 @@ void RescueOnFractalus::initialize()
     // line PMG strip at $0D98 (P1+$98).  The Atari-HPOS / PM-scanline -> Amiga-pixel
     // transform isn't 1:1 (wide-playfield crop + DIWSTRT), so the on-screen XY here
     // is a starting estimate to calibrate visually.
-    gaugeSprite->setX(0x81 + 203);
-    gaugeSprite->setY(0x2c + 144);
+    energyIndicatorSprite->setX(0x81 + 203);
+    energyIndicatorSprite->setY(0x2c + 144);
     // Altimeter terrain-height bar (P0 $0C98): same cockpit scanline band as the energy
     // indicator (both are player strips at buffer offset $98 → Amiga Y 0x2c+144), placed
     // left of it (CLAUDE.md instrument x≈108).  Starting estimate — calibrate visually.
@@ -369,7 +369,7 @@ void RescueOnFractalus::initialize()
     planetCopper = new PlanetCopperList();
     if (planetCopper && planetCopper->data())
         planetCopper->buildLayout(*titleBitmap, *terrainBitmap, *cockpitBitmap,
-                                    *leftPost, *rightPost, *gaugeSprite, *nullSprite,
+                                    *leftPost, *rightPost, *energyIndicatorSprite, *nullSprite,
                                     *starSprite[0], *starSprite[1], *starSprite[2]);
 
     // Static flight fixed copper list (scene 7), same build-once + poke scheme;
@@ -378,7 +378,7 @@ void RescueOnFractalus::initialize()
     flightCopper = new FlightCopperList();
     if (flightCopper && flightCopper->data())
         flightCopper->buildLayout(*titleBitmap, *terrainBitmap, *cockpitBitmap,
-                                  *leftPost, *rightPost, *gaugeSprite, *nullSprite);
+                                  *leftPost, *rightPost, *energyIndicatorSprite, *nullSprite);
 
     // Launch-cinematic fixed copper lists (scene 4 doors / scene 5 tunnel), same
     // build-once scheme; renderFrame installs them during the launch cinematic.  Doors
@@ -388,12 +388,12 @@ void RescueOnFractalus::initialize()
         doorsCopper[i] = new DoorsCopperList();
         if (doorsCopper[i] && doorsCopper[i]->data())
             doorsCopper[i]->buildLayout(*titleBitmap, *cockpitBitmap,
-                                        *leftPost, *rightPost, *gaugeSprite, *nullSprite);
+                                        *leftPost, *rightPost, *energyIndicatorSprite, *nullSprite);
     }
     tunnelCopper = new TunnelCopperList();
     if (tunnelCopper && tunnelCopper->data())
         tunnelCopper->buildLayout(*titleBitmap, *tunnelBitmap, *cockpitBitmap,
-                                  *leftPost, *rightPost, *gaugeSprite, *nullSprite);
+                                  *leftPost, *rightPost, *energyIndicatorSprite, *nullSprite);
 
     // Precompute glyph doubling table: each byte → 16-bit pattern (each bit → 2 bits).
     for (int i = 0; i < 256; i++) {
@@ -736,21 +736,21 @@ void RescueOnFractalus::updateStandbyCopper(bool force)
 {
     const uint16_t titleBg  = atariToOCS(mem[0x02C8]);             // COLBK = title bg / canopy posts
     const uint16_t titlePf0 = atariToOCS(mem[zp::textColorPf0]);   // COLPF0 = title text ($00D8)
-    const uint16_t gaugeCol = atariToOCS(mem[0x00DE]);             // gauge bar colour ramp
+    const uint16_t energyCol = atariToOCS(mem[0x00DE]);             // gauge bar colour ramp
     const uint16_t terr0    = atariToOCS(mem[0x02C0]);             // terrain pen0 (road dots)
     const uint16_t terr1    = atariToOCS(mem[0x02C7]);             // terrain pen1 (LEVEL text)
     const uint16_t terr2    = atariToOCS(mem[zp::colorRing]);      // terrain pen2 ($08D4)
     const uint16_t terr3    = atariToOCS(mem[zp::displayFlags]);   // terrain pen3 (green bg, $0071)
-    const int8_t   gauge    = (int8_t)(rsGauge ? 1 : 0);
+    const int8_t   gauge    = (int8_t)(rsEnergyIndicator ? 1 : 0);
 
     if (force || titleBg != sbTitleBg || titlePf0 != sbTitlePf0) {
         standbyCopper->setTitlePalette(titleBg, titlePf0, atariToOCS(0x78));  // pf1 = blue (const)
         standbyCopper->setSpritePostColor(titleBg);
         sbTitleBg = titleBg; sbTitlePf0 = titlePf0;
     }
-    if (force || gaugeCol != sbGaugeCol) {
-        standbyCopper->setGaugeColor(gaugeCol);
-        sbGaugeCol = gaugeCol;
+    if (force || energyCol != sbEnergyCol) {
+        standbyCopper->setEnergyIndicatorColor(energyCol);
+        sbEnergyCol = energyCol;
     }
     const uint16_t compassCol = atariToOCS(mem[0x00CF]);   // compass band COLPF0 (dark grey)
     if (force || compassCol != sbCompassCol) {
@@ -762,9 +762,9 @@ void RescueOnFractalus::updateStandbyCopper(bool force)
         standbyCopper->setTerrainPalette(terr0, terr1, terr2, terr3);
         sbTerr0 = terr0; sbTerr1 = terr1; sbTerr2 = terr2; sbTerr3 = terr3;
     }
-    if (force || gauge != sbGauge) {
-        standbyCopper->setSprite2(gauge ? *gaugeSprite : *nullSprite);
-        sbGauge = gauge;
+    if (force || gauge != sbEnergyIndicator) {
+        standbyCopper->setSprite2(gauge ? *energyIndicatorSprite : *nullSprite);
+        sbEnergyIndicator = gauge;
     }
 }
 
@@ -776,7 +776,7 @@ void RescueOnFractalus::updatePlanetCopper(bool force)
 {
     const uint16_t titleBg  = atariToOCS(mem[0x02C8]);             // COLBK = title bg / canopy posts
     const uint16_t titlePf0 = atariToOCS(mem[zp::textColorPf0]);   // COLPF0 = title text ($00D8)
-    const uint16_t gaugeCol = atariToOCS(mem[0x00DE]);             // gauge bar colour ramp
+    const uint16_t energyCol = atariToOCS(mem[0x00DE]);             // gauge bar colour ramp
     const uint16_t starCol  = atariToOCS(mem[0x02C0]);             // starfield grey ($02C0)
     const uint16_t bgCol    = atariToOCS(mem[0x00DC]);             // viewport COLBK (space, $00DC)
 
@@ -785,9 +785,9 @@ void RescueOnFractalus::updatePlanetCopper(bool force)
         planetCopper->setSpritePostColor(titleBg);
         plTitleBg = titleBg; plTitlePf0 = titlePf0;
     }
-    if (force || gaugeCol != plGaugeCol) {
-        planetCopper->setGaugeColor(gaugeCol);
-        plGaugeCol = gaugeCol;
+    if (force || energyCol != plEnergyCol) {
+        planetCopper->setEnergyIndicatorColor(energyCol);
+        plEnergyCol = energyCol;
     }
     if (force || starCol != plStarCol) {
         planetCopper->setStarColor(starCol);
@@ -813,16 +813,16 @@ void RescueOnFractalus::updateFlightCopper(bool force)
 {
     const uint16_t titleBg  = atariToOCS(mem[0x02C8]);             // COLBK = top-bar bg / canopy posts
     const uint16_t titlePf0 = atariToOCS(mem[zp::textColorPf0]);   // COLPF0 = top-bar text ($00D8)
-    const uint16_t gaugeCol = atariToOCS(mem[0x00DE]);             // gauge bar colour
+    const uint16_t energyCol = atariToOCS(mem[0x00DE]);             // gauge bar colour
 
     if (force || titleBg != flTitleBg || titlePf0 != flTitlePf0) {
         flightCopper->setTitlePalette(titleBg, titlePf0, atariToOCS(0x78));  // pf1 = blue (const)
         flightCopper->setSpritePostColor(titleBg);
         flTitleBg = titleBg; flTitlePf0 = titlePf0;
     }
-    if (force || gaugeCol != flGaugeCol) {
-        flightCopper->setGaugeColor(gaugeCol);
-        flGaugeCol = gaugeCol;
+    if (force || energyCol != flEnergyCol) {
+        flightCopper->setEnergyIndicatorColor(energyCol);
+        flEnergyCol = energyCol;
     }
 
     // Altimeter terrain-height bar (P0 $0C98) on sprite 4: pointer + colour are constant
@@ -875,12 +875,12 @@ void RescueOnFractalus::updateDoorsCopper(DoorsCopperList* dc)
 {
     const uint16_t titleBg  = atariToOCS(mem[0x02C8]);            // COLBK = title bg / canopy posts
     const uint16_t titlePf0 = atariToOCS(mem[zp::textColorPf0]);  // COLPF0 = title text ($00D8)
-    const uint16_t gaugeCol = atariToOCS(mem[0x00DE]);            // gauge bar colour ramp
+    const uint16_t energyCol = atariToOCS(mem[0x00DE]);            // gauge bar colour ramp
     const uint16_t compassCol = atariToOCS(mem[0x00CF]);          // compass band COLPF0
 
     dc->setTitlePalette(titleBg, titlePf0, atariToOCS(0x78));     // pf1 = blue (const)
     dc->setSpritePostColor(titleBg);
-    dc->setGaugeColor(gaugeCol);
+    dc->setEnergyIndicatorColor(energyCol);
     dc->setCompassColor(compassCol);
 
     // Sliding-door geometry.  topBase = terrain row g2 (slides up); tunBase = tunnel row
@@ -912,7 +912,7 @@ void RescueOnFractalus::updateTunnelCopper(bool force)
 {
     const uint16_t titleBg  = atariToOCS(mem[0x02C8]);
     const uint16_t titlePf0 = atariToOCS(mem[zp::textColorPf0]);
-    const uint16_t gaugeCol = atariToOCS(mem[0x00DE]);
+    const uint16_t energyCol = atariToOCS(mem[0x00DE]);
     const uint16_t compassCol = atariToOCS(mem[0x00CF]);
 
     if (force || titleBg != tnTitleBg || titlePf0 != tnTitlePf0) {
@@ -920,7 +920,7 @@ void RescueOnFractalus::updateTunnelCopper(bool force)
         tunnelCopper->setSpritePostColor(titleBg);
         tnTitleBg = titleBg; tnTitlePf0 = titlePf0;
     }
-    if (force || gaugeCol != tnGaugeCol)   { tunnelCopper->setGaugeColor(gaugeCol);   tnGaugeCol = gaugeCol; }
+    if (force || energyCol != tnEnergyCol)   { tunnelCopper->setEnergyIndicatorColor(energyCol);   tnEnergyCol = energyCol; }
     if (force || compassCol != tnCompassCol) { tunnelCopper->setCompassColor(compassCol); tnCompassCol = compassCol; }
 
     const uint16_t pen0 = atariToOCS(mem[0x02C0]);               // tunnel pen0 = black
@@ -975,7 +975,7 @@ void RescueOnFractalus::deriveRenderSignals()
     rsFlight   = flightVbi;
     rsStars    = standbyVbi && (mem[0x060B] == 0x23u) && (mem[0x0200] == 0xC2u);
     rsViewport = rsStars || rsFlight;
-    rsGauge    = (mem[0x060B] != 0);
+    rsEnergyIndicator    = (mem[0x060B] != 0);
 
     // launched = doors scroll armed / ring armed / viewport active.  Safe to derive
     // now that the transpiled display_setup drives: it arms the ring before the next
@@ -1035,14 +1035,14 @@ void RescueOnFractalus::perFrameWork()
     }
 
     // Title text ("RESCUE ON FRACTALUS!" / copyright): the genuine standby loop
-    // ($62FB) drives it — copy_altitude_graphic_to_screen ($782A) copies the block
+    // ($62FB) drives it — copy_title_text_block_to_screen ($782A) copies the block
     // the SFX sequencer selects (via $0091) into screen RAM $32B7 every frame.  We
     // don't re-copy it here; render() picks up the change by shadow-comparing $32B7.
 
     if (mem[zp::joystickSaved] != 0)            // $004A set when the game starts
-        update_cockpit_digits_native();          // $3FFA: cockpit digit update
+        startup_init_native();          // $3FFA: cockpit digit update
 
-    if (rsGauge) buildGaugeSprite();
+    if (rsEnergyIndicator) buildEnergyIndicatorSprite();
     // Canopy posts: constant graphic, decoded once from the real RLE source tables — shown
     // in every screen (independent of the live $0C32/$0D32 buffers, which only hold the
     // frame at gameplay init and are the starfield otherwise).
@@ -1074,7 +1074,7 @@ static void decode2bppByte(uint8_t src, uint8_t* p1out, uint8_t* p2out)
 
 // Compass (#2): the heading indicator is 4 mode-4 cells $32E3-$32E6 on the mode-4 line at
 // display y=32 (below the title text) — drawn by the compass updater ($3FDE, mislabelled
-// "terrain_lookup") from glyph table $4B0B, or the housing $01 by game_sub_4606.  Its
+// "draw_compass_heading") from glyph table $4B0B, or the housing $01 by game_sub_4606.  Its
 // background/pens are the frame-top colours, which are exactly the title-region palette
 // (COLBK=$00D4=$02C8, COLPF0=$00D8, COLPF1=$00D7), so it renders into the title bitmap with
 // no extra palette band; charset is $0400 (CHBAS, before the $3FDE/$49EE DLI switches it to
@@ -1341,7 +1341,7 @@ void RescueOnFractalus::shutdown()
     delete leftPost;      leftPost      = nullptr;
     delete rightPost;     rightPost     = nullptr;
     delete nullSprite;    nullSprite    = nullptr;
-    delete gaugeSprite;   gaugeSprite   = nullptr;
+    delete energyIndicatorSprite;   energyIndicatorSprite   = nullptr;
     delete altimeterSprite; altimeterSprite = nullptr;
     delete altimeterShipSprite; altimeterShipSprite = nullptr;
     for (int c = 0; c < 3; c++) { delete starSprite[c]; starSprite[c] = nullptr; }

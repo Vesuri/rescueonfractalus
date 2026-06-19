@@ -32,7 +32,7 @@ public:
     // ---- per-frame setters (each pokes one MOVE, or one sprite pointer pair) ----
     void setTitlePalette(uint16_t bg, uint16_t pf0, uint16_t pf1);  // color00..03 (col0=col3=bg)
     void setSpritePostColor(uint16_t c);                           // color17 (canopy posts)
-    void setGaugeColor(uint16_t c);                                // COLOR21 ($1AA) energy-indicator bar
+    void setEnergyIndicatorColor(uint16_t c);                                // COLOR21 ($1AA) energy-indicator bar
     void setAltimeterColor(uint16_t c);                            // COLOR25 ($1B2) altimeter terrain-height bar (P0)
     void setAltimeterShipColor(uint16_t c);                        // COLOR29 ($1BA) altimeter ship-height bar (M3)
     void setCompassColor(uint16_t c);                              // color01 over the compass band (COLPF0 $00CF, housing)

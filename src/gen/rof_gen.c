@@ -1658,7 +1658,7 @@ L_3d0e:;
     /* 3d32 */
     audio_timer_setup();
     /* 3d35 */
-    font_display_init();
+    sfx_engine_reset();
     init_game_vars_attract_timer(); return;
 }
 
@@ -1703,9 +1703,9 @@ L_3fdd:;
     return;
 }
 
-/* terrain_lookup @ $3FDE: Table lookup: reads $281C + index from $2836 into $3FF6 table; writes 4 bytes to $32E3 (display buffer) */
-/* faithful transliteration kept as the validation oracle; native terrain_lookup() lives in rof_native.c (see VALIDATE_FUNCS) */
-void terrain_lookup__t6502(void) {
+/* draw_compass_heading @ $3FDE: Table lookup: reads $281C + index from $2836 into $3FF6 table; writes 4 bytes to $32E3 (display buffer) */
+/* faithful transliteration kept as the validation oracle; native draw_compass_heading() lives in rof_native.c (see VALIDATE_FUNCS) */
+void draw_compass_heading__t6502(void) {
     /* 3fde */
     CLC();
     /* 3fdf */
@@ -1942,8 +1942,8 @@ L_40ab:;
     return_stub_40af(); return;
 }
 
-/* update_bar_gauge_291c @ $40B0: If $291C/$291D changed vs cache $2872/$2874, redraw 21-byte bar from $4B57 (idx $455B[$291C]) into $0E87, $FF-term */
-void update_bar_gauge_291c(void) {
+/* draw_canopy_pillar_p2 @ $40B0: If $291C/$291D changed vs cache $2872/$2874, redraw 21-byte bar from $4B57 (idx $455B[$291C]) into $0E87, $FF-term */
+void draw_canopy_pillar_p2(void) {
     /* 40b0 */
     LDX(mem[0x291C]);
     /* 40b3 */
@@ -1995,8 +1995,8 @@ L_40e4:;
     return;
 }
 
-/* update_gauge_281a @ $40E5: On $281A change vs $2875: clear $0C97 row + $FF fill to col $38; on $281B change vs $2876: mask $0B96..$0B99 edge bytes */
-void update_gauge_281a(void) {
+/* draw_altimeter_bars @ $40E5: On $281A change vs $2875: clear $0C97 row + $FF fill to col $38; on $281B change vs $2876: mask $0B96..$0B99 edge bytes */
+void draw_altimeter_bars(void) {
     /* 40e5 */
     LDY(mem[0x281A]);
     /* 40e8 */
@@ -3989,7 +3989,7 @@ L_4f43:; platform_tick_vbi(); platform_render_frame();
     /* 4f46 */
     if (!cpu.Z) goto L_4f43;
     /* 4f48 */
-    font_display_init();
+    sfx_engine_reset();
     /* 4f4b */
     LDA(0x00);
     /* 4f4d */
@@ -4636,11 +4636,11 @@ L_51fc:;
     mem[0x08A3] = cpu.A;
 L_520f:;
     /* 520f */
-    update_bar_gauge_291c();
+    draw_canopy_pillar_p2();
     /* 5212 */
-    update_gauge_281a();
+    draw_altimeter_bars();
     /* 5215 */
-    terrain_lookup();
+    draw_compass_heading();
     /* 5218 */
     dispatch_43cb_half_70();
     /* 521b */
@@ -4686,7 +4686,7 @@ L_523e:;
     compute_indicator_pos();
 L_5249:;
     /* 5249 */
-    update_gauge_digits();
+    sfx_voice_envelope_tick();
     /* 524c */
     LDA(mem[0x0041]);
     /* 524e */
@@ -4792,7 +4792,7 @@ L_52b4:;
     game_loop_reset_trampoline(); return;
 }
 
-/* vbi_handler_standby @ $52D7: Standby + launch-cinematic VBI handler (VVBLKI=$52D7 set in display_setup $5F50); active from the Standby screen through the doors/tunnel/stars/planet cinematic, until flight init swaps in vbi_handler_flight ($4FF5). Per-frame: attract timer, attract input poll ($5398), sound_event_dispatch ($5367), lock_on_indicator_tick every other frame, SFX/music tick, update_gauge_digits. Was vbi_handler_standby. */
+/* vbi_handler_standby @ $52D7: Standby + launch-cinematic VBI handler (VVBLKI=$52D7 set in display_setup $5F50); active from the Standby screen through the doors/tunnel/stars/planet cinematic, until flight init swaps in vbi_handler_flight ($4FF5). Per-frame: attract timer, attract input poll ($5398), scroll_event_dispatch ($5367), lock_on_indicator_tick every other frame, SFX/music tick, sfx_voice_envelope_tick. Was vbi_handler_standby. */
 void vbi_handler_standby(void) {
     /* 52d7 */
     LDA(mem[0x022F]);
@@ -4874,7 +4874,7 @@ L_533c:;
     /* 533c */
     check_collision_sync();
     /* 533f */
-    sound_event_dispatch();
+    scroll_event_dispatch();
     /* 5342 */
     LSR_M(0x0643);
     /* 5345 */
@@ -4886,8 +4886,8 @@ L_533c:;
     vbi_deferred_dispatch(); return;
 }
 
-/* sound_event_dispatch @ $5367: Tests sound flags $008D/88/89/8B then toggles $008F, $008C/8A -> sfx subs 6a8f/6a38/6aee/69e3/6a27/6953 */
-void sound_event_dispatch(void) {
+/* scroll_event_dispatch @ $5367: Tests sound flags $008D/88/89/8B then toggles $008F, $008C/8A -> sfx subs 6a8f/6a38/6aee/69e3/6a27/6953 */
+void scroll_event_dispatch(void) {
     /* 5367 */
     LDA(mem[0x008D]);
     /* 5369 */
@@ -5060,9 +5060,9 @@ L_53fa:;
     vbi_deferred_dispatch(); return;
 }
 
-/* font_display_init @ $5433: Font/display character setup (called in game_entry init) */
-/* faithful transliteration kept as the validation oracle; native font_display_init() lives in rof_native.c (see VALIDATE_FUNCS) */
-void font_display_init__t6502(void) {
+/* sfx_engine_reset @ $5433: Font/display character setup (called in game_entry init) */
+/* faithful transliteration kept as the validation oracle; native sfx_engine_reset() lives in rof_native.c (see VALIDATE_FUNCS) */
+void sfx_engine_reset__t6502(void) {
     /* 5433 */
     LDY(0x0E);
     /* 5435 */
@@ -5143,9 +5143,9 @@ L_5469:;
     return;
 }
 
-/* update_gauge_digits @ $548D: Loops Y=$0E..1 over digit arrays $06DB/E9/0679/06BF/CD/A3/B1/066B; BCD-step wrap $2D, calls 55FC/5815; sorts $0073/74 ring */
-/* faithful transliteration kept as the validation oracle; native update_gauge_digits() lives in rof_native.c (see VALIDATE_FUNCS) */
-void update_gauge_digits__t6502(void) {
+/* sfx_voice_envelope_tick @ $548D: Loops Y=$0E..1 over digit arrays $06DB/E9/0679/06BF/CD/A3/B1/066B; BCD-step wrap $2D, calls 55FC/5815; sorts $0073/74 ring */
+/* faithful transliteration kept as the validation oracle; native sfx_voice_envelope_tick() lives in rof_native.c (see VALIDATE_FUNCS) */
+void sfx_voice_envelope_tick__t6502(void) {
     /* 548d */
     LDA(mem[0x0634]);
     /* 5490 */
@@ -7231,7 +7231,7 @@ L_6103:;
     build_line_addr_table_2000();
 L_6118:;
     /* 6118 */
-    font_display_init();
+    sfx_engine_reset();
     /* 611b */
     wait_frames_5();
     /* 611e */
@@ -7687,7 +7687,7 @@ L_62f6:; platform_tick_vbi(); platform_render_frame();
     /* 62f9 */
     if (!cpu.Z) goto L_6309;
     /* 62fb */
-    copy_altitude_graphic_to_screen();
+    copy_title_text_block_to_screen();
     /* 62fe */
     LDA(bus_read(0xD01F));
     /* 6301 */
@@ -7844,7 +7844,7 @@ L_63a1:;
     /* 63a1 */
     mem[0x0627] = cpu.A;
     /* 63a4 */
-    compute_gauge_geometry_from_006D();
+    compute_stage_display_geometry();
 L_63a7:;
     /* 63a7 */
     LDX(0x1D);
@@ -11122,7 +11122,7 @@ L_7419:;
     /* 7421 */
     push_a_thunk_3cb2();
     /* 7424 */
-    terrain_lookup();
+    draw_compass_heading();
     /* 7427 */
     unpack_bitmap_4d3e();
     /* 742a */
@@ -11654,9 +11654,9 @@ void set_0628_bcd_redisplay(void) {
     wait_frames_20(); return;
 }
 
-/* compute_gauge_geometry_from_006D @ $75F5: Derives display/gauge coords from $006D into $061F-$0625,$0617,$0618,$061A-$061C,$062A,$08A2; $0628=BCD($006D) */
-/* faithful transliteration kept as the validation oracle; native compute_gauge_geometry_from_006D() lives in rof_native.c (see VALIDATE_FUNCS) */
-void compute_gauge_geometry_from_006D__t6502(void) {
+/* compute_stage_display_geometry @ $75F5: Derives display/gauge coords from $006D into $061F-$0625,$0617,$0618,$061A-$061C,$062A,$08A2; $0628=BCD($006D) */
+/* faithful transliteration kept as the validation oracle; native compute_stage_display_geometry() lives in rof_native.c (see VALIDATE_FUNCS) */
+void compute_stage_display_geometry__t6502(void) {
     /* 75f5 */
     LDX(mem[0x006D]);
     /* 75f7 */
@@ -12219,9 +12219,9 @@ L_7823:;
     return;
 }
 
-/* copy_altitude_graphic_to_screen @ $782A: If $0091>=$C0 copy 20-byte block $5A9F+X (X=$27/$13) into screen $32B6+Y; sets $00D8=$44 when $0091<$E0 */
-/* faithful transliteration kept as the validation oracle; native copy_altitude_graphic_to_screen() lives in rof_native.c (see VALIDATE_FUNCS) */
-void copy_altitude_graphic_to_screen__t6502(void) {
+/* copy_title_text_block_to_screen @ $782A: If $0091>=$C0 copy 20-byte block $5A9F+X (X=$27/$13) into screen $32B6+Y; sets $00D8=$44 when $0091<$E0 */
+/* faithful transliteration kept as the validation oracle; native copy_title_text_block_to_screen() lives in rof_native.c (see VALIDATE_FUNCS) */
+void copy_title_text_block_to_screen__t6502(void) {
     /* 782a */
     LDA(mem[0x0091]);
     /* 782c */
@@ -25539,7 +25539,7 @@ void game_loop_reset_trampoline(void) {
     PLP(); return;
 }
 
-/* vbi_deferred_dispatch @ $534D: VBI tail: if $00E7 & BIT $062D z->sfx_voice_tick; if $0655->music_player_tick; then update_gauge_digits (gauges) + os_xitvbv */
+/* vbi_deferred_dispatch @ $534D: VBI tail: if $00E7 & BIT $062D z->sfx_voice_tick; if $0655->music_player_tick; then sfx_voice_envelope_tick (gauges) + os_xitvbv */
 void vbi_deferred_dispatch(void) {
     /* 534d */
     LDA(mem[0x00E7]);
@@ -25560,7 +25560,7 @@ L_5359:;
     music_player_tick();
 L_5361:;
     /* 5361 */
-    update_gauge_digits();
+    sfx_voice_envelope_tick();
     /* 5364 */
     os_xitvbv(); return;
 }

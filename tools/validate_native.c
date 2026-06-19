@@ -715,13 +715,13 @@ static int test_plot_pixel_2bpp(void) {
     return mem_fail;
 }
 
-/* --- font_display_init @ $5433: clears the music/voice state tables and seeds a few
+/* --- sfx_engine_reset @ $5433: clears the music/voice state tables and seeds a few
  * slots/timers.  The 6502 STA $D1FF,X (indexed) writes are rendered by the transpiler as
  * DIRECT mem[] stores, but the native twin routes POKEY writes through bus_write (-> Paula
  * on Amiga), so the four AUDF addresses $D201/$D203/$D205/$D207 are excluded from the
  * contract (same masking the sfx engine uses for its indexed POKEY writes). --- */
-static int test_font_display_init(void) {
-    if (!want("font_display_init")) return 0;
+static int test_sfx_engine_reset(void) {
+    if (!want("sfx_engine_reset")) return 0;
     enum { N = 20000 };
     static uint8_t pre[65536];
     static const uint16_t ignore[] = { 0xD201, 0xD203, 0xD205, 0xD207 };
@@ -729,11 +729,11 @@ static int test_font_display_init(void) {
     set_ignore(ignore, 4);
     for (int t = 0; t < N; t++) {
         fill_random(pre);
-        mem_fail += diff_run("font_display_init", pre, zero_cpu(),
-                             font_display_init, font_display_init__t6502, t, &printed, &cpu_diff);
+        mem_fail += diff_run("sfx_engine_reset", pre, zero_cpu(),
+                             sfx_engine_reset, sfx_engine_reset__t6502, t, &printed, &cpu_diff);
     }
     set_ignore(0, 0);
-    printf("font_display_init: %d cases, %d mem mismatch (must be 0), %d cpu diffs\n", N, mem_fail, cpu_diff);
+    printf("sfx_engine_reset: %d cases, %d mem mismatch (must be 0), %d cpu diffs\n", N, mem_fail, cpu_diff);
     return mem_fail;
 }
 
@@ -1014,13 +1014,13 @@ static int test_emit_dl_coord_pairs(void) {
     return mem_fail;
 }
 
-/* --- compute_gauge_geometry_from_006D @ $75F5: derive the gauge param block from
+/* --- compute_stage_display_geometry @ $75F5: derive the gauge param block from
  * $006D over fully randomized mem[] (so X = $006D spans 0..255, covering every
  * clamp branch, and any stray write shows as a diff).  Calls the native bin_to_bcd,
  * whose PHA/PLA in the 6502 oracle leaves a dead byte at $01FF (S=$FF) that the
  * native twin doesn't reproduce — masked. */
-static int test_compute_gauge_geometry_from_006D(void) {
-    if (!want("compute_gauge_geometry_from_006D")) return 0;
+static int test_compute_stage_display_geometry(void) {
+    if (!want("compute_stage_display_geometry")) return 0;
     enum { N = 20000 };
     static uint8_t pre[65536];
     static const uint16_t ignore[] = { 0x01FF };
@@ -1028,12 +1028,12 @@ static int test_compute_gauge_geometry_from_006D(void) {
     set_ignore(ignore, 1);
     for (int t = 0; t < N; t++) {
         fill_random(pre);
-        mem_fail += diff_run("compute_gauge_geometry_from_006D", pre, zero_cpu(),
-                             compute_gauge_geometry_from_006D,
-                             compute_gauge_geometry_from_006D__t6502, t, &printed, &cpu_diff);
+        mem_fail += diff_run("compute_stage_display_geometry", pre, zero_cpu(),
+                             compute_stage_display_geometry,
+                             compute_stage_display_geometry__t6502, t, &printed, &cpu_diff);
     }
     set_ignore(0, 0);
-    printf("compute_gauge_geometry_from_006D: %d cases, %d mem mismatch (must be 0), %d cpu diffs\n",
+    printf("compute_stage_display_geometry: %d cases, %d mem mismatch (must be 0), %d cpu diffs\n",
            N, mem_fail, cpu_diff);
     return mem_fail;
 }
@@ -2005,15 +2005,15 @@ static int test_sfx_voice(const char *name, void (*nat)(void), void (*t6502)(voi
     printf("%s: %d cases, %d mem mismatch (must be 0), %d cpu diffs\n", name, N, mem_fail, cpu_diff);
     return mem_fail;
 }
-/* update_gauge_digits @ $548D — the apex.  The ring drain ($0719, head $0073 /
+/* sfx_voice_envelope_tick @ $548D — the apex.  The ring drain ($0719, head $0073 /
  * tail $0074, both decremented & wrapped at $1F) only terminates when the SFX
  * event-table $56D4 holds VALID voice-slot indices (1..14, bit7 clear): a bit7-set
  * ring entry runs input_init, whose tail game_sub_55FC re-pushes mem[$56D4+i] — if
  * that were bit7-set garbage it would re-dispatch input_init forever (the __t6502
  * twin hangs identically, so timeout can't diff it).  Seed $56D4 valid, the voice
  * register indices, and head/tail in 0..$1F; mask the POKEY range. */
-static int test_update_gauge_digits(void) {
-    if (!want("update_gauge_digits")) return 0;
+static int test_sfx_voice_envelope_tick(void) {
+    if (!want("sfx_voice_envelope_tick")) return 0;
     enum { N = 5000 };
     static uint8_t pre[65536];
     static uint16_t mask[272];
@@ -2025,11 +2025,11 @@ static int test_update_gauge_digits(void) {
         for (int i = 0; i < 128; i++) pre[0x56D4 + i] = (uint8_t)(1 + (xs() % 14)); /* valid slots */
         pre[0x0073] = (uint8_t)(xs() % 0x20);    /* ring head 0..$1F */
         pre[0x0074] = (uint8_t)(xs() % 0x20);    /* ring tail 0..$1F */
-        mem_fail += diff_run("update_gauge_digits", pre, zero_cpu(),
-                             update_gauge_digits, update_gauge_digits__t6502, t, &printed, &cpu_diff);
+        mem_fail += diff_run("sfx_voice_envelope_tick", pre, zero_cpu(),
+                             sfx_voice_envelope_tick, sfx_voice_envelope_tick__t6502, t, &printed, &cpu_diff);
     }
     set_ignore(0, 0);
-    printf("update_gauge_digits: %d cases, %d mem mismatch (must be 0), %d cpu diffs\n",
+    printf("sfx_voice_envelope_tick: %d cases, %d mem mismatch (must be 0), %d cpu diffs\n",
            N, mem_fail, cpu_diff);
     return mem_fail;
 }
@@ -2063,9 +2063,9 @@ int main(int argc, char **argv) {
     fails += test_mem_contract("jitter_roll_pitch", jitter_roll_pitch, jitter_roll_pitch__t6502);
     fails += test_mul_u8();
     fails += test_bin_to_bcd();
-    fails += test_mem_contract_regs("copy_altitude_graphic_to_screen",
-                                    copy_altitude_graphic_to_screen,
-                                    copy_altitude_graphic_to_screen__t6502);
+    fails += test_mem_contract_regs("copy_title_text_block_to_screen",
+                                    copy_title_text_block_to_screen,
+                                    copy_title_text_block_to_screen__t6502);
     fails += test_mem_contract("init_row_coords_9c", init_row_coords_9c, init_row_coords_9c__t6502);
     fails += test_mem_contract("clear_scroll_accum", clear_scroll_accum, clear_scroll_accum__t6502);
     fails += test_mem_contract("copy_192_to_1800", copy_192_to_1800, copy_192_to_1800__t6502);
@@ -2111,7 +2111,7 @@ int main(int argc, char **argv) {
     fails += test_memset_or_copy();
     fails += test_copy_bytes_to_dst();
     /* batch — display_setup-subtree mem-effect leaves */
-    fails += test_mem_contract("terrain_lookup", terrain_lookup, terrain_lookup__t6502);
+    fails += test_mem_contract("draw_compass_heading", draw_compass_heading, draw_compass_heading__t6502);
     fails += test_mem_contract("fill_buffer2_region_ff", fill_buffer2_region_ff, fill_buffer2_region_ff__t6502);
     fails += test_mem_contract("game_sub_4606", game_sub_4606, game_sub_4606__t6502);
     fails += test_mem_contract_regs("fill_message_buffer", fill_message_buffer, fill_message_buffer__t6502);
@@ -2151,7 +2151,7 @@ int main(int argc, char **argv) {
     fails += test_mem_contract("intro_seed_object_map", intro_seed_object_map, intro_seed_object_map__t6502);
     fails += test_mem_contract("intro_unmark_random_cells", intro_unmark_random_cells, intro_unmark_random_cells__t6502);
     /* batch — font/voice init + cockpit message renderer */
-    fails += test_font_display_init();
+    fails += test_sfx_engine_reset();
     fails += test_game_sub_6811();
     fails += test_plot_terrain_span();
     /* batch — event/score/message wrappers + object-table shift */
@@ -2173,7 +2173,7 @@ int main(int argc, char **argv) {
     fails += test_unpack_bitmap_4d3e();
     fails += test_intro_random_setup();
     fails += test_emit_dl_coord_pairs();
-    fails += test_compute_gauge_geometry_from_006D();
+    fails += test_compute_stage_display_geometry();
     fails += test_blit_chain("blit_label_row", blit_label_row, blit_label_row__t6502);
     fails += test_blit_chain("blit_message_block", blit_message_block, blit_message_block__t6502);
     fails += test_draw_digit_low_nibble();
@@ -2250,7 +2250,7 @@ int main(int argc, char **argv) {
     fails += test_sfx_voice("sfx_voice_write_freq", sfx_voice_write_freq, sfx_voice_write_freq__t6502);
     fails += test_sfx_voice("sfx_voice_write_freq_ctrl", sfx_voice_write_freq_ctrl, sfx_voice_write_freq_ctrl__t6502);
     fails += test_sfx_voice("reorder_sprite_slot", reorder_sprite_slot, reorder_sprite_slot__t6502);
-    fails += test_update_gauge_digits();
+    fails += test_sfx_voice_envelope_tick();
 
     fails += test_clear_terrain_column();
     fails += test_signed_mul_8x16();

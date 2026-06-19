@@ -31,8 +31,8 @@ static const uint16_t kBPLCON0_3P   = (uint16_t)((3 << PLNCNTSHFT) | USE_BPLCON3
 #define INDEX_TITLE_BPL       (INDEX_TITLE_PAL + 4)    // title bitmap ptrs (2bp = 4)
 #define INDEX_SPRITE_COL      (INDEX_TITLE_BPL + 4)    // color16,color17 (2)
 #define INDEX_SPRITES         (INDEX_SPRITE_COL + 2)   // 8 sprite ptrs (16)
-#define INDEX_GAUGE_COL       (INDEX_SPRITES + 16)     // COLOR21 ($1AA) (1)
-#define INDEX_COMPASS_WAIT    (INDEX_GAUGE_COL + 1)    // WAIT(compass scanline) (1)
+#define INDEX_ENERGY_COL       (INDEX_SPRITES + 16)     // COLOR21 ($1AA) (1)
+#define INDEX_COMPASS_WAIT    (INDEX_ENERGY_COL + 1)    // WAIT(compass scanline) (1)
 #define INDEX_COMPASS_COL     (INDEX_COMPASS_WAIT + 1) // color01 = compass COLPF0 (1)
 #define INDEX_TERRAIN_WAIT    (INDEX_COMPASS_COL + 1)  // WAIT(kTerrainLine-1) (1)
 #define INDEX_TERRAIN_BPL     (INDEX_TERRAIN_WAIT + 1) // tunnel bitmap ptrs (3bp = 6)
@@ -79,7 +79,7 @@ void TunnelCopperList::buildLayout(const Bitmap& title, const Bitmap& tunnel, co
     showSprite(INDEX_SPRITES + 10, 5, nullSprite);
     showSprite(INDEX_SPRITES + 12, 6, nullSprite);
     showSprite(INDEX_SPRITES + 14, 7, nullSprite);
-    setGaugeColor(0);                          // COLOR21 gauge bar (setter)
+    setEnergyIndicatorColor(0);                          // COLOR21 gauge bar (setter)
 
     // ---- compass band: color01 = compass COLPF0 ($00CF) for the mode-4 compass line ----
     d[INDEX_COMPASS_WAIT] = copperWait(kDisplayTop + 33 - 1, 0xE0);
@@ -128,9 +128,9 @@ void TunnelCopperList::setSpritePostColor(uint16_t c)
     data_[INDEX_SPRITE_COL + 1] = copperMove(color17, c);
 }
 
-void TunnelCopperList::setGaugeColor(uint16_t c)
+void TunnelCopperList::setEnergyIndicatorColor(uint16_t c)
 {
-    data_[INDEX_GAUGE_COL] = copperMove(0x1AA, c);   // COLOR21 (sprite pair 2/3 pen 01)
+    data_[INDEX_ENERGY_COL] = copperMove(0x1AA, c);   // COLOR21 (sprite pair 2/3 pen 01)
 }
 
 void TunnelCopperList::setCompassColor(uint16_t c)

@@ -35,8 +35,8 @@ static const uint16_t kColor29 = 0x1BA;   // sprite pair 6/7 pen 01 (starfield)
 #define INDEX_TITLE_BPL       (INDEX_TITLE_PAL + 4)        // 8:  title 2bp ptrs (4)
 #define INDEX_SPRITE_COL      (INDEX_TITLE_BPL + 4)        // 12: color16,color17 (2)
 #define INDEX_SPRITES         (INDEX_SPRITE_COL + 2)       // 14: 8 sprite ptrs (16)
-#define INDEX_GAUGE_COL       (INDEX_SPRITES + 16)         // 30: COLOR21 (1)
-#define INDEX_STAR_COL        (INDEX_GAUGE_COL + 1)        // 31: COLOR25,COLOR29 (2)
+#define INDEX_ENERGY_COL       (INDEX_SPRITES + 16)         // 30: COLOR21 (1)
+#define INDEX_STAR_COL        (INDEX_ENERGY_COL + 1)        // 31: COLOR25,COLOR29 (2)
 #define INDEX_COMPASS_WAIT    (INDEX_STAR_COL + 2)         // 33: WAIT(compass scanline) (1)
 #define INDEX_COMPASS_COL     (INDEX_COMPASS_WAIT + 1)     // 34: color01 = compass COLPF0 (1)
 #define INDEX_VP_WAIT         (INDEX_COMPASS_COL + 1)      // 35: WAIT(kTerrainLine-1) (1)
@@ -84,7 +84,7 @@ void PlanetCopperList::buildLayout(const Bitmap& title, const Bitmap& terrain, c
     showSprite(INDEX_SPRITES + 10, 5, star1);
     showSprite(INDEX_SPRITES + 12, 6, star2);
     showSprite(INDEX_SPRITES + 14, 7, nullSprite);
-    setGaugeColor(0);                          // COLOR21 (setter)
+    setEnergyIndicatorColor(0);                          // COLOR21 (setter)
     setStarColor(0);                           // COLOR25/29 (setter)
 
     // ---- compass band: color01 = compass COLPF0 ($00CF) for the mode-4 compass line ----
@@ -150,9 +150,9 @@ void PlanetCopperList::setSpritePostColor(uint16_t c)
     data_[INDEX_SPRITE_COL + 1] = copperMove(color17, c);
 }
 
-void PlanetCopperList::setGaugeColor(uint16_t c)
+void PlanetCopperList::setEnergyIndicatorColor(uint16_t c)
 {
-    data_[INDEX_GAUGE_COL] = copperMove(kColor21, c);
+    data_[INDEX_ENERGY_COL] = copperMove(kColor21, c);
 }
 
 void PlanetCopperList::setStarColor(uint16_t c)

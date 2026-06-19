@@ -37,8 +37,8 @@ static const uint16_t kBPLCON0_3P   = (uint16_t)((3 << PLNCNTSHFT) | USE_BPLCON3
 #define INDEX_TITLE_BPL       (INDEX_TITLE_PAL + 4)    // title bitmap ptrs (2bp = 4)
 #define INDEX_SPRITE_COL      (INDEX_TITLE_BPL + 4)    // color16,color17 (2)
 #define INDEX_SPRITES         (INDEX_SPRITE_COL + 2)   // 8 sprite ptrs (16)
-#define INDEX_GAUGE_COL       (INDEX_SPRITES + 16)     // COLOR21 ($1AA) (1)
-#define INDEX_COMPASS_WAIT    (INDEX_GAUGE_COL + 1)    // WAIT(compass scanline) (1)
+#define INDEX_ENERGY_COL       (INDEX_SPRITES + 16)     // COLOR21 ($1AA) (1)
+#define INDEX_COMPASS_WAIT    (INDEX_ENERGY_COL + 1)    // WAIT(compass scanline) (1)
 #define INDEX_COMPASS_COL     (INDEX_COMPASS_WAIT + 1) // color01 = compass COLPF0 (1)
 // Band 0 (top terrain): WAIT, 6 bpl ptrs, bplcon0, 2 modulo, color00..06 (7).
 #define INDEX_B0_WAIT         (INDEX_COMPASS_COL + 1)
@@ -107,7 +107,7 @@ void DoorsCopperList::buildLayout(const Bitmap& title, const Bitmap& cockpit,
     showSprite(INDEX_SPRITES + 10, 5, nullSprite);
     showSprite(INDEX_SPRITES + 12, 6, nullSprite);
     showSprite(INDEX_SPRITES + 14, 7, nullSprite);
-    setGaugeColor(0);
+    setEnergyIndicatorColor(0);
 
     d[INDEX_COMPASS_WAIT] = copperWait(kDisplayTop + 33 - 1, 0xE0);
     setCompassColor(0);
@@ -151,9 +151,9 @@ void DoorsCopperList::setSpritePostColor(uint16_t c)
     data_[INDEX_SPRITE_COL + 1] = copperMove(color17, c);
 }
 
-void DoorsCopperList::setGaugeColor(uint16_t c)
+void DoorsCopperList::setEnergyIndicatorColor(uint16_t c)
 {
-    data_[INDEX_GAUGE_COL] = copperMove(0x1AA, c);   // COLOR21 (sprite pair 2/3 pen 01)
+    data_[INDEX_ENERGY_COL] = copperMove(0x1AA, c);   // COLOR21 (sprite pair 2/3 pen 01)
 }
 
 void DoorsCopperList::setCompassColor(uint16_t c)

@@ -65,6 +65,13 @@ AUDIO_CINCLUDES = -I"$(AMIGA_SRC)/framework/compat-include" \
 #   make OPT='-O0' NATIVE_OPT='-O0'   (also drops -fomit-frame-pointer for clean backtraces)
 OPT       ?= -O2 -fomit-frame-pointer
 NATIVE_OPT ?= -O3 -funroll-loops
+# Debug probes: headless auto-launch + flight/init sub-frame timing accumulators (read via
+# the gdb stub, e.g. amiga/diag_run.sh + diag_timing.gdb).  Off by default; enable with
+# `make PROBES=1`.  Turns on ROF_FLIGHT_PROBE (PlatformAmiga.cpp + rof_native.c FP_* macros)
+# and ROF_TDRAW_PROF (terrain_draw_frame sub-phase split).
+ifdef PROBES
+EXTRA_DEFINES += -DROF_FLIGHT_PROBE -DROF_TDRAW_PROF
+endif
 AUDIO_CFLAGS  = -g -MP -MMD -m68000 -msoft-float $(OPT) -nostdlib \
                 -fno-tree-loop-distribution -ffunction-sections -fdata-sections \
                 -Wno-unused-function -Wno-unused-parameter -Wno-unused-variable \
