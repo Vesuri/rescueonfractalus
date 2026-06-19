@@ -35,12 +35,12 @@ public:
     void setEnergyIndicatorColor(uint16_t c);                                // COLOR21 ($1AA) energy-indicator bar
     void setAltimeterColor(uint16_t c);                            // COLOR25 ($1B2) altimeter terrain-height bar (P0)
     void setAltimeterShipColor(uint16_t c);                        // COLOR29 ($1BA) altimeter ship-height bar (M3)
-    void setWingSymbolColor(uint16_t c);                           // COLOR26 ($1B4) wing-clearance centre plane symbol (sprite 5 pen 10)
     void setCompassColor(uint16_t c);                              // color01 over the compass band (COLPF0 $00CF, housing)
     void setCompassNeedleColor(uint16_t c);                        // color03 over the compass band (COLPF2 salmon, needle/letters)
     // Viewport (terrain) pens.  pen0 = terrain body (the salmon→brown fade target),
     // pen1 = sky, pen2 = dots, pen3 = highlight — driven per-frame by the native code.
     void setTerrainPalette(uint16_t pen0, uint16_t pen1, uint16_t pen2, uint16_t pen3);
     void setTerrainPen0(uint16_t pen0);                            // the fade-only fast path
+    void setBandPalette(uint16_t pen0, uint16_t pen1, uint16_t pen2, uint16_t pen3);  // wing-clearance band (scanlines 172-179)
     void setHudSprite(int slot, const Sprite& s);                  // slot 0..7 sprite pointer
 };

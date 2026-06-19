@@ -15,9 +15,14 @@ static const uint16_t kH            = 216;
 static const uint8_t  kBP2          = 2;
 static const uint16_t kDisplayTop   = 0x2c;
 static const uint16_t kTitleHeight  = 42;
-static const uint16_t kTerrainHeight = 86;   // 43 mode-D rows, each shown on 2 scanlines
+static const uint16_t kTerrainHeight = 86;   // 43 mode-D terrain rows, each shown on 2 scanlines
+// The $316B mode-D DL has 47 rows: the bottom 4 ($1810-$18A0) are the windscreen-bottom
+// band (slanted frame; its value-0 triangle corners show the missile fill — a later task).
+// They use a distinct band palette, so the band is its own zone between terrain and cockpit.
+static const uint16_t kBandHeight    = 8;    // 4 band rows × 2 scanlines
+static const uint16_t kViewportHeight = kTerrainHeight + kBandHeight;  // = 94
 static const uint16_t kTerrainLine  = kDisplayTop + kTitleHeight;     // = 0x56
-static const uint16_t kCockpitLine  = kTerrainLine + kTerrainHeight;  // = 172
+static const uint16_t kCockpitLine  = kTerrainLine + kViewportHeight; // = 180 (dashboard start)
 static const uint16_t kCenterY      = kDisplayTop + kH / 2;           // = 0x98
 static const uint16_t kBPLCON0_3P   = (uint16_t)((3 << PLNCNTSHFT) | USE_BPLCON3);
 
@@ -44,14 +49,19 @@ static const uint16_t kColor29 = 0x1BA;   // sprite pair 6/7 pen 01 (starfield)
 #define INDEX_VP_BPLCON0      (INDEX_VP_BPL + 6)           // 40: bplcon0 3P (1)
 #define INDEX_VP_PAL          (INDEX_VP_BPLCON0 + 1)       // 41: color00..03 (4)
 #define INDEX_VP_MOD0         (INDEX_VP_PAL + 4)           // 45: row-0 bpl1mod,bpl2mod (2)
-#define INDEX_VP_LINEDOUBLE   (INDEX_VP_MOD0 + 2)          // 47: 85 × (WAIT+2 mod) (255)
-#define INDEX_COCKPIT_WAIT    (INDEX_VP_LINEDOUBLE + 3 * (kTerrainHeight - 1))  // 302
-#define INDEX_COCKPIT_BPL     (INDEX_COCKPIT_WAIT + 1)     // 303: cockpit 3bp ptrs (6)
-#define INDEX_COCKPIT_BPLCON0 (INDEX_COCKPIT_BPL + 6)      // 309: bplcon0 3P (1)
-#define INDEX_COCKPIT_MOD     (INDEX_COCKPIT_BPLCON0 + 1)  // 310: bpl1mod,bpl2mod (2)
-#define INDEX_COCKPIT_PAL     (INDEX_COCKPIT_MOD + 2)      // 312: color00..07 (8)
-#define INDEX_TERMINATOR      (INDEX_COCKPIT_PAL + 8)      // 320: copperWait(255,254)
-#define LIST_LENGTH           (INDEX_TERMINATOR + 1)       // 321
+#define INDEX_VP_LINEDOUBLE   (INDEX_VP_MOD0 + 2)          // 47: 93 × (WAIT+2 mod), +4 band palette
+// The line-doubling loop runs k=1..kViewportHeight-1.  At k==kTerrainHeight (scanline 172)
+// it injects the band palette block (BAND_BLOCK_WORDS=4: color00..03, poked per-frame from
+// the band DLI's $00DC/$DD/$DA/$D4).  Planet/stars have no centre sprite, so no priority flip.
+#define BAND_BLOCK_WORDS      4
+#define INDEX_BAND_BLOCK      (INDEX_VP_LINEDOUBLE + 3 * (kTerrainHeight - 1) + 1)  // band color00..03 (4)
+#define INDEX_COCKPIT_WAIT    (INDEX_VP_LINEDOUBLE + 3 * (kViewportHeight - 1) + BAND_BLOCK_WORDS)
+#define INDEX_COCKPIT_BPL     (INDEX_COCKPIT_WAIT + 1)     // cockpit 3bp ptrs, yOffset 8 (6)
+#define INDEX_COCKPIT_BPLCON0 (INDEX_COCKPIT_BPL + 6)      // bplcon0 3P (1)
+#define INDEX_COCKPIT_MOD     (INDEX_COCKPIT_BPLCON0 + 1)  // bpl1mod,bpl2mod (2)
+#define INDEX_COCKPIT_PAL     (INDEX_COCKPIT_MOD + 2)      // color00..07 (8)
+#define INDEX_TERMINATOR      (INDEX_COCKPIT_PAL + 8)      // copperWait(255,254)
+#define LIST_LENGTH           (INDEX_TERMINATOR + 1)
 
 PlanetCopperList::PlanetCopperList()
     : CopperList((uint32_t*)AllocMem(LIST_LENGTH << 2, MEMF_CHIP | MEMF_CLEAR), LIST_LENGTH, true)
@@ -110,16 +120,25 @@ void PlanetCopperList::buildLayout(const Bitmap& title, const Bitmap& terrain, c
     d[INDEX_VP_MOD0 + 0] = copperMove(bpl1mod, (uint16_t)-40);
     d[INDEX_VP_MOD0 + 1] = copperMove(bpl2mod, (uint16_t)-40);
     uint32_t idx = INDEX_VP_LINEDOUBLE;
-    for (uint16_t k = 1; k < kTerrainHeight; k++) {
+    for (uint16_t k = 1; k < kViewportHeight; k++) {
         d[idx++] = copperWait((uint16_t)(kTerrainLine + k - 1), 0xE0);
+        if (k == kTerrainHeight) {
+            // Crossing into the windscreen-bottom band (scanline 172): switch to the band
+            // palette (seeded 0, poked per-frame by setBandPalette from the band DLI's pens).
+            d[idx++] = copperMove(color00, 0);
+            d[idx++] = copperMove(color01, 0);
+            d[idx++] = copperMove(color02, 0);
+            d[idx++] = copperMove(color03, 0);
+        }
         const uint16_t v = (k & 1) ? (uint16_t)80 : (uint16_t)-40;
         d[idx++] = copperMove(bpl1mod, v);
         d[idx++] = copperMove(bpl2mod, v);
     }
 
-    // ---- cockpit region: WAIT, pointers, 3bp, modulo, constant palette ----
+    // ---- cockpit region: WAIT, pointers (skip the 8 modeD band scanlines now drawn by the
+    // band above via yOffset=8), 3bp, modulo, constant palette ----
     d[INDEX_COCKPIT_WAIT] = copperWait(kCockpitLine - 1, 0xE0);
-    showBitmap(INDEX_COCKPIT_BPL, cockpit);    // 3bp interleaved = 6 ptr moves
+    showBitmap(INDEX_COCKPIT_BPL, cockpit, 1, 1, 0, 8);   // yOffset 8 scanlines: skip the $350D band rows
     d[INDEX_COCKPIT_BPLCON0] = copperMove(bplcon0, kBPLCON0_3P);
     d[INDEX_COCKPIT_MOD]     = copperMove(bpl1mod, 80);
     d[INDEX_COCKPIT_MOD + 1] = copperMove(bpl2mod, 80);
@@ -169,4 +188,15 @@ void PlanetCopperList::setCompassColor(uint16_t c)
 void PlanetCopperList::setPlanetBgColor(uint16_t c)
 {
     data_[INDEX_VP_PAL] = copperMove(color00, c);
+}
+
+// Windscreen-bottom band palette (scanlines 172-179): the band DLI recolours the mode-D
+// pens — pen0/COLBK ($00DC), pen1/COLPF0 ($00DD), pen2/COLPF1 ($00DA), pen3/COLPF2 ($00D4,
+// grey frame).  Poked per-frame so the descent fade tracks.
+void PlanetCopperList::setBandPalette(uint16_t pen0, uint16_t pen1, uint16_t pen2, uint16_t pen3)
+{
+    data_[INDEX_BAND_BLOCK + 0] = copperMove(color00, pen0);
+    data_[INDEX_BAND_BLOCK + 1] = copperMove(color01, pen1);
+    data_[INDEX_BAND_BLOCK + 2] = copperMove(color02, pen2);
+    data_[INDEX_BAND_BLOCK + 3] = copperMove(color03, pen3);
 }

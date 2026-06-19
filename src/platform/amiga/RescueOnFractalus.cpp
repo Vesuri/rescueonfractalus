@@ -132,6 +132,12 @@ static const uint16_t kCockpitLine   = kTerrainLine + kTerrainHeight; // = 172
 // Cockpit height: 4 modeD DL entries × 2 scan lines + 10 mode4 DL entries × 8 scans
 // (title 42 + terrain 86 + cockpit 88 = 216 = kH).
 static const uint16_t kCockpitH     = 4 * 2 + 10 * 8;               // = 88
+// Flight/planet ($316B mode-D DL) display 47 mode-D rows, not 43: the bottom 4 rows
+// ($2090-$21B0 / $1810-$18A0) are the wing-clearance band (windscreen-bottom frame +
+// the salmon clearance bars).  terrainBitmap must hold all 47 rows × 2 scanlines = 94.
+// The other scenes (standby/doors/tunnel) display only the first 86 — the extra rows
+// are allocated but unused there.
+static const uint16_t kViewportFullHeight = 47 * 2;                 // = 94
 // centerY so that DIWSTRT.y = kDisplayTop: centerY = kDisplayTop + kH/2 = 0x2c + 108 = 0x98
 static const uint16_t kCenterY       = kDisplayTop + kH / 2;
 
@@ -240,32 +246,6 @@ void RescueOnFractalus::buildAltimeterShipSprite()
     }
 }
 
-// ---- wing-clearance centre plane symbol --------------------------------------
-// Instrument #3's centre "plane" marker.  On the Atari this is PMG (players/missiles
-// repositioned to centre by the cockpit-band DLIs $4A40/$4A78 and coloured from the
-// $00CF/$00D4 grey family — NOT the salmon COLPF3); the left/right clearance bars are
-// the separate $350D bitmap band.  Per the port plan it is collapsed into ONE 16x6
-// Amiga sprite (the user-supplied glyph), drawn in the sprite's SECOND bitplane so it
-// uses pen 10 = COLOR26 (independent of the altimeter terrain bar on pen 01 = COLOR25
-// of the same sprite pair 4/5 — no copper colour multiplexing needed).
-static const int      kWingSymRows = 6;
-static const uint16_t kWingSymGlyph[kWingSymRows] = {
-    0xC3C3,   // 1100001111000011  wingtips + fuselage
-    0xC3C3,
-    0xFFFF,   // 1111111111111111  wings
-    0xFFFF,
-    0xC3C3,
-    0xC3C3,
-};
-void RescueOnFractalus::buildWingSymbolSprite()
-{
-    uint16_t* d = wingSymbolSprite->data() + 2;   // skip the 2 control words
-    for (int i = 0; i < kWingSymRows; i++) {
-        d[i * 2]     = 0x0000;                    // plane A (pen 01 = COLOR25, unused here)
-        d[i * 2 + 1] = kWingSymGlyph[i];          // plane B (pen 10 = COLOR26 = grey symbol)
-    }
-}
-
 // ---- starfield sprites -------------------------------------------------------
 // During the stars phase display_setup positions players P0/P2/P3 as a sparse
 // scrolling starfield (random_terrain_height $6B47: POKEY RANDOM, 1/32 chance of a dot
@@ -307,7 +287,7 @@ void RescueOnFractalus::buildStarSprites()
 void RescueOnFractalus::initialize()
 {
     titleBitmap   = Bitmap::allocate(kW, kTitleHeight,   kBP2, true);
-    terrainBitmap = Bitmap::allocate(kW, kTerrainHeight, kBP3, true);  // 3bp: tunnel reveal uses pens 4-7
+    terrainBitmap = Bitmap::allocate(kW, kViewportFullHeight, kBP3, true);  // 3bp: tunnel reveal uses pens 4-7; 47 rows incl. wing band
     cockpitBitmap = Bitmap::allocate(kW, kCockpitH, kBP3, true);  // 3bp: bit-7 chars → red
     tunnelBitmap  = Bitmap::allocate(kW, kTerrainHeight, kBP3, true);  // door-gap reveal
 
@@ -321,9 +301,8 @@ void RescueOnFractalus::initialize()
     energyIndicatorSprite = Sprite::allocate(57);    // throttle bar: 57 vobj-strip rows ($0D98..$0DD0)
     altimeterSprite = Sprite::allocate(kAltimRows);   // P0 $0C98 terrain-height bar (flight)
     altimeterShipSprite = Sprite::allocate(kAltimRows);   // M3 $0B98 ship-height bar (flight)
-    wingSymbolSprite = Sprite::allocate(kWingSymRows);    // wing-clearance centre plane symbol (16x6)
     if (!leftPost || !rightPost || !nullSprite || !energyIndicatorSprite || !altimeterSprite
-        || !altimeterShipSprite || !wingSymbolSprite) return;
+        || !altimeterShipSprite) return;
     // Starfield sprites (P0/P2/P3): 89-row strips, all at the windscreen top
     // (player scanline $32 → Amiga Y = kTerrainLine, the +36 offset that maps the
     // gauge strip $0D98/scanline $98 to Amiga Y 0x2c+144).
@@ -351,11 +330,6 @@ void RescueOnFractalus::initialize()
     // X and Y; bottoms align ($0B98..$0BCF ↔ $0C98..$0CCF, both at offset $98..$CF).
     altimeterShipSprite->setX(0x81 + 107);
     altimeterShipSprite->setY(0x2c + 144);
-    // Wing-clearance centre plane symbol: horizontally centred in the cockpit band
-    // (Atari HPOS ≈ $7C → 0x81+(0x7c-0x32)*2), at the wing-band scanline (cockpit-bitmap
-    // row 0 = kCockpitLine, display y≈128).  Starting estimate — calibrate visually.
-    wingSymbolSprite->setX(0x81 + (0x7C - 0x32) * 2 + 3);   // +3 px (visual calibration)
-    wingSymbolSprite->setY(kCockpitLine + 2);                // +2 px (visual calibration)
 
     // Post graphics are decoded once from the real RLE source tables (buildPostSprites,
     // triggered on the first perFrameWork frame); nothing to fill here.  Position/Y below.
@@ -834,6 +808,14 @@ void RescueOnFractalus::updatePlanetCopper(bool force)
         planetCopper->setPlanetBgColor(bgCol);
         plBg = bgCol;
     }
+    // Windscreen-bottom band palette (scanlines 172-179): pen0 $00DC / pen1 $00DD /
+    // pen2 $00DA / pen3 $00D4 (grey frame).  Poke each frame as the descent fade tracks.
+    const uint16_t plBand1v = atariToOCS(mem[0x00DD]);
+    const uint16_t plBand3v = atariToOCS(mem[0x00D4]);
+    if (force || plBand1v != plBand1 || plBand3v != plBand3) {
+        planetCopper->setBandPalette(bgCol, plBand1v, atariToOCS(mem[0x00DA]), plBand3v);
+        plBand1 = plBand1v; plBand3 = plBand3v;
+    }
 }
 
 // updateFlightCopper(): refresh the FlightCopperList's per-frame-varying slots from mem[].
@@ -870,19 +852,9 @@ void RescueOnFractalus::updateFlightCopper(bool force)
         flightCopper->setAltimeterColor(atariToOCS(mem[0x00D5]));
         flightCopper->setHudSprite(6, *altimeterShipSprite);
         flightCopper->setAltimeterShipColor(atariToOCS(mem[0x00D6]));
-        flightCopper->setHudSprite(5, *wingSymbolSprite);   // wing-clearance centre plane symbol
     }
-    // Wing-clearance centre symbol colour: the cockpit-band DLIs ($4A40/$4A78) colour the
-    // centre PMG from the $00CF/$00D4 grey family (= image-ground-truth $06 grey), which
-    // ramps during descent → the symbol fades in.  Poke COLOR26 from $00D4 as it changes.
-    // The centre plane symbol is maroon (image #9's plane pixels = the 1-bits), fading in
-    // during descent.  $00DA is the wing/ship colour shadow that ramps gray ($10) -> maroon
-    // ($34) with altitude — drive COLOR26 from it so the plane is maroon and fades in.
-    const uint16_t wingSymCol = atariToOCS(mem[0x00DA]);
-    if (force || wingSymCol != flWingSymCol) {
-        flightCopper->setWingSymbolColor(wingSymCol);
-        flWingSymCol = wingSymCol;
-    }
+    // (The wing-clearance centre plane symbol is part of the mode-D band bitmap — the value-2
+    // $AA $AA centre marker decoded into the viewport rows — so it needs no separate sprite.)
 
     // Compass band colour: the $49EE slot-0 DLI sets COLPF0 = mem[$00CF] (dark grey) for the
     // mode-4 compass line — poke it into the band's color01 so the housing/heading show in
@@ -906,6 +878,16 @@ void RescueOnFractalus::updateFlightCopper(bool force)
     if (force || terr0 != flTerr0 || terr1 != flTerr1) {
         flightCopper->setTerrainPalette(terr0, terr1, atariToOCS(0x20), atariToOCS(0x18));
         flTerr0 = terr0; flTerr1 = terr1;
+    }
+
+    // Wing-clearance band palette (scanlines 172-179): the band DLI recolours pens from
+    // $00DC (bg) / $00DD (bars, salmon) / $00DA (centre) / $00D4 (frame, grey).  Poke each
+    // frame so the descent fade tracks (these ramp like the terrain/centre-symbol colours).
+    const uint16_t band1 = atariToOCS(mem[0x00DD]);
+    const uint16_t band3 = atariToOCS(mem[0x00D4]);
+    if (force || band1 != flBand1 || band3 != flBand3) {
+        flightCopper->setBandPalette(terr0, band1, atariToOCS(mem[0x00DA]), band3);
+        flBand1 = band1; flBand3 = band3;
     }
 }
 
@@ -1096,7 +1078,7 @@ void RescueOnFractalus::perFrameWork()
     if (rsStars) buildStarSprites();
     // Flight altimeter bars: mirror the live P0 $0C98 (terrain-height) + M3 $0B98
     // (ship-height) strips each frame.
-    if (rsFlight) { buildAltimeterSprite(); buildAltimeterShipSprite(); buildWingSymbolSprite(); }
+    if (rsFlight) { buildAltimeterSprite(); buildAltimeterShipSprite(); }
 }
 
 // ---- cockpit helpers ---------------------------------------------------------
@@ -1169,10 +1151,10 @@ void RescueOnFractalus::render()
         // render(); the per-byte shadow keeps it cheap.
         if (rsFlight) {
             unsigned short r0 = flight_vbi_tick();
-            renderViewportModeD(0x1070, 96, 43);
+            renderViewportModeD(0x1070, 96, 47);   // 47 rows: +4 for the wing-clearance band ($2090-$21B0)
             g_flightProf.render += (unsigned short)(flight_vbi_tick() - r0);
         }
-        else                        renderViewportModeD(0x1000, 48, 43);
+        else                        renderViewportModeD(0x1000, 48, 47);   // stars/planet: +4 band rows ($1810-$18A0)
     } else if (terrainDirty && g_doorFieldReady != 0u && !rsLaunched) {
         // Standby doors: decode the GTIA mode-10 door field at $2000 to the bitplanes
         // ONCE, then leave it.  The genuine display_setup builds $2000 AFTER
@@ -1388,6 +1370,5 @@ void RescueOnFractalus::shutdown()
     delete energyIndicatorSprite;   energyIndicatorSprite   = nullptr;
     delete altimeterSprite; altimeterSprite = nullptr;
     delete altimeterShipSprite; altimeterShipSprite = nullptr;
-    delete wingSymbolSprite; wingSymbolSprite = nullptr;
     for (int c = 0; c < 3; c++) { delete starSprite[c]; starSprite[c] = nullptr; }
 }

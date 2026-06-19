@@ -58,7 +58,6 @@ private:
     void buildEnergyIndicatorSprite();             // $0D98 strip -> energyIndicatorSprite lines
     Sprite*  altimeterSprite = nullptr;  // P0 $0C98 terrain-height bar (flight altimeter)
     Sprite*  altimeterShipSprite = nullptr;  // M3 $0B98 ship-height bar (flight altimeter)
-    Sprite*  wingSymbolSprite = nullptr;     // wing-clearance centre plane symbol (one 16x6 sprite, pen 10 = COLOR26)
 
     // Stars/space starfield: the 3 Atari players P0/P2/P3 ($0C32/$0E32/$0F32),
     // scrolled + sparsely seeded by the genuine scroll_terrain_columns ($6AEE),
@@ -77,7 +76,6 @@ private:
     void buildPostSprites();   // decode RLE tables $4DFA/$4E09 -> leftPost/rightPost (once)
     void buildAltimeterSprite();   // mirror the live P0 $0C98 terrain-height bar -> altimeterSprite (flight)
     void buildAltimeterShipSprite();   // mirror the live M3 $0B98 ship-height bar -> altimeterShipSprite (flight)
-    void buildWingSymbolSprite();      // fill the 16x6 wing-clearance centre plane glyph -> wingSymbolSprite (flight)
     bool postsBuilt = false;   // canopy posts are constant: decode them a single time
     void decodeCompass();      // decode the 4 compass cells $32E3-$32E6 -> title bitmap (16 longwords)
     void decodeTunnelField(int rowLo, int rowHi);  // decode mem[$2000] rows [lo,hi] -> tunnelBitmap
@@ -105,7 +103,8 @@ private:
     void updatePlanetCopper(bool force); // poke changed colour slots (force = all)
     // Last-poked values (vp* — separate from sb* so a phase switch always force-refreshes).
     uint16_t plTitleBg = 0xFFFF, plTitlePf0 = 0xFFFF, plEnergyCol = 0xFFFF,
-             plStarCol = 0xFFFF, plBg = 0xFFFF, plCompassCol = 0xFFFF;
+             plStarCol = 0xFFFF, plBg = 0xFFFF, plCompassCol = 0xFFFF,
+             plBand1 = 0xFFFF, plBand3 = 0xFFFF;   // windscreen band pen1 ($00DD) / pen3 ($00D4)
 
     // Static flight fixed copper list (scene 7 — same line-doubled mode-D band, with the
     // flight terrain palette + HUD sprites).  Same build-once + poke-in-place scheme:
@@ -117,7 +116,7 @@ private:
     // Last-poked values (fl* — separate from sb*/pl* so a phase switch force-refreshes).
     uint16_t flTitleBg = 0xFFFF, flTitlePf0 = 0xFFFF, flEnergyCol = 0xFFFF, flCompassCol = 0xFFFF;
     uint16_t flTerr0 = 0xFFFF, flTerr1 = 0xFFFF;   // terrain pen0/pen1 (atmosphere ramp $00DC/$00DD)
-    uint16_t flWingSymCol = 0xFFFF;                // wing-clearance centre symbol colour (COLOR26 ← $00D4)
+    uint16_t flBand1 = 0xFFFF, flBand3 = 0xFFFF;   // wing-band pen1 (bars $00DD) / pen3 (frame $00D4)
 
     // Launch-cinematic fixed copper lists:
     //   DoorsCopperList (scene 4) — hangar doors parting, sliding 3-band geometry poked
@@ -167,7 +166,7 @@ private:
     // plane3) on the first frame and whenever the source base changes (stars↔flight).
     bool     viewportForceFull = true;
     uint16_t viewportLastBase  = 0;
-    uint32_t viewportShadow[43 * 10] = {};
+    uint32_t viewportShadow[47 * 10] = {};   // 47 mode-D rows (43 terrain + 4 wing-clearance band)
 
     // Per-byte shadow for the tunnel field at $2000: the exit clear draws a thin
     // black frame outline (horizontal edges + vertical side pieces) each step, so
