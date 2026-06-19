@@ -22,8 +22,9 @@ static const uint16_t kCenterY      = kDisplayTop + kH / 2;           // = 0x98
 static const uint16_t kBPLCON0_3P   = (uint16_t)((3 << PLNCNTSHFT) | USE_BPLCON3);
 
 // Sprite colour-register addresses (custom-chip offsets), as in PlanetCopperList.
-static const uint16_t kColor21 = 0x1AA;   // sprite pair 2/3 pen 01 (gauge bar)
-static const uint16_t kColor25 = 0x1B2;   // sprite pair 4/5 pen 01 (altimeter P2 terrain-height bar)
+static const uint16_t kColor21 = 0x1AA;   // sprite pair 2/3 pen 01 (energy-indicator bar)
+static const uint16_t kColor25 = 0x1B2;   // sprite pair 4/5 pen 01 (altimeter terrain-height bar, P0)
+static const uint16_t kColor29 = 0x1BA;   // sprite pair 6/7 pen 01 (altimeter ship-height bar, M3)
 
 // ---- fixed list layout (indices into data_, in 32-bit MOVE/WAIT words) -------
 // d[0] = copperWait(16,0) (CopperList ctor).  The line-doubling band is 85 rows ×
@@ -34,10 +35,11 @@ static const uint16_t kColor25 = 0x1B2;   // sprite pair 4/5 pen 01 (altimeter P
 #define INDEX_SPRITE_COL      (INDEX_TITLE_BPL + 4)        // 12: color16,color17 (2)
 #define INDEX_SPRITES         (INDEX_SPRITE_COL + 2)       // 14: 8 sprite ptrs (16)
 #define INDEX_GAUGE_COL       (INDEX_SPRITES + 16)         // 30: COLOR21 (1)
-#define INDEX_ALTIM_COL       (INDEX_GAUGE_COL + 1)        // 31: COLOR25 (altimeter P0 terrain-height bar) (1)
+#define INDEX_ALTIM_COL       (INDEX_GAUGE_COL + 1)        // 31: COLOR25 (altimeter terrain-height bar P0) (1)
+#define INDEX_SHIP_COL        (INDEX_ALTIM_COL + 1)        // 32: COLOR29 (altimeter ship-height bar M3) (1)
 // Compass band: between the title text and the viewport, re-point color01 to the compass
 // COLPF0 ($00CF, dark grey) for the mode-4 compass line — the $49EE slot-0 DLI's colour.
-#define INDEX_COMPASS_WAIT    (INDEX_ALTIM_COL + 1)        // 32: WAIT(compass scanline) (1)
+#define INDEX_COMPASS_WAIT    (INDEX_SHIP_COL + 1)         // 33: WAIT(compass scanline) (1)
 #define INDEX_COMPASS_COL     (INDEX_COMPASS_WAIT + 1)     // 32: color01 = compass COLPF0 (housing) (1)
 #define INDEX_COMPASS_COL3    (INDEX_COMPASS_COL + 1)      // 33: color03 = compass COLPF2 (needle salmon) (1)
 #define INDEX_VP_WAIT         (INDEX_COMPASS_COL3 + 1)     // 34: WAIT(kTerrainLine-1) (1)
@@ -86,7 +88,8 @@ void FlightCopperList::buildLayout(const Bitmap& title, const Bitmap& terrain, c
     showSprite(INDEX_SPRITES + 12, 6, nullSprite);
     showSprite(INDEX_SPRITES + 14, 7, nullSprite);
     setGaugeColor(0);                          // COLOR21 (setter)
-    setAltimeterColor(0);                       // COLOR25 (setter) — altimeter P0 bar (sprite pair 4/5)
+    setAltimeterColor(0);                       // COLOR25 (setter) — altimeter terrain bar (sprite pair 4/5)
+    setAltimeterShipColor(0);                   // COLOR29 (setter) — altimeter ship bar M3 (sprite pair 6/7)
 
     // ---- compass band: re-point color01 to the compass COLPF0 for the mode-4 compass
     // line (title-bitmap row 33 = scanline kDisplayTop+33).  Title text above it keeps the
@@ -156,6 +159,11 @@ void FlightCopperList::setGaugeColor(uint16_t c)
 void FlightCopperList::setAltimeterColor(uint16_t c)
 {
     data_[INDEX_ALTIM_COL] = copperMove(kColor25, c);   // COLOR25 = sprite pair 4/5 pen 01
+}
+
+void FlightCopperList::setAltimeterShipColor(uint16_t c)
+{
+    data_[INDEX_SHIP_COL] = copperMove(kColor29, c);    // COLOR29 = sprite pair 6/7 pen 01
 }
 
 void FlightCopperList::setCompassColor(uint16_t c)

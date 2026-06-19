@@ -225,6 +225,21 @@ void RescueOnFractalus::buildAltimeterSprite()
     }
 }
 
+// ---- altimeter ship-height bar (flight) --------------------------------------
+// The ship-height indicator is the Atari missile M3 (bits 6-7 of the shared missile
+// buffer $0B00): update_gauge_281a ($40E5) steps its top edge at $0B98+$281B (which tracks
+// ship altitude $0034) down to a fixed bottom ($0BCF).  SIZEM expands the 2px missile to
+// 8px (quad width) = a full 16px Amiga sprite line, so a set M3 row → 0xFFFF.  Mask bits
+// 6-7 to ignore the other missiles (M0-M2, e.g. the wing-clearance bars) sharing $0B00.
+void RescueOnFractalus::buildAltimeterShipSprite()
+{
+    uint16_t* d = altimeterShipSprite->data() + 2;   // skip the 2 control words
+    for (int i = 0; i < kAltimRows; i++) {
+        d[i * 2]     = (mem[0x0B98 + i] & 0xC0u) ? 0xFFFFu : 0x0000u;   // M3 = bits 6-7
+        d[i * 2 + 1] = 0x0000;
+    }
+}
+
 // ---- starfield sprites -------------------------------------------------------
 // During the stars phase display_setup positions players P0/P2/P3 as a sparse
 // scrolling starfield (random_terrain_height $6B47: POKEY RANDOM, 1/32 chance of a dot
@@ -279,7 +294,9 @@ void RescueOnFractalus::initialize()
     nullSprite = Sprite::allocate(0);
     gaugeSprite = Sprite::allocate(57);    // throttle bar: 57 vobj-strip rows ($0D98..$0DD0)
     altimeterSprite = Sprite::allocate(kAltimRows);   // P0 $0C98 terrain-height bar (flight)
-    if (!leftPost || !rightPost || !nullSprite || !gaugeSprite || !altimeterSprite) return;
+    altimeterShipSprite = Sprite::allocate(kAltimRows);   // M3 $0B98 ship-height bar (flight)
+    if (!leftPost || !rightPost || !nullSprite || !gaugeSprite || !altimeterSprite
+        || !altimeterShipSprite) return;
     // Starfield sprites (P0/P2/P3): 89-row strips, all at the windscreen top
     // (player scanline $32 → Amiga Y = kTerrainLine, the +36 offset that maps the
     // gauge strip $0D98/scanline $98 to Amiga Y 0x2c+144).
@@ -300,6 +317,13 @@ void RescueOnFractalus::initialize()
     // left of it (CLAUDE.md instrument x≈108).  Starting estimate — calibrate visually.
     altimeterSprite->setX(0x81 + 107);
     altimeterSprite->setY(0x2c + 144);
+    // Ship-height bar (M3 missile): the SAME 8px column as the terrain bar (they overlap —
+    // the manual's "amount of light blue showing" is the ship bar visible above the purple
+    // terrain bar).  The terrain bar is the higher-priority sprite (4 < 6), so it covers the
+    // bottom (terrain height) and the light-blue ship bar shows above it (clearance).  Same
+    // X and Y; bottoms align ($0B98..$0BCF ↔ $0C98..$0CCF, both at offset $98..$CF).
+    altimeterShipSprite->setX(0x81 + 107);
+    altimeterShipSprite->setY(0x2c + 144);
 
     // Post graphics are decoded once from the real RLE source tables (buildPostSprites,
     // triggered on the first perFrameWork frame); nothing to fill here.  Position/Y below.
@@ -805,9 +829,15 @@ void RescueOnFractalus::updateFlightCopper(bool force)
     // (the live buffer content is refreshed in buildAltimeterSprite), so install once on
     // force.  COLPM0 for the cockpit bar is cyan ($A9 — the DLI value, distinct from the
     // grey it uses for the left canopy pillar at the top of the same player).
+    // Altimeter (overlapping 8px column): terrain bar = $00D5 (purple/red), ship bar =
+    // $00D6 (steady light blue).  Both are constant cockpit colours, so set once on install.
+    // ($00D9 — which I'd used for the ship — color-cycles for the enemy/lock-on flash, not
+    // the altimeter.)
     if (force) {
         flightCopper->setHudSprite(4, *altimeterSprite);
-        flightCopper->setAltimeterColor(atariToOCS(0xA9));
+        flightCopper->setAltimeterColor(atariToOCS(mem[0x00D5]));
+        flightCopper->setHudSprite(6, *altimeterShipSprite);
+        flightCopper->setAltimeterShipColor(atariToOCS(mem[0x00D6]));
     }
 
     // Compass band colour: the $49EE slot-0 DLI sets COLPF0 = mem[$00CF] (dark grey) for the
@@ -1020,8 +1050,9 @@ void RescueOnFractalus::perFrameWork()
     // Starfield players $0C32/$0E32/$0F32: scrolled+seeded during stars, static
     // through the planet zoom, so map them both phases.
     if (rsStars) buildStarSprites();
-    // Flight altimeter terrain-height bar: mirror the live P0 $0C98 strip each frame.
-    if (rsFlight) buildAltimeterSprite();
+    // Flight altimeter bars: mirror the live P0 $0C98 (terrain-height) + M3 $0B98
+    // (ship-height) strips each frame.
+    if (rsFlight) { buildAltimeterSprite(); buildAltimeterShipSprite(); }
 }
 
 // ---- cockpit helpers ---------------------------------------------------------
@@ -1312,5 +1343,6 @@ void RescueOnFractalus::shutdown()
     delete nullSprite;    nullSprite    = nullptr;
     delete gaugeSprite;   gaugeSprite   = nullptr;
     delete altimeterSprite; altimeterSprite = nullptr;
+    delete altimeterShipSprite; altimeterShipSprite = nullptr;
     for (int c = 0; c < 3; c++) { delete starSprite[c]; starSprite[c] = nullptr; }
 }
