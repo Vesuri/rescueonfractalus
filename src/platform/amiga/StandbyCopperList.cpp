@@ -45,8 +45,16 @@ static const uint16_t kBPLCON0_3P   = (uint16_t)((3 << PLNCNTSHFT) | USE_BPLCON3
 #define INDEX_COCKPIT_BPLCON0 (INDEX_COCKPIT_BPL + 6)  // 61: bplcon0 3P (1)
 #define INDEX_COCKPIT_MOD     (INDEX_COCKPIT_BPLCON0 + 1) // 62: bpl1mod,bpl2mod (2)
 #define INDEX_COCKPIT_PAL     (INDEX_COCKPIT_MOD + 2)  // 64: color00..07 (8)
-#define INDEX_TERMINATOR      (INDEX_COCKPIT_PAL + 8)  // 72: copperWait(255,254)
-#define LIST_LENGTH           (INDEX_TERMINATOR + 1)   // 73
+// Windscreen-bottom band: the cockpit bitmap's top 8 scanlines (kCockpitLine..+7) are the
+// mode-D $350D frame, whose value-0 L/R triangle corners take COLBK.  On the Atari a DLI
+// holds COLBK = $C8 (green ground, = mem[$0071]) through the band, then writes COLBK=$00 at
+// the band's bottom so the dashboard below is black.  We mirror that split: color00 = green
+// is baked into the cockpit palette (applies from kCockpitLine), and a WAIT at kCockpitLine+8
+// pokes color00 back to black for the dashboard.
+#define INDEX_DASH_BG_WAIT    (INDEX_COCKPIT_PAL + 8)  // 72: WAIT(kCockpitLine+8-1) (1)
+#define INDEX_DASH_BG         (INDEX_DASH_BG_WAIT + 1) // 73: color00 = black (dashboard) (1)
+#define INDEX_TERMINATOR      (INDEX_DASH_BG + 1)      // 74: copperWait(255,254)
+#define LIST_LENGTH           (INDEX_TERMINATOR + 1)   // 75
 
 StandbyCopperList::StandbyCopperList()
     : CopperList((uint32_t*)AllocMem(LIST_LENGTH << 2, MEMF_CHIP | MEMF_CLEAR), LIST_LENGTH, true)
@@ -105,9 +113,10 @@ void StandbyCopperList::buildLayout(const Bitmap& title, const Bitmap& terrain, 
     // Cockpit palette: the cockpit DLIs ($6D4F/$6D67/$6D7C) reload these registers
     // with hardcoded immediates (NOT the title/terrain shadows) — constant, and the
     // fade is 16 throughout StandbyCopperList's life, so bake them once here.
-    //   00=COLBK $00 black, 01=COLPF0 $04, 02=COLPF1 $06, 03=COLPF2 $2C salmon,
-    //   04..06 mirror 00..02, 07=COLPF3 $26 red (bit-7 chars via plane3 -> colour 7).
-    d[INDEX_COCKPIT_PAL + 0] = copperMove(color00, atariToOCS(0x00));
+    //   00=COLBK $C8 green (band bg; see below), 01=COLPF0 $04, 02=COLPF1 $06, 03=COLPF2 $2C
+    //   salmon, 04..06 mirror 00..02, 07=COLPF3 $26 red (bit-7 chars via plane3 -> colour 7).
+    // color00 starts at the windscreen-band green ($C8); INDEX_DASH_BG flips it to black below.
+    d[INDEX_COCKPIT_PAL + 0] = copperMove(color00, atariToOCS(0xC8));   // band bg = green ground
     d[INDEX_COCKPIT_PAL + 1] = copperMove(color01, atariToOCS(0x04));
     d[INDEX_COCKPIT_PAL + 2] = copperMove(color02, atariToOCS(0x06));
     d[INDEX_COCKPIT_PAL + 3] = copperMove(color03, atariToOCS(0x2C));
@@ -115,6 +124,10 @@ void StandbyCopperList::buildLayout(const Bitmap& title, const Bitmap& terrain, 
     d[INDEX_COCKPIT_PAL + 5] = copperMove(color05, atariToOCS(0x04));
     d[INDEX_COCKPIT_PAL + 6] = copperMove(color06, atariToOCS(0x06));
     d[INDEX_COCKPIT_PAL + 7] = copperMove(color07, atariToOCS(0x26));
+
+    // Below the 8-row band: COLBK back to black for the dashboard (the Atari DLI's COLBK=$00).
+    d[INDEX_DASH_BG_WAIT] = copperWait(kCockpitLine + 8 - 1, 0xE0);
+    d[INDEX_DASH_BG]      = copperMove(color00, atariToOCS(0x00));
 
     d[INDEX_TERMINATOR] = copperWait(255, 254);
 }
@@ -159,4 +172,13 @@ void StandbyCopperList::setTerrainPalette(uint16_t p0, uint16_t p1, uint16_t p2,
 void StandbyCopperList::setTerrainBgColor(uint16_t c)
 {
     data_[INDEX_TERRAIN_PAL + 3] = copperMove(color03, c);
+}
+
+// Windscreen-band background: color00 over the 8 band scanlines (kCockpitLine..+7).  The
+// band's value-0 L/R corners take this; it is the green ground (mem[$0071]) and ramps with
+// the doors during the standby reveal, so it is poked per-frame, not baked.  INDEX_DASH_BG
+// flips color00 back to black for the dashboard below.
+void StandbyCopperList::setBandBgColor(uint16_t c)
+{
+    data_[INDEX_COCKPIT_PAL + 0] = copperMove(color00, c);
 }

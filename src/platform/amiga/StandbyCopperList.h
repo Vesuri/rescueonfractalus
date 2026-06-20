@@ -36,4 +36,5 @@ public:
     void setCompassColor(uint16_t c);                              // color01 over the compass band (COLPF0 $00CF)
     void setTerrainPalette(uint16_t p0, uint16_t p1, uint16_t p2, uint16_t p3);  // terrain color00..03
     void setTerrainBgColor(uint16_t c);                            // terrain color03 only (green fade)
+    void setBandBgColor(uint16_t c);                               // cockpit color00 over the 8-row band (green ground, fades with the doors)
 };

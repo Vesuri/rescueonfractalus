@@ -766,6 +766,9 @@ void RescueOnFractalus::updateStandbyCopper(bool force)
     if (force || terr0 != sbTerr0 || terr1 != sbTerr1 || terr2 != sbTerr2 || terr3 != sbTerr3) {
         // Any terrain pen changed: rewrite all four (terr3 is the dark->bright green fade).
         standbyCopper->setTerrainPalette(terr0, terr1, terr2, terr3);
+        // The windscreen-band corners use the SAME green ground (mem[$0071] = terr3) for
+        // their value-0 fill, so they fade in together with the doors (not a baked constant).
+        standbyCopper->setBandBgColor(terr3);
         sbTerr0 = terr0; sbTerr1 = terr1; sbTerr2 = terr2; sbTerr3 = terr3;
     }
     if (force || gauge != sbEnergyIndicator) {
