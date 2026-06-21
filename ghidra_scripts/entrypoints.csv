@@ -1,0 +1,51 @@
+# Persistent Ghidra entry-point seed list — read by MarkEntries.java.
+#
+# These addresses are reached ONLY via interrupt vectors (VBI/DLI/IRQ) or indirect
+# jump tables, so Ghidra auto-analysis never falls into them and they end up ABSENT
+# from disasm/listing.txt.  Marking each as an entry point + disassembling from it
+# makes it appear in the listing (and thus available to the transpiler).
+#
+# WHENEVER A NEW DLI / VECTOR-ONLY ROUTINE IS FOUND, ADD A LINE HERE (not in the .java).
+# Names here are placeholders for Ghidra's function creation; disasm/symbols.csv (applied
+# via ApplyNames.java) remains the real name source of truth — keep names consistent with
+# symbols.csv where an entry already exists there.
+#
+# Format:  hexaddr,name      ('#' comments and blank lines ignored; addr has no '$')
+
+# ---- loader / init entry points (XEX INITAD vectors) ----
+3CDE,game_entry
+3C00,loader_3C00
+5000,stage_5000
+1B30,vbi_handler_attract
+1A97,init_1A97
+B800,init_B800
+
+# ---- VBI handlers (installed via VVBLKI $0222/3 OS shadow) ----
+53CC,vbi_handler_1
+4FF5,vbi_handler_flight
+52D7,vbi_handler_standby
+
+# ---- IRQ handler (installed via VIMIRQ $0216/7) ----
+462A,irq_handler
+
+# ---- DLI handlers (installed via VDSLST $0200/1) ----
+49EE,dli_handler_game
+6CC2,dli_handler_game2
+
+# ---- Launch DLI chain (VDSLST=$6CAD dispatches on index $C7 through word table $6DBB) ----
+# Table $6DBB = [$4A0C, $6CD7, $6CF1, $6D28, $6D42, $6D4F, $6D7C, $6D99]; tail $4A05 does
+# INC $C7; $4ACD resets $C7.  All reached only via the indirect JMP, so seed each here.
+6CAD,dli_launch_dispatch_6cad
+4A0C,dli_launch_4a0c
+6CD7,dli_launch_pmg_colors_6cd7
+6CF1,dli_launch_colbk_colpf_6cf1
+6D0E,dli_launch_6d0e
+6D28,dli_launch_6d28
+6D42,dli_launch_6d42
+6D4F,dli_launch_grey_6d4f
+6D67,dli_launch_6d67
+6D7C,dli_launch_colbk_black_6d7c
+6D99,dli_launch_6d99
+6DA1,dli_launch_6da1
+4A05,dli_launch_tail_inc_c7_4a05
+4ACD,dli_launch_reset_c7_4acd

@@ -3751,6 +3751,44 @@ L_49ec:;
 }
 
 /* dli_handler_game @ $49EE: manual implementation in rof_manual.c */
+void dli_launch_tail_inc_c7_4a05(void) {
+    /* 4a05 */
+    INC_M(0x00C7);
+    FUN_4a07(); return;
+}
+
+void dli_launch_4a0c(void) {
+    /* 4a0c */
+    LDA(mem[0x00D4]);
+    /* 4a0e */
+    bus_write(0xD017, cpu.A);
+    /* 4a11 */
+    NOP();
+    /* 4a12 */
+    LDA(0x38);
+    /* 4a14 */
+    bus_write(0xD409, cpu.A);
+    /* 4a17 */
+    LDA(mem[0x00CF]);
+    /* 4a19 */
+    bus_write(0xD016, cpu.A);
+    /* 4a1c */
+    dli_launch_tail_inc_c7_4a05(); return;
+}
+
+void dli_launch_reset_c7_4acd(void) {
+    /* 4acd */
+    LDA(mem[0x00D3]);
+    /* 4acf */
+    bus_write(0xD01A, cpu.A);
+    /* 4ad2 */
+    LDA(0x00);
+    /* 4ad4 */
+    mem[0x00C7] = cpu.A;
+    /* 4ad6 */
+    FUN_4a07(); return;
+}
+
 /* obj_table_scan_y1_c8 @ $4E18: Entry: Y=$01,A=$C8 then falls to obj_table_scan; preset args for obj_table_scan_replace */
 /* faithful transliteration kept as the validation oracle; native obj_table_scan_y1_c8() lives in rof_native.c (see VALIDATE_FUNCS) */
 void obj_table_scan_y1_c8__t6502(void) {
@@ -10225,7 +10263,230 @@ L_6ca2:;
     return;
 }
 
+void dli_launch_dispatch_6cad(void) {
+    /* 6cad */
+    mem[0x00C8] = cpu.A;
+    /* 6caf */
+    mem[0x00CA] = cpu.Y;
+    /* 6cb1 */
+    LDA(mem[0x00C7]);
+    /* 6cb3 */
+    ASL_A();
+    /* 6cb4 */
+    TAY();
+    /* 6cb5 */
+    LDA(mem[(0x6DBB)+cpu.Y]);
+    /* 6cb8 */
+    mem[0x00E0] = cpu.A;
+    /* 6cba */
+    LDA(mem[(0x6DBC)+cpu.Y]);
+    /* 6cbd */
+    mem[0x00E1] = cpu.A;
+    /* 6cbf */
+    { uint16_t _t = (uint16_t)(mem[0x00E0] | ((uint16_t)mem[0x00E1] << 8)); platform_indirect_jmp(_t); return; }
+}
+
 /* dli_handler_game2 @ $6CC2: manual implementation in rof_manual.c */
+void dli_launch_pmg_colors_6cd7(void) {
+    /* 6cd7 */
+    LDA(mem[0x08D8]);
+    /* 6cda */
+    bus_write(0xD014, cpu.A);
+    /* 6cdd */
+    LDA(mem[0x08D7]);
+    /* 6ce0 */
+    bus_write(0xD013, cpu.A);
+    /* 6ce3 */
+    LDA(mem[0x08D9]);
+    /* 6ce6 */
+    bus_write(0xD015, cpu.A);
+    /* 6ce9 */
+    LDA(0x94);
+    /* 6ceb */
+    bus_write(0xD01B, cpu.A);
+    /* 6cee */
+    dli_launch_tail_inc_c7_4a05(); return;
+}
+
+void dli_launch_colbk_colpf_6cf1(void) {
+    /* 6cf1 */
+    bus_write(0xD40A, cpu.A);
+    /* 6cf4 */
+    LDA(mem[0x0071]);
+    /* 6cf6 */
+    bus_write(0xD01A, cpu.A);
+    /* 6cf9 */
+    LDA(mem[0x08D4]);
+    /* 6cfc */
+    bus_write(0xD016, cpu.A);
+    /* 6cff */
+    LDA(mem[0x08D5]);
+    /* 6d02 */
+    bus_write(0xD017, cpu.A);
+    /* 6d05 */
+    LDA(mem[0x08D6]);
+    /* 6d08 */
+    bus_write(0xD018, cpu.A);
+    /* 6d0b */
+    dli_launch_tail_inc_c7_4a05(); return;
+}
+
+void dli_launch_6d0e(void) {
+    /* 6d0e */
+    LDY(mem[0x00DC]);
+    /* 6d10 */
+    LDA(0x2A);
+    /* 6d12 */
+    bus_write(0xD40A, cpu.A);
+    /* 6d15 */
+    bus_write(0xD01A, cpu.Y);
+    /* 6d18 */
+    bus_write(0xD018, cpu.A);
+    /* 6d1b */
+    LDA(0x28);
+    /* 6d1d */
+    bus_write(0xD017, cpu.A);
+    /* 6d20 */
+    LDA(0x24);
+    /* 6d22 */
+    bus_write(0xD016, cpu.A);
+    /* 6d25 */
+    dli_launch_tail_inc_c7_4a05(); return;
+}
+
+void dli_launch_6d28(void) {
+    /* 6d28 */
+    bus_write(0xD40A, cpu.A);
+    /* 6d2b */
+    LDA(0x3E);
+    /* 6d2d */
+    bus_write(0xD006, cpu.A);
+    /* 6d30 */
+    LDA(0x3C);
+    /* 6d32 */
+    bus_write(0xD007, cpu.A);
+    /* 6d35 */
+    LDA(0xC2);
+    /* 6d37 */
+    bus_write(0xD004, cpu.A);
+    /* 6d3a */
+    LDA(0xC0);
+    /* 6d3c */
+    bus_write(0xD005, cpu.A);
+    /* 6d3f */
+    dli_launch_tail_inc_c7_4a05(); return;
+}
+
+void dli_launch_6d42(void) {
+    /* 6d42 */
+    LDA(0x3F);
+    /* 6d44 */
+    bus_write(0xD007, cpu.A);
+    /* 6d47 */
+    LDA(0xBF);
+    /* 6d49 */
+    bus_write(0xD004, cpu.A);
+    /* 6d4c */
+    dli_launch_tail_inc_c7_4a05(); return;
+}
+
+void dli_launch_grey_6d4f(void) {
+    /* 6d4f */
+    LDA(0x06);
+    /* 6d51 */
+    bus_write(0xD017, cpu.A);
+    /* 6d54 */
+    LDA(0x04);
+    /* 6d56 */
+    bus_write(0xD016, cpu.A);
+    /* 6d59 */
+    LDA(0x2C);
+    /* 6d5b */
+    bus_write(0xD018, cpu.A);
+    /* 6d5e */
+    LDA(mem[0x08D8]);
+    /* 6d61 */
+    bus_write(0xD015, cpu.A);
+    /* 6d64 */
+    dli_launch_tail_inc_c7_4a05(); return;
+}
+
+void dli_launch_6d67(void) {
+    /* 6d67 */
+    bus_write(0xD40A, cpu.A);
+    /* 6d6a */
+    LDA(0x06);
+    /* 6d6c */
+    bus_write(0xD017, cpu.A);
+    /* 6d6f */
+    LDA(0x04);
+    /* 6d71 */
+    bus_write(0xD016, cpu.A);
+    /* 6d74 */
+    LDA(0x26);
+    /* 6d76 */
+    bus_write(0xD019, cpu.A);
+    /* 6d79 */
+    dli_launch_tail_inc_c7_4a05(); return;
+}
+
+void dli_launch_colbk_black_6d7c(void) {
+    /* 6d7c */
+    LDA(0x04);
+    /* 6d7e */
+    bus_write(0xD40A, cpu.A);
+    /* 6d81 */
+    bus_write(0xD01B, cpu.A);
+    /* 6d84 */
+    LDA(0x00);
+    /* 6d86 */
+    bus_write(0xD01A, cpu.A);
+    /* 6d89 */
+    LDA(mem[0x0071]);
+    /* 6d8b */
+    bus_write(0xD012, cpu.A);
+    /* 6d8e */
+    bus_write(0xD013, cpu.A);
+    /* 6d91 */
+    LDA(0x26);
+    /* 6d93 */
+    bus_write(0xD019, cpu.A);
+    /* 6d96 */
+    dli_launch_tail_inc_c7_4a05(); return;
+}
+
+void dli_launch_6d99(void) {
+    /* 6d99 */
+    LDA(0x04);
+    /* 6d9b */
+    bus_write(0xD01B, cpu.A);
+    /* 6d9e */
+    dli_launch_tail_inc_c7_4a05(); return;
+}
+
+void dli_launch_6da1(void) {
+    /* 6da1 */
+    bus_write(0xD40A, cpu.A);
+    /* 6da4 */
+    LDA(0x94);
+    /* 6da6 */
+    bus_write(0xD001, cpu.A);
+    /* 6da9 */
+    LDA(mem[0x00DE]);
+    /* 6dab */
+    bus_write(0xD013, cpu.A);
+    /* 6dae */
+    LDA(0x2C);
+    /* 6db0 */
+    bus_write(0xD018, cpu.A);
+    /* 6db3 */
+    LDA(0x90);
+    /* 6db5 */
+    bus_write(0xD01A, cpu.A);
+    /* 6db8 */
+    dli_launch_tail_inc_c7_4a05(); return;
+}
+
 /* init_row_coords_9c @ $6DDF: Loads constants $2E,$30,$2B,$2A,$13 into $009C-$00A0 (row/coordinate setup for drawing) */
 /* faithful transliteration kept as the validation oracle; native init_row_coords_9c() lives in rof_native.c (see VALIDATE_FUNCS) */
 void init_row_coords_9c__t6502(void) {
@@ -25462,6 +25723,15 @@ void set_zsupp_pos_clear_delta__t6502(void) {
     /* 49cc */
     mem[0x0046] = cpu.Y;
     emit_bcd_byte_digits(); return;
+}
+
+void FUN_4a07(void) {
+    /* 4a07 */
+    LDY(mem[0x00CA]);
+    /* 4a09 */
+    LDA(mem[0x00C8]);
+    /* 4a0b */
+    PLP(); return;
 }
 
 /* intro_teardown_fade_loop @ $4F76: DMACTL($D400)=0 to kill ANTIC DMA, wait_frames_save_a, loop dec $0678 & X from $00D4 down to $1F, wait_frames_2/init_game_vars_attract_timer */
