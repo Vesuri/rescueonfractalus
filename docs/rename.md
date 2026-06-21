@@ -7,9 +7,21 @@ and regenerate. Each entry: address, current name, what it really does, suggeste
 
 | Addr | Current name | What it actually does | Suggested |
 |------|--------------|------------------------|-----------|
+| $3CB1 | `push_a_thunk_3cb2` | `PHA`, then falls into the $3CB2 spin-wait (RTCLOK_LOW $14 → $4C frames), then `PLA;RTS`. Just preserves A across a frame-wait — there is no "thunk" (no deferred closure pushed). | `push_a_wait_frames` |
+| $3CB2 | `wait_frames_60` | Spin-waits until RTCLOK_LOW($14) reaches the **caller-set** `$4C` frame count — NOT a fixed 60. The 60 (`#$3C`) is loaded only by the *separate* entry $3CBE, which sets $4C then jumps in. | `wait_frames_4c` |
+| $670D | `advance_message_column` | Draws ONE tunnel-ring frame group via `draw_symmetric_span_loop` (count = $6E0F[$A0]), clears $08D8 (inner ring colour) when $A0<6, then `DEC $A0` / `$88=$A0` — the per-ring-tick incremental tunnel-ring draw + counter step. No message/text ($6E0F is a ring-thickness table, not glyphs). | `draw_ring_frame_step` |
+| $6AEE | `scroll_terrain_columns` | $0089-gated: shifts the four $0C32/$0D32/$0E32/$0F32 PMG buffers left one column + appends via `gen_terrain_column`. During the gated phase those buffers are the **starfield/PMG** field (scenes 4-6), not flight terrain — "terrain" is misleading. ⚠ verify stars-vs-planet-surface first; `gen_terrain_column` may share the issue. | `scroll_field_columns` (tentative) |
 
 ## Notes
-- _(empty — previous backlog applied 2026-06-19; see below)_
+- **`scroll_event_dispatch` ($5367) — name OK, NOTE is stale/wrong.** The name was a
+  deliberate rename (was `sound_event_dispatch`, applied 2026-06-19) and is fine: it's the
+  per-frame launch-cinematic priority dispatcher. But its `symbols.csv` note still reads
+  "Tests **sound flags** $008D/88/89/8B … → **sfx** subs 6a8f/6a38/6aee/69e3/6a27/6953" —
+  those are NOT sound flags or sfx: they're the animation-state flags and the ring-step
+  ($6A38), column-scroll ($6AEE), DL-index ($69E3), **corner-reveal recede** ($6A27), and
+  door-scroll ($6953) handlers. Fix the note when the table above is applied.
+- **`scroll_event_dispatch_native`** (hand-written C++, `rof_native_amiga.cpp`) is the Amiga
+  twin of $5367 — keep its name in sync with whatever $5367 settles on (currently fine).
 
 ## Applied 2026-06-19 (batch rename, committed)
 The earlier backlog was applied wholesale. For the record, the renames made:
