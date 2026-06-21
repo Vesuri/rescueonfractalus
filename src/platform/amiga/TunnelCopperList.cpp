@@ -44,11 +44,15 @@ static const uint16_t kBPLCON0_3P   = (uint16_t)((3 << PLNCNTSHFT) | USE_BPLCON3
 #define INDEX_COCKPIT_BPLCON0 (INDEX_COCKPIT_BPL + 6)  // bplcon0 3P (1)
 #define INDEX_COCKPIT_MOD     (INDEX_COCKPIT_BPLCON0 + 1) // bpl1mod,bpl2mod (2)
 #define INDEX_COCKPIT_PAL     (INDEX_COCKPIT_MOD + 2)  // color00..07 (8)
-// Windscreen-bottom band: cockpit bitmap's top 8 scanlines (mode-D $350D frame) — value-0 L/R
-// corners take COLBK, which the Atari holds green ($C8 = mem[$0071]) through the band then
-// writes $00 below.  Same green->black COLBK split as StandbyCopperList (measured identical for
-// tunnel via the atari-dl-analyzer skill — COLBK=$C8 y128-136 -> $00 dashboard).
-#define INDEX_DASH_BG_WAIT    (INDEX_COCKPIT_PAL + 8)  // WAIT(kCockpitLine+8-1) (1)
+// Windscreen-bottom band: cockpit bitmap's top 8 scanlines (mode-D $350D frame).  The L/R
+// corner triangles are value-0 = color00.  During the tunnel reveal the Atari clears the
+// quad-width canopy-post player ($0C88-$0C8F) top-down, so the green corner recedes and the
+// tunnel (purple) behind shows through.  We approximate that with a single moving color00
+// split: band top = purple (tunnel, $08D8); a moving WAIT flips color00 back to green
+// (door, $0071) at the boundary line = first still-set player scanline (setBandReveal).
+#define INDEX_BAND_GREEN_WAIT (INDEX_COCKPIT_PAL + 8)  // WAIT(boundary) (1)
+#define INDEX_BAND_GREEN      (INDEX_BAND_GREEN_WAIT + 1) // color00 = green door (1)
+#define INDEX_DASH_BG_WAIT    (INDEX_BAND_GREEN + 1)   // WAIT(kCockpitLine+8-1) (1)
 #define INDEX_DASH_BG         (INDEX_DASH_BG_WAIT + 1) // color00 = black (dashboard) (1)
 #define INDEX_TERMINATOR      (INDEX_DASH_BG + 1)      // copperWait(255,254)
 #define LIST_LENGTH           (INDEX_TERMINATOR + 1)
@@ -117,6 +121,9 @@ void TunnelCopperList::buildLayout(const Bitmap& title, const Bitmap& tunnel, co
     d[INDEX_COCKPIT_PAL + 6] = copperMove(color06, atariToOCS(0x06));
     d[INDEX_COCKPIT_PAL + 7] = copperMove(color07, atariToOCS(0x26));
 
+    // Band reveal split (seeded all-green = reveal not started; setBandReveal moves it).
+    setBandReveal(0, atariToOCS(0xC8));
+
     // Below the 8-row band: COLBK back to black for the dashboard (the Atari DLI's COLBK=$00).
     d[INDEX_DASH_BG_WAIT] = copperWait(kCockpitLine + 8 - 1, 0xE0);
     d[INDEX_DASH_BG]      = copperMove(color00, atariToOCS(0x00));
@@ -151,6 +158,18 @@ void TunnelCopperList::setCompassColor(uint16_t c)
 void TunnelCopperList::setBandBgColor(uint16_t c)
 {
     data_[INDEX_COCKPIT_PAL + 0] = copperMove(color00, c);
+}
+
+// setBandReveal(): the green->purple corner reveal.  greenLine = the first band scanline
+// (0..8, relative to kCockpitLine) that still shows the green door — i.e. the topmost
+// still-set canopy-post-player scanline.  Lines above it keep the band-top colour (purple
+// tunnel, set via setBandBgColor); this moving WAIT flips color00 back to green from
+// greenLine down.  greenLine 0 = whole band green (reveal not started); 8 = whole band purple.
+void TunnelCopperList::setBandReveal(uint16_t greenLine, uint16_t greenColor)
+{
+    if (greenLine > 8) greenLine = 8;
+    data_[INDEX_BAND_GREEN_WAIT] = copperWait((uint16_t)(kCockpitLine + greenLine - 1), 0xE0);
+    data_[INDEX_BAND_GREEN]      = copperMove(color00, greenColor);
 }
 
 void TunnelCopperList::setTunnelColors(uint16_t pen0, uint16_t pen1, uint16_t pen2, uint16_t pen3,

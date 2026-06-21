@@ -952,11 +952,20 @@ void RescueOnFractalus::updateTunnelCopper(bool force)
     }
     if (force || energyCol != tnEnergyCol)   { tunnelCopper->setEnergyIndicatorColor(energyCol);   tnEnergyCol = energyCol; }
     if (force || compassCol != tnCompassCol) { tunnelCopper->setCompassColor(compassCol); tnCompassCol = compassCol; }
-    // Windscreen-band corner bg: the band DLI sets COLBK = mem[$0071] (the green ground,
-    // ramped by $65a8/$65ee).  Poke it per-frame so the corners track the live value rather
-    // than a baked constant (matches the Atari DLI $6CF6: LDA $71 / STA COLBK).
-    const uint16_t bandBg = atariToOCS(mem[0x0071]);
-    if (force || bandBg != tnBandBg) { tunnelCopper->setBandBgColor(bandBg); tnBandBg = bandBg; }
+    // Windscreen-corner reveal.  The corner triangle is the quad-width canopy-post player
+    // ($0C88-$0C8F left), green (COLPM0/1 = mem[$0071]); the launch clears it top-down so the
+    // tunnel ($08D8 purple) shows through line-by-line.  We approximate with a single moving
+    // color00 split: band top = purple; flip back to green at the boundary = the first
+    // still-set player scanline (so it descends as the buffer clears).  doors_mid/descent
+    // show this band only at g2>=half, i.e. the Tunnel list (Doors keeps the band green).
+    uint16_t greenLine = 8;                                       // first still-green band scanline
+    for (uint16_t i = 0; i < 8; i++) { if (mem[0x0C88 + i]) { greenLine = i; break; } }
+    const uint16_t green = atariToOCS(mem[0x0071]);
+    // greenLine 0 = reveal not started (whole band green): keep band top green, no purple split
+    // (avoids a 1-line purple flash where the band-top WAIT and the boundary WAIT collide).
+    const uint16_t bandTop = (greenLine == 0) ? green : atariToOCS(mem[0x08D8]);
+    if (force || bandTop != tnBandBg) { tunnelCopper->setBandBgColor(bandTop); tnBandBg = bandTop; }
+    tunnelCopper->setBandReveal(greenLine, green);
 
     const uint16_t pen0 = atariToOCS(mem[0x02C0]);               // tunnel pen0 = black
     uint16_t ring[6];

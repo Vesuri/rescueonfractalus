@@ -795,7 +795,8 @@ static void scroll_terrain_dl(void)
 // while $0088==0, the ring animates once $0088 is armed (after the doors finish
 // opening; the hand-off lives in RescueOnFractalus::update), and once the tunnel ends
 // ($0088 wraps to 0) the $0089 column scroll drives the stars/planet phase.
-// The $008C/clear_slot and $008B branches are documented but inert in Standby.
+// The $008C/clear_slot branch drives the doors/tunnel windscreen-corner reveal (the
+// green canopy-post wedge receding top-down); the $008B branch is inert in Standby.
 // The transpile's 6502 register file (src/cpu/cpu.h: `Cpu6502 cpu`) — mirrored
 // as a POD (see launch_native.cpp for why we don't #include cpu.h).
 extern "C" { typedef struct { uint8_t A, X, Y, S, N, V, Z, C, I, D; } Cpu6502; extern Cpu6502 cpu; }
@@ -813,6 +814,16 @@ extern "C" void scroll_event_dispatch_native(void)
     mem[zp::terrainScrollPhase] = (uint8_t)(ph >> 1);        // LSR $008F
     if (ph & 1u) return;                                     // carry set -> skip this frame
     mem[zp::terrainScrollPhase]++;                           // INC $008F
+    // $008C: windscreen-corner reveal.  clear_slot_0c87_0d87 ($6A27) recedes the green
+    // canopy-post quad-player wedge one scanline per (every-other) frame so the tunnel
+    // shows through top-down.  scroll_terrain_dl arms $008C=8 when the doors finish; this
+    // branch was missing from the native dispatch, so the wedge never receded on the Amiga.
+    if (mem[zp::terrainScrollReload]) {                      // LDA $008C; BEQ skip
+        uint8_t h = --mem[zp::terrainScrollReload];          // DEC $008C (8 -> 0)
+        uint8_t y = (uint8_t)(8 - h);                        // index = 8 - $008C
+        mem[0x0C87 + y] = 0;                                 // clear left canopy-post player line ($0C88..)
+        mem[0x0D87 + y] = 0;                                 // clear right canopy-post player line ($0D88..)
+    }
     if (mem[zp::terrainScrollCounter] == 0) return;          // $008A: doors already fully open
     scroll_terrain_dl();
 }

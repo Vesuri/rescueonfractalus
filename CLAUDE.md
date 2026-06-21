@@ -24,6 +24,43 @@ The boot→flight sequence has 7 canonical scenes (user-approved). Code ids are 
 The Amiga app's main class is `RescueOnFractalus` (flight is a continuation of it, not a
 separate scene). Atari entry is `game_entry $3CDE`; main blob `$3CDE–$B7FF`.
 
+## Scene composition reference (DL / screen modes / PMG / windscreen-frame elements)
+
+Hard-won base findings so we don't re-derive them. **Verify addresses against a live dump
+before trusting** (use `/atari-dl-analyzer` + headless `atari800`).
+
+**Launch cockpit DL (Standby / Doors / Tunnel / Planet share it) = `$3000`**, set *directly*
+in ANTIC `DLISTL/H`; the `$0230` shadow points at `$B832` (a stale blank text DL — don't walk
+it). Layout (DL-relative scanlines): y+20 **mode 6** top bar (Score `$32E3`, Compass `$32C9`);
+y+32 mode 4; y+40 mode D; y+42..127 **mode F** viewport (one LMS/scanline stepping `$1000+`,
+stride `$2E`) rendered under **GTIA mode 10** (`PRIOR=$94`, 9-colour — pixel value selects a
+COLPM*/COLPF* register, NOT normal 1bpp); y+128..135 **mode D `$350D`** windscreen-bottom band
+(4 rows × 2 = Amiga scanlines 172-179); y+136..215 **mode 4 `$332D`** dashboard.
+
+**Launch DLI chain** (`VDSLST=$6CAD`): dispatch on index `$C7` through word table **`$6DBB`** =
+`[$4A0C, $6CD7, $6CF1, $6D28, $6D42, $6D4F, $6D7C, $6D99]`; tail `$4A05` does `INC $C7`; `$4ACD`
+resets `$C7`. Key: `$6CD7` PMG colours `COLPM1/2/3=mem[$08D7/8/9]`+`PRIOR=$94`; `$6CF1`
+`COLBK=mem[$0071]`+`COLPF0/1/2=mem[$08D4/5/6]`; `$6D4F` `COLPF=$04/$06/$2C` grey; `$6D7C`
+`COLBK=$00`. (DLIs are reachable only via this indirect-jump table, so Ghidra never disassembles
+them → absent from `listing.txt`; seed each DLI addr as a Ghidra entry point to persist them.)
+
+**Windscreen-frame PMG (measured `launch_1_title`):**
+- **Pillars (window edges):** MISSILES — M0+M1 (right), M2+M3 (left), `SIZEM=$00`, **grey**
+  (`COLPF3=$06`, 5th-player). `HPOS` converges inward going down (perspective); `GRAFM` cycles
+  per region. (NOT players. Amiga `leftPost`/`rightPost` 16px sprites approximate these.)
+- **Corner-triangle wedge:** PLAYERS P0 (left `HPOS$2D`) / P1 (right `HPOS$BE`), **`SIZEP=$03`
+  quad (~32px)**, `GRAFP=$FF` at scanlines 136-143 only, **green** (`COLPM0/1=mem[$0071]`),
+  buffer `$0C88-$0C8F`/`$0D88-$0D8F`. The narrowing comes from the grey frame masking the block.
+
+**Windscreen-corner triangle per scene:**
+| Scene | Implementation |
+|---|---|
+| **Standby** | band mode-D corners = `COLBK` (DLI background, green) → Amiga **`color00`** band split (commit 7a8f1c6, correct). The green quad-player wedge is present/full below it. |
+| **Doors** | band green (`color00`); reveal hasn't started. |
+| **Tunnel** | the green wedge **recedes top-down** = the green→purple reveal. `FUN_6a27` (called from `$538D` in `scroll_event_dispatch $5367`) does `DEC $008C` (wedge height 8→0) + clears `$0C88+` one line/frame, **gated behind `$0088==0 && $0089==0 && $008B==0`** (ring tick paused). Native `scroll_event_dispatch_native` was missing this `$008C` branch; restored — recede now runs on the Amiga, rendered by `TunnelCopperList::setBandReveal`. |
+| **Flight (7)** | triangles are **bitmap value-2 (COLPF1)**, NOT PMG. |
+| **Planet/Stars (6)** | **TODO — not derived.** |
+
 ## Instrument vocabulary — "Valkyrie Fighter Control Panel" (use these names everywhere)
 
 The 19 cockpit instruments (game manual p.6), with their Amiga-screen position `x,y` and
