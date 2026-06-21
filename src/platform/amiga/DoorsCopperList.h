@@ -32,6 +32,7 @@ public:
     void setSpritePostColor(uint16_t c);                           // color17 (canopy posts)
     void setEnergyIndicatorColor(uint16_t c);                                // COLOR21 ($1AA) gauge bar
     void setCompassColor(uint16_t c);                              // color01 over the compass band
+    void setBandBgColor(uint16_t c);                               // cockpit color00 over the 8-row windscreen band (green ground = mem[$0071])
 
     // ---- terrain geometry (the sliding doors) ----
     // Pokes the whole 3-band terrain region for the current door-scroll progress g2

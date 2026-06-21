@@ -44,7 +44,13 @@ static const uint16_t kBPLCON0_3P   = (uint16_t)((3 << PLNCNTSHFT) | USE_BPLCON3
 #define INDEX_COCKPIT_BPLCON0 (INDEX_COCKPIT_BPL + 6)  // bplcon0 3P (1)
 #define INDEX_COCKPIT_MOD     (INDEX_COCKPIT_BPLCON0 + 1) // bpl1mod,bpl2mod (2)
 #define INDEX_COCKPIT_PAL     (INDEX_COCKPIT_MOD + 2)  // color00..07 (8)
-#define INDEX_TERMINATOR      (INDEX_COCKPIT_PAL + 8)  // copperWait(255,254)
+// Windscreen-bottom band: cockpit bitmap's top 8 scanlines (mode-D $350D frame) — value-0 L/R
+// corners take COLBK, which the Atari holds green ($C8 = mem[$0071]) through the band then
+// writes $00 below.  Same green->black COLBK split as StandbyCopperList (measured identical for
+// tunnel via the atari-dl-analyzer skill — COLBK=$C8 y128-136 -> $00 dashboard).
+#define INDEX_DASH_BG_WAIT    (INDEX_COCKPIT_PAL + 8)  // WAIT(kCockpitLine+8-1) (1)
+#define INDEX_DASH_BG         (INDEX_DASH_BG_WAIT + 1) // color00 = black (dashboard) (1)
+#define INDEX_TERMINATOR      (INDEX_DASH_BG + 1)      // copperWait(255,254)
 #define LIST_LENGTH           (INDEX_TERMINATOR + 1)
 
 TunnelCopperList::TunnelCopperList()
@@ -102,7 +108,7 @@ void TunnelCopperList::buildLayout(const Bitmap& title, const Bitmap& tunnel, co
     // Cockpit palette (constant immediates, as in StandbyCopperList):
     //   00=COLBK $00, 01=COLPF0 $04, 02=COLPF1 $06, 03=COLPF2 $2C salmon,
     //   04..06 mirror 00..02, 07=COLPF3 $26 red (bit-7 chars via plane3).
-    d[INDEX_COCKPIT_PAL + 0] = copperMove(color00, atariToOCS(0x00));
+    d[INDEX_COCKPIT_PAL + 0] = copperMove(color00, atariToOCS(0xC8));   // band bg seed; poked from mem[$0071]
     d[INDEX_COCKPIT_PAL + 1] = copperMove(color01, atariToOCS(0x04));
     d[INDEX_COCKPIT_PAL + 2] = copperMove(color02, atariToOCS(0x06));
     d[INDEX_COCKPIT_PAL + 3] = copperMove(color03, atariToOCS(0x2C));
@@ -110,6 +116,10 @@ void TunnelCopperList::buildLayout(const Bitmap& title, const Bitmap& tunnel, co
     d[INDEX_COCKPIT_PAL + 5] = copperMove(color05, atariToOCS(0x04));
     d[INDEX_COCKPIT_PAL + 6] = copperMove(color06, atariToOCS(0x06));
     d[INDEX_COCKPIT_PAL + 7] = copperMove(color07, atariToOCS(0x26));
+
+    // Below the 8-row band: COLBK back to black for the dashboard (the Atari DLI's COLBK=$00).
+    d[INDEX_DASH_BG_WAIT] = copperWait(kCockpitLine + 8 - 1, 0xE0);
+    d[INDEX_DASH_BG]      = copperMove(color00, atariToOCS(0x00));
 
     d[INDEX_TERMINATOR] = copperWait(255, 254);
 }
@@ -136,6 +146,11 @@ void TunnelCopperList::setEnergyIndicatorColor(uint16_t c)
 void TunnelCopperList::setCompassColor(uint16_t c)
 {
     data_[INDEX_COMPASS_COL] = copperMove(color01, c);
+}
+
+void TunnelCopperList::setBandBgColor(uint16_t c)
+{
+    data_[INDEX_COCKPIT_PAL + 0] = copperMove(color00, c);
 }
 
 void TunnelCopperList::setTunnelColors(uint16_t pen0, uint16_t pen1, uint16_t pen2, uint16_t pen3,

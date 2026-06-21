@@ -60,7 +60,13 @@ static const uint16_t kBPLCON0_3P   = (uint16_t)((3 << PLNCNTSHFT) | USE_BPLCON3
 #define INDEX_COCKPIT_BPLCON0 (INDEX_COCKPIT_BPL + 6)   // 1
 #define INDEX_COCKPIT_MOD     (INDEX_COCKPIT_BPLCON0 + 1) // 2
 #define INDEX_COCKPIT_PAL     (INDEX_COCKPIT_MOD + 2)   // color00..07 (8)
-#define INDEX_TERMINATOR      (INDEX_COCKPIT_PAL + 8)
+// Windscreen-bottom band: cockpit bitmap's top 8 scanlines (the mode-D $350D frame) — its
+// value-0 L/R corners take COLBK, which the Atari holds green ($C8 = mem[$0071]) through the
+// band then writes $00 below.  Same green→black COLBK split as StandbyCopperList (measured
+// identical for doors via the atari-dl-analyzer skill — COLBK=$C8 y128-136 → $00 dashboard).
+#define INDEX_DASH_BG_WAIT    (INDEX_COCKPIT_PAL + 8)   // WAIT(kCockpitLine+8-1) (1)
+#define INDEX_DASH_BG         (INDEX_DASH_BG_WAIT + 1)  // color00 = black (dashboard) (1)
+#define INDEX_TERMINATOR      (INDEX_DASH_BG + 1)
 #define LIST_LENGTH           (INDEX_TERMINATOR + 1)
 
 // Park line for a collapsed band's WAIT (mid terrain region, on its own H-blank).
@@ -125,7 +131,7 @@ void DoorsCopperList::buildLayout(const Bitmap& title, const Bitmap& cockpit,
     d[INDEX_COCKPIT_BPLCON0] = copperMove(bplcon0, kBPLCON0_3P);
     d[INDEX_COCKPIT_MOD]     = copperMove(bpl1mod, 80);
     d[INDEX_COCKPIT_MOD + 1] = copperMove(bpl2mod, 80);
-    d[INDEX_COCKPIT_PAL + 0] = copperMove(color00, atariToOCS(0x00));
+    d[INDEX_COCKPIT_PAL + 0] = copperMove(color00, atariToOCS(0xC8));   // band bg = green ground
     d[INDEX_COCKPIT_PAL + 1] = copperMove(color01, atariToOCS(0x04));
     d[INDEX_COCKPIT_PAL + 2] = copperMove(color02, atariToOCS(0x06));
     d[INDEX_COCKPIT_PAL + 3] = copperMove(color03, atariToOCS(0x2C));
@@ -133,6 +139,10 @@ void DoorsCopperList::buildLayout(const Bitmap& title, const Bitmap& cockpit,
     d[INDEX_COCKPIT_PAL + 5] = copperMove(color05, atariToOCS(0x04));
     d[INDEX_COCKPIT_PAL + 6] = copperMove(color06, atariToOCS(0x06));
     d[INDEX_COCKPIT_PAL + 7] = copperMove(color07, atariToOCS(0x26));
+
+    // Below the 8-row band: COLBK back to black for the dashboard (the Atari DLI's COLBK=$00).
+    d[INDEX_DASH_BG_WAIT] = copperWait(kCockpitLine + 8 - 1, 0xE0);
+    d[INDEX_DASH_BG]      = copperMove(color00, atariToOCS(0x00));
 
     d[INDEX_TERMINATOR] = copperWait(255, 254);
 }
@@ -149,6 +159,11 @@ void DoorsCopperList::setTitlePalette(uint16_t bg, uint16_t pf0, uint16_t pf1)
 void DoorsCopperList::setSpritePostColor(uint16_t c)
 {
     data_[INDEX_SPRITE_COL + 1] = copperMove(color17, c);
+}
+
+void DoorsCopperList::setBandBgColor(uint16_t c)
+{
+    data_[INDEX_COCKPIT_PAL + 0] = copperMove(color00, c);
 }
 
 void DoorsCopperList::setEnergyIndicatorColor(uint16_t c)

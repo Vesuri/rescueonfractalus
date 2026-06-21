@@ -31,6 +31,7 @@ public:
     void setSpritePostColor(uint16_t c);                           // color17 (canopy posts)
     void setEnergyIndicatorColor(uint16_t c);                                // COLOR21 ($1AA) gauge bar
     void setCompassColor(uint16_t c);                              // color01 over the compass band (COLPF0 $00CF)
+    void setBandBgColor(uint16_t c);                               // cockpit color00 over the 8-row windscreen band (green ground = mem[$0071])
     // Tunnel band colours: pen0 = black ($02C0), pens 1-3 = ring[3..5] ($08D7-$08D9),
     // pens 4-6 = ring[0..2] ($08D4-$08D6) — the GTIA mode-10 pixel→ring +3 rotation
     // the Atari tunnel DLI ($6CD7/$6CF1) applies.

@@ -911,6 +911,7 @@ void RescueOnFractalus::updateDoorsCopper(DoorsCopperList* dc)
     dc->setSpritePostColor(titleBg);
     dc->setEnergyIndicatorColor(energyCol);
     dc->setCompassColor(compassCol);
+    dc->setBandBgColor(atariToOCS(mem[0x0071]));                  // band corner bg (COLBK = mem[$0071])
 
     // Sliding-door geometry.  topBase = terrain row g2 (slides up); tunBase = tunnel row
     // (half - g2) (the reveal centred on the vanishing point); botBase = terrain row half.
@@ -951,6 +952,11 @@ void RescueOnFractalus::updateTunnelCopper(bool force)
     }
     if (force || energyCol != tnEnergyCol)   { tunnelCopper->setEnergyIndicatorColor(energyCol);   tnEnergyCol = energyCol; }
     if (force || compassCol != tnCompassCol) { tunnelCopper->setCompassColor(compassCol); tnCompassCol = compassCol; }
+    // Windscreen-band corner bg: the band DLI sets COLBK = mem[$0071] (the green ground,
+    // ramped by $65a8/$65ee).  Poke it per-frame so the corners track the live value rather
+    // than a baked constant (matches the Atari DLI $6CF6: LDA $71 / STA COLBK).
+    const uint16_t bandBg = atariToOCS(mem[0x0071]);
+    if (force || bandBg != tnBandBg) { tunnelCopper->setBandBgColor(bandBg); tnBandBg = bandBg; }
 
     const uint16_t pen0 = atariToOCS(mem[0x02C0]);               // tunnel pen0 = black
     uint16_t ring[6];

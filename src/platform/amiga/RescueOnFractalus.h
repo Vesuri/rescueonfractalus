@@ -142,6 +142,7 @@ private:
     // Last-poked colour values (tn* — poke-on-change for the single-buffered tunnel list).
     uint16_t tnTitleBg = 0xFFFF, tnTitlePf0 = 0xFFFF, tnEnergyCol = 0xFFFF, tnCompassCol = 0xFFFF;
     uint16_t tnPen0 = 0xFFFF, tnRing[6] = { 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF };
+    uint16_t tnBandBg = 0xFFFF;   // windscreen-band corner bg (COLBK = mem[$0071], green ground)
 
     Bitmap*     titleBitmap    = nullptr;
     Bitmap*     terrainBitmap  = nullptr;
