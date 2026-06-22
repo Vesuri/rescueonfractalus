@@ -45,7 +45,13 @@ static const uint16_t kColor30 = 0x1BC;   // pair 6/7 pen 10 (altimeter ship-hei
 // d[0] = copperWait(16,0) (CopperList ctor).  The line-doubling band is 85 rows ×
 // (WAIT + BPL1MOD + BPL2MOD) = 255 words (rows 1..kTerrainHeight-1).
 #define INDEX_PLAYFIELD       1                            // setPlayfield: 3
-#define INDEX_TITLE_PAL       (INDEX_PLAYFIELD + 3)        // 4:  color00..03 (4)
+// BPLCON2 sprite-vs-playfield priority.  The windscreen frame spans TWO sprite pairs:
+// 0/1 (left post+triangle) and 2/3 (right post+triangle).  The global init value (PFxP=1)
+// puts only sprites 0/1 in FRONT of the playfield, leaving 2-7 BEHIND — so the right frame
+// (pair 2/3) gets occluded by the band bitmap while the left doesn't.  Flight needs sprites
+// 0-3 in front, so set PFxP=2 here.  The HUD on 5/6/7 stays behind (as the gauge always was).
+#define INDEX_BPLCON2         (INDEX_PLAYFIELD + 3)        // 4: BPLCON2 PFxP=2 (1)
+#define INDEX_TITLE_PAL       (INDEX_BPLCON2 + 1)          // 5:  color00..03 (4)
 #define INDEX_TITLE_BPL       (INDEX_TITLE_PAL + 4)        // 8:  title 2bp ptrs (4)
 #define INDEX_SPRITE_COL      (INDEX_TITLE_BPL + 4)        // 12: color16,color17,COLOR21,COLOR18,COLOR22 (5)
 #define INDEX_SPRITES         (INDEX_SPRITE_COL + 5)       // 17: 8 sprite ptrs (16)
@@ -95,6 +101,9 @@ void FlightCopperList::buildLayout(const Bitmap& title, const Bitmap& terrain, c
     setPlayfield(INDEX_PLAYFIELD, kW, kH, kBP2, /*interleaved*/true,
                  /*hires*/false, /*interlace*/false, /*dualPlayfield*/false,
                  /*holdAndModify*/false, kCenterY);
+    // PFxP=2: sprites 0-3 in front of the playfield (both windscreen-frame pairs), so the
+    // right frame (pair 2/3) shows over the band bitmap like the left (pair 0/1) — not behind.
+    d[INDEX_BPLCON2] = copperMove(bplcon2, (uint16_t)((2u << 3) | 2u));
     setTitlePalette(0, 0, 0);                  // seeded; caller refreshes
     showBitmap(INDEX_TITLE_BPL, title);        // 2bp interleaved = 4 ptr moves
 
