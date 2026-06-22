@@ -346,13 +346,18 @@ SPINWAIT_HOOKS = {
     # the VBI fires (sets $0080 + RTCLOK); without it the loop is a frozen tight spin.
     0x1A18: 'platform_tick_vbi(); platform_render_frame();',
     0x3C75: 'platform_poll_events();',           # VCOUNT position wait
-    # RTCLOK frame wait (wait_frames_60 $3CB2): spin until RTCLOK_LOW($14)==target(A=$4C).
-    # FAITHFUL poll-then-advance: tick ONLY when the target isn't already met — matching the
-    # 6502 (CMP $14 at the loop top, RTCLOK advanced by the async VBI).  A blind tick-first
-    # hook overshoots a target of 0 (vobj_step_down's gauge-wrap row sets $4C=0): it ticks
-    # $14 0->1, misses 0, and waits a full 256-tick wrap (~5s) — the gauge "one pixel short"
-    # stall.  cpu.A holds the target throughout this spin (CMP doesn't change A).
-    0x3CB8: 'if (cpu.A != mem[0x0014]) { platform_tick_vbi(); platform_render_frame(); }',  # RTCLOK frame wait
+    # RTCLOK frame wait (wait_frames_60 $3CB2): "wait N frames" — STA $14=0 then spin until
+    # RTCLOK_LOW($14) reaches target (A=$4C).  The 6502 uses an EXACT equality (CMP $14 / BNE),
+    # safe on HW because the CPU polls $14 thousands of times/frame so it never skips a value.
+    # Our hook drives one Amiga frame per spin, but RTCLOK is advanced ASYNC by the $4FF5 flight
+    # ISR — a slow render spans several real VBIs, so $14 can jump by >1 across one iteration and
+    # step OVER an equality target, wrapping a full 256 ticks (~5s).  This was the run-by-run
+    # flight-transition stall (init_gameplay_state's 5 push_a_thunk waits, each $4C=$1E).  FIX:
+    # use elapsed>=target (`mem[$14] < cpu.A`) — robust to skips; worst case overshoots a few
+    # frames instead of wrapping.  Still correct for target 0 (vobj_step_down's gauge-wrap row):
+    # $14<0 is false so no tick, matching the HW 0-frame wait.  cpu.A holds the target (CMP/SBC
+    # don't change A); tick ONLY while short of it (poll-then-advance).
+    0x3CB8: 'if (mem[0x0014] < cpu.A) { platform_tick_vbi(); platform_render_frame(); }',  # RTCLOK frame wait
 
     # L_3eba: main flight loop in FUN_3d48 — one full frame of terrain gen,
     # collision, enemy + game-state update per iteration, loops until the

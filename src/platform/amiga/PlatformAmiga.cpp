@@ -525,6 +525,11 @@ extern "C" volatile unsigned char g_maxGap060B = 0, g_maxGap004A = 0;
 extern "C" volatile unsigned short g_rtDoubleCount = 0, g_rtDoubleAtVbi = 0;
 extern "C" volatile unsigned short g_rtZeroCount = 0, g_rtZeroAtVbi = 0;
 extern "C" volatile unsigned short g_rtTornCount = 0, g_rtLastTornVec = 0, g_rtTornAtVbi = 0;
+// RTCLOK SKIP probe: while $4FF5 is active, renderFrame does NOT advance RTCLOK — the ISR does,
+// once per REAL VBI.  If a single renderFrame spans >1 real VBI (slow render), RTCLOK jumps by
+// >1 across one equality-spin iteration ($3CB8 push_a_thunk), which can step OVER the target and
+// wrap 256 ticks.  Track the max single-iteration RTCLOK delta + how many iterations jumped >1.
+extern "C" volatile unsigned short g_rtJumpMax = 0, g_rtJumpGt1Count = 0, g_rtJumpAtVbi = 0;
 // VCOUNT busy-wait span probe (see pollEvents): longest run of frames a non-frame-pacing
 // spin (wait_vcount_eq etc.) holds without a renderFrame — a big value = the equality miss.
 extern "C" volatile unsigned short g_maxPollSpinFrames = 0, g_maxPollSpinAtVbi = 0, g_pollSpinStartVbi = 0;
@@ -586,6 +591,14 @@ void PlatformAmiga::renderFrame() {
     if (g_vbiCount > 360 && vbiVec != 0x52D7u && vbiVec != 0x4FF5u &&
         vbiVec != 0x1B30u && vbiVec != 0x53CCu) {               // torn / unexpected vector read
         g_rtTornCount++; g_rtLastTornVec = vbiVec; g_rtTornAtVbi = g_vbiCount; }
+    // SKIP detector: under $4FF5, renderFrame leaves RTCLOK to the ISR; measure how far it
+    // moved across THIS spin iteration.  A delta >1 means the equality wait at $3CB8 can step
+    // over its target and wrap 256 ticks (~5s) — the run-by-run variance.
+    if (vbiVec == 0x4FF5u && g_vbiCount > 360) {
+        uint8_t d = (uint8_t)(mem[0x0014] - rtBefore);
+        if (d > g_rtJumpMax) { g_rtJumpMax = d; g_rtJumpAtVbi = g_vbiCount; }
+        if (d > 1) g_rtJumpGt1Count++;
+    }
 #endif
     // RTCLOK ownership: the ATTRACT ($1B30) and full flight ($4FF5) VBIs advance RTCLOK
     // ($0014) in their own transpiled bodies, so skip here to avoid double-counting.  The

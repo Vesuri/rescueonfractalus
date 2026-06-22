@@ -23,5 +23,7 @@ echo --- flight-transition spin-wait diagnostics ---\n
 printf "maxPollSpin=%u frames (at vbi %u)  rtDouble=%u (at %u)  rtZero=%u (at %u)  torn=%u last=%04x\n", \
   g_maxPollSpinFrames, g_maxPollSpinAtVbi, g_rtDoubleCount, g_rtDoubleAtVbi, g_rtZeroCount, g_rtZeroAtVbi, \
   g_rtTornCount, g_rtLastTornVec
+echo --- RTCLOK skip ($4FF5 renderFrame delta; >1 enables equality-wait wrap) ---\n
+printf "rtJumpMax=%u rtJumpGt1Count=%u (at vbi %u)\n", g_rtJumpMax, g_rtJumpGt1Count, g_rtJumpAtVbi
 detach
 quit
