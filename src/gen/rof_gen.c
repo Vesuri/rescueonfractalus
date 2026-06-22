@@ -24638,7 +24638,7 @@ void wait_frames_60(void) {
     mem[0x0014] = cpu.A;
     /* 3cb6 */
     LDA(mem[0x004C]);
-L_3cb8:; if (mem[0x0014] < cpu.A) { platform_tick_vbi(); platform_render_frame(); }
+L_3cb8:; if (mem[0x0014] != cpu.A) { if ((uint8_t)(cpu.A - mem[0x0014]) < 0x80u) { platform_tick_vbi(); platform_render_frame(); } else cpu.A = mem[0x0014]; }
     /* 3cb8 */
     CMP(mem[0x0014]);
     /* 3cba */

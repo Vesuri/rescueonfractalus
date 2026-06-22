@@ -346,18 +346,22 @@ SPINWAIT_HOOKS = {
     # the VBI fires (sets $0080 + RTCLOK); without it the loop is a frozen tight spin.
     0x1A18: 'platform_tick_vbi(); platform_render_frame();',
     0x3C75: 'platform_poll_events();',           # VCOUNT position wait
-    # RTCLOK frame wait (wait_frames_60 $3CB2): "wait N frames" — STA $14=0 then spin until
-    # RTCLOK_LOW($14) reaches target (A=$4C).  The 6502 uses an EXACT equality (CMP $14 / BNE),
-    # safe on HW because the CPU polls $14 thousands of times/frame so it never skips a value.
-    # Our hook drives one Amiga frame per spin, but RTCLOK is advanced ASYNC by the $4FF5 flight
-    # ISR — a slow render spans several real VBIs, so $14 can jump by >1 across one iteration and
-    # step OVER an equality target, wrapping a full 256 ticks (~5s).  This was the run-by-run
-    # flight-transition stall (init_gameplay_state's 5 push_a_thunk waits, each $4C=$1E).  FIX:
-    # use elapsed>=target (`mem[$14] < cpu.A`) — robust to skips; worst case overshoots a few
-    # frames instead of wrapping.  Still correct for target 0 (vobj_step_down's gauge-wrap row):
-    # $14<0 is false so no tick, matching the HW 0-frame wait.  cpu.A holds the target (CMP/SBC
-    # don't change A); tick ONLY while short of it (poll-then-advance).
-    0x3CB8: 'if (mem[0x0014] < cpu.A) { platform_tick_vbi(); platform_render_frame(); }',  # RTCLOK frame wait
+    # RTCLOK frame wait (wait_frames_60 $3CB2): "wait N frames" -- STA $14=0 then spin until
+    # RTCLOK_LOW($14) reaches target (A=$4C).  The 6502 uses an EXACT-equality exit (CMP $14 /
+    # BNE), safe on HW because the CPU polls $14 thousands of times/frame so it never skips a
+    # value.  On the Amiga port RTCLOK is advanced ASYNC by the $4FF5 flight ISR, and each spin
+    # iteration drives one render that can span several real VBIs (~5 frames) -- so $14 jumps by
+    # >1 per iteration and can step OVER the target.  The emitted CMP/BNE then keeps spinning
+    # while the ISR drags $14 a full 256-tick lap back to the exact value: a ~256-frame (~5s)
+    # stall, hit or missed by pure render-timing alignment = the run-by-run flight-transition
+    # variance (init_gameplay_state's 5 push_a_thunk waits).  A SPINWAIT hook can't change the
+    # emitted CMP/BNE, so make the exit reached-or-passed by clobbering the THROWAWAY cpu.A
+    # (PLA'd at $3CBC, never reused) to equal $14 once target is met/passed -- forcing the next
+    # CMP to match.  RTCLOK ($14) itself is left untouched (monotonic; keeps the few-tick
+    # overshoot).  While still SHORT, tick one real frame (poll-then-advance).  "Short" = target
+    # is 1..127 ahead of $14 ((A-$14)&0xFF < 0x80); else $14 has reached/passed it (incl. target
+    # 0, vobj_step_down's gauge-wrap row: $14==0==A -> immediate match, 0-frame wait, as on HW).
+    0x3CB8: 'if (mem[0x0014] != cpu.A) { if ((uint8_t)(cpu.A - mem[0x0014]) < 0x80u) { platform_tick_vbi(); platform_render_frame(); } else cpu.A = mem[0x0014]; }',  # RTCLOK frame wait
 
     # L_3eba: main flight loop in FUN_3d48 — one full frame of terrain gen,
     # collision, enemy + game-state update per iteration, loops until the
