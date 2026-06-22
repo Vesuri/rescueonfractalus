@@ -3697,11 +3697,22 @@ void terrain_column_rasterize(void) {
        Safe because terrain_column_rasterize is validated from the REAL flight
        snapshot (test_from_snapshot), where the row tables are real -> _ad in-bitmap;
        the __t6502 oracle's bus_*() reduce to the same mem[] access for _ad<$D000. */
+    /* Band-row clip (Amiga): the windscreen-bottom frame occupies the bottom 4 mode-D
+     * viewport rows ($2090/$20F0/$2150/$21B0 = band rows 43-46), filled ONCE with the static
+     * $FF gray frame by fill_buffer2_region_ff ($45A1) and never cleared (clear_terrain_column
+     * stops at terrain row 42, $2030).  The Atari's terrain silhouette never reaches these
+     * rows (its column heights stay above them), so the band stays clean.  On the Amiga the
+     * fractal heights occasionally land a column at A=104-107 (= those rows via $28CA/$28FA),
+     * OR-plotting a stray value-2 pixel into the frame's value-0 triangle corner; since the
+     * band is never cleared, the pixels ACCUMULATE (the "terrain dots in the cockpit-top
+     * triangle" bug).  Skip any plot whose target address falls in the band rows — terrain
+     * belongs to rows 0-42 ($<2090).  Validation-safe: the Atari oracle never writes here, so
+     * on the equivalence snapshot this guard is a no-op (terrain plots all land $<2090). */
     #define PLOT()   do { mem[0x00B5]=Y; uint8_t _ai=A; \
         mem[0x0080]=mem[0x28CA+_ai]; mem[0x0081]=mem[0x28FA+_ai]; \
         uint8_t _bo=mem[0xBD00+X]; \
         uint16_t _ad=(uint16_t)(mem[0x0080]|(mem[0x0081]<<8))+_bo; \
-        mem[_ad]=(uint8_t)(mem[_ad]|mem[0xBC00+X]); \
+        if (!(_ad >= 0x2090u && _ad < 0x2210u)) mem[_ad]=(uint8_t)(mem[_ad]|mem[0xBC00+X]); \
         Y=mem[0x00B5]; } while(0)
 
     X = cpu.X; mem[0x0060] = X;                          /* b33d STX $60 */
