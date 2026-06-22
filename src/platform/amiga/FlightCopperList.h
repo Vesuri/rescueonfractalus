@@ -26,12 +26,14 @@ public:
     // (setHudSprite) as the flight VBI port maps the Atari players/missiles to sprites;
     // buildLayout seeds the canopy posts + throttle gauge and nulls the rest.
     void buildLayout(const Bitmap& title, const Bitmap& terrain, const Bitmap& cockpit,
-                     const Sprite& leftPost, const Sprite& rightPost, const Sprite& gauge,
+                     const Sprite& leftPost, const Sprite& leftTri,
+                     const Sprite& rightPost, const Sprite& rightTri,
                      const Sprite& nullSprite);
 
     // ---- per-frame setters (each pokes one MOVE, or one sprite pointer pair) ----
     void setTitlePalette(uint16_t bg, uint16_t pf0, uint16_t pf1);  // color00..03 (col0=col3=bg)
-    void setSpritePostColor(uint16_t c);                           // color17 (canopy posts)
+    void setSpritePostColor(uint16_t c);                           // color17 + COLOR21 (A-pillars, pen01)
+    void setTriangleColor(uint16_t c);                             // COLOR18 + COLOR22 (band triangles, pen10)
     void setEnergyIndicatorColor(uint16_t c);                                // COLOR21 ($1AA) energy-indicator bar
     void setAltimeterColor(uint16_t c);                            // COLOR25 ($1B2) altimeter terrain-height bar (P0)
     void setAltimeterShipColor(uint16_t c);                        // COLOR29 ($1BA) altimeter ship-height bar (M3)

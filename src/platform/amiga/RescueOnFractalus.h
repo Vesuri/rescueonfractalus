@@ -153,6 +153,19 @@ private:
     Sprite*     leftPost       = nullptr;
     Sprite*     rightPost      = nullptr;
     Sprite*     nullSprite     = nullptr;
+    // Flight (scene 7) windscreen-frame sprites: the A-pillar + the band-bottom
+    // windscreen-corner triangle, which on the Atari is a SEPARATE element from the
+    // Planet bitmap (players P0/P1, repositioned + double-width at the band DLI $4A40).
+    // Four sprites: each side's ~28px double-width triangle is two 16px Amiga sprites.
+    // flLeftPost/flRightPost carry the A-pillar (rows 86-171) AND the inner 16px of the
+    // triangle (band rows 172-179); flLeftTri/flRightTri carry the outer 16px (band only).
+    // Dedicated to flight so the shared leftPost/rightPost stay 86-row pillars for the
+    // other scenes (extending those would draw the flight wedge into Standby/Planet too).
+    Sprite*     flLeftPost     = nullptr;
+    Sprite*     flRightPost    = nullptr;
+    Sprite*     flLeftTri      = nullptr;
+    Sprite*     flRightTri     = nullptr;
+    void buildFlightFrameSprites();  // decode A-pillars ($4DFA/$4E09) + band wedges ($4DD2/$4DDA)
 
     // Dirty-flag bitmap caching: bitmaps are rendered once on initialize() and
     // only re-rendered when the underlying mem[] data changes.

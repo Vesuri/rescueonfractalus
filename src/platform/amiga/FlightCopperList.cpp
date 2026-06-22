@@ -28,10 +28,18 @@ static const uint16_t kCockpitLine  = kTerrainLine + kViewportHeight; // = 180 (
 static const uint16_t kCenterY      = kDisplayTop + kH / 2;           // = 0x98
 static const uint16_t kBPLCON0_3P   = (uint16_t)((3 << PLNCNTSHFT) | USE_BPLCON3);
 
-// Sprite colour-register addresses (custom-chip offsets), as in PlanetCopperList.
-static const uint16_t kColor21 = 0x1AA;   // sprite pair 2/3 pen 01 (energy-indicator bar)
-static const uint16_t kColor25 = 0x1B2;   // sprite pair 4/5 pen 01 (altimeter terrain-height bar, P0)
-static const uint16_t kColor29 = 0x1BA;   // sprite pair 6/7 pen 01 (altimeter ship-height bar, M3)
+// Sprite colour-register addresses (custom-chip offsets).  Flight sprite layout:
+//   pair 0/1 (ch0 leftPost, ch1 leftTriangle)   -> COLOR17 pen01 (windscreen-frame grey)
+//   pair 2/3 (ch2 rightPost, ch3 rightTriangle) -> COLOR21 pen01 (windscreen-frame grey)
+//   pair 4/5 (ch5 energy indicator)             -> COLOR25 pen01
+//   pair 6/7 (ch6 altimeter terrain / ch7 ship) -> COLOR29 pen01 / COLOR30 pen10 (two pens,
+//            two colours from one pair: terrain draws plane0, ship draws plane1)
+static const uint16_t kColor18 = 0x1A4;   // pair 0/1 pen 10 (left band TRIANGLE — darker grey, $00CF)
+static const uint16_t kColor21 = 0x1AA;   // pair 2/3 pen 01 (windscreen A-pillar grey, right post)
+static const uint16_t kColor22 = 0x1AC;   // pair 2/3 pen 10 (right band TRIANGLE — darker grey, $00CF)
+static const uint16_t kColor25 = 0x1B2;   // pair 4/5 pen 01 (energy-indicator bar)
+static const uint16_t kColor29 = 0x1BA;   // pair 6/7 pen 01 (altimeter terrain-height bar, P0)
+static const uint16_t kColor30 = 0x1BC;   // pair 6/7 pen 10 (altimeter ship-height bar, M3)
 
 // ---- fixed list layout (indices into data_, in 32-bit MOVE/WAIT words) -------
 // d[0] = copperWait(16,0) (CopperList ctor).  The line-doubling band is 85 rows ×
@@ -39,11 +47,11 @@ static const uint16_t kColor29 = 0x1BA;   // sprite pair 6/7 pen 01 (altimeter s
 #define INDEX_PLAYFIELD       1                            // setPlayfield: 3
 #define INDEX_TITLE_PAL       (INDEX_PLAYFIELD + 3)        // 4:  color00..03 (4)
 #define INDEX_TITLE_BPL       (INDEX_TITLE_PAL + 4)        // 8:  title 2bp ptrs (4)
-#define INDEX_SPRITE_COL      (INDEX_TITLE_BPL + 4)        // 12: color16,color17 (2)
-#define INDEX_SPRITES         (INDEX_SPRITE_COL + 2)       // 14: 8 sprite ptrs (16)
-#define INDEX_ENERGY_COL       (INDEX_SPRITES + 16)         // 30: COLOR21 (1)
-#define INDEX_ALTIM_COL       (INDEX_ENERGY_COL + 1)        // 31: COLOR25 (altimeter terrain-height bar P0) (1)
-#define INDEX_SHIP_COL        (INDEX_ALTIM_COL + 1)        // 32: COLOR29 (altimeter ship-height bar M3) (1)
+#define INDEX_SPRITE_COL      (INDEX_TITLE_BPL + 4)        // 12: color16,color17,COLOR21,COLOR18,COLOR22 (5)
+#define INDEX_SPRITES         (INDEX_SPRITE_COL + 5)       // 17: 8 sprite ptrs (16)
+#define INDEX_ENERGY_COL       (INDEX_SPRITES + 16)         // 31: COLOR25 (energy bar) (1)
+#define INDEX_ALTIM_COL       (INDEX_ENERGY_COL + 1)        // 32: COLOR29 (altimeter terrain-height bar P0) (1)
+#define INDEX_SHIP_COL        (INDEX_ALTIM_COL + 1)        // 33: COLOR30 (altimeter ship-height bar M3) (1)
 // Compass band: between the title text and the viewport, re-point color01 to the compass
 // COLPF0 ($00CF, dark grey) for the mode-4 compass line — the $49EE slot-0 DLI's colour.
 #define INDEX_COMPASS_WAIT    (INDEX_SHIP_COL + 1)         // 33: WAIT(compass scanline) (1)
@@ -77,7 +85,8 @@ FlightCopperList::FlightCopperList()
 }
 
 void FlightCopperList::buildLayout(const Bitmap& title, const Bitmap& terrain, const Bitmap& cockpit,
-                                   const Sprite& leftPost, const Sprite& rightPost, const Sprite& gauge,
+                                   const Sprite& leftPost, const Sprite& leftTri,
+                                   const Sprite& rightPost, const Sprite& rightTri,
                                    const Sprite& nullSprite)
 {
     uint32_t* d = data_;
@@ -89,22 +98,27 @@ void FlightCopperList::buildLayout(const Bitmap& title, const Bitmap& terrain, c
     setTitlePalette(0, 0, 0);                  // seeded; caller refreshes
     showBitmap(INDEX_TITLE_BPL, title);        // 2bp interleaved = 4 ptr moves
 
-    // Sprite colour regs + pointers.  COLOR16 const black, COLOR17 = canopy post (setter).
-    // Sprites: 0/1 = canopy posts, 2 = throttle gauge, 3..7 = null (HUD sprites are poked
-    // in later via setHudSprite as the flight VBI port maps the players/missiles).
+    // Sprite colour regs + pointers.  COLOR16 const black; COLOR17 (pair 0/1) + COLOR21
+    // (pair 2/3) = the windscreen-frame grey (setSpritePostColor sets both).  Sprites:
+    //   0 = leftPost (left A-pillar + inner-16px of the left band triangle)
+    //   1 = leftTriangle (outer-16px of the left band triangle)
+    //   2 = rightPost (right A-pillar + inner-16px of the right band triangle)
+    //   3 = rightTriangle (outer-16px of the right band triangle)
+    //   4 = null; 5 = energy bar; 6 = altimeter terrain; 7 = altimeter ship (poked later).
     d[INDEX_SPRITE_COL] = copperMove(color16, 0x000);
-    setSpritePostColor(0);
+    setSpritePostColor(0);                               // color17 + COLOR21 (A-pillars, pen01 grey)
+    setTriangleColor(0);                                 // COLOR18 + COLOR22 (band triangles, pen10 darker grey)
     showSprite(INDEX_SPRITES + 0,  0, leftPost);
-    showSprite(INDEX_SPRITES + 2,  1, rightPost);
-    showSprite(INDEX_SPRITES + 4,  2, gauge);
-    showSprite(INDEX_SPRITES + 6,  3, nullSprite);
+    showSprite(INDEX_SPRITES + 2,  1, leftTri);
+    showSprite(INDEX_SPRITES + 4,  2, rightPost);
+    showSprite(INDEX_SPRITES + 6,  3, rightTri);
     showSprite(INDEX_SPRITES + 8,  4, nullSprite);
     showSprite(INDEX_SPRITES + 10, 5, nullSprite);
     showSprite(INDEX_SPRITES + 12, 6, nullSprite);
     showSprite(INDEX_SPRITES + 14, 7, nullSprite);
-    setEnergyIndicatorColor(0);                          // COLOR21 (setter)
-    setAltimeterColor(0);                       // COLOR25 (setter) — altimeter terrain bar (sprite pair 4/5)
-    setAltimeterShipColor(0);                   // COLOR29 (setter) — altimeter ship bar M3 (sprite pair 6/7)
+    setEnergyIndicatorColor(0);                 // COLOR25 (setter) — energy bar (sprite pair 4/5)
+    setAltimeterColor(0);                       // COLOR29 (setter) — altimeter terrain bar (pair 6/7 pen01)
+    setAltimeterShipColor(0);                   // COLOR30 (setter) — altimeter ship bar (pair 6/7 pen10)
 
     // ---- compass band: re-point color01 to the compass COLPF0 for the mode-4 compass
     // line (title-bitmap row 33 = scanline kDisplayTop+33).  Title text above it keeps the
@@ -181,22 +195,34 @@ void FlightCopperList::setTitlePalette(uint16_t bg, uint16_t pf0, uint16_t pf1)
 
 void FlightCopperList::setSpritePostColor(uint16_t c)
 {
+    // The windscreen frame uses TWO sprite pairs (0/1 = left post+triangle, 2/3 = right),
+    // both the same grey, so set both pens: COLOR17 (pair 0/1) and COLOR21 (pair 2/3).
     data_[INDEX_SPRITE_COL + 1] = copperMove(color17, c);
+    data_[INDEX_SPRITE_COL + 2] = copperMove(kColor21, c);
+}
+
+// The band windscreen-corner TRIANGLES are drawn on the sprites' SECOND bitplane (pen 10),
+// so they take a separate, darker grey than the A-pillars (pen 01) — COLOR18 (pair 0/1) +
+// COLOR22 (pair 2/3).  Faithful source = the band DLI $4A40's COLPM0/1 = mem[$00CF] ($04).
+void FlightCopperList::setTriangleColor(uint16_t c)
+{
+    data_[INDEX_SPRITE_COL + 3] = copperMove(kColor18, c);
+    data_[INDEX_SPRITE_COL + 4] = copperMove(kColor22, c);
 }
 
 void FlightCopperList::setEnergyIndicatorColor(uint16_t c)
 {
-    data_[INDEX_ENERGY_COL] = copperMove(kColor21, c);
+    data_[INDEX_ENERGY_COL] = copperMove(kColor25, c);  // COLOR25 = sprite pair 4/5 pen 01
 }
 
 void FlightCopperList::setAltimeterColor(uint16_t c)
 {
-    data_[INDEX_ALTIM_COL] = copperMove(kColor25, c);   // COLOR25 = sprite pair 4/5 pen 01
+    data_[INDEX_ALTIM_COL] = copperMove(kColor29, c);   // COLOR29 = sprite pair 6/7 pen 01 (terrain bar)
 }
 
 void FlightCopperList::setAltimeterShipColor(uint16_t c)
 {
-    data_[INDEX_SHIP_COL] = copperMove(kColor29, c);    // COLOR29 = sprite pair 6/7 pen 01
+    data_[INDEX_SHIP_COL] = copperMove(kColor30, c);    // COLOR30 = sprite pair 6/7 pen 10 (ship bar)
 }
 
 void FlightCopperList::setCompassColor(uint16_t c)

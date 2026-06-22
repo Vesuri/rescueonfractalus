@@ -196,6 +196,56 @@ void RescueOnFractalus::buildPostSprites()
     decodePostRLE((const uint8_t*)&mem[0x4E09], rightPost->data() + 2);   // P1 right
 }
 
+// Expand one Atari band-wedge player byte to a 32px field at DOUBLE width (band players
+// are SIZEP=$01 -> each set bit = 4 Amiga lores px).  Player bit 7 = leftmost 4px (field
+// MSBs), bit 0 = rightmost.  The field spans the two 16px sprites of one side: bits 31..16
+// = the left sprite, bits 15..0 = the right sprite.
+static inline uint32_t expandWedge32(uint8_t byte)
+{
+    uint32_t f = 0;
+    for (int b = 0; b < 8; b++)
+        if (byte & (1u << b)) f |= (uint32_t)0xFu << (4 * b);
+    return f;
+}
+
+// buildFlightFrameSprites: the flight (scene 7) windscreen frame = A-pillars + the
+// band-bottom windscreen-corner triangles.  On the Atari the band triangle is PMG
+// (players P0/P1, repositioned to HPOSP0=$30/HPOSP1=$C0 and double-width by the band
+// DLI $4A40) — a separate element from the Planet bitmap frame.  A-pillars (sprite rows
+// 0-85) come from the RLE tables $4DFA/$4E09 (as the shared posts); the triangle's 8 band
+// scanlines come from the static source rows $4DD2 (left) / $4DDA (right): 8 player bytes
+// each, gray right-justified for the left wedge ($01,$07,$1f,$7f -> 4/12/20/28px down) and
+// left-justified for the right ($80,$e0,$f8,$fe).  Double-width => ~28px max => two 16px
+// sprites per side: the post sprite carries the inner 16px (toward screen centre), the
+// triangle sprite the outer 16px.  Static frame, built once.
+void RescueOnFractalus::buildFlightFrameSprites()
+{
+    // A-pillars into the post sprites (rows 0-85); band rows 86-93 left zero by allocate.
+    decodePostRLE((const uint8_t*)&mem[0x4DFA], flLeftPost->data()  + 2);
+    decodePostRLE((const uint8_t*)&mem[0x4E09], flRightPost->data() + 2);
+
+    uint16_t* lp = flLeftPost->data()  + 2;   // ch0: left wedge inner 16px, band rows 86..93
+    uint16_t* lt = flLeftTri->data()   + 2;   // ch1: left wedge outer 16px, rows 0..7
+    uint16_t* rp = flRightPost->data() + 2;   // ch2: right wedge inner 16px, band rows 86..93
+    uint16_t* rt = flRightTri->data()  + 2;   // ch3: right wedge outer 16px, rows 0..7
+    for (int i = 0; i < 8; i++) {             // 8 band scanlines (172-179)
+        // 32px field per side (two 16px sprites).  Measured vs the Atari, both triangles sat
+        // 2px too far toward screen-centre, so nudge each 2px OUTWARD in the data (sprites
+        // stay put — flLeftPost/flRightPost also carry the correctly-placed A-pillar, so their
+        // X can't move): left field shifts left (<<2), right field shifts right (>>2).
+        const uint32_t Lf = expandWedge32(mem[0x4DD2 + i]) << 2;   // left  wedge, 2px left
+        const uint32_t Rf = expandWedge32(mem[0x4DDA + i]) >> 2;   // right wedge, 2px right
+        const int lr = (int)kTerrainHeight + i;   // post-sprite band row = 86 + i
+        // Triangles go on the sprites' SECOND bitplane (pen 10) -> darker grey COLOR18/COLOR22,
+        // distinct from the A-pillars on plane 0 (pen 01).  Plane 0 stays 0 in the band rows.
+        // Field layout: bits 31..16 = the side's LEFT sprite, bits 15..0 = the RIGHT sprite.
+        lt[i  * 2] = 0; lt[i  * 2 + 1] = (uint16_t)(Lf >> 16);     // left  outer (left sprite, 0x82)
+        lp[lr * 2] = 0; lp[lr * 2 + 1] = (uint16_t)(Lf & 0xFFFF);  // left  inner (right sprite, 0x92)
+        rp[lr * 2] = 0; rp[lr * 2 + 1] = (uint16_t)(Rf >> 16);     // right inner (left sprite, 0x19E)
+        rt[i  * 2] = 0; rt[i  * 2 + 1] = (uint16_t)(Rf & 0xFFFF);  // right outer (right sprite, 0x1AE)
+    }
+}
+
 // ---- throttle gauge sprite ---------------------------------------------------
 // Build the player-1 throttle bar from the vobj strip mem[$0D98..].  Each strip
 // byte is one Atari player scanline ($F0 = leftmost 4px on); we map a filled row
@@ -239,10 +289,13 @@ void RescueOnFractalus::buildAltimeterSprite()
 // 6-7 to ignore the other missiles (M0-M2, e.g. the wing-clearance bars) sharing $0B00.
 void RescueOnFractalus::buildAltimeterShipSprite()
 {
+    // Draw into the SECOND bitplane (pen 10) so this unattached sprite uses COLOR30, while
+    // the altimeter terrain bar (sprite 6, same pair 6/7) uses plane 0 / pen 01 / COLOR29 —
+    // two distinct colours from one pair without attaching (planes don't interact).
     uint16_t* d = altimeterShipSprite->data() + 2;   // skip the 2 control words
     for (int i = 0; i < kAltimRows; i++) {
-        d[i * 2]     = (mem[0x0B98 + i] & 0xC0u) ? 0xFFFFu : 0x0000u;   // M3 = bits 6-7
-        d[i * 2 + 1] = 0x0000;
+        d[i * 2]     = 0x0000;                                         // plane 0 (unused here)
+        d[i * 2 + 1] = (mem[0x0B98 + i] & 0xC0u) ? 0xFFFFu : 0x0000u;  // plane 1 (pen 10) — M3 bits 6-7
     }
 }
 
@@ -301,8 +354,14 @@ void RescueOnFractalus::initialize()
     energyIndicatorSprite = Sprite::allocate(57);    // throttle bar: 57 vobj-strip rows ($0D98..$0DD0)
     altimeterSprite = Sprite::allocate(kAltimRows);   // P0 $0C98 terrain-height bar (flight)
     altimeterShipSprite = Sprite::allocate(kAltimRows);   // M3 $0B98 ship-height bar (flight)
+    // Flight windscreen frame: posts span the A-pillar (86 rows) + the 8 band scanlines
+    // (= kHT+8 = 94); the triangle outer-half sprites cover only the 8 band scanlines.
+    flLeftPost  = Sprite::allocate(kHT + 8);
+    flRightPost = Sprite::allocate(kHT + 8);
+    flLeftTri   = Sprite::allocate(8);
+    flRightTri  = Sprite::allocate(8);
     if (!leftPost || !rightPost || !nullSprite || !energyIndicatorSprite || !altimeterSprite
-        || !altimeterShipSprite) return;
+        || !altimeterShipSprite || !flLeftPost || !flRightPost || !flLeftTri || !flRightTri) return;
     // Starfield sprites (P0/P2/P3): 89-row strips, all at the windscreen top
     // (player scanline $32 → Amiga Y = kTerrainLine, the +36 offset that maps the
     // gauge strip $0D98/scanline $98 to Amiga Y 0x2c+144).
@@ -337,6 +396,17 @@ void RescueOnFractalus::initialize()
     leftPost->setY(kTerrainLine);
     rightPost->setX(kSprXRight);
     rightPost->setY(kTerrainLine);
+
+    // Flight windscreen-frame sprites (built once in buildFlightFrameSprites).  Posts span
+    // the A-pillar + band (Y = kTerrainLine, 94 rows); the triangle outer-halves cover only
+    // the 8 band scanlines (Y = band line = kTerrainLine + kTerrainHeight = 172).  X: each
+    // side is two 16px sprites — post at the pillar X, triangle 16px outward (band players
+    // sit HPOSP0=$30/HPOSP1=$C0, ~9 colour-clocks wider than the pillar's $39/$BF).
+    const uint16_t kBandSprY = kTerrainLine + kTerrainHeight;   // 172
+    flLeftPost->setX(kSprXLeft);        flLeftPost->setY(kTerrainLine);   // 0x92, inner (toward centre)
+    flLeftTri->setX(kSprXLeft - 16);    flLeftTri->setY(kBandSprY);       // 0x82, outer (toward edge)
+    flRightPost->setX(kSprXRight);      flRightPost->setY(kTerrainLine);  // 0x19E, inner (toward centre)
+    flRightTri->setX(kSprXRight + 16);  flRightTri->setY(kBandSprY);      // 0x1AE, outer (toward edge)
 
     // One-time playfield setup: the constant display registers (FMODE, BPLCON3/2/1,
     // DIWSTRT/STOP/HIGH, DDFSTRT/STOP) never change, so set them ONCE here via the CPU
@@ -384,7 +454,7 @@ void RescueOnFractalus::initialize()
     flightCopper = new FlightCopperList();
     if (flightCopper && flightCopper->data())
         flightCopper->buildLayout(*titleBitmap, *terrainBitmap, *cockpitBitmap,
-                                  *leftPost, *rightPost, *energyIndicatorSprite, *nullSprite);
+                                  *flLeftPost, *flLeftTri, *flRightPost, *flRightTri, *nullSprite);
 
     // Launch-cinematic fixed copper lists (scene 4 doors / scene 5 tunnel), same
     // build-once scheme; renderFrame installs them during the launch cinematic.  Doors
@@ -848,9 +918,13 @@ void RescueOnFractalus::updateFlightCopper(bool force)
     // ($00D9 — which I'd used for the ship — color-cycles for the enemy/lock-on flash, not
     // the altimeter.)
     if (force) {
-        flightCopper->setHudSprite(4, *altimeterSprite);
+        // HUD sprite channels (the frame sprites 0-3 are seeded in buildLayout):
+        //   5 = energy bar (COLOR25), 6 = altimeter terrain (COLOR29 pen01),
+        //   7 = altimeter ship (COLOR30 pen10).
+        flightCopper->setHudSprite(5, *energyIndicatorSprite);
+        flightCopper->setHudSprite(6, *altimeterSprite);
         flightCopper->setAltimeterColor(atariToOCS(mem[0x00D5]));
-        flightCopper->setHudSprite(6, *altimeterShipSprite);
+        flightCopper->setHudSprite(7, *altimeterShipSprite);
         flightCopper->setAltimeterShipColor(atariToOCS(mem[0x00D6]));
     }
     // (The wing-clearance centre plane symbol is part of the mode-D band bitmap — the value-2
@@ -862,6 +936,9 @@ void RescueOnFractalus::updateFlightCopper(bool force)
     const uint16_t compassCol = atariToOCS(mem[0x00CF]);
     if (force || compassCol != flCompassCol) {
         flightCopper->setCompassColor(compassCol);
+        // The band windscreen-corner triangles (sprite pen 10) take the same $00CF dark grey
+        // the band DLI $4A40 gives the wedge players (COLPM0/1) — COLOR18 + COLOR22.
+        flightCopper->setTriangleColor(compassCol);
         flCompassCol = compassCol;
     }
     // Compass needle / heading letters (value-3 = COLPF2) are salmon ($2A); set once.
@@ -1087,7 +1164,7 @@ void RescueOnFractalus::perFrameWork()
     // Canopy posts: constant graphic, decoded once from the real RLE source tables — shown
     // in every screen (independent of the live $0C32/$0D32 buffers, which only hold the
     // frame at gameplay init and are the starfield otherwise).
-    if (!postsBuilt) { buildPostSprites(); postsBuilt = true; }
+    if (!postsBuilt) { buildPostSprites(); buildFlightFrameSprites(); postsBuilt = true; }
     // Starfield players $0C32/$0E32/$0F32: scrolled+seeded during stars, static
     // through the planet zoom, so map them both phases.
     if (rsStars) buildStarSprites();
@@ -1385,5 +1462,9 @@ void RescueOnFractalus::shutdown()
     delete energyIndicatorSprite;   energyIndicatorSprite   = nullptr;
     delete altimeterSprite; altimeterSprite = nullptr;
     delete altimeterShipSprite; altimeterShipSprite = nullptr;
+    delete flLeftPost;  flLeftPost  = nullptr;
+    delete flRightPost; flRightPost = nullptr;
+    delete flLeftTri;   flLeftTri   = nullptr;
+    delete flRightTri;  flRightTri  = nullptr;
     for (int c = 0; c < 3; c++) { delete starSprite[c]; starSprite[c] = nullptr; }
 }
