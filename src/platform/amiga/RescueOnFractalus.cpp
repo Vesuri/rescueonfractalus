@@ -243,6 +243,18 @@ void RescueOnFractalus::buildFlightFrameSprites()
         lp[lr * 2] = 0; lp[lr * 2 + 1] = (uint16_t)(Lf & 0xFFFF);  // left  inner (right sprite, 0x92)
         rp[lr * 2] = 0; rp[lr * 2 + 1] = (uint16_t)(Rf >> 16);     // right inner (left sprite, 0x19E)
         rt[i  * 2] = 0; rt[i  * 2 + 1] = (uint16_t)(Rf & 0xFFFF);  // right outer (right sprite, 0x1AE)
+
+        // Missiles M0 (left) / M1 (right) — the SECOND dark element of the band triangle,
+        // measured live in atari800: on scanlines L138-143 (band rows i>=2) GRAFM=$06 turns on
+        // M0 @ HPOSM0=$40 (just inside P0's right edge cc63) and M1 @ HPOSM1=$BE (just inside
+        // P1), both taking COLPM0/1=$04 (dark) because PRIOR drops to $02 there.  They extend
+        // each corner's dark inner edge by one colour clock (~2 Amiga px).  Fold into the inner
+        // post sprites (same $04 pen10), at the 2px the <<2/>>2 nudge vacated next to the player:
+        // left = rightmost 2px (toward centre), right = leftmost 2px (toward centre).
+        if (i >= 2) {
+            lp[lr * 2 + 1] |= 0x0003;   // M0: +2px on the left triangle's inner (right) edge
+            rp[lr * 2 + 1] |= 0xC000;   // M1: +2px on the right triangle's inner (left) edge
+        }
     }
 }
 
