@@ -519,6 +519,16 @@ extern "C" volatile unsigned short g_probeFlightVbi = 0;  // g_vbiCount at fligh
 // renderFrame() no-yield-gap probe:
 extern "C" volatile unsigned short g_maxRenderGap = 0, g_maxGapAtVbi = 0, g_maxGapVvblki = 0;
 extern "C" volatile unsigned char g_maxGap060B = 0, g_maxGap004A = 0;
+// RTCLOK ownership-race probe: catch frames where RTCLOK ($0014) is advanced by BOTH the VBI
+// body AND renderFrame (double-count -> equality spin-waits overshoot -> ~256-frame wrap), and
+// frames where renderFrame read a "torn"/unexpected VVBLKI vector during the $52D7<->$4FF5 swap.
+extern "C" volatile unsigned short g_rtDoubleCount = 0, g_rtDoubleAtVbi = 0;
+extern "C" volatile unsigned short g_rtZeroCount = 0, g_rtZeroAtVbi = 0;
+extern "C" volatile unsigned short g_rtTornCount = 0, g_rtLastTornVec = 0, g_rtTornAtVbi = 0;
+// VCOUNT busy-wait span probe (see pollEvents): longest run of frames a non-frame-pacing
+// spin (wait_vcount_eq etc.) holds without a renderFrame — a big value = the equality miss.
+extern "C" volatile unsigned short g_maxPollSpinFrames = 0, g_maxPollSpinAtVbi = 0, g_pollSpinStartVbi = 0;
+static bool g_pollAfterRender = false;
 // game_main_loop per-iteration + flight phase split (written by rof_native.c FP_* macros):
 extern "C" volatile unsigned long g_iterMax = 0, g_iterLast = 0, g_iterPostDs = 0;
 extern "C" volatile unsigned short g_iterCount = 0, g_iterMaxAt = 0;
@@ -559,9 +569,24 @@ void PlatformAmiga::renderFrame() {
     }
 #endif
     uint16_t last = g_vbiCount;
+#ifdef ROF_FLIGHT_PROBE
+    uint8_t rtBefore = mem[0x0014];
+#endif
     if (s_scene) s_scene->renderFrame();
     while (g_vbiCount == last) { /* wait for next real VBI */ }
     uint16_t vbiVec = (uint16_t)(mem[0x0222] | (mem[0x0223] << 8));
+#ifdef ROF_FLIGHT_PROBE
+    // Did a VBI body advance RTCLOK during the wait?  (flight/attract bodies do; $52D7 doesn't)
+    bool vbiAdvanced  = (mem[0x0014] != rtBefore);
+    bool rfWillAdvance = (vbiVec != 0x1B30u && vbiVec != 0x4FF5u);
+    if (vbiAdvanced && rfWillAdvance && g_vbiCount > 360) {     // DOUBLE: overshoots equality waits
+        g_rtDoubleCount++; g_rtDoubleAtVbi = g_vbiCount; }
+    if (!vbiAdvanced && !rfWillAdvance && g_vbiCount > 360) {   // ZERO: nobody advanced RTCLOK
+        g_rtZeroCount++; g_rtZeroAtVbi = g_vbiCount; }
+    if (g_vbiCount > 360 && vbiVec != 0x52D7u && vbiVec != 0x4FF5u &&
+        vbiVec != 0x1B30u && vbiVec != 0x53CCu) {               // torn / unexpected vector read
+        g_rtTornCount++; g_rtLastTornVec = vbiVec; g_rtTornAtVbi = g_vbiCount; }
+#endif
     // RTCLOK ownership: the ATTRACT ($1B30) and full flight ($4FF5) VBIs advance RTCLOK
     // ($0014) in their own transpiled bodies, so skip here to avoid double-counting.  The
     // standby/cinematic ($52D7) body does not, so renderFrame owns it there.
@@ -571,11 +596,22 @@ void PlatformAmiga::renderFrame() {
     }
     if (AmigaHardware::isLeftMouseButtonPressed()) g_pumpQuit = 1;
     if (g_pumpQuit) __builtin_longjmp(g_quitJmp, 1);
+#ifdef ROF_FLIGHT_PROBE
+    g_pollAfterRender = true;   // next pollEvents starts a fresh VCOUNT-spin span measurement
+#endif
 }
 
 // pollEvents: called from the non-frame spin-wait hooks (VCOUNT/CONSOL polls that don't
 // pace a frame).  Poll the quit control so the player can always abort.
 void PlatformAmiga::pollEvents() {
+#ifdef ROF_FLIGHT_PROBE
+    // VCOUNT/CONSOL busy-waits (wait_vcount_eq $3C75 etc.) spin here without pacing a frame.
+    // Track how many REAL VBI frames a single such spin spans: an equality VCOUNT wait that
+    // misses its exact target keeps spinning across frames (the "expected 1, got ~255" bug).
+    if (g_pollAfterRender) { g_pollSpinStartVbi = g_vbiCount; g_pollAfterRender = false; }
+    uint16_t span = (uint16_t)(g_vbiCount - g_pollSpinStartVbi);
+    if (span > g_maxPollSpinFrames && g_vbiCount > 360) { g_maxPollSpinFrames = span; g_maxPollSpinAtVbi = g_vbiCount; }
+#endif
     if (AmigaHardware::isLeftMouseButtonPressed()) g_pumpQuit = 1;
     if (g_pumpQuit) __builtin_longjmp(g_quitJmp, 1);
 }

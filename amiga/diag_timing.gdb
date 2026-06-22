@@ -19,5 +19,9 @@ printf "maxGap=%u atVbi=%u vvblki=%04x 060B=%02x 004A=%02x\n", \
   g_maxRenderGap, g_maxGapAtVbi, g_maxGapVvblki, g_maxGap060B, g_maxGap004A
 echo --- atmosphere terrain-pen range (salmon->brown fade) ---\n
 printf "dc=%u..%u dd=%u..%u\n", g_dcMin, g_dcMax, g_ddMin, g_ddMax
+echo --- flight-transition spin-wait diagnostics ---\n
+printf "maxPollSpin=%u frames (at vbi %u)  rtDouble=%u (at %u)  rtZero=%u (at %u)  torn=%u last=%04x\n", \
+  g_maxPollSpinFrames, g_maxPollSpinAtVbi, g_rtDoubleCount, g_rtDoubleAtVbi, g_rtZeroCount, g_rtZeroAtVbi, \
+  g_rtTornCount, g_rtLastTornVec
 detach
 quit
