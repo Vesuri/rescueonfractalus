@@ -65,8 +65,14 @@ static const uint16_t kBPLCON0_3P   = (uint16_t)((3 << PLNCNTSHFT) | USE_BPLCON3
 // band then writes $00 below.  Same green→black COLBK split as StandbyCopperList (measured
 // identical for doors via the atari-dl-analyzer skill — COLBK=$C8 y128-136 → $00 dashboard).
 #define INDEX_DASH_BG_WAIT    (INDEX_COCKPIT_PAL + 8)   // WAIT(kCockpitLine+8-1) (1)
-#define INDEX_DASH_BG         (INDEX_DASH_BG_WAIT + 1)  // color00 = black (dashboard) (1)
-#define INDEX_TERMINATOR      (INDEX_DASH_BG + 1)
+#define INDEX_DASH_BG         (INDEX_DASH_BG_WAIT + 1)  // color00 = black (divider strip 180-188) (1)
+// Dashboard instrument backgrounds are dark blue COLBK $90 (Amiga 182-251), floor black below
+// (252+).  Measured identical to Standby; only COLBK changes so we poke only color00.
+#define INDEX_DASH_BLUE_WAIT  (INDEX_DASH_BG + 1)       // WAIT(kCockpitLine+10-1 = 181) (1)
+#define INDEX_DASH_BLUE       (INDEX_DASH_BLUE_WAIT + 1) // color00 = $90 dark blue (dashboard) (1)
+#define INDEX_FLOOR_WAIT      (INDEX_DASH_BLUE + 1)      // WAIT(kCockpitLine+80-1 = 251) (1)
+#define INDEX_FLOOR           (INDEX_FLOOR_WAIT + 1)     // color00 = black (floor) (1)
+#define INDEX_TERMINATOR      (INDEX_FLOOR + 1)
 #define LIST_LENGTH           (INDEX_TERMINATOR + 1)
 
 // Park line for a collapsed band's WAIT (mid terrain region, on its own H-blank).
@@ -140,9 +146,14 @@ void DoorsCopperList::buildLayout(const Bitmap& title, const Bitmap& cockpit,
     d[INDEX_COCKPIT_PAL + 6] = copperMove(color06, atariToOCS(0x06));
     d[INDEX_COCKPIT_PAL + 7] = copperMove(color07, atariToOCS(0x26));
 
-    // Below the 8-row band: COLBK back to black for the dashboard (the Atari DLI's COLBK=$00).
+    // Below the 8-row band: black divider strip (Amiga 180-188), dark-blue $90 dashboard
+    // instrument backgrounds (182-251), then black floor (252+).  Only COLBK (color00) changes.
     d[INDEX_DASH_BG_WAIT] = copperWait(kCockpitLine + 8 - 1, 0xE0);
     d[INDEX_DASH_BG]      = copperMove(color00, atariToOCS(0x00));
+    d[INDEX_DASH_BLUE_WAIT] = copperWait(kCockpitLine + 10 - 1, 0xE0);
+    d[INDEX_DASH_BLUE]      = copperMove(color00, atariToOCS(0x90));
+    d[INDEX_FLOOR_WAIT] = copperWait(kCockpitLine + 80 - 1, 0xE0);
+    d[INDEX_FLOOR]      = copperMove(color00, atariToOCS(0x00));
 
     d[INDEX_TERMINATOR] = copperWait(255, 254);
 }

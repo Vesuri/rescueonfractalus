@@ -45,16 +45,23 @@ static const uint16_t kBPLCON0_3P   = (uint16_t)((3 << PLNCNTSHFT) | USE_BPLCON3
 #define INDEX_COCKPIT_BPLCON0 (INDEX_COCKPIT_BPL + 6)  // 61: bplcon0 3P (1)
 #define INDEX_COCKPIT_MOD     (INDEX_COCKPIT_BPLCON0 + 1) // 62: bpl1mod,bpl2mod (2)
 #define INDEX_COCKPIT_PAL     (INDEX_COCKPIT_MOD + 2)  // 64: color00..07 (8)
-// Windscreen-bottom band: the cockpit bitmap's top 8 scanlines (kCockpitLine..+7) are the
-// mode-D $350D frame, whose value-0 L/R triangle corners take COLBK.  On the Atari a DLI
-// holds COLBK = $C8 (green ground, = mem[$0071]) through the band, then writes COLBK=$00 at
-// the band's bottom so the dashboard below is black.  We mirror that split: color00 = green
-// is baked into the cockpit palette (applies from kCockpitLine), and a WAIT at kCockpitLine+8
-// pokes color00 back to black for the dashboard.
-#define INDEX_DASH_BG_WAIT    (INDEX_COCKPIT_PAL + 8)  // 72: WAIT(kCockpitLine+8-1) (1)
-#define INDEX_DASH_BG         (INDEX_DASH_BG_WAIT + 1) // 73: color00 = black (dashboard) (1)
-#define INDEX_TERMINATOR      (INDEX_DASH_BG + 1)      // 74: copperWait(255,254)
-#define LIST_LENGTH           (INDEX_TERMINATOR + 1)   // 75
+// Windscreen-bottom band + cockpit COLBK splits (measured live on launch_1_title; absolute
+// atari scanlines map to Amiga copper lines with offset +43, i.e. atari 129 = kCockpitLine):
+//   atari 129-136 green $C8  -> Amiga 172-179  windscreen band (value-0 corners; per-frame)
+//   atari 137-145 black $00  -> Amiga 180-188  divider strip below the band
+//   atari 146-208 blue  $90  -> Amiga 182-251  DASHBOARD instrument backgrounds (was wrong: black)
+//   atari 209+    black $00  -> Amiga 252+      cockpit floor (bottom 8 rows)
+// On the Atari these are DLI COLBK writes ($6CF6=$C8 band, $6D86=$00, $6DB5=$90, $6D86=$00 floor);
+// only COLBK changes, so we poke only color00.  Band green is per-frame (ramps with the doors);
+// the strip-black/dash-blue/floor-black are hard immediates -> baked here.
+#define INDEX_DASH_BG_WAIT    (INDEX_COCKPIT_PAL + 8)  // 72: WAIT(kCockpitLine+8-1)  (divider strip)
+#define INDEX_DASH_BG         (INDEX_DASH_BG_WAIT + 1) // 73: color00 = black (strip 180-188)
+#define INDEX_DASH_BLUE_WAIT  (INDEX_DASH_BG + 1)      // 74: WAIT(kCockpitLine+10-1 = 181)
+#define INDEX_DASH_BLUE       (INDEX_DASH_BLUE_WAIT + 1) // 75: color00 = $90 dark blue (dashboard)
+#define INDEX_FLOOR_WAIT      (INDEX_DASH_BLUE + 1)     // 76: WAIT(kCockpitLine+80-1 = 251)
+#define INDEX_FLOOR           (INDEX_FLOOR_WAIT + 1)    // 77: color00 = black (floor)
+#define INDEX_TERMINATOR      (INDEX_FLOOR + 1)         // 78: copperWait(255,254)
+#define LIST_LENGTH           (INDEX_TERMINATOR + 1)    // 79
 
 StandbyCopperList::StandbyCopperList()
     : CopperList((uint32_t*)AllocMem(LIST_LENGTH << 2, MEMF_CHIP | MEMF_CLEAR), LIST_LENGTH, true)
@@ -125,9 +132,15 @@ void StandbyCopperList::buildLayout(const Bitmap& title, const Bitmap& terrain, 
     d[INDEX_COCKPIT_PAL + 6] = copperMove(color06, atariToOCS(0x06));
     d[INDEX_COCKPIT_PAL + 7] = copperMove(color07, atariToOCS(0x26));
 
-    // Below the 8-row band: COLBK back to black for the dashboard (the Atari DLI's COLBK=$00).
+    // Below the 8-row band: a black divider strip (Amiga 180-188 = atari 137-145).
     d[INDEX_DASH_BG_WAIT] = copperWait(kCockpitLine + 8 - 1, 0xE0);
     d[INDEX_DASH_BG]      = copperMove(color00, atariToOCS(0x00));
+    // Dashboard instrument backgrounds: dark blue COLBK $90 (Amiga 182-251).
+    d[INDEX_DASH_BLUE_WAIT] = copperWait(kCockpitLine + 10 - 1, 0xE0);
+    d[INDEX_DASH_BLUE]      = copperMove(color00, atariToOCS(0x90));
+    // Cockpit floor: COLBK back to black for the bottom 8 rows (Amiga 252+ = atari 209+).
+    d[INDEX_FLOOR_WAIT] = copperWait(kCockpitLine + 80 - 1, 0xE0);
+    d[INDEX_FLOOR]      = copperMove(color00, atariToOCS(0x00));
 
     d[INDEX_TERMINATOR] = copperWait(255, 254);
 }

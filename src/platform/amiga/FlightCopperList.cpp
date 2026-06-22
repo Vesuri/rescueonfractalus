@@ -82,7 +82,14 @@ static const uint16_t kColor30 = 0x1BC;   // pair 6/7 pen 10 (altimeter ship-hei
 #define INDEX_COCKPIT_BPLCON0 (INDEX_COCKPIT_BPL + 6)      // bplcon0 3P (1)
 #define INDEX_COCKPIT_MOD     (INDEX_COCKPIT_BPLCON0 + 1)  // bpl1mod,bpl2mod (2)
 #define INDEX_COCKPIT_PAL     (INDEX_COCKPIT_MOD + 2)      // color00..07 (8)
-#define INDEX_TERMINATOR      (INDEX_COCKPIT_PAL + 8)      // copperWait(255,254)
+// Cockpit bitmap starts at kCockpitLine=180 (yOffset 8 skips the $350D band).  COLBK splits
+// match the launch cockpit: baked color00=$00 covers the black divider strip (180-188); then
+// dark-blue $90 dashboard instrument backgrounds (182-251); then black floor (252+).
+#define INDEX_DASH_BLUE_WAIT  (INDEX_COCKPIT_PAL + 8)      // WAIT(kCockpitLine+2-1 = 181) (1)
+#define INDEX_DASH_BLUE       (INDEX_DASH_BLUE_WAIT + 1)   // color00 = $90 dark blue (dashboard) (1)
+#define INDEX_FLOOR_WAIT      (INDEX_DASH_BLUE + 1)        // WAIT(kCockpitLine+72-1 = 251) (1)
+#define INDEX_FLOOR           (INDEX_FLOOR_WAIT + 1)       // color00 = black (floor) (1)
+#define INDEX_TERMINATOR      (INDEX_FLOOR + 1)            // copperWait(255,254)
 #define LIST_LENGTH           (INDEX_TERMINATOR + 1)
 
 FlightCopperList::FlightCopperList()
@@ -178,6 +185,13 @@ void FlightCopperList::buildLayout(const Bitmap& title, const Bitmap& terrain, c
     d[INDEX_COCKPIT_PAL + 5] = copperMove(color05, atariToOCS(0x04));
     d[INDEX_COCKPIT_PAL + 6] = copperMove(color06, atariToOCS(0x06));
     d[INDEX_COCKPIT_PAL + 7] = copperMove(color07, atariToOCS(0x26));
+
+    // Dashboard instrument backgrounds = dark blue COLBK $90 (Amiga 182-251); floor black (252+).
+    // Only COLBK (color00) changes; baked color00=$00 above covers the divider strip (180-188).
+    d[INDEX_DASH_BLUE_WAIT] = copperWait(kCockpitLine + 2 - 1, 0xE0);
+    d[INDEX_DASH_BLUE]      = copperMove(color00, atariToOCS(0x90));
+    d[INDEX_FLOOR_WAIT] = copperWait(kCockpitLine + 72 - 1, 0xE0);
+    d[INDEX_FLOOR]      = copperMove(color00, atariToOCS(0x00));
 
     d[INDEX_TERMINATOR] = copperWait(255, 254);
 }
