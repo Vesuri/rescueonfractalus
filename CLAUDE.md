@@ -202,6 +202,10 @@ to hardware is largely ignored on Amiga.
   what it does, append it to `docs/rename.md` immediately (address, current name, actual
   behaviour, suggested name). Do not rename piecemeal in generated files — `disasm/symbols.csv`
   is the source of truth; batch-rename later via the transpiler.
+- **Newly-found DLIs:** whenever you identify a DLI handler address, add it to
+  `ghidra_scripts/entrypoints.csv` so Ghidra disassembles it into `listing.txt` (DLIs are
+  reachable only via indirect-jump tables, so Ghidra never finds them on its own). Same spirit
+  as the `docs/rename.md` rule — record it the moment you find it, don't defer.
 - Ask the user at genuine decision points (they're an experienced retro-porter and want to
   steer architecture/scope choices).
 - Persistent cross-session notes live in the auto-memory at
