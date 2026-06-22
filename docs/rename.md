@@ -11,17 +11,16 @@ and regenerate. Each entry: address, current name, what it really does, suggeste
 | $3CB2 | `wait_frames_60` | Spin-waits until RTCLOK_LOW($14) reaches the **caller-set** `$4C` frame count — NOT a fixed 60. The 60 (`#$3C`) is loaded only by the *separate* entry $3CBE, which sets $4C then jumps in. | `wait_frames_4c` |
 | $670D | `advance_message_column` | Draws ONE tunnel-ring frame group via `draw_symmetric_span_loop` (count = $6E0F[$A0]), clears $08D8 (inner ring colour) when $A0<6, then `DEC $A0` / `$88=$A0` — the per-ring-tick incremental tunnel-ring draw + counter step. No message/text ($6E0F is a ring-thickness table, not glyphs). | `draw_ring_frame_step` |
 | $6AEE | `scroll_terrain_columns` | $0089-gated: shifts the four $0C32/$0D32/$0E32/$0F32 PMG buffers left one column + appends via `gen_terrain_column`. During the gated phase those buffers are the **starfield/PMG** field (scenes 4-6), not flight terrain — "terrain" is misleading. ⚠ verify stars-vs-planet-surface first; `gen_terrain_column` may share the issue. | `scroll_field_columns` (tentative) |
+| $5367 | `scroll_event_dispatch` | Per-frame launch-cinematic priority dispatcher: runs exactly ONE animation step by flag precedence — $008D reverse ring-step ($6A8F), $0088 ring-step ($6A38), $0089 column-scroll ($6AEE), $008B DL-index ($69E3), $008C corner-reveal recede ($6A27), $008A door LMS-scroll ($6953). Only two of six are "scroll" steps, so the name overfits one case (and it was already once-renamed from the also-wrong `sound_event_dispatch`). Also fix the stale `symbols.csv` NOTE, which still calls the flags "sound flags" and the subs "sfx". | `launch_anim_dispatch` |
 
 ## Notes
-- **`scroll_event_dispatch` ($5367) — name OK, NOTE is stale/wrong.** The name was a
-  deliberate rename (was `sound_event_dispatch`, applied 2026-06-19) and is fine: it's the
-  per-frame launch-cinematic priority dispatcher. But its `symbols.csv` note still reads
-  "Tests **sound flags** $008D/88/89/8B … → **sfx** subs 6a8f/6a38/6aee/69e3/6a27/6953" —
-  those are NOT sound flags or sfx: they're the animation-state flags and the ring-step
-  ($6A38), column-scroll ($6AEE), DL-index ($69E3), **corner-reveal recede** ($6A27), and
-  door-scroll ($6953) handlers. Fix the note when the table above is applied.
+- **"scroll" in the `scroll_*` names = Atari LMS / buffer-shift scrolling**, not pixel
+  motion: `scroll_terrain_dl` ($6953) shifts the viewport DL's per-scanline LMS pointers so
+  the door halves slide apart vertically (`dl_lms_scroll_up`/`down` $69A9/$69C3); `scroll_terrain_columns`
+  ($6AEE) shifts the $0C32-$0F32 buffers left a column (horizontal starfield scroll). The tunnel
+  rings "rushing in" are **palette cycling** ($08D4-$08D9 rotation), NOT a scroll.
 - **`scroll_event_dispatch_native`** (hand-written C++, `rof_native_amiga.cpp`) is the Amiga
-  twin of $5367 — keep its name in sync with whatever $5367 settles on (currently fine).
+  twin of $5367 — rename it together with $5367 (e.g. → `launch_anim_dispatch_native`).
 
 ## Applied 2026-06-19 (batch rename, committed)
 The earlier backlog was applied wholesale. For the record, the renames made:
