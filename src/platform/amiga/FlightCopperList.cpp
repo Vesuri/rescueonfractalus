@@ -54,13 +54,15 @@ static const uint16_t kColor29 = 0x1BA;   // sprite pair 6/7 pen 01 (altimeter s
 #define INDEX_VP_BPLCON0      (INDEX_VP_BPL + 6)           // 38: bplcon0 3P (1)
 #define INDEX_VP_PAL          (INDEX_VP_BPLCON0 + 1)       // 39: color00..03 (4)
 #define INDEX_VP_MOD0         (INDEX_VP_PAL + 4)           // 43: row-0 bpl1mod,bpl2mod (2)
-#define INDEX_VP_LINEDOUBLE   (INDEX_VP_MOD0 + 2)          // 45: 93 × (WAIT+2 mod), +5 band block
-// The line-doubling loop runs k=1..kViewportHeight-1.  At k==kTerrainHeight (scanline 172)
-// it injects the wing-band palette block (BAND_BLOCK_WORDS=4): color00..03, poked per-frame
-// from the band DLI's $00DC/$DD/$DA/$D4 (bars salmon, frame grey).  BPLCON2 stays at its
+#define INDEX_VP_LINEDOUBLE   (INDEX_VP_MOD0 + 2)          // 45: 93 × (WAIT+2 mod), +1 band block
+// The line-doubling loop runs k=1..kViewportHeight-1.  At k==kTerrainHeight (scanline 172) the
+// flight band DLI changes ONLY COLPF2 (terrain sky $B8 -> band frame grey $06) — COLBK/COLPF0/
+// COLPF1 stay the terrain values (measured live).  So, faithfully, the band block emits ONLY
+// color03 (= COLPF2) and inherits color00/01/02 from the terrain palette (VP_PAL) — which means
+// the band bg/pens fade salmon->brown WITH the terrain automatically.  BPLCON2 stays at its
 // init value 0x09 (sprites behind the playfield) throughout — no per-band flip needed.
-#define BAND_BLOCK_WORDS      4
-#define INDEX_BAND_BLOCK      (INDEX_VP_LINEDOUBLE + 3 * (kTerrainHeight - 1) + 1)  // band color00..03 (4)
+#define BAND_BLOCK_WORDS      1
+#define INDEX_BAND_BLOCK      (INDEX_VP_LINEDOUBLE + 3 * (kTerrainHeight - 1) + 1)  // band color03 (1)
 #define INDEX_COCKPIT_WAIT    (INDEX_VP_LINEDOUBLE + 3 * (kViewportHeight - 1) + BAND_BLOCK_WORDS)
 #define INDEX_COCKPIT_BPL     (INDEX_COCKPIT_WAIT + 1)     // cockpit 3bp ptrs, yOffset 8 (6)
 #define INDEX_COCKPIT_BPLCON0 (INDEX_COCKPIT_BPL + 6)      // bplcon0 3P (1)
@@ -127,11 +129,9 @@ void FlightCopperList::buildLayout(const Bitmap& title, const Bitmap& terrain, c
     for (uint16_t k = 1; k < kViewportHeight; k++) {
         d[idx++] = copperWait((uint16_t)(kTerrainLine + k - 1), 0xE0);
         if (k == kTerrainHeight) {
-            // Crossing into the wing-clearance band (scanline kBandLine = 172): switch to
-            // the band palette (seeded 0, poked per-frame by setBandPalette).
-            d[idx++] = copperMove(color00, 0);
-            d[idx++] = copperMove(color01, 0);
-            d[idx++] = copperMove(color02, 0);
+            // Crossing into the wing-clearance band (scanline kBandLine = 172): the band DLI
+            // changes ONLY COLPF2 to the frame grey, so emit just color03 (seeded 0, poked by
+            // setBandPalette).  color00/01/02 stay the terrain pens (VP_PAL) — they fade with it.
             d[idx++] = copperMove(color03, 0);
         }
         const uint16_t v = (k & 1) ? (uint16_t)80 : (uint16_t)-40;
@@ -159,16 +159,15 @@ void FlightCopperList::buildLayout(const Bitmap& title, const Bitmap& terrain, c
     d[INDEX_TERMINATOR] = copperWait(255, 254);
 }
 
-// Wing-clearance band palette (scanlines 172-179): the band DLI recolours the mode-D
-// pens for the 8 band scanlines — pen0/COLBK ($00DC), pen1/COLPF0 ($00DD, the salmon
-// clearance bars), pen2/COLPF1 ($00DA, centre marker), pen3/COLPF2 ($00D4, grey frame).
-// Poked per-frame so the salmon→maroon descent fade tracks.
-void FlightCopperList::setBandPalette(uint16_t pen0, uint16_t pen1, uint16_t pen2, uint16_t pen3)
+// Wing-clearance band (scanlines 172-179): the band DLI changes ONLY COLPF2 (mode-D value-3
+// = the grey windscreen frame, $00D4=$06).  COLBK/COLPF0/COLPF1 (value-0/1/2 = terrain bg /
+// clearance bars / dots) are NOT touched by the DLI — they stay the terrain pens (VP_PAL) and
+// so fade salmon→brown WITH the terrain.  So only color03 is poked here.
+void FlightCopperList::setBandPalette(uint16_t pen3)
 {
-    data_[INDEX_BAND_BLOCK + 0] = copperMove(color00, pen0);
-    data_[INDEX_BAND_BLOCK + 1] = copperMove(color01, pen1);
-    data_[INDEX_BAND_BLOCK + 2] = copperMove(color02, pen2);
-    data_[INDEX_BAND_BLOCK + 3] = copperMove(color03, pen3);
+    // The band DLI changes only COLPF2 (the windscreen-frame grey); color00/01/02 are
+    // inherited from the terrain palette (which fades), so only color03 is poked here.
+    data_[INDEX_BAND_BLOCK] = copperMove(color03, pen3);
 }
 
 // ---- per-frame setters -------------------------------------------------------

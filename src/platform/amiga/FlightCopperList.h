@@ -41,6 +41,6 @@ public:
     // pen1 = sky, pen2 = dots, pen3 = highlight — driven per-frame by the native code.
     void setTerrainPalette(uint16_t pen0, uint16_t pen1, uint16_t pen2, uint16_t pen3);
     void setTerrainPen0(uint16_t pen0);                            // the fade-only fast path
-    void setBandPalette(uint16_t pen0, uint16_t pen1, uint16_t pen2, uint16_t pen3);  // wing-clearance band (scanlines 172-179)
+    void setBandPalette(uint16_t pen3);   // wing-band: only COLPF2 (frame grey); color00/01/02 inherit from terrain
     void setHudSprite(int slot, const Sprite& s);                  // slot 0..7 sprite pointer
 };

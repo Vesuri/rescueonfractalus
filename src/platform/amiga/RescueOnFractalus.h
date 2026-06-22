@@ -115,7 +115,7 @@ private:
     // Last-poked values (fl* — separate from sb*/pl* so a phase switch force-refreshes).
     uint16_t flTitleBg = 0xFFFF, flTitlePf0 = 0xFFFF, flEnergyCol = 0xFFFF, flCompassCol = 0xFFFF;
     uint16_t flTerr0 = 0xFFFF, flTerr1 = 0xFFFF;   // terrain pen0/pen1 (atmosphere ramp $00DC/$00DD)
-    uint16_t flBand1 = 0xFFFF, flBand3 = 0xFFFF;   // wing-band pen1 (bars $00DD) / pen3 (frame $00D4)
+    uint16_t flBand3 = 0xFFFF;   // wing-band color03 = COLPF2 frame grey ($00D4); other pens inherit terrain
 
     // Launch-cinematic fixed copper lists:
     //   DoorsCopperList (scene 4) — hangar doors parting, sliding 3-band geometry poked

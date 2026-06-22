@@ -880,14 +880,14 @@ void RescueOnFractalus::updateFlightCopper(bool force)
         flTerr0 = terr0; flTerr1 = terr1;
     }
 
-    // Wing-clearance band palette (scanlines 172-179): the band DLI recolours pens from
-    // $00DC (bg) / $00DD (bars, salmon) / $00DA (centre) / $00D4 (frame, grey).  Poke each
-    // frame so the descent fade tracks (these ramp like the terrain/centre-symbol colours).
-    const uint16_t band1 = atariToOCS(mem[0x00DD]);
+    // Wing-clearance band (scanlines 172-179): the band DLI changes ONLY COLPF2 to the frame
+    // grey ($00D4) — color00/01/02 (bg/bars/dots) inherit from the terrain palette above and
+    // fade with it (the salmon→brown bug was poking the band only when $00DD/$00D4 changed, so
+    // the inherited-bg approach also fixes the stuck-salmon fade).  Poke only color03.
     const uint16_t band3 = atariToOCS(mem[0x00D4]);
-    if (force || band1 != flBand1 || band3 != flBand3) {
-        flightCopper->setBandPalette(terr0, band1, atariToOCS(mem[0x00DA]), band3);
-        flBand1 = band1; flBand3 = band3;
+    if (force || band3 != flBand3) {
+        flightCopper->setBandPalette(band3);
+        flBand3 = band3;
     }
 }
 
