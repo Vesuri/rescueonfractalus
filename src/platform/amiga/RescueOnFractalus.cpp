@@ -811,14 +811,11 @@ void RescueOnFractalus::updatePlanetCopper(bool force)
         planetCopper->setPlanetBgColor(bgCol);
         plBg = bgCol;
     }
-    // Windscreen-bottom band palette (scanlines 172-179): pen0 $00DC / pen1 $00DD /
-    // pen2 $00DA / pen3 $00D4 (grey frame).  Poke each frame as the descent fade tracks.
-    const uint16_t plBand1v = atariToOCS(mem[0x00DD]);
-    const uint16_t plBand3v = atariToOCS(mem[0x00D4]);
-    if (force || plBand1v != plBand1 || plBand3v != plBand3) {
-        planetCopper->setBandPalette(bgCol, plBand1v, atariToOCS(mem[0x00DA]), plBand3v);
-        plBand1 = plBand1v; plBand3 = plBand3v;
-    }
+    // Windscreen-bottom band (scanlines 172-179): the launch band DLI $6D67 switches the
+    // bottom 4 mode-D viewport rows to the windscreen-FRAME palette — black bg, two greys
+    // ($04/$06) for the cockpit frame, and COLPF2 left at $2A (the planet's brightest tone,
+    // from viewport DLI $6D0E) for the planet in the corner gaps.  Baked in buildLayout
+    // (PlanetCopperList).  (Earlier this poked $00DD/$00DA/$00D4, which read black/wrong.)
 }
 
 // updateFlightCopper(): refresh the FlightCopperList's per-frame-varying slots from mem[].

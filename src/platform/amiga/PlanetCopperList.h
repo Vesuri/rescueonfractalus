@@ -40,5 +40,6 @@ public:
     void setStarColor(uint16_t c);                                 // COLOR25/29 ($1B2/$1BA) starfield
     void setCompassColor(uint16_t c);                              // color01 over the compass band (COLPF0 $00CF)
     void setPlanetBgColor(uint16_t c);                           // viewport color00 (COLBK, space)
-    void setBandPalette(uint16_t pen0, uint16_t pen1, uint16_t pen2, uint16_t pen3);  // windscreen-bottom band (scanlines 172-179)
+    // (The windscreen-bottom band palette is the constant windscreen-FRAME palette set by the
+    // launch band DLI $6D67 — black bg / two greys / COLPF2=$2A planet — baked in buildLayout.)
 };

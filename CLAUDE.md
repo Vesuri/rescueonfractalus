@@ -42,7 +42,20 @@ COLPM*/COLPF* register, NOT normal 1bpp); y+128..135 **mode D `$350D`** windscre
 resets `$C7`. Key: `$6CD7` PMG colours `COLPM1/2/3=mem[$08D7/8/9]`+`PRIOR=$94`; `$6CF1`
 `COLBK=mem[$0071]`+`COLPF0/1/2=mem[$08D4/5/6]`; `$6D4F` `COLPF=$04/$06/$2C` grey; `$6D7C`
 `COLBK=$00`. (DLIs are reachable only via this indirect-jump table, so Ghidra never disassembles
-them → absent from `listing.txt`; seed each DLI addr as a Ghidra entry point to persist them.)
+them → absent from `listing.txt`; seed each DLI addr as a Ghidra entry point to persist them —
+now done via `ghidra_scripts/entrypoints.csv`.)
+
+**Stars/Planet DLI chain (`VDSLST=$6CC2`, a SEPARATE dispatcher from `$6CAD` above):** `$6CC2`
+dispatches `$C7` through word table **`$6DCF`** (not `$6DBB`). Its key handlers, top→bottom:
+`$6D0E` viewport playfield pens `COLPF0/1/2=$24/$28/$2A` (the 3-tone planet/star body); `$6D67`
+**windscreen-bottom band frame** — writes ONLY `COLPF0=$04`/`COLPF1=$06` (the two cockpit greys)
+and **deliberately leaves COLPF2 and COLBK untouched**, so COLPF2 stays `$2A` (the planet's
+brightest tone) = the salmon seen through the corner triangles, and COLBK stays black; `$6DA1`
+dashboard `COLPF2=$2C`+`COLBK=$90` (dark blue). ⚠ `$6D4F` (`$04/$06/$2C`) is a LAUNCH-chain
+handler that governs the **dashboard**, NOT this band — don't use it for the stars/planet band.
+**Faithful copper rule:** if a DLI leaves a register untouched, the CopperList must too — emit
+only the MOVEs the DLI actually makes (e.g. `PlanetCopperList`'s band block emits just
+`color01`/`color02`, inheriting `color00`/`color03` from the viewport).
 
 **Windscreen-frame PMG (measured `launch_1_title`):**
 - **Pillars (window edges):** MISSILES — M0+M1 (right), M2+M3 (left), `SIZEM=$00`, **grey**
@@ -59,7 +72,7 @@ them → absent from `listing.txt`; seed each DLI addr as a Ghidra entry point t
 | **Doors** | band green (`color00`); reveal hasn't started. |
 | **Tunnel** | the green wedge **recedes top-down** = the green→purple reveal. `FUN_6a27` (called from `$538D` in `scroll_event_dispatch $5367`) does `DEC $008C` (wedge height 8→0) + clears `$0C88+` one line/frame, **gated behind `$0088==0 && $0089==0 && $008B==0`** (ring tick paused). Native `scroll_event_dispatch_native` was missing this `$008C` branch; restored — recede now runs on the Amiga, rendered by `TunnelCopperList::setBandReveal`. |
 | **Flight (7)** | triangles are **bitmap value-2 (COLPF1)**, NOT PMG. |
-| **Planet/Stars (6)** | **TODO — not derived.** |
+| **Planet/Stars (6)** | **bitmap**, NOT PMG (the planet is the mode-D viewport bitmap). The windscreen-bottom band ($1810, Amiga scanlines 172-179) is the bottom 4 mode-D viewport rows under the `$6D67` frame palette: black bg + two greys (`$04/$06`) + `COLPF2=$2A` (planet) — value-2-dominant bitmap reads as the grey frame, value-3 edges = the salmon planet in the corner gaps. `PlanetCopperList` band block emits only `color01/color02` (mirrors `$6D67`). The grey **edge pillars** are still the 5th-player missiles (`COLPF3=$06`) — not yet ported. |
 
 ## Instrument vocabulary — "Valkyrie Fighter Control Panel" (use these names everywhere)
 

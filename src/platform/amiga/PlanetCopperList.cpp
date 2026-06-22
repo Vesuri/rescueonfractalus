@@ -49,12 +49,12 @@ static const uint16_t kColor29 = 0x1BA;   // sprite pair 6/7 pen 01 (starfield)
 #define INDEX_VP_BPLCON0      (INDEX_VP_BPL + 6)           // 40: bplcon0 3P (1)
 #define INDEX_VP_PAL          (INDEX_VP_BPLCON0 + 1)       // 41: color00..03 (4)
 #define INDEX_VP_MOD0         (INDEX_VP_PAL + 4)           // 45: row-0 bpl1mod,bpl2mod (2)
-#define INDEX_VP_LINEDOUBLE   (INDEX_VP_MOD0 + 2)          // 47: 93 × (WAIT+2 mod), +4 band palette
-// The line-doubling loop runs k=1..kViewportHeight-1.  At k==kTerrainHeight (scanline 172)
-// it injects the band palette block (BAND_BLOCK_WORDS=4: color00..03, poked per-frame from
-// the band DLI's $00DC/$DD/$DA/$D4).  Planet/stars have no centre sprite, so no priority flip.
-#define BAND_BLOCK_WORDS      4
-#define INDEX_BAND_BLOCK      (INDEX_VP_LINEDOUBLE + 3 * (kTerrainHeight - 1) + 1)  // band color00..03 (4)
+#define INDEX_VP_LINEDOUBLE   (INDEX_VP_MOD0 + 2)          // 47: 93 × (WAIT+2 mod), +2 band palette
+// The line-doubling loop runs k=1..kViewportHeight-1.  At k==kTerrainHeight (scanline 172) it
+// mirrors the band DLI $6D67, which writes ONLY COLPF0/COLPF1 (the two greys) and leaves COLBK
+// and COLPF2 untouched.  So we emit exactly those two MOVEs (color01/color02) and nothing else
+// — color00 (COLBK) and color03 (COLPF2=$2A planet) stay the viewport's values, as on the Atari.
+#define BAND_BLOCK_WORDS      2
 #define INDEX_COCKPIT_WAIT    (INDEX_VP_LINEDOUBLE + 3 * (kViewportHeight - 1) + BAND_BLOCK_WORDS)
 #define INDEX_COCKPIT_BPL     (INDEX_COCKPIT_WAIT + 1)     // cockpit 3bp ptrs, yOffset 8 (6)
 #define INDEX_COCKPIT_BPLCON0 (INDEX_COCKPIT_BPL + 6)      // bplcon0 3P (1)
@@ -123,12 +123,16 @@ void PlanetCopperList::buildLayout(const Bitmap& title, const Bitmap& terrain, c
     for (uint16_t k = 1; k < kViewportHeight; k++) {
         d[idx++] = copperWait((uint16_t)(kTerrainLine + k - 1), 0xE0);
         if (k == kTerrainHeight) {
-            // Crossing into the windscreen-bottom band (scanline 172): switch to the band
-            // palette (seeded 0, poked per-frame by setBandPalette from the band DLI's pens).
-            d[idx++] = copperMove(color00, 0);
-            d[idx++] = copperMove(color01, 0);
-            d[idx++] = copperMove(color02, 0);
-            d[idx++] = copperMove(color03, 0);
+            // Crossing into the windscreen-bottom band (scanline 172): mirror the band DLI
+            // $6D67, which writes ONLY COLPF0=#$04 / COLPF1=#$06 (the two cockpit-frame greys).
+            // It leaves COLBK and COLPF2 untouched, so — exactly as on the Atari — we emit just
+            // these two MOVEs: color00 (COLBK) keeps the viewport's black, and color03 keeps the
+            // viewport's COLPF2=$2A (the planet's brightest tone, from $6D0E), which is the
+            // salmon shown through the corner-triangle gaps.  The band bitmap is value-2-dominant
+            // -> reads as the grey frame with value-3 edges = the salmon planet.  ($6D4F/$6DA1
+            // set COLPF2=$2C, but those govern the dashboard below the band, not this band.)
+            d[idx++] = copperMove(color01, atariToOCS(0x04));   // grey frame (COLPF0, $6D67)
+            d[idx++] = copperMove(color02, atariToOCS(0x06));   // grey frame (COLPF1, $6D67)
         }
         const uint16_t v = (k & 1) ? (uint16_t)80 : (uint16_t)-40;
         d[idx++] = copperMove(bpl1mod, v);
@@ -187,16 +191,10 @@ void PlanetCopperList::setCompassColor(uint16_t c)
 
 void PlanetCopperList::setPlanetBgColor(uint16_t c)
 {
-    data_[INDEX_VP_PAL] = copperMove(color00, c);
+    data_[INDEX_VP_PAL] = copperMove(color00, c);   // only the viewport COLBK; the band keeps
+                                                    // its own black frame background (baked)
 }
 
 // Windscreen-bottom band palette (scanlines 172-179): the band DLI recolours the mode-D
 // pens — pen0/COLBK ($00DC), pen1/COLPF0 ($00DD), pen2/COLPF1 ($00DA), pen3/COLPF2 ($00D4,
 // grey frame).  Poked per-frame so the descent fade tracks.
-void PlanetCopperList::setBandPalette(uint16_t pen0, uint16_t pen1, uint16_t pen2, uint16_t pen3)
-{
-    data_[INDEX_BAND_BLOCK + 0] = copperMove(color00, pen0);
-    data_[INDEX_BAND_BLOCK + 1] = copperMove(color01, pen1);
-    data_[INDEX_BAND_BLOCK + 2] = copperMove(color02, pen2);
-    data_[INDEX_BAND_BLOCK + 3] = copperMove(color03, pen3);
-}
