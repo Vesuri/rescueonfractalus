@@ -6163,6 +6163,60 @@ void sfx_voice_envelope_tick(void) {
     }
 }
 
+/* init_gameplay_state @ $73C8 — per-game/level gameplay init (run ONCE from
+ * game_main_loop).  Seeds the heading/object/timer arrays + lives, draws the
+ * compass, unpacks the cockpit bitmap, seeds the cockpit bar cells, plots the
+ * initial horizon spans, RANDOM-seeds one flag, and tail-calls cockpit_dial_update.
+ *
+ * Every leaf it calls is already native; this twin just sheds the $73C8 body.
+ * NOT validated by `make validate`: like the apex it calls push_a_thunk_3cb2
+ * (the wait_frames_60 spin-pacer — a deliberate ~$1E-frame delay driven by the
+ * SPINWAIT hook), which would hang the equivalence harness.  Verified on FS-UAE.
+ * Faithful 1:1 with the $73C8 disasm; mem[$004C] (set once to $1E here, never
+ * re-written) is the wait target for all four waits, and A round-trips PHA/PLA. */
+void init_gameplay_state(void) {
+    mem[0x281C] = 0x0E;                                /* 73c8 */
+    mem[0x2886] = 0x02;                                /* 73cf */
+    mem[0x0643] = 0x02;                                /* 73d2 */
+    for (uint8_t y = 0x0E; y != 0; y--) {              /* 73d5 Y=$0E..1 (Y=0 not stored) */
+        mem[0x0B4C + y] = 0x20;
+        mem[0x0B63 + y] = 0x20;
+    }
+    mem[0x0B5F] = 0xCC;                                /* 73e4 */
+    mem[0x006A] = 0xCC;                                /* 73e7 */
+    mem[0x002E] = 0x4D;                                /* 73eb */
+    mem[0x0034] = 0x4F;                                /* 73ef */
+    mem[0x065D] = 0x1E;                                /* 73f3 */
+    mem[0x004C] = 0x1E;                                /* 73f6 — wait_frames_60 target (all 4 waits) */
+    cpu.A = 0x1E; push_a_thunk_3cb2();                 /* 73f8 — A preserved (PHA/PLA) */
+    for (int y = 0x1E; y >= 0; y--)                    /* 73fb TAY (Y=A=$1E); 73fe Y=$1E..0 */
+        mem[0x0E94 + y] = 0xFF;
+    for (int y = 0x5F; y >= 0; y--)                    /* 7406 Y=$5F..0 */
+        mem[0x2210 + y] = 0xFF;
+    mem[0x0063] = 0xFF;                                /* 740c */
+    mem[0x2826] = 0xFF;                                /* 740e */
+    mem[0x0072] = 0xFF;                                /* 7411 */
+    mem[0x0079] = 0xFF;                                /* 7413 */
+    for (int y = 0x37; y >= 0; y--)                    /* 7419 Y=$37..0 */
+        mem[0x0B98 + y] = 0xC0;
+    mem[0x004D] = 0xC0;                                /* 741f */
+    cpu.A = 0xC0; push_a_thunk_3cb2();                 /* 7421 */
+    draw_compass_heading();                            /* 7424 */
+    unpack_bitmap_4d3e();                              /* 7427 */
+    push_a_thunk_3cb2();                               /* 742a */
+    init_cockpit_bar_cells();                          /* 742d */
+    push_a_thunk_3cb2();                               /* 7430 */
+    cpu.A = 0x00; cpu.X = 0x00; cpu.Y = 0x00; game_sub_451d();   /* 7433-7437 */
+    cpu.A = 0x38; cpu.X = 0x04; cpu.Y = 0x10; game_sub_451d();   /* 743a-7440 */
+    push_a_thunk_3cb2();                               /* 7443 */
+    mem[0x0029] = 0xF4;                                /* 7446 */
+    mem[0x00B9] = 0x91;                                /* 744a */
+    mem[0x00BA] = 0x0B;                                /* 744e */
+    if ((uint8_t)bus_read(0xD20A) < 0x1F)              /* 7452 CMP#$1F; BCS skip */
+        mem[0x003A] = (uint8_t)(mem[0x003A] + 1);      /* 7459 INC $3A (when A < $1F) */
+    cpu.A = 0x07; cockpit_dial_update();               /* 745b-745d tail call */
+}
+
 /* display_setup @ $5F1D — the orchestration APEX: main game display setup + the
  * Standby/attract idle loop + the launch (doors/tunnel/stars/planet) cinematic
  * driver.  game_main_loop ($3D48) calls it at the top of every game pass; it RTSes

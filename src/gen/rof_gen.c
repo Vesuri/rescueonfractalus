@@ -11293,7 +11293,8 @@ L_730d:;
 }
 
 /* init_gameplay_state @ $73C8: Per-game/level gameplay init: seeds heading $2886, clears object/timer arrays ($0E94/$2210), sets lives $0072, plots via game_sub_451d, calls unpack_bitmap_4d3e + init_cockpit_bar_cells, seeds RANDOM, tail-calls cockpit_dial_update; run once from game_entry */
-void init_gameplay_state(void) {
+/* faithful transliteration kept as the validation oracle; native init_gameplay_state() lives in rof_native.c (see VALIDATE_FUNCS) */
+void init_gameplay_state__t6502(void) {
     /* 73c8 */
     LDA(0x0E);
     /* 73ca */

@@ -330,6 +330,11 @@ VALIDATE_FUNCS = {
     #     reference; the native twin replaces the spin-wait SPINWAIT-hooks with ds_frame().
     0x5F1D,  # display_setup — main display setup + Standby/attract idle loop + launch cinematic driver
     0x3D48,  # game_main_loop — one-time game init + L_3e0f display_setup + the in-game flight loop (never returns)
+    # --- flight-init de-transpile (2026-06-22): the last transpiled orchestrator on the
+    #     game/level-init path.  Every leaf it calls is already native; this just sheds the
+    #     $73C8 body itself.  Like the apex it calls the wait_frames_60 spin-pacer
+    #     (push_a_thunk_3cb2) so it is NOT in `make validate` — verified on FS-UAE. ---
+    0x73C8,  # init_gameplay_state — per-game/level init: seed heading/arrays, compass, cockpit bars; tail cockpit_dial_update
 }
 VALIDATE_SUFFIX = '__t6502'
 
