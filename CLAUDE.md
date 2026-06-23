@@ -224,6 +224,46 @@ bodies). Spin-wait points in transpiled code are `SPINWAIT_HOOKS` that drive one
 frame (`platform_tick_vbi(); platform_render_frame()`). Copper does the display; `bus_write`
 to hardware is largely ignored on Amiga.
 
+### Optimising a native twin for the 68000 (hard-won; apply when a function is hot)
+
+The transliteration→native step gets you a *correct* twin; it is NOT fast. The transliterated
+style (`mem[addr]` for every access, `bus_read`/`bus_write`, per-op temporaries) is memory-bound
+on the 68000. **The dominant cost is the number of memory accesses, not arithmetic** — the
+68000 has no cache, every load/store goes to RAM, and `mem[]` is `volatile` (shared with the
+VBI/audio ISRs) so the compiler can't cache, batch, or reorder a single access. (`mem[]` lives
+in FAST RAM — verified `&mem[0]`≈`0x264fe8` — so this is raw access latency, NOT chip-DMA
+contention; don't bother reasoning about chip-vs-fast.) Rewrite hot functions in idiomatic C:
+
+- **Keep loop scratch / running pointers / loop-invariants in locals (registers), not `mem[]`.**
+  The transliteration re-reads/-writes ZP scratch every iteration (e.g. `terrain_collision` hit
+  `$80/$81/$95/$96` ~13×/iter). Hoist them into locals; write back only the *final* value the
+  6502 oracle leaves in `mem[]` (the harness only compares post-return state, so intermediate
+  ZP writes that the next iteration overwrites are dead — skip them). Cache invariants
+  (`$00A0-$00A3` etc.) into locals once before the loop.
+- **Pointer-walk with autoincrement, never multiply+index in a loop.** Replace
+  `M[base + i*stride + Y]` (a 68000 `mulu` + indexed load each step) with a pointer advanced by
+  `p += stride` / `p -= stride` (`move (a0)+` / `-(a0)`). Reuse a walked pointer across phases
+  where the geometry allows (collision's scan leaves the pointer at row k, so the waterfall
+  steps it back down with no fresh multiply).
+- **Batch bulk clears/copies with `move.l` through a NON-VOLATILE alias** of `mem[]`
+  (`uint8_t* M = (uint8_t*)mem;`). Casting away `volatile` lets the compiler emit 4-byte stores
+  and a tight loop. SAFE only for buffers the ISR doesn't touch concurrently — the main loop
+  owns the `$1010+` terrain field (verified the flight VBI never writes it); ZP and ISR-shared
+  regions must stay `volatile`. `move.l` needs an even/4-aligned address (odd → 68000 address
+  fault) — align first (see `zero_run`).
+- **Skip redundant work the original wasted.** Avoid re-decoding/-scanning what hasn't changed
+  (per-writer dirty flags; dirty row/cell ranges, cf. planet viewport `g_planetRowLo/Hi` and the
+  cockpit plan `docs/cockpit-render-plan.md`). Shadow-compare scans are themselves a full
+  volatile scan — a 68000 no-go; prefer dirty flags.
+
+**Correctness + measurement:** every rewrite must stay byte-identical — `make validate FN=<name>`
+diffs full `mem[]` state vs the transliterated `__t6502` oracle (exit `cpu` regs are usually dead
+→ "incidental cpu diffs" are fine; **0 mem mismatch is mandatory**). Measure on real hardware via
+the headless beam probe (`make PROBES=1` + `diag_run.sh`); `FP_TIME` subtracts the flight-VBI ISR
+beam-lines (`g_isrBeamLines`) so a phase bucket excludes ISR firings in its window. ⚠ Per-phase
+flight numbers are **terrain-dependent and noisy run-to-run** (±30%) — trust large deltas, not
+small ones, and confirm the real cause by reasoning about access counts.
+
 ## Working conventions
 
 - **Commit directly to `main`** (no feature branches). Commit each fix as soon as the user
