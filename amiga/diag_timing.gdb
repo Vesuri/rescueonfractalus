@@ -18,9 +18,14 @@ printf "flightVbi=%u dispSetup=%lu gameInit=%lu intro=%lu rowAddr=%lu initTotal=
   g_probeFlightVbi, g_probeDispSetup, g_probeGameInit, g_probeIntro, g_probeRowAddr, g_probeInitTotal
 echo --- main-loop per-iteration gap (sub-frame ticks) ---\n
 printf "iterCount=%u iterLast=%lu iterMax=%lu iterMaxAt=%u\n", g_iterCount, g_iterLast, g_iterMax, g_iterMaxAt
-echo --- flight phase split (accumulated sub-frame ticks) ---\n
+echo --- flight phase split (accumulated sub-frame ticks; 313 ticks=1 frame=20ms) ---\n
 printf "setup=%lu clear=%lu draw=%lu coll=%lu state=%lu enemy=%lu\n", \
   g_fSetup, g_fClear, g_fDraw, g_fColl, g_fState, g_fEnemy
+echo --- g_flightProf (RTCLOK ticks=20ms; per-frame = field/frames) ---\n
+printf "frames=%lu terrain=%lu tDraw=%lu stateEnemy=%lu render=%lu copper=%lu renderTot=%lu updateTot=%lu isrLines=%lu isrCalls=%lu\n", \
+  g_flightProf.frames, g_flightProf.terrain, g_flightProf.tDraw, g_flightProf.stateEnemy, g_flightProf.render, g_flightProf.copper, g_flightProf.renderTot, g_flightProf.updateTot, g_flightProf.isrLines, g_flightProf.isrCalls
+echo --- cockpit decode (beam ticks; 313=20ms) ---\n
+printf "cockpitTicks=%lu cockpitScans=%lu (per-scan ticks=%lu)\n", g_fCockpit, g_fCockpitScans, (g_fCockpitScans? g_fCockpit/g_fCockpitScans : 0)
 echo --- terrain_draw_frame sub-phase (ROF_TDRAW_PROF) ---\n
 printf "tdSubdiv=%lu tdProjPlot=%lu\n", g_tdSubdiv, g_tdProjPlot
 echo --- renderFrame no-yield gap (real VBI frames) ---\n

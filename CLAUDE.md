@@ -88,7 +88,7 @@ in the 320×216 display space; use them to identify each instrument's Atari hard
 | 3 | **Wing Clearance Bars** | 40,128 | 240×10 | **missiles M1/M2/M3**, HPOSM3=`$2840`(+`$0C`/+`$11`), SIZEM=`$CC`, GRAFM=`$00CD` ✓ |
 | 4 | **Thrust Level** | 8,152 | 40×60 | mode-4 dial-bar cells (x≈8-16), drawn via `$4581`/`draw_object_column` ✓ |
 | 5 | **Dangerous Altitude** | 24,144 | 40×60 | mode-4 dial-bar cells (x≈24-32, e.g. `$3394`), lights near ground ✓ |
-| 6 | **Artificial Horizon** | 56,138 | 32×28 | mode-4 cells cols ~11-14 (x56-88); bank+climb — only changes when rolling |
+| 6 | **Artificial Horizon** | 56,138 | 32×28 | **PMG (NOT cells)** — dial frame is static $33xx bitmap; brown ground fill is Atari player P2 (COLPM2=`$26`, SIZEP2 dbl, buffer `$0E92-$0EB2`), boundary moves with pitch. Amiga = 2 sprites (`buildAHSprite`). See [[flight-scene]]. ✓ |
 | 7 | **Altimeter** | 108,144 | 8×56 | **Player P3** cyan bar COLPM3=`$00D9`(`$9x`) ship-height + P2 (COLPM2=`$0037`) terrain-height; HPOSP3=`$2870`, HPOSP2=`$00CB` |
 | 8 | **Targeting Scope** | 136,151 | 50×33 | centre-lower mode-4 cells (x≈136) |
 | 9 | **Main Window** | — | — | the terrain viewport |

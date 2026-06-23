@@ -65,6 +65,10 @@ extern "C" volatile unsigned char g_doorFieldReady;
 // never missed.
 extern "C" volatile unsigned char g_titleDirty   = 1;
 extern "C" volatile unsigned char g_cockpitDirty = 1;
+#ifdef ROF_FLIGHT_PROBE
+extern "C" unsigned long rof_subclock(void);
+extern "C" volatile unsigned long g_fCockpit, g_fCockpitScans;
+#endif
 // Compass (#2): the heading cells $32E3-$32E6 (mode-4 line below the title) — flagged by
 // platform_compass_changed() from the housing init (game_sub_4606) / heading updater ($3FDE).
 extern "C" volatile unsigned char g_compassDirty = 1;
@@ -1548,6 +1552,10 @@ void RescueOnFractalus::render()
     // Skip both cockpit scans unless a writer (update_cockpit_digits / lock_on_indicator)
     // dirtied $332D-$352C or a full repaint is forced.  Cleared after the scans.
     if (cockpitFull || g_cockpitDirty) {
+#ifdef ROF_FLIGHT_PROBE
+    unsigned long _ckp0 = rof_subclock();
+    if (rsFlight) g_fCockpitScans++;
+#endif
     // ModeD rows 0-7 (raw bitmap, no bit-7 colour swap → plane3 = 0).  Each
     // source byte feeds the same column of 2 identical scan lines.
     // Walk source/shadow/dest with pointers: the per-cell hot path is `*src++ == *shadow++`
@@ -1608,6 +1616,9 @@ void RescueOnFractalus::render()
         }
     }
     g_cockpitDirty = 0;
+#ifdef ROF_FLIGHT_PROBE
+    g_fCockpit += rof_subclock() - _ckp0;
+#endif
     }
     if (rsFlight) g_flightProf.renderTot += (unsigned short)(flight_vbi_tick() - profR0);
 }

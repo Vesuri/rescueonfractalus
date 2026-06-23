@@ -554,6 +554,9 @@ extern "C" volatile unsigned short g_iterCount = 0, g_iterMaxAt = 0;
 extern "C" volatile unsigned long g_fSetup=0,g_fClear=0,g_fDraw=0,g_fColl=0,g_fState=0,g_fEnemy=0;
 // atmosphere terrain-pen range during flight ($00DC/$00DD salmon→brown fade):
 extern "C" volatile unsigned char g_dcMin=0xFF, g_dcMax=0, g_ddMin=0xFF, g_ddMax=0;
+// Cockpit-decode probe (beam sub-frame ticks): g_fCockpit accumulates the time spent in the
+// render() cockpit scan/decode block; g_fCockpitScans counts the frames it actually ran.
+extern "C" volatile unsigned long g_fCockpit=0, g_fCockpitScans=0;
 #endif
 
 // g_quitJmp: the __builtin_setjmp buffer armed by RescueOnFractalus::run() so we can
