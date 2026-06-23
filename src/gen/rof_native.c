@@ -4488,31 +4488,34 @@ void terrain_collision(void) {
     uint16_t fPtr = 0; uint8_t f95 = 0, f96 = 0;         /* captured final ZP state */
 
     do {                                                 /* L_ae59 — one column */
-        /* Topmost non-empty of the 48 rows (base $1010, stride $60); $30 if all empty. */
+        /* Topmost non-empty of the 48 rows (base $1010, stride $60); $30 if all empty.
+         * Walk a row pointer by +$60 — no per-row multiply/index. */
+        uint8_t* p = M + 0x1010 + Y;
         int k = 0x30;
         for (int i = 0; i < 0x30; i++) {
-            uint16_t a = (uint16_t)(0x1010 + i * 0x60 + Y);
-            if (M[a] != 0) { k = i; break; }
+            if (*p != 0) { k = i; break; }
+            p += 0x60;
         }
-        /* Waterfall $55 into rows k-1..1. */
-        for (int i = k - 1; i >= 1; i--)
-            M[(uint16_t)(0x1010 + i * 0x60 + Y)] = 0x55;
+        /* Waterfall $55 into rows k-1..1.  The scan left p AT row k (or row $30 if none),
+         * so step it back down by $60 — reuse it, still no multiply. */
+        for (int i = k - 1; i >= 1; i--) { p -= 0x60; *p = 0x55; }
 
-        /* Column silhouette fill, walking down by stride $60 via the $073D/$0793 row-ptr
+        /* Column silhouette fill, walking a pointer down by $60 via the $073D/$0793 row-ptr
          * tables, ORing the $BF00/$BE00 mask tables until $BE00[v]&$96 underflows. */
-        uint16_t ptr = (uint16_t)(M[0x073D + k] | (M[0x0793 + k] << 8));  /* b12f-b137 */
+        uint16_t base = (uint16_t)(M[0x073D + k] | (M[0x0793 + k] << 8));  /* b12f-b137 */
+        uint8_t* fp = M + base + Y;
         uint8_t m95 = 0x00, m96 = 0x55;                  /* b139-b13f */
         for (;;) {                                       /* L_b141 */
-            uint16_t addr = (uint16_t)(ptr + Y);
-            uint8_t  v    = M[addr];                      /* ($80),Y */
-            M[addr] = (uint8_t)((v & m95) | m96 | M[0xBF00 + v]);
+            uint8_t v = *fp;                              /* ($80),Y */
+            *fp = (uint8_t)((v & m95) | m96 | M[0xBF00 + v]);
             uint8_t e = (uint8_t)(M[0xBE00 + v] & m96);
             if (e == 0) break;                            /* b152 */
             m96 = e;                                      /* b154 */
             m95 = M[0xBE00 + e];                          /* b157-b15a */
-            ptr = (uint16_t)(ptr + 0x60);                 /* b15c-b167 ($80/$81 += $60) */
+            fp += 0x60;                                   /* b15c-b167 ($80/$81 += $60) */
         }
-        fPtr = ptr; f95 = m95; f96 = m96;                /* last column's surviving ZP state */
+        fPtr = (uint16_t)((uint16_t)(fp - M) - Y);        /* final $80/$81 base */
+        f95 = m95; f96 = m96;                             /* last column's surviving ZP state */
         Y++;                                              /* b169 */
     } while (--col != 0);                                /* b16a-b16c */
 
