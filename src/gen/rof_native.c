@@ -31,7 +31,12 @@ extern volatile unsigned long g_probeDispSetup, g_probeGameInit, g_probeIntro,
 extern volatile unsigned long g_iterMax, g_iterLast, g_iterPostDs,
     g_fSetup, g_fClear, g_fDraw, g_fColl, g_fState, g_fEnemy;
 extern volatile unsigned short g_probeFlightVbi, g_iterCount, g_iterMaxAt;
-#define FP_TIME(stmt, acc) do { unsigned long _p = rof_subclock(); stmt; (acc) += rof_subclock() - _p; } while (0)
+/* Cumulative flight-VBI ISR beam-lines (bumped by flight_vbi_native).  Subtracted in
+ * FP_TIME so a phase's bucket excludes ISR firings that land in its window — otherwise
+ * the ~5 ms 50 Hz VBI inflates the (short) clear/setup/collision buckets. */
+extern volatile unsigned long g_isrBeamLines;
+#define FP_TIME(stmt, acc) do { unsigned long _p = rof_subclock(); unsigned long _i = g_isrBeamLines; \
+    stmt; (acc) += (rof_subclock() - _p) - (g_isrBeamLines - _i); } while (0)
 #define FP_ITER()      do { if (g_iterPostDs) { unsigned long _g = rof_subclock() - g_iterPostDs; \
                                 g_iterLast = _g; if (_g > g_iterMax) { g_iterMax = _g; g_iterMaxAt = g_iterCount; } } \
                             g_iterCount++; } while (0)
@@ -143,15 +148,33 @@ void divide_16x16(void) {
  *          is dead.  We still reproduce it (A=0, Y=0, X=original, N/Z per LDX X)
  *          so the validation harness shows zero incidental CPU drift.
  */
+/* Zero `n` bytes at `vp` through a non-volatile alias so the 68000 compiler can batch
+ * the stores into aligned move.l (instead of one volatile move.b per byte).  The result
+ * is byte-identical to a byte-by-byte zero (proven by make validate).  Aligns to a 4-byte
+ * boundary first — mandatory on the 68000, where move.l faults on an odd address. */
+static void zero_run(volatile uint8_t* vp, unsigned n) {
+    uint8_t* b = (uint8_t*)vp;
+    while (n && ((uintptr_t)b & 3u)) { *b++ = 0u; --n; }   /* align to 4 (move.l needs even) */
+    uint32_t* p = (uint32_t*)b;                            /* post-incr -> move.l d0,(a0)+ */
+    while (n >= 16u) { *p++ = 0u; *p++ = 0u; *p++ = 0u; *p++ = 0u; n -= 16u; }
+    while (n >= 4u)  { *p++ = 0u; n -= 4u; }
+    b = (uint8_t*)p;
+    while (n) { *b++ = 0u; --n; }
+}
+
 /* Typed core: see rof_native.h. */
 void clear_terrain_column_core(uint8_t startCol) {
     mem[0x0094] = startCol;                       /* $AD5F: STX $0094 (save column) */
 
-    /* $AD61-$ADEF: 42 columns ($2A) x 44 rows (base $1010, stride $60), all 0. */
-    for (uint8_t i = 0; i < 0x2A; i++) {
-        uint8_t x = (uint8_t)(startCol + i);      /* INX wraps as a byte */
-        for (uint16_t row = 0x1010; row <= 0x2030; row += 0x60)
-            mem[row + x] = 0x00;
+    /* $AD61-$ADEF: 42 columns ($2A) x 44 rows (base $1010, stride $60), all 0.  The 6502
+     * walks column-major with byte-wide INX wrap; here we clear each row's 42 contiguous
+     * columns in one batched run (row-major), splitting only if the byte column index
+     * wraps past $FF (startCol > $D6 — never happens in flight, kept for bit-exactness). */
+    unsigned head = (startCol + 0x2Au <= 0x100u) ? 0x2Au : (0x100u - startCol);
+    unsigned tail = 0x2Au - head;
+    for (uint16_t row = 0x1010; row <= 0x2030; row += 0x60) {
+        zero_run(mem + row + startCol, head);
+        if (tail) zero_run(mem + row, tail);
     }
 
     /* $ADF0-$AE52: scattered object-table cells, indexed by the ORIGINAL column. */

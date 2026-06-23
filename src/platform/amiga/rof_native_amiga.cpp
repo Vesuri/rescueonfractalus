@@ -1093,14 +1093,23 @@ void reorder_sprite_slot(void);          // $5614: voice-priority mixer — assi
 // ramp, the MANUAL message and the score, none of which the old curated subset did.  RTCLOK
 // ($0014/$0012) is advanced here (as on the Atari); PlatformAmiga::renderFrame skips its
 // own RTCLOK advance for $4FF5 so the clock is not double-counted.
+#ifdef ROF_FLIGHT_PROBE
+// Cumulative flight-VBI ISR beam-lines, subtracted by rof_native.c's FP_TIME so the main-loop
+// phase buckets (clear/setup/collision/draw) exclude ISR firings that land in their windows.
+extern "C" volatile unsigned long g_isrBeamLines = 0;
+#endif
 extern "C" void flight_vbi_native(void)
 {
     unsigned short a = beam_line();      // sub-frame profiler timer
     vbi_handler_flight();                // $4FF5 — the whole handler
     unsigned short b = beam_line();
-    g_flightProf.isrLines += (b >= a) ? (unsigned short)(b - a)
-                                      : (unsigned short)(b + 313 - a);  // PAL wrap (~313 lines)
+    unsigned short d = (b >= a) ? (unsigned short)(b - a)
+                                : (unsigned short)(b + 313 - a);  // PAL wrap (~313 lines)
+    g_flightProf.isrLines += d;
     g_flightProf.isrCalls++;
+#ifdef ROF_FLIGHT_PROBE
+    g_isrBeamLines += d;
+#endif
 }
 
 // g_activeVbi: now only a "scene ready" gate (0 = scene still initialising, ISR does
