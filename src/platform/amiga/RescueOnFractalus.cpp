@@ -258,6 +258,41 @@ void RescueOnFractalus::buildFlightFrameSprites()
     }
 }
 
+// ---- artificial-horizon ground-fill sprites (instrument #6) ------------------
+// The AH's brown ground is the Atari player P2 (COLPM2=$26), multiplexed below the
+// windscreen frame onto sprite channels 0/1 (copper re-points SPR0PT/SPR1PT in the gap).
+// Its GRAFP2 per scanline lives in the P2 player buffer: mem[$0E00 + O], where
+// O = $32 + (Amiga_line - kTerrainLine).  The dial spans Amiga lines 182-214 (offsets
+// $92-$B2) — $00 above the horizon (empty sky), $FF below (solid ground), the boundary
+// moving with pitch.  Each Atari player byte is DOUBLE-WIDTH (8 bits -> 32 lores px), so it
+// expands across BOTH 16px sprites: bits 7-4 -> ahLeft, bits 3-0 -> ahRight, each bit -> 4 px.
+// Brown is pen 01 (plane A -> COLOR17, which the copper sets to $26 over the AH rows).
+static const int      kAHRows    = 33;        // Amiga lines 182..214 (the dial extent)
+static const uint16_t kAHBufBase = 0x0E92;    // P2 player buffer offset for Amiga line 182
+
+static __inline uint16_t expandNibble16(uint8_t nib)
+{
+    uint16_t w = 0;                            // each of the 4 bits -> 4 Amiga px
+    if (nib & 8) w |= 0xF000;
+    if (nib & 4) w |= 0x0F00;
+    if (nib & 2) w |= 0x00F0;
+    if (nib & 1) w |= 0x000F;
+    return w;
+}
+
+void RescueOnFractalus::buildAHSprite()
+{
+    uint16_t* l = ahLeft->data()  + 2;         // skip the 2 control words
+    uint16_t* r = ahRight->data() + 2;
+    for (int i = 0; i < kAHRows; i++) {
+        uint8_t b = mem[kAHBufBase + i];                    // GRAFP2 ($00 sky / $FF ground)
+        l[i * 2]     = expandNibble16((uint8_t)(b >> 4));   // bits 7-4 -> left 16px (plane A = pen01)
+        l[i * 2 + 1] = 0x0000;                              // plane B unused
+        r[i * 2]     = expandNibble16((uint8_t)(b & 0x0F)); // bits 3-0 -> right 16px
+        r[i * 2 + 1] = 0x0000;
+    }
+}
+
 // ---- throttle gauge sprite ---------------------------------------------------
 // Build the player-1 throttle bar from the vobj strip mem[$0D98..].  Each strip
 // byte is one Atari player scanline ($F0 = leftmost 4px on); we map a filled row
@@ -372,8 +407,12 @@ void RescueOnFractalus::initialize()
     flRightPost = Sprite::allocate(kHT + 8);
     flLeftTri   = Sprite::allocate(8);
     flRightTri  = Sprite::allocate(8);
+    // AH ground-fill: two 16px sprites (32px dial) reusing ch0/1 below the frame.
+    ahLeft  = Sprite::allocate(kAHRows);
+    ahRight = Sprite::allocate(kAHRows);
     if (!leftPost || !rightPost || !nullSprite || !energyIndicatorSprite || !altimeterSprite
-        || !altimeterShipSprite || !flLeftPost || !flRightPost || !flLeftTri || !flRightTri) return;
+        || !altimeterShipSprite || !flLeftPost || !flRightPost || !flLeftTri || !flRightTri
+        || !ahLeft || !ahRight) return;
     // Starfield sprites (P0/P2/P3): 89-row strips, all at the windscreen top
     // (player scanline $32 → Amiga Y = kTerrainLine, the +36 offset that maps the
     // gauge strip $0D98/scanline $98 to Amiga Y 0x2c+144).
@@ -419,6 +458,13 @@ void RescueOnFractalus::initialize()
     flLeftTri->setX(kSprXLeft - 16);    flLeftTri->setY(kBandSprY);       // 0x82, outer (toward edge)
     flRightPost->setX(kSprXRight);      flRightPost->setY(kTerrainLine);  // 0x19E, inner (toward centre)
     flRightTri->setX(kSprXRight + 16);  flRightTri->setY(kBandSprY);      // 0x1AE, outer (toward edge)
+
+    // AH ground-fill sprites: 32px (two 16px) at the dial position (CLAUDE x56, y138 →
+    // Amiga line 182).  ch0/1's frame use ends at VSTOP=180; the copper re-points SPR0PT/
+    // SPR1PT to these in the gap (FlightCopperList).  X/Y constant; the FILL is refreshed
+    // each frame by buildAHSprite.
+    ahLeft->setX(0x81 + 55);        ahLeft->setY(0x2c + 138);    // x55 (1px left of the dial bitmap); line 182
+    ahRight->setX(0x81 + 55 + 16);  ahRight->setY(0x2c + 138);   // gap below frame VSTOP 180
 
     // One-time playfield setup: the constant display registers (FMODE, BPLCON3/2/1,
     // DIWSTRT/STOP/HIGH, DDFSTRT/STOP) never change, so set them ONCE here via the CPU
@@ -466,7 +512,8 @@ void RescueOnFractalus::initialize()
     flightCopper = new FlightCopperList();
     if (flightCopper && flightCopper->data())
         flightCopper->buildLayout(*titleBitmap, *terrainBitmap, *cockpitBitmap,
-                                  *flLeftPost, *flLeftTri, *flRightPost, *flRightTri, *nullSprite);
+                                  *flLeftPost, *flLeftTri, *flRightPost, *flRightTri, *nullSprite,
+                                  *ahLeft, *ahRight);
 
     // Launch-cinematic fixed copper lists (scene 4 doors / scene 5 tunnel), same
     // build-once scheme; renderFrame installs them during the launch cinematic.  Doors
@@ -1182,7 +1229,7 @@ void RescueOnFractalus::perFrameWork()
     if (rsStars) buildStarSprites();
     // Flight altimeter bars: mirror the live P0 $0C98 (terrain-height) + M3 $0B98
     // (ship-height) strips each frame.
-    if (rsFlight) { buildAltimeterSprite(); buildAltimeterShipSprite(); }
+    if (rsFlight) { buildAltimeterSprite(); buildAltimeterShipSprite(); buildAHSprite(); }
 }
 
 // ---- cockpit helpers ---------------------------------------------------------

@@ -167,6 +167,16 @@ private:
     Sprite*     flRightTri     = nullptr;
     void buildFlightFrameSprites();  // decode A-pillars ($4DFA/$4E09) + band wedges ($4DD2/$4DDA)
 
+    // Artificial Horizon (#6): the brown ground-fill is the Atari player P2 (COLPM2=$26),
+    // multiplexed below the windscreen frame.  ch0/ch1 are reused (copper re-points SPR0PT/
+    // SPR1PT in the gap below the frame's VSTOP) for two 16px sprites = the 32px-wide dial
+    // fill.  Decoded each flight frame from the live P2 buffer (mem[$0E92..], = GRAFP2 per
+    // scanline) so the horizon tracks pitch.  Shown BEHIND the playfield so the bitmap dial
+    // frame (value-1/2 glyphs) stays in front and the brown shows through the value-0 centre.
+    Sprite*     ahLeft         = nullptr;
+    Sprite*     ahRight        = nullptr;
+    void buildAHSprite();  // mirror the live P2 fill ($0E92..) -> ahLeft/ahRight (flight AH ground)
+
     // Dirty-flag bitmap caching: bitmaps are rendered once on initialize() and
     // only re-rendered when the underlying mem[] data changes.
     bool    terrainDirty = true;   // re-render terrain rows from $2000

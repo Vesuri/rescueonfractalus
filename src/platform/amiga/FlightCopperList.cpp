@@ -78,14 +78,27 @@ static const uint16_t kColor30 = 0x1BC;   // pair 6/7 pen 10 (altimeter ship-hei
 #define BAND_BLOCK_WORDS      1
 #define INDEX_BAND_BLOCK      (INDEX_VP_LINEDOUBLE + 3 * (kTerrainHeight - 1) + 1)  // band color03 (1)
 #define INDEX_COCKPIT_WAIT    (INDEX_VP_LINEDOUBLE + 3 * (kViewportHeight - 1) + BAND_BLOCK_WORDS)
-#define INDEX_COCKPIT_BPL     (INDEX_COCKPIT_WAIT + 1)     // cockpit 3bp ptrs, yOffset 8 (6)
+// Artificial Horizon (#6): the brown ground-fill = Atari player P2, multiplexed onto sprite
+// channels 0/1 BELOW the windscreen frame (whose ch0/1 use ends at VSTOP=180).  The SPR0PT/
+// SPR1PT re-point MUST be the FIRST moves after the cockpit WAIT — at line 180 cycles 0-8,
+// before the sprite DMA slot (~0x14) where the channel does its post-VSTOP control-word fetch
+// — so it reads the AH sprites' control words instead of the frame sprites' $0000 terminator
+// (which would idle ch0/1 for the field).  See HRM 4-2-6-4 / 4-6 (sprite reuse).
+#define INDEX_AH_SPR          (INDEX_COCKPIT_WAIT + 1)     // SPR0PT/SPR1PT -> ahLeft/ahRight (4)
+#define INDEX_COCKPIT_BPL     (INDEX_AH_SPR + 4)           // cockpit 3bp ptrs, yOffset 8 (6)
 #define INDEX_COCKPIT_BPLCON0 (INDEX_COCKPIT_BPL + 6)      // bplcon0 3P (1)
 #define INDEX_COCKPIT_MOD     (INDEX_COCKPIT_BPLCON0 + 1)  // bpl1mod,bpl2mod (2)
 #define INDEX_COCKPIT_PAL     (INDEX_COCKPIT_MOD + 2)      // color00..07 (8)
+// AH colour + priority (line 180, AFTER the frame's last line 179 → safe; COLOR17 is unused on
+// the band rows 172-179, which use COLOR18).  COLOR17 = $26 brown (AH pen01); BPLCON2 PFxP=0
+// puts sprite pair 0 (ch0/1 = AH) BEHIND the playfield so the bitmap dial frame shows in front
+// and the brown shows only through the dial's value-0 centre (mirrors the Atari PRIOR=$04).
+#define INDEX_AH_COL          (INDEX_COCKPIT_PAL + 8)      // COLOR17 = $26 brown (1)
+#define INDEX_AH_BPLCON2      (INDEX_AH_COL + 1)           // BPLCON2 PFxP=0 (sprites behind playfield) (1)
 // Cockpit bitmap starts at kCockpitLine=180 (yOffset 8 skips the $350D band).  COLBK splits
 // match the launch cockpit: baked color00=$00 covers the black divider strip (180-188); then
 // dark-blue $90 dashboard instrument backgrounds (182-251); then black floor (252+).
-#define INDEX_DASH_BLUE_WAIT  (INDEX_COCKPIT_PAL + 8)      // WAIT(kCockpitLine+2-1 = 181) (1)
+#define INDEX_DASH_BLUE_WAIT  (INDEX_AH_BPLCON2 + 1)       // WAIT(kCockpitLine+2-1 = 181) (1)
 #define INDEX_DASH_BLUE       (INDEX_DASH_BLUE_WAIT + 1)   // color00 = $90 dark blue (dashboard) (1)
 #define INDEX_FLOOR_WAIT      (INDEX_DASH_BLUE + 1)        // WAIT(kCockpitLine+72-1 = 251) (1)
 #define INDEX_FLOOR           (INDEX_FLOOR_WAIT + 1)       // color00 = black (floor) (1)
@@ -100,7 +113,8 @@ FlightCopperList::FlightCopperList()
 void FlightCopperList::buildLayout(const Bitmap& title, const Bitmap& terrain, const Bitmap& cockpit,
                                    const Sprite& leftPost, const Sprite& leftTri,
                                    const Sprite& rightPost, const Sprite& rightTri,
-                                   const Sprite& nullSprite)
+                                   const Sprite& nullSprite,
+                                   const Sprite& ahLeft, const Sprite& ahRight)
 {
     uint32_t* d = data_;
 
@@ -172,6 +186,11 @@ void FlightCopperList::buildLayout(const Bitmap& title, const Bitmap& terrain, c
     // ---- cockpit region: WAIT, pointers (skip the 8 modeD frame scanlines now drawn by
     // the wing band above via yOffset=8), 3bp, modulo, constant palette ----
     d[INDEX_COCKPIT_WAIT] = copperWait(kCockpitLine - 1, 0xE0);
+    // AH ground-fill: re-point ch0/1 to the two AH sprites FIRST (timing-critical — before the
+    // line-180 sprite DMA slot; see the INDEX_AH_SPR comment).  Pointers are stable; the fill is
+    // refreshed each frame in buildAHSprite (the copper points at the live sprite buffers).
+    showSprite(INDEX_AH_SPR + 0, 0, ahLeft);    // SPR0PT -> ahLeft  (left 16px of the 32px dial)
+    showSprite(INDEX_AH_SPR + 2, 1, ahRight);   // SPR1PT -> ahRight (right 16px)
     showBitmap(INDEX_COCKPIT_BPL, cockpit, 1, 1, 0, 8);   // yOffset 8 scanlines: skip the $350D band rows
     d[INDEX_COCKPIT_BPLCON0] = copperMove(bplcon0, kBPLCON0_3P);
     d[INDEX_COCKPIT_MOD]     = copperMove(bpl1mod, 80);
@@ -185,6 +204,12 @@ void FlightCopperList::buildLayout(const Bitmap& title, const Bitmap& terrain, c
     d[INDEX_COCKPIT_PAL + 5] = copperMove(color05, atariToOCS(0x04));
     d[INDEX_COCKPIT_PAL + 6] = copperMove(color06, atariToOCS(0x06));
     d[INDEX_COCKPIT_PAL + 7] = copperMove(color07, atariToOCS(0x26));
+
+    // AH ground-fill colour + priority (line 180, after the frame): COLOR17 = $26 red-brown
+    // (the AH sprites use pen 01), and BPLCON2 PFxP=0 so sprite pair 0 (ch0/1 = AH) sits BEHIND
+    // the playfield — the bitmap dial frame stays in front, brown shows through the value-0 centre.
+    d[INDEX_AH_COL]     = copperMove(color17, atariToOCS(0x26));
+    d[INDEX_AH_BPLCON2] = copperMove(bplcon2, (uint16_t)((0u << 3) | 0u));
 
     // Dashboard instrument backgrounds = dark blue COLBK $90 (Amiga 182-251); floor black (252+).
     // Only COLBK (color00) changes; baked color00=$00 above covers the divider strip (180-188).

@@ -28,7 +28,8 @@ public:
     void buildLayout(const Bitmap& title, const Bitmap& terrain, const Bitmap& cockpit,
                      const Sprite& leftPost, const Sprite& leftTri,
                      const Sprite& rightPost, const Sprite& rightTri,
-                     const Sprite& nullSprite);
+                     const Sprite& nullSprite,
+                     const Sprite& ahLeft, const Sprite& ahRight);  // AH ground-fill (ch0/1 reuse)
 
     // ---- per-frame setters (each pokes one MOVE, or one sprite pointer pair) ----
     void setTitlePalette(uint16_t bg, uint16_t pf0, uint16_t pf1);  // color00..03 (col0=col3=bg)
