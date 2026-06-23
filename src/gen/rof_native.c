@@ -5397,15 +5397,19 @@ void flight_control_integrate(void) {
     X = bus_read(0xD300);                          /* 8e70-8e73 */
     if ((X & 0x04) == 0) { mem[0x0021] ^= 0xFF; }  /* 8e74-8e7c */
     else if (X & 0x08)   { mem[0x0021] = 0x00; }   /* 8e81-8e88 */
-    /* L_8e8a */
-    if (mem[0x005D] != 0) { A = 0xD0; }            /* 8e8a-8e90 */
-    else if (X & 0x01) {                           /* 8e93-8e96 */
+    /* L_8e8a — the 6502 uses BNE here, branching AWAY (skipping the body) when the tested
+     * value is nonzero, so each body runs when the value is ZERO (verified vs the disasm and
+     * the flight_control_integrate__t6502 oracle).  The earlier transcription inverted all
+     * three tests, which pinned $0027=$D0 (nose-down) at neutral stick ($D300=$FF, $005D!=0)
+     * instead of $00 (level) — the no-auto-level nose-dive bug. */
+    if (mem[0x005D] == 0) { A = 0xD0; }            /* 8e8a-8e90: $5D==0 -> pitch rate $D0 */
+    else if ((X & 0x01) == 0) {                    /* 8e93-8e96: bit0 clear (stick up) */
         A = 0xD0;                                  /* 8e98 */
         if (mem[0x0029] == 0xF4 && mem[0x0028] == 0) A = 0xFF;   /* 8e9a-8ea4 */
-    } else if (X & 0x02) {                         /* 8ea9-8eac */
+    } else if ((X & 0x02) == 0) {                  /* 8ea9-8eac: bit1 clear (stick down) */
         A = 0x30;                                  /* 8eae */
         if (mem[0x0029] == 0x0B && mem[0x0028] == 0xFF) A = 0x01; /* 8eb0-8ebc */
-    } else { A = 0x00; }                           /* 8ec1 */
+    } else { A = 0x00; }                           /* 8ec1: neutral -> no pitch rate */
     mem[0x0027] = A;                               /* 8ec3 */
 L_8ec5:
     if (mem[0x0004] != 0) compute_target_blip_position();   /* 8ec5-8ec9 */
