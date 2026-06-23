@@ -7,6 +7,10 @@ printf "vbi=%u VVBLKI=%02x%02x joy=%u 060B=%02x\n", g_vbiCount, mem[0x0223], mem
 echo --- flight control integ ($0027 pitch-rate: 00=level at neutral; $D0=nose-dive bug) ---\n
 printf "pitch(28/29)=%02x%02x pitchRate(27)=%02x roll(25/26)=%02x%02x thr(2D/2E)=%02x%02x alt(34)=%02x 005D=%02x D300=%02x\n", \
   mem[0x0028], mem[0x0029], mem[0x0027], mem[0x0025], mem[0x0026], mem[0x002D], mem[0x002E], mem[0x0034], mem[0x005D], mem[0xD300]
+printf "throttle-feeders: 0021=%02x 0022=%02x 0072=%02x 0676=%02x | dial 006F=%02x 0625=%02x (idx=%02x)\n", \
+  mem[0x0021], mem[0x0022], mem[0x0072], mem[0x0676], mem[0x006F], mem[0x0625], (mem[0x006F]+mem[0x0625])&0xff
+printf "event-seq: 003C=%02x 003D=%02x 003E=%02x 0043=%02x 063B=%02x 0634=%02x\n", \
+  mem[0x003C], mem[0x003D], mem[0x003E], mem[0x0043], mem[0x063B], mem[0x0634]
 echo --- flight init (sub-frame ticks; 313/frame) ---\n
 printf "flightVbi=%u dispSetup=%lu gameInit=%lu intro=%lu rowAddr=%lu initTotal=%lu\n", \
   g_probeFlightVbi, g_probeDispSetup, g_probeGameInit, g_probeIntro, g_probeRowAddr, g_probeInitTotal
