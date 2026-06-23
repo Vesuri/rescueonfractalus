@@ -4476,47 +4476,50 @@ void project_terrain_points(void) {
  * Contract: memory only (caller reloads regs).
  */
 void terrain_collision(void) {
-    uint8_t A, X, Y, c;
-    Y = cpu.X;                                           /* ae53 TXA; ae54 TAY */
-    mem[0x009F] = 0x2A;                                  /* ae55-ae57 (42 columns) */
+    /* Idiomatic rewrite (was a per-instruction transliteration that re-read/-wrote the
+     * $80/$81/$95/$96 ZP scratch ~13x per fill iteration and recomputed i*$60 each scan
+     * step).  Every 68000 memory access is slow, so the running pointer / masks / counter
+     * live in registers and only the final ZP state (which the oracle leaves behind, and
+     * the harness checks) is written back.  Terrain field via a non-volatile alias (the
+     * main loop owns $1010+; $BE00/$BF00 are read-only mask tables).  mem[]-identical. */
+    uint8_t* const M = (uint8_t*)mem;
+    uint8_t Y   = cpu.X;                                 /* ae53 TXA;TAY (start column) */
+    uint8_t col = 0x2A;                                  /* ae55 42 columns ($9F) */
+    uint16_t fPtr = 0; uint8_t f95 = 0, f96 = 0;         /* captured final ZP state */
 
-    for (;;) {                                           /* L_ae59 — one column */
-        int k = 0x30;                                    /* all-empty -> $30 */
-        for (int i = 0; i < 0x30; i++)                   /* LDA #0; CMP $ROW,Y ladder */
-            if (mem[(0x1010 + i * 0x60) + Y] != 0) { k = i; break; }
-        for (int i = k - 1; i >= 1; i--)                 /* waterfall: $55 into rows k-1..1 */
-            mem[(0x1010 + i * 0x60) + Y] = 0x55;
-
-        X = (uint8_t)k;                                  /* b12f */
-        mem[0x0080] = mem[0x073D + X];                   /* b12f-b132 */
-        mem[0x0081] = mem[0x0793 + X];                   /* b134-b137 */
-        mem[0x0095] = 0x00;                              /* b139-b13b */
-        mem[0x0096] = 0x55;                              /* b13d-b13f */
-        for (;;) {                                       /* L_b141 */
-            uint16_t addr = (uint16_t)(mem[0x0080] | (mem[0x0081] << 8)) + Y;
-            A = bus_read(addr);                          /* b141 LDA ($80),Y */
-            X = A;                                        /* b143 TAX */
-            A &= mem[0x0095];                            /* b144 AND $95 */
-            A |= mem[0x0096];                            /* b146 ORA $96 */
-            A |= mem[0xBF00 + X];                        /* b148 ORA $BF00,X */
-            bus_write(addr, A);                          /* b14b STA ($80),Y */
-            A = mem[0xBE00 + X];                         /* b14d LDA $BE00,X */
-            A &= mem[0x0096];                            /* b150 AND $96 */
-            if (A == 0) break;                            /* b152 BEQ b169 */
-            mem[0x0096] = A;                             /* b154 STA $96 */
-            X = A;                                        /* b156 TAX */
-            mem[0x0095] = mem[0xBE00 + X];               /* b157-b15a */
-            c = 0; A = mem[0x0080];                      /* b15c CLC; b15d LDA $80 */
-            { uint16_t t = (uint16_t)A + 0x60 + c; c = (uint8_t)(t >> 8); A = (uint8_t)t; }  /* b15f ADC #$60 */
-            mem[0x0080] = A;                             /* b161 */
-            if (!c) continue;                             /* b163 BCC b141 */
-            mem[0x0081] = (uint8_t)(mem[0x0081] + 1);    /* b165 INC $81 (C unchanged) */
-            /* b167 BCS b141 — C still set here, so always loops */
+    do {                                                 /* L_ae59 — one column */
+        /* Topmost non-empty of the 48 rows (base $1010, stride $60); $30 if all empty. */
+        int k = 0x30;
+        for (int i = 0; i < 0x30; i++) {
+            uint16_t a = (uint16_t)(0x1010 + i * 0x60 + Y);
+            if (M[a] != 0) { k = i; break; }
         }
-        Y = (uint8_t)(Y + 1);                            /* b169 INY */
-        mem[0x009F] = (uint8_t)(mem[0x009F] - 1);        /* b16a DEC $9F */
-        if (mem[0x009F] == 0) return;                     /* b16c BEQ b171 */
-    }                                                    /* b16e goto ae59 */
+        /* Waterfall $55 into rows k-1..1. */
+        for (int i = k - 1; i >= 1; i--)
+            M[(uint16_t)(0x1010 + i * 0x60 + Y)] = 0x55;
+
+        /* Column silhouette fill, walking down by stride $60 via the $073D/$0793 row-ptr
+         * tables, ORing the $BF00/$BE00 mask tables until $BE00[v]&$96 underflows. */
+        uint16_t ptr = (uint16_t)(M[0x073D + k] | (M[0x0793 + k] << 8));  /* b12f-b137 */
+        uint8_t m95 = 0x00, m96 = 0x55;                  /* b139-b13f */
+        for (;;) {                                       /* L_b141 */
+            uint16_t addr = (uint16_t)(ptr + Y);
+            uint8_t  v    = M[addr];                      /* ($80),Y */
+            M[addr] = (uint8_t)((v & m95) | m96 | M[0xBF00 + v]);
+            uint8_t e = (uint8_t)(M[0xBE00 + v] & m96);
+            if (e == 0) break;                            /* b152 */
+            m96 = e;                                      /* b154 */
+            m95 = M[0xBE00 + e];                          /* b157-b15a */
+            ptr = (uint16_t)(ptr + 0x60);                 /* b15c-b167 ($80/$81 += $60) */
+        }
+        fPtr = ptr; f95 = m95; f96 = m96;                /* last column's surviving ZP state */
+        Y++;                                              /* b169 */
+    } while (--col != 0);                                /* b16a-b16c */
+
+    /* Final ZP state the 6502 leaves (only the last column's values survive). */
+    mem[0x0080] = (uint8_t)fPtr; mem[0x0081] = (uint8_t)(fPtr >> 8);
+    mem[0x0095] = f95;           mem[0x0096] = f96;
+    mem[0x009F] = 0x00;
 }
 
 /* terrain_draw_frame @ $A31E — main per-frame terrain driver (flight top #5, the last).
