@@ -778,10 +778,21 @@ static uint32_t vbiHandler()
         }
     }
 
-    // Auto-launch: replicate a RETURN/START press once Standby is settled, so the headless
-    // harness reaches the launch cinematic + flight with no keyboard input.
-    if (g_vbiCount == 350) mem[0xD01Fu] = 0x06;   // START down
-    else if (g_vbiCount == 360) mem[0xD01Fu] = 0x07;  // release
+    // Auto-launch: replicate a RETURN/START press once Standby's idle loop is actually
+    // polling CONSOL.  A fixed vbi==350 fired before display_setup's standby poll was live
+    // (g_standbyRevealReady latches at display_setup entry, when the idle loop starts), so the
+    // press was never seen.  Gate on the reveal latch + a settle delay, and HOLD START for a
+    // wide window so the once-per-frame poll catches it.
+    {
+        extern volatile unsigned char g_standbyRevealReady;
+        static uint16_t s_revealVbi = 0;
+        if (g_standbyRevealReady && s_revealVbi == 0) s_revealVbi = g_vbiCount;
+        if (s_revealVbi) {
+            uint16_t d = (uint16_t)(g_vbiCount - s_revealVbi);
+            if (d >= 60 && d < 120)      mem[0xD01Fu] = 0x06;   // START held (bit0 clear), ~1s window
+            else if (d == 120)           mem[0xD01Fu] = 0x07;   // release
+        }
+    }
 #endif
 
     // Per-frame VBI body — run in the REAL vertical-blank interrupt, where the Atari ran
