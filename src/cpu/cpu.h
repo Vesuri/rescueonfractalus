@@ -49,22 +49,58 @@ static inline void P_unpack(uint8_t p) {
 #define TXS()   do { cpu.S=cpu.X; } while(0)  /* TXS: no flag change */
 
 /* ---------- arithmetic -------------------------------------------- */
-/* ADC: A = A + v + C
+/* ADC: A = A + v + C.  Honours decimal mode (cpu.D) — the game uses BCD for the
+ * score ($497d) and other counters ($75c0/$7b8d), so SED/ADC must produce packed
+ * BCD (09+01 -> 10, not 0A) with a decimal carry between digits.
  * NOTE: evaluate the operand EXACTLY ONCE — `v` may have side effects (e.g.
  * bus_read(0xD20A) steps the POKEY RANDOM LFSR).  Double-evaluating it (the old
  * macro referenced (v) in both the sum and the overflow calc) made `ADC <hwreg>`
- * read the register twice, desyncing the RANDOM stream from the real 6502. */
+ * read the register twice, desyncing the RANDOM stream from the real 6502.
+ * Decimal flag quirks follow the NMOS 6502: Z from the binary result, V from the
+ * binary overflow, N from the high nibble; C is the decimal carry. */
 #define ADC(v) do { \
     uint8_t _v = (uint8_t)(v); \
     uint16_t _t = (uint16_t)cpu.A + _v + cpu.C; \
     cpu.V = ((~(cpu.A ^ _v) & (cpu.A ^ (uint8_t)_t)) >> 7) & 1; \
-    cpu.C = (_t > 0xFF) ? 1 : 0; \
-    cpu.A = (uint8_t)_t; \
-    UPD_NZ(cpu.A); \
+    if (cpu.D) { \
+        uint16_t _al = (uint16_t)(cpu.A & 0x0F) + (_v & 0x0F) + cpu.C; \
+        uint16_t _ah = (uint16_t)(cpu.A >> 4) + (_v >> 4); \
+        if (_al > 9) { _al += 6; _ah += 1; } \
+        cpu.Z = ((uint8_t)_t == 0) ? 1 : 0; \
+        cpu.N = (_ah & 0x08) ? 1 : 0; \
+        if (_ah > 9) _ah += 6; \
+        cpu.C = (_ah > 0x0F) ? 1 : 0; \
+        cpu.A = (uint8_t)(((_ah << 4) | (_al & 0x0F)) & 0xFF); \
+    } else { \
+        cpu.C = (_t > 0xFF) ? 1 : 0; \
+        cpu.A = (uint8_t)_t; \
+        UPD_NZ(cpu.A); \
+    } \
 } while(0)
 
-/* SBC: A = A - v - (1-C)  ==  ADC(~v) */
-#define SBC(v) ADC((uint8_t)~(uint8_t)(v))
+/* SBC: A = A - v - (1-C).  In binary mode == ADC(~v).  In decimal mode the NMOS
+ * 6502 sets all flags (C/Z/N/V) exactly as the binary subtraction and only the A
+ * register gets the decimal correction (low nibble, then high nibble). */
+#define SBC(v) do { \
+    uint8_t _sv = (uint8_t)(v); \
+    uint8_t _nv = (uint8_t)~_sv; \
+    uint16_t _t = (uint16_t)cpu.A + _nv + cpu.C; \
+    cpu.V = ((~(cpu.A ^ _nv) & (cpu.A ^ (uint8_t)_t)) >> 7) & 1; \
+    uint8_t _binres = (uint8_t)_t; \
+    if (cpu.D) { \
+        int _al = (int)(cpu.A & 0x0F) - (int)(_sv & 0x0F) + (int)cpu.C - 1; \
+        if (_al < 0) _al = ((_al - 6) & 0x0F) - 0x10; \
+        int _ar = (int)(cpu.A & 0xF0) - (int)(_sv & 0xF0) + _al; \
+        if (_ar < 0) _ar -= 0x60; \
+        cpu.C = (_t > 0xFF) ? 1 : 0; \
+        cpu.A = (uint8_t)(_ar & 0xFF); \
+        UPD_NZ(_binres); \
+    } else { \
+        cpu.C = (_t > 0xFF) ? 1 : 0; \
+        cpu.A = _binres; \
+        UPD_NZ(cpu.A); \
+    } \
+} while(0)
 
 /* ---------- compare ----------------------------------------------- */
 #define CMP(v) do { uint8_t _v=(uint8_t)(v); uint8_t _d=cpu.A-_v; \

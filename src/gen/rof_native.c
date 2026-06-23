@@ -1005,14 +1005,14 @@ void music_init_state(void) {
     mem[0x0655] = 0x01;
 }
 
-/* count_up_to_level @ $75B8 — bump $0604 (and a parallel counter $00C3) until $0604
- * reaches the target $006D.  The 6502 wraps $C3 in SED/ADC but our ADC ignores the
- * decimal flag (matching the transliterated oracle), so $C3 counts in binary. */
+/* count_up_to_level @ $75B8 — bump $0604 (binary, via INC) and a parallel BCD counter
+ * $00C3 (SED/ADC #1) until $0604 reaches the target $006D.  $00C3 counts in decimal. */
 void count_up_to_level(void) {
     mem[0x00C3] = 0x00;
     do {
-        mem[0x0604] = (uint8_t)(mem[0x0604] + 1);
-        mem[0x00C3] = (uint8_t)(mem[0x00C3] + 1);
+        mem[0x0604] = (uint8_t)(mem[0x0604] + 1);                       /* INC $0604 — binary */
+        cpu.A = mem[0x00C3]; cpu.C = 0; cpu.D = 1; ADC(0x01); cpu.D = 0; /* SED;CLC;ADC #1;CLD */
+        mem[0x00C3] = cpu.A;
     } while (mem[0x0604] != mem[0x006D]);
 }
 
@@ -1184,10 +1184,13 @@ void init_cockpit_bar_cells(void) {
  * our ADC ignores the decimal flag (matching the transliterated oracle), so the add is
  * binary; tail-calls the (native) render_bcd_counter (which then clears $0045/$0046). */
 void add_and_show_bcd_counter(void) {
+    cpu.D = 1;   /* SED ($497d): the 4-byte score counter $0600-$0603 is packed BCD, so the
+                  * ADC chain must add in decimal (09+01 -> 10) with a decimal inter-digit carry. */
     cpu.A = mem[0x0603]; cpu.C = 0; ADC(mem[0x0045]); mem[0x0603] = cpu.A;
     cpu.A = mem[0x0602];            ADC(mem[0x0046]); mem[0x0602] = cpu.A;
     cpu.A = mem[0x0601];            ADC(0x00);        mem[0x0601] = cpu.A;
     cpu.A = mem[0x0600];            ADC(0x00);        mem[0x0600] = cpu.A;
+    cpu.D = 0;   /* CLD */
     render_bcd_counter();
 }
 
@@ -4813,11 +4816,11 @@ void load_velocity_from_param_block(void) {
     #undef RORM_
 }
 
-/* bcd_inc_counter_0641 @ $7B88 — CLC; SED; ADC #1; CLD.  The cpu core ignores
- * decimal mode ("decimal ignored in game"), so the oracle does a plain BINARY +1;
- * match it (the whole transpiled game runs binary here). mem-only contract. */
+/* bcd_inc_counter_0641 @ $7B88 — CLC; SED; ADC #1; CLD: increment the BCD counter
+ * $0641 in decimal (09 -> 10, not 0A).  mem-only contract. */
 void bcd_inc_counter_0641(void) {
-    mem[0x0641] = (uint8_t)(mem[0x0641] + 1);
+    cpu.A = mem[0x0641]; cpu.C = 0; cpu.D = 1; ADC(0x01); cpu.D = 0;
+    mem[0x0641] = cpu.A;
 }
 
 /* set_place_params_inc_count @ $7B80 — $0045=0, $0046=1, then bump the counter. */
