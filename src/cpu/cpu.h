@@ -10,7 +10,7 @@ typedef struct {
     uint8_t S;          /* stack pointer */
     /* status flags */
     uint8_t N, V, Z, C;
-    uint8_t I, D;       /* interrupt-disable, decimal (decimal ignored in game) */
+    uint8_t I, D;       /* interrupt-disable, decimal (D honoured by ADC/SBC for BCD) */
 } Cpu6502;
 
 extern Cpu6502 cpu;
