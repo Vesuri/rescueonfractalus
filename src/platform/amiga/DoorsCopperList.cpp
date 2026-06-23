@@ -59,12 +59,12 @@ static const uint16_t kBPLCON0_3P   = (uint16_t)((3 << PLNCNTSHFT) | USE_BPLCON3
 #define INDEX_COCKPIT_BPL     (INDEX_COCKPIT_WAIT + 1)  // 6
 #define INDEX_COCKPIT_BPLCON0 (INDEX_COCKPIT_BPL + 6)   // 1
 #define INDEX_COCKPIT_MOD     (INDEX_COCKPIT_BPLCON0 + 1) // 2
-#define INDEX_COCKPIT_PAL     (INDEX_COCKPIT_MOD + 2)   // color00..07 (8)
+#define INDEX_COCKPIT_PAL     (INDEX_COCKPIT_MOD + 2)   // color01..07 (7; color00 inherited)
 // Windscreen-bottom band: cockpit bitmap's top 8 scanlines (the mode-D $350D frame) — its
 // value-0 L/R corners take COLBK, which the Atari holds green ($C8 = mem[$0071]) through the
 // band then writes $00 below.  Same green→black COLBK split as StandbyCopperList (measured
 // identical for doors via the atari-dl-analyzer skill — COLBK=$C8 y128-136 → $00 dashboard).
-#define INDEX_DASH_BG_WAIT    (INDEX_COCKPIT_PAL + 8)   // WAIT(kCockpitLine+8-1) (1)
+#define INDEX_DASH_BG_WAIT    (INDEX_COCKPIT_PAL + 7)   // WAIT(kCockpitLine+8-1) (1)
 #define INDEX_DASH_BG         (INDEX_DASH_BG_WAIT + 1)  // color00 = black (divider strip 180-188) (1)
 // Dashboard instrument backgrounds are dark blue COLBK $90 (Amiga 182-251), floor black below
 // (252+).  Measured identical to Standby; only COLBK changes so we poke only color00.
@@ -137,14 +137,17 @@ void DoorsCopperList::buildLayout(const Bitmap& title, const Bitmap& cockpit,
     d[INDEX_COCKPIT_BPLCON0] = copperMove(bplcon0, kBPLCON0_3P);
     d[INDEX_COCKPIT_MOD]     = copperMove(bpl1mod, 80);
     d[INDEX_COCKPIT_MOD + 1] = copperMove(bpl2mod, 80);
-    d[INDEX_COCKPIT_PAL + 0] = copperMove(color00, atariToOCS(0xC8));   // band bg = green ground
-    d[INDEX_COCKPIT_PAL + 1] = copperMove(color01, atariToOCS(0x04));
-    d[INDEX_COCKPIT_PAL + 2] = copperMove(color02, atariToOCS(0x06));
-    d[INDEX_COCKPIT_PAL + 3] = copperMove(color03, atariToOCS(0x2C));
-    d[INDEX_COCKPIT_PAL + 4] = copperMove(color04, atariToOCS(0x00));
-    d[INDEX_COCKPIT_PAL + 5] = copperMove(color05, atariToOCS(0x04));
-    d[INDEX_COCKPIT_PAL + 6] = copperMove(color06, atariToOCS(0x06));
-    d[INDEX_COCKPIT_PAL + 7] = copperMove(color07, atariToOCS(0x26));
+    // color00 (COLBK) is NOT set here: it carries the windscreen-band green forward from the
+    // terrain bands (band0 sets color00 = green; the door field decodes COLBK→pen0), exactly
+    // as the Atari's COLBK stays green across the viewport/band boundary.  INDEX_DASH_BG flips
+    // it to black below the 8-row band.
+    d[INDEX_COCKPIT_PAL + 0] = copperMove(color01, atariToOCS(0x04));
+    d[INDEX_COCKPIT_PAL + 1] = copperMove(color02, atariToOCS(0x06));
+    d[INDEX_COCKPIT_PAL + 2] = copperMove(color03, atariToOCS(0x2C));
+    d[INDEX_COCKPIT_PAL + 3] = copperMove(color04, atariToOCS(0x00));
+    d[INDEX_COCKPIT_PAL + 4] = copperMove(color05, atariToOCS(0x04));
+    d[INDEX_COCKPIT_PAL + 5] = copperMove(color06, atariToOCS(0x06));
+    d[INDEX_COCKPIT_PAL + 6] = copperMove(color07, atariToOCS(0x26));
 
     // Below the 8-row band: black divider strip (Amiga 180-188), dark-blue $90 dashboard
     // instrument backgrounds (182-251), then black floor (252+).  Only COLBK (color00) changes.
@@ -172,11 +175,6 @@ void DoorsCopperList::setSpritePostColor(uint16_t c)
     data_[INDEX_SPRITE_COL + 1] = copperMove(color17, c);
 }
 
-void DoorsCopperList::setBandBgColor(uint16_t c)
-{
-    data_[INDEX_COCKPIT_PAL + 0] = copperMove(color00, c);
-}
-
 void DoorsCopperList::setEnergyIndicatorColor(uint16_t c)
 {
     data_[INDEX_ENERGY_COL] = copperMove(0x1AA, c);   // COLOR21 (sprite pair 2/3 pen 01)
@@ -190,7 +188,7 @@ void DoorsCopperList::setCompassColor(uint16_t c)
 // ---- sliding-door geometry (poked every frame) -------------------------------
 void DoorsCopperList::update(uint16_t g2,
                              uint32_t topBase, uint32_t tunBase, uint32_t botBase,
-                             uint16_t terrPen0, uint16_t terr1, uint16_t terr2, uint16_t terr3,
+                             uint16_t bandBg, uint16_t terr1, uint16_t terr2, uint16_t terrDots,
                              uint16_t ring0, uint16_t ring1, uint16_t ring2,
                              uint16_t ring3, uint16_t ring4, uint16_t ring5)
 {
@@ -201,10 +199,10 @@ void DoorsCopperList::update(uint16_t g2,
 
     // ---- band 0: top terrain (slides up by g2 rows) ----
     emitBpl(d, INDEX_B0_BPL, topBase);
-    d[INDEX_B0_COL + 0] = copperMove(color00, terrPen0);      // pen0 = black (terrain & tunnel)
+    d[INDEX_B0_COL + 0] = copperMove(color00, bandBg);        // pen0 = COLBK green (flows into the band)
     d[INDEX_B0_COL + 1] = copperMove(color01, terr1);
     d[INDEX_B0_COL + 2] = copperMove(color02, terr2);
-    d[INDEX_B0_COL + 3] = copperMove(color03, terr3);
+    d[INDEX_B0_COL + 3] = copperMove(color03, terrDots);      // pen3 = road-dot dark
     if (door) {                                               // ring pens 4-6 (pixels 4-6)
         d[INDEX_B0_COL + 4] = copperMove(color04, ring0);     // $08D4
         d[INDEX_B0_COL + 5] = copperMove(color05, ring1);     // $08D5
@@ -237,9 +235,9 @@ void DoorsCopperList::update(uint16_t g2,
     if (door && topH > 0 && botWaitY + 2 <= (uint16_t)(kCockpitLine - 1)) {
         d[INDEX_B2_WAIT] = copperWait(botWaitY, 0xE0);
         emitBpl(d, INDEX_B2_BPL, botBase);
-        d[INDEX_B2_COL + 0] = copperMove(color01, terr1);     // terrain pens 1-3
+        d[INDEX_B2_COL + 0] = copperMove(color01, terr1);     // pens 1-2 + pen3 (color00 green inherited)
         d[INDEX_B2_COL + 1] = copperMove(color02, terr2);
-        d[INDEX_B2_COL + 2] = copperMove(color03, terr3);
+        d[INDEX_B2_COL + 2] = copperMove(color03, terrDots);
     } else {
         d[INDEX_B2_WAIT] = copperWait(kBand2ParkLine, 0xE0);
         for (int i = 0; i < 6; i++) d[INDEX_B2_BPL + i] = COPPER_NOP;

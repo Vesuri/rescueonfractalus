@@ -44,7 +44,7 @@ static const uint16_t kBPLCON0_3P   = (uint16_t)((3 << PLNCNTSHFT) | USE_BPLCON3
 #define INDEX_COCKPIT_BPL     (INDEX_COCKPIT_WAIT + 1) // 55: cockpit bitmap ptrs (3bp = 6)
 #define INDEX_COCKPIT_BPLCON0 (INDEX_COCKPIT_BPL + 6)  // 61: bplcon0 3P (1)
 #define INDEX_COCKPIT_MOD     (INDEX_COCKPIT_BPLCON0 + 1) // 62: bpl1mod,bpl2mod (2)
-#define INDEX_COCKPIT_PAL     (INDEX_COCKPIT_MOD + 2)  // 64: color00..07 (8)
+#define INDEX_COCKPIT_PAL     (INDEX_COCKPIT_MOD + 2)  // 64: color01..07 (7; color00 inherited)
 // Windscreen-bottom band + cockpit COLBK splits (measured live on launch_1_title; absolute
 // atari scanlines map to Amiga copper lines with offset +43, i.e. atari 129 = kCockpitLine):
 //   atari 129-136 green $C8  -> Amiga 172-179  windscreen band (value-0 corners; per-frame)
@@ -54,7 +54,7 @@ static const uint16_t kBPLCON0_3P   = (uint16_t)((3 << PLNCNTSHFT) | USE_BPLCON3
 // On the Atari these are DLI COLBK writes ($6CF6=$C8 band, $6D86=$00, $6DB5=$90, $6D86=$00 floor);
 // only COLBK changes, so we poke only color00.  Band green is per-frame (ramps with the doors);
 // the strip-black/dash-blue/floor-black are hard immediates -> baked here.
-#define INDEX_DASH_BG_WAIT    (INDEX_COCKPIT_PAL + 8)  // 72: WAIT(kCockpitLine+8-1)  (divider strip)
+#define INDEX_DASH_BG_WAIT    (INDEX_COCKPIT_PAL + 7)  // 71: WAIT(kCockpitLine+8-1)  (divider strip)
 #define INDEX_DASH_BG         (INDEX_DASH_BG_WAIT + 1) // 73: color00 = black (strip 180-188)
 #define INDEX_DASH_BLUE_WAIT  (INDEX_DASH_BG + 1)      // 74: WAIT(kCockpitLine+10-1 = 181)
 #define INDEX_DASH_BLUE       (INDEX_DASH_BLUE_WAIT + 1) // 75: color00 = $90 dark blue (dashboard)
@@ -120,17 +120,19 @@ void StandbyCopperList::buildLayout(const Bitmap& title, const Bitmap& terrain, 
     // Cockpit palette: the cockpit DLIs ($6D4F/$6D67/$6D7C) reload these registers
     // with hardcoded immediates (NOT the title/terrain shadows) — constant, and the
     // fade is 16 throughout StandbyCopperList's life, so bake them once here.
-    //   00=COLBK $C8 green (band bg; see below), 01=COLPF0 $04, 02=COLPF1 $06, 03=COLPF2 $2C
-    //   salmon, 04..06 mirror 00..02, 07=COLPF3 $26 red (bit-7 chars via plane3 -> colour 7).
-    // color00 starts at the windscreen-band green ($C8); INDEX_DASH_BG flips it to black below.
-    d[INDEX_COCKPIT_PAL + 0] = copperMove(color00, atariToOCS(0xC8));   // band bg = green ground
-    d[INDEX_COCKPIT_PAL + 1] = copperMove(color01, atariToOCS(0x04));
-    d[INDEX_COCKPIT_PAL + 2] = copperMove(color02, atariToOCS(0x06));
-    d[INDEX_COCKPIT_PAL + 3] = copperMove(color03, atariToOCS(0x2C));
-    d[INDEX_COCKPIT_PAL + 4] = copperMove(color04, atariToOCS(0x00));
-    d[INDEX_COCKPIT_PAL + 5] = copperMove(color05, atariToOCS(0x04));
-    d[INDEX_COCKPIT_PAL + 6] = copperMove(color06, atariToOCS(0x06));
-    d[INDEX_COCKPIT_PAL + 7] = copperMove(color07, atariToOCS(0x26));
+    //   01=COLPF0 $04, 02=COLPF1 $06, 03=COLPF2 $2C salmon, 04..06 mirror 00..02,
+    //   07=COLPF3 $26 red (bit-7 chars via plane3 -> colour 7).
+    // color00 (COLBK) is NOT set here: it carries the windscreen-band green forward from the
+    // terrain region (the door field decodes COLBK→pen0; see kNibbleColour), exactly as the
+    // Atari's COLBK stays green across the viewport/band boundary.  INDEX_DASH_BG flips it to
+    // black below the 8-row band.
+    d[INDEX_COCKPIT_PAL + 0] = copperMove(color01, atariToOCS(0x04));
+    d[INDEX_COCKPIT_PAL + 1] = copperMove(color02, atariToOCS(0x06));
+    d[INDEX_COCKPIT_PAL + 2] = copperMove(color03, atariToOCS(0x2C));
+    d[INDEX_COCKPIT_PAL + 3] = copperMove(color04, atariToOCS(0x00));
+    d[INDEX_COCKPIT_PAL + 4] = copperMove(color05, atariToOCS(0x04));
+    d[INDEX_COCKPIT_PAL + 5] = copperMove(color06, atariToOCS(0x06));
+    d[INDEX_COCKPIT_PAL + 6] = copperMove(color07, atariToOCS(0x26));
 
     // Below the 8-row band: a black divider strip (Amiga 180-188 = atari 137-145).
     d[INDEX_DASH_BG_WAIT] = copperWait(kCockpitLine + 8 - 1, 0xE0);
@@ -185,13 +187,4 @@ void StandbyCopperList::setTerrainPalette(uint16_t p0, uint16_t p1, uint16_t p2,
 void StandbyCopperList::setTerrainBgColor(uint16_t c)
 {
     data_[INDEX_TERRAIN_PAL + 3] = copperMove(color03, c);
-}
-
-// Windscreen-band background: color00 over the 8 band scanlines (kCockpitLine..+7).  The
-// band's value-0 L/R corners take this; it is the green ground (mem[$0071]) and ramps with
-// the doors during the standby reveal, so it is poked per-frame, not baked.  INDEX_DASH_BG
-// flips color00 back to black for the dashboard below.
-void StandbyCopperList::setBandBgColor(uint16_t c)
-{
-    data_[INDEX_COCKPIT_PAL + 0] = copperMove(color00, c);
 }

@@ -32,18 +32,19 @@ public:
     void setSpritePostColor(uint16_t c);                           // color17 (canopy posts)
     void setEnergyIndicatorColor(uint16_t c);                                // COLOR21 ($1AA) gauge bar
     void setCompassColor(uint16_t c);                              // color01 over the compass band
-    void setBandBgColor(uint16_t c);                               // cockpit color00 over the 8-row windscreen band (green ground = mem[$0071])
 
     // ---- terrain geometry (the sliding doors) ----
     // Pokes the whole 3-band terrain region for the current door-scroll progress g2
     // (0 = closed, kTerrainHeight/2 - 1 = nearly open).  topBase/tunBase/botBase are the
     // CHIP-RAM byte addresses of the top terrain row, the tunnel reveal row and the
-    // bottom terrain row.  terr* = terrain pens 1-3 (color01-03); ring0_2 = ring pens
-    // 4-6 (color04-06, $08D4-$08D6); ring3_5 = tunnel pens 1-3 (color01-03, $08D7-$08D9).
-    // terrPen0 = pen0 (black, also the tunnel's pen0).
+    // bottom terrain row.  bandBg = pen0 = COLBK green ($0071) — set on band0 and inherited
+    // by the tunnel/bottom bands and the windscreen band below (the door field decodes
+    // COLBK→pen0).  terr1/terr2 = terrain pens 1-2 (color01-02); terrDots = pen3 = road-dot
+    // dark ($02C0).  ring0_2 = ring pens 4-6 (color04-06, $08D4-$08D6); ring3_5 = tunnel
+    // pens 1-3 (color01-03, $08D7-$08D9).
     void update(uint16_t g2,
                 uint32_t topBase, uint32_t tunBase, uint32_t botBase,
-                uint16_t terrPen0, uint16_t terr1, uint16_t terr2, uint16_t terr3,
+                uint16_t bandBg, uint16_t terr1, uint16_t terr2, uint16_t terrDots,
                 uint16_t ring0, uint16_t ring1, uint16_t ring2,
                 uint16_t ring3, uint16_t ring4, uint16_t ring5);
 };

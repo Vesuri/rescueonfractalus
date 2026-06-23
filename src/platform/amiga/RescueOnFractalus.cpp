@@ -97,18 +97,22 @@ static uint8_t kGtia10P3[256];   // nibble bit2
 //   distinct table.  kDoorP1[s]=plane1 byte, kDoorP2[s]=plane2 byte (plane3 always 0).
 static uint8_t kDoorP1[256];
 static uint8_t kDoorP2[256];
-// GTIA mode-10 nibble → Amiga pen for the Standby door field.  In this scene only three
-// nibble values occur: 0 (road dots → COLPM0 → pen0), 7 ("LEVEL 04" text → COLPF3 → pen1)
-// and 8 (background → COLBK → pen3).  Nibble 7 MUST differ from 8 or the level text (baked
-// into the bitmap as COLPF3 pixels) vanishes into the green background.  Used only to build
+// GTIA mode-10 nibble → Amiga pen for the Standby/Doors door field.  In these scenes only
+// three nibble values occur: 0 (road dots → COLPM0 → dark), 7 ("LEVEL 04" text → COLPF3) and
+// 8 (background → COLBK → green).  COLBK (value 8) maps to pen0 (Amiga color00) so that the
+// green continues unbroken from the viewport into the windscreen band and the dashboard
+// splits below — mirroring the Atari's single COLBK register, which stays green from the
+// viewport top straight through the band (measured: COLBK=$C8 y50-136, →$00 at y138).  The
+// dark road dots (value 0) move to pen3 instead, and nibble 7 stays on pen1 (it MUST differ
+// from the green or the level text baked as COLPF3 pixels vanishes).  Used only to build
 // kDoorP1/kDoorP2 in initialize().
 static const uint8_t kNibbleColour[16] = {
-    0,                   // 0   → COLPM0 → pen0 (road dots / black)
-    3, 3, 3,             // 1-3 → bg
-    3, 3, 3,             // 4-6 → bg
+    3,                   // 0   → COLPM0 → pen3 (road dots / dark seams)
+    0, 0, 0,             // 1-3 → bg (COLBK green → pen0)
+    0, 0, 0,             // 4-6 → bg
     1,                   // 7   → COLPF3 → pen1 ("LEVEL 04" text)
-    3,                   // 8   → COLBK  → pen3 (green background)
-    3, 3, 3, 3, 3, 3, 3  // 9-15 → bg
+    0,                   // 8   → COLBK  → pen0 (green background = color00)
+    0, 0, 0, 0, 0, 0, 0  // 9-15 → bg
 };
 
 #include "assets/terrain_pal.h"
@@ -893,11 +897,12 @@ void RescueOnFractalus::updateStandbyCopper(bool force)
         sbCompassCol = compassCol;
     }
     if (force || terr0 != sbTerr0 || terr1 != sbTerr1 || terr2 != sbTerr2 || terr3 != sbTerr3) {
-        // Any terrain pen changed: rewrite all four (terr3 is the dark->bright green fade).
-        standbyCopper->setTerrainPalette(terr0, terr1, terr2, terr3);
-        // The windscreen-band corners use the SAME green ground (mem[$0071] = terr3) for
-        // their value-0 fill, so they fade in together with the doors (not a baked constant).
-        standbyCopper->setBandBgColor(terr3);
+        // Any terrain pen changed: rewrite all four.  color00 = COLBK green ($0071 = terr3),
+        // color03 = road-dot dark ($02C0 = terr0): the door field decodes COLBK (value 8)→pen0
+        // and the dark dots (value 0)→pen3 (see kNibbleColour).  color00 then carries the green
+        // unbroken into the windscreen band (no setBandBgColor needed — the band corners inherit
+        // it), matching the Atari's continuous COLBK.  terr3 still ramps the dark->bright green.
+        standbyCopper->setTerrainPalette(terr3, terr1, terr2, terr0);
         sbTerr0 = terr0; sbTerr1 = terr1; sbTerr2 = terr2; sbTerr3 = terr3;
     }
     if (force || gauge != sbEnergyIndicator) {
@@ -1044,21 +1049,25 @@ void RescueOnFractalus::updateDoorsCopper(DoorsCopperList* dc)
     dc->setSpritePostColor(titleBg);
     dc->setEnergyIndicatorColor(energyCol);
     dc->setCompassColor(compassCol);
-    dc->setBandBgColor(atariToOCS(mem[0x0071]));                  // band corner bg (COLBK = mem[$0071])
 
     // Sliding-door geometry.  topBase = terrain row g2 (slides up); tunBase = tunnel row
     // (half - g2) (the reveal centred on the vanishing point); botBase = terrain row half.
     const uint16_t half = (uint16_t)(kTerrainHeight / 2);
     const uint16_t g2   = rsLaunched ? (uint16_t)(0x2Bu - mem[zp::terrainScrollCounter]) : 0;
     const uint32_t ta   = (uint32_t)terrainBitmap->data;
+    // pen0 = COLBK green ($0071), pen3 = road-dot dark ($02C0): the door field decodes
+    // COLBK (value 8)→pen0 and the dark dots (value 0)→pen3 (see kNibbleColour).  color00
+    // green then flows unbroken through all three terrain bands AND the tunnel reveal into
+    // the windscreen band (the Atari keeps COLBK green across the whole viewport+band — see
+    // doors_mid, COLBK=$C8 y50-136), so the band corners inherit it: no setBandBgColor.
     dc->update(g2,
                         ta + (uint32_t)g2 * 120u,
                         (uint32_t)tunnelBitmap->data + (uint32_t)(half - g2) * 120u,
                         ta + (uint32_t)half * 120u,
-                        atariToOCS(mem[0x02C0]),                 // pen0 = black
+                        atariToOCS(mem[zp::displayFlags]),       // pen0 = COLBK green ($0071)
                         atariToOCS(mem[0x02C7]),                 // terrain pen1
                         atariToOCS(mem[zp::colorRing]),          // terrain pen2 ($08D4)
-                        atariToOCS(mem[zp::displayFlags]),       // terrain pen3 ($0071)
+                        atariToOCS(mem[0x02C0]),                 // pen3 = road-dot dark ($02C0)
                         atariToOCS(mem[zp::colorRing + 0]),      // ring pen4 ($08D4)
                         atariToOCS(mem[zp::colorRing + 1]),      // ring pen5 ($08D5)
                         atariToOCS(mem[zp::colorRing + 2]),      // ring pen6 ($08D6)

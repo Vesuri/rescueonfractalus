@@ -34,7 +34,9 @@ public:
     void setSprite2(const Sprite& s);                              // sprite-2 ptr (gauge or null)
     void setEnergyIndicatorColor(uint16_t c);                                // COLOR21 ($1AA) gauge bar
     void setCompassColor(uint16_t c);                              // color01 over the compass band (COLPF0 $00CF)
-    void setTerrainPalette(uint16_t p0, uint16_t p1, uint16_t p2, uint16_t p3);  // terrain color00..03
-    void setTerrainBgColor(uint16_t c);                            // terrain color03 only (green fade)
-    void setBandBgColor(uint16_t c);                               // cockpit color00 over the 8-row band (green ground, fades with the doors)
+    // terrain color00..03: color00 = COLBK green ($0071), color03 = road-dot dark ($02C0)
+    // (door field decodes COLBK→pen0; see kNibbleColour).  color00 carries the green into
+    // the windscreen band, so there is no separate band-bg setter.
+    void setTerrainPalette(uint16_t p0, uint16_t p1, uint16_t p2, uint16_t p3);
+    void setTerrainBgColor(uint16_t c);                            // terrain color03 only
 };
