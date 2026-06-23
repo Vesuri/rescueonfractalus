@@ -15,7 +15,7 @@ The boot→flight sequence has 7 canonical scenes (user-approved). Code ids are 
 | 1 | **Logo** | Lucasfilm Games boot logo |
 | 2 | **Station** | Space-station cinematic (stars scroll, station animates). `station_init $195D` |
 | 3 | **Standby** | Cockpit + "RESCUE ON FRACTALUS!" title + LEVEL doors, awaiting START |
-| 3b | **Scoreboard** | Shown after long idle on Standby (provisional name, not fully investigated) |
+| 3b | **Title Screen** | Attract/level-select/results card: big mode-7 "RESCUE ON FRACTALUS!" + mode-6 copyright / STARTING LEVEL / RANKING LEVEL / LAST SCORE / HIGH SCORE on black, text pens cycle. Shown on Standby idle, joystick-up, or after a crash. DL `$5A82`, charset `$0400`, screen RAM `$365B`. (Was "Scoreboard".) |
 | 4 | **Doors** | Hangar doors opening (start of launch) |
 | 5 | **Tunnel** | Tunnel/descent |
 | 6 | **Planet** | Planet approach |

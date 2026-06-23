@@ -394,6 +394,7 @@ void RescueOnFractalus::initialize()
     terrainBitmap = Bitmap::allocate(kW, kViewportFullHeight, kBP3, true);  // 3bp: tunnel reveal uses pens 4-7; 47 rows incl. wing band
     cockpitBitmap = Bitmap::allocate(kW, kCockpitH, kBP3, true);  // 3bp: bit-7 chars → red
     tunnelBitmap  = Bitmap::allocate(kW, kTerrainHeight, kBP3, true);  // door-gap reveal
+    titleScreenBitmap = Bitmap::allocate(kW, kH, kBP3, true);  // 3bp: black + COLPF0-3 text pens
 
     // (The tunnel rings are decoded into tunnelBitmap from the $1000 field by
     // decodeTunnelField, triggered by the platform_tunnel_rings_drawn() hook when the
@@ -533,6 +534,12 @@ void RescueOnFractalus::initialize()
     if (tunnelCopper && tunnelCopper->data())
         tunnelCopper->buildLayout(*titleBitmap, *tunnelBitmap, *cockpitBitmap,
                                   *leftPost, *rightPost, *energyIndicatorSprite, *nullSprite);
+
+    // Title Screen fixed copper list (attract/level-select/results); renderFrame installs it
+    // during rsTitle.  Full-screen text bitmap, black COLBK, 4 cycling text pens.
+    titleScreenCopper = new TitleScreenCopperList();
+    if (titleScreenCopper && titleScreenCopper->data())
+        titleScreenCopper->buildLayout(*titleScreenBitmap, *nullSprite);
 
     // Precompute glyph doubling table: each byte → 16-bit pattern (each bit → 2 bits).
     for (int i = 0; i < 256; i++) {
@@ -782,6 +789,24 @@ void RescueOnFractalus::renderFrame()
     // parting), so drive the single fixed StandbyCopperList by poking only changed
     // colour/sprite slots — no per-frame full rebuild, no double-buffer flip.  Gated
     // on g_doorFieldReady (doors decoded, fade reveal done -> global fade is 16).
+    // Title Screen (attract / level-select / results): a fixed full-screen text bitmap on
+    // black, with 4 text pens that cycle.  Decode the text once on entry (it is static while
+    // displayed); poke the cycling pens each frame.  Runs under the $53CC VBI (see rsTitle).
+    const bool staticTitle = titleScreenCopper && rsTitle;
+    if (staticTitle) {
+        if (!titleScreenCopperInstalled) {
+            decodeTitleScreen();
+            updateTitleScreenCopper(true);
+            AmigaHardware::setCopperList(*titleScreenCopper, false);
+            titleScreenCopperInstalled = true;
+        } else {
+            updateTitleScreenCopper(false);
+        }
+        standbyCopperInstalled = false; planetCopperInstalled = false;
+        flightCopperInstalled = false; tunnelCopperInstalled = false;
+        return;
+    }
+
     const bool staticStandby = standbyCopper && rsStandby && g_doorFieldReady
                                && !rsViewport && !rsLaunched;
     if (staticStandby) {
@@ -793,7 +818,7 @@ void RescueOnFractalus::renderFrame()
             updateStandbyCopper(false);
         }
         planetCopperInstalled = false; flightCopperInstalled = false;
-        tunnelCopperInstalled = false;
+        tunnelCopperInstalled = false; titleScreenCopperInstalled = false;
         return;
     }
 
@@ -812,7 +837,7 @@ void RescueOnFractalus::renderFrame()
         }
         standbyCopperInstalled = false;
         flightCopperInstalled = false;
-        tunnelCopperInstalled = false;
+        tunnelCopperInstalled = false; titleScreenCopperInstalled = false;
         return;
     }
 
@@ -831,7 +856,7 @@ void RescueOnFractalus::renderFrame()
         }
         standbyCopperInstalled = false;
         planetCopperInstalled = false;
-        tunnelCopperInstalled = false;
+        tunnelCopperInstalled = false; titleScreenCopperInstalled = false;
         return;
     }
 
@@ -864,6 +889,7 @@ void RescueOnFractalus::renderFrame()
     standbyCopperInstalled = false;   // left Standby — next static entry re-seeds + re-installs
     planetCopperInstalled = false;
     flightCopperInstalled = false;
+    titleScreenCopperInstalled = false;
 }
 
 // updateStandbyCopper(): refresh the StandbyCopperList's per-frame-varying colour and
@@ -908,6 +934,21 @@ void RescueOnFractalus::updateStandbyCopper(bool force)
     if (force || gauge != sbEnergyIndicator) {
         standbyCopper->setSprite2(gauge ? *energyIndicatorSprite : *nullSprite);
         sbEnergyIndicator = gauge;
+    }
+}
+
+// updateTitleScreenCopper(): poke the Title Screen's 4 text pens from the live COLPF0-3
+// shadows ($02C4-$02C7).  The Atari cycles these periodically (the "palette changes every
+// now and then"); reading the shadows each frame reproduces that.  Poke-on-change.
+void RescueOnFractalus::updateTitleScreenCopper(bool force)
+{
+    const uint16_t pf0 = atariToOCS(mem[0x02C4]);
+    const uint16_t pf1 = atariToOCS(mem[0x02C5]);
+    const uint16_t pf2 = atariToOCS(mem[0x02C6]);
+    const uint16_t pf3 = atariToOCS(mem[0x02C7]);
+    if (force || pf0 != tsPf0 || pf1 != tsPf1 || pf2 != tsPf2 || pf3 != tsPf3) {
+        titleScreenCopper->setTextPalette(pf0, pf1, pf2, pf3);
+        tsPf0 = pf0; tsPf1 = pf1; tsPf2 = pf2; tsPf3 = pf3;
     }
 }
 
@@ -1159,6 +1200,12 @@ void RescueOnFractalus::deriveRenderSignals()
 
     rsStandby  = standbyVbi;
     rsFlight   = flightVbi;
+    // Title Screen (attract/level-select/results): runs under the $53CC in-game VBI, which
+    // ALSO covers early-boot transitional frames — so additionally require the title text to
+    // be present in its screen RAM ($365B holds 'R' of "RESCUE" = internal $32 | COLPF1<<6 =
+    // $72).  display_list_init ($5D29) builds it there; standby/flight don't use $365B.
+    extern volatile unsigned char g_forceTitleScreen;   // ROF_FORCE_TITLE visual-test override
+    rsTitle    = ((vvblki == 0x53CCu) && (mem[0x365B] == 0x72u)) || g_forceTitleScreen;
     rsStars    = standbyVbi && (mem[0x060B] == 0x23u) && (mem[0x0200] == 0xC2u);
     rsViewport = rsStars || rsFlight;
     rsEnergyIndicator    = (mem[0x060B] != 0);
@@ -1283,6 +1330,60 @@ void RescueOnFractalus::decodeCompass()
             uint8_t* row = tbmp + (kCompassRow + s) * 80;   // 80 = 40 plane1 + 40 plane2 (interleaved)
             row[kCompassByteX + cell]      = p1v;
             row[40 + kCompassByteX + cell] = p2v;
+        }
+    }
+}
+
+// decodeTitleScreen(): decode the Title Screen (scene "Title Screen", attract/level-select/
+// results) text into titleScreenBitmap.  Source: charset $0400, screen RAM $365B (6 rows ×
+// 20 chars).  ANTIC mode 6/7: each char byte = (colour-select << 6) | charcode; charcode
+// indexes the charset (8 bytes/glyph), colour-select (0-3) picks COLPF0-3.  We render the
+// glyph foreground as pen = colour-select + 1 (COLPF0->pen1 .. COLPF3->pen4) on a pen-0
+// (black, COLBK) background, into a 3-bitplane interleaved bitmap.  Mode 6/7 chars are
+// double-WIDTH (20 chars across 320px = 16px/char, each glyph bit -> 2 px); the mode-7 title
+// row is also double-HEIGHT (each glyph scanline -> 2).  The copper shows the bitmap full
+// screen and pokes color01-04 from COLPF0-3 each frame (the palette cycle).  Decodes once
+// per entry (dirty-gated), so the full clear + per-pixel build is fine.
+void RescueOnFractalus::decodeTitleScreen()
+{
+    if (!titleScreenBitmap) return;
+    static const uint16_t kCharset   = 0x0400;
+    static const uint16_t kScreenRAM = 0x365B;
+    static const int       kStride   = 120;       // 3bp interleaved: 40 p1 + 40 p2 + 40 p3
+    // Per-row Amiga display-y (≈ Atari DL-relative scanline) and vertical doubling.
+    struct Row { int y; int vdup; };
+    static const Row rows[6] = {
+        {  56, 2 },   // mode 7: "RESCUE ON FRACTALUS!"  (double height)
+        {  96, 1 },   // mode 6: copyright
+        { 136, 1 },   // mode 6: STARTING LEVEL
+        { 146, 1 },   // mode 6: RANKING LEVEL
+        { 170, 1 },   // mode 6: LAST SCORE
+        { 180, 1 },   // mode 6: HIGH SCORE
+    };
+    uint8_t* bmp = (uint8_t*)titleScreenBitmap->data;
+    // Blank = pen 0 (black): clear the whole bitmap once.
+    for (int i = 0; i < kStride * (int)kH; i++) bmp[i] = 0;
+
+    for (int r = 0; r < 6; r++) {
+        const uint8_t* src = (const uint8_t*)mem + kScreenRAM + r * 20;
+        for (int c = 0; c < 20; c++) {
+            const uint8_t cell = src[c];
+            const uint8_t pen  = (uint8_t)((cell >> 6) + 1);          // COLPF0-3 -> pen1-4
+            const uint8_t* glyph = (const uint8_t*)mem + kCharset + (cell & 0x3Fu) * 8u;
+            for (int gr = 0; gr < 8; gr++) {
+                // Double each glyph bit to 2 px (mode 6/7 = 16px/char) via the precomputed table.
+                const uint16_t dbl = kDoubleGlyph[glyph[gr]];
+                const uint8_t hi = (uint8_t)(dbl >> 8), lo = (uint8_t)(dbl & 0xFF);
+                for (int vd = 0; vd < rows[r].vdup; vd++) {
+                    const int sy = rows[r].y + gr * rows[r].vdup + vd;
+                    if (sy < 0 || sy >= (int)kH) continue;
+                    uint8_t* row = bmp + sy * kStride;
+                    const int bx = c * 2;                             // 16px char = 2 bytes/plane
+                    if (pen & 1u) { row[bx]      |= hi; row[bx + 1]      |= lo; }   // plane1
+                    if (pen & 2u) { row[40 + bx] |= hi; row[40 + bx + 1] |= lo; }   // plane2
+                    if (pen & 4u) { row[80 + bx] |= hi; row[80 + bx + 1] |= lo; }   // plane3
+                }
+            }
         }
     }
 }
@@ -1518,12 +1619,14 @@ void RescueOnFractalus::shutdown()
     delete flightCopper; flightCopper = nullptr;
     for (int i = 0; i < 2; i++) { delete doorsCopper[i]; doorsCopper[i] = nullptr; }
     delete tunnelCopper; tunnelCopper = nullptr;
+    delete titleScreenCopper; titleScreenCopper = nullptr;
     delete emptyCopper;   emptyCopper   = nullptr;
     PlatformAmiga::audioShutdown();
     delete titleBitmap;   titleBitmap   = nullptr;
     delete terrainBitmap; terrainBitmap = nullptr;
     delete cockpitBitmap; cockpitBitmap = nullptr;
     delete tunnelBitmap;  tunnelBitmap  = nullptr;
+    delete titleScreenBitmap; titleScreenBitmap = nullptr;
     delete leftPost;      leftPost      = nullptr;
     delete rightPost;     rightPost     = nullptr;
     delete nullSprite;    nullSprite    = nullptr;

@@ -39,6 +39,11 @@
 // mem[] and cpu are defined in src/cpu/cpu.c (compiled for m68k as audio/cpu.o)
 extern "C" volatile uint8_t mem[65536];
 
+// Title Screen visual-test override: when set (only by the ROF_FORCE_TITLE probe path),
+// deriveRenderSignals pins rsTitle true.  Defined unconditionally (default 0) so the normal
+// build references a real symbol with zero effect.
+extern "C" volatile unsigned char g_forceTitleScreen = 0;
+
 // GfxBase is opened in main() (GCCRuntime.cpp defines it); set before run() is called.
 extern struct GfxBase* GfxBase;
 
@@ -789,8 +794,31 @@ static uint32_t vbiHandler()
         if (g_standbyRevealReady && s_revealVbi == 0) s_revealVbi = g_vbiCount;
         if (s_revealVbi) {
             uint16_t d = (uint16_t)(g_vbiCount - s_revealVbi);
+#ifdef ROF_FORCE_TITLE
+            // Visual test path: instead of launching, inject the Title Screen's screen RAM
+            // ($365B, 6 rows × 20 chars, captured from title.a8s) + its COLPF0-3 palette
+            // ($02C4-7) and pin rsTitle (g_forceTitleScreen).  The charset ($0400) is already
+            // present at runtime (decodeCompass reads it).  Re-injected each frame so the
+            // still-running standby loop can't clobber it.  Lets us see the render + tune the
+            // vertical layout before the real attract-mode entry is wired.
+            extern volatile unsigned char g_forceTitleScreen;
+            if (d >= 60) {
+                static const unsigned char kTitleRAM[120] = {
+                    0x72,0x65,0x73,0x63,0x75,0x65,0x40,0x6f,0x6e,0x40,0x66,0x72,0x61,0x63,0x74,0x61,0x6c,0x75,0x73,0x41,
+                    0x20,0x11,0x19,0x18,0x15,0x00,0x2c,0x35,0x23,0x21,0x33,0x26,0x29,0x2c,0x2d,0x00,0x2c,0x34,0x24,0x0e,
+                    0x80,0xb3,0xb4,0xa1,0xb2,0xb4,0xa9,0xae,0xa7,0x80,0xac,0xa5,0xb6,0xa5,0xac,0x9a,0x00,0x00,0x54,0x00,
+                    0x80,0x80,0xb2,0xa1,0xae,0xab,0xa9,0xae,0xa7,0x80,0xac,0xa5,0xb6,0xa5,0xac,0x9a,0x00,0x00,0x00,0x00,
+                    0xc0,0xec,0xe1,0xf3,0xf4,0xc0,0xf3,0xe3,0xef,0xf2,0xe5,0xda,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x50,
+                    0xc0,0xe8,0xe9,0xe7,0xe8,0xc0,0xf3,0xe3,0xef,0xf2,0xe5,0xda,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x50,
+                };
+                for (int i = 0; i < 120; i++) mem[0x365Bu + i] = kTitleRAM[i];
+                mem[0x02C4u] = 0x38; mem[0x02C5u] = 0x2a; mem[0x02C6u] = 0x46; mem[0x02C7u] = 0x56;
+                g_forceTitleScreen = 1;
+            }
+#else
             if (d >= 60 && d < 120)      mem[0xD01Fu] = 0x06;   // START held (bit0 clear), ~1s window
             else if (d == 120)           mem[0xD01Fu] = 0x07;   // release
+#endif
         }
     }
 #endif

@@ -9,6 +9,7 @@
 #include "DoorsCopperList.h"
 #include "TunnelCopperList.h"
 #include "EmptyCopperList.h"
+#include "TitleScreenCopperList.h"
 
 // 2-bitplane attract screen: one BPLCON0 mode for the whole frame, Copper
 // switches the 4-colour palette (and bitmap pointer) at each region boundary,
@@ -49,6 +50,7 @@ private:
     bool rsStars    = false;   // VDSLST $0200==$C2    — stars/planet viewport (sprites/colours)
     bool rsFlight   = false;   // $004A != 0           — in-game flight (palette/probe/profiler)
     bool rsViewport = false;   // stars || flight      — mode-D viewport band active
+    bool rsTitle    = false;   // VVBLKI $53CC && title active — attract/level-select Title Screen
     bool rsLaunched = false;   // doors armed || viewport — door-gap g2 (doors..flight)
     bool doorsOpenedLatch = false;  // door scroll finished; hold the tunnel view through the
     uint8_t prevScrollCtr = 0;      // gap before the ring/viewport arms (see deriveRenderSignals)
@@ -78,6 +80,7 @@ private:
     void buildAltimeterShipSprite();   // mirror the live M3 $0B98 ship-height bar -> altimeterShipSprite (flight)
     bool postsBuilt = false;   // canopy posts are constant: decode them a single time
     void decodeCompass();      // decode the 4 compass cells $32E3-$32E6 -> title bitmap (16 longwords)
+    void decodeTitleScreen();  // decode the Title Screen text ($365B/charset $0400) -> titleScreenBitmap
     void decodeTunnelField(int rowLo, int rowHi);  // decode mem[$2000] rows [lo,hi] -> tunnelBitmap
     void renderViewportModeD(uint16_t srcBase, int stride, int rows); // decode CHANGED mode-D bytes -> terrainBitmap (stars: $1000/48/43; flight: $1070/96)
 
@@ -146,6 +149,14 @@ private:
     Bitmap*     titleBitmap    = nullptr;
     Bitmap*     terrainBitmap  = nullptr;
     Bitmap*     cockpitBitmap  = nullptr;
+    Bitmap*     titleScreenBitmap = nullptr;   // full-screen 3bp text bitmap for the Title Screen
+
+    // Title Screen (attract/level-select/results) fixed copper list — full-screen text
+    // bitmap, black COLBK, 4 cycling text pens.  Same build-once + poke scheme as standbyCopper.
+    TitleScreenCopperList* titleScreenCopper = nullptr;
+    bool titleScreenCopperInstalled = false;
+    void updateTitleScreenCopper(bool force);  // poke color01-04 = COLPF0-3 (cycling)
+    uint16_t tsPf0 = 0xFFFF, tsPf1 = 0xFFFF, tsPf2 = 0xFFFF, tsPf3 = 0xFFFF;  // last-poked
     // Blank black list shown until g_standbyRevealReady latches (boot/standby build in
     // progress) — switched to the real lists in renderFrame once ready.
     EmptyCopperList* emptyCopper = nullptr;
