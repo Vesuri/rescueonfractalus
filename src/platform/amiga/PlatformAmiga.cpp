@@ -443,14 +443,23 @@ void PlatformAmiga::audioShutdown()
 // derive a faithful ANTIC VCOUNT ($D40B) below.
 extern "C" unsigned short rof_beam_line(void);
 
+// Held flight inputs (level, NOT one-shot like the keyboard commands): the joystick
+// directions read off PIA PORTA ($D300) and the fire button off TRIG0 ($D010), both
+// active-LOW (bit clear = pressed).  The CIA-A keyboard ISR (keyboardHandler, below)
+// sets/clears the matching bit on each key down/up edge; hwRead returns these instead of
+// the old hardwired neutral.  PORTA stick-0 bits: 0=up 1=down 2=left 3=right (verified vs
+// flight_control_integrate $8e74-$8eac); bits 4-7 (stick 1) stay high.  Declared here so
+// hwRead — defined above the keyboard section — can see them.
+static volatile uint8_t s_portaState = 0xFFu;   // joystick directions, active-low (neutral)
+static volatile uint8_t s_trig0State = 0x01u;   // fire button, active-low ($00 = pressed)
+
 uint8_t PlatformAmiga::hwRead(uint16_t addr)
 {
     if (addr == 0xD20Au) return pokey_random_step();  // POKEY RANDOM register
     if (addr >= 0xD200u && addr < 0xD210u) return pokey[addr - 0xD200u];
-    // PIA PORTA ($D300): Atari joysticks are ACTIVE-LOW (1 = open/neutral).  With
-    // no Amiga joystick wired in yet, report neutral ($FF) so flight_control_integrate
-    // reads "stick centred, no fire" — the ship flies straight instead of jamming.
-    if (addr == 0xD300u) return 0xFFu;
+    // PIA PORTA ($D300): Atari joysticks are ACTIVE-LOW (1 = open/neutral).  Driven by the
+    // keyboard ISR from the Amiga arrow keys (stick-0 bits 0-3); neutral $FF = stick centred.
+    if (addr == 0xD300u) return s_portaState;
     // CONSOL ($D01F): console keys (START/SELECT/OPTION), ACTIVE-LOW (bit clear =
     // pressed).  The Amiga keyboard handler maintains it in mem[$D01F] (idle $07;
     // RETURN clears a bit for START).  Reflect that — falling through to 0 reads as
@@ -460,11 +469,11 @@ uint8_t PlatformAmiga::hwRead(uint16_t addr)
     // mem[$D01F] is never clobbered by genuine code.)
     if (addr == 0xD01Fu) return mem[0xD01Fu];
     // TRIG0-3 ($D010-$D013): joystick fire buttons, ACTIVE-LOW ($01 = released,
-    // $00 = pressed).  No Amiga fire wired in yet → report released ($01).  Falling
-    // through to 0 reads as "fire held": read_console_trig_delta ($5A78) computes
-    // (CONSOL&$01) - TRIG0, so TRIG0=0 makes the Standby idle loop think fire is down
-    // and auto-launch the game.  (Wire real Amiga fire here when adding flight input.)
-    if (addr >= 0xD010u && addr <= 0xD013u) return 0x01u;
+    // $00 = pressed).  TRIG0 is driven by the keyboard ISR from the Control key; the
+    // others stay released.  (Default $01 also matters at Standby: read_console_trig_delta
+    // $5A78 computes (CONSOL&$01) - TRIG0, so a stuck TRIG0=0 would auto-launch the game.)
+    if (addr == 0xD010u) return s_trig0State;
+    if (addr >= 0xD011u && addr <= 0xD013u) return 0x01u;
     // ANTIC VCOUNT ($D40B): the transpiled init code busy-waits on the beam position
     // (wait_vcount_eq $3C75, wait_vcount_ge_7a $3C7B) — spin until VCOUNT == a target or
     // >= $7A.  VCOUNT reflects the vertical scan counter at TWO-LINE resolution (bits
@@ -665,6 +674,22 @@ void PlatformAmiga::titleChanged() {
     g_titleDirty = 1;
 }
 
+// Pending in-flight command keycode set by the keyboard ISR (keyboardHandler, below),
+// consumed by the flight VBI through flightIrqKey().  $FF = none.  Volatile: written in
+// the SP interrupt, read on the main thread (mirrors the Atari's X-register handoff out
+// of the IRQ).  Declared here so flightIrqKey() — defined before the keyboard section —
+// can see it.
+static volatile uint8_t s_pendingFlightKey = 0xFF;
+
+uint8_t PlatformAmiga::flightIrqKey() {
+    // Consume the keycode the keyboard ISR stashed (if any) and reset to "none".  The flight
+    // VBI's CLI window ($519c) calls this once per frame; returning the code here is exactly
+    // the Atari IRQ leaving KBCODE&$3F (or $80=BREAK) in X for event_sequence_dispatcher.
+    uint8_t k = s_pendingFlightKey;
+    s_pendingFlightKey = 0xFF;
+    return k;
+}
+
 // ============================================================================
 //  CIA-A serial-port keyboard — RETURN -> Atari START switch (CONSOL $D01F)
 // ============================================================================
@@ -683,6 +708,38 @@ static const uint16_t kConsol      = 0xD01F;
 static const uint8_t  kConsolIdle  = 0x07;
 static const uint8_t  kConsolStart = 0x06;
 static const uint8_t  kRawReturn   = 0x44;   // RETURN rawkey (cf. RETURN=$44, ESC=$45)
+
+// In-flight keyboard commands.  On the Atari these arrive as a POKEY keyboard/BREAK
+// IRQ (IRQEN=$C0) whose handler (irq_handler $462A) leaves the event id — KBCODE&$3F,
+// or $80 for BREAK — in X; the flight VBI's CLI window ($519c) then runs
+// event_sequence_dispatcher ($4644), which matches X against tbl $4816 and dispatches
+// by mode $0072.  We model that here: map the Amiga rawkey of each command key to its
+// Atari KBCODE and stash it (one-shot) for the flight VBI to consume via flightIrqKey().
+// The dispatcher itself filters unknown ids, so only the 8 table keys do anything.
+//   Atari KBCODE -> command (event_sequence_dispatcher index Y), from the game manual:
+//     $00 L (Y0) Land     $3f A (Y1) Air Lock    $15 B (Y2) Boosters    $3e S (Y3) Systems
+//     $07 * (Y4) Decrease Thrust (DEC $006F)      $06 + (Y5) Increase Thrust (INC $006F, cap 6)
+//     $80 BREAK ($519e -> game_loop_reset = "Restart")    $1c ESC (Y7) Freeze/pause
+//   ($07/$06 are the Atari cursor-right/left keys, masked to base code by the IRQ's AND #$3F.
+//    We put thrust on '.'/',' so the Amiga arrow keys stay free for the joystick directions.)
+struct FlightKeyMap { uint8_t rawkey; uint8_t kbcode; };
+static const FlightKeyMap kFlightKeys[] = {
+    { 0x28, 0x00 },   // Amiga 'L'   -> Atari L   $00  Land
+    { 0x20, 0x3F },   // Amiga 'A'   -> Atari A   $3f  Air Lock
+    { 0x35, 0x15 },   // Amiga 'B'   -> Atari B   $15  Boosters
+    { 0x21, 0x3E },   // Amiga 'S'   -> Atari S   $3e  Systems
+    { 0x39, 0x06 },   // Amiga '.'   -> Atari +   $06  Increase Thrust
+    { 0x38, 0x07 },   // Amiga ','   -> Atari *   $07  Decrease Thrust
+    { 0x45, 0x1C },   // Amiga 'Esc' -> Atari ESC $1c  Freeze/pause
+    { 0x46, 0x80 },   // Amiga 'Del' -> Atari BREAK $80 Restart
+};
+
+// Amiga rawkeys for the held joystick/fire inputs (driven into s_portaState/s_trig0State).
+static const uint8_t kRawUp        = 0x4C;
+static const uint8_t kRawDown      = 0x4D;
+static const uint8_t kRawRight     = 0x4E;
+static const uint8_t kRawLeft      = 0x4F;
+static const uint8_t kRawCtrl      = 0x63;   // Control = fire button
 
 static struct Library*   s_ciaaBase    = 0;
 static struct Interrupt  s_kbInterrupt;
@@ -713,8 +770,32 @@ static uint32_t keyboardHandler()
 
     // Drive the CONSOL START switch (bit0) from RETURN's down/up edges, so the register
     // continuously reflects the key's level — just like the real GTIA switch.
-    if (raw == kRawReturn)
+    if (raw == kRawReturn) {
         mem[kConsol] = down ? kConsolStart : kConsolIdle;
+        return 0;
+    }
+
+    // Held joystick/fire inputs — track the active-low PORTA/TRIG0 level across down/up
+    // edges (pressed = clear the bit).  Arrows = stick-0 directions; Control = fire.
+    switch (raw) {
+        case kRawUp:    if (down) s_portaState &= (uint8_t)~0x01u; else s_portaState |= 0x01u; return 0;
+        case kRawDown:  if (down) s_portaState &= (uint8_t)~0x02u; else s_portaState |= 0x02u; return 0;
+        case kRawLeft:  if (down) s_portaState &= (uint8_t)~0x04u; else s_portaState |= 0x04u; return 0;
+        case kRawRight: if (down) s_portaState &= (uint8_t)~0x08u; else s_portaState |= 0x08u; return 0;
+        case kRawCtrl:  s_trig0State = down ? 0x00u : 0x01u; return 0;
+        default: break;
+    }
+
+    // In-flight command keys: on the key-DOWN edge, stash the Atari KBCODE for the flight
+    // VBI to pick up (mirrors the POKEY keyboard IRQ leaving the id in X).  One-shot — the
+    // dispatcher consumes the last code, exactly as X holds the most recent KBCODE.
+    if (down) {
+        for (unsigned i = 0; i < sizeof(kFlightKeys) / sizeof(kFlightKeys[0]); i++)
+            if (kFlightKeys[i].rawkey == raw) {
+                s_pendingFlightKey = kFlightKeys[i].kbcode;
+                break;
+            }
+    }
     return 0;
 }
 

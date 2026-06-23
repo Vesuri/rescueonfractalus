@@ -398,6 +398,26 @@ SPINWAIT_HOOKS = {
     0x634A: 'platform_poll_events();',
 }
 
+# Pre-instruction hook injection.
+# Unlike SPINWAIT_HOOKS (emitted at a branch-target LABEL), these inject a C
+# statement immediately BEFORE the instruction at the given address, with no
+# label.  Used for faithful hardware seams that land mid-instruction-stream
+# where no branch label exists (so a forced label would be unreferenced and
+# trip -Wunused-label).
+# Key: 6502 address of the instruction to inject before.  Value: C statement(s).
+PRE_INSN_HOOKS = {
+    # $519c — the flight VBI's 1-instruction CLI window (vbi_handler_flight).
+    # The 6502 does `LDX #$FF` ($519a) then `CLI`($519c)/`SEI`($519d): if a POKEY
+    # KEYBOARD/BREAK IRQ ($D20E IRQEN=$C0, vector irq_handler $462A) fires inside
+    # that window it leaves the event id (KBCODE&$3F, or $80 for BREAK) in X, and
+    # $51a6 `BMI` skips the dispatch when X stays $FF (no key).  The Amiga has no
+    # such IRQ, so we deliver an in-flight command keycode here instead: the CIA-A
+    # keyboard handler stashes a pending Atari KBCODE, platform_flight_irq_key()
+    # returns+clears it (or $FF if none) — exactly mimicking the handler clobbering
+    # X.  No-op everywhere it returns $FF (SDL / validate headless): X stays $FF.
+    0x519c: '{ unsigned char _k = platform_flight_irq_key(); if (_k != 0xFFu) cpu.X = _k; }',
+}
+
 # ---------------------------------------------------------------------------
 # Parse symbols.csv → addr_int → name
 # ---------------------------------------------------------------------------
@@ -978,6 +998,9 @@ def translate_func(func, all_funcs_by_start, symbols,
                 lines.append(f'L_{addr:04x}:; {hook}')
             else:
                 lines.append(f'L_{addr:04x}:;')
+        pre = PRE_INSN_HOOKS.get(addr, '')
+        if pre:
+            lines.append(f'    {pre}')
         stmt_lines = translate_insn(insn, func, all_funcs_by_start, symbols,
                                     local_targets, external_entries, wrapper_names)
         lines.extend(stmt_lines)

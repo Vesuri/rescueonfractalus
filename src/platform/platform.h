@@ -90,6 +90,13 @@ public:
        re-decodes just those 4 cells.  No-op on direct-mem[] platforms (SDL).     */
     virtual void compassChanged() {}
 
+    /* Poll+consume a pending in-flight keyboard-command keycode (Atari KBCODE&$3F,
+       or $80 for BREAK); $FF = none pending.  The flight VBI's CLI window ($519c)
+       calls this to feed event_sequence_dispatcher ($4644), replacing the POKEY
+       keyboard IRQ that left the id in X on the Atari.  Default: no in-flight key
+       delivery (SDL / headless) — always $FF, so the dispatch stays skipped.    */
+    virtual uint8_t flightIrqKey() { return 0xFF; }
+
     /* ------------------------------------------------------------------ */
     /* Image loading                                                        */
     /* ------------------------------------------------------------------ */

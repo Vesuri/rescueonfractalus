@@ -60,6 +60,13 @@ void platform_title_changed(void);
    The Amiga backend re-decodes just those 4 cells; no-op on the host/SDL build. */
 void platform_compass_changed(void);
 
+/* Poll for a pending in-flight keyboard-command keycode (an Atari KBCODE&$3F, or
+   $80 for BREAK), consuming it.  Returns $FF when no command is pending.  Called
+   from the flight VBI's CLI window ($519c) to replicate the POKEY keyboard IRQ
+   leaving the event id in X for event_sequence_dispatcher ($4644).  Returns $FF on
+   platforms that don't deliver in-flight keys (SDL / validate headless). */
+uint8_t platform_flight_irq_key(void);
+
 #ifdef __cplusplus
 }
 #endif

@@ -56,6 +56,10 @@ void platform_compass_changed(void) {
     if (platform) platform->compassChanged();
 }
 
+uint8_t platform_flight_irq_key(void) {
+    return platform ? platform->flightIrqKey() : 0xFF;
+}
+
 } /* extern "C" */
 
 /* ---------------------------------------------------------------------------

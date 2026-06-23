@@ -4559,6 +4559,7 @@ L_5197:;
 L_519a:;
     /* 519a */
     LDX(0xFF);
+    { unsigned char _k = platform_flight_irq_key(); if (_k != 0xFFu) cpu.X = _k; }
     /* 519c */
     CLI();
     /* 519d */

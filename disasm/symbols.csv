@@ -120,7 +120,7 @@ $45A1,fill_buffer2_region_ff,func,0,Fills 8 rows x 32 bytes (stride 48) at $2098
 $45C5,init_cockpit_bar_cells,func,0,Fills cockpit digit/bar init cells ($2107-$2198 with $BE, $2167-$2198 with $AA)
 $45EE,copy_terrain_seed_rows,func,0,Copies three 8-byte blocks $4DD2->$0C88, $4DDA->$0D88, $4DE2->$0B88 (seed rows in the terrain/cockpit buffers); called in game_entry setup
 $4606,game_sub_4606,func,0,Game subsystem (called multiple times including in game loop)
-$462A,irq_handler,func,0,Immediate IRQ handler (VIMIRQ=$462A); set in game_entry at $3D28
+$462A,irq_handler,func,0,Immediate IRQ handler (VIMIRQ=$462A; set in game_entry at $3D28). POKEY keyboard/BREAK IRQ (IRQST $D20E bit7=BREAK->X=$80 / bit6=keyboard->X=KBCODE $D209 &$3F); re-arms IRQEN=$C0. Leaves the event id in X (clobbers A/X) for the flight VBI CLI window $519c -> event_sequence_dispatcher $4644
 $49EE,dli_handler_game,func,0,DLI handler during game (VDSLST=$49EE set at $3E6D in game_entry)
 $4F3F,intro_cinematic_loop,func,0,Intro/cinematic blocking loop (spins on $2891 via tick_vbi/render, runs intro then flight); reached from enemy_check when $063D≠0
 $4FF5,vbi_handler_flight,func,0,In-flight VBI handler (VVBLKI=$4FF5 set at $3E50 during flight init); $51B9 block = flight_control_integrate + terrain projection, mirrored by flight_vbi_native
@@ -141,7 +141,7 @@ $6B47,random_terrain_height,func,0,Generates one random terrain-height value (2 
 $6CC2,dli_handler_game2,func,0,Second game DLI handler (VDSLST=$6CC2 set in display_setup $5F5F-$64)
 $6FBF,intro_random_setup,func,0,Intro/startup sequence with 5 RANDOM reads; called only on fresh start ($0627=0)
 $70B3,intro_unmark_random_cells,func,0,Randomly clears bit7 (marked flag) of $0900 grid/height-map cells below a RANDOM($D20A) threshold; intro continuation after intro_random_setup (3 RANDOM reads)
-$712D,audio_timer_setup,func,0,Sets up POKEY audio timers + IRQEN=$C0 (timer 1+2 IRQs)
+$712D,audio_timer_setup,func,0,Clears POKEY AUDF1-4 + sets AUDCTL=$60 (audio timer reset; NOT an IRQ arm — IRQEN=$C0 is keyboard+BREAK bits6/7 not timers and is set/re-armed by irq_handler $462A not here)
 $7498,intro_seed_object_map,func,0,Clears $0A00 object map, scans obj table (obj_table_scan_a_c8/replace), then places $64 markers into $0A00 for marked $0900 cells below a RANDOM($D20A) threshold; fresh-start object seeding
 $73C8,init_gameplay_state,func,0,Per-game/level gameplay init: seeds heading $2886, clears object/timer arrays ($0E94/$2210), sets lives $0072, plots via game_sub_451d, calls unpack_bitmap_4d3e + init_cockpit_bar_cells, seeds RANDOM, tail-calls cockpit_dial_update; run once from game_entry
 $7460,build_row_addr_table,func,0,Builds the 85-entry ($55) per-scanline screen base-address table $073D/$0793 from $C3:$C4 base + $C1 stride; called before main loop

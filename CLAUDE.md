@@ -106,6 +106,36 @@ in the 320×216 display space; use them to identify each instrument's Atari hard
 The **canopy posts** (cockpit window A-pillars) are a separate frame element = Atari players
 P0 (`$0C32`, left) / P1 (`$0D32`, right), RLE-decoded from tables `$4DFA`/`$4E09`.
 
+## Controls (Atari manual → Amiga port)
+
+The Atari controls (game manual) and the Amiga key chosen for each in the port. Two distinct
+input paths: **console/joystick** (PIA PORTA `$D300` directional bits + TRIG0 `$D010` fire +
+CONSOL `$D01F` START/SELECT/OPTION, all active-low, polled), and **in-flight keyboard commands**
+(POKEY keyboard IRQ `irq_handler $462A` → KBCODE → `event_sequence_dispatcher $4644`, delivered on
+the Amiga via the CIA-A keyboard ISR; the transpiler `PRE_INSN_HOOKS[$519c]` feeds the keycode into
+the flight VBI's CLI window). Faithful 1:1 — the dispatcher logic is the Atari binary's.
+
+| Atari control | Action | Atari KBCODE | Amiga key (rawkey) | Path |
+|---|---|---|---|---|
+| START | Start the game | — (CONSOL) | RETURN ($44) | CONSOL $D01F bit0 |
+| BREAK | Restart (score lost, highs kept) → `game_loop_reset` | $80 | Del ($46) | kbd cmd $519c |
+| ESC | Freeze/pause mission (toggle) | $1c | Esc ($45) | kbd cmd |
+| CURSOR RIGHT | Increase Thrust (`INC $006F`, Y5) | $06 (Ctrl-`+`, masked) | **. period ($39)** | kbd cmd |
+| CURSOR LEFT | Decrease Thrust (`DEC $006F`, Y4) | $07 (Ctrl-`*`, masked) | **, comma ($38)** | kbd cmd |
+| L | Land | $00 | L ($28) | kbd cmd |
+| S | Systems | $3e | S ($21) | kbd cmd |
+| A | Air Lock | $3f | A ($20) | kbd cmd |
+| B | Boosters | $15 | B ($15) | kbd cmd |
+| (joystick) | Steer (pitch/roll) | — | **arrow keys** ($4C/$4D/$4F/$4E) | PORTA $D300 bits 0/1/2/3 = up/down/left/right |
+| (trigger) | Fire | — | **Control ($63)** | TRIG0 $D010 |
+| SELECT / SHIFT-SELECT | Level up / down (Standby) | — | not wired | CONSOL |
+| OPTION | Demo (DEMO DROID) | — | not wired | CONSOL |
+| SYSTEM RESET | Reboot disk | — | not wired (Amiga reset) | — |
+
+Implementation: `PlatformAmiga.cpp` `kFlightKeys` (one-shot command keycodes), `s_portaState`/
+`s_trig0State` (held joystick/fire level read by `hwRead`). SDL build delivers none of these
+(`flightIrqKey`→$FF, PORTA neutral) — Amiga-only for now.
+
 ## Build / run / debug
 
 ### SDL (macOS dev + profiling)  — from repo root
