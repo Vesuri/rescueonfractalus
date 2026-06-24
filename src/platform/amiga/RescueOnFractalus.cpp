@@ -399,6 +399,10 @@ void RescueOnFractalus::initialize()
 {
     titleBitmap   = Bitmap::allocate(kW, kTitleHeight,   kBP2, true);
     terrainBitmap = Bitmap::allocate(kW, kViewportFullHeight, kBP3, true);  // 3bp: tunnel reveal uses pens 4-7; 47 rows incl. wing band
+#ifdef ROF_FLIGHT_PROBE
+    extern volatile uint32_t g_terrainBmpAddr;   // chip addr of terrainBitmap->data (Stage 1 verifier dump)
+    g_terrainBmpAddr = (uint32_t)terrainBitmap->data;
+#endif
     cockpitBitmap = Bitmap::allocate(kW, kCockpitH, kBP3, true);  // 3bp: bit-7 chars → red
     tunnelBitmap  = Bitmap::allocate(kW, kTerrainHeight, kBP3, true);  // door-gap reveal
     titleScreenBitmap = Bitmap::allocate(kW, kH, kBP3, true);  // 3bp: black + COLPF0-3 text pens
