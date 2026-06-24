@@ -562,6 +562,8 @@ extern "C" volatile unsigned long g_fCockpit=0, g_fCockpitScans=0;
 // Stage-1 verifier: chip addr of terrainBitmap->data, so the gdb harness can dump the
 // flight bitplanes and decode/diff them headlessly (no display needed).
 extern "C" volatile uint32_t g_terrainBmpAddr=0;
+// Stage-1 direct renderer's parallel bitmap (for pixel-diff vs the convert).
+extern "C" volatile uint32_t g_flightDirectAddr=0;
 #endif
 
 // g_quitJmp: the __builtin_setjmp buffer armed by RescueOnFractalus::run() so we can

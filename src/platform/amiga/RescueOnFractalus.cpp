@@ -728,6 +728,42 @@ void RescueOnFractalus::renderViewportModeD(uint16_t srcBase, int stride, int ro
     }
 }
 
+#ifdef ROF_FLIGHT_PROBE
+// ── Stage 1 direct terrain renderer (terrain-draw-plan Stages 1-3) ─────────────
+// Plot the terrain straight to bitplanes from $260E (yForX) — NO mem[$1070] round-trip,
+// NO full-buffer LUT scan, NO shadow.  Mapping pinned empirically (a800dumps/flight1 +
+// live dump): Amiga logical column c (0..159) <- $260E[c+48]; scanline = 150 - height
+// (the $28CA/$28FA row table is linear: addr = $1010 + (1+(0x96-h))*0x60, displayed
+// scanline = row-1); $FF = off-top (all body, no sky).  plane1 = sky (filled above the
+// skyline), plane2 = dots (TODO), plane3 = 0.  Renders into a parallel bitmap so the
+// headless verifier can pixel-diff plane1 vs the convert (renderViewportModeD) output.
+// Stage 2 will replace the per-column CPU sky fill with a blitter fill-up.
+static Bitmap*  s_flightDirect = nullptr;
+extern "C" volatile uint32_t g_flightDirectAddr;
+void RescueOnFractalus::renderFlightDirect()
+{
+    if (!terrainBitmap) return;
+    if (!s_flightDirect) {
+        s_flightDirect = Bitmap::allocate(kW, kViewportFullHeight, kBP3, true);
+        g_flightDirectAddr = (uint32_t)s_flightDirect->data;
+    }
+    uint8_t* const bp = (uint8_t*)s_flightDirect->data;
+    for (int i = 0; i < 47 * 120; i++) bp[i] = 0;            // clear the 47 written scanlines
+    const uint8_t* const yForX = (const uint8_t*)mem + 0x260E + 48;   // col 0 -> $260E[48]
+    static const uint8_t kMask[4] = { 0xC0u, 0x30u, 0x0Cu, 0x03u };   // 2-bit pixel within byte
+    for (int c = 0; c < 160; c++) {
+        uint8_t h = yForX[c];
+        if (h == 0xFFu) continue;                            // off-top: all body
+        int scan = 150 - (int)h;                             // height -> skyline scanline
+        if (scan < 0) scan = 0;
+        if (scan > 46) scan = 46;
+        uint8_t* col = bp + (c >> 2);                        // plane1 byte column (bytes 0..39)
+        uint8_t m = kMask[c & 3];
+        for (int s = 0; s <= scan; s++) col[s * 120] |= m;   // plane1 = sky, filled to the skyline
+    }
+}
+#endif
+
 // run(): the whole game, driven by the genuine transpiled/native boot chain
 // (game_entry -> game_main_loop -> display_setup -> flight).  That chain is
 // straight-line 6502 control flow that busy-waits between phases while its VBI/DLI
@@ -1431,6 +1467,7 @@ void RescueOnFractalus::render()
             renderViewportModeD(0x1070, 96, 47);   // 47 rows: +4 for the wing-clearance band ($2090-$21B0)
 #ifdef ROF_FLIGHT_PROBE
             g_fConvert += (rof_subclock() - _cv0) - (g_isrBeamLines - _cvi);
+            renderFlightDirect();   // Stage 1: parallel direct render for headless pixel-diff vs the convert
 #endif
             g_flightProf.render += (unsigned short)(flight_vbi_tick() - r0);
         }

@@ -83,6 +83,9 @@ private:
     void decodeTitleScreen();  // decode the Title Screen text ($365B/charset $0400) -> titleScreenBitmap
     void decodeTunnelField(int rowLo, int rowHi);  // decode mem[$2000] rows [lo,hi] -> tunnelBitmap
     void renderViewportModeD(uint16_t srcBase, int stride, int rows); // decode CHANGED mode-D bytes -> terrainBitmap (stars: $1000/48/43; flight: $1070/96)
+#ifdef ROF_FLIGHT_PROBE
+    void renderFlightDirect();   // Stage 1: plot terrain straight to bitplanes from $260E (parallel buffer, for pixel-diff)
+#endif
 
     // Static-Standby fixed copper list (built once, poked in place — see
     // StandbyCopperList).  Used while in the settled Standby/gauge-fill state
