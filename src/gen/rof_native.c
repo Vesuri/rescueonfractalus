@@ -3391,58 +3391,36 @@ void terrain_point_distance(void) {
  * 16-bit add/sub borrow chains are carry-sensitive).
  */
 void terrain_midpoint_displace(void) {
-    uint8_t A, c;
-    uint8_t x = cpu.X;
-    #define D_ADC(v)  do { uint16_t _t = (uint16_t)A + (uint8_t)(v) + c; c = _t >> 8; A = (uint8_t)_t; } while (0)
-    #define D_SBC(v)  D_ADC((uint8_t)~(uint8_t)(v))
-    #define D_RORA()  do { uint8_t _n = A & 1; A = (uint8_t)((A >> 1) | (c << 7)); c = _n; } while (0)
-    #define D_RORM(a) do { uint8_t _v = mem[a], _n = _v & 1; mem[a] = (uint8_t)((_v >> 1) | (c << 7)); c = _n; } while (0)
-    #define D_LSRA()  do { c = A & 1; A = (uint8_t)(A >> 1); } while (0)
+    const uint8_t x = cpu.X;
+    /* Native 16-bit fixed-point form of the fractal midpoint step (was 6502 byte-pair
+       arithmetic with per-op carry threading).  Each midpoint = the signed value
+       (base + delta + 1) arithmetic-shifted right by 1 — the SEC+ADC rounding then the
+       CMP #$80 / ROR sign-extension.  The displacement = the unsigned (mid - base) >> 1
+       (the LSR/ROR pair).  On uint16_t these collapse to single 68000 word ops; the byte
+       pairs ($82/$83, $84/$85) are little-endian.  Bit-exact rewrite: arithmetic >>1 =
+       (v>>1)|(v&0x8000); logical >>1 = v>>1.  Validated byte-identical vs the __t6502
+       oracle (make validate). */
+    const uint16_t base1 = (uint16_t)(mem[0x0082] | (mem[0x0083] << 8));   /* {$83:$82} */
+    const uint16_t base2 = (uint16_t)(mem[0x0084] | (mem[0x0085] << 8));   /* {$85:$84} */
 
-    /* Hoist the threaded scalars to registers: cache the two re-read inputs ($82/$83)
-       and compute the outputs ($8D-$91) + scratch ($B5/$B6) in locals, writing each ZP
-       byte back exactly once (the intermediate ROR/displacement writes are dead — the
-       harness only compares post-return state).  mem[] is volatile so every hoisted
-       access removed is one fewer 68000 RAM cycle in this per-split hot routine. */
-    #define D_RORL(L) do { uint8_t _v=(L), _n=_v&1; (L)=(uint8_t)((_v>>1)|(c<<7)); c=_n; } while (0)
-    const uint8_t s82 = mem[0x0082], s83 = mem[0x0083];
-    uint8_t d8d, d8e, d8f, d90, d91;
+    const uint16_t sum1 = (uint16_t)(base1 + (uint16_t)(mem[0x25B4 + x] | (mem[0x25D2 + x] << 8)) + 1u);
+    const uint16_t mid1 = (uint16_t)((sum1 >> 1) | (sum1 & 0x8000u));      /* B2CC arith >>1 */
+    const uint16_t sum2 = (uint16_t)(base2 + (uint16_t)(mem[0x25F0 + x] | (mem[0x24E2 + x] << 8)) + 1u);
+    uint16_t       mid2 = (uint16_t)((sum2 >> 1) | (sum2 & 0x8000u));      /* B2E0 */
 
-    c = 1; A = s82; D_ADC(mem[0x25B4 + x]); d8d = A;   /* B2CC */
-    A = s83; D_ADC(mem[0x25D2 + x]);
-    c = (A >= 0x80) ? 1 : 0; D_RORA(); d8e = A; D_RORL(d8d); /* CMP #$80; ROR */
+    const uint16_t r86  = (uint16_t)(mem[0x0086] + mem[0x23E2 + x] + 1u);  /* B2F4 $86 + delta + 1 */
+    const uint8_t  d91  = (uint8_t)r86;
 
-    c = 1; A = mem[0x0084]; D_ADC(mem[0x25F0 + x]); d8f = A;   /* B2E0 */
-    A = mem[0x0085]; D_ADC(mem[0x24E2 + x]);
-    c = (A >= 0x80) ? 1 : 0; D_RORA(); d90 = A; D_RORL(d8f);
+    mem[0x008D] = (uint8_t)mid1; mem[0x008E] = (uint8_t)(mid1 >> 8);
+    mem[0x0091] = d91;
 
-    A = mem[0x0086]; c = 1; D_ADC(mem[0x23E2 + x]); d91 = A;   /* B2F4 */
-
-    mem[0x008D] = d8d; mem[0x008E] = d8e; mem[0x0091] = d91;
-
-    if (A & 0x80) {                            /* B2FC BPL: else return */
-        uint8_t add_branch = c;                /* B2FF BCS: carry from the $0091 ADC above */
-        uint8_t dB5, dB6;
-        /* common to both branches: displacement = (mid - base) >> 1 in $B5/$B6 */
-        A = d8d; c = 1; D_SBC(s82); dB5 = A;
-        A = d8e; D_SBC(s83); D_LSRA(); dB6 = A; D_RORL(dB5);
-        if (add_branch) {                      /* add branch (B31F) */
-            A = d8f; c = 0; D_ADC(dB5); d8f = A;
-            A = d90; D_ADC(dB6); d90 = A;
-        } else {                               /* subtract branch (B301) */
-            A = d8f; c = 1; D_SBC(dB5); d8f = A;
-            A = d90; D_SBC(dB6); d90 = A;
-        }
-        mem[0x00B5] = dB5; mem[0x00B6] = dB6;
+    if (d91 & 0x80u) {                          /* B2FC BPL: skip displacement unless $91 negative */
+        const uint16_t disp = (uint16_t)((mid1 - base1) & 0xFFFFu) >> 1;   /* (mid-base) >>1 logical */
+        mid2 = (r86 & 0x100u) ? (uint16_t)(mid2 + disp)    /* B31F add  (carry from the $86 add) */
+                              : (uint16_t)(mid2 - disp);   /* B301 sub */
+        mem[0x00B5] = (uint8_t)disp; mem[0x00B6] = (uint8_t)(disp >> 8);
     }
-    mem[0x008F] = d8f; mem[0x0090] = d90;
-    #undef D_RORL
-    #undef D_ADC
-    #undef D_SBC
-    #undef D_RORA
-    #undef D_RORM
-    #undef D_LSRA
-    return;
+    mem[0x008F] = (uint8_t)mid2; mem[0x0090] = (uint8_t)(mid2 >> 8);
 }
 
 /* terrain_plot_pixel @ $A6D3 — OR a 2-bit voxel mask into the terrain bitmap.
