@@ -72,6 +72,26 @@ So the layers are:
 Consequence vs the earlier draft: the blitter fill operates on the **SKY bitplane (fill up to the
 top)**, not a terrain body plane. The terrain body needs zero fill work.
 
+### Where the fill actually is (traced from flight1.a8s, 2026-06-24)
+
+The sky fill is **NOT in `terrain_draw_frame`** — it's in **`terrain_collision $AE53`** (a misnomer:
+it does collision detection AND the terrain silhouette render), which runs right after the draw in
+the flight loop (`game_main_loop`: …setup → clear → `terrain_draw_frame`(g_fDraw) →
+`terrain_collision`(g_fColl)…). Per column (rof_native.c `terrain_collision`, ~line 4492):
+1. **CASCADE** — scan the 48 rows (`$1010` stride `$60`) top-to-bottom for the first non-empty
+   cell → row `k` = the skyline (the ridge `terrain_draw_frame` plotted).
+2. **WATERFALL** (line ~4515): `for (i=k-1;i>=1;i--){ p-=0x60; *p=0x55; }` — paint `$55`
+   (value-1 = sky) into rows **above** the skyline, walking **UP**. ← the sky fill.
+3. **RASTER** (`$B12F`): walk **down** from `{$0793:$073D}[k]` ORing the `$BF00`/`$BE00` voxel-mask
+   tables → terrain body + value-2 dots below the skyline.
+
+Full pipeline + costs: `terrain_draw_frame` (g_fDraw ~82ms) plots the ridge edge; `terrain_collision`
+(g_fColl ~11-15ms, ALREADY a native twin + optimized) waterfalls sky up + rasters body down;
+`renderViewportModeD` (g_fConvert ~30ms) converts field→bitplanes.
+
+So the user's "blitter fill the sky up" = port the WATERFALL; "dots without filling" = the RASTER's
+`$BF00`-mask value-2 component. Both currently live in `terrain_collision`, not the draw.
+
 (Live dump confirmed: near rows fill solid; the `$2090`+ rows 43-46 are the wing-clearance band
 `ff/aa/55`, not terrain.)
 

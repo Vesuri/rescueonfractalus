@@ -55,3 +55,14 @@ NOT energy); `update_cockpit_digits_native`→`startup_init_native` ($3FFA ident
 
 Descriptive "gauge" prose still appears in some comments (Atari hardware-channel /
 "throttle gauge" descriptions) — left as-is where accurate; sweep opportunistically.
+
+---
+
+**`$AE53` `terrain_collision`** — misnomer. Traced 2026-06-24 (flight1.a8s): besides the
+ship-vs-terrain collision scan, this routine renders the terrain SILHOUETTE every flight
+frame: per column it (1) CASCADEs the 48 rows for the topmost non-empty cell = the skyline,
+(2) WATERFALLs `$55` (value-1 = sky) into the rows ABOVE the skyline (the upward sky fill),
+(3) RASTERs the body + value-2 dots DOWNWARD via the `$BF00`/`$BE00` mask tables. The "sky
+fill + terrain silhouette" is the bulk of its work, not collision. Suggested:
+`terrain_collision_and_silhouette` or `terrain_render_silhouette` (collision is a side-effect
+of the same row scan). Source of truth = disasm/symbols.csv; batch-rename via the transpiler.
