@@ -124,11 +124,30 @@ blitter fills and which carries the dots.
    - **Dot bitplane (value 2):** plot the darker-brown texture dots, no fill.
 3. No `mem[$1070]` round-trip, no convert pass.
 
+## Stage 1 grounding (2026-06-24, decoded from a800dumps/flight1.bin — DONE before coding)
+
+The field model + column mapping, confirmed from the real flight `mem[$1070]` field + tables:
+- **Value→layer→Amiga pen** (mode-D decode `kModeDP1/P2`, bit0→plane1, bit1→plane2): value0=body
+  (pen0, the cleared background — FREE), value1=sky (plane1, the FILLED region above the skyline),
+  value2=dots (plane2, sparse texture), value3=wing-clearance band only (rows 43-46, not terrain).
+- **The ridge PLOT (`$BC00`=`80,20,08,02`) writes value-2** (the high bit of each 2-bit pixel) at the
+  skyline row — i.e. the ridge edge is the DOT layer.  The **sky fill (value1) and body come from
+  `terrain_collision_and_silhouette`** (WATERFALL up / RASTER down), NOT from `$260E` or the ridge plot.
+  So a $260E-only renderer reproduces the body/sky split + ridge dots, but the texture dots + objects
+  still come from collision/object plotters → Stage 3's "port those too vs keep a reduced convert".
+- **Column→pixel mapping is a perspective fisheye**: `$BD00[X]` = byte offset (4 logical columns per
+  field byte), `$BC00[X]` = the 2-bit pixel mask (`80/20/08/02` cycling = pixel X&3). The left ~32-44
+  logical columns ($260E=$FF, off-top) collapse onto byte 0 (margin); visible terrain maps to field
+  bytes `$30+`. `$28CA/$28FA[ai]` = per-skyline-row bitmap row-address table (the PLOT's row base).
+- **Headless verification (better than the "visual diff" below):** dump `terrainBitmap` chip RAM via
+  the gdb stub (like `diag_run.sh`) + decode to pixels in python and PIXEL-DIFF the new direct-render
+  output against the convert's output. Automatable; no eyeballing. Where they differ = exactly the
+  layers not yet ported (dots/objects) — guides the work. (Eyeball/screenshot only as a final sanity.)
+
 ## Execution stages (each independently verifiable)
 
-- **Stage 0 — measure the convert win (do FIRST).** Add a beam probe around the flight
-  `renderViewportModeD` call (a `g_fConvert` accumulator like `g_fDraw`) so we know the concrete
-  ms that eliminating the convert buys. Cheap; grounds the rest. `diag_run.sh 85`.
+- **Stage 0 — measure the convert win.** ✅ DONE (`g_fConvert` ≈ 62656 cumulative / ~190 frames ≈
+  330 beam ticks/frame ≈ 21 ms — the per-frame cost eliminating the convert would buy).
 
 - **Stage 1 — native skyline+dot plot from `$260E[]` → bitplanes (Amiga-only, behind a flag).** New
   renderer reads `$260E[0..$D4]`, maps each column→(byteCol, 2-bit mask) and height→`multiplyBy120`
