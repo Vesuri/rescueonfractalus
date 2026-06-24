@@ -3702,12 +3702,8 @@ void terrain_plot_object(void) {
  * realistic increasing column array, else the midpoint loop has a fixed point).
  */
 void terrain_column_rasterize(void) {
-    uint8_t A, X, c = 0;
+    uint8_t A, X;        /* A = the row index passed to PLOT / the A==$82 fast path */
     uint8_t Y = cpu.Y;   /* entry Y; the $B33F (A==$82) path plots before reassigning Y */
-    #define ADC_(v)  do { uint16_t _t=(uint16_t)A+(uint8_t)(v)+c; c=(uint8_t)(_t>>8); A=(uint8_t)_t; } while(0)
-    #define SBC_(v)  ADC_((uint8_t)~(uint8_t)(v))
-    #define RORA_()  do { uint8_t _n=A&1; A=(uint8_t)((A>>1)|(c<<7)); c=_n; } while(0)
-    #define LSRA_()  do { c=A&1; A=(uint8_t)(A>>1); } while(0)
     /* Hoist the threaded ZP scalars into registers: $82/$84/$86 (span interpolation
        state, re-read/-written every b380/b446 iteration) and $80/$81/$B5 (PLOT scratch).
        The indexed arrays ($95/$EA/$F4 in, $96/$EB/$F5 out — note the +1 overlap recurrence)
@@ -3750,63 +3746,74 @@ void terrain_column_rasterize(void) {
         { WB(); return; }                                          /* b37d LDX $60; b37f return */
     }
 
-    /* b380 — interpolation: refine $82/$84/$86, emit sub-points into $96/$EB[] */
+    /* b380 — interpolation: refine $82/$84/$86, emit sub-points into $96/$EB[].
+       Arithmetic in plain C (was 6502 carry-macro idioms): the "CLC ADC m; ROR" pattern
+       is the 9-bit average (A+m)>>1; the $86 fraction is a 9-bit add (+1 round) whose
+       carry/sign selects a midpoint-height correction = ($95or$96[Y] - $82)>>1 added or
+       subtracted with 0/0xFF saturation.  NB the two emit paths subtract a DIFFERENT base
+       (mid<=$2C updates $82 first then uses $95[Y]-newmid; mid>$2C uses mid-old$82).
+       Here the correction's carry-in is c=0/c=1 explicitly (unlike b446's b52e). Bit-exact
+       vs the __t6502 oracle (make validate). */
     Y = 0x00;                                            /* b380 LDY #0 */
     for (;;) {                                           /* L_b382 */
-        A = s82;                                 /* b382 */
-        if (A >= 0x2C) { X = A; break; }                 /* BCC b38c else TAX; goto b446 */
-        c = 0; ADC_(mem[0x0095 + Y]); RORA_();           /* b38c CLC; ADC $95,Y; ROR */
-        if (A <= 0x2C) {                                 /* BCC b397 / BNE b3e9 -> A <= 0x2C */
-            s82 = A;                             /* b397 STA $82 */
-            A = s86; c = 1; ADC_(mem[0x00F4 + Y]); s86 = A;  /* LDA $86; SEC; ADC F4,Y */
-            if (!(A & 0x80)) {                           /* BMI b3af -> else */
-                c = 0; A = s84; ADC_(mem[0x00EA + Y]); RORA_(); s84 = A;  /* CLC LDA84 ADC EA,Y ROR */
-            } else if (c) {                              /* b3af BCS b3cd (c from $86 ADC) */
-                A = mem[0x0095 + Y]; c = 1; SBC_(s82); LSRA_(); sB5 = A;
-                c = 0; A = s84; ADC_(mem[0x00EA + Y]); RORA_(); c = 0; ADC_(sB5);
-                if (c) A = 0xFF;                         /* b3e0 BCC b3e4 (skip LDA#$FF) */
-                s84 = A;
-            } else {                                     /* b3af (c clear) */
-                A = mem[0x0095 + Y]; c = 1; SBC_(s82); LSRA_(); sB5 = A;
-                c = 0; A = s84; ADC_(mem[0x00EA + Y]); RORA_(); c = 1; SBC_(sB5);
-                if (!c) A = 0x00;                        /* b3c4 BCC b3c8 (skip LDA#0) */
-                s84 = A;
+        if (s82 >= 0x2C) { X = s82; break; }             /* b382/b38c TAX; goto b446 */
+        uint8_t mid = (uint8_t)(((unsigned)s82 + mem[0x0095 + Y]) >> 1);   /* b38c avg */
+        unsigned fr = (unsigned)s86 + mem[0x00F4 + Y] + 1u;               /* $86 + F4,Y + 1 */
+        unsigned avg = ((unsigned)s84 + mem[0x00EA + Y]) >> 1;            /* ($84+EA,Y)/2 */
+        if (mid <= 0x2C) {                               /* b397 */
+            s82 = mid;
+            s86 = (uint8_t)fr;
+            if (!(s86 & 0x80)) {                         /* simple */
+                s84 = (uint8_t)avg;
+            } else {
+                uint8_t disp = (uint8_t)((uint8_t)(mem[0x0095 + Y] - s82) >> 1);   /* ($95,Y - newmid)>>1 */
+                sB5 = disp;
+                if (fr & 0x100u) {                       /* b3cd add (carry from $86) */
+                    unsigned t = avg + disp;
+                    s84 = (t > 0xFF) ? 0xFF : (uint8_t)t;
+                } else {                                 /* b3af sub */
+                    s84 = (avg >= disp) ? (uint8_t)(avg - disp) : 0;
+                }
             }
-        } else {                                         /* b3e9: A > 0x2C */
-            mem[0x0096 + Y] = A;                         /* b3e9 STA $96,Y */
-            A = s86; c = 1; ADC_(mem[0x00F4 + Y]); mem[0x00F5 + Y] = A;  /* LDA $86; SEC; ADC F4,Y; STA F5,Y */
-            if (!(A & 0x80)) {                           /* BMI b405 -> else */
-                c = 0; A = s84; ADC_(mem[0x00EA + Y]); RORA_(); mem[0x00EB + Y] = A;
-            } else if (c) {                              /* b405 BCS b425 (c from $86 ADC) */
-                A = mem[0x0096 + Y]; c = 1; SBC_(s82); LSRA_(); sB5 = A;
-                c = 0; A = s84; ADC_(mem[0x00EA + Y]); RORA_(); c = 0; ADC_(sB5);
-                if (c) A = 0xFF;                         /* b438 BCC b43c */
-                mem[0x00EB + Y] = A;
-            } else {                                     /* b405 (c clear) */
-                A = mem[0x0096 + Y]; c = 1; SBC_(s82); LSRA_(); sB5 = A;
-                c = 0; A = s84; ADC_(mem[0x00EA + Y]); RORA_(); c = 1; SBC_(sB5);
-                if (!c) A = 0x00;                        /* b41a BCC b41e */
-                mem[0x00EB + Y] = A;
+        } else {                                         /* b3e9: mid > 0x2C */
+            mem[0x0096 + Y] = mid;
+            mem[0x00F5 + Y] = (uint8_t)fr;
+            uint8_t eb;
+            if (!((uint8_t)fr & 0x80)) {                 /* simple */
+                eb = (uint8_t)avg;
+            } else {
+                uint8_t disp = (uint8_t)((uint8_t)(mid - s82) >> 1);     /* (mid - old$82)>>1 */
+                sB5 = disp;
+                if (fr & 0x100u) {                       /* b425 add */
+                    unsigned t = avg + disp;
+                    eb = (t > 0xFF) ? 0xFF : (uint8_t)t;
+                } else {                                 /* b405 sub */
+                    eb = (avg >= disp) ? (uint8_t)(avg - disp) : 0;
+                }
             }
+            mem[0x00EB + Y] = eb;
             Y = (uint8_t)(Y + 1);                        /* INY */
         }
     }
 
-    /* b446 — rasterize each leaf column into the silhouette bitmap */
+    /* b446 — rasterize each leaf column into the silhouette bitmap.  d = X - $95[Y]
+       (SEC SBC).  d==$FE: plot two columns (heights (EA,Y+$84+1)/2 then EA,Y) and step
+       Y down; d==$FF: plot one (EA,Y) and step down; else: emit a sub-point like b380.
+       ⚠ Here the b52e correction's ADC/SBC carry-in is the ROR-carry of the height
+       average (avg9&1), NOT a fresh c=0 — kept exactly.  Bit-exact vs __t6502. */
     for (;;) {                                           /* L_b446 */
         if (X >= 0xD4) { WB(); return; }                            /* CPX #$D4; BCS b443 */
-        A = X; s82 = X;                          /* TXA; STX $82 */
-        c = 1; SBC_(mem[0x0095 + Y]);                    /* SEC; SBC $95,Y */
-        c = (A >= 0xFE) ? 1 : 0;                         /* CMP #$FE (carry used at b4cc) */
-        if (A == 0xFE) {                                 /* BNE b4cc -> else */
-            A = mem[0x00EA + Y]; ADC_(s84); RORA_();   /* LDA EA,Y; ADC $84 (c=1); ROR */
+        s82 = X;                                         /* TXA; STX $82 */
+        uint8_t d = (uint8_t)(X - mem[0x0095 + Y]);      /* SEC; SBC $95,Y */
+        if (d == 0xFE) {                                 /* BNE b4cc -> else */
+            A = (uint8_t)(((unsigned)mem[0x00EA + Y] + s84 + 1u) >> 1);   /* LDA EA,Y; ADC $84(c=1); ROR */
             if (A > mem[0x260E + X]) {                   /* b489 skip (BCC/BEQ) */
                 mem[0x260E + X] = A;
                 if (A >= 0x97) { mem[0x260E + X] = 0xFF; A = 0x97; } /* CMP #$97; BCC b470 */
                 PLOT();                                  /* b470 */
             }
             X++;                                         /* b489 INX */
-            A = mem[0x00EA + Y]; s84 = A;        /* LDA EA,Y; STA $84 */
+            A = mem[0x00EA + Y]; s84 = A;                /* LDA EA,Y; STA $84 */
             if (A > mem[0x260E + X]) {                   /* b4bd skip (BCC/BEQ) */
                 mem[0x260E + X] = A;
                 if (A >= 0x97) { mem[0x260E + X] = 0xFF; A = 0x97; }
@@ -3814,10 +3821,10 @@ void terrain_column_rasterize(void) {
             }
             Y = (uint8_t)(Y - 1); if (Y & 0x80) { WB(); return; }  /* b4bd DEY; BMI b4c9 */
             X++;                                         /* INX */
-            A = mem[0x00F5 + Y]; s86 = A;        /* LDA F5,Y; STA $86 */
+            s86 = mem[0x00F5 + Y];                       /* LDA F5,Y; STA $86 */
             continue;                                    /* goto b446 */
-        } else if (c) {                                  /* b4cc, carry set (A == 0xFF) */
-            A = mem[0x00EA + Y]; s84 = A;        /* LDA EA,Y; STA $84 */
+        } else if (d >= 0xFE) {                          /* b4cc, carry set (d == 0xFF) */
+            A = mem[0x00EA + Y]; s84 = A;                /* LDA EA,Y; STA $84 */
             if (A > mem[0x260E + X]) {                   /* b501 skip (BCC/BEQ) */
                 mem[0x260E + X] = A;
                 if (A >= 0x97) { mem[0x260E + X] = 0xFF; A = 0x97; }
@@ -3825,33 +3832,35 @@ void terrain_column_rasterize(void) {
             }
             Y = (uint8_t)(Y - 1); if (Y & 0x80) { WB(); return; }  /* b501 DEY; BMI b4c9 */
             X++;                                         /* INX */
-            A = mem[0x00F5 + Y]; s86 = A;        /* LDA F5,Y; STA $86 */
+            s86 = mem[0x00F5 + Y];                       /* LDA F5,Y; STA $86 */
             continue;                                    /* goto b446 */
-        } else {                                         /* b50d, carry clear (A < 0xFE) */
-            A = X; ADC_(mem[0x0095 + Y]); RORA_(); mem[0x0096 + Y] = A;  /* TXA; ADC $95,Y (c=0); ROR; STA 96,Y */
-            A = s86; c = 1; ADC_(mem[0x00F4 + Y]); mem[0x00F5 + Y] = A;  /* LDA $86; SEC; ADC F4,Y; STA F5,Y */
-            if (!(A & 0x80)) {                           /* BMI b52e -> else */
-                c = 0; A = s84; ADC_(mem[0x00EA + Y]); RORA_(); mem[0x00EB + Y] = A;
-            } else if (c) {                              /* b52e BCS b54c (c from $86 ADC) */
-                A = mem[0x0096 + Y]; SBC_(s82); LSRA_(); sB5 = A;   /* SBC $82 (c=1, no SEC); LSR */
-                c = 0; A = s84; ADC_(mem[0x00EA + Y]); RORA_(); ADC_(sB5);  /* CLC ADC EA,Y ROR; ADC B5 (c from ROR) */
-                if (c) A = 0xFF;                         /* b55d BCC b561 */
-                mem[0x00EB + Y] = A;
-            } else {                                     /* b52e (c clear) */
-                A = mem[0x0096 + Y]; SBC_(s82); LSRA_(); sB5 = A;   /* SBC $82 (c=0, no SEC); LSR */
-                c = 0; A = s84; ADC_(mem[0x00EA + Y]); RORA_(); SBC_(sB5);  /* CLC ADC EA,Y ROR; SBC B5 (c from ROR) */
-                if (!c) A = 0x00;                        /* b541 BCC b545 */
-                mem[0x00EB + Y] = A;
+        } else {                                         /* b50d, carry clear (d < 0xFE) */
+            uint8_t mid = (uint8_t)(((unsigned)X + mem[0x0095 + Y]) >> 1); /* TXA; ADC $95,Y(c=0); ROR */
+            mem[0x0096 + Y] = mid;
+            unsigned fr = (unsigned)s86 + mem[0x00F4 + Y] + 1u;          /* LDA $86; SEC; ADC F4,Y */
+            mem[0x00F5 + Y] = (uint8_t)fr;
+            unsigned avg9 = (unsigned)s84 + mem[0x00EA + Y];             /* 9-bit ($84+EA,Y) */
+            unsigned avg  = avg9 >> 1;
+            uint8_t eb;
+            if (!((uint8_t)fr & 0x80)) {                 /* simple */
+                eb = (uint8_t)avg;
+            } else if (fr & 0x100u) {                    /* b54c add (carry from $86) */
+                uint8_t disp = (uint8_t)((uint8_t)(mid - s82) >> 1);     /* SBC $82 (c=1) */
+                sB5 = disp;
+                unsigned t = avg + disp + (avg9 & 1u);   /* ADC sB5 with the ROR carry */
+                eb = (t > 0xFF) ? 0xFF : (uint8_t)t;
+            } else {                                     /* b52e sub */
+                uint8_t disp = (uint8_t)((uint8_t)(mid - s82 - 1u) >> 1); /* SBC $82 (c=0) */
+                sB5 = disp;
+                unsigned t = avg + (unsigned)(uint8_t)~disp + (avg9 & 1u);/* SBC sB5 (ADC ~sB5) w/ ROR carry */
+                eb = (t > 0xFF) ? (uint8_t)t : 0;        /* if(!c) A=0 */
             }
+            mem[0x00EB + Y] = eb;
             Y = (uint8_t)(Y + 1);                        /* INY */
             continue;                                    /* goto b446 */
         }
     }
 
-    #undef ADC_
-    #undef SBC_
-    #undef RORA_
-    #undef LSRA_
     #undef PLOT
     #undef WB
     return;
