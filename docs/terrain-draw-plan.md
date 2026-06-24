@@ -52,13 +52,27 @@ renderViewportModeD(srcBase=$1070, stride=96, rows=47)   ← the convert to ELIM
 - Planet path precedent: dirty-row extent (`g_planetRowLo/Hi`) + `ViewportCopperList`/poke-only
   copper. The flight path currently does a FULL convert each frame (no dirty rows).
 
+## Rendering model (user-confirmed 2026-06-24, settled by live mem[$1070] dump)
+
+The flight terrain is **2 layers on 2 bitplanes**:
+- **Lighter-brown FILLED body** — one pixel-bit / one bitplane. The mountain silhouette filled
+  solid below the ridge. **This is what the dot-plot + blitter fill-down produces:** plot the ridge
+  per `$260E[]`, then OR each row onto the next (fill-down).
+- **Darker-brown texture DOTS on top** — the *other* pixel-bit / *other* bitplane. Drawn as
+  individual dots and **NOT filled** — just the dot-plot loop, no fill-down.
+
+(Live dump confirmed: near rows fill solid; the `$2090`+ rows 43-46 are the wing-clearance band
+`ff/aa/55`, not terrain. Exact pen↔bit↔bitplane mapping to be pinned in Stage 1 via dl-analyzer /
+`kModeDP1/P2`: value1=salmon ridge, value2=brown body, value3=both.)
+
 ## Target architecture (user-confirmed)
 
 1. Keep the faithful subdivision producing `$260E[]` (byte-validatable), but **optimise it** as a
    68000-tuned native twin (it's the 84 %).
 2. Replace ridge `PLOT`-into-`mem[$1070]` **and** `renderViewportModeD` with a native Amiga step:
-   read `$260E[]` (yForX) → plot ridge dots straight into `terrainBitmap` bitplanes via the tight
-   `multiplyBy120` LUT loop → **blitter fill-down** (OR each row onto the next) for the body.
+   - **Body bitplane:** read `$260E[]` (yForX) → plot ridge dots straight into the body bitplane via
+     the tight `multiplyBy120` LUT loop → **blitter fill-down** (OR each row onto the next).
+   - **Dot bitplane:** plot the darker-brown texture dots into the second bitplane, no fill.
 3. No `mem[$1070]` round-trip, no convert pass.
 
 ## Execution stages (each independently verifiable)
@@ -69,14 +83,15 @@ renderViewportModeD(srcBase=$1070, stride=96, rows=47)   ← the convert to ELIM
 
 - **Stage 1 — native dot-plot from `$260E[]` → bitplanes (Amiga-only, behind a flag).** New
   renderer reads `$260E[0..$D4]`, maps each column→(byteCol, 2-bit mask) and height→`multiplyBy120`
-  row offset, ORs the ridge dot into `terrainBitmap`. Run it ALONGSIDE the existing convert first
-  and visually diff (FS-UAE `run.sh`); the ridge must match.
+  row offset. Plot the ridge into the **body bitplane** and the texture into the **dot bitplane**.
+  Run it ALONGSIDE the existing convert first and visually diff (FS-UAE `run.sh`); ridge + dots
+  must match. (Body still unfilled at this stage — it's just the ridge line until Stage 2.)
 
-- **Stage 2 — blitter fill-down for the body.** Replace the existing fill with a descending
-  blitter OR (row N → row N+1) over the terrain band. ⚠ **OPEN:** locate the current terrain-BODY
-  fill first — `raster_fill_region` is per-OBJECT; the ridge `PLOT` is one pixel/column. The body
-  fill mechanism is unconfirmed (user to point at the routine, or pin via runtime dump of
-  `mem[$1070]` mid-flight: is it filled or outline-only?).
+- **Stage 2 — blitter fill-down for the body bitplane.** Descending blitter OR (row N → row N+1,
+  BLTCON1 DESC, minterm A|B→D) over the terrain band, on the **body bitplane only** (the dot
+  bitplane is never filled). Produces the lighter-brown filled silhouette from the ridge line.
+  Resolved (live dump 2026-06-24): the body IS filled today; this blitter pass is the native
+  replacement for whatever fills it in the `mem[$1070]` path.
 
 - **Stage 3 — cut the round-trip.** Stop the 6502 ridge `PLOT` into `mem[$1070]` (subdivision still
   computes `$260E[]`); drop `renderViewportModeD` for flight. ⚠ **Complication:** objects
