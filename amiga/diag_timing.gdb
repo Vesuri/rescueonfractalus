@@ -26,8 +26,10 @@ printf "frames=%lu terrain=%lu tDraw=%lu stateEnemy=%lu render=%lu copper=%lu re
   g_flightProf.frames, g_flightProf.terrain, g_flightProf.tDraw, g_flightProf.stateEnemy, g_flightProf.render, g_flightProf.copper, g_flightProf.renderTot, g_flightProf.updateTot, g_flightProf.isrLines, g_flightProf.isrCalls
 echo --- cockpit decode (beam ticks; 313=20ms) ---\n
 printf "cockpitTicks=%lu cockpitScans=%lu (per-scan ticks=%lu)\n", g_fCockpit, g_fCockpitScans, (g_fCockpitScans? g_fCockpit/g_fCockpitScans : 0)
-echo --- terrain_draw_frame sub-phase (ROF_TDRAW_PROF) ---\n
-printf "tdSubdiv=%lu tdProjPlot=%lu\n", g_tdSubdiv, g_tdProjPlot
+echo --- terrain_draw_frame sub-phase (ROF_TDRAW_PROF; cumulative — normalize by frames) ---\n
+printf "tdSubdiv=%lu tdProjPlot=%lu tdFrames=%lu\n", g_tdSubdiv, g_tdProjPlot, g_tdFrames
+printf "  per-frame: tdSubdiv=%lu tdProjPlot=%lu (beam ticks/frame)\n", \
+  (g_tdFrames? g_tdSubdiv/g_tdFrames : 0), (g_tdFrames? g_tdProjPlot/g_tdFrames : 0)
 printf "fConvert=%lu (flight mem[1070]->bitplane convert; same units as draw=%lu)\n", g_fConvert, g_fDraw
 echo --- renderFrame no-yield gap (real VBI frames) ---\n
 printf "maxGap=%u atVbi=%u vvblki=%04x 060B=%02x 004A=%02x\n", \

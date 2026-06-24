@@ -1018,7 +1018,7 @@ extern "C" void standby_vbi_native(void)
 volatile struct FlightProf g_flightProf = { 0 };
 // terrain_draw_frame object-loop sub-phase probe (rof_native.c, -DROF_TDRAW_PROF):
 // beam lines spent in the fractal subdivision vs the projection+object-plot.
-extern "C" unsigned long g_tdSubdiv = 0, g_tdProjPlot = 0;
+extern "C" unsigned long g_tdSubdiv = 0, g_tdProjPlot = 0, g_tdFrames = 0;
 extern "C" unsigned short flight_vbi_tick(void) {
     return (unsigned short)((mem[0x0013] << 8) | mem[0x0014]);  // RTCLOK $0013:$0014
 }

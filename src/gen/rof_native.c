@@ -4580,7 +4580,7 @@ void terrain_collision_and_silhouette(void) {
  * to no-ops (no HW beam there).  Read g_tdSubdiv / g_tdProjPlot from the debugger. */
 #ifdef ROF_TDRAW_PROF
 extern unsigned short rof_beam_line(void);
-extern unsigned long g_tdSubdiv, g_tdProjPlot;
+extern unsigned long g_tdSubdiv, g_tdProjPlot, g_tdFrames;
 #define PB(v) unsigned short v = rof_beam_line()
 #define PE(v,acc) do { unsigned short _e = rof_beam_line(); \
     (acc) += (_e >= (v)) ? (unsigned long)(_e - (v)) : (unsigned long)(_e + 313 - (v)); } while (0)
@@ -4601,6 +4601,9 @@ void terrain_draw_frame(void) {
     #define ROLM_(a) do { uint8_t _v=mem[a],_n=_v>>7; mem[a]=(uint8_t)((_v<<1)|c); c=_n; } while(0)
 
     mem[0x00A7] = cpu.X;                                 /* a31e */
+#ifdef ROF_TDRAW_PROF
+    g_tdFrames++;                                        /* per-frame normalizer for g_tdSubdiv/g_tdProjPlot */
+#endif
     X = cpu.X;
     Y = 0x20; c = 0;                                     /* a320-a322 */
     do {                                                 /* L_a323 — fill the $BD00 column-id table */
