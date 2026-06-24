@@ -149,6 +149,28 @@ The field model + column mapping, confirmed from the real flight `mem[$1070]` fi
 - **Stage 0 — measure the convert win.** ✅ DONE (`g_fConvert` ≈ 62656 cumulative / ~190 frames ≈
   330 beam ticks/frame ≈ 21 ms — the per-frame cost eliminating the convert would buy).
 
+### Stages 1-3 status (2026-06-24) — DONE (sky), dots TODO
+
+✅ **Stage 1+2+3 wired in** (`renderFlightDirect`, `RescueOnFractalus.cpp`; commits on main):
+the flight render path now plots terrain sky straight to `terrainBitmap` from `$260E` and
+**dropped `renderViewportModeD($1070)`** — no `mem[$1070]` round-trip, buffer scan, or shadow.
+- **Mapping** (pinned empirically, byte-exact): Amiga logical col `c` (0..159) → `$260E[c+48]`;
+  skyline scanline = `150 - height` (the `$28CA/$28FA` row table is linear); `$FF` = off-top.
+- **Edge plot**: 160 plane1 `or.b`s (one skyline bit/column). **Sky fill**: ONE descending
+  (`BLITREVERSE`) blitter pass — `AmigaHardware::blitterFillUp`, `D=A|C` minterm 0xFA, A one row
+  below D, so each just-written row feeds the next row up (NOT 46 passes — one blit).
+- **Band** (rows 43-46, windscreen-bottom frame): kept as a cheap 4-row mode-D convert.
+- **Measured**: ~172 vs old convert ~339 beam ticks/frame (**~2x, ~10.6ms/frame**). plane1 sky
+  **byte-exact vs the convert (0/13760)**, verified headlessly (`amiga/dump_terrain.sh` +
+  `tools/decode_terrain.py` dump+decode the live `terrainBitmap`; the dump exposes
+  `g_terrainBmpAddr`). Both PROBES + non-PROBES (shippable) builds link clean.
+- ⚠ **OPEN: plane2 dots** — the value-2 texture (sparse, ~40-72px from `terrain_collision_and_
+  silhouette`'s `$BF00` raster) is NOT yet plotted, so terrain texture is currently absent.
+  Next: have `collision` set plane2 bits as it rasters each column (keeps its `mem[$1070]`
+  writes → `make validate` still holds), mapping its field address to the bitplane via the same
+  `$260E[c+48]` / `150-h` relation. Then the `mem[$1070]` PLOT/fill can be dropped entirely.
+
+#### Original stage notes (for reference)
 - **Stage 1 — native skyline+dot plot from `$260E[]` → bitplanes (Amiga-only, behind a flag).** New
   renderer reads `$260E[0..$D4]`, maps each column→(byteCol, 2-bit mask) and height→`multiplyBy120`
   row offset. Plot the skyline into the **sky bitplane (value 1)** and the texture into the **dot
