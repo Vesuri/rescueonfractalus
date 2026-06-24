@@ -8,9 +8,6 @@ printf "vbi=%u VVBLKI=%02x%02x bmp=%08x\n", g_vbiCount, mem[0x0223], mem[0x0222]
 # terrainBitmap: 3 interleaved bitplanes, 320px => 40 bytes/plane/scanline = 120/scanline.
 # The convert writes 47 mode-D rows (one interleaved scanline each) = 47*120 = 5640 bytes.
 dump binary memory .run/terrain.bin g_terrainBmpAddr (g_terrainBmpAddr + 47*120)
-# Stage-1 direct renderer's parallel output (same layout) for pixel-diff vs the convert.
-printf "direct=%08x\n", g_flightDirectAddr
-dump binary memory .run/direct.bin g_flightDirectAddr (g_flightDirectAddr + 47*120)
 # Also dump the source GTIA field mem[$1070] (47 rows x 96 stride = 4512) + $260E heights.
 dump binary memory .run/field1070.bin &mem[0x1070] (&mem[0x1070] + 47*96)
 dump binary memory .run/heights260e.bin &mem[0x260E] (&mem[0x260E] + 0xD5)

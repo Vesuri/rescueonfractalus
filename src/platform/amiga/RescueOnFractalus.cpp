@@ -728,33 +728,25 @@ void RescueOnFractalus::renderViewportModeD(uint16_t srcBase, int stride, int ro
     }
 }
 
-#ifdef ROF_FLIGHT_PROBE
-// ── Stage 1 direct terrain renderer (terrain-draw-plan Stages 1-3) ─────────────
-// Plot the terrain straight to bitplanes from $260E (yForX) — NO mem[$1070] round-trip,
-// NO full-buffer LUT scan, NO shadow.  Mapping pinned empirically (a800dumps/flight1 +
-// live dump): Amiga logical column c (0..159) <- $260E[c+48]; scanline = 150 - height
-// (the $28CA/$28FA row table is linear: addr = $1010 + (1+(0x96-h))*0x60, displayed
-// scanline = row-1); $FF = off-top (all body, no sky).  plane1 = sky (filled above the
-// skyline), plane2 = dots (TODO), plane3 = 0.  Renders into a parallel bitmap so the
-// headless verifier can pixel-diff plane1 vs the convert (renderViewportModeD) output.
-// Stage 2 will replace the per-column CPU sky fill with a blitter fill-up.
-static Bitmap*  s_flightDirect = nullptr;
-extern "C" volatile uint32_t g_flightDirectAddr;
+// ── Direct flight terrain renderer (terrain-draw-plan Stages 1-3) ──────────────
+// Plot the terrain sky straight to bitplanes from $260E (yForX) — NO mem[$1070] round-trip,
+// NO full-buffer LUT scan, NO shadow (the heavy parts of renderViewportModeD).  Mapping
+// pinned empirically: Amiga logical column c (0..159) <- $260E[c+48]; skyline scanline =
+// 150 - height (the $28CA/$28FA row table is linear); $FF = off-top (all body).  plane1 =
+// sky (filled above the skyline via ONE descending blitter fill), plane2 = dots (TODO).
+// Terrain rows 0-42; the windscreen-bottom band (rows 43-46, from mem[$2098]) is still
+// converted (4 rows) so it isn't lost.  Verified: plane1 byte-exact vs the old convert
+// (0/13760); ~2.8x cheaper per frame (fDirect 120 vs fConvert 339 beam ticks).
 void RescueOnFractalus::renderFlightDirect()
 {
     if (!terrainBitmap) return;
-    if (!s_flightDirect) {
-        s_flightDirect = Bitmap::allocate(kW, kViewportFullHeight, kBP3, true);
-        g_flightDirectAddr = (uint32_t)s_flightDirect->data;
-    }
-    uint8_t* const bp = (uint8_t*)s_flightDirect->data;
-    // Clear all 3 planes of the 47 scanlines via the blitter (120 bytes/row contiguous),
-    // then wait so the CPU edge-plot below doesn't race the clear.
-    AmigaHardware::blitterClear((uint16_t*)bp, 60, 47, 0);
+    uint8_t* const bp = (uint8_t*)terrainBitmap->data;
+
+    // Terrain rows 0-42 (43 scanlines): clear all 3 planes, then build plane1 sky.
+    AmigaHardware::blitterClear((uint16_t*)bp, 60, 43, 0);
     AmigaHardware::blitterWait();
 
-    // Edge plot: ONE plane1 bit per column at its skyline scanline (= 150-height) — the
-    // cheap part (160 byte-ORs).  $FF = off-top (all body, no sky edge).
+    // Edge plot: ONE plane1 bit per column at its skyline scanline (160 byte-ORs).
     const uint8_t* const yForX = (const uint8_t*)mem + 0x260E + 48;   // col 0 -> $260E[48]
     static const uint8_t kMask[4] = { 0xC0u, 0x30u, 0x0Cu, 0x03u };   // 2-bit pixel within byte
     for (int c = 0; c < 160; c++) {
@@ -762,17 +754,24 @@ void RescueOnFractalus::renderFlightDirect()
         if (h == 0xFFu) continue;                            // off-top: all body
         int scan = 150 - (int)h;                             // height -> skyline scanline
         if (scan < 0) scan = 0;
-        if (scan > 46) scan = 46;
+        if (scan > 42) scan = 42;                            // terrain region
         bp[scan * 120 + (c >> 2)] |= kMask[c & 3];           // plane1 skyline edge bit
     }
-
-    // Sky fill = propagate each skyline edge bit UPWARD in ONE descending blit (BLITREVERSE):
-    // plane1 rows are 20 words at stride 120 -> modulo 80.  Writes rows 0..45 (row 46 is the
-    // read-only seed); every row above an edge becomes sky, rows below stay 0 (body).
-    AmigaHardware::blitterFillUp((uint16_t*)bp, 20, 46, 80);
+    // Sky fill: propagate each edge bit UP in ONE descending blit (writes rows 0-41, seed 42).
+    AmigaHardware::blitterFillUp((uint16_t*)bp, 20, 42, 80);
     AmigaHardware::blitterWait();
+
+    // Windscreen-bottom band (scanlines 43-46): still a 4-row mode-D convert from mem[$1070]
+    // (= $2098+ wing band).  Cheap (4/47 of the old convert); keeps the frame element.
+    const uint8_t* src = (const uint8_t*)mem + 0x1070 + 4 + 43 * 96;  // band source rows
+    uint8_t* vd = bp + 43 * 120;
+    for (int row = 0; row < 4; row++, src += 96, vd += 120) {
+        for (int b = 0; b < 40; b++) {
+            uint8_t s = src[b];
+            vd[b] = kModeDP1[s]; vd[40 + b] = kModeDP2[s]; vd[80 + b] = 0;
+        }
+    }
 }
-#endif
 
 // run(): the whole game, driven by the genuine transpiled/native boot chain
 // (game_entry -> game_main_loop -> display_setup -> flight).  That chain is
@@ -1469,19 +1468,14 @@ void RescueOnFractalus::render()
         // render(); the per-byte shadow keeps it cheap.
         if (rsFlight) {
             unsigned short r0 = flight_vbi_tick();
+            // Direct $260E->bitplane terrain render (replaces the renderViewportModeD convert):
+            // no mem[$1070] round-trip / buffer scan / shadow.  ~2.8x cheaper, plane1 byte-exact.
 #ifdef ROF_FLIGHT_PROBE
-            // Beam-based, ISR-decontaminated convert-pass cost (same units as g_fDraw) so the
-            // terrain-draw plan's Stage 0 can quantify what eliminating this pass would buy.
-            unsigned long _cv0 = rof_subclock(), _cvi = g_isrBeamLines;
-#endif
-            renderViewportModeD(0x1070, 96, 47);   // 47 rows: +4 for the wing-clearance band ($2090-$21B0)
-#ifdef ROF_FLIGHT_PROBE
-            g_fConvert += (rof_subclock() - _cv0) - (g_isrBeamLines - _cvi);
-            // Stage 1: parallel direct render (for pixel-diff vs the convert) + its own beam cost,
-            // so we can compare g_fDirect vs g_fConvert in the same run before wiring it in.
             extern volatile unsigned long g_fDirect;
             unsigned long _dv0 = rof_subclock(), _dvi = g_isrBeamLines;
+#endif
             renderFlightDirect();
+#ifdef ROF_FLIGHT_PROBE
             g_fDirect += (rof_subclock() - _dv0) - (g_isrBeamLines - _dvi);
 #endif
             g_flightProf.render += (unsigned short)(flight_vbi_tick() - r0);
