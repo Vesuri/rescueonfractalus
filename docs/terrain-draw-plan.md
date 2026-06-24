@@ -62,8 +62,24 @@ The flight terrain is **2 layers on 2 bitplanes**:
   individual dots and **NOT filled** — just the dot-plot loop, no fill-down.
 
 (Live dump confirmed: near rows fill solid; the `$2090`+ rows 43-46 are the wing-clearance band
-`ff/aa/55`, not terrain. Exact pen↔bit↔bitplane mapping to be pinned in Stage 1 via dl-analyzer /
-`kModeDP1/P2`: value1=salmon ridge, value2=brown body, value3=both.)
+`ff/aa/55`, not terrain.)
+
+**Flight terrain palette** (`updateFlightCopper` → `setTerrainPalette(terr0,terr1,$20,$18)`):
+
+| Amiga pen (color0n) | Atari src | role |
+|---|---|---|
+| color00 | `$00DC` | **terrain body** (lighter brown, salmon→brown fade) — the FILL layer |
+| color01 | `$00DD` | sky |
+| color02 | `$20`   | **dots** (darker brown texture) — the DOT layer |
+| color03 | `$18`   | highlight |
+
+⚠ Subtlety to pin in Stage 1 before coding the renderer: the field is GTIA-10 (PRIOR=$94 — pixel
+value selects a register, NOT linear 2bpp), decoded on the Amiga via `kModeDP1/P2` (bit0→plane1,
+bit1→plane2) so field value V→Amiga pen V. But "body" mapping to pen0 (no bits set = background)
+means the fill model may be inverted (body is the default, sky/dots/highlight drawn over it).
+Pin the true value→bitplane→pen relationship with `/atari-dl-analyzer` on a flight savestate (or a
+runtime `mem[$1070]`+palette cross-check) as Stage 1's FIRST task — it decides which plane the
+blitter fills and which carries the dots.
 
 ## Target architecture (user-confirmed)
 
