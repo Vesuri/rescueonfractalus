@@ -4044,6 +4044,12 @@ void terrain_frame_setup(void) {
     #define LSRA_()  do { c=A&1; A=(uint8_t)(A>>1); } while(0)
     #define ROLM_(a) do { uint8_t _v=mem[a],_n=_v>>7; mem[a]=(uint8_t)((_v<<1)|c); c=_n; } while(0)
     #define RORM_(a) do { uint8_t _v=mem[a],_n=_v&1; mem[a]=(uint8_t)((_v>>1)|(c<<7)); c=_n; } while(0)
+    /* register-local rotate variants (operate on a uint8_t lvalue, not mem[]) — used to
+       keep the hot loop-1 ZP scratch $B5/$B6 in registers; see the 68000 perf notes. */
+    #define ROLL_(x) do { uint8_t _n=(uint8_t)(x)>>7; (x)=(uint8_t)(((uint8_t)(x)<<1)|c); c=_n; } while(0)
+    #define RORL_(x) do { uint8_t _n=(uint8_t)(x)&1; (x)=(uint8_t)(((uint8_t)(x)>>1)|(c<<7)); c=_n; } while(0)
+    uint8_t b5, b6;      /* loop-1 ZP scratch $B5/$B6 hoisted to registers (final value written back) */
+    uint16_t srcptr;     /* loop-1 ($80),Y base — constant across the loop */
 
     setup_projection_params();                           /* 9e54 */
     build_view_transform_matrix();                       /* 9e57 */
@@ -4071,46 +4077,47 @@ void terrain_frame_setup(void) {
     /* 9e92 */
     mem[0x0080] = X; mem[0x0081] = Y;                    /* 9e92/9e94 (ptr for ($80),Y) */
     A = mem[0x008A]; ROLA_(); ROLA_(); ROLA_(); ROLA_(); /* 9e96-9e9b */
-    A &= 0xF0; mem[0x00B6] = A;                          /* 9e9c/9e9e */
+    A &= 0xF0; b6 = A;                                   /* 9e9c/9e9e ($B6 → local across loop 1) */
     A = mem[0x0088]; A &= 0x0F; X = A;                   /* 9ea0-9ea4 (TAX) */
     A |= mem[0x00B5]; mem[0x00B4] = A;                   /* 9ea5/9ea7 */
 
+    srcptr = (uint16_t)(mem[0x0080] | (mem[0x0081] << 8));  /* ($80),Y base — constant in loop 1 */
     Y = 0x00;                                            /* 9ea9 */
     do {                                                 /* L_9eab — per terrain cell */
-        A = bus_read((uint16_t)(mem[0x0080] | (mem[0x0081] << 8)) + Y);  /* 9eab LDA ($80),Y */
-        mem[0x00B5] = A;                                 /* 9ead */
+        A = mem[srcptr + Y];                             /* 9eab LDA ($80),Y (RAM table → mem[]) */
+        b5 = A;                                          /* 9ead ($B5 → local within the iteration) */
 
         /* Examine $B5 MSB-first (up to four ROL $B5) to pick one of six
            rotate/translate updates of the column vectors.  The first two hits
            continue into the 9f61 pair (E/F); later hits land directly at 9fb2. */
         int via_9f61 = 0;
         if (A & 0x80) {                                  /* 9eaf BPL -> else; case A */
-            A = mem[0x00B6]; c = 0; ADC_(0xF0); mem[0x00B6] = A;  /* 9eb1-9eb6 */
+            A = b6; c = 0; ADC_(0xF0); b6 = A;          /* 9eb1-9eb6 */
             c = 0; A = mem[0x22A3 + Y]; ADC_(mem[0x00A0]); mem[0x22A4 + Y] = A;  /* 9eb8-9ebe */
             A = mem[0x22D1 + Y]; ADC_(mem[0x00A1]); mem[0x22D2 + Y] = A;         /* 9ec1-9ec6 */
             c = 1; A = mem[0x22FF + Y]; SBC_(mem[0x00A2]); mem[0x2300 + Y] = A;  /* 9ec9-9ecf */
             A = mem[0x232D + Y]; SBC_(mem[0x00A3]); mem[0x232E + Y] = A;         /* 9ed2-9ed7 */
             via_9f61 = 1;                                /* 9eda goto 9f61 */
         } else {
-            ROLM_(0x00B5);                               /* 9edd */
-            if (mem[0x00B5] & 0x80) {                     /* 9edf BPL -> else; case B */
-                A = mem[0x00B6]; c = 0; ADC_(0x10); mem[0x00B6] = A;  /* 9ee1-9ee6 */
+            ROLL_(b5);                                   /* 9edd */
+            if (b5 & 0x80) {                             /* 9edf BPL -> else; case B */
+                A = b6; c = 0; ADC_(0x10); b6 = A;      /* 9ee1-9ee6 */
                 c = 1; A = mem[0x22A3 + Y]; SBC_(mem[0x00A0]); mem[0x22A4 + Y] = A;  /* 9ee8-9eee */
                 A = mem[0x22D1 + Y]; SBC_(mem[0x00A1]); mem[0x22D2 + Y] = A;         /* 9ef1-9ef6 */
                 c = 0; A = mem[0x22FF + Y]; ADC_(mem[0x00A2]); mem[0x2300 + Y] = A;  /* 9ef9-9eff */
                 A = mem[0x232D + Y]; ADC_(mem[0x00A3]); mem[0x232E + Y] = A;         /* 9f02-9f07 */
                 via_9f61 = 1;                            /* 9f0a goto 9f61 */
             } else {
-                ROLM_(0x00B5);                           /* 9f0d */
-                if (mem[0x00B5] & 0x80) {                 /* 9f0f BPL -> else; case C */
+                ROLL_(b5);                               /* 9f0d */
+                if (b5 & 0x80) {                         /* 9f0f BPL -> else; case C */
                     X = (uint8_t)(X - 1);                /* 9f11 DEX */
                     c = 1; A = mem[0x22A3 + Y]; SBC_(mem[0x00A2]); mem[0x22A4 + Y] = A;  /* 9f12-9f18 */
                     A = mem[0x22D1 + Y]; SBC_(mem[0x00A3]); mem[0x22D2 + Y] = A;         /* 9f1b-9f20 */
                     c = 1; A = mem[0x22FF + Y]; SBC_(mem[0x00A0]); mem[0x2300 + Y] = A;  /* 9f23-9f29 */
                     A = mem[0x232D + Y]; SBC_(mem[0x00A1]); mem[0x232E + Y] = A;         /* 9f2c-9f31 */
                 } else {
-                    ROLM_(0x00B5);                       /* 9f37 */
-                    if (mem[0x00B5] & 0x80) {             /* 9f39 BPL -> 9fb2; case D */
+                    ROLL_(b5);                           /* 9f37 */
+                    if (b5 & 0x80) {                     /* 9f39 BPL -> 9fb2; case D */
                         X = (uint8_t)(X + 1);            /* 9f3b INX */
                         c = 0; A = mem[0x22A3 + Y]; ADC_(mem[0x00A2]); mem[0x22A4 + Y] = A;  /* 9f3c-9f42 */
                         A = mem[0x22D1 + Y]; ADC_(mem[0x00A3]); mem[0x22D2 + Y] = A;         /* 9f45-9f4a */
@@ -4121,16 +4128,16 @@ void terrain_frame_setup(void) {
             }
         }
         if (via_9f61) {                                  /* L_9f61 (reached from case A/B) */
-            ROLM_(0x00B5);                               /* 9f61 */
-            if (mem[0x00B5] & 0x80) {                     /* 9f63 BPL -> else; case E */
+            ROLL_(b5);                                   /* 9f61 */
+            if (b5 & 0x80) {                             /* 9f63 BPL -> else; case E */
                 X = (uint8_t)(X - 1);                    /* 9f65 DEX */
                 c = 1; A = mem[0x22A4 + Y]; SBC_(mem[0x00A2]); mem[0x22A4 + Y] = A;  /* 9f66-9f6c */
                 A = mem[0x22D2 + Y]; SBC_(mem[0x00A3]); mem[0x22D2 + Y] = A;         /* 9f6f-9f74 */
                 c = 1; A = mem[0x2300 + Y]; SBC_(mem[0x00A0]); mem[0x2300 + Y] = A;  /* 9f77-9f7d */
                 A = mem[0x232E + Y]; SBC_(mem[0x00A1]); mem[0x232E + Y] = A;         /* 9f80-9f85 */
             } else {
-                ROLM_(0x00B5);                           /* 9f8b */
-                if (mem[0x00B5] & 0x80) {                 /* 9f8d BPL -> 9fb2; case F */
+                ROLL_(b5);                               /* 9f8b */
+                if (b5 & 0x80) {                         /* 9f8d BPL -> 9fb2; case F */
                     X = (uint8_t)(X + 1);                /* 9f8f INX */
                     c = 0; A = mem[0x22A4 + Y]; ADC_(mem[0x00A2]); mem[0x22A4 + Y] = A;  /* 9f90-9f96 */
                     A = mem[0x22D2 + Y]; ADC_(mem[0x00A3]); mem[0x22D2 + Y] = A;         /* 9f99-9f9e */
@@ -4141,21 +4148,21 @@ void terrain_frame_setup(void) {
         }
 
         /* 9fb2 — derive screen-X ($2388) and the $235B/$2276 columns */
-        c = 1; A = 0x00; SBC_(mem[0x008B]); mem[0x00B5] = A;  /* 9fb2-9fb7 */
-        A = X; A &= 0x0F; A |= mem[0x00B6]; X = A;            /* 9fb9-9fbe (TXA;AND;ORA;TAX) */
+        c = 1; A = 0x00; SBC_(mem[0x008B]); b5 = A;           /* 9fb2-9fb7 */
+        A = X; A &= 0x0F; A |= b6; X = A;                     /* 9fb9-9fbe (TXA;AND;ORA;TAX) */
         A = mem[0x0900 + X]; mem[0x23B5 + Y] = A;             /* 9fbf-9fc2 */
         SBC_(mem[0x008C]);                                   /* 9fc5 (carry from 9fb2 chain) */
         if (c) {                                             /* 9fc7 BCC -> else */
-            LSRA_(); RORM_(0x00B5); LSRA_(); RORM_(0x00B5);  /* 9fc9-9fcd */
-            LSRA_(); RORM_(0x00B5); LSRA_(); RORM_(0x00B5);  /* 9fcf-9fd3 */
+            LSRA_(); RORL_(b5); LSRA_(); RORL_(b5);          /* 9fc9-9fcd */
+            LSRA_(); RORL_(b5); LSRA_(); RORL_(b5);          /* 9fcf-9fd3 */
         } else {
-            LSRA_(); RORM_(0x00B5); LSRA_(); RORM_(0x00B5);  /* 9fd8-9fdc */
-            LSRA_(); RORM_(0x00B5); LSRA_(); RORM_(0x00B5);  /* 9fde-9fe2 */
+            LSRA_(); RORL_(b5); LSRA_(); RORL_(b5);          /* 9fd8-9fdc */
+            LSRA_(); RORL_(b5); LSRA_(); RORL_(b5);          /* 9fde-9fe2 */
             A ^= 0xF0;                                       /* 9fe4 */
         }
         /* 9fe6 */
         mem[0x2388 + Y] = A;                                 /* 9fe6 */
-        A = mem[0x00B5]; mem[0x235B + Y] = A;                /* 9fe9-9feb */
+        A = b5; mem[0x235B + Y] = A;                          /* 9fe9-9feb */
         A = X; mem[0x2276 + Y] = A;                          /* 9fee (TXA) */
 
         /* visibility class -> $24B4 (one of $80/$40/$20/$00) */
@@ -4169,12 +4176,12 @@ void terrain_frame_setup(void) {
             /* a000 */
             A = mem[0x22D2 + Y];                             /* a000 */
             if (A & 0x80) {                                  /* a003 BPL -> else */
-                A = 0x00; c = 1; SBC_(mem[0x22A4 + Y]); mem[0x00B5] = A;  /* a005-a00b */
+                A = 0x00; c = 1; SBC_(mem[0x22A4 + Y]); b5 = A;  /* a005-a00b */
                 A = 0x00; SBC_(mem[0x22D2 + Y]);             /* a00d-a00f */
                 uint8_t m = mem[0x232E + Y];                 /* a012 CMP $232E,Y */
                 if (A < m) cls = 0x00;                       /* a015 BCC -> a037 */
                 else if (A != m) cls = 0x40;                 /* a017 BNE -> a020 */
-                else cls = (mem[0x00B5] < mem[0x2300 + Y]) ? 0x00 : 0x40;  /* a019-a01e / a020 */
+                else cls = (b5 < mem[0x2300 + Y]) ? 0x00 : 0x40;  /* a019-a01e / a020 */
             } else {
                 /* a024 (A = $22D2,Y) */
                 uint8_t m = mem[0x232E + Y];                 /* a024 CMP $232E,Y */
@@ -4187,6 +4194,11 @@ void terrain_frame_setup(void) {
         mem[0x24B4 + Y] = cls;                               /* a03d */
         Y = (uint8_t)(Y + 1);                                /* a040 INY */
     } while (Y != 0x2D);                                     /* a041 CPY #$2D; a043 BEQ a048 */
+
+    /* Loop 1 done — flush the register-held ZP scratch to its final memory value (the
+       6502 oracle leaves the last iteration's $B5/$B6 there; loop 2 reuses $B5 below). */
+    mem[0x00B5] = b5;
+    mem[0x00B6] = b6;
 
     /* a048 — walk the object draw order $B67C[], collapsing visible/hidden pairs */
     Y = 0x00;                                                /* a048 */
@@ -4240,6 +4252,8 @@ void terrain_frame_setup(void) {
     #undef LSRA_
     #undef ROLM_
     #undef RORM_
+    #undef ROLL_
+    #undef RORL_
 }
 
 /* project_terrain_points @ $A11F — per-object world->screen projection (flight top #3).
