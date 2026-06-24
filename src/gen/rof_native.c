@@ -3399,29 +3399,44 @@ void terrain_midpoint_displace(void) {
     #define D_RORM(a) do { uint8_t _v = mem[a], _n = _v & 1; mem[a] = (uint8_t)((_v >> 1) | (c << 7)); c = _n; } while (0)
     #define D_LSRA()  do { c = A & 1; A = (uint8_t)(A >> 1); } while (0)
 
-    c = 1; A = mem[0x0082]; D_ADC(mem[0x25B4 + x]); mem[0x008D] = A;   /* B2CC */
-    A = mem[0x0083]; D_ADC(mem[0x25D2 + x]);
-    c = (A >= 0x80) ? 1 : 0; D_RORA(); mem[0x008E] = A; D_RORM(0x008D); /* CMP #$80; ROR */
+    /* Hoist the threaded scalars to registers: cache the two re-read inputs ($82/$83)
+       and compute the outputs ($8D-$91) + scratch ($B5/$B6) in locals, writing each ZP
+       byte back exactly once (the intermediate ROR/displacement writes are dead — the
+       harness only compares post-return state).  mem[] is volatile so every hoisted
+       access removed is one fewer 68000 RAM cycle in this per-split hot routine. */
+    #define D_RORL(L) do { uint8_t _v=(L), _n=_v&1; (L)=(uint8_t)((_v>>1)|(c<<7)); c=_n; } while (0)
+    const uint8_t s82 = mem[0x0082], s83 = mem[0x0083];
+    uint8_t d8d, d8e, d8f, d90, d91;
 
-    c = 1; A = mem[0x0084]; D_ADC(mem[0x25F0 + x]); mem[0x008F] = A;   /* B2E0 */
+    c = 1; A = s82; D_ADC(mem[0x25B4 + x]); d8d = A;   /* B2CC */
+    A = s83; D_ADC(mem[0x25D2 + x]);
+    c = (A >= 0x80) ? 1 : 0; D_RORA(); d8e = A; D_RORL(d8d); /* CMP #$80; ROR */
+
+    c = 1; A = mem[0x0084]; D_ADC(mem[0x25F0 + x]); d8f = A;   /* B2E0 */
     A = mem[0x0085]; D_ADC(mem[0x24E2 + x]);
-    c = (A >= 0x80) ? 1 : 0; D_RORA(); mem[0x0090] = A; D_RORM(0x008F);
+    c = (A >= 0x80) ? 1 : 0; D_RORA(); d90 = A; D_RORL(d8f);
 
-    A = mem[0x0086]; c = 1; D_ADC(mem[0x23E2 + x]); mem[0x0091] = A;   /* B2F4 */
+    A = mem[0x0086]; c = 1; D_ADC(mem[0x23E2 + x]); d91 = A;   /* B2F4 */
+
+    mem[0x008D] = d8d; mem[0x008E] = d8e; mem[0x0091] = d91;
 
     if (A & 0x80) {                            /* B2FC BPL: else return */
         uint8_t add_branch = c;                /* B2FF BCS: carry from the $0091 ADC above */
+        uint8_t dB5, dB6;
         /* common to both branches: displacement = (mid - base) >> 1 in $B5/$B6 */
-        A = mem[0x008D]; c = 1; D_SBC(mem[0x0082]); mem[0x00B5] = A;
-        A = mem[0x008E]; D_SBC(mem[0x0083]); D_LSRA(); mem[0x00B6] = A; D_RORM(0x00B5);
+        A = d8d; c = 1; D_SBC(s82); dB5 = A;
+        A = d8e; D_SBC(s83); D_LSRA(); dB6 = A; D_RORL(dB5);
         if (add_branch) {                      /* add branch (B31F) */
-            A = mem[0x008F]; c = 0; D_ADC(mem[0x00B5]); mem[0x008F] = A;
-            A = mem[0x0090]; D_ADC(mem[0x00B6]); mem[0x0090] = A;
+            A = d8f; c = 0; D_ADC(dB5); d8f = A;
+            A = d90; D_ADC(dB6); d90 = A;
         } else {                               /* subtract branch (B301) */
-            A = mem[0x008F]; c = 1; D_SBC(mem[0x00B5]); mem[0x008F] = A;
-            A = mem[0x0090]; D_SBC(mem[0x00B6]); mem[0x0090] = A;
+            A = d8f; c = 1; D_SBC(dB5); d8f = A;
+            A = d90; D_SBC(dB6); d90 = A;
         }
+        mem[0x00B5] = dB5; mem[0x00B6] = dB6;
     }
+    mem[0x008F] = d8f; mem[0x0090] = d90;
+    #undef D_RORL
     #undef D_ADC
     #undef D_SBC
     #undef D_RORA
@@ -3715,6 +3730,18 @@ void terrain_column_rasterize(void) {
     #define SBC_(v)  ADC_((uint8_t)~(uint8_t)(v))
     #define RORA_()  do { uint8_t _n=A&1; A=(uint8_t)((A>>1)|(c<<7)); c=_n; } while(0)
     #define LSRA_()  do { c=A&1; A=(uint8_t)(A>>1); } while(0)
+    /* Hoist the threaded ZP scalars into registers: $82/$84/$86 (span interpolation
+       state, re-read/-written every b380/b446 iteration) and $80/$81/$B5 (PLOT scratch).
+       The indexed arrays ($95/$EA/$F4 in, $96/$EB/$F5 out — note the +1 overlap recurrence)
+       and the $260E[] heights + $28CA/$28FA/$BC00/$BD00 tables stay in mem[] (stride-1
+       indexed, no scalar to hoist).  WB() flushes the six scalars back to ZP before each
+       return so the post-return state the harness diffs is byte-identical (intermediate
+       writes are dead — only the final value matters).  mem[] is volatile, so every hoisted
+       scalar removed from the inner loops is one fewer 68000 RAM cycle per iteration. */
+    uint8_t s82 = mem[0x0082], s84 = mem[0x0084], s86 = mem[0x0086];
+    uint8_t s80 = mem[0x0080], s81 = mem[0x0081], sB5 = mem[0x00B5];
+    #define WB()     do { mem[0x0082]=s82; mem[0x0084]=s84; mem[0x0086]=s86; \
+                          mem[0x0080]=s80; mem[0x0081]=s81; mem[0x00B5]=sB5; } while(0)
     /* _ad is a terrain-silhouette bitmap address: {$28CA[ai]:$28FA[ai]} (a row-addr
        table pointing into the ~$1010 bitmap) + $BD00[X].  It is ALWAYS plain RAM —
        never the HW range ($D000-$D7FF) nor a page-2 shadow ($0200-$02FF) — so the
@@ -3723,18 +3750,18 @@ void terrain_column_rasterize(void) {
        Safe because terrain_column_rasterize is validated from the REAL flight
        snapshot (test_from_snapshot), where the row tables are real -> _ad in-bitmap;
        the __t6502 oracle's bus_*() reduce to the same mem[] access for _ad<$D000. */
-    #define PLOT()   do { mem[0x00B5]=Y; uint8_t _ai=A; \
-        mem[0x0080]=mem[0x28CA+_ai]; mem[0x0081]=mem[0x28FA+_ai]; \
+    #define PLOT()   do { sB5=Y; uint8_t _ai=A; \
+        s80=mem[0x28CA+_ai]; s81=mem[0x28FA+_ai]; \
         uint8_t _bo=mem[0xBD00+X]; \
-        uint16_t _ad=(uint16_t)(mem[0x0080]|(mem[0x0081]<<8))+_bo; \
+        uint16_t _ad=(uint16_t)(s80|(s81<<8))+_bo; \
         mem[_ad]=(uint8_t)(mem[_ad]|mem[0xBC00+X]); \
-        Y=mem[0x00B5]; } while(0)
+        Y=sB5; } while(0)
 
     X = cpu.X; mem[0x0060] = X;                          /* b33d STX $60 */
     A = mem[0x0095];                                     /* b33f */
-    if (A < 0x2D) return;                                /* b341 CMP #$2D; BCC b37f */
-    if (A < mem[0x0082]) return;                         /* b345 CMP $82; BCC b37f */
-    if (A == mem[0x0082]) {                              /* b349 BNE b380 -> else */
+    if (A < 0x2D) { WB(); return; }                                /* b341 CMP #$2D; BCC b37f */
+    if (A < s82) { WB(); return; }                         /* b345 CMP $82; BCC b37f */
+    if (A == s82) {                              /* b349 BNE b380 -> else */
         X = mem[0x0095];                                 /* b34b LDX $95 */
         A = mem[0x00EA];                                 /* b34d */
         if (A > mem[0x260E + X]) {                       /* b352 BCC / b354 BEQ -> skip(return) */
@@ -3742,44 +3769,44 @@ void terrain_column_rasterize(void) {
             if (A >= 0x97) { mem[0x260E + X] = 0xFF; A = 0x97; }  /* b359 CMP #$97; BCC b364 */
             PLOT();                                      /* b364 */
         }
-        return;                                          /* b37d LDX $60; b37f return */
+        { WB(); return; }                                          /* b37d LDX $60; b37f return */
     }
 
     /* b380 — interpolation: refine $82/$84/$86, emit sub-points into $96/$EB[] */
     Y = 0x00;                                            /* b380 LDY #0 */
     for (;;) {                                           /* L_b382 */
-        A = mem[0x0082];                                 /* b382 */
+        A = s82;                                 /* b382 */
         if (A >= 0x2C) { X = A; break; }                 /* BCC b38c else TAX; goto b446 */
         c = 0; ADC_(mem[0x0095 + Y]); RORA_();           /* b38c CLC; ADC $95,Y; ROR */
         if (A <= 0x2C) {                                 /* BCC b397 / BNE b3e9 -> A <= 0x2C */
-            mem[0x0082] = A;                             /* b397 STA $82 */
-            A = mem[0x0086]; c = 1; ADC_(mem[0x00F4 + Y]); mem[0x0086] = A;  /* LDA $86; SEC; ADC F4,Y */
+            s82 = A;                             /* b397 STA $82 */
+            A = s86; c = 1; ADC_(mem[0x00F4 + Y]); s86 = A;  /* LDA $86; SEC; ADC F4,Y */
             if (!(A & 0x80)) {                           /* BMI b3af -> else */
-                c = 0; A = mem[0x0084]; ADC_(mem[0x00EA + Y]); RORA_(); mem[0x0084] = A;  /* CLC LDA84 ADC EA,Y ROR */
+                c = 0; A = s84; ADC_(mem[0x00EA + Y]); RORA_(); s84 = A;  /* CLC LDA84 ADC EA,Y ROR */
             } else if (c) {                              /* b3af BCS b3cd (c from $86 ADC) */
-                A = mem[0x0095 + Y]; c = 1; SBC_(mem[0x0082]); LSRA_(); mem[0x00B5] = A;
-                c = 0; A = mem[0x0084]; ADC_(mem[0x00EA + Y]); RORA_(); c = 0; ADC_(mem[0x00B5]);
+                A = mem[0x0095 + Y]; c = 1; SBC_(s82); LSRA_(); sB5 = A;
+                c = 0; A = s84; ADC_(mem[0x00EA + Y]); RORA_(); c = 0; ADC_(sB5);
                 if (c) A = 0xFF;                         /* b3e0 BCC b3e4 (skip LDA#$FF) */
-                mem[0x0084] = A;
+                s84 = A;
             } else {                                     /* b3af (c clear) */
-                A = mem[0x0095 + Y]; c = 1; SBC_(mem[0x0082]); LSRA_(); mem[0x00B5] = A;
-                c = 0; A = mem[0x0084]; ADC_(mem[0x00EA + Y]); RORA_(); c = 1; SBC_(mem[0x00B5]);
+                A = mem[0x0095 + Y]; c = 1; SBC_(s82); LSRA_(); sB5 = A;
+                c = 0; A = s84; ADC_(mem[0x00EA + Y]); RORA_(); c = 1; SBC_(sB5);
                 if (!c) A = 0x00;                        /* b3c4 BCC b3c8 (skip LDA#0) */
-                mem[0x0084] = A;
+                s84 = A;
             }
         } else {                                         /* b3e9: A > 0x2C */
             mem[0x0096 + Y] = A;                         /* b3e9 STA $96,Y */
-            A = mem[0x0086]; c = 1; ADC_(mem[0x00F4 + Y]); mem[0x00F5 + Y] = A;  /* LDA $86; SEC; ADC F4,Y; STA F5,Y */
+            A = s86; c = 1; ADC_(mem[0x00F4 + Y]); mem[0x00F5 + Y] = A;  /* LDA $86; SEC; ADC F4,Y; STA F5,Y */
             if (!(A & 0x80)) {                           /* BMI b405 -> else */
-                c = 0; A = mem[0x0084]; ADC_(mem[0x00EA + Y]); RORA_(); mem[0x00EB + Y] = A;
+                c = 0; A = s84; ADC_(mem[0x00EA + Y]); RORA_(); mem[0x00EB + Y] = A;
             } else if (c) {                              /* b405 BCS b425 (c from $86 ADC) */
-                A = mem[0x0096 + Y]; c = 1; SBC_(mem[0x0082]); LSRA_(); mem[0x00B5] = A;
-                c = 0; A = mem[0x0084]; ADC_(mem[0x00EA + Y]); RORA_(); c = 0; ADC_(mem[0x00B5]);
+                A = mem[0x0096 + Y]; c = 1; SBC_(s82); LSRA_(); sB5 = A;
+                c = 0; A = s84; ADC_(mem[0x00EA + Y]); RORA_(); c = 0; ADC_(sB5);
                 if (c) A = 0xFF;                         /* b438 BCC b43c */
                 mem[0x00EB + Y] = A;
             } else {                                     /* b405 (c clear) */
-                A = mem[0x0096 + Y]; c = 1; SBC_(mem[0x0082]); LSRA_(); mem[0x00B5] = A;
-                c = 0; A = mem[0x0084]; ADC_(mem[0x00EA + Y]); RORA_(); c = 1; SBC_(mem[0x00B5]);
+                A = mem[0x0096 + Y]; c = 1; SBC_(s82); LSRA_(); sB5 = A;
+                c = 0; A = s84; ADC_(mem[0x00EA + Y]); RORA_(); c = 1; SBC_(sB5);
                 if (!c) A = 0x00;                        /* b41a BCC b41e */
                 mem[0x00EB + Y] = A;
             }
@@ -3789,52 +3816,52 @@ void terrain_column_rasterize(void) {
 
     /* b446 — rasterize each leaf column into the silhouette bitmap */
     for (;;) {                                           /* L_b446 */
-        if (X >= 0xD4) return;                            /* CPX #$D4; BCS b443 */
-        A = X; mem[0x0082] = X;                          /* TXA; STX $82 */
+        if (X >= 0xD4) { WB(); return; }                            /* CPX #$D4; BCS b443 */
+        A = X; s82 = X;                          /* TXA; STX $82 */
         c = 1; SBC_(mem[0x0095 + Y]);                    /* SEC; SBC $95,Y */
         c = (A >= 0xFE) ? 1 : 0;                         /* CMP #$FE (carry used at b4cc) */
         if (A == 0xFE) {                                 /* BNE b4cc -> else */
-            A = mem[0x00EA + Y]; ADC_(mem[0x0084]); RORA_();   /* LDA EA,Y; ADC $84 (c=1); ROR */
+            A = mem[0x00EA + Y]; ADC_(s84); RORA_();   /* LDA EA,Y; ADC $84 (c=1); ROR */
             if (A > mem[0x260E + X]) {                   /* b489 skip (BCC/BEQ) */
                 mem[0x260E + X] = A;
                 if (A >= 0x97) { mem[0x260E + X] = 0xFF; A = 0x97; } /* CMP #$97; BCC b470 */
                 PLOT();                                  /* b470 */
             }
             X++;                                         /* b489 INX */
-            A = mem[0x00EA + Y]; mem[0x0084] = A;        /* LDA EA,Y; STA $84 */
+            A = mem[0x00EA + Y]; s84 = A;        /* LDA EA,Y; STA $84 */
             if (A > mem[0x260E + X]) {                   /* b4bd skip (BCC/BEQ) */
                 mem[0x260E + X] = A;
                 if (A >= 0x97) { mem[0x260E + X] = 0xFF; A = 0x97; }
                 PLOT();                                  /* b4a4 */
             }
-            Y = (uint8_t)(Y - 1); if (Y & 0x80) return;  /* b4bd DEY; BMI b4c9 */
+            Y = (uint8_t)(Y - 1); if (Y & 0x80) { WB(); return; }  /* b4bd DEY; BMI b4c9 */
             X++;                                         /* INX */
-            A = mem[0x00F5 + Y]; mem[0x0086] = A;        /* LDA F5,Y; STA $86 */
+            A = mem[0x00F5 + Y]; s86 = A;        /* LDA F5,Y; STA $86 */
             continue;                                    /* goto b446 */
         } else if (c) {                                  /* b4cc, carry set (A == 0xFF) */
-            A = mem[0x00EA + Y]; mem[0x0084] = A;        /* LDA EA,Y; STA $84 */
+            A = mem[0x00EA + Y]; s84 = A;        /* LDA EA,Y; STA $84 */
             if (A > mem[0x260E + X]) {                   /* b501 skip (BCC/BEQ) */
                 mem[0x260E + X] = A;
                 if (A >= 0x97) { mem[0x260E + X] = 0xFF; A = 0x97; }
                 PLOT();                                  /* b4e8 */
             }
-            Y = (uint8_t)(Y - 1); if (Y & 0x80) return;  /* b501 DEY; BMI b4c9 */
+            Y = (uint8_t)(Y - 1); if (Y & 0x80) { WB(); return; }  /* b501 DEY; BMI b4c9 */
             X++;                                         /* INX */
-            A = mem[0x00F5 + Y]; mem[0x0086] = A;        /* LDA F5,Y; STA $86 */
+            A = mem[0x00F5 + Y]; s86 = A;        /* LDA F5,Y; STA $86 */
             continue;                                    /* goto b446 */
         } else {                                         /* b50d, carry clear (A < 0xFE) */
             A = X; ADC_(mem[0x0095 + Y]); RORA_(); mem[0x0096 + Y] = A;  /* TXA; ADC $95,Y (c=0); ROR; STA 96,Y */
-            A = mem[0x0086]; c = 1; ADC_(mem[0x00F4 + Y]); mem[0x00F5 + Y] = A;  /* LDA $86; SEC; ADC F4,Y; STA F5,Y */
+            A = s86; c = 1; ADC_(mem[0x00F4 + Y]); mem[0x00F5 + Y] = A;  /* LDA $86; SEC; ADC F4,Y; STA F5,Y */
             if (!(A & 0x80)) {                           /* BMI b52e -> else */
-                c = 0; A = mem[0x0084]; ADC_(mem[0x00EA + Y]); RORA_(); mem[0x00EB + Y] = A;
+                c = 0; A = s84; ADC_(mem[0x00EA + Y]); RORA_(); mem[0x00EB + Y] = A;
             } else if (c) {                              /* b52e BCS b54c (c from $86 ADC) */
-                A = mem[0x0096 + Y]; SBC_(mem[0x0082]); LSRA_(); mem[0x00B5] = A;   /* SBC $82 (c=1, no SEC); LSR */
-                c = 0; A = mem[0x0084]; ADC_(mem[0x00EA + Y]); RORA_(); ADC_(mem[0x00B5]);  /* CLC ADC EA,Y ROR; ADC B5 (c from ROR) */
+                A = mem[0x0096 + Y]; SBC_(s82); LSRA_(); sB5 = A;   /* SBC $82 (c=1, no SEC); LSR */
+                c = 0; A = s84; ADC_(mem[0x00EA + Y]); RORA_(); ADC_(sB5);  /* CLC ADC EA,Y ROR; ADC B5 (c from ROR) */
                 if (c) A = 0xFF;                         /* b55d BCC b561 */
                 mem[0x00EB + Y] = A;
             } else {                                     /* b52e (c clear) */
-                A = mem[0x0096 + Y]; SBC_(mem[0x0082]); LSRA_(); mem[0x00B5] = A;   /* SBC $82 (c=0, no SEC); LSR */
-                c = 0; A = mem[0x0084]; ADC_(mem[0x00EA + Y]); RORA_(); SBC_(mem[0x00B5]);  /* CLC ADC EA,Y ROR; SBC B5 (c from ROR) */
+                A = mem[0x0096 + Y]; SBC_(s82); LSRA_(); sB5 = A;   /* SBC $82 (c=0, no SEC); LSR */
+                c = 0; A = s84; ADC_(mem[0x00EA + Y]); RORA_(); SBC_(sB5);  /* CLC ADC EA,Y ROR; SBC B5 (c from ROR) */
                 if (!c) A = 0x00;                        /* b541 BCC b545 */
                 mem[0x00EB + Y] = A;
             }
@@ -3848,6 +3875,7 @@ void terrain_column_rasterize(void) {
     #undef RORA_
     #undef LSRA_
     #undef PLOT
+    #undef WB
     return;
 }
 
