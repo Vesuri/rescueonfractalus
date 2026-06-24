@@ -1504,11 +1504,11 @@ L_3cae:;
     goto L_3c95;
 }
 
-/* push_a_thunk_3cb2 @ $3CB1: PHA then tail-call wait_frames_60; trampoline preserving A on stack */
-void push_a_thunk_3cb2(void) {
+/* push_a_wait_frames @ $3CB1: PHA then falls into wait_frames_4c spin (waits caller-set $4C frames), then PLA;RTS. Preserves A across a frame-wait */
+void push_a_wait_frames(void) {
     /* 3cb1 */
     PHA();
-    wait_frames_60(); return;
+    wait_frames_4c(); return;
 }
 
 /* wait_frames_save_a @ $3CBE: PHA caller A, LDA #$3C, BNE(always) to wait_setcount; delays 60 frames via timer_4C */
@@ -2160,7 +2160,7 @@ void vobj_draw_dispatch(void) {
     vobj_step_down(); return;
 }
 
-/* vobj_step_down @ $41E8: Set $004C=1; advance $062F by +4, wrap at $DC bottom ($004C=0,$0D98=$F0,pos=$DC); calls push_a_thunk_3cb2 then erase row */
+/* vobj_step_down @ $41E8: Set $004C=1; advance $062F by +4, wrap at $DC bottom ($004C=0,$0D98=$F0,pos=$DC); calls push_a_wait_frames then erase row */
 void vobj_step_down(void) {
 L_41e8:;
     /* 41e8 */
@@ -2191,7 +2191,7 @@ L_4201:;
     /* 4201 */
     mem[0x062F] = cpu.A;
     /* 4204 */
-    push_a_thunk_3cb2();
+    push_a_wait_frames();
     vobj_erase_row(); return;
 }
 
@@ -3078,7 +3078,7 @@ L_460a:;
     return;
 }
 
-/* irq_handler @ $462A: Immediate IRQ handler (VIMIRQ=$462A); set in game_entry at $3D28 */
+/* irq_handler @ $462A: Immediate IRQ handler (VIMIRQ=$462A; set in game_entry at $3D28). POKEY keyboard/BREAK IRQ (IRQST $D20E bit7=BREAK->X=$80 / bit6=keyboard->X=KBCODE $D209 &$3F); re-arms IRQEN=$C0. Leaves the event id in X (clobbers A/X) for the flight VBI CLI window $519c -> event_sequence_dispatcher $4644 */
 void irq_handler(void) {
     /* 462a */
     LDA(0x00);
@@ -4831,7 +4831,7 @@ L_52b4:;
     game_loop_reset_trampoline(); return;
 }
 
-/* vbi_handler_standby @ $52D7: Standby + launch-cinematic VBI handler (VVBLKI=$52D7 set in display_setup $5F50); active from the Standby screen through the doors/tunnel/stars/planet cinematic, until flight init swaps in vbi_handler_flight ($4FF5). Per-frame: attract timer, attract input poll ($5398), scroll_event_dispatch ($5367), lock_on_indicator_tick every other frame, SFX/music tick, sfx_voice_envelope_tick. Was vbi_handler_standby. */
+/* vbi_handler_standby @ $52D7: Standby + launch-cinematic VBI handler (VVBLKI=$52D7 set in display_setup $5F50); active from the Standby screen through the doors/tunnel/stars/planet cinematic, until flight init swaps in vbi_handler_flight ($4FF5). Per-frame: attract timer, attract input poll ($5398), launch_anim_dispatch ($5367), lock_on_indicator_tick every other frame, SFX/music tick, sfx_voice_envelope_tick. Was vbi_handler_standby. */
 void vbi_handler_standby(void) {
     /* 52d7 */
     LDA(mem[0x022F]);
@@ -4913,7 +4913,7 @@ L_533c:;
     /* 533c */
     check_collision_sync();
     /* 533f */
-    scroll_event_dispatch();
+    launch_anim_dispatch();
     /* 5342 */
     LSR_M(0x0643);
     /* 5345 */
@@ -4925,8 +4925,8 @@ L_533c:;
     vbi_deferred_dispatch(); return;
 }
 
-/* scroll_event_dispatch @ $5367: Tests sound flags $008D/88/89/8B then toggles $008F, $008C/8A -> sfx subs 6a8f/6a38/6aee/69e3/6a27/6953 */
-void scroll_event_dispatch(void) {
+/* launch_anim_dispatch @ $5367: Per-frame launch-cinematic priority dispatcher: runs exactly ONE anim step by flag precedence -> $008D reverse ring-step ($6A8F)/$0088 ring-step ($6A38)/$0089 column-scroll ($6AEE)/$008B DL-index ($69E3)/$008C corner-reveal recede ($6A27)/$008A door LMS-scroll ($6953). Not sound flags. */
+void launch_anim_dispatch(void) {
     /* 5367 */
     LDA(mem[0x008D]);
     /* 5369 */
@@ -4946,7 +4946,7 @@ L_5375:;
     /* 5377 */
     if (cpu.Z) goto L_537c;
     /* 5379 */
-    scroll_terrain_columns(); return;
+    scroll_field_columns(); return;
 L_537c:;
     /* 537c */
     LDA(mem[0x008B]);
@@ -7101,7 +7101,7 @@ L_6065:;
     /* 6066 */
     mem[(0x08D4)+cpu.Y] = cpu.A;
     /* 6069 */
-    push_a_thunk_3cb2();
+    push_a_wait_frames();
     /* 606c */
     DEX();
     /* 606d */
@@ -7126,7 +7126,7 @@ L_6080:;
     /* 6080 */
     mem[0x08D9] = cpu.Y;
     /* 6083 */
-    push_a_thunk_3cb2();
+    push_a_wait_frames();
     /* 6086 */
     INY();
     /* 6087 */
@@ -7576,7 +7576,7 @@ L_6244:;
     /* 625f */
     if (!cpu.Z) goto L_6244;
     /* 6261 */
-    push_a_thunk_3cb2();
+    push_a_wait_frames();
     /* 6264 */
     LDA(0x53);
     /* 6266 */
@@ -7688,7 +7688,7 @@ L_62b9:;
     /* 62d0 */
     INC_M(0x004C);
     /* 62d2 */
-    push_a_thunk_3cb2();
+    push_a_wait_frames();
     /* 62d5 */
     LDA(0x55);
     /* 62d7 */
@@ -7696,7 +7696,7 @@ L_62b9:;
     /* 62da */
     ASL_M(0x004C);
     /* 62dc */
-    push_a_thunk_3cb2();
+    push_a_wait_frames();
     /* 62df */
     dl_index_dec_or_reset();
     /* 62e2 */
@@ -8112,7 +8112,7 @@ L_6478:; platform_tick_vbi(); platform_render_frame();
     mem[0x004C] = cpu.A;
 L_64b0:;
     /* 64b0 */
-    push_a_thunk_3cb2();
+    push_a_wait_frames();
     /* 64b3 */
     LDA(mem[0x0677]);
     /* 64b6 */
@@ -8725,8 +8725,8 @@ void plot_glyph_pixel_masked__t6502(void) {
     return;
 }
 
-/* advance_message_column @ $670D: reads col idx $A0; if<6 loads glyph $6E0F[Y]->$96 & calls draw_symmetric_span_loop else clears $08D8; DEC $A0, $88=$A0+1 */
-void advance_message_column(void) {
+/* draw_ring_frame_step @ $670D: Draws ONE tunnel-ring frame group via draw_symmetric_span_loop (count=ring-thickness table $6E0F[$A0]); clears $08D8 (inner ring colour) when $A0<6; DEC $A0, $88=$A0+1. Per-ring-tick incremental ring draw, NOT message/text. */
+void draw_ring_frame_step(void) {
     /* 670d */
     LDY(mem[0x00A0]);
     /* 670f */
@@ -9615,7 +9615,7 @@ void clear_slot_0c87_0d87(void) {
     return;
 }
 
-/* step_accum_add_75 @ $6A38: Adds $75 via add_multibyte_a1, result->$00A4; if changed & store $00A5, if >=$90 call advance_message_column, then advance_history_6a4d */
+/* step_accum_add_75 @ $6A38: Adds $75 via add_multibyte_a1, result->$00A4; if changed & store $00A5, if >=$90 call draw_ring_frame_step, then advance_history_6a4d */
 void step_accum_add_75(void) {
     /* 6a38 */
     LDA(0x75);
@@ -9637,7 +9637,7 @@ L_6a44:;
     /* 6a48 */
     if (!cpu.C) { advance_history_6a4d(); return; }
     /* 6a4a */
-    advance_message_column();
+    draw_ring_frame_step();
     advance_history_6a4d(); return;
 }
 
@@ -9757,9 +9757,9 @@ L_6ae7:;
     return;
 }
 
-/* scroll_terrain_columns @ $6AEE: Gated by state $0089; updates $A4/$A5 via add_multibyte_a1(24-bit add), shifts $0C32-$0F32 buffers left 1 col ($59 wide), appends new col via gen_terrain_column */
-/* faithful transliteration kept as the validation oracle; native scroll_terrain_columns() lives in rof_native.c (see VALIDATE_FUNCS) */
-void scroll_terrain_columns__t6502(void) {
+/* scroll_field_columns @ $6AEE: Gated by state $0089; updates $A4/$A5 via add_multibyte_a1(24-bit add), shifts $0C32-$0F32 buffers left 1 col ($59 wide), appends new col via gen_terrain_column */
+/* faithful transliteration kept as the validation oracle; native scroll_field_columns() lives in rof_native.c (see VALIDATE_FUNCS) */
+void scroll_field_columns__t6502(void) {
     /* 6aee */
     CMP(0x04);
     /* 6af0 */
@@ -10955,7 +10955,7 @@ L_712c:;
     return;
 }
 
-/* audio_timer_setup @ $712D: Sets up POKEY audio timers + IRQEN=$C0 (timer 1+2 IRQs) */
+/* audio_timer_setup @ $712D: Clears POKEY AUDF1-4 + sets AUDCTL=$60 (audio timer reset; NOT an IRQ arm — IRQEN=$C0 is keyboard+BREAK bits6/7 not timers and is set/re-armed by irq_handler $462A not here) */
 /* faithful transliteration kept as the validation oracle; native audio_timer_setup() lives in rof_native.c (see VALIDATE_FUNCS) */
 void audio_timer_setup__t6502(void) {
     /* 712d */
@@ -11340,7 +11340,7 @@ L_73d9:;
     /* 73f6 */
     mem[0x004C] = cpu.A;
     /* 73f8 */
-    push_a_thunk_3cb2();
+    push_a_wait_frames();
     /* 73fb */
     TAY();
     /* 73fc */
@@ -11383,17 +11383,17 @@ L_7419:;
     /* 741f */
     mem[0x004D] = cpu.A;
     /* 7421 */
-    push_a_thunk_3cb2();
+    push_a_wait_frames();
     /* 7424 */
     draw_compass_heading();
     /* 7427 */
     unpack_bitmap_4d3e();
     /* 742a */
-    push_a_thunk_3cb2();
+    push_a_wait_frames();
     /* 742d */
     init_cockpit_bar_cells();
     /* 7430 */
-    push_a_thunk_3cb2();
+    push_a_wait_frames();
     /* 7433 */
     LDA(0x00);
     /* 7435 */
@@ -11411,7 +11411,7 @@ L_7419:;
     /* 7440 */
     game_sub_451d();
     /* 7443 */
-    push_a_thunk_3cb2();
+    push_a_wait_frames();
     /* 7446 */
     LDA(0xF4);
     /* 7448 */
@@ -22619,9 +22619,9 @@ L_adf0:;
     return;
 }
 
-/* terrain_collision @ $AE53: Terrain collision/render: 799 bytes; compares ship position against 8 terrain rows at $1010,$1070,$10D0,$1130,$1190,$11F0,$1250,$12B0 (spaced $60 apart); finds topmost non-empty row; JMPs to landing/crash handler at $B12F */
-/* faithful transliteration kept as the validation oracle; native terrain_collision() lives in rof_native.c (see VALIDATE_FUNCS) */
-void terrain_collision__t6502(void) {
+/* terrain_collision_and_silhouette @ $AE53: Terrain collision/render: 799 bytes; compares ship position against 8 terrain rows at $1010,$1070,$10D0,$1130,$1190,$11F0,$1250,$12B0 (spaced $60 apart); finds topmost non-empty row; JMPs to landing/crash handler at $B12F */
+/* faithful transliteration kept as the validation oracle; native terrain_collision_and_silhouette() lives in rof_native.c (see VALIDATE_FUNCS) */
+void terrain_collision_and_silhouette__t6502(void) {
     /* ae53 */
     TXA();
     /* ae54 */
@@ -24632,8 +24632,8 @@ void os_xitvbv(void) {
 
 /* === Split functions for cross-function entry points === */
 /* Each function starts at the labelled address inside its container. */
-/* wait_frames_60 @ $3CB2: Sets RTCLOK_LOW=0, spins until RTCLOK_LOW($14)==timer_4C($4C); PLA+RTS. Entry sets $4C=$3C(60) */
-void wait_frames_60(void) {
+/* wait_frames_4c @ $3CB2: Sets RTCLOK_LOW=0, spins until RTCLOK_LOW($14)==caller-set timer_4C($4C); PLA+RTS. (The fixed $3C=60 count is loaded only by the separate entry $3CBE, not here.) */
+void wait_frames_4c(void) {
     /* 3cb2 */
     LDA(0x00);
     /* 3cb4 */
@@ -24651,12 +24651,12 @@ L_3cb8:; if (mem[0x0014] != cpu.A) { if ((uint8_t)(cpu.A - mem[0x0014]) < 0x80u)
     return;
 }
 
-/* wait_setcount @ $3CC6: STA timer_4C($4C); BNE(always, count!=0) falls into wait_frames_60 spin loop */
+/* wait_setcount @ $3CC6: STA timer_4C($4C); BNE(always, count!=0) falls into wait_frames_4c spin loop */
 void wait_setcount(void) {
     /* 3cc6 */
     mem[0x004C] = cpu.A;
     /* 3cc8 */
-    if (!cpu.Z) { wait_frames_60(); return; }
+    if (!cpu.Z) { wait_frames_4c(); return; }
     wait_frames_2(); return;
 }
 
@@ -25015,7 +25015,7 @@ L_3eba:; platform_tick_vbi(); platform_render_frame();
     /* 3ec7 */
     LDX(0x33);
     /* 3ec9 */
-    terrain_collision();
+    terrain_collision_and_silhouette();
     /* 3ecc */
     LDA(mem[0x0041]);
     /* 3ece */
@@ -25065,7 +25065,7 @@ L_3ef5:;
     /* 3f02 */
     LDX(0x03);
     /* 3f04 */
-    terrain_collision();
+    terrain_collision_and_silhouette();
     /* 3f07 */
     LDA(mem[0x0041]);
     /* 3f09 */
@@ -25178,7 +25178,7 @@ L_3f6d:; platform_tick_vbi(); platform_render_frame();
     /* 3f7f */
     mem[0x004A] = cpu.A;
     /* 3f81 */
-    push_a_thunk_3cb2();
+    push_a_wait_frames();
     /* 3f84 */
     LDY(0xA3);
 L_3f86:;

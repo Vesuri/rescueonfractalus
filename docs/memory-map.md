@@ -128,7 +128,7 @@ $C000–$FFFF   OS ROM area     — OS ROM + hardware registers ($D000–$D7FF)
 ## Terrain tables
 
 Eight pre-loaded "strips" of terrain, each $60 (96) bytes wide, accessed by
-column index. Used by `terrain_collision` to find terrain height at ship X:
+column index. Used by `terrain_collision_and_silhouette` to find terrain height at ship X:
 
 ```
 $1010  row 0   CMP $1010,Y
@@ -141,7 +141,7 @@ $1250  row 6
 $12B0  row 7   ← lowest/closest to ground
 ```
 
-`terrain_collision` ($AE53, 799 bytes) scans rows 0→7; first non-$00 row at
+`terrain_collision_and_silhouette` ($AE53, 799 bytes) scans rows 0→7; first non-$00 row at
 the ship column → land at that strip, jump to handler at `$B12F` with X=row.
 
 ## Display lists

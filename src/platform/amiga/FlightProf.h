@@ -35,7 +35,7 @@ struct FlightProf {
     unsigned long tFrameSetup; /* RTCLOK: terrain_frame_setup $9E54                               */
     unsigned long tClear;      /* RTCLOK: clear_terrain_column_core $AD5F                          */
     unsigned long tDraw;       /* RTCLOK: terrain_draw_frame $A31E (fractal/projection/object loop)*/
-    unsigned long tCollision;  /* RTCLOK: terrain_collision $AE53                                  */
+    unsigned long tCollision;  /* RTCLOK: terrain_collision_and_silhouette $AE53                                  */
 };
 extern volatile struct FlightProf g_flightProf;
 

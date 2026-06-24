@@ -37,8 +37,8 @@ extern "C" void vbi_attract_timer_native(void);                  // $52D7: timer
 extern "C" void update_indicator_blink_native(void);           // $4131: cockpit blink
 extern "C" void startup_init_native(void);                      // $3FFA: cockpit digit update
 extern "C" void lock_on_indicator_tick_native(void);               // $4229: cockpit counter animation
-extern "C" void scroll_event_dispatch_native(void);              // $5367: ring ($0088) vs door scroll ($008A)
-extern "C" volatile uint8_t g_tunnelFieldDirty;                // set when advance_message_column draws into $2000
+extern "C" void launch_anim_dispatch_native(void);              // $5367: ring ($0088) vs door scroll ($008A)
+extern "C" volatile uint8_t g_tunnelFieldDirty;                // set when draw_ring_frame_step draws into $2000
 extern "C" volatile uint8_t g_tunRowLo, g_tunRowHi;            // row extent of the expanding black clear
 extern "C" volatile uint8_t g_activeVbi;                       // 0=none 1=standby($52D7) 2=flight($4FF5); read by game_vbi_isr
 
@@ -360,9 +360,9 @@ void RescueOnFractalus::buildAltimeterShipSprite()
 // ---- starfield sprites -------------------------------------------------------
 // During the stars phase display_setup positions players P0/P2/P3 as a sparse
 // scrolling starfield (random_terrain_height $6B47: POKEY RANDOM, 1/32 chance of a dot
-// from table $6B5F = [$80,$20,$04,$01]; scroll_terrain_columns $6AEE shifts each
+// from table $6B5F = [$80,$20,$04,$01]; scroll_field_columns $6AEE shifts each
 // player up one scanline/frame and appends a new bottom byte).  The genuine
-// transpiled scroll_terrain_columns already maintains those player buffers in
+// transpiled scroll_field_columns already maintains those player buffers in
 // mem[], so we just map the 89-byte visible strip ($..32..$..8A, player scanlines
 // $32..$8A) of each into an Amiga sprite.  Each Atari player bit → 2 Amiga lores
 // px (matches the gauge mapping); a single 1-bit star dot lands at one of 4 sub-x.
@@ -603,7 +603,7 @@ void RescueOnFractalus::initialize()
 
     // The tunnel bitmap is NOT decoded here: the genuine display_setup draws the ring
     // pattern into the $1000 field via draw_frame_pattern_seq, and the platform_tunnel_
-    // rings_drawn() hook flags it for decode then (advance_message_column streams the
+    // rings_drawn() hook flags it for decode then (draw_ring_frame_step streams the
     // per-frame ring-clear updates).  Decoding at init would capture an empty $1000.
 
     // Init complete — release the ISR's "scene ready" gate (g_activeVbi != 0).  The ISR
@@ -619,7 +619,7 @@ void RescueOnFractalus::initialize()
 // mem[$1000] into the tunnel bitmap, PER-BYTE shadow-gated so only the bytes that actually
 // changed are re-decoded.  $1000 (NOT $2000, which holds the door field) is where the
 // genuine display_setup renders the rings — draw_frame_pattern_seq plots through the
-// $073D/$0793 row-address table built for base $1000, and advance_message_column streams
+// $073D/$0793 row-address table built for base $1000, and draw_ring_frame_step streams
 // its expanding black ring-clear frames into the same buffer.  The exit clear draws a thin
 // black frame OUTLINE each step (horizontal edges full-width + left/right VERTICAL pieces
 // down the inner rows), so even passing the full new row extent [botAfter..topAfter] here
@@ -781,7 +781,7 @@ void RescueOnFractalus::renderFrame()
     emptyCopperInstalled = false;
 
     deriveRenderSignals();   // recompute the mem[]-derived render-gating signals for this frame
-    // Tunnel reveal: the $52D7 VBI's advance_message_column draws the expanding black
+    // Tunnel reveal: the $52D7 VBI's draw_ring_frame_step draws the expanding black
     // clear into mem[$2000] and flags g_tunnelFieldDirty with its row extent; re-decode
     // those rows into tunnelBitmap here (was in run()'s tunnel loop, now that the
     // transpiled display_setup drives the cinematic).

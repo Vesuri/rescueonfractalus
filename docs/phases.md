@@ -168,7 +168,7 @@ transcription, the lightest hardware lift.
 
 **Tier 3 — the hardware-coupled hot path: the real work.** Terrain
 generation/projection/collision (`terrain_gen_1/2/3`, `project_terrain_points`
-`$A11F`, `terrain_collision` `$AE53`, `divide_16x16` `$9D6F`, the RANDOM/LFSR
+`$A11F`, `terrain_collision_and_silhouette` `$AE53`, `divide_16x16` `$9D6F`, the RANDOM/LFSR
 fractal) is transliterated 6502 that *cannot just recompile*: it fills an Atari
 GTIA-mode-10 nibble buffer (wrong shape for Amiga bitplanes) and is the per-frame
 hot path (per-instruction-macro overhead would miss frame rate on a 7 MHz 68000).

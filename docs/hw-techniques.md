@@ -80,7 +80,7 @@ list** in mode D:
   instruction with its own 16-bit operand — e.g. `$10A0, $1100, $1160, …` at
   **`$60` (96-byte) stride** through the terrain buffer at **`$1000`** (the same
   96-byte row pitch as the heightmap rows `$1010/$1070/…` read by
-  `terrain_collision`). The fractal terrain is re-projected into that buffer each
+  `terrain_collision_and_silhouette`). The fractal terrain is re-projected into that buffer each
   frame (`terrain_gen_1/2/3`, run twice per frame), and the per-row LMS operands
   position each scanline — this *is* the "scroll the pointers" LMS technique
   (`dl_lms_build/fill $69E5/$69F1`, `scroll_terrain_dl $6953`, base tables
@@ -184,10 +184,10 @@ set to `$C0` to enable both VBI and DLI NMIs.
 
 A notable divergence from typical Atari games: **the GTIA hardware collision
 registers (`$D000–$D00F` on read) are never read** (0 sites). Terrain collision
-is computed in software by `terrain_collision $AE53`, which compares the ship's
+is computed in software by `terrain_collision_and_silhouette $AE53`, which compares the ship's
 position against 8 terrain rows and dispatches to the landing/crash handler.
 The port therefore does **not** need to emulate GTIA collision latches for the
-core game — it must reproduce the `terrain_collision` arithmetic exactly.
+core game — it must reproduce the `terrain_collision_and_silhouette` arithmetic exactly.
 
 ---
 
@@ -272,7 +272,7 @@ binary assumes RAM is visible across the whole `$0000–$FFFF` space (minus the
 3. **P/M graphics** positioned by `HPOSx` + buffer offset, with sizes/colours — §3.
 4. **POKEY** 4-channel audio via *both* the VBI and timer-IRQ paths — §6.
 5. A **bit-exact `RANDOM` LFSR** — §7 (non-negotiable for terrain parity).
-6. Software collision (`terrain_collision`) needs no hardware support — §4.
+6. Software collision (`terrain_collision_and_silhouette`) needs no hardware support — §4.
 7. Input mapping: PORTA joystick, TRIG0 fire, CONSOL/CH — §5.
 
 ---
@@ -348,7 +348,7 @@ see 11.3.
   bitmap each frame by `terrain_gen_1/2/3` (run twice per frame in the inner
   loop), and the per-row LMS operands position each scanline. There is a separate
   terrain heightmap at `$1010+`
-  (96-byte rows, read by `terrain_collision $AE53`).
+  (96-byte rows, read by `terrain_collision_and_silhouette $AE53`).
 - **Player overlay [~]:** the four players also carry terrain data —
   `gen_terrain_column` / `fill_terrain_columns ($6AE5)` write per-column pixels
   into the player graphics buffers `$0C32/$0D32/$0E32/$0F32` (= P0/P1/P2/P3).

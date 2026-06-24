@@ -651,14 +651,14 @@ void PlatformAmiga::pollEvents() {
 // tickVBI: no-op — RTCLOK is advanced by renderFrame() after each VBI wait.
 void PlatformAmiga::tickVBI() {}
 
-// The tunnel-ring "dirty field" flags advance_message_column already uses to stream the
+// The tunnel-ring "dirty field" flags draw_ring_frame_step already uses to stream the
 // ring-clear frames from the $1000 GTIA field into the tunnel bitmap (NativeHandlers.cpp).
 extern "C" volatile uint8_t g_tunnelFieldDirty;
 extern "C" volatile uint8_t g_tunRowLo, g_tunRowHi;
 void PlatformAmiga::tunnelRingsDrawn() {
     // display_setup's draw_frame_pattern_seq just rendered the full ring pattern into the
     // $1000 field.  Flag the whole field dirty so the next renderFrame decodes it once into
-    // the tunnel bitmap (then advance_message_column streams the per-frame clear updates).
+    // the tunnel bitmap (then draw_ring_frame_step streams the per-frame clear updates).
     g_tunRowLo = 0; g_tunRowHi = 85;
     g_tunnelFieldDirty = 1;
 }

@@ -37,7 +37,7 @@ flowchart TD
     M --> T["title screen @ $5A78<br/>1985 LUCASFILM LTD<br/>wait for START"]
     T -->|START| D1["STAND BY + doors<br/>unpack_bitmap_4d3e<br/>+ scroll_terrain_dl"]
     D1 --> D2["tunnel<br/>unpack_bitmap_4d3e<br/>+ step_accum_add_75"]
-    D2 --> D3["stars / space<br/>draw_symmetric_span_loop<br/>+ scroll_terrain_columns"]
+    D2 --> D3["stars / space<br/>draw_symmetric_span_loop<br/>+ scroll_field_columns"]
     D3 --> D4["planet<br/>gen_terrain_column +<br/>draw_vline_pair + P3 obj"]
     D4 --> N["inner flight loop L_3eba<br/>mode-D terrain (MANUAL)<br/>terrain_gen_1"]
     N -->|"player_lives ($0072) == 2<br/>→ segment clear"| O["level-clear $3F59"]
@@ -203,13 +203,13 @@ The frame loop. The C port marks each frame boundary with
 ```
 L_3eba:                         // frame top (tick VBI + render)
     terrain_gen_1 / _3 / _2     // build the fractal terrain (X=$33/$30)
-    terrain_collision ($AE53)   // ship vs terrain → landing/crash dispatch
+    terrain_collision_and_silhouette ($AE53)   // ship vs terrain → landing/crash dispatch
     $288F = game_state          // latch state
     game_state_update ($A99C)
     $0042 = 2;  enemy_check
     ...altitude / pilot / message housekeeping ($062F, $003A, …)
     terrain_gen_1 / _3 / _2     // second pass (X=$03/$00)
-    terrain_collision
+    terrain_collision_and_silhouette
     game_state_update;  enemy_check
     pilot_render ($288D/$288E)  // if a pilot is on-screen
     ...rescue / event state machine ($003D, $003E, $0044)...
@@ -274,7 +274,7 @@ loop). Every cinematic-phase call stack ends in `… → game_main_loop+$CA`
 (`$3E12`, the return from that call) **→ a `display_setup+<offset>` frame whose
 offset increases monotonically as the cinematic advances**. So `display_setup`
 walks linearly through its body (`≈$634D → $6585`), drawing one phase, waiting a
-few frames (`wait_frames_60 $3CB2`), then the next — a scripted sequence. When it
+few frames (`wait_frames_4c $3CB2`), then the next — a scripted sequence. When it
 returns, `game_main_loop` drops into the flight loop (`L_3eba`) and gameplay
 begins.
 
@@ -284,9 +284,9 @@ Recovered by reconstructing the **6502 call stack** from each phase savestate
 | Phase | `display_setup` position | Render routines on the stack (innermost → out) | DLI (`VDSLST`) |
 |---|---|---|---|
 | **Title** | waits for START at `$5A78` (`LDA $D01F` CONSOL poll) | static title; `dli_handler_game`/`vbi_deferred_dispatch` hold the image | `$6CAD` |
-| **STAND BY / doors** | `+$501` (`$641E`) | **`unpack_bitmap_4d3e $74D7`** (RLE-expand the door bitmap) → **`scroll_terrain_dl $6953`** (animate the LMS ring) → `audf2_sweep_clear_colors`; `wait_frames_60` | `$6CAD` |
-| **Tunnel** | `+$596` (`$64B3`) | **`unpack_bitmap_4d3e`** → `step_accum_add_75` → `copy_bytes_to_dst` → `terrain_sub_B172`; `wait_frames_60` | `$6CAD` |
-| **Stars / space** | `+$652` (`$656F`) | **`draw_symmetric_span_loop $6642`** → **`fill_vertical_span`** → **`scroll_terrain_columns`** → `game_sub_4f3f` | `$6CC2` |
+| **STAND BY / doors** | `+$501` (`$641E`) | **`unpack_bitmap_4d3e $74D7`** (RLE-expand the door bitmap) → **`scroll_terrain_dl $6953`** (animate the LMS ring) → `audf2_sweep_clear_colors`; `wait_frames_4c` | `$6CAD` |
+| **Tunnel** | `+$596` (`$64B3`) | **`unpack_bitmap_4d3e`** → `step_accum_add_75` → `copy_bytes_to_dst` → `terrain_sub_B172`; `wait_frames_4c` | `$6CAD` |
+| **Stars / space** | `+$652` (`$656F`) | **`draw_symmetric_span_loop $6642`** → **`fill_vertical_span`** → **`scroll_field_columns`** → `game_sub_4f3f` | `$6CC2` |
 | **Planet** | `+$668` (`$6585`) | **`gen_terrain_column`** + **`draw_vline_pair $6C4D`** + **`draw_player3_object $42A7`** + `advance_object_positions`/`update_object_distance` (planet as a scaled object) | `$6CC2` |
 | **Gameplay** | — (returned; now in `L_3eba`) | **`terrain_gen_1`** → `setup_projection_params` → `compute_heading_sincos`; `update_gauge_digits`, `game_sub_4606` | `$49EE` |
 

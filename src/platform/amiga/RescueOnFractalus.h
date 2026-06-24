@@ -62,7 +62,7 @@ private:
     Sprite*  altimeterShipSprite = nullptr;  // M3 $0B98 ship-height bar (flight altimeter)
 
     // Stars/space starfield: the 3 Atari players P0/P2/P3 ($0C32/$0E32/$0F32),
-    // scrolled + sparsely seeded by the genuine scroll_terrain_columns ($6AEE),
+    // scrolled + sparsely seeded by the genuine scroll_field_columns ($6AEE),
     // rendered as Amiga hardware sprites 4/5/6.  (P1 = $0D32 is the throttle gauge
     // player and stays on sprite 2; sprite 3 would share the gauge's colour
     // registers, so the stars use sprites 4/5/6 for an independent grey COLPM.)

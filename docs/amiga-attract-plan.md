@@ -718,7 +718,7 @@ with blinking lights driven by the 6502 blink timer.
 ## Out of scope for this plan (later phases)
 - Live fractal terrain generation + flight sim (Tier 3 native rewrite + oracle
   validation) — the attract static terrain emerges from the ROM buffers.
-- Input/gameplay, collision (`terrain_collision`), enemy/saucer logic, the full
+- Input/gameplay, collision (`terrain_collision_and_silhouette`), enemy/saucer logic, the full
   launch cinematic (doors/tunnel/stars/planet, `startup-flow.md` §6).
 - These reuse the same skeleton + hardware layer + the `native-reimpl-seam`;
   sequence them after the attract proves the rendering/audio stack end-to-end.
@@ -819,7 +819,7 @@ Done & committed:
 - **Launch effects 1–4** — STAND BY + score, throttle-gauge fill (vobj→sprite), left
   indicator lights — faithful ports calling the linked transpile.
 - **Stars/space + Planet** (`3c1e4ca`) — faithful tunnel→stars trigger
-  (`advance_message_column $670D` + the corrected always-rotate `step_accum_add_75`);
+  (`draw_ring_frame_step $670D` + the corrected always-rotate `step_accum_add_75`);
   new **mode-D-from-`$1000` viewport** render path (DL `$3120`, VDSLST `$6CC2`, 43×48B
   wide, central 40, 2bpp, `$6D0E`/`$6D67` palette) decoded via precomputed byte→bitplane
   tables; stars setup + native scroll; planet zoom via `advance_object_positions`

@@ -549,7 +549,7 @@ void fill_terrain_columns(void) {
 }
 
 /* add_multibyte_a1 with entry A=$FF @ $6AB5 — the exact carry chain the transpile runs
- * for scroll_terrain_columns: A1 += $FF (carry chains), then the quirky $A2/$A3 fold the
+ * for scroll_field_columns: A1 += $FF (carry chains), then the quirky $A2/$A3 fold the
  * transliteration performs (A is NOT reloaded before ADC $A3, so it adds A2new+A3+carry),
  * finally $A4 + carry is returned as the top byte ($A4 itself is NOT stored here). */
 static uint8_t scroll_accum_add_ff(void) {
@@ -566,14 +566,14 @@ static uint8_t scroll_accum_add_ff(void) {
     return (uint8_t)t;
 }
 
-/* scroll_terrain_columns @ $6AEE — the $0089-gated stars/planet column scroll, run every
+/* scroll_field_columns @ $6AEE — the $0089-gated stars/planet column scroll, run every
  * VBI during the launch cinematic.  Entry cpu.A = $0089 (the gate value).  When the gate
  * is >= 4 (BMI on A-4 clear) it advances the 24-bit step accumulator via the $FF add; on
  * reaching $64 it resets the gate to 2, otherwise it commits the new step into $A4/$A5 and
  * skips the scroll on a frame whose step is unchanged.  Then it shifts all four parallel
  * height buffers $0C32/$0D32/$0E32/$0F32 left one column (89 wide), halves the $008F
  * every-other-frame toggle, and appends a fresh column (Y=$59) via gen_terrain_column. */
-void scroll_terrain_columns_core(uint8_t gate) {
+void scroll_field_columns_core(uint8_t gate) {
     /* CMP #$04; BMI L_6b0d -> only run the accumulator when (gate-4) has bit7 clear */
     if (!((uint8_t)(gate - 0x04) & 0x80)) {
         uint8_t top = scroll_accum_add_ff();          /* LDA #$FF; JSR add_multibyte_a1 */
@@ -597,9 +597,9 @@ void scroll_terrain_columns_core(uint8_t gate) {
     gen_terrain_column();                             /* append the new rightmost column */
 }
 
-/* 6502-ABI shim: entry gate value arrives in cpu.A (scroll_event_dispatch sets A = $0089). */
-void scroll_terrain_columns(void) {
-    scroll_terrain_columns_core(cpu.A);
+/* 6502-ABI shim: entry gate value arrives in cpu.A (launch_anim_dispatch sets A = $0089). */
+void scroll_field_columns(void) {
+    scroll_field_columns_core(cpu.A);
 }
 
 /* draw_shape_rows_loop @ $6620 — for 86 rows ($0092=$55..$00) set the row pointer
@@ -4470,7 +4470,7 @@ void project_terrain_points(void) {
     #undef LSRA_
 }
 
-/* terrain_collision @ $AE53 — terrain collision/silhouette fill (flight top #4).
+/* terrain_collision_and_silhouette @ $AE53 — terrain collision/silhouette fill (flight top #4).
  *
  * Input: cpu.X = starting column.  Iterates 42 columns (Y = X..X+41), and for each:
  *  - CASCADE: scan the 48 terrain rows ($1010, stride $60) top-to-bottom for the
@@ -4489,7 +4489,7 @@ void project_terrain_points(void) {
  * real terrain tables, so it is validated against a flight RAM snapshot.
  * Contract: memory only (caller reloads regs).
  */
-void terrain_collision(void) {
+void terrain_collision_and_silhouette(void) {
     /* Idiomatic rewrite (was a per-instruction transliteration that re-read/-wrote the
      * $80/$81/$95/$96 ZP scratch ~13x per fill iteration and recomputed i*$60 each scan
      * step).  Every 68000 memory access is slow, so the running pointer / masks / counter
@@ -6219,8 +6219,8 @@ void sfx_voice_envelope_tick(void) {
  * initial horizon spans, RANDOM-seeds one flag, and tail-calls cockpit_dial_update.
  *
  * Every leaf it calls is already native; this twin just sheds the $73C8 body.
- * NOT validated by `make validate`: like the apex it calls push_a_thunk_3cb2
- * (the wait_frames_60 spin-pacer — a deliberate ~$1E-frame delay driven by the
+ * NOT validated by `make validate`: like the apex it calls push_a_wait_frames
+ * (the wait_frames_4c spin-pacer — a deliberate ~$1E-frame delay driven by the
  * SPINWAIT hook), which would hang the equivalence harness.  Verified on FS-UAE.
  * Faithful 1:1 with the $73C8 disasm; mem[$004C] (set once to $1E here, never
  * re-written) is the wait target for all four waits, and A round-trips PHA/PLA. */
@@ -6237,8 +6237,8 @@ void init_gameplay_state(void) {
     mem[0x002E] = 0x4D;                                /* 73eb */
     mem[0x0034] = 0x4F;                                /* 73ef */
     mem[0x065D] = 0x1E;                                /* 73f3 */
-    mem[0x004C] = 0x1E;                                /* 73f6 — wait_frames_60 target (all 4 waits) */
-    cpu.A = 0x1E; push_a_thunk_3cb2();                 /* 73f8 — A preserved (PHA/PLA) */
+    mem[0x004C] = 0x1E;                                /* 73f6 — wait_frames_4c target (all 4 waits) */
+    cpu.A = 0x1E; push_a_wait_frames();                 /* 73f8 — A preserved (PHA/PLA) */
     for (int y = 0x1E; y >= 0; y--)                    /* 73fb TAY (Y=A=$1E); 73fe Y=$1E..0 */
         mem[0x0E94 + y] = 0xFF;
     for (int y = 0x5F; y >= 0; y--)                    /* 7406 Y=$5F..0 */
@@ -6250,15 +6250,15 @@ void init_gameplay_state(void) {
     for (int y = 0x37; y >= 0; y--)                    /* 7419 Y=$37..0 */
         mem[0x0B98 + y] = 0xC0;
     mem[0x004D] = 0xC0;                                /* 741f */
-    cpu.A = 0xC0; push_a_thunk_3cb2();                 /* 7421 */
+    cpu.A = 0xC0; push_a_wait_frames();                 /* 7421 */
     draw_compass_heading();                            /* 7424 */
     unpack_bitmap_4d3e();                              /* 7427 */
-    push_a_thunk_3cb2();                               /* 742a */
+    push_a_wait_frames();                               /* 742a */
     init_cockpit_bar_cells();                          /* 742d */
-    push_a_thunk_3cb2();                               /* 7430 */
+    push_a_wait_frames();                               /* 7430 */
     cpu.A = 0x00; cpu.X = 0x00; cpu.Y = 0x00; game_sub_451d();   /* 7433-7437 */
     cpu.A = 0x38; cpu.X = 0x04; cpu.Y = 0x10; game_sub_451d();   /* 743a-7440 */
-    push_a_thunk_3cb2();                               /* 7443 */
+    push_a_wait_frames();                               /* 7443 */
     mem[0x0029] = 0xF4;                                /* 7446 */
     mem[0x00B9] = 0x91;                                /* 744a */
     mem[0x00BA] = 0x0B;                                /* 744e */
@@ -6278,7 +6278,7 @@ void init_gameplay_state(void) {
  * behaviour, exactly like RescueOnFractalus::run().  This is a FAITHFUL
  * transcription of the $5F1D transliteration: cpu/mem state is preserved bit-for-
  * bit so the (still-transpiled) leaf callees and the wait_frames_NN / clear_colors /
- * push_a_thunk_3cb2 frame primitives behave identically.  Each original spin-wait
+ * push_a_wait_frames frame primitives behave identically.  Each original spin-wait
  * SPINWAIT-hook point becomes one real Amiga frame via ds_frame() (the same
  * platform_tick_vbi + platform_render_frame the transpiler injected); the PHA-based
  * frame primitives drive frames internally and are called as-is.
@@ -6449,7 +6449,7 @@ L_6063:
 L_6065:
     TXA();
     mem[(0x08D4)+cpu.Y] = cpu.A;
-    push_a_thunk_3cb2();
+    push_a_wait_frames();
     DEX();
     if (!cpu.N) goto L_6065;
     INY();
@@ -6462,7 +6462,7 @@ L_6065:
     LDY(0x90);
 L_6080:
     mem[0x08D9] = cpu.Y;
-    push_a_thunk_3cb2();
+    push_a_wait_frames();
     INY();
     CPY(0x9B);
     if (!cpu.Z) goto L_6080;
@@ -6708,7 +6708,7 @@ L_6244:
     LDY(mem[0x00B7]);
     CPY(0x13);
     if (!cpu.Z) goto L_6244;
-    push_a_thunk_3cb2();
+    push_a_wait_frames();
     LDA(0x53);
     mem[0x008B] = cpu.A;
 L_6268:
@@ -6768,11 +6768,11 @@ L_62b9:
     DEC_M(0x00B9);
     if (!cpu.Z) goto L_62b9;
     INC_M(0x004C);
-    push_a_thunk_3cb2();
+    push_a_wait_frames();
     LDA(0x55);
     shift_object_table_up();
     ASL_M(0x004C);
-    push_a_thunk_3cb2();
+    push_a_wait_frames();
     dl_index_dec_or_reset();
     LDA(0x00);
     bus_write(0xD203, cpu.A);
@@ -7006,7 +7006,7 @@ L_6478:
     LDA(0x0F);
     mem[0x004C] = cpu.A;
 L_64b0:
-    push_a_thunk_3cb2();
+    push_a_wait_frames();
     LDA(mem[0x0677]);
     CMP(0x08);
     if (cpu.Z) goto L_64c0;
@@ -7139,7 +7139,7 @@ L_6590:
  * state, and never returns), verified on FS-UAE.  Faithful transcription preserving
  * cpu/mem so the (mostly-native) leaf callees behave identically; the two hooked
  * spin labels L_3eba/L_3f6d become one real Amiga frame via ds_frame(); the
- * wait_vcount_30/wait_frames_10/clear_colors/push_a_thunk_3cb2 frame primitives drive
+ * wait_vcount_30/wait_frames_10/clear_colors/push_a_wait_frames frame primitives drive
  * frames internally and are called as-is.  No leaf exit-register is consumed here
  * (every post-call read reloads from mem), so no fidelity fix-ups are needed. */
 void game_main_loop(void) {
@@ -7341,7 +7341,7 @@ L_3eba:
     LDX(0x30);
     FP_TIME(terrain_draw_frame(), g_fDraw);
     LDX(0x33);
-    FP_TIME(terrain_collision(), g_fColl);
+    FP_TIME(terrain_collision_and_silhouette(), g_fColl);
     LDA(mem[0x0041]);
     mem[0x288F] = cpu.A;
     FP_TIME(game_state_update(), g_fState);
@@ -7367,7 +7367,7 @@ L_3ef5:
     LDX(0x00);
     terrain_draw_frame();
     LDX(0x03);
-    terrain_collision();
+    terrain_collision_and_silhouette();
     LDA(mem[0x0041]);
     if (cpu.Z) goto L_3f0e;
     mem[0x288F] = cpu.A;
@@ -7428,7 +7428,7 @@ L_3f6d:
     mem[0x0642] = cpu.A;
     wait_frames_10();
     mem[0x004A] = cpu.A;
-    push_a_thunk_3cb2();
+    push_a_wait_frames();
     LDY(0xA3);
 L_3f86:
     mem[(0x0F1D)+cpu.Y] = cpu.A;

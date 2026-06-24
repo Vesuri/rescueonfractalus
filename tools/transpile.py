@@ -86,7 +86,7 @@ VALIDATE_FUNCS = {
     0xA613,  # terrain_jitter_column — per-frame random terrain jitter (flight top #1)
     0x9E54,  # terrain_frame_setup — terrain gen step 1: view setup + per-column transform (flight top #2)
     0xA11F,  # project_terrain_points — per-object world->screen projection via divide_16x16 (flight top #3)
-    0xAE53,  # terrain_collision — collision row scan + silhouette fill + column raster (flight top #4)
+    0xAE53,  # terrain_collision_and_silhouette — collision row scan + silhouette fill + column raster (flight top #4)
     0xA31E,  # terrain_draw_frame — main per-frame terrain driver (flight top #5, the last)
     # --- flight ISR de-transpile (2026-06-11): eliminate transpiled code on the
     #     per-frame VBI path.  Small subtrees first; the flight_control_integrate
@@ -186,7 +186,7 @@ VALIDATE_FUNCS = {
     0x6642,  # draw_symmetric_span_loop — $0096x {fill_horizontal_span + fill_vertical_span}, steps coords $9C-$9F
     0x6B2E,  # gen_terrain_column — fill one column (Y) of 4 buffers $0C32/$0D32/$0E32/$0F32 via random_terrain_height
     0x6AE5,  # fill_terrain_columns — 89x gen_terrain_column over Y=$59..1 (RNG; direct buffer writes)
-    0x6AEE,  # scroll_terrain_columns — $0089-gated stars/planet scroll: shift 4 buffers left 1 col + new col (VBI hot path)
+    0x6AEE,  # scroll_field_columns — $0089-gated stars/planet scroll: shift 4 buffers left 1 col + new col (VBI hot path)
     0x6620,  # draw_shape_rows_loop — 86 rows: set_row_ptr_from_count + masked-plot cols $9C/$9D/$A0 (screen ptr)
     0x65FB,  # draw_frame_pattern_seq — per-frame doors/tunnel drawer: 20x draw_symmetric_span_loop + tail draw_shape_rows_loop
     0x6C4D,  # draw_vline_pair — plot a symmetric pair of vertical lines (rows A..$00B8) via plot_pixel_2bpp/bus_write
@@ -332,8 +332,8 @@ VALIDATE_FUNCS = {
     0x3D48,  # game_main_loop — one-time game init + L_3e0f display_setup + the in-game flight loop (never returns)
     # --- flight-init de-transpile (2026-06-22): the last transpiled orchestrator on the
     #     game/level-init path.  Every leaf it calls is already native; this just sheds the
-    #     $73C8 body itself.  Like the apex it calls the wait_frames_60 spin-pacer
-    #     (push_a_thunk_3cb2) so it is NOT in `make validate` — verified on FS-UAE. ---
+    #     $73C8 body itself.  Like the apex it calls the wait_frames_4c spin-pacer
+    #     (push_a_wait_frames) so it is NOT in `make validate` — verified on FS-UAE. ---
     0x73C8,  # init_gameplay_state — per-game/level init: seed heading/arrays, compass, cockpit bars; tail cockpit_dial_update
 }
 VALIDATE_SUFFIX = '__t6502'
@@ -351,7 +351,7 @@ SPINWAIT_HOOKS = {
     # the VBI fires (sets $0080 + RTCLOK); without it the loop is a frozen tight spin.
     0x1A18: 'platform_tick_vbi(); platform_render_frame();',
     0x3C75: 'platform_poll_events();',           # VCOUNT position wait
-    # RTCLOK frame wait (wait_frames_60 $3CB2): "wait N frames" -- STA $14=0 then spin until
+    # RTCLOK frame wait (wait_frames_4c $3CB2): "wait N frames" -- STA $14=0 then spin until
     # RTCLOK_LOW($14) reaches target (A=$4C).  The 6502 uses an EXACT-equality exit (CMP $14 /
     # BNE), safe on HW because the CPU polls $14 thousands of times/frame so it never skips a
     # value.  On the Amiga port RTCLOK is advanced ASYNC by the $4FF5 flight ISR, and each spin

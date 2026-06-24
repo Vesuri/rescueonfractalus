@@ -126,7 +126,7 @@ $4F3F,intro_cinematic_loop,func,0,Intro/cinematic blocking loop (spins on $2891 
 $4FF5,vbi_handler_flight,func,0,In-flight VBI handler (VVBLKI=$4FF5 set at $3E50 during flight init); $51B9 block = flight_control_integrate + terrain projection, mirrored by flight_vbi_native
 $5433,sfx_engine_reset,func,0,Font/display character setup (called in game_entry init)
 $53CC,vbi_handler_1,func,0,First in-game VBI handler (VVBLKI=$53CC set at $3D63 in game_entry)
-$52D7,vbi_handler_standby,func,0,Standby + launch-cinematic VBI handler (VVBLKI=$52D7 set in display_setup $5F50); active from the Standby screen through the doors/tunnel/stars/planet cinematic, until flight init swaps in vbi_handler_flight ($4FF5). Per-frame: attract timer, attract input poll ($5398), scroll_event_dispatch ($5367), lock_on_indicator_tick every other frame, SFX/music tick, sfx_voice_envelope_tick. Was vbi_handler_standby.
+$52D7,vbi_handler_standby,func,0,Standby + launch-cinematic VBI handler (VVBLKI=$52D7 set in display_setup $5F50); active from the Standby screen through the doors/tunnel/stars/planet cinematic, until flight init swaps in vbi_handler_flight ($4FF5). Per-frame: attract timer, attract input poll ($5398), launch_anim_dispatch ($5367), lock_on_indicator_tick every other frame, SFX/music tick, sfx_voice_envelope_tick. Was vbi_handler_standby.
 $5815,ring_push_marked,func,0,TXA;ORA #$80;JMP ring_push_0719 — push object index X marked with bit7 ($80=active) into the $0719 event ring
 $581C,input_init,func,0,Input/controller init (called twice: X=$1F then X=$20)
 $587B,cockpit_display,func,0,Cockpit/instrument display or main input handler (reads PORTA/CONSOL; called if $060B≠0)
@@ -167,7 +167,7 @@ $A99C,game_state_update,func,0,Game state update (2 RANDOM reads; called from ma
 $AA95,jitter_roll_pitch,func,0,Random-walks roll $0029 and pitch $0026 accumulators toward limits via RANDOM $D20A; called from pmg_enemy_update (was game_sub_AA95)
 $AACF,plot_scanline_rand_dir,func,0,Reads RANDOM $D20A: branches to plot_scanline_up else falls through to plot_scanline_down — random-direction scanline plot (was game_sub_AACF)
 $AD5F,clear_terrain_column,func,0,Clears one terrain column band (X=start column): 42 cols x 44 rows from base $1010 stride $60, plus scattered object-table cells (was terrain_gen_3)
-$AE53,terrain_collision,func,0,Terrain collision/render: 799 bytes; compares ship position against 8 terrain rows at $1010,$1070,$10D0,$1130,$1190,$11F0,$1250,$12B0 (spaced $60 apart); finds topmost non-empty row; JMPs to landing/crash handler at $B12F
+$AE53,terrain_collision_and_silhouette,func,0,Terrain collision/render: 799 bytes; compares ship position against 8 terrain rows at $1010,$1070,$10D0,$1130,$1190,$11F0,$1250,$12B0 (spaced $60 apart); finds topmost non-empty row; JMPs to landing/crash handler at $B12F
 $B172,terrain_subdivide_column,func,0,Fractal subdivision driver: calls terrain_column_rasterize ($B33D) + terrain_midpoint_displace ($B2CC) (was terrain_sub_B172)
 $B800,init_B800,func,0,INITAD stub (segment 13): sets CHBAS=$04 SDLSTL/H=$B832 COLOR0/1/2/4 SDMCTL=$22 then enables DMACTL; initial display list at $B832 (embedded in stub body)
 #
@@ -250,7 +250,7 @@ $1130,terrain_row3,data,0,Terrain column data row 3
 $1190,terrain_row4,data,0,Terrain column data row 4
 $11F0,terrain_row5,data,0,Terrain column data row 5
 $1250,terrain_row6,data,0,Terrain column data row 6
-$12B0,terrain_row7,data,0,Terrain column data row 7 (8 rows total; checked by terrain_collision in order)
+$12B0,terrain_row7,data,0,Terrain column data row 7 (8 rows total; checked by terrain_collision_and_silhouette in order)
 #
 # --- Display list RAM ($3120 / $316B — BSS, built at runtime) ---
 $3120,display_list_game,data,0,Game display list (built at runtime by display_setup; DLISTL=$20 DLISTH=$31)
@@ -287,10 +287,10 @@ $3C73,wait_vcount_30,func,0,Load A=$30 and fall into wait_vcount_eq; busy-wait u
 $3C75,wait_vcount_eq,func,0,Busy-wait (polling events) until ANTIC VCOUNT $D40B equals A
 $3C7B,wait_vcount_ge_7a,func,0,Busy-wait until ANTIC VCOUNT $D40B >= $7A (scanline sync)
 $3C83,fill_region_2000,func,0,Set dst $C1/$C2=$2000, count $C3/$C4=$0F73, fall into memset_or_copy to fill region with byte [$B7]
-$3CB1,push_a_thunk_3cb2,func,0,PHA then tail-call wait_frames_60; trampoline preserving A on stack
-$3CB2,wait_frames_60,func,0,Sets RTCLOK_LOW=0, spins until RTCLOK_LOW($14)==timer_4C($4C); PLA+RTS. Entry sets $4C=$3C(60)
+$3CB1,push_a_wait_frames,func,0,PHA then falls into wait_frames_4c spin (waits caller-set $4C frames), then PLA;RTS. Preserves A across a frame-wait
+$3CB2,wait_frames_4c,func,0,Sets RTCLOK_LOW=0, spins until RTCLOK_LOW($14)==caller-set timer_4C($4C); PLA+RTS. (The fixed $3C=60 count is loaded only by the separate entry $3CBE, not here.)
 $3CBE,wait_frames_save_a,func,0,PHA caller A, LDA #$3C, BNE(always) to wait_setcount; delays 60 frames via timer_4C
-$3CC6,wait_setcount,func,0,STA timer_4C($4C); BNE(always, count!=0) falls into wait_frames_60 spin loop
+$3CC6,wait_setcount,func,0,STA timer_4C($4C); BNE(always, count!=0) falls into wait_frames_4c spin loop
 $3CCA,wait_frames_2,func,0,PHA caller A, LDA #$02 then to wait_setcount; delay 2 frames (RTCLOK_LOW vs timer_4C)
 $3CCF,wait_frames_5,func,0,PHA caller A, LDA #$05 then to wait_setcount; delay 5 frames (RTCLOK_LOW vs timer_4C)
 $3CD4,wait_frames_10,func,0,PHA caller A, LDA #$0A then to wait_setcount; delay 10 frames (RTCLOK_LOW vs timer_4C)
@@ -309,7 +309,7 @@ $416B,vobj_speed_accumulate,func,0,Fractional speed accumulator: (8-$006F)>>1 + 
 $4184,vobj_advance,func,0,Decrement vert pos $062F; on reaching top resets/triggers sound ($b786); erase $0D98 row, load shape from $4DEA->$00DE
 $41DA,vobj_pos_to_pmstrip_index,func,0,Y = ($DC - $062F) >> 2: convert vert pos $062F to index into P/M shape strip $0D98
 $41E4,vobj_draw_dispatch,func,0,X=$0038 (row count); if nonzero erase-loop via vobj_erase_row ($4207) else step down via vobj_step_down ($41e8)
-$41E8,vobj_step_down,func,0,Set $004C=1; advance $062F by +4, wrap at $DC bottom ($004C=0,$0D98=$F0,pos=$DC); calls push_a_thunk_3cb2 then erase row
+$41E8,vobj_step_down,func,0,Set $004C=1; advance $062F by +4, wrap at $DC bottom ($004C=0,$0D98=$F0,pos=$DC); calls push_a_wait_frames then erase row
 $4207,vobj_erase_row,func,0,Erase P/M strip row: $0D99+Y=$F0; index Y>>3 into shape table $4DEA->$00DE; DEX loop back to vobj_step_down
 $4225,obj_state_dispatch_0043,func,0,X=$0043; if nonzero jump lock_on_indicator_return else lock_on_indicator_tick (state-driven object update branch)
 $4229,lock_on_indicator_tick,func,0,State machine on $007E: if >=$81 jumps to lock_on_indicator_phase_advance ($428e); else counts down $00E6 (reload $0618), toggles bit7 of table $3492 using RANDOM ($D20A&7); seeds $0048/$00E6 on entry
@@ -362,7 +362,7 @@ $4FCE,intro_reset_score_slots,func,0,Clears $066A/$0686, sets $0678=$0C and refr
 $4FE0,intro_fill_display_params,func,0,Copies $4DF1 table low nibbles OR player_speed($00C2) into display_param $00CF-D6, writes COLPF3($D019), INC $00C2
 $52BE,game_loop_reset_trampoline,func,0,Sets vec $0222/3=$52B4, pushes ret $3D1F+P, sets game_var_E4=$060B(cockpit_flag)=4, PLP; reentry from $5398
 $534D,vbi_deferred_dispatch,func,0,VBI tail: if $00E7 & BIT $062D z->sfx_voice_tick; if $0655->music_player_tick; then sfx_voice_envelope_tick (gauges) + os_xitvbv
-$5367,scroll_event_dispatch,func,0,Tests sound flags $008D/88/89/8B then toggles $008F, $008C/8A -> sfx subs 6a8f/6a38/6aee/69e3/6a27/6953
+$5367,launch_anim_dispatch,func,0,Per-frame launch-cinematic priority dispatcher: runs exactly ONE anim step by flag precedence -> $008D reverse ring-step ($6A8F)/$0088 ring-step ($6A38)/$0089 column-scroll ($6AEE)/$008B DL-index ($69E3)/$008C corner-reveal recede ($6A27)/$008A door LMS-scroll ($6953). Not sound flags.
 $5398,check_collision_sync,func,0,X=$FF, CLI/SEI; if !=$80 set $0002/0003/E2; else reads collision regs $D01F,$D010,$D300, may run reset trampoline
 $548D,sfx_voice_envelope_tick,func,0,Loops Y=$0E..1 over digit arrays $06DB/E9/0679/06BF/CD/A3/B1/066B; BCD-step wrap $2D, calls 55FC/5815; sorts $0073/74 ring
 $5553,sfx_engine_step,func,0,POKEY sound engine: writes AUDF/AUDC $D200/201/204/205/208 from state $0634-$063A and table $55DC
@@ -401,7 +401,7 @@ $66C8,set_row_ptr,func,0,Sets bitmap row pointer $0080=$073D[Y], $0081=$0793[Y] 
 $66D3,plot_pixel_col93,func,0,Loads A=$0093 (column), tail-calls plot_pixel_masked (plot_pixel_masked)
 $66D5,plot_pixel_masked,func,0,A=column: Y=A>>1 (byte idx), mask idx X from $0094(+8 if carry), tail-calls plot_glyph_pixel_masked to OR/AND pixel into row ptr $80
 $66DE,plot_glyph_pixel_masked,func,0,OR/AND a 2-bit pixel into screen byte via ($80) using mask tables $66E9(OR)/$66FB(AND) indexed by X
-$670D,advance_message_column,func,0,reads col idx $A0; if<6 loads glyph $6E0F[Y]->$96 & calls draw_symmetric_span_loop else clears $08D8; DEC $A0, $88=$A0+1
+$670D,draw_ring_frame_step,func,0,Draws ONE tunnel-ring frame group via draw_symmetric_span_loop (count=ring-thickness table $6E0F[$A0]); clears $08D8 (inner ring colour) when $A0<6; DEC $A0, $88=$A0+1. Per-ring-tick incremental ring draw, NOT message/text.
 $672D,blit_message_block,func,0,loop cols $92 from $54 down by 8; per col calls set_row_ptr_from_count then plots rows $15/$2E/$47 via plot_pixel_masked
 $6750,blit_label_row,func,0,renders 5 glyphs from table $6E23[$C5..]; $C5 base 0 or 5 per flag $0004; col $92=$2E, row $9C=$1B
 $6773,glyph_ptr_from_index,func,0,computes glyph data ptr $84/$85 = $E000 + (A*8) (3x ASL with carry into hi), then blits via blit_glyph_8rows
@@ -427,13 +427,13 @@ $69F1,dl_lms_fill,func,0,Fills LMS table via ($C5)=$300A from src tables $073D(l
 $6A0F,shift_object_table_up,func,0,Shifts a stride-3 record array up one slot: copies $3007/$3008 -> $300A/$300B for $0084 records (Y from $FF, DEY x3)
 $6A26,ret_stub_6a26,func,0,Empty routine, immediate RTS; tail-call target/no-op stub
 $6A27,clear_slot_0c87_0d87,func,0,DEC $008C, index Y=8-$008C, zeroes $0C87[Y] and $0D87[Y] in two parallel arrays
-$6A38,step_accum_add_75,func,0,Adds $75 via add_multibyte_a1, result->$00A4; if changed & store $00A5, if >=$90 call advance_message_column, then advance_history_6a4d
+$6A38,step_accum_add_75,func,0,Adds $75 via add_multibyte_a1, result->$00A4; if changed & store $00A5, if >=$90 call draw_ring_frame_step, then advance_history_6a4d
 $6A4D,advance_history_6a4d,func,0,Shifts 6-byte ring $08D4-$08D9 up one (insert old $08D9); if $008D<0 sets $0071=$08D8; bumps $0679[$0C] by $06CC; tail reorder_sprite_slot
 $6A8F,step_accum_sub_7e,func,0,Subtracts $7E via sub_multibyte_a1, result->$00A4; if changed & <$14 use as idx into $6E0F->$0096 then draw_symmetric_span_loop; sets $008D, INC $008E, advance_history_6a4d
 $6AB5,add_multibyte_a1,func,0,Multi-byte add: A (C clear) += $00A1, carry chains into $00A2,$00A3,$00A4; returns top byte in A
 $6AC9,sub_multibyte_a1,func,0,Multi-byte subtract: stores A to $08DA, $00A1 -= A, borrow chains through $00A2,$00A3,$00A4; mirror of add_multibyte_a1
 $6AE5,fill_terrain_columns,func,0,LDY #$59; loops 89x calling gen_terrain_column to fill all 4 parallel terrain buffers $0C32/$0D32/$0E32/$0F32
-$6AEE,scroll_terrain_columns,func,0,Gated by state $0089; updates $A4/$A5 via add_multibyte_a1(24-bit add), shifts $0C32-$0F32 buffers left 1 col ($59 wide), appends new col via gen_terrain_column
+$6AEE,scroll_field_columns,func,0,Gated by state $0089; updates $A4/$A5 via add_multibyte_a1(24-bit add), shifts $0C32-$0F32 buffers left 1 col ($59 wide), appends new col via gen_terrain_column
 $6B2E,gen_terrain_column,func,0,Fills one column (index Y) of all 4 buffers $0C32/$0D32/$0E32/$0F32 with random heights from random_terrain_height
 $6B63,clear_terrain_lo_buffers,func,0,LDY #$5F..0: zeroes the $0E32 and $0F32 terrain buffers (96 bytes each)
 $6B71,clear_scroll_accum,func,0,Zeroes PCOLR0-3 shadow $02C0..$02C3 and 24-bit scroll accum $00A1..$00A4 plus $00A5
@@ -588,18 +588,18 @@ $0075,trig_angle,var,0,Angle accumulator for sine_table_lookup/trig_interp_looku
 $0076,trig_result_lo,var,0,Low byte of 24-bit signed sine result from sine_table_lookup ($0076-$0078)
 $007B,anim_counter_007B,var,0,Animation step counter decremented in animate_clear_colors_timed sweep loops
 $007D,clear_color_count_007D,var,0,X loop count for clear_colors in animate_clear_colors_timed/clear_colors_sweep_5x (clamped min $14); incremented +2 per step
-$0089,terrain_state,var,0,Terrain scroll state flag; gates scroll_terrain_columns (scroll_terrain_columns) in dispatcher $5375; set $7F then counted toward $04 in $6500
+$0089,terrain_state,var,0,Terrain scroll state flag; gates scroll_field_columns (scroll_field_columns) in dispatcher $5375; set $7F then counted toward $04 in $6500
 $008A,terrain_scroll_counter,var,0,Per-call countdown in scroll_terrain_dl (scroll_terrain_dl); at 0 resets $008C=8
 $008B,dl_src_index,var,0,Index into LMS source tables $073D/$0793 used by dl_lms_fill; reset/dec by 69dd/69e3
 $008C,terrain_scroll_reload,var,0,Reload value (8) set when $008A expires in scroll_terrain_dl
-$008D,step_mode_flag,var,0,Selects step routine in scroll_event_dispatch (nonzero->step_accum_sub_7e); set/tested by step_accum_sub_7e and advance_history_6a4d
-$008F,sfx_toggle_8F,var,0,Alternating flag in scroll_event_dispatch: LSR then INC gates every-other-frame sfx ($008C/$008A)
+$008D,step_mode_flag,var,0,Selects step routine in launch_anim_dispatch (nonzero->step_accum_sub_7e); set/tested by step_accum_sub_7e and advance_history_6a4d
+$008F,sfx_toggle_8F,var,0,Alternating flag in launch_anim_dispatch: LSR then INC gates every-other-frame sfx ($008C/$008A)
 $0091,altitude_threshold,var,0,Compared to $C0/$E0 in copy_title_text_block_to_screen to pick which 20-byte graphic block to copy into screen $32B6
 $0092,draw_row,var,0,Current row counter for the draw loop: init 0x55 (85) in draw_shape_rows_loop, used as index into the row_base tables via set_row_ptr_from_count; also stepped by 8 as the glyph blitter pixel-column ($54/$2E/$38) in blit_message_block.
 $0093,blit_pixel_x,var,0,per-pixel X within row, passed to plot_pixel_masked (LSR->plane index), INC each shifted bit in blit_glyph_8rows
 $0094,draw_color_idx,var,0,2-bit pixel colour/pattern selector in draw_frame_pattern_seq/draw_symmetric_span_loop/plot_pixel_masked/plot_glyph_pixel_masked: cycled 1..6, ORed with mask table $66E9 (into $00B9), and used to pick the AND/OR mask masked into the screen byte.
 $0095,blit_color_src,var,0,source color copied to $94 at start of blit_glyph_8rows ($95->$94)
-$0096,span_row_count,var,0,Inner span/plot loop counter (rows for the current shape segment), decremented to zero in draw_symmetric_span_loop/emit_dl_coord_pairs/plot_terrain_span/game_sub_6811; also the glyph code for the current message column in advance_message_column.
+$0096,span_row_count,var,0,Inner span/plot loop counter (rows for the current shape segment), decremented to zero in draw_symmetric_span_loop/emit_dl_coord_pairs/plot_terrain_span/game_sub_6811; also the glyph code for the current message column in draw_ring_frame_step.
 $0097,blit_row_counter,var,0,Glyph row counter $07..0 in the blit_glyph_8rows 8-row loop (indexes glyph byte via ($84),Y); also the top-end byte index of the $300A LMS ring used as a loop terminator (CPX $97) and X index in scroll_terrain_dl/dl_lms_push_top.
 $0098,dl_bottom_index,var,0,Byte index of the bottom/low end of the $3089 LMS ring, loop terminator (CPY $98) in dl_lms_scroll_down and Y index in dl_lms_push_bottom (writes $0082/$0083 into $3089); also the flood-fill cell-stack index at $2500 (init 1).
 $009A,grid_offset_a,var,0,First neighbor cell offset added to $009C when indexing grid at $0900 (test_marked_neighbor/scan_grid_neighbors)
@@ -608,12 +608,12 @@ $009C,draw_x_left,var,0,Left X coordinate of a symmetric span, decremented each 
 $009D,draw_x_right,var,0,Right X coordinate of a symmetric span, incremented each step in draw_symmetric_span_loop; reused as the incremented plot-column high accumulator in plot_terrain_span.
 $009E,draw_row_top,var,0,Top row index (into row_base tables) of a symmetric span, incremented each step in draw_symmetric_span_loop; plot_terrain_span adds $0085 each span (paired with $009F window top).
 $009F,draw_row_bottom,var,0,Bottom row index (into row_base tables) of a symmetric span, decremented each step in draw_symmetric_span_loop; plot_terrain_span subtracts $0085 each span (window bottom) and it also saves the Y shift-count across divide_16x16 calls in project_terrain_points.
-$00A0,draw_iter_count,var,0,Outer iteration count in draw_frame_pattern_seq (init $13 by init_row_coords_9c), decremented per drawn frame; also reused as the message column index counted down in advance_message_column (CPY #$06).
+$00A0,draw_iter_count,var,0,Outer iteration count in draw_frame_pattern_seq (init $13 by init_row_coords_9c), decremented per drawn frame; also reused as the message column index counted down in draw_ring_frame_step (CPY #$06).
 $00A1,scroll_accum_b0,var,0,LSB (byte 0) of the multi-byte scroll/distance accumulator ($00A1..$00A4); add_multibyte_a1 adds A into it, sub_multibyte_a1 subtracts.
 $00A2,scroll_accum_b1,var,0,Byte 1 of multi-byte accumulator; carry/borrow propagation in add/sub_multibyte_a1
 $00A3,scroll_accum_b2,var,0,Byte 2 of multi-byte accumulator (add_multibyte_a1/sub_multibyte_a1)
 $00A4,scroll_accum_b3,var,0,Top byte (byte 3) of the multi-byte scroll/distance accumulator; result of step_accum_add_75/sub_7e; also the per-row X-span increment high byte (from heading $24) used by ad2b.
-$00A5,scroll_accum_prev,var,0,Previous top byte of the scroll accumulator, compared against $00A4 to detect a column step in scroll_terrain_columns/6a38/6a8f; also the per-row X-span increment low byte (from heading $23) used by ad2b.
+$00A5,scroll_accum_prev,var,0,Previous top byte of the scroll accumulator, compared against $00A4 to detect a column step in scroll_field_columns/6a38/6a8f; also the per-row X-span increment low byte (from heading $23) used by ad2b.
 $00A6,horizon_row_index,var,0,Horizon/center row index = 6 - (signextend $28<<2); seeds 271E span table in ad2b
 $00AC,mul_div_frac,var,0,Fractional/carry byte in signed_mul_8x16 rotated through ROR during shift-add
 $00AD,mul_sign,var,0,Saved sign of multiplicand in signed_mul_8x16; used to negate $00AA/$00AB and result

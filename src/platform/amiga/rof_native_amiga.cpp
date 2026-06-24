@@ -613,11 +613,11 @@ extern "C" void update_indicator_blink_native(void)
 
 // --- Tunnel-ring cycle: faithful ports of the $5367 dispatcher's $0088 branch ---
 //
-// The original per-frame driver is scroll_event_dispatch ($5367), a strict
+// The original per-frame driver is launch_anim_dispatch ($5367), a strict
 // priority dispatcher that runs exactly ONE action per frame:
 //     if   $008D != 0  -> step_accum_sub_7e   (ring reverse — NOT ported)
 //     elif $0088 != 0  -> step_accum_add_75   (tunnel ring cycle — ported below)
-//     elif $0089 != 0  -> scroll_terrain_columns
+//     elif $0089 != 0  -> scroll_field_columns
 //     elif $008B != 0  -> dl_index_dec
 //     else (via $008F toggle) $008A != 0 -> scroll_terrain_dl  (door scroll)
 // Only the $0088 ring branch is ported here; the lower-priority branches drive
@@ -658,7 +658,7 @@ static void advance_history_6a4d(void)
     mem[0x0679 + 0x0C] = s ? s : 0xFF;                          // BNE keep; else LDA #$FF
 }
 
-// advance_message_column @ $670D: the tunnel ring's "top byte >= $90" branch.
+// draw_ring_frame_step @ $670D: the tunnel ring's "top byte >= $90" branch.
 // It is the FAITHFUL tunnel→stars trigger: each invocation steps the column
 // index $00A0 down by one and sets $0088 = $00A0 + 1, so once $00A0 wraps from
 // $00 to $FF the gate $0088 becomes 0 and the ring stops cycling — display_setup
@@ -677,7 +677,7 @@ static void advance_history_6a4d(void)
 // re-decodes (g_tunnelFieldDirty) so the rings visibly clear from the middle out.
 static void draw_symmetric_span_loop(void);   // fwd decl (defined below)
 
-// Set by advance_message_column when it draws into the GTIA field at $2000, with the
+// Set by draw_ring_frame_step when it draws into the GTIA field at $2000, with the
 // touched row range, so RescueOnFractalus re-decodes ONLY those rows of the tunnel bitmap
 // (a black ring band) — not the whole 86-row field, which costs > 1 PAL frame on the
 // 68000 and freezes the ring cycle.  Cleared by RescueOnFractalus after it re-decodes.
@@ -688,7 +688,7 @@ static void draw_symmetric_span_loop(void);   // fwd decl (defined below)
 extern "C" volatile uint8_t g_tunnelFieldDirty = 0;
 extern "C" volatile uint8_t g_tunRowLo = 0, g_tunRowHi = 0;   // $009F .. $009E after the draw
 
-static void advance_message_column(void)
+static void draw_ring_frame_step(void)
 {
     uint8_t a0 = mem[0x00A0];
     if ((int8_t)a0 >= 6) {                          // CPY #$06; BMI -> $00A0 >= 6 = DRAW
@@ -706,7 +706,7 @@ static void advance_message_column(void)
 
 // step_accum_add_75 @ $6A38: add $75 into the accumulator; if the resulting top byte
 // ($A4) is unchanged, do nothing; otherwise store it, and — when the top byte >= $90
-// — step the message column (advance_message_column, the tunnel-exit clear + the
+// — step the message column (draw_ring_frame_step, the tunnel-exit clear + the
 // stars trigger), then ALWAYS rotate the ring (advance_history_6a4d).  Per the real
 // $6A38: `CMP #$90 / BCC $6A4D / JSR $670D` falls THROUGH into the rotation at $6A4D
 // — the two are additive, NOT exclusive, so the palette keeps cycling while the
@@ -717,7 +717,7 @@ static void step_accum_add_75(void)
     mem[zp::scrollAccum3] = a;
     if (a == mem[zp::scrollAccumPrev]) return;     // CMP $A5; BEQ -> top byte unchanged
     mem[zp::scrollAccumPrev] = a;
-    if (a >= 0x90u) advance_message_column();      // CMP #$90; BCS -> JSR $670D
+    if (a >= 0x90u) draw_ring_frame_step();      // CMP #$90; BCS -> JSR $670D
     advance_history_6a4d();                        // $6A4D: ring rotation, ALWAYS runs
 }
 
@@ -789,7 +789,7 @@ static void scroll_terrain_dl(void)
     mem[0x0097] = dl_lms_push_top(mem[0x0097]);      // LDX $0097 / push / STX $0097
 }
 
-// scroll_event_dispatch @ $5367 (Standby subset): the per-frame priority dispatcher
+// launch_anim_dispatch @ $5367 (Standby subset): the per-frame priority dispatcher
 // that runs exactly ONE action.  $0088 (ring) outranks $0089 (column scroll) outranks
 // $008A (door scroll), so they are sequential — the doors scroll with a static tunnel
 // while $0088==0, the ring animates once $0088 is armed (after the doors finish
@@ -800,13 +800,13 @@ static void scroll_terrain_dl(void)
 // The transpile's 6502 register file (src/cpu/cpu.h: `Cpu6502 cpu`) — mirrored
 // as a POD (see launch_native.cpp for why we don't #include cpu.h).
 extern "C" { typedef struct { uint8_t A, X, Y, S, N, V, Z, C, I, D; } Cpu6502; extern Cpu6502 cpu; }
-extern "C" void scroll_terrain_columns(void);  // $6AEE transpiled (entered with A = $0089)
-extern "C" void scroll_event_dispatch_native(void)
+extern "C" void scroll_field_columns(void);  // $6AEE transpiled (entered with A = $0089)
+extern "C" void launch_anim_dispatch_native(void)
 {
     if (mem[zp::stepModeFlag]) return;                       // $008D: reverse ring (unused here)
     if (mem[zp::vbiFlags]) { step_accum_add_75(); return; }  // $0088: tunnel ring cycle
     if (uint8_t g = mem[zp::scrollColumnsGate]) {            // $0089: scroll star/planet columns
-        cpu.A = g; scroll_terrain_columns();                 // $6AEE: $0089 gate in A (>=4 advances accum)
+        cpu.A = g; scroll_field_columns();                 // $6AEE: $0089 gate in A (>=4 advances accum)
         return;
     }
     if (mem[zp::dlIndexGate]) return;                        // $008B: dl_index_dec (unused)
@@ -928,7 +928,7 @@ static void init_row_coords_9c(void)
 // Atari tunnel setup does at $647D-$6480 (JSR init_row_coords_9c; $0094=0) just
 // before it arms $0088=1 at $64A8.  The Amiga ran init_row_coords_9c earlier (in
 // decodeTunnelRings, which left $00A0=$FF), so we re-seed here when arming the ring
-// — otherwise advance_message_column would start from $FF and never clear $0088 in
+// — otherwise draw_ring_frame_step would start from $FF and never clear $0088 in
 // the expected 20 crossings.
 extern "C" void tunnel_ring_arm_native(void)
 {
@@ -966,7 +966,7 @@ extern "C" void draw_tunnel_rings_native(void)
 //   $5398  attract input poll            -> SKIPPED: Atari $D01F/$D010/$D300 reads
 //          (resets the attract timeout on input) return neutral on the Amiga, where
 //          input is the keyboard ISR, so it would only ever no-op.
-//   $5367  scroll_event_dispatch          -> the door/tunnel/scroll cinematic driver
+//   $5367  launch_anim_dispatch          -> the door/tunnel/scroll cinematic driver
 //          (self-gated on $0088/$0089/$008A/$008B/$008D — inert on the static screen)
 //   $5342  lock_on_indicator_tick every other frame (LSR/INC $0643 gate)
 //   $534D  SFX tick ($70F9)              -> runs on CIA-B Timer A instead (main.cpp)
@@ -976,7 +976,7 @@ extern "C" void sfx_voice_envelope_tick(void);   // $548D: SFX voice engine + $0
 extern "C" void standby_vbi_native(void)
 {
     vbi_attract_timer_native();              // $5335
-    scroll_event_dispatch_native();           // $5367
+    launch_anim_dispatch_native();           // $5367
     // $548D SFX voice engine — the Atari ran it in this VBI tail too.  Gate on
     // $060B (=$23 once the launch cinematic begins, 0 during pure attract) so the
     // attract music (CIA-B sequencer) is undisturbed but the START/doors/tunnel
@@ -1061,7 +1061,7 @@ void terrain_frame_setup(void);       // $9E54: per-frame view-transform setup
 // clear_terrain_column ($AD5F) is reached via its typed core clear_terrain_column_core()
 // (rof_native.h) instead of the cpu.X = N; clear_terrain_column() 6502-ABI form.
 void terrain_draw_frame(void);        // $A31E: main per-frame terrain draw driver (X = half)
-void terrain_collision(void);         // $AE53: terrain collision + final column fill (X)
+void terrain_collision_and_silhouette(void);         // $AE53: terrain collision + final column fill (X)
 void game_state_update(void);         // $A99C: game state machine
 void enemy_check(void);               // $3FCD: enemy/event dispatch
 
