@@ -52,14 +52,25 @@ renderViewportModeD(srcBase=$1070, stride=96, rows=47)   ← the convert to ELIM
 - Planet path precedent: dirty-row extent (`g_planetRowLo/Hi`) + `ViewportCopperList`/poke-only
   copper. The flight path currently does a FULL convert each frame (no dirty rows).
 
-## Rendering model (user-confirmed 2026-06-24, settled by live mem[$1070] dump)
+## Rendering model (settled 2026-06-24 by ground-truth Atari field dumps — flight1/2/3.bin)
 
-The flight terrain is **2 layers on 2 bitplanes**:
-- **Lighter-brown FILLED body** — one pixel-bit / one bitplane. The mountain silhouette filled
-  solid below the ridge. **This is what the dot-plot + blitter fill-down produces:** plot the ridge
-  per `$260E[]`, then OR each row onto the next (fill-down).
-- **Darker-brown texture DOTS on top** — the *other* pixel-bit / *other* bitplane. Drawn as
-  individual dots and **NOT filled** — just the dot-plot loop, no fill-down.
+⚠ CORRECTED — the Atari fills the **SKY**, NOT the terrain. Decoding the real Atari `$1070`
+field (3 frames) shows the value distribution: value0 = terrain body, value1 = sky (the FILLED
+region, ~100 px/row across the upper rows, tapering down to the skyline), value2 = sparse dots
+(texture, 37–220 px), value3 = unused (0). One frame (flight3) had no sky at all (pitched down).
+
+So the layers are:
+- **Terrain body (value 0 = color00, lighter brown)** — the **cleared value-0 background**. The field
+  is zeroed each frame and left as-is below the skyline. **Never filled — it is free** (the dominant
+  colour by default). This is the "lighter-brown filled body" — filled only in the sense of *being the
+  background colour*, not by any pixel work.
+- **Sky (value 1 = color01)** — the **FILLED region above the skyline**. Drawn by plotting the skyline
+  and filling **upward** (skyline row → row 0). This is the only true fill, and the blitter's job.
+- **Dots (value 2 = color02, darker brown)** — sparse texture, plotted individually, **no fill**.
+- Value 3 (highlight) unused.
+
+Consequence vs the earlier draft: the blitter fill operates on the **SKY bitplane (fill up to the
+top)**, not a terrain body plane. The terrain body needs zero fill work.
 
 (Live dump confirmed: near rows fill solid; the `$2090`+ rows 43-46 are the wing-clearance band
 `ff/aa/55`, not terrain.)
@@ -86,9 +97,11 @@ blitter fills and which carries the dots.
 1. Keep the faithful subdivision producing `$260E[]` (byte-validatable), but **optimise it** as a
    68000-tuned native twin (it's the 84 %).
 2. Replace ridge `PLOT`-into-`mem[$1070]` **and** `renderViewportModeD` with a native Amiga step:
-   - **Body bitplane:** read `$260E[]` (yForX) → plot ridge dots straight into the body bitplane via
-     the tight `multiplyBy120` LUT loop → **blitter fill-down** (OR each row onto the next).
-   - **Dot bitplane:** plot the darker-brown texture dots into the second bitplane, no fill.
+   - **Sky bitplane (value 1):** plot the skyline per `$260E[]` (yForX) via the tight `multiplyBy120`
+     LUT loop → **blitter fill UP** (OR each row onto the row above, skyline → row 0). This is the
+     only fill.
+   - **Terrain body (value 0):** nothing — it's the background colour (color00). Free.
+   - **Dot bitplane (value 2):** plot the darker-brown texture dots, no fill.
 3. No `mem[$1070]` round-trip, no convert pass.
 
 ## Execution stages (each independently verifiable)
@@ -97,17 +110,19 @@ blitter fills and which carries the dots.
   `renderViewportModeD` call (a `g_fConvert` accumulator like `g_fDraw`) so we know the concrete
   ms that eliminating the convert buys. Cheap; grounds the rest. `diag_run.sh 85`.
 
-- **Stage 1 — native dot-plot from `$260E[]` → bitplanes (Amiga-only, behind a flag).** New
+- **Stage 1 — native skyline+dot plot from `$260E[]` → bitplanes (Amiga-only, behind a flag).** New
   renderer reads `$260E[0..$D4]`, maps each column→(byteCol, 2-bit mask) and height→`multiplyBy120`
-  row offset. Plot the ridge into the **body bitplane** and the texture into the **dot bitplane**.
-  Run it ALONGSIDE the existing convert first and visually diff (FS-UAE `run.sh`); ridge + dots
-  must match. (Body still unfilled at this stage — it's just the ridge line until Stage 2.)
+  row offset. Plot the skyline into the **sky bitplane (value 1)** and the texture into the **dot
+  bitplane (value 2)**. Body left as the value-0 background. Run ALONGSIDE the existing convert and
+  visually diff (FS-UAE `run.sh`); skyline + dots must match. (Sky not yet filled — just the
+  skyline until Stage 2.)
 
-- **Stage 2 — blitter fill-down for the body bitplane.** Descending blitter OR (row N → row N+1,
-  BLTCON1 DESC, minterm A|B→D) over the terrain band, on the **body bitplane only** (the dot
-  bitplane is never filled). Produces the lighter-brown filled silhouette from the ridge line.
-  Resolved (live dump 2026-06-24): the body IS filled today; this blitter pass is the native
-  replacement for whatever fills it in the `mem[$1070]` path.
+- **Stage 2 — blitter fill UP for the sky bitplane.** Ascending blitter OR (row N → row N-1,
+  BLTCON1 DESC walks addresses downward; minterm A|B→D) over the terrain band, on the **sky
+  bitplane only** — propagate the skyline upward to row 0 so everything above the skyline is sky.
+  The terrain body (value 0) and the dot bitplane are never filled. (NB: open question — confirm
+  whether the Atari plots the skyline AS value-1 and fills, or fills sky as a separate step from
+  the value-2 dots; flight3 had dots but no sky. Pin which `$260E`-derived edge feeds the sky fill.)
 
 - **Stage 3 — cut the round-trip.** Stop the 6502 ridge `PLOT` into `mem[$1070]` (subdivision still
   computes `$260E[]`); drop `renderViewportModeD` for flight. ⚠ **Complication:** objects
