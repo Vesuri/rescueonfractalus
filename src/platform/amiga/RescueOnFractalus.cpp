@@ -748,7 +748,13 @@ void RescueOnFractalus::renderFlightDirect()
         g_flightDirectAddr = (uint32_t)s_flightDirect->data;
     }
     uint8_t* const bp = (uint8_t*)s_flightDirect->data;
-    for (int i = 0; i < 47 * 120; i++) bp[i] = 0;            // clear the 47 written scanlines
+    // Clear all 3 planes of the 47 scanlines via the blitter (120 bytes/row contiguous),
+    // then wait so the CPU edge-plot below doesn't race the clear.
+    AmigaHardware::blitterClear((uint16_t*)bp, 60, 47, 0);
+    AmigaHardware::blitterWait();
+
+    // Edge plot: ONE plane1 bit per column at its skyline scanline (= 150-height) — the
+    // cheap part (160 byte-ORs).  $FF = off-top (all body, no sky edge).
     const uint8_t* const yForX = (const uint8_t*)mem + 0x260E + 48;   // col 0 -> $260E[48]
     static const uint8_t kMask[4] = { 0xC0u, 0x30u, 0x0Cu, 0x03u };   // 2-bit pixel within byte
     for (int c = 0; c < 160; c++) {
@@ -757,10 +763,14 @@ void RescueOnFractalus::renderFlightDirect()
         int scan = 150 - (int)h;                             // height -> skyline scanline
         if (scan < 0) scan = 0;
         if (scan > 46) scan = 46;
-        uint8_t* col = bp + (c >> 2);                        // plane1 byte column (bytes 0..39)
-        uint8_t m = kMask[c & 3];
-        for (int s = 0; s <= scan; s++) col[s * 120] |= m;   // plane1 = sky, filled to the skyline
+        bp[scan * 120 + (c >> 2)] |= kMask[c & 3];           // plane1 skyline edge bit
     }
+
+    // Sky fill = propagate each skyline edge bit UPWARD in ONE descending blit (BLITREVERSE):
+    // plane1 rows are 20 words at stride 120 -> modulo 80.  Writes rows 0..45 (row 46 is the
+    // read-only seed); every row above an edge becomes sky, rows below stay 0 (body).
+    AmigaHardware::blitterFillUp((uint16_t*)bp, 20, 46, 80);
+    AmigaHardware::blitterWait();
 }
 #endif
 
@@ -1467,7 +1477,12 @@ void RescueOnFractalus::render()
             renderViewportModeD(0x1070, 96, 47);   // 47 rows: +4 for the wing-clearance band ($2090-$21B0)
 #ifdef ROF_FLIGHT_PROBE
             g_fConvert += (rof_subclock() - _cv0) - (g_isrBeamLines - _cvi);
-            renderFlightDirect();   // Stage 1: parallel direct render for headless pixel-diff vs the convert
+            // Stage 1: parallel direct render (for pixel-diff vs the convert) + its own beam cost,
+            // so we can compare g_fDirect vs g_fConvert in the same run before wiring it in.
+            extern volatile unsigned long g_fDirect;
+            unsigned long _dv0 = rof_subclock(), _dvi = g_isrBeamLines;
+            renderFlightDirect();
+            g_fDirect += (rof_subclock() - _dv0) - (g_isrBeamLines - _dvi);
 #endif
             g_flightProf.render += (unsigned short)(flight_vbi_tick() - r0);
         }

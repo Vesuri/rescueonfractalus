@@ -31,6 +31,7 @@ printf "tdSubdiv=%lu tdProjPlot=%lu tdFrames=%lu\n", g_tdSubdiv, g_tdProjPlot, g
 printf "  per-frame: tdSubdiv=%lu tdProjPlot=%lu (beam ticks/frame)\n", \
   (g_tdFrames? g_tdSubdiv/g_tdFrames : 0), (g_tdFrames? g_tdProjPlot/g_tdFrames : 0)
 printf "fConvert=%lu (flight mem[1070]->bitplane convert; same units as draw=%lu)\n", g_fConvert, g_fDraw
+printf "fDirect=%lu (Stage-1 direct $260E->bitplane render; cmp vs fConvert)\n", g_fDirect
 echo --- renderFrame no-yield gap (real VBI frames) ---\n
 printf "maxGap=%u atVbi=%u vvblki=%04x 060B=%02x 004A=%02x\n", \
   g_maxRenderGap, g_maxGapAtVbi, g_maxGapVvblki, g_maxGap060B, g_maxGap004A

@@ -66,6 +66,10 @@ public:
     static void blitterCopy(uint16_t* source, uint16_t* destination, uint16_t width, uint16_t height, int16_t sourceModulo, int16_t destinationModulo, int16_t shift, uint16_t firstWordMask, uint16_t lastWordMask, uint16_t mask);
     static void blitterCopyWithMask(uint16_t* source, uint16_t* destination, uint16_t* mask, uint16_t width, uint16_t height, int16_t sourceModulo, int16_t destinationModulo, int16_t maskModulo, int16_t sourceShift, int16_t maskShift, uint16_t firstWordMask, uint16_t lastWordMask, bool clearMasked);
     static void blitterLine(uint16_t* data, uint16_t x1, uint16_t y1, uint16_t x2, uint16_t y2, uint16_t bytesPerRow, bool singleBitPerRow);
+    // Single-pass vertical fill-UP (flight terrain sky): one descending (BLITREVERSE) blit,
+    // D = A|C with A one row below D, so each just-written row feeds the next row up.  Fills
+    // `height` rows above the seed.  modulo = bytes between rows of the target plane.
+    static void blitterFillUp(uint16_t* dest, uint16_t width, uint16_t height, int16_t modulo);
     static void processBlitterQueue();
 #endif
     // Masked compositing — portable C++ on both compilers (no hand-written asm

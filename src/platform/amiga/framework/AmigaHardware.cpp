@@ -488,6 +488,36 @@ void AmigaHardware::blitterFill(uint16_t* data, uint16_t width, uint16_t height,
     AmigaHardware::setInterrupts(INTF_BLIT, true);
 }
 
+void AmigaHardware::blitterFillUp(uint16_t* dest, uint16_t width, uint16_t height, int16_t modulo)
+{
+    // Single-pass vertical fill-UP: propagate every set bit upward (toward row 0) so the
+    // region above each seed bit becomes set.  Done in ONE descending blit with D = A | C,
+    // A offset one row BELOW D (C=D): in DESC mode the blitter writes row r then, processing
+    // row r-1, reads that just-written row r as A — so the OR chains up the whole plane in a
+    // single blit.  Writes `height` rows; the row just below them is the read-only seed.
+    // Minterm 0xFA = ABC|ABNC|ANBC|ANBNC|NABC|NANBC = A|C.  `modulo` = bytes between rows of
+    // this plane (e.g. interleaved plane stride - row bytes).
+    const int32_t rowBytes = (int32_t)width * 2 + modulo;          // stride between plane rows
+    uint8_t* dLast = (uint8_t*)dest + (int32_t)(height - 1) * rowBytes + (int32_t)(width - 1) * 2;
+    uint8_t* aLast = dLast + rowBytes;                             // one row below
+    AmigaHardware::setInterrupts(INTF_BLIT, false);
+    while (hasQueuedBlits) processBlitterQueue();
+    blitterWait();
+    *bltafwmPointer = 0xffff;
+    *bltalwmPointer = 0xffff;
+    *bltcon1Pointer = BLITREVERSE;                                 // descending
+    *bltcon0Pointer = (uint16_t)(BC0F_SRCA | BC0F_SRCC | BC0F_DEST |
+                                 ABC | ABNC | ANBC | ANBNC | NABC | NANBC);
+    *bltamodPointer = modulo;
+    *bltcmodPointer = modulo;
+    *bltdmodPointer = modulo;
+    *bltaptPointer = (uint16_t*)aLast;
+    *bltcptPointer = (uint16_t*)dLast;
+    *bltdptPointer = (uint16_t*)dLast;
+    *bltsizePointer = (uint16_t)((height << 6) | width);
+    AmigaHardware::setInterrupts(INTF_BLIT, true);
+}
+
 void AmigaHardware::processBlitterQueue()
 {
     if (isBlitterBusy() || !hasQueuedBlits) {
