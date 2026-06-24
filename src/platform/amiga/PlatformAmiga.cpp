@@ -552,6 +552,8 @@ static bool g_pollAfterRender = false;
 extern "C" volatile unsigned long g_iterMax = 0, g_iterLast = 0, g_iterPostDs = 0;
 extern "C" volatile unsigned short g_iterCount = 0, g_iterMaxAt = 0;
 extern "C" volatile unsigned long g_fSetup=0,g_fClear=0,g_fDraw=0,g_fColl=0,g_fState=0,g_fEnemy=0;
+// Stage-0 convert-pass cost (flight renderViewportModeD), beam-based, ISR-decontaminated.
+extern "C" volatile unsigned long g_fConvert=0;
 // atmosphere terrain-pen range during flight ($00DC/$00DD salmon→brown fade):
 extern "C" volatile unsigned char g_dcMin=0xFF, g_dcMax=0, g_ddMin=0xFF, g_ddMax=0;
 // Cockpit-decode probe (beam sub-frame ticks): g_fCockpit accumulates the time spent in the

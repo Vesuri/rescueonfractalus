@@ -28,6 +28,7 @@ echo --- cockpit decode (beam ticks; 313=20ms) ---\n
 printf "cockpitTicks=%lu cockpitScans=%lu (per-scan ticks=%lu)\n", g_fCockpit, g_fCockpitScans, (g_fCockpitScans? g_fCockpit/g_fCockpitScans : 0)
 echo --- terrain_draw_frame sub-phase (ROF_TDRAW_PROF) ---\n
 printf "tdSubdiv=%lu tdProjPlot=%lu\n", g_tdSubdiv, g_tdProjPlot
+printf "fConvert=%lu (flight mem[1070]->bitplane convert; same units as draw=%lu)\n", g_fConvert, g_fDraw
 echo --- renderFrame no-yield gap (real VBI frames) ---\n
 printf "maxGap=%u atVbi=%u vvblki=%04x 060B=%02x 004A=%02x\n", \
   g_maxRenderGap, g_maxGapAtVbi, g_maxGapVvblki, g_maxGap060B, g_maxGap004A

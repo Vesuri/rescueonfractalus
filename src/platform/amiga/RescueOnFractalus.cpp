@@ -67,6 +67,9 @@ extern "C" volatile unsigned char g_titleDirty   = 1;
 extern "C" volatile unsigned char g_cockpitDirty = 1;
 #ifdef ROF_FLIGHT_PROBE
 extern "C" unsigned long rof_subclock(void);
+#ifdef ROF_FLIGHT_PROBE
+extern "C" volatile unsigned long g_fConvert, g_isrBeamLines;  // Stage-0 convert-pass probe
+#endif
 extern "C" volatile unsigned long g_fCockpit, g_fCockpitScans;
 #endif
 // Compass (#2): the heading cells $32E3-$32E6 (mode-4 line below the title) — flagged by
@@ -1416,7 +1419,15 @@ void RescueOnFractalus::render()
         // render(); the per-byte shadow keeps it cheap.
         if (rsFlight) {
             unsigned short r0 = flight_vbi_tick();
+#ifdef ROF_FLIGHT_PROBE
+            // Beam-based, ISR-decontaminated convert-pass cost (same units as g_fDraw) so the
+            // terrain-draw plan's Stage 0 can quantify what eliminating this pass would buy.
+            unsigned long _cv0 = rof_subclock(), _cvi = g_isrBeamLines;
+#endif
             renderViewportModeD(0x1070, 96, 47);   // 47 rows: +4 for the wing-clearance band ($2090-$21B0)
+#ifdef ROF_FLIGHT_PROBE
+            g_fConvert += (rof_subclock() - _cv0) - (g_isrBeamLines - _cvi);
+#endif
             g_flightProf.render += (unsigned short)(flight_vbi_tick() - r0);
         }
         else                        renderViewportModeD(0x1000, 48, 47);   // stars/planet: +4 band rows ($1810-$18A0)
