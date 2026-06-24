@@ -150,11 +150,30 @@ blitter fills and which carries the dots.
   rely on the convert. Eliminating the convert requires EITHER porting object plotting to native
   bitplane writes too, OR keeping a reduced convert for the object layer only. Decide here.
 
-- **Stage 4 — optimise the subdivision math (the 84 %).** 68000-tune `terrain_subdivide_column`,
-  `terrain_column_rasterize` (the `b380` interpolation loop), `terrain_midpoint_displace`: hoist ZP
-  scratch to registers, pointer-walk arrays, drop dead intermediate writes — same recipe as
-  `terrain_collision_and_silhouette`/`terrain_frame_setup`. **Must stay byte-identical** on `$260E[]` + math state
-  via `make validate` (these are already native twins with `__t6502` oracles).
+- **Stage 4 — optimise the subdivision math (the 84 %).** ✅ DONE 2026-06-24 (commits on main).
+  68000-tuned all three, byte-identical (`make validate` 0 mem mismatch, real-flight snapshot):
+  - **Hoisted** ZP scalars to register locals in all three (midpoint $8D-$91/$B5/$B6; column_rasterize
+    $82/$84/$86/$80/$81/$B5 span+PLOT scratch; subdivide cpu.X recursion index + $9F budget), writing
+    each ZP byte back once.  Explicit hoisting — NOT relying on the compiler caching the non-volatile
+    `cpu` struct.
+  - **Rewrote `terrain_midpoint_displace` in native 16-bit fixed-point** — each midpoint =
+    (base+delta+1) arithmetic->>1, displacement = (mid-base)>>1 logical; collapses the 6502 byte-pair
+    carry chains into single 68000 word ops (arith >>1 = (v>>1)|(v&0x8000)).
+  - **Converted `terrain_column_rasterize` interpolation to plain C** — the "CLC ADC; ROR" averaging =
+    (A+m)>>1; the $86 fraction = a 9-bit add picking a (base-$82)>>1 height correction w/ 0/$FF
+    saturation.  ⚠ b446's b52e correction threads the height-average ROR carry (avg9&1) into its
+    ADC/SBC (unlike b380's fresh c=0) — kept exactly.
+  - **`terrain_subdivide_column`** left with carry-macro arithmetic in the cascade — NOT hot (runs once
+    per leaf), and its memory traffic is already hoisted; converting would be cosmetic.
+
+  **Measurement (per-frame normalizer `g_tdFrames` added — raw `g_tdSubdiv` is cumulative over a
+  jittery frame count, so compare per-frame):** `tdSubdiv` ≈ **1935 → ~1554 beam ticks/frame, ≈20%**
+  (baseline median of 2 runs vs current median of 5; ±~10% run-to-run, so trust the cluster, not
+  single runs).  The hoisting+midpoint gave the bulk (~15%); column_rasterize ~6% more.  **The
+  remaining `tdSubdiv` (~1554) is MEMORY-bound** (recursion stack push/pop, PLOT into mem[$1070],
+  array indexing) — not arithmetic-bound, so further math tuning won't help.  The next flight-render
+  lever is Stages 1-3 (eliminate the PLOT round-trip + the `renderViewportModeD` convert pass,
+  `fConvert` ≈ 62656 cumulative / ~30 ms).
 
 ## Faithfulness / validation note
 
