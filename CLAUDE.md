@@ -157,6 +157,16 @@ make            # build out/RoF.exe (+ RoF.elf for debug)
 Toolchain lives at `~/.local`. `OPT=-O2`/`NATIVE_OPT=-O3` by default; override for debug
 backtraces with `make OPT='-O0' NATIVE_OPT='-O0'`.
 
+⚠ **Run `make clean` after toggling `PROBES` OR after editing a widely-included header**
+(`RescueOnFractalus.h`, `PlatformAmiga.h`, the framework headers, …). The Amiga Makefile
+does **not** track the `PROBES` flag or header dependencies, so a partial rebuild links
+**stale object files** against new code. The failure mode is NOT just a link error — it
+often links a **working-but-wrong binary** that runs with **silent runtime breakage**
+(e.g. struct layout / member-offset mismatches when a header changed, manifesting as
+unrelated corrupted rendering or wrong behaviour). Treat any unexplained runtime
+regression right after a header edit or a `PROBES` toggle as a stale build until a clean
+rebuild rules it out — don't chase it as a logic bug first.
+
 ### Headless FS-UAE measure→fix→verify loop (works great — use it instead of guessing)
 The agent can drive FS-UAE + gdb itself, with no display interaction, to measure real
 runtime state. This loop diagnosed several timing/render bugs precisely where static
