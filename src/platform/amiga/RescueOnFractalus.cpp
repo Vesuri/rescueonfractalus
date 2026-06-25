@@ -399,6 +399,8 @@ void RescueOnFractalus::initialize()
 {
     titleBitmap   = Bitmap::allocate(kW, kTitleHeight,   kBP2, true);
     terrainBitmap = Bitmap::allocate(kW, kViewportFullHeight, kBP3, true);  // 3bp: tunnel reveal uses pens 4-7; 47 rows incl. wing band
+    // Second flight terrain buffer for double-buffering renderFlightDirect (see header).
+    terrainBitmapBack = Bitmap::allocate(kW, kViewportFullHeight, kBP3, true);
 #ifdef ROF_FLIGHT_PROBE
     extern volatile uint32_t g_terrainBmpAddr;   // chip addr of terrainBitmap->data (Stage 1 verifier dump)
     g_terrainBmpAddr = (uint32_t)terrainBitmap->data;
@@ -739,8 +741,14 @@ void RescueOnFractalus::renderViewportModeD(uint16_t srcBase, int stride, int ro
 // (0/13760); ~2.8x cheaper per frame (fDirect 120 vs fConvert 339 beam ticks).
 void RescueOnFractalus::renderFlightDirect()
 {
-    if (!terrainBitmap) return;
-    uint8_t* const bp = (uint8_t*)terrainBitmap->data;
+    if (!terrainBitmap || !terrainBitmapBack || !flightCopper) return;
+
+    // Double-buffer: paint the OFF-screen buffer (the one the copper is NOT currently showing),
+    // then re-point the copper to it.  The flip latches at the next vblank, so the live buffer
+    // is never cleared/refilled mid-frame (that was the plane1 flicker).  First frame
+    // (flightDisplayed==null) draws into terrainBitmapBack.
+    Bitmap* const back = (flightDisplayed == terrainBitmapBack) ? terrainBitmap : terrainBitmapBack;
+    uint8_t* const bp = (uint8_t*)back->data;
 
     // Terrain rows 0-42 (43 scanlines): clear all 3 planes, then build plane1 sky.
     AmigaHardware::blitterClear((uint16_t*)bp, 60, 43, 0);
@@ -761,6 +769,23 @@ void RescueOnFractalus::renderFlightDirect()
     AmigaHardware::blitterFillUp((uint16_t*)bp, 20, 42, 80);
     AmigaHardware::blitterWait();
 
+    // plane2 = terrain dots/detail (mode-D value-2; value-3 highlight also sets it).  The
+    // blitter builds plane1 (sky) from $260E but carries no dot info, so decode plane2 from
+    // the mode-D field mem[$1070] (the upstream CPU pass still fills it).  Sparse, but every
+    // byte must be scanned to find the dots: 43 rows × 40 bytes via the kModeDP2 LUT into the
+    // freshly-cleared plane2 (offset +40 within each 120-byte interleaved scanline).
+    // (Perf endgame is to have the terrain rasterizer set plane2 as it plots — flight item #1.)
+    {
+        const uint8_t* s2 = (const uint8_t*)mem + 0x1070 + 4;   // row 0, +4 crop (matches plane1 align)
+        uint8_t* p2 = bp + 40;                                  // plane2 of scanline 0
+        for (int row = 0; row < 43; row++, s2 += 96, p2 += 120) {
+            for (int b = 0; b < 40; b++) {
+                uint8_t d = kModeDP2[s2[b]];
+                if (d) p2[b] = d;                               // cleared to 0; write only set dots
+            }
+        }
+    }
+
     // Windscreen-bottom band (scanlines 43-46): still a 4-row mode-D convert from mem[$1070]
     // (= $2098+ wing band).  Cheap (4/47 of the old convert); keeps the frame element.
     const uint8_t* src = (const uint8_t*)mem + 0x1070 + 4 + 43 * 96;  // band source rows
@@ -771,6 +796,11 @@ void RescueOnFractalus::renderFlightDirect()
             vd[b] = kModeDP1[s]; vd[40 + b] = kModeDP2[s]; vd[80 + b] = 0;
         }
     }
+
+    // Flip: re-point the flight copper's viewport bitplanes to the buffer we just painted.
+    // The copper latches this at the next vblank (renderFrame waits for VBI after render()).
+    flightCopper->setTerrainBitplanes(*back);
+    flightDisplayed = back;
 }
 
 // run(): the whole game, driven by the genuine transpiled/native boot chain
@@ -1696,6 +1726,7 @@ void RescueOnFractalus::shutdown()
     PlatformAmiga::audioShutdown();
     delete titleBitmap;   titleBitmap   = nullptr;
     delete terrainBitmap; terrainBitmap = nullptr;
+    delete terrainBitmapBack; terrainBitmapBack = nullptr;
     delete cockpitBitmap; cockpitBitmap = nullptr;
     delete tunnelBitmap;  tunnelBitmap  = nullptr;
     delete titleScreenBitmap; titleScreenBitmap = nullptr;

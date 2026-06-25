@@ -149,6 +149,12 @@ private:
 
     Bitmap*     titleBitmap    = nullptr;
     Bitmap*     terrainBitmap  = nullptr;
+    // Flight terrain double-buffer: renderFlightDirect rebuilds the whole terrain region
+    // every frame (blitter clear + sky fill), so it must NOT paint the live displayed buffer
+    // mid-frame (caused plane1 flicker).  It renders into the off-screen one of these two and
+    // re-points the flight copper's viewport bitplane ptrs to it; the swap latches next vblank.
+    Bitmap*     terrainBitmapBack = nullptr;   // 2nd flight terrain buffer (== terrainBitmap dims)
+    Bitmap*     flightDisplayed   = nullptr;   // which buffer the flight copper currently shows
     Bitmap*     cockpitBitmap  = nullptr;
     Bitmap*     titleScreenBitmap = nullptr;   // full-screen 3bp text bitmap for the Title Screen
 

@@ -300,3 +300,13 @@ void FlightCopperList::setHudSprite(int slot, const Sprite& s)
 {
     showSprite(INDEX_SPRITES + slot * 2, slot, s);
 }
+
+// Re-point the viewport (terrain) bitplane pointers to a different bitmap — the flight
+// terrain double-buffer flip.  renderFlightDirect paints the off-screen buffer, then calls
+// this to swap it in; the copper picks up the new pointers at the next vblank restart, so the
+// live displayed buffer is never repainted mid-frame (was the plane1 flicker).  Same 3bp
+// interleaved layout as buildLayout's showBitmap(INDEX_VP_BPL, terrain) — only the 6 ptrs change.
+void FlightCopperList::setTerrainBitplanes(const Bitmap& terrain)
+{
+    showBitmap(INDEX_VP_BPL, terrain);
+}
