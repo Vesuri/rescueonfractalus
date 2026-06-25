@@ -1023,13 +1023,24 @@ void PlatformAmiga::run()
     }
 
     // --- bring up the scene --------------------------------------------------
-    // Enable copper + raster + sprite DMA, then load the faithful boot memory image
-    // (pristine rof.xex) into mem[] before anything reads it — the genuine power-on RAM.
-    *dmaconPointer = (uint16_t)(DMAF_SETCLR | DMAF_MASTER | DMAF_COPPER | DMAF_RASTER | DMAF_SPRITE);
+    // Load the faithful boot memory image (pristine rof.xex) into mem[] before anything
+    // reads it — the genuine power-on RAM.  Display DMA (copper/raster/sprite) stays OFF
+    // here: COP1LC still points at the OS LoadView(NULL) copper, so enabling copper DMA now
+    // would let the OS copper run all through initialize() and intermittently reset our
+    // one-time custom-register setup (BPLCON3 border-blanking was getting clobbered when an
+    // OS-copper frame happened to land after setPlayfield's write).  scene.initialize()
+    // writes the constant registers and installs our first copper list (setCopperList →
+    // COP1LC = ours) with the copper halted, so there is no race.
     load_xex_image();
 
     s_scene = &scene;
-    scene.initialize();   // builds bitmaps/copper; calls PlatformAmiga::audioInit
+    scene.initialize();   // builds bitmaps/copper (COP1LC = ours); calls PlatformAmiga::audioInit
+
+    // Our copper list is now installed and the constant registers are set — safe to start
+    // display DMA.  The copper restarts from COP1LC (our list) at the next vblank; the OS
+    // copper never runs again, so BPLCON3 (and the rest of setPlayfield) persists.
+    *dmaconPointer = (uint16_t)(DMAF_SETCLR | DMAF_MASTER | DMAF_COPPER | DMAF_RASTER | DMAF_SPRITE);
+
     keyboardInit();       // RETURN = START for the launch cinematic
 
     // --- run -----------------------------------------------------------------
