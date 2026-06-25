@@ -916,8 +916,16 @@ static uint32_t vbiHandler()
                 g_forceTitleScreen = 1;
             }
 #else
-            if (d >= 60 && d < 120)      mem[0xD01Fu] = 0x06;   // START held (bit0 clear), ~1s window
-            else if (d == 120)           mem[0xD01Fu] = 0x07;   // release
+            // Hold START (bit0 clear) until the launch cinematic actually engages
+            // ($060B==$23), then release.  A fixed [60,120) window was timing-flaky under
+            // the slow headless gdb-stub emulation: the standby idle loop polls CONSOL only
+            // once per main-loop iteration, and with heavy per-frame render work few polls
+            // land inside a 60-frame window, so the press was often missed.  Holding until
+            // 060B latches makes the catch race-free regardless of emulation speed.
+            if (d >= 60) {
+                if (mem[0x060Bu] != 0x23u) mem[0xD01Fu] = 0x06;   // START held until launched
+                else                       mem[0xD01Fu] = 0x07;   // launched → release
+            }
 #endif
         }
     }

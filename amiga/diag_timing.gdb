@@ -4,6 +4,7 @@
 continue
 echo \n==== SIGINT ====\n
 printf "vbi=%u VVBLKI=%02x%02x joy=%u 060B=%02x\n", g_vbiCount, mem[0x0223], mem[0x0222], mem[0x004A], mem[0x060B]
+printf "reveal=%u D01F=%02x\n", g_standbyRevealReady, mem[0xD01F]
 echo --- Title Screen probe (rsTitle = VVBLKI==53cc && 365B==72) ---\n
 printf "365B=%02x (R=72?) 365C=%02x COLPF0-3=%02x %02x %02x %02x\n", mem[0x365B], mem[0x365C], mem[0x02C4], mem[0x02C5], mem[0x02C6], mem[0x02C7]
 echo --- flight control integ ($0027 pitch-rate: 00=level at neutral; $D0=nose-dive bug) ---\n
