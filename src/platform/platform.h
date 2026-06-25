@@ -90,6 +90,11 @@ public:
        re-decodes just those 4 cells.  No-op on direct-mem[] platforms (SDL).     */
     virtual void compassChanged() {}
 
+    /* Notification that an instrument writer changed a span of nCells cockpit cells
+       starting at Atari screen-RAM address `addr`.  A bitplane-mirroring platform records
+       the span for a targeted decode; no-op on direct-mem[] platforms (SDL / headless).  */
+    virtual void cockpitDirty(uint16_t /*addr*/, uint8_t /*nCells*/) {}
+
     /* Poll+consume a pending in-flight keyboard-command keycode (Atari KBCODE&$3F,
        or $80 for BREAK); $FF = none pending.  The flight VBI's CLI window ($519c)
        calls this to feed event_sequence_dispatcher ($4644), replacing the POKEY

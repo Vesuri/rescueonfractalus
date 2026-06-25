@@ -64,12 +64,33 @@ extern "C" volatile unsigned char g_doorFieldReady;
 // initial build (by the transpiled display_setup, not those writers) + flight updates are
 // never missed.
 extern "C" volatile unsigned char g_titleDirty   = 1;
-extern "C" volatile unsigned char g_cockpitDirty = 1;
+
+// ---- cockpit dirty-cell registry --------------------------------------------
+// The cockpit ($332D mode4 / $350D modeD) is decoded WRITER-DRIVEN: each instrument writer
+// (digits startup_init, lock-on, dials draw_object_column) calls rof_cockpit_dirty(addr,n)
+// with the exact cell span it just changed, and render() decodes only those cells — no
+// per-frame full scan / shadow compare.  Writers run on BOTH the main thread (digits, in
+// perFrameWork) AND the VBI ISR (lock-on, dials), so the registry must be lock-free: it is a
+// per-cell dirty-flag array indexed by (addr - $332D), spanning $332D..$355D (mode4 + modeD).
+// Single-byte stores are atomic on the 68000, so producers just set their cells' flags with no
+// Disable() (calling Disable()/Enable() from the VBI ISR wedged interrupt delivery — incl. the
+// keyboard ISR that starts the game).  render() clears-then-decodes each set flag; a write that
+// races the clear simply re-flags for the next frame — never a missed change, never a lost span.
+static const int CK_FLAGS = 0x355D - 0x332D;   // 560 cells: mode4 $332D..$350C + modeD $350D..$355C
+static volatile unsigned char g_ckFlag[CK_FLAGS] __attribute__((aligned(4))) = {};
+
+extern "C" void rof_cockpit_dirty(unsigned short addr, unsigned char n)
+{
+    if (addr < 0x332Du) return;
+    unsigned short off = (unsigned short)(addr - 0x332Du);
+    for (unsigned char j = 0; j < n; j++) {
+        unsigned short o = (unsigned short)(off + j);
+        if (o < (unsigned short)CK_FLAGS) g_ckFlag[o] = 1u;
+    }
+}
 #ifdef ROF_FLIGHT_PROBE
 extern "C" unsigned long rof_subclock(void);
-#ifdef ROF_FLIGHT_PROBE
 extern "C" volatile unsigned long g_fConvert, g_isrBeamLines;  // Stage-0 convert-pass probe
-#endif
 extern "C" volatile unsigned long g_fCockpit, g_fCockpitScans;
 #endif
 // Compass (#2): the heading cells $32E3-$32E6 (mode-4 line below the title) — flagged by
@@ -1324,18 +1345,17 @@ void RescueOnFractalus::deriveRenderSignals()
     // fresh entry into Standby re-decodes the doors exactly once and then idles.
     if (g_doorFieldReady == 0u || rsLaunched || rsViewport) terrainDirty = true;
 
-    // Force a full title + cockpit rescan while the scene is transitional (boot/building)
-    // or in flight, plus ONCE on entry to the stars/planet viewport — so the initial
-    // cockpit build (written by the transpiled display_setup, not the native writers) and
-    // the per-frame flight cockpit updates are never missed.  During the settled stars/
-    // planet phase the cockpit is static ($004A clear → update_cockpit_digits doesn't run),
-    // so re-scanning ~580 cells EVERY frame was pure cost (~10 ms/frame on the A500); after
-    // the one-time entry scan we rely on the writers' dirty flags (title alternation flags
-    // g_titleDirty via the $782A copy hook).  (The g_doorFieldReady==0 window covers boot.)
-    if (g_doorFieldReady == 0u || rsFlight || (rsStars && !prevRsStars)) {
-        g_titleDirty = 1; g_cockpitDirty = 1;
+    // Force a one-time full title + cockpit repaint when the transpiled display_setup (NOT a
+    // hooked writer) builds the cockpit: while the scene is transitional (boot/building), and
+    // ONCE on entry to the stars/planet viewport or to flight.  The cockpit is otherwise
+    // WRITER-DRIVEN (the g_ck* span registry) — in flight the instrument writers register the
+    // exact cells they change, so re-scanning ~580 cells EVERY frame is gone (it was the #1
+    // flight cost).  Title still uses g_titleDirty via the $782A copy hook.
+    if (g_doorFieldReady == 0u || (rsStars && !prevRsStars) || (rsFlight && !prevRsFlight)) {
+        g_titleDirty = 1; cockpitForceFull = true;
     }
-    prevRsStars = rsStars;
+    prevRsStars  = rsStars;
+    prevRsFlight = rsFlight;
 }
 
 // perFrameWork(): per-frame non-phase work (the tail of the old update()).  These
@@ -1389,6 +1409,54 @@ static void decode2bppByte(uint8_t src, uint8_t* p1out, uint8_t* p2out)
     }
     *p1out = p1;
     *p2out = p2;
+}
+
+// Decode a run of nCells cockpit cells starting at Atari screen-RAM address `addr` (cells in
+// the same DL row) into cockpitBitmap.  Handles both the modeD raster band ($350D, 4 entries
+// × 2 identical scan lines, raw 2bpp) and the mode4 dashboard ($332D, 10 entries × 8 scan
+// lines, charset $3800, bit-7 → plane3).  Cells outside the visible 40-byte window (the
+// 4-byte wide-field crop) are skipped.  Layout matches the old full scan exactly.
+void RescueOnFractalus::decodeCockpitSpan(uint16_t addr, uint8_t nCells)
+{
+    static const int kStride   = 48;    // wide-playfield bytes per DL row
+    static const int kCrop     = 4;     // skip 4 left overscan bytes
+    static const int kRowBytes = 120;   // 3bp interleaved: p1(40)+p2(40)+p3(40)
+    uint8_t* cdest = (uint8_t*)cockpitBitmap->data;
+
+    for (uint8_t i = 0; i < nCells; i++) {
+        uint16_t a = (uint16_t)(addr + i);
+        if (a >= 0x350Du) {                     // modeD raster band
+            int off = (int)(a - 0x350Du);
+            int entry = off / kStride, col = (off % kStride) - kCrop;
+            if (entry < 0 || entry >= 4 || col < 0 || col >= 40) continue;
+            uint8_t p1v, p2v; decode2bppByte(mem[a], &p1v, &p2v);
+            uint8_t* d0 = cdest + (entry * 2) * kRowBytes;
+            uint8_t* d1 = d0 + kRowBytes;
+            d0[col] = p1v; d0[40 + col] = p2v; d0[80 + col] = 0;
+            d1[col] = p1v; d1[40 + col] = p2v; d1[80 + col] = 0;
+        } else {                                // mode4 dashboard
+            int off = (int)(a - 0x332Du);
+            int entry = off / kStride, col = (off % kStride) - kCrop;
+            if (entry < 0 || entry >= 10 || col < 0 || col >= 40) continue;
+            uint8_t ch = mem[a];
+            uint8_t plane3 = (ch & 0x80u) ? 0xFFu : 0x00u;
+            const uint8_t* glyph = (const uint8_t*)mem + 0x3800u + (uint16_t)(ch & 0x7Fu) * 8u;
+            uint8_t* p = cdest + (8 + entry * 8) * kRowBytes + col;
+            for (int scan = 0; scan < 8; scan++, p += kRowBytes) {
+                uint8_t p1v, p2v; decode2bppByte(*glyph++, &p1v, &p2v);
+                p[0] = p1v; p[40] = p2v; p[80] = plane3;
+            }
+        }
+    }
+}
+
+// Decode the whole cockpit region once (scene-entry repaint / registry overflow): all 4
+// modeD rows + 10 mode4 rows.  The transpiled display_setup (not a hooked writer) builds
+// the cockpit on entry, so the writer-driven registry alone would miss the initial paint.
+void RescueOnFractalus::decodeCockpitFull()
+{
+    for (int e = 0; e < 4;  e++) decodeCockpitSpan((uint16_t)(0x350Du + e * 48 + 4), 40);
+    for (int e = 0; e < 10; e++) decodeCockpitSpan((uint16_t)(0x332Du + e * 48 + 4), 40);
 }
 
 // Compass (#2): the heading indicator is 4 mode-4 cells $32E3-$32E6 on the mode-4 line at
@@ -1616,101 +1684,49 @@ void RescueOnFractalus::render()
     }
 
     // ---- cockpit region ------------------------------------------------------
-    // Per-cell shadow compare (like the title region above): re-decode only the
-    // cells whose Atari source byte changed since last frame.  A single Atari
-    // write therefore costs 6 Amiga writes (modeD: 2 rows × 3 planes) or 24
-    // (mode4: 8 scanlines × 3 planes) — never a full-region re-decode.
-    const bool cockpitFull = cockpitForceFull;
-    cockpitForceFull = false;
-    // The cockpit shares the terrain's WIDE playfield (48 bytes/line).  Both the
-    // modeD and mode4 blocks are sequential DL entries (LMS only on the first
-    // line), so each successive row advances by ANTIC's fetch width = 48 bytes,
-    // NOT 40.  As with the terrain we render the central 40 bytes of each line
-    // (+4-byte crop) so the content centres.  Using stride 40 / offset 0 mis-reads
-    // every row past the first → the garbled "modulo" shear.
-    //
-    // ModeD $350D: 4 DL entries × 2 identical scan lines = 8 rows (raw 2bpp).
-    // Mode4 $332D: 10 DL entries × 8 scan lines = 80 rows ($332D..$350D = 10×48).
-    //   40 chars/row, glyph per scanline from charset $3800.
-    //   Glyph byte = 4 × 2-bit pixels (COLBK/COLPF0/COLPF1/COLPF2).
-    static const int kCockpitStride    = 48;   // wide-playfield bytes per line
-    static const int kCockpitXByteCrop = 4;    // skip 4 left overscan bytes (= terrain)
-    uint8_t* cdest = (uint8_t*)cockpitBitmap->data;
-
-    // 3bp interleaved row = plane1(40) + plane2(40) + plane3(40) = 120 bytes.
-    static const int kRowBytes = 120;
-
-    // Skip both cockpit scans unless a writer (update_cockpit_digits / lock_on_indicator)
-    // dirtied $332D-$352C or a full repaint is forced.  Cleared after the scans.
-    if (cockpitFull || g_cockpitDirty) {
+    // WRITER-DRIVEN decode (replaces the per-frame full shadow scan): instrument writers
+    // register the exact cell spans they changed in the g_ck* registry; we decode only those.
+    // On scene entry (cockpitForceFull) the whole region is painted once (the transpiled
+    // display_setup built it — not a hooked writer); steady state is span-only, ~0 cost on
+    // frames where nothing moved.  Layout note: the cockpit shares the terrain WIDE playfield
+    // (48 bytes/DL row) — modeD $350D (4 entries × 2 scan lines) then mode4 $332D (10 × 8),
+    // 40 visible cols of each 48-byte row (+4 crop) — all handled by decodeCockpitSpan().
 #ifdef ROF_FLIGHT_PROBE
     unsigned long _ckp0 = rof_subclock();
-    if (rsFlight) g_fCockpitScans++;
 #endif
-    // ModeD rows 0-7 (raw bitmap, no bit-7 colour swap → plane3 = 0).  Each
-    // source byte feeds the same column of 2 identical scan lines.
-    // Walk source/shadow/dest with pointers: the per-cell hot path is `*src++ == *shadow++`
-    // with NO muls (the old `entry*40+b` shadow index and `(entry*2+scan)*kRowBytes` dest
-    // offset were a 68000 muls per cell).  src advances +1/cell then skips the wide-field
-    // overscan (+kCockpitStride-40) per entry; dest advances 2 rows (240B) per entry.
-    {
-        const uint8_t* src    = (const uint8_t*)mem + 0x350D + kCockpitXByteCrop;
-        uint8_t*       shadow = cockpitModeDShadow;
-        uint8_t*       drow   = cdest;
-        for (int entry = 0; entry < 4; entry++) {
-            uint8_t* d0 = drow;               // scan line 0 of this entry
-            uint8_t* d1 = drow + kRowBytes;   // scan line 1 (identical content)
-            for (int b = 0; b < 40; b++) {
-                uint8_t s = *src++;
-                uint8_t old = *shadow++;            // always advance shadow (cockpitFull-safe)
-                if (!cockpitFull && s == old) continue;
-                shadow[-1] = s;
-                uint8_t p1v, p2v;
-                decode2bppByte(s, &p1v, &p2v);
-                d0[b] = p1v; d0[40 + b] = p2v; d0[80 + b] = 0;
-                d1[b] = p1v; d1[40 + b] = p2v; d1[80 + b] = 0;
-            }
-            src  += kCockpitStride - 40;
-            drow += 2 * kRowBytes;
-        }
-    }
-
-    // Mode4 rows 8-87.  Char bit-7 → plane3 = 0xFF for that cell, shifting its
-    // pixels to colours 4-7 (col7 = red); bit-7 clear → plane3 = 0 (cols 0-3).
-    // One changed char re-decodes its 8 scanlines × 3 planes = 24 writes.
-    // Same pointer-walk as modeD: per-cell hot path is `*chars++ == *shadow++`, no muls
-    // (the old `entry*40+col` shadow index and `(8+entry*8+scan)*kRowBytes` dest offset
-    // were per-cell muls).  dest starts at row 8 and advances 8 rows (8*120B) per entry.
-    {
-        const uint8_t* chars  = (const uint8_t*)mem + 0x332D + kCockpitXByteCrop;
-        uint8_t*       shadow = cockpitMode4Shadow;
-        uint8_t*       drow   = cdest + 8 * kRowBytes;   // mode4 begins after the 8 modeD rows
-        for (int entry = 0; entry < 10; entry++) {
-            for (int col = 0; col < 40; col++) {
-                uint8_t ch  = *chars++;
-                uint8_t old = *shadow++;               // always advance shadow (cockpitFull-safe)
-                if (!cockpitFull && ch == old) continue;
-                shadow[-1] = ch;
-                // Mode-4 glyph index is bits 0-6 (128 glyphs); bit 7 is the
-                // COLPF2/PF3 colour flag (handled via plane3).  *8 is a shift.
-                uint8_t plane3 = (ch & 0x80u) ? 0xFFu : 0x00u;
-                const uint8_t* glyph = (const uint8_t*)mem + 0x3800u + (ch & 0x7Fu) * 8u;
-                uint8_t* p = drow + col;                 // col = add; drow already row-offset
-                for (int scan = 0; scan < 8; scan++, p += kRowBytes) {
-                    uint8_t p1v, p2v;
-                    decode2bppByte(*glyph++, &p1v, &p2v);
-                    p[0] = p1v; p[40] = p2v; p[80] = plane3;
+    if (cockpitForceFull) {
+        cockpitForceFull = false;
+        decodeCockpitFull();
+        // The full paint covers every cell — drop any flags set before it.
+        for (int i = 0; i < CK_FLAGS; i++) g_ckFlag[i] = 0u;
+#ifdef ROF_FLIGHT_PROBE
+        if (rsFlight) g_fCockpitScans++;
+#endif
+    } else {
+        // Walk the dirty-flag array; long-batched so all-clear runs (the common case) skip 4
+        // cells at a time.  A set flag → clear it, then decode that single cell.  (Reading the
+        // flags through a non-volatile long alias lets the compiler batch the skip; a flag set
+        // by the ISR mid-walk that this long missed stays set and is caught next frame.)
+        const unsigned long* fl = (const unsigned long*)(const void*)g_ckFlag;
+        bool any = false;
+        for (int i = 0; i < CK_FLAGS / 4; i++) {
+            if (fl[i] == 0u) continue;
+            int base = i * 4;
+            for (int b = 0; b < 4; b++) {
+                if (g_ckFlag[base + b]) {
+                    g_ckFlag[base + b] = 0u;
+                    decodeCockpitSpan((uint16_t)(0x332Du + base + b), 1u);
+                    any = true;
                 }
             }
-            chars += kCockpitStride - 40;
-            drow  += 8 * kRowBytes;
         }
-    }
-    g_cockpitDirty = 0;
 #ifdef ROF_FLIGHT_PROBE
-    g_fCockpit += rof_subclock() - _ckp0;
+        if (rsFlight && any) g_fCockpitScans++;
 #endif
     }
+#ifdef ROF_FLIGHT_PROBE
+    if (rsFlight) g_fCockpit += rof_subclock() - _ckp0;   // flight-only: cockpitTicks/tdFrames is per-flight-frame
+#endif
     if (rsFlight) g_flightProf.renderTot += (unsigned short)(flight_vbi_tick() - profR0);
 }
 

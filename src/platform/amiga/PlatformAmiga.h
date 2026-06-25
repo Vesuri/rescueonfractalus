@@ -39,6 +39,7 @@ public:
     virtual void    tunnelRingsDrawn()               override;   // flag the $1000 ring field dirty
     virtual void    titleChanged()                   override;   // flag the $32B7 title region dirty
     virtual void    compassChanged()                 override;   // flag the $32E3 compass cells dirty
+    virtual void    cockpitDirty(uint16_t addr, uint8_t nCells) override;  // register a changed cockpit cell span
     virtual uint8_t flightIrqKey()                   override;   // consume a pending in-flight command key
     virtual int     loadImage(const char* path)      override;   // image is embedded -> no-op
     virtual void    setInterrupt(void (*fn)(void))   override;   // Amiga uses the real VBI -> no-op

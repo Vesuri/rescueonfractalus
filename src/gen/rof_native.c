@@ -5248,11 +5248,22 @@ void draw_object_column(void) {
         else       { mem[0x00C0] = 0x00; A = 0xB4; }     /* 43fb even column ($00C0=0) */
         if (X >= mem[0x00BF]) A &= 0x7F;          /* 4406-440c X>=thresh -> clear bit7 */
         else                  A |= 0x80;          /* 440f X<thresh -> lit (bit7) */
-        bus_write((uint16_t)(mem[0x00BB] | (mem[0x00BC] << 8)) + Y, A);   /* 4411 ($BB),Y=0 */
+        {
+            uint16_t da = (uint16_t)(mem[0x00BB] | (mem[0x00BC] << 8)) + Y;  /* 4411 ($BB),Y=0 */
+            /* Writer-driven cockpit decode: when the dial cell genuinely changes and lands in
+               the cockpit mode4/modeD screen RAM, register it (PMG-buffer dests via the same
+               $4581 table fall outside the range → ignored). */
+            if (da >= 0x332Du && da < 0x355Du && mem[da] != A) platform_cockpit_dirty(da, 1u);
+            bus_write(da, A);
+        }
         if (mem[0x00C0] != 0) {                   /* 4413-4415 */
             Y = 0x01;                             /* 4417 INY */
             A = (X >= mem[0x00BF]) ? 0x38 : 0xB8; /* 4418-4421 */
-            bus_write((uint16_t)(mem[0x00BB] | (mem[0x00BC] << 8)) + Y, A);  /* 4423 ($BB),Y=1 */
+            {
+                uint16_t da = (uint16_t)(mem[0x00BB] | (mem[0x00BC] << 8)) + Y;  /* 4423 ($BB),Y=1 */
+                if (da >= 0x332Du && da < 0x355Du && mem[da] != A) platform_cockpit_dirty(da, 1u);
+                bus_write(da, A);
+            }
         }
         mem[0x00BD] = (uint8_t)(mem[0x00BD] - 1); /* 4425 DEC $00BD */
         A = mem[0x00BD];                          /* 4427 */

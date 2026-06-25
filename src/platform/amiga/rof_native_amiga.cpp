@@ -421,11 +421,10 @@ extern "C" void station_setup(void)
 // Only the pure mem[]-state fragments below remain.
 
 
-// Cockpit dirty flag (defined in RescueOnFractalus.cpp): set when a writer stores into the
-// cockpit ($332D mode4, $350D modeD) region so render() re-scans it; otherwise its per-cell
-// shadow scan is skipped (the static-Standby cost saver).  The title region ($32B7) has no
-// dirty flag — its 20-cell scan runs unconditionally (the genuine $782A writer doesn't flag).
-extern "C" volatile uint8_t g_cockpitDirty;
+// Cockpit dirty-cell registry (defined in RescueOnFractalus.cpp): a writer that stores into
+// the cockpit ($332D mode4, $350D modeD) region registers the exact cell span it changed via
+// rof_cockpit_dirty(addr, nCells); render() decodes only those spans (no full scan / shadow).
+extern "C" void rof_cockpit_dirty(unsigned short addr, unsigned char nCells);
 
 // vbi_attract_timer_native: fragment of vbi_handler_standby @ $52D7 relevant to
 // Standby.  The full handler also writes DMACTL/CHBASE/colour/HPOS registers
@@ -469,7 +468,9 @@ extern "C" void startup_init_native(void)
         mem[dest + 1u]     = mem[t + 1u] | flag;
         mem[dest + 0x30u]  = mem[t + 2u] | flag;
         mem[dest + 0x31u]  = mem[t + 3u] | flag;
-        g_cockpitDirty = 1;   // cockpit mode-4 cell changed → render() must re-scan
+        // 2×2 digit block: top row (dest,dest+1) + bottom row one DL row down (+$30).
+        rof_cockpit_dirty(dest, 2u);
+        rof_cockpit_dirty((unsigned short)(dest + 0x30u), 2u);
     };
 
     mem[zp::barColThreshold] = 0u;
@@ -488,7 +489,7 @@ extern "C" void startup_init_native(void)
     }
     // $33DF/$33E0 are in the scanned mode-4 region; only dirty when the value actually
     // changes (this runs every call, so an unconditional dirty would defeat the skip).
-    if (mem[0x33DFu] != y) { mem[0x33DFu] = y; mem[0x33E0u] = (uint8_t)(y - 1u); g_cockpitDirty = 1; }
+    if (mem[0x33DFu] != y) { mem[0x33DFu] = y; mem[0x33E0u] = (uint8_t)(y - 1u); rof_cockpit_dirty(0x33DFu, 2u); }
 
     // Digit 1: lower nibble of mem[$0642], change-detected against mem[$0647]
     if (a != mem[zp::digitCache647]) {
@@ -556,7 +557,7 @@ extern "C" void lock_on_indicator_tick_native(void)
             uint8_t newS = (n == 7u) ? (uint8_t)(s - 2u) : (uint8_t)(s - 1u);
             mem[zp::lockOnIndicatorState] = newS;
             mem[0x3491u + newS] = 0xA9u;
-            g_cockpitDirty = 1;
+            rof_cockpit_dirty((unsigned short)(0x3491u + newS), 1u);
             pushRingBuf(0xA9u);
         } else {    // s == $80: random blink (faithful port of $4235-$4247)
             if (mem[zp::animStepTimer] > 0u) { mem[zp::animStepTimer]--; return; }
@@ -568,7 +569,7 @@ extern "C" void lock_on_indicator_tick_native(void)
             mem[zp::animStepTimer] = r;                       // $423A STA $E6 (full r)
             uint8_t y = (r >= 6u) ? (uint8_t)(r >> 1u) : r;   // $423C CMP #6 / BCC / LSR A
             mem[0x3492u + y] ^= 0x80u;                        // $4242-$4247 toggle colour bit
-            g_cockpitDirty = 1;
+            rof_cockpit_dirty((unsigned short)(0x3492u + y), 1u);
         }
         return;
     }
@@ -583,14 +584,14 @@ extern "C" void lock_on_indicator_tick_native(void)
         mem[zp::lockOnIndicatorState]++;
         uint8_t newS = mem[zp::lockOnIndicatorState];
         mem[0x3491u + newS] = 0x29u;
-        g_cockpitDirty = 1;
+        rof_cockpit_dirty((unsigned short)(0x3491u + newS), 1u);
         pushRingBuf(0x29u);     // pushes $A9 = $29|$80
     } else {                    // s == 0: initialise
         mem[zp::lockOnIndicatorActive] = 0u;
         mem[zp::lockOnIndicatorState] = 1u;
         mem[zp::animStepTimer] = mem[zp::lockonStepReload];
         for (int i = 5; i >= 0; i--) mem[0x3492u + (uint16_t)i] = 0xA9u;
-        g_cockpitDirty = 1;
+        rof_cockpit_dirty(0x3492u, 6u);
     }
 }
 

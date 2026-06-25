@@ -55,6 +55,7 @@ private:
     bool doorsOpenedLatch = false;  // door scroll finished; hold the tunnel view through the
     uint8_t prevScrollCtr = 0;      // gap before the ring/viewport arms (see deriveRenderSignals)
     bool    prevRsStars = false;    // rising edge → one-time title/cockpit rescan on stars entry
+    bool    prevRsFlight = false;   // rising edge → one-time full cockpit repaint on flight entry
 
     Sprite*  energyIndicatorSprite   = nullptr;    // player-strip throttle bar ($0D98)
     void buildEnergyIndicatorSprite();             // $0D98 strip -> energyIndicatorSprite lines
@@ -80,6 +81,8 @@ private:
     void buildAltimeterShipSprite();   // mirror the live M3 $0B98 ship-height bar -> altimeterShipSprite (flight)
     bool postsBuilt = false;   // canopy posts are constant: decode them a single time
     void decodeCompass();      // decode the 4 compass cells $32E3-$32E6 -> title bitmap (16 longwords)
+    void decodeCockpitSpan(uint16_t addr, uint8_t nCells);  // decode nCells cockpit cells from Atari screen addr
+    void decodeCockpitFull();  // decode the whole cockpit region (modeD + mode4) once (scene-entry repaint)
     void decodeTitleScreen();  // decode the Title Screen text ($365B/charset $0400) -> titleScreenBitmap
     void decodeTunnelField(int rowLo, int rowHi);  // decode mem[$2000] rows [lo,hi] -> tunnelBitmap
     void renderViewportModeD(uint16_t srcBase, int stride, int rows); // decode CHANGED mode-D bytes -> terrainBitmap (stars: $1000/48/43; flight: $1070/96)
@@ -215,12 +218,10 @@ private:
     // vertical pieces a row-band would miss, while staying well under a frame.
     uint8_t tunnelShadow[86 * 40] = {};
 
-    // Per-cell shadow caching for the cockpit (mirrors titleShadow): a single
-    // changed Atari source byte re-decodes only that cell — modeD: 2 rows × 3
-    // planes = 6 writes; mode4: 8 scanlines × 3 planes = 24 writes — never the
-    // whole 88-row region.  cockpitForceFull makes the first render() populate
-    // every cell regardless of shadow contents.
+    // Cockpit decode is writer-driven: instrument writers register the exact cells
+    // they changed (rof_cockpit_dirty → the g_ck* span registry) and render() decodes
+    // only those — no per-frame full scan / shadow compare.  cockpitForceFull forces a
+    // one-time full repaint of the whole region (scene entry, when the transpiled
+    // display_setup — not a hooked writer — built the cockpit).
     bool    cockpitForceFull = true;
-    uint8_t cockpitModeDShadow[4 * 40] = {};   // shadow of modeD source ($350D region)
-    uint8_t cockpitMode4Shadow[10 * 40] = {};  // shadow of mode4 source ($332D region)
 };

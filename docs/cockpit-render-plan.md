@@ -99,3 +99,43 @@ lock-on writers), `src/gen/rof_native.c` (`draw_object_column` dial writer). Pro
 If any bitmap-cell writer isn't converted before the shadow is removed, that instrument
 freezes. Mitigation: discovery step #1 enumerates every in-flight-changing cell first; keep the
 shadow as a temporary backstop until all writers are confirmed converted, then delete it.
+
+## STATUS — IMPLEMENTED 2026-06-25 (writer-driven decode, shadow scan removed)
+
+The full per-frame shadow scan is GONE. Decode is now WRITER-DRIVEN via a lock-free per-cell
+dirty-flag registry (`rof_cockpit_dirty(addr,n)` → `g_ckFlag[addr-$332D]`, 560 cells covering
+$332D mode4 + $350D modeD). render() does a one-time full repaint on scene entry
+(`cockpitForceFull`, since the transpiled `display_setup` builds the cockpit and isn't hooked),
+then steady-state walks the flag array (long-batched skip) and decodes only set cells —
+`decodeCockpitSpan()`. Single-byte flag stores are atomic on the 68000, so writers in the VBI
+ISR (lock-on, dials) and on the main thread (digits) need no Disable()/Enable() (an early
+Disable()-in-ISR version WEDGED interrupt delivery → the game never auto-started; do NOT
+reintroduce it). Measured flight-only (`make PROBES=1`, `cockpitTicks/tdFrames`): **~620 →
+~115 ticks/frame (~5×)**; only ~15-28 of ~125 flight frames decode any cell. `make validate
+FN=draw_object_column` passes (the dial hook is a no-op on SDL/validate). Files: the hook
+plumbing is `platform_cockpit_dirty` (platform_c.h / platform_cbridge.cpp / Platform.h virtual
+/ PlatformAmiga::cockpitDirty → rof_cockpit_dirty); the registry + decode live in
+RescueOnFractalus.cpp; writers in rof_native_amiga.cpp (digits/lock-on, call rof_cockpit_dirty
+directly) and rof_native.c (dials, via platform_cockpit_dirty, range-guarded to $332D-$355D).
+
+### HOOKED writers (confirmed converted)
+- **Digits** `startup_init_native` (rof_native_amiga.cpp): `writeDigit` 2×2 blocks $33B4 /
+  $3413 / $3445 / $3472 / $34A4 (each → `rof_cockpit_dirty(dest,2)` + `(dest+$30,2)`); the
+  DL-stride bytes $33DF/$33E0.
+- **Lock-on** `lock_on_indicator_tick_native`: each $3491-$3497 cell it touches.
+- **Dials (thrust #4 / dangerous-alt #5)** `draw_object_column` (rof_native.c): each $4581-table
+  dest it actually changes, range-guarded so PMG-buffer dests fall outside and are ignored.
+
+### TODO — UNHOOKED writers (these instruments may FREEZE in flight; hunt when needed)
+Verify each VISUALLY in flight (run.sh); if frozen, find the writer + add a rof_cockpit_dirty call.
+- **Shields light (#14) / $3355 `special_state_color`** — CONFIRMED changing in the neutral-flight
+  discovery, but written by TRANSPILED `enter_terrain_special_state` ($9B0D) /
+  `exit_terrain_special_state` ($9B4C) / `check_object_in_target_box` ($93BD), none hooked.
+  HIGHEST priority — known to change.
+- **Mother Ship (#15) / Air Lock (#16) status lights** — writers not located (event-driven, not
+  seen in the neutral discovery run).
+- **Targeting Scope (#8) / Long Range Scanner (#13)** — did NOT change in neutral flight (likely
+  static after entry, or event-driven). Confirm they don't need a per-frame writer.
+- **Score / kills / quota digits $3413/$3445/$3472/$34A4** — hooked (startup_init), but only fire
+  on game events; the neutral discovery couldn't exercise them. Confirm they update on a
+  rescue/kill.

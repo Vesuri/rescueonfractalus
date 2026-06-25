@@ -670,6 +670,13 @@ void PlatformAmiga::tunnelRingsDrawn() {
     g_tunnelFieldDirty = 1;
 }
 
+extern "C" void rof_cockpit_dirty(unsigned short addr, unsigned char nCells);
+void PlatformAmiga::cockpitDirty(uint16_t addr, uint8_t nCells) {
+    // An instrument writer (e.g. the dial bars, draw_object_column) changed a cockpit cell
+    // span; record it so render() decodes only those cells (writer-driven, no full scan).
+    rof_cockpit_dirty(addr, nCells);
+}
+
 extern "C" volatile unsigned char g_compassDirty;
 void PlatformAmiga::compassChanged() {
     // The compass heading cells $32E3-$32E6 were rewritten (housing or heading glyph).

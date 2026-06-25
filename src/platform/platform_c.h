@@ -60,6 +60,12 @@ void platform_title_changed(void);
    The Amiga backend re-decodes just those 4 cells; no-op on the host/SDL build. */
 void platform_compass_changed(void);
 
+/* Notification that an instrument writer changed a span of nCells cockpit cells starting at
+   Atari screen-RAM address `addr` ($332D mode4 / $350D modeD).  The Amiga backend records the
+   span so render() decodes only those cells (writer-driven cockpit decode, no full scan).
+   No-op on platforms that render mem[] directly (SDL / validate headless). */
+void platform_cockpit_dirty(uint16_t addr, uint8_t nCells);
+
 /* Poll for a pending in-flight keyboard-command keycode (an Atari KBCODE&$3F, or
    $80 for BREAK), consuming it.  Returns $FF when no command is pending.  Called
    from the flight VBI's CLI window ($519c) to replicate the POKEY keyboard IRQ

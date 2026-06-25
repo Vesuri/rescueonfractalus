@@ -56,6 +56,10 @@ void platform_compass_changed(void) {
     if (platform) platform->compassChanged();
 }
 
+void platform_cockpit_dirty(uint16_t addr, uint8_t nCells) {
+    if (platform) platform->cockpitDirty(addr, nCells);
+}
+
 uint8_t platform_flight_irq_key(void) {
     return platform ? platform->flightIrqKey() : 0xFF;
 }
