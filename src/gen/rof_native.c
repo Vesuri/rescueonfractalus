@@ -2825,7 +2825,7 @@ void update_terrain_horizon_lr(void) {
  * depth row with enter/exit terrain-special-state transitions, finalize the visible
  * span $281A/$281B, update the L/R horizon, and run the $066C-gated state machine.
  * All callees native; bounded -> random mem safe.  Memory contract (no entry regs read). */
-void update_terrain_scanline_proj(void) {
+static void update_terrain_scanline_proj_impl(void) {
     /* $9833: map X = {$2888:$2887} >> 4 ; map Z = {$288A:$2889} >> 4 (logical) */
     uint16_t sx = (uint16_t)((mem[0x2887] | (mem[0x2888] << 8)) >> 4);
     uint8_t sx_lo = (uint8_t)sx, sx_hi = (uint8_t)(sx >> 8);
@@ -2888,6 +2888,12 @@ void update_terrain_scanline_proj(void) {
     if (v66c >= 0x04) return;                             /* CMP #4; BCS */
     mem[0x2879] = 0; mem[0x0041] = 0;
 }
+#ifdef ROF_FLIGHT_PROBE
+extern volatile unsigned long g_pProj, g_pInteg;
+void update_terrain_scanline_proj(void) { unsigned long _p = rof_subclock(); update_terrain_scanline_proj_impl(); g_pProj += rof_subclock() - _p; }
+#else
+void update_terrain_scanline_proj(void) { update_terrain_scanline_proj_impl(); }
+#endif
 
 /* signed_mul_8x16 @ $9C97 — fixed-point signed multiply.
  *
@@ -5499,7 +5505,7 @@ void compute_obj_rel_angle_scale(void) {
  * RANDOM $D20A.  Ported goto-faithfully (huge maze).  mem-only contract (reads no entry
  * regs/carry at $8e5b).  Native-call cpu setup: game_sub_55FC needs cpu.Y; draw_cockpit_dial_bar
  * / store_676_init need cpu.A; compute_obj_rel_angle_scale reads ENTRY CARRY ($90f8). */
-void flight_control_integrate(void) {
+static void flight_control_integrate_impl(void) {
     uint8_t A, X, Y, c = 0, n, v;
     #define ADC_(x) do { uint16_t _t=(uint16_t)A+(uint8_t)(x)+c; c=(uint8_t)(_t>>8); A=(uint8_t)_t; } while(0)
     #define SBC_(x) ADC_((uint8_t)~(uint8_t)(x))
@@ -5793,6 +5799,11 @@ L_92c7:
     #undef RORM_
     #undef ASLM_
 }
+#ifdef ROF_FLIGHT_PROBE
+void flight_control_integrate(void) { unsigned long _p = rof_subclock(); flight_control_integrate_impl(); g_pInteg += rof_subclock() - _p; }
+#else
+void flight_control_integrate(void) { flight_control_integrate_impl(); }
+#endif
 
 /* ===========================================================================
  * Flight main-loop de-transpile (2026-06-12): game_state_update + enemy_check

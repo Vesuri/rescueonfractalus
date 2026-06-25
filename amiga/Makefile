@@ -69,6 +69,11 @@ NATIVE_OPT ?= -O3 -funroll-loops
 # the gdb stub, e.g. amiga/diag_run.sh + diag_timing.gdb).  Off by default; enable with
 # `make PROBES=1`.  Turns on ROF_FLIGHT_PROBE (PlatformAmiga.cpp + rof_native.c FP_* macros)
 # and ROF_TDRAW_PROF (terrain_draw_frame sub-phase split).
+# On the Amiga, bus_write to hardware ($D000-$D7FF) is a no-op for everything except the
+# POKEY audio range $D200-$D20F (PlatformAmiga::hwWrite ignores GTIA/ANTIC writes).  Tell
+# bus_write to skip the (virtual) platform call for those dead ranges — the per-frame VBI
+# alone pokes ~20 GTIA/ANTIC registers that did nothing but cost an indirect call.
+EXTRA_DEFINES += -DROF_HW_WRITE_POKEY_ONLY
 ifdef PROBES
 EXTRA_DEFINES += -DROF_FLIGHT_PROBE -DROF_TDRAW_PROF
 endif

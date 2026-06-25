@@ -24,8 +24,18 @@ static inline uint8_t bus_read(uint16_t addr) {
 
 static inline void bus_write(uint16_t addr, uint8_t val) {
     if (addr >= 0xD000 && addr < 0xD800) {
+#ifdef ROF_HW_WRITE_POKEY_ONLY
+        /* Amiga: hwWrite only acts on the POKEY audio range ($D200-$D20F → Paula); every
+           other hardware write is ignored, so skip the (virtual) platform call entirely.
+           Behaviourally identical on this platform — the call had no side effect — but it
+           drops ~20 dead GTIA/ANTIC virtual calls per flight-VBI firing (and elsewhere). */
+        if (addr >= 0xD200 && addr < 0xD210)
+            platform_hw_write(addr, val);
+        return;
+#else
         platform_hw_write(addr, val);
         return;
+#endif
     }
     mem[addr] = val;
     /* Notify platform about writes to key OS shadow registers so it

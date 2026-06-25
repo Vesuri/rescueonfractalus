@@ -559,6 +559,8 @@ extern "C" volatile unsigned char g_dcMin=0xFF, g_dcMax=0, g_ddMin=0xFF, g_ddMax
 // Cockpit-decode probe (beam sub-frame ticks): g_fCockpit accumulates the time spent in the
 // render() cockpit scan/decode block; g_fCockpitScans counts the frames it actually ran.
 extern "C" volatile unsigned long g_fCockpit=0, g_fCockpitScans=0;
+// TEMP VBI-body sub-profiling (beam-line deltas inside the flight VBI; normalize by isrCalls).
+extern "C" volatile unsigned long g_pProj=0, g_pInteg=0;
 // Stage-1 verifier: chip addr of terrainBitmap->data, so the gdb harness can dump the
 // flight bitplanes and decode/diff them headlessly (no display needed).
 extern "C" volatile uint32_t g_terrainBmpAddr=0;

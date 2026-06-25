@@ -25,6 +25,12 @@ printf "setup=%lu clear=%lu draw=%lu coll=%lu state=%lu enemy=%lu\n", \
 echo --- g_flightProf (RTCLOK ticks=20ms; per-frame = field/frames) ---\n
 printf "frames=%lu terrain=%lu tDraw=%lu stateEnemy=%lu render=%lu copper=%lu renderTot=%lu updateTot=%lu isrLines=%lu isrCalls=%lu\n", \
   g_flightProf.frames, g_flightProf.terrain, g_flightProf.tDraw, g_flightProf.stateEnemy, g_flightProf.render, g_flightProf.copper, g_flightProf.renderTot, g_flightProf.updateTot, g_flightProf.isrLines, g_flightProf.isrCalls
+echo --- VBI body sub-profile (beam ticks; per-ISR-call = total/isrCalls) ---\n
+printf "pProj=%lu pInteg=%lu isrCalls=%lu | per-call: proj=%lu integ=%lu isr=%lu\n", \
+  g_pProj, g_pInteg, g_flightProf.isrCalls, \
+  (g_flightProf.isrCalls? g_pProj/g_flightProf.isrCalls:0), \
+  (g_flightProf.isrCalls? g_pInteg/g_flightProf.isrCalls:0), \
+  (g_flightProf.isrCalls? g_flightProf.isrLines/g_flightProf.isrCalls:0)
 echo --- cockpit decode (beam ticks; 313=20ms) ---\n
 printf "cockpitTicks=%lu cockpitScans=%lu (per-scan ticks=%lu)\n", g_fCockpit, g_fCockpitScans, (g_fCockpitScans? g_fCockpit/g_fCockpitScans : 0)
 echo --- terrain_draw_frame sub-phase (ROF_TDRAW_PROF; cumulative — normalize by frames) ---\n
