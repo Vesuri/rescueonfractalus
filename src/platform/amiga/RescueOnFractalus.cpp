@@ -78,6 +78,10 @@ extern "C" volatile unsigned char g_titleDirty   = 1;
 // races the clear simply re-flags for the next frame — never a missed change, never a lost span.
 static const int CK_FLAGS = 0x355D - 0x332D;   // 560 cells: mode4 $332D..$350C + modeD $350D..$355C
 static volatile unsigned char g_ckFlag[CK_FLAGS] __attribute__((aligned(4))) = {};
+// "Any cell pending" gate: set whenever a flag is raised, so render() skips the whole flag-array
+// walk on idle frames (the common case) — those cost a single byte read.  Cleared before the
+// walk; a write racing the walk re-sets it, so the cell is caught next frame.
+static volatile unsigned char g_ckAnyDirty = 0;
 
 extern "C" void rof_cockpit_dirty(unsigned short addr, unsigned char n)
 {
@@ -87,6 +91,7 @@ extern "C" void rof_cockpit_dirty(unsigned short addr, unsigned char n)
         unsigned short o = (unsigned short)(off + j);
         if (o < (unsigned short)CK_FLAGS) g_ckFlag[o] = 1u;
     }
+    g_ckAnyDirty = 1u;
 }
 #ifdef ROF_FLIGHT_PROBE
 extern "C" unsigned long rof_subclock(void);
@@ -1699,10 +1704,12 @@ void RescueOnFractalus::render()
         decodeCockpitFull();
         // The full paint covers every cell — drop any flags set before it.
         for (int i = 0; i < CK_FLAGS; i++) g_ckFlag[i] = 0u;
+        g_ckAnyDirty = 0u;
 #ifdef ROF_FLIGHT_PROBE
         if (rsFlight) g_fCockpitScans++;
 #endif
-    } else {
+    } else if (g_ckAnyDirty) {
+        g_ckAnyDirty = 0u;   // clear before the walk; a write that races it re-sets → next frame
         // Walk the dirty-flag array; long-batched so all-clear runs (the common case) skip 4
         // cells at a time.  A set flag → clear it, then decode that single cell.  (Reading the
         // flags through a non-volatile long alias lets the compiler batch the skip; a flag set
