@@ -218,10 +218,10 @@ private:
     // vertical pieces a row-band would miss, while staying well under a frame.
     uint8_t tunnelShadow[86 * 40] = {};
 
-    // Cockpit decode is writer-driven: instrument writers register the exact cells
-    // they changed (rof_cockpit_dirty → the g_ck* span registry) and render() decodes
-    // only those — no per-frame full scan / shadow compare.  cockpitForceFull forces a
-    // one-time full repaint of the whole region (scene entry, when the transpiled
-    // display_setup — not a hooked writer — built the cockpit).
+    // Cockpit decode is writer-driven per instrument: each writer raises one g_ck* boolean
+    // (digits / lock-on / dial) and render() decodes only that instrument's cells — no
+    // per-frame full scan / shadow compare.  cockpitForceFull forces a one-time full repaint
+    // of the whole region (scene entry, when the transpiled display_setup — not a hooked
+    // writer — built the cockpit).
     bool    cockpitForceFull = true;
 };

@@ -670,11 +670,11 @@ void PlatformAmiga::tunnelRingsDrawn() {
     g_tunnelFieldDirty = 1;
 }
 
-extern "C" void rof_cockpit_dirty(unsigned short addr, unsigned char nCells);
+extern "C" void rof_cockpit_dial_dirty(unsigned short addr);
 void PlatformAmiga::cockpitDirty(uint16_t addr, uint8_t nCells) {
-    // An instrument writer (e.g. the dial bars, draw_object_column) changed a cockpit cell
-    // span; record it so render() decodes only those cells (writer-driven, no full scan).
-    rof_cockpit_dirty(addr, nCells);
+    // The shared-code cockpit writer is the dial bars (draw_object_column); grow the dial
+    // bounding box so render() re-decodes just that footprint (writer-driven, no full scan).
+    for (uint8_t i = 0; i < nCells; i++) rof_cockpit_dial_dirty((uint16_t)(addr + i));
 }
 
 extern "C" volatile unsigned char g_compassDirty;

@@ -102,29 +102,33 @@ shadow as a temporary backstop until all writers are confirmed converted, then d
 
 ## STATUS — IMPLEMENTED 2026-06-25 (writer-driven decode, shadow scan removed)
 
-The full per-frame shadow scan is GONE. Decode is now WRITER-DRIVEN via a lock-free per-cell
-dirty-flag registry (`rof_cockpit_dirty(addr,n)` → `g_ckFlag[addr-$332D]`, 560 cells covering
-$332D mode4 + $350D modeD). render() does a one-time full repaint on scene entry
-(`cockpitForceFull`, since the transpiled `display_setup` builds the cockpit and isn't hooked),
-then steady-state walks the flag array (long-batched skip) and decodes only set cells —
-`decodeCockpitSpan()`. Single-byte flag stores are atomic on the 68000, so writers in the VBI
-ISR (lock-on, dials) and on the main thread (digits) need no Disable()/Enable() (an early
+The full per-frame shadow scan is GONE. Decode is now WRITER-DRIVEN **per instrument**: each
+writer raises ONE boolean and render() decodes just that instrument's cells. render() does a
+one-time full repaint on scene entry (`cockpitForceFull`, since the transpiled `display_setup`
+builds the cockpit and isn't hooked), then steady-state checks the booleans — idle frames (the
+common case) cost three byte reads. Single-byte flags are atomic on the 68000, so writers on the
+VBI ISR (lock-on, dials) and the main thread (digits) need no Disable()/Enable() (an early
 Disable()-in-ISR version WEDGED interrupt delivery → the game never auto-started; do NOT
-reintroduce it). Measured flight-only (`make PROBES=1`, `cockpitTicks/tdFrames`): **~620 →
-~115 ticks/frame (~5×)**; only ~15-28 of ~125 flight frames decode any cell. `make validate
-FN=draw_object_column` passes (the dial hook is a no-op on SDL/validate). Files: the hook
-plumbing is `platform_cockpit_dirty` (platform_c.h / platform_cbridge.cpp / Platform.h virtual
-/ PlatformAmiga::cockpitDirty → rof_cockpit_dirty); the registry + decode live in
-RescueOnFractalus.cpp; writers in rof_native_amiga.cpp (digits/lock-on, call rof_cockpit_dirty
-directly) and rof_native.c (dials, via platform_cockpit_dirty, range-guarded to $332D-$355D).
+reintroduce it). Measured flight-only (`make PROBES=1`, `cockpitTicks/tdFrames`): **~1662 →
+~73 ticks/frame (~23×)** (the old ~1662 included the ~3×/game-frame redundant re-scan, now
+entirely gone); ~15 of ~176 flight frames decode any cell, the rest hit the boolean
+short-circuit. `make validate FN=draw_object_column` passes (the dial hook is a no-op on
+SDL/validate). Files: the registry + decode live in RescueOnFractalus.cpp; writers in
+rof_native_amiga.cpp (digits/lock-on set `g_ckDigits`/`g_ckLockon` directly) and rof_native.c
+(dials via `platform_cockpit_dirty` → PlatformAmiga::cockpitDirty → `rof_cockpit_dial_dirty`,
+range-guarded to $332D-$355D).
 
 ### HOOKED writers (confirmed converted)
-- **Digits** `startup_init_native` (rof_native_amiga.cpp): `writeDigit` 2×2 blocks $33B4 /
-  $3413 / $3445 / $3472 / $34A4 (each → `rof_cockpit_dirty(dest,2)` + `(dest+$30,2)`); the
-  DL-stride bytes $33DF/$33E0.
-- **Lock-on** `lock_on_indicator_tick_native`: each $3491-$3497 cell it touches.
-- **Dials (thrust #4 / dangerous-alt #5)** `draw_object_column` (rof_native.c): each $4581-table
-  dest it actually changes, range-guarded so PMG-buffer dests fall outside and are ignored.
+- **Digits** `startup_init_native` (rof_native_amiga.cpp): set `g_ckDigits`; render decodes the
+  five 2×2 blocks $33B4 / $3413 / $3445 / $3472 / $34A4 (+ bottom row at +$30) and the DL-stride
+  pair $33DF/$33E0. (Fixed spans → one boolean for the digit group.)
+- **Lock-on** `lock_on_indicator_tick_native`: set `g_ckLockon`; render decodes $3491-$3497.
+- **Dials (thrust #4 / dangerous-alt #5)** `draw_object_column` (rof_native.c): the bars' cells
+  come from the $4581 column table (NOT a fixed span), so the dial alone keeps per-cell precision
+  — `g_ckDialFlag[addr-$332D]` (480 mode4 cells), walked only when `g_ckDial` is set. A fixed
+  bounding-box decode was tried and measured ~4× worse (it re-paints dozens of static cells each
+  time one bar moves). Each $4581-table dest it actually changes is range-guarded so PMG-buffer
+  dests fall outside and are ignored.
 
 ### TODO — UNHOOKED writers (these instruments may FREEZE in flight; hunt when needed)
 Verify each VISUALLY in flight (run.sh); if frozen, find the writer + add a rof_cockpit_dirty call.

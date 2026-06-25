@@ -65,33 +65,35 @@ extern "C" volatile unsigned char g_doorFieldReady;
 // never missed.
 extern "C" volatile unsigned char g_titleDirty   = 1;
 
-// ---- cockpit dirty-cell registry --------------------------------------------
-// The cockpit ($332D mode4 / $350D modeD) is decoded WRITER-DRIVEN: each instrument writer
-// (digits startup_init, lock-on, dials draw_object_column) calls rof_cockpit_dirty(addr,n)
-// with the exact cell span it just changed, and render() decodes only those cells — no
-// per-frame full scan / shadow compare.  Writers run on BOTH the main thread (digits, in
-// perFrameWork) AND the VBI ISR (lock-on, dials), so the registry must be lock-free: it is a
-// per-cell dirty-flag array indexed by (addr - $332D), spanning $332D..$355D (mode4 + modeD).
-// Single-byte stores are atomic on the 68000, so producers just set their cells' flags with no
-// Disable() (calling Disable()/Enable() from the VBI ISR wedged interrupt delivery — incl. the
-// keyboard ISR that starts the game).  render() clears-then-decodes each set flag; a write that
-// races the clear simply re-flags for the next frame — never a missed change, never a lost span.
-static const int CK_FLAGS = 0x355D - 0x332D;   // 560 cells: mode4 $332D..$350C + modeD $350D..$355C
-static volatile unsigned char g_ckFlag[CK_FLAGS] __attribute__((aligned(4))) = {};
-// "Any cell pending" gate: set whenever a flag is raised, so render() skips the whole flag-array
-// walk on idle frames (the common case) — those cost a single byte read.  Cleared before the
-// walk; a write racing the walk re-sets it, so the cell is caught next frame.
-static volatile unsigned char g_ckAnyDirty = 0;
+// ---- cockpit per-instrument dirty flags -------------------------------------
+// The cockpit ($332D mode4 / $350D modeD) is decoded WRITER-DRIVEN by instrument: the only
+// instruments that change in flight are the digits, the lock-on indicator and the two dial bars,
+// so each writer raises ONE boolean and render() decodes just that instrument's cells — no array,
+// no scan/walk.  Idle frames (the common case) cost three boolean reads.  Flags are single bytes
+// (atomic on the 68000) so writers on the main thread (digits) and the VBI ISR (lock-on, dials)
+// need no Disable() (an early Disable()/Enable()-in-ISR version wedged interrupt delivery — incl.
+// the keyboard ISR that starts the game).  render() clears-then-decodes; a write racing the clear
+// is caught next frame.  Other instruments (status lights, scope, scanner) are static after the
+// scene-entry full paint until a writer is hooked — see docs/cockpit-render-plan.md "TODO".
+extern "C" volatile unsigned char g_ckDigits = 0;   // score/kills/quota digits + DL-stride (startup_init)
+extern "C" volatile unsigned char g_ckLockon = 0;   // lock-on indicator $3491-$3497
+extern "C" volatile unsigned char g_ckDial   = 0;   // thrust/danger-alt dial bars (draw_object_column)
+// The two dial bars are the one instrument without a fixed cell span — their cells come from the
+// $4581 column table — so the dial alone needs per-cell precision (a fixed-box decode re-paints
+// dozens of static cells every time one bar cell moves, which measured ~4x worse).  Per-cell
+// dirty flags over the mode4 region, walked ONLY when g_ckDial is set (so idle frames still cost
+// nothing).  Single-byte stores → lock-free vs the VBI writer; clear-then-decode, race re-set
+// caught next frame.
+static const int CK_DIAL_N = 0x350D - 0x332D;   // 480 mode4 cells ($332D..$350C)
+static volatile unsigned char g_ckDialFlag[CK_DIAL_N] __attribute__((aligned(4))) = {};
 
-extern "C" void rof_cockpit_dirty(unsigned short addr, unsigned char n)
+// The shared dial writer (draw_object_column, rof_native.c) reports each changed bar cell here via
+// PlatformAmiga::cockpitDirty → this.  Mode4 only (the bars live in $332D..$350C).
+extern "C" void rof_cockpit_dial_dirty(unsigned short addr)
 {
-    if (addr < 0x332Du) return;
-    unsigned short off = (unsigned short)(addr - 0x332Du);
-    for (unsigned char j = 0; j < n; j++) {
-        unsigned short o = (unsigned short)(off + j);
-        if (o < (unsigned short)CK_FLAGS) g_ckFlag[o] = 1u;
-    }
-    g_ckAnyDirty = 1u;
+    if (addr < 0x332Du || addr >= 0x350Du) return;
+    g_ckDialFlag[addr - 0x332Du] = 1u;
+    g_ckDial = 1u;
 }
 #ifdef ROF_FLIGHT_PROBE
 extern "C" unsigned long rof_subclock(void);
@@ -1702,30 +1704,48 @@ void RescueOnFractalus::render()
     if (cockpitForceFull) {
         cockpitForceFull = false;
         decodeCockpitFull();
-        // The full paint covers every cell — drop any flags set before it.
-        for (int i = 0; i < CK_FLAGS; i++) g_ckFlag[i] = 0u;
-        g_ckAnyDirty = 0u;
+        // The full paint covers every cell — drop all instrument flags + the dial cell flags.
+        g_ckDigits = g_ckLockon = g_ckDial = 0u;
+        for (int i = 0; i < CK_DIAL_N; i++) g_ckDialFlag[i] = 0u;
 #ifdef ROF_FLIGHT_PROBE
         if (rsFlight) g_fCockpitScans++;
 #endif
-    } else if (g_ckAnyDirty) {
-        g_ckAnyDirty = 0u;   // clear before the walk; a write that races it re-sets → next frame
-        // Walk the dirty-flag array; long-batched so all-clear runs (the common case) skip 4
-        // cells at a time.  A set flag → clear it, then decode that single cell.  (Reading the
-        // flags through a non-volatile long alias lets the compiler batch the skip; a flag set
-        // by the ISR mid-walk that this long missed stays set and is caught next frame.)
-        const unsigned long* fl = (const unsigned long*)(const void*)g_ckFlag;
+    } else {
         bool any = false;
-        for (int i = 0; i < CK_FLAGS / 4; i++) {
-            if (fl[i] == 0u) continue;
-            int base = i * 4;
-            for (int b = 0; b < 4; b++) {
-                if (g_ckFlag[base + b]) {
-                    g_ckFlag[base + b] = 0u;
-                    decodeCockpitSpan((uint16_t)(0x332Du + base + b), 1u);
-                    any = true;
+        // Digits (#17-19) + DL-stride: 5 two-tall 2×2 blocks + the $33DF/$33E0 stride pair.
+        // Decoding all five whenever any digit changes is ~22 cells and digits change rarely.
+        if (g_ckDigits) {
+            g_ckDigits = 0u;
+            static const uint16_t kDigit[5] = { 0x33B4u, 0x3413u, 0x3445u, 0x3472u, 0x34A4u };
+            for (int i = 0; i < 5; i++) {
+                decodeCockpitSpan(kDigit[i], 2u);                 // top row
+                decodeCockpitSpan((uint16_t)(kDigit[i] + 0x30u), 2u);  // bottom row (one DL row down)
+            }
+            decodeCockpitSpan(0x33DFu, 2u);                       // DL-stride control bytes
+            any = true;
+        }
+        // Lock-on indicator (#11): the 7 cells $3491-$3497.
+        if (g_ckLockon) {
+            g_ckLockon = 0u;
+            decodeCockpitSpan(0x3491u, 7u);
+            any = true;
+        }
+        // Thrust (#4) / Dangerous-Altitude (#5) dial bars: per-cell, walked only now (dial moved).
+        // Long-batched skip so the all-clear runs between bar cells are cheap.
+        if (g_ckDial) {
+            g_ckDial = 0u;
+            const unsigned long* fl = (const unsigned long*)(const void*)g_ckDialFlag;
+            for (int i = 0; i < CK_DIAL_N / 4; i++) {
+                if (fl[i] == 0u) continue;
+                int base = i * 4;
+                for (int b = 0; b < 4; b++) {
+                    if (g_ckDialFlag[base + b]) {
+                        g_ckDialFlag[base + b] = 0u;
+                        decodeCockpitSpan((uint16_t)(0x332Du + base + b), 1u);
+                    }
                 }
             }
+            any = true;
         }
 #ifdef ROF_FLIGHT_PROBE
         if (rsFlight && any) g_fCockpitScans++;
