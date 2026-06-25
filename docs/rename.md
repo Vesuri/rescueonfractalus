@@ -10,7 +10,7 @@ really does, suggested name.
 
 | Addr | Current name | What it actually does | Suggested |
 |------|--------------|------------------------|-----------|
-| | | _(empty — add new findings here)_ | |
+| $AB9A | `raster_fill_region` | Not a region/flood fill: samples a **distance-scaled source object bitmap** (source ptr `($00C3)` + the `$AC3A` per-bit table) through the `$0052-$0055` fixed-point step accumulators over a 12×32 sampling grid, plotting each set source bit via `terrain_clip_row_top`. I.e. it draws a scaled object's texture/detail (the terrain "dots" when called with plot-mask `$0058=$AA`). Name hides that it's an object-sprite rasteriser. | `raster_scaled_object` (or `plot_scaled_object_cells`) |
 
 ## Notes
 - **"scroll" in the `scroll_*` names = Atari LMS / buffer-shift scrolling**, not pixel
