@@ -56,6 +56,7 @@ private:
     uint8_t prevScrollCtr = 0;      // gap before the ring/viewport arms (see deriveRenderSignals)
     bool    prevRsStars = false;    // rising edge → one-time title/cockpit rescan on stars entry
     bool    prevRsFlight = false;   // rising edge → one-time full cockpit repaint on flight entry
+    uint8_t prevDoorFieldReady = 0; // rising edge (standby built) → one-time full cockpit repaint
 
     Sprite*  energyIndicatorSprite   = nullptr;    // player-strip throttle bar ($0D98)
     void buildEnergyIndicatorSprite();             // $0D98 strip -> energyIndicatorSprite lines

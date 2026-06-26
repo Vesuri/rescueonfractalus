@@ -1358,11 +1358,20 @@ void RescueOnFractalus::deriveRenderSignals()
     // WRITER-DRIVEN (the g_ck* span registry) — in flight the instrument writers register the
     // exact cells they change, so re-scanning ~580 cells EVERY frame is gone (it was the #1
     // flight cost).  Title still uses g_titleDirty via the $782A copy hook.
-    if (g_doorFieldReady == 0u || (rsStars && !prevRsStars) || (rsFlight && !prevRsFlight)) {
-        g_titleDirty = 1; cockpitForceFull = true;
-    }
-    prevRsStars  = rsStars;
-    prevRsFlight = rsFlight;
+    // Title uses a cheap 20-cell shadow scan, so forcing it every transitional frame is fine.
+    if (g_doorFieldReady == 0u || (rsStars && !prevRsStars) || (rsFlight && !prevRsFlight))
+        g_titleDirty = 1;
+    // The cockpit full repaint (decodeCockpitFull = 560 cells, no shadow) must NOT run every
+    // boot frame — forcing it while g_doorFieldReady==0 full-decoded the whole region every
+    // frame and visibly slowed the standby reveal.  display_setup builds the cockpit once, so
+    // repaint only on EDGES: the first render (initial cockpitForceFull=true), when standby
+    // becomes ready (g_doorFieldReady 0->nonzero = cockpit built), and on stars/flight entry.
+    if ((g_doorFieldReady != 0u && prevDoorFieldReady == 0u)
+        || (rsStars && !prevRsStars) || (rsFlight && !prevRsFlight))
+        cockpitForceFull = true;
+    prevRsStars         = rsStars;
+    prevRsFlight        = rsFlight;
+    prevDoorFieldReady  = g_doorFieldReady;
 }
 
 // perFrameWork(): per-frame non-phase work (the tail of the old update()).  These
