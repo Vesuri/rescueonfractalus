@@ -39,6 +39,11 @@ printf "  per-frame: tdSubdiv=%lu tdProjPlot=%lu (beam ticks/frame)\n", \
   (g_tdFrames? g_tdSubdiv/g_tdFrames : 0), (g_tdFrames? g_tdProjPlot/g_tdFrames : 0)
 printf "fConvert=%lu (flight mem[1070]->bitplane convert; same units as draw=%lu)\n", g_fConvert, g_fDraw
 printf "fDirect=%lu (Stage-1 direct $260E->bitplane render; cmp vs fConvert)\n", g_fDirect
+echo --- altimeter sprites ($281A/$281B bar tops; sprite hdr SV/EV bytes) ---\n
+printf "281A=%02x 281B=%02x | altimAddr=%08x shipAddr=%08x\n", mem[0x281A], mem[0x281B], g_altimSprAddr, g_altimShipSprAddr
+printf "altim  hdr: SV=%02x EV=%02x ctl=%02x | ship hdr: SV=%02x EV=%02x ctl=%02x\n", \
+  *(unsigned char*)g_altimSprAddr, *(unsigned char*)(g_altimSprAddr+2), *(unsigned char*)(g_altimSprAddr+3), \
+  *(unsigned char*)g_altimShipSprAddr, *(unsigned char*)(g_altimShipSprAddr+2), *(unsigned char*)(g_altimShipSprAddr+3)
 echo --- render/glue gap: ds_frame() per flight renderFrame call (beam ticks; 313=20ms) ---\n
 printf "rCalls=%lu renderWall=%lu renderCompute=%lu idleWall=%lu\n", \
   g_rCalls, g_rRenderWall, g_rRenderCompute, g_rIdleWall

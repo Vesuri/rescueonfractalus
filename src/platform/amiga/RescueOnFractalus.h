@@ -62,6 +62,7 @@ private:
     void buildEnergyIndicatorSprite();             // $0D98 strip -> energyIndicatorSprite lines
     Sprite*  altimeterSprite = nullptr;  // P0 $0C98 terrain-height bar (flight altimeter)
     Sprite*  altimeterShipSprite = nullptr;  // M3 $0B98 ship-height bar (flight altimeter)
+    bool     altimSolidBuilt = false;    // altimeter bars are solid 56-row sprites filled once (lazily)
 
     // Stars/space starfield: the 3 Atari players P0/P2/P3 ($0C32/$0E32/$0F32),
     // scrolled + sparsely seeded by the genuine scroll_field_columns ($6AEE),

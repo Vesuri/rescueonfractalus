@@ -349,40 +349,43 @@ void RescueOnFractalus::buildEnergyIndicatorSprite()
     }
 }
 
-// ---- altimeter terrain-height bar (flight) -----------------------------------
-// The altimeter's terrain-height indicator is the Atari player P0 strip $0C98: a solid
-// 8px-wide bar that draw_altimeter_bars ($40E5) fills with $FF from offset $281A (the bar
-// top, which tracks terrain height $0062) down to a fixed bottom ($0C98+$37).  Mirror the
-// live buffer into the sprite each flight frame, exactly as buildEnergyIndicatorSprite mirrors the
-// energy indicator's $0D98 — each Atari player bit → 2 Amiga lores px via kDoubleGlyph,
-// so a solid $FF row becomes a full 16px sprite line.  (The P3 ship-height bar at $0F98 is
-// parked until triggered; not built yet.)
-static const int kAltimRows = 56;   // $0C98..$0CCF (bar top $281A varies, bottom fixed $37)
+static const int      kAltimRows    = 56;             // 8×56 rectangle ($0C98..$0CCF / $0B98..$0BCF)
+static const uint16_t kAltimTopLine = 0x2c + 144;     // buffer offset 0 → Amiga line 188 (matches setY below)
+
+// ---- altimeter bars (flight) -------------------------------------------------
+// The terrain-height (P0 $0C98) and ship-height (M3 $0B98) bars are fixed 8×56 solid rectangles
+// whose TOP edge tracks the value (bar offsets $281A / $281B).  On the Atari, draw_altimeter_bars
+// ($40E5) redraws the GRAFP fill because players have no per-line start register; the Amiga sprite
+// does (VSTART), so we keep a SOLID 56-row sprite and just move its Y each frame.  The 56-row bar
+// overflows past the dial bottom, but sprite<playfield priority hides the overflow behind the
+// cockpit dashboard, so the visible bar = top..dial-bottom — identical to the Atari, at the cost
+// of one setY (a few header bytes) instead of 56 row-decodes.  The solid fill is done once,
+// lazily on the first flight frame, so pre-flight the (zeroed) sprites stay invisible.
 void RescueOnFractalus::buildAltimeterSprite()
 {
-    uint16_t* d = altimeterSprite->data() + 2;   // skip the 2 control words
-    for (int i = 0; i < kAltimRows; i++) {
-        d[i * 2]     = kDoubleGlyph[mem[0x0C98 + i]];   // plane A (pen 01)
-        d[i * 2 + 1] = 0x0000;                          // plane B
+    if (!altimSolidBuilt) {
+        uint16_t* at = altimeterSprite->data() + 2;       // skip the 2 control words
+        uint16_t* sh = altimeterShipSprite->data() + 2;
+        for (int i = 0; i < kAltimRows; i++) {
+            at[i * 2] = 0xFFFFu; at[i * 2 + 1] = 0x0000u; // terrain bar: plane A (pen 01 / COLOR29)
+            sh[i * 2] = 0x0000u; sh[i * 2 + 1] = 0xFFFFu; // ship bar:    plane B (pen 10 / COLOR30)
+        }
+        altimSolidBuilt = true;
     }
+    // top = bar-top offset (0 = full bar at the dial top, kAltimRows = empty).  Pre-flight (and the
+    // first flight frame before the VBI computes it) $281A holds garbage (e.g. $88); an out-of-range
+    // value added to kAltimTopLine would push VSTART past 255 and wrap into the windscreen (Sprite::setY
+    // has no SV8), so clamp it to 0 = full (the topmost valid position).
+    uint16_t top = mem[0x281A];
+    if (top > (uint16_t)kAltimRows) top = 0;
+    altimeterSprite->setY((uint16_t)(kAltimTopLine + top));
 }
 
-// ---- altimeter ship-height bar (flight) --------------------------------------
-// The ship-height indicator is the Atari missile M3 (bits 6-7 of the shared missile
-// buffer $0B00): draw_altimeter_bars ($40E5) steps its top edge at $0B98+$281B (which tracks
-// ship altitude $0034) down to a fixed bottom ($0BCF).  SIZEM expands the 2px missile to
-// 8px (quad width) = a full 16px Amiga sprite line, so a set M3 row → 0xFFFF.  Mask bits
-// 6-7 to ignore the other missiles (M0-M2, e.g. the wing-clearance bars) sharing $0B00.
 void RescueOnFractalus::buildAltimeterShipSprite()
 {
-    // Draw into the SECOND bitplane (pen 10) so this unattached sprite uses COLOR30, while
-    // the altimeter terrain bar (sprite 6, same pair 6/7) uses plane 0 / pen 01 / COLOR29 —
-    // two distinct colours from one pair without attaching (planes don't interact).
-    uint16_t* d = altimeterShipSprite->data() + 2;   // skip the 2 control words
-    for (int i = 0; i < kAltimRows; i++) {
-        d[i * 2]     = 0x0000;                                         // plane 0 (unused here)
-        d[i * 2 + 1] = (mem[0x0B98 + i] & 0xC0u) ? 0xFFFFu : 0x0000u;  // plane 1 (pen 10) — M3 bits 6-7
-    }
+    uint16_t top = mem[0x281B];
+    if (top > (uint16_t)kAltimRows) top = 0;       // clamp pre-flight garbage to full (see buildAltimeterSprite)
+    altimeterShipSprite->setY((uint16_t)(kAltimTopLine + top));
 }
 
 // ---- starfield sprites -------------------------------------------------------
@@ -486,6 +489,11 @@ void RescueOnFractalus::initialize()
     // X and Y; bottoms align ($0B98..$0BCF ↔ $0C98..$0CCF, both at offset $98..$CF).
     altimeterShipSprite->setX(0x81 + 107);
     altimeterShipSprite->setY(0x2c + 144);
+#ifdef ROF_FLIGHT_PROBE
+    { extern volatile uint32_t g_altimSprAddr, g_altimShipSprAddr;
+      g_altimSprAddr     = (uint32_t)altimeterSprite->data();
+      g_altimShipSprAddr = (uint32_t)altimeterShipSprite->data(); }
+#endif
 
     // Post graphics are decoded once from the real RLE source tables (buildPostSprites,
     // triggered on the first perFrameWork frame); nothing to fill here.  Position/Y below.

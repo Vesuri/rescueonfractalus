@@ -584,6 +584,9 @@ extern "C" volatile unsigned long g_fDirect=0;
 extern "C" volatile unsigned long g_isrBeamLines;  // defined in rof_native_amiga.cpp
 extern "C" volatile unsigned long g_rRenderCompute=0, g_rRenderWall=0, g_rIdleWall=0, g_rCalls=0;
 extern "C" volatile unsigned long g_rPerFrame=0, g_rRenderFn=0, g_rCopper=0;
+// Altimeter sprite chip addresses (set in initialize) so the gdb harness can read their VSTART/
+// VSTOP control words and confirm the bar Y vs mem[$281A]/$281B.
+extern "C" volatile uint32_t g_altimSprAddr=0, g_altimShipSprAddr=0;
 #endif
 
 // g_quitJmp: the __builtin_setjmp buffer armed by RescueOnFractalus::run() so we can

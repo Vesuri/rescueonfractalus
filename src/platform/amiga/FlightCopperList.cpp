@@ -102,7 +102,13 @@ static const uint16_t kColor30 = 0x1BC;   // pair 6/7 pen 10 (altimeter ship-hei
 #define INDEX_DASH_BLUE       (INDEX_DASH_BLUE_WAIT + 1)   // color00 = $90 dark blue (dashboard) (1)
 #define INDEX_FLOOR_WAIT      (INDEX_DASH_BLUE + 1)        // WAIT(kCockpitLine+72-1 = 251) (1)
 #define INDEX_FLOOR           (INDEX_FLOOR_WAIT + 1)       // color00 = black (floor) (1)
-#define INDEX_TERMINATOR      (INDEX_FLOOR + 1)            // copperWait(255,254)
+// The altimeter bars (sprite pair 6/7) are fixed 56-row SOLID sprites whose Y tracks the bar
+// value (setY in buildAltimeterSprite), so a short/high bar's sprite overflows below the dial
+// into the black floor — where it would show purple/cyan.  Black out its two pens at the same
+// floor line color00 goes black, so the overflow vanishes into the floor.
+#define INDEX_FLOOR_ALTIM     (INDEX_FLOOR + 1)            // COLOR29 = black (altimeter terrain overflow) (1)
+#define INDEX_FLOOR_SHIP      (INDEX_FLOOR_ALTIM + 1)      // COLOR30 = black (altimeter ship overflow) (1)
+#define INDEX_TERMINATOR      (INDEX_FLOOR_SHIP + 1)       // copperWait(255,254)
 #define LIST_LENGTH           (INDEX_TERMINATOR + 1)
 
 FlightCopperList::FlightCopperList()
@@ -215,8 +221,10 @@ void FlightCopperList::buildLayout(const Bitmap& title, const Bitmap& terrain, c
     // Only COLBK (color00) changes; baked color00=$00 above covers the divider strip (180-188).
     d[INDEX_DASH_BLUE_WAIT] = copperWait(kCockpitLine + 2 - 1, 0xE0);
     d[INDEX_DASH_BLUE]      = copperMove(color00, atariToOCS(0x90));
-    d[INDEX_FLOOR_WAIT] = copperWait(kCockpitLine + 72 - 1, 0xE0);
-    d[INDEX_FLOOR]      = copperMove(color00, atariToOCS(0x00));
+    d[INDEX_FLOOR_WAIT]  = copperWait(kCockpitLine + 72 - 1, 0xE0);
+    d[INDEX_FLOOR]       = copperMove(color00, atariToOCS(0x00));
+    d[INDEX_FLOOR_ALTIM] = copperMove(kColor29, 0x000);   // altimeter terrain pen01 → black (hide overflow)
+    d[INDEX_FLOOR_SHIP]  = copperMove(kColor30, 0x000);   // altimeter ship   pen10 → black (hide overflow)
 
     d[INDEX_TERMINATOR] = copperWait(255, 254);
 }
