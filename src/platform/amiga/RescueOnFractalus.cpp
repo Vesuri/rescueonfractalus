@@ -895,8 +895,20 @@ void RescueOnFractalus::renderFrame()
     if (g_tunnelFieldDirty) {
         decodeTunnelField((int)g_tunRowLo, (int)g_tunRowHi); g_tunnelFieldDirty = 0;
     }
+#ifdef ROF_FLIGHT_PROBE
+    extern volatile unsigned long g_rPerFrame, g_rRenderFn;
+    const bool _profR = rsFlight;
+    unsigned long _p0 = _profR ? rof_subclock() : 0, _pi = _profR ? g_isrBeamLines : 0;
+#endif
     perFrameWork();
+#ifdef ROF_FLIGHT_PROBE
+    if (_profR) { g_rPerFrame += (rof_subclock() - _p0) - (g_isrBeamLines - _pi);
+                  _p0 = rof_subclock(); _pi = g_isrBeamLines; }
+#endif
     render();
+#ifdef ROF_FLIGHT_PROBE
+    if (_profR) g_rRenderFn += (rof_subclock() - _p0) - (g_isrBeamLines - _pi);
+#endif
 
     // Static Standby (incl. the gauge-fill sub-phase before the doors scroll): the
     // copper layout is FIXED here (!rsViewport, doors not
@@ -961,6 +973,10 @@ void RescueOnFractalus::renderFrame()
     // sprites via updateFlightCopper.  No full rebuild/flip.
     const bool staticFlight = flightCopper && rsFlight;
     if (staticFlight) {
+#ifdef ROF_FLIGHT_PROBE
+        extern volatile unsigned long g_rCopper;
+        unsigned long _c0 = rof_subclock(), _ci = g_isrBeamLines;
+#endif
         if (!flightCopperInstalled) {
             updateFlightCopper(true);
             AmigaHardware::setCopperList(*flightCopper, false);
@@ -968,6 +984,9 @@ void RescueOnFractalus::renderFrame()
         } else {
             updateFlightCopper(false);
         }
+#ifdef ROF_FLIGHT_PROBE
+        g_rCopper += (rof_subclock() - _c0) - (g_isrBeamLines - _ci);
+#endif
         standbyCopperInstalled = false;
         planetCopperInstalled = false;
         tunnelCopperInstalled = false; titleScreenCopperInstalled = false;

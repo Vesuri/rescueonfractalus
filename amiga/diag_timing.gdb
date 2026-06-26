@@ -39,6 +39,13 @@ printf "  per-frame: tdSubdiv=%lu tdProjPlot=%lu (beam ticks/frame)\n", \
   (g_tdFrames? g_tdSubdiv/g_tdFrames : 0), (g_tdFrames? g_tdProjPlot/g_tdFrames : 0)
 printf "fConvert=%lu (flight mem[1070]->bitplane convert; same units as draw=%lu)\n", g_fConvert, g_fDraw
 printf "fDirect=%lu (Stage-1 direct $260E->bitplane render; cmp vs fConvert)\n", g_fDirect
+echo --- render/glue gap: ds_frame() per flight renderFrame call (beam ticks; 313=20ms) ---\n
+printf "rCalls=%lu renderWall=%lu renderCompute=%lu idleWall=%lu\n", \
+  g_rCalls, g_rRenderWall, g_rRenderCompute, g_rIdleWall
+printf "  per-call: renderWall=%lu renderCompute=%lu idleWall=%lu\n", \
+  (g_rCalls? g_rRenderWall/g_rCalls:0), (g_rCalls? g_rRenderCompute/g_rCalls:0), (g_rCalls? g_rIdleWall/g_rCalls:0)
+printf "  compute split/call: perFrame=%lu renderFn=%lu copper=%lu (renderFn incl fDirect+cockpit)\n", \
+  (g_rCalls? g_rPerFrame/g_rCalls:0), (g_rCalls? g_rRenderFn/g_rCalls:0), (g_rCalls? g_rCopper/g_rCalls:0)
 echo --- renderFrame no-yield gap (real VBI frames) ---\n
 printf "maxGap=%u atVbi=%u vvblki=%04x 060B=%02x 004A=%02x\n", \
   g_maxRenderGap, g_maxGapAtVbi, g_maxGapVvblki, g_maxGap060B, g_maxGap004A

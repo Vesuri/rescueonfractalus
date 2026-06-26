@@ -572,6 +572,18 @@ extern "C" volatile uint32_t g_terrainBmpAddr=0;
 extern "C" volatile uint32_t g_flightDirectAddr=0;
 // Stage-1 direct-render beam cost (same units as g_fConvert) for the head-to-head.
 extern "C" volatile unsigned long g_fDirect=0;
+// Render/glue-gap probe: attribute the per-iteration ds_frame() (= platform_tick_vbi +
+// platform_render_frame) cost, which the phase buckets above do NOT cover.  ds_frame runs
+// once per game-loop iteration, then ~300ms of two-pass terrain compute runs with the display
+// frozen.  g_rRenderWall = raw beam ticks in scene->renderFrame(); g_rRenderCompute = the same
+// ISR-subtracted (comparable to g_fDraw etc.); g_rIdleWall = raw ticks in the "wait next real
+// VBI" spin (idle + ISR firings); g_rCalls = renderFrame invocations.  The compute sub-split
+// (ISR-subtracted, written in RescueOnFractalus::renderFrame) is g_rPerFrame (perFrameWork: HUD
+// sprites) / g_rRenderFn (render(): renderFlightDirect=g_fDirect + cockpit + title/compass) /
+// g_rCopper (updateFlightCopper poke).
+extern "C" volatile unsigned long g_isrBeamLines;  // defined in rof_native_amiga.cpp
+extern "C" volatile unsigned long g_rRenderCompute=0, g_rRenderWall=0, g_rIdleWall=0, g_rCalls=0;
+extern "C" volatile unsigned long g_rPerFrame=0, g_rRenderFn=0, g_rCopper=0;
 #endif
 
 // g_quitJmp: the __builtin_setjmp buffer armed by RescueOnFractalus::run() so we can
@@ -608,9 +620,25 @@ void PlatformAmiga::renderFrame() {
     uint16_t last = g_vbiCount;
 #ifdef ROF_FLIGHT_PROBE
     uint8_t rtBefore = mem[0x0014];
+    // Flight-only gate (matches the flight-gated sub-phases in RescueOnFractalus::renderFrame):
+    // VVBLKI == $4FF5 is the flight VBI vector.
+    const bool _rFlight = ((mem[0x0222] | (mem[0x0223] << 8)) == 0x4FF5u);
+    unsigned long _rr0 = rof_subclock(), _rri = g_isrBeamLines;
 #endif
     if (s_scene) s_scene->renderFrame();
+#ifdef ROF_FLIGHT_PROBE
+    if (_rFlight) {
+        unsigned long _w = rof_subclock() - _rr0;
+        g_rRenderWall    += _w;
+        g_rRenderCompute += _w - (g_isrBeamLines - _rri);
+        g_rCalls++;
+    }
+    unsigned long _ri0 = rof_subclock();
+#endif
     while (g_vbiCount == last) { /* wait for next real VBI */ }
+#ifdef ROF_FLIGHT_PROBE
+    if (_rFlight) g_rIdleWall += rof_subclock() - _ri0;
+#endif
     uint16_t vbiVec = (uint16_t)(mem[0x0222] | (mem[0x0223] << 8));
 #ifdef ROF_FLIGHT_PROBE
     // Did a VBI body advance RTCLOK during the wait?  (flight/attract bodies do; $52D7 doesn't)
