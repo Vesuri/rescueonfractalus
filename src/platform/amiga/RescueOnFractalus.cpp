@@ -336,17 +336,30 @@ void RescueOnFractalus::buildAHSprite()
 // Build the player-1 throttle bar from the vobj strip mem[$0D98..].  Each strip
 // byte is one Atari player scanline ($F0 = leftmost 4px on); we map a filled row
 // to the leftmost 4 px (colour 01) of an Amiga sprite line.
+static const int kEnergyRows = 56;   // full bar = 56 px, same as the altimeter (NOT 57 — that 1px diff was a bug)
 void RescueOnFractalus::buildEnergyIndicatorSprite()
 {
-    // 57-row strip $0D98..$0DD0 (the original vobj player extent).  Each Atari
-    // player bit is one colour clock = 2 Amiga lores px, so the 4-bit $F0 segment
-    // is 8 px wide -> 0xFF00 (matches SIZEP1=0, normal width).
-    uint16_t* d = energyIndicatorSprite->data() + 2;   // skip the 2 control words
-    for (int i = 0; i < 57; i++) {
-        uint16_t on = (mem[0x0D98 + i] & 0xF0u) ? 0xFF00u : 0x0000u;
-        d[i * 2]     = on;     // plane A (colour bit 0)
-        d[i * 2 + 1] = 0x0000; // plane B
+    // The energy/fuel bar (Atari P1 strip $0D98, the "right gauge") is a solid 8px bottom-anchored
+    // bar — filled with $F0 from a fuel-derived top down to the bottom, exactly the altimeter shape
+    // (verified live: strip is a contiguous $F0 run, empty when fuel $062F = 0).  So use the same
+    // trick: build the solid sprite ONCE and move its Y, instead of decoding 57 rows every frame.
+    // Bar top index = (($DC - fuel) & 0xFF) >> 2, +1 to match the drawn fill (vobj_pos_to_pmstrip_index
+    // $41DA).  fuel 0 (empty / out of fuel) parks the bar below the floor (line 252) where the
+    // COLOR25 black-out hides it.  Gauge is 8px wide → plane A = 0xFF00 (left half of the 16px sprite).
+    static const uint16_t kBase = 0x2c + 144;            // buffer offset 0 → line 188 (same base as the altimeter)
+    if (!energySolidBuilt) {
+        uint16_t* d = energyIndicatorSprite->data() + 2; // skip the 2 control words
+        for (int i = 0; i < kEnergyRows; i++) { d[i * 2] = 0xFF00u; d[i * 2 + 1] = 0x0000u; }
+        energySolidBuilt = true;
     }
+    uint8_t  fuel = mem[0x062F];
+    uint16_t top;
+    if (fuel == 0) top = 64u;                            // empty → park below floor = blacked out
+    else {
+        top = (uint16_t)((uint8_t)(0xDC - fuel) >> 2);   // bar-top index (vobj_pos_to_pmstrip_index $41DA)
+        if (top > (uint16_t)kEnergyRows) top = 0u;       // clamp garbage → full bar
+    }
+    energyIndicatorSprite->setY((uint16_t)(kBase + top));
 }
 
 static const int      kAltimRows    = 56;             // 8×56 rectangle ($0C98..$0CCF / $0B98..$0BCF)
@@ -447,7 +460,7 @@ void RescueOnFractalus::initialize()
     leftPost   = Sprite::allocate(kHT);
     rightPost  = Sprite::allocate(kHT);
     nullSprite = Sprite::allocate(0);
-    energyIndicatorSprite = Sprite::allocate(57);    // throttle bar: 57 vobj-strip rows ($0D98..$0DD0)
+    energyIndicatorSprite = Sprite::allocate(kEnergyRows);    // energy bar: 56 px high when full (same as the altimeter)
     altimeterSprite = Sprite::allocate(kAltimRows);   // P0 $0C98 terrain-height bar (flight)
     altimeterShipSprite = Sprite::allocate(kAltimRows);   // M3 $0B98 ship-height bar (flight)
     // Flight windscreen frame: posts span the A-pillar (86 rows) + the 8 band scanlines
@@ -490,9 +503,10 @@ void RescueOnFractalus::initialize()
     altimeterShipSprite->setX(0x81 + 107);
     altimeterShipSprite->setY(0x2c + 144);
 #ifdef ROF_FLIGHT_PROBE
-    { extern volatile uint32_t g_altimSprAddr, g_altimShipSprAddr;
+    { extern volatile uint32_t g_altimSprAddr, g_altimShipSprAddr, g_energySprAddr;
       g_altimSprAddr     = (uint32_t)altimeterSprite->data();
-      g_altimShipSprAddr = (uint32_t)altimeterShipSprite->data(); }
+      g_altimShipSprAddr = (uint32_t)altimeterShipSprite->data();
+      g_energySprAddr    = (uint32_t)energyIndicatorSprite->data(); }
 #endif
 
     // Post graphics are decoded once from the real RLE source tables (buildPostSprites,

@@ -59,6 +59,7 @@ private:
     uint8_t prevDoorFieldReady = 0; // rising edge (standby built) → one-time full cockpit repaint
 
     Sprite*  energyIndicatorSprite   = nullptr;    // player-strip throttle bar ($0D98)
+    bool     energySolidBuilt = false;             // solid 57-row sprite filled once (lazily), then setY only
     void buildEnergyIndicatorSprite();             // $0D98 strip -> energyIndicatorSprite lines
     Sprite*  altimeterSprite = nullptr;  // P0 $0C98 terrain-height bar (flight altimeter)
     Sprite*  altimeterShipSprite = nullptr;  // M3 $0B98 ship-height bar (flight altimeter)

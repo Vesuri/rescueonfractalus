@@ -60,8 +60,12 @@ static const uint16_t kBPLCON0_3P   = (uint16_t)((3 << PLNCNTSHFT) | USE_BPLCON3
 #define INDEX_DASH_BLUE       (INDEX_DASH_BLUE_WAIT + 1) // 75: color00 = $90 dark blue (dashboard)
 #define INDEX_FLOOR_WAIT      (INDEX_DASH_BLUE + 1)     // 76: WAIT(kCockpitLine+80-1 = 251)
 #define INDEX_FLOOR           (INDEX_FLOOR_WAIT + 1)    // 77: color00 = black (floor)
-#define INDEX_TERMINATOR      (INDEX_FLOOR + 1)         // 78: copperWait(255,254)
-#define LIST_LENGTH           (INDEX_TERMINATOR + 1)    // 79
+// The energy/fuel gauge (sprite 2, COLOR21) is a fixed 56-row SOLID sprite whose Y tracks the bar
+// value (setY), so a short/high bar overflows below the dial into the black floor.  On the same line
+// color00 goes black, switch the energy bar colour (COLOR21) to black too so the overflow vanishes.
+#define INDEX_FLOOR_ENERGY    (INDEX_FLOOR + 1)         // 78: COLOR21 = black (energy bar overflow)
+#define INDEX_TERMINATOR      (INDEX_FLOOR_ENERGY + 1)  // 79: copperWait(255,254)
+#define LIST_LENGTH           (INDEX_TERMINATOR + 1)    // 80
 
 StandbyCopperList::StandbyCopperList()
     : CopperList((uint32_t*)AllocMem(LIST_LENGTH << 2, MEMF_CHIP | MEMF_CLEAR), LIST_LENGTH, true)
@@ -142,7 +146,8 @@ void StandbyCopperList::buildLayout(const Bitmap& title, const Bitmap& terrain, 
     d[INDEX_DASH_BLUE]      = copperMove(color00, atariToOCS(0x90));
     // Cockpit floor: COLBK back to black for the bottom 8 rows (Amiga 252+ = atari 209+).
     d[INDEX_FLOOR_WAIT] = copperWait(kCockpitLine + 80 - 1, 0xE0);
-    d[INDEX_FLOOR]      = copperMove(color00, atariToOCS(0x00));
+    d[INDEX_FLOOR]        = copperMove(color00, atariToOCS(0x00));
+    d[INDEX_FLOOR_ENERGY] = copperMove(0x1AA, 0x000);   // energy bar (sprite 2 / COLOR21) → black (hide overflow)
 
     d[INDEX_TERMINATOR] = copperWait(255, 254);
 }

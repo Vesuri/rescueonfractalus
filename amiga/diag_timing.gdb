@@ -39,6 +39,14 @@ printf "  per-frame: tdSubdiv=%lu tdProjPlot=%lu (beam ticks/frame)\n", \
   (g_tdFrames? g_tdSubdiv/g_tdFrames : 0), (g_tdFrames? g_tdProjPlot/g_tdFrames : 0)
 printf "fConvert=%lu (flight mem[1070]->bitplane convert; same units as draw=%lu)\n", g_fConvert, g_fDraw
 printf "fDirect=%lu (Stage-1 direct $260E->bitplane render; cmp vs fConvert)\n", g_fDirect
+echo --- energy strip $0D98..$0DD0 (57 bytes; is it a solid contiguous run = rectangle?) ---\n
+printf "062F(fuel)=%02x | energyAddr=%08x energy SV=%02x EV=%02x\n", mem[0x062F], g_energySprAddr, *(unsigned char*)g_energySprAddr, *(unsigned char*)(g_energySprAddr+2)
+set $i = 0
+while $i < 57
+  printf "%02x ", mem[0x0D98 + $i]
+  set $i = $i + 1
+end
+printf "\n"
 echo --- altimeter sprites ($281A/$281B bar tops; sprite hdr SV/EV bytes) ---\n
 printf "281A=%02x 281B=%02x | altimAddr=%08x shipAddr=%08x\n", mem[0x281A], mem[0x281B], g_altimSprAddr, g_altimShipSprAddr
 printf "altim  hdr: SV=%02x EV=%02x ctl=%02x | ship hdr: SV=%02x EV=%02x ctl=%02x\n", \
