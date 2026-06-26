@@ -490,6 +490,10 @@ void PlatformAmiga::hwWrite(uint16_t addr, uint8_t val)
 {
     if (addr < 0xD200u || addr >= 0xD210u) return;  // only POKEY range
     uint8_t reg = (uint8_t)(addr - 0xD200u);
+    // Change-detect: the 50Hz SFX envelope engine rewrites AUDF/AUDC every tick, often with
+    // the same value; recomputing the Paula channel (period divide + waveform select) for an
+    // unchanged register is pure waste.  Skip it when nothing changed.
+    if (pokey[reg] == val) { mem[addr] = val; return; }
     pokey[reg] = val;
     mem[addr]  = val;   // keep Atari-RAM mirror in sync (matches transpile bus_write)
 
