@@ -6381,7 +6381,10 @@ static inline void ds_frame(void) { platform_tick_vbi(); platform_render_frame()
 
 void display_setup(void) {
     /* 5f1d */
-    g_standbyRevealReady = 1;   /* Amiga: cockpit/top-bar drawn + sprites up — reveal (latched) */
+    /* g_standbyRevealReady is NOT set here (display_setup ENTRY): the screen must stay black
+       through the whole ~30-frame paced construction below — setting it here revealed the
+       half-built screen and forced a full render() on every construction frame (slow).  It is
+       set at the construction-done point ($6118 region, alongside g_doorFieldReady) instead. */
     LDA(0x06);
     bus_write(0x02C7, cpu.A);
     build_line_addr_table_2000();
@@ -6642,6 +6645,11 @@ L_6118:
     blit_message_block();
     blit_numeric_readout();
     g_doorFieldReady = 1;   /* Amiga: doors/LEVEL drawn into $2000 — decode now, before the green fade */
+    /* Standby construction complete (cockpit/top-bar/doors/LEVEL all drawn) — reveal now.  The
+       black EmptyCopperList held the screen (and skipped all rendering) through the build above;
+       the first render() after this decodes the finished bitmaps in one frame (the initial
+       terrainDirty/cockpitForceFull/g_titleDirty flags are still set — render never ran). */
+    g_standbyRevealReady = 1;
     dl_index_dec_or_reset();
     delay_loop_c2_to_c9();
     LDA(0xFF);
