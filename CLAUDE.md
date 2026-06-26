@@ -157,10 +157,12 @@ make            # build out/RoF.exe (+ RoF.elf for debug)
 Toolchain lives at `~/.local`. `OPT=-O2`/`NATIVE_OPT=-O3` by default; override for debug
 backtraces with `make OPT='-O0' NATIVE_OPT='-O0'`.
 
-⚠ **Run `make clean` after toggling `PROBES` OR after editing a widely-included header**
-(`RescueOnFractalus.h`, `PlatformAmiga.h`, the framework headers, …). The Amiga Makefile
-does **not** track the `PROBES` flag or header dependencies, so a partial rebuild links
-**stale object files** against new code. The failure mode is NOT just a link error — it
+⚠ **Always `make clean && make -j4 PROBES=1` before a headless probe run** (a plain `make`
+may have built a non-probe binary in between), and **run `make clean` after toggling `PROBES`
+OR after editing a widely-included header** (`RescueOnFractalus.h`, `PlatformAmiga.h`, the
+framework headers, …). The Amiga Makefile does **not** track the `PROBES` flag or header
+dependencies, so a partial rebuild links **stale object files** against new code. The failure
+mode is NOT just a link error — it
 often links a **working-but-wrong binary** that runs with **silent runtime breakage**
 (e.g. struct layout / member-offset mismatches when a header changed, manifesting as
 unrelated corrupted rendering or wrong behaviour). Treat any unexplained runtime
@@ -180,7 +182,8 @@ reasoning kept failing — **measure, don't theorize.**
   `amiga/.run/gdb-out.log` (also echoes a filtered tail). Edit `diag_timing.gdb` to print
   whatever globals/`mem[0xNNNN]` you need (a `while $i < N ... end` loop dumps arrays).
   `-g` is always on (AUDIO_CFLAGS), so all globals are readable by name.
-- **Build with probes:** `cd amiga && make PROBES=1` (→ `-DROF_FLIGHT_PROBE -DROF_TDRAW_PROF`).
+- **Build with probes:** `cd amiga && make clean && make -j4 PROBES=1` (→ `-DROF_FLIGHT_PROBE
+  -DROF_TDRAW_PROF`); the `make clean` is mandatory (see the stale-build ⚠ above).
   This is OFF by default — the probes + auto-launch + timing accumulators are now PERMANENT,
   guarded code (committed), not throwaway edits. With probes off, the SDL build + `make validate`
   link cleanly. ⚠ `diag_run.sh`/`diag_sample.sh` need an `out/RoF.exe` built with `PROBES=1`.
@@ -233,6 +236,21 @@ on the live VVBLKI vector to standby `$52D7` / flight `$4FF5` / station `$1B30` 
 bodies). Spin-wait points in transpiled code are `SPINWAIT_HOOKS` that drive one real Amiga
 frame (`platform_tick_vbi(); platform_render_frame()`). Copper does the display; `bus_write`
 to hardware is largely ignored on Amiga.
+
+### Performance budget (judge every number against this)
+
+**Target: 50 FPS on the Amiga = 20 ms/frame. Fallback 25 FPS = 40 ms/frame, only if 50 is
+genuinely not doable.** Spending 10 ms on *anything* is HALF the budget. The A500 (7 MHz 68000)
+is slow — there is no room for half measures; be conscious of absolute milliseconds, always.
+
+When reading flight probe numbers, compare **per-firing / per-render unit costs** against
+20/40 ms, NOT per-game-iteration totals (at the current ~2.4 fps one iteration spans ~21 real
+frames, so totals are ~21× a frame). Units: 1 probe "tick" = 1 raster scanline = 63.56 µs; a
+PAL frame = 313 ticks = 20 ms. The flight VBI ISR fires once per real frame, so its per-firing
+cost (~56 ticks ≈ 3.6 ms = ~18% of budget) is what matters. ⚠ The faithful terrain renderer
+(~329 ms/iteration) is ~16× over a 20 ms budget on the 68000; no VBI/HUD micro-opt closes that —
+playable faithful flight likely needs the A1200 (68020) target or a non-faithful renderer, which
+is the user's scope call. Surface the numbers honestly.
 
 ### Optimising a native twin for the 68000 (hard-won; apply when a function is hot)
 
