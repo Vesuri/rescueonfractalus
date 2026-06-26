@@ -6232,7 +6232,7 @@ static void sfx_voice_envelope_tick_impl(void) {
     cpu.Y = 0x0E;
     do {
         uint8_t y = cpu.Y;
-        mem[0x0718] = 0x00;                              /* 5497 per-slot "expired" flag */
+        uint8_t expired = 0;   /* $0718 per-slot "expired" flag — local (read nowhere else) */
         /* --- frequency-step block ($549c) --- */
         if (mem[0x06DB + y] != 0) {                      /* LDA $06DB+Y; BEQ L_54d5 */
             uint16_t s = (uint16_t)mem[0x06DB + y] + mem[0x06E9 + y];  /* CLC; ADC $06E9+Y */
@@ -6245,7 +6245,7 @@ static void sfx_voice_envelope_tick_impl(void) {
                 mem[0x0679 + y] = f;
                 if (f == mem[0x06CD + y]) {              /* CMP $06CD+Y; BNE skip */
                     mem[0x06DB + y] = 0x00;
-                    mem[0x0718]++;                       /* INC $0718 */
+                    expired++;                           /* INC $0718 */
                 }
                 cpu.Y = y;
                 sfx_voice_write_freq();                  /* 54d2 */
@@ -6263,14 +6263,14 @@ static void sfx_voice_envelope_tick_impl(void) {
                 mem[0x066B + y] = p;
                 if (p == mem[0x0695 + y]) {              /* CMP $0695+Y; BNE skip */
                     mem[0x06A3 + y] = 0x00;
-                    mem[0x0718]++;                       /* INC $0718 */
+                    expired++;                           /* INC $0718 */
                 }
                 cpu.Y = y;
                 game_sub_55FC();                         /* 550d (push slot Y to ring) */
             }
         }
         /* --- L_5510: if a slot expired this pass, re-queue its event id --- */
-        if (mem[0x0718] != 0) {                          /* LDA $0718; BEQ L_551b */
+        if (expired != 0) {                              /* LDA $0718; BEQ L_551b */
             cpu.X = mem[0x06F7 + y];                     /* LDX $06F7+Y */
             ring_push_marked();                          /* 5518 (push X|$80) */
         }
