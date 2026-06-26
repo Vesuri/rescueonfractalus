@@ -6223,7 +6223,7 @@ void reorder_sprite_slot(void) {
  * $5406; emits AUDF via sfx_voice_write_freq; re-queues finished slots via
  * game_sub_55FC / ring_push_marked), then drains the $0719 event ring:
  * bit7-set entries -> input_init (a new voice), bit7-clear -> reorder_sprite_slot. */
-void sfx_voice_envelope_tick(void) {
+static void sfx_voice_envelope_tick_impl(void) {
     if (mem[0x0634] != 0) {                              /* 548d LDA $0634; BEQ skip */
         cpu.A = mem[0x0634];                             /* sfx_engine_step reads entry A */
         sfx_engine_step();                               /* 5492 */
@@ -6297,6 +6297,12 @@ void sfx_voice_envelope_tick(void) {
         mem[0x0074] = t;
     }
 }
+#ifdef ROF_FLIGHT_PROBE
+extern volatile unsigned long g_pSfx;
+void sfx_voice_envelope_tick(void) { unsigned long _p = rof_subclock(); sfx_voice_envelope_tick_impl(); g_pSfx += rof_subclock() - _p; }
+#else
+void sfx_voice_envelope_tick(void) { sfx_voice_envelope_tick_impl(); }
+#endif
 
 /* init_gameplay_state @ $73C8 — per-game/level gameplay init (run ONCE from
  * game_main_loop).  Seeds the heading/object/timer arrays + lives, draws the

@@ -70,3 +70,13 @@ NOT energy); `update_cockpit_digits_native`→`startup_init_native` ($3FFA ident
 
 Descriptive "gauge" prose still appears in some comments (Atari hardware-channel /
 "throttle gauge" descriptions) — left as-is where accurate; sweep opportunistically.
+
+## 2026-06-26
+
+- **`$40B0` `draw_canopy_pillar_p2` → `draw_ah_ground_fill_p2`** (suggested). Despite the
+  name it does NOT draw the canopy A-pillars (those are P0/P1 `$0C32`/`$0D32`, built once by
+  `unpack_terrain_seed_cols`). It copies a 21-byte `$FF`-terminated slope from table `$4B57`
+  (index `$455B[$291C]`) into the P2 buffer at `$0E87+` — i.e. the **Artificial Horizon ground
+  fill** (`$0E92-$0EB2`, the brown ground whose boundary moves with pitch; see the AH note in
+  the flight-scene memory). Change-detected on `$291C`/`$291D` vs cache `$2872`/`$2874`, so it
+  redraws only when attitude changes (cheap most VBI firings — NOT a per-frame cost).
