@@ -1,145 +1,37 @@
-# Cockpit render perf — implementation plan (flight scene)
+# Cockpit render — DONE (writer-driven decode) + remaining TODO
 
-Goal: stop the per-frame full cockpit re-decode in flight. Replace the shadow-compare
-scan with **per-writer dirty flags**, each mapping to a known set of cockpit cells, so the
-render converts *exactly* the bytes that changed and does no extra work. **Eliminate the
-shadow-compare everywhere** (a 560-byte volatile-CHIP-RAM scan is a no-go on the 68000).
+Implemented 2026-06-25/26. The old per-frame full cockpit scan (shadow-compare over ~560
+mode4/modeD cells, run ~3×/game-frame in flight — the #1 flight cost) is GONE. Decode is now
+**writer-driven per instrument**: each writer raises one boolean and `render()` decodes only that
+instrument's cells. Idle frames cost three byte reads. Flight-only cost: **~1662 → ~65 ticks/frame
+(~23×)**; ~15–30 of ~180 flight frames decode anything.
 
-## Measurement (2026-06-23, headless FS-UAE beam-clock probe `g_fCockpit`)
+Single-byte flags are atomic on the 68000, so writers on the VBI ISR (lock-on, dials) and the main
+thread (digits) need no `Disable()`/`Enable()` — an early Disable-in-ISR version WEDGED interrupt
+delivery (game never auto-started); **do NOT reintroduce it**.
 
-Per flight frame: terrain `draw` ≈ 82 ms (#1), **cockpit decode ≈ 24 ms (≈372 beam-ticks/scan,
-scanned EVERY frame)**, collision ≈ 15 ms, setup ≈ 10 ms, clear ≈ 6 ms. The cockpit is ~17 %
-of flight compute and almost entirely avoidable: `deriveRenderSignals` force-sets
-`g_cockpitDirty=1` whenever `rsFlight` (RescueOnFractalus.cpp ~line 1249), so the decode runs
-its full shadow scan every frame even though only a few instrument cells change.
-(Probe: `cd amiga && make PROBES=1 && ./diag_run.sh 85`; reads `g_fCockpit`/`g_fCockpitScans`
-+ `g_flightProf` via diag_timing.gdb. Flight is reached ~vbi 2200; needs ≥75 s delay.)
+Files: registry + decode in `RescueOnFractalus.cpp` (`decodeCockpitSpan`/`decodeCockpitFull`,
+`g_ck*` flags, `cockpitForceFull` one-time full repaint on scene entry). Writers in
+`rof_native_amiga.cpp` (digits/lock-on set `g_ckDigits`/`g_ckLockon` directly) and `rof_native.c`
+(dials via `platform_cockpit_dirty` → `PlatformAmiga::cockpitDirty` → `rof_cockpit_dial_dirty`,
+range-guarded $332D-$355D). `make validate FN=draw_object_column` passes (hook is a no-op on SDL).
 
-## Current decode (RescueOnFractalus.cpp render(), ~line 1528-1618) — to be replaced
-
-Two shadow-compare loops over `mem[]` (volatile CHIP RAM):
-- **modeD** rows 0-7: src `$350D+4`, 4 entries × 40 bytes, each byte → 2 identical scanlines.
-- **mode4** rows 8-87: src `$332D+4`, 10 entries × 40 chars, each changed char → 8 scanlines ×
-  3 planes. charset `$3800`, glyph = `ch & $7F`, bit7 → plane3 = `$FF` (colours 4-7).
-- dest = `cockpitBitmap->data`, 3bp interleaved, `kRowBytes=120`, stride 48 (skip 4 overscan).
-Shadows: `cockpitModeDShadow`, `cockpitMode4Shadow` — **delete these**.
-
-## Instrument classification (CLAUDE.md "Instrument vocabulary" + user 2026-06-23)
-
-| Type | Instruments | Cell work |
-|---|---|---|
-| **PMG** (no cells) | Artificial Horizon (P2 `buildAHSprite` — CLAUDE.md #6 was wrongly "cells", fixed), Altimeter (P0/M3), Energy (P1) | none |
-| **1-2 cell lights** | Shields (#14), Mother Ship (#15), Air Lock (#16) | tiny on/off |
-| **Multi-cell dials** | Thrust (#4), Dangerous Altitude (#5) | a vertical bar column |
-| **Numeric 2×2** | Range (#17), Enemies Destroyed (#18), Pilot Quota (#19) | 2×2 char blocks |
-| **Static** | dashboard frame, scope (#8), scanner (#13) outlines, modeD rows 0-7 | paint once on entry |
-
-## Writers → cells (what flags which span)
-
-Writers ALREADY change-detect (caches `$0647/$0645/$0646`, `$062E`, lock-on state) and today
-set the shared `g_cockpitDirty`. Give each its own flag + decode only its cells:
-
-- **Digits** `startup_init_native` (rof_native_amiga.cpp ~463), called from perFrameWork (MAIN
-  thread). 2×2 blocks at dest +0/+1/+$30/+$31:
-  - Digit1 `$33B4` (gated on `$0642`/`$0647`)
-  - Digit2 `$3413` (tens) + `$3445` (units) (gated on `$0641`/`$0645`)
-  - Digit3 `$3472` (tens) + `$34A4` (units) (gated on `$0628`/`$0646`, +$80 colour flag)
-  - DL-stride bytes `$33DF`/`$33E0` (`$9E/$9D` or `$1E/$1D`) — also in the scanned region.
-- **Lock-on** `lock_on_indicator_tick_native` (~538), called from the VBI (**ISR**). Cells
-  `$3491-$3497` (7 mode-4 chars).
-- **Thrust / Dangerous-Alt dials** `draw_object_column` / `draw_cockpit_dial_bar` /
-  `draw_dial_bar_column` (native, rof_native.c ~5128). Writes via the `$4581` column-pointer
-  table → cockpit cells; dest computed at runtime as `mem[$BB]|mem[$BC]<<8`. Does NOT flag
-  dirty today. **Cells TBD** — see discovery below.
-- **Status lights** (shields/mother-ship/air-lock) — **writer not yet located.** Find it
-  (likely in the flight state-update / a transpiled routine writing the far-right mode-4 cols).
-
-## Empirical cell-span discovery (do FIRST next session)
-
-Don't reverse-engineer the `$4581` table by hand. Two options:
-1. **Runtime-report**: have `draw_object_column` (and the status-light writer once found) record
-   the actual dest addresses they write — gives exact spans with no table archaeology.
-2. **Shadow-extent log**: temporarily keep the shadow loops but record min/max changed mode4/
-   modeD cell address over a flight run (`make PROBES=1` + diag). The union of changed cells =
-   the complete in-flight dirty set → confirms every span before the shadow is removed.
-
-## Implementation steps
-
-1. **Discover** the dial + status-light exact cell spans (above). Confirm modeD rows 0-7 never
-   change in flight (expected static → paint once on entry).
-2. Add **per-writer volatile flags** (e.g. `g_ckDigit1..3`, `g_ckLockon`, `g_ckStride`,
-   `g_ckThrust`, `g_ckDangerAlt`, `g_ckShields/Mother/AirLock`). Volatile byte flags are
-   ISR/main race-safe exactly like the current `g_cockpitDirty` (worst case: one redundant
-   span decode — never a missed change).
-3. Each writer sets ONLY its flag (replace the `g_cockpitDirty=1` lines). Keep the existing
-   change-detection so a flag is set only on a real value change.
-4. Refactor the decode into `decodeCockpitSpan(cellAddr, nCells)` (cell addr → bitplane pos via
-   the existing entry/col → dest math, factored out). render() checks each flag, decodes its
-   span, clears the flag. **No shadow, no full scan.**
-5. **Flight entry** (and any scene entry needing a full paint): set all flags once (or a single
-   `cockpitFull` that decodes the whole region one time), then steady-state is flag-driven.
-6. Remove the per-frame force in `deriveRenderSignals` (line ~1249-1251) for `rsFlight`; delete
-   `cockpitModeDShadow`/`cockpitMode4Shadow` and the shadow loops.
-7. **Eliminate other shadow compares too** (user directive "everywhere"): audit the title
-   ($32B7) and any compass/region decodes for shadow scans and convert them to dirty-flag /
-   dirty-range (compass already targeted; title uses a shadow compare — convert).
-8. Verify on FS-UAE (`run.sh`) that every instrument still updates (dials move with thrust,
-   digits on rescue/kills, lock-on animates, lights toggle). Re-measure `g_fCockpit`
-   (target: ~24 ms → ~0 on steady frames, a few ms when an instrument changes).
-
-## Files
-
-`src/platform/amiga/RescueOnFractalus.cpp` (render decode + deriveRenderSignals force),
-`RescueOnFractalus.h` (shadow members), `src/platform/amiga/rof_native_amiga.cpp` (digit/
-lock-on writers), `src/gen/rof_native.c` (`draw_object_column` dial writer). Probe:
-`g_fCockpit` already in PlatformAmiga.cpp + diag_timing.gdb (keep for re-measurement).
-
-## Risk
-
-If any bitmap-cell writer isn't converted before the shadow is removed, that instrument
-freezes. Mitigation: discovery step #1 enumerates every in-flight-changing cell first; keep the
-shadow as a temporary backstop until all writers are confirmed converted, then delete it.
-
-## STATUS — IMPLEMENTED 2026-06-25 (writer-driven decode, shadow scan removed)
-
-The full per-frame shadow scan is GONE. Decode is now WRITER-DRIVEN **per instrument**: each
-writer raises ONE boolean and render() decodes just that instrument's cells. render() does a
-one-time full repaint on scene entry (`cockpitForceFull`, since the transpiled `display_setup`
-builds the cockpit and isn't hooked), then steady-state checks the booleans — idle frames (the
-common case) cost three byte reads. Single-byte flags are atomic on the 68000, so writers on the
-VBI ISR (lock-on, dials) and the main thread (digits) need no Disable()/Enable() (an early
-Disable()-in-ISR version WEDGED interrupt delivery → the game never auto-started; do NOT
-reintroduce it). Measured flight-only (`make PROBES=1`, `cockpitTicks/tdFrames`): **~1662 →
-~73 ticks/frame (~23×)** (the old ~1662 included the ~3×/game-frame redundant re-scan, now
-entirely gone); ~15 of ~176 flight frames decode any cell, the rest hit the boolean
-short-circuit. `make validate FN=draw_object_column` passes (the dial hook is a no-op on
-SDL/validate). Files: the registry + decode live in RescueOnFractalus.cpp; writers in
-rof_native_amiga.cpp (digits/lock-on set `g_ckDigits`/`g_ckLockon` directly) and rof_native.c
-(dials via `platform_cockpit_dirty` → PlatformAmiga::cockpitDirty → `rof_cockpit_dial_dirty`,
-range-guarded to $332D-$355D).
-
-### HOOKED writers (confirmed converted)
-- **Digits** `startup_init_native` (rof_native_amiga.cpp): set `g_ckDigits`; render decodes the
-  five 2×2 blocks $33B4 / $3413 / $3445 / $3472 / $34A4 (+ bottom row at +$30) and the DL-stride
-  pair $33DF/$33E0. (Fixed spans → one boolean for the digit group.)
+## HOOKED writers (confirmed converted)
+- **Digits** `startup_init_native`: set `g_ckDigits`; render decodes the five 2×2 blocks
+  $33B4 / $3413 / $3445 / $3472 / $34A4 (+ bottom row at +$30) and the DL-stride pair $33DF/$33E0.
 - **Lock-on** `lock_on_indicator_tick_native`: set `g_ckLockon`; render decodes $3491-$3497.
-- **Dials (thrust #4 / dangerous-alt #5)** `draw_object_column` (rof_native.c): the bars' cells
-  come from the $4581 column table (NOT a fixed span), so the dial alone keeps per-cell precision
-  — `g_ckDialFlag[addr-$332D]` (480 mode4 cells), walked only when `g_ckDial` is set. A fixed
-  bounding-box decode was tried and measured ~4× worse (it re-paints dozens of static cells each
-  time one bar moves). Each $4581-table dest it actually changes is range-guarded so PMG-buffer
-  dests fall outside and are ignored.
+- **Dials (thrust #4 / dangerous-alt #5)** `draw_object_column`: bar cells come from the $4581
+  column table (NOT a fixed span) → the dial keeps per-cell precision (`g_ckDialFlag[addr-$332D]`,
+  480 mode4 cells, walked only when `g_ckDial` set). A fixed bounding-box decode was tried and
+  measured ~4× worse (re-paints dozens of static cells per bar move).
 
-### TODO — UNHOOKED writers (these instruments may FREEZE in flight; hunt when needed)
-Verify each VISUALLY in flight (run.sh); if frozen, find the writer + add a rof_cockpit_dirty call.
-- **Shields light (#14) / $3355 `special_state_color`** — CONFIRMED changing in the neutral-flight
-  discovery, but written by TRANSPILED `enter_terrain_special_state` ($9B0D) /
-  `exit_terrain_special_state` ($9B4C) / `check_object_in_target_box` ($93BD), none hooked.
-  HIGHEST priority — known to change.
-- **Mother Ship (#15) / Air Lock (#16) status lights** — writers not located (event-driven, not
-  seen in the neutral discovery run).
-- **Targeting Scope (#8) / Long Range Scanner (#13)** — did NOT change in neutral flight (likely
-  static after entry, or event-driven). Confirm they don't need a per-frame writer.
-- **Score / kills / quota digits $3413/$3445/$3472/$34A4** — hooked (startup_init), but only fire
-  on game events; the neutral discovery couldn't exercise them. Confirm they update on a
-  rescue/kill.
+## TODO — UNHOOKED writers (these instruments may FREEZE in flight; hunt when needed)
+Verify each VISUALLY in flight (`run.sh`); if frozen, find the writer + add a dirty-flag call.
+- **Shields light (#14) / $3355 `special_state_color`** — CONFIRMED changing, but written by
+  TRANSPILED `enter_terrain_special_state` ($9B0D) / `exit_terrain_special_state` ($9B4C) /
+  `check_object_in_target_box` ($93BD), none hooked. HIGHEST priority.
+- **Mother Ship (#15) / Air Lock (#16) lights** — writers not located (event-driven).
+- **Targeting Scope (#8) / Long Range Scanner (#13)** — didn't change in neutral flight; confirm
+  they're static after entry (or event-driven), not needing a per-frame writer.
+- **Score / kills / quota digits** ($3413/$3445/$3472/$34A4) — hooked, but only fire on game
+  events; confirm they update on a rescue/kill.
