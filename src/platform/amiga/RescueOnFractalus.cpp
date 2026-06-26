@@ -309,26 +309,29 @@ void RescueOnFractalus::buildFlightFrameSprites()
 static const int      kAHRows    = 33;        // Amiga lines 182..214 (the dial extent)
 static const uint16_t kAHBufBase = 0x0E92;    // P2 player buffer offset for Amiga line 182
 
-static __inline uint16_t expandNibble16(uint8_t nib)
-{
-    uint16_t w = 0;                            // each of the 4 bits -> 4 Amiga px
-    if (nib & 8) w |= 0xF000;
-    if (nib & 4) w |= 0x0F00;
-    if (nib & 2) w |= 0x00F0;
-    if (nib & 1) w |= 0x000F;
-    return w;
-}
+// Each GRAFP2 nibble (4 bits) expands to 16 px — each bit → 4 Amiga px.  Precomputed so the
+// per-row decode is two table lookups instead of expandNibble16's 8 conditional branches.
+static const uint16_t kAHExpand[16] = {
+    0x0000, 0x000F, 0x00F0, 0x00FF, 0x0F00, 0x0F0F, 0x0FF0, 0x0FFF,
+    0xF000, 0xF00F, 0xF0F0, 0xF0FF, 0xFF00, 0xFF0F, 0xFFF0, 0xFFFF,
+};
 
 void RescueOnFractalus::buildAHSprite()
 {
+    // Change-detect: the ground-fill source ($0E92..) is rewritten IN FLIGHT only by
+    // draw_canopy_pillar_p2 ($40B0), which is itself gated on the pitch index $291C/$291D (the
+    // other writers of this range — fill_four_bufs_ff, init_gameplay_state — are gameplay-init
+    // only).  So skip the 33-row rebuild when pitch is unchanged; cockpitForceFull (scene entry,
+    // where the init writers ran) forces a rebuild so the post-init state is captured.
+    uint8_t idx = mem[0x291C], sub = mem[0x291D];
+    if (!cockpitForceFull && idx == ahLastIdx && sub == ahLastSub) return;
+    ahLastIdx = idx; ahLastSub = sub;
     uint16_t* l = ahLeft->data()  + 2;         // skip the 2 control words
     uint16_t* r = ahRight->data() + 2;
     for (int i = 0; i < kAHRows; i++) {
-        uint8_t b = mem[kAHBufBase + i];                    // GRAFP2 ($00 sky / $FF ground)
-        l[i * 2]     = expandNibble16((uint8_t)(b >> 4));   // bits 7-4 -> left 16px (plane A = pen01)
-        l[i * 2 + 1] = 0x0000;                              // plane B unused
-        r[i * 2]     = expandNibble16((uint8_t)(b & 0x0F)); // bits 3-0 -> right 16px
-        r[i * 2 + 1] = 0x0000;
+        uint8_t b = mem[kAHBufBase + i];                 // GRAFP2 ($00 sky / $FF ground)
+        l[i * 2] = kAHExpand[b >> 4];   l[i * 2 + 1] = 0x0000;   // bits 7-4 → left 16px (plane A = pen01)
+        r[i * 2] = kAHExpand[b & 0x0F]; r[i * 2 + 1] = 0x0000;   // bits 3-0 → right 16px
     }
 }
 

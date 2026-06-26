@@ -199,6 +199,7 @@ private:
     // frame (value-1/2 glyphs) stays in front and the brown shows through the value-0 centre.
     Sprite*     ahLeft         = nullptr;
     Sprite*     ahRight        = nullptr;
+    uint8_t     ahLastIdx = 0xFF, ahLastSub = 0xFF;   // AH ground-fill change-detect (pitch index $291C/$291D)
     void buildAHSprite();  // mirror the live P2 fill ($0E92..) -> ahLeft/ahRight (flight AH ground)
 
     // Dirty-flag bitmap caching: bitmaps are rendered once on initialize() and
