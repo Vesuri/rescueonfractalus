@@ -2,7 +2,7 @@
 
 Reimplementing the 1985 Atari 8-bit game *Rescue on Fractalus!* on the Amiga from a
 binary only (`rof.xex`, no source). Pipeline: decompile (Ghidra) → transliterate 6502
-→ C → abstract hardware → platform backends (SDL on macOS for dev, Amiga A500/A1200 as
+→ C → abstract hardware → platform backends (SDL on macOS for dev, Amiga A500 as
 the real target). **Faithful 1:1 port** — parity before improvements; validate against
 the Atari 6502 code + `atari800`, NOT PlatformSDL (SDL is an approximation).
 
@@ -247,10 +247,11 @@ When reading flight probe numbers, compare **per-firing / per-render unit costs*
 20/40 ms, NOT per-game-iteration totals (at the current ~2.4 fps one iteration spans ~21 real
 frames, so totals are ~21× a frame). Units: 1 probe "tick" = 1 raster scanline = 63.56 µs; a
 PAL frame = 313 ticks = 20 ms. The flight VBI ISR fires once per real frame, so its per-firing
-cost (~56 ticks ≈ 3.6 ms = ~18% of budget) is what matters. ⚠ The faithful terrain renderer
-(~329 ms/iteration) is ~16× over a 20 ms budget on the 68000; no VBI/HUD micro-opt closes that —
-playable faithful flight likely needs the A1200 (68020) target or a non-faithful renderer, which
-is the user's scope call. Surface the numbers honestly.
+cost (~56 ticks ≈ 3.6 ms = ~18% of budget) is what matters. The terrain renderer
+(terrain_draw_frame, ~102 ms/iteration) dominates flight compute (~78%); the HUD/VBI/render-glue
+micro-opts are done and the remaining win is in the draw itself. **Target: A500, 50 FPS goal
+(25 FPS acceptable fallback only if 50 is genuinely not doable).** Surface the numbers honestly
+and keep digging into the draw.
 
 ### Optimising a native twin for the 68000 (hard-won; apply when a function is hot)
 
