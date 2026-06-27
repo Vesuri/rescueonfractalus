@@ -813,19 +813,45 @@ void RescueOnFractalus::renderFlightDirect()
   #define FD_LAP(acc) do {} while(0)
 #endif
 
-    // Terrain rows 0-42 (43 scanlines): clear all 3 planes, then build plane1 sky.
+    // The blits below run on the Amiga blitter while the 68000 keeps working; we only
+    // blitterWait() at the point where the CPU actually needs the blit's result.  Two
+    // independent CPU passes are scheduled to overlap their blits:
+    //   - clear (plane1+2+3 rows 0-42)  ||  the windscreen-band convert (rows 43-46: different
+    //     scanlines, so the clear never touches them);
+    //   - sky fill (plane1 rows 0-42)   ||  the plane2 dot scan (plane2 only: the fill reads/
+    //     writes plane1, the scan writes plane2 at byte +40 — disjoint addresses).
+    // The edge plot DOES depend on the clear (it ORs into freshly-zeroed plane1), so it alone
+    // sits behind a blitterWait.
+
+    // Kick the clear (terrain rows 0-42, all 3 planes); do NOT wait yet.
     AmigaHardware::blitterClear((uint16_t*)bp, 60, 43, 0);
-    AmigaHardware::blitterWait();
-    FD_LAP(g_fdClear);
+
+    // Windscreen-bottom band (scanlines 43-46): 4-row mode-D convert from mem[$1074+].  Runs
+    // while the clear blit is in flight (rows 43-46 are outside the cleared region).
+    {
+        const uint8_t* srow = (const uint8_t*)mem + 0x1074 + 43 * 96;
+        uint8_t* vrow = bp + 43 * 120;
+        for (int row = 0; row < 4; row++, srow += 96, vrow += 120) {
+            const uint8_t* s = srow;
+            uint8_t* d1 = vrow; uint8_t* d2 = vrow + 40; uint8_t* d3 = vrow + 80;
+            for (int b = 0; b < 40; b++) {
+                uint8_t v = *s++;
+                *d1++ = kModeDP1[v]; *d2++ = kModeDP2[v]; *d3++ = 0;
+            }
+        }
+    }
+    FD_LAP(g_fdBand);
+    AmigaHardware::blitterWait();                            // clear must finish before the edge OR
+    FD_LAP(g_fdClear);                                       // residual clear wait (~0 if band hid it)
 
     // Edge plot: ONE plane1 bit per column at its skyline scanline (160 byte-ORs).  Also
     // tracks the topmost skyline row (minScan): above it every column is sky (value-1), so
     // no value-2 dots can exist there -> the plane2 scan below starts at minScan, not row 0.
-    const uint8_t* const yForX = (const uint8_t*)mem + 0x260E + 48;   // col 0 -> $260E[48]
+    const uint8_t* y = (const uint8_t*)mem + 0x260E + 48;    // col 0 -> $260E[48]
     static const uint8_t kMask[4] = { 0xC0u, 0x30u, 0x0Cu, 0x03u };   // 2-bit pixel within byte
     int minScan = 42;
     for (int c = 0; c < 160; c++) {
-        uint8_t h = yForX[c];
+        uint8_t h = *y++;
         if (h == 0xFFu) continue;                            // off-top: all body
         int scan = 150 - (int)h;                             // height -> skyline scanline
         if (scan < 0) scan = 0;
@@ -833,48 +859,45 @@ void RescueOnFractalus::renderFlightDirect()
         if (scan < minScan) minScan = scan;                  // topmost terrain row this frame
         bp[scan * 120 + (c >> 2)] |= kMask[c & 3];           // plane1 skyline edge bit
     }
-    FD_LAP(g_fdEdge);
     // Sky fill: propagate each edge bit UP in ONE descending blit (writes rows 0-41, seed 42).
+    // Kicked here; the plane2 scan below runs while it DMAs (disjoint plane).
     AmigaHardware::blitterFillUp((uint16_t*)bp, 20, 42, 80);
-    AmigaHardware::blitterWait();
-    FD_LAP(g_fdFill);
+    FD_LAP(g_fdEdge);
 
     // plane2 = terrain dots/detail (mode-D value-2; value-3 highlight also sets it).  The
     // blitter builds plane1 (sky) from $260E but carries no dot info, so decode plane2 from
-    // the mode-D field mem[$1070] (the upstream CPU pass still fills it).  Sparse, but every
-    // byte must be scanned to find the dots: 43 rows × 40 bytes via the kModeDP2 LUT into the
-    // freshly-cleared plane2 (offset +40 within each 120-byte interleaved scanline).
-    // (Perf endgame is to have the terrain rasterizer set plane2 as it plots — flight item #1.)
+    // the mode-D field mem[$1074+] (the upstream CPU pass still fills it).
     // Dirty-row bound: skip rows above the topmost skyline (minScan).  Every column there is
     // sky (value-1) -> no value-2 dots -> nothing to write (plane2 already cleared).  Like the
     // planet viewport's g_planetRowLo/Hi, but derived for free from the silhouette we just plotted.
+    // Read the source field 4 bytes at a time (the $1074+ field is 4-aligned, stride 96, and
+    // main-loop-owned — the flight VBI never writes it, so a plain non-volatile long read is
+    // safe and lets the 68000 use one move.l instead of 4 move.b).  Dots are SPARSE: a pixel
+    // is value-2/3 (i.e. contributes to plane2) iff its high bit is set = mask 0xAA per byte,
+    // so one `& 0xAAAAAAAA` test skips 4 all-sky/all-body bytes without touching the LUT.
     {
-        const uint8_t* s2 = (const uint8_t*)mem + 0x1070 + 4 + (unsigned)minScan * 96;
-        uint8_t* p2 = bp + 40 + (unsigned)minScan * 120;        // plane2 of scanline minScan
-        for (int row = minScan; row < 43; row++, s2 += 96, p2 += 120) {
-            for (int b = 0; b < 40; b++) {
-                uint8_t d = kModeDP2[s2[b]];
-                if (d) p2[b] = d;                               // cleared to 0; write only set dots
+        const uint32_t* s4row = (const uint32_t*)((const uint8_t*)mem + 0x1074
+                                                  + (unsigned)minScan * 96);
+        uint8_t* p2row = bp + 40 + (unsigned)minScan * 120;     // plane2 of scanline minScan
+        for (int row = minScan; row < 43; row++, s4row += 24, p2row += 120) {   // 96/4 = 24 longs/row
+            const uint32_t* s4 = s4row;
+            uint8_t* pp = p2row;
+            for (int k = 0; k < 10; k++, pp += 4) {             // 40 bytes = 10 longs
+                uint32_t w = *s4++;
+                if (!(w & 0xAAAAAAAAu)) continue;               // no value-2/3 pixel in these 4
+                uint8_t d;                                      // big-endian: byte 0 in bits 31-24
+                if ((d = kModeDP2[(w >> 24) & 0xFFu])) pp[0] = d;
+                if ((d = kModeDP2[(w >> 16) & 0xFFu])) pp[1] = d;
+                if ((d = kModeDP2[(w >>  8) & 0xFFu])) pp[2] = d;
+                if ((d = kModeDP2[ w        & 0xFFu])) pp[3] = d;
             }
         }
     }
-    FD_LAP(g_fdScan);
+    FD_LAP(g_fdScan);                                        // scan CPU (overlapped the fill blit)
+    AmigaHardware::blitterWait();                            // fill must finish before the flip
+    FD_LAP(g_fdFill);                                        // residual fill wait (~0 if scan hid it)
 #ifdef ROF_FLIGHT_PROBE
     g_fdScanRows += (unsigned)(43 - minScan);
-#endif
-
-    // Windscreen-bottom band (scanlines 43-46): still a 4-row mode-D convert from mem[$1070]
-    // (= $2098+ wing band).  Cheap (4/47 of the old convert); keeps the frame element.
-    const uint8_t* src = (const uint8_t*)mem + 0x1070 + 4 + 43 * 96;  // band source rows
-    uint8_t* vd = bp + 43 * 120;
-    for (int row = 0; row < 4; row++, src += 96, vd += 120) {
-        for (int b = 0; b < 40; b++) {
-            uint8_t s = src[b];
-            vd[b] = kModeDP1[s]; vd[40 + b] = kModeDP2[s]; vd[80 + b] = 0;
-        }
-    }
-    FD_LAP(g_fdBand);
-#ifdef ROF_FLIGHT_PROBE
     g_fdCalls++;
 #endif
 #undef FD_LAP
