@@ -7457,13 +7457,13 @@ L_3eba:
     FP_ITER();
     ds_frame();
     FP_ITER_MARK();
+    /* --- PASS 1: render terrain field BACK half (draw col-base $30; clear/collision $33). ---
+       On the Atari this half is double-buffered against the display (offset-0) half below; the
+       two halves alternate on screen each vblank.  (clear/collision use the draw base + 3.) */
     FP_TIME(terrain_frame_setup(), g_fSetup);
-    LDX(0x33);
-    FP_TIME(clear_terrain_column(), g_fClear);
-    LDX(0x30);
-    FP_TIME(terrain_draw_frame(), g_fDraw);
-    LDX(0x33);
-    FP_TIME(terrain_collision_and_silhouette(), g_fColl);
+    FP_TIME(clear_terrain_column_core(0x33), g_fClear);
+    FP_TIME(terrain_draw_frame_core(0x30), g_fDraw);
+    FP_TIME(terrain_collision_and_silhouette_core(0x33), g_fColl);
     LDA(mem[0x0041]);
     mem[0x288F] = cpu.A;
     FP_TIME(game_state_update(), g_fState);
@@ -7483,13 +7483,12 @@ L_3eec:
     if (!cpu.Z) goto L_3ef5;
     mem[0x2849] = cpu.A;
 L_3ef5:
+    /* --- PASS 2: render terrain field DISPLAY half (draw col-base $00; clear/collision $03). ---
+       This offset-0 half is what the Amiga port currently shows every frame. --- */
     terrain_frame_setup();
-    LDX(0x03);
-    clear_terrain_column();
-    LDX(0x00);
-    terrain_draw_frame();
-    LDX(0x03);
-    terrain_collision_and_silhouette();
+    clear_terrain_column_core(0x03);
+    terrain_draw_frame_core(0x00);
+    terrain_collision_and_silhouette_core(0x03);
     LDA(mem[0x0041]);
     if (cpu.Z) goto L_3f0e;
     mem[0x288F] = cpu.A;
