@@ -36,6 +36,12 @@ DivResult divide_16x16_core(uint16_t dividend, uint16_t divisor);
  * scattered object-table cells, starting at column offset startCol. */
 void clear_terrain_column_core(uint8_t startCol);
 
+/* terrain_draw_frame @ $A31E core — render one terrain half (entryX = $00 / $30)
+ * into the silhouette field; terrain_collision_and_silhouette @ $AE53 core — collision
+ * + silhouette fill from start column.  void shims keep the 6502-ABI for validation. */
+void terrain_draw_frame_core(uint8_t entryX);
+void terrain_collision_and_silhouette_core(uint8_t startCol);
+
 /* bin_to_bcd @ $4E84 core — convert a binary byte to packed BCD by repeated
  * subtraction (faithful to the 6502: 8-bit (tens<<4) truncation when a >= 100).
  * Returns the packed BCD byte; writes the ones digit to *units and the tens to

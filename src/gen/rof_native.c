@@ -4572,7 +4572,9 @@ void project_terrain_points(void) {
  * real terrain tables, so it is validated against a flight RAM snapshot.
  * Contract: memory only (caller reloads regs).
  */
-void terrain_collision_and_silhouette(void) {
+/* _core takes the start column directly (was passed in cpu.X); the void shim below preserves
+   the 6502-ABI entry for the validation harness.  See clear_terrain_column for the pattern. */
+void terrain_collision_and_silhouette_core(uint8_t startCol) {
     /* Idiomatic rewrite (was a per-instruction transliteration that re-read/-wrote the
      * $80/$81/$95/$96 ZP scratch ~13x per fill iteration and recomputed i*$60 each scan
      * step).  Every 68000 memory access is slow, so the running pointer / masks / counter
@@ -4580,7 +4582,7 @@ void terrain_collision_and_silhouette(void) {
      * the harness checks) is written back.  Terrain field via a non-volatile alias (the
      * main loop owns $1010+; $BE00/$BF00 are read-only mask tables).  mem[]-identical. */
     uint8_t* const M = (uint8_t*)mem;
-    uint8_t Y   = cpu.X;                                 /* ae53 TXA;TAY (start column) */
+    uint8_t Y   = startCol;                              /* ae53 TXA;TAY (start column) */
     uint8_t col = 0x2A;                                  /* ae55 42 columns ($9F) */
     uint16_t fPtr = 0; uint8_t f95 = 0, f96 = 0;         /* captured final ZP state */
 
@@ -4621,6 +4623,7 @@ void terrain_collision_and_silhouette(void) {
     mem[0x0095] = f95;           mem[0x0096] = f96;
     mem[0x009F] = 0x00;
 }
+void terrain_collision_and_silhouette(void) { terrain_collision_and_silhouette_core(cpu.X); }
 
 /* terrain_draw_frame @ $A31E — main per-frame terrain driver (flight top #5, the last).
  *
@@ -4656,7 +4659,9 @@ extern unsigned long g_tdSubdiv, g_tdProjPlot, g_tdFrames;
 #define PE(v,acc) ((void)0)
 #endif
 
-void terrain_draw_frame(void) {
+/* _core takes the half/column-base directly (was passed in cpu.X); the void shim below keeps
+   the 6502-ABI entry for validation.  entryX is half 0 ($00) or half 1 ($30). */
+void terrain_draw_frame_core(uint8_t entryX) {
     uint8_t A, X, Y, c = 0;
     #define ADC_(v)  do { uint16_t _t=(uint16_t)A+(uint8_t)(v)+c; c=(uint8_t)(_t>>8); A=(uint8_t)_t; } while(0)
     #define SBC_(v)  ADC_((uint8_t)~(uint8_t)(v))
@@ -4667,11 +4672,11 @@ void terrain_draw_frame(void) {
     #define ASLM_(a) do { uint8_t _v=mem[a]; c=_v>>7; mem[a]=(uint8_t)(_v<<1); } while(0)
     #define ROLM_(a) do { uint8_t _v=mem[a],_n=_v>>7; mem[a]=(uint8_t)((_v<<1)|c); c=_n; } while(0)
 
-    mem[0x00A7] = cpu.X;                                 /* a31e */
+    mem[0x00A7] = entryX;                                /* a31e */
 #ifdef ROF_TDRAW_PROF
     g_tdFrames++;                                        /* per-frame normalizer for g_tdSubdiv/g_tdProjPlot */
 #endif
-    X = cpu.X;
+    X = entryX;
     Y = 0x20; c = 0;                                     /* a320-a322 */
     do {                                                 /* L_a323 — fill the $BD00 column-id table */
         A = X; mem[0xBD00+Y]=A; mem[0xBD01+Y]=A; mem[0xBD02+Y]=A; mem[0xBD03+Y]=A;  /* a323-a32d */
@@ -4865,6 +4870,7 @@ void terrain_draw_frame(void) {
     #undef ASLM_
     #undef ROLM_
 }
+void terrain_draw_frame(void) { terrain_draw_frame_core(cpu.X); }
 
 /* ===========================================================================
  * flight_control_integrate subtree — ISR de-transpile (the last transpiled code
