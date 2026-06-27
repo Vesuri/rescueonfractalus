@@ -68,6 +68,23 @@ printf "  compute split/call: perFrame=%lu renderFn=%lu copper=%lu (renderFn inc
 echo --- renderFrame no-yield gap (real VBI frames) ---\n
 printf "maxGap=%u atVbi=%u vvblki=%04x 060B=%02x 004A=%02x\n", \
   g_maxRenderGap, g_maxGapAtVbi, g_maxGapVvblki, g_maxGap060B, g_maxGap004A
+echo --- flight VBI ZP write-set (firings; cells $00-$FF the VBI changed) ---\n
+printf "vbiZpFirings=%lu\n", g_vbiZpFirings
+set $i = 0
+while $i < 256
+  if g_vbiZpTouched[$i] != 0
+    printf "%02x ", $i
+  end
+  set $i = $i + 1
+end
+printf "\n"
+echo --- rasterizer ZP cells: 1=VBI-WRITES-IT(unsafe to alias) 0=safe ---\n
+printf "60=%d 80=%d 81=%d 82=%d 83=%d 84=%d 85=%d 86=%d 8D=%d 8E=%d 8F=%d 90=%d 91=%d 95=%d 96=%d 9F=%d B5=%d B6=%d EA=%d EB=%d F4=%d F5=%d\n", \
+  g_vbiZpTouched[0x60], g_vbiZpTouched[0x80], g_vbiZpTouched[0x81], g_vbiZpTouched[0x82], g_vbiZpTouched[0x83], \
+  g_vbiZpTouched[0x84], g_vbiZpTouched[0x85], g_vbiZpTouched[0x86], g_vbiZpTouched[0x8D], g_vbiZpTouched[0x8E], \
+  g_vbiZpTouched[0x8F], g_vbiZpTouched[0x90], g_vbiZpTouched[0x91], g_vbiZpTouched[0x95], g_vbiZpTouched[0x96], \
+  g_vbiZpTouched[0x9F], g_vbiZpTouched[0xB5], g_vbiZpTouched[0xB6], g_vbiZpTouched[0xEA], g_vbiZpTouched[0xEB], \
+  g_vbiZpTouched[0xF4], g_vbiZpTouched[0xF5]
 echo --- atmosphere terrain-pen range (salmon->brown fade) ---\n
 printf "dc=%u..%u dd=%u..%u\n", g_dcMin, g_dcMax, g_ddMin, g_ddMax
 echo --- flight-transition spin-wait diagnostics ---\n

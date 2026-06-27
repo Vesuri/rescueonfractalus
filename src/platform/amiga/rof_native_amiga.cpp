@@ -1100,10 +1100,26 @@ void reorder_sprite_slot(void);          // $5614: voice-priority mixer — assi
 // phase buckets (clear/setup/collision/draw) exclude ISR firings that land in their windows.
 extern "C" volatile unsigned long g_isrBeamLines = 0;
 #endif
+#ifdef ROF_FLIGHT_PROBE
+// ZP write-set audit: which of $00-$FF does the flight VBI ($4FF5) change?  Snapshot ZP
+// before each firing, OR the diff into g_vbiZpTouched so the gdb harness can read the union
+// over the whole run.  (Catches net changes; a write-then-restore within one firing is
+// invisible here — cross-check those statically.)  g_vbiZpFirings = firing count.
+extern "C" volatile unsigned char g_vbiZpTouched[256] = {0};
+extern "C" volatile unsigned long g_vbiZpFirings = 0;
+#endif
 extern "C" void flight_vbi_native(void)
 {
     unsigned short a = beam_line();      // sub-frame profiler timer
+#ifdef ROF_FLIGHT_PROBE
+    unsigned char zpSnap[256];
+    for (int i = 0; i < 256; i++) zpSnap[i] = mem[i];
+#endif
     vbi_handler_flight();                // $4FF5 — the whole handler
+#ifdef ROF_FLIGHT_PROBE
+    for (int i = 0; i < 256; i++) if (mem[i] != zpSnap[i]) g_vbiZpTouched[i] = 1;
+    g_vbiZpFirings++;
+#endif
     unsigned short b = beam_line();
     unsigned short d = (b >= a) ? (unsigned short)(b - a)
                                 : (unsigned short)(b + 313 - a);  // PAL wrap (~313 lines)
