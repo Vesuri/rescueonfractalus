@@ -684,6 +684,7 @@ $08A4,obj_pos_table,var,0,22-entry 16-bit object position array (lo=$08A4,hi=$08
 $08D1,obj_anim_frame,var,0,Object-approach frame counter, INC'd each advance_object_positions call (advance_object_positions)
 $08D2,obj_advance_lo,var,0,16-bit per-call object advance offset low; += $18 each advance_object_positions call
 $08D3,obj_advance_hi,var,0,16-bit per-call object advance offset high (advance_object_positions/6bed)
+$08D4,color_ring,var,0,Base of the 6-byte colour ring $08D4-$08D9 (feeds COLOR01-06)
 $08DA,sbc_operand_tmp,var,0,Scratch holding the subtract operand byte stored then SBC'd in the 24-bit subtract of sub_multibyte_a1 (sub_multibyte_a1).
 $08DB,audf2_sweep_val,var,0,Running AUDF2 pitch value decremented by $08DC each step in audf2_sweep_clear_colors, written to $D202
 $08DC,audf2_sweep_step,var,0,Decrement step subtracted from $08DB each iteration of audf2_sweep_clear_colors

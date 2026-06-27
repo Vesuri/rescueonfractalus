@@ -17,7 +17,7 @@
 // per-file banner comments are preserved as the section headers below.
 
 #include "PlatformAmiga.h"          // PlatformAmiga::pokeyRandom / noiseTick + uint types
-#include "../../gen/AtariZp.h"                // zp:: named Atari mem[] offsets
+#include "../../gen/mem.h"                     // MEM_<name> named Atari mem[] offsets
 #include "FlightProf.h"             // per-frame VBI-count profiler (g_flightProf)
 #include "../../gen/rof_native.h"   // typed C cores (clear_terrain_column_core, ...)
 
@@ -434,8 +434,8 @@ extern "C" volatile unsigned char g_ckLockon;   // lock-on indicator $3491-$3497
 //   if Z: INC_M($00E2)     — cascade to attract_timer on 256-wrap
 extern "C" void vbi_attract_timer_native(void)
 {
-    mem[zp::attractTimerSub]++;
-    if (mem[zp::attractTimerSub] == 0) mem[zp::attractTimer]++;
+    mem[MEM_attract_timer_sub]++;
+    if (mem[MEM_attract_timer_sub] == 0) mem[MEM_attract_timer]++;
 }
 
 // The Standby title banner ($782A copy_title_text_block_to_screen) is NOT reimplemented
@@ -471,17 +471,17 @@ extern "C" void startup_init_native(void)
         g_ckDigits = 1u;   // a digit 2×2 block changed → render decodes the digit instruments
     };
 
-    mem[zp::barColThreshold] = 0u;
+    mem[MEM_bar_col_threshold] = 0u;
     uint8_t y = 0x1Eu;
-    uint8_t a = mem[zp::gamePhaseFlag];
+    uint8_t a = mem[MEM_game_phase_flag];
 
-    if (a >= 1u && a < 3u && (a & mem[zp::collisionFlags]) == 0u) {
-        if (mem[zp::playerLives] != 0u) {
+    if (a >= 1u && a < 3u && (a & mem[MEM_collision_flags]) == 0u) {
+        if (mem[MEM_player_lives] != 0u) {
             // ring_push_marked(X=$14): push (a|$80) into altitude ring buffer at $0719
-            uint8_t ptr = mem[zp::altRingHead];
+            uint8_t ptr = mem[MEM_alt_ring_head];
             if (ptr >= 0x20u) ptr = 0x1Fu;
             mem[0x0719u + ptr] = a | 0x80u;
-            mem[zp::altRingHead] = (ptr == 0u) ? 0x1Fu : (uint8_t)(ptr - 1u);
+            mem[MEM_alt_ring_head] = (ptr == 0u) ? 0x1Fu : (uint8_t)(ptr - 1u);
         }
         y = 0x9Eu;
     }
@@ -490,15 +490,15 @@ extern "C" void startup_init_native(void)
     if (mem[0x33DFu] != y) { mem[0x33DFu] = y; mem[0x33E0u] = (uint8_t)(y - 1u); g_ckDigits = 1u; }
 
     // Digit 1: lower nibble of mem[$0642], change-detected against mem[$0647]
-    if (a != mem[zp::digitCache647]) {
-        mem[zp::digitCache647] = a;
+    if (a != mem[MEM_digit_cache_647]) {
+        mem[MEM_digit_cache_647] = a;
         writeDigit(0x33B4u, (uint8_t)(a & 0x0Fu), 0u);
     }
 
     // Digit 2: BCD byte mem[$0641], upper nibble → $3413, lower nibble → $3445
-    a = mem[zp::placedItemCountBcd];
-    if (a != mem[zp::shieldOrDamage]) {
-        mem[zp::shieldOrDamage] = a;
+    a = mem[MEM_placed_item_count_bcd];
+    if (a != mem[MEM_shield_or_damage]) {
+        mem[MEM_shield_or_damage] = a;
         uint8_t hi = (uint8_t)(a >> 4u);  // upper nibble (BCD tens)
         uint8_t lo = (uint8_t)(a & 0x0Fu);                   // lower nibble (BCD units)
         writeDigit(0x3413u, hi, 0u);
@@ -507,12 +507,12 @@ extern "C" void startup_init_native(void)
 
     // Digit 3: BCD byte mem[$0628] with optional $80 flag
     uint8_t bf = 0u;
-    if (mem[0x062Bu] != 0u && (0x0Cu & mem[zp::collisionFlags]) == 0u)
+    if (mem[0x062Bu] != 0u && (0x0Cu & mem[MEM_collision_flags]) == 0u)
         bf = 0x80u;
-    mem[zp::barColThreshold] = bf;
-    a = mem[zp::scoreBcd];
-    if ((a | bf) != mem[zp::digitCache646]) {
-        mem[zp::digitCache646] = a | bf;
+    mem[MEM_bar_col_threshold] = bf;
+    a = mem[MEM_score_bcd];
+    if ((a | bf) != mem[MEM_digit_cache_646]) {
+        mem[MEM_digit_cache_646] = a | bf;
         uint8_t hi = (uint8_t)(((a >> 2u) & 0x3Cu) >> 2u);
         uint8_t lo = (uint8_t)(a & 0x0Fu);
         writeDigit(0x3472u, hi, bf);
@@ -537,34 +537,34 @@ extern "C" void startup_init_native(void)
 extern "C" void lock_on_indicator_tick_native(void)
 {
     auto pushRingBuf = [](uint8_t val) {
-        uint8_t ptr = mem[zp::altRingHead];
+        uint8_t ptr = mem[MEM_alt_ring_head];
         if (ptr >= 0x20u) ptr = 0x1Fu;
         mem[0x0719u + ptr] = val | 0x80u;
-        mem[zp::altRingHead] = (ptr == 0u) ? 0x1Fu : (uint8_t)(ptr - 1u);
+        mem[MEM_alt_ring_head] = (ptr == 0u) ? 0x1Fu : (uint8_t)(ptr - 1u);
     };
 
-    uint8_t s = mem[zp::lockOnIndicatorState];
+    uint8_t s = mem[MEM_lock_on_indicator_state];
 
     if ((int8_t)s < 0) {        // s >= $80
         if (s >= 0x81u) {
             // Reverse-fill path: restore $A9 glyphs one by one.
             // LSR $0631 / BCS skip: rate-limit alternate calls.
-            if (mem[zp::lockOnIndicatorPhase] & 1u) { mem[zp::lockOnIndicatorPhase] >>= 1u; return; }
-            mem[zp::lockOnIndicatorPhase] = (uint8_t)((mem[zp::lockOnIndicatorPhase] >> 1u) + 1u);
+            if (mem[MEM_lock_on_indicator_phase] & 1u) { mem[MEM_lock_on_indicator_phase] >>= 1u; return; }
+            mem[MEM_lock_on_indicator_phase] = (uint8_t)((mem[MEM_lock_on_indicator_phase] >> 1u) + 1u);
             uint8_t n = (uint8_t)(s & 0x0Fu);
             uint8_t newS = (n == 7u) ? (uint8_t)(s - 2u) : (uint8_t)(s - 1u);
-            mem[zp::lockOnIndicatorState] = newS;
+            mem[MEM_lock_on_indicator_state] = newS;
             mem[0x3491u + newS] = 0xA9u;
             g_ckLockon = 1u;
             pushRingBuf(0xA9u);
         } else {    // s == $80: random blink (faithful port of $4235-$4247)
-            if (mem[zp::animStepTimer] > 0u) { mem[zp::animStepTimer]--; return; }
+            if (mem[MEM_anim_step_timer] > 0u) { mem[MEM_anim_step_timer]--; return; }
             // $4235 LDA $D20A / AND #7 — MUST be the POKEY RANDOM LFSR, not RTCLOK.
             // (RTCLOK is monotonic; once this runs in the ISR locked to the $0014++
             // tick, RTCLOK&7 at blink time aliases to one value -> only one light
             // blinks.  PlatformAmiga::pokeyRandom() is the real LFSR, as the Atari read.)
             uint8_t r = PlatformAmiga::pokeyRandom() & 7u;
-            mem[zp::animStepTimer] = r;                       // $423A STA $E6 (full r)
+            mem[MEM_anim_step_timer] = r;                       // $423A STA $E6 (full r)
             uint8_t y = (r >= 6u) ? (uint8_t)(r >> 1u) : r;   // $423C CMP #6 / BCC / LSR A
             mem[0x3492u + y] ^= 0x80u;                        // $4242-$4247 toggle colour bit
             g_ckLockon = 1u;
@@ -573,21 +573,21 @@ extern "C" void lock_on_indicator_tick_native(void)
     }
 
     if (s != 0u) {              // s = 1-7
-        if (mem[zp::animStepTimer] > 0u) { mem[zp::animStepTimer]--; return; }
-        mem[zp::animStepTimer] = mem[zp::lockonStepReload];
+        if (mem[MEM_anim_step_timer] > 0u) { mem[MEM_anim_step_timer]--; return; }
+        mem[MEM_anim_step_timer] = mem[MEM_lockon_step_reload];
         if (s == 7u) {
-            if (mem[zp::lockOnIndicatorActive] == 0u) { mem[zp::lockOnIndicatorActive] = 1u; mem[0x28EEu] = 1u; }
+            if (mem[MEM_lock_on_indicator_active] == 0u) { mem[MEM_lock_on_indicator_active] = 1u; mem[0x28EEu] = 1u; }
             return;
         }
-        mem[zp::lockOnIndicatorState]++;
-        uint8_t newS = mem[zp::lockOnIndicatorState];
+        mem[MEM_lock_on_indicator_state]++;
+        uint8_t newS = mem[MEM_lock_on_indicator_state];
         mem[0x3491u + newS] = 0x29u;
         g_ckLockon = 1u;
         pushRingBuf(0x29u);     // pushes $A9 = $29|$80
     } else {                    // s == 0: initialise
-        mem[zp::lockOnIndicatorActive] = 0u;
-        mem[zp::lockOnIndicatorState] = 1u;
-        mem[zp::animStepTimer] = mem[zp::lockonStepReload];
+        mem[MEM_lock_on_indicator_active] = 0u;
+        mem[MEM_lock_on_indicator_state] = 1u;
+        mem[MEM_anim_step_timer] = mem[MEM_lockon_step_reload];
         for (int i = 5; i >= 0; i--) mem[0x3492u + (uint16_t)i] = 0xA9u;
         g_ckLockon = 1u;
     }
@@ -600,13 +600,13 @@ extern "C" void lock_on_indicator_tick_native(void)
 // Tail calls to vobj_* (in-game object animation) are skipped for Standby.
 extern "C" void update_indicator_blink_native(void)
 {
-    if (mem[zp::blinkTimer] < 1) return;   // CMP #1 / BCC: skip if already 0
-    mem[zp::blinkTimer]--;
-    if (mem[zp::blinkTimer] == 0) {
-        mem[zp::blinkTimer] = 0x0F;        // reload timer
-        mem[zp::indicatorLightState] = 0x4E;        // lights ON
-    } else if (mem[zp::blinkTimer] < 0x0A) {
-        mem[zp::indicatorLightState] = 0x46;        // lights OFF (last 9 ticks of cycle)
+    if (mem[MEM_blink_timer] < 1) return;   // CMP #1 / BCC: skip if already 0
+    mem[MEM_blink_timer]--;
+    if (mem[MEM_blink_timer] == 0) {
+        mem[MEM_blink_timer] = 0x0F;        // reload timer
+        mem[MEM_indicator_light_state] = 0x4E;        // lights ON
+    } else if (mem[MEM_blink_timer] < 0x0A) {
+        mem[MEM_indicator_light_state] = 0x46;        // lights OFF (last 9 ticks of cycle)
     }
 }
 
@@ -628,13 +628,13 @@ extern "C" void update_indicator_blink_native(void)
 // between them) — a quirk of the original that is reproduced verbatim.
 static uint8_t add_multibyte_a1(uint8_t a)
 {
-    uint16_t r = (uint16_t)a + mem[zp::scrollAccum0];                 // CLC; ADC $A1
-    mem[zp::scrollAccum0] = (uint8_t)r;
-    r = (uint16_t)mem[zp::scrollAccum1] + (r >> 8);                   // LDA #0; ADC $A2
-    mem[zp::scrollAccum1] = (uint8_t)r;
-    r = (uint16_t)mem[zp::scrollAccum1] + mem[zp::scrollAccum2] + (r >> 8);     // ADC $A3 (A = new $A2!)
-    mem[zp::scrollAccum2] = (uint8_t)r;
-    r = (uint16_t)mem[zp::scrollAccum3] + (r >> 8);                   // LDA #0; ADC $A4
+    uint16_t r = (uint16_t)a + mem[MEM_scroll_accum_b0];                 // CLC; ADC $A1
+    mem[MEM_scroll_accum_b0] = (uint8_t)r;
+    r = (uint16_t)mem[MEM_scroll_accum_b1] + (r >> 8);                   // LDA #0; ADC $A2
+    mem[MEM_scroll_accum_b1] = (uint8_t)r;
+    r = (uint16_t)mem[MEM_scroll_accum_b1] + mem[MEM_scroll_accum_b2] + (r >> 8);     // ADC $A3 (A = new $A2!)
+    mem[MEM_scroll_accum_b2] = (uint8_t)r;
+    r = (uint16_t)mem[MEM_scroll_accum_b3] + (r >> 8);                   // LDA #0; ADC $A4
     return (uint8_t)r;                                      // top byte
 }
 
@@ -645,15 +645,15 @@ static uint8_t add_multibyte_a1(uint8_t a)
 // to the Standby tunnel and is omitted (same convention as the handlers above).
 static void advance_history_6a4d(void)
 {
-    uint8_t top = mem[zp::colorRing + 5];
-    mem[zp::colorRing + 5] = mem[zp::colorRing + 4];
-    mem[zp::colorRing + 4] = mem[zp::colorRing + 3];
-    mem[zp::colorRing + 3] = mem[zp::colorRing + 2];
-    mem[zp::colorRing + 2] = mem[zp::colorRing + 1];
-    mem[zp::colorRing + 1] = mem[zp::colorRing];
-    mem[zp::colorRing] = top;
-    if ((int8_t)mem[zp::stepModeFlag] < 0) mem[zp::displayFlags] = mem[zp::colorRing + 4];     // $008D < 0
-    uint8_t s = (uint8_t)(mem[0x0679 + 0x0C] + mem[zp::historyRingStep]);    // CLC; ADC $06CC
+    uint8_t top = mem[MEM_color_ring + 5];
+    mem[MEM_color_ring + 5] = mem[MEM_color_ring + 4];
+    mem[MEM_color_ring + 4] = mem[MEM_color_ring + 3];
+    mem[MEM_color_ring + 3] = mem[MEM_color_ring + 2];
+    mem[MEM_color_ring + 2] = mem[MEM_color_ring + 1];
+    mem[MEM_color_ring + 1] = mem[MEM_color_ring];
+    mem[MEM_color_ring] = top;
+    if ((int8_t)mem[MEM_step_mode_flag] < 0) mem[MEM_display_flags] = mem[MEM_color_ring + 4];     // $008D < 0
+    uint8_t s = (uint8_t)(mem[0x0679 + 0x0C] + mem[MEM_history_ring_step]);    // CLC; ADC $06CC
     mem[0x0679 + 0x0C] = s ? s : 0xFF;                          // BNE keep; else LDA #$FF
 }
 
@@ -700,7 +700,7 @@ static void draw_ring_frame_step(void)
         mem[0x08D8] = 0u;                           // $671E: LDA #$00; STA $08D8
     }
     mem[0x00A0]--;                                  // DEC $00A0
-    mem[zp::vbiFlags] = (uint8_t)(mem[0x00A0] + 1u);   // CLC; LDA $00A0; ADC #$01; STA $0088
+    mem[MEM_vbi_flags] = (uint8_t)(mem[0x00A0] + 1u);   // CLC; LDA $00A0; ADC #$01; STA $0088
 }
 
 // step_accum_add_75 @ $6A38: add $75 into the accumulator; if the resulting top byte
@@ -713,9 +713,9 @@ static void draw_ring_frame_step(void)
 static void step_accum_add_75(void)
 {
     uint8_t a = add_multibyte_a1(0x75);
-    mem[zp::scrollAccum3] = a;
-    if (a == mem[zp::scrollAccumPrev]) return;     // CMP $A5; BEQ -> top byte unchanged
-    mem[zp::scrollAccumPrev] = a;
+    mem[MEM_scroll_accum_b3] = a;
+    if (a == mem[MEM_scroll_accum_prev]) return;     // CMP $A5; BEQ -> top byte unchanged
+    mem[MEM_scroll_accum_prev] = a;
     if (a >= 0x90u) draw_ring_frame_step();      // CMP #$90; BCS -> JSR $670D
     advance_history_6a4d();                        // $6A4D: ring rotation, ALWAYS runs
 }
@@ -778,11 +778,11 @@ static uint8_t dl_lms_push_bottom(uint8_t y)
 // reload $008C=8 instead.  Then push the leading row into each half.
 static void scroll_terrain_dl(void)
 {
-    if (--mem[zp::terrainScrollCounter] != 0) {     // DEC $008A; BNE
+    if (--mem[MEM_terrain_scroll_counter] != 0) {     // DEC $008A; BNE
         dl_lms_scroll_down();
         dl_lms_scroll_up();
     } else {
-        mem[zp::terrainScrollReload] = 8;            // $008C = 8
+        mem[MEM_terrain_scroll_reload] = 8;            // $008C = 8
     }
     mem[0x0098] = dl_lms_push_bottom(mem[0x0098]);   // LDY $0098 / push / STY $0098
     mem[0x0097] = dl_lms_push_top(mem[0x0097]);      // LDX $0097 / push / STX $0097
@@ -802,28 +802,28 @@ extern "C" { typedef struct { uint8_t A, X, Y, S, N, V, Z, C, I, D; } Cpu6502; e
 extern "C" void scroll_field_columns(void);  // $6AEE transpiled (entered with A = $0089)
 extern "C" void launch_anim_dispatch_native(void)
 {
-    if (mem[zp::stepModeFlag]) return;                       // $008D: reverse ring (unused here)
-    if (mem[zp::vbiFlags]) { step_accum_add_75(); return; }  // $0088: tunnel ring cycle
-    if (uint8_t g = mem[zp::scrollColumnsGate]) {            // $0089: scroll star/planet columns
+    if (mem[MEM_step_mode_flag]) return;                       // $008D: reverse ring (unused here)
+    if (mem[MEM_vbi_flags]) { step_accum_add_75(); return; }  // $0088: tunnel ring cycle
+    if (uint8_t g = mem[MEM_terrain_state]) {            // $0089: scroll star/planet columns
         cpu.A = g; scroll_field_columns();                 // $6AEE: $0089 gate in A (>=4 advances accum)
         return;
     }
-    if (mem[zp::dlIndexGate]) return;                        // $008B: dl_index_dec (unused)
-    uint8_t ph = mem[zp::terrainScrollPhase];                // $008F every-other-frame toggle
-    mem[zp::terrainScrollPhase] = (uint8_t)(ph >> 1);        // LSR $008F
+    if (mem[MEM_dl_src_index]) return;                        // $008B: dl_index_dec (unused)
+    uint8_t ph = mem[MEM_sfx_toggle_8F];                // $008F every-other-frame toggle
+    mem[MEM_sfx_toggle_8F] = (uint8_t)(ph >> 1);        // LSR $008F
     if (ph & 1u) return;                                     // carry set -> skip this frame
-    mem[zp::terrainScrollPhase]++;                           // INC $008F
+    mem[MEM_sfx_toggle_8F]++;                           // INC $008F
     // $008C: windscreen-corner reveal.  clear_slot_0c87_0d87 ($6A27) recedes the green
     // canopy-post quad-player wedge one scanline per (every-other) frame so the tunnel
     // shows through top-down.  scroll_terrain_dl arms $008C=8 when the doors finish; this
     // branch was missing from the native dispatch, so the wedge never receded on the Amiga.
-    if (mem[zp::terrainScrollReload]) {                      // LDA $008C; BEQ skip
-        uint8_t h = --mem[zp::terrainScrollReload];          // DEC $008C (8 -> 0)
+    if (mem[MEM_terrain_scroll_reload]) {                      // LDA $008C; BEQ skip
+        uint8_t h = --mem[MEM_terrain_scroll_reload];          // DEC $008C (8 -> 0)
         uint8_t y = (uint8_t)(8 - h);                        // index = 8 - $008C
         mem[0x0C87 + y] = 0;                                 // clear left canopy-post player line ($0C88..)
         mem[0x0D87 + y] = 0;                                 // clear right canopy-post player line ($0D88..)
     }
-    if (mem[zp::terrainScrollCounter] == 0) return;          // $008A: doors already fully open
+    if (mem[MEM_terrain_scroll_counter] == 0) return;          // $008A: doors already fully open
     scroll_terrain_dl();
 }
 
@@ -981,11 +981,11 @@ extern "C" void standby_vbi_native(void)
     // attract music (CIA-B sequencer) is undisturbed but the START/doors/tunnel
     // launch effects get drained from the $0719 ring to POKEY -> Paula.
     if (mem[0x060B]) sfx_voice_envelope_tick();
-    uint8_t g = mem[zp::lockOnIndicatorTickParity];   // $5342: LSR $0643 / BCS skip / ... / INC
-    mem[zp::lockOnIndicatorTickParity] = (uint8_t)(g >> 1);
+    uint8_t g = mem[MEM_lock_on_indicator_tick_parity];   // $5342: LSR $0643 / BCS skip / ... / INC
+    mem[MEM_lock_on_indicator_tick_parity] = (uint8_t)(g >> 1);
     if (!(g & 1u)) {                         // carry clear -> run, then INC
         lock_on_indicator_tick_native();           // $4229
-        mem[zp::lockOnIndicatorTickParity]++;
+        mem[MEM_lock_on_indicator_tick_parity]++;
     }
 }
 

@@ -29,7 +29,7 @@
 #include "framework/Sprite.h"
 #include "RescueOnFractalus.h"
 #include "PlatformAmiga.h"
-#include "../../gen/AtariZp.h"      // zp:: named Atari memory offsets
+#include "../../gen/mem.h"           // MEM_<name> named Atari memory offsets
 #include "FlightProf.h"   // per-frame VBI-count profiler (g_flightProf / flight_vbi_tick)
 
 // Native handler functions — see NativeHandlers.cpp and SfxPlayer.cpp.
@@ -647,7 +647,7 @@ void RescueOnFractalus::initialize()
     // mem[$0071]: COLBK source for terrain rows (DLI dli_sub_6cf1 reads it).
     //   Snapshot has $DB (mid-animation); attract init targets $C8 (green, $C8=hue12/luma4).
     //   SDL oracle (atari000.png) shows terrain as (82,140,22) = $C8.
-    mem[zp::displayFlags] = 0xC8;   // COLBK source for terrain DLI → green
+    mem[MEM_display_flags] = 0xC8;   // COLBK source for terrain DLI → green
     mem[0x02C0] = 0x00;   // COLPM0 → nibble-0 terrain dots; $00=black matches SDL oracle
                            // (music_playing.a8s has $18=orange from mid-animation)
 
@@ -1085,7 +1085,7 @@ void RescueOnFractalus::renderFrame()
     // g2 = 0x2B - $008A grows 0 -> kTerrainHeight/2 as the doors open; once it reaches the
     // half-height the doors are fully open and the single full tunnel band takes over.
     const uint16_t half = (uint16_t)(kTerrainHeight / 2);
-    const uint16_t g2   = rsLaunched ? (uint16_t)(0x2Bu - mem[zp::terrainScrollCounter]) : 0;
+    const uint16_t g2   = rsLaunched ? (uint16_t)(0x2Bu - mem[MEM_terrain_scroll_counter]) : 0;
     if (tunnelCopper && g2 >= half) {
         // ---- scene 5: tunnel descent (doors fully open) ----
         if (!tunnelCopperInstalled) {
@@ -1120,12 +1120,12 @@ void RescueOnFractalus::renderFrame()
 void RescueOnFractalus::updateStandbyCopper(bool force)
 {
     const uint16_t titleBg  = atariToOCS(mem[0x02C8]);             // COLBK = title bg / canopy posts
-    const uint16_t titlePf0 = atariToOCS(mem[zp::textColorPf0]);   // COLPF0 = title text ($00D8)
+    const uint16_t titlePf0 = atariToOCS(mem[MEM_text_color_pf0]);   // COLPF0 = title text ($00D8)
     const uint16_t energyCol = atariToOCS(mem[0x00DE]);             // gauge bar colour ramp
     const uint16_t terr0    = atariToOCS(mem[0x02C0]);             // terrain pen0 (road dots)
     const uint16_t terr1    = atariToOCS(mem[0x02C7]);             // terrain pen1 (LEVEL text)
-    const uint16_t terr2    = atariToOCS(mem[zp::colorRing]);      // terrain pen2 ($08D4)
-    const uint16_t terr3    = atariToOCS(mem[zp::displayFlags]);   // terrain pen3 (green bg, $0071)
+    const uint16_t terr2    = atariToOCS(mem[MEM_color_ring]);      // terrain pen2 ($08D4)
+    const uint16_t terr3    = atariToOCS(mem[MEM_display_flags]);   // terrain pen3 (green bg, $0071)
     const int8_t   gauge    = (int8_t)(rsEnergyIndicator ? 1 : 0);
 
     if (force || titleBg != sbTitleBg || titlePf0 != sbTitlePf0) {
@@ -1179,7 +1179,7 @@ void RescueOnFractalus::updateTitleScreenCopper(bool force)
 void RescueOnFractalus::updatePlanetCopper(bool force)
 {
     const uint16_t titleBg  = atariToOCS(mem[0x02C8]);             // COLBK = title bg / canopy posts
-    const uint16_t titlePf0 = atariToOCS(mem[zp::textColorPf0]);   // COLPF0 = title text ($00D8)
+    const uint16_t titlePf0 = atariToOCS(mem[MEM_text_color_pf0]);   // COLPF0 = title text ($00D8)
     const uint16_t energyCol = atariToOCS(mem[0x00DE]);             // gauge bar colour ramp
     const uint16_t starCol  = atariToOCS(mem[0x02C0]);             // starfield grey ($02C0)
     const uint16_t bgCol    = atariToOCS(mem[0x00DC]);             // viewport COLBK (space, $00DC)
@@ -1221,7 +1221,7 @@ void RescueOnFractalus::updatePlanetCopper(bool force)
 void RescueOnFractalus::updateFlightCopper(bool force)
 {
     const uint16_t titleBg  = atariToOCS(mem[0x02C8]);             // COLBK = top-bar bg / canopy posts
-    const uint16_t titlePf0 = atariToOCS(mem[zp::textColorPf0]);   // COLPF0 = top-bar text ($00D8)
+    const uint16_t titlePf0 = atariToOCS(mem[MEM_text_color_pf0]);   // COLPF0 = top-bar text ($00D8)
     const uint16_t energyCol = atariToOCS(mem[0x00DE]);             // gauge bar colour
 
     if (force || titleBg != flTitleBg || titlePf0 != flTitlePf0) {
@@ -1302,7 +1302,7 @@ void RescueOnFractalus::updateFlightCopper(bool force)
 void RescueOnFractalus::updateDoorsCopper(DoorsCopperList* dc)
 {
     const uint16_t titleBg  = atariToOCS(mem[0x02C8]);            // COLBK = title bg / canopy posts
-    const uint16_t titlePf0 = atariToOCS(mem[zp::textColorPf0]);  // COLPF0 = title text ($00D8)
+    const uint16_t titlePf0 = atariToOCS(mem[MEM_text_color_pf0]);  // COLPF0 = title text ($00D8)
     const uint16_t energyCol = atariToOCS(mem[0x00DE]);            // gauge bar colour ramp
     const uint16_t compassCol = atariToOCS(mem[0x00CF]);          // compass band COLPF0
 
@@ -1314,7 +1314,7 @@ void RescueOnFractalus::updateDoorsCopper(DoorsCopperList* dc)
     // Sliding-door geometry.  topBase = terrain row g2 (slides up); tunBase = tunnel row
     // (half - g2) (the reveal centred on the vanishing point); botBase = terrain row half.
     const uint16_t half = (uint16_t)(kTerrainHeight / 2);
-    const uint16_t g2   = rsLaunched ? (uint16_t)(0x2Bu - mem[zp::terrainScrollCounter]) : 0;
+    const uint16_t g2   = rsLaunched ? (uint16_t)(0x2Bu - mem[MEM_terrain_scroll_counter]) : 0;
     const uint32_t ta   = (uint32_t)terrainBitmap->data;
     // pen0 = COLBK green ($0071), pen3 = road-dot dark ($02C0): the door field decodes
     // COLBK (value 8)→pen0 and the dark dots (value 0)→pen3 (see kNibbleColour).  color00
@@ -1325,16 +1325,16 @@ void RescueOnFractalus::updateDoorsCopper(DoorsCopperList* dc)
                         ta + (uint32_t)g2 * 120u,
                         (uint32_t)tunnelBitmap->data + (uint32_t)(half - g2) * 120u,
                         ta + (uint32_t)half * 120u,
-                        atariToOCS(mem[zp::displayFlags]),       // pen0 = COLBK green ($0071)
+                        atariToOCS(mem[MEM_display_flags]),       // pen0 = COLBK green ($0071)
                         atariToOCS(mem[0x02C7]),                 // terrain pen1
-                        atariToOCS(mem[zp::colorRing]),          // terrain pen2 ($08D4)
+                        atariToOCS(mem[MEM_color_ring]),          // terrain pen2 ($08D4)
                         atariToOCS(mem[0x02C0]),                 // pen3 = road-dot dark ($02C0)
-                        atariToOCS(mem[zp::colorRing + 0]),      // ring pen4 ($08D4)
-                        atariToOCS(mem[zp::colorRing + 1]),      // ring pen5 ($08D5)
-                        atariToOCS(mem[zp::colorRing + 2]),      // ring pen6 ($08D6)
-                        atariToOCS(mem[zp::colorRing + 3]),      // tunnel pen1 ($08D7)
-                        atariToOCS(mem[zp::colorRing + 4]),      // tunnel pen2 ($08D8)
-                        atariToOCS(mem[zp::colorRing + 5]));     // tunnel pen3 ($08D9)
+                        atariToOCS(mem[MEM_color_ring + 0]),      // ring pen4 ($08D4)
+                        atariToOCS(mem[MEM_color_ring + 1]),      // ring pen5 ($08D5)
+                        atariToOCS(mem[MEM_color_ring + 2]),      // ring pen6 ($08D6)
+                        atariToOCS(mem[MEM_color_ring + 3]),      // tunnel pen1 ($08D7)
+                        atariToOCS(mem[MEM_color_ring + 4]),      // tunnel pen2 ($08D8)
+                        atariToOCS(mem[MEM_color_ring + 5]));     // tunnel pen3 ($08D9)
 }
 
 // updateTunnelCopper(): refresh the TunnelCopperList for the full tunnel descent (scene 5,
@@ -1344,7 +1344,7 @@ void RescueOnFractalus::updateDoorsCopper(DoorsCopperList* dc)
 void RescueOnFractalus::updateTunnelCopper(bool force)
 {
     const uint16_t titleBg  = atariToOCS(mem[0x02C8]);
-    const uint16_t titlePf0 = atariToOCS(mem[zp::textColorPf0]);
+    const uint16_t titlePf0 = atariToOCS(mem[MEM_text_color_pf0]);
     const uint16_t energyCol = atariToOCS(mem[0x00DE]);
     const uint16_t compassCol = atariToOCS(mem[0x00CF]);
 
@@ -1374,7 +1374,7 @@ void RescueOnFractalus::updateTunnelCopper(bool force)
     uint16_t ring[6];
     bool ringChanged = (pen0 != tnPen0);
     for (int i = 0; i < 6; i++) {
-        ring[i] = atariToOCS(mem[zp::colorRing + i]);
+        ring[i] = atariToOCS(mem[MEM_color_ring + i]);
         if (ring[i] != tnRing[i]) ringChanged = true;
     }
     if (force || ringChanged) {
@@ -1434,7 +1434,7 @@ void RescueOnFractalus::deriveRenderSignals()
     // now that the transpiled display_setup drives: it arms the ring before the next
     // platform_render_frame, so no frame renders in the doors-fully-open gap where this
     // would briefly read false (the artifact that kept this as a C++ bool through C4).
-    rsLaunched = (mem[zp::terrainScrollCounter] != 0) || (mem[zp::vbiFlags] != 0) || rsViewport;
+    rsLaunched = (mem[MEM_terrain_scroll_counter] != 0) || (mem[MEM_vbi_flags] != 0) || rsViewport;
 
     // Door-fully-open latch.  When the door scroll completes ($008A counts $2B->0) there
     // is a multi-frame gap before the tunnel-ring dispatcher arms ($0088 set) / the
@@ -1445,7 +1445,7 @@ void RescueOnFractalus::deriveRenderSignals()
     // and the tunnel bitmap is shown) until the cinematic leaves launch or a viewport scene
     // begins.  (The old comment here wrongly assumed the ring arms before the next frame.)
     {
-        const uint8_t scroll = mem[zp::terrainScrollCounter];
+        const uint8_t scroll = mem[MEM_terrain_scroll_counter];
         if (mem[0x060B] != 0x23u || rsViewport) doorsOpenedLatch = false;  // left launch / viewport took over
         else if (prevScrollCtr != 0u && scroll == 0u) doorsOpenedLatch = true;  // door just reached fully open
         prevScrollCtr = scroll;
@@ -1489,10 +1489,10 @@ void RescueOnFractalus::perFrameWork()
     // sfx_voice_tick_native() is driven by CIA-B Timer A at 25 Hz (main.cpp).
 
     // $62E7 SFX-reinit gate: when $0090 is non-zero the loop reinits the SFX sequence.
-    if (mem[zp::sfxReinitGate]) {
+    if (mem[MEM_sfx_reinit_gate]) {
         mem[0x073Au] = 0u;    // immediate underflow → next CIA tick loads note[0]
         mem[0x073Cu] = 0xFFu; // sequence ptr before index 0
-        mem[zp::sfxReinitGate] = 0u;    // clear flag (as $70E7 does via STX $0090)
+        mem[MEM_sfx_reinit_gate] = 0u;    // clear flag (as $70E7 does via STX $0090)
     }
 
     // Title text ("RESCUE ON FRACTALUS!" / copyright): the genuine standby loop
@@ -1500,7 +1500,7 @@ void RescueOnFractalus::perFrameWork()
     // the SFX sequencer selects (via $0091) into screen RAM $32B7 every frame.  We
     // don't re-copy it here; render() picks up the change by shadow-comparing $32B7.
 
-    if (mem[zp::joystickSaved] != 0)            // $004A set when the game starts
+    if (mem[MEM_joystick_saved] != 0)            // $004A set when the game starts
         startup_init_native();          // $3FFA: cockpit digit update
 
     if (rsEnergyIndicator) buildEnergyIndicatorSprite();
