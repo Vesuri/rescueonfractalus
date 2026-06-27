@@ -37,6 +37,9 @@ echo --- terrain_draw_frame sub-phase (ROF_TDRAW_PROF; cumulative — normalize 
 printf "tdSubdiv=%lu tdProjPlot=%lu tdFrames=%lu\n", g_tdSubdiv, g_tdProjPlot, g_tdFrames
 printf "  per-frame: tdSubdiv=%lu tdProjPlot=%lu (beam ticks/frame)\n", \
   (g_tdFrames? g_tdSubdiv/g_tdFrames : 0), (g_tdFrames? g_tdProjPlot/g_tdFrames : 0)
+printf "  shape/frame: midpoints=%lu plots=%lu rasterCalls=%lu subdivCalls=%lu\n", \
+  (g_tdFrames? g_tdMidpoints/g_tdFrames:0), (g_tdFrames? g_tdPlots/g_tdFrames:0), \
+  (g_tdFrames? g_tdRasterCalls/g_tdFrames:0), (g_tdFrames? g_tdSubdivCalls/g_tdFrames:0)
 printf "fConvert=%lu (flight mem[1070]->bitplane convert; same units as draw=%lu)\n", g_fConvert, g_fDraw
 printf "fDirect=%lu (Stage-1 direct $260E->bitplane render; cmp vs fConvert)\n", g_fDirect
 printf "  fDirect breakdown/call (ticks): clear=%lu edge=%lu fill=%lu scan=%lu band=%lu | scanRows/call=%lu (of 43)\n", \

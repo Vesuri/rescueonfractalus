@@ -1018,6 +1018,9 @@ volatile struct FlightProf g_flightProf = { 0 };
 // terrain_draw_frame object-loop sub-phase probe (rof_native.c, -DROF_TDRAW_PROF):
 // beam lines spent in the fractal subdivision vs the projection+object-plot.
 extern "C" unsigned long g_tdSubdiv = 0, g_tdProjPlot = 0, g_tdFrames = 0;
+// terrain-draw shape counters (-DROF_TDRAW_PROF): how many times the hot inner ops run
+// per flight (cumulative; divide by g_tdFrames).  Tells where the subdiv cost actually is.
+extern "C" unsigned long g_tdMidpoints = 0, g_tdPlots = 0, g_tdRasterCalls = 0, g_tdSubdivCalls = 0;
 extern "C" unsigned short flight_vbi_tick(void) {
     return (unsigned short)((mem[0x0013] << 8) | mem[0x0014]);  // RTCLOK $0013:$0014
 }

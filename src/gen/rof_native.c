@@ -47,6 +47,14 @@ extern volatile unsigned long g_isrBeamLines;
 #define FP_ITER_MARK() ((void)0)
 #endif
 
+/* terrain-draw shape counters: how often the hot inner ops run (see rof_native_amiga.cpp). */
+#ifdef ROF_TDRAW_PROF
+extern unsigned long g_tdMidpoints, g_tdPlots, g_tdRasterCalls, g_tdSubdivCalls;
+#define TDCNT(c) (++(c))
+#else
+#define TDCNT(c) ((void)0)
+#endif
+
 /* Amiga black-until-ready reveal gate (read by animatePalette in RescueOnFractalus.cpp).
  * Set at display_setup entry — by then game_main_loop has drawn the cockpit + top bar and
  * scene.initialize has set up the sprites, so the window build is about to begin: the point
@@ -3708,6 +3716,7 @@ void terrain_plot_object(void) {
  * realistic increasing column array, else the midpoint loop has a fixed point).
  */
 void terrain_column_rasterize(void) {
+    TDCNT(g_tdRasterCalls);
     uint8_t A, X;        /* A = the row index passed to PLOT / the A==$82 fast path */
     uint8_t Y = cpu.Y;   /* entry Y; the $B33F (A==$82) path plots before reassigning Y */
     /* Hoist the threaded ZP scalars into registers: $82/$84/$86 (span interpolation
@@ -3730,7 +3739,7 @@ void terrain_column_rasterize(void) {
        Safe because terrain_column_rasterize is validated from the REAL flight
        snapshot (test_from_snapshot), where the row tables are real -> _ad in-bitmap;
        the __t6502 oracle's bus_*() reduce to the same mem[] access for _ad<$D000. */
-    #define PLOT()   do { sB5=Y; uint8_t _ai=A; \
+    #define PLOT()   do { TDCNT(g_tdPlots); sB5=Y; uint8_t _ai=A; \
         s80=mem[0x28CA+_ai]; s81=mem[0x28FA+_ai]; \
         uint8_t _bo=mem[0xBD00+X]; \
         uint16_t _ad=(uint16_t)(s80|(s81<<8))+_bo; \
@@ -3887,6 +3896,7 @@ void terrain_column_rasterize(void) {
  * terrain_column_rasterize, which random mem[] can't terminate).
  */
 void terrain_subdivide_column(void) {
+    TDCNT(g_tdSubdivCalls);
     uint8_t A, c;
     #define ADC_(v) do { uint16_t _t=(uint16_t)A+(uint8_t)(v)+c; c=(uint8_t)(_t>>8); A=(uint8_t)_t; } while(0)
     #define SBC_(v) ADC_((uint8_t)~(uint8_t)(v))
@@ -3914,7 +3924,7 @@ void terrain_subdivide_column(void) {
     /* Inlined terrain_midpoint_displace ($B2CC): midpoint of the register span, indexed by xi
        into the $25xx/$24xx/$23xx delta tables; outputs into m8D-m91 (+ $B5/$B6 when $91 neg).
        Bit-identical to the standalone twin (same 16-bit fixed-point form). */
-    #define MIDPOINT() do { \
+    #define MIDPOINT() do { TDCNT(g_tdMidpoints); \
         uint16_t _b1 = (uint16_t)(s82 | (s83 << 8)); \
         uint16_t _b2 = (uint16_t)(s84 | (s85 << 8)); \
         uint16_t _s1 = (uint16_t)(_b1 + (uint16_t)(mem[0x25B4+xi] | (mem[0x25D2+xi] << 8)) + 1u); \
