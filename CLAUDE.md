@@ -279,7 +279,12 @@ contention; don't bother reasoning about chip-vs-fast.) Rewrite hot functions in
   and a tight loop. SAFE only for buffers the ISR doesn't touch concurrently — the main loop
   owns the `$1010+` terrain field (verified the flight VBI never writes it); ZP and ISR-shared
   regions must stay `volatile`. `move.l` needs an even/4-aligned address (odd → 68000 address
-  fault) — align first (see `zero_run`).
+  fault) — align first (see `zero_run`). ⚠ The win is from **`move.l` batching of SEQUENTIAL
+  bytes**, NOT from dropping `volatile` per se. For SCATTERED single-byte access (e.g. the terrain
+  rasterizer's per-column PLOT + Y-walked interpolation arrays) a non-volatile alias is a measured
+  **no-op** — GCC already keeps the base in a register, so there is nothing to batch. Don't chase
+  volatile-vs-non-volatile for scattered access; that whole class of "cheaper mem access" is
+  exhausted there — the cost is instruction count / algorithm, not the `volatile` barrier.
 - **Skip redundant work the original wasted.** Avoid re-decoding/-scanning what hasn't changed
   (per-writer dirty flags; dirty row/cell ranges, cf. planet viewport `g_planetRowLo/Hi` and the
   cockpit plan `docs/cockpit-render-plan.md`). Shadow-compare scans are themselves a full
@@ -292,6 +297,13 @@ the headless beam probe (`make PROBES=1` + `diag_run.sh`); `FP_TIME` subtracts t
 beam-lines (`g_isrBeamLines`) so a phase bucket excludes ISR firings in its window. ⚠ Per-phase
 flight numbers are **terrain-dependent and noisy run-to-run** (±30%) — trust large deltas, not
 small ones, and confirm the real cause by reasoning about access counts.
+
+**Flight VBI ($4FF5) ZP write-set (audited 1872 firings + static cross-check):** the in-flight
+VBI writes only `$14 $20 $27-$2E $33 $34 $42 $44 $4B $5D $61 $62 $70 $73 $74 $B9-$BF $CE $D8-$DC
+$E6` (attitude/throttle/altitude, HUD/atmosphere colour ramp, object+sprite state). It writes
+NONE of the terrain rasterizer/subdivide cells (`$60/$80/$81/$82-$86/$8D-$91/$95/$96/$9F/$B5/$B6/
+$EA/$EB/$F4/$F5`) nor `$260E`. So the main-loop terrain renderer's working set is disjoint from
+the VBI's — useful when reasoning about ISR-safety of a main-loop optimisation.
 
 ## Working conventions
 
