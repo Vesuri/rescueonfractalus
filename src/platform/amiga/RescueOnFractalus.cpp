@@ -112,6 +112,9 @@ extern "C" void game_entry(void);
 extern "C" void* g_quitJmp[];   // definition (sized) lives in PlatformAmiga.cpp
 
 extern "C" volatile uint8_t mem[65536];
+// Which terrain field half renderFlightDirect displays (defined in rof_native.c, set by
+// game_main_loop before each ds_frame): 0 = display half (offset 0), 1 = back half (offset $30).
+extern "C" volatile unsigned char g_flightRenderHalf;
 
 // Lookup table: byte → 16-bit doubled glyph pattern (each bit → 2 pixels).
 // Filled once in initialize(); used by title render for mode-6 1bpp doubling.
@@ -803,6 +806,13 @@ void RescueOnFractalus::renderFlightDirect()
     Bitmap* const back = (flightDisplayed == terrainBitmapBack) ? terrainBitmap : terrainBitmapBack;
     uint8_t* const bp = (uint8_t*)back->data;
 
+    // Which terrain field half to read (set by game_main_loop before each ds_frame): 0 =
+    // display half (offset 0, pass 2), 1 = back half (offset $30, pass 1).  Each mode-D row is
+    // 96 bytes = two 48-byte double-buffer halves; the silhouette ($260E, plane1 sky) is
+    // column-indexed and already holds the just-rendered pass, so only the field-sourced plane2
+    // dots + the windscreen band shift by the half offset.  (Atari showed both halves alternately.)
+    const unsigned fieldHalf = g_flightRenderHalf ? 0x30u : 0x00u;
+
 #ifdef ROF_FLIGHT_PROBE
     extern volatile unsigned long g_fdClear, g_fdEdge, g_fdFill, g_fdScan,
                                   g_fdBand, g_fdCalls, g_fdScanRows;
@@ -829,7 +839,7 @@ void RescueOnFractalus::renderFlightDirect()
     // Windscreen-bottom band (scanlines 43-46): 4-row mode-D convert from mem[$1074+].  Runs
     // while the clear blit is in flight (rows 43-46 are outside the cleared region).
     {
-        const uint8_t* srow = (const uint8_t*)mem + 0x1074 + 43 * 96;
+        const uint8_t* srow = (const uint8_t*)mem + 0x1074 + fieldHalf + 43 * 96;
         uint8_t* vrow = bp + 43 * 120;
         for (int row = 0; row < 4; row++, srow += 96, vrow += 120) {
             const uint8_t* s = srow;
@@ -876,7 +886,7 @@ void RescueOnFractalus::renderFlightDirect()
     // is value-2/3 (i.e. contributes to plane2) iff its high bit is set = mask 0xAA per byte,
     // so one `& 0xAAAAAAAA` test skips 4 all-sky/all-body bytes without touching the LUT.
     {
-        const uint32_t* s4row = (const uint32_t*)((const uint8_t*)mem + 0x1074
+        const uint32_t* s4row = (const uint32_t*)((const uint8_t*)mem + 0x1074 + fieldHalf
                                                   + (unsigned)minScan * 96);
         uint8_t* p2row = bp + 40 + (unsigned)minScan * 120;     // plane2 of scanline minScan
         for (int row = minScan; row < 43; row++, s4row += 24, p2row += 120) {   // 96/4 = 24 longs/row

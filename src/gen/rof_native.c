@@ -55,6 +55,15 @@ extern unsigned long g_tdMidpoints, g_tdPlots, g_tdRasterCalls, g_tdSubdivCalls;
 #define TDCNT(c) ((void)0)
 #endif
 
+/* Flight terrain double-buffer: which field half renderFlightDirect should display.
+ * The flight loop renders TWO field halves per iteration (pass 1 = back/offset-$30,
+ * pass 2 = display/offset-0).  game_main_loop sets this before each ds_frame so BOTH
+ * halves get shown (one ds_frame per pass) — faithful to the Atari, which alternated
+ * the displayed half each vblank.  0 = display half (offset 0); 1 = back half (offset $30).
+ * Defined here (writer's TU, linked by both SDL + Amiga); the Amiga renderFlightDirect
+ * reads it, the SDL render path ignores it. */
+volatile unsigned char g_flightRenderHalf = 0;
+
 /* Amiga black-until-ready reveal gate (read by animatePalette in RescueOnFractalus.cpp).
  * Set at display_setup entry — by then game_main_loop has drawn the cockpit + top bar and
  * scene.initialize has set up the sprites, so the window build is about to begin: the point
@@ -7455,6 +7464,7 @@ L_3eb8:
     mem[0x004A] = cpu.A;
 L_3eba:
     FP_ITER();
+    g_flightRenderHalf = 0;          /* this ds_frame shows the DISPLAY half (prev pass 2, offset 0) */
     ds_frame();
     FP_ITER_MARK();
     /* --- PASS 1: render terrain field BACK half (draw col-base $30; clear/collision $33). ---
@@ -7464,6 +7474,11 @@ L_3eba:
     FP_TIME(clear_terrain_column_core(0x33), g_fClear);
     FP_TIME(terrain_draw_frame_core(0x30), g_fDraw);
     FP_TIME(terrain_collision_and_silhouette_core(0x33), g_fColl);
+    /* Display pass 1's BACK half (offset $30).  This is the second shown frame per iteration —
+       on the Atari both halves alternate on screen; here we render+show each as it completes, so
+       neither pass is dropped (smoother motion, ~2x displayed framerate). */
+    g_flightRenderHalf = 1;
+    ds_frame();
     LDA(mem[0x0041]);
     mem[0x288F] = cpu.A;
     FP_TIME(game_state_update(), g_fState);
@@ -7540,6 +7555,7 @@ L_3f59:
     if (cpu.C) goto L_3f6d;
     goto L_3eba;
 L_3f6d:
+    g_flightRenderHalf = 0;          /* level-clear / crash handoff: show the display half */
     ds_frame();
     LDA(mem[0x283B]);
     if (!cpu.N) goto L_3f6d;
