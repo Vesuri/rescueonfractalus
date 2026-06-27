@@ -6264,9 +6264,10 @@ static void sfx_voice_envelope_tick_impl(void) {
     }
     /* envelope loop: Y = $0E down to 1 */
     cpu.Y = 0x0E;
+    uint8_t expired = 0;   /* $0718 per-slot "expired" flag, localised across the loop */
     do {
         uint8_t y = cpu.Y;
-        uint8_t expired = 0;   /* $0718 per-slot "expired" flag — local (read nowhere else) */
+        expired = 0;       /* 5499 STA $0718 — reset each slot */
         /* --- frequency-step block ($549c) --- */
         if (mem[0x06DB + y] != 0) {                      /* LDA $06DB+Y; BEQ L_54d5 */
             uint16_t s = (uint16_t)mem[0x06DB + y] + mem[0x06E9 + y];  /* CLC; ADC $06E9+Y */
@@ -6310,6 +6311,7 @@ static void sfx_voice_envelope_tick_impl(void) {
         }
         cpu.Y = (uint8_t)(y - 1);                        /* DEY */
     } while (cpu.Y != 0);                                /* BNE L_5497 (stop after Y=1) */
+    sfx_voice_expired_flag = expired;   /* flush $0718 = last slot's flag (faithful final state) */
 
     /* --- clamp the ring head/tail to <= $1F ($5521) --- */
     if (alt_ring_head > 0x1F) alt_ring_head = 0x1F;          /* LDA #$1F; CMP $0073; BCS keep; STA */

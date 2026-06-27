@@ -5200,7 +5200,7 @@ L_5497:;
     /* 5497 */
     LDA(0x00);
     /* 5499 */
-    mem[0x0718] = cpu.A;
+    sfx_voice_expired_flag = cpu.A;
     /* 549c */
     LDA(mem[(0x06DB)+cpu.Y]);
     /* 549f */
@@ -5248,7 +5248,7 @@ L_54b2:;
     /* 54cc */
     mem[(0x06DB)+cpu.Y] = cpu.A;
     /* 54cf */
-    INC_M(0x0718);
+    INC_M(MEM_sfx_voice_expired_flag);
 L_54d2:;
     /* 54d2 */
     sfx_voice_write_freq();
@@ -5302,13 +5302,13 @@ L_54eb:;
     /* 5507 */
     mem[(0x06A3)+cpu.Y] = cpu.A;
     /* 550a */
-    INC_M(0x0718);
+    INC_M(MEM_sfx_voice_expired_flag);
 L_550d:;
     /* 550d */
     game_sub_55FC();
 L_5510:;
     /* 5510 */
-    LDA(mem[0x0718]);
+    LDA(sfx_voice_expired_flag);
     /* 5513 */
     if (cpu.Z) goto L_551b;
     /* 5515 */

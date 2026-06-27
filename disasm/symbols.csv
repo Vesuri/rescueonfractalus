@@ -674,6 +674,7 @@ $0714,sfx_top_prio_val,var,0,Selected top voice priority nibble value from sfx_p
 $0715,sfx_top_voice_idx,var,0,Selected top voice slot index from $568a; excluded in $56af next-voice scan
 $0716,sfx_scan_prio,var,0,SFX voice-scan threshold/min priority accumulator ($10 init in 568a, 0 in 56af)
 $0717,sfx_next_voice_idx,var,0,Second/next selected voice slot index from sfx_pick_next_voice ($56af)
+$0718,sfx_voice_expired_flag,var,0,Per-slot "voice expired" flag in sfx_voice_envelope_tick; reset 0 per slot ($5499) INC'd when an envelope completes ($54cf/$5505) gates ring_push_marked ($5510). Dead after the call.
 $0719,event_ring_0719,var,0,32-entry ($20) circular buffer; pushed by ring_push_0719, drained in sfx_voice_envelope_tick (input_init/reorder_sprite_slot per entry)
 $073A,sfx_note_timer,var,0,SFX note/duration countdown; decremented each tick in sfx_voice_tick($70F9), reloaded from table $71D2 by sfx_seq_step
 $073B,sfx_voice_mute,var,0,SFX play/mute selector; nonzero -> write Y(=0) to AUDC1/2/3 silencing; set from note high-nibble in sfx_seq_step ($718D)
