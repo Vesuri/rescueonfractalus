@@ -803,24 +803,41 @@ void RescueOnFractalus::renderFlightDirect()
     Bitmap* const back = (flightDisplayed == terrainBitmapBack) ? terrainBitmap : terrainBitmapBack;
     uint8_t* const bp = (uint8_t*)back->data;
 
+#ifdef ROF_FLIGHT_PROBE
+    extern volatile unsigned long g_fdClear, g_fdEdge, g_fdFill, g_fdScan,
+                                  g_fdBand, g_fdCalls, g_fdScanRows;
+    unsigned long _fi = g_isrBeamLines, _ft = rof_subclock();
+  #define FD_LAP(acc) do { unsigned long _n=rof_subclock(), _ni=g_isrBeamLines; \
+        (acc) += (_n - _ft) - (_ni - _fi); _ft=_n; _fi=_ni; } while(0)
+#else
+  #define FD_LAP(acc) do {} while(0)
+#endif
+
     // Terrain rows 0-42 (43 scanlines): clear all 3 planes, then build plane1 sky.
     AmigaHardware::blitterClear((uint16_t*)bp, 60, 43, 0);
     AmigaHardware::blitterWait();
+    FD_LAP(g_fdClear);
 
-    // Edge plot: ONE plane1 bit per column at its skyline scanline (160 byte-ORs).
+    // Edge plot: ONE plane1 bit per column at its skyline scanline (160 byte-ORs).  Also
+    // tracks the topmost skyline row (minScan): above it every column is sky (value-1), so
+    // no value-2 dots can exist there -> the plane2 scan below starts at minScan, not row 0.
     const uint8_t* const yForX = (const uint8_t*)mem + 0x260E + 48;   // col 0 -> $260E[48]
     static const uint8_t kMask[4] = { 0xC0u, 0x30u, 0x0Cu, 0x03u };   // 2-bit pixel within byte
+    int minScan = 42;
     for (int c = 0; c < 160; c++) {
         uint8_t h = yForX[c];
         if (h == 0xFFu) continue;                            // off-top: all body
         int scan = 150 - (int)h;                             // height -> skyline scanline
         if (scan < 0) scan = 0;
         if (scan > 42) scan = 42;                            // terrain region
+        if (scan < minScan) minScan = scan;                  // topmost terrain row this frame
         bp[scan * 120 + (c >> 2)] |= kMask[c & 3];           // plane1 skyline edge bit
     }
+    FD_LAP(g_fdEdge);
     // Sky fill: propagate each edge bit UP in ONE descending blit (writes rows 0-41, seed 42).
     AmigaHardware::blitterFillUp((uint16_t*)bp, 20, 42, 80);
     AmigaHardware::blitterWait();
+    FD_LAP(g_fdFill);
 
     // plane2 = terrain dots/detail (mode-D value-2; value-3 highlight also sets it).  The
     // blitter builds plane1 (sky) from $260E but carries no dot info, so decode plane2 from
@@ -828,16 +845,23 @@ void RescueOnFractalus::renderFlightDirect()
     // byte must be scanned to find the dots: 43 rows × 40 bytes via the kModeDP2 LUT into the
     // freshly-cleared plane2 (offset +40 within each 120-byte interleaved scanline).
     // (Perf endgame is to have the terrain rasterizer set plane2 as it plots — flight item #1.)
+    // Dirty-row bound: skip rows above the topmost skyline (minScan).  Every column there is
+    // sky (value-1) -> no value-2 dots -> nothing to write (plane2 already cleared).  Like the
+    // planet viewport's g_planetRowLo/Hi, but derived for free from the silhouette we just plotted.
     {
-        const uint8_t* s2 = (const uint8_t*)mem + 0x1070 + 4;   // row 0, +4 crop (matches plane1 align)
-        uint8_t* p2 = bp + 40;                                  // plane2 of scanline 0
-        for (int row = 0; row < 43; row++, s2 += 96, p2 += 120) {
+        const uint8_t* s2 = (const uint8_t*)mem + 0x1070 + 4 + (unsigned)minScan * 96;
+        uint8_t* p2 = bp + 40 + (unsigned)minScan * 120;        // plane2 of scanline minScan
+        for (int row = minScan; row < 43; row++, s2 += 96, p2 += 120) {
             for (int b = 0; b < 40; b++) {
                 uint8_t d = kModeDP2[s2[b]];
                 if (d) p2[b] = d;                               // cleared to 0; write only set dots
             }
         }
     }
+    FD_LAP(g_fdScan);
+#ifdef ROF_FLIGHT_PROBE
+    g_fdScanRows += (unsigned)(43 - minScan);
+#endif
 
     // Windscreen-bottom band (scanlines 43-46): still a 4-row mode-D convert from mem[$1070]
     // (= $2098+ wing band).  Cheap (4/47 of the old convert); keeps the frame element.
@@ -849,6 +873,11 @@ void RescueOnFractalus::renderFlightDirect()
             vd[b] = kModeDP1[s]; vd[40 + b] = kModeDP2[s]; vd[80 + b] = 0;
         }
     }
+    FD_LAP(g_fdBand);
+#ifdef ROF_FLIGHT_PROBE
+    g_fdCalls++;
+#endif
+#undef FD_LAP
 
     // Flip: re-point the flight copper's viewport bitplanes to the buffer we just painted.
     // The copper latches this at the next vblank (renderFrame waits for VBI after render()).

@@ -572,6 +572,10 @@ extern "C" volatile uint32_t g_terrainBmpAddr=0;
 extern "C" volatile uint32_t g_flightDirectAddr=0;
 // Stage-1 direct-render beam cost (same units as g_fConvert) for the head-to-head.
 extern "C" volatile unsigned long g_fDirect=0;
+// renderFlightDirect internal breakdown (beam ticks, accumulated over g_fdCalls):
+// clear+wait / edge plot / fill+wait / plane2 scan / band convert / scanned-row count.
+extern "C" volatile unsigned long g_fdClear=0, g_fdEdge=0, g_fdFill=0, g_fdScan=0,
+                                   g_fdBand=0, g_fdCalls=0, g_fdScanRows=0;
 // Render/glue-gap probe: attribute the per-iteration ds_frame() (= platform_tick_vbi +
 // platform_render_frame) cost, which the phase buckets above do NOT cover.  ds_frame runs
 // once per game-loop iteration, then ~300ms of two-pass terrain compute runs with the display
