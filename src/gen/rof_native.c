@@ -4148,6 +4148,13 @@ void terrain_frame_setup(void) {
     A |= mem[0x00B5]; mem[0x00B4] = A;                   /* 9ea5/9ea7 */
 
     srcptr = (uint16_t)(mem[0x0080] | (mem[0x0081] << 8));  /* ($80),Y base — constant in loop 1 */
+    /* Loop-1 invariants hoisted to locals (registers): the view-transform vector $00A0-$00A3
+       (built by build_view_transform_matrix above) and the altitude terms $008B/$008C are
+       READ ~4-8x/iteration across ~45 cells but never written in either loop, and the flight
+       VBI tree (flight_control_integrate/update_terrain_scanline_proj/sfx) writes none of them
+       — so they are stable for the duration.  See the 68000 perf notes (cache invariants). */
+    const uint8_t iA0 = mem[0x00A0], iA1 = mem[0x00A1], iA2 = mem[0x00A2], iA3 = mem[0x00A3];
+    const uint8_t i8B = mem[0x008B], i8C = mem[0x008C];
     Y = 0x00;                                            /* 9ea9 */
     do {                                                 /* L_9eab — per terrain cell */
         A = mem[srcptr + Y];                             /* 9eab LDA ($80),Y (RAM table → mem[]) */
@@ -4159,36 +4166,36 @@ void terrain_frame_setup(void) {
         int via_9f61 = 0;
         if (A & 0x80) {                                  /* 9eaf BPL -> else; case A */
             A = b6; c = 0; ADC_(0xF0); b6 = A;          /* 9eb1-9eb6 */
-            c = 0; A = mem[0x22A3 + Y]; ADC_(mem[0x00A0]); mem[0x22A4 + Y] = A;  /* 9eb8-9ebe */
-            A = mem[0x22D1 + Y]; ADC_(mem[0x00A1]); mem[0x22D2 + Y] = A;         /* 9ec1-9ec6 */
-            c = 1; A = mem[0x22FF + Y]; SBC_(mem[0x00A2]); mem[0x2300 + Y] = A;  /* 9ec9-9ecf */
-            A = mem[0x232D + Y]; SBC_(mem[0x00A3]); mem[0x232E + Y] = A;         /* 9ed2-9ed7 */
+            c = 0; A = mem[0x22A3 + Y]; ADC_(iA0); mem[0x22A4 + Y] = A;  /* 9eb8-9ebe */
+            A = mem[0x22D1 + Y]; ADC_(iA1); mem[0x22D2 + Y] = A;         /* 9ec1-9ec6 */
+            c = 1; A = mem[0x22FF + Y]; SBC_(iA2); mem[0x2300 + Y] = A;  /* 9ec9-9ecf */
+            A = mem[0x232D + Y]; SBC_(iA3); mem[0x232E + Y] = A;         /* 9ed2-9ed7 */
             via_9f61 = 1;                                /* 9eda goto 9f61 */
         } else {
             ROLL_(b5);                                   /* 9edd */
             if (b5 & 0x80) {                             /* 9edf BPL -> else; case B */
                 A = b6; c = 0; ADC_(0x10); b6 = A;      /* 9ee1-9ee6 */
-                c = 1; A = mem[0x22A3 + Y]; SBC_(mem[0x00A0]); mem[0x22A4 + Y] = A;  /* 9ee8-9eee */
-                A = mem[0x22D1 + Y]; SBC_(mem[0x00A1]); mem[0x22D2 + Y] = A;         /* 9ef1-9ef6 */
-                c = 0; A = mem[0x22FF + Y]; ADC_(mem[0x00A2]); mem[0x2300 + Y] = A;  /* 9ef9-9eff */
-                A = mem[0x232D + Y]; ADC_(mem[0x00A3]); mem[0x232E + Y] = A;         /* 9f02-9f07 */
+                c = 1; A = mem[0x22A3 + Y]; SBC_(iA0); mem[0x22A4 + Y] = A;  /* 9ee8-9eee */
+                A = mem[0x22D1 + Y]; SBC_(iA1); mem[0x22D2 + Y] = A;         /* 9ef1-9ef6 */
+                c = 0; A = mem[0x22FF + Y]; ADC_(iA2); mem[0x2300 + Y] = A;  /* 9ef9-9eff */
+                A = mem[0x232D + Y]; ADC_(iA3); mem[0x232E + Y] = A;         /* 9f02-9f07 */
                 via_9f61 = 1;                            /* 9f0a goto 9f61 */
             } else {
                 ROLL_(b5);                               /* 9f0d */
                 if (b5 & 0x80) {                         /* 9f0f BPL -> else; case C */
                     X = (uint8_t)(X - 1);                /* 9f11 DEX */
-                    c = 1; A = mem[0x22A3 + Y]; SBC_(mem[0x00A2]); mem[0x22A4 + Y] = A;  /* 9f12-9f18 */
-                    A = mem[0x22D1 + Y]; SBC_(mem[0x00A3]); mem[0x22D2 + Y] = A;         /* 9f1b-9f20 */
-                    c = 1; A = mem[0x22FF + Y]; SBC_(mem[0x00A0]); mem[0x2300 + Y] = A;  /* 9f23-9f29 */
-                    A = mem[0x232D + Y]; SBC_(mem[0x00A1]); mem[0x232E + Y] = A;         /* 9f2c-9f31 */
+                    c = 1; A = mem[0x22A3 + Y]; SBC_(iA2); mem[0x22A4 + Y] = A;  /* 9f12-9f18 */
+                    A = mem[0x22D1 + Y]; SBC_(iA3); mem[0x22D2 + Y] = A;         /* 9f1b-9f20 */
+                    c = 1; A = mem[0x22FF + Y]; SBC_(iA0); mem[0x2300 + Y] = A;  /* 9f23-9f29 */
+                    A = mem[0x232D + Y]; SBC_(iA1); mem[0x232E + Y] = A;         /* 9f2c-9f31 */
                 } else {
                     ROLL_(b5);                           /* 9f37 */
                     if (b5 & 0x80) {                     /* 9f39 BPL -> 9fb2; case D */
                         X = (uint8_t)(X + 1);            /* 9f3b INX */
-                        c = 0; A = mem[0x22A3 + Y]; ADC_(mem[0x00A2]); mem[0x22A4 + Y] = A;  /* 9f3c-9f42 */
-                        A = mem[0x22D1 + Y]; ADC_(mem[0x00A3]); mem[0x22D2 + Y] = A;         /* 9f45-9f4a */
-                        c = 0; A = mem[0x22FF + Y]; ADC_(mem[0x00A0]); mem[0x2300 + Y] = A;  /* 9f4d-9f53 */
-                        A = mem[0x232D + Y]; ADC_(mem[0x00A1]); mem[0x232E + Y] = A;         /* 9f56-9f5b */
+                        c = 0; A = mem[0x22A3 + Y]; ADC_(iA2); mem[0x22A4 + Y] = A;  /* 9f3c-9f42 */
+                        A = mem[0x22D1 + Y]; ADC_(iA3); mem[0x22D2 + Y] = A;         /* 9f45-9f4a */
+                        c = 0; A = mem[0x22FF + Y]; ADC_(iA0); mem[0x2300 + Y] = A;  /* 9f4d-9f53 */
+                        A = mem[0x232D + Y]; ADC_(iA1); mem[0x232E + Y] = A;         /* 9f56-9f5b */
                     }
                 }
             }
@@ -4197,27 +4204,27 @@ void terrain_frame_setup(void) {
             ROLL_(b5);                                   /* 9f61 */
             if (b5 & 0x80) {                             /* 9f63 BPL -> else; case E */
                 X = (uint8_t)(X - 1);                    /* 9f65 DEX */
-                c = 1; A = mem[0x22A4 + Y]; SBC_(mem[0x00A2]); mem[0x22A4 + Y] = A;  /* 9f66-9f6c */
-                A = mem[0x22D2 + Y]; SBC_(mem[0x00A3]); mem[0x22D2 + Y] = A;         /* 9f6f-9f74 */
-                c = 1; A = mem[0x2300 + Y]; SBC_(mem[0x00A0]); mem[0x2300 + Y] = A;  /* 9f77-9f7d */
-                A = mem[0x232E + Y]; SBC_(mem[0x00A1]); mem[0x232E + Y] = A;         /* 9f80-9f85 */
+                c = 1; A = mem[0x22A4 + Y]; SBC_(iA2); mem[0x22A4 + Y] = A;  /* 9f66-9f6c */
+                A = mem[0x22D2 + Y]; SBC_(iA3); mem[0x22D2 + Y] = A;         /* 9f6f-9f74 */
+                c = 1; A = mem[0x2300 + Y]; SBC_(iA0); mem[0x2300 + Y] = A;  /* 9f77-9f7d */
+                A = mem[0x232E + Y]; SBC_(iA1); mem[0x232E + Y] = A;         /* 9f80-9f85 */
             } else {
                 ROLL_(b5);                               /* 9f8b */
                 if (b5 & 0x80) {                         /* 9f8d BPL -> 9fb2; case F */
                     X = (uint8_t)(X + 1);                /* 9f8f INX */
-                    c = 0; A = mem[0x22A4 + Y]; ADC_(mem[0x00A2]); mem[0x22A4 + Y] = A;  /* 9f90-9f96 */
-                    A = mem[0x22D2 + Y]; ADC_(mem[0x00A3]); mem[0x22D2 + Y] = A;         /* 9f99-9f9e */
-                    c = 0; A = mem[0x2300 + Y]; ADC_(mem[0x00A0]); mem[0x2300 + Y] = A;  /* 9fa1-9fa7 */
-                    A = mem[0x232E + Y]; ADC_(mem[0x00A1]); mem[0x232E + Y] = A;         /* 9faa-9faf */
+                    c = 0; A = mem[0x22A4 + Y]; ADC_(iA2); mem[0x22A4 + Y] = A;  /* 9f90-9f96 */
+                    A = mem[0x22D2 + Y]; ADC_(iA3); mem[0x22D2 + Y] = A;         /* 9f99-9f9e */
+                    c = 0; A = mem[0x2300 + Y]; ADC_(iA0); mem[0x2300 + Y] = A;  /* 9fa1-9fa7 */
+                    A = mem[0x232E + Y]; ADC_(iA1); mem[0x232E + Y] = A;         /* 9faa-9faf */
                 }
             }
         }
 
         /* 9fb2 — derive screen-X ($2388) and the $235B/$2276 columns */
-        c = 1; A = 0x00; SBC_(mem[0x008B]); b5 = A;           /* 9fb2-9fb7 */
+        c = 1; A = 0x00; SBC_(i8B); b5 = A;                   /* 9fb2-9fb7 */
         A = X; A &= 0x0F; A |= b6; X = A;                     /* 9fb9-9fbe (TXA;AND;ORA;TAX) */
         A = mem[0x0900 + X]; mem[0x23B5 + Y] = A;             /* 9fbf-9fc2 */
-        SBC_(mem[0x008C]);                                   /* 9fc5 (carry from 9fb2 chain) */
+        SBC_(i8C);                                            /* 9fc5 (carry from 9fb2 chain) */
         if (c) {                                             /* 9fc7 BCC -> else */
             LSRA_(); RORL_(b5); LSRA_(); RORL_(b5);          /* 9fc9-9fcd */
             LSRA_(); RORL_(b5); LSRA_(); RORL_(b5);          /* 9fcf-9fd3 */
