@@ -7282,11 +7282,11 @@ void game_main_loop(void) {
     bus_write(0x022F, cpu.A);
     bus_write(0xD01D, cpu.A);
     LDY(0x07);
-L_3d52:
-    mem[(0xD00D)+cpu.Y] = cpu.A;
-    mem[(0x36CA)+cpu.Y] = cpu.A;
-    DEY();
-    if (!cpu.N) goto L_3d52;
+    do {                                 /* L_3d52 */
+        mem[(0xD00D)+cpu.Y] = cpu.A;
+        mem[(0x36CA)+cpu.Y] = cpu.A;
+        DEY();
+    } while (!cpu.N);
     bus_write(0x02C8, cpu.A);
     wait_vcount_30();
     LDA(0xCC);
@@ -7300,10 +7300,10 @@ L_3d52:
     game_phase = cpu.A;
     mem[0x00C7] = cpu.A;
     LDY(0x19);
-L_3d7a:
-    DEY();
-    mem[(0x062C)+cpu.Y] = cpu.A;
-    if (!cpu.Z) goto L_3d7a;
+    do {                                 /* L_3d7a */
+        DEY();
+        mem[(0x062C)+cpu.Y] = cpu.A;
+    } while (!cpu.Z);
     life_counter = cpu.A;
     LDA(0x08);
     bus_write(0xD407, cpu.A);
@@ -7319,9 +7319,9 @@ L_3d7a:
     LDA(0xC0);
     bus_write(0xD20E, cpu.A);
     LDA(cockpit_flag);
-    if (cpu.Z) goto L_3dae;
-    cockpit_display();
-L_3dae:
+    if (!cpu.Z) {                        /* L_3dae: skip when cockpit_flag == 0 */
+        cockpit_display();
+    }
     game_sub_4258();
     LDY(0x09);
     draw_dial_bar_column();
@@ -7333,17 +7333,17 @@ L_3dae:
     LDA(0x26);
     bus_write(0x02C7, cpu.A);
     LDY(0x08);
-L_3dca:
-    LDA(mem[(0x4DF1)+cpu.Y]);
-    mem[(0x00CF)+cpu.Y] = cpu.A;
-    DEY();
-    if (!cpu.N) goto L_3dca;
+    do {                                 /* L_3dca */
+        LDA(mem[(0x4DF1)+cpu.Y]);
+        mem[(0x00CF)+cpu.Y] = cpu.A;
+        DEY();
+    } while (!cpu.N);
     LDA(0x80);
     LDY(0x03);
-L_3dd7:
-    DEY();
-    mem[(0x0645)+cpu.Y] = cpu.A;
-    if (!cpu.Z) goto L_3dd7;
+    do {                                 /* L_3dd7 */
+        DEY();
+        mem[(0x0645)+cpu.Y] = cpu.A;
+    } while (!cpu.Z);
     lock_on_indicator_state = cpu.A;
     sfx_voice_distort_0b = cpu.A;
     sfx_voice_distort_0c = cpu.A;
@@ -7364,7 +7364,7 @@ L_3dd7:
     dl_param_lo = cpu.A;
     LDA(0x35);
     dl_param_hi = cpu.A;
-L_3e0f:
+    for (;;) {  /* L_3e0f: outer game / attract loop (re-entered after each level or crash) */
 #ifdef ROF_FLIGHT_PROBE
     { unsigned long _ds = rof_subclock(); display_setup(); g_probeDispSetup = rof_subclock() - _ds; }
 #else
@@ -7381,15 +7381,15 @@ L_3e0f:
     frame_counter = cpu.A;
     zp_flag_05 = cpu.A;
     LDY(0x2C);
-L_3e2c:
-    DEY();
-    mem[(0x0020)+cpu.Y] = cpu.A;
-    if (!cpu.Z) goto L_3e2c;
+    do {                                 /* L_3e2c */
+        DEY();
+        mem[(0x0020)+cpu.Y] = cpu.A;
+    } while (!cpu.Z);
     LDY(0xA6);
-L_3e34:
-    DEY();
-    mem[(0x2830)+cpu.Y] = cpu.A;
-    if (!cpu.Z) goto L_3e34;
+    do {                                 /* L_3e34 */
+        DEY();
+        mem[(0x2830)+cpu.Y] = cpu.A;
+    } while (!cpu.Z);
     screen_state = cpu.A;
     init_terrain_render_buffers();
     fill_buffer2_region_ff();
@@ -7403,10 +7403,10 @@ L_3e34:
     bus_write(0x0223, cpu.A);
     LDA(0x00);
     LDY(0x57);
-L_3e5c:
-    DEY();
-    mem[(0x0B31)+cpu.Y] = cpu.A;
-    if (!cpu.Z) goto L_3e5c;
+    do {                                 /* L_3e5c */
+        DEY();
+        mem[(0x0B31)+cpu.Y] = cpu.A;
+    } while (!cpu.Z);
     LDA(0x11);
     bus_write(0x026F, cpu.A);
     copy_terrain_seed_rows();
@@ -7427,22 +7427,22 @@ L_3e5c:
     init_gameplay_state();
       unsigned long _t1 = rof_subclock(); g_probeGameInit = _t1 - _t0;
     LDA(fresh_start_flag);
-    if (!cpu.Z) goto L_3e97_probe;
-    intro_random_setup();
-    intro_unmark_random_cells();
-    intro_seed_object_map();
-L_3e97_probe:
+    if (cpu.Z) {                         /* L_3e97: run the intro only on a fresh start */
+        intro_random_setup();
+        intro_unmark_random_cells();
+        intro_seed_object_map();
+    }
       g_probeIntro = rof_subclock() - _t1;
       g_probeInitTotal = rof_subclock() - _t0; }
 #else
     init_gameplay_state();
     LDA(fresh_start_flag);
-    if (!cpu.Z) goto L_3e97;
-    intro_random_setup();
-    intro_unmark_random_cells();
-    intro_seed_object_map();
+    if (cpu.Z) {                         /* L_3e97: run the intro only on a fresh start */
+        intro_random_setup();
+        intro_unmark_random_cells();
+        intro_seed_object_map();
+    }
 #endif
-L_3e97:
     LDA(0x60);
     row_table_stride = cpu.A;
     LDA(0x10);
@@ -7457,16 +7457,15 @@ L_3e97:
     copy_row_addr_subset();
 #endif
     LDA(level_or_state);
-    if (!cpu.Z) goto L_3eb6;
-    LDA(0x54);
-    timer_or_counter = cpu.A;
-    LDA(0x02);
-    goto L_3eb8;
-L_3eb6:
-    LDA(0x01);
-L_3eb8:
-    joystick_saved = cpu.A;
-L_3eba:
+    if (cpu.Z) {                         /* level_or_state == 0: fresh level start */
+        LDA(0x54);
+        timer_or_counter = cpu.A;
+        LDA(0x02);
+    } else {                             /* L_3eb6 */
+        LDA(0x01);
+    }
+    joystick_saved = cpu.A;              /* L_3eb8 */
+    for (;;) {                           /* L_3eba: in-game flight loop (one frame/iteration) */
     FP_ITER();
     g_flightRenderHalf = 0;          /* this ds_frame shows the DISPLAY half (prev pass 2, offset 0) */
     ds_frame();
@@ -7491,17 +7490,19 @@ L_3eba:
     FP_TIME(enemy_check(), g_fEnemy);
     LDA(life_counter);
     CMP(0x0E);
-    if (cpu.C) goto L_3ef5;
-    LDA(level_or_state);
-    if (cpu.Z) goto L_3eec;
-    game_sub_7B54();
-    goto L_3ef5;
-L_3eec:
-    LDA(mem[0x003A]);
-    CMP(0x01);
-    if (!cpu.Z) goto L_3ef5;
-    level_cleared_flag = cpu.A;
-L_3ef5:
+    if (!cpu.C) {                        /* life_counter < 0x0E */
+        LDA(level_or_state);
+        if (!cpu.Z) {                    /* level_or_state != 0 */
+            game_sub_7B54();
+        } else {                         /* L_3eec: level_or_state == 0 */
+            LDA(mem[0x003A]);
+            CMP(0x01);
+            if (cpu.Z) {
+                level_cleared_flag = cpu.A;
+            }
+        }
+    }
+    /* L_3ef5 */
     /* --- PASS 2: render terrain field DISPLAY half (draw col-base $00; clear/collision $03). ---
        This offset-0 half is what the Amiga port currently shows every frame. --- */
     terrain_frame_setup();
@@ -7509,46 +7510,48 @@ L_3ef5:
     terrain_draw_frame_core(0x00);
     terrain_collision_and_silhouette_core(0x03);
     LDA(game_state);
-    if (cpu.Z) goto L_3f0e;
-    pilot_state = cpu.A;
-L_3f0e:
+    if (!cpu.Z) {                        /* L_3f0e: keep pilot_state when game_state != 0 */
+        pilot_state = cpu.A;
+    }
     game_state_update();
     enemy_check();
     LDA(pilot_prev);
-    if (cpu.Z) goto L_3f21;
-    LDA(pilot_visible);
-    if (cpu.Z) goto L_3f21;
-    pilot_render();
-L_3f21:
+    if (!cpu.Z) {                        /* L_3f21: render pilot only when prev && visible */
+        LDA(pilot_visible);
+        if (!cpu.Z) {
+            pilot_render();
+        }
+    }
     LDA(pilot_visible);
     pilot_prev = cpu.A;
     LDA(pilot_state);
-    if (!cpu.Z) goto L_3f31;
-    LDA(clear_colors_done_003E);
-    goto L_3f33;
-L_3f31:
-    LDA(0x00);
-L_3f33:
-    pilot_visible = cpu.A;
+    if (cpu.Z) {                         /* pilot_state == 0 */
+        LDA(clear_colors_done_003E);
+    } else {                             /* L_3f31 */
+        LDA(0x00);
+    }
+    pilot_visible = cpu.A;               /* L_3f33 */
     LDA(0x01);
     game_phase = cpu.A;
     CMP(clear_colors_done_003E);
-    if (cpu.Z) goto L_3f50;
+    if (!cpu.Z) {                        /* game_phase(=1) != clear_colors_done_003E */
+        LDX(player_lives);
+        CPX(0x02);
+        if (!cpu.Z) {                    /* player_lives != 2 */
+            LDA(mem[0x003D]);
+            if (!cpu.Z) {                /* mem[0x003D] != 0 */
+                LDA(0x02);
+                mem[0x003D] = cpu.A;
+                LDY(0x0E);
+                timer_or_counter = cpu.Y;
+            }
+        }
+    }
+    /* L_3f50: stay in the flight loop unless this life is over (lives == 2) */
     LDX(player_lives);
     CPX(0x02);
-    if (cpu.Z) goto L_3f50;
-    LDA(mem[0x003D]);
-    if (cpu.Z) goto L_3f50;
-    LDA(0x02);
-    mem[0x003D] = cpu.A;
-    LDY(0x0E);
-    timer_or_counter = cpu.Y;
-L_3f50:
-    LDX(player_lives);
-    CPX(0x02);
-    if (cpu.Z) goto L_3f59;
-    goto L_3eba;
-L_3f59:
+    if (!cpu.Z) continue;                /* goto L_3eba */
+    /* L_3f59: life over — set up the level-clear / crash handoff */
     INX();
     joystick_saved = cpu.X;
     LDY(0x80);
@@ -7556,13 +7559,13 @@ L_3f59:
     mem[0x28DA] = cpu.Y;
     LDA(terrain_depth_step);
     CMP(0x40);
-    if (cpu.C) goto L_3f6d;
-    goto L_3eba;
-L_3f6d:
-    g_flightRenderHalf = 0;          /* level-clear / crash handoff: show the display half */
-    ds_frame();
-    LDA(level_ready_flag);
-    if (!cpu.N) goto L_3f6d;
+    if (!cpu.C) continue;                /* terrain_depth_step < 0x40: keep flying (goto L_3eba) */
+    /* L_3f6d: spin until the level-ready signal, then reset state and restart the outer loop */
+    do {
+        g_flightRenderHalf = 0;          /* level-clear / crash handoff: show the display half */
+        ds_frame();
+        LDA(level_ready_flag);
+    } while (!cpu.N);
     lock_on_indicator_state = cpu.Y;
     LDA(0x00);
     bcd_osc_dir = cpu.A;
@@ -7571,28 +7574,28 @@ L_3f6d:
     joystick_saved = cpu.A;
     push_a_wait_frames();
     LDY(0xA3);
-L_3f86:
-    mem[(0x0F1D)+cpu.Y] = cpu.A;
-    DEY();
-    if (!cpu.Z) goto L_3f86;
+    do {                                 /* L_3f86 */
+        mem[(0x0F1D)+cpu.Y] = cpu.A;
+        DEY();
+    } while (!cpu.Z);
     LDY(0x1E);
-L_3f8e:
-    mem[(0x0E8F)+cpu.Y] = cpu.A;
-    DEY();
-    if (!cpu.N) goto L_3f8e;
+    do {                                 /* L_3f8e */
+        mem[(0x0E8F)+cpu.Y] = cpu.A;
+        DEY();
+    } while (!cpu.N);
     LDA(indicator_light_state);
     CMP(0x4E);
-    if (!cpu.Z) goto L_3f9e;
-    LDA(0x46);
-    indicator_light_state = cpu.A;
-L_3f9e:
+    if (cpu.Z) {                         /* L_3f9e: turn the indicator light off if it was on ($4E) */
+        LDA(0x46);
+        indicator_light_state = cpu.A;
+    }
     game_sub_4606();
     LDA(anim_counter_2);
     CMP(0x2B);
-    if (!cpu.C) goto L_3fab;
-    LDA(0x2A);
-    anim_counter_2 = cpu.A;
-L_3fab:
+    if (cpu.C) {                         /* L_3fab: clamp anim_counter_2 to 0x2A */
+        LDA(0x2A);
+        anim_counter_2 = cpu.A;
+    }
     game_state = cpu.A;
     display_flags = cpu.A;
     clear_pm_state();
@@ -7600,5 +7603,7 @@ L_3fab:
     LDY(0x03);
     mem[(0x066B)+cpu.Y] = cpu.A;
     game_sub_55FC();
-    goto L_3e0f;
+    break;                               /* goto L_3e0f: restart the outer loop (display_setup) */
+    }   /* end inner in-game flight loop (L_3eba) */
+    }   /* end outer game / attract loop (L_3e0f) */
 }
