@@ -646,6 +646,10 @@ void PlatformAmiga::renderFrame() {
 #ifdef ROF_FLIGHT_PROBE
     if (_rFlight) g_rIdleWall += rof_subclock() - _ri0;
 #endif
+    // Flight double-buffer: the flip in render() has now latched (the just-painted buffer is on
+    // screen).  Kick the blitter clear of the OTHER (now off-screen) buffer so it overlaps the
+    // upcoming terrain draw instead of running serially inside the next convert.  No-op off flight.
+    if (s_scene) s_scene->flightKickBackClear();
     uint16_t vbiVec = (uint16_t)(mem[0x0222] | (mem[0x0223] << 8));
 #ifdef ROF_FLIGHT_PROBE
     // Did a VBI body advance RTCLOK during the wait?  (flight/attract bodies do; $52D7 doesn't)

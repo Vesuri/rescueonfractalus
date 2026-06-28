@@ -27,6 +27,9 @@ public:
     // back copper-list rebuild + flip.  Called from PlatformAmiga::renderFrame() at each
     // transpiled frame-wait hook; public because the caller reaches it through s_scene.
     void renderFrame();
+    void flightKickBackClear();  // post-vblank (called by PlatformAmiga::renderFrame): kick the
+                                 // blitter clear of the next back buffer so it overlaps the upcoming
+                                 // terrain draw; renderFlightDirect then just waits for it.
     void shutdown();
 
     // run(): the whole game as a faithful straight-line transcription of the
@@ -161,6 +164,8 @@ private:
     // re-points the flight copper's viewport bitplane ptrs to it; the swap latches next vblank.
     Bitmap*     terrainBitmapBack = nullptr;   // 2nd flight terrain buffer (== terrainBitmap dims)
     Bitmap*     flightDisplayed   = nullptr;   // which buffer the flight copper currently shows
+    Bitmap*     flightClearPending = nullptr;  // back buffer whose terrain rows a post-vblank blitter
+                                               // clear is currently clearing (overlapping the draw)
     Bitmap*     cockpitBitmap  = nullptr;
     Bitmap*     titleScreenBitmap = nullptr;   // full-screen 3bp text bitmap for the Title Screen
 

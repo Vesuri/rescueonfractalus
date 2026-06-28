@@ -19,6 +19,7 @@ printf "flightVbi=%u dispSetup=%lu gameInit=%lu intro=%lu rowAddr=%lu initTotal=
   g_probeFlightVbi, g_probeDispSetup, g_probeGameInit, g_probeIntro, g_probeRowAddr, g_probeInitTotal
 echo --- main-loop per-iteration gap (sub-frame ticks) ---\n
 printf "iterCount=%u iterLast=%lu iterMax=%lu iterMaxAt=%u\n", g_iterCount, g_iterLast, g_iterMax, g_iterMaxAt
+printf "fdCalls=%lu (renderFlightDirect converts) -> per-iteration = fdCalls/iterCount\n", g_fdCalls
 echo --- flight phase split (accumulated sub-frame ticks; 313 ticks=1 frame=20ms) ---\n
 printf "setup=%lu clear=%lu draw=%lu coll=%lu state=%lu enemy=%lu\n", \
   g_fSetup, g_fClear, g_fDraw, g_fColl, g_fState, g_fEnemy
