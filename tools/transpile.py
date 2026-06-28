@@ -993,6 +993,154 @@ def translate_insn(insn, func, all_funcs_by_start, symbols, local_targets,
     return lines
 
 # ---------------------------------------------------------------------------
+# Peephole: register/flag liveness + load-immediate→store folding
+# ---------------------------------------------------------------------------
+# Cleans up the transliteration's `LDA(#imm); STA addr;` two-step (a faithful
+# but ugly 6502 idiom) into a direct `addr = imm;` when the loaded register and
+# the N/Z flags it set are provably dead afterwards.  Gated on a real liveness
+# analysis so the fold can never drop a value/flag a later instruction (or the
+# function's exit, treated as live for all regs/flags) still needs.
+PEEPHOLE = True
+
+ALL_LIVE = frozenset({'A', 'X', 'Y', 'N', 'Z', 'C', 'V'})
+
+# Branch mnemonic → the flag it reads.
+_BRANCH_READ = {'BEQ': 'Z', 'BNE': 'Z', 'BCS': 'C', 'BCC': 'C',
+                'BMI': 'N', 'BPL': 'N', 'BVS': 'V', 'BVC': 'V'}
+
+def _mode_index_reg(mode):
+    """The register an addressing mode reads to form the effective address."""
+    if mode in ('zpx', 'absx', 'indx'): return 'X'
+    if mode in ('zpy', 'absy', 'indy'): return 'Y'
+    return None
+
+def insn_effects(mnem, mode):
+    """Return (reads, writes) sets over {A,X,Y,N,Z,C,V} for one instruction.
+    Conservative: anything unmodelled reads+writes everything (so nothing around
+    it is ever considered dead).  The index register of an indexed/indirect mode
+    is always an additional read (it is needed to compute the address)."""
+    rd, wr = _insn_effects_base(mnem, mode)
+    ireg = _mode_index_reg(mode)
+    if ireg:
+        rd = rd | {ireg}
+    return (rd, wr)
+
+def _insn_effects_base(mnem, mode):
+    if mnem in ('LDA','LDX','LDY'): return (set(),            {mnem[2], 'N', 'Z'})
+    if mnem in ('STA','STX','STY'): return ({mnem[2]},        set())
+    if mnem == 'TAX': return ({'A'}, {'X','N','Z'})
+    if mnem == 'TAY': return ({'A'}, {'Y','N','Z'})
+    if mnem == 'TXA': return ({'X'}, {'A','N','Z'})
+    if mnem == 'TYA': return ({'Y'}, {'A','N','Z'})
+    if mnem == 'TSX': return (set(), {'X','N','Z'})
+    if mnem == 'TXS': return ({'X'}, set())
+    if mnem in ('INX','DEX'): return ({'X'}, {'X','N','Z'})
+    if mnem in ('INY','DEY'): return ({'Y'}, {'Y','N','Z'})
+    if mnem in ('ADC','SBC'): return ({'A','C'}, {'A','N','Z','C','V'})
+    if mnem in ('AND','ORA','EOR'): return ({'A'}, {'A','N','Z'})
+    if mnem == 'CMP': return ({'A'}, {'N','Z','C'})
+    if mnem == 'CPX': return ({'X'}, {'N','Z','C'})
+    if mnem == 'CPY': return ({'Y'}, {'N','Z','C'})
+    if mnem == 'BIT': return (set(), {'N','Z','V'})
+    if mnem in ('INC','DEC'): return (set(), {'N','Z'})
+    if mnem in ('ASL','LSR'):
+        if mode in ('acc','impl'): return ({'A'}, {'A','N','Z','C'})
+        return (set(), {'N','Z','C'})
+    if mnem in ('ROL','ROR'):
+        if mode in ('acc','impl'): return ({'A','C'}, {'A','N','Z','C'})
+        return ({'C'}, {'N','Z','C'})
+    if mnem in _BRANCH_READ: return ({_BRANCH_READ[mnem]}, set())
+    if mnem in ('CLC','SEC'): return (set(), {'C'})
+    if mnem == 'CLV': return (set(), {'V'})
+    if mnem in ('CLD','SED','CLI','SEI','NOP'): return (set(), set())
+    if mnem == 'PHA': return ({'A'}, set())
+    if mnem == 'PLA': return (set(), {'A','N','Z'})
+    if mnem == 'PHP': return ({'N','Z','C','V'}, set())
+    if mnem == 'PLP': return (set(), {'N','Z','C','V'})
+    if mnem in ('JMP','RTS','RTI','BRK'): return (set(), set())  # control flow via succ/sink
+    # JSR and anything else: assume it reads args + clobbers everything.
+    return (set(ALL_LIVE), set(ALL_LIVE))
+
+def compute_liveness(insns, symbols, local_targets):
+    """Backward CFG liveness over regs/flags.  Returns live_out[index] (a set).
+    Exits (RTS/RTI/BRK, tail-calls, indirect jumps, fall-through) are sinks where
+    every reg/flag is live — so a value reaching an exit is never folded away."""
+    n = len(insns)
+    idx_by_addr = {ins['addr']: i for i, ins in enumerate(insns)}
+    eff = []
+    succ = []
+    for i, ins in enumerate(insns):
+        mnem, op, nbytes = ins['mnem'], ins['op'], len(ins['bytes'])
+        eff.append(insn_effects(mnem, parse_operand(op, nbytes, symbols)[0]))
+        s = []
+        if mnem in BRANCH_FLAGS:
+            _, val, _ = parse_operand(op, nbytes, symbols)
+            s.append(idx_by_addr[val] if val in local_targets and val in idx_by_addr else 'EXIT')
+            s.append(i + 1 if i + 1 < n else 'EXIT')         # fall-through
+        elif mnem == 'JMP':
+            _, val, _ = parse_operand(op, nbytes, symbols)
+            s.append(idx_by_addr[val] if val in local_targets and val in idx_by_addr else 'EXIT')
+        elif mnem in ('RTS', 'RTI', 'BRK'):
+            s.append('EXIT')
+        else:  # JSR, loads/stores, ALU, … fall through to next
+            s.append(i + 1 if i + 1 < n else 'EXIT')
+        succ.append(s)
+
+    live_in = [set() for _ in range(n)]
+    live_out = [set() for _ in range(n)]
+    changed = True
+    while changed:
+        changed = False
+        for i in range(n - 1, -1, -1):
+            out = set()
+            for s in succ[i]:
+                out |= ALL_LIVE if s == 'EXIT' else live_in[s]
+            rd, wr = eff[i]
+            inn = (out - wr) | rd
+            if out != live_out[i] or inn != live_in[i]:
+                live_out[i], live_in[i] = out, inn
+                changed = True
+    return live_out
+
+def compute_imm_store_folds(insns, symbols, local_targets, external_entry_labels,
+                            blocked_addrs):
+    """Find `LD{R}(#imm)` at i immediately followed by `ST{R}` at i+1 that can be
+    fused to `<store> = imm;`.  Returns (skip_loads, store_vals): indices of loads
+    to omit, and index→value-expr for stores to rewrite.
+
+    Safe iff: the pair is straight-line (neither is a branch target / split / hook,
+    so the store is only reachable through the load), and R + N + Z are all dead in
+    live_out[store]."""
+    skip_loads, store_vals = set(), {}
+    if not PEEPHOLE:
+        return skip_loads, store_vals
+    live_out = compute_liveness(insns, symbols, local_targets)
+    for i in range(len(insns) - 1):
+        ld, st = insns[i], insns[i + 1]
+        if ld['mnem'] not in ('LDA', 'LDX', 'LDY'):
+            continue
+        reg = ld['mnem'][2]
+        if st['mnem'] != 'ST' + reg:
+            continue
+        lmode, limm, _ = parse_operand(ld['op'], len(ld['bytes']), symbols)
+        if lmode != 'imm':
+            continue
+        # straight-line guard: control may not enter at either addr, and neither
+        # may carry an injected hook (which assumes the literal 6502 sequence).
+        a_ld, a_st = ld['addr'], st['addr']
+        if (a_ld in local_targets or a_st in local_targets or
+                a_ld in external_entry_labels or a_st in external_entry_labels or
+                a_ld in blocked_addrs or a_st in blocked_addrs):
+            continue
+        # the load's outputs must be dead after the store consumes the register.
+        if {reg, 'N', 'Z'} & live_out[i + 1]:
+            continue
+        smode, sval, sidx = parse_operand(st['op'], len(st['bytes']), symbols)
+        skip_loads.add(i)
+        store_vals[i + 1] = write_expr(smode, sval, sidx, f'0x{limm:02X}')
+    return skip_loads, store_vals
+
+# ---------------------------------------------------------------------------
 # Translate one function
 # ---------------------------------------------------------------------------
 def translate_func(func, all_funcs_by_start, symbols,
@@ -1040,6 +1188,11 @@ def translate_func(func, all_funcs_by_start, symbols,
     if skip_to is not None:
         local_targets.add(skip_to)
 
+    # Peephole: fold `LD{R}(#imm); ST{R} addr;` → `addr = imm;` (liveness-checked).
+    blocked_addrs = set(PRE_INSN_HOOKS) | set(SPINWAIT_HOOKS)
+    skip_loads, store_vals = compute_imm_store_folds(
+        insns, symbols, local_targets, external_entry_labels, blocked_addrs)
+
     TERMINATORS = {'RTS', 'RTI', 'JMP', 'BRK'}
 
     lines = []
@@ -1061,14 +1214,24 @@ def translate_func(func, all_funcs_by_start, symbols,
         lines.append(f'    goto L_{skip_to:04x};  /* enter past orphan-prefix loop body */')
     hit_split = False
     last_insn = None
-    for insn in insns:
+    for idx, insn in enumerate(insns):
         addr = insn['addr']
+        # Peephole: a folded load is dropped entirely (its value moves into the
+        # following store); the store is rewritten to assign the literal directly.
+        if idx in skip_loads:
+            last_insn = insn
+            continue
         # Split point: stop the current function and tail-call the wrapper.
         if addr in external_entry_labels:
             wname = wrapper_names.get(addr, f'FUN_{addr:04x}')
             lines.append(f'    {wname}(); return;')
             hit_split = True
             break   # do not translate addr or any subsequent instructions
+        if idx in store_vals:
+            lines.append(f'    /* {addr:04x} */')
+            lines.append(f'    {store_vals[idx]};')
+            last_insn = insn
+            continue
         if addr in local_targets:
             # Inject spin-wait hook at the label itself so ALL paths
             # reaching this label (including unconditional JMPs) get it.
