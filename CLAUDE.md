@@ -210,9 +210,10 @@ truth for names** (the transpiler reads it; never hand-rename in generated files
 
 | File | Role |
 |---|---|
-| `tools/transpile.py` | The transpiler. Reads `disasm/listing.txt` + `symbols.csv` + `zeropage.csv` |
+| `tools/transpile.py` | The transpiler. Reads `disasm/listing.txt` + `symbols.csv` (functions + named-memory var rows) |
 | `src/gen/rof_gen.c` | Generated 6502→C transliteration (regenerated; do NOT edit by hand) |
 | `src/gen/rof_decl.h` | Generated forward decls + mid-function entry wrappers |
+| `src/gen/mem.h` | Generated `MEM_<name>` offset macros (305) for named Atari RAM/shadow addresses, usable in C and C++, plus an opt-in `ROF_MEM_ALIASES` block of bare lvalue aliases (`rof_gen.c` enables it). Built from `symbols.csv` var rows |
 | `src/gen/rof_manual.c` | Hand-written stubs for self-modifying routines (DLI handlers etc.) |
 | `src/gen/rof_native.c` | Hand-written native twins (idiomatic C `_core` + 6502-ABI shim) |
 | `tools/validate_native.c` | The `make validate` harness |
@@ -230,6 +231,28 @@ truth for names** (the transpiler reads it; never hand-rename in generated files
 Transpiled code uses `mem[]` for RAM, a global `cpu` struct + flag-setting macros
 (`LDA`/`CMP`/`ADC`…) per 6502 op, and `bus_read`/`bus_write` for hardware ($D000–$D7FF).
 Per-op flag computation + bus dispatch is the overhead that native rewrites remove.
+
+**Named memory accesses (`mem.h`):** `symbols.csv` is the single source of truth not just for
+function names but for named RAM/shadow addresses. The transpiler builds a `VAR_NAMES` map from
+its var rows and emits named accesses instead of raw `mem[$NNNN]`: a direct access becomes a bare
+lvalue alias (`player_lives = cpu.X`, via the `ROF_MEM_ALIASES` block in `mem.h`), while
+indexed / RMW / `bus_write` forms use `mem[MEM_<name> + i]`. `rof_native.c` is auto-converted to
+the same named forms; `rof_native_amiga.cpp` + `RescueOnFractalus.cpp` use `mem[MEM_*]` directly.
+(The old `zp::`/`AtariZp.h` namespace was removed — these are general RAM/shadow addresses, not
+zero page.)
+
+**Peephole folding (liveness-gated):** the transpiler runs a backward-CFG register/flag liveness
+fixpoint (over A/X/Y/N/Z/C/V; function exits = all-live) and folds the faithful-but-ugly 6502
+load→store idioms into direct C assignments when the loaded register **and** the N/Z flags it set
+are provably dead after the store and the sequence is straight-line (no end is a branch
+target / split / injected hook):
+- `LD{R}(#imm); ST{R} addr` → `addr = imm;` (or `bus_write(addr, imm)` for hw/shadow), including a
+  run of consecutive same-reg stores (`LDA #0; STA a; STA b` → `a = 0; b = 0;`).
+- `LDA $x; STA $y` → `$y = $x;` (load-memory, **single store only**, so a later store in a run
+  can't change what an earlier-read source should hold).
+Indexed/indirect modes count their index register as a read, and `JSR` reads+clobbers everything,
+so no live value/flag is ever dropped. This shrank `rof_gen.c` by ~1490 lines vs the pre-peephole
+baseline while keeping `make validate` fully green (0 `mem[]` mismatch).
 
 **Amiga specifics:** VBI bodies run in the *real* INTB_VERTB ISR (`game_vbi_isr` dispatches
 on the live VVBLKI vector to standby `$52D7` / flight `$4FF5` / station `$1B30` native
