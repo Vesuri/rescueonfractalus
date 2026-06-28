@@ -1104,40 +1104,61 @@ def compute_liveness(insns, symbols, local_targets):
 
 def compute_imm_store_folds(insns, symbols, local_targets, external_entry_labels,
                             blocked_addrs):
-    """Find `LD{R}(#imm)` at i immediately followed by `ST{R}` at i+1 that can be
-    fused to `<store> = imm;`.  Returns (skip_loads, store_vals): indices of loads
-    to omit, and index→value-expr for stores to rewrite.
+    """Fold a `LD{R}(value)` into the run of consecutive `ST{R}` that follows it,
+    turning each store into `<store> = value;` and dropping the load.  Returns
+    (skip_loads, store_vals): load indices to omit, store index→value-expr.
 
-    Safe iff: the pair is straight-line (neither is a branch target / split / hook,
-    so the store is only reachable through the load), and R + N + Z are all dead in
-    live_out[store]."""
+    Folds handled:
+      * load-immediate, single OR multiple stores:  LDA #0; STA a; STA b -> a=0; b=0;
+      * load-memory, single store only:             LDA $x; STA $y       -> $y = $x;
+        (single-store only: a 2nd store in the run could write $x and change what a
+         later store should read.)
+
+    Safe iff: the load and EVERY store in the run are straight-line (not a branch
+    target / split / injected-hook addr — so each store is reachable only via the
+    load, guaranteeing cpu.R holds `value` there), and R + N + Z are all dead in
+    live_out of the LAST store (nothing later needs the register or its flags)."""
     skip_loads, store_vals = set(), {}
     if not PEEPHOLE:
         return skip_loads, store_vals
     live_out = compute_liveness(insns, symbols, local_targets)
-    for i in range(len(insns) - 1):
-        ld, st = insns[i], insns[i + 1]
-        if ld['mnem'] not in ('LDA', 'LDX', 'LDY'):
-            continue
+    n = len(insns)
+
+    def straight_line(a):
+        return not (a in local_targets or a in external_entry_labels or a in blocked_addrs)
+
+    i = 0
+    while i < n - 1:
+        ld = insns[i]
+        if ld['mnem'] not in ('LDA', 'LDX', 'LDY') or not straight_line(ld['addr']):
+            i += 1; continue
         reg = ld['mnem'][2]
-        if st['mnem'] != 'ST' + reg:
-            continue
-        lmode, limm, _ = parse_operand(ld['op'], len(ld['bytes']), symbols)
-        if lmode != 'imm':
-            continue
-        # straight-line guard: control may not enter at either addr, and neither
-        # may carry an injected hook (which assumes the literal 6502 sequence).
-        a_ld, a_st = ld['addr'], st['addr']
-        if (a_ld in local_targets or a_st in local_targets or
-                a_ld in external_entry_labels or a_st in external_entry_labels or
-                a_ld in blocked_addrs or a_st in blocked_addrs):
-            continue
-        # the load's outputs must be dead after the store consumes the register.
-        if {reg, 'N', 'Z'} & live_out[i + 1]:
-            continue
-        smode, sval, sidx = parse_operand(st['op'], len(st['bytes']), symbols)
+        lmode, lval, lidx = parse_operand(ld['op'], len(ld['bytes']), symbols)
+        if lmode == 'imm':
+            val_expr, allow_multi = f'0x{lval:02X}', True
+        elif lmode in ('zp', 'abs', 'zpx', 'zpy', 'absx', 'absy', 'indx', 'indy'):
+            val_expr, allow_multi = operand_read_fixed(lmode, lval, lidx), False
+        else:
+            i += 1; continue
+        # Maximal run of consecutive same-register stores.
+        run = []
+        j = i + 1
+        while j < n and insns[j]['mnem'] == 'ST' + reg:
+            run.append(j); j += 1
+        if not run or (not allow_multi and len(run) > 1):
+            i += 1; continue
+        # Every store in the run must be straight-line; the last store must leave
+        # R and the N/Z flags dead.
+        if not all(straight_line(insns[k]['addr']) for k in run):
+            i += 1; continue
+        if {reg, 'N', 'Z'} & live_out[run[-1]]:
+            i += 1; continue
         skip_loads.add(i)
-        store_vals[i + 1] = write_expr(smode, sval, sidx, f'0x{limm:02X}')
+        for k in run:
+            st = insns[k]
+            smode, sval, sidx = parse_operand(st['op'], len(st['bytes']), symbols)
+            store_vals[k] = write_expr(smode, sval, sidx, val_expr)
+        i = run[-1] + 1
     return skip_loads, store_vals
 
 # ---------------------------------------------------------------------------

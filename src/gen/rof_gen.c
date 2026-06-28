@@ -231,14 +231,12 @@ L_1a2f:;
     bus_write(0x02FC, cpu.A);
     /* 1a36 */
     bus_write(0xD01F, 0x08);
-    /* 1a39 */
-    LDA(0x00);
     /* 1a3b */
-    bus_write(0xD01D, cpu.A);
+    bus_write(0xD01D, 0x00);
     /* 1a3e */
-    bus_write(0x022F, cpu.A);
+    bus_write(0x022F, 0x00);
     /* 1a41 */
-    bus_write(0xD400, cpu.A);
+    bus_write(0xD400, 0x00);
     /* 1a44 */
     LDA(0x06);
     /* 1a46 */
@@ -356,10 +354,8 @@ L_1b63:;
     CPX(0x0F);
     /* 1b6a */
     if (cpu.C) goto L_1b74;
-    /* 1b6c */
-    LDA(mem[(0x1BE5)+cpu.X]);
     /* 1b6f */
-    bus_write(0xD205, cpu.A);
+    bus_write(0xD205, mem[(0x1BE5)+cpu.X]);
     /* 1b72 */
     INC_M(MEM_terrain_scroll_reload);
 L_1b74:;
@@ -594,16 +590,12 @@ L_1c9a:;
 L_1ca7:;
     /* 1ca7 */
     INY();
-    /* 1ca8 */
-    LDA(screen_ptr_lo);
     /* 1caa */
-    bus_write(ZP_IND_Y(0x81), cpu.A);
+    bus_write(ZP_IND_Y(0x81), screen_ptr_lo);
     /* 1cac */
     INY();
-    /* 1cad */
-    LDA(screen_ptr_hi);
     /* 1caf */
-    bus_write(ZP_IND_Y(0x81), cpu.A);
+    bus_write(ZP_IND_Y(0x81), screen_ptr_hi);
 L_1cb1:;
     /* 1cb1 */
     LDA(bus_read(0xD20A));
@@ -621,10 +613,8 @@ L_1cb1:;
     AND(0x01);
     /* 1cc0 */
     TAX();
-    /* 1cc1 */
-    LDA(mem[(0x1C3E)+cpu.X]);
     /* 1cc4 */
-    bus_write(ZP_IND_Y(0x83), cpu.A);
+    bus_write(ZP_IND_Y(0x83), mem[(0x1C3E)+cpu.X]);
     /* 1cc6 */
     DEC_M(MEM_encounter_count);
     /* 1cc8 */
@@ -668,12 +658,10 @@ L_1ce4:;
     DEY();
     /* 1cea */
     if (!cpu.N) goto L_1ce4;
-    /* 1cec */
-    LDA(0x00);
     /* 1cee */
-    terrain_state = cpu.A;
+    terrain_state = 0x00;
     /* 1cf0 */
-    dl_src_index = cpu.A;
+    dl_src_index = 0x00;
     /* 1cf2 */
     LDA(0x04);
     /* 1cf4 */
@@ -769,26 +757,22 @@ L_1d3e:;
     if (!cpu.C) goto L_1d69;
     /* 1d4c */
     TAX();
-    /* 1d4d */
-    LDA(0xC0);
     /* 1d4f */
-    mem[(0x3600)+cpu.X] = cpu.A;
+    mem[(0x3600)+cpu.X] = 0xC0;
     /* 1d52 */
-    mem[(0x3700)+cpu.X] = cpu.A;
+    mem[(0x3700)+cpu.X] = 0xC0;
     /* 1d55 */
-    mem[(0x3601)+cpu.X] = cpu.A;
+    mem[(0x3601)+cpu.X] = 0xC0;
     /* 1d58 */
-    mem[(0x3701)+cpu.X] = cpu.A;
+    mem[(0x3701)+cpu.X] = 0xC0;
     /* 1d5b */
-    mem[(0x3602)+cpu.X] = cpu.A;
+    mem[(0x3602)+cpu.X] = 0xC0;
     /* 1d5e */
-    mem[(0x3702)+cpu.X] = cpu.A;
-    /* 1d61 */
-    LDA(0x00);
+    mem[(0x3702)+cpu.X] = 0xC0;
     /* 1d63 */
-    mem[(0x35FF)+cpu.X] = cpu.A;
+    mem[(0x35FF)+cpu.X] = 0x00;
     /* 1d66 */
-    mem[(0x36FF)+cpu.X] = cpu.A;
+    mem[(0x36FF)+cpu.X] = 0x00;
 L_1d69:;
     /* 1d69 */
     LDY(0x07);
@@ -811,10 +795,8 @@ L_1d6b:;
     if (!cpu.C) goto L_1d86;
     /* 1d7a */
     TAX();
-    /* 1d7b */
-    LDA(mem[(0x1D92)+cpu.Y]);
     /* 1d7e */
-    mem[(0x3300)+cpu.X] = cpu.A;
+    mem[(0x3300)+cpu.X] = mem[(0x1D92)+cpu.Y];
     /* 1d81 */
     LDA(0x00);
     /* 1d83 */
@@ -872,10 +854,8 @@ void dli_handler_station(void) {
 L_1e18:;
     /* 1e18 */
     LDY(grid_offset_a);
-    /* 1e1a */
-    LDA(mem[(0x276D)+cpu.Y]);
     /* 1e1d */
-    grid_offset_b = cpu.A;
+    grid_offset_b = mem[(0x276D)+cpu.Y];
 L_1e1f:;
     /* 1e1f */
     LDA(dl_bottom_index);
@@ -896,26 +876,16 @@ L_1e29:;
 void station_sub_1E2A(void) {
     /* 1e2a */
     LDY(grid_offset_a);
-    /* 1e2c */
-    LDA(mem[(0x272C)+cpu.Y]);
     /* 1e2f */
-    sfx_reinit_gate = cpu.A;
-    /* 1e31 */
-    LDA(mem[(0x2746)+cpu.Y]);
+    sfx_reinit_gate = mem[(0x272C)+cpu.Y];
     /* 1e34 */
-    altitude_threshold = cpu.A;
-    /* 1e36 */
-    LDA(mem[(0x2739)+cpu.Y]);
+    altitude_threshold = mem[(0x2746)+cpu.Y];
     /* 1e39 */
-    draw_row = cpu.A;
-    /* 1e3b */
-    LDA(mem[(0x2753)+cpu.Y]);
+    draw_row = mem[(0x2739)+cpu.Y];
     /* 1e3e */
-    blit_pixel_x = cpu.A;
-    /* 1e40 */
-    LDA(mem[(0x2760)+cpu.Y]);
+    blit_pixel_x = mem[(0x2753)+cpu.Y];
     /* 1e43 */
-    blit_color_src = cpu.A;
+    blit_color_src = mem[(0x2760)+cpu.Y];
     /* 1e45 */
     LDY(dl_bottom_index);
     /* 1e47 */
@@ -944,14 +914,10 @@ L_1e5c:;
     CPX(0xE1);
     /* 1e5e */
     if (cpu.C) goto L_1e70;
-    /* 1e60 */
-    LDA(bus_read(ZP_IND_Y(0x90)));
     /* 1e62 */
-    mem[(0x3400)+cpu.X] = cpu.A;
-    /* 1e65 */
-    LDA(bus_read(ZP_IND_Y(0x92)));
+    mem[(0x3400)+cpu.X] = bus_read(ZP_IND_Y(0x90));
     /* 1e67 */
-    mem[(0x3500)+cpu.X] = cpu.A;
+    mem[(0x3500)+cpu.X] = bus_read(ZP_IND_Y(0x92));
     /* 1e6a */
     INY();
     /* 1e6b */
@@ -1060,14 +1026,10 @@ void pmg_colors_station(void) {
     AND(0x07);
     /* 1f19 */
     TAY();
-    /* 1f1a */
-    LDA(mem[(0x1F30)+cpu.Y]);
     /* 1f1d */
-    bus_write(0xD002, cpu.A);
-    /* 1f20 */
-    LDA(mem[(0x1F38)+cpu.Y]);
+    bus_write(0xD002, mem[(0x1F30)+cpu.Y]);
     /* 1f23 */
-    bus_write(0xD003, cpu.A);
+    bus_write(0xD003, mem[(0x1F38)+cpu.Y]);
     /* 1f26 */
     LDA(mem[(0x1F40)+cpu.Y]);
     /* 1f29 */
@@ -1117,14 +1079,10 @@ L_1f59:;
     if (!cpu.Z) goto L_1f98;
     /* 1f7e */
     mem[(0x2606)+cpu.X] = 0x00;
-    /* 1f81 */
-    LDA(mem[(0x260C)+cpu.X]);
     /* 1f84 */
-    mem[MEM_terrain_height_max+cpu.X] = cpu.A;
-    /* 1f87 */
-    LDA(mem[(0x260D)+cpu.X]);
+    mem[MEM_terrain_height_max+cpu.X] = mem[(0x260C)+cpu.X];
     /* 1f8a */
-    mem[(0x260F)+cpu.X] = cpu.A;
+    mem[(0x260F)+cpu.X] = mem[(0x260D)+cpu.X];
     /* 1f8d */
     LDA(mem[(0x260B)+cpu.X]);
     /* 1f90 */
@@ -1139,26 +1097,16 @@ L_1f98:;
     LDA(mem[MEM_terrain_height_max+cpu.X]);
     /* 1f9b */
     sfx_reinit_gate = cpu.A;
-    /* 1f9d */
-    LDA(mem[(0x260F)+cpu.X]);
     /* 1fa0 */
-    altitude_threshold = cpu.A;
-    /* 1fa2 */
-    LDA(mem[(0x2610)+cpu.X]);
+    altitude_threshold = mem[(0x260F)+cpu.X];
     /* 1fa5 */
-    draw_row = cpu.A;
-    /* 1fa7 */
-    LDA(mem[(0x2611)+cpu.X]);
+    draw_row = mem[(0x2610)+cpu.X];
     /* 1faa */
-    blit_pixel_x = cpu.A;
-    /* 1fac */
-    LDA(mem[(0x2607)+cpu.X]);
+    blit_pixel_x = mem[(0x2611)+cpu.X];
     /* 1faf */
-    scroll_accum_b0 = cpu.A;
-    /* 1fb1 */
-    LDA(mem[(0x2608)+cpu.X]);
+    scroll_accum_b0 = mem[(0x2607)+cpu.X];
     /* 1fb4 */
-    scroll_accum_b1 = cpu.A;
+    scroll_accum_b1 = mem[(0x2608)+cpu.X];
 L_1fb6:;
     /* 1fb6 */
     LDY(0x00);
@@ -1493,14 +1441,10 @@ void wait_frames_20(void) {
 void game_entry(void) {
     /* 3cde */
     game_init_first();
-    /* 3ce1 */
-    LDA(joystick_raw);
     /* 3ce3 */
-    joystick_saved_1 = cpu.A;
-    /* 3ce6 */
-    LDA(joystick_saved);
+    joystick_saved_1 = joystick_raw;
     /* 3ce8 */
-    joystick_saved_2 = cpu.A;
+    joystick_saved_2 = joystick_saved;
     /* 3ceb */
     LDA(0x00);
     /* 3ced */
@@ -1775,14 +1719,10 @@ void draw_2digit_value__t6502(void) {
     AND(0x3C);
     /* 4089 */
     draw_glyph_2rows();
-    /* 408c */
-    LDA(dl_y3);
     /* 408e */
-    dl_y1 = cpu.A;
-    /* 4090 */
-    LDA(dl_y4);
+    dl_y1 = dl_y3;
     /* 4092 */
-    dl_y2 = cpu.A;
+    dl_y2 = dl_y4;
     /* 4094 */
     PLA();
     draw_digit_low_nibble(); return;
@@ -1862,10 +1802,8 @@ L_40c0:;
 L_40d3:;
     /* 40d3 */
     INY();
-    /* 40d4 */
-    LDA(mem[(0x4B57)+cpu.X]);
     /* 40d7 */
-    mem[(0x0E87)+cpu.Y] = cpu.A;
+    mem[(0x0E87)+cpu.Y] = mem[(0x4B57)+cpu.X];
     /* 40da */
     INX();
     /* 40db */
@@ -2127,10 +2065,8 @@ L_424d:;
     lock_on_indicator_active = cpu.A;
     /* 4251 */
     INC_M(MEM_lock_on_indicator_state);
-    /* 4253 */
-    LDA(lockon_step_reload);
     /* 4256 */
-    anim_step_timer = cpu.A;
+    anim_step_timer = lockon_step_reload;
     game_sub_4258(); return;
 }
 
@@ -2156,14 +2092,10 @@ void draw_player3_object__t6502(void) {
 L_42bc:;
     /* 42bc */
     TAY();
-    /* 42bd */
-    LDA(mem[(0x4566)+cpu.Y]);
     /* 42c0 */
-    bus_write(0xD00B, cpu.A);
-    /* 42c3 */
-    LDA(mem[(0x4569)+cpu.Y]);
+    bus_write(0xD00B, mem[(0x4566)+cpu.Y]);
     /* 42c6 */
-    player3_vsize = cpu.A;
+    player3_vsize = mem[(0x4569)+cpu.Y];
     /* 42c9 */
     SEC();
     /* 42ca */
@@ -2356,14 +2288,10 @@ L_4369:;
     ASL_A();
     /* 436f */
     TAY();
-    /* 4370 */
-    LDA(mem[(0x4D3E)+cpu.Y]);
     /* 4373 */
-    dl_y1 = cpu.A;
-    /* 4375 */
-    LDA(mem[(0x4D3F)+cpu.Y]);
+    dl_y1 = mem[(0x4D3E)+cpu.Y];
     /* 4378 */
-    dl_y2 = cpu.A;
+    dl_y2 = mem[(0x4D3F)+cpu.Y];
     /* 437a */
     LDY(0x00);
 L_437c:;
@@ -2844,24 +2772,22 @@ L_45af:;
 /* init_cockpit_bar_cells @ $45C5: Fills cockpit digit/bar init cells ($2107-$2198 with $BE, $2167-$2198 with $AA) */
 /* faithful transliteration kept as the validation oracle; native init_cockpit_bar_cells() lives in rof_native.c (see VALIDATE_FUNCS) */
 void init_cockpit_bar_cells__t6502(void) {
-    /* 45c5 */
-    LDA(0xBE);
     /* 45c7 */
-    mem[0x2107] = cpu.A;
+    mem[0x2107] = 0xBE;
     /* 45ca */
-    mem[0x2108] = cpu.A;
+    mem[0x2108] = 0xBE;
     /* 45cd */
-    mem[0x2137] = cpu.A;
+    mem[0x2137] = 0xBE;
     /* 45d0 */
-    mem[0x2138] = cpu.A;
+    mem[0x2138] = 0xBE;
     /* 45d3 */
-    mem[0x21C7] = cpu.A;
+    mem[0x21C7] = 0xBE;
     /* 45d6 */
-    mem[0x21C8] = cpu.A;
+    mem[0x21C8] = 0xBE;
     /* 45d9 */
-    mem[0x21F7] = cpu.A;
+    mem[0x21F7] = 0xBE;
     /* 45dc */
-    mem[0x21F8] = cpu.A;
+    mem[0x21F8] = 0xBE;
     /* 45df */
     LDA(0xAA);
     /* 45e1 */
@@ -2886,10 +2812,8 @@ L_45f0:;
     LDA(mem[(0x4DD2)+cpu.Y]);
     /* 45f3 */
     mem[(0x0C88)+cpu.Y] = cpu.A;
-    /* 45f6 */
-    LDA(mem[(0x4DDA)+cpu.Y]);
     /* 45f9 */
-    mem[(0x0D88)+cpu.Y] = cpu.A;
+    mem[(0x0D88)+cpu.Y] = mem[(0x4DDA)+cpu.Y];
     /* 45fc */
     LDA(mem[(0x4DE2)+cpu.Y]);
     /* 45ff */
@@ -3032,10 +2956,8 @@ L_466a:;
     LDA(sfx_state_0634);
     /* 4679 */
     if (!cpu.Z) goto L_4669;
-    /* 467b */
-    LDA(joystick_saved);
     /* 467d */
-    saved_joy_4a = cpu.A;
+    saved_joy_4a = joystick_saved;
     /* 4680 */
     joystick_saved = cpu.Y;
     /* 4682 */
@@ -3076,10 +2998,8 @@ L_469d:;
     LDA(0x00);
     /* 469f */
     event_active_flag = cpu.A;
-    /* 46a1 */
-    LDA(saved_joy_4a);
     /* 46a4 */
-    joystick_saved = cpu.A;
+    joystick_saved = saved_joy_4a;
     /* 46a6 */
     LDY(0x08);
 L_46a8:;
@@ -3612,10 +3532,8 @@ void dli_launch_tail_inc_c7_4a05(void) {
 }
 
 void dli_launch_4a0c(void) {
-    /* 4a0c */
-    LDA(display_param_5);
     /* 4a0e */
-    bus_write(0xD017, cpu.A);
+    bus_write(0xD017, display_param_5);
     /* 4a11 */
     NOP();
     /* 4a14 */
@@ -3629,10 +3547,8 @@ void dli_launch_4a0c(void) {
 }
 
 void dli_launch_reset_c7_4acd(void) {
-    /* 4acd */
-    LDA(display_param_4);
     /* 4acf */
-    bus_write(0xD01A, cpu.A);
+    bus_write(0xD01A, display_param_4);
     /* 4ad2 */
     LDA(0x00);
     /* 4ad4 */
@@ -3878,16 +3794,14 @@ L_4f43:; platform_tick_vbi(); platform_render_frame();
     if (!cpu.Z) goto L_4f43;
     /* 4f48 */
     sfx_engine_reset();
-    /* 4f4b */
-    LDA(0x00);
     /* 4f4d */
-    joystick_saved = cpu.A;
+    joystick_saved = 0x00;
     /* 4f4f */
-    player3_hpos = cpu.A;
+    player3_hpos = 0x00;
     /* 4f52 */
-    player3_bottom_y = cpu.A;
+    player3_bottom_y = 0x00;
     /* 4f54 */
-    intro_sfx_delay = cpu.A;
+    intro_sfx_delay = 0x00;
     /* 4f59 */
     intro_phase_counter = 0x42;
     /* 4f5c */
@@ -3968,12 +3882,10 @@ L_4fcb:;
 /* intro_reset_score_slots @ $4FCE: Clears $066A/$0686, sets $0678=$0C and refreshes display field Y=$0D via game_sub_55FC */
 /* faithful transliteration kept as the validation oracle; native intro_reset_score_slots() lives in rof_native.c (see VALIDATE_FUNCS) */
 void intro_reset_score_slots__t6502(void) {
-    /* 4fce */
-    LDA(0x00);
     /* 4fd0 */
-    sfx_voice_distort_0d = cpu.A;
+    sfx_voice_distort_0d = 0x00;
     /* 4fd3 */
-    mem[0x0686] = cpu.A;
+    mem[0x0686] = 0x00;
     /* 4fd6 */
     LDA(0x0C);
     /* 4fd8 */
@@ -4012,14 +3924,12 @@ L_4fe2:;
 
 /* vbi_handler_flight @ $4FF5: In-flight VBI handler (VVBLKI=$4FF5 set at $3E50 during flight init); $51B9 block = flight_control_integrate + terrain projection, mirrored by flight_vbi_native */
 void vbi_handler_flight(void) {
-    /* 4ff5 */
-    LDA(0x00);
     /* 4ff7 */
-    mem[0x00C7] = cpu.A;
+    mem[0x00C7] = 0x00;
     /* 4ff9 */
-    bus_write(0xD008, cpu.A);
+    bus_write(0xD008, 0x00);
     /* 4ffc */
-    bus_write(0xD009, cpu.A);
+    bus_write(0xD009, 0x00);
     /* 5001 */
     bus_write(0xD409, 0x04);
     /* 5004 */
@@ -4030,38 +3940,22 @@ void vbi_handler_flight(void) {
     bus_write(0xD012, cpu.A);
     /* 500c */
     bus_write(0xD013, cpu.A);
-    /* 500f */
-    LDA(mem[0x0037]);
     /* 5011 */
-    bus_write(0xD014, cpu.A);
-    /* 5014 */
-    LDA(text_color_pf0);
+    bus_write(0xD014, mem[0x0037]);
     /* 5016 */
-    bus_write(0xD016, cpu.A);
-    /* 5019 */
-    LDA(display_param_8);
+    bus_write(0xD016, text_color_pf0);
     /* 501b */
-    bus_write(0xD017, cpu.A);
-    /* 501e */
-    LDA(mem[0x00D9]);
+    bus_write(0xD017, display_param_8);
     /* 5020 */
-    bus_write(0xD015, cpu.A);
-    /* 5023 */
-    LDA(mem[0x00CB]);
+    bus_write(0xD015, mem[0x00D9]);
     /* 5025 */
-    bus_write(0xD002, cpu.A);
-    /* 5028 */
-    LDA(mem[0x00CD]);
+    bus_write(0xD002, mem[0x00CB]);
     /* 502a */
-    bus_write(0xD00A, cpu.A);
-    /* 502d */
-    LDA(player3_hpos);
+    bus_write(0xD00A, mem[0x00CD]);
     /* 5030 */
-    bus_write(0xD003, cpu.A);
-    /* 5033 */
-    LDA(mem[0x026F]);
+    bus_write(0xD003, player3_hpos);
     /* 5036 */
-    bus_write(0xD01B, cpu.A);
+    bus_write(0xD01B, mem[0x026F]);
     /* 5039 */
     INC_M(MEM_RTCLOK_LOW);
     /* 503b */
@@ -4468,22 +4362,14 @@ L_51db:;
     ADC(mem[0x08A3]);
     /* 51df */
     TAY();
-    /* 51e0 */
-    LDA(mem[(0x07F9)+cpu.Y]);
     /* 51e3 */
-    audc_shadow_0 = cpu.A;
-    /* 51e5 */
-    LDA(mem[(0x0823)+cpu.Y]);
+    audc_shadow_0 = mem[(0x07F9)+cpu.Y];
     /* 51e8 */
-    mem[0x00DC] = cpu.A;
-    /* 51ea */
-    LDA(mem[(0x084D)+cpu.Y]);
+    mem[0x00DC] = mem[(0x0823)+cpu.Y];
     /* 51ed */
-    mem[0x00DB] = cpu.A;
-    /* 51ef */
-    LDA(mem[(0x0877)+cpu.Y]);
+    mem[0x00DB] = mem[(0x084D)+cpu.Y];
     /* 51f2 */
-    anim_counter_2 = cpu.A;
+    anim_counter_2 = mem[(0x0877)+cpu.Y];
     /* 51f4 */
     LDA(stage_geom_0617);
     /* 51f7 */
@@ -4663,52 +4549,32 @@ L_52b4:;
 
 /* vbi_handler_standby @ $52D7: Standby + launch-cinematic VBI handler (VVBLKI=$52D7 set in display_setup $5F50); active from the Standby screen through the doors/tunnel/stars/planet cinematic, until flight init swaps in vbi_handler_flight ($4FF5). Per-frame: attract timer, attract input poll ($5398), launch_anim_dispatch ($5367), lock_on_indicator_tick every other frame, SFX/music tick, sfx_voice_envelope_tick. Was vbi_handler_standby. */
 void vbi_handler_standby(void) {
-    /* 52d7 */
-    LDA(mem[0x022F]);
     /* 52da */
-    bus_write(0xD400, cpu.A);
+    bus_write(0xD400, mem[0x022F]);
     /* 52df */
     mem[0x00C7] = 0x00;
     /* 52e3 */
     bus_write(0xD409, 0x04);
-    /* 52e6 */
-    LDA(text_color_pf0);
     /* 52e8 */
-    bus_write(0xD016, cpu.A);
-    /* 52eb */
-    LDA(mem[0x02C7]);
+    bus_write(0xD016, text_color_pf0);
     /* 52ee */
-    bus_write(0xD019, cpu.A);
-    /* 52f1 */
-    LDA(mem[0x02C8]);
+    bus_write(0xD019, mem[0x02C7]);
     /* 52f4 */
-    bus_write(0xD01A, cpu.A);
+    bus_write(0xD01A, mem[0x02C8]);
     /* 52f9 */
     bus_write(0xD017, 0x78);
-    /* 52fc */
-    LDA(mem[0x02C0]);
     /* 52ff */
-    bus_write(0xD012, cpu.A);
-    /* 5302 */
-    LDA(mem[0x02C1]);
+    bus_write(0xD012, mem[0x02C0]);
     /* 5305 */
-    bus_write(0xD013, cpu.A);
-    /* 5308 */
-    LDA(mem[0x02C2]);
+    bus_write(0xD013, mem[0x02C1]);
     /* 530b */
-    bus_write(0xD014, cpu.A);
-    /* 530e */
-    LDA(mem[0x02C3]);
+    bus_write(0xD014, mem[0x02C2]);
     /* 5311 */
-    bus_write(0xD015, cpu.A);
-    /* 5314 */
-    LDA(mem[0x00B5]);
+    bus_write(0xD015, mem[0x02C3]);
     /* 5316 */
-    bus_write(0xD001, cpu.A);
-    /* 5319 */
-    LDA(mem[0x026F]);
+    bus_write(0xD001, mem[0x00B5]);
     /* 531c */
-    bus_write(0xD01B, cpu.A);
+    bus_write(0xD01B, mem[0x026F]);
     /* 5321 */
     bus_write(0xD006, 0x3B);
     /* 5326 */
@@ -4857,10 +4723,8 @@ L_53cb:;
 
 /* vbi_handler_1 @ $53CC: First in-game VBI handler (VVBLKI=$53CC set at $3D63 in game_entry) */
 void vbi_handler_1(void) {
-    /* 53cc */
-    LDA(mem[0x022F]);
     /* 53cf */
-    bus_write(0xD400, cpu.A);
+    bus_write(0xD400, mem[0x022F]);
     /* 53d2 */
     INC_M(MEM_RTCLOK_LOW);
     /* 53d4 */
@@ -5359,10 +5223,8 @@ void reorder_sprite_slot__t6502(void) {
 L_562d:;
     /* 562d */
     LDX(sfx_top_voice_idx);
-    /* 5630 */
-    LDA(mem[MEM_sfx_voice_reg_idx+cpu.X]);
     /* 5633 */
-    mem[MEM_sfx_voice_reg_idx+cpu.Y] = cpu.A;
+    mem[MEM_sfx_voice_reg_idx+cpu.Y] = mem[MEM_sfx_voice_reg_idx+cpu.X];
     /* 5636 */
     LDA(0x00);
     /* 5638 */
@@ -5386,10 +5248,8 @@ L_5641:;
     if (cpu.Z) goto L_5661;
     /* 5650 */
     LDY(sfx_next_voice_idx);
-    /* 5653 */
-    LDA(mem[MEM_sfx_voice_reg_idx+cpu.X]);
     /* 5656 */
-    mem[MEM_sfx_voice_reg_idx+cpu.Y] = cpu.A;
+    mem[MEM_sfx_voice_reg_idx+cpu.Y] = mem[MEM_sfx_voice_reg_idx+cpu.X];
     /* 5659 */
     LDA(0x00);
     /* 565b */
@@ -5431,10 +5291,8 @@ void sfx_voice_write_freq_ctrl__t6502(void) {
     LDX(mem[MEM_sfx_voice_reg_idx+cpu.Y]);
     /* 5676 */
     if (cpu.Z) goto L_5689;
-    /* 5678 */
-    LDA(mem[MEM_hud_field_679+cpu.Y]);
     /* 567b */
-    mem[(0xD1FE)+cpu.X] = cpu.A;
+    mem[(0xD1FE)+cpu.X] = mem[MEM_hud_field_679+cpu.Y];
     /* 567e */
     LDA(mem[MEM_sfx_voice_distort_0e+cpu.Y]);
     /* 5681 */
@@ -5569,44 +5427,28 @@ void input_init__t6502(void) {
     AND(0x0F);
     /* 5832 */
     mem[MEM_sfx_voice_distort_0e+cpu.Y] = cpu.A;
-    /* 5835 */
-    LDA(mem[(0x5716)+cpu.X]);
     /* 5838 */
-    mem[MEM_hud_field_679+cpu.Y] = cpu.A;
-    /* 583b */
-    LDA(mem[(0x5737)+cpu.X]);
+    mem[MEM_hud_field_679+cpu.Y] = mem[(0x5716)+cpu.X];
     /* 583e */
-    mem[(0x06A3)+cpu.Y] = cpu.A;
-    /* 5841 */
-    LDA(mem[(0x5758)+cpu.X]);
+    mem[(0x06A3)+cpu.Y] = mem[(0x5737)+cpu.X];
     /* 5844 */
-    mem[(0x0687)+cpu.Y] = cpu.A;
-    /* 5847 */
-    LDA(mem[(0x5779)+cpu.X]);
+    mem[(0x0687)+cpu.Y] = mem[(0x5758)+cpu.X];
     /* 584a */
-    mem[(0x0695)+cpu.Y] = cpu.A;
-    /* 584d */
-    LDA(mem[(0x579A)+cpu.X]);
+    mem[(0x0695)+cpu.Y] = mem[(0x5779)+cpu.X];
     /* 5850 */
-    mem[(0x06B1)+cpu.Y] = cpu.A;
+    mem[(0x06B1)+cpu.Y] = mem[(0x579A)+cpu.X];
     /* 5853 */
     LDA(mem[(0x57BB)+cpu.X]);
     /* 5856 */
     mem[(0x06DB)+cpu.Y] = cpu.A;
     /* 5859 */
     if (cpu.Z) goto L_586d;
-    /* 585b */
-    LDA(mem[(0x57DC)+cpu.X]);
     /* 585e */
-    mem[(0x06BF)+cpu.Y] = cpu.A;
-    /* 5861 */
-    LDA(mem[(0x57E4)+cpu.X]);
+    mem[(0x06BF)+cpu.Y] = mem[(0x57DC)+cpu.X];
     /* 5864 */
-    mem[(0x06CD)+cpu.Y] = cpu.A;
-    /* 5867 */
-    LDA(mem[(0x57EC)+cpu.X]);
+    mem[(0x06CD)+cpu.Y] = mem[(0x57E4)+cpu.X];
     /* 586a */
-    mem[(0x06E9)+cpu.Y] = cpu.A;
+    mem[(0x06E9)+cpu.Y] = mem[(0x57EC)+cpu.X];
 L_586d:;
     /* 586d */
     LDA(mem[(0x57F4)+cpu.X]);
@@ -6107,14 +5949,10 @@ L_5c03:;
 L_5c12:;
     /* 5c12 */
     LDX(name_entry_cell_base);
-    /* 5c15 */
-    LDA(mem[0x37F5]);
     /* 5c18 */
-    mem[(0x3709)+cpu.X] = cpu.A;
-    /* 5c1b */
-    LDA(mem[0x37F6]);
+    mem[(0x3709)+cpu.X] = mem[0x37F5];
     /* 5c1e */
-    mem[(0x370A)+cpu.X] = cpu.A;
+    mem[(0x370A)+cpu.X] = mem[0x37F6];
     /* 5c21 */
     LDY(0x07);
 L_5c23:;
@@ -6431,14 +6269,10 @@ void game_init_5D50(void) {
     bus_write(0x0222, 0x0E);
     /* 5d62 */
     bus_write(0x0223, 0x5E);
-    /* 5d65 */
-    LDA(joystick_saved_1);
     /* 5d68 */
-    bus_write(0x0216, cpu.A);
-    /* 5d6b */
-    LDA(joystick_saved_2);
+    bus_write(0x0216, joystick_saved_1);
     /* 5d6e */
-    bus_write(0x0217, cpu.A);
+    bus_write(0x0217, joystick_saved_2);
     /* 5d71 */
     CLI();
     /* 5d74 */
@@ -6618,12 +6452,10 @@ L_5f34:;
     dl_y4 = cpu.A;
     /* 5f81 */
     rle_expand_list();
-    /* 5f84 */
-    LDA(0x14);
     /* 5f86 */
-    bus_write(0x026F, cpu.A);
+    bus_write(0x026F, 0x14);
     /* 5f89 */
-    bus_write(0xD01B, cpu.A);
+    bus_write(0xD01B, 0x14);
     /* 5f8c */
     LDY(0x56);
     /* 5f8e */
@@ -6650,12 +6482,10 @@ L_5f9f:;
     DEY();
     /* 5fa3 */
     if (!cpu.N) goto L_5f9f;
-    /* 5fa5 */
-    LDA(0x2D);
     /* 5fa7 */
-    bus_write(0xD000, cpu.A);
+    bus_write(0xD000, 0x2D);
     /* 5faa */
-    bus_write(0xD002, cpu.A);
+    bus_write(0xD002, 0x2D);
     /* 5fad */
     LDA(0xBE);
     /* 5faf */
@@ -6889,10 +6719,8 @@ L_60b6:;
     if (!cpu.Z) goto L_60c3;
     /* 60bc */
     step_mode_flag = 0xFF;
-    /* 60be */
-    LDA(mem[0x08D8]);
     /* 60c1 */
-    display_flags = cpu.A;
+    display_flags = mem[0x08D8];
 L_60c3:;
     /* 60c3 */
     LDA(mem[0x008E]);
@@ -7652,22 +7480,18 @@ L_641b:;
     CMP(0x03);
     /* 6429 */
     if (!cpu.Z) goto L_644c;
-    /* 642b */
-    LDA(0xFF);
     /* 642d */
-    mem[0x06CA] = cpu.A;
+    mem[0x06CA] = 0xFF;
     /* 6430 */
-    history_ring_step = cpu.A;
+    history_ring_step = 0xFF;
     /* 6433 */
-    mem[0x06CD] = cpu.A;
-    /* 6436 */
-    LDA(0x01);
+    mem[0x06CD] = 0xFF;
     /* 6438 */
-    mem[0x06E6] = cpu.A;
+    mem[0x06E6] = 0x01;
     /* 643b */
-    mem[0x06E8] = cpu.A;
+    mem[0x06E8] = 0x01;
     /* 643e */
-    mem[0x06E9] = cpu.A;
+    mem[0x06E9] = 0x01;
     /* 6441 */
     LDA(0x00);
     /* 6443 */
@@ -7738,12 +7562,10 @@ L_6478:; platform_tick_vbi(); platform_render_frame();
     reorder_sprite_slot();
     /* 6498 */
     timer_676 = 0x02;
-    /* 649b */
-    LDA(0x00);
     /* 649d */
-    mem[0x06E8] = cpu.A;
+    mem[0x06E8] = 0x00;
     /* 64a0 */
-    mem[0x06E9] = cpu.A;
+    mem[0x06E9] = 0x00;
     /* 64a3 */
     LDA(0x01);
     /* 64a5 */
@@ -7831,10 +7653,8 @@ L_650b:;
     LDA(mem[MEM_row_base_lo+cpu.X]);
     /* 650e */
     row_table_stride = cpu.A;
-    /* 6510 */
-    LDA(mem[MEM_row_base_hi+cpu.X]);
     /* 6513 */
-    player_speed = cpu.A;
+    player_speed = mem[MEM_row_base_hi+cpu.X];
     /* 6515 */
     LDY(0x2D);
     /* 6517 */
@@ -7852,12 +7672,10 @@ L_6519:;
     if (!cpu.N) goto L_650b;
     /* 6521 */
     copy_192_to_1800();
-    /* 6524 */
-    LDA(0x00);
     /* 6526 */
-    mem[0x00DC] = cpu.A;
+    mem[0x00DC] = 0x00;
     /* 6528 */
-    display_flags = cpu.A;
+    display_flags = 0x00;
     /* 652c */
     dl_param_lo = 0x10;
     /* 652f */
@@ -8161,24 +7979,16 @@ L_664a:;
 void fill_horizontal_span__t6502(void) {
     /* 665d */
     LDY(draw_row_top);
-    /* 665f */
-    LDA(mem[MEM_row_base_lo+cpu.Y]);
     /* 6662 */
-    sync_flag = cpu.A;
-    /* 6664 */
-    LDA(mem[MEM_row_base_hi+cpu.Y]);
+    sync_flag = mem[MEM_row_base_lo+cpu.Y];
     /* 6667 */
-    dl_ptr_lo = cpu.A;
+    dl_ptr_lo = mem[MEM_row_base_hi+cpu.Y];
     /* 6669 */
     LDY(draw_row_bottom);
-    /* 666b */
-    LDA(mem[MEM_row_base_lo+cpu.Y]);
     /* 666e */
-    frame_counter = cpu.A;
-    /* 6670 */
-    LDA(mem[MEM_row_base_hi+cpu.Y]);
+    frame_counter = mem[MEM_row_base_lo+cpu.Y];
     /* 6673 */
-    draw_row_ptr2_hi = cpu.A;
+    draw_row_ptr2_hi = mem[MEM_row_base_hi+cpu.Y];
     /* 6675 */
     LDA(draw_x_left);
     /* 6677 */
@@ -8231,10 +8041,8 @@ L_6692:;
 /* fill_vertical_span @ $669C: Iterates rows $009E..$009F: ptr $80/$81=tbl[$0084]; masked-plot col $009C via plot_pixel_masked and col $009D>>1 via plot_glyph_pixel_masked per row */
 /* faithful transliteration kept as the validation oracle; native fill_vertical_span() lives in rof_native.c (see VALIDATE_FUNCS) */
 void fill_vertical_span__t6502(void) {
-    /* 669c */
-    LDA(draw_row_bottom);
     /* 669e */
-    screen_ptr_hi = cpu.A;
+    screen_ptr_hi = draw_row_bottom;
     /* 66a0 */
     SEC();
     /* 66a1 */
@@ -8246,14 +8054,10 @@ void fill_vertical_span__t6502(void) {
 L_66a7:;
     /* 66a7 */
     LDY(screen_ptr_hi);
-    /* 66a9 */
-    LDA(mem[MEM_row_base_lo+cpu.Y]);
     /* 66ac */
-    sync_flag = cpu.A;
-    /* 66ae */
-    LDA(mem[MEM_row_base_hi+cpu.Y]);
+    sync_flag = mem[MEM_row_base_lo+cpu.Y];
     /* 66b1 */
-    dl_ptr_lo = cpu.A;
+    dl_ptr_lo = mem[MEM_row_base_hi+cpu.Y];
     /* 66b3 */
     LDA(draw_x_left);
     /* 66b5 */
@@ -8287,10 +8091,8 @@ void set_row_ptr_from_count__t6502(void) {
 /* set_row_ptr @ $66C8: Sets bitmap row pointer $0080=$073D[Y], $0081=$0793[Y] (per-scanline base-address table) */
 /* faithful transliteration kept as the validation oracle; native set_row_ptr() lives in rof_native.c (see VALIDATE_FUNCS) */
 void set_row_ptr__t6502(void) {
-    /* 66c8 */
-    LDA(mem[MEM_row_base_lo+cpu.Y]);
     /* 66cb */
-    sync_flag = cpu.A;
+    sync_flag = mem[MEM_row_base_lo+cpu.Y];
     /* 66cd */
     LDA(mem[MEM_row_base_hi+cpu.Y]);
     /* 66d0 */
@@ -8809,10 +8611,8 @@ L_68d9:;
     LDA(mem[MEM_row_base_lo+cpu.X]);
     /* 68dc */
     mem[(0x300A)+cpu.Y] = cpu.A;
-    /* 68df */
-    LDA(mem[MEM_row_base_hi+cpu.X]);
     /* 68e2 */
-    mem[(0x300B)+cpu.Y] = cpu.A;
+    mem[(0x300B)+cpu.Y] = mem[MEM_row_base_hi+cpu.X];
     /* 68e5 */
     DEY();
     /* 68e6 */
@@ -8840,10 +8640,8 @@ L_68f6:;
     LDA(mem[MEM_row_base_lo+cpu.X]);
     /* 68f9 */
     mem[(0x308B)+cpu.Y] = cpu.A;
-    /* 68fc */
-    LDA(mem[MEM_row_base_hi+cpu.X]);
     /* 68ff */
-    mem[(0x308C)+cpu.Y] = cpu.A;
+    mem[(0x308C)+cpu.Y] = mem[MEM_row_base_hi+cpu.X];
     /* 6902 */
     INY();
     /* 6903 */
@@ -8972,16 +8770,12 @@ L_6964:;
 
 /* dl_lms_push_top @ $6973: Writes 16-bit ptr $80/$81 into top LMS entry at $300A,X (X-=3), then ptr -= $2E (46-byte row stride) */
 void dl_lms_push_top(void) {
-    /* 6973 */
-    LDA(dl_ptr_lo);
     /* 6975 */
-    mem[(0x300A)+cpu.X] = cpu.A;
+    mem[(0x300A)+cpu.X] = dl_ptr_lo;
     /* 6978 */
     DEX();
-    /* 6979 */
-    LDA(sync_flag);
     /* 697b */
-    mem[(0x300A)+cpu.X] = cpu.A;
+    mem[(0x300A)+cpu.X] = sync_flag;
     /* 697e */
     SEC();
     /* 697f */
@@ -9006,16 +8800,12 @@ void dl_lms_push_top(void) {
 
 /* dl_lms_push_bottom @ $698E: Writes 16-bit ptr $82/$83 into bottom LMS entry at $3089,Y (Y+=3), then ptr += $2E (46-byte row stride) */
 void dl_lms_push_bottom(void) {
-    /* 698e */
-    LDA(dl_ptr_hi);
     /* 6990 */
-    mem[(0x3089)+cpu.Y] = cpu.A;
+    mem[(0x3089)+cpu.Y] = dl_ptr_hi;
     /* 6993 */
     INY();
-    /* 6994 */
-    LDA(screen_ptr_lo);
     /* 6996 */
-    mem[(0x3089)+cpu.Y] = cpu.A;
+    mem[(0x3089)+cpu.Y] = screen_ptr_lo;
     /* 6999 */
     CLC();
     /* 699a */
@@ -9400,14 +9190,10 @@ L_6b0f:;
     LDA(mem[(0x0C33)+cpu.Y]);
     /* 6b12 */
     mem[(0x0C32)+cpu.Y] = cpu.A;
-    /* 6b15 */
-    LDA(mem[(0x0D33)+cpu.Y]);
     /* 6b18 */
-    mem[(0x0D32)+cpu.Y] = cpu.A;
-    /* 6b1b */
-    LDA(mem[(0x0E33)+cpu.Y]);
+    mem[(0x0D32)+cpu.Y] = mem[(0x0D33)+cpu.Y];
     /* 6b1e */
-    mem[(0x0E32)+cpu.Y] = cpu.A;
+    mem[(0x0E32)+cpu.Y] = mem[(0x0E33)+cpu.Y];
     /* 6b21 */
     LDA(mem[(0x0F33)+cpu.Y]);
     /* 6b24 */
@@ -9520,14 +9306,12 @@ L_6b75:;
 /* init_object_positions @ $6B85: Zeroes $08D1/$08D2/$08D3; for Y=$2A..0 step2 adds base $2EE0 to word table $6E2D into 22-entry word array $08A4/$08A5 */
 /* faithful transliteration kept as the validation oracle; native init_object_positions() lives in rof_native.c (see VALIDATE_FUNCS) */
 void init_object_positions__t6502(void) {
-    /* 6b85 */
-    LDA(0x00);
     /* 6b87 */
-    obj_advance_lo = cpu.A;
+    obj_advance_lo = 0x00;
     /* 6b8a */
-    obj_advance_hi = cpu.A;
+    obj_advance_hi = 0x00;
     /* 6b8d */
-    obj_anim_frame = cpu.A;
+    obj_anim_frame = 0x00;
     /* 6b90 */
     LDY(0x2A);
 L_6b92:;
@@ -9651,14 +9435,10 @@ void update_object_distance__t6502(void) {
 L_6bfc:;
     /* 6bfc */
     draw_row_ptr2_hi = cpu.A;
-    /* 6bfe */
-    LDA(frame_counter);
     /* 6c00 */
-    mem[MEM_obj_pos_table+cpu.X] = cpu.A;
-    /* 6c03 */
-    LDA(draw_row_ptr2_hi);
+    mem[MEM_obj_pos_table+cpu.X] = frame_counter;
     /* 6c05 */
-    mem[(0x08A5)+cpu.X] = cpu.A;
+    mem[(0x08A5)+cpu.X] = draw_row_ptr2_hi;
     /* 6c0a */
     screen_ptr_hi = 0xFF;
     /* 6c0c */
@@ -9699,10 +9479,8 @@ L_6c2b:;
     LDA(frame_counter);
     /* 6c2f */
     draw_vline_pair();
-    /* 6c32 */
-    LDA(draw_row_ptr2_hi);
     /* 6c34 */
-    frame_counter = cpu.A;
+    frame_counter = draw_row_ptr2_hi;
     /* 6c36 */
     LDA(0x55);
     /* 6c38 */
@@ -9797,10 +9575,8 @@ L_6c7b:;
     SBC(encounter_count);
     /* 6c84 */
     TAY();
-    /* 6c85 */
-    LDA(screen_ptr_hi);
     /* 6c87 */
-    bus_write(ZP_IND_Y(0x80), cpu.A);
+    bus_write(ZP_IND_Y(0x80), screen_ptr_hi);
 L_6c89:;
     /* 6c89 */
     DEC_M(MEM_draw_row);
@@ -9867,10 +9643,8 @@ void dli_launch_dispatch_6cad(void) {
     ASL_A();
     /* 6cb4 */
     TAY();
-    /* 6cb5 */
-    LDA(mem[(0x6DBB)+cpu.Y]);
     /* 6cb8 */
-    dli_jmp_ptr_lo = cpu.A;
+    dli_jmp_ptr_lo = mem[(0x6DBB)+cpu.Y];
     /* 6cba */
     LDA(mem[(0x6DBC)+cpu.Y]);
     /* 6cbd */
@@ -9881,18 +9655,12 @@ void dli_launch_dispatch_6cad(void) {
 
 /* dli_handler_game2 @ $6CC2: manual implementation in rof_manual.c */
 void dli_launch_pmg_colors_6cd7(void) {
-    /* 6cd7 */
-    LDA(mem[0x08D8]);
     /* 6cda */
-    bus_write(0xD014, cpu.A);
-    /* 6cdd */
-    LDA(mem[0x08D7]);
+    bus_write(0xD014, mem[0x08D8]);
     /* 6ce0 */
-    bus_write(0xD013, cpu.A);
-    /* 6ce3 */
-    LDA(mem[0x08D9]);
+    bus_write(0xD013, mem[0x08D7]);
     /* 6ce6 */
-    bus_write(0xD015, cpu.A);
+    bus_write(0xD015, mem[0x08D9]);
     /* 6ce9 */
     LDA(0x94);
     /* 6ceb */
@@ -9904,18 +9672,12 @@ void dli_launch_pmg_colors_6cd7(void) {
 void dli_launch_colbk_colpf_6cf1(void) {
     /* 6cf1 */
     bus_write(0xD40A, cpu.A);
-    /* 6cf4 */
-    LDA(display_flags);
     /* 6cf6 */
-    bus_write(0xD01A, cpu.A);
-    /* 6cf9 */
-    LDA(color_ring);
+    bus_write(0xD01A, display_flags);
     /* 6cfc */
-    bus_write(0xD016, cpu.A);
-    /* 6cff */
-    LDA(mem[0x08D5]);
+    bus_write(0xD016, color_ring);
     /* 6d02 */
-    bus_write(0xD017, cpu.A);
+    bus_write(0xD017, mem[0x08D5]);
     /* 6d05 */
     LDA(mem[0x08D6]);
     /* 6d08 */
@@ -10004,12 +9766,10 @@ void dli_launch_6d67(void) {
 }
 
 void dli_launch_colbk_black_6d7c(void) {
-    /* 6d7c */
-    LDA(0x04);
     /* 6d7e */
-    bus_write(0xD40A, cpu.A);
+    bus_write(0xD40A, 0x04);
     /* 6d81 */
-    bus_write(0xD01B, cpu.A);
+    bus_write(0xD01B, 0x04);
     /* 6d86 */
     bus_write(0xD01A, 0x00);
     /* 6d89 */
@@ -10040,10 +9800,8 @@ void dli_launch_6da1(void) {
     bus_write(0xD40A, cpu.A);
     /* 6da6 */
     bus_write(0xD001, 0x94);
-    /* 6da9 */
-    LDA(indicator_light_state);
     /* 6dab */
-    bus_write(0xD013, cpu.A);
+    bus_write(0xD013, indicator_light_state);
     /* 6db0 */
     bus_write(0xD018, 0x2C);
     /* 6db3 */
@@ -10242,10 +10000,8 @@ L_7038:;
 L_703d:;
     /* 703d */
     LDX(dl_bottom_index);
-    /* 703f */
-    LDA(mem[(0x2500)+cpu.X]);
     /* 7042 */
-    draw_x_left = cpu.A;
+    draw_x_left = mem[(0x2500)+cpu.X];
     /* 7044 */
     goto L_6fe3;
 }
@@ -10563,22 +10319,14 @@ L_7154:;
     AND(0x1F);
     /* 715a */
     TAY();
-    /* 715b */
-    LDA(mem[(0x71AB)+cpu.Y]);
     /* 715e */
-    bus_write(0xD200, cpu.A);
-    /* 7161 */
-    LDA(mem[(0x719E)+cpu.Y]);
+    bus_write(0xD200, mem[(0x71AB)+cpu.Y]);
     /* 7164 */
-    bus_write(0xD202, cpu.A);
-    /* 7167 */
-    LDA(mem[(0x7191)+cpu.Y]);
+    bus_write(0xD202, mem[(0x719E)+cpu.Y]);
     /* 716a */
-    bus_write(0xD204, cpu.A);
-    /* 716d */
-    LDA(mem[(0x71B8)+cpu.Y]);
+    bus_write(0xD204, mem[(0x7191)+cpu.Y]);
     /* 7170 */
-    bus_write(0xD206, cpu.A);
+    bus_write(0xD206, mem[(0x71B8)+cpu.Y]);
     /* 7173 */
     LDA(mem[(0x71C5)+cpu.Y]);
     /* 7176 */
@@ -10594,10 +10342,8 @@ L_717b:;
     AND(0x1F);
     /* 7181 */
     TAX();
-    /* 7182 */
-    LDA(mem[(0x71D2)+cpu.X]);
     /* 7185 */
-    sfx_note_timer = cpu.A;
+    sfx_note_timer = mem[(0x71D2)+cpu.X];
     /* 7188 */
     TYA();
     /* 7189 */
@@ -10681,10 +10427,8 @@ L_7277:;
     LDA(music_stream_ptr_lo);
     /* 727a */
     mem[0x0099] = cpu.A;
-    /* 727c */
-    LDA(music_stream_ptr_hi);
     /* 727f */
-    grid_offset_a = cpu.A;
+    grid_offset_a = music_stream_ptr_hi;
     /* 7281 */
     LDY(0x00);
 L_7283:;
@@ -10707,28 +10451,20 @@ L_728a:;
     ASL_A();
     /* 7292 */
     TAX();
-    /* 7293 */
-    LDA(mem[(0x7375)+cpu.X]);
     /* 7296 */
-    mem[0x0656] = cpu.A;
+    mem[0x0656] = mem[(0x7375)+cpu.X];
     /* 7299 */
     INX();
-    /* 729a */
-    LDA(mem[(0x7375)+cpu.X]);
     /* 729d */
-    mem[0x0654] = cpu.A;
+    mem[0x0654] = mem[(0x7375)+cpu.X];
     /* 72a0 */
     INX();
-    /* 72a1 */
-    LDA(mem[(0x7375)+cpu.X]);
     /* 72a4 */
-    mem[0x0652] = cpu.A;
+    mem[0x0652] = mem[(0x7375)+cpu.X];
     /* 72a7 */
     INX();
-    /* 72a8 */
-    LDA(mem[(0x7375)+cpu.X]);
     /* 72ab */
-    mem[0x0650] = cpu.A;
+    mem[0x0650] = mem[(0x7375)+cpu.X];
     /* 72ae */
     INY();
     /* 72af */
@@ -10789,14 +10525,10 @@ L_72e7:;
 L_72ea:;
     /* 72ea */
     mem[(0x0648)+cpu.X] = cpu.A;
-    /* 72ed */
-    LDA(mem[0x065B]);
     /* 72f0 */
-    mem[(0x0649)+cpu.X] = cpu.A;
-    /* 72f3 */
-    LDA(mem[(0x0650)+cpu.X]);
+    mem[(0x0649)+cpu.X] = mem[0x065B];
     /* 72f6 */
-    mem[(0xD200)+cpu.X] = cpu.A;
+    mem[(0xD200)+cpu.X] = mem[(0x0650)+cpu.X];
 L_72f9:;
     /* 72f9 */
     TYA();
@@ -10852,12 +10584,10 @@ L_730d:;
 void init_gameplay_state__t6502(void) {
     /* 73ca */
     terrain_index = 0x0E;
-    /* 73cd */
-    LDA(0x02);
     /* 73cf */
-    heading_hi = cpu.A;
+    heading_hi = 0x02;
     /* 73d2 */
-    lock_on_indicator_tick_parity = cpu.A;
+    lock_on_indicator_tick_parity = 0x02;
     /* 73d5 */
     LDY(0x0E);
     /* 73d7 */
@@ -10871,12 +10601,10 @@ L_73d9:;
     DEY();
     /* 73e0 */
     if (!cpu.Z) goto L_73d9;
-    /* 73e2 */
-    LDA(0xCC);
     /* 73e4 */
-    mem[0x0B5F] = cpu.A;
+    mem[0x0B5F] = 0xCC;
     /* 73e7 */
-    mem[0x006A] = cpu.A;
+    mem[0x006A] = 0xCC;
     /* 73eb */
     throttle_accum_hi = 0x4D;
     /* 73ef */
@@ -10986,14 +10714,10 @@ L_745b:;
 void build_row_addr_table__t6502(void) {
     /* 7460 */
     LDY(0x00);
-    /* 7462 */
-    LDA(row_table_base_lo);
     /* 7464 */
-    row_base_lo = cpu.A;
-    /* 7467 */
-    LDA(row_table_base_hi);
+    row_base_lo = row_table_base_lo;
     /* 7469 */
-    row_base_hi = cpu.A;
+    row_base_hi = row_table_base_hi;
 L_746c:;
     /* 746c */
     CLC();
@@ -11134,14 +10858,10 @@ L_74e3:;
 L_74eb:;
     /* 74eb */
     LDY(screen_ptr_hi);
-    /* 74ed */
-    LDA(mem[(0x4D3E)+cpu.Y]);
     /* 74f0 */
-    row_table_stride = cpu.A;
-    /* 74f2 */
-    LDA(mem[(0x4D3F)+cpu.Y]);
+    row_table_stride = mem[(0x4D3E)+cpu.Y];
     /* 74f5 */
-    player_speed = cpu.A;
+    player_speed = mem[(0x4D3F)+cpu.Y];
     /* 74f7 */
     SEC();
     /* 74f8 */
@@ -11150,14 +10870,10 @@ L_74eb:;
     SBC(dl_ptr_lo);
     /* 74fc */
     TAY();
-    /* 74fd */
-    LDA(mem[(0x4D3E)+cpu.Y]);
     /* 7500 */
-    row_table_base_lo = cpu.A;
-    /* 7502 */
-    LDA(mem[(0x4D3F)+cpu.Y]);
+    row_table_base_lo = mem[(0x4D3E)+cpu.Y];
     /* 7505 */
-    row_table_base_hi = cpu.A;
+    row_table_base_hi = mem[(0x4D3F)+cpu.Y];
     /* 7507 */
     LDY(0x00);
 L_7509:;
@@ -11765,40 +11481,34 @@ L_772b:;
     DEY();
     /* 772f */
     if (!cpu.N) goto L_772b;
-    /* 7731 */
-    LDA(0xCF);
     /* 7733 */
-    mem[0x306F] = cpu.A;
+    mem[0x306F] = 0xCF;
     /* 7736 */
-    mem[0x30ED] = cpu.A;
+    mem[0x30ED] = 0xCF;
     /* 7739 */
-    mem[0x30F9] = cpu.A;
+    mem[0x30F9] = 0xCF;
     /* 773c */
-    mem[0x3105] = cpu.A;
-    /* 773f */
-    LDA(0x8D);
+    mem[0x3105] = 0xCF;
     /* 7741 */
-    mem[0x3008] = cpu.A;
+    mem[0x3008] = 0x8D;
     /* 7744 */
-    mem[0x3128] = cpu.A;
+    mem[0x3128] = 0x8D;
     /* 7747 */
-    mem[0x313C] = cpu.A;
+    mem[0x313C] = 0x8D;
     /* 774a */
-    mem[0x3151] = cpu.A;
+    mem[0x3151] = 0x8D;
     /* 774d */
-    mem[0x3155] = cpu.A;
+    mem[0x3155] = 0x8D;
     /* 7752 */
     mem[0x3007] = 0x84;
-    /* 7755 */
-    LDA(0xCD);
     /* 7757 */
-    mem[0x31F2] = cpu.A;
+    mem[0x31F2] = 0xCD;
     /* 775a */
-    mem[0x31FE] = cpu.A;
+    mem[0x31FE] = 0xCD;
     /* 775d */
-    mem[0x3297] = cpu.A;
+    mem[0x3297] = 0xCD;
     /* 7760 */
-    mem[0x32A3] = cpu.A;
+    mem[0x32A3] = 0xCD;
     /* 7765 */
     mem[0x311E] = 0x00;
     /* 776a */
@@ -11998,16 +11708,14 @@ L_7853:;
 
 /* pilot_render @ $7854: Pilot/rescue rendering + interaction (3 RANDOM reads; checks $288D/$288E rescue state; large function) */
 void pilot_render(void) {
-    /* 7854 */
-    LDA(0x80);
     /* 7856 */
-    lock_on_indicator_state = cpu.A;
+    lock_on_indicator_state = 0x80;
     /* 7858 */
-    mem[0x004D] = cpu.A;
+    mem[0x004D] = 0x80;
     /* 785a */
-    mem[0x2830] = cpu.A;
+    mem[0x2830] = 0x80;
     /* 785d */
-    mem[0x007A] = cpu.A;
+    mem[0x007A] = 0x80;
     /* 785f */
     LDA(mem[0x0079]);
     /* 7861 */
@@ -12067,14 +11775,12 @@ L_7879:;
     mem[0x007C] = 0xA5;
     /* 789b */
     clear_color_count_007D = 0x0F;
-    /* 789d */
-    LDA(0x80);
     /* 789f */
-    mem[0x28D9] = cpu.A;
+    mem[0x28D9] = 0x80;
     /* 78a2 */
-    mem[0x28DA] = cpu.A;
+    mem[0x28DA] = 0x80;
     /* 78a5 */
-    mem[0x0079] = cpu.A;
+    mem[0x0079] = 0x80;
     /* 78a9 */
     mem[0x281E] = 0x01;
     /* 78ac */
@@ -12216,14 +11922,10 @@ L_793b:;
     if (cpu.C) goto L_78d6;
     /* 793d */
     LDA(0x80);
-    /* 793f */
-    LDA(plot_step_hi);
     /* 7941 */
-    mem[0x28E9] = cpu.A;
-    /* 7944 */
-    LDA(bus_read(0xD20A));
+    mem[0x28E9] = plot_step_hi;
     /* 7947 */
-    mem[0x005A] = cpu.A;
+    mem[0x005A] = bus_read(0xD20A);
     /* 7949 */
     LDA(mem[0x0040]);
     /* 794b */
@@ -12991,14 +12693,10 @@ L_7c20:;
     LDA(mem[(0x7D8D)+cpu.Y]);
     /* 7c23 */
     row_table_base_lo = cpu.A;
-    /* 7c25 */
-    LDA(mem[(0x7D95)+cpu.Y]);
     /* 7c28 */
-    row_table_base_hi = cpu.A;
-    /* 7c2a */
-    LDA(mem[(0x7D9D)+cpu.Y]);
+    row_table_base_hi = mem[(0x7D95)+cpu.Y];
     /* 7c2d */
-    shape_col_base = cpu.A;
+    shape_col_base = mem[(0x7D9D)+cpu.Y];
     /* 7c30 */
     CLC();
     /* 7c31 */
@@ -13138,16 +12836,12 @@ L_7ca3:;
     DEC_M(MEM_terrain_pt_coord_a);
     /* 7cb1 */
     if (cpu.C) goto L_7ca3;
-    /* 7cb3 */
-    LDA(terrain_pt_coord_a);
     /* 7cb5 */
-    shape_row_width = cpu.A;
-    /* 7cb8 */
-    LDA(0x00);
+    shape_row_width = terrain_pt_coord_a;
     /* 7cba */
-    mem[0x0054] = cpu.A;
+    mem[0x0054] = 0x00;
     /* 7cbc */
-    mem[0x0055] = cpu.A;
+    mem[0x0055] = 0x00;
     /* 7cc0 */
     mem[0x0053] = 0x0E;
 L_7cc2:;
@@ -13651,10 +13345,8 @@ L_7feb:;
 L_7ffa:;
     /* 7ffa */
     if (cpu.Z) goto L_7feb;
-    /* 7ffc */
-    LDA(mem[0x2922]);
     /* 7fff */
-    mem[0x2923] = cpu.A;
+    mem[0x2923] = mem[0x2922];
     /* 8002 */
     mem[0x2922] = cpu.X;
     /* 8005 */
@@ -13670,40 +13362,24 @@ L_800f:;
     mem[0x292C] = cpu.A;
     /* 8012 */
     LDX(mem[0x292A]);
-    /* 8015 */
-    LDA(mem[(0x81A1)+cpu.X]);
     /* 8018 */
-    encounter_count = cpu.A;
-    /* 801a */
-    LDA(mem[(0x81A9)+cpu.X]);
+    encounter_count = mem[(0x81A1)+cpu.X];
     /* 801d */
-    row_count = cpu.A;
-    /* 801f */
-    LDA(mem[(0x81B1)+cpu.X]);
+    row_count = mem[(0x81A9)+cpu.X];
     /* 8022 */
-    sync_flag = cpu.A;
-    /* 8024 */
-    LDA(mem[(0x81B9)+cpu.X]);
+    sync_flag = mem[(0x81B1)+cpu.X];
     /* 8027 */
-    hud_field0_limit = cpu.A;
+    hud_field0_limit = mem[(0x81B9)+cpu.X];
     /* 802a */
     LDX(mem[0x292B]);
-    /* 802d */
-    LDA(mem[(0x81A1)+cpu.X]);
     /* 8030 */
-    vbi_phase = cpu.A;
-    /* 8032 */
-    LDA(mem[(0x81A9)+cpu.X]);
+    vbi_phase = mem[(0x81A1)+cpu.X];
     /* 8035 */
-    vbi_flags = cpu.A;
-    /* 8037 */
-    LDA(mem[(0x81B1)+cpu.X]);
+    vbi_flags = mem[(0x81A9)+cpu.X];
     /* 803a */
-    dl_ptr_lo = cpu.A;
-    /* 803c */
-    LDA(mem[(0x81B9)+cpu.X]);
+    dl_ptr_lo = mem[(0x81B1)+cpu.X];
     /* 803f */
-    hud_field1_limit = cpu.A;
+    hud_field1_limit = mem[(0x81B9)+cpu.X];
     /* 8044 */
     mem[0x292D] = 0x00;
     /* 8047 */
@@ -13719,22 +13395,14 @@ L_800f:;
 L_8053:;
     /* 8053 */
     TAX();
-    /* 8054 */
-    LDA(mem[(0x81C1)+cpu.X]);
     /* 8057 */
-    terrain_state = cpu.A;
-    /* 8059 */
-    LDA(mem[(0x81C9)+cpu.X]);
+    terrain_state = mem[(0x81C1)+cpu.X];
     /* 805c */
-    terrain_scroll_counter = cpu.A;
-    /* 805e */
-    LDA(mem[(0x81D1)+cpu.X]);
+    terrain_scroll_counter = mem[(0x81C9)+cpu.X];
     /* 8061 */
-    dl_ptr_hi = cpu.A;
-    /* 8063 */
-    LDA(mem[(0x81D9)+cpu.X]);
+    dl_ptr_hi = mem[(0x81D1)+cpu.X];
     /* 8066 */
-    hud_field2_limit = cpu.A;
+    hud_field2_limit = mem[(0x81D9)+cpu.X];
     /* 806b */
     screen_ptr_lo = 0xE7;
     /* 806d */
@@ -14392,10 +14060,8 @@ L_8d00:;
     mem[0x00CB] = cpu.A;
     /* 8d12 */
     bus_write(0xD002, cpu.A);
-    /* 8d15 */
-    LDA(mem[0x0037]);
     /* 8d17 */
-    bus_write(0xD014, cpu.A);
+    bus_write(0xD014, mem[0x0037]);
     /* 8d1a */
     LDA(mem[0x00CD]);
     /* 8d1c */
@@ -14676,10 +14342,8 @@ L_8ecc:;
     if (!cpu.Z) goto L_8ef5;
     /* 8ed4 */
     roll_velocity = 0x30;
-    /* 8ed6 */
-    LDA(pitch_pos_hi);
     /* 8ed8 */
-    pitch_velocity = cpu.A;
+    pitch_velocity = pitch_pos_hi;
     /* 8eda */
     LDA(pitch_pos_lo);
     /* 8edc */
@@ -14749,10 +14413,8 @@ L_8f20:;
     LDA(pitch_pos_lo);
     /* 8f22 */
     mem[0x0023] = cpu.A;
-    /* 8f24 */
-    LDA(pitch_pos_hi);
     /* 8f26 */
-    mem[0x0024] = cpu.A;
+    mem[0x0024] = pitch_pos_hi;
 L_8f28:;
     /* 8f28 */
     goto L_8f49;
@@ -14814,10 +14476,8 @@ L_8f69:;
     LDA(pitch_velocity);
     /* 8f6b */
     if (!cpu.Z) goto L_8f9a;
-    /* 8f6d */
-    LDA(pitch_pos_hi);
     /* 8f6f */
-    dl_y1 = cpu.A;
+    dl_y1 = pitch_pos_hi;
     /* 8f71 */
     LDA(pitch_pos_lo);
     /* 8f73 */
@@ -14873,10 +14533,8 @@ L_8f9a:;
     LDA(roll_velocity);
     /* 8fa0 */
     if (!cpu.Z) goto L_8fcd;
-    /* 8fa2 */
-    LDA(roll_pos_hi);
     /* 8fa4 */
-    dl_y1 = cpu.A;
+    dl_y1 = roll_pos_hi;
     /* 8fa6 */
     LDA(roll_pos_lo);
     /* 8fa8 */
@@ -15198,10 +14856,8 @@ L_90c1:;
     ROL_M(0x2884);
     /* 90d0 */
     mem[0x2883] = cpu.A;
-    /* 90d3 */
-    LDA(pitch_pos_lo);
     /* 90d5 */
-    dl_y1 = cpu.A;
+    dl_y1 = pitch_pos_lo;
     /* 90d7 */
     LDA(pitch_pos_hi);
     /* 90d9 */
@@ -15481,10 +15137,8 @@ L_91ed:;
     mem[MEM_hud_field_679+cpu.Y] = cpu.A;
     /* 91f0 */
     game_sub_55FC();
-    /* 91f3 */
-    LDA(mem[0x2919]);
     /* 91f6 */
-    mem[0x2850] = cpu.A;
+    mem[0x2850] = mem[0x2919];
     /* 91f9 */
     LDA(mem[0x291A]);
     /* 91fc */
@@ -15706,42 +15360,24 @@ L_92c7:;
 L_92d1:;
     /* 92d1 */
     mem[0x291E] = cpu.Y;
-    /* 92d4 */
-    LDA(mem[(0x2893)+cpu.Y]);
     /* 92d7 */
-    mem[0x2919] = cpu.A;
-    /* 92da */
-    LDA(pitch_pos_lo);
+    mem[0x2919] = mem[(0x2893)+cpu.Y];
     /* 92dc */
-    mem[(0x2893)+cpu.Y] = cpu.A;
-    /* 92df */
-    LDA(mem[(0x289A)+cpu.Y]);
+    mem[(0x2893)+cpu.Y] = pitch_pos_lo;
     /* 92e2 */
-    mem[0x291A] = cpu.A;
-    /* 92e5 */
-    LDA(pitch_pos_hi);
+    mem[0x291A] = mem[(0x289A)+cpu.Y];
     /* 92e7 */
-    mem[(0x289A)+cpu.Y] = cpu.A;
-    /* 92ea */
-    LDA(mem[(0x28A1)+cpu.Y]);
+    mem[(0x289A)+cpu.Y] = pitch_pos_hi;
     /* 92ed */
-    mem[0x291B] = cpu.A;
-    /* 92f0 */
-    LDA(roll_velocity);
+    mem[0x291B] = mem[(0x28A1)+cpu.Y];
     /* 92f2 */
-    mem[(0x28A1)+cpu.Y] = cpu.A;
-    /* 92f5 */
-    LDA(mem[(0x28A8)+cpu.Y]);
+    mem[(0x28A1)+cpu.Y] = roll_velocity;
     /* 92f8 */
-    mem[0x291C] = cpu.A;
-    /* 92fb */
-    LDA(mem[0x2871]);
+    mem[0x291C] = mem[(0x28A8)+cpu.Y];
     /* 92fe */
-    mem[(0x28A8)+cpu.Y] = cpu.A;
-    /* 9301 */
-    LDA(mem[(0x28AF)+cpu.Y]);
+    mem[(0x28A8)+cpu.Y] = mem[0x2871];
     /* 9304 */
-    mem[0x291D] = cpu.A;
+    mem[0x291D] = mem[(0x28AF)+cpu.Y];
     /* 9307 */
     LDA(mem[0x2873]);
     /* 930a */
@@ -16072,32 +15708,20 @@ L_94be:;
 /* load_velocity_from_param_block @ $94BF: init accum $2854-$2863 from param block $28FD-$290A: sign-extend & ASL/ROL scale ($285E,$2861), $285B=clamp($2902+8), $2863=$290A>>1-1; then ring_push_marked X=$11 */
 /* faithful transliteration kept as the validation oracle; native load_velocity_from_param_block() lives in rof_native.c (see VALIDATE_FUNCS) */
 void load_velocity_from_param_block__t6502(void) {
-    /* 94bf */
-    LDA(0x00);
     /* 94c1 */
-    mem[0x2854] = cpu.A;
+    mem[0x2854] = 0x00;
     /* 94c4 */
-    mem[0x2857] = cpu.A;
-    /* 94c7 */
-    LDA(mem[0x28FD]);
+    mem[0x2857] = 0x00;
     /* 94ca */
-    mem[0x2855] = cpu.A;
-    /* 94cd */
-    LDA(mem[0x28FE]);
+    mem[0x2855] = mem[0x28FD];
     /* 94d0 */
-    mem[0x2856] = cpu.A;
-    /* 94d3 */
-    LDA(mem[0x28FF]);
+    mem[0x2856] = mem[0x28FE];
     /* 94d6 */
-    mem[0x2858] = cpu.A;
-    /* 94d9 */
-    LDA(mem[0x2900]);
+    mem[0x2858] = mem[0x28FF];
     /* 94dc */
-    mem[0x2859] = cpu.A;
-    /* 94df */
-    LDA(mem[0x2901]);
+    mem[0x2859] = mem[0x2900];
     /* 94e2 */
-    mem[0x285A] = cpu.A;
+    mem[0x285A] = mem[0x2901];
     /* 94e5 */
     CLC();
     /* 94e6 */
@@ -16113,10 +15737,8 @@ L_94ef:;
     vel_z_clamp_hi = cpu.A;
     /* 94f2 */
     LDY(0x00);
-    /* 94f4 */
-    LDA(mem[0x2903]);
     /* 94f7 */
-    mem[0x285C] = cpu.A;
+    mem[0x285C] = mem[0x2903];
     /* 94fa */
     LDA(mem[0x2904]);
     /* 94fd */
@@ -16144,10 +15766,8 @@ L_9503:;
     mem[0x285E] = cpu.A;
     /* 9515 */
     LDY(0x00);
-    /* 9517 */
-    LDA(mem[0x2905]);
     /* 951a */
-    mem[0x285F] = cpu.A;
+    mem[0x285F] = mem[0x2905];
     /* 951d */
     LDA(mem[0x2906]);
     /* 9520 */
@@ -16173,10 +15793,8 @@ L_9526:;
     ROL_A();
     /* 9535 */
     mem[0x2861] = cpu.A;
-    /* 9538 */
-    LDA(mem[0x2909]);
     /* 953b */
-    mem[0x2862] = cpu.A;
+    mem[0x2862] = mem[0x2909];
     /* 953e */
     LDA(mem[0x290A]);
     /* 9541 */
@@ -16756,10 +16374,8 @@ L_9797:;
 /* compute_obj_rel_angle_scale @ $97A0: Builds 10-bit value from $2885/$2886, sign into $2882, indexes $4EB9 table, calls mul $9821; outputs $2881/$002B scaled coords */
 /* faithful transliteration kept as the validation oracle; native compute_obj_rel_angle_scale() lives in rof_native.c (see VALIDATE_FUNCS) */
 void compute_obj_rel_angle_scale__t6502(void) {
-    /* 97a0 */
-    LDA(heading_hi);
     /* 97a3 */
-    mul_multiplicand = cpu.A;
+    mul_multiplicand = heading_hi;
     /* 97a5 */
     LDA(heading_lo);
     /* 97a8 */
@@ -16818,10 +16434,8 @@ L_97bd:;
     INC_M((0x28D7)+cpu.X);
     /* 97d9 */
     LDX(mem[0x28D8]);
-    /* 97dc */
-    LDA(mem[(0x4EB9)+cpu.X]);
     /* 97df */
-    mul_multiplicand = cpu.A;
+    mul_multiplicand = mem[(0x4EB9)+cpu.X];
     /* 97e1 */
     LDA(throttle_accum_hi);
     /* 97e3 */
@@ -16850,10 +16464,8 @@ L_97f1:;
 L_97fa:;
     /* 97fa */
     LDX(mem[0x28D7]);
-    /* 97fd */
-    LDA(mem[(0x4EB9)+cpu.X]);
     /* 9800 */
-    mul_multiplicand = cpu.A;
+    mul_multiplicand = mem[(0x4EB9)+cpu.X];
     /* 9802 */
     LDA(throttle_accum_hi);
     /* 9804 */
@@ -16912,10 +16524,8 @@ L_9829:;
 /* update_terrain_scanline_proj @ $9833: Builds 16-bit map coords $27FD-$2800 from $2887-$288A>>4 and depth $0034/$0033 into $2275/$2274; samples height via $9a36; advances depth, calls $992d */
 /* faithful transliteration kept as the validation oracle; native update_terrain_scanline_proj() lives in rof_native.c (see VALIDATE_FUNCS) */
 void update_terrain_scanline_proj__t6502(void) {
-    /* 9833 */
-    LDA(world_x_hi);
     /* 9836 */
-    mem[0x2271] = cpu.A;
+    mem[0x2271] = world_x_hi;
     /* 9839 */
     LDA(world_x_lo);
     /* 983c */
@@ -16946,10 +16556,8 @@ void update_terrain_scanline_proj__t6502(void) {
     map_x_hi = cpu.A;
     /* 985b */
     mem[0x2802] = cpu.A;
-    /* 985e */
-    LDA(world_z_hi);
     /* 9861 */
-    mem[0x2273] = cpu.A;
+    mem[0x2273] = world_z_hi;
     /* 9864 */
     LDA(world_z_lo);
     /* 9867 */
@@ -17061,12 +16669,10 @@ L_98d1:;
 L_98da:;
     /* 98da */
     INC_M(MEM_terrain_depth_step);
-    /* 98dc */
-    LDA(0x00);
     /* 98de */
-    terrain_depth_frac = cpu.A;
+    terrain_depth_frac = 0x00;
     /* 98e0 */
-    mem[0x0070] = cpu.A;
+    mem[0x0070] = 0x00;
     /* 98e2 */
     LDA(roll_pos_hi);
     /* 98e4 */
@@ -17173,10 +16779,8 @@ L_9941:;
     if (!cpu.Z) goto L_9941;
     /* 994a */
     mem[0x2806] = cpu.A;
-    /* 994d */
-    LDA(mem[0x280B]);
     /* 9950 */
-    mem[0x2807] = cpu.A;
+    mem[0x2807] = mem[0x280B];
     /* 9953 */
     LDA(mem[0x280C]);
     /* 9956 */
@@ -17410,10 +17014,8 @@ void sample_terrain_height_bilerp__t6502(void) {
     ORA(terrain_lerp_index);
     /* 9a46 */
     TAY();
-    /* 9a47 */
-    LDA(mem[(0x0900)+cpu.Y]);
     /* 9a4a */
-    mem[0x27F0] = cpu.A;
+    mem[0x27F0] = mem[(0x0900)+cpu.Y];
     /* 9a4d */
     INY();
     /* 9a4e */
@@ -17424,10 +17026,8 @@ void sample_terrain_height_bilerp__t6502(void) {
     ORA(terrain_lerp_index);
     /* 9a53 */
     TAY();
-    /* 9a54 */
-    LDA(mem[(0x0900)+cpu.Y]);
     /* 9a57 */
-    mem[0x27F1] = cpu.A;
+    mem[0x27F1] = mem[(0x0900)+cpu.Y];
     /* 9a5a */
     CLC();
     /* 9a5b */
@@ -17444,10 +17044,8 @@ void sample_terrain_height_bilerp__t6502(void) {
     ORA(terrain_lerp_index);
     /* 9a68 */
     TAY();
-    /* 9a69 */
-    LDA(mem[(0x0900)+cpu.Y]);
     /* 9a6c */
-    mem[0x27F2] = cpu.A;
+    mem[0x27F2] = mem[(0x0900)+cpu.Y];
     /* 9a6f */
     INY();
     /* 9a70 */
@@ -17458,10 +17056,8 @@ void sample_terrain_height_bilerp__t6502(void) {
     ORA(terrain_lerp_index);
     /* 9a75 */
     TAY();
-    /* 9a76 */
-    LDA(mem[(0x0900)+cpu.Y]);
     /* 9a79 */
-    mem[0x27F3] = cpu.A;
+    mem[0x27F3] = mem[(0x0900)+cpu.Y];
     /* 9a7c */
     LDX(map_x_lo);
     /* 9a7f */
@@ -17538,10 +17134,8 @@ L_9ac2:;
 L_9ace:;
     /* 9ace */
     mem[0x27F5] = cpu.A;
-    /* 9ad1 */
-    LDA(map_z_lo);
     /* 9ad4 */
-    mem[0x27FB] = cpu.A;
+    mem[0x27FB] = map_z_lo;
     /* 9ad7 */
     LDY(0x08);
     /* 9ad9 */
@@ -17689,14 +17283,12 @@ L_9b5f:;
     LDA(0xB4);
     /* 9b61 */
     special_state_color = cpu.A;
-    /* 9b64 */
-    LDA(0x00);
     /* 9b66 */
-    vobj_speed_frac = cpu.A;
+    vobj_speed_frac = 0x00;
     /* 9b69 */
-    mem[0x0696] = cpu.A;
+    mem[0x0696] = 0x00;
     /* 9b6c */
-    mem[0x0697] = cpu.A;
+    mem[0x0697] = 0x00;
     /* 9b6f */
     LDA(0xFF);
     /* 9b71 */
@@ -17740,10 +17332,8 @@ void init_proj_scratch_pointers__t6502(void) {
 /* compute_heading_sincos @ $9BA0: From 16-bit heading $2885/$2886 builds octant $280D; calls trig at angle and angle+$40(90deg); stores sin/cos pair to $2809-$280C */
 /* faithful transliteration kept as the validation oracle; native compute_heading_sincos() lives in rof_native.c (see VALIDATE_FUNCS) */
 void compute_heading_sincos__t6502(void) {
-    /* 9ba0 */
-    LDA(heading_hi);
     /* 9ba3 */
-    trig_angle = cpu.A;
+    trig_angle = heading_hi;
     /* 9ba5 */
     LDA(heading_lo);
     /* 9ba8 */
@@ -17768,14 +17358,10 @@ void compute_heading_sincos__t6502(void) {
     trig_octant = cpu.A;
     /* 9bb9 */
     trig_interp_lookup();
-    /* 9bbc */
-    LDA(mem[0x0077]);
     /* 9bbe */
-    mem[0x2809] = cpu.A;
-    /* 9bc1 */
-    LDA(mem[0x0078]);
+    mem[0x2809] = mem[0x0077];
     /* 9bc3 */
-    mem[0x280A] = cpu.A;
+    mem[0x280A] = mem[0x0078];
     /* 9bc6 */
     CLC();
     /* 9bc7 */
@@ -17786,10 +17372,8 @@ void compute_heading_sincos__t6502(void) {
     trig_angle = cpu.A;
     /* 9bcd */
     trig_interp_lookup();
-    /* 9bd0 */
-    LDA(mem[0x0077]);
     /* 9bd2 */
-    mem[0x280B] = cpu.A;
+    mem[0x280B] = mem[0x0077];
     /* 9bd5 */
     LDA(mem[0x0078]);
     /* 9bd7 */
@@ -17805,14 +17389,10 @@ void trig_interp_lookup__t6502(void) {
     INC_M(MEM_trig_angle);
     /* 9bdd */
     sine_table_lookup();
-    /* 9be0 */
-    LDA(trig_result_lo);
     /* 9be2 */
-    mem[0x2816] = cpu.A;
-    /* 9be5 */
-    LDA(mem[0x0077]);
+    mem[0x2816] = trig_result_lo;
     /* 9be7 */
-    mem[0x2817] = cpu.A;
+    mem[0x2817] = mem[0x0077];
     /* 9bea */
     LDA(mem[0x0078]);
     /* 9bec */
@@ -17821,22 +17401,14 @@ void trig_interp_lookup__t6502(void) {
     DEC_M(MEM_trig_angle);
     /* 9bf1 */
     sine_table_lookup();
-    /* 9bf4 */
-    LDA(trig_result_lo);
     /* 9bf6 */
-    mem[0x2813] = cpu.A;
-    /* 9bf9 */
-    LDA(mem[0x0077]);
+    mem[0x2813] = trig_result_lo;
     /* 9bfb */
-    mem[0x2814] = cpu.A;
-    /* 9bfe */
-    LDA(mem[0x0078]);
+    mem[0x2814] = mem[0x0077];
     /* 9c00 */
-    mem[0x2815] = cpu.A;
-    /* 9c03 */
-    LDA(trig_octant);
+    mem[0x2815] = mem[0x0078];
     /* 9c06 */
-    mem[0x280F] = cpu.A;
+    mem[0x280F] = trig_octant;
     /* 9c09 */
     LDY(0x03);
 L_9c0b:;
@@ -17939,10 +17511,8 @@ void sine_table_lookup__t6502(void) {
     if (!cpu.Z) goto L_9c81;
     /* 9c72 */
     mem[0x0078] = cpu.A;
-    /* 9c74 */
-    LDA(mem[(0x4EB9)+cpu.Y]);
     /* 9c77 */
-    mem[0x0077] = cpu.A;
+    mem[0x0077] = mem[(0x4EB9)+cpu.Y];
     /* 9c79 */
     LDA(mem[(0x4EFA)+cpu.Y]);
     /* 9c7c */
@@ -17980,12 +17550,10 @@ L_9c96:;
 void signed_mul_8x16__t6502(void) {
     /* 9c97 */
     mul_div_frac = cpu.A;
-    /* 9c99 */
-    LDA(0x00);
     /* 9c9b */
-    mem[0x00A9] = cpu.A;
+    mem[0x00A9] = 0x00;
     /* 9c9d */
-    mem[0x00A8] = cpu.A;
+    mem[0x00A8] = 0x00;
     /* 9c9f */
     LDA(mem[0x00AB]);
     /* 9ca1 */
@@ -18011,10 +17579,8 @@ L_9cb2:;
     ROR_M(MEM_mul_div_frac);
     /* 9cb4 */
     if (!cpu.C) goto L_9cbe;
-    /* 9cb6 */
-    LDA(mem[0x00AA]);
     /* 9cb8 */
-    mem[0x00A8] = cpu.A;
+    mem[0x00A8] = mem[0x00AA];
     /* 9cba */
     LDA(mem[0x00AB]);
     /* 9cbc */
@@ -18501,18 +18067,12 @@ void terrain_frame_setup__t6502(void) {
     ROL_A();
     /* 9e5f */
     if (cpu.N) goto L_9e7f;
-    /* 9e61 */
-    LDA(mem[0x22A3]);
     /* 9e64 */
-    mem[0x22A4] = cpu.A;
-    /* 9e67 */
-    LDA(mem[0x22D1]);
+    mem[0x22A4] = mem[0x22A3];
     /* 9e6a */
-    mem[0x22D2] = cpu.A;
-    /* 9e6d */
-    LDA(mem[0x22FF]);
+    mem[0x22D2] = mem[0x22D1];
     /* 9e70 */
-    mem[0x2300] = cpu.A;
+    mem[0x2300] = mem[0x22FF];
     /* 9e73 */
     LDA(mem[0x232D]);
     /* 9e76 */
@@ -18876,10 +18436,8 @@ L_9fd8:;
 L_9fe6:;
     /* 9fe6 */
     mem[(0x2388)+cpu.Y] = cpu.A;
-    /* 9fe9 */
-    LDA(mem[0x00B5]);
     /* 9feb */
-    mem[(0x235B)+cpu.Y] = cpu.A;
+    mem[(0x235B)+cpu.Y] = mem[0x00B5];
     /* 9fee */
     TXA();
     /* 9fef */
@@ -19050,34 +18608,22 @@ L_a0a2:;
 /* build_view_transform_matrix @ $A0A3: Builds rotation matrix from sin/cos $00A0-$00A3 scaled by $0089/vbi_phase$0087 via signed_mul; stores to $22A3/$22D1,$22FF/$232D; called by terrain_frame_setup */
 /* faithful transliteration kept as the validation oracle; native build_view_transform_matrix() lives in rof_native.c (see VALIDATE_FUNCS) */
 void build_view_transform_matrix__t6502(void) {
-    /* a0a3 */
-    LDA(draw_iter_count);
     /* a0a5 */
-    mem[0x00AA] = cpu.A;
-    /* a0a7 */
-    LDA(scroll_accum_b0);
+    mem[0x00AA] = draw_iter_count;
     /* a0a9 */
-    mem[0x00AB] = cpu.A;
+    mem[0x00AB] = scroll_accum_b0;
     /* a0ab */
     LDA(terrain_state);
     /* a0ad */
     signed_mul_8x16();
-    /* a0b0 */
-    LDA(mem[0x00A8]);
     /* a0b2 */
-    mem[0x22A3] = cpu.A;
-    /* a0b5 */
-    LDA(mem[0x00A9]);
+    mem[0x22A3] = mem[0x00A8];
     /* a0b7 */
-    mem[0x22D1] = cpu.A;
-    /* a0ba */
-    LDA(scroll_accum_b1);
+    mem[0x22D1] = mem[0x00A9];
     /* a0bc */
-    mem[0x00AA] = cpu.A;
-    /* a0be */
-    LDA(scroll_accum_b2);
+    mem[0x00AA] = scroll_accum_b1;
     /* a0c0 */
-    mem[0x00AB] = cpu.A;
+    mem[0x00AB] = scroll_accum_b2;
     /* a0c2 */
     LDA(vbi_phase);
     /* a0c4 */
@@ -19096,34 +18642,22 @@ void build_view_transform_matrix__t6502(void) {
     SBC(mem[0x00A9]);
     /* a0d5 */
     mem[0x22D1] = cpu.A;
-    /* a0d8 */
-    LDA(scroll_accum_b1);
     /* a0da */
-    mem[0x00AA] = cpu.A;
-    /* a0dc */
-    LDA(scroll_accum_b2);
+    mem[0x00AA] = scroll_accum_b1;
     /* a0de */
-    mem[0x00AB] = cpu.A;
+    mem[0x00AB] = scroll_accum_b2;
     /* a0e0 */
     LDA(terrain_state);
     /* a0e2 */
     signed_mul_8x16();
-    /* a0e5 */
-    LDA(mem[0x00A8]);
     /* a0e7 */
-    mem[0x22FF] = cpu.A;
-    /* a0ea */
-    LDA(mem[0x00A9]);
+    mem[0x22FF] = mem[0x00A8];
     /* a0ec */
-    mem[0x232D] = cpu.A;
-    /* a0ef */
-    LDA(draw_iter_count);
+    mem[0x232D] = mem[0x00A9];
     /* a0f1 */
-    mem[0x00AA] = cpu.A;
-    /* a0f3 */
-    LDA(scroll_accum_b0);
+    mem[0x00AA] = draw_iter_count;
     /* a0f5 */
-    mem[0x00AB] = cpu.A;
+    mem[0x00AB] = scroll_accum_b0;
     /* a0f7 */
     LDA(vbi_phase);
     /* a0f9 */
@@ -19171,24 +18705,18 @@ void project_terrain_points__t6502(void) {
     mem[(0x24B4)+cpu.X] = cpu.A;
     /* a127 */
     LDY(0x00);
-    /* a129 */
-    LDA(mem[(0x2300)+cpu.X]);
     /* a12c */
-    mem[0x00AE] = cpu.A;
-    /* a12e */
-    LDA(mem[(0x232E)+cpu.X]);
+    mem[0x00AE] = mem[(0x2300)+cpu.X];
     /* a131 */
-    mem[0x00AF] = cpu.A;
+    mem[0x00AF] = mem[(0x232E)+cpu.X];
     /* a133 */
     LDA(mem[(0x22D2)+cpu.X]);
     /* a136 */
     if (cpu.N) goto L_a142;
     /* a138 */
     mem[0x00B1] = cpu.A;
-    /* a13a */
-    LDA(mem[(0x22A4)+cpu.X]);
     /* a13d */
-    mem[0x00B0] = cpu.A;
+    mem[0x00B0] = mem[(0x22A4)+cpu.X];
     /* a13f */
     goto L_a151;
 L_a142:;
@@ -19391,24 +18919,18 @@ L_a1f2:;
 L_a202:;
     /* a202 */
     LDY(0x00);
-    /* a204 */
-    LDA(mem[(0x2300)+cpu.X]);
     /* a207 */
-    mem[0x00AE] = cpu.A;
-    /* a209 */
-    LDA(mem[(0x232E)+cpu.X]);
+    mem[0x00AE] = mem[(0x2300)+cpu.X];
     /* a20c */
-    mem[0x00AF] = cpu.A;
+    mem[0x00AF] = mem[(0x232E)+cpu.X];
     /* a20e */
     LDA(mem[(0x2388)+cpu.X]);
     /* a211 */
     if (cpu.N) goto L_a21d;
     /* a213 */
     mem[0x00B1] = cpu.A;
-    /* a215 */
-    LDA(mem[(0x235B)+cpu.X]);
     /* a218 */
-    mem[0x00B0] = cpu.A;
+    mem[0x00B0] = mem[(0x235B)+cpu.X];
     /* a21a */
     goto L_a22c;
 L_a21d:;
@@ -19758,10 +19280,8 @@ L_a35e:;
     mem[(0x26B1)+cpu.Y] = cpu.A;
     /* a36b */
     if (!cpu.Z) goto L_a35e;
-    /* a36d */
-    LDA(roll_pos_lo);
     /* a36f */
-    mem[0x2907] = cpu.A;
+    mem[0x2907] = roll_pos_lo;
     /* a372 */
     LDA(roll_pos_hi);
     /* a374 */
@@ -19856,22 +19376,14 @@ L_a3da:;
     LDA(mem[(0x2400)+cpu.X]);
     /* a3dd */
     mem[0x25B4] = cpu.A;
-    /* a3e0 */
-    LDA(mem[(0x242D)+cpu.X]);
     /* a3e3 */
-    mem[0x25D2] = cpu.A;
-    /* a3e6 */
-    LDA(mem[(0x245A)+cpu.X]);
+    mem[0x25D2] = mem[(0x242D)+cpu.X];
     /* a3e9 */
-    mem[0x25F0] = cpu.A;
-    /* a3ec */
-    LDA(mem[(0x2487)+cpu.X]);
+    mem[0x25F0] = mem[(0x245A)+cpu.X];
     /* a3ef */
-    mem[0x24E2] = cpu.A;
-    /* a3f2 */
-    LDA(mem[(0x23B5)+cpu.X]);
+    mem[0x24E2] = mem[(0x2487)+cpu.X];
     /* a3f5 */
-    mem[0x23E2] = cpu.A;
+    mem[0x23E2] = mem[(0x23B5)+cpu.X];
     /* a3f8 */
     LDX(mem[0x28DB]);
     /* a3fb */
@@ -19889,18 +19401,12 @@ L_a408:;
     LDA(mem[(0x2400)+cpu.X]);
     /* a40b */
     dl_ptr_hi = cpu.A;
-    /* a40d */
-    LDA(mem[(0x242D)+cpu.X]);
     /* a410 */
-    screen_ptr_lo = cpu.A;
-    /* a412 */
-    LDA(mem[(0x245A)+cpu.X]);
+    screen_ptr_lo = mem[(0x242D)+cpu.X];
     /* a415 */
-    screen_ptr_hi = cpu.A;
-    /* a417 */
-    LDA(mem[(0x2487)+cpu.X]);
+    screen_ptr_hi = mem[(0x245A)+cpu.X];
     /* a41a */
-    encounter_count = cpu.A;
+    encounter_count = mem[(0x2487)+cpu.X];
     /* a41c */
     LDA(mem[(0x23B5)+cpu.X]);
     /* a41f */
@@ -19928,10 +19434,8 @@ L_a433:;
     LDA(mem[0x28E7]);
     /* a436 */
     mem[0x28D9] = cpu.A;
-    /* a439 */
-    LDA(mem[0x28E8]);
     /* a43c */
-    mem[0x28DA] = cpu.A;
+    mem[0x28DA] = mem[0x28E8];
     /* a43f */
     LDA(mem[0x0079]);
     /* a441 */
@@ -19995,18 +19499,12 @@ L_a46c:;
     ADC(0x15);
     /* a47e */
     mem[0x2845] = cpu.A;
-    /* a481 */
-    LDA(mem[0x2914]);
     /* a484 */
-    mem[0x2916] = cpu.A;
-    /* a487 */
-    LDA(mem[0x2910]);
+    mem[0x2916] = mem[0x2914];
     /* a48a */
-    mem[0x2839] = cpu.A;
-    /* a48d */
-    LDA(mem[0x2911]);
+    mem[0x2839] = mem[0x2910];
     /* a490 */
-    mem[0x283A] = cpu.A;
+    mem[0x283A] = mem[0x2911];
     /* a493 */
     LDA(level_or_state);
     /* a495 */
@@ -20023,54 +19521,30 @@ L_a49a:;
 L_a4a1:;
     /* a4a1 */
     mem[0x2840] = cpu.A;
-    /* a4a4 */
-    LDA(mem[0x2270]);
     /* a4a7 */
-    mem[0x28FD] = cpu.A;
-    /* a4aa */
-    LDA(mem[0x2271]);
+    mem[0x28FD] = mem[0x2270];
     /* a4ad */
-    mem[0x28FE] = cpu.A;
-    /* a4b0 */
-    LDA(mem[0x2272]);
+    mem[0x28FE] = mem[0x2271];
     /* a4b3 */
-    mem[0x28FF] = cpu.A;
-    /* a4b6 */
-    LDA(mem[0x2273]);
+    mem[0x28FF] = mem[0x2272];
     /* a4b9 */
-    mem[0x2900] = cpu.A;
-    /* a4bc */
-    LDA(mem[0x2274]);
+    mem[0x2900] = mem[0x2273];
     /* a4bf */
-    mem[0x2901] = cpu.A;
-    /* a4c2 */
-    LDA(scaled_depth_hi);
+    mem[0x2901] = mem[0x2274];
     /* a4c5 */
-    mem[0x2902] = cpu.A;
-    /* a4c8 */
-    LDA(mem[0x2809]);
+    mem[0x2902] = scaled_depth_hi;
     /* a4cb */
-    mem[0x2903] = cpu.A;
-    /* a4ce */
-    LDA(mem[0x280A]);
+    mem[0x2903] = mem[0x2809];
     /* a4d1 */
-    mem[0x2904] = cpu.A;
-    /* a4d4 */
-    LDA(mem[0x280B]);
+    mem[0x2904] = mem[0x280A];
     /* a4d7 */
-    mem[0x2905] = cpu.A;
-    /* a4da */
-    LDA(mem[0x280C]);
+    mem[0x2905] = mem[0x280B];
     /* a4dd */
-    mem[0x2906] = cpu.A;
-    /* a4e0 */
-    LDA(mem[0x2907]);
+    mem[0x2906] = mem[0x280C];
     /* a4e3 */
-    mem[0x2909] = cpu.A;
-    /* a4e6 */
-    LDA(mem[0x2908]);
+    mem[0x2909] = mem[0x2907];
     /* a4e9 */
-    mem[0x290A] = cpu.A;
+    mem[0x290A] = mem[0x2908];
     /* a4ec */
     LDY(0x1F);
 L_a4ee:;
@@ -20369,14 +19843,12 @@ L_a5b5:;
     mem[0x0069] = cpu.A;
     /* a5fd */
     terrain_jitter_column();
-    /* a600 */
-    LDA(0x7F);
     /* a602 */
-    mem[0x006A] = cpu.A;
+    mem[0x006A] = 0x7F;
     /* a604 */
-    object_index_signed = cpu.A;
+    object_index_signed = 0x7F;
     /* a606 */
-    mem[0x2845] = cpu.A;
+    mem[0x2845] = 0x7F;
     /* a60b */
     indicator_pos = 0x01;
     /* a60d */
@@ -20533,18 +20005,12 @@ L_a683:;
     SBC(mem[0x005A]);
     /* a69d */
     mem[0x0079] = cpu.A;
-    /* a69f */
-    LDA(mem[0x0059]);
     /* a6a1 */
-    mem[0x28E7] = cpu.A;
-    /* a6a4 */
-    LDA(mem[0x28E4]);
+    mem[0x28E7] = mem[0x0059];
     /* a6a7 */
-    mem[0x28E8] = cpu.A;
-    /* a6aa */
-    LDA(mem[(0x2276)+cpu.X]);
+    mem[0x28E8] = mem[0x28E4];
     /* a6ad */
-    grid_slot_index = cpu.A;
+    grid_slot_index = mem[(0x2276)+cpu.X];
     /* a6b2 */
     mem[0x0040] = 0x64;
     /* a6b4 */
@@ -20555,10 +20021,8 @@ L_a683:;
     LDA(mem[(0x2487)+cpu.X]);
     /* a6bc */
     if (!cpu.Z) goto L_a6c8;
-    /* a6be */
-    LDA(mem[(0x2400)+cpu.X]);
     /* a6c1 */
-    mem[0x003F] = cpu.A;
+    mem[0x003F] = mem[(0x2400)+cpu.X];
     /* a6c3 */
     LDA(mem[(0x245A)+cpu.X]);
     /* a6c6 */
@@ -20586,24 +20050,18 @@ void terrain_plot_object_a__t6502(void) {
     plot_base_ptr_hi = 0xA6;
     /* a838 */
     plot_pixel_mask = 0xFF;
-    /* a83a */
-    LDA(mem[(0x232E)+cpu.X]);
     /* a83d */
-    plot_step_hi = cpu.A;
-    /* a83f */
-    LDA(mem[(0x2300)+cpu.X]);
+    plot_step_hi = mem[(0x232E)+cpu.X];
     /* a842 */
-    plot_step_lo = cpu.A;
+    plot_step_lo = mem[(0x2300)+cpu.X];
     /* a844 */
     LDA(mem[(0x245A)+cpu.X]);
     /* a847 */
     terrain_pt_coord_b = cpu.A;
     /* a849 */
     TAY();
-    /* a84a */
-    LDA(mem[(0x2400)+cpu.X]);
     /* a84d */
-    terrain_pt_coord_a = cpu.A;
+    terrain_pt_coord_a = mem[(0x2400)+cpu.X];
     /* a84f */
     LDA(mem[(0x2276)+cpu.X]);
     /* a852 */
@@ -20649,12 +20107,10 @@ L_a86c:;
     CMP(0x37);
     /* a87a */
     if (cpu.C) goto L_a8a1;
-    /* a87c */
-    LDA(0x01);
     /* a87e */
-    mem[0x28FC] = cpu.A;
+    mem[0x28FC] = 0x01;
     /* a881 */
-    mem[0x28FB] = cpu.A;
+    mem[0x28FB] = 0x01;
     /* a884 */
     LDA(mem[0x006A]);
     /* a886 */
@@ -20675,10 +20131,8 @@ L_a86c:;
     mem[0x28EB] = cpu.X;
     /* a899 */
     mem[0x28EC] = cpu.Y;
-    /* a89c */
-    LDA(plot_step_hi);
     /* a89e */
-    mem[0x28ED] = cpu.A;
+    mem[0x28ED] = plot_step_hi;
 L_a8a1:;
     /* a8a1 */
     LDA(plot_step_hi);
@@ -20755,22 +20209,14 @@ L_a8d5:;
     if (cpu.C) { terrain_distance_clamp_return(); return; }
     /* a8e8 */
     mem[0x2915] = cpu.A;
-    /* a8eb */
-    LDA(terrain_distance_acc);
     /* a8ee */
-    mem[0x2914] = cpu.A;
-    /* a8f1 */
-    LDA(mem[0x290B]);
+    mem[0x2914] = terrain_distance_acc;
     /* a8f4 */
-    mem[0x2912] = cpu.A;
-    /* a8f7 */
-    LDA(mem[0x290C]);
+    mem[0x2912] = mem[0x290B];
     /* a8fa */
-    mem[0x2913] = cpu.A;
-    /* a8fd */
-    LDA(mem[0x290E]);
+    mem[0x2913] = mem[0x290C];
     /* a900 */
-    mem[0x2910] = cpu.A;
+    mem[0x2910] = mem[0x290E];
     /* a903 */
     LDA(mem[0x290F]);
     /* a906 */
@@ -20801,22 +20247,14 @@ void terrain_plot_object_b__t6502(void) {
     mem[0x290F] = cpu.A;
     /* a926 */
     shape_col_base = cpu.A;
-    /* a929 */
-    LDA(mem[(0x2400)+cpu.X]);
     /* a92c */
-    terrain_pt_coord_a = cpu.A;
-    /* a92e */
-    LDA(mem[(0x245A)+cpu.X]);
+    terrain_pt_coord_a = mem[(0x2400)+cpu.X];
     /* a931 */
-    terrain_pt_coord_b = cpu.A;
-    /* a933 */
-    LDA(mem[(0x232E)+cpu.X]);
+    terrain_pt_coord_b = mem[(0x245A)+cpu.X];
     /* a936 */
-    plot_step_hi = cpu.A;
-    /* a938 */
-    LDA(mem[(0x2300)+cpu.X]);
+    plot_step_hi = mem[(0x232E)+cpu.X];
     /* a93b */
-    plot_step_lo = cpu.A;
+    plot_step_lo = mem[(0x2300)+cpu.X];
     /* a93d */
     LDY(mem[(0x2276)+cpu.X]);
     /* a940 */
@@ -20949,32 +20387,24 @@ L_a9c3:;
     LDA(mem[0x28ED]);
     /* a9c8 */
     if (cpu.Z) goto L_a9c2;
-    /* a9ca */
-    LDA(mem[0x28EB]);
     /* a9cd */
-    mem[0x28F0] = cpu.A;
-    /* a9d0 */
-    LDA(mem[0x28EC]);
+    mem[0x28F0] = mem[0x28EB];
     /* a9d3 */
-    mem[0x28F2] = cpu.A;
+    mem[0x28F2] = mem[0x28EC];
     /* a9d8 */
     mem[0x28F4] = 0x01;
-    /* a9db */
-    LDA(0x80);
     /* a9dd */
-    mem[0x28EF] = cpu.A;
+    mem[0x28EF] = 0x80;
     /* a9e0 */
-    mem[0x28F1] = cpu.A;
+    mem[0x28F1] = 0x80;
     /* a9e3 */
-    mem[0x28F3] = cpu.A;
+    mem[0x28F3] = 0x80;
     /* a9e8 */
     plot_pixel_mask = 0xFF;
-    /* a9ea */
-    LDA(0x00);
     /* a9ec */
-    plot_x_step_hi = cpu.A;
+    plot_x_step_hi = 0x00;
     /* a9ee */
-    mem[0x28F8] = cpu.A;
+    mem[0x28F8] = 0x00;
     /* a9f1 */
     LDA(bus_read(0xD20A));
     /* a9f4 */
@@ -21216,14 +20646,10 @@ void set_plot_mask_and_halve_step__t6502(void) {
     AND(0x03);
     /* ab7d */
     TAX();
-    /* ab7e */
-    LDA(mem[(0xA7E9)+cpu.X]);
     /* ab81 */
-    plot_base_ptr_lo = cpu.A;
-    /* ab84 */
-    LDA(mem[(0xA7ED)+cpu.X]);
+    plot_base_ptr_lo = mem[(0xA7E9)+cpu.X];
     /* ab87 */
-    plot_base_ptr_hi = cpu.A;
+    plot_base_ptr_hi = mem[(0xA7ED)+cpu.X];
     /* ab8a */
     TXA();
     /* ab8b */
@@ -21282,16 +20708,12 @@ L_abad:;
     DEC_M(MEM_terrain_pt_coord_a);
     /* abbb */
     if (cpu.C) goto L_abad;
-    /* abbd */
-    LDA(terrain_pt_coord_a);
     /* abbf */
-    shape_row_width = cpu.A;
-    /* abc2 */
-    LDA(0x00);
+    shape_row_width = terrain_pt_coord_a;
     /* abc4 */
-    mem[0x0054] = cpu.A;
+    mem[0x0054] = 0x00;
     /* abc6 */
-    mem[0x0055] = cpu.A;
+    mem[0x0055] = 0x00;
 L_abc8:;
     /* abc8 */
     LDA(0x00);
@@ -21323,10 +20745,8 @@ L_abc8:;
     ADC(plot_base_ptr_hi);
     /* abe3 */
     row_table_base_hi = cpu.A;
-    /* abe5 */
-    LDA(shape_row_width);
     /* abe8 */
-    terrain_pt_coord_a = cpu.A;
+    terrain_pt_coord_a = shape_row_width;
 L_abea:;
     /* abea */
     LDA(mem[0x0053]);
@@ -21507,10 +20927,8 @@ L_ac92:;
 /* setup_projection_params @ $AC93: Builds 16-bit fixed-pt scratch from 2887/2888 and 2889/288A (>>4), sign-extends $33/$34, sets $92 from 2886<<2, calls 9ba0; loads view vector 2809-280C, computes $A4/$A5/$A6 from heading $23/$24/$28/$29; clamps 2822 to 0..8 */
 /* faithful transliteration kept as the validation oracle; native setup_projection_params() lives in rof_native.c (see VALIDATE_FUNCS) */
 void setup_projection_params__t6502(void) {
-    /* ac93 */
-    LDA(world_x_lo);
     /* ac96 */
-    vbi_phase = cpu.A;
+    vbi_phase = world_x_lo;
     /* ac98 */
     LDA(world_x_hi);
     /* ac9b */
@@ -21531,10 +20949,8 @@ void setup_projection_params__t6502(void) {
     ROR_M(MEM_vbi_phase);
     /* aca7 */
     vbi_flags = cpu.A;
-    /* aca9 */
-    LDA(world_z_lo);
     /* acac */
-    terrain_state = cpu.A;
+    terrain_state = world_z_lo;
     /* acae */
     LDA(world_z_hi);
     /* acb1 */
@@ -21555,10 +20971,8 @@ void setup_projection_params__t6502(void) {
     ROR_M(MEM_terrain_state);
     /* acbd */
     terrain_scroll_counter = cpu.A;
-    /* acbf */
-    LDA(terrain_depth_frac);
     /* acc1 */
-    dl_src_index = cpu.A;
+    dl_src_index = terrain_depth_frac;
     /* acc3 */
     LDA(terrain_depth_step);
     /* acc5 */
@@ -21591,26 +21005,16 @@ L_acd8:;
     draw_row = cpu.A;
     /* acdf */
     compute_heading_sincos();
-    /* ace2 */
-    LDA(mem[0x2809]);
     /* ace5 */
-    draw_iter_count = cpu.A;
-    /* ace7 */
-    LDA(mem[0x280A]);
+    draw_iter_count = mem[0x2809];
     /* acea */
-    scroll_accum_b0 = cpu.A;
-    /* acec */
-    LDA(mem[0x280B]);
+    scroll_accum_b0 = mem[0x280A];
     /* acef */
-    scroll_accum_b1 = cpu.A;
-    /* acf1 */
-    LDA(mem[0x280C]);
+    scroll_accum_b1 = mem[0x280B];
     /* acf4 */
-    scroll_accum_b2 = cpu.A;
-    /* acf6 */
-    LDA(roll_pos_hi);
+    scroll_accum_b2 = mem[0x280C];
     /* acf8 */
-    horizon_row_index = cpu.A;
+    horizon_row_index = roll_pos_hi;
     /* acfa */
     LDA(roll_pos_lo);
     /* acfc */
@@ -21674,10 +21078,8 @@ L_ad27:;
 /* compute_row_xspans @ $AD2B: Fills 271F.. (15 entries) by adding A4/A5 step to 271E seed, then fills 270E.. (downward) by subtracting A4/A5; builds per-row horizontal span endpoints */
 /* faithful transliteration kept as the validation oracle; native compute_row_xspans() lives in rof_native.c (see VALIDATE_FUNCS) */
 void compute_row_xspans__t6502(void) {
-    /* ad2b */
-    LDA(horizon_row_index);
     /* ad2d */
-    row_span_seed = cpu.A;
+    row_span_seed = horizon_row_index;
     /* ad30 */
     LDX(0x00);
     /* ad32 */
@@ -22601,10 +22003,8 @@ L_b12f:;
     LDA(mem[MEM_row_base_lo+cpu.X]);
     /* b132 */
     sync_flag = cpu.A;
-    /* b134 */
-    LDA(mem[MEM_row_base_hi+cpu.X]);
     /* b137 */
-    dl_ptr_lo = cpu.A;
+    dl_ptr_lo = mem[MEM_row_base_hi+cpu.X];
     /* b13b */
     blit_color_src = 0x00;
     /* b13f */
@@ -22632,10 +22032,8 @@ L_b141:;
     span_row_count = cpu.A;
     /* b156 */
     TAX();
-    /* b157 */
-    LDA(mem[(0xBE00)+cpu.X]);
     /* b15a */
-    blit_color_src = cpu.A;
+    blit_color_src = mem[(0xBE00)+cpu.X];
     /* b15c */
     CLC();
     /* b15d */
@@ -22718,18 +22116,12 @@ L_b1a3:;
     LDA(step_mode_flag);
     /* b1a5 */
     mem[(0x25B5)+cpu.X] = cpu.A;
-    /* b1a8 */
-    LDA(mem[0x008E]);
     /* b1aa */
-    mem[(0x25D3)+cpu.X] = cpu.A;
-    /* b1ad */
-    LDA(sfx_toggle_8F);
+    mem[(0x25D3)+cpu.X] = mem[0x008E];
     /* b1af */
-    mem[(0x25F1)+cpu.X] = cpu.A;
-    /* b1b2 */
-    LDA(sfx_reinit_gate);
+    mem[(0x25F1)+cpu.X] = sfx_toggle_8F;
     /* b1b4 */
-    mem[(0x24E3)+cpu.X] = cpu.A;
+    mem[(0x24E3)+cpu.X] = sfx_reinit_gate;
     /* b1b7 */
     LDA(altitude_threshold);
     /* b1b9 */
@@ -22748,22 +22140,14 @@ L_b1c2:;
     LDA(step_mode_flag);
     /* b1c4 */
     dl_ptr_hi = cpu.A;
-    /* b1c6 */
-    LDA(mem[0x008E]);
     /* b1c8 */
-    screen_ptr_lo = cpu.A;
-    /* b1ca */
-    LDA(sfx_toggle_8F);
+    screen_ptr_lo = mem[0x008E];
     /* b1cc */
-    screen_ptr_hi = cpu.A;
-    /* b1ce */
-    LDA(sfx_reinit_gate);
+    screen_ptr_hi = sfx_toggle_8F;
     /* b1d0 */
-    encounter_count = cpu.A;
-    /* b1d2 */
-    LDA(altitude_threshold);
+    encounter_count = sfx_reinit_gate;
     /* b1d4 */
-    row_count = cpu.A;
+    row_count = altitude_threshold;
     /* b1d6 */
     goto L_b18c;
 L_b1d9:;
@@ -22789,22 +22173,14 @@ L_b1e8:;
     if (cpu.N) goto L_b210;
     /* b1ec */
     terrain_midpoint_displace();
-    /* b1ef */
-    LDA(step_mode_flag);
     /* b1f1 */
-    mem[(0x25B5)+cpu.X] = cpu.A;
-    /* b1f4 */
-    LDA(mem[0x008E]);
+    mem[(0x25B5)+cpu.X] = step_mode_flag;
     /* b1f6 */
-    mem[(0x25D3)+cpu.X] = cpu.A;
-    /* b1f9 */
-    LDA(sfx_toggle_8F);
+    mem[(0x25D3)+cpu.X] = mem[0x008E];
     /* b1fb */
-    mem[(0x25F1)+cpu.X] = cpu.A;
-    /* b1fe */
-    LDA(sfx_reinit_gate);
+    mem[(0x25F1)+cpu.X] = sfx_toggle_8F;
     /* b200 */
-    mem[(0x24E3)+cpu.X] = cpu.A;
+    mem[(0x24E3)+cpu.X] = sfx_reinit_gate;
     /* b203 */
     LDA(altitude_threshold);
     /* b205 */
@@ -22967,10 +22343,8 @@ L_b298:;
 L_b29b:;
     /* b29b */
     mem[0x00EA] = cpu.A;
-    /* b29d */
-    LDA(mem[(0x25B4)+cpu.X]);
     /* b2a0 */
-    blit_color_src = cpu.A;
+    blit_color_src = mem[(0x25B4)+cpu.X];
     /* b2a2 */
     LDA(mem[(0x23E2)+cpu.X]);
     /* b2a5 */
@@ -22982,26 +22356,16 @@ L_b2aa:;
     CPX(0x00);
     /* b2ac */
     if (cpu.Z) goto L_b2cb;
-    /* b2ae */
-    LDA(mem[(0x25B4)+cpu.X]);
     /* b2b1 */
-    dl_ptr_hi = cpu.A;
-    /* b2b3 */
-    LDA(mem[(0x25D2)+cpu.X]);
+    dl_ptr_hi = mem[(0x25B4)+cpu.X];
     /* b2b6 */
-    screen_ptr_lo = cpu.A;
-    /* b2b8 */
-    LDA(mem[(0x25F0)+cpu.X]);
+    screen_ptr_lo = mem[(0x25D2)+cpu.X];
     /* b2bb */
-    screen_ptr_hi = cpu.A;
-    /* b2bd */
-    LDA(mem[(0x24E2)+cpu.X]);
+    screen_ptr_hi = mem[(0x25F0)+cpu.X];
     /* b2c0 */
-    encounter_count = cpu.A;
-    /* b2c2 */
-    LDA(mem[(0x23E2)+cpu.X]);
+    encounter_count = mem[(0x24E2)+cpu.X];
     /* b2c5 */
-    row_count = cpu.A;
+    row_count = mem[(0x23E2)+cpu.X];
     /* b2c7 */
     DEX();
     /* b2c8 */
@@ -23182,14 +22546,10 @@ L_b364:;
     mem[0x00B5] = cpu.Y;
     /* b366 */
     TAY();
-    /* b367 */
-    LDA(mem[(0x28CA)+cpu.Y]);
     /* b36a */
-    sync_flag = cpu.A;
-    /* b36c */
-    LDA(mem[(0x28FA)+cpu.Y]);
+    sync_flag = mem[(0x28CA)+cpu.Y];
     /* b36f */
-    dl_ptr_lo = cpu.A;
+    dl_ptr_lo = mem[(0x28FA)+cpu.Y];
     /* b371 */
     LDY(mem[(0xBD00)+cpu.X]);
     /* b374 */
@@ -23470,14 +22830,10 @@ L_b470:;
     mem[0x00B5] = cpu.Y;
     /* b472 */
     TAY();
-    /* b473 */
-    LDA(mem[(0x28CA)+cpu.Y]);
     /* b476 */
-    sync_flag = cpu.A;
-    /* b478 */
-    LDA(mem[(0x28FA)+cpu.Y]);
+    sync_flag = mem[(0x28CA)+cpu.Y];
     /* b47b */
-    dl_ptr_lo = cpu.A;
+    dl_ptr_lo = mem[(0x28FA)+cpu.Y];
     /* b47d */
     LDY(mem[(0xBD00)+cpu.X]);
     /* b480 */
@@ -23516,14 +22872,10 @@ L_b4a4:;
     mem[0x00B5] = cpu.Y;
     /* b4a6 */
     TAY();
-    /* b4a7 */
-    LDA(mem[(0x28CA)+cpu.Y]);
     /* b4aa */
-    sync_flag = cpu.A;
-    /* b4ac */
-    LDA(mem[(0x28FA)+cpu.Y]);
+    sync_flag = mem[(0x28CA)+cpu.Y];
     /* b4af */
-    dl_ptr_lo = cpu.A;
+    dl_ptr_lo = mem[(0x28FA)+cpu.Y];
     /* b4b1 */
     LDY(mem[(0xBD00)+cpu.X]);
     /* b4b4 */
@@ -23580,14 +22932,10 @@ L_b4e8:;
     mem[0x00B5] = cpu.Y;
     /* b4ea */
     TAY();
-    /* b4eb */
-    LDA(mem[(0x28CA)+cpu.Y]);
     /* b4ee */
-    sync_flag = cpu.A;
-    /* b4f0 */
-    LDA(mem[(0x28FA)+cpu.Y]);
+    sync_flag = mem[(0x28CA)+cpu.Y];
     /* b4f3 */
-    dl_ptr_lo = cpu.A;
+    dl_ptr_lo = mem[(0x28FA)+cpu.Y];
     /* b4f5 */
     LDY(mem[(0xBD00)+cpu.X]);
     /* b4f8 */
@@ -23732,20 +23080,16 @@ void compute_indicator_pos(void) {
     SBC(0x10);
     /* b71d */
     indicator_pos = cpu.A;
-    /* b71f */
-    LDA(object_pos_x_hi);
     /* b721 */
-    dl_y3 = cpu.A;
+    dl_y3 = object_pos_x_hi;
     /* b723 */
     LDA(object_pos_x_lo);
     /* b725 */
     abs_scaled_hi_nibble();
     /* b728 */
     dl_y1 = cpu.A;
-    /* b72a */
-    LDA(object_pos_y_hi);
     /* b72c */
-    dl_y3 = cpu.A;
+    dl_y3 = object_pos_y_hi;
     /* b72e */
     LDA(object_pos_y_lo);
     /* b730 */
@@ -23853,12 +23197,10 @@ void init_B800(void) {
     bus_write(0x02C4, 0x9C);
     /* b816 */
     bus_write(0x02C5, 0x08);
-    /* b819 */
-    LDA(0x00);
     /* b81b */
-    bus_write(0x02C6, cpu.A);
+    bus_write(0x02C6, 0x00);
     /* b81e */
-    bus_write(0x02C8, cpu.A);
+    bus_write(0x02C8, 0x00);
     /* b821 */
     LDX(0x22);
     /* b823 */
@@ -24731,14 +24073,10 @@ L_43e8:;
     ASL_A();
     /* 43ea */
     TAY();
-    /* 43eb */
-    LDA(mem[(0x4581)+cpu.Y]);
     /* 43ee */
-    dl_y1 = cpu.A;
-    /* 43f0 */
-    LDA(mem[(0x4582)+cpu.Y]);
+    dl_y1 = mem[(0x4581)+cpu.Y];
     /* 43f3 */
-    dl_y2 = cpu.A;
+    dl_y2 = mem[(0x4582)+cpu.Y];
     /* 43f5 */
     LDY(0x00);
     /* 43f7 */
@@ -25380,26 +24718,16 @@ void advance_history_6a4d(void) {
     LDA(mem[0x08D9]);
     /* 6a50 */
     PHA();
-    /* 6a51 */
-    LDA(mem[0x08D8]);
     /* 6a54 */
-    mem[0x08D9] = cpu.A;
-    /* 6a57 */
-    LDA(mem[0x08D7]);
+    mem[0x08D9] = mem[0x08D8];
     /* 6a5a */
-    mem[0x08D8] = cpu.A;
-    /* 6a5d */
-    LDA(mem[0x08D6]);
+    mem[0x08D8] = mem[0x08D7];
     /* 6a60 */
-    mem[0x08D7] = cpu.A;
-    /* 6a63 */
-    LDA(mem[0x08D5]);
+    mem[0x08D7] = mem[0x08D6];
     /* 6a66 */
-    mem[0x08D6] = cpu.A;
-    /* 6a69 */
-    LDA(color_ring);
+    mem[0x08D6] = mem[0x08D5];
     /* 6a6c */
-    mem[0x08D5] = cpu.A;
+    mem[0x08D5] = color_ring;
     /* 6a6f */
     PLA();
     /* 6a70 */
@@ -25408,10 +24736,8 @@ void advance_history_6a4d(void) {
     LDA(step_mode_flag);
     /* 6a75 */
     if (!cpu.N) goto L_6a7c;
-    /* 6a77 */
-    LDA(mem[0x08D8]);
     /* 6a7a */
-    display_flags = cpu.A;
+    display_flags = mem[0x08D8];
 L_6a7c:;
     /* 6a7c */
     LDY(0x0C);
@@ -25473,14 +24799,10 @@ void terrain_plot_pixel__t6502(void) {
     if (cpu.C) { terrain_plot_skip_return(); return; }
     /* a6d7 */
     terrain_plot_row = cpu.Y;
-    /* a6da */
-    LDA(mem[(0x28CA)+cpu.Y]);
     /* a6dd */
-    sync_flag = cpu.A;
-    /* a6df */
-    LDA(mem[(0x28FA)+cpu.Y]);
+    sync_flag = mem[(0x28CA)+cpu.Y];
     /* a6e2 */
-    dl_ptr_lo = cpu.A;
+    dl_ptr_lo = mem[(0x28FA)+cpu.Y];
     /* a6e4 */
     LDY(mem[(0xBD00)+cpu.X]);
     /* a6e7 */
@@ -25703,10 +25025,8 @@ L_ab77:;
 /* enqueue_indicator_event @ $B756: Writes indicator params $0673=$0035(pos), $0665=$A0(char), $0681=($0014&5)+2(jiffy), Y=8, then game_sub_55FC enqueues event id 8 */
 /* faithful transliteration kept as the validation oracle; native enqueue_indicator_event() lives in rof_native.c (see VALIDATE_FUNCS) */
 void enqueue_indicator_event__t6502(void) {
-    /* b756 */
-    LDA(indicator_pos);
     /* b758 */
-    indicator_evt_pos = cpu.A;
+    indicator_evt_pos = indicator_pos;
     /* b75d */
     indicator_evt_char = 0xA0;
     /* b760 */
