@@ -4673,52 +4673,43 @@ extern unsigned long g_tdSubdiv, g_tdProjPlot, g_tdFrames;
 /* _core takes the half/column-base directly (was passed in cpu.X); the void shim below keeps
    the 6502-ABI entry for validation.  entryX is half 0 ($00) or half 1 ($30). */
 void terrain_draw_frame_core(uint8_t entryX) {
-    uint8_t A, X, Y, c = 0;
-    #define ADC_(v)  do { uint16_t _t=(uint16_t)A+(uint8_t)(v)+c; c=(uint8_t)(_t>>8); A=(uint8_t)_t; } while(0)
-    #define SBC_(v)  ADC_((uint8_t)~(uint8_t)(v))
-    #define ASLA_()  do { c=A>>7; A=(uint8_t)(A<<1); } while(0)
-    #define ROLA_()  do { uint8_t _n=A>>7; A=(uint8_t)((A<<1)|c); c=_n; } while(0)
-    #define RORA_()  do { uint8_t _n=A&1; A=(uint8_t)((A>>1)|(c<<7)); c=_n; } while(0)
-    #define LSRA_()  do { c=A&1; A=(uint8_t)(A>>1); } while(0)
-    #define ASLM_(a) do { uint8_t _v=mem[a]; c=_v>>7; mem[a]=(uint8_t)(_v<<1); } while(0)
-    #define ROLM_(a) do { uint8_t _v=mem[a],_n=_v>>7; mem[a]=(uint8_t)((_v<<1)|c); c=_n; } while(0)
+    uint8_t A, X, Y;     /* the object draw-order loop's index/flag scratch (the arithmetic
+                            sections now use typed locals; the 6502 carry-macro idioms are gone) */
 
     mem[0x00A7] = entryX;                                /* a31e */
 #ifdef ROF_TDRAW_PROF
     g_tdFrames++;                                        /* per-frame normalizer for g_tdSubdiv/g_tdProjPlot */
 #endif
-    X = entryX;
-    Y = 0x20; c = 0;                                     /* a320-a322 */
-    do {                                                 /* L_a323 — fill the $BD00 column-id table */
-        A = X; mem[0xBD00+Y]=A; mem[0xBD01+Y]=A; mem[0xBD02+Y]=A; mem[0xBD03+Y]=A;  /* a323-a32d */
-        X = (uint8_t)(X+1);                              /* a330 */
-        A = X; mem[0xBD04+Y]=A; mem[0xBD05+Y]=A; mem[0xBD06+Y]=A; mem[0xBD07+Y]=A;  /* a331-a33b */
-        X = (uint8_t)(X+1);                              /* a33e */
-        A = Y; ADC_(0x08); Y = A;                        /* a33f-a342 (c=0 from CLC/CPY) */
-        c = (Y >= 0xD4) ? 1 : 0;                         /* a343 CPY #$D4 */
-    } while (Y < 0xD4);                                  /* a345 BCC */
-    A = X; c = 0; ADC_(0x2E); mem[0x00B3] = A;           /* a347-a34b */
-    Y = 0x14; A = 0x67;                                  /* a34d-a34f */
-    do {                                                 /* L_a351 */
-        Y = (uint8_t)(Y-1); mem[0x263A+Y]=A; mem[0x26CE + Y]=A;  /* a351-a355 */
-    } while (Y != 0);                                    /* a358 BNE */
-    Y = 0x21; A = 0x6B;                                  /* a35a-a35c */
-    do {                                                 /* L_a35e */
-        Y = (uint8_t)(Y-1);                              /* a35e */
-        mem[0x264E + Y]=A; mem[0x266F+Y]=A; mem[0x2690+Y]=A; mem[0x26B1+Y]=A;  /* a35f-a368 */
-    } while (Y != 0);                                    /* a36b BNE */
+    {
+        /* a320-a345: fill the $BD00 column-id table — 8-byte blocks [col×4, (col+1)×4],
+           Y stepping +8 over $20..$D0, col starting at entryX and +2 per block (23 blocks). */
+        uint8_t col = entryX;
+        for (unsigned y = 0x20; y < 0xD4; y += 8) {
+            mem[0xBD00+y]=col; mem[0xBD01+y]=col; mem[0xBD02+y]=col; mem[0xBD03+y]=col;
+            col++;
+            mem[0xBD04+y]=col; mem[0xBD05+y]=col; mem[0xBD06+y]=col; mem[0xBD07+y]=col;
+            col++;
+        }
+        mem[0x00B3] = (uint8_t)(col + 0x2E);             /* a347: X(=entryX+$2E after loop) + $2E */
+    }
+    for (int i = 0; i < 0x14; i++) {                     /* L_a351: $263A/$26CE[0..$13] = $67 */
+        mem[0x263A + i]=0x67; mem[0x26CE + i]=0x67;
+    }
+    for (int i = 0; i < 0x21; i++) {                     /* L_a35e: $264E/$266F/$2690/$26B1[0..$20] = $6B */
+        mem[0x264E + i]=0x6B; mem[0x266F + i]=0x6B; mem[0x2690 + i]=0x6B; mem[0x26B1 + i]=0x6B;
+    }
 
-    mem[0x2907] = roll_pos_lo;                           /* a36d-a36f */
-    mem[0x2908] = roll_pos_hi;                           /* a372-a374 */
+    mem[0x2907] = roll_pos_lo;                           /* a36d */
+    mem[0x2908] = roll_pos_hi;                           /* a372 */
     compute_row_xspans();                                /* a377 */
-    A = 0x80;                                            /* a37a */
-    mem[0x28E7]=A; mem[0x28E8]=A; mem[0x2912]=A; mem[0x2913]=A; mem[0x2914]=A; mem[0x2915]=A;  /* a37c-a38b */
-    Y = mem[0x00A7];                                     /* a38e */
-    if (Y == 0) { terrain_span_max=A; mem[0x0079]=A; }        /* a390 BNE a397; else a392-a395 */
-    A = 0x00;                                            /* a397 */
-    mem[0x28ED]=A; mem[0x28FB]=A; mem[0x28FC]=A;         /* a399-a39f */
-    A = mem[0x006A];                                     /* a3a2 */
-    if (!(A & 0x80)) mem[0x28FC] = (uint8_t)(mem[0x28FC]+1);  /* a3a4 BMI a3a9; else a3a6 INC */
+    mem[0x28E7]=0x80; mem[0x28E8]=0x80; mem[0x2912]=0x80; /* a37c-a38b */
+    mem[0x2913]=0x80; mem[0x2914]=0x80; mem[0x2915]=0x80;
+    if (mem[0x00A7] == 0) {                              /* a38e: only on the entryX==0 pass */
+        terrain_span_max = 0x80; mem[0x0079] = 0x80;
+    }
+    mem[0x28ED]=0x00; mem[0x28FB]=0x00; mem[0x28FC]=0x00; /* a397-a39f */
+    if (!(mem[0x006A] & 0x80))                           /* a3a2: $6A non-negative -> bump $28FC */
+        mem[0x28FC] = (uint8_t)(mem[0x28FC] + 1);
 
     Y = 0x00;                                            /* a3a9 */
     for (;;) {                                           /* L_a3ab — object draw-order loop */
@@ -4753,133 +4744,108 @@ void terrain_draw_frame_core(uint8_t entryX) {
     }
 
     /* a433 */
-    mem[0x28D9] = mem[0x28E7];                           /* a433-a436 */
-    mem[0x28DA] = mem[0x28E8];                           /* a439-a43c */
-    A = mem[0x0079];                                     /* a43f */
-    if (!(A & 0x80)) {                                   /* a441 BPL a44b */
-        LSRA_(); LSRA_(); c = 0; ADC_(0x01);             /* a44b-a44e */
-        if (A >= 0x0A) A = 0x09;                         /* a450 CMP#$0A; a452 BCC a456; a454 */
-        game_phase_flag = A;                                 /* a456 */
-        c = (A >= mem[0x283F]) ? 1 : 0;                  /* a459 CMP $283F */
-        if (A != mem[0x283F]) {                          /* a45c BEQ a46c -> else */
-            mem[0x283F] = A;                             /* a45e */
-            if (!c && mem[0x003D] == 0) {                /* a461 BCS a46c / a463 BNE a46c */
-                cpu.X = 0x14; ring_push_marked();        /* a467-a469 */
-            }
+    mem[0x28D9] = mem[0x28E7];                           /* a433 */
+    mem[0x28DA] = mem[0x28E8];                           /* a439 */
+    if (!(mem[0x0079] & 0x80)) {                         /* a441: $0079 non-negative */
+        uint8_t lvl = (uint8_t)((mem[0x0079] >> 2) + 1); /* a44b: (>>2)+1 */
+        if (lvl >= 0x0A) lvl = 0x09;                     /* a450: clamp to 9 */
+        game_phase_flag = lvl;
+        if (lvl != mem[0x283F]) {                        /* a45c */
+            uint8_t prev = mem[0x283F];
+            mem[0x283F] = lvl;
+            if (lvl < prev && mem[0x003D] == 0)          /* a461/a463: level dropped & not crashed */
+                { cpu.X = 0x14; ring_push_marked(); }    /* a467 */
         }
     } else {
-        game_phase_flag = 0x00;                              /* a443-a445 */
+        game_phase_flag = 0x00;                          /* a443 */
     }
-    /* a46c */
-    A = mem[0x2912]; c = (A >= 0x80) ? 1 : 0; RORA_(); c = 0; ADC_(0x7D); mem[0x2847] = A;  /* a46c-a475 */
-    A = mem[0x2913]; c = 0; ADC_(0x15); mem[0x2845] = A;  /* a478-a47e */
-    mem[0x2916] = mem[0x2914];                           /* a481-a484 */
-    mem[0x2839] = mem[0x2910];                           /* a487-a48a */
-    mem[0x283A] = mem[0x2911];                           /* a48d-a490 */
-    if (level_or_state != 0) check_target_in_window();      /* a493 BEQ a49a; a497 */
-    A = (mem[0x28FC] != 0) ? 0x74 : mem[0x28FC];         /* a49a-a49f (LDA $28FC; BEQ; LDA #$74) */
-    mem[0x2840] = A;                                     /* a4a1 */
-    mem[0x28FD]=mem[0x2270]; mem[0x28FE]=mem[0x2271]; mem[0x28FF]=mem[0x2272];  /* a4a4-a4b3 */
-    mem[0x2900]=mem[0x2273]; mem[0x2901]=mem[0x2274]; mem[0x2902]=scaled_depth_hi;  /* a4b6-a4c5 */
-    mem[0x2903]=mem[0x2809]; mem[0x2904]=mem[0x280A]; mem[0x2905]=mem[0x280B]; mem[0x2906]=mem[0x280C];  /* a4c8-a4dd */
-    mem[0x2909]=mem[0x2907]; mem[0x290A]=mem[0x2908];    /* a4e0-a4e9 */
-    Y = 0x1F;                                            /* a4ec */
-    do {                                                 /* L_a4ee */
-        c = 1; A = row_span_seed; SBC_(mem[0x270E + Y]);     /* a4ee-a4f2 */
-        c = (A >= 0x80) ? 1 : 0; RORA_(); ADC_(0x00);    /* a4f5-a4f8 (sign-ext shift + round) */
-        mem[0x28B6+Y] = A;                               /* a4fa */
-        Y = (uint8_t)(Y-1);                              /* a4fd DEY */
-    } while (!(Y & 0x80));                               /* a4fe BPL */
+    /* a46c: $2847 = sar($2912) + $7D;  $2845 = $2913 + $15  (ROR with carry=sign = arith >>1) */
+    mem[0x2847] = (uint8_t)(((mem[0x2912] >> 1) | (mem[0x2912] & 0x80)) + 0x7D);
+    mem[0x2845] = (uint8_t)(mem[0x2913] + 0x15);
+    mem[0x2916] = mem[0x2914];                           /* a481 */
+    mem[0x2839] = mem[0x2910];                           /* a487 */
+    mem[0x283A] = mem[0x2911];                           /* a48d */
+    if (level_or_state != 0) check_target_in_window();   /* a493 */
+    mem[0x2840] = mem[0x28FC] ? 0x74 : 0x00;             /* a49a */
+    mem[0x28FD]=mem[0x2270]; mem[0x28FE]=mem[0x2271]; mem[0x28FF]=mem[0x2272];  /* a4a4 */
+    mem[0x2900]=mem[0x2273]; mem[0x2901]=mem[0x2274]; mem[0x2902]=scaled_depth_hi;  /* a4b6 */
+    mem[0x2903]=mem[0x2809]; mem[0x2904]=mem[0x280A]; mem[0x2905]=mem[0x280B]; mem[0x2906]=mem[0x280C];  /* a4c8 */
+    mem[0x2909]=mem[0x2907]; mem[0x290A]=mem[0x2908];    /* a4e0 */
+    for (int y = 0x1F; y >= 0; y--) {                    /* L_a4ee: $28B6[y] = sar(seed - $270E[y]), rounded */
+        uint8_t a = (uint8_t)(row_span_seed - mem[0x270E + y]);
+        mem[0x28B6 + y] = (uint8_t)(((a >> 1) | (a & 0x80)) + (a & 1));
+    }
 
-    int a562_keep_carry = 0;                             /* arriving via a509 keeps c=1 into a562 */
-    if (mem[0x28FB] == 0) {                              /* a500 LDA $28FB; a503 BNE a50c */
-        c = 1; A = mem[0x061C];                          /* a505-a506 SEC; LDA $061C */
-        a562_keep_carry = 1;                             /* a509 goto a562 */
-    } else if (mem[0x003D] != 0) {
-        A = 0x00;                                        /* a50c-a512 goto a561 */
-    } else {
-        A = pitch_pos_lo; ASLA_(); row_table_base_lo = A;       /* a515-a518 */
-        A = pitch_pos_hi; ROLA_(); ASLM_(0x00C3); ROLA_(); ASLM_(0x00C3); ROLA_(); row_table_base_lo = A;  /* a51a-a523 */
-        A = mem[0x2919]; ASLA_(); row_table_base_hi = A;       /* a525-a529 */
-        A = mem[0x291A]; ROLA_(); ASLM_(0x00C4); ROLA_(); ASLM_(0x00C4); ROLA_();  /* a52b-a534 */
-        c = 1; SBC_(row_table_base_lo);                        /* a535-a536 SEC; SBC $C3 */
-        if (A & 0x80) { c = 0; A ^= 0xFF; ADC_(0x01); }  /* a538 BPL a53f; a53a-a53d negate */
-        row_table_base_lo = A;                                 /* a53f */
-        A = roll_velocity; c = (A>=0x80)?1:0; RORA_(); c = (A>=0x80)?1:0; RORA_(); row_table_base_hi = A;  /* a541-a549 */
-        A = mem[0x291B]; c = (A>=0x80)?1:0; RORA_(); c = (A>=0x80)?1:0; RORA_();  /* a54b-a553 */
-        c = 1; SBC_(row_table_base_hi);                        /* a554-a555 SEC; SBC $C4 */
-        if (A & 0x80) { c = 0; A ^= 0xFF; ADC_(0x01); }  /* a557 BPL a55e; negate */
-        c = 0; ADC_(row_table_base_lo);                        /* a55e CLC; ADC $C3 */
+    /* a500-a570: converge $004D toward a pitch/roll-delta magnitude target.
+       v = this frame's contribution; carryIn = the SEC/CLC state into the a562 ADD. */
+    uint8_t v; int carryIn;
+    if (mem[0x28FB] == 0) {                              /* a500 */
+        v = mem[0x061C]; carryIn = 1;                    /* a505: SEC kept through to a562 */
+    } else if (mem[0x003D] != 0) {                       /* a50c: crashed */
+        v = 0x00; carryIn = 0;
+    } else {                                             /* a515: |Δpitch| + |Δroll| in scaled units */
+        #define SAR1(x) ((uint8_t)(((uint8_t)(x) >> 1) | ((uint8_t)(x) & 0x80)))
+        uint16_t pitch16 = (uint16_t)(pitch_pos_lo | (pitch_pos_hi << 8));
+        uint16_t v2919   = (uint16_t)(mem[0x2919] | (mem[0x291A] << 8));
+        uint8_t base = (uint8_t)((uint16_t)(pitch16 << 3) >> 8);  /* a523: hi byte of pitch16<<3 -> $C3 */
+        uint8_t dx   = (uint8_t)((uint16_t)(v2919  << 3) >> 8);   /* a534: hi byte of $2919.291A<<3 */
+        dx = (uint8_t)(dx - base);                       /* a535 */
+        if (dx & 0x80) dx = (uint8_t)(0u - dx);          /* a538: abs */
+        uint8_t c4 = SAR1(SAR1(roll_velocity));          /* a549: roll_velocity arith >>2 -> $C4 */
+        uint8_t dy = SAR1(SAR1(mem[0x291B]));            /* a553: $291B arith >>2 */
+        dy = (uint8_t)(dy - c4);                         /* a554 */
+        if (dy & 0x80) dy = (uint8_t)(0u - dy);          /* a557: abs */
+        v = (uint8_t)(dy + dx); carryIn = 0;             /* a55e */
+        #undef SAR1
     }
-    /* a561 */
-    if (!a562_keep_carry) c = 0;                         /* a561 CLC (skipped when arriving via a562) */
     /* a562 */
-    ADC_(mem[0x004D]);                                   /* a562 ADC $4D */
-    if (A & 0x80) A = 0x7F;                              /* a564 BPL a568; a566 */
-    c = 1; SBC_(mem[0x061C]);                            /* a568-a569 SEC; SBC $061C */
-    if (!c) A = 0x00;                                    /* a56c BCS a570; a56e */
+    A = (uint8_t)((uint16_t)v + mem[0x004D] + carryIn);  /* a562 ADC $4D */
+    if (A & 0x80) A = 0x7F;                              /* a564: clamp negative -> $7F */
+    A = (A >= mem[0x061C]) ? (uint8_t)(A - mem[0x061C]) : 0x00;  /* a568-a56e: decay by $061C, floor 0 */
     mem[0x004D] = A;                                     /* a570 */
-    Y = lock_on_indicator_state;                                     /* a572 */
-    c = (A >= 0x20) ? 1 : 0;                             /* a574 CMP #$20 */
-    if (c) {                                             /* a576 BCC a580 -> else branch */
-        if (!(Y & 0x80)) Y = 0x80;                       /* a578 TYA; a579 BMI a57d; a57b LDY#$80 */
-    } else {                                             /* a580 */
-        if (Y == 0x80) Y = 0x00;                         /* a580 CPY#$80; a582 BNE a586; a584 */
+    {
+        uint8_t lo = lock_on_indicator_state;            /* a572 */
+        if (A >= 0x20) {                                 /* a574 */
+            if (!(lo & 0x80)) lo = 0x80;                 /* a578: arm lock-on */
+        } else {
+            if (lo == 0x80) lo = 0x00;                   /* a580: disarm */
+        }
+        lock_on_indicator_state = lo;                    /* a586 */
     }
-    lock_on_indicator_state = Y;                                     /* a586 */
-    if (game_state != 0) {                              /* a588 BEQ a59b */
-        c = 1; A = level_stage; SBC_(0x06);              /* a58c-a58f SEC; LDA $6D; SBC #6 */
-        if (c) {                                         /* a591 BCC a59b */
-            c = (A >= bus_read(0xD20A)) ? 1 : 0;         /* a593 CMP $D20A */
-            if (c) obj_table_set_active();               /* a596 BCC a59b; a598 */
+    if (game_state != 0 && level_stage >= 0x06           /* a588-a591 */
+        && (uint8_t)(level_stage - 0x06) >= bus_read(0xD20A))   /* a593 */
+        obj_table_set_active();                          /* a598 */
+    /* a59b: bump every near-max ($FA-$FF) map cell, counting them into $2843 */
+    if (map_cell_hit_marker != 0) {
+        map_cell_hit_marker = 0;                         /* a5a0 */
+        for (int x = 0; x < 0x100; x++) {                /* L_a5a7 */
+            if (mem[0x0A00 + x] > 0xF9) {
+                mem[0x0A00 + x]++;
+                map_cell_hit_marker++;
+            }
         }
     }
-    /* a59b */
-    if (map_cell_hit_marker != 0) {                              /* a59b BEQ a5b5 */
-        X = 0x00; map_cell_hit_marker = X; A = 0xF9;             /* a5a0-a5a5 */
-        do {                                             /* L_a5a7 */
-            if (A < mem[0x0A00+X]) {                     /* a5a7 CMP; a5aa BCS a5b2 -> else */
-                mem[0x0A00+X] = (uint8_t)(mem[0x0A00+X]+1);  /* a5ac INC $0A00,X */
-                map_cell_hit_marker = (uint8_t)(map_cell_hit_marker+1);  /* a5af INC $2843 */
-            }
-            X = (uint8_t)(X+1);                          /* a5b2 INX */
-        } while (X != 0);                                /* a5b3 BNE */
-    }
-    /* a5b5 — random enemy-spawn path; any failed guard returns (a612) */
-    X = object_index_signed;                                     /* a5b5 */
-    if (!(X & 0x80)) return;                             /* a5b7 BPL a612 */
-    if (mem[0x003D] != 0) return;                        /* a5b9-a5bb BNE a612 */
-    A = mem[0x0621];                                     /* a5bd */
-    if (A == 0) return;                                  /* a5c0 BEQ a612 */
-    mem[0x0622] = (uint8_t)(mem[0x0622]-1);              /* a5c2 DEC $0622 */
-    if (mem[0x0622] != 0) return;                        /* a5c5 BNE a612 */
-    mem[0x0622] = A;                                     /* a5c7 STA $0622 (A=$0621) */
-    c = 0; A = bus_read(0xD20A);                         /* a5ca CLC; LDA $D20A */
-    if (A & 0x80) return;                                /* a5ce BMI a612 */
-    ADC_(0x40); X = A;                                   /* a5d0-a5d2 ADC #$40 (c=0); TAX */
-    A = bus_read(0xD20A); A &= 0x1F; ADC_(0x6E);         /* a5d3-a5d8 (ADC #$6E carry from a5d0) */
-    c = (A >= mem[MEM_terrain_height_max + X]) ? 1 : 0;                    /* a5da CMP $260E,X */
-    if (!c) return;                                      /* a5dd BCC a612 */
-    if (A == mem[MEM_terrain_height_max + X]) return;                     /* a5df BEQ a612 */
-    object_pos_y_lo = A;                                     /* a5e1 */
-    A = 0x80; SBC_(object_pos_y_lo);                         /* a5e3-a5e5 (c=1 from a5da CMP) */
-    ASLA_(); c = 0; ADC_(0x42); object_pos_y_lo = A;         /* a5e7-a5eb */
-    A = X; c = 1; SBC_(0x10); object_pos_x_lo = A;           /* a5ed-a5f1 TXA; SEC; SBC #$10 */
-    A = 0x00; object_pos_x_hi=A; object_pos_y_hi=A; mem[0x0068]=A; mem[0x0069]=A;  /* a5f3-a5fb */
-    terrain_jitter_column();                                  /* a5fd */
-    A = 0x7F; mem[0x006A]=A; object_index_signed=A; mem[0x2845]=A;  /* a600-a606 */
-    indicator_pos = 0x01;                                  /* a609-a60b */
-    mem[0x282D] = terrain_depth_step;                           /* a60d-a60f */
+    /* a5b5 — random enemy spawn; bail on any failed guard */
+    if (!(object_index_signed & 0x80)) return;           /* a5b7 */
+    if (mem[0x003D] != 0) return;                        /* a5b9 */
+    if (mem[0x0621] == 0) return;                        /* a5c0 */
+    if (--mem[0x0622] != 0) return;                      /* a5c2-a5c5 */
+    mem[0x0622] = mem[0x0621];                           /* a5c7: reload the spawn period */
+    uint8_t r1 = bus_read(0xD20A);                       /* a5ca */
+    if (r1 & 0x80) return;                               /* a5ce */
+    uint16_t sx = (uint16_t)r1 + 0x40;                   /* a5d0 */
+    uint8_t spawnX = (uint8_t)sx;                        /* a5d2 TAX */
+    uint8_t h = (uint8_t)((bus_read(0xD20A) & 0x1F) + 0x6E + (sx >> 8));  /* a5d3-a5d8 (carry from a5d0) */
+    if (h <= mem[MEM_terrain_height_max + spawnX]) return;   /* a5da-a5df: need h > height */
+    uint8_t yt = (uint8_t)(0x80 - h);                    /* a5e3: $80 - h (c=1 from a5da) */
+    object_pos_y_lo = (uint8_t)((yt << 1) + 0x42);       /* a5e7: <<1, +$42 */
+    object_pos_x_lo = (uint8_t)(spawnX - 0x10);          /* a5ed */
+    object_pos_x_hi = 0; object_pos_y_hi = 0; mem[0x0068] = 0; mem[0x0069] = 0;  /* a5f3 */
+    terrain_jitter_column();                             /* a5fd */
+    mem[0x006A] = 0x7F; object_index_signed = 0x7F; mem[0x2845] = 0x7F;  /* a600 */
+    indicator_pos = 0x01;                                /* a609 */
+    mem[0x282D] = terrain_depth_step;                    /* a60d */
     return;                                              /* a612 */
-
-    #undef ADC_
-    #undef SBC_
-    #undef ASLA_
-    #undef ROLA_
-    #undef RORA_
-    #undef LSRA_
-    #undef ASLM_
-    #undef ROLM_
 }
 void terrain_draw_frame(void) { terrain_draw_frame_core(cpu.X); }
 
