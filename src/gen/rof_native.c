@@ -3711,196 +3711,177 @@ void terrain_plot_object(void) {
     terrain_plot_object_b();                                      /* a6c8 tail */
 }
 
-/* terrain_column_rasterize @ $B33D — THE fractal column renderer.
+/* terrain_column_rasterize @ $B33D — draw ONE terrain-surface segment into the silhouette
+ * bitmap by recursive midpoint subdivision.
  *
- * Walks columns from $0082 up to $D4, interpolating per-segment heights ($00EA[]/
- * $00F4[]) and midpoint-refining the column position toward $0095[Y]; for each
- * column it clamps the height to $97, updates the max-height array $260E[X], and
- * OR-plots the silhouette pixel into the bitmap at ($0080),$BD00[X] using the
- * $BC00 bit table and the $28CA/$28FA row-address tables.
+ * The flight terrain is a fractal height-field.  terrain_subdivide_column produces a sparse
+ * set of surface control points; this routine fills the surface BETWEEN two of them, one
+ * screen column at a time.  On entry:
+ *   - the running cursor {col,height,frac} is the segment's LEFT end;
+ *   - control-point slot [0] (CTL_*[0]) is the RIGHT end (column / height / fraction).
+ * It bisects the column interval down to single columns and plots the surface at each one:
+ *     midpoint column = (left.col + right.col) / 2
+ *     midpoint height = (left.height + right.height) / 2, then — once the running sub-pixel
+ *                       fraction rolls past a bit — displaced up or down by half the remaining
+ *                       horizontal span (the fractal roughness step), saturating at 0 / $FF.
+ * Midpoints are pushed onto a small stack (the CTL_* arrays indexed by `depth`; each slot's
+ * +1 neighbour doubles as the parent's interpolated output).  Every plotted pixel is OR'd
+ * into the mode-D bitmap and recorded in the per-column max-height map (COL_MAX); a column is
+ * drawn only if its new surface rises ABOVE what is already there — painter's hidden-surface,
+ * so nearer terrain in front stays visible.  Heights clamp to $97.
  *
- * Self-contained (no calls); structured C with purely local A/X/Y + carry c
- * (preserving the 6502 op order so carry threads identically); the bitmap pointer
- * is computed manually (= ZP_IND_Y($80)).
- * Contract: memory; cpu.X is preserved (saved to $0060, restored on exit — and
- * since we never touch cpu.X it stays at entry anyway).  Validated against a real
- * in-flight RAM snapshot (random mem[] would not terminate — $0095[] must be a
- * realistic increasing column array, else the midpoint loop has a fixed point).
+ * Two phases: (1) LEFT-CLIP — the cursor may start left of the viewport edge ($2C); bisect and
+ * fast-forward it to the edge, discarding off-screen midpoints.  (2) FILL — walk columns right
+ * to the right edge ($D4), bisecting toward each control point and plotting the final one or
+ * two columns of each leaf before popping to the next point.
+ *
+ * Contract: memory only; cpu.X (the caller's column base) is saved to $60 and not otherwise
+ * used.  Validated bit-exact against the 6502 oracle from a real flight snapshot (random mem[]
+ * would not terminate — the control columns must be a realistic ascending set).
  */
 void terrain_column_rasterize(void) {
     TDCNT(g_tdRasterCalls);
-    uint8_t A, X;        /* A = the row index passed to PLOT / the A==$82 fast path */
-    uint8_t Y = cpu.Y;   /* entry Y; the $B33F (A==$82) path plots before reassigning Y */
-    /* Hoist the threaded ZP scalars into registers: $82/$84/$86 (span interpolation
-       state, re-read/-written every b380/b446 iteration) and $80/$81/$B5 (PLOT scratch).
-       The indexed arrays ($95/$EA/$F4 in, $96/$EB/$F5 out) + the $260E[] heights and the
-       $28CA/$28FA/$BC00/$BD00 plot tables are reached through the non-volatile alias M below
-       (stride-1 indexed, no scalar to hoist, but the volatile barrier still hurt — see M).
-       WB() flushes the six scalars back to ZP before each return so the post-return state the
-       harness diffs is byte-identical (intermediate writes are dead — only the final value
-       matters).  mem[] is volatile, so every hoisted scalar removed from the inner loops is
-       one fewer 68000 RAM cycle per iteration. */
-    uint8_t s82 = dl_ptr_hi, s84 = screen_ptr_hi, s86 = row_count;
-    uint8_t s80 = sync_flag, s81 = dl_ptr_lo, sB5 = mem[0x00B5];
-    /* Non-volatile alias for the interpolation arrays $95/$EA/$F4 (in) and their +1-overlap
-       outputs $96/$EB/$F5: the per-column loop writes $96[Y] and reads it back next iteration
-       as $95[Y+1] (same address) — a store-to-load recurrence the `volatile mem[]` barrier
-       forces through RAM every time.  Through M the compiler may forward the store to the load
-       and keep the small ($95..$F5, the live window is <16 entries — the ZP layout caps Y) span
-       in registers.  Writes still land at the SAME addresses, so the post-return residue the
-       harness diffs is byte-identical.  SAFE: the flight VBI writes none of $95/$96/$EA/$EB/$F4/
-       $F5/$260E (CLAUDE.md ZP audit), so no concurrent ISR access to lose. */
+    /* Non-volatile alias: the control-point stack, the max-height map and the plot tables are
+       all main-loop-owned (the flight VBI touches none of them — CLAUDE.md ZP audit), so
+       dropping the volatile barrier lets the compiler forward the bisection's push-then-read
+       recurrence.  Writes land at the SAME addresses -> mem[] residue byte-identical. */
     uint8_t* const M = (uint8_t*)mem;
-    #define WB()     do { dl_ptr_hi=s82; screen_ptr_hi=s84; row_count=s86; \
-                          sync_flag=s80; dl_ptr_lo=s81; mem[0x00B5]=sB5; } while(0)
-    /* _ad is a terrain-silhouette bitmap address: {$28CA[ai]:$28FA[ai]} (a row-addr
-       table pointing into the ~$1010 bitmap) + $BD00[X].  It is ALWAYS plain RAM —
-       never the HW range ($D000-$D7FF) nor a page-2 shadow ($0200-$02FF) — so the
-       bus_read/bus_write routing (4 dead range-check branches per voxel, in the
-       hottest loop in the game) is replaced with a direct mem[] read-modify-write.
-       Safe because terrain_column_rasterize is validated from the REAL flight
-       snapshot (test_from_snapshot), where the row tables are real -> _ad in-bitmap;
-       the __t6502 oracle's bus_*() reduce to the same mem[] access for _ad<$D000. */
-    #define PLOT()   do { TDCNT(g_tdPlots); sB5=Y; uint8_t _ai=A; \
-        s80=M[0x28CA+_ai]; s81=M[0x28FA+_ai]; \
-        uint8_t _bo=M[MEM_terrain_col_byte_offset+X]; \
-        uint16_t _ad=(uint16_t)(s80|(s81<<8))+_bo; \
-        M[_ad]=(uint8_t)(M[_ad]|M[MEM_terrain_col_pixel_mask+X]); \
-        Y=sB5; } while(0)
+    /* Surface cursor + plot scratch held in registers across the recursion; flushed to ZP at
+       every exit (WB) so the state the validator diffs is byte-identical (spills are dead). */
+    uint8_t col    = dl_ptr_hi;       /* $82: current column (segment left end / running col)  */
+    uint8_t height = screen_ptr_hi;   /* $84: surface height at the cursor                      */
+    uint8_t frac   = row_count;       /* $86: sub-pixel fraction accumulator (the slope carry)  */
+    uint8_t rowLo  = sync_flag;       /* $80/$81: bitmap row address of the last pixel plotted  */
+    uint8_t rowHi  = dl_ptr_lo;
+    uint8_t b5     = mem[0x00B5];      /* $B5: observable scratch (last displacement / depth)    */
+    uint8_t depth  = cpu.Y;           /* bisection-stack depth (= control-point index)          */
+    uint8_t plotCol;                  /* the screen column currently being drawn                */
 
-    X = cpu.X; mem[0x0060] = X;                          /* b33d STX $60 */
-    A = M[MEM_blit_color_src];                              /* b33f */
-    if (A < 0x2D) { WB(); return; }                                /* b341 CMP #$2D; BCC b37f */
-    if (A < s82) { WB(); return; }                         /* b345 CMP $82; BCC b37f */
-    if (A == s82) {                              /* b349 BNE b380 -> else */
-        X = M[MEM_blit_color_src];                          /* b34b LDX $95 */
-        A = M[0x00EA];                                   /* b34d */
-        if (A > M[MEM_terrain_height_max + X]) {                       /* b352 BCC / b354 BEQ -> skip(return) */
-            M[MEM_terrain_height_max + X] = A;
-            if (A >= 0x97) { M[MEM_terrain_height_max + X] = 0xFF; A = 0x97; }  /* b359 CMP #$97; BCC b364 */
-            PLOT();                                      /* b364 */
-        }
-        { WB(); return; }                                          /* b37d LDX $60; b37f return */
+    #define CTL_COL(d)    M[MEM_blit_color_src + (d)]      /* $95[]: stack of control-point columns    */
+    #define CTL_HEIGHT(d) M[0x00EA + (d)]                  /* $EA[]: their heights                     */
+    #define CTL_FRAC(d)   M[0x00F4 + (d)]                  /* $F4[]: their fractions                   */
+    #define COL_MAX(c)    M[MEM_terrain_height_max + (c)]  /* $260E[]: topmost height drawn per column */
+    #define WB() do { dl_ptr_hi=col; screen_ptr_hi=height; row_count=frac; \
+                      sync_flag=rowLo; dl_ptr_lo=rowHi; mem[0x00B5]=b5; } while(0)
+    /* Plot the surface pixel at plotCol/h, keeping only the topmost height per column.  The
+       height indexes the height->bitmap-row tables; the column gives the byte offset + bit
+       mask.  A column whose height saturates at $97 is flagged $FF ("full") in the max map. */
+    #define DRAW(h) do { uint8_t _h=(h); \
+        if (_h > COL_MAX(plotCol)) { \
+            COL_MAX(plotCol) = _h; \
+            if (_h >= 0x97) { COL_MAX(plotCol) = 0xFF; _h = 0x97; } \
+            TDCNT(g_tdPlots); b5 = depth; \
+            rowLo = M[0x28CA + _h]; rowHi = M[0x28FA + _h]; \
+            uint16_t _a = (uint16_t)(rowLo | (rowHi << 8)) + M[MEM_terrain_col_byte_offset + plotCol]; \
+            M[_a] |= M[MEM_terrain_col_pixel_mask + plotCol]; \
+        } } while(0)
+
+    mem[0x0060] = cpu.X;                     /* save the caller's column base ($60) */
+
+    const uint8_t endCol = CTL_COL(0);       /* right endpoint of this segment */
+    if (endCol < 0x2D) { WB(); return; }     /* endpoint left of the viewport -> nothing on screen */
+    if (endCol < col)  { WB(); return; }     /* endpoint behind the cursor    -> empty segment     */
+    if (endCol == col) {                     /* one column wide -> plot it and done */
+        plotCol = endCol;
+        DRAW(CTL_HEIGHT(0));
+        WB(); return;
     }
 
-    /* b380 — interpolation: refine $82/$84/$86, emit sub-points into $96/$EB[].
-       Arithmetic in plain C (was 6502 carry-macro idioms): the "CLC ADC m; ROR" pattern
-       is the 9-bit average (A+m)>>1; the $86 fraction is a 9-bit add (+1 round) whose
-       carry/sign selects a midpoint-height correction = ($95or$96[Y] - $82)>>1 added or
-       subtracted with 0/0xFF saturation.  NB the two emit paths subtract a DIFFERENT base
-       (mid<=$2C updates $82 first then uses $95[Y]-newmid; mid>$2C uses mid-old$82).
-       Here the correction's carry-in is c=0/c=1 explicitly (unlike b446's b52e). Bit-exact
-       vs the __t6502 oracle (make validate). */
-    Y = 0x00;                                            /* b380 LDY #0 */
-    for (;;) {                                           /* L_b382 */
-        if (s82 >= 0x2C) { X = s82; break; }             /* b382/b38c TAX; goto b446 */
-        uint8_t mid = (uint8_t)(((unsigned)s82 + M[MEM_blit_color_src + Y]) >> 1);   /* b38c avg */
-        unsigned fr = (unsigned)s86 + M[0x00F4 + Y] + 1u;               /* $86 + F4,Y + 1 */
-        unsigned avg = ((unsigned)s84 + M[0x00EA + Y]) >> 1;            /* ($84+EA,Y)/2 */
-        if (mid <= 0x2C) {                               /* b397 */
-            s82 = mid;
-            s86 = (uint8_t)fr;
-            if (!(s86 & 0x80)) {                         /* simple */
-                s84 = (uint8_t)avg;
-            } else {
-                uint8_t disp = (uint8_t)((uint8_t)(M[MEM_blit_color_src + Y] - s82) >> 1);   /* ($95,Y - newmid)>>1 */
-                sB5 = disp;
-                if (fr & 0x100u) {                       /* b3cd add (carry from $86) */
-                    unsigned t = avg + disp;
-                    s84 = (t > 0xFF) ? 0xFF : (uint8_t)t;
-                } else {                                 /* b3af sub */
-                    s84 = (avg >= disp) ? (uint8_t)(avg - disp) : 0;
-                }
+    /* ---- phase 1: left-clip.  Bisect the cursor->endpoint span; advance the cursor onto each
+       midpoint that is still off-screen, and push the first one that lands in-view, until the
+       cursor reaches the viewport's left edge ($2C).  The midpoint height is interpolated the
+       same way as the fill below: average of the two ends, then (once the fraction rolls) a
+       roughness displacement of half the remaining horizontal span.  Note the two paths take
+       that span from a different base — the advance path has already moved the cursor to the
+       midpoint, the push path has not. ---- */
+    depth = 0;
+    for (;;) {
+        if (col >= 0x2C) { plotCol = col; break; }       /* reached the viewport -> start filling */
+        const uint8_t mid   = (uint8_t)(((unsigned)col + CTL_COL(depth)) >> 1);
+        const unsigned fsum = (unsigned)frac + CTL_FRAC(depth) + 1u;       /* fraction accumulate (9-bit) */
+        const unsigned havg = ((unsigned)height + CTL_HEIGHT(depth)) >> 1; /* height midpoint */
+        if (mid <= 0x2C) {                               /* midpoint still off-screen: take it as the cursor */
+            col  = mid;
+            frac = (uint8_t)fsum;
+            if (!(frac & 0x80)) height = (uint8_t)havg;  /* fraction not yet rolled: no roughness */
+            else {
+                const uint8_t disp = (uint8_t)((uint8_t)(CTL_COL(depth) - col) >> 1);  /* half remaining span */
+                b5 = disp;
+                if (fsum & 0x100u) { unsigned t = havg + disp; height = (t > 0xFF) ? 0xFF : (uint8_t)t; }  /* up, sat $FF */
+                else height = (havg >= disp) ? (uint8_t)(havg - disp) : 0;                                /* down, floor 0 */
             }
-        } else {                                         /* b3e9: mid > 0x2C */
-            M[MEM_span_row_count + Y] = mid;
-            M[0x00F5 + Y] = (uint8_t)fr;
-            uint8_t eb;
-            if (!((uint8_t)fr & 0x80)) {                 /* simple */
-                eb = (uint8_t)avg;
-            } else {
-                uint8_t disp = (uint8_t)((uint8_t)(mid - s82) >> 1);     /* (mid - old$82)>>1 */
-                sB5 = disp;
-                if (fr & 0x100u) {                       /* b425 add */
-                    unsigned t = avg + disp;
-                    eb = (t > 0xFF) ? 0xFF : (uint8_t)t;
-                } else {                                 /* b405 sub */
-                    eb = (avg >= disp) ? (uint8_t)(avg - disp) : 0;
-                }
+        } else {                                         /* midpoint in-view: push it as control point depth+1 */
+            CTL_COL(depth + 1)  = mid;
+            CTL_FRAC(depth + 1) = (uint8_t)fsum;
+            uint8_t mh;
+            if (!((uint8_t)fsum & 0x80)) mh = (uint8_t)havg;
+            else {
+                const uint8_t disp = (uint8_t)((uint8_t)(mid - col) >> 1);
+                b5 = disp;
+                if (fsum & 0x100u) { unsigned t = havg + disp; mh = (t > 0xFF) ? 0xFF : (uint8_t)t; }
+                else mh = (havg >= disp) ? (uint8_t)(havg - disp) : 0;
             }
-            M[0x00EB + Y] = eb;
-            Y = (uint8_t)(Y + 1);                        /* INY */
+            CTL_HEIGHT(depth + 1) = mh;
+            depth++;
         }
     }
 
-    /* b446 — rasterize each leaf column into the silhouette bitmap.  d = X - $95[Y]
-       (SEC SBC).  d==$FE: plot two columns (heights (EA,Y+$84+1)/2 then EA,Y) and step
-       Y down; d==$FF: plot one (EA,Y) and step down; else: emit a sub-point like b380.
-       ⚠ Here the b52e correction's ADC/SBC carry-in is the ROR-carry of the height
-       average (avg9&1), NOT a fresh c=0 — kept exactly.  Bit-exact vs __t6502. */
-    for (;;) {                                           /* L_b446 */
-        if (X >= 0xD4) { WB(); return; }                            /* CPX #$D4; BCS b443 */
-        s82 = X;                                         /* TXA; STX $82 */
-        uint8_t d = (uint8_t)(X - M[MEM_blit_color_src + Y]);      /* SEC; SBC $95,Y */
-        if (d == 0xFE) {                                 /* BNE b4cc -> else */
-            A = (uint8_t)(((unsigned)M[0x00EA + Y] + s84 + 1u) >> 1);   /* LDA EA,Y; ADC $84(c=1); ROR */
-            if (A > M[MEM_terrain_height_max + X]) {                   /* b489 skip (BCC/BEQ) */
-                M[MEM_terrain_height_max + X] = A;
-                if (A >= 0x97) { M[MEM_terrain_height_max + X] = 0xFF; A = 0x97; } /* CMP #$97; BCC b470 */
-                PLOT();                                  /* b470 */
+    /* ---- phase 2: fill.  Walk columns rightward.  `gap` = plotCol - control-point column,
+       which wraps just below the control point: $FF = one column short, $FE = two short.
+         gap < $FE  -> still far: bisect (push an interpolated midpoint) and stay put;
+         gap == $FE -> plot the two remaining columns (interpolated, then endpoint) and pop;
+         gap == $FF -> plot the endpoint column and pop.
+       A pop drops to the parent control point and restores its fraction.  Done at the right
+       edge ($D4) or when the stack underflows. ---- */
+    for (;;) {
+        if (plotCol >= 0xD4) { WB(); return; }           /* past the right edge */
+        col = plotCol;                                   /* the cursor tracks the running column (disp base) */
+        const uint8_t gap = (uint8_t)(plotCol - CTL_COL(depth));
+        if (gap == 0xFE) {                               /* two columns short: fill both, then pop */
+            DRAW((uint8_t)(((unsigned)CTL_HEIGHT(depth) + height + 1u) >> 1));  /* interpolated column */
+            plotCol++;
+            height = CTL_HEIGHT(depth);
+            DRAW(height);                                /* endpoint column */
+            plotCol++;
+            if ((uint8_t)--depth & 0x80) { WB(); return; }   /* pop; underflow -> done */
+            frac = CTL_FRAC(depth + 1);                       /* restore this leaf's midpoint fraction ($F5[depth]) */
+        } else if (gap == 0xFF) {                        /* one column short: plot endpoint, pop */
+            height = CTL_HEIGHT(depth);
+            DRAW(height);
+            plotCol++;
+            if ((uint8_t)--depth & 0x80) { WB(); return; }
+            frac = CTL_FRAC(depth + 1);                       /* $F5[depth] */
+        } else {                                         /* far: bisect, push an interpolated midpoint */
+            const uint8_t mid   = (uint8_t)(((unsigned)plotCol + CTL_COL(depth)) >> 1);
+            CTL_COL(depth + 1)  = mid;
+            const unsigned fsum = (unsigned)frac + CTL_FRAC(depth) + 1u;
+            CTL_FRAC(depth + 1) = (uint8_t)fsum;
+            const unsigned hsum = (unsigned)height + CTL_HEIGHT(depth);   /* 9-bit; its LSB rounds the disp */
+            const unsigned havg = hsum >> 1;
+            uint8_t mh;
+            if (!((uint8_t)fsum & 0x80)) mh = (uint8_t)havg;             /* no roughness */
+            else if (fsum & 0x100u) {                                   /* roughness up */
+                const uint8_t disp = (uint8_t)((uint8_t)(mid - col) >> 1);
+                b5 = disp;
+                unsigned t = havg + disp + (hsum & 1u);
+                mh = (t > 0xFF) ? 0xFF : (uint8_t)t;
+            } else {                                                    /* roughness down */
+                const uint8_t disp = (uint8_t)((uint8_t)(mid - col - 1u) >> 1);
+                b5 = disp;
+                unsigned t = havg + (unsigned)(uint8_t)~disp + (hsum & 1u);
+                mh = (t > 0xFF) ? (uint8_t)t : 0;
             }
-            X++;                                         /* b489 INX */
-            A = M[0x00EA + Y]; s84 = A;                  /* LDA EA,Y; STA $84 */
-            if (A > M[MEM_terrain_height_max + X]) {                   /* b4bd skip (BCC/BEQ) */
-                M[MEM_terrain_height_max + X] = A;
-                if (A >= 0x97) { M[MEM_terrain_height_max + X] = 0xFF; A = 0x97; }
-                PLOT();                                  /* b4a4 */
-            }
-            Y = (uint8_t)(Y - 1); if (Y & 0x80) { WB(); return; }  /* b4bd DEY; BMI b4c9 */
-            X++;                                         /* INX */
-            s86 = M[0x00F5 + Y];                         /* LDA F5,Y; STA $86 */
-            continue;                                    /* goto b446 */
-        } else if (d >= 0xFE) {                          /* b4cc, carry set (d == 0xFF) */
-            A = M[0x00EA + Y]; s84 = A;                  /* LDA EA,Y; STA $84 */
-            if (A > M[MEM_terrain_height_max + X]) {                   /* b501 skip (BCC/BEQ) */
-                M[MEM_terrain_height_max + X] = A;
-                if (A >= 0x97) { M[MEM_terrain_height_max + X] = 0xFF; A = 0x97; }
-                PLOT();                                  /* b4e8 */
-            }
-            Y = (uint8_t)(Y - 1); if (Y & 0x80) { WB(); return; }  /* b501 DEY; BMI b4c9 */
-            X++;                                         /* INX */
-            s86 = M[0x00F5 + Y];                         /* LDA F5,Y; STA $86 */
-            continue;                                    /* goto b446 */
-        } else {                                         /* b50d, carry clear (d < 0xFE) */
-            uint8_t mid = (uint8_t)(((unsigned)X + M[MEM_blit_color_src + Y]) >> 1); /* TXA; ADC $95,Y(c=0); ROR */
-            M[MEM_span_row_count + Y] = mid;
-            unsigned fr = (unsigned)s86 + M[0x00F4 + Y] + 1u;          /* LDA $86; SEC; ADC F4,Y */
-            M[0x00F5 + Y] = (uint8_t)fr;
-            unsigned avg9 = (unsigned)s84 + M[0x00EA + Y];             /* 9-bit ($84+EA,Y) */
-            unsigned avg  = avg9 >> 1;
-            uint8_t eb;
-            if (!((uint8_t)fr & 0x80)) {                 /* simple */
-                eb = (uint8_t)avg;
-            } else if (fr & 0x100u) {                    /* b54c add (carry from $86) */
-                uint8_t disp = (uint8_t)((uint8_t)(mid - s82) >> 1);     /* SBC $82 (c=1) */
-                sB5 = disp;
-                unsigned t = avg + disp + (avg9 & 1u);   /* ADC sB5 with the ROR carry */
-                eb = (t > 0xFF) ? 0xFF : (uint8_t)t;
-            } else {                                     /* b52e sub */
-                uint8_t disp = (uint8_t)((uint8_t)(mid - s82 - 1u) >> 1); /* SBC $82 (c=0) */
-                sB5 = disp;
-                unsigned t = avg + (unsigned)(uint8_t)~disp + (avg9 & 1u);/* SBC sB5 (ADC ~sB5) w/ ROR carry */
-                eb = (t > 0xFF) ? (uint8_t)t : 0;        /* if(!c) A=0 */
-            }
-            M[0x00EB + Y] = eb;
-            Y = (uint8_t)(Y + 1);                        /* INY */
-            continue;                                    /* goto b446 */
+            CTL_HEIGHT(depth + 1) = mh;
+            depth++;
         }
     }
 
-    #undef PLOT
+    #undef CTL_COL
+    #undef CTL_HEIGHT
+    #undef CTL_FRAC
+    #undef COL_MAX
     #undef WB
-    return;
+    #undef DRAW
 }
 
 /* terrain_subdivide_column @ $B172 — fractal terrain subdivision driver.
