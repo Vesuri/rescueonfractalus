@@ -3717,11 +3717,13 @@ void terrain_plot_object(void) {
  * bitmap by recursive midpoint subdivision.
  *
  * The flight terrain is a fractal height-field.  terrain_subdivide_column produces a sparse
- * set of surface control points; this routine fills the surface BETWEEN two of them, one
- * screen column at a time.  On entry:
+ * set of surface control points; this routine traces the surface CONTOUR (the terrain/sky
+ * silhouette edge) between two of them — ONE pixel per screen column, NOT an area fill.  The
+ * solid area fill (sky above the skyline, terrain body below) is a separate later pass,
+ * fill_terrain_silhouette ($AE53).  On entry:
  *   - the running cursor {col,height,frac} is the segment's LEFT end;
  *   - control-point slot [0] (CTL_*[0]) is the RIGHT end (column / height / fraction).
- * It bisects the column interval down to single columns and plots the surface at each one:
+ * It bisects the column interval down to single columns and plots one surface pixel at each:
  *     midpoint column = (left.col + right.col) / 2
  *     midpoint height = (left.height + right.height) / 2, then — once the running sub-pixel
  *                       fraction rolls past a bit — displaced up or down by half the remaining
@@ -3733,9 +3735,9 @@ void terrain_plot_object(void) {
  * so nearer terrain in front stays visible.  Heights clamp to $97.
  *
  * Two phases: (1) LEFT-CLIP — the cursor may start left of the viewport edge ($2C); bisect and
- * fast-forward it to the edge, discarding off-screen midpoints.  (2) FILL — walk columns right
- * to the right edge ($D4), bisecting toward each control point and plotting the final one or
- * two columns of each leaf before popping to the next point.
+ * fast-forward it to the edge, discarding off-screen midpoints.  (2) TRACE — walk columns right
+ * to the right edge ($D4), bisecting toward each control point and plotting the surface pixel of
+ * the final one or two columns of each leaf before popping to the next point.
  *
  * Args: entryDepth = the bisection-stack depth to start at (the 6502 entry cpu.Y); colBase =
  * the caller's column base, saved to $60 (the 6502 entry cpu.X) and not otherwise used.
@@ -3830,7 +3832,8 @@ void terrain_column_rasterize_core(uint8_t entryDepth, uint8_t colBase) {
         }
     }
 
-    /* ---- phase 2: fill.  Walk columns rightward.  `gap` = plotCol - control-point column,
+    /* ---- phase 2: trace.  Walk columns rightward, plotting one surface pixel per column.
+       `gap` = plotCol - control-point column,
        which wraps just below the control point: $FF = one column short, $FE = two short.
          gap < $FE  -> still far: bisect (push an interpolated midpoint) and stay put;
          gap == $FE -> plot the two remaining columns (interpolated, then endpoint) and pop;
