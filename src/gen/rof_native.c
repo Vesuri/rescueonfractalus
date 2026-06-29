@@ -3919,9 +3919,7 @@ void terrain_column_rasterize(void) {
  */
 void terrain_subdivide_column(void) {
     TDCNT(g_tdSubdivCalls);
-    uint8_t A, c;
-    #define ADC_(v) do { uint16_t _t=(uint16_t)A+(uint8_t)(v)+c; c=(uint8_t)(_t>>8); A=(uint8_t)_t; } while(0)
-    #define SBC_(v) ADC_((uint8_t)~(uint8_t)(v))
+    uint8_t A, c;          /* A = cascade scratch; c = the entry signed-compare result */
     /* Hoist the recursion stack index (cpu.X — indexed into the $25xx/$24xx/$23xx
        sub-point stacks ~25x per call) and the $9F descent budget (RMW'd every recursion
        step) into register locals.  cpu.X is re-synced to the global only at the two
@@ -3940,6 +3938,12 @@ void terrain_subdivide_column(void) {
        rasterizer's own $00B5 writes, so their final ordering must stay in mem[]. */
     uint8_t s82 = dl_ptr_hi, s83 = screen_ptr_lo, s84 = screen_ptr_hi, s85 = encounter_count, s86 = row_count;
     uint8_t m8D = step_mode_flag, m8E = mem[0x008E], m8F = sfx_toggle_8F, m90 = sfx_reinit_gate, m91 = altitude_threshold;
+    /* Non-volatile alias for the $25xx/$24xx/$23xx sub-point stacks (5 reads per MIDPOINT, 5
+       writes per push, several reads per cascade) — main-RAM scratch the flight VBI never
+       touches, so dropping the volatile barrier lets the compiler cache/forward across the
+       recursion.  Writes land at the same addresses -> mem[] residue byte-identical.  ($00B5/
+       $00B6/$008E stay direct mem[] — observable final values, interleaved with the rasterizer.) */
+    uint8_t* const M = (uint8_t*)mem;
     #define RET() do { dl_ptr_hi=s82; screen_ptr_lo=s83; screen_ptr_hi=s84; encounter_count=s85; row_count=s86; \
                        step_mode_flag=m8D; mem[0x008E]=m8E; sfx_toggle_8F=m8F; sfx_reinit_gate=m90; altitude_threshold=m91; \
                        cpu.X = (uint8_t)xi; draw_row_bottom = s9F; return; } while(0)
@@ -3949,11 +3953,11 @@ void terrain_subdivide_column(void) {
     #define MIDPOINT() do { TDCNT(g_tdMidpoints); \
         uint16_t _b1 = (uint16_t)(s82 | (s83 << 8)); \
         uint16_t _b2 = (uint16_t)(s84 | (s85 << 8)); \
-        uint16_t _s1 = (uint16_t)(_b1 + (uint16_t)(mem[0x25B4+xi] | (mem[0x25D2+xi] << 8)) + 1u); \
+        uint16_t _s1 = (uint16_t)(_b1 + (uint16_t)(M[0x25B4+xi] | (M[0x25D2+xi] << 8)) + 1u); \
         uint16_t _m1 = (uint16_t)((_s1 >> 1) | (_s1 & 0x8000u)); \
-        uint16_t _s2 = (uint16_t)(_b2 + (uint16_t)(mem[0x25F0+xi] | (mem[0x24E2+xi] << 8)) + 1u); \
+        uint16_t _s2 = (uint16_t)(_b2 + (uint16_t)(M[0x25F0+xi] | (M[0x24E2+xi] << 8)) + 1u); \
         uint16_t _m2 = (uint16_t)((_s2 >> 1) | (_s2 & 0x8000u)); \
-        uint16_t _r86 = (uint16_t)(s86 + mem[0x23E2+xi] + 1u); \
+        uint16_t _r86 = (uint16_t)(s86 + M[0x23E2+xi] + 1u); \
         m91 = (uint8_t)_r86; m8D = (uint8_t)_m1; m8E = (uint8_t)(_m1 >> 8); \
         if (m91 & 0x80u) { \
             uint16_t _disp = (uint16_t)((_m1 - _b1) & 0xFFFFu) >> 1; \
@@ -3963,10 +3967,10 @@ void terrain_subdivide_column(void) {
         m8F = (uint8_t)_m2; m90 = (uint8_t)(_m2 >> 8); \
     } while(0)
 
-    uint8_t b5 = (uint8_t)(mem[0x25D2] ^ 0x80); mem[0x00B5] = b5;   /* b172 (signed cmp) */
+    uint8_t b5 = (uint8_t)(M[0x25D2] ^ 0x80); mem[0x00B5] = b5;   /* b172 (signed cmp); $B5 observable */
     A = (uint8_t)(s83 ^ 0x80);
     c = (A >= b5) ? 1 : 0;                                /* CMP $B5 */
-    if (A == b5) { A = s82; c = (A >= mem[0x25B4]) ? 1 : 0; }   /* BNE b186; else CMP 25B4 */
+    if (A == b5) { A = s82; c = (A >= M[0x25B4]) ? 1 : 0; }   /* BNE b186; else CMP 25B4 */
     if (c) { cpu.X = (uint8_t)xi; return; }               /* b186 BCS b1c1 ($9F + span/outputs untouched) */
     s9F = 0x14;                                           /* b188 */
 
@@ -3978,11 +3982,11 @@ void terrain_subdivide_column(void) {
         if ((m8E & 0x80) || (m8E == 0 && m8D < 0x28)) {   /* BMI b1c2 / (BNE b1a3; $8D<$28 -> b1c2) */
             s82 = m8D; s83 = m8E; s84 = m8F; s85 = m90; s86 = m91;   /* b1c2 update span, loop */
         } else {
-            mem[0x25B5 + xi] = m8D;                        /* b1a3 push sub-point */
-            mem[0x25D3 + xi] = m8E;
-            mem[0x25F1 + xi] = m8F;
-            mem[0x24E3 + xi] = m90;
-            mem[0x23E3 + xi] = m91;
+            M[0x25B5 + xi] = m8D;                          /* b1a3 push sub-point */
+            M[0x25D3 + xi] = m8E;
+            M[0x25F1 + xi] = m8F;
+            M[0x24E3 + xi] = m90;
+            M[0x23E3 + xi] = m91;
             xi++;
             if (xi >= 0x0F) RET();                        /* CPX #$0F; BCC b18c -> else return */
         }
@@ -3998,16 +4002,16 @@ void terrain_subdivide_column(void) {
         for (;;) {                                        /* b1e3 / b1e8 inner loop */
             int cascade;
             if (force_b1e8) { force_b1e8 = 0; cascade = 0; }
-            else cascade = (mem[0x25D2 + xi] == 0);       /* b1e3 LDA 25D2,X; BEQ b211 */
+            else cascade = (M[0x25D2 + xi] == 0);         /* b1e3 LDA 25D2,X; BEQ b211 */
             if (!cascade) {
                 /* b1e8 */
                 s9F--; if (s9F & 0x80) RET();             /* DEC $9F; BMI b210 */
                 MIDPOINT();                               /* inlined */
-                mem[0x25B5 + xi] = m8D;
-                mem[0x25D3 + xi] = m8E;
-                mem[0x25F1 + xi] = m8F;
-                mem[0x24E3 + xi] = m90;
-                mem[0x23E3 + xi] = m91;
+                M[0x25B5 + xi] = m8D;
+                M[0x25D3 + xi] = m8E;
+                M[0x25F1 + xi] = m8F;
+                M[0x24E3 + xi] = m90;
+                M[0x23E3 + xi] = m91;
                 xi++;
                 if (xi >= 0x0F) RET();                    /* CPX #$0F; BCS b210 */
                 continue;                                  /* goto b1e3 */
@@ -4021,41 +4025,43 @@ void terrain_subdivide_column(void) {
             else use21d = 1;
             if (use21d) {
                 /* b21d */
-                A = mem[0x24E2 + xi];
+                A = M[0x24E2 + xi];
                 int b241;
                 if (A & 0x80) b241 = 0;                   /* BMI b23e -> b2aa (rasterize stays 0) */
                 else if (A != 0) b241 = 1;                /* BNE b241 */
-                else if (mem[0x25F0 + xi] < 0x6C) b241 = 0;  /* BCC b23e -> b2aa */
+                else if (M[0x25F0 + xi] < 0x6C) b241 = 0; /* BCC b23e -> b2aa */
                 else b241 = 1;
                 if (b241) {
-                    /* b241 */
-                    c = 1; A = mem[0x25B4 + xi]; SBC_(s82);           /* SEC; LDA 25B4,X; SBC $82 */
-                    if (A < 0x14) rasterize = 1;          /* CMP #$14; BCC b27b */
+                    /* b241 — leaf-width test: width = $25B4[xi] - $82 (8-bit).  If <$14 the
+                       segment is narrow enough to rasterize; else compare the segment HEIGHT
+                       ($85:$84, signed 16-bit) against width>>2 — if height >= width/4 it's
+                       still steep enough to recurse (b1e8), otherwise rasterize. */
+                    uint8_t width = (uint8_t)(M[0x25B4 + xi] - s82);     /* SEC; LDA 25B4,X; SBC $82 */
+                    if (width < 0x14) rasterize = 1;                     /* CMP #$14; BCC b27b */
                     else {
-                        A = (uint8_t)(A >> 2); mem[0x00B5] = A;          /* LSR;LSR; STA $B5 */
-                        A = s84; c = 1; SBC_(mem[0x00B5]);               /* LDA $84; SEC; SBC $B5 */
-                        A = s85; SBC_(0x00);                             /* LDA $85; SBC #0 (16-bit) */
-                        if (!(A & 0x80)) rasterize = 1;    /* BPL b27b */
+                        uint8_t q = (uint8_t)(width >> 2); mem[0x00B5] = q;   /* LSR;LSR; STA $B5 (observable) */
+                        uint16_t h = (uint16_t)(((uint16_t)(s85 << 8) | s84) - q);  /* ($85:$84) - q, 16-bit */
+                        if (!(h & 0x8000u)) rasterize = 1; /* BPL b27b: height >= q */
                         else { force_b1e8 = 1; continue; } /* goto b1e8 */
                     }
                 }
             } else {
                 /* b22d */
-                A = mem[0x24E2 + xi];
+                A = M[0x24E2 + xi];
                 int b25d;
                 if (A & 0x80) b25d = 1;                   /* BMI b25d */
                 else if (A != 0) { rasterize = 1; b25d = 0; }  /* BNE b27b */
-                else if (mem[0x25F0 + xi] < 0x6C) b25d = 1; /* BCC b25d */
+                else if (M[0x25F0 + xi] < 0x6C) b25d = 1; /* BCC b25d */
                 else { rasterize = 1; b25d = 0; }         /* b27b */
                 if (b25d) {
-                    /* b25d */
-                    c = 1; A = mem[0x25B4 + xi]; SBC_(s82);
-                    if (A < 0x14) rasterize = 1;
+                    /* b25d — same width/height test as b241, but the height is the SUB-POINT's
+                       ($24E2:$25F0[xi]) rather than the running span's ($85:$84). */
+                    uint8_t width = (uint8_t)(M[0x25B4 + xi] - s82);
+                    if (width < 0x14) rasterize = 1;
                     else {
-                        A = (uint8_t)(A >> 2); mem[0x00B5] = A;
-                        A = mem[0x25F0 + xi]; c = 1; SBC_(mem[0x00B5]);
-                        A = mem[0x24E2 + xi]; SBC_(0x00);
-                        if (!(A & 0x80)) rasterize = 1;
+                        uint8_t q = (uint8_t)(width >> 2); mem[0x00B5] = q;
+                        uint16_t h = (uint16_t)(((uint16_t)(M[0x24E2 + xi] << 8) | M[0x25F0 + xi]) - q);
+                        if (!(h & 0x8000u)) rasterize = 1;
                         else { force_b1e8 = 1; continue; } /* goto b1e8 */
                     }
                 }
@@ -4066,12 +4072,12 @@ void terrain_subdivide_column(void) {
             /* b27b — clamp the leaf and rasterize it */
             A = s85;                                      /* clamp $84 by $85 sign */
             if (A != 0) s84 = (A & 0x80) ? 0x00 : 0xFF;
-            A = mem[0x24E2 + xi];                         /* select/clamp $EA */
-            if (A == 0) A = mem[0x25F0 + xi];
+            A = M[0x24E2 + xi];                           /* select/clamp $EA */
+            if (A == 0) A = M[0x25F0 + xi];
             else A = (A & 0x80) ? 0x00 : 0xFF;
-            mem[0x00EA] = A;
-            blit_color_src = mem[0x25B4 + xi];
-            mem[0x00F4] = mem[0x23E2 + xi];
+            mem[0x00EA] = A;                              /* rasterize inputs ($EA/$95/$F4[0]) */
+            blit_color_src = M[0x25B4 + xi];
+            mem[0x00F4] = M[0x23E2 + xi];
             /* terrain_column_rasterize reads the span $82/$84/$86 and rewrites them via its own
                WB — flush the hoisted span before the call, reload the three it rewrites after
                ($83/$85 it never touches, so those registers stay valid). */
@@ -4081,15 +4087,13 @@ void terrain_subdivide_column(void) {
         }
         /* b2aa */
         if (xi == 0) RET();                               /* CPX #0; BEQ b2cb */
-        s82 = mem[0x25B4 + xi];                            /* reload span from the stacks */
-        s83 = mem[0x25D2 + xi];
-        s84 = mem[0x25F0 + xi];
-        s85 = mem[0x24E2 + xi];
-        s86 = mem[0x23E2 + xi];
+        s82 = M[0x25B4 + xi];                              /* reload span from the stacks */
+        s83 = M[0x25D2 + xi];
+        s84 = M[0x25F0 + xi];
+        s85 = M[0x24E2 + xi];
+        s86 = M[0x23E2 + xi];
         xi--;                                             /* DEX; goto b1d9 (outer loop) */
     }
-    #undef ADC_
-    #undef SBC_
     #undef RET
     #undef MIDPOINT
 }
