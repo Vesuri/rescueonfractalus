@@ -4718,9 +4718,7 @@ extern unsigned long g_tdSubdiv, g_tdProjPlot, g_tdFrames;
  * (harness seeds it identically per run).
  */
 void terrain_draw_frame_core(uint8_t entryX) {
-    uint8_t Y;           /* the object draw-order index (the rest now uses named locals) */
-
-    mem[0x00A7] = entryX;                                /* a31e */
+    mem[0x00A7] = entryX;                                /* remember which double-buffer half we're drawing */
 #ifdef ROF_TDRAW_PROF
     g_tdFrames++;                                        /* per-frame normalizer for g_tdSubdiv/g_tdProjPlot */
 #endif
@@ -4764,93 +4762,102 @@ void terrain_draw_frame_core(uint8_t entryX) {
     if (!(mem[0x006A] & 0x80))
         mem[0x28FC] = (uint8_t)(mem[0x28FC] + 1);
 
-    /* L_a3ab — object draw-order loop.  $B67C[] is the draw order; each entry indexes the
-       per-object visibility class $24B4[obj] (bit7 = off-screen, bit5/bit6 = cull flags,
-       bit4 = "already projected").  Objects are processed in pairs: a primary (obj0) and,
-       if it's visible, a paired companion (obj1).  Both get projected (project_terrain_points
-       + terrain_plot_object) unless already-projected, then the segment between them is
-       fractal-subdivided.  Loop ends when the order index reaches $90. */
-    Y = 0x00;                                            /* a3a9 */
+    /* Object draw-order pass — the bulk of the frame cost.  $B67C[] lists object ids in
+       back-to-front draw order, grouped in pairs: a primary endpoint and its companion (the
+       two ends of one terrain segment).  For each pair whose endpoints are both visible we
+       project the endpoints to screen space, then fractal-subdivide the terrain spanning
+       between them.  $24B4[obj] is the per-object visibility class: bit7 off-screen, bit6/bit5
+       cull flags, bit4 "already projected this frame".  project_terrain_points and
+       terrain_plot_object take the object id in the 6502 X register (still 6502-ABI twins).
+       The pass ends once the draw-order index reaches $90. */
+    uint8_t order_idx = 0x00;
     for (;;) {
-        uint8_t obj0 = mem[0xB67C + Y]; Y++;             /* a3ab primary object id */
+        uint8_t obj0 = mem[0xB67C + order_idx++];        /* primary endpoint of the next pair */
         mem[0x28DB] = obj0;
-        if (mem[0x24B4 + obj0] & 0xA0) {                 /* a3b6 off-screen ($80) or culled ($20) */
-            Y++;                                         /* a42b skip the pair slot */
+        if (mem[0x24B4 + obj0] & 0xA0) {                 /* primary off-screen or culled: skip the whole pair */
+            order_idx++;
         } else {
-            uint8_t obj1 = mem[0xB67C + Y]; Y++;         /* a3bc paired object id */
-            mem[0x272E] = Y;
-            if (!(mem[0x24B4 + obj1] & 0xC0)) {          /* a3c7 obj1 on-screen & not culled */
-                if (!(mem[0x24B4 + obj1] & 0x10))        /* a3cd project unless already done */
+            uint8_t obj1 = mem[0xB67C + order_idx++];     /* companion endpoint */
+            mem[0x272E] = order_idx;                      /* scratch-save the index across the calls (6502 used Y) */
+            if (!(mem[0x24B4 + obj1] & 0xC0)) {          /* companion on-screen and not culled */
+                if (!(mem[0x24B4 + obj1] & 0x10))        /* project the companion unless already projected */
                     { PB(_pp1); cpu.X = obj1; project_terrain_points(); cpu.X = obj1; terrain_plot_object(); PE(_pp1, g_tdProjPlot); }
-                /* a3da: stage obj1's projected vector into the subdivide sub-point [0] slot */
+                /* seed subdivide sub-point [0] with the companion's projected vector */
                 mem[0x25B4]=mem[0x2400+obj1]; mem[0x25D2]=mem[0x242D+obj1]; mem[0x25F0]=mem[0x245A+obj1];
                 mem[0x24E2]=mem[0x2487+obj1]; mem[0x23E2]=mem[0x23B5+obj1];
-                if (!(mem[0x24B4 + obj0] & 0x10))        /* a3fb project obj0 unless already done */
+                if (!(mem[0x24B4 + obj0] & 0x10))        /* project the primary unless already projected */
                     { PB(_pp2); cpu.X = obj0; project_terrain_points(); cpu.X = obj0; terrain_plot_object(); PE(_pp2, g_tdProjPlot); }
-                /* a408: load obj0's projected vector into the running span, then subdivide */
+                /* load the primary's projected vector as the running span endpoint, then subdivide */
                 dl_ptr_hi=mem[0x2400+obj0]; screen_ptr_lo=mem[0x242D+obj0]; screen_ptr_hi=mem[0x245A+obj0];
                 encounter_count=mem[0x2487+obj0]; row_count=mem[0x23B5+obj0];
-                PB(_sd); terrain_subdivide_column_core(0x00, Y); PE(_sd, g_tdSubdiv);  /* a421 (cpu.Y=Y) */
-                Y = mem[0x272E];                         /* a426 restore order index (calls clobber none, faithful) */
-                if (Y == 0) Y++;                         /* a429 */
+                PB(_sd); terrain_subdivide_column_core(0x00, order_idx); PE(_sd, g_tdSubdiv);
+                order_idx = mem[0x272E];                 /* restore the index (the calls leave $272E untouched) */
+                if (order_idx == 0) order_idx++;
             }
         }
-        if (Y == 0x90) break;                            /* a42c CPY #$90 */
+        if (order_idx == 0x90) break;
     }
 
-    /* a433 */
-    mem[0x28D9] = mem[0x28E7];                           /* a433 */
-    mem[0x28DA] = mem[0x28E8];                           /* a439 */
-    if (!(mem[0x0079] & 0x80)) {                         /* a441: $0079 non-negative */
-        uint8_t lvl = (uint8_t)((mem[0x0079] >> 2) + 1); /* a44b: (>>2)+1 */
-        if (lvl >= 0x0A) lvl = 0x09;                     /* a450: clamp to 9 */
+    /* Publish this frame's span extents for the HUD / next frame. */
+    mem[0x28D9] = mem[0x28E7];
+    mem[0x28DA] = mem[0x28E8];
+    /* Difficulty level = (max span >> 2) + 1, clamped to 9, while the span is valid (non-negative).
+       On a level drop while not crashed, queue a level-change marker (ring slot $14). */
+    if (!(mem[0x0079] & 0x80)) {
+        uint8_t lvl = (uint8_t)((mem[0x0079] >> 2) + 1);
+        if (lvl >= 0x0A) lvl = 0x09;
         game_phase_flag = lvl;
-        if (lvl != mem[0x283F]) {                        /* a45c */
+        if (lvl != mem[0x283F]) {
             uint8_t prev = mem[0x283F];
             mem[0x283F] = lvl;
-            if (lvl < prev && mem[0x003D] == 0)          /* a461/a463: level dropped & not crashed */
-                { cpu.X = 0x14; ring_push_marked(); }    /* a467 */
+            if (lvl < prev && mem[0x003D] == 0)
+                { cpu.X = 0x14; ring_push_marked(); }
         }
     } else {
-        game_phase_flag = 0x00;                          /* a443 */
+        game_phase_flag = 0x00;
     }
-    /* a46c: $2847 = sar($2912) + $7D;  $2845 = $2913 + $15  (ROR with carry=sign = arith >>1) */
+    /* Derive HUD sprite positions from the span extents ($2912/$2913).  The shift is a
+       sign-preserving (arithmetic) >>1. */
     mem[0x2847] = (uint8_t)(((mem[0x2912] >> 1) | (mem[0x2912] & 0x80)) + 0x7D);
     mem[0x2845] = (uint8_t)(mem[0x2913] + 0x15);
-    mem[0x2916] = mem[0x2914];                           /* a481 */
-    mem[0x2839] = mem[0x2910];                           /* a487 */
-    mem[0x283A] = mem[0x2911];                           /* a48d */
-    if (level_or_state != 0) check_target_in_window();   /* a493 */
-    mem[0x2840] = mem[0x28FC] ? 0x74 : 0x00;             /* a49a */
-    mem[0x28FD]=mem[0x2270]; mem[0x28FE]=mem[0x2271]; mem[0x28FF]=mem[0x2272];  /* a4a4 */
-    mem[0x2900]=mem[0x2273]; mem[0x2901]=mem[0x2274]; mem[0x2902]=scaled_depth_hi;  /* a4b6 */
-    mem[0x2903]=mem[0x2809]; mem[0x2904]=mem[0x280A]; mem[0x2905]=mem[0x280B]; mem[0x2906]=mem[0x280C];  /* a4c8 */
-    mem[0x2909]=mem[0x2907]; mem[0x290A]=mem[0x2908];    /* a4e0 */
-    for (int y = 0x1F; y >= 0; y--) {                    /* L_a4ee: $28B6[y] = sar(seed - $270E[y]), rounded */
+    mem[0x2916] = mem[0x2914];
+    mem[0x2839] = mem[0x2910];
+    mem[0x283A] = mem[0x2911];
+    if (level_or_state != 0) check_target_in_window();
+    mem[0x2840] = mem[0x28FC] ? 0x74 : 0x00;             /* light the target marker if any object was visible */
+    /* Stage the per-frame parameter block (object positions, depth, roll) consumed downstream. */
+    mem[0x28FD]=mem[0x2270]; mem[0x28FE]=mem[0x2271]; mem[0x28FF]=mem[0x2272];
+    mem[0x2900]=mem[0x2273]; mem[0x2901]=mem[0x2274]; mem[0x2902]=scaled_depth_hi;
+    mem[0x2903]=mem[0x2809]; mem[0x2904]=mem[0x280A]; mem[0x2905]=mem[0x280B]; mem[0x2906]=mem[0x280C];
+    mem[0x2909]=mem[0x2907]; mem[0x290A]=mem[0x2908];
+    /* Per-row half-deltas: $28B6[y] = arithmetic-rounded (row_span_seed - $270E[y]) >> 1, 32 rows. */
+    for (int y = 0x1F; y >= 0; y--) {
         uint8_t a = (uint8_t)(row_span_seed - mem[0x270E + y]);
         mem[0x28B6 + y] = (uint8_t)(((a >> 1) | (a & 0x80)) + (a & 1));
     }
 
-    /* a500-a570: converge $004D toward a pitch/roll-delta magnitude target.
-       v = this frame's contribution; carryIn = the SEC/CLC state into the a562 ADD. */
+    /* This frame's contribution (v) to the lock-on magnitude, plus an extra +1 (carryIn) in the
+       "no objects" case. */
     uint8_t v; int carryIn;
-    if (mem[0x28FB] == 0) {                              /* a500 */
-        v = mem[0x061C]; carryIn = 1;                    /* a505: SEC kept through to a562 */
-    } else if (mem[0x003D] != 0) {                       /* a50c: crashed */
+    if (mem[0x28FB] == 0) {                              /* no objects this frame: use the decay constant */
+        v = mem[0x061C]; carryIn = 1;
+    } else if (mem[0x003D] != 0) {                       /* crashed: no contribution */
         v = 0x00; carryIn = 0;
-    } else {                                             /* a515: |Δpitch| + |Δroll| in scaled units */
-        #define SAR1(x) ((uint8_t)(((uint8_t)(x) >> 1) | ((uint8_t)(x) & 0x80)))
+    } else {                                             /* otherwise v = |Δpitch| + |Δroll| in scaled units */
+        #define SAR1(x) ((uint8_t)(((uint8_t)(x) >> 1) | ((uint8_t)(x) & 0x80)))  /* arithmetic >>1 */
         uint16_t pitch16 = (uint16_t)(pitch_pos_lo | (pitch_pos_hi << 8));
         uint16_t v2919   = (uint16_t)(mem[0x2919] | (mem[0x291A] << 8));
-        uint8_t base = (uint8_t)((uint16_t)(pitch16 << 3) >> 8);  /* a523: hi byte of pitch16<<3 -> $C3 */
-        uint8_t dx   = (uint8_t)((uint16_t)(v2919  << 3) >> 8);   /* a534: hi byte of $2919.291A<<3 */
-        dx = (uint8_t)(dx - base);                       /* a535 */
-        if (dx & 0x80) dx = (uint8_t)(0u - dx);          /* a538: abs */
-        uint8_t c4 = SAR1(SAR1(roll_velocity));          /* a549: roll_velocity arith >>2 -> $C4 */
-        uint8_t dy = SAR1(SAR1(mem[0x291B]));            /* a553: $291B arith >>2 */
-        dy = (uint8_t)(dy - c4);                         /* a554 */
-        if (dy & 0x80) dy = (uint8_t)(0u - dy);          /* a557: abs */
-        v = (uint8_t)(dy + dx); carryIn = 0;             /* a55e */
+        /* pitch delta: high byte of each 16-bit value scaled by 8 (<<3), then differenced + abs */
+        uint8_t base = (uint8_t)((uint16_t)(pitch16 << 3) >> 8);
+        uint8_t dx   = (uint8_t)((uint16_t)(v2919  << 3) >> 8);
+        dx = (uint8_t)(dx - base);
+        if (dx & 0x80) dx = (uint8_t)(0u - dx);
+        /* roll delta: roll_velocity vs $291B, each arithmetic >>2, then differenced + abs */
+        uint8_t c4 = SAR1(SAR1(roll_velocity));
+        uint8_t dy = SAR1(SAR1(mem[0x291B]));
+        dy = (uint8_t)(dy - c4);
+        if (dy & 0x80) dy = (uint8_t)(0u - dy);
+        v = (uint8_t)(dy + dx); carryIn = 0;
         #undef SAR1
     }
     /* Fold this frame's contribution into the lock-on magnitude $4D, clamp out of the negative
@@ -4865,40 +4872,43 @@ void terrain_draw_frame_core(uint8_t entryX) {
         else             { if (ind == 0x80)   ind = 0x00; }          /* disarm */
         lock_on_indicator_state = ind;
     }
-    if (game_state != 0 && level_stage >= 0x06           /* a588-a591 */
-        && (uint8_t)(level_stage - 0x06) >= bus_read(0xD20A))   /* a593 */
-        obj_table_set_active();                          /* a598 */
-    /* a59b: bump every near-max ($FA-$FF) map cell, counting them into $2843 */
+    /* Randomly activate a dormant object, with probability scaled by how far past level 6 we are. */
+    if (game_state != 0 && level_stage >= 0x06
+        && (uint8_t)(level_stage - 0x06) >= bus_read(0xD20A))
+        obj_table_set_active();
+    /* Age every near-max ($FA-$FF) terrain-map cell by one, re-flagging if any remain. */
     if (map_cell_hit_marker != 0) {
-        map_cell_hit_marker = 0;                         /* a5a0 */
-        for (int x = 0; x < 0x100; x++) {                /* L_a5a7 */
+        map_cell_hit_marker = 0;
+        for (int x = 0; x < 0x100; x++) {
             if (mem[0x0A00 + x] > 0xF9) {
                 mem[0x0A00 + x]++;
                 map_cell_hit_marker++;
             }
         }
     }
-    /* a5b5 — random enemy spawn; bail on any failed guard */
-    if (!(object_index_signed & 0x80)) return;           /* a5b7 */
-    if (mem[0x003D] != 0) return;                        /* a5b9 */
-    if (mem[0x0621] == 0) return;                        /* a5c0 */
-    if (--mem[0x0622] != 0) return;                      /* a5c2-a5c5 */
-    mem[0x0622] = mem[0x0621];                           /* a5c7: reload the spawn period */
-    uint8_t r1 = bus_read(0xD20A);                       /* a5ca */
-    if (r1 & 0x80) return;                               /* a5ce */
-    uint16_t sx = (uint16_t)r1 + 0x40;                   /* a5d0 */
-    uint8_t spawnX = (uint8_t)sx;                        /* a5d2 TAX */
-    uint8_t h = (uint8_t)((bus_read(0xD20A) & 0x1F) + 0x6E + (sx >> 8));  /* a5d3-a5d8 (carry from a5d0) */
-    if (h <= mem[MEM_terrain_height_max + spawnX]) return;   /* a5da-a5df: need h > height */
-    uint8_t yt = (uint8_t)(0x80 - h);                    /* a5e3: $80 - h (c=1 from a5da) */
-    object_pos_y_lo = (uint8_t)((yt << 1) + 0x42);       /* a5e7: <<1, +$42 */
-    object_pos_x_lo = (uint8_t)(spawnX - 0x10);          /* a5ed */
-    object_pos_x_hi = 0; object_pos_y_hi = 0; mem[0x0068] = 0; mem[0x0069] = 0;  /* a5f3 */
-    terrain_jitter_column();                             /* a5fd */
-    mem[0x006A] = 0x7F; object_index_signed = 0x7F; mem[0x2845] = 0x7F;  /* a600 */
-    indicator_pos = 0x01;                                /* a609 */
-    mem[0x282D] = terrain_depth_step;                    /* a60d */
-    return;                                              /* a612 */
+    /* Occasionally spawn a random enemy above the terrain; bail out on any failed precondition:
+       a free object slot, not crashed, a configured spawn period, and the per-spawn countdown
+       reaching zero (then reload it). */
+    if (!(object_index_signed & 0x80)) return;
+    if (mem[0x003D] != 0) return;
+    if (mem[0x0621] == 0) return;
+    if (--mem[0x0622] != 0) return;
+    mem[0x0622] = mem[0x0621];                           /* reload the spawn period */
+    uint8_t r1 = bus_read(0xD20A);                       /* random screen column candidate */
+    if (r1 & 0x80) return;
+    uint16_t sx = (uint16_t)r1 + 0x40;
+    uint8_t spawnX = (uint8_t)sx;
+    /* random height = base $6E + 5-bit jitter (+ carry out of sx) */
+    uint8_t h = (uint8_t)((bus_read(0xD20A) & 0x1F) + 0x6E + (sx >> 8));
+    if (h <= mem[MEM_terrain_height_max + spawnX]) return;   /* must sit above the terrain here */
+    uint8_t yt = (uint8_t)(0x80 - h);                    /* convert height to a screen y */
+    object_pos_y_lo = (uint8_t)((yt << 1) + 0x42);
+    object_pos_x_lo = (uint8_t)(spawnX - 0x10);
+    object_pos_x_hi = 0; object_pos_y_hi = 0; mem[0x0068] = 0; mem[0x0069] = 0;
+    terrain_jitter_column();
+    mem[0x006A] = 0x7F; object_index_signed = 0x7F; mem[0x2845] = 0x7F;  /* mark the slot occupied */
+    indicator_pos = 0x01;
+    mem[0x282D] = terrain_depth_step;
 }
 void terrain_draw_frame(void) { terrain_draw_frame_core(cpu.X); }
 

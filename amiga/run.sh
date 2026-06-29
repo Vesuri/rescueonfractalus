@@ -23,5 +23,6 @@ exec "$FSUAE" \
   --chip_memory=1024 --fast_memory=8192 \
   --kickstart_file="$ROM" \
   --hard_drive_0="$DH0" --hard_drive_1="$DH1" \
+  --joystick_port_0=none --joystick_port_1=none \
   --automatic_input_grab=0 --fullscreen=0 --window_width=720 --window_height=568 \
   --ntsc_mode=0 --state_dir="$RUN/state"
