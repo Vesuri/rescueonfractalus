@@ -43,6 +43,9 @@ printf "  subdiv split/frame: rasterize=%lu recursion=%lu (tdSubdiv - tdRaster)\
 printf "  shape/frame: midpoints=%lu plots=%lu rasterCalls=%lu subdivCalls=%lu\n", \
   (g_tdFrames? g_tdMidpoints/g_tdFrames:0), (g_tdFrames? g_tdPlots/g_tdFrames:0), \
   (g_tdFrames? g_tdRasterCalls/g_tdFrames:0), (g_tdFrames? g_tdSubdivCalls/g_tdFrames:0)
+printf "  raster split/frame: bisectSteps=%lu drawAttempts=%lu actualPlots=%lu (per call: bisect=%lu draw=%lu)\n", \
+  (g_tdFrames? g_tdRasBisect/g_tdFrames:0), (g_tdFrames? g_tdRasDraw/g_tdFrames:0), (g_tdFrames? g_tdPlots/g_tdFrames:0), \
+  (g_tdRasterCalls? g_tdRasBisect/g_tdRasterCalls:0), (g_tdRasterCalls? g_tdRasDraw/g_tdRasterCalls:0)
 printf "fConvert=%lu (flight mem[1070]->bitplane convert; same units as draw=%lu)\n", g_fConvert, g_fDraw
 printf "fDirect=%lu (Stage-1 direct $260E->bitplane render; cmp vs fConvert)\n", g_fDirect
 printf "  fDirect breakdown/call (ticks): clear=%lu edge=%lu fill=%lu scan=%lu band=%lu | scanRows/call=%lu (of 43)\n", \

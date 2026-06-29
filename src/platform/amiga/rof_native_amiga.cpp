@@ -1024,6 +1024,8 @@ extern "C" unsigned long g_tdMidpoints = 0, g_tdPlots = 0, g_tdRasterCalls = 0, 
 // beam ticks spent inside terrain_column_rasterize (a subset of g_tdSubdiv) — splits the
 // fractal recursion cost from the leaf-rasterization cost.
 extern "C" unsigned long g_tdRaster = 0;
+// terrain_column_rasterize shape split: phase-2 bisect-push steps vs. DRAW() attempts.
+extern "C" unsigned long g_tdRasBisect = 0, g_tdRasDraw = 0;
 extern "C" unsigned short flight_vbi_tick(void) {
     return (unsigned short)((mem[0x0013] << 8) | mem[0x0014]);  // RTCLOK $0013:$0014
 }

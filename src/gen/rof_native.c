@@ -53,6 +53,8 @@ extern volatile unsigned long g_isrBeamLines;
 #ifdef ROF_TDRAW_PROF
 extern unsigned long g_tdMidpoints, g_tdPlots, g_tdRasterCalls, g_tdSubdivCalls;
 extern unsigned long g_tdRaster;          /* beam ticks spent inside terrain_column_rasterize (subset of g_tdSubdiv) */
+extern unsigned long g_tdRasBisect;       /* terrain_column_rasterize phase-2 "far" bisect-push iterations */
+extern unsigned long g_tdRasDraw;         /* terrain_column_rasterize DRAW() invocations (incl. occluded; g_tdPlots = those that drew) */
 extern unsigned short rof_beam_line(void);
 #define TDCNT(c) (++(c))
 /* bracket a statement, accumulating its raster-beam-line span (mod 313) into acc */
@@ -3768,7 +3770,7 @@ void terrain_column_rasterize_core(uint8_t entryDepth, uint8_t colBase) {
     /* Plot the surface pixel at plotCol/h, keeping only the topmost height per column.  The
        height indexes the height->bitmap-row tables; the column gives the byte offset + bit
        mask.  A column whose height saturates at $97 is flagged $FF ("full") in the max map. */
-    #define DRAW(h) do { uint8_t _h=(h); \
+    #define DRAW(h) do { uint8_t _h=(h); TDCNT(g_tdRasDraw); \
         if (_h > COL_MAX(plotCol)) { \
             COL_MAX(plotCol) = _h; \
             if (_h >= 0x97) { COL_MAX(plotCol) = 0xFF; _h = 0x97; } \
@@ -3854,6 +3856,7 @@ void terrain_column_rasterize_core(uint8_t entryDepth, uint8_t colBase) {
             if (depth-- == 0) { WB(); return; }
             frac = CTL_FRAC(depth + 1);                       /* $F5[depth] */
         } else {                                         /* far: bisect, push an interpolated midpoint */
+            TDCNT(g_tdRasBisect);
             const uint8_t mid   = (uint8_t)(((unsigned)plotCol + CTL_COL(depth)) >> 1);
             CTL_COL(depth + 1)  = mid;
             const unsigned fsum = (unsigned)frac + CTL_FRAC(depth) + 1u;
