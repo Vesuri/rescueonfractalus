@@ -9,6 +9,11 @@
 # NO_ASSEMBLER is the only build mode for this plan: the dA JoRMaS framework
 # *Assembler.s are not vendored; we compile the portable C++ bodies throughout.
 # See amiga/ARCH.md and amiga/framework/UPSTREAM.md for rationale.
+#
+# Structure mirrors the repo-root SDL Makefile: explicit CXX_SRCS / CORE_C_SRCS
+# lists mapped to objects, compiled by per-extension pattern rules.  The objects
+# live in a flat obj/ (keyed by basename — there are no basename collisions across
+# the source trees) and the sources are located via vpath.
 
 OUT      = out/RoF
 CC       = m68k-amiga-elf-gcc
@@ -17,50 +22,82 @@ OBJDUMP  = m68k-amiga-elf-objdump
 SDKDIR   = $(abspath $(dir $(shell which $(CC)))../m68k-amiga-elf/sys-include)
 SUPPORT  = $(abspath $(dir $(shell which $(CC)))../../support)
 
-# Repository root (parent of amiga/)
-REPO     = ..
+# Repository root (parent of amiga/) and the unified Amiga source tree.  The code now
+# lives under $(REPO)/src/platform/amiga (and .../amiga/framework); this amiga/ directory
+# holds only build infrastructure (this Makefile, env.sh, run.sh, assets/, diag scripts).
+REPO      = ..
+AMIGA_SRC = $(REPO)/src/platform/amiga
 
-$(shell mkdir -p obj/framework obj/src obj/platform obj/audio out)
+$(shell mkdir -p obj out)
 
-# C++ sources: framework hw classes + RoF application.  The code now lives in the
-# unified source tree under $(REPO)/src/platform/amiga (and .../amiga/framework); this
-# amiga/ directory holds only build infrastructure (this Makefile, env.sh, run.sh,
-# assets/, the diag scripts).
-AMIGA_SRC := $(REPO)/src/platform/amiga
-FW_CPPS  := $(wildcard $(AMIGA_SRC)/framework/*.cpp)
-SRC_CPPS := $(wildcard $(AMIGA_SRC)/*.cpp)
-FW_OBJS  := $(patsubst $(AMIGA_SRC)/framework/%.cpp,obj/framework/%.o,$(FW_CPPS))
-SRC_OBJS := $(patsubst $(AMIGA_SRC)/%.cpp,obj/src/%.o,$(SRC_CPPS))
+# ---------------------------------------------------------------------------
+# Sources
+# ---------------------------------------------------------------------------
+# C++ sources: framework hw classes + RoF application + the shared platform layer
+# (the abstract Platform base, the C bridge dispatching the transpiled code's
+# platform_* calls to the Platform singleton, and the common entry point).
+CXX_SRCS := \
+    $(AMIGA_SRC)/framework/AmigaHardware.cpp \
+    $(AMIGA_SRC)/framework/Bitmap.cpp \
+    $(AMIGA_SRC)/framework/CopperList.cpp \
+    $(AMIGA_SRC)/framework/Palette.cpp \
+    $(AMIGA_SRC)/framework/Sprite.cpp \
+    $(AMIGA_SRC)/framework/Util.cpp \
+    $(AMIGA_SRC)/DoorsCopperList.cpp \
+    $(AMIGA_SRC)/EmptyCopperList.cpp \
+    $(AMIGA_SRC)/FlightCopperList.cpp \
+    $(AMIGA_SRC)/GCCRuntime.cpp \
+    $(AMIGA_SRC)/PlanetCopperList.cpp \
+    $(AMIGA_SRC)/PlatformAmiga.cpp \
+    $(AMIGA_SRC)/RescueOnFractalus.cpp \
+    $(AMIGA_SRC)/StandbyCopperList.cpp \
+    $(AMIGA_SRC)/TitleScreenCopperList.cpp \
+    $(AMIGA_SRC)/TunnelCopperList.cpp \
+    $(AMIGA_SRC)/XexImage.cpp \
+    $(AMIGA_SRC)/rof_native_amiga.cpp \
+    $(REPO)/src/platform/Platform.cpp \
+    $(REPO)/src/platform/platform_cbridge.cpp \
+    $(REPO)/src/main.cpp
 
-# Shared platform layer (repo src/): the abstract Platform base, the C bridge that
-# dispatches the transpiled code's platform_* calls to the Platform singleton, and the
-# common entry point.  Built with the SAME C++ flags + -DROF_PLATFORM_AMIGA (so main.cpp
-# selects PlatformAmiga) and -I src/platform (CPPFLAGS below).
-PLATFORM_CPPS := $(REPO)/src/platform/Platform.cpp $(REPO)/src/platform/platform_cbridge.cpp $(REPO)/src/main.cpp
-PLATFORM_OBJS := obj/platform/Platform.o obj/platform/platform_cbridge.o obj/platform/main.o
+# C sources: the transpiled 6502 core — cpu/bus emulation + generated 6502->C
+# translation (rof_gen) + hand-written native twins (rof_native) + manual stubs
+# for self-modifying routines (rof_manual).  --gc-sections drops the unused funcs.
+CORE_C_SRCS := \
+    $(REPO)/src/cpu/cpu.c \
+    $(REPO)/src/gen/rof_gen.c \
+    $(REPO)/src/gen/rof_native.c \
+    $(REPO)/src/gen/rof_manual.c
 
-CPP_OBJS := $(FW_OBJS) $(SRC_OBJS) $(PLATFORM_OBJS)
+# Support runtime (freestanding CRT: program entry, memset…) + incbin'd assets.
+# These need bespoke flags, so they keep explicit rules below rather than the
+# CXX/CORE pattern rules.
+SUPPORT_C_SRCS := $(SUPPORT)/gcc8_c_support.c
+ASM_SRCS       := $(SUPPORT)/gcc8_a_support.s $(AMIGA_SRC)/incbin.s
 
-# M5 audio slice: the 6502-converted cpu/bus core + generated audio functions.
-# Compiled as plain C (not C++), with include paths into the repo src tree.
-# --gc-sections keeps only what station_audio transitively calls.
-AUDIO_C_SRCS := $(REPO)/src/cpu/cpu.c $(REPO)/src/gen/rof_gen.c $(REPO)/src/gen/rof_native.c $(REPO)/src/gen/rof_manual.c
-AUDIO_C_OBJS := obj/audio/cpu.o obj/audio/rof_gen.o obj/audio/rof_native.o obj/audio/rof_manual.o
+# Objects (flattened into obj/ by basename).
+CXX_OBJS       := $(addprefix obj/,$(notdir $(CXX_SRCS:.cpp=.o)))
+CORE_C_OBJS    := $(addprefix obj/,$(notdir $(CORE_C_SRCS:.c=.o)))
+SUPPORT_C_OBJS := $(addprefix obj/,$(notdir $(SUPPORT_C_SRCS:.c=.o)))
+ASM_OBJS       := $(addprefix obj/,$(notdir $(ASM_SRCS:.s=.o)))
 
-# Support runtime (freestanding CRT: program entry, memset…)
-S_OBJS   := obj/gcc8_a_support.o obj/incbin.o
-C_OBJS   := obj/gcc8_c_support.o
+OBJECTS := $(CXX_OBJS) $(CORE_C_OBJS) $(SUPPORT_C_OBJS) $(ASM_OBJS)
 
-OBJECTS  := $(CPP_OBJS) $(C_OBJS) $(S_OBJS) $(AUDIO_C_OBJS)
+# Locate sources for the pattern rules.  (gcc8_c_support.c is deliberately NOT on
+# vpath %.c — it has its own explicit rule so it builds with CCFLAGS, not CORE_CFLAGS.)
+vpath %.cpp $(AMIGA_SRC)/framework $(AMIGA_SRC) $(REPO)/src/platform $(REPO)/src
+vpath %.c   $(REPO)/src/cpu $(REPO)/src/gen
 
+# ---------------------------------------------------------------------------
+# Flags
+# ---------------------------------------------------------------------------
 WARN      = -Wall -Wno-unused-function -Wno-unused-parameter -Wno-unused-variable
 # -m68000: target is A500 68000. -msoft-float: no FPU.
 # -DNO_ASSEMBLER: use the portable C++ bodies; no *Assembler.s or vasm step.
-# Audio C flags: same base but with repo src/ include paths for cpu.h/bus.h/rof_gen.c
-AUDIO_CINCLUDES = -I"$(AMIGA_SRC)/framework/compat-include" \
-                  -I"$(REPO)/src/cpu" \
-                  -I"$(REPO)/src/gen" \
-                  -I"$(REPO)/src/platform"
+# Core C flags: same base but with repo src/ include paths for cpu.h/bus.h/rof_gen.c
+CORE_CINCLUDES = -I"$(AMIGA_SRC)/framework/compat-include" \
+                 -I"$(REPO)/src/cpu" \
+                 -I"$(REPO)/src/gen" \
+                 -I"$(REPO)/src/platform"
 # Optimization level — overridable for debug builds, e.g.
 #   make OPT='-O0' NATIVE_OPT='-O0'   (also drops -fomit-frame-pointer for clean backtraces)
 OPT       ?= -O2 -fomit-frame-pointer
@@ -83,12 +120,12 @@ endif
 ifdef TITLE
 EXTRA_DEFINES += -DROF_FORCE_TITLE
 endif
-AUDIO_CFLAGS  = -g -MP -MMD -m68000 -msoft-float $(OPT) -nostdlib \
+CORE_CFLAGS   = -g -MP -MMD -m68000 -msoft-float $(OPT) -nostdlib \
                 -fno-tree-loop-distribution -ffunction-sections -fdata-sections \
                 -Wno-unused-function -Wno-unused-parameter -Wno-unused-variable \
                 -Wno-implicit-function-declaration -Wno-int-conversion \
                 -DROF_PLATFORM_AMIGA \
-                $(AUDIO_CINCLUDES) $(EXTRA_DEFINES)
+                $(CORE_CINCLUDES) $(EXTRA_DEFINES)
 CCFLAGS   = -g -MP -MMD -m68000 -msoft-float $(OPT) -nostdlib \
             -fno-tree-loop-distribution -ffunction-sections -fdata-sections \
             -DNO_ASSEMBLER $(WARN) $(EXTRA_DEFINES)
@@ -104,6 +141,9 @@ CPPFLAGS  = $(CCFLAGS) -fno-rtti -fno-exceptions -fno-use-cxa-atexit -std=gnu++1
 ASFLAGS   = -mcpu=68000 -g --register-prefix-optional -I"$(SDKDIR)" -I"$(CURDIR)"
 LDFLAGS   = -Wl,--emit-relocs,--gc-sections,-Ttext=0,-Map=$(OUT).map
 
+# ---------------------------------------------------------------------------
+# Rules
+# ---------------------------------------------------------------------------
 all: $(OUT).exe
 
 $(OUT).exe: $(OUT).elf
@@ -115,25 +155,20 @@ $(OUT).elf: $(OBJECTS)
 	@$(CC) $(CCFLAGS) $(LDFLAGS) $(OBJECTS) -o $@
 	@$(OBJDUMP) --disassemble --no-show-raw-ins -S $@ > $(OUT).s 2>/dev/null || true
 
-obj/framework/%.o : $(AMIGA_SRC)/framework/%.cpp
+# C++ (framework + RoF app + shared platform layer): all built with CPPFLAGS.
+obj/%.o : %.cpp
 	$(info C++  $<)
 	@$(CC) $(CPPFLAGS) -c -o $@ "$(abspath $<)"
 
-obj/src/%.o : $(AMIGA_SRC)/%.cpp
-	$(info C++  $<)
-	@$(CC) $(CPPFLAGS) -c -o $@ "$(abspath $<)"
+# Transpiled 6502 core C: built with CORE_CFLAGS (repo src/ include paths).
+# rof_native.c (hand-written native twins) additionally gets NATIVE_OPT.
+obj/%.o : %.c
+	$(info C    $< [core])
+	@$(CC) $(CORE_CFLAGS) -c -o $@ "$(abspath $<)"
+obj/rof_native.o : CORE_CFLAGS += $(NATIVE_OPT)
 
-# Shared platform layer (repo src/ + src/platform/): same C++ flags as the Amiga src.
-obj/platform/Platform.o : $(REPO)/src/platform/Platform.cpp
-	$(info C++  $< [platform])
-	@$(CC) $(CPPFLAGS) -c -o $@ "$(abspath $<)"
-obj/platform/platform_cbridge.o : $(REPO)/src/platform/platform_cbridge.cpp
-	$(info C++  $< [platform])
-	@$(CC) $(CPPFLAGS) -c -o $@ "$(abspath $<)"
-obj/platform/main.o : $(REPO)/src/main.cpp
-	$(info C++  $< [platform])
-	@$(CC) $(CPPFLAGS) -c -o $@ "$(abspath $<)"
-
+# Support runtime: gcc8_c_support.c needs CCFLAGS (no core include paths), so it
+# gets an explicit rule rather than the obj/%.o:%.c pattern above.
 obj/gcc8_c_support.o : $(SUPPORT)/gcc8_c_support.c
 	$(info C    $<)
 	@$(CC) $(CCFLAGS) -c -o $@ "$<"
@@ -154,29 +189,7 @@ obj/incbin.o : $(AMIGA_SRC)/incbin.s $(INCBIN_DEPS)
 	$(info ASM  $<)
 	@$(AS) $(ASFLAGS) -o $@ "$(abspath $(AMIGA_SRC)/incbin.s)"
 
-# Audio C translation units (rof_gen.c is large; GC sections keep only the audio slice)
-obj/audio/cpu.o : $(REPO)/src/cpu/cpu.c
-	$(info C    $< [audio])
-	@$(CC) $(AUDIO_CFLAGS) -c -o $@ "$(abspath $<)"
-
-obj/audio/rof_gen.o : $(REPO)/src/gen/rof_gen.c
-	$(info C    $< [audio — may take ~30 s])
-	@$(CC) $(AUDIO_CFLAGS) -c -o $@ "$(abspath $<)"
-
-# rof_native.c: hand-written native twins (divide_16x16, …) the transpile leaves
-# unimplemented (VALIDATE_FUNCS seam) — required once flight code references them.
-obj/audio/rof_native.o : $(REPO)/src/gen/rof_native.c
-	$(info C    $< [audio, native])
-	@$(CC) $(AUDIO_CFLAGS) $(NATIVE_OPT) -c -o $@ "$(abspath $<)"
-
-# rof_manual.c: hand-written replacements for self-modifying routines (screen_page_swap,
-# the DLI handlers).  Needed now that the genuine station_init/game_main_loop chain is
-# linked (station_init tail-calls screen_page_swap).  GC-sections keeps only what's used.
-obj/audio/rof_manual.o : $(REPO)/src/gen/rof_manual.c
-	$(info C    $< [audio])
-	@$(CC) $(AUDIO_CFLAGS) -c -o $@ "$(abspath $<)"
-
 clean:
 	@$(RM) -r obj/ out/
 
--include $(CPP_OBJS:.o=.d) $(C_OBJS:.o=.d) $(AUDIO_C_OBJS:.o=.d)
+-include $(CXX_OBJS:.o=.d) $(CORE_C_OBJS:.o=.d) $(SUPPORT_C_OBJS:.o=.d)

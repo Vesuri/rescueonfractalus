@@ -181,7 +181,7 @@ reasoning kept failing — **measure, don't theorize.**
   print commands in **`amiga/diag_timing.gdb`**, and writes everything to
   `amiga/.run/gdb-out.log` (also echoes a filtered tail). Edit `diag_timing.gdb` to print
   whatever globals/`mem[0xNNNN]` you need (a `while $i < N ... end` loop dumps arrays).
-  `-g` is always on (AUDIO_CFLAGS), so all globals are readable by name.
+  `-g` is always on (CORE_CFLAGS), so all globals are readable by name.
 - **Build with probes:** `cd amiga && make clean && make -j4 PROBES=1` (→ `-DROF_FLIGHT_PROBE
   -DROF_TDRAW_PROF`); the `make clean` is mandatory (see the stale-build ⚠ above).
   This is OFF by default — the probes + auto-launch + timing accumulators are now PERMANENT,
