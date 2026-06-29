@@ -11587,21 +11587,21 @@ L_77e6:;
     /* 77ed */
     LSR_A();
     /* 77ee */
-    ROR_M((0xBE00)+cpu.X);
+    ROR_M(MEM_terrain_fill_chain_mask+cpu.X);
     /* 77f1 */
     LSR_A();
     /* 77f2 */
-    ROR_M((0xBE00)+cpu.X);
+    ROR_M(MEM_terrain_fill_chain_mask+cpu.X);
     /* 77f5 */
     LDA(mem[(0x780F)+cpu.Y]);
     /* 77f8 */
     LSR_A();
     /* 77f9 */
-    ROR_M((0xBF00)+cpu.X);
+    ROR_M(MEM_terrain_fill_or_mask+cpu.X);
     /* 77fc */
     LSR_A();
     /* 77fd */
-    ROR_M((0xBF00)+cpu.X);
+    ROR_M(MEM_terrain_fill_or_mask+cpu.X);
     /* 7800 */
     PLA();
     /* 7801 */
@@ -13523,7 +13523,7 @@ L_80dc:;
     /* 80e1 */
     TAX();
     /* 80e2 */
-    LDA(mem[(0xBE00)+cpu.X]);
+    LDA(mem[MEM_terrain_fill_chain_mask+cpu.X]);
     /* 80e5 */
     AND(bus_read(ZP_IND_Y(0x8B)));
     /* 80e7 */
@@ -21307,9 +21307,9 @@ L_adf0:;
     return;
 }
 
-/* terrain_collision_and_silhouette @ $AE53: Terrain collision/render: 799 bytes; compares ship position against 8 terrain rows at $1010,$1070,$10D0,$1130,$1190,$11F0,$1250,$12B0 (spaced $60 apart); finds topmost non-empty row; JMPs to landing/crash handler at $B12F */
-/* faithful transliteration kept as the validation oracle; native terrain_collision_and_silhouette() lives in rof_native.c (see VALIDATE_FUNCS) */
-void terrain_collision_and_silhouette__t6502(void) {
+/* fill_terrain_silhouette @ $AE53: Per-column terrain silhouette fill (NOT collision - the misread "$B12F crash handler" is actually the raster-fill entry). For each of 42 columns: scan the 48 bitmap rows ($1010, stride $60) for the topmost non-empty cell, fill $55 (sky) above it, then raster-fill the body down via the terrain_row_addr/$073D pointer tables + terrain_fill_chain_mask/terrain_fill_or_mask. Builds the bitmap renderFlightDirect reads for the dots plane. Real ship/object collision is object_step_and_collide ($9552), which uses the $0900/$0A00 cell maps, not this bitmap. */
+/* faithful transliteration kept as the validation oracle; native fill_terrain_silhouette() lives in rof_native.c (see VALIDATE_FUNCS) */
+void fill_terrain_silhouette__t6502(void) {
     /* ae53 */
     TXA();
     /* ae54 */
@@ -22019,11 +22019,11 @@ L_b141:;
     /* b146 */
     ORA(span_row_count);
     /* b148 */
-    ORA(mem[(0xBF00)+cpu.X]);
+    ORA(mem[MEM_terrain_fill_or_mask+cpu.X]);
     /* b14b */
     bus_write(ZP_IND_Y(0x80), cpu.A);
     /* b14d */
-    LDA(mem[(0xBE00)+cpu.X]);
+    LDA(mem[MEM_terrain_fill_chain_mask+cpu.X]);
     /* b150 */
     AND(span_row_count);
     /* b152 */
@@ -22033,7 +22033,7 @@ L_b141:;
     /* b156 */
     TAX();
     /* b15a */
-    blit_color_src = mem[(0xBE00)+cpu.X];
+    blit_color_src = mem[MEM_terrain_fill_chain_mask+cpu.X];
     /* b15c */
     CLC();
     /* b15d */
@@ -23575,7 +23575,7 @@ L_3eba:; platform_tick_vbi(); platform_render_frame();
     /* 3ec7 */
     LDX(0x33);
     /* 3ec9 */
-    terrain_collision_and_silhouette();
+    fill_terrain_silhouette();
     /* 3ecc */
     LDA(game_state);
     /* 3ece */
@@ -23625,7 +23625,7 @@ L_3ef5:;
     /* 3f02 */
     LDX(0x03);
     /* 3f04 */
-    terrain_collision_and_silhouette();
+    fill_terrain_silhouette();
     /* 3f07 */
     LDA(game_state);
     /* 3f09 */

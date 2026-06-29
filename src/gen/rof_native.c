@@ -4558,64 +4558,64 @@ void project_terrain_points(void) {
     #undef LSRA_
 }
 
-/* terrain_collision_and_silhouette @ $AE53 — terrain collision/silhouette fill (flight top #4).
+/* fill_terrain_silhouette @ $AE53 — per-column terrain silhouette fill (flight top #4).
+ * NOT collision: the symbol's old "$B12F crash handler" was a misread — $B12F is the raster-fill
+ * entry, and there is no ship test here.  Real ship/object collision is object_step_and_collide
+ * ($9552), which uses the $0900/$0A00 cell maps, not this bitmap.
  *
  * Input: cpu.X = starting column.  Iterates 42 columns (Y = X..X+41), and for each:
- *  - CASCADE: scan the 48 terrain rows ($1010, stride $60) top-to-bottom for the
- *    first non-empty cell; its index k (0..$2F, or $30 if all empty) is the
- *    collision row.
- *  - WATERFALL: paint $55 into rows k-1..1 (everything above the hit; row 0 is left
- *    alone — the original jumps into a fall-through chain of stores that does
- *    exactly this).  k=0/1 paint nothing.
- *  - RASTER ($B12F): walk the column's bitmap downward from base ptr {$0793:$073D}[k]
- *    via ($80),Y stepping $60, OR-ing in the voxel masks ($BF00[]) and chaining the
- *    fill mask $96 through the $BE00[] table until $BE00[X]&$96 == 0.
+ *  - CASCADE: scan the 48 bitmap rows (terrain_row0, stride $60) top-to-bottom for the first
+ *    non-empty cell; its index k (0..$2F, or $30 if all empty) is the terrain surface row.
+ *  - WATERFALL: paint $55 (sky) into rows k-1..1 (everything above the surface; row 0 left alone).
+ *  - RASTER ($B12F): walk the column's bitmap downward from row_base {hi:lo}[k] stepping $60,
+ *    ORing terrain_fill_or_mask in and chaining via terrain_fill_chain_mask until it & the
+ *    running mask underflows.
  *
- * The cascade/waterfall are written as plain loops (byte-equivalent to the 6502's
- * unrolled compare ladder + store fall-through, confirmed by the harness); the
- * raster loop is a faithful transliteration.  The $B141 loop only terminates on
- * real terrain tables, so it is validated against a flight RAM snapshot.
+ * Builds the mode-D bitmap that renderFlightDirect reads for the dots plane (the rasterizer's
+ * |= reads it back too).  Cascade/waterfall are plain loops (byte-equivalent to the 6502's
+ * unrolled compare ladder + store fall-through); the raster loop is faithful.  The fill loop
+ * only terminates on real terrain tables, so it is validated against a flight RAM snapshot.
  * Contract: memory only (caller reloads regs).
  */
 /* _core takes the start column directly (was passed in cpu.X); the void shim below preserves
    the 6502-ABI entry for the validation harness.  See clear_terrain_column for the pattern. */
-void terrain_collision_and_silhouette_core(uint8_t startCol) {
+void fill_terrain_silhouette_core(uint8_t startCol) {
     /* Idiomatic rewrite (was a per-instruction transliteration that re-read/-wrote the
      * $80/$81/$95/$96 ZP scratch ~13x per fill iteration and recomputed i*$60 each scan
      * step).  Every 68000 memory access is slow, so the running pointer / masks / counter
      * live in registers and only the final ZP state (which the oracle leaves behind, and
-     * the harness checks) is written back.  Terrain field via a non-volatile alias (the
-     * main loop owns $1010+; $BE00/$BF00 are read-only mask tables).  mem[]-identical. */
+     * the harness checks) is written back.  Bitmap via a non-volatile alias (the main loop
+     * owns terrain_row0+; the fill-mask tables are read-only).  mem[]-identical. */
     uint8_t* const M = (uint8_t*)mem;
     uint8_t Y   = startCol;                              /* ae53 TXA;TAY (start column) */
     uint8_t col = 0x2A;                                  /* ae55 42 columns ($9F) */
     uint16_t fPtr = 0; uint8_t f95 = 0, f96 = 0;         /* captured final ZP state */
 
     do {                                                 /* L_ae59 — one column */
-        /* Topmost non-empty of the 48 rows (base $1010, stride $60); $30 if all empty.
+        /* Topmost non-empty of the 48 rows (base terrain_row0, stride $60); $30 if all empty.
          * Walk a row pointer by +$60 — no per-row multiply/index. */
-        uint8_t* p = M + 0x1010 + Y;
+        uint8_t* p = M + 0x1010 + Y;                     /* $1010 = terrain_row0 (data sym; no MEM_*) */
         int k = 0x30;
         for (int i = 0; i < 0x30; i++) {
             if (*p != 0) { k = i; break; }
             p += 0x60;
         }
-        /* Waterfall $55 into rows k-1..1.  The scan left p AT row k (or row $30 if none),
+        /* Waterfall $55 (sky) into rows k-1..1.  The scan left p AT row k (or row $30 if none),
          * so step it back down by $60 — reuse it, still no multiply. */
         for (int i = k - 1; i >= 1; i--) { p -= 0x60; *p = 0x55; }
 
-        /* Column silhouette fill, walking a pointer down by $60 via the $073D/$0793 row-ptr
-         * tables, ORing the $BF00/$BE00 mask tables until $BE00[v]&$96 underflows. */
-        uint16_t base = (uint16_t)(M[0x073D + k] | (M[0x0793 + k] << 8));  /* b12f-b137 */
+        /* Column body fill, walking a pointer down by $60 via the row_base[k] pointer tables,
+         * ORing terrain_fill_or_mask until terrain_fill_chain_mask[v] & the running mask = 0. */
+        uint16_t base = (uint16_t)(M[MEM_row_base_lo + k] | (M[MEM_row_base_hi + k] << 8));  /* b12f-b137 */
         uint8_t* fp = M + base + Y;
         uint8_t m95 = 0x00, m96 = 0x55;                  /* b139-b13f */
         for (;;) {                                       /* L_b141 */
             uint8_t v = *fp;                              /* ($80),Y */
-            *fp = (uint8_t)((v & m95) | m96 | M[0xBF00 + v]);
-            uint8_t e = (uint8_t)(M[0xBE00 + v] & m96);
+            *fp = (uint8_t)((v & m95) | m96 | M[MEM_terrain_fill_or_mask + v]);
+            uint8_t e = (uint8_t)(M[MEM_terrain_fill_chain_mask + v] & m96);
             if (e == 0) break;                            /* b152 */
             m96 = e;                                      /* b154 */
-            m95 = M[0xBE00 + e];                          /* b157-b15a */
+            m95 = M[MEM_terrain_fill_chain_mask + e];     /* b157-b15a */
             fp += 0x60;                                   /* b15c-b167 ($80/$81 += $60) */
         }
         fPtr = (uint16_t)((uint16_t)(fp - M) - Y);        /* final $80/$81 base */
@@ -4628,7 +4628,7 @@ void terrain_collision_and_silhouette_core(uint8_t startCol) {
     blit_color_src = f95;           span_row_count = f96;
     draw_row_bottom = 0x00;
 }
-void terrain_collision_and_silhouette(void) { terrain_collision_and_silhouette_core(cpu.X); }
+void fill_terrain_silhouette(void) { fill_terrain_silhouette_core(cpu.X); }
 
 /* terrain_draw_frame @ $A31E — render one frame of the fractal planet surface.
  *
@@ -7216,7 +7216,7 @@ void game_main_loop(void) {
     FP_TIME(terrain_frame_setup(), g_fSetup);
     FP_TIME(clear_terrain_column_core(0x33), g_fClear);
     FP_TIME(terrain_draw_frame_core(0x30), g_fDraw);
-    FP_TIME(terrain_collision_and_silhouette_core(0x33), g_fColl);
+    FP_TIME(fill_terrain_silhouette_core(0x33), g_fColl);
     /* Display pass 1's BACK half (offset $30).  This is the second shown frame per iteration —
        on the Atari both halves alternate on screen; here we render+show each as it completes, so
        neither pass is dropped (smoother motion, ~2x displayed framerate). */
@@ -7246,7 +7246,7 @@ void game_main_loop(void) {
     terrain_frame_setup();
     clear_terrain_column_core(0x03);
     terrain_draw_frame_core(0x00);
-    terrain_collision_and_silhouette_core(0x03);
+    fill_terrain_silhouette_core(0x03);
     LDA(game_state);
     if (!cpu.Z) {                        /* L_3f0e: keep pilot_state when game_state != 0 */
         pilot_state = cpu.A;

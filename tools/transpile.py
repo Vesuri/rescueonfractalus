@@ -87,7 +87,7 @@ VALIDATE_FUNCS = {
     0xA613,  # terrain_jitter_column — per-frame random terrain jitter (flight top #1)
     0x9E54,  # terrain_frame_setup — terrain gen step 1: view setup + per-column transform (flight top #2)
     0xA11F,  # project_terrain_points — per-object world->screen projection via divide_16x16 (flight top #3)
-    0xAE53,  # terrain_collision_and_silhouette — collision row scan + silhouette fill + column raster (flight top #4)
+    0xAE53,  # fill_terrain_silhouette — per-column surface scan + sky/body fill (NOT collision; flight top #4)
     0xA31E,  # terrain_draw_frame — main per-frame terrain driver (flight top #5, the last)
     # --- flight ISR de-transpile (2026-06-11): eliminate transpiled code on the
     #     per-frame VBI path.  Small subtrees first; the flight_control_integrate

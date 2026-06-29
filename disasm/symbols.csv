@@ -167,7 +167,7 @@ $A99C,game_state_update,func,0,Game state update (2 RANDOM reads; called from ma
 $AA95,jitter_roll_pitch,func,0,Random-walks roll $0029 and pitch $0026 accumulators toward limits via RANDOM $D20A; called from pmg_enemy_update (was game_sub_AA95)
 $AACF,plot_scanline_rand_dir,func,0,Reads RANDOM $D20A: branches to plot_scanline_up else falls through to plot_scanline_down — random-direction scanline plot (was game_sub_AACF)
 $AD5F,clear_terrain_column,func,0,Clears one terrain column band (X=start column): 42 cols x 44 rows from base $1010 stride $60, plus scattered object-table cells (was terrain_gen_3)
-$AE53,terrain_collision_and_silhouette,func,0,Terrain collision/render: 799 bytes; compares ship position against 8 terrain rows at $1010,$1070,$10D0,$1130,$1190,$11F0,$1250,$12B0 (spaced $60 apart); finds topmost non-empty row; JMPs to landing/crash handler at $B12F
+$AE53,fill_terrain_silhouette,func,0,Per-column terrain silhouette fill (NOT collision - the misread "$B12F crash handler" is actually the raster-fill entry). For each of 42 columns: scan the 48 bitmap rows ($1010, stride $60) for the topmost non-empty cell, fill $55 (sky) above it, then raster-fill the body down via the terrain_row_addr/$073D pointer tables + terrain_fill_chain_mask/terrain_fill_or_mask. Builds the bitmap renderFlightDirect reads for the dots plane. Real ship/object collision is object_step_and_collide ($9552), which uses the $0900/$0A00 cell maps, not this bitmap.
 $B172,terrain_subdivide_column,func,0,Fractal subdivision driver: calls terrain_column_rasterize ($B33D) + terrain_midpoint_displace ($B2CC) (was terrain_sub_B172)
 $B800,init_B800,func,0,INITAD stub (segment 13): sets CHBAS=$04 SDLSTL/H=$B832 COLOR0/1/2/4 SDMCTL=$22 then enables DMACTL; initial display list at $B832 (embedded in stub body)
 #
@@ -692,6 +692,8 @@ $08DC,audf2_sweep_step,var,0,Decrement step subtracted from $08DB each iteration
 $0D98,pm_shape_strip,var,0,P/M graphics shape strip; rows written/erased with $F0 indexed by ($DC-$062F)>>2 in $41da/$4184/$4207
 $2275,scaled_depth_hi,var,0,Depth*4 high byte ($0034 clamped to $3F, ROL with $0033); SBC $0062 for horizon in 9833/992d
 $260E,terrain_height_max,var,0,Per-column max-height array indexed by X in terrain_column_rasterize ($b33d); clamped to $97, updated when new height exceeds stored
+$BE00,terrain_fill_chain_mask,var,0,Mask table chaining the column silhouette fill DOWNward in fill_terrain_silhouette: $BE00[v] gives the next-row carry mask; the fill stops when it & the running mask underflows. Built by init at $77E6 from $780B.
+$BF00,terrain_fill_or_mask,var,0,Mask OR'd into each cell during the column silhouette body fill in fill_terrain_silhouette. Built by init at $77E6 from $780F.
 $BC00,terrain_col_pixel_mask,var,0,Per-screen-column intra-byte pixel mask for the mode-D terrain bitmap (rotating $80/$20/$08/$02 = high bit of each 2bpp pixel). OR'd into the bitmap by terrain_column_rasterize/terrain_plot_pixel. Atari analogue of the Amiga renderFlightDirect kMask[c&3]. Built once by init_terrain_col_tables ($7813).
 $BD00,terrain_col_byte_offset,var,0,Per-screen-column byte offset into a bitmap row (= column/4 + draw-base) for the mode-D terrain bitmap; added to the $28CA/$28FA row address. Atari analogue of the Amiga renderFlightDirect (c>>2). Rebuilt each frame by terrain_draw_frame (groups of 4 columns share a byte).
 $271E,row_span_seed,var,0,Seed value ($A6) for per-row horizontal span table built by ad2b at 271F.. and 270E..

@@ -2291,11 +2291,11 @@ int main(int argc, char **argv) {
     fails += test_from_snapshot("project_terrain_points", project_terrain_points,
                                 project_terrain_points__t6502, 4000, 0x3F);
     set_ignore(0, 0);
-    /* terrain_collision_and_silhouette: the $B141 column-raster loop only terminates on real
-       terrain tables (random mem can chain forever via $BE00).  Snapshot-driven;
+    /* fill_terrain_silhouette: the $B141 column-raster loop only terminates on real
+       terrain tables (random mem can chain forever via terrain_fill_chain_mask).  Snapshot-driven;
        entry X (column start) masked 0..$3F — all verified hang-free. */
-    fails += test_from_snapshot("terrain_collision_and_silhouette", terrain_collision_and_silhouette,
-                                terrain_collision_and_silhouette__t6502, 2000, 0x3F);
+    fails += test_from_snapshot("fill_terrain_silhouette", fill_terrain_silhouette,
+                                fill_terrain_silhouette__t6502, 2000, 0x3F);
     fails += test_terrain_draw_frame();
 
     printf("\n%s%s\n", fails == 0 ? "PASS — " : "FAIL — ",
