@@ -1165,23 +1165,17 @@ void init_terrain_render_buffers(void) {
     memset_or_copy();
 }
 
-/* game_init_7813 @ $7813 — fill $BC00[0..255] with a rotating bit pattern (seed $80,
- * each step >>2 then ROR if the 2nd shifted-out bit was set) and clear $BD00[0..255].
- * Pure (no input); the rotate carry chain is reproduced with the cpu shift macros. */
-void game_init_7813(void) {
-    cpu.A = 0x80;
-    uint8_t y = 0x00;
-    do {
-        mem[0xBC00 + y] = cpu.A;
-        LSR_A(); LSR_A();
-        if (cpu.C) ROR_A();
-        y = (uint8_t)(y + 1);
-    } while (y != 0x00);
-    cpu.A = y;                                 /* TYA — y wrapped to 0 */
-    do {
-        mem[0xBD00 + y] = cpu.A;
-        y = (uint8_t)(y + 1);
-    } while (y != 0x00);
+/* init_terrain_col_tables @ $7813 — build the per-column mode-D plot lookup tables used by
+ * the terrain rasterizer.  terrain_col_pixel_mask[X] is screen column X's intra-byte pixel
+ * mask: the high bit of X's 2-bits-per-pixel cell, which cycles $80,$20,$08,$02 across each
+ * group of 4 columns (mode-D packs 4 px/byte).  terrain_col_byte_offset[X] is X's byte offset
+ * within a bitmap row; cleared here and rebuilt every frame by terrain_draw_frame.  Together
+ * they are the Atari lookup-table form of the Amiga renderFlightDirect kMask[c&3] / (c>>2).
+ * (The original seeds $80 and rotates >>2-with-ROR to synthesise the same period-4 pattern.) */
+void init_terrain_col_tables(void) {
+    static const uint8_t kColMask[4] = { 0x80, 0x20, 0x08, 0x02 };
+    for (int x = 0; x < 256; x++) mem[MEM_terrain_col_pixel_mask + x] = kColMask[x & 3];
+    for (int x = 0; x < 256; x++) mem[MEM_terrain_col_byte_offset + x] = 0x00;
 }
 
 /* game_sub_7B54 @ $7B54 — maybe seed the wind/drift cell $2849 with a random value.
@@ -3464,8 +3458,8 @@ void terrain_plot_pixel(void) {
     terrain_plot_row = savedY;
     sync_flag = mem[0x28CA + savedY];
     dl_ptr_lo = mem[0x28FA + savedY];
-    cpu.Y = mem[0xBD00 + cpu.X];            /* LDY $BD00,X (the sub-x within the byte) */
-    uint8_t a = mem[0xBC00 + cpu.X];        /* LDA $BC00,X (pixel mask) */
+    cpu.Y = mem[MEM_terrain_col_byte_offset + cpu.X];   /* column X's byte offset within the row */
+    uint8_t a = mem[MEM_terrain_col_pixel_mask + cpu.X];/* column X's 2bpp pixel mask */
     mem[0x00B5] = a;
     a = (uint8_t)(a >> 1);                  /* LSR A */
     a |= mem[0x00B5];                       /* ORA $B5 -> 2-bit mask */
@@ -3752,9 +3746,9 @@ void terrain_column_rasterize(void) {
        the __t6502 oracle's bus_*() reduce to the same mem[] access for _ad<$D000. */
     #define PLOT()   do { TDCNT(g_tdPlots); sB5=Y; uint8_t _ai=A; \
         s80=mem[0x28CA+_ai]; s81=mem[0x28FA+_ai]; \
-        uint8_t _bo=mem[0xBD00+X]; \
+        uint8_t _bo=mem[MEM_terrain_col_byte_offset+X]; \
         uint16_t _ad=(uint16_t)(s80|(s81<<8))+_bo; \
-        mem[_ad]=(uint8_t)(mem[_ad]|mem[0xBC00+X]); \
+        mem[_ad]=(uint8_t)(mem[_ad]|mem[MEM_terrain_col_pixel_mask+X]); \
         Y=sB5; } while(0)
 
     X = cpu.X; mem[0x0060] = X;                          /* b33d STX $60 */
@@ -4636,24 +4630,31 @@ void terrain_collision_and_silhouette_core(uint8_t startCol) {
 }
 void terrain_collision_and_silhouette(void) { terrain_collision_and_silhouette_core(cpu.X); }
 
-/* terrain_draw_frame @ $A31E — main per-frame terrain driver (flight top #5, the last).
+/* terrain_draw_frame @ $A31E — render one frame of the fractal planet surface.
  *
- * Input: cpu.X = level base index (saved to $00A7).  Phases:
- *  1. INIT: fill the $BD00 column-id table (2 ids x 8 cells, Y=$20..$D0 step 8),
- *     and the $263A/$26CE and $264E/$266F/$2690/$26B1 work arrays.
- *  2. SETUP: stash $0028/$0029, compute_row_xspans, seed span/clip accumulators.
- *  3. OBJECT LOOP ($A3AB, Y over the $B67C draw order until $90): per active pair,
- *     project_terrain_points + terrain_plot_object, then terrain_subdivide_column (the
- *     fractal subdivision/column renderer).  All callees native.
- *  4. TAIL: altitude/pitch/scroll game-state math, check_target_in_window,
- *     obj_table_set_active, the $0A00 object bump, the random enemy-spawn path
- *     (terrain_jitter_column), reading POKEY RANDOM $D20A several times.
+ * Draws the terrain into a mode-D (2bpp, 4px/byte) silhouette bitmap and tracks the
+ * per-column ridge line in terrain_height_max ($260E).  Downstream, the Amiga's
+ * renderFlightDirect turns those into two bitplanes: the SKY plane (filled above the
+ * terrain_height_max ridge of each column) and the DOTS plane (the mode-D value-2/3
+ * surface pixels this function plots).  Each viewport column is mapped to a bitmap
+ * (byte offset, pixel mask) via terrain_col_byte_offset/terrain_col_pixel_mask.
  *
- * Structured C, locals A/X/Y/c (6502 op order preserved so carry threads identically).
- * Native callees that consume a
- * register get cpu.X set first: project_terrain_points/terrain_plot_object take the
- * object index, terrain_subdivide_column takes 0, the transpiled ring_push_marked takes $14.
- * Reads $D20A (harness seeds it identically per case).  Contract: memory only.
+ * Input: entryX = the draw base / double-buffer half ($00 display, $30 back).  Phases:
+ *  1. INIT: build terrain_col_byte_offset (col -> row byte offset) for this frame, plus the
+ *     per-column work arrays that seed each column's starting row at the horizon ($67/$6B).
+ *  2. SETUP: stash the roll position, compute_row_xspans (the per-row L/R extents that form
+ *     the perspective viewport trapezoid), seed the span/parallax accumulators to centre.
+ *  3. DRAW LOOP ($A3AB, walks the $B67C back-to-front draw order until $90): for each active
+ *     object, project_terrain_points (world->screen) + terrain_plot_object, then
+ *     terrain_subdivide_column — the fractal midpoint-displacement renderer that fills the
+ *     terrain between objects, OR-plotting each column into the bitmap and updating $260E.
+ *  4. TAIL: altimeter/pitch HUD math, lock-on convergence ($004D), check_target_in_window,
+ *     obj_table_set_active, the $0A00 cell bump, and a random enemy-spawn attempt.
+ *
+ * Structured C; the draw loop keeps A/X/Y index scratch.  Native callees that consume a
+ * register get cpu.X set first: project_terrain_points/terrain_plot_object take the object
+ * index, terrain_subdivide_column takes 0, ring_push_marked takes $14.  Reads POKEY RANDOM
+ * $D20A (the harness seeds it identically per case).  Contract: memory only.
  */
 /* Optional sub-phase probe (Amiga autoflight only; -DROF_TDRAW_PROF): split the
  * terrain_draw_frame object loop's cost into the fractal subdivision vs the
@@ -4681,16 +4682,21 @@ void terrain_draw_frame_core(uint8_t entryX) {
     g_tdFrames++;                                        /* per-frame normalizer for g_tdSubdiv/g_tdProjPlot */
 #endif
     {
-        /* a320-a345: $BD00 column-id table, bytes $BD20..$BDD7 (184) — consecutive 4-byte
-           groups holding entryX, entryX+1, entryX+2, ... (one id per 4-pixel column).
-           Batched as 46 long stores: each group is a UNIFORM byte, so the broadcast is
-           endianness-neutral (same bytes on host + Amiga); the region is 4-aligned and never
-           touched by the flight VBI, so the non-volatile long alias is safe.  entryX is always
-           $00/$30, so the per-group +1 never carries across a lane. */
+        /* Map each viewport screen column to its byte offset within a bitmap row.  The mode-D
+           bitmap packs 4 columns per byte, so 4 consecutive columns share one byte offset and
+           the offset advances by 1 every 4 columns: terrain_col_byte_offset[col] = entryX +
+           col/4, for the viewport columns (bytes $BD20..$BDD7).  entryX is the draw base (the
+           double-buffer half: $00 = display, $30 = back).  The rasterizer plots column X via
+           bitmap[row_addr + terrain_col_byte_offset[X]] |= terrain_col_pixel_mask[X].
+           Filled as 46 long stores: each 4-column group is a uniform byte (offset value
+           broadcast to all 4 lanes), which is endianness-neutral and lets us walk a long
+           pointer; the region is 4-aligned, the flight VBI never touches it, and entryX
+           ($00/$30) keeps the per-group +1 from carrying across a lane. */
         uint32_t grp = (uint32_t)entryX * 0x01010101u;
-        uint32_t *p = (uint32_t *)(mem + 0xBD20), *end = (uint32_t *)(mem + 0xBDD8);
+        uint32_t *p   = (uint32_t *)(mem + MEM_terrain_col_byte_offset + 0x20);
+        uint32_t *end = (uint32_t *)(mem + MEM_terrain_col_byte_offset + 0xD8);
         while (p < end) { *p++ = grp; grp += 0x01010101u; }
-        mem[0x00B3] = (uint8_t)(entryX + 0x5C);          /* a347: (entryX+$2E)+$2E */
+        mem[0x00B3] = (uint8_t)(entryX + 0x5C);          /* $00B3 = far column id (entryX + $5C) */
     }
     {   /* L_a351: $263A/$26CE[0..$13] = $67 (20 bytes, 2-aligned) -> uniform word stores */
         uint16_t *a = (uint16_t *)(mem + 0x263A), *b = (uint16_t *)(mem + 0x26CE);
@@ -7087,7 +7093,7 @@ void game_main_loop(void) {
     bus_write(0xD409, 0x04);
     bus_write(0xD20F, 0x03);
     loader_util();
-    game_init_7813();
+    init_terrain_col_tables();
     game_init_77DF();
     game_init_7588();
     game_init_76CB();

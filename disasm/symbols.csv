@@ -151,7 +151,7 @@ $753B,init_terrain_render_buffers,func,0,Fills the height-max array region $250F
 $7588,game_init_7588,func,0,Game init (called in game_entry setup sequence)
 $76CB,game_init_76CB,func,0,Game init (called in game_entry setup sequence)
 $77DF,game_init_77DF,func,0,Game init (called in game_entry setup sequence)
-$7813,game_init_7813,func,0,Game init (called in game_entry setup sequence)
+$7813,init_terrain_col_tables,func,0,One-time init of the per-column mode-D plot LUTs: fills terrain_col_pixel_mask ($BC00, the rotating $80/$20/$08/$02 high-bit-of-2bpp-pixel mask, 256 entries) and zeroes terrain_col_byte_offset ($BD00, rebuilt per frame by terrain_draw_frame). Atari analogue of the Amiga renderFlightDirect kMask[]/(c>>2).
 $7854,pilot_render,func,0,Pilot/rescue rendering + interaction (3 RANDOM reads; checks $288D/$288E rescue state; large function)
 $7AB8,pmg_enemy_update,func,0,PMG enemy update (1 RANDOM read; called from enemy_check when $0633≠0)
 $7B54,game_sub_7B54,func,0,Game sub (1 RANDOM read; called in main loop)
@@ -692,6 +692,8 @@ $08DC,audf2_sweep_step,var,0,Decrement step subtracted from $08DB each iteration
 $0D98,pm_shape_strip,var,0,P/M graphics shape strip; rows written/erased with $F0 indexed by ($DC-$062F)>>2 in $41da/$4184/$4207
 $2275,scaled_depth_hi,var,0,Depth*4 high byte ($0034 clamped to $3F, ROL with $0033); SBC $0062 for horizon in 9833/992d
 $260E,terrain_height_max,var,0,Per-column max-height array indexed by X in terrain_column_rasterize ($b33d); clamped to $97, updated when new height exceeds stored
+$BC00,terrain_col_pixel_mask,var,0,Per-screen-column intra-byte pixel mask for the mode-D terrain bitmap (rotating $80/$20/$08/$02 = high bit of each 2bpp pixel). OR'd into the bitmap by terrain_column_rasterize/terrain_plot_pixel. Atari analogue of the Amiga renderFlightDirect kMask[c&3]. Built once by init_terrain_col_tables ($7813).
+$BD00,terrain_col_byte_offset,var,0,Per-screen-column byte offset into a bitmap row (= column/4 + draw-base) for the mode-D terrain bitmap; added to the $28CA/$28FA row address. Atari analogue of the Amiga renderFlightDirect (c>>2). Rebuilt each frame by terrain_draw_frame (groups of 4 columns share a byte).
 $271E,row_span_seed,var,0,Seed value ($A6) for per-row horizontal span table built by ad2b at 271F.. and 270E..
 $27FD,map_x_lo,var,0,16-bit map X coordinate low byte fed to bilinear sampler sample_terrain_height_bilerp
 $27FE,map_x_hi,var,0,Map X coordinate high byte; low nibble used as bilerp fraction in sample_terrain_height_bilerp

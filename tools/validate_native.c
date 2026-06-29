@@ -2132,7 +2132,7 @@ int main(int argc, char **argv) {
     fails += test_mem_contract("fill_region_2000", fill_region_2000, fill_region_2000__t6502);
     fails += test_mem_contract_regs("silence_audio_channels", silence_audio_channels, silence_audio_channels__t6502);
     fails += test_mem_contract("init_terrain_render_buffers", init_terrain_render_buffers, init_terrain_render_buffers__t6502);
-    fails += test_mem_contract("game_init_7813", game_init_7813, game_init_7813__t6502);
+    fails += test_mem_contract("init_terrain_col_tables", init_terrain_col_tables, init_terrain_col_tables__t6502);
     fails += test_mem_contract("game_sub_7B54", game_sub_7B54, game_sub_7B54__t6502);
     fails += test_ret_a("rng_signed_jitter", rng_signed_jitter, rng_signed_jitter__t6502);
     /* batch — cockpit/score init + zero-suppress char plotter */

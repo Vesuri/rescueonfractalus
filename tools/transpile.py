@@ -231,7 +231,7 @@ VALIDATE_FUNCS = {
     0x3C83,  # fill_region_2000 — seed $C1=$2000/count $0F73, tail memset_or_copy ($00B7 fill)
     0x7F60,  # silence_audio_channels — $0634=A + POKEY AUDF1-4 + AUDCTL=$60, tail clear_var_0632 (entry A)
     0x753B,  # init_terrain_render_buffers — $260E..$270D=$FF, then $1070 fill via memset_or_copy
-    0x7813,  # game_init_7813 — $BC00 rotating bit pattern + $BD00=0 (pure)
+    0x7813,  # init_terrain_col_tables — terrain_col_pixel_mask ($BC00) + clear terrain_col_byte_offset ($BD00) (pure)
     0x7B54,  # game_sub_7B54 — maybe-seed $2849 from (RANDOM|$08)&$3F shifted by 0/1/3
     0x687D,  # rng_signed_jitter — $0085 +/- entry-A magnitude, sign from RANDOM bit7; result in A
     # batch — cockpit/score init + the zero-suppress char plotter:

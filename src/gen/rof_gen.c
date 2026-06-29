@@ -11620,16 +11620,16 @@ L_77e6:;
     return;
 }
 
-/* game_init_7813 @ $7813: Game init (called in game_entry setup sequence) */
-/* faithful transliteration kept as the validation oracle; native game_init_7813() lives in rof_native.c (see VALIDATE_FUNCS) */
-void game_init_7813__t6502(void) {
+/* init_terrain_col_tables @ $7813: One-time init of the per-column mode-D plot LUTs: fills terrain_col_pixel_mask ($BC00, the rotating $80/$20/$08/$02 high-bit-of-2bpp-pixel mask, 256 entries) and zeroes terrain_col_byte_offset ($BD00, rebuilt per frame by terrain_draw_frame). Atari analogue of the Amiga renderFlightDirect kMask[]/(c>>2). */
+/* faithful transliteration kept as the validation oracle; native init_terrain_col_tables() lives in rof_native.c (see VALIDATE_FUNCS) */
+void init_terrain_col_tables__t6502(void) {
     /* 7813 */
     LDY(0x00);
     /* 7815 */
     LDA(0x80);
 L_7817:;
     /* 7817 */
-    mem[(0xBC00)+cpu.Y] = cpu.A;
+    mem[MEM_terrain_col_pixel_mask+cpu.Y] = cpu.A;
     /* 781a */
     LSR_A();
     /* 781b */
@@ -11647,7 +11647,7 @@ L_781f:;
     TYA();
 L_7823:;
     /* 7823 */
-    mem[(0xBD00)+cpu.Y] = cpu.A;
+    mem[MEM_terrain_col_byte_offset+cpu.Y] = cpu.A;
     /* 7826 */
     INY();
     /* 7827 */
@@ -19211,7 +19211,7 @@ L_a323:;
     /* a323 */
     TXA();
     /* a324 */
-    mem[(0xBD00)+cpu.Y] = cpu.A;
+    mem[MEM_terrain_col_byte_offset+cpu.Y] = cpu.A;
     /* a327 */
     mem[(0xBD01)+cpu.Y] = cpu.A;
     /* a32a */
@@ -22551,11 +22551,11 @@ L_b364:;
     /* b36f */
     dl_ptr_lo = mem[(0x28FA)+cpu.Y];
     /* b371 */
-    LDY(mem[(0xBD00)+cpu.X]);
+    LDY(mem[MEM_terrain_col_byte_offset+cpu.X]);
     /* b374 */
     LDA(bus_read(ZP_IND_Y(0x80)));
     /* b376 */
-    ORA(mem[(0xBC00)+cpu.X]);
+    ORA(mem[MEM_terrain_col_pixel_mask+cpu.X]);
     /* b379 */
     bus_write(ZP_IND_Y(0x80), cpu.A);
     /* b37b */
@@ -22835,11 +22835,11 @@ L_b470:;
     /* b47b */
     dl_ptr_lo = mem[(0x28FA)+cpu.Y];
     /* b47d */
-    LDY(mem[(0xBD00)+cpu.X]);
+    LDY(mem[MEM_terrain_col_byte_offset+cpu.X]);
     /* b480 */
     LDA(bus_read(ZP_IND_Y(0x80)));
     /* b482 */
-    ORA(mem[(0xBC00)+cpu.X]);
+    ORA(mem[MEM_terrain_col_pixel_mask+cpu.X]);
     /* b485 */
     bus_write(ZP_IND_Y(0x80), cpu.A);
     /* b487 */
@@ -22877,11 +22877,11 @@ L_b4a4:;
     /* b4af */
     dl_ptr_lo = mem[(0x28FA)+cpu.Y];
     /* b4b1 */
-    LDY(mem[(0xBD00)+cpu.X]);
+    LDY(mem[MEM_terrain_col_byte_offset+cpu.X]);
     /* b4b4 */
     LDA(bus_read(ZP_IND_Y(0x80)));
     /* b4b6 */
-    ORA(mem[(0xBC00)+cpu.X]);
+    ORA(mem[MEM_terrain_col_pixel_mask+cpu.X]);
     /* b4b9 */
     bus_write(ZP_IND_Y(0x80), cpu.A);
     /* b4bb */
@@ -22937,11 +22937,11 @@ L_b4e8:;
     /* b4f3 */
     dl_ptr_lo = mem[(0x28FA)+cpu.Y];
     /* b4f5 */
-    LDY(mem[(0xBD00)+cpu.X]);
+    LDY(mem[MEM_terrain_col_byte_offset+cpu.X]);
     /* b4f8 */
     LDA(bus_read(ZP_IND_Y(0x80)));
     /* b4fa */
-    ORA(mem[(0xBC00)+cpu.X]);
+    ORA(mem[MEM_terrain_col_pixel_mask+cpu.X]);
     /* b4fd */
     bus_write(ZP_IND_Y(0x80), cpu.A);
     /* b4ff */
@@ -23344,7 +23344,7 @@ L_3d7a:;
     /* 3d92 */
     loader_util();
     /* 3d95 */
-    game_init_7813();
+    init_terrain_col_tables();
     /* 3d98 */
     game_init_77DF();
     /* 3d9b */
@@ -24804,9 +24804,9 @@ void terrain_plot_pixel__t6502(void) {
     /* a6e2 */
     dl_ptr_lo = mem[(0x28FA)+cpu.Y];
     /* a6e4 */
-    LDY(mem[(0xBD00)+cpu.X]);
+    LDY(mem[MEM_terrain_col_byte_offset+cpu.X]);
     /* a6e7 */
-    LDA(mem[(0xBC00)+cpu.X]);
+    LDA(mem[MEM_terrain_col_pixel_mask+cpu.X]);
     /* a6ea */
     mem[0x00B5] = cpu.A;
     /* a6ec */
