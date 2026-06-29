@@ -126,6 +126,15 @@ static uint16_t kDoubleGlyph[256];
 //     kModeDP1[s] = plane1 (colour bit0 of each pixel), kModeDP2[s] = plane2 (bit1).
 static uint8_t kModeDP1[256];
 static uint8_t kModeDP2[256];
+// Row -> byte offset within the flight bitmap (120 bytes/scanline = plane1 40 + plane2 40 +
+// plane3 40).  The 68000 has no fast multiply, so the per-column horizon plotter indexes this
+// instead of computing scan*120.  Covers terrain rows 0-42 + the windscreen band rows 43-47.
+static const uint16_t kRow120[48] = {
+       0,  120,  240,  360,  480,  600,  720,  840,  960, 1080, 1200, 1320,
+    1440, 1560, 1680, 1800, 1920, 2040, 2160, 2280, 2400, 2520, 2640, 2760,
+    2880, 3000, 3120, 3240, 3360, 3480, 3600, 3720, 3840, 3960, 4080, 4200,
+    4320, 4440, 4560, 4680, 4800, 4920, 5040, 5160, 5280, 5400, 5520, 5640,
+};
 //   GTIA mode-10 (tunnel field at $2000): byte = 2 nibbles; nibble bit k → 4px.
 static uint8_t kGtia10P1[256];   // nibble bit0
 static uint8_t kGtia10P2[256];   // nibble bit1
@@ -861,20 +870,22 @@ void RescueOnFractalus::renderFlightDirect()
     }
     FD_LAP(g_fdBand);
 
-    // Edge plot: ONE plane1 bit per column at its skyline scanline (160 byte-ORs).  Also
-    // tracks the topmost skyline row (minScan): above it every column is sky (value-1), so
-    // no value-2 dots can exist there -> the plane2 scan below starts at minScan, not row 0.
+    // Edge plot: ONE plane1 bit per column at its skyline scanline (160 byte-ORs).  colp is the
+    // plane1 byte for the current 4-column group at row 0; it advances +1 every 4 columns (no
+    // c>>2), and the row offset comes from kRow120[] (no scan*120 multiply).  h==$FF (off-top, all
+    // body) is rejected before any scan arithmetic.
     const uint8_t* y = (const uint8_t*)mem + 0x260E + 48;    // col 0 -> $260E[48]
     static const uint8_t kMask[4] = { 0xC0u, 0x30u, 0x0Cu, 0x03u };   // 2-bit pixel within byte
-    int minScan = 42;
+    uint8_t* colp = bp;
     for (int c = 0; c < 160; c++) {
         uint8_t h = *y++;
-        if (h == 0xFFu) continue;                            // off-top: all body
-        int scan = 150 - (int)h;                             // height -> skyline scanline
-        if (scan < 0) scan = 0;
-        if (scan > 42) scan = 42;                            // terrain region
-        if (scan < minScan) minScan = scan;                  // topmost terrain row this frame
-        bp[scan * 120 + (c >> 2)] |= kMask[c & 3];           // plane1 skyline edge bit
+        if (h != 0xFFu) {
+            int scan = 150 - (int)h;                         // height -> skyline scanline
+            if (scan < 0) scan = 0;
+            else if (scan > 42) scan = 42;                   // clamp into the terrain region
+            colp[kRow120[scan]] |= kMask[c & 3];             // plane1 skyline edge bit
+        }
+        if ((c & 3) == 3) colp++;                            // next 4-column plane1 byte
     }
     // Sky fill: propagate each edge bit UP in ONE descending blit (writes rows 0-41, seed 42).
     // Kicked here; the plane2 scan below runs while it DMAs (disjoint plane).
@@ -884,19 +895,18 @@ void RescueOnFractalus::renderFlightDirect()
     // plane2 = terrain dots/detail (mode-D value-2; value-3 highlight also sets it).  The
     // blitter builds plane1 (sky) from $260E but carries no dot info, so decode plane2 from
     // the mode-D field mem[$1074+] (the upstream CPU pass still fills it).
-    // Dirty-row bound: skip rows above the topmost skyline (minScan).  Every column there is
-    // sky (value-1) -> no value-2 dots -> nothing to write (plane2 already cleared).  Like the
-    // planet viewport's g_planetRowLo/Hi, but derived for free from the silhouette we just plotted.
-    // Read the source field 4 bytes at a time (the $1074+ field is 4-aligned, stride 96, and
-    // main-loop-owned — the flight VBI never writes it, so a plain non-volatile long read is
-    // safe and lets the 68000 use one move.l instead of 4 move.b).  Dots are SPARSE: a pixel
-    // is value-2/3 (i.e. contributes to plane2) iff its high bit is set = mask 0xAA per byte,
-    // so one `& 0xAAAAAAAA` test skips 4 all-sky/all-body bytes without touching the LUT.
+    // TODO(step 2): this whole field-decode scan is being replaced by a direct-to-bitplane
+    // terrain_column_rasterize that writes plane2 dots straight here — at which point this block
+    // (and the minScan dirty-row bound it used to start from) goes away.  Until then it starts at
+    // row 0.  Read the source field 4 bytes at a time (the $1074+ field is 4-aligned, stride 96,
+    // and main-loop-owned — the flight VBI never writes it, so a plain non-volatile long read is
+    // safe and lets the 68000 use one move.l instead of 4 move.b).  Dots are SPARSE: a pixel is
+    // value-2/3 (contributes to plane2) iff its high bit is set = mask 0xAA per byte, so one
+    // `& 0xAAAAAAAA` test skips 4 all-sky/all-body bytes without touching the LUT.
     {
-        const uint32_t* s4row = (const uint32_t*)((const uint8_t*)mem + 0x1074 + fieldHalf
-                                                  + (unsigned)minScan * 96);
-        uint8_t* p2row = bp + 40 + (unsigned)minScan * 120;     // plane2 of scanline minScan
-        for (int row = minScan; row < 43; row++, s4row += 24, p2row += 120) {   // 96/4 = 24 longs/row
+        const uint32_t* s4row = (const uint32_t*)((const uint8_t*)mem + 0x1074 + fieldHalf);
+        uint8_t* p2row = bp + 40;                               // plane2 of scanline 0
+        for (int row = 0; row < 43; row++, s4row += 24, p2row += 120) {   // 96/4 = 24 longs/row
             const uint32_t* s4 = s4row;
             uint8_t* pp = p2row;
             for (int k = 0; k < 10; k++, pp += 4) {             // 40 bytes = 10 longs
@@ -914,7 +924,7 @@ void RescueOnFractalus::renderFlightDirect()
     AmigaHardware::blitterWait();                            // fill must finish before the flip
     FD_LAP(g_fdFill);                                        // residual fill wait (~0 if scan hid it)
 #ifdef ROF_FLIGHT_PROBE
-    g_fdScanRows += (unsigned)(43 - minScan);
+    g_fdScanRows += 43;
     g_fdCalls++;
 #endif
 #undef FD_LAP
