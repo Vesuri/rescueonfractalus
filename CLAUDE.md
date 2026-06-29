@@ -271,10 +271,20 @@ When reading flight probe numbers, compare **per-firing / per-render unit costs*
 frames, so totals are ~21× a frame). Units: 1 probe "tick" = 1 raster scanline = 63.56 µs; a
 PAL frame = 313 ticks = 20 ms. The flight VBI ISR fires once per real frame, so its per-firing
 cost (~56 ticks ≈ 3.6 ms = ~18% of budget) is what matters. The terrain renderer
-(terrain_draw_frame, ~102 ms/iteration) dominates flight compute (~78%); the HUD/VBI/render-glue
-micro-opts are done and the remaining win is in the draw itself. **Target: A500, 50 FPS goal
-(25 FPS acceptable fallback only if 50 is genuinely not doable).** Surface the numbers honestly
-and keep digging into the draw.
+(terrain_draw_frame, ~127 ms/call ISR-subtracted, ×2 passes/iter) dominates flight compute; the
+HUD/VBI/render-glue micro-opts are done and `renderFlightDirect` is now lean (~8.7 ms/call, its
+dirty-row plane2 scan touches only ~9 of 43 rows). **The draw is at its mem-bound algorithmic
+floor** (measured 2026-06-29, g_tdRaster split: `terrain_column_rasterize` ~71% of the draw,
+~98% of which is the per-column interpolation loop — scattered single-byte volatile `mem[]`,
+the exhausted class; the fractal recursion ~13%; project+plot ~16%). De-volatiling + idiom
+cleanup of the rasterizer/subdivide yielded **NO measurable speedup** — within probe noise.
+So **50 FPS needs an ALGORITHMIC change** (span-fill instead of per-pixel PLOT, coarser
+subdivision, or a different terrain rep — all break 1:1 faithfulness), NOT more micro-opt.
+⚠ The live-flight beam probe is **noisy ±15–30%** (raw, ISR-polluted sub-phase timers +
+non-deterministic auto-flight terrain) — it cannot resolve a sub-15% change; don't trust small
+per-commit deltas (2-sample lows mislead — take ≥3 samples, or build a deterministic flight).
+**Target: A500, 50 FPS goal (25 FPS acceptable fallback only if 50 is genuinely not doable).**
+Surface the numbers honestly.
 
 ### Optimising a native twin for the 68000 (hard-won; apply when a function is hot)
 
