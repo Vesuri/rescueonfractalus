@@ -48,9 +48,9 @@ printf "  raster split/frame: bisectSteps=%lu drawAttempts=%lu actualPlots=%lu (
   (g_tdRasterCalls? g_tdRasBisect/g_tdRasterCalls:0), (g_tdRasterCalls? g_tdRasDraw/g_tdRasterCalls:0)
 printf "fConvert=%lu (flight mem[1070]->bitplane convert; same units as draw=%lu)\n", g_fConvert, g_fDraw
 printf "fDirect=%lu (Stage-1 direct $260E->bitplane render; cmp vs fConvert)\n", g_fDirect
-printf "  fDirect breakdown/call (ticks): clear=%lu edge=%lu fill=%lu scan=%lu band=%lu | scanRows/call=%lu (of 43)\n", \
+printf "  fDirect breakdown/call (ticks): clear=%lu edge=%lu fill=%lu scan=%lu band=%lu\n", \
   (g_fdCalls? g_fdClear/g_fdCalls:0), (g_fdCalls? g_fdEdge/g_fdCalls:0), (g_fdCalls? g_fdFill/g_fdCalls:0), \
-  (g_fdCalls? g_fdScan/g_fdCalls:0), (g_fdCalls? g_fdBand/g_fdCalls:0), (g_fdCalls? g_fdScanRows/g_fdCalls:0)
+  (g_fdCalls? g_fdScan/g_fdCalls:0), (g_fdCalls? g_fdBand/g_fdCalls:0)
 echo --- energy strip $0D98..$0DD0 (57 bytes; is it a solid contiguous run = rectangle?) ---\n
 printf "062F(fuel)=%02x | energyAddr=%08x energy SV=%02x EV=%02x\n", mem[0x062F], g_energySprAddr, *(unsigned char*)g_energySprAddr, *(unsigned char*)(g_energySprAddr+2)
 set $i = 0

@@ -87,6 +87,7 @@ AUDIO_CFLAGS  = -g -MP -MMD -m68000 -msoft-float $(OPT) -nostdlib \
                 -fno-tree-loop-distribution -ffunction-sections -fdata-sections \
                 -Wno-unused-function -Wno-unused-parameter -Wno-unused-variable \
                 -Wno-implicit-function-declaration -Wno-int-conversion \
+                -DROF_PLATFORM_AMIGA \
                 $(AUDIO_CINCLUDES) $(EXTRA_DEFINES)
 CCFLAGS   = -g -MP -MMD -m68000 -msoft-float $(OPT) -nostdlib \
             -fno-tree-loop-distribution -ffunction-sections -fdata-sections \

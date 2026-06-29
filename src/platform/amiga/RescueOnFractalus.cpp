@@ -127,14 +127,25 @@ static uint16_t kDoubleGlyph[256];
 static uint8_t kModeDP1[256];
 static uint8_t kModeDP2[256];
 // Row -> byte offset within the flight bitmap (120 bytes/scanline = plane1 40 + plane2 40 +
-// plane3 40).  The 68000 has no fast multiply, so the per-column horizon plotter indexes this
-// instead of computing scan*120.  Covers terrain rows 0-42 + the windscreen band rows 43-47.
-static const uint16_t kRow120[48] = {
+// plane3 40).  The 68000 has no fast multiply, so the per-column horizon plotter (and the
+// direct-to-plane2 terrain rasterizer in rof_native.c) index this instead of computing scan*120.
+// Covers terrain rows 0-42 + the windscreen band rows 43-47.  extern "C" so rof_native.c can use it.
+extern "C" const uint16_t kRow120[48] = {
        0,  120,  240,  360,  480,  600,  720,  840,  960, 1080, 1200, 1320,
     1440, 1560, 1680, 1800, 1920, 2040, 2160, 2280, 2400, 2520, 2640, 2760,
     2880, 3000, 3120, 3240, 3360, 3480, 3600, 3720, 3840, 3960, 4080, 4200,
     4320, 4440, 4560, 4680, 4800, 4920, 5040, 5160, 5280, 5400, 5520, 5640,
 };
+// 2-bit intra-byte column mask (4 columns/byte): used for both the plane1 skyline edge and the
+// plane2 dot write.  A value-2/3 mode-D pixel decodes (kModeDP2) to exactly these bits.
+extern "C" const uint8_t kColMask4[4] = { 0xC0u, 0x30u, 0x0Cu, 0x03u };
+// Plane2 base of the off-screen buffer the terrain rasterizer should OR its dots into this frame
+// (= back->data + 40).  Set by flightKickBackClear once the buffer + its clear are committed; null
+// on the first flight frame (rasterizer then skips the direct write).  See renderFlightDirect.
+extern "C" uint8_t* g_flightDotPlane = nullptr;
+// Called by the terrain draw (rof_native.c) before its first dot write, to ensure the kicked
+// off-screen-buffer clear has finished (the dots OR into freshly-zeroed plane2).
+extern "C" void rof_flight_wait_dotclear(void) { AmigaHardware::blitterWait(); }
 //   GTIA mode-10 (tunnel field at $2000): byte = 2 nibbles; nibble bit k → 4px.
 static uint8_t kGtia10P1[256];   // nibble bit0
 static uint8_t kGtia10P2[256];   // nibble bit1
@@ -875,7 +886,6 @@ void RescueOnFractalus::renderFlightDirect()
     // c>>2), and the row offset comes from kRow120[] (no scan*120 multiply).  h==$FF (off-top, all
     // body) is rejected before any scan arithmetic.
     const uint8_t* y = (const uint8_t*)mem + 0x260E + 48;    // col 0 -> $260E[48]
-    static const uint8_t kMask[4] = { 0xC0u, 0x30u, 0x0Cu, 0x03u };   // 2-bit pixel within byte
     uint8_t* colp = bp;
     for (int c = 0; c < 160; c++) {
         uint8_t h = *y++;
@@ -883,48 +893,26 @@ void RescueOnFractalus::renderFlightDirect()
             int scan = 150 - (int)h;                         // height -> skyline scanline
             if (scan < 0) scan = 0;
             else if (scan > 42) scan = 42;                   // clamp into the terrain region
-            colp[kRow120[scan]] |= kMask[c & 3];             // plane1 skyline edge bit
+            // The crest row IS the silhouette top.  The terrain rasterizer lags its plane2 dots
+            // by one (terrain_column_rasterize / ROF_PLOT_DOT), so it never plots a dot at COL_MAX
+            // — the crest stays pure sky.  Thus plane1 sky safely covers down to and INCLUDING the
+            // crest row (= COLPF0), with no plane2 overlap (no value-3 COLPF2 tan crest).
+            colp[kRow120[scan]] |= kColMask4[c & 3];         // plane1 skyline edge bit
         }
         if ((c & 3) == 3) colp++;                            // next 4-column plane1 byte
     }
     // Sky fill: propagate each edge bit UP in ONE descending blit (writes rows 0-41, seed 42).
-    // Kicked here; the plane2 scan below runs while it DMAs (disjoint plane).
     AmigaHardware::blitterFillUp((uint16_t*)bp, 20, 42, 80);
     FD_LAP(g_fdEdge);
 
-    // plane2 = terrain dots/detail (mode-D value-2; value-3 highlight also sets it).  The
-    // blitter builds plane1 (sky) from $260E but carries no dot info, so decode plane2 from
-    // the mode-D field mem[$1074+] (the upstream CPU pass still fills it).
-    // TODO(step 2): this whole field-decode scan is being replaced by a direct-to-bitplane
-    // terrain_column_rasterize that writes plane2 dots straight here — at which point this block
-    // (and the minScan dirty-row bound it used to start from) goes away.  Until then it starts at
-    // row 0.  Read the source field 4 bytes at a time (the $1074+ field is 4-aligned, stride 96,
-    // and main-loop-owned — the flight VBI never writes it, so a plain non-volatile long read is
-    // safe and lets the 68000 use one move.l instead of 4 move.b).  Dots are SPARSE: a pixel is
-    // value-2/3 (contributes to plane2) iff its high bit is set = mask 0xAA per byte, so one
-    // `& 0xAAAAAAAA` test skips 4 all-sky/all-body bytes without touching the LUT.
-    {
-        const uint32_t* s4row = (const uint32_t*)((const uint8_t*)mem + 0x1074 + fieldHalf);
-        uint8_t* p2row = bp + 40;                               // plane2 of scanline 0
-        for (int row = 0; row < 43; row++, s4row += 24, p2row += 120) {   // 96/4 = 24 longs/row
-            const uint32_t* s4 = s4row;
-            uint8_t* pp = p2row;
-            for (int k = 0; k < 10; k++, pp += 4) {             // 40 bytes = 10 longs
-                uint32_t w = *s4++;
-                if (!(w & 0xAAAAAAAAu)) continue;               // no value-2/3 pixel in these 4
-                uint8_t d;                                      // big-endian: byte 0 in bits 31-24
-                if ((d = kModeDP2[(w >> 24) & 0xFFu])) pp[0] = d;
-                if ((d = kModeDP2[(w >> 16) & 0xFFu])) pp[1] = d;
-                if ((d = kModeDP2[(w >>  8) & 0xFFu])) pp[2] = d;
-                if ((d = kModeDP2[ w        & 0xFFu])) pp[3] = d;
-            }
-        }
-    }
-    FD_LAP(g_fdScan);                                        // scan CPU (overlapped the fill blit)
-    AmigaHardware::blitterWait();                            // fill must finish before the flip
-    FD_LAP(g_fdFill);                                        // residual fill wait (~0 if scan hid it)
+    // plane2 = terrain dots/detail (mode-D value-2/3).  No decode scan any more: the terrain
+    // rasterizer (terrain_column_rasterize, rof_native.c) ORs its dots STRAIGHT into this buffer's
+    // plane2 (g_flightDotPlane) during the upstream draw, so they are already here.  The band
+    // (rows 43-46) is still field-sourced above.
+    FD_LAP(g_fdScan);                                        // (now ~0)
+    AmigaHardware::blitterWait();                            // sky fill must finish before the flip
+    FD_LAP(g_fdFill);
 #ifdef ROF_FLIGHT_PROBE
-    g_fdScanRows += 43;
     g_fdCalls++;
 #endif
 #undef FD_LAP
@@ -948,6 +936,10 @@ void RescueOnFractalus::flightKickBackClear()
     Bitmap* const back = (flightDisplayed == terrainBitmapBack) ? terrainBitmap : terrainBitmapBack;
     AmigaHardware::blitterClear((uint16_t*)back->data, 60, 43, 0);   // terrain rows 0-42, 3 planes
     flightClearPending = back;
+    // The upcoming terrain draw (rof_native.c) ORs its dots straight into this buffer's plane2
+    // (+40 = plane2 of an interleaved 120-byte scanline), replacing renderFlightDirect's old
+    // field-decode scan.  It waits (rof_flight_wait_dotclear) for the clear kicked just above.
+    g_flightDotPlane = (uint8_t*)back->data + 40;
 }
 
 // run(): the whole game, driven by the genuine transpiled/native boot chain

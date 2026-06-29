@@ -66,6 +66,40 @@ extern unsigned short rof_beam_line(void);
 #define TDSPAN(stmt, acc) do { stmt; } while (0)
 #endif
 
+/* Direct-to-plane2 terrain dots (Amiga).  Instead of OR-ing each surface pixel into the mode-D
+ * field and letting renderFlightDirect decode-scan it, terrain_column_rasterize writes the dots
+ * STRAIGHT into the off-screen buffer's bitplane 2 (g_flightDotPlane; null on the first flight
+ * frame -> skip), using the same kRow120/kColMask4 geometry the horizon plotter uses.  Mapping:
+ * field column -> Amiga column = plotCol-48 (visible 0..159); height -> scanline = 150-h.
+ *
+ * LAG-BY-ONE so the topmost ridge pixel is NOT a dot.  On the Atari the rasterizer plots the
+ * silhouette contour (one value-2 pixel per column per height, in strictly increasing height as
+ * nearer terrain rises), and fill_terrain_silhouette then turns each column's TOPMOST pixel into
+ * sky (COLPF0) while keeping the lower ones as the dark dots.  The Amiga builds the sky plane
+ * (plane1) from $260E=COL_MAX via blitterFillUp, which already covers down to the crest row — so
+ * if we also plotted a dot at COL_MAX the crest would be plane1&plane2 = value-3 COLPF2 (the tan
+ * artifact).  Faithful fix: DRAW plots the column's PREVIOUS top (_oldMax) each time a higher
+ * point supersedes it; the final/topmost point is never superseded, so it is never plotted as a
+ * dot -> the crest stays pure sky.  The very first plot's _oldMax is the per-frame reset floor
+ * ($67/$6b -> scanline 43..47, below the viewport), rejected by the `_sc < 43` range test.
+ * See RescueOnFractalus::renderFlightDirect. */
+#ifdef ROF_PLATFORM_AMIGA
+extern uint8_t* g_flightDotPlane;
+extern const uint16_t kRow120[48];
+extern const uint8_t kColMask4[4];
+extern void rof_flight_wait_dotclear(void);
+#define ROF_PLOT_DOT(col, h) do { \
+    if (g_flightDotPlane) { \
+        int _ac = (int)(col) - 48; \
+        int _sc = 150 - (int)(h);    /* height -> scanline */ \
+        if ((unsigned)_ac < 160u && (unsigned)_sc < 43u) {   /* in viewport AND rows 0..42 only: */ \
+            /* skips the per-frame reset floor (h=$67/$6b -> scanline 43..47, below the viewport) */ \
+            g_flightDotPlane[kRow120[_sc] + (_ac >> 2)] |= kColMask4[_ac & 3]; \
+        } } } while (0)
+#else
+#define ROF_PLOT_DOT(col, h) ((void)0)
+#endif
+
 /* Flight terrain double-buffer: which field half renderFlightDirect should display.
  * The flight loop renders TWO field halves per iteration (pass 1 = back/offset-$30,
  * pass 2 = display/offset-0).  game_main_loop sets this before each ds_frame so BOTH
@@ -3774,12 +3808,14 @@ void terrain_column_rasterize_core(uint8_t entryDepth, uint8_t colBase) {
        mask.  A column whose height saturates at $97 is flagged $FF ("full") in the max map. */
     #define DRAW(h) do { uint8_t _h=(h); TDCNT(g_tdRasDraw); \
         if (_h > COL_MAX(plotCol)) { \
+            uint8_t _oldMax = COL_MAX(plotCol);  /* the column's previous top — now a confirmed body dot */ \
             COL_MAX(plotCol) = _h; \
             if (_h >= 0x97) { COL_MAX(plotCol) = 0xFF; _h = 0x97; } \
             TDCNT(g_tdPlots); b5 = depth; \
             rowLo = M[0x28CA + _h]; rowHi = M[0x28FA + _h]; \
             uint16_t _a = (uint16_t)(rowLo | (rowHi << 8)) + M[MEM_terrain_col_byte_offset + plotCol]; \
             M[_a] |= M[MEM_terrain_col_pixel_mask + plotCol]; \
+            ROF_PLOT_DOT(plotCol, _oldMax); /* Amiga: lag-plot the PREVIOUS top into plane2 (see below) */ \
         } } while(0)
 
     mem[0x0060] = colBase;                   /* save the caller's column base ($60) */
@@ -4742,6 +4778,11 @@ void terrain_draw_frame_core(uint8_t entryX) {
     mem[0x00A7] = entryX;                                /* remember which double-buffer half we're drawing */
 #ifdef ROF_TDRAW_PROF
     g_tdFrames++;                                        /* per-frame normalizer for g_tdSubdiv/g_tdProjPlot */
+#endif
+#ifdef ROF_PLATFORM_AMIGA
+    /* The rasterizer ORs dots straight into the off-screen buffer's plane2 (g_flightDotPlane);
+       make sure that buffer's kicked clear has finished before the first dot lands. */
+    rof_flight_wait_dotclear();
 #endif
     {
         /* Map each viewport screen column to its byte offset within a bitmap row.  The mode-D
