@@ -4710,8 +4710,8 @@ extern unsigned long g_tdSubdiv, g_tdProjPlot, g_tdFrames;
 /* _core takes the half/column-base directly (was passed in cpu.X); the void shim below keeps
    the 6502-ABI entry for validation.  entryX is half 0 ($00) or half 1 ($30). */
 void terrain_draw_frame_core(uint8_t entryX) {
-    uint8_t A, X, Y;     /* the object draw-order loop's index/flag scratch (the arithmetic
-                            sections now use typed locals; the 6502 carry-macro idioms are gone) */
+    uint8_t A, Y;        /* Y = the object draw-order index; A = tail-section scratch
+                            (the object loop now uses named obj0/obj1; carry idioms are gone) */
 
     mem[0x00A7] = entryX;                                /* a31e */
 #ifdef ROF_TDRAW_PROF
@@ -4756,36 +4756,38 @@ void terrain_draw_frame_core(uint8_t entryX) {
     if (!(mem[0x006A] & 0x80))                           /* a3a2: $6A non-negative -> bump $28FC */
         mem[0x28FC] = (uint8_t)(mem[0x28FC] + 1);
 
+    /* L_a3ab — object draw-order loop.  $B67C[] is the draw order; each entry indexes the
+       per-object visibility class $24B4[obj] (bit7 = off-screen, bit5/bit6 = cull flags,
+       bit4 = "already projected").  Objects are processed in pairs: a primary (obj0) and,
+       if it's visible, a paired companion (obj1).  Both get projected (project_terrain_points
+       + terrain_plot_object) unless already-projected, then the segment between them is
+       fractal-subdivided.  Loop ends when the order index reaches $90. */
     Y = 0x00;                                            /* a3a9 */
-    for (;;) {                                           /* L_a3ab — object draw-order loop */
-        A = mem[0xB67C+Y]; Y = (uint8_t)(Y+1); X = A; mem[0x28DB] = X;  /* a3ab-a3b0 */
-        A = mem[0x24B4+X];                               /* a3b3 */
-        if ((A & 0x80) || (A & 0x20)) {                  /* a3b6 BMI / a3b8 AND#$20 -> L_a42b */
-            Y = (uint8_t)(Y+1);                          /* a42b INY */
+    for (;;) {
+        uint8_t obj0 = mem[0xB67C + Y]; Y++;             /* a3ab primary object id */
+        mem[0x28DB] = obj0;
+        if (mem[0x24B4 + obj0] & 0xA0) {                 /* a3b6 off-screen ($80) or culled ($20) */
+            Y++;                                         /* a42b skip the pair slot */
         } else {
-            A = mem[0xB67C+Y]; Y = (uint8_t)(Y+1); mem[0x272E] = Y; X = A;  /* a3bc-a3c3 */
-            A = mem[0x24B4+X];                           /* a3c4 */
-            if (!((A & 0x80) || (A & 0x40))) {           /* a3c7 BMI / a3c9 AND#$40 -> L_a42c */
-                if (!(mem[0x24B4+X] & 0x10)) {           /* a3cd BNE L_a3da -> else project */
-                    PB(_pp1); cpu.X = X; project_terrain_points(); cpu.X = X; terrain_plot_object(); PE(_pp1, g_tdProjPlot);  /* a3d4-a3d7 */
-                }
-                /* a3da */
-                mem[0x25B4]=mem[0x2400+X]; mem[0x25D2]=mem[0x242D+X]; mem[0x25F0]=mem[0x245A+X];  /* a3da-a3ec */
-                mem[0x24E2]=mem[0x2487+X]; mem[0x23E2]=mem[0x23B5+X];  /* a3ef-a3f5 */
-                X = mem[0x28DB];                         /* a3f8 */
-                if (!(mem[0x24B4+X] & 0x10)) {           /* a3fb BNE L_a408 -> else project */
-                    PB(_pp2); cpu.X = X; project_terrain_points(); cpu.X = X; terrain_plot_object(); PE(_pp2, g_tdProjPlot);  /* a402-a405 */
-                }
-                /* a408 */
-                dl_ptr_hi=mem[0x2400+X]; screen_ptr_lo=mem[0x242D+X]; screen_ptr_hi=mem[0x245A+X];  /* a408-a415 */
-                encounter_count=mem[0x2487+X]; row_count=mem[0x23B5+X];  /* a417-a41f */
-                PB(_sd); cpu.X = 0x00; terrain_subdivide_column(); PE(_sd, g_tdSubdiv);  /* a421-a423 */
-                Y = mem[0x272E];                         /* a426 */
-                if (Y == 0) Y = (uint8_t)(Y+1);          /* a429 BNE L_a42c; else a42b INY */
+            uint8_t obj1 = mem[0xB67C + Y]; Y++;         /* a3bc paired object id */
+            mem[0x272E] = Y;
+            if (!(mem[0x24B4 + obj1] & 0xC0)) {          /* a3c7 obj1 on-screen & not culled */
+                if (!(mem[0x24B4 + obj1] & 0x10))        /* a3cd project unless already done */
+                    { PB(_pp1); cpu.X = obj1; project_terrain_points(); cpu.X = obj1; terrain_plot_object(); PE(_pp1, g_tdProjPlot); }
+                /* a3da: stage obj1's projected vector into the subdivide sub-point [0] slot */
+                mem[0x25B4]=mem[0x2400+obj1]; mem[0x25D2]=mem[0x242D+obj1]; mem[0x25F0]=mem[0x245A+obj1];
+                mem[0x24E2]=mem[0x2487+obj1]; mem[0x23E2]=mem[0x23B5+obj1];
+                if (!(mem[0x24B4 + obj0] & 0x10))        /* a3fb project obj0 unless already done */
+                    { PB(_pp2); cpu.X = obj0; project_terrain_points(); cpu.X = obj0; terrain_plot_object(); PE(_pp2, g_tdProjPlot); }
+                /* a408: load obj0's projected vector into the running span, then subdivide */
+                dl_ptr_hi=mem[0x2400+obj0]; screen_ptr_lo=mem[0x242D+obj0]; screen_ptr_hi=mem[0x245A+obj0];
+                encounter_count=mem[0x2487+obj0]; row_count=mem[0x23B5+obj0];
+                PB(_sd); cpu.X = 0x00; terrain_subdivide_column(); PE(_sd, g_tdSubdiv);  /* a421 */
+                Y = mem[0x272E];                         /* a426 restore order index (calls clobber none, faithful) */
+                if (Y == 0) Y++;                         /* a429 */
             }
         }
-        /* a42c */
-        if (Y == 0x90) break;                            /* CPY#$90; BEQ a433 */
+        if (Y == 0x90) break;                            /* a42c CPY #$90 */
     }
 
     /* a433 */
