@@ -4681,21 +4681,24 @@ void terrain_draw_frame_core(uint8_t entryX) {
     g_tdFrames++;                                        /* per-frame normalizer for g_tdSubdiv/g_tdProjPlot */
 #endif
     {
-        /* a320-a345: fill the $BD00 column-id table — 8-byte blocks [col×4, (col+1)×4],
-           Y stepping +8 over $20..$D0, col starting at entryX and +2 per block (23 blocks). */
-        uint8_t col = entryX;
-        for (unsigned y = 0x20; y < 0xD4; y += 8) {
-            mem[0xBD00+y]=col; mem[0xBD01+y]=col; mem[0xBD02+y]=col; mem[0xBD03+y]=col;
-            col++;
-            mem[0xBD04+y]=col; mem[0xBD05+y]=col; mem[0xBD06+y]=col; mem[0xBD07+y]=col;
-            col++;
-        }
-        mem[0x00B3] = (uint8_t)(col + 0x2E);             /* a347: X(=entryX+$2E after loop) + $2E */
+        /* a320-a345: $BD00 column-id table, bytes $BD20..$BDD7 (184) — consecutive 4-byte
+           groups holding entryX, entryX+1, entryX+2, ... (one id per 4-pixel column).
+           Batched as 46 long stores: each group is a UNIFORM byte, so the broadcast is
+           endianness-neutral (same bytes on host + Amiga); the region is 4-aligned and never
+           touched by the flight VBI, so the non-volatile long alias is safe.  entryX is always
+           $00/$30, so the per-group +1 never carries across a lane. */
+        uint32_t grp = (uint32_t)entryX * 0x01010101u;
+        uint32_t *p = (uint32_t *)(mem + 0xBD20), *end = (uint32_t *)(mem + 0xBDD8);
+        while (p < end) { *p++ = grp; grp += 0x01010101u; }
+        mem[0x00B3] = (uint8_t)(entryX + 0x5C);          /* a347: (entryX+$2E)+$2E */
     }
-    for (int i = 0; i < 0x14; i++) {                     /* L_a351: $263A/$26CE[0..$13] = $67 */
-        mem[0x263A + i]=0x67; mem[0x26CE + i]=0x67;
+    {   /* L_a351: $263A/$26CE[0..$13] = $67 (20 bytes, 2-aligned) -> uniform word stores */
+        uint16_t *a = (uint16_t *)(mem + 0x263A), *b = (uint16_t *)(mem + 0x26CE);
+        for (int i = 0; i < 0x0A; i++) { a[i] = 0x6767; b[i] = 0x6767; }
     }
-    for (int i = 0; i < 0x21; i++) {                     /* L_a35e: $264E/$266F/$2690/$26B1[0..$20] = $6B */
+    /* L_a35e: $264E/$266F/$2690/$26B1[0..$20] = $6B — byte loop ($266F/$26B1 are odd
+       addresses, so word/long batching would fault on the 68000; $21 is odd too). */
+    for (int i = 0; i < 0x21; i++) {
         mem[0x264E + i]=0x6B; mem[0x266F + i]=0x6B; mem[0x2690 + i]=0x6B; mem[0x26B1 + i]=0x6B;
     }
 
