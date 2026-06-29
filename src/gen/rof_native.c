@@ -3912,142 +3912,147 @@ void terrain_column_rasterize(void) { terrain_column_rasterize_core(cpu.Y, cpu.X
  * left untouched here).  Contract: memory.  Validated bit-exact against the 6502 oracle from a
  * real flight snapshot (it drives terrain_column_rasterize, which random mem[] can't terminate).
  */
+/* ---- terrain_subdivide_column_core sub-point stacks -----------------------------------------
+ * The recursion works on "sub-points": a terrain endpoint = {column (16-bit), height (16-bit),
+ * fraction (8-bit)}.  Parent endpoints awaiting processing live on a stack indexed by recursion
+ * depth, kept as 5 PARALLEL byte arrays in main RAM (struct-of-arrays) at the fixed bases below
+ * — scratch the flight VBI never touches.  We model one sub-point as a struct and load/store a
+ * whole slot at once; reads go through the non-volatile mem alias so the compiler drops any
+ * field a caller doesn't use (no extra loads vs. the old hand-indexed access). */
+typedef struct { uint8_t colLo, colHi, hgtLo, hgtHi, frac; } SubPt;
+#define SUBPT_COL_LO 0x25B4
+#define SUBPT_COL_HI 0x25D2
+#define SUBPT_HGT_LO 0x25F0
+#define SUBPT_HGT_HI 0x24E2
+#define SUBPT_FRAC   0x23E2
+static inline SubPt subpt_load(const uint8_t *M, int depth) {
+    SubPt p;
+    p.colLo = M[SUBPT_COL_LO + depth]; p.colHi = M[SUBPT_COL_HI + depth];
+    p.hgtLo = M[SUBPT_HGT_LO + depth]; p.hgtHi = M[SUBPT_HGT_HI + depth];
+    p.frac  = M[SUBPT_FRAC   + depth];
+    return p;
+}
+static inline void subpt_store(uint8_t *M, int depth, SubPt p) {
+    M[SUBPT_COL_LO + depth] = p.colLo; M[SUBPT_COL_HI + depth] = p.colHi;
+    M[SUBPT_HGT_LO + depth] = p.hgtLo; M[SUBPT_HGT_HI + depth] = p.hgtHi;
+    M[SUBPT_FRAC   + depth] = p.frac;
+}
+/* Bisect the segment [span..far]: the midpoint is the signed average of the two endpoints, with
+   the midpoint HEIGHT displaced by half the column span when the summed fraction rolls past a bit
+   (the fractal roughness step), saturating in 16-bit.  $B5/$B6 hold the displacement when applied
+   (observable residue). */
+static inline SubPt subdiv_midpoint(SubPt span, SubPt far, uint8_t *M) {
+    TDCNT(g_tdMidpoints);
+    uint16_t col = (uint16_t)(span.colLo | (span.colHi << 8));
+    uint16_t hgt = (uint16_t)(span.hgtLo | (span.hgtHi << 8));
+    uint16_t colSum = (uint16_t)(col + (uint16_t)(far.colLo | (far.colHi << 8)) + 1u);
+    uint16_t midCol = (uint16_t)((colSum >> 1) | (colSum & 0x8000u));   /* signed average */
+    uint16_t hgtSum = (uint16_t)(hgt + (uint16_t)(far.hgtLo | (far.hgtHi << 8)) + 1u);
+    uint16_t midHgt = (uint16_t)((hgtSum >> 1) | (hgtSum & 0x8000u));
+    uint16_t fracSum = (uint16_t)(span.frac + far.frac + 1u);
+    SubPt mid;
+    mid.frac  = (uint8_t)fracSum;
+    mid.colLo = (uint8_t)midCol; mid.colHi = (uint8_t)(midCol >> 8);
+    if (mid.frac & 0x80u) {                                  /* roughness: displace the height */
+        uint16_t disp = (uint16_t)((midCol - col) & 0xFFFFu) >> 1;
+        midHgt = (fracSum >= 0x100u) ? (uint16_t)(midHgt + disp) : (uint16_t)(midHgt - disp);
+        M[0x00B5] = (uint8_t)disp; M[0x00B6] = (uint8_t)(disp >> 8);
+    }
+    mid.hgtLo = (uint8_t)midHgt; mid.hgtHi = (uint8_t)(midHgt >> 8);
+    return mid;
+}
+
 void terrain_subdivide_column_core(uint8_t startDepth, uint8_t rasterEntryDepth) {
     TDCNT(g_tdSubdivCalls);
-    /* Non-volatile alias for the (col,height,frac) sub-point stacks — main-RAM scratch the
-       flight VBI never touches, so the compiler may cache/forward across the recursion.
-       Writes land at the same addresses -> mem[] residue byte-identical.  ($B5/$B6/$8E stay
-       direct mem[] writes: observable final values, interleaved with the rasterizer's.) */
+    /* Non-volatile alias for the sub-point stacks (main-RAM scratch the flight VBI never touches)
+       so the compiler may cache/forward across the recursion; writes land at the same addresses
+       -> mem[] residue byte-identical. */
     uint8_t* const M = (uint8_t*)mem;
-    int depth      = startDepth;     /* current sub-point stack index (recursion depth)        */
-    uint8_t budget = 0;              /* $9F: remaining recursion budget (set to $14 below)     */
-    /* The running span endpoint {column 16-bit, height 16-bit, fraction} + the last midpoint's
-       output {col,hgt,frac}, register-resident across the recursion and flushed to ZP at every
-       exit (RET) for byte-identical residue. */
-    uint8_t colLo = dl_ptr_hi, colHi = screen_ptr_lo;        /* $82:$83 span column (16-bit)   */
-    uint8_t hgtLo = screen_ptr_hi, hgtHi = encounter_count;  /* $84:$85 span height (16-bit)   */
-    uint8_t frac  = row_count;                               /* $86    span fraction          */
-    uint8_t midColLo = step_mode_flag, midColHi = mem[0x008E];   /* $8D:$8E midpoint column    */
-    uint8_t midHgtLo = sfx_toggle_8F, midHgtHi = sfx_reinit_gate;/* $8F:$90 midpoint height    */
-    uint8_t midFrac  = altitude_threshold;                       /* $91    midpoint fraction   */
+    int depth      = startDepth;     /* current sub-point stack index (recursion depth)    */
+    uint8_t budget = 0;              /* $9F: remaining recursion budget (set to $14 below) */
+    /* The running span endpoint and the last computed midpoint live in registers across the
+       recursion, flushed back to ZP at every exit (label `out:`) for byte-identical residue. */
+    SubPt span = { dl_ptr_hi, screen_ptr_lo, screen_ptr_hi, encounter_count, row_count };       /* $82:$83 $84:$85 $86 */
+    SubPt mid  = { step_mode_flag, mem[0x008E], sfx_toggle_8F, sfx_reinit_gate, altitude_threshold }; /* $8D:$8E $8F:$90 $91 */
 
-    #define STK_COL_LO(d) M[0x25B4 + (d)]    /* sub-point stacks: 16-bit column, 16-bit height, */
-    #define STK_COL_HI(d) M[0x25D2 + (d)]    /* and an 8-bit fraction, indexed by depth.  The   */
-    #define STK_HGT_LO(d) M[0x25F0 + (d)]    /* +1 neighbour of each is the push target (the    */
-    #define STK_HGT_HI(d) M[0x24E2 + (d)]    /* parent endpoint of the just-bisected segment).  */
-    #define STK_FRAC(d)   M[0x23E2 + (d)]
-    #define RET() do { dl_ptr_hi=colLo; screen_ptr_lo=colHi; screen_ptr_hi=hgtLo; encounter_count=hgtHi; row_count=frac; \
-                       step_mode_flag=midColLo; mem[0x008E]=midColHi; sfx_toggle_8F=midHgtLo; sfx_reinit_gate=midHgtHi; altitude_threshold=midFrac; \
-                       cpu.X = (uint8_t)depth; draw_row_bottom = budget; return; } while(0)
-    /* Bisect the current segment: midpoint = average of the span endpoint and STK_*[depth],
-       with the midpoint HEIGHT displaced by half the column span when the fraction rolls past
-       a bit (the fractal roughness step), saturating in 16-bit.  Outputs into mid* (+ $B5/$B6
-       hold the displacement when applied). */
-    #define MIDPOINT() do { TDCNT(g_tdMidpoints); \
-        uint16_t _col = (uint16_t)(colLo | (colHi << 8)); \
-        uint16_t _hgt = (uint16_t)(hgtLo | (hgtHi << 8)); \
-        uint16_t _colSum = (uint16_t)(_col + (uint16_t)(STK_COL_LO(depth) | (STK_COL_HI(depth) << 8)) + 1u); \
-        uint16_t _midCol = (uint16_t)((_colSum >> 1) | (_colSum & 0x8000u));   /* signed average */ \
-        uint16_t _hgtSum = (uint16_t)(_hgt + (uint16_t)(STK_HGT_LO(depth) | (STK_HGT_HI(depth) << 8)) + 1u); \
-        uint16_t _midHgt = (uint16_t)((_hgtSum >> 1) | (_hgtSum & 0x8000u)); \
-        uint16_t _fracSum = (uint16_t)(frac + STK_FRAC(depth) + 1u); \
-        midFrac = (uint8_t)_fracSum; midColLo = (uint8_t)_midCol; midColHi = (uint8_t)(_midCol >> 8); \
-        if (midFrac & 0x80u) {                                   /* roughness: displace the height */ \
-            uint16_t _disp = (uint16_t)((_midCol - _col) & 0xFFFFu) >> 1; \
-            _midHgt = (_fracSum >= 0x100u) ? (uint16_t)(_midHgt + _disp) : (uint16_t)(_midHgt - _disp); \
-            mem[0x00B5] = (uint8_t)_disp; mem[0x00B6] = (uint8_t)(_disp >> 8); \
-        } \
-        midHgtLo = (uint8_t)_midHgt; midHgtHi = (uint8_t)(_midHgt >> 8); \
-    } while(0)
-
-    /* ---- entry guard: signed-compare the span column ($83:$82) against the segment's far
-       endpoint (stack[0]); if the span already sits at/past it there is nothing to subdivide.
-       The ^$80 turns the signed compare into an unsigned one; $B5 keeps the sign-flipped
-       endpoint high byte (observable residue). ---- */
-    const uint8_t farHi  = (uint8_t)(STK_COL_HI(0) ^ 0x80); mem[0x00B5] = farHi;
-    const uint8_t spanHi = (uint8_t)(colHi ^ 0x80);
-    if (spanHi > farHi || (spanHi == farHi && colLo >= STK_COL_LO(0))) {
+    /* Entry guard: signed-compare the span column against the segment's far endpoint (stack[0]);
+       if the span already sits at/past it there is nothing to subdivide.  The ^$80 turns the
+       signed compare into an unsigned one; $B5 keeps the sign-flipped endpoint high byte
+       (observable residue). */
+    SubPt far0 = subpt_load(M, 0);
+    const uint8_t farHi  = (uint8_t)(far0.colHi ^ 0x80); mem[0x00B5] = farHi;
+    const uint8_t spanHi = (uint8_t)(span.colHi ^ 0x80);
+    if (spanHi > farHi || (spanHi == farHi && span.colLo >= far0.colLo)) {
         cpu.X = (uint8_t)depth; return;                   /* span >= far endpoint -> done */
     }
     budget = 0x14;
 
-    /* ---- descend: bisect repeatedly.  If the midpoint is "near" (its column high byte is
-       negative, or zero with the low byte < $28) pull the span's near end onto it and keep
-       bisecting; otherwise push the midpoint as a sub-point and go one level deeper.  Stop once
-       the span column's high byte settles non-negative (segment now in the $00xx column range).
-       Bounded by the recursion budget and a stack depth < $0F. ---- */
+    /* Descend: bisect repeatedly.  If the midpoint is "near" (its column high byte is negative,
+       or zero with the low byte < $28) pull the span's near end onto it and keep bisecting;
+       otherwise push the midpoint as a parent sub-point and go one level deeper.  Stop once the
+       span column's high byte settles non-negative (segment now in the $00xx column range).
+       Bounded by the recursion budget and a stack depth < $0F. */
     for (;;) {
-        if (!(colHi & 0x80)) break;
-        if (budget-- == 0) RET();                         /* budget exhausted */
-        MIDPOINT();
-        if ((midColHi & 0x80) || (midColHi == 0 && midColLo < 0x28)) {
-            colLo = midColLo; colHi = midColHi;           /* near midpoint: adopt it as the span */
-            hgtLo = midHgtLo; hgtHi = midHgtHi; frac = midFrac;
+        if (!(span.colHi & 0x80)) break;
+        if (budget-- == 0) goto out;                      /* budget exhausted */
+        mid = subdiv_midpoint(span, subpt_load(M, depth), M);
+        if ((mid.colHi & 0x80) || (mid.colHi == 0 && mid.colLo < 0x28)) {
+            span = mid;                                   /* near midpoint: adopt it as the span */
         } else {
-            STK_COL_LO(depth + 1) = midColLo;             /* push the midpoint, descend */
-            STK_COL_HI(depth + 1) = midColHi;
-            STK_HGT_LO(depth + 1) = midHgtLo;
-            STK_HGT_HI(depth + 1) = midHgtHi;
-            STK_FRAC(depth + 1)   = midFrac;
-            depth++;
-            if (depth >= 0x0F) RET();                     /* stack full */
+            subpt_store(M, depth + 1, mid);               /* push the midpoint, descend */
+            if (++depth >= 0x0F) goto out;                /* stack full */
         }
     }
 
-    /* ---- leaf + unwind.  For each leaf (span column now in $00xx and < $D8): run the cascade
-       to decide skip / subdivide / rasterize; rasterize fills the leaf via the pixel renderer.
-       Then pop the parent endpoint off the stack and repeat. ---- */
+    /* Leaf + unwind.  For each leaf (span column now in $00xx and < $D8): run the cascade to
+       decide skip / subdivide / rasterize; rasterize fills the leaf via the pixel renderer.
+       Then pop the parent endpoint off the stack and repeat. */
     for (;;) {
-        if (colHi != 0)   RET();                          /* span column escaped $00xx -> done */
-        if (colLo >= 0xD8) RET();                         /* span column out of range -> done  */
+        if (span.colHi != 0)    goto out;                 /* span column escaped $00xx -> done */
+        if (span.colLo >= 0xD8) goto out;                 /* span column out of range -> done  */
 
         int rasterize    = 0;
         int recurseAgain = 0;        /* steep leaf: re-enter the subdivide path next iteration */
         for (;;) {
-            /* Subdivide while the segment's far endpoint still has a non-zero column high byte
-               (it spans more than the $00xx range); once it is in $00xx, fall to the cascade. */
-            int subdivide = recurseAgain ? (recurseAgain = 0, 1) : (STK_COL_HI(depth) != 0);
+            SubPt far = subpt_load(M, depth);             /* the segment's far endpoint */
+            /* Subdivide while the far endpoint still has a non-zero column high byte (it spans
+               more than the $00xx range); once it is in $00xx, fall to the cascade. */
+            int subdivide = recurseAgain ? (recurseAgain = 0, 1) : (far.colHi != 0);
             if (subdivide) {
-                if (budget-- == 0) RET();                 /* budget exhausted */
-                MIDPOINT();
-                STK_COL_LO(depth + 1) = midColLo;         /* push the midpoint */
-                STK_COL_HI(depth + 1) = midColHi;
-                STK_HGT_LO(depth + 1) = midHgtLo;
-                STK_HGT_HI(depth + 1) = midHgtHi;
-                STK_FRAC(depth + 1)   = midFrac;
-                depth++;
-                if (depth >= 0x0F) RET();                 /* stack full */
+                if (budget-- == 0) goto out;              /* budget exhausted */
+                mid = subdiv_midpoint(span, far, M);
+                subpt_store(M, depth + 1, mid);           /* push the midpoint */
+                if (++depth >= 0x0F) goto out;            /* stack full */
                 continue;
             }
 
-            /* CASCADE: decide skip / subdivide / rasterize.  Picks which height to judge by
-               (the span's vs the sub-point's) from their sign + magnitude vs the $6C threshold,
-               then applies a width/steepness test. */
-            const uint8_t subHgtHi = STK_HGT_HI(depth);
-            const int spanLow = (hgtHi & 0x80) || (hgtHi == 0 && hgtLo < 0x6C);
+            /* CASCADE: decide skip / subdivide / rasterize.  Picks which height to judge by (the
+               span's vs the far sub-point's) from sign + magnitude vs the $6C threshold, then
+               applies a width/steepness test. */
+            const int spanLow = (span.hgtHi & 0x80) || (span.hgtHi == 0 && span.hgtLo < 0x6C);
             int doWidthTest = 0;       /* run the width/steepness test below */
-            int useSpanHeight = 0;     /* test the span height (1) or the sub-point height (0) */
-            if (spanLow) {             /* judge by the sub-point height, default to skip */
-                if (subHgtHi & 0x80) { /* skip */ }
-                else if (subHgtHi != 0) { doWidthTest = 1; useSpanHeight = 1; }
-                else if (STK_HGT_LO(depth) < 0x6C) { /* skip */ }
+            int useSpanHeight = 0;     /* test the span height (1) or the far sub-point height (0) */
+            if (spanLow) {             /* judge by the far sub-point height, default to skip */
+                if (far.hgtHi & 0x80) { /* skip */ }
+                else if (far.hgtHi != 0) { doWidthTest = 1; useSpanHeight = 1; }
+                else if (far.hgtLo < 0x6C) { /* skip */ }
                 else { doWidthTest = 1; useSpanHeight = 1; }
-            } else {                   /* judge by the sub-point height, default to rasterize */
-                if (subHgtHi & 0x80) { doWidthTest = 1; }
-                else if (subHgtHi != 0) rasterize = 1;
-                else if (STK_HGT_LO(depth) < 0x6C) { doWidthTest = 1; }
+            } else {                   /* judge by the far sub-point height, default to rasterize */
+                if (far.hgtHi & 0x80) { doWidthTest = 1; }
+                else if (far.hgtHi != 0) rasterize = 1;
+                else if (far.hgtLo < 0x6C) { doWidthTest = 1; }
                 else rasterize = 1;
             }
             if (doWidthTest) {
                 /* Width/steepness: width = (far column - span column).  Narrow (<$14 cols) ->
                    rasterize.  Otherwise rasterize only if the chosen height is shallower than
                    width/4 (height - width/4 >= 0); a steeper leaf subdivides further. */
-                const uint8_t width = (uint8_t)(STK_COL_LO(depth) - colLo);
+                const uint8_t width = (uint8_t)(far.colLo - span.colLo);
                 if (width < 0x14) rasterize = 1;
                 else {
                     const uint8_t q = (uint8_t)(width >> 2); mem[0x00B5] = q;  /* $B5 observable */
-                    const uint16_t hgt = useSpanHeight ? (uint16_t)((hgtHi << 8) | hgtLo)
-                                                       : (uint16_t)((STK_HGT_HI(depth) << 8) | STK_HGT_LO(depth));
+                    const uint16_t hgt = useSpanHeight ? (uint16_t)((span.hgtHi << 8) | span.hgtLo)
+                                                       : (uint16_t)((far.hgtHi << 8) | far.hgtLo);
                     if (!((uint16_t)(hgt - q) & 0x8000u)) rasterize = 1;       /* shallow -> rasterize */
                     else { recurseAgain = 1; continue; }                      /* steep -> subdivide */
                 }
@@ -4059,35 +4064,41 @@ void terrain_subdivide_column_core(uint8_t startDepth, uint8_t rasterEntryDepth)
             /* Set up the pixel renderer's control point [0] from the leaf's far endpoint
                (column / height / fraction), clamping each 16-bit height to 0 or $FF by its
                sign, then fill the leaf's columns. */
-            if (hgtHi != 0) hgtLo = (hgtHi & 0x80) ? 0x00 : 0xFF;
-            uint8_t leafHgt = STK_HGT_HI(depth);
-            if (leafHgt == 0) leafHgt = STK_HGT_LO(depth);
-            else              leafHgt = (leafHgt & 0x80) ? 0x00 : 0xFF;
-            mem[0x00EA]    = leafHgt;                 /* $EA[0]: control-point height  */
-            blit_color_src = STK_COL_LO(depth);       /* $95[0]: control-point column  */
-            mem[0x00F4]    = STK_FRAC(depth);         /* $F4[0]: control-point fraction */
+            if (span.hgtHi != 0) span.hgtLo = (span.hgtHi & 0x80) ? 0x00 : 0xFF;
+            SubPt leaf = subpt_load(M, depth);
+            uint8_t leafHgt = leaf.hgtHi ? ((leaf.hgtHi & 0x80) ? 0x00 : 0xFF) : leaf.hgtLo;
+            mem[0x00EA]    = leafHgt;                  /* $EA[0]: control-point height   */
+            blit_color_src = leaf.colLo;               /* $95[0]: control-point column   */
+            mem[0x00F4]    = leaf.frac;                /* $F4[0]: control-point fraction */
             /* terrain_column_rasterize consumes the span $82/$84/$86 and rewrites them via its
                own write-back; flush the span before the call and reload those three after
                ($83/$85 it never touches). */
-            dl_ptr_hi=colLo; screen_ptr_lo=colHi; screen_ptr_hi=hgtLo; encounter_count=hgtHi; row_count=frac;
+            dl_ptr_hi = span.colLo; screen_ptr_lo = span.colHi; screen_ptr_hi = span.hgtLo;
+            encounter_count = span.hgtHi; row_count = span.frac;
             TDSPAN(terrain_column_rasterize_core(rasterEntryDepth, (uint8_t)depth), g_tdRaster);
-            colLo = dl_ptr_hi; hgtLo = screen_ptr_hi; frac = row_count;
+            span.colLo = dl_ptr_hi; span.hgtLo = screen_ptr_hi; span.frac = row_count;
         }
 
         /* pop the parent endpoint off the stack and continue with it */
-        if (depth == 0) RET();
-        colLo = STK_COL_LO(depth); colHi = STK_COL_HI(depth);
-        hgtLo = STK_HGT_LO(depth); hgtHi = STK_HGT_HI(depth); frac = STK_FRAC(depth);
+        if (depth == 0) goto out;
+        span = subpt_load(M, depth);
         depth--;
     }
-    #undef STK_COL_LO
-    #undef STK_COL_HI
-    #undef STK_HGT_LO
-    #undef STK_HGT_HI
-    #undef STK_FRAC
-    #undef RET
-    #undef MIDPOINT
+
+out:
+    /* Flush the register-resident span + midpoint back to ZP (byte-identical residue) and return
+       the recursion depth (cpu.X) and the remaining budget ($9F, via draw_row_bottom). */
+    dl_ptr_hi = span.colLo; screen_ptr_lo = span.colHi; screen_ptr_hi = span.hgtLo;
+    encounter_count = span.hgtHi; row_count = span.frac;
+    step_mode_flag = mid.colLo; mem[0x008E] = mid.colHi; sfx_toggle_8F = mid.hgtLo;
+    sfx_reinit_gate = mid.hgtHi; altitude_threshold = mid.frac;
+    cpu.X = (uint8_t)depth; draw_row_bottom = budget;
 }
+#undef SUBPT_COL_LO
+#undef SUBPT_COL_HI
+#undef SUBPT_HGT_LO
+#undef SUBPT_HGT_HI
+#undef SUBPT_FRAC
 /* 6502-ABI shim: entry cpu.X = start depth, cpu.Y = the rasterizer's start depth. */
 void terrain_subdivide_column(void) { terrain_subdivide_column_core(cpu.X, cpu.Y); }
 
