@@ -3735,11 +3735,13 @@ void terrain_plot_object(void) {
  * to the right edge ($D4), bisecting toward each control point and plotting the final one or
  * two columns of each leaf before popping to the next point.
  *
- * Contract: memory only; cpu.X (the caller's column base) is saved to $60 and not otherwise
- * used.  Validated bit-exact against the 6502 oracle from a real flight snapshot (random mem[]
- * would not terminate — the control columns must be a realistic ascending set).
+ * Args: entryDepth = the bisection-stack depth to start at (the 6502 entry cpu.Y); colBase =
+ * the caller's column base, saved to $60 (the 6502 entry cpu.X) and not otherwise used.
+ * Contract: memory only.  Validated bit-exact against the 6502 oracle from a real flight
+ * snapshot (random mem[] would not terminate — the control columns must be a realistic
+ * ascending set).
  */
-void terrain_column_rasterize(void) {
+void terrain_column_rasterize_core(uint8_t entryDepth, uint8_t colBase) {
     TDCNT(g_tdRasterCalls);
     /* Non-volatile alias: the control-point stack, the max-height map and the plot tables are
        all main-loop-owned (the flight VBI touches none of them — CLAUDE.md ZP audit), so
@@ -3754,7 +3756,7 @@ void terrain_column_rasterize(void) {
     uint8_t rowLo  = sync_flag;       /* $80/$81: bitmap row address of the last pixel plotted  */
     uint8_t rowHi  = dl_ptr_lo;
     uint8_t b5     = mem[0x00B5];      /* $B5: observable scratch (last displacement / depth)    */
-    uint8_t depth  = cpu.Y;           /* bisection-stack depth (= control-point index)          */
+    uint8_t depth  = entryDepth;      /* bisection-stack depth (= control-point index)          */
     uint8_t plotCol;                  /* the screen column currently being drawn                */
 
     #define CTL_COL(d)    M[MEM_blit_color_src + (d)]      /* $95[]: stack of control-point columns    */
@@ -3776,7 +3778,7 @@ void terrain_column_rasterize(void) {
             M[_a] |= M[MEM_terrain_col_pixel_mask + plotCol]; \
         } } while(0)
 
-    mem[0x0060] = cpu.X;                     /* save the caller's column base ($60) */
+    mem[0x0060] = colBase;                   /* save the caller's column base ($60) */
 
     const uint8_t endCol = CTL_COL(0);       /* right endpoint of this segment */
     if (endCol < 0x2D) { WB(); return; }     /* endpoint left of the viewport -> nothing on screen */
@@ -3807,7 +3809,7 @@ void terrain_column_rasterize(void) {
             else {
                 const uint8_t disp = (uint8_t)((uint8_t)(CTL_COL(depth) - col) >> 1);  /* half remaining span */
                 b5 = disp;
-                if (fsum & 0x100u) { unsigned t = havg + disp; height = (t > 0xFF) ? 0xFF : (uint8_t)t; }  /* up, sat $FF */
+                if (fsum >= 0x100u) { unsigned t = havg + disp; height = (t > 0xFF) ? 0xFF : (uint8_t)t; }  /* up, sat $FF */
                 else height = (havg >= disp) ? (uint8_t)(havg - disp) : 0;                                /* down, floor 0 */
             }
         } else {                                         /* midpoint in-view: push it as control point depth+1 */
@@ -3818,7 +3820,7 @@ void terrain_column_rasterize(void) {
             else {
                 const uint8_t disp = (uint8_t)((uint8_t)(mid - col) >> 1);
                 b5 = disp;
-                if (fsum & 0x100u) { unsigned t = havg + disp; mh = (t > 0xFF) ? 0xFF : (uint8_t)t; }
+                if (fsum >= 0x100u) { unsigned t = havg + disp; mh = (t > 0xFF) ? 0xFF : (uint8_t)t; }
                 else mh = (havg >= disp) ? (uint8_t)(havg - disp) : 0;
             }
             CTL_HEIGHT(depth + 1) = mh;
@@ -3843,13 +3845,13 @@ void terrain_column_rasterize(void) {
             height = CTL_HEIGHT(depth);
             DRAW(height);                                /* endpoint column */
             plotCol++;
-            if ((uint8_t)--depth & 0x80) { WB(); return; }   /* pop; underflow -> done */
+            if (depth-- == 0) { WB(); return; }              /* pop; underflow -> done */
             frac = CTL_FRAC(depth + 1);                       /* restore this leaf's midpoint fraction ($F5[depth]) */
         } else if (gap == 0xFF) {                        /* one column short: plot endpoint, pop */
             height = CTL_HEIGHT(depth);
             DRAW(height);
             plotCol++;
-            if ((uint8_t)--depth & 0x80) { WB(); return; }
+            if (depth-- == 0) { WB(); return; }
             frac = CTL_FRAC(depth + 1);                       /* $F5[depth] */
         } else {                                         /* far: bisect, push an interpolated midpoint */
             const uint8_t mid   = (uint8_t)(((unsigned)plotCol + CTL_COL(depth)) >> 1);
@@ -3860,7 +3862,7 @@ void terrain_column_rasterize(void) {
             const unsigned havg = hsum >> 1;
             uint8_t mh;
             if (!((uint8_t)fsum & 0x80)) mh = (uint8_t)havg;             /* no roughness */
-            else if (fsum & 0x100u) {                                   /* roughness up */
+            else if (fsum >= 0x100u) {                                   /* roughness up */
                 const uint8_t disp = (uint8_t)((uint8_t)(mid - col) >> 1);
                 b5 = disp;
                 unsigned t = havg + disp + (hsum & 1u);
@@ -3883,6 +3885,8 @@ void terrain_column_rasterize(void) {
     #undef WB
     #undef DRAW
 }
+/* 6502-ABI shim: entry cpu.Y = start depth, cpu.X = column base. */
+void terrain_column_rasterize(void) { terrain_column_rasterize_core(cpu.Y, cpu.X); }
 
 /* terrain_subdivide_column @ $B172 — the coarse fractal LOD pass over one terrain segment.
  *
@@ -3903,19 +3907,19 @@ void terrain_column_rasterize(void) {
  * the column high byte settles non-negative.  (3) LEAF + UNWIND — run the cascade on each
  * leaf, then pop the stack and repeat.
  *
- * Contract: memory.  cpu.X carries the stack depth across the sub-calls (which preserve it);
- * cpu.Y is the caller's (terrain_column_rasterize reads it).  Validated bit-exact against the
- * 6502 oracle from a real flight snapshot (it drives terrain_column_rasterize, which random
- * mem[] can't terminate).
+ * Args: startDepth = the stack index to start at (the 6502 entry cpu.X, normally 0);
+ * rasterEntryDepth = forwarded as terrain_column_rasterize's start depth (the 6502 entry cpu.Y,
+ * left untouched here).  Contract: memory.  Validated bit-exact against the 6502 oracle from a
+ * real flight snapshot (it drives terrain_column_rasterize, which random mem[] can't terminate).
  */
-void terrain_subdivide_column(void) {
+void terrain_subdivide_column_core(uint8_t startDepth, uint8_t rasterEntryDepth) {
     TDCNT(g_tdSubdivCalls);
     /* Non-volatile alias for the (col,height,frac) sub-point stacks — main-RAM scratch the
        flight VBI never touches, so the compiler may cache/forward across the recursion.
        Writes land at the same addresses -> mem[] residue byte-identical.  ($B5/$B6/$8E stay
        direct mem[] writes: observable final values, interleaved with the rasterizer's.) */
     uint8_t* const M = (uint8_t*)mem;
-    int depth      = cpu.X;          /* current sub-point stack index (recursion depth)        */
+    int depth      = startDepth;     /* current sub-point stack index (recursion depth)        */
     uint8_t budget = 0;              /* $9F: remaining recursion budget (set to $14 below)     */
     /* The running span endpoint {column 16-bit, height 16-bit, fraction} + the last midpoint's
        output {col,hgt,frac}, register-resident across the recursion and flushed to ZP at every
@@ -3950,7 +3954,7 @@ void terrain_subdivide_column(void) {
         midFrac = (uint8_t)_fracSum; midColLo = (uint8_t)_midCol; midColHi = (uint8_t)(_midCol >> 8); \
         if (midFrac & 0x80u) {                                   /* roughness: displace the height */ \
             uint16_t _disp = (uint16_t)((_midCol - _col) & 0xFFFFu) >> 1; \
-            _midHgt = (_fracSum & 0x100u) ? (uint16_t)(_midHgt + _disp) : (uint16_t)(_midHgt - _disp); \
+            _midHgt = (_fracSum >= 0x100u) ? (uint16_t)(_midHgt + _disp) : (uint16_t)(_midHgt - _disp); \
             mem[0x00B5] = (uint8_t)_disp; mem[0x00B6] = (uint8_t)(_disp >> 8); \
         } \
         midHgtLo = (uint8_t)_midHgt; midHgtHi = (uint8_t)(_midHgt >> 8); \
@@ -3974,7 +3978,7 @@ void terrain_subdivide_column(void) {
        Bounded by the recursion budget and a stack depth < $0F. ---- */
     for (;;) {
         if (!(colHi & 0x80)) break;
-        if ((uint8_t)--budget & 0x80) RET();              /* budget exhausted */
+        if (budget-- == 0) RET();                         /* budget exhausted */
         MIDPOINT();
         if ((midColHi & 0x80) || (midColHi == 0 && midColLo < 0x28)) {
             colLo = midColLo; colHi = midColHi;           /* near midpoint: adopt it as the span */
@@ -4004,7 +4008,7 @@ void terrain_subdivide_column(void) {
                (it spans more than the $00xx range); once it is in $00xx, fall to the cascade. */
             int subdivide = recurseAgain ? (recurseAgain = 0, 1) : (STK_COL_HI(depth) != 0);
             if (subdivide) {
-                if ((uint8_t)--budget & 0x80) RET();      /* budget exhausted */
+                if (budget-- == 0) RET();                 /* budget exhausted */
                 MIDPOINT();
                 STK_COL_LO(depth + 1) = midColLo;         /* push the midpoint */
                 STK_COL_HI(depth + 1) = midColHi;
@@ -4066,7 +4070,7 @@ void terrain_subdivide_column(void) {
                own write-back; flush the span before the call and reload those three after
                ($83/$85 it never touches). */
             dl_ptr_hi=colLo; screen_ptr_lo=colHi; screen_ptr_hi=hgtLo; encounter_count=hgtHi; row_count=frac;
-            cpu.X = (uint8_t)depth; TDSPAN(terrain_column_rasterize(), g_tdRaster);
+            TDSPAN(terrain_column_rasterize_core(rasterEntryDepth, (uint8_t)depth), g_tdRaster);
             colLo = dl_ptr_hi; hgtLo = screen_ptr_hi; frac = row_count;
         }
 
@@ -4084,6 +4088,8 @@ void terrain_subdivide_column(void) {
     #undef RET
     #undef MIDPOINT
 }
+/* 6502-ABI shim: entry cpu.X = start depth, cpu.Y = the rasterizer's start depth. */
+void terrain_subdivide_column(void) { terrain_subdivide_column_core(cpu.X, cpu.Y); }
 
 /* terrain_jitter_column @ $A613 — per-frame random terrain/object jitter (2+1 RANDOM).
  *
@@ -4784,7 +4790,7 @@ void terrain_draw_frame_core(uint8_t entryX) {
                 /* a408: load obj0's projected vector into the running span, then subdivide */
                 dl_ptr_hi=mem[0x2400+obj0]; screen_ptr_lo=mem[0x242D+obj0]; screen_ptr_hi=mem[0x245A+obj0];
                 encounter_count=mem[0x2487+obj0]; row_count=mem[0x23B5+obj0];
-                PB(_sd); cpu.X = 0x00; terrain_subdivide_column(); PE(_sd, g_tdSubdiv);  /* a421 */
+                PB(_sd); terrain_subdivide_column_core(0x00, Y); PE(_sd, g_tdSubdiv);  /* a421 (cpu.Y=Y) */
                 Y = mem[0x272E];                         /* a426 restore order index (calls clobber none, faithful) */
                 if (Y == 0) Y++;                         /* a429 */
             }
