@@ -308,6 +308,16 @@ contention; don't bother reasoning about chip-vs-fast.) Rewrite hot functions in
   **no-op** — GCC already keeps the base in a register, so there is nothing to batch. Don't chase
   volatile-vs-non-volatile for scattered access; that whole class of "cheaper mem access" is
   exhausted there — the cost is instruction count / algorithm, not the `volatile` barrier.
+  ⚠ **Endianness when aliasing `mem[]` as `uint16_t*`/`uint32_t*`:** `mem[]` is little-endian
+  (6502: `mem[a]`=lo). The Amiga 68000 is **big-endian**, so a word/long read through such an
+  alias returns the **byte-swapped** value — and worse, the SDL validation host is little-endian,
+  so `make validate` passes GREEN while the Amiga silently renders garbage. So do NOT alias for
+  general 16/32-bit values; lift them into `uint16_t`/`int16_t` LOCALS and touch `mem[]` byte-wise
+  at the boundaries (`mem[a] | (mem[a+1]<<8)`), as the rasterizer/`MIDPOINT` twins do. The ONE
+  safe alias case is a **uniform-byte broadcast** store (e.g. fill 4 lanes with the same byte via
+  `grp = b*0x01010101u`, walk a `uint32_t*`): all bytes equal ⇒ endianness-neutral (identical on
+  host + Amiga). Used for `terrain_draw_frame_core`'s `$BD00` column-id fill (commit ac3a9a8) —
+  46 long stores; still needs the 4-aligned + ISR-untouched + non-overflowing-lane conditions.
 - **Skip redundant work the original wasted.** Avoid re-decoding/-scanning what hasn't changed
   (per-writer dirty flags; dirty row/cell ranges, cf. planet viewport `g_planetRowLo/Hi` and the
   cockpit plan `docs/cockpit-render-plan.md`). Shadow-compare scans are themselves a full
