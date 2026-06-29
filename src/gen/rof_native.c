@@ -3760,8 +3760,8 @@ void terrain_column_rasterize_core(uint8_t entryDepth, uint8_t colBase) {
     uint8_t plotCol;                  /* the screen column currently being drawn                */
 
     #define CTL_COL(d)    M[MEM_blit_color_src + (d)]      /* $95[]: stack of control-point columns    */
-    #define CTL_HEIGHT(d) M[0x00EA + (d)]                  /* $EA[]: their heights                     */
-    #define CTL_FRAC(d)   M[0x00F4 + (d)]                  /* $F4[]: their fractions                   */
+    #define CTL_HEIGHT(d) M[MEM_terrain_ctl_height + (d)]  /* $EA[]: their heights                     */
+    #define CTL_FRAC(d)   M[MEM_terrain_ctl_frac + (d)]    /* $F4[]: their fractions                   */
     #define COL_MAX(c)    M[MEM_terrain_height_max + (c)]  /* $260E[]: topmost height drawn per column */
     #define WB() do { dl_ptr_hi=col; screen_ptr_hi=height; row_count=frac; \
                       sync_flag=rowLo; dl_ptr_lo=rowHi; mem[0x00B5]=b5; } while(0)
@@ -4068,9 +4068,9 @@ uint8_t terrain_subdivide_column_core(uint8_t startDepth, uint8_t rasterEntryDep
                 span.hgt = (span.hgt & 0xFF00) | ((span.hgt & 0x8000) ? 0x00 : 0xFF);
             SubPt leaf = subpt_load(M, depth);
             uint8_t leafHgt = (leaf.hgt > 0xFF) ? ((leaf.hgt & 0x8000) ? 0x00 : 0xFF) : (uint8_t)leaf.hgt;
-            mem[0x00EA]    = leafHgt;                  /* $EA[0]: control-point height   */
-            blit_color_src = (uint8_t)leaf.col;        /* $95[0]: control-point column   */
-            mem[0x00F4]    = leaf.frac;                /* $F4[0]: control-point fraction */
+            terrain_ctl_height = leafHgt;              /* $EA[0]: control-point height   */
+            blit_color_src     = (uint8_t)leaf.col;    /* $95[0]: control-point column   */
+            terrain_ctl_frac   = leaf.frac;            /* $F4[0]: control-point fraction */
             /* terrain_column_rasterize consumes the span $82/$84/$86 and rewrites them via its
                own write-back; flush the span before the call and reload those three after
                ($83/$85 it never touches). */

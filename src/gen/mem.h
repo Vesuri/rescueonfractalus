@@ -159,6 +159,8 @@
 #define MEM_attract_timer                 0x00E2  // $00E2 Attract mode timer ($64=100 at game_entry start)
 #define MEM_game_var_E4                   0x00E4  // $00E4 Zeroed in game_entry
 #define MEM_anim_step_timer               0x00E6  // $00E6 Zeroed in game_entry
+#define MEM_terrain_ctl_height            0x00EA  // $00EA Control-point height stack for the terrain rasterizer; height...
+#define MEM_terrain_ctl_frac              0x00F4  // $00F4 Control-point sub-pixel fraction stack (the slope carry) for ...
 #define MEM_score_display                 0x0601  // $0601 Displayed score, 3-byte packed BCD $0601-$0603 (6 digits); re...
 #define MEM_level_count_acc               0x0604  // $0604 Counter incremented in count_up_to_level($75B8) until it equa...
 #define MEM_cockpit_flag                  0x060B  // $060B Non-zero → cockpit_display called in game_entry
@@ -472,6 +474,8 @@
 #define attract_timer                 mem[MEM_attract_timer]
 #define game_var_E4                   mem[MEM_game_var_E4]
 #define anim_step_timer               mem[MEM_anim_step_timer]
+#define terrain_ctl_height            mem[MEM_terrain_ctl_height]
+#define terrain_ctl_frac              mem[MEM_terrain_ctl_frac]
 #define score_display                 mem[MEM_score_display]
 #define level_count_acc               mem[MEM_level_count_acc]
 #define cockpit_flag                  mem[MEM_cockpit_flag]

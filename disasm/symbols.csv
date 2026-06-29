@@ -221,6 +221,8 @@ $00DD,anim_counter_2,var,0,Animation counter 2 (clamped to $2A from $2B)
 $00E2,attract_timer,var,0,Attract mode timer ($64=100 at game_entry start)
 $00E4,game_var_E4,var,0,Zeroed in game_entry
 $00E6,anim_step_timer,var,0,Zeroed in game_entry
+$00EA,terrain_ctl_height,var,0,Control-point height stack for the terrain rasterizer; heights interpolated per column by terrain_column_rasterize ($B33D) and seeded at [0] by terrain_subdivide_column. Parallel to the column stack $0095 (blit_color_src) and the fraction stack $00F4
+$00F4,terrain_ctl_frac,var,0,Control-point sub-pixel fraction stack (the slope carry) for the terrain rasterizer; parallel to the height stack $00EA and the column stack $0095 (blit_color_src)
 #
 # --- RAM workspace ($0600 area) ---
 $0600,screen_data_start,data,0,Start of screen data (122 rows × 40 bytes = $0600-$1306); also game state at $0600-$062B

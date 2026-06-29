@@ -22342,13 +22342,13 @@ L_b298:;
     LDA(mem[(0x25F0)+cpu.X]);
 L_b29b:;
     /* b29b */
-    mem[0x00EA] = cpu.A;
+    terrain_ctl_height = cpu.A;
     /* b2a0 */
     blit_color_src = mem[(0x25B4)+cpu.X];
     /* b2a2 */
     LDA(mem[(0x23E2)+cpu.X]);
     /* b2a5 */
-    mem[0x00F4] = cpu.A;
+    terrain_ctl_frac = cpu.A;
     /* b2a7 */
     terrain_column_rasterize();
 L_b2aa:;
@@ -22524,7 +22524,7 @@ void terrain_column_rasterize__t6502(void) {
     /* b34b */
     LDX(blit_color_src);
     /* b34d */
-    LDA(mem[0x00EA]);
+    LDA(terrain_ctl_height);
     /* b34f */
     CMP(mem[MEM_terrain_height_max+cpu.X]);
     /* b352 */
@@ -22601,7 +22601,7 @@ L_b397:;
     /* b39b */
     SEC();
     /* b39c */
-    ADC(mem[(0x00F4)+cpu.Y]);
+    ADC(mem[MEM_terrain_ctl_frac+cpu.Y]);
     /* b39f */
     row_count = cpu.A;
     /* b3a1 */
@@ -22611,7 +22611,7 @@ L_b397:;
     /* b3a4 */
     LDA(screen_ptr_hi);
     /* b3a6 */
-    ADC(mem[(0x00EA)+cpu.Y]);
+    ADC(mem[MEM_terrain_ctl_height+cpu.Y]);
     /* b3a9 */
     ROR_A();
     /* b3aa */
@@ -22636,7 +22636,7 @@ L_b3af:;
     /* b3bb */
     LDA(screen_ptr_hi);
     /* b3bd */
-    ADC(mem[(0x00EA)+cpu.Y]);
+    ADC(mem[MEM_terrain_ctl_height+cpu.Y]);
     /* b3c0 */
     ROR_A();
     /* b3c1 */
@@ -22668,7 +22668,7 @@ L_b3cd:;
     /* b3d7 */
     LDA(screen_ptr_hi);
     /* b3d9 */
-    ADC(mem[(0x00EA)+cpu.Y]);
+    ADC(mem[MEM_terrain_ctl_height+cpu.Y]);
     /* b3dc */
     ROR_A();
     /* b3dd */
@@ -22692,7 +22692,7 @@ L_b3e9:;
     /* b3ee */
     SEC();
     /* b3ef */
-    ADC(mem[(0x00F4)+cpu.Y]);
+    ADC(mem[MEM_terrain_ctl_frac+cpu.Y]);
     /* b3f2 */
     mem[(0x00F5)+cpu.Y] = cpu.A;
     /* b3f5 */
@@ -22702,7 +22702,7 @@ L_b3e9:;
     /* b3f8 */
     LDA(screen_ptr_hi);
     /* b3fa */
-    ADC(mem[(0x00EA)+cpu.Y]);
+    ADC(mem[MEM_terrain_ctl_height+cpu.Y]);
     /* b3fd */
     ROR_A();
     /* b3fe */
@@ -22729,7 +22729,7 @@ L_b405:;
     /* b411 */
     LDA(screen_ptr_hi);
     /* b413 */
-    ADC(mem[(0x00EA)+cpu.Y]);
+    ADC(mem[MEM_terrain_ctl_height+cpu.Y]);
     /* b416 */
     ROR_A();
     /* b417 */
@@ -22763,7 +22763,7 @@ L_b425:;
     /* b42f */
     LDA(screen_ptr_hi);
     /* b431 */
-    ADC(mem[(0x00EA)+cpu.Y]);
+    ADC(mem[MEM_terrain_ctl_height+cpu.Y]);
     /* b434 */
     ROR_A();
     /* b435 */
@@ -22804,7 +22804,7 @@ L_b446:;
     /* b453 */
     if (!cpu.Z) goto L_b4cc;
     /* b455 */
-    LDA(mem[(0x00EA)+cpu.Y]);
+    LDA(mem[MEM_terrain_ctl_height+cpu.Y]);
     /* b458 */
     ADC(screen_ptr_hi);
     /* b45a */
@@ -22848,7 +22848,7 @@ L_b489:;
     /* b489 */
     INX();
     /* b48a */
-    LDA(mem[(0x00EA)+cpu.Y]);
+    LDA(mem[MEM_terrain_ctl_height+cpu.Y]);
     /* b48d */
     screen_ptr_hi = cpu.A;
     /* b48f */
@@ -22908,7 +22908,7 @@ L_b4cc:;
     /* b4cc */
     if (!cpu.C) goto L_b50d;
     /* b4ce */
-    LDA(mem[(0x00EA)+cpu.Y]);
+    LDA(mem[MEM_terrain_ctl_height+cpu.Y]);
     /* b4d1 */
     screen_ptr_hi = cpu.A;
     /* b4d3 */
@@ -22973,7 +22973,7 @@ L_b50d:;
     /* b517 */
     SEC();
     /* b518 */
-    ADC(mem[(0x00F4)+cpu.Y]);
+    ADC(mem[MEM_terrain_ctl_frac+cpu.Y]);
     /* b51b */
     mem[(0x00F5)+cpu.Y] = cpu.A;
     /* b51e */
@@ -22983,7 +22983,7 @@ L_b50d:;
     /* b521 */
     LDA(screen_ptr_hi);
     /* b523 */
-    ADC(mem[(0x00EA)+cpu.Y]);
+    ADC(mem[MEM_terrain_ctl_height+cpu.Y]);
     /* b526 */
     ROR_A();
     /* b527 */
@@ -23008,7 +23008,7 @@ L_b52e:;
     /* b539 */
     LDA(screen_ptr_hi);
     /* b53b */
-    ADC(mem[(0x00EA)+cpu.Y]);
+    ADC(mem[MEM_terrain_ctl_height+cpu.Y]);
     /* b53e */
     ROR_A();
     /* b53f */
@@ -23038,7 +23038,7 @@ L_b54c:;
     /* b555 */
     LDA(screen_ptr_hi);
     /* b557 */
-    ADC(mem[(0x00EA)+cpu.Y]);
+    ADC(mem[MEM_terrain_ctl_height+cpu.Y]);
     /* b55a */
     ROR_A();
     /* b55b */
