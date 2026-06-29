@@ -4694,11 +4694,25 @@ extern unsigned long g_tdSubdiv, g_tdProjPlot, g_tdFrames;
 #define PE(v,acc) ((void)0)
 #endif
 
-/* _core takes the half/column-base directly (was passed in cpu.X); the void shim below keeps
-   the 6502-ABI entry for validation.  entryX is half 0 ($00) or half 1 ($30). */
+/* terrain_draw_frame @ $A31E — render one frame's terrain + objects (the flight top-level draw).
+ *
+ * For one double-buffer half (entryX = $00 display / $30 back):
+ *   1. SETUP — build the per-column bitmap byte-offset map, reset the per-row span tables to
+ *      their empty sentinels and the frame's span extents to the neutral midpoint, then compute
+ *      the row x-spans (compute_row_xspans).
+ *   2. DRAW — walk the object draw order ($B67C): project each visible object to screen space
+ *      (project_terrain_points + terrain_plot_object) and fractal-subdivide the terrain segment
+ *      between paired objects (terrain_subdivide_column).  This is the bulk of the frame cost.
+ *   3. BOOKKEEPING — derive the difficulty level from the max span, converge the lock-on
+ *      magnitude $4D from the pitch/roll rates (arming the lock-on indicator), age near-max
+ *      terrain-map cells, and occasionally spawn a random enemy above the terrain.
+ *
+ * Contract: memory only.  _core takes the half/column-base directly; the void shim keeps the
+ * 6502-ABI entry for validation.  entryX is half 0 ($00) or 1 ($30).  Reads POKEY RANDOM
+ * (harness seeds it identically per run).
+ */
 void terrain_draw_frame_core(uint8_t entryX) {
-    uint8_t A, Y;        /* Y = the object draw-order index; A = tail-section scratch
-                            (the object loop now uses named obj0/obj1; carry idioms are gone) */
+    uint8_t Y;           /* the object draw-order index (the rest now uses named locals) */
 
     mem[0x00A7] = entryX;                                /* a31e */
 #ifdef ROF_TDRAW_PROF
@@ -4731,16 +4745,17 @@ void terrain_draw_frame_core(uint8_t entryX) {
         mem[0x264E + i]=0x6B; mem[0x266F + i]=0x6B; mem[0x2690 + i]=0x6B; mem[0x26B1 + i]=0x6B;
     }
 
-    mem[0x2907] = roll_pos_lo;                           /* a36d */
-    mem[0x2908] = roll_pos_hi;                           /* a372 */
-    compute_row_xspans();                                /* a377 */
-    mem[0x28E7]=0x80; mem[0x28E8]=0x80; mem[0x2912]=0x80; /* a37c-a38b */
+    mem[0x2907] = roll_pos_lo;                           /* stash the current roll into the param block */
+    mem[0x2908] = roll_pos_hi;
+    compute_row_xspans();
+    /* reset this frame's span extents to the neutral $80 midpoint (terrain_span_max + $0079
+       only on the display pass, so the back pass inherits the display pass's max). */
+    mem[0x28E7]=0x80; mem[0x28E8]=0x80; mem[0x2912]=0x80;
     mem[0x2913]=0x80; mem[0x2914]=0x80; mem[0x2915]=0x80;
-    if (mem[0x00A7] == 0) {                              /* a38e: only on the entryX==0 pass */
-        terrain_span_max = 0x80; mem[0x0079] = 0x80;
-    }
-    mem[0x28ED]=0x00; mem[0x28FB]=0x00; mem[0x28FC]=0x00; /* a397-a39f */
-    if (!(mem[0x006A] & 0x80))                           /* a3a2: $6A non-negative -> bump $28FC */
+    if (mem[0x00A7] == 0) { terrain_span_max = 0x80; mem[0x0079] = 0x80; }
+    /* clear the per-frame object-visibility counters; bump one when $6A is non-negative */
+    mem[0x28ED]=0x00; mem[0x28FB]=0x00; mem[0x28FC]=0x00;
+    if (!(mem[0x006A] & 0x80))
         mem[0x28FC] = (uint8_t)(mem[0x28FC] + 1);
 
     /* L_a3ab — object draw-order loop.  $B67C[] is the draw order; each entry indexes the
@@ -4832,19 +4847,17 @@ void terrain_draw_frame_core(uint8_t entryX) {
         v = (uint8_t)(dy + dx); carryIn = 0;             /* a55e */
         #undef SAR1
     }
-    /* a562 */
-    A = (uint8_t)((uint16_t)v + mem[0x004D] + carryIn);  /* a562 ADC $4D */
-    if (A & 0x80) A = 0x7F;                              /* a564: clamp negative -> $7F */
-    A = (A >= mem[0x061C]) ? (uint8_t)(A - mem[0x061C]) : 0x00;  /* a568-a56e: decay by $061C, floor 0 */
-    mem[0x004D] = A;                                     /* a570 */
+    /* Fold this frame's contribution into the lock-on magnitude $4D, clamp out of the negative
+       range, then decay it by $061C (floor 0).  Magnitude >= $20 arms the lock-on indicator. */
+    uint8_t mag = (uint8_t)((uint16_t)v + mem[0x004D] + carryIn);
+    if (mag & 0x80) mag = 0x7F;                                       /* clamp negative -> $7F */
+    mag = (mag >= mem[0x061C]) ? (uint8_t)(mag - mem[0x061C]) : 0x00; /* decay, floor 0 */
+    mem[0x004D] = mag;
     {
-        uint8_t lo = lock_on_indicator_state;            /* a572 */
-        if (A >= 0x20) {                                 /* a574 */
-            if (!(lo & 0x80)) lo = 0x80;                 /* a578: arm lock-on */
-        } else {
-            if (lo == 0x80) lo = 0x00;                   /* a580: disarm */
-        }
-        lock_on_indicator_state = lo;                    /* a586 */
+        uint8_t ind = lock_on_indicator_state;
+        if (mag >= 0x20) { if (!(ind & 0x80)) ind = 0x80; }          /* arm   */
+        else             { if (ind == 0x80)   ind = 0x00; }          /* disarm */
+        lock_on_indicator_state = ind;
     }
     if (game_state != 0 && level_stage >= 0x06           /* a588-a591 */
         && (uint8_t)(level_stage - 0x06) >= bus_read(0xD20A))   /* a593 */
