@@ -3962,7 +3962,8 @@ static inline SubPt subdiv_midpoint(SubPt span, SubPt far, uint8_t *M) {
     return mid;
 }
 
-void terrain_subdivide_column_core(uint8_t startDepth, uint8_t rasterEntryDepth) {
+/* Returns the final recursion depth (the 6502 left it in X); callers that care put it in cpu.X. */
+uint8_t terrain_subdivide_column_core(uint8_t startDepth, uint8_t rasterEntryDepth) {
     TDCNT(g_tdSubdivCalls);
     /* Non-volatile alias for the sub-point stacks (main-RAM scratch the flight VBI never touches)
        so the compiler may cache/forward across the recursion; writes land at the same addresses
@@ -3983,7 +3984,7 @@ void terrain_subdivide_column_core(uint8_t startDepth, uint8_t rasterEntryDepth)
     const uint8_t farHi  = (uint8_t)(far0.colHi ^ 0x80); mem[0x00B5] = farHi;
     const uint8_t spanHi = (uint8_t)(span.colHi ^ 0x80);
     if (spanHi > farHi || (spanHi == farHi && span.colLo >= far0.colLo)) {
-        cpu.X = (uint8_t)depth; return;                   /* span >= far endpoint -> done */
+        return (uint8_t)depth;                            /* span >= far endpoint -> done */
     }
     budget = 0x14;
 
@@ -4086,13 +4087,14 @@ void terrain_subdivide_column_core(uint8_t startDepth, uint8_t rasterEntryDepth)
     }
 
 out:
-    /* Flush the register-resident span + midpoint back to ZP (byte-identical residue) and return
-       the recursion depth (cpu.X) and the remaining budget ($9F, via draw_row_bottom). */
+    /* Flush the register-resident span + midpoint back to ZP (byte-identical residue), stash the
+       remaining budget ($9F, via draw_row_bottom), and return the recursion depth. */
     dl_ptr_hi = span.colLo; screen_ptr_lo = span.colHi; screen_ptr_hi = span.hgtLo;
     encounter_count = span.hgtHi; row_count = span.frac;
     step_mode_flag = mid.colLo; mem[0x008E] = mid.colHi; sfx_toggle_8F = mid.hgtLo;
     sfx_reinit_gate = mid.hgtHi; altitude_threshold = mid.frac;
-    cpu.X = (uint8_t)depth; draw_row_bottom = budget;
+    draw_row_bottom = budget;
+    return (uint8_t)depth;
 }
 #undef SUBPT_COL_LO
 #undef SUBPT_COL_HI
@@ -4100,7 +4102,7 @@ out:
 #undef SUBPT_HGT_HI
 #undef SUBPT_FRAC
 /* 6502-ABI shim: entry cpu.X = start depth, cpu.Y = the rasterizer's start depth. */
-void terrain_subdivide_column(void) { terrain_subdivide_column_core(cpu.X, cpu.Y); }
+void terrain_subdivide_column(void) { cpu.X = terrain_subdivide_column_core(cpu.X, cpu.Y); }
 
 /* terrain_jitter_column @ $A613 — per-frame random terrain/object jitter (2+1 RANDOM).
  *
