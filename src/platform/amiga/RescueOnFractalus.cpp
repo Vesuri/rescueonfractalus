@@ -826,13 +826,6 @@ void RescueOnFractalus::renderFlightDirect()
     Bitmap* const back = (flightDisplayed == terrainBitmapBack) ? terrainBitmap : terrainBitmapBack;
     uint8_t* const bp = (uint8_t*)back->data;
 
-    // Which terrain field half to read (set by game_main_loop before each ds_frame): 0 =
-    // display half (offset 0, pass 2), 1 = back half (offset $30, pass 1).  Each mode-D row is
-    // 96 bytes = two 48-byte double-buffer halves; the silhouette ($260E, plane1 sky) is
-    // column-indexed and already holds the just-rendered pass, so only the field-sourced plane2
-    // dots + the windscreen band shift by the half offset.  (Atari showed both halves alternately.)
-    const unsigned fieldHalf = g_flightRenderHalf ? 0x30u : 0x00u;
-
 #ifdef ROF_FLIGHT_PROBE
     extern volatile unsigned long g_fdClear, g_fdEdge, g_fdFill, g_fdScan,
                                   g_fdBand, g_fdCalls, g_fdScanRows;
@@ -844,42 +837,23 @@ void RescueOnFractalus::renderFlightDirect()
 #endif
 
     // The blits below run on the Amiga blitter while the 68000 keeps working; we only
-    // blitterWait() at the point where the CPU actually needs the blit's result.  Two
-    // independent CPU passes are scheduled to overlap their blits:
-    //   - clear (plane1+2+3 rows 0-42)  ||  the windscreen-band convert (rows 43-46: different
-    //     scanlines, so the clear never touches them);
-    //   - sky fill (plane1 rows 0-42)   ||  the plane2 dot scan (plane2 only: the fill reads/
-    //     writes plane1, the scan writes plane2 at byte +40 — disjoint addresses).
-    // The edge plot DOES depend on the clear (it ORs into freshly-zeroed plane1), so it alone
-    // sits behind a blitterWait.
+    // blitterWait() at the point where the CPU actually needs the blit's result.  The sky fill
+    // (plane1 rows 0-41) is kicked and only waited on just before the flip.  The edge plot DOES
+    // depend on the clear (it ORs into freshly-zeroed plane1), so it sits behind a blitterWait.
 
-    // The back buffer's terrain rows (0-42) were cleared by a blitter clear KICKED right after
-    // the previous frame's vblank (flightKickBackClear), so the clear overlapped the terrain
-    // draw that just ran into mem[] (the draw is ~1630 beam ticks; the clear ~11) — the Amiga
-    // equivalent of the Atari clearing the off-screen half while the on-screen half is shown.
-    // Just wait for it here.  First flight frame (nothing kicked, or a buffer mismatch): clear
-    // inline.  The vertical fill below is ALSO a blit into this buffer, so the single blitter
-    // forces this clear to finish before the edge OR / fill begins.
-    if (flightClearPending != back) AmigaHardware::blitterClear((uint16_t*)bp, 60, 43, 0);
+    // The back buffer's terrain rows were cleared by a blitter clear KICKED right after the
+    // previous frame's vblank (flightKickBackClear), so the clear overlapped the terrain draw
+    // that just ran into mem[] — the Amiga equivalent of the Atari clearing the off-screen half
+    // while the on-screen half is shown.  Just wait for it here.  First flight frame (nothing
+    // kicked, or a buffer mismatch): clear inline.  The clear spans all 47 rows (0-46): the
+    // terrain viewport (0-42) AND the windscreen-bottom band (43-46), which is now left BLANK —
+    // the mode-D field + its per-frame convert were shed (dots come straight from the plane2
+    // rasterizer, sky from $260E), so there is no field to source the band from.  TODO: restore
+    // the windscreen-bottom band (cockpit-frame corners) without the mode-D field.
+    if (flightClearPending != back) AmigaHardware::blitterClear((uint16_t*)bp, 60, 47, 0);
     AmigaHardware::blitterWait();
     flightClearPending = nullptr;
     FD_LAP(g_fdClear);
-
-    // Windscreen-bottom band (scanlines 43-46): 4-row mode-D convert from mem[$1074+] (rows 43-46
-    // are outside the cleared region, so the band is fully written regardless of the clear).
-    {
-        const uint8_t* srow = (const uint8_t*)mem + 0x1074 + fieldHalf + 43 * 96;
-        uint8_t* vrow = bp + 43 * 120;
-        for (int row = 0; row < 4; row++, srow += 96, vrow += 120) {
-            const uint8_t* s = srow;
-            uint8_t* d1 = vrow; uint8_t* d2 = vrow + 40; uint8_t* d3 = vrow + 80;
-            for (int b = 0; b < 40; b++) {
-                uint8_t v = *s++;
-                *d1++ = kModeDP1[v]; *d2++ = kModeDP2[v]; *d3++ = 0;
-            }
-        }
-    }
-    FD_LAP(g_fdBand);
 
     // Edge plot: ONE plane1 bit per column at its skyline scanline (160 byte-ORs).  colp is the
     // plane1 byte for the current 4-column group at row 0; it advances +1 every 4 columns (no
@@ -934,7 +908,7 @@ void RescueOnFractalus::flightKickBackClear()
 {
     if (!rsFlight || !terrainBitmap || !terrainBitmapBack || !flightDisplayed) return;
     Bitmap* const back = (flightDisplayed == terrainBitmapBack) ? terrainBitmap : terrainBitmapBack;
-    AmigaHardware::blitterClear((uint16_t*)back->data, 60, 43, 0);   // terrain rows 0-42, 3 planes
+    AmigaHardware::blitterClear((uint16_t*)back->data, 60, 47, 0);   // all 47 rows: viewport 0-42 + blanked band 43-46
     flightClearPending = back;
     // The upcoming terrain draw (rof_native.c) ORs its dots straight into this buffer's plane2
     // (+40 = plane2 of an interleaved 120-byte scanline), replacing renderFlightDirect's old

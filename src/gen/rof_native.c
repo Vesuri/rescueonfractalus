@@ -96,8 +96,21 @@ extern void rof_flight_wait_dotclear(void);
             /* skips the per-frame reset floor (h=$67/$6b -> scanline 43..47, below the viewport) */ \
             g_flightDotPlane[kRow120[_sc] + (_ac >> 2)] |= kColMask4[_ac & 3]; \
         } } } while (0)
+/* Amiga sheds the mode-D field entirely: the dots come from ROF_PLOT_DOT (plane2) and the sky
+ * from $260E (blitterFillUp), so nothing reads the field — fill_terrain_silhouette is skipped and
+ * the windscreen band is blanked (see game_main_loop + renderFlightDirect).  So the rasterizer's
+ * per-plot field write is dead here; drop it (one scattered volatile RMW per plot, in the hottest
+ * loop) and leave rowLo/rowHi at their entry values (only the dropped field write used them). */
+#define ROF_FIELD_PLOT(h) ((void)0)
 #else
 #define ROF_PLOT_DOT(col, h) ((void)0)
+/* SDL/validate: OR the value-2 pixel into the mode-D field (the dots source SDL decodes, and the
+ * surface fill_terrain_silhouette scans).  rowLo/rowHi are left in $80/$81 via WB() (faithful). */
+#define ROF_FIELD_PLOT(h) do { \
+    rowLo = M[0x28CA + (h)]; rowHi = M[0x28FA + (h)]; \
+    uint16_t _a = (uint16_t)(rowLo | (rowHi << 8)) + M[MEM_terrain_col_byte_offset + plotCol]; \
+    M[_a] |= M[MEM_terrain_col_pixel_mask + plotCol]; \
+} while (0)
 #endif
 
 /* Flight terrain double-buffer: which field half renderFlightDirect should display.
@@ -3812,9 +3825,7 @@ void terrain_column_rasterize_core(uint8_t entryDepth, uint8_t colBase) {
             COL_MAX(plotCol) = _h; \
             if (_h >= 0x97) { COL_MAX(plotCol) = 0xFF; _h = 0x97; } \
             TDCNT(g_tdPlots); b5 = depth; \
-            rowLo = M[0x28CA + _h]; rowHi = M[0x28FA + _h]; \
-            uint16_t _a = (uint16_t)(rowLo | (rowHi << 8)) + M[MEM_terrain_col_byte_offset + plotCol]; \
-            M[_a] |= M[MEM_terrain_col_pixel_mask + plotCol]; \
+            ROF_FIELD_PLOT(_h); /* SDL/validate: OR value-2 into the mode-D field (the dots source) */ \
             ROF_PLOT_DOT(plotCol, _oldMax); /* Amiga: lag-plot the PREVIOUS top into plane2 (see below) */ \
         } } while(0)
 
@@ -7332,7 +7343,13 @@ void game_main_loop(void) {
     FP_TIME(terrain_frame_setup(), g_fSetup);
     FP_TIME(clear_terrain_column_core(0x33), g_fClear);
     FP_TIME(terrain_draw_frame_core(0x30), g_fDraw);
+#ifndef ROF_PLATFORM_AMIGA
+    /* Builds the mode-D field's sky + dot texture (the SDL display + the silhouette scan).  On the
+       Amiga nothing reads the field (dots->plane2, sky->$260E, band blanked), so it is skipped —
+       its ZP residue ($80/$81/$95/$96) is overwritten by the next terrain_frame_setup / control-
+       point rebuild before any read.  See ROF_FIELD_PLOT + renderFlightDirect. */
     FP_TIME(fill_terrain_silhouette_core(0x33), g_fColl);
+#endif
     /* Display pass 1's BACK half (offset $30).  This is the second shown frame per iteration —
        on the Atari both halves alternate on screen; here we render+show each as it completes, so
        neither pass is dropped (smoother motion, ~2x displayed framerate). */
@@ -7362,7 +7379,9 @@ void game_main_loop(void) {
     terrain_frame_setup();
     clear_terrain_column_core(0x03);
     terrain_draw_frame_core(0x00);
-    fill_terrain_silhouette_core(0x03);
+#ifndef ROF_PLATFORM_AMIGA
+    fill_terrain_silhouette_core(0x03);   /* Amiga: skipped — see PASS 1 note */
+#endif
     LDA(game_state);
     if (!cpu.Z) {                        /* L_3f0e: keep pilot_state when game_state != 0 */
         pilot_state = cpu.A;
