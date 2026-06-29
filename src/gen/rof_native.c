@@ -4601,8 +4601,23 @@ void fill_terrain_silhouette_core(uint8_t startCol) {
             p += 0x60;
         }
         /* Waterfall $55 (sky) into rows k-1..1.  The scan left p AT row k (or row $30 if none),
-         * so step it back down by $60 — reuse it, still no multiply. */
-        for (int i = k - 1; i >= 1; i--) { p -= 0x60; *p = 0x55; }
+         * so step it back down by $60 — reuse it, still no multiply.
+         *
+         * On the Amiga only the bottom 4 rows (waterfall rows 44-47) are ever read back, so the
+         * fill stops at row 44 there.  renderFlightDirect builds the main viewport's sky plane
+         * from $260E (blitterFillUp) and its plane2 dot scan skips sky bytes ($55 & $AA == 0,
+         * identical to the 0 clear_terrain_column already wrote), so rows 1..43 of this fill feed
+         * nothing on screen.  The lone reader is the windscreen-bottom band convert (scanlines
+         * 172-179): it decodes field rows 43-46, which — via the $1074-vs-$1010 base skew of
+         * 100 = 1 row + 4 bytes — are exactly THESE waterfall rows 44-47.  So when the skyline
+         * descends into the band (k>=45) those corner cells must hold $55 to show sky, not the
+         * cleared 0 (black).  The full fill is kept for SDL so make validate stays mem[]-identical. */
+#ifdef ROF_PLATFORM_AMIGA
+        const int wf_lo = 44;       /* band rows 44-47 only — the sole cells read back */
+#else
+        const int wf_lo = 1;        /* faithful full above-surface sky fill (validation oracle) */
+#endif
+        for (int i = k - 1; i >= wf_lo; i--) { p -= 0x60; *p = 0x55; }
 
         /* Column body fill, walking a pointer down by $60 via the row_base[k] pointer tables,
          * ORing terrain_fill_or_mask until terrain_fill_chain_mask[v] & the running mask = 0. */
