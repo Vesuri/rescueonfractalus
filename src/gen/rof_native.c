@@ -52,9 +52,16 @@ extern volatile unsigned long g_isrBeamLines;
 /* terrain-draw shape counters: how often the hot inner ops run (see rof_native_amiga.cpp). */
 #ifdef ROF_TDRAW_PROF
 extern unsigned long g_tdMidpoints, g_tdPlots, g_tdRasterCalls, g_tdSubdivCalls;
+extern unsigned long g_tdRaster;          /* beam ticks spent inside terrain_column_rasterize (subset of g_tdSubdiv) */
+extern unsigned short rof_beam_line(void);
 #define TDCNT(c) (++(c))
+/* bracket a statement, accumulating its raster-beam-line span (mod 313) into acc */
+#define TDSPAN(stmt, acc) do { unsigned short _b0 = rof_beam_line(); stmt; \
+    unsigned short _b1 = rof_beam_line(); \
+    (acc) += (_b1 >= _b0) ? (unsigned long)(_b1 - _b0) : (unsigned long)(_b1 + 313 - _b0); } while (0)
 #else
 #define TDCNT(c) ((void)0)
+#define TDSPAN(stmt, acc) do { stmt; } while (0)
 #endif
 
 /* Flight terrain double-buffer: which field half renderFlightDirect should display.
@@ -4059,7 +4066,7 @@ void terrain_subdivide_column(void) {
                WB — flush the hoisted span before the call, reload the three it rewrites after
                ($83/$85 it never touches, so those registers stay valid). */
             dl_ptr_hi=s82; screen_ptr_lo=s83; screen_ptr_hi=s84; encounter_count=s85; row_count=s86;
-            cpu.X = (uint8_t)xi; terrain_column_rasterize();   /* b2a7 (uses cpu.X, cpu.Y) */
+            cpu.X = (uint8_t)xi; TDSPAN(terrain_column_rasterize(), g_tdRaster);   /* b2a7 (uses cpu.X, cpu.Y) */
             s82 = dl_ptr_hi; s84 = screen_ptr_hi; s86 = row_count;
         }
         /* b2aa */
