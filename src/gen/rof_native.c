@@ -4176,28 +4176,26 @@ out:
 /* 6502-ABI shim: entry cpu.X = start depth, cpu.Y = the rasterizer's start depth. */
 void terrain_subdivide_column(void) { cpu.X = terrain_subdivide_column_core(cpu.X, cpu.Y); }
 
-/* terrain_jitter_column @ $A613 — per-frame random terrain/object jitter (2+1 RANDOM).
+/* terrain_jitter_column @ $A613 — add a small random wobble to the active object's position.
  *
- * $2829 = RANDOM + RANDOM (with the add's carry rolled into $0068, EOR'd $FF when
- * the ship column $0064 >= $6C); $282C = RANDOM - $80 with $0069 = -1 on borrow
- * (a signed offset).  Tail-calls the empty terrain_plot_return.
- * Contract: memory.  Reads POKEY RANDOM (harness seeds it identically per run).
- */
+ * Writes two random jitter offsets (3 POKEY RANDOM reads total):
+ *   - {$0068:$2829} = RANDOM + RANDOM; the add's carry forms the high byte, inverted when the
+ *     ship is in the near half of the column range (object_pos_x_lo < $6C) — a signed X wobble.
+ *   - {$0069:$282C} = RANDOM - $80, sign-extended (high byte $FF when the result is negative)
+ *     — a signed Y wobble centred on 0.
+ * Contract: memory only.  Reads POKEY RANDOM (the harness seeds it identically per run); no
+ * hardware writes (the original's tail RTS at terrain_plot_return is a no-op and dropped). */
 void terrain_jitter_column(void) {
-    uint8_t A, c, Y;
-    c = 0; A = bus_read(0xD20A);                          /* CLC; LDA $D20A */
-    { uint16_t t = (uint16_t)A + bus_read(0xD20A) + c; c = (uint8_t)(t >> 8); A = (uint8_t)t; }  /* ADC $D20A */
-    mem[0x2829] = A;
-    A = c;                                                /* LDA #0; ROL A -> A = carry */
-    if (object_pos_x_lo < 0x6C) A ^= 0xFF;                    /* LDY $64; CPY #$6C; BCS skip; EOR #$FF when <$6C */
-    mem[0x0068] = A;
+    uint8_t r1 = bus_read(0xD20A);
+    uint8_t r2 = bus_read(0xD20A);
+    uint16_t sum = (uint16_t)r1 + r2;
+    mem[0x2829] = (uint8_t)sum;
+    uint8_t carry = (uint8_t)(sum >> 8);
+    mem[0x0068] = (object_pos_x_lo < 0x6C) ? (uint8_t)(carry ^ 0xFF) : carry;
 
-    c = 1; Y = 0x00; A = bus_read(0xD20A);                /* SEC; LDY #0; LDA $D20A */
-    { uint16_t t = (uint16_t)A + (uint8_t)~0x80 + c; c = (uint8_t)(t >> 8); A = (uint8_t)t; }  /* SBC #$80 */
-    if (!c) Y = (uint8_t)(Y - 1);                         /* BCS skip; DEY (borrow -> -1) */
-    mem[0x0069] = Y;
-    mem[0x282C] = A;
-    terrain_plot_return();
+    uint8_t r3 = bus_read(0xD20A);
+    mem[0x282C] = (uint8_t)(r3 - 0x80);
+    mem[0x0069] = (r3 < 0x80) ? 0xFF : 0x00;
 }
 
 /* terrain_frame_setup @ $9E54 — terrain view-transform setup (flight top #2).

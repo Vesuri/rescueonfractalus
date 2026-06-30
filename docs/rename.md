@@ -200,3 +200,10 @@ Per-frame terrain view-transform: builds the per-column projection vectors from 
 - `$00B4` → `proj_setup_scratch` ? — = (vbi_flags&0x0F) | $B5; written once, dead within the fn.
 - `$00B5`/`$00B6` → loop-1 cell-pattern / column-high-nibble scratch (b5/b6); $B5 reused in loop 2
   to stash the scan index.
+
+**`terrain_jitter_column` ($A613) — unnamed memory (found during the clean-C rewrite):**
+- `$2829`/`$0068` and `$282C`/`$0069` → `obj_jitter_x_*` / `obj_jitter_y_*` ? — the random
+  horizontal/vertical jitter offsets it writes (same cells the flight_control_integrate
+  obj-accumulators feed; see that section's `obj_accum_*`).
+- `$A63A` `terrain_plot_return` is an empty RTS (a shared return target), not a real callee —
+  the clean rewrite drops the no-op tail call.
