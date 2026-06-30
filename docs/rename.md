@@ -183,3 +183,20 @@ Per-object world->screen projection; X = object/column index into these 22-entry
   half-2 output ($272D = $270E+$1F; indexed by half-1 X >> 3 when half-1 hi byte is 0).
 - `$00B5` → `proj_fold_scratch` ? — fold high-byte scratch (= projection magnitude >> 8); in the
   contract but dead after return. ($AE/$AF/$B0/$B1/$B2 are divide_16x16 scratch, already excluded.)
+
+**`terrain_frame_setup` ($9E54) — unnamed memory (found during the clean-C rewrite):**
+Per-frame terrain view-transform: builds the per-column projection vectors from the cell map.
+- `$22A3`/`$22D1` and `$22FF`/`$232D` → `obj_num1_in_lo/hi[]` / `obj_divisor_in_lo/hi[]` ? — the
+  INPUT column vectors (offset -1 from the $22A4/$2300 outputs project_terrain_points consumes);
+  built by build_view_transform_matrix, rotated/translated per cell into the $22A4.. outputs.
+- `$2276` → `obj_col_index[]` ? — per-column height-map index ((X&0x0F)|b6) stored for later use.
+- `$23B5` → `obj_height_sample[]` ? — per-column terrain height read from $0900[index].
+- `$0900` → `terrain_height_map` ? — 16x16 (256-byte) height grid sampled here and by $9A36.
+- `$B67C` → `obj_draw_order[]` ? — 12-entry object draw-order list walked by loop 2.
+- `$28DB` → `collapse_cur_obj` ? — current object index saved across the pair-collapse in loop 2.
+- `$00A0`-`$00A3` (named draw_iter_count/scroll_accum_b0..b2) are DUAL-USED here as the
+  view-transform rotation vector {rot_a=$A1:$A0, rot_b=$A3:$A2} — the mem.h names are misleading
+  in this context; consider a union/overlay name.
+- `$00B4` → `proj_setup_scratch` ? — = (vbi_flags&0x0F) | $B5; written once, dead within the fn.
+- `$00B5`/`$00B6` → loop-1 cell-pattern / column-high-nibble scratch (b5/b6); $B5 reused in loop 2
+  to stash the scan index.

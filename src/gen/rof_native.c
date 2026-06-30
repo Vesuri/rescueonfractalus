@@ -4200,247 +4200,174 @@ void terrain_jitter_column(void) {
     terrain_plot_return();
 }
 
-/* terrain_frame_setup @ $9E54 — terrain/level generation step 1 (flight top #2).
+/* terrain_frame_setup @ $9E54 — terrain view-transform setup (flight top #2).
  *
- * Calls native setup_projection_params + build_view_transform_matrix, then runs
- * two loops over the per-column transform tables ($22A3/$22D1/$22FF/$232D etc.):
- *  - LOOP 1 (Y=0..$2C): per terrain map cell read via ($80),Y, rotate the cell's
- *    bit pattern ($B5) to pick one of six rotate/translate updates of the column
- *    vectors, derive the screen-X ($2388/$235B) and visibility class ($24B4).
- *  - LOOP 2 (Y=0..$0B): walk the object draw order $B67C[], collapse adjacent
- *    visible/hidden pairs (clear $232E/set $2300=$20/clear $24B4) per the class.
+ * Runs once per frame after setup_projection_params + build_view_transform_matrix (which
+ * fill the rotation vector $00A0-$00A3 and the input column vectors $22A3/$22D1/$22FF/$232D):
  *
- * Structured C, locals A/X/Y/c (op order preserved so carry threads as on the 6502);
- * X carries cross-iteration state
- * in loop 1 (rebuilt at $9FB9 as (X&$0F)|$B6).  Carry into the top ROL A chain and
- * into ROL $B5 is irrelevant (masked / discarded low bits) but threaded anyway.
- * Contract: memory only (the main flight loop reloads regs after the call).
- */
+ *  LOOP 1 (45 terrain cells): for each cell, a bit pattern selects how to rotate/translate
+ *  that column's two vectors — the screen-X numerator {$22D2:$22A4}[Y] and the depth divisor
+ *  {$232E:$2300}[Y] — by the view rotation ±(rot_a,rot_b), nudging the column's screen index.
+ *  It then derives the screen-Y numerator {$2388:$235B}[Y] from the sampled terrain height
+ *  minus the altitude term, and classifies the column's visibility into $24B4[Y]
+ *  ($80 off-screen, $40/$20 behind, $00 visible).  These arrays feed project_terrain_points.
+ *
+ *  LOOP 2 (object draw order $B67C[]): collapses adjacent visible/hidden object pairs,
+ *  clearing the hidden one's column ($232E=0, $2300=$20, $24B4=0) so it isn't drawn.
+ *
+ * The two divide-scratch carry chains and the build_view carry are dead/masked here, so this
+ * is plain 16-bit arithmetic.  Memory contract only (the flight loop reloads regs); no hardware. */
 void terrain_frame_setup(void) {
-    uint8_t A, X, Y, c;
-    #define ADC_(v)  do { uint16_t _t=(uint16_t)A+(uint8_t)(v)+c; c=(uint8_t)(_t>>8); A=(uint8_t)_t; } while(0)
-    #define SBC_(v)  ADC_((uint8_t)~(uint8_t)(v))
-    #define ROLA_()  do { uint8_t _n=A>>7; A=(uint8_t)((A<<1)|c); c=_n; } while(0)
-    #define LSRA_()  do { c=A&1; A=(uint8_t)(A>>1); } while(0)
-    #define ROLM_(a) do { uint8_t _v=mem[a],_n=_v>>7; mem[a]=(uint8_t)((_v<<1)|c); c=_n; } while(0)
-    #define RORM_(a) do { uint8_t _v=mem[a],_n=_v&1; mem[a]=(uint8_t)((_v>>1)|(c<<7)); c=_n; } while(0)
-    /* register-local rotate variants (operate on a uint8_t lvalue, not mem[]) — used to
-       keep the hot loop-1 ZP scratch $B5/$B6 in registers; see the 68000 perf notes. */
-    #define ROLL_(x) do { uint8_t _n=(uint8_t)(x)>>7; (x)=(uint8_t)(((uint8_t)(x)<<1)|c); c=_n; } while(0)
-    #define RORL_(x) do { uint8_t _n=(uint8_t)(x)&1; (x)=(uint8_t)(((uint8_t)(x)>>1)|(c<<7)); c=_n; } while(0)
-    uint8_t b5, b6;      /* loop-1 ZP scratch $B5/$B6 hoisted to registers (final value written back) */
-    uint16_t srcptr;     /* loop-1 ($80),Y base — constant across the loop */
+    setup_projection_params();
+    build_view_transform_matrix();
 
-    setup_projection_params();                           /* 9e54 */
-    build_view_transform_matrix();                       /* 9e57 */
-    c = cpu.C;
-    A = draw_row;                                     /* 9e5a */
-    if (!(A & 0x80)) {                                    /* 9e5c BMI -> else (bit7 set) */
-        ROLA_();                                         /* 9e5e */
-        if (A & 0x80) {                                  /* 9e5f BMI */
-            X = 0x4F; Y = 0xB6;                          /* 9e7f/9e81 */
-        } else {
-            mem[0x22A4] = mem[0x22A3];                   /* 9e61 (only bit7=0,bit6=0 path copies) */
+    /* draw_row's top two bits pick the cell-pattern source table ($B5xx/$B6xx) and the
+     * starting column screen index; only the 00 case seeds output column 0 from its input. */
+    uint8_t dr = draw_row;
+    uint8_t src_lo, src_hi;
+    if (!(dr & 0x80)) {
+        if (dr & 0x40) { src_lo = 0x4F; src_hi = 0xB6; }
+        else {
+            mem[0x22A4] = mem[0x22A3];           /* seed col-0 outputs from inputs */
             mem[0x22D2] = mem[0x22D1];
             mem[0x2300] = mem[0x22FF];
             mem[0x232E] = mem[0x232D];
-            X = 0x22; Y = 0xB6;                          /* 9e79/9e7b */
+            src_lo = 0x22; src_hi = 0xB6;
         }
-    } else {                                             /* 9e85 */
-        ROLA_();                                         /* 9e85 */
-        if (A & 0x80) {                                  /* 9e86 BMI */
-            X = 0xC8; Y = 0xB5;                          /* 9e8e/9e90 */
-        } else {
-            X = 0xF5; Y = 0xB5;                          /* 9e88/9e8a */
-        }
+    } else {
+        if (dr & 0x40) { src_lo = 0xC8; src_hi = 0xB5; }
+        else           { src_lo = 0xF5; src_hi = 0xB5; }
     }
-    /* 9e92 */
-    sync_flag = X; dl_ptr_lo = Y;                    /* 9e92/9e94 (ptr for ($80),Y) */
-    A = terrain_scroll_counter; ROLA_(); ROLA_(); ROLA_(); ROLA_(); /* 9e96-9e9b */
-    A &= 0xF0; b6 = A;                                   /* 9e9c/9e9e ($B6 → local across loop 1) */
-    A = vbi_flags; A &= 0x0F; X = A;                   /* 9ea0-9ea4 (TAX) */
-    A |= mem[0x00B5]; mem[0x00B4] = A;                   /* 9ea5/9ea7 */
+    sync_flag = src_lo; dl_ptr_lo = src_hi;
+    uint16_t srcptr = (uint16_t)(src_lo | (src_hi << 8));
 
-    srcptr = (uint16_t)(sync_flag | (dl_ptr_lo << 8));  /* ($80),Y base — constant in loop 1 */
-    /* Loop-1 invariants hoisted to locals (registers): the view-transform vector $00A0-$00A3
-       (built by build_view_transform_matrix above) and the altitude terms $008B/$008C are
-       READ ~4-8x/iteration across ~45 cells but never written in either loop, and the flight
-       VBI tree (flight_control_integrate/update_terrain_scanline_proj/sfx) writes none of them
-       — so they are stable for the duration.  See the 68000 perf notes (cache invariants). */
-    const uint8_t iA0 = draw_iter_count, iA1 = scroll_accum_b0, iA2 = scroll_accum_b1, iA3 = scroll_accum_b2;
-    const uint8_t i8B = dl_src_index, i8C = terrain_scroll_reload;
-    Y = 0x00;                                            /* 9ea9 */
-    do {                                                 /* L_9eab — per terrain cell */
-        A = mem[srcptr + Y];                             /* 9eab LDA ($80),Y (RAM table → mem[]) */
-        b5 = A;                                          /* 9ead ($B5 → local within the iteration) */
+    uint8_t b6 = (uint8_t)((terrain_scroll_counter & 0x0F) << 4);  /* column high-nibble base */
+    uint8_t X  = vbi_flags & 0x0F;                                 /* running column index */
+    mem[0x00B4] = (uint8_t)(X | mem[0x00B5]);                      /* (written once; dead here) */
 
-        /* Examine $B5 MSB-first (up to four ROL $B5) to pick one of six
-           rotate/translate updates of the column vectors.  The first two hits
-           continue into the 9f61 pair (E/F); later hits land directly at 9fb2. */
-        int via_9f61 = 0;
-        if (A & 0x80) {                                  /* 9eaf BPL -> else; case A */
-            A = b6; c = 0; ADC_(0xF0); b6 = A;          /* 9eb1-9eb6 */
-            c = 0; A = mem[0x22A3 + Y]; ADC_(iA0); mem[0x22A4 + Y] = A;  /* 9eb8-9ebe */
-            A = mem[0x22D1 + Y]; ADC_(iA1); mem[0x22D2 + Y] = A;         /* 9ec1-9ec6 */
-            c = 1; A = mem[0x22FF + Y]; SBC_(iA2); mem[0x2300 + Y] = A;  /* 9ec9-9ecf */
-            A = mem[0x232D + Y]; SBC_(iA3); mem[0x232E + Y] = A;         /* 9ed2-9ed7 */
-            via_9f61 = 1;                                /* 9eda goto 9f61 */
+    /* Loop-1 invariants: the view rotation vector {rot_a,rot_b} = $00A0-$00A3, and the
+     * altitude terms $008B/$008C — read many times per cell, written by neither loop. */
+    const uint16_t rot_a = (uint16_t)((scroll_accum_b0 << 8) | draw_iter_count);  /* {$A1:$A0} */
+    const uint16_t rot_b = (uint16_t)((scroll_accum_b2 << 8) | scroll_accum_b1);  /* {$A3:$A2} */
+    const uint8_t  alt_b = dl_src_index;          /* $8B */
+    const uint8_t  alt_c = terrain_scroll_reload; /* $8C */
+
+    uint8_t b5 = 0;                               /* loop-1 cell-pattern / low-byte scratch */
+    uint8_t Y = 0;
+    do {
+        /* Decode the cell's rotation pattern (MSB first) into a rotate/translate of this
+         * column's vectors u = {$22D2:$22A4}, v = {$232E:$2300}, and a ±1 column-index step. */
+        uint8_t pat = mem[srcptr + Y];
+        uint16_t in_u = (uint16_t)((mem[0x22D1 + Y] << 8) | mem[0x22A3 + Y]);
+        uint16_t in_v = (uint16_t)((mem[0x232D + Y] << 8) | mem[0x22FF + Y]);
+        uint16_t u = 0, v = 0;
+        int fired = 1;
+        if (pat & 0x80) {                         /* +rot_a / -rot_b, then maybe a 2nd step */
+            b6 = (uint8_t)(b6 + 0xF0);
+            u = (uint16_t)(in_u + rot_a); v = (uint16_t)(in_v - rot_b);
+            if      (pat & 0x40) { X--; u = (uint16_t)(u - rot_b); v = (uint16_t)(v - rot_a); }
+            else if (pat & 0x20) { X++; u = (uint16_t)(u + rot_b); v = (uint16_t)(v + rot_a); }
+        } else if (pat & 0x40) {                  /* -rot_a / +rot_b, then maybe a 2nd step */
+            b6 = (uint8_t)(b6 + 0x10);
+            u = (uint16_t)(in_u - rot_a); v = (uint16_t)(in_v + rot_b);
+            if      (pat & 0x20) { X--; u = (uint16_t)(u - rot_b); v = (uint16_t)(v - rot_a); }
+            else if (pat & 0x10) { X++; u = (uint16_t)(u + rot_b); v = (uint16_t)(v + rot_a); }
+        } else if (pat & 0x20) {                  /* -rot_b / -rot_a */
+            X--; u = (uint16_t)(in_u - rot_b); v = (uint16_t)(in_v - rot_a);
+        } else if (pat & 0x10) {                  /* +rot_b / +rot_a */
+            X++; u = (uint16_t)(in_u + rot_b); v = (uint16_t)(in_v + rot_a);
         } else {
-            ROLL_(b5);                                   /* 9edd */
-            if (b5 & 0x80) {                             /* 9edf BPL -> else; case B */
-                A = b6; c = 0; ADC_(0x10); b6 = A;      /* 9ee1-9ee6 */
-                c = 1; A = mem[0x22A3 + Y]; SBC_(iA0); mem[0x22A4 + Y] = A;  /* 9ee8-9eee */
-                A = mem[0x22D1 + Y]; SBC_(iA1); mem[0x22D2 + Y] = A;         /* 9ef1-9ef6 */
-                c = 0; A = mem[0x22FF + Y]; ADC_(iA2); mem[0x2300 + Y] = A;  /* 9ef9-9eff */
-                A = mem[0x232D + Y]; ADC_(iA3); mem[0x232E + Y] = A;         /* 9f02-9f07 */
-                via_9f61 = 1;                            /* 9f0a goto 9f61 */
-            } else {
-                ROLL_(b5);                               /* 9f0d */
-                if (b5 & 0x80) {                         /* 9f0f BPL -> else; case C */
-                    X = (uint8_t)(X - 1);                /* 9f11 DEX */
-                    c = 1; A = mem[0x22A3 + Y]; SBC_(iA2); mem[0x22A4 + Y] = A;  /* 9f12-9f18 */
-                    A = mem[0x22D1 + Y]; SBC_(iA3); mem[0x22D2 + Y] = A;         /* 9f1b-9f20 */
-                    c = 1; A = mem[0x22FF + Y]; SBC_(iA0); mem[0x2300 + Y] = A;  /* 9f23-9f29 */
-                    A = mem[0x232D + Y]; SBC_(iA1); mem[0x232E + Y] = A;         /* 9f2c-9f31 */
-                } else {
-                    ROLL_(b5);                           /* 9f37 */
-                    if (b5 & 0x80) {                     /* 9f39 BPL -> 9fb2; case D */
-                        X = (uint8_t)(X + 1);            /* 9f3b INX */
-                        c = 0; A = mem[0x22A3 + Y]; ADC_(iA2); mem[0x22A4 + Y] = A;  /* 9f3c-9f42 */
-                        A = mem[0x22D1 + Y]; ADC_(iA3); mem[0x22D2 + Y] = A;         /* 9f45-9f4a */
-                        c = 0; A = mem[0x22FF + Y]; ADC_(iA0); mem[0x2300 + Y] = A;  /* 9f4d-9f53 */
-                        A = mem[0x232D + Y]; ADC_(iA1); mem[0x232E + Y] = A;         /* 9f56-9f5b */
-                    }
-                }
-            }
+            fired = 0;                            /* pattern empty: leave column unchanged */
         }
-        if (via_9f61) {                                  /* L_9f61 (reached from case A/B) */
-            ROLL_(b5);                                   /* 9f61 */
-            if (b5 & 0x80) {                             /* 9f63 BPL -> else; case E */
-                X = (uint8_t)(X - 1);                    /* 9f65 DEX */
-                c = 1; A = mem[0x22A4 + Y]; SBC_(iA2); mem[0x22A4 + Y] = A;  /* 9f66-9f6c */
-                A = mem[0x22D2 + Y]; SBC_(iA3); mem[0x22D2 + Y] = A;         /* 9f6f-9f74 */
-                c = 1; A = mem[0x2300 + Y]; SBC_(iA0); mem[0x2300 + Y] = A;  /* 9f77-9f7d */
-                A = mem[0x232E + Y]; SBC_(iA1); mem[0x232E + Y] = A;         /* 9f80-9f85 */
-            } else {
-                ROLL_(b5);                               /* 9f8b */
-                if (b5 & 0x80) {                         /* 9f8d BPL -> 9fb2; case F */
-                    X = (uint8_t)(X + 1);                /* 9f8f INX */
-                    c = 0; A = mem[0x22A4 + Y]; ADC_(iA2); mem[0x22A4 + Y] = A;  /* 9f90-9f96 */
-                    A = mem[0x22D2 + Y]; ADC_(iA3); mem[0x22D2 + Y] = A;         /* 9f99-9f9e */
-                    c = 0; A = mem[0x2300 + Y]; ADC_(iA0); mem[0x2300 + Y] = A;  /* 9fa1-9fa7 */
-                    A = mem[0x232E + Y]; ADC_(iA1); mem[0x232E + Y] = A;         /* 9faa-9faf */
-                }
-            }
+        if (fired) {
+            mem[0x22A4 + Y] = (uint8_t)u; mem[0x22D2 + Y] = (uint8_t)(u >> 8);
+            mem[0x2300 + Y] = (uint8_t)v; mem[0x232E + Y] = (uint8_t)(v >> 8);
         }
 
-        /* 9fb2 — derive screen-X ($2388) and the $235B/$2276 columns */
-        c = 1; A = 0x00; SBC_(i8B); b5 = A;                   /* 9fb2-9fb7 */
-        A = X; A &= 0x0F; A |= b6; X = A;                     /* 9fb9-9fbe (TXA;AND;ORA;TAX) */
-        A = mem[0x0900 + X]; mem[0x23B5 + Y] = A;             /* 9fbf-9fc2 */
-        SBC_(i8C);                                            /* 9fc5 (carry from 9fb2 chain) */
-        if (c) {                                             /* 9fc7 BCC -> else */
-            LSRA_(); RORL_(b5); LSRA_(); RORL_(b5);          /* 9fc9-9fcd */
-            LSRA_(); RORL_(b5); LSRA_(); RORL_(b5);          /* 9fcf-9fd3 */
-        } else {
-            LSRA_(); RORL_(b5); LSRA_(); RORL_(b5);          /* 9fd8-9fdc */
-            LSRA_(); RORL_(b5); LSRA_(); RORL_(b5);          /* 9fde-9fe2 */
-            A ^= 0xF0;                                       /* 9fe4 */
-        }
-        /* 9fe6 */
-        mem[0x2388 + Y] = A;                                 /* 9fe6 */
-        A = b5; mem[0x235B + Y] = A;                          /* 9fe9-9feb */
-        A = X; mem[0x2276 + Y] = A;                          /* 9fee (TXA) */
+        /* Screen-Y numerator = (height[col] - alt_c : -alt_b) >> 4, high nibble flipped on
+         * borrow.  The column index combines the running low nibble with b6's high nibble. */
+        uint8_t y_lo = (uint8_t)(0u - alt_b);
+        int     no_borrow1 = (alt_b == 0);
+        X = (uint8_t)((X & 0x0F) | b6);
+        uint8_t h = mem[0x0900 + X];
+        mem[0x23B5 + Y] = h;
+        int     diff = (int)h - alt_c - (no_borrow1 ? 0 : 1);
+        uint8_t y_hi = (uint8_t)diff;
+        uint16_t pair = (uint16_t)((((uint16_t)y_hi << 8) | y_lo) >> 4);
+        uint8_t r_hi = (uint8_t)(pair >> 8);
+        b5 = (uint8_t)pair;                       /* the 6502 leaves the shifted low byte in $B5 */
+        if (diff < 0) r_hi ^= 0xF0;
+        mem[0x2388 + Y] = r_hi;
+        mem[0x235B + Y] = b5;
+        mem[0x2276 + Y] = X;
 
-        /* visibility class -> $24B4 (one of $80/$40/$20/$00) */
+        /* Visibility class for project_terrain_points: compare |screen-X| against depth. */
+        uint8_t v_hi = mem[0x232E + Y];
         uint8_t cls;
-        A = mem[0x232E + Y];                                 /* 9ff2 */
-        if (A & 0x80) {                                      /* 9ff5 BMI */
-            cls = 0x80;                                      /* a03b */
-        } else if (A == 0 && mem[0x2300 + Y] < 0x20) {       /* 9ff7 BNE / 9ffc CMP #$20; BCC */
-            cls = 0x80;                                      /* a03b */
+        if (v_hi & 0x80) {
+            cls = 0x80;                           /* depth negative -> off-screen */
+        } else if (v_hi == 0 && mem[0x2300 + Y] < 0x20) {
+            cls = 0x80;                           /* too close -> off-screen */
         } else {
-            /* a000 */
-            A = mem[0x22D2 + Y];                             /* a000 */
-            if (A & 0x80) {                                  /* a003 BPL -> else */
-                A = 0x00; c = 1; SBC_(mem[0x22A4 + Y]); b5 = A;  /* a005-a00b */
-                A = 0x00; SBC_(mem[0x22D2 + Y]);             /* a00d-a00f */
-                uint8_t m = mem[0x232E + Y];                 /* a012 CMP $232E,Y */
-                if (A < m) cls = 0x00;                       /* a015 BCC -> a037 */
-                else if (A != m) cls = 0x40;                 /* a017 BNE -> a020 */
-                else cls = (b5 < mem[0x2300 + Y]) ? 0x00 : 0x40;  /* a019-a01e / a020 */
-            } else {
-                /* a024 (A = $22D2,Y) */
-                uint8_t m = mem[0x232E + Y];                 /* a024 CMP $232E,Y */
-                if (A < m) cls = 0x00;                       /* a027 BCC -> a037 */
-                else if (A != m) cls = 0x20;                 /* a029 BNE -> a033 */
-                else cls = (mem[0x22A4 + Y] < mem[0x2300 + Y]) ? 0x00 : 0x20;  /* a02b-a031 / a033 */
+            uint8_t u_hi = mem[0x22D2 + Y];
+            if (u_hi & 0x80) {                    /* screen-X negative: classify by |u| vs v */
+                uint16_t nu = (uint16_t)(0u - (uint16_t)(((uint16_t)u_hi << 8) | mem[0x22A4 + Y]));
+                b5 = (uint8_t)nu;
+                uint8_t nu_hi = (uint8_t)(nu >> 8);
+                if      (nu_hi <  v_hi) cls = 0x00;
+                else if (nu_hi != v_hi) cls = 0x40;
+                else cls = ((uint8_t)nu < mem[0x2300 + Y]) ? 0x00 : 0x40;
+            } else {                              /* screen-X positive */
+                if      (u_hi <  v_hi) cls = 0x00;
+                else if (u_hi != v_hi) cls = 0x20;
+                else cls = (mem[0x22A4 + Y] < mem[0x2300 + Y]) ? 0x00 : 0x20;
             }
         }
-        /* a03d */
-        mem[0x24B4 + Y] = cls;                               /* a03d */
-        Y = (uint8_t)(Y + 1);                                /* a040 INY */
-    } while (Y != 0x2D);                                     /* a041 CPY #$2D; a043 BEQ a048 */
+        mem[0x24B4 + Y] = cls;
+        Y++;
+    } while (Y != 0x2D);
 
-    /* Loop 1 done — flush the register-held ZP scratch to its final memory value (the
-       6502 oracle leaves the last iteration's $B5/$B6 there; loop 2 reuses $B5 below). */
+    /* Persist the last cell's scratch (the 6502 leaves it in $B5/$B6; loop 2 reuses $B5). */
     mem[0x00B5] = b5;
     mem[0x00B6] = b6;
 
-    /* a048 — walk the object draw order $B67C[], collapsing visible/hidden pairs */
-    Y = 0x00;                                                /* a048 */
-    for (;;) {                                               /* L_a04a */
-        X = mem[0xB67C + Y];                                 /* a04a LDX $B67C,Y */
-        mem[0x28DB] = X;                                     /* a04d */
-        Y = (uint8_t)(Y + 1);                                /* a050 INY */
-        A = mem[0x24B4 + X];                                 /* a051 */
+    /* Loop 2: walk the object draw order, collapsing adjacent visible/hidden pairs. */
+    uint8_t y2 = 0;
+    for (;;) {
+        uint8_t obj = mem[0xB67C + y2];
+        mem[0x28DB] = obj;
+        y2++;
+        uint8_t cls = mem[0x24B4 + obj];
 
-        int do_a079 = 0, do_a09a = 0;
-        if (A & 0x80) {                                      /* a054 BMI -> a079 */
-            do_a079 = 1;
-        } else if (A != 0) {                                 /* a056 BNE -> a09a */
-            do_a09a = 1;
-        } else {
-            X = mem[0xB67C + Y];                             /* a058 */
-            Y = (uint8_t)(Y + 1);                            /* a05b INY */
-            A = mem[0x24B4 + X];                             /* a05c */
-            if (A & 0x80) {                                  /* a05f BPL -> a09b (skip) */
-                mem[0x00B5] = Y;                             /* a061 STY $B5 */
-                Y = mem[0x28DB];                             /* a063 */
-                mem[0x232E + X] = 0x00;                      /* a066-a068 */
-                mem[0x2300 + X] = 0x20;                      /* a06b-a06d */
-                mem[0x24B4 + X] = 0x00;                      /* a070-a072 */
-                Y = mem[0x00B5];                             /* a075 */
-                if (Y == 0) do_a079 = 1;                     /* a077 BNE -> a09b; else fall to a079 */
+        int check_following = 0, extra_step = 0;
+        if (cls & 0x80) {                         /* current off-screen */
+            check_following = 1;
+        } else if (cls != 0) {                    /* current partially behind */
+            extra_step = 1;
+        } else {                                  /* current fully visible */
+            uint8_t nxt = mem[0xB67C + y2];
+            y2++;
+            if (mem[0x24B4 + nxt] & 0x80) {        /* next off-screen -> hide the next object */
+                mem[0x00B5] = y2;
+                mem[0x232E + nxt] = 0x00; mem[0x2300 + nxt] = 0x20; mem[0x24B4 + nxt] = 0x00;
+                y2 = mem[0x00B5];
+                if (y2 == 0) check_following = 1;
             }
         }
-        if (do_a079) {                                       /* L_a079 */
-            X = mem[0xB67C + Y];                             /* a079 */
-            Y = (uint8_t)(Y + 1);                            /* a07c INY */
-            A = mem[0x24B4 + X];                             /* a07d */
-            if (A == 0) {                                    /* a080 BNE -> a09b (skip) */
-                mem[0x00B5] = Y;                             /* a082 STY $B5 */
-                Y = mem[0x28DB];                             /* a084 */
-                mem[0x232E + Y] = 0x00;                      /* a087-a089 (indexed by Y=$28DB) */
-                mem[0x2300 + Y] = 0x20;                      /* a08c-a08e */
-                mem[0x24B4 + Y] = 0x00;                      /* a091-a093 */
-                Y = mem[0x00B5];                             /* a096 */
-                if (Y == 0) do_a09a = 1;                     /* a098 BNE -> a09b; else fall to a09a */
+        if (check_following) {
+            uint8_t nxt = mem[0xB67C + y2];
+            y2++;
+            if (mem[0x24B4 + nxt] == 0) {          /* next visible -> hide the current object */
+                mem[0x00B5] = y2;
+                uint8_t prev = mem[0x28DB];
+                mem[0x232E + prev] = 0x00; mem[0x2300 + prev] = 0x20; mem[0x24B4 + prev] = 0x00;
+                y2 = mem[0x00B5];
+                if (y2 == 0) extra_step = 1;
             }
         }
-        if (do_a09a) Y = (uint8_t)(Y + 1);                   /* L_a09a INY */
-        /* a09b */
-        if (Y >= 0x0C) return;                               /* a09b CPY #$0C; a09d BCS a0a2 */
-    }                                                        /* a09f goto a04a */
-
-    #undef ADC_
-    #undef SBC_
-    #undef ROLA_
-    #undef LSRA_
-    #undef ROLM_
-    #undef RORM_
-    #undef ROLL_
-    #undef RORL_
+        if (extra_step) y2++;
+        if (y2 >= 0x0C) return;
+    }
 }
 
 /* Project one signed axis for object/column X: ratio numerator/divisor -> screen coord.
