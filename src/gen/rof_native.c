@@ -5637,307 +5637,371 @@ void compute_obj_rel_angle_scale(void) {
     #undef SBC_
 }
 
-/* flight_control_integrate @ $8E5B — THE flight VBI root (the last transpiled fn on the
- * per-frame VBI path).  Reads the joystick (PORTA $D300) + throttle, integrates the
- * ship's pitch/roll/heading and 24-bit world position, clamps the angles, drives the
- * HUD/audio refresh + the per-object scratch ring rotation, and steps the active object
- * (load_velocity_from_param_block / object_step_and_collide).  Bounded loops only; reads
- * RANDOM $D20A.  Ported goto-faithfully (huge maze).  mem-only contract (reads no entry
- * regs/carry at $8e5b).  Native-call cpu setup: game_sub_55FC needs cpu.Y; draw_cockpit_dial_bar
- * / store_676_init need cpu.A; compute_obj_rel_angle_scale reads ENTRY CARRY ($90f8). */
+/* flight_control_integrate @ $8E5B — the master per-frame flight step (called from the
+ * in-flight VBI at $51B9).  In one pass it:
+ *   - reads the joystick (PORTA $D300) and derives this frame's pitch/roll rates;
+ *   - integrates the ship's pitch angle ($25/$26), roll/heading angle ($28/$29),
+ *     throttle ($2D/$2E), compass heading ($2885/$2886) and 24-bit world position
+ *     (world_x $2887, world_z $2889, depth $33/$34), clamping each to its legal range;
+ *   - refreshes the cockpit HUD / engine-sound fields;
+ *   - steps the currently-active world object and rolls the 7-frame attitude history ring
+ *     that delays the canopy-pillar / horizon geometry.
+ * It reads RANDOM ($D20A) for the throttle jitter and the lock-on countdown.  No entry
+ * registers/carry are read; the validation harness compares full mem[] against the
+ * transliterated $8E5B oracle (flight_control_integrate__t6502).
+ *
+ * No bus_write() here is a no-op on the Amiga — the only hardware touched is the two
+ * bus_read()s (PORTA joystick + POKEY RANDOM), both of which are real reads on Amiga. */
 static void flight_control_integrate_impl(void) {
-    uint8_t A, X, Y, c = 0, n, v;
-    #define ADC_(x) do { uint16_t _t=(uint16_t)A+(uint8_t)(x)+c; c=(uint8_t)(_t>>8); A=(uint8_t)_t; } while(0)
-    #define SBC_(x) ADC_((uint8_t)~(uint8_t)(x))
-    #define ASLA_() do { c=(uint8_t)(A>>7); A=(uint8_t)(A<<1); } while(0)
-    #define ROLA_() do { n=(uint8_t)(A>>7); A=(uint8_t)((A<<1)|c); c=n; } while(0)
-    #define RORA_() do { n=A&1; A=(uint8_t)((A>>1)|(c<<7)); c=n; } while(0)
-    #define LSRA_() do { c=A&1; A=(uint8_t)(A>>1); } while(0)
-    #define ROLM_(a) do { v=mem[a]; n=(uint8_t)(v>>7); mem[a]=(uint8_t)((v<<1)|c); c=n; } while(0)
-    #define RORM_(a) do { v=mem[a]; n=v&1; mem[a]=(uint8_t)((v>>1)|(c<<7)); c=n; } while(0)
-    #define ASLM_(a) do { v=mem[a]; c=(uint8_t)(v>>7); mem[a]=(uint8_t)(v<<1); } while(0)
+    /* ---- Steering: derive the roll rate (and a dial-based pitch trim) from the stick ----
+     * Only while joystick_saved==2 (active flight) and no colour-clear sweep in progress. */
+    if (joystick_saved == 0x02 && clear_colors_done_003E == 0) {
+        /* base trim from the cockpit dial index (carries dial bit1 into the +$20 add) */
+        pitch_velocity = (uint8_t)((dial_draw_index >> 2) + 0x20 + ((dial_draw_index >> 1) & 1));
+        uint8_t joy = bus_read(0xD300);                 /* PORTA, active-low direction bits */
+        if (!(joy & 0x04))      pitch_velocity ^= 0xFF; /* bit2 released -> invert trim */
+        else if (joy & 0x08)    pitch_velocity = 0x00;  /* bit3 -> zero trim */
 
-    if (joystick_saved != 0x02) goto L_8ec5;          /* 8e5b-8e5f */
-    if (clear_colors_done_003E != 0)    goto L_8ec5;          /* 8e61-8e63 */
-    A = dial_draw_index; LSRA_(); LSRA_(); ADC_(0x20); pitch_velocity = A;  /* 8e68-8e6e */
-    X = bus_read(0xD300);                          /* 8e70-8e73 */
-    if ((X & 0x04) == 0) { pitch_velocity ^= 0xFF; }  /* 8e74-8e7c */
-    else if (X & 0x08)   { pitch_velocity = 0x00; }   /* 8e81-8e88 */
-    /* L_8e8a — the 6502 uses BNE here, branching AWAY (skipping the body) when the tested
-     * value is nonzero, so each body runs when the value is ZERO (verified vs the disasm and
-     * the flight_control_integrate__t6502 oracle).  The earlier transcription inverted all
-     * three tests, which pinned $0027=$D0 (nose-down) at neutral stick ($D300=$FF, $005D!=0)
-     * instead of $00 (level) — the no-auto-level nose-dive bug. */
-    if (mem[0x005D] == 0) { A = 0xD0; }            /* 8e8a-8e90: $5D==0 -> pitch rate $D0 */
-    else if ((X & 0x01) == 0) {                    /* 8e93-8e96: bit0 clear (stick up) */
-        A = 0xD0;                                  /* 8e98 */
-        if (roll_pos_hi == 0xF4 && roll_pos_lo == 0) A = 0xFF;   /* 8e9a-8ea4 */
-    } else if ((X & 0x02) == 0) {                  /* 8ea9-8eac: bit1 clear (stick down) */
-        A = 0x30;                                  /* 8eae */
-        if (roll_pos_hi == 0x0B && roll_pos_lo == 0xFF) A = 0x01; /* 8eb0-8ebc */
-    } else { A = 0x00; }                           /* 8ec1: neutral -> no pitch rate */
-    roll_velocity = A;                               /* 8ec3 */
-L_8ec5:
-    if (level_or_state != 0) compute_target_blip_position();   /* 8ec5-8ec9 */
-    if (player_lives == 0x02) {                     /* 8ecc-8ed0 */
-        roll_velocity = 0x30;                        /* 8ed2-8ed4 */
-        pitch_velocity = pitch_pos_hi;                 /* 8ed6-8ed8 */
-        A = pitch_pos_lo; ASLA_(); ROLM_(0x0021); ASLA_(); ROLM_(0x0021);   /* 8eda-8ee0 */
-        c = 1; A = 0x00; SBC_(pitch_velocity); pitch_velocity = A;   /* 8ee2-8ee7 */
-        dial_draw_index = 0xF0;                        /* 8ee9-8eeb */
-        cpu.A = 0x00; draw_cockpit_dial_bar();             /* 8eed-8eef */
-        goto L_8f49;                               /* 8ef2 */
-    }
-    /* L_8ef5 */
-    if (mem[0x003D] != 0) goto L_8f2b;             /* 8ef5-8ef7 */
-    if (player_lives == 0) { step_object_along_axes(); goto L_8f28; }   /* 8ef9-8f00 */
-    if (timer_676 != 0x01) {                     /* 8f03-8f08 */
-        mem[0x066C] = 0x00; mem[0x066D] = 0x00;    /* 8f0a-8f0f */
-        cpu.Y = 0x01; game_sub_55FC();             /* 8f12-8f14 */
-        cpu.Y++;       game_sub_55FC();            /* 8f17-8f18 */
-        cpu.A = 0x01; store_676_init();            /* 8f1b-8f1d */
-    }
-    /* L_8f20 */
-    mem[0x0023] = pitch_pos_lo;                     /* 8f20-8f22 */
-    mem[0x0024] = pitch_pos_hi;                     /* 8f24-8f26 */
-L_8f28:
-    goto L_8f49;
-L_8f2b:
-    if (mem[0x283C] != 0) goto L_8f49;             /* 8f2b-8f2e */
-    if (mem[0x066C] == 0x01) goto L_8f49;          /* 8f30-8f35 */
-    mem[0x066C] = 0x01; mem[0x066D] = 0x01;        /* 8f37-8f3a */
-    cpu.Y = 0x01; game_sub_55FC();                 /* 8f3d */
-    cpu.Y++;       game_sub_55FC();                /* 8f40-8f41 */
-    special_state_color = 0x34;                            /* 8f44-8f46 */
-L_8f49:
-    if (clear_colors_done_003E != 0) {                        /* 8f49-8f4b */
-        if (mem[0x066C] != 0x00) {                 /* 8f4d-8f52 */
-            mem[0x066C] = 0x00; mem[0x066D] = 0x00; /* 8f54-8f57 */
-            cpu.Y = 0x01; game_sub_55FC();         /* 8f5a-8f5c */
-            cpu.Y++;       game_sub_55FC();        /* 8f5f-8f60 */
-            special_state_color = 0xB4;                    /* 8f63-8f65 */
+        uint8_t roll_rate;
+        if (mem[0x005D] == 0) {
+            roll_rate = 0xD0;                           /* near-ground: forced auto-level */
+        } else if (!(joy & 0x01)) {                     /* stick up */
+            roll_rate = 0xD0;
+            if (roll_pos_hi == 0xF4 && roll_pos_lo == 0x00) roll_rate = 0xFF;  /* at -limit */
+        } else if (!(joy & 0x02)) {                     /* stick down */
+            roll_rate = 0x30;
+            if (roll_pos_hi == 0x0B && roll_pos_lo == 0xFF) roll_rate = 0x01;  /* at +limit */
+        } else {
+            roll_rate = 0x00;                           /* neutral */
         }
-        return;                                    /* 8f68 */
+        roll_velocity = roll_rate;
     }
-    /* L_8f69: roll integration */
-    if (pitch_velocity != 0) goto L_8f9a;             /* 8f69-8f6b */
-    dl_y1 = pitch_pos_hi;                     /* 8f6d-8f6f */
-    A = pitch_pos_lo; Y = 0x05;                     /* 8f71-8f73 */
-L_8f75:
-    ASLA_(); ROLM_(0x00BB); if (--Y != 0) goto L_8f75;   /* 8f75-8f79 */
-    if (!c) goto L_8f8a;                           /* 8f7b */
-    A = pitch_pos_lo; SBC_(dl_y1); pitch_pos_lo = A;  /* 8f7d-8f81 */
-    if (c) pitch_pos_hi++;                           /* 8f83-8f85 */
-    goto L_8f98;                                   /* 8f87 */
-L_8f8a:
-    A = pitch_pos_lo; SBC_(dl_y1);            /* 8f8a-8f8c */
-    if (!c) {                                      /* 8f8e BCS L_8f98 */
-        pitch_pos_hi = (uint8_t)(pitch_pos_hi - 1);  /* 8f90 DEC */
-        if (pitch_pos_hi & 0x80) { A = 0x00; pitch_pos_hi = 0x00; }   /* 8f92-8f96 */
-    }
-L_8f98:
-    pitch_pos_lo = A;                               /* 8f98 */
-L_8f9a:
-    /* pitch integration */
-    if (mem[0x003D] != 0) goto L_8fcd;             /* 8f9a-8f9c */
-    if (roll_velocity != 0) goto L_8fcd;             /* 8f9e-8fa0 */
-    dl_y1 = roll_pos_hi;                     /* 8fa2-8fa4 */
-    A = roll_pos_lo; ASLA_(); ROLM_(0x00BB); ASLA_(); ROLM_(0x00BB);   /* 8fa6-8fac */
-    if (!c) goto L_8fbd;                           /* 8fae */
-    A = roll_pos_lo; SBC_(dl_y1); roll_pos_lo = A;  /* 8fb0-8fb4 */
-    if (c) roll_pos_hi++;                           /* 8fb6-8fb8 */
-    goto L_8fcd;                                   /* 8fba */
-L_8fbd:
-    A = roll_pos_lo; SBC_(dl_y1);            /* 8fbd-8fbf */
-    if (!c) {                                      /* 8fc1 BCS L_8fcb */
-        roll_pos_hi = (uint8_t)(roll_pos_hi - 1);  /* 8fc3 DEC */
-        if (roll_pos_hi & 0x80) { A = 0x00; roll_pos_hi = 0x00; }   /* 8fc5-8fc9 */
-    }
-    roll_pos_lo = A;                               /* 8fcb */
-L_8fcd:
-    Y = 0x01;                                      /* 8fcd LDY #$01 */
-    if (dial_draw_index == 0) { Y = 0x03; goto L_8ff7; }   /* 8fcf-8fd5 BNE L_8fd8: run block when $0022!=0 */
-    c = 1; A = dial_draw_index; SBC_(roll_pos_hi); SBC_(roll_pos_hi); dl_y1 = A;   /* 8fd8-8fdd */
-    c = 0; A = dial_draw_index; LSRA_(); A |= 0x07; A &= bus_read(0xD20A); ADC_(dl_y1);   /* 8fdf-8fe8 */
-    if (c) A = 0xFF;                               /* 8fea-8fec */
-    c = 0; ADC_(throttle_accum_lo); throttle_accum_lo = A;     /* 8fee-8ff1 */
-    if (c) throttle_accum_hi++;                          /* 8ff3-8ff5 */
-L_8ff7:
-    if (mem[0x005D] == 0) goto L_902d;             /* 8ff7-8ff9 */
-    c = 0; A = throttle_accum_hi; ADC_(0x02); dl_y1 = A;   /* 8ffb-9000 */
-    A = 0x00; ROLA_(); dl_y2 = A;            /* 9002-9005 */
-    A = throttle_accum_lo;                               /* 9007 */
-L_9009:
-    ASLA_(); ROLM_(0x00BB); ROLM_(0x00BC); if (--Y != 0) goto L_9009;   /* 9009-900f */
-    A = throttle_accum_lo; SBC_(dl_y1); throttle_accum_lo = A;   /* 9011-9015 */
-    A = throttle_accum_hi; SBC_(dl_y2); throttle_accum_hi = A;   /* 9017-901b */
-    if (c) goto L_902d;                            /* 901d BCS */
-    A = 0x00; throttle_accum_lo = 0x00; throttle_accum_hi = 0x00;   /* 901f-9023 */
-    if (A != timer_676) { cpu.A = A; store_676_init(); }   /* 9025-902a (A=0) */
-L_902d:
-    c = 0; A = pitch_pos_lo; ADC_(pitch_velocity); pitch_pos_lo = A;   /* 902d-9032 */
-    if (pitch_velocity & 0x80) { if (!c) pitch_pos_hi--; }   /* 9034-903a BIT;BPL;BCC;DEC */
-    else                    { if (c)  pitch_pos_hi++; }   /* 903f-9041 */
-    /* L_9043: clamp roll $0026 to [$FB,$04] */
-    A = pitch_pos_hi;                               /* 9043 */
-    if (!(A & 0x80)) {                             /* 9045 BMI L_9054 */
-        if (A >= 0x05) { pitch_pos_lo = 0xFF; A = 0x04; }   /* 9047-904f */
+
+    /* Targeting blip position (skipped during level 0 / intro). */
+    if (level_or_state != 0) compute_target_blip_position();
+
+    /* ---- Per-state dispatch; every branch falls through to the $3E shutdown check ---- */
+    if (player_lives == 0x02) {
+        /* Crash/landing auto-attitude: force roll, set pitch trim = -(pitch_pos >> 6). */
+        roll_velocity = 0x30;
+        uint8_t v = (uint8_t)((((uint16_t)pitch_pos_hi << 8) | pitch_pos_lo) >> 6);
+        pitch_velocity = (uint8_t)(0u - v);
+        dial_draw_index = 0xF0;
+        cpu.A = 0x00; draw_cockpit_dial_bar();
+    } else if (mem[0x003D] != 0) {
+        /* Landing sequence: enter the $3355 special state once (engine_state $066C latch). */
+        if (mem[0x283C] == 0 && mem[0x066C] != 0x01) {
+            mem[0x066C] = 0x01; mem[0x066D] = 0x01;
+            cpu.Y = 0x01; game_sub_55FC();
+            cpu.Y = 0x02; game_sub_55FC();
+            special_state_color = 0x34;
+        }
+    } else if (player_lives == 0) {
+        step_object_along_axes();
     } else {
-        if (A < 0xFB) { pitch_pos_lo = 0x00; A = 0xFB; }    /* 9054-905c */
+        /* Active flight: arm the HUD once (timer_676), then shadow the pitch angle. */
+        if (timer_676 != 0x01) {
+            mem[0x066C] = 0x00; mem[0x066D] = 0x00;
+            cpu.Y = 0x01; game_sub_55FC();
+            cpu.Y = 0x02; game_sub_55FC();
+            cpu.A = 0x01; store_676_init();
+        }
+        mem[0x0023] = pitch_pos_lo;
+        mem[0x0024] = pitch_pos_hi;
     }
-    pitch_pos_hi = A;                               /* 905e */
-    c = 0; A = roll_pos_lo; ADC_(roll_velocity); roll_pos_lo = A;   /* 9060-9065 */
-    if (roll_velocity & 0x80) { if (!c) roll_pos_hi--; }   /* 9067-906d */
-    else                    { if (c)  roll_pos_hi++; }   /* 9072-9074 */
-    /* L_9076: clamp pitch $0029 to [$F4,$0B] */
-    A = roll_pos_hi;                               /* 9076 */
-    if (!(A & 0x80)) {                             /* 9078 BMI L_9087 */
-        if (A >= 0x0C) { roll_pos_lo = 0xFF; A = 0x0B; }   /* 907a-9082 */
+
+    /* ---- Colour-clear shutdown: tear the special state back down and bail ---- */
+    if (clear_colors_done_003E != 0) {
+        if (mem[0x066C] != 0x00) {
+            mem[0x066C] = 0x00; mem[0x066D] = 0x00;
+            cpu.Y = 0x01; game_sub_55FC();
+            cpu.Y = 0x02; game_sub_55FC();
+            special_state_color = 0xB4;
+        }
+        return;
+    }
+
+    /* ---- Pitch auto-level: when no pitch input, bleed pitch_pos toward 0 by ~(pos*32>>8) ---- */
+    if (pitch_velocity == 0) {
+        uint16_t pp  = ((uint16_t)pitch_pos_hi << 8) | pitch_pos_lo;
+        uint8_t  sub = (uint8_t)((pp << 5) >> 8);
+        if ((pp >> 11) & 1) {                           /* shift carry set */
+            int diff = (int)pitch_pos_lo - sub;
+            pitch_pos_lo = (uint8_t)diff;
+            if (diff >= 0) pitch_pos_hi++;
+        } else {
+            int diff = (int)pitch_pos_lo - sub - 1;
+            if (diff >= 0)                              pitch_pos_lo = (uint8_t)diff;
+            else if ((uint8_t)(pitch_pos_hi - 1) & 0x80) { pitch_pos_hi = 0; pitch_pos_lo = 0; }
+            else                                        { pitch_pos_hi--; pitch_pos_lo = (uint8_t)diff; }
+        }
+    }
+
+    /* ---- Roll auto-level: same idea, ~(pos*4>>8), only when no roll input and not landing ---- */
+    if (mem[0x003D] == 0 && roll_velocity == 0) {
+        uint16_t rp  = ((uint16_t)roll_pos_hi << 8) | roll_pos_lo;
+        uint8_t  sub = (uint8_t)((rp << 2) >> 8);
+        if ((rp >> 14) & 1) {
+            int diff = (int)roll_pos_lo - sub;
+            roll_pos_lo = (uint8_t)diff;
+            if (diff >= 0) roll_pos_hi++;
+        } else {
+            int diff = (int)roll_pos_lo - sub - 1;
+            if (diff >= 0)                             roll_pos_lo = (uint8_t)diff;
+            else if ((uint8_t)(roll_pos_hi - 1) & 0x80) { roll_pos_hi = 0; roll_pos_lo = 0; }
+            else                                       { roll_pos_hi--; roll_pos_lo = (uint8_t)diff; }
+        }
+    }
+
+    /* ---- Throttle: add a RANDOM-modulated kick, scaled by the dial index ----
+     * loops_y also picks the shift count for the throttle clamp below. */
+    uint8_t loops_y;
+    if (dial_draw_index == 0) {
+        loops_y = 3;
     } else {
-        if (A < 0xF4) { roll_pos_lo = 0x00; A = 0xF4; }    /* 9087-908f */
+        loops_y = 1;
+        /* base = dial - 2*roll_pos_hi (two chained 6502 subtracts preserve the borrow) */
+        int t = (int)dial_draw_index - roll_pos_hi;
+        int borrow = (t < 0) ? 1 : 0;
+        uint8_t base = (uint8_t)((t & 0xFF) - roll_pos_hi - borrow);
+        uint16_t kick = (uint16_t)((((dial_draw_index >> 1) | 0x07) & bus_read(0xD20A))
+                                   + base + (dial_draw_index & 1));
+        if (kick > 0xFF) kick = 0xFF;
+        uint16_t acc = (uint16_t)throttle_accum_lo + (uint8_t)kick;
+        throttle_accum_lo = (uint8_t)acc;
+        if (acc > 0xFF) throttle_accum_hi++;
     }
-    roll_pos_hi = A; mem[0x0020] = A;              /* 9091-9093 */
-    A = roll_pos_lo; ASLA_(); ROLM_(0x0020); ASLA_(); ROLM_(0x0020); ASLA_(); ROLM_(0x0020);  /* 9095-909e */
-    A = mem[0x0020];                               /* 90a0 */
-    if (c) { A ^= 0xFF; ADC_(0x00); }              /* 90a2-90a6 BCC L_90a8; EOR;ADC */
-    mem[0x28D6] = A;                               /* 90a8 */
-    mul_multiplicand = throttle_accum_hi;                     /* 90ab-90ad */
-    mul_u8(); A = cpu.A;                           /* 90af */
-    Y = 0x00;                                      /* 90b2 */
-    if (mem[0x0020] & 0x80) {                      /* 90b4-90b6 BIT;BPL L_90c1 */
-        Y--;                                       /* 90b8 DEY */
-        A ^= 0xFF; c = 0; ADC_(0x01);              /* 90b9-90bc EOR;CLC;ADC #1 */
-        if (c) Y++;                                /* 90be-90c0 */
+
+    /* ---- Throttle clamp (near-ground only): cap the throttle to (hi+2)<<loops_y ---- */
+    if (mem[0x005D] != 0) {
+        uint16_t hi2 = (uint16_t)throttle_accum_hi + 2;
+        uint32_t v = ((uint32_t)(uint8_t)(hi2 >> 8) << 16)
+                   | ((uint32_t)(uint8_t)hi2 << 8) | throttle_accum_lo;
+        for (uint8_t i = 0; i < loops_y; i++) v <<= 1;
+        int carry = (v >> 24) & 1;
+        int lo = (int)throttle_accum_lo - (uint8_t)(v >> 8) - (carry ? 0 : 1);
+        throttle_accum_lo = (uint8_t)lo;
+        int hi = (int)throttle_accum_hi - (uint8_t)(v >> 16) - (lo < 0 ? 1 : 0);
+        throttle_accum_hi = (uint8_t)hi;
+        if (hi < 0) {                                   /* over the cap -> zero + rearm HUD */
+            throttle_accum_lo = 0; throttle_accum_hi = 0;
+            if (timer_676 != 0) { cpu.A = 0; store_676_init(); }
+        }
     }
-    mem[0x2884] = Y;                               /* 90c1 STY $2884 */
-    ASLA_(); ROLM_(0x2884); ASLA_(); ROLM_(0x2884); ASLA_(); ROLM_(0x2884);   /* 90c4-90cd */
-    mem[0x2883] = A;                               /* 90d0 */
-    dl_y1 = pitch_pos_lo;                     /* 90d3-90d5 */
-    A = pitch_pos_hi; Y = 0x04;                     /* 90d7-90d9 */
-L_90db:
-    c = (A >= 0x80) ? 1 : 0; RORA_(); RORM_(0x00BB); if (--Y != 0) goto L_90db;   /* 90db-90e1 */
-    dl_y2 = A;                               /* 90e3 */
-    c = 0; A = heading_lo; ADC_(dl_y1); heading_lo = A;   /* 90e5-90eb */
-    A = heading_hi; ADC_(dl_y2); A &= 0x3F; heading_hi = A;   /* 90ee-90f5 */
-    cpu.C = c; compute_obj_rel_angle_scale();      /* 90f8 (reads ENTRY CARRY) */
-    c = 0; A = world_x_lo; ADC_(mem[0x002B]); world_x_lo = A;   /* 90fb-9101 */
-    A = world_x_hi; ADC_(mem[0x002C]); world_x_hi = A;   /* 9104-9109 */
-    c = 0; A = world_z_lo; ADC_(mem[0x2881]); world_z_lo = A;   /* 910c-9115 (910c LDA $002C dead) */
-    A = world_z_hi; ADC_(mem[0x2882]); world_z_hi = A;   /* 9118-911e */
-    c = 0; A = terrain_depth_frac; ADC_(mem[0x2883]); terrain_depth_frac = A;   /* 9121-9127 */
-    A = terrain_depth_step; ADC_(mem[0x2884]);            /* 9129-912b */
-    if (A == 0xFF) A = 0x00;                        /* 912e-9132 */
-    if (A >= 0x50) {                               /* 9134-9136 BCC L_914e */
-        Y = 0xFF;                                  /* 9138 */
-        if (player_lives == 0x02) {                 /* 913a-913e */
-            if (A >= 0x60) level_ready_flag = Y;        /* 9140-9144 BCC L_9147 */
-        } else { terrain_depth_frac = Y; A = 0x4F; }      /* 914a-914c */
+
+    /* ---- Integrate + clamp pitch angle ($25/$26) to [-5 .. +4] = [$FB .. $04] ---- */
+    {
+        int8_t   dv  = (int8_t)pitch_velocity;
+        uint16_t sum = (uint16_t)pitch_pos_lo + (uint8_t)pitch_velocity;
+        pitch_pos_lo = (uint8_t)sum;
+        if (dv < 0) { if (!(sum >> 8)) pitch_pos_hi--; }
+        else        { if ( (sum >> 8)) pitch_pos_hi++; }
+        if (!(pitch_pos_hi & 0x80)) {
+            if (pitch_pos_hi >= 0x05) { pitch_pos_lo = 0xFF; pitch_pos_hi = 0x04; }
+        } else {
+            if (pitch_pos_hi <  0xFB) { pitch_pos_lo = 0x00; pitch_pos_hi = 0xFB; }
+        }
     }
-    terrain_depth_step = A;                               /* 914e */
-    c = roll_pos_lo >> 7; A = roll_pos_hi; ADC_(0x0C); mem[0x2873] = A;   /* 9150-9157 */
-    c = mem[0x0023] >> 7; A = mem[0x0024]; ADC_(0x05); mem[0x2871] = A;   /* 915a-9161 */
-    c = 1; A = 0x3A;                               /* 9164-9165 */
-    if (mem[0x283D] != 0) SBC_(RTCLOK_LOW);       /* 9167-916a BNE L_9172: SBC $0014 */
-    else                  SBC_(heading_hi);       /* 916c SBC $2886 */
-    A &= 0x3F; Y = A;                              /* 9174-9176 TAY */
-    terrain_sub_index = (uint8_t)(A & 0x03);             /* 9177-9179 */
-    A = Y; LSRA_(); LSRA_(); terrain_index = A;      /* 917c-917f */
-    A = throttle_accum_lo; ASLA_(); A = throttle_accum_hi; ROLA_(); A ^= 0xFF; mem[0x0686] = A;   /* 9182-918a */
-    c = 1; SBC_(0x04); mem[0x0687] = A;            /* 918d-9190 */
-    refresh_hud_field_0d_entry();                  /* 9193 (sets own Y) */
-    Y = 0x0C;                                      /* 9196 */
-    A = dial_draw_index;                               /* 9198 */
-    if (A == 0xF0) goto L_91bc;                    /* 919a-919c (A=$F0) */
-    A = life_counter;                               /* 919e */
-    if (A != 0) { mem[0x2917] = 0xFF; A = 0xFF; goto L_91bc; }   /* 91a1 BNE L_91b7; 91b7-91b9 */
-    mem[0x005D] = A;                               /* 91a3 (A=0) */
-    X = mem[0x2917];                               /* 91a5 */
-    if (X == 0) goto L_91dc;                       /* 91a8 (A=0) */
-    mem[0x2917] = (uint8_t)(mem[0x2917] - 1);      /* 91aa DEC */
-    if (X < bus_read(0xD20A)) goto L_91dc;         /* 91ad-91b0 CPX $D20A; BCC (A=0) */
-    A = 0xFF;                                      /* 91b2 (fall to L_91bc) */
-L_91bc:
-    mem[0x005D] = A;                               /* 91bc */
-    X = dial_draw_index;                               /* 91be */
-    if (X == 0) { A = 0x00; goto L_91dc; }         /* 91c0 BNE L_91c6; 91c2 TXA (A=0) */
-    if (X < 0xF0) { A = 0x04; goto L_91dc; }       /* 91c6-91cc CPX #$F0; BCS L_91cf */
-    A = terrain_depth_step; LSRA_(); LSRA_(); LSRA_(); A ^= 0x0F;   /* 91cf-91d4 */
-    if (A < 0x04) A = 0x04;                        /* 91d6-91da CMP #$04; BCS L_91dc; LDA #$04 */
-L_91dc:
-    mem[MEM_sfx_voice_distort_0e + Y] = A;                           /* 91dc STA $066B,Y */
-    A = throttle_accum_lo; ASLA_(); A = throttle_accum_hi; ROLA_(); A ^= 0xFF;   /* 91df-91e5 */
-    if (A < 0x0C) A = 0x0C;                        /* 91e7-91eb */
-    mem[MEM_hud_field_679 + Y] = A;                           /* 91ed STA $0679,Y */
-    cpu.Y = Y; game_sub_55FC();                    /* 91f0 */
-    mem[0x2850] = mem[0x2919];                     /* 91f3-91f6 */
-    A = mem[0x291A]; c = (A >= 0x80) ? 1 : 0; RORA_(); RORM_(0x2850); mem[0x2851] = A;   /* 91f9-9202 */
-    Y = 0x00; A = mem[0x291B]; mem[0x2852] = A;    /* 9205-920a */
-    if (A & 0x80) Y--;                             /* 920d-920f BPL L_9210; DEY */
-    A = Y; Y = 0x03;                               /* 9210-9211 TYA; LDY #$03 */
-L_9213:
-    ASLM_(0x2852); ROLA_(); if (--Y != 0) goto L_9213;   /* 9213-9218 */
-    mem[0x2853] = A;                               /* 921a */
-    Y = 0x00; A = mem[0x291A]; c = (A >= 0x80) ? 1 : 0; RORA_();   /* 921d-9224 */
-    if (A & 0x80) Y--;                             /* 9225-9227 BPL L_9228; DEY */
-    /* L_9228 */
-    c = 0; ADC_(mem[0x2829]); mem[0x2829] = A;     /* 9228-922c */
-    A = Y; ADC_(mem[0x0068]); mem[0x0068] = A;     /* 922e-9232 TYA; ADC $0068 */
-    Y = 0x00; A = mem[0x291B];                     /* 9234-9236 */
-    c = (A >= 0x80) ? 1 : 0; RORA_(); c = (A >= 0x80) ? 1 : 0; RORA_(); c = (A >= 0x80) ? 1 : 0; RORA_();   /* 9239-9241 */
-    if (A & 0x80) Y--;                             /* 9242-9244 BPL L_9245; DEY */
-    /* L_9245 */
-    c = 0; ADC_(mem[0x282C]); mem[0x282C] = A;     /* 9245-9249 */
-    A = Y; ADC_(mem[0x0069]); mem[0x0069] = A;     /* 924c-924f TYA; ADC $0069 */
-    /* 9251: step the active object */
-    A = object_anim_frame;                               /* 9251 */
-    if (A == 0) goto L_9289;                       /* 9253 BNE L_9258; 9255 goto L_9289 */
-    if (!(A & 0x80)) {                             /* 9258 BMI L_9267 */
-        if (A == 0x01) load_velocity_from_param_block();   /* 925a-925e */
-        else           object_step_and_collide();          /* 9264 */
+
+    /* ---- Integrate + clamp roll/heading angle ($28/$29) to [$F4 .. $0B] ---- */
+    {
+        int8_t   dv  = (int8_t)roll_velocity;
+        uint16_t sum = (uint16_t)roll_pos_lo + (uint8_t)roll_velocity;
+        roll_pos_lo = (uint8_t)sum;
+        if (dv < 0) { if (!(sum >> 8)) roll_pos_hi--; }
+        else        { if ( (sum >> 8)) roll_pos_hi++; }
+        if (!(roll_pos_hi & 0x80)) {
+            if (roll_pos_hi >= 0x0C) { roll_pos_lo = 0xFF; roll_pos_hi = 0x0B; }
+        } else {
+            if (roll_pos_hi <  0xF4) { roll_pos_lo = 0x00; roll_pos_hi = 0xF4; }
+        }
     }
-    /* L_9267 */
-    c = 1; A = mem[0x284E]; SBC_(mem[0x2850]); mem[0x284E] = A;   /* 9267-926e */
-    A = vobj_row_count; SBC_(mem[0x2851]); vobj_row_count = A;   /* 9271-9276 */
-    c = 0; A = mem[0x284F]; ADC_(mem[0x2852]); mem[0x284F] = A;   /* 9278-927f */
-    A = mem[0x0039]; ADC_(mem[0x2853]); mem[0x0039] = A;   /* 9282-9287 */
-L_9289:
-    Y = object_index_signed;                               /* 9289 */
-    if (Y & 0x80) goto L_92c7;                      /* 928b BMI L_92c7 */
-    Y = (uint8_t)(Y - 1); object_index_signed = Y;         /* 928d-928e DEY; STY $0063 */
-    if (!(Y & 0x80)) goto L_92a6;                  /* 9290 BPL L_92a6 */
-    if (player3_dither_flag != 0) { reset_flags_ff(); goto L_92a3; }   /* 9292-929a BNE L_929d */
-    reset_flags_ff(); check_object_in_target_box();            /* 929d-92a0 */
-L_92a3:
-    goto L_92c7;
-L_92a6:
-    A = Y; LSRA_(); LSRA_(); mem[0x006A] = A;      /* 92a6-92a9 TYA;LSR;LSR */
-    if (Y == 0x5A) goto L_92c1;                    /* 92ab-92ad CPY #$5A; BEQ */
-    A = level_stage;                               /* 92af */
-    if (A < 0x1F) goto L_92c4;                      /* 92b1-92b3 CMP #$1F; BCC L_92c4 */
-    if (Y == 0x3C) goto L_92c1;                     /* 92b5-92b7 CPY #$3C; BEQ */
-    if (A < 0x3D) goto L_92c4;                      /* 92b9-92bb CMP #$3D; BCC L_92c4 */
-    if (Y != 0x28) goto L_92c4;                     /* 92bd-92bf CPY #$28; BNE L_92c4 */
-L_92c1:
-    terrain_jitter_column();                        /* 92c1 */
-L_92c4:
-    object_integrate_position();                    /* 92c4 */
-L_92c7:
-    Y = mem[0x291E]; Y++; if (Y >= 0x07) Y = 0x00;  /* 92c7-92cf INY; CPY #$07; BCC; LDY #0 */
-    mem[0x291E] = Y;                                /* 92d1 */
-    mem[0x2919] = mem[0x2893 + Y]; mem[0x2893 + Y] = pitch_pos_lo;   /* 92d4-92dc */
-    mem[0x291A] = mem[0x289A + Y]; mem[0x289A + Y] = pitch_pos_hi;   /* 92df-92e7 */
-    mem[0x291B] = mem[0x28A1 + Y]; mem[0x28A1 + Y] = roll_velocity;   /* 92ea-92f2 */
-    mem[0x291C] = mem[0x28A8 + Y]; mem[0x28A8 + Y] = mem[0x2871];   /* 92f5-92fe */
-    mem[0x291D] = mem[0x28AF + Y]; mem[0x28AF + Y] = mem[0x2873];   /* 9301-930a */
-    #undef ADC_
-    #undef SBC_
-    #undef ASLA_
-    #undef ROLA_
-    #undef RORA_
-    #undef LSRA_
-    #undef ROLM_
-    #undef RORM_
-    #undef ASLM_
+
+    /* ---- Roll-derived magnitudes: |roll<<3| -> $28D6, and (throttle_hi * that)<<3 -> fwd step ---- */
+    {
+        uint16_t rp = ((uint16_t)roll_pos_hi << 8) | roll_pos_lo;
+        uint8_t  hi = (uint8_t)((rp << 3) >> 8);
+        mem[0x0020] = hi;                               /* sign source for the multiply below */
+        mem[0x28D6] = ((rp >> 13) & 1) ? (uint8_t)(0u - hi) : hi;
+    }
+    {
+        mul_multiplicand = throttle_accum_hi;
+        mul_u8();                                       /* product = throttle_hi * $28D6 */
+        int16_t signed_step = (mem[0x0020] & 0x80) ? -(int16_t)cpu.A : (int16_t)cpu.A;
+        uint16_t shifted = (uint16_t)signed_step << 3;
+        mem[0x2883] = (uint8_t)shifted;                 /* forward/depth step lo */
+        mem[0x2884] = (uint8_t)(shifted >> 8);          /* forward/depth step hi */
+    }
+
+    /* ---- Heading: heading += (signed pitch_pos >> 4); carry feeds the angle-scale call ---- */
+    {
+        int16_t step    = (int16_t)((int16_t)(((uint16_t)pitch_pos_hi << 8) | pitch_pos_lo) >> 4);
+        uint8_t step_lo = (uint8_t)step, step_hi = (uint8_t)(step >> 8);
+        dl_y1 = step_lo; dl_y2 = step_hi;               /* scratch the 6502 left behind */
+        uint16_t hlo = (uint16_t)heading_lo + step_lo;
+        heading_lo = (uint8_t)hlo;
+        uint16_t hhi = (uint16_t)heading_hi + step_hi + (hlo >> 8);
+        heading_hi = (uint8_t)(hhi & 0x3F);
+        cpu.C = (uint8_t)(hhi >> 8);                    /* entry carry for the call */
+        compute_obj_rel_angle_scale();                  /* -> world velocity $2B/$2C, $2881/$2882 */
+    }
+
+    /* ---- Integrate world position + depth accumulator ---- */
+    {
+        uint16_t x = (uint16_t)(((world_x_hi << 8) | world_x_lo)
+                              + ((mem[0x002C] << 8) | mem[0x002B]));
+        world_x_lo = (uint8_t)x; world_x_hi = (uint8_t)(x >> 8);
+
+        uint16_t z = (uint16_t)(((world_z_hi << 8) | world_z_lo)
+                              + ((mem[0x2882] << 8) | mem[0x2881]));
+        world_z_lo = (uint8_t)z; world_z_hi = (uint8_t)(z >> 8);
+
+        uint16_t d = (uint16_t)(((terrain_depth_step << 8) | terrain_depth_frac)
+                              + ((mem[0x2884] << 8) | mem[0x2883]));
+        terrain_depth_frac = (uint8_t)d;
+        uint8_t step = (uint8_t)(d >> 8);
+        if (step == 0xFF) step = 0x00;
+        if (step >= 0x50) {                             /* depth past the far cap */
+            if (player_lives == 0x02) {
+                if (step >= 0x60) level_ready_flag = 0xFF;  /* landing: signal level ready */
+            } else {
+                terrain_depth_frac = 0xFF; step = 0x4F;     /* clamp at the cap */
+            }
+        }
+        terrain_depth_step = step;
+    }
+
+    /* ---- Canopy-pillar Y pair (each = angle_hi + offset + sign-of-lo) ---- */
+    mem[0x2873] = (uint8_t)(roll_pos_hi  + 0x0C + (roll_pos_lo  >> 7));
+    mem[0x2871] = (uint8_t)(mem[0x0024]  + 0x05 + (mem[0x0023]  >> 7));
+
+    /* ---- Terrain table index from heading (or RTCLOK when heading is frozen) ---- */
+    {
+        uint8_t a = (mem[0x283D] != 0) ? (uint8_t)(0x3A - RTCLOK_LOW)
+                                       : (uint8_t)(0x3A - heading_hi);
+        a &= 0x3F;
+        terrain_sub_index = a & 0x03;
+        terrain_index     = a >> 2;
+    }
+
+    /* ---- Engine-sound pitch fields = ~(throttle << 1, high byte) ---- */
+    {
+        uint8_t v = (uint8_t)(~((throttle_accum_hi << 1) | (throttle_accum_lo >> 7)));
+        mem[0x0686] = v;
+        mem[0x0687] = (uint8_t)(v - 0x04);
+    }
+
+    refresh_hud_field_0d_entry();
+
+    /* ---- Near-ground flag $5D + lock-on RANDOM countdown $2917 ---- */
+    if (dial_draw_index == 0xF0) {
+        mem[0x005D] = 0xF0;
+    } else if (life_counter != 0) {
+        mem[0x2917] = 0xFF;
+        mem[0x005D] = 0xFF;
+    } else {
+        mem[0x005D] = 0x00;
+        uint8_t cnt = mem[0x2917];
+        if (cnt != 0) {
+            mem[0x2917] = cnt - 1;
+            if (cnt >= bus_read(0xD20A)) mem[0x005D] = 0xFF;
+        }
+    }
+
+    /* ---- Engine-sound voice slot ($066B[$0C]) value from dial + depth ---- */
+    {
+        uint8_t voice;
+        if (dial_draw_index == 0)             voice = 0x00;
+        else if (dial_draw_index < 0xF0)      voice = 0x04;
+        else {
+            voice = (uint8_t)((terrain_depth_step >> 3) ^ 0x0F);
+            if (voice < 0x04) voice = 0x04;
+        }
+        mem[MEM_sfx_voice_distort_0e + 0x0C] = voice;   /* $0677 */
+    }
+    /* ---- HUD field ($0679[$0C]) = same ~(throttle<<1) value, floored at $0C ---- */
+    {
+        uint8_t fld = (uint8_t)(~((throttle_accum_hi << 1) | (throttle_accum_lo >> 7)));
+        if (fld < 0x0C) fld = 0x0C;
+        mem[MEM_hud_field_679 + 0x0C] = fld;            /* $0685 */
+        cpu.Y = 0x0C; game_sub_55FC();
+    }
+
+    /* ---- Object velocity from the delayed history ring ($2919/$291A/$291B) ---- */
+    {
+        int16_t vx = (int16_t)(((uint16_t)mem[0x291A] << 8) | mem[0x2919]);
+        int16_t hx = (int16_t)(vx >> 1);
+        mem[0x2850] = (uint8_t)hx; mem[0x2851] = (uint8_t)(hx >> 8);
+
+        uint16_t vy = (uint16_t)((int16_t)(int8_t)mem[0x291B] << 3);
+        mem[0x2852] = (uint8_t)vy; mem[0x2853] = (uint8_t)(vy >> 8);
+    }
+
+    /* ---- Two 16-bit object-position accumulators (sign-extended ring deltas) ---- */
+    {
+        int8_t  a   = (int8_t)((int8_t)mem[0x291A] >> 1);
+        uint16_t s  = (uint16_t)mem[0x2829] + (uint8_t)a;
+        mem[0x2829] = (uint8_t)s;
+        mem[0x0068] = (uint8_t)(mem[0x0068] + (a < 0 ? 0xFF : 0x00) + (uint8_t)(s >> 8));
+    }
+    {
+        int8_t  a   = (int8_t)((int8_t)mem[0x291B] >> 3);
+        uint16_t s  = (uint16_t)mem[0x282C] + (uint8_t)a;
+        mem[0x282C] = (uint8_t)s;
+        mem[0x0069] = (uint8_t)(mem[0x0069] + (a < 0 ? 0xFF : 0x00) + (uint8_t)(s >> 8));
+    }
+
+    /* ---- Step the active world object, then integrate its position by the ring velocity ---- */
+    {
+        uint8_t af = object_anim_frame;
+        if (af != 0) {
+            if (!(af & 0x80)) {
+                if (af == 0x01) load_velocity_from_param_block();
+                else            object_step_and_collide();
+            }
+            int lo = (int)mem[0x284E] - mem[0x2850];
+            mem[0x284E]    = (uint8_t)lo;
+            vobj_row_count = (uint8_t)(vobj_row_count - mem[0x2851] - (lo < 0 ? 1 : 0));
+            uint16_t s = (uint16_t)mem[0x284F] + mem[0x2852];
+            mem[0x284F] = (uint8_t)s;
+            mem[0x0039] = (uint8_t)(mem[0x0039] + mem[0x2853] + (uint8_t)(s >> 8));
+        }
+    }
+
+    /* ---- Decrement the object slot index; dispatch its per-frame work ---- */
+    {
+        uint8_t y = object_index_signed;
+        if (!(y & 0x80)) {
+            y = (uint8_t)(y - 1);
+            object_index_signed = y;
+            if (y & 0x80) {                             /* slot ran out */
+                reset_flags_ff();
+                if (player3_dither_flag != 0) check_object_in_target_box();
+            } else {
+                mem[0x006A] = y >> 2;
+                int jitter;
+                if      (y == 0x5A)            jitter = 1;
+                else if (level_stage < 0x1F)  jitter = 0;
+                else if (y == 0x3C)           jitter = 1;
+                else if (level_stage < 0x3D)  jitter = 0;
+                else                          jitter = (y == 0x28);
+                if (jitter) terrain_jitter_column();
+                object_integrate_position();
+            }
+        }
+    }
+
+    /* ---- Roll the 7-frame attitude history ring (delays the canopy/horizon geometry) ---- */
+    {
+        uint8_t y = mem[0x291E] + 1;
+        if (y >= 0x07) y = 0x00;
+        mem[0x291E] = y;
+        mem[0x2919] = mem[0x2893 + y]; mem[0x2893 + y] = pitch_pos_lo;
+        mem[0x291A] = mem[0x289A + y]; mem[0x289A + y] = pitch_pos_hi;
+        mem[0x291B] = mem[0x28A1 + y]; mem[0x28A1 + y] = roll_velocity;
+        mem[0x291C] = mem[0x28A8 + y]; mem[0x28A8 + y] = mem[0x2871];
+        mem[0x291D] = mem[0x28AF + y]; mem[0x28AF + y] = mem[0x2873];
+    }
 }
 #ifdef ROF_FLIGHT_PROBE
 void flight_control_integrate(void) { unsigned long _p = rof_subclock(); flight_control_integrate_impl(); g_pInteg += rof_subclock() - _p; }

@@ -118,3 +118,37 @@ read as named state.  Behaviour is from the $4FF5 handler context; ✓ = confide
 - `$062C` → `static_dither_threshold` ? — the windscreen-"static" POKEY-RANDOM dither threshold
   (SDL-only raster effect; dead on Amiga).  `$0632` → `static_enable_flag` ? — gates that block.
 - `$2840` → `wing_bar_hpos_base` ✓ — base HPOS for the wing-clearance missiles (M3/M2/M1 = +0,+$0C,+$11).
+
+**`flight_control_integrate` ($8E5B) — unnamed memory (found during the clean-C rewrite):**
+The master flight step reads/writes many still-unnamed cells. Addresses + observed behaviour:
+- `$005D` → `ground_proximity_flag` ? — gates auto-level pitch rate (8e8a) and throttle braking
+  (8ff7); set to $F0/$FF/$00 from the dial/life/`$2917` logic at 91a3-91bc. (Landing/near-ground.)
+- `$003D` → `landing_seq_flag` ? — when nonzero, runs the "in-box"/$3355 special-state path
+  (8ef5/8f2b) and suppresses the pitch/roll auto-level (8f9a); also driven by `step_object_along_axes`.
+- `$0023`/`$0024` → `pitch_shadow_lo`/`pitch_shadow_hi` ? — snapshot of pitch_pos ($25/$26) taken at
+  8f20; later feeds the canopy-pillar Y at $2871 (9 15a).
+- `$002B`/`$002C` → `world_dx_lo`/`world_dx_hi` ? — per-frame world-X velocity added to world_x
+  ($2887/$2888); produced by `compute_obj_rel_angle_scale`. (`$002C` reloaded+discarded at 910c.)
+- `$2881`/`$2882` → `world_dz_lo`/`world_dz_hi` ? — per-frame world-Z velocity added to world_z.
+- `$2883`/`$2884` → `fwd_step_lo`/`fwd_step_hi` ? — signed forward/depth step = (throttle_hi*roll)
+  <<3; added to the depth accumulator ($33/$34) at 9121.
+- `$28D6` → `roll_mag_scaled` ? — |(roll_pos<<3)>>8|; the multiplier fed to `mul_u8` for fwd_step.
+- `$0020` → reused here purely as ROL scratch for the $28D6/fwd-step sign (NOT its display-list role).
+- `$283C` → `landing_inhibit_flag` ? — when set, blocks the $3355=$34 special-state entry (8f2b).
+- `$283D` → `heading_freeze_flag` ? — selects terrain index angle source: RTCLOK_LOW if set, else
+  heading_hi (9164).
+- `$066C`/`$066D` → `engine_state_a`/`engine_state_b` ? — paired flag set to 0/1 around the
+  game_sub_55FC HUD refresh + $3355 special-state transitions (8f0a/8f37/8f54).
+- `$0686`/`$0687` → `engine_sound_pitch_a`/`engine_sound_pitch_b` ? — ~(throttle<<1 hi); $0687=$0686-4.
+- `$2917` → `lockon_rand_countdown` ? — DEC'd, compared to RANDOM to latch `$005D`=$FF (91a5-91b9).
+- `$2871`/`$2873` → `canopy_pillar_y_left`/`canopy_pillar_y_right` ? — pitch/roll-derived pillar Y
+  (915a/9150); pushed into the 7-deep history ring ($28A8/$28AF).
+- `$2850`-`$2853` → `obj_vel_x_lo/hi`/`obj_vel_y_lo/hi` ? — object velocity from the delayed ring
+  history ($2919/$291A/$291B), arithmetic-shifted; integrated into the object pos at 9267.
+- `$2829`/`$0068` and `$282C`/`$0069` → `obj_accum_*` ? — 16-bit object-position accumulators.
+- `$284E`/`$0038`(vobj_row_count) and `$284F`/`$0039` → `obj_pos2_*` ? — second object pos pair.
+- `$2919`-`$291D` → `ring_cur_0`..`ring_cur_4` ? — current (delayed-by-7-frames) read of the history
+  ring fields (pitch lo/hi, roll vel, pillar L/R).
+- `$291E` → `ring_head` ? — 0..6 rotating index of the 7-entry attitude history ring.
+- `$2893`/`$289A`/`$28A1`/`$28A8`/`$28AF` → `ring_pitch_lo[]`/`ring_pitch_hi[]`/`ring_roll_vel[]`/
+  `ring_pillar_l[]`/`ring_pillar_r[]` ? — the five 7-entry history-ring arrays.
