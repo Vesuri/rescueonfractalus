@@ -5094,27 +5094,26 @@ void store_676_init(void) {                      /* $4EA2 */
  * $0033/$0034 by $30 (when $0070 != 0) or, on first settle ($003D==0 && $0678==0),
  * bump $003D and (if $0063 >= 0) reset the gameplay flags.  mem-only contract. */
 void step_object_along_axes(void) {
-    uint8_t A, Y, c;
-    #define ADC_(v) do { uint16_t _t=(uint16_t)A+(uint8_t)(v)+c; c=(uint8_t)(_t>>8); A=(uint8_t)_t; } while(0)
-    #define SBC_(v) ADC_((uint8_t)~(uint8_t)(v))
-    if (mem[0x0024] & 0x80) {                              /* 9473-9475 BPL: neg -> increment */
-        c = 0; A = mem[0x0023]; ADC_(0x14); mem[0x0023] = A;  /* 9477-947c */
-        if (c) mem[0x0024]++;                              /* 947e-9480 */
-    } else {                                               /* L_9485 decrement, clamp 0 */
-        c = 1; A = mem[0x0023]; SBC_(0x14); Y = A;         /* 9485-948a SEC;SBC;TAY */
-        A = mem[0x0024]; SBC_(0x00);                       /* 948b-948d */
-        if (!c) { A = 0x00; Y = 0x00; }                    /* 948f BCS; 9491-9493 */
-        mem[0x0024] = A; mem[0x0023] = Y;                  /* 9494-9496 */
+    /* Step the 16-bit screen pos {$0024:$0023} by $14 toward 0: increment when it's
+     * negative, else decrement clamped at 0. */
+    uint16_t pos = mem[0x0023] | (mem[0x0024] << 8);
+    if (mem[0x0024] & 0x80) {                              /* 9473: negative -> increment */
+        pos = (uint16_t)(pos + 0x14);
+    } else {                                               /* 9485: decrement, clamp 0 */
+        pos = (pos >= 0x14) ? (uint16_t)(pos - 0x14) : 0;
     }
-    if (mem[0x0070] != 0) {                                /* 9498-949a BEQ L_94ac */
-        c = 1; A = terrain_depth_frac; SBC_(0x30); terrain_depth_frac = A;  /* 949c-94a1 */
-        A = terrain_depth_step; SBC_(0x00); terrain_depth_step = A;      /* 94a3-94a7 */
-    } else if (mem[0x003D] == 0 && hud_field_678 == 0) {     /* 94ac-94b3 */
-        mem[0x003D]++;                                     /* 94b5 INC $003D */
-        if (!(object_index_signed & 0x80)) reset_flags_ff();       /* 94b7-94bb BMI; tail (native) */
+    mem[0x0023] = (uint8_t)pos;
+    mem[0x0024] = (uint8_t)(pos >> 8);
+
+    if (mem[0x0070] != 0) {                                /* 9498: still above terrain -> sink depth $30 */
+        uint16_t depth = terrain_depth_frac | (terrain_depth_step << 8);
+        depth = (uint16_t)(depth - 0x30);
+        terrain_depth_frac = (uint8_t)depth;
+        terrain_depth_step = (uint8_t)(depth >> 8);
+    } else if (mem[0x003D] == 0 && hud_field_678 == 0) {  /* 94ac: first settle -> latch + reset flags */
+        mem[0x003D]++;
+        if (!(object_index_signed & 0x80)) reset_flags_ff();
     }
-    #undef ADC_
-    #undef SBC_
 }
 
 /* draw_object_column @ $43E8 — draw a vertical PMG dial-bar column.  Loops the counter
