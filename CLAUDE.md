@@ -147,7 +147,13 @@ make validate              # run the native-vs-transpiled equivalence suite
 make validate FN="name"    # only tests whose name contains a substring
 ```
 
-### Amiga cross-build (m68k-amiga-elf-gcc, NO_ASSEMBLER) — from `amiga/`
+### Amiga cross-build (m68k-amiga-elf-gcc) — from `amiga/`
+> Hand-written m68k asm is the norm for hot paths + framework routines (`-DNO_ASSEMBLER` is gone;
+> `vasmm68k_mot -m68010 -Felf` assembles the `.s`). Done: the framework `*Assembler.s` (GCC bridges),
+> the flight terrain rasterizer (`TerrainRasterizeAssembler.s`: `terrain_column_rasterize_core` +
+> `flight_edge_plot_asm`). Verify asm twins with `make VERIFY=1 PROBES=1` + `amiga/raster_verify.gdb`
+> (in-process differential vs the C oracle — NOT cross-run render-diff). `make RASTER_C=1` falls back
+> to the C. See `docs/asm-migration-plan.md`.
 ```
 . env.sh        # put the ~/.local Amiga toolchain on PATH (source it first)
 make            # build out/RoF.exe (+ RoF.elf for debug)
@@ -266,23 +272,28 @@ to hardware is largely ignored on Amiga.
 genuinely not doable.** Spending 10 ms on *anything* is HALF the budget. The A500 (7 MHz 68000)
 is slow — there is no room for half measures; be conscious of absolute milliseconds, always.
 
-When reading flight probe numbers, compare **per-firing / per-render unit costs** against
-20/40 ms, NOT per-game-iteration totals (at the current ~2.4 fps one iteration spans ~21 real
-frames, so totals are ~21× a frame). Units: 1 probe "tick" = 1 raster scanline = 63.56 µs; a
-PAL frame = 313 ticks = 20 ms. The flight VBI ISR fires once per real frame, so its per-firing
-cost (~56 ticks ≈ 3.6 ms = ~18% of budget) is what matters. The terrain renderer
-(terrain_draw_frame, ~127 ms/call ISR-subtracted, ×2 passes/iter) dominates flight compute; the
-HUD/VBI/render-glue micro-opts are done and `renderFlightDirect` is now lean (~8.7 ms/call, its
-dirty-row plane2 scan touches only ~9 of 43 rows). **The draw is at its mem-bound algorithmic
-floor** (measured 2026-06-29, g_tdRaster split: `terrain_column_rasterize` ~71% of the draw,
-~98% of which is the per-column interpolation loop — scattered single-byte volatile `mem[]`,
-the exhausted class; the fractal recursion ~13%; project+plot ~16%). De-volatiling + idiom
-cleanup of the rasterizer/subdivide yielded **NO measurable speedup** — within probe noise.
-So **50 FPS needs an ALGORITHMIC change** (span-fill instead of per-pixel PLOT, coarser
-subdivision, or a different terrain rep — all break 1:1 faithfulness), NOT more micro-opt.
-⚠ The live-flight beam probe is **noisy ±15–30%** (raw, ISR-polluted sub-phase timers +
-non-deterministic auto-flight terrain) — it cannot resolve a sub-15% change; don't trust small
-per-commit deltas (2-sample lows mislead — take ≥3 samples, or build a deterministic flight).
+Units: 1 probe "tick" = 1 raster scanline = 63.56 µs; a PAL frame = 313 ticks = 20 ms. The flight
+VBI ISR fires once per real frame; its per-firing cost (~56 ticks ≈ 3.6 ms) is mostly the faithful
+50Hz sim+audio (hard to cut). The terrain draw dominates flight compute.
+
+⚠ **The old "mem-bound ALGORITHMIC FLOOR / 50 FPS needs an algorithmic change / micro-opt EXHAUSTED"
+conclusion (2026-06-29) is RETIRED — it was disproven.** Hand-written m68k ASM broke that floor with
+NO faithfulness loss (the C *was* near GCC's floor; the floor was GCC, not the algorithm). Done
+2026-06-30: `terrain_column_rasterize_core` asm twin (~27% faster than the C oracle) + instruction-
+shaving (another ~9%); `renderFlightDirect`'s plane-1 edge-plot asm (~2.8×). See
+`docs/asm-migration-plan.md` + [[flight-scene]]. **The lever for hot code is hand-asm (control the
+regs, force `(a0)+`/`(d8,a0)`, shave every redundant insn), not the transliteration model.**
+
+**CURRENT MEASURED BUDGET (per iteration, deep flight, all asm in):** terrain draw both passes ~167ms
+(dominant) [rasterize ~64% (asm'd) · project_terrain_points ~20% · subdivide ~16%] · VBI ~71ms (3.6ms
+× ~20 firings/iter, faithful) · renderFlightDirect ~24ms · setup+clear ~31ms. NEXT asm targets (open):
+project_terrain_points (recommended), terrain_subdivide_column, terrain_frame_setup.
+
+⚠ **Measure asm twins with the in-process differential** (`make VERIFY=1 PROBES=1` +
+`amiga/raster_verify.gdb`): asm + C oracle run back-to-back on the SAME inputs in ONE run, byte-compared
++ beam-ticks tallied per-impl. This is DETERMINISTIC. **Cross-run comparison (render-diff, or beam-probe
+asm-build-vs-C-build) is NOT** — the async 50Hz VBI desyncs frames vs the free-running main loop when
+render speed changes (vbi 2204 vs 2217 at the same `fdCalls`).
 **Target: A500, 50 FPS goal (25 FPS acceptable fallback only if 50 is genuinely not doable).**
 Surface the numbers honestly.
 
@@ -332,6 +343,14 @@ contention; don't bother reasoning about chip-vs-fast.) Rewrite hot functions in
   (per-writer dirty flags; dirty row/cell ranges, cf. planet viewport `g_planetRowLo/Hi` and the
   cockpit plan `docs/cockpit-render-plan.md`). Shadow-compare scans are themselves a full
   volatile scan — a 68000 no-go; prefer dirty flags.
+- **When the idiomatic-C twin is still hot, ESCALATE to hand-written m68k asm** (vasm). GCC won't
+  emit `(a0)+`, has no scaled index, and spills under the register pressure these loops create — so
+  the C floor is GCC's floor, not the algorithm's. In asm you control the regs (pin the working set,
+  walk a private stack with `(a3)±3`), force the addressing, and shave every redundant insn
+  (`movea` copies, `and.w #$FF` after a `sub.b` into an already-zero-extended reg, `moveq#0;move.b`
+  → `move.l` of a clean reg). This beat the C on `terrain_column_rasterize_core` (~27%) where four C
+  restructurings had all regressed. Verify with the in-process differential (see the budget section),
+  NOT cross-run. See `docs/asm-migration-plan.md` + `TerrainRasterizeAssembler.s`.
 
 **Correctness + measurement:** every rewrite must stay byte-identical — `make validate FN=<name>`
 diffs full `mem[]` state vs the transliterated `__t6502` oracle (exit `cpu` regs are usually dead

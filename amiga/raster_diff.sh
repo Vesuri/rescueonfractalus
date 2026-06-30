@@ -1,13 +1,14 @@
 #!/usr/bin/env bash
-# Drive FS-UAE + gdb to dump the rasterizer outputs at a deterministic flight moment
-# (see raster_diff.gdb), copying the dumps to a per-label location.  Usage:
-#   ./raster_diff.sh <label> [delay]      e.g.  ./raster_diff.sh asm 90
+# Generic FS-UAE + gdb driver for the rasterizer asm verification: boots to deep flight
+# and runs $GDBSCRIPT (default raster_verify.gdb = the in-process asm-vs-C-oracle
+# differential; build with `make VERIFY=1 PROBES=1`).  Usage:
+#   GDBSCRIPT=raster_verify.gdb ./raster_diff.sh verify 420
 # Source ../env.sh first (fs-uae + gdb on PATH).  Needs out/RoF.exe built PROBES=1.
 set -uo pipefail
 cd "$(dirname "$0")"
 FSUAE="${FSUAE:-fs-uae}"; GDB="${GDB:-m68k-amiga-elf-gdb}"
 ROM="${KICKSTART:-$HOME/Documents/RetroPie/BIOS/kick31.rom}"
-LABEL="${1:-asm}"; DELAY="${2:-90}"; GDBSCRIPT="${GDBSCRIPT:-raster_diff.gdb}"
+LABEL="${1:-verify}"; DELAY="${2:-90}"; GDBSCRIPT="${GDBSCRIPT:-raster_verify.gdb}"
 RUN=.run; DH0="$RUN/dh0"; DH1="$RUN/dh1"; GDBHOME="$RUN/gdbhome"
 mkdir -p "$DH0/s" "$DH1" "$RUN/state" "$GDBHOME"
 printf 'cd dh1:\nRoF\n' > "$DH0/s/startup-sequence"

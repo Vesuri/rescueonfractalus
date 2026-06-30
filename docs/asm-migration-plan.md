@@ -162,7 +162,41 @@ Byte-identical to the C oracle (harness + render-diff) AND measurably fewer inne
 register allocation still can't beat the C baseline (unlikely — we control the regs now), the faithful
 rasterizer is genuinely at its floor and the flight target is ~25 fps.
 
-## Phase 3 (optional, if P2 wins)
-Extend hand-asm to the other draw hot spots: `terrain_subdivide_column_core` (~19% of draw),
-`project_terrain_points`/plot (~20%), `terrain_frame_setup` (~10 ms). Same vasm + on-target-harness
-pattern.
+## Verification — what was ACTUALLY built (2026-06-30, supersedes the plan above)
+**NOT render-diff.** Cross-run render-diff (plan step 2) is unusable: the async 50Hz VBI and the
+free-running main loop interleave differently when the rasterizer's speed changes, so the dump lands
+on a different sim frame (measured: vbi 2204 vs 2217 at the same `fdCalls`). Instead an **in-process
+differential** (`make VERIFY=1 PROBES=1`, read via `amiga/raster_verify.gdb`): each call runs the asm
+twin + the C oracle back-to-back on the SAME live inputs, byte-compares the outputs ($260E + the
+writeback + the plane2 dot buffer), leaves the C output LIVE (flight stays correct on an asm bug), and
+tallies mismatches + same-run beam-ticks (`g_rasAsmTicks`/`g_rasCTicks`, `g_edge*`). The `.s` carries
+a `ifnd ROF_RASTERIZE_VERIFY` second xdef so the C wrapper can own the symbol in verify builds. Same-run
+back-to-back timing sidesteps the cross-run noise → perf deltas ARE measurable. `make RASTER_C=1`
+builds the C oracle as the live path (fallback / A-B).
+
+## Phase 3 — DONE so far (2026-06-30), ONE target still OPEN
+Done this session (all byte-identical, in-process differential 0 mismatch over thousands of calls):
+- **`terrain_column_rasterize_core`** (`TerrainRasterizeAssembler.s`): the big one, ~27% faster than
+  the C oracle. Then **instruction-shaving** (`movea.l a5,a0` dropped, redundant `and.l`/`and.w`/`moveq`
+  removed, `moveq#0;move.b` → `move.l` for already-clean regs) → another ~9%. Commits d2114aa, e27a292,
+  8b52207.
+- **`renderFlightDirect` plane-1 edge-plot** (`flight_edge_plot_asm`, same `.s`): ~2.8× faster
+  (26 vs ~78 beam-ticks/call), via 4-col unroll + immediate masks + `kHeightRowOff[256]` folded
+  clamp (the user's hypothetical-renderer asm structure). Commit c6285bb. ⚠ Note: `bmi` CANNOT replace
+  the per-column `cmp.b #$FF/beq` off-top skip — real heights reach $96 (~28% of columns have bit7 set,
+  verified from a $260E dump); only $FF must skip.
+
+**CURRENT MEASURED BUDGET (per iteration, deep flight, iterCount=130, all asm in):** terrain draw both
+passes **~167ms (dominant ~47%)** [rasterize ~64% (asm'd, near instruction floor) · project ~20% ·
+subdivide ~16%] · VBI ~71ms (3.6ms × ~20 firings/iter, faithful 50Hz sim+audio, hard to cut) ·
+renderFlightDirect ~24ms · setup+clear ~31ms. **Target stays 50fps A500 (25 acceptable).**
+
+**OPEN — next target (user to pick next session):**
+1. **`project_terrain_points`/plot (~20% of draw)** — RECOMMENDED (clean numeric fn; multiplies +
+   `divide_16x16`; best value/risk; reuse the differential pipeline).
+2. `terrain_subdivide_column` (~16% of draw) — the fractal LOD cascade driving the rasterizer; more
+   structural complexity.
+3. Deeper rasterize restructure (keep the control-point stack TOP in registers, skip store-then-reload
+   each bisect step) — biggest potential on the largest chunk, but fights 68000 register pressure (all
+   8 d-regs + a2-a6 already live; this is what defeated the C attempts) → high risk.
+Also still available: `terrain_frame_setup` (~10ms). Same vasm + in-process-differential pattern.
