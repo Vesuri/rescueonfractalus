@@ -2892,74 +2892,87 @@ void update_terrain_horizon_lr(void) {
     }
 }
 
-/* update_terrain_scanline_proj @ $9833 — TOP of the flight-VBI projection subtree.
- * Build 16-bit map coords {$27FD..$2800}/{$2801..$2804} from world pos $2887-$288A
- * (>>4) and depth $0033/$0034 (<<2 into $2274/$2275), sample the height, advance the
- * depth row with enter/exit terrain-special-state transitions, finalize the visible
- * span $281A/$281B, update the L/R horizon, and run the $066C-gated state machine.
- * All callees native; bounded -> random mem safe.  Memory contract (no entry regs read). */
+/* update_terrain_scanline_proj @ $9833 — top of the in-flight terrain projection subtree.
+ * Once per frame it derives everything the rasterizer/horizon code needs from the current
+ * ship position:
+ *   - the map cell the ship sits over (world position >> 4) and the sub-cell depth;
+ *   - the sampled terrain height under that cell, and the visible viewport span;
+ *   - the above-terrain clearance, advancing to the next depth row (and toggling the
+ *     terrain "special state") when the ship sinks into the terrain;
+ *   - the L/R horizon; and the landing/launch projection phase state machine.
+ * All callees are native; the function reads no entry registers and writes only memory
+ * (validated byte-for-byte against the $9833 oracle). No hardware is touched. */
 static void update_terrain_scanline_proj_impl(void) {
-    /* $9833: map X = {$2888:$2887} >> 4 ; map Z = {$288A:$2889} >> 4 (logical) */
-    uint16_t sx = (uint16_t)((world_x_lo | (world_x_hi << 8)) >> 4);
-    uint8_t sx_lo = (uint8_t)sx, sx_hi = (uint8_t)(sx >> 8);
-    mem[0x2270] = sx_lo; map_x_lo = sx_lo; mem[0x2801] = sx_lo;
-    mem[0x2271] = sx_hi; map_x_hi = sx_hi; mem[0x2802] = sx_hi;
-    uint16_t sz = (uint16_t)((world_z_lo | (world_z_hi << 8)) >> 4);
-    uint8_t sz_lo = (uint8_t)sz, sz_hi = (uint8_t)(sz >> 8);
-    mem[0x2272] = sz_lo; map_z_lo = sz_lo; mem[0x2803] = sz_lo;
-    mem[0x2273] = sz_hi; map_z_hi = sz_hi; mem[0x2804] = sz_hi;
+    /* Map cell coords = world position >> 4.  Stored to the bilinear-sampler inputs
+     * (map_x/map_z), plus a scratch pair and a mirror pair the horizon code reads. */
+    uint16_t mx = (uint16_t)(((world_x_hi << 8) | world_x_lo) >> 4);
+    mem[0x2270] = (uint8_t)mx; map_x_lo = (uint8_t)mx; mem[0x2801] = (uint8_t)mx;
+    mem[0x2271] = (uint8_t)(mx >> 8); map_x_hi = (uint8_t)(mx >> 8); mem[0x2802] = (uint8_t)(mx >> 8);
+    uint16_t mz = (uint16_t)(((world_z_hi << 8) | world_z_lo) >> 4);
+    mem[0x2272] = (uint8_t)mz; map_z_lo = (uint8_t)mz; mem[0x2803] = (uint8_t)mz;
+    mem[0x2273] = (uint8_t)(mz >> 8); map_z_hi = (uint8_t)(mz >> 8); mem[0x2804] = (uint8_t)(mz >> 8);
 
-    /* $9889: depth {$2275:$2274} = ({clamp($0034,$3F)}:$0033) << 2 */
-    uint8_t d34 = terrain_depth_step; if (d34 >= 0x40) d34 = 0x3F;
-    uint8_t a33 = terrain_depth_frac, cc;
-    cc = (uint8_t)(a33 >> 7); a33 = (uint8_t)(a33 << 1); d34 = (uint8_t)((d34 << 1) | cc);
-    cc = (uint8_t)(a33 >> 7); a33 = (uint8_t)(a33 << 1); d34 = (uint8_t)((d34 << 1) | cc);
-    scaled_depth_hi = d34; mem[0x2274] = a33;
+    /* Sub-cell depth fixed-point = (clamp(depth_step,$3F) : depth_frac) << 2. */
+    uint8_t step = terrain_depth_step;
+    if (step >= 0x40) step = 0x3F;
+    uint16_t depth = (uint16_t)((((step << 8) | terrain_depth_frac)) << 2);
+    scaled_depth_hi = (uint8_t)(depth >> 8);   /* $2275 */
+    mem[0x2274]     = (uint8_t)depth;          /* $2274: depth fraction low byte */
 
-    /* $98A1: sample + $27F9 = round(round($0062/2)/2) */
+    /* Sample terrain height under the map cell -> terrain_height_sample ($0062).
+     * Quantise it to quarters and turn that into the top visible scanline ($281A). */
     sample_terrain_height_bilerp();
-    { uint8_t a = terrain_height_sample;
-      a = (uint8_t)((a >> 1) + (a & 1));
-      a = (uint8_t)((a >> 1) + (a & 1));
-      mem[0x27F9] = a; }
-    { uint8_t r9 = mem[0x27F9]; mem[0x281A] = (0x37 >= r9) ? (uint8_t)(0x37 - r9) : 0; }
+    uint8_t hq = terrain_height_sample;
+    hq = (uint8_t)((hq >> 1) + (hq & 1));      /* round /2 */
+    hq = (uint8_t)((hq >> 1) + (hq & 1));      /* round /2 -> height/4 */
+    mem[0x27F9] = hq;
+    mem[0x281A] = (hq <= 0x37) ? (uint8_t)(0x37 - hq) : 0;
 
-    /* $98BC: depth advance + special-state transitions */
-    uint8_t v2275 = scaled_depth_hi, v62 = terrain_height_sample;
-    if (v2275 >= v62) {                                  /* no borrow */
-        mem[0x0070] = (uint8_t)(v2275 - v62);
-        if (mem[0x283C] == 0) exit_terrain_special_state();   /* $98C9 BNE skip */
-    } else {                                             /* $98D1 borrow */
-        if (player_lives != 0) enter_terrain_special_state();  /* $98D5 BEQ skip */
-        terrain_depth_step = (uint8_t)(terrain_depth_step + 1);
-        terrain_depth_frac = 0; mem[0x0070] = 0;
-        uint8_t a29 = roll_pos_hi;
-        if (a29 & 0x80) { roll_pos_hi = (uint8_t)(a29 + 1); roll_pos_lo = 0; }
+    /* Advance the depth row by comparing this row's depth against the terrain height. */
+    uint8_t height = terrain_height_sample;
+    if (scaled_depth_hi >= height) {
+        /* Still above the terrain: record clearance, leave the special state if in it. */
+        mem[0x0070] = (uint8_t)(scaled_depth_hi - height);
+        if (mem[0x283C] == 0) exit_terrain_special_state();
+    } else {
+        /* Sank into the terrain: enter the special state and step to the next depth row. */
+        if (player_lives != 0) enter_terrain_special_state();
+        terrain_depth_step++;
+        terrain_depth_frac = 0;
+        mem[0x0070] = 0;
+        if (roll_pos_hi & 0x80) {              /* roll below level -> nudge back up */
+            roll_pos_hi++;
+            roll_pos_lo = 0;
+        }
     }
 
-    /* $98EC: visible span $281A/$281B from depth $0034 */
-    { uint8_t d = terrain_depth_step;
-      if (0x37 >= d) {
-          mem[0x281B] = (uint8_t)(0x37 - d);
-      } else {
-          uint8_t A = (uint8_t)(~(uint8_t)(0x37 - d));          /* EOR #$FF of wrapped SBC */
-          A = (uint8_t)((uint16_t)A + mem[0x281A] + 1);          /* SEC; ADC $281A */
-          if (A >= 0x38) A = 0x38;
-          mem[0x281A] = A; mem[0x281B] = 0;
-      } }
+    /* Bottom of the visible span; once the depth step passes $37, grow the top span instead. */
+    uint8_t d = terrain_depth_step;
+    if (d <= 0x37) {
+        mem[0x281B] = (uint8_t)(0x37 - d);
+    } else {
+        uint8_t top = (uint8_t)(mem[0x281A] + (d - 0x37));
+        if (top >= 0x38) top = 0x38;
+        mem[0x281A] = top;
+        mem[0x281B] = 0;
+    }
 
-    update_terrain_horizon_lr();                          /* $9907 */
+    update_terrain_horizon_lr();
 
-    /* $990A: $066C-gated state machine */
-    uint8_t v66c = mem[0x066C];
-    if (v66c >= 0x08) {                                   /* CMP #8; >=8 */
+    /* Landing/launch projection phase, gated on $066C:
+     *   >=8  -> arm phase 1 + (re)init the projection scratch pointers (game_state=1);
+     *   4..7 -> hold;
+     *   <4   -> if phase was armed, disarm it and clear game_state. */
+    uint8_t phase = mem[0x066C];
+    if (phase >= 0x08) {
         mem[0x2879] = 1;
-        init_proj_scratch_pointers();                     /* sets $0041=1 */
+        init_proj_scratch_pointers();
         return;
     }
-    if (mem[0x2879] == 0) return;                         /* LDY $2879; BEQ */
-    if (v66c >= 0x04) return;                             /* CMP #4; BCS */
-    mem[0x2879] = 0; game_state = 0;
+    if (mem[0x2879] == 0) return;
+    if (phase >= 0x04) return;
+    mem[0x2879] = 0;
+    game_state = 0;
 }
 #ifdef ROF_FLIGHT_PROBE
 extern volatile unsigned long g_pProj, g_pInteg;

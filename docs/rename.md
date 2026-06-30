@@ -152,3 +152,21 @@ The master flight step reads/writes many still-unnamed cells. Addresses + observ
 - `$291E` → `ring_head` ? — 0..6 rotating index of the 7-entry attitude history ring.
 - `$2893`/`$289A`/`$28A1`/`$28A8`/`$28AF` → `ring_pitch_lo[]`/`ring_pitch_hi[]`/`ring_roll_vel[]`/
   `ring_pillar_l[]`/`ring_pillar_r[]` ? — the five 7-entry history-ring arrays.
+
+**`update_terrain_scanline_proj` ($9833) — unnamed memory (found during the clean-C rewrite):**
+The top of the flight projection subtree. Cells still lacking mem.h names:
+- `$2270`/`$2271` and `$2272`/`$2273` → `map_x_scratch_lo/hi`/`map_z_scratch_lo/hi` ? — the
+  LSR working bytes for world>>4; end up equal to map_x ($27FD/$27FE) / map_z ($27FF/$2800).
+- `$2801`-`$2804` → `map_x_mirror_lo/hi`/`map_z_mirror_lo/hi` ? — a second copy of the map
+  coords (sampler reads $27FD-$2800; the mirror is consumed by update_terrain_horizon_lr's deltas).
+- `$2274` → `scaled_depth_lo` ? — paired low byte of the <<2 depth fixed-point (hi = scaled_depth_hi $2275).
+- `$27F9` → `terrain_height_q2` ? — sampled height rounded down by /4 (two rounding halvings).
+- `$281A`/`$281B` → `viewport_top_row`/`viewport_bottom_row` ? — the visible terrain span limits
+  derived from height + depth step; $281A extends (clamped $38) once depth step passes $37.
+- `$0070` → `terrain_clearance` ? — ship-above-terrain clearance (scaled_depth_hi - height), 0 on
+  contact; gates step_object_along_axes' depth brake and the engine-sound path.
+- `$283C` → `landing_inhibit_flag` ? (also seen in flight_control_integrate) — when 0, allows
+  exit_terrain_special_state.
+- `$2879` → `proj_phase_flag` ? — 0/1 latch of the $066C landing/launch projection state machine.
+- `$066C` → `engine_state_a` ? (paired $066D, also in flight_control_integrate) — its value
+  (<4 / 4-7 / >=8) selects the projection phase.
