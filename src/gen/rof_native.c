@@ -5340,46 +5340,43 @@ void check_player_proximity_hit(void) {
  * multiply by $002E (two mul_u8 passes) to produce the scaled coords $002B and $2881.
  * NOTE: the first ROL A rotates in the ENTRY CARRY -> contract includes entry C. */
 void compute_obj_rel_angle_scale(void) {
-    uint8_t A, X, c, n, v;
-    #define ASLA_()  do { c=(uint8_t)(A>>7); A=(uint8_t)(A<<1); } while(0)
-    #define ROLA_()  do { n=(uint8_t)(A>>7); A=(uint8_t)((A<<1)|c); c=n; } while(0)
-    #define ROLM_(a) do { v=mem[a]; n=(uint8_t)(v>>7); mem[a]=(uint8_t)((v<<1)|c); c=n; } while(0)
-    #define SBC_(x)  do { uint16_t _t=(uint16_t)A+(uint8_t)~(uint8_t)(x)+c; c=(uint8_t)(_t>>8); A=(uint8_t)_t; } while(0)
+    /* Rotate {$2886:$2885} left twice through the entry carry to form the 10-bit angle;
+     * only the high byte ($006B) feeds the rest. */
+    uint16_t w = heading_lo | (heading_hi << 8);
+    int carry = cpu.C & 1;                       /* ENTRY CARRY -> first ROL */
+    for (int i = 0; i < 2; i++) { int nc = (w >> 15) & 1; w = (uint16_t)((w << 1) | carry); carry = nc; }
+    mul_multiplicand = (uint8_t)(w >> 8);
+    uint8_t hi = mul_multiplicand;
 
-    c = cpu.C;                              /* ENTRY CARRY -> first ROL A */
-    mul_multiplicand = heading_hi;              /* 97a0-97a3 */
-    A = heading_lo;                        /* 97a5 */
-    ROLA_(); ROLM_(0x006B); ROLA_(); ROLM_(0x006B);   /* 97a8-97ad build 10-bit */
-    X = 0x00; mem[0x002C] = 0x00;           /* 97ae-97b0 */
-    A = mul_multiplicand;                        /* 97b2 */
-    ASLA_(); if (c) mem[0x002C] = (uint8_t)(mem[0x002C] - 1);   /* 97b4-97b7 */
-    ASLA_(); if (c) X--;                    /* 97b9-97bc */
-    A = (uint8_t)(X ^ mem[0x002C]); mem[0x2882] = A;           /* 97bd-97c0 TXA;EOR;STA */
-    A = 0x00; ROLA_(); X = A;               /* 97c3-97c6 LDA#0;ROL A;TAX (X = last carry) */
-    A = (uint8_t)(mul_multiplicand & 0x3F);      /* 97c7-97c9 */
-    mem[0x28D7] = A; mem[0x28D8] = A;       /* 97cb-97ce */
-    A ^= 0x3F; mem[0x28D7 + X] = A;         /* 97d1-97d3 EOR #$3F; STA $28D7,X */
-    mem[0x28D7 + X] = (uint8_t)(mem[0x28D7 + X] + 1);          /* 97d6 INC $28D7,X */
-    X = mem[0x28D8];                        /* 97d9 */
-    mul_multiplicand = mem[0x4EB9 + X];          /* 97dc-97df scale factor */
-    mem[0x28D6] = throttle_accum_hi;              /* 97e1-97e3 multiplier */
-    mul_u8(); A = cpu.A;                    /* 97e6 (native; product in cpu.A) */
-    mem[0x002B] = A;                        /* 97e9 */
-    if (A == 0) mem[0x002C] = A;            /* 97eb-97ef */
-    A = mem[0x002C];                        /* 97f1 */
-    if (A != 0) { c = 0; SBC_(mem[0x002B]); mem[0x002B] = A; }  /* 97f3 BEQ; 97f5 CLC;SBC;STA */
-    X = mem[0x28D7];                        /* 97fa */
-    mul_multiplicand = mem[0x4EB9 + X];          /* 97fd-9800 */
-    mem[0x28D6] = throttle_accum_hi;              /* 9802-9804 */
-    mul_u8(); A = cpu.A;                    /* 9807 */
-    mem[0x2881] = A;                        /* 980a */
-    if (A == 0) mem[0x2882] = A;            /* 980d-9811 */
-    A = mem[0x2882];                        /* 9814 */
-    if (A != 0) { c = 0; SBC_(mem[0x2881]); mem[0x2881] = A; }  /* 9817-981d */
-    #undef ASLA_
-    #undef ROLA_
-    #undef ROLM_
-    #undef SBC_
+    /* Top two bits give the quadrant: bit7 -> X-axis sign ($002C), bit6 -> which of the
+     * scale-index pair $28D7/$28D8 gets complemented; $2882 = XOR of the two sign bits. */
+    uint8_t signX = (hi & 0x80) ? 0xFF : 0x00;
+    uint8_t signSel = (hi & 0x40) ? 0xFF : 0x00;
+    uint8_t sel = (hi >> 6) & 1;
+    mem[0x002C] = signX;
+    mem[0x2882] = (uint8_t)(signSel ^ signX);
+
+    /* Low 6 bits index the scale table; one of the pair folds to its complement + 1. */
+    uint8_t ang = (uint8_t)(hi & 0x3F);
+    mem[0x28D7] = ang;
+    mem[0x28D8] = ang;
+    mem[0x28D7 + sel] = (uint8_t)((ang ^ 0x3F) + 1);
+
+    /* X scale: $4EB9[$28D8] * throttle -> $002B, complemented (CLC;SBC = -x-1) when $002C set. */
+    mem[0x28D6] = throttle_accum_hi;
+    mul_multiplicand = mem[0x4EB9 + mem[0x28D8]];
+    mul_u8();
+    mem[0x002B] = cpu.A;
+    if (cpu.A == 0) mem[0x002C] = 0x00;
+    if (mem[0x002C] != 0) mem[0x002B] = (uint8_t)(mem[0x002C] - mem[0x002B] - 1);
+
+    /* Z scale: $4EB9[$28D7] * throttle -> $2881, complemented when $2882 set. */
+    mem[0x28D6] = throttle_accum_hi;
+    mul_multiplicand = mem[0x4EB9 + mem[0x28D7]];
+    mul_u8();
+    mem[0x2881] = cpu.A;
+    if (cpu.A == 0) mem[0x2882] = 0x00;
+    if (mem[0x2882] != 0) mem[0x2881] = (uint8_t)(mem[0x2882] - mem[0x2881] - 1);
 }
 
 /* flight_control_integrate @ $8E5B — the master per-frame flight step (called from the
