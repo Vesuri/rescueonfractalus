@@ -91,7 +91,29 @@ vasm→ELF→link→GCC-bridge pipeline end-to-end**, which de-risks Phase 2.
    partial enablement is fine.
 7. Finish Phase 0 scrub once `-DNO_ASSEMBLER` is gone and the build is green.
 
-## Phase 2 — hand-asm `terrain_column_rasterize_core`
+## Phase 2 — hand-asm `terrain_column_rasterize_core`  ✅ DONE 2026-06-30 (commit e27a292)
+
+Implemented as `src/platform/amiga/TerrainRasterizeAssembler.s` (vasm), reached via the
+`ROF_RASTERIZE_ASM` seam in `rof_native.c` (the clean-C body kept as
+`terrain_column_rasterize_core_c`, the validate/SDL oracle).  **Result: byte-identical to
+the oracle over ~6700 real-flight calls, ~20% fewer beam-ticks than GCC's C** (asm 94724 vs
+C 117956, same-run back-to-back) — the interleaved-pointer-walk win the four C attempts
+couldn't get.  Key realisations vs the original plan below:
+- The asm mirrors only the **Amiga path** of the oracle: field-plot is a no-op, the plane2
+  dot plot is active, and the ONLY live writeback is `$82/$84/$86` (read back by the
+  subdivide caller, verified) + `$60`.  `$95/$EA/$F4` (depth>0), `$80/$81`, `$B5` are dead,
+  so the control-point stack is a PRIVATE register-walked scratch buffer (a3 ±3) — no mem[].
+- `entryDepth` is effectively dead (the C assigns it to `depth` then overwrites with 0 before
+  the loops); the asm ignores it.
+- **Verification — NOT render-diff.** Cross-run render-diff is unusable: the async 50Hz VBI
+  desyncs frames vs the free-running main loop, so a faster rasterizer lands the dump on a
+  different sim frame (measured: vbi 2204 vs 2217 at the same `fdCalls`).  Instead an
+  **in-process differential** (`make VERIFY=1 PROBES=1` + `amiga/raster_verify.gdb`): the
+  `terrain_column_rasterize_core` wrapper runs the asm + the C oracle back-to-back on
+  identical inputs each call, byte-compares `$260E` + writeback + the plane2 dot buffer,
+  leaves the C output live, and tallies mismatches + same-run beam-ticks for each.
+
+### Original plan (kept for reference)
 
 Independent of P1 (can be a standalone vasm `.s` with plain C linkage — no SAS/C wrapper needed since
 it's our own function), but do P1 first per the goal order, and because P1 establishes the vasm rule +
