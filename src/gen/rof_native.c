@@ -6224,86 +6224,87 @@ void reorder_sprite_slot(void) {
     cpu.A = savedY;
 }
 
-/* sfx_voice_envelope_tick @ $548D — APEX: the per-frame voice/gauge envelope engine.
- * Runs sfx_engine_step (when $0634 armed), advances the 14 voice/gauge slots'
- * frequency/duration/priority envelopes (BCD-step wrap $2D, gated by table
- * $5406; emits AUDF via sfx_voice_write_freq; re-queues finished slots via
- * game_sub_55FC / ring_push_marked), then drains the $0719 event ring:
- * bit7-set entries -> input_init (a new voice), bit7-clear -> reorder_sprite_slot. */
-static void sfx_voice_envelope_tick_impl(void) {
-    if (sfx_state_0634 != 0) {                              /* 548d LDA $0634; BEQ skip */
-        cpu.A = sfx_state_0634;                             /* sfx_engine_step reads entry A */
-        sfx_engine_step();                               /* 5492 */
-    }
-    /* envelope loop: Y = $0E down to 1 */
-    cpu.Y = 0x0E;
-    uint8_t expired = 0;   /* $0718 per-slot "expired" flag, localised across the loop */
-    do {
-        uint8_t y = cpu.Y;
-        expired = 0;       /* 5499 STA $0718 — reset each slot */
-        /* --- frequency-step block ($549c) --- */
-        if (mem[0x06DB + y] != 0) {                      /* LDA $06DB+Y; BEQ L_54d5 */
-            uint16_t s = (uint16_t)mem[0x06DB + y] + mem[0x06E9 + y];  /* CLC; ADC $06E9+Y */
-            uint8_t a = (uint8_t)s;
-            if (a & 0x80) a = (uint8_t)(a + 0x0A + (s >> 8)); /* BPL skip; ADC #$0A (+ prior carry) */
-            else if (a >= 0x2D) a = 0x2C;                /* CMP #$2D; BCC skip; LDA #$2C */
-            mem[0x06E9 + y] = a;
-            if (mem[0x5406 + a] != 0) {                  /* TAX; LDA $5406,X; BEQ L_54d5 */
-                uint8_t f = (uint8_t)(mem[MEM_hud_field_679 + y] + mem[0x06BF + y]);  /* CLC; ADC $06BF+Y */
-                mem[MEM_hud_field_679 + y] = f;
-                if (f == mem[0x06CD + y]) {              /* CMP $06CD+Y; BNE skip */
-                    mem[0x06DB + y] = 0x00;
-                    expired++;                           /* INC $0718 */
-                }
-                cpu.Y = y;
-                sfx_voice_write_freq();                  /* 54d2 */
-            }
-        }
-        /* --- duration/priority-step block ($54d5) --- */
-        if (mem[0x06A3 + y] != 0) {                      /* LDA $06A3+Y; BEQ L_5510 */
-            uint16_t s = (uint16_t)mem[0x06A3 + y] + mem[0x06B1 + y];  /* CLC; ADC $06B1+Y */
-            uint8_t a = (uint8_t)s;
-            if (a & 0x80) a = (uint8_t)(a + 0x0A + (s >> 8)); /* BPL skip; ADC #$0A (+ prior carry) */
-            else if (a >= 0x2D) a = 0x2C;                /* CMP #$2D; BCC skip; LDA #$2C */
-            mem[0x06B1 + y] = a;
-            if (mem[0x5406 + a] != 0) {                  /* TAX; LDA $5406,X; BEQ L_5510 */
-                uint8_t p = (uint8_t)((mem[MEM_sfx_voice_distort_0e + y] + mem[0x0687 + y]) & 0x0F); /* ADC; AND #$0F */
-                mem[MEM_sfx_voice_distort_0e + y] = p;
-                if (p == mem[0x0695 + y]) {              /* CMP $0695+Y; BNE skip */
-                    mem[0x06A3 + y] = 0x00;
-                    expired++;                           /* INC $0718 */
-                }
-                cpu.Y = y;
-                game_sub_55FC();                         /* 550d (push slot Y to ring) */
-            }
-        }
-        /* --- L_5510: if a slot expired this pass, re-queue its event id --- */
-        if (expired != 0) {                              /* LDA $0718; BEQ L_551b */
-            cpu.X = mem[0x06F7 + y];                     /* LDX $06F7+Y */
-            ring_push_marked();                          /* 5518 (push X|$80) */
-        }
-        cpu.Y = (uint8_t)(y - 1);                        /* DEY */
-    } while (cpu.Y != 0);                                /* BNE L_5497 (stop after Y=1) */
-    sfx_voice_expired_flag = expired;   /* flush $0718 = last slot's flag (faithful final state) */
+/* Advance one envelope phase by its step, wrapping like the 6502 BCD-ish accumulator:
+ * a sum that goes negative ($80+) wraps forward by $0A; otherwise it saturates just below
+ * the $2D table size (at $2C). */
+static uint8_t sfx_phase_wrap(uint8_t step, uint8_t phase) {
+    uint16_t s = (uint16_t)step + phase;
+    uint8_t  a = (uint8_t)s;
+    if (a & 0x80)       a = (uint8_t)(a + 0x0A + (uint8_t)(s >> 8));
+    else if (a >= 0x2D) a = 0x2C;
+    return a;
+}
 
-    /* --- clamp the ring head/tail to <= $1F ($5521) --- */
-    if (alt_ring_head > 0x1F) alt_ring_head = 0x1F;          /* LDA #$1F; CMP $0073; BCS keep; STA */
-    if (ring_tail_0719 > 0x1F) ring_tail_0719 = 0x1F;
-    /* --- drain loop ($552F): walk tail $0074 down to head $0073, wrapping at $1F --- */
-    for (;;) {
-        cpu.Y = ring_tail_0719;                             /* LDY $0074 */
-        if (cpu.Y == alt_ring_head) break;                 /* CPY $0073; BEQ done */
-        cpu.A = mem[MEM_event_ring_0719 + cpu.Y];                     /* LDA $0719,Y */
-        if (cpu.A & 0x80) {                              /* BPL -> reorder; here bit7 set -> input */
-            cpu.X = (uint8_t)(cpu.A & 0x7F);             /* AND #$7F; TAX */
-            input_init();                                /* 553d */
-        } else {
-            cpu.Y = cpu.A;                               /* TAY (ring value = slot index) */
-            reorder_sprite_slot();                       /* 5544 (entry cpu.X = leftover) */
+/* sfx_voice_envelope_tick @ $548D — per-frame voice/gauge envelope engine + event-ring drain.
+ *
+ * 1. Run the active sound-effect generator (sfx_engine_step) when armed ($0634).
+ * 2. For each of the 14 voice/gauge slots (Y=$0E..1), advance two parallel envelopes:
+ *      - frequency: step its phase; while the phase indexes a live entry in the $5406 gate
+ *        table, add the per-step delta to the frequency field and emit it (sfx_voice_write_freq);
+ *        expire the slot when the field reaches its target;
+ *      - duration/priority: same, on the 4-bit priority field, re-queuing via game_sub_55FC.
+ *    A slot that finished either envelope re-queues its event id (bit7-marked) on the ring.
+ * 3. Drain the $0719 event ring (tail $0074 -> head $0073, wrapping at $1F): bit7-set entries
+ *    start a new voice (input_init), the rest reorder a sprite slot.
+ *
+ * Contract: memory only.  No hardware writes here (the AUDF pokes live inside the callees). */
+static void sfx_voice_envelope_tick_impl(void) {
+    if (sfx_state_0634 != 0) {
+        cpu.A = sfx_state_0634;          /* sfx_engine_step reads its mode from A */
+        sfx_engine_step();
+    }
+
+    uint8_t expired = 0;
+    for (uint8_t y = 0x0E; y != 0; y--) {
+        expired = 0;                     /* per-slot "an envelope finished" flag ($0718) */
+
+        /* Frequency envelope. */
+        if (mem[0x06DB + y] != 0) {       /* nonzero step = active */
+            uint8_t ph = sfx_phase_wrap(mem[0x06DB + y], mem[0x06E9 + y]);
+            mem[0x06E9 + y] = ph;
+            if (mem[0x5406 + ph] != 0) {  /* gate table: zero entry pauses the step */
+                uint8_t f = (uint8_t)(mem[MEM_hud_field_679 + y] + mem[0x06BF + y]);
+                mem[MEM_hud_field_679 + y] = f;
+                if (f == mem[0x06CD + y]) { mem[0x06DB + y] = 0; expired++; }  /* hit target */
+                cpu.Y = y; sfx_voice_write_freq();
+            }
         }
-        uint8_t t = (uint8_t)(ring_tail_0719 - 1);          /* DEC $0074 */
-        if (t & 0x80) t = 0x1F;                          /* BPL skip; LDA #$1F; STA $0074 */
-        ring_tail_0719 = t;
+
+        /* Duration / priority envelope (priority field kept to 4 bits). */
+        if (mem[0x06A3 + y] != 0) {
+            uint8_t ph = sfx_phase_wrap(mem[0x06A3 + y], mem[0x06B1 + y]);
+            mem[0x06B1 + y] = ph;
+            if (mem[0x5406 + ph] != 0) {
+                uint8_t p = (uint8_t)((mem[MEM_sfx_voice_distort_0e + y] + mem[0x0687 + y]) & 0x0F);
+                mem[MEM_sfx_voice_distort_0e + y] = p;
+                if (p == mem[0x0695 + y]) { mem[0x06A3 + y] = 0; expired++; }
+                cpu.Y = y; game_sub_55FC();
+            }
+        }
+
+        /* Either envelope finished -> re-queue this slot's event id (bit7-marked) on the ring. */
+        if (expired != 0) {
+            cpu.X = mem[0x06F7 + y];
+            ring_push_marked();
+        }
+    }
+    sfx_voice_expired_flag = expired;     /* final state = the last slot's flag */
+
+    /* Drain the event ring from tail down to head, wrapping the index at $1F. */
+    if (alt_ring_head  > 0x1F) alt_ring_head  = 0x1F;
+    if (ring_tail_0719 > 0x1F) ring_tail_0719 = 0x1F;
+    while (ring_tail_0719 != alt_ring_head) {
+        uint8_t entry = mem[MEM_event_ring_0719 + ring_tail_0719];
+        cpu.A = entry;                    /* preserve the 6502 register state the callees see */
+        if (entry & 0x80) {               /* new-voice request */
+            cpu.X = (uint8_t)(entry & 0x7F);
+            input_init();
+        } else {                          /* sprite-slot reorder request */
+            cpu.Y = entry;
+            reorder_sprite_slot();
+        }
+        uint8_t t = (uint8_t)(ring_tail_0719 - 1);
+        ring_tail_0719 = (t & 0x80) ? 0x1F : t;
     }
 }
 #ifdef ROF_FLIGHT_PROBE

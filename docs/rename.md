@@ -207,3 +207,17 @@ Per-frame terrain view-transform: builds the per-column projection vectors from 
   obj-accumulators feed; see that section's `obj_accum_*`).
 - `$A63A` `terrain_plot_return` is an empty RTS (a shared return target), not a real callee —
   the clean rewrite drops the no-op tail call.
+
+**`sfx_voice_envelope_tick` ($548D) — unnamed memory (found during the clean-C rewrite):**
+Per-frame envelope engine over 14 voice/gauge slots (Y=$0E..1). Each slot has two parallel
+envelopes; these per-slot arrays lack mem.h names:
+- `$06DB`/`$06E9` → `freq_env_step[]`/`freq_env_phase[]` ? — frequency envelope increment
+  (nonzero = active) and its wrapping phase accumulator.
+- `$0679`(hud_field_679)/`$06BF`/`$06CD` → `freq_value[]`/`freq_delta[]`/`freq_target[]` ? — the
+  frequency field, its per-step delta, and the target that expires the envelope.
+- `$06A3`/`$06B1` → `dur_env_step[]`/`dur_env_phase[]` ? — duration/priority envelope step + phase.
+- `$066B`(sfx_voice_distort_0e)/`$0687`/`$0695` → `prio_value[]`/`prio_delta[]`/`prio_target[]` ? —
+  the 4-bit priority/distortion field, its delta, and expiry target.
+- `$06F7` → `slot_event_id[]` ? — event id re-queued (bit7-marked) on the ring when a slot expires.
+- `$5406` → `env_gate_table` ? — ROM ramp/gate table; a zero entry pauses the envelope step.
+- `$0718` (sfx_voice_expired_flag) is named; reset per slot, set on expiry.
