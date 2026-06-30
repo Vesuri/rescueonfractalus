@@ -4907,56 +4907,34 @@ void enqueue_indicator_event(void) {
  * heading table $93F3[$0063] (arith >>1 gated by $282D) + $0066, and $2824 from $0064;
  * else $2824 = 0.  mem-only contract (starts SEC; X/Y loaded from mem; no RANDOM). */
 void object_integrate_position(void) {
-    uint8_t A, X, Y, c;
-    #define ADC_(v) do { uint16_t _t=(uint16_t)A+(uint8_t)(v)+c; c=(uint8_t)(_t>>8); A=(uint8_t)_t; } while(0)
-    #define SBC_(v) ADC_((uint8_t)~(uint8_t)(v))
-    #define RORA_() do { uint8_t _n=A&1; A=(uint8_t)((A>>1)|(c<<7)); c=_n; } while(0)
+    /* Each axis is a 24-bit accumulator {hi:mid:lo}; each block adds/subtracts a
+     * sign-extended 16-bit operand.  The 6502 does this as a 2-byte add/subtract
+     * plus a carry-conditional INC/DEC of the high byte = ordinary signed modular
+     * arithmetic, so a signed 32-bit local masked back to 3 bytes is byte-identical. */
+    int32_t x = mem[0x2827] | (object_pos_x_lo << 8) | (object_pos_x_hi << 16);
+    int32_t y = mem[0x2828] | (object_pos_y_lo << 8) | (object_pos_y_hi << 16);
 
-    /* block 1: subtract velocity $2850/$2851 (BPL form) */
-    c = 1; A = mem[0x2827]; SBC_(mem[0x2850]); mem[0x2827] = A;   /* 930e-9315 */
-    A = object_pos_x_lo; SBC_(mem[0x2851]); object_pos_x_lo = A;          /* 9318-931d */
-    A = mem[0x2851];                                             /* 931f */
-    if (A & 0x80) { if (c)  object_pos_x_hi++; }                     /* 9322 BPL: N set -> if c INC */
-    else          { if (!c) object_pos_x_hi--; }                     /*          N clear -> if !c DEC */
+    x -= (int16_t)(uint16_t)(mem[0x2850] | (mem[0x2851] << 8));   /* 930e: -= velocity */
+    y += (int16_t)(uint16_t)(mem[0x2852] | (mem[0x2853] << 8));   /* 932f: += velocity */
+    x -= (int16_t)(uint16_t)(mem[0x2829] | (mem[0x0068] << 8));   /* 9350: -= decel    */
+    y += (int16_t)(uint16_t)(mem[0x282C] | (mem[0x0069] << 8));   /* 936f: += accel    */
 
-    /* block 2: add velocity $2852/$2853 (BMI form) */
-    c = 0; A = mem[0x2828]; ADC_(mem[0x2852]); mem[0x2828] = A;   /* 932f-9336 */
-    A = object_pos_y_lo; ADC_(mem[0x2853]); object_pos_y_lo = A;          /* 9339-933e */
-    A = mem[0x2853];                                             /* 9340 */
-    if (A & 0x80) { if (!c) object_pos_y_hi--; }                     /* 9343 BMI: N set -> if !c DEC */
-    else          { if (c)  object_pos_y_hi++; }                     /*          N clear -> if c INC */
+    mem[0x2827]    = (uint8_t)x;  object_pos_x_lo = (uint8_t)(x >> 8);  object_pos_x_hi = (uint8_t)(x >> 16);
+    mem[0x2828]    = (uint8_t)y;  object_pos_y_lo = (uint8_t)(y >> 8);  object_pos_y_hi = (uint8_t)(y >> 16);
 
-    /* block 3: subtract decel $2829/$0068 (BPL form) */
-    c = 1; A = mem[0x2827]; SBC_(mem[0x2829]); mem[0x2827] = A;   /* 9350-9357 */
-    A = object_pos_x_lo; SBC_(mem[0x0068]); object_pos_x_lo = A;          /* 935a-935e */
-    A = mem[0x0068];                                             /* 9360 */
-    if (A & 0x80) { if (c)  object_pos_x_hi++; }                     /* 9362 BPL */
-    else          { if (!c) object_pos_x_hi--; }
-
-    /* block 4: add $282C/$0069 (BMI form) */
-    c = 0; A = mem[0x2828]; ADC_(mem[0x282C]); mem[0x2828] = A;   /* 936f-9376 */
-    A = object_pos_y_lo; ADC_(mem[0x0069]); object_pos_y_lo = A;          /* 9379-937d */
-    A = mem[0x0069];                                             /* 937f */
-    if (A & 0x80) { if (!c) object_pos_y_hi--; }                     /* 9381 BMI */
-    else          { if (c)  object_pos_y_hi++; }
-
-    /* tail: settled? */
-    if (object_pos_x_hi != 0 || object_pos_y_hi != 0) {                  /* 938e/9392 BNE L_93b7 */
-        player3_ytop = 0x00;                                      /* 93b7-93b9 */
-        goto done;
+    /* Once both high bytes settle to 0, derive the screen blip from a heading table
+     * (arith >>1 once the sensor angle $282D passes $20, zeroed past $30) + the Y
+     * accumulator's mid byte; else clear the blip Y. */
+    if (object_pos_x_hi != 0 || object_pos_y_hi != 0) {
+        player3_ytop = 0x00;
+        return;
     }
-    X = object_index_signed;                                            /* 9396 */
-    A = mem[0x93F3 + X];                                        /* 9398 heading table */
-    Y = mem[0x282D];                                           /* 939b */
-    if (Y >= 0x30) A = 0x00;                                    /* 939e CPY#$30; BCC; LDA#0 */
-    if (Y >= 0x20) { c = (A >= 0x80) ? 1 : 0; RORA_(); }        /* 93a4 CPY#$20; CMP#$80; ROR A */
-    c = 0; ADC_(object_pos_y_lo); player3_xpos = A;                  /* 93ab CLC; ADC $0066; STA $2821 */
-    player3_ytop = object_pos_x_lo;                                  /* 93b1-93b4 */
-done:
-    #undef ADC_
-    #undef SBC_
-    #undef RORA_
-    return;
+    int8_t a = (int8_t)mem[0x93F3 + object_index_signed];        /* 9398 heading table */
+    uint8_t ang = mem[0x282D];
+    if (ang >= 0x30) a = 0x00;
+    if (ang >= 0x20) a = (int8_t)(a >> 1);                       /* arithmetic >>1 */
+    player3_xpos = (uint8_t)((uint8_t)a + object_pos_y_lo);
+    player3_ytop = object_pos_x_lo;
 }
 
 /* jitter_roll_pitch @ $AA95 — per-frame random walk of the pitch ($0029) and roll
