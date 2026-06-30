@@ -4443,218 +4443,83 @@ void terrain_frame_setup(void) {
     #undef RORL_
 }
 
+/* Project one signed axis for object/column X: ratio numerator/divisor -> screen coord.
+ *   numerator = {num_hi:num_lo}[X] (signed), divisor = {div_hi:div_lo}[X] (unsigned depth).
+ * The divisor is normalised by doubling until it strictly exceeds |numerator| (so the
+ * quotient fits a byte), then divide_16x16 gives an 8-bit quotient.  That quotient, scaled
+ * back up by the doubling count and by 3/2, is offset from screen centre ($0080) — added
+ * for a positive numerator, subtracted for a negative one — into {out_hi:out_lo}[X].
+ * If 8 doublings still don't fit, the point is off-screen: clamp to the edge ($40 / $C0). */
+static void project_axis(uint8_t X,
+                         uint16_t num_lo, uint16_t num_hi,
+                         uint16_t div_lo, uint16_t div_hi,
+                         uint16_t out_lo, uint16_t out_hi) {
+    int      neg     = mem[num_hi + X] & 0x80;
+    int16_t  numer   = (int16_t)((mem[num_hi + X] << 8) | mem[num_lo + X]);
+    uint16_t absn    = neg ? (uint16_t)(-numer) : (uint16_t)numer;
+    uint16_t divisor = (uint16_t)((mem[div_hi + X] << 8) | mem[div_lo + X]);
+
+    int count = 0, fits = 0;
+    while (1) {
+        if (absn < divisor) { fits = 1; break; }
+        divisor = (uint16_t)(divisor << 1);
+        if (++count == 8) break;
+    }
+    if (!fits) {                                    /* never fit -> off-screen edge */
+        mem[out_hi + X] = neg ? 0xC0 : 0x40;
+        mem[out_lo + X] = 0x00;
+        return;
+    }
+
+    draw_row_bottom = (uint8_t)count;               /* $9F: the 6502 saved Y across the divide */
+    uint8_t q = (uint8_t)divide_16x16_core(absn, divisor).quotient;
+
+    if (count == 0) {
+        /* No scaling needed: fold the raw quotient into the low byte (hi byte = 0). */
+        uint8_t mag = (uint8_t)((((q >> 1) + q + 1) >> 2) & 0x7F);  /* (q*3/2 + 1) / 4 */
+        mem[out_lo + X] = neg ? (uint8_t)(0x80 - mag) : (uint8_t)(0x80 + mag);
+        mem[out_hi + X] = 0x00;
+    } else {
+        /* Undo the divisor scaling (<<count), apply the 3/2 perspective factor, /4. */
+        uint16_t scaled = (uint16_t)(q << count);
+        uint16_t mag    = (uint16_t)((scaled + (scaled >> 1)) >> 2);
+        mem[0x00B5]     = (uint8_t)(mag >> 8);      /* $B5: fold scratch (in contract) */
+        uint16_t screen = neg ? (uint16_t)(0x80 - mag) : (uint16_t)(0x80 + mag);
+        mem[out_lo + X] = (uint8_t)screen;
+        mem[out_hi + X] = (uint8_t)(screen >> 8);
+    }
+}
+
 /* project_terrain_points @ $A11F — per-object world->screen projection (flight top #3).
  *
- * Input: cpu.X = object/column index.  Two near-identical halves each normalize a
- * 16-bit numerator (the doubling loop that scales {$AF:$AE} until it exceeds the
- * value), call divide_16x16, then fold the quotient ($B2) into a screen coordinate:
- *   - half 1: {$22A4:$22D2}[X] / {$2300:$232E}[X]  ->  {$2400:$242D}[X]
- *   - half 2: {$235B:$2388}[X] / {$2300:$232E}[X]  ->  {$245A:$2487}[X]
- * Tail ($A2DD): add a per-screen-band scroll offset ($270E[]/$272D) into the
- * {$245A:$2487}[X] pair.  The $A31C fall-through into terrain_draw_frame is dead code
- * (the preceding BMI/BPL are exhaustive) but kept to mirror the oracle.
+ * Input: cpu.X = object/column index.  Marks the object "projected this frame", then runs
+ * two perspective divides (project_axis) sharing the depth divisor {$232E:$2300}[X]:
+ *   - screen X: {$22D2:$22A4}[X] / depth  ->  {$242D:$2400}[X]
+ *   - screen Y: {$2388:$235B}[X] / depth  ->  {$2487:$245A}[X]
+ * Then it adds a per-screen-band scroll offset (chosen from the screen-X result) into the
+ * screen-Y coordinate.  divide_16x16's scratch ($AE-$B2) is dead after return and excluded
+ * from the validation contract, so project_axis uses the typed divide_16x16_core() directly.
+ * Memory contract only (the caller reloads registers); no hardware is touched.
  *
- * divide_16x16 is pure-memory (preserves cpu.X), so the entry X threads through as
- * a constant local; Y is saved/restored via $009F around the divide (as the 6502
- * does).  Contract: memory only (caller reloads regs).
- *
- * This calls the typed divide_16x16_core(): only the QUOTIENT feeds the coordinate
- * fold below (written to $B2, which the fold reads/RMWs).  The 6502 divide also left
- * a remainder in $B0/$B1 and the shifted divisor in $AE/$AF, but those — like $B2's
- * final value — are DEAD after this function: disasm/zeropage.csv shows $AE/$AF/$B0/
- * $B1/$B2 are touched by no routine except divide_16x16 + this one, so nothing reads
- * them before the next call overwrites them.  The validate harness excludes those 5
- * cells from this function's contract (see set_ignore in validate_native.c), so the
- * core's results don't need to be marshalled back into 6502 divide scratch.
- */
+ * The $A31C fall-through into terrain_draw_frame is dead (the divides are exhaustive). */
 void project_terrain_points(void) {
-    uint8_t A, Y, c, X = cpu.X;
-    #define ADC_(v)  do { uint16_t _t=(uint16_t)A+(uint8_t)(v)+c; c=(uint8_t)(_t>>8); A=(uint8_t)_t; } while(0)
-    #define SBC_(v)  ADC_((uint8_t)~(uint8_t)(v))
-    #define ASLM_(a) do { uint8_t _v=mem[a]; c=_v>>7; mem[a]=(uint8_t)(_v<<1); } while(0)
-    #define ROLM_(a) do { uint8_t _v=mem[a],_n=_v>>7; mem[a]=(uint8_t)((_v<<1)|c); c=_n; } while(0)
-    #define RORM_(a) do { uint8_t _v=mem[a],_n=_v&1; mem[a]=(uint8_t)((_v>>1)|(c<<7)); c=_n; } while(0)
-    #define ROLA_()  do { uint8_t _n=A>>7; A=(uint8_t)((A<<1)|c); c=_n; } while(0)
-    #define RORA_()  do { uint8_t _n=A&1; A=(uint8_t)((A>>1)|(c<<7)); c=_n; } while(0)
-    #define LSRA_()  do { c=A&1; A=(uint8_t)(A>>1); } while(0)
+    uint8_t X = cpu.X;
 
-    A = mem[0x24B4 + X]; A |= 0x10; mem[0x24B4 + X] = A;  /* a11f-a124 */
+    mem[0x24B4 + X] |= 0x10;                          /* flag: object projected this frame */
 
-    /* --- half 1: {$22A4:$22D2}/{$2300:$232E} -> {$2400:$242D} --- */
-    Y = 0x00;                                            /* a127 */
-    A = mem[0x2300 + X]; mem[0x00AE] = A;                /* a129-a12c */
-    A = mem[0x232E + X]; mem[0x00AF] = A;                /* a12e-a131 */
-    A = mem[0x22D2 + X];                                /* a133 */
-    if (A & 0x80) {                                      /* a136 BMI */
-        A = 0x00; c = 1; SBC_(mem[0x22A4 + X]); mem[0x00B0] = A;  /* a142-a148 */
-        A = 0x00; SBC_(mem[0x22D2 + X]); mem[0x00B1] = A;         /* a14a-a14f */
-    } else {
-        mem[0x00B1] = A;                                 /* a138 */
-        A = mem[0x22A4 + X]; mem[0x00B0] = A;            /* a13a-a13d */
-    }
-    /* L_a151 — normalize {$AF:$AE} until it exceeds {$B1:$B0}, or 8 doublings overflow */
-    int half1_divide = 0;
-    for (;;) {
-        A = mem[0x00B1];                                 /* a151 */
-        if (A < mem[0x00AF]) { half1_divide = 1; break; }   /* a153/a155 BCC -> a187 */
-        if (A == mem[0x00AF]) {                          /* a157 BNE -> skip */
-            A = mem[0x00B0];                             /* a159 */
-            if (A < mem[0x00AE]) { half1_divide = 1; break; }  /* a15b/a15d BCC -> a187 */
-        }
-        ASLM_(0x00AE); ROLM_(0x00AF);                    /* a15f-a161 */
-        Y = (uint8_t)(Y + 1);                            /* a163 INY */
-        if (Y == 0x08) break;                            /* a164 CPY #8; a166 BNE -> a168 */
-    }
-    if (!half1_divide) {
-        /* a168 — overflow: numerator never fit, clamp to screen edge */
-        A = mem[0x22D2 + X];                            /* a168 */
-        if (A & 0x80) { mem[0x242D + X] = 0xC0; mem[0x2400 + X] = 0x00; }  /* a17a */
-        else          { mem[0x242D + X] = 0x40; mem[0x2400 + X] = 0x00; }  /* a16d */
-    } else {
-        /* a187 — divide and fold quotient into the screen coordinate.  $9F save/
-           restore kept (it is shared scratch, in the contract); the core preserves
-           our local Y anyway.  Only the quotient ($B2) feeds the fold. */
-        draw_row_bottom = Y;                                 /* a187 STY $9F */
-        div_quotient = divide_16x16_core(rd16(0x00B0), rd16(0x00AE)).quotient;  /* a189 */
-        Y = draw_row_bottom;                                 /* a18c LDY $9F */
-        Y = (uint8_t)(Y - 1);                            /* a18e DEY */
-        if (Y & 0x80) {                                  /* a18f BMI -> a1d9 */
-            mem[0x242D + X] = 0x00;                      /* a1d9-a1db */
-            A = mem[0x22D2 + X];                        /* a1de */
-            if (A & 0x80) {                              /* a1e1 BMI -> a1f2 */
-                A = div_quotient; LSRA_(); c = 1; ADC_(div_quotient);  /* a1f2-a1f6 */
-                RORA_(); LSRA_(); A ^= 0xFF;             /* a1f8-a1fa */
-                c = 1; ADC_(0x80); mem[0x2400 + X] = A;  /* a1fc-a1ff */
-            } else {
-                A = div_quotient; LSRA_(); c = 1; ADC_(div_quotient);  /* a1e3-a1e7 (LSR;SEC;ADC) */
-                RORA_(); LSRA_(); A |= 0x80; mem[0x2400 + X] = A;    /* a1e9-a1ed */
-                /* a1f0 BNE always taken (A|=0x80 => nonzero) -> a202 */
-            }
-        } else {
-            A = 0x00;                                    /* a191 */
-            do { ASLM_(0x00B2); ROLA_(); Y = (uint8_t)(Y - 1); }     /* a193-a195 */
-            while (!(Y & 0x80));                          /* a196-a197 DEY; BPL */
-            mem[0x00B5] = A;                             /* a199 */
-            LSRA_(); Y = A;                              /* a19b-a19c (LSR;TAY) */
-            A = div_quotient; RORA_();                    /* a19d-a19f */
-            c = 0; ADC_(div_quotient); div_quotient = A;    /* a1a0-a1a3 */
-            A = Y; ADC_(mem[0x00B5]);                    /* a1a5-a1a6 (TYA;ADC, carry threads) */
-            LSRA_(); RORM_(0x00B2);                      /* a1a8-a1a9 */
-            LSRA_(); RORM_(0x00B2);                      /* a1ab-a1ac */
-            mem[0x00B5] = A;                             /* a1ae */
-            A = mem[0x22D2 + X];                        /* a1b0 */
-            if (A & 0x80) {                              /* a1b3 BMI -> a1c7 */
-                A = 0x80; c = 1; SBC_(div_quotient); mem[0x2400 + X] = A;  /* a1c7-a1cc */
-                A = 0x00; SBC_(mem[0x00B5]); mem[0x242D + X] = A;        /* a1cf-a1d3 */
-            } else {
-                A = 0x80; c = 0; ADC_(div_quotient); mem[0x2400 + X] = A;  /* a1b5-a1ba */
-                A = mem[0x00B5]; ADC_(0x00); mem[0x242D + X] = A;        /* a1bd-a1c1 */
-            }
-        }
-    }
+    project_axis(X, 0x22A4, 0x22D2, 0x2300, 0x232E, 0x2400, 0x242D);   /* screen X */
+    project_axis(X, 0x235B, 0x2388, 0x2300, 0x232E, 0x245A, 0x2487);   /* screen Y */
 
-    /* --- half 2: {$235B:$2388}/{$2300:$232E} -> {$245A:$2487} --- */
-    Y = 0x00;                                            /* a202 */
-    A = mem[0x2300 + X]; mem[0x00AE] = A;                /* a204-a207 */
-    A = mem[0x232E + X]; mem[0x00AF] = A;                /* a209-a20c */
-    A = mem[0x2388 + X];                                /* a20e */
-    if (A & 0x80) {                                      /* a211 BMI */
-        A = 0x00; c = 1; SBC_(mem[0x235B + X]); mem[0x00B0] = A;  /* a21d-a223 */
-        A = 0x00; SBC_(mem[0x2388 + X]); mem[0x00B1] = A;        /* a225-a22a */
-    } else {
-        mem[0x00B1] = A;                                 /* a213 */
-        A = mem[0x235B + X]; mem[0x00B0] = A;            /* a215-a218 */
-    }
-    /* L_a22c — normalize */
-    int half2_divide = 0;
-    for (;;) {
-        A = mem[0x00B1];                                 /* a22c */
-        if (A < mem[0x00AF]) { half2_divide = 1; break; }   /* a22e/a230 BCC -> a262 */
-        if (A == mem[0x00AF]) {                          /* a232 BNE */
-            A = mem[0x00B0];                             /* a234 */
-            if (A < mem[0x00AE]) { half2_divide = 1; break; }  /* a236/a238 BCC -> a262 */
-        }
-        ASLM_(0x00AE); ROLM_(0x00AF);                    /* a23a-a23c */
-        Y = (uint8_t)(Y + 1);                            /* a23e INY */
-        if (Y == 0x08) break;                            /* a23f CPY #8; a241 BNE -> a243 */
-    }
-    if (!half2_divide) {
-        /* a243 — overflow */
-        A = mem[0x2388 + X];                            /* a243 */
-        if (A & 0x80) { mem[0x2487 + X] = 0xC0; mem[0x245A + X] = 0x00; }  /* a255 */
-        else          { mem[0x2487 + X] = 0x40; mem[0x245A + X] = 0x00; }  /* a248 */
-    } else {
-        /* a262 — divide (see half-1 note: only the quotient feeds the fold) */
-        draw_row_bottom = Y;                                 /* a262 */
-        div_quotient = divide_16x16_core(rd16(0x00B0), rd16(0x00AE)).quotient;  /* a264 */
-        Y = draw_row_bottom;                                 /* a267 */
-        Y = (uint8_t)(Y - 1);                            /* a269 DEY */
-        if (Y & 0x80) {                                  /* a26a BMI -> a2b4 */
-            mem[0x2487 + X] = 0x00;                      /* a2b4-a2b6 */
-            A = mem[0x2388 + X];                        /* a2b9 */
-            if (A & 0x80) {                              /* a2bc BMI -> a2cd */
-                A = div_quotient; LSRA_(); c = 1; ADC_(div_quotient);  /* a2cd-a2d1 */
-                RORA_(); LSRA_(); A ^= 0xFF;             /* a2d3-a2d5 */
-                c = 1; ADC_(0x80); mem[0x245A + X] = A;  /* a2d7-a2da */
-            } else {
-                A = div_quotient; LSRA_(); c = 1; ADC_(div_quotient);  /* a2be-a2c2 */
-                RORA_(); LSRA_(); A |= 0x80; mem[0x245A + X] = A;    /* a2c4-a2c8 */
-                /* a2cb BNE always taken -> a2dd */
-            }
-        } else {
-            A = 0x00;                                    /* a26c */
-            do { ASLM_(0x00B2); ROLA_(); Y = (uint8_t)(Y - 1); }     /* a26e-a270 */
-            while (!(Y & 0x80));                          /* a271-a272 DEY; BPL */
-            mem[0x00B5] = A;                             /* a274 */
-            LSRA_(); Y = A;                              /* a276-a277 */
-            A = div_quotient; RORA_();                    /* a278-a27a */
-            c = 0; ADC_(div_quotient); div_quotient = A;    /* a27b-a27e */
-            A = Y; ADC_(mem[0x00B5]);                    /* a280-a281 */
-            LSRA_(); RORM_(0x00B2);                      /* a283-a284 */
-            LSRA_(); RORM_(0x00B2);                      /* a286-a287 */
-            mem[0x00B5] = A;                             /* a289 */
-            A = mem[0x2388 + X];                        /* a28b */
-            if (A & 0x80) {                              /* a28e BMI -> a2a2 */
-                A = 0x80; c = 1; SBC_(div_quotient); mem[0x245A + X] = A;  /* a2a2-a2a7 */
-                A = 0x00; SBC_(mem[0x00B5]); mem[0x2487 + X] = A;        /* a2aa-a2ae */
-            } else {
-                A = 0x80; c = 0; ADC_(div_quotient); mem[0x245A + X] = A;  /* a290-a295 */
-                A = mem[0x00B5]; ADC_(0x00); mem[0x2487 + X] = A;        /* a298-a29c */
-            }
-        }
-    }
+    /* Pick the band scroll offset from the screen-X coordinate, add it (signed) to screen Y. */
+    uint8_t x_hi = mem[0x242D + X];
+    uint8_t off;
+    if (x_hi & 0x80)    off = mem[0x270E];                              /* X off left edge */
+    else if (x_hi != 0) off = mem[0x272D];                             /* X off right edge */
+    else                off = mem[0x270E + (mem[0x2400 + X] >> 3)];     /* on-screen band */
 
-    /* a2dd — tail: add the per-screen-band scroll offset (signed) into {$245A:$2487}[X].
-       The offset source and its sign select the high-byte addend (0x00 vs 0xFF). */
-    {
-        uint8_t off;
-        A = mem[0x242D + X];                            /* a2dd */
-        if (A & 0x80) {                                  /* a2e0 BMI -> a310 */
-            off = mem[0x270E];                          /* a310 */
-        } else if (A != 0) {                             /* a2e2 BNE -> a317 */
-            off = mem[0x272D];                          /* a317 */
-        } else {
-            A = mem[0x2400 + X];                        /* a2e4 */
-            LSRA_(); LSRA_(); LSRA_();                    /* a2e7-a2e9 (>>3) */
-            Y = A;                                       /* a2ea TAY */
-            off = mem[0x270E + Y];                       /* a2eb */
-        }
-        A = off;
-        c = 0; ADC_(mem[0x245A + X]); mem[0x245A + X] = A;       /* a2f0 / a300 */
-        A = mem[0x2487 + X]; ADC_((off & 0x80) ? 0xFF : 0x00);   /* a2f7 #$00 / a307 #$FF */
-        mem[0x2487 + X] = A;
-        return;                                          /* a2ff / a30f */
-    }
-    /* a31e fall-through into terrain_draw_frame is unreachable */
-
-    #undef ADC_
-    #undef SBC_
-    #undef ASLM_
-    #undef ROLM_
-    #undef RORM_
-    #undef ROLA_
-    #undef RORA_
-    #undef LSRA_
+    uint16_t y_lo = (uint16_t)mem[0x245A + X] + off;
+    mem[0x245A + X] = (uint8_t)y_lo;
+    mem[0x2487 + X] = (uint8_t)(mem[0x2487 + X] + ((off & 0x80) ? 0xFF : 0x00) + (y_lo >> 8));
 }
 
 /* fill_terrain_silhouette @ $AE53 — per-column terrain silhouette fill (flight top #4).

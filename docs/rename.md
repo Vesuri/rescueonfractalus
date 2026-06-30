@@ -170,3 +170,16 @@ The top of the flight projection subtree. Cells still lacking mem.h names:
 - `$2879` → `proj_phase_flag` ? — 0/1 latch of the $066C landing/launch projection state machine.
 - `$066C` → `engine_state_a` ? (paired $066D, also in flight_control_integrate) — its value
   (<4 / 4-7 / >=8) selects the projection phase.
+
+**`project_terrain_points` ($A11F) — unnamed memory (found during the clean-C rewrite):**
+Per-object world->screen projection; X = object/column index into these 22-entry arrays:
+- `$24B4` → `obj_proj_flags[]` ? — per-object cull/state byte; bit4 = "already projected this frame".
+- `$22A4`/`$22D2` → `obj_num1_lo[]`/`obj_num1_hi[]` ? — half-1 signed numerator (screen X source).
+- `$235B`/`$2388` → `obj_num2_lo[]`/`obj_num2_hi[]` ? — half-2 signed numerator (screen Y source).
+- `$2300`/`$232E` → `obj_divisor_lo[]`/`obj_divisor_hi[]` ? — shared perspective divisor (depth).
+- `$2400`/`$242D` → `obj_screen_x_lo[]`/`obj_screen_x_hi[]` ? — half-1 projected coord output.
+- `$245A`/`$2487` → `obj_screen_y_lo[]`/`obj_screen_y_hi[]` ? — half-2 projected coord output.
+- `$270E`/`$272D` → `band_scroll_offset[]` ? — per-screen-band scroll offset table added to the
+  half-2 output ($272D = $270E+$1F; indexed by half-1 X >> 3 when half-1 hi byte is 0).
+- `$00B5` → `proj_fold_scratch` ? — fold high-byte scratch (= projection magnitude >> 8); in the
+  contract but dead after return. ($AE/$AF/$B0/$B1/$B2 are divide_16x16 scratch, already excluded.)
