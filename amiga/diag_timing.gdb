@@ -27,21 +27,14 @@ echo --- g_flightProf (RTCLOK ticks=20ms; per-frame = field/frames) ---\n
 printf "frames=%lu terrain=%lu tDraw=%lu stateEnemy=%lu render=%lu copper=%lu renderTot=%lu updateTot=%lu isrLines=%lu isrCalls=%lu\n", \
   g_flightProf.frames, g_flightProf.terrain, g_flightProf.tDraw, g_flightProf.stateEnemy, g_flightProf.render, g_flightProf.copper, g_flightProf.renderTot, g_flightProf.updateTot, g_flightProf.isrLines, g_flightProf.isrCalls
 echo --- VBI body sub-profile (beam ticks; per-ISR-call = total/isrCalls; 313/firing=20ms) ---\n
-printf "per-call: top=%lu integ=%lu proj=%lu atmo=%lu hud=%lu score=%lu tail=%lu | unattr=%lu | ISR=%lu\n", \
-  (g_flightProf.isrCalls? g_pTop/g_flightProf.isrCalls:0), \
+echo (vbi_handler_flight is now a NATIVE twin; timed as a whole via isrLines, integ/proj/sfx sub-measured)\n
+printf "per-call: integ=%lu proj=%lu sfx=%lu | ISR(whole handler)=%lu\n", \
   (g_flightProf.isrCalls? g_pInteg/g_flightProf.isrCalls:0), \
   (g_flightProf.isrCalls? g_pProj/g_flightProf.isrCalls:0), \
-  (g_flightProf.isrCalls? g_pAtmo/g_flightProf.isrCalls:0), \
-  (g_flightProf.isrCalls? g_pHud/g_flightProf.isrCalls:0), \
-  (g_flightProf.isrCalls? g_pScore/g_flightProf.isrCalls:0), \
-  (g_flightProf.isrCalls? g_pTail/g_flightProf.isrCalls:0), \
-  (g_flightProf.isrCalls? (g_flightProf.isrLines-g_pTop-g_pInteg-g_pProj-g_pAtmo-g_pHud-g_pScore-g_pTail)/g_flightProf.isrCalls:0), \
+  (g_flightProf.isrCalls? g_pSfx/g_flightProf.isrCalls:0), \
   (g_flightProf.isrCalls? g_flightProf.isrLines/g_flightProf.isrCalls:0)
-printf "  (tail includes sfx=%lu; partition: top+integ+proj+atmo+hud+score+tail ~= ISR)\n", \
-  (g_flightProf.isrCalls? g_pSfx/g_flightProf.isrCalls:0)
-printf "  bcd-render gate mem[0070]=%02x (score render runs when !=0)\n", mem[0x0070]
-printf "  totals: top=%lu integ=%lu proj=%lu atmo=%lu hud=%lu score=%lu tail=%lu isrLines=%lu isrCalls=%lu\n", \
-  g_pTop, g_pInteg, g_pProj, g_pAtmo, g_pHud, g_pScore, g_pTail, g_flightProf.isrLines, g_flightProf.isrCalls
+printf "  totals: integ=%lu proj=%lu sfx=%lu isrLines=%lu isrCalls=%lu\n", \
+  g_pInteg, g_pProj, g_pSfx, g_flightProf.isrLines, g_flightProf.isrCalls
 echo --- cockpit decode (beam ticks; 313=20ms) ---\n
 printf "cockpitTicks=%lu cockpitScans=%lu (per-scan ticks=%lu)\n", g_fCockpit, g_fCockpitScans, (g_fCockpitScans? g_fCockpit/g_fCockpitScans : 0)
 echo --- terrain_draw_frame sub-phase (ROF_TDRAW_PROF; cumulative — normalize by frames) ---\n

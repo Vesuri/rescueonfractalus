@@ -6446,6 +6446,273 @@ void sfx_voice_envelope_tick(void) { unsigned long _p = rof_subclock(); sfx_voic
 void sfx_voice_envelope_tick(void) { sfx_voice_envelope_tick_impl(); }
 #endif
 
+/* Typed argument wrappers over the (still-transpiled) callees that take their argument in a
+ * 6502 register, so vbi_handler_flight's call sites stay idiomatic (no inline cpu.X/Y/A pokes).
+ * Each marshals the arg into the register the transpiled body reads.  This is the inverse of
+ * the usual `_core` seam — here the callee is the transpiled cpu-ABI function, so the wrapper
+ * is the typed face; when these callees are themselves made native, the wrapper becomes the
+ * direct typed call.  (Register contracts confirmed against the $4FF5 disasm:
+ *   build_player2_sprite  reads X  -> stored to $2867;
+ *   draw_player3_object   reads A  (the $006A object byte; the oracle PHA/PLA-preserves it);
+ *   set_colpf0_from_flag  reads Y  (the message index; it falls into show_cockpit_message);
+ *   event_sequence_dispatcher reads X (and A=X) — the keyboard command id;
+ *   ring_push_marked      reads X  -> pushed as X|$80 onto the $0719 event ring.) */
+static void build_player2_sprite_core(uint8_t anim_frame)    { cpu.X = anim_frame;      build_player2_sprite(); }
+static void draw_player3_object_core(uint8_t obj_byte)       { cpu.A = obj_byte;        draw_player3_object(); }
+static void set_colpf0_from_flag_core(uint8_t msg_index)     { cpu.Y = msg_index;       set_colpf0_from_flag(); }
+static void event_sequence_dispatcher_core(uint8_t keycode)  { cpu.A = cpu.X = keycode; event_sequence_dispatcher(); }
+static void ring_push_marked_core(uint8_t value)             { cpu.X = value;           ring_push_marked(); }
+
+/* vbi_handler_flight @ $4FF5 — the in-flight vertical-blank handler (native twin).
+ *
+ * Runs once per frame while flying.  It advances the jiffy clock, then SPLITS its per-frame
+ * work across two alternating frames using the lock-on parity counter ($0643): on "draw" frames
+ * it updates the player-3 object / message flash / score; on "sim" frames it runs the motion
+ * integrator + terrain projection + the HUD cells + score.  Both frame types finish with the
+ * indicator + SFX-envelope tail.  (On the SDL build it ALSO pushes the Atari GTIA/ANTIC display
+ * shadows to hardware each frame — the `#ifndef ROF_PLATFORM_AMIGA` block below; that is dead on
+ * the Amiga, where the copper owns the display.)
+ *
+ * Faithful 1:1 re-expression of the $4FF5 6502 handler (validated byte-identical to the
+ * __t6502 oracle via `make validate FN=vbi_handler_flight`).  Amiga simplifications, all
+ * mem[]-neutral so they don't affect the validation:
+ *   - the GTIA/ANTIC per-frame register pushes are DEAD (the copper owns the display); kept
+ *     only for the SDL approximate display, under #ifndef ROF_PLATFORM_AMIGA.
+ *   - the windscreen-"static" raster loop ($5278-$52b1) is DEAD (it only pokes GTIA colour
+ *     registers, beam-synced; the copper has no equivalent) — SDL-only, same guard.
+ * POKEY ($D2xx) writes are kept on both platforms (they drive Paula on the Amiga).
+ *
+ * Sub-functions (flight_control_integrate / update_terrain_scanline_proj / the HUD draws /
+ * sfx_voice_envelope_tick / …) are called by name — identical in both twins, so the validation
+ * isolates exactly this handler's orchestration + inline state updates.
+ */
+void vbi_handler_flight(void) {
+    mem[0x00C7] = 0x00;                       /* reset the DLI dispatch index for this frame ($00C7) */
+
+#ifndef ROF_PLATFORM_AMIGA
+    /* Per-frame GTIA/ANTIC shadow push — SDL display only (dead on Amiga). */
+    uint8_t dp5 = display_param_5;
+    bus_write(0xD008, 0x00); bus_write(0xD009, 0x00);   /* P2/P3 horizontal pos (cleared) */
+    bus_write(0xD409, 0x04);                            /* CHBASE */
+    bus_write(0xD01A, dp5); bus_write(0xD012, dp5); bus_write(0xD013, dp5);
+    bus_write(0xD014, mem[0x0037]);
+    bus_write(0xD016, text_color_pf0);
+    bus_write(0xD017, display_param_8);
+    bus_write(0xD015, mem[0x00D9]);
+    bus_write(0xD002, mem[0x00CB]);
+    bus_write(0xD00A, mem[0x00CD]);
+    bus_write(0xD003, player3_hpos);
+    bus_write(0xD01B, mem[0x026F]);
+#endif
+
+    /* Advance the jiffy clock; on its 256-frame wrap, while an event is pending, EOR-strobe
+     * the 15-entry attract palette shadow ($07E9 -> display_param_0..$0E). */
+    if ((uint8_t)(++mem[MEM_RTCLOK_LOW]) == 0 &&
+        (event_active_flag | clear_colors_done_003E) != 0) {
+        mem[MEM_RTCLOK]++;
+        if ((uint8_t)(++mem[MEM_event_pending_flag]) & 0x80) {
+            event_pending_flag = 0x80;
+            for (int y = 0x0E; y >= 0; y--)
+                mem[MEM_display_param_0 + y] = (uint8_t)((mem[0x07E9 + y] ^ RTCLOK) & 0xF6);
+        }
+    }
+
+#ifndef ROF_PLATFORM_AMIGA
+    /* Wing-clearance missile HPOS (M3/M2/M1 from $2840, +$0C, +$05) — dead on Amiga (the
+     * clearance bars are a bitmap there). */
+    unsigned hp = mem[0x2840];
+    bus_write(0xD007, (uint8_t)hp);
+    hp += 0x0C; bus_write(0xD006, (uint8_t)hp);
+    hp = (hp & 0xFF) + 0x05 + (hp >> 8); bus_write(0xD005, (uint8_t)hp);
+    bus_write(0xD00C, 0xCC);
+#endif
+
+#ifndef ROF_PLATFORM_AMIGA
+    /* Re-entrancy guard ($0005): a VBI that fires before the previous one finished is a no-op.
+     * Dead on the Amiga — the VERTB interrupt cannot re-enter while this ISR is running, and
+     * nothing else reads $0005 (the guard is its only reader). */
+    if (zp_flag_05 != 0) { os_xitvbv(); return; }
+    zp_flag_05 = 0xCC;                        /* mark "in VBI" (cleared at the normal exit) */
+#endif
+
+    /* Double-buffer flip: while actively flying and mid-swap, point ANTIC at the terrain
+     * field half selected by game_phase, then clear it.  Dead on Amiga (the copper flips the
+     * bitplane pointers); the field-half selection itself is faithful, so keep clearing
+     * game_phase on both platforms. */
+    if (joystick_saved != 0 && game_phase != 0) {
+#ifndef ROF_PLATFORM_AMIGA
+        if (game_phase == 0x01) { bus_write(0xD402, 0x6B); bus_write(0xD403, 0x31); }
+        else                    { bus_write(0xD402, 0x10); bus_write(0xD403, 0x32); }
+#endif
+        game_phase = 0x00;
+    }
+
+    /* Alternate per-frame work via the lock-on parity counter ($00C8). */
+    if ((uint8_t)(--mem[MEM_lock_on_indicator_tick_parity]) != 0) {
+        /* ===== "draw" frame: lock-on flash colour, player-3 object, message, score ===== */
+
+        /* Cycle the lock-on flash colour ($00D9) within a small range. */
+        uint8_t d9 = mem[0x00D9], a = (uint8_t)(d9 >> 1), c;
+        if (d9 & 1) { a = (uint8_t)(a - 1); c = (a >= 0x4B); }   /* SBC #$01 ; CMP #$4B */
+        else        { a = (uint8_t)(a + 1); c = (a >= 0x4E); }   /* ADC #$01 ; CMP #$4E */
+        mem[0x00D9] = (uint8_t)((a << 1) | c);                   /* ROL */
+
+        if (object_anim_frame != 0 && event_active_flag == 0)
+            build_player2_sprite_core(object_anim_frame);
+        if (intro_phase_counter != 0) intro_sound_and_tick();
+
+        if (joystick_saved != 0) {
+            if (mem[0x006A] & 0x80) {                /* $006A bit7 set */
+                if (mem[0x006A] == 0xFF) draw_player3_object_core(mem[0x006A]);
+                update_p3_indicator_stripe();
+            } else {
+                if (mem[0x2845] == 0x7F) update_p3_indicator_stripe();
+                draw_player3_object_core(mem[0x006A]);
+            }
+            mem[MEM_collision_flags]--;
+            startup_init();
+            if (mem[0x003A] & 0x80) {                /* update the shields-status cockpit cell */
+                uint8_t v = (mem[MEM_collision_flags] & 0x08) ? 0xB6 : 0x36;
+                mem[0x3357] = v;
+                mem[0x3356] = (uint8_t)(v - 1);
+            }
+            if (vobj_path_flag != 0) vobj_update_active();
+        }
+
+        /* Message-flash timer + cockpit COLPF0. */
+        if (!(msg_flash_timer & 0x80)) {
+            if ((uint8_t)(--mem[MEM_msg_flash_timer]) & 0x80) {  /* just expired (0 -> $FF) */
+                clear_message_buffer();
+                if (level_or_state != 0) { colpf0_value = 0xEA; set_colpf0_from_flag_core(0x33); }
+            }
+        } else if (timer_or_counter != 0) {
+            set_colpf0_from_flag_core(timer_or_counter);
+        }
+
+        if (bcd_delta_hi != 0) add_and_show_bcd_counter();
+        /* -> tail */
+    } else {
+        /* ===== "sim" frame: target/lock-on logic, then the motion sim + terrain + HUD ===== */
+        obj_state_dispatch_0043();
+        lock_on_indicator_tick_parity = 0x02;        /* reload the parity counter */
+
+        /* Decide where this frame joins the common chain:
+         *   RESET  ($5178) — latch the target object, then continue through BLINK
+         *   BLINK  ($5197) — update_blink_timer, then KEYWIN
+         *   KEYWIN ($519A) — the keyboard-command window, then JOIN
+         *   JOIN   ($51B2) — the motion sim / terrain / HUD (when flying)
+         */
+        enum { RESET, BLINK, KEYWIN, JOIN } at;
+        if (level_or_state != 0) {
+            if      (target_latched_idx != 0) at = RESET;
+            else if (joystick_saved != 0)     at = BLINK;
+            else                              at = JOIN;
+        } else {
+            if      (event_active_flag != 0)  at = KEYWIN;
+            else if (joystick_saved != 0x02)  at = JOIN;          /* A==2 (parity) vs joystick */
+            else if (bus_read(0xD010) != 0)   at = BLINK;         /* fire NOT pressed (TRIG0=$D010) */
+            else if (clear_colors_done_003E == 0) at = RESET;
+            else { msg_flash_timer = clear_colors_done_003E; timer_or_counter = 0x4F; at = BLINK; }
+        }
+
+        if (at == RESET) {                           /* latch the first target object */
+            if (object_anim_frame == 0) {
+                mem[0x286A] = 0x00; mem[0x0039] = 0x00; target_latched_idx = 0x00;
+                mem[0x286B] = 0x01; object_anim_frame = 0x01;
+                vobj_row_count = 0x7C; mem[0x0037] = 0x78; mem[0x286C] = 0x0C;
+            }
+            at = BLINK;
+        }
+        if (at == BLINK) { update_blink_timer_006e(); at = KEYWIN; }
+        if (at == KEYWIN) {
+            /* The in-flight keyboard-command window: on the Atari a POKEY keyboard/BREAK IRQ
+             * fires in the 1-instruction CLI gap and leaves the keycode (or $80=BREAK) in X;
+             * the Amiga delivers it via platform_flight_irq_key() (one-shot, $FF = none). */
+            uint8_t k = 0xFF, kk = platform_flight_irq_key();
+            if (kk != 0xFFu) k = kk;
+            if (k == 0x80) { game_loop_reset_trampoline(); return; }   /* BREAK -> restart */
+            if (!(k & 0x80)) {                       /* a real key */
+                event_sequence_dispatcher_core(k);
+                if (span_pixel_count != 0) ring_push_marked_core(span_pixel_count);
+            }
+            at = JOIN;
+        }
+        /* JOIN ($51B2): run the motion sim + terrain + HUD only while actively flying. */
+        if (joystick_saved != 0) {
+            flight_control_integrate();
+            update_terrain_scanline_proj();
+
+            /* Atmosphere colour-ramp: pick an altitude band, copy its 4-entry palette set,
+             * and slowly advance the fade phase ($08A1 countdown -> $08A2 -> $08A3 via $364B). */
+            if (game_state == 0 && !(event_pending_flag & 0x80)) {
+                int idx;
+                if (terrain_depth_step < 0x32) idx = 0;
+                else { idx = (terrain_depth_step - 0x32) >> 1; if (idx > 6) idx = 6; }
+                uint8_t y = (uint8_t)(idx + mem[0x08A3]);
+                audc_shadow_0  = mem[0x07F9 + y];
+                mem[0x00DC]    = mem[0x0823 + y];
+                mem[0x00DB]    = mem[0x084D + y];
+                anim_counter_2 = mem[0x0877 + y];
+                if (stage_geom_0617 == 0 && (uint8_t)(--mem[0x08A1]) == 0) {
+                    uint8_t p = (uint8_t)(++mem[0x08A2]);
+                    mem[0x08A3] = mem[0x364B + ((p >> 2) & 0x0F)];
+                }
+            }
+
+            /* HUD cells (the 5 instrument draws). */
+            draw_canopy_pillar_p2();          /* misnamed: actually the artificial-horizon ground fill */
+            draw_altimeter_bars();
+            draw_compass_heading();
+            dispatch_43cb_half_70();
+            update_altitude_digit_display();
+
+            /* Score: every ~30 frames ($00DF countdown) fold the pending delta + redraw. */
+            if ((uint8_t)(--mem[MEM_sfx_voice_distortion]) == 0) {
+                if (level_cleared_flag != 0 && (uint8_t)(--mem[MEM_level_cleared_flag]) == 0)
+                    setup_level_clear_state();
+                if (mem[0x0070] != 0) { mem[MEM_bcd_delta_lo]++; add_and_show_bcd_counter(); }
+                sfx_voice_distortion = 0x1E;
+            }
+        }
+        /* -> tail */
+    }
+
+    /* ===== tail ($523E): indicator + SFX envelope, then the idle windscreen static ===== */
+    if (event_active_flag == 0) {
+        if (indicator_pos != 0) compute_indicator_pos();
+        sfx_voice_envelope_tick();
+        if (game_state == 0 && var_0632 == 0) {
+#ifndef ROF_PLATFORM_AMIGA
+            /* Windscreen "static" dither — SDL display only (dead on Amiga: GTIA colour pokes,
+             * beam-synced; the copper has no equivalent).  Nudge the threshold $062C toward a
+             * band target, then dither COLPF0/1/COLBK per scanline from POKEY RANDOM. */
+            uint8_t band = mem[0x08A2] & 0x3F;
+            int upd = -1;
+            if (band == 0x28) { unsigned s = mem[0x062C] + 0x0F; if (!(s & 0x100)) upd = (int)(s & 0xFF); }
+            else if (band == 0x30) { int s = (int)mem[0x062C] - 0x0F; if (s >= 0) upd = s; }
+            if (upd >= 0) {
+                mem[0x062C] = (uint8_t)upd;
+                for (;;) { uint8_t v = bus_read(0xD40B); if (!(v & 0x80) && v >= 0x19) break; }
+                bus_write(0xD20F, 0xFB);
+                do {
+                    uint8_t r = bus_read(0xD20A), col;
+                    if (r >= mem[0x062C]) { bus_write(0xD016, 0x20); col = 0xF0; }
+                    else                  { col = 0x00; bus_write(0xD016, 0x00); }
+                    bus_write(0xD017, col); bus_write(0xD01A, col);
+                    while (bus_read(0xD20A) & 0x80) { }
+                } while (bus_read(0xD40B) < 0x46);
+                bus_write(0xD20F, 0x03);
+            }
+#endif
+        }
+    }
+
+#ifndef ROF_PLATFORM_AMIGA
+    zp_flag_05 = 0x00;                        /* clear the re-entrancy guard (SDL only; see above) */
+#endif
+    os_xitvbv();
+}
+
 /* init_gameplay_state @ $73C8 — per-game/level gameplay init (run ONCE from
  * game_main_loop).  Seeds the heading/object/timer arrays + lives, draws the
  * compass, unpacks the cockpit bitmap, seeds the cockpit bar cells, plots the

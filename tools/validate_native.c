@@ -2034,6 +2034,50 @@ static int test_sfx_voice_envelope_tick(void) {
     return mem_fail;
 }
 
+/* vbi_handler_flight @ $4FF5 — the in-flight VBI handler (native twin).  Snapshot-driven (it
+ * orchestrates ~20 sub-functions whose loops only terminate with realistic arrays), with the
+ * zero-page control bytes + the lock-on parity counter ($0643) + the message timer ($063E)
+ * randomized for branch coverage (covers BOTH the "draw" and "sim" frame paths and the message
+ * expire/idle branches — the latter exercises set_colpf0_from_flag's Y arg), plus anti-hang guards:
+ *   - var_0632 ($0632) forced nonzero -> skips the tail's windscreen-static raster loop, which
+ *     busy-waits on VCOUNT ($D40B) the harness can't advance (SDL-only / #ifndef AMIGA, and its
+ *     $062C update falls straight into the loop, so it can't be diffed anyway).
+ *   - the SFX ring tables ($56D4 valid slots, voice regs, head/tail) seeded like the sfx test,
+ *     so sfx_voice_envelope_tick's ring drain terminates.
+ * platform_flight_irq_key() returns $FF (no key) so the keyboard-command/BREAK paths take the
+ * no-key branch in both twins.  Mask the POKEY range $D200-$D20F (Paula side effect) + the 6502
+ * stack page (transient PHA/PLA scratch from the callees). */
+static int test_vbi_handler_flight(void) {
+    if (!want("vbi_handler_flight")) return 0;
+    static uint8_t snap[65536], pre[65536];
+    static uint16_t mask[272];
+    const char *path = "a800dumps/flight_ram_0000_BFFF.bin";
+    FILE *f = fopen(path, "rb");
+    if (!f) { printf("vbi_handler_flight: SKIP (%s not found)\n", path); return 0; }
+    memset(snap, 0, sizeof snap);
+    size_t got = fread(snap, 1, 0xC000, f); fclose(f);
+    if (got != 0xC000) { printf("vbi_handler_flight: SKIP (short read %zu)\n", got); return 0; }
+    int mem_fail = 0, cpu_diff = 0, printed = 0;
+    set_ignore(mask, build_sfx_mask(mask));          /* stack page + POKEY $D200-$D20F */
+    for (int t = 0; t < 8000; t++) {
+        memcpy(pre, snap, sizeof pre);
+        for (int a = 0x00; a <= 0x7F; a++) pre[a] = (uint8_t)(xs() & 0xFF);  /* control bytes */
+        pre[0x0643] = (uint8_t)(xs() & 0xFF);        /* lock-on parity ($0643): cover draw + sim frames */
+        pre[0x063E] = (uint8_t)(xs() & 0xFF);        /* msg_flash_timer: cover the message expire/idle paths */
+        seed_voice_regs(pre);
+        for (int i = 0; i < 128; i++) pre[0x56D4 + i] = (uint8_t)(1 + (xs() % 14)); /* valid SFX slots */
+        pre[0x0073] = (uint8_t)(xs() % 0x20);        /* sfx ring head 0..$1F */
+        pre[0x0074] = (uint8_t)(xs() % 0x20);        /* sfx ring tail 0..$1F */
+        pre[0x0632] = (uint8_t)(1 + (xs() & 0x7F));  /* var_0632 != 0 -> skip the VCOUNT static loop */
+        mem_fail += diff_run("vbi_handler_flight", pre, zero_cpu(),
+                             vbi_handler_flight, vbi_handler_flight__t6502, t, &printed, &cpu_diff);
+    }
+    set_ignore(0, 0);
+    printf("vbi_handler_flight: %d cases (snapshot + random ZP, static loop skipped), %d mem mismatch (must be 0), %d cpu diffs\n",
+           8000, mem_fail, cpu_diff);
+    return mem_fail;
+}
+
 int main(int argc, char **argv) {
     g_filter = argv + 1; g_nfilter = argc - 1;   /* optional name-substring filters */
     platform_test_init_headless();   /* enable seedable RANDOM ($D20A) for both runs */
@@ -2297,6 +2341,7 @@ int main(int argc, char **argv) {
     fails += test_from_snapshot("fill_terrain_silhouette", fill_terrain_silhouette,
                                 fill_terrain_silhouette__t6502, 2000, 0x3F);
     fails += test_terrain_draw_frame();
+    fails += test_vbi_handler_flight();
 
     printf("\n%s%s\n", fails == 0 ? "PASS — " : "FAIL — ",
         fails == 0

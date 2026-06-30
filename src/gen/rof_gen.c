@@ -3923,19 +3923,14 @@ L_4fe2:;
 }
 
 /* vbi_handler_flight @ $4FF5: In-flight VBI handler (VVBLKI=$4FF5 set at $3E50 during flight init); $51B9 block = flight_control_integrate + terrain projection, mirrored by flight_vbi_native */
-void vbi_handler_flight(void) {
-    /* 4ff5 */
-    LDA(0x00);
-    
-#ifdef ROF_FLIGHT_PROBE
-    { extern volatile unsigned long g_vbiClk; extern unsigned long rof_subclock(void); g_vbiClk = rof_subclock(); }
-#endif
+/* faithful transliteration kept as the validation oracle; native vbi_handler_flight() lives in rof_native.c (see VALIDATE_FUNCS) */
+void vbi_handler_flight__t6502(void) {
     /* 4ff7 */
-    mem[0x00C7] = cpu.A;
+    mem[0x00C7] = 0x00;
     /* 4ff9 */
-    bus_write(0xD008, cpu.A);
+    bus_write(0xD008, 0x00);
     /* 4ffc */
-    bus_write(0xD009, cpu.A);
+    bus_write(0xD009, 0x00);
     /* 5001 */
     bus_write(0xD409, 0x04);
     /* 5004 */
@@ -4327,18 +4322,10 @@ L_51b2:;
     /* 51b6 */
     goto L_523e;
 L_51b9:;
-    
-#ifdef ROF_FLIGHT_PROBE
-    { extern volatile unsigned long g_pTop, g_vbiClk; extern unsigned long rof_subclock(void); g_pTop += rof_subclock() - g_vbiClk; }
-#endif
     /* 51b9 */
     flight_control_integrate();
     /* 51bc */
     update_terrain_scanline_proj();
-    
-#ifdef ROF_FLIGHT_PROBE
-    { extern volatile unsigned long g_vbiClk; extern unsigned long rof_subclock(void); g_vbiClk = rof_subclock(); }
-#endif
     /* 51bf */
     LDA(game_state);
     /* 51c1 */
@@ -4410,10 +4397,6 @@ L_51fc:;
     /* 520c */
     mem[0x08A3] = cpu.A;
 L_520f:;
-    
-#ifdef ROF_FLIGHT_PROBE
-    { extern volatile unsigned long g_pAtmo, g_vbiClk; extern unsigned long rof_subclock(void); unsigned long _s = rof_subclock(); g_pAtmo += _s - g_vbiClk; g_vbiClk = _s; }
-#endif
     /* 520f */
     draw_canopy_pillar_p2();
     /* 5212 */
@@ -4424,10 +4407,6 @@ L_520f:;
     dispatch_43cb_half_70();
     /* 521b */
     update_altitude_digit_display();
-    
-#ifdef ROF_FLIGHT_PROBE
-    { extern volatile unsigned long g_pHud, g_vbiClk; extern unsigned long rof_subclock(void); unsigned long _s = rof_subclock(); g_pHud += _s - g_vbiClk; g_vbiClk = _s; }
-#endif
     /* 521e */
     DEC_M(MEM_sfx_voice_distortion);
     /* 5221 */
@@ -4457,10 +4436,6 @@ L_5239:;
     /* 523b */
     sfx_voice_distortion = cpu.A;
 L_523e:;
-    
-#ifdef ROF_FLIGHT_PROBE
-    { extern volatile unsigned long g_pScore, g_vbiClk; extern unsigned long rof_subclock(void); unsigned long _s = rof_subclock(); g_pScore += _s - g_vbiClk; g_vbiClk = _s; }
-#endif
     /* 523e */
     LDA(event_active_flag);
     /* 5240 */
@@ -4564,10 +4539,6 @@ L_52a3:;
     /* 52b1 */
     bus_write(0xD20F, 0x03);
 L_52b4:;
-    
-#ifdef ROF_FLIGHT_PROBE
-    { extern volatile unsigned long g_pTail, g_vbiClk; extern unsigned long rof_subclock(void); g_pTail += rof_subclock() - g_vbiClk; }
-#endif
     /* 52b4 */
     LDA(0x00);
     /* 52b6 */

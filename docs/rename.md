@@ -80,3 +80,41 @@ Descriptive "gauge" prose still appears in some comments (Atari hardware-channel
   fill** (`$0E92-$0EB2`, the brown ground whose boundary moves with pitch; see the AH note in
   the flight-scene memory). Change-detected on `$291C`/`$291D` vs cache `$2872`/`$2874`, so it
   redraws only when attitude changes (cheap most VBI firings — NOT a per-frame cost).
+
+## 2026-06-30 — unnamed memory locations surfaced de-transpiling `vbi_handler_flight` ($4FF5)
+
+These RAM/ZP cells are read/written by the in-flight VBI but have **no `symbols.csv` var row**
+(the transpiler emits them as raw `mem[0xNNNN]`).  Add var rows so the native + transpiled code
+read as named state.  Behaviour is from the $4FF5 handler context; ✓ = confident, ? = verify.
+
+**Display-shadow pushes (the per-frame GTIA/ANTIC register copy at $4FF7-$5036):**
+- `$00C7` → `dli_dispatch_index` ✓ — the DLI/NMI chain index, reset to 0 at the top of every VBI.
+- `$00CB` → `hposp2_shadow` ? — pushed to HPOSP2 ($D002) (altimeter terrain-bar X).
+- `$00CD` → `grafm_shadow` ? — pushed to GRAFM ($D00A) (wing-clearance missile graphics).
+- `$026F` → `prior_shadow` ? — pushed to PRIOR ($D01B) (GTIA priority).
+- `$00D9` → `lockon_flash_color` ✓ — colour-cycled in the "draw" frame (LSR/SBC/ADC/ROL toggle
+  through $4B..$4E), pushed to $D015; the enemy/lock-on flash (matches CLAUDE.md instrument map).
+- `$0037` → `colpf1_shadow_or_terrain_h` ? — pushed to COLPF1 ($D014); also force-set to $78 in
+  the target-latch reset.  Dual use unclear — verify.
+
+**Atmosphere colour-ramp ($51BF-$520C) — altitude→palette fade:**
+- `$08A1` → `atmo_fade_countdown` ?, `$08A2` → `atmo_fade_phase` ?, `$08A3` → `atmo_band_base` ? —
+  the slow-fade phase counters ($08A1 counts down → bumps $08A2 → indexes $364B → $08A3).
+- `$00DC` → `terrain_pen0_fade` ✓ / `$00DB` → `terrain_pen1_fade` ? — the salmon→brown terrain
+  pens written from the lookup tables (matches the FlightCopperList terrain-fade note).
+- `$07F9` → `atmo_audc_table`, `$0823` → `atmo_pen0_table`, `$084D` → `atmo_pen1_table`,
+  `$0877` → `atmo_anim_table` ? — 4 parallel altitude-band lookup tables (indexed by depth band
+  + `$08A3`).  `$364B` → `atmo_fade_step_table` ? — the $08A2→$08A3 step table.
+- `$07E9` → `attract_palette_src` ? — source of the RTCLOK-EOR palette strobe → `display_param_0..E`.
+
+**Target-latch / object indices (the "sim" frame $5178 block):**
+- `$2845` → `p3_object_state` ?, `$006A` → `p3_object_mode` ? — gate the player-3 object draw path.
+- `$0039`/`$286A`/`$286B`/`$286C` → `target_obj_*` ? — the latched target object indices/coords.
+- `$003A` → bit7 gates the shields-cell update; verify (game-state/health flag?).
+
+**Cockpit cells / misc:**
+- `$3356`/`$3357` → `cockpit_shields_cell` ? — the mode-4 cockpit cell pair written ($36/$B6 ±1)
+  for the Shields-On status indicator (#14).
+- `$062C` → `static_dither_threshold` ? — the windscreen-"static" POKEY-RANDOM dither threshold
+  (SDL-only raster effect; dead on Amiga).  `$0632` → `static_enable_flag` ? — gates that block.
+- `$2840` → `wing_bar_hpos_base` ✓ — base HPOS for the wing-clearance missiles (M3/M2/M1 = +0,+$0C,+$11).

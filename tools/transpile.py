@@ -89,6 +89,7 @@ VALIDATE_FUNCS = {
     0xA11F,  # project_terrain_points — per-object world->screen projection via divide_16x16 (flight top #3)
     0xAE53,  # fill_terrain_silhouette — per-column surface scan + sky/body fill (NOT collision; flight top #4)
     0xA31E,  # terrain_draw_frame — main per-frame terrain driver (flight top #5, the last)
+    0x4FF5,  # vbi_handler_flight — the in-flight VBI handler itself (orchestrates the whole flight frame)
     # --- flight ISR de-transpile (2026-06-11): eliminate transpiled code on the
     #     per-frame VBI path.  Small subtrees first; the flight_control_integrate
     #     tree (~27 fns) is deferred. ---
@@ -417,26 +418,12 @@ PRE_INSN_HOOKS = {
     # returns+clears it (or $FF if none) — exactly mimicking the handler clobbering
     # X.  No-op everywhere it returns $FF (SDL / validate headless): X stays $FF.
     0x519c: '{ unsigned char _k = platform_flight_irq_key(); if (_k != 0xFFu) cpu.X = _k; }',
-    # ---- flight-VBI ($4FF5) sub-phase profiling (ROF_FLIGHT_PROBE only) ---------------
-    # The whole vbi_handler_flight is bracketed by flight_vbi_native (g_flightProf.isrLines),
-    # and integ/proj/sfx are wrapped individually — this PARTITIONS the rest of the handler so
-    # the per-firing budget is complete (top+integ+proj+atmo+hud+score+tail ~= isr).  One shared
-    # clock g_vbiClk is restarted at each boundary; the integ/proj region ($51b9..$51bf) is left
-    # OUT of the partition (it's covered by g_pInteg/g_pProj) by NOT restarting at $51b9.
-    #   TOP   $4ff7..$51b9 — entry boilerplate (~20 GTIA/ANTIC bus_writes), RTCLOK, colour strobe,
-    #                        missile/sprite HPOS, event_sequence_dispatcher, ring_push_marked.
-    #   ATMO  $51bf..$520f — atmosphere colour-ramp (altitude->pen table lookups; no calls/loops).
-    #   HUD   $520f..$521e — the 5 HUD draws (canopy/AH-fill, altimeter, compass, dispatch, digits).
-    #   SCORE $521e..$523e — level-clear + add_and_show_bcd_counter (the BCD score-digit render).
-    #   TAIL  $523e..$52b4 — indicator + sfx + the $5278-$52b1 raster-sync loop (gated; usually off).
-    # Each boundary is straight-line-balanced in the flight path (joystick_saved!=0).
-    0x4ff7: '\n#ifdef ROF_FLIGHT_PROBE\n    { extern volatile unsigned long g_vbiClk; extern unsigned long rof_subclock(void); g_vbiClk = rof_subclock(); }\n#endif',
-    0x51b9: '\n#ifdef ROF_FLIGHT_PROBE\n    { extern volatile unsigned long g_pTop, g_vbiClk; extern unsigned long rof_subclock(void); g_pTop += rof_subclock() - g_vbiClk; }\n#endif',
-    0x51bf: '\n#ifdef ROF_FLIGHT_PROBE\n    { extern volatile unsigned long g_vbiClk; extern unsigned long rof_subclock(void); g_vbiClk = rof_subclock(); }\n#endif',
-    0x520f: '\n#ifdef ROF_FLIGHT_PROBE\n    { extern volatile unsigned long g_pAtmo, g_vbiClk; extern unsigned long rof_subclock(void); unsigned long _s = rof_subclock(); g_pAtmo += _s - g_vbiClk; g_vbiClk = _s; }\n#endif',
-    0x521e: '\n#ifdef ROF_FLIGHT_PROBE\n    { extern volatile unsigned long g_pHud, g_vbiClk; extern unsigned long rof_subclock(void); unsigned long _s = rof_subclock(); g_pHud += _s - g_vbiClk; g_vbiClk = _s; }\n#endif',
-    0x523e: '\n#ifdef ROF_FLIGHT_PROBE\n    { extern volatile unsigned long g_pScore, g_vbiClk; extern unsigned long rof_subclock(void); unsigned long _s = rof_subclock(); g_pScore += _s - g_vbiClk; g_vbiClk = _s; }\n#endif',
-    0x52b4: '\n#ifdef ROF_FLIGHT_PROBE\n    { extern volatile unsigned long g_pTail, g_vbiClk; extern unsigned long rof_subclock(void); g_pTail += rof_subclock() - g_vbiClk; }\n#endif',
+    # NB: vbi_handler_flight ($4FF5) is now a native twin (rof_native.c) — only its __t6502
+    # validation oracle is transpiled here, so the $519c key-injection hook above still applies
+    # to the oracle (keeping its keyboard behaviour identical to the native).  The old
+    # top/atmo/hud/score/tail PRE_INSN_HOOKS sub-phase profilers were removed when the handler
+    # went native; the native is timed as a whole by flight_vbi_native (g_flightProf.isrLines)
+    # with integ/proj/sfx still sub-measured by their wrappers.
 }
 
 # ---------------------------------------------------------------------------
