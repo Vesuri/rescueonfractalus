@@ -3964,7 +3964,49 @@ void terrain_column_rasterize_core_c(uint8_t entryDepth, uint8_t colBase) {
  * oracle by headless render-diff of terrainBitmap + the plane2 dot buffer
  * (the deterministic auto-flight).  noinline so the call site binds to whichever
  * implementation is linked rather than inlining the C body into the caller. */
-#ifdef ROF_RASTERIZE_ASM
+#if defined(ROF_RASTERIZE_ASM) && defined(ROF_RASTERIZE_VERIFY)
+/* On-target differential check (single run, deterministic): each call runs the asm
+ * twin on the real state, snapshots the regions it wrote, restores them, runs the C
+ * oracle on the same inputs, and compares.  The C oracle's output is left LIVE so the
+ * flight stays correct regardless of an asm bug.  g_rasterMismatch / g_rasterFirstBad /
+ * g_rasterCalls are read via gdb (raster_verify.gdb).  Compares $260E (the per-column
+ * max-height output), the $82/$84/$86/$60 writeback, and the plane2 dot buffer. */
+extern void terrain_column_rasterize_core_asm(uint8_t entryDepth, uint8_t colBase);
+extern uint8_t* g_flightDotPlane;
+volatile unsigned long g_rasterCalls = 0, g_rasterMismatch = 0, g_rasterFirstBad = 0;
+/* Same-run perf comparison: bracket the asm and the C oracle back-to-back on the same
+ * inputs (FP_TIME subtracts ISR beam-lines).  Snapshot/restore is OUTSIDE the brackets,
+ * so these tally only the two implementations' own beam-ticks — directly comparable in a
+ * single run (sidesteps the cross-run VBI/main-loop interleave nondeterminism). */
+volatile unsigned long g_rasAsmTicks = 0, g_rasCTicks = 0;
+#define RAS_HMAP 0xD8          /* $260E[0..0xD7] max-height window (cols + slack) */
+#define RAS_DOT  5120          /* plane2 dot window: kRow120[42]+39 < 5120        */
+static uint8_t ras_snapH[RAS_HMAP], ras_asmH[RAS_HMAP];
+static uint8_t ras_snapZ[4],        ras_asmZ[4];
+static uint8_t ras_snapD[RAS_DOT],  ras_asmD[RAS_DOT];
+static void ras_cpy(uint8_t* d, const uint8_t* s, unsigned n) { while (n--) *d++ = *s++; }
+static int  ras_cmp(const uint8_t* a, const uint8_t* b, unsigned n) { while (n--) if (*a++ != *b++) return 1; return 0; }
+void terrain_column_rasterize_core(uint8_t entryDepth, uint8_t colBase) {
+    g_rasterCalls++;
+    uint8_t* const M = (uint8_t*)mem;
+    uint8_t* const dp = g_flightDotPlane;
+    ras_cpy(ras_snapH, &M[0x260E], RAS_HMAP);
+    ras_snapZ[0]=M[0x82]; ras_snapZ[1]=M[0x84]; ras_snapZ[2]=M[0x86]; ras_snapZ[3]=M[0x60];
+    if (dp) ras_cpy(ras_snapD, dp, RAS_DOT);
+    FP_TIME(terrain_column_rasterize_core_asm(entryDepth, colBase), g_rasAsmTicks);
+    ras_cpy(ras_asmH, &M[0x260E], RAS_HMAP);
+    ras_asmZ[0]=M[0x82]; ras_asmZ[1]=M[0x84]; ras_asmZ[2]=M[0x86]; ras_asmZ[3]=M[0x60];
+    if (dp) ras_cpy(ras_asmD, dp, RAS_DOT);
+    ras_cpy(&M[0x260E], ras_snapH, RAS_HMAP);
+    M[0x82]=ras_snapZ[0]; M[0x84]=ras_snapZ[1]; M[0x86]=ras_snapZ[2]; M[0x60]=ras_snapZ[3];
+    if (dp) ras_cpy(dp, ras_snapD, RAS_DOT);
+    FP_TIME(terrain_column_rasterize_core_c(entryDepth, colBase), g_rasCTicks);
+    int bad = ras_cmp(&M[0x260E], ras_asmH, RAS_HMAP);
+    if (M[0x82]!=ras_asmZ[0] || M[0x84]!=ras_asmZ[1] || M[0x86]!=ras_asmZ[2] || M[0x60]!=ras_asmZ[3]) bad = 1;
+    if (dp && ras_cmp(dp, ras_asmD, RAS_DOT)) bad = 1;
+    if (bad) { if (!g_rasterMismatch) g_rasterFirstBad = g_rasterCalls; g_rasterMismatch++; }
+}
+#elif defined(ROF_RASTERIZE_ASM)
 extern void terrain_column_rasterize_core(uint8_t entryDepth, uint8_t colBase); /* TerrainRasterizeAssembler.s */
 #else
 __attribute__((noinline)) void terrain_column_rasterize_core(uint8_t entryDepth, uint8_t colBase) {

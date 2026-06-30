@@ -87,6 +87,22 @@ FRAMEWORK_ASM_SRCS := \
     $(AMIGA_SRC)/framework/BitmapAssembler.s \
     $(AMIGA_SRC)/framework/CopperListAssembler.s
 
+# Hand-written m68k twin of the flight terrain rasterizer (asm-migration-plan Phase 2).
+# ON by default; build with `make RASTER_C=1` to fall back to the clean-C oracle
+# (terrain_column_rasterize_core_c) — used for the headless render-diff A/B.
+ifndef RASTER_C
+FRAMEWORK_ASM_SRCS += $(AMIGA_SRC)/TerrainRasterizeAssembler.s
+EXTRA_DEFINES += -DROF_RASTERIZE_ASM
+# `make VERIFY=1` (implies PROBES): on-target differential check of the asm twin vs
+# the C oracle each call (rof_native.c), read via amiga/raster_verify.gdb.  The define
+# goes to BOTH the C (the diff wrapper) and the raster .s (drops its plain xdef so the
+# wrapper owns terrain_column_rasterize_core and the asm is reached as *_asm).
+ifdef VERIFY
+EXTRA_DEFINES += -DROF_RASTERIZE_VERIFY
+obj/TerrainRasterizeAssembler.o : VASMFLAGS += -DROF_RASTERIZE_VERIFY
+endif
+endif
+
 # Objects (flattened into obj/ by basename).
 CXX_OBJS       := $(addprefix obj/,$(notdir $(CXX_SRCS:.cpp=.o)))
 CORE_C_OBJS    := $(addprefix obj/,$(notdir $(CORE_C_SRCS:.c=.o)))
@@ -100,7 +116,7 @@ OBJECTS := $(CXX_OBJS) $(CORE_C_OBJS) $(SUPPORT_C_OBJS) $(ASM_OBJS) $(FRAMEWORK_
 # vpath %.c — it has its own explicit rule so it builds with CCFLAGS, not CORE_CFLAGS.)
 vpath %.cpp $(AMIGA_SRC)/framework $(AMIGA_SRC) $(REPO)/src/platform $(REPO)/src
 vpath %.c   $(REPO)/src/cpu $(REPO)/src/gen
-vpath %.s   $(AMIGA_SRC)/framework
+vpath %.s   $(AMIGA_SRC)/framework $(AMIGA_SRC)
 
 # ---------------------------------------------------------------------------
 # Flags
