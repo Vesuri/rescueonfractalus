@@ -20,18 +20,28 @@ printf "flightVbi=%u dispSetup=%lu gameInit=%lu intro=%lu rowAddr=%lu initTotal=
 echo --- main-loop per-iteration gap (sub-frame ticks) ---\n
 printf "iterCount=%u iterLast=%lu iterMax=%lu iterMaxAt=%u\n", g_iterCount, g_iterLast, g_iterMax, g_iterMaxAt
 printf "fdCalls=%lu (renderFlightDirect converts) -> per-iteration = fdCalls/iterCount\n", g_fdCalls
-echo --- flight phase split (accumulated sub-frame ticks; 313 ticks=1 frame=20ms) ---\n
-printf "setup=%lu clear=%lu draw=%lu coll=%lu state=%lu enemy=%lu\n", \
-  g_fSetup, g_fClear, g_fDraw, g_fColl, g_fState, g_fEnemy
+echo --- flight phase split (accumulated sub-frame ticks; 313 ticks=1 frame=20ms; PASS-1 only) ---\n
+printf "setup=%lu clear=%lu draw=%lu state=%lu enemy=%lu  (collision=0: fill_terrain_silhouette shed on Amiga)\n", \
+  g_fSetup, g_fClear, g_fDraw, g_fState, g_fEnemy
 echo --- g_flightProf (RTCLOK ticks=20ms; per-frame = field/frames) ---\n
 printf "frames=%lu terrain=%lu tDraw=%lu stateEnemy=%lu render=%lu copper=%lu renderTot=%lu updateTot=%lu isrLines=%lu isrCalls=%lu\n", \
   g_flightProf.frames, g_flightProf.terrain, g_flightProf.tDraw, g_flightProf.stateEnemy, g_flightProf.render, g_flightProf.copper, g_flightProf.renderTot, g_flightProf.updateTot, g_flightProf.isrLines, g_flightProf.isrCalls
-echo --- VBI body sub-profile (beam ticks; per-ISR-call = total/isrCalls) ---\n
-printf "per-call: proj=%lu integ=%lu sfx=%lu isr=%lu\n", \
-  (g_flightProf.isrCalls? g_pProj/g_flightProf.isrCalls:0), \
+echo --- VBI body sub-profile (beam ticks; per-ISR-call = total/isrCalls; 313/firing=20ms) ---\n
+printf "per-call: top=%lu integ=%lu proj=%lu atmo=%lu hud=%lu score=%lu tail=%lu | unattr=%lu | ISR=%lu\n", \
+  (g_flightProf.isrCalls? g_pTop/g_flightProf.isrCalls:0), \
   (g_flightProf.isrCalls? g_pInteg/g_flightProf.isrCalls:0), \
-  (g_flightProf.isrCalls? g_pSfx/g_flightProf.isrCalls:0), \
+  (g_flightProf.isrCalls? g_pProj/g_flightProf.isrCalls:0), \
+  (g_flightProf.isrCalls? g_pAtmo/g_flightProf.isrCalls:0), \
+  (g_flightProf.isrCalls? g_pHud/g_flightProf.isrCalls:0), \
+  (g_flightProf.isrCalls? g_pScore/g_flightProf.isrCalls:0), \
+  (g_flightProf.isrCalls? g_pTail/g_flightProf.isrCalls:0), \
+  (g_flightProf.isrCalls? (g_flightProf.isrLines-g_pTop-g_pInteg-g_pProj-g_pAtmo-g_pHud-g_pScore-g_pTail)/g_flightProf.isrCalls:0), \
   (g_flightProf.isrCalls? g_flightProf.isrLines/g_flightProf.isrCalls:0)
+printf "  (tail includes sfx=%lu; partition: top+integ+proj+atmo+hud+score+tail ~= ISR)\n", \
+  (g_flightProf.isrCalls? g_pSfx/g_flightProf.isrCalls:0)
+printf "  bcd-render gate mem[0070]=%02x (score render runs when !=0)\n", mem[0x0070]
+printf "  totals: top=%lu integ=%lu proj=%lu atmo=%lu hud=%lu score=%lu tail=%lu isrLines=%lu isrCalls=%lu\n", \
+  g_pTop, g_pInteg, g_pProj, g_pAtmo, g_pHud, g_pScore, g_pTail, g_flightProf.isrLines, g_flightProf.isrCalls
 echo --- cockpit decode (beam ticks; 313=20ms) ---\n
 printf "cockpitTicks=%lu cockpitScans=%lu (per-scan ticks=%lu)\n", g_fCockpit, g_fCockpitScans, (g_fCockpitScans? g_fCockpit/g_fCockpitScans : 0)
 echo --- terrain_draw_frame sub-phase (ROF_TDRAW_PROF; cumulative — normalize by frames) ---\n
@@ -46,11 +56,12 @@ printf "  shape/frame: midpoints=%lu plots=%lu rasterCalls=%lu subdivCalls=%lu\n
 printf "  raster split/frame: bisectSteps=%lu drawAttempts=%lu actualPlots=%lu (per call: bisect=%lu draw=%lu)\n", \
   (g_tdFrames? g_tdRasBisect/g_tdFrames:0), (g_tdFrames? g_tdRasDraw/g_tdFrames:0), (g_tdFrames? g_tdPlots/g_tdFrames:0), \
   (g_tdRasterCalls? g_tdRasBisect/g_tdRasterCalls:0), (g_tdRasterCalls? g_tdRasDraw/g_tdRasterCalls:0)
-printf "fConvert=%lu (flight mem[1070]->bitplane convert; same units as draw=%lu)\n", g_fConvert, g_fDraw
-printf "fDirect=%lu (Stage-1 direct $260E->bitplane render; cmp vs fConvert)\n", g_fDirect
-printf "  fDirect breakdown/call (ticks): clear=%lu edge=%lu fill=%lu scan=%lu band=%lu\n", \
+printf "(fConvert path removed: direct $260E render replaced the mode-D convert)\n"
+printf "fDirect=%lu total; per-call=%lu ticks (Stage-1 direct $260E->bitplane render)\n", \
+  g_fDirect, (g_fdCalls? g_fDirect/g_fdCalls:0)
+printf "  fDirect breakdown/call (ticks): clear=%lu edge=%lu fill=%lu scan=%lu  (band convert removed -> band blank)\n", \
   (g_fdCalls? g_fdClear/g_fdCalls:0), (g_fdCalls? g_fdEdge/g_fdCalls:0), (g_fdCalls? g_fdFill/g_fdCalls:0), \
-  (g_fdCalls? g_fdScan/g_fdCalls:0), (g_fdCalls? g_fdBand/g_fdCalls:0)
+  (g_fdCalls? g_fdScan/g_fdCalls:0)
 echo --- energy strip $0D98..$0DD0 (57 bytes; is it a solid contiguous run = rectangle?) ---\n
 printf "062F(fuel)=%02x | energyAddr=%08x energy SV=%02x EV=%02x\n", mem[0x062F], g_energySprAddr, *(unsigned char*)g_energySprAddr, *(unsigned char*)(g_energySprAddr+2)
 set $i = 0

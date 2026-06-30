@@ -37,8 +37,12 @@ extern volatile unsigned short g_probeFlightVbi, g_iterCount, g_iterMaxAt;
  * FP_TIME so a phase's bucket excludes ISR firings that land in its window — otherwise
  * the ~5 ms 50 Hz VBI inflates the (short) clear/setup/collision buckets. */
 extern volatile unsigned long g_isrBeamLines;
+/* Clamp at 0: for a sub-ISR-duration phase (enemy/state), an ISR firing in its window can make
+ * the subtracted ISR beam-span exceed the phase's own wall span -> a negative (unsigned-wrapped)
+ * bucket.  Clamp so short buckets read 0 rather than ~4.29e9. */
 #define FP_TIME(stmt, acc) do { unsigned long _p = rof_subclock(); unsigned long _i = g_isrBeamLines; \
-    stmt; (acc) += (rof_subclock() - _p) - (g_isrBeamLines - _i); } while (0)
+    stmt; unsigned long _d = rof_subclock() - _p, _id = g_isrBeamLines - _i; \
+    (acc) += (_d > _id) ? (_d - _id) : 0; } while (0)
 #define FP_ITER()      do { if (g_iterPostDs) { unsigned long _g = rof_subclock() - g_iterPostDs; \
                                 g_iterLast = _g; if (_g > g_iterMax) { g_iterMax = _g; g_iterMaxAt = g_iterCount; } } \
                             g_iterCount++; } while (0)

@@ -417,6 +417,26 @@ PRE_INSN_HOOKS = {
     # returns+clears it (or $FF if none) — exactly mimicking the handler clobbering
     # X.  No-op everywhere it returns $FF (SDL / validate headless): X stays $FF.
     0x519c: '{ unsigned char _k = platform_flight_irq_key(); if (_k != 0xFFu) cpu.X = _k; }',
+    # ---- flight-VBI ($4FF5) sub-phase profiling (ROF_FLIGHT_PROBE only) ---------------
+    # The whole vbi_handler_flight is bracketed by flight_vbi_native (g_flightProf.isrLines),
+    # and integ/proj/sfx are wrapped individually — this PARTITIONS the rest of the handler so
+    # the per-firing budget is complete (top+integ+proj+atmo+hud+score+tail ~= isr).  One shared
+    # clock g_vbiClk is restarted at each boundary; the integ/proj region ($51b9..$51bf) is left
+    # OUT of the partition (it's covered by g_pInteg/g_pProj) by NOT restarting at $51b9.
+    #   TOP   $4ff7..$51b9 — entry boilerplate (~20 GTIA/ANTIC bus_writes), RTCLOK, colour strobe,
+    #                        missile/sprite HPOS, event_sequence_dispatcher, ring_push_marked.
+    #   ATMO  $51bf..$520f — atmosphere colour-ramp (altitude->pen table lookups; no calls/loops).
+    #   HUD   $520f..$521e — the 5 HUD draws (canopy/AH-fill, altimeter, compass, dispatch, digits).
+    #   SCORE $521e..$523e — level-clear + add_and_show_bcd_counter (the BCD score-digit render).
+    #   TAIL  $523e..$52b4 — indicator + sfx + the $5278-$52b1 raster-sync loop (gated; usually off).
+    # Each boundary is straight-line-balanced in the flight path (joystick_saved!=0).
+    0x4ff7: '\n#ifdef ROF_FLIGHT_PROBE\n    { extern volatile unsigned long g_vbiClk; extern unsigned long rof_subclock(void); g_vbiClk = rof_subclock(); }\n#endif',
+    0x51b9: '\n#ifdef ROF_FLIGHT_PROBE\n    { extern volatile unsigned long g_pTop, g_vbiClk; extern unsigned long rof_subclock(void); g_pTop += rof_subclock() - g_vbiClk; }\n#endif',
+    0x51bf: '\n#ifdef ROF_FLIGHT_PROBE\n    { extern volatile unsigned long g_vbiClk; extern unsigned long rof_subclock(void); g_vbiClk = rof_subclock(); }\n#endif',
+    0x520f: '\n#ifdef ROF_FLIGHT_PROBE\n    { extern volatile unsigned long g_pAtmo, g_vbiClk; extern unsigned long rof_subclock(void); unsigned long _s = rof_subclock(); g_pAtmo += _s - g_vbiClk; g_vbiClk = _s; }\n#endif',
+    0x521e: '\n#ifdef ROF_FLIGHT_PROBE\n    { extern volatile unsigned long g_pHud, g_vbiClk; extern unsigned long rof_subclock(void); unsigned long _s = rof_subclock(); g_pHud += _s - g_vbiClk; g_vbiClk = _s; }\n#endif',
+    0x523e: '\n#ifdef ROF_FLIGHT_PROBE\n    { extern volatile unsigned long g_pScore, g_vbiClk; extern unsigned long rof_subclock(void); unsigned long _s = rof_subclock(); g_pScore += _s - g_vbiClk; g_vbiClk = _s; }\n#endif',
+    0x52b4: '\n#ifdef ROF_FLIGHT_PROBE\n    { extern volatile unsigned long g_pTail, g_vbiClk; extern unsigned long rof_subclock(void); g_pTail += rof_subclock() - g_vbiClk; }\n#endif',
 }
 
 # ---------------------------------------------------------------------------

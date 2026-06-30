@@ -1115,23 +1115,34 @@ extern "C" volatile unsigned long g_vbiZpFirings = 0;
 #endif
 extern "C" void flight_vbi_native(void)
 {
-    unsigned short a = beam_line();      // sub-frame profiler timer
+    unsigned short a = beam_line();      // sub-frame profiler timer (FULL probe-ISR span)
 #ifdef ROF_FLIGHT_PROBE
+    // ZP write-set audit (rasterizer-alias safety, see CLAUDE.md): snapshot ZP before the
+    // handler, diff after.  These two 256-iter loops are PROBE-ONLY overhead (~70 beam
+    // lines/firing of volatile mem[] traffic) — absent from the real probe-off build.  So
+    // bracket the HANDLER separately (a2..b2) and report THAT as isrLines (the real VBI cost),
+    // while g_isrBeamLines keeps the FULL a..b span: the probe ISR really does steal that
+    // wall-time during a probe run, so subtracting the full span is what makes the main-loop
+    // FP_TIME buckets (draw/setup/clear) match the real game's pure main-loop compute.
     unsigned char zpSnap[256];
     for (int i = 0; i < 256; i++) zpSnap[i] = mem[i];
 #endif
+    unsigned short a2 = beam_line();     // HANDLER-only span start
     vbi_handler_flight();                // $4FF5 — the whole handler
+    unsigned short b2 = beam_line();     // HANDLER-only span end
 #ifdef ROF_FLIGHT_PROBE
     for (int i = 0; i < 256; i++) if (mem[i] != zpSnap[i]) g_vbiZpTouched[i] = 1;
     g_vbiZpFirings++;
 #endif
     unsigned short b = beam_line();
-    unsigned short d = (b >= a) ? (unsigned short)(b - a)
-                                : (unsigned short)(b + 313 - a);  // PAL wrap (~313 lines)
-    g_flightProf.isrLines += d;
+    unsigned short dHandler = (b2 >= a2) ? (unsigned short)(b2 - a2)
+                                         : (unsigned short)(b2 + 313 - a2);  // PAL wrap
+    g_flightProf.isrLines += dHandler;   // report the real handler cost (excludes the ZP audit)
     g_flightProf.isrCalls++;
 #ifdef ROF_FLIGHT_PROBE
-    g_isrBeamLines += d;
+    unsigned short dFull = (b >= a) ? (unsigned short)(b - a)
+                                    : (unsigned short)(b + 313 - a);
+    g_isrBeamLines += dFull;             // subtract FULL probe-ISR span from main-loop buckets
 #endif
 }
 

@@ -564,7 +564,11 @@ extern "C" volatile unsigned char g_dcMin=0xFF, g_dcMax=0, g_ddMin=0xFF, g_ddMax
 // render() cockpit scan/decode block; g_fCockpitScans counts the frames it actually ran.
 extern "C" volatile unsigned long g_fCockpit=0, g_fCockpitScans=0;
 // TEMP VBI-body sub-profiling (beam-line deltas inside the flight VBI; normalize by isrCalls).
+// proj/integ/sfx wrap individual native twins; top/hud are bracketed by PRE_INSN_HOOKS in
+// rof_gen.c ($4ff7..$51b9 entry boilerplate+events, $520f..$521e the 5 HUD draws).  The
+// *Clk vars hold each bracket's start subclock.  "rest" = isr - top - integ - proj - hud - sfx.
 extern "C" volatile unsigned long g_pProj=0, g_pInteg=0, g_pSfx=0;
+extern "C" volatile unsigned long g_pTop=0, g_pAtmo=0, g_pHud=0, g_pScore=0, g_pTail=0, g_vbiClk=0;
 // Stage-1 verifier: chip addr of terrainBitmap->data, so the gdb harness can dump the
 // flight bitplanes and decode/diff them headlessly (no display needed).
 extern "C" volatile uint32_t g_terrainBmpAddr=0;
