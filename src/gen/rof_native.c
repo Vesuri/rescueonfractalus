@@ -4813,62 +4813,46 @@ void reset_flags_ff(void) {
  * tail-push X=$11 to the event ring.  Outputs are mem[]; the ring push goes through
  * the same native ring_push_marked the oracle calls, so it's equivalence-safe. */
 void load_velocity_from_param_block(void) {
-    uint8_t A, Y, c;
-    #define ADC_(v)  do { uint16_t _t=(uint16_t)A+(uint8_t)(v)+c; c=(uint8_t)(_t>>8); A=(uint8_t)_t; } while(0)
-    #define SBC_(v)  ADC_((uint8_t)~(uint8_t)(v))
-    #define ROLA_()  do { uint8_t _n=A>>7; A=(uint8_t)((A<<1)|c); c=_n; } while(0)
-    #define RORA_()  do { uint8_t _n=A&1; A=(uint8_t)((A>>1)|(c<<7)); c=_n; } while(0)
-    #define ASLM_(a) do { uint8_t _v=mem[a]; c=_v>>7; mem[a]=(uint8_t)(_v<<1); } while(0)
-    #define ROLM_(a) do { uint8_t _v=mem[a],_n=_v>>7; mem[a]=(uint8_t)((_v<<1)|c); c=_n; } while(0)
-    #define RORM_(a) do { uint8_t _v=mem[a],_n=_v&1; mem[a]=(uint8_t)((_v>>1)|(c<<7)); c=_n; } while(0)
+    /* Copy straight-through fields. */
+    mem[0x2854] = 0x00;
+    mem[0x2857] = 0x00;
+    mem[0x2855] = mem[0x28FD];
+    mem[0x2856] = mem[0x28FE];
+    mem[0x2858] = mem[0x28FF];
+    mem[0x2859] = mem[0x2900];
+    mem[0x285A] = mem[0x2901];
 
-    mem[0x2854] = 0x00;                       /* 94bf-94c1 */
-    mem[0x2857] = 0x00;                       /* 94c4 */
-    mem[0x2855] = mem[0x28FD];                /* 94c7-94ca */
-    mem[0x2856] = mem[0x28FE];                /* 94cd-94d0 */
-    mem[0x2858] = mem[0x28FF];                /* 94d3-94d6 */
-    mem[0x2859] = mem[0x2900];                /* 94d9-94dc */
-    mem[0x285A] = mem[0x2901];                /* 94df-94e2 */
-    c = 0; A = mem[0x2902]; ADC_(0x08);       /* 94e5 CLC; 94e6 LDA $2902; 94e9 ADC #$08 */
-    if (c) A = 0xFF;                          /* 94eb BCC; 94ed LDA #$FF */
-    vel_z_clamp_hi = A;                          /* 94ef */
+    /* $285B = saturating $2902 + 8 (clamp to $FF on overflow). */
+    {
+        unsigned v = (unsigned)mem[0x2902] + 0x08;
+        vel_z_clamp_hi = (v > 0xFF) ? 0xFF : (uint8_t)v;
+    }
 
-    Y = 0x00;                                 /* 94f2 */
-    A = mem[0x2903]; mem[0x285C] = A;         /* 94f4-94f7 */
-    A = mem[0x2904]; mem[0x285D] = A;         /* 94fa-94fd */
-    if (A & 0x80) Y--;                        /* 9500 BPL; 9502 DEY (N from LDA $2904) */
-    A = Y;                                    /* 9503 TYA */
-    ASLM_(0x285C); ROLM_(0x285D); ROLA_();    /* 9504/9507/950a */
-    ASLM_(0x285C); ROLM_(0x285D); ROLA_();    /* 950b/950e/9511 */
-    mem[0x285E] = A;                          /* 9512 */
+    /* {$285E:$285D:$285C} = sign_extend24({$2904:$2903}) << 2. */
+    {
+        int32_t v = (int32_t)(int16_t)(uint16_t)(mem[0x2903] | (mem[0x2904] << 8)) << 2;
+        mem[0x285C] = (uint8_t)v;
+        mem[0x285D] = (uint8_t)(v >> 8);
+        mem[0x285E] = (uint8_t)(v >> 16);
+    }
 
-    Y = 0x00;                                 /* 9515 */
-    A = mem[0x2905]; mem[0x285F] = A;         /* 9517-951a */
-    A = mem[0x2906]; mem[0x2860] = A;         /* 951d-9520 */
-    if (A & 0x80) Y--;                        /* 9523 BPL; 9525 DEY */
-    A = Y;                                    /* 9526 TYA */
-    ASLM_(0x285F); ROLM_(0x2860); ROLA_();    /* 9527/952a/952d */
-    ASLM_(0x285F); ROLM_(0x2860); ROLA_();    /* 952e/9531/9534 */
-    mem[0x2861] = A;                          /* 9535 */
+    /* {$2861:$2860:$285F} = sign_extend24({$2906:$2905}) << 2. */
+    {
+        int32_t v = (int32_t)(int16_t)(uint16_t)(mem[0x2905] | (mem[0x2906] << 8)) << 2;
+        mem[0x285F] = (uint8_t)v;
+        mem[0x2860] = (uint8_t)(v >> 8);
+        mem[0x2861] = (uint8_t)(v >> 16);
+    }
 
-    mem[0x2862] = mem[0x2909];                /* 9538-953b */
-    A = mem[0x290A];                          /* 953e */
-    c = (A >= 0x80) ? 1 : 0;                  /* 9541 CMP #$80 -> carry = A>=$80 */
-    RORA_();                                  /* 9543 ROR A (arithmetic >>1) */
-    RORM_(0x2862);                            /* 9544 ROR $2862 */
-    c = 1; SBC_(0x01);                        /* 9547 SEC; 9548 SBC #$01 */
-    mem[0x2863] = A;                          /* 954a */
+    /* {$2863:$2862} = arith(sign_extend16({$290A:$2909}) >> 1), then high byte -= 1. */
+    {
+        int16_t v = (int16_t)(int16_t)(uint16_t)(mem[0x2909] | (mem[0x290A] << 8)) >> 1;
+        mem[0x2862] = (uint8_t)v;
+        mem[0x2863] = (uint8_t)((v >> 8) - 1);
+    }
 
-    cpu.X = 0x11;                             /* 954d LDX #$11 */
-    ring_push_marked();                       /* 954f (native; reads cpu.X) */
-
-    #undef ADC_
-    #undef SBC_
-    #undef ROLA_
-    #undef RORA_
-    #undef ASLM_
-    #undef ROLM_
-    #undef RORM_
+    cpu.X = 0x11;                             /* queue event $11 (ring_push_marked reads cpu.X) */
+    ring_push_marked();
 }
 
 /* bcd_inc_counter_0641 @ $7B88 — CLC; SED; ADC #1; CLD: increment the BCD counter
