@@ -89,18 +89,15 @@ ph1_loop:
 	bcc	ph2_enter		; col >= $2C -> start filling
 	moveq	#0,d0
 	move.b	(a3),d0			; ccol
-	moveq	#0,d6
-	move.b	d2,d6
+	move.l	d2,d6			; col (already zero-extended)
 	add.w	d0,d6			; col + ccol
 	lsr.w	#1,d6			; d6 = mid
-	moveq	#0,d7
-	move.b	d4,d7			; frac
+	move.l	d4,d7			; frac (already zero-extended)
 	moveq	#0,d1
 	move.b	2(a3),d1		; cfrac
 	add.w	d1,d7
 	addq.w	#1,d7			; d7 = fsum (bit8 = carry)
-	moveq	#0,d1
-	move.b	d3,d1			; height
+	move.l	d3,d1			; height (already zero-extended)
 	moveq	#0,d0
 	move.b	1(a3),d0		; chgt
 	add.w	d0,d1
@@ -117,8 +114,7 @@ ph1_loop:
 ph1_adv_disp:
 	moveq	#0,d0
 	move.b	(a3),d0			; ccol
-	sub.b	d2,d0			; (ccol - col) low byte  (col == mid now)
-	and.w	#$FF,d0
+	sub.b	d2,d0			; (ccol - col) low byte  (col == mid now; upper stays 0)
 	lsr.w	#1,d0			; d0 = disp = (uint8_t)(ccol-col) >> 1
 	btst	#8,d7
 	beq	ph1_adv_down
@@ -149,8 +145,7 @@ ph1_push:
 ph1_push_disp:
 	moveq	#0,d0
 	move.b	d6,d0			; mid
-	sub.b	d2,d0			; (mid - col) low byte
-	and.w	#$FF,d0
+	sub.b	d2,d0			; (mid - col) low byte  (upper stays 0)
 	lsr.w	#1,d0			; disp = (uint8_t)(mid-col) >> 1
 	btst	#8,d7
 	beq	ph1_push_down
@@ -189,20 +184,17 @@ ph2_loop:
 	cmp.b	#$FF,d1
 	beq	ph2_ff
 	; --- far: bisect, push interpolated midpoint (d0 = ccol still) ---
-	moveq	#0,d6
-	move.b	d5,d6
+	move.l	d5,d6			; plotCol (already zero-extended)
 	add.w	d0,d6			; plotCol + ccol
 	lsr.w	#1,d6			; d6 = mid
 	move.b	d6,3(a3)		; cp[d+1].col = mid
-	moveq	#0,d7
-	move.b	d4,d7			; frac
+	move.l	d4,d7			; frac (already zero-extended)
 	moveq	#0,d1
 	move.b	2(a3),d1		; cfrac
 	add.w	d1,d7
 	addq.w	#1,d7			; d7 = fsum
 	move.b	d7,5(a3)		; cp[d+1].frac
-	moveq	#0,d1
-	move.b	d3,d1			; height
+	move.l	d3,d1			; height (already zero-extended)
 	moveq	#0,d0
 	move.b	1(a3),d0		; chgt
 	add.w	d0,d1			; d1 = hsum
@@ -217,8 +209,7 @@ ph2_far_disp:
 	btst	#8,d7
 	beq	ph2_far_down
 	; up: disp = (uint8_t)(mid - col) >> 1 ; t = havg + disp + (hsum&1)
-	sub.b	d2,d6			; mid - col   (col == plotCol == d2)
-	and.w	#$FF,d6
+	sub.b	d2,d6			; mid - col   (col == plotCol == d2; upper stays 0)
 	lsr.w	#1,d6			; d6 = disp
 	add.w	d6,d1			; havg + disp
 	add.w	d0,d1			; + (hsum&1)
@@ -231,12 +222,10 @@ ph2_far_up_set:
 ph2_far_down:
 	; down: disp = (uint8_t)(mid - col - 1) >> 1
 	;       t = havg + (uint8_t)~disp + (hsum&1) ; mh = (t>0xFF)? t&0xFF : 0
-	sub.b	d2,d6			; mid - col
+	sub.b	d2,d6			; mid - col   (upper stays 0)
 	subq.b	#1,d6			; mid - col - 1
-	and.w	#$FF,d6
 	lsr.w	#1,d6			; disp
-	not.b	d6			; ~disp
-	and.w	#$FF,d6			; (uint8_t)~disp
+	not.b	d6			; ~disp = (uint8_t)~disp (upper already 0)
 	add.w	d6,d1			; havg + ~disp
 	add.w	d0,d1			; + (hsum&1)
 	cmp.w	#$FF,d1
@@ -282,29 +271,26 @@ ph2_ff:
 	bra	ph2_loop
 
 	; ---- DRAW(h in d0) : keep topmost height per column, lag-plot the dot ----
-	; Clobbers d0/d1/d6/d7/a0.  Reads d5=plotCol, a2=COL_MAX, a5=dotplane, a6=kRow120.
+	; Clobbers d0/d1/d6/d7.  Reads d5=plotCol (clean, zero-extended), a2=COL_MAX,
+	; a5=dotplane, a6=kRow120.  _h (d0) arrives zero-extended from every caller.
 draw:
-	and.l	#$FF,d0			; _h
-	moveq	#0,d1
-	move.b	d5,d1			; plotCol (index)
 	moveq	#0,d6
-	move.b	(a2,d1.w),d6		; oldMax = COL_MAX(plotCol)
+	move.b	(a2,d5.w),d6		; oldMax = COL_MAX(plotCol)
 	cmp.b	d6,d0			; _h - oldMax
 	bls	draw_ret		; _h <= oldMax -> hidden, nothing
-	move.b	d0,(a2,d1.w)		; COL_MAX(plotCol) = _h
+	move.b	d0,(a2,d5.w)		; COL_MAX(plotCol) = _h
 	cmp.b	#$97,d0
 	bcs	draw_dot		; _h < $97
-	move.b	#$FF,(a2,d1.w)		; saturate: full column
+	move.b	#$FF,(a2,d5.w)		; saturate: full column
 draw_dot:
 	; ROF_PLOT_DOT(plotCol, oldMax) — uses oldMax (the PREVIOUS top), not _h
 	move.l	a5,d7
-	beq	draw_ret		; g_flightDotPlane null -> skip
-	move.w	d1,d7			; plotCol
+	beq	draw_ret		; g_flightDotPlane null -> skip (cheap An-zero test)
+	move.w	d5,d7			; plotCol
 	sub.w	#48,d7			; _ac = plotCol - 48
 	cmp.w	#160,d7
 	bcc	draw_ret		; (unsigned) _ac >= 160 -> off viewport
-	moveq	#0,d0
-	move.w	#150,d0
+	move.w	#150,d0			; (upper word irrelevant — all .w below)
 	sub.w	d6,d0			; _sc = 150 - oldMax
 	cmp.w	#43,d0
 	bcc	draw_ret		; (unsigned) _sc >= 43 -> below viewport rows
@@ -318,8 +304,7 @@ draw_dot:
 	add.w	d1,d1			; * 2
 	move.w	#$C0,d6
 	lsr.w	d1,d6			; mask = $C0 >> (2*(_ac&3))  ( = kColMask4[_ac&3] )
-	movea.l	a5,a0
-	or.b	d6,(a0,d0.w)		; g_flightDotPlane[off] |= mask
+	or.b	d6,(a5,d0.w)		; g_flightDotPlane[off] |= mask
 draw_ret:
 	rts
 
