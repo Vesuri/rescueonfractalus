@@ -31,7 +31,7 @@ cycles per VBI to walk the server list) is negligible at 50 Hz.
 
 | Layer | Source | What we take |
 |-------|--------|--------------|
-| **Hardware** | `dA JoRMaS / Template / C++` | `AmigaHardware`, `Bitmap`, `CopperList`, `Sprite`, `Palette`, `Util` (C++ bodies, NO_ASSEMBLER) |
+| **Hardware** | `dA JoRMaS / Template / C++` | `AmigaHardware`, `Bitmap`, `CopperList`, `Sprite`, `Palette`, `Util` (hand-written m68k asm via vasm + GCC bridges; `Sprite`/`Palette` C++) |
 | **App skeleton** | PETSCII-Robots / WHDLoadMenuAnimated pattern | `main()` + `AddIntServer` VBI server + `while(!quit){poll;update;render;waitVBI}` state machine |
 
 The dA JoRMaS demo `Production`/`Part`/`Script`/`ProductionRunner` timeline and
@@ -40,5 +40,6 @@ runs the 6502-converted POKEY player and translates writes to Paula directly.
 
 ## Build
 
-`make` from `amiga/` (defaults to NO_ASSEMBLER; no vasm step needed).
+`make` from `amiga/` (ASSEMBLER on by default — vasm assembles the framework
+`*Assembler.s`; pass `CPPFLAGS+=-DNO_ASSEMBLER` for the portable C++ bodies).
 Toolchain on PATH via `. amiga/env.sh`.

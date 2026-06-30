@@ -9,18 +9,28 @@
 class CopperList;
 class Palette;
 
+// GCC + ASSEMBLER: AmigaHardwareAssembler.s xrefs these statics by their SAS/C
+// mangled names. Force GCC to emit the same symbol names (asm label) so the
+// linker resolves the asm routines' references to the C++-defined statics.
+// Empty (default mangling) for the C++-body builds.
+#if defined(ASSEMBLER) && !defined(__SASC)
+#define ROF_SASC_ALIAS(n) __asm__(n)
+#else
+#define ROF_SASC_ALIAS(n)
+#endif
+
 class AmigaHardware {
 private:
-    static uint16_t octants[4];
-    static uint16_t blitterQueueBuffer[BLITTER_QUEUE_SIZE + 1];
-    static uint16_t* blitterQueueBufferEnd;
-    static uint16_t* blitterQueueToBeBlitted;
-    static uint16_t* blitterQueueAddPosition;
+    static uint16_t octants[4] ROF_SASC_ALIAS("_octants__13AmigaHardware");
+    static uint16_t blitterQueueBuffer[BLITTER_QUEUE_SIZE + 1] ROF_SASC_ALIAS("_blitterQueueBuffer__13AmigaHardware");
+    static uint16_t* blitterQueueBufferEnd ROF_SASC_ALIAS("_blitterQueueBufferEnd__13AmigaHardware");
+    static uint16_t* blitterQueueToBeBlitted ROF_SASC_ALIAS("_blitterQueueToBeBlitted__13AmigaHardware");
+    static uint16_t* blitterQueueAddPosition ROF_SASC_ALIAS("_blitterQueueAddPosition__13AmigaHardware");
     static bool modifyingBlitterQueue;
 
 public:
     static bool hasAGAChipSet;
-    static volatile bool hasQueuedBlits;
+    static volatile bool hasQueuedBlits ROF_SASC_ALIAS("_hasQueuedBlits__13AmigaHardware");
 #if defined(ASSEMBLER) && defined(__SASC)
     __asm static void* getVBR(void);
 #else

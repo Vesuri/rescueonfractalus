@@ -1,4 +1,4 @@
-# Rescue on Fractalus — Amiga cross-build (m68k-amiga-elf-gcc, NO_ASSEMBLER)
+# Rescue on Fractalus — Amiga cross-build (m68k-amiga-elf-gcc)
 #
 # Usage (from amiga/ with toolchain on PATH via `. env.sh`):
 #   make          — build out/RoF.exe
@@ -6,9 +6,11 @@
 #   ./run.sh      — boot in FS-UAE (OCS A500)
 #   ./debug.sh    — source-level debug via FS-UAE GDB stub
 #
-# NO_ASSEMBLER is the only build mode for this plan: the dA JoRMaS framework
-# *Assembler.s are not vendored; we compile the portable C++ bodies throughout.
-# See amiga/ARCH.md and amiga/framework/UPSTREAM.md for rationale.
+# The dA JoRMaS framework's hand-written m68k *Assembler.s routines are vendored
+# (framework/*Assembler.s, vasm-assembled) and reached from GCC via register-
+# marshalling bridges (the `#if defined(ASSEMBLER) && !defined(__SASC)` sections in
+# the framework .cpp).  ASSEMBLER is enabled by default (Util.h); pass -DNO_ASSEMBLER
+# to fall back to the portable C++ bodies.  See docs/asm-migration-plan.md.
 #
 # Structure mirrors the repo-root SDL Makefile: explicit CXX_SRCS / CORE_C_SRCS
 # lists mapped to objects, compiled by per-extension pattern rules.  The objects
@@ -18,6 +20,7 @@
 OUT      = out/RoF
 CC       = m68k-amiga-elf-gcc
 AS       = m68k-amiga-elf-as
+VASM     = vasmm68k_mot
 OBJDUMP  = m68k-amiga-elf-objdump
 SDKDIR   = $(abspath $(dir $(shell which $(CC)))../m68k-amiga-elf/sys-include)
 SUPPORT  = $(abspath $(dir $(shell which $(CC)))../../support)
@@ -74,25 +77,36 @@ CORE_C_SRCS := \
 SUPPORT_C_SRCS := $(SUPPORT)/gcc8_c_support.c
 ASM_SRCS       := $(SUPPORT)/gcc8_a_support.s $(AMIGA_SRC)/incbin.s
 
+# Framework hand-written m68k asm (Motorola syntax, assembled by vasm -> ELF).  These
+# are the dA JoRMaS framework's *Assembler.s routines, vendored + dotted-label-sanitised
+# (see framework/UPSTREAM.md).  The matching GCC register-marshalling bridges live under
+# `#if defined(ASSEMBLER) && !defined(__SASC)` in the corresponding framework .cpp.
+FRAMEWORK_ASM_SRCS := \
+    $(AMIGA_SRC)/framework/UtilAssembler.s \
+    $(AMIGA_SRC)/framework/AmigaHardwareAssembler.s \
+    $(AMIGA_SRC)/framework/BitmapAssembler.s \
+    $(AMIGA_SRC)/framework/CopperListAssembler.s
+
 # Objects (flattened into obj/ by basename).
 CXX_OBJS       := $(addprefix obj/,$(notdir $(CXX_SRCS:.cpp=.o)))
 CORE_C_OBJS    := $(addprefix obj/,$(notdir $(CORE_C_SRCS:.c=.o)))
 SUPPORT_C_OBJS := $(addprefix obj/,$(notdir $(SUPPORT_C_SRCS:.c=.o)))
 ASM_OBJS       := $(addprefix obj/,$(notdir $(ASM_SRCS:.s=.o)))
+FRAMEWORK_ASM_OBJS := $(addprefix obj/,$(notdir $(FRAMEWORK_ASM_SRCS:.s=.o)))
 
-OBJECTS := $(CXX_OBJS) $(CORE_C_OBJS) $(SUPPORT_C_OBJS) $(ASM_OBJS)
+OBJECTS := $(CXX_OBJS) $(CORE_C_OBJS) $(SUPPORT_C_OBJS) $(ASM_OBJS) $(FRAMEWORK_ASM_OBJS)
 
 # Locate sources for the pattern rules.  (gcc8_c_support.c is deliberately NOT on
 # vpath %.c — it has its own explicit rule so it builds with CCFLAGS, not CORE_CFLAGS.)
 vpath %.cpp $(AMIGA_SRC)/framework $(AMIGA_SRC) $(REPO)/src/platform $(REPO)/src
 vpath %.c   $(REPO)/src/cpu $(REPO)/src/gen
+vpath %.s   $(AMIGA_SRC)/framework
 
 # ---------------------------------------------------------------------------
 # Flags
 # ---------------------------------------------------------------------------
 WARN      = -Wall -Wno-unused-function -Wno-unused-parameter -Wno-unused-variable
 # -m68000: target is A500 68000. -msoft-float: no FPU.
-# -DNO_ASSEMBLER: use the portable C++ bodies; no *Assembler.s or vasm step.
 # Core C flags: same base but with repo src/ include paths for cpu.h/bus.h/rof_gen.c
 CORE_CINCLUDES = -I"$(AMIGA_SRC)/framework/compat-include" \
                  -I"$(REPO)/src/cpu" \
@@ -128,7 +142,7 @@ CORE_CFLAGS   = -g -MP -MMD -m68000 -msoft-float $(OPT) -nostdlib \
                 $(CORE_CINCLUDES) $(EXTRA_DEFINES)
 CCFLAGS   = -g -MP -MMD -m68000 -msoft-float $(OPT) -nostdlib \
             -fno-tree-loop-distribution -ffunction-sections -fdata-sections \
-            -DNO_ASSEMBLER $(WARN) $(EXTRA_DEFINES)
+            $(WARN) $(EXTRA_DEFINES)
 CPPFLAGS  = $(CCFLAGS) -fno-rtti -fno-exceptions -fno-use-cxa-atexit -std=gnu++17 \
             -fpermissive -Wno-write-strings -Wno-pointer-arith \
             -DROF_PLATFORM_AMIGA \
@@ -139,6 +153,10 @@ CPPFLAGS  = $(CCFLAGS) -fno-rtti -fno-exceptions -fno-use-cxa-atexit -std=gnu++1
             -I"$(REPO)/src/platform" \
             -I"$(CURDIR)"
 ASFLAGS   = -mcpu=68000 -g --register-prefix-optional -I"$(SDKDIR)" -I"$(CURDIR)"
+# vasm (Motorola syntax) for the framework *Assembler.s.  -m68010: the only >68000
+# instruction is `movec vbr,d0` in getVBR (the C++ getVBR already emits movec via raw
+# bytes through Supervisor(), so this is behaviour-neutral on the A500 68000 target).
+VASMFLAGS = -m68010 -Felf -quiet -x -no-opt -nowarn=62
 LDFLAGS   = -Wl,--emit-relocs,--gc-sections,-Ttext=0,-Map=$(OUT).map
 
 # ---------------------------------------------------------------------------
@@ -188,6 +206,12 @@ INCBIN_DEPS := assets/cockpit.raw ../disasm/screen3_mem.bin ../rof.xex assets/at
 obj/incbin.o : $(AMIGA_SRC)/incbin.s $(INCBIN_DEPS)
 	$(info ASM  $<)
 	@$(AS) $(ASFLAGS) -o $@ "$(abspath $(AMIGA_SRC)/incbin.s)"
+
+# Framework hand-written asm (vasm, Motorola syntax -> ELF).  Static pattern rule so
+# it doesn't collide with the gas-assembled gcc8_a_support.s / incbin.s (explicit rules).
+$(FRAMEWORK_ASM_OBJS) : obj/%.o : %.s
+	$(info VASM $<)
+	@$(VASM) $(VASMFLAGS) -o $@ "$(abspath $<)"
 
 clean:
 	@$(RM) -r obj/ out/
