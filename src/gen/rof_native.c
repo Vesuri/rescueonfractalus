@@ -5302,40 +5302,37 @@ void check_object_in_target_box(void) {
  * threshold $96F5[$0036].  On a hit: clear $2826 and fire the pickup/explosion chain.
  * Reads ENTRY CARRY ($9682 ADC #$04).  mem-only contract. */
 void check_player_proximity_hit(void) {
-    uint8_t A, X, c;
-    #define ADC_(v) do { uint16_t _t=(uint16_t)A+(uint8_t)(v)+c; c=(uint8_t)(_t>>8); A=(uint8_t)_t; } while(0)
-    #define SBC_(v) ADC_((uint8_t)~(uint8_t)(v))
-    #define RORA_() do { uint8_t _n=A&1; A=(uint8_t)((A>>1)|(c<<7)); c=_n; } while(0)
-    #define LSRA_() do { c=A&1; A=(uint8_t)(A>>1); } while(0)
+    /* Reject unless object slot $0036 is within hit range of the player ship index:
+     * |($006A + 4 + entryC) - $0036| < 4.  (The +4 ADC rotates in the entry carry.) */
+    uint8_t near = (uint8_t)(mem[0x006A] + 0x04 + (cpu.C & 1));      /* 9680: entry carry */
+    uint8_t ds = (uint8_t)(near - object_anim_frame);
+    if (near < object_anim_frame) ds = (uint8_t)-ds;
+    if (ds >= 0x04) return;
 
-    c = cpu.C;                                  /* ENTRY CARRY */
-    A = mem[0x006A]; ADC_(0x04);                /* 9680-9682 */
-    c = 1; SBC_(object_anim_frame);                   /* 9684-9685 SEC; SBC $0036 */
-    if (!c) { A ^= 0xFF; ADC_(0x01); }          /* 9687 BCS; 9689-968b abs */
-    if (A >= 0x04) return;                      /* 968d CMP #$04; 968f BCS L_96d8 */
-    c = 1; A = vobj_row_count; SBC_(0x0C); SBC_(player3_ytop);   /* 9691-9696 SEC;SBC #$0C;SBC $2824 */
-    if (!c) { A ^= 0xFF; ADC_(0x01); }          /* 9699-969d abs */
-    dl_y1 = A;                            /* 969f */
-    c = 0; A = mem[0x0039]; ADC_(0x42);         /* 96a1-96a4 CLC;LDA $0039;ADC #$42 */
-    c = 1; SBC_(player3_xpos);                   /* 96a6-96a7 SEC; SBC $2821 */
-    if (!c) { A ^= 0xFF; ADC_(0x01); }          /* 96aa-96ae abs */
-    c = 0; ADC_(dl_y1);                   /* 96b0-96b1 CLC; ADC $00BB */
-    RORA_(); LSRA_();                           /* 96b3 ROR A; 96b4 LSR A */
-    X = object_anim_frame;                            /* 96b5 */
-    if (A >= mem[0x96F5 + X]) return;           /* 96b7 CMP $96F5,X; 96ba BCS L_96d8 */
-    /* HIT */
-    player3_dither_flag = 0x00;                         /* 96bc-96be */
-    reset_indicator_event();                    /* 96c1 (native) */
-    reset_object_slot();                        /* 96c4 (native) */
-    trigger_object_explosion();                 /* 96c7 (native) */
-    bcd_delta_lo = 0x50;                         /* 96ca-96cc */
-    bcd_delta_hi = 0x02;                         /* 96ce-96d0 */
-    bcd_inc_counter_0641();                     /* 96d2 (native) */
-    terrain_jitter_column();                    /* 96d5 (native) */
-    #undef ADC_
-    #undef SBC_
-    #undef RORA_
-    #undef LSRA_
+    /* Folded screen distance |row-$0C-blipY| + |($0039+$42)-blipX|, halved twice,
+     * compared to the per-shape threshold $96F5[$0036]. */
+    int b1 = (vobj_row_count < 0x0C);                              /* borrow out of SBC #$0C */
+    int dyt = (int)(uint8_t)(vobj_row_count - 0x0C) - player3_ytop - b1;  /* then SBC $2824 */
+    uint8_t dy = (uint8_t)dyt;
+    if (dyt < 0) dy = (uint8_t)-dy;
+    dl_y1 = dy;                                                     /* $00BB scratch (969f) */
+
+    uint8_t lhsX = (uint8_t)(mem[0x0039] + 0x42);
+    uint8_t dx = (uint8_t)(lhsX - player3_xpos);
+    if (lhsX < player3_xpos) dx = (uint8_t)-dx;
+
+    if ((uint8_t)((dx + dy) >> 2) >= mem[0x96F5 + object_anim_frame]) return;
+
+    /* HIT: clear the dither flag, fire the pickup/explosion chain, add 250 to the score,
+     * and jitter the terrain. */
+    player3_dither_flag = 0x00;
+    reset_indicator_event();
+    reset_object_slot();
+    trigger_object_explosion();
+    bcd_delta_lo = 0x50;
+    bcd_delta_hi = 0x02;
+    bcd_inc_counter_0641();
+    terrain_jitter_column();
 }
 
 /* compute_obj_rel_angle_scale @ $97A0 — build a 10-bit relative angle from $2885/$2886,
