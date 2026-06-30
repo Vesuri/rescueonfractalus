@@ -5182,74 +5182,83 @@ void draw_cockpit_dial_bar(void) {
  * trigger_object_explosion -> ring_push consumes it; the same native chain runs in both
  * the native and oracle paths, so it stays equivalent.  mem-only contract. */
 void object_step_and_collide(void) {
-    uint8_t A, Y, c;
-    #define ADC_(v) do { uint16_t _t=(uint16_t)A+(uint8_t)(v)+c; c=(uint8_t)(_t>>8); A=(uint8_t)_t; } while(0)
-    #define ASLA_() do { c=(uint8_t)(A>>7); A=(uint8_t)(A<<1); } while(0)
-
-    c = 0; A = mem[0x2854]; ADC_(mem[0x285C]); mem[0x2854] = A;             /* 9552-9559 */
-    A = mem[0x2855]; ADC_(mem[0x285D]); mem[0x2855] = A; map_x_lo = A;   /* 955c-9565 */
-    A = mem[0x2856]; ADC_(mem[0x285E]); A &= 0x0F; mem[0x2856] = A; map_x_hi = A; /* 9568-9573 */
-    c = 0; A = mem[0x2857]; ADC_(mem[0x285F]); mem[0x2857] = A;             /* 9576-957d */
-    A = mem[0x2858]; ADC_(mem[0x2860]); mem[0x2858] = A; map_z_lo = A;   /* 9580-9589 */
-    A = mem[0x2859]; ADC_(mem[0x2861]); A &= 0x0F; mem[0x2859] = A; map_z_hi = A; /* 958c-9597 */
-    c = 0; A = mem[0x285A]; ADC_(mem[0x2862]); mem[0x285A] = A;             /* 959a-95a1 */
-    A = vel_z_clamp_hi; ADC_(mem[0x2863]);                                     /* 95a4-95a7 */
-    if (c) { if (!(mem[0x2863] & 0x80)) A = 0xFF; }                         /* 95aa-95b1 BMI: $FF on +overflow */
-    else   { if (mem[0x2863] & 0x80) A = 0x00; }                            /* 95b6-95bb */
-    vel_z_clamp_hi = A;                                                        /* 95bd */
-    /* check_player_proximity_hit reads ENTRY CARRY; at $95c4 that carry is the
-       overflow out of the $95a7 ADC $2863 (BIT/LDA in the clamp don't touch C). */
-    cpu.C = c;
-    if (!(object_index_signed & 0x80)) check_player_proximity_hit();                /* 95c0-95c4 */
-
-    A = mem[0x2858]; ASLA_();                  /* 95c7-95ca */
-    A = mem[0x2859]; ADC_(0x00);               /* 95cb-95ce */
-    ASLA_(); ASLA_(); ASLA_(); ASLA_();        /* 95d0-95d3 (x16) */
-    dl_y1 = A;                           /* 95d4 */
-    A = mem[0x2855]; ASLA_();                  /* 95d6-95d9 */
-    A = mem[0x2856]; ADC_(0x00); A &= 0x0F;    /* 95da-95df */
-    A |= dl_y1; map_cell_index = A;         /* 95e1-95e3 */
-    Y = A;                                     /* 95e6 TAY */
-
-    if (mem[0x0A00 + Y] != 0) {                 /* 95e7-95ea BEQ L_9614 */
-        A = mem[0x0900 + Y]; c = 0; ADC_(0x10); if (c) A = 0xFF;   /* 95ec-95f4 */
-        if (A >= vel_z_clamp_hi) {                 /* 95f6-95f9 BCC L_9614 */
-            A = mem[0x2855];
-            if (!(A >= 0x30 && A < 0xD0)) {      /* 95fb-9604 not in X-band -> L_9606 */
-                A = mem[0x2858];
-                if (!(A >= 0x30 && A < 0xD0)) goto L_9635;   /* 9606-960f / L_9611 */
-            }
-        }
+    /* Integrate the three position accumulators by their velocities.  X and Z are 24-bit
+     * with the high byte masked to 12-bit map coords (mirrored to $27FD-$2800); altitude
+     * is 16-bit with a signed saturating clamp. */
+    {   /* X: {$2856:$2855:$2854} += {$285E:$285D:$285C} */
+        uint32_t v = mem[0x2854] | (mem[0x2855] << 8) | (mem[0x2856] << 16);
+        v += mem[0x285C] | (mem[0x285D] << 8) | (mem[0x285E] << 16);
+        uint8_t lo = (uint8_t)(v >> 8), hi = (uint8_t)(v >> 16) & 0x0F;
+        mem[0x2854] = (uint8_t)v;
+        mem[0x2855] = lo; map_x_lo = lo;
+        mem[0x2856] = hi; map_x_hi = hi;
     }
-    /* L_9614 */
-    sample_terrain_height_bilerp();             /* 9614 (native) */
-    if (terrain_height_sample < vel_z_clamp_hi) return;      /* 9617-961e */
-    A = mem[0x2855];
-    if (A >= 0x30 && A < 0xD0) { reset_object_slot(); return; }   /* 961f-9628 */
-    A = mem[0x2858];
-    if (A >= 0x30 && A < 0xD0) { reset_object_slot(); return; }   /* 962a-9633 */
-L_9635:
-    Y = map_cell_index;                            /* 9635 */
-    A = mem[0x0A00 + Y];                        /* 9638 */
-    if (A == 0) { reset_object_slot(); return; }        /* 963b BEQ */
-    if (A >= 0xF8) { reset_object_slot(); return; }     /* 963d-963f CMP #$F8; BCS */
-    mem[0x0100 | cpu.S] = A; cpu.S--;           /* 9641 PHA */
-    mem[0x0A00 + Y] = 0xFC;                      /* 9642-9644 */
-    map_cell_hit_marker = 0xFC;                          /* 9647 */
-    trigger_object_explosion();                  /* 964a (native; touches the stack) */
-    cpu.S++; A = mem[0x0100 | cpu.S];           /* 964d PLA */
-    if (A < 0x64) { reset_object_slot(); return; }      /* 964e-9650 CMP #$64; BCC */
-    if (A != 0x64) {                             /* 9652 BNE L_9664 */
-        if (A == 0x80) { set_place_params_inc_count(); A = 0x40; }   /* 9664-966d */
-        else           { countdown_show_char_0620(); A = 0x49; }     /* 9670-9673 */
-        timer_or_counter = A; reset_object_slot(); return;                /* 9675 */
+    {   /* Z: {$2859:$2858:$2857} += {$2861:$2860:$285F} */
+        uint32_t v = mem[0x2857] | (mem[0x2858] << 8) | (mem[0x2859] << 16);
+        v += mem[0x285F] | (mem[0x2860] << 8) | (mem[0x2861] << 16);
+        uint8_t lo = (uint8_t)(v >> 8), hi = (uint8_t)(v >> 16) & 0x0F;
+        mem[0x2857] = (uint8_t)v;
+        mem[0x2858] = lo; map_z_lo = lo;
+        mem[0x2859] = hi; map_z_hi = hi;
     }
-    set_place_params_inc_count();                /* 9654 (A == $64) */
-    mem[0x004D] = 0x28;                          /* 9657-9659 */
-    lock_on_indicator_state = (uint8_t)(lock_on_indicator_state | 0x80); /* 965b-965f */
-    reset_object_slot();                         /* 9661 */
-    #undef ADC_
-    #undef ASLA_
+    uint8_t altCarry;
+    {   /* altitude: {$285B:$285A} += {$2863:$2862}, saturate on signed over/underflow */
+        uint16_t lo  = (uint16_t)mem[0x285A] + mem[0x2862];
+        mem[0x285A]  = (uint8_t)lo;
+        uint16_t sum = (uint16_t)vel_z_clamp_hi + mem[0x2863] + (lo >> 8);
+        altCarry = (uint8_t)(sum >> 8);
+        uint8_t a = (uint8_t)sum;
+        if (altCarry) { if (!(mem[0x2863] & 0x80)) a = 0xFF; }   /* +overflow -> $FF */
+        else          { if (mem[0x2863] & 0x80)   a = 0x00; }    /* -underflow -> $00 */
+        vel_z_clamp_hi = a;
+    }
+
+    /* The player hit-test reads the altitude add's carry-out as its entry carry. */
+    cpu.C = altCarry;
+    if (!(object_index_signed & 0x80)) check_player_proximity_hit();
+
+    /* Map cell index $2864 = (Z high-nibble << 4) | X high-nibble. */
+    uint8_t zHi = (uint8_t)((mem[0x2859] + (mem[0x2858] >> 7)) << 4);
+    uint8_t xHi = (uint8_t)((mem[0x2856] + (mem[0x2855] >> 7)) & 0x0F);
+    uint8_t cell = (uint8_t)(zHi | xHi);
+    dl_y1 = zHi;                                 /* $00BB scratch (the 95d4 store) */
+    map_cell_index = cell;
+
+    /* An occupant present + tall enough + both screen coords outside the [$30,$D0) centre
+     * band explodes immediately; otherwise sample the terrain height first. */
+    int explode = mem[0x0A00 + cell] != 0;
+    if (explode) {
+        unsigned h = mem[0x0900 + cell] + 0x10;
+        if (h > 0xFF) h = 0xFF;
+        explode = h >= vel_z_clamp_hi &&
+                  !(mem[0x2855] >= 0x30 && mem[0x2855] < 0xD0) &&
+                  !(mem[0x2858] >= 0x30 && mem[0x2858] < 0xD0);
+    }
+    if (!explode) {
+        sample_terrain_height_bilerp();
+        if (terrain_height_sample < vel_z_clamp_hi) return;
+        if (mem[0x2855] >= 0x30 && mem[0x2855] < 0xD0) { reset_object_slot(); return; }
+        if (mem[0x2858] >= 0x30 && mem[0x2858] < 0xD0) { reset_object_slot(); return; }
+    }
+
+    /* $9635: explode the occupant, then dispatch by its pickup type. */
+    uint8_t occ = mem[0x0A00 + cell];
+    if (occ == 0 || occ >= 0xF8) { reset_object_slot(); return; }
+    mem[0x0100 | cpu.S] = occ; cpu.S--;          /* PHA: preserve occ across the explosion (mem-equivalent) */
+    mem[0x0A00 + cell] = 0xFC;
+    map_cell_hit_marker = 0xFC;
+    trigger_object_explosion();
+    cpu.S++; occ = mem[0x0100 | cpu.S];          /* PLA */
+    if (occ < 0x64) { reset_object_slot(); return; }
+    if (occ != 0x64) {
+        if (occ == 0x80) { set_place_params_inc_count(); timer_or_counter = 0x40; }
+        else             { countdown_show_char_0620(); timer_or_counter = 0x49; }
+        reset_object_slot(); return;
+    }
+    set_place_params_inc_count();                /* occ == $64 (pilot pickup) */
+    mem[0x004D] = 0x28;
+    lock_on_indicator_state = (uint8_t)(lock_on_indicator_state | 0x80);
+    reset_object_slot();
 }
 
 /* reset_indicator_event @ $B786 — clear $0035, then enqueue the indicator event. */
