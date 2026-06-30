@@ -31,8 +31,10 @@
 	ifnd	ROF_RASTERIZE_VERIFY
 	xdef	terrain_column_rasterize_core		; ships as the core symbol directly
 	endif
+	xdef	flight_edge_plot_asm
 	xref	mem
 	xref	kRow120
+	xref	kHeightRowOff
 	xref	g_flightDotPlane
 
 CPBUF	equ	96		; 32 control-point slots * 3 bytes (depth stays < ~12)
@@ -328,4 +330,64 @@ done:
 	move.b	d4,mem+$86		; frac
 	lea	CPBUF(sp),sp		; free the control-point stack
 	movem.l	(sp)+,d2-d7/a2-a6
+	rts
+
+; ---------------------------------------------------------------------------
+; flight_edge_plot_asm(uint8_t* bp) — RescueOnFractalus::renderFlightDirect's
+; plane-1 skyline edge plot: one bit per column at its skyline scanline, 160
+; columns = 40 plane-1 bytes (4 cols/byte).  Structured after the user's
+; hypothetical-renderer asm: 4 columns unrolled with IMMEDIATE column masks
+; ($C0/$30/$0C/$03 = kColMask4), the plane-1 byte pointer (a2) walked +1 per 4
+; columns (no c>>2), and the height->row-byte-offset folded through the
+; kHeightRowOff[256] table = kRow120[clamp(150-h,0,42)] (no per-column 150-h /
+; clamp branches).  The one residual per-column branch is h==$FF (off-top: the
+; column is all terrain body, so it must plot NOTHING — no safe table sentinel
+; without an extra buffer row).  Reads heights from mem[$260E+48..].  d0's high
+; byte stays 0 (only move.b writes it; the *2 index is taken in d1), so no
+; per-column re-clear is needed.
+;   a0 = height source (mem+$260E+48)   a1 = kHeightRowOff
+;   a2 = plane-1 byte base (bp), advanced +1 per 4-column group
+flight_edge_plot_asm:
+	movem.l	d7/a2,-(sp)		; 2 callee-saved longs = 8 bytes; arg shifts +8
+	movea.l	12(sp),a2		; bp  (4 + 8)
+	lea	mem+$260E+48,a0		; per-column max-height ($260E[48..])
+	lea	kHeightRowOff,a1
+	moveq	#0,d0			; d0 high stays 0 for the whole loop
+	move.w	#40-1,d7
+ep_loop:
+	move.b	(a0)+,d0		; col 4k
+	cmp.b	#$FF,d0
+	beq.s	ep_c1
+	move.w	d0,d1
+	add.w	d1,d1
+	move.w	(a1,d1.w),d1		; kHeightRowOff[h] = scanline byte offset
+	or.b	#$C0,(a2,d1.w)
+ep_c1:
+	move.b	(a0)+,d0		; col 4k+1
+	cmp.b	#$FF,d0
+	beq.s	ep_c2
+	move.w	d0,d1
+	add.w	d1,d1
+	move.w	(a1,d1.w),d1
+	or.b	#$30,(a2,d1.w)
+ep_c2:
+	move.b	(a0)+,d0		; col 4k+2
+	cmp.b	#$FF,d0
+	beq.s	ep_c3
+	move.w	d0,d1
+	add.w	d1,d1
+	move.w	(a1,d1.w),d1
+	or.b	#$0C,(a2,d1.w)
+ep_c3:
+	move.b	(a0)+,d0		; col 4k+3
+	cmp.b	#$FF,d0
+	beq.s	ep_next
+	move.w	d0,d1
+	add.w	d1,d1
+	move.w	(a1,d1.w),d1
+	or.b	#$03,(a2,d1.w)
+ep_next:
+	addq.l	#1,a2			; next 4-column plane-1 byte
+	dbra	d7,ep_loop
+	movem.l	(sp)+,d7/a2
 	rts

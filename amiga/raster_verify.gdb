@@ -10,5 +10,8 @@ printf "VERIFY fdCalls=%u vbi=%u rasterCalls=%lu mismatch=%lu firstBad=%lu\n", \
 printf "  PERF beam-ticks: asm=%lu C=%lu  (per-call asm=%lu C=%lu, lower=faster)\n", \
   g_rasAsmTicks, g_rasCTicks, \
   (g_rasterCalls? g_rasAsmTicks/g_rasterCalls:0), (g_rasterCalls? g_rasCTicks/g_rasterCalls:0)
+printf "EDGE calls=%lu mismatch=%lu  ticks asm=%lu C=%lu (per-call asm=%lu C=%lu)\n", \
+  g_edgeCalls, g_edgeMismatch, g_edgeAsmTicks, g_edgeCTicks, \
+  (g_edgeCalls? g_edgeAsmTicks/g_edgeCalls:0), (g_edgeCalls? g_edgeCTicks/g_edgeCalls:0)
 detach
 quit

@@ -146,6 +146,38 @@ extern "C" uint8_t* g_flightDotPlane = nullptr;
 // Called by the terrain draw (rof_native.c) before its first dot write, to ensure the kicked
 // off-screen-buffer clear has finished (the dots OR into freshly-zeroed plane2).
 extern "C" void rof_flight_wait_dotclear(void) { AmigaHardware::blitterWait(); }
+// Edge-plot height->plane1-row-byte-offset table: kHeightRowOff[h] = kRow120[clamp(150-h,0,42)].
+// Folds the per-column "scanline = 150-h, clamp to the terrain rows" arithmetic out of the
+// skyline plot loop (a pure table index), so the loop has no per-column clamp branches — used by
+// both the C reference edgePlotCore and the hand-asm flight_edge_plot_asm.  extern "C" so the asm
+// can xref it; built once (it depends only on kRow120, not on per-frame state).
+extern "C" uint16_t kHeightRowOff[256];
+uint16_t kHeightRowOff[256];
+static bool kHeightRowOffBuilt = false;
+static void buildHeightRowOff() {
+    for (int h = 0; h < 256; h++) {
+        int scan = 150 - h;
+        if (scan < 0) scan = 0; else if (scan > 42) scan = 42;
+        kHeightRowOff[h] = kRow120[scan];
+    }
+    kHeightRowOffBuilt = true;
+}
+// C reference / non-asm fallback for the plane1 skyline edge plot (see renderFlightDirect).
+// One bit per column at its skyline scanline; h==$FF (off-top, all body) plots nothing.
+static void edgePlotCore(uint8_t* bp) {
+    const uint8_t* y = (const uint8_t*)mem + 0x260E + 48;    // col 0 -> $260E[48]
+    uint8_t* colp = bp;
+    for (int c = 0; c < 160; c++) {
+        uint8_t h = *y++;
+        if (h != 0xFFu) colp[kHeightRowOff[h]] |= kColMask4[c & 3];
+        if ((c & 3) == 3) colp++;                            // next 4-column plane1 byte
+    }
+}
+extern "C" void flight_edge_plot_asm(uint8_t* bp);           // TerrainRasterizeAssembler.s
+#if defined(ROF_RASTERIZE_ASM) && defined(ROF_RASTERIZE_VERIFY)
+extern "C" volatile unsigned long g_edgeCalls = 0, g_edgeMismatch = 0, g_edgeAsmTicks = 0, g_edgeCTicks = 0;
+// rof_subclock / g_isrBeamLines come from the ROF_FLIGHT_PROBE block above (VERIFY pairs with PROBES).
+#endif
 //   GTIA mode-10 (tunnel field at $2000): byte = 2 nibbles; nibble bit k → 4px.
 static uint8_t kGtia10P1[256];   // nibble bit0
 static uint8_t kGtia10P2[256];   // nibble bit1
@@ -855,26 +887,29 @@ void RescueOnFractalus::renderFlightDirect()
     flightClearPending = nullptr;
     FD_LAP(g_fdClear);
 
-    // Edge plot: ONE plane1 bit per column at its skyline scanline (160 byte-ORs).  colp is the
-    // plane1 byte for the current 4-column group at row 0; it advances +1 every 4 columns (no
-    // c>>2), and the row offset comes from kRow120[] (no scan*120 multiply).  h==$FF (off-top, all
-    // body) is rejected before any scan arithmetic.
-    const uint8_t* y = (const uint8_t*)mem + 0x260E + 48;    // col 0 -> $260E[48]
-    uint8_t* colp = bp;
-    for (int c = 0; c < 160; c++) {
-        uint8_t h = *y++;
-        if (h != 0xFFu) {
-            int scan = 150 - (int)h;                         // height -> skyline scanline
-            if (scan < 0) scan = 0;
-            else if (scan > 42) scan = 42;                   // clamp into the terrain region
-            // The crest row IS the silhouette top.  The terrain rasterizer lags its plane2 dots
-            // by one (terrain_column_rasterize / ROF_PLOT_DOT), so it never plots a dot at COL_MAX
-            // — the crest stays pure sky.  Thus plane1 sky safely covers down to and INCLUDING the
-            // crest row (= COLPF0), with no plane2 overlap (no value-3 COLPF2 tan crest).
-            colp[kRow120[scan]] |= kColMask4[c & 3];         // plane1 skyline edge bit
-        }
-        if ((c & 3) == 3) colp++;                            // next 4-column plane1 byte
+    // Edge plot: ONE plane1 bit per column at its skyline scanline (160 byte-ORs).  Hand-asm twin
+    // (flight_edge_plot_asm, TerrainRasterizeAssembler.s) — 4 columns unrolled with immediate masks,
+    // the plane1 byte pointer walked +1 per 4 cols, the 150-h/clamp folded into kHeightRowOff[].
+    // The crest row IS the silhouette top; the rasterizer lags its plane2 dots by one so it never
+    // plots at COL_MAX, so plane1 sky safely covers down to and INCLUDING the crest with no overlap.
+    if (!kHeightRowOffBuilt) buildHeightRowOff();
+#if defined(ROF_RASTERIZE_ASM) && defined(ROF_RASTERIZE_VERIFY)
+    // Differential verify (same run, deterministic): C reference and asm into fresh scratch planes
+    // from the same $260E, byte-compare; perf timed back-to-back.  Live plane uses the proven C.
+    edgePlotCore(bp);
+    { static uint8_t eScrC[47*120], eScrA[47*120];
+      for (int i = 0; i < 47*120; i++) { eScrC[i] = 0; eScrA[i] = 0; }
+      unsigned long p, ib;
+      p = rof_subclock(); ib = g_isrBeamLines; edgePlotCore(eScrC);        g_edgeCTicks   += (rof_subclock()-p) - (g_isrBeamLines-ib);
+      p = rof_subclock(); ib = g_isrBeamLines; flight_edge_plot_asm(eScrA); g_edgeAsmTicks += (rof_subclock()-p) - (g_isrBeamLines-ib);
+      g_edgeCalls++;
+      for (int i = 0; i < 47*120; i++) if (eScrC[i] != eScrA[i]) { g_edgeMismatch++; break; }
     }
+#elif defined(ROF_RASTERIZE_ASM)
+    flight_edge_plot_asm(bp);
+#else
+    edgePlotCore(bp);
+#endif
     // Sky fill: propagate each edge bit UP in ONE descending blit (writes rows 0-41, seed 42).
     AmigaHardware::blitterFillUp((uint16_t*)bp, 20, 42, 80);
     FD_LAP(g_fdEdge);
