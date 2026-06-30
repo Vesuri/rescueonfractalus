@@ -12,7 +12,7 @@ Object-loop sub-phase split (`g_tdSubdiv` / `g_tdProjPlot`, beam ticks, ISR not 
 | Phase | ticks | share | what |
 |---|---|---|---|
 | `tdSubdiv` | 354326 | **~84 %** | `terrain_subdivide_column` recursion (midpoint-displace + the per-column ridge `PLOT`) |
-| `tdProjPlot` | 68822 | ~16 % | `project_terrain_points` + `terrain_plot_object` (towers/pilots via `raster_fill_region`) |
+| `tdProjPlot` | 68822 | ~16 % | `project_terrain_points` + `terrain_plot_object` (towers/pilots via `raster_scaled_object`) |
 
 `g_fDraw` whole-bucket ≈ 178010 ticks (ISR-subtracted). The `mem[$1070]`→bitplane convert
 (`renderViewportModeD`) is a SEPARATE per-frame pass (not in `g_fDraw`) — **its cost is not yet
@@ -24,7 +24,7 @@ isolated** (Stage 0 below). ⚠ terrain-dependent, ±30 % run-to-run; trust larg
 terrain_draw_frame $A31E  (per flight frame, cpu.X = level half index)
  ├─ object loop over $B67C draw order:
  │   ├─ project_terrain_points $A11F   (world→screen projection)         ┐ tdProjPlot
- │   ├─ terrain_plot_object   $A63B → _a/_b → raster_fill_region $AB9A   ┘ (objects)
+ │   ├─ terrain_plot_object   $A63B → _a/_b → raster_scaled_object $AB9A   ┘ (objects)
  │   │      └─ plots tower/pilot cells into mem[$1070] via terrain_clip_row_top→plot
  │   └─ terrain_subdivide_column $B172  (fractal midpoint recursion)      ┐ tdSubdiv
  │        ├─ terrain_midpoint_displace $B2CC                              │ (terrain
@@ -187,7 +187,7 @@ the flight render path now plots terrain sky straight to `terrainBitmap` from `$
 
 - **Stage 3 — cut the round-trip.** Stop the 6502 ridge `PLOT` into `mem[$1070]` (subdivision still
   computes `$260E[]`); drop `renderViewportModeD` for flight. ⚠ **Complication:** objects
-  (`raster_fill_region`/`terrain_clip_row_top`) and any terrain jitter ALSO write `mem[$1070]` and
+  (`raster_scaled_object`/`terrain_clip_row_top`) and any terrain jitter ALSO write `mem[$1070]` and
   rely on the convert. Eliminating the convert requires EITHER porting object plotting to native
   bitplane writes too, OR keeping a reduced convert for the object layer only. Decide here.
 
@@ -225,7 +225,7 @@ ridge+fill output becomes **visual-only** (like the copper lists) once it no lon
 ## Files
 
 `src/gen/rof_native.c` (`terrain_draw_frame`, `terrain_subdivide_column`,
-`terrain_column_rasterize`, `terrain_midpoint_displace`, `raster_fill_region`),
+`terrain_column_rasterize`, `terrain_midpoint_displace`, `raster_scaled_object`),
 `src/platform/amiga/RescueOnFractalus.cpp` (`renderViewportModeD`, new dot-plot renderer),
 `src/platform/amiga/FlightCopperList.*`, `framework/AmigaHardware.*` (blitter fill),
 probes in `PlatformAmiga.cpp` + `diag_timing.gdb`.

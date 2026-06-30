@@ -342,7 +342,7 @@ static const uint16_t kAHExpand[16] = {
 void RescueOnFractalus::buildAHSprite()
 {
     // Change-detect: the ground-fill source ($0E92..) is rewritten IN FLIGHT only by
-    // draw_canopy_pillar_p2 ($40B0), which is itself gated on the pitch index $291C/$291D (the
+    // draw_ah_ground_fill_p2 ($40B0), which is itself gated on the pitch index $291C/$291D (the
     // other writers of this range — fill_four_bufs_ff, init_gameplay_state — are gameplay-init
     // only).  So skip the 33-row rebuild when pitch is unchanged; cockpitForceFull (scene entry,
     // where the init writers ran) forces a rebuild so the post-init state is captured.

@@ -65,7 +65,7 @@ Traced `terrain_plot_object` and its helpers (`src/gen/rof_native.c`):
 - **Terrain → folds into a per-column height array.** `terrain_column_rasterize`
   writes `$260E[x]` (the silhouette top, clamped `$97`) and OR-plots the ridge
   detail. The solid body is derivable from `$260E` alone.
-- **Objects → do NOT fold.** `raster_fill_region` ($AB9A) blits a 12×32 cell
+- **Objects → do NOT fold.** `raster_scaled_object` ($AB9A) blits a 12×32 cell
   sprite; `terrain_clip_row_top`/`terrain_plot_pixel` stamp individual 2-bit
   colour pixels. These carry shape + colour a single height-per-column cannot
   represent.

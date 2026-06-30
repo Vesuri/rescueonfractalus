@@ -3555,7 +3555,7 @@ void terrain_clip_row_top(void) {
     terrain_plot_pixel();
 }
 
-/* raster_fill_region @ $AB9A — fill a 12x32 cell grid, plotting set bits.
+/* raster_scaled_object @ $AB9A — fill a 12x32 cell grid, plotting set bits.
  *
  * Ensures the step {$0051:$0050} is nonzero; subtracts it from $1000 (counting
  * into $004F) to find the start row; then walks 12 rows x 32 columns, advancing
@@ -3569,7 +3569,7 @@ void terrain_clip_row_top(void) {
  * the start-row subtract chains carry ACROSS iterations (one SEC before the
  * loop, none inside), a 6502 quirk reproduced exactly.
  */
-void raster_fill_region(void) {
+void raster_scaled_object(void) {
     uint8_t A, c;
 
     if (plot_step_hi == 0) { plot_step_lo = 0x00; plot_step_hi++; }   /* AB9A nonzero step */
@@ -3627,8 +3627,8 @@ void raster_fill_region(void) {
  * a "mask" object (set_plot_mask), else it plots a marker pixel (point_distance +
  * clip_row_top) and may latch a targeting record (gated on $0034/$006A/$003E/
  * RANDOM/$28ED).  Finally, when the step's hi byte < $0D, fills via
- * raster_fill_region.  Reads POKEY RANDOM once.  All callees native/empty.
- * Contract: memory; exit X=$28E1 (restored by the tail raster_fill_region or the
+ * raster_scaled_object.  Reads POKEY RANDOM once.  All callees native/empty.
+ * Contract: memory; exit X=$28E1 (restored by the tail raster_scaled_object or the
  * explicit a868 path); other regs dead.
  */
 void terrain_plot_object_a(void) {
@@ -3666,7 +3666,7 @@ void terrain_plot_object_a(void) {
     /* L_a8a1 */
     if (plot_step_hi >= 0x0D) { cpu.X = terrain_cur_obj_idx; return; }   /* CMP #$0D; BCS a868 */
     shape_col_base = 0x00;
-    raster_fill_region();
+    raster_scaled_object();
 }
 
 /* terrain_plot_object_b @ $A90A — plot one terrain object, variant B (4 plot points).
@@ -3696,7 +3696,7 @@ void terrain_plot_object_b(void) {
     if (cpu.A >= mem[MEM_terrain_height_max + cpu.Y]) {           /* CMP 260E,Y; BCC a965 */
         cpu.A = 0x00; terrain_point_distance();   /* a953-a955 */
         plot_pixel_mask = 0xAA;
-        if (plot_step_hi < 0x0D) raster_fill_region();          /* CMP #$0D; BCS a965 */
+        if (plot_step_hi < 0x0D) raster_scaled_object();          /* CMP #$0D; BCS a965 */
     }
 
     /* L_a965 */
@@ -6555,7 +6555,7 @@ void vbi_handler_flight(void) {
 
             /* HUD cells (the 5 instrument draws). */
             { VP_T0();
-            draw_canopy_pillar_p2();          /* misnamed: actually the artificial-horizon ground fill */
+            draw_ah_ground_fill_p2();          /* misnamed: actually the artificial-horizon ground fill */
             draw_altimeter_bars();
             draw_compass_heading();
             dispatch_43cb_half_70();

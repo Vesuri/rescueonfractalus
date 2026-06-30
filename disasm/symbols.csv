@@ -303,7 +303,7 @@ $4084,draw_2digit_value,func,0,Render packed 2-digit value: high nibble via $BD/
 $4095,draw_digit_low_nibble,func,0,Isolate A low nibble, *4, fall into draw_glyph: renders units digit glyph to ($00BB) screen ptr
 $4099,draw_glyph_2rows,func,0,Copy 2-byte glyph from $4AE3[X] OR mask $00BF into ($00BB),Y at Y=0,1 and Y=$30,$31 (two char rows)
 $40AF,return_stub_40af,func,0,Empty RTS; tail-call target of draw_glyph_2rows and the score-update path at $406E
-$40B0,draw_canopy_pillar_p2,func,0,If $291C/$291D changed vs cache $2872/$2874, redraw 21-byte bar from $4B57 (idx $455B[$291C]) into $0E87, $FF-term
+$40B0,draw_ah_ground_fill_p2,func,0,Artificial-Horizon ground fill (NOT the canopy pillars): if $291C/$291D changed vs cache $2872/$2874, redraw 21-byte slope from $4B57 (idx $455B[$291C]) into the P2 buffer $0E87+ ($FF-term)
 $40E5,draw_altimeter_bars,func,0,On $281A change vs $2875: clear $0C97 row + $FF fill to col $38; on $281B change vs $2876: mask $0B96..$0B99 edge bytes
 $4131,update_blink_timer_006e,func,0,Decr timer $006E; at 0 reload $0F, if $3E set & life_counter $062F=0 & $0063<0 fire ring_push_marked(X=$1C); toggles $00DE $4E/$46
 $4166,vobj_update_active,func,0,Active-path: DEC $003B then advance vert object via vobj_advance ($4184); $003B gates which path
@@ -526,7 +526,7 @@ $AAD4,plot_scanline_down,func,0,Line-plot loop: subtracts $40 from $5B/$5C step,
 $AB26,plot_line_done,func,0,Empty return / shared exit label for the line-plot routines (aad4/ab27); falls into ab27 only via dead tail call
 $AB27,plot_scanline_up,func,0,Bresenham-style point plotter: from 28F0/28F2 walks via 28F1/28F3 + 28F7/28F9 steps, X drift by $5C sign, calls a6d3 per point; bounds X $2C..$D4, Y>=$6C
 $AB7B,set_plot_mask_and_halve_step,func,0,Index by A&3 into A7E9/A7ED tables -> 28DC/28DD base ptr; if idx0 set $58=$FF mask; shifts $50/$51 step right by 2 (divide by 4)
-$AB9A,raster_fill_region,func,0,Nested fill: computes start ptr 28DC/28DD + $55*4, walks 12x32 cells testing AC3A bitmask vs buffer at ($C3),Y; plots via a6cb when set; uses $50/$51 step, $52-$55 accumulators
+$AB9A,raster_scaled_object,func,0,Scaled object-sprite rasteriser (NOT a region fill): samples a distance-scaled source bitmap (src ptr ($C3) + the $AC3A per-bit table) through the $0052-$0055 fixed-point step accumulators over a 12x32 grid, plotting each set source bit via terrain_clip_row_top ($A6CB); uses $50/$51 step. Draws the terrain dots when plot-mask $0058=$AA
 $AC42,check_target_in_window,func,0,If $36 set and $4A nonzero: tests 2912/2913 (or $64/$66 when $63 neg) against window bounds; counts 2 consecutive hits in 2837 then latches index to 2838
 $AC93,setup_projection_params,func,0,Builds 16-bit fixed-pt scratch from 2887/2888 and 2889/288A (>>4), sign-extends $33/$34, sets $92 from 2886<<2, calls 9ba0; loads view vector 2809-280C, computes $A4/$A5/$A6 from heading $23/$24/$28/$29; clamps 2822 to 0..8
 $AD2B,compute_row_xspans,func,0,Fills 271F.. (15 entries) by adding A4/A5 step to 271E seed, then fills 270E.. (downward) by subtracting A4/A5; builds per-row horizontal span endpoints
@@ -627,9 +627,12 @@ $00BF,bar_col_threshold,var,0,Column/fill threshold compared via CPX in draw_pla
 $00C0,object_col_flag,var,0,Two-byte-tall flag for column draw: nonzero adds a second PMG byte ($38/$B8) (draw_object_column)
 $00C5,digit_dst_ptr_lo,var,0,Low byte of 16-bit screen-destination pointer ($C5/$C6) for BCD digit / label-glyph writes via ($C5),Y; set to $32C5 by render_bcd_counter and to $0A (ptr=$300A) for dl_lms_fill.
 $00C6,digit_dst_ptr_hi,var,0,High byte paired with $C5 (digit_dst_ptr_lo): set to $30 so the dest pointer = $300A for dl_lms_fill; also the countdown of glyphs to blit (init 5) in the blit_label_row label loop.
+$00C7,dli_dispatch_index,var,0,DLI/NMI display-list-interrupt chain index; reset to 0 at the top of every VBI (vbi_handler_flight/standby) and INC'd by each DLI to step the per-region colour-change table.
 $00CC,player3_bottom_y,var,0,Player-3 object bottom-Y clamp result (draw_player3_object $43c4) from $2870 vs $8D/$00BF; intro_cinematic_loop also sets it from $2847 (in [$6C,$8D) else 0) paired with the SIZEP3 $D00B write.
 $00CE,altitude_color_or_glyph,var,0,update_altitude_digit_display sets from $28D9+$AB clamped to [$A3,$B4) else $B5
+$00D9,lockon_flash_color,var,0,Enemy/lock-on flash colour (P3 altimeter bar COLPM3); colour-cycled in the vbi_handler_flight draw frame via LSR/SBC/ADC/ROL toggling through $4B..$4E, then pushed to $D015.
 $00DA,audc_shadow_0,var,0,RANDOM($D20A)|4 written to $00DA-$00DD in $4f9f; staged POKEY audio control bytes
+$00DC,terrain_pen0_fade,var,0,Salmon->brown terrain pen 0 fade colour; copied from the atmosphere altitude-band table $0823+y in vbi_handler_flight, drives the FlightCopperList terrain fade.
 $00DF,span_pixel_count,var,0,Down-counter for pixels/rows within a single span in fill_horizontal_span/fill_vertical_span (loop ends when negative); also holds the current event glyph id output by event_sequence_dispatcher.
 $0601,score_display,var,0,Displayed score, 3-byte packed BCD $0601-$0603 (6 digits); rendered to the top text line $32C5 by render_bcd_counter
 $0604,level_count_acc,var,0,Counter incremented in count_up_to_level($75B8) until it equals level_stage $006D
@@ -718,6 +721,7 @@ $2834,horizon_phase_toggle,var,0,LSR/INC toggle gating update_terrain_horizon_lr
 $2835,player3_prev_rows,var,0,Count of PMG rows drawn last frame; cleared at top of frame then re-stored (draw_player3_object $43a5) for erase loop
 $2837,target_hit_streak,var,0,Consecutive-frame counter in ac42; reaching 2 latches target index to 2838, else reset to 0
 $2838,target_latched_idx,var,0,Latched target/window index (X) stored by ac42 after 2 consecutive in-window frames
+$2840,wing_bar_hpos_base,var,0,Base HPOS for the wing-clearance bars (Atari missiles M3/M2/M1 = base+0/+$0C/+$11); read in vbi_handler_flight and pushed to HPOSM3/2/1.
 $2841,horizon_left_prev,var,0,Cached previous left horizon; compared to $282E to skip redundant game_sub_451d
 $2842,horizon_right_prev,var,0,Cached previous right horizon; compared to $282F in update_terrain_horizon_lr
 $2843,map_cell_hit_marker,var,0,Written $FC into map $0A00[$2864] to mark a struck/destroyed cell in 9552
@@ -726,8 +730,8 @@ $285B,vel_z_clamp_hi,var,0,High byte of Z/depth accumulator, saturating-clamped 
 $2864,map_cell_index,var,0,Computed cell index from object pos ($2855/$2858 nibbles) into terrain maps $0900 (height) & $0A00 (type) in 9552
 $286F,player3_draw_y,var,0,Current draw Y/row index for player-3 object (draw_player3_object $4369), clamped/derived via $4D11 table
 $2870,player3_hpos,var,0,Player-3 horizontal position = $2823+$2824, written to HPOSP3 ($D003) in draw_player3_object
-$2872,canopy_pillar_x_cache,var,0,Cached last $291C drawn by draw_canopy_pillar_p2 ($40b0); change-detect to skip redraw
-$2874,canopy_pillar_y_cache,var,0,Cached last $291D ($40c7); row offset base into $0E87 buffer in draw_canopy_pillar_p2
+$2872,canopy_pillar_x_cache,var,0,Cached last $291C drawn by draw_ah_ground_fill_p2 ($40b0); change-detect to skip redraw
+$2874,canopy_pillar_y_cache,var,0,Cached last $291D ($40c7); row offset base into $0E87 buffer in draw_ah_ground_fill_p2
 $2875,altimeter_terrain_cache,var,0,Cached last $281A drawn by draw_altimeter_bars ($40e5); change-detect for $0C97 bar fill
 $2876,altimeter_ship_cache,var,0,Cached last $281B drawn by draw_altimeter_bars ($40e5); gates $0B96 edge-byte masking
 $2877,vobj_speed_frac,var,0,Per-frame fractional speed added into accumulator $2848 in $416b and OR'd with $003B in $4184.

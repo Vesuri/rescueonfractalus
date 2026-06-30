@@ -8,9 +8,11 @@ and regenerate (`make gen`). Hand-written twins (`rof_native.c`, `rof_native_ami
 directly and must be updated in the same pass. Each entry: address, current name, what it
 really does, suggested name.
 
+## Open: function renames
+
 | Addr | Current name | What it actually does | Suggested |
 |------|--------------|------------------------|-----------|
-| $AB9A | `raster_fill_region` | Not a region/flood fill: samples a **distance-scaled source object bitmap** (source ptr `($00C3)` + the `$AC3A` per-bit table) through the `$0052-$0055` fixed-point step accumulators over a 12×32 sampling grid, plotting each set source bit via `terrain_clip_row_top`. I.e. it draws a scaled object's texture/detail (the terrain "dots" when called with plot-mask `$0058=$AA`). Name hides that it's an object-sprite rasteriser. | `raster_scaled_object` (or `plot_scaled_object_cells`) |
+| _(none — drained 2026-06-30; add new rows here)_ | | | |
 
 ## Notes
 - **"scroll" in the `scroll_*` names = Atari LMS / buffer-shift scrolling**, not pixel
@@ -20,7 +22,165 @@ really does, suggested name.
   starfield scroll). The tunnel rings "rushing in" are **palette cycling** ($08D4-$08D9
   rotation), NOT a scroll.
 
+## Open: unnamed memory locations (add `symbols.csv` var rows)
+
+RAM/ZP cells read/written by the in-flight code but with **no `symbols.csv` var row** (the
+transpiler emits them as raw `mem[0xNNNN]`). Add var rows so the native + transpiled code read
+as named state. ✓ = confident, ? = verify before promoting the suggested name to canonical.
+Surfaced 2026-06-30 while de-transpiling the flight subtree; the four ✓ cells were applied that
+day (see the Applied log) and removed from the lists below — everything remaining is ?-tentative.
+
+**`vbi_handler_flight` ($4FF5) — display-shadow pushes ($4FF7-$5036):**
+- `$00CB` → `hposp2_shadow` ? — pushed to HPOSP2 ($D002) (altimeter terrain-bar X).
+- `$00CD` → `grafm_shadow` ? — pushed to GRAFM ($D00A) (wing-clearance missile graphics).
+- `$026F` → `prior_shadow` ? — pushed to PRIOR ($D01B) (GTIA priority).
+- `$0037` → `colpf1_shadow_or_terrain_h` ? — pushed to COLPF1 ($D014); also force-set to $78 in
+  the target-latch reset.  Dual use unclear — verify.
+
+**`vbi_handler_flight` — atmosphere colour-ramp ($51BF-$520C, altitude→palette fade):**
+- `$08A1` → `atmo_fade_countdown` ?, `$08A2` → `atmo_fade_phase` ?, `$08A3` → `atmo_band_base` ? —
+  the slow-fade phase counters ($08A1 counts down → bumps $08A2 → indexes $364B → $08A3).
+- `$00DB` → `terrain_pen1_fade` ? — the second salmon→brown terrain pen (paired with the applied
+  `$00DC` terrain_pen0_fade), written from the lookup tables.
+- `$07F9` → `atmo_audc_table`, `$0823` → `atmo_pen0_table`, `$084D` → `atmo_pen1_table`,
+  `$0877` → `atmo_anim_table` ? — 4 parallel altitude-band lookup tables (indexed by depth band
+  + `$08A3`).  `$364B` → `atmo_fade_step_table` ? — the $08A2→$08A3 step table.
+- `$07E9` → `attract_palette_src` ? — source of the RTCLOK-EOR palette strobe → `display_param_0..E`.
+
+**`vbi_handler_flight` — target-latch / object indices (the "sim" frame $5178 block):**
+- `$2845` → `p3_object_state` ?, `$006A` → `p3_object_mode` ? — gate the player-3 object draw path.
+- `$0039`/`$286A`/`$286B`/`$286C` → `target_obj_*` ? — the latched target object indices/coords.
+- `$003A` → bit7 gates the shields-cell update; verify (game-state/health flag?).
+
+**`vbi_handler_flight` — cockpit cells / misc:**
+- `$3356`/`$3357` → `cockpit_shields_cell` ? — the mode-4 cockpit cell pair written ($36/$B6 ±1)
+  for the Shields-On status indicator (#14).
+- `$062C` → `static_dither_threshold` ? — the windscreen-"static" POKEY-RANDOM dither threshold
+  (SDL-only raster effect; dead on Amiga).  `$0632` → `static_enable_flag` ? — gates that block.
+
+**`flight_control_integrate` ($8E5B):**
+- `$005D` → `ground_proximity_flag` ? — gates auto-level pitch rate (8e8a) and throttle braking
+  (8ff7); set to $F0/$FF/$00 from the dial/life/`$2917` logic at 91a3-91bc. (Landing/near-ground.)
+- `$003D` → `landing_seq_flag` ? — when nonzero, runs the "in-box"/$3355 special-state path
+  (8ef5/8f2b) and suppresses the pitch/roll auto-level (8f9a); also driven by `step_object_along_axes`.
+- `$0023`/`$0024` → `pitch_shadow_lo`/`pitch_shadow_hi` ? — snapshot of pitch_pos ($25/$26) taken at
+  8f20; later feeds the canopy-pillar Y at $2871 (9 15a).
+- `$002B`/`$002C` → `world_dx_lo`/`world_dx_hi` ? — per-frame world-X velocity added to world_x
+  ($2887/$2888); produced by `compute_obj_rel_angle_scale`. (`$002C` reloaded+discarded at 910c.)
+- `$2881`/`$2882` → `world_dz_lo`/`world_dz_hi` ? — per-frame world-Z velocity added to world_z.
+- `$2883`/`$2884` → `fwd_step_lo`/`fwd_step_hi` ? — signed forward/depth step = (throttle_hi*roll)
+  <<3; added to the depth accumulator ($33/$34) at 9121.
+- `$28D6` → `roll_mag_scaled` ? — |(roll_pos<<3)>>8|; the multiplier fed to `mul_u8` for fwd_step.
+- `$0020` → reused here purely as ROL scratch for the $28D6/fwd-step sign (NOT its display-list role).
+- `$283C` → `landing_inhibit_flag` ? — when set, blocks the $3355=$34 special-state entry (8f2b).
+- `$283D` → `heading_freeze_flag` ? — selects terrain index angle source: RTCLOK_LOW if set, else
+  heading_hi (9164).
+- `$066C`/`$066D` → `engine_state_a`/`engine_state_b` ? — paired flag set to 0/1 around the
+  game_sub_55FC HUD refresh + $3355 special-state transitions (8f0a/8f37/8f54).
+- `$0686`/`$0687` → `engine_sound_pitch_a`/`engine_sound_pitch_b` ? — ~(throttle<<1 hi); $0687=$0686-4.
+- `$2917` → `lockon_rand_countdown` ? — DEC'd, compared to RANDOM to latch `$005D`=$FF (91a5-91b9).
+- `$2871`/`$2873` → `canopy_pillar_y_left`/`canopy_pillar_y_right` ? — pitch/roll-derived pillar Y
+  (915a/9150); pushed into the 7-deep history ring ($28A8/$28AF).
+- `$2850`-`$2853` → `obj_vel_x_lo/hi`/`obj_vel_y_lo/hi` ? — object velocity from the delayed ring
+  history ($2919/$291A/$291B), arithmetic-shifted; integrated into the object pos at 9267.
+- `$2829`/`$0068` and `$282C`/`$0069` → `obj_accum_*` ? — 16-bit object-position accumulators.
+- `$284E`/`$0038`(vobj_row_count) and `$284F`/`$0039` → `obj_pos2_*` ? — second object pos pair.
+- `$2919`-`$291D` → `ring_cur_0`..`ring_cur_4` ? — current (delayed-by-7-frames) read of the history
+  ring fields (pitch lo/hi, roll vel, pillar L/R).
+- `$291E` → `ring_head` ? — 0..6 rotating index of the 7-entry attitude history ring.
+- `$2893`/`$289A`/`$28A1`/`$28A8`/`$28AF` → `ring_pitch_lo[]`/`ring_pitch_hi[]`/`ring_roll_vel[]`/
+  `ring_pillar_l[]`/`ring_pillar_r[]` ? — the five 7-entry history-ring arrays.
+
+**`update_terrain_scanline_proj` ($9833):**
+- `$2270`/`$2271` and `$2272`/`$2273` → `map_x_scratch_lo/hi`/`map_z_scratch_lo/hi` ? — the
+  LSR working bytes for world>>4; end up equal to map_x ($27FD/$27FE) / map_z ($27FF/$2800).
+- `$2801`-`$2804` → `map_x_mirror_lo/hi`/`map_z_mirror_lo/hi` ? — a second copy of the map
+  coords (sampler reads $27FD-$2800; the mirror is consumed by update_terrain_horizon_lr's deltas).
+- `$2274` → `scaled_depth_lo` ? — paired low byte of the <<2 depth fixed-point (hi = scaled_depth_hi $2275).
+- `$27F9` → `terrain_height_q2` ? — sampled height rounded down by /4 (two rounding halvings).
+- `$281A`/`$281B` → `viewport_top_row`/`viewport_bottom_row` ? — the visible terrain span limits
+  derived from height + depth step; $281A extends (clamped $38) once depth step passes $37.
+- `$0070` → `terrain_clearance` ? — ship-above-terrain clearance (scaled_depth_hi - height), 0 on
+  contact; gates step_object_along_axes' depth brake and the engine-sound path.
+- `$283C` → `landing_inhibit_flag` ? (also seen in flight_control_integrate) — when 0, allows
+  exit_terrain_special_state.
+- `$2879` → `proj_phase_flag` ? — 0/1 latch of the $066C landing/launch projection state machine.
+- `$066C` → `engine_state_a` ? (paired $066D, also in flight_control_integrate) — its value
+  (<4 / 4-7 / >=8) selects the projection phase.
+
+**`project_terrain_points` ($A11F)** — X = object/column index into these 22-entry arrays:
+- `$24B4` → `obj_proj_flags[]` ? — per-object cull/state byte; bit4 = "already projected this frame".
+- `$22A4`/`$22D2` → `obj_num1_lo[]`/`obj_num1_hi[]` ? — half-1 signed numerator (screen X source).
+- `$235B`/`$2388` → `obj_num2_lo[]`/`obj_num2_hi[]` ? — half-2 signed numerator (screen Y source).
+- `$2300`/`$232E` → `obj_divisor_lo[]`/`obj_divisor_hi[]` ? — shared perspective divisor (depth).
+- `$2400`/`$242D` → `obj_screen_x_lo[]`/`obj_screen_x_hi[]` ? — half-1 projected coord output.
+- `$245A`/`$2487` → `obj_screen_y_lo[]`/`obj_screen_y_hi[]` ? — half-2 projected coord output.
+- `$270E`/`$272D` → `band_scroll_offset[]` ? — per-screen-band scroll offset table added to the
+  half-2 output ($272D = $270E+$1F; indexed by half-1 X >> 3 when half-1 hi byte is 0).
+- `$00B5` → `proj_fold_scratch` ? — fold high-byte scratch (= projection magnitude >> 8); in the
+  contract but dead after return. ($AE/$AF/$B0/$B1/$B2 are divide_16x16 scratch, already excluded.)
+
+**`terrain_frame_setup` ($9E54):**
+- `$22A3`/`$22D1` and `$22FF`/`$232D` → `obj_num1_in_lo/hi[]` / `obj_divisor_in_lo/hi[]` ? — the
+  INPUT column vectors (offset -1 from the $22A4/$2300 outputs project_terrain_points consumes);
+  built by build_view_transform_matrix, rotated/translated per cell into the $22A4.. outputs.
+- `$2276` → `obj_col_index[]` ? — per-column height-map index ((X&0x0F)|b6) stored for later use.
+- `$23B5` → `obj_height_sample[]` ? — per-column terrain height read from $0900[index].
+- `$0900` → `terrain_height_map` ? — 16x16 (256-byte) height grid sampled here and by $9A36.
+- `$B67C` → `obj_draw_order[]` ? — 12-entry object draw-order list walked by loop 2.
+- `$28DB` → `collapse_cur_obj` ? — current object index saved across the pair-collapse in loop 2.
+- `$00A0`-`$00A3` (named draw_iter_count/scroll_accum_b0..b2) are DUAL-USED here as the
+  view-transform rotation vector {rot_a=$A1:$A0, rot_b=$A3:$A2} — the mem.h names are misleading
+  in this context; consider a union/overlay name.
+- `$00B4` → `proj_setup_scratch` ? — = (vbi_flags&0x0F) | $B5; written once, dead within the fn.
+- `$00B5`/`$00B6` → loop-1 cell-pattern / column-high-nibble scratch (b5/b6); $B5 reused in loop 2
+  to stash the scan index.
+
+**`terrain_jitter_column` ($A613):**
+- `$2829`/`$0068` and `$282C`/`$0069` → `obj_jitter_x_*` / `obj_jitter_y_*` ? — the random
+  horizontal/vertical jitter offsets it writes (same cells the flight_control_integrate
+  obj-accumulators feed; see that section's `obj_accum_*`).
+- `$A63A` `terrain_plot_return` is an empty RTS (a shared return target), not a real callee —
+  the clean rewrite drops the no-op tail call.
+
+**`sfx_voice_envelope_tick` ($548D)** — per-slot envelope arrays (Y=$0E..1):
+- `$06DB`/`$06E9` → `freq_env_step[]`/`freq_env_phase[]` ? — frequency envelope increment
+  (nonzero = active) and its wrapping phase accumulator.
+- `$0679`(hud_field_679)/`$06BF`/`$06CD` → `freq_value[]`/`freq_delta[]`/`freq_target[]` ? — the
+  frequency field, its per-step delta, and the target that expires the envelope.
+- `$06A3`/`$06B1` → `dur_env_step[]`/`dur_env_phase[]` ? — duration/priority envelope step + phase.
+- `$066B`(sfx_voice_distort_0e)/`$0687`/`$0695` → `prio_value[]`/`prio_delta[]`/`prio_target[]` ? —
+  the 4-bit priority/distortion field, its delta, and expiry target.
+- `$06F7` → `slot_event_id[]` ? — event id re-queued (bit7-marked) on the ring when a slot expires.
+- `$5406` → `env_gate_table` ? — ROM ramp/gate table; a zero entry pauses the envelope step.
+- `$0718` (sfx_voice_expired_flag) is named; reset per slot, set on expiry.
+
 ---
+
+# Applied log (newest first)
+
+## Applied 2026-06-30b (batch rename + var rows, committed)
+Functions (`symbols.csv` → `make gen` → `make validate` PASS, 0 mem mismatch on every twin):
+- `raster_fill_region`→`raster_scaled_object` ($AB9A) — scaled object-sprite rasteriser (samples a
+  distance-scaled source bitmap through the $52-$55 step accumulators), NOT a region/flood fill.
+- `draw_canopy_pillar_p2`→`draw_ah_ground_fill_p2` ($40B0) — Artificial-Horizon ground fill into the
+  P2 buffer ($0E87+), NOT the canopy pillars (those are P0/P1 $0C32/$0D32).
+
+New var rows (the ✓-confident cells from the 2026-06-30 unnamed-memory backlog):
+- `$00C7` `dli_dispatch_index`, `$00D9` `lockon_flash_color`, `$00DC` `terrain_pen0_fade`,
+  `$2840` `wing_bar_hpos_base`.
+
+Hand-written files updated in the same pass: `rof_native.c`, `validate_native.c`, `transpile.py`,
+`RescueOnFractalus.cpp`, `docs/terrain-{draw,render}-plan.md`; the `$2872`/`$2874` cache-var notes
+were repointed to `draw_ah_ground_fill_p2`. Amiga `out/RoF.exe` rebuilt clean.
+
+## 2026-06-26 (applied 2026-06-30b)
+- **`$40B0` `draw_canopy_pillar_p2` → `draw_ah_ground_fill_p2`** — see the 2026-06-30b entry above.
+  Despite the old name it did NOT draw the canopy A-pillars (those are P0/P1 `$0C32`/`$0D32`, built
+  once by `unpack_terrain_seed_cols`); it copies a 21-byte `$FF`-terminated slope from table `$4B57`
+  (index `$455B[$291C]`) into the P2 buffer at `$0E87+` — the Artificial Horizon ground fill
+  (`$0E92-$0EB2`, the brown ground whose boundary moves with pitch). Change-detected on
+  `$291C`/`$291D` vs cache `$2872`/`$2874`, so it redraws only when attitude changes.
 
 ## Applied 2026-06-24 (batch rename, committed)
 Functions (`symbols.csv`, regenerated + `make validate` PASS, 0 mem mismatch):
@@ -70,154 +230,3 @@ NOT energy); `update_cockpit_digits_native`→`startup_init_native` ($3FFA ident
 
 Descriptive "gauge" prose still appears in some comments (Atari hardware-channel /
 "throttle gauge" descriptions) — left as-is where accurate; sweep opportunistically.
-
-## 2026-06-26
-
-- **`$40B0` `draw_canopy_pillar_p2` → `draw_ah_ground_fill_p2`** (suggested). Despite the
-  name it does NOT draw the canopy A-pillars (those are P0/P1 `$0C32`/`$0D32`, built once by
-  `unpack_terrain_seed_cols`). It copies a 21-byte `$FF`-terminated slope from table `$4B57`
-  (index `$455B[$291C]`) into the P2 buffer at `$0E87+` — i.e. the **Artificial Horizon ground
-  fill** (`$0E92-$0EB2`, the brown ground whose boundary moves with pitch; see the AH note in
-  the flight-scene memory). Change-detected on `$291C`/`$291D` vs cache `$2872`/`$2874`, so it
-  redraws only when attitude changes (cheap most VBI firings — NOT a per-frame cost).
-
-## 2026-06-30 — unnamed memory locations surfaced de-transpiling `vbi_handler_flight` ($4FF5)
-
-These RAM/ZP cells are read/written by the in-flight VBI but have **no `symbols.csv` var row**
-(the transpiler emits them as raw `mem[0xNNNN]`).  Add var rows so the native + transpiled code
-read as named state.  Behaviour is from the $4FF5 handler context; ✓ = confident, ? = verify.
-
-**Display-shadow pushes (the per-frame GTIA/ANTIC register copy at $4FF7-$5036):**
-- `$00C7` → `dli_dispatch_index` ✓ — the DLI/NMI chain index, reset to 0 at the top of every VBI.
-- `$00CB` → `hposp2_shadow` ? — pushed to HPOSP2 ($D002) (altimeter terrain-bar X).
-- `$00CD` → `grafm_shadow` ? — pushed to GRAFM ($D00A) (wing-clearance missile graphics).
-- `$026F` → `prior_shadow` ? — pushed to PRIOR ($D01B) (GTIA priority).
-- `$00D9` → `lockon_flash_color` ✓ — colour-cycled in the "draw" frame (LSR/SBC/ADC/ROL toggle
-  through $4B..$4E), pushed to $D015; the enemy/lock-on flash (matches CLAUDE.md instrument map).
-- `$0037` → `colpf1_shadow_or_terrain_h` ? — pushed to COLPF1 ($D014); also force-set to $78 in
-  the target-latch reset.  Dual use unclear — verify.
-
-**Atmosphere colour-ramp ($51BF-$520C) — altitude→palette fade:**
-- `$08A1` → `atmo_fade_countdown` ?, `$08A2` → `atmo_fade_phase` ?, `$08A3` → `atmo_band_base` ? —
-  the slow-fade phase counters ($08A1 counts down → bumps $08A2 → indexes $364B → $08A3).
-- `$00DC` → `terrain_pen0_fade` ✓ / `$00DB` → `terrain_pen1_fade` ? — the salmon→brown terrain
-  pens written from the lookup tables (matches the FlightCopperList terrain-fade note).
-- `$07F9` → `atmo_audc_table`, `$0823` → `atmo_pen0_table`, `$084D` → `atmo_pen1_table`,
-  `$0877` → `atmo_anim_table` ? — 4 parallel altitude-band lookup tables (indexed by depth band
-  + `$08A3`).  `$364B` → `atmo_fade_step_table` ? — the $08A2→$08A3 step table.
-- `$07E9` → `attract_palette_src` ? — source of the RTCLOK-EOR palette strobe → `display_param_0..E`.
-
-**Target-latch / object indices (the "sim" frame $5178 block):**
-- `$2845` → `p3_object_state` ?, `$006A` → `p3_object_mode` ? — gate the player-3 object draw path.
-- `$0039`/`$286A`/`$286B`/`$286C` → `target_obj_*` ? — the latched target object indices/coords.
-- `$003A` → bit7 gates the shields-cell update; verify (game-state/health flag?).
-
-**Cockpit cells / misc:**
-- `$3356`/`$3357` → `cockpit_shields_cell` ? — the mode-4 cockpit cell pair written ($36/$B6 ±1)
-  for the Shields-On status indicator (#14).
-- `$062C` → `static_dither_threshold` ? — the windscreen-"static" POKEY-RANDOM dither threshold
-  (SDL-only raster effect; dead on Amiga).  `$0632` → `static_enable_flag` ? — gates that block.
-- `$2840` → `wing_bar_hpos_base` ✓ — base HPOS for the wing-clearance missiles (M3/M2/M1 = +0,+$0C,+$11).
-
-**`flight_control_integrate` ($8E5B) — unnamed memory (found during the clean-C rewrite):**
-The master flight step reads/writes many still-unnamed cells. Addresses + observed behaviour:
-- `$005D` → `ground_proximity_flag` ? — gates auto-level pitch rate (8e8a) and throttle braking
-  (8ff7); set to $F0/$FF/$00 from the dial/life/`$2917` logic at 91a3-91bc. (Landing/near-ground.)
-- `$003D` → `landing_seq_flag` ? — when nonzero, runs the "in-box"/$3355 special-state path
-  (8ef5/8f2b) and suppresses the pitch/roll auto-level (8f9a); also driven by `step_object_along_axes`.
-- `$0023`/`$0024` → `pitch_shadow_lo`/`pitch_shadow_hi` ? — snapshot of pitch_pos ($25/$26) taken at
-  8f20; later feeds the canopy-pillar Y at $2871 (9 15a).
-- `$002B`/`$002C` → `world_dx_lo`/`world_dx_hi` ? — per-frame world-X velocity added to world_x
-  ($2887/$2888); produced by `compute_obj_rel_angle_scale`. (`$002C` reloaded+discarded at 910c.)
-- `$2881`/`$2882` → `world_dz_lo`/`world_dz_hi` ? — per-frame world-Z velocity added to world_z.
-- `$2883`/`$2884` → `fwd_step_lo`/`fwd_step_hi` ? — signed forward/depth step = (throttle_hi*roll)
-  <<3; added to the depth accumulator ($33/$34) at 9121.
-- `$28D6` → `roll_mag_scaled` ? — |(roll_pos<<3)>>8|; the multiplier fed to `mul_u8` for fwd_step.
-- `$0020` → reused here purely as ROL scratch for the $28D6/fwd-step sign (NOT its display-list role).
-- `$283C` → `landing_inhibit_flag` ? — when set, blocks the $3355=$34 special-state entry (8f2b).
-- `$283D` → `heading_freeze_flag` ? — selects terrain index angle source: RTCLOK_LOW if set, else
-  heading_hi (9164).
-- `$066C`/`$066D` → `engine_state_a`/`engine_state_b` ? — paired flag set to 0/1 around the
-  game_sub_55FC HUD refresh + $3355 special-state transitions (8f0a/8f37/8f54).
-- `$0686`/`$0687` → `engine_sound_pitch_a`/`engine_sound_pitch_b` ? — ~(throttle<<1 hi); $0687=$0686-4.
-- `$2917` → `lockon_rand_countdown` ? — DEC'd, compared to RANDOM to latch `$005D`=$FF (91a5-91b9).
-- `$2871`/`$2873` → `canopy_pillar_y_left`/`canopy_pillar_y_right` ? — pitch/roll-derived pillar Y
-  (915a/9150); pushed into the 7-deep history ring ($28A8/$28AF).
-- `$2850`-`$2853` → `obj_vel_x_lo/hi`/`obj_vel_y_lo/hi` ? — object velocity from the delayed ring
-  history ($2919/$291A/$291B), arithmetic-shifted; integrated into the object pos at 9267.
-- `$2829`/`$0068` and `$282C`/`$0069` → `obj_accum_*` ? — 16-bit object-position accumulators.
-- `$284E`/`$0038`(vobj_row_count) and `$284F`/`$0039` → `obj_pos2_*` ? — second object pos pair.
-- `$2919`-`$291D` → `ring_cur_0`..`ring_cur_4` ? — current (delayed-by-7-frames) read of the history
-  ring fields (pitch lo/hi, roll vel, pillar L/R).
-- `$291E` → `ring_head` ? — 0..6 rotating index of the 7-entry attitude history ring.
-- `$2893`/`$289A`/`$28A1`/`$28A8`/`$28AF` → `ring_pitch_lo[]`/`ring_pitch_hi[]`/`ring_roll_vel[]`/
-  `ring_pillar_l[]`/`ring_pillar_r[]` ? — the five 7-entry history-ring arrays.
-
-**`update_terrain_scanline_proj` ($9833) — unnamed memory (found during the clean-C rewrite):**
-The top of the flight projection subtree. Cells still lacking mem.h names:
-- `$2270`/`$2271` and `$2272`/`$2273` → `map_x_scratch_lo/hi`/`map_z_scratch_lo/hi` ? — the
-  LSR working bytes for world>>4; end up equal to map_x ($27FD/$27FE) / map_z ($27FF/$2800).
-- `$2801`-`$2804` → `map_x_mirror_lo/hi`/`map_z_mirror_lo/hi` ? — a second copy of the map
-  coords (sampler reads $27FD-$2800; the mirror is consumed by update_terrain_horizon_lr's deltas).
-- `$2274` → `scaled_depth_lo` ? — paired low byte of the <<2 depth fixed-point (hi = scaled_depth_hi $2275).
-- `$27F9` → `terrain_height_q2` ? — sampled height rounded down by /4 (two rounding halvings).
-- `$281A`/`$281B` → `viewport_top_row`/`viewport_bottom_row` ? — the visible terrain span limits
-  derived from height + depth step; $281A extends (clamped $38) once depth step passes $37.
-- `$0070` → `terrain_clearance` ? — ship-above-terrain clearance (scaled_depth_hi - height), 0 on
-  contact; gates step_object_along_axes' depth brake and the engine-sound path.
-- `$283C` → `landing_inhibit_flag` ? (also seen in flight_control_integrate) — when 0, allows
-  exit_terrain_special_state.
-- `$2879` → `proj_phase_flag` ? — 0/1 latch of the $066C landing/launch projection state machine.
-- `$066C` → `engine_state_a` ? (paired $066D, also in flight_control_integrate) — its value
-  (<4 / 4-7 / >=8) selects the projection phase.
-
-**`project_terrain_points` ($A11F) — unnamed memory (found during the clean-C rewrite):**
-Per-object world->screen projection; X = object/column index into these 22-entry arrays:
-- `$24B4` → `obj_proj_flags[]` ? — per-object cull/state byte; bit4 = "already projected this frame".
-- `$22A4`/`$22D2` → `obj_num1_lo[]`/`obj_num1_hi[]` ? — half-1 signed numerator (screen X source).
-- `$235B`/`$2388` → `obj_num2_lo[]`/`obj_num2_hi[]` ? — half-2 signed numerator (screen Y source).
-- `$2300`/`$232E` → `obj_divisor_lo[]`/`obj_divisor_hi[]` ? — shared perspective divisor (depth).
-- `$2400`/`$242D` → `obj_screen_x_lo[]`/`obj_screen_x_hi[]` ? — half-1 projected coord output.
-- `$245A`/`$2487` → `obj_screen_y_lo[]`/`obj_screen_y_hi[]` ? — half-2 projected coord output.
-- `$270E`/`$272D` → `band_scroll_offset[]` ? — per-screen-band scroll offset table added to the
-  half-2 output ($272D = $270E+$1F; indexed by half-1 X >> 3 when half-1 hi byte is 0).
-- `$00B5` → `proj_fold_scratch` ? — fold high-byte scratch (= projection magnitude >> 8); in the
-  contract but dead after return. ($AE/$AF/$B0/$B1/$B2 are divide_16x16 scratch, already excluded.)
-
-**`terrain_frame_setup` ($9E54) — unnamed memory (found during the clean-C rewrite):**
-Per-frame terrain view-transform: builds the per-column projection vectors from the cell map.
-- `$22A3`/`$22D1` and `$22FF`/`$232D` → `obj_num1_in_lo/hi[]` / `obj_divisor_in_lo/hi[]` ? — the
-  INPUT column vectors (offset -1 from the $22A4/$2300 outputs project_terrain_points consumes);
-  built by build_view_transform_matrix, rotated/translated per cell into the $22A4.. outputs.
-- `$2276` → `obj_col_index[]` ? — per-column height-map index ((X&0x0F)|b6) stored for later use.
-- `$23B5` → `obj_height_sample[]` ? — per-column terrain height read from $0900[index].
-- `$0900` → `terrain_height_map` ? — 16x16 (256-byte) height grid sampled here and by $9A36.
-- `$B67C` → `obj_draw_order[]` ? — 12-entry object draw-order list walked by loop 2.
-- `$28DB` → `collapse_cur_obj` ? — current object index saved across the pair-collapse in loop 2.
-- `$00A0`-`$00A3` (named draw_iter_count/scroll_accum_b0..b2) are DUAL-USED here as the
-  view-transform rotation vector {rot_a=$A1:$A0, rot_b=$A3:$A2} — the mem.h names are misleading
-  in this context; consider a union/overlay name.
-- `$00B4` → `proj_setup_scratch` ? — = (vbi_flags&0x0F) | $B5; written once, dead within the fn.
-- `$00B5`/`$00B6` → loop-1 cell-pattern / column-high-nibble scratch (b5/b6); $B5 reused in loop 2
-  to stash the scan index.
-
-**`terrain_jitter_column` ($A613) — unnamed memory (found during the clean-C rewrite):**
-- `$2829`/`$0068` and `$282C`/`$0069` → `obj_jitter_x_*` / `obj_jitter_y_*` ? — the random
-  horizontal/vertical jitter offsets it writes (same cells the flight_control_integrate
-  obj-accumulators feed; see that section's `obj_accum_*`).
-- `$A63A` `terrain_plot_return` is an empty RTS (a shared return target), not a real callee —
-  the clean rewrite drops the no-op tail call.
-
-**`sfx_voice_envelope_tick` ($548D) — unnamed memory (found during the clean-C rewrite):**
-Per-frame envelope engine over 14 voice/gauge slots (Y=$0E..1). Each slot has two parallel
-envelopes; these per-slot arrays lack mem.h names:
-- `$06DB`/`$06E9` → `freq_env_step[]`/`freq_env_phase[]` ? — frequency envelope increment
-  (nonzero = active) and its wrapping phase accumulator.
-- `$0679`(hud_field_679)/`$06BF`/`$06CD` → `freq_value[]`/`freq_delta[]`/`freq_target[]` ? — the
-  frequency field, its per-step delta, and the target that expires the envelope.
-- `$06A3`/`$06B1` → `dur_env_step[]`/`dur_env_phase[]` ? — duration/priority envelope step + phase.
-- `$066B`(sfx_voice_distort_0e)/`$0687`/`$0695` → `prio_value[]`/`prio_delta[]`/`prio_target[]` ? —
-  the 4-bit priority/distortion field, its delta, and expiry target.
-- `$06F7` → `slot_event_id[]` ? — event id re-queued (bit7-marked) on the ring when a slot expires.
-- `$5406` → `env_gate_table` ? — ROM ramp/gate table; a zero entry pauses the envelope step.
-- `$0718` (sfx_voice_expired_flag) is named; reset per slot, set on expiry.

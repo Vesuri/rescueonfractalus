@@ -1700,13 +1700,13 @@ static int test_mem_contract_regs(const char *name, void (*native)(void), void (
     return mem_fail;
 }
 
-/* raster_fill_region @ $AB9A: nested fill driven by the fixed-point step
+/* raster_scaled_object @ $AB9A: nested fill driven by the fixed-point step
  * {$0051:$0050}.  The game's step is a sub-pixel increment (high byte $0051 is
  * small — set_plot_mask_and_halve_step divides by 4); a fully random $0051 could
  * make the accumulator loops run pathologically long, so seed a realistic step
  * ($0051 in 0..$3F).  Both runs share it, so the logic is still fully diffed. */
-static int test_raster_fill_region(void) {
-    if (!want("raster_fill_region")) return 0;
+static int test_raster_scaled_object(void) {
+    if (!want("raster_scaled_object")) return 0;
     enum { N = 20000 };
     static uint8_t pre[65536];
     int mem_fail = 0, cpu_diff = 0, printed = 0;
@@ -1714,10 +1714,10 @@ static int test_raster_fill_region(void) {
     for (int t = 0; t < N; t++) {
         fill_random(pre);
         pre[0x0051] = (uint8_t)(xs() % 0x40);   /* realistic step high byte (0..$3F) */
-        mem_fail += diff_run("raster_fill_region", pre, zero_cpu(),
-                             raster_fill_region, raster_fill_region__t6502, t, &printed, &cpu_diff);
+        mem_fail += diff_run("raster_scaled_object", pre, zero_cpu(),
+                             raster_scaled_object, raster_scaled_object__t6502, t, &printed, &cpu_diff);
     }
-    printf("raster_fill_region: %d cases, %d mem mismatch (must be 0), %d cpu diffs\n",
+    printf("raster_scaled_object: %d cases, %d mem mismatch (must be 0), %d cpu diffs\n",
            N, mem_fail, cpu_diff);
     return mem_fail;
 }
@@ -1725,7 +1725,7 @@ static int test_raster_fill_region(void) {
 /* terrain_plot_object_a/A90A @ $A822/$A90A: plot one terrain object indexed by entry
  * X.  Force the two slot-guard cells ($2487/$242D[X]) to 0 so the body runs every
  * case (the nonzero early-out is a trivial empty return), and seed a realistic
- * step ($232E[X] in 0..$3F -> $0051) so the raster_fill_region loops terminate. */
+ * step ($232E[X] in 0..$3F -> $0051) so the raster_scaled_object loops terminate. */
 static int test_terrain_sub_obj(const char *name, void (*nat)(void), void (*t6502)(void)) {
     if (!want(name)) return 0;
     enum { N = 20000 };
@@ -2312,7 +2312,7 @@ int main(int argc, char **argv) {
     fails += test_mem_contract_regs("terrain_midpoint_displace", terrain_midpoint_displace, terrain_midpoint_displace__t6502);
     fails += test_mem_contract_regs("terrain_plot_pixel", terrain_plot_pixel, terrain_plot_pixel__t6502);
     fails += test_mem_contract_regs("terrain_clip_row_top", terrain_clip_row_top, terrain_clip_row_top__t6502);
-    fails += test_raster_fill_region();
+    fails += test_raster_scaled_object();
     fails += test_terrain_sub_obj("terrain_plot_object_a", terrain_plot_object_a, terrain_plot_object_a__t6502);
     fails += test_terrain_sub_obj("terrain_plot_object_b", terrain_plot_object_b, terrain_plot_object_b__t6502);
     fails += test_terrain_sub_obj("terrain_plot_object", terrain_plot_object, terrain_plot_object__t6502);

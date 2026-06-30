@@ -1529,7 +1529,7 @@ L_3fc1:;
     /* 3fc8 */
     if (!cpu.N) goto L_3fc1;
     /* 3fca */
-    mem[0x00D9] = cpu.A;
+    lockon_flash_color = cpu.A;
     /* 3fcc */
     return;
 }
@@ -1772,8 +1772,8 @@ L_40ab:;
     return_stub_40af(); return;
 }
 
-/* draw_canopy_pillar_p2 @ $40B0: If $291C/$291D changed vs cache $2872/$2874, redraw 21-byte bar from $4B57 (idx $455B[$291C]) into $0E87, $FF-term */
-void draw_canopy_pillar_p2(void) {
+/* draw_ah_ground_fill_p2 @ $40B0: Artificial-Horizon ground fill (NOT the canopy pillars): if $291C/$291D changed vs cache $2872/$2874, redraw 21-byte slope from $4B57 (idx $455B[$291C]) into the P2 buffer $0E87+ ($FF-term) */
+void draw_ah_ground_fill_p2(void) {
     /* 40b0 */
     LDX(mem[0x291C]);
     /* 40b3 */
@@ -3527,7 +3527,7 @@ L_49ec:;
 /* dli_handler_game @ $49EE: manual implementation in rof_manual.c */
 void dli_launch_tail_inc_c7_4a05(void) {
     /* 4a05 */
-    INC_M(0x00C7);
+    INC_M(MEM_dli_dispatch_index);
     FUN_4a07(); return;
 }
 
@@ -3552,7 +3552,7 @@ void dli_launch_reset_c7_4acd(void) {
     /* 4ad2 */
     LDA(0x00);
     /* 4ad4 */
-    mem[0x00C7] = cpu.A;
+    dli_dispatch_index = cpu.A;
     /* 4ad6 */
     FUN_4a07(); return;
 }
@@ -3861,7 +3861,7 @@ L_4fb7:;
     /* 4fbc */
     audc_shadow_0 = cpu.A;
     /* 4fbe */
-    mem[0x00DC] = cpu.A;
+    terrain_pen0_fade = cpu.A;
     /* 4fc0 */
     mem[0x00DB] = cpu.A;
     /* 4fc2 */
@@ -3926,7 +3926,7 @@ L_4fe2:;
 /* faithful transliteration kept as the validation oracle; native vbi_handler_flight() lives in rof_native.c (see VALIDATE_FUNCS) */
 void vbi_handler_flight__t6502(void) {
     /* 4ff7 */
-    mem[0x00C7] = 0x00;
+    dli_dispatch_index = 0x00;
     /* 4ff9 */
     bus_write(0xD008, 0x00);
     /* 4ffc */
@@ -3948,7 +3948,7 @@ void vbi_handler_flight__t6502(void) {
     /* 501b */
     bus_write(0xD017, display_param_8);
     /* 5020 */
-    bus_write(0xD015, mem[0x00D9]);
+    bus_write(0xD015, lockon_flash_color);
     /* 5025 */
     bus_write(0xD002, mem[0x00CB]);
     /* 502a */
@@ -3994,7 +3994,7 @@ L_505e:;
     /* 505e */
     CLC();
     /* 505f */
-    LDA(mem[0x2840]);
+    LDA(wing_bar_hpos_base);
     /* 5062 */
     bus_write(0xD007, cpu.A);
     /* 5065 */
@@ -4059,7 +4059,7 @@ L_50a3:;
     goto L_5146;
 L_50ab:;
     /* 50ab */
-    LDA(mem[0x00D9]);
+    LDA(lockon_flash_color);
     /* 50ad */
     LSR_A();
     /* 50ae */
@@ -4079,7 +4079,7 @@ L_50bb:;
     /* 50bb */
     ROL_A();
     /* 50bc */
-    mem[0x00D9] = cpu.A;
+    lockon_flash_color = cpu.A;
     /* 50be */
     LDX(object_anim_frame);
     /* 50c0 */
@@ -4366,7 +4366,7 @@ L_51db:;
     /* 51e3 */
     audc_shadow_0 = mem[(0x07F9)+cpu.Y];
     /* 51e8 */
-    mem[0x00DC] = mem[(0x0823)+cpu.Y];
+    terrain_pen0_fade = mem[(0x0823)+cpu.Y];
     /* 51ed */
     mem[0x00DB] = mem[(0x084D)+cpu.Y];
     /* 51f2 */
@@ -4398,7 +4398,7 @@ L_51fc:;
     mem[0x08A3] = cpu.A;
 L_520f:;
     /* 520f */
-    draw_canopy_pillar_p2();
+    draw_ah_ground_fill_p2();
     /* 5212 */
     draw_altimeter_bars();
     /* 5215 */
@@ -4553,7 +4553,7 @@ void vbi_handler_standby(void) {
     /* 52da */
     bus_write(0xD400, mem[0x022F]);
     /* 52df */
-    mem[0x00C7] = 0x00;
+    dli_dispatch_index = 0x00;
     /* 52e3 */
     bus_write(0xD409, 0x04);
     /* 52e8 */
@@ -7674,7 +7674,7 @@ L_6519:;
     /* 6521 */
     copy_192_to_1800();
     /* 6526 */
-    mem[0x00DC] = 0x00;
+    terrain_pen0_fade = 0x00;
     /* 6528 */
     display_flags = 0x00;
     /* 652c */
@@ -9639,7 +9639,7 @@ void dli_launch_dispatch_6cad(void) {
     /* 6caf */
     mem[0x00CA] = cpu.Y;
     /* 6cb1 */
-    LDA(mem[0x00C7]);
+    LDA(dli_dispatch_index);
     /* 6cb3 */
     ASL_A();
     /* 6cb4 */
@@ -9689,7 +9689,7 @@ void dli_launch_colbk_colpf_6cf1(void) {
 
 void dli_launch_6d0e(void) {
     /* 6d0e */
-    LDY(mem[0x00DC]);
+    LDY(terrain_pen0_fade);
     /* 6d10 */
     LDA(0x2A);
     /* 6d12 */
@@ -16202,7 +16202,7 @@ void trigger_object_explosion__t6502(void) {
     /* 96e1 */
     anim_counter_2 = 0x7C;
     /* 96e5 */
-    mem[0x00DC] = 0x76;
+    terrain_pen0_fade = 0x76;
     /* 96e9 */
     audc_shadow_0 = 0x78;
     /* 96eb */
@@ -17321,7 +17321,7 @@ void init_proj_scratch_pointers__t6502(void) {
     /* 9b8d */
     anim_counter_2 = 0x3C;
     /* 9b91 */
-    mem[0x00DC] = 0x38;
+    terrain_pen0_fade = 0x38;
     /* 9b93 */
     LDA(0x34);
     /* 9b95 */
@@ -19521,7 +19521,7 @@ L_a49a:;
     LDA(0x74);
 L_a4a1:;
     /* a4a1 */
-    mem[0x2840] = cpu.A;
+    wing_bar_hpos_base = cpu.A;
     /* a4a7 */
     mem[0x28FD] = mem[0x2270];
     /* a4ad */
@@ -20146,7 +20146,7 @@ L_a8a1:;
     /* a8a9 */
     shape_col_base = cpu.A;
     /* a8ac */
-    raster_fill_region(); return;
+    raster_scaled_object(); return;
 }
 
 /* terrain_point_distance @ $A8AF: $A8AF: computes |$004F-0x80|+|$004E-0x80| range into $290B-$290E (saves arg in $290E); overflow->a909 */
@@ -20288,7 +20288,7 @@ L_a94a:;
     /* a960 */
     if (cpu.C) goto L_a965;
     /* a962 */
-    raster_fill_region();
+    raster_scaled_object();
 L_a965:;
     /* a965 */
     LDA(mem[0x00A7]);
@@ -20530,7 +20530,7 @@ L_aa5c:;
     /* aa74 */
     anim_counter_2 = 0xBC;
     /* aa78 */
-    mem[0x00DC] = 0xB6;
+    terrain_pen0_fade = 0xB6;
     /* aa7c */
     audc_shadow_0 = 0xB8;
     /* aa7e */
@@ -20672,9 +20672,9 @@ L_ab91:;
     return;
 }
 
-/* raster_fill_region @ $AB9A: Nested fill: computes start ptr 28DC/28DD + $55*4, walks 12x32 cells testing AC3A bitmask vs buffer at ($C3),Y; plots via a6cb when set; uses $50/$51 step, $52-$55 accumulators */
-/* faithful transliteration kept as the validation oracle; native raster_fill_region() lives in rof_native.c (see VALIDATE_FUNCS) */
-void raster_fill_region__t6502(void) {
+/* raster_scaled_object @ $AB9A: Scaled object-sprite rasteriser (NOT a region fill): samples a distance-scaled source bitmap (src ptr ($C3) + the $AC3A per-bit table) through the $0052-$0055 fixed-point step accumulators over a 12x32 grid, plotting each set source bit via terrain_clip_row_top ($A6CB); uses $50/$51 step. Draws the terrain dots when plot-mask $0058=$AA */
+/* faithful transliteration kept as the validation oracle; native raster_scaled_object() lives in rof_native.c (see VALIDATE_FUNCS) */
+void raster_scaled_object__t6502(void) {
     /* ab9a */
     LDA(plot_step_hi);
     /* ab9c */
@@ -23318,11 +23318,11 @@ L_3d52:;
     /* 3d70 */
     rtclok_frac = cpu.A;
     /* 3d72 */
-    mem[0x00DC] = cpu.A;
+    terrain_pen0_fade = cpu.A;
     /* 3d74 */
     game_phase = cpu.A;
     /* 3d76 */
-    mem[0x00C7] = cpu.A;
+    dli_dispatch_index = cpu.A;
     /* 3d78 */
     LDY(0x19);
 L_3d7a:;
