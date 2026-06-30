@@ -35,6 +35,20 @@ printf "per-call: integ=%lu proj=%lu sfx=%lu | ISR(whole handler)=%lu\n", \
   (g_flightProf.isrCalls? g_flightProf.isrLines/g_flightProf.isrCalls:0)
 printf "  totals: integ=%lu proj=%lu sfx=%lu isrLines=%lu isrCalls=%lu\n", \
   g_pInteg, g_pProj, g_pSfx, g_flightProf.isrLines, g_flightProf.isrCalls
+echo --- VBI handler SECTION partition (per-ISR-call beam ticks; the chunks outside integ/proj/sfx) ---\n
+printf "per-call: drawBr=%lu simHead=%lu integ=%lu proj=%lu atmo=%lu hud=%lu score=%lu tail=%lu(incl sfx=%lu) | whole=%lu\n", \
+  (g_flightProf.isrCalls? g_pDrawBr/g_flightProf.isrCalls:0), \
+  (g_flightProf.isrCalls? g_pSimHead/g_flightProf.isrCalls:0), \
+  (g_flightProf.isrCalls? g_pInteg/g_flightProf.isrCalls:0), \
+  (g_flightProf.isrCalls? g_pProj/g_flightProf.isrCalls:0), \
+  (g_flightProf.isrCalls? g_pAtmo/g_flightProf.isrCalls:0), \
+  (g_flightProf.isrCalls? g_pHud/g_flightProf.isrCalls:0), \
+  (g_flightProf.isrCalls? g_pScore/g_flightProf.isrCalls:0), \
+  (g_flightProf.isrCalls? g_pTail/g_flightProf.isrCalls:0), \
+  (g_flightProf.isrCalls? g_pSfx/g_flightProf.isrCalls:0), \
+  (g_flightProf.isrCalls? g_flightProf.isrLines/g_flightProf.isrCalls:0)
+printf "  totals: drawBr=%lu simHead=%lu atmo=%lu hud=%lu score=%lu tail=%lu\n", \
+  g_pDrawBr, g_pSimHead, g_pAtmo, g_pHud, g_pScore, g_pTail
 echo --- cockpit decode (beam ticks; 313=20ms) ---\n
 printf "cockpitTicks=%lu cockpitScans=%lu (per-scan ticks=%lu)\n", g_fCockpit, g_fCockpitScans, (g_fCockpitScans? g_fCockpit/g_fCockpitScans : 0)
 echo --- terrain_draw_frame sub-phase (ROF_TDRAW_PROF; cumulative — normalize by frames) ---\n

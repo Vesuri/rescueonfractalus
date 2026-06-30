@@ -6331,6 +6331,26 @@ static void set_colpf0_from_flag_core(uint8_t msg_index)     { cpu.Y = msg_index
 static void event_sequence_dispatcher_core(uint8_t keycode)  { cpu.A = cpu.X = keycode; event_sequence_dispatcher(); }
 static void ring_push_marked_core(uint8_t value)             { cpu.X = value;           ring_push_marked(); }
 
+/* VBI-section sub-profiling (PROBE-only): partition the $4FF5 handler into the chunks NOT
+ * already covered by the integ/proj/sfx wrappers, so the headless probe can report exactly
+ * which part of the handler costs what.  Same rof_subclock() unit as g_pInteg/g_pProj/g_pSfx
+ * (sub-frame ticks; 313 = 1 PAL frame).  Accumulated over isrCalls firings; per-call = acc/isrCalls.
+ *   g_pDrawBr  — the whole "draw" parity branch (player3 object / message flash / score)
+ *   g_pSimHead — the "sim" branch head up to JOIN (obj dispatch + target routing + blink + kbd)
+ *   g_pAtmo    — the atmosphere colour-ramp block
+ *   g_pHud     — the 5 HUD instrument draws (AH fill / altimeter / compass / dispatch_43cb / digit)
+ *   g_pScore   — the per-~30-frame BCD score fold + redraw
+ *   g_pTail    — the tail (compute_indicator_pos + sfx_voice_envelope_tick; sfx also in g_pSfx)
+ * (integ/proj/sfx stay measured by their own wrappers; isrLines = whole handler.) */
+#ifdef ROF_FLIGHT_PROBE
+extern volatile unsigned long g_pDrawBr, g_pSimHead, g_pAtmo, g_pHud, g_pScore, g_pTail;
+  #define VP_T0()      unsigned long _vp = rof_subclock()
+  #define VP_ACC(acc)  do { (acc) += rof_subclock() - _vp; } while (0)
+#else
+  #define VP_T0()      ((void)0)
+  #define VP_ACC(acc)  ((void)0)
+#endif
+
 /* vbi_handler_flight @ $4FF5 — the in-flight vertical-blank handler (native twin).
  *
  * Runs once per frame while flying.  It advances the jiffy clock, then SPLITS its per-frame
@@ -6418,6 +6438,7 @@ void vbi_handler_flight(void) {
     /* Alternate per-frame work via the lock-on parity counter ($00C8). */
     if ((uint8_t)(--mem[MEM_lock_on_indicator_tick_parity]) != 0) {
         /* ===== "draw" frame: lock-on flash colour, player-3 object, message, score ===== */
+        VP_T0();
 
         /* Cycle the lock-on flash colour ($00D9) within a small range. */
         uint8_t d9 = mem[0x00D9], a = (uint8_t)(d9 >> 1), c;
@@ -6458,9 +6479,11 @@ void vbi_handler_flight(void) {
         }
 
         if (bcd_delta_hi != 0) add_and_show_bcd_counter();
+        VP_ACC(g_pDrawBr);
         /* -> tail */
     } else {
         /* ===== "sim" frame: target/lock-on logic, then the motion sim + terrain + HUD ===== */
+        VP_T0();
         obj_state_dispatch_0043();
         lock_on_indicator_tick_parity = 0x02;        /* reload the parity counter */
 
@@ -6505,6 +6528,7 @@ void vbi_handler_flight(void) {
             }
             at = JOIN;
         }
+        VP_ACC(g_pSimHead);
         /* JOIN ($51B2): run the motion sim + terrain + HUD only while actively flying. */
         if (joystick_saved != 0) {
             flight_control_integrate();
@@ -6512,6 +6536,7 @@ void vbi_handler_flight(void) {
 
             /* Atmosphere colour-ramp: pick an altitude band, copy its 4-entry palette set,
              * and slowly advance the fade phase ($08A1 countdown -> $08A2 -> $08A3 via $364B). */
+            { VP_T0();
             if (game_state == 0 && !(event_pending_flag & 0x80)) {
                 int idx;
                 if (terrain_depth_step < 0x32) idx = 0;
@@ -6526,26 +6551,32 @@ void vbi_handler_flight(void) {
                     mem[0x08A3] = mem[0x364B + ((p >> 2) & 0x0F)];
                 }
             }
+            VP_ACC(g_pAtmo); }
 
             /* HUD cells (the 5 instrument draws). */
+            { VP_T0();
             draw_canopy_pillar_p2();          /* misnamed: actually the artificial-horizon ground fill */
             draw_altimeter_bars();
             draw_compass_heading();
             dispatch_43cb_half_70();
             update_altitude_digit_display();
+            VP_ACC(g_pHud); }
 
             /* Score: every ~30 frames ($00DF countdown) fold the pending delta + redraw. */
+            { VP_T0();
             if ((uint8_t)(--mem[MEM_sfx_voice_distortion]) == 0) {
                 if (level_cleared_flag != 0 && (uint8_t)(--mem[MEM_level_cleared_flag]) == 0)
                     setup_level_clear_state();
                 if (mem[0x0070] != 0) { mem[MEM_bcd_delta_lo]++; add_and_show_bcd_counter(); }
                 sfx_voice_distortion = 0x1E;
             }
+            VP_ACC(g_pScore); }
         }
         /* -> tail */
     }
 
     /* ===== tail ($523E): indicator + SFX envelope, then the idle windscreen static ===== */
+    { VP_T0();
     if (event_active_flag == 0) {
         if (indicator_pos != 0) compute_indicator_pos();
         sfx_voice_envelope_tick();
@@ -6574,6 +6605,7 @@ void vbi_handler_flight(void) {
 #endif
         }
     }
+    VP_ACC(g_pTail); }
 
 #ifndef ROF_PLATFORM_AMIGA
     zp_flag_05 = 0x00;                        /* clear the re-entrancy guard (SDL only; see above) */

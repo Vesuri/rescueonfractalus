@@ -568,6 +568,9 @@ extern "C" volatile unsigned long g_fCockpit=0, g_fCockpitScans=0;
 // flight_vbi_native (g_flightProf.isrLines).  (The old top/atmo/hud/score/tail PRE_INSN_HOOK
 // partition was retired when vbi_handler_flight went native — it had done its diagnostic job.)
 extern "C" volatile unsigned long g_pProj=0, g_pInteg=0, g_pSfx=0;
+// VBI handler section partition (the chunks NOT covered by integ/proj/sfx; see rof_native.c
+// vbi_handler_flight).  Per-call = acc/isrCalls; sum(all sections)+integ+proj ≈ isrLines.
+extern "C" volatile unsigned long g_pDrawBr=0, g_pSimHead=0, g_pAtmo=0, g_pHud=0, g_pScore=0, g_pTail=0;
 // Stage-1 verifier: chip addr of terrainBitmap->data, so the gdb harness can dump the
 // flight bitplanes and decode/diff them headlessly (no display needed).
 extern "C" volatile uint32_t g_terrainBmpAddr=0;
