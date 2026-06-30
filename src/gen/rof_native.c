@@ -3809,7 +3809,7 @@ void terrain_plot_object(void) {
  * snapshot (random mem[] would not terminate — the control columns must be a realistic
  * ascending set).
  */
-void terrain_column_rasterize_core(uint8_t entryDepth, uint8_t colBase) {
+void terrain_column_rasterize_core_c(uint8_t entryDepth, uint8_t colBase) {
     TDCNT(g_tdRasterCalls);
     /* Non-volatile alias: the control-point stack, the max-height map and the plot tables are
        all main-loop-owned (the flight VBI touches none of them — CLAUDE.md ZP audit), so
@@ -3955,6 +3955,23 @@ void terrain_column_rasterize_core(uint8_t entryDepth, uint8_t colBase) {
     #undef WB
     #undef DRAW
 }
+
+/* Dispatcher seam (asm-migration-plan Phase 2).  The clean-C body above
+ * (terrain_column_rasterize_core_c) is the validation/SDL oracle; on the Amiga,
+ * when ROF_RASTERIZE_ASM is set, terrain_column_rasterize_core is the hand-written
+ * m68k twin in TerrainRasterizeAssembler.s (link-swapped, plain C linkage — no
+ * SAS/C wrapper since it's our own function).  Verified byte-identical to the
+ * oracle by headless render-diff of terrainBitmap + the plane2 dot buffer
+ * (the deterministic auto-flight).  noinline so the call site binds to whichever
+ * implementation is linked rather than inlining the C body into the caller. */
+#ifdef ROF_RASTERIZE_ASM
+extern void terrain_column_rasterize_core(uint8_t entryDepth, uint8_t colBase); /* TerrainRasterizeAssembler.s */
+#else
+__attribute__((noinline)) void terrain_column_rasterize_core(uint8_t entryDepth, uint8_t colBase) {
+    terrain_column_rasterize_core_c(entryDepth, colBase);
+}
+#endif
+
 /* 6502-ABI shim: entry cpu.Y = start depth, cpu.X = column base. */
 void terrain_column_rasterize(void) { terrain_column_rasterize_core(cpu.Y, cpu.X); }
 
