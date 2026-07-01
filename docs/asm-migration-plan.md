@@ -185,6 +185,19 @@ Done this session (all byte-identical, in-process differential 0 mismatch over t
   clamp (the user's hypothetical-renderer asm structure). Commit c6285bb. ⚠ Note: `bmi` CANNOT replace
   the per-column `cmp.b #$FF/beq` off-top skip — real heights reach $96 (~28% of columns have bit7 set,
   verified from a $260E dump); only $FF must skip.
+- **`terrain_frame_setup` loops (~10ms)** (`TerrainFrameSetupAssembler.s`, new file, 2026-07-01):
+  **~26% faster (per-call 91 vs 123 beam-ticks), byte-identical (0 mismatch / deep flight fdCalls=320);
+  make validate green.** A GOOD win (unlike subdiv) — this function has NO rasterizer call, so its
+  bracket is its own compute. The two projection calls (setup_projection_params/build_view_transform_matrix)
+  stay in the C `terrain_frame_setup` wrapper; the asm twin is just the two transform loops
+  (`terrain_frame_setup_core`). Win source: loop 1 touches ~15 Y-indexed arrays spanning ~530 bytes
+  ($2276..$24E0); GCC can only reach them with 8-bit displacements so it juggles several base registers +
+  `lea disp8(base),aN`+`move (aN)` per access, whereas the asm uses `a0=mem+Y` and a single
+  `move.b (d16,a0)` (16-bit disp covers the whole cluster). rot_a/rot_b in a3/a4 (used via `add.w aN,dN`),
+  a5=mem+$0900 (height index by X). Seam `ROF_TFSETUP_ASM`; `make TFSETUP_C=1` fallback; tfsetup_verify.gdb.
+  ⚠ VERIFY GOTCHA (cost ~1 iteration): the differential's snapshot block must EXCLUDE $2270-$2275 — the
+  async flight VBI (`update_terrain_scanline_proj`) writes map/depth scratch there, giving false mismatches;
+  tfsetup's real outputs are $2276+. (Same async-VBI-contamination class as the nested subdiv verify.)
 - **`terrain_subdivide_column` (~16% of draw)** (`TerrainSubdivideAssembler.s`, new file, 2026-07-01):
   byte-identical (in-process differential, **0 mismatch over 6836 deep-flight calls** to fdCalls=320;
   `make validate` green) but the perf win is **modest — ~0.6 beam-tick/call (asm 153149 vs C 157365, ~2.7%

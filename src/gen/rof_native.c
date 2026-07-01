@@ -4335,11 +4335,14 @@ void terrain_jitter_column(void) {
  *  clearing the hidden one's column ($232E=0, $2300=$20, $24B4=0) so it isn't drawn.
  *
  * The two divide-scratch carry chains and the build_view carry are dead/masked here, so this
- * is plain 16-bit arithmetic.  Memory contract only (the flight loop reloads regs); no hardware. */
-void terrain_frame_setup(void) {
-    setup_projection_params();
-    build_view_transform_matrix();
-
+ * is plain 16-bit arithmetic.  Memory contract only (the flight loop reloads regs); no hardware.
+ *
+ * Split into the two projection calls (kept in C — separate targets) + terrain_frame_setup_core,
+ * the two loops.  The core is the ROF_TFSETUP_ASM asm seam's target; its inputs (draw_row $92,
+ * terrain_scroll_counter $8A, vbi_flags $88, rot $A0-$A3, alt $8B/$8C, the $22A3/$22D1/$22FF/$232D
+ * input vectors, $0900 heights) are all VBI-stable, so the differential need only snapshot the
+ * loop outputs. */
+void terrain_frame_setup_core_c(void) {
     /* draw_row's top two bits pick the cell-pattern source table ($B5xx/$B6xx) and the
      * starting column screen index; only the 00 case seeds output column 0 from its input. */
     uint8_t dr = draw_row;
@@ -4487,6 +4490,54 @@ void terrain_frame_setup(void) {
         if (extra_step) y2++;
         if (y2 >= 0x0C) return;
     }
+}
+
+/* Dispatcher seam (asm-migration-plan Phase 3), mirrors terrain_column_rasterize_core.
+ * On the Amiga (ROF_TFSETUP_ASM) terrain_frame_setup_core is the hand-written m68k twin
+ * in TerrainFrameSetupAssembler.s; elsewhere it is the clean-C oracle above. */
+#if defined(ROF_TFSETUP_ASM) && defined(ROF_TFSETUP_VERIFY)
+/* On-target differential (single run, deterministic).  All loop INPUTS are VBI-stable, so we
+ * snapshot only the OUTPUTS: the $2270-$24E7 vector/class/height block (contains the $22A3.. input
+ * vectors too, which the loops don't write) + the ZP outputs $80/$81/$B4/$B5/$B6 + $28DB.  Run the
+ * asm twin, capture, restore, run the C oracle, compare.  C output left LIVE. */
+extern void terrain_frame_setup_core_asm(void);
+volatile unsigned long g_tfsCalls = 0, g_tfsMismatch = 0, g_tfsFirstBad = 0, g_tfsBadAddr = 0;
+volatile unsigned long g_tfsAsmTicks = 0, g_tfsCTicks = 0;
+/* Start at $2276 — the lowest byte terrain_frame_setup writes.  $2270-$2274 are map/depth
+ * scratch written by the ASYNC flight VBI (update_terrain_scanline_proj), so including them
+ * gave false mismatches (the VBI fires between the asm and C runs). */
+#define TFS_BLK_LO 0x2276
+#define TFS_BLK_N  0x28A            /* $2276..$24FF (covers all loop-1 + loop-2 outputs) */
+static uint8_t tfs_snapB[TFS_BLK_N], tfs_asmB[TFS_BLK_N];
+static const uint16_t tfs_zp[6] = { 0x80, 0x81, 0xB4, 0xB5, 0xB6, 0x28DB };
+static uint8_t tfs_snapZ[6], tfs_asmZ[6];
+void terrain_frame_setup_core(void) {
+    g_tfsCalls++;
+    uint8_t* const M = (uint8_t*)mem;
+    for (int i = 0; i < TFS_BLK_N; i++) tfs_snapB[i] = M[TFS_BLK_LO + i];
+    for (int i = 0; i < 6; i++) tfs_snapZ[i] = M[tfs_zp[i]];
+    FP_TIME(terrain_frame_setup_core_asm(), g_tfsAsmTicks);
+    for (int i = 0; i < TFS_BLK_N; i++) tfs_asmB[i] = M[TFS_BLK_LO + i];
+    for (int i = 0; i < 6; i++) tfs_asmZ[i] = M[tfs_zp[i]];
+    for (int i = 0; i < TFS_BLK_N; i++) M[TFS_BLK_LO + i] = tfs_snapB[i];
+    for (int i = 0; i < 6; i++) M[tfs_zp[i]] = tfs_snapZ[i];
+    FP_TIME(terrain_frame_setup_core_c(), g_tfsCTicks);
+    int bad = 0, first = !g_tfsMismatch;
+    for (int i = 0; i < TFS_BLK_N; i++) if (M[TFS_BLK_LO + i] != tfs_asmB[i]) { bad = 1; if (first) { g_tfsBadAddr = TFS_BLK_LO + i; first = 0; } }
+    for (int i = 0; i < 6; i++) if (M[tfs_zp[i]] != tfs_asmZ[i]) { bad = 1; if (first) { g_tfsBadAddr = tfs_zp[i]; first = 0; } }
+    if (bad) { if (!g_tfsMismatch) g_tfsFirstBad = g_tfsCalls; g_tfsMismatch++; }
+}
+#elif defined(ROF_TFSETUP_ASM)
+extern void terrain_frame_setup_core(void);  /* TerrainFrameSetupAssembler.s */
+#else
+__attribute__((noinline)) void terrain_frame_setup_core(void) { terrain_frame_setup_core_c(); }
+#endif
+
+/* terrain_frame_setup @ $9E54 — projection setup (kept C) + the two transform loops (asm seam). */
+void terrain_frame_setup(void) {
+    setup_projection_params();
+    build_view_transform_matrix();
+    terrain_frame_setup_core();
 }
 
 /* Project one signed axis for object/column X: ratio numerator/divisor -> screen coord.

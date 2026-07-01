@@ -288,8 +288,9 @@ regs, force `(a0)+`/`(d8,a0)`, shave every redundant insn), not the transliterat
 (dominant) [rasterize ~64% (asm'd) · project_terrain_points ~20% (asm'd, ~2.2× — `ProjectTerrainAssembler.s`)
 · subdivide ~16% (asm'd, but only ~0.6 tick/call — `TerrainSubdivideAssembler.s`; its bracket is dominated
 by the raster leaf-fills it drives, so removing GCC's spills barely helps)] · VBI ~71ms (3.6ms × ~20
-firings/iter, faithful) · renderFlightDirect ~24ms · setup+clear ~31ms. NEXT asm targets (open):
-terrain_frame_setup (~10ms, clean numeric fn, own bucket — not raster-diluted), deeper rasterize restructure.
+firings/iter, faithful) · renderFlightDirect ~24ms · setup+clear ~31ms [terrain_frame_setup loops asm'd
+~26% — `TerrainFrameSetupAssembler.s`]. NEXT asm targets (open): deeper rasterize restructure (keep
+control-point TOS in registers); replace bit-serial mul_u8/signed_mul_8x16 with 68000 mulu/muls.
 
 ⚠ **Measure asm twins with the in-process differential** (`make VERIFY=1 PROBES=1` +
 `amiga/raster_verify.gdb`): asm + C oracle run back-to-back on the SAME inputs in ONE run, byte-compared

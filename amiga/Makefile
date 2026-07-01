@@ -132,6 +132,18 @@ obj/TerrainSubdivideAssembler.o : VASMFLAGS += -DROF_SUBDIV_VERIFY
 endif
 endif
 
+# Hand-written m68k twin of terrain_frame_setup's two transform loops (Phase 3).
+# ON by default; `make TFSETUP_C=1` falls back to the clean-C oracle.  Verify via
+# amiga/tfsetup_verify.gdb (not raster-diluted: no rasterizer call in this function).
+ifndef TFSETUP_C
+FRAMEWORK_ASM_SRCS += $(AMIGA_SRC)/TerrainFrameSetupAssembler.s
+EXTRA_DEFINES += -DROF_TFSETUP_ASM
+ifdef VERIFY
+EXTRA_DEFINES += -DROF_TFSETUP_VERIFY
+obj/TerrainFrameSetupAssembler.o : VASMFLAGS += -DROF_TFSETUP_VERIFY
+endif
+endif
+
 # Objects (flattened into obj/ by basename).
 CXX_OBJS       := $(addprefix obj/,$(notdir $(CXX_SRCS:.cpp=.o)))
 CORE_C_OBJS    := $(addprefix obj/,$(notdir $(CORE_C_SRCS:.c=.o)))
