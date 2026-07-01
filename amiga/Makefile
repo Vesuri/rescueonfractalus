@@ -97,9 +97,13 @@ EXTRA_DEFINES += -DROF_RASTERIZE_ASM
 # the C oracle each call (rof_native.c), read via amiga/raster_verify.gdb.  The define
 # goes to BOTH the C (the diff wrapper) and the raster .s (drops its plain xdef so the
 # wrapper owns terrain_column_rasterize_core and the asm is reached as *_asm).
+# NO_RASTER_VERIFY=1 keeps the rasterizer as plain asm even under VERIFY (so another
+# twin's differential — e.g. subdiv — runs against a fast deterministic rasterizer).
 ifdef VERIFY
+ifndef NO_RASTER_VERIFY
 EXTRA_DEFINES += -DROF_RASTERIZE_VERIFY
 obj/TerrainRasterizeAssembler.o : VASMFLAGS += -DROF_RASTERIZE_VERIFY
+endif
 endif
 endif
 
@@ -113,6 +117,18 @@ EXTRA_DEFINES += -DROF_PROJECT_ASM
 ifdef VERIFY
 EXTRA_DEFINES += -DROF_PROJECT_VERIFY
 obj/ProjectTerrainAssembler.o : VASMFLAGS += -DROF_PROJECT_VERIFY
+endif
+endif
+
+# Hand-written m68k twin of terrain_subdivide_column (asm-migration-plan Phase 3).
+# ON by default; `make SUBDIV_C=1` falls back to the clean-C oracle.  Same VERIFY
+# mechanism; read the on-target differential via amiga/subdiv_verify.gdb.
+ifndef SUBDIV_C
+FRAMEWORK_ASM_SRCS += $(AMIGA_SRC)/TerrainSubdivideAssembler.s
+EXTRA_DEFINES += -DROF_SUBDIV_ASM
+ifdef VERIFY
+EXTRA_DEFINES += -DROF_SUBDIV_VERIFY
+obj/TerrainSubdivideAssembler.o : VASMFLAGS += -DROF_SUBDIV_VERIFY
 endif
 endif
 

@@ -4092,8 +4092,10 @@ static inline SubPt subdiv_midpoint(SubPt span, SubPt far, uint8_t *M) {
     return mid;
 }
 
-/* Returns the final recursion depth (the 6502 left it in X); callers that care put it in cpu.X. */
-uint8_t terrain_subdivide_column_core(uint8_t startDepth, uint8_t rasterEntryDepth) {
+/* Returns the final recursion depth (the 6502 left it in X); callers that care put it in cpu.X.
+ * This clean-C body is the SDL/validate oracle; on the Amiga the hand-asm twin
+ * (TerrainSubdivideAssembler.s) replaces it via the ROF_SUBDIV_ASM seam below. */
+uint8_t terrain_subdivide_column_core_c(uint8_t startDepth, uint8_t rasterEntryDepth) {
     TDCNT(g_tdSubdivCalls);
     /* Non-volatile alias for the sub-point stacks (main-RAM scratch the flight VBI never touches)
        so the compiler may cache/forward across the recursion; writes land at the same addresses
@@ -4227,6 +4229,66 @@ out:
     draw_row_bottom = budget;
     return (uint8_t)depth;
 }
+/* Dispatcher seam (asm-migration-plan Phase 3), mirrors terrain_column_rasterize_core.
+ * On the Amiga (ROF_SUBDIV_ASM) terrain_subdivide_column_core is the hand-written m68k
+ * twin in TerrainSubdivideAssembler.s; elsewhere it is the clean-C oracle above. */
+#if defined(ROF_SUBDIV_ASM) && defined(ROF_SUBDIV_VERIFY)
+/* On-target differential check (single run, deterministic).  Snapshot everything the
+ * subdivide writes, run the asm twin, capture its outputs, restore, run the C oracle on
+ * the same inputs, compare.  The C oracle's output is left LIVE (flight stays correct on
+ * an asm bug).  Compared: the 5 SubPt stacks ($23E2/$24E2/$25B4/$25D2/$25F0, 16 each),
+ * the ZP residue ($60 + $80-$91 + $9F + $B5/$B6) and the return value.  We do NOT snapshot
+ * $260E / the dot plane: subdivide's own control flow is independent of them (it works in
+ * column/height space from the stacks), and terrain_column_rasterize's COL_MAX writes are
+ * idempotent under the repeated identical calls a correct asm twin makes. */
+extern uint8_t terrain_subdivide_column_core_asm(uint8_t startDepth, uint8_t rasterEntryDepth);
+volatile unsigned long g_subdivCalls = 0, g_subdivMismatch = 0, g_subdivFirstBad = 0;
+volatile unsigned long g_subdivAsmTicks = 0, g_subdivCTicks = 0;
+/* First-mismatch detail: kind 1=return, 2=stack, 3=zp; idx = which; asm/c = the values. */
+volatile unsigned long g_subdivBadKind = 0, g_subdivBadIdx = 0, g_subdivBadAsm = 0, g_subdivBadC = 0;
+volatile unsigned long g_subdivBadRetA = 0, g_subdivBadRetC = 0;
+#define SUBV_STK 5
+static const uint16_t subv_stkBase[SUBV_STK] = { 0x23E2, 0x24E2, 0x25B4, 0x25D2, 0x25F0 };
+static uint8_t subv_snapS[SUBV_STK][16], subv_asmS[SUBV_STK][16];
+/* ZP residue window: $60, then $80..$91, $9F, $B5, $B6 (16 discrete bytes). */
+static const uint16_t subv_zp[16] = { 0x60, 0x80,0x81,0x82,0x83,0x84,0x85,0x86,
+                                      0x8D,0x8E,0x8F,0x90,0x91, 0x9F, 0xB5,0xB6 };
+static uint8_t subv_snapZ[16], subv_asmZ[16];
+uint8_t terrain_subdivide_column_core(uint8_t startDepth, uint8_t rasterEntryDepth) {
+    g_subdivCalls++;
+    uint8_t* const M = (uint8_t*)mem;
+    for (int s = 0; s < SUBV_STK; s++) for (int i = 0; i < 16; i++) subv_snapS[s][i] = M[subv_stkBase[s] + i];
+    for (int i = 0; i < 16; i++) subv_snapZ[i] = M[subv_zp[i]];
+    uint8_t asmRet;
+    FP_TIME(asmRet = terrain_subdivide_column_core_asm(startDepth, rasterEntryDepth), g_subdivAsmTicks);
+    for (int s = 0; s < SUBV_STK; s++) for (int i = 0; i < 16; i++) subv_asmS[s][i] = M[subv_stkBase[s] + i];
+    for (int i = 0; i < 16; i++) subv_asmZ[i] = M[subv_zp[i]];
+    for (int s = 0; s < SUBV_STK; s++) for (int i = 0; i < 16; i++) M[subv_stkBase[s] + i] = subv_snapS[s][i];
+    for (int i = 0; i < 16; i++) M[subv_zp[i]] = subv_snapZ[i];
+    uint8_t cRet;
+    FP_TIME(cRet = terrain_subdivide_column_core_c(startDepth, rasterEntryDepth), g_subdivCTicks);
+    int bad = 0, first = !g_subdivMismatch;
+    if (cRet != asmRet) { bad = 1; if (first) { g_subdivBadKind=1; g_subdivBadRetA=asmRet; g_subdivBadRetC=cRet; } }
+    for (int s = 0; s < SUBV_STK; s++) for (int i = 0; i < 16; i++)
+        if (M[subv_stkBase[s] + i] != subv_asmS[s][i]) {
+            bad = 1;
+            if (first && g_subdivBadKind != 2) { g_subdivBadKind=2; g_subdivBadIdx=(unsigned long)s*16+i; g_subdivBadAsm=subv_asmS[s][i]; g_subdivBadC=M[subv_stkBase[s]+i]; }
+        }
+    for (int i = 0; i < 16; i++)
+        if (M[subv_zp[i]] != subv_asmZ[i]) {
+            bad = 1;
+            if (first && g_subdivBadKind != 2 && g_subdivBadKind != 3) { g_subdivBadKind=3; g_subdivBadIdx=subv_zp[i]; g_subdivBadAsm=subv_asmZ[i]; g_subdivBadC=M[subv_zp[i]]; }
+        }
+    if (bad) { if (first) g_subdivFirstBad = g_subdivCalls; g_subdivMismatch++; }
+    return cRet;
+}
+#elif defined(ROF_SUBDIV_ASM)
+extern uint8_t terrain_subdivide_column_core(uint8_t startDepth, uint8_t rasterEntryDepth); /* TerrainSubdivideAssembler.s */
+#else
+__attribute__((noinline)) uint8_t terrain_subdivide_column_core(uint8_t startDepth, uint8_t rasterEntryDepth) {
+    return terrain_subdivide_column_core_c(startDepth, rasterEntryDepth);
+}
+#endif
 #undef SUBPT_COL_LO
 #undef SUBPT_COL_HI
 #undef SUBPT_HGT_LO

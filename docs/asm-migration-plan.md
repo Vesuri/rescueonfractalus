@@ -185,6 +185,20 @@ Done this session (all byte-identical, in-process differential 0 mismatch over t
   clamp (the user's hypothetical-renderer asm structure). Commit c6285bb. ⚠ Note: `bmi` CANNOT replace
   the per-column `cmp.b #$FF/beq` off-top skip — real heights reach $96 (~28% of columns have bit7 set,
   verified from a $260E dump); only $FF must skip.
+- **`terrain_subdivide_column` (~16% of draw)** (`TerrainSubdivideAssembler.s`, new file, 2026-07-01):
+  byte-identical (in-process differential, **0 mismatch over 6836 deep-flight calls** to fdCalls=320;
+  `make validate` green) but the perf win is **modest — ~0.6 beam-tick/call (asm 153149 vs C 157365, ~2.7%
+  end-to-end)**. GCC compiled the C to 1173 insns with 129 frame-slot spills (it can't pin the recursion's
+  span/mid/far/depth/budget), and the asm register-pins all of it (span d2-d4, mid d5-d7, depth/budget/
+  rasterEntryDepth in a2-a4, `a1=mem+depth` for single-(d16,a1) SubPt-stack access, `jsr` to the asm
+  rasterizer for leaf fills). ⚠ **Lesson: the differential bracket includes the raster leaf-fills the
+  recursion drives (identical in both asm/C), which DOMINATE the per-call time — so eliminating the
+  register spills (subdivide's OWN compute, a small slice) barely moves the total.** Kept because it is
+  correct + never-slower + removes the spills, but the ISA-level win here is much smaller than the
+  rasterizer/project got. Seam: `ROF_SUBDIV_ASM` in `rof_native.c` (`terrain_subdivide_column_core_c` is
+  the oracle). Verify: `make VERIFY=1 NO_RASTER_VERIFY=1 PROBES=1` + `subdiv_verify.gdb` (NO_RASTER_VERIFY
+  keeps the rasterizer plain-asm so the two differentials don't nest — a nested double-verify gave false
+  mismatches). `make SUBDIV_C=1` falls back to the C.
 - **`project_terrain_points` (~20% of draw)** (`ProjectTerrainAssembler.s`, new file, 2026-07-01):
   ~2.2–2.4× faster (per-call 5 vs 11 beam-ticks; 15420 vs 34615 over 3082 deep-flight calls).
   The per-object world→screen projection: two perspective divides (each a single `divu.w` after the
