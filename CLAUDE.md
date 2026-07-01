@@ -288,9 +288,11 @@ regs, force `(a0)+`/`(d8,a0)`, shave every redundant insn), not the transliterat
 (dominant) [rasterize ~64% (asm'd) · project_terrain_points ~20% (asm'd, ~2.2× — `ProjectTerrainAssembler.s`)
 · subdivide ~16% (asm'd, but only ~0.6 tick/call — `TerrainSubdivideAssembler.s`; its bracket is dominated
 by the raster leaf-fills it drives, so removing GCC's spills barely helps)] · VBI ~71ms (3.6ms × ~20
-firings/iter, faithful) · renderFlightDirect ~24ms · setup+clear ~31ms [terrain_frame_setup loops asm'd
-~26% — `TerrainFrameSetupAssembler.s`]. NEXT asm targets (open): deeper rasterize restructure (keep
-control-point TOS in registers); replace bit-serial mul_u8/signed_mul_8x16 with 68000 mulu/muls.
+firings/iter, faithful — `integ` ~13→~8/firing after the mul_u8 table below) · renderFlightDirect ~24ms ·
+setup+clear ~31ms [terrain_frame_setup loops asm'd ~26% — `TerrainFrameSetupAssembler.s`]. **mul_u8 bit-serial
+multiply → byte-exact 64KB lookup table** (`g_mulTable`, rof_native.c; mul_u8 is NOT a plain product so no
+single mulu is byte-identical — see docs/asm-migration-plan.md). NEXT (open): deeper rasterize restructure
+(keep control-point TOS in registers); signed_mul_8x16 (bit-serial, 8× in build_view — 16MB table infeasible).
 
 ⚠ **Measure asm twins with the in-process differential** (`make VERIFY=1 PROBES=1` +
 `amiga/raster_verify.gdb`): asm + C oracle run back-to-back on the SAME inputs in ONE run, byte-compared

@@ -185,6 +185,22 @@ Done this session (all byte-identical, in-process differential 0 mismatch over t
   clamp (the user's hypothetical-renderer asm structure). Commit c6285bb. ⚠ Note: `bmi` CANNOT replace
   the per-column `cmp.b #$FF/beq` off-top skip — real heights reach $96 (~28% of columns have bit7 set,
   verified from a $260E dump); only $FF must skip.
+- **`mul_u8` bit-serial multiply → 64KB lookup table (2026-07-01, NOT asm — a C table).** `mul_u8`
+  ($9821) is NOT a plain product: it's a round-half-up-per-bit multiply with multiplicand-precision
+  truncation (brute-forced: differs from round(M*N/256) on ~1/3 of the 65536-pair domain; exact form =
+  Σ round-half-up(M/2^(i+1)) over set bits). So NO single 68000 mulu/muls reproduces it byte-identically —
+  the user's "just use mulu" can't be byte-exact. Instead: a lazily-filled 64KB byte table
+  `g_mulTable[(M<<8)|N]` (rof_native.c) turns the ~8-iteration loop into one indexed load, byte-EXACT.
+  The 3 NATIVE call sites (compute_obj_rel_angle_scale ×2, flight_control_integrate) use `mul_u8_lookup`
+  and leave the operands $6B/$28D6 untouched (mul_u8 consumes them, but those consumed values are dead —
+  read only by mul_u8, always written before use). `make validate` needed $6B/$28D6 added to the ignore
+  mask for those two tests (proven dead, like divide_16x16's scratch). mul_u8 itself is untouched (still
+  the oracle + a still-transpiled caller). ⚠ GOTCHA that cost a detour: a "restore the operands" test
+  FALSELY passed because BOTH native+oracle callers shared the modified mul_u8 — the real oracle consumes,
+  so the operand diff is real and must be masked, not ignored. **Bonus: the muls run in the flight VBI
+  (fires ~20×/iter), so flight_control_integrate's `integ` dropped ~13→~8 ticks/firing (measured).** Cost:
+  64KB BSS on the A500. (The other bit-serial multiply, signed_mul_8x16, 8× in build_view, would need a
+  256×65536=16MB table → left as-is.)
 - **`terrain_frame_setup` loops (~10ms)** (`TerrainFrameSetupAssembler.s`, new file, 2026-07-01):
   **~26% faster (per-call 91 vs 123 beam-ticks), byte-identical (0 mismatch / deep flight fdCalls=320);
   make validate green.** A GOOD win (unlike subdiv) — this function has NO rasterizer call, so its

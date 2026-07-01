@@ -1820,8 +1820,11 @@ static int test_dial_bar(const char *name, void (*nat)(void), void (*t6502)(void
 static int test_flight_control_integrate(void) {
     if (!want("flight_control_integrate")) return 0;
     static uint8_t snap[65536], pre[65536];
-    static uint16_t stack_page[256];
+    static uint16_t stack_page[258];
     for (int i = 0; i < 256; i++) stack_page[i] = (uint16_t)(0x0100 + i);
+    /* + mul_u8's operands $006B/$28D6: the native uses the byte-exact mul_u8 lookup table,
+       leaving them untouched vs the 6502's consume; those values are dead (see rof_native.c). */
+    stack_page[256] = 0x006B; stack_page[257] = 0x28D6;
     const char *path = "a800dumps/flight_ram_0000_BFFF.bin";
     FILE *f = fopen(path, "rb");
     if (!f) { printf("flight_control_integrate: SKIP (%s not found)\n", path); return 0; }
@@ -1829,7 +1832,7 @@ static int test_flight_control_integrate(void) {
     size_t got = fread(snap, 1, 0xC000, f); fclose(f);
     if (got != 0xC000) { printf("flight_control_integrate: SKIP (short read %zu)\n", got); return 0; }
     int mem_fail = 0, cpu_diff = 0, printed = 0;
-    set_ignore(stack_page, 256);                 /* dead CPU-stack scratch (see header) */
+    set_ignore(stack_page, 258);                 /* dead CPU-stack scratch + mul_u8 operands */
     for (int t = 0; t < 8000; t++) {
         memcpy(pre, snap, sizeof pre);
         for (int a = 0x00; a <= 0x7F; a++) pre[a] = (uint8_t)(xs() & 0xFF);  /* control bytes */
@@ -2267,7 +2270,13 @@ int main(int argc, char **argv) {
     fails += test_mem_contract_regs("refresh_hud_fields_0d_0e", refresh_hud_fields_0d_0e, refresh_hud_fields_0d_0e__t6502);
     fails += test_mem_contract("step_object_along_axes", step_object_along_axes, step_object_along_axes__t6502);
     fails += test_mem_contract("reset_indicator_event", reset_indicator_event, reset_indicator_event__t6502);
-    fails += test_mem_contract_regs("compute_obj_rel_angle_scale", compute_obj_rel_angle_scale, compute_obj_rel_angle_scale__t6502);
+    /* $006B/$28D6 are mul_u8's operands; the native uses the byte-exact mul_u8 lookup table
+       (rof_native.c) which leaves them untouched instead of consuming them like the 6502.
+       Those consumed values are dead (read only by mul_u8, always written before use), so
+       they are excluded from the contract here. */
+    { static const uint16_t mul_ig[] = { 0x006B, 0x28D6 }; set_ignore(mul_ig, 2);
+      fails += test_mem_contract_regs("compute_obj_rel_angle_scale", compute_obj_rel_angle_scale, compute_obj_rel_angle_scale__t6502);
+      set_ignore(0, 0); }
     fails += test_dial_bar("draw_object_column", draw_object_column, draw_object_column__t6502, 0x0F);
     fails += test_dial_bar("setup_dial_bar_draw", setup_dial_bar_draw, setup_dial_bar_draw__t6502, 0x3F);
     fails += test_dial_bar("draw_cockpit_dial_bar", draw_cockpit_dial_bar, draw_cockpit_dial_bar__t6502, 0x3F);

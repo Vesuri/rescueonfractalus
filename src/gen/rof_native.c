@@ -5189,6 +5189,37 @@ check:                                          /* 9829 */
     cpu.A = A;                                  /* 9832 RTS — result in A */
 }
 
+/* Byte-exact 256x256 product table for mul_u8's bit-serial multiply.  mul_u8 is NOT a plain
+ * product: it's a round-half-up-per-bit multiply with multiplicand-precision truncation (proven
+ * by brute force: it differs from round(M*N/256) on ~1/3 of the input domain), so no single
+ * 68000 mulu/muls reproduces it.  A lookup table does — byte-exact — and turns the ~8-iteration
+ * shift/add/branch loop into one indexed load.  Filled ONCE (lazily) from the exact bit-serial
+ * reference; costs 64KB of RAM (BSS).  The three native call sites (compute_obj_rel_angle_scale x2,
+ * flight_control_integrate) use this instead of calling mul_u8 and leave the operands $6B/$28D6
+ * untouched: mul_u8 consumes them, but those consumed values are dead in all callers (proven
+ * byte-identical by make validate FN=compute_obj_rel_angle_scale/flight_control_integrate).
+ * mul_u8 itself stays for the still-transpiled caller + as the validation oracle. */
+static uint8_t g_mulTable[256u * 256u];
+static int     g_mulTableReady = 0;
+static uint8_t mul_u8_bitserial(uint8_t M, uint8_t N) {
+    uint8_t A = 0, c = 0; goto ck;
+ad: c = M & 1; M >>= 1; { uint16_t t = (uint16_t)A + M + c; c = (uint8_t)(t >> 8); A = (uint8_t)t; }
+ck: { uint8_t v = N; c = (uint8_t)(v >> 7); N = (uint8_t)(v << 1); }
+    if (c) goto ad;
+    c = M & 1; M >>= 1;
+    if (M != 0) goto ck;
+    return A;
+}
+static uint8_t mul_u8_lookup(uint8_t M, uint8_t N) {
+    if (!g_mulTableReady) {
+        for (unsigned m = 0; m < 256; m++)
+            for (unsigned n = 0; n < 256; n++)
+                g_mulTable[(m << 8) | n] = mul_u8_bitserial((uint8_t)m, (uint8_t)n);
+        g_mulTableReady = 1;
+    }
+    return g_mulTable[((unsigned)M << 8) | N];
+}
+
 /* compute_target_blip_position @ $9713 — derive the target-blip screen coords $0021/$0027
  * from the nearest-point range latch $27F7/$27F8, the depth $0034, sensor masks
  * $1027/$1057, and the parallax samples $2912/$2913.  Several early returns.  mem-only
@@ -5579,7 +5610,7 @@ void compute_obj_rel_angle_scale(void) {
     /* X scale: $4EB9[$28D8] * throttle -> $002B, complemented (CLC;SBC = -x-1) when $002C set. */
     mem[0x28D6] = throttle_accum_hi;
     mul_multiplicand = mem[0x4EB9 + mem[0x28D8]];
-    mul_u8();
+    cpu.A = mul_u8_lookup(mul_multiplicand, mem[0x28D6]);  /* byte-exact table (was mul_u8) */
     mem[0x002B] = cpu.A;
     if (cpu.A == 0) mem[0x002C] = 0x00;
     if (mem[0x002C] != 0) mem[0x002B] = (uint8_t)(mem[0x002C] - mem[0x002B] - 1);
@@ -5587,7 +5618,7 @@ void compute_obj_rel_angle_scale(void) {
     /* Z scale: $4EB9[$28D7] * throttle -> $2881, complemented when $2882 set. */
     mem[0x28D6] = throttle_accum_hi;
     mul_multiplicand = mem[0x4EB9 + mem[0x28D7]];
-    mul_u8();
+    cpu.A = mul_u8_lookup(mul_multiplicand, mem[0x28D6]);  /* byte-exact table (was mul_u8) */
     mem[0x2881] = cpu.A;
     if (cpu.A == 0) mem[0x2882] = 0x00;
     if (mem[0x2882] != 0) mem[0x2881] = (uint8_t)(mem[0x2882] - mem[0x2881] - 1);
@@ -5782,7 +5813,7 @@ static void flight_control_integrate_impl(void) {
     }
     {
         mul_multiplicand = throttle_accum_hi;
-        mul_u8();                                       /* product = throttle_hi * $28D6 */
+        cpu.A = mul_u8_lookup(mul_multiplicand, mem[0x28D6]);  /* byte-exact table (was mul_u8) */
         int16_t signed_step = (mem[0x0020] & 0x80) ? -(int16_t)cpu.A : (int16_t)cpu.A;
         uint16_t shifted = (uint16_t)signed_step << 3;
         mem[0x2883] = (uint8_t)shifted;                 /* forward/depth step lo */
