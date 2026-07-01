@@ -103,6 +103,19 @@ obj/TerrainRasterizeAssembler.o : VASMFLAGS += -DROF_RASTERIZE_VERIFY
 endif
 endif
 
+# Hand-written m68k twin of project_terrain_points (asm-migration-plan Phase 3).
+# ON by default; `make PROJECT_C=1` falls back to the clean-C oracle.  Same VERIFY
+# mechanism as the rasterizer: the on-target differential vs the C oracle each call
+# (rof_native.c, ROF_PROJECT_VERIFY), read via amiga/project_verify.gdb.
+ifndef PROJECT_C
+FRAMEWORK_ASM_SRCS += $(AMIGA_SRC)/ProjectTerrainAssembler.s
+EXTRA_DEFINES += -DROF_PROJECT_ASM
+ifdef VERIFY
+EXTRA_DEFINES += -DROF_PROJECT_VERIFY
+obj/ProjectTerrainAssembler.o : VASMFLAGS += -DROF_PROJECT_VERIFY
+endif
+endif
+
 # Objects (flattened into obj/ by basename).
 CXX_OBJS       := $(addprefix obj/,$(notdir $(CXX_SRCS:.cpp=.o)))
 CORE_C_OBJS    := $(addprefix obj/,$(notdir $(CORE_C_SRCS:.c=.o)))

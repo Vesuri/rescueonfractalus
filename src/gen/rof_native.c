@@ -4485,10 +4485,12 @@ static void project_axis(uint8_t X,
  * from the validation contract, so project_axis uses the typed divide_16x16_core() directly.
  * Memory contract only (the caller reloads registers); no hardware is touched.
  *
- * The $A31C fall-through into terrain_draw_frame is dead (the divides are exhaustive). */
-void project_terrain_points(void) {
-    uint8_t X = cpu.X;
-
+ * The $A31C fall-through into terrain_draw_frame is dead (the divides are exhaustive).
+ *
+ * Split into a typed core + a 6502-ABI shim (like the rasterizer): the clean-C core
+ * project_terrain_points_core_c(X) is the SDL/validate oracle; on the Amiga a hand-asm
+ * twin (ProjectTerrainAssembler.s) replaces it via the ROF_PROJECT_ASM seam below. */
+void project_terrain_points_core_c(uint8_t X) {
     mem[0x24B4 + X] |= 0x10;                          /* flag: object projected this frame */
 
     project_axis(X, 0x22A4, 0x22D2, 0x2300, 0x232E, 0x2400, 0x242D);   /* screen X */
@@ -4505,6 +4507,46 @@ void project_terrain_points(void) {
     mem[0x245A + X] = (uint8_t)y_lo;
     mem[0x2487 + X] = (uint8_t)(mem[0x2487 + X] + ((off & 0x80) ? 0xFF : 0x00) + (y_lo >> 8));
 }
+
+/* Dispatcher seam (asm-migration-plan Phase 3), mirrors terrain_column_rasterize_core.
+ * On the Amiga (ROF_PROJECT_ASM) project_terrain_points_core is the hand-written m68k
+ * twin in ProjectTerrainAssembler.s; elsewhere it is the clean-C oracle above. */
+#if defined(ROF_PROJECT_ASM) && defined(ROF_PROJECT_VERIFY)
+/* On-target differential check (single run, deterministic): run the asm twin on the
+ * real state, snapshot the cells it wrote, restore them, run the C oracle on the same
+ * inputs, and compare.  The C oracle's output is left LIVE so flight stays correct on
+ * an asm bug.  Reads via amiga/project_verify.gdb.  project_terrain_points writes only
+ * X-indexed cells ($2400/$242D/$245A/$2487/$24B4 + X) plus $009F and $00B5, so the
+ * snapshot is exact (no wide window needed). */
+extern void project_terrain_points_core_asm(uint8_t X);
+volatile unsigned long g_projCalls = 0, g_projMismatch = 0, g_projFirstBad = 0;
+volatile unsigned long g_projAsmTicks = 0, g_projCTicks = 0;
+void project_terrain_points_core(uint8_t X) {
+    g_projCalls++;
+    uint8_t* const M = (uint8_t*)mem;
+    const uint16_t cells[7] = { (uint16_t)(0x2400+X), (uint16_t)(0x242D+X),
+                                (uint16_t)(0x245A+X), (uint16_t)(0x2487+X),
+                                (uint16_t)(0x24B4+X), 0x009F, 0x00B5 };
+    uint8_t snap[7], asmv[7];
+    for (int i = 0; i < 7; i++) snap[i] = M[cells[i]];
+    FP_TIME(project_terrain_points_core_asm(X), g_projAsmTicks);
+    for (int i = 0; i < 7; i++) asmv[i] = M[cells[i]];
+    for (int i = 0; i < 7; i++) M[cells[i]] = snap[i];
+    FP_TIME(project_terrain_points_core_c(X), g_projCTicks);
+    int bad = 0;
+    for (int i = 0; i < 7; i++) if (M[cells[i]] != asmv[i]) bad = 1;
+    if (bad) { if (!g_projMismatch) g_projFirstBad = g_projCalls; g_projMismatch++; }
+}
+#elif defined(ROF_PROJECT_ASM)
+extern void project_terrain_points_core(uint8_t X);  /* ProjectTerrainAssembler.s */
+#else
+__attribute__((noinline)) void project_terrain_points_core(uint8_t X) {
+    project_terrain_points_core_c(X);
+}
+#endif
+
+/* 6502-ABI shim: object/column index in cpu.X (memory-only contract; caller reloads regs). */
+void project_terrain_points(void) { project_terrain_points_core(cpu.X); }
 
 /* fill_terrain_silhouette @ $AE53 — per-column terrain silhouette fill (flight top #4).
  * NOT collision: the symbol's old "$B12F crash handler" was a misread — $B12F is the raster-fill

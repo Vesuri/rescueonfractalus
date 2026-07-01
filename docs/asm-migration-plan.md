@@ -185,6 +185,15 @@ Done this session (all byte-identical, in-process differential 0 mismatch over t
   clamp (the user's hypothetical-renderer asm structure). Commit c6285bb. ⚠ Note: `bmi` CANNOT replace
   the per-column `cmp.b #$FF/beq` off-top skip — real heights reach $96 (~28% of columns have bit7 set,
   verified from a $260E dump); only $FF must skip.
+- **`project_terrain_points` (~20% of draw)** (`ProjectTerrainAssembler.s`, new file, 2026-07-01):
+  ~2.2–2.4× faster (per-call 5 vs 11 beam-ticks; 15420 vs 34615 over 3082 deep-flight calls).
+  The per-object world→screen projection: two perspective divides (each a single `divu.w` after the
+  `<<count` normalization loop — GCC was marshalling args to the `_core`/`divide_16x16_core` calls and
+  re-reading `mem[]` volatile per axis) + the band-offset tail, all inlined with `a0 = mem+X` so every
+  per-object cell is `(disp16,a0)`. Reached via the `ROF_PROJECT_ASM` seam in `rof_native.c`
+  (`project_terrain_points_core_c` kept as the SDL/validate oracle). Byte-identical over 3082 calls
+  (in-process differential, 0 mismatch); `make validate` green. `make PROJECT_C=1` falls back to the C.
+  Verify: `make VERIFY=1 PROBES=1` + `GDBSCRIPT=project_verify.gdb ./raster_diff.sh`.
 
 **CURRENT MEASURED BUDGET (per iteration, deep flight, iterCount=130, all asm in):** terrain draw both
 passes **~167ms (dominant ~47%)** [rasterize ~64% (asm'd, near instruction floor) · project ~20% ·

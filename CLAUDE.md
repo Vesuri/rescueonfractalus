@@ -285,9 +285,10 @@ shaving (another ~9%); `renderFlightDirect`'s plane-1 edge-plot asm (~2.8×). Se
 regs, force `(a0)+`/`(d8,a0)`, shave every redundant insn), not the transliteration model.**
 
 **CURRENT MEASURED BUDGET (per iteration, deep flight, all asm in):** terrain draw both passes ~167ms
-(dominant) [rasterize ~64% (asm'd) · project_terrain_points ~20% · subdivide ~16%] · VBI ~71ms (3.6ms
-× ~20 firings/iter, faithful) · renderFlightDirect ~24ms · setup+clear ~31ms. NEXT asm targets (open):
-project_terrain_points (recommended), terrain_subdivide_column, terrain_frame_setup.
+(dominant) [rasterize ~64% (asm'd) · project_terrain_points ~20% (asm'd, ~2.2× — `ProjectTerrainAssembler.s`)
+· subdivide ~16%] · VBI ~71ms (3.6ms × ~20 firings/iter, faithful) · renderFlightDirect ~24ms ·
+setup+clear ~31ms. NEXT asm targets (open): terrain_subdivide_column (~16% of draw), terrain_frame_setup
+(~10ms), deeper rasterize restructure.
 
 ⚠ **Measure asm twins with the in-process differential** (`make VERIFY=1 PROBES=1` +
 `amiga/raster_verify.gdb`): asm + C oracle run back-to-back on the SAME inputs in ONE run, byte-compared
