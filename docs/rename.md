@@ -30,6 +30,19 @@ as named state. ✓ = confident, ? = verify before promoting the suggested name 
 Surfaced 2026-06-30 while de-transpiling the flight subtree; the four ✓ cells were applied that
 day (see the Applied log) and removed from the lists below — everything remaining is ?-tentative.
 
+**`cockpit_dial_update` ($4430) — dial bar derivation (surfaced 2026-07-02 during its de-6502 cleanup):**
+- `$0625` → `dial_base_offset` ? — added to the dial value before the `$4457` table lookup
+  (`ADC $0625` at $443d); the per-dial base index selecting which dial's bar-value run to read.
+- `$4457` → `dial_bar_value_table` ? — the bar-value lookup table read at `$4457,Y` (Y = dial
+  value + `$0625`); maps a dial value to its drawn bar fill.
+- `$4581` → `dial_column_ptr_table` ? — per-column 16-bit target-cell pointer table (indexed by
+  `2*column` in `draw_object_column`); each entry is the cockpit screen-RAM address that column's
+  bar glyph is drawn into.
+- ZP `$00BB/$00BC` (`dl_y1`/`dl_y2`) → `dial_col_ptr_lo`/`_hi` ? and `$00BD` (`dl_y3`) →
+  `dial_col_counter` ? — in `draw_object_column` these are the current column's cell pointer and
+  the loop counter, NOT display-list Y coordinates; the `dl_y*` names are misleading here (they
+  may be reused as DL coords elsewhere — verify before renaming).
+
 **`vbi_handler_flight` ($4FF5) — display-shadow pushes ($4FF7-$5036):**
 - `$00CB` → `hposp2_shadow` ? — pushed to HPOSP2 ($D002) (altimeter terrain-bar X).
 - `$00CD` → `grafm_shadow` ? — pushed to GRAFM ($D00A) (wing-clearance missile graphics).

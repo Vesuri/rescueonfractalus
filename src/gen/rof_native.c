@@ -2540,24 +2540,24 @@ void validate_save_state(void) {
     }
 }
 
-/* cockpit_dial_update @ $4430 — set the dial source $006F=A, derive the bar value $0022
- * (0 when A==8, else $4457[A + $0625]) and draw it via the native draw_cockpit_dial_bar.
- * The PHA/PLA preserving the entry A across the derivation is reproduced with the op-macros
- * (its $01FF byte is masked in the test). */
-void cockpit_dial_update(void) {
-    dial_value = cpu.A;
-    PHA();
-    CMP(0x08);
-    if (cpu.Z) {
-        LDA(0x00);
-    } else {
-        CLC(); ADC(mem[0x0625]); cpu.Y = cpu.A;
-        LDA(mem[0x4457 + cpu.Y]);
-    }
-    dial_draw_index = cpu.A;
-    PLA();
+/* cockpit_dial_update @ $4430 — set a cockpit dial/gauge to value `v` and redraw its bar.
+ *   - Stores `v` as the live dial value (dial_value, $006F).
+ *   - Derives the bar's fill index (dial_draw_index, $0022): 0 for the "empty" sentinel
+ *     v==8, otherwise a lookup in the dial bar-value table ($4457) indexed by v plus the
+ *     dial's base offset ($0625).  (dial_draw_index is a side output consumed by other dial
+ *     code; the bar itself is redrawn from `v`, not from dial_draw_index.)
+ *   - Redraws the dial bar for value `v` via draw_cockpit_dial_bar.
+ * ($4457 = dial bar-value table, $0625 = dial base offset — both still unnamed, see
+ * docs/rename.md.)  No hardware writes here — dial_value/dial_draw_index are plain RAM. */
+static void cockpit_dial_update_core(uint8_t v) {
+    dial_value = v;
+    dial_draw_index = (v == 8) ? 0
+                    : mem[0x4457 + (uint8_t)(v + mem[0x0625])];
+    cpu.A = v;                    /* draw_cockpit_dial_bar is a 6502-ABI twin: value in A */
     draw_cockpit_dial_bar();
 }
+
+void cockpit_dial_update(void) { cockpit_dial_update_core(cpu.A); }
 
 /* hud_fill_field0 @ $8105 — if $0080 has reached $2927 just bump it; otherwise pack 5 source
  * bytes (($85)+Y) through pack_byte_to_5bit_cells into the cell bytes $93..$8F (X=4..0) and
@@ -5361,61 +5361,71 @@ void step_object_along_axes(void) {
     }
 }
 
-/* draw_object_column @ $43E8 — draw a vertical PMG dial-bar column.  Loops the counter
- * $00BD down to $00BE; for each value X it loads a column pointer from $4581[2*X] into
- * $BB/$BC, writes a body byte ($B4/$B7 with bit7 set when X<$00BF, the lit threshold)
- * via ($BB),Y=0, and when $00C0!=0 a second byte ($B8/$38) via ($BB),Y=1.  Entry A is
- * the initial column index.  Tail draw_bar_loop_end ($442D) is a bare RTS (absorbed). */
-void draw_object_column(void) {
-    uint8_t A = cpu.A, X, Y;
+/* Write one cockpit dial cell and register it for the Amiga's writer-driven cockpit decode.
+ * The cell address comes from the $4581 column-pointer table; only writes that land in the
+ * cockpit mode4/modeD screen RAM ($332D-$355C) are tracked (PMG-buffer destinations from the
+ * same table fall outside the range and are just written).  bus_write to this RAM range is a
+ * plain mem[] store on every platform (no hardware/shadow path), so store directly. */
+static void dial_cell_write(uint16_t addr, uint8_t val) {
+    if (addr >= 0x332Du && addr < 0x355Du && mem[addr] != val) platform_cockpit_dirty(addr, 1u);
+    mem[addr] = val;
+}
+
+/* draw_object_column @ $43E8 — draw one vertical cockpit dial/indicator bar, column by column.
+ * Draws columns from `startCol` down to (dl_y4 + 1) inclusive.  Each column's target cell
+ * address is read from the $4581 pointer table (indexed by 2*column).  A column below the lit
+ * threshold (bar_col_threshold) is drawn "lit" (glyph bit7 set), otherwise "empty".  Odd
+ * columns are two cells tall (a lower cell is written as well).  Shared by the dial bars
+ * (setup_dial_bar_draw), the left-indicator bar (draw_dial_bar_column) and player-3 lock-on.
+ * ($4581 = per-column cell-pointer table, still unnamed — see docs/rename.md.) */
+static void draw_object_column_core(uint8_t startCol) {
+    const uint8_t threshold = bar_col_threshold;   /* $BF: columns below this are lit */
+    const uint8_t stop      = dl_y4;               /* $BE: loop ends when the counter reaches this */
+    /* The first column drawn is the entry index; every column after that is taken from the
+       $BD counter (which the callers seed equal to startCol).  Faithful to the 6502 loop:
+       draw column, DEC $BD, reload column from $BD, repeat until it hits the stop index. */
+    uint8_t counter = dl_y3;
+    uint8_t col = startCol;
+    uint16_t ptr = 0;
+    int odd = 0;
     for (;;) {
-        X = A;                                   /* 43e8 TAX */
-        Y = (uint8_t)(A << 1);                   /* 43e9 ASL A; 43ea TAY */
-        dl_y1 = mem[0x4581 + Y];           /* 43eb-43ee */
-        dl_y2 = mem[0x4582 + Y];           /* 43f0-43f3 */
-        Y = 0x00;                                /* 43f5 */
-        if (X & 1) { A = 0xB7; object_col_flag = A; }        /* 43f9 BCS L_4402: odd column */
-        else       { object_col_flag = 0x00; A = 0xB4; }     /* 43fb even column ($00C0=0) */
-        if (X >= bar_col_threshold) A &= 0x7F;          /* 4406-440c X>=thresh -> clear bit7 */
-        else                  A |= 0x80;          /* 440f X<thresh -> lit (bit7) */
-        {
-            uint16_t da = (uint16_t)(dl_y1 | (dl_y2 << 8)) + Y;  /* 4411 ($BB),Y=0 */
-            /* Writer-driven cockpit decode: when the dial cell genuinely changes and lands in
-               the cockpit mode4/modeD screen RAM, register it (PMG-buffer dests via the same
-               $4581 table fall outside the range → ignored). */
-            if (da >= 0x332Du && da < 0x355Du && mem[da] != A) platform_cockpit_dirty(da, 1u);
-            bus_write(da, A);
-        }
-        if (object_col_flag != 0) {                   /* 4413-4415 */
-            Y = 0x01;                             /* 4417 INY */
-            A = (X >= bar_col_threshold) ? 0x38 : 0xB8; /* 4418-4421 */
-            {
-                uint16_t da = (uint16_t)(dl_y1 | (dl_y2 << 8)) + Y;  /* 4423 ($BB),Y=1 */
-                if (da >= 0x332Du && da < 0x355Du && mem[da] != A) platform_cockpit_dirty(da, 1u);
-                bus_write(da, A);
-            }
-        }
-        dl_y3 = (uint8_t)(dl_y3 - 1); /* 4425 DEC $00BD */
-        A = dl_y3;                          /* 4427 */
-        if (A == dl_y4) break;              /* 4429-442b loop while != $00BE */
+        ptr = (uint16_t)(mem[0x4581 + col * 2] | (mem[0x4582 + col * 2] << 8));
+        odd = col & 1;                             /* odd columns are 2 cells tall */
+        const int lit = col < threshold;
+        uint8_t glyph = odd ? 0xB7 : 0xB4;         /* lit glyph (odd / even column) */
+        if (!lit) glyph &= 0x7F;                    /* empty glyph clears bit7 */
+        dial_cell_write(ptr, glyph);
+        if (odd) dial_cell_write((uint16_t)(ptr + 1), lit ? 0xB8 : 0x38);   /* lower cell */
+        counter--;
+        col = counter;
+        if (col == stop) break;
     }
+    /* Leave the 6502 scratch in its post-loop state (the last column drawn): the column
+       pointer ($BB/$BC), the 2-tall flag ($C0), and the counter ($BD, now == stop). */
+    dl_y1 = (uint8_t)ptr;
+    dl_y2 = (uint8_t)(ptr >> 8);
+    object_col_flag = odd ? 0xB7 : 0x00;
+    dl_y3 = counter;
 }
 
-/* setup_dial_bar_draw @ $444A — set the dial-bar params ($BF=limit from A, $BE=7, $BD=$0F)
- * then draw the column from index $0F. */
-void setup_dial_bar_draw(void) {
-    bar_col_threshold = cpu.A;          /* 444a (limit) */
-    dl_y4 = 0x07;           /* 444c-444e */
-    dl_y3 = 0x0F;           /* 4450-4452 */
-    cpu.A = 0x0F;                 /* draw_object_column's entry index */
-    draw_object_column();         /* 4454 (native) */
-}
+void draw_object_column(void) { draw_object_column_core(cpu.A); }
 
-/* draw_cockpit_dial_bar @ $4447 — A += 8 (the lit threshold), then draw the dial bar. */
-void draw_cockpit_dial_bar(void) {
-    cpu.A = (uint8_t)(cpu.A + 0x08);   /* 4447 CLC; 4448 ADC #$08 */
-    setup_dial_bar_draw();             /* 444a (native) */
+/* setup_dial_bar_draw @ $444A — draw a dial bar with fill limit `limit`: set the lit
+ * threshold ($BF) and stop index ($BE = 7, i.e. draw columns 15..8), then draw the column.
+ * (draw_object_column_core owns the loop counter $BD, leaving it at the stop index.) */
+static void setup_dial_bar_draw_core(uint8_t limit) {
+    bar_col_threshold = limit;   /* $BF: columns below this are lit */
+    dl_y4 = 0x07;                /* $BE: stop index */
+    draw_object_column_core(0x0F);
 }
+void setup_dial_bar_draw(void) { setup_dial_bar_draw_core(cpu.A); }
+
+/* draw_cockpit_dial_bar @ $4447 — draw a cockpit dial bar for value `v`: the lit-column
+ * threshold is v + 8 (values 0..7 fill 8..15 columns). */
+static void draw_cockpit_dial_bar_core(uint8_t v) {
+    setup_dial_bar_draw_core((uint8_t)(v + 0x08));
+}
+void draw_cockpit_dial_bar(void) { draw_cockpit_dial_bar_core(cpu.A); }
 
 /* object_step_and_collide @ $9552 — advance an object's position accumulators by its
  * velocity ($2854-$285B += $285C-$2863, 3-byte chained adds with the 12-bit map coords
