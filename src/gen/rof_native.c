@@ -6926,7 +6926,7 @@ void display_setup(void) {
     dl_y2 = 0x6E;
     dl_y3 = 0x31;
     dl_y4 = 0x0B;
-    LDA(0x0B);                            /* rle_expand_list takes its count in A */
+    cpu.A = 0x0B;                         /* rle_expand_list takes its count in A */
     rle_expand_list();
     bus_write(0x026F, 0x14);             /* GPRIOR shadow */
     HW_WRITE(0xD01B, 0x14);              /* PRIOR */
@@ -6955,80 +6955,64 @@ void display_setup(void) {
     HW_WRITE(0xD402, 0x00);              /* DLISTL/H: launch display list $3000 */
     HW_WRITE(0xD403, 0x30);
     fill_four_bufs_ff();
-    LDA(sound_active_flag);
-    if (!cpu.Z) goto L_5ff8;
-    goto L_6118;
-L_5ff8:
+    if (sound_active_flag == 0) goto L_6118;
     clear_message_buffer();
-    for (int i = 0; i <= 4; i++)          /* L_5ffd */
+    for (int i = 0; i <= 4; i++)          /* copy palette seed $6B80..$6B84 -> $A1..$A5 */
         mem[0x00A1 + i] = mem[0x6B80 + i];
-    LDA(anim_counter_2);
-    fill_buf_08d4();                      /* consumes A */
+    cpu.A = anim_counter_2;               /* fill_buf_08d4 takes its fill value in A */
+    fill_buf_08d4();
     game_sub_6811();
-    LDX(anim_counter_2);
-    if (!cpu.Z) {                         /* L_6012: ramp display_flags from X down to $1F */
+    if (anim_counter_2 != 0) {            /* ramp display_flags from anim_counter_2 down to $1F */
+        uint8_t x = anim_counter_2;
         do {
-            display_flags = cpu.X;
+            display_flags = x;
             wait_frames_2();
-            DEX();
-            CPX(0x1F);
-        } while (!cpu.Z);
+        } while (--x != 0x1F);
     }
-    display_flags = 0;                    /* L_601c */
-    LDA(anim_counter_2);
-    AND(0x0F);
-    if (cpu.Z) ORA(0x02);                 /* L_6028: floor the colour index at 2 */
-    TAX();
-    do {                                  /* L_6029 */
-        TXA();
-        fill_buf_08d4();                  /* consumes A */
-        clear_colors();
-        INX();
-        CPX(0x0F);
-    } while (!cpu.Z);
+    display_flags = 0;
+    {
+        uint8_t idx = anim_counter_2 & 0x0F;   /* colour index, floored at 2 */
+        if (idx == 0) idx = 0x02;
+        do {                                   /* fill $08D4 + clear colours, idx..$0E */
+            cpu.A = idx;                        /* fill_buf_08d4 takes its fill value in A */
+            fill_buf_08d4();
+            clear_colors();
+        } while (++idx != 0x0F);
+    }
     build_line_addr_table_1000();
-    LDA(alien_trigger);
-    if (!cpu.Z) {                         /* skip when alien_trigger == 0 (was: goto L_6047) */
-        LDY(0x00);
+    if (alien_trigger != 0) {             /* one-shot: clear the alien trigger + set colour $C8 */
         alien_trigger = 0;
-        LDA(0xC8);
-        save_color_clear_y_bit5();        /* consumes A, Y */
+        cpu.Y = 0x00;
+        cpu.A = 0xC8;
+        save_color_clear_y_bit5();        /* takes A + Y */
     }
-    draw_frame_pattern_seq();             /* L_6047; consumes Y */
+    draw_frame_pattern_seq();             /* L_6047; reloads its own Y ($00A0) */
     platform_tunnel_rings_drawn();   /* hook: convert the freshly-drawn $1000 ring field to bitplanes */
     init_row_coords_9c();
     draw_pattern_byte = 0x13;             /* init_row_coords_9c leaves cpu.A; faithful exit A=$13 */
     draw_color_idx = 0x08;
-    do {                                  /* L_6053 */
-        LDY(draw_pattern_byte);
-        plot_terrain_span();              /* consumes Y */
-        DEC_M(0x00B9);
-    } while (!cpu.N);
-    LDA(0x07);
-    draw_cockpit_dial_bar();              /* consumes A */
-    LDY(0x00);
-    do {                                  /* L_6063 */
-        LDX(0x0E);
-        do {                              /* L_6065 */
-            TXA();
-            mem[0x08D4 + cpu.Y] = cpu.A;
-            push_a_wait_frames();         /* consumes A */
-            DEX();
-        } while (!cpu.N);
-        INY();
-        CPY(0x06);
-    } while (!cpu.Z);
+    do {                                  /* plot terrain spans for rows $13..$00 */
+        cpu.Y = draw_pattern_byte;        /* plot_terrain_span takes its row in Y */
+        plot_terrain_span();
+    } while (!(--draw_pattern_byte & 0x80));
+    cpu.A = 0x07;                         /* draw_cockpit_dial_bar takes its value in A */
+    draw_cockpit_dial_bar();
+    for (uint8_t y = 0; y != 0x06; y++) {          /* animate $08D4[y] down $0E..$00, one frame each */
+        uint8_t x = 0x0E;
+        do {
+            mem[0x08D4 + y] = x;
+            cpu.A = x;                    /* push_a_wait_frames takes its value in A */
+            push_a_wait_frames();
+        } while (!(--x & 0x80));
+    }
     fill_region_2000();
-    LDA(0x03);                            /* A=3 also feeds push_a_wait_frames in the loop */
+    cpu.A = 0x03;                         /* A=3 feeds push_a_wait_frames throughout the loop */
     timer_4C = 0x03;
     mem[0x27A3] = 0x03;
-    LDY(0x90);
-    do {                                  /* L_6080 */
-        mem[0x08D9] = cpu.Y;
+    for (uint8_t y = 0x90; y != 0x9B; y++) {       /* sweep $08D9 = $90..$9A, one frame each */
+        mem[0x08D9] = y;
         push_a_wait_frames();
-        INY();
-        CPY(0x9B);
-    } while (!cpu.Z);
+    }
     init_terrain_dl();
     for (int i = 0; i <= 5; i++)          /* L_6090 */
         mem[0x08D4 + i] = mem[0x6E68 + i];
@@ -7038,48 +7022,41 @@ L_5ff8:
     init_row_coords_9c();
     draw_pattern_byte = 0x13;             /* faithful init_row_coords_9c exit A=$13 */
     row_table_base_lo = 0x7E;
-    LDA(0x2A);                            /* A=$2A flows through clear_message_buffer -> row_table_stride */
     row_table_base_hi = 0x2A;
     player_speed = 0x2A;
+    cpu.A = 0x2A;                         /* clear_message_buffer preserves A -> row_table_stride */
     clear_message_buffer();
-    row_table_stride = cpu.A;
-    do {                                  /* L_60b6 */
-        LDY(draw_pattern_byte);
-        if (cpu.Z) {                      /* draw_pattern_byte == 0 */
+    row_table_stride = 0x2A;
+    do {                                  /* emit DL coord pairs for rows $13..$00, VBI-paced */
+        cpu.Y = draw_pattern_byte;        /* emit_dl_coord_pairs takes its row in Y */
+        if (draw_pattern_byte == 0) {     /* last row: latch full-step mode + its colour */
             step_mode_flag = 0xFF;
             display_flags = mem[0x08D8];
         }
-        /* L_60c3: spin until the standby/launch VBI clears $008E */
-        while (mem[0x008E] == 0) ds_frame();
+        while (mem[0x008E] == 0) ds_frame();   /* wait for the VBI to arm the next row */
         mem[0x008E] = 0;
-        emit_dl_coord_pairs();            /* consumes Y */
-        INC_M(0x0094);
-        if (draw_color_idx == 0x07)       /* L_60da */
-            draw_color_idx = 1;
-        DEC_M(0x00B9);
-    } while (!cpu.N);
+        emit_dl_coord_pairs();
+        if (++draw_color_idx == 0x07) draw_color_idx = 1;
+        draw_pattern_byte--;
+    } while (!(draw_pattern_byte & 0x80));
     step_mode_flag = 1;
     init_row_coords_9c();
     draw_color_idx = 0x08;
-    for (int i = 1; i <= 8; i++) {         /* L_60eb (store-first/!Z: offset 0 skipped) */
+    for (int i = 1; i <= 8; i++) {         /* clear canopy-wedge buffers $0C88/$0D88[1..8] (offset 0 skipped) */
         mem[0x0C87 + i] = 0;
         mem[0x0D87 + i] = 0;
     }
     display_flags = 0xC0;
-    /* L_60f8: spin until the VBI clears step_mode_flag ($008D) */
+    /* spin until the VBI clears step_mode_flag ($008D) */
     while (step_mode_flag != 0) ds_frame();
     draw_shape_rows_loop();
-    LDY(0x00);
-    LDA(0xFF);
-    do {                                  /* L_6103 */
+    for (uint8_t y = 0; y != 0x08; y++) {  /* clear colours + fill wedge buffers $0C88/$0D88[0..7] = $FF */
         clear_colors();
-        mem[0x0C88 + cpu.Y] = cpu.A;      /* A=$FF preserved across clear_colors (faithful) */
-        mem[0x0D88 + cpu.Y] = cpu.A;
-        INY();
-        CPY(0x08);
-    } while (!cpu.Z);
-    TYA();
-    draw_cockpit_dial_bar();              /* consumes A */
+        mem[0x0C88 + y] = 0xFF;
+        mem[0x0D88 + y] = 0xFF;
+    }
+    cpu.A = 0x08;                         /* Y=8 at loop exit; draw_cockpit_dial_bar takes it in A */
+    draw_cockpit_dial_bar();
     build_line_addr_table_2000();
 L_6118:
     sfx_engine_reset();
@@ -7104,252 +7081,194 @@ L_6118:
        rebuild, and launch).  Faithfully structuring it would need state-flag emulation that is
        less clear than the gotos, so the goto form is kept verbatim; only the straight-line
        LD#imm;store idioms within each basic block are folded. */
-    LDA(cockpit_flag);
-    if (!cpu.Z) goto L_6141;
+    if (cockpit_flag != 0) goto L_6141;
     goto L_62eb;
 L_6141:
-    LDA(sound_active_flag);
-    if (!cpu.Z) goto L_6153;
-    LDY(sound_event_flag);
-    if (cpu.Z) goto L_614d;
+    if (sound_active_flag != 0) goto L_6153;
+    if (sound_event_flag == 0) goto L_614d;
     goto L_6332;
 L_614d:
     wait_frames_save_a();
     goto L_634f;
 L_6153:
-    LDA(osc_step_counter);
-    if (!cpu.Z) goto L_615b;
-    goto L_61f8;
+    if (osc_step_counter == 0) goto L_61f8;
 L_615b:
-    SEC();
-    SBC(stage_geom_height_062A);
-    mem[0x00E3] = cpu.A;
-    if (!cpu.N) goto L_6174;
-    LDY(stage_geom_height_062A);
-    SEC();
-    TYA();
-    SBC(osc_step_counter);
-    stage_geom_height_062A = cpu.A;
-    LDA(osc_step_counter);
+    /* $E3 = osc_step_counter - stage_geom_height_062A (single subtract) */
+    mem[0x00E3] = (uint8_t)(osc_step_counter - stage_geom_height_062A);
+    if (!(mem[0x00E3] & 0x80)) goto L_6174;
+    /* osc < height: shrink height by osc, carry A=osc / Y=old-height into the join */
+    cpu.Y = stage_geom_height_062A;
+    stage_geom_height_062A = (uint8_t)(stage_geom_height_062A - osc_step_counter);
+    cpu.A = osc_step_counter;
     goto L_6178;
 L_6174:
-    LDA(stage_geom_height_062A);
-    TAY();
+    cpu.A = stage_geom_height_062A;
+    cpu.Y = cpu.A;
 L_6178:
     span_row_count = cpu.A;
-    TYA();
+    cpu.A = cpu.Y;                        /* set_0628_bcd_redisplay takes A */
     set_0628_bcd_redisplay();
-    LDY(0x0C);
-    LDA(0x78);
-    save_color_clear_y_bit5();
+    cpu.Y = 0x0C;
+    cpu.A = 0x78;
+    save_color_clear_y_bit5();           /* takes A + Y */
 L_6185:
     bcd_delta_lo = 0;
     bcd_delta_hi = 0x05;
     decrement_bcd_0628_restart();
-    DEC_M(0x0096);
-    if (!cpu.Z) goto L_6185;
-    LDA(mem[0x00E3]);
-    if (cpu.N) goto L_61f2;
-    if (cpu.Z) goto L_61b7;
+    if (--span_row_count != 0) goto L_6185;
+    if (mem[0x00E3] & 0x80) goto L_61f2;
+    if (mem[0x00E3] == 0)   goto L_61b7;
     wait_frames_save_a();
     set_0628_bcd_redisplay();
     text_color_pf0 = 0x7C;
 L_61a4:
     bcd_delta_hi = 0x10;
-    LDX(0x10);
-    input_init();                        /* consumes X */
+    cpu.X = 0x10;                         /* input_init takes X */
+    input_init();
     wait_frames_5();
     decrement_bcd_0628_restart();
-    DEC_M(0x00E3);
-    if (!cpu.Z) goto L_61a4;
+    if (--mem[0x00E3] != 0) goto L_61a4;
 L_61b7:
     wait_frames_save_a();
-    LDA(0x2A);
-    LDY(0x83);
-    save_color_clear_y_bit5();
-    LDY(0x0B);
+    cpu.A = 0x2A;
+    cpu.Y = 0x83;
+    save_color_clear_y_bit5();           /* takes A + Y */
+    cpu.Y = 0x0B;                        /* music_init_state takes Y */
     music_init_state();
 L_61c6:
     /* spin: wait for the music/VBI to clear $0655 (one frame/iter) */
     ds_frame();
-    LDA(mem[0x0655]);
-    if (!cpu.Z) goto L_61c6;
-    LDA(level_stage);
-    row_table_stride = cpu.A;
-    CMP(mem[0x060A]);
-    if (!cpu.C) goto L_61d7;
-    mem[0x060A] = cpu.A;
+    if (mem[0x0655] != 0) goto L_61c6;
+    row_table_stride = level_stage;
+    if (level_stage < mem[0x060A]) goto L_61d7;
+    mem[0x060A] = level_stage;           /* raise the recorded max level */
 L_61d7:
     count_up_to_level();
-    LDA(fresh_start_flag);
-    if (!cpu.Z) goto L_61f5;
+    if (fresh_start_flag != 0) goto L_61f5;
 L_61df:
     span_row_count = 0x02;
 L_61e3:
     bcd_delta_hi = row_table_base_lo;
     reinit_and_redraw_via_delay();
-    DEC_M(0x0096);
-    if (!cpu.Z) goto L_61e3;
-    DEC_M(0x00C1);
-    if (!cpu.Z) goto L_61df;
+    if (--span_row_count != 0) goto L_61e3;
+    if (--row_table_stride != 0) goto L_61df;   /* $00C1 outer counter */
 L_61f2:
     wait_frames_save_a();
 L_61f5:
     clear_message_buffer();
 L_61f8:
-    LDA(mem[0x00E3]);
-    if (!cpu.N) goto L_6219;
-    LDA(level_stage);
-    CMP(0x05);
-    if (cpu.C) goto L_620e;
+    if (!(mem[0x00E3] & 0x80)) goto L_6219;
+    if (level_stage >= 0x05) goto L_620e;
     grid_offset_b = 0x01;
     mem[0x0609] = 0x04;
     goto L_6216;
 L_620e:
-    mem[0x0609] = cpu.A;
-    SEC();
-    SBC(0x03);
-    grid_offset_b = cpu.A;
+    mem[0x0609] = level_stage;
+    grid_offset_b = (uint8_t)(level_stage - 0x03);
 L_6216:
     goto L_62e7;
 L_6219:
-    LDA(level_stage);
-    grid_offset_b = cpu.A;
-    INC_M(0x009B);
-    CLC();
-    ADC(0x04);
-    CMP(0x64);
-    if (!cpu.C) goto L_6228;
-    LDA(0x63);
-L_6228:
-    mem[0x0609] = cpu.A;
-    sfx_reinit_gate = cpu.A;
+    grid_offset_b = (uint8_t)(level_stage + 1);   /* STA $9B; INC $9B */
+    {
+        uint8_t a = (uint8_t)(level_stage + 0x04);  /* clamp level+4 to $63 */
+        if (a >= 0x64) a = 0x63;
+        mem[0x0609] = a;
+        sfx_reinit_gate = a;
+    }
 L_622d:
-    LDY(0x00);                            /* Y=0 feeds the L_6244 loop's mem[$6595+Y] */
+    cpu.Y = 0x00;                         /* Y feeds the L_6244 loop's mem[$6595+Y] */
     frame_counter = 0;
     draw_pattern_byte = 0x4F;
-    bus_write(0xD203, 0x44);
+    bus_write(0xD203, 0x44);              /* POKEY AUDCTL — live on Amiga (Paula) */
     audf2_sweep_val = 0x52;
     audf2_sweep_step = 0x01;
 L_6244:
-    timer_4C = mem[0x6595 + cpu.Y];
+    cpu.Y = frame_counter;                /* $6595,Y and $8B fed to dl_index_dec */
+    timer_4C = mem[0x6595 + frame_counter];
     audf2_sweep_clear_colors();
     dl_src_index = draw_pattern_byte;
     dl_index_dec();
     dl_src_index = 0;
-    DEC_M(0x00B9);
-    INC_M(0x00B7);
-    LDY(frame_counter);
-    CPY(0x13);
-    if (!cpu.Z) goto L_6244;
+    draw_pattern_byte--;                  /* $B9 */
+    if (++frame_counter != 0x13) goto L_6244;   /* $B7 */
     push_a_wait_frames();
     dl_src_index = 0x53;
 L_6268:
-    LDX(0x05);
+    cpu.X = 0x05;
 L_626a:
-    LDA(dl_src_index);
-    CMP(0x3E);
-    if (!cpu.Z) goto L_6289;
+    if (dl_src_index != 0x3E) { cpu.Z = 0; goto L_6289; }   /* spin: wait for the VBI to reach $3E */
     dl_src_index = 0x56;
-    CPX(0x03);
-    if (!cpu.Z) goto L_6288;
-    blit_color_src = 0x08;
+    if (cpu.X != 0x03) goto L_6288;
+    blit_color_src = 0x08;               /* on the 3rd pass: re-blit the score readout, bump level */
     blit_numeric_readout();
-    DEC_M(0x0095);
-    INC_M(0x006D);
+    blit_color_src--;                    /* $95 */
+    level_stage++;                       /* $6D */
     blit_numeric_readout();
-    LDX(0x03);
+    cpu.X = 0x03;
 L_6288:
-    DEX();
+    cpu.Z = (--cpu.X == 0);              /* DEX sets Z */
 L_6289:
     if (!cpu.Z) goto L_626a;
     dl_src_index = 0x56;
 L_628f:
-    LDA(dl_src_index);
-    CMP(0x0F);
-    if (!cpu.Z) goto L_628f;
-    draw_pattern_byte = cpu.A;            /* A == dl_src_index == $0F at spin exit */
+    if (dl_src_index != 0x0F) goto L_628f;   /* spin: wait for the VBI to reach $0F */
+    draw_pattern_byte = 0x0F;            /* A == dl_src_index == $0F at spin exit */
     dl_src_index = 0;
-    LDA(bus_read(0xD300));
-    AND(0x01);
-    if (cpu.Z) goto L_62a9;
-    LDA(bus_read(0xD01F));
-    AND(0x02);
-    if (!cpu.Z) goto L_62b4;
+    if ((bus_read(0xD300) & 0x01) == 0) goto L_62a9;   /* PORTA joystick (live on Amiga) */
+    if ((bus_read(0xD01F) & 0x02) != 0) goto L_62b4;   /* CONSOL SELECT  (live on Amiga) */
 L_62a9:
     dl_src_index = 0x56;
-    LDY(level_stage);
-    CPY(mem[0x0609]);
-    if (!cpu.C) goto L_6268;
+    if (level_stage < mem[0x0609]) goto L_6268;
 L_62b4:
     audf2_sweep_step = 0xFF;
 L_62b9:
-    LDY(draw_pattern_byte);
-    timer_4C = mem[0x6598 + cpu.Y];
-    dl_src_index = cpu.Y;
+    cpu.Y = draw_pattern_byte;            /* $6598,Y and $8B fed to dl_index_dec */
+    timer_4C = mem[0x6598 + draw_pattern_byte];
+    dl_src_index = draw_pattern_byte;
     dl_index_dec();
     dl_src_index = 0;
     audf2_sweep_clear_colors();
-    DEC_M(0x00B9);
-    if (!cpu.Z) goto L_62b9;
-    INC_M(0x004C);
+    if (--draw_pattern_byte != 0) goto L_62b9;   /* $B9 */
+    timer_4C++;
     push_a_wait_frames();
-    LDA(0x55);
-    shift_object_table_up();             /* consumes A */
-    ASL_M(0x004C);
+    cpu.A = 0x55;                        /* shift_object_table_up takes A */
+    shift_object_table_up();
+    timer_4C = (uint8_t)(timer_4C << 1);  /* ASL $4C */
     push_a_wait_frames();
     dl_index_dec_or_reset();
-    bus_write(0xD203, 0);
+    bus_write(0xD203, 0);                /* POKEY */
 L_62e7:
-    LDA(sfx_reinit_gate);
-    if (cpu.Z) goto L_62ee;
+    if (sfx_reinit_gate == 0) goto L_62ee;
 L_62eb:
     ds_frame();
     reset_audctl_flags();
 L_62ee:
     attract_timer = 0x64;
-    LDA(level_or_state);
-    if (!cpu.Z) goto L_634f;
+    if (level_or_state != 0) goto L_634f;
 L_62f6:
     ds_frame();
-    LDY(cockpit_flag);
-    if (!cpu.Z) goto L_6309;
+    if (cockpit_flag != 0) goto L_6309;
     copy_title_text_block_to_screen();
-    LDA(bus_read(0xD01F));
-    AND(0x04);
-    if (!cpu.Z) goto L_6309;
-    INC_M(0x0004);
-    if (!cpu.Z) goto L_6311;
+    if ((bus_read(0xD01F) & 0x04) != 0) goto L_6309;   /* CONSOL OPTION */
+    if (++level_or_state != 0) goto L_6311;            /* $0004 */
 L_6309:
-    LDA(attract_timer);
-    if (!cpu.N) goto L_6324;
-    LDX(mem[0x00E7]);
-    if (!cpu.Z) goto L_631e;
+    if (!(attract_timer & 0x80)) goto L_6324;
+    if (mem[0x00E7] != 0) goto L_631e;
 L_6311:
-    LDY(cockpit_flag);
-    sound_active_flag = cpu.Y;
-    if (!cpu.Z) goto L_631b;
-    INC_M(0x060B);
+    sound_active_flag = cockpit_flag;
+    if (cockpit_flag != 0) goto L_631b;
+    cockpit_flag++;                       /* $060B */
 L_631b:
     game_main_loop(); return;
 L_631e:
-    LDX(altitude_threshold);
-    CPX(0xC0);
-    if (cpu.Z) goto L_6311;
+    if (altitude_threshold == 0xC0) goto L_6311;
 L_6324:
-    LDA(bus_read(0xD300));
-    AND(0x01);
-    if (cpu.Z) goto L_6332;
-    LDA(bus_read(0xD01F));
-    AND(0x02);
-    if (!cpu.Z) goto L_634a;
+    if ((bus_read(0xD300) & 0x01) == 0) goto L_6332;   /* PORTA joystick */
+    if ((bus_read(0xD01F) & 0x02) != 0) goto L_634a;   /* CONSOL SELECT */
 L_6332:
-    LDY(cockpit_flag);
-    if (cpu.Z) goto L_6311;
+    if (cockpit_flag == 0) goto L_6311;
     audio_timer_setup();
-    LDA(level_stage);
-    CMP(mem[0x0609]);
-    if (!cpu.C) goto L_6347;
+    if (level_stage < mem[0x0609]) goto L_6347;
     intro_screen_build_seq();
     goto L_634a;
 L_6347:
@@ -7361,60 +7280,55 @@ L_634a:
 L_634f:
     audio_timer_setup();
     rle_unpack_to_07f9();                 /* consumes Y */
-    LDA(cockpit_flag);
-    if (cpu.Z) {                          /* cockpit_flag == 0 */
-        LDX(0x16);
-        fill_message_buffer();            /* consumes A(=0), X */
+    if (cockpit_flag == 0) {
+        cpu.A = 0x00;                     /* fill_message_buffer takes A + X */
+        cpu.X = 0x16;
+        fill_message_buffer();
     }
     mem[0x08A3] = 0x23;                    /* L_635f */
     cockpit_flag = 0x23;
     sound_active_flag = 0x23;
-    LDY(0x0B);
-    LDA(level_or_state);
-    if (!cpu.Z) LDY(0x13);                /* L_6371: Y feeds save_color_clear_y_bit5 */
-    LDA(0xEA);
-    save_color_clear_y_bit5();            /* consumes A, Y */
+    cpu.Y = (level_or_state != 0) ? 0x13 : 0x0B;   /* Y feeds save_color_clear_y_bit5 */
+    cpu.A = 0xEA;
+    save_color_clear_y_bit5();            /* takes A + Y */
     osc_step_counter = 0;
-    LDY(level_or_state);
-    if (cpu.Z) {                          /* level_or_state == 0 */
-        LDY(level_stage);
-        CPY(mem[0x0626]);
-        mem[0x0626] = cpu.Y;
-        if (cpu.Z) {                      /* level_stage unchanged from prev -> bump $0627 */
-            INC_M(0x0627);
+    if (level_or_state == 0) {
+        uint8_t prev = mem[0x0626];
+        mem[0x0626] = level_stage;
+        if (level_stage == prev) {        /* level unchanged from last run -> bump replay counter */
+            mem[0x0627]++;
             goto L_63a7;
         }
-        if (!cpu.C) {                     /* L_638f: level_stage < prev */
-            for (int i = 0; i <= 4; i++)  /* L_6393 */
+        if (level_stage < prev) {         /* level dropped -> clear score/HUD state */
+            for (int i = 0; i <= 4; i++)
                 mem[0x0600 + i] = 0;
-            for (int i = 0; i <= 5; i++)  /* L_639b */
+            for (int i = 0; i <= 5; i++)
                 mem[0x32C5 + i] = 0;
         }
     }
-    fresh_start_flag = 0;                  /* L_63a1 */
+    fresh_start_flag = 0;                  /* L_63a1 ($0627) */
     compute_stage_display_geometry();
 L_63a7:
-    LDX(0x1D);
-    input_init();                        /* consumes X */
+    cpu.X = 0x1D;                         /* input_init takes X */
+    input_init();
     vobj_draw_dispatch();
     render_bcd_counter();
     clear_scroll_accum();
-    LDY(0x05);
-    LDA(0x3A);
-    do {                                  /* L_63b9: $08D4[5..0] = $3A,$38,... (step -2) */
-        mem[0x08D4 + cpu.Y] = cpu.A;
-        SEC();
-        SBC(0x02);
-        DEY();
-    } while (!cpu.N);
+    {
+        uint8_t a = 0x3A;
+        for (int8_t y = 0x05; y >= 0; y--) {   /* $08D4[5..0] = $3A,$38,$36,$34,$32,$30 */
+            mem[0x08D4 + y] = a;
+            a -= 0x02;
+        }
+    }
     placed_item_count_bcd = 0;
     startup_init();
     build_line_addr_table_1000();
     draw_frame_pattern_seq();             /* consumes Y */
     platform_tunnel_rings_drawn();   /* hook: convert the freshly-drawn $1000 ring field to bitplanes */
-    LDX(0x01);
-    input_init();                        /* consumes X */
-    do { ds_frame(); } while (mem[0x067E] != 0x1F);   /* L_63d7: wait door VBI $067E==$1F */
+    cpu.X = 0x01;                        /* input_init takes X */
+    input_init();
+    do { ds_frame(); } while (mem[0x067E] != 0x1F);   /* wait for the door VBI to set $067E==$1F */
     mem[0x06E0] = 0;
     sync_flag = 0x8C;
     dl_ptr_lo = 0x17;
@@ -7423,19 +7337,19 @@ L_63a7:
     dl_bottom_index = 0x02;
     blit_row_counter = 0x7F;
     terrain_scroll_counter = 0x2B;
-    LDA(0x07);
-    draw_cockpit_dial_bar();              /* consumes A */
+    cpu.A = 0x07;                        /* draw_cockpit_dial_bar takes A */
+    draw_cockpit_dial_bar();
     mem[0x0684] = 0x7F;
     timer_676 = 0x09;
     mem[0x0686] = 0xFB;
     mem[0x0687] = 0xFF;
-    LDA(0x01);
-    set_hud_fields_678_679();             /* consumes A */
-    do {                                  /* L_641b */
+    cpu.A = 0x01;                        /* set_hud_fields_678_679 takes A */
+    set_hud_fields_678_679();
+    do {                                 /* door-open HUD sweep, one 10-frame tick per step */
         wait_frames_10();
-        INC_M(0x0678);
-        INC_M(0x0679);
-        if (hud_field_678 == 0x03) {       /* L_644c skipped when != 3 */
+        hud_field_678++;
+        hud_field_679++;
+        if (hud_field_678 == 0x03) {     /* mid-sweep: arm the door/ring state */
             mem[0x06CA] = 0xFF;
             history_ring_step = 0xFF;
             mem[0x06CD] = 0xFF;
@@ -7446,52 +7360,51 @@ L_63a7:
             mem[0x06F6] = 0;
             mem[0x06F7] = 0;
         }
-        /* L_644c */
-        DEC_M(0x0676);
+        timer_676--;
         refresh_hud_field_0b();
     } while (timer_676 != 0x04);
-    /* L_645b: wait for the gauge-fill VBI counter $0684 to reach $64 */
+    /* wait for the gauge-fill VBI counter $0684 to reach $64 */
     do { ds_frame(); } while (mem[0x0684] != 0x64);
-    LDY(0x05);
+    cpu.Y = 0x05;                        /* reorder_sprite_slot takes Y (also indexes $066B) */
     mem[0x066B + cpu.Y] = 0;
-    reorder_sprite_slot();                /* consumes Y */
-    /* L_646c: wait for $0684 to reach $1D */
+    reorder_sprite_slot();
+    /* wait for $0684 to reach $1D */
     do { ds_frame(); } while (mem[0x0684] != 0x1D);
     mem[0x06E6] = 0xFF;
-    /* L_6478: wait for the door-swoosh VBI counter $0686 to reach $64 */
+    /* wait for the door-swoosh VBI counter $0686 to reach $64 */
     do { ds_frame(); } while (mem[0x0686] != 0x64);
     init_row_coords_9c();
-    LDA(0x00);
+    cpu.A = 0x00;                        /* draw_cockpit_dial_bar takes A */
     draw_color_idx = 0;
-    draw_cockpit_dial_bar();              /* consumes A(=0) */
-    LDY(0x0C);
+    draw_cockpit_dial_bar();
+    cpu.Y = 0x0C;                        /* reorder_sprite_slot takes Y */
     mem[0x066B + cpu.Y] = 0x0F;
     mem[0x0679 + cpu.Y] = 0xB4;
-    reorder_sprite_slot();                /* consumes Y */
+    reorder_sprite_slot();
     timer_676 = 0x02;
     mem[0x06E8] = 0;
     mem[0x06E9] = 0;
-    LDA(0x01);
-    set_hud_fields_678_679();             /* consumes A */
+    cpu.A = 0x01;                        /* set_hud_fields_678_679 takes A */
+    set_hud_fields_678_679();
     vbi_flags = 0x01;
     timer_4C = 0x0F;
-    do {                                  /* L_64b0 */
+    do {                                 /* wait out the door-swoosh, decrementing $0677 to 8 */
         push_a_wait_frames();
-        if (mem[0x0677] == 0x08)          /* L_64c0 */
+        if (mem[0x0677] == 0x08)
             timer_4C = 0x01;
         else
-            DEC_M(0x0677);                /* L_64c4 */
+            mem[0x0677]--;
     } while (vbi_flags != 0);
-    LDA(0x04);
+    cpu.A = 0x04;                        /* draw_cockpit_dial_bar takes A */
     mem[0x0677] = 0x04;
-    draw_cockpit_dial_bar();              /* consumes A(=4) */
-    LDY(0x0C);
+    draw_cockpit_dial_bar();
+    cpu.Y = 0x0C;                        /* reorder_sprite_slot takes Y */
     mem[0x0679 + cpu.Y] = 0x65;
-    reorder_sprite_slot();                /* consumes Y */
-    LDY(0x0B);
+    reorder_sprite_slot();
+    cpu.Y = 0x0B;
     mem[0x066B + cpu.Y] = 0x01;
     mem[0x0679 + cpu.Y] = 0x0E;
-    reorder_sprite_slot();                /* consumes Y */
+    reorder_sprite_slot();
     for (int i = 0; i <= 3; i++)          /* L_64ed */
         mem[0xD008 + i] = 0x01;
     HW_WRITE(0xD000, 0x38);              /* HPOSP0 */
@@ -7499,17 +7412,13 @@ L_63a7:
     HW_WRITE(0xD002, 0x8E);              /* HPOSP2 */
     HW_WRITE(0xD003, 0xB8);              /* HPOSP3 */
     clear_scroll_accum();
-    LDX(0x2C);
-    do {                                  /* L_650b */
-        row_table_stride = mem[0x073D + cpu.X];
-        player_speed = mem[0x0793 + cpu.X];
-        LDY(0x2D);
-        do {                              /* L_6519 */
-            bus_write(ZP_IND_Y(0xC1), 0);
-            DEY();
-        } while (!cpu.N);
-        DEX();
-    } while (!cpu.N);
+    for (int8_t x = 0x2C; x >= 0; x--) {          /* clear the 46-byte line buffer for rows $2C..0 */
+        row_table_stride = mem[0x073D + x];       /* $C1 = line pointer lo */
+        player_speed     = mem[0x0793 + x];       /* $C2 = line pointer hi */
+        uint16_t p = (uint16_t)(row_table_stride | (player_speed << 8));
+        for (int8_t y = 0x2D; y >= 0; y--)
+            mem[p + y] = 0;
+    }
     copy_192_to_1800();
     mem[0x00DC] = 0;
     display_flags = 0;
@@ -7523,25 +7432,15 @@ L_63a7:
     init_object_positions();
     terrain_state = 0x7F;
     fill_terrain_columns();
-    LDA(0x00);
-    do {                                  /* L_6557: cycle $02C0..$02C3 = $00..$0C */
-        LDX(0x03);
-        do {                              /* L_6559 */
-            mem[0x02C0 + cpu.X] = cpu.A;
-            DEX();
-        } while (!cpu.N);
+    for (uint8_t a = 0x00; a != 0x0D; a++) {   /* fade colour shadows $02C0..$02C3 up $00..$0C */
+        for (int8_t x = 0x03; x >= 0; x--)
+            mem[0x02C0 + x] = a;
         wait_frames_2();
-        CLC();
-        ADC(0x01);
-        CMP(0x0D);
-    } while (!cpu.Z);
-    LDA(0x30);
-    build_line_addr_table_1000_stride();  /* consumes A */
-    do {                                  /* L_656e: wait until terrain_state drops below $04 */
-        ds_frame();
-        LDA(terrain_state);
-        CMP(0x04);
-    } while (!cpu.N);
+    }
+    cpu.A = 0x30;                        /* build_line_addr_table_1000_stride takes A */
+    build_line_addr_table_1000_stride();
+    /* wait until terrain_state drops below $04 (CMP #$04; BPL) */
+    do { ds_frame(); } while (!((uint8_t)(terrain_state - 0x04) & 0x80));
     RTCLOK_LOW = 0;
     do {                                  /* L_6578: every other frame, advance object positions */
         ds_frame();
