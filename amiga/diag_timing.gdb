@@ -7,6 +7,8 @@ printf "cineGap=%u frames (~%ums) atVbi=%u 060B=%02x  [launch-VBI-only freeze]\n
   g_maxCineGap, g_maxCineGap*20, g_maxCineGapAtVbi, g_maxCineGap060B
 printf "dsMile vbi: 0=%u 1A=%u 2door=%u 3B=%u 4clr=%u 5C=%u 6fade=%u 7ts4=%u 8done=%u\n", \
   g_dsMile[0], g_dsMile[1], g_dsMile[2], g_dsMile[3], g_dsMile[4], g_dsMile[5], g_dsMile[6], g_dsMile[7], g_dsMile[8]
+printf "ckFull=%lu ticks (~%lums) count=%lu  [decodeCockpitFull one-shot]\n", \
+  g_ckFullTicks, g_ckFullTicks/16, g_ckFullCount
 printf "vbi=%u VVBLKI=%02x%02x joy=%u 060B=%02x\n", g_vbiCount, mem[0x0223], mem[0x0222], mem[0x004A], mem[0x060B]
 printf "reveal=%u D01F=%02x\n", g_standbyRevealReady, mem[0xD01F]
 echo --- Title Screen probe (rsTitle = VVBLKI==53cc && 365B==72) ---\n

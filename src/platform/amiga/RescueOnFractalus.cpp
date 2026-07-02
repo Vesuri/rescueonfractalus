@@ -99,6 +99,7 @@ extern "C" void rof_cockpit_dial_dirty(unsigned short addr)
 extern "C" unsigned long rof_subclock(void);
 extern "C" volatile unsigned long g_fConvert, g_isrBeamLines;  // Stage-0 convert-pass probe
 extern "C" volatile unsigned long g_fCockpit, g_fCockpitScans;
+extern "C" volatile unsigned long g_ckFullTicks, g_ckFullCount;  // decodeCockpitFull one-shot timing
 #endif
 // Compass (#2): the heading cells $32E3-$32E6 (mode-4 line below the title) — flagged by
 // platform_compass_changed() from the housing init (game_sub_4606) / heading updater ($3FDE).
@@ -1611,25 +1612,36 @@ void RescueOnFractalus::decodeCockpitSpan(uint16_t addr, uint8_t nCells)
     static const int kRowBytes = 120;   // 3bp interleaved: p1(40)+p2(40)+p3(40)
     uint8_t* cdest = (uint8_t*)cockpitBitmap->data;
 
-    for (uint8_t i = 0; i < nCells; i++) {
-        uint16_t a = (uint16_t)(addr + i);
-        if (a >= 0x350Du) {                     // modeD raster band
-            int off = (int)(a - 0x350Du);
-            int entry = off / kStride, col = (off % kStride) - kCrop;
-            if (entry < 0 || entry >= 4 || col < 0 || col >= 40) continue;
-            uint8_t p1v, p2v; decode2bppByte(mem[a], &p1v, &p2v);
-            uint8_t* d0 = cdest + (entry * 2) * kRowBytes;
-            uint8_t* d1 = d0 + kRowBytes;
+    // All callers pass a span within ONE region (mode4 $332D / modeD $350D) and ONE 48-byte DL
+    // row, so region + entry are constant across the span.  Compute the destination row base
+    // ONCE (a single divide) and walk the columns — the old code recomputed entry=off/48 and
+    // col=off%48 PER CELL as SIGNED int, which GCC lowered to __divsi3/__modsi3 subroutine
+    // CALLS on every cell (2/cell x 560 cells in a full repaint).
+    if (addr >= 0x350Du) {                          // modeD raster band (2 identical scan lines)
+        unsigned off   = (unsigned)(addr - 0x350Du);
+        unsigned entry = off / (unsigned)kStride;
+        int      col   = (int)(off % (unsigned)kStride) - kCrop;
+        if (entry >= 4u) return;
+        uint8_t* d0 = cdest + (entry * 2) * kRowBytes;
+        uint8_t* d1 = d0 + kRowBytes;
+        for (uint8_t i = 0; i < nCells; i++, col++) {
+            if (col < 0 || col >= 40) continue;
+            uint8_t p1v, p2v; decode2bppByte(mem[(uint16_t)(addr + i)], &p1v, &p2v);
             d0[col] = p1v; d0[40 + col] = p2v; d0[80 + col] = 0;
             d1[col] = p1v; d1[40 + col] = p2v; d1[80 + col] = 0;
-        } else {                                // mode4 dashboard
-            int off = (int)(a - 0x332Du);
-            int entry = off / kStride, col = (off % kStride) - kCrop;
-            if (entry < 0 || entry >= 10 || col < 0 || col >= 40) continue;
-            uint8_t ch = mem[a];
+        }
+    } else {                                        // mode4 dashboard (8 scan lines, glyph)
+        unsigned off   = (unsigned)(addr - 0x332Du);
+        unsigned entry = off / (unsigned)kStride;
+        int      col   = (int)(off % (unsigned)kStride) - kCrop;
+        if (entry >= 10u) return;
+        uint8_t* base = cdest + (8 + entry * 8) * kRowBytes;
+        for (uint8_t i = 0; i < nCells; i++, col++) {
+            if (col < 0 || col >= 40) continue;
+            uint8_t ch = mem[(uint16_t)(addr + i)];
             uint8_t plane3 = (ch & 0x80u) ? 0xFFu : 0x00u;
             const uint8_t* glyph = (const uint8_t*)mem + 0x3800u + (uint16_t)(ch & 0x7Fu) * 8u;
-            uint8_t* p = cdest + (8 + entry * 8) * kRowBytes + col;
+            uint8_t* p = base + col;
             for (int scan = 0; scan < 8; scan++, p += kRowBytes) {
                 uint8_t p1v, p2v; decode2bppByte(*glyph++, &p1v, &p2v);
                 p[0] = p1v; p[40] = p2v; p[80] = plane3;
@@ -1884,7 +1896,14 @@ void RescueOnFractalus::render()
 #endif
     if (cockpitForceFull) {
         cockpitForceFull = false;
+#ifdef ROF_FLIGHT_PROBE
+        unsigned long _ckf0 = rof_subclock();
+#endif
         decodeCockpitFull();
+#ifdef ROF_FLIGHT_PROBE
+        g_ckFullTicks = rof_subclock() - _ckf0;
+        g_ckFullCount++;
+#endif
         // The full paint covers every cell — drop all instrument flags + the dial cell flags.
         g_ckDigits = g_ckLockon = g_ckDial = 0u;
         for (int i = 0; i < CK_DIAL_N; i++) g_ckDialFlag[i] = 0u;

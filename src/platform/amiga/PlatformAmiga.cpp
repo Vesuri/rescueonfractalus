@@ -540,6 +540,8 @@ extern "C" volatile unsigned char g_maxGap060B = 0, g_maxGap004A = 0;
 // Cinematic-only render-gap probe (launch VBI $52D7 active): isolates a tunnel->stars freeze.
 extern "C" volatile unsigned short g_maxCineGap = 0, g_maxCineGapAtVbi = 0;
 extern "C" volatile unsigned char g_maxCineGap060B = 0;
+// decodeCockpitFull one-shot timing (chip-vs-fast-RAM experiment).
+extern "C" volatile unsigned long g_ckFullTicks = 0, g_ckFullCount = 0;
 // display_setup launch-tail milestone stamps: rof_ds_mile(i) records g_vbiCount at milestone i,
 // so a big jump between consecutive stamps localises the ~580ms cinematic freeze to one stretch.
 extern "C" volatile unsigned short g_dsMile[16] = {0};
