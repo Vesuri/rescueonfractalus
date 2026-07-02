@@ -497,6 +497,11 @@ void RescueOnFractalus::buildStarSprites()
 }
 
 // ---- public interface --------------------------------------------------------
+// 2bpp→Amiga plane-pair decode LUT (filled by buildDecode2bppLut below; used by the
+// cockpit/title/compass decoders).
+static uint8_t s_dec2bppP1[256], s_dec2bppP2[256];
+static bool s_dec2bppReady = false;
+static void buildDecode2bppLut();
 void RescueOnFractalus::initialize()
 {
     titleBitmap   = Bitmap::allocate(kW, kTitleHeight,   kBP2, true);
@@ -507,6 +512,7 @@ void RescueOnFractalus::initialize()
     extern volatile uint32_t g_terrainBmpAddr;   // chip addr of terrainBitmap->data (Stage 1 verifier dump)
     g_terrainBmpAddr = (uint32_t)terrainBitmap->data;
 #endif
+    if (!s_dec2bppReady) buildDecode2bppLut();   // 2bpp→Amiga plane-pair LUT (cockpit/title decode)
     cockpitBitmap = Bitmap::allocate(kW, kCockpitH, kBP3, true);  // 3bp: bit-7 chars → red
     tunnelBitmap  = Bitmap::allocate(kW, kTerrainHeight, kBP3, true);  // door-gap reveal
     titleScreenBitmap = Bitmap::allocate(kW, kH, kBP3, true);  // 3bp: black + COLPF0-3 text pens
@@ -1565,17 +1571,28 @@ void RescueOnFractalus::perFrameWork()
 // Decode one 2bpp byte (modeD raw or mode4 glyph) → Amiga 2bp byte pair.
 // Each byte contains 4 × 2-bit Atari pixels; each pixel expands to 2 Amiga pixels.
 // Amiga colour index = {p2_bit, p1_bit} — same layout as terrain kNibbleColour.
-static void decode2bppByte(uint8_t src, uint8_t* p1out, uint8_t* p2out)
+// The mapping is a fixed function of the source byte, so it's a 256-entry LUT: the
+// per-call bit loop used variable shifts (1 bit/cycle on the 68000, no barrel shifter)
+// and cost ~96 ms across the 3360 calls of a full cockpit repaint (decodeCockpitFull).
+static void buildDecode2bppLut()
 {
-    uint8_t p1 = 0, p2 = 0;
-    for (int i = 0; i < 4; i++) {
-        uint8_t pixel = (src >> (6 - i*2)) & 3u;
-        uint8_t mask  = (uint8_t)(0xC0u >> (i*2));  // 0xC0, 0x30, 0x0C, 0x03
-        if (pixel & 1u) p1 |= mask;   // plane1 = bit 0 of colour index
-        if (pixel & 2u) p2 |= mask;   // plane2 = bit 1 of colour index
+    for (int src = 0; src < 256; src++) {
+        uint8_t p1 = 0, p2 = 0;
+        for (int i = 0; i < 4; i++) {
+            uint8_t pixel = (uint8_t)((src >> (6 - i*2)) & 3u);
+            uint8_t mask  = (uint8_t)(0xC0u >> (i*2));  // 0xC0, 0x30, 0x0C, 0x03
+            if (pixel & 1u) p1 |= mask;   // plane1 = bit 0 of colour index
+            if (pixel & 2u) p2 |= mask;   // plane2 = bit 1 of colour index
+        }
+        s_dec2bppP1[src] = p1;
+        s_dec2bppP2[src] = p2;
     }
-    *p1out = p1;
-    *p2out = p2;
+    s_dec2bppReady = true;
+}
+static inline void decode2bppByte(uint8_t src, uint8_t* p1out, uint8_t* p2out)
+{
+    *p1out = s_dec2bppP1[src];
+    *p2out = s_dec2bppP2[src];
 }
 
 // Decode a run of nCells cockpit cells starting at Atari screen-RAM address `addr` (cells in
