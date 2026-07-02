@@ -38,19 +38,25 @@ static const uint16_t kBPLCON0_3P   = (uint16_t)((3 << PLNCNTSHFT) | USE_BPLCON3
 #define INDEX_TERRAIN_BPL     (INDEX_TERRAIN_WAIT + 1) // tunnel bitmap ptrs (3bp = 6)
 #define INDEX_TERRAIN_BPLCON0 (INDEX_TERRAIN_BPL + 6)  // bplcon0 3P (1)
 #define INDEX_TERRAIN_MOD     (INDEX_TERRAIN_BPLCON0 + 1) // bpl1mod,bpl2mod (2)
-#define INDEX_TERRAIN_PAL     (INDEX_TERRAIN_MOD + 2)  // color00..06 (7: pen0 + ring pens 1-6)
-#define INDEX_COCKPIT_WAIT    (INDEX_TERRAIN_PAL + 7)  // WAIT(kCockpitLine-1) (1)
+#define INDEX_TERRAIN_PAL     (INDEX_TERRAIN_MOD + 2)  // color00..07 (8: corner-carry pen0 + ring pens 1-6 + spare pen7=black)
+#define INDEX_COCKPIT_WAIT    (INDEX_TERRAIN_PAL + 8)  // WAIT(kCockpitLine-1) (1)
 #define INDEX_COCKPIT_BPL     (INDEX_COCKPIT_WAIT + 1) // cockpit bitmap ptrs (3bp = 6)
 #define INDEX_COCKPIT_BPLCON0 (INDEX_COCKPIT_BPL + 6)  // bplcon0 3P (1)
 #define INDEX_COCKPIT_MOD     (INDEX_COCKPIT_BPLCON0 + 1) // bpl1mod,bpl2mod (2)
-#define INDEX_COCKPIT_PAL     (INDEX_COCKPIT_MOD + 2)  // color00..07 (8)
+#define INDEX_COCKPIT_PAL     (INDEX_COCKPIT_MOD + 2)  // color01..07 (7; color00 carries in from the viewport)
 // Windscreen-bottom band: cockpit bitmap's top 8 scanlines (mode-D $350D frame).  The L/R
 // corner triangles are value-0 = color00.  During the tunnel reveal the Atari clears the
 // quad-width canopy-post player ($0C88-$0C8F) top-down, so the green corner recedes and the
-// tunnel (purple) behind shows through.  We approximate that with a single moving color00
-// split: band top = purple (tunnel, $08D8); a moving WAIT flips color00 back to green
-// (door, $0071) at the boundary line = first still-set player scanline (setBandReveal).
-#define INDEX_BAND_GREEN_WAIT (INDEX_COCKPIT_PAL + 8)  // WAIT(boundary) (1)
+// tunnel (purple) behind shows through.
+//
+// We render this with NO per-band poke: the viewport carries the corner colour in color00.
+// The tunnel field's value-0 (the exit-clear black) was routed to the spare register color07
+// (RescueOnFractalus.cpp kGtia10P remap), so color00 is unused by the ring field and holds the
+// tunnel purple (mem[$08D8], set in the terrain palette).  It flows across the viewport/band
+// boundary untouched; a single moving WAIT (setBandReveal) flips color00 to green (door $0071)
+// from the reveal boundary down.  At the exit clear color00 = mem[$08D8] -> 0, so the corner
+// goes black in step with the tunnel, while the field's black comes from color07 independently.
+#define INDEX_BAND_GREEN_WAIT (INDEX_COCKPIT_PAL + 7)  // WAIT(boundary) (1)
 #define INDEX_BAND_GREEN      (INDEX_BAND_GREEN_WAIT + 1) // color00 = green door (1)
 #define INDEX_DASH_BG_WAIT    (INDEX_BAND_GREEN + 1)   // WAIT(kCockpitLine+8-1) (1)
 #define INDEX_DASH_BG         (INDEX_DASH_BG_WAIT + 1) // color00 = black (divider strip 180-188) (1)
@@ -106,7 +112,7 @@ void TunnelCopperList::buildLayout(const Bitmap& title, const Bitmap& tunnel, co
     d[INDEX_TERRAIN_BPLCON0] = copperMove(bplcon0, kBPLCON0_3P);
     d[INDEX_TERRAIN_MOD]     = copperMove(bpl1mod, 80);   // 3bp interleaved = (3-1)*40
     d[INDEX_TERRAIN_MOD + 1] = copperMove(bpl2mod, 80);
-    setTunnelColors(0, 0, 0, 0, 0, 0, 0);      // seeded; caller refreshes (ring cycles)
+    setTunnelColors(0, 0, 0, 0, 0, 0, 0, 0);   // seeded; caller refreshes (ring cycles)
 
     // ---- cockpit region: WAIT, pointers, 3bp, modulo, constant palette ----
     d[INDEX_COCKPIT_WAIT] = copperWait(kCockpitLine - 1, 0xE0);
@@ -114,17 +120,20 @@ void TunnelCopperList::buildLayout(const Bitmap& title, const Bitmap& tunnel, co
     d[INDEX_COCKPIT_BPLCON0] = copperMove(bplcon0, kBPLCON0_3P);
     d[INDEX_COCKPIT_MOD]     = copperMove(bpl1mod, 80);
     d[INDEX_COCKPIT_MOD + 1] = copperMove(bpl2mod, 80);
-    // Cockpit palette (constant immediates, as in StandbyCopperList):
-    //   00=COLBK $00, 01=COLPF0 $04, 02=COLPF1 $06, 03=COLPF2 $2C salmon,
-    //   04..06 mirror 00..02, 07=COLPF3 $26 red (bit-7 chars via plane3).
-    d[INDEX_COCKPIT_PAL + 0] = copperMove(color00, atariToOCS(0xC8));   // band bg seed; poked from mem[$0071]
-    d[INDEX_COCKPIT_PAL + 1] = copperMove(color01, atariToOCS(0x04));
-    d[INDEX_COCKPIT_PAL + 2] = copperMove(color02, atariToOCS(0x06));
-    d[INDEX_COCKPIT_PAL + 3] = copperMove(color03, atariToOCS(0x2C));
-    d[INDEX_COCKPIT_PAL + 4] = copperMove(color04, atariToOCS(0x00));
-    d[INDEX_COCKPIT_PAL + 5] = copperMove(color05, atariToOCS(0x04));
-    d[INDEX_COCKPIT_PAL + 6] = copperMove(color06, atariToOCS(0x06));
-    d[INDEX_COCKPIT_PAL + 7] = copperMove(color07, atariToOCS(0x26));
+    // Cockpit palette (constant immediates, as in StandbyCopperList).  color00 is NOT set
+    // here: it carries the windscreen-band corner colour (tunnel purple mem[$08D8]) forward
+    // from the terrain palette across the viewport/band boundary (see the band note above).
+    //   01=COLPF0 $04, 02=COLPF1 $06, 03=COLPF2 $2C salmon, 04..06 mirror 00..02,
+    //   07=COLPF3 $26 red (bit-7 chars via plane3).  color07 carried the field's exit-clear
+    //   black through the viewport; this line (executed at the band top) restores it to $26
+    //   for the dashboard below (the band itself uses only values 0/1/2, never 7).
+    d[INDEX_COCKPIT_PAL + 0] = copperMove(color01, atariToOCS(0x04));
+    d[INDEX_COCKPIT_PAL + 1] = copperMove(color02, atariToOCS(0x06));
+    d[INDEX_COCKPIT_PAL + 2] = copperMove(color03, atariToOCS(0x2C));
+    d[INDEX_COCKPIT_PAL + 3] = copperMove(color04, atariToOCS(0x00));
+    d[INDEX_COCKPIT_PAL + 4] = copperMove(color05, atariToOCS(0x04));
+    d[INDEX_COCKPIT_PAL + 5] = copperMove(color06, atariToOCS(0x06));
+    d[INDEX_COCKPIT_PAL + 6] = copperMove(color07, atariToOCS(0x26));
 
     // Band reveal split (seeded all-green = reveal not started; setBandReveal moves it).
     setBandReveal(0, atariToOCS(0xC8));
@@ -165,16 +174,12 @@ void TunnelCopperList::setCompassColor(uint16_t c)
     data_[INDEX_COMPASS_COL] = copperMove(color01, c);
 }
 
-void TunnelCopperList::setBandBgColor(uint16_t c)
-{
-    data_[INDEX_COCKPIT_PAL + 0] = copperMove(color00, c);
-}
-
 // setBandReveal(): the green->purple corner reveal.  greenLine = the first band scanline
 // (0..8, relative to kCockpitLine) that still shows the green door — i.e. the topmost
-// still-set canopy-post-player scanline.  Lines above it keep the band-top colour (purple
-// tunnel, set via setBandBgColor); this moving WAIT flips color00 back to green from
-// greenLine down.  greenLine 0 = whole band green (reveal not started); 8 = whole band purple.
+// still-set canopy-post-player scanline.  Lines above it keep color00's carried-in colour
+// (tunnel purple, from the terrain palette — no band-top poke); this moving WAIT flips color00
+// to green from greenLine down.  greenLine 0 = whole band green (reveal not started); 8 = whole
+// band purple.
 void TunnelCopperList::setBandReveal(uint16_t greenLine, uint16_t greenColor)
 {
     if (greenLine > 8) greenLine = 8;
@@ -182,8 +187,12 @@ void TunnelCopperList::setBandReveal(uint16_t greenLine, uint16_t greenColor)
     data_[INDEX_BAND_GREEN]      = copperMove(color00, greenColor);
 }
 
+// pen0 = color00 = the windscreen-band corner colour (tunnel purple mem[$08D8]); it is unused
+// by the ring field (value-0 was remapped to pen7) and carries into the band.  pen7 = color07 =
+// the field's exit-clear black (mem[$02C0]); the cockpit palette restores color07=$26 at the
+// band top for the dashboard.
 void TunnelCopperList::setTunnelColors(uint16_t pen0, uint16_t pen1, uint16_t pen2, uint16_t pen3,
-                                       uint16_t pen4, uint16_t pen5, uint16_t pen6)
+                                       uint16_t pen4, uint16_t pen5, uint16_t pen6, uint16_t pen7)
 {
     data_[INDEX_TERRAIN_PAL + 0] = copperMove(color00, pen0);
     data_[INDEX_TERRAIN_PAL + 1] = copperMove(color01, pen1);
@@ -192,4 +201,5 @@ void TunnelCopperList::setTunnelColors(uint16_t pen0, uint16_t pen1, uint16_t pe
     data_[INDEX_TERRAIN_PAL + 4] = copperMove(color04, pen4);
     data_[INDEX_TERRAIN_PAL + 5] = copperMove(color05, pen5);
     data_[INDEX_TERRAIN_PAL + 6] = copperMove(color06, pen6);
+    data_[INDEX_TERRAIN_PAL + 7] = copperMove(color07, pen7);
 }

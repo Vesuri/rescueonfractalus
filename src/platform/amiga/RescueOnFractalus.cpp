@@ -681,9 +681,18 @@ void RescueOnFractalus::initialize()
         }
         kModeDP1[s] = pa; kModeDP2[s] = pc;
         uint8_t ph = (uint8_t)((s >> 4) & 0xF), pl = (uint8_t)(s & 0xF);   // GTIA-10
-        kGtia10P1[s] = (uint8_t)(((ph & 1) ? 0xF0u : 0u) | ((pl & 1) ? 0x0Fu : 0u));
-        kGtia10P2[s] = (uint8_t)(((ph & 2) ? 0xF0u : 0u) | ((pl & 2) ? 0x0Fu : 0u));
-        kGtia10P3[s] = (uint8_t)(((ph & 4) ? 0xF0u : 0u) | ((pl & 4) ? 0x0Fu : 0u));
+        // Tunnel rings: remap pixel value 0 -> pen 7.  value-0 is the exit-clear black
+        // (draw_ring_frame_step floods the field with value-0 as the tunnel clears from the
+        // middle out); it is never a ring colour.  Routing it to the spare register color07
+        // (=black) frees color00 to carry the windscreen-band corner colour (purple mem[$08D8])
+        // straight from the viewport into the band with NO line-172 poke, and keeps color00
+        // (corner) independent of the field's black so the exit clear still renders black.
+        // Use gh/gl for the GTIA split so kDoorP below still sees the ORIGINAL ph/pl.
+        // (kGtia10P* is used only by decodeTunnelField, so this is tunnel-scoped.)
+        uint8_t gh = ph ? ph : 7, gl = pl ? pl : 7;
+        kGtia10P1[s] = (uint8_t)(((gh & 1) ? 0xF0u : 0u) | ((gl & 1) ? 0x0Fu : 0u));
+        kGtia10P2[s] = (uint8_t)(((gh & 2) ? 0xF0u : 0u) | ((gl & 2) ? 0x0Fu : 0u));
+        kGtia10P3[s] = (uint8_t)(((gh & 4) ? 0xF0u : 0u) | ((gl & 4) ? 0x0Fu : 0u));
         // Standby door field: map each nibble through kNibbleColour first, then split
         // the resulting pen into plane1 (bit0) / plane2 (bit1) bytes.
         uint8_t ch = kNibbleColour[ph], cl = kNibbleColour[pl];
@@ -1390,30 +1399,33 @@ void RescueOnFractalus::updateTunnelCopper(bool force)
     if (force || compassCol != tnCompassCol) { tunnelCopper->setCompassColor(compassCol); tnCompassCol = compassCol; }
     // Windscreen-corner reveal.  The corner triangle is the quad-width canopy-post player
     // ($0C88-$0C8F left), green (COLPM0/1 = mem[$0071]); the launch clears it top-down so the
-    // tunnel ($08D8 purple) shows through line-by-line.  We approximate with a single moving
-    // color00 split: band top = purple; flip back to green at the boundary = the first
-    // still-set player scanline (so it descends as the buffer clears).  doors_mid/descent
-    // show this band only at g2>=half, i.e. the Tunnel list (Doors keeps the band green).
+    // tunnel ($08D8 purple) shows through line-by-line.  We render it WITHOUT a per-band poke:
+    // color00 carries the tunnel purple from the viewport into the band (the ring field's
+    // value-0 was remapped to the spare pen7, freeing color00), and a single moving WAIT flips
+    // color00 to green from the boundary = the first still-set player scanline down (so the
+    // green recedes as the buffer clears).  doors_mid/descent show this band only at g2>=half,
+    // i.e. the Tunnel list (Doors keeps the band green).
     uint16_t greenLine = 8;                                       // first still-green band scanline
     for (uint16_t i = 0; i < 8; i++) { if (mem[0x0C88 + i]) { greenLine = i; break; } }
     const uint16_t green = atariToOCS(mem[0x0071]);
-    // greenLine 0 = reveal not started (whole band green): keep band top green, no purple split
-    // (avoids a 1-line purple flash where the band-top WAIT and the boundary WAIT collide).
-    const uint16_t bandTop = (greenLine == 0) ? green : atariToOCS(mem[0x08D8]);
-    if (force || bandTop != tnBandBg) { tunnelCopper->setBandBgColor(bandTop); tnBandBg = bandTop; }
     tunnelCopper->setBandReveal(greenLine, green);
 
-    const uint16_t pen0 = atariToOCS(mem[0x02C0]);               // tunnel pen0 = black
+    // color00 = band corner = tunnel purple mem[$08D8]: carried into the band, tracks the ring
+    // cycle (in sync), and goes black at the exit clear (mem[$08D8] -> 0) in step with the
+    // tunnel.  color07 = the field's exit-clear black (value-0 was remapped to pen7).
+    const uint16_t corner = atariToOCS(mem[0x08D8]);             // color00 = band corner (purple)
+    const uint16_t black  = atariToOCS(mem[0x02C0]);             // color07 = field value-0 (black)
     uint16_t ring[6];
-    bool ringChanged = (pen0 != tnPen0);
+    bool ringChanged = (corner != tnCorner) || (black != tnPen0);
     for (int i = 0; i < 6; i++) {
         ring[i] = atariToOCS(mem[MEM_color_ring + i]);
         if (ring[i] != tnRing[i]) ringChanged = true;
     }
     if (force || ringChanged) {
-        // pens 1-3 = ring[3..5] ($08D7-$08D9); pens 4-6 = ring[0..2] ($08D4-$08D6).
-        tunnelCopper->setTunnelColors(pen0, ring[3], ring[4], ring[5], ring[0], ring[1], ring[2]);
-        tnPen0 = pen0;
+        // pen0/color00 = corner purple; pens 1-3 = ring[3..5] ($08D7-$08D9);
+        // pens 4-6 = ring[0..2] ($08D4-$08D6); pen7/color07 = field black.
+        tunnelCopper->setTunnelColors(corner, ring[3], ring[4], ring[5], ring[0], ring[1], ring[2], black);
+        tnCorner = corner; tnPen0 = black;
         for (int i = 0; i < 6; i++) tnRing[i] = ring[i];
     }
 }

@@ -31,14 +31,15 @@ public:
     void setSpritePostColor(uint16_t c);                           // color17 (canopy posts)
     void setEnergyIndicatorColor(uint16_t c);                                // COLOR21 ($1AA) gauge bar
     void setCompassColor(uint16_t c);                              // color01 over the compass band (COLPF0 $00CF)
-    void setBandBgColor(uint16_t c);                               // cockpit color00 at the band top (purple tunnel = mem[$08D8] during the reveal)
     // Moving green->purple corner reveal: greenLine (0..8) = first band scanline still showing
     // the green door (= topmost still-set canopy-post player scanline, mem[$0C88+]).  Above it
-    // stays the band-top colour (purple); color00 flips to greenColor from greenLine down.
+    // the corner keeps color00's carried-in colour (tunnel purple); color00 flips to greenColor
+    // from greenLine down.  color00 carries from the viewport, so there is NO band-top poke.
     void setBandReveal(uint16_t greenLine, uint16_t greenColor);
-    // Tunnel band colours: pen0 = black ($02C0), pens 1-3 = ring[3..5] ($08D7-$08D9),
-    // pens 4-6 = ring[0..2] ($08D4-$08D6) — the GTIA mode-10 pixel→ring +3 rotation
-    // the Atari tunnel DLI ($6CD7/$6CF1) applies.
+    // Tunnel band colours: pen0 = color00 = the band corner (tunnel purple mem[$08D8], carried
+    // into the band); pens 1-3 = ring[3..5] ($08D7-$08D9); pens 4-6 = ring[0..2] ($08D4-$08D6)
+    // — the GTIA mode-10 pixel→ring +3 rotation the Atari tunnel DLI ($6CD7/$6CF1) applies;
+    // pen7 = color07 = the field's exit-clear black ($02C0, value-0 remapped to pen7).
     void setTunnelColors(uint16_t pen0, uint16_t pen1, uint16_t pen2, uint16_t pen3,
-                         uint16_t pen4, uint16_t pen5, uint16_t pen6);
+                         uint16_t pen4, uint16_t pen5, uint16_t pen6, uint16_t pen7);
 };
