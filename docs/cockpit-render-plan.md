@@ -1,5 +1,19 @@
 # Cockpit render — DONE (writer-driven decode) + remaining TODO
 
+## Update 2026-07-02 — full-repaint cost slashed + scene-entry repaint dropped
+- **`cockpitForceFull` now fires ONLY on the standby-build edge** (`g_doorFieldReady` 0→nonzero), NOT on
+  stars/flight entry. The single persistent `cockpitBitmap` is shared by every copper list (never cleared
+  on a scene switch) and `cockpit_display` ($587B) writes no cockpit cells, so the dashboard decoded once
+  at the standby build survives Standby→Doors→Tunnel→Stars→Flight; dial/digit deltas are caught
+  incrementally. The old stars-/flight-ENTRY repaints were redundant and cost a ~580ms tunnel→stars freeze
+  + a ~700ms flight-entry freeze (77ad113).
+- **`decodeCockpitFull` 216ms→66ms**: (a) `decode2bppByte` → 256-entry LUT `s_dec2bppP1/P2` (accf1d1;
+  killed a per-call variable-shift loop, ~1-bit/cycle on the 68000); (b) hoisted the per-cell SIGNED
+  `entry=off/48`, `col=off%48` out of the loop — GCC lowered them to `__divsi3`/`__modsi3` SUBROUTINE
+  CALLS *per cell* (1120 calls/full repaint, ~70% of cost). All callers pass single-row/single-region
+  spans, so the divide is once-per-span now (e94a656). Byte-identical.
+- Further cockpit-decode asm was considered and **declined** by the user (66ms one-shot at standby is fine).
+
 Implemented 2026-06-25/26. The old per-frame full cockpit scan (shadow-compare over ~560
 mode4/modeD cells, run ~3×/game-frame in flight — the #1 flight cost) is GONE. Decode is now
 **writer-driven per instrument**: each writer raises one boolean and `render()` decodes only that
