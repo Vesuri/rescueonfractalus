@@ -20,6 +20,17 @@
 #define ROF_MEM_ALIASES /* bare lvalue aliases: player_lives == mem[MEM_player_lives] */
 #include "mem.h"        /* MEM_<name> offsets + bare aliases (symbols.csv var rows) */
 
+/* Display hardware register writes (ANTIC/GTIA/PMG, $D000-$D4xx) are DEAD on the Amiga — the
+ * copper owns the display and bus_write already skips non-POKEY hardware there — but LIVE on
+ * SDL, whose hwWrite() feeds the reference renderer (displayListPtr / colHW[] / hposP[] / ...).
+ * HW_WRITE keeps them for SDL and compiles them out on the Amiga.  (POKEY $D2xx audio writes
+ * and $02xx OS-shadow writes stay as bus_write — both are live on the Amiga.) */
+#ifdef ROF_PLATFORM_AMIGA
+#define HW_WRITE(addr, val) ((void)0)
+#else
+#define HW_WRITE(addr, val) bus_write((addr), (val))
+#endif
+
 /* Optional flight/init timing probes (Amiga autoflight only; -DROF_FLIGHT_PROBE, i.e.
  * `make PROBES=1`).  Accumulate sub-frame timings of game_main_loop's flight init + the
  * per-frame phase split into the g_* globals (defined in PlatformAmiga.cpp, read from the
@@ -6905,42 +6916,42 @@ void display_setup(void) {
     bus_write(0x0222, 0xD7);
     bus_write(0x0223, 0x52);
     wait_vcount_ge_7a();
-    bus_write(0x0200, 0xC2);
+    bus_write(0x0200, 0xC2);             /* VDSLST shadow (stars DLI) */
     bus_write(0x0201, 0x6C);
-    bus_write(0xD402, 0x20);
-    bus_write(0xD403, 0x31);
+    HW_WRITE(0xD402, 0x20);              /* DLISTL/H: stars display list $3120 */
+    HW_WRITE(0xD403, 0x31);
     dl_y1 = 0x59;
     dl_y2 = 0x6E;
     dl_y3 = 0x31;
-    LDA(0x0B);
     dl_y4 = 0x0B;
-    rle_expand_list();                   /* consumes A (#$0B nonzero) */
-    bus_write(0x026F, 0x14);
-    bus_write(0xD01B, 0x14);
-    for (int i = 0; i <= 0x56; i++) {     /* L_5f90 */
+    LDA(0x0B);                            /* rle_expand_list takes its count in A */
+    rle_expand_list();
+    bus_write(0x026F, 0x14);             /* GPRIOR shadow */
+    HW_WRITE(0xD01B, 0x14);              /* PRIOR */
+    for (int i = 0; i <= 0x56; i++) {     /* clear the canopy-post player buffers $0C31/$0D31 */
         mem[0x0C31 + i] = 0;
         mem[0x0D31 + i] = 0;
     }
-    bus_write(0xD00C, 0);
-    for (int i = 0; i <= 3; i++)          /* L_5f9f: TYA -> store Y(=3) */
+    HW_WRITE(0xD00C, 0);                 /* SIZEM */
+    for (int i = 0; i <= 3; i++)          /* SIZEP0-3 (shadowed in mem[$D008+]) */
         mem[0xD008 + i] = 3;
-    bus_write(0xD000, 0x2D);
-    bus_write(0xD002, 0x2D);
+    HW_WRITE(0xD000, 0x2D);              /* HPOSP0 */
+    HW_WRITE(0xD002, 0x2D);              /* HPOSP2 */
     mem[0x00B5] = 0xBE;
-    bus_write(0xD003, 0xBE);
+    HW_WRITE(0xD003, 0xBE);              /* HPOSP3 */
     clear_colors();
-    bus_write(0xD40E, 0xC0);
-    bus_write(0x022F, 0x3F);
-    bus_write(0xD01D, 0x03);
-    bus_write(0x02C0, 0x00);
-    bus_write(0x02C8, 0x06);
+    HW_WRITE(0xD40E, 0xC0);             /* NMIEN */
+    bus_write(0x022F, 0x3F);            /* SDMCTL shadow */
+    HW_WRITE(0xD01D, 0x03);             /* GRACTL */
+    bus_write(0x02C0, 0x00);            /* PCOLR0 shadow */
+    bus_write(0x02C8, 0x06);           /* COLOR4/border shadow */
     frame_counter = 0x88;
     fill_region_2000();
     wait_vcount_ge_7a();
-    bus_write(0x0200, 0xAD);
+    bus_write(0x0200, 0xAD);             /* VDSLST shadow (launch/tunnel DLI) */
     bus_write(0x0201, 0x6C);
-    bus_write(0xD402, 0x00);
-    bus_write(0xD403, 0x30);
+    HW_WRITE(0xD402, 0x00);              /* DLISTL/H: launch display list $3000 */
+    HW_WRITE(0xD403, 0x30);
     fill_four_bufs_ff();
     LDA(sound_active_flag);
     if (!cpu.Z) goto L_5ff8;
@@ -7481,10 +7492,10 @@ L_63a7:
     reorder_sprite_slot();                /* consumes Y */
     for (int i = 0; i <= 3; i++)          /* L_64ed */
         mem[0xD008 + i] = 0x01;
-    bus_write(0xD000, 0x38);
+    HW_WRITE(0xD000, 0x38);              /* HPOSP0 */
     mem[0x00B5] = 0x62;
-    bus_write(0xD002, 0x8E);
-    bus_write(0xD003, 0xB8);
+    HW_WRITE(0xD002, 0x8E);              /* HPOSP2 */
+    HW_WRITE(0xD003, 0xB8);              /* HPOSP3 */
     clear_scroll_accum();
     LDX(0x2C);
     do {                                  /* L_650b */
@@ -7503,10 +7514,10 @@ L_63a7:
     dl_param_lo = 0x10;
     dl_param_hi = 0x18;
     wait_vcount_ge_7a();
-    bus_write(0x0200, 0xC2);
+    bus_write(0x0200, 0xC2);             /* VDSLST shadow (stars DLI) */
     bus_write(0x0201, 0x6C);
-    bus_write(0xD402, 0x20);
-    bus_write(0xD403, 0x31);
+    HW_WRITE(0xD402, 0x20);              /* DLISTL/H: stars display list $3120 */
+    HW_WRITE(0xD403, 0x31);
     init_object_positions();
     terrain_state = 0x7F;
     fill_terrain_columns();
