@@ -1518,13 +1518,17 @@ void RescueOnFractalus::deriveRenderSignals()
     // Title uses a cheap 20-cell shadow scan, so forcing it every transitional frame is fine.
     if (g_doorFieldReady == 0u || (rsStars && !prevRsStars) || (rsFlight && !prevRsFlight))
         g_titleDirty = 1;
-    // The cockpit full repaint (decodeCockpitFull = 560 cells, no shadow) must NOT run every
-    // boot frame — forcing it while g_doorFieldReady==0 full-decoded the whole region every
-    // frame and visibly slowed the standby reveal.  display_setup builds the cockpit once, so
-    // repaint only on EDGES: the first render (initial cockpitForceFull=true), when standby
-    // becomes ready (g_doorFieldReady 0->nonzero = cockpit built), and on stars/flight entry.
-    if ((g_doorFieldReady != 0u && prevDoorFieldReady == 0u)
-        || (rsStars && !prevRsStars) || (rsFlight && !prevRsFlight))
+    // The cockpit full repaint (decodeCockpitFull = 560 cells) is EXPENSIVE (~300ms even after
+    // the decode LUT) and must run only when the static dashboard is actually (re)built.  That
+    // happens exactly ONCE: the transpiled display_setup builds it during the standby
+    // construction, latched by the g_doorFieldReady 0->nonzero edge below.  There is a SINGLE
+    // persistent cockpitBitmap shared by every copper list (never cleared on a scene switch), and
+    // cockpit_display ($587B) is an input handler that writes NO cockpit cells — so the decoded
+    // dashboard survives Standby->Doors->Tunnel->Stars->Flight unchanged, with dial/digit deltas
+    // caught incrementally by the g_ck* writer registry.  So the old stars-/flight-ENTRY repaints
+    // were redundant; they cost a ~580ms tunnel->stars freeze and a ~700ms flight-entry freeze.
+    // Repaint on the build edge only.
+    if (g_doorFieldReady != 0u && prevDoorFieldReady == 0u)
         cockpitForceFull = true;
     prevRsStars         = rsStars;
     prevRsFlight        = rsFlight;
