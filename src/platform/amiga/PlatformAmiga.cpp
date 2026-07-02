@@ -537,6 +537,13 @@ extern "C" volatile unsigned short g_probeFlightVbi = 0;  // g_vbiCount at fligh
 // renderFrame() no-yield-gap probe:
 extern "C" volatile unsigned short g_maxRenderGap = 0, g_maxGapAtVbi = 0, g_maxGapVvblki = 0;
 extern "C" volatile unsigned char g_maxGap060B = 0, g_maxGap004A = 0;
+// Cinematic-only render-gap probe (launch VBI $52D7 active): isolates a tunnel->stars freeze.
+extern "C" volatile unsigned short g_maxCineGap = 0, g_maxCineGapAtVbi = 0;
+extern "C" volatile unsigned char g_maxCineGap060B = 0;
+// display_setup launch-tail milestone stamps: rof_ds_mile(i) records g_vbiCount at milestone i,
+// so a big jump between consecutive stamps localises the ~580ms cinematic freeze to one stretch.
+extern "C" volatile unsigned short g_dsMile[16] = {0};
+extern "C" void rof_ds_mile(int i) { if (i >= 0 && i < 16) g_dsMile[i] = g_vbiCount; }
 // RTCLOK ownership-race probe: catch frames where RTCLOK ($0014) is advanced by BOTH the VBI
 // body AND renderFrame (double-count -> equality spin-waits overshoot -> ~256-frame wrap), and
 // frames where renderFrame read a "torn"/unexpected VVBLKI vector during the $52D7<->$4FF5 swap.
@@ -620,12 +627,21 @@ void PlatformAmiga::renderFrame() {
         static uint16_t s_lastEntryVbi = 0;
         uint16_t nowVbi = g_vbiCount;
         uint16_t gap = (uint16_t)(nowVbi - s_lastEntryVbi);
+        uint16_t vvblki = (uint16_t)(mem[0x0222] | (mem[0x0223] << 8));
         if (nowVbi > 360 && gap > g_maxRenderGap) {
             g_maxRenderGap   = gap;
             g_maxGapAtVbi    = nowVbi;
-            g_maxGapVvblki   = (uint16_t)(mem[0x0222] | (mem[0x0223] << 8));
+            g_maxGapVvblki   = vvblki;
             g_maxGap060B     = mem[0x060B];
             g_maxGap004A     = mem[0x004A];
+        }
+        // Cinematic-only gap: worst render freeze while the launch VBI ($52D7) is active
+        // (i.e. NOT the flight VBI $4FF5) — pins a tunnel->stars-transition freeze that the
+        // (larger) first-flight gap would otherwise overwrite in g_maxRenderGap.
+        if (nowVbi > 360 && vvblki != 0x4FF5u && gap > g_maxCineGap) {
+            g_maxCineGap    = gap;
+            g_maxCineGapAtVbi = nowVbi;
+            g_maxCineGap060B  = mem[0x060B];
         }
         s_lastEntryVbi = nowVbi;
     }

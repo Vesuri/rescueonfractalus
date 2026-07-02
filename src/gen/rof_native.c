@@ -44,6 +44,8 @@ extern volatile unsigned long g_probeDispSetup, g_probeGameInit, g_probeIntro,
 extern volatile unsigned long g_iterMax, g_iterLast, g_iterPostDs,
     g_fSetup, g_fClear, g_fDraw, g_fColl, g_fState, g_fEnemy;
 extern volatile unsigned short g_probeFlightVbi, g_iterCount, g_iterMaxAt;
+extern void rof_ds_mile(int i);
+#define DS_MILE(i) rof_ds_mile(i)
 /* Cumulative flight-VBI ISR beam-lines (bumped by flight_vbi_native).  Subtracted in
  * FP_TIME so a phase's bucket excludes ISR firings that land in its window — otherwise
  * the ~5 ms 50 Hz VBI inflates the (short) clear/setup/collision buckets. */
@@ -62,6 +64,7 @@ extern volatile unsigned long g_isrBeamLines;
 #define FP_TIME(stmt, acc) do { stmt; } while (0)
 #define FP_ITER()      ((void)0)
 #define FP_ITER_MARK() ((void)0)
+#define DS_MILE(i)     ((void)0)
 #endif
 
 /* terrain-draw shape counters: how often the hot inner ops run (see rof_native_amiga.cpp). */
@@ -7278,6 +7281,7 @@ L_634a:
     read_console_trig_delta();
     if (cpu.Z) goto L_62f6;
 L_634f:
+    DS_MILE(0);
     audio_timer_setup();
     rle_unpack_to_07f9();                 /* consumes Y */
     if (cockpit_flag == 0) {
@@ -7326,6 +7330,7 @@ L_63a7:
     build_line_addr_table_1000();
     draw_frame_pattern_seq();             /* consumes Y */
     platform_tunnel_rings_drawn();   /* hook: convert the freshly-drawn $1000 ring field to bitplanes */
+    DS_MILE(1);                          /* end of stretch A (L_634f -> here: pure compute, no ds_frame) */
     cpu.X = 0x01;                        /* input_init takes X */
     input_init();
     do { ds_frame(); } while (mem[0x067E] != 0x1F);   /* wait for the door VBI to set $067E==$1F */
@@ -7373,6 +7378,7 @@ L_63a7:
     mem[0x06E6] = 0xFF;
     /* wait for the door-swoosh VBI counter $0686 to reach $64 */
     do { ds_frame(); } while (mem[0x0686] != 0x64);
+    DS_MILE(2);                          /* door/HUD sweep done (VBI-paced) */
     init_row_coords_9c();
     cpu.A = 0x00;                        /* draw_cockpit_dial_bar takes A */
     draw_color_idx = 0;
@@ -7412,6 +7418,7 @@ L_63a7:
     HW_WRITE(0xD002, 0x8E);              /* HPOSP2 */
     HW_WRITE(0xD003, 0xB8);              /* HPOSP3 */
     clear_scroll_accum();
+    DS_MILE(3);                          /* end of stretch B (init_row_coords/reorder/L_650b clear) */
     for (int8_t x = 0x2C; x >= 0; x--) {          /* clear the 46-byte line buffer for rows $2C..0 */
         row_table_stride = mem[0x073D + x];       /* $C1 = line pointer lo */
         player_speed     = mem[0x0793 + x];       /* $C2 = line pointer hi */
@@ -7419,6 +7426,7 @@ L_63a7:
         for (int8_t y = 0x2D; y >= 0; y--)
             mem[p + y] = 0;
     }
+    DS_MILE(4);                          /* L_650b line-buffer clear done */
     copy_192_to_1800();
     mem[0x00DC] = 0;
     display_flags = 0;
@@ -7432,15 +7440,18 @@ L_63a7:
     init_object_positions();
     terrain_state = 0x7F;
     fill_terrain_columns();
+    DS_MILE(5);                          /* end of stretch C (copy_192/stars-DL/init_obj/fill_terrain) */
     for (uint8_t a = 0x00; a != 0x0D; a++) {   /* fade colour shadows $02C0..$02C3 up $00..$0C */
         for (int8_t x = 0x03; x >= 0; x--)
             mem[0x02C0 + x] = a;
         wait_frames_2();
     }
+    DS_MILE(6);                          /* $6557 colour fade done (VBI-paced) */
     cpu.A = 0x30;                        /* build_line_addr_table_1000_stride takes A */
     build_line_addr_table_1000_stride();
     /* wait until terrain_state drops below $04 (CMP #$04; BPL) */
     do { ds_frame(); } while (!((uint8_t)(terrain_state - 0x04) & 0x80));
+    DS_MILE(7);                          /* $656e terrain_state<4 wait done */
     RTCLOK_LOW = 0;
     do {                                  /* L_6578: every other frame, advance object positions */
         ds_frame();
@@ -7452,6 +7463,7 @@ L_63a7:
         }
         /* L_6590 */
     } while (terrain_state != 0);
+    DS_MILE(8);                          /* $6578 stars-approach done -> flight */
     return;
 }
 
