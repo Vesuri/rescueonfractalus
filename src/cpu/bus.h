@@ -16,9 +16,27 @@
 #include "cpu.h"
 #include "../platform/platform_c.h"
 
+#ifdef ROF_PLATFORM_AMIGA
+/* Direct, non-virtual POKEY RANDOM ($D20A) LFSR step (PlatformAmiga.cpp).  The generic
+   platform_hw_read path is a C bridge + a VIRTUAL hwRead dispatch — ~2 call frames + a
+   vtable lookup per read.  RANDOM is read in tight RNG loops (fill_terrain_columns reads
+   it ~360x in one go → ~35ms of pure call-chain overhead), so route $D20A straight to the
+   LFSR here.  Amiga-only: the SDL build keeps the platform_hw_read path so `make validate`
+   still exercises the same reference LFSR as the 6502 oracle. */
+#ifdef __cplusplus
+extern "C" uint8_t rof_pokey_random(void);
+#else
+extern uint8_t rof_pokey_random(void);
+#endif
+#endif
+
 static inline uint8_t bus_read(uint16_t addr) {
-    if (addr >= 0xD000 && addr < 0xD800)
+    if (addr >= 0xD000 && addr < 0xD800) {
+#ifdef ROF_PLATFORM_AMIGA
+        if (addr == 0xD20Au) return rof_pokey_random();
+#endif
         return platform_hw_read(addr);
+    }
     return mem[addr];
 }
 

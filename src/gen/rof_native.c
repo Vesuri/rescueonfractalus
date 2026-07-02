@@ -7428,6 +7428,7 @@ L_63a7:
     }
     DS_MILE(4);                          /* L_650b line-buffer clear done */
     copy_192_to_1800();
+    DS_MILE(9);                          /* copy_192_to_1800 done */
     mem[0x00DC] = 0;
     display_flags = 0;
     dl_param_lo = 0x10;
@@ -7438,9 +7439,17 @@ L_63a7:
     HW_WRITE(0xD402, 0x20);              /* DLISTL/H: stars display list $3120 */
     HW_WRITE(0xD403, 0x31);
     init_object_positions();
+    DS_MILE(10);                         /* init_object_positions done */
     terrain_state = 0x7F;
+#ifdef ROF_FLIGHT_PROBE
+    { extern volatile unsigned long g_fillTerrTicks, g_fillTerrIsr;
+      unsigned long _ft0 = rof_subclock(), _fi = g_isrBeamLines;
+      fill_terrain_columns();
+      g_fillTerrTicks = rof_subclock() - _ft0; g_fillTerrIsr = g_isrBeamLines - _fi; }
+#else
     fill_terrain_columns();
-    DS_MILE(5);                          /* end of stretch C (copy_192/stars-DL/init_obj/fill_terrain) */
+#endif
+    DS_MILE(5);                          /* end of stretch C (fill_terrain_columns done) */
     for (uint8_t a = 0x00; a != 0x0D; a++) {   /* fade colour shadows $02C0..$02C3 up $00..$0C */
         for (int8_t x = 0x03; x >= 0; x--)
             mem[0x02C0 + x] = a;

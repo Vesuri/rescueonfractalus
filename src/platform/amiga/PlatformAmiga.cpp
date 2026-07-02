@@ -184,6 +184,11 @@ static uint8_t pokey_random_step(void)
 
 uint8_t PlatformAmiga::pokeyRandom() { return pokey_random_step(); }
 
+// Direct POKEY RANDOM accessor for bus_read($D20A) — bypasses the platform_hw_read C bridge
+// + virtual hwRead dispatch (see bus.h).  Same lfsr_state hwRead($D20A) steps, so the RANDOM
+// sequence is identical to the generic path.
+extern "C" uint8_t rof_pokey_random(void) { return pokey_random_step(); }
+
 // ---- Paula register helpers --------------------------------------------------
 // Layout: AUD0=$DFF0A0, AUD1=$DFF0B0, AUD2=$DFF0C0, AUD3=$DFF0D0
 // Within each: +0 PTR(32), +4 LEN(16), +6 PER(16), +8 VOL(16)
@@ -542,6 +547,8 @@ extern "C" volatile unsigned short g_maxCineGap = 0, g_maxCineGapAtVbi = 0;
 extern "C" volatile unsigned char g_maxCineGap060B = 0;
 // decodeCockpitFull one-shot timing (chip-vs-fast-RAM experiment).
 extern "C" volatile unsigned long g_ckFullTicks = 0, g_ckFullCount = 0;
+// fill_terrain_columns one-shot timing (tunnel->stars setup gap).
+extern "C" volatile unsigned long g_fillTerrTicks = 0, g_fillTerrIsr = 0;
 // display_setup launch-tail milestone stamps: rof_ds_mile(i) records g_vbiCount at milestone i,
 // so a big jump between consecutive stamps localises the ~580ms cinematic freeze to one stretch.
 extern "C" volatile unsigned short g_dsMile[16] = {0};
