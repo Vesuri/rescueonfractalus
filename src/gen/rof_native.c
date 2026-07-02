@@ -5427,6 +5427,8 @@ void draw_object_column(void) { draw_object_column_core(cpu.A); }
 static void setup_dial_bar_draw_core(uint8_t limit) {
     bar_col_threshold = limit;   /* $BF: columns below this are lit */
     dl_y4 = 0x07;                /* $BE: stop index */
+    dl_y3 = 0x0F;                /* $BD: seed the loop counter ($4450 LDA #$0F; STA $BD) —
+                                    draw_object_column_core reads its counter from here */
     draw_object_column_core(0x0F);
 }
 void setup_dial_bar_draw(void) { setup_dial_bar_draw_core(cpu.A); }

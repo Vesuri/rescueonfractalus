@@ -1794,7 +1794,12 @@ static int test_dial_bar(const char *name, void (*nat)(void), void (*t6502)(void
     int mem_fail = 0, cpu_diff = 0, printed = 0;
     for (int t = 0; t < 20000; t++) {
         memcpy(pre, snap, sizeof pre);
-        pre[0x00BD] = 0x0F; pre[0x00BE] = 0x07;          /* real dial loop bounds */
+        /* Randomize the loop counter seed $BD (0x08..0x0F: stays in-range and decrements
+           cleanly to the $BE=0x07 stop) — setup_dial_bar_draw / draw_cockpit_dial_bar must
+           seed $BD themselves (6502: LDA #$0F; STA $BD); a dropped seed reads this stale
+           value and drifts.  draw_object_column takes $BD as a genuine input, so both twins
+           read the same seed and still match. */
+        pre[0x00BD] = (uint8_t)(0x08 + (xs() & 0x07)); pre[0x00BE] = 0x07;   /* real dial loop bounds */
         Cpu6502 c = zero_cpu();
         c.A = (uint8_t)(xs() & amask);
         mem_fail += diff_run(name, pre, c, nat, t6502, t, &printed, &cpu_diff);
