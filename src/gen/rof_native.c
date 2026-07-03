@@ -594,10 +594,6 @@ void fill_horizontal_span(void) {
      * field is RAM, so hoist them and write mem[] directly — no per-byte bus dispatch. */
     uint16_t base1 = (uint16_t)(sync_flag | (dl_ptr_lo << 8));
     uint16_t base2 = (uint16_t)(frame_counter | (draw_row_ptr2_hi << 8));
-#ifdef ROF_FLIGHT_PROBE
-    { extern volatile unsigned long g_dfHCalls, g_dfHCols;
-      g_dfHCalls++; g_dfHCols += (unsigned)cnt + 1u; }
-#endif
     fill_horizontal_span_core(base1, base2, y, cnt, pat);
     span_pixel_count = 0xFF;                                    /* faithful exit: count ran to -1 */
     cpu.Y = lo;                                           /* last Y set at loop top (incidental) */
@@ -723,10 +719,6 @@ static void fill_vertical_span_core(uint8_t r0, uint8_t r1, uint8_t colL, uint8_
 void fill_vertical_span(void) {
     uint8_t r0 = draw_row_bottom, r1 = draw_row_top;
     uint8_t colL = draw_x_left, colR = draw_x_right, maskSel = draw_color_idx;
-#ifdef ROF_FLIGHT_PROBE
-    { extern volatile unsigned long g_dfVCalls, g_dfVRows;
-      g_dfVCalls++; g_dfVRows += (unsigned)(uint8_t)(r1 - r0) + 1u; }
-#endif
     fill_vertical_span_core(r0, r1, colL, colR, maskSel);
     /* Faithful exit state: $0084 = last row + 1; $80/$81 = addr table[last row];
      * $00DF = $FF; cpu.X = mask index, cpu.Y = colR>>1 (cpu state is incidental). */
@@ -758,23 +750,63 @@ void plot_pixel_2bpp(void) {
     cpu.X = savedX;
 }
 
-/* draw_symmetric_span_loop @ $6642 — draw $0096 nested span pairs.  The fill
- * pattern $00B9 = $0094 | maskTbl[$0094].  Each iteration draws one horizontal and
- * one vertical span, then steps the four edge coordinates inward ($9C--, $9D++,
- * $9E++, $9F--).  Loops $0096 times (DEC; BNE). */
+/* draw_symmetric_span_loop @ $6642 — draw one concentric-rectangle group ($0096 nested
+ * rectangles) of the door frame.  Each rectangle is a horizontal edge pair (top+bottom rows)
+ * + a vertical edge pair (left+right columns) in the current pattern colour; after each, the
+ * four edges step one pixel inward.
+ *
+ * The four edge coordinates ($9C/$9D left/right, $9E/$9F top/bottom) are held in LOCALS for
+ * the whole run and passed straight to fill_horizontal_span_core / fill_vertical_span_core —
+ * eliminating the per-rectangle ZP round-trip the old code paid (each fill_*_span shim re-read
+ * those four coords + the pattern from zero page every call, ~10 volatile reads/rectangle).
+ * The shims' ZP scratch is dead until return, so we write the coords + reproduce the exact
+ * exit scratch the last fill pair left ONCE after the loop (byte-identical to the oracle). */
 void draw_symmetric_span_loop(void) {
-    uint8_t v94 = draw_color_idx;
-    draw_pattern_byte = (uint8_t)(v94 | mem[MEM_pixel_or_mask_tbl + v94]);
+    uint8_t colour = draw_color_idx;
+    uint8_t pat = (uint8_t)(colour | mem[MEM_pixel_or_mask_tbl + colour]);
+    draw_pattern_byte = pat;
+
+    uint8_t xL = draw_x_left, xR = draw_x_right, top = draw_row_top, bot = draw_row_bottom;
+    uint8_t count = span_row_count;
+    uint8_t lxL = xL, lxR = xR, ltop = top, lbot = bot;   /* last-drawn coords, for the exit scratch */
     for (;;) {
-        fill_horizontal_span();
-        fill_vertical_span();
-        draw_x_left = (uint8_t)(draw_x_left - 1);
-        draw_x_right = (uint8_t)(draw_x_right + 1);
-        draw_row_top = (uint8_t)(draw_row_top + 1);
-        draw_row_bottom = (uint8_t)(draw_row_bottom - 1);
-        uint8_t n = (uint8_t)(span_row_count - 1);
-        span_row_count = n;
-        if (n == 0) break;                                /* DEC $0096; BNE */
+        uint16_t baseTop = (uint16_t)(mem[MEM_row_base_lo + top] | (mem[MEM_row_base_hi + top] << 8));
+        uint16_t baseBot = (uint16_t)(mem[MEM_row_base_lo + bot] | (mem[MEM_row_base_hi + bot] << 8));
+        uint8_t lo = (uint8_t)(xL >> 1);              /* left byte column  */
+        uint8_t hi = (uint8_t)(xR >> 1);              /* right byte column */
+        if (xR & 1) lo = (uint8_t)(lo + 1);           /* odd right edge -> nudge left in  */
+        else        hi = (uint8_t)(hi - 1);           /* even right edge -> nudge right in */
+#ifdef ROF_FLIGHT_PROBE
+        { extern volatile unsigned long g_dfHCalls, g_dfHCols, g_dfVCalls, g_dfVRows;
+          g_dfHCalls++; g_dfHCols += (unsigned)(uint8_t)(hi - lo) + 1u;
+          g_dfVCalls++; g_dfVRows += (unsigned)(uint8_t)(top - bot) + 1u; }
+#endif
+        fill_horizontal_span_core(baseTop, baseBot, hi, (uint8_t)(hi - lo), pat);
+        fill_vertical_span_core(bot, top, xL, xR, colour);
+        lxL = xL; lxR = xR; ltop = top; lbot = bot;
+        xL = (uint8_t)(xL - 1); xR = (uint8_t)(xR + 1);
+        top = (uint8_t)(top + 1); bot = (uint8_t)(bot - 1);
+        if ((uint8_t)(--count) == 0) break;           /* DEC $0096; BNE */
+    }
+    draw_x_left = xL; draw_x_right = xR; draw_row_top = top; draw_row_bottom = bot;
+    span_row_count = 0;
+    /* Reproduce the ZP scratch the fill_horizontal_span + fill_vertical_span shims left on the
+     * final rectangle (coords lxL/lxR/ltop/lbot): dl_ptr_hi/screen_ptr_lo = the horizontal
+     * lo/hi byte columns; $80/$81 = row addr[top]; $B7/$B8 = row addr[bot]; $84 = top+1;
+     * $DF = $FF. */
+    {
+        uint8_t lo = (uint8_t)(lxL >> 1);
+        uint8_t hi = (uint8_t)(lxR >> 1);
+        if (lxR & 1) lo = (uint8_t)(lo + 1);
+        else         hi = (uint8_t)(hi - 1);
+        dl_ptr_hi     = lo;
+        screen_ptr_lo = hi;
+        frame_counter    = mem[MEM_row_base_lo + lbot];
+        draw_row_ptr2_hi = mem[MEM_row_base_hi + lbot];
+        sync_flag = mem[MEM_row_base_lo + ltop];
+        dl_ptr_lo = mem[MEM_row_base_hi + ltop];
+        screen_ptr_hi = (uint8_t)(ltop + 1);
+        span_pixel_count = 0xFF;
     }
 }
 
