@@ -594,31 +594,50 @@ void fill_horizontal_span(void) {
      * field is RAM, so hoist them and write mem[] directly — no per-byte bus dispatch. */
     uint16_t base1 = (uint16_t)(sync_flag | (dl_ptr_lo << 8));
     uint16_t base2 = (uint16_t)(frame_counter | (draw_row_ptr2_hi << 8));
+#ifdef ROF_FLIGHT_PROBE
+    { extern volatile unsigned long g_dfHCalls, g_dfHCols;
+      g_dfHCalls++; g_dfHCols += (unsigned)cnt + 1u; }
+#endif
     fill_horizontal_span_core(base1, base2, y, cnt, pat);
     span_pixel_count = 0xFF;                                    /* faithful exit: count ran to -1 */
     cpu.Y = lo;                                           /* last Y set at loop top (incidental) */
 }
 
-/* plot_glyph_pixel_masked @ $66DE — OR/AND a 2-bit pixel into the screen byte at
- * ($80)+Y using the OR mask $66E9[X] and AND mask $66FB[X].  Leaf (entry X/Y). */
-void plot_glyph_pixel_masked(void) {
-    uint16_t a = ZP_IND_Y(0x80);          /* screen field ($1000/$2000) is RAM: direct mem[] */
-    uint8_t v = mem[a];                   /* (bus_read/write would HW-range-check every pixel) */
-    v |= mem[MEM_pixel_or_mask_tbl + cpu.X];
-    v &= mem[MEM_pixel_and_mask_tbl + cpu.X];
-    mem[a] = v;
+/* Set one 2-bit pixel into the screen byte at rowBase+byteOff: OR in the pixel's colour bits,
+ * then AND away the other pixel's bits.  Both masks are indexed by maskSel (which encodes the
+ * colour AND which of the four 2-bit pixels in the byte to touch).  The screen field
+ * ($1000/$2000) is plain RAM, so we read-modify-write mem[] directly (bus_read/bus_write would
+ * range-check hardware on every pixel; there is no hardware here to write). */
+static inline void plot_glyph_pixel_masked_core(uint16_t rowBase, uint8_t byteOff, uint8_t maskSel) {
+    uint16_t a = (uint16_t)(rowBase + byteOff);
+    mem[a] = (uint8_t)((mem[a] | mem[MEM_pixel_or_mask_tbl + maskSel])
+                                & mem[MEM_pixel_and_mask_tbl + maskSel]);
 }
 
-/* plot_pixel_masked @ $66D5 — entry A = column.  Y = A>>1 (byte index); the mask
- * index X = $0094, plus 9 (ADC #$08 with the LSR's shifted-out carry) for odd
- * columns; tail-calls plot_glyph_pixel_masked. */
+/* Plot one pixel at pixel-column `col` on the row whose byte-address base is rowBase, in colour
+ * `colour`.  Two pixels share a byte, so the byte offset is col>>1; odd columns select the high
+ * pixel by biasing the mask index by 9 (the Atari's ADC #$08 + shifted-out LSR carry). */
+static inline void plot_pixel_masked_core(uint16_t rowBase, uint8_t col, uint8_t colour) {
+    uint8_t maskSel = (col & 1u) ? (uint8_t)(colour + 9u) : colour;
+    plot_glyph_pixel_masked_core(rowBase, (uint8_t)(col >> 1), maskSel);
+}
+
+/* $66DE 6502-ABI shim (validation oracle): row pointer in $80/$81 (misnamed sync_flag/dl_ptr_lo
+ * — see docs/rename.md), byte offset in Y, mask index in X. */
+void plot_glyph_pixel_masked(void) {
+    plot_glyph_pixel_masked_core((uint16_t)(sync_flag | (dl_ptr_lo << 8)), cpu.Y, cpu.X);
+}
+
+/* $66D5 6502-ABI shim: pixel column in A, colour from $0094 (draw_color_idx), row ptr $80/$81.
+ * Transliterated oracle callers (fill_vertical_span__t6502 etc.) reuse the registers this leaves
+ * — Y = byte offset, X = mask index — for a following plot_glyph_pixel_masked, so reproduce them. */
 void plot_pixel_masked(void) {
     uint8_t col = cpu.A;
-    cpu.Y = (uint8_t)(col >> 1);
-    uint8_t x = draw_color_idx;
-    if (col & 1) x = (uint8_t)(x + 0x09);   /* ADC #$08 with carry=1 from LSR */
-    cpu.X = x;
-    plot_glyph_pixel_masked();
+    uint8_t byteOff = (uint8_t)(col >> 1);
+    uint8_t maskSel = (col & 1u) ? (uint8_t)(draw_color_idx + 9u) : draw_color_idx;
+    plot_glyph_pixel_masked_core((uint16_t)(sync_flag | (dl_ptr_lo << 8)), byteOff, maskSel);
+    cpu.Y = byteOff;
+    cpu.X = maskSel;
 }
 
 /* set_row_ptr @ $66C8 — load the bitmap row pointer $0080/$0081 from the per-
@@ -704,6 +723,10 @@ static void fill_vertical_span_core(uint8_t r0, uint8_t r1, uint8_t colL, uint8_
 void fill_vertical_span(void) {
     uint8_t r0 = draw_row_bottom, r1 = draw_row_top;
     uint8_t colL = draw_x_left, colR = draw_x_right, maskSel = draw_color_idx;
+#ifdef ROF_FLIGHT_PROBE
+    { extern volatile unsigned long g_dfVCalls, g_dfVRows;
+      g_dfVCalls++; g_dfVRows += (unsigned)(uint8_t)(r1 - r0) + 1u; }
+#endif
     fill_vertical_span_core(r0, r1, colL, colR, maskSel);
     /* Faithful exit state: $0084 = last row + 1; $80/$81 = addr table[last row];
      * $00DF = $FF; cpu.X = mask index, cpu.Y = colR>>1 (cpu state is incidental). */
@@ -905,17 +928,26 @@ void scroll_field_columns(void) {
  * from the row counter, then masked-plot three columns ($009C, $009D, and
  * $00A0=$009D+1) into that row.  Tail of draw_frame_pattern_seq. */
 void draw_shape_rows_loop(void) {
-    draw_row = 0x55;
-    draw_iter_count = (uint8_t)(draw_x_right + 1);             /* CLC; ADC #1 */
-    for (;;) {
-        set_row_ptr_from_count();                         /* $80/$81 = table[$0092] */
-        cpu.A = draw_x_left; plot_pixel_masked();
-        cpu.A = draw_x_right; plot_pixel_masked();
-        cpu.A = draw_iter_count; plot_pixel_masked();
-        uint8_t n = (uint8_t)(draw_row - 1);
-        draw_row = n;
-        if (n & 0x80) break;                              /* DEC $0092; BPL */
+    uint8_t colL = draw_x_left, colR = draw_x_right;
+    uint8_t colR1 = (uint8_t)(colR + 1);
+    uint8_t colour = draw_color_idx;
+    draw_iter_count = colR1;                              /* $A0 = $9D+1 (caller-visible scratch) */
+    /* Walk the $073D/$0793 per-scanline base-address table with a descending pointer (row
+     * $55..$00) instead of an indexed reload each row.  ISR-safe: build_row_addr_table (main
+     * loop) is the only writer of this table. */
+    const uint8_t* lop = (const uint8_t*)mem + MEM_row_base_lo + 0x55;
+    const uint8_t* hip = (const uint8_t*)mem + MEM_row_base_hi + 0x55;
+    for (int8_t row = 0x55; row >= 0; row--, lop--, hip--) {
+        uint16_t rowBase = (uint16_t)(*lop | (*hip << 8));
+        plot_pixel_masked_core(rowBase, colL,  colour);
+        plot_pixel_masked_core(rowBase, colR,  colour);
+        plot_pixel_masked_core(rowBase, colR1, colour);
     }
+    /* Faithful exit scratch the 6502 leaves: row counter $92 ran to $FF, and the row pointer
+     * $80/$81 holds table[0] (the last row set). */
+    draw_row = 0xFF;
+    sync_flag = mem[MEM_row_base_lo];
+    dl_ptr_lo = mem[MEM_row_base_hi];
 }
 
 /* draw_frame_pattern_seq @ $65FB — the per-frame doors/tunnel frame drawer.  After
@@ -924,21 +956,21 @@ void draw_shape_rows_loop(void) {
  * and cycle the pattern selector $0094 through 1..6.  Finally DEC $0094 and tail
  * draw_shape_rows_loop.  (Entry A=$01 is positive so the $6602 BMI never fires.) */
 void draw_frame_pattern_seq(void) {
-    init_row_coords_9c();
+    init_row_coords_9c();                                 /* seed the four edge coords $9C-$9F */
     draw_color_idx = 0x01;
-    for (;;) {
-        cpu.Y = draw_iter_count;
-        span_row_count = mem[0x6E0F + cpu.Y];
-        draw_symmetric_span_loop();
-        uint8_t v = (uint8_t)(draw_color_idx + 1);           /* INC $0094 */
-        if (v == 0x07) v = 0x01;                          /* CMP #7; BEQ -> wrap to 1 */
-        draw_color_idx = v;
-        uint8_t a0 = (uint8_t)(draw_iter_count - 1);          /* DEC $00A0 */
-        draw_iter_count = a0;
-        if (a0 & 0x80) break;                             /* BPL: loop while N clear */
+    /* $6E0F = the door-frame span-thickness table (unnamed ROM table — see docs/rename.md):
+     * one entry per concentric rectangle, index $13 down to 0 (20 rectangles).  Walk it with a
+     * descending pointer; each entry is that rectangle's row count. */
+    const uint8_t* thick = (const uint8_t*)mem + 0x6E0F + 0x13;
+    uint8_t colour = 0x01;
+    for (int8_t ring = 0x13; ring >= 0; ring--, thick--) {
+        span_row_count = *thick;                          /* $0096 = this rectangle's thickness */
+        draw_symmetric_span_loop();                       /* draws it in the current colour */
+        colour = (colour == 0x06) ? 0x01 : (uint8_t)(colour + 1);   /* cycle pattern colour 1..6 */
+        draw_color_idx = colour;
     }
-    draw_color_idx = (uint8_t)(draw_color_idx - 1);             /* DEC $0094 */
-    draw_shape_rows_loop();                                /* tail */
+    draw_color_idx = (uint8_t)(colour - 1);               /* faithful: final DEC $0094 */
+    draw_shape_rows_loop();                                /* tail: the three vertical guide columns */
 }
 
 /* draw_vline_pair @ $6C4D — plot a symmetric pair of vertical lines.  Entry A is the

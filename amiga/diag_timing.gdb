@@ -11,6 +11,8 @@ printf "  standby->doors gap=%u frames (~%ums) atVbi=%u 060B=%02x  [window 60-82
   g_doorGap, g_doorGap*20, g_doorGapAtVbi, g_doorGap060B
 printf "  stretchA ticks: audio=%lu rle=%lu fillmsg=%lu savecol=%lu geom=%lu input=%lu vobj=%lu bcd=%lu startup=%lu framepat=%lu rings=%lu\n", \
   g_saTicks[0], g_saTicks[1], g_saTicks[2], g_saTicks[3], g_saTicks[4], g_saTicks[5], g_saTicks[6], g_saTicks[7], g_saTicks[8], g_saTicks[9], g_saTicks[10]
+printf "  door-frame pixels: vertCalls=%lu vertRows=%lu (x2=%lu RMW) | horizCalls=%lu horizCols=%lu (x2=%lu wr) | shape=258 RMW\n", \
+  g_dfVCalls, g_dfVRows, g_dfVRows*2, g_dfHCalls, g_dfHCols, g_dfHCols*2
 printf "dsMile vbi: 0=%u 1A=%u 2door=%u 3B=%u 4clr=%u 5C=%u 6fade=%u 7ts4=%u 8done=%u\n", \
   g_dsMile[0], g_dsMile[1], g_dsMile[2], g_dsMile[3], g_dsMile[4], g_dsMile[5], g_dsMile[6], g_dsMile[7], g_dsMile[8]
 printf "  stretchC: 4clr=%u copy192=%u initObj=%u fillTerr(5C)=%u | fillTerr=%lu ticks (~%lums)\n", \

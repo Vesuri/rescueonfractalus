@@ -256,3 +256,19 @@ tunnel→stars build-burst work):**
   A-pillars (P0 `$0C32` / P1 `$0D32`, RLE-decoded) + starfield (P2 `$0E32` / P3 `$0F32`) —
   see CLAUDE.md "canopy POSTS"; a name should reflect the shared player-buffer role, not
   just "terrain".
+
+**Door-frame drawer functions + memory (rof_native.c, cleaned 2026-07-03 during the
+standby→doors freeze work — `draw_frame_pattern_seq` subtree):**
+- `$0080/$0081` — currently named `sync_flag` / `dl_ptr_lo`, but in the plot/span path these
+  are the **16-bit screen row pointer** (lo/hi) that `set_row_ptr` loads from the $073D/$0793
+  table and that `plot_glyph_pixel_masked` / `fill_*_span` dereference. Misleading. Suggest
+  `row_ptr_lo` / `row_ptr_hi` (and audit other `sync_flag`/`dl_ptr_lo` uses — the names may be
+  correct in the DL-setup path but not here).
+- `$6E0F` — unnamed ROM table = the **door-frame / tunnel-ring span-thickness table** (one entry
+  per concentric rectangle), read by `draw_frame_pattern_seq`, `draw_ring_frame_step`,
+  `plot_terrain_span`, `step_accum_sub_7e`, `emit_dl_coord_pairs`. Suggest
+  `frame_span_thickness_tbl`.
+- `plot_glyph_pixel_masked` ($66DE) — no glyph is involved; it OR/ANDs one 2-bit pixel into a
+  screen byte. Suggest `plot_masked_pixel`.
+- `draw_shape_rows_loop` ($6620) — draws three **vertical guide columns** ($9C, $9D, $9D+1) down
+  all 86 rows, not "shape rows". Suggest `draw_frame_guide_columns`.

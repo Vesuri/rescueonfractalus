@@ -555,6 +555,8 @@ extern "C" volatile unsigned short g_doorGap = 0, g_doorGapAtVbi = 0;
 extern "C" volatile unsigned char g_doorGap060B = 0;
 // stretch-A per-function one-shot subclock deltas (ticks): find the standby->doors freeze.
 extern "C" volatile unsigned long g_saTicks[16] = {0};
+// door-frame draw pixel-volume counters (span calls + total bytes/edges written).
+extern "C" volatile unsigned long g_dfVCalls = 0, g_dfVRows = 0, g_dfHCalls = 0, g_dfHCols = 0;
 // decodeCockpitFull one-shot timing (chip-vs-fast-RAM experiment).
 extern "C" volatile unsigned long g_ckFullTicks = 0, g_ckFullCount = 0;
 // fill_terrain_columns one-shot timing (tunnel->stars setup gap).
