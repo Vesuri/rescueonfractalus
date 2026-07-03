@@ -243,3 +243,16 @@ NOT energy); `update_cockpit_digits_native`→`startup_init_native` ($3FFA ident
 
 Descriptive "gauge" prose still appears in some comments (Atari hardware-channel /
 "throttle gauge" descriptions) — left as-is where accurate; sweep opportunistically.
+
+**Unnamed terrain field-generator memory (rof_native.c, cleaned 2026-07-03 during the
+tunnel→stars build-burst work):**
+- `$6B5F` — 4-entry preset terrain-height table the RNG picks from (1/32 of samples).
+  Temp macro `TERRAIN_HEIGHT_TABLE` in rof_native.c; suggest a symbols.csv name
+  `terrain_height_table`.
+- `$0C32/$0D32/$0E32/$0F32` — the four parallel 89-byte terrain-height column buffers
+  (`$0100` apart), filled by `gen_terrain_column` / scrolled by `scroll_field_columns`.
+  Temp macro `TERRAIN_COL_BUF(layer,col)` in rof_native.c; suggest symbols.csv names
+  `terrain_col_buf_0..3`. ⚠ DUAL-USE: at gameplay init these same buffers hold the canopy
+  A-pillars (P0 `$0C32` / P1 `$0D32`, RLE-decoded) + starfield (P2 `$0E32` / P3 `$0F32`) —
+  see CLAUDE.md "canopy POSTS"; a name should reflect the shared player-buffer role, not
+  just "terrain".

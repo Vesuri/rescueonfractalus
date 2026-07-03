@@ -442,19 +442,32 @@ void audio_timer_setup(void) {
     bus_write(0xD208, 0x60);
 }
 
-/* random_terrain_height @ $6B47 — produce one sparse terrain-height value.
- * Reads POKEY RANDOM ($D20A): if (r & $1F) != 0 the height is 0; only when the
- * low 5 bits are all zero (1/32) does it take a second RANDOM read and index the
- * 4-entry table $6B5F[r2 & 3].  Result is returned in cpu.A (no mem writes); both
- * branches advance the RANDOM LFSR by exactly the reads the 6502 made. */
-void random_terrain_height(void) {
-    uint8_t r = (uint8_t)(bus_read(0xD20A) & 0x1F);
-    if (r != 0) {                       /* CMP #1 -> BPL taken (r >= 1): height 0 */
-        LDA(0x00);
-        return;
-    }
-    uint8_t x = (uint8_t)(bus_read(0xD20A) & 0x03);
-    LDA(mem[0x6B5F + x]);
+/* Four preset terrain-height samples ($6B5F, 4 bytes): the non-flat heights the
+ * generator picks from.  (Unnamed in symbols.csv — see docs/rename.md.) */
+#define TERRAIN_HEIGHT_TABLE 0x6B5Fu
+
+/* Base of the four parallel terrain-height column buffers ($0C32/$0D32/$0E32/$0F32,
+ * 0x100 apart), one per starfield/terrain layer, indexed by column.  (Unnamed in
+ * symbols.csv — see docs/rename.md.) */
+#define TERRAIN_COL_BUF(layer, col) mem[0x0C32u + (layer) * 0x100u + (col)]
+
+/* random_terrain_height @ $6B47 — pick one sparse terrain-height sample.
+ * Reads the POKEY RANDOM register: 31 times out of 32 the ground is flat (height 0);
+ * 1 time in 32 (when the low 5 random bits are all zero) it takes a second RANDOM read
+ * and returns one of the four preset heights from TERRAIN_HEIGHT_TABLE.  Consumes 1 or 2
+ * RANDOM reads, advancing the LFSR by exactly as many (bus_read routes $D20A to the direct
+ * rof_pokey_random() LFSR step on Amiga; SDL keeps the reference path so validate matches).
+ *
+ * The value-returning core is the hot path — fill_terrain_columns runs it ~356x in the
+ * one-shot tunnel->stars field build; returning a plain uint8_t lets the callers inline it
+ * and skip the LDA() N/Z-flag computation and the void-shim call frame. */
+static inline uint8_t random_terrain_height_core(void) {
+    if ((bus_read(0xD20Au) & 0x1F) != 0)                       /* 31/32: flat ground */
+        return 0;
+    return mem[TERRAIN_HEIGHT_TABLE + (bus_read(0xD20Au) & 0x03)];   /* 1/32: preset height */
+}
+void random_terrain_height(void) {   /* 6502-ABI shim: result in A (validate + any A-consuming caller) */
+    LDA(random_terrain_height_core());
 }
 
 /* fill_horizontal_span @ $665D — fill pattern $00B9 across a horizontal run on
@@ -624,21 +637,28 @@ void draw_symmetric_span_loop(void) {
  * terrain buffers $0C32/$0D32/$0E32/$0F32 with sparse random heights.  Each of the
  * four random_terrain_height calls advances the POKEY RANDOM LFSR; cpu.Y is
  * preserved across them (neither this routine nor random_terrain_height touch Y). */
-void gen_terrain_column(void) {
-    uint8_t y = cpu.Y;
-    random_terrain_height(); mem[0x0C32 + y] = cpu.A;
-    random_terrain_height(); mem[0x0D32 + y] = cpu.A;
-    random_terrain_height(); mem[0x0E32 + y] = cpu.A;
-    random_terrain_height(); mem[0x0F32 + y] = cpu.A;
+/* gen_terrain_column @ $6B2E — fill one column (index `col`) of all four parallel
+ * terrain-height buffers with four independent random height samples (one per layer). */
+static void gen_terrain_column_core(uint8_t col) {
+    TERRAIN_COL_BUF(0, col) = random_terrain_height_core();
+    TERRAIN_COL_BUF(1, col) = random_terrain_height_core();
+    TERRAIN_COL_BUF(2, col) = random_terrain_height_core();
+    TERRAIN_COL_BUF(3, col) = random_terrain_height_core();
+}
+void gen_terrain_column(void) {   /* 6502-ABI shim: column index in Y, last height left in A */
+    uint8_t col = cpu.Y;
+    gen_terrain_column_core(col);
+    cpu.A = TERRAIN_COL_BUF(3, col);
 }
 
 /* fill_terrain_columns @ $6AE5 — fill all 89 columns (Y=$59..$01) of the four
  * parallel terrain buffers by calling gen_terrain_column per column. */
 void fill_terrain_columns(void) {
-    for (uint8_t y = 0x59; y != 0x00; y--) {
-        cpu.Y = y;
-        gen_terrain_column();
-    }
+    /* One-shot field build (stars/planet scene): fill all 89 columns (indices $59..$01,
+     * right-to-left) of the four terrain-height buffers with fresh random samples.  Column
+     * 0 is intentionally left untouched (the original loops while the index is non-zero). */
+    for (uint8_t col = 0x59; col != 0; col--)
+        gen_terrain_column_core(col);
 }
 
 /* add_multibyte_a1 with entry A=$FF @ $6AB5 — the exact carry chain the transpile runs
@@ -686,8 +706,7 @@ void scroll_field_columns_core(uint8_t gate) {
         mem[0x0F32 + y] = mem[0x0F33 + y];
     }
     sfx_toggle_8F >>= 1;                                /* LSR $008F */
-    cpu.Y = 0x59;                                     /* Y left at $59 by the CPY #$59 loop exit */
-    gen_terrain_column();                             /* append the new rightmost column */
+    gen_terrain_column_core(0x59);                    /* append the new rightmost column */
 }
 
 /* 6502-ABI shim: entry gate value arrives in cpu.A (launch_anim_dispatch sets A = $0089). */
@@ -7419,14 +7438,29 @@ L_63a7:
     HW_WRITE(0xD003, 0xB8);              /* HPOSP3 */
     clear_scroll_accum();
     DS_MILE(3);                          /* end of stretch B (init_row_coords/reorder/L_650b clear) */
-    for (int8_t x = 0x2C; x >= 0; x--) {          /* clear the 46-byte line buffer for rows $2C..0 */
+#ifdef ROF_FLIGHT_PROBE
+    { extern volatile unsigned long g_burstClrTicks, g_burstClrIsr;
+      unsigned long _b0 = rof_subclock(), _bi = g_isrBeamLines;
+#endif
+    /* Clear the 46-byte ($2E) line buffer of each of the 45 viewport rows ($2C..0) — this
+     * zeroes the $1000 stars/planet field so undrawn rows read as black.  Row bases come from
+     * the $073D/$0793 line-pointer table (all in the main-loop-owned $1000 field; the launch
+     * VBI writes the ring at $2000 and scrolls $0C32-$0F32, never $1000), so the batched
+     * move.l zero_run is ISR-safe and byte-identical to the original per-byte clear. */
+    for (int8_t x = 0x2C; x >= 0; x--) {
         row_table_stride = mem[0x073D + x];       /* $C1 = line pointer lo */
         player_speed     = mem[0x0793 + x];       /* $C2 = line pointer hi */
         uint16_t p = (uint16_t)(row_table_stride | (player_speed << 8));
-        for (int8_t y = 0x2D; y >= 0; y--)
-            mem[p + y] = 0;
+        zero_run(mem + p, 0x2E);                  /* 46 bytes ($2D..0 inclusive) */
     }
+#ifdef ROF_FLIGHT_PROBE
+      g_burstClrTicks = rof_subclock() - _b0; g_burstClrIsr = g_isrBeamLines - _bi; }
+#endif
     DS_MILE(4);                          /* L_650b line-buffer clear done */
+#ifdef ROF_FLIGHT_PROBE
+    { extern volatile unsigned long g_burstMidTicks, g_burstMidIsr;
+      unsigned long _m0 = rof_subclock(), _mi = g_isrBeamLines;
+#endif
     copy_192_to_1800();
     DS_MILE(9);                          /* copy_192_to_1800 done */
     mem[0x00DC] = 0;
@@ -7439,6 +7473,9 @@ L_63a7:
     HW_WRITE(0xD402, 0x20);              /* DLISTL/H: stars display list $3120 */
     HW_WRITE(0xD403, 0x31);
     init_object_positions();
+#ifdef ROF_FLIGHT_PROBE
+      g_burstMidTicks = rof_subclock() - _m0; g_burstMidIsr = g_isrBeamLines - _mi; }
+#endif
     DS_MILE(10);                         /* init_object_positions done */
     terrain_state = 0x7F;
 #ifdef ROF_FLIGHT_PROBE
