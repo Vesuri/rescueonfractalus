@@ -144,6 +144,18 @@ obj/TerrainFrameSetupAssembler.o : VASMFLAGS += -DROF_TFSETUP_VERIFY
 endif
 endif
 
+# Hand-written m68k twin of fill_terrain_columns (the one-shot stars/planet field build).
+# ON by default; `make FILLTERR_C=1` falls back to the clean-C oracle.  Verify via
+# amiga/fillterr_verify.gdb (fires once — fill_terrain_columns is one-shot).
+ifndef FILLTERR_C
+FRAMEWORK_ASM_SRCS += $(AMIGA_SRC)/FillTerrainAssembler.s
+EXTRA_DEFINES += -DROF_FILLTERR_ASM
+ifdef VERIFY
+EXTRA_DEFINES += -DROF_FILLTERR_VERIFY
+obj/FillTerrainAssembler.o : VASMFLAGS += -DROF_FILLTERR_VERIFY
+endif
+endif
+
 # Objects (flattened into obj/ by basename).
 CXX_OBJS       := $(addprefix obj/,$(notdir $(CXX_SRCS:.cpp=.o)))
 CORE_C_OBJS    := $(addprefix obj/,$(notdir $(CORE_C_SRCS:.c=.o)))

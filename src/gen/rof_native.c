@@ -668,17 +668,21 @@ void gen_terrain_column(void) {   /* 6502-ABI shim: column index in Y, last heig
  * read+write per read: it's our own RNG (not POKEY-cycle-accurate), so a launch-VBI RANDOM
  * read landing mid-loop just reshuffles cosmetic terrain, no correctness concern.  SDL keeps
  * the reference bus_read($D20A) path so make validate stays byte-identical to the 6502 oracle. */
-void fill_terrain_columns(void) {
+void fill_terrain_columns_core_c(void) {
 #ifdef ROF_PLATFORM_AMIGA
     uint32_t s = rof_lfsr_state;                 /* LFSR in a register for the whole loop */
-  #define NEXT_RAND8() ( s = ((s << 1) | (((s >> 16) ^ (s >> 4)) & 1u)) & 0x1FFFFu, (uint8_t)s )
+    /* Tap = bit16 ^ bit4.  bit16 via (s>>16) (GCC: clr.w+swap, 4cyc); bit4 from the LOW BYTE
+     * ((uint8_t)s >> 4) so it's an 8cyc byte shift, not a 16cyc long lsr.l #4.  Returns the
+     * new state's low byte; callers mask it with byte ANDs. */
+  #define NEXT_RAND8() ( s = ((s << 1) | (((s >> 16) ^ ((uint8_t)s >> 4)) & 1u)) & 0x1FFFFu, (uint8_t)s )
 #else
   #define NEXT_RAND8() bus_read(0xD20Au)
 #endif
     for (uint8_t col = 0x59; col != 0; col--) {
         for (uint16_t base = 0x0C32u; base <= 0x0F32u; base += 0x100u) {
             uint8_t h = 0;                                        /* 31/32: flat ground */
-            if ((NEXT_RAND8() & 0x1F) == 0)                       /* 1/32: pick a preset height */
+            uint8_t r = NEXT_RAND8();
+            if ((r & 0x1F) == 0)                                  /* 1/32: pick a preset height */
                 h = mem[TERRAIN_HEIGHT_TABLE + (NEXT_RAND8() & 0x03)];
             mem[base + col] = h;
         }
@@ -688,6 +692,46 @@ void fill_terrain_columns(void) {
     rof_lfsr_state = s;                          /* commit the advanced LFSR back once */
 #endif
 }
+
+/* Dispatcher seam (asm-migration-plan Phase 3), mirrors project_terrain_points_core.  On the
+ * Amiga (ROF_FILLTERR_ASM) fill_terrain_columns_core is the hand-written m68k twin in
+ * FillTerrainAssembler.s (byte-width LFSR ANDs + displacement-addressed stores, which GCC won't
+ * emit); elsewhere it is the clean-C oracle above. */
+#if defined(ROF_FILLTERR_ASM) && defined(ROF_FILLTERR_VERIFY)
+/* On-target differential (fires once — fill_terrain_columns is a one-shot): run the asm twin on
+ * the live state from the current LFSR seed, snapshot the 4 buffers ($0C32..$0F8B window) + the
+ * resulting LFSR, restore both, run the C oracle from the same seed, and compare.  The C oracle's
+ * output stays LIVE so a bug can't corrupt the scene.  Read via amiga/fillterr_verify.gdb. */
+extern void fill_terrain_columns_core_asm(void);
+extern uint32_t rof_lfsr_state;
+volatile unsigned long g_fillterrCalls = 0, g_fillterrMismatch = 0,
+                       g_fillterrFirstBad = 0, g_fillterrLfsrBad = 0;
+#define FILLTERR_WIN 0x35Au                      /* $0C32..$0F8B covers all 4 buffers + gaps */
+void fill_terrain_columns_core(void) {
+    g_fillterrCalls++;
+    uint8_t* const M = (uint8_t*)mem;
+    uint32_t seed = rof_lfsr_state;
+    static uint8_t snap[FILLTERR_WIN], asmv[FILLTERR_WIN];
+    for (unsigned i = 0; i < FILLTERR_WIN; i++) snap[i] = M[0x0C32u + i];
+    fill_terrain_columns_core_asm();
+    uint32_t asmLfsr = rof_lfsr_state;
+    for (unsigned i = 0; i < FILLTERR_WIN; i++) asmv[i] = M[0x0C32u + i];
+    rof_lfsr_state = seed;
+    for (unsigned i = 0; i < FILLTERR_WIN; i++) M[0x0C32u + i] = snap[i];
+    fill_terrain_columns_core_c();
+    int bad = 0;
+    for (unsigned i = 0; i < FILLTERR_WIN; i++) if (M[0x0C32u + i] != asmv[i]) bad = 1;
+    if (bad) { if (!g_fillterrMismatch) g_fillterrFirstBad = g_fillterrCalls; g_fillterrMismatch++; }
+    if (asmLfsr != rof_lfsr_state) g_fillterrLfsrBad++;
+}
+#elif defined(ROF_FILLTERR_ASM)
+extern void fill_terrain_columns_core(void);     /* FillTerrainAssembler.s */
+#else
+void fill_terrain_columns_core(void) { fill_terrain_columns_core_c(); }
+#endif
+
+/* fill_terrain_columns @ $6AE5 — public entry (called by display_setup; validated twin). */
+void fill_terrain_columns(void) { fill_terrain_columns_core(); }
 
 /* add_multibyte_a1 with entry A=$FF @ $6AB5 — the exact carry chain the transpile runs
  * for scroll_field_columns: A1 += $FF (carry chains), then the quirky $A2/$A3 fold the
