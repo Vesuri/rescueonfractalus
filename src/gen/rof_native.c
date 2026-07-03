@@ -529,6 +529,48 @@ void random_terrain_height(void) {   /* 6502-ABI shim: result in A (validate + a
  * The column endpoints come from $009C>>1 and $009D>>1 (one adjusted by +/-1 per
  * the shifted-out bit of $009D), giving the inclusive count $00DF = hi - lo and the
  * start index Y = hi.  Writes the pattern to ($80)+Y and ($B7)+Y down to lo.  Leaf. */
+/* Fill the horizontal run [y_hi-cnt .. y_hi] of the uniform pattern byte `pat` on both
+ * scanlines (base1, base2).  Since every written byte is `pat`, this is two memsets — the
+ * FrameDrawAssembler.s twin broadcasts pat into a long and batches with move.l (the C is one
+ * volatile byte-store per pixel, which GCC can't batch).  Byte-identical: same bytes set. */
+void fill_horizontal_span_core_c(uint16_t base1, uint16_t base2, uint8_t y_hi, uint8_t cnt, uint8_t pat) {
+    uint8_t y = y_hi;
+    for (;;) {
+        mem[(uint16_t)(base1 + y)] = pat;
+        mem[(uint16_t)(base2 + y)] = pat;
+        y = (uint8_t)(y - 1);
+        if (((uint8_t)(cnt - 1)) & 0x80) break;           /* BPL: loop while N clear */
+        cnt = (uint8_t)(cnt - 1);
+    }
+}
+/* Shared verify-snapshot window for both span twins (the $1000 door field). */
+#define FVS_WIN_BASE 0x1000u
+#define FVS_WIN_LEN  0x1100u                         /* $1000..$20FF */
+#if defined(ROF_FRAMEDRAW_ASM) && defined(ROF_FRAMEDRAW_VERIFY)
+extern void fill_horizontal_span_core_asm(uint16_t base1, uint16_t base2, uint8_t y_hi, uint8_t cnt, uint8_t pat);
+volatile unsigned long g_fhsCalls = 0, g_fhsMismatch = 0, g_fhsFirstBad = 0;
+void fill_horizontal_span_core(uint16_t base1, uint16_t base2, uint8_t y_hi, uint8_t cnt, uint8_t pat) {
+    extern volatile unsigned long g_fvsCalls;   /* reuse the FVS_WIN door-field snapshot window */
+    g_fhsCalls++;
+    uint8_t* const M = (uint8_t*)mem;
+    static uint8_t snap[FVS_WIN_LEN], asmv[FVS_WIN_LEN];
+    for (unsigned i = 0; i < FVS_WIN_LEN; i++) snap[i] = M[FVS_WIN_BASE + i];
+    fill_horizontal_span_core_asm(base1, base2, y_hi, cnt, pat);
+    for (unsigned i = 0; i < FVS_WIN_LEN; i++) asmv[i] = M[FVS_WIN_BASE + i];
+    for (unsigned i = 0; i < FVS_WIN_LEN; i++) M[FVS_WIN_BASE + i] = snap[i];
+    fill_horizontal_span_core_c(base1, base2, y_hi, cnt, pat);
+    int bad = 0;
+    for (unsigned i = 0; i < FVS_WIN_LEN; i++) if (M[FVS_WIN_BASE + i] != asmv[i]) bad = 1;
+    if (bad) { if (!g_fhsMismatch) g_fhsFirstBad = g_fhsCalls; g_fhsMismatch++; }
+}
+#elif defined(ROF_FRAMEDRAW_ASM)
+extern void fill_horizontal_span_core(uint16_t base1, uint16_t base2, uint8_t y_hi, uint8_t cnt, uint8_t pat);  /* FrameDrawAssembler.s */
+#else
+static void fill_horizontal_span_core(uint16_t base1, uint16_t base2, uint8_t y_hi, uint8_t cnt, uint8_t pat) {
+    fill_horizontal_span_core_c(base1, base2, y_hi, cnt, pat);
+}
+#endif
+
 void fill_horizontal_span(void) {
     uint8_t y1 = draw_row_top;
     sync_flag = mem[MEM_row_base_lo + y1];
@@ -549,17 +591,10 @@ void fill_horizontal_span(void) {
     span_pixel_count = cnt;
     uint8_t pat = draw_pattern_byte;
     /* Both row bases are loop-invariant (set above from the addr table) and the screen
-     * field is RAM, so hoist them and write mem[] directly — no per-byte bus dispatch /
-     * ZP_IND_Y volatile re-read. */
+     * field is RAM, so hoist them and write mem[] directly — no per-byte bus dispatch. */
     uint16_t base1 = (uint16_t)(sync_flag | (dl_ptr_lo << 8));
     uint16_t base2 = (uint16_t)(frame_counter | (draw_row_ptr2_hi << 8));
-    for (;;) {
-        mem[(uint16_t)(base1 + y)] = pat;
-        mem[(uint16_t)(base2 + y)] = pat;
-        y = (uint8_t)(y - 1);
-        if (((uint8_t)(cnt - 1)) & 0x80) break;           /* BPL: loop while N clear */
-        cnt = (uint8_t)(cnt - 1);
-    }
+    fill_horizontal_span_core(base1, base2, y, cnt, pat);
     span_pixel_count = 0xFF;                                    /* faithful exit: count ran to -1 */
     cpu.Y = lo;                                           /* last Y set at loop top (incidental) */
 }
@@ -645,8 +680,6 @@ void fill_vertical_span_core_c(uint8_t r0, uint8_t r1, uint8_t colL, uint8_t col
  * output stays LIVE so an asm bug can't corrupt the scene.  Read via amiga/framedraw_verify.gdb. */
 extern void fill_vertical_span_core_asm(uint8_t r0, uint8_t r1, uint8_t colL, uint8_t colR, uint8_t maskSel);
 volatile unsigned long g_fvsCalls = 0, g_fvsMismatch = 0, g_fvsFirstBad = 0;
-#define FVS_WIN_BASE 0x1000u
-#define FVS_WIN_LEN  0x1100u                         /* $1000..$20FF: covers the $1000 door field */
 void fill_vertical_span_core(uint8_t r0, uint8_t r1, uint8_t colL, uint8_t colR, uint8_t maskSel) {
     g_fvsCalls++;
     uint8_t* const M = (uint8_t*)mem;

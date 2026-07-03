@@ -9,7 +9,7 @@ set confirm off
 set remotetimeout 90
 tbreak PlatformAmiga::renderFrame if g_fvsCalls >= 200
 continue
-printf "VERIFY fvsCalls=%lu mismatch=%lu firstBad=%lu vbi=%u\n", \
-  g_fvsCalls, g_fvsMismatch, g_fvsFirstBad, g_vbiCount
+printf "VERIFY vert fvsCalls=%lu mismatch=%lu firstBad=%lu | horiz fhsCalls=%lu mismatch=%lu firstBad=%lu vbi=%u\n", \
+  g_fvsCalls, g_fvsMismatch, g_fvsFirstBad, g_fhsCalls, g_fhsMismatch, g_fhsFirstBad, g_vbiCount
 detach
 quit
