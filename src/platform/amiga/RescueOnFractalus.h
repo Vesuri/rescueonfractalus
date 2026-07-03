@@ -218,6 +218,7 @@ private:
     // much of the field static frame-to-frame).  forceFull re-decodes everything (and clears
     // plane3) on the first frame and whenever the source base changes (stars↔flight).
     bool     viewportForceFull = true;
+    bool     viewportClearKicked = false;    // entry-frame terrain-bitmap clear kicked in perFrameWork (overlaps buildStarSprites)
     uint16_t viewportLastBase  = 0;
     uint32_t viewportShadow[47 * 10] = {};   // 47 mode-D rows (43 terrain + 4 wing-clearance band)
 

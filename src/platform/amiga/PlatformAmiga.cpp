@@ -545,6 +545,7 @@ extern "C" volatile unsigned char g_maxGap060B = 0, g_maxGap004A = 0;
 // Cinematic-only render-gap probe (launch VBI $52D7 active): isolates a tunnel->stars freeze.
 extern "C" volatile unsigned short g_maxCineGap = 0, g_maxCineGapAtVbi = 0;
 extern "C" volatile unsigned char g_maxCineGap060B = 0;
+extern "C" volatile unsigned short g_csGap = 0, g_csGapAtVbi = 0;   // tunnel->stars window only
 // decodeCockpitFull one-shot timing (chip-vs-fast-RAM experiment).
 extern "C" volatile unsigned long g_ckFullTicks = 0, g_ckFullCount = 0;
 // fill_terrain_columns one-shot timing (tunnel->stars setup gap).
@@ -552,6 +553,8 @@ extern "C" volatile unsigned long g_fillTerrTicks = 0, g_fillTerrIsr = 0;
 // display_setup launch-tail milestone stamps: rof_ds_mile(i) records g_vbiCount at milestone i,
 // so a big jump between consecutive stamps localises the ~580ms cinematic freeze to one stretch.
 extern "C" volatile unsigned short g_dsMile[16] = {0};
+extern "C" volatile unsigned long g_burstClrTicks = 0, g_burstClrIsr = 0;   // L_650b field-clear cost
+extern "C" volatile unsigned long g_burstMidTicks = 0, g_burstMidIsr = 0;
 extern "C" void rof_ds_mile(int i) { if (i >= 0 && i < 16) g_dsMile[i] = g_vbiCount; }
 // RTCLOK ownership-race probe: catch frames where RTCLOK ($0014) is advanced by BOTH the VBI
 // body AND renderFrame (double-count -> equality spin-waits overshoot -> ~256-frame wrap), and
@@ -651,6 +654,11 @@ void PlatformAmiga::renderFrame() {
             g_maxCineGap    = gap;
             g_maxCineGapAtVbi = nowVbi;
             g_maxCineGap060B  = mem[0x060B];
+        }
+        // Tunnel->stars transition window only (the entry burst lands ~vbi 850-950): isolates
+        // that specific freeze from later planet-scene gaps that now dominate g_maxCineGap.
+        if (nowVbi > 820 && nowVbi < 1000 && vvblki != 0x4FF5u && gap > g_csGap) {
+            g_csGap = gap; g_csGapAtVbi = nowVbi;
         }
         s_lastEntryVbi = nowVbi;
     }

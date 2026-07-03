@@ -5,12 +5,21 @@ continue
 echo \n==== SIGINT ====\n
 printf "cineGap=%u frames (~%ums) atVbi=%u 060B=%02x  [launch-VBI-only freeze]\n", \
   g_maxCineGap, g_maxCineGap*20, g_maxCineGapAtVbi, g_maxCineGap060B
+printf "  tunnel->stars gap=%u frames (~%ums) atVbi=%u  [window 820-1000]\n", \
+  g_csGap, g_csGap*20, g_csGapAtVbi
 printf "dsMile vbi: 0=%u 1A=%u 2door=%u 3B=%u 4clr=%u 5C=%u 6fade=%u 7ts4=%u 8done=%u\n", \
   g_dsMile[0], g_dsMile[1], g_dsMile[2], g_dsMile[3], g_dsMile[4], g_dsMile[5], g_dsMile[6], g_dsMile[7], g_dsMile[8]
 printf "  stretchC: 4clr=%u copy192=%u initObj=%u fillTerr(5C)=%u | fillTerr=%lu ticks (~%lums)\n", \
   g_dsMile[4], g_dsMile[9], g_dsMile[10], g_dsMile[5], g_fillTerrTicks, (g_fillTerrTicks-g_fillTerrIsr)/16
-printf "ckFull=%lu ticks (~%lums) count=%lu  [decodeCockpitFull one-shot]\n", \
-  g_ckFullTicks, g_ckFullTicks/16, g_ckFullCount
+printf "  burst: L_650b clear=%lu ticks (~%lums)  copy192+initObj=%lu ticks (~%lums)\n", \
+  (g_burstClrTicks-g_burstClrIsr), (g_burstClrTicks-g_burstClrIsr)/16, \
+  (g_burstMidTicks-g_burstMidIsr), (g_burstMidTicks-g_burstMidIsr)/16
+printf "ckFull=%lu ticks (~%lums) count=%lu  atVbi 0=%u 1=%u 2=%u  [decodeCockpitFull one-shot]\n", \
+  g_ckFullTicks, g_ckFullTicks/16, g_ckFullCount, g_ckFullVbi[0], g_ckFullVbi[1], g_ckFullVbi[2]
+printf "starEntry: vbi=%u decode=%lu ticks (~%lums)  sprites vbi=%u %lu ticks (~%lums)\n", \
+  g_starEntryVbi, (g_starEntryTicks-g_starEntryIsr), (g_starEntryTicks-g_starEntryIsr)/16, \
+  g_starSprVbi, g_starSprTicks, g_starSprTicks/16
+printf "starGroups decoded on entry = %lu / 470  clr+shadow=%lu ticks (~%lums)\n", g_starGroups, g_starClrTicks, g_starClrTicks/16
 printf "vbi=%u VVBLKI=%02x%02x joy=%u 060B=%02x\n", g_vbiCount, mem[0x0223], mem[0x0222], mem[0x004A], mem[0x060B]
 printf "reveal=%u D01F=%02x\n", g_standbyRevealReady, mem[0xD01F]
 echo --- Title Screen probe (rsTitle = VVBLKI==53cc && 365B==72) ---\n

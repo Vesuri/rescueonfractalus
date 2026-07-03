@@ -100,6 +100,13 @@ extern "C" unsigned long rof_subclock(void);
 extern "C" volatile unsigned long g_fConvert, g_isrBeamLines;  // Stage-0 convert-pass probe
 extern "C" volatile unsigned long g_fCockpit, g_fCockpitScans;
 extern "C" volatile unsigned long g_ckFullTicks, g_ckFullCount;  // decodeCockpitFull one-shot timing
+extern "C" volatile unsigned short g_ckFullVbi[4] = {0,0,0,0};       // g_vbiCount at each ckFull call
+extern "C" volatile unsigned short g_starEntryVbi = 0;              // vbi at first rsStars viewport decode
+extern "C" volatile unsigned long  g_starEntryTicks = 0, g_starEntryIsr = 0; // its cost
+extern "C" volatile unsigned short g_starSprVbi = 0;
+extern "C" volatile unsigned long  g_starSprTicks = 0;             // first buildStarSprites cost
+extern "C" volatile unsigned long  g_starGroups = 0;              // non-skipped groups on the entry decode
+extern "C" volatile unsigned long  g_starClrTicks = 0;
 #endif
 // Compass (#2): the heading cells $32E3-$32E6 (mode-4 line below the title) — flagged by
 // platform_compass_changed() from the housing init (game_sub_4606) / heading updater ($3FDE).
@@ -804,24 +811,52 @@ void RescueOnFractalus::renderViewportModeD(uint16_t srcBase, int stride, int ro
     // RAM, so throughput is dominated by the store count and longs roughly halve it vs
     // byte writes.  But the planet zoom / star scroll leaves much of the field static
     // frame-to-frame, so guard each long with a long-granular shadow: skip the (q1,q2)
-    // stores when the 4-byte source group is unchanged.  plane3 is always 0 in mode-D —
-    // clear it only on a forceFull frame (entry / source-base change); nothing writes it
-    // during the viewport, so it stays 0 thereafter.  vdest is chip-aligned and the
-    // +40/+80/120 offsets keep every long aligned.
+    // stores when the 4-byte source group is unchanged.  plane3 is always 0 in mode-D and
+    // is zeroed by the full-frame blitter clear below (nothing writes it during the viewport,
+    // so it stays 0 thereafter).  vdest is chip-aligned and the +40/+80 offsets keep every
+    // long aligned.
     const bool full = viewportForceFull || (srcBase != viewportLastBase);
     viewportForceFull = false;
     viewportLastBase  = srcBase;
 
+    // On a full (re)decode the naive path re-stores all 470 groups into terrainBitmap — ~50ms,
+    // CHIP-write-bound under the viewport's 3-bitplane + sprite DMA.  Instead, blitter-clear the
+    // WHOLE bitmap (all 3 planes, incl. plane3 which the tunnel reveal dirtied with pens 4-7) to
+    // pen 0 and zero the shadow, then fall through to the ordinary change-skip pass.  On stars/
+    // planet ENTRY the $1000 field is mostly value 0 (black space, the planet still far), and
+    // value 0 decodes to pen 0 = the freshly-cleared bitmap, so the skip drops those groups and
+    // only the sparse non-zero stars/planet cells are stored.  Byte-identical output; the entry
+    // cost is now proportional to content, not the full 47-row field.  The blitter clear must
+    // finish before the CPU writes the non-zero groups, so wait right after kicking it.
+    bool clearedFull = false;
+    if (full) {
+#ifdef ROF_FLIGHT_PROBE
+        extern volatile unsigned long g_starClrTicks; unsigned long _c0 = rof_subclock();
+#endif
+        // The clear was normally kicked in perFrameWork (overlapping buildStarSprites); if not
+        // (base-change mid-stream, not the stars entry), kick it here.  Either way the shadow-zero
+        // loop below runs while the blit is in flight, then we wait for it before the CPU writes.
+        if (!viewportClearKicked)
+            AmigaHardware::blitterClear((uint16_t*)terrainBitmap->data, 60, (uint16_t)rows, 0);
+        for (int i = 0; i < rows * 10; i++) viewportShadow[i] = 0u;   // FAST RAM, overlaps the blit
+        AmigaHardware::blitterWait();
+        viewportClearKicked = false;
+        clearedFull = true;
+#ifdef ROF_FLIGHT_PROBE
+        if (g_starEntryVbi == 0 || g_starClrTicks == 0) g_starClrTicks = rof_subclock() - _c0;
+#endif
+    }
+
     // Dirty-row band.  For the stars/planet source ($1000) the planet renderer
     // (draw_vline_pair, the only writer of this field — validated: every shadow-detected
     // change lay inside its reported extent) records the rows it touched in
-    // g_planetRowLo/Hi.  Decode only that band instead of scanning all 43 rows: the field
-    // lives in DMA-contended CHIP RAM, so the full per-frame scan cost ~17 ms even though
-    // only ~3 rows change.  full frames (entry) still decode everything (and clear plane3).
-    // The flight source ($1070) has a different writer, so it keeps the full scan + shadow.
+    // g_planetRowLo/Hi.  Decode only that band instead of scanning all 43 rows: mem[] is FAST
+    // RAM but every 68000 access is slow + volatile, so the full per-frame scan cost ~17 ms
+    // even though only ~3 rows change.  Entry frames (clearedFull) scan all rows but skip the
+    // (now-cleared) zero groups.
     extern volatile unsigned long g_planetRowLo, g_planetRowHi;
     int rStart = 0, rEnd = rows - 1;
-    if (srcBase == 0x1000u && !full) {
+    if (srcBase == 0x1000u && !clearedFull) {
         rStart = (int)g_planetRowLo;
         rEnd   = (int)g_planetRowHi;
         g_planetRowLo = 9999; g_planetRowHi = 0;             // consume for next frame
@@ -837,18 +872,24 @@ void RescueOnFractalus::renderViewportModeD(uint16_t srcBase, int stride, int ro
         const uint8_t* rs = src;
         uint32_t* q1 = (uint32_t*)vdest;
         uint32_t* q2 = (uint32_t*)(vdest + 40);
-        uint32_t* q3 = (uint32_t*)(vdest + 80);
-        for (int b = 0; b < 10; b++, q1++, q2++, q3++, shadow++) {   // 10 longs = 40 bytes
-            uint8_t s0 = rs[0], s1 = rs[1], s2 = rs[2], s3 = rs[3]; rs += 4;
-            uint32_t key = ((uint32_t)s0 << 24) | ((uint32_t)s1 << 16) |
-                           ((uint32_t)s2 <<  8) |  (uint32_t)s3;
-            if (!full && key == *shadow) continue;           // 4-byte group unchanged
+        for (int b = 0; b < 10; b++, q1++, q2++, shadow++) {   // 10 longs = 40 bytes
+            // The Amiga 68000 is big-endian, so one aligned long read of the source == the
+            // byte-packed key (s0<<24|s1<<16|s2<<8|s3) — halve the scan cost by reading a single
+            // long for the (dominant) unchanged/cleared case instead of 4 separate byte reads;
+            // only decompose into bytes for the sparse groups that actually decode.  (Amiga-only
+            // file; rs is 4-aligned: srcBase $1000 + kCrop 4, stride 48, b*4 all keep alignment.)
+            uint32_t key = *(const uint32_t*)rs; rs += 4;
+            if (key == *shadow) continue;                    // 4-byte group unchanged (or still cleared-to-0)
             *shadow = key;
+            uint8_t s0 = (uint8_t)(key >> 24), s1 = (uint8_t)(key >> 16),
+                    s2 = (uint8_t)(key >>  8), s3 = (uint8_t)key;
             *q1 = ((uint32_t)kModeDP1[s0] << 24) | ((uint32_t)kModeDP1[s1] << 16) |
                   ((uint32_t)kModeDP1[s2] <<  8) |  (uint32_t)kModeDP1[s3];
             *q2 = ((uint32_t)kModeDP2[s0] << 24) | ((uint32_t)kModeDP2[s1] << 16) |
                   ((uint32_t)kModeDP2[s2] <<  8) |  (uint32_t)kModeDP2[s3];
-            if (full) *q3 = 0u;                              // plane3 unused; clear once on entry
+#ifdef ROF_FLIGHT_PROBE
+            extern volatile unsigned long g_starGroups; if (clearedFull) g_starGroups++;
+#endif
         }
         vdest += 120;                                        // one interleaved scanline
     }
@@ -1566,7 +1607,26 @@ void RescueOnFractalus::perFrameWork()
     if (!postsBuilt) { buildPostSprites(); buildFlightFrameSprites(); postsBuilt = true; }
     // Starfield players $0C32/$0E32/$0F32: scrolled+seeded during stars, static
     // through the planet zoom, so map them both phases.
-    if (rsStars) buildStarSprites();
+    // On the stars ENTRY frame the terrain bitmap needs a full clear (the tunnel left stale
+    // pens, incl. plane3).  Kick that clear on the BLITTER now, BEFORE buildStarSprites (pure
+    // CPU, ~7ms) — the blit runs in parallel with the sprite build and the shadow-zero loop, so
+    // renderViewportModeD only has to blitterWait() for it (≈free) instead of stalling the CPU
+    // ~7ms on it.  viewportForceFull is still set here (renderViewportModeD consumes it later).
+    if (rsStars && viewportForceFull && terrainBitmap && !viewportClearKicked) {
+        AmigaHardware::blitterClear((uint16_t*)terrainBitmap->data, 60, 47, 0);
+        viewportClearKicked = true;
+    }
+    if (rsStars) {
+#ifdef ROF_FLIGHT_PROBE
+        if (g_starSprVbi == 0) {
+            g_starSprVbi = (unsigned short)(rof_subclock()/313u);
+            unsigned long _s0 = rof_subclock();
+            buildStarSprites();
+            g_starSprTicks = rof_subclock() - _s0;
+        } else
+#endif
+        buildStarSprites();
+    }
     // Flight altimeter bars: mirror the live P0 $0C98 (terrain-height) + M3 $0B98
     // (ship-height) strips each frame.
     if (rsFlight) { buildAltimeterSprite(); buildAltimeterShipSprite(); buildAHSprite(); }
@@ -1778,7 +1838,18 @@ void RescueOnFractalus::render()
 #endif
             g_flightProf.render += (unsigned short)(flight_vbi_tick() - r0);
         }
-        else                        renderViewportModeD(0x1000, 48, 47);   // stars/planet: +4 band rows ($1810-$18A0)
+        else {
+#ifdef ROF_FLIGHT_PROBE
+            if (g_starEntryVbi == 0) {
+                g_starEntryVbi = (unsigned short)(rof_subclock()/313u);
+                unsigned long _s0 = rof_subclock(), _si = g_isrBeamLines;
+                renderViewportModeD(0x1000, 48, 47);
+                g_starEntryTicks = rof_subclock() - _s0;
+                g_starEntryIsr   = g_isrBeamLines - _si;
+            } else
+#endif
+            renderViewportModeD(0x1000, 48, 47);   // stars/planet: +4 band rows ($1810-$18A0)
+        }
     } else if (terrainDirty && g_doorFieldReady != 0u && !rsLaunched) {
         // Standby doors: decode the GTIA mode-10 door field at $2000 to the bitplanes
         // ONCE, then leave it.  The genuine display_setup builds $2000 AFTER
@@ -1902,6 +1973,7 @@ void RescueOnFractalus::render()
         decodeCockpitFull();
 #ifdef ROF_FLIGHT_PROBE
         g_ckFullTicks = rof_subclock() - _ckf0;
+        if (g_ckFullCount < 4) g_ckFullVbi[g_ckFullCount] = (unsigned short)(rof_subclock()/313u);
         g_ckFullCount++;
 #endif
         // The full paint covers every cell — drop all instrument flags + the dial cell flags.
