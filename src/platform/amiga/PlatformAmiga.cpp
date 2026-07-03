@@ -172,14 +172,18 @@ static void build_poly_tables(void)
 // hardware-range writes, so we maintain our own copy here)
 static uint8_t pokey[16];   // [0]=AUDF1 [1]=AUDC1 ... [8]=AUDCTL ...
 
-// POKEY LFSR (17-bit, polynomial x^17+x^5+1; matches Platform::pokeyRandomStep)
-static uint32_t lfsr_state = 0x1FFFFu;
+// POKEY LFSR (17-bit, polynomial x^17+x^5+1; matches Platform::pokeyRandomStep).
+// Exposed (extern "C") so a RANDOM-heavy native loop (fill_terrain_columns) can hold the
+// state in a register for its whole run and step the LFSR inline, instead of paying a
+// cross-TU rof_pokey_random() call per read.  It's our own RNG (not POKEY-cycle-accurate),
+// so an ISR RANDOM read interleaving with such a loop only reshuffles cosmetic output.
+extern "C" uint32_t rof_lfsr_state = 0x1FFFFu;
 
 static uint8_t pokey_random_step(void)
 {
-    uint32_t bit = ((lfsr_state >> 16) ^ (lfsr_state >> 4)) & 1u;
-    lfsr_state = ((lfsr_state << 1) | bit) & 0x1FFFFu;
-    return (uint8_t)lfsr_state;
+    uint32_t bit = ((rof_lfsr_state >> 16) ^ (rof_lfsr_state >> 4)) & 1u;
+    rof_lfsr_state = ((rof_lfsr_state << 1) | bit) & 0x1FFFFu;
+    return (uint8_t)rof_lfsr_state;
 }
 
 uint8_t PlatformAmiga::pokeyRandom() { return pokey_random_step(); }
@@ -411,7 +415,7 @@ void PlatformAmiga::audioInit()
 {
     // Clear POKEY shadow and LFSR
     for (int i = 0; i < 16; i++) pokey[i] = 0;
-    lfsr_state = 0x1FFFFu;
+    rof_lfsr_state = 0x1FFFFu;
     fill_noise_buf();   // pre-render the poly17 noise sample for noise-distortion voices
     build_poly_tables(); // pre-render every distinct poly distortion waveform (immutable)
 

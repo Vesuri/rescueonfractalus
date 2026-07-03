@@ -451,6 +451,13 @@ void audio_timer_setup(void) {
  * symbols.csv — see docs/rename.md.) */
 #define TERRAIN_COL_BUF(layer, col) mem[0x0C32u + (layer) * 0x100u + (col)]
 
+/* The 17-bit POKEY RANDOM LFSR state (x^17+x^5+1), defined (extern "C") in PlatformAmiga.cpp.
+ * Exposed so fill_terrain_columns can hold it in a register across its whole loop instead of
+ * paying a cross-TU rof_pokey_random() call per read. */
+#ifdef ROF_PLATFORM_AMIGA
+extern uint32_t rof_lfsr_state;
+#endif
+
 /* random_terrain_height @ $6B47 — pick one sparse terrain-height sample.
  * Reads the POKEY RANDOM register: 31 times out of 32 the ground is flat (height 0);
  * 1 time in 32 (when the low 5 random bits are all zero) it takes a second RANDOM read
@@ -633,12 +640,10 @@ void draw_symmetric_span_loop(void) {
     }
 }
 
-/* gen_terrain_column @ $6B2E — fill column (entry cpu.Y) of all four parallel
- * terrain buffers $0C32/$0D32/$0E32/$0F32 with sparse random heights.  Each of the
- * four random_terrain_height calls advances the POKEY RANDOM LFSR; cpu.Y is
- * preserved across them (neither this routine nor random_terrain_height touch Y). */
-/* gen_terrain_column @ $6B2E — fill one column (index `col`) of all four parallel
- * terrain-height buffers with four independent random height samples (one per layer). */
+/* gen_terrain_column @ $6B2E — fill one column (index `col`) of all four parallel terrain-
+ * height buffers with four independent random height samples (one per layer).  Still used by
+ * scroll_field_columns (per-VBI append) + the standalone validate twin; fill_terrain_columns
+ * inlines its own copy of this logic (see below). */
 static void gen_terrain_column_core(uint8_t col) {
     TERRAIN_COL_BUF(0, col) = random_terrain_height_core();
     TERRAIN_COL_BUF(1, col) = random_terrain_height_core();
@@ -651,14 +656,37 @@ void gen_terrain_column(void) {   /* 6502-ABI shim: column index in Y, last heig
     cpu.A = TERRAIN_COL_BUF(3, col);
 }
 
-/* fill_terrain_columns @ $6AE5 — fill all 89 columns (Y=$59..$01) of the four
- * parallel terrain buffers by calling gen_terrain_column per column. */
+/* fill_terrain_columns @ $6AE5 — one-shot stars/planet field build: fill all 89 columns
+ * (indices $59..$01, right-to-left; column 0 left untouched) of the four parallel terrain-
+ * height buffers with fresh random samples.  Each sample is flat (0) 31/32 of the time, else
+ * one of four preset heights picked by a second random read.
+ *
+ * Fully inlined into one function — this runs 356 samples in the tunnel->stars build burst,
+ * and the per-sample rof_pokey_random / random_terrain_height / gen_terrain_column calls each
+ * cost a 68000 jsr/rts + stack frame.  On Amiga the 17-bit LFSR (x^17+x^5+1) is held in a
+ * local for the whole loop — one load at entry, one store at exit — instead of a memory
+ * read+write per read: it's our own RNG (not POKEY-cycle-accurate), so a launch-VBI RANDOM
+ * read landing mid-loop just reshuffles cosmetic terrain, no correctness concern.  SDL keeps
+ * the reference bus_read($D20A) path so make validate stays byte-identical to the 6502 oracle. */
 void fill_terrain_columns(void) {
-    /* One-shot field build (stars/planet scene): fill all 89 columns (indices $59..$01,
-     * right-to-left) of the four terrain-height buffers with fresh random samples.  Column
-     * 0 is intentionally left untouched (the original loops while the index is non-zero). */
-    for (uint8_t col = 0x59; col != 0; col--)
-        gen_terrain_column_core(col);
+#ifdef ROF_PLATFORM_AMIGA
+    uint32_t s = rof_lfsr_state;                 /* LFSR in a register for the whole loop */
+  #define NEXT_RAND8() ( s = ((s << 1) | (((s >> 16) ^ (s >> 4)) & 1u)) & 0x1FFFFu, (uint8_t)s )
+#else
+  #define NEXT_RAND8() bus_read(0xD20Au)
+#endif
+    for (uint8_t col = 0x59; col != 0; col--) {
+        for (uint16_t base = 0x0C32u; base <= 0x0F32u; base += 0x100u) {
+            uint8_t h = 0;                                        /* 31/32: flat ground */
+            if ((NEXT_RAND8() & 0x1F) == 0)                       /* 1/32: pick a preset height */
+                h = mem[TERRAIN_HEIGHT_TABLE + (NEXT_RAND8() & 0x03)];
+            mem[base + col] = h;
+        }
+    }
+#undef NEXT_RAND8
+#ifdef ROF_PLATFORM_AMIGA
+    rof_lfsr_state = s;                          /* commit the advanced LFSR back once */
+#endif
 }
 
 /* add_multibyte_a1 with entry A=$FF @ $6AB5 — the exact carry chain the transpile runs
