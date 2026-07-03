@@ -14,6 +14,8 @@ printf "  stretchC: 4clr=%u copy192=%u initObj=%u fillTerr(5C)=%u | fillTerr=%lu
 printf "  burst: L_650b clear=%lu ticks (~%lums)  copy192+initObj=%lu ticks (~%lums)\n", \
   (g_burstClrTicks-g_burstClrIsr), (g_burstClrTicks-g_burstClrIsr)/16, \
   (g_burstMidTicks-g_burstMidIsr), (g_burstMidTicks-g_burstMidIsr)/16
+printf "  stretchB compute: preloop(initrow+dial+reorder+hud)=%lu ticks (~%lums)  postloop(dial+2reorder)=%lu ticks (~%lums)\n", \
+  (g_sbATicks-g_sbAIsr), (g_sbATicks-g_sbAIsr)/16, (g_sbCTicks-g_sbCIsr), (g_sbCTicks-g_sbCIsr)/16
 printf "ckFull=%lu ticks (~%lums) count=%lu  atVbi 0=%u 1=%u 2=%u  [decodeCockpitFull one-shot]\n", \
   g_ckFullTicks, g_ckFullTicks/16, g_ckFullCount, g_ckFullVbi[0], g_ckFullVbi[1], g_ckFullVbi[2]
 printf "starEntry: vbi=%u decode=%lu ticks (~%lums)  sprites vbi=%u %lu ticks (~%lums)\n", \

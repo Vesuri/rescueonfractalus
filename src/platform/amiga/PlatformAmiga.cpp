@@ -559,6 +559,7 @@ extern "C" volatile unsigned long g_fillTerrTicks = 0, g_fillTerrIsr = 0;
 extern "C" volatile unsigned short g_dsMile[16] = {0};
 extern "C" volatile unsigned long g_burstClrTicks = 0, g_burstClrIsr = 0;   // L_650b field-clear cost
 extern "C" volatile unsigned long g_burstMidTicks = 0, g_burstMidIsr = 0;
+extern "C" volatile unsigned long g_sbATicks = 0, g_sbAIsr = 0, g_sbCTicks = 0, g_sbCIsr = 0;
 extern "C" void rof_ds_mile(int i) { if (i >= 0 && i < 16) g_dsMile[i] = g_vbiCount; }
 // RTCLOK ownership-race probe: catch frames where RTCLOK ($0014) is advanced by BOTH the VBI
 // body AND renderFrame (double-count -> equality spin-waits overshoot -> ~256-frame wrap), and

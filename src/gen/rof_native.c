@@ -7470,6 +7470,10 @@ L_63a7:
     /* wait for the door-swoosh VBI counter $0686 to reach $64 */
     do { ds_frame(); } while (mem[0x0686] != 0x64);
     DS_MILE(2);                          /* door/HUD sweep done (VBI-paced) */
+#ifdef ROF_FLIGHT_PROBE
+    { extern volatile unsigned long g_sbATicks, g_sbAIsr;
+      unsigned long _a0 = rof_subclock(), _ai = g_isrBeamLines;
+#endif
     init_row_coords_9c();
     cpu.A = 0x00;                        /* draw_cockpit_dial_bar takes A */
     draw_color_idx = 0;
@@ -7485,6 +7489,9 @@ L_63a7:
     set_hud_fields_678_679();
     vbi_flags = 0x01;
     timer_4C = 0x0F;
+#ifdef ROF_FLIGHT_PROBE
+      g_sbATicks = rof_subclock() - _a0; g_sbAIsr = g_isrBeamLines - _ai; }
+#endif
     do {                                 /* wait out the door-swoosh, decrementing $0677 to 8 */
         push_a_wait_frames();
         if (mem[0x0677] == 0x08)
@@ -7492,6 +7499,10 @@ L_63a7:
         else
             mem[0x0677]--;
     } while (vbi_flags != 0);
+#ifdef ROF_FLIGHT_PROBE
+    { extern volatile unsigned long g_sbCTicks, g_sbCIsr;
+      unsigned long _c0 = rof_subclock(), _ci = g_isrBeamLines;
+#endif
     cpu.A = 0x04;                        /* draw_cockpit_dial_bar takes A */
     mem[0x0677] = 0x04;
     draw_cockpit_dial_bar();
@@ -7509,6 +7520,9 @@ L_63a7:
     HW_WRITE(0xD002, 0x8E);              /* HPOSP2 */
     HW_WRITE(0xD003, 0xB8);              /* HPOSP3 */
     clear_scroll_accum();
+#ifdef ROF_FLIGHT_PROBE
+      g_sbCTicks = rof_subclock() - _c0; g_sbCIsr = g_isrBeamLines - _ci; }
+#endif
     DS_MILE(3);                          /* end of stretch B (init_row_coords/reorder/L_650b clear) */
 #ifdef ROF_FLIGHT_PROBE
     { extern volatile unsigned long g_burstClrTicks, g_burstClrIsr;
