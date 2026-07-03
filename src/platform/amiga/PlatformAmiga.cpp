@@ -550,6 +550,11 @@ extern "C" volatile unsigned char g_maxGap060B = 0, g_maxGap004A = 0;
 extern "C" volatile unsigned short g_maxCineGap = 0, g_maxCineGapAtVbi = 0;
 extern "C" volatile unsigned char g_maxCineGap060B = 0;
 extern "C" volatile unsigned short g_csGap = 0, g_csGapAtVbi = 0;   // tunnel->stars window only
+// standby->doors window render-gap probe (no vbi>360 gate, so it catches the early launch burst)
+extern "C" volatile unsigned short g_doorGap = 0, g_doorGapAtVbi = 0;
+extern "C" volatile unsigned char g_doorGap060B = 0;
+// stretch-A per-function one-shot subclock deltas (ticks): find the standby->doors freeze.
+extern "C" volatile unsigned long g_saTicks[16] = {0};
 // decodeCockpitFull one-shot timing (chip-vs-fast-RAM experiment).
 extern "C" volatile unsigned long g_ckFullTicks = 0, g_ckFullCount = 0;
 // fill_terrain_columns one-shot timing (tunnel->stars setup gap).
@@ -664,6 +669,11 @@ void PlatformAmiga::renderFrame() {
         // that specific freeze from later planet-scene gaps that now dominate g_maxCineGap.
         if (nowVbi > 820 && nowVbi < 1000 && vvblki != 0x4FF5u && gap > g_csGap) {
             g_csGap = gap; g_csGapAtVbi = nowVbi;
+        }
+        // standby->doors: whole launch-cinematic window BEFORE the tunnel->stars burst, NO
+        // vbi>360 gate (the door sweep + stretch A land ~vbi 100-500).
+        if (nowVbi > 150 && nowVbi < 300 && vvblki != 0x4FF5u && gap > g_doorGap) {
+            g_doorGap = gap; g_doorGapAtVbi = nowVbi; g_doorGap060B = mem[0x060B];
         }
         s_lastEntryVbi = nowVbi;
     }

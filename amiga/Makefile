@@ -156,6 +156,18 @@ obj/FillTerrainAssembler.o : VASMFLAGS += -DROF_FILLTERR_VERIFY
 endif
 endif
 
+# Hand-written m68k twin of fill_vertical_span_core (the standby->doors door-frame draw's
+# dominant cost).  ON by default; `make FRAMEDRAW_C=1` falls back to the clean-C oracle.
+# Verify via amiga/framedraw_verify.gdb (in-process differential over the $1000 door field).
+ifndef FRAMEDRAW_C
+FRAMEWORK_ASM_SRCS += $(AMIGA_SRC)/FrameDrawAssembler.s
+EXTRA_DEFINES += -DROF_FRAMEDRAW_ASM
+ifdef VERIFY
+EXTRA_DEFINES += -DROF_FRAMEDRAW_VERIFY
+obj/FrameDrawAssembler.o : VASMFLAGS += -DROF_FRAMEDRAW_VERIFY
+endif
+endif
+
 # Objects (flattened into obj/ by basename).
 CXX_OBJS       := $(addprefix obj/,$(notdir $(CXX_SRCS:.cpp=.o)))
 CORE_C_OBJS    := $(addprefix obj/,$(notdir $(CORE_C_SRCS:.c=.o)))

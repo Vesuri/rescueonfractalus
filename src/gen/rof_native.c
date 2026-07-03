@@ -241,6 +241,14 @@ void divide_16x16(void) {
  *          is dead.  We still reproduce it (A=0, Y=0, X=original, N/Z per LDX X)
  *          so the validation harness shows zero incidental CPU drift.
  */
+/* stretch-A per-function one-shot subclock profiler (standby->doors freeze hunt). */
+#ifdef ROF_FLIGHT_PROBE
+extern volatile unsigned long g_saTicks[16];
+#define SA_TIMED(i, expr) do { unsigned long _t0 = rof_subclock(); expr; g_saTicks[i] += rof_subclock() - _t0; } while (0)
+#else
+#define SA_TIMED(i, expr) do { expr; } while (0)
+#endif
+
 /* Zero `n` bytes at `vp` through a non-volatile alias so the 68000 compiler can batch
  * the stores into aligned move.l (instead of one volatile move.b per byte).  The result
  * is byte-identical to a byte-by-byte zero (proven by make validate).  Aligns to a 4-byte
@@ -606,7 +614,7 @@ void set_row_ptr_from_count(void) {
  * indexing the $073D/$0793 table into bitmap RAM (the real caller's contract — see the
  * fixture in tools/validate_native.c).  This was the bulk of the pre-door ring-draw
  * freeze on the 68000. */
-static void fill_vertical_span_core(uint8_t r0, uint8_t r1, uint8_t colL, uint8_t colR, uint8_t maskSel) {
+void fill_vertical_span_core_c(uint8_t r0, uint8_t r1, uint8_t colL, uint8_t colR, uint8_t maskSel) {
     uint8_t x    = (colL & 1u) ? (uint8_t)(maskSel + 9u) : maskSel;  /* mask index (both edges) */
     uint8_t orm  = mem[MEM_pixel_or_mask_tbl + x];
     uint8_t am   = mem[MEM_pixel_and_mask_tbl + x];
@@ -625,6 +633,41 @@ static void fill_vertical_span_core(uint8_t r0, uint8_t r1, uint8_t colL, uint8_
         cnt = (uint8_t)(cnt - 1);
     }
 }
+
+/* Dispatcher seam (asm-migration-plan), mirrors project_terrain_points_core.  On the Amiga
+ * (ROF_FRAMEDRAW_ASM) fill_vertical_span_core is the hand-written m68k twin in
+ * FrameDrawAssembler.s (scattered row-stride masked RMW — pointer-walked row table, masks
+ * pinned in registers); elsewhere it is the clean-C oracle above.  This is the dominant cost
+ * of the standby->doors door-frame draw (~71ms of the ~93ms span loop). */
+#if defined(ROF_FRAMEDRAW_ASM) && defined(ROF_FRAMEDRAW_VERIFY)
+/* On-target differential: run the asm twin on the live field, snapshot the door-field window
+ * it may touch, restore it, run the C oracle on the same input, and compare.  The C oracle's
+ * output stays LIVE so an asm bug can't corrupt the scene.  Read via amiga/framedraw_verify.gdb. */
+extern void fill_vertical_span_core_asm(uint8_t r0, uint8_t r1, uint8_t colL, uint8_t colR, uint8_t maskSel);
+volatile unsigned long g_fvsCalls = 0, g_fvsMismatch = 0, g_fvsFirstBad = 0;
+#define FVS_WIN_BASE 0x1000u
+#define FVS_WIN_LEN  0x1100u                         /* $1000..$20FF: covers the $1000 door field */
+void fill_vertical_span_core(uint8_t r0, uint8_t r1, uint8_t colL, uint8_t colR, uint8_t maskSel) {
+    g_fvsCalls++;
+    uint8_t* const M = (uint8_t*)mem;
+    static uint8_t snap[FVS_WIN_LEN], asmv[FVS_WIN_LEN];
+    for (unsigned i = 0; i < FVS_WIN_LEN; i++) snap[i] = M[FVS_WIN_BASE + i];
+    fill_vertical_span_core_asm(r0, r1, colL, colR, maskSel);
+    for (unsigned i = 0; i < FVS_WIN_LEN; i++) asmv[i] = M[FVS_WIN_BASE + i];
+    for (unsigned i = 0; i < FVS_WIN_LEN; i++) M[FVS_WIN_BASE + i] = snap[i];
+    fill_vertical_span_core_c(r0, r1, colL, colR, maskSel);
+    int bad = 0;
+    for (unsigned i = 0; i < FVS_WIN_LEN; i++) if (M[FVS_WIN_BASE + i] != asmv[i]) bad = 1;
+    if (bad) { if (!g_fvsMismatch) g_fvsFirstBad = g_fvsCalls; g_fvsMismatch++; }
+}
+#elif defined(ROF_FRAMEDRAW_ASM)
+extern void fill_vertical_span_core(uint8_t r0, uint8_t r1, uint8_t colL, uint8_t colR, uint8_t maskSel);  /* FrameDrawAssembler.s */
+#else
+static void fill_vertical_span_core(uint8_t r0, uint8_t r1, uint8_t colL, uint8_t colR, uint8_t maskSel) {
+    fill_vertical_span_core_c(r0, r1, colL, colR, maskSel);
+}
+#endif
+
 void fill_vertical_span(void) {
     uint8_t r0 = draw_row_bottom, r1 = draw_row_top;
     uint8_t colL = draw_x_left, colR = draw_x_right, maskSel = draw_color_idx;
@@ -7412,19 +7455,19 @@ L_634a:
     if (cpu.Z) goto L_62f6;
 L_634f:
     DS_MILE(0);
-    audio_timer_setup();
-    rle_unpack_to_07f9();                 /* consumes Y */
+    SA_TIMED(0, audio_timer_setup());
+    SA_TIMED(1, rle_unpack_to_07f9());                 /* consumes Y */
     if (cockpit_flag == 0) {
         cpu.A = 0x00;                     /* fill_message_buffer takes A + X */
         cpu.X = 0x16;
-        fill_message_buffer();
+        SA_TIMED(2, fill_message_buffer());
     }
     mem[0x08A3] = 0x23;                    /* L_635f */
     cockpit_flag = 0x23;
     sound_active_flag = 0x23;
     cpu.Y = (level_or_state != 0) ? 0x13 : 0x0B;   /* Y feeds save_color_clear_y_bit5 */
     cpu.A = 0xEA;
-    save_color_clear_y_bit5();            /* takes A + Y */
+    SA_TIMED(3, save_color_clear_y_bit5());            /* takes A + Y */
     osc_step_counter = 0;
     if (level_or_state == 0) {
         uint8_t prev = mem[0x0626];
@@ -7441,12 +7484,12 @@ L_634f:
         }
     }
     fresh_start_flag = 0;                  /* L_63a1 ($0627) */
-    compute_stage_display_geometry();
+    SA_TIMED(4, compute_stage_display_geometry());
 L_63a7:
     cpu.X = 0x1D;                         /* input_init takes X */
-    input_init();
-    vobj_draw_dispatch();
-    render_bcd_counter();
+    SA_TIMED(5, input_init());
+    SA_TIMED(6, vobj_draw_dispatch());
+    SA_TIMED(7, render_bcd_counter());
     clear_scroll_accum();
     {
         uint8_t a = 0x3A;
@@ -7456,10 +7499,10 @@ L_63a7:
         }
     }
     placed_item_count_bcd = 0;
-    startup_init();
+    SA_TIMED(8, startup_init());
     build_line_addr_table_1000();
-    draw_frame_pattern_seq();             /* consumes Y */
-    platform_tunnel_rings_drawn();   /* hook: convert the freshly-drawn $1000 ring field to bitplanes */
+    SA_TIMED(9, draw_frame_pattern_seq());             /* consumes Y */
+    SA_TIMED(10, platform_tunnel_rings_drawn());   /* hook: convert the freshly-drawn $1000 ring field to bitplanes */
     DS_MILE(1);                          /* end of stretch A (L_634f -> here: pure compute, no ds_frame) */
     cpu.X = 0x01;                        /* input_init takes X */
     input_init();
