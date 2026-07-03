@@ -363,6 +363,26 @@ void clear_scroll_accum(void) {
     scroll_accum_prev = 0x00;
 }
 
+/* wait_vcount_ge_7a @ $3C7B — block until the vertical beam has scanned past the visible
+ * playfield, so the caller can swap the ANTIC display list / DLI vector without the change
+ * being seen mid-frame.  EVERY caller follows it with writes to the DL pointer ($D402/$D403)
+ * and/or the VDSLST shadow ($0200/$0201) — this is a tear-avoidance beam sync for that swap.
+ *
+ * Atari/SDL: spin on VCOUNT ($D40B, the vertical scan position at two-line resolution) until
+ * it reaches $7A (scanline ~244, below the 200-line display).
+ *
+ * Amiga: NO-OP.  The display is copper-driven; the DL-pointer/VDSLST writes the caller makes
+ * are all ignored (the real scene swap is a CopperList install that latches at the next
+ * vblank), so there is no display list to tear and the beam sync guards nothing.  Skipping it
+ * reclaims up to ~1 frame (~15 ms) of otherwise-pointless beam-wait per call — the bulk of the
+ * tunnel->stars setup "burst" was this wait, not the copy/field work around it. */
+void wait_vcount_ge_7a(void) {
+#ifndef ROF_PLATFORM_AMIGA
+    while (bus_read(0xD40B) < 0x7A)
+        ;
+#endif
+}
+
 /* copy_192_to_1800 @ $75A5 — set the $00BB/$00BC dest pointer to $180F and copy
  * 192 bytes $350C+Y -> $180F+Y for Y=$C0..$01 (i.e. $1810..$18CF).  The 6502
  * writes via bus_write(ZP_IND_Y($BB)); the dest is RAM, so this is a plain mem[]
@@ -370,8 +390,18 @@ void clear_scroll_accum(void) {
 void copy_192_to_1800(void) {
     dl_y1 = 0x0F;
     dl_y2 = 0x18;
-    for (uint8_t y = 0xC0; y != 0x00; y--)
-        mem[0x180F + y] = mem[0x350C + y];
+    /* Copy 192 bytes $350D->$1810.  NOTE: a uint32_t/word copy is IMPOSSIBLE here — the dst
+     * ($1810) is even/4-aligned but the src ($350D) is ODD, so the two regions have different
+     * alignment and the 68000 faults on any misaligned word/long access (there is no common
+     * boundary to batch to).  Best available is a byte pointer-walk (move.b (a0)+,(a1)+)
+     * through a non-volatile alias so GCC emits the mem-to-mem post-increment form instead of
+     * recomputing two (d16,a0,d.w) indexed addresses per byte.  ISR-safe: the launch VBI never
+     * writes the $1000 field ($1810 lives in it) and $350D is read-only cockpit data.  dst and
+     * src are disjoint, so the forward walk is byte-identical to the original high->low order. */
+    const uint8_t* s = (const uint8_t*)mem + 0x350D;
+    uint8_t* d = (uint8_t*)mem + 0x1810;
+    for (unsigned n = 0xC0u; n; n--)
+        *d++ = *s++;
 }
 
 /* build_row_addr_table @ $7460 — build the 85-entry ($55) per-scanline base-
@@ -420,10 +450,19 @@ void init_object_positions(void) {
     obj_advance_lo = 0x00;
     obj_advance_hi = 0x00;
     obj_anim_frame = 0x00;
-    for (int y = 0x2A; y >= 0; y -= 2) {
-        uint16_t lo = (uint16_t)mem[0x6E2D + y] + 0xE0;        /* CLC; ADC #$E0 */
-        mem[MEM_obj_pos_table + y] = (uint8_t)lo;
-        mem[0x08A5 + y] = (uint8_t)(mem[0x6E2E + y] + 0x2E + (lo >> 8));  /* ADC #$2E + carry */
+    /* Add the 16-bit base $2EE0 to each of the 22 words of the $6E2D source table, storing to
+     * the $08A4(lo)/$08A5(hi) world-position array.  Walk src/dst with decrementing pointers
+     * (matches the original Y=$2A..0 step-2 order) instead of recomputing base+Y indexed
+     * addresses each step.  Byte-wise (not word) — the +$E0/carry math + little-endian layout
+     * rule out a single word op. */
+    const uint8_t* s   = (const uint8_t*)mem + 0x6E2D + 0x2A;   /* &src[$2A] */
+    uint8_t*       dlo = (uint8_t*)mem + MEM_obj_pos_table + 0x2A;
+    uint8_t*       dhi = (uint8_t*)mem + 0x08A5 + 0x2A;
+    for (int i = 0; i < 22; i++) {
+        uint16_t lo = (uint16_t)s[0] + 0xE0;                    /* CLC; ADC #$E0 */
+        *dlo = (uint8_t)lo;
+        *dhi = (uint8_t)(s[1] + 0x2E + (lo >> 8));              /* ADC #$2E + carry */
+        s -= 2; dlo -= 2; dhi -= 2;
     }
 }
 
@@ -7529,16 +7568,17 @@ L_63a7:
       unsigned long _b0 = rof_subclock(), _bi = g_isrBeamLines;
 #endif
     /* Clear the 46-byte ($2E) line buffer of each of the 45 viewport rows ($2C..0) — this
-     * zeroes the $1000 stars/planet field so undrawn rows read as black.  Row bases come from
-     * the $073D/$0793 line-pointer table (all in the main-loop-owned $1000 field; the launch
-     * VBI writes the ring at $2000 and scrolls $0C32-$0F32, never $1000), so the batched
-     * move.l zero_run is ISR-safe and byte-identical to the original per-byte clear. */
-    for (int8_t x = 0x2C; x >= 0; x--) {
-        row_table_stride = mem[0x073D + x];       /* $C1 = line pointer lo */
-        player_speed     = mem[0x0793 + x];       /* $C2 = line pointer hi */
-        uint16_t p = (uint16_t)(row_table_stride | (player_speed << 8));
-        zero_run(mem + p, 0x2E);                  /* 46 bytes ($2D..0 inclusive) */
-    }
+     * zeroes the $1000 stars/planet field so undrawn rows read as black.  The $073D/$0793
+     * line-pointer table was built at build_line_addr_table_1000() (base $1000, stride $2E)
+     * above and NOT rebuilt since, so the 45 row bases are exactly $1000 + i*$2E: one
+     * contiguous 2070-byte span $1000..$1815.  Clear it in a SINGLE batched zero_run (one
+     * align + ~517 move.l) instead of 45 calls that each re-read the table and re-align.
+     * ISR-safe (main-loop-owned $1000 field; the launch VBI writes the $2000 ring / scrolls
+     * $0C32-$0F32, never $1000).  Leaves $C1/$C2 = the final ($073D[0],$0793[0]) = $00/$10
+     * that the per-row walk used to leave, for faithful mem state. */
+    zero_run(mem + 0x1000, 45u * 0x2Eu);
+    row_table_stride = 0x00;   /* $C1 (final row-ptr lo) */
+    player_speed     = 0x10;   /* $C2 (final row-ptr hi) */
 #ifdef ROF_FLIGHT_PROBE
       g_burstClrTicks = rof_subclock() - _b0; g_burstClrIsr = g_isrBeamLines - _bi; }
 #endif
