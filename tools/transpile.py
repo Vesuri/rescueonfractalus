@@ -337,6 +337,10 @@ VALIDATE_FUNCS = {
     #     $73C8 body itself.  Like the apex it calls the wait_frames_4c spin-pacer
     #     (push_a_wait_frames) so it is NOT in `make validate` — verified on FS-UAE. ---
     0x73C8,  # init_gameplay_state — per-game/level init: seed heading/arrays, compass, cockpit bars; tail cockpit_dial_update
+    # --- HW beam spin, hand-written in rof_native.c.  NOT in `make validate` (it busy-waits on
+    #     the live ANTIC VCOUNT / real Amiga beam, which the headless harness can't reproduce);
+    #     its __t6502 oracle is kept for reference only. ---
+    0x3C7B,  # wait_vcount_ge_7a — spin until VCOUNT ($D40B) >= $7A (beam-sync a DL/colour swap)
 }
 VALIDATE_SUFFIX = '__t6502'
 

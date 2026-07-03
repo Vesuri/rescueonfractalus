@@ -1300,7 +1300,8 @@ L_3c75:; platform_poll_events();
 }
 
 /* wait_vcount_ge_7a @ $3C7B: Busy-wait until ANTIC VCOUNT $D40B >= $7A (scanline sync) */
-void wait_vcount_ge_7a(void) {
+/* faithful transliteration kept as the validation oracle; native wait_vcount_ge_7a() lives in rof_native.c (see VALIDATE_FUNCS) */
+void wait_vcount_ge_7a__t6502(void) {
 L_3c7b:;
     /* 3c7b */
     LDA(bus_read(0xD40B));
