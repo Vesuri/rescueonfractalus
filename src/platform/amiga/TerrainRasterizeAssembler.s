@@ -292,8 +292,10 @@ draw_dot:
 	bcc	draw_ret		; (unsigned) _ac >= 160 -> off viewport
 	move.w	#150,d0			; (upper word irrelevant — all .w below)
 	sub.w	d6,d0			; _sc = 150 - oldMax
+	cmp.w	#47,d0
+	bcc	draw_ret		; (unsigned) _sc >= 47 -> off display
 	cmp.w	#43,d0
-	bcc	draw_ret		; (unsigned) _sc >= 43 -> below viewport rows
+	beq	draw_ret		; _sc == 43 -> the $6b per-frame reset floor, skip (band rows 44-46 pass)
 	add.w	d0,d0			; _sc * 2 (word index)
 	move.w	(a6,d0.w),d0		; kRow120[_sc]
 	move.w	d7,d1
@@ -324,7 +326,7 @@ done:
 ; hypothetical-renderer asm: 4 columns unrolled with IMMEDIATE column masks
 ; ($C0/$30/$0C/$03 = kColMask4), the plane-1 byte pointer (a2) walked +1 per 4
 ; columns (no c>>2), and the height->row-byte-offset folded through the
-; kHeightRowOff[256] table = kRow120[clamp(150-h,0,42)] (no per-column 150-h /
+; kHeightRowOff[256] table = kRow120[clamp(150-h,0,46)] (no per-column 150-h /
 ; clamp branches).  The one residual per-column branch is h==$FF (off-top: the
 ; column is all terrain body, so it must plot NOTHING — no safe table sentinel
 ; without an extra buffer row).  Reads heights from mem[$260E+48..].  d0's high

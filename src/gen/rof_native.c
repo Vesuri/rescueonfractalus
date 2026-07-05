@@ -99,7 +99,10 @@ extern unsigned short rof_beam_line(void);
  * artifact).  Faithful fix: DRAW plots the column's PREVIOUS top (_oldMax) each time a higher
  * point supersedes it; the final/topmost point is never superseded, so it is never plotted as a
  * dot -> the crest stays pure sky.  The very first plot's _oldMax is the per-frame reset floor
- * ($67/$6b -> scanline 43..47, below the viewport), rejected by the `_sc < 43` range test.
+ * ($67 -> scanline 47 on the outer columns, $6b -> scanline 43 on the inner ones — see the
+ * $263A/$264E.. reset in terrain_frame_setup).  The range test admits scanlines 0..46 EXCEPT 43:
+ * that lets real terrain dots reach the windscreen-band rows 44-46 (the terrain now renders full
+ * height there) while still rejecting BOTH floor scanlines (43 for the $6b columns, 47 is >=47).
  * See RescueOnFractalus::renderFlightDirect. */
 #ifdef ROF_PLATFORM_AMIGA
 extern uint8_t* g_flightDotPlane;
@@ -110,8 +113,7 @@ extern void rof_flight_wait_dotclear(void);
     if (g_flightDotPlane) { \
         int _ac = (int)(col) - 48; \
         int _sc = 150 - (int)(h);    /* height -> scanline */ \
-        if ((unsigned)_ac < 160u && (unsigned)_sc < 43u) {   /* in viewport AND rows 0..42 only: */ \
-            /* skips the per-frame reset floor (h=$67/$6b -> scanline 43..47, below the viewport) */ \
+        if ((unsigned)_ac < 160u && (unsigned)_sc < 47u && _sc != 43) {  /* rows 0..46 except the $6b floor at 43 */ \
             g_flightDotPlane[kRow120[_sc] + (_ac >> 2)] |= kColMask4[_ac & 3]; \
         } } } while (0)
 /* Amiga sheds the mode-D field entirely: the dots come from ROF_PLOT_DOT (plane2) and the sky
