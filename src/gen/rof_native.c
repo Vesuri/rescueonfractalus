@@ -3608,8 +3608,15 @@ void compute_heading_sincos(void) {
  * subtract's carry into the last two muls.  We mirror that exactly by writing
  * cpu.C after each add/sub block.  Contract: memory (caller reloads A; final
  * carry is incidental).  Calls native signed_mul_8x16.
+ *
+ * build_view_transform_matrix_core_c is the SDL/validate oracle; on the Amiga a hand-asm
+ * twin (BuildViewAssembler.s) replaces it via the ROF_BUILDVIEW_ASM seam below.  The asm
+ * inlines the four signed_mul_8x16 calls as a single `mulu.w` each: the multiply core is an
+ * UNSIGNED 8x16 product P = m*|mc| (m<=255, |mc|<=0x8000 both fit a word), so one mulu.w is
+ * byte-exact — the bit-serial $9C97 loop is NOT needed (unlike mul_u8 $9821, which is a
+ * round-half-up multiply and needs the g_mulTable lookup).
  */
-void build_view_transform_matrix(void) {
+void build_view_transform_matrix_core_c(void) {
     mem[0x00AA] = draw_iter_count; mem[0x00AB] = scroll_accum_b0;
     cpu.A = terrain_state; signed_mul_8x16();
     mem[0x22A3] = mem[0x00A8]; mem[0x22D1] = mem[0x00A9];
@@ -3642,6 +3649,40 @@ void build_view_transform_matrix(void) {
         cpu.C = c & 1;
     }
 }
+
+/* Dispatcher seam (asm-migration-plan Phase 3), mirrors project_terrain_points_core.
+ * On the Amiga (ROF_BUILDVIEW_ASM) build_view_transform_matrix is the hand-written m68k
+ * twin in BuildViewAssembler.s; elsewhere it is the clean-C oracle above.  Memory-only
+ * contract: the twin writes exactly the 10 cells below (the four output pairs $22A3:$22D1
+ * and $22FF:$232D, plus signed_mul_8x16's ZP side effects $00A8-$00AD from the last call). */
+#if defined(ROF_BUILDVIEW_ASM) && defined(ROF_BUILDVIEW_VERIFY)
+/* On-target differential (single run, deterministic): run the asm twin on the real state,
+ * snapshot the 10 cells it wrote, restore them, run the C oracle on the same inputs, compare.
+ * The C oracle's output is left LIVE so flight stays correct on an asm bug.  Reads via
+ * amiga/buildview_verify.gdb. */
+extern void build_view_transform_matrix_asm(void);
+volatile unsigned long g_bvCalls = 0, g_bvMismatch = 0, g_bvFirstBad = 0, g_bvBadAddr = 0;
+volatile unsigned long g_bvAsmTicks = 0, g_bvCTicks = 0;
+void build_view_transform_matrix(void) {
+    g_bvCalls++;
+    uint8_t* const M = (uint8_t*)mem;
+    static const uint16_t cells[10] = { 0x00A8, 0x00A9, 0x00AA, 0x00AB, 0x00AC, 0x00AD,
+                                        0x22A3, 0x22D1, 0x22FF, 0x232D };
+    uint8_t snap[10], asmv[10];
+    for (int i = 0; i < 10; i++) snap[i] = M[cells[i]];
+    FP_TIME(build_view_transform_matrix_asm(), g_bvAsmTicks);
+    for (int i = 0; i < 10; i++) asmv[i] = M[cells[i]];
+    for (int i = 0; i < 10; i++) M[cells[i]] = snap[i];
+    FP_TIME(build_view_transform_matrix_core_c(), g_bvCTicks);
+    int bad = 0, first = !g_bvMismatch;
+    for (int i = 0; i < 10; i++) if (M[cells[i]] != asmv[i]) { bad = 1; if (first) { g_bvBadAddr = cells[i]; first = 0; } }
+    if (bad) { if (!g_bvMismatch) g_bvFirstBad = g_bvCalls; g_bvMismatch++; }
+}
+#elif defined(ROF_BUILDVIEW_ASM)
+extern void build_view_transform_matrix(void);  /* BuildViewAssembler.s */
+#else
+void build_view_transform_matrix(void) { build_view_transform_matrix_core_c(); }
+#endif
 
 /* setup_projection_params @ $AC93 — per-frame projection/view setup.
  *

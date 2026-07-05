@@ -144,6 +144,18 @@ obj/TerrainFrameSetupAssembler.o : VASMFLAGS += -DROF_TFSETUP_VERIFY
 endif
 endif
 
+# Hand-written m68k twin of build_view_transform_matrix (four signed_mul_8x16 -> mulu.w each;
+# retires the bit-serial-multiply TODO).  ON by default; `make BUILDVIEW_C=1` falls back to the
+# clean-C oracle.  Verify via amiga/buildview_verify.gdb (setup path, not raster-diluted).
+ifndef BUILDVIEW_C
+FRAMEWORK_ASM_SRCS += $(AMIGA_SRC)/BuildViewAssembler.s
+EXTRA_DEFINES += -DROF_BUILDVIEW_ASM
+ifdef VERIFY
+EXTRA_DEFINES += -DROF_BUILDVIEW_VERIFY
+obj/BuildViewAssembler.o : VASMFLAGS += -DROF_BUILDVIEW_VERIFY
+endif
+endif
+
 # Hand-written m68k twin of fill_terrain_columns (the one-shot stars/planet field build).
 # ON by default; `make FILLTERR_C=1` falls back to the clean-C oracle.  Verify via
 # amiga/fillterr_verify.gdb (fires once — fill_terrain_columns is one-shot).

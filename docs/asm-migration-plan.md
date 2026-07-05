@@ -237,6 +237,19 @@ Done this session (all byte-identical, in-process differential 0 mismatch over t
   (`project_terrain_points_core_c` kept as the SDL/validate oracle). Byte-identical over 3082 calls
   (in-process differential, 0 mismatch); `make validate` green. `make PROJECT_C=1` falls back to the C.
   Verify: `make VERIFY=1 PROBES=1` + `GDBSCRIPT=project_verify.gdb ./raster_diff.sh`.
+- **`build_view_transform_matrix` (setup path)** (`BuildViewAssembler.s`, new file, 2026-07-05):
+  ~2× faster (per-call 3 vs 6 beam-ticks; asm 187 vs C 308 over 49 deep-flight calls), byte-identical
+  (in-process differential, 0 mismatch; `make validate` green). **Retires the bit-serial-multiply TODO.**
+  KEY FINDING: `signed_mul_8x16` ($9C97) is bit-serial on the 6502, but its product core is a plain
+  UNSIGNED 8×16 multiply P = m·|mc| (m≤255, |mc|≤$8000, both fit a word) with the multiplicand's sign
+  re-applied to P>>8 — so ONE `mulu.w` per call is byte-exact (unlike mul_u8 $9821, a round-half-up
+  multiply that needed g_mulTable). The asm inlines all four `signed_mul_8x16` calls as `mulu.w` and
+  reproduces the last call's ZP side effects ($00A8-$00AD) + the two output pairs ($22A3:$22D1,
+  $22FF:$232D). The step-2 subtract's "no-borrow" carry is threaded into mul4's frac ($00AC) via `scc`.
+  Reached via the `ROF_BUILDVIEW_ASM` seam in rof_native.c (`build_view_transform_matrix_core_c` kept
+  as the SDL/validate oracle); `make BUILDVIEW_C=1` falls back to the C. Verify: `make VERIFY=1 PROBES=1`
+  + `GDBSCRIPT=buildview_verify.gdb ./raster_diff.sh`. (`signed_mul_8x16` native/oracle left untouched —
+  still used by the C oracle path + the still-transpiled `build_view_transform_matrix__t6502`.)
 
 **CURRENT MEASURED BUDGET (per iteration, deep flight, iterCount=130, all asm in):** terrain draw both
 passes **~167ms (dominant ~47%)** [rasterize ~64% (asm'd, near instruction floor) · project ~20% ·
