@@ -94,7 +94,7 @@ private:
     void decodeCockpitFull();  // decode the whole cockpit region (modeD + mode4) once (scene-entry repaint)
     void decodeTitleScreen();  // decode the Title Screen text ($365B/charset $0400) -> titleScreenBitmap
     void decodeTunnelField(int rowLo, int rowHi);  // decode mem[$2000] rows [lo,hi] -> tunnelBitmap
-    void renderViewportModeD(uint16_t srcBase, int stride, int rows); // decode CHANGED mode-D bytes -> terrainBitmap (stars: $1000/48/43; flight: $1070/96)
+    void renderViewportModeD(uint16_t srcBase, int stride, int rows); // decode CHANGED mode-D bytes -> viewportBitmap (stars/planet: $1000/48/47)
     void renderFlightDirect();   // flight terrain: plot sky straight to bitplanes from $260E (replaces the convert)
 
     // Static-Standby fixed copper list (built once, poked in place — see
@@ -161,6 +161,17 @@ private:
 
     Bitmap*     titleBitmap    = nullptr;
     Bitmap*     terrainBitmap  = nullptr;
+    // Shared single-buffered pre-flight viewport bitmap: Standby (closed doors), Doors (door halves),
+    // Planet, Stars — the scenes that are mutually exclusive in time and never composite together in
+    // one frame.  (The tunnel reveal is the exception: it's shown ALONGSIDE the door halves during the
+    // Doors scene, so it keeps its own tunnelBitmap.)  DEDICATED — NOT shared with flight's
+    // terrainBitmap double-buffer, so flight-side rendering can never clobber a still-displayed
+    // pre-flight frame at a scene handoff (was the one-frame planet→flight black-band glitch: the
+    // flight renderer cleared the shared buffer mid-frame while the outgoing planet copper still
+    // displayed it).  This mirrors the Atari, where the pre-flight scenes are single-buffered (one
+    // $1000/$2000 field) and only flight double-buffers ($1070, two halves).  Written by the Standby/
+    // Doors door-field decode and by renderViewportModeD (planet/stars).
+    Bitmap*     viewportBitmap   = nullptr;
     // Flight terrain double-buffer: renderFlightDirect rebuilds the whole terrain region
     // every frame (blitter clear + sky fill), so it must NOT paint the live displayed buffer
     // mid-frame (caused plane1 flicker).  It renders into the off-screen one of these two and

@@ -51,7 +51,7 @@ extern "C" void display_setup(void);
 extern "C" volatile unsigned char g_standbyRevealReady;
 // Door-field-ready gate, latched on in display_setup once the doors/dots/LEVEL field has been
 // drawn into $2000 but BEFORE delay_loop_c2_to_c9 ramps the green colour $0071 (rof_native.c).
-// render() decodes $2000 -> terrainBitmap once when this rises, so the door pixels exist before
+// render() decodes $2000 -> viewportBitmap once when this rises, so the door pixels exist before
 // the fade and the per-frame color03 ramp shows the dark->bright green build on them.
 extern "C" volatile unsigned char g_doorFieldReady;
 // Screen-RAM dirty flags: render() scans the title ($32B7) + cockpit ($332D mode4 / $350D
@@ -527,9 +527,15 @@ static void buildDecode2bppLut();
 void RescueOnFractalus::initialize()
 {
     titleBitmap   = Bitmap::allocate(kW, kTitleHeight,   kBP2, true);
-    terrainBitmap = Bitmap::allocate(kW, kViewportFullHeight, kBP3, true);  // 3bp: tunnel reveal uses pens 4-7; 47 rows incl. wing band
+    terrainBitmap = Bitmap::allocate(kW, kViewportFullHeight, kBP3, true);  // FLIGHT-ONLY (double-buffered); 47 rows incl. wing band
     // Second flight terrain buffer for double-buffering renderFlightDirect (see header).
     terrainBitmapBack = Bitmap::allocate(kW, kViewportFullHeight, kBP3, true);
+    // Shared single-buffered pre-flight viewport bitmap for Standby / Doors (door halves) / Planet /
+    // Stars — the scenes that never composite together in one frame (unlike the tunnel reveal, which
+    // coexists with the door halves during Doors, so it keeps its own tunnelBitmap).  Kept separate
+    // from the flight terrainBitmap so flight-side rendering can never clobber a still-displayed
+    // pre-flight frame at a scene handoff (was the one-frame planet→flight black-band glitch).
+    viewportBitmap  = Bitmap::allocate(kW, kViewportFullHeight, kBP3, true);
 #ifdef ROF_FLIGHT_PROBE
     extern volatile uint32_t g_terrainBmpAddr;   // chip addr of terrainBitmap->data (Stage 1 verifier dump)
     g_terrainBmpAddr = (uint32_t)terrainBitmap->data;
@@ -649,14 +655,14 @@ void RescueOnFractalus::initialize()
     // Standby; until then the EmptyCopperList holds the screen black.
     standbyCopper = new StandbyCopperList();
     if (standbyCopper && standbyCopper->data())
-        standbyCopper->buildLayout(*titleBitmap, *terrainBitmap, *cockpitBitmap,
+        standbyCopper->buildLayout(*titleBitmap, *viewportBitmap, *cockpitBitmap,
                                    *leftPost, *rightPost, *nullSprite);
 
     // Static stars/planet viewport fixed copper list (the line-doubled mode-D band),
     // same build-once + poke-in-place scheme; renderFrame installs it during rsStars.
     planetCopper = new PlanetCopperList();
     if (planetCopper && planetCopper->data())
-        planetCopper->buildLayout(*titleBitmap, *terrainBitmap, *cockpitBitmap,
+        planetCopper->buildLayout(*titleBitmap, *viewportBitmap, *cockpitBitmap,
                                     *leftPost, *rightPost, *energyIndicatorSprite, *nullSprite,
                                     *starSprite[0], *starSprite[1], *starSprite[2]);
 
@@ -815,7 +821,8 @@ void RescueOnFractalus::decodeTunnelField(int rowLo, int rowHi)
 }
 
 // renderViewportModeD: decode the stars/planet viewport buffer mem[$1000] as an
-// ANTIC mode-D field into terrainBitmap.  Layout (verified vs launch_5_planet.a8s
+// ANTIC mode-D field into viewportBitmap (the DEDICATED planet buffer, NOT flight's
+// shared terrainBitmap).  Layout (verified vs launch_5_planet.a8s
 // row-addr table $073D/$0793): 43 mode-D rows, 48 bytes/row (WIDE playfield), the
 // central 40 displayed (+4 crop, as terrain/cockpit); each mode-D row is 2 display
 // scanlines, so 43*2 = 86 = kTerrainHeight.  mode-D is 2bpp: byte = 4 pixels (2
@@ -827,7 +834,7 @@ void RescueOnFractalus::decodeTunnelField(int rowLo, int rowHi)
 // the displayed 40 of 48 either way.
 void RescueOnFractalus::renderViewportModeD(uint16_t srcBase, int stride, int rows)
 {
-    if (!terrainBitmap) return;
+    if (!viewportBitmap) return;
     static const int kCrop   = 4;    // central 40 of 48 (centres content)
 
     // Write each mode-D row to ONE interleaved scanline; the copper line-doubles the
@@ -866,7 +873,7 @@ void RescueOnFractalus::renderViewportModeD(uint16_t srcBase, int stride, int ro
         // (base-change mid-stream, not the stars entry), kick it here.  Either way the shadow-zero
         // loop below runs while the blit is in flight, then we wait for it before the CPU writes.
         if (!viewportClearKicked)
-            AmigaHardware::blitterClear((uint16_t*)terrainBitmap->data, 60, (uint16_t)rows, 0);
+            AmigaHardware::blitterClear((uint16_t*)viewportBitmap->data, 60, (uint16_t)rows, 0);
         for (int i = 0; i < rows * 10; i++) viewportShadow[i] = 0u;   // FAST RAM, overlaps the blit
         AmigaHardware::blitterWait();
         viewportClearKicked = false;
@@ -895,7 +902,7 @@ void RescueOnFractalus::renderViewportModeD(uint16_t srcBase, int stride, int ro
     }
 
     const uint8_t* src = (const uint8_t*)&mem[srcBase + kCrop] + (unsigned)rStart * stride;
-    uint8_t* vdest    = (uint8_t*)terrainBitmap->data + (unsigned)rStart * 120;
+    uint8_t* vdest    = (uint8_t*)viewportBitmap->data + (unsigned)rStart * 120;
     uint32_t* shadow  = viewportShadow + rStart * 10;
 #ifdef ROF_FLIGHT_PROBE
     extern volatile unsigned long g_vpDecMax, g_vpDecMaxVbi, g_vpDecMaxRows;
@@ -1497,7 +1504,7 @@ void RescueOnFractalus::updateDoorsCopper(DoorsCopperList* dc)
     // (half - g2) (the reveal centred on the vanishing point); botBase = terrain row half.
     const uint16_t half = (uint16_t)(kTerrainHeight / 2);
     const uint16_t g2   = rsLaunched ? (uint16_t)(0x2Bu - mem[MEM_terrain_scroll_counter]) : 0;
-    const uint32_t ta   = (uint32_t)terrainBitmap->data;
+    const uint32_t ta   = (uint32_t)viewportBitmap->data;   // door halves live in the shared pre-flight viewport bitmap
     // pen0 = COLBK green ($0071), pen3 = road-dot dark ($02C0): the door field decodes
     // COLBK (value 8)→pen0 and the dark dots (value 0)→pen3 (see kNibbleColour).  color00
     // green then flows unbroken through all three terrain bands AND the tunnel reveal into
@@ -1699,13 +1706,13 @@ void RescueOnFractalus::perFrameWork()
     if (!postsBuilt) { buildPostSprites(); buildFlightFrameSprites(); postsBuilt = true; }
     // Starfield players $0C32/$0E32/$0F32: scrolled+seeded during stars, static
     // through the planet zoom, so map them both phases.
-    // On the stars ENTRY frame the terrain bitmap needs a full clear (the tunnel left stale
-    // pens, incl. plane3).  Kick that clear on the BLITTER now, BEFORE buildStarSprites (pure
-    // CPU, ~7ms) — the blit runs in parallel with the sprite build and the shadow-zero loop, so
-    // renderViewportModeD only has to blitterWait() for it (≈free) instead of stalling the CPU
+    // On the stars ENTRY frame the planet bitmap needs a full clear (an earlier scene may have
+    // left stale pens, incl. plane3).  Kick that clear on the BLITTER now, BEFORE buildStarSprites
+    // (pure CPU, ~7ms) — the blit runs in parallel with the sprite build and the shadow-zero loop,
+    // so renderViewportModeD only has to blitterWait() for it (≈free) instead of stalling the CPU
     // ~7ms on it.  viewportForceFull is still set here (renderViewportModeD consumes it later).
-    if (rsStars && viewportForceFull && terrainBitmap && !viewportClearKicked) {
-        AmigaHardware::blitterClear((uint16_t*)terrainBitmap->data, 60, 47, 0);
+    if (rsStars && viewportForceFull && viewportBitmap && !viewportClearKicked) {
+        AmigaHardware::blitterClear((uint16_t*)viewportBitmap->data, 60, 47, 0);
         viewportClearKicked = true;
     }
     if (rsStars) {
@@ -1967,7 +1974,7 @@ void RescueOnFractalus::render()
         // (the 68000's (An)+ mode).  vdest is chip-aligned; +40/+80 keep each plane long-
         // aligned.  Big-endian packing so plane[4k+n] = kDoorPx[src[4k+n]].  plane3 = 0.
         const uint8_t* sbase = (const uint8_t*)mem + 0x2000 + kTerrainXByteOffset;
-        uint8_t* vdest = (uint8_t*)terrainBitmap->data;
+        uint8_t* vdest = (uint8_t*)viewportBitmap->data;   // Standby/Doors door field -> shared pre-flight viewport
         for (int row = 0; row < (int)kTerrainHeight; row++) {
             const uint8_t* src = sbase + row * 46;
             uint32_t* p1 = (uint32_t*)vdest;
@@ -2134,6 +2141,7 @@ void RescueOnFractalus::shutdown()
     delete titleBitmap;   titleBitmap   = nullptr;
     delete terrainBitmap; terrainBitmap = nullptr;
     delete terrainBitmapBack; terrainBitmapBack = nullptr;
+    delete viewportBitmap;  viewportBitmap  = nullptr;
     delete cockpitBitmap; cockpitBitmap = nullptr;
     delete tunnelBitmap;  tunnelBitmap  = nullptr;
     delete titleScreenBitmap; titleScreenBitmap = nullptr;
