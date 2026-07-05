@@ -134,6 +134,18 @@ static uint16_t kDoubleGlyph[256];
 //     kModeDP1[s] = plane1 (colour bit0 of each pixel), kModeDP2[s] = plane2 (bit1).
 static uint8_t kModeDP1[256];
 static uint8_t kModeDP2[256];
+// Windscreen-bottom band (flight rows 43-46) decode.  The band mode-D field (mem[$1074+43*96],
+// written per frame by game_sub_451d) holds: value 3 = grey windscreen frame (the dominant
+// "middle"), value 0 = the L/R edge regions (terrain body colour, behind the corner-triangle
+// sprites), value 1 = the salmon wing-clearance bars, value 2 = the centre marker.  Instead of
+// the terrain palette carrying the grey (a color03 poke), only the grey frame (value 3) is put on
+// the UNUSED third bitplane -> color04 (cockpit grey).  Values 0/1/2 are plane3 HOLES taking the
+// terrain palette color00-03 (so the L/R edges show color00 = terrain body and the salmon bars
+// show color01 = sky, both fading salmon->brown WITH the terrain).  kBandP1/2/3[s] = the
+// plane1/2/3 byte for source byte s.
+static uint8_t kBandP1[256];
+static uint8_t kBandP2[256];
+static uint8_t kBandP3[256];
 // Row -> byte offset within the flight bitmap (120 bytes/scanline = plane1 40 + plane2 40 +
 // plane3 40).  The 68000 has no fast multiply, so the per-column horizon plotter (and the
 // direct-to-plane2 terrain rasterizer in rof_native.c) index this instead of computing scan*120.
@@ -154,18 +166,20 @@ extern "C" uint8_t* g_flightDotPlane = nullptr;
 // Called by the terrain draw (rof_native.c) before its first dot write, to ensure the kicked
 // off-screen-buffer clear has finished (the dots OR into freshly-zeroed plane2).
 extern "C" void rof_flight_wait_dotclear(void) { AmigaHardware::blitterWait(); }
-// Edge-plot height->plane1-row-byte-offset table: kHeightRowOff[h] = kRow120[clamp(150-h,0,42)].
+// Edge-plot height->plane1-row-byte-offset table: kHeightRowOff[h] = kRow120[clamp(150-h,0,46)].
 // Folds the per-column "scanline = 150-h, clamp to the terrain rows" arithmetic out of the
 // skyline plot loop (a pure table index), so the loop has no per-column clamp branches — used by
 // both the C reference edgePlotCore and the hand-asm flight_edge_plot_asm.  extern "C" so the asm
-// can xref it; built once (it depends only on kRow120, not on per-frame state).
+// can xref it; built once (it depends only on kRow120, not on per-frame state).  The clamp is row
+// 46 (not 42) so a low horizon lets the terrain silhouette extend into the windscreen band rows
+// 43-46 — the band's L/R edges then show real terrain (the sky fill writes rows 0-45, seed 46).
 extern "C" uint16_t kHeightRowOff[256];
 uint16_t kHeightRowOff[256];
 static bool kHeightRowOffBuilt = false;
 static void buildHeightRowOff() {
     for (int h = 0; h < 256; h++) {
         int scan = 150 - h;
-        if (scan < 0) scan = 0; else if (scan > 42) scan = 42;
+        if (scan < 0) scan = 0; else if (scan > 46) scan = 46;
         kHeightRowOff[h] = kRow120[scan];
     }
     kHeightRowOffBuilt = true;
@@ -694,6 +708,21 @@ void RescueOnFractalus::initialize()
             if (px & 2u) pc |= mask;
         }
         kModeDP1[s] = pa; kModeDP2[s] = pc;
+        // Windscreen-band split (see kBandP1/2/3): only the grey frame (value 3) -> plane3
+        // (color04).  value 1 -> plane1 (color01 salmon bar), value 2 -> plane2 (color02 centre
+        // marker), value 0 -> all planes 0 -> color00 = terrain body (the L/R edge regions, which
+        // the Atari band draws in COLBK=$DC = the terrain pen0; the grey corner-triangle sprites
+        // overlay on top).  So values 0/1/2 are plane3 HOLES taking the fading terrain palette.
+        uint8_t bp1 = 0, bp2 = 0, bp3 = 0;
+        for (int i = 0; i < 4; i++) {
+            uint8_t px   = (uint8_t)((s >> (6 - i * 2)) & 3u);
+            uint8_t mask = (uint8_t)(0xC0u >> (i * 2));
+            if      (px == 3) bp3 |= mask;                    // grey windscreen frame -> plane3 -> color04
+            else if (px == 1) bp1 |= mask;                    // clearance bar -> hole -> color01
+            else if (px == 2) bp2 |= mask;                    // centre marker -> hole -> color02
+            // px == 0: L/R edge -> all planes 0 -> color00 (terrain body); sprite triangle on top
+        }
+        kBandP1[s] = bp1; kBandP2[s] = bp2; kBandP3[s] = bp3;
         uint8_t ph = (uint8_t)((s >> 4) & 0xF), pl = (uint8_t)(s & 0xF);   // GTIA-10
         // Tunnel rings: remap pixel value 0 -> pen 7.  value-0 is the exit-clear black
         // (draw_ring_frame_step floods the field with value-0 as the tunnel clears from the
@@ -944,10 +973,10 @@ void RescueOnFractalus::renderFlightDirect()
     // that just ran into mem[] — the Amiga equivalent of the Atari clearing the off-screen half
     // while the on-screen half is shown.  Just wait for it here.  First flight frame (nothing
     // kicked, or a buffer mismatch): clear inline.  The clear spans all 47 rows (0-46): the
-    // terrain viewport (0-42) AND the windscreen-bottom band (43-46), which is now left BLANK —
-    // the mode-D field + its per-frame convert were shed (dots come straight from the plane2
-    // rasterizer, sky from $260E), so there is no field to source the band from.  TODO: restore
-    // the windscreen-bottom band (cockpit-frame corners) without the mode-D field.
+    // terrain viewport (0-42) AND the windscreen-bottom band (43-46).  The terrain is now rendered
+    // full-height (47 rows): the edge plot + sky fill below cover the whole band width, so its L/R
+    // edges show real terrain; the windscreen-frame overlay (plane3) + salmon bars are punched into
+    // the band middle AFTER the fill (see below).
     if (flightClearPending != back) AmigaHardware::blitterClear((uint16_t*)bp, 60, 47, 0);
     AmigaHardware::blitterWait();
     flightClearPending = nullptr;
@@ -976,17 +1005,47 @@ void RescueOnFractalus::renderFlightDirect()
 #else
     edgePlotCore(bp);
 #endif
-    // Sky fill: propagate each edge bit UP in ONE descending blit (writes rows 0-41, seed 42).
-    AmigaHardware::blitterFillUp((uint16_t*)bp, 20, 42, 80);
+    // Sky fill: propagate each edge bit UP in ONE descending blit (writes rows 0-45, seed 46).
+    // Full-height (47 rows) so the terrain silhouette continues into the windscreen band — the
+    // band's L/R edges then show real terrain.  (Was 43 rows / seed 42; buildHeightRowOff clamps
+    // the skyline to row 46 to match.)
+    AmigaHardware::blitterFillUp((uint16_t*)bp, 20, 46, 80);
     FD_LAP(g_fdEdge);
 
     // plane2 = terrain dots/detail (mode-D value-2/3).  No decode scan any more: the terrain
     // rasterizer (terrain_column_rasterize, rof_native.c) ORs its dots STRAIGHT into this buffer's
-    // plane2 (g_flightDotPlane) during the upstream draw, so they are already here.  The band
-    // (rows 43-46) is still field-sourced above.
+    // plane2 (g_flightDotPlane) during the upstream draw, so they are already here.
     FD_LAP(g_fdScan);                                        // (now ~0)
-    AmigaHardware::blitterWait();                            // sky fill must finish before the flip
+    AmigaHardware::blitterWait();                            // sky fill must finish before the band overlay + flip
     FD_LAP(g_fdFill);
+
+    // Windscreen-bottom band overlay (rows 43-46 = scanlines 172-179): the cockpit frame + the
+    // wing-clearance bars, punched OVER the now-rendered terrain.  Source = the mode-D band field
+    // mem[$1074+43*96] (double-buffer half via g_flightRenderHalf), written per frame by
+    // game_sub_451d.  Per pixel: the grey frame (value 3) sets plane3 -> color04-07 (all grey), so
+    // it covers the terrain in planes 1&2 with a solid frame; the salmon bars (value 1) + centre
+    // marker (value 2) OVERWRITE planes 1&2 (bar -> color01 salmon, marker -> color02) and clear
+    // plane3, so they punch through the frame; value 0 (the L/R edge regions) touches nothing, so
+    // the rendered terrain shows there.  (The bars/marker overwrite must clear the terrain bits
+    // under them, hence the read-modify-write with the `ow` mask.)
+    {
+        const unsigned fieldHalf = g_flightRenderHalf ? 0x30u : 0x00u;
+        const uint8_t* srow = (const uint8_t*)mem + 0x1074 + fieldHalf + 43 * 96;
+        uint8_t* vrow = bp + 43 * 120;
+        for (int row = 0; row < 4; row++, srow += 96, vrow += 120) {
+            const uint8_t* s = srow;
+            uint8_t* d1 = vrow; uint8_t* d2 = vrow + 40; uint8_t* d3 = vrow + 80;
+            for (int b = 0; b < 40; b++, s++, d1++, d2++, d3++) {
+                uint8_t v = *s;
+                uint8_t bar = kBandP1[v], mark = kBandP2[v];
+                uint8_t ow  = (uint8_t)(bar | mark);         // pixels that overwrite the terrain
+                *d1 = (uint8_t)((*d1 & ~ow) | bar);          // salmon bar; terrain kept elsewhere
+                *d2 = (uint8_t)((*d2 & ~ow) | mark);         // centre marker; terrain kept elsewhere
+                *d3 = kBandP3[v];                             // grey windscreen frame -> color04-07
+            }
+        }
+    }
+    FD_LAP(g_fdBand);
 #ifdef ROF_FLIGHT_PROBE
     g_fdCalls++;
 #endif

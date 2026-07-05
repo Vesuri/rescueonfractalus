@@ -69,14 +69,16 @@ static const uint16_t kColor30 = 0x1BC;   // pair 6/7 pen 10 (altimeter ship-hei
 #define INDEX_VP_PAL          (INDEX_VP_BPLCON0 + 1)       // 39: color00..03 (4)
 #define INDEX_VP_MOD0         (INDEX_VP_PAL + 4)           // 43: row-0 bpl1mod,bpl2mod (2)
 #define INDEX_VP_LINEDOUBLE   (INDEX_VP_MOD0 + 2)          // 45: 93 × (WAIT+2 mod), +1 band block
-// The line-doubling loop runs k=1..kViewportHeight-1.  At k==kTerrainHeight (scanline 172) the
-// flight band DLI changes ONLY COLPF2 (terrain sky $B8 -> band frame grey $06) — COLBK/COLPF0/
-// COLPF1 stay the terrain values (measured live).  So, faithfully, the band block emits ONLY
-// color03 (= COLPF2) and inherits color00/01/02 from the terrain palette (VP_PAL) — which means
-// the band bg/pens fade salmon->brown WITH the terrain automatically.  BPLCON2 stays at its
-// init value 0x09 (sprites behind the playfield) throughout — no per-band flip needed.
-#define BAND_BLOCK_WORDS      1
-#define INDEX_BAND_BLOCK      (INDEX_VP_LINEDOUBLE + 3 * (kTerrainHeight - 1) + 1)  // band color03 (1)
+// The line-doubling loop runs k=1..kViewportHeight-1.  At k==kTerrainHeight (scanline 172) we
+// enter the wing-clearance band.  The terrain is rendered full-height across the whole band, so
+// the band's planes 1&2 hold terrain; the grey windscreen frame is overlaid on plane3.  Where
+// plane3=1 the pen is 4/5/6/7 (plane3 + whatever terrain is in planes 1&2), so the band block
+// sets ALL of color04-07 = the frame grey — the frame then reads solid grey over any terrain.
+// color00-03 stay the terrain palette (VP_PAL): the salmon clearance bars are plane3 holes that
+// overwrite planes 1&2 to color01, so they fade salmon->brown WITH the terrain.  BPLCON2 stays at
+// its init value 0x09 (sprites behind the playfield) throughout — no per-band flip needed.
+#define BAND_BLOCK_WORDS      4
+#define INDEX_BAND_BLOCK      (INDEX_VP_LINEDOUBLE + 3 * (kTerrainHeight - 1) + 1)  // band color04-07 (4)
 #define INDEX_COCKPIT_WAIT    (INDEX_VP_LINEDOUBLE + 3 * (kViewportHeight - 1) + BAND_BLOCK_WORDS)
 // Artificial Horizon (#6): the brown ground-fill = Atari player P2, multiplexed onto sprite
 // channels 0/1 BELOW the windscreen frame (whose ch0/1 use ends at VSTOP=180).  The SPR0PT/
@@ -180,10 +182,15 @@ void FlightCopperList::buildLayout(const Bitmap& title, const Bitmap& terrain, c
     for (uint16_t k = 1; k < kViewportHeight; k++) {
         d[idx++] = copperWait((uint16_t)(kTerrainLine + k - 1), 0xE0);
         if (k == kTerrainHeight) {
-            // Crossing into the wing-clearance band (scanline kBandLine = 172): the band DLI
-            // changes ONLY COLPF2 to the frame grey, so emit just color03 (seeded 0, poked by
-            // setBandPalette).  color00/01/02 stay the terrain pens (VP_PAL) — they fade with it.
-            d[idx++] = copperMove(color03, 0);
+            // Crossing into the wing-clearance band (scanline kBandLine = 172): the grey windscreen
+            // frame is on plane3, over terrain in planes 1&2 -> set ALL of color04-07 = frame grey
+            // (seeded 0, poked by setBandPalette) so the frame reads solid grey over any terrain.
+            // color00-03 stay the terrain pens (VP_PAL) — the salmon bars fade with the terrain.
+            // plane3 is 0 across the terrain rows above, so color04-07 are only selected in the band.
+            d[idx++] = copperMove(color04, 0);
+            d[idx++] = copperMove(color05, 0);
+            d[idx++] = copperMove(color06, 0);
+            d[idx++] = copperMove(color07, 0);
         }
         const uint16_t v = (k & 1) ? (uint16_t)80 : (uint16_t)-40;
         d[idx++] = copperMove(bpl1mod, v);
@@ -231,15 +238,17 @@ void FlightCopperList::buildLayout(const Bitmap& title, const Bitmap& terrain, c
     d[INDEX_TERMINATOR] = copperWait(255, 254);
 }
 
-// Wing-clearance band (scanlines 172-179): the band DLI changes ONLY COLPF2 (mode-D value-3
-// = the grey windscreen frame, $00D4=$06).  COLBK/COLPF0/COLPF1 (value-0/1/2 = terrain bg /
-// clearance bars / dots) are NOT touched by the DLI — they stay the terrain pens (VP_PAL) and
-// so fade salmon→brown WITH the terrain.  So only color03 is poked here.
-void FlightCopperList::setBandPalette(uint16_t pen3)
+// Wing-clearance band (scanlines 172-179): the grey windscreen frame ($00D4=$06) is drawn on
+// plane3, over terrain in planes 1&2, so a frame pixel selects one of color04-07 — all four are
+// set to the frame grey here so the frame reads solid over any terrain.  The bars/marker are
+// plane3 holes taking color00-03 from the terrain palette (VP_PAL), which fade salmon→brown WITH
+// the terrain.
+void FlightCopperList::setBandPalette(uint16_t grey)
 {
-    // The band DLI changes only COLPF2 (the windscreen-frame grey); color00/01/02 are
-    // inherited from the terrain palette (which fades), so only color03 is poked here.
-    data_[INDEX_BAND_BLOCK] = copperMove(color03, pen3);
+    data_[INDEX_BAND_BLOCK + 0] = copperMove(color04, grey);
+    data_[INDEX_BAND_BLOCK + 1] = copperMove(color05, grey);
+    data_[INDEX_BAND_BLOCK + 2] = copperMove(color06, grey);
+    data_[INDEX_BAND_BLOCK + 3] = copperMove(color07, grey);
 }
 
 // ---- per-frame setters -------------------------------------------------------
