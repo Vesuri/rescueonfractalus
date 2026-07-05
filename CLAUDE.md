@@ -71,8 +71,8 @@ only the MOVEs the DLI actually makes (e.g. `PlanetCopperList`'s band block emit
 | **Standby** | band mode-D corners = `COLBK` (DLI background, green). On the Atari COLBK is ONE register, green continuously from the viewport top through the band (measured `launch_1_title`: COLBK=`$C8` y50-136 → `$00` y138). The Amiga mirrors this: the door field decodes COLBK (GTIA-10 value 8) → **`color00`** via `kNibbleColour` (8→pen0; road dots value-0→pen3), so `color00`=green flows from the terrain region straight into the band — no per-band poke. `INDEX_DASH_BG` flips `color00`→black below. (Was a `setBandBgColor` `color00` split; removed.) The green quad-player wedge is present/full below it. |
 | **Doors** | band green (`color00`), inherited the same way as Standby — COLBK is green across the WHOLE Doors viewport *including the tunnel reveal* (measured `doors_mid`: rings are playfield pens `$34/$36/$38` over green COLBK), so `color00`=green set once on band0 flows through all 3 terrain bands into the band. (Was `setBandBgColor`; removed.) Reveal hasn't started. |
 | **Tunnel** | the green wedge **recedes top-down** = the green→purple reveal. `FUN_6a27` (called from `$538D` in `launch_anim_dispatch $5367`) does `DEC $008C` (wedge height 8→0) + clears `$0C88+` one line/frame, **gated behind `$0088==0 && $0089==0 && $008B==0`** (ring tick paused). Native `launch_anim_dispatch_native` was missing this `$008C` branch; restored — recede now runs on the Amiga, rendered by `TunnelCopperList::setBandReveal`. |
-| **Flight (7)** | The windscreen-bottom band (bitmap rows 43-46 = scanlines 172-179) is rendered as PART of the direct terrain render (2026-07-05, `renderFlightDirect`): terrain fills all **47 rows** (skyline clamp→row 46 + sky-fill rows 0-45), so planes 1&2 hold live terrain full-width and the band's **L/R 32px show real terrain**. The grey windscreen frame is on the otherwise-unused **plane3** across the middle (`color04-07` all = frame grey `$00D4`); the salmon wing-clearance bars (mode-D field value 1) + centre marker (value 2) OVERWRITE planes 1&2 as holes in plane3 (bar→`color01` salmon, fades with terrain) and plane-2 terrain **dots reach band rows 44-46** (scanline 43 excluded = the `$6B` COL_MAX reset floor). The band overlay is a RMW after the sky fill, sourced from the live mode-D band field (`mem[$1074+43*96]`, written per frame by `game_sub_451d`). Corner triangles are separate **PMG sprites** on top. See [[windscreen-corner-triangles]] + [[flight-scene]]. |
-| **Planet/Stars (6)** | **bitmap**, NOT PMG (the planet is the mode-D viewport bitmap). The windscreen-bottom band ($1810, Amiga scanlines 172-179) is the bottom 4 mode-D viewport rows under the `$6D67` frame palette: black bg + two greys (`$04/$06`) + `COLPF2=$2A` (planet) — value-2-dominant bitmap reads as the grey frame, value-3 edges = the salmon planet in the corner gaps. `PlanetCopperList` band block emits only `color01/color02` (mirrors `$6D67`). The grey **edge pillars** are still the 5th-player missiles (`COLPF3=$06`) — not yet ported. |
+| **Flight (7)** | The windscreen-bottom band (bitmap rows 43-46 = scanlines 172-179) is rendered as PART of the direct terrain render (2026-07-05, `renderFlightDirect`): terrain fills all **47 rows** (skyline clamp→row 46 + sky-fill rows 0-45), so planes 1&2 hold live terrain full-width and the band's **L/R 32px show real terrain**. The grey windscreen frame is on the otherwise-unused **plane3** across the middle (`color04-07` all = frame grey `$00D4`); the salmon wing-clearance bars (mode-D field value 1) + centre marker (value 2) OVERWRITE planes 1&2 as holes in plane3 (bar→`color01` salmon, fades with terrain) and plane-2 terrain **dots reach band rows 44-46** (scanline 43 excluded = the `$6B` COL_MAX reset floor). The band overlay is a RMW after the sky fill, sourced from the live mode-D band field (`mem[$1074+43*96]`, written per frame by `game_sub_451d`). Corner triangles are separate **PMG sprites** on top. See [[flight-scene]]. |
+| **Planet/Stars (6)** | **bitmap**, NOT PMG (the planet is the mode-D viewport bitmap). The windscreen-bottom band ($1810, Amiga scanlines 172-179) is the bottom 4 mode-D viewport rows under the `$6D67` frame palette: black bg + two greys (`$04/$06`) + `COLPF2=$2A` (planet) — value-2-dominant bitmap reads as the grey frame, value-3 edges = the salmon planet in the corner gaps. `PlanetCopperList` band block emits only `color01/color02` (mirrors `$6D67`). The grey **edge pillars** (5th-player missiles, `COLPF3=$06`) are ported (as with all scenes' corner frame — DONE 2026-07-05). |
 
 ## Instrument vocabulary — "Valkyrie Fighter Control Panel" (use these names everywhere)
 
@@ -85,7 +85,7 @@ in the 320×216 display space; use them to identify each instrument's Atari hard
 |---|---|---|---|---|
 | 1 | **Score** | 304,20 | 16×8 | top-bar mode-6 text ~`$32E3` ✓ |
 | 2 | **Compass** | 144,32 | 32×8 | top-bar mode-6 cells `$32C9-$32CA`, varies with heading octant `$280D` ✓ |
-| 3 | **Wing Clearance Bars** | 40,128 | 240×10 | **missiles M1/M2/M3**, HPOSM3=`$2840`(+`$0C`/+`$11`), SIZEM=`$CC`, GRAFM=`$00CD` ✓ |
+| 3 | **Wing Clearance Bars** | 40,128 | 240×10 | **BITMAP** (mode-D band field), NOT missiles — viewport row LMS `$2150` (flight) / `$1870` (planet), row 45. value-1 `$55`=salmon bar fill, value-2 `$AA`=centre marker, value-3 `$FF`=end caps. Width = clearance. ✓ (superseded the earlier missiles-M1/M2/M3 guess — see [[flight-scene]]) |
 | 4 | **Thrust Level** | 8,152 | 40×60 | mode-4 dial-bar cells (x≈8-16), drawn via `$4581`/`draw_object_column` ✓ |
 | 5 | **Dangerous Altitude** | 24,144 | 40×60 | mode-4 dial-bar cells (x≈24-32, e.g. `$3394`), lights near ground ✓ |
 | 6 | **Artificial Horizon** | 56,138 | 32×28 | **PMG (NOT cells)** — dial frame is static $33xx bitmap; brown ground fill is Atari player P2 (COLPM2=`$26`, SIZEP2 dbl, buffer `$0E92-$0EB2`), boundary moves with pitch. Amiga = 2 sprites (`buildAHSprite`). See [[flight-scene]]. ✓ |
@@ -149,11 +149,14 @@ make validate FN="name"    # only tests whose name contains a substring
 
 ### Amiga cross-build (m68k-amiga-elf-gcc) — from `amiga/`
 > Hand-written m68k asm is the norm for hot paths + framework routines (`-DNO_ASSEMBLER` is gone;
-> `vasmm68k_mot -m68010 -Felf` assembles the `.s`). Done: the framework `*Assembler.s` (GCC bridges),
+> `vasmm68k_mot -m68010 -Felf` assembles the `.s`). Done: the framework `*Assembler.s` (GCC bridges);
 > the flight terrain rasterizer (`TerrainRasterizeAssembler.s`: `terrain_column_rasterize_core` +
-> `flight_edge_plot_asm`). Verify asm twins with `make VERIFY=1 PROBES=1` + `amiga/raster_verify.gdb`
-> (in-process differential vs the C oracle — NOT cross-run render-diff). `make RASTER_C=1` falls back
-> to the C. See `docs/asm-migration-plan.md`.
+> `flight_edge_plot_asm`); `project_terrain_points` (`ProjectTerrainAssembler.s`);
+> `terrain_subdivide_column` (`TerrainSubdivideAssembler.s`); `terrain_frame_setup` loops
+> (`TerrainFrameSetupAssembler.s`); `fill_terrain` (`FillTerrainAssembler.s`). Each has an
+> `ROF_<NAME>_ASM` seam + a `make <NAME>_C=1` C-fallback. Verify asm twins with `make VERIFY=1 PROBES=1`
+> + the matching `amiga/*_verify.gdb` (in-process differential vs the C oracle — NOT cross-run
+> render-diff). See `docs/asm-migration-plan.md`.
 ```
 . env.sh        # put the ~/.local Amiga toolchain on PATH (source it first)
 make            # build out/RoF.exe (+ RoF.elf for debug)
