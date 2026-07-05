@@ -71,7 +71,7 @@ only the MOVEs the DLI actually makes (e.g. `PlanetCopperList`'s band block emit
 | **Standby** | band mode-D corners = `COLBK` (DLI background, green). On the Atari COLBK is ONE register, green continuously from the viewport top through the band (measured `launch_1_title`: COLBK=`$C8` y50-136 → `$00` y138). The Amiga mirrors this: the door field decodes COLBK (GTIA-10 value 8) → **`color00`** via `kNibbleColour` (8→pen0; road dots value-0→pen3), so `color00`=green flows from the terrain region straight into the band — no per-band poke. `INDEX_DASH_BG` flips `color00`→black below. (Was a `setBandBgColor` `color00` split; removed.) The green quad-player wedge is present/full below it. |
 | **Doors** | band green (`color00`), inherited the same way as Standby — COLBK is green across the WHOLE Doors viewport *including the tunnel reveal* (measured `doors_mid`: rings are playfield pens `$34/$36/$38` over green COLBK), so `color00`=green set once on band0 flows through all 3 terrain bands into the band. (Was `setBandBgColor`; removed.) Reveal hasn't started. |
 | **Tunnel** | the green wedge **recedes top-down** = the green→purple reveal. `FUN_6a27` (called from `$538D` in `launch_anim_dispatch $5367`) does `DEC $008C` (wedge height 8→0) + clears `$0C88+` one line/frame, **gated behind `$0088==0 && $0089==0 && $008B==0`** (ring tick paused). Native `launch_anim_dispatch_native` was missing this `$008C` branch; restored — recede now runs on the Amiga, rendered by `TunnelCopperList::setBandReveal`. |
-| **Flight (7)** | triangles are **bitmap value-2 (COLPF1)**, NOT PMG. |
+| **Flight (7)** | The windscreen-bottom band (bitmap rows 43-46 = scanlines 172-179) is rendered as PART of the direct terrain render (2026-07-05, `renderFlightDirect`): terrain fills all **47 rows** (skyline clamp→row 46 + sky-fill rows 0-45), so planes 1&2 hold live terrain full-width and the band's **L/R 32px show real terrain**. The grey windscreen frame is on the otherwise-unused **plane3** across the middle (`color04-07` all = frame grey `$00D4`); the salmon wing-clearance bars (mode-D field value 1) + centre marker (value 2) OVERWRITE planes 1&2 as holes in plane3 (bar→`color01` salmon, fades with terrain) and plane-2 terrain **dots reach band rows 44-46** (scanline 43 excluded = the `$6B` COL_MAX reset floor). The band overlay is a RMW after the sky fill, sourced from the live mode-D band field (`mem[$1074+43*96]`, written per frame by `game_sub_451d`). Corner triangles are separate **PMG sprites** on top. See [[windscreen-corner-triangles]] + [[flight-scene]]. |
 | **Planet/Stars (6)** | **bitmap**, NOT PMG (the planet is the mode-D viewport bitmap). The windscreen-bottom band ($1810, Amiga scanlines 172-179) is the bottom 4 mode-D viewport rows under the `$6D67` frame palette: black bg + two greys (`$04/$06`) + `COLPF2=$2A` (planet) — value-2-dominant bitmap reads as the grey frame, value-3 edges = the salmon planet in the corner gaps. `PlanetCopperList` band block emits only `color01/color02` (mirrors `$6D67`). The grey **edge pillars** are still the 5th-player missiles (`COLPF3=$06`) — not yet ported. |
 
 ## Instrument vocabulary — "Valkyrie Fighter Control Panel" (use these names everywhere)
@@ -265,6 +265,15 @@ on the live VVBLKI vector to standby `$52D7` / flight `$4FF5` / station `$1B30` 
 bodies). Spin-wait points in transpiled code are `SPINWAIT_HOOKS` that drive one real Amiga
 frame (`platform_tick_vbi(); platform_render_frame()`). Copper does the display; `bus_write`
 to hardware is largely ignored on Amiga.
+
+⚠ **Swapping copper bitplane POINTERS (double-buffer flip) must happen in the VBI ISR, not
+mid-frame.** Poking a copper list's `BPLxPT` words while it's the live list, at an arbitrary beam
+position, can coincide with the copper fetching them → a **torn pointer** → whole viewport shows
+garbage/brown for one frame. The flight terrain double-buffer does it right (`renderFlightDirect`
+publishes the painted buffer + raises `flightSwapPending` then busy-waits; the INTB_VERTB ISR
+`flightVblankSwap()` rewrites the pointers at vblank START — before the beam reaches them — then
+clears the flag). Deferring the poke to *after* the VBI wait is NOT enough (it races the copper's
+own scanline-85 fetch). Colour-only pokes mid-frame are tolerable; POINTER pokes are not.
 
 ### Performance budget (judge every number against this)
 
