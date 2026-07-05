@@ -238,14 +238,19 @@ Done this session (all byte-identical, in-process differential 0 mismatch over t
   (in-process differential, 0 mismatch); `make validate` green. `make PROJECT_C=1` falls back to the C.
   Verify: `make VERIFY=1 PROBES=1` + `GDBSCRIPT=project_verify.gdb ./raster_diff.sh`.
 - **`build_view_transform_matrix` (setup path)** (`BuildViewAssembler.s`, new file, 2026-07-05):
-  ~2× faster (per-call 3 vs 6 beam-ticks; asm 187 vs C 308 over 49 deep-flight calls), byte-identical
-  (in-process differential, 0 mismatch; `make validate` green). **Retires the bit-serial-multiply TODO.**
-  KEY FINDING: `signed_mul_8x16` ($9C97) is bit-serial on the 6502, but its product core is a plain
-  UNSIGNED 8×16 multiply P = m·|mc| (m≤255, |mc|≤$8000, both fit a word) with the multiplicand's sign
-  re-applied to P>>8 — so ONE `mulu.w` per call is byte-exact (unlike mul_u8 $9821, a round-half-up
-  multiply that needed g_mulTable). The asm inlines all four `signed_mul_8x16` calls as `mulu.w` and
-  reproduces the last call's ZP side effects ($00A8-$00AD) + the two output pairs ($22A3:$22D1,
-  $22FF:$232D). The step-2 subtract's "no-borrow" carry is threaded into mul4's frac ($00AC) via `scc`.
+  ~3× faster (per-call 2 vs 6 beam-ticks), byte-identical (in-process differential, 0 mismatch;
+  `make validate` green). **Retires the bit-serial-multiply TODO.**
+  KEY FINDING: `signed_mul_8x16` ($9C97) is *named* signed but its product core is a plain UNSIGNED
+  8×16 multiply P = m·|mc| (m≤255, |mc|≤$8000, both fit a word) with the multiplicand's sign re-applied
+  to the 16-bit result P>>8 = **round toward zero** (not floor). So each product is exactly ONE `mulu.w`
+  on the magnitudes; `muls.w`+`asr` would be WRONG — it floors (off-by-one for negatives, e.g. m=1
+  mc=-1: 6502→0 but muls+asr→-1) and its low bits are the two's-complement of P, not P, so the $00AC
+  frac would differ too. (Contrast mul_u8 $9821, a round-half-up multiply that needed g_mulTable.) The
+  two multiplicands' magnitudes+signs are formed ONCE (the only byte-wise work — mem is little-endian
+  so a word read would byte-swap) and held in registers; each of the four products is `move.w;mulu.w;
+  lsr.l #8;` + a conditional `neg.w`. NO `bsr`, NO `divs` — 4 `mulu.w` total. The asm reproduces the
+  last (mul4) call's ZP side effects ($00A8-$00AD) + the two output pairs ($22A3:$22D1, $22FF:$232D).
+  The step-2 subtract's "no-borrow" carry is threaded into mul4's frac ($00AC) via `scc`.
   Reached via the `ROF_BUILDVIEW_ASM` seam in rof_native.c (`build_view_transform_matrix_core_c` kept
   as the SDL/validate oracle); `make BUILDVIEW_C=1` falls back to the C. Verify: `make VERIFY=1 PROBES=1`
   + `GDBSCRIPT=buildview_verify.gdb ./raster_diff.sh`. (`signed_mul_8x16` native/oracle left untouched —
