@@ -244,7 +244,8 @@ void divide_16x16(void) {
 /* stretch-A per-function one-shot subclock profiler (standby->doors freeze hunt). */
 #ifdef ROF_FLIGHT_PROBE
 extern volatile unsigned long g_saTicks[16];
-#define SA_TIMED(i, expr) do { unsigned long _t0 = rof_subclock(); expr; g_saTicks[i] += rof_subclock() - _t0; } while (0)
+extern volatile unsigned char g_saPhase;
+#define SA_TIMED(i, expr) do { g_saPhase = (i); unsigned long _t0 = rof_subclock(); expr; g_saTicks[i] += rof_subclock() - _t0; } while (0)
 #else
 #define SA_TIMED(i, expr) do { expr; } while (0)
 #endif
@@ -7218,11 +7219,6 @@ static void tunnel_prebuild_rings(void) {
     build_line_addr_table_1000();      /* row-addr table for base $1000 (the draw needs it) */
     draw_frame_pattern_seq();          /* plot the rings into $1000 (deterministic geometry) */
     platform_tunnel_rings_drawn();     /* flag $1000 -> tunnelBitmap decode (runs at reveal) */
-#ifdef ROF_FLIGHT_PROBE
-    { extern volatile unsigned char g_dfps7262Ran; extern volatile unsigned long g_field1000Sum7262;
-      unsigned long s = 0; for (int a = 0x1000; a < 0x2000; a++) s += (unsigned)mem[a] * (a & 0xFF);
-      g_field1000Sum7262 = s; g_dfps7262Ran = 1; }   /* == sum7601pre => field survived byte-identically */
-#endif
     /* snapshot the draw's exit ZP scratch (its write-set) for the launch-site replay */
     g_tunnelPrebuildExit.s80 = sync_flag;        g_tunnelPrebuildExit.s81 = dl_ptr_lo;
     g_tunnelPrebuildExit.s84 = screen_ptr_hi;    g_tunnelPrebuildExit.s92 = draw_row;
@@ -7343,11 +7339,6 @@ void display_setup(void) {
     }
     draw_frame_pattern_seq();             /* L_6047; reloads its own Y ($00A0) */
     platform_tunnel_rings_drawn();   /* hook: convert the freshly-drawn $1000 ring field to bitplanes */
-#ifdef ROF_FLIGHT_PROBE
-    { extern volatile unsigned char g_dfps7262Ran; extern volatile unsigned long g_field1000Sum7262;
-      unsigned long s = 0; for (int a = 0x1000; a < 0x2000; a++) s += (unsigned)mem[a] * (a & 0xFF);
-      g_field1000Sum7262 = s; g_dfps7262Ran = 1; }
-#endif
     init_row_coords_9c();
     draw_pattern_byte = 0x13;             /* init_row_coords_9c leaves cpu.A; faithful exit A=$13 */
     draw_color_idx = 0x08;
@@ -7688,12 +7679,10 @@ L_63a7:
     }
     placed_item_count_bcd = 0;
     SA_TIMED(8, startup_init());
-    build_line_addr_table_1000();
 #ifdef ROF_FLIGHT_PROBE
-    { extern volatile unsigned long g_field1000Sum7601Pre;
-      unsigned long s = 0; for (int a = 0x1000; a < 0x2000; a++) s += (unsigned)mem[a] * (a & 0xFF);
-      g_field1000Sum7601Pre = s; }
+    g_saPhase = 20;   /* after startup_init, before build_line_addr_table_1000 */
 #endif
+    build_line_addr_table_1000();
 #ifdef ROF_PLATFORM_AMIGA
     if (g_tunnelPrebuilt) {
         /* rings already plotted into $1000 during standby construction (tunnel_prebuild_rings)
@@ -7707,9 +7696,18 @@ L_63a7:
         SA_TIMED(10, platform_tunnel_rings_drawn());   /* hook: convert the freshly-drawn $1000 ring field to bitplanes */
     }
     DS_MILE(1);                          /* end of stretch A (L_634f -> here: pure compute, no ds_frame) */
+#ifdef ROF_FLIGHT_PROBE
+    g_saPhase = 22;   /* after the ring branch / DS_MILE(1), before input_init */
+#endif
     cpu.X = 0x01;                        /* input_init takes X */
     input_init();
+#ifdef ROF_FLIGHT_PROBE
+    g_saPhase = 23;   /* after input_init, entering the $067E door-wait ds_frame loop */
+#endif
     do { ds_frame(); } while (mem[0x067E] != 0x1F);   /* wait for the door VBI to set $067E==$1F */
+#ifdef ROF_FLIGHT_PROBE
+    g_saPhase = 24;   /* door-wait done, HUD setup before the door-open sweep */
+#endif
     mem[0x06E0] = 0;
     sync_flag = 0x8C;
     dl_ptr_lo = 0x17;
