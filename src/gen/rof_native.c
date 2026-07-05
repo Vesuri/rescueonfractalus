@@ -733,21 +733,34 @@ void fill_vertical_span(void) {
 /* plot_pixel_2bpp @ $6C92 — pack the screen byte at ($80)+Y into a 2-bits-per-pixel
  * cell: read it, then 4 rounds of {force both top bits if either is set; ROL twice}
  * through the carry chain (seeded by the entry carry), a final ROL, and write back.
- * Preserves cpu.X (the 6502 saves/restores it on the stack). */
+ * Preserves cpu.X (the 6502 saves/restores it on the stack).
+ *
+ * The transform output is a pure function of (input byte, entry carry) — no other input —
+ * so the 4-round bit-serial pack is replaced by a 512-entry lookup (plot2bpp_lut[carry][byte]),
+ * built once from the exact loop.  This is the hot per-pixel op of the planet-approach body
+ * fill (draw_vline_pair calls it twice per row across many rows x 22 objects as the planet
+ * fills the viewport = the launch-cinematic cineGap spike); the LUT drops it from ~13
+ * ops/branch to one indexed read + one RMW.  Byte-identical (make validate). */
+static uint8_t plot2bpp_lut[2][256];
+static uint8_t plot2bpp_lut_ready = 0;
+static void build_plot2bpp_lut(void) {
+    for (int ci = 0; ci < 2; ci++)
+        for (int in = 0; in < 256; in++) {
+            uint8_t c = (uint8_t)ci, acc = (uint8_t)in;
+            for (int i = 0; i < 4; i++) {
+                if ((acc & 0xC0) == 0) acc |= 0xC0;
+                uint8_t nc = (uint8_t)((acc >> 7) & 1); acc = (uint8_t)((acc << 1) | c); c = nc;
+                nc = (uint8_t)((acc >> 7) & 1);          acc = (uint8_t)((acc << 1) | c); c = nc;
+            }
+            plot2bpp_lut[ci][in] = (uint8_t)((acc << 1) | c);   /* final ROL */
+        }
+    plot2bpp_lut_ready = 1;
+}
 void plot_pixel_2bpp(void) {
-    uint8_t savedX = cpu.X;
-    uint8_t c = (uint8_t)(cpu.C & 1);                     /* carry into the first ROL = entry C */
+    if (!plot2bpp_lut_ready) build_plot2bpp_lut();
+    dl_ptr_hi = 0xC0;                                     /* BIT mask side effect, set once */
     uint16_t a = ZP_IND_Y(0x80);                          /* screen field is RAM: direct mem[] */
-    uint8_t acc = mem[a];
-    dl_ptr_hi = 0xC0;                                   /* BIT mask, set once */
-    for (int i = 0; i < 4; i++) {
-        if ((acc & 0xC0) == 0) acc |= 0xC0;               /* BIT $0082; BNE skips -> ORA #$C0 only when top bits clear */
-        uint8_t nc = (uint8_t)((acc >> 7) & 1); acc = (uint8_t)((acc << 1) | c); c = nc;  /* ROL */
-        nc = (uint8_t)((acc >> 7) & 1);          acc = (uint8_t)((acc << 1) | c); c = nc;  /* ROL */
-    }
-    acc = (uint8_t)((acc << 1) | c);                      /* final ROL */
-    mem[a] = acc;
-    cpu.X = savedX;
+    mem[a] = plot2bpp_lut[cpu.C & 1][mem[a]];             /* cpu.X untouched (preserved) */
 }
 
 /* draw_symmetric_span_loop @ $6642 — draw one concentric-rectangle group ($0096 nested
@@ -1020,28 +1033,43 @@ void draw_vline_pair(void) {
     draw_row = cpu.A;
     if ((uint8_t)(cpu.A - draw_row_ptr2_hi) & 0x80) return;     /* CMP $00B8; BMI -> return */
     uint8_t entryX = cpu.X;
+    /* Loop-invariants (all fixed across the whole vertical line): the two plot columns, the
+     * fill byte, and the plot_pixel_2bpp carries — hoist them out.  Inline set_row_ptr_from_count
+     * (a per-row addr-table read) into a direct base read, and inline plot_pixel_2bpp's LUT.  This
+     * is the planet-approach body-fill hot loop (the launch cineGap): the per-row body drops from
+     * set_row_ptr + 2 function calls (each re-reading $80/$81 for ZP_IND_Y) to one table read + two
+     * indexed RMWs.  $80/$81 / $0082 are only needed at exit, so write them once after the loop.
+     * Byte-identical to the oracle (make validate). */
+    uint8_t col = (uint8_t)((entryX >> 1) + 2);            /* TXA; LSR; CLC; ADC #$02 */
+    uint8_t y2  = (uint8_t)(0x2F - col);                   /* mirror column */
+    uint8_t fill = screen_ptr_hi;
+    const uint8_t* lutCol = plot2bpp_lut[1];               /* col: C=1 (CMP a>=$2B) */
+    const uint8_t* lutMir = plot2bpp_lut[(uint8_t)(0x2F >= col) & 1];  /* mirror: C from SBC */
+    if (!plot2bpp_lut_ready) build_plot2bpp_lut();
+    encounter_count = col;                                 /* constant; final ZP value */
+    uint8_t packed = 0;
+    uint16_t base = 0;
     for (;;) {
         uint8_t a = draw_row;
         if (a & 0x80) { a = 0x00; draw_row = 0x00; }    /* CMP #0; BPL skips; clamp negative to 0 */
         if (a < g_planetRowLo) g_planetRowLo = a;          /* widen the dirty-row extent */
         if (a > g_planetRowHi) g_planetRowHi = a;
-        set_row_ptr_from_count();                          /* Y=$0092 -> $80/$81 (preserves X) */
-        uint8_t col = (uint8_t)((entryX >> 1) + 2);        /* TXA; LSR; CLC; ADC #$02 */
-        encounter_count = col;
-        uint8_t y2 = (uint8_t)(0x2F - col);                /* mirror column */
-        if (a >= 0x2B) {                                   /* CMP #$2B; BCC -> else (bus_write) path */
-            cpu.Y = col; cpu.C = 1;                        /* C set by the CMP (a >= $2B) */
-            plot_pixel_2bpp();
-            cpu.Y = y2;  cpu.C = (uint8_t)(0x2F >= col);   /* C from SEC; SBC $0085 */
-            plot_pixel_2bpp();
+        base = (uint16_t)(mem[MEM_row_base_lo + a] | (mem[MEM_row_base_hi + a] << 8));  /* was set_row_ptr */
+        if (a >= 0x2B) {                                   /* CMP #$2B; BCC -> else (direct store) path */
+            uint16_t ac = (uint16_t)(base + col); mem[ac] = lutCol[mem[ac]];
+            uint16_t am = (uint16_t)(base + y2);  mem[am] = lutMir[mem[am]];
+            packed = 1;
         } else {
-            cpu.Y = col; mem[ZP_IND_Y(0x80)] = screen_ptr_hi;   /* screen field is RAM: direct mem[] */
-            cpu.Y = y2;  mem[ZP_IND_Y(0x80)] = screen_ptr_hi;
+            mem[(uint16_t)(base + col)] = fill;                 /* screen field is RAM: direct mem[] */
+            mem[(uint16_t)(base + y2)]  = fill;
         }
         uint8_t n = (uint8_t)(draw_row - 1);            /* DEC $0092 */
         draw_row = n;
         if ((uint8_t)(n - draw_row_ptr2_hi) & 0x80) break;      /* CMP $00B8; BPL loops; break when N set */
     }
+    /* faithful exit ZP: $80/$81 = addr table[last row processed]; $0082 = $C0 if any pack ran */
+    sync_flag = (uint8_t)base; dl_ptr_lo = (uint8_t)(base >> 8);
+    if (packed) dl_ptr_hi = 0xC0;
 }
 
 /* update_object_distance @ $6BED — compute an object's clamped 16-bit screen distance
@@ -7223,6 +7251,7 @@ static void tunnel_prebuild_replay_exit(void) {
 
 void display_setup(void) {
     /* 5f1d */
+    if (!plot2bpp_lut_ready) build_plot2bpp_lut();   /* eager: keep the LUT build off the planet hot path */
     /* g_standbyRevealReady is NOT set here (display_setup ENTRY): the screen must stay black
        through the whole ~30-frame paced construction below — setting it here revealed the
        half-built screen and forced a full render() on every construction frame (slow).  It is
@@ -7846,7 +7875,15 @@ L_63a7:
         ds_frame();
         if (RTCLOK_LOW >= 0x02) {
             RTCLOK_LOW = 0;
+#ifdef ROF_FLIGHT_PROBE
+            { extern volatile unsigned long g_aopMax, g_aopMaxVbi;
+              unsigned long _a0 = rof_subclock();
+              advance_object_positions();
+              unsigned long _d = rof_subclock() - _a0;
+              if (_d > g_aopMax) { g_aopMax = _d; g_aopMaxVbi = rof_subclock()/313u; } }
+#else
             advance_object_positions();
+#endif
             if (mem[0x1002] == 0xFF)      /* planet reached */
                 terrain_state = 0;
         }

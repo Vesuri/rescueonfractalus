@@ -573,6 +573,10 @@ extern "C" void rof_ds_mile(int i) { if (i >= 0 && i < 16) g_dsMile[i] = g_vbiCo
 extern "C" volatile unsigned char g_dfps7262Ran = 0;
 extern "C" volatile unsigned long g_field1000Sum7262 = 0, g_field1000Sum7601Pre = 0;
 extern "C" volatile unsigned short g_dfps7262Vbi = 0, g_dfps7601Vbi = 0;
+// planet-approach spike probe (L_6578 loop): max advance_object_positions cost + max
+// renderViewportModeD dirty-band decode (rows + ticks), each with the vbi it peaked at.
+extern "C" volatile unsigned long g_aopMax = 0, g_aopMaxVbi = 0;
+extern "C" volatile unsigned long g_vpDecMax = 0, g_vpDecMaxVbi = 0, g_vpDecMaxRows = 0;
 // RTCLOK ownership-race probe: catch frames where RTCLOK ($0014) is advanced by BOTH the VBI
 // body AND renderFrame (double-count -> equality spin-waits overshoot -> ~256-frame wrap), and
 // frames where renderFrame read a "torn"/unexpected VVBLKI vector during the $52D7<->$4FF5 swap.

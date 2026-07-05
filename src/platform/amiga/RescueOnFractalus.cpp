@@ -868,6 +868,10 @@ void RescueOnFractalus::renderViewportModeD(uint16_t srcBase, int stride, int ro
     const uint8_t* src = (const uint8_t*)&mem[srcBase + kCrop] + (unsigned)rStart * stride;
     uint8_t* vdest    = (uint8_t*)terrainBitmap->data + (unsigned)rStart * 120;
     uint32_t* shadow  = viewportShadow + rStart * 10;
+#ifdef ROF_FLIGHT_PROBE
+    extern volatile unsigned long g_vpDecMax, g_vpDecMaxVbi, g_vpDecMaxRows;
+    unsigned long _vp0 = rof_subclock();
+#endif
     for (int row = rStart; row <= rEnd; row++, src += stride) {
         const uint8_t* rs = src;
         uint32_t* q1 = (uint32_t*)vdest;
@@ -893,6 +897,11 @@ void RescueOnFractalus::renderViewportModeD(uint16_t srcBase, int stride, int ro
         }
         vdest += 120;                                        // one interleaved scanline
     }
+#ifdef ROF_FLIGHT_PROBE
+    { unsigned long _d = rof_subclock() - _vp0;
+      if (_d > g_vpDecMax) { g_vpDecMax = _d; g_vpDecMaxVbi = rof_subclock()/313u;
+                             g_vpDecMaxRows = (unsigned long)(rEnd - rStart + 1); } }
+#endif
 }
 
 // ── Direct flight terrain renderer (terrain-draw-plan Stages 1-3) ──────────────
