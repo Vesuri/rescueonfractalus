@@ -1051,19 +1051,43 @@ void RescueOnFractalus::renderFlightDirect()
 #endif
 #undef FD_LAP
 
-    // Flip: re-point the flight copper's viewport bitplanes to the buffer we just painted.
-    // The copper latches this at the next vblank (renderFrame waits for VBI after render()).
-    flightCopper->setTerrainBitplanes(*back);
-    flightDisplayed = back;
+    // Flip — handed to the VBI so the copper's viewport bitplane-pointer words are rewritten at
+    // the VERY START of the next vertical blank, i.e. BEFORE the beam reaches the WAIT(scanline
+    // 85)/BPLxPT MOVEs the copper executes for the viewport.  Poking those 6 pointer words from
+    // here (mid-frame, arbitrary beam position) could tear a pointer as the copper fetched it →
+    // a brown/garbage viewport for one frame.  Protocol: publish the target buffer + raise the
+    // swap flag, then busy-wait until the VBI (flightVblankSwap) has done the swap and cleared
+    // the flag — so on return the just-painted buffer is genuinely the one on screen and
+    // flightDisplayed is in sync (the next flightKickBackClear clears the true off-screen buffer).
+    flightPendingFlip = back;
+    flightSwapPending = true;
+    while (flightSwapPending) { }        // VBI clears it after rewriting the copper pointers
+}
+
+// flightVblankSwap: run from the real INTB_VERTB ISR (PlatformAmiga vbiHandler) at the very start
+// of vertical blank.  If a flip is pending, rewrite the flight copper's viewport bitplane pointers
+// NOW — the beam is above the viewport, so the copper won't fetch them until scanline 85, long
+// after this returns → no torn pointer.  Then publish the new displayed buffer and clear the flag
+// so the main thread's busy-wait in renderFlightDirect can proceed.  Safe to call every vblank
+// (no-op unless a swap is pending); the flag is only ever set during flight.
+void RescueOnFractalus::flightVblankSwap()
+{
+    if (!flightSwapPending) return;
+    if (flightCopper && flightPendingFlip) {
+        flightCopper->setTerrainBitplanes(*flightPendingFlip);
+        flightDisplayed = flightPendingFlip;
+    }
+    flightSwapPending = false;
 }
 
 // flightKickBackClear: called by PlatformAmiga::renderFrame RIGHT AFTER the post-render vblank
-// wait — i.e. once the flip above has latched and `flightDisplayed` is genuinely on screen.  Kick
-// a non-blocking blitter clear of the OTHER buffer (the one renderFlightDirect will convert into
-// next), so the clear runs concurrently with the upcoming terrain draw (game code writing mem[],
-// no blitter) instead of serially inside the convert.  renderFlightDirect waits for it before the
-// edge plot / vertical fill (both touch this buffer; one blitter).  Mirrors the Atari clearing the
-// off-screen mode-D half while the on-screen half is displayed.
+// wait — i.e. once the flip (done by the VBI, flightVblankSwap) has latched and `flightDisplayed`
+// is genuinely on screen.  Kick a non-blocking blitter clear of the OTHER buffer (the one
+// renderFlightDirect will convert into next), so the clear runs concurrently with the upcoming
+// terrain draw (game code writing mem[], no blitter) instead of serially inside the convert.
+// renderFlightDirect waits for it before the edge plot / vertical fill (both touch this buffer;
+// one blitter).  Mirrors the Atari clearing the off-screen mode-D half while the on-screen half
+// is displayed.
 void RescueOnFractalus::flightKickBackClear()
 {
     if (!rsFlight || !terrainBitmap || !terrainBitmapBack || !flightDisplayed) return;

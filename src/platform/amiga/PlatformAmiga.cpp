@@ -987,6 +987,13 @@ static uint32_t vbiHandler()
     // (Do NOT touch $0080 — sync_flag, reused as the $80/$81 zp pointer.)
     g_vbiCount++;
 
+    // Flight terrain double-buffer swap — do this FIRST, while the beam is still in vertical
+    // blank (well above the viewport WAIT at scanline 85).  If renderFlightDirect has published a
+    // freshly-painted buffer, rewrite the copper's viewport bitplane pointers now so the copper
+    // fetches the new buffer this frame with no torn pointer (the brown-flash cause).  No-op unless
+    // a swap is pending; clears the flag so the main thread's busy-wait can proceed.
+    if (s_scene) s_scene->flightVblankSwap();
+
 #ifdef ROF_FLIGHT_PROBE
     // Probe: track the range of the atmosphere terrain pens ($00DC/$00DD) during flight to
     // confirm they ramp (salmon→brown fade) vs stay frozen.

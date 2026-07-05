@@ -30,6 +30,9 @@ public:
     void flightKickBackClear();  // post-vblank (called by PlatformAmiga::renderFrame): kick the
                                  // blitter clear of the next back buffer so it overlaps the upcoming
                                  // terrain draw; renderFlightDirect then just waits for it.
+    void flightVblankSwap();     // run from the INTB_VERTB ISR at vblank start: if a flight buffer
+                                 // swap is pending, rewrite the copper's viewport bitplane pointers
+                                 // (before the beam reaches them) and clear the flag.
     void shutdown();
 
     // run(): the whole game as a faithful straight-line transcription of the
@@ -164,6 +167,9 @@ private:
     // re-points the flight copper's viewport bitplane ptrs to it; the swap latches next vblank.
     Bitmap*     terrainBitmapBack = nullptr;   // 2nd flight terrain buffer (== terrainBitmap dims)
     Bitmap*     flightDisplayed   = nullptr;   // which buffer the flight copper currently shows
+    Bitmap*     flightPendingFlip = nullptr;   // buffer renderFlightDirect just painted, awaiting the
+                                               // vblank-safe pointer swap (done by flightVblankSwap)
+    volatile bool flightSwapPending = false;   // main thread raises it; the VBI does the swap + clears
     Bitmap*     flightClearPending = nullptr;  // back buffer whose terrain rows a post-vblank blitter
                                                // clear is currently clearing (overlapping the draw)
     Bitmap*     cockpitBitmap  = nullptr;
