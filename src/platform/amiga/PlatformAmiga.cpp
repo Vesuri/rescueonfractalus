@@ -568,6 +568,11 @@ extern "C" volatile unsigned long g_burstClrTicks = 0, g_burstClrIsr = 0;   // L
 extern "C" volatile unsigned long g_burstMidTicks = 0, g_burstMidIsr = 0;
 extern "C" volatile unsigned long g_sbATicks = 0, g_sbAIsr = 0, g_sbCTicks = 0, g_sbCIsr = 0;
 extern "C" void rof_ds_mile(int i) { if (i >= 0 && i < 16) g_dsMile[i] = g_vbiCount; }
+// tunnel-prebuild probe: does the standby-construction ring draw (7262) run, and does its
+// mem[$1000] ring field survive to the launch-time redraw (7601)?  (checksums + run flags)
+extern "C" volatile unsigned char g_dfps7262Ran = 0;
+extern "C" volatile unsigned long g_field1000Sum7262 = 0, g_field1000Sum7601Pre = 0;
+extern "C" volatile unsigned short g_dfps7262Vbi = 0, g_dfps7601Vbi = 0;
 // RTCLOK ownership-race probe: catch frames where RTCLOK ($0014) is advanced by BOTH the VBI
 // body AND renderFrame (double-count -> equality spin-waits overshoot -> ~256-frame wrap), and
 // frames where renderFrame read a "torn"/unexpected VVBLKI vector during the $52D7<->$4FF5 swap.

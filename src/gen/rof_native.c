@@ -7168,6 +7168,59 @@ void init_gameplay_state(void) {
  * the faithful exit value A=$13 is loaded explicitly before it is stored to $00B9. */
 static inline void ds_frame(void) { platform_tick_vbi(); platform_render_frame(); }
 
+#ifdef ROF_PLATFORM_AMIGA
+/* Tunnel-ring pre-build (user-directed 2026-07-03): the launch-time draw_frame_pattern_seq
+ * (the L_635f site below) plots ~5900 pixels into mem[$1000] on a no-render stretch = the
+ * ~140ms standby->doors freeze.  Build the identical ring field into $1000 HERE, during
+ * standby construction (behind the black EmptyCopperList reveal curtain, where there is no
+ * frame-timing pressure), flag the $1000->tunnelBitmap decode (which runs at the standby
+ * reveal), and snapshot the ZP scratch the draw leaves.  At the launch site we replay that
+ * scratch instead of re-plotting.  The geometry is deterministic (init_row_coords_9c
+ * constants + the $6E0F table + a fixed colour cycle, no runtime input), so it is
+ * byte-identical to the launch draw; mem[$1000] is untouched between the two points
+ * (measured), so the pre-built field survives.  Construction ZP + the resting $2000 addr
+ * table are restored around the build so the rest of construction is unaffected. */
+volatile unsigned char g_tunnelPrebuilt = 0;
+static struct { uint8_t s80,s81,s84,s92,s94,s96,s9c,s9d,s9e,s9f,sa0,sb7,sb8,sb9,sdf; }
+    g_tunnelPrebuildExit;
+
+static void tunnel_prebuild_rings(void) {
+    uint8_t zp[0x80];
+    for (int i = 0; i < 0x80; i++) zp[i] = mem[0x80 + i];   /* protect construction ZP */
+    build_line_addr_table_1000();      /* row-addr table for base $1000 (the draw needs it) */
+    draw_frame_pattern_seq();          /* plot the rings into $1000 (deterministic geometry) */
+    platform_tunnel_rings_drawn();     /* flag $1000 -> tunnelBitmap decode (runs at reveal) */
+#ifdef ROF_FLIGHT_PROBE
+    { extern volatile unsigned char g_dfps7262Ran; extern volatile unsigned long g_field1000Sum7262;
+      unsigned long s = 0; for (int a = 0x1000; a < 0x2000; a++) s += (unsigned)mem[a] * (a & 0xFF);
+      g_field1000Sum7262 = s; g_dfps7262Ran = 1; }   /* == sum7601pre => field survived byte-identically */
+#endif
+    /* snapshot the draw's exit ZP scratch (its write-set) for the launch-site replay */
+    g_tunnelPrebuildExit.s80 = sync_flag;        g_tunnelPrebuildExit.s81 = dl_ptr_lo;
+    g_tunnelPrebuildExit.s84 = screen_ptr_hi;    g_tunnelPrebuildExit.s92 = draw_row;
+    g_tunnelPrebuildExit.s94 = draw_color_idx;   g_tunnelPrebuildExit.s96 = span_row_count;
+    g_tunnelPrebuildExit.s9c = draw_x_left;      g_tunnelPrebuildExit.s9d = draw_x_right;
+    g_tunnelPrebuildExit.s9e = draw_row_top;     g_tunnelPrebuildExit.s9f = draw_row_bottom;
+    g_tunnelPrebuildExit.sa0 = draw_iter_count;  g_tunnelPrebuildExit.sb7 = frame_counter;
+    g_tunnelPrebuildExit.sb8 = draw_row_ptr2_hi; g_tunnelPrebuildExit.sb9 = draw_pattern_byte;
+    g_tunnelPrebuildExit.sdf = span_pixel_count;
+    for (int i = 0; i < 0x80; i++) mem[0x80 + i] = zp[i];   /* undo all ZP changes */
+    build_line_addr_table_2000();      /* re-establish the resting $2000 addr table + regs */
+    g_tunnelPrebuilt = 1;
+}
+
+static void tunnel_prebuild_replay_exit(void) {
+    sync_flag = g_tunnelPrebuildExit.s80;        dl_ptr_lo = g_tunnelPrebuildExit.s81;
+    screen_ptr_hi = g_tunnelPrebuildExit.s84;    draw_row = g_tunnelPrebuildExit.s92;
+    draw_color_idx = g_tunnelPrebuildExit.s94;   span_row_count = g_tunnelPrebuildExit.s96;
+    draw_x_left = g_tunnelPrebuildExit.s9c;      draw_x_right = g_tunnelPrebuildExit.s9d;
+    draw_row_top = g_tunnelPrebuildExit.s9e;     draw_row_bottom = g_tunnelPrebuildExit.s9f;
+    draw_iter_count = g_tunnelPrebuildExit.sa0;  frame_counter = g_tunnelPrebuildExit.sb7;
+    draw_row_ptr2_hi = g_tunnelPrebuildExit.sb8; draw_pattern_byte = g_tunnelPrebuildExit.sb9;
+    span_pixel_count = g_tunnelPrebuildExit.sdf;
+}
+#endif
+
 void display_setup(void) {
     /* 5f1d */
     /* g_standbyRevealReady is NOT set here (display_setup ENTRY): the screen must stay black
@@ -7261,6 +7314,11 @@ void display_setup(void) {
     }
     draw_frame_pattern_seq();             /* L_6047; reloads its own Y ($00A0) */
     platform_tunnel_rings_drawn();   /* hook: convert the freshly-drawn $1000 ring field to bitplanes */
+#ifdef ROF_FLIGHT_PROBE
+    { extern volatile unsigned char g_dfps7262Ran; extern volatile unsigned long g_field1000Sum7262;
+      unsigned long s = 0; for (int a = 0x1000; a < 0x2000; a++) s += (unsigned)mem[a] * (a & 0xFF);
+      g_field1000Sum7262 = s; g_dfps7262Ran = 1; }
+#endif
     init_row_coords_9c();
     draw_pattern_byte = 0x13;             /* init_row_coords_9c leaves cpu.A; faithful exit A=$13 */
     draw_color_idx = 0x08;
@@ -7339,6 +7397,10 @@ L_6118:
     fill_region_2000();
     blit_message_block();
     blit_numeric_readout();
+#ifdef ROF_PLATFORM_AMIGA
+    tunnel_prebuild_rings();   /* build the tunnel rings into $1000 + flag decode BEFORE reveal
+                                  (off the launch hot path — kills the standby->doors freeze) */
+#endif
     g_doorFieldReady = 1;   /* Amiga: doors/LEVEL drawn into $2000 — decode now, before the green fade */
     /* Standby construction complete (cockpit/top-bar/doors/LEVEL all drawn) — reveal now.  The
        black EmptyCopperList held the screen (and skipped all rendering) through the build above;
@@ -7598,8 +7660,23 @@ L_63a7:
     placed_item_count_bcd = 0;
     SA_TIMED(8, startup_init());
     build_line_addr_table_1000();
-    SA_TIMED(9, draw_frame_pattern_seq());             /* consumes Y */
-    SA_TIMED(10, platform_tunnel_rings_drawn());   /* hook: convert the freshly-drawn $1000 ring field to bitplanes */
+#ifdef ROF_FLIGHT_PROBE
+    { extern volatile unsigned long g_field1000Sum7601Pre;
+      unsigned long s = 0; for (int a = 0x1000; a < 0x2000; a++) s += (unsigned)mem[a] * (a & 0xFF);
+      g_field1000Sum7601Pre = s; }
+#endif
+#ifdef ROF_PLATFORM_AMIGA
+    if (g_tunnelPrebuilt) {
+        /* rings already plotted into $1000 during standby construction (tunnel_prebuild_rings)
+           and decoded into tunnelBitmap at the reveal — just replay the draw's exit ZP scratch
+           the descent's draw_ring_frame_step relies on, skipping the ~140ms re-plot. */
+        tunnel_prebuild_replay_exit();
+    } else
+#endif
+    {
+        SA_TIMED(9, draw_frame_pattern_seq());             /* consumes Y */
+        SA_TIMED(10, platform_tunnel_rings_drawn());   /* hook: convert the freshly-drawn $1000 ring field to bitplanes */
+    }
     DS_MILE(1);                          /* end of stretch A (L_634f -> here: pure compute, no ds_frame) */
     cpu.X = 0x01;                        /* input_init takes X */
     input_init();
