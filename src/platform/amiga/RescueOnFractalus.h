@@ -33,6 +33,7 @@ public:
     void flightVblankSwap();     // run from the INTB_VERTB ISR at vblank start: if a flight buffer
                                  // swap is pending, rewrite the copper's viewport bitplane pointers
                                  // (before the beam reaches them) and clear the flag.
+    void starVblankUpdate();     // run from the INTB_VERTB ISR at vblank: zero-copy starfield scroll
     void shutdown();
 
     // run(): the whole game as a faithful straight-line transcription of the
@@ -79,7 +80,26 @@ private:
     // overlaps the stars — PlanetCopperList re-points SPR2PT to the gauge at the band scanline.
     // Layout: starSprite[2c] = player c low, starSprite[2c+1] = player c high.
     Sprite*  starSprite[6] = { nullptr, nullptr, nullptr, nullptr, nullptr, nullptr };
-    void buildStarSprites();             // $0C32/$0E32/$0F32 player buffers -> star sprites
+
+    // Zero-copy scroll: instead of rebuilding the whole sprite from mem[] every frame, each
+    // star sprite's pixel data lives in an oversized "ring" chip buffer holding the WHOLE
+    // scene's worth of star rows laid out linearly (the field scrolls up a known, fixed
+    // maximum over the cinematic — measured 595 rows; sized generously below).  Each frame the
+    // field scrolls up by N rows (0 or 1 normally); we advance a window pointer by N (re-pointing
+    // the copper SPRxPT), convert only the N brand-new rows into the ring, and leave every
+    // already-converted row untouched.  Control words are written at the current window slot
+    // (which was a star row that has since scrolled off the top); the 5 blank padding rows + the
+    // terminator are simply the not-yet-written (zero, MEMF_CLEAR) slots below the star region.
+    // The whole update runs at vblank (starVblankUpdate, from the VBI ISR) so the pointer +
+    // control-word writes are tear-free — the flightVblankSwap pattern.
+    uint16_t* starRing[6] = { nullptr, nullptr, nullptr, nullptr, nullptr, nullptr };
+    uint16_t  starCtl[6][2] = {};          // precomputed POS/CTL words per sprite (constant)
+    int       starWindow = 0;              // current window start slot in the ring (control slot)
+    unsigned short starLastGen = 0;        // last consumed g_starScrollGen (delta = rows scrolled)
+    bool      starSpritesValid = false;    // false → perFrameWork does the full (re)build
+    volatile bool starPhaseActive = false; // set by perFrameWork (rsStars); read by the VBI ISR
+    volatile int  starVbiRows = 0;         // perFrameWork → VBI handoff: # new rows to convert this frame
+    void buildStarSprites();               // full (re)build: convert all rows into the ring at window 0
 
     // Tunnel reveal: a 3bp concentric-rectangle bitmap shown in the door gap.
     // Motion is palette cycling — the 6-entry ring lives in mem[$08D4-$08D9]

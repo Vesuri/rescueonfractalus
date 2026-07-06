@@ -1012,6 +1012,13 @@ static uint32_t vbiHandler()
     // freshly-painted buffer, rewrite the copper's viewport bitplane pointers now so the copper
     // fetches the new buffer this frame with no torn pointer (the brown-flash cause).  No-op unless
     // a swap is pending; clears the flag so the main thread's busy-wait can proceed.
+    // Zero-copy starfield scroll — write the fresh star-sprite control words + convert the new
+    // rows into the ring, at the very TOP of the vblank ISR so the control words are in place well
+    // before the sprite's (early) control DMA fetch — otherwise a stale read corrupts VSTOP and
+    // drops the channel-2 gauge.  No-op unless we're in the stars/planet phase.  (flightVblankSwap
+    // is a no-op during stars and vice-versa, so ordering between them is free.)
+    if (s_scene) s_scene->starVblankUpdate();
+
     if (s_scene) s_scene->flightVblankSwap();
 
 #ifdef ROF_FLIGHT_PROBE

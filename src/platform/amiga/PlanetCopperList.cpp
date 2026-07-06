@@ -204,6 +204,20 @@ void PlanetCopperList::setEnergyIndicatorColor(uint16_t c)
     data_[INDEX_GAUGE_COL] = copperMove(kColor21, c);
 }
 
+void PlanetCopperList::setStarOperand(int i, const uint16_t* data)
+{
+    // Point star channel (2+i) at the current ring window by updating the copper-list SPRxPT MOVE
+    // operand.  MUST be called during the PREVIOUS frame's render pass (not the VBI): the copper
+    // reads this operand at the very top of the next frame (scanline 0), before the sprite control
+    // DMA fetch (~line 14-24).  Setting it a frame ahead means it is stable when read — no race with
+    // the fetch — so the pointer lands on the same frame as the VBI-written control words (lockstep).
+    // (The mid-screen ch2 gauge re-point at INDEX_GAUGE_PTR is separate and untouched.)
+    uint32_t d = (uint32_t)data;
+    uint16_t ch = (uint16_t)(2 + i);
+    data_[INDEX_SPRITES + 4 + i * 2]     = copperMove((uint16_t)(spr1pth + ch * 4),     (uint16_t)(d >> 16));
+    data_[INDEX_SPRITES + 4 + i * 2 + 1] = copperMove((uint16_t)(spr1pth + ch * 4 + 2), (uint16_t)d);
+}
+
 void PlanetCopperList::setStarColor(uint16_t c)
 {
     // Star pen for all three quad players in the viewport: pair 2/3 (P0), 4/5 (P2), 6/7 (P3).

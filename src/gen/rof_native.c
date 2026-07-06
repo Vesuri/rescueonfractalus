@@ -926,6 +926,13 @@ void fill_terrain_columns(void) { fill_terrain_columns_core(); }
  * This faithfully reproduces a quirk of the Atari carry chain: after byte 1 is updated the
  * code does not reload a clean 0 before folding byte 2, so byte 2 becomes (byte1_new + byte2 +
  * carry) instead of (byte2 + carry).  Preserved exactly for byte-identical behaviour. */
+/* Star-scroll generation counter: bumped once per emitted column by scroll_field_columns
+ * (the stars/planet scroll, run in the standby VBI).  The Amiga star-sprite renderer reads
+ * the delta since its last frame to learn how many rows the field scrolled up, so it can
+ * advance the sprite window pointer + convert only the new rows (zero-copy scroll) instead of
+ * rebuilding all rows.  A word so the main loop's read is atomic vs the VBI's bump. */
+volatile unsigned short g_starScrollGen = 0;
+
 static uint8_t scroll_accum_add_ff(void) {
     uint16_t t = (uint16_t)0xFF + scroll_accum_b0;                /* byte 0 += $FF          */
     scroll_accum_b0 = (uint8_t)t;
@@ -963,6 +970,7 @@ void scroll_field_columns_core(uint8_t gate) {
         }
     }
     /* Emit one column: shift all four buffers left (col y <- col y+1), dropping col 0. */
+    g_starScrollGen++;                                 /* signal one row scrolled (star-sprite renderer) */
     for (uint8_t y = 0; y < 0x59; y++) {
         TERRAIN_COL_BUF(0, y) = TERRAIN_COL_BUF(0, y + 1);
         TERRAIN_COL_BUF(1, y) = TERRAIN_COL_BUF(1, y + 1);

@@ -43,6 +43,7 @@ extern "C" volatile uint8_t g_tunInRowLo, g_tunInRowHi;        // inner (previou
 extern "C" volatile uint8_t g_tunColLpx, g_tunColRpx;          // outer left/right PIXEL cols
 extern "C" volatile uint8_t g_tunInColLpx, g_tunInColRpx;      // inner left/right PIXEL cols
 extern "C" volatile uint8_t g_tunBandMode;                     // 1 = band decode, 0 = full extent (reveal)
+extern "C" volatile unsigned short g_starScrollGen;            // rof_native.c: bumped per scrolled star row
 extern "C" volatile uint8_t g_activeVbi;                       // 0=none 1=standby($52D7) 2=flight($4FF5); read by game_vbi_isr
 
 // The genuine transpiled launch cinematic ($5F1D, src/gen/rof_gen.c): display_setup()'s
@@ -522,22 +523,75 @@ static const uint16_t kStarX[3]    = { (uint16_t)(0x81 + (0x38 - 0x32) * 2),    
                                        (uint16_t)(0x81 + (0x8E - 0x32) * 2),    // P2 lo = 313
                                        (uint16_t)(0x81 + (0xB8 - 0x32) * 2) };  // P3 lo = 397
 static const int       kStarRows   = 89;   // visible strip $..32..$..8A ($59 bytes)
+// Zero-copy scroll ring sizing.  The starfield scrolls up a fixed maximum over the whole
+// cinematic — measured 595 rows (g_starScrollGen plateaus there, then freezes for the rest of
+// the scene; a faithful port so it won't grow).  Size the ring for that plus headroom; a clamp
+// in starVblankUpdate freezes rather than overruns if the window ever hits the end.  Each ring
+// "slot" = one sprite row (2 words: plane A glyph + plane B 0).  Window advances 0..kStarMaxScroll.
+static const int       kStarMaxScroll = 640;                  // 595 measured + margin
+// display window = kViewportFullHeight rows; +2 = control slot + terminator fetch past the window.
+static const int       kStarRingSlots = kStarMaxScroll + kViewportFullHeight + 2;
 
+// Full (re)build of all 6 star rings at window 0 — run once on stars entry (and on re-entry).
+// Clears each ring (so a previous pass's rows above the window / stale terminator are gone),
+// re-seeds the window-0 control slot, then converts the 89 visible rows into slots [1..89].
+// Each set star bit becomes a 4-px dot at its faithful 0/8/20/28-cc offset via kStarGlyphLo/Hi.
 void RescueOnFractalus::buildStarSprites()
 {
-    // Each Atari player P0/P2/P3 → two sprites: starSprite[2c] (low, px 0-15) + starSprite[2c+1]
-    // (high, px 16-31), together the full 32-cc quad span.  Each set star bit becomes a 4-px dot
-    // at its faithful 0/8/20/28-cc offset via the kStarGlyphLo/Hi tables (built in initialize()).
-    // Post-increment pointers (the 68000 (An)+ mode), one table lookup per row per half.
-    for (int c = 0; c < 3; c++) {
-        uint16_t* lo = starSprite[2 * c]->data() + 2;      // skip the 2 control words
-        uint16_t* hi = starSprite[2 * c + 1]->data() + 2;
-        const uint8_t* src = (const uint8_t*)&mem[kStarSrc[c]];
-        const uint8_t* end = src + kStarRows;
-        while (src < end) {
-            uint8_t b = *src++;
-            *lo++ = kStarGlyphLo[b];  *lo++ = 0x0000;   // plane A / plane B (low sprite)
-            *hi++ = kStarGlyphHi[b];  *hi++ = 0x0000;   // plane A / plane B (high sprite)
+    for (int i = 0; i < 6; i++) {
+        uint16_t* ring = starRing[i];
+        if (!ring) continue;
+        for (int w = 0; w < kStarRingSlots * 2; w++) ring[w] = 0;   // clear whole ring (rare — entry only)
+        ring[0] = starCtl[i][0];  ring[1] = starCtl[i][1];          // window-0 control slot
+        const uint8_t* src = (const uint8_t*)&mem[kStarSrc[i >> 1]];
+        const uint16_t* tbl = (i & 1) ? kStarGlyphHi : kStarGlyphLo;
+        uint16_t* dst = ring + 2;                                   // slot 1 (skip control slot 0)
+        for (int r = 0; r < kStarRows; r++) { *dst++ = tbl[src[r]]; *dst++ = 0x0000; }
+    }
+    starWindow  = 0;
+    starLastGen = g_starScrollGen;
+}
+
+// starVblankUpdate: the per-vblank zero-copy star scroll, called from the real VBI ISR
+// (PlatformAmiga::vbiHandler) so the copper SPRxPT + control-word writes are tear-free.
+// The field scrolls up by N rows since last frame (g_starScrollGen delta, 0 or 1 normally).
+// We advance the window by N (re-pointing the copper), convert ONLY the N new bottom rows into
+// the ring, and write the (constant) control words at the new window slot.  Everything else —
+// the already-converted rows, the 5 blank padding rows and the terminator — is untouched (the
+// padding/terminator are the still-zero slots below the star region).  See RescueOnFractalus.h.
+void RescueOnFractalus::starVblankUpdate()
+{
+    // Pixel half of the zero-copy star scroll (pointer half is in perFrameWork).  Runs at vblank —
+    // after the previous frame's display (so overwriting the now-scrolled-off control slot doesn't
+    // tear it) and before this frame's sprite control fetch (~line 14-24, so the fresh control
+    // words are in place when fetched).  perFrameWork already advanced starWindow + set the copper
+    // pointer operand for this frame and handed us the new-row count in starVbiRows.
+    if (!starPhaseActive) return;
+    const int N = starVbiRows;
+    starVbiRows = 0;
+    if (N <= 0) return;                                          // no scroll this frame (or entry-built)
+    const int nw = starWindow;                                  // window perFrameWork advanced to
+    // Write the CONTROL WORDS FIRST for all 6 sprites — this is the timing-critical write.  The
+    // control slot (nw) held star data one frame ago (it was display-row-0); the sprite's control
+    // DMA fetch happens early in the frame, so stamping the fresh control words at the very start
+    // of this vblank ISR maximises the lead and prevents the fetch from reading stale star data as
+    // the control word (which would corrupt VSTOP and break the channel-2 gauge re-arm).
+    for (int i = 0; i < 6; i++) {
+        uint16_t* ring = starRing[i];
+        ring[2 * nw]     = starCtl[i][0];
+        ring[2 * nw + 1] = starCtl[i][1];
+    }
+    // Then convert the N new bottom rows (mem visible rows [kStarRows-N .. kStarRows-1]) into the
+    // ring.  Rows above are reused in place; the 5 padding rows + terminator stay zero (ambient,
+    // never-written slots — the data-side end marker is always present without being rewritten).
+    for (int i = 0; i < 6; i++) {
+        uint16_t* ring = starRing[i];
+        const uint8_t* src = (const uint8_t*)&mem[kStarSrc[i >> 1]];
+        const uint16_t* tbl = (i & 1) ? kStarGlyphHi : kStarGlyphLo;
+        for (int r = kStarRows - N; r < kStarRows; r++) {
+            int slot = nw + 1 + r;                              // display row r of the advanced window
+            ring[2 * slot]     = tbl[src[r]];
+            ring[2 * slot + 1] = 0x0000;
         }
     }
 }
@@ -597,15 +651,24 @@ void RescueOnFractalus::initialize()
     // lands on PlanetCopperList's cockpit line (180): the copper re-points channel 2 to the throttle
     // gauge THERE, and the re-arm requires the outgoing (P0-low) sprite's post-VSTOP control-word
     // fetch to coincide with the re-point (only kStarRows=89 rows carry star data; the rest blank).
-    for (int c = 0; c < 3; c++) {
-        starSprite[2 * c]     = Sprite::allocate(kViewportFullHeight);
-        starSprite[2 * c + 1] = Sprite::allocate(kViewportFullHeight);
-        if (!starSprite[2 * c] || !starSprite[2 * c + 1]) return;
-        starSprite[2 * c]->setX(kStarX[c]);
-        starSprite[2 * c]->setY(kTerrainLine);
-        starSprite[2 * c + 1]->setX((uint16_t)(kStarX[c] + 16));
-        starSprite[2 * c + 1]->setY(kTerrainLine);
+    // Each star sprite is backed by an oversized ring buffer (kStarRingSlots rows) holding the
+    // whole scene's scroll laid out linearly; the Sprite object wraps the ring base (window 0)
+    // for the copper's initial pointer.  Sprite::allocate(h) gives (h+2) cleared chip slots.
+    for (int i = 0; i < 6; i++) {
+        starSprite[i] = Sprite::allocate(kStarRingSlots - 2);
+        if (!starSprite[i]) return;
+        starRing[i] = starSprite[i]->data();
+        // Precompute the constant POS/CTL control words for this sprite (X per sprite, Y =
+        // kTerrainLine, VSTOP = +kViewportFullHeight = line 180 so the channel-2 gauge re-point
+        // still coincides).  Written big-endian as the hardware expects (see Sprite::setX/setY).
+        uint16_t x = (i & 1) ? (uint16_t)(kStarX[i >> 1] + 16) : kStarX[i >> 1];
+        uint16_t vstop = (uint16_t)(kTerrainLine + kViewportFullHeight);
+        starCtl[i][0] = (uint16_t)((kTerrainLine << 8) | (x >> 1));   // SV7-0, SH8-1
+        starCtl[i][1] = (uint16_t)((vstop << 8) | (x & 1));           // EV7-0 | SH0 (ATT/SV8/EV8 = 0)
+        starRing[i][0] = starCtl[i][0];                              // seed the window-0 control slot
+        starRing[i][1] = starCtl[i][1];
     }
+    starWindow = 0; starSpritesValid = false;
     // Player 1 is the throttle gauge: original HPOSP1 = mem[$00B5] = $BE, single-
     // line PMG strip at $0D98 (P1+$98).  The Atari-HPOS / PM-scanline -> Amiga-pixel
     // transform isn't 1:1 (wide-playfield crop + DIWSTRT), so the on-screen XY here
@@ -1815,16 +1878,35 @@ void RescueOnFractalus::perFrameWork()
         AmigaHardware::blitterClear((uint16_t*)viewportBitmap->data, 60, 47, 0);
         viewportClearKicked = true;
     }
+    // Starfield zero-copy scroll — the pointer half runs HERE (during the frame's render pass),
+    // the pixel half in the VBI.  Advancing the ring window means re-pointing the copper SPRxPT
+    // operand; done here it is read cleanly at the NEXT frame's top (no race with the sprite's
+    // early control DMA fetch).  The VBI (starVblankUpdate) then writes the control words + converts
+    // the new rows for that same window at vblank (after this frame's display, before the fetch) —
+    // so pointer and pixels land in lockstep.  starVbiRows hands the new-row count to the VBI.
     if (rsStars) {
-#ifdef ROF_FLIGHT_PROBE
-        if (g_starSprVbi == 0) {
-            g_starSprVbi = (unsigned short)(rof_subclock()/313u);
-            unsigned long _s0 = rof_subclock();
-            buildStarSprites();
-            g_starSprTicks = rof_subclock() - _s0;
-        } else
-#endif
-        buildStarSprites();
+        extern volatile unsigned short g_starScrollGen;
+        if (!starSpritesValid) {
+            buildStarSprites();                         // full build at window 0 (one transient frame)
+            starLastGen = g_starScrollGen;
+            starVbiRows = 0;
+            starSpritesValid = true;
+        } else {
+            unsigned short gen = g_starScrollGen;
+            int N = (int)(unsigned short)(gen - starLastGen);   // rows scrolled since last frame
+            if (N > 0) {
+                starLastGen = gen;
+                if (starWindow + N > kStarMaxScroll)            // clamp: freeze rather than overrun
+                    N = (starWindow >= kStarMaxScroll) ? 0 : (kStarMaxScroll - starWindow);
+                starWindow += N;
+            }
+            starVbiRows = N;                            // VBI converts N new rows + control at starWindow
+        }
+        if (planetCopper) for (int i = 0; i < 6; i++) planetCopper->setStarOperand(i, starRing[i] + 2 * starWindow);
+        starPhaseActive = true;
+    } else {
+        starPhaseActive = false;
+        starSpritesValid = false;                       // force a full rebuild on the next stars entry
     }
     // Flight altimeter bars: mirror the live P0 $0C98 (terrain-height) + M3 $0B98
     // (ship-height) strips each frame.

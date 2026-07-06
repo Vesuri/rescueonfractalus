@@ -320,9 +320,18 @@ The transliteration→native step gets you a *correct* twin; it is NOT fast. The
 style (`mem[addr]` for every access, `bus_read`/`bus_write`, per-op temporaries) is memory-bound
 on the 68000. **The dominant cost is the number of memory accesses, not arithmetic** — the
 68000 has no cache, every load/store goes to RAM, and `mem[]` is `volatile` (shared with the
-VBI/audio ISRs) so the compiler can't cache, batch, or reorder a single access. (`mem[]` lives
-in FAST RAM — verified `&mem[0]`≈`0x264fe8` — so this is raw access latency, NOT chip-DMA
-contention; don't bother reasoning about chip-vs-fast.) Rewrite hot functions in idiomatic C:
+VBI/audio ISRs) so the compiler can't cache, batch, or reorder a single access.
+
+⚠ **RAM is slow REGARDLESS of address — do NOT reason in terms of "FAST RAM vs CHIP RAM".** The
+target is a bare **A500 with NO real fast RAM**. Any "fast RAM" an A500 has is almost always
+"slow RAM" (trapdoor/ranger) on the SAME bus as chip RAM, and even genuine fast RAM is not much
+faster. So treat **every** memory access — `mem[]`, chip bitmaps/sprites, the stack (hence every
+subroutine call/return) — as uniformly expensive. The lever is **reducing the number of reads and
+writes**, full stop; never justify one buffer being cheaper than another by which "kind" of RAM it
+lives in, and never dismiss a copy as cheap because it's "fast RAM". (This has been a recurring
+mistake — the old `&mem[0]`≈`0x264fe8` "it's fast RAM" note was wrong-headed and is retired.)
+A zero-copy scheme that avoids moving data beats any scheme that moves it, independent of address.
+Rewrite hot functions in idiomatic C:
 
 - **Keep loop scratch / running pointers / loop-invariants in locals (registers), not `mem[]`.**
   The transliteration re-reads/-writes ZP scratch every iteration (e.g. `terrain_collision_and_silhouette` hit
