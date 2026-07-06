@@ -786,12 +786,13 @@ void PlatformAmiga::tickVBI() {}
 // The tunnel-ring "dirty field" flags draw_ring_frame_step already uses to stream the
 // ring-clear frames from the $1000 GTIA field into the tunnel bitmap (NativeHandlers.cpp).
 extern "C" volatile uint8_t g_tunnelFieldDirty;
-extern "C" volatile uint8_t g_tunRowLo, g_tunRowHi;
+extern "C" volatile uint8_t g_tunRowLo, g_tunRowHi, g_tunBandMode;
 void PlatformAmiga::tunnelRingsDrawn() {
     // display_setup's draw_frame_pattern_seq just rendered the full ring pattern into the
-    // $1000 field.  Flag the whole field dirty so the next renderFrame decodes it once into
-    // the tunnel bitmap (then draw_ring_frame_step streams the per-frame clear updates).
-    g_tunRowLo = 0; g_tunRowHi = 85;
+    // $1000 field.  Flag the whole field dirty (band mode 0 = full extent) so the next
+    // renderFrame decodes it once into the tunnel bitmap (then draw_ring_frame_step publishes
+    // the per-frame band updates in mode 1).
+    g_tunRowLo = 0; g_tunRowHi = 85; g_tunBandMode = 0;
     g_tunnelFieldDirty = 1;
 }
 

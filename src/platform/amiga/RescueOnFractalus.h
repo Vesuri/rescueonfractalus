@@ -95,7 +95,8 @@ private:
     void decodeCockpitSpan(uint16_t addr, uint8_t nCells);  // decode nCells cockpit cells from Atari screen addr
     void decodeCockpitFull();  // decode the whole cockpit region (modeD + mode4) once (scene-entry repaint)
     void decodeTitleScreen();  // decode the Title Screen text ($365B/charset $0400) -> titleScreenBitmap
-    void decodeTunnelField(int rowLo, int rowHi);  // decode mem[$2000] rows [lo,hi] -> tunnelBitmap
+    void decodeTunnelRect(int rowLo, int rowHi, int byteLo, int byteHi);  // decode a $1000 sub-rect -> tunnelBitmap (no shadow)
+    void decodeTunnelBand();                       // decode only the ring-clear frame band (outer\inner rect) from the g_tun* bounds
     void renderViewportModeD(uint16_t srcBase, int stride, int rows); // decode CHANGED mode-D bytes -> viewportBitmap (stars/planet: $1000/48/47)
     void renderFlightDirect();   // flight terrain: plot sky straight to bitplanes from $260E (replaces the convert)
 
@@ -241,12 +242,6 @@ private:
     bool     viewportClearKicked = false;    // entry-frame terrain-bitmap clear kicked in perFrameWork (overlaps buildStarSprites)
     uint16_t viewportLastBase  = 0;
     uint32_t viewportShadow[47 * 10] = {};   // 47 mode-D rows (43 terrain + 4 wing-clearance band)
-
-    // Per-byte shadow for the tunnel field at $2000: the exit clear draws a thin
-    // black frame outline (horizontal edges + vertical side pieces) each step, so
-    // decodeTunnelField re-decodes only the bytes that changed — covering the
-    // vertical pieces a row-band would miss, while staying well under a frame.
-    uint8_t tunnelShadow[86 * 40] = {};
 
     // Cockpit decode is writer-driven per instrument: each writer raises one g_ck* boolean
     // (digits / lock-on / dial) and render() decodes only that instrument's cells — no

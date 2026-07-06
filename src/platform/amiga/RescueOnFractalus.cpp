@@ -37,8 +37,12 @@ extern "C" void vbi_attract_timer_native(void);                  // $52D7: timer
 extern "C" void update_indicator_blink_native(void);           // $4131: cockpit blink
 extern "C" void startup_init_native(void);                      // $3FFA: cockpit digit update
 extern "C" void launch_anim_dispatch_native(void);              // $5367: ring ($0088) vs door scroll ($008A)
-extern "C" volatile uint8_t g_tunnelFieldDirty;                // set when draw_ring_frame_step draws into $2000
-extern "C" volatile uint8_t g_tunRowLo, g_tunRowHi;            // row extent of the expanding black clear
+extern "C" volatile uint8_t g_tunnelFieldDirty;                // set when draw_ring_frame_step draws into $1000
+extern "C" volatile uint8_t g_tunRowLo, g_tunRowHi;            // outer row extent of the expanding black clear
+extern "C" volatile uint8_t g_tunInRowLo, g_tunInRowHi;        // inner (previous-outer) row extent
+extern "C" volatile uint8_t g_tunColLpx, g_tunColRpx;          // outer left/right PIXEL cols
+extern "C" volatile uint8_t g_tunInColLpx, g_tunInColRpx;      // inner left/right PIXEL cols
+extern "C" volatile uint8_t g_tunBandMode;                     // 1 = band decode, 0 = full extent (reveal)
 extern "C" volatile uint8_t g_activeVbi;                       // 0=none 1=standby($52D7) 2=flight($4FF5); read by game_vbi_isr
 
 // The genuine transpiled launch cinematic ($5F1D, src/gen/rof_gen.c): display_setup()'s
@@ -566,8 +570,8 @@ void RescueOnFractalus::initialize()
     titleScreenBitmap = Bitmap::allocate(kW, kH, kBP3, true);  // 3bp: black + COLPF0-3 text pens
 
     // (The tunnel rings are decoded into tunnelBitmap from the $1000 field by
-    // decodeTunnelField, triggered by the platform_tunnel_rings_drawn() hook when the
-    // genuine display_setup draws them — not at init; see decodeTunnelField.)
+    // decodeTunnelRect/decodeTunnelBand, triggered by the platform_tunnel_rings_drawn() hook
+    // when the genuine display_setup draws them — not at init; see decodeTunnelRect.)
 
     leftPost   = Sprite::allocate(kHT);
     rightPost  = Sprite::allocate(kHT);
@@ -775,7 +779,7 @@ void RescueOnFractalus::initialize()
         // straight from the viewport into the band with NO line-172 poke, and keeps color00
         // (corner) independent of the field's black so the exit clear still renders black.
         // Use gh/gl for the GTIA split so kDoorP below still sees the ORIGINAL ph/pl.
-        // (kGtia10P* is used only by decodeTunnelField, so this is tunnel-scoped.)
+        // (kGtia10P* is used only by decodeTunnelRect, so this is tunnel-scoped.)
         uint8_t gh = ph ? ph : 7, gl = pl ? pl : 7;
         kGtia10P1[s] = (uint8_t)(((gh & 1) ? 0xF0u : 0u) | ((gl & 1) ? 0x0Fu : 0u));
         kGtia10P2[s] = (uint8_t)(((gh & 2) ? 0xF0u : 0u) | ((gl & 2) ? 0x0Fu : 0u));
@@ -825,37 +829,61 @@ void RescueOnFractalus::initialize()
     g_activeVbi = 1;
 }
 
-// decodeTunnelField: decode rows [rowLo..rowHi] of the GTIA-10 tunnel-ring field at
-// mem[$1000] into the tunnel bitmap, PER-BYTE shadow-gated so only the bytes that actually
-// changed are re-decoded.  $1000 (NOT $2000, which holds the door field) is where the
-// genuine display_setup renders the rings — draw_frame_pattern_seq plots through the
-// $073D/$0793 row-address table built for base $1000, and draw_ring_frame_step streams
-// its expanding black ring-clear frames into the same buffer.  The exit clear draws a thin
-// black frame OUTLINE each step (horizontal edges full-width + left/right VERTICAL pieces
-// down the inner rows), so even passing the full new row extent [botAfter..topAfter] here
-// touches only the outline bytes — staying far under one PAL frame (GTIA-10 decode tables).
-void RescueOnFractalus::decodeTunnelField(int rowLo, int rowHi)
+// decodeTunnelRect: decode the sub-rectangle rows [rowLo..rowHi] × displayed bytes
+// [byteLo..byteHi] of the GTIA-10 tunnel-ring field at mem[$1000] into the tunnel bitmap.
+// $1000 (NOT $2000, which holds the door field) is where the genuine display_setup renders
+// the rings — draw_frame_pattern_seq plots through the $073D/$0793 row-address table built
+// for base $1000 (so table index r == row r == $1000 + r*46), and draw_ring_frame_step streams
+// its expanding black ring-clear frames into the same buffer.  No shadow / compare: decoding a
+// byte to LUT[$1000[byte]] is idempotent, so re-decoding a superset of the changed bytes is
+// byte-identical to a per-byte-gated pass — the shadow only ever saved work, never correctness.
+void RescueOnFractalus::decodeTunnelRect(int rowLo, int rowHi, int byteLo, int byteHi)
 {
     if (!tunnelBitmap) return;
     if (rowLo < 0) rowLo = 0;
     if (rowHi > (int)kTerrainHeight - 1) rowHi = (int)kTerrainHeight - 1;
-    // Pointer-walk (no per-row 68000 multiplies — row*46/*120/*40 would be __mulsi3
-    // soft-multiplies each row).  Compute the row-0 bases once, then += stride per row,
-    // as render()/renderViewportModeD() do.
-    const uint8_t* src   = (const uint8_t*)&mem[0x1000 + rowLo * 46 + 4];  // +4: wide-field crop
-    uint8_t*       p1     = (uint8_t*)tunnelBitmap->data + rowLo * 120;
-    uint8_t*       shadow = &tunnelShadow[rowLo * 40];
+    if (byteLo < 0) byteLo = 0;
+    if (byteHi > 39) byteHi = 39;
+    if (rowLo > rowHi || byteLo > byteHi) return;   // degenerate band strip — nothing to do
+    // Pointer-walk (no per-row 68000 multiplies — row*46/*120 would be __mulsi3 soft-multiplies
+    // each row).  Compute the row-0 bases once, then += stride per row, as render() does.
+    const uint8_t* src = (const uint8_t*)&mem[0x1000 + rowLo * 46 + 4];  // +4: wide-field crop
+    uint8_t*       p1  = (uint8_t*)tunnelBitmap->data + rowLo * 120;
     for (int row = rowLo; row <= rowHi; row++) {
         uint8_t* pp2 = p1 + 40; uint8_t* pp3 = p1 + 80;
-        for (int b = 0; b < 40; b++) {
+        for (int b = byteLo; b <= byteHi; b++) {
             uint8_t s = src[b];
-            if (s != shadow[b]) {                  // changed byte — re-decode 3 planes
-                shadow[b] = s;
-                p1[b] = kGtia10P1[s]; pp2[b] = kGtia10P2[s]; pp3[b] = kGtia10P3[s];
-            }
+            p1[b] = kGtia10P1[s]; pp2[b] = kGtia10P2[s]; pp3[b] = kGtia10P3[s];
         }
-        src += 46; p1 += 120; shadow += 40;        // walk to next row
+        src += 46; p1 += 120;                        // walk to next row
     }
+}
+
+// decodeTunnelBand: re-decode only the frame band draw_ring_frame_step just wrote — the
+// picture-frame between the previous outer rectangle (inner, before this step's expansion)
+// and the new outer rectangle.  The four g_tun* bound pairs come from draw_symmetric_span_loop's
+// boundary regs snapshotted before/after the loop (rof_native_amiga.cpp).  Rows are $073D-table
+// indices (== decode rows); columns are PIXEL cols → displayed byte = (px>>1) - 4.  We decode
+// four thin strips whose union covers the whole band (idempotent overlap at the corners):
+// full-width top+bottom bands + left/right column strips over the middle rows.
+void RescueOnFractalus::decodeTunnelBand()
+{
+    const int R0 = g_tunRowLo,   R1 = g_tunRowHi;     // outer rows (R0 = top, small index)
+    const int r0 = g_tunInRowLo, r1 = g_tunInRowHi;   // inner rows (previous outer)
+    // Pixel col → displayed byte.  outL/outR = new outer edges, inL/inR = inner edges.
+    const int outL = ((int)g_tunColLpx   >> 1) - 4;
+    const int outR = ((int)g_tunColRpx   >> 1) - 4;
+    const int inL  = ((int)g_tunInColLpx >> 1) - 4;
+    const int inR  = ((int)g_tunInColRpx >> 1) - 4;
+    // Row-spill guard: fill_horizontal_span writes bytes [.. $009D>>1] within a row; if that
+    // exceeds the 46-byte row width it wraps into the NEXT row's low bytes, which the strips
+    // would miss.  Rare (would need the frame to grow past the field edge), but decode the full
+    // outer row extent full-width if it can happen — still shadow-free, just less selective.
+    if (((int)g_tunColRpx >> 1) >= 46) { decodeTunnelRect(R0, R1, 0, 39); return; }
+    decodeTunnelRect(R0, r0, 0, 39);      // top band, full width
+    decodeTunnelRect(r1, R1, 0, 39);      // bottom band, full width
+    decodeTunnelRect(r0, r1, outL, inL);  // left edge strip over the middle rows
+    decodeTunnelRect(r0, r1, inR, outR);  // right edge strip over the middle rows
 }
 
 // renderViewportModeD: decode the stars/planet viewport buffer mem[$1000] as an
@@ -1202,12 +1230,14 @@ void RescueOnFractalus::renderFrame()
     emptyCopperInstalled = false;
 
     deriveRenderSignals();   // recompute the mem[]-derived render-gating signals for this frame
-    // Tunnel reveal: the $52D7 VBI's draw_ring_frame_step draws the expanding black
-    // clear into mem[$2000] and flags g_tunnelFieldDirty with its row extent; re-decode
-    // those rows into tunnelBitmap here (was in run()'s tunnel loop, now that the
-    // transpiled display_setup drives the cinematic).
+    // Tunnel: the reveal (platform_tunnel_rings_drawn) decodes the full field once
+    // (g_tunBandMode==0); thereafter the $52D7 VBI's draw_ring_frame_step draws each expanding
+    // black clear frame into mem[$1000] and publishes the exact band it touched (g_tunBandMode==1
+    // + the g_tun* bounds).  Decode only that band into tunnelBitmap — no shadow scan.
     if (g_tunnelFieldDirty) {
-        decodeTunnelField((int)g_tunRowLo, (int)g_tunRowHi); g_tunnelFieldDirty = 0;
+        if (g_tunBandMode) decodeTunnelBand();
+        else               decodeTunnelRect((int)g_tunRowLo, (int)g_tunRowHi, 0, 39);
+        g_tunnelFieldDirty = 0;
     }
 #ifdef ROF_FLIGHT_PROBE
     extern volatile unsigned long g_rPerFrame, g_rRenderFn;

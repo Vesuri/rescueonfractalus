@@ -611,25 +611,41 @@ static void advance_history_6a4d(void)
 // re-decodes (g_tunnelFieldDirty) so the rings visibly clear from the middle out.
 static void draw_symmetric_span_loop(void);   // fwd decl (defined below)
 
-// Set by draw_ring_frame_step when it draws into the GTIA field at $2000, with the
-// touched row range, so RescueOnFractalus re-decodes ONLY those rows of the tunnel bitmap
-// (a black ring band) — not the whole 86-row field, which costs > 1 PAL frame on the
-// 68000 and freezes the ring cycle.  Cleared by RescueOnFractalus after it re-decodes.
-// Report the row extent [$009F..$009E] the just-drawn black frame spans; RescueOnFractalus
-// re-decodes that extent of the field, but PER-BYTE shadow-gated, so only the thin
-// frame outline (horizontal edges + vertical side pieces) is actually re-decoded —
-// fast enough to stay under one PAL frame (no tearing, stays synced to the palette).
+// Set by draw_ring_frame_step when it draws a black ring-clear frame into the GTIA field at
+// $1000, so RescueOnFractalus re-decodes ONLY the band it just wrote — not the whole 86-row
+// field (> 1 PAL frame on the 68000, freezes the ring cycle) and not a shadow scan of the
+// cumulative extent.  draw_symmetric_span_loop expands the rectangle [$009C..$009F] outward
+// by $0096 on each side; the newly-written cells are exactly the picture-frame band between
+// the rectangle BEFORE the loop (inner = the previous outer) and AFTER (outer).  Publish both:
+//   g_tunRowLo/Hi     = outer rows ($009F..$009E after)   [also reused as the reveal full extent]
+//   g_tunInRowLo/Hi   = inner rows ($009F..$009E before)
+//   g_tunColLpx/Rpx   = outer left/right PIXEL cols ($009C/$009D after)
+//   g_tunInColLpx/Rpx = inner left/right PIXEL cols ($009C/$009D before)
+//   g_tunBandMode     = 1 → decode the band (exit clear); 0 → decode the full extent (reveal)
+// RescueOnFractalus::decodeTunnelBand turns these into four thin decode strips.  Cleared by
+// RescueOnFractalus after it re-decodes.
 extern "C" volatile uint8_t g_tunnelFieldDirty = 0;
-extern "C" volatile uint8_t g_tunRowLo = 0, g_tunRowHi = 0;   // $009F .. $009E after the draw
+extern "C" volatile uint8_t g_tunRowLo = 0, g_tunRowHi = 0;       // outer rows $009F .. $009E after
+extern "C" volatile uint8_t g_tunInRowLo = 0, g_tunInRowHi = 0;   // inner rows $009F .. $009E before
+extern "C" volatile uint8_t g_tunColLpx = 0, g_tunColRpx = 0;     // outer $009C / $009D after
+extern "C" volatile uint8_t g_tunInColLpx = 0, g_tunInColRpx = 0; // inner $009C / $009D before
+extern "C" volatile uint8_t g_tunBandMode = 0;                    // 1 = band decode, 0 = full extent
 
 static void draw_ring_frame_step(void)
 {
     uint8_t a0 = mem[0x00A0];
     if ((int8_t)a0 >= 6) {                          // CPY #$06; BMI -> $00A0 >= 6 = DRAW
+        // Snapshot the rectangle BEFORE the loop expands it (= this band's inner edge).
+        uint8_t inTop = mem[0x009F], inBot = mem[0x009E];
+        uint8_t inL   = mem[0x009C], inR   = mem[0x009D];
         mem[0x0096] = mem[0x6E0F + a0];             // LDA $6E0F,Y; STA $0096
-        draw_symmetric_span_loop();                 // JSR $6642 (steps $009E++/$009F--)
-        g_tunRowLo = mem[0x009F];                   // full new extent (bottom .. top)
+        draw_symmetric_span_loop();                 // JSR $6642 (steps $009C--/$009D++/$009E++/$009F--)
+        g_tunRowLo = mem[0x009F];                   // outer rows (top .. bottom) after
         g_tunRowHi = mem[0x009E];
+        g_tunInRowLo = inTop; g_tunInRowHi = inBot; // inner rows (before)
+        g_tunColLpx = mem[0x009C]; g_tunColRpx = mem[0x009D];   // outer cols after
+        g_tunInColLpx = inL;       g_tunInColRpx = inR;         // inner cols before
+        g_tunBandMode = 1;
         g_tunnelFieldDirty = 1;
     } else {
         mem[0x08D8] = 0u;                           // $671E: LDA #$00; STA $08D8
