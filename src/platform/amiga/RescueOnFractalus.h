@@ -72,11 +72,13 @@ private:
     bool     altimSolidBuilt = false;    // altimeter bars are solid 56-row sprites filled once (lazily)
 
     // Stars/space starfield: the 3 Atari players P0/P2/P3 ($0C32/$0E32/$0F32),
-    // scrolled + sparsely seeded by the genuine scroll_field_columns ($6AEE),
-    // rendered as Amiga hardware sprites 4/5/6.  (P1 = $0D32 is the throttle gauge
-    // player and stays on sprite 2; sprite 3 would share the gauge's colour
-    // registers, so the stars use sprites 4/5/6 for an independent grey COLPM.)
-    Sprite*  starSprite[3] = { nullptr, nullptr, nullptr };
+    // scrolled + sparsely seeded by the genuine scroll_field_columns ($6AEE).  Each is a
+    // SIZEP=$03 quad player spanning 32 colour clocks, drawn faithfully as a PAIR of Amiga
+    // sprites (low + high 16 px) on channels 2/3 (P0), 4/5 (P2), 6/7 (P3).  Channel 2 is
+    // shared with the throttle gauge (P1 = $0D32), which sits lower in the cockpit and never
+    // overlaps the stars — PlanetCopperList re-points SPR2PT to the gauge at the band scanline.
+    // Layout: starSprite[2c] = player c low, starSprite[2c+1] = player c high.
+    Sprite*  starSprite[6] = { nullptr, nullptr, nullptr, nullptr, nullptr, nullptr };
     void buildStarSprites();             // $0C32/$0E32/$0F32 player buffers -> star sprites
 
     // Tunnel reveal: a 3bp concentric-rectangle bitmap shown in the door gap.

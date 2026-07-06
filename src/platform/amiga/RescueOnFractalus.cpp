@@ -127,6 +127,18 @@ extern "C" volatile unsigned char g_flightRenderHalf;
 // Filled once in initialize(); used by title render for mode-6 1bpp doubling.
 static uint16_t kDoubleGlyph[256];
 
+// Starfield glyph tables: byte → 16-bit sprite word, rendering each star sub-position as a
+// 4-lores-px dot at its FAITHFUL offset (matches the Atari's SIZEP=$03 quad players, whose set
+// bits are 4 colour clocks = 4 Amiga px wide — measured against atari033.png).  The star
+// pattern only ever sets bits 7/5/2/0 ($80/$20/$04/$01), which on a 32-cc quad player sit at
+// offsets 0/8/20/28 cc.  A 16 px hardware sprite can't span that, so each Atari player is drawn
+// as TWO adjacent sprites (low = px 0-15, high = px 16-31, giving the full 32 cc span at 1:1):
+//   kStarGlyphLo — bits 7/5 → low  sprite px 0-3 / 8-11
+//   kStarGlyphHi — bits 2/0 → high sprite px 4-7 / 12-15  (offsets 20/28 cc minus the 16 px base)
+// bit15 = leftmost sprite pixel.  Filled once in initialize().
+static uint16_t kStarGlyphLo[256];
+static uint16_t kStarGlyphHi[256];
+
 // Precomputed decode tables (filled in initialize()) — convert one source byte
 // straight to its output bitplane bytes, replacing the per-byte bit loops.
 //   mode-D (2bpp, stars/planet viewport): byte = 4 pixels (2 bits) → 8 Amiga px.
@@ -487,32 +499,35 @@ void RescueOnFractalus::buildAltimeterShipSprite()
 // player up one scanline/frame and appends a new bottom byte).  The genuine
 // transpiled scroll_field_columns already maintains those player buffers in
 // mem[], so we just map the 89-byte visible strip ($..32..$..8A, player scanlines
-// $32..$8A) of each into an Amiga sprite.  Each Atari player bit → 2 Amiga lores
-// px (matches the gauge mapping); a single 1-bit star dot lands at one of 4 sub-x.
+// $32..$8A) of each into a PAIR of Amiga sprites (the faithful SIZEP=$03 quad player spans
+// 32 colour clocks = 32 lores px at 1:1, wider than one 16 px hardware sprite).
 static const uint16_t kStarSrc[3]  = { 0x0C32, 0x0E32, 0x0F32 };  // P0, P2, P3
-// First-guess Amiga X: the mode-D viewport's visible window is the central 40 of
-// 48 bytes → Atari colour clock $32 maps to the left display edge (0x81), scale 2
-// (320 px / 160 cc).  HPOSP0=$38, HPOSP2=$8E, HPOSP3=$B8 (display_setup $64F3-$6503).
-static const uint16_t kStarX[3]    = { 0x81 + (0x38 - 0x32) * 2,    // P0 = 141
-                                       0x81 + (0x8E - 0x32) * 2,    // P2 = 313
-                                       0x81 + (0xB8 - 0x32) * 2 };  // P3 = 397
+// Amiga X of each player's LOW sprite: Atari colour clock $32 maps to the left display edge
+// (0x81), scale 2 (320 px / 160 cc) for the on-screen COLUMN placement (matches the terrain
+// viewport scale, so the columns spread across the screen as on the Atari).  Each player's
+// two-sprite pair then spans 32 px internally (the HIGH sprite sits +16 px right), rendering
+// the quad at 1:1 so a 4-cc dot is 4 px wide.  HPOSP0=$38, HPOSP2=$8E, HPOSP3=$B8
+// (display_setup $64F3-$6503).
+static const uint16_t kStarX[3]    = { (uint16_t)(0x81 + (0x38 - 0x32) * 2),    // P0 lo = 141
+                                       (uint16_t)(0x81 + (0x8E - 0x32) * 2),    // P2 lo = 313
+                                       (uint16_t)(0x81 + (0xB8 - 0x32) * 2) };  // P3 lo = 397
 static const int       kStarRows   = 89;   // visible strip $..32..$..8A ($59 bytes)
 
 void RescueOnFractalus::buildStarSprites()
 {
+    // Each Atari player P0/P2/P3 → two sprites: starSprite[2c] (low, px 0-15) + starSprite[2c+1]
+    // (high, px 16-31), together the full 32-cc quad span.  Each set star bit becomes a 4-px dot
+    // at its faithful 0/8/20/28-cc offset via the kStarGlyphLo/Hi tables (built in initialize()).
+    // Post-increment pointers (the 68000 (An)+ mode), one table lookup per row per half.
     for (int c = 0; c < 3; c++) {
-        uint16_t* d = starSprite[c]->data() + 2;   // skip the 2 control words
+        uint16_t* lo = starSprite[2 * c]->data() + 2;      // skip the 2 control words
+        uint16_t* hi = starSprite[2 * c + 1]->data() + 2;
         const uint8_t* src = (const uint8_t*)&mem[kStarSrc[c]];
         const uint8_t* end = src + kStarRows;
-        // Double each set player bit to 2 Amiga px: player bit b (b7 = leftmost) → sprite
-        // word bits (2b+1, 2b).  All 4 star sub-positions ($80/$20/$04/$01 = bits 7/5/2/0)
-        // land inside the 16 px sprite this way.  kDoubleGlyph is the precomputed byte→
-        // doubled-word table (built in initialize()), so the per-row 8-iteration bit loop
-        // becomes one lookup — that loop was ~22 ms of the stars/planet frame on the A500.
-        // Post-increment pointers (the 68000 (An)+ mode), no per-row index multiplies.
         while (src < end) {
-            *d++ = kDoubleGlyph[*src++];   // plane A (colour bit 0 = pen 01)
-            *d++ = 0x0000;                 // plane B
+            uint8_t b = *src++;
+            *lo++ = kStarGlyphLo[b];  *lo++ = 0x0000;   // plane A / plane B (low sprite)
+            *hi++ = kStarGlyphHi[b];  *hi++ = 0x0000;   // plane A / plane B (high sprite)
         }
     }
 }
@@ -566,14 +581,20 @@ void RescueOnFractalus::initialize()
     if (!leftPost || !rightPost || !nullSprite || !energyIndicatorSprite || !altimeterSprite
         || !altimeterShipSprite || !flLeftPost || !flRightPost || !flLeftTri || !flRightTri
         || !ahLeft || !ahRight) return;
-    // Starfield sprites (P0/P2/P3): 89-row strips, all at the windscreen top
-    // (player scanline $32 → Amiga Y = kTerrainLine, the +36 offset that maps the
-    // gauge strip $0D98/scanline $98 to Amiga Y 0x2c+144).
+    // Starfield sprites: each Atari player P0/P2/P3 is a 32-cc quad, drawn as a pair of strips —
+    // starSprite[2c] (low, at kStarX[c]) + starSprite[2c+1] (high, +16 px) — both at the windscreen
+    // top (player scanline $32 → Amiga Y = kTerrainLine).  Height = kViewportFullHeight so VSTOP
+    // lands on PlanetCopperList's cockpit line (180): the copper re-points channel 2 to the throttle
+    // gauge THERE, and the re-arm requires the outgoing (P0-low) sprite's post-VSTOP control-word
+    // fetch to coincide with the re-point (only kStarRows=89 rows carry star data; the rest blank).
     for (int c = 0; c < 3; c++) {
-        starSprite[c] = Sprite::allocate(kStarRows);
-        if (!starSprite[c]) return;
-        starSprite[c]->setX(kStarX[c]);
-        starSprite[c]->setY(kTerrainLine);
+        starSprite[2 * c]     = Sprite::allocate(kViewportFullHeight);
+        starSprite[2 * c + 1] = Sprite::allocate(kViewportFullHeight);
+        if (!starSprite[2 * c] || !starSprite[2 * c + 1]) return;
+        starSprite[2 * c]->setX(kStarX[c]);
+        starSprite[2 * c]->setY(kTerrainLine);
+        starSprite[2 * c + 1]->setX((uint16_t)(kStarX[c] + 16));
+        starSprite[2 * c + 1]->setY(kTerrainLine);
     }
     // Player 1 is the throttle gauge: original HPOSP1 = mem[$00B5] = $BE, single-
     // line PMG strip at $0D98 (P1+$98).  The Atari-HPOS / PM-scanline -> Amiga-pixel
@@ -662,8 +683,7 @@ void RescueOnFractalus::initialize()
     planetCopper = new PlanetCopperList();
     if (planetCopper && planetCopper->data())
         planetCopper->buildLayout(*titleBitmap, *viewportBitmap, *cockpitBitmap,
-                                    *leftPost, *rightPost, *energyIndicatorSprite, *nullSprite,
-                                    *starSprite[0], *starSprite[1], *starSprite[2]);
+                                    *leftPost, *rightPost, *energyIndicatorSprite, starSprite);
 
     // Static flight fixed copper list (scene 7), same build-once + poke scheme;
     // renderFrame installs it during rsFlight.  HUD sprites are poked in later by the
@@ -701,6 +721,19 @@ void RescueOnFractalus::initialize()
         for (int b = 7; b >= 0; b--)
             if (i & (1 << b)) out |= (uint16_t)3u << (b * 2);
         kDoubleGlyph[i] = out;
+    }
+
+    // Precompute the starfield glyph tables (see kStarGlyphLo/Hi decl): each star sub-position
+    // → a 4-px dot at its faithful 0/8/20/28-cc offset, split across the low (px 0-15) and high
+    // (px 16-31) sprites of the player's two-sprite quad.  bit15 = leftmost sprite pixel.
+    for (int i = 0; i < 256; i++) {
+        uint16_t lo = 0, hi = 0;
+        if (i & 0x80) lo |= 0xF000u;   // $80 (bit7): cc  0 → low  px 0-3
+        if (i & 0x20) lo |= 0x00F0u;   // $20 (bit5): cc  8 → low  px 8-11
+        if (i & 0x04) hi |= 0x0F00u;   // $04 (bit2): cc 20 → high px 4-7  (20-16)
+        if (i & 0x01) hi |= 0x000Fu;   // $01 (bit0): cc 28 → high px 12-15 (28-16)
+        kStarGlyphLo[i] = lo;
+        kStarGlyphHi[i] = hi;
     }
 
     // Precompute the mode-D (2bpp) and GTIA-10 (nibble) byte→bitplane decode tables.
@@ -2186,5 +2219,5 @@ void RescueOnFractalus::shutdown()
     delete flRightPost; flRightPost = nullptr;
     delete flLeftTri;   flLeftTri   = nullptr;
     delete flRightTri;  flRightTri  = nullptr;
-    for (int c = 0; c < 3; c++) { delete starSprite[c]; starSprite[c] = nullptr; }
+    for (int c = 0; c < 6; c++) { delete starSprite[c]; starSprite[c] = nullptr; }
 }

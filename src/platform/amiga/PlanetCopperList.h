@@ -25,19 +25,21 @@ public:
     PlanetCopperList();
 
     // One-time layout: emit the whole fixed list.  Sprite pointers (canopy posts,
-    // throttle gauge, the three starfield sprites) are all constant for this phase —
+    // throttle gauge, the six starfield sprites) are all constant for this phase —
     // only their pixel data changes frame-to-frame, which is written to the sprite
     // buffers directly (buildStarSprites/buildEnergyIndicatorSprite), not via the copper.
+    // star[6] = the three quad Atari players as low/high sprite pairs (P0 lo/hi → ch 2/3,
+    // P2 lo/hi → ch 4/5, P3 lo/hi → ch 6/7).  The throttle gauge shares channel 2: it is
+    // re-pointed (SPR2PT) in below the starfield, where the two never overlap vertically.
     void buildLayout(const Bitmap& title, const Bitmap& terrain, const Bitmap& cockpit,
                      const Sprite& leftPost, const Sprite& rightPost, const Sprite& gauge,
-                     const Sprite& nullSprite, const Sprite& star0, const Sprite& star1,
-                     const Sprite& star2);
+                     Sprite* const star[6]);
 
     // ---- per-frame setters (each pokes one MOVE) ----
     void setTitlePalette(uint16_t bg, uint16_t pf0, uint16_t pf1);  // color00..03 (col0=col3=bg)
     void setSpritePostColor(uint16_t c);                           // color17 (canopy posts)
     void setEnergyIndicatorColor(uint16_t c);                                // COLOR21 ($1AA) gauge bar
-    void setStarColor(uint16_t c);                                 // COLOR25/29 ($1B2/$1BA) starfield
+    void setStarColor(uint16_t c);                                 // COLOR21/25/29 starfield pens (pairs 2/3,4/5,6/7)
     void setCompassColor(uint16_t c);                              // color01 over the compass band (COLPF0 $00CF)
     void setPlanetBgColor(uint16_t c);                           // viewport color00 (COLBK, space)
     // (The windscreen-bottom band palette is the constant windscreen-FRAME palette set by the

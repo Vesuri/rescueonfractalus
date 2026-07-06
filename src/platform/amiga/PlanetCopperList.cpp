@@ -40,9 +40,8 @@ static const uint16_t kColor29 = 0x1BA;   // sprite pair 6/7 pen 01 (starfield)
 #define INDEX_TITLE_BPL       (INDEX_TITLE_PAL + 4)        // 8:  title 2bp ptrs (4)
 #define INDEX_SPRITE_COL      (INDEX_TITLE_BPL + 4)        // 12: color16,color17 (2)
 #define INDEX_SPRITES         (INDEX_SPRITE_COL + 2)       // 14: 8 sprite ptrs (16)
-#define INDEX_ENERGY_COL       (INDEX_SPRITES + 16)         // 30: COLOR21 (1)
-#define INDEX_STAR_COL        (INDEX_ENERGY_COL + 1)        // 31: COLOR25,COLOR29 (2)
-#define INDEX_COMPASS_WAIT    (INDEX_STAR_COL + 2)         // 33: WAIT(compass scanline) (1)
+#define INDEX_STAR_COL        (INDEX_SPRITES + 16)         // 30: COLOR21,COLOR25,COLOR29 star pens (3)
+#define INDEX_COMPASS_WAIT    (INDEX_STAR_COL + 3)         // 33: WAIT(compass scanline) (1)
 #define INDEX_COMPASS_COL     (INDEX_COMPASS_WAIT + 1)     // 34: color01 = compass COLPF0 (1)
 #define INDEX_VP_WAIT         (INDEX_COMPASS_COL + 1)      // 35: WAIT(kTerrainLine-1) (1)
 #define INDEX_VP_BPL          (INDEX_VP_WAIT + 1)          // 34: viewport 3bp ptrs (6)
@@ -56,7 +55,16 @@ static const uint16_t kColor29 = 0x1BA;   // sprite pair 6/7 pen 01 (starfield)
 // — color00 (COLBK) and color03 (COLPF2=$2A planet) stay the viewport's values, as on the Atari.
 #define BAND_BLOCK_WORDS      2
 #define INDEX_COCKPIT_WAIT    (INDEX_VP_LINEDOUBLE + 3 * (kViewportHeight - 1) + BAND_BLOCK_WORDS)
-#define INDEX_COCKPIT_BPL     (INDEX_COCKPIT_WAIT + 1)     // cockpit 3bp ptrs, yOffset 8 (6)
+// Throttle-gauge re-point (channel 2).  The P0 starfield low sprite owns channel 2 across the
+// viewport; its VSTOP is at the cockpit line (180), so its post-VSTOP control-word fetch happens
+// at line 180's sprite DMA slot (~cycle 0x14).  These SPR2PT moves MUST be the FIRST moves after
+// the cockpit WAIT — at line 180 cycles 0-8, before that fetch — so the channel re-reads the
+// gauge sprite's control words instead of the P0-low terminator (which would idle it).  Mirrors
+// the flight-scene AH multiplex (FlightCopperList INDEX_AH_SPR).  COLOR21 (pair 2/3 pen 01) then
+// switches from the star pen to the gauge-bar colour.  SPR3 (P0 high) terminates on its own.
+#define INDEX_GAUGE_PTR       (INDEX_COCKPIT_WAIT + 1)     // SPR2PTH,SPR2PTL -> gauge (2)
+#define INDEX_GAUGE_COL       (INDEX_GAUGE_PTR + 2)        // COLOR21 = gauge bar (1)
+#define INDEX_COCKPIT_BPL     (INDEX_GAUGE_COL + 1)        // cockpit 3bp ptrs, yOffset 8 (6)
 #define INDEX_COCKPIT_BPLCON0 (INDEX_COCKPIT_BPL + 6)      // bplcon0 3P (1)
 #define INDEX_COCKPIT_MOD     (INDEX_COCKPIT_BPLCON0 + 1)  // bpl1mod,bpl2mod (2)
 #define INDEX_COCKPIT_PAL     (INDEX_COCKPIT_MOD + 2)      // color00..07 (8)
@@ -77,8 +85,7 @@ PlanetCopperList::PlanetCopperList()
 
 void PlanetCopperList::buildLayout(const Bitmap& title, const Bitmap& terrain, const Bitmap& cockpit,
                                      const Sprite& leftPost, const Sprite& rightPost, const Sprite& gauge,
-                                     const Sprite& nullSprite, const Sprite& star0, const Sprite& star1,
-                                     const Sprite& star2)
+                                     Sprite* const star[6])
 {
     uint32_t* d = data_;
 
@@ -90,19 +97,20 @@ void PlanetCopperList::buildLayout(const Bitmap& title, const Bitmap& terrain, c
     showBitmap(INDEX_TITLE_BPL, title);        // 2bp interleaved = 4 ptr moves
 
     // Sprite colour regs + pointers.  COLOR16 const black, COLOR17 = canopy post (setter).
-    // Sprites: 0/1 = canopy posts, 2 = throttle gauge, 3/7 = null, 4/5/6 = starfield.
+    // Sprites: 0/1 = canopy posts; 2/3,4/5,6/7 = the three quad starfield players (low/high
+    // pairs) — P0 on 2/3, P2 on 4/5, P3 on 6/7.  Channel 2 is re-pointed to the throttle gauge
+    // below the starfield (INDEX_GAUGE_* block).
     d[INDEX_SPRITE_COL] = copperMove(color16, 0x000);
     setSpritePostColor(0);
     showSprite(INDEX_SPRITES + 0,  0, leftPost);
     showSprite(INDEX_SPRITES + 2,  1, rightPost);
-    showSprite(INDEX_SPRITES + 4,  2, gauge);
-    showSprite(INDEX_SPRITES + 6,  3, nullSprite);
-    showSprite(INDEX_SPRITES + 8,  4, star0);
-    showSprite(INDEX_SPRITES + 10, 5, star1);
-    showSprite(INDEX_SPRITES + 12, 6, star2);
-    showSprite(INDEX_SPRITES + 14, 7, nullSprite);
-    setEnergyIndicatorColor(0);                          // COLOR21 (setter)
-    setStarColor(0);                           // COLOR25/29 (setter)
+    showSprite(INDEX_SPRITES + 4,  2, *star[0]);   // P0 low
+    showSprite(INDEX_SPRITES + 6,  3, *star[1]);   // P0 high
+    showSprite(INDEX_SPRITES + 8,  4, *star[2]);   // P2 low
+    showSprite(INDEX_SPRITES + 10, 5, *star[3]);   // P2 high
+    showSprite(INDEX_SPRITES + 12, 6, *star[4]);   // P3 low
+    showSprite(INDEX_SPRITES + 14, 7, *star[5]);   // P3 high
+    setStarColor(0);                           // COLOR21/25/29 star pens (setter)
 
     // ---- compass band: color01 = compass COLPF0 ($00CF) for the mode-4 compass line ----
     // (the compass glyph is decoded into the title bitmap rows ~33-40; without this band
@@ -146,9 +154,12 @@ void PlanetCopperList::buildLayout(const Bitmap& title, const Bitmap& terrain, c
         d[idx++] = copperMove(bpl2mod, v);
     }
 
-    // ---- cockpit region: WAIT, pointers (skip the 8 modeD band scanlines now drawn by the
+    // ---- cockpit region: WAIT, then the channel-2 gauge re-point (MUST be first — see the
+    // INDEX_GAUGE_PTR comment), then pointers (skip the 8 modeD band scanlines now drawn by the
     // band above via yOffset=8), 3bp, modulo, constant palette ----
     d[INDEX_COCKPIT_WAIT] = copperWait(kCockpitLine - 1, 0xE0);
+    showSprite(INDEX_GAUGE_PTR, 2, gauge);   // re-point channel 2 (P0-low -> throttle gauge)
+    setEnergyIndicatorColor(0);              // COLOR21 = gauge bar (setter, at INDEX_GAUGE_COL)
     showBitmap(INDEX_COCKPIT_BPL, cockpit, 1, 1, 0, 8);   // yOffset 8 scanlines: skip the $350D band rows
     d[INDEX_COCKPIT_BPLCON0] = copperMove(bplcon0, kBPLCON0_3P);
     d[INDEX_COCKPIT_MOD]     = copperMove(bpl1mod, 80);
@@ -189,13 +200,17 @@ void PlanetCopperList::setSpritePostColor(uint16_t c)
 
 void PlanetCopperList::setEnergyIndicatorColor(uint16_t c)
 {
-    data_[INDEX_ENERGY_COL] = copperMove(kColor21, c);
+    // COLOR21 (sprite pair 2/3 pen 01) — poked BELOW the starfield, where channel 2 is the gauge.
+    data_[INDEX_GAUGE_COL] = copperMove(kColor21, c);
 }
 
 void PlanetCopperList::setStarColor(uint16_t c)
 {
-    data_[INDEX_STAR_COL + 0] = copperMove(kColor25, c);
-    data_[INDEX_STAR_COL + 1] = copperMove(kColor29, c);
+    // Star pen for all three quad players in the viewport: pair 2/3 (P0), 4/5 (P2), 6/7 (P3).
+    // COLOR21 is switched to the gauge colour again below the starfield (setEnergyIndicatorColor).
+    data_[INDEX_STAR_COL + 0] = copperMove(kColor21, c);
+    data_[INDEX_STAR_COL + 1] = copperMove(kColor25, c);
+    data_[INDEX_STAR_COL + 2] = copperMove(kColor29, c);
 }
 
 void PlanetCopperList::setCompassColor(uint16_t c)
