@@ -819,13 +819,13 @@ void PlatformAmiga::lockonChanged() {
     g_ckLockon = 1;
 }
 
-extern "C" volatile unsigned char g_titleDirty;
+extern "C" volatile int g_titleToRender;
 void PlatformAmiga::titleChanged() {
     // copy_title_text_block_to_screen ($782A) just rewrote the banner text in $32B7-$32CA
-    // (the SFX sequencer alternates the block via $0091).  Flag the title region so the next
-    // renderFrame re-scans it; the per-cell shadow compare then re-decodes only the glyphs
-    // that actually changed between "RESCUE ON FRACTALUS!" and the copyright line.
-    g_titleDirty = 1;
+    // (the SFX sequencer alternates the block via $0091).  Ask the next renderFrame to repaint
+    // all 20 title cells straight from screen RAM (whichever of "RESCUE ON FRACTALUS!" / the
+    // copyright line is now there).
+    g_titleToRender = 20;
 }
 
 // Pending in-flight command keycode set by the keyboard ISR (keyboardHandler, below),

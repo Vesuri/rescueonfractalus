@@ -7646,7 +7646,7 @@ L_6118:
     /* Standby construction complete (cockpit/top-bar/doors/LEVEL all drawn) — reveal now.  The
        black EmptyCopperList held the screen (and skipped all rendering) through the build above;
        the first render() after this decodes the finished bitmaps in one frame (the initial
-       terrainDirty/cockpitForceFull/g_titleDirty flags are still set — render never ran). */
+       terrainDirty/cockpitForceFull/g_titleToRender signals are still set — render never ran). */
     g_standbyRevealReady = 1;
     dl_index_dec_or_reset();
     delay_loop_c2_to_c9();

@@ -230,7 +230,7 @@ private:
     // Dirty-flag bitmap caching: bitmaps are rendered once on initialize() and
     // only re-rendered when the underlying mem[] data changes.
     bool    terrainDirty = true;   // re-render terrain rows from $2000
-    uint8_t titleShadow[20] = {};  // shadow of last-rendered $32B7-$32CA
+    int     titleRendered = 0;     // # of top-bar title cells painted last time (see g_titleToRender)
 
     // Long-granular shadow for the stars/planet/flight mode-D viewport.  Holds the last
     // decoded source as 430 longs (43 rows × 10 longs of 4 packed bytes); renderViewportModeD

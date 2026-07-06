@@ -56,13 +56,19 @@ extern "C" volatile unsigned char g_doorFieldReady;
 // Screen-RAM dirty flags: render() scans the title ($32B7) + cockpit ($332D mode4 / $350D
 // modeD) regions only when these are set, instead of re-scanning all ~580 cells every
 // frame.  During the static doors/standby phases nothing changes, so the scan was pure
-// overhead (~7 ms/frame, the dominant door-cinematic cost).  g_titleDirty is set by the
-// genuine $782A title writer (copy_title_text_block_to_screen) via the platform_title_
-// changed() hook; g_cockpitDirty by update_cockpit_digits / lock_on_indicator_tick at their
-// store sites.  Both are force-set at phase transitions in deriveRenderSignals() so the
-// initial build (by the transpiled display_setup, not those writers) + flight updates are
+// overhead (~7 ms/frame, the dominant door-cinematic cost).  The title region is driven by
+// g_titleToRender (below); g_cockpitDirty by update_cockpit_digits / lock_on_indicator_tick
+// at their store sites.  These are force-set at phase transitions in deriveRenderSignals() so
+// the initial build (by the transpiled display_setup, not those writers) + flight updates are
 // never missed.
-extern "C" volatile unsigned char g_titleDirty   = 1;
+
+// Top-bar title text: no shadow / per-cell compare.  Two counts drive the re-decode:
+//   g_titleToRender = how many of the 20 title cells to (re)paint from screen RAM this frame;
+//                     -1 means "nothing to do" (idle).  Set by the genuine $782A title writer
+//                     (copy_title_text_block_to_screen) via the platform_title_changed() hook.
+//   titleRendered   = how many cells were painted last time (member), so shrinking the count
+//                     blanks the now-unwanted trailing (titleRendered - g_titleToRender) cells.
+extern "C" volatile int g_titleToRender = 20;   // >=0 → paint that many; -1 → idle
 
 // ---- cockpit per-instrument dirty flags -------------------------------------
 // The cockpit ($332D mode4 / $350D modeD) is decoded WRITER-DRIVEN by instrument: the only
@@ -1719,10 +1725,10 @@ void RescueOnFractalus::deriveRenderSignals()
     // ONCE on entry to the stars/planet viewport or to flight.  The cockpit is otherwise
     // WRITER-DRIVEN (the g_ck* span registry) — in flight the instrument writers register the
     // exact cells they change, so re-scanning ~580 cells EVERY frame is gone (it was the #1
-    // flight cost).  Title still uses g_titleDirty via the $782A copy hook.
-    // Title uses a cheap 20-cell shadow scan, so forcing it every transitional frame is fine.
+    // flight cost).  Title still uses g_titleToRender via the $782A copy hook.
+    // Title just repaints its 20 cells, so forcing it every transitional frame is fine.
     if (g_doorFieldReady == 0u || (rsStars && !prevRsStars) || (rsFlight && !prevRsFlight))
-        g_titleDirty = 1;
+        g_titleToRender = 20;
     // The cockpit full repaint (decodeCockpitFull = 560 cells) is EXPENSIVE (~300ms even after
     // the decode LUT) and must run only when the static dashboard is actually (re)built.  That
     // happens exactly ONCE: the transpiled display_setup builds it during the standby
@@ -2057,8 +2063,7 @@ void RescueOnFractalus::render()
     }
 
     // ---- title region -------------------------------------------------------
-    // Shadow-compare: re-render only chars whose byte changed since last frame.
-    // titleShadow[] mirrors $32B7-$32CA; updated here on change.
+    // Count-driven: repaint g_titleToRender cells straight from screen RAM (no shadow / compare).
     // Chars start at $32B7 (skip $32B5/$32B6 left-border), charset $3800 (NTSC).
     static const int      kTitleTextRow  = 21;
     // The flight top-bar mode-6 line (flight DL $3123) is at $32B5 but the screen
@@ -2070,22 +2075,18 @@ void RescueOnFractalus::render()
     // at scanY=28 (after title scanlines 20-27) → title uses $0400 for all 8 scans.
     static const uint16_t kCharsetBase  = 0x0400;
 
-    // Walk the screen RAM + shadow with pointers (no per-col indexing).  The unchanged-
-    // cell hot path is just `*src++ == *shadow++` — no 68000 muls.  68000 muls (~70cy) are
-    // kept out of the per-cell path entirely: the changed-cell decode uses a row pointer
-    // pre-offset once (kTitleTextRow*80 computed before the loop) and `*8`/`*2` are shifts.
-    // Skip the whole title scan unless the genuine $782A writer (copy_altitude_graphic_to_
-    // screen) rewrote $32B7-$32CA — it flags g_titleDirty through the platform_title_changed()
-    // hook on each copy — or a full repaint is forced.  Cleared after the scan.
-    if (g_titleDirty || cockpitForceFull) {
+    // The title region is idle unless the genuine $782A writer (copy_title_text_block_to_
+    // screen) rewrote $32B7-$32CA — it sets g_titleToRender through the platform_title_
+    // changed() hook on each copy — or a full repaint is forced.  A forced full repaint paints
+    // all 20 cells.  68000 muls (~70cy) are kept out of the per-cell path: the row pointer is
+    // pre-offset once (kTitleTextRow*80 before the loop) and `*8`/`*2` are shifts.
+    if (g_titleToRender >= 0 || cockpitForceFull) {
+    const int want = cockpitForceFull ? 20 : g_titleToRender;
     uint8_t* tbmp = (uint8_t*)titleBitmap->data;
     uint8_t* const titleBase = tbmp + kTitleTextRow * 80;     // first text scanline row (once)
     const uint8_t* tsrc    = (const uint8_t*)mem + kScreenRAM;  // non-volatile walk (RAM static this frame)
-    uint8_t*       tshadow = titleShadow;
-    for (int col = 0; col < 20; col++) {
-        uint8_t charByte = *tsrc++;
-        if (charByte == *tshadow++) continue;   // unchanged — skip (shadow already advanced)
-        tshadow[-1] = charByte;
+    for (int col = 0; col < want; col++) {
+        uint8_t charByte = tsrc[col];
 
         // Re-render this char: mode-6 is 1bpp, but the byte's top 2 bits select
         // the text colour register.  We support the two cases that occur here:
@@ -2107,7 +2108,16 @@ void RescueOnFractalus::render()
             row[41] = usePF1 ? lb : 0;
         }
     }
-    g_titleDirty = 0;
+    // Shrinking the count blanks the cells that were painted last time but are no longer wanted.
+    for (int col = want; col < titleRendered; col++) {
+        uint8_t* row = titleBase + col * 2;
+        for (int scanline = 0; scanline < 8; scanline++, row += 80) {
+            if (kTitleTextRow + scanline >= (int)kTitleHeight) break;
+            row[0] = row[1] = row[40] = row[41] = 0;
+        }
+    }
+    titleRendered = want;
+    g_titleToRender = -1;
     }
 
     // Compass (#2): re-decode the 4 heading cells when flagged (housing/heading rewritten)
