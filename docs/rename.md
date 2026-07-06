@@ -303,3 +303,18 @@ delay investigation — `push_a_wait_frames`/`wait_frames_4c` native twins):**
   Fix the description, keep the name.
 - `lock_on_indicator_return` ($428D) — accurate (a shared bare-RTS landing pad); could be
   dropped once no oracle references it, but harmless to keep.
+
+**Stars/planet scroll cluster (rof_native.c, de-transpiled 2026-07-06):**
+- `$0C32/$0D32/$0E32/$0F32` — UNNAMED memory (no `symbols.csv` var rows). The four parallel
+  column buffers (`TERRAIN_COL_BUF` layers 0-3, 0x100 apart, 89 bytes used): scrolling
+  terrain-height columns in flight, reused as the sparse star-field players (P0/P2/P3 +one)
+  during the stars/planet cinematic. Suggest naming the base(s), e.g. `terrain_col_buf`
+  (single base + layer stride) or `terrain_col_buf0..3` / `star_player_buf*`.
+- `terrain_state` / `$0089` — the NAME is generic; in `scroll_field_columns` it is the
+  scroll-phase gate (0=idle, <4=scroll every frame, >=4=distance-accumulator-paced, reset to
+  2 at distance 100). Consider `scroll_phase` or at least a `symbols.csv` description noting the
+  stars/planet scroll-pacing role.
+- `scroll_field_columns` ($6AEE) — name is accurate for the data (shifts the column buffers
+  left + appends one), but the `symbols.csv` description ("shifts ... left 1 col") hides that
+  the same shift renders as a VERTICAL star scroll on screen when the buffers are the star
+  players. Description-only enhancement; keep the name.

@@ -919,55 +919,61 @@ void fill_terrain_columns_core(void) { fill_terrain_columns_core_c(); }
 /* fill_terrain_columns @ $6AE5 — public entry (called by display_setup; validated twin). */
 void fill_terrain_columns(void) { fill_terrain_columns_core(); }
 
-/* add_multibyte_a1 with entry A=$FF @ $6AB5 — the exact carry chain the transpile runs
- * for scroll_field_columns: A1 += $FF (carry chains), then the quirky $A2/$A3 fold the
- * transliteration performs (A is NOT reloaded before ADC $A3, so it adds A2new+A3+carry),
- * finally $A4 + carry is returned as the top byte ($A4 itself is NOT stored here). */
+/* Advance the multi-byte scroll/distance accumulator ($00A1..$00A4) by $FF and return the
+ * prospective new top byte (accumulator byte 3 + carry-out).  Byte 3 itself is NOT written
+ * here — the caller decides whether to commit it.
+ *
+ * This faithfully reproduces a quirk of the Atari carry chain: after byte 1 is updated the
+ * code does not reload a clean 0 before folding byte 2, so byte 2 becomes (byte1_new + byte2 +
+ * carry) instead of (byte2 + carry).  Preserved exactly for byte-identical behaviour. */
 static uint8_t scroll_accum_add_ff(void) {
-    uint16_t t = (uint16_t)0xFF + scroll_accum_b0;   /* CLC; ADC $A1 */
+    uint16_t t = (uint16_t)0xFF + scroll_accum_b0;                /* byte 0 += $FF          */
     scroll_accum_b0 = (uint8_t)t;
-    uint8_t c = (uint8_t)(t >> 8);
-    t = (uint16_t)scroll_accum_b1 + c;               /* LDA #0; ADC $A2 */
+    uint8_t carry = (uint8_t)(t >> 8);
+    t = (uint16_t)scroll_accum_b1 + carry;                       /* byte 1 += carry         */
     scroll_accum_b1 = (uint8_t)t;
-    c = (uint8_t)(t >> 8);
-    t = (uint16_t)scroll_accum_b1 + scroll_accum_b2 + c; /* ADC $A3 (A still = A2new) */
+    carry = (uint8_t)(t >> 8);
+    t = (uint16_t)scroll_accum_b1 + scroll_accum_b2 + carry;     /* byte 2 += byte1_new+carry (quirk) */
     scroll_accum_b2 = (uint8_t)t;
-    c = (uint8_t)(t >> 8);
-    t = (uint16_t)scroll_accum_b3 + c;               /* LDA #0; ADC $A4 -> return */
-    return (uint8_t)t;
+    carry = (uint8_t)(t >> 8);
+    return (uint8_t)(scroll_accum_b3 + carry);                   /* prospective new top byte */
 }
 
-/* scroll_field_columns @ $6AEE — the $0089-gated stars/planet column scroll, run every
- * VBI during the launch cinematic.  Entry cpu.A = $0089 (the gate value).  When the gate
- * is >= 4 (BMI on A-4 clear) it advances the 24-bit step accumulator via the $FF add; on
- * reaching $64 it resets the gate to 2, otherwise it commits the new step into $A4/$A5 and
- * skips the scroll on a frame whose step is unchanged.  Then it shifts all four parallel
- * height buffers $0C32/$0D32/$0E32/$0F32 left one column (89 wide), halves the $008F
- * every-other-frame toggle, and appends a fresh column (Y=$59) via gen_terrain_column. */
+/* scroll_field_columns @ $6AEE — scroll the four parallel column buffers one column to the
+ * left and generate a fresh rightmost column.  These four buffers ($0C32/$0D32/$0E32/$0F32,
+ * TERRAIN_COL_BUF layers 0-3) are the scrolling terrain-height columns in flight and are
+ * reused as the sparse star-field "players" during the stars/planet cinematic (same storage).
+ * Called every VBI while a scroll is active; `gate` is the scroll-phase state ($0089).
+ *
+ *   gate < 4  : emit a column every frame (the fast, unpaced star scroll).
+ *   gate >= 4 : pace the scroll with a distance accumulator that advances by $FF each frame —
+ *               emit a column only on the frame its top byte ticks over.  When that top byte
+ *               reaches $64 (100) the phase restarts (gate := 2); frames whose top byte is
+ *               unchanged emit nothing (early return). */
 void scroll_field_columns_core(uint8_t gate) {
-    /* CMP #$04; BMI L_6b0d -> only run the accumulator when (gate-4) has bit7 clear */
-    if (!((uint8_t)(gate - 0x04) & 0x80)) {
-        uint8_t top = scroll_accum_add_ff();          /* LDA #$FF; JSR add_multibyte_a1 */
-        if (top == 0x64) {                            /* CMP #$64; BEQ */
-            terrain_state = 0x02;                       /* reset gate; BNE falls to the shift */
+    if ((int8_t)(gate - 4) >= 0) {                     /* paced phase: advance the accumulator */
+        uint8_t top = scroll_accum_add_ff();
+        if (top == 0x64) {
+            terrain_state = 0x02;                      /* distance 100 reached — restart the phase */
         } else {
-            scroll_accum_b3 = top;                        /* STA $A4 */
-            if ((uint8_t)(scroll_accum_b3 - scroll_accum_prev) == 0) return;  /* SEC;SBC $A5; BEQ -> no scroll */
-            scroll_accum_prev = scroll_accum_b3;                /* A5 = A4 */
+            scroll_accum_b3 = top;
+            if (scroll_accum_b3 == scroll_accum_prev)  /* top byte unchanged — no column this frame */
+                return;
+            scroll_accum_prev = scroll_accum_b3;
         }
     }
-    /* L_6b0d: shift each 89-byte buffer left one column (dst[y] = src[y+1]) */
+    /* Emit one column: shift all four buffers left (col y <- col y+1), dropping col 0. */
     for (uint8_t y = 0; y < 0x59; y++) {
-        mem[0x0C32 + y] = mem[0x0C33 + y];
-        mem[0x0D32 + y] = mem[0x0D33 + y];
-        mem[0x0E32 + y] = mem[0x0E33 + y];
-        mem[0x0F32 + y] = mem[0x0F33 + y];
+        TERRAIN_COL_BUF(0, y) = TERRAIN_COL_BUF(0, y + 1);
+        TERRAIN_COL_BUF(1, y) = TERRAIN_COL_BUF(1, y + 1);
+        TERRAIN_COL_BUF(2, y) = TERRAIN_COL_BUF(2, y + 1);
+        TERRAIN_COL_BUF(3, y) = TERRAIN_COL_BUF(3, y + 1);
     }
-    sfx_toggle_8F >>= 1;                                /* LSR $008F */
-    gen_terrain_column_core(0x59);                    /* append the new rightmost column */
+    sfx_toggle_8F >>= 1;                               /* advance the every-other-frame SFX toggle */
+    gen_terrain_column_core(0x59);                     /* fill the new rightmost column (index $59) */
 }
 
-/* 6502-ABI shim: entry gate value arrives in cpu.A (launch_anim_dispatch sets A = $0089). */
+/* 6502-ABI shim: the scroll-phase gate ($0089) arrives in cpu.A (set by launch_anim_dispatch). */
 void scroll_field_columns(void) {
     scroll_field_columns_core(cpu.A);
 }
