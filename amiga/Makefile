@@ -180,6 +180,20 @@ obj/FrameDrawAssembler.o : VASMFLAGS += -DROF_FRAMEDRAW_VERIFY
 endif
 endif
 
+# Hand-written m68k twin of the g_mulTable build (the one-shot 64KB mul_u8 lookup-table fill,
+# run once at startup via rof_mul_table_init so it's NEVER built lazily inside the flight VBI
+# ISR — that first-flight build froze the display ~3.6s at flight entry).  Uses mul_u8's
+# symmetry (triangle + mirror) so it's ~2x fewer bit-serial passes than the C.  ON by default;
+# `make MULTABLE_C=1` falls back to the clean-C oracle.  Verify (one-shot, memcmp vs the full
+# C oracle -> g_mulTableMismatch) via `make VERIFY=1` + amiga/multable_verify.gdb.
+ifndef MULTABLE_C
+FRAMEWORK_ASM_SRCS += $(AMIGA_SRC)/MulTableAssembler.s
+EXTRA_DEFINES += -DROF_MULTABLE_ASM
+ifdef VERIFY
+EXTRA_DEFINES += -DROF_MULTABLE_VERIFY
+endif
+endif
+
 # Objects (flattened into obj/ by basename).
 CXX_OBJS       := $(addprefix obj/,$(notdir $(CXX_SRCS:.cpp=.o)))
 CORE_C_OBJS    := $(addprefix obj/,$(notdir $(CORE_C_SRCS:.c=.o)))
@@ -226,6 +240,11 @@ endif
 # render before its real attract-mode entry is wired.  Requires PROBES.
 ifdef TITLE
 EXTRA_DEFINES += -DROF_FORCE_TITLE
+endif
+# `make PROBES=1 NOAUTO=1`: disable the auto-launch START injection so the player presses
+# START manually (measure the REAL manual-launch timing under debug.sh, not the auto path).
+ifdef NOAUTO
+EXTRA_DEFINES += -DROF_NO_AUTOLAUNCH
 endif
 CORE_CFLAGS   = -g -MP -MMD -m68000 -msoft-float $(OPT) -nostdlib \
                 -fno-tree-loop-distribution -ffunction-sections -fdata-sections \

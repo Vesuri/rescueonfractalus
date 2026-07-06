@@ -543,6 +543,15 @@ extern "C" unsigned long rof_subclock(void) {
 extern "C" volatile unsigned long g_probeDispSetup = 0, g_probeGameInit = 0,
     g_probeIntro = 0, g_probeRowAddr = 0, g_probeInitTotal = 0;
 extern "C" volatile unsigned short g_probeFlightVbi = 0;  // g_vbiCount at flight VBI install
+// Flight-entry -> terrain-fade-start window decomposition (VBI frames vs game-loop iters).
+extern "C" volatile unsigned short g_fadeLoopVbi = 0;   // vbi when flight loop (iterCount>=1) starts
+extern "C" volatile unsigned short g_fadeEntryVbi = 0, g_fadeStartVbi = 0;
+extern "C" volatile unsigned short g_fadeEntryIter = 0, g_fadeStartIter = 0;
+extern "C" volatile unsigned short g_fadeEntryFd = 0, g_fadeStartFd = 0;
+extern "C" volatile unsigned char g_fadeEntryDC = 0, g_fadeDone = 0;
+extern "C" volatile unsigned char g_fadeEntryState = 0, g_fadeStartState = 0;   // mem[0x41]
+extern "C" volatile unsigned char g_fadeEntry66C = 0, g_fadeStart66C = 0;       // mem[0x66C]
+extern "C" volatile unsigned char g_fadeEntryAlt = 0, g_fadeStartAlt = 0;       // mem[0x34]
 // renderFrame() no-yield-gap probe:
 extern "C" volatile unsigned short g_maxRenderGap = 0, g_maxGapAtVbi = 0, g_maxGapVvblki = 0;
 extern "C" volatile unsigned char g_maxGap060B = 0, g_maxGap004A = 0;
@@ -1045,10 +1054,14 @@ static uint32_t vbiHandler()
             // once per main-loop iteration, and with heavy per-frame render work few polls
             // land inside a 60-frame window, so the press was often missed.  Holding until
             // 060B latches makes the catch race-free regardless of emulation speed.
+#ifndef ROF_NO_AUTOLAUNCH
             if (d >= 60) {
                 if (mem[0x060Bu] != 0x23u) mem[0xD01Fu] = 0x06;   // START held until launched
                 else                       mem[0xD01Fu] = 0x07;   // launched → release
             }
+#else
+            (void)d;   // manual-launch measurement: the player presses START themselves
+#endif
 #endif
         }
     }

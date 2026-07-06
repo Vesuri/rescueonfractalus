@@ -3,6 +3,20 @@
 # Edit freely to print whatever globals / mem[0xNNNN] a given investigation needs.
 continue
 echo \n==== SIGINT ====\n
+echo --- FLIGHT-ENTRY -> FADE-START (moved to top; prints before any missing-symbol abort) ---\n
+printf "GATE: iterCount=%u vbiNOW=%u joySaved(4A)=%02x game_state(41)=%02x stageGeom(617)=%02x clrDone(3E)=%02x | alt(34)=%02x vel(2883/4)=%02x%02x\n", \
+  g_iterCount, g_vbiCount, mem[0x004A], mem[0x0041], mem[0x0617], mem[0x003E], mem[0x0034], mem[0x2884], mem[0x2883]
+printf "FADEPHASE: 08A1=%02x 08A2=%02x 08A3=%02x | DCnow=%02x DDnow=%02x | pitch(28/29)=%02x%02x thr(2D/2E)=%02x%02x\n", \
+  mem[0x08A1], mem[0x08A2], mem[0x08A3], mem[0x00DC], mem[0x00DD], mem[0x0028], mem[0x0029], mem[0x002D], mem[0x002E]
+printf "entry: vbi=%u iter=%u fd=%u | DC=%02x state(41)=%02x 066C=%02x alt(34)=%02x\n", \
+  g_fadeEntryVbi, g_fadeEntryIter, g_fadeEntryFd, g_fadeEntryDC, g_fadeEntryState, g_fadeEntry66C, g_fadeEntryAlt
+printf "loopStart: vbi=%u  (flight loop L_3eba begins; iterCount>=1)\n", g_fadeLoopVbi
+printf "start: vbi=%u iter=%u fd=%u | state(41)=%02x 066C=%02x alt(34)=%02x  done=%u\n", \
+  g_fadeStartVbi, g_fadeStartIter, g_fadeStartFd, g_fadeStartState, g_fadeStart66C, g_fadeStartAlt, g_fadeDone
+printf "SPLIT: entry->loop(INIT)=%u frames (~%ums) | loop->fade(DESCENT)=%u frames (~%ums) | TOTAL=%u frames (~%ums)\n", \
+  (g_fadeLoopVbi-g_fadeEntryVbi), (g_fadeLoopVbi-g_fadeEntryVbi)*20, \
+  (g_fadeStartVbi-g_fadeLoopVbi), (g_fadeStartVbi-g_fadeLoopVbi)*20, \
+  (g_fadeStartVbi-g_fadeEntryVbi), (g_fadeStartVbi-g_fadeEntryVbi)*20
 printf "cineGap=%u frames (~%ums) atVbi=%u 060B=%02x  [launch-VBI-only freeze]\n", \
   g_maxCineGap, g_maxCineGap*20, g_maxCineGapAtVbi, g_maxCineGap060B
 printf "  tunnel->stars gap=%u frames (~%ums) atVbi=%u  [window 820-1000]\n", \

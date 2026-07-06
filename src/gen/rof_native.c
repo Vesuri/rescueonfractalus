@@ -5555,8 +5555,9 @@ check:                                          /* 9829 */
  * untouched: mul_u8 consumes them, but those consumed values are dead in all callers (proven
  * byte-identical by make validate FN=compute_obj_rel_angle_scale/flight_control_integrate).
  * mul_u8 itself stays for the still-transpiled caller + as the validation oracle. */
-static uint8_t g_mulTable[256u * 256u];
-static int     g_mulTableReady = 0;
+/* Non-static: MulTableAssembler.s (ROF_MULTABLE_ASM) fills this directly. */
+uint8_t     g_mulTable[256u * 256u];
+static int  g_mulTableReady = 0;
 static uint8_t mul_u8_bitserial(uint8_t M, uint8_t N) {
     uint8_t A = 0, c = 0; goto ck;
 ad: c = M & 1; M >>= 1; { uint16_t t = (uint16_t)A + M + c; c = (uint8_t)(t >> 8); A = (uint8_t)t; }
@@ -5566,13 +5567,42 @@ ck: { uint8_t v = N; c = (uint8_t)(v >> 7); N = (uint8_t)(v << 1); }
     if (M != 0) goto ck;
     return A;
 }
+/* C reference fill: every entry via the exact bit-serial multiply (the validation oracle
+ * and the SDL/non-asm shipping build).  The asm twin uses mul_u8's symmetry to compute
+ * only the triangle, so filling ALL entries here keeps the oracle independent. */
+static void mul_table_fill_c(uint8_t* t) {
+    for (unsigned m = 0; m < 256; m++)
+        for (unsigned n = 0; n < 256; n++)
+            t[(m << 8) | n] = mul_u8_bitserial((uint8_t)m, (uint8_t)n);
+}
+#if defined(ROF_MULTABLE_ASM)
+extern void mul_table_build_asm(void);          /* fills g_mulTable via the symmetric triangle */
+#endif
+#if defined(ROF_MULTABLE_ASM) && defined(ROF_MULTABLE_VERIFY)
+static uint8_t g_mulTableRef[256u * 256u];
+volatile unsigned long g_mulTableMismatch = 0xFFFFFFFFu;  /* read via gdb; 0 = byte-identical */
+#endif
+/* Public one-shot builder: call ONCE at startup (before flight) so the ~64KB table is
+ * never built lazily inside the flight VBI ISR — that first-flight build (65536 bit-serial
+ * products) took ~3.6s on the 7MHz 68000 and froze the ISR + whole display at flight entry.
+ * Idempotent; safe to call anytime. */
+void rof_mul_table_init(void) {
+    if (g_mulTableReady) return;
+#if defined(ROF_MULTABLE_ASM) && defined(ROF_MULTABLE_VERIFY)
+    mul_table_fill_c(g_mulTableRef);            /* oracle: full bit-serial */
+    mul_table_build_asm();                       /* twin: symmetric triangle -> g_mulTable */
+    { unsigned long bad = 0;
+      for (unsigned i = 0; i < 256u * 256u; i++) if (g_mulTable[i] != g_mulTableRef[i]) bad++;
+      g_mulTableMismatch = bad; }
+#elif defined(ROF_MULTABLE_ASM)
+    mul_table_build_asm();
+#else
+    mul_table_fill_c(g_mulTable);
+#endif
+    g_mulTableReady = 1;
+}
 static uint8_t mul_u8_lookup(uint8_t M, uint8_t N) {
-    if (!g_mulTableReady) {
-        for (unsigned m = 0; m < 256; m++)
-            for (unsigned n = 0; n < 256; n++)
-                g_mulTable[(m << 8) | n] = mul_u8_bitserial((uint8_t)m, (uint8_t)n);
-        g_mulTableReady = 1;
-    }
+    if (!g_mulTableReady) rof_mul_table_init();   /* safety fallback if init was skipped */
     return g_mulTable[((unsigned)M << 8) | N];
 }
 

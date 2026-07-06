@@ -1257,11 +1257,37 @@ void RescueOnFractalus::renderFrame()
             updateFlightCopper(true);
             AmigaHardware::setCopperList(*flightCopper, false);
             flightCopperInstalled = true;
+#ifdef ROF_FLIGHT_PROBE
+            extern volatile unsigned short g_fadeEntryVbi, g_fadeEntryIter, g_fadeEntryFd, g_iterCount;
+            extern volatile unsigned long g_fdCalls;
+            extern volatile unsigned char g_fadeEntryDC, g_fadeEntryState, g_fadeEntry66C, g_fadeEntryAlt, g_fadeDone;
+            g_fadeEntryVbi = (unsigned short)(rof_subclock() / 313u);
+            g_fadeEntryIter = g_iterCount;
+            g_fadeEntryFd = (unsigned short)g_fdCalls;
+            g_fadeEntryDC = mem[0x00DC]; g_fadeEntryState = mem[0x0041];
+            g_fadeEntry66C = mem[0x066C]; g_fadeEntryAlt = mem[0x0034];
+            g_fadeDone = 0;
+#endif
         } else {
             updateFlightCopper(false);
         }
 #ifdef ROF_FLIGHT_PROBE
         g_rCopper += (rof_subclock() - _c0) - (g_isrBeamLines - _ci);
+        {
+            extern volatile unsigned short g_fadeStartVbi, g_fadeStartIter, g_fadeStartFd, g_iterCount;
+            extern volatile unsigned long g_fdCalls;
+            extern volatile unsigned char g_fadeEntryDC, g_fadeDone, g_fadeStartState, g_fadeStart66C, g_fadeStartAlt;
+            extern volatile unsigned short g_fadeLoopVbi;
+            if (!g_fadeDone && g_fadeLoopVbi == 0 && g_iterCount != 0)
+                g_fadeLoopVbi = (unsigned short)(rof_subclock() / 313u);
+            if (!g_fadeDone && mem[0x00DC] != g_fadeEntryDC) {
+                g_fadeStartVbi = (unsigned short)(rof_subclock() / 313u);
+                g_fadeStartIter = g_iterCount;
+                g_fadeStartFd = (unsigned short)g_fdCalls;
+                g_fadeStartState = mem[0x0041]; g_fadeStart66C = mem[0x066C]; g_fadeStartAlt = mem[0x0034];
+                g_fadeDone = 1;
+            }
+        }
 #endif
         standbyCopperInstalled = false;
         planetCopperInstalled = false;

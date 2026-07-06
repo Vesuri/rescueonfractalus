@@ -37,7 +37,7 @@ target remote 127.0.0.1:2345
 EOF
 
 env HOME="$GDBHOME" XDG_CACHE_HOME="$GDBHOME" \
-  "$GDB" -q -l 10 -x "$RUN/connect.gdb" -x diag_timing.gdb out/RoF.elf \
+  "$GDB" -q -l 10 -x "$RUN/connect.gdb" -x "${GDBSCRIPT:-diag_timing.gdb}" out/RoF.elf \
   > "$RUN/gdb-out.log" 2>&1 &
 GDB_PID=$!
 echo "gdb pid=$GDB_PID; running for ${DELAY}s..."
