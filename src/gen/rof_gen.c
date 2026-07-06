@@ -1368,7 +1368,8 @@ L_3cae:;
 }
 
 /* push_a_wait_frames @ $3CB1: PHA then falls into wait_frames_4c spin (waits caller-set $4C frames), then PLA;RTS. Preserves A across a frame-wait */
-void push_a_wait_frames(void) {
+/* faithful transliteration kept as the validation oracle; native push_a_wait_frames() lives in rof_native.c (see VALIDATE_FUNCS) */
+void push_a_wait_frames__t6502(void) {
     /* 3cb1 */
     PHA();
     wait_frames_4c(); return;
@@ -23237,7 +23238,8 @@ void os_xitvbv(void) {
 /* === Split functions for cross-function entry points === */
 /* Each function starts at the labelled address inside its container. */
 /* wait_frames_4c @ $3CB2: Sets RTCLOK_LOW=0, spins until RTCLOK_LOW($14)==caller-set timer_4C($4C); PLA+RTS. (The fixed $3C=60 count is loaded only by the separate entry $3CBE, not here.) */
-void wait_frames_4c(void) {
+/* faithful transliteration kept as the validation oracle; native wait_frames_4c() lives in rof_native.c (see VALIDATE_FUNCS) */
+void wait_frames_4c__t6502(void) {
     /* 3cb4 */
     RTCLOK_LOW = 0x00;
     /* 3cb6 */

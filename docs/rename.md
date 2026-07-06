@@ -272,3 +272,19 @@ standby→doors freeze work — `draw_frame_pattern_seq` subtree):**
   screen byte. Suggest `plot_masked_pixel`.
 - `draw_shape_rows_loop` ($6620) — draws three **vertical guide columns** ($9C, $9D, $9D+1) down
   all 86 rows, not "shape rows". Suggest `draw_frame_guide_columns`.
+
+**Frame-wait spin-pacers (rof_native.c, cleaned 2026-07-05 during the flight-entry
+delay investigation — `push_a_wait_frames`/`wait_frames_4c` native twins):**
+- `clear_colors` ($3CC3) — MISNAMED. The disasm is `PHA; LDA #$01` falling into
+  `wait_setcount` ($3CC6) = **wait 1 frame** (accumulator preserved), NOT a colour clear.
+  The symbols.csv comment "Clears player color shadows PCOLR0-3 + COLBK" is wrong. Suggest
+  `wait_frames_1`.
+- `push_a_wait_frames` ($3CB1) — named after the 6502 mechanism (PHA). It waits `timer_4C`
+  ($4C) vertical-blank periods, preserving the accumulator. Suggest `wait_frames` (or
+  `wait_frames_preserve_a`).
+- `wait_frames_4c` ($3CB2) — the `4c` is the `$004C` address it reads. Suggest
+  `wait_timer_4c_frames` / `wait_frame_count` (waits the caller-set `timer_4C` count).
+- `timer_4C` / `$004C` — named after its address; it is the **frame-wait target count** set by
+  every caller entry before routing through `wait_frames_4c`. Suggest `frame_wait_count`.
+- `wait_setcount` ($3CC6) — OK-ish (stores the count then falls into the wait spin), but could
+  be `wait_frames_set_count` for symmetry.

@@ -341,6 +341,12 @@ VALIDATE_FUNCS = {
     #     the live ANTIC VCOUNT / real Amiga beam, which the headless harness can't reproduce);
     #     its __t6502 oracle is kept for reference only. ---
     0x3C7B,  # wait_vcount_ge_7a — spin until VCOUNT ($D40B) >= $7A (beam-sync a DL/colour swap)
+    # --- frame-wait spin-pacers, hand-written in rof_native.c (2026-07-05).  NOT in
+    #     `make validate` (they busy-wait on RTCLOK, advanced async by the $4FF5 ISR, which
+    #     the headless harness can't reproduce); __t6502 oracles kept for reference only.
+    #     The clean twins fold the 0x3CB8 SPINWAIT-hook overshoot mitigation into plain C. ---
+    0x3CB1,  # push_a_wait_frames — PHA, wait timer_4C ($4C) frames, PLA (accumulator preserved)
+    0x3CB2,  # wait_frames_4c — wait the caller-set timer_4C ($4C) count of vertical-blank periods
 }
 VALIDATE_SUFFIX = '__t6502'
 

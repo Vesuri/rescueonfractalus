@@ -7165,6 +7165,47 @@ void vbi_handler_flight(void) {
     os_xitvbv();
 }
 
+/* wait_frames_core — busy-wait `frames` vertical-blank periods, driving one real
+ * Amiga frame (VBI tick + render) per iteration so the display animates and the
+ * async $4FF5 flight ISR keeps advancing RTCLOK while we wait.
+ *
+ * Faithful to the Atari's wait_frames_4c ($3CB2): zero the RTCLOK low byte, then
+ * count up to `frames`.  The 6502 loops on an EXACT-equality test (CMP $14 / BNE),
+ * safe on hardware because the CPU polls $14 thousands of times per frame so it
+ * never skips the target value.  On the Amiga RTCLOK is bumped asynchronously by
+ * the flight ISR and a single driven frame can span several real VBIs, so $14 can
+ * step OVER the target — an exact-equality test would then stall a full 256-tick
+ * lap waiting for the value to come round again.  We instead exit as soon as the
+ * target is reached OR passed: `remaining` (target − RTCLOK, mod 256) is 1..127
+ * while the target is still ahead, 0 exactly on the tick, and >=128 once passed. */
+static void wait_frames_core(uint8_t frames) {
+    RTCLOK_LOW = 0;
+    for (;;) {
+        uint8_t remaining = (uint8_t)(frames - RTCLOK_LOW);
+        if (remaining == 0 || remaining >= 0x80)
+            break;                       /* target reached (0) or just passed (>=128) */
+        platform_tick_vbi();
+        platform_render_frame();
+    }
+}
+
+/* wait_frames_4c @ $3CB2 — wait the caller-set frame count in timer_4C ($4C) of
+ * vertical-blank periods.  Every caller entry ($3CB1 push_a_wait_frames, $3CBE,
+ * $3CC3, $3CCA..$3CD9) PHA's the accumulator before routing here; the closing PLA
+ * restores it, so the accumulator survives the wait.  (No hardware writes: it only
+ * touches the RTCLOK/timer zero-page cells, so nothing to shed on the Amiga.) */
+void wait_frames_4c(void) {
+    wait_frames_core(timer_4C);
+    PLA();                               /* restore the accumulator each caller PHA'd */
+}
+
+/* push_a_wait_frames @ $3CB1 — preserve the accumulator across a timer_4C-frame
+ * wait: PHA, then fall into wait_frames_4c (which PLA's it back on exit). */
+void push_a_wait_frames(void) {
+    PHA();
+    wait_frames_4c();
+}
+
 /* init_gameplay_state @ $73C8 — per-game/level gameplay init (run ONCE from
  * game_main_loop).  Seeds the heading/object/timer arrays + lives, draws the
  * compass, unpacks the cockpit bitmap, seeds the cockpit bar cells, plots the
