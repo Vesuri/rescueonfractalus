@@ -1484,17 +1484,23 @@ void RescueOnFractalus::updateFlightCopper(bool force)
     // Compass needle / heading letters (value-3 = COLPF2) are salmon ($2A); set once.
     if (force) flightCopper->setCompassNeedleColor(atariToOCS(0x2A));
 
-    // Terrain salmon→brown fade (#2): the flight VBI computes the atmosphere colours
-    // each frame from altitude — pen0 = terrain body ($00DC), pen1 = sky ($00DD).  Poke
-    // them into the copper as they ramp (the "native computes, callback updates the
-    // copper" model).  pen2 (dots) / pen3 (highlight) stay the baked constants.  At flight
-    // entry pen0 starts near the sky tone and ramps to brown as the ship descends, so the
-    // view no longer snaps from the planet's salmon straight to brown.
+    // Terrain salmon→brown fade (#2): the flight VBI atmosphere ramp ($51C8) computes ALL
+    // FOUR terrain pens each frame from altitude ($0034 → tables $07F9/$0823/$084D/$0877),
+    // matching the Atari viewport DLI $4A1F which loads them into the mode-D pens:
+    //   pen0 = body      (value0 = COLBK)  ← $00DC
+    //   pen1 = sky       (value1 = COLPF0) ← $00DD
+    //   pen2 = dots      (value2 = COLPF1) ← $00DA
+    //   pen3 = highlight (value3 = COLPF2) ← $00DB
+    // Poke them all as they ramp (the "native computes, callback updates the copper" model).
+    // The plane-2 dots ($00DA) start salmon at flight entry and fade in WITH the terrain,
+    // just like the body/sky — so pen2 must track $00DA, not a baked constant.
     const uint16_t terr0 = atariToOCS(mem[0x00DC]);
     const uint16_t terr1 = atariToOCS(mem[0x00DD]);
-    if (force || terr0 != flTerr0 || terr1 != flTerr1) {
-        flightCopper->setTerrainPalette(terr0, terr1, atariToOCS(0x20), atariToOCS(0x18));
-        flTerr0 = terr0; flTerr1 = terr1;
+    const uint16_t terr2 = atariToOCS(mem[0x00DA]);
+    const uint16_t terr3 = atariToOCS(mem[0x00DB]);
+    if (force || terr0 != flTerr0 || terr1 != flTerr1 || terr2 != flTerr2 || terr3 != flTerr3) {
+        flightCopper->setTerrainPalette(terr0, terr1, terr2, terr3);
+        flTerr0 = terr0; flTerr1 = terr1; flTerr2 = terr2; flTerr3 = terr3;
     }
 
     // Wing-clearance band (scanlines 172-179): the band DLI changes ONLY COLPF2 to the frame

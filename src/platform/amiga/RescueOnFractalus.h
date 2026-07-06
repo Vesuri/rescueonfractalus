@@ -131,6 +131,7 @@ private:
     // Last-poked values (fl* — separate from sb*/pl* so a phase switch force-refreshes).
     uint16_t flTitleBg = 0xFFFF, flTitlePf0 = 0xFFFF, flEnergyCol = 0xFFFF, flCompassCol = 0xFFFF;
     uint16_t flTerr0 = 0xFFFF, flTerr1 = 0xFFFF;   // terrain pen0/pen1 (atmosphere ramp $00DC/$00DD)
+    uint16_t flTerr2 = 0xFFFF, flTerr3 = 0xFFFF;   // terrain pen2/pen3 (atmosphere ramp $00DA/$00DB)
     uint16_t flBand3 = 0xFFFF;   // wing-band color03 = COLPF2 frame grey ($00D4); other pens inherit terrain
 
     // Launch-cinematic fixed copper lists:
