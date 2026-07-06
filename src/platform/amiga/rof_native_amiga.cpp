@@ -520,78 +520,13 @@ extern "C" void startup_init_native(void)
     }
 }
 
-// lock_on_indicator_tick_native: direct translation of lock_on_indicator_tick @ $4229.
-// (Previously mislabelled sfx_voice_envelope_tick — that is a different routine at
-// $548D; the canonical name for $4229 in disasm/symbols.csv is lock_on_indicator_tick.)
-// Called from vbi_handler_standby ($52D7) every other frame (LSR $0643 gate).
-// Drives the cockpit score/counter animation at $3491-$3497 (mode-4 chars).
-// State machine in mem[$007E]:
-//   0       — init: fill $3492-$3497 with $A9 (coloured glyph), advance to 1
-//   1-6     — each call (after timer $00E6 expires): blank $3491+state with $29,
-//             advance state; state 6→7 on final step
-//   7       — done: set mem[$0048]=1 / mem[$28EE]=1
-//   $80     — random blink: toggle colour of one $3492-$3497 char each tick
-//   $81+    — reverse fill: restore $A9 at $3491+state, decrement state
-// mem[$0618] = per-step timer reload (0 = advance every call).
-// ring_push_marked ring-buffer push is inlined (ring at $0719, ptr at $0073).
-extern "C" void lock_on_indicator_tick_native(void)
-{
-    auto pushRingBuf = [](uint8_t val) {
-        uint8_t ptr = mem[MEM_alt_ring_head];
-        if (ptr >= 0x20u) ptr = 0x1Fu;
-        mem[0x0719u + ptr] = val | 0x80u;
-        mem[MEM_alt_ring_head] = (ptr == 0u) ? 0x1Fu : (uint8_t)(ptr - 1u);
-    };
-
-    uint8_t s = mem[MEM_lock_on_indicator_state];
-
-    if ((int8_t)s < 0) {        // s >= $80
-        if (s >= 0x81u) {
-            // Reverse-fill path: restore $A9 glyphs one by one.
-            // LSR $0631 / BCS skip: rate-limit alternate calls.
-            if (mem[MEM_lock_on_indicator_phase] & 1u) { mem[MEM_lock_on_indicator_phase] >>= 1u; return; }
-            mem[MEM_lock_on_indicator_phase] = (uint8_t)((mem[MEM_lock_on_indicator_phase] >> 1u) + 1u);
-            uint8_t n = (uint8_t)(s & 0x0Fu);
-            uint8_t newS = (n == 7u) ? (uint8_t)(s - 2u) : (uint8_t)(s - 1u);
-            mem[MEM_lock_on_indicator_state] = newS;
-            mem[0x3491u + newS] = 0xA9u;
-            g_ckLockon = 1u;
-            pushRingBuf(0xA9u);
-        } else {    // s == $80: random blink (faithful port of $4235-$4247)
-            if (mem[MEM_anim_step_timer] > 0u) { mem[MEM_anim_step_timer]--; return; }
-            // $4235 LDA $D20A / AND #7 — MUST be the POKEY RANDOM LFSR, not RTCLOK.
-            // (RTCLOK is monotonic; once this runs in the ISR locked to the $0014++
-            // tick, RTCLOK&7 at blink time aliases to one value -> only one light
-            // blinks.  PlatformAmiga::pokeyRandom() is the real LFSR, as the Atari read.)
-            uint8_t r = PlatformAmiga::pokeyRandom() & 7u;
-            mem[MEM_anim_step_timer] = r;                       // $423A STA $E6 (full r)
-            uint8_t y = (r >= 6u) ? (uint8_t)(r >> 1u) : r;   // $423C CMP #6 / BCC / LSR A
-            mem[0x3492u + y] ^= 0x80u;                        // $4242-$4247 toggle colour bit
-            g_ckLockon = 1u;
-        }
-        return;
-    }
-
-    if (s != 0u) {              // s = 1-7
-        if (mem[MEM_anim_step_timer] > 0u) { mem[MEM_anim_step_timer]--; return; }
-        mem[MEM_anim_step_timer] = mem[MEM_lockon_step_reload];
-        if (s == 7u) {
-            if (mem[MEM_lock_on_indicator_active] == 0u) { mem[MEM_lock_on_indicator_active] = 1u; mem[0x28EEu] = 1u; }
-            return;
-        }
-        mem[MEM_lock_on_indicator_state]++;
-        uint8_t newS = mem[MEM_lock_on_indicator_state];
-        mem[0x3491u + newS] = 0x29u;
-        g_ckLockon = 1u;
-        pushRingBuf(0x29u);     // pushes $A9 = $29|$80
-    } else {                    // s == 0: initialise
-        mem[MEM_lock_on_indicator_active] = 0u;
-        mem[MEM_lock_on_indicator_state] = 1u;
-        mem[MEM_anim_step_timer] = mem[MEM_lockon_step_reload];
-        for (int i = 5; i >= 0; i--) mem[0x3492u + (uint16_t)i] = 0xA9u;
-        g_ckLockon = 1u;
-    }
-}
+// The lock-on indicator animation ($4229 and its cluster) is now a validated native twin
+// in rof_native.c (obj_state_dispatch_0043 / lock_on_indicator_tick / _step / _write_cell /
+// _phase_advance / game_sub_4258), byte-identical to the 6502 oracle and driving
+// platform_lockon_changed() at each glyph write.  The old hand-written twin here was an
+// unvalidated approximation (wrong ring-push id + wrong cell index on the step/reverse-fill
+// paths); standby now calls the shared native lock_on_indicator_tick() below.
+extern "C" void lock_on_indicator_tick(void);   // $4229 (rof_native.c)
 
 // update_indicator_blink_native: direct translation of update_blink_timer_006e
 // @ $4131, called via vbi_handler_flight ($4FF5) during Standby.
@@ -984,7 +919,7 @@ extern "C" void standby_vbi_native(void)
     uint8_t g = mem[MEM_lock_on_indicator_tick_parity];   // $5342: LSR $0643 / BCS skip / ... / INC
     mem[MEM_lock_on_indicator_tick_parity] = (uint8_t)(g >> 1);
     if (!(g & 1u)) {                         // carry clear -> run, then INC
-        lock_on_indicator_tick_native();           // $4229
+        lock_on_indicator_tick();                  // $4229 (native twin, rof_native.c)
         mem[MEM_lock_on_indicator_tick_parity]++;
     }
 }

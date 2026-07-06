@@ -2113,6 +2113,16 @@ int main(int argc, char **argv) {
     fails += test_mem_contract("enqueue_indicator_event", enqueue_indicator_event, enqueue_indicator_event__t6502);
     fails += test_mem_contract("object_integrate_position", object_integrate_position, object_integrate_position__t6502);
     fails += test_mem_contract("jitter_roll_pitch", jitter_roll_pitch, jitter_roll_pitch__t6502);
+    /* enemy lock-on indicator animation cluster ($3491-$3497).  Random mem[] sweeps $007E
+       across every state; the reg-taking members (step/write_cell/phase_advance) get random
+       A/Y too.  All share the same seeded $D20A stream, so the blink path is deterministic. */
+    fails += test_mem_contract("obj_state_dispatch_0043", obj_state_dispatch_0043, obj_state_dispatch_0043__t6502);
+    fails += test_mem_contract("lock_on_indicator_tick", lock_on_indicator_tick, lock_on_indicator_tick__t6502);
+    fails += test_mem_contract("game_sub_4258", game_sub_4258, game_sub_4258__t6502);
+    fails += test_mem_contract("lock_on_indicator_return", lock_on_indicator_return, lock_on_indicator_return__t6502);
+    fails += test_mem_contract_regs("lock_on_indicator_step", lock_on_indicator_step, lock_on_indicator_step__t6502);
+    fails += test_mem_contract_regs("lock_on_indicator_write_cell", lock_on_indicator_write_cell, lock_on_indicator_write_cell__t6502);
+    fails += test_mem_contract_regs("lock_on_indicator_phase_advance", lock_on_indicator_phase_advance, lock_on_indicator_phase_advance__t6502);
     fails += test_mul_u8();
     fails += test_bin_to_bcd();
     fails += test_mem_contract_regs("copy_title_text_block_to_screen",

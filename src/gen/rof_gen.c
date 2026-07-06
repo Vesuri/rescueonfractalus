@@ -2014,7 +2014,8 @@ L_4201:;
 }
 
 /* obj_state_dispatch_0043 @ $4225: X=$0043; if nonzero jump lock_on_indicator_return else lock_on_indicator_tick (state-driven object update branch) */
-void obj_state_dispatch_0043(void) {
+/* faithful transliteration kept as the validation oracle; native obj_state_dispatch_0043() lives in rof_native.c (see VALIDATE_FUNCS) */
+void obj_state_dispatch_0043__t6502(void) {
     /* 4225 */
     LDX(event_active_flag);
     /* 4227 */
@@ -2023,7 +2024,8 @@ void obj_state_dispatch_0043(void) {
 }
 
 /* lock_on_indicator_tick @ $4229: State machine on $007E: if >=$81 jumps to lock_on_indicator_phase_advance ($428e); else counts down $00E6 (reload $0618), toggles bit7 of table $3492 using RANDOM ($D20A&7); seeds $0048/$00E6 on entry */
-void lock_on_indicator_tick(void) {
+/* faithful transliteration kept as the validation oracle; native lock_on_indicator_tick() lives in rof_native.c (see VALIDATE_FUNCS) */
+void lock_on_indicator_tick__t6502(void) {
     /* 4229 */
     LDA(lock_on_indicator_state);
     /* 422b */
@@ -23963,7 +23965,8 @@ L_421c:;
 }
 
 /* game_sub_4258 @ $4258: Game subsystem (called in game_entry setup) */
-void game_sub_4258(void) {
+/* faithful transliteration kept as the validation oracle; native game_sub_4258() lives in rof_native.c (see VALIDATE_FUNCS) */
+void game_sub_4258__t6502(void) {
     /* 4258 */
     LDA(0xA9);
     /* 425a */
@@ -23981,7 +23984,8 @@ L_425c:;
 }
 
 /* lock_on_indicator_step @ $4265: Decrements $00E6, on underflow reloads from $0618; at count 7 sets $0048/$28EE=1; advances $007E and writes $29 into shape table $3491+Y via lock_on_indicator_write_cell */
-void lock_on_indicator_step(void) {
+/* faithful transliteration kept as the validation oracle; native lock_on_indicator_step() lives in rof_native.c (see VALIDATE_FUNCS) */
+void lock_on_indicator_step__t6502(void) {
     /* 4265 */
     DEC_M(MEM_anim_step_timer);
     /* 4267 */
@@ -24018,7 +24022,8 @@ L_4280:;
 }
 
 /* lock_on_indicator_write_cell @ $4285: Writes A into shape table $3491+Y, then LDX #$12 and tail-calls ring_push_marked (sprite/object update with X=$12) */
-void lock_on_indicator_write_cell(void) {
+/* faithful transliteration kept as the validation oracle; native lock_on_indicator_write_cell() lives in rof_native.c (see VALIDATE_FUNCS) */
+void lock_on_indicator_write_cell__t6502(void) {
 L_4285:;
     /* 4285 */
     mem[(0x3491)+cpu.Y] = cpu.A;
@@ -24030,7 +24035,8 @@ L_4285:;
 }
 
 /* lock_on_indicator_return @ $428D: Empty RTS landing pad shared by lock-on indicator animation paths; falls through to lock_on_indicator_phase_advance in ROM */
-void lock_on_indicator_return(void) {
+/* faithful transliteration kept as the validation oracle; native lock_on_indicator_return() lives in rof_native.c (see VALIDATE_FUNCS) */
+void lock_on_indicator_return__t6502(void) {
 L_428d:;
     /* 428d */
     return;
@@ -24038,7 +24044,8 @@ L_428d:;
 }
 
 /* lock_on_indicator_phase_advance @ $428E: LSR $0631 phase flag, returns if carry; else INC $0631, masks low nibble; at phase 7 adjusts $007E and writes opcode-like $A9/$29 bytes via lock_on_indicator_write_cell / draw_player3_object */
-void lock_on_indicator_phase_advance(void) {
+/* faithful transliteration kept as the validation oracle; native lock_on_indicator_phase_advance() lives in rof_native.c (see VALIDATE_FUNCS) */
+void lock_on_indicator_phase_advance__t6502(void) {
     /* 428e */
     LSR_M(MEM_lock_on_indicator_phase);
     /* 4291 */

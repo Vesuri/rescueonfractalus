@@ -6913,6 +6913,113 @@ static void set_colpf0_from_flag_core(uint8_t msg_index)     { cpu.Y = msg_index
 static void event_sequence_dispatcher_core(uint8_t keycode)  { cpu.A = cpu.X = keycode; event_sequence_dispatcher(); }
 static void ring_push_marked_core(uint8_t value)             { cpu.X = value;           ring_push_marked(); }
 
+/* ===========================================================================================
+ * Enemy lock-on indicator (#11) — the six targeting lights at the bottom centre of the
+ * cockpit (glyph cells $3491-$3497).  A small state machine on $007E
+ * (lock_on_indicator_state) sweeps the lights on, holds them randomly blinking, then sweeps
+ * them back off:
+ *     state 0        one-shot init: light all six ($A9) and begin the fill sweep (-> state 1)
+ *     state 1..6     fill sweep: light one more cell ($29) per timer tick
+ *     state 7        fully lit: latch "locked on" ($0048 + $28EE) once
+ *     state $80      random blink: flip one cell's colour bit each timer tick
+ *     state $81..    reverse sweep: clear the cells one per phase tick, back toward off
+ * The standby VBI runs this through the planet descent; the flight VBI runs it via
+ * obj_state_dispatch_0043.  Every glyph write calls platform_lockon_changed() (a no-op on
+ * the host/SDL build) so the Amiga cockpit decoder re-renders the strip — the transpiled
+ * originals raised no such dirty signal, which froze the lights once flight began.
+ * ========================================================================================= */
+
+/* Write one glyph into the indicator strip and flag it for re-decode on the Amiga. */
+static inline void lockon_write(uint16_t addr, uint8_t glyph) {
+    mem[addr] = glyph;
+    platform_lockon_changed();
+}
+
+/* $428D lock_on_indicator_return — shared exit landing pad; the 6502 parked a bare RTS here. */
+void lock_on_indicator_return(void) { /* no-op */ }
+
+/* $4285 lock_on_indicator_write_cell — store `glyph` into cell $3491+idx, then enqueue a
+ * sprite/object refresh event (ring id $12). */
+static void lock_on_indicator_write_cell_core(uint8_t idx, uint8_t glyph) {
+    lockon_write((uint16_t)(0x3491u + idx), glyph);
+    ring_push_marked_core(0x12);
+}
+void lock_on_indicator_write_cell(void) {   /* 6502 ABI: A = glyph, Y = cell index */
+    lock_on_indicator_write_cell_core(cpu.Y, cpu.A);
+}
+
+/* $4258 game_sub_4258 — light all six indicator glyphs ($A9) at once: the fill sweep's
+ * opening frame, also used to (re)initialise the strip at game start.
+ * (Misnamed "game_sub_4258" — really lock_on_indicator_fill_cells; see docs/rename.md.) */
+void game_sub_4258(void) {
+    for (uint8_t i = 0; i <= 5; i++) lockon_write((uint16_t)(0x3492u + i), 0xA9);
+}
+
+/* $4265 lock_on_indicator_step — fill-sweep tick: light one more cell.  `state` is the
+ * current $007E (1..7).  Idles until the step timer underflows. */
+static void lock_on_indicator_step_core(uint8_t state) {
+    uint8_t t = (uint8_t)(mem[MEM_anim_step_timer] - 1u);      /* count down (signed underflow) */
+    mem[MEM_anim_step_timer] = t;
+    if (!(t & 0x80u)) return;                                  /* still >= 0: not time yet */
+    mem[MEM_anim_step_timer] = mem[MEM_lockon_step_reload];    /* underflowed: reload delay */
+    if (state == 7) {                              /* all six lit: latch "locked on" once */
+        if (mem[MEM_lock_on_indicator_active] == 0) {
+            mem[MEM_lock_on_indicator_active]   = 1;
+            mem[MEM_lock_on_indicator_complete] = 1;
+        }
+        return;
+    }
+    mem[MEM_lock_on_indicator_state]++;                       /* advance the sweep (1..6) */
+    lock_on_indicator_write_cell_core(state, 0x29);          /* light cell $3491+state */
+}
+void lock_on_indicator_step(void) { lock_on_indicator_step_core(cpu.A); }
+
+/* $428E lock_on_indicator_phase_advance — reverse-sweep driver (state $81..): clear one cell
+ * per phase tick, walking $007E back down toward off.  `state` is the current $007E; $0631
+ * (lock_on_indicator_phase) is halved each call and only every other call does real work. */
+static void lock_on_indicator_phase_advance_core(uint8_t state) {
+    uint8_t phase = mem[MEM_lock_on_indicator_phase];
+    mem[MEM_lock_on_indicator_phase] = (uint8_t)(phase >> 1);
+    if (phase & 1) return;                                    /* skip this tick */
+    mem[MEM_lock_on_indicator_phase]++;
+    uint8_t n = (uint8_t)(state & 0x0Fu);
+    uint8_t idx;
+    if (n == 7) { mem[MEM_lock_on_indicator_state] -= 2u; idx = 6; }  /* skip the parity gap */
+    else        { mem[MEM_lock_on_indicator_state] -= 1u; idx = n; }
+    lock_on_indicator_write_cell_core(idx, 0xA9);            /* restore glyph $A9 */
+}
+void lock_on_indicator_phase_advance(void) { lock_on_indicator_phase_advance_core(cpu.A); }
+
+/* $4229 lock_on_indicator_tick — the indicator state machine (dispatch on $007E). */
+void lock_on_indicator_tick(void) {
+    uint8_t state = mem[MEM_lock_on_indicator_state];
+    if (state >= 0x80u) {
+        if (state >= 0x81u) { lock_on_indicator_phase_advance_core(state); return; }
+        /* state == $80: random blink — toggle one cell's colour bit each timer tick. */
+        uint8_t t = (uint8_t)(mem[MEM_anim_step_timer] - 1u);   /* count down (signed underflow) */
+        mem[MEM_anim_step_timer] = t;
+        if (!(t & 0x80u)) return;                               /* still >= 0: not time yet */
+        uint8_t r = (uint8_t)(bus_read(0xD20A) & 7u);        /* POKEY RANDOM (LFSR on Amiga) */
+        mem[MEM_anim_step_timer] = r;                        /* random inter-blink delay */
+        uint8_t idx = (r >= 6u) ? (uint8_t)(r >> 1) : r;
+        lockon_write((uint16_t)(0x3492u + idx), (uint8_t)(mem[0x3492u + idx] ^ 0x80u));
+        return;
+    }
+    if (state != 0) { lock_on_indicator_step_core(state); return; }   /* fill sweep 1..7 */
+    /* state == 0: one-shot init — clear the "locked" latch and start the fill sweep. */
+    mem[MEM_lock_on_indicator_active] = 0;
+    mem[MEM_lock_on_indicator_state]++;                      /* -> state 1 */
+    mem[MEM_anim_step_timer] = mem[MEM_lockon_step_reload];
+    game_sub_4258();                                         /* light all six glyphs */
+}
+
+/* $4225 obj_state_dispatch_0043 — the flight/standby entry point.  While an event owns the
+ * indicator ($0043 != 0) it stays put; otherwise it runs one tick of the animation. */
+void obj_state_dispatch_0043(void) {
+    if (mem[MEM_event_active_flag] != 0) return;
+    lock_on_indicator_tick();
+}
+
 /* VBI-section sub-profiling (PROBE-only): partition the $4FF5 handler into the chunks NOT
  * already covered by the integ/proj/sfx wrappers, so the headless probe can report exactly
  * which part of the handler costs what.  Same rof_subclock() unit as g_pInteg/g_pProj/g_pSfx
@@ -7066,7 +7173,7 @@ void vbi_handler_flight(void) {
     } else {
         /* ===== "sim" frame: target/lock-on logic, then the motion sim + terrain + HUD ===== */
         VP_T0();
-        obj_state_dispatch_0043();
+        obj_state_dispatch_0043();   /* native: flags platform_lockon_changed() at each cell write */
         lock_on_indicator_tick_parity = 0x02;        /* reload the parity counter */
 
         /* Decide where this frame joins the common chain:

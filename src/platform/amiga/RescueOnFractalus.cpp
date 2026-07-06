@@ -36,7 +36,6 @@
 extern "C" void vbi_attract_timer_native(void);                  // $52D7: timer cascade
 extern "C" void update_indicator_blink_native(void);           // $4131: cockpit blink
 extern "C" void startup_init_native(void);                      // $3FFA: cockpit digit update
-extern "C" void lock_on_indicator_tick_native(void);               // $4229: cockpit counter animation
 extern "C" void launch_anim_dispatch_native(void);              // $5367: ring ($0088) vs door scroll ($008A)
 extern "C" volatile uint8_t g_tunnelFieldDirty;                // set when draw_ring_frame_step draws into $2000
 extern "C" volatile uint8_t g_tunRowLo, g_tunRowHi;            // row extent of the expanding black clear

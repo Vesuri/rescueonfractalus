@@ -60,6 +60,14 @@ void platform_title_changed(void);
    The Amiga backend re-decodes just those 4 cells; no-op on the host/SDL build. */
 void platform_compass_changed(void);
 
+/* Notification that the enemy lock-on indicator cells $3491-$3497 (mode-4, #11) were
+   rewritten by the lock-on animation (lock_on_indicator_tick / _step / _phase_advance).
+   The in-flight VBI drives this every other frame through obj_state_dispatch_0043 ($4225);
+   the transpiled writers don't raise a dirty flag on their own, so the flight path calls
+   this to flag the 7 cells for re-decode (during the planet descent the indicator keeps
+   randomly blinking — faithful to the Atari).  No-op on the host/SDL build. */
+void platform_lockon_changed(void);
+
 /* Notification that an instrument writer changed a span of nCells cockpit cells starting at
    Atari screen-RAM address `addr` ($332D mode4 / $350D modeD).  The Amiga backend records the
    span so render() decodes only those cells (writer-driven cockpit decode, no full scan).

@@ -347,6 +347,18 @@ VALIDATE_FUNCS = {
     #     The clean twins fold the 0x3CB8 SPINWAIT-hook overshoot mitigation into plain C. ---
     0x3CB1,  # push_a_wait_frames — PHA, wait timer_4C ($4C) frames, PLA (accumulator preserved)
     0x3CB2,  # wait_frames_4c — wait the caller-set timer_4C ($4C) count of vertical-blank periods
+    # --- enemy lock-on indicator animation cluster (2026-07-06): the 6-light targeting
+    #     indicator (#11, cells $3491-$3497).  Driven by both the standby VBI (planet
+    #     descent) and the flight VBI (via obj_state_dispatch_0043); the native twins
+    #     raise platform_lockon_changed() at each cell write so the Amiga re-decodes them
+    #     (keeps the lights blinking through the descent — faithful to the Atari). ---
+    0x4225,  # obj_state_dispatch_0043 — gate on $0043: phase_advance vs lock_on_indicator_tick
+    0x4229,  # lock_on_indicator_tick — state machine on $007E (init / step / blink / reverse-fill)
+    0x4258,  # lock_on_indicator_fill_cells (game_sub_4258) — fill the 6 lit glyphs $3492-$3497
+    0x4265,  # lock_on_indicator_step — advance one light per timer tick ($007E 1..7)
+    0x4285,  # lock_on_indicator_write_cell — write a glyph to $3491+Y, then ring_push_marked X=$12
+    0x428D,  # lock_on_indicator_return — empty RTS landing pad (shared exit)
+    0x428E,  # lock_on_indicator_phase_advance — reverse-fill phase driver ($007E >= $81)
 }
 VALIDATE_SUFFIX = '__t6502'
 

@@ -809,6 +809,16 @@ void PlatformAmiga::compassChanged() {
     g_compassDirty = 1;
 }
 
+extern "C" volatile unsigned char g_ckLockon;
+void PlatformAmiga::lockonChanged() {
+    // The enemy lock-on indicator cells $3491-$3497 were rewritten by the native lock-on
+    // animation twins (lock_on_indicator_tick / _step / _write_cell / game_sub_4258 in
+    // rof_native.c, driven by both the standby and flight VBIs).  Flag them so the next
+    // renderFrame re-decodes those 7 cells — this keeps the indicator randomly blinking
+    // through the planet descent and into flight.
+    g_ckLockon = 1;
+}
+
 extern "C" volatile unsigned char g_titleDirty;
 void PlatformAmiga::titleChanged() {
     // copy_title_text_block_to_screen ($782A) just rewrote the banner text in $32B7-$32CA

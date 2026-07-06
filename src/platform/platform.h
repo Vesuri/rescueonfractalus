@@ -90,6 +90,11 @@ public:
        re-decodes just those 4 cells.  No-op on direct-mem[] platforms (SDL).     */
     virtual void compassChanged() {}
 
+    /* Notification that the enemy lock-on indicator cells ($3491-$3497, #11) were
+       rewritten by the lock-on animation.  A bitplane-mirroring platform flags those
+       7 cells for re-decode; no-op on direct-mem[] platforms (SDL / headless).       */
+    virtual void lockonChanged() {}
+
     /* Notification that an instrument writer changed a span of nCells cockpit cells
        starting at Atari screen-RAM address `addr`.  A bitplane-mirroring platform records
        the span for a targeted decode; no-op on direct-mem[] platforms (SDL / headless).  */

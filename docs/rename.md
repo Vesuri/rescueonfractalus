@@ -288,3 +288,18 @@ delay investigation — `push_a_wait_frames`/`wait_frames_4c` native twins):**
   every caller entry before routing through `wait_frames_4c`. Suggest `frame_wait_count`.
 - `wait_setcount` ($3CC6) — OK-ish (stores the count then falls into the wait spin), but could
   be `wait_frames_set_count` for symmetry.
+
+**Enemy lock-on indicator cluster (rof_native.c, de-transpiled 2026-07-06):**
+- `game_sub_4258` ($4258) — MISNAMED ("Game subsystem (called in game_entry setup)"). It
+  lights all six lock-on indicator glyphs at once (`mem[$3492-$3497] = $A9`), used as the
+  fill-sweep's opening frame and to (re)initialise the strip at game start. Suggest
+  `lock_on_indicator_fill_cells`.
+- `obj_state_dispatch_0043` ($4225) — OK-ish but generic; it is specifically the lock-on
+  indicator entry gate (skip while an event owns it via `$0043`, else run one tick). Suggest
+  `lock_on_indicator_dispatch`.
+- `$007E` `lock_on_indicator_state` — the NAME is right but the symbols.csv DESCRIPTION is
+  wrong ("Score or rescued-pilot counter (set $80 at game start)"). It is the lock-on
+  indicator state machine value (0 init / 1..7 fill sweep / $80 blink / $81.. reverse sweep).
+  Fix the description, keep the name.
+- `lock_on_indicator_return` ($428D) — accurate (a shared bare-RTS landing pad); could be
+  dropped once no oracle references it, but harmless to keep.
