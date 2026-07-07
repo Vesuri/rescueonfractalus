@@ -71,6 +71,9 @@ private:
     Sprite*  altimeterSprite = nullptr;  // P0 $0C98 terrain-height bar (flight altimeter)
     Sprite*  altimeterShipSprite = nullptr;  // M3 $0B98 ship-height bar (flight altimeter)
     bool     altimSolidBuilt = false;    // altimeter bars are solid 56-row sprites filled once (lazily)
+    Sprite*  shotSprite = nullptr;       // player laser (Atari P2 $0E32) on the idle sprite ch4
+    bool     shotWasActive = false;      // last frame's mem[$0036]!=0 (to clear the sprite once when it ends)
+    void buildShotSprite();              // $0E32 P2 shot buffer -> shotSprite (X/Y/colour from $00CB/$0037)
 
     // Stars/space starfield: the 3 Atari players P0/P2/P3 ($0C32/$0E32/$0F32),
     // scrolled + sparsely seeded by the genuine scroll_field_columns ($6AEE).  Each is a

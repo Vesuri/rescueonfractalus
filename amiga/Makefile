@@ -235,6 +235,11 @@ EXTRA_DEFINES += -DROF_HW_WRITE_POKEY_ONLY
 ifdef PROBES
 EXTRA_DEFINES += -DROF_FLIGHT_PROBE -DROF_TDRAW_PROF
 endif
+# `make PROBES=1 AUTOFIRE=1`: hold the trigger once in flight so the player laser fires
+# continuously — a capture path for the shot PMG (dump mem[$0E00 page] + shadows via gdb).
+ifdef AUTOFIRE
+EXTRA_DEFINES += -DROF_AUTO_FIRE
+endif
 # `make PROBES=1 TITLE=1`: force-enter the Title Screen (inject its screen RAM + palette and
 # pin rsTitle) instead of auto-launching to flight — a visual test path for the Title Screen
 # render before its real attract-mode entry is wired.  Requires PROBES.

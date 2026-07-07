@@ -443,6 +443,58 @@ void RescueOnFractalus::buildAHSprite()
     }
 }
 
+// ---- player laser shot sprite (instrument-free gameplay PMG) ------------------
+// The player's laser is Atari player P2, rendered by draw_player_shot ($8c58) into the P2
+// buffer's UPPER region (mem[$0E32+], separate from the AH ground fill at $0E92+).  The
+// transpiled $8c58 already fills mem[] on the Amiga every flight frame (only its $D0xx writes
+// are ignored), so we mirror it into a sprite exactly like buildAHSprite:
+//   active  = mem[$0036] != 0   (0 = no shot; 1..~$11 = travel; $81..$8a = impact burst)
+//   pixels  = mem[$0E00 + O]    (8 GRAFP2 bits per row; O in $34..$91)
+//   HPOS    = mem[$00CB]        (true HPOSP2 shadow → viewport X = 0x81 + (hpos-$32)*2)
+//   colour  = mem[$0037]        (COLPM2 → COLOR27; blue $78 travel → white/orange impact)
+//   size    = mem[$00CD]        (0=1×/1=2×/3=4×; milestone renders 1×, each bit → 2 Amiga px)
+// The sprite lives on the otherwise-idle ch4 (energy is ch5, altimeter ch6/7).  Fixed height;
+// its VSTART (setY) moves to the current run each frame, unused rows stay blank (transparent).
+static const int kShotRows = 32;          // covers the 1× bolt + 1× impact burst
+
+// Expand an 8-bit Atari player row (bit7 = leftmost) to 16 Amiga sprite px, each bit → 2 px
+// (the 1× player→viewport scale, 2 Amiga lores px per Atari colour clock).
+static inline uint16_t expandShotRow(uint8_t b)
+{
+    uint16_t v = 0;
+    for (int k = 0; k < 8; k++)
+        if (b & (uint8_t)(0x80u >> k)) v |= (uint16_t)(3u << (14 - 2 * k));
+    return v;
+}
+
+void RescueOnFractalus::buildShotSprite()
+{
+    uint16_t* d = shotSprite->data() + 2;              // skip the 2 control words
+    if (mem[0x0036] == 0) {                            // no shot active
+        if (shotWasActive) {                           // clear once when the shot ends (else nothing shows)
+            for (int i = 0; i < kShotRows * 2; i++) d[i] = 0;
+            shotWasActive = false;
+        }
+        return;
+    }
+    shotWasActive = true;
+    // Find the shot's non-zero run in the P2 UPPER region ($34..$91; $92+ is the AH ground fill).
+    int top = -1, bot = -1;
+    for (int o = 0x34; o <= 0x91; o++)
+        if (mem[0x0E00 + o]) { if (top < 0) top = o; bot = o; }
+    for (int i = 0; i < kShotRows * 2; i++) d[i] = 0;  // clear, then decode the run below
+    if (top < 0) return;                               // active but no pixels this frame (mid erase/redraw)
+    int rows = bot - top + 1;
+    if (rows > kShotRows) rows = kShotRows;
+    for (int i = 0; i < rows; i++) {
+        uint16_t m = expandShotRow(mem[0x0E00 + top + i]);
+        d[i * 2] = m; d[i * 2 + 1] = m;                // both planes → pen 11 → COLOR27
+    }
+    shotSprite->setY((uint16_t)(kTerrainLine + (top - 0x32)));            // buffer row → Amiga line
+    shotSprite->setX((uint16_t)(0x81 + ((int)mem[0x00CB] - 0x32) * 2));   // HPOSP2 → viewport X
+    if (flightCopper) flightCopper->setShotColor(atariToOCS(mem[0x0037])); // COLPM2 → COLOR27
+}
+
 // ---- throttle gauge sprite ---------------------------------------------------
 // Build the player-1 throttle bar from the vobj strip mem[$0D98..].  Each strip
 // byte is one Atari player scanline ($F0 = leftmost 4px on); we map a filled row
@@ -678,9 +730,12 @@ void RescueOnFractalus::initialize()
     // AH ground-fill: two 16px sprites (32px dial) reusing ch0/1 below the frame.
     ahLeft  = Sprite::allocate(kAHRows);
     ahRight = Sprite::allocate(kAHRows);
+    // Player laser shot (Atari P2 $0E32) on the idle sprite ch4.  Fixed-height sprite whose Y is
+    // moved to the shot's current buffer row each frame; only the active run is decoded (rest blank).
+    shotSprite = Sprite::allocate(kShotRows);
     if (!leftPost || !rightPost || !nullSprite || !energyIndicatorSprite || !altimeterSprite
         || !altimeterShipSprite || !flLeftPost || !flRightPost || !flLeftTri || !flRightTri
-        || !ahLeft || !ahRight) return;
+        || !ahLeft || !ahRight || !shotSprite) return;
     // Starfield sprites: each Atari player P0/P2/P3 is a 32-cc quad, drawn as a pair of strips —
     // starSprite[2c] (low, at kStarX[c]) + starSprite[2c+1] (high, +16 px) — both at the windscreen
     // top (player scanline $32 → Amiga Y = kTerrainLine).  Height = kViewportFullHeight so VSTOP
@@ -1628,6 +1683,7 @@ void RescueOnFractalus::updateFlightCopper(bool force)
         // HUD sprite channels (the frame sprites 0-3 are seeded in buildLayout):
         //   5 = energy bar (COLOR25), 6 = altimeter terrain (COLOR29 pen01),
         //   7 = altimeter ship (COLOR30 pen10).
+        flightCopper->setHudSprite(4, *shotSprite);   // player laser (P2) — ch4 is otherwise idle
         flightCopper->setHudSprite(5, *energyIndicatorSprite);
         flightCopper->setHudSprite(6, *altimeterSprite);
         flightCopper->setAltimeterColor(atariToOCS(mem[0x00D5]));
@@ -1953,7 +2009,7 @@ void RescueOnFractalus::perFrameWork()
     }
     // Flight altimeter bars: mirror the live P0 $0C98 (terrain-height) + M3 $0B98
     // (ship-height) strips each frame.
-    if (rsFlight) { buildAltimeterSprite(); buildAltimeterShipSprite(); buildAHSprite(); }
+    if (rsFlight) { buildAltimeterSprite(); buildAltimeterShipSprite(); buildAHSprite(); buildShotSprite(); }
 }
 
 // ---- cockpit helpers ---------------------------------------------------------

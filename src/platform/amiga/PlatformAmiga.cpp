@@ -894,7 +894,7 @@ static const uint8_t kRawUp        = 0x4C;
 static const uint8_t kRawDown      = 0x4D;
 static const uint8_t kRawRight     = 0x4E;
 static const uint8_t kRawLeft      = 0x4F;
-static const uint8_t kRawCtrl      = 0x63;   // Control = fire button
+static const uint8_t kRawFire      = 0x60;   // Left Shift = fire button (TRIG0)
 
 static struct Library*   s_ciaaBase    = 0;
 static struct Interrupt  s_kbInterrupt;
@@ -937,7 +937,7 @@ static uint32_t keyboardHandler()
         case kRawDown:  if (down) s_portaState &= (uint8_t)~0x02u; else s_portaState |= 0x02u; return 0;
         case kRawLeft:  if (down) s_portaState &= (uint8_t)~0x04u; else s_portaState |= 0x04u; return 0;
         case kRawRight: if (down) s_portaState &= (uint8_t)~0x08u; else s_portaState |= 0x08u; return 0;
-        case kRawCtrl:  s_trig0State = down ? 0x00u : 0x01u; return 0;
+        case kRawFire:  s_trig0State = down ? 0x00u : 0x01u; return 0;
         default: break;
     }
 
@@ -1032,6 +1032,14 @@ static uint32_t vbiHandler()
             if (dd < g_ddMin) g_ddMin = dd; if (dd > g_ddMax) g_ddMax = dd;
         }
     }
+
+#ifdef ROF_AUTO_FIRE
+    // Auto-fire probe (capture only): once the flight VBI ($4FF5) is live, HOLD the trigger
+    // ($D010=0, active-low) so the player laser fires continuously.  A held trigger auto-repeats
+    // (the $5178 fire path re-arms whenever $0036 returns to 0), so snapshotting mem[] at varying
+    // delays catches every phase of the shot animation (travel scale/pos + impact).
+    if ((mem[0x0222] | (mem[0x0223] << 8)) == 0x4FF5u) s_trig0State = 0x00u;
+#endif
 
     // Auto-launch: replicate a RETURN/START press once Standby's idle loop is actually
     // polling CONSOL.  A fixed vbi==350 fired before display_setup's standby poll was live

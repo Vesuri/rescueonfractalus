@@ -39,6 +39,7 @@ static const uint16_t kColor21 = 0x1AA;   // pair 2/3 pen 01 (windscreen A-pilla
 static const uint16_t kColor22 = 0x1AC;   // pair 2/3 pen 10 (right band TRIANGLE — darker grey, $00CF)
 static const uint16_t kColor25 = 0x1B2;   // pair 4/5 pen 01 (energy-indicator bar)
 static const uint16_t kColor29 = 0x1BA;   // pair 6/7 pen 01 (altimeter terrain-height bar, P0)
+static const uint16_t kColor27 = 0x1B6;   // pair 4/5 pen 11 (player laser shot — independent of energy's pen01=COLOR25)
 static const uint16_t kColor30 = 0x1BC;   // pair 6/7 pen 10 (altimeter ship-height bar, M3)
 
 // ---- fixed list layout (indices into data_, in 32-bit MOVE/WAIT words) -------
@@ -58,9 +59,13 @@ static const uint16_t kColor30 = 0x1BC;   // pair 6/7 pen 10 (altimeter ship-hei
 #define INDEX_ENERGY_COL       (INDEX_SPRITES + 16)         // 31: COLOR25 (energy bar) (1)
 #define INDEX_ALTIM_COL       (INDEX_ENERGY_COL + 1)        // 32: COLOR29 (altimeter terrain-height bar P0) (1)
 #define INDEX_SHIP_COL        (INDEX_ALTIM_COL + 1)        // 33: COLOR30 (altimeter ship-height bar M3) (1)
+// Player laser shot (Atari player P2, on the otherwise-idle sprite ch4): COLOR27 = pair 4/5
+// pen 11, set once near the top and holding all frame (the shot is viewport-only + the only
+// pen-11 user of pair 4/5, so it never clashes with the energy bar on ch5 pen01=COLOR25).
+#define INDEX_SHOT_COL        (INDEX_SHIP_COL + 1)         // COLOR27 (laser shot colour) (1)
 // Compass band: between the title text and the viewport, re-point color01 to the compass
 // COLPF0 ($00CF, dark grey) for the mode-4 compass line — the $49EE slot-0 DLI's colour.
-#define INDEX_COMPASS_WAIT    (INDEX_SHIP_COL + 1)         // 33: WAIT(compass scanline) (1)
+#define INDEX_COMPASS_WAIT    (INDEX_SHOT_COL + 1)         // WAIT(compass scanline) (1)
 #define INDEX_COMPASS_COL     (INDEX_COMPASS_WAIT + 1)     // 32: color01 = compass COLPF0 (housing) (1)
 #define INDEX_COMPASS_COL3    (INDEX_COMPASS_COL + 1)      // 33: color03 = compass COLPF2 (needle salmon) (1)
 #define INDEX_VP_WAIT         (INDEX_COMPASS_COL3 + 1)     // 34: WAIT(kTerrainLine-1) (1)
@@ -155,6 +160,7 @@ void FlightCopperList::buildLayout(const Bitmap& title, const Bitmap& terrain, c
     showSprite(INDEX_SPRITES + 10, 5, nullSprite);
     showSprite(INDEX_SPRITES + 12, 6, nullSprite);
     showSprite(INDEX_SPRITES + 14, 7, nullSprite);
+    d[INDEX_SHOT_COL] = copperMove(kColor27, 0);         // player laser shot colour (poked per frame)
     setEnergyIndicatorColor(0);                 // COLOR25 (setter) — energy bar (sprite pair 4/5)
     setAltimeterColor(0);                       // COLOR29 (setter) — altimeter terrain bar (pair 6/7 pen01)
     setAltimeterShipColor(0);                   // COLOR30 (setter) — altimeter ship bar (pair 6/7 pen10)
@@ -280,6 +286,11 @@ void FlightCopperList::setTriangleColor(uint16_t c)
 void FlightCopperList::setEnergyIndicatorColor(uint16_t c)
 {
     data_[INDEX_ENERGY_COL] = copperMove(kColor25, c);  // COLOR25 = sprite pair 4/5 pen 01
+}
+
+void FlightCopperList::setShotColor(uint16_t c)
+{
+    data_[INDEX_SHOT_COL] = copperMove(kColor27, c);    // COLOR27 = sprite pair 4/5 pen 11 (laser shot)
 }
 
 void FlightCopperList::setAltimeterColor(uint16_t c)

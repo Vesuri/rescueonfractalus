@@ -46,5 +46,6 @@ public:
     void setTerrainPen0(uint16_t pen0);                            // the fade-only fast path
     void setBandPalette(uint16_t grey);   // wing-band: color04 = frame grey (plane3); color00-03 inherit from terrain
     void setHudSprite(int slot, const Sprite& s);                  // slot 0..7 sprite pointer
+    void setShotColor(uint16_t c);                                 // COLOR27 (player laser shot, ch4 pen11)
     void setTerrainBitplanes(const Bitmap& terrain);               // re-point viewport bpl ptrs (double-buffer flip)
 };
