@@ -136,9 +136,12 @@ void FlightCopperList::buildLayout(const Bitmap& title, const Bitmap& terrain, c
     setPlayfield(INDEX_PLAYFIELD, kW, kH, kBP2, /*interleaved*/true,
                  /*hires*/false, /*interlace*/false, /*dualPlayfield*/false,
                  /*holdAndModify*/false, kCenterY);
-    // PFxP=2: sprites 0-3 in front of the playfield (both windscreen-frame pairs), so the
-    // right frame (pair 2/3) shows over the band bitmap like the left (pair 0/1) — not behind.
-    d[INDEX_BPLCON2] = copperMove(bplcon2, (uint16_t)((2u << 3) | 2u));
+    // PFxP=4: ALL sprites in front of the playfield in the viewport — the windscreen frame
+    // (pairs 0/1 = ch0-3) AND the player laser shot (pair 2 = ch4) sit over the terrain.  (The
+    // gauges on ch5/6/7 live in the dashboard, where INDEX_AH_BPLCON2 flips PFxP=0 = all sprites
+    // BEHIND the playfield, so the dial-frame bitmaps show in front of the bars.)  Was PFxP=2,
+    // which left pair 2 (the laser) behind the terrain.
+    d[INDEX_BPLCON2] = copperMove(bplcon2, (uint16_t)((4u << 3) | 4u));
     setTitlePalette(0, 0, 0);                  // seeded; caller refreshes
     showBitmap(INDEX_TITLE_BPL, title);        // 2bp interleaved = 4 ptr moves
 

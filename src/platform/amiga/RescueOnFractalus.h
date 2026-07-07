@@ -30,6 +30,10 @@ public:
     void flightKickBackClear();  // post-vblank (called by PlatformAmiga::renderFrame): kick the
                                  // blitter clear of the next back buffer so it overlaps the upcoming
                                  // terrain draw; renderFlightDirect then just waits for it.
+    void buildShotSprite();      // player laser (P2 $0E32) -> shotSprite; PUBLIC because it runs in
+                                 // the flight VBI (via PlatformAmiga::flightShotTick) at 50Hz, not
+                                 // at the slow render rate — faithful to the Atari (the shot is a VBI
+                                 // op).  Reads mem[$0036/$0037/$00CB]; safe at vblank (beam off-screen).
     void flightVblankSwap();     // run from the INTB_VERTB ISR at vblank start: if a flight buffer
                                  // swap is pending, rewrite the copper's viewport bitplane pointers
                                  // (before the beam reaches them) and clear the flag.
@@ -71,9 +75,14 @@ private:
     Sprite*  altimeterSprite = nullptr;  // P0 $0C98 terrain-height bar (flight altimeter)
     Sprite*  altimeterShipSprite = nullptr;  // M3 $0B98 ship-height bar (flight altimeter)
     bool     altimSolidBuilt = false;    // altimeter bars are solid 56-row sprites filled once (lazily)
-    Sprite*  shotSprite = nullptr;       // player laser (Atari P2 $0E32) on the idle sprite ch4
-    bool     shotWasActive = false;      // last frame's mem[$0036]!=0 (to clear the sprite once when it ends)
-    void buildShotSprite();              // $0E32 P2 shot buffer -> shotSprite (X/Y/colour from $00CB/$0037)
+    // Player laser (Atari P2 $0E32) on the idle sprite ch4.  DOUBLE-BUFFERED: buildShotSprite
+    // (run in the flight VBI) writes the off-screen buffer and re-points SPR4PT to it; the copper
+    // latches SPR4PT at the top of the NEXT frame, so the buffer being displayed is always one
+    // fully built in a prior VBI — never rewritten mid-scan (was single-buffered → tearing).
+    Sprite*  shotSprite     = nullptr;   // buffer 0
+    Sprite*  shotSpriteBack = nullptr;   // buffer 1
+    uint8_t  shotBuildIdx   = 0;         // which buffer buildShotSprite writes this frame (toggles)
+    bool     shotWasActive  = false;     // last frame's mem[$0036]!=0 (blank both buffers once on end)
 
     // Stars/space starfield: the 3 Atari players P0/P2/P3 ($0C32/$0E32/$0F32),
     // scrolled + sparsely seeded by the genuine scroll_field_columns ($6AEE).  Each is a

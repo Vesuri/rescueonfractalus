@@ -531,6 +531,16 @@ static volatile uint8_t  g_pumpQuit = 0;
 static volatile uint16_t g_vbiCount = 0;
 static RescueOnFractalus* s_scene   = 0;   // running scene; set by run()
 
+// flightShotTick: rebuild the player laser sprite from mem[] in the flight VBI (called from
+// game_vbi_isr's $4FF5 branch, right after vbi_handler_flight fills mem[$0E32..]).  This is the
+// faithful home for it — on the Atari the shot's HPOSP2/COLPM2/GRAFP2 are written by the VBI
+// ($8c58, 50Hz), NOT the slow main-loop terrain render — so the bolt/explosion animate at full
+// rate.  Runs at vblank START (beam off-screen), so the sprite-data write is race-free.
+void PlatformAmiga::flightShotTick()
+{
+    if (s_scene) s_scene->buildShotSprite();
+}
+
 // Flight/init timing probes (enable with `make PROBES=1` → -DROF_FLIGHT_PROBE).  Sub-frame
 // clock rof_subclock() = g_vbiCount*313 + beam_line, plus the accumulators that rof_native.c's
 // FP_* macros and the renderFrame/atmosphere probes below write into.  All read from the gdb

@@ -469,30 +469,42 @@ static inline uint16_t expandShotRow(uint8_t b)
 
 void RescueOnFractalus::buildShotSprite()
 {
-    uint16_t* d = shotSprite->data() + 2;              // skip the 2 control words
     if (mem[0x0036] == 0) {                            // no shot active
-        if (shotWasActive) {                           // clear once when the shot ends (else nothing shows)
-            for (int i = 0; i < kShotRows * 2; i++) d[i] = 0;
+        if (shotWasActive) {                           // shot just ended: blank BOTH buffers once so
+            uint16_t* a = shotSprite->data()     + 2;  // whichever is on-screen shows nothing, then
+            uint16_t* b = shotSpriteBack->data() + 2;  // leave ch4 pointing at a blank buffer (no more
+            for (int i = 0; i < kShotRows * 2; i++) { a[i] = 0; b[i] = 0; }   // per-frame work while idle)
+            if (flightCopper) flightCopper->setHudSprite(4, *shotSprite);
             shotWasActive = false;
         }
         return;
     }
     shotWasActive = true;
+    // Build into the OFF-screen buffer (the one NOT latched for display this frame): the copper
+    // fetched SPR4PT at the top of the frame, before this VBI-time build, so re-pointing it now
+    // takes effect NEXT frame — the displayed buffer is always a fully-built one, never mid-write.
+    Sprite* s = shotBuildIdx ? shotSpriteBack : shotSprite;
+    uint16_t* d = s->data() + 2;                       // skip the 2 control words
     // Find the shot's non-zero run in the P2 UPPER region ($34..$91; $92+ is the AH ground fill).
     int top = -1, bot = -1;
     for (int o = 0x34; o <= 0x91; o++)
         if (mem[0x0E00 + o]) { if (top < 0) top = o; bot = o; }
     for (int i = 0; i < kShotRows * 2; i++) d[i] = 0;  // clear, then decode the run below
-    if (top < 0) return;                               // active but no pixels this frame (mid erase/redraw)
-    int rows = bot - top + 1;
-    if (rows > kShotRows) rows = kShotRows;
-    for (int i = 0; i < rows; i++) {
-        uint16_t m = expandShotRow(mem[0x0E00 + top + i]);
-        d[i * 2] = m; d[i * 2 + 1] = m;                // both planes → pen 11 → COLOR27
+    if (top >= 0) {
+        int rows = bot - top + 1;
+        if (rows > kShotRows) rows = kShotRows;
+        for (int i = 0; i < rows; i++) {
+            uint16_t m = expandShotRow(mem[0x0E00 + top + i]);
+            d[i * 2] = m; d[i * 2 + 1] = m;            // both planes → pen 11 → COLOR27
+        }
+        s->setY((uint16_t)(kTerrainLine + (top - 0x32)));            // buffer row → Amiga line
+        s->setX((uint16_t)(0x81 + ((int)mem[0x00CB] - 0x32) * 2));   // HPOSP2 → viewport X
     }
-    shotSprite->setY((uint16_t)(kTerrainLine + (top - 0x32)));            // buffer row → Amiga line
-    shotSprite->setX((uint16_t)(0x81 + ((int)mem[0x00CB] - 0x32) * 2));   // HPOSP2 → viewport X
-    if (flightCopper) flightCopper->setShotColor(atariToOCS(mem[0x0037])); // COLPM2 → COLOR27
+    if (flightCopper) {
+        flightCopper->setHudSprite(4, *s);                            // display this buffer next frame
+        flightCopper->setShotColor(atariToOCS(mem[0x0037]));          // COLPM2 → COLOR27
+    }
+    shotBuildIdx ^= 1;                                                // next frame builds the other buffer
 }
 
 // ---- throttle gauge sprite ---------------------------------------------------
@@ -730,12 +742,13 @@ void RescueOnFractalus::initialize()
     // AH ground-fill: two 16px sprites (32px dial) reusing ch0/1 below the frame.
     ahLeft  = Sprite::allocate(kAHRows);
     ahRight = Sprite::allocate(kAHRows);
-    // Player laser shot (Atari P2 $0E32) on the idle sprite ch4.  Fixed-height sprite whose Y is
-    // moved to the shot's current buffer row each frame; only the active run is decoded (rest blank).
-    shotSprite = Sprite::allocate(kShotRows);
+    // Player laser shot (Atari P2 $0E32) on the idle sprite ch4.  Two fixed-height buffers,
+    // double-buffered by buildShotSprite (VBI); Y moves to the shot's current row each frame.
+    shotSprite     = Sprite::allocate(kShotRows);
+    shotSpriteBack = Sprite::allocate(kShotRows);
     if (!leftPost || !rightPost || !nullSprite || !energyIndicatorSprite || !altimeterSprite
         || !altimeterShipSprite || !flLeftPost || !flRightPost || !flLeftTri || !flRightTri
-        || !ahLeft || !ahRight || !shotSprite) return;
+        || !ahLeft || !ahRight || !shotSprite || !shotSpriteBack) return;
     // Starfield sprites: each Atari player P0/P2/P3 is a 32-cc quad, drawn as a pair of strips —
     // starSprite[2c] (low, at kStarX[c]) + starSprite[2c+1] (high, +16 px) — both at the windscreen
     // top (player scanline $32 → Amiga Y = kTerrainLine).  Height = kViewportFullHeight so VSTOP
@@ -1683,7 +1696,9 @@ void RescueOnFractalus::updateFlightCopper(bool force)
         // HUD sprite channels (the frame sprites 0-3 are seeded in buildLayout):
         //   5 = energy bar (COLOR25), 6 = altimeter terrain (COLOR29 pen01),
         //   7 = altimeter ship (COLOR30 pen10).
-        flightCopper->setHudSprite(4, *shotSprite);   // player laser (P2) — ch4 is otherwise idle
+        // Player laser (P2) — ch4 is otherwise idle.  Point at the BACK buffer so the first
+        // buildShotSprite (which writes shotSprite, idx 0) never touches the displayed buffer.
+        flightCopper->setHudSprite(4, *shotSpriteBack);
         flightCopper->setHudSprite(5, *energyIndicatorSprite);
         flightCopper->setHudSprite(6, *altimeterSprite);
         flightCopper->setAltimeterColor(atariToOCS(mem[0x00D5]));
@@ -2009,7 +2024,10 @@ void RescueOnFractalus::perFrameWork()
     }
     // Flight altimeter bars: mirror the live P0 $0C98 (terrain-height) + M3 $0B98
     // (ship-height) strips each frame.
-    if (rsFlight) { buildAltimeterSprite(); buildAltimeterShipSprite(); buildAHSprite(); buildShotSprite(); }
+    // The laser shot (buildShotSprite) is NOT built here — it runs in the flight VBI (50Hz) via
+    // PlatformAmiga::flightShotTick, faithful to the Atari (the shot is a VBI op), so it animates
+    // at full rate even while the terrain render is much slower.
+    if (rsFlight) { buildAltimeterSprite(); buildAltimeterShipSprite(); buildAHSprite(); }
 }
 
 // ---- cockpit helpers ---------------------------------------------------------

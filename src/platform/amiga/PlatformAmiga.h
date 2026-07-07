@@ -55,5 +55,6 @@ public:
     static void audioShutdown();
     static uint8_t pokeyRandom();
     static void noiseTick();
+    static void flightShotTick();   // build the player laser sprite from the VBI (50Hz), via s_scene
 };
 
