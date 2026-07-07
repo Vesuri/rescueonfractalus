@@ -260,6 +260,14 @@ private:
     uint8_t     ahLastIdx = 0xFF, ahLastSub = 0xFF;   // AH ground-fill change-detect (pitch index $291C/$291D)
     void buildAHSprite();  // mirror the live P2 fill ($0E92..) -> ahLeft/ahRight (flight AH ground)
 
+    // Targeting-scope "target" indicator = Atari player 3 = a small cyan dome ($38 7C FE FE FE)
+    // drawn by draw_player3_object $42A7 into the P3 buffer $0F00 scope band.  Reuses sprite ch3
+    // (right window-frame triangle, idle below line 180) via the copper SPR3PT re-point; colour
+    // = COLPM3 = mem[$00D9] (cyan, cycled by the flight VBI) -> COLOR23.  Same subsystem as the
+    // flying saucer + downed-pilot blink (all P3); this ports the scope copy first.
+    Sprite*     scopeDomeSprite = nullptr;
+    void buildScopeDomeSprite();  // mirror the live P3 scope-band fill ($0F00) -> scopeDomeSprite (flight scope)
+
     // Dirty-flag bitmap caching: bitmaps are rendered once on initialize() and
     // only re-rendered when the underlying mem[] data changes.
     bool    terrainDirty = true;   // re-render terrain rows from $2000

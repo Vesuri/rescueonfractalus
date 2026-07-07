@@ -29,7 +29,8 @@ public:
                      const Sprite& leftPost, const Sprite& leftTri,
                      const Sprite& rightPost, const Sprite& rightTri,
                      const Sprite& nullSprite,
-                     const Sprite& ahLeft, const Sprite& ahRight);  // AH ground-fill (ch0/1 reuse)
+                     const Sprite& ahLeft, const Sprite& ahRight,   // AH ground-fill (ch0/1 reuse)
+                     const Sprite& scopeDome);                      // targeting-scope P3 dome (ch3 reuse)
 
     // ---- per-frame setters (each pokes one MOVE, or one sprite pointer pair) ----
     void setTitlePalette(uint16_t bg, uint16_t pf0, uint16_t pf1);  // color00..03 (col0=col3=bg)
@@ -47,5 +48,6 @@ public:
     void setBandPalette(uint16_t grey);   // wing-band: color04 = frame grey (plane3); color00-03 inherit from terrain
     void setHudSprite(int slot, const Sprite& s);                  // slot 0..7 sprite pointer
     void setShotColor(uint16_t c);                                 // COLOR27 (player laser shot, ch4 pen11)
+    void setScopeDomeColor(uint16_t c);                            // COLOR23 (targeting-scope P3 dome, ch3 pen11, from $00D9)
     void setTerrainBitplanes(const Bitmap& terrain);               // re-point viewport bpl ptrs (double-buffer flip)
 };

@@ -507,6 +507,38 @@ void RescueOnFractalus::buildShotSprite()
     shotBuildIdx ^= 1;                                                // next frame builds the other buffer
 }
 
+// ---- targeting-scope P3 dome -------------------------------------------------
+// The "target" shown in the targeting scope (#8) is Atari player 3 — a small cyan dome
+// ($38 7C FE FE FE) that draw_player3_object $42A7 plots into the P3 buffer $0F00 in the
+// scope band, coloured by COLPM3 = mem[$00D9] (cyan, cycled each frame by the flight VBI at
+// $50ab).  P3 is otherwise unrendered on the Amiga; reuse sprite ch3 (right window-frame
+// triangle, whose VSTOP<=180 leaves it idle in the dashboard) via the copper SPR3PT re-point
+// (INDEX_SCOPE_SPR).  Same buffer→sprite mirror as the laser shot, single-buffered like the
+// AH ground fill (the object moves at terrain-render rate, so a per-render rebuild suffices).
+// Scope-band window in the P3 buffer: offset $98..$B8 → Amiga lines 188..220 (the dashboard
+// scope box).  (The viewport saucer copy lives lower in the buffer and is a later increment.)
+static const int kScopeDomeRows = 24;
+void RescueOnFractalus::buildScopeDomeSprite()
+{
+    uint16_t* d = scopeDomeSprite->data() + 2;         // skip the 2 control words
+    int top = -1, bot = -1;
+    for (int o = 0x98; o <= 0xB8; o++)
+        if (mem[0x0F00 + o]) { if (top < 0) top = o; bot = o; }
+    for (int i = 0; i < kScopeDomeRows * 2; i++) d[i] = 0;  // clear, then decode the run below
+    if (top >= 0) {
+        int rows = bot - top + 1;
+        if (rows > kScopeDomeRows) rows = kScopeDomeRows;
+        for (int i = 0; i < rows; i++) {
+            uint16_t m = expandShotRow(mem[0x0F00 + top + i]);
+            d[i * 2] = m; d[i * 2 + 1] = m;            // both planes → pen 11 → COLOR23 (cyan)
+        }
+        scopeDomeSprite->setY((uint16_t)(kTerrainLine + (top - 0x32)));  // buffer row → Amiga line
+        scopeDomeSprite->setX((uint16_t)(0x81 + ((int)mem[0x2870] - 0x32) * 2));  // HPOSP3 shadow → X
+    }
+    // (inactive: data left zeroed → the sprite shows nothing regardless of Y)
+    if (flightCopper) flightCopper->setScopeDomeColor(atariToOCS(mem[0x00D9]));  // COLPM3 → COLOR23
+}
+
 // ---- throttle gauge sprite ---------------------------------------------------
 // Build the player-1 throttle bar from the vobj strip mem[$0D98..].  Each strip
 // byte is one Atari player scanline ($F0 = leftmost 4px on); we map a filled row
@@ -746,9 +778,11 @@ void RescueOnFractalus::initialize()
     // double-buffered by buildShotSprite (VBI); Y moves to the shot's current row each frame.
     shotSprite     = Sprite::allocate(kShotRows);
     shotSpriteBack = Sprite::allocate(kShotRows);
+    // Targeting-scope P3 dome on the idle sprite ch3 (reused below the frame via SPR3PT re-point).
+    scopeDomeSprite = Sprite::allocate(kScopeDomeRows);
     if (!leftPost || !rightPost || !nullSprite || !energyIndicatorSprite || !altimeterSprite
         || !altimeterShipSprite || !flLeftPost || !flRightPost || !flLeftTri || !flRightTri
-        || !ahLeft || !ahRight || !shotSprite || !shotSpriteBack) return;
+        || !ahLeft || !ahRight || !shotSprite || !shotSpriteBack || !scopeDomeSprite) return;
     // Starfield sprites: each Atari player P0/P2/P3 is a 32-cc quad, drawn as a pair of strips —
     // starSprite[2c] (low, at kStarX[c]) + starSprite[2c+1] (high, +16 px) — both at the windscreen
     // top (player scanline $32 → Amiga Y = kTerrainLine).  Height = kViewportFullHeight so VSTOP
@@ -869,7 +903,7 @@ void RescueOnFractalus::initialize()
     if (flightCopper && flightCopper->data())
         flightCopper->buildLayout(*titleBitmap, *terrainBitmap, *cockpitBitmap,
                                   *flLeftPost, *flLeftTri, *flRightPost, *flRightTri, *nullSprite,
-                                  *ahLeft, *ahRight);
+                                  *ahLeft, *ahRight, *scopeDomeSprite);
 
     // Launch-cinematic fixed copper lists (scene 4 doors / scene 5 tunnel), same
     // build-once scheme; renderFrame installs them during the launch cinematic.  Doors
@@ -2027,7 +2061,7 @@ void RescueOnFractalus::perFrameWork()
     // The laser shot (buildShotSprite) is NOT built here — it runs in the flight VBI (50Hz) via
     // PlatformAmiga::flightShotTick, faithful to the Atari (the shot is a VBI op), so it animates
     // at full rate even while the terrain render is much slower.
-    if (rsFlight) { buildAltimeterSprite(); buildAltimeterShipSprite(); buildAHSprite(); }
+    if (rsFlight) { buildAltimeterSprite(); buildAltimeterShipSprite(); buildAHSprite(); buildScopeDomeSprite(); }
 }
 
 // ---- cockpit helpers ---------------------------------------------------------
