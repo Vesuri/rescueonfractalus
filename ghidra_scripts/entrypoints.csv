@@ -49,3 +49,13 @@ B800,init_B800
 6DA1,dli_launch_6da1
 4A05,dli_launch_tail_inc_c7_4a05
 4ACD,dli_launch_reset_c7_4acd
+
+# ---- Flight DLI chain (VDSLST=$49EE dispatches on index $C7 through word table $4AD9/$4ADE) ----
+# Table = [$4A11, $4A1F, $4A40, $4A78, $4ACD].  $4A1F = viewport playfield pens (COLPF0/1/2 from
+# $DA dots/$DB highlight); $4A40 = wing-band frame (COLPM0/1 = $CF, triangles); $4A78 = DASHBOARD
+# DLI — reloads all HUD player/missile HPOS incl. **HPOSP3 = mem[$00CC]** (the Targeting-Scope P3
+# X, clamped viewport-X from draw_player3_object $43C4), COLPM0-3, COLPF0-2, PRIOR=$04, HPOSM2/3.
+# Reached only via the indirect JMP → absent from listing.txt until seeded here.
+4A1F,dli_flight_viewport_pens_4a1f
+4A40,dli_flight_band_frame_4a40
+4A78,dli_flight_dashboard_hpos_4a78
