@@ -90,9 +90,9 @@ in the 320×216 display space; use them to identify each instrument's Atari hard
 | 5 | **Dangerous Altitude** | 24,144 | 40×60 | mode-4 dial-bar cells (x≈24-32, e.g. `$3394`), lights near ground ✓ |
 | 6 | **Artificial Horizon** | 56,138 | 32×28 | **PMG (NOT cells)** — dial frame is static $33xx bitmap; brown ground fill is Atari player P2 (COLPM2=`$26`, SIZEP2 dbl, buffer `$0E92-$0EB2`), boundary moves with pitch. Amiga = 2 sprites (`buildAHSprite`). See [[flight-scene]]. ✓ |
 | 7 | **Altimeter** | 108,144 | 8×56 | **terrain-height bar = player P0** (`$0C98`, COLPM0 purple `$00D5`) + **ship-height bar = missile M3** (`$0B98`, light-blue `$00D6`). (CORRECTED 2026-07-07 from a firing capture — the old "P3 ship / P2 terrain, HPOSP2=`$00CB`" was WRONG: P3 is parked in flight and `$00CB` is the **laser shot**'s HPOSP2. See [[flight-pmg-map]].) |
-| 8 | **Targeting Scope** | 136,151 | 50×33 | centre-lower mode-4 cells (x≈136) |
+| 8 | **Targeting Scope** | 136,151 | 50×33 | centre-lower mode-4 **bitmap** cells (x≈136); locked-target blip = cells `$2E-$31` + a generic P3 dome blob (`38 7C FE FE FE`); a flying saucer also mirrors as **P3** here. FROZEN on Amiga (transpiled writer, no `g_ck*` dirty hook — lock-on fix pattern). ✓ (2026-07-07) |
 | 9 | **Main Window** | — | — | the terrain viewport |
-| 10 | **Cross Hairs** | 136,69 | 50×37 | centre of Main Window |
+| 10 | **Cross Hairs** | 136,69 | 50×37 | **missile M2** vertical reticle @ HPOS `$80` (centre), two segments (`$0B4D-5A`+`$64-71`) with a centre gap; set in flight VBI `$505F-$5071` (`HPOSM3=mem[$2840]`, M2=+`$0C`, SIZEM=`$CC`). NOT ported to Amiga. ✓ (2026-07-07) |
 | 11 | **Enemy Lock-On Indicator** | 136,193 | 48×6 | mode-4 cells `$3492-$3496` (`lock_on_indicator_tick $4229`, state `$007E`) ✓ |
 | 12 | **Energy Level Indicator** | 204,144 | 8×56 | **P1 strip `$0D98`** gauge sprite, HPOSP1=`$00B5` (the working "right gauge") ✓ |
 | 13 | **Long Range Scanner** | 232,138 | 32×28 | mode-4 cells (x≈232) |
@@ -105,6 +105,17 @@ in the 320×216 display space; use them to identify each instrument's Atari hard
 
 The **canopy posts** (cockpit window A-pillars) are a separate frame element = Atari players
 P0 (`$0C32`, left) / P1 (`$0D32`, right), RLE-decoded from tables `$4DFA`/`$4E09`.
+
+**Enemies / terrain objects (render paths mapped 2026-07-07 via live atari800 captures; detail in
+the `flight-pmg-map` memory):** the two enemy classes render differently. A **flying saucer = player
+P3 PMG** (diamond `18 3C 7E FF 7E 3C`, grows with proximity), drawn in the viewport at `HPOSP3`=objX
+and mirrored into the targeting scope (2nd P3 copy ~83 lines lower, scope-X via an HPOSP3 DLI); on the
+Amiga reuse ch6/ch7 (altimeter, dashboard-only) via a copper `SPRxPT` mid-screen swap. **Ground objects
+(gun emplacement, base, downed pilot) = terrain BITMAP value-2/3** (`terrain_plot_object $A63B`, from
+`$0A00` map markers — pilot = `$64`); the object-plot native twins already run on the Amiga (plotted
+into plane2, just low-contrast). The **downed-pilot "blink" is a COLOUR-REGISTER CYCLE on `$00D9`** (hue
+9, luminance pulsing `$4`↔`$B`), NOT a graphics toggle → animate with a per-frame pen poke, don't redraw.
+None of P3/M2/scope-blip are ported yet.
 
 ## Controls (Atari manual → Amiga port)
 
