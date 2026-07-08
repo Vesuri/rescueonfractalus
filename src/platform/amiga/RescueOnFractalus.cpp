@@ -532,8 +532,12 @@ void RescueOnFractalus::buildScopeP3Sprite()
             uint16_t m = expandShotRow(mem[0x0F00 + top + i]);
             d[i * 2] = m; d[i * 2 + 1] = m;            // both planes → pen 11 → COLOR23 (cyan)
         }
-        scopeP3Sprite->setY((uint16_t)(kTerrainLine + (top - 0x32)));  // buffer row → Amiga line
-        scopeP3Sprite->setX((uint16_t)(0x81 + ((int)mem[0x2870] - 0x32) * 2));  // HPOSP3 shadow → X
+        scopeP3Sprite->setY((uint16_t)(kTerrainLine + (top - 0x32) + 7));  // buffer row → Amiga line (+7 user-calibrated)
+        // Scope-P3 X = mem[$00CC], NOT the viewport HPOSP3 ($2870): the flight dashboard DLI $4A78
+        // reloads HPOSP3←$CC before the scope band, and draw_player3_object $43C4 sets $CC = the
+        // viewport X clamped into the scope-box window.  (For a saucer $CC==$2870; they diverge for
+        // other target positions.)  Same cc→hw-X transform as the viewport copy.
+        scopeP3Sprite->setX((uint16_t)(0x81 + ((int)mem[0x00CC] - 0x32) * 2));
     }
     // (inactive: data left zeroed → the sprite shows nothing regardless of Y)
     if (flightCopper) flightCopper->setScopeP3Color(atariToOCS(mem[0x00D9]));  // COLPM3 → COLOR23
@@ -547,33 +551,35 @@ void RescueOnFractalus::buildScopeP3Sprite()
 // ship, free in the viewport) via the copper SPR7PT multiplex.  Present only when the target is
 // close enough to have a Main-Window body; far targets show only the Targeting-Scope copy.  Colour cyan
 // from mem[$00D9] (COLPM3) → COLOR31.
-// Keep the sprite SHORT: ch7 is multiplexed (this P3 object in the viewport, the altimeter-ship gauge
-// in the dashboard, re-pointed at line 181).  The sprite's VSTOP must stay < 181 so ch7 is free to
-// re-arm for the altimeter; with the viewport window top<=$85 (VSTART<=169) an 8-row sprite ends by
-// line 177.  A close gun emplacement / saucer is only ~5-6 rows, so 8 is plenty.
-static const int kViewportP3Rows = 8;
+// ch7 is MULTIPLEXED: this P3 object in the viewport (top sprite), the altimeter-ship gauge in the
+// dashboard (re-pointed by SPR7PT at line 181, INDEX_ALTIM_SHIP_SPR).  Amiga sprite reuse only
+// re-arms a channel on the control-word re-fetch that follows a VSTOP — so the outgoing top sprite
+// MUST run continuously to the re-point line (180), exactly like the ch0-3 frame posts (which the
+// AH ch0/1 + scope ch3 re-points depend on).  An 8-row object parked at VSTART 86 hits VSTOP ~94,
+// the DMA fetches its trailing 0,0 terminator and DISARMS ch7 for the frame → the 181 re-point is
+// too late and the altimeter ship never arms (the regression).  So keep viewportP3 a FIXED-VSTART
+// (kTerrainLine) FULL-VIEWPORT-HEIGHT (94 rows → VSTOP 180) sprite with the object drawn at its
+// internal row and every other row transparent — then ch7 re-arms the altimeter at 181 like ch3.
+static const int kViewportP3Rows = kViewportFullHeight;   // 94: VSTART 86 → VSTOP 180 (matches the frame posts / star sprites)
 void RescueOnFractalus::buildViewportP3Sprite()
 {
     uint16_t* d = viewportP3Sprite->data() + 2;      // skip the 2 control words
     int top = -1, bot = -1;
     for (int o = 0x32; o <= 0x85; o++)
         if (mem[0x0F00 + o]) { if (top < 0) top = o; bot = o; }
-    for (int i = 0; i < kViewportP3Rows * 2; i++) d[i] = 0;   // clear, then decode the run
+    for (int i = 0; i < kViewportP3Rows * 2; i++) d[i] = 0;   // clear the whole tall sprite
+    viewportP3Sprite->setY(kTerrainLine);            // FIXED VSTART: keep ch7 busy through the viewport
     if (top >= 0) {
+        int base = top - 0x32;                       // object's row within the fixed-VSTART sprite
         int rows = bot - top + 1;
-        if (rows > kViewportP3Rows) rows = kViewportP3Rows;
+        if (base + rows > kViewportP3Rows) rows = kViewportP3Rows - base;
         for (int i = 0; i < rows; i++) {
             uint16_t m = expandShotRow(mem[0x0F00 + top + i]);
-            d[i * 2] = m; d[i * 2 + 1] = m;            // both planes → pen 11 → COLOR31 (cyan)
+            d[(base + i) * 2] = m; d[(base + i) * 2 + 1] = m;  // both planes → pen 11 → COLOR31 (cyan)
         }
-        viewportP3Sprite->setY((uint16_t)(kTerrainLine + (top - 0x32)));       // buffer row → Amiga line
         viewportP3Sprite->setX((uint16_t)(0x81 + ((int)mem[0x2870] - 0x32) * 2));  // HPOSP3 shadow → X
-    } else {
-        // Inactive: data zeroed (invisible) AND park high so VSTOP stays well before the line-181
-        // ch7 re-point (otherwise a stale low VSTART would keep ch7 busy → altimeter arms late and
-        // its tail escapes the floor blackout).
-        viewportP3Sprite->setY(kTerrainLine);
     }
+    // (inactive: data left zeroed → transparent; ch7 still runs 86→180 so the altimeter re-arms)
     if (flightCopper) flightCopper->setViewportP3Color(atariToOCS(mem[0x00D9]));  // COLPM3 → COLOR31
 }
 
@@ -867,10 +873,12 @@ void RescueOnFractalus::initialize()
     altimeterShipSprite->setX(0x81 + 107);
     altimeterShipSprite->setY(0x2c + 144);
 #ifdef ROF_FLIGHT_PROBE
-    { extern volatile uint32_t g_altimSprAddr, g_altimShipSprAddr, g_energySprAddr;
+    { extern volatile uint32_t g_altimSprAddr, g_altimShipSprAddr, g_energySprAddr, g_viewportP3SprAddr, g_scopeP3SprAddr;
       g_altimSprAddr     = (uint32_t)altimeterSprite->data();
       g_altimShipSprAddr = (uint32_t)altimeterShipSprite->data();
-      g_energySprAddr    = (uint32_t)energyIndicatorSprite->data(); }
+      g_energySprAddr    = (uint32_t)energyIndicatorSprite->data();
+      g_viewportP3SprAddr = (uint32_t)viewportP3Sprite->data();
+      g_scopeP3SprAddr    = (uint32_t)scopeP3Sprite->data(); }
 #endif
 
     // Post graphics are decoded once from the real RLE source tables (buildPostSprites,
@@ -945,6 +953,10 @@ void RescueOnFractalus::initialize()
         flightCopper->buildLayout(*titleBitmap, *terrainBitmap, *cockpitBitmap,
                                   *flLeftPost, *flLeftTri, *flRightPost, *flRightTri, *nullSprite,
                                   *ahLeft, *ahRight, *scopeP3Sprite);
+#ifdef ROF_FLIGHT_PROBE
+    { extern volatile uint32_t g_flightCopperAddr;
+      if (flightCopper) g_flightCopperAddr = (uint32_t)flightCopper->data(); }
+#endif
 
     // Launch-cinematic fixed copper lists (scene 4 doors / scene 5 tunnel), same
     // build-once scheme; renderFrame installs them during the launch cinematic.  Doors
@@ -1779,9 +1791,9 @@ void RescueOnFractalus::updateFlightCopper(bool force)
         flightCopper->setAltimeterColor(atariToOCS(mem[0x00D5]));
         // ch7 is multiplexed: the VIEWPORT half shows the Main-Window P3 object (ch7 top pointer,
         // SPR7PT via setHudSprite), the DASHBOARD half shows the altimeter-ship gauge (the
-        // SPR7PT re-point at the cockpit WAIT, setAltimeterShipSprite).
+        // SPR7PT re-point at the cockpit WAIT, setDashboardSprite(7, ...)).
         flightCopper->setHudSprite(7, *viewportP3Sprite);
-        flightCopper->setAltimeterShipSprite(*altimeterShipSprite);
+        flightCopper->setDashboardSprite(7, *altimeterShipSprite);
         flightCopper->setAltimeterShipColor(atariToOCS(mem[0x00D6]));
     }
     // (The wing-clearance centre plane symbol is part of the mode-D band bitmap — the value-2

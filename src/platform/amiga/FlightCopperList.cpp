@@ -95,20 +95,26 @@ static const uint16_t kColor31 = 0x1BE;   // pair 6/7 pen 11 (Main-Window P3 obj
 // its init value 0x09 (sprites behind the playfield) throughout — no per-band flip needed.
 #define BAND_BLOCK_WORDS      4
 #define INDEX_BAND_BLOCK      (INDEX_VP_LINEDOUBLE + 3 * (kTerrainHeight - 1) + 1)  // band color04-07 (4)
-#define INDEX_COCKPIT_WAIT    (INDEX_VP_LINEDOUBLE + 3 * (kViewportHeight - 1) + BAND_BLOCK_WORDS)
-// Artificial Horizon (#6): the brown ground-fill = Atari player P2, multiplexed onto sprite
-// channels 0/1 BELOW the windscreen frame (whose ch0/1 use ends at VSTOP=180).  The SPR0PT/
-// SPR1PT re-point MUST be the FIRST moves after the cockpit WAIT — at line 180 cycles 0-8,
-// before the sprite DMA slot (~0x14) where the channel does its post-VSTOP control-word fetch
-// — so it reads the AH sprites' control words instead of the frame sprites' $0000 terminator
-// (which would idle ch0/1 for the field).  See HRM 4-2-6-4 / 4-6 (sprite reuse).
-#define INDEX_AH_SPR          (INDEX_COCKPIT_WAIT + 1)     // SPR0PT/SPR1PT -> ahLeft/ahRight (4)
-// NOTE: the Targeting-Scope (ch3) + altimeter-ship (ch7) SPR re-points are NOT here — they were
-// crowding line 180 (AH's 4 moves + bitmap ptrs + palette) and pushing the cockpit bitmap-pointer
-// fetch late, corrupting the top-left dashboard bytes (a sky-coloured left-edge glitch).  Their
-// sprites don't display until ~188, so they're re-pointed one line lower (INDEX_DASH_SPR, after the
-// dashboard-blue WAIT), keeping line 180 at the known-good AH-only layout.
-#define INDEX_COCKPIT_BPL     (INDEX_AH_SPR + 4)           // cockpit 3bp ptrs, yOffset 8 (6)
+// TWO WAITs at the viewport→dashboard boundary, BOTH on line 179 but at different hpos — required
+// because the sprite re-points and the bitmap pointers must land in DIFFERENT time windows and a
+// single sequential run of 14 moves can't hit both (measured: one WAIT early → bitmaps land before
+// the band's DDFSTOP = garbage; one WAIT late → the 14 moves overrun line 180's DDFSTRT = left-edge
+// glitch).  The two windows:
+//  (1) INDEX_SPR_WAIT @ hpos 0xB0 — the 8 dashboard sprite re-points (AH ch0/1, scope ch3, ship ch7).
+//      Safe mid-band: SPRxPT pokes don't touch bitplanes, and each reused channel's line-179 DATA was
+//      already fetched at the line start, so re-pointing now only affects the next (line-180) fetch =
+//      the post-VSTOP CONTROL re-fetch that arms the dashboard sprite.  That fetch MUST read the new
+//      pointer (a re-point landing after it never arms — the altimeter-ship/scope disappearing bug
+//      when they sat at line 181).
+//  (2) INDEX_COCKPIT_WAIT @ hpos 0xE0 — RESYNCS the clock so the 6 cockpit bitmap-ptr moves land in
+//      their own late window: after the band's bitplane DMA has ended (so re-pointing BPLxPT can't
+//      corrupt line 179's right edge) yet before line 180's DDFSTRT (so no left-edge glitch).
+#define INDEX_SPR_WAIT        (INDEX_VP_LINEDOUBLE + 3 * (kViewportHeight - 1) + BAND_BLOCK_WORDS)
+#define INDEX_AH_SPR          (INDEX_SPR_WAIT + 1)          // SPR0PT/SPR1PT -> ahLeft/ahRight (4)
+#define INDEX_SCOPE_SPR       (INDEX_AH_SPR + 4)            // SPR3PT -> Targeting-Scope image (2)
+#define INDEX_ALTIM_SHIP_SPR  (INDEX_SCOPE_SPR + 2)         // SPR7PT -> altimeter ship / ch7 viewport half (2)
+#define INDEX_COCKPIT_WAIT    (INDEX_ALTIM_SHIP_SPR + 2)    // WAIT(179, 0xE0) resync for the bitmap ptrs (1)
+#define INDEX_COCKPIT_BPL     (INDEX_COCKPIT_WAIT + 1)      // cockpit 3bp ptrs, yOffset 8 (6)
 #define INDEX_COCKPIT_BPLCON0 (INDEX_COCKPIT_BPL + 6)      // bplcon0 3P (1)
 #define INDEX_COCKPIT_MOD     (INDEX_COCKPIT_BPLCON0 + 1)  // bpl1mod,bpl2mod (2)
 #define INDEX_COCKPIT_PAL     (INDEX_COCKPIT_MOD + 2)      // color00..07 (8)
@@ -123,13 +129,7 @@ static const uint16_t kColor31 = 0x1BE;   // pair 6/7 pen 11 (Main-Window P3 obj
 // dark-blue $90 dashboard instrument backgrounds (182-251); then black floor (252+).
 #define INDEX_DASH_BLUE_WAIT  (INDEX_AH_BPLCON2 + 1)       // WAIT(kCockpitLine+2-1 = 181) (1)
 #define INDEX_DASH_BLUE       (INDEX_DASH_BLUE_WAIT + 1)   // color00 = $90 dark blue (dashboard) (1)
-// Dashboard sprite re-points (line 181, well before their ~188 display): ch3 -> the gun
-// emplacement / flying saucer image in the Targeting Scope (#8, behind the bitplanes); ch7 ->
-// the altimeter-ship gauge (ch7's viewport half = the Main-Window (#9) emplacement/saucer).
-// Deferred here from line 180 to avoid crowding the cockpit bitmap-pointer fetch (see AH note).
-#define INDEX_SCOPE_SPR       (INDEX_DASH_BLUE + 1)        // SPR3PT -> Targeting-Scope image (2)
-#define INDEX_ALTIM_SHIP_SPR  (INDEX_SCOPE_SPR + 2)        // SPR7PT -> altimeter ship (dashboard) (2)
-#define INDEX_FLOOR_WAIT_BASE (INDEX_ALTIM_SHIP_SPR + 2)
+#define INDEX_FLOOR_WAIT_BASE (INDEX_DASH_BLUE + 1)
 // The gauge sprites (altimeter pair 6/7, energy pair 4/5) are fixed 56-row SOLID sprites whose Y
 // tracks the bar value (setY), so a short/high bar overflows below the dial into the black floor.
 // On the one line color00 switches to black (the floor), also switch the gauge bar colours
@@ -141,6 +141,37 @@ static const uint16_t kColor31 = 0x1BE;   // pair 6/7 pen 11 (Main-Window P3 obj
 #define INDEX_FLOOR_ENERGY    (INDEX_FLOOR_SHIP + 1)       // COLOR25 = black (energy bar overflow) (1)
 #define INDEX_TERMINATOR      (INDEX_FLOOR_ENERGY + 1)     // copperWait(255,254)
 #define LIST_LENGTH           (INDEX_TERMINATOR + 1)
+
+// ---- Sprite channel × region plan (the single source of truth; see docs/sprite-multiplex-plan.md) ----
+// Each Amiga sprite channel mirrors one Atari PMG object and is re-pointed at region boundaries to
+// follow that object's own vertical multiplex.  Three regions: VIEWPORT 86-171 / BAND 172-179 /
+// DASHBOARD 180-267.  The ARMING RULE: a reused channel must present exactly ONE active sprite whose
+// VSTOP == the boundary (180) with no earlier VSTOP, so the post-VSTOP control fetch at 180/181 reads
+// the re-pointed dashboard sprite (a re-point alone does NOT re-arm a disarmed channel).
+//
+//   ch | viewport (86-171)      | band (172-179)     | dashboard (180-267)   | dashboard re-point
+//   ---+------------------------+--------------------+-----------------------+-------------------
+//    0 | left A-pillar (P0)     | left-tri inner     | AH fill left (P2)     | INDEX_AH_SPR+0
+//    1 | idle                   | left-tri outer     | AH fill right (P2)    | INDEX_AH_SPR+2
+//    2 | right A-pillar (P1)    | right-tri inner    | idle                  | —
+//    3 | idle                   | right-tri outer    | scope-P3 dome (P3)    | INDEX_SCOPE_SPR
+//    4 | laser shot (P2)        | (laser)            | idle                  | —
+//    5 | free (crosshair TODO)  | —                  | energy (P1)           | (non-mux)
+//    6 | free (crosshair TODO)  | —                  | altimeter terrain (P0)| (non-mux)
+//    7 | viewport-P3 (P3, tall) | (P3 tall)          | altimeter ship (M3)   | INDEX_ALTIM_SHIP_SPR
+// ALL re-points sit in the early-line-179 group (INDEX_SPR_WAIT @ 0xB0, before the bitmap ptrs'
+// own resync WAIT) — a re-point at line 181 fires after the channel's post-VSTOP re-fetch and never arms.
+//
+// The dashboard re-points (channels reused viewport→dashboard) are table-driven — setDashboardSprite()
+// looks the channel up here, so adding an element (e.g. the crosshair on ch5/6) is a one-row change.
+struct DashRepoint { uint8_t ch; uint16_t copperIndex; };
+static const DashRepoint kDashRepoints[] = {
+    { 0, INDEX_AH_SPR + 0 },       // AH ground-fill left
+    { 1, INDEX_AH_SPR + 2 },       // AH ground-fill right
+    { 3, INDEX_SCOPE_SPR },        // Targeting-Scope P3 dome
+    { 7, INDEX_ALTIM_SHIP_SPR },   // altimeter ship (ch7 viewport half = the Main-Window P3 object)
+};
+static const int kNumDashRepoints = (int)(sizeof(kDashRepoints) / sizeof(kDashRepoints[0]));
 
 FlightCopperList::FlightCopperList()
     : CopperList((uint32_t*)AllocMem(LIST_LENGTH << 2, MEMF_CHIP | MEMF_CLEAR), LIST_LENGTH, true)
@@ -232,14 +263,15 @@ void FlightCopperList::buildLayout(const Bitmap& title, const Bitmap& terrain, c
         d[idx++] = copperMove(bpl2mod, v);
     }
 
-    // ---- cockpit region: WAIT, pointers (skip the 8 modeD frame scanlines now drawn by
-    // the wing band above via yOffset=8), 3bp, modulo, constant palette ----
+    // ---- cockpit region: two WAITs on line 179 (see the INDEX_SPR_WAIT/INDEX_COCKPIT_WAIT comment) ----
+    // (1) early WAIT (hpos 0xB0): the 8 dashboard sprite re-points, first.
+    d[INDEX_SPR_WAIT] = copperWait(kCockpitLine - 1, 0xB0);
+    setDashboardSprite(0, ahLeft);              // SPR0PT -> ahLeft  (left 16px of the 32px dial)
+    setDashboardSprite(1, ahRight);             // SPR1PT -> ahRight (right 16px)
+    setDashboardSprite(3, scopeP3);             // SPR3PT -> Targeting-Scope P3 dome (ch3)
+    setDashboardSprite(7, nullSprite);          // SPR7PT -> altimeter ship (real ptr set on force)
+    // (2) resync WAIT (hpos 0xE0): the cockpit bitmap ptrs land in their own late window.
     d[INDEX_COCKPIT_WAIT] = copperWait(kCockpitLine - 1, 0xE0);
-    // AH ground-fill: re-point ch0/1 to the two AH sprites FIRST (timing-critical — before the
-    // line-180 sprite DMA slot; see the INDEX_AH_SPR comment).  Pointers are stable; the fill is
-    // refreshed each frame in buildAHSprite (the copper points at the live sprite buffers).
-    showSprite(INDEX_AH_SPR + 0, 0, ahLeft);    // SPR0PT -> ahLeft  (left 16px of the 32px dial)
-    showSprite(INDEX_AH_SPR + 2, 1, ahRight);   // SPR1PT -> ahRight (right 16px)
     showBitmap(INDEX_COCKPIT_BPL, cockpit, 1, 1, 0, 8);   // yOffset 8 scanlines: skip the $350D band rows
     d[INDEX_COCKPIT_BPLCON0] = copperMove(bplcon0, kBPLCON0_3P);
     d[INDEX_COCKPIT_MOD]     = copperMove(bpl1mod, 80);
@@ -264,10 +296,8 @@ void FlightCopperList::buildLayout(const Bitmap& title, const Bitmap& terrain, c
     // Only COLBK (color00) changes; baked color00=$00 above covers the divider strip (180-188).
     d[INDEX_DASH_BLUE_WAIT] = copperWait(kCockpitLine + 2 - 1, 0xE0);
     d[INDEX_DASH_BLUE]      = copperMove(color00, atariToOCS(0x90));
-    // Dashboard sprite re-points (line 181): ch3 -> Targeting-Scope (#8) image (behind bitplanes),
-    // ch7 -> altimeter ship (its viewport half shows the Main-Window (#9) emplacement/saucer).
-    showSprite(INDEX_SCOPE_SPR, 3, scopeP3);        // SPR3PT -> Targeting-Scope image
-    showSprite(INDEX_ALTIM_SHIP_SPR, 7, nullSprite);  // SPR7PT -> altimeter ship (real ptr set on force)
+    // (ch3 scope + ch7 altimeter-ship SPR re-points now live in the line-180 boundary group above,
+    // with the AH re-points — deferring them to line 181 here disarmed the channels.  See INDEX_AH_SPR.)
     d[INDEX_FLOOR_WAIT]  = copperWait(kCockpitLine + 72 - 1, 0xE0);
     d[INDEX_FLOOR]        = copperMove(color00, atariToOCS(0x00));  // floor background → black
     d[INDEX_FLOOR_ALTIM]  = copperMove(kColor29, 0x000);   // altimeter terrain pen01 → black (hide overflow)
@@ -336,9 +366,13 @@ void FlightCopperList::setViewportP3Color(uint16_t c)
     data_[INDEX_VP_P3_COL] = copperMove(kColor31, c);   // COLOR31 = sprite pair 6/7 pen 11 (Main-Window P3 object, cyan)
 }
 
-void FlightCopperList::setAltimeterShipSprite(const Sprite& s)
+// Re-point one dashboard-reused channel's SPRxPT at the region boundary (table-driven — the copper
+// index per channel lives in kDashRepoints, mirroring docs/sprite-multiplex-plan.md §3).  Callers
+// name the CHANNEL, not a copper offset, so the multiplex map is edited in one place.
+void FlightCopperList::setDashboardSprite(int ch, const Sprite& s)
 {
-    showSprite(INDEX_ALTIM_SHIP_SPR, 7, s);             // dashboard SPR7PT re-point (ch7 viewport half = the Main-Window P3 object)
+    for (int i = 0; i < kNumDashRepoints; i++)
+        if (kDashRepoints[i].ch == ch) { showSprite(kDashRepoints[i].copperIndex, (uint16_t)ch, s); return; }
 }
 
 void FlightCopperList::setAltimeterColor(uint16_t c)

@@ -657,6 +657,7 @@ extern "C" volatile unsigned long g_rPerFrame=0, g_rRenderFn=0, g_rCopper=0;
 // Altimeter sprite chip addresses (set in initialize) so the gdb harness can read their VSTART/
 // VSTOP control words and confirm the bar Y vs mem[$281A]/$281B.
 extern "C" volatile uint32_t g_altimSprAddr=0, g_altimShipSprAddr=0, g_energySprAddr=0;
+extern "C" volatile uint32_t g_viewportP3SprAddr=0, g_scopeP3SprAddr=0, g_flightCopperAddr=0;
 #endif
 
 // g_quitJmp: the __builtin_setjmp buffer armed by RescueOnFractalus::run() so we can

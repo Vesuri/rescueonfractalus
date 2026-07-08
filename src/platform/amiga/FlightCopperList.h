@@ -50,6 +50,11 @@ public:
     void setShotColor(uint16_t c);                                 // COLOR27 (player laser shot, ch4 pen11)
     void setScopeP3Color(uint16_t c);                            // COLOR23 (Targeting-Scope P3 object, ch3 pen11, from $00D9)
     void setViewportP3Color(uint16_t c);                         // COLOR31 (Main-Window P3 object, ch7 pen11, from $00D9)
-    void setAltimeterShipSprite(const Sprite& s);                  // dashboard SPR7PT re-point (ch7 viewport half = Main-Window P3 object)
+    // Dashboard sprite re-point (the region-boundary SPRxPT rewrite that reuses a viewport channel
+    // for a dashboard element — AH ch0/1, scope ch3, altimeter-ship ch7).  Data-driven: the channel
+    // is looked up in the kDashRepoints table (FlightCopperList.cpp) which owns the copper index +
+    // boundary line.  See docs/sprite-multiplex-plan.md §3 for the full channel×region map, and the
+    // arming rule (the channel's viewport sprite must run to VSTOP 180 or the re-point never arms).
+    void setDashboardSprite(int ch, const Sprite& s);
     void setTerrainBitplanes(const Bitmap& terrain);               // re-point viewport bpl ptrs (double-buffer flip)
 };
