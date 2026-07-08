@@ -95,26 +95,21 @@ static const uint16_t kColor31 = 0x1BE;   // pair 6/7 pen 11 (Main-Window P3 obj
 // its init value 0x09 (sprites behind the playfield) throughout — no per-band flip needed.
 #define BAND_BLOCK_WORDS      4
 #define INDEX_BAND_BLOCK      (INDEX_VP_LINEDOUBLE + 3 * (kTerrainHeight - 1) + 1)  // band color04-07 (4)
-// TWO WAITs at the viewport→dashboard boundary, BOTH on line 179 but at different hpos — required
-// because the sprite re-points and the bitmap pointers must land in DIFFERENT time windows and a
-// single sequential run of 14 moves can't hit both (measured: one WAIT early → bitmaps land before
-// the band's DDFSTOP = garbage; one WAIT late → the 14 moves overrun line 180's DDFSTRT = left-edge
-// glitch).  The two windows:
-//  (1) INDEX_SPR_WAIT @ hpos 0xB0 — the 8 dashboard sprite re-points (AH ch0/1, scope ch3, ship ch7).
-//      Safe mid-band: SPRxPT pokes don't touch bitplanes, and each reused channel's line-179 DATA was
-//      already fetched at the line start, so re-pointing now only affects the next (line-180) fetch =
-//      the post-VSTOP CONTROL re-fetch that arms the dashboard sprite.  That fetch MUST read the new
-//      pointer (a re-point landing after it never arms — the altimeter-ship/scope disappearing bug
-//      when they sat at line 181).
-//  (2) INDEX_COCKPIT_WAIT @ hpos 0xE0 — RESYNCS the clock so the 6 cockpit bitmap-ptr moves land in
-//      their own late window: after the band's bitplane DMA has ended (so re-pointing BPLxPT can't
-//      corrupt line 179's right edge) yet before line 180's DDFSTRT (so no left-edge glitch).
-#define INDEX_SPR_WAIT        (INDEX_VP_LINEDOUBLE + 3 * (kViewportHeight - 1) + BAND_BLOCK_WORDS)
-#define INDEX_AH_SPR          (INDEX_SPR_WAIT + 1)          // SPR0PT/SPR1PT -> ahLeft/ahRight (4)
+// ONE WAIT at the viewport→dashboard boundary: line 179, hpos 0xC0 (measured on FS-UAE — the sweet
+// spot).  The moves after it are ordered: the 8 dashboard sprite re-points (AH ch0/1, scope ch3,
+// ship ch7) FIRST, then the 6 cockpit bitmap pointers.  0xC0 lands the sprite re-points in line
+// 179's tail (safe: SPRxPT pokes don't touch bitplanes, and each reused channel's line-179 DATA was
+// already fetched at the line start, so this only affects the next (line-180) post-VSTOP CONTROL
+// re-fetch = the arming fetch — which MUST read the new pointer; a re-point after it never arms,
+// the altimeter-ship/scope disappearing bug when they sat at line 181).  The 8 sprite moves then
+// carry the bitmap-ptr moves into their window: after the band's DDFSTOP (so re-pointing BPLxPT
+// can't corrupt line 179's right edge = garbage bitplane) yet before line 180's DDFSTRT (so no
+// left-edge glitch).  0xB0 was too early (bitmaps before DDFSTOP), 0xE0 too late (overrun DDFSTRT).
+#define INDEX_COCKPIT_WAIT    (INDEX_VP_LINEDOUBLE + 3 * (kViewportHeight - 1) + BAND_BLOCK_WORDS)
+#define INDEX_AH_SPR          (INDEX_COCKPIT_WAIT + 1)      // SPR0PT/SPR1PT -> ahLeft/ahRight (4)
 #define INDEX_SCOPE_SPR       (INDEX_AH_SPR + 4)            // SPR3PT -> Targeting-Scope image (2)
 #define INDEX_ALTIM_SHIP_SPR  (INDEX_SCOPE_SPR + 2)         // SPR7PT -> altimeter ship / ch7 viewport half (2)
-#define INDEX_COCKPIT_WAIT    (INDEX_ALTIM_SHIP_SPR + 2)    // WAIT(179, 0xE0) resync for the bitmap ptrs (1)
-#define INDEX_COCKPIT_BPL     (INDEX_COCKPIT_WAIT + 1)      // cockpit 3bp ptrs, yOffset 8 (6)
+#define INDEX_COCKPIT_BPL     (INDEX_ALTIM_SHIP_SPR + 2)    // cockpit 3bp ptrs, yOffset 8 (6)
 #define INDEX_COCKPIT_BPLCON0 (INDEX_COCKPIT_BPL + 6)      // bplcon0 3P (1)
 #define INDEX_COCKPIT_MOD     (INDEX_COCKPIT_BPLCON0 + 1)  // bpl1mod,bpl2mod (2)
 #define INDEX_COCKPIT_PAL     (INDEX_COCKPIT_MOD + 2)      // color00..07 (8)
@@ -159,8 +154,8 @@ static const uint16_t kColor31 = 0x1BE;   // pair 6/7 pen 11 (Main-Window P3 obj
 //    5 | free (crosshair TODO)  | —                  | energy (P1)           | (non-mux)
 //    6 | free (crosshair TODO)  | —                  | altimeter terrain (P0)| (non-mux)
 //    7 | viewport-P3 (P3, tall) | (P3 tall)          | altimeter ship (M3)   | INDEX_ALTIM_SHIP_SPR
-// ALL re-points sit in the early-line-179 group (INDEX_SPR_WAIT @ 0xB0, before the bitmap ptrs'
-// own resync WAIT) — a re-point at line 181 fires after the channel's post-VSTOP re-fetch and never arms.
+// ALL re-points sit in the line-179 boundary group (INDEX_COCKPIT_WAIT @ 0xC0, before the bitmap
+// ptrs) — a re-point at line 181 fires after the channel's post-VSTOP re-fetch and never arms.
 //
 // The dashboard re-points (channels reused viewport→dashboard) are table-driven — setDashboardSprite()
 // looks the channel up here, so adding an element (e.g. the crosshair on ch5/6) is a one-row change.
@@ -263,15 +258,13 @@ void FlightCopperList::buildLayout(const Bitmap& title, const Bitmap& terrain, c
         d[idx++] = copperMove(bpl2mod, v);
     }
 
-    // ---- cockpit region: two WAITs on line 179 (see the INDEX_SPR_WAIT/INDEX_COCKPIT_WAIT comment) ----
-    // (1) early WAIT (hpos 0xB0): the 8 dashboard sprite re-points, first.
-    d[INDEX_SPR_WAIT] = copperWait(kCockpitLine - 1, 0xB0);
+    // ---- cockpit region: one WAIT on line 179 @ hpos 0xC0 (see the INDEX_COCKPIT_WAIT comment) ----
+    // sprite re-points FIRST, then the cockpit bitmap ptrs (skip the 8 modeD frame scanlines via yOffset=8).
+    d[INDEX_COCKPIT_WAIT] = copperWait(kCockpitLine - 1, 0xC0);
     setDashboardSprite(0, ahLeft);              // SPR0PT -> ahLeft  (left 16px of the 32px dial)
     setDashboardSprite(1, ahRight);             // SPR1PT -> ahRight (right 16px)
     setDashboardSprite(3, scopeP3);             // SPR3PT -> Targeting-Scope P3 dome (ch3)
     setDashboardSprite(7, nullSprite);          // SPR7PT -> altimeter ship (real ptr set on force)
-    // (2) resync WAIT (hpos 0xE0): the cockpit bitmap ptrs land in their own late window.
-    d[INDEX_COCKPIT_WAIT] = copperWait(kCockpitLine - 1, 0xE0);
     showBitmap(INDEX_COCKPIT_BPL, cockpit, 1, 1, 0, 8);   // yOffset 8 scanlines: skip the $350D band rows
     d[INDEX_COCKPIT_BPLCON0] = copperMove(bplcon0, kBPLCON0_3P);
     d[INDEX_COCKPIT_MOD]     = copperMove(bpl1mod, 80);

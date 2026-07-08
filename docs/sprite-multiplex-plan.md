@@ -41,17 +41,13 @@ scope dome for two sessions (the "sprites don't display until 188 so re-point on
 reasoning was wrong: arming is gated on the VSTOP line, not the display line). Verified by gdb copper
 dump (`amiga/sprite_probe.gdb`).
 
-Emit it as TWO WAITs on line 179 (measured necessary — a single WAIT can't hit both windows):
-- **`WAIT(179, 0xB0)`** → the 8 sprite re-points first. Safe mid-band: SPRxPT pokes don't touch the
-  bitplanes and each channel's line-179 data is already fetched, so this only affects the line-180
-  control re-fetch (the arming fetch).
-- **`WAIT(179, 0xE0)`** → resync, then the 6 cockpit bitmap pointers, so they land in their own late
-  window: after the band's DDFSTOP (re-pointing BPLxPT can't corrupt line 179's right edge) yet before
-  line 180's DDFSTRT (no left-edge glitch).
-
-A single WAIT fails both ways (verified on FS-UAE): early enough to fit all 14 moves → the bitmap
-pointers land *before* DDFSTOP = garbage bitplane; late enough for the bitmaps → the 14 moves overrun
-DDFSTRT = left-edge glitch. The two constraints need two starts.
+Emit it as ONE `WAIT(179, 0xC0)` (the measured sweet spot on FS-UAE), sprite re-points FIRST then the
+6 cockpit bitmap pointers. `0xC0` lands the 8 sprite re-points in line 179's tail (safe: SPRxPT pokes
+don't touch bitplanes and each channel's line-179 data is already fetched, so this only affects the
+line-180 control re-fetch = the arming fetch), and those 8 moves carry the bitmap-ptr moves into their
+window: after the band's DDFSTOP (re-pointing BPLxPT can't corrupt line 179's right edge) yet before
+line 180's DDFSTRT (no left-edge glitch). The hpos is narrow: `0xB0` is too early (bitmaps land before
+DDFSTOP → garbage bitplane), `0xE0` too late (the 14 moves overrun DDFSTRT → left-edge glitch).
 
 Two valid ways to satisfy the rule:
 - **Pattern A — tall sprite:** the upper-region sprite runs (transparently padded) from its
