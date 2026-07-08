@@ -260,13 +260,20 @@ private:
     uint8_t     ahLastIdx = 0xFF, ahLastSub = 0xFF;   // AH ground-fill change-detect (pitch index $291C/$291D)
     void buildAHSprite();  // mirror the live P2 fill ($0E92..) -> ahLeft/ahRight (flight AH ground)
 
-    // Targeting-scope "target" indicator = Atari player 3 = a small cyan dome ($38 7C FE FE FE)
-    // drawn by draw_player3_object $42A7 into the P3 buffer $0F00 scope band.  Reuses sprite ch3
-    // (right window-frame triangle, idle below line 180) via the copper SPR3PT re-point; colour
-    // = COLPM3 = mem[$00D9] (cyan, cycled by the flight VBI) -> COLOR23.  Same subsystem as the
-    // flying saucer + downed-pilot blink (all P3); this ports the scope copy first.
-    Sprite*     scopeDomeSprite = nullptr;
-    void buildScopeDomeSprite();  // mirror the live P3 scope-band fill ($0F00) -> scopeDomeSprite (flight scope)
+    // The targeted object (gun emplacement / flying saucer) is a single generic Atari player-3
+    // sprite (draw_player3_object $42A7): shape+size from data tables by class+distance, written
+    // into TWO P3 buffer copies in one loop.  We mirror each copy to one Amiga sprite (shape-
+    // agnostic — the enemy TYPE is just different table data, not different code):
+    //   Targeting Scope (#8) copy = mem[$0F00+$98..$B8], behind the bitplanes, on ch3.
+    Sprite*     scopeP3Sprite = nullptr;
+    void buildScopeP3Sprite();    // mirror the P3 Targeting-Scope copy ($0F00 $98..$B8) -> scopeP3Sprite
+
+    //   Main Window (#9) copy = mem[$0F00+$32..$85], IN FRONT of terrain, tracking X (HPOSP3
+    //   $2870) + Y (buffer offset).  Reuses ch7 (altimeter ship, free in the viewport) via the
+    //   copper SPR7PT multiplex; colour COLPM3=$00D9 -> COLOR31.  Present only when the target is
+    //   close enough to have a Main-Window body (far targets: Targeting-Scope copy only).
+    Sprite*     viewportP3Sprite = nullptr;
+    void buildViewportP3Sprite(); // mirror the P3 Main-Window copy ($0F00 $32..$85) -> viewportP3Sprite
 
     // Dirty-flag bitmap caching: bitmaps are rendered once on initialize() and
     // only re-rendered when the underlying mem[] data changes.

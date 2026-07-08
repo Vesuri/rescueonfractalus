@@ -41,7 +41,8 @@ static const uint16_t kColor25 = 0x1B2;   // pair 4/5 pen 01 (energy-indicator b
 static const uint16_t kColor29 = 0x1BA;   // pair 6/7 pen 01 (altimeter terrain-height bar, P0)
 static const uint16_t kColor27 = 0x1B6;   // pair 4/5 pen 11 (player laser shot — independent of energy's pen01=COLOR25)
 static const uint16_t kColor30 = 0x1BC;   // pair 6/7 pen 10 (altimeter ship-height bar, M3)
-static const uint16_t kColor23 = 0x1AE;   // pair 2/3 pen 11 (targeting-scope P3 dome — unused by the frame's pen01/pen10)
+static const uint16_t kColor23 = 0x1AE;   // pair 2/3 pen 11 (Targeting-Scope P3 object — unused by the frame's pen01/pen10)
+static const uint16_t kColor31 = 0x1BE;   // pair 6/7 pen 11 (Main-Window P3 object — unused by the altimeter's pen01/pen10)
 
 // ---- fixed list layout (indices into data_, in 32-bit MOVE/WAIT words) -------
 // d[0] = copperWait(16,0) (CopperList ctor).  The line-doubling band is 85 rows ×
@@ -64,13 +65,18 @@ static const uint16_t kColor23 = 0x1AE;   // pair 2/3 pen 11 (targeting-scope P3
 // pen 11, set once near the top and holding all frame (the shot is viewport-only + the only
 // pen-11 user of pair 4/5, so it never clashes with the energy bar on ch5 pen01=COLOR25).
 #define INDEX_SHOT_COL        (INDEX_SHIP_COL + 1)         // COLOR27 (laser shot colour) (1)
-// Targeting-scope P3 dome (Atari player 3, reused onto sprite ch3 below the frame — see
+// Targeting-Scope P3 object (Atari player 3, reused onto sprite ch3 below the frame — see
 // INDEX_SCOPE_SPR).  COLOR23 = pair 2/3 pen 11 (unused by the frame's post/triangle pens),
 // set near the top and holding all frame; poked per frame from mem[$00D9] (COLPM3, cyan).
-#define INDEX_SCOPE_COL       (INDEX_SHOT_COL + 1)         // COLOR23 (scope dome colour) (1)
+#define INDEX_SCOPE_COL       (INDEX_SHOT_COL + 1)         // COLOR23 (Targeting-Scope P3 colour) (1)
+// Main-Window P3 object: the gun-emplacement / flying-saucer target rendered as a sprite
+// IN FRONT of the terrain (viewport BPLCON2 PFxP=4), on ch7 (altimeter ship — free in the
+// viewport) multiplexed via SPR7PT (see INDEX_ALTIM_SHIP_SPR).  COLOR31 = pair 6/7 pen 11
+// (unused by the altimeter's COLOR29/30), poked per frame from mem[$00D9] (COLPM3, cyan).
+#define INDEX_VP_P3_COL       (INDEX_SCOPE_COL + 1)        // COLOR31 (Main-Window P3 colour) (1)
 // Compass band: between the title text and the viewport, re-point color01 to the compass
 // COLPF0 ($00CF, dark grey) for the mode-4 compass line — the $49EE slot-0 DLI's colour.
-#define INDEX_COMPASS_WAIT    (INDEX_SCOPE_COL + 1)        // WAIT(compass scanline) (1)
+#define INDEX_COMPASS_WAIT    (INDEX_VP_P3_COL + 1)        // WAIT(compass scanline) (1)
 #define INDEX_COMPASS_COL     (INDEX_COMPASS_WAIT + 1)     // 32: color01 = compass COLPF0 (housing) (1)
 #define INDEX_COMPASS_COL3    (INDEX_COMPASS_COL + 1)      // 33: color03 = compass COLPF2 (needle salmon) (1)
 #define INDEX_VP_WAIT         (INDEX_COMPASS_COL3 + 1)     // 34: WAIT(kTerrainLine-1) (1)
@@ -97,13 +103,12 @@ static const uint16_t kColor23 = 0x1AE;   // pair 2/3 pen 11 (targeting-scope P3
 // — so it reads the AH sprites' control words instead of the frame sprites' $0000 terminator
 // (which would idle ch0/1 for the field).  See HRM 4-2-6-4 / 4-6 (sprite reuse).
 #define INDEX_AH_SPR          (INDEX_COCKPIT_WAIT + 1)     // SPR0PT/SPR1PT -> ahLeft/ahRight (4)
-// Targeting-scope P3 dome: re-point ch3 (SPR3PT) to the dome sprite right after the AH
-// re-points (same timing window — before the line-180 sprite DMA control-word fetch).  ch3
-// = right band triangle above, VSTOP<=180, so it's idle below the frame; the dome sprite's
-// own VSTART (~201, scope band) positions it in the dashboard.  Stable pointer; the fill +
-// Y/X are refreshed each frame in buildScopeDomeSprite (like the AH ground fill).
-#define INDEX_SCOPE_SPR       (INDEX_AH_SPR + 4)           // SPR3PT -> scopeDome (2)
-#define INDEX_COCKPIT_BPL     (INDEX_SCOPE_SPR + 2)        // cockpit 3bp ptrs, yOffset 8 (6)
+// NOTE: the Targeting-Scope (ch3) + altimeter-ship (ch7) SPR re-points are NOT here — they were
+// crowding line 180 (AH's 4 moves + bitmap ptrs + palette) and pushing the cockpit bitmap-pointer
+// fetch late, corrupting the top-left dashboard bytes (a sky-coloured left-edge glitch).  Their
+// sprites don't display until ~188, so they're re-pointed one line lower (INDEX_DASH_SPR, after the
+// dashboard-blue WAIT), keeping line 180 at the known-good AH-only layout.
+#define INDEX_COCKPIT_BPL     (INDEX_AH_SPR + 4)           // cockpit 3bp ptrs, yOffset 8 (6)
 #define INDEX_COCKPIT_BPLCON0 (INDEX_COCKPIT_BPL + 6)      // bplcon0 3P (1)
 #define INDEX_COCKPIT_MOD     (INDEX_COCKPIT_BPLCON0 + 1)  // bpl1mod,bpl2mod (2)
 #define INDEX_COCKPIT_PAL     (INDEX_COCKPIT_MOD + 2)      // color00..07 (8)
@@ -118,11 +123,18 @@ static const uint16_t kColor23 = 0x1AE;   // pair 2/3 pen 11 (targeting-scope P3
 // dark-blue $90 dashboard instrument backgrounds (182-251); then black floor (252+).
 #define INDEX_DASH_BLUE_WAIT  (INDEX_AH_BPLCON2 + 1)       // WAIT(kCockpitLine+2-1 = 181) (1)
 #define INDEX_DASH_BLUE       (INDEX_DASH_BLUE_WAIT + 1)   // color00 = $90 dark blue (dashboard) (1)
+// Dashboard sprite re-points (line 181, well before their ~188 display): ch3 -> the gun
+// emplacement / flying saucer image in the Targeting Scope (#8, behind the bitplanes); ch7 ->
+// the altimeter-ship gauge (ch7's viewport half = the Main-Window (#9) emplacement/saucer).
+// Deferred here from line 180 to avoid crowding the cockpit bitmap-pointer fetch (see AH note).
+#define INDEX_SCOPE_SPR       (INDEX_DASH_BLUE + 1)        // SPR3PT -> Targeting-Scope image (2)
+#define INDEX_ALTIM_SHIP_SPR  (INDEX_SCOPE_SPR + 2)        // SPR7PT -> altimeter ship (dashboard) (2)
+#define INDEX_FLOOR_WAIT_BASE (INDEX_ALTIM_SHIP_SPR + 2)
 // The gauge sprites (altimeter pair 6/7, energy pair 4/5) are fixed 56-row SOLID sprites whose Y
 // tracks the bar value (setY), so a short/high bar overflows below the dial into the black floor.
 // On the one line color00 switches to black (the floor), also switch the gauge bar colours
 // (COLOR25 energy, COLOR29/30 altimeter) to black, so the overflow vanishes into the floor.
-#define INDEX_FLOOR_WAIT      (INDEX_DASH_BLUE + 1)        // WAIT(kCockpitLine+72-1 = 251) (1)
+#define INDEX_FLOOR_WAIT      (INDEX_FLOOR_WAIT_BASE)      // WAIT(kCockpitLine+72-1 = 251) (1)
 #define INDEX_FLOOR           (INDEX_FLOOR_WAIT + 1)       // color00 = black (floor) (1)
 #define INDEX_FLOOR_ALTIM     (INDEX_FLOOR + 1)            // COLOR29 = black (altimeter terrain overflow) (1)
 #define INDEX_FLOOR_SHIP      (INDEX_FLOOR_ALTIM + 1)      // COLOR30 = black (altimeter ship overflow) (1)
@@ -140,7 +152,7 @@ void FlightCopperList::buildLayout(const Bitmap& title, const Bitmap& terrain, c
                                    const Sprite& rightPost, const Sprite& rightTri,
                                    const Sprite& nullSprite,
                                    const Sprite& ahLeft, const Sprite& ahRight,
-                                   const Sprite& scopeDome)
+                                   const Sprite& scopeP3)
 {
     uint32_t* d = data_;
 
@@ -176,7 +188,8 @@ void FlightCopperList::buildLayout(const Bitmap& title, const Bitmap& terrain, c
     showSprite(INDEX_SPRITES + 12, 6, nullSprite);
     showSprite(INDEX_SPRITES + 14, 7, nullSprite);
     d[INDEX_SHOT_COL] = copperMove(kColor27, 0);         // player laser shot colour (poked per frame)
-    d[INDEX_SCOPE_COL] = copperMove(kColor23, 0);        // scope P3 dome colour (poked per frame from $00D9)
+    d[INDEX_SCOPE_COL] = copperMove(kColor23, 0);        // Targeting-Scope P3 colour (poked per frame from $00D9)
+    d[INDEX_VP_P3_COL] = copperMove(kColor31, 0);        // Main-Window P3 object colour (poked per frame from $00D9)
     setEnergyIndicatorColor(0);                 // COLOR25 (setter) — energy bar (sprite pair 4/5)
     setAltimeterColor(0);                       // COLOR29 (setter) — altimeter terrain bar (pair 6/7 pen01)
     setAltimeterShipColor(0);                   // COLOR30 (setter) — altimeter ship bar (pair 6/7 pen10)
@@ -227,7 +240,6 @@ void FlightCopperList::buildLayout(const Bitmap& title, const Bitmap& terrain, c
     // refreshed each frame in buildAHSprite (the copper points at the live sprite buffers).
     showSprite(INDEX_AH_SPR + 0, 0, ahLeft);    // SPR0PT -> ahLeft  (left 16px of the 32px dial)
     showSprite(INDEX_AH_SPR + 2, 1, ahRight);   // SPR1PT -> ahRight (right 16px)
-    showSprite(INDEX_SCOPE_SPR, 3, scopeDome);  // SPR3PT -> scope P3 dome (ch3 reuse below the frame)
     showBitmap(INDEX_COCKPIT_BPL, cockpit, 1, 1, 0, 8);   // yOffset 8 scanlines: skip the $350D band rows
     d[INDEX_COCKPIT_BPLCON0] = copperMove(bplcon0, kBPLCON0_3P);
     d[INDEX_COCKPIT_MOD]     = copperMove(bpl1mod, 80);
@@ -252,6 +264,10 @@ void FlightCopperList::buildLayout(const Bitmap& title, const Bitmap& terrain, c
     // Only COLBK (color00) changes; baked color00=$00 above covers the divider strip (180-188).
     d[INDEX_DASH_BLUE_WAIT] = copperWait(kCockpitLine + 2 - 1, 0xE0);
     d[INDEX_DASH_BLUE]      = copperMove(color00, atariToOCS(0x90));
+    // Dashboard sprite re-points (line 181): ch3 -> Targeting-Scope (#8) image (behind bitplanes),
+    // ch7 -> altimeter ship (its viewport half shows the Main-Window (#9) emplacement/saucer).
+    showSprite(INDEX_SCOPE_SPR, 3, scopeP3);        // SPR3PT -> Targeting-Scope image
+    showSprite(INDEX_ALTIM_SHIP_SPR, 7, nullSprite);  // SPR7PT -> altimeter ship (real ptr set on force)
     d[INDEX_FLOOR_WAIT]  = copperWait(kCockpitLine + 72 - 1, 0xE0);
     d[INDEX_FLOOR]        = copperMove(color00, atariToOCS(0x00));  // floor background → black
     d[INDEX_FLOOR_ALTIM]  = copperMove(kColor29, 0x000);   // altimeter terrain pen01 → black (hide overflow)
@@ -310,9 +326,19 @@ void FlightCopperList::setShotColor(uint16_t c)
     data_[INDEX_SHOT_COL] = copperMove(kColor27, c);    // COLOR27 = sprite pair 4/5 pen 11 (laser shot)
 }
 
-void FlightCopperList::setScopeDomeColor(uint16_t c)
+void FlightCopperList::setScopeP3Color(uint16_t c)
 {
-    data_[INDEX_SCOPE_COL] = copperMove(kColor23, c);   // COLOR23 = sprite pair 2/3 pen 11 (scope P3 dome, cyan)
+    data_[INDEX_SCOPE_COL] = copperMove(kColor23, c);   // COLOR23 = sprite pair 2/3 pen 11 (Targeting-Scope P3 object, cyan)
+}
+
+void FlightCopperList::setViewportP3Color(uint16_t c)
+{
+    data_[INDEX_VP_P3_COL] = copperMove(kColor31, c);   // COLOR31 = sprite pair 6/7 pen 11 (Main-Window P3 object, cyan)
+}
+
+void FlightCopperList::setAltimeterShipSprite(const Sprite& s)
+{
+    showSprite(INDEX_ALTIM_SHIP_SPR, 7, s);             // dashboard SPR7PT re-point (ch7 viewport half = the Main-Window P3 object)
 }
 
 void FlightCopperList::setAltimeterColor(uint16_t c)
