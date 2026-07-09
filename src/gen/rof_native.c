@@ -607,7 +607,7 @@ void fill_horizontal_span(void) {
  * colour AND which of the four 2-bit pixels in the byte to touch).  The screen field
  * ($1000/$2000) is plain RAM, so we read-modify-write mem[] directly (bus_read/bus_write would
  * range-check hardware on every pixel; there is no hardware here to write). */
-static inline void plot_glyph_pixel_masked_core(uint16_t rowBase, uint8_t byteOff, uint8_t maskSel) {
+static inline void plot_masked_pixel_core(uint16_t rowBase, uint8_t byteOff, uint8_t maskSel) {
     uint16_t a = (uint16_t)(rowBase + byteOff);
     mem[a] = (uint8_t)((mem[a] | mem[MEM_pixel_or_mask_tbl + maskSel])
                                 & mem[MEM_pixel_and_mask_tbl + maskSel]);
@@ -618,23 +618,23 @@ static inline void plot_glyph_pixel_masked_core(uint16_t rowBase, uint8_t byteOf
  * pixel by biasing the mask index by 9 (the Atari's ADC #$08 + shifted-out LSR carry). */
 static inline void plot_pixel_masked_core(uint16_t rowBase, uint8_t col, uint8_t colour) {
     uint8_t maskSel = (col & 1u) ? (uint8_t)(colour + 9u) : colour;
-    plot_glyph_pixel_masked_core(rowBase, (uint8_t)(col >> 1), maskSel);
+    plot_masked_pixel_core(rowBase, (uint8_t)(col >> 1), maskSel);
 }
 
 /* $66DE 6502-ABI shim (validation oracle): row pointer in $80/$81 (misnamed sync_flag/dl_ptr_lo
  * — see docs/rename.md), byte offset in Y, mask index in X. */
-void plot_glyph_pixel_masked(void) {
-    plot_glyph_pixel_masked_core((uint16_t)(sync_flag | (dl_ptr_lo << 8)), cpu.Y, cpu.X);
+void plot_masked_pixel(void) {
+    plot_masked_pixel_core((uint16_t)(sync_flag | (dl_ptr_lo << 8)), cpu.Y, cpu.X);
 }
 
 /* $66D5 6502-ABI shim: pixel column in A, colour from $0094 (draw_color_idx), row ptr $80/$81.
  * Transliterated oracle callers (fill_vertical_span__t6502 etc.) reuse the registers this leaves
- * — Y = byte offset, X = mask index — for a following plot_glyph_pixel_masked, so reproduce them. */
+ * — Y = byte offset, X = mask index — for a following plot_masked_pixel, so reproduce them. */
 void plot_pixel_masked(void) {
     uint8_t col = cpu.A;
     uint8_t byteOff = (uint8_t)(col >> 1);
     uint8_t maskSel = (col & 1u) ? (uint8_t)(draw_color_idx + 9u) : draw_color_idx;
-    plot_glyph_pixel_masked_core((uint16_t)(sync_flag | (dl_ptr_lo << 8)), byteOff, maskSel);
+    plot_masked_pixel_core((uint16_t)(sync_flag | (dl_ptr_lo << 8)), byteOff, maskSel);
     cpu.Y = byteOff;
     cpu.X = maskSel;
 }
@@ -655,14 +655,14 @@ void set_row_ptr_from_count(void) {
 /* fill_vertical_span @ $669C — plot a vertical run of pixels down rows $009F..$009E.
  * Per row: set the row pointer $80/$81 from the addr table, then masked-plot column
  * $009C (plot_pixel_masked, which also leaves the mask index in cpu.X) and the glyph
- * column $009D>>1 reusing that mask (plot_glyph_pixel_masked).  $00DF = $009E-$009F
+ * column $009D>>1 reusing that mask (plot_masked_pixel).  $00DF = $009E-$009F
  * is the inclusive row count; $0084 walks the row index.
  *
  * Typed core: within one call the two columns, the (shared) mask index and its OR/AND
  * mask bytes, and the byte offsets within a row are all loop-invariant — only the row
  * base changes.  Hoist them into locals so the per-row body is two addr-table reads +
  * two direct RAM read-modify-writes, instead of re-reading volatile zero page + the
- * mask tables on every pixel via plot_pixel_masked/plot_glyph_pixel_masked.  The screen
+ * mask tables on every pixel via plot_pixel_masked/plot_masked_pixel.  The screen
  * field ($1000/$2000) is RAM, so the plots go straight to mem[].  Domain: rows r0<=r1
  * indexing the $073D/$0793 table into bitmap RAM (the real caller's contract — see the
  * fixture in tools/validate_native.c).  This was the bulk of the pre-door ring-draw
@@ -986,10 +986,10 @@ void scroll_field_columns(void) {
     scroll_field_columns_core(cpu.A);
 }
 
-/* draw_shape_rows_loop @ $6620 — for 86 rows ($0092=$55..$00) set the row pointer
+/* draw_frame_guide_columns @ $6620 — for 86 rows ($0092=$55..$00) set the row pointer
  * from the row counter, then masked-plot three columns ($009C, $009D, and
  * $00A0=$009D+1) into that row.  Tail of draw_frame_pattern_seq. */
-void draw_shape_rows_loop(void) {
+void draw_frame_guide_columns(void) {
     uint8_t colL = draw_x_left, colR = draw_x_right;
     uint8_t colR1 = (uint8_t)(colR + 1);
     uint8_t colour = draw_color_idx;
@@ -1016,7 +1016,7 @@ void draw_shape_rows_loop(void) {
  * init_row_coords_9c seeds the edge coords, loop $00A0+1 (=20) times: read the next
  * span count from the $6E0F pattern table into $0096, draw one symmetric span pair,
  * and cycle the pattern selector $0094 through 1..6.  Finally DEC $0094 and tail
- * draw_shape_rows_loop.  (Entry A=$01 is positive so the $6602 BMI never fires.) */
+ * draw_frame_guide_columns.  (Entry A=$01 is positive so the $6602 BMI never fires.) */
 void draw_frame_pattern_seq(void) {
     init_row_coords_9c();                                 /* seed the four edge coords $9C-$9F */
     draw_color_idx = 0x01;
@@ -1032,7 +1032,7 @@ void draw_frame_pattern_seq(void) {
         draw_color_idx = colour;
     }
     draw_color_idx = (uint8_t)(colour - 1);               /* faithful: final DEC $0094 */
-    draw_shape_rows_loop();                                /* tail: the three vertical guide columns */
+    draw_frame_guide_columns();                                /* tail: the three vertical guide columns */
 }
 
 /* draw_vline_pair @ $6C4D — plot a symmetric pair of vertical lines.  Entry A is the
@@ -6938,7 +6938,7 @@ static void ring_push_marked_core(uint8_t value)             { cpu.X = value;   
  *     state $80      random blink: flip one cell's colour bit each timer tick
  *     state $81..    reverse sweep: clear the cells one per phase tick, back toward off
  * The standby VBI runs this through the planet descent; the flight VBI runs it via
- * obj_state_dispatch_0043.  Every glyph write calls platform_lockon_changed() (a no-op on
+ * lock_on_indicator_dispatch.  Every glyph write calls platform_lockon_changed() (a no-op on
  * the host/SDL build) so the Amiga cockpit decoder re-renders the strip — the transpiled
  * originals raised no such dirty signal, which froze the lights once flight began.
  * ========================================================================================= */
@@ -6962,10 +6962,10 @@ void lock_on_indicator_write_cell(void) {   /* 6502 ABI: A = glyph, Y = cell ind
     lock_on_indicator_write_cell_core(cpu.Y, cpu.A);
 }
 
-/* $4258 game_sub_4258 — light all six indicator glyphs ($A9) at once: the fill sweep's
+/* $4258 lock_on_indicator_fill_cells — light all six indicator glyphs ($A9) at once: the fill sweep's
  * opening frame, also used to (re)initialise the strip at game start.
- * (Misnamed "game_sub_4258" — really lock_on_indicator_fill_cells; see docs/rename.md.) */
-void game_sub_4258(void) {
+ * (Misnamed "lock_on_indicator_fill_cells" — really lock_on_indicator_fill_cells; see docs/rename.md.) */
+void lock_on_indicator_fill_cells(void) {
     for (uint8_t i = 0; i <= 5; i++) lockon_write((uint16_t)(0x3492u + i), 0xA9);
 }
 
@@ -7024,12 +7024,12 @@ void lock_on_indicator_tick(void) {
     mem[MEM_lock_on_indicator_active] = 0;
     mem[MEM_lock_on_indicator_state]++;                      /* -> state 1 */
     mem[MEM_anim_step_timer] = mem[MEM_lockon_step_reload];
-    game_sub_4258();                                         /* light all six glyphs */
+    lock_on_indicator_fill_cells();                                         /* light all six glyphs */
 }
 
-/* $4225 obj_state_dispatch_0043 — the flight/standby entry point.  While an event owns the
+/* $4225 lock_on_indicator_dispatch — the flight/standby entry point.  While an event owns the
  * indicator ($0043 != 0) it stays put; otherwise it runs one tick of the animation. */
-void obj_state_dispatch_0043(void) {
+void lock_on_indicator_dispatch(void) {
     if (mem[MEM_event_active_flag] != 0) return;
     lock_on_indicator_tick();
 }
@@ -7187,7 +7187,7 @@ void vbi_handler_flight(void) {
     } else {
         /* ===== "sim" frame: target/lock-on logic, then the motion sim + terrain + HUD ===== */
         VP_T0();
-        obj_state_dispatch_0043();   /* native: flags platform_lockon_changed() at each cell write */
+        lock_on_indicator_dispatch();   /* native: flags platform_lockon_changed() at each cell write */
         lock_on_indicator_tick_parity = 0x02;        /* reload the parity counter */
 
         /* Decide where this frame joins the common chain:
@@ -7320,7 +7320,7 @@ void vbi_handler_flight(void) {
  * Amiga frame (VBI tick + render) per iteration so the display animates and the
  * async $4FF5 flight ISR keeps advancing RTCLOK while we wait.
  *
- * Faithful to the Atari's wait_frames_4c ($3CB2): zero the RTCLOK low byte, then
+ * Faithful to the Atari's wait_timer_4c_frames ($3CB2): zero the RTCLOK low byte, then
  * count up to `frames`.  The 6502 loops on an EXACT-equality test (CMP $14 / BNE),
  * safe on hardware because the CPU polls $14 thousands of times per frame so it
  * never skips the target value.  On the Amiga RTCLOK is bumped asynchronously by
@@ -7340,21 +7340,21 @@ static void wait_frames_core(uint8_t frames) {
     }
 }
 
-/* wait_frames_4c @ $3CB2 — wait the caller-set frame count in timer_4C ($4C) of
- * vertical-blank periods.  Every caller entry ($3CB1 push_a_wait_frames, $3CBE,
+/* wait_timer_4c_frames @ $3CB2 — wait the caller-set frame count in frame_wait_count ($4C) of
+ * vertical-blank periods.  Every caller entry ($3CB1 wait_frames, $3CBE,
  * $3CC3, $3CCA..$3CD9) PHA's the accumulator before routing here; the closing PLA
  * restores it, so the accumulator survives the wait.  (No hardware writes: it only
  * touches the RTCLOK/timer zero-page cells, so nothing to shed on the Amiga.) */
-void wait_frames_4c(void) {
-    wait_frames_core(timer_4C);
+void wait_timer_4c_frames(void) {
+    wait_frames_core(frame_wait_count);
     PLA();                               /* restore the accumulator each caller PHA'd */
 }
 
-/* push_a_wait_frames @ $3CB1 — preserve the accumulator across a timer_4C-frame
- * wait: PHA, then fall into wait_frames_4c (which PLA's it back on exit). */
-void push_a_wait_frames(void) {
+/* wait_frames @ $3CB1 — preserve the accumulator across a frame_wait_count-frame
+ * wait: PHA, then fall into wait_timer_4c_frames (which PLA's it back on exit). */
+void wait_frames(void) {
     PHA();
-    wait_frames_4c();
+    wait_timer_4c_frames();
 }
 
 /* init_gameplay_state @ $73C8 — per-game/level gameplay init (run ONCE from
@@ -7363,8 +7363,8 @@ void push_a_wait_frames(void) {
  * initial horizon spans, RANDOM-seeds one flag, and tail-calls cockpit_dial_update.
  *
  * Every leaf it calls is already native; this twin just sheds the $73C8 body.
- * NOT validated by `make validate`: like the apex it calls push_a_wait_frames
- * (the wait_frames_4c spin-pacer — a deliberate ~$1E-frame delay driven by the
+ * NOT validated by `make validate`: like the apex it calls wait_frames
+ * (the wait_timer_4c_frames spin-pacer — a deliberate ~$1E-frame delay driven by the
  * SPINWAIT hook), which would hang the equivalence harness.  Verified on FS-UAE.
  * Faithful 1:1 with the $73C8 disasm; mem[$004C] (set once to $1E here, never
  * re-written) is the wait target for all four waits, and A round-trips PHA/PLA. */
@@ -7381,8 +7381,8 @@ void init_gameplay_state(void) {
     throttle_accum_hi = 0x4D;                                /* 73eb */
     terrain_depth_step = 0x4F;                                /* 73ef */
     sfx_voice_distortion = 0x1E;                                /* 73f3 */
-    timer_4C = 0x1E;                                /* 73f6 — wait_frames_4c target (all 4 waits) */
-    cpu.A = 0x1E; push_a_wait_frames();                 /* 73f8 — A preserved (PHA/PLA) */
+    frame_wait_count = 0x1E;                                /* 73f6 — wait_timer_4c_frames target (all 4 waits) */
+    cpu.A = 0x1E; wait_frames();                 /* 73f8 — A preserved (PHA/PLA) */
     for (int y = 0x1E; y >= 0; y--)                    /* 73fb TAY (Y=A=$1E); 73fe Y=$1E..0 */
         mem[0x0E94 + y] = 0xFF;
     for (int y = 0x5F; y >= 0; y--)                    /* 7406 Y=$5F..0 */
@@ -7394,15 +7394,15 @@ void init_gameplay_state(void) {
     for (int y = 0x37; y >= 0; y--)                    /* 7419 Y=$37..0 */
         mem[0x0B98 + y] = 0xC0;
     mem[0x004D] = 0xC0;                                /* 741f */
-    cpu.A = 0xC0; push_a_wait_frames();                 /* 7421 */
+    cpu.A = 0xC0; wait_frames();                 /* 7421 */
     draw_compass_heading();                            /* 7424 */
     unpack_bitmap_4d3e();                              /* 7427 */
-    push_a_wait_frames();                               /* 742a */
+    wait_frames();                               /* 742a */
     init_cockpit_bar_cells();                          /* 742d */
-    push_a_wait_frames();                               /* 7430 */
+    wait_frames();                               /* 7430 */
     cpu.A = 0x00; cpu.X = 0x00; cpu.Y = 0x00; game_sub_451d();   /* 7433-7437 */
     cpu.A = 0x38; cpu.X = 0x04; cpu.Y = 0x10; game_sub_451d();   /* 743a-7440 */
-    push_a_wait_frames();                               /* 7443 */
+    wait_frames();                               /* 7443 */
     roll_pos_hi = 0xF4;                                /* 7446 */
     draw_pattern_byte = 0x91;                                /* 744a */
     obj_pos_hi = 0x0B;                                /* 744e */
@@ -7421,8 +7421,8 @@ void init_gameplay_state(void) {
  * which would hang the equivalence harness.  Correctness is verified on FS-UAE by
  * behaviour, exactly like RescueOnFractalus::run().  This is a FAITHFUL
  * transcription of the $5F1D transliteration: cpu/mem state is preserved bit-for-
- * bit so the (still-transpiled) leaf callees and the wait_frames_NN / clear_colors /
- * push_a_wait_frames frame primitives behave identically.  Each original spin-wait
+ * bit so the (still-transpiled) leaf callees and the wait_frames_NN / wait_frames_1 /
+ * wait_frames frame primitives behave identically.  Each original spin-wait
  * SPINWAIT-hook point becomes one real Amiga frame via ds_frame() (the same
  * platform_tick_vbi + platform_render_frame the transpiler injected); the PHA-based
  * frame primitives drive frames internally and are called as-is.
@@ -7527,7 +7527,7 @@ void display_setup(void) {
     HW_WRITE(0xD002, 0x2D);              /* HPOSP2 */
     mem[0x00B5] = 0xBE;
     HW_WRITE(0xD003, 0xBE);              /* HPOSP3 */
-    clear_colors();
+    wait_frames_1();
     HW_WRITE(0xD40E, 0xC0);             /* NMIEN */
     bus_write(0x022F, 0x3F);            /* SDMCTL shadow */
     HW_WRITE(0xD01D, 0x03);             /* GRACTL */
@@ -7562,7 +7562,7 @@ void display_setup(void) {
         do {                                   /* fill $08D4 + clear colours, idx..$0E */
             cpu.A = idx;                        /* fill_buf_08d4 takes its fill value in A */
             fill_buf_08d4();
-            clear_colors();
+            wait_frames_1();
         } while (++idx != 0x0F);
     }
     build_line_addr_table_1000();
@@ -7587,17 +7587,17 @@ void display_setup(void) {
         uint8_t x = 0x0E;
         do {
             mem[0x08D4 + y] = x;
-            cpu.A = x;                    /* push_a_wait_frames takes its value in A */
-            push_a_wait_frames();
+            cpu.A = x;                    /* wait_frames takes its value in A */
+            wait_frames();
         } while (!(--x & 0x80));
     }
     fill_region_2000();
-    cpu.A = 0x03;                         /* A=3 feeds push_a_wait_frames throughout the loop */
-    timer_4C = 0x03;
+    cpu.A = 0x03;                         /* A=3 feeds wait_frames throughout the loop */
+    frame_wait_count = 0x03;
     mem[0x27A3] = 0x03;
     for (uint8_t y = 0x90; y != 0x9B; y++) {       /* sweep $08D9 = $90..$9A, one frame each */
         mem[0x08D9] = y;
-        push_a_wait_frames();
+        wait_frames();
     }
     init_terrain_dl();
     for (int i = 0; i <= 5; i++)          /* L_6090 */
@@ -7635,9 +7635,9 @@ void display_setup(void) {
     display_flags = 0xC0;
     /* spin until the VBI clears step_mode_flag ($008D) */
     while (step_mode_flag != 0) ds_frame();
-    draw_shape_rows_loop();
+    draw_frame_guide_columns();
     for (uint8_t y = 0; y != 0x08; y++) {  /* clear colours + fill wedge buffers $0C88/$0D88[0..7] = $FF */
-        clear_colors();
+        wait_frames_1();
         mem[0x0C88 + y] = 0xFF;
         mem[0x0D88 + y] = 0xFF;
     }
@@ -7774,14 +7774,14 @@ L_622d:
     audf2_sweep_step = 0x01;
 L_6244:
     cpu.Y = frame_counter;                /* $6595,Y and $8B fed to dl_index_dec */
-    timer_4C = mem[0x6595 + frame_counter];
+    frame_wait_count = mem[0x6595 + frame_counter];
     audf2_sweep_clear_colors();
     dl_src_index = draw_pattern_byte;
     dl_index_dec();
     dl_src_index = 0;
     draw_pattern_byte--;                  /* $B9 */
     if (++frame_counter != 0x13) goto L_6244;   /* $B7 */
-    push_a_wait_frames();
+    wait_frames();
     dl_src_index = 0x53;
 L_6268:
     cpu.X = 0x05;
@@ -7813,18 +7813,18 @@ L_62b4:
     audf2_sweep_step = 0xFF;
 L_62b9:
     cpu.Y = draw_pattern_byte;            /* $6598,Y and $8B fed to dl_index_dec */
-    timer_4C = mem[0x6598 + draw_pattern_byte];
+    frame_wait_count = mem[0x6598 + draw_pattern_byte];
     dl_src_index = draw_pattern_byte;
     dl_index_dec();
     dl_src_index = 0;
     audf2_sweep_clear_colors();
     if (--draw_pattern_byte != 0) goto L_62b9;   /* $B9 */
-    timer_4C++;
-    push_a_wait_frames();
+    frame_wait_count++;
+    wait_frames();
     cpu.A = 0x55;                        /* shift_object_table_up takes A */
     shift_object_table_up();
-    timer_4C = (uint8_t)(timer_4C << 1);  /* ASL $4C */
-    push_a_wait_frames();
+    frame_wait_count = (uint8_t)(frame_wait_count << 1);  /* ASL $4C */
+    wait_frames();
     dl_index_dec_or_reset();
     bus_write(0xD203, 0);                /* POKEY */
 L_62e7:
@@ -8006,14 +8006,14 @@ L_63a7:
     cpu.A = 0x01;                        /* set_hud_fields_678_679 takes A */
     set_hud_fields_678_679();
     vbi_flags = 0x01;
-    timer_4C = 0x0F;
+    frame_wait_count = 0x0F;
 #ifdef ROF_FLIGHT_PROBE
       g_sbATicks = rof_subclock() - _a0; g_sbAIsr = g_isrBeamLines - _ai; }
 #endif
     do {                                 /* wait out the door-swoosh, decrementing $0677 to 8 */
-        push_a_wait_frames();
+        wait_frames();
         if (mem[0x0677] == 0x08)
-            timer_4C = 0x01;
+            frame_wait_count = 0x01;
         else
             mem[0x0677]--;
     } while (vbi_flags != 0);
@@ -8142,7 +8142,7 @@ L_63a7:
  * state, and never returns), verified on FS-UAE.  Faithful transcription preserving
  * cpu/mem so the (mostly-native) leaf callees behave identically; the two hooked
  * spin labels L_3eba/L_3f6d become one real Amiga frame via ds_frame(); the
- * wait_vcount_30/wait_frames_10/clear_colors/push_a_wait_frames frame primitives drive
+ * wait_vcount_30/wait_frames_10/wait_frames_1/wait_frames frame primitives drive
  * frames internally and are called as-is.  No leaf exit-register is consumed here
  * (every post-call read reloads from mem), so no fidelity fix-ups are needed. */
 void game_main_loop(void) {
@@ -8177,7 +8177,7 @@ void game_main_loop(void) {
     if (!cpu.Z) {                        /* L_3dae: skip when cockpit_flag == 0 */
         cockpit_display();
     }
-    game_sub_4258();
+    lock_on_indicator_fill_cells();
     LDY(0x09);
     draw_dial_bar_column();
     game_sub_4606();
@@ -8212,7 +8212,7 @@ void game_main_loop(void) {
 #endif
     LDA(0x2A);
     clear_pm_state();                    /* consumes A */
-    clear_colors();
+    wait_frames_1();
     dl_param_lo = 0x0D;
     dl_param_hi = 0x35;
     frame_counter = 0;
@@ -8390,8 +8390,8 @@ void game_main_loop(void) {
     game_phase_flag = cpu.A;
     wait_frames_10();
     joystick_saved = cpu.A;
-    push_a_wait_frames();
-    { uint8_t fill = cpu.A;              /* A threaded through push_a_wait_frames (PHA/PLA) */
+    wait_frames();
+    { uint8_t fill = cpu.A;              /* A threaded through wait_frames (PHA/PLA) */
       for (int i = 1; i <= 0xA3; i++)    /* L_3f86 (store-first/!Z: offset 0 left intact) */
           mem[0x0F1D + i] = fill;
       for (int i = 0; i <= 0x1E; i++)    /* L_3f8e (store-first/!N: offsets 0..$1E) */

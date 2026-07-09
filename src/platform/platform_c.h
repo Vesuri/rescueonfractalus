@@ -62,7 +62,7 @@ void platform_compass_changed(void);
 
 /* Notification that the enemy lock-on indicator cells $3491-$3497 (mode-4, #11) were
    rewritten by the lock-on animation (lock_on_indicator_tick / _step / _phase_advance).
-   The in-flight VBI drives this every other frame through obj_state_dispatch_0043 ($4225);
+   The in-flight VBI drives this every other frame through lock_on_indicator_dispatch ($4225);
    the transpiled writers don't raise a dirty flag on their own, so the flight path calls
    this to flag the 7 cells for re-decode (during the planet descent the indicator keeps
    randomly blinking — faithful to the Atari).  No-op on the host/SDL build. */

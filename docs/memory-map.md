@@ -49,7 +49,7 @@ $C000–$FFFF   OS ROM area     — OS ROM + hardware registers ($D000–$D7FF)
 | `$47` | player_dir | Direction or facing |
 | `$49/$4A` | joystick_raw/saved | Joystick + processed value; $49 → $061D at entry start |
 | `$4B` | collision_flags | BIT-tested in startup_init (bit 7 = PM collision?) |
-| `$4C` | timer_4C | General-purpose counter/timer (12 writes across subs) |
+| `$4C` | frame_wait_count | General-purpose counter/timer (12 writes across subs) |
 | `$6C` | game_var_6C | Zeroed at $3D42 in game_entry |
 | `$6D` | game_var_6D | Set $04 then cleared; loop counter in game_entry init |
 | `$71` | display_flags | $C0 at init → $00 attract → $2A game mode flags |

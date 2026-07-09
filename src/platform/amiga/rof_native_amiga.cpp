@@ -521,8 +521,8 @@ extern "C" void startup_init_native(void)
 }
 
 // The lock-on indicator animation ($4229 and its cluster) is now a validated native twin
-// in rof_native.c (obj_state_dispatch_0043 / lock_on_indicator_tick / _step / _write_cell /
-// _phase_advance / game_sub_4258), byte-identical to the 6502 oracle and driving
+// in rof_native.c (lock_on_indicator_dispatch / lock_on_indicator_tick / _step / _write_cell /
+// _phase_advance / lock_on_indicator_fill_cells), byte-identical to the 6502 oracle and driving
 // platform_lockon_changed() at each glyph write.  The old hand-written twin here was an
 // unvalidated approximation (wrong ring-push id + wrong cell index on the step/reverse-fill
 // paths); standby now calls the shared native lock_on_indicator_tick() below.
@@ -787,9 +787,9 @@ extern "C" void launch_anim_dispatch_native(void)
 // $009C-A0/$00B7-B9/$00DF) — re-seeded by the genuine display_setup launch path
 // before the door scroll runs.
 
-// plot_glyph_pixel_masked @ $66DE: OR then AND a pen into the screen byte at
+// plot_masked_pixel @ $66DE: OR then AND a pen into the screen byte at
 // ($0080)+yByte using the mask tables $66E9 (set) / $66FB (clear), indexed by x.
-static void plot_glyph_pixel_masked(uint8_t yByte, uint8_t x)
+static void plot_masked_pixel(uint8_t yByte, uint8_t x)
 {
     uint16_t a = (uint16_t)((mem[0x0080] | (mem[0x0081] << 8)) + yByte);
     mem[a] = (uint8_t)((mem[a] | mem[0x66E9 + x]) & mem[0x66FB + x]);
@@ -801,7 +801,7 @@ static void plot_glyph_pixel_masked(uint8_t yByte, uint8_t x)
 static uint8_t plot_pixel_masked(uint8_t col)
 {
     uint8_t x = (col & 1u) ? (uint8_t)(mem[0x0094] + 9u) : mem[0x0094];
-    plot_glyph_pixel_masked((uint8_t)(col >> 1), x);
+    plot_masked_pixel((uint8_t)(col >> 1), x);
     return x;
 }
 
@@ -832,7 +832,7 @@ static void fill_vertical_span(void)
         mem[0x0080] = mem[0x073D + y];
         mem[0x0081] = mem[0x0793 + y];
         uint8_t x = plot_pixel_masked(mem[0x009C]);                 // left edge
-        plot_glyph_pixel_masked((uint8_t)(mem[0x009D] >> 1), x);    // right edge, same mask
+        plot_masked_pixel((uint8_t)(mem[0x009D] >> 1), x);    // right edge, same mask
         mem[0x0084]++;
     } while (--cnt >= 0);
 }
@@ -849,9 +849,9 @@ static void draw_symmetric_span_loop(void)
     } while (--mem[0x0096] != 0);
 }
 
-// draw_shape_rows_loop @ $6620: three full-height vertical lines at columns $009C,
+// draw_frame_guide_columns @ $6620: three full-height vertical lines at columns $009C,
 // $009D and $009D+1 (the tunnel's vanishing-point verticals), in pen $0094.
-static void draw_shape_rows_loop(void)
+static void draw_frame_guide_columns(void)
 {
     mem[0x0092] = 0x55;
     mem[0x00A0] = (uint8_t)(mem[0x009D] + 1);
@@ -903,7 +903,7 @@ extern "C" void draw_tunnel_rings_native(void)
         if (++mem[0x0094] == 7u) mem[0x0094] = 1u;
     } while (((int8_t)--mem[0x00A0]) >= 0);
     mem[0x0094]--;
-    draw_shape_rows_loop();
+    draw_frame_guide_columns();
 }
 
 // standby_vbi_native: the faithful per-frame body of vbi_handler_standby ($52D7),
@@ -1001,7 +1001,7 @@ extern "C" unsigned short rof_beam_line(void) { return beam_line(); }
 extern "C" {
 // Flight init subroutines (game_entry $3E12-$3EA6) — genuine transpiled:
 void clear_pm_state(void);            // $3FBF: zero player/missile state + PCOLR shadows
-void clear_colors(void);              // $3CC3: zero colour shadows
+void wait_frames_1(void);              // $3CC3: zero colour shadows
 void init_terrain_render_buffers(void); // $753B: prime height-max ($250F-$260E=$FF) + clear $1070 terrain bitmap
 void fill_buffer2_region_ff(void);    // $45A1: fill 8x32 (stride 48) region at $2098 in the $2000 buffer with $FF
 void clear_terrain_lo_buffers(void);  // $6B63: zero $0E32/$0F32 buffers

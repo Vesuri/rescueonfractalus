@@ -609,7 +609,7 @@ static int test_game_sub_6811(void) {
     return mem_fail;
 }
 
-/* --- pixel/span plotter leaves (plot_glyph_pixel_masked, plot_pixel_masked, plot_pixel_2bpp,
+/* --- pixel/span plotter leaves (plot_masked_pixel, plot_pixel_masked, plot_pixel_2bpp,
  * fill_vertical_span, fill_horizontal_span).  Their real contract is plotting into the GTIA
  * screen field — through the $80/$81 row pointer or the $073D/$0793 addr table, both pointing
  * into bitmap RAM.  A fully-random mem[] instead aims them at random addresses (the $D000
@@ -658,8 +658,8 @@ static int test_fill_horizontal_span(void) {
     printf("fill_horizontal_span: %d cases, %d mem mismatch (must be 0), %d cpu diffs\n", N, mem_fail, cpu_diff);
     return mem_fail;
 }
-static int test_plot_glyph_pixel_masked(void) {
-    if (!want("plot_glyph_pixel_masked")) return 0;
+static int test_plot_masked_pixel(void) {
+    if (!want("plot_masked_pixel")) return 0;
     enum { N = 20000 };
     static uint8_t pre[65536];
     int mem_fail = 0, cpu_diff = 0, printed = 0;
@@ -669,10 +669,10 @@ static int test_plot_glyph_pixel_masked(void) {
         Cpu6502 c = zero_cpu();
         c.Y = (uint8_t)(xs() & 0x3F);                    /* byte offset 0..$3F */
         c.X = (uint8_t)(xs() & 0x1F);                    /* mask index 0..$1F */
-        mem_fail += diff_run("plot_glyph_pixel_masked", pre, c,
-                             plot_glyph_pixel_masked, plot_glyph_pixel_masked__t6502, t, &printed, &cpu_diff);
+        mem_fail += diff_run("plot_masked_pixel", pre, c,
+                             plot_masked_pixel, plot_masked_pixel__t6502, t, &printed, &cpu_diff);
     }
-    printf("plot_glyph_pixel_masked: %d cases, %d mem mismatch (must be 0), %d cpu diffs\n", N, mem_fail, cpu_diff);
+    printf("plot_masked_pixel: %d cases, %d mem mismatch (must be 0), %d cpu diffs\n", N, mem_fail, cpu_diff);
     return mem_fail;
 }
 static int test_plot_pixel_masked(void) {
@@ -1462,12 +1462,12 @@ static int test_draw_symmetric_span_loop(void) {
     return mem_fail;
 }
 
-/* --- draw_shape_rows_loop @ $6620: 86-row masked plot via the row-addr table.
+/* --- draw_frame_guide_columns @ $6620: 86-row masked plot via the row-addr table.
  * Same hazard as draw_symmetric_span_loop — random row pointers make plot_pixel_masked
  * overwrite the $0092 loop counter and hang both runs.  Seed the addr table into safe
  * bitmap RAM ($2000 + row*$28) and bound the plotted columns ($009C/$009D). --- */
-static int test_draw_shape_rows_loop(void) {
-    if (!want("draw_shape_rows_loop")) return 0;
+static int test_draw_frame_guide_columns(void) {
+    if (!want("draw_frame_guide_columns")) return 0;
     enum { N = 8000 };
     static uint8_t pre[65536];
     int mem_fail = 0, cpu_diff = 0, printed = 0;
@@ -1480,11 +1480,11 @@ static int test_draw_shape_rows_loop(void) {
         }
         pre[0x009C] = (uint8_t)(0x20 + (xs() & 0x1F));     /* plotted columns */
         pre[0x009D] = (uint8_t)(0x20 + (xs() & 0x1F));
-        mem_fail += diff_run("draw_shape_rows_loop", pre, zero_cpu(),
-                             draw_shape_rows_loop, draw_shape_rows_loop__t6502,
+        mem_fail += diff_run("draw_frame_guide_columns", pre, zero_cpu(),
+                             draw_frame_guide_columns, draw_frame_guide_columns__t6502,
                              t, &printed, &cpu_diff);
     }
-    printf("draw_shape_rows_loop: %d cases, %d mem mismatch (must be 0), %d cpu diffs\n",
+    printf("draw_frame_guide_columns: %d cases, %d mem mismatch (must be 0), %d cpu diffs\n",
            N, mem_fail, cpu_diff);
     return mem_fail;
 }
@@ -2116,9 +2116,9 @@ int main(int argc, char **argv) {
     /* enemy lock-on indicator animation cluster ($3491-$3497).  Random mem[] sweeps $007E
        across every state; the reg-taking members (step/write_cell/phase_advance) get random
        A/Y too.  All share the same seeded $D20A stream, so the blink path is deterministic. */
-    fails += test_mem_contract("obj_state_dispatch_0043", obj_state_dispatch_0043, obj_state_dispatch_0043__t6502);
+    fails += test_mem_contract("lock_on_indicator_dispatch", lock_on_indicator_dispatch, lock_on_indicator_dispatch__t6502);
     fails += test_mem_contract("lock_on_indicator_tick", lock_on_indicator_tick, lock_on_indicator_tick__t6502);
-    fails += test_mem_contract("game_sub_4258", game_sub_4258, game_sub_4258__t6502);
+    fails += test_mem_contract("lock_on_indicator_fill_cells", lock_on_indicator_fill_cells, lock_on_indicator_fill_cells__t6502);
     fails += test_mem_contract("lock_on_indicator_return", lock_on_indicator_return, lock_on_indicator_return__t6502);
     fails += test_mem_contract_regs("lock_on_indicator_step", lock_on_indicator_step, lock_on_indicator_step__t6502);
     fails += test_mem_contract_regs("lock_on_indicator_write_cell", lock_on_indicator_write_cell, lock_on_indicator_write_cell__t6502);
@@ -2143,7 +2143,7 @@ int main(int argc, char **argv) {
        addr table, so they use seeded fixtures (not fully-random mem[], which would aim them
        at the $D000 HW range + self-clobbering ZP that the idiomatic native cores don't model). */
     fails += test_fill_horizontal_span();
-    fails += test_plot_glyph_pixel_masked();
+    fails += test_plot_masked_pixel();
     fails += test_plot_pixel_masked();
     fails += test_mem_contract("set_row_ptr", set_row_ptr, set_row_ptr__t6502);
     fails += test_mem_contract("set_row_ptr_from_count", set_row_ptr_from_count, set_row_ptr_from_count__t6502);
@@ -2152,7 +2152,7 @@ int main(int argc, char **argv) {
     fails += test_draw_symmetric_span_loop();
     fails += test_mem_contract_regs("gen_terrain_column", gen_terrain_column, gen_terrain_column__t6502);
     fails += test_mem_contract("fill_terrain_columns", fill_terrain_columns, fill_terrain_columns__t6502);
-    fails += test_draw_shape_rows_loop();
+    fails += test_draw_frame_guide_columns();
     fails += test_draw_frame_pattern_seq();
     fails += test_draw_vline_pair();
     fails += test_update_object_distance();

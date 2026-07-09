@@ -171,7 +171,7 @@ Runs once before each life. Highlights:
 - Program POKEY (`AUDCTL`, dividers), then the subsystem inits
   `game_init_7813 / 77DF / 7588 / 76CB`, `loader_util ($3C00)`.
 - If `cockpit_flag ($060B) ≠ 0` → `cockpit_display ($587B)`.
-- `game_sub_4258`, `game_sub_43CB`, `game_sub_4606`, `game_sub_4447`.
+- `lock_on_indicator_fill_cells`, `game_sub_43CB`, `game_sub_4606`, `game_sub_4447`.
 - Copy 9-byte display-param block `$4DF1→$00CF`; seed scores `$0663/066A/066B`;
   `startup_init ($3FFA)`; `input_init ($581C)` twice (X=$1F, X=$20).
 
@@ -184,7 +184,7 @@ does `goto L_3e0f`). Each pass:
   copies), PMG bases and colours. The flight terrain is ANTIC mode D (GR.7)
   4-colour with per-row LMS, re-projected each frame — see `hw-techniques.md`
   §1.3.
-- `clear_pm_state`, `clear_colors`; zero ZP scratch (`$0020+`), zero `$2830+`.
+- `clear_pm_state`, `wait_frames_1`; zero ZP scratch (`$0020+`), zero `$2830+`.
 - `game_init_753B`, `game_init_45A1`, `clear_terrain_lo_buffers`,
   `game_init_7558`.
 - Hand-off VBI to `$4FF5` (`vbi_handler_2`) at scanline `$45`; install the
@@ -274,7 +274,7 @@ loop). Every cinematic-phase call stack ends in `… → game_main_loop+$CA`
 (`$3E12`, the return from that call) **→ a `display_setup+<offset>` frame whose
 offset increases monotonically as the cinematic advances**. So `display_setup`
 walks linearly through its body (`≈$634D → $6585`), drawing one phase, waiting a
-few frames (`wait_frames_4c $3CB2`), then the next — a scripted sequence. When it
+few frames (`wait_timer_4c_frames $3CB2`), then the next — a scripted sequence. When it
 returns, `game_main_loop` drops into the flight loop (`L_3eba`) and gameplay
 begins.
 
@@ -284,8 +284,8 @@ Recovered by reconstructing the **6502 call stack** from each phase savestate
 | Phase | `display_setup` position | Render routines on the stack (innermost → out) | DLI (`VDSLST`) |
 |---|---|---|---|
 | **Title** | waits for START at `$5A78` (`LDA $D01F` CONSOL poll) | static title; `dli_handler_game`/`vbi_deferred_dispatch` hold the image | `$6CAD` |
-| **STAND BY / doors** | `+$501` (`$641E`) | **`unpack_bitmap_4d3e $74D7`** (RLE-expand the door bitmap) → **`scroll_terrain_dl $6953`** (animate the LMS ring) → `audf2_sweep_clear_colors`; `wait_frames_4c` | `$6CAD` |
-| **Tunnel** | `+$596` (`$64B3`) | **`unpack_bitmap_4d3e`** → `step_accum_add_75` → `copy_bytes_to_dst` → `terrain_sub_B172`; `wait_frames_4c` | `$6CAD` |
+| **STAND BY / doors** | `+$501` (`$641E`) | **`unpack_bitmap_4d3e $74D7`** (RLE-expand the door bitmap) → **`scroll_terrain_dl $6953`** (animate the LMS ring) → `audf2_sweep_clear_colors`; `wait_timer_4c_frames` | `$6CAD` |
+| **Tunnel** | `+$596` (`$64B3`) | **`unpack_bitmap_4d3e`** → `step_accum_add_75` → `copy_bytes_to_dst` → `terrain_sub_B172`; `wait_timer_4c_frames` | `$6CAD` |
 | **Stars / space** | `+$652` (`$656F`) | **`draw_symmetric_span_loop $6642`** → **`fill_vertical_span`** → **`scroll_field_columns`** → `game_sub_4f3f` | `$6CC2` |
 | **Planet** | `+$668` (`$6585`) | **`gen_terrain_column`** + **`draw_vline_pair $6C4D`** + **`draw_player3_object $42A7`** + `advance_object_positions`/`update_object_distance` (planet as a scaled object) | `$6CC2` |
 | **Gameplay** | — (returned; now in `L_3eba`) | **`terrain_gen_1`** → `setup_projection_params` → `compute_heading_sincos`; `update_gauge_digits`, `game_sub_4606` | `$49EE` |

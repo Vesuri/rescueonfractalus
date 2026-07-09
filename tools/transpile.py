@@ -179,18 +179,18 @@ VALIDATE_FUNCS = {
     0x712D,  # audio_timer_setup — zero $00E7/$0655/$00E5 + POKEY timers $D201-$D207, AUDCTL=$60 (leaf; POKEY via bus_write)
     0x6B47,  # random_terrain_height — 2 RANDOM reads -> sparse height (result in A; seeded-LFSR test)
     0x665D,  # fill_horizontal_span — write pattern $00B9 across a row span into two row ptrs (leaf)
-    0x66DE,  # plot_glyph_pixel_masked — OR/AND a 2-bit pixel into ($80)+Y via mask tbls $66E9/$66FB (leaf, entry X/Y)
-    0x66D5,  # plot_pixel_masked — A=col -> Y/X mask index, tail plot_glyph_pixel_masked (entry A)
+    0x66DE,  # plot_masked_pixel — OR/AND a 2-bit pixel into ($80)+Y via mask tbls $66E9/$66FB (leaf, entry X/Y)
+    0x66D5,  # plot_pixel_masked — A=col -> Y/X mask index, tail plot_masked_pixel (entry A)
     0x66C8,  # set_row_ptr — $80/$81 = addr-table[Y] (leaf, entry Y)
     0x66C6,  # set_row_ptr_from_count — Y=$0092, tail set_row_ptr
-    0x669C,  # fill_vertical_span — per-row masked plot of cols $9C/$9D via plot_pixel_masked/plot_glyph_pixel_masked
+    0x669C,  # fill_vertical_span — per-row masked plot of cols $9C/$9D via plot_pixel_masked/plot_masked_pixel
     0x6C92,  # plot_pixel_2bpp — 4x ROL 2bpp pack of ($80)+Y, mask via BIT $0082 (leaf, entry Y+carry; preserves X)
     0x6642,  # draw_symmetric_span_loop — $0096x {fill_horizontal_span + fill_vertical_span}, steps coords $9C-$9F
     0x6B2E,  # gen_terrain_column — fill one column (Y) of 4 buffers $0C32/$0D32/$0E32/$0F32 via random_terrain_height
     0x6AE5,  # fill_terrain_columns — 89x gen_terrain_column over Y=$59..1 (RNG; direct buffer writes)
     0x6AEE,  # scroll_field_columns — $0089-gated stars/planet scroll: shift 4 buffers left 1 col + new col (VBI hot path)
-    0x6620,  # draw_shape_rows_loop — 86 rows: set_row_ptr_from_count + masked-plot cols $9C/$9D/$A0 (screen ptr)
-    0x65FB,  # draw_frame_pattern_seq — per-frame doors/tunnel drawer: 20x draw_symmetric_span_loop + tail draw_shape_rows_loop
+    0x6620,  # draw_frame_guide_columns — 86 rows: set_row_ptr_from_count + masked-plot cols $9C/$9D/$A0 (screen ptr)
+    0x65FB,  # draw_frame_pattern_seq — per-frame doors/tunnel drawer: 20x draw_symmetric_span_loop + tail draw_frame_guide_columns
     0x6C4D,  # draw_vline_pair — plot a symmetric pair of vertical lines (rows A..$00B8) via plot_pixel_2bpp/bus_write
     0x6BED,  # update_object_distance — clamped 16-bit dist subtract -> $08A4/$08A5[X]; up to 3 draw_vline_pair draws
     0x6BA8,  # advance_object_positions — INC $08D1, +$18 to $08D2/$08D3, then per slot (X=$2A..0 step2) update_object_distance
@@ -334,8 +334,8 @@ VALIDATE_FUNCS = {
     0x3D48,  # game_main_loop — one-time game init + L_3e0f display_setup + the in-game flight loop (never returns)
     # --- flight-init de-transpile (2026-06-22): the last transpiled orchestrator on the
     #     game/level-init path.  Every leaf it calls is already native; this just sheds the
-    #     $73C8 body itself.  Like the apex it calls the wait_frames_4c spin-pacer
-    #     (push_a_wait_frames) so it is NOT in `make validate` — verified on FS-UAE. ---
+    #     $73C8 body itself.  Like the apex it calls the wait_timer_4c_frames spin-pacer
+    #     (wait_frames) so it is NOT in `make validate` — verified on FS-UAE. ---
     0x73C8,  # init_gameplay_state — per-game/level init: seed heading/arrays, compass, cockpit bars; tail cockpit_dial_update
     # --- HW beam spin, hand-written in rof_native.c.  NOT in `make validate` (it busy-waits on
     #     the live ANTIC VCOUNT / real Amiga beam, which the headless harness can't reproduce);
@@ -345,16 +345,16 @@ VALIDATE_FUNCS = {
     #     `make validate` (they busy-wait on RTCLOK, advanced async by the $4FF5 ISR, which
     #     the headless harness can't reproduce); __t6502 oracles kept for reference only.
     #     The clean twins fold the 0x3CB8 SPINWAIT-hook overshoot mitigation into plain C. ---
-    0x3CB1,  # push_a_wait_frames — PHA, wait timer_4C ($4C) frames, PLA (accumulator preserved)
-    0x3CB2,  # wait_frames_4c — wait the caller-set timer_4C ($4C) count of vertical-blank periods
+    0x3CB1,  # wait_frames — PHA, wait frame_wait_count ($4C) frames, PLA (accumulator preserved)
+    0x3CB2,  # wait_timer_4c_frames — wait the caller-set frame_wait_count ($4C) count of vertical-blank periods
     # --- enemy lock-on indicator animation cluster (2026-07-06): the 6-light targeting
     #     indicator (#11, cells $3491-$3497).  Driven by both the standby VBI (planet
-    #     descent) and the flight VBI (via obj_state_dispatch_0043); the native twins
+    #     descent) and the flight VBI (via lock_on_indicator_dispatch); the native twins
     #     raise platform_lockon_changed() at each cell write so the Amiga re-decodes them
     #     (keeps the lights blinking through the descent — faithful to the Atari). ---
-    0x4225,  # obj_state_dispatch_0043 — gate on $0043: phase_advance vs lock_on_indicator_tick
+    0x4225,  # lock_on_indicator_dispatch — gate on $0043: phase_advance vs lock_on_indicator_tick
     0x4229,  # lock_on_indicator_tick — state machine on $007E (init / step / blink / reverse-fill)
-    0x4258,  # lock_on_indicator_fill_cells (game_sub_4258) — fill the 6 lit glyphs $3492-$3497
+    0x4258,  # lock_on_indicator_fill_cells (lock_on_indicator_fill_cells) — fill the 6 lit glyphs $3492-$3497
     0x4265,  # lock_on_indicator_step — advance one light per timer tick ($007E 1..7)
     0x4285,  # lock_on_indicator_write_cell — write a glyph to $3491+Y, then ring_push_marked X=$12
     0x428D,  # lock_on_indicator_return — empty RTS landing pad (shared exit)
@@ -375,7 +375,7 @@ SPINWAIT_HOOKS = {
     # the VBI fires (sets $0080 + RTCLOK); without it the loop is a frozen tight spin.
     0x1A18: 'platform_tick_vbi(); platform_render_frame();',
     0x3C75: 'platform_poll_events();',           # VCOUNT position wait
-    # RTCLOK frame wait (wait_frames_4c $3CB2): "wait N frames" -- STA $14=0 then spin until
+    # RTCLOK frame wait (wait_timer_4c_frames $3CB2): "wait N frames" -- STA $14=0 then spin until
     # RTCLOK_LOW($14) reaches target (A=$4C).  The 6502 uses an EXACT-equality exit (CMP $14 /
     # BNE), safe on HW because the CPU polls $14 thousands of times/frame so it never skips a
     # value.  On the Amiga port RTCLOK is advanced ASYNC by the $4FF5 flight ISR, and each spin

@@ -669,7 +669,7 @@ extern "C" void* g_quitJmp[5] = { 0, 0, 0, 0, 0 };
 // Render first so the display reflects the state the spin-wait just advanced, then
 // wait for the next real VBI (or return immediately if one already fired during
 // rendering).  After the wait, advance RTCLOK by exactly one — owned here rather
-// than in the ISR so the equality spin (wait_setcount $3CB2) always gets one advance
+// than in the ISR so the equality spin (wait_frames_set_count $3CB2) always gets one advance
 // per iteration regardless of how long rendering takes.
 // Exception: ATTRACT VBI ($1B30) bumps RTCLOK in its own transpiled body; skip here.
 void PlatformAmiga::renderFrame() {
@@ -824,7 +824,7 @@ void PlatformAmiga::compassChanged() {
 extern "C" volatile unsigned char g_ckLockon;
 void PlatformAmiga::lockonChanged() {
     // The enemy lock-on indicator cells $3491-$3497 were rewritten by the native lock-on
-    // animation twins (lock_on_indicator_tick / _step / _write_cell / game_sub_4258 in
+    // animation twins (lock_on_indicator_tick / _step / _write_cell / lock_on_indicator_fill_cells in
     // rof_native.c, driven by both the standby and flight VBIs).  Flag them so the next
     // renderFrame re-decodes those 7 cells — this keeps the indicator randomly blinking
     // through the planet descent and into flight.
