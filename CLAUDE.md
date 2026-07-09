@@ -90,7 +90,7 @@ in the 320×216 display space; use them to identify each instrument's Atari hard
 | 5 | **Dangerous Altitude** | 24,144 | 40×60 | mode-4 dial-bar cells (x≈24-32, e.g. `$3394`), lights near ground ✓ |
 | 6 | **Artificial Horizon** | 56,138 | 32×28 | **PMG (NOT cells)** — dial frame is static $33xx bitmap; brown ground fill is Atari player P2 (COLPM2=`$26`, SIZEP2 dbl, buffer `$0E92-$0EB2`), boundary moves with pitch. Amiga = 2 sprites (`buildAHSprite`). See [[flight-scene]]. ✓ |
 | 7 | **Altimeter** | 108,144 | 8×56 | **terrain-height bar = player P0** (`$0C98`, COLPM0 purple `$00D5`) + **ship-height bar = missile M3** (`$0B98`, light-blue `$00D6`). (CORRECTED 2026-07-07 from a firing capture — the old "P3 ship / P2 terrain, HPOSP2=`$00CB`" was WRONG: P3 is parked in flight and `$00CB` is the **laser shot**'s HPOSP2. See [[flight-pmg-map]].) |
-| 8 | **Targeting Scope** | 136,151 | 50×33 | centre-lower mode-4 **bitmap** cells (x≈136); locked-target blip = cells `$2E-$31` + a generic P3 dome blob (`38 7C FE FE FE`); a flying saucer also mirrors as **P3** here. FROZEN on Amiga (transpiled writer, no `g_ck*` dirty hook — lock-on fix pattern). ✓ (2026-07-07) |
+| 8 | **Targeting Scope** | 136,151 | 50×33 | centre-lower mode-4 **bitmap** cells (x≈136); locked-target blip = cells `$2E-$31` + a generic P3 dome blob (`38 7C FE FE FE`); a flying saucer also mirrors as **P3** here. ✓ blip renders/updates on Amiga (DONE 2026-07-09, user-confirmed — was frozen; fixed via the lock-on dirty-hook pattern). ✓ (2026-07-07) |
 | 9 | **Main Window** | — | — | the terrain viewport |
 | 10 | **Cross Hairs** | 136,69 | 50×37 | **a "+" of PMG missiles**: M2 = vertical stem @ HPOS `$80` (centre), two segments (`$0B4D-5A`+`$64-71`) w/ a horizon gap; M3 @ `$74` + M1 @ `$85` (quad-width, `SIZEM=$CC`) = horizontal arms, lit only at the gap-centre line (`$0B5F`). Set in flight VBI `$505F-$5071`. Colour = Atari `$26` salmon (NOT grey). Visibility = the HPOS gate: `$A49A` sets `mem[$2840]=($28FC==0)?$00:$74` (`$00`=off-screen/hidden). **✓ PORTED 2026-07-09 as a plane3 overlay** (NOT a sprite — plane3 is free in the terrain body; `color04-07`=`$26` when visible, =terrain pens `color00-03` when hidden). See [[flight-pmg-map]] §3. |
 | 11 | **Enemy Lock-On Indicator** | 136,193 | 48×6 | mode-4 cells `$3492-$3496` (`lock_on_indicator_tick $4229`, state `$007E`) ✓ |
@@ -113,15 +113,17 @@ and mirrored into the targeting scope (2nd P3 copy ~83 lines lower, scope-X via 
 Amiga reuse ch6/ch7 (altimeter, dashboard-only) via a copper `SPRxPT` mid-screen swap. **Ground objects
 (gun emplacement, base, downed pilot) = terrain BITMAP value-2/3** (`terrain_plot_object $A63B`, from
 `$0A00` map markers — pilot = `$64`); `terrain_plot_object $A63B` → `terrain_plot_pixel $A6D3` writes them
-into the mode-D field via `($80),Y`. ⚠ **These objects DO NOT render on the Amiga (root-caused 2026-07-09):
-`renderFlightDirect` no longer converts the mode-D field for the terrain body (rows 0–42) — the rasterizer
-writes plane2 dots straight to `g_flightDotPlane`, and the field is read only for the windscreen band. So
-object pixels written into the field are DROPPED. Fix: hook `terrain_plot_pixel` to also OR into
-`g_flightDotPlane` (mirror `ROF_PLOT_DOT`). See [[flight-pmg-map]].** (Flying saucers ARE fine — they're P3
-PMG sprites, ported.) The **downed-pilot "blink" is a COLOUR-REGISTER CYCLE on `$00D9`** (hue 9, luminance
-pulsing `$4`↔`$B`), NOT a graphics toggle → animate with a per-frame pen poke, don't redraw. **Flying saucer
+into the mode-D field via `($80),Y`. ✅ **These objects RENDER on the Amiga (DONE + user-confirmed 2026-07-09;
+perf could be better but they're visible).** `renderFlightDirect` no longer converts the mode-D field for the
+terrain body (rows 0–42) — the rasterizer writes plane2 dots straight to `g_flightDotPlane`, and the field is
+read only for the windscreen band — so object pixels written into the field were being DROPPED; fixed by
+hooking `terrain_plot_pixel` to also OR the object pixel into `g_flightDotPlane` (mirror `ROF_PLOT_DOT`, same
+kRow120/kColMask4 geometry). See [[flight-pmg-map]]. (Flying saucers ARE fine — they're P3 PMG sprites, ported.) The **downed-pilot "blink" is a COLOUR-REGISTER CYCLE on `$00D9`** (hue 9, luminance
+pulsing `$4`↔`$B`), NOT a graphics toggle → animated with a per-frame pen poke, don't redraw. **Flying saucer
 P3 + scope mirror + altimeter multiplex are DONE (user-confirmed 2026-07-09); the M2/M1/M3 crosshair "+"
-is DONE too (plane3 overlay, `$26` salmon, mem[$2840] visibility gate — user-confirmed 2026-07-09).**
+is DONE too (plane3 overlay, `$26` salmon, mem[$2840] visibility gate — user-confirmed 2026-07-09); the
+downed-pilot blink, the targeting-scope blip, and the ground objects (emplacement/pilot/base/enemy fire)
+all render on the Amiga too (user-confirmed 2026-07-09).**
 
 ## Controls (Atari manual → Amiga port)
 
