@@ -46,6 +46,10 @@ public:
     void setTerrainPalette(uint16_t pen0, uint16_t pen1, uint16_t pen2, uint16_t pen3);
     void setTerrainPen0(uint16_t pen0);                            // the fade-only fast path
     void setBandPalette(uint16_t grey);   // wing-band: color04 = frame grey (plane3); color00-03 inherit from terrain
+    // Crosshair (#10) plane3 palette (color04-07).  Visible = all four = the reticle salmon ($26);
+    // hidden = the four terrain pens (= color00-03) so the plane3 "+" reads identical to the terrain
+    // beneath it.  Gated on the Atari missile HPOS (mem[$2840]==0 ⇒ reticle pushed off-screen).
+    void setCrosshairPalette(uint16_t c04, uint16_t c05, uint16_t c06, uint16_t c07);
     void setHudSprite(int slot, const Sprite& s);                  // slot 0..7 sprite pointer
     void setShotColor(uint16_t c);                                 // COLOR27 (player laser shot, ch4 pen11)
     void setScopeP3Color(uint16_t c);                            // COLOR23 (Targeting-Scope P3 object, ch3 pen11, from $00D9)

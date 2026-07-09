@@ -37,6 +37,15 @@ state. The confident, conflict-free cells were drained 2026-07-09 (see the Appli
 across subsystems or needs a live check before a canonical name can be trusted. ✓=confident,
 ?=verify. Do NOT promote these without resolving the aliasing noted.
 
+**Misnamed (rename in a future batch):**
+- `$2840` `wing_bar_hpos_base` → **`crosshair_hpos_base`** (named 2026-06-30b, WRONG). It is the
+  Targeting-Crosshair (#10) HPOS base, NOT the wing-clearance bars (those are the mode-D band
+  BITMAP, per CLAUDE.md #3). The flight VBI ($505F) pushes `HPOSM3=mem[$2840]`, `M2=+$0C`, `M1=+$11`
+  (the "+" reticle's stem + arms); `$A49A` sets it `= ($28FC==0) ? $00 : $74` = the visibility gate
+  ($00 pushes the missiles off-screen). Confirmed: `flight1.bin`=$00 (hidden), `flight_saucer1`/
+  `flight_emplacement_scope`=$74 (visible). Also fix the `$00CD grafm_shadow` comment ($00CD is the
+  laser SIZEP2, per flight-pmg-map) and `$00CB hposp2_shadow` "wing-clearance" prose.
+
 **Aliased / dual-use cells (a single name would mislead one of the users):**
 - `$0037` (`cockpit_dial_update`/`vbi_handler_flight`) — pushed to COLPF1 ($D014) but also
   force-set to `$78` in the target-latch reset. Dual use unclear — verify before naming

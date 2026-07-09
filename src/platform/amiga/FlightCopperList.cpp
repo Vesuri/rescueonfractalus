@@ -83,7 +83,16 @@ static const uint16_t kColor31 = 0x1BE;   // pair 6/7 pen 11 (Main-Window P3 obj
 #define INDEX_VP_BPL          (INDEX_VP_WAIT + 1)          // 32: viewport 3bp ptrs (6)
 #define INDEX_VP_BPLCON0      (INDEX_VP_BPL + 6)           // 38: bplcon0 3P (1)
 #define INDEX_VP_PAL          (INDEX_VP_BPLCON0 + 1)       // 39: color00..03 (4)
-#define INDEX_VP_MOD0         (INDEX_VP_PAL + 4)           // 43: row-0 bpl1mod,bpl2mod (2)
+// Viewport plane3 palette = the targeting crosshair (#10) colour.  plane3 is 0 across the whole
+// terrain body (rows 0-42) EXCEPT where renderFlightDirect ORs in the M2/M1/M3 reticle, so setting
+// all of color04-07 = the reticle colour here makes a plane3 pixel read that colour solid over any
+// terrain in planes 1&2 (same trick as the band block below).  The Atari crosshair is missiles
+// M2 (vertical) + M1/M3 (horizontal arms); measured on-screen colour = Atari $26 (dark salmon,
+// #833c2d), a CONSTANT frame colour (the missiles are byte-identical across captures) — NOT the
+// windscreen-frame grey (that was the initial mistake).  Seeded once in buildLayout; the band
+// block below re-sets color04-07 to the frame grey at line 172, and the whole "+" is above that.
+#define INDEX_VP_CROSSHAIR    (INDEX_VP_PAL + 4)           // color04..07 = crosshair salmon $26 (4)
+#define INDEX_VP_MOD0         (INDEX_VP_CROSSHAIR + 4)     // row-0 bpl1mod,bpl2mod (2)
 #define INDEX_VP_LINEDOUBLE   (INDEX_VP_MOD0 + 2)          // 45: 93 × (WAIT+2 mod), +1 band block
 // The line-doubling loop runs k=1..kViewportHeight-1.  At k==kTerrainHeight (scanline 172) we
 // enter the wing-clearance band.  The terrain is rendered full-height across the whole band, so
@@ -235,6 +244,12 @@ void FlightCopperList::buildLayout(const Bitmap& title, const Bitmap& terrain, c
     // body, pen1 = sky, pen2 = dots, pen3 = highlight (NOT 0=background).  pen0 is the
     // salmon→brown fade target; seed the fully-faded values, the native code pokes them.
     setTerrainPalette(atariToOCS(0x14), atariToOCS(0x2A), atariToOCS(0x20), atariToOCS(0x18));
+    // Viewport plane3 palette = the crosshair colour (seed = salmon $26 = visible).  Poked per frame
+    // by setCrosshairPalette to gate reticle visibility (→ terrain pens when hidden; see the header).
+    d[INDEX_VP_CROSSHAIR + 0] = copperMove(color04, atariToOCS(0x26));
+    d[INDEX_VP_CROSSHAIR + 1] = copperMove(color05, atariToOCS(0x26));
+    d[INDEX_VP_CROSSHAIR + 2] = copperMove(color06, atariToOCS(0x26));
+    d[INDEX_VP_CROSSHAIR + 3] = copperMove(color07, atariToOCS(0x26));
     // Line doubling: each 120-byte interleaved row shown on 2 scanlines via bplmod toggle
     // (-40 rewind to repeat, +80 advance).  Row 0's -40 here; rows 1.. alternate.
     d[INDEX_VP_MOD0 + 0] = copperMove(bpl1mod, (uint16_t)-40);
@@ -311,6 +326,17 @@ void FlightCopperList::setBandPalette(uint16_t grey)
     data_[INDEX_BAND_BLOCK + 1] = copperMove(color05, grey);
     data_[INDEX_BAND_BLOCK + 2] = copperMove(color06, grey);
     data_[INDEX_BAND_BLOCK + 3] = copperMove(color07, grey);
+}
+
+// Crosshair plane3 palette (viewport color04-07).  See the header: visible → salmon ($26) ×4,
+// hidden → the terrain pens so the plane3 "+" vanishes into the terrain.  The band block overrides
+// color04-07 to grey at line 172, below the reticle, so this only affects the terrain body.
+void FlightCopperList::setCrosshairPalette(uint16_t c04, uint16_t c05, uint16_t c06, uint16_t c07)
+{
+    data_[INDEX_VP_CROSSHAIR + 0] = copperMove(color04, c04);
+    data_[INDEX_VP_CROSSHAIR + 1] = copperMove(color05, c05);
+    data_[INDEX_VP_CROSSHAIR + 2] = copperMove(color06, c06);
+    data_[INDEX_VP_CROSSHAIR + 3] = copperMove(color07, c07);
 }
 
 // ---- per-frame setters -------------------------------------------------------

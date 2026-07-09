@@ -1372,6 +1372,27 @@ void RescueOnFractalus::renderFlightDirect()
         g_objRowLo = 47; g_objRowHi = -1;                       // range consumed
     }
 
+    // Targeting crosshair (#10): the Atari's "+" reticle rendered into the otherwise-empty plane3
+    // of the terrain body (plane3 is 0 across rows 0-42; only the band below uses it).  The copper
+    // sets color04-07 in the viewport = the reticle salmon ($26, #833c2d) so a plane3 pixel reads
+    // that colour over any terrain in planes 1&2.  The "+" is missiles M2/M1/M3 (flight VBI
+    // $505F-$5071: HPOSM3=$74, HPOSM2=$80, HPOSM1=$85, SIZEM=$CC → M1/M3 quad-width); measured
+    // byte-identical across captures = a static frame element.  Geometry (column = HPOS-$30, one
+    // colour clock = one terrain column = 2 Amiga px = kColMask4[col&3]; row = (missile offset-$32)/2
+    // under the ×2 line-doubling):
+    //   • VERTICAL (M2 @ $80 = column 80): buffer $0B4D-$5A / $0B64-$71 → rows 13-20 / 25-31, gap at
+    //     the horizon (rows 21-24).
+    //   • HORIZONTAL arms at the gap-centre line (buffer $0B5F → row 22): M3 @ $74 quad = columns
+    //     68-75 (left), M1 @ $85 quad = columns 85-92 (right), leaving the centre gap around col 80.
+    {
+        uint8_t* const p3 = bp + 80;                            // plane3 base (offset 80 per 120B scanline)
+        for (int r = 13; r <= 20; r++) p3[r * 120 + 20] |= 0xC0u;   // vertical, upper (col 80)
+        for (int r = 25; r <= 31; r++) p3[r * 120 + 20] |= 0xC0u;   // vertical, lower
+        uint8_t* const h = p3 + 22 * 120;                       // horizontal arms, row 22
+        for (int c = 68; c <= 75; c++) h[c >> 2] |= kColMask4[c & 3];   // left arm (M3)
+        for (int c = 85; c <= 92; c++) h[c >> 2] |= kColMask4[c & 3];   // right arm (M1)
+    }
+
     // Windscreen-bottom band overlay (rows 43-46 = scanlines 172-179): the cockpit frame + the
     // wing-clearance bars, punched OVER the now-rendered terrain.  Source = the mode-D band field
     // mem[$1074+43*96] (double-buffer half via g_flightRenderHalf), written per frame by
@@ -1867,6 +1888,19 @@ void RescueOnFractalus::updateFlightCopper(bool force)
     if (force || band3 != flBand3) {
         flightCopper->setBandPalette(band3);
         flBand3 = band3;
+    }
+
+    // Targeting-crosshair (#10) visibility — faithful to the Atari missile HPOS gate.  The flight
+    // VBI ($505F) pushes HPOSM3=mem[$2840] / M2=+$0C / M1=+$11 every frame, and $A49A sets
+    // mem[$2840] = ($28FC==0) ? $00 : $74: at $74 the "+" sits at screen centre (visible), at $00 the
+    // three missiles sit off the left edge (hidden).  The plane3 "+" is drawn unconditionally
+    // (renderFlightDirect); we gate visibility purely by colour — visible → salmon $26; hidden →
+    // the terrain pens (color00-03) so the plane3 pixels read identical to the terrain = invisible.
+    if (mem[0x2840] != 0) {
+        const uint16_t cross = atariToOCS(0x26);
+        flightCopper->setCrosshairPalette(cross, cross, cross, cross);
+    } else {
+        flightCopper->setCrosshairPalette(terr0, terr1, terr2, terr3);
     }
 }
 
