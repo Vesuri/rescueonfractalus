@@ -92,7 +92,7 @@ in the 320×216 display space; use them to identify each instrument's Atari hard
 | 7 | **Altimeter** | 108,144 | 8×56 | **terrain-height bar = player P0** (`$0C98`, COLPM0 purple `$00D5`) + **ship-height bar = missile M3** (`$0B98`, light-blue `$00D6`). (CORRECTED 2026-07-07 from a firing capture — the old "P3 ship / P2 terrain, HPOSP2=`$00CB`" was WRONG: P3 is parked in flight and `$00CB` is the **laser shot**'s HPOSP2. See [[flight-pmg-map]].) |
 | 8 | **Targeting Scope** | 136,151 | 50×33 | centre-lower mode-4 **bitmap** cells (x≈136); locked-target blip = cells `$2E-$31` + a generic P3 dome blob (`38 7C FE FE FE`); a flying saucer also mirrors as **P3** here. FROZEN on Amiga (transpiled writer, no `g_ck*` dirty hook — lock-on fix pattern). ✓ (2026-07-07) |
 | 9 | **Main Window** | — | — | the terrain viewport |
-| 10 | **Cross Hairs** | 136,69 | 50×37 | **missile M2** vertical reticle @ HPOS `$80` (centre), two segments (`$0B4D-5A`+`$64-71`) with a centre gap; set in flight VBI `$505F-$5071` (`HPOSM3=mem[$2840]`, M2=+`$0C`, SIZEM=`$CC`). NOT ported to Amiga. ✓ (2026-07-07) |
+| 10 | **Cross Hairs** | 136,69 | 50×37 | **a "+" of PMG missiles**: M2 = vertical stem @ HPOS `$80` (centre), two segments (`$0B4D-5A`+`$64-71`) w/ a horizon gap; M3 @ `$74` + M1 @ `$85` (quad-width, `SIZEM=$CC`) = horizontal arms, lit only at the gap-centre line (`$0B5F`). Set in flight VBI `$505F-$5071`. Colour = Atari `$26` salmon (NOT grey). Visibility = the HPOS gate: `$A49A` sets `mem[$2840]=($28FC==0)?$00:$74` (`$00`=off-screen/hidden). **✓ PORTED 2026-07-09 as a plane3 overlay** (NOT a sprite — plane3 is free in the terrain body; `color04-07`=`$26` when visible, =terrain pens `color00-03` when hidden). See [[flight-pmg-map]] §3. |
 | 11 | **Enemy Lock-On Indicator** | 136,193 | 48×6 | mode-4 cells `$3492-$3496` (`lock_on_indicator_tick $4229`, state `$007E`) ✓ |
 | 12 | **Energy Level Indicator** | 204,144 | 8×56 | **P1 strip `$0D98`** gauge sprite, HPOSP1=`$00B5` (the working "right gauge") ✓ |
 | 13 | **Long Range Scanner** | 232,138 | 32×28 | mode-4 cells (x≈232) |
@@ -120,7 +120,8 @@ object pixels written into the field are DROPPED. Fix: hook `terrain_plot_pixel`
 `g_flightDotPlane` (mirror `ROF_PLOT_DOT`). See [[flight-pmg-map]].** (Flying saucers ARE fine — they're P3
 PMG sprites, ported.) The **downed-pilot "blink" is a COLOUR-REGISTER CYCLE on `$00D9`** (hue 9, luminance
 pulsing `$4`↔`$B`), NOT a graphics toggle → animate with a per-frame pen poke, don't redraw. **Flying saucer
-P3 + scope mirror + altimeter multiplex are DONE (user-confirmed 2026-07-09); M2 crosshairs not ported.**
+P3 + scope mirror + altimeter multiplex are DONE (user-confirmed 2026-07-09); the M2/M1/M3 crosshair "+"
+is DONE too (plane3 overlay, `$26` salmon, mem[$2840] visibility gate — user-confirmed 2026-07-09).**
 
 ## Controls (Atari manual → Amiga port)
 
