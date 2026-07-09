@@ -106,6 +106,8 @@ extern unsigned short rof_beam_line(void);
  * See RescueOnFractalus::renderFlightDirect. */
 #ifdef ROF_PLATFORM_AMIGA
 extern uint8_t* g_flightDotPlane;
+extern uint8_t* g_flightObjP1;    /* object plane1 overlay (value-3 low bit), applied post sky-fill */
+extern int g_objRowLo, g_objRowHi;
 extern const uint16_t kRow120[48];
 extern const uint8_t kColMask4[4];
 extern void rof_flight_wait_dotclear(void);
@@ -116,6 +118,18 @@ extern void rof_flight_wait_dotclear(void);
         if ((unsigned)_ac < 160u && (unsigned)_sc < 47u && _sc != 43) {  /* rows 0..46 except the $6b floor at 43 */ \
             g_flightDotPlane[kRow120[_sc] + (_ac >> 2)] |= kColMask4[_ac & 3]; \
         } } } while (0)
+/* Object value-3 low bit -> plane1 overlay (deferred to AFTER the sky fill; see g_flightObjP1 in
+ * RescueOnFractalus.cpp).  Same geometry as ROF_PLOT_DOT; tracks the dirty scanline range so the
+ * post-fill apply only walks the touched rows. */
+#define ROF_PLOT_DOT_P1(col, h) do { \
+    if (g_flightObjP1) { \
+        int _ac = (int)(col) - 48; \
+        int _sc = 150 - (int)(h); \
+        if ((unsigned)_ac < 160u && (unsigned)_sc < 47u && _sc != 43) { \
+            g_flightObjP1[kRow120[_sc] + (_ac >> 2)] |= kColMask4[_ac & 3]; \
+            if (_sc < g_objRowLo) g_objRowLo = _sc; \
+            if (_sc > g_objRowHi) g_objRowHi = _sc; \
+        } } } while (0)
 /* Amiga sheds the mode-D field entirely: the dots come from ROF_PLOT_DOT (plane2) and the sky
  * from $260E (blitterFillUp), so nothing reads the field — fill_terrain_silhouette is skipped and
  * the windscreen band is blanked (see game_main_loop + renderFlightDirect).  So the rasterizer's
@@ -124,6 +138,7 @@ extern void rof_flight_wait_dotclear(void);
 #define ROF_FIELD_PLOT(h) ((void)0)
 #else
 #define ROF_PLOT_DOT(col, h) ((void)0)
+#define ROF_PLOT_DOT_P1(col, h) ((void)0)
 /* SDL/validate: OR the value-2 pixel into the mode-D field (the dots source SDL decodes, and the
  * surface fill_terrain_silhouette scans).  rowLo/rowHi are left in $80/$81 via WB() (faithful). */
 #define ROF_FIELD_PLOT(h) do { \
@@ -3902,23 +3917,27 @@ void terrain_plot_pixel(void) {
     sync_flag = mem[0x28CA + savedY];
     dl_ptr_lo = mem[0x28FA + savedY];
     cpu.Y = mem[MEM_terrain_col_byte_offset + cpu.X];   /* column X's byte offset within the row */
-    uint8_t a = mem[MEM_terrain_col_pixel_mask + cpu.X];/* column X's 2bpp pixel mask */
+    uint8_t himask = mem[MEM_terrain_col_pixel_mask + cpu.X]; /* column X's HIGH-bit-of-2bpp mask ($80/$20/$08/$02) */
+    uint8_t a = himask;
     mem[0x00B5] = a;
     a = (uint8_t)(a >> 1);                  /* LSR A */
-    a |= mem[0x00B5];                       /* ORA $B5 -> 2-bit mask */
-    a &= plot_pixel_mask;                       /* AND plot mask */
+    a |= mem[0x00B5];                       /* ORA $B5 -> 2-bit mask (both bits of the pixel) */
+    a &= plot_pixel_mask;                       /* AND plot mask ($AA=value-2, $FF=value-3) */
     a |= bus_read(ZP_IND_Y(0x80));          /* ORA ($80),Y */
     bus_write(ZP_IND_Y(0x80), a);           /* STA ($80),Y */
-    /* Amiga: mirror the object pixel into plane2 directly, exactly as the terrain rasterizer's
-       ROF_PLOT_DOT does for its silhouette dots.  renderFlightDirect no longer decode-scans the
-       mode-D field for the terrain body (rows 0-42), so a ground object (gun emplacement / downed
-       pilot / base) written ONLY into the field would be dropped.  cpu.X = screen column (== the
-       rasterizer's plotCol, 48-based); savedY = height (the $28CA/$28FA row-table index) -> Amiga
-       scanline 150-savedY.  Objects plot value-2 (plot_pixel_mask $AA -> high bit only) = plane2,
-       which is exactly the plane ROF_PLOT_DOT writes.  No-op on SDL/validate (ROF_PLOT_DOT is a
-       null macro off-Amiga).  Runs in terrain_draw_frame_core's object pass, AFTER its dot-clear
-       wait, into the same g_flightDotPlane the rasterizer fills -> same buffer, not wiped. */
-    ROF_PLOT_DOT(cpu.X, savedY);
+    /* Amiga: mirror the object pixel into the flight bitplanes, FAITHFUL to the value the field got.
+       renderFlightDirect no longer decode-scans the mode-D field for the terrain body (rows 0-42),
+       so a ground object (gun emplacement / downed pilot / enemy fire) written ONLY into the field
+       is dropped.  cpu.X = screen column (== the rasterizer's plotCol, 48-based); savedY = height
+       (the $28CA/$28FA row-table index) -> Amiga scanline 150-savedY.  The plotted value's HIGH bit
+       (plot_pixel_mask & himask; set for value-2 $AA AND value-3 $FF) -> plane2 (ROF_PLOT_DOT); its
+       LOW bit (plot_pixel_mask & himask>>1; set only for value-3 $FF) -> plane1 via the post-fill
+       overlay (ROF_PLOT_DOT_P1) so value-3 objects show COLPF2 not COLPF1.  Doing plane1 direct here
+       would seed spurious blitterFillUp streaks; hence the deferred overlay.  No-op on SDL/validate
+       (both macros null off-Amiga).  Runs in terrain_draw_frame_core's object pass, after the
+       dot-clear wait, into the same buffer the rasterizer fills. */
+    if (plot_pixel_mask & himask)              ROF_PLOT_DOT(cpu.X, savedY);      /* value bit1 -> plane2 */
+    if (plot_pixel_mask & (uint8_t)(himask >> 1)) ROF_PLOT_DOT_P1(cpu.X, savedY);/* value bit0 -> plane1 (post-fill) */
     cpu.Y = savedY;                         /* LDY $28E2 (restore) */
     terrain_plot_skip_return();
 }

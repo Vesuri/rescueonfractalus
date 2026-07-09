@@ -194,6 +194,17 @@ extern "C" const uint8_t kColMask4[4] = { 0xC0u, 0x30u, 0x0Cu, 0x03u };
 // (= back->data + 40).  Set by flightKickBackClear once the buffer + its clear are committed; null
 // on the first flight frame (rasterizer then skips the direct write).  See renderFlightDirect.
 extern "C" uint8_t* g_flightDotPlane = nullptr;
+// Object plane1 overlay (post-fill).  Ground objects (gun emplacement / downed pilot / enemy
+// fire) are drawn value-3 (COLPF2) = plane1+plane2 for their highlight pixels (terrain_plot_object
+// variant A whole-body + variant B's 2x2 cross; variant B bodies stay value-2 = plane2 only).  We
+// can't set plane1 during the draw: the sky-fill blit (blitterFillUp) would treat a stray plane1
+// bit in the terrain body as a fill seed and paint a vertical sky-coloured streak above it.  So
+// terrain_plot_pixel records the value-3 LOW bit here (a separate plane1-shaped scratch); after the
+// sky fill, renderFlightDirect ORs it into the back buffer's plane1 over the dirty scanline range,
+// clearing as it applies.  Sized like one plane (47 rows x 120 stride) so the plot reuses kRow120.
+static uint8_t s_flightObjP1[47 * 120];
+extern "C" uint8_t* g_flightObjP1 = nullptr;      // = s_flightObjP1 during flight; null otherwise
+extern "C" int g_objRowLo = 47, g_objRowHi = -1;  // dirty scanline range in s_flightObjP1 (empty)
 // Called by the terrain draw (rof_native.c) before its first dot write, to ensure the kicked
 // off-screen-buffer clear has finished (the dots OR into freshly-zeroed plane2).
 extern "C" void rof_flight_wait_dotclear(void) { AmigaHardware::blitterWait(); }
@@ -1346,6 +1357,21 @@ void RescueOnFractalus::renderFlightDirect()
     AmigaHardware::blitterWait();                            // sky fill must finish before the band overlay + flip
     FD_LAP(g_fdFill);
 
+    // Object plane1 overlay: OR the value-3 ground-object low bits (recorded by terrain_plot_pixel
+    // during the draw) into plane1 NOW — AFTER the sky fill — so those objects show value-3 (COLPF2,
+    // the distinct object colour) instead of value-2 (COLPF1, the terrain-dot colour).  Deferred to
+    // here because a plane1 bit present during blitterFillUp would seed a spurious sky-coloured
+    // vertical streak.  Walk only the dirty scanline range; clear each byte as it is applied so the
+    // scratch is ready for the next frame.  (Objects are sparse, so this is a few rows x 40 bytes.)
+    if (g_objRowHi >= g_objRowLo) {
+        for (int sc = g_objRowLo; sc <= g_objRowHi; sc++) {
+            uint8_t* d = bp             + (unsigned)sc * 120;   // plane1 row (offset 0 in the 120B scanline)
+            uint8_t* s = s_flightObjP1  + (unsigned)sc * 120;   // scratch row (same base offset)
+            for (int b = 0; b < 40; b++) { if (s[b]) { d[b] |= s[b]; s[b] = 0; } }
+        }
+        g_objRowLo = 47; g_objRowHi = -1;                       // range consumed
+    }
+
     // Windscreen-bottom band overlay (rows 43-46 = scanlines 172-179): the cockpit frame + the
     // wing-clearance bars, punched OVER the now-rendered terrain.  Source = the mode-D band field
     // mem[$1074+43*96] (double-buffer half via g_flightRenderHalf), written per frame by
@@ -1425,6 +1451,7 @@ void RescueOnFractalus::flightKickBackClear()
     // (+40 = plane2 of an interleaved 120-byte scanline), replacing renderFlightDirect's old
     // field-decode scan.  It waits (rof_flight_wait_dotclear) for the clear kicked just above.
     g_flightDotPlane = (uint8_t*)back->data + 40;
+    g_flightObjP1    = s_flightObjP1;   // arm the object plane1 overlay (applied post-fill below)
 }
 
 // run(): the whole game, driven by the genuine transpiled/native boot chain
