@@ -3909,6 +3909,16 @@ void terrain_plot_pixel(void) {
     a &= plot_pixel_mask;                       /* AND plot mask */
     a |= bus_read(ZP_IND_Y(0x80));          /* ORA ($80),Y */
     bus_write(ZP_IND_Y(0x80), a);           /* STA ($80),Y */
+    /* Amiga: mirror the object pixel into plane2 directly, exactly as the terrain rasterizer's
+       ROF_PLOT_DOT does for its silhouette dots.  renderFlightDirect no longer decode-scans the
+       mode-D field for the terrain body (rows 0-42), so a ground object (gun emplacement / downed
+       pilot / base) written ONLY into the field would be dropped.  cpu.X = screen column (== the
+       rasterizer's plotCol, 48-based); savedY = height (the $28CA/$28FA row-table index) -> Amiga
+       scanline 150-savedY.  Objects plot value-2 (plot_pixel_mask $AA -> high bit only) = plane2,
+       which is exactly the plane ROF_PLOT_DOT writes.  No-op on SDL/validate (ROF_PLOT_DOT is a
+       null macro off-Amiga).  Runs in terrain_draw_frame_core's object pass, AFTER its dot-clear
+       wait, into the same g_flightDotPlane the rasterizer fills -> same buffer, not wiped. */
+    ROF_PLOT_DOT(cpu.X, savedY);
     cpu.Y = savedY;                         /* LDY $28E2 (restore) */
     terrain_plot_skip_return();
 }

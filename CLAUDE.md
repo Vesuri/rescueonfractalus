@@ -112,10 +112,15 @@ P3 PMG** (diamond `18 3C 7E FF 7E 3C`, grows with proximity), drawn in the viewp
 and mirrored into the targeting scope (2nd P3 copy ~83 lines lower, scope-X via an HPOSP3 DLI); on the
 Amiga reuse ch6/ch7 (altimeter, dashboard-only) via a copper `SPRxPT` mid-screen swap. **Ground objects
 (gun emplacement, base, downed pilot) = terrain BITMAP value-2/3** (`terrain_plot_object $A63B`, from
-`$0A00` map markers — pilot = `$64`); the object-plot native twins already run on the Amiga (plotted
-into plane2, just low-contrast). The **downed-pilot "blink" is a COLOUR-REGISTER CYCLE on `$00D9`** (hue
-9, luminance pulsing `$4`↔`$B`), NOT a graphics toggle → animate with a per-frame pen poke, don't redraw.
-None of P3/M2/scope-blip are ported yet.
+`$0A00` map markers — pilot = `$64`); `terrain_plot_object $A63B` → `terrain_plot_pixel $A6D3` writes them
+into the mode-D field via `($80),Y`. ⚠ **These objects DO NOT render on the Amiga (root-caused 2026-07-09):
+`renderFlightDirect` no longer converts the mode-D field for the terrain body (rows 0–42) — the rasterizer
+writes plane2 dots straight to `g_flightDotPlane`, and the field is read only for the windscreen band. So
+object pixels written into the field are DROPPED. Fix: hook `terrain_plot_pixel` to also OR into
+`g_flightDotPlane` (mirror `ROF_PLOT_DOT`). See [[flight-pmg-map]].** (Flying saucers ARE fine — they're P3
+PMG sprites, ported.) The **downed-pilot "blink" is a COLOUR-REGISTER CYCLE on `$00D9`** (hue 9, luminance
+pulsing `$4`↔`$B`), NOT a graphics toggle → animate with a per-frame pen poke, don't redraw. **Flying saucer
+P3 + scope mirror + altimeter multiplex are DONE (user-confirmed 2026-07-09); M2 crosshairs not ported.**
 
 ## Controls (Atari manual → Amiga port)
 
