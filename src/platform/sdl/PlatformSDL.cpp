@@ -535,7 +535,9 @@ void PlatformSDL::updateChannelFreq(int ch, uint8_t audf) {
         divider = (double)audf + 1.0;
     }
 
-    double freqHz = clockHz / divider;
+    // POKEY's output flip-flop halves the counted rate: f = clock / (2 * divider).
+    // Without this ÷2 every voice is an octave too high (see PlatformAmiga pokey_period).
+    double freqHz = clockHz / (2.0 * divider);
     if (freqHz <= 0.0 || freqHz > audioSpec.freq / 2.0) {
         channels[ch].period = 0.0f;
         return;

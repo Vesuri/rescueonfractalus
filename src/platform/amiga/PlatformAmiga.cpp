@@ -319,14 +319,23 @@ static uint16_t pokey_period(uint8_t ch, uint8_t audf, uint8_t audctl)
         divider = (uint32_t)audf + 1u;
     }
 
+    // POKEY's output flip-flop toggles once per counter underflow, so the audible
+    // square wave is HALF the counted-clock rate: f = clock / (2 * divider).  Omitting
+    // this ÷2 makes every voice an octave too high — most audible on the bass, whose
+    // octave-up shift destroys its bass character (measured on the Standby tune: ch2
+    // AUDF=$3B/15kHz reads 130.8 Hz on real POKEY but 261.6 Hz without the ÷2).  The
+    // separate 2u in the Paula-period line below is the 2-sample wave_pure cycle, NOT
+    // this toggle.
     uint32_t freq;
     if (use_179) {
-        freq = POKEY_CLOCK / divider;
+        freq = POKEY_CLOCK / (2u * divider);
     } else {
-        freq = POKEY_CLOCK / (base_div * divider);
+        freq = POKEY_CLOCK / (2u * base_div * divider);
     }
 
-    if (freq < 50u || freq > 28000u) return 0u;  // out of range → silence
+    if (freq < 20u || freq > 28000u) return 0u;  // out of range → silence
+                                                  // (floor 20 Hz: a deep 15kHz bass note
+                                                  // is ~30 Hz after the ÷2 above)
 
     uint32_t per = PAULA_CLOCK / (2u * freq);
     if (per < 124u)   per = 124u;   // Paula minimum period
