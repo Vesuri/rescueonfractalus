@@ -147,7 +147,8 @@ the flight VBI's CLI window). Faithful 1:1 — the dispatcher logic is the Atari
 | B | Boosters | $15 | B ($15) | kbd cmd |
 | (joystick) | Steer (pitch/roll) | — | **arrow keys** ($4C/$4D/$4F/$4E) | PORTA $D300 bits 0/1/2/3 = up/down/left/right |
 | (trigger) | Fire | — | **Left Shift ($60)** | TRIG0 $D010 |
-| SELECT / SHIFT-SELECT | Level up / down (Standby) | — | not wired | CONSOL |
+| Joystick up / down | Starting level up / down (Standby) | — | **arrow up/down** ($4C/$4D) | PORTA $D300 bits 0/1 |
+| SELECT / SHIFT-SELECT | Starting level up / down (Standby) | — | not wired | CONSOL |
 | OPTION | Demo (DEMO DROID) | — | not wired | CONSOL |
 | SYSTEM RESET | Reboot disk | — | not wired (Amiga reset) | — |
 

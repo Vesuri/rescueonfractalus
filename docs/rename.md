@@ -232,3 +232,16 @@ NOT energy); `update_cockpit_digits_native`→`startup_init_native` ($3FFA ident
 
 Descriptive "gauge" prose still appears in some comments (Atari hardware-channel /
 "throttle gauge" descriptions) — left as-is where accurate; sweep opportunistically.
+
+---
+
+**`$5978 engine_sound_update` → `standby_level_select_loop`** (found 2026-07-10). NOT engine
+sound. It is the **Standby / Title-Screen idle loop with the starting-level select**: reads
+joystick up/down (PORTA `$D300` bits 0/1) + SELECT (CONSOL `$D01F` bit1) + the SHIFT-key
+status (SKSTAT `$D20F` bit3, active-low), and increments/decrements `level_stage $006D`
+(`$59CC` decrement / `$59E4` increment, wrap at `level_progress $37EE`), re-rendering the
+STARTING-LEVEL digit via `setup_initials_ptr $5A63`. Loops (mutual tail-recursion with
+`sound_check_trigger $5A17`, TCO'd) once per ~2 frames (`wait_frames_2 $3CCA`) until a
+console/trigger delta launches the game. Called from `cockpit_display $587B` tail. (The
+"engine sound" name likely came from the `$006D` ramp resembling a pitch ramp.) Its callee
+`sound_check_trigger $5A17` and the `$5A0E sound_stop` are part of the same loop, not audio.
