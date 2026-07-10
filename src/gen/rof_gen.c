@@ -10223,7 +10223,8 @@ void reset_audctl_flags__t6502(void) {
 }
 
 /* sfx_voice_tick @ $70F9: Decrements duration timer $073A (calls sfx_seq_step on underflow), derives note, writes AUDC1/2/3 ($D201/$D203/$D205); $073B gates mute */
-void sfx_voice_tick(void) {
+/* faithful transliteration kept as the validation oracle; native sfx_voice_tick() lives in rof_native.c (see VALIDATE_FUNCS) */
+void sfx_voice_tick__t6502(void) {
     /* 70f9 */
     DEC_M(MEM_sfx_note_timer);
     /* 70fc */
@@ -10300,7 +10301,8 @@ void audio_timer_setup__t6502(void) {
 }
 
 /* sfx_seq_step @ $7148: Advances SFX sequence ptr $073C through table $71DB; loads AUDF/AUDC from tables $7191-$71C5 to POKEY $D200-$D207; sets $073A/$073B */
-void sfx_seq_step(void) {
+/* faithful transliteration kept as the validation oracle; native sfx_seq_step() lives in rof_native.c (see VALIDATE_FUNCS) */
+void sfx_seq_step__t6502(void) {
     /* 7148 */
     LDX(sfx_seq_ptr);
 L_714b:;
