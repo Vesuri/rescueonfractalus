@@ -254,8 +254,24 @@ truth for names** (the transpiler reads it; never hand-rename in generated files
 3. In `rof_native.c` write two halves: a typed idiomatic `<name>_core(...)` and a
    `void <name>(void)` 6502-ABI shim that marshals `mem[]`/`cpu` ↔ the core.
 4. `make validate FN=<name>` runs both on the same inputs and diffs full `mem[]` state.
+   ⚠ Step 1 only makes the transpiler emit the oracle — the twin is NOT tested until you ALSO
+   register a fixture (`test_mem_contract(_regs)(…)` or a custom `test_<name>()`) in
+   `validate_native.c`'s `main()`. An unregistered function prints `PASS` with no `"N cases"`
+   line = a vacuous green (zero comparisons run). See [[feedback-native-twin-validation-gaps]] §4.
 5. Once a transpiled caller is also shed, the `VALIDATE_FUNCS` entry can be dropped and the
    plain native twin lives directly in `rof_native.c`.
+
+**Which file a native twin belongs in.** `rof_native.c` = FAITHFUL twins (byte-identical to the
+`__t6502` oracle, `make validate`d, linked into BOTH the SDL and Amiga backends). `rof_native_amiga.cpp`
+= genuinely Amiga-only code (deliberately "lossy" — drops HW-register writes, routes audio to Paula,
+frame-driven entry points), NOT validated. **A faithful, pure-`mem[]` 6502 routine that merely needs a
+small Amiga variation does NOT go in the .cpp — it stays a validated twin in `rof_native.c` with the
+variation guarded by `#ifdef ROF_PLATFORM_AMIGA`** (Amiga-only code, e.g. a dirty-band publish or a
+skipped Atari HW tail) or `#ifndef ROF_PLATFORM_AMIGA` (Atari-faithful behavior the validation/SDL
+build keeps so the twin still matches its oracle). Amiga-only globals a twin writes go in that twin's TU
+(the writer's TU), also under `#ifdef ROF_PLATFORM_AMIGA` (cf. `g_planetRowLo/Hi`, `g_tun*`). Precedent:
+the tunnel-ring/door-scroll standby cinematic (`draw_ring_frame_step`, `step_accum_add_75`,
+`advance_history_6a4d`, `dl_lms_*`, `scroll_terrain_dl`, …) lives entirely in `rof_native.c` this way.
 
 Transpiled code uses `mem[]` for RAM, a global `cpu` struct + flag-setting macros
 (`LDA`/`CMP`/`ADC`…) per 6502 op, and `bus_read`/`bus_write` for hardware ($D000–$D7FF).
