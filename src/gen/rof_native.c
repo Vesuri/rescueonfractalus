@@ -7535,6 +7535,15 @@ static void tunnel_prebuild_replay_exit(void) {
 void display_setup(void) {
     /* 5f1d */
     if (!plot2bpp_lut_ready) build_plot2bpp_lut();   /* eager: keep the LUT build off the planet hot path */
+    /* Amiga: arm the one-shot door-field ($2000) decode for THIS Standby build.  The renderer
+       decodes the door "LEVEL NN" bitmap once on the g_doorFieldReady 0→1 edge (set at L_6118,
+       right after blit_message_block/blit_numeric_readout redraw $2000 with the selected
+       level_stage $6D).  It is otherwise latched at 1 forever, so a fast re-entry from the
+       Title/level-select (which rebuilds $2000 with a new level but never leaves to a launched/
+       viewport scene) would never re-decode → doors stuck on the first-boot level.  Clearing it
+       at every display_setup entry restores the edge, so each fresh Standby build re-decodes the
+       doors exactly once with the current level.  (No-op on SDL, which never reads it.) */
+    g_doorFieldReady = 0;
     /* g_standbyRevealReady is NOT set here (display_setup ENTRY): the screen must stay black
        through the whole ~30-frame paced construction below — setting it here revealed the
        half-built screen and forced a full render() on every construction frame (slow).  It is

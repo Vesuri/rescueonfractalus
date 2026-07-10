@@ -2107,6 +2107,11 @@ void RescueOnFractalus::deriveRenderSignals()
     // are built, gated on $00E7!=0) whenever the scene is NOT a settled Standby —
     // music off (building / not yet there), launched, or a viewport scene.  So each
     // fresh entry into Standby re-decodes the doors exactly once and then idles.
+    // (The level-select round-trip's re-decode is armed by resetting g_doorFieldReady
+    // to 0 at display_setup entry — see rof_native.c — so this ==0 clause fires and the
+    // g_doorFieldReady 0→1 edge at L_6118, set right AFTER the door blits, decodes the
+    // freshly-written $2000 with the new level.  A scene-based re-arm here fired too
+    // early: rsTitle drops when the VBI vector flips, BEFORE L_6118 redraws $2000.)
     if (g_doorFieldReady == 0u || rsLaunched || rsViewport) terrainDirty = true;
 
     // Force a one-time full title + cockpit repaint when the transpiled display_setup (NOT a
