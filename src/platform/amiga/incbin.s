@@ -49,5 +49,5 @@ atari_osrom:
 atari_osrom_end:
 
 | (tunnel.raw removed: the concentric tunnel rings are now drawn procedurally by
-|  draw_tunnel_rings_native ($65FB port) into mem[$2000] at scene init, then
+|  draw_frame_pattern_seq ($65FB, src/gen/rof_native.c) at scene init, then
 |  decoded — no pre-baked bitmap.)

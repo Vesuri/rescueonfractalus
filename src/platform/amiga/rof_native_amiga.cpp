@@ -519,7 +519,7 @@ static void advance_history_6a4d(void)
 // 14 crossings ($00A0 19->6); the $08D8 palette touch is only the last 6 ($00A0 5->0).
 // The draw writes black (pen $0094=0) into the GTIA field at $2000, which the Amiga
 // re-decodes (g_tunnelFieldDirty) so the rings visibly clear from the middle out.
-static void draw_symmetric_span_loop(void);   // fwd decl (defined below)
+extern "C" void draw_symmetric_span_loop(void);   // faithful shared twin in src/gen/rof_native.c
 
 // Set by draw_ring_frame_step when it draws a black ring-clear frame into the GTIA field at
 // $1000, so RescueOnFractalus re-decodes ONLY the band it just wrote — not the whole 86-row
@@ -695,133 +695,18 @@ extern "C" void launch_anim_dispatch_native(void)
     scroll_terrain_dl();
 }
 
-// ---- procedural tunnel rings: native port of draw_frame_pattern_seq ($65FB) ---
-// The concentric tunnel rings are DRAWN (not pre-baked): nested rectangle frames
-// are filled into the GTIA-mode-10 screen at $2000 (per-row base address table
-// $073D lo / $0793 hi, 46-byte stride), with the pen cycling 1..6.  Run once at
-// scene init; the $2000 image is then decoded to the tunnel bitmap, the same path
-// the terrain uses.  All scratch is in zero page ($0080-84/$0092/$0094/$0096/
-// $009C-A0/$00B7-B9/$00DF) — re-seeded by the genuine display_setup launch path
-// before the door scroll runs.
-
-// plot_masked_pixel @ $66DE: OR then AND a pen into the screen byte at
-// ($0080)+yByte using the mask tables $66E9 (set) / $66FB (clear), indexed by x.
-static void plot_masked_pixel(uint8_t yByte, uint8_t x)
-{
-    uint16_t a = (uint16_t)((mem[0x0080] | (mem[0x0081] << 8)) + yByte);
-    mem[a] = (uint8_t)((mem[a] | mem[0x66E9 + x]) & mem[0x66FB + x]);
-}
-
-// plot_pixel_masked @ $66D5: plot pen $0094 into pixel column `col` of the row
-// pointer $0080/$0081 — high nibble for even columns, low nibble for odd.  (The
-// 6502 LSR leaves carry = col bit0, so the odd-column "ADC #8" actually adds 9.)
-static uint8_t plot_pixel_masked(uint8_t col)
-{
-    uint8_t x = (col & 1u) ? (uint8_t)(mem[0x0094] + 9u) : mem[0x0094];
-    plot_masked_pixel((uint8_t)(col >> 1), x);
-    return x;
-}
-
-// fill_horizontal_span @ $665D: solid-fill the pattern byte $00B9 across the byte
-// range [$009C>>1 .. $009D>>1] in both the top ($009E) and bottom ($009F) rows.
-static void fill_horizontal_span(void)
-{
-    uint8_t et = mem[0x009E], eb = mem[0x009F];
-    uint16_t topp = (uint16_t)(mem[0x073D + et] | (mem[0x0793 + et] << 8));
-    uint16_t botp = (uint16_t)(mem[0x073D + eb] | (mem[0x0793 + eb] << 8));
-    uint8_t b0 = (uint8_t)(mem[0x009C] >> 1);            // $0082
-    uint8_t b1 = (uint8_t)(mem[0x009D] >> 1);            // $0083
-    if (mem[0x009D] & 1u) b0++; else b1--;               // trim one edge byte by parity
-    uint8_t fill = mem[0x00B9];
-    int cnt = (int)b1 - (int)b0;                         // $00DF
-    uint8_t y = b1;
-    do { mem[topp + y] = fill; mem[botp + y] = fill; y--; } while (--cnt >= 0);
-}
-
-// fill_vertical_span @ $669C: plot the left ($009C) and right ($009D) edge pixels
-// down every row from $009F to $009E (the right pixel reuses the left's mask).
-static void fill_vertical_span(void)
-{
-    mem[0x0084] = mem[0x009F];
-    int cnt = (uint8_t)(mem[0x009E] - mem[0x009F]);      // $00DF
-    do {
-        uint8_t y = mem[0x0084];
-        mem[0x0080] = mem[0x073D + y];
-        mem[0x0081] = mem[0x0793 + y];
-        uint8_t x = plot_pixel_masked(mem[0x009C]);                 // left edge
-        plot_masked_pixel((uint8_t)(mem[0x009D] >> 1), x);    // right edge, same mask
-        mem[0x0084]++;
-    } while (--cnt >= 0);
-}
-
-// draw_symmetric_span_loop @ $6642: draw $0096 nested rectangle frames, each one
-// step larger ($009C--/$009D++/$009E++/$009F--), in the current pen $0094.
-static void draw_symmetric_span_loop(void)
-{
-    mem[0x00B9] = (uint8_t)(mem[0x0094] | mem[0x66E9 + mem[0x0094]]);  // both pixels = pen
-    do {
-        fill_horizontal_span();
-        fill_vertical_span();
-        mem[0x009C]--; mem[0x009D]++; mem[0x009E]++; mem[0x009F]--;
-    } while (--mem[0x0096] != 0);
-}
-
-// draw_frame_guide_columns @ $6620: three full-height vertical lines at columns $009C,
-// $009D and $009D+1 (the tunnel's vanishing-point verticals), in pen $0094.
-static void draw_frame_guide_columns(void)
-{
-    mem[0x0092] = 0x55;
-    mem[0x00A0] = (uint8_t)(mem[0x009D] + 1);
-    do {
-        uint8_t y = mem[0x0092];
-        mem[0x0080] = mem[0x073D + y];
-        mem[0x0081] = mem[0x0793 + y];
-        plot_pixel_masked(mem[0x009C]);
-        plot_pixel_masked(mem[0x009D]);
-        plot_pixel_masked(mem[0x00A0]);
-    } while (((int8_t)--mem[0x0092]) >= 0);
-}
-
-// init_row_coords_9c @ $6DDF: seed the symmetric-span coordinates (centre of the
-// terrain region: rows 42/43, columns 46/48) and the 20-frame outer count.
-static void init_row_coords_9c(void)
-{
-    mem[0x009C] = 0x2E; mem[0x009D] = 0x30;
-    mem[0x009E] = 0x2B; mem[0x009F] = 0x2A;
-    mem[0x00A0] = 0x13;
-}
-
-// tunnel_ring_arm_native: reseed the message-column / span coordinates the way the
-// Atari tunnel setup does at $647D-$6480 (JSR init_row_coords_9c; $0094=0) just
-// before it arms $0088=1 at $64A8.  The Amiga ran init_row_coords_9c earlier (in
-// decodeTunnelRings, which left $00A0=$FF), so we re-seed here when arming the ring
-// — otherwise draw_ring_frame_step would start from $FF and never clear $0088 in
-// the expected 20 crossings.
-extern "C" void tunnel_ring_arm_native(void)
-{
-    mem[0x009C] = 0x2E; mem[0x009D] = 0x30;
-    mem[0x009E] = 0x2B; mem[0x009F] = 0x2A;
-    mem[0x00A0] = 0x13;     // 19 → 20 message-column crossings before $0088 clears
-    mem[0x0094] = 0x00;     // pen index reset ($6480)
-}
-
-// draw_frame_pattern_seq @ $65FB: draw 20 concentric frame groups (thickness from
-// the $6E0F table, pen cycling 1..6), then the vanishing-point verticals.
-// draw_tunnel_rings_native clears the $2000 GTIA field first so the rings land on
-// a black background (pen 0); RescueOnFractalus decodes the result into the tunnel bitmap.
-extern "C" void draw_tunnel_rings_native(void)
-{
-    for (uint16_t i = 0; i < 86u * 46u; i++) mem[0x2000 + i] = 0u;   // clear screen field
-    init_row_coords_9c();
-    mem[0x0094] = 1u;
-    do {
-        mem[0x0096] = mem[0x6E0F + mem[0x00A0]];
-        draw_symmetric_span_loop();
-        if (++mem[0x0094] == 7u) mem[0x0094] = 1u;
-    } while (((int8_t)--mem[0x00A0]) >= 0);
-    mem[0x0094]--;
-    draw_frame_guide_columns();
-}
+// ---- procedural tunnel rings ------------------------------------------------
+// The concentric-tunnel-ring drawing primitives (plot_masked_pixel $66DE,
+// plot_pixel_masked $66D5, fill_horizontal_span $665D, fill_vertical_span $669C,
+// draw_symmetric_span_loop $6642, draw_frame_guide_columns $6620, init_row_coords_9c
+// $6DDF) and the one-shot ring drawer (draw_frame_pattern_seq $65FB) all live as
+// faithful shared native twins in src/gen/rof_native.c (declared in rof_decl.h).
+// They are pure mem[] 6502 logic — not Amiga-specific — so the duplicate copies
+// that used to live here were removed.  The Amiga standby builds the rings once via
+// rof_native.c's display_setup (the g_tunnelPrebuilt path); draw_ring_frame_step
+// (above) drives the per-frame ring-clear and calls draw_symmetric_span_loop from
+// rof_native.c.  The former Amiga-only entry points draw_tunnel_rings_native and
+// tunnel_ring_arm_native were dead (no callers) and are gone with them.
 
 // standby_vbi_native: the faithful per-frame body of vbi_handler_standby ($52D7),
 // run from the real INTB_VERTB interrupt via game_vbi_isr() during the Standby
