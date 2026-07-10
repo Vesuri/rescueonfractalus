@@ -751,9 +751,16 @@ static void scroll_terrain_dl(void)
 // as a POD (see launch_native.cpp for why we don't #include cpu.h).
 extern "C" { typedef struct { uint8_t A, X, Y, S, N, V, Z, C, I, D; } Cpu6502; extern Cpu6502 cpu; }
 extern "C" void scroll_field_columns(void);  // $6AEE transpiled (entered with A = $0089)
+extern "C" void step_accum_sub_7e(void);      // $6A8F transpiled — the $008D DL-construction step
 extern "C" void launch_anim_dispatch_native(void)
 {
-    if (mem[MEM_step_mode_flag]) return;                       // $008D: reverse ring (unused here)
+    // $008D (step_mode_flag): the DL-CONSTRUCTION step, NOT a "reverse ring" — the Atari
+    // $5367 does `if ($008D != 0) JMP $6A8F` (step_accum_sub_7e), which subtracts $7E from the
+    // scroll accumulator, arms the next DL row (INC $008E) and counts $008D down to 0.  The
+    // standby REBUILD path in display_setup (the $006C!=0 branch, taken when re-entering Standby
+    // from the Title/level-select) spins on this handshake (`while(step_mode_flag) ds_frame()`),
+    // so stubbing it as a bare return hung the rebuild at black doors (no green fade).  Drive it.
+    if (mem[MEM_step_mode_flag]) { step_accum_sub_7e(); return; }   // $008D: JMP $6A8F
     if (mem[MEM_vbi_flags]) { step_accum_add_75(); return; }  // $0088: tunnel ring cycle
     if (uint8_t g = mem[MEM_terrain_state]) {            // $0089: scroll star/planet columns
         cpu.A = g; scroll_field_columns();                 // $6AEE: $0089 gate in A (>=4 advances accum)
