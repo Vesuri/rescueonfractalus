@@ -5,7 +5,7 @@
 //   2. the platform_c.h bridge the C-compiled 6502 transliteration calls,
 //   3. the launch-cinematic frame pump + quit handling,
 //   4. the CIA-A serial-port keyboard (RETURN -> Atari START switch),
-//   5. the real INTB_VERTB VBI server + CIA-B Timer A music tick,
+//   5. the real INTB_VERTB VBI server (runs the per-frame game VBI body),
 //   6. PlatformAmiga::run() — display takeover, install (1)/(4)/(5), run the scene,
 //      then restore the system.
 //
@@ -49,8 +49,6 @@ extern struct GfxBase* GfxBase;
 
 // load_xex_image (XexImage.cpp): populate mem[] with the pristine rof.xex boot image.
 extern "C" void load_xex_image(void);
-// sfx_voice_tick ($70F9, rof_native.c validated twin): the SFX theme tick, driven by CIA-B Timer A.
-extern "C" void sfx_voice_tick(void);
 // game_vbi_isr (flight_native.cpp): the per-frame VBI body, run from the real VBI below.
 extern "C" void game_vbi_isr(void);
 
@@ -301,7 +299,7 @@ static void wait_rasterlines(uint8_t lines)
 // Apply all channels recorded since the last flush.  Waveform changes are batched through a
 // single DMA off → wait → on so the rasterline wait is paid once.  Called once per frame from
 // game_vbi_isr, after both audio engines have recorded their POKEY writes for the frame: the
-// CIA-B music tick (sfx_voice_tick) and the in-game SFX engine (sfx_voice_envelope_tick).
+// VBI SFX-theme tick (sfx_voice_tick) and the in-game SFX engine (sfx_voice_envelope_tick).
 extern "C" void flush_paula(void)
 {
     uint8_t valid = want_valid;
@@ -954,8 +952,8 @@ uint8_t PlatformAmiga::flightIrqKey() {
 // ============================================================================
 // The Amiga keyboard shifts each keycode into CIA-A's serial data register, raising
 // the CIA-A SP interrupt (CIAICRB_SP, via INTB_PORTS).  We hang a handler on that
-// vector through ciaa.resource (the same AddICRVector mechanism the CIA-B music tick
-// uses).  keyboard.device normally owns the vector, so we steal it (saving the
+// vector through ciaa.resource (the AddICRVector mechanism).  keyboard.device
+// normally owns the vector, so we steal it (saving the
 // previous) and restore it on shutdown, leaving the OS keyboard working afterwards.
 //
 // This handler IS the Atari console-switch hardware abstraction: it maps RETURN onto
@@ -1207,23 +1205,6 @@ static uint32_t vbiHandler()
 }
 
 // ============================================================================
-//  CIA-B Timer A interrupt — SFX music tick at 25 Hz
-// ============================================================================
-// The Atari SFX sequencer ticks every other VBI (the BIT $062D gate, $00E7=1) = 25 Hz.
-// On the Amiga we drive it from CIA-B Timer A at that exact rate, off a dedicated
-// hardware interrupt rather than the VBI/render loop, so the music tempo is independent
-// of frame timing.  CIA-B uses the Amiga E-clock (~709379 Hz PAL); period = 709379/25 =
-// 28375.  The interrupt fires through INTB_EXTER (level 6) via the ciab.resource.
-static struct Library  *CIABBase;
-static struct Interrupt sfxTimer;
-
-static uint32_t sfxTimerHandler()
-{
-    if (mem[0x00E7]) sfx_voice_tick();
-    return 0;
-}
-
-// ============================================================================
 //  PlatformAmiga construction + run — takeover, install interrupts, run scene, restore
 // ============================================================================
 PlatformAmiga::PlatformAmiga(const char* /*imagePath*/)
@@ -1279,29 +1260,10 @@ void PlatformAmiga::run()
     vbiServer.is_Code = (void(*)())vbiHandler;
     AddIntServer(INTB_VERTB, &vbiServer);
 
-    // --- CIA-B Timer A — SFX music at 25 Hz ----------------------------------
-    // Use ciab.resource so the CIA ICR is demultiplexed for us.
-    CIABBase = (struct Library*)OpenResource((UBYTE*)CIABNAME);
-    if (CIABBase) {
-        sfxTimer.is_Node.ln_Type = NT_INTERRUPT;
-        sfxTimer.is_Node.ln_Pri  = 0;
-        sfxTimer.is_Node.ln_Name = (char*)"RoF SFX";
-        sfxTimer.is_Data = 0;
-        sfxTimer.is_Code = (void(*)())sfxTimerHandler;
-        if (!AddICRVector(CIABBase, CIAICRB_TA, &sfxTimer)) {
-            Disable();
-            // Stop timer, load period (28375 = 0x6EC7 = 709379/25), continuous mode.
-            *((volatile uint8_t*)(ciab + ciacra)) &= (uint8_t)~CIACRAF_START;
-            *((volatile uint8_t*)(ciab + ciatalo)) = (uint8_t)(28375 & 0xFF);
-            *((volatile uint8_t*)(ciab + ciatahi)) = (uint8_t)(28375 >> 8);
-            *((volatile uint8_t*)(ciab + ciacra)) =
-                (uint8_t)((*((volatile uint8_t*)(ciab + ciacra))
-                           & ~(CIACRAF_RUNMODE | CIACRAF_PBON | CIACRAF_OUTMODE
-                               | CIACRAF_SPMODE | CIACRAF_TODIN))
-                          | CIACRAF_START);
-            Enable();
-        }
-    }
+    // (The attract/standby-theme SFX tick sfx_voice_tick ($70F9) now runs in the
+    // INTB_VERTB VBI body — standby_vbi_native, gated $00E7 & BIT $062D = 25 Hz —
+    // exactly as the Atari's deferred VBI $534D did, keeping it frame-synchronized
+    // with the main loop.  It used to run off a dedicated CIA-B Timer A interrupt.)
 
     // --- bring up the scene --------------------------------------------------
     // Load the faithful boot memory image (pristine rof.xex) into mem[] before anything
@@ -1334,12 +1296,6 @@ void PlatformAmiga::run()
     keyboardShutdown();
     scene.shutdown();     // calls PlatformAmiga::audioShutdown
 
-    if (CIABBase) {
-        Disable();
-        *((volatile uint8_t*)(ciab + ciacra)) &= (uint8_t)~CIACRAF_START;
-        Enable();
-        RemICRVector(CIABBase, CIAICRB_TA, &sfxTimer);
-    }
     RemIntServer(INTB_VERTB, &vbiServer);
 
     // Disable our display DMA before handing back.
