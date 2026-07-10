@@ -100,6 +100,13 @@ public:
        the span for a targeted decode; no-op on direct-mem[] platforms (SDL / headless).  */
     virtual void cockpitDirty(uint16_t /*addr*/, uint8_t /*nCells*/) {}
 
+    /* Notification that a span of nCells Title Screen (scene 3b) digit cells was written
+       starting at Atari screen-RAM address `addr` — the STARTING LEVEL digit (level select)
+       or a LAST/HIGH SCORE digit (game-over build).  A bitplane-mirroring platform grows
+       its value-cell dirty range so render() redraws only those cells (no full-screen
+       repaint / flash).  No-op on direct-mem[] platforms (SDL / headless).            */
+    virtual void titleScreenDirty(uint16_t /*addr*/, uint8_t /*nCells*/) {}
+
     /* Poll+consume a pending in-flight keyboard-command keycode (Atari KBCODE&$3F,
        or $80 for BREAK); $FF = none pending.  The flight VBI's CLI window ($519c)
        calls this to feed event_sequence_dispatcher ($4644), replacing the POKEY

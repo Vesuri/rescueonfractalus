@@ -1654,7 +1654,13 @@ void plot_char_bounded(void) {
     if (plot) {
         a = (uint8_t)(a + 0x50);                  /* CLC; ADC #$50 (char code) */
         cpu.Y = y;
-        bus_write(ZP_IND_Y(0x00C5), a);
+        uint16_t dst = (uint16_t)((digit_dst_ptr_lo | (digit_dst_ptr_hi << 8)) + y);
+        bus_write(dst, a);
+        /* Title Screen (scene 3b): if this digit landed in the $365B text window it is a
+           STARTING LEVEL / score digit — flag the cell so the Amiga redraws just it (no
+           full-screen repaint).  Off-screen / cockpit dests ($32C5, $37F5, ...) are clamped
+           away inside the hook.  No-op on SDL / validate headless. */
+        platform_title_screen_dirty(dst, 1u);
     }
     cpu.A = a;
     cpu.X = x;
@@ -2701,6 +2707,11 @@ void setup_initials_ptr(void) {
     cpu.Y = 0x00;
     mem[0x3694] = 0x00;
     render_bcd_digits_supp_all();
+    /* Title Screen (scene 3b) level select: this renders the STARTING LEVEL digit into
+       $3694/$3695 — the tens cell is cleared directly (above) rather than via
+       plot_char_bounded, so flag both cells explicitly so the Amiga redraws them (a
+       decreasing level must blank the old tens digit).  No-op on SDL / validate headless. */
+    platform_title_screen_dirty(0x3694, 2u);
 }
 
 /* startup_init @ $3FFA — refresh the level/score HUD digits when their source values

@@ -64,6 +64,10 @@ void platform_cockpit_dirty(uint16_t addr, uint8_t nCells) {
     if (platform) platform->cockpitDirty(addr, nCells);
 }
 
+void platform_title_screen_dirty(uint16_t addr, uint8_t nCells) {
+    if (platform) platform->titleScreenDirty(addr, nCells);
+}
+
 uint8_t platform_flight_irq_key(void) {
     return platform ? platform->flightIrqKey() : 0xFF;
 }

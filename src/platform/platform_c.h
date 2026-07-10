@@ -74,6 +74,13 @@ void platform_lockon_changed(void);
    No-op on platforms that render mem[] directly (SDL / validate headless). */
 void platform_cockpit_dirty(uint16_t addr, uint8_t nCells);
 
+/* Notification that a span of nCells Title Screen (scene 3b) digit cells was written starting
+   at Atari screen-RAM address `addr` — the STARTING LEVEL digit (level select) or a LAST/HIGH
+   SCORE digit (game-over build).  The Amiga backend grows its value-cell dirty range so render()
+   redraws only those cells (no full-screen repaint / flash).  No-op on platforms that render
+   mem[] directly (SDL / validate headless). */
+void platform_title_screen_dirty(uint16_t addr, uint8_t nCells);
+
 /* Poll for a pending in-flight keyboard-command keycode (an Atari KBCODE&$3F, or
    $80 for BREAK), consuming it.  Returns $FF when no command is pending.  Called
    from the flight VBI's CLI window ($519c) to replicate the POKEY keyboard IRQ

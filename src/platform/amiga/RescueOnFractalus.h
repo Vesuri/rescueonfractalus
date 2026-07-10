@@ -126,7 +126,8 @@ private:
     void decodeCompass();      // decode the 4 compass cells $32E3-$32E6 -> title bitmap (16 longwords)
     void decodeCockpitSpan(uint16_t addr, uint8_t nCells);  // decode nCells cockpit cells from Atari screen addr
     void decodeCockpitFull();  // decode the whole cockpit region (modeD + mode4) once (scene-entry repaint)
-    void decodeTitleScreen();  // decode the Title Screen text ($365B/charset $0400) -> titleScreenBitmap
+    void decodeTitleScreen();  // decode the whole Title Screen text ($365B/charset $0400) -> titleScreenBitmap
+    void decodeTitleCells(int cellLo, int cellHi);  // (re)decode Title Screen cells [lo..hi] (clears+ORs); targeted value updates
     void decodeTunnelRect(int rowLo, int rowHi, int byteLo, int byteHi);  // decode a $1000 sub-rect -> tunnelBitmap (no shadow)
     void decodeTunnelBand();                       // decode only the ring-clear frame band (outer\inner rect) from the g_tun* bounds
     void renderViewportModeD(uint16_t srcBase, int stride, int rows); // decode CHANGED mode-D bytes -> viewportBitmap (stars/planet: $1000/48/47)
@@ -226,8 +227,6 @@ private:
     // bitmap, black COLBK, 4 cycling text pens.  Same build-once + poke scheme as standbyCopper.
     TitleScreenCopperList* titleScreenCopper = nullptr;
     bool titleScreenCopperInstalled = false;
-    uint32_t titleTextHash = 0;   // hash of the $365B text region; re-decode when it changes
-    uint32_t titleTextHashCompute() const;  // cheap checksum over the 6x20 title screen RAM
     void updateTitleScreenCopper(bool force);  // poke color01-04 = COLPF0-3 (cycling)
     uint16_t tsPf0 = 0xFFFF, tsPf1 = 0xFFFF, tsPf2 = 0xFFFF, tsPf3 = 0xFFFF;  // last-poked
     // Blank black list shown until g_standbyRevealReady latches (boot/standby build in

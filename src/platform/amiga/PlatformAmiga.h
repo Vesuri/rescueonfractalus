@@ -41,6 +41,7 @@ public:
     virtual void    compassChanged()                 override;   // flag the $32E3 compass cells dirty
     virtual void    lockonChanged()                  override;   // flag the $3491 lock-on cells dirty
     virtual void    cockpitDirty(uint16_t addr, uint8_t nCells) override;  // register a changed cockpit cell span
+    virtual void    titleScreenDirty(uint16_t addr, uint8_t nCells) override;  // grow the Title Screen value-cell dirty range
     virtual uint8_t flightIrqKey()                   override;   // consume a pending in-flight command key
     virtual int     loadImage(const char* path)      override;   // image is embedded -> no-op
     virtual void    setInterrupt(void (*fn)(void))   override;   // Amiga uses the real VBI -> no-op

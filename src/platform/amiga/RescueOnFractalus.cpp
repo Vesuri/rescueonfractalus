@@ -75,6 +75,29 @@ extern "C" volatile unsigned char g_doorFieldReady;
 //                     blanks the now-unwanted trailing (titleRendered - g_titleToRender) cells.
 extern "C" volatile int g_titleToRender = 20;   // >=0 → paint that many; -1 → idle
 
+// Title Screen (scene 3b) value-cell dirty range: while the Title Screen is up the only
+// cells that change are the STARTING LEVEL digit (level select) and the LAST/HIGH SCORE
+// digits (game-over build).  Their writers report each changed cell here; render() redraws
+// exactly [g_titleCellLo..g_titleCellHi] so the screen never fully repaints (no flash).
+// Empty range = lo>hi.  Cell index = Atari screen addr - $365B (0..119).  Single ints
+// (atomic on the 68000); the writers run on the main thread, render() clears the range.
+extern "C" volatile int g_titleCellLo = 120, g_titleCellHi = -1;
+
+// The BCD digit writer (plot_char_bounded, rof_native.c) and the level-digit renderer
+// (setup_initials_ptr $5A63) report the Title-Screen-region cell span they write here via
+// PlatformAmiga::titleScreenDirty → this.  Off-screen / cockpit digit dests (e.g. $32C5,
+// $37F5) fall outside the window and are clamped away.
+extern "C" void rof_title_screen_dirty(unsigned short addr, unsigned char nCells)
+{
+    int lo = (int)addr - 0x365B;
+    int hi = lo + (int)nCells - 1;
+    if (lo < 0) lo = 0;
+    if (hi > 119) hi = 119;
+    if (lo > hi) return;                       // span entirely outside the $365B window
+    if (lo < g_titleCellLo) g_titleCellLo = lo;
+    if (hi > g_titleCellHi) g_titleCellHi = hi;
+}
+
 // ---- cockpit per-instrument dirty flags -------------------------------------
 // The cockpit ($332D mode4 / $350D modeD) is decoded WRITER-DRIVEN by instrument: the only
 // instruments that change in flight are the digits, the lock-on indicator and the two dial bars,
@@ -1567,21 +1590,25 @@ void RescueOnFractalus::renderFrame()
     const bool staticTitle = titleScreenCopper && rsTitle;
     if (staticTitle) {
         if (!titleScreenCopperInstalled) {
+            // Entry: decode the whole screen once, and drop any pending value-cell
+            // dirty range (the full decode already captured everything).
             decodeTitleScreen();
-            titleTextHash = titleTextHashCompute();
+            g_titleCellLo = 120; g_titleCellHi = -1;
             updateTitleScreenCopper(true);
             AmigaHardware::setCopperList(*titleScreenCopper, false);
             titleScreenCopperInstalled = true;
         } else {
-            // Re-decode if the title text ($365B region) changed.  The game-over/
-            // results build (cockpit_display $587B) copies the text template FIRST
-            // (which makes mem[$365B]=='R'=$72 -> rsTitle true, so the copper installs
-            // and the first decode can snapshot the screen BEFORE the LAST SCORE /
-            // HIGH SCORE digits are rendered into $36B7/$36CB a few instructions later).
-            // A cheap 120-byte checksum catches that so the score appears.  Harmless on
-            // the joystick-up attract entry (text is stable there -> hash unchanged).
-            uint32_t h = titleTextHashCompute();
-            if (h != titleTextHash) { titleTextHash = h; decodeTitleScreen(); }
+            // Thereafter only the VALUES change, and we know exactly when: the STARTING
+            // LEVEL digit as joystick up/down selects the level (setup_initials_ptr $5A63)
+            // and the LAST/HIGH SCORE digits on the game-over build (cockpit_display $587B,
+            // whose template copy trips rsTitle BEFORE the digits are plotted a few
+            // instructions later).  Those writers mark a dirty cell range via the
+            // rof_title_screen_dirty() hook; redraw only that range so the screen never fully
+            // repaints (no flash).  No shadow-compare / checksum scan.
+            if (g_titleCellHi >= g_titleCellLo) {
+                decodeTitleCells(g_titleCellLo, g_titleCellHi);
+                g_titleCellLo = 120; g_titleCellHi = -1;
+            }
             updateTitleScreenCopper(false);
         }
         standbyCopperInstalled = false; planetCopperInstalled = false;
@@ -2316,62 +2343,71 @@ void RescueOnFractalus::decodeCompass()
 // (black, COLBK) background, into a 3-bitplane interleaved bitmap.  Mode 6/7 chars are
 // double-WIDTH (20 chars across 320px = 16px/char, each glyph bit -> 2 px); the mode-7 title
 // row is also double-HEIGHT (each glyph scanline -> 2).  The copper shows the bitmap full
-// screen and pokes color01-04 from COLPF0-3 each frame (the palette cycle).  Decodes once
-// per entry (dirty-gated), so the full clear + per-pixel build is fine.
-// Cheap checksum over the 6x20 = 120-byte Title Screen RAM ($365B) so render() can
-// re-decode when the text changes (e.g. the game-over score digits, written by
-// cockpit_display $587B a few instructions after the template copy that first trips
-// rsTitle).  120 bytes at 50 Hz on the otherwise-idle Title Screen is negligible.
-uint32_t RescueOnFractalus::titleTextHashCompute() const
+// screen and pokes color01-04 from COLPF0-3 each frame (the palette cycle).  The whole
+// screen is decoded once on entry; thereafter only the changed value cells are redrawn
+// (writer-driven dirty range g_titleCellLo/Hi — see decodeTitleCells / rof_title_screen_dirty).
+
+// Title Screen text geometry, shared by the full decode and the per-cell update.
+namespace {
+    constexpr uint16_t kTitleCharset   = 0x0400;
+    constexpr int      kTitleStride    = 120;   // 3bp interleaved: 40 p1 + 40 p2 + 40 p3
+    // Per-row (of the 6 x 20 screen) starting bitmap-y and vertical doubling.  A cell's
+    // bitmap-y = kTitleRowY[row] and it occupies 8*vdup scanlines.  (Row 0 is the mode-7
+    // double-height banner; rows 1-5 are single-height mode-6 lines.)
+    constexpr short kTitleRowY[6]    = { 56, 96, 136, 146, 170, 180 };
+    constexpr uint8_t kTitleRowVdup[6] = { 2, 1, 1, 1, 1, 1 };
+}
+
+// Decode Title Screen cells [cellLo..cellHi] (flat 0..119 = row*20+col) from screen RAM
+// ($365B, charset $0400) into titleScreenBitmap.  Each cell clears its own 2-byte-wide
+// column across its scanline range before OR-ing the glyph in, so a changed character
+// fully replaces the old one.  The full decode passes (0,119) after a whole-bitmap clear;
+// the writer-driven update (only the STARTING LEVEL digit / score cells ever change while
+// the screen is up) passes a tight range so the screen never fully repaints (no flash).
+// The row/col walk advances with a running column counter — no divide/modulo — and the
+// glyph bit-doubling is a precomputed table (kDoubleGlyph).
+void RescueOnFractalus::decodeTitleCells(int cellLo, int cellHi)
 {
-    const uint8_t* p = (const uint8_t*)mem + 0x365B;
-    uint32_t h = 2166136261u;                    // FNV-1a
-    for (int i = 0; i < 120; i++) { h ^= p[i]; h *= 16777619u; }
-    return h;
+    if (!titleScreenBitmap) return;
+    uint8_t* bmp = (uint8_t*)titleScreenBitmap->data;
+    const uint8_t* src = (const uint8_t*)mem + 0x365B + cellLo;
+    // Walk to the starting (row,col) with subtract-compares — no div/mod.
+    int r = 0;
+    while (cellLo >= 20) { cellLo -= 20; r++; }
+    int c = cellLo;
+    for (int cell = (r * 20 + c); cell <= cellHi; cell++) {
+        const uint8_t byte = *src++;
+        const uint8_t pen   = (uint8_t)((byte >> 6) + 1);            // COLPF0-3 -> pen1-4
+        const uint8_t* glyph = (const uint8_t*)mem + kTitleCharset + (byte & 0x3Fu) * 8u;
+        const int   bx   = c * 2;                                    // 16px char = 2 bytes/plane
+        const int   y0   = kTitleRowY[r];
+        const int   vdup = kTitleRowVdup[r];
+        uint8_t* rowp = bmp + y0 * kTitleStride + bx;                // top-left of this cell's column
+        for (int gr = 0; gr < 8; gr++) {
+            const uint16_t dbl = kDoubleGlyph[glyph[gr]];            // bit-double table
+            const uint8_t hi = (uint8_t)(dbl >> 8), lo = (uint8_t)(dbl & 0xFF);
+            for (int vd = 0; vd < vdup; vd++) {
+                // Clear this cell's 2-byte column in all 3 planes, then OR the glyph in.
+                rowp[0]  = rowp[1]  = 0;
+                rowp[40] = rowp[41] = 0;
+                rowp[80] = rowp[81] = 0;
+                if (pen & 1u) { rowp[0]  |= hi; rowp[1]  |= lo; }    // plane1
+                if (pen & 2u) { rowp[40] |= hi; rowp[41] |= lo; }    // plane2
+                if (pen & 4u) { rowp[80] |= hi; rowp[81] |= lo; }    // plane3
+                rowp += kTitleStride;                                // next scanline
+            }
+        }
+        if (++c == 20) { c = 0; r++; }                               // next cell, no div/mod
+    }
 }
 
 void RescueOnFractalus::decodeTitleScreen()
 {
     if (!titleScreenBitmap) return;
-    static const uint16_t kCharset   = 0x0400;
-    static const uint16_t kScreenRAM = 0x365B;
-    static const int       kStride   = 120;       // 3bp interleaved: 40 p1 + 40 p2 + 40 p3
-    // Per-row Amiga display-y (≈ Atari DL-relative scanline) and vertical doubling.
-    struct Row { int y; int vdup; };
-    static const Row rows[6] = {
-        {  56, 2 },   // mode 7: "RESCUE ON FRACTALUS!"  (double height)
-        {  96, 1 },   // mode 6: copyright
-        { 136, 1 },   // mode 6: STARTING LEVEL
-        { 146, 1 },   // mode 6: RANKING LEVEL
-        { 170, 1 },   // mode 6: LAST SCORE
-        { 180, 1 },   // mode 6: HIGH SCORE
-    };
     uint8_t* bmp = (uint8_t*)titleScreenBitmap->data;
-    // Blank = pen 0 (black): clear the whole bitmap once.
-    for (int i = 0; i < kStride * (int)kH; i++) bmp[i] = 0;
-
-    for (int r = 0; r < 6; r++) {
-        const uint8_t* src = (const uint8_t*)mem + kScreenRAM + r * 20;
-        for (int c = 0; c < 20; c++) {
-            const uint8_t cell = src[c];
-            const uint8_t pen  = (uint8_t)((cell >> 6) + 1);          // COLPF0-3 -> pen1-4
-            const uint8_t* glyph = (const uint8_t*)mem + kCharset + (cell & 0x3Fu) * 8u;
-            for (int gr = 0; gr < 8; gr++) {
-                // Double each glyph bit to 2 px (mode 6/7 = 16px/char) via the precomputed table.
-                const uint16_t dbl = kDoubleGlyph[glyph[gr]];
-                const uint8_t hi = (uint8_t)(dbl >> 8), lo = (uint8_t)(dbl & 0xFF);
-                for (int vd = 0; vd < rows[r].vdup; vd++) {
-                    const int sy = rows[r].y + gr * rows[r].vdup + vd;
-                    if (sy < 0 || sy >= (int)kH) continue;
-                    uint8_t* row = bmp + sy * kStride;
-                    const int bx = c * 2;                             // 16px char = 2 bytes/plane
-                    if (pen & 1u) { row[bx]      |= hi; row[bx + 1]      |= lo; }   // plane1
-                    if (pen & 2u) { row[40 + bx] |= hi; row[40 + bx + 1] |= lo; }   // plane2
-                    if (pen & 4u) { row[80 + bx] |= hi; row[80 + bx + 1] |= lo; }   // plane3
-                }
-            }
-        }
-    }
+    // Blank = pen 0 (black): clear the whole bitmap once, then decode every cell.
+    for (int i = 0; i < kTitleStride * (int)kH; i++) bmp[i] = 0;
+    decodeTitleCells(0, 119);
 }
 
 void RescueOnFractalus::render()

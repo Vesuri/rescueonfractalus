@@ -902,6 +902,14 @@ void PlatformAmiga::cockpitDirty(uint16_t addr, uint8_t nCells) {
     for (uint8_t i = 0; i < nCells; i++) rof_cockpit_dial_dirty((uint16_t)(addr + i));
 }
 
+extern "C" void rof_title_screen_dirty(unsigned short addr, unsigned char nCells);
+void PlatformAmiga::titleScreenDirty(uint16_t addr, uint8_t nCells) {
+    // A span of Title Screen digit cells ($365B region) was written — the STARTING LEVEL
+    // digit (level select) or LAST/HIGH SCORE digits (game-over).  Grow the value-cell dirty
+    // range so the next renderFrame redraws just those cells (no full-screen flash).
+    rof_title_screen_dirty(addr, nCells);
+}
+
 extern "C" volatile unsigned char g_compassDirty;
 void PlatformAmiga::compassChanged() {
     // The compass heading cells $32E3-$32E6 were rewritten (housing or heading glyph).
