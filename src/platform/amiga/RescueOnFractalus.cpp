@@ -2146,7 +2146,7 @@ void RescueOnFractalus::deriveRenderSignals()
 void RescueOnFractalus::perFrameWork()
 {
     update_indicator_blink_native();    // $4131: cockpit blink lights (flight-VBI routine)
-    // sfx_voice_tick_native() is driven by CIA-B Timer A at 25 Hz (main.cpp).
+    // sfx_voice_tick() is driven by CIA-B Timer A at 25 Hz (main.cpp).
 
     // $62E7 SFX-reinit gate: when $0090 is non-zero the loop reinits the SFX sequence.
     if (mem[MEM_sfx_reinit_gate]) {

@@ -49,8 +49,8 @@ extern struct GfxBase* GfxBase;
 
 // load_xex_image (XexImage.cpp): populate mem[] with the pristine rof.xex boot image.
 extern "C" void load_xex_image(void);
-// sfx_voice_tick_native (SfxPlayer.cpp): the SFX music tick, driven by CIA-B Timer A.
-extern "C" void sfx_voice_tick_native(void);
+// sfx_voice_tick ($70F9, rof_native.c validated twin): the SFX theme tick, driven by CIA-B Timer A.
+extern "C" void sfx_voice_tick(void);
 // game_vbi_isr (flight_native.cpp): the per-frame VBI body, run from the real VBI below.
 extern "C" void game_vbi_isr(void);
 
@@ -301,7 +301,7 @@ static void wait_rasterlines(uint8_t lines)
 // Apply all channels recorded since the last flush.  Waveform changes are batched through a
 // single DMA off → wait → on so the rasterline wait is paid once.  Called once per frame from
 // game_vbi_isr, after both audio engines have recorded their POKEY writes for the frame: the
-// CIA-B music tick (sfx_voice_tick_native) and the in-game SFX engine (sfx_voice_envelope_tick).
+// CIA-B music tick (sfx_voice_tick) and the in-game SFX engine (sfx_voice_envelope_tick).
 extern "C" void flush_paula(void)
 {
     uint8_t valid = want_valid;
@@ -484,9 +484,6 @@ static void update_paula_channel(uint8_t ch)
     }
     want_set(ch, sel_ptr, sel_len, per ? per : 124u, vol);
 }
-
-// Forward declaration — defined in SfxPlayer.cpp
-extern "C" void sfx_seq_step_native(void);
 
 // ---- public interface --------------------------------------------------------
 // mem[] has already been populated (load_xex_image, called from main before the scene
@@ -1222,7 +1219,7 @@ static struct Interrupt sfxTimer;
 
 static uint32_t sfxTimerHandler()
 {
-    if (mem[0x00E7]) sfx_voice_tick_native();
+    if (mem[0x00E7]) sfx_voice_tick();
     return 0;
 }
 

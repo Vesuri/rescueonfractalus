@@ -28,110 +28,20 @@ extern "C" volatile uint8_t mem[65536];
 // SFX engine  (was SfxPlayer.cpp)
 // ============================================================================
 
-// Native 68000 reimplementation of sfx_voice_tick + sfx_seq_step.
-// Replaces the 6502-transpiled versions (rof_gen.c $70F9/$7148) which emulate
-// 6502 registers/flags on every "instruction" — ~60x too slow at 7 MHz.
+// The attract/standby-theme SFX sequencer sfx_voice_tick ($70F9) + sfx_seq_step
+// ($7148) now live as byte-identical VALIDATED twins in src/gen/rof_native.c
+// (see VALIDATE_FUNCS), linked into both backends.  They route POKEY AUDF/AUDC
+// through bus_write -> platform_hw_write -> the Paula want[] table, so the Amiga
+// no longer needs a separate lossy copy here.  PlatformAmiga's CIA-B tick calls
+// sfx_voice_tick() directly.  Likewise sfx_engine_reset ($5433) is the validated
+// twin in rof_native.c (its former sfx_engine_reset_native duplicate was dead and
+// has been removed).
 //
-// State in mem[] (identical to Atari):
-//   $073A  — duration countdown (decrements each call; sfx_seq_step on underflow)
-//   $073B  — gate/mute (upper nibble of last note byte; 0 = silence)
-//   $073C  — sequence pointer (index into $71DB table)
-//   $0091  — last voice-param command byte (scratch)
-//
-// Tables in mem[] (game ROM, loaded from screen3_mem.bin):
-//   $71DB  — sequence byte stream (0=loop to 0, 0x01-0x7F=note, 0x80-0xFF=voice cmd)
-//   $71D2  — duration table indexed by note & 0x1F
-//   $71AB/$719E/$7191/$71B8  — AUDF1-4 per voice index
-//   $71C5  — AUDC4 per voice index
-
-
-// platform_hw_write declared in PlatformAmiga.h (extern "C")
-
-// ---- sfx_seq_step_native ($7148) — also called from PlatformAmiga::audioInit() ------
-// Advances the sequence pointer and loads the next note.
-//   Negative bytes (0x80-0xFF): voice-param command — write AUDF1-4+AUDC4,
-//     continue if AUDC4 != 0, else fall through with note=0.
-//   Zero: reset pointer to 0 and re-read (sequence loop).
-//   Positive (0x01-0x7F): note byte — decode duration+gate and stop.
-extern "C" void sfx_seq_step_native(void)
-{
-    uint8_t x = mem[0x073C];
-    uint8_t note;
-
-    for (;;) {
-        x++;                                        // INX
-        uint8_t cmd = mem[0x71DB + x];
-        if (cmd == 0) { x = 0; cmd = mem[0x71DB]; } // TAX / re-read table[0]
-
-        if ((int8_t)cmd >= 0) {                     // positive: note command
-            note = cmd;
-            break;
-        }
-
-        // Negative: voice-parameter command
-        mem[0x0091] = cmd;
-        uint8_t v = cmd & 0x1Fu;                    // voice index = lower 5 bits
-        platform_hw_write(0xD200, mem[0x71AB + v]); // AUDF1
-        platform_hw_write(0xD202, mem[0x719E + v]); // AUDF2
-        platform_hw_write(0xD204, mem[0x7191 + v]); // AUDF3
-        platform_hw_write(0xD206, mem[0x71B8 + v]); // AUDF4
-        uint8_t audc4 = mem[0x71C5 + v];
-        platform_hw_write(0xD207, audc4);
-        if (audc4 != 0) continue;                   // keep processing commands
-        note = 0;                                   // audc4==0 → treat as rest
-        break;
-    }
-
-    // L_717b: save pointer, decode duration and gate
-    mem[0x073C] = x;
-    mem[0x073A] = mem[0x71D2 + (note & 0x1Fu)];    // duration from table
-    mem[0x073B] = note >> 4;                        // gate = upper nibble
-}
-
-// ---- sfx_voice_tick_native ($70F9) ------------------------------------------
-// Driven by CIA-B Timer A (main.cpp) when mem[$00E7] != 0.  On the Atari this
-// runs from vbi_deferred_dispatch ($534D) every *other* VBI — gated by
-// BIT $062D bit 0 with $00E7=1 — i.e. 25 Hz on PAL, which the CIA timer matches.
-// Decrements the duration counter; on underflow calls sfx_seq_step_native.
-// Computes an AUDC amplitude value and writes it to POKEY channels 1-3.
-//
-// AUDC computation (matches 6502 exactly):
-//   half = mem[$073A] >> 1
-//   if half < 3:  audc = half + 0xA0  (CMP carry = 0)
-//   if half >= 3: audc = 0xA3         (CMP carry = 1 → LDA #2 + ADC #0xA0 + C)
-// flush_paula (PlatformAmiga.cpp): apply the frame's batched POKEY→Paula register changes,
-// paying the single DMA-restart rasterline wait once for all channels that changed waveform.
-// Called once per frame from game_vbi_isr (NOT here): this SFX tick only RECORDS its POKEY
-// writes into the want[] table (via platform_hw_write → update_paula_channel), and the
-// in-game SFX engine sfx_voice_envelope_tick ($548D) records into the same table from the VBI.
-// Flushing in one place (the VBI) applies whichever engine wrote this frame and keeps the
-// DMA-restart sequence on a single interrupt level (no CIA-B vs VBI DMACON race).
+// flush_paula (PlatformAmiga.cpp) applies the frame's batched POKEY->Paula
+// register changes; game_vbi_isr (below) calls it once per frame.  The SFX ticks
+// only RECORD their writes into want[] via platform_hw_write; flushing in one
+// place keeps the DMA-restart sequence on a single interrupt level.
 extern "C" void flush_paula(void);
-
-extern "C" void sfx_voice_tick_native(void)
-{
-    mem[0x073A]--;
-    if ((int8_t)mem[0x073A] < 0) sfx_seq_step_native();
-
-    uint8_t half = mem[0x073A] >> 1;
-    uint8_t audc = (half < 3) ? (uint8_t)(half + 0xA0u) : 0xA3u;
-
-    uint8_t gate = mem[0x073B];
-    if (gate == 0) {
-        platform_hw_write(0xD201, 0);
-        platform_hw_write(0xD203, 0);
-        platform_hw_write(0xD205, 0);
-    } else {
-        platform_hw_write(0xD201, audc);
-        platform_hw_write(0xD203, audc);
-        platform_hw_write(0xD205, audc);
-        // Original: STA $D1FF,Y (Y=gate) — writes audc+2 to a POKEY register.
-        // Route through platform_hw_write so Paula + mem[] both see it.
-        platform_hw_write((uint16_t)(0xD1FFu + gate), (uint8_t)(audc + 2u));
-    }
-    // POKEY writes are now recorded in the want[] table; game_vbi_isr flushes them once
-    // per frame (see flush_paula above) along with any in-game SFX writes.
-}
 
 // ============================================================================
 // Station / attract mode  (was station_native.cpp)
@@ -417,7 +327,7 @@ extern "C" void station_setup(void)
 // management, sound dispatch, and object animation.  On the Amiga:
 //   • Copper handles all hardware register writes.
 //   • main.cpp VBI interrupt server handles RTCLOK ($0014/$0013/$0080).
-//   • SfxPlayer handles the audio (sfx_voice_tick_native).
+//   • the CIA-B tick handles the audio (sfx_voice_tick, rof_native.c).
 // Only the pure mem[]-state fragments below remain.
 
 
@@ -1160,37 +1070,6 @@ extern "C" void game_vbi_isr(void)
     // starts new notes/SFX, so without it stuck notes never stop and SFX never sound.
     flush_paula();
     PlatformAmiga::noiseTick();                     // refresh a 128-byte slice of the noise sample (cheap)
-}
-
-// sfx_engine_reset_native: faithful replica of the SFX engine reset $5433 (mislabelled
-// sfx_engine_reset in symbols.csv), called on the Atari during game init ($3D35) and at
-// launch ($6118).  Clears the $0719 event ring (head/tail $0073/$0074) and the 14 voice-
-// slot envelope arrays, assigns the 4 physical POKEY channels to voice slots 1..4
-// ($0705 = {2,4,6,8}) and mutes their AUDC, seeds the mixer scratch, and sets AUDCTL=$60.
-// On the Atari this runs at game init ($3D35) and launch ($6118) so sfx_voice_envelope_tick
-// starts from a clean, silent state.
-// ⚠ CURRENTLY UNWIRED on the Amiga (the genuine native game_main_loop chain does its own
-// init); kept for wiring into the native flight/launch path alongside seed_engine_drone_native.
-extern "C" void sfx_engine_reset_native(void)
-{
-    mem[0x0073] = 0x00;                       // ring head
-    mem[0x0074] = 0x00;                       // ring tail
-    for (int y = 1; y <= 0x0E; y++) {         // $543b: clear voice-slot arrays, slots 1..14
-        mem[0x066B + y] = 0; mem[0x0705 + y] = 0; mem[0x0687 + y] = 0;
-        mem[0x0695 + y] = 0; mem[0x06A3 + y] = 0; mem[0x06B1 + y] = 0;
-        mem[0x06BF + y] = 0; mem[0x06CD + y] = 0; mem[0x06DB + y] = 0;
-        mem[0x06E9 + y] = 0; mem[0x06F7 + y] = 0;
-    }
-    mem[0x0714] = 0x00;                        // $545f mixer "top priority" value
-    mem[0x0715] = 0x02;                        // $5462 mixer "top slot" index
-    for (int y = 4; y >= 1; y--) {             // $5467: assign POKEY channels to slots 4..1
-        uint8_t a = (uint8_t)(y << 1);         // TYA; ASL -> 8,6,4,2
-        mem[0x0705 + y] = a;                   // voice slot y -> POKEY reg index a
-        platform_hw_write((uint16_t)(0xD1FF + a), 0x00);  // mute AUDCn
-    }
-    mem[0x0706] = 0x00; mem[0x0708] = 0x00;    // $5477/$547a mixer scratch
-    mem[0x0712] = 0x02; mem[0x0713] = 0x06;    // $547d/$5482
-    platform_hw_write(0xD208, 0x60);           // $5487 AUDCTL = $60
 }
 
 // seed_engine_drone_native: install the continuous engine-drone voices for flight.
