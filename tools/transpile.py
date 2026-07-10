@@ -362,6 +362,21 @@ VALIDATE_FUNCS = {
     0x4285,  # lock_on_indicator_write_cell — write a glyph to $3491+Y, then ring_push_marked X=$12
     0x428D,  # lock_on_indicator_return — empty RTS landing pad (shared exit)
     0x428E,  # lock_on_indicator_phase_advance — reverse-fill phase driver ($007E >= $81)
+    # --- standby/launch tunnel-ring + door-scroll cinematic driver (2026-07-11):
+    #     these are pure mem[] 6502 logic (not Amiga-specific), so they move out of
+    #     rof_native_amiga.cpp into rof_native.c as faithful native twins.  The Amiga
+    #     dirty-band glue (g_tun*) draw_ring_frame_step publishes lives under
+    #     #ifdef ROF_PLATFORM_AMIGA; advance_history_6a4d's reorder_sprite_slot tail is
+    #     skipped on Amiga (#ifndef ROF_PLATFORM_AMIGA) to preserve the confirmed cinematic. ---
+    0x6AB5,  # add_multibyte_a1 — multi-byte accumulator add ($00A1..$00A4), returns top byte
+    0x6A4D,  # advance_history_6a4d — rotate the 6-byte colour ring $08D4-$08D9 + $0685 bump
+    0x670D,  # draw_ring_frame_step — one tunnel-ring frame-clear step (draw_symmetric_span_loop)
+    0x6A38,  # step_accum_add_75 — add $75, gate the ring step + ring rotate
+    0x69A9,  # dl_lms_scroll_up — shift top-half DL LMS entries up one slot
+    0x69C3,  # dl_lms_scroll_down — shift bottom-half DL LMS entries down one slot
+    0x6973,  # dl_lms_push_top — push a fresh top-edge LMS row pointer (X-=3)
+    0x698E,  # dl_lms_push_bottom — push a fresh bottom-edge LMS row pointer (Y+=3)
+    0x6953,  # scroll_terrain_dl — one door-open step: scroll both DL halves + push edges
 }
 VALIDATE_SUFFIX = '__t6502'
 

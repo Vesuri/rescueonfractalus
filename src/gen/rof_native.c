@@ -960,8 +960,13 @@ void fill_terrain_columns(void) { fill_terrain_columns_core(); }
  * rebuilding all rows.  A word so the main loop's read is atomic vs the VBI's bump. */
 volatile unsigned short g_starScrollGen = 0;
 
-static uint8_t scroll_accum_add_ff(void) {
-    uint16_t t = (uint16_t)0xFF + scroll_accum_b0;                /* byte 0 += $FF          */
+/* add_multibyte_a1 @ $6AB5 — 32-bit little-endian accumulator add: operand `a` += byte 0
+ * ($00A1); the carry chains up through bytes 1..3 ($00A2/$00A3/$00A4).  Returns the
+ * PROSPECTIVE new top byte (byte 3 + final carry) WITHOUT storing it — the caller decides
+ * whether to commit it to $00A4.  Faithful quirk ($6AC0): the byte-2 step reuses the
+ * freshly-written byte-1 as its operand (the 6502 has no LDA #0 between those two ADCs). */
+uint8_t add_multibyte_a1_core(uint8_t a) {
+    uint16_t t = (uint16_t)a + scroll_accum_b0;                  /* byte 0 += operand       */
     scroll_accum_b0 = (uint8_t)t;
     uint8_t carry = (uint8_t)(t >> 8);
     t = (uint16_t)scroll_accum_b1 + carry;                       /* byte 1 += carry         */
@@ -972,6 +977,8 @@ static uint8_t scroll_accum_add_ff(void) {
     carry = (uint8_t)(t >> 8);
     return (uint8_t)(scroll_accum_b3 + carry);                   /* prospective new top byte */
 }
+/* 6502-ABI shim: operand in cpu.A, returns the top byte in cpu.A (callers CMP it). */
+void add_multibyte_a1(void) { cpu.A = add_multibyte_a1_core(cpu.A); }
 
 /* scroll_field_columns @ $6AEE — scroll the four parallel column buffers one column to the
  * left and generate a fresh rightmost column.  These four buffers ($0C32/$0D32/$0E32/$0F32,
@@ -986,7 +993,7 @@ static uint8_t scroll_accum_add_ff(void) {
  *               unchanged emit nothing (early return). */
 void scroll_field_columns_core(uint8_t gate) {
     if ((int8_t)(gate - 4) >= 0) {                     /* paced phase: advance the accumulator */
-        uint8_t top = scroll_accum_add_ff();
+        uint8_t top = add_multibyte_a1_core(0xFF);
         if (top == 0x64) {
             terrain_state = 0x02;                      /* distance 100 reached — restart the phase */
         } else {
@@ -1060,6 +1067,157 @@ void draw_frame_pattern_seq(void) {
     }
     draw_color_idx = (uint8_t)(colour - 1);               /* faithful: final DEC $0094 */
     draw_frame_guide_columns();                                /* tail: the three vertical guide columns */
+}
+
+/* ============================================================================
+ * Standby/launch tunnel-ring + door-scroll cinematic driver (2026-07-11)
+ *
+ * These were hand-ported in rof_native_amiga.cpp, but they are pure mem[] 6502
+ * logic — not Amiga-specific — so they belong here as faithful native twins.
+ * Two Amiga specifics are guarded:
+ *   - draw_ring_frame_step publishes the tunnel dirty-band globals (g_tun*) under
+ *     #ifdef ROF_PLATFORM_AMIGA so RescueOnFractalus re-decodes only the band it
+ *     just wrote (a full 86-row field scan is > 1 PAL frame on the 68000).
+ *   - advance_history_6a4d skips its reorder_sprite_slot tail on Amiga (the copper
+ *     owns PMG and the confirmed standby cinematic omitted it); the validation/SDL
+ *     build keeps the faithful tail so the twin matches its __t6502 oracle.
+ * ============================================================================ */
+
+/* advance_history_6a4d @ $6A4D — rotate the 6-byte colour ring $08D4-$08D9 up one slot (old
+ * $08D9 wraps back into $08D4; feeds COLOR01-06).  If $008D (step_mode_flag) is negative, copy
+ * $08D8 -> $0071 (display_flags).  Then bump $0685 ($0679[$0C]) by $06CC (history_ring_step),
+ * saturating a wrap-to-0 result to $FF.  Atari tail: reorder_sprite_slot (Y=$0C). */
+void advance_history_6a4d(void) {
+    uint8_t top = mem[0x08D9];
+    mem[0x08D9] = mem[0x08D8];
+    mem[0x08D8] = mem[0x08D7];
+    mem[0x08D7] = mem[0x08D6];
+    mem[0x08D6] = mem[0x08D5];
+    mem[0x08D5] = color_ring;                             /* $08D5 <- $08D4 */
+    color_ring = top;                                     /* $08D4 <- old $08D9 */
+    if ((int8_t)step_mode_flag < 0) display_flags = mem[0x08D8];
+    uint8_t s = (uint8_t)(mem[MEM_hud_field_679 + 0x0C] + history_ring_step);
+    mem[MEM_hud_field_679 + 0x0C] = s ? s : 0xFF;
+#ifndef ROF_PLATFORM_AMIGA
+    cpu.Y = 0x0C;                                         /* the $0685 index is still live in Y */
+    reorder_sprite_slot();                                /* Atari PMG/voice slot reorder */
+#endif
+}
+
+/* dl_lms_scroll_up @ $69A9 — shift the top-half 3-byte LMS entries from $300C,X up to $3009,X
+ * (one slot) until X reaches the top index $0097 (blit_row_counter). */
+void dl_lms_scroll_up(void) {
+    uint8_t x = 1, top = blit_row_counter;
+    while (x != top) {
+        mem[0x3009 + x] = mem[0x300C + x]; x++;
+        mem[0x3009 + x] = mem[0x300C + x]; x += 2;
+    }
+}
+
+/* dl_lms_scroll_down @ $69C3 — shift the bottom-half 3-byte LMS entries from $3087,Y down to
+ * $308A,Y (one slot) until Y reaches the bottom index $0098 (dl_bottom_index). */
+void dl_lms_scroll_down(void) {
+    uint8_t y = 0x80, bot = dl_bottom_index;
+    while (y != bot) {
+        mem[0x308A + y] = mem[0x3087 + y]; y--;
+        mem[0x308A + y] = mem[0x3087 + y]; y -= 2;
+    }
+}
+
+/* dl_lms_push_top @ $6973 — write the 16-bit top push pointer $0080/$0081 (sync_flag lo /
+ * dl_ptr_lo hi) into the top LMS entry at $300A,X (net X -= 3), then step the pointer up one
+ * row (-$2E, the 46-byte mode-F stride). */
+uint8_t dl_lms_push_top_core(uint8_t x) {
+    mem[0x300A + x] = dl_ptr_lo; x--;                     /* hi byte */
+    mem[0x300A + x] = sync_flag;                          /* lo byte */
+    uint16_t p = (uint16_t)(sync_flag | (dl_ptr_lo << 8));
+    p = (uint16_t)(p - 0x2E);
+    sync_flag = (uint8_t)p; dl_ptr_lo = (uint8_t)(p >> 8);
+    return (uint8_t)(x - 2);
+}
+void dl_lms_push_top(void) { cpu.X = dl_lms_push_top_core(cpu.X); }
+
+/* dl_lms_push_bottom @ $698E — write the 16-bit bottom push pointer $0082/$0083 (dl_ptr_hi lo /
+ * screen_ptr_lo hi) into the bottom LMS entry at $3089,Y (net Y += 3), then step the pointer
+ * down one row (+$2E). */
+uint8_t dl_lms_push_bottom_core(uint8_t y) {
+    mem[0x3089 + y] = dl_ptr_hi; y++;                     /* lo byte */
+    mem[0x3089 + y] = screen_ptr_lo;                      /* hi byte */
+    uint16_t p = (uint16_t)(dl_ptr_hi | (screen_ptr_lo << 8));
+    p = (uint16_t)(p + 0x2E);
+    dl_ptr_hi = (uint8_t)p; screen_ptr_lo = (uint8_t)(p >> 8);
+    return (uint8_t)(y + 2);
+}
+void dl_lms_push_bottom(void) { cpu.Y = dl_lms_push_bottom_core(cpu.Y); }
+
+/* scroll_terrain_dl @ $6953 — one door-open step: DEC $008A (terrain_scroll_counter); while it
+ * is still non-zero, scroll both DL halves apart; on the step that reaches 0, arm the reveal
+ * reload $008C=8 instead.  Then push a fresh leading LMS row into each half. */
+void scroll_terrain_dl(void) {
+    if (--terrain_scroll_counter != 0) {
+        dl_lms_scroll_down();
+        dl_lms_scroll_up();
+    } else {
+        terrain_scroll_reload = 8;
+    }
+    dl_bottom_index = dl_lms_push_bottom_core(dl_bottom_index);
+    blit_row_counter = dl_lms_push_top_core(blit_row_counter);
+}
+
+#ifdef ROF_PLATFORM_AMIGA
+/* Tunnel dirty-band publish (draw_ring_frame_step is the sole writer of the $1000 GTIA field
+ * during the tunnel-exit clear).  RescueOnFractalus::decodeTunnelBand turns these into four
+ * thin decode strips; it clears g_tunnelFieldDirty after re-decoding.  See the phase-table
+ * "Tunnel" row in CLAUDE.md.  Defined here (the writer's TU) like g_planetRowLo/Hi above. */
+volatile uint8_t g_tunnelFieldDirty = 0;
+volatile uint8_t g_tunRowLo = 0, g_tunRowHi = 0;       /* outer rows $009F .. $009E after  */
+volatile uint8_t g_tunInRowLo = 0, g_tunInRowHi = 0;   /* inner rows $009F .. $009E before */
+volatile uint8_t g_tunColLpx = 0, g_tunColRpx = 0;     /* outer $009C / $009D after        */
+volatile uint8_t g_tunInColLpx = 0, g_tunInColRpx = 0; /* inner $009C / $009D before       */
+volatile uint8_t g_tunBandMode = 0;                    /* 1 = band decode, 0 = full extent */
+#endif
+
+/* draw_ring_frame_step @ $670D — draw ONE tunnel-ring frame group via draw_symmetric_span_loop
+ * (thickness = $6E0F[$00A0]); when $00A0 < 6 (signed) clear $08D8 (the inner-ring colour)
+ * instead.  Then DEC $00A0 and set $0088 = $00A0 + 1 — the gate that stops the ring cycle once
+ * $00A0 wraps past 0 (display_setup then advances to the stars/space phase). */
+void draw_ring_frame_step(void) {
+    uint8_t a0 = draw_iter_count;                         /* $00A0 */
+    if ((int8_t)a0 >= 6) {                                /* CPY #$06; BMI -> clear branch */
+#ifdef ROF_PLATFORM_AMIGA
+        /* snapshot the rectangle BEFORE the span loop expands it (= this band's inner edge) */
+        uint8_t inTop = draw_row_bottom, inBot = draw_row_top;   /* $009F / $009E */
+        uint8_t inL   = draw_x_left,     inR   = draw_x_right;   /* $009C / $009D */
+#endif
+        span_row_count = mem[0x6E0F + a0];                /* $0096 = ring thickness */
+        draw_symmetric_span_loop();                       /* steps $9C--/$9D++/$9E++/$9F-- */
+#ifdef ROF_PLATFORM_AMIGA
+        g_tunRowLo = draw_row_bottom; g_tunRowHi = draw_row_top; /* outer rows after  */
+        g_tunInRowLo = inTop; g_tunInRowHi = inBot;             /* inner rows before */
+        g_tunColLpx = draw_x_left; g_tunColRpx = draw_x_right;  /* outer cols after  */
+        g_tunInColLpx = inL;       g_tunInColRpx = inR;         /* inner cols before */
+        g_tunBandMode = 1;
+        g_tunnelFieldDirty = 1;
+#endif
+    } else {
+        mem[0x08D8] = 0;                                  /* $671E: LDA #$00; STA $08D8 */
+    }
+    draw_iter_count--;                                    /* DEC $00A0 */
+    vbi_flags = (uint8_t)(draw_iter_count + 1);           /* $0088 = $00A0 + 1 */
+}
+
+/* step_accum_add_75 @ $6A38 — advance the scroll accumulator by $75; if the new top byte is
+ * unchanged, do nothing; else store it, and (when >= $90) step the tunnel-ring clear
+ * (draw_ring_frame_step) before ALWAYS rotating the colour ring (advance_history_6a4d).  Per
+ * $6A38 the CMP #$90 branch falls THROUGH into the rotation — the two are additive, so the
+ * palette keeps cycling while the tunnel clears. */
+void step_accum_add_75(void) {
+    uint8_t a = add_multibyte_a1_core(0x75);
+    scroll_accum_b3 = a;
+    if (a == scroll_accum_prev) return;                   /* top byte unchanged */
+    scroll_accum_prev = a;
+    if (a >= 0x90) draw_ring_frame_step();
+    advance_history_6a4d();
 }
 
 /* draw_vline_pair @ $6C4D — plot a symmetric pair of vertical lines.  Entry A is the

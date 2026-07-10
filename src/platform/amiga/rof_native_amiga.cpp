@@ -455,199 +455,24 @@ extern "C" void update_indicator_blink_native(void)
     }
 }
 
-// --- Tunnel-ring cycle: faithful ports of the $5367 dispatcher's $0088 branch ---
+// --- Tunnel-ring cycle + door scroll: the $5367 dispatcher body -------------
 //
-// The original per-frame driver is launch_anim_dispatch ($5367), a strict
-// priority dispatcher that runs exactly ONE action per frame:
-//     if   $008D != 0  -> step_accum_sub_7e   (ring reverse — NOT ported)
-//     elif $0088 != 0  -> step_accum_add_75   (tunnel ring cycle — ported below)
-//     elif $0089 != 0  -> scroll_field_columns
-//     elif $008B != 0  -> dl_index_dec
-//     else (via $008F toggle) $008A != 0 -> scroll_terrain_dl  (door scroll)
-// Only the $0088 ring branch is ported here; the lower-priority branches drive
-// the ANTIC display-list machinery and are deferred to the (not-yet-done) DL pass.
-
-// add_multibyte_a1 @ $6AB5: A (carry clear) += $00A1, carry chaining up through
-// $00A2,$00A3,$00A4; returns the top byte (the caller stores it to $00A4).
-// NOTE: the $A3 step reuses the freshly-written $A2 as its operand (no LDA #0
-// between them) — a quirk of the original that is reproduced verbatim.
-static uint8_t add_multibyte_a1(uint8_t a)
-{
-    uint16_t r = (uint16_t)a + mem[MEM_scroll_accum_b0];                 // CLC; ADC $A1
-    mem[MEM_scroll_accum_b0] = (uint8_t)r;
-    r = (uint16_t)mem[MEM_scroll_accum_b1] + (r >> 8);                   // LDA #0; ADC $A2
-    mem[MEM_scroll_accum_b1] = (uint8_t)r;
-    r = (uint16_t)mem[MEM_scroll_accum_b1] + mem[MEM_scroll_accum_b2] + (r >> 8);     // ADC $A3 (A = new $A2!)
-    mem[MEM_scroll_accum_b2] = (uint8_t)r;
-    r = (uint16_t)mem[MEM_scroll_accum_b3] + (r >> 8);                   // LDA #0; ADC $A4
-    return (uint8_t)r;                                      // top byte
-}
-
-// advance_history_6a4d @ $6A4D: rotate the 6-byte colour ring $08D4-$08D9 up one
-// slot (old $08D9 wraps back into $08D4 — feeds COLOR01-06); if $008D is negative
-// copy $08D8 -> $0071; bump $0679[$0C] by $06CC, saturating to $FF on wrap-to-0.
-// The tail-call to reorder_sprite_slot ($5629, PMG slot reordering) is irrelevant
-// to the Standby tunnel and is omitted (same convention as the handlers above).
-static void advance_history_6a4d(void)
-{
-    uint8_t top = mem[MEM_color_ring + 5];
-    mem[MEM_color_ring + 5] = mem[MEM_color_ring + 4];
-    mem[MEM_color_ring + 4] = mem[MEM_color_ring + 3];
-    mem[MEM_color_ring + 3] = mem[MEM_color_ring + 2];
-    mem[MEM_color_ring + 2] = mem[MEM_color_ring + 1];
-    mem[MEM_color_ring + 1] = mem[MEM_color_ring];
-    mem[MEM_color_ring] = top;
-    if ((int8_t)mem[MEM_step_mode_flag] < 0) mem[MEM_display_flags] = mem[MEM_color_ring + 4];     // $008D < 0
-    uint8_t s = (uint8_t)(mem[0x0679 + 0x0C] + mem[MEM_history_ring_step]);    // CLC; ADC $06CC
-    mem[0x0679 + 0x0C] = s ? s : 0xFF;                          // BNE keep; else LDA #$FF
-}
-
-// draw_ring_frame_step @ $670D: the tunnel ring's "top byte >= $90" branch.
-// It is the FAITHFUL tunnel→stars trigger: each invocation steps the column
-// index $00A0 down by one and sets $0088 = $00A0 + 1, so once $00A0 wraps from
-// $00 to $FF the gate $0088 becomes 0 and the ring stops cycling — display_setup
-// then advances to the stars/space phase.  init_row_coords_9c seeds $00A0 = $13
-// (=19), so the tunnel runs for 20 threshold crossings before it ends.
+// launch_anim_dispatch ($5367) is a strict priority dispatcher that runs exactly
+// ONE action per frame:
+//     if   $008D != 0  -> step_accum_sub_7e   (DL-construction step)
+//     elif $0088 != 0  -> step_accum_add_75   (tunnel ring cycle)
+//     elif $0089 != 0  -> scroll_field_columns (stars/planet column scroll)
+//     elif $008B != 0  -> dl_index_dec         (unused in Standby)
+//     else (via $008F toggle) $008C reveal / $008A != 0 -> scroll_terrain_dl (doors)
+// launch_anim_dispatch_native (below) is the Amiga per-frame dispatch entry.
 //
-//   $670D  LDY $00A0
-//   $670F  CPY #$06 / BMI $671E   ; $00A0 < 6 (signed) -> clear $08D8, else DRAW
-//   $6713  LDA $6E0F,Y / STA $0096 / JSR draw_symmetric_span_loop ($6642)
-//   $671E  (else) LDA #$00 / STA $08D8
-//   $6723  DEC $00A0 / CLC / LDA $00A0 / ADC #$01 / STA $0088
-//
-// So the GEOMETRIC clear (expanding black frames from the centre) runs for the FIRST
-// 14 crossings ($00A0 19->6); the $08D8 palette touch is only the last 6 ($00A0 5->0).
-// The draw writes black (pen $0094=0) into the GTIA field at $2000, which the Amiga
-// re-decodes (g_tunnelFieldDirty) so the rings visibly clear from the middle out.
-extern "C" void draw_symmetric_span_loop(void);   // faithful shared twin in src/gen/rof_native.c
-
-// Set by draw_ring_frame_step when it draws a black ring-clear frame into the GTIA field at
-// $1000, so RescueOnFractalus re-decodes ONLY the band it just wrote — not the whole 86-row
-// field (> 1 PAL frame on the 68000, freezes the ring cycle) and not a shadow scan of the
-// cumulative extent.  draw_symmetric_span_loop expands the rectangle [$009C..$009F] outward
-// by $0096 on each side; the newly-written cells are exactly the picture-frame band between
-// the rectangle BEFORE the loop (inner = the previous outer) and AFTER (outer).  Publish both:
-//   g_tunRowLo/Hi     = outer rows ($009F..$009E after)   [also reused as the reveal full extent]
-//   g_tunInRowLo/Hi   = inner rows ($009F..$009E before)
-//   g_tunColLpx/Rpx   = outer left/right PIXEL cols ($009C/$009D after)
-//   g_tunInColLpx/Rpx = inner left/right PIXEL cols ($009C/$009D before)
-//   g_tunBandMode     = 1 → decode the band (exit clear); 0 → decode the full extent (reveal)
-// RescueOnFractalus::decodeTunnelBand turns these into four thin decode strips.  Cleared by
-// RescueOnFractalus after it re-decodes.
-extern "C" volatile uint8_t g_tunnelFieldDirty = 0;
-extern "C" volatile uint8_t g_tunRowLo = 0, g_tunRowHi = 0;       // outer rows $009F .. $009E after
-extern "C" volatile uint8_t g_tunInRowLo = 0, g_tunInRowHi = 0;   // inner rows $009F .. $009E before
-extern "C" volatile uint8_t g_tunColLpx = 0, g_tunColRpx = 0;     // outer $009C / $009D after
-extern "C" volatile uint8_t g_tunInColLpx = 0, g_tunInColRpx = 0; // inner $009C / $009D before
-extern "C" volatile uint8_t g_tunBandMode = 0;                    // 1 = band decode, 0 = full extent
-
-static void draw_ring_frame_step(void)
-{
-    uint8_t a0 = mem[0x00A0];
-    if ((int8_t)a0 >= 6) {                          // CPY #$06; BMI -> $00A0 >= 6 = DRAW
-        // Snapshot the rectangle BEFORE the loop expands it (= this band's inner edge).
-        uint8_t inTop = mem[0x009F], inBot = mem[0x009E];
-        uint8_t inL   = mem[0x009C], inR   = mem[0x009D];
-        mem[0x0096] = mem[0x6E0F + a0];             // LDA $6E0F,Y; STA $0096
-        draw_symmetric_span_loop();                 // JSR $6642 (steps $009C--/$009D++/$009E++/$009F--)
-        g_tunRowLo = mem[0x009F];                   // outer rows (top .. bottom) after
-        g_tunRowHi = mem[0x009E];
-        g_tunInRowLo = inTop; g_tunInRowHi = inBot; // inner rows (before)
-        g_tunColLpx = mem[0x009C]; g_tunColRpx = mem[0x009D];   // outer cols after
-        g_tunInColLpx = inL;       g_tunInColRpx = inR;         // inner cols before
-        g_tunBandMode = 1;
-        g_tunnelFieldDirty = 1;
-    } else {
-        mem[0x08D8] = 0u;                           // $671E: LDA #$00; STA $08D8
-    }
-    mem[0x00A0]--;                                  // DEC $00A0
-    mem[MEM_vbi_flags] = (uint8_t)(mem[0x00A0] + 1u);   // CLC; LDA $00A0; ADC #$01; STA $0088
-}
-
-// step_accum_add_75 @ $6A38: add $75 into the accumulator; if the resulting top byte
-// ($A4) is unchanged, do nothing; otherwise store it, and — when the top byte >= $90
-// — step the message column (draw_ring_frame_step, the tunnel-exit clear + the
-// stars trigger), then ALWAYS rotate the ring (advance_history_6a4d).  Per the real
-// $6A38: `CMP #$90 / BCC $6A4D / JSR $670D` falls THROUGH into the rotation at $6A4D
-// — the two are additive, NOT exclusive, so the palette keeps cycling while the
-// tunnel clears.  (The earlier if/else port froze the cycle during the clear.)
-static void step_accum_add_75(void)
-{
-    uint8_t a = add_multibyte_a1(0x75);
-    mem[MEM_scroll_accum_b3] = a;
-    if (a == mem[MEM_scroll_accum_prev]) return;     // CMP $A5; BEQ -> top byte unchanged
-    mem[MEM_scroll_accum_prev] = a;
-    if (a >= 0x90u) draw_ring_frame_step();      // CMP #$90; BCS -> JSR $670D
-    advance_history_6a4d();                        // $6A4D: ring rotation, ALWAYS runs
-}
-
-// ---- door display-list scroll: native ports of the $6953 family -------------
-// The "doors" open by scrolling the ANTIC display list at $3000: each scanline's
-// 3-byte LMS entry (mode byte + 16-bit source address) is shifted one slot, then a
-// fresh leading row pointer is pushed at each edge.  These run on the live DL in
-// mem[$3000+]; the door-open progress is the $008A counter they decrement.
-// (Raw $00xx / $30xx literals kept here to mirror the 6502 DL layout 1:1.)
-
-// dl_lms_scroll_up @ $69A9: shift top-half LMS entries from $300C,X up to $3009,X
-// (3-byte stride) until X reaches the top index $0097.
-static void dl_lms_scroll_up(void)
-{
-    uint8_t x = 1, top = mem[0x0097];
-    while (x != top) {
-        mem[0x3009 + x] = mem[0x300C + x]; x++;
-        mem[0x3009 + x] = mem[0x300C + x]; x += 2;
-    }
-}
-
-// dl_lms_scroll_down @ $69C3: shift bottom-half LMS entries from $3087,Y down to
-// $308A,Y until Y reaches the bottom index $0098.
-static void dl_lms_scroll_down(void)
-{
-    uint8_t y = 0x80, bot = mem[0x0098];
-    while (y != bot) {
-        mem[0x308A + y] = mem[0x3087 + y]; y--;
-        mem[0x308A + y] = mem[0x3087 + y]; y -= 2;
-    }
-}
-
-// dl_lms_push_top @ $6973: write the 16-bit top push pointer $0080/$0081 into the
-// top LMS entry at $300A,X (net X -= 3), then advance the pointer up one row (-$2E).
-static uint8_t dl_lms_push_top(uint8_t x)
-{
-    mem[0x300A + x] = mem[0x0081]; x--;
-    mem[0x300A + x] = mem[0x0080];
-    uint16_t p = (uint16_t)(mem[0x0080] | (mem[0x0081] << 8));
-    p = (uint16_t)(p - 0x2E);
-    mem[0x0080] = (uint8_t)p; mem[0x0081] = (uint8_t)(p >> 8);
-    return (uint8_t)(x - 2);
-}
-
-// dl_lms_push_bottom @ $698E: write the 16-bit bottom push pointer $0082/$0083 into
-// the bottom LMS entry at $3089,Y (net Y += 3), then advance the pointer down (+$2E).
-static uint8_t dl_lms_push_bottom(uint8_t y)
-{
-    mem[0x3089 + y] = mem[0x0082]; y++;
-    mem[0x3089 + y] = mem[0x0083];
-    uint16_t p = (uint16_t)(mem[0x0082] | (mem[0x0083] << 8));
-    p = (uint16_t)(p + 0x2E);
-    mem[0x0082] = (uint8_t)p; mem[0x0083] = (uint8_t)(p >> 8);
-    return (uint8_t)(y + 2);
-}
-
-// scroll_terrain_dl @ $6953: one door-open step.  Decrement $008A; while it is
-// still non-zero scroll both DL halves apart; on the step that reaches 0 set the
-// reload $008C=8 instead.  Then push the leading row into each half.
-static void scroll_terrain_dl(void)
-{
-    if (--mem[MEM_terrain_scroll_counter] != 0) {     // DEC $008A; BNE
-        dl_lms_scroll_down();
-        dl_lms_scroll_up();
-    } else {
-        mem[MEM_terrain_scroll_reload] = 8;            // $008C = 8
-    }
-    mem[0x0098] = dl_lms_push_bottom(mem[0x0098]);   // LDY $0098 / push / STY $0098
-    mem[0x0097] = dl_lms_push_top(mem[0x0097]);      // LDX $0097 / push / STX $0097
-}
+// The helper 6502 routines it drives (step_accum_add_75/$6A38, draw_ring_frame_step/
+// $670D, add_multibyte_a1/$6AB5, advance_history_6a4d/$6A4D, scroll_terrain_dl/$6953,
+// dl_lms_*) are pure mem[] 6502 logic, not Amiga-specific, so they now live as faithful
+// native twins in src/gen/rof_native.c (VALIDATE_FUNCS).  draw_ring_frame_step's Amiga
+// tunnel dirty-band publish (the g_tun* globals, formerly defined here) is guarded there
+// under #ifdef ROF_PLATFORM_AMIGA; advance_history_6a4d skips its reorder_sprite_slot tail
+// on Amiga.  The g_tun* globals are now defined by their writer's TU (rof_native.c).
 
 // launch_anim_dispatch @ $5367 (Standby subset): the per-frame priority dispatcher
 // that runs exactly ONE action.  $0088 (ring) outranks $0089 (column scroll) outranks
@@ -662,6 +487,8 @@ static void scroll_terrain_dl(void)
 extern "C" { typedef struct { uint8_t A, X, Y, S, N, V, Z, C, I, D; } Cpu6502; extern Cpu6502 cpu; }
 extern "C" void scroll_field_columns(void);  // $6AEE transpiled (entered with A = $0089)
 extern "C" void step_accum_sub_7e(void);      // $6A8F transpiled — the $008D DL-construction step
+extern "C" void step_accum_add_75(void);      // $6A38 native twin (rof_native.c) — tunnel ring cycle
+extern "C" void scroll_terrain_dl(void);      // $6953 native twin (rof_native.c) — one door-open step
 extern "C" void launch_anim_dispatch_native(void)
 {
     // $008D (step_mode_flag): the DL-CONSTRUCTION step, NOT a "reverse ring" — the Atari

@@ -2153,6 +2153,82 @@ static int test_vbi_handler_flight(void) {
     return mem_fail;
 }
 
+/* --- standby/launch tunnel-ring + door-scroll cinematic twins (2026-07-11). ---
+ * add_multibyte_a1 / dl_lms_push_top / dl_lms_push_bottom take an entry register (operand /
+ * X index / Y index) -> test_mem_contract_regs.  dl_lms_scroll_up/down / scroll_terrain_dl are
+ * mem-only -> test_mem_contract (the DL area $3000+ and indices $0097/$0098 are randomized;
+ * the scroll loops step by 3 and always terminate mod 256).  draw_ring_frame_step and
+ * step_accum_add_75 can reach draw_symmetric_span_loop, so they use the same safe drawing
+ * fixture as test_draw_symmetric_span_loop (row-addr table -> $2000, small span coords) plus a
+ * small ring-thickness table $6E0F and a bounded ring index $00A0.  step_accum_add_75 (and the
+ * advance_history_6a4d it tail-calls) reaches reorder_sprite_slot on the validation build
+ * (#ifndef ROF_PLATFORM_AMIGA), so it also needs the SFX voice-slot seeding + POKEY/stack mask. */
+static void seed_ring_draw_fixture(uint8_t *pre) {
+    for (int i = 0; i <= 0x54; i++) {                     /* row addr table -> $2000.. (safe RAM) */
+        uint16_t p = (uint16_t)(0x2000 + i * 0x28);
+        pre[0x073D + i] = (uint8_t)p; pre[0x0793 + i] = (uint8_t)(p >> 8);
+    }
+    for (int i = 0; i <= 0x1F; i++) pre[0x6E0F + i] = (uint8_t)((xs() & 3) + 1); /* small ring thickness */
+    pre[0x00A0] = (uint8_t)(xs() & 0x1F);                 /* ring index: hits both >=6 draw & <6 clear */
+    pre[0x009C] = (uint8_t)(0x20 + (xs() & 0x1F));        /* span column endpoints */
+    pre[0x009D] = (uint8_t)(0x20 + (xs() & 0x1F));
+    pre[0x009E] = (uint8_t)(0x30 + (xs() & 0x0F));        /* span row range (stays < $54) */
+    pre[0x009F] = (uint8_t)(0x28 + (xs() & 0x0F));
+}
+static void seed_reorder_sprite_slot(uint8_t *pre) {
+    seed_voice_regs(pre);
+    for (int i = 0; i < 128; i++) pre[0x56D4 + i] = (uint8_t)(1 + (xs() % 14)); /* valid voice slots */
+}
+static int test_draw_ring_frame_step(void) {
+    if (!want("draw_ring_frame_step")) return 0;
+    enum { N = 4000 };
+    static uint8_t pre[65536];
+    int mem_fail = 0, cpu_diff = 0, printed = 0;
+    for (int t = 0; t < N; t++) {
+        fill_random(pre);
+        seed_ring_draw_fixture(pre);
+        mem_fail += diff_run("draw_ring_frame_step", pre, zero_cpu(),
+                             draw_ring_frame_step, draw_ring_frame_step__t6502, t, &printed, &cpu_diff);
+    }
+    printf("draw_ring_frame_step: %d cases, %d mem mismatch (must be 0), %d cpu diffs\n", N, mem_fail, cpu_diff);
+    return mem_fail;
+}
+static int test_step_accum_add_75(void) {
+    if (!want("step_accum_add_75")) return 0;
+    enum { N = 4000 };
+    static uint8_t pre[65536];
+    static uint16_t mask[272];
+    int mem_fail = 0, cpu_diff = 0, printed = 0;
+    set_ignore(mask, build_sfx_mask(mask));               /* reorder_sprite_slot: mask stack + POKEY */
+    for (int t = 0; t < N; t++) {
+        fill_random(pre);
+        seed_ring_draw_fixture(pre);                      /* draw_ring_frame_step path */
+        seed_reorder_sprite_slot(pre);                    /* advance_history_6a4d tail */
+        mem_fail += diff_run("step_accum_add_75", pre, zero_cpu(),
+                             step_accum_add_75, step_accum_add_75__t6502, t, &printed, &cpu_diff);
+    }
+    set_ignore(0, 0);
+    printf("step_accum_add_75: %d cases, %d mem mismatch (must be 0), %d cpu diffs\n", N, mem_fail, cpu_diff);
+    return mem_fail;
+}
+static int test_advance_history_6a4d(void) {
+    if (!want("advance_history_6a4d")) return 0;
+    enum { N = 20000 };
+    static uint8_t pre[65536];
+    static uint16_t mask[272];
+    int mem_fail = 0, cpu_diff = 0, printed = 0;
+    set_ignore(mask, build_sfx_mask(mask));               /* reorder_sprite_slot tail: mask stack + POKEY */
+    for (int t = 0; t < N; t++) {
+        fill_random(pre);
+        seed_reorder_sprite_slot(pre);
+        mem_fail += diff_run("advance_history_6a4d", pre, zero_cpu(),
+                             advance_history_6a4d, advance_history_6a4d__t6502, t, &printed, &cpu_diff);
+    }
+    set_ignore(0, 0);
+    printf("advance_history_6a4d: %d cases, %d mem mismatch (must be 0), %d cpu diffs\n", N, mem_fail, cpu_diff);
+    return mem_fail;
+}
+
 int main(int argc, char **argv) {
     g_filter = argv + 1; g_nfilter = argc - 1;   /* optional name-substring filters */
     platform_test_init_headless();   /* enable seedable RANDOM ($D20A) for both runs */
@@ -2317,6 +2393,16 @@ int main(int argc, char **argv) {
     fails += test_emit_chain("render_bcd_digits_supp_all", render_bcd_digits_supp_all, render_bcd_digits_supp_all__t6502);
     fails += test_blit_chain("blit_numeric_readout", blit_numeric_readout, blit_numeric_readout__t6502);
     fails += test_dl_lms_fill();
+    /* standby/launch tunnel-ring + door-scroll cinematic twins (moved out of rof_native_amiga.cpp) */
+    fails += test_mem_contract_regs("add_multibyte_a1", add_multibyte_a1, add_multibyte_a1__t6502);
+    fails += test_advance_history_6a4d();
+    fails += test_draw_ring_frame_step();
+    fails += test_step_accum_add_75();
+    fails += test_mem_contract("dl_lms_scroll_up", dl_lms_scroll_up, dl_lms_scroll_up__t6502);
+    fails += test_mem_contract("dl_lms_scroll_down", dl_lms_scroll_down, dl_lms_scroll_down__t6502);
+    fails += test_mem_contract_regs("dl_lms_push_top", dl_lms_push_top, dl_lms_push_top__t6502);
+    fails += test_mem_contract_regs("dl_lms_push_bottom", dl_lms_push_bottom, dl_lms_push_bottom__t6502);
+    fails += test_mem_contract("scroll_terrain_dl", scroll_terrain_dl, scroll_terrain_dl__t6502);
     fails += test_draw_dial_bar_column();
     fails += test_draw_player3_object();
     fails += test_dl_lms_build();

@@ -8149,7 +8149,8 @@ void plot_masked_pixel__t6502(void) {
 }
 
 /* draw_ring_frame_step @ $670D: Draws ONE tunnel-ring frame group via draw_symmetric_span_loop (count=ring-thickness table $6E0F[$A0]); clears $08D8 (inner ring colour) when $A0<6; DEC $A0, $88=$A0+1. Per-ring-tick incremental ring draw, NOT message/text. */
-void draw_ring_frame_step(void) {
+/* faithful transliteration kept as the validation oracle; native draw_ring_frame_step() lives in rof_native.c (see VALIDATE_FUNCS) */
+void draw_ring_frame_step__t6502(void) {
     /* 670d */
     LDY(draw_iter_count);
     /* 670f */
@@ -8740,7 +8741,8 @@ L_6939:;
 }
 
 /* scroll_terrain_dl @ $6953: Dec $008A; if !=0 scroll DL halves via dl_lms_scroll_down/dl_lms_scroll_up else $008C=8; emit ship coords via dl_lms_push_bottom($0098)/dl_lms_push_top($0097) */
-void scroll_terrain_dl(void) {
+/* faithful transliteration kept as the validation oracle; native scroll_terrain_dl() lives in rof_native.c (see VALIDATE_FUNCS) */
+void scroll_terrain_dl__t6502(void) {
     /* 6953 */
     DEC_M(MEM_terrain_scroll_counter);
     /* 6955 */
@@ -8774,7 +8776,8 @@ L_6964:;
 }
 
 /* dl_lms_push_top @ $6973: Writes 16-bit ptr $80/$81 into top LMS entry at $300A,X (X-=3), then ptr -= $2E (46-byte row stride) */
-void dl_lms_push_top(void) {
+/* faithful transliteration kept as the validation oracle; native dl_lms_push_top() lives in rof_native.c (see VALIDATE_FUNCS) */
+void dl_lms_push_top__t6502(void) {
     /* 6975 */
     mem[(0x300A)+cpu.X] = dl_ptr_lo;
     /* 6978 */
@@ -8804,7 +8807,8 @@ void dl_lms_push_top(void) {
 }
 
 /* dl_lms_push_bottom @ $698E: Writes 16-bit ptr $82/$83 into bottom LMS entry at $3089,Y (Y+=3), then ptr += $2E (46-byte row stride) */
-void dl_lms_push_bottom(void) {
+/* faithful transliteration kept as the validation oracle; native dl_lms_push_bottom() lives in rof_native.c (see VALIDATE_FUNCS) */
+void dl_lms_push_bottom__t6502(void) {
     /* 6990 */
     mem[(0x3089)+cpu.Y] = dl_ptr_hi;
     /* 6993 */
@@ -8834,7 +8838,8 @@ void dl_lms_push_bottom(void) {
 }
 
 /* dl_lms_scroll_up @ $69A9: Shifts 3-byte LMS entries from $300C,X to $3009,X (up one slot) until X==$0097 (top index) */
-void dl_lms_scroll_up(void) {
+/* faithful transliteration kept as the validation oracle; native dl_lms_scroll_up() lives in rof_native.c (see VALIDATE_FUNCS) */
+void dl_lms_scroll_up__t6502(void) {
     /* 69a9 */
     LDX(0x01);
     /* 69ab */
@@ -8866,7 +8871,8 @@ L_69c2:;
 }
 
 /* dl_lms_scroll_down @ $69C3: Shifts 3-byte LMS entries from $3087,Y to $308A,Y (down one slot) until Y==$0098 (bottom index) */
-void dl_lms_scroll_down(void) {
+/* faithful transliteration kept as the validation oracle; native dl_lms_scroll_down() lives in rof_native.c (see VALIDATE_FUNCS) */
+void dl_lms_scroll_down__t6502(void) {
     /* 69c3 */
     LDY(0x80);
     /* 69c5 */
@@ -9009,7 +9015,8 @@ void clear_slot_0c87_0d87(void) {
 }
 
 /* step_accum_add_75 @ $6A38: Adds $75 via add_multibyte_a1, result->$00A4; if changed & store $00A5, if >=$90 call draw_ring_frame_step, then advance_history_6a4d */
-void step_accum_add_75(void) {
+/* faithful transliteration kept as the validation oracle; native step_accum_add_75() lives in rof_native.c (see VALIDATE_FUNCS) */
+void step_accum_add_75__t6502(void) {
     /* 6a38 */
     LDA(0x75);
     /* 6a3a */
@@ -9077,7 +9084,8 @@ L_6ab4:;
 }
 
 /* add_multibyte_a1 @ $6AB5: Multi-byte add: A (C clear) += $00A1, carry chains into $00A2,$00A3,$00A4; returns top byte in A */
-void add_multibyte_a1(void) {
+/* faithful transliteration kept as the validation oracle; native add_multibyte_a1() lives in rof_native.c (see VALIDATE_FUNCS) */
+void add_multibyte_a1__t6502(void) {
     /* 6ab5 */
     CLC();
     /* 6ab6 */
@@ -24727,7 +24735,8 @@ void ret_stub_6a26__t6502(void) {
 }
 
 /* advance_history_6a4d @ $6A4D: Shifts 6-byte ring $08D4-$08D9 up one (insert old $08D9); if $008D<0 sets $0071=$08D8; bumps $0679[$0C] by $06CC; tail reorder_sprite_slot */
-void advance_history_6a4d(void) {
+/* faithful transliteration kept as the validation oracle; native advance_history_6a4d() lives in rof_native.c (see VALIDATE_FUNCS) */
+void advance_history_6a4d__t6502(void) {
     /* 6a4d */
     LDA(mem[0x08D9]);
     /* 6a50 */
