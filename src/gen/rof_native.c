@@ -8069,7 +8069,11 @@ L_62ee:
 L_62f6:
     ds_frame();
     if (cockpit_flag != 0) goto L_6309;
-    copy_title_text_block_to_screen();
+    /* 6502 $62F6 does LDY $060B before the JSR; copy_title_text_block_to_screen uses
+     * that entry Y as the value it writes back to the $0091 block-selector (STY $0091).
+     * cockpit_flag is 0 on this idle path, so pass it explicitly — a stale cpu.Y here
+     * would leave $0091 un-reset and freeze the top-bar title/copyright swap. */
+    copy_title_text_block_to_screen_core(cockpit_flag);
     if ((bus_read(0xD01F) & 0x04) != 0) goto L_6309;   /* CONSOL OPTION */
     if (++level_or_state != 0) goto L_6311;            /* $0004 */
 L_6309:
