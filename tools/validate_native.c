@@ -2042,6 +2042,42 @@ static int test_sfx_voice_envelope_tick(void) {
     return mem_fail;
 }
 
+/* sfx_seq_step @ $7148 / sfx_voice_tick @ $70F9 — the attract/standby-theme SFX
+ * sequencer.  Fully-random mem[] (catches stray writes) with the 256-byte stream
+ * window forced free of $00 bytes and given one guaranteed positive note: the
+ * 6502 scanner wraps to index 0 on a $00 byte, so a stream that wraps back to a
+ * voice-command-with-AUDC4!=0 loops forever (bad data); a $00-free window can
+ * never wrap, and the forced note guarantees the forward scan terminates within
+ * one 256-byte pass.  The __t6502 twin hangs identically on such data, so the
+ * harness must avoid it rather than diff it.  Mask $D200-$D20F: the native routes
+ * AUDF/AUDC via bus_write (-> Paula on the Amiga) while the twin's INDEXED
+ * $D1FF+gate store goes straight to mem[] — a hardware side effect, not part of
+ * the mem[] contract.  (The non-indexed AUDF/AUDC writes use bus_write in BOTH
+ * twins, so they match without the mask; the mask only covers the indexed store.) */
+static int test_sfx_theme(const char *name, void (*nat)(void), void (*t6502)(void)) {
+    if (!want(name)) return 0;
+    enum { N = 20000 };
+    static uint8_t pre[65536];
+    static uint16_t mask[16];
+    int mem_fail = 0, cpu_diff = 0, printed = 0;
+    for (int a = 0xD200; a <= 0xD20F; a++) mask[a - 0xD200] = (uint16_t)a;
+    set_ignore(mask, 16);
+    for (int t = 0; t < N; t++) {
+        fill_random(pre);
+        for (int i = 0; i < 256; i++)                 /* no $00 in the scan window (no wrap) */
+            if (pre[0x71DB + i] == 0) pre[0x71DB + i] = (uint8_t)(1 + (xs() % 0xFF));
+        pre[0x71DB + (xs() & 0xFF)] = (uint8_t)(1 + (xs() % 0x7F));  /* one reachable note (1..127) */
+        /* $073B (gate) is note>>4 of a valid note in reality (<=7); keep it a small
+         * nibble so sfx_voice_tick's indexed $D1FF+gate POKEY write stays in the
+         * masked $D200-$D20F range instead of the unmasked $D210+ mirror. */
+        pre[0x073B] = (uint8_t)(xs() & 0x0F);
+        mem_fail += diff_run(name, pre, zero_cpu(), nat, t6502, t, &printed, &cpu_diff);
+    }
+    set_ignore(0, 0);
+    printf("%s: %d cases, %d mem mismatch (must be 0), %d cpu diffs\n", name, N, mem_fail, cpu_diff);
+    return mem_fail;
+}
+
 /* music_player_tick @ $7253 — the note-stream tune player.  Reads its command
  * stream through the pointer $0657/$0658 (copied to ZP $99/$9A): the native reads
  * mem[base+y] directly, so constrain the pointer to a mid-RAM page ($20-$3F) so a
@@ -2212,6 +2248,8 @@ int main(int argc, char **argv) {
     fails += test_mem_contract_regs("match_code_sequence", match_code_sequence, match_code_sequence__t6502);
     fails += test_mem_contract("init_terrain_dl", init_terrain_dl, init_terrain_dl__t6502);
     fails += test_mem_contract_regs("music_init_state", music_init_state, music_init_state__t6502);
+    fails += test_sfx_theme("sfx_seq_step", sfx_seq_step, sfx_seq_step__t6502);
+    fails += test_sfx_theme("sfx_voice_tick", sfx_voice_tick, sfx_voice_tick__t6502);
     fails += test_music_player_tick();
     fails += test_mem_contract("count_up_to_level", count_up_to_level, count_up_to_level__t6502);
     fails += test_mem_contract("hud_fill_field1", hud_fill_field1, hud_fill_field1__t6502);

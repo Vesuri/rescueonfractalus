@@ -99,6 +99,22 @@ Also: the `$7238 music_init_state` var-row comments in `symbols.csv` are **stale
 `$0653=$0655=2`, but the code sets `$0651=0`, `$0653=1`, `$0655=1` (verified against the
 disassembly + the native twin). Fix the `$0651`/`$0653` comments in the same pass.
 
+**SFX theme sequencer state (`sfx_voice_tick $70F9` + `sfx_seq_step $7148`)** — the
+attract/standby-theme player (distinct from the note-stream `music_player_tick` above and the
+in-flight SFX engine `$548D`). Traced 2026-07-10 during the native rewrite. ✓
+- `$0091` is `altitude_threshold` (named for its `copy_title_text_block_to_screen` use), but in
+  `sfx_seq_step` it is **dual-used as scratch** for the last voice-parameter command byte. A single
+  name misleads one caller — leave `altitude_threshold` and note the aliasing (do not rename).
+- `$71DB` (byte stream) → **`sfx_seq_stream`** — the theme "score": note bytes (bit7 clear),
+  voice-parameter commands (bit7 set), `$00` = end/loop-to-start marker.
+- `$71D2` (table, indexed `note & $1F`) → **`sfx_note_duration_table`** — per-note duration
+  loaded into `sfx_note_timer $073A`.
+- `$71AB`/`$719E`/`$7191`/`$71B8` (tables, indexed by the command's low 5 bits) →
+  **`sfx_audf1_table`/`sfx_audf2_table`/`sfx_audf3_table`/`sfx_audf4_table`** — the four POKEY
+  AUDF (pitch) presets per voice-parameter command.
+- `$71C5` (table, same index) → **`sfx_audc4_table`** — the AUDC4 preset; a `0` here also acts as
+  a rest (ends the command scan with the note treated as silent).
+
 **`sfx_voice_envelope_tick` ($548D) — per-slot envelope arrays (base+Y, Y=$0E..1):** the whole
 cluster overlaps itself and the `$068x` flight cells above — treat as one aliasing puzzle, name
 together after auditing the stride/overlap. Cells: `$06DB`/`$06E9` (`freq_env_step[]`/`_phase[]`),

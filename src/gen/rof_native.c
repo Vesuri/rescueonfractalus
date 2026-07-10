@@ -1449,6 +1449,78 @@ void init_terrain_dl(void) {
     }
 }
 
+/* sfx_seq_step @ $7148 — advance the SFX theme sequencer to the next note.
+ *
+ * The attract/standby-theme "score" is a byte stream at $71DB.  Each byte is
+ * either a NOTE (bit7 clear) or a VOICE-PARAMETER command (bit7 set); a $00 byte
+ * marks the end and loops the stream back to index 0 (a valid stream has a
+ * non-zero byte at index 0).  This routine walks $073C (the stream cursor)
+ * forward, applying every voice-parameter command it passes — each reloads all
+ * four POKEY AUDF presets plus AUDC4 from the per-voice tables ($71AB/$719E/
+ * $7191/$71B8/$71C5, indexed by the command's low 5 bits) — until it reaches the
+ * next note (or a voice command whose AUDC4 is 0, which doubles as a rest).  The
+ * chosen byte then sets the note duration ($073A, from $71D2[note&$1F]) and the
+ * gate/volume nibble ($073B = note>>4). */
+void sfx_seq_step(void) {
+    uint8_t x = sfx_seq_ptr;
+    uint8_t note;
+    for (;;) {
+        x++;
+        uint8_t cmd = mem[0x71DB + x];
+        if (cmd == 0) {                        /* end marker: loop to stream start */
+            x = 0;
+            cmd = mem[0x71DB];                 /* valid stream => table[0] != 0 */
+        }
+        if ((int8_t)cmd >= 0) { note = cmd; break; }   /* note byte -> emit it */
+
+        /* Voice-parameter command: load the four AUDF presets + AUDC4. */
+        mem[0x0091] = cmd;                     /* scratch ($0091 misnamed, see rename.md) */
+        uint8_t v = (uint8_t)(cmd & 0x1F);     /* voice index = low 5 bits */
+        bus_write(0xD200, mem[0x71AB + v]);    /* AUDF1 */
+        bus_write(0xD202, mem[0x719E + v]);    /* AUDF2 */
+        bus_write(0xD204, mem[0x7191 + v]);    /* AUDF3 */
+        bus_write(0xD206, mem[0x71B8 + v]);    /* AUDF4 */
+        uint8_t audc4 = mem[0x71C5 + v];
+        bus_write(0xD207, audc4);              /* AUDC4 */
+        if (audc4 != 0) continue;              /* more commands follow -> keep scanning */
+        note = 0; break;                       /* AUDC4 == 0 -> rest (6502: A = AUDC4 = 0) */
+    }
+    sfx_seq_ptr = x;
+    sfx_note_timer = mem[0x71D2 + (note & 0x1F)];   /* note duration */
+    sfx_voice_mute = (uint8_t)(note >> 4);          /* gate/volume nibble (0 = silent) */
+}
+
+/* sfx_voice_tick @ $70F9 — one tick of the SFX theme player (attract/standby
+ * theme).  On the Atari this ran from the VBI tail every other frame (25 Hz);
+ * the Amiga drives it from CIA-B Timer A at the same rate.  Counts the current
+ * note's duration down ($073A) and fetches the next note (sfx_seq_step) on
+ * underflow, then emits an amplitude that ramps down with the remaining
+ * duration: AUDC = (timer>>1) + $A0, clamped to $A3.  While the note is gated
+ * ($073B != 0) that amplitude drives POKEY voices 1-3 (+ a 4th voice slot at
+ * $D200+gate, amplitude+2); a zero gate silences voices 1-3. */
+void sfx_voice_tick(void) {
+    uint8_t timer = (uint8_t)(sfx_note_timer - 1);
+    sfx_note_timer = timer;
+    if ((int8_t)timer < 0) {                   /* duration underflowed -> next note */
+        sfx_seq_step();
+        timer = sfx_note_timer;                /* reloaded by sfx_seq_step */
+    }
+
+    uint8_t half = (uint8_t)(timer >> 1);
+    uint8_t audc = (half < 3) ? (uint8_t)(half + 0xA0) : 0xA3;
+
+    if (sfx_voice_mute == 0) {                 /* gate closed -> silence voices 1-3 */
+        bus_write(0xD201, 0);
+        bus_write(0xD203, 0);
+        bus_write(0xD205, 0);
+    } else {                                   /* gate open -> play */
+        bus_write(0xD201, audc);
+        bus_write(0xD203, audc);
+        bus_write(0xD205, audc);
+        bus_write(0xD1FF + sfx_voice_mute, (uint8_t)(audc + 2));  /* 4th voice slot */
+    }
+}
+
 /* music_init_state @ $7238 — copy 6 bytes $731E[Y..Y-5] (entry Y) into $0657[5..0],
  * clear $0651 + POKEY AUDCTL ($D208), and set $0653/$0655 = 1. */
 void music_init_state(void) {
