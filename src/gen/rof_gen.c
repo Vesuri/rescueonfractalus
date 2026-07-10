@@ -10398,7 +10398,8 @@ L_723a:;
 }
 
 /* music_player_tick @ $7253: Music engine tick: counts down $0651/$0653, reads cmd stream via ptr $0099/$009A, writes AUDF $D200+X and AUDC via EOR table $73C1 */
-void music_player_tick(void) {
+/* faithful transliteration kept as the validation oracle; native music_player_tick() lives in rof_native.c (see VALIDATE_FUNCS) */
+void music_player_tick__t6502(void) {
     /* 7253 */
     LDA(music_note_timer);
     /* 7256 */

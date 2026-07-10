@@ -2042,6 +2042,37 @@ static int test_sfx_voice_envelope_tick(void) {
     return mem_fail;
 }
 
+/* music_player_tick @ $7253 — the note-stream tune player.  Reads its command
+ * stream through the pointer $0657/$0658 (copied to ZP $99/$9A): the native reads
+ * mem[base+y] directly, so constrain the pointer to a mid-RAM page ($20-$3F) so a
+ * random pre-state can't aim the (indirect) reads at the $D000 hardware range
+ * where the native's mem[] read and the oracle's bus_read would disagree.  The
+ * envelope/timer state ($0648-$065C) and both timers are left fully random for
+ * branch coverage.  Mask the POKEY range $D200-$D20F: the native writes AUDF/AUDC
+ * via bus_write (-> Paula on the Amiga) while the __t6502 twin writes raw mem[]
+ * there (indexed hardware stores the transpiler does not route), so the POKEY
+ * registers are a hardware side effect, not part of the mem[] contract. */
+static int test_music_player_tick(void) {
+    if (!want("music_player_tick")) return 0;
+    enum { N = 20000 };
+    static uint8_t pre[65536];
+    static uint16_t mask[16];
+    int mem_fail = 0, cpu_diff = 0, printed = 0;
+    for (int a = 0xD200; a <= 0xD20F; a++) mask[a - 0xD200] = (uint16_t)a;
+    set_ignore(mask, 16);
+    for (int t = 0; t < N; t++) {
+        fill_random(pre);
+        pre[0x0657] = (uint8_t)(xs() & 0xFF);            /* stream ptr lo: anywhere in page */
+        pre[0x0658] = (uint8_t)(0x20 + (xs() % 0x20));   /* stream ptr hi: safe RAM page $20-$3F */
+        mem_fail += diff_run("music_player_tick", pre, zero_cpu(),
+                             music_player_tick, music_player_tick__t6502, t, &printed, &cpu_diff);
+    }
+    set_ignore(0, 0);
+    printf("music_player_tick: %d cases, %d mem mismatch (must be 0), %d cpu diffs\n",
+           N, mem_fail, cpu_diff);
+    return mem_fail;
+}
+
 /* vbi_handler_flight @ $4FF5 — the in-flight VBI handler (native twin).  Snapshot-driven (it
  * orchestrates ~20 sub-functions whose loops only terminate with realistic arrays), with the
  * zero-page control bytes + the lock-on parity counter ($0643) + the message timer ($063E)
@@ -2181,6 +2212,7 @@ int main(int argc, char **argv) {
     fails += test_mem_contract_regs("match_code_sequence", match_code_sequence, match_code_sequence__t6502);
     fails += test_mem_contract("init_terrain_dl", init_terrain_dl, init_terrain_dl__t6502);
     fails += test_mem_contract_regs("music_init_state", music_init_state, music_init_state__t6502);
+    fails += test_music_player_tick();
     fails += test_mem_contract("count_up_to_level", count_up_to_level, count_up_to_level__t6502);
     fails += test_mem_contract("hud_fill_field1", hud_fill_field1, hud_fill_field1__t6502);
     fails += test_mem_contract("hud_fill_field3_font", hud_fill_field3_font, hud_fill_field3_font__t6502);

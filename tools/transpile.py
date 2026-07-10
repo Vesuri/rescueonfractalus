@@ -219,6 +219,7 @@ VALIDATE_FUNCS = {
     0x5B45,  # match_code_sequence — cheat-code matcher; advance/reset $063F, copy payload $5B17->$36AB at 6
     0x68AD,  # init_terrain_dl — fill $2F75..$2FA3=$88 + LMS ptr pairs $300A/$308B = $2F74 every 3rd entry
     0x7238,  # music_init_state — copy 6 bytes $731E[Y..]-> $0657[5..0]; clear $0651/$D208; $0653/$0655=1 (entry Y)
+    0x7253,  # music_player_tick — note-stream tune player: tick envelopes + advance cmd stream -> POKEY AUDF/AUDC
     0x75B8,  # count_up_to_level — bump $0604 + binary counter $C3 until $0604 == $006D
     0x811F,  # hud_fill_field1 — INC $0081 when $0081 >= $2928 (+ 5-byte copy in the else path)
     0x8168,  # hud_fill_field3_font — INC $0083 when $0083 >= $A8 (+ 7-byte font copy in the else path)

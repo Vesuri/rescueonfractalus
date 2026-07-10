@@ -1463,6 +1463,104 @@ void music_init_state(void) {
     mem[0x0655] = 0x01;
 }
 
+/* music_player_tick @ $7253 — one 50 Hz tick of the note-stream tune player (the
+ * engine behind the level-start and game-over/results jingles; a SEPARATE engine
+ * from the CIA-B SFX sequencer that carries the attract theme).  Called from the
+ * VBI tail while the music-active flag $0655 is set.
+ *
+ * Voice model: four POKEY voices, indexed v=0..3 by the byte offset x=v*2.  Each
+ * voice has a software ADSR envelope kept as an (level,delta) pair —
+ *   level = mem[$0648 + x]   (current amplitude, 0..127)
+ *   delta = mem[$0649 + x]   (added to level every tick; +attack / -release)
+ * and a pitch  audf = mem[$0650 + x]  (POKEY AUDF value).  Every tick the
+ * envelope is integrated (level += delta, clamped to 0) and emitted as POKEY
+ * AUDC = (level >> 3) EOR distortion_bits[x], giving a decaying note.
+ *
+ * Two countdown timers pace the stream:
+ *   music_note_timer  ($0651) — while >0, just integrate envelopes; on the tick
+ *       it reaches 0 all four voices switch to the release slope ($065C).
+ *   music_tempo_timer ($0653) — once note_timer is 0, this counts down the note's
+ *       remaining frames; when it hits 0 the next stream step is decoded.
+ *
+ * Command stream (base ptr $0657/$0658, decoded via ZP scratch $99/$9A): a run of
+ * optional instrument commands ($C0..$FF, each reloads all four voices' AUDF from
+ * the 4-byte preset table $7375) followed by one duration byte (<$C0 = the tempo
+ * reload) and one note byte packing four 2-bit voice codes (MSB pair first):
+ *   00 = note off (silence the voice)      10 = note on, attack level $065A
+ *   01 = tie (leave the voice unchanged)   11 = note on, attack level $0659
+ * A note-on also loads the attack slope ($065B) and writes the voice's AUDF.
+ * A $00 stream byte marks end-of-song and stops playback via audio_timer_setup. */
+void music_player_tick(void) {
+    if (music_note_timer != 0) {
+        /* Note still sounding: integrate only.  When the note timer expires this
+         * tick, flip every voice to the release slope so the note decays. */
+        if (--music_note_timer == 0) {
+            uint8_t release_delta = mem[0x065C];
+            mem[0x0649] = release_delta;   /* voice 0 delta */
+            mem[0x064B] = release_delta;   /* voice 1 delta */
+            mem[0x064D] = release_delta;   /* voice 2 delta */
+            mem[0x064F] = release_delta;   /* voice 3 delta */
+        }
+    } else if (--music_tempo_timer == 0) {
+        /* Tempo expired: decode the next step of the command stream.  The Atari
+         * used ZP $99/$9A as the indirect read pointer; mirror those writes so the
+         * exit state is byte-identical to the 6502 oracle. */
+        mem[0x0099] = music_stream_ptr_lo;
+        mem[0x009A] = music_stream_ptr_hi;
+        uint16_t base = (uint16_t)(music_stream_ptr_lo | (music_stream_ptr_hi << 8));
+        uint8_t y = 0;
+
+        /* Consume any leading instrument commands ($C0..$FF). */
+        uint8_t b;
+        for (;;) {
+            b = mem[base + y];
+            if (b == 0) { audio_timer_setup(); return; }   /* end of song -> stop */
+            if (b < 0xC0) break;                            /* duration byte follows */
+            uint8_t idx = (uint8_t)((b ^ 0xFF) << 2);       /* (~b)*4 = preset index */
+            mem[0x0656] = mem[0x7375 + idx];                /* voice 3 AUDF */
+            mem[0x0654] = mem[0x7375 + (uint8_t)(idx + 1)]; /* voice 2 AUDF */
+            mem[0x0652] = mem[0x7375 + (uint8_t)(idx + 2)]; /* voice 1 AUDF */
+            mem[0x0650] = mem[0x7375 + (uint8_t)(idx + 3)]; /* voice 0 AUDF */
+            y++;
+        }
+
+        /* Duration byte: reload the tempo timer and restart the 4-tick note timer. */
+        y++;
+        music_tempo_timer = b;
+        music_note_timer = 0x04;
+
+        /* Advance the stream pointer past the instrument+duration+note bytes
+         * (6502: lo = $99 + Y + 1 with carry into $0658). */
+        uint16_t adv = (uint16_t)(music_stream_ptr_lo + y + 1);
+        music_stream_ptr_lo = (uint8_t)adv;
+        if (adv > 0xFF) music_stream_ptr_hi++;
+
+        /* Note byte: four 2-bit voice codes, MSB pair = voice 3 down to voice 0. */
+        uint8_t note = mem[base + y];
+        for (int x = 6; x >= 0; x -= 2) {
+            uint8_t code = note & 0xC0;
+            if (code == 0x00) {                    /* note off */
+                mem[0x0648 + x] = 0;               /* level = 0 */
+                mem[0x0649 + x] = 0;               /* delta = 0 */
+            } else if (code != 0x40) {             /* $80/$C0 = note on ($40 = tie) */
+                mem[0x0648 + x] = (code == 0xC0) ? mem[0x0659] : mem[0x065A];
+                mem[0x0649 + x] = mem[0x065B];     /* attack slope */
+                bus_write(0xD200 + x, mem[0x0650 + x]);  /* set voice AUDF (POKEY) */
+            }
+            note = (uint8_t)(note << 2);           /* next voice's code to MSB pair */
+        }
+    }
+
+    /* Envelope integrate + emit for all four voices (runs every tick). */
+    for (int x = 6; x >= 0; x -= 2) {
+        uint8_t level = (uint8_t)(mem[0x0648 + x] + mem[0x0649 + x]);
+        if (level & 0x80) level = 0;               /* clamp negative sum to silence */
+        mem[0x0648 + x] = level;
+        uint8_t audc = (uint8_t)((level >> 3) ^ mem[0x73C1 + x]);
+        bus_write(0xD201 + x, audc);               /* AUDC = volume | distortion (POKEY) */
+    }
+}
+
 /* count_up_to_level @ $75B8 — bump $0604 (binary, via INC) and a parallel BCD counter
  * $00C3 (SED/ADC #1) until $0604 reaches the target $006D.  $00C3 counts in decimal. */
 void count_up_to_level(void) {

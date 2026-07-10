@@ -76,6 +76,29 @@ across subsystems or needs a live check before a canonical name can be trusted. 
   and `$003A` bit7 (gates the shields-cell update) — `$0039` clash above; `$003A` role unclear.
   Verify the target-latch block before naming.
 
+**Music note-stream player state (`music_player_tick $7253` + `music_init_state $7238`)** —
+all confident (behaviour fully traced 2026-07-10 during the native rewrite); add `symbols.csv`
+var rows. Four voices, indexed by byte offset `x = voice*2` (voices 0-3). ✓
+- `$0648` (stride 2: `$0648/$064A/$064C/$064E`) → **`music_env_level`** — per-voice software
+  envelope amplitude (0-127); integrated each tick, emitted as `AUDC = (level>>3) EOR distortion`.
+- `$0649` (stride 2: `$0649/$064B/$064D/$064F`) → **`music_env_delta`** — per-voice envelope
+  slope added to the level each tick (+attack on note-on, −release once the note timer expires).
+- `$0650` (stride 2: `$0650/$0652/$0654/$0656`) → **`music_voice_audf`** — per-voice POKEY AUDF
+  (pitch), loaded from the preset table on an instrument command, written to `$D200+x` on note-on.
+- `$0659` → **`music_note_on_level_c0`** — envelope level loaded on a `11` (`$C0`) voice code.
+- `$065A` → **`music_note_on_level_80`** — envelope level loaded on a `10` (`$80`) voice code.
+- `$065B` → **`music_attack_delta`** — envelope slope loaded into `music_env_delta` on note-on.
+- `$065C` → **`music_release_delta`** — envelope slope all voices switch to when the note timer
+  reaches 0 (the note's decay/release phase).
+- `$7375` (table, 4 bytes/entry, indexed `(~cmd)*4`) → **`music_instrument_audf_table`** — AUDF
+  preset per instrument command (`$C0..$FF`); 4 bytes = the four voices' pitches (voice 3 first).
+- `$73C1` (table, stride 2) → **`music_audc_distortion_table`** — per-voice POKEY AUDC distortion
+  bits, EORed with the volume nibble before the `$D201+x` write.
+
+Also: the `$7238 music_init_state` var-row comments in `symbols.csv` are **stale** — they say
+`$0653=$0655=2`, but the code sets `$0651=0`, `$0653=1`, `$0655=1` (verified against the
+disassembly + the native twin). Fix the `$0651`/`$0653` comments in the same pass.
+
 **`sfx_voice_envelope_tick` ($548D) — per-slot envelope arrays (base+Y, Y=$0E..1):** the whole
 cluster overlaps itself and the `$068x` flight cells above — treat as one aliasing puzzle, name
 together after auditing the stride/overlap. Cells: `$06DB`/`$06E9` (`freq_env_step[]`/`_phase[]`),
