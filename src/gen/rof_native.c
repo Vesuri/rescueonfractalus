@@ -495,7 +495,17 @@ void init_object_positions(void) {
 /* audio_timer_setup @ $712D — silence the music gate ($00E7), $0655 and $00E5,
  * clear the POKEY audio timers ($D201/$D203/$D205/$D207) and set AUDCTL=$60.
  * The POKEY writes go through bus_write (Paula/ignored on Amiga; not in mem[], so
- * identical side effect in both runs).  Leaf. */
+ * identical side effect in both runs).  Leaf.
+ *
+ * ⚠ FAITHFUL EXIT REGISTERS: the 6502 routine returns A=0 (its final `LDA #0`
+ * feeds every store; STA leaves A untouched) and Y=$60 (`LDY #$60; STY $D208`).
+ * sound_stop ($5A0E) RELIES on A=0: `JSR $712D; STA $022F; STA $006C` stores this
+ * A into sound_active_flag ($006C).  As a `void` twin that left cpu.A stale,
+ * sound_stop wrote the caller's stale A ($FF on the level-select→START path) into
+ * $006C instead of 0, so the game_main_loop→display_setup re-entry (enters at
+ * $3D48, past the $3D42 zeroing) saw $006C!=0 and took the ~10 s Standby-
+ * construction path instead of the fast L_6118 path.  make validate never caught
+ * it (diffs mem[] only; exit cpu regs are treated as incidental).  Restore them. */
 void audio_timer_setup(void) {
     mem[0x00E7] = 0x00;
     mem[0x0655] = 0x00;
@@ -505,6 +515,8 @@ void audio_timer_setup(void) {
     bus_write(0xD205, 0x00);
     bus_write(0xD207, 0x00);
     bus_write(0xD208, 0x60);
+    cpu.A = 0x00;   /* faithful exit A (sound_stop stores this into $006C/$022F) */
+    cpu.Y = 0x60;   /* faithful exit Y */
 }
 
 /* Four preset terrain-height samples ($6B5F, 4 bytes): the non-flat heights the
