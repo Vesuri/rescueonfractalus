@@ -920,13 +920,25 @@ extern "C" void draw_tunnel_rings_native(void)
 //          (self-gated on $0088/$0089/$008A/$008B/$008D — inert on the static screen)
 //   $5342  lock_on_indicator_tick every other frame (LSR/INC $0643 gate)
 //   $534D  SFX tick ($70F9)              -> runs on CIA-B Timer A instead (main.cpp)
-//          sfx_voice_envelope_tick ($548D) / music_player_tick ($7253) -> never ported.
+//   $5359  music_player_tick ($7253)      -> ported below, gated on $0655 (see note)
+//          sfx_voice_envelope_tick ($548D) -> ported below, gated on $060B
 extern "C" void sfx_voice_envelope_tick(void);   // $548D: SFX voice engine + $0719 ring drain
+extern "C" void music_player_tick(void);         // $7253: note-stream music player (transpiled)
 
 extern "C" void standby_vbi_native(void)
 {
     vbi_attract_timer_native();              // $5335
     launch_anim_dispatch_native();           // $5367
+    // $5359  music_player_tick ($7253): the note-stream tune player (level-start,
+    // game-over/results jingles).  Separate engine from the CIA-B SFX sequencer
+    // ($70F9) that carries the standby/attract THEME — that one is gated on $00E7
+    // and undisturbed by this.  The Atari ran $7253 in this VBI tail gated on the
+    // music-active flag $0655 (set by music_init_state $7238); mirror that here so
+    // the game-over tune actually plays.  Runs at 50 Hz (one VBI) like the Atari;
+    // its own tempo counter ($0653) paces the notes.  POKEY AUDF/AUDC writes route
+    // through platform_hw_write into the Paula want[] table and are applied by
+    // flush_paula in game_vbi_isr (same path as the SFX envelope below).
+    if (mem[0x0655]) music_player_tick();
     // $548D SFX voice engine — the Atari ran it in this VBI tail too.  Gate on
     // $060B (=$23 once the launch cinematic begins, 0 during pure attract) so the
     // attract music (CIA-B sequencer) is undisturbed but the START/doors/tunnel
