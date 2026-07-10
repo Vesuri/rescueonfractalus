@@ -226,6 +226,8 @@ private:
     // bitmap, black COLBK, 4 cycling text pens.  Same build-once + poke scheme as standbyCopper.
     TitleScreenCopperList* titleScreenCopper = nullptr;
     bool titleScreenCopperInstalled = false;
+    uint32_t titleTextHash = 0;   // hash of the $365B text region; re-decode when it changes
+    uint32_t titleTextHashCompute() const;  // cheap checksum over the 6x20 title screen RAM
     void updateTitleScreenCopper(bool force);  // poke color01-04 = COLPF0-3 (cycling)
     uint16_t tsPf0 = 0xFFFF, tsPf1 = 0xFFFF, tsPf2 = 0xFFFF, tsPf3 = 0xFFFF;  // last-poked
     // Blank black list shown until g_standbyRevealReady latches (boot/standby build in

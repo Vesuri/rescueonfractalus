@@ -1568,10 +1568,20 @@ void RescueOnFractalus::renderFrame()
     if (staticTitle) {
         if (!titleScreenCopperInstalled) {
             decodeTitleScreen();
+            titleTextHash = titleTextHashCompute();
             updateTitleScreenCopper(true);
             AmigaHardware::setCopperList(*titleScreenCopper, false);
             titleScreenCopperInstalled = true;
         } else {
+            // Re-decode if the title text ($365B region) changed.  The game-over/
+            // results build (cockpit_display $587B) copies the text template FIRST
+            // (which makes mem[$365B]=='R'=$72 -> rsTitle true, so the copper installs
+            // and the first decode can snapshot the screen BEFORE the LAST SCORE /
+            // HIGH SCORE digits are rendered into $36B7/$36CB a few instructions later).
+            // A cheap 120-byte checksum catches that so the score appears.  Harmless on
+            // the joystick-up attract entry (text is stable there -> hash unchanged).
+            uint32_t h = titleTextHashCompute();
+            if (h != titleTextHash) { titleTextHash = h; decodeTitleScreen(); }
             updateTitleScreenCopper(false);
         }
         standbyCopperInstalled = false; planetCopperInstalled = false;
@@ -2308,6 +2318,18 @@ void RescueOnFractalus::decodeCompass()
 // row is also double-HEIGHT (each glyph scanline -> 2).  The copper shows the bitmap full
 // screen and pokes color01-04 from COLPF0-3 each frame (the palette cycle).  Decodes once
 // per entry (dirty-gated), so the full clear + per-pixel build is fine.
+// Cheap checksum over the 6x20 = 120-byte Title Screen RAM ($365B) so render() can
+// re-decode when the text changes (e.g. the game-over score digits, written by
+// cockpit_display $587B a few instructions after the template copy that first trips
+// rsTitle).  120 bytes at 50 Hz on the otherwise-idle Title Screen is negligible.
+uint32_t RescueOnFractalus::titleTextHashCompute() const
+{
+    const uint8_t* p = (const uint8_t*)mem + 0x365B;
+    uint32_t h = 2166136261u;                    // FNV-1a
+    for (int i = 0; i < 120; i++) { h ^= p[i]; h *= 16777619u; }
+    return h;
+}
+
 void RescueOnFractalus::decodeTitleScreen()
 {
     if (!titleScreenBitmap) return;
