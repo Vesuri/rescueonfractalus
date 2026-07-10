@@ -545,6 +545,14 @@ static volatile uint8_t s_trig0State = 0x01u;   // fire button, active-low ($00 
 uint8_t PlatformAmiga::hwRead(uint16_t addr)
 {
     if (addr == 0xD20Au) return pokey_random_step();  // POKEY RANDOM register
+    // SKSTAT ($D20F read) is a STATUS register, distinct from the SKCTL we WRITE to the
+    // same address.  The standby level-select (engine_sound_update $5978, reached via the
+    // Title Screen) reads bit3 = the SHIFT key, ACTIVE-LOW (1 = NOT pressed): shift idle →
+    // the level-INCREMENT path (joystick-up / SELECT raise the starting level), shift held →
+    // decrement.  Returning the POKEY write-shadow (pokey[$F], bit3=0) reads as "shift held",
+    // so the code always decremented → joystick-up appeared to do nothing / wrong direction.
+    // Emit a proper idle SKSTAT (nothing pressed) so up=raise, down=lower, matching the Atari.
+    if (addr == 0xD20Fu) return 0xFFu;                // SKSTAT: idle (bit3=1 = shift not pressed)
     if (addr >= 0xD200u && addr < 0xD210u) return pokey[addr - 0xD200u];
     // PIA PORTA ($D300): Atari joysticks are ACTIVE-LOW (1 = open/neutral).  Driven by the
     // keyboard ISR from the Amiga arrow keys (stick-0 bits 0-3); neutral $FF = stick centred.
