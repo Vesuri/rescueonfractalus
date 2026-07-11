@@ -387,6 +387,7 @@ VALIDATE_FUNCS = {
     # frame-driven colour-clear sweeps (validated via the opt-in RTCLOK-tick fixture):
     0x6DF4,  # audf2_sweep_clear_colors — AUDF2 pitch sweep over frame_wait_count frames
     0x7A89,  # clear_colors_sweep_5x — 5-pass colour-clear timer gated on $003E (load-bearing exit Z)
+    0x7A17,  # animate_clear_colors_timed — RTCLOK-gated colour-clear stepper (nested waits + RANDOM)
 }
 VALIDATE_SUFFIX = '__t6502'
 

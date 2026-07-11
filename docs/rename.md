@@ -299,3 +299,8 @@ console/trigger delta launches the game. Called from `cockpit_display $587B` tai
   `animate_clear_colors_timed $7A17` actually **continue while `$003E != 0` and exit at `$003E == 0`**
   (`$7a94`/`$7a66` `LDA $3E; BEQ return`). So `$003E` nonzero = "keep sweeping", zero = "done". This is
   the flag the Systems key toggles and the pilot_render L_78d6↔L_792e hold-loop exit (see [[flight-scene]]).
+
+**`$007C` — unnamed** (found 2026-07-11, animate_clear_colors_timed). A pacing accumulator
+for the colour-clear stepper: `animate_clear_colors_timed $7A17` pulls it down by 7 each pass
+(when the step counter `$7B < $0F`) and re-seeds RTCLOK ($0014) from it on exit, so it sets the
+inter-tick delay of the sweep. Suggested name: `clear_sweep_delay_007C`.

@@ -12150,7 +12150,8 @@ L_7a14:;
 }
 
 /* animate_clear_colors_timed @ $7A17: Gated by $0014(RTCLOK); steps $007B/$007D, reads RANDOM $D20A, runs wait_frames_1 loops + ring_push_marked X=$19/$1B */
-void animate_clear_colors_timed(void) {
+/* faithful transliteration kept as the validation oracle; native animate_clear_colors_timed() lives in rof_native.c (see VALIDATE_FUNCS) */
+void animate_clear_colors_timed__t6502(void) {
     /* 7a17 */
     LDA(RTCLOK_LOW);
     /* 7a19 */

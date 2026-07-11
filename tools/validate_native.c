@@ -2232,6 +2232,33 @@ static int test_advance_history_6a4d(void) {
     return mem_fail;
 }
 
+/* animate_clear_colors_timed @ $7A17: RTCLOK-gated, so force $0014=0 in the fixture (else
+ * ~255/256 random cases would no-op at entry) and enable the RTCLOK-advancing tick so its
+ * nested wait_frames loops terminate.  No stack ignore needed — all PHA/PLA are inside
+ * callees that BOTH runs invoke identically. */
+static int test_animate_clear_colors_timed(void) {
+    if (!want("animate_clear_colors_timed")) return 0;
+    enum { N = 20000 };
+    static uint8_t pre[65536];
+    static uint16_t stack_pg[256];
+    for (int i = 0; i < 256; i++) stack_pg[i] = (uint16_t)(0x0100 + i);
+    int mem_fail = 0, cpu_diff = 0, printed = 0;
+    platform_test_tick_rtclok(1);
+    set_ignore(stack_pg, 256);                       /* callee PHA residue differs harmlessly */
+    for (int t = 0; t < N; t++) {
+        fill_random(pre);
+        pre[0x0014] = 0;                              /* the RTCLOK==0 tick that gates the body */
+        mem_fail += diff_run("animate_clear_colors_timed", pre, zero_cpu(),
+                             animate_clear_colors_timed, animate_clear_colors_timed__t6502,
+                             t, &printed, &cpu_diff);
+    }
+    set_ignore(0, 0);
+    platform_test_tick_rtclok(0);
+    printf("animate_clear_colors_timed: %d cases ($14=0 forced), %d mem mismatch (must be 0), %d cpu diffs\n",
+           N, mem_fail, cpu_diff);
+    return mem_fail;
+}
+
 int main(int argc, char **argv) {
     g_filter = argv + 1; g_nfilter = argc - 1;   /* optional name-substring filters */
     platform_test_init_headless();   /* enable seedable RANDOM ($D20A) for both runs */
@@ -2427,6 +2454,7 @@ int main(int argc, char **argv) {
         fails += test_mem_contract("clear_colors_sweep_5x", clear_colors_sweep_5x, clear_colors_sweep_5x__t6502);
         platform_test_tick_rtclok(0);
     }
+    fails += test_animate_clear_colors_timed();
     fails += test_draw_dial_bar_column();
     fails += test_draw_player3_object();
     fails += test_dl_lms_build();

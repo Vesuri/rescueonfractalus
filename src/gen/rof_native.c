@@ -2392,6 +2392,81 @@ void clear_colors_sweep_5x(void) {
     cpu.Z = 0; cpu.N = 1;                         /* all passes done — leave Z=0 for the caller */
 }
 
+/* animate_clear_colors_timed @ $7A17 — the once-per-256-frames colour-clear stepper for the
+ * rescue/landing sequence.  Runs only on the RTCLOK==0 tick.  Two modes by the step counter
+ * anim_counter_007B ($7B):
+ *   • $7B == 0: queue two $19 ring events around a 10-frame wait, double the clear-colour count
+ *     ($7D), re-seed RTCLOK from $007C, and return.
+ *   • $7B >= $80: finish the sequence — mark the grid slot / show the countdown glyph, set
+ *     landing_seq_flag = 2, timer_or_counter = 9.
+ *   • else ($7B in 1..$7F): pick this tick's loop count from RANDOM (biased 3..7, halved unless
+ *     $7B has reached 7), then run that many passes: each queues a $1B event + waits $007D frames
+ *     (unless anim_flag_003C is set / already aborted), decays $7B, and while $7B < $0F grows $7D
+ *     by 2 and pulls $007C down by 7.  Finally re-seeds RTCLOK from $007C.
+ * (6502 note: the $7B==0 path's 7a2e branch is ALWAYS taken because ring_push_marked exits with
+ * Z=0 from its TAX of X=$19 — not from the ASL — so it never falls into the $7B-sign branch.) */
+void animate_clear_colors_timed(void) {
+    if (RTCLOK_LOW != 0) return;                         /* 7a17/7a19 */
+
+    uint8_t y = anim_counter_007B;                       /* 7a1b LDY $7B */
+    if (y == 0) {
+        anim_counter_007B--;                             /* 7a1f DEC $7B (0 -> $FF) */
+        cpu.X = 0x19; ring_push_marked();                /* 7a23 */
+        wait_frames_10();                                /* 7a26 */
+        clear_color_count_007D = (uint8_t)(clear_color_count_007D << 1);  /* 7a29 ASL $7D */
+        cpu.X = 0x19; ring_push_marked();                /* 7a2b */
+        RTCLOK_LOW = mem[0x007C];                        /* 7a2e always -> L_7a84 */
+        return;
+    }
+
+    if (y & 0x80) {                                      /* 7a30 BPL not taken (step counter high) */
+        mark_slot_and_countdown_char();                  /* 7a32 */
+        landing_seq_flag = 0x02;                         /* 7a37 */
+        timer_or_counter  = 0x09;                        /* 7a3b */
+        return;                                          /* 7a3d */
+    }
+
+    /* L_7a3e — loop count from RANDOM. */
+    uint8_t a = (uint8_t)(bus_read(0xD20A) & 0x07);      /* 7a3e/7a41 (the one RANDOM read) */
+    if (a < 0x03) a |= 0x03;                             /* 7a43/7a45/7a47 */
+    if (y < 0x07) a >>= 1;                               /* 7a49/7a4b/7a4d */
+    y = a;                                               /* 7a4e TAY */
+
+    int skip_wait = 0;                                   /* first iteration enters at L_7a6d? */
+    if (y != 0) {
+        row_table_stride = clear_color_count_007D;       /* 7a54/7a56 $C1 = $7D (inner-count scratch) */
+    } else {
+        y = 1;                                           /* 7a51 INY */
+        skip_wait = 1;                                   /* 7a52 -> L_7a6d */
+    }
+
+    for (;;) {
+        if (!skip_wait) {                                /* L_7a58 */
+            if (anim_flag_003C == 0) {                   /* 7a58/7a5a */
+                cpu.X = 0x1B; ring_push_marked();        /* 7a5c/7a5e */
+                uint8_t x = row_table_stride;            /* 7a61 LDX $C1 */
+                do {                                     /* L_7a63 */
+                    wait_frames_1();
+                    if (clear_colors_done_003E == 0) return;   /* 7a66/7a68 aborted */
+                    x--;                                 /* 7a6a */
+                } while (x != 0);                        /* 7a6b */
+            }
+        }
+        skip_wait = 0;
+
+        uint8_t step = anim_counter_007B;                /* 7a6d LDA $7B */
+        if (step != 0) anim_counter_007B--;              /* 7a6f/7a71 */
+        if (step < 0x0F) {                               /* 7a73/7a75 CMP #$0F; BCS */
+            clear_color_count_007D++;                    /* 7a77 */
+            clear_color_count_007D++;                    /* 7a79 */
+            mem[0x007C] = (uint8_t)(mem[0x007C] - 7);    /* 7a7b/7a7d/7a7f SBC #6 with C=0 */
+        }
+        y--;                                             /* 7a81 DEY */
+        if (y == 0) break;                               /* 7a82 BNE L_7a58 */
+    }
+    RTCLOK_LOW = mem[0x007C];                            /* 7a84/7a86 */
+}
+
 /* shift_object_table_up @ $6A0F — shift the display-list LMS address pairs up by 3 bytes
  * ($3007/$3008[Y] -> $300A/$300B[Y]) for entry-A iterations, stepping Y down by 3. */
 void shift_object_table_up(void) {
