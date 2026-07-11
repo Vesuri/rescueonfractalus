@@ -384,6 +384,9 @@ VALIDATE_FUNCS = {
     0x495F,  # reset_pilot_state_if_no_2830 — clears $003D if $2830==0, tail clear_pilot_rescue_state
     0x4971,  # copy_display_params_to_buffer — copy 16 bytes $00CF..$00DE -> $07E9..$07F8
     0x47A3,  # set_colpf0_from_flag — pick COLPF0 by Y bit5, tail save_color_clear_y_bit5 (entry Y)
+    # frame-driven colour-clear sweeps (validated via the opt-in RTCLOK-tick fixture):
+    0x6DF4,  # audf2_sweep_clear_colors — AUDF2 pitch sweep over frame_wait_count frames
+    0x7A89,  # clear_colors_sweep_5x — 5-pass colour-clear timer gated on $003E (load-bearing exit Z)
 }
 VALIDATE_SUFFIX = '__t6502'
 

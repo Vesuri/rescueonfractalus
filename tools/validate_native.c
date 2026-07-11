@@ -56,6 +56,9 @@ static void set_ignore(const uint16_t *addrs, int n) { g_ignore = addrs; g_ignor
 void     platform_test_init_headless(void);
 void     platform_test_seed_rng(uint32_t s);
 uint32_t platform_test_get_rng(void);
+/* When on, the headless tickVBI advances RTCLOK ($0014) by 1 — lets frame-wait twins
+   (and their oracles) terminate so the whole function can be diffed.  See platform_cbridge.c. */
+void     platform_test_tick_rtclok(int on);
 
 /* Fill a 64 KB buffer with random bytes, 32 bits at a time (4x fewer PRNG calls
    than a per-byte loop — the dominant cost of the full-random-mem tests). */
@@ -2410,6 +2413,20 @@ int main(int argc, char **argv) {
     fails += test_mem_contract("reset_pilot_state_if_no_2830", reset_pilot_state_if_no_2830, reset_pilot_state_if_no_2830__t6502);
     fails += test_mem_contract("copy_display_params_to_buffer", copy_display_params_to_buffer, copy_display_params_to_buffer__t6502);
     fails += test_mem_contract_regs("set_colpf0_from_flag", set_colpf0_from_flag, set_colpf0_from_flag__t6502);
+    /* Frame-driven colour-clear sweeps: enable the RTCLOK-advancing tick so their
+       wait_frames_1 loops (native + oracle) terminate, then diff the whole function.
+       audf2 saves frame_wait_count via the 6502 stack (PHA/PLA) whereas the twin uses a
+       local, so ignore the stack page ($0100-$01FF) for it. */
+    {
+        static uint16_t stack_pg[256];
+        for (int i = 0; i < 256; i++) stack_pg[i] = (uint16_t)(0x0100 + i);
+        platform_test_tick_rtclok(1);
+        set_ignore(stack_pg, 256);
+        fails += test_mem_contract("audf2_sweep_clear_colors", audf2_sweep_clear_colors, audf2_sweep_clear_colors__t6502);
+        set_ignore(0, 0);
+        fails += test_mem_contract("clear_colors_sweep_5x", clear_colors_sweep_5x, clear_colors_sweep_5x__t6502);
+        platform_test_tick_rtclok(0);
+    }
     fails += test_draw_dial_bar_column();
     fails += test_draw_player3_object();
     fails += test_dl_lms_build();

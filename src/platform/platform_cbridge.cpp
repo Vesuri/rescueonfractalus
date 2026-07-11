@@ -82,12 +82,24 @@ uint8_t platform_flight_irq_key(void) {
    can be diffed, with a seedable LFSR so both runs share an identical stream.
    None of this is referenced by the real game build.
    --------------------------------------------------------------------------- */
+extern volatile uint8_t mem[65536];   /* the 6502 RAM image (src/cpu/cpu.c) */
+
+/* Opt-in for the sweep/frame-wait validation fixtures: when nonzero, tickVBI advances
+   the RTCLOK low byte ($0014) by 1.  A frame-driven twin (e.g. clear_colors_sweep_5x)
+   and its __t6502 oracle both busy-wait on RTCLOK via platform_tick_vbi; with the real
+   headless no-op tick, RTCLOK never advances and those waits spin forever.  Bumping it
+   by exactly 1 per tick lets BOTH the native wait_frames_core and the oracle's exact-
+   equality spin terminate identically (no overshoot), so the whole function can be
+   diffed.  Default OFF so every existing pure-mem test is unaffected. */
+static int g_headlessTickRtclok = 0;
+
 namespace {
 struct HeadlessPlatform : Platform {
     void    run() override {}
     void    setInterrupt(void (*)(void)) override {}
     int     framesPerSecond() override { return 50; }
     void    renderFrame() override {}
+    void    tickVBI() override { if (g_headlessTickRtclok) mem[0x0014]++; }
     int     loadImage(const char*) override { return -1; }
     uint8_t hwRead(uint16_t addr) override {
         return addr == 0xD20A ? pokeyRandomStep() : 0x00;
@@ -103,5 +115,8 @@ void platform_test_init_headless(void) {
 
 void     platform_test_seed_rng(uint32_t s) { if (platform) platform->rngSeed(s); }
 uint32_t platform_test_get_rng(void)        { return platform ? platform->rngGet() : 0; }
+
+/* Enable/disable the RTCLOK-advancing tick for frame-wait twin validation (see above). */
+void     platform_test_tick_rtclok(int on)  { g_headlessTickRtclok = on ? 1 : 0; }
 
 } /* extern "C" */

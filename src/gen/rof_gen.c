@@ -9849,7 +9849,8 @@ void init_row_coords_9c__t6502(void) {
 }
 
 /* audf2_sweep_clear_colors @ $6DF4: Loops $004C times: $08DB-=$08DC, write to AUDF2 ($D202) pitch sweep, then wait_frames_1; preserves $004C via stack */
-void audf2_sweep_clear_colors(void) {
+/* faithful transliteration kept as the validation oracle; native audf2_sweep_clear_colors() lives in rof_native.c (see VALIDATE_FUNCS) */
+void audf2_sweep_clear_colors__t6502(void) {
     /* 6df4 */
     LDY(frame_wait_count);
     /* 6df6 */
@@ -12277,7 +12278,8 @@ L_7a88:;
 }
 
 /* clear_colors_sweep_5x @ $7A89: Y=5 outer loop: wait_frames_1 X=$007D(min $14) until $003E set, then ring_push_marked X=$1A; returns Z=done */
-void clear_colors_sweep_5x(void) {
+/* faithful transliteration kept as the validation oracle; native clear_colors_sweep_5x() lives in rof_native.c (see VALIDATE_FUNCS) */
+void clear_colors_sweep_5x__t6502(void) {
     /* 7a89 */
     LDY(0x05);
 L_7a8b:;

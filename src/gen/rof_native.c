@@ -2353,6 +2353,45 @@ void copy_display_params_to_buffer(void) {
         mem[MEM_attract_palette_src + i] = mem[MEM_display_param_0 + i];
 }
 
+/* audf2_sweep_clear_colors @ $6DF4 — pitch-sweep the AUDF2 audio channel: for
+ * frame_wait_count ($4C) frames, subtract audf2_sweep_step ($08DC) from audf2_sweep_val
+ * ($08DB) and emit the new value to AUDF2 ($D202, POKEY -> Paula), one step per frame.
+ * frame_wait_count is clobbered by the per-frame wait, so it is saved and restored. */
+void audf2_sweep_clear_colors(void) {
+    uint8_t saved = frame_wait_count;            /* PHA: preserve across the sweep */
+    uint8_t n = frame_wait_count;                /* frame/step count (0 => 256, per DEY;BNE) */
+    do {
+        audf2_sweep_val = (uint8_t)(audf2_sweep_val - audf2_sweep_step);
+        bus_write(0xD202, audf2_sweep_val);      /* AUDF2 pitch — real audio via Paula */
+        wait_frames_1();                         /* one vertical-blank period */
+        n--;
+    } while (n != 0);
+    frame_wait_count = saved;                    /* PLA -> $4C */
+}
+
+/* clear_colors_sweep_5x @ $7A89 — the systems-off / rescue colour-clear timer: up to 5
+ * passes (Y=5..0), each waiting max(clear_color_count_007D, $14) frames while the
+ * sweep-active flag clear_colors_done_003E stays nonzero, queuing a $1A ring event per
+ * completed pass.  Aborts as soon as $003E clears (systems back on).
+ * EXIT Z IS LOAD-BEARING: pilot_render tests it (`BEQ`/`BNE` after the call) — Z=1 when
+ * aborted early ($003E==0), Z=0 when all passes completed (the 6502's final DEY -> $FF). */
+void clear_colors_sweep_5x(void) {
+    for (int pass = 0; pass < 6; pass++) {       /* Y = 5,4,3,2,1,0 via DEY;BPL */
+        uint8_t frames = clear_color_count_007D;
+        if (frames < 0x14) frames = 0x14;        /* minimum sweep length */
+        do {
+            wait_frames_1();
+            if (clear_colors_done_003E == 0) {   /* aborted — leave Z=1 for the caller */
+                cpu.A = 0x00; cpu.Z = 1; cpu.N = 0;
+                return;
+            }
+            frames--;
+        } while (frames != 0);
+        cpu.X = 0x1A; ring_push_marked();        /* queue this pass's colour-clear event */
+    }
+    cpu.Z = 0; cpu.N = 1;                         /* all passes done — leave Z=0 for the caller */
+}
+
 /* shift_object_table_up @ $6A0F — shift the display-list LMS address pairs up by 3 bytes
  * ($3007/$3008[Y] -> $300A/$300B[Y]) for entry-A iterations, stepping Y down by 3. */
 void shift_object_table_up(void) {
