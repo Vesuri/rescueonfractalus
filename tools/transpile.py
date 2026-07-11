@@ -377,6 +377,13 @@ VALIDATE_FUNCS = {
     0x6973,  # dl_lms_push_top — push a fresh top-edge LMS row pointer (X-=3)
     0x698E,  # dl_lms_push_bottom — push a fresh bottom-edge LMS row pointer (Y+=3)
     0x6953,  # scroll_terrain_dl — one door-open step: scroll both DL halves + push edges
+    # --- pilot-rescue state machine (2026-07-11): native-ize the cluster around
+    #     pilot_render ($7854) to understand + fix the Systems-off/rescue FREEZE
+    #     (the L_78d6<->L_792e hold loop stuck on $003D/$003E). Leaves-first. ---
+    0x4968,  # clear_pilot_rescue_state — clears $003E + pilot_visible/pilot_prev (entry A)
+    0x495F,  # reset_pilot_state_if_no_2830 — clears $003D if $2830==0, tail clear_pilot_rescue_state
+    0x4971,  # copy_display_params_to_buffer — copy 16 bytes $00CF..$00DE -> $07E9..$07F8
+    0x47A3,  # set_colpf0_from_flag — pick COLPF0 by Y bit5, tail save_color_clear_y_bit5 (entry Y)
 }
 VALIDATE_SUFFIX = '__t6502'
 

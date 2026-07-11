@@ -2403,6 +2403,13 @@ int main(int argc, char **argv) {
     fails += test_mem_contract_regs("dl_lms_push_top", dl_lms_push_top, dl_lms_push_top__t6502);
     fails += test_mem_contract_regs("dl_lms_push_bottom", dl_lms_push_bottom, dl_lms_push_bottom__t6502);
     fails += test_mem_contract("scroll_terrain_dl", scroll_terrain_dl, scroll_terrain_dl__t6502);
+    /* pilot-rescue state-machine cluster (batch 1: leaves).  clear_pilot_rescue_state reads
+       entry A; set_colpf0_from_flag reads entry Y (message id) -> _regs.  reset_pilot_state_if_no_2830
+       and copy_display_params_to_buffer are mem-only. */
+    fails += test_mem_contract_regs("clear_pilot_rescue_state", clear_pilot_rescue_state, clear_pilot_rescue_state__t6502);
+    fails += test_mem_contract("reset_pilot_state_if_no_2830", reset_pilot_state_if_no_2830, reset_pilot_state_if_no_2830__t6502);
+    fails += test_mem_contract("copy_display_params_to_buffer", copy_display_params_to_buffer, copy_display_params_to_buffer__t6502);
+    fails += test_mem_contract_regs("set_colpf0_from_flag", set_colpf0_from_flag, set_colpf0_from_flag__t6502);
     fails += test_draw_dial_bar_column();
     fails += test_draw_player3_object();
     fails += test_dl_lms_build();

@@ -284,3 +284,18 @@ STARTING-LEVEL digit via `setup_initials_ptr $5A63`. Loops (mutual tail-recursio
 console/trigger delta launches the game. Called from `cockpit_display $587B` tail. (The
 "engine sound" name likely came from the `$006D` ramp resembling a pitch ramp.) Its callee
 `sound_check_trigger $5A17` and the `$5A0E sound_stop` are part of the same loop, not audio.
+
+---
+
+**Pilot-rescue cluster corrections (found 2026-07-11, native-izing pilot_render group):**
+- **`$2830` — unnamed.** = the queued-landing-target slot flag. `reset_pilot_state_if_no_2830 $495F`
+  reads it: if `$2830==0` (no target queued) it also clears `landing_seq_flag $003D`. Suggested
+  name: `landing_target_queued_2830`.
+- **`$0047 colpf0_value` / `set_colpf0_from_flag $47A3` — symbols.csv comment is BACKWARDS.** The
+  comment says "If Y bit5 set A=$CA else A=$0047"; the disasm (`$47a6 BNE`) is the opposite —
+  **bit5 CLEAR selects $CA**, bit5 SET selects `colpf0_value`. Verified via `make validate`.
+- **`$003E clear_colors_done_003E` — symbols.csv comment is misleading.** It says "Set non-zero to
+  abort wait_frames_1 sweep loops"; the loops in `clear_colors_sweep_5x $7A89` /
+  `animate_clear_colors_timed $7A17` actually **continue while `$003E != 0` and exit at `$003E == 0`**
+  (`$7a94`/`$7a66` `LDA $3E; BEQ return`). So `$003E` nonzero = "keep sweeping", zero = "done". This is
+  the flag the Systems key toggles and the pilot_render L_78d6↔L_792e hold-loop exit (see [[flight-scene]]).

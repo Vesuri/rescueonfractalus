@@ -3261,7 +3261,8 @@ L_47a1:;
 }
 
 /* set_colpf0_from_flag @ $47A3: If Y bit5 set A=$CA else A=$0047, writes COLPF0 $D016, falls into save_color_clear_y_bit5 */
-void set_colpf0_from_flag(void) {
+/* faithful transliteration kept as the validation oracle; native set_colpf0_from_flag() lives in rof_native.c (see VALIDATE_FUNCS) */
+void set_colpf0_from_flag__t6502(void) {
     /* 47a3 */
     TYA();
     /* 47a4 */
@@ -3348,7 +3349,8 @@ L_4949:;
 }
 
 /* reset_pilot_state_if_no_2830 @ $495F: If $2830==0 also clears $003D; falls into clear_pilot_rescue_state to clear $003E and pilot flags */
-void reset_pilot_state_if_no_2830(void) {
+/* faithful transliteration kept as the validation oracle; native reset_pilot_state_if_no_2830() lives in rof_native.c (see VALIDATE_FUNCS) */
+void reset_pilot_state_if_no_2830__t6502(void) {
     /* 495f */
     LDA(0x00);
     /* 4961 */
@@ -3361,7 +3363,8 @@ void reset_pilot_state_if_no_2830(void) {
 }
 
 /* clear_pilot_rescue_state @ $4968: Clears $003E, pilot_visible $288D and pilot_prev $288E (resets pilot/rescue state) */
-void clear_pilot_rescue_state(void) {
+/* faithful transliteration kept as the validation oracle; native clear_pilot_rescue_state() lives in rof_native.c (see VALIDATE_FUNCS) */
+void clear_pilot_rescue_state__t6502(void) {
     /* 4968 */
     clear_colors_done_003E = cpu.A;
     /* 496a */
@@ -3373,7 +3376,8 @@ void clear_pilot_rescue_state(void) {
 }
 
 /* copy_display_params_to_buffer @ $4971: Copies 16 bytes $00CF..$00DE (display_param_0+) down to $07E9..$07F8 via Y=$0F..0 loop */
-void copy_display_params_to_buffer(void) {
+/* faithful transliteration kept as the validation oracle; native copy_display_params_to_buffer() lives in rof_native.c (see VALIDATE_FUNCS) */
+void copy_display_params_to_buffer__t6502(void) {
     /* 4971 */
     LDY(0x0F);
 L_4973:;

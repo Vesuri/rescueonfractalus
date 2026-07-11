@@ -2306,6 +2306,53 @@ void save_color_clear_y_bit5(void) {
     show_cockpit_message();
 }
 
+/* ===========================================================================
+ *  Pilot-rescue state-machine cluster (native twins of the pilot_render group).
+ *  These drive the landing/rescue sequence: the colour-sweep-done flag $003E,
+ *  the landing-sequence counter $003D, the pilot visibility flags, and the HUD
+ *  message/colour bookkeeping the sequence uses.  Faithful, mem[]-only.
+ * =========================================================================== */
+
+/* set_colpf0_from_flag @ $47A3 — choose the cockpit playfield colour by the message
+ * id's bit5: ids with bit5 set use the fixed $CA "flash" colour, others use the live
+ * colpf0_value shadow; then render the message via save_color_clear_y_bit5 (which
+ * needs A = colour and Y = id).  Entry Y = message id.  (The Atari also poked COLPF0
+ * $D016 here — dropped; the copper owns colour on the Amiga.)
+ * NOTE: bit5 CLEAR selects $CA (per the $47a6 BNE), the opposite of the old header
+ * comment; verified against disasm + make validate. */
+void set_colpf0_from_flag(void) {
+    cpu.A = (cpu.Y & 0x20) ? colpf0_value : 0xCA;
+    save_color_clear_y_bit5();                 /* consumes A (colour) + Y (id) */
+}
+
+/* clear_pilot_rescue_state @ $4968 — reset the pilot-rescue state: clear the
+ * colour-sweep-done flag and both pilot-visibility flags.  All three take the entry
+ * A (callers always pass 0). */
+void clear_pilot_rescue_state(void) {
+    uint8_t v = cpu.A;
+    clear_colors_done_003E = v;
+    pilot_visible = v;
+    pilot_prev    = v;
+}
+
+/* reset_pilot_state_if_no_2830 @ $495F — when no landing target is queued
+ * ($2830 == 0), also clear the landing-sequence counter $003D; then fall into
+ * clear_pilot_rescue_state with A = 0. */
+void reset_pilot_state_if_no_2830(void) {
+    cpu.A = 0x00;
+    if (mem[0x2830] == 0x00)                    /* $2830: queued-landing-target slot (unnamed) */
+        landing_seq_flag = 0x00;
+    clear_pilot_rescue_state();                 /* consumes A (= 0) */
+}
+
+/* copy_display_params_to_buffer @ $4971 — snapshot the 16 live display parameters
+ * ($00CF..$00DE) into the palette-strobe buffer ($07E9..$07F8); the event/systems
+ * path saves them here before running a colour-clear sweep. */
+void copy_display_params_to_buffer(void) {
+    for (int i = 0; i < 16; i++)
+        mem[MEM_attract_palette_src + i] = mem[MEM_display_param_0 + i];
+}
+
 /* shift_object_table_up @ $6A0F — shift the display-list LMS address pairs up by 3 bytes
  * ($3007/$3008[Y] -> $300A/$300B[Y]) for entry-A iterations, stepping Y down by 3. */
 void shift_object_table_up(void) {
