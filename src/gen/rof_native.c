@@ -8118,17 +8118,23 @@ void vbi_handler_flight(void) {
     mem[0x00C7] = 0x00;                       /* reset the DLI dispatch index for this frame ($00C7) */
 
 #ifdef ROF_PLATFORM_AMIGA
-    /* Shields-On indicator (#14): the cockpit cell $3355 (special_state_color) toggles $34 (ON —
-     * lit pixel uses COLPF2 = light salmon $2C) <-> $B4 (OFF — COLPF3 = dark salmon $26).  Its
-     * writers (enter/exit_terrain_special_state $9B0D/$9B4C, check_object_in_target_box $93BD, the
-     * game_state_update special-state paths) raise no dirty flag, so the Amiga never re-decoded the
-     * cell and the light stayed frozen.  A one-byte change-detect here (every flight VBI frame)
-     * flags it for re-decode whenever it flips — robust to whichever writer changed it.  $3355 is in
-     * the $332D-$355D mode-4 range, so platform_cockpit_dirty routes through the g_ckDial registry.
-     * (Measured 2026-07-13: shields.a8s $3355=$34 vs flight2/longrange $3355=$B4.)  Amiga-only. */
+    /* Cockpit status lights = four cells that game_sub_4606 inits to the OFF glyphs $B4/$B5/$B6/$B4:
+     *   $3355 = Shields (#14)   $3356/$3357 = Mother Ship (#15, a 2-cell pair)   $3388 = Air Lock (#16).
+     * Each toggles $34..$36 (ON — lit pixel uses COLPF2 = light salmon $2C) <-> $B4..$B6 (OFF — same
+     * glyph, bit7 set → COLPF3 = dark salmon $26).  Their writers (enter/exit_terrain_special_state,
+     * check_object_in_target_box, the event / game_state_update paths, the $50fa VBI pair-write) raise
+     * no dirty flag, so the Amiga never re-decoded them and the lights stayed frozen.  A change-detect
+     * here (every flight VBI frame) flags each cell for re-decode when it flips — robust to whichever
+     * writer changed it.  All four are in the $332D-$355D mode-4 range, so platform_cockpit_dirty routes
+     * through the g_ckDial registry.  (Measured 2026-07-13: shields.a8s $3355=$34 ON; airlock.a8s
+     * $3388=$34 ON; both OFF = $B4 elsewhere.)  Amiga-only. */
     {
-        static uint8_t s_last3355 = 0xFF;
-        if (mem[0x3355] != s_last3355) { s_last3355 = mem[0x3355]; platform_cockpit_dirty(0x3355u, 1u); }
+        static const uint16_t kStatusCells[4] = { 0x3355u, 0x3356u, 0x3357u, 0x3388u };
+        static uint8_t s_lastStatus[4] = { 0xFFu, 0xFFu, 0xFFu, 0xFFu };
+        for (uint8_t k = 0; k < 4; k++) {
+            uint8_t v = mem[kStatusCells[k]];
+            if (v != s_lastStatus[k]) { s_lastStatus[k] = v; platform_cockpit_dirty(kStatusCells[k], 1u); }
+        }
     }
 #endif
 
