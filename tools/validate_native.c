@@ -2330,6 +2330,46 @@ static int test_event_sequence_dispatcher(void) {
     return mem_fail;
 }
 
+/* pilot_render @ $7854: the rescue state machine.  Force $003E=0 so only the diffable path runs
+ * (setup + the L_78d6 preamble + the systems-on finish/abort, incl. the $0079-seed ADC/SBC chain and
+ * the level_clear_fx_loop finish for phases 3/4); the $003E!=0 rescue loop spins on RTCLOK cleared by
+ * the VBI (inspection-only).  Seed from the flight snapshot (callees need real tables/scratch); bias
+ * $003D to 0..5 to exercise both the seed (>=3) and the phase-3/4 finish, and randomize the other
+ * branch-gating flags.  Frame-driven (level_clear_fx_loop / trigger paths) -> RTCLOK tick; the JSR
+ * chain leaves stack residue -> ignore the stack page. */
+static int test_pilot_render(void) {
+    if (!want("pilot_render")) return 0;
+    static uint8_t snap[65536], pre[65536];
+    static uint16_t stack_pg[256];
+    for (int i = 0; i < 256; i++) stack_pg[i] = (uint16_t)(0x0100 + i);
+    const char *path = "a800dumps/flight_ram_0000_BFFF.bin";
+    FILE *f = fopen(path, "rb");
+    if (!f) { printf("pilot_render: SKIP (%s not found)\n", path); return 0; }
+    memset(snap, 0, sizeof snap);
+    size_t got = fread(snap, 1, 0xC000, f); fclose(f);
+    if (got != 0xC000) { printf("pilot_render: SKIP (short read %zu)\n", got); return 0; }
+    static const uint16_t gate[] = { 0x0079, 0x003C, 0x0633, 0x2844, 0x281E, 0x061B,
+                                     0x0040, 0x003F, 0x007A, 0x2830 };
+    enum { N = 20000 };
+    int mem_fail = 0, cpu_diff = 0, printed = 0;
+    platform_test_tick_rtclok(1);
+    set_ignore(stack_pg, 256);
+    for (int t = 0; t < N; t++) {
+        memcpy(pre, snap, sizeof pre);
+        pre[0x003E] = 0;                                 /* systems on -> the diffable path */
+        pre[0x003D] = (uint8_t)(xs() % 6);               /* landing phase 0..5 (hits >=3 seed + 3/4 finish) */
+        for (unsigned g = 0; g < sizeof gate / sizeof *gate; g++)
+            pre[gate[g]] = (uint8_t)(xs() & 0xFF);
+        mem_fail += diff_run("pilot_render", pre, zero_cpu(),
+                             pilot_render, pilot_render__t6502, t, &printed, &cpu_diff);
+    }
+    set_ignore(0, 0);
+    platform_test_tick_rtclok(0);
+    printf("pilot_render: %d cases (flight snapshot, $3E=0), %d mem mismatch (must be 0), %d cpu diffs\n",
+           N, mem_fail, cpu_diff);
+    return mem_fail;
+}
+
 int main(int argc, char **argv) {
     g_filter = argv + 1; g_nfilter = argc - 1;   /* optional name-substring filters */
     platform_test_init_headless();   /* enable seedable RANDOM ($D20A) for both runs */
@@ -2534,6 +2574,7 @@ int main(int argc, char **argv) {
     fails += test_animate_clear_colors_timed();
     fails += test_game_sub_7EC7();
     fails += test_event_sequence_dispatcher();
+    fails += test_pilot_render();
     /* level_clear_fx_loop: frame-driven (wait_frames_1 ×75) — enable the RTCLOK tick so both
        runs' waits terminate.  mem-only entry; RANDOM ($D20A) is seeded identically per run.
        Ignore the stack page ($0100-$01FF): a harmless PHA/JSR-residue byte at $01FF differs. */

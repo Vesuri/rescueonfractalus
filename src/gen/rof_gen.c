@@ -11730,7 +11730,8 @@ L_7853:;
 }
 
 /* pilot_render @ $7854: Pilot/rescue rendering + interaction (3 RANDOM reads; checks $288D/$288E rescue state; large function) */
-void pilot_render(void) {
+/* faithful transliteration kept as the validation oracle; native pilot_render() lives in rof_native.c (see VALIDATE_FUNCS) */
+void pilot_render__t6502(void) {
     /* 7856 */
     lock_on_indicator_state = 0x80;
     /* 7858 */

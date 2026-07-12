@@ -2736,6 +2736,184 @@ void animate_clear_colors_timed(void) {
     RTCLOK_LOW = mem[0x007C];                            /* 7a84/7a86 */
 }
 
+/* pilot_render @ $7854 — the pilot/rescue render + rescue state machine.  Seeds the lock-on /
+ * landing state from the pilot range ($0079), then runs a per-frame loop (L_78d6) that animates the
+ * alien knock ($0633 / pmg_enemy_update), and:
+ *   • systems ON ($003E==0): finish/abort the rescue and return (via level_clear_fx_loop);
+ *   • systems OFF ($003E!=0): step the landing sequence $003D — colour sweeps, the descending audio,
+ *     the zoom, and the L_78d6 hold loop.  This is FAITHFUL: the real Atari hard-holds here too (see
+ *     [[flight-scene]]); the loop exits only when systems come back on ($003E->0 via the VBI).
+ * The systems-off freeze fix lives in the L_78d6 / L_79d0 frame-yields below (Amiga: keep the display
+ * + VBI live while spinning — the transpiled twin got these from SPINWAIT_HOOKS, so this native twin
+ * must reproduce them or the freeze returns).  This is a faithful mirror of the transpiled CFG (goto
+ * labels match the $76xx/$79xx addresses); cpu.A/X/Y propagation is kept where a value feeds a store
+ * or callee, and the delicate carry chains use the cpu-op macros (byte-exact to the oracle).
+ * VALIDATION: only the $003E==0 path is diffed (the $003E!=0 loop can't advance RTCLOK headless — the
+ * $793d/$797f arithmetic there is inspection-only).  $004D/$0079/$281E/$005A/$28E5/$28E9/$003F/$0040
+ * are unnamed scratch — see docs/rename.md. */
+void pilot_render(void) {
+    lock_on_indicator_state = 0x80;                      /* 7856 $7E */
+    mem[0x004D] = 0x80;
+    mem[0x2830] = 0x80;
+    mem[0x007A] = 0x80;
+    /* Seed colour ($47) / timer ($44) + landing phase from the pilot range $0079. */
+    {
+        uint8_t r = mem[0x0079];                         /* 785f */
+        if (r & 0x80)       { cpu.X = 0x2A; cpu.Y = 0x68; }   /* 7863 very near */
+        else if (r >= 0x08) { cpu.X = 0x1A; cpu.Y = 0x67; }   /* 786e mid */
+        else                { cpu.Y = 0x46; landing_seq_flag = (uint8_t)(landing_seq_flag + 1); }  /* 7875 close: INC $003D (X = entry X) */
+    }
+    colpf0_value = cpu.X;                                /* 7879 STX $47 */
+    timer_or_counter = cpu.Y;                            /* 787b STY $44 */
+
+    if (landing_seq_flag >= 0x03) {                      /* 787f CMP #3; BCC L_78d6 */
+        /* Landing well underway: seed the colour-sweep + audio params + grid slot. */
+        mem[0x0642] = 0x00;
+        plot_step_lo = 0x00;                             /* $50 */
+        cpu.A = 0x00; cpu.C = 1; ADC(mem[0x0079]);       /* A = 0 + $0079 + 1 (C=1 from the CMP #3 that reached here) */
+        plot_step_hi = cpu.A;                            /* 788c $51 */
+        SBC(0x12); EOR(0xFF); ASL_A();                   /* 788e-7892 */
+        anim_counter_007B = cpu.A;                       /* 7893 $7B */
+        mem[0x007C] = 0xA5;
+        clear_color_count_007D = 0x0F;                   /* $7D */
+        mem[0x28D9] = 0x80; mem[0x28DA] = 0x80;
+        mem[0x0079] = 0x80;
+        mem[0x281E] = 0x01;
+        uint8_t v = mem[0x0A00 + grid_slot_index];       /* 78af $0A00,X (X=$28E6) */
+        if (v == 0x80) {                                 /* 78b2/78b4 */
+            uint8_t g = mem[0x061B];                      /* 78b6 */
+            if (g != 0 && g >= bus_read(0xD20A)) goto L_78d6;   /* 78b9/78be/78c0 */
+            v = g;                                       /* A = $061B for the CMP #$C9 below */
+        } else {
+            mem[0x281E] = (uint8_t)(mem[0x281E] - 1);    /* 78c3 DEC $281E */
+        }
+        game_state = (uint8_t)(game_state + 1);          /* 78c6 INC $0041 */
+        cpu.Y = 0x0C;
+        if (v == 0xC9) { timer_or_counter = 0x55; cpu.Y = 0x68; }   /* 78ca-78d2 */
+        terrain_pen1_fade = cpu.Y;                        /* 78d4 STY $DB */
+    }
+
+L_78d6:
+#ifdef ROF_PLATFORM_AMIGA
+    if (mem[0x003E]) { platform_tick_vbi(); platform_render_frame(); }   /* freeze fix: keep display+VBI live while systems-off */
+#endif
+    if (alien_trigger != 0) {                            /* 78d6/78d9 */
+        if (RTCLOK_LOW & 0x08) {                         /* 78db/78dd/78df */
+            if (mem[0x2844] == 0) { mem[0x2844] = (uint8_t)(mem[0x2844] + 1); pmg_enemy_update(); }  /* 78e1-78e9 */
+        } else {
+            mem[0x2844] = 0x00;                          /* 78ef */
+        }
+    }
+
+    /* L_78f2 */
+    if (clear_colors_done_003E != 0) goto L_792e;        /* 78f2/78f4: systems OFF -> rescue loop */
+
+    /* --- systems ON ($003E==0): finish/abort the rescue, then return. --- */
+    if (anim_flag_003C != 0) trigger_effect_4a();        /* 78f6/78f8/78fa */
+    {
+        uint8_t phase = landing_seq_flag;                /* 78fd LDY $003D */
+        mem[0x2830] = 0x00;
+        landing_seq_flag = 0x00;
+        game_state = 0x00;
+        pitch_pos_lo = 0x00; pitch_pos_hi = 0x00;
+        if (phase != 0x04 && phase != 0x03) return;      /* 790c-7914: only phases 3/4 continue */
+    }
+    /* L_7915 */
+    if (mem[0x281E] == 0) {                              /* 7915/7918 */
+        cpu.A = 0x49; timer_or_counter = cpu.A; mark_slot_and_countdown_char();   /* 791a-791e */
+    } else {
+        cpu.A = 0x40; timer_or_counter = cpu.A; mark_slot_and_inc_count();        /* 7924-7928 */
+    }
+    level_clear_fx_loop();                               /* 792b */
+    return;
+
+L_792e:
+    {
+        uint8_t phase = landing_seq_flag;                /* 792e */
+        if (phase < 0x03) goto L_78d6;                   /* 7930/7932 */
+        if (phase == 0x04) goto L_79a8;                  /* 7934/7936/7938 */
+        if (phase > 0x04) goto L_78d6;                   /* 793b BCS */
+    }
+    /* phase == 3: colour-sweep bit-shuffle + descending audio (inspection-only path). */
+    mem[0x28E9] = plot_step_hi;                          /* 7941 */
+    mem[0x005A] = bus_read(0xD20A);                      /* 7947 */
+    if (mem[0x0040] >= 0x6C) mem[0x28E5] = bus_read(0xD20A);   /* 7949-7952 */
+    else mem[0x28E5] = 0x00;                             /* 7955 */
+    do {                                                 /* L_795a */
+        cpu.A = mem[0x003F]; ASL_A();                    /* 795a/795c: C = bit7 of $3F */
+        ROR_M(0x005A);                                   /* 795d ROR $5A */
+        LSR_M(0x28E5);                                   /* 795f */
+        LSR_M(0x28E9);                                   /* 7962 (Z from this) */
+    } while (mem[0x28E9] != 0);                          /* 7965 BNE */
+    if (plot_step_hi == 0x01) {                          /* 7967/7969/796b */
+        mem[0x005A] = (uint8_t)(mem[0x005A] | 0x40);     /* 796d-7971 */
+        if (plot_step_lo == 0x00) {                      /* 7973/7975 */
+            uint8_t v40 = mem[0x0040];                   /* 7977 */
+            if (v40 < 0x6C) {                            /* 7979/797b BCS L_7995 */
+                RTCLOK_LOW = v40;                        /* 797d STA $14 */
+                cpu.A = bus_read(0xD20A); cpu.C = 0;     /* 797f (C=0: v40<$6C) */
+                ADC(bus_read(0xD20A));                   /* 7982 */
+                ROR_A(); LSR_A(); LSR_A();               /* 7985-7987 */
+                ADC(RTCLOK_LOW);                         /* 7988 ADC $14 */
+                if (mem[0x281E] != 0) ADC(0x20);         /* 798a-798f */
+                RTCLOK_LOW = cpu.A;                      /* 7991 STA $14 */
+                landing_seq_flag = (uint8_t)(landing_seq_flag + 1);   /* 7993 INC $003D */
+            }
+            mem[0x28E5] = 0xFF;                          /* 7995/7997/799f */
+        } else {
+            mem[0x28E5] = (uint8_t)(mem[0x28E5] | 0x80); /* 799a-799f */
+        }
+    }
+    /* L_79a2 */
+    if (landing_seq_flag != 0x04) {                      /* 79a2/79a4/79a6 */
+        animate_zoom_sequence();                         /* L_7a0f: CMP #4 gave C=0 (phase 3<4) -> run zoom */
+        goto L_78d6;                                     /* 7a14 */
+    }
+
+L_79a8:
+    if (mem[0x007A] != 0) {                              /* 79a8/79aa */
+        if (RTCLOK_LOW != 0) goto L_78d6;                /* 79ac/79ae -> L_7a0c -> L_7a14 -> L_78d6 */
+        mem[0x007A] = 0x00;                              /* 79b0 */
+    }
+    /* L_79b2 */
+    if (mem[0x281E] != 0) {                              /* 79b2/79b5 */
+        cpu.A = anim_flag_003C;                          /* 79b7 */
+        if (cpu.A == 0) {                                /* 79b9 */
+            game_state = cpu.A;                          /* 79bb (=0) */
+            game_sub_7EC7();                             /* 79bd */
+            goto L_78d6;                                 /* 79c0/79c9 -> L_7a0c -> L_7a14 */
+        }
+        anim_flag_003C = 0x80;                           /* 79c3/79c5 -> L_79d9 */
+        goto L_79d9;
+    }
+    /* L_79cc */
+    if (anim_flag_003C == 0) { animate_clear_colors_timed(); goto L_78d6; }   /* 79cc/79ce L_7a09 -> L_7a0c */
+L_79d0:
+    while (mem[0x06FF] != 0) {                           /* 79d0/79d3 sound-busy spin */
+        platform_tick_vbi(); platform_render_frame();    /* SPINWAIT: keep audio/VBI live */
+    }
+    anim_flag_003C = 0xFF;                               /* 79d5/79d7 */
+L_79d9:
+    clear_colors_sweep_5x();                             /* 79d9 (exit Z: aborted if $3E cleared) */
+    if (cpu.Z) goto L_78d6;                              /* 79dc/79de */
+    clear_message_buffer();                              /* 79e1 */
+    wait_frames_20();                                    /* 79e4 */
+    cpu.A = anim_flag_003C;                              /* 79e7 */
+    if (cpu.A == 0x80) {                                 /* 79e9/79eb */
+        mark_grid_slot_active();                         /* 79ed (leaves cpu.A = $3C for the next store) */
+        alien_trigger = cpu.A;                           /* 79f0 */
+        colpf0_value = 0xD8;                             /* 79f5 */
+        cpu.A = 0x70;                                    /* 79f7 */
+    } else {
+        bcd_oscillate_counter_0628();                    /* 79fc */
+        cpu.A = 0x0A;                                    /* 79ff */
+    }
+    /* L_7a01 */
+    init_event_state_5815_x16();                         /* 7a01 (entry A) */
+    landing_seq_flag = (uint8_t)(landing_seq_flag + 1);  /* 7a04 INC $003D */
+    goto L_78d6;                                         /* 7a06 -> L_7a0c -> L_7a14 */
+}
+
 /* shift_object_table_up @ $6A0F — shift the display-list LMS address pairs up by 3 bytes
  * ($3007/$3008[Y] -> $300A/$300B[Y]) for entry-A iterations, stepping Y down by 3. */
 void shift_object_table_up(void) {

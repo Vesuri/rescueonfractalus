@@ -397,6 +397,8 @@ VALIDATE_FUNCS = {
     0x7EC7,  # game_sub_7EC7 — rescue SFX/zoom setup + descending-pitch sweep (flight-snapshot fixture, $3E==0)
     # batch 4 — the in-flight keyboard-command dispatcher:
     0x4644,  # event_sequence_dispatcher — match keycode vs $4816, dispatch by mode/slot (flight-snapshot fixture)
+    # batch 5 — the pilot-rescue state machine (the hold loop lives here):
+    0x7854,  # pilot_render — pilot/rescue render + rescue state machine (validated $3E==0 path; loop inspection-only)
 }
 VALIDATE_SUFFIX = '__t6502'
 
