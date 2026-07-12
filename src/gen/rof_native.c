@@ -8117,6 +8117,21 @@ extern volatile unsigned long g_pDrawBr, g_pSimHead, g_pAtmo, g_pHud, g_pScore, 
 void vbi_handler_flight(void) {
     mem[0x00C7] = 0x00;                       /* reset the DLI dispatch index for this frame ($00C7) */
 
+#ifdef ROF_PLATFORM_AMIGA
+    /* Shields-On indicator (#14): the cockpit cell $3355 (special_state_color) toggles $34 (ON —
+     * lit pixel uses COLPF2 = light salmon $2C) <-> $B4 (OFF — COLPF3 = dark salmon $26).  Its
+     * writers (enter/exit_terrain_special_state $9B0D/$9B4C, check_object_in_target_box $93BD, the
+     * game_state_update special-state paths) raise no dirty flag, so the Amiga never re-decoded the
+     * cell and the light stayed frozen.  A one-byte change-detect here (every flight VBI frame)
+     * flags it for re-decode whenever it flips — robust to whichever writer changed it.  $3355 is in
+     * the $332D-$355D mode-4 range, so platform_cockpit_dirty routes through the g_ckDial registry.
+     * (Measured 2026-07-13: shields.a8s $3355=$34 vs flight2/longrange $3355=$B4.)  Amiga-only. */
+    {
+        static uint8_t s_last3355 = 0xFF;
+        if (mem[0x3355] != s_last3355) { s_last3355 = mem[0x3355]; platform_cockpit_dirty(0x3355u, 1u); }
+    }
+#endif
+
 #ifndef ROF_PLATFORM_AMIGA
     /* Per-frame GTIA/ANTIC shadow push — SDL display only (dead on Amiga). */
     uint8_t dp5 = display_param_5;
