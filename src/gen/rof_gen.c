@@ -2901,7 +2901,8 @@ L_463e:;
 }
 
 /* event_sequence_dispatcher @ $4644: Matches event id vs tbl $4816, dispatches by mode $0072(0-5); drives POKEY AUDF $D201, flags $43/$4A/$3C-$3E, throttle cockpit_dial_update */
-void event_sequence_dispatcher(void) {
+/* faithful transliteration kept as the validation oracle; native event_sequence_dispatcher() lives in rof_native.c (see VALIDATE_FUNCS) */
+void event_sequence_dispatcher__t6502(void) {
     /* 4644 */
     LDA(0x00);
     /* 4646 */

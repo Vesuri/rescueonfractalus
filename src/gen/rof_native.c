@@ -2431,6 +2431,150 @@ void level_clear_fx_loop(void) {
     landing_inhibit_flag = 0x00;
 }
 
+/* event_sequence_dispatcher @ $4644 — the in-flight keyboard-command handler.  Entry X = the
+ * KBCODE the POKEY keyboard IRQ left (see CLAUDE.md "Controls").  Matches it against the command
+ * table $4816[0..7] and dispatches by the matched SLOT (0=Land 1=? 2=ACE/msg 3=Systems 4=AirLock
+ * 5=Boosters/thrust-up 6=? 7=BREAK/restart) plus the current flight mode ($0072 player_lives).
+ * Faithful to the 6502 stack tricks the takeover (slot 7) uses: a PHA;PHA;PHA;RTI that the
+ * transpiler models as PLP;return, and a PLA x8 unwind — both stack-only, so the fixture ignores
+ * the stack page and cpu diffs are incidental.  All callees are native/transpiled twins. */
+void event_sequence_dispatcher(void) {
+    /* Consume the pending-event flag; if it was negative, restore the saved display params. */
+    uint8_t pending = event_pending_flag;               /* $063B */
+    event_pending_flag = 0x00;
+    span_pixel_count = 0x00;                             /* $00DF = 0 */
+    if (pending & 0x80) {                                /* old $063B negative */
+        for (int y = 0x0F; y >= 0; y--)
+            mem[MEM_display_param_0 + y] = mem[MEM_attract_palette_src + y];   /* $07E9 -> $00CF */
+    }
+
+    /* Match the keycode (entry X) against the command table; slot = highest matching index. */
+    uint8_t key = cpu.X;
+    int slot;
+    for (slot = 7; slot >= 0; slot--)
+        if (key == mem[0x4816 + slot]) break;
+    if (slot < 0) return;                                /* not a command key */
+
+    if (level_or_state != 0) return;                     /* commands only during gameplay ($0004==0) */
+
+    if (slot == 7) {                                     /* BREAK — event takeover / restore */
+        if (event_active_flag != 0) {                    /* $0043: takeover active -> end it */
+            event_active_flag = 0x00;
+            joystick_saved = saved_joy_4a;               /* $004A = $0630 */
+            cpu.S = (uint8_t)(cpu.S + 8);                /* PLA x8: discard the pushed IRQ frame */
+            cpu.Y = 0x01;                                /* Y=0 after the loop, INY -> 1 */
+            refresh_hud_fields_0d_0e();                  /* uses cpu.Y */
+            refresh_hud_field_0b();
+            return;
+        }
+        if (sfx_state_0634 != 0) return;                 /* $0634: SFX busy -> ignore */
+        saved_joy_4a = joystick_saved;                   /* $0630 = $004A */
+        joystick_saved = 0x00;
+        for (int x = 6; x >= 0; x -= 2) mem[0xD201 + x] = 0x00;   /* clear AUDC1-4 ($D201/3/5/7) */
+        zp_flag_05 = 0x00;                               /* $0005 = 0 */
+        copy_display_params_to_buffer();
+        event_active_flag = (uint8_t)(event_active_flag + 1);    /* INC $0043 */
+        /* Faked RTI: push a $52BB return frame + status $04, then RTI.  The transpiler models
+         * this as PLP;return (on HW $52BB is the flight-loop continuation); replicate the stack
+         * writes so the ignored stack page still matches the oracle. */
+        mem[0x0100 + cpu.S] = 0x52; cpu.S--;
+        mem[0x0100 + cpu.S] = 0xBB; cpu.S--;
+        mem[0x0100 + cpu.S] = 0x04; cpu.S--;
+        cpu.S = (uint8_t)(cpu.S + 1);                    /* PLP: pull the status byte back off */
+        return;
+    }
+
+    /* --- slots 0..6 --- */
+    if (event_active_flag != 0) return;                  /* $0043: ignore commands during takeover */
+    span_pixel_count = 0x21;                             /* $00DF = $21 (default event glyph) */
+    if (slot == (int)player_lives) return;               /* CPY $0072: no-op if slot == current mode */
+
+    if (slot == 3) {                                     /* Systems key: toggle systems ($003E) */
+        if (landing_seq_flag < 0x02) return;             /* only >= landing phase 2 */
+        if (clear_colors_done_003E == 0) {               /* systems ON -> turn OFF */
+            copy_display_params_to_buffer();
+            clear_colors_done_003E = (uint8_t)(clear_colors_done_003E + 1);   /* INC $003E */
+            colpf0_value = 0x3A;
+            timer_or_counter = 0x2F;
+        } else {                                         /* systems OFF -> turn back ON */
+            msg_flash_timer = 0xFF;
+            cpu.A = 0x00; clear_pilot_rescue_state();    /* clears $003E + pilot flags */
+            timer_or_counter = 0x0E;
+        }
+        return;
+    }
+
+    if (slot == 1) {                                     /* alien / windscreen event */
+        if (alien_trigger != 0) {                        /* $0633 */
+            colpf0_value = 0x28;                         /* $0047 = $28 */
+            span_pixel_count = 0x17;                     /* $00DF = $17 */
+            cpu.Y = 0x71; set_colpf0_from_flag();        /* show message id $71 */
+            return;
+        }
+        if (clear_colors_done_003E == 0) return;         /* $003E == 0 */
+        if (anim_flag_003C == 0) {                       /* start the shake: INC $003C */
+            anim_flag_003C = (uint8_t)(anim_flag_003C + 1);
+            mem[0x3388] = 0x34;                          /* cockpit cell */
+            span_pixel_count = 0x16;                     /* $00DF = $16 */
+            cpu.Y = 0x01; set_colpf0_from_flag();        /* Y = slot (1) */
+            return;
+        }
+        if (anim_flag_003C & 0x80) return;               /* $003C negative */
+        if (landing_seq_flag == 0x04 && mem[0x007A] == 0) return;
+        anim_flag_003C = (uint8_t)(anim_flag_003C - 1);  /* DEC $003C */
+        mem[0x3388] = 0xB4;
+        span_pixel_count = 0x16;                         /* $00DF = $16 */
+        cpu.Y = 0x0A; set_colpf0_from_flag();
+        return;
+    }
+
+    if (slot == 2) { cpu.Y = 0x02; show_ace_or_message(); return; }   /* Y = slot */
+
+    if (life_counter == 0) return;                       /* $062F: no fuel/lives -> ignore */
+
+    if (slot == 4) {                                     /* Air Lock */
+        player_lives = 0xFF;                             /* $0072 = $FF */
+        if (landing_seq_flag != 0) {                     /* $003D */
+            if (pilot_prev == 0) timer_or_counter = 0x00;    /* $0044 = $288E (== 0) */
+            reset_pilot_state_if_no_2830();              /* leaves A = 0 */
+            pitch_pos_lo = 0x00; pitch_pos_hi = 0x00;    /* $0025/$0026 = A(0) */
+            cpu.A = 0x07; cockpit_dial_update();
+        } else if (dial_value != 0) {                    /* $006F: nudge dial down */
+            dial_value = (uint8_t)(dial_value - 1);
+            redraw_dial_from_6f();
+        }
+        clear_message_buffer();
+        return;
+    }
+
+    if (landing_seq_flag != 0) return;                   /* $003D: slots 5/0/6 only when landed */
+
+    if (slot == 5) {                                     /* Boosters — thrust up (cap 6) */
+        player_lives = 0xFF;
+        if (0x06 >= dial_value) {                        /* CMP #6 vs $6F; INC unless dial > 6 */
+            dial_value = (uint8_t)(dial_value + 1);
+            redraw_dial_from_6f();
+        }
+        clear_message_buffer();
+        return;
+    }
+
+    if (slot == 0) {                                     /* Land */
+        if (terrain_clearance >= 0x64) {                 /* too high to land */
+            span_pixel_count = 0x1C;                     /* $00DF = $1C */
+            cpu.A = 0xFF; cpu.Y = 0xC5; show_message_id_a();
+        } else {
+            cpu.A = 0x08; cockpit_dial_update();
+            cpu.A = 0x00; cpu.Y = 0x04; show_message_id_a();
+        }
+        return;
+    }
+
+    /* slot == 6 */
+    player_lives = (uint8_t)slot;                        /* $0072 = Y (= 6) */
+    cpu.Y = (uint8_t)slot; set_colpf0_from_flag();
+}
+
 /* ===========================================================================
  *  Pilot-rescue state-machine cluster (native twins of the pilot_render group).
  *  These drive the landing/rescue sequence: the colour-sweep-done flag $003E,
