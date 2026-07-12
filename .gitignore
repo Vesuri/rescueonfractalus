@@ -26,3 +26,9 @@ src/gen/rof_decl.h
 # OS
 .DS_Store
 src/**/*.o
+
+# Ghidra install + project and local probe scratch under tools/ (never commit)
+tools/ghidra/
+tools/ghidra-proj/
+tools/__pycache__/
+tools/live_*.sh
