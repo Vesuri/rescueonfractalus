@@ -136,9 +136,42 @@ extern void rof_flight_wait_dotclear(void);
  * per-plot field write is dead here; drop it (one scattered volatile RMW per plot, in the hottest
  * loop) and leave rowLo/rowHi at their entry values (only the dropped field write used them). */
 #define ROF_FIELD_PLOT(h) ((void)0)
+/* Rescue-figure overlay (the pilot/alien walk-to-airlock zoom).  plot_clipped_pixel (only called
+ * from draw_scaled_shape = the zoom) writes the figure as a BITMAP into the mode-D field, which the
+ * Amiga sheds -> the figure would be dropped.  So mirror each opaque figure pixel into a small
+ * scratch overlay (plane1 g_figP1 / plane2 g_figP2 + opaque mask g_figM, 43 rows x 40 bytes) that
+ * renderFlightDirect composites over the preserved frozen terrain each paused frame.  Geometry
+ * matches renderViewportModeD's verified field mapping: the field write lands at $1074+$30+r*96+b,
+ * so Amiga row r = $96-y, plane byte b = (x>>2)-12, pixel-in-byte = x&3 (kColMask4).  Only the
+ * zoom drives plot_clipped_pixel, so no gating is needed. */
+extern uint8_t* g_figP1; extern uint8_t* g_figP2; extern uint8_t* g_figM;
+extern int g_figRowLo, g_figRowHi;
+#define ROF_PLOT_FIG(x, y, v2) do { \
+    if (g_figP1) { \
+        int _r = 0x96 - (int)(y); int _b = ((int)(x) >> 2) - 12; \
+        if ((unsigned)_r < 43u && (unsigned)_b < 40u) { \
+            uint8_t _m = kColMask4[(int)(x) & 3]; int _i = _r * 40 + _b; \
+            g_figM[_i] |= _m; \
+            if ((v2) & 1u) g_figP1[_i] |= _m; \
+            if ((v2) & 2u) g_figP2[_i] |= _m; \
+            if (_r < g_figRowLo) g_figRowLo = _r; \
+            if (_r > g_figRowHi) g_figRowHi = _r; \
+        } } } while (0)
+/* Clear the scratch (dirty range only) at the START of each shape draw so it holds exactly the
+ * current frame's figure — during the multi-frame RTCLOK wait renderFlightDirect keeps compositing
+ * the same figure (no flicker); the next draw clears + refills it. */
+#define ROF_CLEAR_FIG() do { \
+    if (g_figM && g_figRowHi >= g_figRowLo) { \
+        for (int _r = g_figRowLo; _r <= g_figRowHi; _r++) { \
+            int _o = _r * 40; \
+            for (int _b = 0; _b < 40; _b++) { g_figM[_o + _b] = 0; g_figP1[_o + _b] = 0; g_figP2[_o + _b] = 0; } } \
+        g_figRowLo = 99; g_figRowHi = -1; \
+    } } while (0)
 #else
 #define ROF_PLOT_DOT(col, h) ((void)0)
 #define ROF_PLOT_DOT_P1(col, h) ((void)0)
+#define ROF_PLOT_FIG(x, y, v2) ((void)0)
+#define ROF_CLEAR_FIG() ((void)0)
 /* SDL/validate: OR the value-2 pixel into the mode-D field (the dots source SDL decodes, and the
  * surface fill_terrain_silhouette scans).  rowLo/rowHi are left in $80/$81 via WB() (faithful). */
 #define ROF_FIELD_PLOT(h) do { \
@@ -3068,6 +3101,15 @@ void plot_clipped_pixel(void) {
             b &= mem[0x7DEB + mx];
             b |= blit_color_src;
             bus_write(ZP_IND_Y(0x00C1), b);
+#ifdef ROF_PLATFORM_AMIGA
+            /* Mirror opaque figure pixels into the rescue-figure overlay (the field write above is
+             * shed on the Amiga; see ROF_PLOT_FIG).  plot_pixel_mask==0 = a transparent (value-0)
+             * copy of the terrain — not part of the figure, so skip it. */
+            if (plot_pixel_mask != 0) {
+                uint8_t v2 = (uint8_t)((plot_pixel_mask >> (6 - 2 * mx)) & 3u);
+                if (v2) ROF_PLOT_FIG(x, y, v2);
+            }
+#endif
         }
     }
     terrain_pt_coord_a = (uint8_t)(terrain_pt_coord_a + 1);
@@ -3745,6 +3787,7 @@ void dl_index_dec_or_reset(void) {
  * through $7DA5 and plots it.  plot_clipped_pixel is native (clips OOB).  HW-free except the
  * mask read through ($C3) routed via bus_read.  Step must be nonzero or the loops never end. */
 void draw_scaled_shape(void) {
+    ROF_CLEAR_FIG();      /* Amiga: reset the rescue-figure overlay for this frame's shape (no-op on SDL) */
     player_speed = 0x06;
     row_table_stride = 0x00;
     {
