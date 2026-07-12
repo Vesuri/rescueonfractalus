@@ -70,7 +70,7 @@ The bug that motivated this plan: viewport-P3 was an 8-row sprite parked at VSTA
 |----|------|------------------------|-----------------------|--------------------------|-----------------------------|
 | 0  | 0/1  | left A-pillar (P0)     | left-tri inner (P0)   | AH fill left (P2)        | post X → AH X               |
 | 1  | 0/1  | idle                  | left-tri outer (P0)   | AH fill right (P2)       | (pair of ch0)               |
-| 2  | 2/3  | right A-pillar (P1)   | right-tri inner (P1)  | idle (free)              | post X                      |
+| 2  | 2/3  | right A-pillar (P1)   | right-tri inner (P1)  | **Long-Range-Scanner dot (M2)** | mem[$00CE] (bearing)  |
 | 3  | 2/3  | idle                  | right-tri outer (P1)  | **scope-P3 dome (P3)**   | **fixed scope-box X**       |
 | 4  | 4/5  | laser shot (P2)       | (laser)               | idle (free)              | shot X `mem[$00CB]`         |
 | 5  | 4/5  | free                  | free                  | energy (P1)              | energy X                    |
@@ -120,7 +120,11 @@ is exactly what the region re-points already do.)
 - [x] **table-driven re-points** — `setDashboardSprite(ch)` + `kDashRepoints` table (FlightCopperList).
 - [ ] **scope-P3 Y calibration** — dome maps to screen ~195–207; verify vs the scope box on FS-UAE.
 - [ ] **viewport-P3 vs scope-P3 X/Y calibration** — with a live saucer on screen.
-- [ ] **crosshair (M2)** — Pattern-A tall sprite on ch5/ch6 (add a `kDashRepoints` row).
+- [x] **crosshair (M2, viewport)** — done as a plane3 overlay (NOT a sprite; see flight-pmg-map).
+- [x] **Long Range Scanner dot (#13, M2 dashboard)** — done: ch2 dashboard re-point (kDashRepoints {2,...}),
+      buildScannerDotSprite reads missile buf $0B00 + mem[$00CE], red pen10=COLOR22 (commit f8bffc4, confirmed).
+- [ ] **scanner dot distance<=2 close-range blink** — bottom rows render solid, should blink (a colour cycle;
+      need a distance<=2 savestate to measure).
 - [ ] **gun-emplacement visibility** — confirm it's the bitmap-contrast path, not a spawn bug.
 
 All code changes build clean (Amiga cross-build); FS-UAE visual verification pending.

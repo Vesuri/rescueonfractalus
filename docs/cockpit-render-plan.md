@@ -39,13 +39,19 @@ range-guarded $332D-$355D). `make validate FN=draw_object_column` passes (hook i
   480 mode4 cells, walked only when `g_ckDial` set). A fixed bounding-box decode was tried and
   measured ~4× worse (re-paints dozens of static cells per bar move).
 
-## TODO — UNHOOKED writers (these instruments may FREEZE in flight; hunt when needed)
-Verify each VISUALLY in flight (`run.sh`); if frozen, find the writer + add a dirty-flag call.
-- **Shields light (#14) / $3355 `special_state_color`** — CONFIRMED changing, but written by
-  TRANSPILED `enter_terrain_special_state` ($9B0D) / `exit_terrain_special_state` ($9B4C) /
-  `check_object_in_target_box` ($93BD), none hooked. HIGHEST priority.
-- **Mother Ship (#15) / Air Lock (#16) lights** — writers not located (event-driven).
-- **Targeting Scope (#8) / Long Range Scanner (#13)** — didn't change in neutral flight; confirm
-  they're static after entry (or event-driven), not needing a per-frame writer.
+## Status lights #14/#15/#16 — HOOKED 2026-07-13 (commits 9b5ece3, 0358cf6)
+The four cockpit status-light cells (init'd by `game_sub_4606` to the OFF glyphs $B4/$B5/$B6/$B4) toggle
+$34/$35/$36 (ON — lit pixel COLPF2 light $2C) <-> $B4/$B5/$B6 (OFF — same glyph, bit7 set → COLPF3 dark $26);
+`decodeCockpitSpan` maps bit7→plane3 so ON=pen3=$2C, OFF=pen7=$26:
+- **$3355 = Shields (#14)** — confirmed (shields.a8s $34).
+- **$3388 = Air Lock (#16)** — confirmed (airlock.a8s $34; row1 col43, NON-adjacent to shields).
+- **$3356/$3357 = Mother Ship (#15)** pair — hooked, UNVERIFIED (never seen ON; verify by flying near it,
+  else pin the exact cell from a mother-ship savestate the way $3388 was found).
+Their writers raise no dirty flag, so a 4-cell change-detect at the top of the native `vbi_handler_flight`
+(`#ifdef ROF_PLATFORM_AMIGA`) flags each for re-decode when it flips. Lock-on #11 hooked earlier (a3557dc).
+
+## TODO — remaining unhooked writers
+- **Targeting Scope (#8) / Long Range Scanner (#13) cells** — the scanner GUIDE DOT (#13) is done (M2 hardware
+  sprite, commit f8bffc4), not a cell; confirm the scope/scanner static cells are correct after entry.
 - **Score / kills / quota digits** ($3413/$3445/$3472/$34A4) — hooked, but only fire on game
   events; confirm they update on a rescue/kill.
