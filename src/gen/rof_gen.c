@@ -13099,7 +13099,8 @@ L_7d8a:;
 }
 
 /* game_sub_7EC7 @ $7EC7: Game sub (3 RANDOM reads) */
-void game_sub_7EC7(void) {
+/* faithful transliteration kept as the validation oracle; native game_sub_7EC7() lives in rof_native.c (see VALIDATE_FUNCS) */
+void game_sub_7EC7__t6502(void) {
     /* 7ec7 */
     LDX(0x01);
     /* 7ec9 */

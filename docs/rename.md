@@ -304,3 +304,14 @@ console/trigger delta launches the game. Called from `cockpit_display $587B` tai
 for the colour-clear stepper: `animate_clear_colors_timed $7A17` pulls it down by 7 each pass
 (when the step counter `$7B < $0F`) and re-seeds RTCLOK ($0014) from it on exit, so it sets the
 inter-tick delay of the sweep. Suggested name: `clear_sweep_delay_007C`.
+
+**game_sub_7EC7 ($7EC7) unnamed cells** (found 2026-07-12, native-izing the rescue SFX/zoom
+setup). These are set/used by `game_sub_7EC7` + `game_sub_7F85`:
+- `$005E`/`$005F` — SFX voice-slot indices (set 1/$0B then 4/$12); indexed into `$81E8`/`$81E2`.
+- `$2921` — a second voice-slot index (set 2 then 5).
+- `$2922`/`$2923`/`$2926` — recently-used voice-value history (reroll excludes `$2922`/`$2923`).
+- `$2924 sound_table_idx` — already named; `$2930` — current SFX pitch (descending sweep);
+  `$2931` — pitch base offset (RANDOM&7 + $0C); `$292E` — zoom step count; `$2927`-`$292B` —
+  per-voice shape/params from the `$81xx` tables.
+- `$0635` — set $20 (unnamed); `$0637`/`$063A` — cleared (unnamed); `$061A` — zoom base (read).
+  Suggested names deferred (need cross-referencing with the full SFX engine).

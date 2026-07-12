@@ -1363,6 +1363,74 @@ void advance_object_positions(void) {
 /* clear_var_0632 @ $7F74 — $0632 = 0. */
 void clear_var_0632(void) { var_0632 = 0x00; }
 
+/* game_sub_7EC7 @ $7EC7 — set up the pilot-rescue SFX + zoom-animation state, then play a
+ * 4-step descending-pitch sweep (each step stashes the pitch in $2930 and advances the SFX
+ * frame via game_sub_7F85).  If a colour-clear is active ($003E != 0 — systems off during a
+ * rescue) it then runs the zoom animation loop, driving game_sub_7F85 once per RTCLOK frame
+ * until $003E clears, and finally silences the audio channels.
+ * (2 RANDOM reads here + 3 in the $3E!=0 block + 1 per game_sub_7F85 call.)
+ * $2930/$2931/$005E/$005F/$061A/$0635 are unnamed scratch — see docs/rename.md.
+ * VALIDATION: diffed against the oracle on the $003E==0 path (setup + sweep + tail) over a real
+ * flight RAM snapshot (so game_sub_7F85's table-driven call tree terminates).  The $003E!=0
+ * zoom loop spins on RTCLOK (cleared externally by the VBI) — verified by inspection. */
+void game_sub_7EC7(void) {
+    var_0632 = 0x01;
+    mem[0x005E] = 0x01;
+    sound_table_idx = 0x09;                      /* $2924 */
+    mem[0x2921] = 0x02;
+    mem[0x005F] = 0x0B;
+    mem[0x2922] = 0x00;
+    mem[0x2926] = 0x00;
+    sfx_state_0634 = (uint8_t)(sfx_state_0634 + 1);   /* INC $0634 */
+    mem[0x0637] = 0x00;
+    mem[0x063A] = 0x00;
+    bus_write(0xD208, 0x00);                     /* AUDCTL = 0 */
+    mem[0x0635] = 0x20;
+    sfx_pitch_0638 = 0xBF;
+    sfx_pitch_0639 = 0xD3;
+    mem[0x2931] = (uint8_t)((bus_read(0xD20A) & 0x07) + 0x0C);   /* RANDOM&7 + $0C */
+
+    /* Descending-pitch sweep: seed, then 4 steps (each stashes the pitch in $2930, advances
+     * the SFX frame, then drops the pitch).  game_sub_7F85 is reached via sound_step_preserve_a
+     * which SECs, so every SBC is a plain subtract. */
+    uint8_t pitch = (uint8_t)((bus_read(0xD20A) & 0x07) + 0x21);
+    mem[0x2930] = pitch; game_sub_7F85(); pitch = (uint8_t)(pitch - 0x10);
+    mem[0x2930] = pitch; game_sub_7F85(); pitch = (uint8_t)(pitch - 0x0A);
+    mem[0x2930] = pitch; game_sub_7F85(); pitch = (uint8_t)(pitch - 0x04);
+    mem[0x2930] = pitch; game_sub_7F85(); pitch = (uint8_t)(pitch - 0x02);
+    mem[0x2930] = pitch;
+
+    if (clear_colors_done_003E == 0) {           /* no colour-clear active — done */
+        clear_var_0632();
+        return;
+    }
+
+    /* $003E != 0: the zoom animation (systems off during a rescue). */
+    {
+        uint8_t rnd  = (uint8_t)(bus_read(0xD20A) & 0x03);
+        uint16_t sum = (uint16_t)rnd + mem[0x061A];   /* CLC; ADC $061A */
+        uint8_t a    = (uint8_t)sum;
+        uint8_t carry = (uint8_t)(sum >> 8);          /* carry-out of the ADC */
+        if (a & 0x80) a = 0x00;                       /* 7f37: clamp a negative sum to 0 (carry kept) */
+        mem[0x292E] = (uint8_t)(a + 1 + carry);       /* 7f39: ADC #1 */
+    }
+    mem[0x005E] = 0x04;
+    sound_table_idx = 0x0F;                      /* $2924 */
+    mem[0x2921] = 0x05;
+    mem[0x005F] = 0x12;
+    do {
+        while (RTCLOK_LOW <= 0x04) {             /* wait for RTCLOK to pass 4 (reach 5) */
+#ifdef ROF_PLATFORM_AMIGA
+            platform_tick_vbi(); platform_render_frame();   /* keep the display live while spinning */
+#endif
+        }
+        RTCLOK_LOW = 0x00;
+        game_sub_7F85();
+    } while (clear_colors_done_003E != 0);
+    cpu.A = 0x00;                                /* A = $3E (== 0 at loop exit) */
+    silence_audio_channels();
+}
+
 /* clear_pm_state @ $3FBF — fill $00DA-$00DD, $02C0-$02C3 and $00D9 with entry cpu.A. */
 void clear_pm_state(void) {
     uint8_t a = cpu.A;

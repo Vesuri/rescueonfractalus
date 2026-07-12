@@ -394,6 +394,7 @@ VALIDATE_FUNCS = {
     0x493D,  # show_ace_or_message — ACE ($3A bit7) vs pilot message driver (entry Y)
     # batch 3 — rescue FX loops (frame-driven; RTCLOK-tick fixture):
     0x7B94,  # level_clear_fx_loop — INC $283C; 15x ring pairs + waits; $3C-iter RANDOM $DB flash
+    0x7EC7,  # game_sub_7EC7 — rescue SFX/zoom setup + descending-pitch sweep (flight-snapshot fixture, $3E==0)
 }
 VALIDATE_SUFFIX = '__t6502'
 
