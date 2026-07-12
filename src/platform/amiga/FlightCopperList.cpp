@@ -118,7 +118,12 @@ static const uint16_t kColor31 = 0x1BE;   // pair 6/7 pen 11 (Main-Window P3 obj
 #define INDEX_AH_SPR          (INDEX_COCKPIT_WAIT + 1)      // SPR0PT/SPR1PT -> ahLeft/ahRight (4)
 #define INDEX_SCOPE_SPR       (INDEX_AH_SPR + 4)            // SPR3PT -> Targeting-Scope image (2)
 #define INDEX_ALTIM_SHIP_SPR  (INDEX_SCOPE_SPR + 2)         // SPR7PT -> altimeter ship / ch7 viewport half (2)
-#define INDEX_COCKPIT_BPL     (INDEX_ALTIM_SHIP_SPR + 2)    // cockpit 3bp ptrs, yOffset 8 (6)
+// Long Range Scanner (#13) guide dot = Atari missile M2, reused onto sprite ch2 (right A-pillar,
+// which runs to VSTOP 180 → arms a dashboard re-point) via SPR2PT (INDEX_SCANNER_SPR).  ch2 is
+// idle in the dashboard per the channel map below.  Colour = pair 2/3 pen10 = COLOR22 (see
+// INDEX_SCANNER_COL) — red-brown $26 (COLPM2), independent of the scope's pen11 (COLOR23) on ch3.
+#define INDEX_SCANNER_SPR     (INDEX_ALTIM_SHIP_SPR + 2)    // SPR2PT -> Long-Range-Scanner dot (2)
+#define INDEX_COCKPIT_BPL     (INDEX_SCANNER_SPR + 2)       // cockpit 3bp ptrs, yOffset 8 (6)
 #define INDEX_COCKPIT_BPLCON0 (INDEX_COCKPIT_BPL + 6)      // bplcon0 3P (1)
 #define INDEX_COCKPIT_MOD     (INDEX_COCKPIT_BPLCON0 + 1)  // bpl1mod,bpl2mod (2)
 #define INDEX_COCKPIT_PAL     (INDEX_COCKPIT_MOD + 2)      // color00..07 (8)
@@ -128,10 +133,15 @@ static const uint16_t kColor31 = 0x1BE;   // pair 6/7 pen 11 (Main-Window P3 obj
 // and the brown shows only through the dial's value-0 centre (mirrors the Atari PRIOR=$04).
 #define INDEX_AH_COL          (INDEX_COCKPIT_PAL + 8)      // COLOR17 = $26 brown (1)
 #define INDEX_AH_BPLCON2      (INDEX_AH_COL + 1)           // BPLCON2 PFxP=0 (sprites behind playfield) (1)
+// Long Range Scanner dot colour: COLOR22 (pair 2/3 pen10) = red-brown $26.  COLOR22 is the band
+// TRIANGLE grey (set near the top, INDEX_SPRITE_COL+4) for scanlines 172-179; re-point it to red
+// here (line 180, after the band) so the ch2 scanner dot in the dashboard reads red.  Nothing else
+// uses pair 2/3 pen10 in the dashboard (the scope on ch3 uses pen11 = COLOR23).
+#define INDEX_SCANNER_COL     (INDEX_AH_BPLCON2 + 1)       // COLOR22 = $26 red (scanner dot) (1)
 // Cockpit bitmap starts at kCockpitLine=180 (yOffset 8 skips the $350D band).  COLBK splits
 // match the launch cockpit: baked color00=$00 covers the black divider strip (180-188); then
 // dark-blue $90 dashboard instrument backgrounds (182-251); then black floor (252+).
-#define INDEX_DASH_BLUE_WAIT  (INDEX_AH_BPLCON2 + 1)       // WAIT(kCockpitLine+2-1 = 181) (1)
+#define INDEX_DASH_BLUE_WAIT  (INDEX_SCANNER_COL + 1)      // WAIT(kCockpitLine+2-1 = 181) (1)
 #define INDEX_DASH_BLUE       (INDEX_DASH_BLUE_WAIT + 1)   // color00 = $90 dark blue (dashboard) (1)
 #define INDEX_FLOOR_WAIT_BASE (INDEX_DASH_BLUE + 1)
 // The gauge sprites (altimeter pair 6/7, energy pair 4/5) are fixed 56-row SOLID sprites whose Y
@@ -174,6 +184,7 @@ static const DashRepoint kDashRepoints[] = {
     { 1, INDEX_AH_SPR + 2 },       // AH ground-fill right
     { 3, INDEX_SCOPE_SPR },        // Targeting-Scope P3 dome
     { 7, INDEX_ALTIM_SHIP_SPR },   // altimeter ship (ch7 viewport half = the Main-Window P3 object)
+    { 2, INDEX_SCANNER_SPR },      // Long-Range-Scanner guide dot (Atari missile M2)
 };
 static const int kNumDashRepoints = (int)(sizeof(kDashRepoints) / sizeof(kDashRepoints[0]));
 
@@ -280,6 +291,8 @@ void FlightCopperList::buildLayout(const Bitmap& title, const Bitmap& terrain, c
     setDashboardSprite(1, ahRight);             // SPR1PT -> ahRight (right 16px)
     setDashboardSprite(3, scopeP3);             // SPR3PT -> Targeting-Scope P3 dome (ch3)
     setDashboardSprite(7, nullSprite);          // SPR7PT -> altimeter ship (real ptr set on force)
+    setDashboardSprite(2, nullSprite);          // SPR2PT -> Long-Range-Scanner dot (real ptr set on force)
+    d[INDEX_SCANNER_COL] = copperMove(kColor22, atariToOCS(0x26));  // scanner dot red-brown (COLPM2 $26)
     showBitmap(INDEX_COCKPIT_BPL, cockpit, 1, 1, 0, 8);   // yOffset 8 scanlines: skip the $350D band rows
     d[INDEX_COCKPIT_BPLCON0] = copperMove(bplcon0, kBPLCON0_3P);
     d[INDEX_COCKPIT_MOD]     = copperMove(bpl1mod, 80);

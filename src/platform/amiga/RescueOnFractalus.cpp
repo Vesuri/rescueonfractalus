@@ -649,6 +649,43 @@ void RescueOnFractalus::buildViewportP3Sprite()
     if (flightCopper) flightCopper->setViewportP3Color(atariToOCS(mem[0x00D9]));  // COLPM3 → COLOR31
 }
 
+// ---- Long Range Scanner (#13) guide dot ------------------------------------------
+// The single flashing-red dot that points the player toward a downed pilot is Atari MISSILE M2 (a
+// ~3-scanline blob), NOT a bitmap cell.  Its VERTICAL position (range) lives as the M2 bits (5:4)
+// of the missile DMA buffer $0B00 in the dashboard band (written by $44E0: it clears 3 M2 rows at
+// the old row and sets 3 at the new row mem[$B9]); its HORIZONTAL position (bearing) is mem[$00CE]
+// (the flight dashboard DLI $4AC7 loads it into HPOSM2); its colour is COLPM2 $26 (red-brown).
+// The native flight VBI writes all of that into mem[], so this is a READ-ONLY mirror (like the
+// scope/AH copies) onto sprite ch2 (right A-pillar, idle+armed in the dashboard) via SPR2PT.
+// Blink: when the game clears the M2 bits, the scan finds no run → the sprite goes transparent.
+static const int kScannerDotRows = 8;   // the M2 blob is ~3 rows; a few spare for safety
+void RescueOnFractalus::buildScannerDotSprite()
+{
+    // Scan the DASHBOARD band of the missile buffer for M2 (bits 5:4).  The crosshair M2 lives
+    // higher ($0B4D-71, viewport) so start at $0B88; M1/M3 (other bits) don't trip the M2 mask.
+    uint16_t* d = scannerDotSprite->data() + 2;      // skip the 2 control words
+    int top = -1, bot = -1;
+    for (int o = 0x88; o <= 0xB8; o++)
+        if ((mem[0x0B00 + o] >> 4) & 3) { if (top < 0) top = o; bot = o; }
+    for (int i = 0; i < kScannerDotRows * 2; i++) d[i] = 0;   // clear, then decode the run below
+    if (top >= 0) {
+        int rows = bot - top + 1;
+        if (rows > kScannerDotRows) rows = kScannerDotRows;
+        for (int i = 0; i < rows; i++) {
+            uint8_t m2 = (uint8_t)((mem[0x0B00 + top + i] >> 4) & 3);   // the 2 M2 pixels
+            uint16_t w = (uint16_t)((m2 & 2 ? 0x8000u : 0u) | (m2 & 1 ? 0x4000u : 0u));
+            d[i * 2] = 0; d[i * 2 + 1] = w;          // plane B only → pen 10 → COLOR22 (red)
+        }
+        // buffer row → Amiga line (same PMG single-line mapping as the AH/scope copies; +0 =
+        // no extra offset — user-calibrated for the scanner disc on FS-UAE, higher than the scope's +7).
+        scannerDotSprite->setY((uint16_t)(kTerrainLine + (top - 0x32)));
+        // bearing X = mem[$00CE] (the HPOSM2 source the dashboard DLI $4AC7 loads); same Atari-HPOS
+        // → Amiga hardware-X transform as the scope/viewport-P3 copies (+4 user-calibrated on FS-UAE).
+        scannerDotSprite->setX((uint16_t)(0x85 + ((int)mem[0x00CE] - 0x32) * 2));
+    }
+    // (inactive: data left zeroed → the sprite shows nothing regardless of Y = the "off" blink)
+}
+
 // ---- throttle gauge sprite ---------------------------------------------------
 // Build the player-1 throttle bar from the vobj strip mem[$0D98..].  Each strip
 // byte is one Atari player scanline ($F0 = leftmost 4px on); we map a filled row
@@ -892,10 +929,12 @@ void RescueOnFractalus::initialize()
     scopeP3Sprite = Sprite::allocate(kScopeP3Rows);
     // Main-Window P3 object on ch7 (altimeter ship, free in the viewport) via SPR7PT multiplex.
     viewportP3Sprite = Sprite::allocate(kViewportP3Rows);
+    // Long Range Scanner (#13) guide dot (Atari missile M2) on ch2 via SPR2PT re-point.
+    scannerDotSprite = Sprite::allocate(kScannerDotRows);
     if (!leftPost || !rightPost || !nullSprite || !energyIndicatorSprite || !altimeterSprite
         || !altimeterShipSprite || !flLeftPost || !flRightPost || !flLeftTri || !flRightTri
         || !ahLeft || !ahRight || !shotSprite || !shotSpriteBack || !scopeP3Sprite
-        || !viewportP3Sprite) return;
+        || !viewportP3Sprite || !scannerDotSprite) return;
     // Starfield sprites: each Atari player P0/P2/P3 is a 32-cc quad, drawn as a pair of strips —
     // starSprite[2c] (low, at kStarX[c]) + starSprite[2c+1] (high, +16 px) — both at the windscreen
     // top (player scanline $32 → Amiga Y = kTerrainLine).  Height = kViewportFullHeight so VSTOP
@@ -2001,6 +2040,8 @@ void RescueOnFractalus::updateFlightCopper(bool force)
         flightCopper->setHudSprite(7, *viewportP3Sprite);
         flightCopper->setDashboardSprite(7, *altimeterShipSprite);
         flightCopper->setAltimeterShipColor(atariToOCS(mem[0x00D6]));
+        // Long Range Scanner guide dot (Atari M2) on ch2 (idle in the dashboard) via SPR2PT.
+        flightCopper->setDashboardSprite(2, *scannerDotSprite);
     }
     // (The wing-clearance centre plane symbol is part of the mode-D band bitmap — the value-2
     // $AA $AA centre marker decoded into the viewport rows — so it needs no separate sprite.)
@@ -2342,7 +2383,7 @@ void RescueOnFractalus::perFrameWork()
     // The laser shot (buildShotSprite) is NOT built here — it runs in the flight VBI (50Hz) via
     // PlatformAmiga::flightShotTick, faithful to the Atari (the shot is a VBI op), so it animates
     // at full rate even while the terrain render is much slower.
-    if (rsFlight) { buildAltimeterSprite(); buildAltimeterShipSprite(); buildAHSprite(); buildScopeP3Sprite(); buildViewportP3Sprite(); }
+    if (rsFlight) { buildAltimeterSprite(); buildAltimeterShipSprite(); buildAHSprite(); buildScopeP3Sprite(); buildViewportP3Sprite(); buildScannerDotSprite(); }
 }
 
 // ---- cockpit helpers ---------------------------------------------------------

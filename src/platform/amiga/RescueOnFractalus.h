@@ -276,6 +276,15 @@ private:
     Sprite*     viewportP3Sprite = nullptr;
     void buildViewportP3Sprite(); // mirror the P3 Main-Window copy ($0F00 $32..$85) -> viewportP3Sprite
 
+    //   Long Range Scanner (#13) guide dot = Atari missile M2 (a 3-scanline blob).  Vertical
+    //   position (RANGE to the downed pilot) = the M2 bits in the missile DMA buffer $0B00
+    //   (dashboard band); horizontal position (BEARING) = mem[$00CE] (the flight dashboard DLI
+    //   $4AC7 loads it into HPOSM2); colour = COLPM2 $26 (red).  Reuses ch2 (right A-pillar, runs
+    //   to VSTOP 180 → arms) via the copper SPR2PT re-point.  Read-only mirror: the native flight
+    //   VBI already writes the buffer + $CE into mem[], so no writer port / dirty hook is needed.
+    Sprite*     scannerDotSprite = nullptr;
+    void buildScannerDotSprite(); // mirror the M2 scanner dot (missile buf $0B00 + $CE) -> scannerDotSprite
+
     // Dirty-flag bitmap caching: bitmaps are rendered once on initialize() and
     // only re-rendered when the underlying mem[] data changes.
     bool    terrainDirty = true;   // re-render terrain rows from $2000
