@@ -5719,6 +5719,12 @@ extern unsigned long g_tdSubdiv, g_tdProjPlot, g_tdFrames;
  */
 void terrain_draw_frame_core(uint8_t entryX) {
     mem[0x00A7] = entryX;                                /* remember which double-buffer half we're drawing */
+#ifdef ROF_PLATFORM_AMIGA
+    /* Signal the flight renderer that a fresh terrain frame is being drawn, so renderFlightDirect
+     * repaints (rather than preserving the last frame during a rescue pause).  See g_flightTerrainFresh. */
+    extern volatile int g_flightTerrainFresh;
+    g_flightTerrainFresh = 1;
+#endif
 #ifdef ROF_TDRAW_PROF
     g_tdFrames++;                                        /* per-frame normalizer for g_tdSubdiv/g_tdProjPlot */
 #endif

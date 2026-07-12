@@ -217,6 +217,14 @@ extern "C" const uint8_t kColMask4[4] = { 0xC0u, 0x30u, 0x0Cu, 0x03u };
 // (= back->data + 40).  Set by flightKickBackClear once the buffer + its clear are committed; null
 // on the first flight frame (rasterizer then skips the direct write).  See renderFlightDirect.
 extern "C" uint8_t* g_flightDotPlane = nullptr;
+// "Terrain was freshly drawn since the last flight render" flag.  terrain_draw_frame_core
+// (rof_native.c) sets it each time it draws; renderFlightDirect checks + clears it and, when
+// it is clear, SKIPS the clear+repaint and leaves the last terrain frame on screen.  This is
+// what keeps the plane2 dots (and silhouette) alive during a rescue PAUSE (systems off): the
+// main loop is parked in pilot_render's hold loop so no terrain_draw runs, and re-clearing the
+// buffer each yielded frame would drop the dots (renderFlightDirect only ever refills plane2
+// from the rasterizer's live draw).  Init 1 so the first flight frame paints.  See renderFlightDirect.
+extern "C" volatile int g_flightTerrainFresh = 1;
 // Object plane1 overlay (post-fill).  Ground objects (gun emplacement / downed pilot / enemy
 // fire) are drawn value-3 (COLPF2) = plane1+plane2 for their highlight pixels (terrain_plot_object
 // variant A whole-body + variant B's 2x2 cross; variant B bodies stay value-2 = plane2 only).  We
@@ -1306,6 +1314,16 @@ void RescueOnFractalus::renderViewportModeD(uint16_t srcBase, int stride, int ro
 void RescueOnFractalus::renderFlightDirect()
 {
     if (!terrainBitmap || !terrainBitmapBack || !flightCopper) return;
+
+    // Preserve the last terrain frame across rescue PAUSES.  When the main loop is parked in
+    // pilot_render's hold loop (systems off during a rescue) it drives frames via the SPINWAIT
+    // yield but runs NO terrain_draw, so g_flightTerrainFresh stays clear.  Repainting here would
+    // clear+refill the buffer from an empty dot plane and drop the plane2 dots (the Atari doesn't:
+    // its display is the persistent mode-D field).  So skip the whole clear/edge/fill/flip and
+    // leave the displayed buffer (last good terrain, dots included) on screen — the cockpit still
+    // updates via updateFlightCopper.  Cleared here so the next real draw repaints exactly once.
+    if (!g_flightTerrainFresh) return;
+    g_flightTerrainFresh = 0;
 
     // Double-buffer: paint the OFF-screen buffer (the one the copper is NOT currently showing),
     // then re-point the copper to it.  The flip latches at the next vblank, so the live buffer

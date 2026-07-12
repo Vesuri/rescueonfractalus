@@ -442,6 +442,19 @@ SPINWAIT_HOOKS = {
     # rises into view after the star scroll).
     0x6578: 'platform_tick_vbi(); platform_render_frame();',
     0x79D0: 'platform_tick_vbi(); platform_render_frame();',
+    # L_78d6: TOP of pilot_render's whole rescue loop.  pilot_render's body is one big loop
+    # (L_78d6 ... L_7a14 -> goto L_78d6) that is entered ONLY while systems are off
+    # ($003E != 0) — with systems on, L_78f2 falls through to L_78fd and the function RETURNS
+    # instead of looping.  So systems-off during a rescue runs this loop (advancing the landing
+    # sequence $003D, playing knock SFX, colour sweeps) and is FAITHFUL: the real Atari does the
+    # same (measured 2026-07-12; at $003D==2 it even hard-hold-loops there too).  But unlike the
+    # $06FF sound-wait below (which HAS a yield), this loop had none, so on the Amiga renderFrame
+    # is never called for most of it and the display/cockpit freeze except during a knock sound.
+    # The Atari stays alive because ANTIC shows the persistent field + the VBI updates the cockpit.
+    # Restore that: drive one frame per loop iteration whenever the loop is active ($003E set).
+    # Gated on $003E so normal (systems-on) passes through $78d6 add NO spurious frames; the yield
+    # also lets the VBI process a later S/systems-on press (clears $003E -> loop exits -> resume).
+    0x78D6: 'if (mem[0x003E]) { platform_tick_vbi(); platform_render_frame(); }',
     # Attract-mode loops: need VBI to fire for animation, audio, and input.
     # L_62EB: outer loop entry — tick VBI to drive the game
     # L_62F6: inner input-poll loop — tick VBI here too so audio/rtclok work

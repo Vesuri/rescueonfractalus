@@ -11841,7 +11841,7 @@ L_78c6:;
 L_78d4:;
     /* 78d4 */
     terrain_pen1_fade = cpu.Y;
-L_78d6:;
+L_78d6:; if (mem[0x003E]) { platform_tick_vbi(); platform_render_frame(); }
     /* 78d6 */
     LDA(alien_trigger);
     /* 78d9 */
