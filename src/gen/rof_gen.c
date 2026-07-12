@@ -3321,7 +3321,8 @@ L_480f:;
 }
 
 /* show_ace_or_message @ $493D: Branch on $003A: if clear sets $00DF=$1C and shows msg ID $CD via $4958; else saves Y, calls store_676_init/reset_pilot_state_if_no_2830 then re-shows saved msg ID */
-void show_ace_or_message(void) {
+/* faithful transliteration kept as the validation oracle; native show_ace_or_message() lives in rof_native.c (see VALIDATE_FUNCS) */
+void show_ace_or_message__t6502(void) {
     /* 493d */
     LDA(mem[0x003A]);
     /* 493f */
@@ -12610,7 +12611,8 @@ void bcd_inc_counter_0641__t6502(void) {
 }
 
 /* level_clear_fx_loop @ $7B94: INC $283C; 15x game_sub_55FC pairs + wait_frames_1; then $3C-iter loop reading RANDOM $D20A|=4 -> $DB, wait_frames_1 */
-void level_clear_fx_loop(void) {
+/* faithful transliteration kept as the validation oracle; native level_clear_fx_loop() lives in rof_native.c (see VALIDATE_FUNCS) */
+void level_clear_fx_loop__t6502(void) {
     /* 7b94 */
     INC_M(MEM_landing_inhibit_flag);
     /* 7b97 */
@@ -24268,14 +24270,16 @@ L_480a:;
 }
 
 /* show_message_id_a @ $4956: Saves message ID A->$0072 then falls into show_message_with_d8 (show_message_with_d8) */
-void show_message_id_a(void) {
+/* faithful transliteration kept as the validation oracle; native show_message_id_a() lives in rof_native.c (see VALIDATE_FUNCS) */
+void show_message_id_a__t6502(void) {
     /* 4956 */
     player_lives = cpu.A;
     show_message_with_d8(); return;
 }
 
 /* show_message_with_d8 @ $4958: Sets $00D8=$48 then tail-calls message decoder show_cockpit_message with current A/Y */
-void show_message_with_d8(void) {
+/* faithful transliteration kept as the validation oracle; native show_message_with_d8() lives in rof_native.c (see VALIDATE_FUNCS) */
+void show_message_with_d8__t6502(void) {
     /* 4958 */
     LDA(0x48);
     /* 495a */

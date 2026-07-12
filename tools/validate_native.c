@@ -2440,6 +2440,12 @@ int main(int argc, char **argv) {
     fails += test_mem_contract("reset_pilot_state_if_no_2830", reset_pilot_state_if_no_2830, reset_pilot_state_if_no_2830__t6502);
     fails += test_mem_contract("copy_display_params_to_buffer", copy_display_params_to_buffer, copy_display_params_to_buffer__t6502);
     fails += test_mem_contract_regs("set_colpf0_from_flag", set_colpf0_from_flag, set_colpf0_from_flag__t6502);
+    /* batch 3 message drivers: all read entry regs (A/Y).  Random mem covers both the
+       ACE ($3A bit7) and normal branches of show_ace_or_message; the shared decoder
+       show_cockpit_message is a native twin, so both runs invoke it identically. */
+    fails += test_mem_contract_regs("show_message_with_d8", show_message_with_d8, show_message_with_d8__t6502);
+    fails += test_mem_contract_regs("show_message_id_a", show_message_id_a, show_message_id_a__t6502);
+    fails += test_mem_contract_regs("show_ace_or_message", show_ace_or_message, show_ace_or_message__t6502);
     /* Frame-driven colour-clear sweeps: enable the RTCLOK-advancing tick so their
        wait_frames_1 loops (native + oracle) terminate, then diff the whole function.
        audf2 saves frame_wait_count via the 6502 stack (PHA/PLA) whereas the twin uses a
@@ -2455,6 +2461,18 @@ int main(int argc, char **argv) {
         platform_test_tick_rtclok(0);
     }
     fails += test_animate_clear_colors_timed();
+    /* level_clear_fx_loop: frame-driven (wait_frames_1 ×75) — enable the RTCLOK tick so both
+       runs' waits terminate.  mem-only entry; RANDOM ($D20A) is seeded identically per run.
+       Ignore the stack page ($0100-$01FF): a harmless PHA/JSR-residue byte at $01FF differs. */
+    {
+        static uint16_t stack_pg[256];
+        for (int i = 0; i < 256; i++) stack_pg[i] = (uint16_t)(0x0100 + i);
+        platform_test_tick_rtclok(1);
+        set_ignore(stack_pg, 256);
+        fails += test_mem_contract("level_clear_fx_loop", level_clear_fx_loop, level_clear_fx_loop__t6502);
+        set_ignore(0, 0);
+        platform_test_tick_rtclok(0);
+    }
     fails += test_draw_dial_bar_column();
     fails += test_draw_player3_object();
     fails += test_dl_lms_build();

@@ -388,6 +388,12 @@ VALIDATE_FUNCS = {
     0x6DF4,  # audf2_sweep_clear_colors — AUDF2 pitch sweep over frame_wait_count frames
     0x7A89,  # clear_colors_sweep_5x — 5-pass colour-clear timer gated on $003E (load-bearing exit Z)
     0x7A17,  # animate_clear_colors_timed — RTCLOK-gated colour-clear stepper (nested waits + RANDOM)
+    # batch 3 — message drivers (call native show_cockpit_message; entry regs):
+    0x4958,  # show_message_with_d8 — $00D8=$48, tail show_cockpit_message (entry Y id)
+    0x4956,  # show_message_id_a — $0072=A, tail show_message_with_d8 (entry A,Y)
+    0x493D,  # show_ace_or_message — ACE ($3A bit7) vs pilot message driver (entry Y)
+    # batch 3 — rescue FX loops (frame-driven; RTCLOK-tick fixture):
+    0x7B94,  # level_clear_fx_loop — INC $283C; 15x ring pairs + waits; $3C-iter RANDOM $DB flash
 }
 VALIDATE_SUFFIX = '__t6502'
 

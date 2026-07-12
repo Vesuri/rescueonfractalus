@@ -2306,6 +2306,63 @@ void save_color_clear_y_bit5(void) {
     show_cockpit_message();
 }
 
+/* show_message_with_d8 @ $4958 — set the cockpit-message colour ($00D8 = $48), then
+ * render the message (entry Y = message id) via the (native) show_cockpit_message. */
+void show_message_with_d8(void) {
+    text_color_pf0 = 0x48;
+    show_cockpit_message();                     /* uses cpu.Y (id) */
+}
+static void show_message_with_d8_core(uint8_t id) { cpu.Y = id; show_message_with_d8(); }
+
+/* show_message_id_a @ $4956 — stash the message/event mode ($0072 = entry A), then show
+ * the message via show_message_with_d8 (entry Y = message id). */
+void show_message_id_a(void) {
+    player_lives = cpu.A;                       /* $0072 (event/message mode) = A */
+    show_message_with_d8();                     /* uses cpu.Y (id) */
+}
+static void show_message_id_a_core(uint8_t a, uint8_t id) {
+    cpu.A = a; cpu.Y = id; show_message_id_a();
+}
+
+/* show_ace_or_message @ $493D — the ACE-rank / pilot-message driver.  Entry Y = message id.
+ *   • rescue-active flag $003A bit7 CLEAR: show the fixed message id $CD and latch the
+ *     current event glyph ($00DF = $1C).
+ *   • $003A bit7 SET: a normal pilot message — re-init the HUD counter ($0676) via
+ *     store_676_init(A=1), reset the pilot-rescue state if no landing target is queued, then
+ *     re-show the saved message id (A = Y = id) via show_message_id_a. */
+void show_ace_or_message(void) {
+    if (!(mem[0x003A] & 0x80)) {                /* $3A bit7 CLEAR -> fixed message $CD */
+        span_pixel_count = 0x1C;                /* $00DF = current event glyph $1C */
+        show_message_with_d8_core(0xCD);        /* Y = $CD (fixed message id) */
+        return;
+    }
+    uint8_t id = cpu.Y;                         /* $00BB = saved entry id */
+    dl_y1 = id;
+    cpu.A = 0x01; store_676_init();             /* A = 1 (HUD counter re-init) */
+    reset_pilot_state_if_no_2830();
+    show_message_id_a_core(id, id);             /* A = Y = saved id */
+}
+
+/* level_clear_fx_loop @ $7B94 — the level-cleared visual/audio flourish.  Sets the
+ * landing-inhibit flag ($283C), then runs 15 frames each queuing a pair of ring events
+ * (ids 1 and 2 via game_sub_55FC) with $066C/$066D holding the frame counter, then a
+ * 60-frame screen-flash loop poking terrain_pen1_fade ($00DB) with RANDOM|4.  Finally
+ * clears $283C.  Frame-driven (wait_frames_1). */
+void level_clear_fx_loop(void) {
+    landing_inhibit_flag = (uint8_t)(landing_inhibit_flag + 1);   /* INC $283C */
+    for (uint8_t x = 1; x < 0x10; x++) {        /* X = 1..15 */
+        mem[0x066C] = x; mem[0x066D] = x;
+        cpu.Y = 0x01; game_sub_55FC();          /* queue ring event id 1 */
+        cpu.Y = 0x02; game_sub_55FC();          /* queue ring event id 2 */
+        wait_frames_1();
+    }
+    for (uint8_t x = 0x3C; x != 0; x--) {       /* 60-frame flash */
+        wait_frames_1();
+        terrain_pen1_fade = (uint8_t)(bus_read(0xD20A) | 0x04);   /* $00DB = RANDOM | 4 */
+    }
+    landing_inhibit_flag = 0x00;
+}
+
 /* ===========================================================================
  *  Pilot-rescue state-machine cluster (native twins of the pilot_render group).
  *  These drive the landing/rescue sequence: the colour-sweep-done flag $003E,
