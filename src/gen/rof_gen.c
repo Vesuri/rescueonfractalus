@@ -12691,7 +12691,7 @@ void animate_zoom_sequence(void) {
 L_7c06:;
     /* 7c06 */
     LDA(0x03);
-L_7c08:;
+L_7c08:; platform_tick_vbi(); platform_render_frame();
     /* 7c08 */
     CMP(RTCLOK_LOW);
     /* 7c0a */

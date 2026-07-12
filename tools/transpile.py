@@ -466,6 +466,15 @@ SPINWAIT_HOOKS = {
     # Gated on $003E so normal (systems-on) passes through $78d6 add NO spurious frames; the yield
     # also lets the VBI process a later S/systems-on press (clears $003E -> loop exits -> resume).
     0x78D6: 'if (mem[0x003E]) { platform_tick_vbi(); platform_render_frame(); }',
+    # L_7c08: animate_zoom_sequence's per-phase RTCLOK frame wait ("LDA #3; CMP $14; BCS L_7c08"
+    # -> spin until RTCLOK_LOW>=4, then reset $14=0).  This is the rescue "figure walks to the
+    # airlock" zoom (called ONLY from pilot_render's systems-off rescue path, L_79a2, so it never
+    # runs in normal flight).  Like the L_78d6 hold loop it had NO yield, so on the Amiga the display
+    # freezes through the ~4-frame-per-phase x 8-phase zoom -- the cockpit only ever refreshed during
+    # the footstep-SFX sound spin (L_79d0, which HAS a yield).  Drive one frame per RTCLOK-wait
+    # iteration so the zoom animates + the cockpit/PMG stay live (same fix as the knock hold loop).
+    # RTCLOK is advanced by the flight VBI (platform_tick_vbi), so the yield also lets the spin exit.
+    0x7C08: 'platform_tick_vbi(); platform_render_frame();',
     # Attract-mode loops: need VBI to fire for animation, audio, and input.
     # L_62EB: outer loop entry — tick VBI to drive the game
     # L_62F6: inner input-poll loop — tick VBI here too so audio/rtclok work
