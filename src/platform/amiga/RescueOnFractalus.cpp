@@ -246,11 +246,20 @@ extern "C" uint8_t* g_figP1 = s_figP1;
 extern "C" uint8_t* g_figP2 = s_figP2;
 extern "C" uint8_t* g_figM  = s_figM;
 extern "C" int g_figRowLo = 99, g_figRowHi = -1;   // empty
-// Frozen terrain dots (plane2, rows 0-42) snapshotted at rescue entry.  The rescue re-render
-// rebuilds the sky (plane1) from the frozen $260E but the dots come from the rasterizer, which is
-// NOT running during the pause — so grab the last real frame's plane2 and restore it each frame.
-static uint8_t s_dotSnap[43 * 40];
-static bool    s_dotSnapValid = false;
+// Rescue-pause dirty-rect state.  The terrain is FROZEN during the walk-to-airlock pause, so
+// instead of re-rendering the whole viewport each frame we snapshot the clean frozen terrain once
+// (all 3 planes of the 47 interleaved rows) and, per frame, only ERASE the previous figure's row
+// box (restore plane1+plane2 from the snapshot) and draw the new figure.  Because the viewport is
+// double-buffered we track per-buffer state: whether the buffer has been seeded with clean terrain
+// yet, and the row box its current figure occupies (to erase next time that buffer comes round).
+static uint8_t s_clean[47 * 120];
+static bool    s_cleanValid = false;
+static bool    s_bufSeeded[2] = { false, false };
+static int     s_boxLo[2] = { 99, 99 }, s_boxHi[2] = { -1, -1 };
+// While set, flightKickBackClear does NOT wipe the off-screen buffer (the dirty-rect needs it to
+// retain the frozen terrain) but still re-arms the dot/object plane pointers.  Set/cleared by
+// renderFlightDirect.
+static bool    s_flightRescuePause = false;
 // Called by the terrain draw (rof_native.c) before its first dot write, to ensure the kicked
 // off-screen-buffer clear has finished (the dots OR into freshly-zeroed plane2).
 extern "C" void rof_flight_wait_dotclear(void) { AmigaHardware::blitterWait(); }
@@ -1334,36 +1343,81 @@ void RescueOnFractalus::renderFlightDirect()
     // game runs animate_zoom_sequence, which draws the approaching pilot/alien figure as a BITMAP
     // into the mode-D flight field via plot_clipped_pixel (verified from rescue_pilot.a8s — NOT PMG;
     // the viewport PMG holds only static frame elements).  The Amiga sheds the field for the terrain
-    // body, so the figure would be dropped.  During this pause no terrain_draw runs, so instead of
-    // preserving the last frame we RE-RENDER via the normal path (clear -> edge-plot the frozen
-    // silhouette from $260E -> sky fill -> band) and OR the figure on top as an extra overlay (the
-    // scratch filled by ROF_PLOT_FIG — ONLY the pixels plot_clipped_pixel actually drew).  Reusing
-    // the proven interleaved render avoids the corruption a hand-rolled composite caused.  The dots
-    // are absent here (the rasterizer isn't running) but the frozen silhouette + figure are shown.
+    // body, so the figure would be dropped.  The terrain is FROZEN during the pause (no terrain_draw
+    // runs), so rather than re-render the whole viewport every frame we do DIRTY-RECT: snapshot the
+    // clean frozen terrain once, suppress the per-frame back-buffer clear so the buffers retain it,
+    // and each frame only ERASE the previous figure's row box (restore plane1+plane2 from the
+    // snapshot) and draw the new figure.  Reuses the exact normal VBI-synced flip.
     const bool rescueFigure = (mem[0x003E] != 0 && mem[0x003D] >= 3);
+    if (rescueFigure) {
+        // Entry: snapshot the clean frozen terrain (all 3 planes, 47 interleaved rows) from the
+        // currently-displayed buffer, which still holds the last real frame here.  Mark that buffer
+        // seeded (it IS the clean terrain); the other buffer gets seeded on its first use below.
+        if (!s_cleanValid && flightDisplayed) {
+            const uint32_t* s = (const uint32_t*)flightDisplayed->data;
+            uint32_t* d = (uint32_t*)s_clean;
+            for (int i = 0; i < 47 * 120 / 4; i++) d[i] = s[i];
+            s_cleanValid = true;
+            const int di = (flightDisplayed == terrainBitmapBack) ? 1 : 0;
+            s_bufSeeded[di] = true;      s_boxLo[di] = 99;      s_boxHi[di] = -1;
+            s_bufSeeded[di ^ 1] = false; s_boxLo[di ^ 1] = 99;  s_boxHi[di ^ 1] = -1;
+        }
+        s_flightRescuePause = true;   // tell flightKickBackClear to stop wiping the off-screen buffer
+        if (s_cleanValid) {
+            Bitmap* const back = (flightDisplayed == terrainBitmapBack) ? terrainBitmap : terrainBitmapBack;
+            uint8_t* const bp2 = (uint8_t*)back->data;
+            const int bi = (back == terrainBitmapBack) ? 1 : 0;
+            // A clear may still be pending on this buffer from the frame we entered the pause on.
+            if (flightClearPending == back) { AmigaHardware::blitterWait(); flightClearPending = nullptr; }
+            if (!s_bufSeeded[bi]) {
+                // First use of this buffer in the pause — it was cleared blank; seed clean terrain.
+                const uint32_t* s = (const uint32_t*)s_clean; uint32_t* d = (uint32_t*)bp2;
+                for (int i = 0; i < 47 * 120 / 4; i++) d[i] = s[i];
+                s_bufSeeded[bi] = true; s_boxLo[bi] = 99; s_boxHi[bi] = -1;
+            } else if (s_boxHi[bi] >= s_boxLo[bi]) {
+                // Erase this buffer's previous figure: restore plane1(+0)+plane2(+40) over its box rows.
+                for (int r = s_boxLo[bi]; r <= s_boxHi[bi]; r++) {
+                    const uint8_t* s1 = s_clean + (unsigned)r * 120;
+                    uint8_t* d1 = bp2 + (unsigned)r * 120;
+                    for (int b = 0; b < 80; b++) d1[b] = s1[b];
+                }
+            }
+            // Draw the new figure (replace only the recorded opaque pixels), and record its box.
+            if (g_figRowHi >= g_figRowLo) {
+                for (int r = g_figRowLo; r <= g_figRowHi; r++) {
+                    const uint8_t* fm = s_figM  + r * 40;
+                    const uint8_t* p1 = s_figP1 + r * 40;
+                    const uint8_t* p2 = s_figP2 + r * 40;
+                    uint8_t* d1 = bp2 + (unsigned)r * 120;
+                    uint8_t* d2 = d1 + 40;
+                    for (int b = 0; b < 40; b++) {
+                        uint8_t m = fm[b];
+                        if (!m) continue;
+                        d1[b] = (uint8_t)((d1[b] & ~m) | p1[b]);
+                        d2[b] = (uint8_t)((d2[b] & ~m) | p2[b]);
+                    }
+                }
+                s_boxLo[bi] = g_figRowLo; s_boxHi[bi] = g_figRowHi;
+            } else {
+                s_boxLo[bi] = 99; s_boxHi[bi] = -1;
+            }
+            // Flip via the VBI (same torn-pointer-safe protocol as the normal render path).
+            flightPendingFlip = back;
+            flightSwapPending = true;
+            while (flightSwapPending) { }
+        }
+        return;
+    }
+    s_flightRescuePause = false;   // not in the rescue pause — resume normal clears
+    s_cleanValid = false;          // re-snapshot on the next rescue
 
     // Preserve the last terrain frame across rescue PAUSES (e.g. the knock phase).  When the main
     // loop is parked in pilot_render's hold loop it drives frames via the SPINWAIT yield but runs NO
     // terrain_draw, so g_flightTerrainFresh stays clear.  Repainting from an empty dot plane would
-    // drop the plane2 dots, so normally we skip the whole clear/edge/fill/flip and leave the last
-    // good terrain on screen.  EXCEPTION: the rescue-figure phase re-renders (above) so the figure
-    // shows.  Cleared here so the next real draw repaints exactly once.
-    if (!g_flightTerrainFresh && !rescueFigure) return;
+    // drop the plane2 dots, so we skip the whole clear/edge/fill/flip and leave the last good
+    // terrain on screen.  Cleared here so the next real draw repaints exactly once.
+    if (!g_flightTerrainFresh) return;
     g_flightTerrainFresh = 0;
-
-    // Snapshot the frozen terrain dots (plane2) from the last real frame once, on entry to the
-    // rescue pause (flightDisplayed still holds that clean frame here); restored into the re-render
-    // below so the paused terrain keeps its dots.  Reset when not in the rescue phase.
-    if (rescueFigure) {
-        if (!s_dotSnapValid && flightDisplayed) {
-            const uint8_t* src = (const uint8_t*)flightDisplayed->data;
-            for (int r = 0; r < 43; r++)
-                for (int b = 0; b < 40; b++) s_dotSnap[r * 40 + b] = src[r * 120 + 40 + b];
-            s_dotSnapValid = true;
-        }
-    } else {
-        s_dotSnapValid = false;
-    }
 
     // Double-buffer: paint the OFF-screen buffer (the one the copper is NOT currently showing),
     // then re-point the copper to it.  The flip latches at the next vblank, so the live buffer
@@ -1501,37 +1555,6 @@ void RescueOnFractalus::renderFlightDirect()
         }
     }
     FD_LAP(g_fdBand);
-
-    // Restore the frozen terrain dots (plane2, rows 0-42) that the rasterizer would normally have
-    // written — it's paused, so pull them from the entry snapshot.  Done AFTER the sky fill (plane1)
-    // + band (rows 43-46, disjoint) and BEFORE the figure overlay so the figure sits on top.
-    if (rescueFigure && s_dotSnapValid) {
-        for (int r = 0; r < 43; r++) {
-            uint8_t* d2 = bp + (unsigned)r * 120 + 40;
-            const uint8_t* s = s_dotSnap + r * 40;
-            for (int b = 0; b < 40; b++) d2[b] = s[b];
-        }
-    }
-
-    // Rescue-figure overlay (see the rescueFigure note at the top): OR the recorded figure pixels
-    // over the just-rendered terrain, replacing only the opaque pixels.  Same plane layout as the
-    // object/band overlays (interleaved 120-byte scanline: plane1 +0, plane2 +40).  s_figP1/P2/M
-    // are per-plane scratch (40 bytes/row) filled by ROF_PLOT_FIG; walk only the dirty row range.
-    if (rescueFigure && g_figRowHi >= g_figRowLo) {
-        for (int r = g_figRowLo; r <= g_figRowHi; r++) {
-            const uint8_t* fm = s_figM  + r * 40;
-            const uint8_t* p1 = s_figP1 + r * 40;
-            const uint8_t* p2 = s_figP2 + r * 40;
-            uint8_t* d1 = bp + (unsigned)r * 120;
-            uint8_t* d2 = d1 + 40;
-            for (int b = 0; b < 40; b++) {
-                uint8_t m = fm[b];
-                if (!m) continue;
-                d1[b] = (uint8_t)((d1[b] & ~m) | p1[b]);
-                d2[b] = (uint8_t)((d2[b] & ~m) | p2[b]);
-            }
-        }
-    }
 #ifdef ROF_FLIGHT_PROBE
     g_fdCalls++;
 #endif
@@ -1578,6 +1601,15 @@ void RescueOnFractalus::flightKickBackClear()
 {
     if (!rsFlight || !terrainBitmap || !terrainBitmapBack || !flightDisplayed) return;
     Bitmap* const back = (flightDisplayed == terrainBitmapBack) ? terrainBitmap : terrainBitmapBack;
+    // During the rescue-figure pause the dirty-rect path needs the off-screen buffer to RETAIN the
+    // frozen terrain, so don't wipe it — but still re-arm the dot/object plane pointers so flight
+    // resumes correctly when the pause ends.  No clear is left pending.
+    if (s_flightRescuePause) {
+        flightClearPending = nullptr;
+        g_flightDotPlane = (uint8_t*)back->data + 40;
+        g_flightObjP1    = s_flightObjP1;
+        return;
+    }
     AmigaHardware::blitterClear((uint16_t*)back->data, 60, 47, 0);   // all 47 rows: viewport 0-42 + blanked band 43-46
     flightClearPending = back;
     // The upcoming terrain draw (rof_native.c) ORs its dots straight into this buffer's plane2
