@@ -1778,6 +1778,30 @@ void RescueOnFractalus::renderFrame()
     // displayed); poke the cycling pens each frame.  Runs under the $53CC VBI (see rsTitle).
     const bool staticTitle = titleScreenCopper && rsTitle;
     if (staticTitle) {
+        // Atari game-over black: the Title screen comes up while ANTIC DMA is still OFF (the
+        // death teardown $4F76 left SDMCTL/$D400 off; game_main_loop re-clears the $022F shadow
+        // at entry).  cockpit_display ($587B) writes the LAST/HIGH SCORE + level digits into
+        // $365B and STARTS the game-over music, and only THEN, at its $595a, does
+        // display_list_init + SDMCTL($022F)=$22 turn DMA back on — so on the Atari the screen is
+        // completely BLACK from game-over entry until the music begins, and the text + score
+        // appear TOGETHER.  Mirror that: while the game's DMA shadow is off, keep the screen
+        // black (the blank EmptyCopperList) instead of showing the decoded static text early.
+        // A legitimately-visible Title (attract idle / level-select) always runs with DMA on
+        // (the $5A82 Title DL can't display otherwise), so this only blacks the game-over
+        // pre-music window; when $022F flips to $22 the full decode below paints text+score at once.
+        static bool titleBlankInstalled = false;
+        if (emptyCopper && mem[0x022F] == 0) {
+            if (!titleBlankInstalled) {
+                emptyCopper->setColor00(atariToOCS(0));   // pure black (COLBK off)
+                AmigaHardware::setCopperList(*emptyCopper, false);
+                titleBlankInstalled = true;
+                titleScreenCopperInstalled = false;   // force a fresh full decode when DMA returns
+                standbyCopperInstalled = false; planetCopperInstalled = false;
+                flightCopperInstalled = false; tunnelCopperInstalled = false;
+            }
+            return;
+        }
+        titleBlankInstalled = false;
         if (!titleScreenCopperInstalled) {
             // Entry: decode the whole screen once, and drop any pending value-cell
             // dirty range (the full decode already captured everything).
