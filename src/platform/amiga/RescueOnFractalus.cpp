@@ -165,6 +165,9 @@ extern "C" volatile uint8_t mem[65536];
 // Which terrain field half renderFlightDirect displays (defined in rof_native.c, set by
 // game_main_loop before each ds_frame): 0 = display half (offset 0), 1 = back half (offset $30).
 extern "C" volatile unsigned char g_flightRenderHalf;
+// Death-cinematic teardown flag (defined in PlatformAmiga.cpp): set when the game blanks ANTIC
+// DMA ($4F76 DMACTL $D400=0) so renderFrame shows the solid COLBK fade.  See death-cinematic memory.
+extern "C" volatile unsigned char g_flightBlank;
 
 // Lookup table: byte → 16-bit doubled glyph pattern (each bit → 2 pixels).
 // Filled once in initialize(); used by title render for mode-6 1bpp doubling.
@@ -1739,6 +1742,29 @@ void RescueOnFractalus::renderFrame()
     if (_profR) g_rRenderFn += (rof_subclock() - _p0) - (g_isrBeamLines - _pi);
 #endif
 
+    // Death-cinematic teardown ($4F76): once the game blanks ANTIC DMA (g_flightBlank, set by
+    // the DMACTL $D400=0 write while VVBLKI is still the flight $4FF5), show a SOLID full-screen
+    // colour — the EmptyCopperList (0 bitplanes → whole display = color00) with color00 poked
+    // from mem[$00D4].  That reproduces the Atari's "DMA off, only COLBK shows" salmon-hold →
+    // black fade (COLBK ramps $2F salmon → black in $4F76).  The flash + cockpit-salmon tint ran
+    // on FlightCopperList before this; the JMP $3D38 that ends the cinematic flips VVBLKI away
+    // from $4FF5, so rsFlight drops → g_flightBlank is cleared below and the Title (game-over)
+    // takes over.  See the death-cinematic memory.
+    static bool deathBlankInstalled = false;
+    if (!rsFlight) g_flightBlank = 0;   // safety: never carry the blank out of flight
+    if (rsFlight && g_flightBlank && emptyCopper) {
+        emptyCopper->setColor00(atariToOCS(mem[0x00D4]));   // COLBK fade colour, poked every frame
+        if (!deathBlankInstalled) {
+            AmigaHardware::setCopperList(*emptyCopper, false);
+            deathBlankInstalled    = true;
+            flightCopperInstalled  = false; standbyCopperInstalled  = false;
+            planetCopperInstalled  = false; tunnelCopperInstalled   = false;
+            titleScreenCopperInstalled = false;
+        }
+        return;
+    }
+    deathBlankInstalled = false;   // left the blank phase → allow a fresh install next death
+
     // Static Standby (incl. the gauge-fill sub-phase before the doors scroll): the
     // copper layout is FIXED here (!rsViewport, doors not
     // parting), so drive the single fixed StandbyCopperList by poking only changed
@@ -2607,7 +2633,10 @@ void RescueOnFractalus::render()
             extern volatile unsigned long g_fDirect;
             unsigned long _dv0 = rof_subclock(), _dvi = g_isrBeamLines;
 #endif
-            renderFlightDirect();
+            // Skip the terrain convert once the death cinematic has blanked ANTIC DMA
+            // ($4F76 DMACTL=0 → g_flightBlank): renderFrame shows the solid COLBK fade
+            // instead, so re-converting the frozen terrain field would only fight it.
+            if (!g_flightBlank) renderFlightDirect();
 #ifdef ROF_FLIGHT_PROBE
             g_fDirect += (rof_subclock() - _dv0) - (g_isrBeamLines - _dvi);
 #endif

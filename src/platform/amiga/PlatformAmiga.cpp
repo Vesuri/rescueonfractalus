@@ -578,8 +578,18 @@ uint8_t PlatformAmiga::hwRead(uint16_t addr)
     return 0u;
 }
 
+// Death-cinematic teardown signal (energy-out/crash).  The Atari's $4F76
+// intro_teardown_fade_loop writes DMACTL ($D400)=0 to blank the ANTIC playfield before it
+// fades COLBK ($00D4) to black.  On the Amiga the copper owns the display, so that write is
+// otherwise dropped — latch it here so renderFrame stops the terrain convert and shows a
+// solid full-screen colour faded from mem[$00D4] (mirroring "DMA off, only COLBK shows").
+// Set on a 0 write during flight, cleared on any nonzero DMACTL write (and by renderFrame
+// when the scene leaves flight).  See the death-cinematic memory.
+extern "C" volatile unsigned char g_flightBlank = 0;
+
 void PlatformAmiga::hwWrite(uint16_t addr, uint8_t val)
 {
+    if (addr == 0xD400u) { g_flightBlank = (val == 0u) ? 1u : 0u; return; }  // DMACTL: 0 = playfield blanked
     if (addr < 0xD200u || addr >= 0xD210u) return;  // only POKEY range
     uint8_t reg = (uint8_t)(addr - 0xD200u);
     // Change-detect: the 50Hz SFX envelope engine rewrites AUDF/AUDC every tick, often with
@@ -1191,6 +1201,20 @@ static uint32_t vbiHandler()
             (void)d;   // manual-launch measurement: the player presses START themselves
 #endif
 #endif
+        }
+    }
+#endif
+
+#ifdef ROF_FORCE_DEATH
+    // Headless death-cinematic verification: once the flight VBI ($4FF5) has been live for a
+    // while, arm the energy-out cinematic exactly once (event_trigger $063D) so diag_run can
+    // observe the flash→salmon→black→title sequence + g_flightBlank.  (make PROBES=1 FORCE_DEATH=1)
+    {
+        const uint16_t vv = (uint16_t)(mem[0x0222u] | (mem[0x0223u] << 8));
+        static uint16_t s_flightVbi = 0; static uint8_t s_forcedDeath = 0;
+        if (vv == 0x4FF5u && s_flightVbi == 0) s_flightVbi = g_vbiCount;
+        if (s_flightVbi && !s_forcedDeath && (uint16_t)(g_vbiCount - s_flightVbi) >= 120) {
+            mem[0x063Du] = 1; s_forcedDeath = 1;
         }
     }
 #endif

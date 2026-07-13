@@ -240,6 +240,12 @@ endif
 ifdef AUTOFIRE
 EXTRA_DEFINES += -DROF_AUTO_FIRE
 endif
+# `make PROBES=1 FORCE_DEATH=1`: once flight has been running a while, arm the energy-out
+# death cinematic (event_trigger $063D) once — headless verification of the
+# flash→salmon→black→title sequence + g_flightBlank.  Requires PROBES.
+ifdef FORCE_DEATH
+EXTRA_DEFINES += -DROF_FORCE_DEATH
+endif
 # `make PROBES=1 TITLE=1`: force-enter the Title Screen (inject its screen RAM + palette and
 # pin rsTitle) instead of auto-launching to flight — a visual test path for the Title Screen
 # render before its real attract-mode entry is wired.  Requires PROBES.

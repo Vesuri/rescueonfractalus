@@ -27,3 +27,8 @@ void EmptyCopperList::buildLayout(const Sprite& nullSprite)
         showSprite(INDEX_SPRITES + s * 2, (uint16_t)s, nullSprite);
     d[INDEX_TERMINATOR] = copperWait(255, 254);
 }
+
+void EmptyCopperList::setColor00(uint16_t c)
+{
+    data_[INDEX_COLOR00] = copperMove(color00, c);
+}
