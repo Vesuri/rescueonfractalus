@@ -134,6 +134,9 @@ extern "C" volatile unsigned long g_fConvert, g_isrBeamLines;  // Stage-0 conver
 extern "C" volatile unsigned long g_fCockpit, g_fCockpitScans;
 extern "C" volatile unsigned long g_ckFullTicks, g_ckFullCount;  // decodeCockpitFull one-shot timing
 extern "C" volatile unsigned short g_ckFullVbi[4] = {0,0,0,0};       // g_vbiCount at each ckFull call
+// Boost-return probe: last-installed copper id (1=title 2=standby 3=planet 4=flight 5=tunnel
+// 6=doors 7=empty) + the live boost signals, sampled per render() to confirm phase routing.
+extern "C" volatile unsigned char g_boostRet = 0, g_boostVp = 0, g_liveCopper = 0;
 extern "C" volatile unsigned short g_starEntryVbi = 0;              // vbi at first rsStars viewport decode
 extern "C" volatile unsigned long  g_starEntryTicks = 0, g_starEntryIsr = 0; // its cost
 extern "C" volatile unsigned short g_starSprVbi = 0;
@@ -1829,8 +1832,34 @@ void RescueOnFractalus::renderFrame()
         return;
     }
 
+    // Boost / return-to-mother-ship reverse cinematic — stars + reverse tunnel rings (scene
+    // 2b/5 played backwards).  Both share the launch-cockpit mode-D viewport bitmap decoded from
+    // the $1000 GTIA-10 field: the starfield (pre-ring) and the concentric rings the reverse ring
+    // step (step_accum_sub_7e $6A8F) streams in.  Reuse the TunnelCopperList (its viewport palette
+    // tracks the live $08D4-$08D9 ring / $08D8 corner / $02C0 black registers, so it follows the
+    // boost palette — black starfield bg → cycling teal rings — automatically).  The reverse ring
+    // does NOT publish the g_tun* dirty band the forward ring does, so decode the full field each
+    // frame (a brief cinematic, not the 50 FPS flight budget).  Placed before staticStandby so it
+    // wins over the (mispositioned) Standby door copper the forward gates would otherwise select.
+    if (rsBoostViewport && tunnelCopper) {
+        decodeTunnelRect(0, (int)kTerrainHeight - 1, 0, 39);   // full $1000 viewport field → tunnelBitmap
+        if (!tunnelCopperInstalled) {
+            updateTunnelCopper(true);
+            AmigaHardware::setCopperList(*tunnelCopper, false);
+            tunnelCopperInstalled = true;
+        } else {
+            updateTunnelCopper(false);
+        }
+        standbyCopperInstalled = false; planetCopperInstalled = false;
+        flightCopperInstalled = false; titleScreenCopperInstalled = false;
+#ifdef ROF_FLIGHT_PROBE
+        { extern volatile unsigned char g_liveCopper; g_liveCopper = 5; }
+#endif
+        return;
+    }
+
     const bool staticStandby = standbyCopper && rsStandby && g_doorFieldReady
-                               && !rsViewport && !rsLaunched;
+                               && !rsViewport && !rsLaunched && !rsBoostViewport;
     if (staticStandby) {
         if (!standbyCopperInstalled) {
             updateStandbyCopper(true);
@@ -1841,6 +1870,9 @@ void RescueOnFractalus::renderFrame()
         }
         planetCopperInstalled = false; flightCopperInstalled = false;
         tunnelCopperInstalled = false; titleScreenCopperInstalled = false;
+#ifdef ROF_FLIGHT_PROBE
+        { extern volatile unsigned char g_liveCopper; g_liveCopper = 2; }
+#endif
         return;
     }
 
@@ -2335,6 +2367,31 @@ void RescueOnFractalus::deriveRenderSignals()
     rsStars    = standbyVbi && (mem[0x060B] == 0x23u) && (mem[0x0200] == 0xC2u);
     rsViewport = rsStars || rsFlight;
     rsEnergyIndicator    = (mem[0x060B] != 0);
+
+    // Boost / return-to-mother-ship reverse cinematic (BOOSTERS, B key).  When the level quota
+    // is met the player docks with the mother ship: the boosters handler ($493D) sets the
+    // mother-ship-arrived flag level_clear_gate($003A) to $FF, then the ship ascends (flight VBI)
+    // and the game plays a REVERSE launch cinematic — stars → reverse tunnel rings → next-level
+    // Standby — all under the launch-cockpit VBI $52D7 + $6CAD mode-D DLI ($0200==$AD).  The
+    // FORWARD-launch gates never match this path ($0200 is $AD not $C2; the door/ring flags
+    // $008A/$0088 stay 0; the reverse ring uses $008D instead), so without a dedicated gate the
+    // wrong Standby door copper is shown over a stale/mispositioned field (the confirmed bug).
+    // GATE on level_clear_gate($003A)==$FF (set only when the mother ship arrives, held through
+    // the whole cinematic) — NOT on player_lives($0072)==2, which is a NORMAL lives count that
+    // also matches the forward launch and mis-fires there.
+    // Sub-phase by the reverse-ring flags (measured live, FORCE_RETURN):
+    //   stars   : $008D==0 && $008E==0   reverse ring not started — starfield in the $1000 field
+    //   tunnel  : $008D!=0               reverse ring active      — concentric rings in $1000
+    //   standby : $008D==0 && $008E!=0   ring done                — green LEVEL-NN door field ($2000)
+    // Stars+tunnel share the launch-cockpit mode-D VIEWPORT bitmap (decoded from $1000, per the
+    // user's faithful-to-$6CAD decision — NOT the forward $6CC2 PMG starfield); the final standby
+    // falls through to the normal rsStandby path.
+    rsBoostReturn   = standbyVbi && (mem[0x003A] == 0xFFu);
+    rsBoostViewport = rsBoostReturn && (mem[0x008D] != 0u || mem[0x008E] == 0u);
+#ifdef ROF_FLIGHT_PROBE
+    { extern volatile unsigned char g_boostRet, g_boostVp;
+      g_boostRet = rsBoostReturn ? 1 : 0; g_boostVp = rsBoostViewport ? 1 : 0; }
+#endif
 
     // launched = doors scroll armed / ring armed / viewport active.  Safe to derive
     // now that the transpiled display_setup drives: it arms the ring before the next
