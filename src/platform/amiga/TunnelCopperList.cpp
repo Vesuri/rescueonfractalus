@@ -27,7 +27,8 @@ static const uint16_t kBPLCON0_3P   = (uint16_t)((3 << PLNCNTSHFT) | USE_BPLCON3
 // d[0] = copperWait(16,0) (CopperList ctor).  Title region is identical to
 // StandbyCopperList; the terrain region is one tunnel band with pens 4-6.
 #define INDEX_PLAYFIELD       1
-#define INDEX_TITLE_PAL       (INDEX_PLAYFIELD + 3)    // color00..03 (4)
+#define INDEX_BPLCON2         (INDEX_PLAYFIELD + 3)    // BPLCON2 PFxP=4 sprites-on-top (1)
+#define INDEX_TITLE_PAL       (INDEX_BPLCON2 + 1)      // color00..03 (4)
 #define INDEX_TITLE_BPL       (INDEX_TITLE_PAL + 4)    // title bitmap ptrs (2bp = 4)
 #define INDEX_SPRITE_COL      (INDEX_TITLE_BPL + 4)    // color16,color17 (2)
 #define INDEX_SPRITES         (INDEX_SPRITE_COL + 2)   // 8 sprite ptrs (16)
@@ -83,6 +84,13 @@ void TunnelCopperList::buildLayout(const Bitmap& title, const Bitmap& tunnel, co
     setPlayfield(INDEX_PLAYFIELD, kW, kH, kBP2, /*interleaved*/true,
                  /*hires*/false, /*interlace*/false, /*dualPlayfield*/false,
                  /*holdAndModify*/false, kCenterY);
+
+    // BPLCON2 PFxP=4 = sprites in FRONT of the playfield (canopy posts over the viewport).
+    // MUST be set explicitly: the boost reverse cinematic reaches this list straight from the
+    // FlightCopperList, whose dashboard band leaves BPLCON2 at PFxP=0 (sprites BEHIND playfield,
+    // for the HUD gauges) and never restores it — so without this the starfield/rings would draw
+    // in front of the pillars.  (CopperList::setPlayfield sets only bitplane geometry, not BPLCON2.)
+    d[INDEX_BPLCON2] = copperMove(bplcon2, (uint16_t)((4u << 3) | 4u));
 
     setTitlePalette(0, 0, 0);                  // seeded; caller refreshes
     showBitmap(INDEX_TITLE_BPL, title);        // 2bp interleaved = 4 ptr moves

@@ -238,3 +238,40 @@ Already-native callees (reuse as-is): `display_setup $5F1D`, `draw_symmetric_spa
   Then `ffmpeg -i <mov> frame_%04d.png` to extract for frame-compare.
 - The uncommitted probe infra (transpile.py `$3C75` VCOUNT hook, PlatformAmiga.cpp FORCE_RETURN,
   amiga/Makefile FORCE_RETURN) stays UNCOMMITTED per user decision — see boost-return-cinematic memory.
+
+--------------------------------------------------------------------------------
+## 8. BOOST-CINEMATIC FUNCTION REFERENCE (all functions in the chain)
+
+### Atari 6502 / transpiled+native logic (drives the cinematic; runs faithfully on both backends)
+| Addr | Name | File | Role in the boost |
+|---|---|---|---|
+| `$3D48/$3E0F` | `game_main_loop` / `game_main_loop_body` | rof_native.c | Loops over `display_setup`; the dock branch (`$3F50`, `player_lives $0072==2`) runs the ASCENT (depth `$0034` $40→$60), then breaks back to re-enter `display_setup` for the reverse cinematic. |
+| `$4644` | `event_sequence_dispatcher` | rof_gen.c | In-flight keyboard dispatch; routes the **B** key ($15) to the boosters handler. |
+| `$493D` | boosters handler (misnamed — see docs/rename.md) | rof_gen.c | Gated on `$003A` negative: sets mother-ship light `$0676=1`, clears rescue state, sets **`$0072=2`** (handoff sentinel), shows "FIRE BOOSTERS". |
+| `$7BC6` | `setup_level_clear_state` | rof_gen.c | Mother-ship arrival: sets **`$003A=$FF`**, lights the indicator, "MOTHER SHIP!". (The boost render gate keys on `$003A==$FF`.) |
+| `$5F1D` | **`display_setup`** | rof_native.c:8541 | **The cinematic APEX.** Re-entered after ascent; runs construction → salmon→black fade (`display_flags $0071` ramp) → draws the `$2000` starfield + `$1000` ring field → star-pen fade → reverse tunnel (`emit_dl_coord_pairs` loop) → standby handoff. Drives real Amiga frames via `ds_frame()`. |
+| `$52D7` | `vbi_handler_standby` | rof_gen.c | The VBI active for the whole cinematic (VVBLKI). Calls `launch_anim_dispatch`. |
+| `$5367` | `launch_anim_dispatch` | rof_gen.c | Per-frame step dispatch by flag precedence; the BOOST uses the **`$008D` reverse ring** branch → `step_accum_sub_7e`. |
+| `$6A8F` | `step_accum_sub_7e` | rof_gen.c (⚠ transpiled-only, no `g_tun*` publish) | The `$008D` reverse ring-step; bumps `$008E` (the row-arm counter `display_setup` spins on). T4 target: native twin + Amiga dirty-band publish. |
+| `$6A4D` | `advance_history_6a4d` | rof_native.c | During the reverse ring (`$008D<0`) copies `$08D8→$0071` each rotation (COLBK tracks the decaying ring). |
+| `$6A27` | `clear_slot_0c87_0d87` | rof_gen.c (transpiled-only) | Row-by-row corner/band-triangle clear at the standby handoff. T6 target. |
+| — | `draw_frame_pattern_seq` (`$6047`/`L_635f`) | rof_native.c | Plots the concentric ring field into **`$1000`** (deterministic geometry). |
+| — | `emit_dl_coord_pairs` | rof_gen.c | Reverse-tunnel row emit: rewrites the `$3000` DL's mode-F **LMS from `$2000`→`$1000` row-by-row** as `$008E` counts (the gradual reveal; the Amiga currently switches the whole buffer, not per-row — issue 3). |
+| — | `fill_region_2000` | rof_native.c | Fills the **`$2000`** field (the starfield background = value-8), one frame after the boost viewport first installs (source of issue 1's stale-frame). |
+| `$65D0/$65D2` | `build_line_addr_table_1000(_stride)` | rof_native.c | (Re)seeds the `$073D/$0793` row-base tables for base `$1000`, stride 46. |
+
+### Amiga rendering / conversion layer (src/platform/amiga/)
+| Symbol | File | Role |
+|---|---|---|
+| `deriveRenderSignals()` | RescueOnFractalus.cpp | Sets `rsBoostReturn = standbyVbi && mem[$003A]==$FF` and `rsBoostViewport = rsBoostReturn && (mem[$008D]!=0 \|\| mem[$008E]==0)`. |
+| `render()` boost branch | RescueOnFractalus.cpp (~1851) | When `rsBoostViewport`: picks `tunnelSrcBase = (mem[$008D]==0)?$2000:$1000`, decodes into `tunnelBitmap`, installs `TunnelCopperList`. Clears the bitmap on the install edge (issue-1 garbage-frame guard). |
+| `tunnelSrcBase` | RescueOnFractalus.h | Decode source base: `$1000` rings / `$2000` starfield. |
+| `decodeTunnelRect()` | RescueOnFractalus.cpp | GTIA-10 nibble → 3-bitplane decode of `tunnelSrcBase` (stride 46) into `tunnelBitmap`. |
+| `updateTunnelCopper()` | RescueOnFractalus.cpp | Per-frame palette; BOOST mode (`rsBoostViewport`): viewport color00←`$0071` (fade, not `$08D8`), pillars←fixed `$06` grey (not `$02C8`), band corners track `$0071`. |
+| `TunnelCopperList` | TunnelCopperList.cpp | The launch-cockpit copper reused for boost. Now emits **BPLCON2 PFxP=4** (sprites-on-top; fixes pillars-behind-stars — the flight copper leaves PFxP=0). Canopy-post sprites, band, viewport bitmap. |
+| `buildPostSprites()` / `decodePostRLE()` | RescueOnFractalus.cpp | Decodes the canopy pillars ONCE from the constant tables `$4DFA`/`$4E09` into the `leftPost`/`rightPost` sprites. |
+
+### Fixed so far (2026-07-14) vs OPEN
+- **FIXED + confirmed:** stars decode the `$2000` field (not `$1000`); boost palette (color00/pillars/band); BPLCON2 sprites-on-top (pillars visible over stars + tunnel).
+- **FIXED (logic, 1-frame, not visually confirmable):** issue-1 stale-`$2000` garbage frame → clear-on-install.
+- **OPEN:** issue-3 stars→tunnel transition shows a static ring field briefly instead of the Atari's row-by-row `$2000`→`$1000` reveal (needs per-row source = T4-adjacent). Reverse-ring perf (full-decode/frame; T4 native `$6A8F` twin + dirty band). Standby handoff / band-triangle clear (`$6A27`; T6).

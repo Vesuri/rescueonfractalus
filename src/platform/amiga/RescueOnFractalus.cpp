@@ -1850,12 +1850,19 @@ void RescueOnFractalus::renderFrame()
     // wins over the (mispositioned) Standby door copper the forward gates would otherwise select.
     if (rsBoostViewport && tunnelCopper) {
         tunnelSrcBase = (mem[0x008D] == 0u) ? 0x2000u : 0x1000u;
-        decodeTunnelRect(0, (int)kTerrainHeight - 1, 0, 39);   // full viewport field → tunnelBitmap
         if (!tunnelCopperInstalled) {
+            // First boost-viewport frame (transitioning from the flight ascent copper): the
+            // faithful display_setup writes the $2000 starfield ONE frame later, so the source
+            // field still holds the stale standby door-field ("LEVEL NN") content here and would
+            // decode as a garbage flash.  Clear the bitmap instead (→ pen0 = color00 = $0071, the
+            // salmon fade bg) and skip this frame's decode; f1 onward decodes the ready starfield.
+            uint8_t* bd = (uint8_t*)tunnelBitmap->data;
+            for (int i = 0; i < 120 * (int)kTerrainHeight; i++) bd[i] = 0;
             updateTunnelCopper(true);
             AmigaHardware::setCopperList(*tunnelCopper, false);
             tunnelCopperInstalled = true;
         } else {
+            decodeTunnelRect(0, (int)kTerrainHeight - 1, 0, 39);   // full viewport field → tunnelBitmap
             updateTunnelCopper(false);
         }
         standbyCopperInstalled = false; planetCopperInstalled = false;
