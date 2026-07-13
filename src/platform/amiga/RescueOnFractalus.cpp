@@ -1212,7 +1212,7 @@ void RescueOnFractalus::decodeTunnelRect(int rowLo, int rowHi, int byteLo, int b
     if (rowLo > rowHi || byteLo > byteHi) return;   // degenerate band strip — nothing to do
     // Pointer-walk (no per-row 68000 multiplies — row*46/*120 would be __mulsi3 soft-multiplies
     // each row).  Compute the row-0 bases once, then += stride per row, as render() does.
-    const uint8_t* src = (const uint8_t*)&mem[0x1000 + rowLo * 46 + 4];  // +4: wide-field crop
+    const uint8_t* src = (const uint8_t*)&mem[tunnelSrcBase + rowLo * 46 + 4];  // +4: wide-field crop
     uint8_t*       p1  = (uint8_t*)tunnelBitmap->data + rowLo * 120;
     for (int row = rowLo; row <= rowHi; row++) {
         uint8_t* pp2 = p1 + 40; uint8_t* pp3 = p1 + 80;
@@ -1729,6 +1729,7 @@ void RescueOnFractalus::renderFrame()
     // black clear frame into mem[$1000] and publishes the exact band it touched (g_tunBandMode==1
     // + the g_tun* bounds).  Decode only that band into tunnelBitmap — no shadow scan.
     if (g_tunnelFieldDirty) {
+        tunnelSrcBase = 0x1000u;   // forward tunnel rings live in $1000 (boost may have left $2000)
         if (g_tunBandMode) decodeTunnelBand();
         else               decodeTunnelRect((int)g_tunRowLo, (int)g_tunRowHi, 0, 39);
         g_tunnelFieldDirty = 0;
@@ -1833,16 +1834,23 @@ void RescueOnFractalus::renderFrame()
     }
 
     // Boost / return-to-mother-ship reverse cinematic — stars + reverse tunnel rings (scene
-    // 2b/5 played backwards).  Both share the launch-cockpit mode-D viewport bitmap decoded from
-    // the $1000 GTIA-10 field: the starfield (pre-ring) and the concentric rings the reverse ring
-    // step (step_accum_sub_7e $6A8F) streams in.  Reuse the TunnelCopperList (its viewport palette
-    // tracks the live $08D4-$08D9 ring / $08D8 corner / $02C0 black registers, so it follows the
-    // boost palette — black starfield bg → cycling teal rings — automatically).  The reverse ring
-    // does NOT publish the g_tun* dirty band the forward ring does, so decode the full field each
-    // frame (a brief cinematic, not the 50 FPS flight budget).  Placed before staticStandby so it
+    // 2b/5 played backwards).  Reuse the TunnelCopperList (its viewport palette tracks the live
+    // $08D4-$08D9 ring / $0071 fade / $02C0 black registers, so it follows the boost palette
+    // automatically).  The reverse ring does NOT publish the g_tun* dirty band the forward ring
+    // does, so decode the full field each frame (a brief cinematic, not the 50 FPS flight budget).
+    //
+    // ⚠ SOURCE BUFFER SWITCHES per sub-phase (the KEY faithful detail — the $3000 launch DL's
+    // mode-F LMS is rewritten mid-cinematic, measured from boost_stars/boost_tunnel savestates):
+    //   $008D==0 (stars): the DL displays the $2000 GTIA-10 field = the black starfield (value-8
+    //     bg + sparse dots).  $1000 is empty/being-built here.
+    //   $008D!=0 (reverse tunnel): emit_dl_coord_pairs has rewritten the DL LMS to the $1000 ring
+    //     field (the concentric rings).
+    // (The committed code always decoded $1000 → stars showed the empty/bowtie ring field instead
+    // of the starfield.  See docs/boost-cinematic-plan.md §1b.)  Placed before staticStandby so it
     // wins over the (mispositioned) Standby door copper the forward gates would otherwise select.
     if (rsBoostViewport && tunnelCopper) {
-        decodeTunnelRect(0, (int)kTerrainHeight - 1, 0, 39);   // full $1000 viewport field → tunnelBitmap
+        tunnelSrcBase = (mem[0x008D] == 0u) ? 0x2000u : 0x1000u;
+        decodeTunnelRect(0, (int)kTerrainHeight - 1, 0, 39);   // full viewport field → tunnelBitmap
         if (!tunnelCopperInstalled) {
             updateTunnelCopper(true);
             AmigaHardware::setCopperList(*tunnelCopper, false);
@@ -2282,12 +2290,17 @@ void RescueOnFractalus::updateTunnelCopper(bool force)
     const uint16_t titlePf0 = atariToOCS(mem[MEM_text_color_pf0]);
     const uint16_t energyCol = atariToOCS(mem[0x00DE]);
     const uint16_t compassCol = atariToOCS(mem[0x00CF]);
+    // Canopy-post/pillar grey.  The forward tunnel colours the posts from the title bg
+    // ($02C8).  In the BOOSTERS reverse cinematic $02C8 is black (posts vanish) — the Atari
+    // pillars are 5th-player missiles at the fixed frame grey COLPF3=$06 (measured T0,
+    // boost_stars/boost_tunnel savestates), so use that in boost mode.
+    const uint16_t postCol = rsBoostViewport ? atariToOCS(0x06) : titleBg;
 
     if (force || titleBg != tnTitleBg || titlePf0 != tnTitlePf0) {
         tunnelCopper->setTitlePalette(titleBg, titlePf0, atariToOCS(0x78));
-        tunnelCopper->setSpritePostColor(titleBg);
         tnTitleBg = titleBg; tnTitlePf0 = titlePf0;
     }
+    if (force || postCol != tnPostCol) { tunnelCopper->setSpritePostColor(postCol); tnPostCol = postCol; }
     if (force || energyCol != tnEnergyCol)   { tunnelCopper->setEnergyIndicatorColor(energyCol);   tnEnergyCol = energyCol; }
     if (force || compassCol != tnCompassCol) { tunnelCopper->setCompassColor(compassCol); tnCompassCol = compassCol; }
     // Windscreen-corner reveal.  The corner triangle is the quad-width canopy-post player
@@ -2298,15 +2311,26 @@ void RescueOnFractalus::updateTunnelCopper(bool force)
     // color00 to green from the boundary = the first still-set player scanline down (so the
     // green recedes as the buffer clears).  doors_mid/descent show this band only at g2>=half,
     // i.e. the Tunnel list (Doors keeps the band green).
-    uint16_t greenLine = 8;                                       // first still-green band scanline
-    for (uint16_t i = 0; i < 8; i++) { if (mem[0x0C88 + i]) { greenLine = i; break; } }
-    const uint16_t green = atariToOCS(mem[0x0071]);
-    tunnelCopper->setBandReveal(greenLine, green);
+    if (rsBoostViewport) {
+        // Boost reverse cinematic: no green->purple corner wedge.  The whole windscreen-band
+        // corner tracks the fade register $0071 (= the viewport bg), so the corners fade
+        // salmon->black in step with the body (measured T0: band COLBK <- $0071).  greenLine=0
+        // flips color00 across the entire band to the fade colour.
+        tunnelCopper->setBandReveal(0, atariToOCS(mem[0x0071]));
+    } else {
+        uint16_t greenLine = 8;                                   // first still-green band scanline
+        for (uint16_t i = 0; i < 8; i++) { if (mem[0x0C88 + i]) { greenLine = i; break; } }
+        const uint16_t green = atariToOCS(mem[0x0071]);
+        tunnelCopper->setBandReveal(greenLine, green);
+    }
 
-    // color00 = band corner = tunnel purple mem[$08D8]: carried into the band, tracks the ring
-    // cycle (in sync), and goes black at the exit clear (mem[$08D8] -> 0) in step with the
-    // tunnel.  color07 = the field's exit-clear black (value-0 was remapped to pen7).
-    const uint16_t corner = atariToOCS(mem[0x08D8]);             // color00 = band corner (purple)
+    // color00 = viewport background (GTIA value-8).  Forward tunnel: the band corner = tunnel
+    // purple mem[$08D8], carried into the band, tracking the ring cycle.  BOOST: the whole
+    // viewport bg (starfield + reverse-ring COLBK) = the fade register $0071 (measured T0);
+    // advance_history_6a4d copies $08D8->$0071 each tunnel rotation, so $0071 is correct for
+    // both the star fade and the reverse-ring tunnel.  color07 = field value-0 (remapped to pen7).
+    const uint16_t corner = rsBoostViewport ? atariToOCS(mem[0x0071])   // boost: viewport bg = fade reg
+                                            : atariToOCS(mem[0x08D8]);   // forward: corner-reveal purple
     const uint16_t black  = atariToOCS(mem[0x02C0]);             // color07 = field value-0 (black)
     uint16_t ring[6];
     bool ringChanged = (corner != tnCorner) || (black != tnPen0);

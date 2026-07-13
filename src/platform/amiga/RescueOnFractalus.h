@@ -130,7 +130,8 @@ private:
     void decodeCockpitFull();  // decode the whole cockpit region (modeD + mode4) once (scene-entry repaint)
     void decodeTitleScreen();  // decode the whole Title Screen text ($365B/charset $0400) -> titleScreenBitmap
     void decodeTitleCells(int cellLo, int cellHi);  // (re)decode Title Screen cells [lo..hi] (clears+ORs); targeted value updates
-    void decodeTunnelRect(int rowLo, int rowHi, int byteLo, int byteHi);  // decode a $1000 sub-rect -> tunnelBitmap (no shadow)
+    uint16_t tunnelSrcBase = 0x1000;               // decodeTunnelRect source base: $1000 rings (forward tunnel + boost tunnel) / $2000 starfield (boost stars — the $3000 DL displays $2000 while $008D==0, then emit_dl_coord_pairs rewrites its LMS to $1000 for the reverse tunnel)
+    void decodeTunnelRect(int rowLo, int rowHi, int byteLo, int byteHi);  // decode a tunnelSrcBase sub-rect -> tunnelBitmap (no shadow)
     void decodeTunnelBand();                       // decode only the ring-clear frame band (outer\inner rect) from the g_tun* bounds
     void renderViewportModeD(uint16_t srcBase, int stride, int rows); // decode CHANGED mode-D bytes -> viewportBitmap (stars/planet: $1000/48/47)
     void renderFlightDirect();   // flight terrain: plot sky straight to bitplanes from $260E (replaces the convert)
@@ -202,6 +203,7 @@ private:
     uint16_t tnTitleBg = 0xFFFF, tnTitlePf0 = 0xFFFF, tnEnergyCol = 0xFFFF, tnCompassCol = 0xFFFF;
     uint16_t tnPen0 = 0xFFFF, tnRing[6] = { 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF };
     uint16_t tnCorner = 0xFFFF;   // color00 = windscreen-band corner (tunnel purple mem[$08D8], carried into the band)
+    uint16_t tnPostCol = 0xFFFF;  // canopy-post/pillar grey (forward: title bg $02C8; boost: fixed $06)
 
     Bitmap*     titleBitmap    = nullptr;
     Bitmap*     terrainBitmap  = nullptr;
