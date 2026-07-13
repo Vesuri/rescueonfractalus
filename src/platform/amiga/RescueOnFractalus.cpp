@@ -1701,6 +1701,9 @@ void RescueOnFractalus::run()
 // when this is entered; rendering happens first, then the caller waits for the VBI.
 void RescueOnFractalus::renderFrame()
 {
+#ifdef ROF_FLIGHT_PROBE
+    extern volatile unsigned long g_renderFrameCount; g_renderFrameCount++;
+#endif
     // Black-until-ready: while the boot/standby build is still in progress, keep the blank
     // EmptyCopperList on screen and do no rendering — the bitmaps are mid-build and the real
     // lists would show garbage.  When g_standbyRevealReady latches, fall through and the copper

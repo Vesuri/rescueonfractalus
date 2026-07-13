@@ -643,6 +643,7 @@ void PlatformAmiga::flightShotTick()
 extern "C" unsigned long rof_subclock(void) {
     return (unsigned long)g_vbiCount * 313u + (unsigned long)rof_beam_line();
 }
+extern "C" volatile unsigned long g_renderFrameCount = 0;
 extern "C" volatile unsigned long g_probeDispSetup = 0, g_probeGameInit = 0,
     g_probeIntro = 0, g_probeRowAddr = 0, g_probeInitTotal = 0;
 extern "C" volatile unsigned short g_probeFlightVbi = 0;  // g_vbiCount at flight VBI install

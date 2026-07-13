@@ -9215,8 +9215,30 @@ L_63a7:
  * spin labels L_3eba/L_3f6d become one real Amiga frame via ds_frame(); the
  * wait_vcount_30/wait_frames_10/wait_frames_1/wait_frames frame primitives drive
  * frames internally and are called as-is.  No leaf exit-register is consumed here
- * (every post-call read reloads from mem), so no fidelity fix-ups are needed. */
+ * (every post-call read reloads from mem), so no fidelity fix-ups are needed.
+ *
+ * ⚠ RESTART TRAMPOLINE (2026-07-13): on the Atari the game-over / attract restart is a tail
+ * JMP to game_main_loop ($3D48) — it never grows the stack.  But game_main_loop CALLS
+ * enemy_check NON-tail (code follows at L_3ef5), so the base frame is still live when a death
+ * re-enters game_main_loop (enemy_check -> intro_cinematic_loop -> intro_teardown_fade_loop ->
+ * init_game_vars_attract_timer -> game_main_loop).  Each death then pushes a fresh, LARGE
+ * game_main_loop frame that never unwinds -> stack overflow + memory corruption (guru),
+ * observed on the first death.  The old "TCO'd, no unbounded recursion" note above was wrong
+ * (proven by the FS-UAE backtrace).  Fix: anchor a setjmp at the base (outermost) entry and
+ * turn every re-entry into a longjmp back to it — the nested frames are reclaimed and the loop
+ * restarts from the top, exactly as the JMP does.  game_main_loop is not `make validate`d and
+ * consumes no leaf exit register, so wrapping it is safe. */
+static void game_main_loop_body(void);
 void game_main_loop(void) {
+    static void* s_gmlJmp[5];
+    static int   s_gmlActive = 0;
+    if (s_gmlActive) __builtin_longjmp(s_gmlJmp, 1);   /* re-entry (restart): unwind to the base anchor */
+    s_gmlActive = 1;
+    __builtin_setjmp(s_gmlJmp);                        /* restarts resume here with a fresh body frame */
+    game_main_loop_body();
+    s_gmlActive = 0;                                   /* body returned (it never should) — re-arm cleanly */
+}
+static void game_main_loop_body(void) {
     bus_write(0x022F, 0);
     bus_write(0xD01D, 0);
     for (int i = 0; i < 8; i++) {         /* L_3d52 */
