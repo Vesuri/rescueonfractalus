@@ -341,6 +341,24 @@ void FlightCopperList::setBandPalette(uint16_t grey)
     data_[INDEX_BAND_BLOCK + 3] = copperMove(color07, grey);
 }
 
+void FlightCopperList::setCockpitPalette(uint16_t c0, uint16_t c1, uint16_t c2, uint16_t c3,
+                                         uint16_t c4, uint16_t c5, uint16_t c6, uint16_t c7)
+{
+    data_[INDEX_COCKPIT_PAL + 0] = copperMove(color00, c0);
+    data_[INDEX_COCKPIT_PAL + 1] = copperMove(color01, c1);
+    data_[INDEX_COCKPIT_PAL + 2] = copperMove(color02, c2);
+    data_[INDEX_COCKPIT_PAL + 3] = copperMove(color03, c3);
+    data_[INDEX_COCKPIT_PAL + 4] = copperMove(color04, c4);
+    data_[INDEX_COCKPIT_PAL + 5] = copperMove(color05, c5);
+    data_[INDEX_COCKPIT_PAL + 6] = copperMove(color06, c6);
+    data_[INDEX_COCKPIT_PAL + 7] = copperMove(color07, c7);
+}
+
+void FlightCopperList::setDashBg(uint16_t c)
+{
+    data_[INDEX_DASH_BLUE] = copperMove(color00, c);
+}
+
 // Crosshair plane3 palette (viewport color04-07).  See the header: visible → salmon ($26) ×4,
 // hidden → the terrain pens so the plane3 "+" vanishes into the terrain.  The band block overrides
 // color04-07 to grey at line 172, below the reticle, so this only affects the terrain body.

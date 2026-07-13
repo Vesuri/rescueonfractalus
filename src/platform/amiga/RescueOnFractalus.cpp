@@ -2028,7 +2028,13 @@ void RescueOnFractalus::updatePlanetCopper(bool force)
 // colours live.
 void RescueOnFractalus::updateFlightCopper(bool force)
 {
-    const uint16_t titleBg  = atariToOCS(mem[0x02C8]);             // COLBK = top-bar bg / canopy posts
+    // Death cinematic: while it runs (event_trigger $063D != 0, DMA still on before $4F76) the
+    // frame greys must fade to salmon with the cockpit.  On the Atari the top-bar background +
+    // canopy pillars are COLBK = mem[$00D4] (the frame-grey display param $4FE0 ramps to hue-2);
+    // normal flight uses the $02C8 shadow.  Drive titleBg from $00D4 during the cinematic so the
+    // top bar + pillars (setSpritePostColor(titleBg)) fade too — not just the band.
+    const bool cine = (mem[0x063D] != 0);
+    const uint16_t titleBg  = atariToOCS(cine ? mem[0x00D4] : mem[0x02C8]);  // COLBK = top-bar bg / canopy posts
     const uint16_t titlePf0 = atariToOCS(mem[MEM_text_color_pf0]);   // COLPF0 = top-bar text ($00D8)
     const uint16_t energyCol = atariToOCS(mem[0x00DE]);             // gauge bar colour
 
@@ -2126,6 +2132,28 @@ void RescueOnFractalus::updateFlightCopper(bool force)
         flightCopper->setCrosshairPalette(cross, cross, cross, cross);
     } else {
         flightCopper->setCrosshairPalette(terr0, terr1, terr2, terr3);
+    }
+
+    // Death-cinematic cockpit fade: the Atari cockpit DLI loads its pens from the display params
+    // $00CF-$00D6, which intro_fill_display_params ($4FE0) ramps to salmon (hue 2) during the
+    // cinematic.  Drive the FlightCopperList cockpit palette + dashboard-blue bg from them while
+    // the cinematic runs, so the WHOLE dashboard (body, divider, gauge housings) tints gray→salmon
+    // with the frame — not just the band.  Mapping mirrors the buildLayout bake (each baked value
+    // equals a $00CF-$00D6 base): color00/04←$D3, 01/05←$CF, 02/06←$D4, 03←$D1, 07←$D0, dash←$D2.
+    // Normal flight leaves the baked palette alone (those params hold their base values then); the
+    // baked constants are restored once when the cinematic ends (or on the next flight-entry force).
+    if (cine) {
+        flightCopper->setCockpitPalette(
+            atariToOCS(mem[0x00D3]), atariToOCS(mem[0x00CF]), atariToOCS(mem[0x00D4]), atariToOCS(mem[0x00D1]),
+            atariToOCS(mem[0x00D3]), atariToOCS(mem[0x00CF]), atariToOCS(mem[0x00D4]), atariToOCS(mem[0x00D0]));
+        flightCopper->setDashBg(atariToOCS(mem[0x00D2]));
+        flCinePrev = true;
+    } else if (flCinePrev || force) {
+        flightCopper->setCockpitPalette(
+            atariToOCS(0x00), atariToOCS(0x04), atariToOCS(0x06), atariToOCS(0x2C),
+            atariToOCS(0x00), atariToOCS(0x04), atariToOCS(0x06), atariToOCS(0x26));
+        flightCopper->setDashBg(atariToOCS(0x90));
+        flCinePrev = false;
     }
 }
 

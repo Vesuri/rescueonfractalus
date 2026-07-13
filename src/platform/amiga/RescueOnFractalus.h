@@ -169,6 +169,7 @@ private:
     uint16_t flTerr0 = 0xFFFF, flTerr1 = 0xFFFF;   // terrain pen0/pen1 (atmosphere ramp $00DC/$00DD)
     uint16_t flTerr2 = 0xFFFF, flTerr3 = 0xFFFF;   // terrain pen2/pen3 (atmosphere ramp $00DA/$00DB)
     uint16_t flBand3 = 0xFFFF;   // wing-band color03 = COLPF2 frame grey ($00D4); other pens inherit terrain
+    bool     flCinePrev = false; // death-cinematic salmon fade was active last frame (restore cockpit palette on exit)
 
     // Launch-cinematic fixed copper lists:
     //   DoorsCopperList (scene 4) — hangar doors parting, sliding 3-band geometry poked
