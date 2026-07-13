@@ -2092,16 +2092,28 @@ void RescueOnFractalus::updateFlightCopper(bool force)
         flightCopper->setHudSprite(4, *shotSpriteBack);
         flightCopper->setHudSprite(5, *energyIndicatorSprite);
         flightCopper->setHudSprite(6, *altimeterSprite);
-        flightCopper->setAltimeterColor(atariToOCS(mem[0x00D5]));
         // ch7 is multiplexed: the VIEWPORT half shows the Main-Window P3 object (ch7 top pointer,
         // SPR7PT via setHudSprite), the DASHBOARD half shows the altimeter-ship gauge (the
         // SPR7PT re-point at the cockpit WAIT, setDashboardSprite(7, ...)).
         flightCopper->setHudSprite(7, *viewportP3Sprite);
         flightCopper->setDashboardSprite(7, *altimeterShipSprite);
-        flightCopper->setAltimeterShipColor(atariToOCS(mem[0x00D6]));
         // Long Range Scanner guide dot (Atari M2) on ch2 (idle in the dashboard) via SPR2PT.
         flightCopper->setDashboardSprite(2, *scannerDotSprite);
     }
+
+    // HUD sprite colours sourced (on the Atari) from the cockpit DLI $4A78's display params —
+    // altimeter terrain P0 ← $00D5 (COLPM0), ship M3 ← $00D6 (COLPM3), AH ground P2 ← $00D0
+    // (COLPM2).  These are constant in normal flight, so poke-on-change costs nothing; but the
+    // death cinematic's $4FE0 ramps $00CF-$00D6 to salmon, so driving them live makes the gauges
+    // fade gray→salmon WITH the cockpit bitmap + canopy posts (matching the Atari — the DLI
+    // reloads COLPM from these shadows every frame).  (Energy P1 ← $00DE is OUTSIDE the ramp, so
+    // it correctly does not fade; the ship is empty at energy-out anyway.)
+    const uint16_t altimCol  = atariToOCS(mem[0x00D5]);
+    const uint16_t shipCol   = atariToOCS(mem[0x00D6]);
+    const uint16_t ahGround  = atariToOCS(mem[0x00D0]);
+    if (force || altimCol != flAltimCol)     { flightCopper->setAltimeterColor(altimCol);      flAltimCol = altimCol; }
+    if (force || shipCol  != flAltimShipCol) { flightCopper->setAltimeterShipColor(shipCol);   flAltimShipCol = shipCol; }
+    if (force || ahGround != flAHGround)     { flightCopper->setAHGroundColor(ahGround);       flAHGround = ahGround; }
     // (The wing-clearance centre plane symbol is part of the mode-D band bitmap — the value-2
     // $AA $AA centre marker decoded into the viewport rows — so it needs no separate sprite.)
 

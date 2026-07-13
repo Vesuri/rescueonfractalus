@@ -435,6 +435,11 @@ void FlightCopperList::setAltimeterShipColor(uint16_t c)
     data_[INDEX_SHIP_COL] = copperMove(kColor30, c);    // COLOR30 = sprite pair 6/7 pen 10 (ship bar)
 }
 
+void FlightCopperList::setAHGroundColor(uint16_t c)
+{
+    data_[INDEX_AH_COL] = copperMove(color17, c);       // COLOR17 (line-180 re-MOVE) = AH ground-fill (P2 ← $00D0)
+}
+
 void FlightCopperList::setCompassColor(uint16_t c)
 {
     data_[INDEX_COMPASS_COL] = copperMove(color01, c);

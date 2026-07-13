@@ -169,6 +169,10 @@ private:
     uint16_t flTerr0 = 0xFFFF, flTerr1 = 0xFFFF;   // terrain pen0/pen1 (atmosphere ramp $00DC/$00DD)
     uint16_t flTerr2 = 0xFFFF, flTerr3 = 0xFFFF;   // terrain pen2/pen3 (atmosphere ramp $00DA/$00DB)
     uint16_t flBand3 = 0xFFFF;   // wing-band color03 = COLPF2 frame grey ($00D4); other pens inherit terrain
+    // HUD sprite colours whose Atari DLI ($4A78) source is a $00CF-$00D6 display param that the death
+    // cinematic ($4FE0) ramps to salmon — poked on change so they fade with the cockpit (constant in
+    // normal flight → free): altimeter terrain P0 ← $00D5, ship M3 ← $00D6, AH ground P2 ← $00D0.
+    uint16_t flAltimCol = 0xFFFF, flAltimShipCol = 0xFFFF, flAHGround = 0xFFFF;
     bool     flCinePrev = false; // death-cinematic salmon fade was active last frame (restore cockpit palette on exit)
 
     // Launch-cinematic fixed copper lists:
