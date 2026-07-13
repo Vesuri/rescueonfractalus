@@ -482,6 +482,19 @@ SPINWAIT_HOOKS = {
     0x62EB: 'platform_tick_vbi(); platform_render_frame();',
     0x62F6: 'platform_tick_vbi(); platform_render_frame();',
     0x634A: 'platform_poll_events();',
+    # L_596d: cockpit_display's game-over / high-score wait — "LDA $00E5; BNE L_596d" spins
+    # while the game-over countdown $00E5 (set to 5 by the death teardown $4F76) is nonzero,
+    # played out under the $53CC in-game VBI while the game-over jingle runs.  On real HW ANTIC
+    # keeps showing screen RAM and the VBI decrements $00E5, so the LAST/HIGH SCORE + level
+    # digits (already written into $365B before this spin) are visible the whole time.  This
+    # spin had NO yield, so on the Amiga renderFrame never ran during it: the Title-screen value
+    # cells (marked dirty by the digit writers) were never decoded into titleScreenBitmap until
+    # the spin exited and standby resumed rendering -> the score/level appeared only once the
+    # standby music started (measured 2026-07-13, PC frozen at rof_gen.c:5693, g_renderFrameCount
+    # stuck, cellLo/Hi=57/119 unconsumed).  Drive one frame per iteration so the game-over screen
+    # renders (and decodeTitleCells consumes the dirty range) immediately; the VBI advance also
+    # keeps decrementing $00E5 so the spin still exits.
+    0x596D: 'platform_tick_vbi(); platform_render_frame();',
 }
 
 # Pre-instruction hook injection.

@@ -5686,7 +5686,7 @@ L_5969:;
     LDA(mem[0x00E5]);
     /* 596b */
     if (cpu.Z) { engine_sound_update(); return; }
-L_596d:;
+L_596d:; platform_tick_vbi(); platform_render_frame();
     /* 596d */
     LDA(mem[0x00E5]);
     /* 596f */
