@@ -36,7 +36,8 @@ static const uint16_t kColor29 = 0x1BA;   // sprite pair 6/7 pen 01 (starfield)
 // (WAIT + BPL1MOD + BPL2MOD) = 255 words (rows 1..kTerrainHeight-1; row 0's modulo
 // is INDEX_VP_MOD0).
 #define INDEX_PLAYFIELD       1                            // setPlayfield: 3
-#define INDEX_TITLE_PAL       (INDEX_PLAYFIELD + 3)        // 4:  color00..03 (4)
+#define INDEX_BPLCON2         (INDEX_PLAYFIELD + 3)        // BPLCON2 PFxP=1 (game GPRIOR=$14) (1)
+#define INDEX_TITLE_PAL       (INDEX_BPLCON2 + 1)          // color00..03 (4)
 #define INDEX_TITLE_BPL       (INDEX_TITLE_PAL + 4)        // 8:  title 2bp ptrs (4)
 #define INDEX_SPRITE_COL      (INDEX_TITLE_BPL + 4)        // 12: color16,color17 (2)
 #define INDEX_SPRITES         (INDEX_SPRITE_COL + 2)       // 14: 8 sprite ptrs (16)
@@ -93,6 +94,12 @@ void PlanetCopperList::buildLayout(const Bitmap& title, const Bitmap& terrain, c
     setPlayfield(INDEX_PLAYFIELD, kW, kH, kBP2, /*interleaved*/true,
                  /*hires*/false, /*interlace*/false, /*dualPlayfield*/false,
                  /*holdAndModify*/false, kCenterY);
+    // BPLCON2 = the game's GPRIOR=$14 priority (PF1P=PF2P=1): sprite pair 0 (canopy posts) in
+    // FRONT of the playfield, pairs 1-3 (the starfield sprites) BEHIND it — stars behind the
+    // planet body + cockpit.  Must be emitted explicitly: TunnelCopperList leaves BPLCON2 at
+    // PFxP=4 (all sprites in front) and the planet/stars scene follows it in the launch loop, so
+    // without this re-assert the star sprites inherit PFxP=4 and render in front of the planet.
+    d[INDEX_BPLCON2] = copperMove(bplcon2, (uint16_t)((1u << 3) | 1u));
     setTitlePalette(0, 0, 0);                  // seeded; caller refreshes
     showBitmap(INDEX_TITLE_BPL, title);        // 2bp interleaved = 4 ptr moves
 
