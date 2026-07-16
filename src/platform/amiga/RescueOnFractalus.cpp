@@ -1251,20 +1251,18 @@ void RescueOnFractalus::decodeBoostViewport()
             // the stars.  The reveal only reads the DL once the reverse ring is active ($008D!=0).
             base = (uint16_t)(0x2000u + row * 46);
         } else {
+            // Reverse tunnel: the $1000 ring field is decoded LINEARLY (row r -> $1000+r*46), the
+            // same mapping the forward tunnel (decodeTunnelRect) uses on the same field, so the
+            // symmetric rings form correctly.  The $3000 DL is consulted only as a per-row REVEAL
+            // FLAG (NOT a decode address — its rev-strand LMS are mirrored and would misform the
+            // tunnel): a row is revealed once emit_dl_coord_pairs has pointed it at $1xxx.  The
+            // emit converts rows 42->0 (fwd) + 57->85 (rev) from the centre outward but NEVER the
+            // centre 14 (43-56), whose DL stays the $2f74 leftover, so treat those as always
+            // revealed (the vanishing point).  Not-yet-revealed outer rows show $2000 (black).
             uint16_t lms = (uint16_t)(mem[0x300Au + row * 3] | (mem[0x300Bu + row * 3] << 8));
-            if (lms >= 0x1000u && lms < 0x2000u) {
-                base = lms;                                   // revealed rings row (live DL LMS)
-            } else if (row >= 43 && row <= 56) {
-                // Centre rows 43-56 are the tunnel's vanishing point; the reverse-ring emit loop
-                // converts rows 42->0 (fwd strand) and 57->85 (rev strand) but NEVER these 14, so
-                // their DL LMS stays the $2f74 leftover.  On the Atari they read the $1000 ring
-                // field (fully-revealed DL: row r -> field row r-1 = $1000+(r-1)*46), giving the
-                // continuous rings converging to centre; leaving them $2000 stars = the black
-                // full-width rectangle bug.
-                base = (uint16_t)(0x1000u + (row - 1) * 46);
-            } else {
-                base = (uint16_t)(0x2000u + row * 46);        // not-yet-revealed outer row (stars)
-            }
+            bool revealed = (lms >= 0x1000u && lms < 0x2000u) || (row >= 43 && row <= 56);
+            base = revealed ? (uint16_t)(0x1000u + row * 46)   // rings (linear, as forward tunnel)
+                            : (uint16_t)(0x2000u + row * 46);  // not-yet-revealed outer row (stars)
         }
         const uint8_t* src = (const uint8_t*)&mem[base + 4];   // +4: wide-field crop
         uint8_t* pp2 = p1 + 40; uint8_t* pp3 = p1 + 80;
@@ -1780,11 +1778,18 @@ void RescueOnFractalus::renderFrame()
     // (g_tunBandMode==0); thereafter the $52D7 VBI's draw_ring_frame_step draws each expanding
     // black clear frame into mem[$1000] and publishes the exact band it touched (g_tunBandMode==1
     // + the g_tun* bounds).  Decode only that band into tunnelBitmap — no shadow scan.
+    // ⚠ SKIP during the boost: decodeBoostViewport owns the tunnelBitmap there.  The boost's
+    // draw_frame_pattern_seq plots its ring field into $1000 and sets g_tunnelFieldDirty during
+    // the STARS sub-phase; if this forward-tunnel path decodes it, the $1000 rings (whose value-0
+    // exit-clear pixels are pen7 black) flash over the starfield on any frame where the boost
+    // branch's decodeBoostViewport doesn't re-overwrite it = the bowtie + black-stars-on-salmon.
     if (g_tunnelFieldDirty) {
-        tunnelSrcBase = 0x1000u;   // forward tunnel rings live in $1000 (boost may have left $2000)
-        if (g_tunBandMode) decodeTunnelBand();
-        else               decodeTunnelRect((int)g_tunRowLo, (int)g_tunRowHi, 0, 39);
-        g_tunnelFieldDirty = 0;
+        if (!rsBoostViewport) {
+            tunnelSrcBase = 0x1000u;   // forward tunnel rings live in $1000 (boost may have left $2000)
+            if (g_tunBandMode) decodeTunnelBand();
+            else               decodeTunnelRect((int)g_tunRowLo, (int)g_tunRowHi, 0, 39);
+        }
+        g_tunnelFieldDirty = 0;        // clear even in boost (decodeBoostViewport owns the bitmap)
     }
 #ifdef ROF_FLIGHT_PROBE
     extern volatile unsigned long g_rPerFrame, g_rRenderFn;
@@ -1902,11 +1907,21 @@ void RescueOnFractalus::renderFrame()
     // wins over the (mispositioned) Standby door copper the forward gates would otherwise select.
     if (rsBoostViewport && tunnelCopper) {
         if (!tunnelCopperInstalled) {
-            // First boost-viewport frame (transitioning from the flight ascent copper): the
-            // faithful display_setup writes the $2000 starfield ONE frame later, so the source
-            // field still holds the stale standby door-field ("LEVEL NN") content here and would
-            // decode as a garbage flash.  Clear the bitmap instead (→ pen0 = color00 = $0071, the
-            // salmon fade bg) and skip this frame's decode; f1 onward decodes the ready starfield.
+            // Defer the install until the star pens are seeded.  display_setup writes the star
+            // pens $08D4-$08D9 (=color_ring) ONE frame after the boost viewport becomes active,
+            // so on the very first boost frame they are still $00 (black) while the fade bg $0071
+            // is salmon.  Installing the copper here (with black color01-07) and then decoding the
+            // star pixels next frame paints BLACK stars over the salmon fade for a frame (the
+            // copper's colour writes lag the bitmap by one frame).  So while the pens are unseeded
+            // during the stars sub-phase, keep the previous (ascent) copper — which shows the same
+            // salmon fade — and install only once the pens are valid, with correct colours.
+            if (mem[0x008D] == 0u && mem[MEM_color_ring] == 0u)
+                return;   // pens not ready yet — hold the ascent copper one more frame
+            // First boost-viewport frame: the faithful display_setup writes the $2000 starfield
+            // ONE frame later, so the source field may still hold the stale standby door-field
+            // ("LEVEL NN") content and would decode as a garbage flash.  Clear the bitmap instead
+            // (→ pen0 = color00 = $0071, the salmon fade bg) and skip this frame's decode; the next
+            // frame decodes the ready starfield.
             uint8_t* bd = (uint8_t*)tunnelBitmap->data;
             for (int i = 0; i < 120 * (int)kTerrainHeight; i++) bd[i] = 0;
             updateTunnelCopper(true);
@@ -2396,7 +2411,7 @@ void RescueOnFractalus::updateTunnelCopper(bool force)
     // register $0071 (the salmon->black viewport fade).
     const uint16_t corner = (rsBoostViewport && mem[0x008D] == 0u) ? atariToOCS(mem[0x0071])
                                                                    : atariToOCS(mem[0x08D8]);
-    const uint16_t black  = atariToOCS(mem[0x02C0]);             // color07 = field value-0 (black)
+    const uint16_t black  = atariToOCS(mem[0x02C0]);            // color07 = field value-0 (black)
     uint16_t ring[6];
     bool ringChanged = (corner != tnCorner) || (black != tnPen0);
     for (int i = 0; i < 6; i++) {
