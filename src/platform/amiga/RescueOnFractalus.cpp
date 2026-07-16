@@ -1240,18 +1240,28 @@ void RescueOnFractalus::decodeBoostViewport()
 {
     if (!tunnelBitmap) return;
     const bool tunnel = (mem[0x008D] != 0u);   // reverse-ring active (0 = stars sub-phase)
+    // Reverse-tunnel reveal band.  The $1000 ring field is a FULL nested-rectangle tunnel; the
+    // reveal shows a CONTIGUOUS band of rows centred on the vanishing point (rows 42/43), growing
+    // symmetrically outward, decoded LINEARLY (row r -> $1000+r*46, as the forward tunnel).  A
+    // symmetric band around the centre is a clean small tunnel; the earlier bugs came from decoding
+    // an ASYMMETRIC set (the Amiga emit converts fwd rows 42->0 but rev rows 57->85, skipping the
+    // centre 43-56) — a lopsided slice reads as a bowtie/staircase.  Measured on the Atari (rv_8.6,
+    // 22 rows in: rows 32-53 revealed = symmetric around 42.5).  So derive the band from the FWD
+    // strand alone: K = the topmost DL row (0..42) that emit has pointed at $1xxx; reveal [K, 85-K]
+    // and black (stars) outside.  As the reverse ring runs, K falls 42->0 and the tunnel grows.
+    int K = 43;
+    if (tunnel) {
+        for (int row = 0; row <= 42; row++) {
+            uint16_t lms = (uint16_t)(mem[0x300Au + row * 3] | (mem[0x300Bu + row * 3] << 8));
+            if (lms >= 0x1000u && lms < 0x2000u) { K = row; break; }
+        }
+    }
     uint8_t* p1 = (uint8_t*)tunnelBitmap->data;
     for (int row = 0; row < (int)kTerrainHeight; row++) {
-        // Stars sub-phase ($008D==0): the whole viewport is the $2000 starfield.  Reverse tunnel
-        // ($008D!=0): the whole viewport is the $1000 ring field, decoded LINEARLY (row r ->
-        // base+r*46), the SAME mapping the forward tunnel (decodeTunnelRect) uses on the same
-        // field.  Do NOT mask by the $3000 DL reveal flags: the reverse-ring animation grows the
-        // $1000 field itself from the centre out (the Atari reveal is the field animating, exactly
-        // as the forward tunnel), so slicing a partial row-band out of the already-drawn full
-        // tunnel just shows a horizontal cross-section = the outer rings' top/bottom edges crossing
-        // the band = a bowtie/hourglass.  Decoding the full field every frame reproduces the clean
-        // growing tunnel (and never leaves the centre rows black).
-        const uint16_t base = (uint16_t)((tunnel ? 0x1000u : 0x2000u) + row * 46);
+        // Stars ($008D==0): whole viewport = $2000 starfield.  Tunnel: rings ($1000+row*46) inside
+        // the symmetric reveal band [K, 85-K], $2000 (black) outside it.
+        const bool rings = tunnel && row >= K && row <= 85 - K;
+        const uint16_t base = (uint16_t)((rings ? 0x1000u : 0x2000u) + row * 46);
         const uint8_t* src = (const uint8_t*)&mem[base + 4];   // +4: wide-field crop
         uint8_t* pp2 = p1 + 40; uint8_t* pp3 = p1 + 80;
         for (int b = 0; b < 40; b++) {
