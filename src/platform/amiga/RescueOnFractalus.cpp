@@ -1224,6 +1224,36 @@ void RescueOnFractalus::decodeTunnelRect(int rowLo, int rowHi, int byteLo, int b
     }
 }
 
+// decodeBoostViewport: the boost reverse-tunnel row-by-row REVEAL.  Each viewport row's
+// source is read from the live $3000 launch DL's per-row mode-F LMS word (maintained by the
+// faithful emit_dl_coord_pairs, which the reverse-ring loop calls once per VBI-paced step to
+// convert rows $2000→$1000 from the centre outward — verified on-Amiga: at draw_pattern_byte
+// $09 exactly rows 33-42 + 57-66 held $1xxx, everything else still the DL leftover $2f74).
+// So: a row whose LMS is in [$1000,$2000) has been converted → decode the rings straight from
+// that LMS (this also gives the rev strand's mirrored bottom-half addresses for free); every
+// other row is not yet revealed → decode stars from $2000+row*46 (NOT the raw $2f74 leftover,
+// which points one row past the stars field).  During the stars sub-phase ($008D==0) the DL is
+// all $2f74 so every row is stars — identical to the old whole-buffer $2000 decode.  This
+// reproduces the Atari's row-by-row reveal and removes the whole-buffer $008D snap (the bowtie
+// flash) at the stars→tunnel handoff.  Full-viewport decode/frame is fine for a brief cinematic.
+void RescueOnFractalus::decodeBoostViewport()
+{
+    if (!tunnelBitmap) return;
+    uint8_t* p1 = (uint8_t*)tunnelBitmap->data;
+    for (int row = 0; row < (int)kTerrainHeight; row++) {
+        uint16_t lms  = (uint16_t)(mem[0x300Au + row * 3] | (mem[0x300Bu + row * 3] << 8));
+        uint16_t base = (lms >= 0x1000u && lms < 0x2000u) ? lms                        // revealed rings row
+                                                          : (uint16_t)(0x2000u + row * 46);  // stars row
+        const uint8_t* src = (const uint8_t*)&mem[base + 4];   // +4: wide-field crop
+        uint8_t* pp2 = p1 + 40; uint8_t* pp3 = p1 + 80;
+        for (int b = 0; b < 40; b++) {
+            uint8_t s = src[b];
+            p1[b] = kGtia10P1[s]; pp2[b] = kGtia10P2[s]; pp3[b] = kGtia10P3[s];
+        }
+        p1 += 120;
+    }
+}
+
 // decodeTunnelBand: re-decode only the frame band draw_ring_frame_step just wrote — the
 // picture-frame between the previous outer rectangle (inner, before this step's expansion)
 // and the new outer rectangle.  The four g_tun* bound pairs come from draw_symmetric_span_loop's
@@ -1849,7 +1879,6 @@ void RescueOnFractalus::renderFrame()
     // of the starfield.  See docs/boost-cinematic-plan.md §1b.)  Placed before staticStandby so it
     // wins over the (mispositioned) Standby door copper the forward gates would otherwise select.
     if (rsBoostViewport && tunnelCopper) {
-        tunnelSrcBase = (mem[0x008D] == 0u) ? 0x2000u : 0x1000u;
         if (!tunnelCopperInstalled) {
             // First boost-viewport frame (transitioning from the flight ascent copper): the
             // faithful display_setup writes the $2000 starfield ONE frame later, so the source
@@ -1862,7 +1891,7 @@ void RescueOnFractalus::renderFrame()
             AmigaHardware::setCopperList(*tunnelCopper, false);
             tunnelCopperInstalled = true;
         } else {
-            decodeTunnelRect(0, (int)kTerrainHeight - 1, 0, 39);   // full viewport field → tunnelBitmap
+            decodeBoostViewport();   // per-row source from the live $3000 DL LMS (reveal)
             updateTunnelCopper(false);
         }
         standbyCopperInstalled = false; planetCopperInstalled = false;

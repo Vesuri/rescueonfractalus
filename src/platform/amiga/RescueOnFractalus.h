@@ -132,6 +132,7 @@ private:
     void decodeTitleCells(int cellLo, int cellHi);  // (re)decode Title Screen cells [lo..hi] (clears+ORs); targeted value updates
     uint16_t tunnelSrcBase = 0x1000;               // decodeTunnelRect source base: $1000 rings (forward tunnel + boost tunnel) / $2000 starfield (boost stars — the $3000 DL displays $2000 while $008D==0, then emit_dl_coord_pairs rewrites its LMS to $1000 for the reverse tunnel)
     void decodeTunnelRect(int rowLo, int rowHi, int byteLo, int byteHi);  // decode a tunnelSrcBase sub-rect -> tunnelBitmap (no shadow)
+    void decodeBoostViewport();                    // boost reverse-tunnel reveal: per-row source from the live $3000 DL LMS ($1xxx rings / $2000 stars)
     void decodeTunnelBand();                       // decode only the ring-clear frame band (outer\inner rect) from the g_tun* bounds
     void renderViewportModeD(uint16_t srcBase, int stride, int rows); // decode CHANGED mode-D bytes -> viewportBitmap (stars/planet: $1000/48/47)
     void renderFlightDirect();   // flight terrain: plot sky straight to bitplanes from $260E (replaces the convert)
