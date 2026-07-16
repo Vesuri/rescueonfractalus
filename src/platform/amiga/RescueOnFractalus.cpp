@@ -1242,28 +1242,16 @@ void RescueOnFractalus::decodeBoostViewport()
     const bool tunnel = (mem[0x008D] != 0u);   // reverse-ring active (0 = stars sub-phase)
     uint8_t* p1 = (uint8_t*)tunnelBitmap->data;
     for (int row = 0; row < (int)kTerrainHeight; row++) {
-        uint16_t base;
-        if (!tunnel) {
-            // Stars sub-phase: the whole viewport is the $2000 starfield.  Do NOT consult the
-            // $3000 DL here — draw_frame_pattern_seq plots the ring field into $1000 and briefly
-            // points DL rows at it during the stars setup, and stale $1xxx LMS also linger from a
-            // previous cycle's tunnel (the demo loop), which would flash as a bowtie of rings over
-            // the stars.  The reveal only reads the DL once the reverse ring is active ($008D!=0).
-            base = (uint16_t)(0x2000u + row * 46);
-        } else {
-            // Reverse tunnel: the $1000 ring field is decoded LINEARLY (row r -> $1000+r*46), the
-            // same mapping the forward tunnel (decodeTunnelRect) uses on the same field, so the
-            // symmetric rings form correctly.  The $3000 DL is consulted only as a per-row REVEAL
-            // FLAG (NOT a decode address — its rev-strand LMS are mirrored and would misform the
-            // tunnel): a row is revealed once emit_dl_coord_pairs has pointed it at $1xxx.  The
-            // emit converts rows 42->0 (fwd) + 57->85 (rev) from the centre outward but NEVER the
-            // centre 14 (43-56), whose DL stays the $2f74 leftover, so treat those as always
-            // revealed (the vanishing point).  Not-yet-revealed outer rows show $2000 (black).
-            uint16_t lms = (uint16_t)(mem[0x300Au + row * 3] | (mem[0x300Bu + row * 3] << 8));
-            bool revealed = (lms >= 0x1000u && lms < 0x2000u) || (row >= 43 && row <= 56);
-            base = revealed ? (uint16_t)(0x1000u + row * 46)   // rings (linear, as forward tunnel)
-                            : (uint16_t)(0x2000u + row * 46);  // not-yet-revealed outer row (stars)
-        }
+        // Stars sub-phase ($008D==0): the whole viewport is the $2000 starfield.  Reverse tunnel
+        // ($008D!=0): the whole viewport is the $1000 ring field, decoded LINEARLY (row r ->
+        // base+r*46), the SAME mapping the forward tunnel (decodeTunnelRect) uses on the same
+        // field.  Do NOT mask by the $3000 DL reveal flags: the reverse-ring animation grows the
+        // $1000 field itself from the centre out (the Atari reveal is the field animating, exactly
+        // as the forward tunnel), so slicing a partial row-band out of the already-drawn full
+        // tunnel just shows a horizontal cross-section = the outer rings' top/bottom edges crossing
+        // the band = a bowtie/hourglass.  Decoding the full field every frame reproduces the clean
+        // growing tunnel (and never leaves the centre rows black).
+        const uint16_t base = (uint16_t)((tunnel ? 0x1000u : 0x2000u) + row * 46);
         const uint8_t* src = (const uint8_t*)&mem[base + 4];   // +4: wide-field crop
         uint8_t* pp2 = p1 + 40; uint8_t* pp3 = p1 + 80;
         for (int b = 0; b < 40; b++) {
