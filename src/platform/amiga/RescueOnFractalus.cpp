@@ -1239,11 +1239,33 @@ void RescueOnFractalus::decodeTunnelRect(int rowLo, int rowHi, int byteLo, int b
 void RescueOnFractalus::decodeBoostViewport()
 {
     if (!tunnelBitmap) return;
+    const bool tunnel = (mem[0x008D] != 0u);   // reverse-ring active (0 = stars sub-phase)
     uint8_t* p1 = (uint8_t*)tunnelBitmap->data;
     for (int row = 0; row < (int)kTerrainHeight; row++) {
-        uint16_t lms  = (uint16_t)(mem[0x300Au + row * 3] | (mem[0x300Bu + row * 3] << 8));
-        uint16_t base = (lms >= 0x1000u && lms < 0x2000u) ? lms                        // revealed rings row
-                                                          : (uint16_t)(0x2000u + row * 46);  // stars row
+        uint16_t base;
+        if (!tunnel) {
+            // Stars sub-phase: the whole viewport is the $2000 starfield.  Do NOT consult the
+            // $3000 DL here — draw_frame_pattern_seq plots the ring field into $1000 and briefly
+            // points DL rows at it during the stars setup, and stale $1xxx LMS also linger from a
+            // previous cycle's tunnel (the demo loop), which would flash as a bowtie of rings over
+            // the stars.  The reveal only reads the DL once the reverse ring is active ($008D!=0).
+            base = (uint16_t)(0x2000u + row * 46);
+        } else {
+            uint16_t lms = (uint16_t)(mem[0x300Au + row * 3] | (mem[0x300Bu + row * 3] << 8));
+            if (lms >= 0x1000u && lms < 0x2000u) {
+                base = lms;                                   // revealed rings row (live DL LMS)
+            } else if (row >= 43 && row <= 56) {
+                // Centre rows 43-56 are the tunnel's vanishing point; the reverse-ring emit loop
+                // converts rows 42->0 (fwd strand) and 57->85 (rev strand) but NEVER these 14, so
+                // their DL LMS stays the $2f74 leftover.  On the Atari they read the $1000 ring
+                // field (fully-revealed DL: row r -> field row r-1 = $1000+(r-1)*46), giving the
+                // continuous rings converging to centre; leaving them $2000 stars = the black
+                // full-width rectangle bug.
+                base = (uint16_t)(0x1000u + (row - 1) * 46);
+            } else {
+                base = (uint16_t)(0x2000u + row * 46);        // not-yet-revealed outer row (stars)
+            }
+        }
         const uint8_t* src = (const uint8_t*)&mem[base + 4];   // +4: wide-field crop
         uint8_t* pp2 = p1 + 40; uint8_t* pp3 = p1 + 80;
         for (int b = 0; b < 40; b++) {
@@ -2348,11 +2370,14 @@ void RescueOnFractalus::updateTunnelCopper(bool force)
     // green recedes as the buffer clears).  doors_mid/descent show this band only at g2>=half,
     // i.e. the Tunnel list (Doors keeps the band green).
     if (rsBoostViewport) {
-        // Boost reverse cinematic: no green->purple corner wedge.  The whole windscreen-band
-        // corner tracks the fade register $0071 (= the viewport bg), so the corners fade
-        // salmon->black in step with the body (measured T0: band COLBK <- $0071).  greenLine=0
-        // flips color00 across the entire band to the fade colour.
-        tunnelCopper->setBandReveal(0, atariToOCS(mem[0x0071]));
+        // Boost reverse cinematic: no green->purple corner wedge; the whole band corner = color00.
+        //   STARS ($008D==0): color00 tracks the fade register $0071, so the corners fade
+        //     salmon->black in step with the viewport body (measured T0: band COLBK <- $0071).
+        //   TUNNEL ($008D!=0): color00 = the ring corner $08D8 (as the forward tunnel), so the
+        //     outermost ring colour flows straight into the band triangle (measured: $0071=$C0 !=
+        //     $08D8=$94 during the reverse ring, so tracking $0071 leaves the triangle mismatched).
+        const uint16_t bandCol = (mem[0x008D] == 0u) ? atariToOCS(mem[0x0071]) : atariToOCS(mem[0x08D8]);
+        tunnelCopper->setBandReveal(0, bandCol);
     } else {
         uint16_t greenLine = 8;                                   // first still-green band scanline
         for (uint16_t i = 0; i < 8; i++) { if (mem[0x0C88 + i]) { greenLine = i; break; } }
@@ -2365,8 +2390,12 @@ void RescueOnFractalus::updateTunnelCopper(bool force)
     // viewport bg (starfield + reverse-ring COLBK) = the fade register $0071 (measured T0);
     // advance_history_6a4d copies $08D8->$0071 each tunnel rotation, so $0071 is correct for
     // both the star fade and the reverse-ring tunnel.  color07 = field value-0 (remapped to pen7).
-    const uint16_t corner = rsBoostViewport ? atariToOCS(mem[0x0071])   // boost: viewport bg = fade reg
-                                            : atariToOCS(mem[0x08D8]);   // forward: corner-reveal purple
+    // color00 = viewport bg (GTIA value-8 = the outermost ring / body).  Forward tunnel + boost
+    // TUNNEL: the ring corner $08D8 (so the outer ring flows into the band triangle; boost tunnel
+    // measured $0071 != $08D8, so it must use $08D8 too, not the fade reg).  Boost STARS: the fade
+    // register $0071 (the salmon->black viewport fade).
+    const uint16_t corner = (rsBoostViewport && mem[0x008D] == 0u) ? atariToOCS(mem[0x0071])
+                                                                   : atariToOCS(mem[0x08D8]);
     const uint16_t black  = atariToOCS(mem[0x02C0]);             // color07 = field value-0 (black)
     uint16_t ring[6];
     bool ringChanged = (corner != tnCorner) || (black != tnPen0);
