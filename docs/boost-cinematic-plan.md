@@ -17,9 +17,16 @@ f824503):
    see the gradual reveal headlessly), so it was committed unverified. Confirm it grows cleanly from the
    centre (Atari-like) with no bowtie/stripes. Atari ground-truth PNGs were in $CLAUDE_JOB_DIR/tmp
    (rv_8.6_disp.png etc.) — regenerate via boost_savestate.sh T=8.6..9 from a800dumps/boost.a8s if gone.
-2. **Reverse-ring PERF** (T4): the boost decodes the full $1000 field every frame. Write the native
-   `step_accum_sub_7e $6A8F` twin + an Amiga g_tun* dirty-band publish (mirror `draw_ring_frame_step
-   $670D`) so the reveal can use the cheap incremental `decodeTunnelBand`. See §5.
+2. **Reverse-ring PERF** (T4): PARTIALLY DONE — the native `step_accum_sub_7e $6A8F` twin + the Amiga
+   `g_tun*` / `g_tunnelFieldDirty` dirty-band publish (mirroring `draw_ring_frame_step $670D`) are
+   committed (b7ea184; `make validate FN=step_accum_sub_7e` = 4000 cases, 0 mem mismatch). REMAINING:
+   wire `decodeBoostViewport` to CONSUME the publish (cheap incremental `decodeTunnelBand`) instead of
+   the full 86-row decode — deferred because it changes the tuned symmetric-centre reveal geometry
+   (f824503) and must be visual-frame-compared (A323/A400) alongside open item 1. See §5.
+   ⚠ Incidental build fix along the way (8f0b0ec): Apple clang 21 (arm64) dropped `__builtin_setjmp`,
+   which broke every host rebuild of `rof_native.c` (`game_main_loop`'s restart trampoline) — both
+   `make validate` and the SDL `make`. Fixed with a host-only ISO `<setjmp.h>` shim; Amiga path
+   unchanged.
 3. **T6 — standby handoff** (= "bug 6": after the tunnel the viewport shows a black-top + green-doors
    "04" bottom, then the top re-renders with "LEVEL"). Port `clear_slot_0c87_0d87 $6A27` behaviour /
    fix the reverse-tunnel→standby copper switch. See §4 T6.
