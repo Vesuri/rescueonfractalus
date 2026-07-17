@@ -31,6 +31,22 @@
 #define HW_WRITE(addr, val) bus_write((addr), (val))
 #endif
 
+/* game_main_loop's restart trampoline (see the RESTART TRAMPOLINE note below) needs setjmp/
+ * longjmp.  The Amiga m68k-gcc toolchain provides __builtin_setjmp; Apple clang 21 (arm64)
+ * dropped it ("not supported for the current target"), which breaks every host rebuild of this
+ * file, so the host validate/SDL builds use ISO <setjmp.h> instead — identical restart
+ * semantics.  The Amiga path is unchanged (still __builtin, byte-for-byte). */
+#ifdef ROF_PLATFORM_AMIGA
+typedef void *rof_jmp_buf[5];
+#define ROF_SETJMP(b)     __builtin_setjmp(b)
+#define ROF_LONGJMP(b, v) __builtin_longjmp((b), (v))
+#else
+#include <setjmp.h>
+typedef jmp_buf rof_jmp_buf;
+#define ROF_SETJMP(b)     setjmp(b)
+#define ROF_LONGJMP(b, v) longjmp((b), (v))
+#endif
+
 /* Optional flight/init timing probes (Amiga autoflight only; -DROF_FLIGHT_PROBE, i.e.
  * `make PROBES=1`).  Accumulate sub-frame timings of game_main_loop's flight init + the
  * per-frame phase split into the g_* globals (defined in PlatformAmiga.cpp, read from the
@@ -9230,11 +9246,11 @@ L_63a7:
  * consumes no leaf exit register, so wrapping it is safe. */
 static void game_main_loop_body(void);
 void game_main_loop(void) {
-    static void* s_gmlJmp[5];
+    static rof_jmp_buf s_gmlJmp;
     static int   s_gmlActive = 0;
-    if (s_gmlActive) __builtin_longjmp(s_gmlJmp, 1);   /* re-entry (restart): unwind to the base anchor */
+    if (s_gmlActive) ROF_LONGJMP(s_gmlJmp, 1);         /* re-entry (restart): unwind to the base anchor */
     s_gmlActive = 1;
-    __builtin_setjmp(s_gmlJmp);                        /* restarts resume here with a fresh body frame */
+    (void)ROF_SETJMP(s_gmlJmp);                        /* restarts resume here with a fresh body frame */
     game_main_loop_body();
     s_gmlActive = 0;                                   /* body returned (it never should) — re-arm cleanly */
 }
