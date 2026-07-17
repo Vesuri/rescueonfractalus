@@ -1,4 +1,48 @@
-# BOOSTERS "return to mother ship" reverse cinematic — port plan (next session)
+# BOOSTERS "return to mother ship" reverse cinematic — port plan
+
+## 0. STATUS 2026-07-17 — START HERE (boost render is essentially DONE; a few polish items remain)
+
+The whole boost cinematic (ascent → stars → reverse tunnel → standby) renders and is committed+pushed.
+All the render bugs found this cycle are FIXED (commits 792e6d0, c347749, 6abc6cd, 53f4d86, 45f02c7,
+f824503):
+- forward stars-behind-planet sprite priority (PlanetCopperList BPLCON2 PFxP=1);
+- boost stars black-on-salmon + bowtie (defer the copper install until the star pens $08D4-9 seed —
+  they're $00 for one frame; and skip the forward-tunnel g_tunnelFieldDirty $1000 decode during boost);
+- tunnel black-middle + outer-ring→band-triangle colour (ring corner $08D8 during the tunnel);
+- tunnel reveal shape: reveal a SYMMETRIC centre band [K, 85-K] (K = topmost fwd DL row 0..42 emit
+  pointed at $1xxx) decoded linearly, growing from the centre (f824503).
+
+**OPEN / next-session items (pick by priority — NOT necessarily T6 first):**
+1. **VERIFY the reveal (f824503) in real play** — FORCE_RETURN converts the DL by $008E=3 (too fast to
+   see the gradual reveal headlessly), so it was committed unverified. Confirm it grows cleanly from the
+   centre (Atari-like) with no bowtie/stripes. Atari ground-truth PNGs were in $CLAUDE_JOB_DIR/tmp
+   (rv_8.6_disp.png etc.) — regenerate via boost_savestate.sh T=8.6..9 from a800dumps/boost.a8s if gone.
+2. **Reverse-ring PERF** (T4): the boost decodes the full $1000 field every frame. Write the native
+   `step_accum_sub_7e $6A8F` twin + an Amiga g_tun* dirty-band publish (mirror `draw_ring_frame_step
+   $670D`) so the reveal can use the cheap incremental `decodeTunnelBand`. See §5.
+3. **T6 — standby handoff** (= "bug 6": after the tunnel the viewport shows a black-top + green-doors
+   "04" bottom, then the top re-renders with "LEVEL"). Port `clear_slot_0c87_0d87 $6A27` behaviour /
+   fix the reverse-tunnel→standby copper switch. See §4 T6.
+4. Verify the pink-vs-teal tunnel ring cycle looks right.
+
+**Durable lessons from this cycle (don't relearn):**
+- **Copper colour latency:** a copper's colour MOVEs must already hold the right values BEFORE cop1lc
+  points at it — a colour write the same frame the bitmap is decoded shows the OLD colour that frame
+  (writes lag the bitmap by one frame). If a palette source is seeded a frame late by the faithful game
+  code (e.g. $08D4-9), DEFER installing/showing content until it's valid. (Same 1-frame rule as bitplane
+  pointer swaps — CLAUDE.md.)
+- **The boost tunnel is the SAME animating $1000 field as the forward tunnel** — decode it linearly
+  (row r → $1000+r*46, as decodeTunnelRect). Do NOT decode from the $3000 DL LMS as an address (its
+  rev-strand addresses are mirrored/misform it); the DL is only a per-row REVEAL FLAG.
+- **The reveal is a SYMMETRIC centre-out row band**, not the field growing and not a linear slice. A
+  lopsided/linear slice of a nested-rectangle tunnel reads as a bowtie/staircase. Derive the band from
+  the FWD strand only (rows 0-42); the Amiga rev strand converts 57-85 (not 43-, unlike the Atari) so it
+  can't be used directly. Measured Atari: rv_8.6 (22 rows in) = rows 32-53.
+- The probe infra (transpile.py $3C75 VCOUNT hook, PlatformAmiga.cpp FORCE_RETURN, amiga/Makefile
+  FORCE_RETURN, the regenerated rof_gen.c) is intentionally UNCOMMITTED (working tree). `make gen`
+  preserves the rof_gen.c hook. Build headless probes with `make clean && make -j4 PROBES=1 FORCE_RETURN=1`.
+
+--------------------------------------------------------------------------------
 
 Status 2026-07-13: the phase ROUTING is committed (e9043d4) but the RENDER is a broken mess.
 User verdict: "not nearly good enough." Root theme (user's diagnosis, now confirmed by a 3-agent
