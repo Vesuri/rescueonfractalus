@@ -9048,7 +9048,8 @@ L_6a44:;
 }
 
 /* step_accum_sub_7e @ $6A8F: Subtracts $7E via sub_multibyte_a1, result->$00A4; if changed & <$14 use as idx into $6E0F->$0096 then draw_symmetric_span_loop; sets $008D, INC $008E, advance_history_6a4d */
-void step_accum_sub_7e(void) {
+/* faithful transliteration kept as the validation oracle; native step_accum_sub_7e() lives in rof_native.c (see VALIDATE_FUNCS) */
+void step_accum_sub_7e__t6502(void) {
     /* 6a8f */
     LDA(0x7E);
     /* 6a91 */

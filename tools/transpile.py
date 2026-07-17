@@ -372,6 +372,7 @@ VALIDATE_FUNCS = {
     0x6A4D,  # advance_history_6a4d — rotate the 6-byte colour ring $08D4-$08D9 + $0685 bump
     0x670D,  # draw_ring_frame_step — one tunnel-ring frame-clear step (draw_symmetric_span_loop)
     0x6A38,  # step_accum_add_75 — add $75, gate the ring step + ring rotate
+    0x6A8F,  # step_accum_sub_7e — reverse ring step: sub $7E, draw_symmetric_span_loop + g_tun* publish
     0x69A9,  # dl_lms_scroll_up — shift top-half DL LMS entries up one slot
     0x69C3,  # dl_lms_scroll_down — shift bottom-half DL LMS entries down one slot
     0x6973,  # dl_lms_push_top — push a fresh top-edge LMS row pointer (X-=3)

@@ -1269,6 +1269,47 @@ void step_accum_add_75(void) {
     advance_history_6a4d();
 }
 
+/* step_accum_sub_7e @ $6A8F — the BOOST reverse ring-step (the $008D branch of
+ * launch_anim_dispatch).  Subtract $7E from the scroll accumulator via sub_multibyte_a1;
+ * if the top byte is unchanged do nothing.  Otherwise store it, and when it is < $14 use it
+ * as an index into the ring-thickness table $6E0F -> $0096 and draw ONE reverse ring group
+ * via draw_symmetric_span_loop (it also latches $008D = the accumulator top byte).  Finally,
+ * while $008D is non-zero, INC $008E (the row-arm counter display_setup spins on) and rotate
+ * the colour ring via advance_history_6a4d (which copies $08D8 -> $0071 while $008D<0).
+ *
+ * Amiga: mirror draw_ring_frame_step's dirty-band publish around the span loop so the reverse
+ * ring uses the cheap decodeTunnelBand incremental decode at stride 46 instead of a full
+ * 86-row field scan (> 1 PAL frame on the 68000). */
+void step_accum_sub_7e(void) {
+    cpu.A = 0x7E;
+    sub_multibyte_a1();                                    /* $08DA=$7E; 24-bit sub; A=new top */
+    uint8_t a = cpu.A;
+    scroll_accum_b3 = a;                                   /* $00A4 */
+    if (a == scroll_accum_prev) return;                   /* CMP $00A5; BEQ -> return */
+    scroll_accum_prev = a;                                /* $00A5 = A */
+    if (a < 0x14) {                                        /* CMP #$14; BCC -> draw a ring group */
+        step_mode_flag = a;                               /* $008D = A (TAY; STA) */
+#ifdef ROF_PLATFORM_AMIGA
+        /* snapshot the rectangle BEFORE the span loop expands it (= this band's inner edge) */
+        uint8_t inTop = draw_row_bottom, inBot = draw_row_top;   /* $009F / $009E */
+        uint8_t inL   = draw_x_left,     inR   = draw_x_right;   /* $009C / $009D */
+#endif
+        span_row_count = mem[0x6E0F + a];                 /* $0096 = ring thickness */
+        draw_symmetric_span_loop();                       /* steps $9C--/$9D++/$9E++/$9F-- */
+#ifdef ROF_PLATFORM_AMIGA
+        g_tunRowLo = draw_row_bottom; g_tunRowHi = draw_row_top; /* outer rows after  */
+        g_tunInRowLo = inTop; g_tunInRowHi = inBot;             /* inner rows before */
+        g_tunColLpx = draw_x_left; g_tunColRpx = draw_x_right;  /* outer cols after  */
+        g_tunInColLpx = inL;       g_tunInColRpx = inR;         /* inner cols before */
+        g_tunBandMode = 1;
+        g_tunnelFieldDirty = 1;
+#endif
+    }
+    if (step_mode_flag == 0) return;                      /* LDA $008D; BEQ -> return */
+    mem[0x008E]++;                                        /* INC $008E */
+    advance_history_6a4d();
+}
+
 /* draw_vline_pair @ $6C4D — plot a symmetric pair of vertical lines.  Entry A is the
  * start row, $00B8 the end row; the loop walks A down to $00B8 ($0092 = row counter).
  * Per row: set the row pointer; the plot column is col = (entryX>>1)+2 and its mirror

@@ -2214,6 +2214,30 @@ static int test_step_accum_add_75(void) {
     printf("step_accum_add_75: %d cases, %d mem mismatch (must be 0), %d cpu diffs\n", N, mem_fail, cpu_diff);
     return mem_fail;
 }
+/* step_accum_sub_7e (the BOOST reverse ring-step) has the same reachability as
+ * step_accum_add_75 — it can reach draw_symmetric_span_loop (via $6E0F[a] when the sub result
+ * top byte a < $14) and advance_history_6a4d -> reorder_sprite_slot on the validation build — so
+ * it uses the identical seeding + SFX/stack mask.  The draw index here is the accumulator top
+ * byte (not $00A0); fill_random's random $00A1..$00A5 exercise both the <$14 draw and the
+ * unchanged-top early-out. */
+static int test_step_accum_sub_7e(void) {
+    if (!want("step_accum_sub_7e")) return 0;
+    enum { N = 4000 };
+    static uint8_t pre[65536];
+    static uint16_t mask[272];
+    int mem_fail = 0, cpu_diff = 0, printed = 0;
+    set_ignore(mask, build_sfx_mask(mask));               /* reorder_sprite_slot: mask stack + POKEY */
+    for (int t = 0; t < N; t++) {
+        fill_random(pre);
+        seed_ring_draw_fixture(pre);                      /* draw_symmetric_span_loop path */
+        seed_reorder_sprite_slot(pre);                    /* advance_history_6a4d tail */
+        mem_fail += diff_run("step_accum_sub_7e", pre, zero_cpu(),
+                             step_accum_sub_7e, step_accum_sub_7e__t6502, t, &printed, &cpu_diff);
+    }
+    set_ignore(0, 0);
+    printf("step_accum_sub_7e: %d cases, %d mem mismatch (must be 0), %d cpu diffs\n", N, mem_fail, cpu_diff);
+    return mem_fail;
+}
 static int test_advance_history_6a4d(void) {
     if (!want("advance_history_6a4d")) return 0;
     enum { N = 20000 };
@@ -2539,6 +2563,7 @@ int main(int argc, char **argv) {
     fails += test_advance_history_6a4d();
     fails += test_draw_ring_frame_step();
     fails += test_step_accum_add_75();
+    fails += test_step_accum_sub_7e();
     fails += test_mem_contract("dl_lms_scroll_up", dl_lms_scroll_up, dl_lms_scroll_up__t6502);
     fails += test_mem_contract("dl_lms_scroll_down", dl_lms_scroll_down, dl_lms_scroll_down__t6502);
     fails += test_mem_contract_regs("dl_lms_push_top", dl_lms_push_top, dl_lms_push_top__t6502);
