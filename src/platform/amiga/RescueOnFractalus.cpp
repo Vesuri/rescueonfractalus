@@ -307,6 +307,12 @@ extern "C" volatile unsigned long g_edgeCalls = 0, g_edgeMismatch = 0, g_edgeAsm
 static uint8_t kGtia10P1[256];   // nibble bit0
 static uint8_t kGtia10P2[256];   // nibble bit1
 static uint8_t kGtia10P3[256];   // nibble bit2
+// BOOST reverse-tunnel variant of the GTIA-10 LUT (decodeBoostViewport only): value-2 (outermost
+// ring) -> pen0/color00, value-8 (background) -> pen2/color02.  See the constructor build + the
+// updateTunnelCopper boost palette branch.  Kept separate so the FORWARD tunnel LUT is untouched.
+static uint8_t kGtia10BoostP1[256];
+static uint8_t kGtia10BoostP2[256];
+static uint8_t kGtia10BoostP3[256];
 //   Standby door field at $2000: like GTIA-10 but each nibble is first mapped through
 //   kNibbleColour (collapsing the 16 GTIA registers to pens 0/1/3) — so this is a
 //   distinct table.  kDoorP1[s]=plane1 byte, kDoorP2[s]=plane2 byte (plane3 always 0).
@@ -1137,18 +1143,24 @@ void RescueOnFractalus::initialize()
         }
         kBandP1[s] = bp1; kBandP2[s] = bp2; kBandP3[s] = bp3;
         uint8_t ph = (uint8_t)((s >> 4) & 0xF), pl = (uint8_t)(s & 0xF);   // GTIA-10
-        // Tunnel rings: remap pixel value 0 -> pen 7.  value-0 is the exit-clear black
-        // (draw_ring_frame_step floods the field with value-0 as the tunnel clears from the
-        // middle out); it is never a ring colour.  Routing it to the spare register color07
-        // (=black) frees color00 to carry the windscreen-band corner colour (purple mem[$08D8])
-        // straight from the viewport into the band with NO line-172 poke, and keeps color00
-        // (corner) independent of the field's black so the exit clear still renders black.
-        // Use gh/gl for the GTIA split so kDoorP below still sees the ORIGINAL ph/pl.
-        // (kGtia10P* is used only by decodeTunnelRect, so this is tunnel-scoped.)
+        // FORWARD tunnel (kGtia10P*, decodeTunnelRect) — the long-working mapping, UNCHANGED:
+        // value-0 (exit-clear) -> spare pen7 (color07=black); value-8 (background/corner) -> pen0
+        // (color00 = the tunnel corner $08D8, carried into the band); others straight through.
+        // Use gh/gl so kDoorP below still sees the ORIGINAL ph/pl.
         uint8_t gh = ph ? ph : 7, gl = pl ? pl : 7;
         kGtia10P1[s] = (uint8_t)(((gh & 1) ? 0xF0u : 0u) | ((gl & 1) ? 0x0Fu : 0u));
         kGtia10P2[s] = (uint8_t)(((gh & 2) ? 0xF0u : 0u) | ((gl & 2) ? 0x0Fu : 0u));
         kGtia10P3[s] = (uint8_t)(((gh & 4) ? 0xF0u : 0u) | ((gl & 4) ? 0x0Fu : 0u));
+        // BOOST reverse tunnel (kGtia10BoostP*, decodeBoostViewport only) — additionally move value-2
+        // (the outermost ring, COLPM2) -> pen0 (color00) so the ring is DRAWN in the same register as
+        // the windscreen-band corner triangle (mode-D value-0 -> color00), and value-8 (COLBK
+        // background: star field + unrevealed rows) -> the freed pen2 (color02) so the background keeps
+        // its own register and does not inherit the outermost-ring colour (which caused teal edges).
+        uint8_t bh = (ph == 0) ? 7 : (ph == 2) ? 0 : (ph == 8) ? 2 : ph;
+        uint8_t bl = (pl == 0) ? 7 : (pl == 2) ? 0 : (pl == 8) ? 2 : pl;
+        kGtia10BoostP1[s] = (uint8_t)(((bh & 1) ? 0xF0u : 0u) | ((bl & 1) ? 0x0Fu : 0u));
+        kGtia10BoostP2[s] = (uint8_t)(((bh & 2) ? 0xF0u : 0u) | ((bl & 2) ? 0x0Fu : 0u));
+        kGtia10BoostP3[s] = (uint8_t)(((bh & 4) ? 0xF0u : 0u) | ((bl & 4) ? 0x0Fu : 0u));
         // Standby door field: map each nibble through kNibbleColour first, then split
         // the resulting pen into plane1 (bit0) / plane2 (bit1) bytes.
         uint8_t ch = kNibbleColour[ph], cl = kNibbleColour[pl];
@@ -1259,14 +1271,14 @@ void RescueOnFractalus::decodeBoostViewport()
     uint8_t* p1 = (uint8_t*)tunnelBitmap->data;
     for (int row = 0; row < (int)kTerrainHeight; row++) {
         // Stars ($008D==0): whole viewport = $2000 starfield.  Tunnel: rings ($1000+row*46) inside
-        // the symmetric reveal band [K, 85-K], $2000 (black) outside it.
+        // the symmetric reveal band [K, 85-K]; the black space surround OUTSIDE it.
         const bool rings = tunnel && row >= K && row <= 85 - K;
         const uint16_t base = (uint16_t)((rings ? 0x1000u : 0x2000u) + row * 46);
         const uint8_t* src = (const uint8_t*)&mem[base + 4];   // +4: wide-field crop
         uint8_t* pp2 = p1 + 40; uint8_t* pp3 = p1 + 80;
         for (int b = 0; b < 40; b++) {
             uint8_t s = src[b];
-            p1[b] = kGtia10P1[s]; pp2[b] = kGtia10P2[s]; pp3[b] = kGtia10P3[s];
+            p1[b] = kGtia10BoostP1[s]; pp2[b] = kGtia10BoostP2[s]; pp3[b] = kGtia10BoostP3[s];  // boost LUT: value-2->color00, value-8->color02
         }
         p1 += 120;
     }
@@ -2374,54 +2386,58 @@ void RescueOnFractalus::updateTunnelCopper(bool force)
     if (force || postCol != tnPostCol) { tunnelCopper->setSpritePostColor(postCol); tnPostCol = postCol; }
     if (force || energyCol != tnEnergyCol)   { tunnelCopper->setEnergyIndicatorColor(energyCol);   tnEnergyCol = energyCol; }
     if (force || compassCol != tnCompassCol) { tunnelCopper->setCompassColor(compassCol); tnCompassCol = compassCol; }
-    // Windscreen-corner reveal.  The corner triangle is the quad-width canopy-post player
-    // ($0C88-$0C8F left), green (COLPM0/1 = mem[$0071]); the launch clears it top-down so the
-    // tunnel ($08D8 purple) shows through line-by-line.  We render it WITHOUT a per-band poke:
-    // color00 carries the tunnel purple from the viewport into the band (the ring field's
-    // value-0 was remapped to the spare pen7, freeing color00), and a single moving WAIT flips
-    // color00 to green from the boundary = the first still-set player scanline down (so the
-    // green recedes as the buffer clears).  doors_mid/descent show this band only at g2>=half,
-    // i.e. the Tunnel list (Doors keeps the band green).
+    // Windscreen-band corner + tunnel palette.  FORWARD and BOOST share the copper but use DIFFERENT
+    // GTIA->pen mappings (kGtia10P vs kGtia10BoostP), so their palette wiring differs.  Shared bits:
+    uint16_t ring[6];
+    for (int i = 0; i < 6; i++) ring[i] = atariToOCS(mem[MEM_color_ring + i]);
+    const uint16_t black = atariToOCS(mem[0x02C0]);          // color07 = value-0 (COLPM0), both paths
+
     if (rsBoostViewport) {
-        // Boost reverse cinematic: no green->purple corner wedge; the whole band corner = color00.
-        //   STARS ($008D==0): color00 tracks the fade register $0071, so the corners fade
-        //     salmon->black in step with the viewport body (measured T0: band COLBK <- $0071).
-        //   TUNNEL ($008D!=0): color00 = the ring corner $08D8 (as the forward tunnel), so the
-        //     outermost ring colour flows straight into the band triangle (measured: $0071=$C0 !=
-        //     $08D8=$94 during the reverse ring, so tracking $0071 leaves the triangle mismatched).
-        const uint16_t bandCol = (mem[0x008D] == 0u) ? atariToOCS(mem[0x0071]) : atariToOCS(mem[0x08D8]);
+        // BOOST reverse cinematic (kGtia10BoostP): value-2 (outermost ring) -> color00, value-8
+        // (background) -> color02.  So the band-corner triangle (mode-D value-0 -> color00) IS the
+        // outermost ring, and the star / unrevealed background keeps its own COLBK register.
+        //   color00 = the outermost ring $08D8 during the tunnel; the COLBK fade $0071 during stars.
+        const uint16_t col00 = (mem[0x008D] == 0u) ? atariToOCS(mem[0x0071]) : atariToOCS(mem[0x08D8]);
+        const uint16_t colBK = atariToOCS(mem[0x0071]);     // color02 = value-8 background (COLBK)
+        // The band triangle must stay BLACK until the OUTER tunnel rows are actually drawn (early in
+        // the expansion they're still the value-8 background = dark), then follow the ring.  Latch on
+        // $008D going negative (= outermost ring rendered); reset at the stars phase.
+        if (mem[0x008D] == 0u && mem[0x008E] == 0u) boostRingRevealed = false;
+        if ((int8_t)mem[0x008D] < 0)                boostRingRevealed = true;
+        uint16_t bandCol;
+        if (mem[0x008D] == 0u)      bandCol = atariToOCS(mem[0x0071]);  // stars: fade with body
+        else if (boostRingRevealed) bandCol = col00;                   // outermost drawn: follow ring
+        else                        bandCol = 0x000u;                  // expanding: black until drawn
         tunnelCopper->setBandReveal(0, bandCol);
+
+        bool changed = (col00 != tnCorner) || (black != tnPen0) || (colBK != tnColBK);
+        for (int i = 0; i < 6; i++) if (ring[i] != tnRing[i]) changed = true;
+        if (force || changed) {
+            // pen0=color00 (value-2 outermost ring); pen1/3=ring[3]/ring[5] (COLPM1/3); pen2=color02
+            // (value-8 COLBK); pen4/5/6=ring[0..2] (COLPF0/1/2); pen7=value-0 black.
+            tunnelCopper->setTunnelColors(col00, ring[3], colBK, ring[5], ring[0], ring[1], ring[2], black);
+            tnCorner = col00; tnPen0 = black; tnColBK = colBK;
+            for (int i = 0; i < 6; i++) tnRing[i] = ring[i];
+        }
     } else {
+        // FORWARD tunnel (kGtia10P) — the long-working mapping, UNCHANGED.  The corner triangle is the
+        // quad-width canopy-post player ($0C88-$0C8F), green (COLPM0/1 = mem[$0071]); the launch clears
+        // it top-down so the tunnel ($08D8) shows through.  Rendered WITHOUT a per-band poke: color00
+        // (value-8) carries the tunnel corner from the viewport into the band (value-0 -> spare pen7),
+        // and a moving WAIT flips color00 to green from the first still-set player scanline down.
         uint16_t greenLine = 8;                                   // first still-green band scanline
         for (uint16_t i = 0; i < 8; i++) { if (mem[0x0C88 + i]) { greenLine = i; break; } }
-        const uint16_t green = atariToOCS(mem[0x0071]);
-        tunnelCopper->setBandReveal(greenLine, green);
-    }
+        tunnelCopper->setBandReveal(greenLine, atariToOCS(mem[0x0071]));
 
-    // color00 = viewport background (GTIA value-8).  Forward tunnel: the band corner = tunnel
-    // purple mem[$08D8], carried into the band, tracking the ring cycle.  BOOST: the whole
-    // viewport bg (starfield + reverse-ring COLBK) = the fade register $0071 (measured T0);
-    // advance_history_6a4d copies $08D8->$0071 each tunnel rotation, so $0071 is correct for
-    // both the star fade and the reverse-ring tunnel.  color07 = field value-0 (remapped to pen7).
-    // color00 = viewport bg (GTIA value-8 = the outermost ring / body).  Forward tunnel + boost
-    // TUNNEL: the ring corner $08D8 (so the outer ring flows into the band triangle; boost tunnel
-    // measured $0071 != $08D8, so it must use $08D8 too, not the fade reg).  Boost STARS: the fade
-    // register $0071 (the salmon->black viewport fade).
-    const uint16_t corner = (rsBoostViewport && mem[0x008D] == 0u) ? atariToOCS(mem[0x0071])
-                                                                   : atariToOCS(mem[0x08D8]);
-    const uint16_t black  = atariToOCS(mem[0x02C0]);            // color07 = field value-0 (black)
-    uint16_t ring[6];
-    bool ringChanged = (corner != tnCorner) || (black != tnPen0);
-    for (int i = 0; i < 6; i++) {
-        ring[i] = atariToOCS(mem[MEM_color_ring + i]);
-        if (ring[i] != tnRing[i]) ringChanged = true;
-    }
-    if (force || ringChanged) {
-        // pen0/color00 = corner purple; pens 1-3 = ring[3..5] ($08D7-$08D9);
-        // pens 4-6 = ring[0..2] ($08D4-$08D6); pen7/color07 = field black.
-        tunnelCopper->setTunnelColors(corner, ring[3], ring[4], ring[5], ring[0], ring[1], ring[2], black);
-        tnCorner = corner; tnPen0 = black;
-        for (int i = 0; i < 6; i++) tnRing[i] = ring[i];
+        const uint16_t corner = atariToOCS(mem[0x08D8]);    // color00 = value-8 = the tunnel corner
+        bool ringChanged = (corner != tnCorner) || (black != tnPen0);
+        for (int i = 0; i < 6; i++) if (ring[i] != tnRing[i]) ringChanged = true;
+        if (force || ringChanged) {
+            // pen0/color00 = corner ($08D8); pens 1-3 = ring[3..5]; pens 4-6 = ring[0..2]; pen7 = black.
+            tunnelCopper->setTunnelColors(corner, ring[3], ring[4], ring[5], ring[0], ring[1], ring[2], black);
+            tnCorner = corner; tnPen0 = black;
+            for (int i = 0; i < 6; i++) tnRing[i] = ring[i];
+        }
     }
 }
 
