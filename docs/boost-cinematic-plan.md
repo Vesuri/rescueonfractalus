@@ -1,32 +1,42 @@
 # BOOSTERS "return to mother ship" reverse cinematic — port plan
 
-## 0. STATUS 2026-07-17 — START HERE (boost render is essentially DONE; a few polish items remain)
+## 0. STATUS 2026-07-18 — START HERE (boost render is essentially DONE; a few polish items remain)
 
 The whole boost cinematic (ascent → stars → reverse tunnel → standby) renders and is committed+pushed.
-All the render bugs found this cycle are FIXED (commits 792e6d0, c347749, 6abc6cd, 53f4d86, 45f02c7,
-f824503):
+Render bugs fixed through 2026-07-17 (commits 792e6d0, c347749, 6abc6cd, 53f4d86, 45f02c7, f824503):
 - forward stars-behind-planet sprite priority (PlanetCopperList BPLCON2 PFxP=1);
-- boost stars black-on-salmon + bowtie (defer the copper install until the star pens $08D4-9 seed —
-  they're $00 for one frame; and skip the forward-tunnel g_tunnelFieldDirty $1000 decode during boost);
-- tunnel black-middle + outer-ring→band-triangle colour (ring corner $08D8 during the tunnel);
-- tunnel reveal shape: reveal a SYMMETRIC centre band [K, 85-K] (K = topmost fwd DL row 0..42 emit
-  pointed at $1xxx) decoded linearly, growing from the centre (f824503).
+- boost stars black-on-salmon + bowtie (defer the copper install until the star pens $08D4-9 seed);
+- tunnel reveal shape: SYMMETRIC centre band [K, 85-K] decoded linearly, growing from the centre.
+
+**2026-07-18 session — DONE + user-verified (all pushed):**
+- **T4 native twin** `step_accum_sub_7e $6A8F` + the Amiga `g_tun*`/`g_tunnelFieldDirty` dirty-band
+  publish (b7ea184; `make validate FN=step_accum_sub_7e` = 4000 cases, 0 mem mismatch).
+- **Boost tunnel COLOURS re-derived from the 6502 DLIs (ground truth, not screenshots)** (31d9bd8):
+  the copper mirrors dli_sub_6cf1/6cd7 (GTIA mode-10) — see the colour model in the durable lessons
+  below. Fixes the teal edges / wrong clear. A **boost-only** GTIA→pen LUT (`kGtia10BoostP`) maps the
+  outermost ring (value-2) → color00 and the background (value-8) → color02, so the windscreen-band
+  corner triangle (mode-D value-0 → color00) is the SAME register as the outermost ring. Latch
+  `boostRingRevealed` ($008D<0) keeps the triangle black until the outer rows are drawn, then follows
+  the ring. FORWARD tunnel keeps its own `kGtia10P` LUT (value-8→color00), untouched — the paths
+  branch on `rsBoostViewport`.
+- **Band-triangle teal stripe** (8481ec0): the late band color00 flip landed ~16px into the band's
+  first line (the cockpit bitplane-pointer moves overrun (kCockpitLine-1,0xE0)). Fixed with an EARLY
+  band-top color00 copper slot (`INDEX_BANDTOP_COL00`, before the bitplane moves) + `disableBandReveal()`
+  no-op of the late slot. See the copper lesson below.
+- **setjmp host-build fix** (8f0b0ec): Apple clang 21 (arm64) dropped `__builtin_setjmp`, breaking every
+  host rebuild of `rof_native.c` (game_main_loop's restart trampoline) — both `make validate` and the
+  SDL `make`. Host-only ISO `<setjmp.h>` shim; Amiga path unchanged.
 
 **OPEN / next-session items (pick by priority — NOT necessarily T6 first):**
-1. **VERIFY the reveal (f824503) in real play** — FORCE_RETURN converts the DL by $008E=3 (too fast to
-   see the gradual reveal headlessly), so it was committed unverified. Confirm it grows cleanly from the
-   centre (Atari-like) with no bowtie/stripes. Atari ground-truth PNGs were in $CLAUDE_JOB_DIR/tmp
-   (rv_8.6_disp.png etc.) — regenerate via boost_savestate.sh T=8.6..9 from a800dumps/boost.a8s if gone.
-2. **Reverse-ring PERF** (T4): PARTIALLY DONE — the native `step_accum_sub_7e $6A8F` twin + the Amiga
-   `g_tun*` / `g_tunnelFieldDirty` dirty-band publish (mirroring `draw_ring_frame_step $670D`) are
-   committed (b7ea184; `make validate FN=step_accum_sub_7e` = 4000 cases, 0 mem mismatch). REMAINING:
-   wire `decodeBoostViewport` to CONSUME the publish (cheap incremental `decodeTunnelBand`) instead of
-   the full 86-row decode — deferred because it changes the tuned symmetric-centre reveal geometry
-   (f824503) and must be visual-frame-compared (A323/A400) alongside open item 1. See §5.
-   ⚠ Incidental build fix along the way (8f0b0ec): Apple clang 21 (arm64) dropped `__builtin_setjmp`,
-   which broke every host rebuild of `rof_native.c` (`game_main_loop`'s restart trampoline) — both
-   `make validate` and the SDL `make`. Fixed with a host-only ISO `<setjmp.h>` shim; Amiga path
-   unchanged.
+1. **VERIFY the reveal (f824f82) in real play** — FORCE_RETURN converts the DL by $008E=3 (too
+   fast to see the gradual reveal headlessly), so it was committed unverified. Confirm it grows cleanly
+   from the centre with no bowtie/stripes. Atari ground truth: `~/Pictures/Screenshots/rof_boost_frames_atari/`
+   (frame_0455/0500/0560 = tunnel) + $CLAUDE_JOB_DIR/tmp rv_8.6_disp.png (regenerate via boost_savestate.sh
+   T=8.6..9 from a800dumps/boost.a8s if gone).
+2. **Reverse-ring PERF decode-consume** (was T4): the twin + publish are DONE; REMAINING is to wire
+   `decodeBoostViewport` to CONSUME the `g_tun*` publish (cheap incremental `decodeTunnelBand`) instead
+   of the full 86-row decode — deferred because it changes the tuned reveal geometry and must be
+   visual-frame-compared alongside item 1. See §5.
 3. **T6 — standby handoff** (= "bug 6": after the tunnel the viewport shows a black-top + green-doors
    "04" bottom, then the top re-renders with "LEVEL"). Port `clear_slot_0c87_0d87 $6A27` behaviour /
    fix the reverse-tunnel→standby copper switch. See §4 T6.
@@ -48,6 +58,20 @@ f824503):
 - The probe infra (transpile.py $3C75 VCOUNT hook, PlatformAmiga.cpp FORCE_RETURN, amiga/Makefile
   FORCE_RETURN, the regenerated rof_gen.c) is intentionally UNCOMMITTED (working tree). `make gen`
   preserves the rof_gen.c hook. Build headless probes with `make clean && make -j4 PROBES=1 FORCE_RETURN=1`.
+- **DERIVE COLOURS FROM THE 6502 DLIs, NOT SCREENSHOTS** (user directive 2026-07-18). The faithful
+  boost tunnel colour model is just the launch DLI chain mirrored: GTIA mode-10 (PRIOR=$94), value→reg
+  = **0→COLPM0 $02C0 · 1/2/3→COLPM1/2/3 $08D7/$08D8/$08D9 · 4/5/6→COLPF0/1/2 $08D4/$08D5/$08D6 ·
+  8→COLBK $0071** (dli_sub_6cf1/6cd7 in rof_manual.c). The live $1000 field is value-2-dominant
+  (value-2 = the outermost ring/surround = COLPM2 = $08D8; there is NO value-8 in the tunnel body — so
+  color00 is free there). Mirror the regs live from mem[] each frame; the ring cycle (advance_history
+  rotating $08D4-9) then just works.
+- **Copper colour change at a region boundary must be emitted BEFORE that region's bitplane-pointer
+  moves.** The 6 cockpit BPLxPT moves after the (kCockpitLine-1,0xE0) WAIT overrun ~16px into the
+  band's first line, so a color00 flip placed AFTER them lands 16px late (a stripe). Fix = a dedicated
+  early copper slot right after the region WAIT, before the pointers (INDEX_BANDTOP_COL00). See the
+  amiga-copper-lessons memory. To make a shared copper MOVE a no-op, retarget it to color31 ($1be).
+- **Faithful twins that only need an Amiga tweak stay in rof_native.c under #ifdef ROF_PLATFORM_AMIGA**
+  (step_accum_sub_7e is the T4 example: pure mem[] twin + the g_tun* publish guarded). Not the .cpp.
 
 --------------------------------------------------------------------------------
 
