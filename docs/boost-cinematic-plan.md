@@ -1,6 +1,6 @@
 # BOOSTERS "return to mother ship" reverse cinematic — port plan
 
-## 0. STATUS 2026-07-18 — START HERE (boost render is essentially DONE; a few polish items remain)
+## 0. STATUS 2026-07-19 — START HERE (boost render DONE incl. T6 handoff; one perf item remains)
 
 The whole boost cinematic (ascent → stars → reverse tunnel → standby) renders and is committed+pushed.
 Render bugs fixed through 2026-07-17 (commits 792e6d0, c347749, 6abc6cd, 53f4d86, 45f02c7, f824503):
@@ -27,20 +27,32 @@ Render bugs fixed through 2026-07-17 (commits 792e6d0, c347749, 6abc6cd, 53f4d86
   host rebuild of `rof_native.c` (game_main_loop's restart trampoline) — both `make validate` and the
   SDL `make`. Host-only ISO `<setjmp.h>` shim; Amiga path unchanged.
 
-**OPEN / next-session items (pick by priority — NOT necessarily T6 first):**
-1. **VERIFY the reveal (f824f82) in real play** — FORCE_RETURN converts the DL by $008E=3 (too
-   fast to see the gradual reveal headlessly), so it was committed unverified. Confirm it grows cleanly
-   from the centre with no bowtie/stripes. Atari ground truth: `~/Pictures/Screenshots/rof_boost_frames_atari/`
-   (frame_0455/0500/0560 = tunnel) + $CLAUDE_JOB_DIR/tmp rv_8.6_disp.png (regenerate via boost_savestate.sh
-   T=8.6..9 from a800dumps/boost.a8s if gone).
+**2026-07-19 session — T6 reverse-tunnel→standby handoff DONE + user-verified (commits d8d7c18, 89a57f1):**
+- **T6 handoff hold (3 bugs, d8d7c18)** — when the reverse ring ends ($008D clears) rsBoostViewport goes
+  false but display_setup spends ~13 frames finishing the next-level door field before latching
+  g_doorFieldReady; in that window render() fell through to the forward doors/tunnel path.
+  (1) HOLD the last reverse-ring frame while `rsBoostReturn && !g_doorFieldReady` — staticStandby takes
+  over on the g_doorFieldReady 0→1 edge (kills the black-top/green-doors flash; measured exactly 13 hold
+  frames). (2) Gate the forward-tunnel decode on `rsBoostReturn` not `rsBoostViewport` — the still-ticking
+  reverse-ring VBI kept setting g_tunnelFieldDirty, re-decoding $1000 rings into the held tunnelBitmap
+  (rings reappeared over the dark-green field). (3) The Standby door decoder now stamps
+  `viewportLastBase=$2000` so the next renderViewportModeD($1000) full-clears — else a re-launch's planet
+  re-entered with the same $1000 base + viewportForceFull consumed, leaving stale LEVEL-NN text / band
+  remnants under the starfield. ⚠ the earlier `viewportForceFull=true` on the rsStars edge was WRONG — it
+  also caught a brief rsStars phase DURING the boost and cleared viewportBitmap mid-cinematic.
+- **Row-by-row band-triangle recede (89a57f1)** — the band corner triangle now transitions teal→dark-green
+  one row at a time (mirror of the forward doors→tunnel green→purple reveal), instead of snapping. The
+  recede runs inside the T6 hold: display_setup fills the wedge buffer $0C88-$0C8F with $FF top-down (one
+  row/frame); mirror it with band-top = dark-green ($0071=$C0) + `setBandReveal(k, teal=$08D8)` where k =
+  first still-empty wedge row (rows 0..k-1 green, k..7 teal, k growing 0→8). Measured on the Amiga.
+
+**OPEN / next-session items:**
+1. ✅ **VERIFIED (user-confirmed 2026-07-18)** — the reveal (f824f82) grows cleanly from the centre
+   in real play, and the pink-vs-teal tunnel ring cycle looks right.
 2. **Reverse-ring PERF decode-consume** (was T4): the twin + publish are DONE; REMAINING is to wire
    `decodeBoostViewport` to CONSUME the `g_tun*` publish (cheap incremental `decodeTunnelBand`) instead
-   of the full 86-row decode — deferred because it changes the tuned reveal geometry and must be
-   visual-frame-compared alongside item 1. See §5.
-3. **T6 — standby handoff** (= "bug 6": after the tunnel the viewport shows a black-top + green-doors
-   "04" bottom, then the top re-renders with "LEVEL"). Port `clear_slot_0c87_0d87 $6A27` behaviour /
-   fix the reverse-tunnel→standby copper switch. See §4 T6.
-4. Verify the pink-vs-teal tunnel ring cycle looks right.
+   of the full 86-row decode. See §5. **This is the only remaining boost item.**
+3. ✅ **T6 — standby handoff DONE (2026-07-19, above).**
 
 **Durable lessons from this cycle (don't relearn):**
 - **Copper colour latency:** a copper's colour MOVEs must already hold the right values BEFORE cop1lc
