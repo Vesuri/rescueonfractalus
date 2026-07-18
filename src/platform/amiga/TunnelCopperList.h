@@ -36,6 +36,16 @@ public:
     // the corner keeps color00's carried-in colour (tunnel purple); color00 flips to greenColor
     // from greenLine down.  color00 carries from the viewport, so there is NO band-top poke.
     void setBandReveal(uint16_t greenLine, uint16_t greenColor);
+    // Neutralise the (late) band color00 reveal slot — write color31 instead of color00, so the band
+    // inherits color00 from the viewport.  The boost uses this because it sets its band color00 at the
+    // band top (setBandTopColor00) instead; if the late slot ALSO wrote color00 the change would land
+    // ~16px into the band's first line (a teal stripe).
+    void disableBandReveal();
+    // Boost band-corner triangle color00, set at the band top BEFORE the cockpit bitplane-pointer
+    // moves (which overrun ~16px into the band's first line and made setBandReveal's late flip land
+    // as a stripe).  active=true -> color00=color; active=false -> no-op (color00 inherits the
+    // viewport register: the ring $08D8 once drawn, or the $0071 star fade).
+    void setBandTopColor00(bool active, uint16_t color);
     // Tunnel band colours: pen0 = color00 = the band corner (tunnel purple mem[$08D8], carried
     // into the band); pens 1-3 = ring[3..5] ($08D7-$08D9); pens 4-6 = ring[0..2] ($08D4-$08D6)
     // — the GTIA mode-10 pixel→ring +3 rotation the Atari tunnel DLI ($6CD7/$6CF1) applies;

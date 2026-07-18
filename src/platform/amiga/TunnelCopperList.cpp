@@ -41,7 +41,8 @@ static const uint16_t kBPLCON0_3P   = (uint16_t)((3 << PLNCNTSHFT) | USE_BPLCON3
 #define INDEX_TERRAIN_MOD     (INDEX_TERRAIN_BPLCON0 + 1) // bpl1mod,bpl2mod (2)
 #define INDEX_TERRAIN_PAL     (INDEX_TERRAIN_MOD + 2)  // color00..07 (8: corner-carry pen0 + ring pens 1-6 + spare pen7=black)
 #define INDEX_COCKPIT_WAIT    (INDEX_TERRAIN_PAL + 8)  // WAIT(kCockpitLine-1) (1)
-#define INDEX_COCKPIT_BPL     (INDEX_COCKPIT_WAIT + 1) // cockpit bitmap ptrs (3bp = 6)
+#define INDEX_BANDTOP_COL00   (INDEX_COCKPIT_WAIT + 1) // boost band-top color00, BEFORE the bitplane ptrs (1)
+#define INDEX_COCKPIT_BPL     (INDEX_BANDTOP_COL00 + 1)// cockpit bitmap ptrs (3bp = 6)
 #define INDEX_COCKPIT_BPLCON0 (INDEX_COCKPIT_BPL + 6)  // bplcon0 3P (1)
 #define INDEX_COCKPIT_MOD     (INDEX_COCKPIT_BPLCON0 + 1) // bpl1mod,bpl2mod (2)
 #define INDEX_COCKPIT_PAL     (INDEX_COCKPIT_MOD + 2)  // color01..07 (7; color00 carries in from the viewport)
@@ -124,6 +125,10 @@ void TunnelCopperList::buildLayout(const Bitmap& title, const Bitmap& tunnel, co
 
     // ---- cockpit region: WAIT, pointers, 3bp, modulo, constant palette ----
     d[INDEX_COCKPIT_WAIT] = copperWait(kCockpitLine - 1, 0xE0);
+    // Boost band-top color00, executed HERE (right after the WAIT, before the 6 bitplane-pointer
+    // moves that overrun ~16px into the band's first line).  Default = no-op (color00 carries in);
+    // setBandTopColor00() activates it for the boost expansion phase.
+    d[INDEX_BANDTOP_COL00] = copperMove(color31, 0);
     showBitmap(INDEX_COCKPIT_BPL, cockpit);    // 3bp interleaved = 6 ptr moves
     d[INDEX_COCKPIT_BPLCON0] = copperMove(bplcon0, kBPLCON0_3P);
     d[INDEX_COCKPIT_MOD]     = copperMove(bpl1mod, 80);
@@ -193,6 +198,16 @@ void TunnelCopperList::setBandReveal(uint16_t greenLine, uint16_t greenColor)
     if (greenLine > 8) greenLine = 8;
     data_[INDEX_BAND_GREEN_WAIT] = copperWait((uint16_t)(kCockpitLine + greenLine - 1), 0xE0);
     data_[INDEX_BAND_GREEN]      = copperMove(color00, greenColor);
+}
+
+void TunnelCopperList::disableBandReveal()
+{
+    data_[INDEX_BAND_GREEN] = copperMove(color31, 0);   // no-op: leave color00 = the viewport's
+}
+
+void TunnelCopperList::setBandTopColor00(bool active, uint16_t color)
+{
+    data_[INDEX_BANDTOP_COL00] = active ? copperMove(color00, color) : copperMove(color31, 0);
 }
 
 // pen0 = color00 = the windscreen-band corner colour (tunnel purple mem[$08D8]); it is unused

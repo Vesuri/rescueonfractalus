@@ -2404,11 +2404,14 @@ void RescueOnFractalus::updateTunnelCopper(bool force)
         // $008D going negative (= outermost ring rendered); reset at the stars phase.
         if (mem[0x008D] == 0u && mem[0x008E] == 0u) boostRingRevealed = false;
         if ((int8_t)mem[0x008D] < 0)                boostRingRevealed = true;
-        uint16_t bandCol;
-        if (mem[0x008D] == 0u)      bandCol = atariToOCS(mem[0x0071]);  // stars: fade with body
-        else if (boostRingRevealed) bandCol = col00;                   // outermost drawn: follow ring
-        else                        bandCol = 0x000u;                  // expanding: black until drawn
-        tunnelCopper->setBandReveal(0, bandCol);
+        // The band triangle needs its color00 set BLACK only during expansion; during stars (inherit
+        // the $0071 fade) and once the outermost ring is drawn (inherit the ring $08D8) it must NOT be
+        // re-touched — else the copper flip lands ~16px into the band's first line (teal stripe).  Do
+        // the black flip EARLY (band-top slot, before the cockpit bitplane overrun) and NO-OP the late
+        // slot; the no-touch phases no-op BOTH so color00 simply carries in from the viewport.
+        const bool bandBlack = (mem[0x008D] != 0u) && !boostRingRevealed;   // expanding only
+        tunnelCopper->setBandTopColor00(bandBlack, atariToOCS(0x00));
+        tunnelCopper->disableBandReveal();                                  // late slot unused by boost
 
         bool changed = (col00 != tnCorner) || (black != tnPen0) || (colBK != tnColBK);
         for (int i = 0; i < 6; i++) if (ring[i] != tnRing[i]) changed = true;
@@ -2425,6 +2428,7 @@ void RescueOnFractalus::updateTunnelCopper(bool force)
         // it top-down so the tunnel ($08D8) shows through.  Rendered WITHOUT a per-band poke: color00
         // (value-8) carries the tunnel corner from the viewport into the band (value-0 -> spare pen7),
         // and a moving WAIT flips color00 to green from the first still-set player scanline down.
+        tunnelCopper->setBandTopColor00(false, 0);               // no-op the boost band-top slot
         uint16_t greenLine = 8;                                   // first still-green band scanline
         for (uint16_t i = 0; i < 8; i++) { if (mem[0x0C88 + i]) { greenLine = i; break; } }
         tunnelCopper->setBandReveal(greenLine, atariToOCS(mem[0x0071]));
