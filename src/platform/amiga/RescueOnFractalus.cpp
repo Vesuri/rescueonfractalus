@@ -1974,6 +1974,21 @@ void RescueOnFractalus::renderFrame()
         { extern volatile unsigned char g_liveCopper; g_liveCopper = 8;
           extern volatile unsigned long g_boostHandoffHoldFrames; g_boostHandoffHoldFrames++; }
 #endif
+        // Row-by-row band-triangle recede (teal -> dark green) while the viewport stays frozen.
+        // display_setup fills the canopy-wedge buffer $0C88-$0C8F with $FF TOP-DOWN, one row per
+        // frame (rof_native.c ~8763-8767) — on the Atari the green quad-player corner triangle
+        // (COLPM0/1 = mem[$0071] = $C0 dark green) grows over the tunnel teal (the outermost-ring
+        // corner mem[$08D8]).  Mirror it: band top = the dark-green door colour, then flip color00
+        // to teal from the first STILL-EMPTY wedge row down (setBandReveal), so rows 0..k-1 read
+        // green and k..7 read teal, with k = filled-row count growing 0->8.  (Analogous to the
+        // FORWARD doors->tunnel green->purple reveal, just the opposite colour + fill direction.)
+        // Measured: $0C88 fills 00->ff top-down over the 8 hold frames; $0071 = $C0 throughout.
+        if (tunnelCopper && tunnelCopperInstalled) {
+            uint16_t k = 8;
+            for (uint16_t i = 0; i < 8; i++) if (mem[0x0C88 + i] == 0u) { k = i; break; }
+            tunnelCopper->setBandTopColor00(true, atariToOCS(mem[0x0071]));   // band top = dark green
+            tunnelCopper->setBandReveal(k, atariToOCS(mem[0x08D8]));          // teal from row k down
+        }
         return;
     }
 
