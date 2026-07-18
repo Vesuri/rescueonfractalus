@@ -135,8 +135,11 @@ extern "C" volatile unsigned long g_fCockpit, g_fCockpitScans;
 extern "C" volatile unsigned long g_ckFullTicks, g_ckFullCount;  // decodeCockpitFull one-shot timing
 extern "C" volatile unsigned short g_ckFullVbi[4] = {0,0,0,0};       // g_vbiCount at each ckFull call
 // Boost-return probe: last-installed copper id (1=title 2=standby 3=planet 4=flight 5=tunnel
-// 6=doors 7=empty) + the live boost signals, sampled per render() to confirm phase routing.
+// 6=doors 7=empty 8=boost-handoff-hold) + the live boost signals, sampled per render() to
+// confirm phase routing.  g_boostHandoffHoldFrames counts the T6 handoff-hold frames (proves
+// the reverse-tunnel->standby window exists and the guard catches it).
 extern "C" volatile unsigned char g_boostRet = 0, g_boostVp = 0, g_liveCopper = 0;
+extern "C" volatile unsigned long g_boostHandoffHoldFrames = 0;
 extern "C" volatile unsigned short g_starEntryVbi = 0;              // vbi at first rsStars viewport decode
 extern "C" volatile unsigned long  g_starEntryTicks = 0, g_starEntryIsr = 0; // its cost
 extern "C" volatile unsigned short g_starSprVbi = 0;
@@ -1793,8 +1796,13 @@ void RescueOnFractalus::renderFrame()
     // the STARS sub-phase; if this forward-tunnel path decodes it, the $1000 rings (whose value-0
     // exit-clear pixels are pen7 black) flash over the starfield on any frame where the boost
     // branch's decodeBoostViewport doesn't re-overwrite it = the bowtie + black-stars-on-salmon.
+    // Gate on rsBoostReturn (the WHOLE cinematic), NOT rsBoostViewport: during the T6 handoff hold
+    // rsBoostViewport is already false but the reverse-ring VBI is still ticking (it keeps setting
+    // g_tunnelFieldDirty until $008D fully clears), so a !rsBoostViewport gate would let this path
+    // re-decode the $1000 rings into the held tunnelBitmap with the FORWARD LUT — the rings briefly
+    // reappear over the dark-green cleared field just before the standby LEVEL-NN card (bug 1).
     if (g_tunnelFieldDirty) {
-        if (!rsBoostViewport) {
+        if (!rsBoostReturn) {
             tunnelSrcBase = 0x1000u;   // forward tunnel rings live in $1000 (boost may have left $2000)
             if (g_tunBandMode) decodeTunnelBand();
             else               decodeTunnelRect((int)g_tunRowLo, (int)g_tunRowHi, 0, 39);
@@ -1945,6 +1953,26 @@ void RescueOnFractalus::renderFrame()
         flightCopperInstalled = false; titleScreenCopperInstalled = false;
 #ifdef ROF_FLIGHT_PROBE
         { extern volatile unsigned char g_liveCopper; g_liveCopper = 5; }
+#endif
+        return;
+    }
+
+    // Boost handoff hold (T6).  When the reverse tunnel ends ($008D clears) rsBoostViewport
+    // goes false (its gate is $008D!=0 || $008E==0, and the VBI has bumped $008E by then), but
+    // display_setup then spends ~13 frames finishing the NEXT-level Standby door field: it
+    // rebuilds $2000 via fill_region_2000 + blit_message_block/blit_numeric_readout at L_6118,
+    // and only THEN latches g_doorFieldReady (rof_native.c ~8783).  In that window rsBoostViewport
+    // is false (so we've left the boost branch above) but g_doorFieldReady is still 0 (so
+    // staticStandby below can't fire yet) — so control would fall through to the forward-launch
+    // doors/tunnel fallthrough (~line 2046) and paint the stale/partial $2000 field for those
+    // frames (the "black-top + green-doors '04', then re-render as LEVEL NN" glitch, bug 6).
+    // Hold instead: keep whatever copper is live (the last reverse-ring frame) and skip re-decode
+    // until the door field is ready; staticStandby then takes over cleanly on the g_doorFieldReady
+    // 0->1 edge with the finished LEVEL-NN field.
+    if (rsBoostReturn && !g_doorFieldReady) {
+#ifdef ROF_FLIGHT_PROBE
+        { extern volatile unsigned char g_liveCopper; g_liveCopper = 8;
+          extern volatile unsigned long g_boostHandoffHoldFrames; g_boostHandoffHoldFrames++; }
 #endif
         return;
     }
@@ -2941,6 +2969,16 @@ void RescueOnFractalus::render()
             }
             vdest += 120;
         }
+        // The door field ($2000) shares viewportBitmap with the stars/planet renderer, but this
+        // decoder does NOT go through renderViewportModeD, so viewportLastBase still holds the
+        // previous stars base ($1000).  Stamp it to $2000 here so the NEXT renderViewportModeD
+        // ($1000, planet) sees a base mismatch -> full blitter-clear before decoding the stars.
+        // Without this, a re-launch (e.g. after the BOOSTERS return) re-enters the planet with the
+        // same $1000 base and viewportForceFull already consumed, so the clear is skipped and the
+        // door field's "LEVEL NN" text + band remnants bleed through the sparse starfield (bug 3;
+        // invisible on first boot only because chip RAM starts zeroed).  The clear lives inside
+        // renderViewportModeD (planet phase only) so it can never wipe the doors/tunnel bitmaps.
+        viewportLastBase = 0x2000u;
     }
 
     // ---- title region -------------------------------------------------------
