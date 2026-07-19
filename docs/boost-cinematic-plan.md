@@ -1,6 +1,6 @@
 # BOOSTERS "return to mother ship" reverse cinematic — port plan
 
-## 0. STATUS 2026-07-19 — START HERE (boost render DONE incl. T6 handoff; one perf item remains)
+## 0. STATUS 2026-07-20 — START HERE (boost render DONE incl. T6 handoff + 2nd launch; one perf item remains)
 
 The whole boost cinematic (ascent → stars → reverse tunnel → standby) renders and is committed+pushed.
 Render bugs fixed through 2026-07-17 (commits 792e6d0, c347749, 6abc6cd, 53f4d86, 45f02c7, f824503):
@@ -46,13 +46,43 @@ Render bugs fixed through 2026-07-17 (commits 792e6d0, c347749, 6abc6cd, 53f4d86
   row/frame); mirror it with band-top = dark-green ($0071=$C0) + `setBandReveal(k, teal=$08D8)` where k =
   first still-empty wedge row (rows 0..k-1 green, k..7 teal, k growing 0→8). Measured on the Amiga.
 
+**2026-07-20 session — 2nd-launch forward tunnel DONE + user-verified (commit 8339175):**
+- **Defer the forward-tunnel pre-build decode past the boost handoff (8339175)** — SUPERSEDES d8d7c18's
+  bug-1 gate. The forward tunnel's ONE-SHOT full-field pre-build decode (`tunnel_prebuild_rings` →
+  `platform_tunnel_rings_drawn` → mode 0, rows 0-85, rof_native.c ~8780) fires AT the boost handoff edge,
+  where the boost's tunnel copper is still the live display. That single decode was BOTH failure modes:
+  run there → rings flash over the LEVEL-NN card (bug 1); skipped+dropped → the next forward launch's
+  doors open onto a stale tunnelBitmap (salmon/cycling, no rings — only mode-1 band strips decode during
+  the descent, never the body). Neither `rsBoostReturn` nor `g_doorFieldReady` can gate it ($003A=$FF
+  persists into the next level; g_doorFieldReady=1 at BOTH the edge and the 2nd-launch tunnel). The signal
+  is WHICH COPPER IS LIVE — `tunnelCopperInstalled` (tunnel copper held at the edge vs standby at the
+  pre-build). Fix: `boostOwnsTunnel = rsBoostViewport || (rsBoostReturn && tunnelCopperInstalled &&
+  !rsLaunched)`, AND crucially **clear g_tunnelFieldDirty ONLY when a decode actually runs** — a skipped
+  decode DEFERS one frame to when staticStandby has taken over (tunnel copper uninstalled, tunnelBitmap
+  off-screen) and decodes the full field there. Measured (decode-event ring): pre-build SKIP=1 at the edge
+  (tci=1), then SKIP=0 the next frame (tci=0). `!rsLaunched` still lets the 2nd launch's own tunnel
+  descent decode normally.
+
 **OPEN / next-session items:**
 1. ✅ **VERIFIED (user-confirmed 2026-07-18)** — the reveal (f824f82) grows cleanly from the centre
    in real play, and the pink-vs-teal tunnel ring cycle looks right.
 2. **Reverse-ring PERF decode-consume** (was T4): the twin + publish are DONE; REMAINING is to wire
    `decodeBoostViewport` to CONSUME the `g_tun*` publish (cheap incremental `decodeTunnelBand`) instead
-   of the full 86-row decode. See §5. **This is the only remaining boost item.**
-3. ✅ **T6 — standby handoff DONE (2026-07-19, above).**
+   of the full 86-row decode. See §5. **This is the ONLY remaining boost item** (perf, not correctness).
+3. ✅ **T6 — standby handoff DONE (2026-07-19).**  ✅ **2nd forward launch after boost DONE (2026-07-20).**
+
+**Durable lessons from the T6/2nd-launch cycle (don't relearn):**
+- **A shared bitmap owned by different phases needs a "who owns it now" gate keyed on the LIVE COPPER,
+  not on game-state flags.** tunnelBitmap is written by decodeBoostViewport (boost) AND the forward
+  decode. $003A ($FF) and g_doorFieldReady persist/coincide across the handoff↔2nd-launch boundary, so
+  only `tunnelCopperInstalled` (deferred-install state) cleanly says whether the boost still displays it.
+- **A one-shot decode triggered at a phase edge can land on the WRONG frame (copper installs defer to
+  vblank).** If you must skip it there, DEFER don't DROP: consume the dirty flag only when you actually
+  decode, so it retries the next (safe) frame. The same value flashing-when-shown / missing-when-dropped
+  is the tell that one decode serves two masters.
+- **Measure decode events, don't theorize the gate.** A per-event ring (mode/bounds/skip/live-copper)
+  settled which of ~4 candidate gate conditions was right after 3 wrong guesses (`!rsBoostReturn`,
+  `!(rsBoostReturn && !g_doorFieldReady)`, `!(rsBoostReturn && !rsLaunched)` all failed differently).
 
 **Durable lessons from this cycle (don't relearn):**
 - **Copper colour latency:** a copper's colour MOVEs must already hold the right values BEFORE cop1lc
