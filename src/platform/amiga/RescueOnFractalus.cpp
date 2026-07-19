@@ -1796,18 +1796,38 @@ void RescueOnFractalus::renderFrame()
     // the STARS sub-phase; if this forward-tunnel path decodes it, the $1000 rings (whose value-0
     // exit-clear pixels are pen7 black) flash over the starfield on any frame where the boost
     // branch's decodeBoostViewport doesn't re-overwrite it = the bowtie + black-stars-on-salmon.
-    // Gate on rsBoostReturn (the WHOLE cinematic), NOT rsBoostViewport: during the T6 handoff hold
-    // rsBoostViewport is already false but the reverse-ring VBI is still ticking (it keeps setting
-    // g_tunnelFieldDirty until $008D fully clears), so a !rsBoostViewport gate would let this path
-    // re-decode the $1000 rings into the held tunnelBitmap with the FORWARD LUT — the rings briefly
-    // reappear over the dark-green cleared field just before the standby LEVEL-NN card (bug 1).
+    // ⚠ SKIP only while the BOOST owns tunnelBitmap.  The boost owns it during:
+    //   (a) rsBoostViewport — decodeBoostViewport is painting the stars / reverse tunnel; and
+    //   (b) the T6 handoff hold AND its g_doorFieldReady 0->1 EDGE frame, where the tunnel copper
+    //       is still the live display (copper installs defer to vblank, so staticStandby's list only
+    //       takes over next frame) — a decode there re-paints $1000 rings into the still-shown
+    //       tunnelBitmap = the ring FLASH before the LEVEL-NN card (bug 1).
+    // It does NOT own it during a FORWARD launch, INCLUDING the next level's STANDBY pre-build:
+    // tunnel_prebuild_rings (rof_native.c ~8780) fills $1000 + flags the one-time full decode while
+    // still on the standby idle, where rsLaunched is false — so gating on rsLaunched alone skipped
+    // that pre-build decode and the 2nd launch's doors opened onto a stale tunnelBitmap (no rings).
+    // The signal that separates the handoff EDGE from the standby pre-build is WHICH copper is live:
+    // at the edge the boost's tunnel copper is still installed (held), at the pre-build the standby
+    // copper is.  ($003A stays $FF into the next level, and g_doorFieldReady is 1 at both, so neither
+    // rsBoostReturn nor g_doorFieldReady can tell them apart; tunnelCopperInstalled can.)  !rsLaunched
+    // then still lets the 2nd launch's actual tunnel DESCENT (tunnelCopperInstalled true) decode.
     if (g_tunnelFieldDirty) {
-        if (!rsBoostReturn) {
+        const bool boostOwnsTunnel = rsBoostViewport ||
+                                     (rsBoostReturn && tunnelCopperInstalled && !rsLaunched);
+        if (!boostOwnsTunnel) {
             tunnelSrcBase = 0x1000u;   // forward tunnel rings live in $1000 (boost may have left $2000)
             if (g_tunBandMode) decodeTunnelBand();
             else               decodeTunnelRect((int)g_tunRowLo, (int)g_tunRowHi, 0, 39);
+            g_tunnelFieldDirty = 0;    // consume ONLY when actually decoded (see the DEFER note below)
         }
-        g_tunnelFieldDirty = 0;        // clear even in boost (decodeBoostViewport owns the bitmap)
+        // ⚠ Do NOT clear g_tunnelFieldDirty when skipped — DEFER the decode.  The next forward
+        // launch's one-shot FULL pre-build (tunnel_prebuild_rings -> mode 0, rows 0-85) fires at
+        // the boost handoff edge, where the boost's tunnel copper is still live (tunnelCopperInstalled)
+        // so decoding it here would flash rings over the LEVEL-NN card (bug 1).  Keeping the dirty flag
+        // set retries next frame, by which point staticStandby has taken over (tunnel copper no longer
+        // installed, tunnelBitmap not displayed) and the reverse ring is finished (mode still 0), so the
+        // full field decodes OFF-SCREEN — ready for when the player launches (fixes "doors open, no
+        // tunnel").  Measured: pre-build skipped at the edge, then decoded the next frame.
     }
 #ifdef ROF_FLIGHT_PROBE
     extern volatile unsigned long g_rPerFrame, g_rRenderFn;
