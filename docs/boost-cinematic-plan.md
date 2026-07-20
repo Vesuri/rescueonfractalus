@@ -115,8 +115,8 @@ Render bugs fixed through 2026-07-17 (commits 792e6d0, c347749, 6abc6cd, 53f4d86
   the FWD strand only (rows 0-42); the Amiga rev strand converts 57-85 (not 43-, unlike the Atari) so it
   can't be used directly. Measured Atari: rv_8.6 (22 rows in) = rows 32-53.
 - The probe infra (transpile.py $3C75 VCOUNT hook, PlatformAmiga.cpp FORCE_RETURN, amiga/Makefile
-  FORCE_RETURN, the regenerated rof_gen.c) is intentionally UNCOMMITTED (working tree). `make gen`
-  preserves the rof_gen.c hook. Build headless probes with `make clean && make -j4 PROBES=1 FORCE_RETURN=1`.
+  FORCE_RETURN, the regenerated rof_gen.c) is now COMMITTED as permanent debug infra (2026-07-20).
+  `make gen` preserves the rof_gen.c hook. Build headless probes with `make clean && make -j4 PROBES=1 FORCE_RETURN=1`.
 - **DERIVE COLOURS FROM THE 6502 DLIs, NOT SCREENSHOTS** (user directive 2026-07-18). The faithful
   boost tunnel colour model is just the launch DLI chain mirrored: GTIA mode-10 (PRIOR=$94), value→reg
   = **0→COLPM0 $02C0 · 1/2/3→COLPM1/2/3 $08D7/$08D8/$08D9 · 4/5/6→COLPF0/1/2 $08D4/$08D5/$08D6 ·
@@ -405,8 +405,8 @@ Already-native callees (reuse as-is): `display_setup $5F1D`, `draw_symmetric_spa
   Recording permission — granted this session). Dense-capture scripts in `$CLAUDE_JOB_DIR/tmp/
   boost_capture{4,5}.sh`; colour-per-frame scan via `magick ... -crop -resize 1x1` to find phases.
   Then `ffmpeg -i <mov> frame_%04d.png` to extract for frame-compare.
-- The uncommitted probe infra (transpile.py `$3C75` VCOUNT hook, PlatformAmiga.cpp FORCE_RETURN,
-  amiga/Makefile FORCE_RETURN) stays UNCOMMITTED per user decision — see boost-return-cinematic memory.
+- The probe infra (transpile.py `$3C75` VCOUNT hook, PlatformAmiga.cpp FORCE_RETURN,
+  amiga/Makefile FORCE_RETURN) is COMMITTED as permanent debug infra (2026-07-20).
 
 --------------------------------------------------------------------------------
 ## 8. BOOST-CINEMATIC FUNCTION REFERENCE (all functions in the chain)

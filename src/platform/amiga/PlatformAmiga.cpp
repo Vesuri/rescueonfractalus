@@ -1225,6 +1225,36 @@ static uint32_t vbiHandler()
     // or flight ($4FF5) body — as the Atari swaps VVBLKI — bracketing the work in a
     // save/restore of the shared 6502 register file (the main loop may be mid-instruction
     // using `cpu` when this interrupt preempts it).
+#ifdef ROF_FORCE_RETURN
+    // Headless return-to-mother-ship verification — drive the REAL gameplay path, not a $0072
+    // poke (which skipped the arrival setup and gave an unfaithful repro).  Two phases:
+    //   Phase 1 (flight+250 VBI): arm the mother-ship ARRIVAL the way gameplay does — set the
+    //     level_cleared_flag countdown $2849=1, which the flight VBI's per-frame check ($5223)
+    //     decrements to 0 and then calls setup_level_clear_state $7BC6 → $003A=$FF + shows the
+    //     "MOTHER SHIP!" message and lights the indicator.  (Natural arrival, faithful.)
+    //   Phase 2 (flight+340 VBI, after the message shows): inject a real B keypress via the
+    //     flight keyboard path (s_pendingFlightKey → the $519c CLI window → event_sequence_
+    //     dispatcher $4644 → boosters handler $493D), which does the full faithful boosters
+    //     setup ($0676 light, clear rescue state, $0072=2, "FIRE BOOSTERS" msg) itself.
+    //   (make PROBES=1 FORCE_RETURN=1)
+    {
+        const uint16_t vv = (uint16_t)(mem[0x0222u] | (mem[0x0223u] << 8));
+        static uint16_t s_flightVbi = 0; static uint8_t s_retPhase = 0;
+        if (vv == 0x4FF5u && s_flightVbi == 0) s_flightVbi = g_vbiCount;
+        const uint16_t dt = s_flightVbi ? (uint16_t)(g_vbiCount - s_flightVbi) : 0;
+        if (s_flightVbi && s_retPhase == 0 && dt >= 250) {
+            mem[0x003Au] = 0xFF;          // level-clear / mother-ship-arrived gate (what $7BC6 sets)
+            mem[0x0676u] = 1;             // mother-ship HUD light on
+            mem[0x2849u] = 1;             // level_cleared_flag → $5223 chain also fires $7BC6 (MOTHER SHIP! msg)
+            s_retPhase = 1;
+        }
+        if (s_retPhase == 1 && dt >= 340) {
+            s_pendingFlightKey = 0x15;     // Atari KBCODE 'B' (boosters) → $519c CLI window
+            s_retPhase = 2;
+        }
+    }
+#endif
+
     game_vbi_isr();
     return 0;
 }

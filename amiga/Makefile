@@ -246,6 +246,12 @@ endif
 ifdef FORCE_DEATH
 EXTRA_DEFINES += -DROF_FORCE_DEATH
 endif
+# `make PROBES=1 FORCE_RETURN=1`: once flight has been running a while, replicate the B/boosters
+# handler (level-clear gate $003A + player_lives $0072=2) once — headless verification of the
+# return-to-mother-ship ascent + flight→launch-cinematic handoff.  Requires PROBES.
+ifdef FORCE_RETURN
+EXTRA_DEFINES += -DROF_FORCE_RETURN
+endif
 # `make PROBES=1 TITLE=1`: force-enter the Title Screen (inject its screen RAM + palette and
 # pin rsTitle) instead of auto-launching to flight — a visual test path for the Title Screen
 # render before its real attract-mode entry is wired.  Requires PROBES.

@@ -32,3 +32,19 @@ tools/ghidra/
 tools/ghidra-proj/
 tools/__pycache__/
 tools/live_*.sh
+
+# Local probe/debug scratch — savestates, RAM dumps, ad-hoc probe scripts, spike
+# experiments. Kept LOCAL only (never committed); regenerable / disposable.
+/tmp/
+/a800dumps/
+/amiga-spike/
+*.a8s
+*.dat
+*bars_active.bin*
+amiga/*_probe.sh
+amiga/sample.sh
+amiga/trace_blit*.sh
+amiga/wing_run.sh
+amiga/wing_probe.gdb
+amiga/assets/attract.raw
+amiga/assets/attract_pal.h

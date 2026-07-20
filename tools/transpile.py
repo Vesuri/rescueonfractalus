@@ -415,7 +415,19 @@ SPINWAIT_HOOKS = {
     # attract VBI ($1B30).  Drive a frame each iteration so the attract animates and
     # the VBI fires (sets $0080 + RTCLOK); without it the loop is a frozen tight spin.
     0x1A18: 'platform_tick_vbi(); platform_render_frame();',
-    0x3C75: 'platform_poll_events();',           # VCOUNT position wait
+    # VCOUNT position wait (wait_vcount_eq $3C75): spin until ANTIC VCOUNT $D40B == A (an EXACT-
+    # equality beam sync before a DL-pointer / VDSLST / hardware-register write).  Safe on the
+    # Atari (the 6502 polls VCOUNT thousands of times/frame under a SHORT VBI, so it never skips the
+    # target value).  On the Amiga the emulated VCOUNT ($D40B = rof_beam_line()>>1) is read far less
+    # often AND the loop can be preempted by the HEAVY flight VBI ($4FF5) — which is still the active
+    # VBI when display_setup is re-entered on the mother-ship RETURN path (game_main_loop only sets
+    # the light $53CC VBI once at the top, not on the outer-loop re-entry) — so consecutive reads step
+    # OVER the target and the exact-equality test HANGS, blocking the $52D7 install (no launch
+    # cinematic on the return).  The beam sync guards writes that are copper-irrelevant on the Amiga
+    # anyway (cf. wait_vcount_ge_7a, a NO-OP here), so force the match: set cpu.A to the just-read
+    # VCOUNT so the following CMP is equal → exit immediately (mirrors the $3CB8 RTCLOK reached-or-
+    # passed hook).  Atari/SDL keep the faithful spin.
+    0x3C75: 'platform_poll_events();\n#ifdef ROF_PLATFORM_AMIGA\n    cpu.A = bus_read(0xD40B);\n#endif',
     # RTCLOK frame wait (wait_timer_4c_frames $3CB2): "wait N frames" -- STA $14=0 then spin until
     # RTCLOK_LOW($14) reaches target (A=$4C).  The 6502 uses an EXACT-equality exit (CMP $14 /
     # BNE), safe on HW because the CPU polls $14 thousands of times/frame so it never skips a

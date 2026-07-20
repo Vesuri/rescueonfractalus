@@ -1291,6 +1291,9 @@ void wait_vcount_30(void) {
 /* wait_vcount_eq @ $3C75: Busy-wait (polling events) until ANTIC VCOUNT $D40B equals A */
 void wait_vcount_eq(void) {
 L_3c75:; platform_poll_events();
+#ifdef ROF_PLATFORM_AMIGA
+    cpu.A = bus_read(0xD40B);
+#endif
     /* 3c75 */
     CMP(bus_read(0xD40B));
     /* 3c78 */
