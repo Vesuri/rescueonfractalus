@@ -1,5 +1,14 @@
 # Native Amiga terrain renderer — execution plan
 
+> ⚠️ **SUPERSEDED / HISTORICAL (marked 2026-07-20).** This plan is DONE and then some.
+> The convert pass it targets (`renderViewportModeD` chunky→planar) no longer exists for the
+> terrain body: `renderFlightDirect` computes the per-column silhouette from `$260E`, plots
+> plane2 dots directly (`ROF_PLOT_DOT` → `g_flightDotPlane`), and the **blitter** fills the sky
+> (`blitterFillUp`) + clears (`blitterClear`). The fractal math (rasterize/project/subdivide/
+> build_view/frame_setup) that this plan called "out of scope / the real floor" is ALSO now
+> hand-asm'd (see `asm-migration-plan.md`). Kept only as a record of the original design intent.
+> Current flight-perf status lives in the `flight-scene` memory + `asm-migration-plan.md` tail.
+
 Plan to replace the current flight-terrain rendering path (per-pixel 6502-style
 silhouette plotting into an Atari ANTIC mode-D bitmap, then a per-byte
 chunky→planar conversion in `renderViewportModeD`) with a **native Amiga

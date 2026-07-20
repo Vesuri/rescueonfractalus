@@ -1,5 +1,12 @@
 # Terrain draw perf — implementation plan (flight scene 7, the #1 cost)
 
+> ⚠️ **SUPERSEDED / HISTORICAL (marked 2026-07-20).** The "full rework" scoped here is DONE:
+> native dot-plot (`ROF_PLOT_DOT`), blitter fill (`blitterFillUp`/`blitterClear`), no convert
+> pass, and the fractal math is hand-asm'd (rasterize/project/subdivide/build_view/frame_setup —
+> see `asm-migration-plan.md`). The `≈82 ms` and sub-phase numbers below are pre-asm and no longer
+> current. Kept for the design rationale + the sub-phase decomposition method. Live flight-perf
+> status: the `flight-scene` memory + `asm-migration-plan.md` tail.
+
 Goal: cut `terrain_draw_frame $A31E` (≈82 ms/frame, the single biggest flight cost) **and**
 eliminate the separate `mem[$1070]`→bitplane convert pass. User-chosen scope (2026-06-24):
 the **full** rework — native dot-plot + blitter fill + skip conversion, **and** optimise the

@@ -261,12 +261,24 @@ passes **~167ms (dominant ~47%)** [rasterize ~64% (asm'd, near instruction floor
 subdivide ~16%] · VBI ~71ms (3.6ms × ~20 firings/iter, faithful 50Hz sim+audio, hard to cut) ·
 renderFlightDirect ~24ms · setup+clear ~31ms. **Target stays 50fps A500 (25 acceptable).**
 
-**OPEN — next target (user to pick next session):**
-1. **`project_terrain_points`/plot (~20% of draw)** — RECOMMENDED (clean numeric fn; multiplies +
-   `divide_16x16`; best value/risk; reuse the differential pipeline).
-2. `terrain_subdivide_column` (~16% of draw) — the fractal LOD cascade driving the rasterizer; more
-   structural complexity.
-3. Deeper rasterize restructure (keep the control-point stack TOP in registers, skip store-then-reload
-   each bisect step) — biggest potential on the largest chunk, but fights 68000 register pressure (all
-   8 d-regs + a2-a6 already live; this is what defeated the C attempts) → high risk.
-Also still available: `terrain_frame_setup` (~10ms). Same vasm + in-process-differential pattern.
+**⚠️ STALE — the list below is DONE (corrected 2026-07-20).** All three "next targets" plus
+`terrain_frame_setup` are hand-asm'd and ON by default (`ROF_PROJECT_ASM`, `ROF_SUBDIV_ASM`,
+`ROF_RASTERIZE_ASM`, `ROF_BUILDVIEW_ASM`, `ROF_FRAMEDRAW_ASM` — see `amiga/Makefile`). The
+faithful CPU terrain math is at the 68000 instruction floor. **Piecemeal faithful asm is
+EXHAUSTED as a lever.** Do NOT pick from this list — it is kept only as the historical trail.
+
+**~~OPEN — next target (user to pick next session):~~** (all DONE — see above)
+1. ~~`project_terrain_points`/plot~~ — DONE, `ProjectTerrainAssembler.s` (~2.2×).
+2. ~~`terrain_subdivide_column`~~ — DONE, `TerrainSubdivideAssembler.s`.
+3. ~~Deeper rasterize restructure~~ — `TerrainRasterizeAssembler.s` (~27%, near instruction floor).
+   ~~Also `terrain_frame_setup`~~ — DONE, `TerrainFrameSetupAssembler.s`.
+
+**ACTUAL open lever (2026-07-20, user-directed):** the remaining waste is mem[]→bitplane
+*conversion* on the hot path, NOT the terrain math. All hot-path graphics should write bitplanes
+directly. Prime suspect = **object drawing** (ground objects / downed pilot / enemy fire): the
+`terrain_plot_object` → `terrain_plot_pixel` path still does the full faithful mode-D field RMW
+(`bus_read`/`bus_write` via `($80),Y` indirect — slowest access) for every object pixel, then
+*additionally* mirrors to the bitplane (`ROF_PLOT_DOT`); on Amiga the field write is dead weight
+for terrain-body rows (only band rows 43-46 are read back). And `draw_scaled_shape` (rescue-figure
+zoom) writes a bitmap into the field via `plot_clipped_pixel`. **Measure first** with the current
+all-asm build (`make PROBES=1` + `diag_run.sh`) before committing scope.
