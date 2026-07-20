@@ -1224,6 +1224,10 @@ volatile uint8_t g_tunInRowLo = 0, g_tunInRowHi = 0;   /* inner rows $009F .. $0
 volatile uint8_t g_tunColLpx = 0, g_tunColRpx = 0;     /* outer $009C / $009D after        */
 volatile uint8_t g_tunInColLpx = 0, g_tunInColRpx = 0; /* inner $009C / $009D before       */
 volatile uint8_t g_tunBandMode = 0;                    /* 1 = band decode, 0 = full extent */
+/* Boost stars viewport ($2000) dirty flag — set by fill_region_2000 (the sole $2000 writer),
+ * consumed by the boost stars render branch so it decodes only when the field content actually
+ * changes (measured: twice per boost) instead of every frame.  See fill_region_2000. */
+volatile uint8_t g_boostStarsDirty = 0;
 #endif
 
 /* draw_ring_frame_step @ $670D — draw ONE tunnel-ring frame group via draw_symmetric_span_loop
@@ -2039,6 +2043,16 @@ void test_marked_neighbor(void) {
  * = $0F74 bytes): seed the dest ptr $C1/$C2 = $2000 and the 16-bit count $C4:$C3 =
  * $0F73, then tail-call the (native) memset_or_copy. */
 void fill_region_2000(void) {
+#ifdef ROF_PLATFORM_AMIGA
+    /* Amiga: fill_region_2000 is the SOLE writer of the boost stars viewport field ($2000) —
+     * measured on-Amiga, it re-fills the whole field exactly twice during the boost stars
+     * sub-phase (a value-8 background, then a black one), and the star fade in between is
+     * palette-only.  Publish a dirty flag so the boost render decodes $2000 into the tunnel
+     * bitmap ONLY on those (rare) content changes instead of a full 86-row / ~56ms decode
+     * EVERY frame.  Harmless for the Standby door-field fills that also call this (nobody
+     * consumes the flag outside the boost stars branch, which forces it true on entry anyway). */
+    g_boostStarsDirty = 1;
+#endif
     row_table_stride = 0x00; player_speed = 0x20;   /* dest $2000 */
     row_table_base_lo = 0x73; row_table_base_hi = 0x0F;   /* count $0F73 */
     memset_or_copy();

@@ -43,6 +43,7 @@ extern "C" volatile uint8_t g_tunInRowLo, g_tunInRowHi;        // inner (previou
 extern "C" volatile uint8_t g_tunColLpx, g_tunColRpx;          // outer left/right PIXEL cols
 extern "C" volatile uint8_t g_tunInColLpx, g_tunInColRpx;      // inner left/right PIXEL cols
 extern "C" volatile uint8_t g_tunBandMode;                     // 1 = band decode, 0 = full extent (reveal)
+extern "C" volatile uint8_t g_boostStarsDirty;                 // set by fill_region_2000; boost stars decode-on-change gate
 extern "C" volatile unsigned short g_starScrollGen;            // rof_native.c: bumped per scrolled star row
 extern "C" volatile uint8_t g_activeVbi;                       // 0=none 1=standby($52D7) 2=flight($4FF5); read by game_vbi_isr
 
@@ -140,6 +141,11 @@ extern "C" volatile unsigned short g_ckFullVbi[4] = {0,0,0,0};       // g_vbiCou
 // the reverse-tunnel->standby window exists and the guard catches it).
 extern "C" volatile unsigned char g_boostRet = 0, g_boostVp = 0, g_liveCopper = 0;
 extern "C" volatile unsigned long g_boostHandoffHoldFrames = 0;
+// Boost-viewport decode-cost probe (item 2, decode-consume): count decode events, to confirm the
+// decode-on-change gating runs and quantify the win vs the old always-full decode EVERY frame.
+// g_bStarDec = $2000 stars decodes (dirty-gated, ~2/cinematic); g_bTunDec = reverse-tunnel full
+// decodes (per-frame — the field is a VBI-written multi-writer reveal, unsafe to gate).
+extern "C" volatile unsigned long g_bStarDec = 0, g_bTunDec = 0;
 extern "C" volatile unsigned short g_starEntryVbi = 0;              // vbi at first rsStars viewport decode
 extern "C" volatile unsigned long  g_starEntryTicks = 0, g_starEntryIsr = 0; // its cost
 extern "C" volatile unsigned short g_starSprVbi = 0;
@@ -1965,8 +1971,34 @@ void RescueOnFractalus::renderFrame()
             updateTunnelCopper(true);
             AmigaHardware::setCopperList(*tunnelCopper, false);
             tunnelCopperInstalled = true;
+            g_boostStarsDirty = 1;          // force the first stars decode once the field is ready
+        } else if (mem[0x008D] == 0u) {
+            // STARS sub-phase: whole viewport = the $2000 starfield.  fill_region_2000 is the sole
+            // $2000 writer and re-fills the field only twice per cinematic (the star fade in between
+            // is palette-only, read live by the copper), so decode ONLY when g_boostStarsDirty says
+            // the content changed — not the old ~56ms full decode EVERY frame.
+            if (g_boostStarsDirty) {
+                decodeBoostViewport();
+                g_boostStarsDirty = 0;
+#ifdef ROF_FLIGHT_PROBE
+                { extern volatile unsigned long g_bStarDec; g_bStarDec++; }
+#endif
+            }
+            updateTunnelCopper(false);
         } else {
-            decodeBoostViewport();   // per-row source from the live $3000 DL LMS (reveal)
+            // REVERSE TUNNEL sub-phase: decode the full boost viewport every frame.  The $1000 ring
+            // field is written by BOTH the main loop (draw_frame_pattern_seq's one-shot pre-draw)
+            // AND the VBI (step_accum_sub_7e's ring draws), progressively REVEALED row by row as
+            // emit_dl_coord_pairs rewrites the $3000 DL LMS $2000->$1000 (the symmetric band
+            // decodeBoostViewport reads).  A decode-on-change gate here proved fragile: skipping a
+            // frame HOLDS any mid-reveal / mid-clear state the next writer hasn't settled yet (a
+            // stray teal reveal row; the final clear's outermost-ring colour), which per-frame
+            // re-decoding heals automatically.  This sub-phase is brief, so pay the full decode.
+            // (The big win — the ~150-frame STARS sub-phase — is safely dirty-gated above.)
+            decodeBoostViewport();
+#ifdef ROF_FLIGHT_PROBE
+            { extern volatile unsigned long g_bTunDec; g_bTunDec++; }
+#endif
             updateTunnelCopper(false);
         }
         standbyCopperInstalled = false; planetCopperInstalled = false;

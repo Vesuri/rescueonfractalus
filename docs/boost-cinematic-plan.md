@@ -66,9 +66,26 @@ Render bugs fixed through 2026-07-17 (commits 792e6d0, c347749, 6abc6cd, 53f4d86
 **OPEN / next-session items:**
 1. ✅ **VERIFIED (user-confirmed 2026-07-18)** — the reveal (f824f82) grows cleanly from the centre
    in real play, and the pink-vs-teal tunnel ring cycle looks right.
-2. **Reverse-ring PERF decode-consume** (was T4): the twin + publish are DONE; REMAINING is to wire
-   `decodeBoostViewport` to CONSUME the `g_tun*` publish (cheap incremental `decodeTunnelBand`) instead
-   of the full 86-row decode. See §5. **This is the ONLY remaining boost item** (perf, not correctness).
+2. **Boost-viewport decode-cost — STARS half DONE (2026-07-20, user-confirmed); TUNNEL half NOT
+   safely gate-able.** See §5 for the full writeup.
+   - ✅ **STARS decode-on-change (shipped):** `fill_region_2000` is the SOLE `$2000` writer and re-fills
+     the starfield only TWICE per cinematic (measured on-Amiga: value-8 bg, then black; the star fade
+     between is palette-only). It now publishes `g_boostStarsDirty` (rof_native.c, `#ifdef
+     ROF_PLATFORM_AMIGA`); the boost stars render branch decodes only on that flag. **149 → 2 full
+     decodes** (each ~56ms), race-free (fill_region_2000 is main-loop). `make validate
+     FN=fill_region_2000` green.
+   - ❌ **TUNNEL decode-consume — abandoned (reverted to per-frame decode).** The reverse-tunnel `$1000`
+     field is a MULTI-WRITER reveal: the main loop pre-draws the full ring field once
+     (`draw_frame_pattern_seq`) AND the VBI (`step_accum_sub_7e`) draws ring groups into it, while
+     `emit_dl_coord_pairs` reveals it row-by-row. There is NO clean "content settled" signal (`$008D`
+     stays positive through the clearing spin at rof_native.c ~8775). Any gate that SKIPS a frame
+     HOLDS a mid-update state: a stray teal reveal row (revealed before its ring content is drawn) and
+     the final clear's wrong outermost-ring colour (last change skipped). Per-frame re-decode heals
+     both automatically. A band-only consume (decodeTunnelBand of the `g_tun*` publish) was even worse —
+     it dropped the reveal entirely (only the centre dot drew). The sub-phase is brief, so it stays a
+     full `decodeBoostViewport` every frame (byte-identical to the pre-2026-07-20 committed behavior).
+     A correct tunnel speedup would need a race-free reveal-delta rewrite (decode only newly-revealed
+     rows + VBI-published band, synchronized) — deferred; the perf isn't worth that risk right now.
 3. ✅ **T6 — standby handoff DONE (2026-07-19).**  ✅ **2nd forward launch after boost DONE (2026-07-20).**
 
 **Durable lessons from the T6/2nd-launch cycle (don't relearn):**
@@ -309,6 +326,41 @@ it lands on the uniform-green viewport + pillars (A638) without the broken parti
 **T7 — End-to-end timing + polish.** Re-capture the full cinematic; frame-compare against the Atari
 set. Confirm cadence roughly matches (the fade/star ramps are frame-paced; if the Amiga is far
 slower, profile — likely the residual full-decodes or the transpiled `step_accum_sub_7e` before T4).
+
+--------------------------------------------------------------------------------
+## 5b. BOOST-VIEWPORT DECODE-COST OUTCOME (2026-07-20)
+
+The original boost render called the full `decodeBoostViewport` (86 rows × 40 bytes × 3 planes,
+**~56ms each — measured on-Amiga**) EVERY `rsBoostViewport` frame, across BOTH sub-phases.
+
+**STARS ($008D==0) — decode-on-change, SHIPPED.** `fill_region_2000 $3C83` is the SOLE writer of the
+`$2000` starfield and (measured on-Amiga via a per-frame `$2000` checksum + a `fill_region_2000`
+call trace) re-fills it EXACTLY TWICE per cinematic — a value-8 background, then a black one — with
+the whole star fade in between being palette-only (`$0071` / `$08D4-9`, read live by the copper). So
+it now publishes `g_boostStarsDirty` (defined + set in `rof_native.c` under `#ifdef ROF_PLATFORM_AMIGA`,
+the `g_tun*` publish pattern) and the stars render branch decodes only on that flag (forced true once
+on boost-viewport install). **149 → 2 full decodes.** Race-free (fill_region_2000 is main-loop, not
+VBI). `make validate FN=fill_region_2000` stays green (the publish is `#ifdef`'d out on the host).
+
+**TUNNEL ($008D!=0) — NOT safely gate-able, reverted to per-frame `decodeBoostViewport`.** Two failed
+attempts + the root cause:
+- *Band-only consume* (decode the `g_tun*` publish via `decodeTunnelBand`): WRONG — dropped the reveal
+  entirely, only the centre dot drew. The reverse tunnel is NOT built incrementally from the published
+  bands; the full ring field is PRE-DRAWN once (`draw_frame_pattern_seq $6047`, rof_native.c ~8713) and
+  progressively REVEALED row-by-row as `emit_dl_coord_pairs` rewrites the `$3000` DL LMS `$2000→$1000`.
+- *Decode-on-(dirty||K-advanced)* with full `decodeBoostViewport`: rendered the reveal correctly but left
+  two artifacts, because `$1000` is a MULTI-WRITER field (main-loop pre-draw + VBI `step_accum_sub_7e`
+  ring draws) with no clean "settled" signal (`$008D` stays positive through the clearing spin at ~8775).
+  Any SKIPPED frame HOLDS a mid-update state that per-frame re-decode would heal: (1) a stray teal
+  reveal row (a row revealed before its ring content is drawn), (2) the final clear's wrong outermost-
+  ring colour (the last content change lands on a frame the gate skips / after `$008D` clears into the
+  stars branch, which can't render rings).
+- **Conclusion:** the tunnel sub-phase stays a full `decodeBoostViewport` every frame (byte-identical to
+  the pre-2026-07-20 committed behavior). It is brief, so the cost is tolerable. A correct speedup needs
+  a race-free reveal-delta decode (only newly-revealed rows + the VBI-published band, VBI-synchronized) —
+  deferred; not worth the risk vs the payoff. (Durable lesson: **a VBI-written, main-loop-read buffer
+  with no settled-state signal cannot be safely decode-gated — the reader holds transients the writer
+  hasn't finished. Per-frame re-decode is self-healing; gating is not.**)
 
 --------------------------------------------------------------------------------
 ## 5. NATIVE-CONVERSION TARGETS (transpiled-only fns in the chain)
