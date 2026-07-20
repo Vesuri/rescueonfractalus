@@ -38,6 +38,10 @@ public:
                                  // swap is pending, rewrite the copper's viewport bitplane pointers
                                  // (before the beam reaches them) and clear the flag.
     void starVblankUpdate();     // run from the INTB_VERTB ISR at vblank: zero-copy starfield scroll
+    void decodeScannerBlinkCells(); // LR-scanner (#13) close-range blink cells $33DF/$33E0 -> cockpit
+                                 // bitmap; PUBLIC because it runs in the flight VBI (via PlatformAmiga::
+                                 // flightScannerTick) at 50Hz so the blink animates at full rate, not
+                                 // the ~5-6fps main-loop render() cadence.  Decodes only on a bit7 flip.
     void shutdown();
 
     // run(): the whole game as a faithful straight-line transcription of the

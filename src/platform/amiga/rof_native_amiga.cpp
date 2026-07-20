@@ -782,7 +782,8 @@ extern "C" void game_vbi_isr(void)
     uint16_t vbi = (uint16_t)(mem[0x0222] | (mem[0x0223] << 8));
     Cpu6502 saved = cpu;                            // == OS VBLANK PHA;TXA;PHA;TYA;PHA
     if      (vbi == 0x4FF5) { flight_vbi_native();    // $4FF5 in-flight VBI
-                              PlatformAmiga::flightShotTick(); }  // laser sprite @ 50Hz (VBI, faithful)
+                              PlatformAmiga::flightShotTick();      // laser sprite @ 50Hz (VBI, faithful)
+                              PlatformAmiga::flightScannerTick(); }  // LR-scanner close-range blink @ 50Hz
     else if (vbi == 0x1B30) vbi_handler_station();   // $1B30 attract VBI (sets $0080 + RTCLOK)
     else                    standby_vbi_native();    // $52D7 standby/launch VBI (and fallback)
     cpu = saved;                                    // == XITVBV PLA;TAY;PLA;TAX;PLA

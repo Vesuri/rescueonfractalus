@@ -57,5 +57,6 @@ public:
     static uint8_t pokeyRandom();
     static void noiseTick();
     static void flightShotTick();   // build the player laser sprite from the VBI (50Hz), via s_scene
+    static void flightScannerTick(); // decode the LR-scanner close-range blink cells from the VBI (50Hz), via s_scene
 };
 

@@ -2831,6 +2831,22 @@ void RescueOnFractalus::decodeCockpitSpan(uint16_t addr, uint8_t nCells)
     }
 }
 
+// LR Scanner (#13) close-range blink: $33DF/$33E0 are two mode-4 cells whose bit7 startup_init()
+// ($3FFA, in the flight VBI) toggles $1E/$1D<->$9E/$9D at 50Hz when the pilot range ($0642) is 1
+// or 2 (bit7 swaps the pen COLPF2 $2C <-> COLPF3 $26 — a two-speed proximity blink).  Called from
+// the VBI ISR (PlatformAmiga::flightScannerTick) so the decode runs at 50Hz, NOT the throttled
+// main-loop render() rate.  Decode only when the value flips (cheap: 2 cells x 8 scanlines into the
+// static cockpit bitmap; disjoint bytes from any main-loop decode, so ISR-safe).  Reads mem[$33DF]
+// after startup_init() has written this frame's value (flightScannerTick runs after the handler).
+void RescueOnFractalus::decodeScannerBlinkCells()
+{
+    static uint8_t last = 0xFFu;
+    uint8_t v = mem[0x33DFu];
+    if (v == last) return;
+    last = v;
+    decodeCockpitSpan(0x33DFu, 2u);
+}
+
 // Decode the whole cockpit region once (scene-entry repaint / registry overflow): all 4
 // modeD rows + 10 mode4 rows.  The transpiled display_setup (not a hooked writer) builds
 // the cockpit on entry, so the writer-driven registry alone would miss the initial paint.

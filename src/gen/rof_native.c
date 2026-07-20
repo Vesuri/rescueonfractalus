@@ -8207,6 +8207,15 @@ void vbi_handler_flight(void) {
             if (v != s_lastStatus[k]) { s_lastStatus[k] = v; platform_cockpit_dirty(kStatusCells[k], 1u); }
         }
     }
+    /* The Long Range Scanner (#13) close-range blink cells $33DF/$33E0 are NOT handled here:
+     * startup_init() ($3FFA, in the joystick_saved block below) toggles their bit7 $1E/$1D<->
+     * $9E/$9D every frame when the pilot range ($0642) is 1 or 2 and ($0642 & the $004B counter)
+     * ==0 (bit7 swaps the mode-4 pen COLPF2 $2C <-> COLPF3 $26 — a two-speed proximity blink:
+     * range 1 tests bit0 => ~2-frame period, range 2 tests bit1 => ~4-frame).  Routing them
+     * through platform_cockpit_dirty would decode in the main-loop render() (throttled to the
+     * ~5-6fps terrain rate) so the blink ran far too slow.  Instead they are decoded straight
+     * into the cockpit bitmap at 50Hz in the VBI ISR by PlatformAmiga::flightScannerTick()
+     * (called from game_vbi_isr right after this handler returns). */
 #endif
 
 #ifndef ROF_PLATFORM_AMIGA

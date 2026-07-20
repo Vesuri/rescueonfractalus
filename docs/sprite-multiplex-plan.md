@@ -123,8 +123,21 @@ is exactly what the region re-points already do.)
 - [x] **crosshair (M2, viewport)** — done as a plane3 overlay (NOT a sprite; see flight-pmg-map).
 - [x] **Long Range Scanner dot (#13, M2 dashboard)** — done: ch2 dashboard re-point (kDashRepoints {2,...}),
       buildScannerDotSprite reads missile buf $0B00 + mem[$00CE], red pen10=COLOR22 (commit f8bffc4, confirmed).
-- [ ] **scanner dot distance<=2 close-range blink** — bottom rows render solid, should blink (a colour cycle;
-      need a distance<=2 savestate to measure).
+- [x] **scanner close-range blink — FIXED + user-confirmed 2026-07-21 (at both speeds).** NOT the M2 dot and
+      NOT a colour/DLI trick: it is the two **mode-4 bitmap cells $33DF/$33E0** (LR scanner bottom row, screen
+      (240,160)) toggling their **bit 7** ($1E/$1D<->$9E/$9D).  In ANTIC mode 4 bit7 selects the colour
+      interpretation, so the toggle swaps those pixels between COLPF2 $2C (salmon) and COLPF3 $26 (red) — a
+      colour blink driven by the cell value, which is why every colour-register/shadow probe stayed constant.
+      Driver = startup_init() ($3FFA, in the flight VBI): bit7 set when pilot range mem[$0642] is 1 or 2 AND
+      (range & the free-running counter mem[$004B])==0.  **The range picks which counter bit is tested → the two
+      speeds:** range 1 → bit0 → ~2-frame period (fast); range 2 → bit1 → ~4-frame (slow); range 0 or >=3 → solid.
+      Measured on atari800 (per-frame cell capture of a800dumps/lrscanner.a8s, range 2: $33DF toggled $9E<->$1E;
+      colour regs/charset/shadows all constant).  **Amiga bug:** startup_init() toggled mem[] every frame but the
+      DECODE ran only in the main-loop render() (throttled to the ~5-6fps terrain rate) → blink far too slow, range
+      1≈2.  **Fix:** decode $33DF/$33E0 straight into the cockpit bitmap at 50Hz IN THE VBI ISR —
+      PlatformAmiga::flightScannerTick() (called from game_vbi_isr's flight branch beside flightShotTick) →
+      RescueOnFractalus::decodeScannerBlinkCells() (change-detect + decodeCockpitSpan, cheap).  Mirrors the
+      laser-sprite-at-50Hz precedent.
 - [ ] **gun-emplacement visibility** — confirm it's the bitmap-contrast path, not a spawn bug.
 
 All code changes build clean (Amiga cross-build); FS-UAE visual verification pending.

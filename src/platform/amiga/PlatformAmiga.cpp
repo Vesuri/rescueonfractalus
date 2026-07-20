@@ -634,6 +634,17 @@ void PlatformAmiga::flightShotTick()
     if (s_scene) s_scene->buildShotSprite();
 }
 
+// flightScannerTick: decode the Long Range Scanner (#13) close-range blink cells $33DF/$33E0
+// straight into the cockpit bitmap, from the flight VBI (50Hz) — like flightShotTick, this is
+// the faithful home for it: startup_init() ($3FFA, run in vbi_handler_flight just above) toggles
+// their bit7 at 50Hz (a two-speed proximity blink), so decoding here at 50Hz makes the blink run
+// at full rate instead of the ~5-6fps main-loop render() cadence (which made it far too slow and
+// range 1 vs 2 indistinguishable).  s_scene decodes only on a bit7 flip (cheap: 2 cells).
+void PlatformAmiga::flightScannerTick()
+{
+    if (s_scene) s_scene->decodeScannerBlinkCells();
+}
+
 // Flight/init timing probes (enable with `make PROBES=1` → -DROF_FLIGHT_PROBE).  Sub-frame
 // clock rof_subclock() = g_vbiCount*313 + beam_line, plus the accumulators that rof_native.c's
 // FP_* macros and the renderFrame/atmosphere probes below write into.  All read from the gdb
