@@ -3191,8 +3191,15 @@ void plot_clipped_pixel(void) {
         uint8_t col = cpu.A;
         CMP(mem[0x00B3]);
         if (!cpu.C) {                               /* BCS skip => plot when col < $00B3 */
-            cpu.Y = col;
+            cpu.Y = col;                            /* exit-Y contract (kept on both paths) */
             uint8_t mx = (uint8_t)(x & 0x03);
+#ifndef ROF_PLATFORM_AMIGA
+            /* SDL/validate: composite the figure pixel into the mode-D field — read the current
+             * terrain (a transparent source keeps it), mask, OR the figure colour in, write back.
+             * On the Amiga this whole ($80),Y-read + ($C1),Y-RMW is DEAD: during the paused
+             * pilot-zoom nothing reads the mode-D field (renderFlightDirect composites the frozen
+             * terrain + the g_fig* overlay) — which is precisely why the overlay exists.  So drop
+             * it (up to 3 indirect bus accesses per figure pixel) and feed the overlay instead. */
             uint8_t a = plot_pixel_mask;
             if (a == 0x00) a = bus_read(ZP_IND_Y(0x0080));
             a &= mem[0x4F3B + mx];
@@ -3201,10 +3208,10 @@ void plot_clipped_pixel(void) {
             b &= mem[0x7DEB + mx];
             b |= blit_color_src;
             bus_write(ZP_IND_Y(0x00C1), b);
-#ifdef ROF_PLATFORM_AMIGA
-            /* Mirror opaque figure pixels into the rescue-figure overlay (the field write above is
-             * shed on the Amiga; see ROF_PLOT_FIG).  plot_pixel_mask==0 = a transparent (value-0)
-             * copy of the terrain — not part of the figure, so skip it. */
+#else
+            /* Amiga: mirror opaque figure pixels into the rescue-figure overlay (see ROF_PLOT_FIG).
+             * plot_pixel_mask==0 = a transparent (value-0) copy of the terrain — not part of the
+             * figure, so skip it. */
             if (plot_pixel_mask != 0) {
                 uint8_t v2 = (uint8_t)((plot_pixel_mask >> (6 - 2 * mx)) & 3u);
                 if (v2) ROF_PLOT_FIG(x, y, v2);
