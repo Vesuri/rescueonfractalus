@@ -5002,46 +5002,72 @@ void terrain_midpoint_displace(void) {
     sfx_toggle_8F = (uint8_t)mid2; sfx_reinit_gate = (uint8_t)(mid2 >> 8);
 }
 
-/* terrain_plot_pixel @ $A6D3 — OR a 2-bit voxel mask into the terrain bitmap.
+/* terrain_plot_pixel @ $A6D3 — draw one object pixel into the terrain viewport.
  *
- * Inputs : cpu.Y = scanline (clipped to < $97), cpu.X = mask index.
- * Effect : bitmap ptr {$0081:$0080} from row tables $28FA/$28CA[Y]; mask from
- *          $BC00[X] | ($BC00[X]>>1) ANDed with the plot-mask $0058, ORed into
- *          (ptr),$BD00[X].  Restores Y from $28E2.
- * Contract: memory (the bitmap write).  X and Y are preserved (callers read
- *           them via INX/DEY); exit A/flags are dead at every call site, so
- *           left incidental.  Calls the empty transpiled terrain_plot_skip_return.
+ * The flight viewport is a 2-bits-per-pixel bitmap ("mode D"): four screen columns share
+ * one byte of a raster row, each column occupying a fixed 2-bit field.  This routine sets
+ * the pixel at (row, col) to an object's value class and OR-blends it over whatever terrain
+ * is already there, so ground objects (gun emplacement / base / downed pilot / enemy fire)
+ * draw on top of the landscape:
+ *   valueMask $AA -> only the HIGH bit of each 2-bit pixel  => value-2 (object body / dot pen)
+ *   valueMask $FF -> both bits                              => value-3 (highlight pen, COLPF2)
+ * Rows >= $97 are below the bitmap and clipped (nothing drawn).
+ *
+ * Per-column geometry comes from two tables rebuilt once per frame:
+ *   terrain_col_byte_offset[col] ($BD00) = which byte of the row holds this column
+ *   terrain_col_pixel_mask[col]  ($BC00) = the column's HIGH-bit position ($80/$20/$08/$02)
+ * The row's base address comes from the $28CA (lo) / $28FA (hi) row-address tables.
+ *
+ * The 6502 stashes several intermediates in ZP ($80/$81 field pointer — a scratch reuse of
+ * the sync_flag/dl_ptr_lo cells; $B5 mask-build scratch; $28E2 the saved row).  Those are
+ * dead after return here but the transliterated oracle leaves them, so the SDL/validate path
+ * reproduces them for byte-identity.  The core takes typed args and never touches cpu, so the
+ * shim preserves X and Y (callers walk them with INX/DEY); exit A/flags are dead at every call
+ * site.  On the Amiga the field write is dropped (see below).
  */
+static inline void terrain_plot_pixel_core(uint8_t row, uint8_t col, uint8_t valueMask) {
+    if (row >= 0x97) return;                              /* below the bitmap: clip */
+
+    /* Field row-base pointer, from the $28CA (lo) / $28FA (hi) row-address tables.
+       ORDER MATTERS: the saved-row write ($28E2) must precede the table reads, because the $28CA
+       table OVERLAPS $28E2 (row $18 -> $28CA+$18 == $28E2), so at row $18 the table read is meant
+       to pick up the row we just stored.  The 6502 stores $28E2 first for exactly this reason;
+       reading the table first would grab the stale pre-store byte. */
+    terrain_plot_row = row;                               /* $28E2 (saved for the caller's Y) */
+    sync_flag = mem[0x28CA + row];                        /* $80 field ptr lo */
+    dl_ptr_lo = mem[0x28FA + row];                        /* $81 field ptr hi */
+
+    const uint8_t himask = mem[MEM_terrain_col_pixel_mask + col];  /* column's HIGH-bit position */
+    mem[0x00B5] = himask;                                 /* $B5 mask-build scratch (oracle leaves it) */
+
+    /* Both bits of this column's 2-bpp pixel, narrowed to the object's value class. */
+    const uint8_t pixelBits = (uint8_t)((himask >> 1) | himask) & valueMask;
+
+#ifndef ROF_PLATFORM_AMIGA
+    /* SDL/validate: OR the pixel bits into the mode-D field byte (what fill_terrain_silhouette /
+       the SDL decoder read back).  Base from $80/$81 (== the oracle's ($80),Y) and route through
+       bus_read/bus_write, NOT a direct mem[] RMW: the row base is a caller pointer, so a byte
+       offset can reach the $D000-$D7FF hardware page where the two differ — the validate harness's
+       randomized inputs exercise exactly that. */
+    const uint16_t addr = (uint16_t)((sync_flag | (dl_ptr_lo << 8)) + mem[MEM_terrain_col_byte_offset + col]);
+    bus_write(addr, (uint8_t)(bus_read(addr) | pixelBits));
+#else
+    /* Amiga: DROP the field write.  Same case as the rasterizer's ROF_FIELD_PLOT no-op —
+       renderFlightDirect builds the display straight from $260E + the plane2 dot buffer and never
+       reads the field body (rows 0-42) back, so the field write is dead weight (one scattered
+       indirect RMW per object pixel, in the object-plot loop).  The pixel is mirrored to the
+       bitplanes instead, exactly matching the field value it would have produced:
+         value bit1 (set for value-2 AND value-3) -> plane2  (ROF_PLOT_DOT, rows 0-46)
+         value bit0 (set only for value-3)         -> plane1  (ROF_PLOT_DOT_P1, post-fill overlay,
+                                                               so value-3 shows COLPF2 not COLPF1)
+       Mirroring plane1 directly here would seed spurious blitterFillUp sky streaks -> deferred. */
+    if (valueMask & himask)                  ROF_PLOT_DOT(col, row);       /* -> plane2 */
+    if (valueMask & (uint8_t)(himask >> 1))  ROF_PLOT_DOT_P1(col, row);    /* -> plane1 (post-fill) */
+#endif
+}
+
 void terrain_plot_pixel(void) {
-    if (cpu.Y >= 0x97) { terrain_plot_skip_return(); return; }   /* CPY #$97; BCS skip */
-    uint8_t savedY = cpu.Y;
-    terrain_plot_row = savedY;
-    sync_flag = mem[0x28CA + savedY];
-    dl_ptr_lo = mem[0x28FA + savedY];
-    cpu.Y = mem[MEM_terrain_col_byte_offset + cpu.X];   /* column X's byte offset within the row */
-    uint8_t himask = mem[MEM_terrain_col_pixel_mask + cpu.X]; /* column X's HIGH-bit-of-2bpp mask ($80/$20/$08/$02) */
-    uint8_t a = himask;
-    mem[0x00B5] = a;
-    a = (uint8_t)(a >> 1);                  /* LSR A */
-    a |= mem[0x00B5];                       /* ORA $B5 -> 2-bit mask (both bits of the pixel) */
-    a &= plot_pixel_mask;                       /* AND plot mask ($AA=value-2, $FF=value-3) */
-    a |= bus_read(ZP_IND_Y(0x80));          /* ORA ($80),Y */
-    bus_write(ZP_IND_Y(0x80), a);           /* STA ($80),Y */
-    /* Amiga: mirror the object pixel into the flight bitplanes, FAITHFUL to the value the field got.
-       renderFlightDirect no longer decode-scans the mode-D field for the terrain body (rows 0-42),
-       so a ground object (gun emplacement / downed pilot / enemy fire) written ONLY into the field
-       is dropped.  cpu.X = screen column (== the rasterizer's plotCol, 48-based); savedY = height
-       (the $28CA/$28FA row-table index) -> Amiga scanline 150-savedY.  The plotted value's HIGH bit
-       (plot_pixel_mask & himask; set for value-2 $AA AND value-3 $FF) -> plane2 (ROF_PLOT_DOT); its
-       LOW bit (plot_pixel_mask & himask>>1; set only for value-3 $FF) -> plane1 via the post-fill
-       overlay (ROF_PLOT_DOT_P1) so value-3 objects show COLPF2 not COLPF1.  Doing plane1 direct here
-       would seed spurious blitterFillUp streaks; hence the deferred overlay.  No-op on SDL/validate
-       (both macros null off-Amiga).  Runs in terrain_draw_frame_core's object pass, after the
-       dot-clear wait, into the same buffer the rasterizer fills. */
-    if (plot_pixel_mask & himask)              ROF_PLOT_DOT(cpu.X, savedY);      /* value bit1 -> plane2 */
-    if (plot_pixel_mask & (uint8_t)(himask >> 1)) ROF_PLOT_DOT_P1(cpu.X, savedY);/* value bit0 -> plane1 (post-fill) */
-    cpu.Y = savedY;                         /* LDY $28E2 (restore) */
-    terrain_plot_skip_return();
+    terrain_plot_pixel_core(cpu.Y, cpu.X, plot_pixel_mask);   /* X/Y unchanged = the oracle's exit */
 }
 
 /* terrain_clip_row_top @ $A6CB — clip a column's top against the per-column row
@@ -5053,7 +5079,7 @@ void terrain_clip_row_top(void) {
     uint8_t lim = mem[MEM_terrain_height_max + cpu.X];       /* CMP $260E,X */
     if (y < lim)  { terrain_plot_skip_return(); return; }   /* BCC skip */
     if (y == lim) { terrain_plot_skip_return(); return; }   /* BEQ skip */
-    terrain_plot_pixel();
+    terrain_plot_pixel_core(cpu.Y, cpu.X, plot_pixel_mask);
 }
 
 /* raster_scaled_object @ $AB9A — fill a 12x32 cell grid, plotting set bits.
@@ -7572,7 +7598,7 @@ void plot_scanline_down(void) {
         mem[0x28FA] = mem[0x28F4];                /* LDA $28F4; STA $28FA */
         do {                                      /* L_aaef (across the row) */
             if (cpu.X >= 0x2C && cpu.X < 0xD4)    /* CPX #$2C BCC; CPX #$D4 BCS */
-                terrain_plot_pixel();             /* aaf7 (preserves X/Y) */
+                terrain_plot_pixel_core(cpu.Y, cpu.X, plot_pixel_mask);             /* aaf7 (preserves X/Y) */
             cpu.X++;                              /* INX */
             mem[0x28FA]--;                        /* DEC $28FA */
         } while (mem[0x28FA] != 0);               /* BNE L_aaef */
@@ -7603,7 +7629,7 @@ void plot_scanline_up(void) {
         if (cpu.Y < 0x6C) return;                 /* CPY #$6C; BCC done */
         mem[0x28FA] = mem[0x28F4];                /* LDA $28F4; STA $28FA */
         do {                                      /* L_ab3f (up the column) */
-            terrain_plot_pixel();                 /* ab3f (preserves X/Y) */
+            terrain_plot_pixel_core(cpu.Y, cpu.X, plot_pixel_mask);                 /* ab3f (preserves X/Y) */
             cpu.Y--;                              /* DEY */
             if (cpu.Y < 0x6C) break;              /* CPY #$6C; BCC L_ab4c */
             mem[0x28FA]--;                        /* DEC $28FA */
