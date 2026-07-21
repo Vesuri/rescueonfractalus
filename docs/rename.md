@@ -315,3 +315,26 @@ setup). These are set/used by `game_sub_7EC7` + `game_sub_7F85`:
   per-voice shape/params from the `$81xx` tables.
 - `$0635` — set $20 (unnamed); `$0637`/`$063A` — cleared (unnamed); `$061A` — zoom base (read).
   Suggested names deferred (need cross-referencing with the full SFX engine).
+
+**update_object_distance ($6BED) / draw_vline_pair ($6C4D) — scratch reuse of named ZP cells**
+(found 2026-07-22, clean-C rewrite of both twins). These routines reuse several cells purely as
+local scratch, so the cells' current symbol names are MEANINGLESS in this context (the names come
+from their PRIMARY use in unrelated code):
+- `$0084 screen_ptr_hi` — here it is the **draw fill-pattern byte** ($FF/$AA/$55 in
+  update_object_distance; the byte draw_vline_pair stores for rows < $2B). Not a screen pointer.
+  Suggested (context) name: `draw_fill_byte`.
+- `$0085 encounter_count` — here it is the **object-distance subtrahend high byte** on entry to
+  update_object_distance, then overwritten by draw_vline_pair with the **plot column** `(X>>1)+2`.
+  Not the encounter counter.
+- `$00B7 frame_counter` — here it is **object-distance-lo / draw row-counter scratch**. Not the
+  VBI frame counter. Suggested: `obj_dist_lo` (or a generic `draw_row_scratch`).
+- `$00B8 draw_row_ptr2_hi` — here it is the **object-distance high byte / draw END-row**. Suggested:
+  `obj_dist_hi`. (symbols.csv already notes this reuse.)
+- `$00B9 draw_pattern_byte` — here it is the **object-distance minuend low byte** (the object's
+  current 16-bit distance lo, set by advance_object_positions). Suggested: `obj_dist_in_lo`.
+- `$00BA obj_pos_hi` — the object-distance minuend high byte; name is acceptable.
+- `$0082 dl_ptr_hi` — draw_vline_pair sets it to `$C0` purely as a "any 2bpp pack happened" marker
+  (from plot_pixel_2bpp's BIT $0082), not a display-list pointer here.
+
+Not misnamed but worth confirming: `draw_vline_pair` draws a column and its `$2F`-mirror as a
+symmetric pair of vertical spans (the approaching-object trail) — the name is fine.

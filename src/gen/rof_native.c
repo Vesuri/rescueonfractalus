@@ -1314,35 +1314,37 @@ void step_accum_sub_7e(void) {
     advance_history_6a4d();
 }
 
-/* draw_vline_pair @ $6C4D — plot a symmetric pair of vertical lines.  Entry A is the
- * start row, $00B8 the end row; the loop walks A down to $00B8 ($0092 = row counter).
- * Per row: set the row pointer; the plot column is col = (entryX>>1)+2 and its mirror
- * $2F-col.  For rows >= $2B the two columns are written via plot_pixel_2bpp (2bpp pack,
- * carry-sensitive — the entry carry is whatever CMP/SBC last set), otherwise the fill
- * byte $0084 is stored directly.  cpu.X (entryX) is preserved across the loop. */
 /* Planet dirty-row extent: draw_vline_pair is the only writer of the $1000 stars/planet
  * field, so it records the min/max field row it touches here; the Amiga
  * renderViewportModeD (RescueOnFractalus.cpp) decodes only that band, then resets it.
  * Defined here (the writer's TU) so every build that links the native twins resolves it. */
 volatile unsigned long g_planetRowLo = 9999, g_planetRowHi = 0;
-void draw_vline_pair(void) {
-    draw_row = cpu.A;
-    if ((uint8_t)(cpu.A - draw_row_ptr2_hi) & 0x80) return;     /* CMP $00B8; BMI -> return */
-    uint8_t entryX = cpu.X;
-    /* Loop-invariants (all fixed across the whole vertical line): the two plot columns, the
-     * fill byte, and the plot_pixel_2bpp carries — hoist them out.  Inline set_row_ptr_from_count
-     * (a per-row addr-table read) into a direct base read, and inline plot_pixel_2bpp's LUT.  This
-     * is the planet-approach body-fill hot loop (the launch cineGap): the per-row body drops from
-     * set_row_ptr + 2 function calls (each re-reading $80/$81 for ZP_IND_Y) to one table read + two
-     * indexed RMWs.  $80/$81 / $0082 are only needed at exit, so write them once after the loop.
-     * Byte-identical to the oracle (make validate). */
-    uint8_t col = (uint8_t)((entryX >> 1) + 2);            /* TXA; LSR; CLC; ADC #$02 */
+
+/* draw_vline_pair_core @ $6C4D — plot a symmetric pair of vertical lines down the screen field.
+ * Walks from startRow down to endRow (inclusive), and at each row fills two mirror columns:
+ * col = (colSourceX >> 1) + 2 and its mirror $2F-col.  For rows >= $2B the two cells are packed
+ * 2-bits-per-pixel (plot_pixel_2bpp: OR $C0 into the addressed cell); below $2B the raw `fill` byte
+ * is stored directly.  startRow < endRow draws nothing.  Writes the screen field plus the faithful
+ * exit scratch $0092/$0085/$0080/$0081/$0082 (see below); colSourceX is not mutated.
+ *
+ * Args replace the 6502 register/ZP ABI: startRow=A, endRow=$00B8, colSourceX=X, fill=$0084. */
+static void draw_vline_pair_core(uint8_t startRow, uint8_t endRow,
+                                 uint8_t colSourceX, uint8_t fill)
+{
+    draw_row = startRow;                                   /* $0092 = row counter (set even on the early-out) */
+    if ((uint8_t)(startRow - endRow) & 0x80) return;       /* startRow below endRow -> nothing to draw */
+    /* Loop-invariants (fixed across the whole vertical line): the two plot columns and the
+     * plot_pixel_2bpp carries — hoist them out.  Inline set_row_ptr_from_count (a per-row addr-table
+     * read) into a direct base read, and inline plot_pixel_2bpp's LUT.  This is the planet-approach
+     * body-fill hot loop (the launch cineGap): the per-row body drops from set_row_ptr + 2 function
+     * calls (each re-reading $80/$81 for ZP_IND_Y) to one table read + two indexed RMWs.  $80/$81 /
+     * $0082 are only needed at exit, so write them once after the loop.  Byte-identical (make validate). */
+    uint8_t col = (uint8_t)((colSourceX >> 1) + 2);        /* TXA; LSR; CLC; ADC #$02 */
     uint8_t y2  = (uint8_t)(0x2F - col);                   /* mirror column */
-    uint8_t fill = screen_ptr_hi;
     const uint8_t* lutCol = plot2bpp_lut[1];               /* col: C=1 (CMP a>=$2B) */
     const uint8_t* lutMir = plot2bpp_lut[(uint8_t)(0x2F >= col) & 1];  /* mirror: C from SBC */
     if (!plot2bpp_lut_ready) build_plot2bpp_lut();
-    encounter_count = col;                                 /* constant; final ZP value */
+    encounter_count = col;                                 /* $0085: constant; final ZP value */
     uint8_t packed = 0;
     uint16_t base = 0;
     for (;;) {
@@ -1361,65 +1363,92 @@ void draw_vline_pair(void) {
         }
         uint8_t n = (uint8_t)(draw_row - 1);            /* DEC $0092 */
         draw_row = n;
-        if ((uint8_t)(n - draw_row_ptr2_hi) & 0x80) break;      /* CMP $00B8; BPL loops; break when N set */
+        if ((uint8_t)(n - endRow) & 0x80) break;        /* CMP $00B8; BPL loops; break when N set */
     }
     /* faithful exit ZP: $80/$81 = addr table[last row processed]; $0082 = $C0 if any pack ran */
     sync_flag = (uint8_t)base; dl_ptr_lo = (uint8_t)(base >> 8);
     if (packed) dl_ptr_hi = 0xC0;
 }
 
-/* update_object_distance @ $6BED — compute an object's clamped 16-bit screen distance
- * {$00B7:$00B8} = {$00B9:$00BA} - {$0084:$0085} (clamped to >= 0), store it to the
- * object position arrays $08A4/$08A5[X], then draw up to three vertical line pairs
- * (top edge at row <= $2E, then two more stepping the row/fill byte) via draw_vline_pair,
- * with early-outs when the row counter $00B7 goes negative.  Entry cpu.X selects the
- * object slot and is the column source for the draws (draw_vline_pair preserves it). */
+/* 6502-ABI shim: A = start row, X = column source, $00B8 = end row, $0084 = fill byte. */
+void draw_vline_pair(void) {
+    draw_vline_pair_core(cpu.A, mem[MEM_draw_row_ptr2_hi], cpu.X, mem[MEM_screen_ptr_hi]);
+}
+
+/* update_object_distance @ $6BED — recompute one approaching object's on-screen distance
+ * and redraw its vertical "getting closer" marker.
+ *
+ * Given the object's current 16-bit distance and this frame's accumulated approach offset,
+ * it computes the new distance (high byte floored at 0), writes it back to the object-position
+ * table at [slot], and draws up to three stacked vertical line-pairs down the screen — each one
+ * row shorter and in a different fill pattern ($FF, then $AA, then $55) — stopping early as the
+ * row counter runs out.  Each line-pair is one draw_vline_pair call, which fills a column and its
+ * mirror ($2F-col) from a start row down to an end row.
+ *
+ * SCRATCH-NAME WARNING: the 6502 reuses several named zero-page cells purely as scratch here, so
+ * their mem.h symbol names are MEANINGLESS in this routine (see docs/rename.md):
+ *   $0084 screen_ptr_hi   -> draw fill-pattern byte ($FF/$AA/$55)
+ *   $0085 encounter_count -> subtrahend high byte (this frame's advance-hi input)
+ *   $00B7 frame_counter   -> row counter / distance-lo scratch
+ *   $00B8 draw_row_ptr2_hi-> distance-hi / draw end-row scratch
+ *   $00B9 draw_pattern_byte / $00BA obj_pos_hi -> the object's 16-bit distance (minuend)
+ * We keep the logic in locals and touch mem[] only where draw_vline_pair reads its inputs from
+ * fixed cells ($0084 = pattern, $00B8 = end row; A = start row, X = column/slot) or where the
+ * routine's final $00B7/$00B8/$0084 values must match the 6502 (the validation harness diffs full
+ * memory).  No hardware ($D000-$D7FF) writes here, so there are no dead bus_writes to drop. */
+static void update_object_distance_core(uint8_t slot,
+                                        uint8_t distLo, uint8_t distHi,
+                                        uint8_t subLo, uint8_t subHi)
+{
+    /* New distance = {distHi:distLo} - {subHi:subLo}.  The low byte wraps freely; the high byte
+     * is floored at 0 (a negative result is clamped, but the low byte is NOT re-clamped). */
+    uint8_t newLo  = (uint8_t)(distLo - subLo);
+    uint8_t borrow = (distLo < subLo) ? 1 : 0;
+    uint8_t newHi  = (uint8_t)(distHi - subHi - borrow);
+    if (newHi & 0x80) newHi = 0;
+    mem[MEM_obj_pos_table + slot]     = newLo;      /* $08A4[slot] = distance lo */
+    mem[MEM_obj_pos_table + 1 + slot] = newHi;      /* $08A5[slot] = distance hi */
+
+    /* The mem[$0084]/mem[$00B8] writes below are the 6502's faithful scratch side-effects (the
+     * validation harness diffs full memory), left in place; the live draw inputs are passed to
+     * draw_vline_pair_core as explicit arguments. */
+
+    /* Draw #1: from the object's raw distance-hi (clamped to the last row $2E) down to the new
+     * distance-hi, fill pattern $FF. */
+    uint8_t endRow   = newHi;
+    uint8_t startRow = (distHi < 0x2F) ? distHi : 0x2E;
+    mem[MEM_screen_ptr_hi]    = 0xFF;
+    mem[MEM_draw_row_ptr2_hi] = endRow;
+    draw_vline_pair_core(startRow, endRow, slot, 0xFF);
+
+    mem[MEM_screen_ptr_hi] = 0xAA;                  /* pattern for draw #2, set before the early-out */
+    if (startRow == 0) { mem[MEM_frame_counter] = 0xFF; return; }   /* row-- underflowed -> done */
+    uint8_t row = (uint8_t)(startRow - 1);
+
+    /* Draw #2: same start row (one up), end row stepped up by this frame's advance-hi (floored). */
+    endRow = (uint8_t)(endRow - mem[MEM_obj_advance_hi]);
+    if (endRow & 0x80) endRow = 0;
+    mem[MEM_draw_row_ptr2_hi] = endRow;
+    draw_vline_pair_core(row, endRow, slot, 0xAA);
+
+    mem[MEM_screen_ptr_hi] = 0x55;                  /* pattern for draw #3, set before the early-out */
+    if (endRow == 0) { mem[MEM_frame_counter] = 0xFF; return; }     /* row = endRow, row-- underflowed */
+    row    = (uint8_t)(endRow - 1);
+    endRow = (uint8_t)(endRow - 1);                 /* draw #3 end row (endRow >= 1 here, so >= 0) */
+    mem[MEM_frame_counter]    = row;
+    mem[MEM_draw_row_ptr2_hi] = endRow;
+
+    /* Draw #3 only while the row is still above the marker cut-off ($2B). */
+    if (row < 0x2B) draw_vline_pair_core(row, endRow, slot, 0x55);
+}
+
+/* 6502-ABI shim: X = object slot; minuend (current distance) in {$00B9:$00BA}; subtrahend
+ * (this frame's advance) in {$0084:$0085}.  These input cells' mem.h names are the misleading
+ * scratch aliases noted in update_object_distance_core / docs/rename.md. */
 void update_object_distance(void) {
-    uint8_t x = cpu.X;
-
-    uint16_t lo = (uint16_t)draw_pattern_byte - screen_ptr_hi;     /* SEC; SBC $0084 */
-    frame_counter = (uint8_t)lo;
-    uint8_t borrow = (lo & 0x100) ? 1 : 0;
-    uint8_t hi = (uint8_t)(obj_pos_hi - encounter_count - borrow);  /* SBC $0085 */
-    if (hi & 0x80) hi = 0x00;                              /* BPL skips; clamp negative to 0 */
-    draw_row_ptr2_hi = hi;
-
-    mem[MEM_obj_pos_table + x] = frame_counter;
-    mem[0x08A5 + x] = draw_row_ptr2_hi;
-    screen_ptr_hi = 0xFF;
-
-    frame_counter = (obj_pos_hi < 0x2F) ? obj_pos_hi : 0x2E;  /* CMP #$2F; BCC skips; else $2E */
-    cpu.A = frame_counter; cpu.X = x; draw_vline_pair();
-    screen_ptr_hi = 0xAA;
-
-    {   /* DEC $00B7; BMI -> return */
-        uint8_t d = (uint8_t)(frame_counter - 1);
-        frame_counter = d;
-        if (d & 0x80) return;
-    }
-
-    {   /* SEC; LDA $00B8; SBC $08D3; BPL skips; clamp negative */
-        uint8_t s = (uint8_t)(draw_row_ptr2_hi - obj_advance_hi);
-        if (s & 0x80) s = 0x00;
-        draw_row_ptr2_hi = s;
-    }
-    cpu.A = frame_counter; cpu.X = x; draw_vline_pair();
-    frame_counter = draw_row_ptr2_hi;
-    screen_ptr_hi = 0x55;
-
-    {   /* DEC $00B7; BMI -> return */
-        uint8_t d = (uint8_t)(frame_counter - 1);
-        frame_counter = d;
-        if (d & 0x80) return;
-    }
-
-    {   /* DEC $00B8; BPL skips; clamp negative to 0 */
-        uint8_t d = (uint8_t)(draw_row_ptr2_hi - 1);
-        draw_row_ptr2_hi = (d & 0x80) ? 0x00 : d;
-    }
-    if ((uint8_t)(frame_counter - 0x2B) & 0x80) {            /* CMP #$2B; BMI -> draw + return */
-        cpu.A = frame_counter; cpu.X = x; draw_vline_pair();
-    }
+    update_object_distance_core(cpu.X,
+                                mem[MEM_draw_pattern_byte], mem[MEM_obj_pos_hi],
+                                mem[MEM_screen_ptr_hi], mem[MEM_encounter_count]);
 }
 
 /* advance_object_positions @ $6BA8 — advance the scroll counters ($08D1++, the
