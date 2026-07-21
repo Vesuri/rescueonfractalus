@@ -1,10 +1,29 @@
-# Pilot-rescue "walk-to-airlock" figure render — OPEN bug + investigation plan
+# Pilot-rescue "walk-to-airlock" figure render — RESOLVED (resume-frame dot dropout)
 
-Status (2026-07-21): the committed dirty-rect render (`2158300`) **works** — entry (systems off →
-pilot zoom) is clean, the pause animates, perf is fine. The **one open bug** is a **1-frame terrain-dot
-dropout on the RESUME frame** (systems back ON → first flight frame shows terrain silhouette + sky but
-NO plane2 dots; self-corrects the next frame). This doc is the handoff for fixing it *properly next
-session* — two blind attempts regressed it (see "What NOT to do"), so fix it with measurement.
+Status (2026-07-21): **FIXED + user-confirmed.** The resume-frame 1-frame terrain-dot dropout is gone,
+the pilot zoom stays clean, resume has dots, no crash. Root cause + fix below; the investigation
+history (how it was measured) is kept because the measurement technique + the two dead-end approaches
+are the durable lessons.
+
+**Root cause (confirmed by a live gdb ring-buffer capture, `amiga/diag_rescue.gdb`):** on the single
+frame the rescue ends, `flightKickBackClear` had suppressed the off-screen buffer's pre-clear for the
+whole pause (`flightClearPending==null`), so the terrain rasterizer ORed the resume frame's fresh dots
+into an un-cleared buffer and `renderFlightDirect`'s safety clear then wiped BOTH planes — measured: the
+painted buffer's plane2 byte-sum collapsed ~10209→1290 for exactly one displayed frame, then
+self-corrected once the pre-clear re-armed.
+
+**Fix (`renderFlightDirect`, keyed on the `$3E` latch — NOT `rescueFigure`):** detect the `$3E`
+(clear_colors_done) nonzero→zero edge = the true rescue END, and latch a **one-shot plane2 restore**
+that runs on the next terrain-rendering frame: copy the FROZEN terrain dots captured in `s_clean` at
+pause entry into the painted buffer's plane2 (rows 0-42). The ship is stationary across a rescue so the
+frozen dots are a byte-identical stand-in for that one frame; `s_clean` is the pre-figure snapshot so no
+ghost. Touches ONLY the normal path — no flip-skip, no change to the pause dirty-rect. **Why `$3E` and
+not `rescueFigure`:** `rescueFigure = ($3E!=0 && $3D>=3)` also goes false on the mid-zoom frames where
+`pilot_render` drops `$3D` to 2 (`$7a37`), so any recovery keyed on `rescueFigure`/"was in pause" fires
+DURING the zoom and corrupts it (that was the failing attempt). `$3E` is a clean single latch (set once
+at rescue start, cleared once at end — measured `01→00` one edge), so the edge fires exactly once at the
+real resume. Also hardened: `s_clean` is now `alignas(4)` (the existing snapshot casts it to `uint32_t*`
+and long-accesses it — a 68000 bus error if a BSS-layout change pushes the byte-array to an odd address).
 
 ## Scene / trigger
 
@@ -50,7 +69,14 @@ The catch-22: the dirty-rect NEEDS the suppress-clear (to retain frozen terrain 
 the resume needs a PRE-CLEARED buffer. You can't tell during the pause which frame is the last, so you
 can't pre-clear the resume buffer from `flightKickBackClear` ahead of time.
 
-## What does NOT work (both regressed into "modulo-like" interleaved shear — do NOT repeat)
+## What does NOT work (do NOT repeat)
+
+0. **Keying the resume recovery on `rescueFigure` / "was in the pause" (`s_wasRescuePause`)** — corrupts
+   the ZOOM, not the resume. `rescueFigure` flickers false mid-zoom (see the `$3E` vs `$3D` note above),
+   so the recovery fires while the figure is animating. The `$3E` nonzero→zero edge is the correct key
+   (RESOLVED, above). This is a *different* failure from the two shear regressions below.
+
+## Earlier shear dead-ends (both regressed into "modulo-like" interleaved shear — do NOT repeat)
 
 Both attempts were reverted; neither was committed. Confirmed via **git bisect (user tested each build)**
 that the committed code is clean and these uncommitted patches were the cause:

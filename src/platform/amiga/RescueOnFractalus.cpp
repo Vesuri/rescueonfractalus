@@ -267,7 +267,11 @@ extern "C" int g_figRowLo = 99, g_figRowHi = -1;   // empty
 // box (restore plane1+plane2 from the snapshot) and draw the new figure.  Because the viewport is
 // double-buffered we track per-buffer state: whether the buffer has been seeded with clean terrain
 // yet, and the row box its current figure occupies (to erase next time that buffer comes round).
-static uint8_t s_clean[47 * 120];
+// alignas(4): the snapshot/seed copies below cast s_clean to uint32_t* and do long accesses, which
+// bus-error on the 68000 unless 4-aligned.  A plain char array is only byte-aligned, so it was
+// aligned by luck before; pin it so a BSS-layout change (e.g. adding a probe global) can't push it
+// to an odd address and fault.
+alignas(4) static uint8_t s_clean[47 * 120];
 static bool    s_cleanValid = false;
 static bool    s_bufSeeded[2] = { false, false };
 static int     s_boxLo[2] = { 99, 99 }, s_boxHi[2] = { -1, -1 };
@@ -275,6 +279,16 @@ static int     s_boxLo[2] = { 99, 99 }, s_boxHi[2] = { -1, -1 };
 // retain the frozen terrain) but still re-arms the dot/object plane pointers.  Set/cleared by
 // renderFlightDirect.
 static bool    s_flightRescuePause = false;
+// Resume-frame terrain-dot recovery, keyed on the $3E (clear_colors_done) latch — NOT on
+// rescueFigure.  $3E is set ONCE when the rescue starts and cleared ONCE when it ends (measured
+// clean 01->00 single edge, diag_rescue.gdb 2026-07-21), whereas rescueFigure ($3E && $3D>=3) also
+// goes false on the mid-zoom frames where pilot_render drops $3D to 2 ($7a37) — firing a
+// rescueFigure-keyed recovery DURING the zoom, which corrupts it (user-observed).  So we detect the
+// true rescue END as the $3E nonzero->zero edge and latch a one-shot restore that runs on the first
+// terrain-rendering frame at/after it (survives a possible !g_flightTerrainFresh hold on the exact
+// edge frame).  s_prevRescueActive tracks "$3E was nonzero last frame".
+static bool    s_prevRescueActive   = false;
+static bool    s_resumeRestorePend  = false;
 // Called by the terrain draw (rof_native.c) before its first dot write, to ensure the kicked
 // off-screen-buffer clear has finished (the dots OR into freshly-zeroed plane2).
 extern "C" void rof_flight_wait_dotclear(void) { AmigaHardware::blitterWait(); }
@@ -1440,6 +1454,59 @@ void RescueOnFractalus::renderViewportModeD(uint16_t srcBase, int stride, int ro
 #endif
 }
 
+#ifdef ROF_FLIGHT_PROBE
+// ── Pilot-rescue resume-frame dot-dropout diagnostic ring buffer ───────────────
+// One record per renderFlightDirect() entry, capturing exactly the state that decides which
+// buffer is displayed vs painted vs cleared across the rescue pause + resume, so we can see how
+// they desync (the doc's investigation-plan step 1).  A rescue can only be reached by interactive
+// play, so we can't drive this headlessly — instead the ring auto-FREEZES a few frames after the
+// pause ends (rescueFigure seen true then false), preserving the window for a later gdb dump
+// (amiga/diag_rescue.gdb) without the history scrolling away.  All globals are read from the gdb
+// stub.  Buffer ids: 0=terrainBitmap, 1=terrainBitmapBack, 2=null.  Path: 1=rescue-pause branch,
+// 2=hold (!terrainFresh early return), 3=normal render, 0=early null return.
+#define RF_RING_N 128
+extern "C" volatile unsigned short g_rfN = RF_RING_N;
+extern "C" volatile unsigned short g_rfIdx = 0;      // next write slot (wraps); #records = min(count,N)
+extern "C" volatile unsigned long  g_rfCount = 0;    // total records ever (pre-freeze)
+extern "C" volatile unsigned char  g_rfFrozen = 0;   // 1 once the post-resume window elapsed
+extern "C" volatile unsigned char  g_rfSawRescue = 0;
+extern "C" volatile unsigned short g_rfPostResume = 0;
+// Per-slot columns (parallel arrays so the gdb `while` loop can dump each cleanly).
+extern "C" volatile unsigned long  g_rfFrame[RF_RING_N] = {0};   // platform_frame_count (g_vbiCount) at entry
+extern "C" volatile unsigned char  g_rfPath[RF_RING_N]  = {0};
+extern "C" volatile unsigned char  g_rfResc[RF_RING_N]  = {0};   // rescueFigure
+extern "C" volatile unsigned char  g_rf3D[RF_RING_N]    = {0};   // mem[0x3D]
+extern "C" volatile unsigned char  g_rf3E[RF_RING_N]    = {0};   // mem[0x3E]
+extern "C" volatile unsigned char  g_rfDisp[RF_RING_N]  = {0};   // flightDisplayed id
+extern "C" volatile unsigned char  g_rfBack[RF_RING_N]  = {0};   // back id (buffer to paint)
+extern "C" volatile unsigned char  g_rfClr[RF_RING_N]   = {0};   // flightClearPending id
+extern "C" volatile unsigned char  g_rfFresh[RF_RING_N] = {0};   // g_flightTerrainFresh
+extern "C" volatile short          g_rfFigLo[RF_RING_N] = {0};   // g_figRowLo
+extern "C" volatile short          g_rfFigHi[RF_RING_N] = {0};   // g_figRowHi
+// Cheap byte-sum checksums of plane1 (dots' silhouette) and plane2 (terrain dots) of BOTH fixed
+// buffers, so we can see which buffer holds dots and when a clear wiped them.
+extern "C" volatile unsigned long  g_rfP1a[RF_RING_N] = {0};  // terrainBitmap  plane1 sum
+extern "C" volatile unsigned long  g_rfP2a[RF_RING_N] = {0};  // terrainBitmap  plane2 sum
+extern "C" volatile unsigned long  g_rfP1b[RF_RING_N] = {0};  // terrainBitmapBack plane1 sum
+extern "C" volatile unsigned long  g_rfP2b[RF_RING_N] = {0};  // terrainBitmapBack plane2 sum
+// s_clean snapshot checksums (to catch a re-snapshot contaminating it mid-rescue) + whether the
+// resume-frame dot-recovery restore was armed (s_wasRescuePause) at entry = fires this frame.
+extern "C" volatile unsigned long  g_rfScP1[RF_RING_N] = {0};  // s_clean plane1 sum
+extern "C" volatile unsigned long  g_rfScP2[RF_RING_N] = {0};  // s_clean plane2 sum
+extern "C" volatile unsigned char  g_rfWasR[RF_RING_N] = {0};  // s_wasRescuePause at entry
+extern "C" unsigned short platform_frame_count(void);   // returns g_vbiCount (PlatformAmiga.cpp)
+
+static unsigned long rfPlaneSum(const uint8_t* base, int planeOff)
+{
+    unsigned long s = 0;
+    for (int r = 0; r < 47; r++) {
+        const uint8_t* p = base + (unsigned)r * 120 + planeOff;
+        for (int b = 0; b < 40; b++) s += p[b];
+    }
+    return s;
+}
+#endif  // ROF_FLIGHT_PROBE
+
 // ── Direct flight terrain renderer (terrain-draw-plan Stages 1-3) ──────────────
 // Plot the terrain sky straight to bitplanes from $260E (yForX) — NO mem[$1070] round-trip,
 // NO full-buffer LUT scan, NO shadow (the heavy parts of renderViewportModeD).  Mapping
@@ -1462,7 +1529,43 @@ void RescueOnFractalus::renderFlightDirect()
     // clean frozen terrain once, suppress the per-frame back-buffer clear so the buffers retain it,
     // and each frame only ERASE the previous figure's row box (restore plane1+plane2 from the
     // snapshot) and draw the new figure.  Reuses the exact normal VBI-synced flip.
-    const bool rescueFigure = (mem[0x003E] != 0 && mem[0x003D] >= 3);
+    const bool rescueActive = (mem[0x003E] != 0);
+    const bool rescueFigure = (rescueActive && mem[0x003D] >= 3);
+    // $3E nonzero->zero edge = the rescue truly ended (this is the resume frame).  Latch a one-shot
+    // dot restore for the next rendering frame; never set during the pause or its mid-zoom $3D dips.
+    if (s_prevRescueActive && !rescueActive) s_resumeRestorePend = true;
+    s_prevRescueActive = rescueActive;
+#ifdef ROF_FLIGHT_PROBE
+    // Record this entry into the rescue diagnostic ring (see the block above renderFlightDirect).
+    if (!g_rfFrozen) {
+        auto bid = [&](Bitmap* b) -> unsigned char {
+            return (unsigned char)(b == terrainBitmap ? 0 : (b == terrainBitmapBack ? 1 : 2)); };
+        Bitmap* const backPrev = (flightDisplayed == terrainBitmapBack) ? terrainBitmap : terrainBitmapBack;
+        const unsigned char path = rescueFigure ? 1 : (!g_flightTerrainFresh ? 2 : 3);
+        const unsigned i = g_rfIdx;
+        g_rfFrame[i] = platform_frame_count(); g_rfPath[i] = path;
+        g_rfResc[i]  = rescueFigure ? 1 : 0;
+        g_rf3D[i]    = mem[0x003D];         g_rf3E[i]   = mem[0x003E];
+        g_rfDisp[i]  = bid(flightDisplayed); g_rfBack[i] = bid(backPrev);
+        g_rfClr[i]   = bid(flightClearPending);
+        g_rfFresh[i] = (unsigned char)(g_flightTerrainFresh ? 1 : 0);
+        g_rfFigLo[i] = (short)g_figRowLo;   g_rfFigHi[i] = (short)g_figRowHi;
+        g_rfP1a[i]   = rfPlaneSum((const uint8_t*)terrainBitmap->data, 0);
+        g_rfP2a[i]   = rfPlaneSum((const uint8_t*)terrainBitmap->data, 40);
+        g_rfP1b[i]   = rfPlaneSum((const uint8_t*)terrainBitmapBack->data, 0);
+        g_rfP2b[i]   = rfPlaneSum((const uint8_t*)terrainBitmapBack->data, 40);
+        g_rfScP1[i]  = rfPlaneSum(s_clean, 0);
+        g_rfScP2[i]  = rfPlaneSum(s_clean, 40);
+        g_rfWasR[i]  = (unsigned char)(s_resumeRestorePend ? 1 : 0);
+        g_rfIdx = (unsigned short)((i + 1) % RF_RING_N);
+        g_rfCount++;
+        // Track the rescue->resume window and freeze ~24 frames after the pause ends so the
+        // capture survives until a gdb break.  (rescueFigure can toggle mid-animation, so require
+        // a sustained run of non-rescue frames after having seen a rescue.)
+        if (rescueFigure) { g_rfSawRescue = 1; g_rfPostResume = 0; }
+        else if (g_rfSawRescue) { if (++g_rfPostResume >= 24) g_rfFrozen = 1; }
+    }
+#endif
     if (rescueFigure) {
         // Entry: snapshot the clean frozen terrain (all 3 planes, 47 interleaved rows) from the
         // currently-displayed buffer, which still holds the last real frame here.  Mark that buffer
@@ -1568,6 +1671,29 @@ void RescueOnFractalus::renderFlightDirect()
     AmigaHardware::blitterWait();
     flightClearPending = nullptr;
     FD_LAP(g_fdClear);
+
+    // Resume-frame terrain-dot recovery.  On the single normal frame that ends a rescue-figure
+    // pause the off-screen buffer was NEVER pre-cleared (flightKickBackClear suppressed the clear
+    // for the whole pause), so the terrain rasterizer ORed this frame's fresh dots into the
+    // un-cleared buffer and the safety clear just above wiped BOTH planes — measured: the painted
+    // buffer's plane2 byte-sum collapses ~10209->1290 for exactly one displayed frame, then
+    // self-corrects once flightKickBackClear re-arms the pre-clear.  The fresh dots are
+    // unrecoverable (ORed on top of stale content, inseparable), but the ship is stationary across
+    // a rescue, so the FROZEN dots captured in s_clean at pause entry are a byte-identical stand-in
+    // for this one frame.  Restore plane2 (offset +40) for terrain body rows 0-42 only; the
+    // windscreen band (43-46) is repainted from mem[$2098] by the band overlay below.  s_clean is
+    // the pre-figure snapshot (no figure pixels) so this leaves no ghost.  Touches ONLY the normal
+    // path — the dirty-rect clear/flip/seed state machine is untouched, and there is no flip-skip
+    // (attempt #1's shear) nor pause-flow change (attempt #2's shear).  Keyed on the $3E-end latch
+    // (s_resumeRestorePend), so it fires exactly once at the true resume and never during the zoom.
+    if (s_resumeRestorePend) {
+        s_resumeRestorePend = false;
+        for (int r = 0; r <= 42; r++) {
+            const uint8_t* s2 = s_clean + (unsigned)r * 120 + 40;   // plane2 in the clean snapshot
+            uint8_t* d2 = bp + (unsigned)r * 120 + 40;              // plane2 in the back buffer
+            for (int b = 0; b < 40; b++) d2[b] = s2[b];
+        }
+    }
 
     // Edge plot: ONE plane1 bit per column at its skyline scanline (160 byte-ORs).  Hand-asm twin
     // (flight_edge_plot_asm, TerrainRasterizeAssembler.s) — 4 columns unrolled with immediate masks,
