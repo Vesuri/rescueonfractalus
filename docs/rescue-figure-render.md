@@ -5,6 +5,19 @@ the pilot zoom stays clean, resume has dots, no crash. Root cause + fix below; t
 history (how it was measured) is kept because the measurement technique + the two dead-end approaches
 are the durable lessons.
 
+**2026-07-22 follow-up — SECOND resume bug (systems toggled with NO pilot animation) FIXED + user-confirmed
+(commit 49172b4).** `$3E` (rescueActive) also goes active when systems are switched off with no pilot in
+range: no walk runs (`$3D` never reaches 3 → `rescueFigure` never true), so `s_clean` is NEVER snapshotted
+that pause and holds STALE data from a prior rescue (or is empty). The `$3E`-edge restore fired anyway on
+resume, copying that stale/empty plane2 over the correct fresh dots → resume showed a stale/wrong (or empty)
+frame. Fix: gate the arming on `s_cleanValid` (`if (s_prevRescueActive && !rescueActive && s_cleanValid)`),
+so the restore fires ONLY when a real rescue-figure pause captured `s_clean` this cycle. In the no-animation
+case the clear was never suppressed (`s_flightRescuePause` stayed false), so the normal render path already
+draws correct dots — no restore needed. **Durable lesson: `$3E`/rescueActive is NOT "pilot rescue" — it is
+"systems off," which happens with or without a pilot; only `s_cleanValid` distinguishes a real walk pause.**
+(Bisect ruled out the same session's `terrain_plot_pixel`/`plot_clipped_pixel` field-RMW-drop commits —
+this bug was pre-existing, present at fc16a15.)
+
 **Root cause (confirmed by a live gdb ring-buffer capture, `amiga/diag_rescue.gdb`):** on the single
 frame the rescue ends, `flightKickBackClear` had suppressed the off-screen buffer's pre-clear for the
 whole pause (`flightClearPending==null`), so the terrain rasterizer ORed the resume frame's fresh dots
