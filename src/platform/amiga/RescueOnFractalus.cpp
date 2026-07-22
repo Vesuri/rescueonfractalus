@@ -1533,7 +1533,14 @@ void RescueOnFractalus::renderFlightDirect()
     const bool rescueFigure = (rescueActive && mem[0x003D] >= 3);
     // $3E nonzero->zero edge = the rescue truly ended (this is the resume frame).  Latch a one-shot
     // dot restore for the next rendering frame; never set during the pause or its mid-zoom $3D dips.
-    if (s_prevRescueActive && !rescueActive) s_resumeRestorePend = true;
+    // GATE on s_cleanValid: $3E (rescueActive) also goes active when systems are switched off with NO
+    // pilot in range (no walk animation, $3D never reaches 3 -> rescueFigure never true -> s_clean is
+    // never snapshotted this pause).  In that case the clear was NOT suppressed (s_flightRescuePause
+    // stayed false), so the normal render path already produces correct fresh dots on resume — arming
+    // the restore there would copy STALE s_clean (from a prior rescue, or empty) over them, which is
+    // the "resume shows a stale/incorrect frame" bug.  Only restore when a real rescue-figure pause
+    // actually captured s_clean.
+    if (s_prevRescueActive && !rescueActive && s_cleanValid) s_resumeRestorePend = true;
     s_prevRescueActive = rescueActive;
 #ifdef ROF_FLIGHT_PROBE
     // Record this entry into the rescue diagnostic ring (see the block above renderFlightDirect).
