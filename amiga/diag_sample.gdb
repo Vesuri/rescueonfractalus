@@ -11,7 +11,7 @@ set height 0
 set $i = 0
 while $i < 400
   continue
-  printf "S%d vbi=%u 060B=%u 004A=%u iter=%u pc=0x%x SYM=", $i, g_vbiCount, mem[0x060B], mem[0x004A], g_iterCount, $pc
+  printf "S%d vbi=%u VVBLKI=%02x%02x 365B=%02x sp=%08x pc=0x%x SYM=", $i, g_vbiCount, mem[0x0223], mem[0x0222], mem[0x365B], $sp, $pc
   info symbol $pc
   set $i = $i + 1
 end
