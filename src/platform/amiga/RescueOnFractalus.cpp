@@ -1542,7 +1542,7 @@ void RescueOnFractalus::renderFlightDirect()
     // actually captured s_clean.
     if (s_prevRescueActive && !rescueActive && s_cleanValid) s_resumeRestorePend = true;
     s_prevRescueActive = rescueActive;
-#ifdef ROF_FLIGHT_PROBE
+#if defined(ROF_FLIGHT_PROBE) && !defined(ROF_PROFILE_NORING)
     // Record this entry into the rescue diagnostic ring (see the block above renderFlightDirect).
     if (!g_rfFrozen) {
         auto bid = [&](Bitmap* b) -> unsigned char {

@@ -235,6 +235,13 @@ EXTRA_DEFINES += -DROF_HW_WRITE_POKEY_ONLY
 ifdef PROBES
 EXTRA_DEFINES += -DROF_FLIGHT_PROBE -DROF_TDRAW_PROF
 endif
+# `make PROBES=1 PROFILE_NORING=1`: compile out the ROF_FLIGHT_PROBE rescue-debug ring
+# (rfPlaneSum — 4x full-plane 47x120 byte-sum walks EVERY frame; it only freezes after a
+# rescue, so in steady flight it runs forever and eats ~half the PC-profile samples).
+# Use this for any flight PC-sampling profile (diag_sample.sh) so the ring doesn't swamp it.
+ifdef PROFILE_NORING
+EXTRA_DEFINES += -DROF_PROFILE_NORING
+endif
 # `make PROBES=1 AUTOFIRE=1`: hold the trigger once in flight so the player laser fires
 # continuously — a capture path for the shot PMG (dump mem[$0E00 page] + shadows via gdb).
 ifdef AUTOFIRE
