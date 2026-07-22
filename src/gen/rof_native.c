@@ -9572,22 +9572,27 @@ static void game_main_loop_body(void) {
     /* Stay in the flight loop unless this life is over (player_lives == 2). */
     if (player_lives != 0x02) continue;
     /* Life over — set up the level-clear / crash handoff. */
-    joystick_saved = 0x03;               /* player_lives(2) + 1 */
-    mem[0x28D9] = 0x80;
-    mem[0x28DA] = 0x80;
+    joystick_saved = 0x03;               /* player_lives(2) + 1 (used if we keep flying below) */
+    cpu.Y = 0x80;
+    mem[0x28D9] = cpu.Y;
+    mem[0x28DA] = cpu.Y;
     if (terrain_depth_step < 0x40) continue;   /* still descending: keep flying */
     /* Spin (showing the display half) until the level-ready flag goes negative (bit7 set). */
     do {
         g_flightRenderHalf = 0;
         ds_frame();
     } while (!(level_ready_flag & 0x80));
-    lock_on_indicator_state = 0x80;      /* Y held $80 since the $28D9/$28DA stores */
-    bcd_osc_dir = 0x00;
-    game_phase_flag = 0x00;
+    lock_on_indicator_state = cpu.Y;     /* faithful: Y held since the LDY $80 above */
+    /* A = 0 is threaded (unchanged) through wait_frames_10 / wait_frames' PHA/PLA into
+       joystick_saved and the buffer-clear fill byte — MUST stay 0 or the PMG buffers get
+       cleared with garbage (crash after game over). */
+    cpu.A = 0x00;
+    bcd_osc_dir = cpu.A;
+    game_phase_flag = cpu.A;
     wait_frames_10();
-    joystick_saved = cpu.A;              /* wait_frames_10 leaves its frame residue in A (faithful) */
+    joystick_saved = cpu.A;              /* 0 (preserved through wait_frames_10) */
     wait_frames();
-    { uint8_t fill = cpu.A;              /* wait_frames restores the pre-call A (PHA/PLA) = the clear byte */
+    { uint8_t fill = cpu.A;              /* 0 (preserved through wait_frames) = the clear byte */
       for (int i = 1; i <= 0xA3; i++)    /* clear $0F1D.. (offset 0 left intact) */
           mem[0x0F1D + i] = fill;
       for (int i = 0; i <= 0x1E; i++)    /* clear $0E8F.. */
