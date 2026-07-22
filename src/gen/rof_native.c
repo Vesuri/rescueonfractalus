@@ -9381,49 +9381,49 @@ void game_main_loop(void) {
     s_gmlActive = 0;                                   /* body returned (it never should) — re-arm cleanly */
 }
 static void game_main_loop_body(void) {
-    bus_write(0x022F, 0);
-    bus_write(0xD01D, 0);
-    for (int i = 0; i < 8; i++) {         /* L_3d52 */
+    /* ---- One-time hardware + game init (runs once; the loop below never returns) ---- */
+    bus_write(0x022F, 0);                     /* SDMCTL shadow: display DMA off while we rebuild */
+#ifndef ROF_PLATFORM_AMIGA
+    bus_write(0xD01D, 0);                     /* GTIA GRACTL off (dead on Amiga: copper owns display) */
+#endif
+    for (int i = 0; i < 8; i++) {             /* zero the 8 GTIA colour regs + the $36CA state block */
         mem[0xD00D + i] = 0;
         mem[0x36CA + i] = 0;
     }
-    bus_write(0x02C8, 0);
+    bus_write(0x02C8, 0);                      /* COLBK shadow = black */
     wait_vcount_30();
-    bus_write(0x0222, 0xCC);
+    bus_write(0x0222, 0xCC);                   /* VVBLKI = $53CC (attract/standby VBI); Amiga VBI reads this */
     bus_write(0x0223, 0x53);
     display_list_init();
     rtclok_frac = 0;
-    mem[0x00DC] = 0;
+    mem[MEM_terrain_pen0_fade] = 0;            /* $00DC */
     game_phase = 0;
-    mem[0x00C7] = 0;
-    for (int i = 0; i < 0x19; i++)        /* L_3d7a */
-        mem[0x062C + i] = 0;
+    mem[MEM_dli_dispatch_index] = 0;           /* $00C7 */
+    for (int i = 0; i < 0x19; i++)             /* clear the $062C dither/threshold state block */
+        mem[MEM_static_dither_threshold + i] = 0;
     life_counter = 0;
-    bus_write(0xD407, 0x08);
-    bus_write(0xD409, 0x04);
-    bus_write(0xD20F, 0x03);
+#ifndef ROF_PLATFORM_AMIGA
+    bus_write(0xD407, 0x08);                   /* ANTIC PMBASE (dead on Amiga) */
+    bus_write(0xD409, 0x04);                   /* ANTIC CHBASE (dead on Amiga) */
+#endif
+    bus_write(0xD20F, 0x03);                   /* POKEY SKCTL: init serial/keyboard (live: audio) */
     loader_util();
     init_terrain_col_tables();
     game_init_77DF();
     game_init_7588();
     game_init_76CB();
-    bus_write(0xD20E, 0xC0);
-    LDA(cockpit_flag);
-    if (!cpu.Z) {                        /* L_3dae: skip when cockpit_flag == 0 */
-        cockpit_display();
-    }
+    bus_write(0xD20E, 0xC0);                   /* POKEY IRQEN: enable timer/keyboard IRQs */
+    if (cockpit_flag != 0) cockpit_display();  /* draw the static cockpit bitmap when enabled */
     lock_on_indicator_fill_cells();
-    LDY(0x09);
-    draw_dial_bar_column();
+    cpu.Y = 0x09; draw_dial_bar_column();      /* Y = dial column index (callee arg) */
     game_sub_4606();
-    LDA(0x08);
-    draw_cockpit_dial_bar();
-    bus_write(0x02C6, 0x2C);
-    bus_write(0x02C7, 0x26);
-    for (int i = 0; i <= 8; i++)          /* L_3dca: copy $4DF1.. -> $00CF.. */
+    draw_cockpit_dial_bar_core(0x08);          /* dial index 8 */
+    bus_write(0x02C6, 0x2C);                   /* COLOR2 shadow */
+    bus_write(0x02C7, 0x26);                   /* COLOR3 shadow */
+    for (int i = 0; i <= 8; i++)               /* seed the $00CF palette from the $4DF1 table */
         mem[0x00CF + i] = mem[0x4DF1 + i];
-    for (int i = 0; i < 3; i++)           /* L_3dd7 */
-        mem[0x0645 + i] = 0x80;
+    for (int i = 0; i < 3; i++)                /* $0645 shield/damage cells = $80 */
+        mem[MEM_shield_or_damage + i] = 0x80;
     lock_on_indicator_state = 0x80;
     sfx_voice_distort_0b = 0x80;
     sfx_voice_distort_0c = 0x80;
@@ -9431,57 +9431,56 @@ static void game_main_loop_body(void) {
     sfx_voice_distort_06 = 0xA0;
     sfx_voice_distort_0d = 0xA0;
     sfx_voice_distort_0e = 0xA0;
-    LDX(0x1F);
-    input_init();
-    INX();
-    input_init();
-    bus_write(0xD40E, 0x40);
+    cpu.X = 0x1F; input_init();                /* init input slot $1F, then $20 (X = slot arg) */
+    cpu.X = 0x20; input_init();
+#ifndef ROF_PLATFORM_AMIGA
+    bus_write(0xD40E, 0x40);                   /* ANTIC NMIEN: enable DLI (dead on Amiga) */
+#endif
     display_flags = 0xC0;
-    dl_param_lo = 0x0D;
+    dl_param_lo = 0x0D;                         /* windscreen-band DL params ($350D) */
     dl_param_hi = 0x35;
-    for (;;) {  /* L_3e0f: outer game / attract loop (re-entered after each level or crash) */
+    for (;;) {  /* game / attract outer loop — re-entered after each level or crash */
 #ifdef ROF_FLIGHT_PROBE
     { unsigned long _ds = rof_subclock(); display_setup(); g_probeDispSetup = rof_subclock() - _ds; }
 #else
-    display_setup();
+    display_setup();                           /* Standby/attract + launch cinematic (RTSes after launch) */
 #endif
-    LDA(0x2A);
-    clear_pm_state();                    /* consumes A */
+    cpu.A = 0x2A; clear_pm_state();            /* A = PMG clear fill (callee arg) */
     wait_frames_1();
-    dl_param_lo = 0x0D;
+    dl_param_lo = 0x0D;                         /* windscreen-band DL params ($350D) */
     dl_param_hi = 0x35;
     frame_counter = 0;
     zp_flag_05 = 0;
-    for (int i = 0; i < 0x2C; i++)       /* L_3e2c */
+    for (int i = 0; i < 0x2C; i++)             /* clear the $0020 ZP working set */
         mem[0x0020 + i] = 0;
-    for (int i = 0; i < 0xA6; i++)       /* L_3e34 */
+    for (int i = 0; i < 0xA6; i++)             /* clear the $2830 object-state block */
         mem[0x2830 + i] = 0;
     screen_state = 0;
     init_terrain_render_buffers();
     fill_buffer2_region_ff();
     clear_terrain_lo_buffers();
     unpack_terrain_seed_cols();
-    LDA(0x45);
-    wait_vcount_eq();                    /* consumes A */
-    bus_write(0x0222, 0xF5);
+    cpu.A = 0x45; wait_vcount_eq();            /* A = target VCOUNT (callee arg) */
+    bus_write(0x0222, 0xF5);                   /* VVBLKI = $4FF5 (flight VBI); Amiga VBI reads this */
     bus_write(0x0223, 0x4F);
-    for (int i = 0; i < 0x57; i++)       /* L_3e5c */
+    for (int i = 0; i < 0x57; i++)             /* clear the $0B31 PMG DMA buffer */
         mem[0x0B31 + i] = 0;
-    bus_write(0x026F, 0x11);
+    bus_write(0x026F, 0x11);                   /* GPRIOR shadow: PMG priority */
     copy_terrain_seed_rows();
     wait_vcount_ge_7a();
-    bus_write(0x0200, 0xEE);
+    bus_write(0x0200, 0xEE);                   /* VDSLST = $49EE (DLI vector shadow) */
     bus_write(0x0201, 0x49);
-    bus_write(0xD402, 0x6B);
+#ifndef ROF_PLATFORM_AMIGA
+    bus_write(0xD402, 0x6B);                   /* ANTIC DLISTL/H = $316B (dead on Amiga: copper owns display) */
     bus_write(0xD403, 0x31);
-    bus_write(0xD004, 0x40);
+    bus_write(0xD004, 0x40);                   /* GTIA HPOSP0 (dead on Amiga) */
+#endif
 #ifdef ROF_FLIGHT_PROBE
     { g_probeFlightVbi = (unsigned short)(rof_subclock() / 313u);
       unsigned long _t0 = rof_subclock();
     init_gameplay_state();
       unsigned long _t1 = rof_subclock(); g_probeGameInit = _t1 - _t0;
-    LDA(fresh_start_flag);
-    if (cpu.Z) {                         /* L_3e97: run the intro only on a fresh start */
+    if (fresh_start_flag == 0) {               /* run the intro only on a fresh start */
         intro_random_setup();
         intro_unmark_random_cells();
         intro_seed_object_map();
@@ -9490,8 +9489,7 @@ static void game_main_loop_body(void) {
       g_probeInitTotal = rof_subclock() - _t0; }
 #else
     init_gameplay_state();
-    LDA(fresh_start_flag);
-    if (cpu.Z) {                         /* L_3e97: run the intro only on a fresh start */
+    if (fresh_start_flag == 0) {               /* run the intro only on a fresh start */
         intro_random_setup();
         intro_unmark_random_cells();
         intro_seed_object_map();
@@ -9507,14 +9505,12 @@ static void game_main_loop_body(void) {
     build_row_addr_table();
     copy_row_addr_subset();
 #endif
-    LDA(level_or_state);
-    if (cpu.Z) {                         /* level_or_state == 0: fresh level start */
+    if (level_or_state == 0) {                 /* fresh level start */
         timer_or_counter = 0x54;
-        LDA(0x02);
-    } else {                             /* L_3eb6 */
-        LDA(0x01);
+        joystick_saved = 0x02;
+    } else {
+        joystick_saved = 0x01;
     }
-    joystick_saved = cpu.A;              /* L_3eb8 */
     for (;;) {                           /* L_3eba: in-game flight loop (one frame/iteration) */
     FP_ITER();
     g_flightRenderHalf = 0;          /* this ds_frame shows the DISPLAY half (prev pass 2, offset 0) */
@@ -9542,18 +9538,11 @@ static void game_main_loop_body(void) {
     FP_TIME(game_state_update(), g_fState);
     game_phase = 0x02;
     FP_TIME(enemy_check(), g_fEnemy);
-    LDA(life_counter);
-    CMP(0x0E);
-    if (!cpu.C) {                        /* life_counter < 0x0E */
-        LDA(level_or_state);
-        if (!cpu.Z) {                    /* level_or_state != 0 */
+    if (life_counter < 0x0E) {
+        if (level_or_state != 0) {
             game_sub_7B54();
-        } else {                         /* L_3eec: level_or_state == 0 */
-            LDA(mem[0x003A]);
-            CMP(0x01);
-            if (cpu.Z) {
-                level_cleared_flag = cpu.A;
-            }
+        } else if (mem[0x003A] == 0x01) {    /* level-complete signal on a fresh level */
+            level_cleared_flag = 0x01;
         }
     }
     /* L_3ef5 */
@@ -9565,90 +9554,56 @@ static void game_main_loop_body(void) {
 #ifndef ROF_PLATFORM_AMIGA
     fill_terrain_silhouette_core(0x03);   /* Amiga: skipped — see PASS 1 note */
 #endif
-    LDA(game_state);
-    if (!cpu.Z) {                        /* L_3f0e: keep pilot_state when game_state != 0 */
-        pilot_state = cpu.A;
-    }
+    if (game_state != 0) pilot_state = game_state;   /* keep pilot_state while game_state is active */
     game_state_update();
     enemy_check();
-    LDA(pilot_prev);
-    if (!cpu.Z) {                        /* L_3f21: render pilot only when prev && visible */
-        LDA(pilot_visible);
-        if (!cpu.Z) {
-            pilot_render();
-        }
-    }
+    if (pilot_prev != 0 && pilot_visible != 0) pilot_render();  /* render only when prev && current visible */
     pilot_prev = pilot_visible;
-    LDA(pilot_state);
-    if (cpu.Z) {                         /* pilot_state == 0 */
-        LDA(clear_colors_done_003E);
-    } else {                             /* L_3f31 */
-        LDA(0x00);
-    }
-    pilot_visible = cpu.A;               /* L_3f33 */
-    LDA(0x01);
+    pilot_visible = (pilot_state == 0) ? clear_colors_done_003E : 0x00;
     game_phase = 0x01;
-    CMP(clear_colors_done_003E);         /* consumes A (=1) */
-    if (!cpu.Z) {                        /* game_phase(=1) != clear_colors_done_003E */
-        LDX(player_lives);
-        CPX(0x02);
-        if (!cpu.Z) {                    /* player_lives != 2 */
-            LDA(mem[0x003D]);
-            if (!cpu.Z) {                /* mem[0x003D] != 0 */
+    if (clear_colors_done_003E != 0x01) {            /* not in the colour-clear (death) phase */
+        if (player_lives != 0x02) {
+            if (mem[0x003D] != 0) {                  /* a death handoff is pending */
                 mem[0x003D] = 0x02;
                 timer_or_counter = 0x0E;
             }
         }
     }
-    /* L_3f50: stay in the flight loop unless this life is over (lives == 2) */
-    LDX(player_lives);
-    CPX(0x02);
-    if (!cpu.Z) continue;                /* goto L_3eba */
-    /* L_3f59: life over — set up the level-clear / crash handoff */
-    INX();
-    joystick_saved = cpu.X;
-    LDY(0x80);
-    mem[0x28D9] = cpu.Y;
-    mem[0x28DA] = cpu.Y;
-    LDA(terrain_depth_step);
-    CMP(0x40);
-    if (!cpu.C) continue;                /* terrain_depth_step < 0x40: keep flying (goto L_3eba) */
-    /* L_3f6d: spin until the level-ready signal, then reset state and restart the outer loop */
+    /* Stay in the flight loop unless this life is over (player_lives == 2). */
+    if (player_lives != 0x02) continue;
+    /* Life over — set up the level-clear / crash handoff. */
+    joystick_saved = 0x03;               /* player_lives(2) + 1 */
+    mem[0x28D9] = 0x80;
+    mem[0x28DA] = 0x80;
+    if (terrain_depth_step < 0x40) continue;   /* still descending: keep flying */
+    /* Spin (showing the display half) until the level-ready flag goes negative (bit7 set). */
     do {
-        g_flightRenderHalf = 0;          /* level-clear / crash handoff: show the display half */
+        g_flightRenderHalf = 0;
         ds_frame();
-        LDA(level_ready_flag);
-    } while (!cpu.N);
-    lock_on_indicator_state = cpu.Y;
-    LDA(0x00);
-    bcd_osc_dir = cpu.A;
-    game_phase_flag = cpu.A;
+    } while (!(level_ready_flag & 0x80));
+    lock_on_indicator_state = 0x80;      /* Y held $80 since the $28D9/$28DA stores */
+    bcd_osc_dir = 0x00;
+    game_phase_flag = 0x00;
     wait_frames_10();
-    joystick_saved = cpu.A;
+    joystick_saved = cpu.A;              /* wait_frames_10 leaves its frame residue in A (faithful) */
     wait_frames();
-    { uint8_t fill = cpu.A;              /* A threaded through wait_frames (PHA/PLA) */
-      for (int i = 1; i <= 0xA3; i++)    /* L_3f86 (store-first/!Z: offset 0 left intact) */
+    { uint8_t fill = cpu.A;              /* wait_frames restores the pre-call A (PHA/PLA) = the clear byte */
+      for (int i = 1; i <= 0xA3; i++)    /* clear $0F1D.. (offset 0 left intact) */
           mem[0x0F1D + i] = fill;
-      for (int i = 0; i <= 0x1E; i++)    /* L_3f8e (store-first/!N: offsets 0..$1E) */
+      for (int i = 0; i <= 0x1E; i++)    /* clear $0E8F.. */
           mem[0x0E8F + i] = fill; }
-    LDA(indicator_light_state);
-    CMP(0x4E);
-    if (cpu.Z) {                         /* L_3f9e: turn the indicator light off if it was on ($4E) */
+    if (indicator_light_state == 0x4E)   /* turn the indicator light off if it was on */
         indicator_light_state = 0x46;
-    }
     game_sub_4606();
-    LDA(anim_counter_2);
-    CMP(0x2B);
-    if (cpu.C) {                         /* L_3fab: clamp anim_counter_2 to 0x2A */
-        LDA(0x2A);
-        anim_counter_2 = cpu.A;
+    { uint8_t a = anim_counter_2;        /* clamp the animation counter to $2A */
+      if (a >= 0x2B) { a = 0x2A; anim_counter_2 = 0x2A; }
+      game_state = a;
+      display_flags = a;
+      cpu.A = a; clear_pm_state();        /* clear_pm_state consumes A = the clamped value */
     }
-    game_state = cpu.A;
-    display_flags = cpu.A;
-    clear_pm_state();
-    mem[0x066E] = 0;                      /* LDY #3; STA $066B,Y -> single store at $066E */
+    mem[0x066E] = 0;
     game_sub_55FC();
-    break;                               /* goto L_3e0f: restart the outer loop (display_setup) */
+    break;                               /* restart the outer loop (re-run display_setup) */
     }   /* end inner in-game flight loop (L_3eba) */
     }   /* end outer game / attract loop (L_3e0f) */
 }

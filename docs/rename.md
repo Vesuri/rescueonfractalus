@@ -338,3 +338,24 @@ from their PRIMARY use in unrelated code):
 
 Not misnamed but worth confirming: `draw_vline_pair` draws a column and its `$2F`-mirror as a
 symmetric pair of vertical spans (the approaching-object trail) — the name is fine.
+
+**game_main_loop_body ($3D48) — unnamed OS-shadow + game-state cells** (found 2026-07-22, clean-C
+rewrite). These are written directly (raw `mem[]` / `bus_write`) with no `symbols.csv` name; most are
+well-known Atari OS shadow registers and should get standard names:
+- `$0222`/`$0223` — **VVBLKI** vertical-blank-immediate vector shadow (set to `$53CC` attract, then
+  `$4FF5` flight). Suggested: `vvblki_lo`/`vvblki_hi`. ⚠ The Amiga `game_vbi_isr` dispatches on this
+  live vector — NOT dead.
+- `$0200`/`$0201` — **VDSLST** display-list-interrupt vector shadow (set to `$49EE`). Suggested:
+  `vdslst_lo`/`vdslst_hi`.
+- `$022F` — **SDMCTL** (DMA control shadow), cleared. Suggested: `sdmctl`.
+- `$02C8` — **COLOR4/COLBK** background-colour shadow, cleared. Suggested: `color_bak_shadow`.
+- `$02C6`/`$02C7` — **COLOR2/COLOR3** shadows (set `$2C`/`$26`). Suggested: `color2_shadow`/`color3_shadow`.
+- `$026F` — **GPRIOR** priority shadow (set `$11`). Suggested: `gprior_shadow`.
+- `$066E` — cleared once at the level-clear handoff (part of a `$066B`+ block); unnamed. Needs analysis.
+- `$28D9`/`$28DA` — both set to `$80` at the level-clear handoff (object/anim state); unnamed.
+- `$0F1D`+ (0xA3 bytes) / `$0E8F`+ (0x1F bytes) — PMG/player buffers cleared with a `wait_frames`
+  residue byte at the handoff; part of the `$0Cxx`-`$0Fxx` player pages.
+- `$0B31`+ (0x57 bytes) — missile/DMA buffer region cleared per level; part of the `$0B00` PMG page.
+- `$0020`+ (0x2C bytes) / `$2830`+ (0xA6 bytes) — per-level ZP + object-state clears.
+- `$003A` — read at level-clear check (`==1` sets `level_cleared_flag`); unnamed. Needs analysis.
+- `$003D` — death/handoff phase byte (`!=0` → set to `2`); unnamed. Suggested: `death_phase`.
