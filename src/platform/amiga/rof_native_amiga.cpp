@@ -558,7 +558,17 @@ extern "C" void music_player_tick(void);         // $7253: note-stream music pla
 extern "C" void standby_vbi_native(void)
 {
     vbi_attract_timer_native();              // $5335 (also INCs $062D, the 25 Hz sub-counter)
-    launch_anim_dispatch_native();           // $5367
+    // launch_anim_dispatch ($5367) is the LAUNCH-cinematic driver (doors/tunnel/scroll) and only
+    // belongs to the $52D7 standby/launch screen.  On the $53CC Title/game-over/attract card NO
+    // cinematic animates, yet the launch gates ($0088/$0089/$008A) are stale-nonzero from the prior
+    // flight (nothing clears them on the game-over restart) — so running it there fired the tunnel-
+    // ring cycle with out-of-range coords into the hand-asm span plotter, whose .w sign-extended
+    // addressing (FrameDrawAssembler.s) wrote BELOW mem[] into .text/.rodata (the game-over wild-write
+    // crash).  Gate it to the launch VBI vector only; the static title screen must not drive it.
+    {
+        uint16_t vv = (uint16_t)(mem[0x0222] | (mem[0x0223] << 8));
+        if (vv != 0x53CCu) launch_anim_dispatch_native();   // $5367 (launch cinematic only)
+    }
     // $534D  sfx_voice_tick ($70F9): the attract/standby-theme SFX sequencer.  The Atari
     // ran it in THIS VBI tail (deferred VBI $534D — NOT a POKEY timer), gated by
     // `LDA $00E7; BEQ; BIT $062D; BNE` = run only when $00E7!=0 AND ($00E7 & $062D)==0,
