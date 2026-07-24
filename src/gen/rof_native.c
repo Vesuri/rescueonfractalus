@@ -2923,9 +2923,22 @@ static void rof_alien_probe(void) {
         if (g_figRowHi > g_alFigHi) g_alFigHi = g_figRowHi;
     }
 }
+/* Decisive bitmap-vs-not capture: record up to 12 DISTINCT draw_scaled_shape shape pointers
+ * ($C3/$C4) seen during the systems-off rescue.  The pilot/figure frames are $7DEF/$7E25/
+ * $7E5B/$7E91 — if a shape OUTSIDE that set appears, the alien creature IS a bitmap (and we
+ * port it via the existing figure path); if ONLY those 4 ever appear, the creature is drawn
+ * some other way (PMG / a non-draw_scaled_shape primitive). */
+volatile unsigned short g_alShapes[12];
+volatile unsigned char  g_alShapeCount = 0;
+static void rof_alshape_note(unsigned short p) {
+    for (unsigned i = 0; i < g_alShapeCount; i++) if (g_alShapes[i] == p) return;
+    if (g_alShapeCount < 12) g_alShapes[g_alShapeCount++] = p;
+}
 #define ROF_ALIEN_PROBE()       rof_alien_probe()
 #define ROF_ALIEN_PLOT()        do { if (mem[0x003E]) g_alRescuePlot++; if (mem[0x0633]) g_alPlotCalls++; } while (0)
-#define ROF_ALIEN_DRAWSHAPE()   do { if (mem[0x0633]) { g_alDrawShape++; g_alShapePtr = (unsigned short)(mem[0x00C3] | (mem[0x00C4] << 8)); } } while (0)
+#define ROF_ALIEN_DRAWSHAPE()   do { unsigned short _p = (unsigned short)(mem[0x00C3] | (mem[0x00C4] << 8)); \
+    if (mem[0x003E] || mem[0x0633]) rof_alshape_note(_p); \
+    if (mem[0x0633]) { g_alDrawShape++; g_alShapePtr = _p; } } while (0)
 #else
 #define ROF_ALIEN_PROBE()       ((void)0)
 #define ROF_ALIEN_PLOT()        ((void)0)
@@ -2981,10 +2994,14 @@ void pilot_render(void) {
          * marker here — $80 = alien jump-scare (keeps $281E=1 → on airlock-open $003C promotes
          * to $80 → alien_trigger $0633 set), anything else = a real pilot that boards ($281E
          * DEC'd to 0).  (Validated: a800dumps/rescue_pilot.a8s has marker $C8 and is a real
-         * pilot.)  Whether a figure is designated alien is normally decided at spawn ($4E58);
-         * forcing the marker to $80 here makes EVERY rescue the alien for testing.  Off by
-         * default; enable at runtime (poke g_forceAlienRescue=1) or build with FORCE_ALIEN=1.
-         * Amiga-only + default-0, so the validation oracle + `make validate` are unaffected. */
+         * pilot.)  Whether a figure is designated alien is normally decided at spawn ($4E58).
+         * ⚠ 2026-07-25: forcing the marker here does NOT reproduce the real alien jump-scare —
+         * the probe (g_al*) shows the rescue stalls at the phase-4 knock ($003D never passes 4,
+         * $0633 never sets, no shake, no creature); the real alien is designated at SPAWN and
+         * auto-jumps at the knock via a timing-gated path this late render-time force can't reach.
+         * Kept only as a partial test lever.  Off by default; poke g_forceAlienRescue=1 or build
+         * FORCE_ALIEN=1.  Amiga-only + default-0, so the validation oracle + `make validate` are
+         * unaffected. */
         if (g_forceAlienRescue) v = 0x80;
 #endif
         if (v == 0x80) {                                 /* 78b2/78b4 */

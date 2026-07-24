@@ -29,6 +29,14 @@ printf "g_alSeen=%u  g_alFrames=%lu\n", g_alSeen, g_alFrames
 printf "g_alPlotCalls=%lu  (>0 => alien drawn as BITMAP via plot_clipped_pixel)\n", g_alPlotCalls
 printf "g_alDrawShape=%lu  g_alShapePtr=$%04X\n", g_alDrawShape, g_alShapePtr
 printf "g_alFig rows: lo=%d hi=%d\n", g_alFigLo, g_alFigHi
+printf "-- distinct draw_scaled_shape ptrs during the rescue (figure frames = $7DEF/$7E25/$7E5B/$7E91) --\n"
+printf "g_alShapeCount=%u :", g_alShapeCount
+set $i = 0
+while $i < g_alShapeCount
+  printf " $%04X", g_alShapes[$i]
+  set $i = $i + 1
+end
+printf "\n  (any ptr OUTSIDE the 4 figure frames => the creature IS a bitmap; only those 4 => PMG/other)\n"
 printf "--- latest per-frame snapshot (g_alSnap) ---\n"
 printf "  003C(anim)=%02x 003D(phase)=%02x 003E(sysoff)=%02x 0633(alien)=%02x\n", \
   g_alSnap[0], g_alSnap[1], g_alSnap[2], g_alSnap[3]
