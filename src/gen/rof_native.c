@@ -2888,28 +2888,43 @@ volatile uint8_t g_forceAlienRescue =
  * via plot_clipped_pixel (so the fix is in the Amiga composite path); ==0 ⇒ it's drawn some
  * other way (PMG / different primitive).  g_alSnap = latest per-frame state snapshot. */
 extern int g_figRowLo, g_figRowHi;
-volatile unsigned char  g_alSeen = 0;        /* ever entered the alien-attack state */
+volatile unsigned char  g_alSeen = 0;        /* ever entered the alien-attack state ($0633!=0) */
 volatile unsigned long  g_alFrames = 0;      /* pilot_render passes with $0633!=0 */
 volatile unsigned long  g_alPlotCalls = 0;   /* plot_clipped_pixel calls while $0633!=0 */
 volatile unsigned long  g_alDrawShape = 0;   /* draw_scaled_shape calls while $0633!=0 */
 volatile unsigned short g_alShapePtr = 0;    /* $C3/$C4 shape ptr during an alien-frame draw */
 volatile int            g_alFigLo = 99, g_alFigHi = -1;  /* g_figRowLo/Hi extent during attack */
+/* Broader rescue-wide capture (confirms the sequence actually happened, regardless of $0633): */
+volatile unsigned char  g_alRescueSeen = 0;  /* ever in a systems-off rescue ($003E!=0) */
+volatile unsigned long  g_alRescueFrames = 0;/* pilot_render passes with $003E!=0 */
+volatile unsigned long  g_alRescuePlot = 0;  /* plot_clipped_pixel calls while $003E!=0 (whole rescue) */
+volatile unsigned char  g_alMaxPhase = 0;    /* max $003D reached during a rescue */
+volatile unsigned char  g_alAirlock = 0;     /* $003C ever went nonzero (airlock opened) */
+volatile unsigned char  g_alAirlockMax = 0;  /* max $003C seen */
 /* g_alSnap: [0]$3C [1]$3D [2]$3E [3]$0633 [4]$44 [5]$47 [6]$3A [7]$283D [8]$79 [9]$41
  *           [10]$2844 [11]$DB [12]figLo [13]figHi [14]$C3 [15]$C4 */
 volatile unsigned char  g_alSnap[16];
 static void rof_alien_probe(void) {
-    g_alSeen = 1; g_alFrames++;
-    g_alSnap[0]=mem[0x003C]; g_alSnap[1]=mem[0x003D]; g_alSnap[2]=mem[0x003E];
-    g_alSnap[3]=mem[0x0633]; g_alSnap[4]=mem[0x0044]; g_alSnap[5]=mem[0x0047];
-    g_alSnap[6]=mem[0x003A]; g_alSnap[7]=mem[0x283D]; g_alSnap[8]=mem[0x0079];
-    g_alSnap[9]=mem[0x0041]; g_alSnap[10]=mem[0x2844]; g_alSnap[11]=mem[0x00DB];
-    g_alSnap[12]=(unsigned char)(g_figRowLo & 0xFF); g_alSnap[13]=(unsigned char)(g_figRowHi & 0xFF);
-    g_alSnap[14]=mem[0x00C3]; g_alSnap[15]=mem[0x00C4];
-    if (g_figRowLo < g_alFigLo) g_alFigLo = g_figRowLo;
-    if (g_figRowHi > g_alFigHi) g_alFigHi = g_figRowHi;
+    if (mem[0x003E]) {                       /* systems-off rescue active */
+        g_alRescueSeen = 1; g_alRescueFrames++;
+        if (mem[0x003D] > g_alMaxPhase) g_alMaxPhase = mem[0x003D];
+        if (mem[0x003C]) { g_alAirlock = 1; if (mem[0x003C] > g_alAirlockMax) g_alAirlockMax = mem[0x003C]; }
+    }
+    if (mem[0x0633]) { g_alSeen = 1; g_alFrames++; }
+    /* snapshot latest state whenever a rescue OR alien is active */
+    if (mem[0x003E] || mem[0x0633]) {
+        g_alSnap[0]=mem[0x003C]; g_alSnap[1]=mem[0x003D]; g_alSnap[2]=mem[0x003E];
+        g_alSnap[3]=mem[0x0633]; g_alSnap[4]=mem[0x0044]; g_alSnap[5]=mem[0x0047];
+        g_alSnap[6]=mem[0x003A]; g_alSnap[7]=mem[0x283D]; g_alSnap[8]=mem[0x0079];
+        g_alSnap[9]=mem[0x0041]; g_alSnap[10]=mem[0x2844]; g_alSnap[11]=mem[0x00DB];
+        g_alSnap[12]=(unsigned char)(g_figRowLo & 0xFF); g_alSnap[13]=(unsigned char)(g_figRowHi & 0xFF);
+        g_alSnap[14]=mem[0x00C3]; g_alSnap[15]=mem[0x00C4];
+        if (g_figRowLo < g_alFigLo) g_alFigLo = g_figRowLo;
+        if (g_figRowHi > g_alFigHi) g_alFigHi = g_figRowHi;
+    }
 }
 #define ROF_ALIEN_PROBE()       rof_alien_probe()
-#define ROF_ALIEN_PLOT()        do { if (mem[0x0633]) g_alPlotCalls++; } while (0)
+#define ROF_ALIEN_PLOT()        do { if (mem[0x003E]) g_alRescuePlot++; if (mem[0x0633]) g_alPlotCalls++; } while (0)
 #define ROF_ALIEN_DRAWSHAPE()   do { if (mem[0x0633]) { g_alDrawShape++; g_alShapePtr = (unsigned short)(mem[0x00C3] | (mem[0x00C4] << 8)); } } while (0)
 #else
 #define ROF_ALIEN_PROBE()       ((void)0)
@@ -2989,8 +3004,8 @@ L_78d6:
 #ifdef ROF_PLATFORM_AMIGA
     if (mem[0x003E]) { platform_tick_vbi(); platform_render_frame(); }   /* freeze fix: keep display+VBI live while systems-off */
 #endif
+    ROF_ALIEN_PROBE();                                   /* diag: latch rescue/alien state each L_78d6 pass */
     if (alien_trigger != 0) {                            /* 78d6/78d9 */
-        ROF_ALIEN_PROBE();                               /* diag: latch alien-attack state each frame */
         if (RTCLOK_LOW & 0x08) {                         /* 78db/78dd/78df */
             if (mem[0x2844] == 0) { mem[0x2844] = (uint8_t)(mem[0x2844] + 1); pmg_enemy_update(); }  /* 78e1-78e9 */
         } else {
