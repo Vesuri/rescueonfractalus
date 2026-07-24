@@ -18,7 +18,7 @@ siblings like `clear_colors_timed`/`_sweep_5x`/`_done_003E` safe when renaming `
 
 | Addr | Current name | What it actually does | Suggested |
 |------|--------------|------------------------|-----------|
-| _(none — drained 2026-07-09; add new rows here)_ | | | |
+| `$7AB8` | `pmg_enemy_update` | NOT PMG-related. The per-frame alien-attack tick when `$0633 alien_trigger` is set: RANDOM gate, sets shape/colour selectors (`$0044`/`$0047`=`$70`, or `$6D`) + phase toggle `$283D`, calls `jitter_roll_pitch $AA95` (shakes the ship), bumps `$003B`, fires pounding SFX via `ring_push_marked $5815` (X=`$1A`/`$1B`). The alien creature is a **bitmap** (draw_scaled_shape), drawn elsewhere — this fn draws nothing. | `alien_attack_tick` |
 
 ## Notes
 - **"scroll" in the `scroll_*` names = Atari LMS / buffer-shift scrolling**, not pixel
