@@ -2869,6 +2869,18 @@ void animate_clear_colors_timed(void) {
     RTCLOK_LOW = mem[0x007C];                            /* 7a84/7a86 */
 }
 
+#ifdef ROF_PLATFORM_AMIGA
+/* Debug test aid — force every rescued figure to be the alien jump-scare (see the marker note
+ * in pilot_render below).  Default 0 (no change); set to 1 at runtime, or build FORCE_ALIEN=1
+ * to default it on.  Amiga-only so the validation oracle is unaffected. */
+volatile uint8_t g_forceAlienRescue =
+#ifdef ROF_FORCE_ALIEN_RESCUE
+    1;
+#else
+    0;
+#endif
+#endif
+
 /* pilot_render @ $7854 — the pilot/rescue render + rescue state machine.  Seeds the lock-on /
  * landing state from the pilot range ($0079), then runs a per-frame loop (L_78d6) that animates the
  * alien knock ($0633 / pmg_enemy_update), and:
@@ -2913,6 +2925,17 @@ void pilot_render(void) {
         mem[0x0079] = 0x80;
         mem[0x281E] = 0x01;
         uint8_t v = mem[0x0A00 + grid_slot_index];       /* 78af $0A00,X (X=$28E6) */
+#ifdef ROF_PLATFORM_AMIGA
+        /* DEBUG TEST AID (g_forceAlienRescue): the rescued-figure fork is PURELY the map
+         * marker here — $80 = alien jump-scare (keeps $281E=1 → on airlock-open $003C promotes
+         * to $80 → alien_trigger $0633 set), anything else = a real pilot that boards ($281E
+         * DEC'd to 0).  (Validated: a800dumps/rescue_pilot.a8s has marker $C8 and is a real
+         * pilot.)  Whether a figure is designated alien is normally decided at spawn ($4E58);
+         * forcing the marker to $80 here makes EVERY rescue the alien for testing.  Off by
+         * default; enable at runtime (poke g_forceAlienRescue=1) or build with FORCE_ALIEN=1.
+         * Amiga-only + default-0, so the validation oracle + `make validate` are unaffected. */
+        if (g_forceAlienRescue) v = 0x80;
+#endif
         if (v == 0x80) {                                 /* 78b2/78b4 */
             uint8_t g = mem[0x061B];                      /* 78b6 */
             if (g != 0 && g >= bus_read(0xD20A)) goto L_78d6;   /* 78b9/78be/78c0 */

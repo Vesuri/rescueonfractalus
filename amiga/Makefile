@@ -194,6 +194,14 @@ EXTRA_DEFINES += -DROF_MULTABLE_VERIFY
 endif
 endif
 
+# Debug test aid: `make FORCE_ALIEN=1` forces EVERY rescued figure to be the alien
+# jump-scare (pilot_render marker override, rof_native.c g_forceAlienRescue).  For testing
+# the alien-on-windshield animation without waiting for the level-scaled random roll.  OFF
+# by default; can also be toggled at runtime by poking g_forceAlienRescue=1.
+ifdef FORCE_ALIEN
+EXTRA_DEFINES += -DROF_FORCE_ALIEN_RESCUE
+endif
+
 # Objects (flattened into obj/ by basename).
 CXX_OBJS       := $(addprefix obj/,$(notdir $(CXX_SRCS:.cpp=.o)))
 CORE_C_OBJS    := $(addprefix obj/,$(notdir $(CORE_C_SRCS:.c=.o)))
