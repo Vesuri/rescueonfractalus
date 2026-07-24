@@ -22,11 +22,18 @@
 ; (entry[i+1]=entry[i]+stride, never modified), so base[row]==base[r0]+(row-r0)*stride
 ; exactly — it just drops the two per-row volatile table reads.
 ;
+; Every effective address is computed as (base + off) & $FFFF and indexed through a
+; zero-extended .l displacement, so writes always land inside mem[0..$FFFF] — faithful to
+; the 6502 ($80),Y 64K wrap and to the C oracle's mem[(uint16_t)(base+off)].  (The earlier
+; `.w`-indexed row-pointer march SIGN-EXTENDED base, so a base >= $8000 — or a marched
+; pointer — wrote BELOW mem[] into .text/.rodata: the game-over wild-write.  Legit door/ring
+; bases $1000-$2000 never wrap, so this stays byte-identical under framedraw_verify.)
+;
 ; Registers (d2-d7/a2-a3 callee-saved at entry):
-;   a0 = mem base   a3 = mem + base (row pointer, stepped by stride)   a2 = table scratch
+;   a0 = mem base   a2 = mem + eff (per-column pointer)
+;   d7 = base (word VALUE, stepped by stride; upper word kept 0)
 ;   d6 = cnt (byte loop counter)   d5 = orMask   d4 = andMask
 ;   d3 = offL (colL>>1, word)   d2 = offR (colR>>1, word)   d0 = stride (word)   d1 = scratch
-;   d7 = base0 (word, setup scratch)
 
 	xdef	fill_vertical_span_core_asm
 	ifnd	ROF_FRAMEDRAW_VERIFY
@@ -83,22 +90,29 @@ fill_vertical_span_core_asm:
 	move.b	($57,a2),d1		; row_base_hi[r0+1]
 	lsl.w	#8,d1
 	or.w	d1,d0			; d0 = base1
-	sub.w	d7,d0			; d0 = stride = base1 - base0
-	lea	(a0,d7.w),a3		; a3 = mem + base0 (row pointer)
+	sub.w	d7,d0			; d0 = stride = base1 - base0 (d7 still = base0, upper word 0)
 
 .loop:
-	; left column: (a3 + offL)
-	move.b	(a3,d3.w),d1
+	; left column: eff = (base + offL) & $FFFF
+	moveq	#0,d1
+	move.w	d7,d1
+	add.w	d3,d1			; (base + offL) mod $10000 (carry discarded; upper word stays 0)
+	lea	(a0,d1.l),a2		; a2 = mem + eff  (0..$FFFF -> always in the 64K window)
+	move.b	(a2),d1
 	or.b	d5,d1
 	and.b	d4,d1
-	move.b	d1,(a3,d3.w)
-	; right column: (a3 + offR)
-	move.b	(a3,d2.w),d1
+	move.b	d1,(a2)
+	; right column: eff = (base + offR) & $FFFF
+	moveq	#0,d1
+	move.w	d7,d1
+	add.w	d2,d1			; (base + offR) mod $10000
+	lea	(a0,d1.l),a2
+	move.b	(a2),d1
 	or.b	d5,d1
 	and.b	d4,d1
-	move.b	d1,(a3,d2.w)
+	move.b	d1,(a2)
 
-	adda.w	d0,a3			; base += stride (next row)
+	add.w	d0,d7			; base = (base + stride) mod $10000 (low word; upper stays 0)
 	subq.b	#1,d6			; cnt--  (N set when (cnt-1) bit7 set)
 	bpl	.loop			; loop while result >= 0 (bit7 clear)
 
@@ -109,12 +123,16 @@ fill_vertical_span_core_asm:
 ;                               uint8_t pat) --------------------------------------------------
 ; Fill the uniform pattern byte `pat` across the horizontal run on two scanlines: base1+y and
 ; base2+y for y = y_hi down to y_hi-cnt (cnt+1 bytes, exactly the C loop's descending walk).
-; Walk each row with a pre-decrement pointer (move.b pat,-(a1)) instead of GCC's per-byte
-; indexed store.  Byte-identical to fill_horizontal_span_core_c (same subq.b/bpl loop control,
-; so every cnt value — incl. the pathological >=$81 -> 1 byte — matches).
+; Each byte address is computed as (base + y) & $FFFF with y a wrapping uint8 (y = y_hi
+; down), matching the C's mem[(uint16_t)(base+y)] with y = (uint8_t)(y-1) exactly — so every
+; write lands inside mem[0..$FFFF] (no pre-decrement pointer that could drift below mem[] or
+; a `.w`-indexed base >= $8000 sign-extending outside it).  Byte-identical to
+; fill_horizontal_span_core_c (same subq.b/bpl loop control, so every cnt value — incl. the
+; pathological >=$81 -> 1 byte — matches; the y-underflow-past-0 case now matches the C too).
 ;
-; Args after saving d2-d3 (8 bytes): base1 word 14(sp), base2 word 18(sp), y_hi 23(sp),
-; cnt 27(sp), pat 31(sp).  a0=mem  a1=run pointer  d0=pat  d2=cnt  d3=y_hi  d1=scratch/count
+; Args after saving d2-d4 (12 bytes): base1 word 18(sp), base2 word 22(sp), y_hi 27(sp),
+; cnt 31(sp), pat 35(sp).  a0=mem  a1=byte pointer  d0=pat  d1=count  d2=eff scratch
+;   d3=y (uint8, descends)  d4=base (word value)
 
 	xdef	fill_horizontal_span_core_asm
 	ifnd	ROF_FRAMEDRAW_VERIFY
@@ -123,36 +141,42 @@ fill_vertical_span_core_asm:
 
 fill_horizontal_span_core:
 fill_horizontal_span_core_asm:
-	movem.l	d2-d3,-(sp)		; 8 bytes; args at +8
-	moveq	#0,d0
-	move.b	31(sp),d0		; pat
-	moveq	#0,d2
-	move.b	27(sp),d2		; cnt
-	moveq	#0,d3
-	move.b	23(sp),d3		; y_hi
+	movem.l	d2-d4,-(sp)		; 12 bytes; args at +12
 	lea	mem,a0
+	moveq	#0,d0
+	move.b	35(sp),d0		; pat
 
-	; run 1: base1 + y_hi + 1 (pre-decrement writes base1+y_hi first, then descends)
-	move.w	14(sp),d1
-	add.w	d3,d1
-	addq.w	#1,d1
-	lea	(a0,d1.w),a1
-	move.b	d2,d1			; working count = cnt (byte)
+	; run 1: base1 + y for y = y_hi down, cnt+1 bytes (each addr wrapped to 16 bits)
+	move.w	18(sp),d4		; base1
+	moveq	#0,d3
+	move.b	27(sp),d3		; y = y_hi
+	moveq	#0,d1
+	move.b	31(sp),d1		; working count = cnt
 .h1:
-	move.b	d0,-(a1)
-	subq.b	#1,d1
+	moveq	#0,d2
+	move.b	d3,d2			; y (uint8)
+	add.w	d4,d2			; (base1 + y) mod $10000 (carry discarded; upper word 0)
+	lea	(a0,d2.l),a1		; a1 = mem + eff  (0..$FFFF -> in window)
+	move.b	d0,(a1)
+	subq.b	#1,d3			; y = (y-1) & $FF
+	subq.b	#1,d1			; count--
 	bpl	.h1
 
-	; run 2: base2 + y_hi + 1
-	move.w	18(sp),d1
-	add.w	d3,d1
-	addq.w	#1,d1
-	lea	(a0,d1.w),a1
-	move.b	d2,d1
+	; run 2: base2 + y (same y range)
+	move.w	22(sp),d4		; base2
+	moveq	#0,d3
+	move.b	27(sp),d3		; y = y_hi
+	moveq	#0,d1
+	move.b	31(sp),d1		; working count = cnt
 .h2:
-	move.b	d0,-(a1)
+	moveq	#0,d2
+	move.b	d3,d2
+	add.w	d4,d2			; (base2 + y) mod $10000
+	lea	(a0,d2.l),a1
+	move.b	d0,(a1)
+	subq.b	#1,d3
 	subq.b	#1,d1
 	bpl	.h2
 
-	movem.l	(sp)+,d2-d3
+	movem.l	(sp)+,d2-d4
 	rts
