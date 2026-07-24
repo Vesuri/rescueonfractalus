@@ -2344,14 +2344,25 @@ void RescueOnFractalus::updateStandbyCopper(bool force)
 }
 
 // updateTitleScreenCopper(): poke the Title Screen's 4 text pens from the live COLPF0-3
-// shadows ($02C4-$02C7).  The Atari cycles these periodically (the "palette changes every
-// now and then"); reading the shadows each frame reproduces that.  Poke-on-change.
+// shadows ($02C4-$02C7).  The Atari cycles these in the $53CC vbi_handler_1 body (the
+// $53ED loop, X=4..0): pen = ($02C4+X EOR $0013) & $F6 when the attract fraction $0002 has
+// gone negative (bit7 set), else the raw shadow — then STA $D016,X (COLPF0-3/COLBK).  That
+// HW write is skipped on the Amiga (the copper owns the pens), so we reproduce the SAME
+// modulation here on the source shadows before converting.  $0002/$0013 are maintained by
+// vbi_handler_1_native (rof_native_amiga.cpp).  Poke-on-change.
 void RescueOnFractalus::updateTitleScreenCopper(bool force)
 {
-    const uint16_t pf0 = atariToOCS(mem[0x02C4]);
-    const uint16_t pf1 = atariToOCS(mem[0x02C5]);
-    const uint16_t pf2 = atariToOCS(mem[0x02C6]);
-    const uint16_t pf3 = atariToOCS(mem[0x02C7]);
+    const bool cyc = (mem[MEM_rtclok_frac] & 0x80u) != 0u;   // $0002 negative -> cycle active
+    const uint8_t mid = mem[MEM_RTCLOK_MID];                 // $0013 modulator
+    auto penOf = [&](uint16_t sh) -> uint16_t {
+        uint8_t v = mem[sh];
+        if (cyc) v = (uint8_t)((v ^ mid) & 0xF6u);
+        return atariToOCS(v);
+    };
+    const uint16_t pf0 = penOf(0x02C4);
+    const uint16_t pf1 = penOf(0x02C5);
+    const uint16_t pf2 = penOf(0x02C6);
+    const uint16_t pf3 = penOf(0x02C7);
     if (force || pf0 != tsPf0 || pf1 != tsPf1 || pf2 != tsPf2 || pf3 != tsPf3) {
         titleScreenCopper->setTextPalette(pf0, pf1, pf2, pf3);
         tsPf0 = pf0; tsPf1 = pf1; tsPf2 = pf2; tsPf3 = pf3;

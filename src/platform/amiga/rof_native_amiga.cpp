@@ -554,51 +554,103 @@ extern "C" void launch_anim_dispatch_native(void)
 extern "C" void sfx_voice_tick(void);            // $70F9: attract/standby-theme SFX sequencer (validated twin)
 extern "C" void sfx_voice_envelope_tick(void);   // $548D: SFX voice engine + $0719 ring drain
 extern "C" void music_player_tick(void);         // $7253: note-stream music player (transpiled)
+extern "C" uint8_t platform_hw_read(uint16_t addr);  // $D01F/$D010/$D300 live input (hwRead)
 
+// vbi_attract_poll: faithful port of the $5398 console/attract poll shared by BOTH
+// standby-family VBI handlers ($52D7 calls it at $533C; $53CC at $5400).  Reads the
+// console keys ($D01F), fire trigger ($D010), and joystick ($D300) — all maintained on
+// the Amiga now (the keyboard ISR keeps mem[$D01F]; hwRead maps $D010/$D300 to
+// s_trig0State/s_portaState), so route them through platform_hw_read exactly as bus_read
+// would.  On ANY input it resets the attract-mode timeout ($0049/$0002/$00E2/$0003).  The
+// DEMO-DROID branch ($52BE, taken via CPX #$80) is unreachable — X is loaded #$FF and
+// never becomes $80 — so it is omitted.
+static void vbi_attract_poll(void)
+{
+    // $53B4-$53C9: input iff a console key is down, OR fire is pressed, OR the stick is up/down.
+    bool input = ((platform_hw_read(0xD01Fu) & 0x07u) != 0x07u)     // CONSOL START/SELECT/OPTION
+              || (platform_hw_read(0xD010u) == 0x00u)               // TRIG0 fire
+              || ((platform_hw_read(0xD300u) & 0x03u) != 0x03u);    // PORTA joystick up/down
+    if (input) {                                    // $53A6-$53B0: reset the attract timeout
+        mem[MEM_joystick_raw]  = 0xFFu;   // $0049 = X ($FF)
+        mem[MEM_rtclok_frac]   = 0x00u;   // $0002 = 0
+        mem[MEM_attract_timer] = 0x64u;   // $00E2 = 100
+        mem[MEM_zp_flag_03]    = 0x64u;   // $0003 = 100
+    }
+}
+
+// vbi_shared_tail: the $534D deferred-VBI audio tail shared by both standby-family
+// handlers ($52D7 falls into it; $53CC does JMP $534D at $5403).  Faithful order:
+//   $534D  LDA $00E7; BEQ; BIT $062D; BNE; JSR $70F9   sfx_voice_tick (every other frame)
+//   $5359  LDA $0655; BEQ; JSR $7253                   music_player_tick (jingle-gated)
+//   $5361  JSR $548D                                   sfx_voice_envelope_tick (UNCONDITIONAL)
+// POKEY writes route via bus_write -> Paula want[] (flushed once per frame in game_vbi_isr).
+static void vbi_shared_tail(void)
+{
+    // $534D: run only when $00E7!=0 AND ($00E7 & $062D)==0 (25 Hz, since vbi_attract_timer_native
+    // just bumped $062D).  The attract/standby-theme SFX sequencer.
+    if (mem[0x00E7] && (mem[0x00E7] & mem[MEM_attract_timer_sub]) == 0) sfx_voice_tick();
+    // $5359: the note-stream tune player (level-start, game-over/results jingles), gated on
+    // the music-active flag $0655 (set by music_init_state $7238) so the game-over tune plays.
+    if (mem[0x0655]) music_player_tick();
+    // $5361: SFX voice engine + $0719 ring drain.  UNCONDITIONAL on the Atari (2026-07-24:
+    // made faithful; the old `if (mem[$060B])` Amiga gate was removed).
+    sfx_voice_envelope_tick();
+}
+
+// standby_vbi_native: faithful $52D7 vbi_handler_game (standby screen + launch cinematic).
+// HW-display writes ($52D7-$5332: DMACTL, CHBASE, PMG/colour/HPOS registers) are SKIPPED —
+// the Amiga copper owns the display.  mem[] order mirrors $52DF onward:
+//   $52DF  STA $00C7                 dli_dispatch_index = 0   (DLI chain index reset)
+//   $5333  INC $0014 (RTCLOK)        -> done by the ISR before this call
+//   $5335  attract-timer cascade     -> vbi_attract_timer_native ($062D -> $00E2)
+//   $533C  JSR $5398                 -> vbi_attract_poll
+//   $533F  JSR $5367                 -> launch_anim_dispatch_native (door/tunnel/scroll)
+//   $5342  lock-on parity           -> LSR $0643 / BCS skip / lock_on_indicator_tick / INC
+//   $534D  shared audio tail        -> vbi_shared_tail
 extern "C" void standby_vbi_native(void)
 {
-    vbi_attract_timer_native();              // $5335 (also INCs $062D, the 25 Hz sub-counter)
-    // launch_anim_dispatch ($5367) is the LAUNCH-cinematic driver (doors/tunnel/scroll) and only
-    // belongs to the $52D7 standby/launch screen.  On the $53CC Title/game-over/attract card NO
-    // cinematic animates, yet the launch gates ($0088/$0089/$008A) are stale-nonzero from the prior
-    // flight (nothing clears them on the game-over restart) — so running it there fired the tunnel-
-    // ring cycle with out-of-range coords into the hand-asm span plotter, whose .w sign-extended
-    // addressing (FrameDrawAssembler.s) wrote BELOW mem[] into .text/.rodata (the game-over wild-write
-    // crash).  Gate it to the launch VBI vector only; the static title screen must not drive it.
-    {
-        uint16_t vv = (uint16_t)(mem[0x0222] | (mem[0x0223] << 8));
-        if (vv != 0x53CCu) launch_anim_dispatch_native();   // $5367 (launch cinematic only)
-    }
-    // $534D  sfx_voice_tick ($70F9): the attract/standby-theme SFX sequencer.  The Atari
-    // ran it in THIS VBI tail (deferred VBI $534D — NOT a POKEY timer), gated by
-    // `LDA $00E7; BEQ; BIT $062D; BNE` = run only when $00E7!=0 AND ($00E7 & $062D)==0,
-    // i.e. every other frame (25 Hz), since vbi_attract_timer_native just bumped $062D.
-    // Running it here (rather than the old CIA-B Timer A) keeps it frame-synchronized with
-    // the main loop as on the Atari — required because it shares $0091 with the top-bar
-    // title/copyright display (copy_title_text_block_to_screen), which the async CIA-B
-    // could race.  POKEY writes route via bus_write -> Paula want[] (flushed in game_vbi_isr).
-    if (mem[0x00E7] && (mem[0x00E7] & mem[0x062D]) == 0) sfx_voice_tick();
-    // $5359  music_player_tick ($7253): the note-stream tune player (level-start,
-    // game-over/results jingles).  Separate engine from the SFX sequencer above
-    // ($70F9) that carries the standby/attract THEME — that one is gated on $00E7
-    // and undisturbed by this.  The Atari ran $7253 in this VBI tail gated on the
-    // music-active flag $0655 (set by music_init_state $7238); mirror that here so
-    // the game-over tune actually plays.  Runs at 50 Hz (one VBI) like the Atari;
-    // its own tempo counter ($0653) paces the notes.  POKEY AUDF/AUDC writes route
-    // through platform_hw_write into the Paula want[] table and are applied by
-    // flush_paula in game_vbi_isr (same path as the SFX envelope below).
-    if (mem[0x0655]) music_player_tick();
-    // $548D SFX voice engine — the Atari ran it in this VBI tail too.  Gate on
-    // $060B (=$23 once the launch cinematic begins, 0 during pure attract) so the
-    // attract music (sfx_voice_tick above) is undisturbed but the START/doors/tunnel
-    // launch effects get drained from the $0719 ring to POKEY -> Paula.
-    if (mem[0x060B]) sfx_voice_envelope_tick();
-    uint8_t g = mem[MEM_lock_on_indicator_tick_parity];   // $5342: LSR $0643 / BCS skip / ... / INC
+    mem[MEM_dli_dispatch_index] = 0u;        // $52DF STA $00C7 (DLI chain index reset)
+    vbi_attract_timer_native();              // $5335 (INC $062D; 256-ovf -> INC $00E2)
+    vbi_attract_poll();                      // $533C JSR $5398
+    launch_anim_dispatch_native();           // $533F JSR $5367 (launch cinematic driver;
+                                             //   self-gated on $0088/$0089/$008A/$008B/$008D)
+    uint8_t g = mem[MEM_lock_on_indicator_tick_parity];   // $5342 LSR $0643
     mem[MEM_lock_on_indicator_tick_parity] = (uint8_t)(g >> 1);
     if (!(g & 1u)) {                         // carry clear -> run, then INC
         lock_on_indicator_tick();                  // $4229 (native twin, rof_native.c)
         mem[MEM_lock_on_indicator_tick_parity]++;
     }
+    vbi_shared_tail();                       // $534D
+}
+
+// vbi_handler_1_native: faithful $53CC vbi_handler_1 (attract / Title Screen / game-over
+// card).  This is the SEPARATE VBI body the Atari installs for the static cards — it does
+// NOT run the launch cinematic ($5367) or the lock-on tick, and maintains a RICHER attract
+// cascade than $52D7 (this is what the committed band-aid approximated by gating
+// launch_anim inside standby_vbi_native; now split out properly).  HW writes ($53CC STA
+// $D400; the $53ED colour-cycle STA $D016,X) are SKIPPED — but the pen cycle's INPUTS
+// ($0002/$0013) are the mem[] state updateTitleScreenCopper reads to reproduce the pen
+// cycle on the Amiga, so the cascade + clamps are kept exactly.  mem[] order:
+//   $53D2  INC $0014 (RTCLOK)        -> done by the ISR before this call
+//   $53D4  INC $062D; 256-ovf -> INC $0002, INC $0013, INC $00E2 (clamp $00E2 -> $80 if neg)
+//   $53E5  LDY $0002; if neg clamp $0002 -> $80
+//   $53ED  colour-cycle STA $D016,X  -> HW only, SKIPPED (see updateTitleScreenCopper)
+//   $5400  JSR $5398                 -> vbi_attract_poll
+//   $5403  JMP $534D                 -> vbi_shared_tail
+extern "C" void vbi_handler_1_native(void)
+{
+    mem[MEM_attract_timer_sub]++;                          // $53D4 INC $062D
+    if (mem[MEM_attract_timer_sub] == 0) {                 // $53D7 256-wrap cascade
+        mem[MEM_rtclok_frac]++;                            // $53D9 INC $0002
+        mem[MEM_RTCLOK_MID]++;                             // $53DB INC $0013
+        mem[MEM_attract_timer]++;                          // $53DD INC $00E2
+        if (mem[MEM_attract_timer] & 0x80u)               // $53DF BPL / LDA #$80 / STA $00E2
+            mem[MEM_attract_timer] = 0x80u;
+    }
+    if (mem[MEM_rtclok_frac] & 0x80u)                     // $53E5 LDY $0002; BPL / LDY #$80 / STY $0002
+        mem[MEM_rtclok_frac] = 0x80u;
+    vbi_attract_poll();                                   // $5400 JSR $5398
+    vbi_shared_tail();                                    // $5403 JMP $534D
 }
 
 // ============================================================================
@@ -764,8 +816,10 @@ extern "C" void flight_vbi_native(void)
 // game_vbi_isr dispatches on THAT (see below), so this no longer selects the body.
 extern "C" volatile uint8_t g_activeVbi = 0;
 
-// standby_vbi_native: the faithful $52D7 per-frame body (defined in NativeHandlers.cpp).
+// standby_vbi_native: the faithful $52D7 per-frame body (defined above).
 extern "C" void standby_vbi_native(void);
+// vbi_handler_1_native: the faithful $53CC per-frame body (attract/Title/game-over card).
+extern "C" void vbi_handler_1_native(void);
 // vbi_handler_station ($1B30): the attract-mode VBI (transpiled).  It sets the $0080
 // sync flag the station_init attract loop spins on, and bumps RTCLOK itself.
 extern "C" void vbi_handler_station(void);
@@ -795,6 +849,7 @@ extern "C" void game_vbi_isr(void)
                               PlatformAmiga::flightShotTick();      // laser sprite @ 50Hz (VBI, faithful)
                               PlatformAmiga::flightScannerTick(); }  // LR-scanner close-range blink @ 50Hz
     else if (vbi == 0x1B30) vbi_handler_station();   // $1B30 attract VBI (sets $0080 + RTCLOK)
+    else if (vbi == 0x53CC) vbi_handler_1_native();  // $53CC attract/Title/game-over card VBI
     else                    standby_vbi_native();    // $52D7 standby/launch VBI (and fallback)
     cpu = saved;                                    // == XITVBV PLA;TAY;PLA;TAX;PLA
     // Apply this frame's batched POKEY→Paula writes — from the CIA-B music tick
