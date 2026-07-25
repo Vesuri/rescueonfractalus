@@ -366,3 +366,16 @@ well-known Atari OS shadow registers and should get standard names:
 - `$0020`+ (0x2C bytes) / `$2830`+ (0xA6 bytes) — per-level ZP + object-state clears.
 - `$003A` — read at level-clear check (`==1` sets `level_cleared_flag`); unnamed. Needs analysis.
 - `$003D` — death/handoff phase byte (`!=0` → set to `2`); unnamed. Suggested: `death_phase`.
+
+## Alien jump-scare cluster (2026-07-25, creature draw located — see docs/alien-jumpscare.md)
+- `$7EC7 game_sub_7EC7` → `alien_knock_setup_loop`: seeds the jump-scare creature-animation state
+  (`$0632/$005E/$005F/$2921/$2924/$2930/$2931/$0635/$0638/$0639`) then loops `$7F85` per frame while
+  systems-off (the airlock-CLOSED knock). NOT "sfx only".
+- `$7F85 game_sub_7F85` → `alien_creature_animate_draw`: ⚠ MISNAMED "sfx_seq_step". Steps the frame
+  tables `$81E2/$81E8/$820A` AND draws the creature via `$80C5`. The actual jump-scare draw.
+- `$80C5 (FUN_80c5)` → `alien_shape_blit`: masked 17-byte-wide bitmap blit into the mode-D viewport
+  field (`$BE00` mask, `AND ($8B),Y / ORA / STA ($8D),Y`, row stride `$60`, row addrs `$073D`/`$0793`
+  built at `$7464/$7469`, position `$2930`/`$2931`, geometry tables `$81A1..$81D9`).
+- `$0632` → `alien_knock_active` (set 1 by `$7EC7`, cleared at `$7F76`; gates VBI work at `$5250`).
+- `$003C anim_flag_003C` → `airlock_state` (0=closed→scare; nonzero→boarding/reveal).
+- `$281E` (unnamed) → `figure_is_alien` (1 when rescue map-marker `$0A00[$28E6] == $80`).
