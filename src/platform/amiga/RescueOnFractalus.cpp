@@ -201,8 +201,12 @@ static uint16_t kStarGlyphHi[256];
 // straight to its output bitplane bytes, replacing the per-byte bit loops.
 //   mode-D (2bpp, stars/planet viewport): byte = 4 pixels (2 bits) → 8 Amiga px.
 //     kModeDP1[s] = plane1 (colour bit0 of each pixel), kModeDP2[s] = plane2 (bit1).
-static uint8_t kModeDP1[256];
-static uint8_t kModeDP2[256];
+// Non-static + extern "C" so the alien-creature mirror (ROF_PLOT_ALIEN in rof_native.c) can decode
+// the creature's mode-D field bytes into plane1/plane2 with the identical mapping this file uses.
+extern "C" {
+uint8_t kModeDP1[256];
+uint8_t kModeDP2[256];
+}
 // Windscreen-bottom band (flight rows 43-46) decode.  The band mode-D field (mem[$1074+43*96],
 // written per frame by game_sub_451d) holds: value 3 = grey windscreen frame (the dominant
 // "middle"), value 0 = the L/R edge regions (terrain body colour, behind the corner-triangle

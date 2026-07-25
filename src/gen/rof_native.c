@@ -183,11 +183,35 @@ extern int g_figRowLo, g_figRowHi;
             for (int _b = 0; _b < 40; _b++) { g_figM[_o + _b] = 0; g_figP1[_o + _b] = 0; g_figP2[_o + _b] = 0; } } \
         g_figRowLo = 99; g_figRowHi = -1; \
     } } while (0)
+/* Alien jump-scare creature overlay.  The creature (game_sub_7F85 -> hud_build_text_row $80C5,
+ * airlock-CLOSED knock) blits into the mode-D field (base $1010, stride 96, +$30 display half),
+ * which the Amiga sheds for the terrain body -> dropped.  Mirror each written byte into the SAME
+ * figure overlay the paused-rescue compositor already draws (the approach-figure zoom = landing
+ * phase 3 and the creature = phase 4 never draw simultaneously, so g_figP1/P2/M is free).  Geometry
+ * (measured, matches the figure overlay): field byte at addr A -> rel = A-$10A4, row r = rel/96,
+ * plane byte b = rel%96.  The stored byte V is the FINAL composited field byte (creature over the
+ * frozen terrain, same frame the compositor draws over), so writing V wholesale (all pixels opaque,
+ * mask=$FF) reproduces the field exactly.  Decode V -> plane1/plane2 via the same kModeDP1/kModeDP2
+ * tables renderViewportModeD uses.  Cleared each creature frame by ROF_CLEAR_FIG (in game_sub_7EC7). */
+extern uint8_t kModeDP1[256]; extern uint8_t kModeDP2[256];
+#define ROF_PLOT_ALIEN(addr, V) do { \
+    if (g_figP1) { \
+        int _rel = (int)(addr) - 0x10A4; \
+        if (_rel >= 0) { int _r = _rel / 96, _b = _rel % 96; \
+            if ((unsigned)_r < 43u && (unsigned)_b < 40u) { \
+                int _i = _r * 40 + _b; \
+                g_figM[_i]  = 0xFF; \
+                g_figP1[_i] = kModeDP1[(unsigned char)(V)]; \
+                g_figP2[_i] = kModeDP2[(unsigned char)(V)]; \
+                if (_r < g_figRowLo) g_figRowLo = _r; \
+                if (_r > g_figRowHi) g_figRowHi = _r; \
+            } } } } while (0)
 #else
 #define ROF_PLOT_DOT(col, h) ((void)0)
 #define ROF_PLOT_DOT_P1(col, h) ((void)0)
 #define ROF_PLOT_FIG(x, y, v2) ((void)0)
 #define ROF_CLEAR_FIG() ((void)0)
+#define ROF_PLOT_ALIEN(addr, V) ((void)0)
 /* SDL/validate: OR the value-2 pixel into the mode-D field (the dots source SDL decodes, and the
  * surface fill_terrain_silhouette scans).  rowLo/rowHi are left in $80/$81 via WB() (faithful). */
 #define ROF_FIELD_PLOT(h) do { \
@@ -1541,13 +1565,21 @@ void game_sub_7EC7(void) {
     sound_table_idx = 0x0F;                      /* $2924 */
     mem[0x2921] = 0x05;
     mem[0x005F] = 0x12;
+#ifdef ROF_PLATFORM_AMIGA
+    ROF_CLEAR_FIG();   /* discard the setup-cascade's transient creature draws before the loop */
+#endif
     do {
         while (RTCLOK_LOW <= 0x04) {             /* wait for RTCLOK to pass 4 (reach 5) */
 #ifdef ROF_PLATFORM_AMIGA
-            platform_tick_vbi(); platform_render_frame();   /* keep the display live while spinning */
+            platform_tick_vbi(); platform_render_frame();   /* composites the current creature overlay */
 #endif
         }
         RTCLOK_LOW = 0x00;
+#ifdef ROF_PLATFORM_AMIGA
+        /* Fresh creature overlay for this knock frame — after the render above composited the
+         * previous frame, before game_sub_7F85 (via hud_build_text_row/ROF_PLOT_ALIEN) redraws it. */
+        ROF_CLEAR_FIG();
+#endif
         game_sub_7F85();
     } while (clear_colors_done_003E != 0);
     cpu.A = 0x00;                                /* A = $3E (== 0 at loop exit) */
@@ -4227,15 +4259,18 @@ void hud_build_text_row(void) {
         cpu.A &= bus_read(ZP_IND_Y(0x8B));       /* AND ($8B)+Y */
         cpu.A |= screen_ptr_hi;                    /* ORA $0084 */
         bus_write(ZP_IND_Y(0x8D), cpu.A);        /* STA ($8D)+Y */
-#if defined(ROF_PLATFORM_AMIGA) && defined(ROF_FLIGHT_PROBE)
-        /* Jump-scare creature capture: during the airlock-CLOSED knock ($0632 set by
-         * game_sub_7EC7) game_sub_7F85 drives this composer to blit the alien into the viewport
-         * field.  Record the writes (rof_alien_crwrite) so we can derive the field->plane geometry.
-         * $0632 is clear for ordinary HUD text, so those draws are not captured.  Read-only side
-         * effect (touches only g_alCr* probe globals) — the validated twin stays byte-identical. */
+#ifdef ROF_PLATFORM_AMIGA
+        /* Alien jump-scare: during the airlock-CLOSED knock ($0632, set by game_sub_7EC7) this
+         * composer blits the creature into the viewport field, which the Amiga sheds -> mirror each
+         * byte into the paused-rescue figure overlay so renderFlightDirect composites it.  $0632 is
+         * clear for ordinary HUD text, so those draws are untouched.  (Read-only on mem[] -> the
+         * validated twin stays byte-identical for the SDL oracle, which never sets $0632.) */
         if (mem[0x0632]) {
-            unsigned _t = (mem[0x8D] | (mem[0x8E] << 8)) + y;
-            rof_alien_crwrite(_t & 0xFFFFu, cpu.A);
+            unsigned _t = ((mem[0x8D] | (mem[0x8E] << 8)) + y) & 0xFFFFu;
+            ROF_PLOT_ALIEN(_t, cpu.A);
+#ifdef ROF_FLIGHT_PROBE
+            rof_alien_crwrite(_t, cpu.A);   /* keep the capture (extent/geometry probe) */
+#endif
         }
 #endif
         if (y == 0x00) break;
