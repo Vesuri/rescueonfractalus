@@ -1949,6 +1949,20 @@ void RescueOnFractalus::renderFrame()
     }
     emptyCopperInstalled = false;
 
+    // Lighter knock render path: during the airlock-closed alien knock ($0632) the whole flight
+    // scene is frozen except the animating creature overlay, yet the game is parked in a blocking
+    // per-frame loop (game_sub_7EC7).  renderFlightDirect already does a dirty-rect figure composite
+    // (+ VBI flip) for the rescue-figure pause, so go straight to it and skip the full per-frame
+    // machinery that would only recompute frozen state: deriveRenderSignals() rebuilds SIX cockpit
+    // sprites every frame (altimeter/AH/scope/viewport-P3/scanner), plus the tunnel-band decode
+    // checks and the flight-copper install/refresh.  All of those are stable across the pause (set by
+    // the frames before the knock), so recomputing them per knock frame is the dominant render cost.
+    // Gate == renderFlightDirect's own rescueFigure branch ($3E!=0 && $3D>=3) AND the knock flag.
+    if (mem[0x0632] && mem[0x003E] != 0 && mem[0x003D] >= 3) {
+        renderFlightDirect();
+        return;
+    }
+
     deriveRenderSignals();   // recompute the mem[]-derived render-gating signals for this frame
 #if defined(ROF_FLIGHT_PROBE)
     // Diagnose why renderFlightDirect isn't reached during the knock: is renderFrame even entered
