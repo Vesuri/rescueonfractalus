@@ -88,16 +88,30 @@ mirror its field writes into the Amiga flight plane(s) with the value→pen mapp
 
 **★ OPEN #1 — PERF (the blocker, ~7.5× too slow).** Measured per knock STEP (beam ticks, 313=1 frame=20ms;
 faithful step = 5 frames = 1565): **draw `game_sub_7F85` ≈ 8438 ticks (~540ms), render ≈ 3284 (~210ms),
-wait ≈ 0** (no pacing left — draw+render already blow past 5 frames). `game_sub_7F85` is the dominant
-lever — the user asked to **native-twin it**. ⚠ BUT its heavy inner work is `hud_build_text_row` ×~38
-rows/step, which is ALREADY a native twin — so the **hud-vs-wrapper split is UNMEASURED** and is the
-FIRST next step (add a `g_alTHud` timer in hud_build_text_row gated on `$0632`; if hud dominates,
-native-twinning the `$7F85` wrapper won't help and the fix is to speed up hud_build_text_row / cut rows;
-if the wrapper dominates, native-twin `$7F85`). Also: `ROF_PLOT_ALIEN` does 2 divisions/byte (rel/96,
-rel%96) — cache the row (17 consecutive bytes share a row) to drop ~1 div/byte. And the **render 210ms**
-is the normal slow-flight-frame cost (flight is ~5-6 FPS); even a perfect draw leaves ~2× from the render
-— may need a lighter composite path for the paused knock (skip the full renderFrame per-frame work).
-bus_read/bus_write are inline+cheap for RAM (ruled out).
+wait ≈ 0** (no pacing left — draw+render already blow past 5 frames).
+
+**★ MEASURED 2026-07-25 (session 3) — the hud-vs-wrapper split: `hud_build_text_row` is ~100% of
+`game_sub_7F85`; the wrapper is ~0%.** (`g_alTHud` ≈ `g_alTDraw` per step, `hud/draw`=111% within async-VBI
+noise; 40 hud calls/step.) So native-twinning the `$7F85` *wrapper* does NOT help — the lever is the row
+composer + cutting per-row work.
+
+**★ DONE 2026-07-25 (session 3, commit fa1d06b) — clean-C rewrite of the whole draw tree** (foundation for
+the next perf pass; all byte-identical `make validate`, both backends build):
+- `pack_byte_to_5bit_cells` → a fixed bit-permutation (no more 22-op ROL/ROR chain; **dropped ~12 `$0084`
+  bus ops/call**, ~480 pack calls/step) + a `_core` so callers keep the accumulator in a register.
+- `hud_fill_field0/1/2/3` → hoisted the ZP source-pointer reconstruction out of the per-byte loop.
+- `hud_build_text_row` → hoisted the mask/dest row-pointer bases out of the 17-cell inner loop.
+- `game_sub_7F85` → now a validated native twin (clean sequencer + setup + blit loop), no longer transpiled.
+
+**★ NEXT (perf, now on a clean base):** (1) re-measure the per-step draw to quantify the win; (2) the
+remaining cost is the faithful 17-cell blit × ~40 rows + ~480 pack calls — escalate the row composer to the
+same levers as the terrain path (hand-asm the inner blit / pack, or CUT rows: on the Amiga only the
+`ROF_PLOT_ALIEN` mirror output is observable, so rows whose output falls entirely outside the figure region
+do dead work — but the cursor/pointer state threads through all rows, so skipping needs care). (3)
+`ROF_PLOT_ALIEN` still does 2 divisions/byte (rel/96, rel%96) — cache the row (17 consecutive bytes share a
+row) to drop ~1 div/byte. And the **render 210ms** is the normal slow-flight-frame cost (flight is ~5-6 FPS);
+even a perfect draw leaves ~2× from the render — may need a lighter composite path for the paused knock
+(skip the full renderFrame per-frame work). bus_read/bus_write are inline+cheap for RAM (ruled out).
 
 **OPEN #2 — COLOUR.** The creature renders in the viewport pens 0-3 (terrain palette), so likely the WRONG
 hue. The attack colour is `$0047` (`$6D/$70/$D8` cycle, set by `pmg_enemy_update $7AB8`). Pens during the
