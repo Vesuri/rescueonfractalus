@@ -260,7 +260,7 @@ extern "C" int g_objRowLo = 47, g_objRowHi = -1;  // dirty scanline range in s_f
 // plot_clipped_pixel actually drew (mirrored via ROF_PLOT_FIG in rof_native.c) — plane1, plane2,
 // and the opaque-pixel mask.  Decoding the raw mode-D field instead would splatter the stale
 // non-figure data in that shed region (it corrupted the viewport).  g_figRowLo/Hi = dirty rows.
-static uint8_t s_figP1[43 * 40], s_figP2[43 * 40], s_figM[43 * 40];
+alignas(4) static uint8_t s_figP1[43 * 40], s_figP2[43 * 40], s_figM[43 * 40];  // 4-aligned: 32-bit composite
 extern "C" uint8_t* g_figP1 = s_figP1;
 extern "C" uint8_t* g_figP2 = s_figP2;
 extern "C" uint8_t* g_figM  = s_figM;
@@ -1617,11 +1617,14 @@ void RescueOnFractalus::renderFlightDirect()
                 for (int i = 0; i < 47 * 120 / 4; i++) d[i] = s[i];
                 s_bufSeeded[bi] = true; s_boxLo[bi] = 99; s_boxHi[bi] = -1;
             } else if (s_boxHi[bi] >= s_boxLo[bi]) {
-                // Erase this buffer's previous figure: restore plane1(+0)+plane2(+40) over its box rows.
+                // Erase this buffer's previous figure: restore plane1(+0)+plane2(+40) over its box
+                // rows.  32-bit copy (80 bytes = 20 longs/row) — the buffers are 4-aligned and the
+                // 120-byte row stride is a multiple of 4, so every long access is aligned.  On the
+                // 68000 this is the dominant win: 4x fewer chip-RAM cycles than the byte loop.
                 for (int r = s_boxLo[bi]; r <= s_boxHi[bi]; r++) {
-                    const uint8_t* s1 = s_clean + (unsigned)r * 120;
-                    uint8_t* d1 = bp2 + (unsigned)r * 120;
-                    for (int b = 0; b < 80; b++) d1[b] = s1[b];
+                    const uint32_t* s1 = (const uint32_t*)(s_clean + (unsigned)r * 120);
+                    uint32_t* d1 = (uint32_t*)(bp2 + (unsigned)r * 120);
+                    for (int b = 0; b < 20; b++) d1[b] = s1[b];
                 }
             }
             // Draw the new figure (replace only the recorded opaque pixels), and record its box.
@@ -1632,17 +1635,23 @@ void RescueOnFractalus::renderFlightDirect()
             { extern volatile unsigned long g_alComp; if (mem[0x0632] && g_figRowHi >= g_figRowLo) g_alComp++; }
 #endif
             if (g_figRowHi >= g_figRowLo) {
+                // Cookie-cut composite the figure into plane1(d1)/plane2(d2): dest = (dest & ~mask)
+                // | pixels (the pixel bytes are already 0 wherever the mask byte is 0, so no extra
+                // AND is needed).  32-bit words (40 bytes = 10 longs/plane) — the mask/pixel/dest
+                // buffers are all 4-aligned.  The op is applied per byte-lane within each long, so it
+                // is endianness-neutral (host + Amiga agree).  ⚠ This is the blitter's cookie-cut job;
+                // a chip-RAM figure buffer + blitter minterm is the eventual faster path.
                 for (int r = g_figRowLo; r <= g_figRowHi; r++) {
-                    const uint8_t* fm = s_figM  + r * 40;
-                    const uint8_t* p1 = s_figP1 + r * 40;
-                    const uint8_t* p2 = s_figP2 + r * 40;
-                    uint8_t* d1 = bp2 + (unsigned)r * 120;
-                    uint8_t* d2 = d1 + 40;
-                    for (int b = 0; b < 40; b++) {
-                        uint8_t m = fm[b];
+                    const uint32_t* fm = (const uint32_t*)(s_figM  + r * 40);
+                    const uint32_t* p1 = (const uint32_t*)(s_figP1 + r * 40);
+                    const uint32_t* p2 = (const uint32_t*)(s_figP2 + r * 40);
+                    uint32_t* d1 = (uint32_t*)(bp2 + (unsigned)r * 120);
+                    uint32_t* d2 = (uint32_t*)((uint8_t*)d1 + 40);
+                    for (int b = 0; b < 10; b++) {
+                        uint32_t m = fm[b];
                         if (!m) continue;
-                        d1[b] = (uint8_t)((d1[b] & ~m) | p1[b]);
-                        d2[b] = (uint8_t)((d2[b] & ~m) | p2[b]);
+                        d1[b] = (d1[b] & ~m) | p1[b];
+                        d2[b] = (d2[b] & ~m) | p2[b];
                     }
                 }
                 s_boxLo[bi] = g_figRowLo; s_boxHi[bi] = g_figRowHi;
@@ -1652,7 +1661,14 @@ void RescueOnFractalus::renderFlightDirect()
             // Flip via the VBI (same torn-pointer-safe protocol as the normal render path).
             flightPendingFlip = back;
             flightSwapPending = true;
+#if defined(ROF_FLIGHT_PROBE)
+            { extern volatile unsigned long g_alTFlipWait;
+              unsigned long _fw = rof_subclock();
+              while (flightSwapPending) { }
+              if (mem[0x0632]) g_alTFlipWait += rof_subclock() - _fw; }
+#else
             while (flightSwapPending) { }
+#endif
         }
         return;
     }
@@ -1852,6 +1868,10 @@ void RescueOnFractalus::renderFlightDirect()
 // (no-op unless a swap is pending); the flag is only ever set during flight.
 void RescueOnFractalus::flightVblankSwap()
 {
+#if defined(ROF_FLIGHT_PROBE)
+    { extern volatile unsigned long g_alVSwapRun, g_alVSwapCleared;
+      if (mem[0x0632]) { g_alVSwapRun++; if (flightSwapPending) g_alVSwapCleared++; } }
+#endif
     if (!flightSwapPending) return;
     if (flightCopper && flightPendingFlip) {
         flightCopper->setTerrainBitplanes(*flightPendingFlip);

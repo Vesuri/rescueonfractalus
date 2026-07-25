@@ -76,6 +76,13 @@ printf "  per-step: hud=%lu ticks (%lu calls/step)  wrapper=%lu ticks  hud/draw=
   (g_alTDraw ? (g_alTHud*100)/g_alTDraw : 0)
 printf "renderFlightDirect during knock: g_alRFD=%lu  rescueFig=%lu  cleanValid=%lu  (locates the drop-out)\n", \
   g_alRFD, g_alRFDresc, g_alRFDclean
+printf "  render split: scene(composite+flipwait)=%lu  frameSync(vbi==last wait)=%lu ticks/step\n", \
+  (g_alKnockFrames ? g_alTRScene/g_alKnockFrames : 0), \
+  (g_alKnockFrames ? g_alTRIdle/g_alKnockFrames : 0)
+printf "    of scene: flipWait(while flightSwapPending)=%lu ticks/step  (rest = the composite itself)\n", \
+  (g_alKnockFrames ? g_alTFlipWait/g_alKnockFrames : 0)
+printf "    flightVblankSwap during knock: ran=%lu  didFlip=%lu  (ran/step=%lu; if ran>>steps ISR is live)\n", \
+  g_alVSwapRun, g_alVSwapCleared, (g_alKnockFrames ? g_alVSwapRun/g_alKnockFrames : 0)
 printf "viewport pens during knock: $DA=%02x $DB=%02x $DC=%02x $DD=%02x  attack $47=%02x $44=%02x\n", \
   g_alPen[0], g_alPen[1], g_alPen[2], g_alPen[3], g_alPen[4], g_alPen[5]
 printf "  (Amiga color02<-$DA, color03<-$DB; if creature pens ~= sky/background, shape is invisible)\n"

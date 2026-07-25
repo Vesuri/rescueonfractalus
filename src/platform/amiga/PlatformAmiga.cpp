@@ -759,6 +759,17 @@ extern "C" volatile unsigned long g_fdClear=0, g_fdEdge=0, g_fdFill=0, g_fdScan=
 extern "C" volatile unsigned long g_isrBeamLines;  // defined in rof_native_amiga.cpp
 extern "C" volatile unsigned long g_rRenderCompute=0, g_rRenderWall=0, g_rIdleWall=0, g_rCalls=0;
 extern "C" volatile unsigned long g_rPerFrame=0, g_rRenderFn=0, g_rCopper=0;
+// Knock-gated ($0632) split of platform_render_frame: g_alTRScene = scene->renderFrame() (the
+// dirty-rect composite + the renderFlightDirect while(flightSwapPending) flip wait); g_alTRIdle =
+// the PlatformAmiga while(g_vbiCount==last) frame-sync wait after it.  Pinpoints the ~204ms.
+extern "C" volatile unsigned long g_alTRScene=0, g_alTRIdle=0;
+// Of g_alTRScene, the time specifically in renderFlightDirect's while(flightSwapPending) flip wait.
+extern "C" volatile unsigned long g_alTFlipWait=0;
+// flightVblankSwap during the knock: g_alVSwapRun = ISR firings that ran it; g_alVSwapCleared = of
+// those, how many found flightSwapPending set (i.e. actually did the flip).  If Run >> Cleared, the
+// ISR fires often but a flip is rarely pending -> the flip wait isn't ISR-starved; if Run ~ steps,
+// the ISR itself is being throttled during the knock.
+extern "C" volatile unsigned long g_alVSwapRun=0, g_alVSwapCleared=0;
 // Altimeter sprite chip addresses (set in initialize) so the gdb harness can read their VSTART/
 // VSTOP control words and confirm the bar Y vs mem[$281A]/$281B.
 extern "C" volatile uint32_t g_altimSprAddr=0, g_altimShipSprAddr=0, g_energySprAddr=0;
@@ -835,12 +846,14 @@ void PlatformAmiga::renderFrame() {
         g_rRenderWall    += _w;
         g_rRenderCompute += _w - (g_isrBeamLines - _rri);
         g_rCalls++;
+        if (mem[0x0632]) g_alTRScene += _w;   // knock: scene render (composite + flip wait)
     }
     unsigned long _ri0 = rof_subclock();
 #endif
     while (g_vbiCount == last) { /* wait for next real VBI */ }
 #ifdef ROF_FLIGHT_PROBE
-    if (_rFlight) g_rIdleWall += rof_subclock() - _ri0;
+    if (_rFlight) { unsigned long _iw = rof_subclock() - _ri0; g_rIdleWall += _iw;
+                    if (mem[0x0632]) g_alTRIdle += _iw; }   // knock: frame-sync wait
 #endif
     // Flight double-buffer: the flip in render() has now latched (the just-painted buffer is on
     // screen).  Kick the blitter clear of the OTHER (now off-screen) buffer so it overlaps the
