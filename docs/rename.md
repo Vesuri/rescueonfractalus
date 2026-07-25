@@ -19,6 +19,8 @@ siblings like `clear_colors_timed`/`_sweep_5x`/`_done_003E` safe when renaming `
 | Addr | Current name | What it actually does | Suggested |
 |------|--------------|------------------------|-----------|
 | `$7AB8` | `pmg_enemy_update` | NOT PMG-related. The per-frame alien-attack tick when `$0633 alien_trigger` is set: RANDOM gate, sets shape/colour selectors (`$0044`/`$0047`=`$70`, or `$6D`) + phase toggle `$283D`, calls `jitter_roll_pitch $AA95` (shakes the ship), bumps `$003B`, fires pounding SFX via `ring_push_marked $5815` (X=`$1A`/`$1B`). The alien creature is a **bitmap** (draw_scaled_shape), drawn elsewhere — this fn draws nothing. | `alien_attack_tick` |
+| `$7EC7` | `game_sub_7EC7` | Sets up + plays the rescue "knock"/alien-attack SFX (descending-pitch sweep); during a systems-off rescue (`$003E!=0`) it BLOCKS in a loop driving the SFX sequencer per-frame until systems come back on. See docs/alien-jumpscare.md. | `rescue_knock_sfx` |
+| `$7F85` | `game_sub_7F85` | Table-driven SFX sequencer step (tables `$81E2/$81E8/$820A`, idx `$2924`/`$005E`/`$005F`); stepped once per frame by the knock-SFX loop. NOT a draw. | `sfx_seq_step` |
 
 ## Notes
 - **"scroll" in the `scroll_*` names = Atari LMS / buffer-shift scrolling**, not pixel
@@ -38,6 +40,11 @@ across subsystems or needs a live check before a canonical name can be trusted. 
 ?=verify. Do NOT promote these without resolving the aliasing noted.
 
 **Misnamed (rename in a future batch):**
+- `$003C` `anim_flag_003C` → **`airlock_state`** — 0=closed; INC'd by the airlock command
+  (`event_sequence_dispatcher $46EA`→`$471E`); promoted to `$80`/`$FF` in the pilot_render reveal.
+  Gates the rescue reveal (pilot boards / alien jumps). See docs/alien-jumpscare.md.
+- `$281E` (unnamed) → **`figure_is_alien`** — set 1 in pilot_render when the rescued figure's map
+  marker (`$0A00[$28E6]`) is `$80` (alien-designated at spawn `$4E58`); DEC'd to 0 for a pilot.
 - `$2840` `wing_bar_hpos_base` → **`crosshair_hpos_base`** (named 2026-06-30b, WRONG). It is the
   Targeting-Crosshair (#10) HPOS base, NOT the wing-clearance bars (those are the mode-D band
   BITMAP, per CLAUDE.md #3). The flight VBI ($505F) pushes `HPOSM3=mem[$2840]`, `M2=+$0C`, `M1=+$11`
