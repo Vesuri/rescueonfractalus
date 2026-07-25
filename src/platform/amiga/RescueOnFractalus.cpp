@@ -1485,6 +1485,9 @@ extern "C" volatile unsigned char  g_rfDisp[RF_RING_N]  = {0};   // flightDispla
 extern "C" volatile unsigned char  g_rfBack[RF_RING_N]  = {0};   // back id (buffer to paint)
 extern "C" volatile unsigned char  g_rfClr[RF_RING_N]   = {0};   // flightClearPending id
 extern "C" volatile unsigned long  g_alComp = 0;   // live creature composites during the knock ($0632)
+extern "C" volatile unsigned long  g_alRFD = 0;      // renderFlightDirect entries during the knock
+extern "C" volatile unsigned long  g_alRFDresc = 0;  // ...of those, rescueFigure true
+extern "C" volatile unsigned long  g_alRFDclean = 0; // ...of those, s_cleanValid true
 extern "C" volatile unsigned char  g_rfFresh[RF_RING_N] = {0};   // g_flightTerrainFresh
 extern "C" volatile short          g_rfFigLo[RF_RING_N] = {0};   // g_figRowLo
 extern "C" volatile short          g_rfFigHi[RF_RING_N] = {0};   // g_figRowHi
@@ -1536,6 +1539,12 @@ void RescueOnFractalus::renderFlightDirect()
     // snapshot) and draw the new figure.  Reuses the exact normal VBI-synced flip.
     const bool rescueActive = (mem[0x003E] != 0);
     const bool rescueFigure = (rescueActive && mem[0x003D] >= 3);
+#if defined(ROF_FLIGHT_PROBE)
+    // Locate where the creature composite drops out during the knock ($0632): entered renderFlightDirect
+    // at all / rescueFigure true / s_cleanValid true.  (g_alComp below counts the actual composite.)
+    { extern volatile unsigned long g_alRFD, g_alRFDresc, g_alRFDclean;
+      if (mem[0x0632]) { g_alRFD++; if (rescueFigure) g_alRFDresc++; if (s_cleanValid) g_alRFDclean++; } }
+#endif
     // $3E nonzero->zero edge = the rescue truly ended (this is the resume frame).  Latch a one-shot
     // dot restore for the next rendering frame; never set during the pause or its mid-zoom $3D dips.
     // GATE on s_cleanValid: $3E (rescueActive) also goes active when systems are switched off with NO
