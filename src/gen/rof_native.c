@@ -4227,6 +4227,17 @@ void hud_build_text_row(void) {
         cpu.A &= bus_read(ZP_IND_Y(0x8B));       /* AND ($8B)+Y */
         cpu.A |= screen_ptr_hi;                    /* ORA $0084 */
         bus_write(ZP_IND_Y(0x8D), cpu.A);        /* STA ($8D)+Y */
+#if defined(ROF_PLATFORM_AMIGA) && defined(ROF_FLIGHT_PROBE)
+        /* Jump-scare creature capture: during the airlock-CLOSED knock ($0632 set by
+         * game_sub_7EC7) game_sub_7F85 drives this composer to blit the alien into the viewport
+         * field.  Record the writes (rof_alien_crwrite) so we can derive the field->plane geometry.
+         * $0632 is clear for ordinary HUD text, so those draws are not captured.  Read-only side
+         * effect (touches only g_alCr* probe globals) — the validated twin stays byte-identical. */
+        if (mem[0x0632]) {
+            unsigned _t = (mem[0x8D] | (mem[0x8E] << 8)) + y;
+            rof_alien_crwrite(_t & 0xFFFFu, cpu.A);
+        }
+#endif
         if (y == 0x00) break;
     }
     /* advance $8B/$8C += $60; $8D/$8E = $8B/$8C + $30 */
