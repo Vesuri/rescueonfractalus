@@ -66,12 +66,54 @@ creature's field-body writes are dropped. Exactly the ground-object case (fixed 
 plot routine, and its shape is a **masked multi-value blit** (not single dots), so the port needs to
 mirror its field writes into the Amiga flight plane(s) with the value→pen mapping.
 
-**NEXT (fix): (1)** re-gate the probe to the closed path (`$0632!=0` or `$281E!=0 && $003C==0 &&
-$003E!=0`) and hook `game_sub_7F85`/`$80C5` to CONFIRM on the Amiga it draws into the field + capture
-the row/col extent; **(2)** mirror `$80C5`'s masked writes into the Amiga flight planes (analogous to
-`ROF_PLOT_DOT`/`g_flightDotPlane`, mapping the mode-D field values it writes → planes/pens). ⚠ Test
-with **`FORCE_ALIEN=1` and airlock CLOSED** (do NOT set `FORCE_AIRLOCK` — that takes the boarding
-path). Reaching + HOLDING the knock is the trigger. Probe infra: `g_al*` in rof_native.c.
+## ★★ RENDERS 2026-07-25 (session 2) — creature shows + animates + lights blink (user-confirmed). PERF is the open blocker.
+
+**What now works (committed 9e8a83c → e36b6a1):**
+- **Mirror:** `hud_build_text_row` ($80C5, the native twin the game actually runs — NOT the transpiled
+  oracle) mirrors each creature byte, gated on `$0632` (alien_knock_active), into the paused-rescue
+  overlay **`g_figP1/P2/M`** via `ROF_PLOT_ALIEN` (rof_native.c). Geometry MEASURED + matches the figure
+  overlay: field base `$1010`, stride 96; `rel = A-$10A4`, `r = rel/96`, `b = rel%96`; byte decoded via
+  `kModeDP1/kModeDP2` (now `extern "C"`). `game_sub_7EC7` clears the overlay each step (`ROF_CLEAR_FIG`).
+- **Render path fix (THE key unlock):** the knock is a *blocking* loop in `game_sub_7EC7` (main loop
+  never runs). The old faithful pre-wait spinwait `while(RTCLOK<=4){render}` NEVER rendered on the Amiga
+  (`g_alRF=0`, frozen screen) because RTCLOK is advanced by the **hardware flight VBI**, not renderFrame,
+  so after the slow `$7F85` draw RTCLOK was already >4 → wait was a no-op. Restructured to faithful
+  **wait-then-draw with ONE composite per SFX step**: busy-wait the 5-frame interval (copper displays the
+  last-composited creature continuously = the ANTIC stand-in, NO re-render), then `ROF_CLEAR_FIG` + draw
+  + `platform_render_frame()` once. renderFrame → `renderFlightDirect`'s **rescueFigure branch** (active
+  at systems-off phase≥3) composites the overlay over the frozen terrain. (`g_alComp=28/28`, `g_alRF=28`,
+  VVBLKI=`$4FF5`, rsFlight=1 — all confirmed.)
+- **Airlock-OPEN path** = the *boarding* mechanic ("ALIEN IN SHIP" + shake + energy drain, `$0633` set),
+  draws NO creature. The jump-scare is the airlock-CLOSED knock. (`FORCE_AIRLOCK` = boarding test only.)
+
+**★ OPEN #1 — PERF (the blocker, ~7.5× too slow).** Measured per knock STEP (beam ticks, 313=1 frame=20ms;
+faithful step = 5 frames = 1565): **draw `game_sub_7F85` ≈ 8438 ticks (~540ms), render ≈ 3284 (~210ms),
+wait ≈ 0** (no pacing left — draw+render already blow past 5 frames). `game_sub_7F85` is the dominant
+lever — the user asked to **native-twin it**. ⚠ BUT its heavy inner work is `hud_build_text_row` ×~38
+rows/step, which is ALREADY a native twin — so the **hud-vs-wrapper split is UNMEASURED** and is the
+FIRST next step (add a `g_alTHud` timer in hud_build_text_row gated on `$0632`; if hud dominates,
+native-twinning the `$7F85` wrapper won't help and the fix is to speed up hud_build_text_row / cut rows;
+if the wrapper dominates, native-twin `$7F85`). Also: `ROF_PLOT_ALIEN` does 2 divisions/byte (rel/96,
+rel%96) — cache the row (17 consecutive bytes share a row) to drop ~1 div/byte. And the **render 210ms**
+is the normal slow-flight-frame cost (flight is ~5-6 FPS); even a perfect draw leaves ~2× from the render
+— may need a lighter composite path for the paused knock (skip the full renderFrame per-frame work).
+bus_read/bus_write are inline+cheap for RAM (ruled out).
+
+**OPEN #2 — COLOUR.** The creature renders in the viewport pens 0-3 (terrain palette), so likely the WRONG
+hue. The attack colour is `$0047` (`$6D/$70/$D8` cycle, set by `pmg_enemy_update $7AB8`). Pens during the
+knock (measured): `$DA=10 $DB=b8 $DC=14 $DD=2a`. Wire `$0047` → the copper viewport pens during the knock
+so the alien shows in its proper colour. Do AFTER perf (shape is confirmed; colour is polish).
+
+**OPEN #3 — >1 MINUTE to REACH the alien.** Separate from the knock: the rescue APPROACH (colour sweeps
+`animate_clear_colors_timed`/`clear_colors_sweep_5x` + the figure zoom `animate_zoom_sequence`) + general
+slow flight rendering. NOT fixed by the `$7F85` twin. Its own follow-up.
+
+**Probe infra (all committed, Amiga+PROBES):** `g_al*` in rof_native.c (creature capture, pen/timing,
+composite counters), read via **`amiga/diag_alien.gdb`**. Build `make PROBES=1 FORCE_ALIEN=1`; test with
+airlock CLOSED (do NOT set FORCE_AIRLOCK). `g_alTDraw/g_alTRender/g_alKnockFrames` = the per-step timing.
+
+**(Superseded) original NEXT plan — now done:** re-gate the probe to `$0632` + hook `$80C5` + mirror the
+masked writes into the flight planes → all implemented; creature renders. Remaining = perf + colour above.
 
 ## Rename candidates (add to symbols.csv later)
 - `$7EC7 game_sub_7EC7` → `alien_knock_setup_loop` (seeds the jump-scare creature-animation state
