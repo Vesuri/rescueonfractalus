@@ -103,15 +103,38 @@ the next perf pass; all byte-identical `make validate`, both backends build):
 - `hud_build_text_row` → hoisted the mask/dest row-pointer bases out of the 17-cell inner loop.
 - `game_sub_7F85` → now a validated native twin (clean sequencer + setup + blit loop), no longer transpiled.
 
-**★ NEXT (perf, now on a clean base):** (1) re-measure the per-step draw to quantify the win; (2) the
-remaining cost is the faithful 17-cell blit × ~40 rows + ~480 pack calls — escalate the row composer to the
-same levers as the terrain path (hand-asm the inner blit / pack, or CUT rows: on the Amiga only the
-`ROF_PLOT_ALIEN` mirror output is observable, so rows whose output falls entirely outside the figure region
-do dead work — but the cursor/pointer state threads through all rows, so skipping needs care). (3)
-`ROF_PLOT_ALIEN` still does 2 divisions/byte (rel/96, rel%96) — cache the row (17 consecutive bytes share a
-row) to drop ~1 div/byte. And the **render 210ms** is the normal slow-flight-frame cost (flight is ~5-6 FPS);
-even a perfect draw leaves ~2× from the render — may need a lighter composite path for the paused knock
-(skip the full renderFrame per-frame work). bus_read/bus_write are inline+cheap for RAM (ruled out).
+**★★ SESSION 4 (2026-07-26) — measured wins committed; per-step ~750→~379ms (~50% faster).** Progression
+(noisy ±30% run-to-run; trust the trend): step ~750ms → ~440 → **~379ms**.  All committed, both backends build,
+draw tree still `make validate` byte-identical.
+- **DRAW (commit 1e75d7e): division-free mirror = the big win, ~540→~235ms.**  `ROF_PLOT_ALIEN` mapped each
+  field byte→overlay (row,col) with `int rel/96` + `rel%96` PER CELL — on the 68000 that's a SOFTWARE 32-bit
+  divide (`__divsi3`, ~1000 cyc) TWICE per cell × ~646 cells = ~140ms/step of pure division.  Fixed: the 17
+  cells are consecutive + `dstRow` loop-invariant, so one divide per ROW (col = figB0+y, single 96-wrap).
+  Entirely `#ifdef ROF_PLATFORM_AMIGA` so validation untouched.
+- **"Cut dead rows" — REJECTED (not faithful).** The blit OVERWRITES + is displayed; `ROF_PLOT_ALIEN` mirrors
+  every byte OPAQUE (`g_figM=0xFF`).  A skipped row = transparent (terrain shows through) ≠ a drawn blank row
+  (opaque bg).  Loop maps almost entirely onto on-screen field rows (`_r≈7-45`); ~0 safely-cuttable rows.
+- **RENDER (commit 777c62f + 81ecbfd): ~207→~152ms.**  Two findings via probes (`g_alTRScene/Idle/FlipWait`,
+  `g_alVSwap*` in diag_alien.gdb): (a) the flip busy-wait is NOT the cost — `while(flightSwapPending)` is only
+  ~13ms/step, ISR fully live (~22 swaps/step); (b) the ~194ms is the **dirty-rect COMPOSITE on the AMIGA
+  PLANAR back-buffer** (erase 80B/row + masked cookie-cut draw 40B/plane/row = ~18k chip-RAM byte accesses/step
+  — genuinely ~190ms on the 68000, no cache + display-DMA contention).  Fixed the *lighter knock render path*
+  (skip the 6 sprite rebuilds — correct but wait-bound so no wall win) + **32-bit-word composite** (4-aligned,
+  byte-lane-preserving so endianness-neutral) → composite ~194→~136ms.  Only ~30% because it's
+  chip-RAM/ISR-bound, NOT access-count bound.
+
+**★ NEXT SESSION — THE RENDER LEVER = the BLITTER (user-directed).** The composite is Amiga PLANAR with a mask
+= textbook blitter cookie-cut.  The framework ALREADY has the primitives: `AmigaHardware::blitterCopy` (erase =
+block copy) + `blitterCopyWithMask` (cookie-cut draw).  Offloads the whole ~136ms composite to the blitter
+(runs PARALLEL to CPU + the 50Hz VBI ISR).  **★ INVESTIGATION ANGLE (user, 2026-07-26): the compositing
+buffers — is the dest (`terrainBitmap`/`Back` = `bp2`) a `Bitmap` already (YES, chip)?  Are the SOURCES
+(`s_clean`, `s_figP1/P2/M`) chip?  (NO — plain BSS today, the blitter can't read them.)  If we make the
+figure/clean buffers `Bitmap`s in CHIP RAM, can we composite with the `Bitmap` class's OWN methods, which are
+already blitter-based + asm-optimized?**  At minimum these composite loops should be all-asm; but `Bitmap`
+likely already provides the blit/cookie-cut methods — prefer reusing them over hand-rolling `blitterCopyWithMask`.
+This is the concrete first step of the future "anim frames = pre-made chip `Bitmap`s" rework the user described.
+(Also still open, lower priority: the draw's ~44 hud rows × masked blit is now near the C floor; hand-asm only
+if the blitter render still leaves the draw dominant.)  bus_read/bus_write are inline+cheap for RAM (ruled out).
 
 **OPEN #2 — COLOUR.** The creature renders in the viewport pens 0-3 (terrain palette), so likely the WRONG
 hue. The attack colour is `$0047` (`$6D/$70/$D8` cycle, set by `pmg_enemy_update $7AB8`). Pens during the
