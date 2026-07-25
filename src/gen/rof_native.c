@@ -162,14 +162,17 @@ extern void rof_flight_wait_dotclear(void);
  * zoom drives plot_clipped_pixel, so no gating is needed. */
 extern uint8_t* g_figP1; extern uint8_t* g_figP2; extern uint8_t* g_figM;
 extern int g_figRowLo, g_figRowHi;
+/* The figure planes g_figP1/g_figP2 live in a 2-plane INTERLEAVED chip Bitmap (row stride 80 =
+ * plane1[40]+plane2[40]) so renderFlightDirect can composite it with the blitter; the mask g_figM
+ * is a separate 1-plane bitmap (row stride 40).  So mask uses _im (stride 40), planes use _ip (80). */
 #define ROF_PLOT_FIG(x, y, v2) do { \
     if (g_figP1) { \
         int _r = 0x96 - (int)(y); int _b = ((int)(x) >> 2) - 12; \
         if ((unsigned)_r < 43u && (unsigned)_b < 40u) { \
-            uint8_t _m = kColMask4[(int)(x) & 3]; int _i = _r * 40 + _b; \
-            g_figM[_i] |= _m; \
-            if ((v2) & 1u) g_figP1[_i] |= _m; \
-            if ((v2) & 2u) g_figP2[_i] |= _m; \
+            uint8_t _m = kColMask4[(int)(x) & 3]; int _im = _r * 40 + _b, _ip = _r * 80 + _b; \
+            g_figM[_im] |= _m; \
+            if ((v2) & 1u) g_figP1[_ip] |= _m; \
+            if ((v2) & 2u) g_figP2[_ip] |= _m; \
             if (_r < g_figRowLo) g_figRowLo = _r; \
             if (_r > g_figRowHi) g_figRowHi = _r; \
         } } } while (0)
@@ -179,8 +182,8 @@ extern int g_figRowLo, g_figRowHi;
 #define ROF_CLEAR_FIG() do { \
     if (g_figM && g_figRowHi >= g_figRowLo) { \
         for (int _r = g_figRowLo; _r <= g_figRowHi; _r++) { \
-            int _o = _r * 40; \
-            for (int _b = 0; _b < 40; _b++) { g_figM[_o + _b] = 0; g_figP1[_o + _b] = 0; g_figP2[_o + _b] = 0; } } \
+            int _om = _r * 40, _op = _r * 80; \
+            for (int _b = 0; _b < 40; _b++) { g_figM[_om + _b] = 0; g_figP1[_op + _b] = 0; g_figP2[_op + _b] = 0; } } \
         g_figRowLo = 99; g_figRowHi = -1; \
     } } while (0)
 /* Alien jump-scare creature overlay.  The creature (game_sub_7F85 -> hud_build_text_row $80C5,
@@ -206,10 +209,10 @@ extern volatile unsigned long g_alHudCalls;      /* # hud_build_text_row calls d
         int _rel = (int)(addr) - 0x10A4; \
         if (_rel >= 0) { int _r = _rel / 96, _b = _rel % 96; \
             if ((unsigned)_r < 43u && (unsigned)_b < 40u) { \
-                int _i = _r * 40 + _b; \
-                g_figM[_i]  = 0xFF; \
-                g_figP1[_i] = kModeDP1[(unsigned char)(V)]; \
-                g_figP2[_i] = kModeDP2[(unsigned char)(V)]; \
+                int _im = _r * 40 + _b, _ip = _r * 80 + _b; \
+                g_figM[_im]  = 0xFF; \
+                g_figP1[_ip] = kModeDP1[(unsigned char)(V)]; \
+                g_figP2[_ip] = kModeDP2[(unsigned char)(V)]; \
                 if (_r < g_figRowLo) g_figRowLo = _r; \
                 if (_r > g_figRowHi) g_figRowHi = _r; \
             } } } } while (0)
@@ -4344,10 +4347,10 @@ void hud_build_text_row(void) {
             int b = figB0 + y, r = figR0;
             if (b >= 96) { b -= 96; r++; }                   /* single 96-wrap (y<=16, figB0<96) */
             if ((unsigned)r < 43u && (unsigned)b < 40u) {
-                int i = r * 40 + b;
-                g_figM[i]  = 0xFF;
-                g_figP1[i] = kModeDP1[v];
-                g_figP2[i] = kModeDP2[v];
+                int im = r * 40 + b, ip = r * 80 + b;   /* mask stride 40; interleaved figure planes stride 80 */
+                g_figM[im]  = 0xFF;
+                g_figP1[ip] = kModeDP1[v];
+                g_figP2[ip] = kModeDP2[v];
                 if (r < g_figRowLo) g_figRowLo = r;
                 if (r > g_figRowHi) g_figRowHi = r;
             }

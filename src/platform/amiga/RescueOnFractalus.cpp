@@ -260,10 +260,20 @@ extern "C" int g_objRowLo = 47, g_objRowHi = -1;  // dirty scanline range in s_f
 // plot_clipped_pixel actually drew (mirrored via ROF_PLOT_FIG in rof_native.c) — plane1, plane2,
 // and the opaque-pixel mask.  Decoding the raw mode-D field instead would splatter the stale
 // non-figure data in that shed region (it corrupted the viewport).  g_figRowLo/Hi = dirty rows.
-alignas(4) static uint8_t s_figP1[43 * 40], s_figP2[43 * 40], s_figM[43 * 40];  // 4-aligned: 32-bit composite
-extern "C" uint8_t* g_figP1 = s_figP1;
-extern "C" uint8_t* g_figP2 = s_figP2;
-extern "C" uint8_t* g_figM  = s_figM;
+// The overlay + clean-terrain snapshot are CHIP-RAM Bitmaps so the per-frame composite (erase +
+// cookie-cut draw) runs on the BLITTER via Bitmap::combineWithMask instead of a CPU 32-bit loop
+// (was ~136 ms/step, chip-RAM/ISR-bound).  Layout:
+//  - s_figBmp: 2-plane INTERLEAVED (plane1 @ +0, plane2 @ +40, 80-byte rows) = the figure source;
+//    g_figP1/P2 point at its two planes and rof_native.c's plot macros write them at row stride 80.
+//  - s_figMaskBmp: 1-plane opaque mask (40-byte rows); g_figM points at it.
+//  - s_cleanBmp: 3-plane interleaved, identical layout to terrainBitmap = the composite background.
+// Allocated in initialize(); the g_fig* pointers stay null until then (the plot macros no-op on null).
+static Bitmap* s_figBmp     = nullptr;   // 320x43, 2bp interleaved (figure planes)
+static Bitmap* s_figMaskBmp = nullptr;   // 320x43, 1bp (opaque mask)
+static Bitmap* s_cleanBmp   = nullptr;   // 320x94, 3bp interleaved (clean-terrain snapshot)
+extern "C" uint8_t* g_figP1 = nullptr;   // -> s_figBmp plane1 (offset 0)
+extern "C" uint8_t* g_figP2 = nullptr;   // -> s_figBmp plane2 (offset 40)
+extern "C" uint8_t* g_figM  = nullptr;   // -> s_figMaskBmp
 extern "C" int g_figRowLo = 99, g_figRowHi = -1;   // empty
 // Rescue-pause dirty-rect state.  The terrain is FROZEN during the walk-to-airlock pause, so
 // instead of re-rendering the whole viewport each frame we snapshot the clean frozen terrain once
@@ -271,11 +281,8 @@ extern "C" int g_figRowLo = 99, g_figRowHi = -1;   // empty
 // box (restore plane1+plane2 from the snapshot) and draw the new figure.  Because the viewport is
 // double-buffered we track per-buffer state: whether the buffer has been seeded with clean terrain
 // yet, and the row box its current figure occupies (to erase next time that buffer comes round).
-// alignas(4): the snapshot/seed copies below cast s_clean to uint32_t* and do long accesses, which
-// bus-error on the 68000 unless 4-aligned.  A plain char array is only byte-aligned, so it was
-// aligned by luck before; pin it so a BSS-layout change (e.g. adding a probe global) can't push it
-// to an odd address and fault.
-alignas(4) static uint8_t s_clean[47 * 120];
+// The clean snapshot itself is s_cleanBmp (declared above, chip) — combineWithMask reads it as the
+// composite background, so it must be chip and layout-identical to the terrain buffers.
 static bool    s_cleanValid = false;
 static bool    s_bufSeeded[2] = { false, false };
 static int     s_boxLo[2] = { 99, 99 }, s_boxHi[2] = { -1, -1 };
@@ -937,6 +944,14 @@ void RescueOnFractalus::initialize()
     g_terrainBmpAddr = (uint32_t)terrainBitmap->data;
 #endif
     if (!s_dec2bppReady) buildDecode2bppLut();   // 2bpp→Amiga plane-pair LUT (cockpit/title decode)
+    // Rescue-figure overlay + clean-terrain snapshot (chip Bitmaps for the blitter composite).
+    // s_cleanBmp mirrors terrainBitmap's layout exactly so combineWithMask's per-row modulos line up.
+    s_cleanBmp   = Bitmap::allocate(kW, kViewportFullHeight, kBP3, true);   // 3bp interleaved, == terrain
+    s_figBmp     = Bitmap::allocate(kW, 43, 2, true);                       // 2bp interleaved (figure planes)
+    s_figMaskBmp = Bitmap::allocate(kW, 43, 1, true);                       // 1bp opaque mask
+    g_figP1 = (uint8_t*)s_figBmp->data;          // plane1 base (row stride 80)
+    g_figP2 = (uint8_t*)s_figBmp->data + 40;     // plane2 base (offset 40, row stride 80)
+    g_figM  = (uint8_t*)s_figMaskBmp->data;      // mask (row stride 40)
     cockpitBitmap = Bitmap::allocate(kW, kCockpitH, kBP3, true);  // 3bp: bit-7 chars → red
     tunnelBitmap  = Bitmap::allocate(kW, kTerrainHeight, kBP3, true);  // door-gap reveal
     titleScreenBitmap = Bitmap::allocate(kW, kH, kBP3, true);  // 3bp: black + COLPF0-3 text pens
@@ -1579,8 +1594,8 @@ void RescueOnFractalus::renderFlightDirect()
         g_rfP2a[i]   = rfPlaneSum((const uint8_t*)terrainBitmap->data, 40);
         g_rfP1b[i]   = rfPlaneSum((const uint8_t*)terrainBitmapBack->data, 0);
         g_rfP2b[i]   = rfPlaneSum((const uint8_t*)terrainBitmapBack->data, 40);
-        g_rfScP1[i]  = rfPlaneSum(s_clean, 0);
-        g_rfScP2[i]  = rfPlaneSum(s_clean, 40);
+        g_rfScP1[i]  = s_cleanBmp ? rfPlaneSum((const uint8_t*)s_cleanBmp->data, 0)  : 0;
+        g_rfScP2[i]  = s_cleanBmp ? rfPlaneSum((const uint8_t*)s_cleanBmp->data, 40) : 0;
         g_rfWasR[i]  = (unsigned char)(s_resumeRestorePend ? 1 : 0);
         g_rfIdx = (unsigned short)((i + 1) % RF_RING_N);
         g_rfCount++;
@@ -1595,10 +1610,9 @@ void RescueOnFractalus::renderFlightDirect()
         // Entry: snapshot the clean frozen terrain (all 3 planes, 47 interleaved rows) from the
         // currently-displayed buffer, which still holds the last real frame here.  Mark that buffer
         // seeded (it IS the clean terrain); the other buffer gets seeded on its first use below.
+        // Blitter copy (Bitmap::copy) — runs on the blitter, parallel to the CPU.
         if (!s_cleanValid && flightDisplayed) {
-            const uint32_t* s = (const uint32_t*)flightDisplayed->data;
-            uint32_t* d = (uint32_t*)s_clean;
-            for (int i = 0; i < 47 * 120 / 4; i++) d[i] = s[i];
+            s_cleanBmp->copy(*flightDisplayed, 0, 0, 0, 0, kW, 47);
             s_cleanValid = true;
             const int di = (flightDisplayed == terrainBitmapBack) ? 1 : 0;
             s_bufSeeded[di] = true;      s_boxLo[di] = 99;      s_boxHi[di] = -1;
@@ -1607,57 +1621,48 @@ void RescueOnFractalus::renderFlightDirect()
         s_flightRescuePause = true;   // tell flightKickBackClear to stop wiping the off-screen buffer
         if (s_cleanValid) {
             Bitmap* const back = (flightDisplayed == terrainBitmapBack) ? terrainBitmap : terrainBitmapBack;
-            uint8_t* const bp2 = (uint8_t*)back->data;
             const int bi = (back == terrainBitmapBack) ? 1 : 0;
             // A clear may still be pending on this buffer from the frame we entered the pause on.
             if (flightClearPending == back) { AmigaHardware::blitterWait(); flightClearPending = nullptr; }
             if (!s_bufSeeded[bi]) {
                 // First use of this buffer in the pause — it was cleared blank; seed clean terrain.
-                const uint32_t* s = (const uint32_t*)s_clean; uint32_t* d = (uint32_t*)bp2;
-                for (int i = 0; i < 47 * 120 / 4; i++) d[i] = s[i];
+                back->copy(*s_cleanBmp, 0, 0, 0, 0, kW, 47);
                 s_bufSeeded[bi] = true; s_boxLo[bi] = 99; s_boxHi[bi] = -1;
-            } else if (s_boxHi[bi] >= s_boxLo[bi]) {
-                // Erase this buffer's previous figure: restore plane1(+0)+plane2(+40) over its box
-                // rows.  32-bit copy (80 bytes = 20 longs/row) — the buffers are 4-aligned and the
-                // 120-byte row stride is a multiple of 4, so every long access is aligned.  On the
-                // 68000 this is the dominant win: 4x fewer chip-RAM cycles than the byte loop.
-                for (int r = s_boxLo[bi]; r <= s_boxHi[bi]; r++) {
-                    const uint32_t* s1 = (const uint32_t*)(s_clean + (unsigned)r * 120);
-                    uint32_t* d1 = (uint32_t*)(bp2 + (unsigned)r * 120);
-                    for (int b = 0; b < 20; b++) d1[b] = s1[b];
-                }
             }
-            // Draw the new figure (replace only the recorded opaque pixels), and record its box.
 #if defined(ROF_FLIGHT_PROBE)
             // Alien-colour diagnosis: count live composites of a non-empty overlay during the
             // knock ($0632).  >0 confirms the creature IS composited+flipped live (so invisibility
             // is a palette issue, not a render/flip one).
             { extern volatile unsigned long g_alComp; if (mem[0x0632] && g_figRowHi >= g_figRowLo) g_alComp++; }
 #endif
-            if (g_figRowHi >= g_figRowLo) {
-                // Cookie-cut composite the figure into plane1(d1)/plane2(d2): dest = (dest & ~mask)
-                // | pixels (the pixel bytes are already 0 wherever the mask byte is 0, so no extra
-                // AND is needed).  32-bit words (40 bytes = 10 longs/plane) — the mask/pixel/dest
-                // buffers are all 4-aligned.  The op is applied per byte-lane within each long, so it
-                // is endianness-neutral (host + Amiga agree).  ⚠ This is the blitter's cookie-cut job;
-                // a chip-RAM figure buffer + blitter minterm is the eventual faster path.
-                for (int r = g_figRowLo; r <= g_figRowHi; r++) {
-                    const uint32_t* fm = (const uint32_t*)(s_figM  + r * 40);
-                    const uint32_t* p1 = (const uint32_t*)(s_figP1 + r * 40);
-                    const uint32_t* p2 = (const uint32_t*)(s_figP2 + r * 40);
-                    uint32_t* d1 = (uint32_t*)(bp2 + (unsigned)r * 120);
-                    uint32_t* d2 = (uint32_t*)((uint8_t*)d1 + 40);
-                    for (int b = 0; b < 10; b++) {
-                        uint32_t m = fm[b];
-                        if (!m) continue;
-                        d1[b] = (d1[b] & ~m) | p1[b];
-                        d2[b] = (d2[b] & ~m) | p2[b];
-                    }
-                }
-                s_boxLo[bi] = g_figRowLo; s_boxHi[bi] = g_figRowHi;
-            } else {
-                s_boxLo[bi] = 99; s_boxHi[bi] = -1;
+            // Composite = erase-old + cookie-cut-draw in ONE blitter pass (Bitmap::combineWithMask,
+            // 4-channel A=mask B=figure C=clean D=dest).  Writes dest = (clean & ~mask) | (figure &
+            // mask): clean where the mask is 0 (erasing the previous figure + filling the gaps), the
+            // figure where the mask is 1.  ROF_CLEAR_FIG already cleared the mask for this buffer's
+            // PREVIOUS figure rows, so compositing the UNION of the previous box + the current figure
+            // rows restores clean over the old figure and paints the new one.  Only planes 1+2 are
+            // touched (s_figBmp is 2-plane); plane3 (windscreen frame) stays the clean seed.  Runs on
+            // the blitter, parallel to the CPU + the 50Hz ISR (was a ~136 ms/step CPU 32-bit loop).
+            int lo = g_figRowLo, hi = g_figRowHi;
+            if (s_boxHi[bi] >= s_boxLo[bi]) {           // include the previous figure rows so they erase
+                if (s_boxLo[bi] < lo) lo = s_boxLo[bi];
+                if (s_boxHi[bi] > hi) hi = s_boxHi[bi];
             }
+            if (hi >= lo) {
+                const uint16_t y = (uint16_t)lo, h = (uint16_t)(hi - lo + 1);
+                back->combineWithMask(*s_cleanBmp, *s_figBmp, *s_figMaskBmp,
+                                      0, y,   // dest x,y
+                                      0, y,   // background (clean) x,y
+                                      0, y,   // source (figure) x,y
+                                      0, y,   // mask x,y
+                                      kW, h);
+            }
+            if (g_figRowHi >= g_figRowLo) { s_boxLo[bi] = g_figRowLo; s_boxHi[bi] = g_figRowHi; }
+            else                          { s_boxLo[bi] = 99;         s_boxHi[bi] = -1; }
+            // FULLY drain the queue (not just blitterWait): combineWithMask enqueues one blit
+            // per plane (+ a possible seed copy), and blitterWait() returns after only the FIRST
+            // completes — flipping then would show a half-composited buffer (missing plane/rows).
+            AmigaHardware::blitterDrain();  // composite (+ any seed copy) fully done before the flip
             // Flip via the VBI (same torn-pointer-safe protocol as the normal render path).
             flightPendingFlip = back;
             flightSwapPending = true;
@@ -1735,9 +1740,10 @@ void RescueOnFractalus::renderFlightDirect()
     // (s_resumeRestorePend), so it fires exactly once at the true resume and never during the zoom.
     if (s_resumeRestorePend) {
         s_resumeRestorePend = false;
+        const uint8_t* cbase = (const uint8_t*)s_cleanBmp->data;
         for (int r = 0; r <= 42; r++) {
-            const uint8_t* s2 = s_clean + (unsigned)r * 120 + 40;   // plane2 in the clean snapshot
-            uint8_t* d2 = bp + (unsigned)r * 120 + 40;              // plane2 in the back buffer
+            const uint8_t* s2 = cbase + (unsigned)r * 120 + 40;    // plane2 in the clean snapshot
+            uint8_t* d2 = bp + (unsigned)r * 120 + 40;             // plane2 in the back buffer
             for (int b = 0; b < 40; b++) d2[b] = s2[b];
         }
     }

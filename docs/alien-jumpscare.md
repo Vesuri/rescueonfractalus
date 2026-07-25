@@ -123,7 +123,51 @@ draw tree still `make validate` byte-identical.
   byte-lane-preserving so endianness-neutral) → composite ~194→~136ms.  Only ~30% because it's
   chip-RAM/ISR-bound, NOT access-count bound.
 
-**★ NEXT SESSION — THE RENDER LEVER = the BLITTER (user-directed).** The composite is Amiga PLANAR with a mask
+**★★ SESSION 5 (2026-07-26) — the composite is now a BLITTER cookie-cut (Bitmap::combineWithMask). Awaiting the
+user's interactive perf/visual confirmation.** Done + build-clean (both backends; draw tree still `make validate`
+byte-identical — all changes are `#ifdef ROF_PLATFORM_AMIGA`):
+- **The alien composite AND the pilot-run composite are the SAME path** — both write the `g_figP1/P2/M` overlay
+  (alien via `ROF_PLOT_ALIEN`/`hud_build_text_row`, pilot via `ROF_PLOT_FIG`/`plot_clipped_pixel`) and both are
+  drawn by `renderFlightDirect`'s `rescueFigure` branch. So this one change speeds up BOTH.
+- **The per-frame erase+draw is now ONE `Bitmap::combineWithMask` blit** (4-channel A=mask B=figure C=clean D=dest;
+  dest = (clean & ~mask) | (figure & mask)). It erases the previous figure AND draws the new one in a single
+  blitter pass, offloading the whole ~136 ms/step CPU composite to the blitter (parallel to CPU + the 50 Hz ISR).
+  Composites the UNION of the previous per-buffer box + the current figure rows (ROF_CLEAR_FIG already zeroed the
+  old mask, so clean is written back over the old figure). Only planes 1+2 touched; plane3 (frame) stays clean.
+- **Buffers moved to CHIP RAM as Bitmaps** (blitter can't read BSS): `s_cleanBmp` (3bp interleaved, ==terrain),
+  `s_figBmp` (2bp interleaved, figure planes — row stride now 80), `s_figMaskBmp` (1bp mask, stride 40). The plot
+  macros' figure-plane index changed 40→80 (mask stays 40). Snapshot/seed are now `Bitmap::copy` blits. ~11 KB chip.
+- **★ FRAMEWORK FIX (unblocks ALL Bitmap methods): `BitmapAssembler.s` `bsr`→`jsr`.** The Bitmap asm twins
+  (copy/clear/copyWithMask/line/fill) called the blitter primitives with `bsr` = PC-relative-16 → left an
+  `R_68K_PC16` relocation the GCC-path `Elf2Hunk` REJECTS ("Unsupported relocation type R_68K_PC16"). That is why
+  these methods were unusable from the app until now (framework originated under SAS/C). `jsr` emits `R_68K_32`,
+  which Elf2Hunk supports. **This makes the whole Bitmap blit suite linkable** — the basis for the future
+  pre-rendered-chip-frames rework (pilot zoom, tunnel clear, etc.). Do NOT revert to bsr.
+- **★ BLITTER-QUEUE DRAIN BUG (fixed) — the initial glitch.** `Bitmap::combineWithMask` on a 2-plane figure
+  enqueues ONE BLIT PER PLANE (and `Bitmap::copy` of an interleaved bitmap is multi-blit); the framework starts
+  each *queued* blit from the blitter-done INTERRUPT, async.  `AmigaHardware::blitterWait()` only spins on
+  `isBlitterBusy()` → it returns after just the FIRST blit, so flipping showed a buffer with plane1 composited
+  but **plane2 missing** (half the figure's value bits) — read as "lower half not rendered / vertical jump /
+  bitplanes off", intermittent on the alien, obvious on the moving pilot.  FIX: new **`AmigaHardware::blitterDrain()`**
+  (the same `setInterrupts(INTF_BLIT,false); while(hasQueuedBlits) processBlitterQueue(); blitterWait();` idiom
+  `blitterFillUp` uses) fully drains the queue before the flip.  ⚠ RULE: after any multi-blit Bitmap op, use
+  `blitterDrain()` (NOT `blitterWait()`) before reusing/reading/flipping the target.  User-confirmed glitch-free.
+- **⚠ PERF RESULT: the blitter composite is ~NEUTRAL (~119 ms vs the old ~136 ms CPU loop); per-step still ~379 ms.**
+  Measured (glitch-free, 40 steps): draw `game_sub_7F85` ~3851 ticks (~245 ms), render ~2103 (~134 ms; composite
+  ~1870 = ~119 ms, flipWait ~227 = ~14 ms).  WHY no win: the knock is a BLOCKING loop, so the CPU has NO
+  concurrent work to overlap the blitter with — it just `blitterDrain()`s.  Offloading to the blitter only pays
+  off when the CPU runs in parallel.  **★ The bottleneck is now the DRAW: `hud_build_text_row` = ~245 ms = ~65%
+  of the step (hud ≈99–103% of the wrapper).**  Two future levers: (1) **overlap** — double-buffer `s_figBmp`/mask
+  and KICK the composite without draining, so it runs on the blitter DURING the next step's CPU draw (could hide
+  ~119 ms → step ~260 ms); needs care (the next draw's ROF_CLEAR_FIG must not race the in-flight composite's read).
+  (2) **narrow rect** — track the figure's HORIZONTAL extent too and composite only that sub-rect instead of full
+  320px/row.  (3) the DRAW itself: the mul-table TODO + the bigger "creature frames = pre-rendered chip Bitmaps
+  blitted straight in" rework (would remove the per-cell CPU field blit entirely).
+- **⚠ TODO (user-directed, tracked): per-pixel MULTIPLIES in the plot macros.** `r*40`/`r*80`/`r*120` per cell is
+  a 68000 `mulu` in hot loops. Build GLOBAL mul-tables for the common widths (40/80/120) and route every plot/
+  composite index through them. Audit `ROF_PLOT_*`, the hud inline, `ROF_PLOT_DOT`, etc.
+
+**(Superseded) NEXT SESSION — THE RENDER LEVER = the BLITTER (user-directed).** The composite is Amiga PLANAR with a mask
 = textbook blitter cookie-cut.  The framework ALREADY has the primitives: `AmigaHardware::blitterCopy` (erase =
 block copy) + `blitterCopyWithMask` (cookie-cut draw).  Offloads the whole ~136ms composite to the blitter
 (runs PARALLEL to CPU + the 50Hz VBI ISR).  **★ INVESTIGATION ANGLE (user, 2026-07-26): the compositing
