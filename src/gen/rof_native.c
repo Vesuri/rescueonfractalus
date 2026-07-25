@@ -1571,23 +1571,24 @@ void game_sub_7EC7(void) {
     mem[0x005F] = 0x12;
     do {
 #ifdef ROF_PLATFORM_AMIGA
-        /* Draw the creature into a fresh overlay, THEN pace+display.  On the Atari the loop waits 5
-         * RTCLOK frames (SFX interval) BEFORE calling $7F85; on the Amiga RTCLOK is advanced by the
-         * hardware flight VBI, so the old pre-wait spinwait exited immediately (RTCLOK already >4
-         * after the slow draw) and NEVER rendered -> frozen screen, no creature composite (g_alRF=0).
-         * Draw first, then render the 5-frame interval so each displayed frame composites the fresh
-         * creature (via renderFlightDirect's rescueFigure branch) and the cockpit stays live. */
-        ROF_CLEAR_FIG();
+        /* Faithful wait-then-draw (6502 $7F4F), Amiga-adapted for display.  The Atari busy-waits 5
+         * RTCLOK frames (the SFX interval) while ANTIC keeps displaying the mode-D field for free,
+         * then calls $7F85.  The Amiga has no auto-display, so: busy-wait the interval (RTCLOK is
+         * advanced by the hardware flight VBI; the COPPER keeps showing the last-composited creature
+         * buffer continuously — the ANTIC stand-in, so NO re-render in the wait), then draw the new
+         * creature and composite+display it ONCE.  (Re-compositing every frame of the wait — my first
+         * cut — was ~5x the work per SFX step and the cause of the "horrible perf"; the creature only
+         * changes once per $7F85, so one composite per step is both faithful and fast.) */
+        while (RTCLOK_LOW <= 0x04) { platform_tick_vbi(); }   /* busy-wait; copper displays continuously */
+        RTCLOK_LOW = 0x00;
+        ROF_CLEAR_FIG();                        /* fresh overlay for this step's creature */
 #ifdef ROF_FLIGHT_PROBE
         g_alKnockFrames++;
         g_alPen[0]=mem[0x00DA]; g_alPen[1]=mem[0x00DB]; g_alPen[2]=mem[0x00DC];
         g_alPen[3]=mem[0x00DD]; g_alPen[4]=mem[0x0047]; g_alPen[5]=mem[0x0044];
 #endif
         game_sub_7F85();                        /* step SFX + blit the creature -> overlay */
-        RTCLOK_LOW = 0x00;
-        do {                                    /* faithful 5-frame SFX interval; renders each frame */
-            platform_tick_vbi(); platform_render_frame();
-        } while (RTCLOK_LOW <= 0x04);
+        platform_render_frame();                /* composite + display it ONCE per SFX step */
 #else
         while (RTCLOK_LOW <= 0x04) { }          /* SDL/validate never enters this ($3E==0 fixture) */
         RTCLOK_LOW = 0x00;
