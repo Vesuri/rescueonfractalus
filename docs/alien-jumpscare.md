@@ -157,12 +157,23 @@ byte-identical — all changes are `#ifdef ROF_PLATFORM_AMIGA`):
   ~1870 = ~119 ms, flipWait ~227 = ~14 ms).  WHY no win: the knock is a BLOCKING loop, so the CPU has NO
   concurrent work to overlap the blitter with — it just `blitterDrain()`s.  Offloading to the blitter only pays
   off when the CPU runs in parallel.  **★ The bottleneck is now the DRAW: `hud_build_text_row` = ~245 ms = ~65%
-  of the step (hud ≈99–103% of the wrapper).**  Two future levers: (1) **overlap** — double-buffer `s_figBmp`/mask
-  and KICK the composite without draining, so it runs on the blitter DURING the next step's CPU draw (could hide
-  ~119 ms → step ~260 ms); needs care (the next draw's ROF_CLEAR_FIG must not race the in-flight composite's read).
-  (2) **narrow rect** — track the figure's HORIZONTAL extent too and composite only that sub-rect instead of full
-  320px/row.  (3) the DRAW itself: the mul-table TODO + the bigger "creature frames = pre-rendered chip Bitmaps
-  blitted straight in" rework (would remove the per-cell CPU field blit entirely).
+  of the step (hud ≈99–103% of the wrapper).**
+**★★ SESSION 6 (2026-07-26) — narrow-rect composite + row-offset mul-tables + pointer-walk loops.** Both backends
+build; `make validate FN=hud` green (all changes `#ifdef ROF_PLATFORM_AMIGA`).
+- **Narrow-rect composite.** The plot macros now track the figure's byte-COLUMN extent (`g_figColLo/Hi`) alongside
+  the rows; the composite unions it (per buffer, word-aligned) and `combineWithMask`s only that sub-rect instead of
+  full 320 px/row.  `ROF_CLEAR_FIG` also narrows its clear to that column range.  Safe because ROF_CLEAR_FIG keeps
+  the mask nonzero EXACTLY on the current figure → any covering rect composites with no ghosting.
+- **Row-offset mul-tables `kRow40`/`kRow80` (siblings of the existing `kRow120`).** `row*stride` with a NON-sequential
+  row (the plot macros, row derived from x/y) was a `__mulsi3`; routed through the tables.  `kRow120` was already
+  used by the terrain plot macros; added 40/80 for the figure planes (mask 40, interleaved figure 80).
+- **Pointer-walk for SEQUENTIAL loops (user-directed).** A sequential `for r … buf[kRow120[r]]` is better as a
+  walked pointer (`p += 120`) than even a table read.  Converted rfPlaneSum, the resume-restore plane2 copy, the
+  object-overlay apply, the crosshair stems, and the compass decode.  Tables stay for the non-sequential macros.
+- **⚠ Still DRAW-bound:** these trim the composite/clear but the step is dominated by `hud_build_text_row` (~65%).
+  Remaining levers: (1) **overlap** — double-buffer `s_figBmp`/mask + KICK the composite without draining so it runs
+  during the next step's CPU draw (needs the next ROF_CLEAR_FIG to not race the in-flight read); (2) the
+  **pre-rendered chip-Bitmap creature frames** rework (removes the per-cell CPU field blit entirely).
 - **⚠ TODO (user-directed, tracked): per-pixel MULTIPLIES in the plot macros.** `r*40`/`r*80`/`r*120` per cell is
   a 68000 `mulu` in hot loops. Build GLOBAL mul-tables for the common widths (40/80/120) and route every plot/
   composite index through them. Audit `ROF_PLOT_*`, the hud inline, `ROF_PLOT_DOT`, etc.

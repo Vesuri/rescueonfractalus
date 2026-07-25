@@ -223,11 +223,30 @@ static uint8_t kBandP3[256];
 // plane3 40).  The 68000 has no fast multiply, so the per-column horizon plotter (and the
 // direct-to-plane2 terrain rasterizer in rof_native.c) index this instead of computing scan*120.
 // Covers terrain rows 0-42 + the windscreen band rows 43-47.  extern "C" so rof_native.c can use it.
+// Row-offset (row × width) lookup tables — the 68000 has no cheap multiply, so a `row * stride`
+// with a NON-sequential row (e.g. the flight plot macros, where the row is computed from x/y) is
+// a __mulsi3 soft-multiply; these replace it with an index.  (For a SEQUENTIAL loop, walk a
+// pointer by the stride instead — cheaper still than a table read.)  kRow120 is the interleaved-
+// terrain scanline stride (3bp × 40 B); kRow40 / kRow80 are one / two mode-D planes (the rescue-
+// figure overlay: mask stride 40, interleaved figure planes stride 80).  Used by the flight
+// terrain plot macros (rof_native.c) and a few viewport/composite/HUD paths here.  [0..47].
 extern "C" const uint16_t kRow120[48] = {
        0,  120,  240,  360,  480,  600,  720,  840,  960, 1080, 1200, 1320,
     1440, 1560, 1680, 1800, 1920, 2040, 2160, 2280, 2400, 2520, 2640, 2760,
     2880, 3000, 3120, 3240, 3360, 3480, 3600, 3720, 3840, 3960, 4080, 4200,
     4320, 4440, 4560, 4680, 4800, 4920, 5040, 5160, 5280, 5400, 5520, 5640,
+};
+extern "C" const uint16_t kRow40[48] = {
+       0,   40,   80,  120,  160,  200,  240,  280,  320,  360,  400,  440,
+     480,  520,  560,  600,  640,  680,  720,  760,  800,  840,  880,  920,
+     960, 1000, 1040, 1080, 1120, 1160, 1200, 1240, 1280, 1320, 1360, 1400,
+    1440, 1480, 1520, 1560, 1600, 1640, 1680, 1720, 1760, 1800, 1840, 1880,
+};
+extern "C" const uint16_t kRow80[48] = {
+       0,   80,  160,  240,  320,  400,  480,  560,  640,  720,  800,  880,
+     960, 1040, 1120, 1200, 1280, 1360, 1440, 1520, 1600, 1680, 1760, 1840,
+    1920, 2000, 2080, 2160, 2240, 2320, 2400, 2480, 2560, 2640, 2720, 2800,
+    2880, 2960, 3040, 3120, 3200, 3280, 3360, 3440, 3520, 3600, 3680, 3760,
 };
 // 2-bit intra-byte column mask (4 columns/byte): used for both the plane1 skyline edge and the
 // plane2 dot write.  A value-2/3 mode-D pixel decodes (kModeDP2) to exactly these bits.
@@ -275,6 +294,7 @@ extern "C" uint8_t* g_figP1 = nullptr;   // -> s_figBmp plane1 (offset 0)
 extern "C" uint8_t* g_figP2 = nullptr;   // -> s_figBmp plane2 (offset 40)
 extern "C" uint8_t* g_figM  = nullptr;   // -> s_figMaskBmp
 extern "C" int g_figRowLo = 99, g_figRowHi = -1;   // empty
+extern "C" int g_figColLo = 40, g_figColHi = -1;   // dirty byte-column extent (0..39) — narrow-rect composite
 // Rescue-pause dirty-rect state.  The terrain is FROZEN during the walk-to-airlock pause, so
 // instead of re-rendering the whole viewport each frame we snapshot the clean frozen terrain once
 // (all 3 planes of the 47 interleaved rows) and, per frame, only ERASE the previous figure's row
@@ -286,6 +306,9 @@ extern "C" int g_figRowLo = 99, g_figRowHi = -1;   // empty
 static bool    s_cleanValid = false;
 static bool    s_bufSeeded[2] = { false, false };
 static int     s_boxLo[2] = { 99, 99 }, s_boxHi[2] = { -1, -1 };
+// Per-buffer WORD-column extent of the figure last composited into each buffer (for the
+// narrow-rect erase, alongside the row box above).  Empty = lo>hi.
+static int     s_boxColLo[2] = { 20, 20 }, s_boxColHi[2] = { -1, -1 };
 // While set, flightKickBackClear does NOT wipe the off-screen buffer (the dirty-rect needs it to
 // retain the frozen terrain) but still re-arms the dot/object plane pointers.  Set/cleared by
 // renderFlightDirect.
@@ -1526,8 +1549,8 @@ extern "C" unsigned short platform_frame_count(void);   // returns g_vbiCount (P
 static unsigned long rfPlaneSum(const uint8_t* base, int planeOff)
 {
     unsigned long s = 0;
-    for (int r = 0; r < 47; r++) {
-        const uint8_t* p = base + (unsigned)r * 120 + planeOff;
+    const uint8_t* p = base + planeOff;                  // walk the plane row-by-row (+120), no per-row multiply
+    for (int r = 0; r < 47; r++, p += 120) {
         for (int b = 0; b < 40; b++) s += p[b];
     }
     return s;
@@ -1617,6 +1640,7 @@ void RescueOnFractalus::renderFlightDirect()
             const int di = (flightDisplayed == terrainBitmapBack) ? 1 : 0;
             s_bufSeeded[di] = true;      s_boxLo[di] = 99;      s_boxHi[di] = -1;
             s_bufSeeded[di ^ 1] = false; s_boxLo[di ^ 1] = 99;  s_boxHi[di ^ 1] = -1;
+            s_boxColHi[di] = -1;         s_boxColHi[di ^ 1] = -1;   // no prior figure to erase
         }
         s_flightRescuePause = true;   // tell flightKickBackClear to stop wiping the off-screen buffer
         if (s_cleanValid) {
@@ -1627,7 +1651,7 @@ void RescueOnFractalus::renderFlightDirect()
             if (!s_bufSeeded[bi]) {
                 // First use of this buffer in the pause — it was cleared blank; seed clean terrain.
                 back->copy(*s_cleanBmp, 0, 0, 0, 0, kW, 47);
-                s_bufSeeded[bi] = true; s_boxLo[bi] = 99; s_boxHi[bi] = -1;
+                s_bufSeeded[bi] = true; s_boxLo[bi] = 99; s_boxHi[bi] = -1; s_boxColHi[bi] = -1;
             }
 #if defined(ROF_FLIGHT_PROBE)
             // Alien-colour diagnosis: count live composites of a non-empty overlay during the
@@ -1638,27 +1662,40 @@ void RescueOnFractalus::renderFlightDirect()
             // Composite = erase-old + cookie-cut-draw in ONE blitter pass (Bitmap::combineWithMask,
             // 4-channel A=mask B=figure C=clean D=dest).  Writes dest = (clean & ~mask) | (figure &
             // mask): clean where the mask is 0 (erasing the previous figure + filling the gaps), the
-            // figure where the mask is 1.  ROF_CLEAR_FIG already cleared the mask for this buffer's
-            // PREVIOUS figure rows, so compositing the UNION of the previous box + the current figure
-            // rows restores clean over the old figure and paints the new one.  Only planes 1+2 are
-            // touched (s_figBmp is 2-plane); plane3 (windscreen frame) stays the clean seed.  Runs on
-            // the blitter, parallel to the CPU + the 50Hz ISR (was a ~136 ms/step CPU 32-bit loop).
-            int lo = g_figRowLo, hi = g_figRowHi;
-            if (s_boxHi[bi] >= s_boxLo[bi]) {           // include the previous figure rows so they erase
+            // figure where the mask is 1.  ROF_CLEAR_FIG keeps the mask nonzero EXACTLY on the current
+            // figure, so compositing any rect covering (this buffer's previous figure box ∪ the current
+            // figure) restores clean over the old figure and paints the new one — with no ghosting
+            // outside the current figure.  We composite that union as a NARROW word-aligned sub-rect
+            // (rows AND columns) instead of full 320px, cutting the blitter work to the figure's actual
+            // footprint.  Only planes 1+2 are touched (s_figBmp is 2-plane); plane3 (windscreen frame)
+            // stays the clean seed.  Runs on the blitter, parallel to the CPU + the 50Hz ISR.
+            int lo = g_figRowLo, hi = g_figRowHi;                 // current figure row extent
+            int wlo = (g_figColHi >= g_figColLo) ? (g_figColLo >> 1) : 20;  // -> word columns (0..19)
+            int whi = (g_figColHi >= g_figColLo) ? (g_figColHi >> 1) : -1;
+            if (s_boxHi[bi] >= s_boxLo[bi]) {           // union in the previous figure box (to erase it)
                 if (s_boxLo[bi] < lo) lo = s_boxLo[bi];
                 if (s_boxHi[bi] > hi) hi = s_boxHi[bi];
             }
-            if (hi >= lo) {
-                const uint16_t y = (uint16_t)lo, h = (uint16_t)(hi - lo + 1);
-                back->combineWithMask(*s_cleanBmp, *s_figBmp, *s_figMaskBmp,
-                                      0, y,   // dest x,y
-                                      0, y,   // background (clean) x,y
-                                      0, y,   // source (figure) x,y
-                                      0, y,   // mask x,y
-                                      kW, h);
+            if (s_boxColHi[bi] >= 0) {                   // union in the previous word-column box
+                if (s_boxColLo[bi] < wlo) wlo = s_boxColLo[bi];
+                if (s_boxColHi[bi] > whi) whi = s_boxColHi[bi];
             }
-            if (g_figRowHi >= g_figRowLo) { s_boxLo[bi] = g_figRowLo; s_boxHi[bi] = g_figRowHi; }
-            else                          { s_boxLo[bi] = 99;         s_boxHi[bi] = -1; }
+            if (hi >= lo && whi >= wlo) {
+                const uint16_t y = (uint16_t)lo, h = (uint16_t)(hi - lo + 1);
+                const uint16_t x = (uint16_t)(wlo << 4), w = (uint16_t)((whi - wlo + 1) << 4);  // word-aligned px
+                back->combineWithMask(*s_cleanBmp, *s_figBmp, *s_figMaskBmp,
+                                      x, y,   // dest x,y
+                                      x, y,   // background (clean) x,y
+                                      x, y,   // source (figure) x,y
+                                      x, y,   // mask x,y
+                                      w, h);
+            }
+            if (g_figRowHi >= g_figRowLo) {
+                s_boxLo[bi] = g_figRowLo; s_boxHi[bi] = g_figRowHi;
+                s_boxColLo[bi] = g_figColLo >> 1; s_boxColHi[bi] = g_figColHi >> 1;
+            } else {
+                s_boxLo[bi] = 99; s_boxHi[bi] = -1; s_boxColHi[bi] = -1;
+            }
             // FULLY drain the queue (not just blitterWait): combineWithMask enqueues one blit
             // per plane (+ a possible seed copy), and blitterWait() returns after only the FIRST
             // completes — flipping then would show a half-composited buffer (missing plane/rows).
@@ -1740,10 +1777,9 @@ void RescueOnFractalus::renderFlightDirect()
     // (s_resumeRestorePend), so it fires exactly once at the true resume and never during the zoom.
     if (s_resumeRestorePend) {
         s_resumeRestorePend = false;
-        const uint8_t* cbase = (const uint8_t*)s_cleanBmp->data;
-        for (int r = 0; r <= 42; r++) {
-            const uint8_t* s2 = cbase + (unsigned)r * 120 + 40;    // plane2 in the clean snapshot
-            uint8_t* d2 = bp + (unsigned)r * 120 + 40;             // plane2 in the back buffer
+        const uint8_t* s2 = (const uint8_t*)s_cleanBmp->data + 40;   // plane2 base, walked +120/row
+        uint8_t* d2 = bp + 40;                                       // plane2 in the back buffer
+        for (int r = 0; r <= 42; r++, s2 += 120, d2 += 120) {
             for (int b = 0; b < 40; b++) d2[b] = s2[b];
         }
     }
@@ -1792,9 +1828,9 @@ void RescueOnFractalus::renderFlightDirect()
     // vertical streak.  Walk only the dirty scanline range; clear each byte as it is applied so the
     // scratch is ready for the next frame.  (Objects are sparse, so this is a few rows x 40 bytes.)
     if (g_objRowHi >= g_objRowLo) {
-        for (int sc = g_objRowLo; sc <= g_objRowHi; sc++) {
-            uint8_t* d = bp             + (unsigned)sc * 120;   // plane1 row (offset 0 in the 120B scanline)
-            uint8_t* s = s_flightObjP1  + (unsigned)sc * 120;   // scratch row (same base offset)
+        uint8_t* d = bp            + kRow120[g_objRowLo];   // plane1 row, walked +120/scanline
+        uint8_t* s = s_flightObjP1 + kRow120[g_objRowLo];   // scratch row (same base offset)
+        for (int sc = g_objRowLo; sc <= g_objRowHi; sc++, d += 120, s += 120) {
             for (int b = 0; b < 40; b++) { if (s[b]) { d[b] |= s[b]; s[b] = 0; } }
         }
         g_objRowLo = 47; g_objRowHi = -1;                       // range consumed
@@ -1814,9 +1850,11 @@ void RescueOnFractalus::renderFlightDirect()
     //     68-75 (left), M1 @ $85 quad = columns 85-92 (right), leaving the centre gap around col 80.
     {
         uint8_t* const p3 = bp + 80;                            // plane3 base (offset 80 per 120B scanline)
-        for (int r = 13; r <= 20; r++) p3[r * 120 + 20] |= 0xC0u;   // vertical, upper (col 80)
-        for (int r = 25; r <= 31; r++) p3[r * 120 + 20] |= 0xC0u;   // vertical, lower
-        uint8_t* const h = p3 + 22 * 120;                       // horizontal arms, row 22
+        uint8_t* vu = p3 + kRow120[13] + 20;                    // vertical stem, walked +120/row
+        for (int r = 13; r <= 20; r++, vu += 120) *vu |= 0xC0u;        // upper (col 80)
+        uint8_t* vl = p3 + kRow120[25] + 20;
+        for (int r = 25; r <= 31; r++, vl += 120) *vl |= 0xC0u;        // lower
+        uint8_t* const h = p3 + kRow120[22];                    // horizontal arms, row 22
         for (int c = 68; c <= 75; c++) h[c >> 2] |= kColMask4[c & 3];   // left arm (M3)
         for (int c = 85; c <= 92; c++) h[c >> 2] |= kColMask4[c & 3];   // right arm (M1)
     }
@@ -3091,10 +3129,10 @@ void RescueOnFractalus::decodeCompass()
     const uint8_t* src = (const uint8_t*)mem + kCompassRAM;
     for (int cell = 0; cell < 4; cell++) {
         const uint8_t* glyph = (const uint8_t*)mem + kCompassCharset + (src[cell] & 0x7Fu) * 8u;
-        for (int s = 0; s < 8; s++) {
+        uint8_t* row = tbmp + kRow80[kCompassRow];   // walked +80/scanline (80 = 40 plane1 + 40 plane2)
+        for (int s = 0; s < 8; s++, row += 80) {
             uint8_t p1v, p2v;
             decode2bppByte(glyph[s], &p1v, &p2v);
-            uint8_t* row = tbmp + (kCompassRow + s) * 80;   // 80 = 40 plane1 + 40 plane2 (interleaved)
             row[kCompassByteX + cell]      = p1v;
             row[40 + kCompassByteX + cell] = p2v;
         }

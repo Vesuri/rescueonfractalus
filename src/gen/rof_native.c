@@ -124,7 +124,9 @@ extern unsigned short rof_beam_line(void);
 extern uint8_t* g_flightDotPlane;
 extern uint8_t* g_flightObjP1;    /* object plane1 overlay (value-3 low bit), applied post sky-fill */
 extern int g_objRowLo, g_objRowHi;
-extern const uint16_t kRow120[48];
+extern const uint16_t kRow120[48];   /* row*120 (interleaved terrain scanline) */
+extern const uint16_t kRow40[48];    /* row*40  (one mode-D plane / figure mask stride) */
+extern const uint16_t kRow80[48];    /* row*80  (interleaved 2-plane figure stride) */
 extern const uint8_t kColMask4[4];
 extern void rof_flight_wait_dotclear(void);
 #define ROF_PLOT_DOT(col, h) do { \
@@ -162,6 +164,7 @@ extern void rof_flight_wait_dotclear(void);
  * zoom drives plot_clipped_pixel, so no gating is needed. */
 extern uint8_t* g_figP1; extern uint8_t* g_figP2; extern uint8_t* g_figM;
 extern int g_figRowLo, g_figRowHi;
+extern int g_figColLo, g_figColHi;   /* dirty byte-column extent (0..39) — for the narrow-rect composite */
 /* The figure planes g_figP1/g_figP2 live in a 2-plane INTERLEAVED chip Bitmap (row stride 80 =
  * plane1[40]+plane2[40]) so renderFlightDirect can composite it with the blitter; the mask g_figM
  * is a separate 1-plane bitmap (row stride 40).  So mask uses _im (stride 40), planes use _ip (80). */
@@ -169,22 +172,25 @@ extern int g_figRowLo, g_figRowHi;
     if (g_figP1) { \
         int _r = 0x96 - (int)(y); int _b = ((int)(x) >> 2) - 12; \
         if ((unsigned)_r < 43u && (unsigned)_b < 40u) { \
-            uint8_t _m = kColMask4[(int)(x) & 3]; int _im = _r * 40 + _b, _ip = _r * 80 + _b; \
+            uint8_t _m = kColMask4[(int)(x) & 3]; int _im = kRow40[_r] + _b, _ip = kRow80[_r] + _b; \
             g_figM[_im] |= _m; \
             if ((v2) & 1u) g_figP1[_ip] |= _m; \
             if ((v2) & 2u) g_figP2[_ip] |= _m; \
             if (_r < g_figRowLo) g_figRowLo = _r; \
             if (_r > g_figRowHi) g_figRowHi = _r; \
+            if (_b < g_figColLo) g_figColLo = _b; \
+            if (_b > g_figColHi) g_figColHi = _b; \
         } } } while (0)
 /* Clear the scratch (dirty range only) at the START of each shape draw so it holds exactly the
  * current frame's figure — during the multi-frame RTCLOK wait renderFlightDirect keeps compositing
  * the same figure (no flicker); the next draw clears + refills it. */
 #define ROF_CLEAR_FIG() do { \
     if (g_figM && g_figRowHi >= g_figRowLo) { \
+        int _cl = g_figColLo, _ch = g_figColHi; \
         for (int _r = g_figRowLo; _r <= g_figRowHi; _r++) { \
-            int _om = _r * 40, _op = _r * 80; \
-            for (int _b = 0; _b < 40; _b++) { g_figM[_om + _b] = 0; g_figP1[_op + _b] = 0; g_figP2[_op + _b] = 0; } } \
-        g_figRowLo = 99; g_figRowHi = -1; \
+            int _om = kRow40[_r], _op = kRow80[_r]; \
+            for (int _b = _cl; _b <= _ch; _b++) { g_figM[_om + _b] = 0; g_figP1[_op + _b] = 0; g_figP2[_op + _b] = 0; } } \
+        g_figRowLo = 99; g_figRowHi = -1; g_figColLo = 40; g_figColHi = -1; \
     } } while (0)
 /* Alien jump-scare creature overlay.  The creature (game_sub_7F85 -> hud_build_text_row $80C5,
  * airlock-CLOSED knock) blits into the mode-D field (base $1010, stride 96, +$30 display half),
@@ -209,10 +215,12 @@ extern volatile unsigned long g_alHudCalls;      /* # hud_build_text_row calls d
         int _rel = (int)(addr) - 0x10A4; \
         if (_rel >= 0) { int _r = _rel / 96, _b = _rel % 96; \
             if ((unsigned)_r < 43u && (unsigned)_b < 40u) { \
-                int _im = _r * 40 + _b, _ip = _r * 80 + _b; \
+                int _im = kRow40[_r] + _b, _ip = kRow80[_r] + _b; \
                 g_figM[_im]  = 0xFF; \
                 g_figP1[_ip] = kModeDP1[(unsigned char)(V)]; \
                 g_figP2[_ip] = kModeDP2[(unsigned char)(V)]; \
+                if (_b < g_figColLo) g_figColLo = _b; \
+                if (_b > g_figColHi) g_figColHi = _b; \
                 if (_r < g_figRowLo) g_figRowLo = _r; \
                 if (_r > g_figRowHi) g_figRowHi = _r; \
             } } } } while (0)
@@ -4347,12 +4355,14 @@ void hud_build_text_row(void) {
             int b = figB0 + y, r = figR0;
             if (b >= 96) { b -= 96; r++; }                   /* single 96-wrap (y<=16, figB0<96) */
             if ((unsigned)r < 43u && (unsigned)b < 40u) {
-                int im = r * 40 + b, ip = r * 80 + b;   /* mask stride 40; interleaved figure planes stride 80 */
+                int im = kRow40[r] + b, ip = kRow80[r] + b;   /* mask stride 40; interleaved figure planes stride 80 */
                 g_figM[im]  = 0xFF;
                 g_figP1[ip] = kModeDP1[v];
                 g_figP2[ip] = kModeDP2[v];
                 if (r < g_figRowLo) g_figRowLo = r;
                 if (r > g_figRowHi) g_figRowHi = r;
+                if (b < g_figColLo) g_figColLo = b;
+                if (b > g_figColHi) g_figColHi = b;
             }
 #ifdef ROF_FLIGHT_PROBE
             rof_alien_crwrite(dst, v);      /* keep the capture (extent/geometry probe) */
