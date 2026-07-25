@@ -1569,27 +1569,30 @@ void game_sub_7EC7(void) {
     sound_table_idx = 0x0F;                      /* $2924 */
     mem[0x2921] = 0x05;
     mem[0x005F] = 0x12;
-#ifdef ROF_PLATFORM_AMIGA
-    ROF_CLEAR_FIG();   /* discard the setup-cascade's transient creature draws before the loop */
-#endif
     do {
-        while (RTCLOK_LOW <= 0x04) {             /* wait for RTCLOK to pass 4 (reach 5) */
 #ifdef ROF_PLATFORM_AMIGA
-            platform_tick_vbi(); platform_render_frame();   /* composites the current creature overlay */
-#endif
-        }
-        RTCLOK_LOW = 0x00;
-#ifdef ROF_PLATFORM_AMIGA
-        /* Fresh creature overlay for this knock frame — after the render above composited the
-         * previous frame, before game_sub_7F85 (via hud_build_text_row/ROF_PLOT_ALIEN) redraws it. */
+        /* Draw the creature into a fresh overlay, THEN pace+display.  On the Atari the loop waits 5
+         * RTCLOK frames (SFX interval) BEFORE calling $7F85; on the Amiga RTCLOK is advanced by the
+         * hardware flight VBI, so the old pre-wait spinwait exited immediately (RTCLOK already >4
+         * after the slow draw) and NEVER rendered -> frozen screen, no creature composite (g_alRF=0).
+         * Draw first, then render the 5-frame interval so each displayed frame composites the fresh
+         * creature (via renderFlightDirect's rescueFigure branch) and the cockpit stays live. */
         ROF_CLEAR_FIG();
 #ifdef ROF_FLIGHT_PROBE
         g_alKnockFrames++;
         g_alPen[0]=mem[0x00DA]; g_alPen[1]=mem[0x00DB]; g_alPen[2]=mem[0x00DC];
         g_alPen[3]=mem[0x00DD]; g_alPen[4]=mem[0x0047]; g_alPen[5]=mem[0x0044];
 #endif
-#endif
+        game_sub_7F85();                        /* step SFX + blit the creature -> overlay */
+        RTCLOK_LOW = 0x00;
+        do {                                    /* faithful 5-frame SFX interval; renders each frame */
+            platform_tick_vbi(); platform_render_frame();
+        } while (RTCLOK_LOW <= 0x04);
+#else
+        while (RTCLOK_LOW <= 0x04) { }          /* SDL/validate never enters this ($3E==0 fixture) */
+        RTCLOK_LOW = 0x00;
         game_sub_7F85();
+#endif
     } while (clear_colors_done_003E != 0);
     cpu.A = 0x00;                                /* A = $3E (== 0 at loop exit) */
     silence_audio_channels();
