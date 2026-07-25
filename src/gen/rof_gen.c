@@ -13560,6 +13560,7 @@ L_80dc:;
     AND(bus_read(ZP_IND_Y(0x8B)));
     /* 80e7 */
     ORA(screen_ptr_hi);
+    { unsigned _t = (mem[0x8D] | (mem[0x8E] << 8)) + cpu.Y; rof_alien_crwrite(_t & 0xFFFFu, cpu.A); }
     /* 80e9 */
     bus_write(ZP_IND_Y(0x8D), cpu.A);
     /* 80eb */

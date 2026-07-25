@@ -528,6 +528,11 @@ PRE_INSN_HOOKS = {
     # returns+clears it (or $FF if none) — exactly mimicking the handler clobbering
     # X.  No-op everywhere it returns $FF (SDL / validate headless): X stays $FF.
     0x519c: '{ unsigned char _k = platform_flight_irq_key(); if (_k != 0xFFu) cpu.X = _k; }',
+    # $80e9 — game_sub_7F85's $80C5 creature blit: `STA ($8D),Y` (the ONLY writer of the alien
+    # jump-scare creature, into the mode-D field).  cpu.A already holds the final masked byte here.
+    # Capture (target addr, value) so a closed-airlock knock reveals the field->plane geometry the
+    # Amiga plane hook needs (the row table $073D/$0793 is runtime-built).  No-op off-probe.
+    0x80e9: '{ unsigned _t = (mem[0x8D] | (mem[0x8E] << 8)) + cpu.Y; rof_alien_crwrite(_t & 0xFFFFu, cpu.A); }',
     # NB: vbi_handler_flight ($4FF5) is now a native twin (rof_native.c) — only its __t6502
     # validation oracle is transpiled here, so the $519c key-injection hook above still applies
     # to the oracle (keeping its keyboard behaviour identical to the native).  The old

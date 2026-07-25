@@ -47,6 +47,14 @@ printf "  0079(range)=%02x 0041(gamestate)=%02x 2844=%02x 00DB=%02x\n", \
   g_alSnap[8], g_alSnap[9], g_alSnap[10], g_alSnap[11]
 printf "  figLo=%02x figHi=%02x shapePtr=$%02x%02x\n", \
   g_alSnap[12], g_alSnap[13], g_alSnap[15], g_alSnap[14]
+printf "-- creature blit ($80C5) capture — the jump-scare draw (airlock-CLOSED path) --\n"
+printf "g_alCrSeen=%u  g_alCrWrites=%lu  (>0 => the creature DID blit into the field on Amiga)\n", \
+  g_alCrSeen, g_alCrWrites
+printf "g_alCrAddr range = $%04X .. $%04X   valOR=$%02x  (which mode-D pixel bits used)\n", \
+  g_alCrAddrLo, g_alCrAddrHi, g_alCrValOr
+printf "g_alCrRowBase=$%04X  rowStride=%d  pos $2930=%02x $2931=%02x\n", \
+  g_alCrRowBase, g_alCrRowStride, g_alCrPos0, g_alCrPos1
+printf "  (field base $1010? stride 96? -> row=(addr-base)/stride; half=(addr-base)%%stride)\n"
 printf "--- live state right now ---\n"
 printf "  0633=%02x 003C=%02x 003D=%02x 003E=%02x\n", \
   mem[0x0633], mem[0x003C], mem[0x003D], mem[0x003E]

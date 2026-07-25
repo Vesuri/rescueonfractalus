@@ -2952,11 +2952,46 @@ static void rof_alshape_note(unsigned short p) {
 #define ROF_ALIEN_DRAWSHAPE()   do { unsigned short _p = (unsigned short)(mem[0x00C3] | (mem[0x00C4] << 8)); \
     if (mem[0x003E] || mem[0x0633]) rof_alshape_note(_p); \
     if (mem[0x0633]) { g_alDrawShape++; g_alShapePtr = _p; } } while (0)
+
+/* Creature-blit capture (game_sub_7F85 -> $80C5 `STA ($8D),Y`, hooked at $80E9 via a
+ * PRE_INSN_HOOK).  The jump-scare creature is drawn ONLY here (airlock-closed knock), into the
+ * mode-D field via a runtime-built row table ($073D/$0793), so the field->overlay geometry can't
+ * be derived statically.  Record the write extent + row-table base/stride + the sample so a real
+ * closed-airlock knock reveals the exact mapping we need for the plane hook. */
+volatile unsigned long  g_alCrWrites   = 0;       /* total $80C5 byte-stores */
+volatile unsigned int   g_alCrAddrLo   = 0xFFFFu; /* min field address written */
+volatile unsigned int   g_alCrAddrHi   = 0;       /* max field address written */
+volatile unsigned char  g_alCrValOr    = 0;       /* OR of all stored bytes (which pixels used) */
+volatile unsigned int   g_alCrRowBase  = 0;       /* $073D[0]|$0793[0]<<8 (row-table base) */
+volatile int            g_alCrRowStride = 0;      /* $073D[1] - $073D[0] (row stride) */
+volatile unsigned char  g_alCrPos0     = 0;       /* $2930 at first write (start row idx) */
+volatile unsigned char  g_alCrPos1     = 0;       /* $2931 at first write (col offset) */
+volatile unsigned char  g_alCrSeen     = 0;       /* creature blit ran at least once */
 #else
 #define ROF_ALIEN_PROBE()       ((void)0)
 #define ROF_ALIEN_PLOT()        ((void)0)
 #define ROF_ALIEN_DRAWSHAPE()   ((void)0)
 #endif
+
+/* Creature-blit write hook (PRE_INSN_HOOK at $80E9, emitted into rof_gen.c in ALL builds, so this
+ * must exist everywhere; the body is probe/Amiga-only).  addr = ($8D)+Y target, val = byte stored. */
+void rof_alien_crwrite(unsigned int addr, unsigned char val) {
+#if defined(ROF_PLATFORM_AMIGA) && defined(ROF_FLIGHT_PROBE)
+    if (!g_alCrSeen) {
+        g_alCrSeen = 1;
+        g_alCrRowBase   = (unsigned int)(mem[0x073D] | (mem[0x0793] << 8));
+        g_alCrRowStride = (int)((unsigned int)(mem[0x073E] | (mem[0x0794] << 8)) - g_alCrRowBase);
+        g_alCrPos0 = mem[0x2930];
+        g_alCrPos1 = mem[0x2931];
+    }
+    g_alCrWrites++;
+    g_alCrValOr |= val;
+    if (addr < g_alCrAddrLo) g_alCrAddrLo = addr;
+    if (addr > g_alCrAddrHi) g_alCrAddrHi = addr;
+#else
+    (void)addr; (void)val;
+#endif
+}
 
 /* pilot_render @ $7854 — the pilot/rescue render + rescue state machine.  Seeds the lock-on /
  * landing state from the pilot range ($0079), then runs a per-frame loop (L_78d6) that animates the
