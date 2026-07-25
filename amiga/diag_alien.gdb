@@ -58,6 +58,8 @@ printf "  (field base $1010? stride 96? -> row=(addr-base)/stride; half=(addr-ba
 printf "-- creature COLOUR diagnosis (why invisible live) --\n"
 printf "g_alKnockFrames=%lu  g_alComp=%lu  (comp>0 => creature IS composited+flipped LIVE => palette issue)\n", \
   g_alKnockFrames, g_alComp
+printf "renderFrame during knock: g_alRF=%lu  VVBLKI=$%04x (want 4FF5)  rsFlight=%u  rsViewport=%u\n", \
+  g_alRF, g_alVV, g_alRFfl, g_alRFvw
 printf "renderFlightDirect during knock: g_alRFD=%lu  rescueFig=%lu  cleanValid=%lu  (locates the drop-out)\n", \
   g_alRFD, g_alRFDresc, g_alRFDclean
 printf "viewport pens during knock: $DA=%02x $DB=%02x $DC=%02x $DD=%02x  attack $47=%02x $44=%02x\n", \

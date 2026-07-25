@@ -1488,6 +1488,10 @@ extern "C" volatile unsigned long  g_alComp = 0;   // live creature composites d
 extern "C" volatile unsigned long  g_alRFD = 0;      // renderFlightDirect entries during the knock
 extern "C" volatile unsigned long  g_alRFDresc = 0;  // ...of those, rescueFigure true
 extern "C" volatile unsigned long  g_alRFDclean = 0; // ...of those, s_cleanValid true
+extern "C" volatile unsigned long  g_alRF = 0;       // renderFrame entries during the knock
+extern "C" volatile unsigned short g_alVV = 0;       // VVBLKI during the knock (want $4FF5)
+extern "C" volatile unsigned char  g_alRFfl = 0;     // rsFlight at renderFrame during the knock
+extern "C" volatile unsigned char  g_alRFvw = 0;     // rsViewport at renderFrame during the knock
 extern "C" volatile unsigned char  g_rfFresh[RF_RING_N] = {0};   // g_flightTerrainFresh
 extern "C" volatile short          g_rfFigLo[RF_RING_N] = {0};   // g_figRowLo
 extern "C" volatile short          g_rfFigHi[RF_RING_N] = {0};   // g_figRowHi
@@ -1946,6 +1950,14 @@ void RescueOnFractalus::renderFrame()
     emptyCopperInstalled = false;
 
     deriveRenderSignals();   // recompute the mem[]-derived render-gating signals for this frame
+#if defined(ROF_FLIGHT_PROBE)
+    // Diagnose why renderFlightDirect isn't reached during the knock: is renderFrame even entered
+    // ($0632), what is VVBLKI, and is rsFlight/rsViewport true at that moment?
+    { extern volatile unsigned long g_alRF; extern volatile unsigned short g_alVV;
+      extern volatile unsigned char g_alRFfl, g_alRFvw;
+      if (mem[0x0632]) { g_alRF++; g_alVV = (unsigned short)(mem[0x0222] | (mem[0x0223] << 8));
+                         g_alRFfl = rsFlight ? 1 : 0; g_alRFvw = rsViewport ? 1 : 0; } }
+#endif
     // Tunnel: the reveal (platform_tunnel_rings_drawn) decodes the full field once
     // (g_tunBandMode==0); thereafter the $52D7 VBI's draw_ring_frame_step draws each expanding
     // black clear frame into mem[$1000] and publishes the exact band it touched (g_tunBandMode==1
