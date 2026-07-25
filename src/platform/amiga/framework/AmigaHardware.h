@@ -88,6 +88,13 @@ public:
     // pattern through mask. (Imported from DanceDiverse3.)
     static void blitterCombineWithMask(uint16_t* background, uint16_t* source, uint16_t* destination, uint16_t* mask, uint16_t width, uint16_t height, int16_t backgroundModulo, int16_t sourceModulo, int16_t destinationModulo, int16_t maskModulo, int16_t sourceShift, int16_t maskShift, uint16_t firstWordMask, uint16_t lastWordMask, bool clearMasked);
     static void blitterPatternWithMask(uint16_t pattern, uint16_t* destination, uint16_t* mask, uint16_t width, uint16_t height, int16_t sourceModulo, int16_t destinationModulo, int16_t maskModulo, int16_t sourceShift, int16_t maskShift, uint16_t firstWordMask, uint16_t lastWordMask, bool clearMasked);
+    // Fully drain the blitter queue AND wait for the in-flight blit to finish.  blitterWait()
+    // alone only waits for the CURRENTLY-RUNNING blit; a multi-blit operation (copy of an
+    // interleaved bitmap, or combineWithMask/copyWithMask = one blit per bitplane) leaves the
+    // later blits QUEUED, started asynchronously by the blitter interrupt.  So blitterWait()
+    // can return with blits still pending — call this instead before reusing, reading, or
+    // flipping a buffer that a queued blit still targets.  (Same drain idiom as blitterFillUp.)
+    static void blitterDrain();
 };
 
 #define bltddat 0x000

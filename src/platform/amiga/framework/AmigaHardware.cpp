@@ -695,6 +695,18 @@ void AmigaHardware::blitterFillUp(uint16_t* dest, uint16_t width, uint16_t heigh
     AmigaHardware::setInterrupts(INTF_BLIT, true);
 }
 
+void AmigaHardware::blitterDrain()
+{
+    // Mask the blitter interrupt so the ISR doesn't race the queue pointers, then spin-drain:
+    // processBlitterQueue() no-ops while the blitter is busy and pops the next queued blit the
+    // instant it goes idle, so this exits only once the queue is empty; blitterWait() then
+    // finishes the last-started blit.  (Same prologue blitterFillUp uses.)
+    AmigaHardware::setInterrupts(INTF_BLIT, false);
+    while (hasQueuedBlits) processBlitterQueue();
+    blitterWait();
+    AmigaHardware::setInterrupts(INTF_BLIT, true);
+}
+
 void AmigaHardware::blitterCombineWithMask(uint16_t* background, uint16_t* source, uint16_t* destination, uint16_t* mask, uint16_t width, uint16_t height, int16_t backgroundModulo, int16_t sourceModulo, int16_t destinationModulo, int16_t maskModulo, int16_t sourceShift, int16_t maskShift, uint16_t firstWordMask, uint16_t lastWordMask, bool clearMasked)
 {
     AmigaHardware::setInterrupts(INTF_BLIT, false);

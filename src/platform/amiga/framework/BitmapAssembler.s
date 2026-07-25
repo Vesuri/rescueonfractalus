@@ -9,6 +9,13 @@
 	xref	_blitterLine__13AmigaHardwareFPUsUsUsUsUsUsUc
 	xref	_blitterFill__13AmigaHardwareFPUsUsUss
 
+; NOTE: the AmigaHardware::blitter* calls below use `jsr` (absolute long), NOT `bsr`
+; (PC-relative 16-bit).  Under the GCC/Elf2Hunk build the twins and the blitter primitives
+; land in different input sections, so a `bsr` leaves an R_68K_PC16 relocation in the ELF and
+; Elf2Hunk rejects it ("Unsupported relocation type R_68K_PC16") — which is why these Bitmap
+; methods were unusable from the app until 2026-07-26.  `jsr` emits R_68K_32, which Elf2Hunk
+; supports.  Do NOT "optimise" these back to bsr.
+
 ; Offsets to various C++ structures. These MUST match the C++ structures!
 ; -----------------------------------------------------------------------
 data_		equ	0
@@ -65,7 +72,7 @@ cl_heightOk:
 	mulu.w	bitplanes_(a0),d1
 	move.l	a1,d2
 	move.w	a2,d3
-	bsr	_blitterClear__13AmigaHardwareFPUsUsUss
+	jsr	_blitterClear__13AmigaHardwareFPUsUsUss
 	bra	cl_done
 
 cl_chipNonInterleaved:
@@ -78,7 +85,7 @@ cl_chipNonInterleavedLoop:
 	move.w	d4,d1
 	move.l	a1,d2
 	move.w	a2,d3
-	bsr	_blitterClear__13AmigaHardwareFPUsUsUss
+	jsr	_blitterClear__13AmigaHardwareFPUsUsUss
 	add.w	d6,a1			; destData += this->bitplaneSizeInWords();
 	dbra	d7,cl_chipNonInterleavedLoop
 	bra	cl_done
@@ -308,7 +315,7 @@ c_shiftOk:
 	swap	d7
 	move.l	a5,d2
 	move.l	a6,d3
-	bsr	_blitterCopy__13AmigaHardwareFPUsPUsUsUssssUsUsUs
+	jsr	_blitterCopy__13AmigaHardwareFPUsPUsUsUssssUsUsUs
 	bra.s	c_done
 
 c_nonInterleaved:
@@ -664,7 +671,7 @@ cWM_interleavedSingleBitplaneMaskLoop:	; for (uint16_t i = 0; i < bitplanes; i++
 	move.l	60(sp),d3	; maskData
 	move.l	64(sp),d4	; destData
 	move.w	68(sp),d7	; clearMasked
-	bsr	_blitterCopyWithMask__13AmigaHardwareFPUsPUsPUsUsUssssssUsUsUc
+	jsr	_blitterCopyWithMask__13AmigaHardwareFPUsPUsPUsUsUssssssUsUsUc
 	movem.l	(sp)+,d0-d7/a0-a3/a5-a6
 
 	subq	#1,a4
@@ -712,7 +719,7 @@ cWM_interleavedMultiBitplaneMask:
 	mulu.w	bitplanes_(a0),d1
 	movem.l	(sp)+,d2/d3/d4
 	move.w	(sp)+,d7
-	bsr	_blitterCopyWithMask__13AmigaHardwareFPUsPUsPUsUsUssssssUsUsUc
+	jsr	_blitterCopyWithMask__13AmigaHardwareFPUsPUsPUsUsUssssssUsUsUc
 	bra.s	cWM_done
 
 cWM_nonInterleaved:
@@ -743,7 +750,7 @@ l_loop:	btst	#0,d4			; if (color & 1) {
 	movem.l	d0/d1/d4/a1,-(sp)	; AmigaHardware::blitterLine(destData, x1, y1, x2, y2, rowSizeInBytes, fillMode);
 	move.l	a1,d4
 	move.w	rowSizeInBytes_(a0),d5
-	bsr	_blitterLine__13AmigaHardwareFPUsUsUsUsUsUsUc
+	jsr	_blitterLine__13AmigaHardwareFPUsUsUsUsUsUsUc
 	movem.l	(sp)+,d0/d1/d4/a1
 l_colorDone:
 	lsr.w	#1,d4
@@ -798,7 +805,7 @@ f_heightOk:
 	mulu.w	bitplanes_(a0),d1
 	move.l	a1,d2
 	move.w	a2,d3
-	bsr	_blitterFill__13AmigaHardwareFPUsUsUss
+	jsr	_blitterFill__13AmigaHardwareFPUsUsUss
 	bra	f_done
 
 f_chipNonInterleaved:
@@ -811,7 +818,7 @@ f_chipNonInterleavedLoop:
 	move.w	d5,d1
 	move.l	a1,d2
 	move.w	a2,d3
-	bsr	_blitterFill__13AmigaHardwareFPUsUsUss
+	jsr	_blitterFill__13AmigaHardwareFPUsUsUss
 	sub.w	d6,a1			; destData -= this->bitplaneSizeInWords();
 	dbra	d7,f_chipNonInterleavedLoop
 
