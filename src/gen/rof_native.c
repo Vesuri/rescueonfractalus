@@ -197,6 +197,7 @@ extern uint8_t kModeDP1[256]; extern uint8_t kModeDP2[256];
 #ifdef ROF_FLIGHT_PROBE
 extern volatile unsigned long g_alKnockFrames;   /* fwd decls (defined in the probe block below) */
 extern volatile unsigned char g_alPen[6];
+extern volatile unsigned long g_alTWait, g_alTDraw, g_alTRender;  /* per-step beam-tick accumulators */
 #endif
 #define ROF_PLOT_ALIEN(addr, V) do { \
     if (g_figP1) { \
@@ -1579,16 +1580,30 @@ void game_sub_7EC7(void) {
          * creature and composite+display it ONCE.  (Re-compositing every frame of the wait — my first
          * cut — was ~5x the work per SFX step and the cause of the "horrible perf"; the creature only
          * changes once per $7F85, so one composite per step is both faithful and fast.) */
+#ifdef ROF_FLIGHT_PROBE
+        { unsigned long _tw = rof_subclock();
+#endif
         while (RTCLOK_LOW <= 0x04) { platform_tick_vbi(); }   /* busy-wait; copper displays continuously */
+#ifdef ROF_FLIGHT_PROBE
+          g_alTWait += rof_subclock() - _tw; }
+#endif
         RTCLOK_LOW = 0x00;
         ROF_CLEAR_FIG();                        /* fresh overlay for this step's creature */
 #ifdef ROF_FLIGHT_PROBE
         g_alKnockFrames++;
         g_alPen[0]=mem[0x00DA]; g_alPen[1]=mem[0x00DB]; g_alPen[2]=mem[0x00DC];
         g_alPen[3]=mem[0x00DD]; g_alPen[4]=mem[0x0047]; g_alPen[5]=mem[0x0044];
+        { unsigned long _td = rof_subclock();
 #endif
         game_sub_7F85();                        /* step SFX + blit the creature -> overlay */
+#ifdef ROF_FLIGHT_PROBE
+          g_alTDraw += rof_subclock() - _td; }
+        { unsigned long _tr = rof_subclock();
+#endif
         platform_render_frame();                /* composite + display it ONCE per SFX step */
+#ifdef ROF_FLIGHT_PROBE
+          g_alTRender += rof_subclock() - _tr; }
+#endif
 #else
         while (RTCLOK_LOW <= 0x04) { }          /* SDL/validate never enters this ($3E==0 fixture) */
         RTCLOK_LOW = 0x00;
@@ -3018,6 +3033,9 @@ volatile unsigned char  g_alCrSeen     = 0;       /* creature blit ran at least 
  * composited but invisible until the normal palette returns (the observed restore-frame flash). */
 volatile unsigned char  g_alPen[6];               /* [0]$DA [1]$DB [2]$DC [3]$DD [4]$47 [5]$44 */
 volatile unsigned long  g_alKnockFrames = 0;      /* game_sub_7EC7 loop iterations (knock frames) */
+volatile unsigned long  g_alTWait = 0;            /* beam ticks in the 5-frame busy-wait (all steps) */
+volatile unsigned long  g_alTDraw = 0;            /* beam ticks in game_sub_7F85 (all steps) */
+volatile unsigned long  g_alTRender = 0;          /* beam ticks in platform_render_frame (all steps) */
 #else
 #define ROF_ALIEN_PROBE()       ((void)0)
 #define ROF_ALIEN_PLOT()        ((void)0)

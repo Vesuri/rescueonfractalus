@@ -60,6 +60,13 @@ printf "g_alKnockFrames=%lu  g_alComp=%lu  (comp>0 => creature IS composited+fli
   g_alKnockFrames, g_alComp
 printf "renderFrame during knock: g_alRF=%lu  VVBLKI=$%04x (want 4FF5)  rsFlight=%u  rsViewport=%u\n", \
   g_alRF, g_alVV, g_alRFfl, g_alRFvw
+printf "-- knock STEP timing (beam ticks; 313=1 frame=20ms; a step should be ~5 frames=1565) --\n"
+printf "steps=%lu  wait=%lu  draw(7F85)=%lu  render=%lu  (totals)\n", \
+  g_alKnockFrames, g_alTWait, g_alTDraw, g_alTRender
+printf "  per-step avg: wait=%lu draw=%lu render=%lu ticks  (draw>>1565 => native-twin 7F85; render>>1565 => render)\n", \
+  (g_alKnockFrames ? g_alTWait/g_alKnockFrames : 0), \
+  (g_alKnockFrames ? g_alTDraw/g_alKnockFrames : 0), \
+  (g_alKnockFrames ? g_alTRender/g_alKnockFrames : 0)
 printf "renderFlightDirect during knock: g_alRFD=%lu  rescueFig=%lu  cleanValid=%lu  (locates the drop-out)\n", \
   g_alRFD, g_alRFDresc, g_alRFDclean
 printf "viewport pens during knock: $DA=%02x $DB=%02x $DC=%02x $DD=%02x  attack $47=%02x $44=%02x\n", \
