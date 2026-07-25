@@ -13264,7 +13264,8 @@ void sound_step_preserve_a(void) {
 }
 
 /* game_sub_7F85 @ $7F85: Game sub (1 RANDOM read) */
-void game_sub_7F85(void) {
+/* faithful transliteration kept as the validation oracle; native game_sub_7F85() lives in rof_native.c (see VALIDATE_FUNCS) */
+void game_sub_7F85__t6502(void) {
     /* 7f85 */
     INC_M(MEM_sound_table_idx);
     /* 7f88 */

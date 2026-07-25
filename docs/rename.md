@@ -379,3 +379,33 @@ well-known Atari OS shadow registers and should get standard names:
 - `$0632` → `alien_knock_active` (set 1 by `$7EC7`, cleared at `$7F76`; gates VBI work at `$5250`).
 - `$003C anim_flag_003C` → `airlock_state` (0=closed→scare; nonzero→boarding/reveal).
 - `$281E` (unnamed) → `figure_is_alien` (1 when rescue map-marker `$0A00[$28E6] == $80`).
+
+### The "hud_*"/"font" family is misleading — it is the creature composer, not HUD text (2026-07-25)
+User-flagged: none of these draw HUD text; they compose/blit the animated alien-creature rows into
+the mode-D viewport field during the airlock-closed knock. Suggested renames:
+- `$80C5 hud_build_text_row` → `alien_row_compose` (or `alien_shape_blit`, per the cluster note above):
+  clears the 17-cell buffer `$8F-$9F`, refills it from the four field sources, then for each cell expands
+  it through `$BE00`, masks against the source row `($8B)`, and stores to the dest row `($8D)`.
+- `$8105 hud_fill_field0` → `alien_field0_fill` (packs 5 source bytes into cells `$8F-$93`).
+- `$811F hud_fill_field1` → `alien_field1_fill` (copies 5 source bytes verbatim into cells `$9B-$9F`).
+- `$8138 hud_fill_field2` → `alien_field2_fill` (7 bytes into `$94-$9A`, verbatim or packed per `$292D`).
+- `$8168 hud_fill_field3_font` → `alien_field3_fill` (7 glyph bytes from `$35CD` into `$94-$9A`; "font" is
+  wrong — it is a shape/glyph table; and this field is idle in the knock path, cursor `$0083` starts `$E7`).
+- `$8181 pack_byte_to_5bit_cells` → `reorder_cell_bits` (reverses the four 2-bit groups of a byte and
+  folds it into accumulator `$0084`; the "5bit" is a misnomer — it's a fixed bit permutation).
+- `$2927/$2928/$2929 hud_field{0,1,2}_limit` → `alien_field{0,1,2}_limit` (per-field cursor limits).
+
+### ZP cells reused by the creature composer with a DIFFERENT meaning than their names (2026-07-25)
+These carry names from `display_list_build`/VBI code but the composer tree reuses them as text-source
+state. Consider per-context aliases (or just document the reuse):
+- `$0080 sync_flag` / `$0081 dl_ptr_lo` / `$0082 dl_ptr_hi` / `$0083 screen_ptr_lo` = the four field
+  **cursors** (field 0/1/2/3 source index).
+- `$0084 screen_ptr_hi` = the `reorder_cell_bits` **packing accumulator**.
+- `$0085/$0086 encounter_count/row_count` = field-0 **source pointer** (lo/hi).
+- `$0087/$0088 vbi_phase/vbi_flags` = field-1 **source pointer**.
+- `$0089/$008A terrain_state/terrain_scroll_counter` = field-2 **source pointer**.
+- `$008B/$008C dl_src_index/terrain_scroll_reload` = the composer **mask-row pointer**.
+- `$008D/$008E step_mode_flag/(unnamed)` = the composer **dest-row pointer** (mask row + `$30`).
+- `$292A/$292B/$292C` = the three per-frame voice values; `$2921/$005E/$005F/$2924/$2926` = voice
+  positions/link indices; `$2922/$2923` = voice-C last-two picks; `$292D` = field-2 pack flag;
+  `$292E` = SFX sustain counter; `$292F` = the draw-loop row counter; `$2930/$2931` = draw start row/col.

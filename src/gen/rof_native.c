@@ -198,6 +198,8 @@ extern uint8_t kModeDP1[256]; extern uint8_t kModeDP2[256];
 extern volatile unsigned long g_alKnockFrames;   /* fwd decls (defined in the probe block below) */
 extern volatile unsigned char g_alPen[6];
 extern volatile unsigned long g_alTWait, g_alTDraw, g_alTRender;  /* per-step beam-tick accumulators */
+extern volatile unsigned long g_alTHud;          /* beam ticks inside hud_build_text_row (creature rows) */
+extern volatile unsigned long g_alHudCalls;      /* # hud_build_text_row calls during the knock */
 #endif
 #define ROF_PLOT_ALIEN(addr, V) do { \
     if (g_figP1) { \
@@ -2053,32 +2055,31 @@ void count_up_to_level(void) {
     } while (level_count_acc != level_stage);
 }
 
-/* hud_fill_field1 @ $811F — HUD field-1 advance.  Cursor Y = $0081: if it has
- * reached/passed the limit $2928, just INC $0081 and return.  Otherwise copy 5
- * bytes from the source ($0087)+Y into $009B..$009F (cells $8F+$0C..$8F+$10) and
- * store the advanced cursor (Y+5) back to $0081. */
+/* hud_fill_field1 @ $811F — advance HUD text field 1.  If its source cursor ($0081) has
+ * reached the field limit ($2928) just bump the cursor.  Otherwise copy 5 source bytes
+ * (from the field-1 pointer $0087/$0088, indexed by the cursor) verbatim into cells
+ * $9B..$9F and advance the cursor by 5.  ($0087/$0088 are the "vbi_phase/vbi_flags" cells
+ * reused here as a text-source pointer — see docs/rename.md.) */
 void hud_fill_field1(void) {
-    uint8_t y = dl_ptr_lo;
-    if (y >= hud_field1_limit) { dl_ptr_lo = (uint8_t)(y + 1); return; }
-    for (uint8_t x = 0x0C; x < 0x11; x++) {
-        cpu.Y = y;
-        mem[(uint8_t)(0x8F + x)] = bus_read(ZP_IND_Y(0x87));
-        y = (uint8_t)(y + 1);
-    }
-    dl_ptr_lo = y;
+    uint8_t cursor = dl_ptr_lo;                                  /* $0081 field-1 cursor */
+    if (cursor >= hud_field1_limit) { dl_ptr_lo = (uint8_t)(cursor + 1); return; }  /* $2928 */
+    uint16_t src = (uint16_t)(vbi_phase | (vbi_flags << 8));     /* $0087/$0088 field-1 ptr */
+    for (uint8_t cell = 0x9B; cell <= 0x9F; cell++)              /* cells $9B..$9F */
+        mem[cell] = bus_read((uint16_t)(src + cursor++));
+    dl_ptr_lo = cursor;
 }
 
-/* hud_fill_field3_font @ $8168 — HUD field-3 advance.  Cursor Y = $0083: if >= $A8,
- * INC $0083 and return.  Otherwise copy 7 font bytes from $35CD[Y] into $0094..$009A
- * (cells $8F+$05..$8F+$0B) and store the advanced cursor (Y+7) to $0083. */
+/* hud_fill_field3_font @ $8168 — advance HUD text field 3 (font-glyph row).  If its cursor
+ * ($0083) has reached the fixed limit $A8 just bump it.  Otherwise copy 7 font bytes from
+ * the glyph table $35CD (indexed by the cursor) into cells $94..$9A and advance the cursor
+ * by 7.  (Shares cells $94..$9A with field 2 — the two are mutually exclusive per row via
+ * their cursors, whichever last runs the fill path wins.) */
 void hud_fill_field3_font(void) {
-    uint8_t y = screen_ptr_lo;
-    if (y >= 0xA8) { screen_ptr_lo = (uint8_t)(y + 1); return; }
-    for (uint8_t x = 0x05; x < 0x0C; x++) {
-        mem[(uint8_t)(0x8F + x)] = mem[0x35CD + y];
-        y = (uint8_t)(y + 1);
-    }
-    screen_ptr_lo = y;
+    uint8_t cursor = screen_ptr_lo;                             /* $0083 field-3 cursor */
+    if (cursor >= 0xA8) { screen_ptr_lo = (uint8_t)(cursor + 1); return; }
+    for (uint8_t cell = 0x94; cell <= 0x9A; cell++)             /* cells $94..$9A */
+        mem[cell] = mem[(uint16_t)(0x35CD + cursor++)];
+    screen_ptr_lo = cursor;
 }
 
 /* clear_message_buffer @ $480B — clear the 14-byte message buffer: set X=$0E, A=$00
@@ -3036,6 +3037,8 @@ volatile unsigned long  g_alKnockFrames = 0;      /* game_sub_7EC7 loop iteratio
 volatile unsigned long  g_alTWait = 0;            /* beam ticks in the 5-frame busy-wait (all steps) */
 volatile unsigned long  g_alTDraw = 0;            /* beam ticks in game_sub_7F85 (all steps) */
 volatile unsigned long  g_alTRender = 0;          /* beam ticks in platform_render_frame (all steps) */
+volatile unsigned long  g_alTHud = 0;             /* beam ticks inside hud_build_text_row (creature rows) */
+volatile unsigned long  g_alHudCalls = 0;         /* # hud_build_text_row calls during the knock */
 #else
 #define ROF_ALIEN_PROBE()       ((void)0)
 #define ROF_ALIEN_PLOT()        ((void)0)
@@ -4171,20 +4174,32 @@ void draw_scaled_shape(void) {
     } while (mem[0x0055] < 0x12);
 }
 
-/* pack_byte_to_5bit_cells @ $8181 — interleave the bits of A with the running cell byte
- * $0084 via a ROL/ROR carry chain, returning the packed result in A.  Faithfully reproduced
- * with the op-macros (the carry threads through every rotate, so an idiomatic rewrite would
- * be no faster and far more error-prone). */
+/* pack_byte_to_5bit_cells @ $8181 — reorder a source byte into a mode-D cell byte and fold
+ * it into the running accumulator ($0084).  The Atari does this with a 22-op ROL-A / ROR-$84 /
+ * ROR-A carry chain; that chain is exactly equivalent to a fixed bit permutation (proven over
+ * all 2^17 inputs):
+ *   - the result byte = the source byte with its four 2-bit groups placed in REVERSE order
+ *     (bits[1:0]->[7:6], [3:2]->[5:4], [5:4]->[3:2], [7:6]->[1:0]);
+ *   - the accumulator becomes (result << 1) | oldbit7, i.e. it retains only bit7 of its prior
+ *     value and shifts the fresh result in above it;
+ *   - the 6502 carry ends up holding that prior bit7.
+ * The entry carry and the accumulator's low 7 bits do NOT affect the output.  Returns the cell
+ * byte in A.  (Was a faithful ROL/ROR macro chain — replaced with the equivalent permutation,
+ * which drops all the $0084 bus traffic and lets callers keep the accumulator in a register.) */
+static uint8_t pack_byte_to_5bit_cells_core(uint8_t src, uint8_t *accum) {
+    uint8_t cell = (uint8_t)(((src & 3) << 6) | (((src >> 2) & 3) << 4)
+                           | (((src >> 4) & 3) << 2) | ((src >> 6) & 3));
+    *accum = (uint8_t)((cell << 1) | (*accum >> 7));
+    return cell;
+}
+
 void pack_byte_to_5bit_cells(void) {
-    ROL_A(); ROL_A();
-    ROR_M(0x0084); ROR_A(); ROR_M(0x0084);
-    ROL_A(); ROL_A(); ROL_A();
-    ROR_M(0x0084); ROR_A(); ROR_M(0x0084);
-    ROL_A(); ROL_A(); ROL_A();
-    ROR_M(0x0084); ROR_A(); ROR_M(0x0084);
-    ROL_A(); ROL_A(); ROL_A();
-    ROR_M(0x0084); ROR_A();
-    LDA(screen_ptr_hi); ROR_A();
+    uint8_t accum = screen_ptr_hi;               /* $0084 */
+    uint8_t prev7 = (uint8_t)(accum >> 7);
+    cpu.A = pack_byte_to_5bit_cells_core(cpu.A, &accum);
+    screen_ptr_hi = accum;
+    cpu.C = prev7;                                /* faithful: final carry = prior $0084 bit7 */
+    cpu.N = (uint8_t)(cpu.A >> 7); cpu.Z = (cpu.A == 0);
 }
 
 /* read_console_trig_delta @ $5A78 — A = (CONSOL & 1) - TRIG0, reading the two active-low HW
@@ -4232,93 +4247,225 @@ static void cockpit_dial_update_core(uint8_t v) {
 
 void cockpit_dial_update(void) { cockpit_dial_update_core(cpu.A); }
 
-/* hud_fill_field0 @ $8105 — if $0080 has reached $2927 just bump it; otherwise pack 5 source
- * bytes (($85)+Y) through pack_byte_to_5bit_cells into the cell bytes $93..$8F (X=4..0) and
- * advance $0080 by 5. */
+/* hud_fill_field0 @ $8105 — advance HUD text field 0.  If its source cursor ($0080) has
+ * reached the field limit ($2927) just bump the cursor.  Otherwise pack the next 5 source
+ * bytes (from the field-0 pointer $0085/$0086, indexed by the cursor) into cells $93..$8F
+ * (high cell first) via pack_byte_to_5bit_cells — threading the shared accumulator $0084 —
+ * and advance the cursor by 5.  ($0085/$0086 are the "encounter_count/row_count" cells
+ * reused here as a text-source pointer — see docs/rename.md.) */
 void hud_fill_field0(void) {
-    uint8_t y = sync_flag;
-    if (y >= hud_field0_limit) { sync_flag = (uint8_t)(y + 1); return; }
-    for (uint8_t x = 0x04; ; x--) {
-        cpu.Y = y;
-        cpu.A = bus_read(ZP_IND_Y(0x85));
-        pack_byte_to_5bit_cells();
-        mem[(uint8_t)(0x8F + x)] = cpu.A;
-        y = (uint8_t)(y + 1);
-        if (x == 0x00) break;                 /* DEX; BPL */
+    uint8_t cursor = sync_flag;                                  /* $0080 field-0 cursor */
+    if (cursor >= hud_field0_limit) { sync_flag = (uint8_t)(cursor + 1); return; }  /* $2927 */
+    uint16_t src  = (uint16_t)(encounter_count | (row_count << 8));  /* $0085/$0086 field-0 ptr */
+    uint8_t  accum = screen_ptr_hi;                              /* $0084 packing accumulator */
+    for (uint8_t cell = 0x93; ; cell--) {                        /* cells $93..$8F, high first */
+        mem[cell] = pack_byte_to_5bit_cells_core(bus_read((uint16_t)(src + cursor++)), &accum);
+        screen_ptr_hi = accum;   /* publish each step: a source read aliasing $0084 must see it live */
+        if (cell == 0x8F) break;
     }
-    sync_flag = y;
+    sync_flag = cursor;
 }
 
-/* hud_fill_field2 @ $8138 — if $0082 reached $2929 just bump it; else fill $8F-$9A from
- * ($89)+Y.  When $292D==0 do a plain ascending copy (X=5..$0B); otherwise pack each byte via
- * pack_byte_to_5bit_cells descending (X=$0B..5).  Advance $0082 by the 7 bytes consumed. */
+/* hud_fill_field2 @ $8138 — advance HUD text field 2.  If its source cursor ($0082) has
+ * reached the field limit ($2929) just bump the cursor.  Otherwise consume 7 source bytes
+ * (from the field-2 pointer $0089/$008A, indexed by the cursor) into cells $94..$9A:
+ *   - when the pack flag $292D==0 they are copied verbatim, ascending ($94..$9A);
+ *   - otherwise each is packed via pack_byte_to_5bit_cells and written descending ($9A..$94),
+ *     threading the shared accumulator $0084.
+ * Advances the cursor by 7 either way.  ($0089/$008A are the "terrain_state/terrain_scroll_
+ * counter" cells reused here as a text-source pointer — see docs/rename.md.) */
 void hud_fill_field2(void) {
-    uint8_t y = dl_ptr_hi;
-    if (y >= hud_field2_limit) { dl_ptr_hi = (uint8_t)(y + 1); return; }
-    if (mem[0x292D] == 0x00) {
-        for (uint8_t x = 0x05; x < 0x0C; x++) {       /* INX; CPX #$0C; BCC */
-            cpu.Y = y;
-            mem[(uint8_t)(0x8F + x)] = bus_read(ZP_IND_Y(0x89));
-            y = (uint8_t)(y + 1);
-        }
-    } else {
-        for (uint8_t x = 0x0B; ; x--) {               /* DEX; CPX #5; BCS */
-            cpu.Y = y;
-            cpu.A = bus_read(ZP_IND_Y(0x89));
-            pack_byte_to_5bit_cells();
-            mem[(uint8_t)(0x8F + x)] = cpu.A;
-            y = (uint8_t)(y + 1);
-            if (x == 0x05) break;
+    uint8_t cursor = dl_ptr_hi;                                  /* $0082 field-2 cursor */
+    if (cursor >= hud_field2_limit) { dl_ptr_hi = (uint8_t)(cursor + 1); return; }  /* $2929 */
+    uint16_t src = (uint16_t)(terrain_state | (terrain_scroll_counter << 8));  /* $0089/$008A ptr */
+    if (mem[0x292D] == 0x00) {                                   /* verbatim copy, ascending */
+        for (uint8_t cell = 0x94; cell <= 0x9A; cell++)
+            mem[cell] = bus_read((uint16_t)(src + cursor++));
+    } else {                                                     /* packed, high cell first */
+        uint8_t accum = screen_ptr_hi;                          /* $0084 */
+        for (uint8_t cell = 0x9A; ; cell--) {
+            mem[cell] = pack_byte_to_5bit_cells_core(bus_read((uint16_t)(src + cursor++)), &accum);
+            screen_ptr_hi = accum;   /* publish each step: a source read aliasing $0084 stays faithful */
+            if (cell == 0x94) break;
         }
     }
-    dl_ptr_hi = y;
+    dl_ptr_hi = cursor;
 }
 
-/* hud_build_text_row @ $80C5 — assemble one HUD text row.  Clear the 17 cell bytes
- * $008F-$009F, fill them from the four fields (hud_fill_field0..3), then for each cell map
- * it through the $BE00 PMG bit table, AND with the mask row (($8B)+Y) and OR the raw cell,
- * writing the result via the dest row (($8D)+Y).  Finally advance the mask pointer $8B/$8C
- * by $60 and set the dest pointer $8D/$8E = $8B/$8C + $30. */
+/* hud_build_text_row @ $80C5 — compose ONE 17-cell row of the animated overlay into the
+ * mode-D viewport field.  (Despite the "hud_build_text_row" name this is the alien-creature /
+ * overlay row blitter — see docs/rename.md.)  Steps:
+ *   1. clear the 17-byte cell buffer $8F..$9F;
+ *   2. refill it from the four field sources (hud_fill_field0..3);
+ *   3. for each cell, expand it through the $BE00 shape/bit table, AND it with the matching
+ *      byte of the SOURCE row ($8B/$8C indirect = the mask), OR the raw cell back in, and store
+ *      the result into the DEST row ($8D/$8E indirect, which is the source row + $30);
+ *   4. advance the source pointer $8B/$8C by one field row ($60) and set the dest pointer
+ *      $8D/$8E = $8B/$8C + $30 for the next call.
+ * The mask/dest are true indirect accesses (kept on bus_read/bus_write so the validation oracle
+ * stays byte-identical even when the harness aims the pointer at hardware space); the cell buffer
+ * and $0084 are always zero-page, so they use direct mem[].  The row-pointer reconstruction is
+ * hoisted out of the inner loop (it is loop-invariant) — the reason this rewrite is faster. */
 void hud_build_text_row(void) {
-    for (uint8_t x = 0x10; ; x--) {              /* clear $8F..$9F */
-        mem[(uint8_t)(0x8F + x)] = 0x00;
-        if (x == 0x00) break;
-    }
+#if defined(ROF_PLATFORM_AMIGA) && defined(ROF_FLIGHT_PROBE)
+    unsigned long _thud = 0;
+    if (mem[0x0632]) { g_alHudCalls++; _thud = rof_subclock(); }
+#endif
+    for (uint8_t cell = 0x8F; cell <= 0x9F; cell++) mem[cell] = 0x00;   /* clear cell buffer */
     hud_fill_field0();
     hud_fill_field1();
     hud_fill_field2();
     hud_fill_field3_font();
-    for (uint8_t y = 0x10; ; y--) {
-        cpu.Y = y;
-        uint8_t cell = mem[MEM_sfx_toggle_8F + y];
-        screen_ptr_hi = cell;
-        cpu.A = mem[0xBE00 + cell];              /* TAX; LDA $BE00,X */
-        cpu.A &= bus_read(ZP_IND_Y(0x8B));       /* AND ($8B)+Y */
-        cpu.A |= screen_ptr_hi;                    /* ORA $0084 */
-        bus_write(ZP_IND_Y(0x8D), cpu.A);        /* STA ($8D)+Y */
+
+    uint16_t srcRow = (uint16_t)(dl_src_index | (terrain_scroll_reload << 8));  /* $8B/$8C mask row */
+    uint16_t dstRow = (uint16_t)(step_mode_flag | (mem[0x008E] << 8));          /* $8D/$8E dest row */
+    for (uint8_t y = 0x10; ; y--) {                          /* 17 cells, high offset first */
+        uint8_t cell = mem[0x8F + y];
+        screen_ptr_hi = cell;                                /* $0084 = cell (before the mask read) */
+        uint8_t v = (uint8_t)(mem[0xBE00 + cell] & bus_read((uint16_t)(srcRow + y)));
+        v |= cell;                                           /* ORA $0084 (== cell) */
+        uint16_t dst = (uint16_t)(dstRow + y);
+        bus_write(dst, v);
 #ifdef ROF_PLATFORM_AMIGA
         /* Alien jump-scare: during the airlock-CLOSED knock ($0632, set by game_sub_7EC7) this
-         * composer blits the creature into the viewport field, which the Amiga sheds -> mirror each
+         * blitter draws the creature into the viewport field, which the Amiga sheds -> mirror each
          * byte into the paused-rescue figure overlay so renderFlightDirect composites it.  $0632 is
-         * clear for ordinary HUD text, so those draws are untouched.  (Read-only on mem[] -> the
-         * validated twin stays byte-identical for the SDL oracle, which never sets $0632.) */
+         * clear for ordinary overlay text, so those draws are untouched. */
         if (mem[0x0632]) {
-            unsigned _t = ((mem[0x8D] | (mem[0x8E] << 8)) + y) & 0xFFFFu;
-            ROF_PLOT_ALIEN(_t, cpu.A);
+            ROF_PLOT_ALIEN(dst, v);
 #ifdef ROF_FLIGHT_PROBE
-            rof_alien_crwrite(_t, cpu.A);   /* keep the capture (extent/geometry probe) */
+            rof_alien_crwrite(dst, v);      /* keep the capture (extent/geometry probe) */
 #endif
         }
 #endif
+        /* The 6502 re-reads the $8B/$8D pointer cells every pass, so a store that aliased them
+         * (only a bogus off-field pointer could — never in real play) must be reflected next pass.
+         * One cheap range test preserves the loop-invariant hoist for the real case. */
+        if (dst >= 0x8B && dst <= 0x8E) {
+            srcRow = (uint16_t)(dl_src_index | (terrain_scroll_reload << 8));
+            dstRow = (uint16_t)(step_mode_flag | (mem[0x008E] << 8));
+        }
         if (y == 0x00) break;
     }
-    /* advance $8B/$8C += $60; $8D/$8E = $8B/$8C + $30 */
-    unsigned s = (unsigned)dl_src_index + 0x60;
-    dl_src_index = (uint8_t)s;
-    if (s > 0xFF) terrain_scroll_reload = (uint8_t)(terrain_scroll_reload + 1);
-    unsigned s2 = (unsigned)dl_src_index + 0x30;
-    step_mode_flag = (uint8_t)s2;
-    mem[0x008E] = (uint8_t)(terrain_scroll_reload + (s2 > 0xFF ? 1 : 0));
+
+    /* advance $8B/$8C += $60, then $8D/$8E = $8B/$8C + $30 (both 16-bit).  Read the pointer cells
+     * fresh — a self-modifying store above may have changed them (matches the 6502, which reloads). */
+    uint16_t nextSrc = (uint16_t)((dl_src_index | (terrain_scroll_reload << 8)) + 0x60);
+    dl_src_index          = (uint8_t)nextSrc;
+    terrain_scroll_reload = (uint8_t)(nextSrc >> 8);
+    uint16_t nextDst = (uint16_t)(nextSrc + 0x30);
+    step_mode_flag = (uint8_t)nextDst;
+    mem[0x008E]    = (uint8_t)(nextDst >> 8);
+#if defined(ROF_PLATFORM_AMIGA) && defined(ROF_FLIGHT_PROBE)
+    if (_thud) g_alTHud += rof_subclock() - _thud;
+#endif
+}
+
+/* Advance one voice of the game_sub_7F85 frame sequencer (voices A and B share this shape).
+ * Walk the value table $81E8 forward one step; while still inside a run just return that value.
+ * When the run ends (value 0) pick the next run through the link table $81E2 — resetting the
+ * link index to 0 or 3 (chosen by whether the sustain counter $292E is still live) whenever it
+ * strays outside 1..3 — and return the value at the linked position.
+ *   posAddr  = the voice's table-position cell ($2924 for A, $005F for B)
+ *   loopAddr = the voice's link-index cell   ($005E for A, $2921 for B) */
+static uint8_t seq_voice_step(unsigned posAddr, unsigned loopAddr) {
+    uint8_t pos = (uint8_t)(mem[posAddr] + 1);
+    mem[posAddr] = pos;
+    uint8_t v = mem[0x81E8 + pos];
+    if (v == 0) {                                   /* run finished — follow the link */
+        uint8_t idx = mem[loopAddr];
+        if (idx == 0 || idx >= 4) { idx = mem[0x292E] ? 0 : 3; mem[loopAddr] = idx; }
+        uint8_t link = mem[0x81E2 + idx];
+        mem[posAddr] = link;
+        v = mem[0x81E8 + link];
+    }
+    return v;
+}
+
+/* game_sub_7F85 @ $7F85 — step the alien-creature animation and draw one full frame of it.
+ * (Misnamed "sfx_seq" — it is the creature animator/blitter; see docs/rename.md.)  Runs once per
+ * knock SFX step.  Three independent "voices" (A, B, C) each advance through frame tables to pick
+ * this frame's three shape indices; those index the shape-parameter tables ($81A1/$81A9/$81B1/
+ * $81B9 for A and B, $81C1/$81C9/$81D1/$81D9 for C) to load the four field-source pointers/limits
+ * consumed by hud_build_text_row; then the row-blit loop draws rows $2930..$2B of the creature.
+ * The tail retires the SFX step: while the sustain counter $292E holds it queues two ring markers
+ * ($1A/$1B); when it underflows it silences audio and hands off to the audio IRQ. */
+void game_sub_7F85(void) {
+    /* --- Voice A / B: table-walked frame values --- */
+    uint8_t frameA = seq_voice_step(0x2924, 0x005E);   /* $2924 pos, $005E link */
+    mem[0x292A] = frameA;
+    uint8_t frameB = seq_voice_step(0x005F, 0x2921);   /* $005F pos, $2921 link */
+    mem[0x292B] = frameB;
+
+    /* --- Voice C: randomly-picked frame value (avoiding the last two picks $2922/$2923) --- */
+    uint8_t vposC = (uint8_t)(mem[0x2926] + 1);
+    mem[0x2926] = vposC;
+    uint8_t frameC = mem[0x820A + vposC];
+    if (frameC == 0) {                                 /* run finished — pick a fresh target */
+        uint8_t pick;
+        do { pick = (uint8_t)((bus_read(0xD20A) & 7) + 1); }   /* POKEY RANDOM, 1..8 */
+        while (pick == mem[0x2922] || pick == mem[0x2923]);
+        mem[0x2923] = mem[0x2922];
+        mem[0x2922] = pick;
+        uint8_t link = mem[0x8201 + pick];
+        mem[0x2926] = link;
+        frameC = mem[0x820A + link];
+    }
+    mem[0x292C] = frameC;
+
+    /* --- Load the field-0/1 source pointers + cursors + limits from frames A and B --- */
+    encounter_count  = mem[0x81A1 + frameA];   /* $0085 field-0 ptr lo */
+    row_count        = mem[0x81A9 + frameA];   /* $0086 field-0 ptr hi */
+    sync_flag        = mem[0x81B1 + frameA];   /* $0080 field-0 cursor */
+    mem[0x2927]      = mem[0x81B9 + frameA];   /* field-0 limit */
+    vbi_phase        = mem[0x81A1 + frameB];   /* $0087 field-1 ptr lo */
+    vbi_flags        = mem[0x81A9 + frameB];   /* $0088 field-1 ptr hi */
+    dl_ptr_lo        = mem[0x81B1 + frameB];   /* $0081 field-1 cursor */
+    mem[0x2928]      = mem[0x81B9 + frameB];   /* field-1 limit */
+
+    /* --- Load the field-2 source from frame C.  Values >= $0C select the "packed" glyph set
+     *     (index -= $0B) and set the pack flag $292D; else the verbatim set. --- */
+    mem[0x292D] = 0x00;
+    uint8_t idxC = frameC;
+    if (idxC >= 0x0C) { idxC = (uint8_t)(idxC - 0x0B); mem[0x292D] = 0x01; }
+    terrain_state          = mem[0x81C1 + idxC];   /* $0089 field-2 ptr lo */
+    terrain_scroll_counter = mem[0x81C9 + idxC];   /* $008A field-2 ptr hi */
+    dl_ptr_hi              = mem[0x81D1 + idxC];   /* $0082 field-2 cursor */
+    mem[0x2929]           = mem[0x81D9 + idxC];   /* field-2 limit */
+    screen_ptr_lo = 0xE7;                          /* $0083 field-3 cursor (>= $A8 => field 3 idle) */
+
+    /* --- Compute the first row's source/dest pointers = rowtable[$2930] + $2931, dest = +$30 --- */
+    uint8_t rowIdx = mem[0x2930];
+    uint16_t base  = (uint16_t)(mem[MEM_row_base_lo + rowIdx] | (mem[MEM_row_base_hi + rowIdx] << 8));
+    uint16_t maskRow = (uint16_t)(base + mem[0x2931]);
+    dl_src_index          = (uint8_t)maskRow;            /* $8B */
+    terrain_scroll_reload = (uint8_t)(maskRow >> 8);     /* $8C */
+    uint16_t dstRow = (uint16_t)(maskRow + 0x30);
+    step_mode_flag = (uint8_t)dstRow;                    /* $8D */
+    mem[0x008E]    = (uint8_t)(dstRow >> 8);             /* $8E */
+
+    /* --- Draw the creature: one hud_build_text_row per field row from $2930 up to $2B --- */
+    uint8_t r = mem[0x2930];
+    do {
+        mem[0x292F] = r;
+        hud_build_text_row();
+        r++;
+    } while (r < 0x2C);
+
+    /* --- Retire this SFX step.  Only act when voice A or B is at a run boundary (0 or $0D). --- */
+    uint8_t vposA = mem[0x2924], vposB = mem[0x005F];
+    if (vposA == 0 || vposA == 0x0D || vposB == 0 || vposB == 0x0D) {
+        uint8_t sustain = (uint8_t)(mem[0x292E] - 1);
+        mem[0x292E] = sustain;
+        if (sustain & 0x80) {              /* underflowed past 0 -> end the SFX */
+            mem[0x004A] = 0x00;            /* joystick_saved = 0 */
+            silence_audio_channels();
+            audio_irq_handler();
+        } else {                            /* still sustaining -> queue ring markers $1A, $1B */
+            cpu.X = 0x1A; ring_push_marked();
+            cpu.X = (uint8_t)(cpu.X + 1); ring_push_marked();
+        }
+    }
 }
 
 /* render_bcd_counter @ $49A0 — render the 3-byte packed-BCD score ($0601-$0603,

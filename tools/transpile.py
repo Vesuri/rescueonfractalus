@@ -400,6 +400,8 @@ VALIDATE_FUNCS = {
     0x4644,  # event_sequence_dispatcher — match keycode vs $4816, dispatch by mode/slot (flight-snapshot fixture)
     # batch 5 — the pilot-rescue state machine (the hold loop lives here):
     0x7854,  # pilot_render — pilot/rescue render + rescue state machine (validated $3E==0 path; loop inspection-only)
+    # batch 6 — the alien-creature animation/blit driver (jump-scare hot path):
+    0x7F85,  # game_sub_7F85 — 3-voice frame sequencer + shape-table setup + the row-blit draw loop
 }
 VALIDATE_SUFFIX = '__t6502'
 

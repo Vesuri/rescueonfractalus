@@ -67,6 +67,13 @@ printf "  per-step avg: wait=%lu draw=%lu render=%lu ticks  (draw>>1565 => nativ
   (g_alKnockFrames ? g_alTWait/g_alKnockFrames : 0), \
   (g_alKnockFrames ? g_alTDraw/g_alKnockFrames : 0), \
   (g_alKnockFrames ? g_alTRender/g_alKnockFrames : 0)
+printf "  hud split: g_alHudCalls=%lu  g_alTHud=%lu ticks  (hud vs wrapper: draw-hud = wrapper cost)\n", \
+  g_alHudCalls, g_alTHud
+printf "  per-step: hud=%lu ticks (%lu calls/step)  wrapper=%lu ticks  hud/draw=%lu%%\n", \
+  (g_alKnockFrames ? g_alTHud/g_alKnockFrames : 0), \
+  (g_alKnockFrames ? g_alHudCalls/g_alKnockFrames : 0), \
+  (g_alKnockFrames ? (g_alTDraw-g_alTHud)/g_alKnockFrames : 0), \
+  (g_alTDraw ? (g_alTHud*100)/g_alTDraw : 0)
 printf "renderFlightDirect during knock: g_alRFD=%lu  rescueFig=%lu  cleanValid=%lu  (locates the drop-out)\n", \
   g_alRFD, g_alRFDresc, g_alRFDclean
 printf "viewport pens during knock: $DA=%02x $DB=%02x $DC=%02x $DD=%02x  attack $47=%02x $44=%02x\n", \

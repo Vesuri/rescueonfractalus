@@ -2283,6 +2283,51 @@ static int test_animate_clear_colors_timed(void) {
     return mem_fail;
 }
 
+/* game_sub_7F85 @ $7F85: the alien-creature animator/blitter.  Seed from the flight RAM snapshot
+ * (real $81xx/$82xx frame + shape tables, $073D/$0793 row tables) so the sequencer + hud_build_text_row
+ * call tree follow valid paths and terminate, then randomize the small set of per-frame sequencer
+ * STATE cells each case to exercise every voice/shape/loop path.  RANDOM ($D20A) varies per case too.
+ * The JSR chain (ring_push_marked / audio_irq_handler) leaves a dead stack byte, so ignore $0100-$01FF. */
+static int test_game_sub_7F85(void) {
+    if (!want("game_sub_7F85")) return 0;
+    static uint8_t snap[65536], pre[65536];
+    static uint16_t stack_pg[256];
+    for (int i = 0; i < 256; i++) stack_pg[i] = (uint16_t)(0x0100 + i);
+    const char *path = "a800dumps/flight_ram_0000_BFFF.bin";
+    FILE *f = fopen(path, "rb");
+    if (!f) { printf("game_sub_7F85: SKIP (%s not found)\n", path); return 0; }
+    memset(snap, 0, sizeof snap);
+    size_t got = fread(snap, 1, 0xC000, f); fclose(f);
+    if (got != 0xC000) { printf("game_sub_7F85: SKIP (short read %zu)\n", got); return 0; }
+    int mem_fail = 0, cpu_diff = 0, printed = 0;
+    /* Sequencer/loop state cells the routine reads — randomize to reach all branches.  NOTE: do
+     * NOT randomize the voice-C recent-pick cells $2922/$2923 — the faithful pick loop retries
+     * until (RANDOM&7)+1 avoids both, and a degenerate per-case LFSR low-bit cycle could then spin
+     * forever on bogus values (the oracle would hang identically — such state never occurs in play).
+     * Keep them from the snapshot, exactly as the game_sub_7EC7 fixture does (proven non-hanging). */
+    /* Randomize the voice/frame state to reach all sequencer branches, but NOT the draw geometry
+     * $2930/$2931 (the row-blit dest = rowtable[$2930]+$2931 must land in the display field; random
+     * values would scribble over the $29xx control cells — corrupting $292E into the audio-IRQ tail,
+     * a deep spinwait routine shared verbatim by both sides).  Keep them from the snapshot (real
+     * in-field addresses), exactly as the game_sub_7EC7 fixture does. */
+    const uint16_t st[] = { 0x2924, 0x005E, 0x005F, 0x2921, 0x2926,
+                            0x292A, 0x292B, 0x292C };
+    /* Keep the sustain counter $292E in 1..$80 so the retire-tail takes the ring-push branch (the
+     * in-game per-step path), never the underflow handoff to the spinwait-heavy audio_irq_handler. */
+    set_ignore(stack_pg, 256);
+    for (int t = 0; t < 20000; t++) {
+        memcpy(pre, snap, sizeof pre);
+        for (unsigned k = 0; k < sizeof st / sizeof st[0]; k++) pre[st[k]] = (uint8_t)(xs() & 0xFF);
+        pre[0x292E] = (uint8_t)(xs() % 0x80 + 1);    /* 1..$80 -> ($292E-1) stays >=0, no underflow */
+        mem_fail += diff_run("game_sub_7F85", pre, zero_cpu(),
+                             game_sub_7F85, game_sub_7F85__t6502, t, &printed, &cpu_diff);
+    }
+    set_ignore(0, 0);
+    printf("game_sub_7F85: %d cases (flight snapshot, randomized seq state), %d mem mismatch (must be 0), %d cpu diffs\n",
+           20000, mem_fail, cpu_diff);
+    return mem_fail;
+}
+
 /* game_sub_7EC7 @ $7EC7: force $003E=0 so the fixture exercises the setup + descending-pitch
  * sweep + tail (the diffable path).  Seed from the flight RAM snapshot so game_sub_7F85's
  * table-driven call tree ($81xx/$82xx tables, $80C5 plot loop, $8237) follows real paths and
@@ -2598,6 +2643,7 @@ int main(int argc, char **argv) {
     }
     fails += test_animate_clear_colors_timed();
     fails += test_game_sub_7EC7();
+    fails += test_game_sub_7F85();
     fails += test_event_sequence_dispatcher();
     fails += test_pilot_render();
     /* level_clear_fx_loop: frame-driven (wait_frames_1 ×75) — enable the RTCLOK tick so both
