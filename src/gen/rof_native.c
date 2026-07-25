@@ -4319,6 +4319,15 @@ void hud_build_text_row(void) {
 
     uint16_t srcRow = (uint16_t)(dl_src_index | (terrain_scroll_reload << 8));  /* $8B/$8C mask row */
     uint16_t dstRow = (uint16_t)(step_mode_flag | (mem[0x008E] << 8));          /* $8D/$8E dest row */
+#ifdef ROF_PLATFORM_AMIGA
+    /* Alien jump-scare mirror geometry (see the block below).  The 17 cells are CONSECUTIVE field
+     * addresses and dstRow is loop-invariant, so the field-byte -> overlay (row,col) map needs only
+     * ONE divide per hud-row (figR0/figB0 from the row base) instead of two per cell — the cell's
+     * col is figB0+y with a single 96-wrap.  (Was ROF_PLOT_ALIEN doing rel/96 + rel%96 per cell.) */
+    const int alienKnock = (mem[0x0632] != 0) && (g_figP1 != 0);
+    int figBase = (int)dstRow - 0x10A4, figR0 = 0, figB0 = 0;
+    if (alienKnock) { figR0 = figBase / 96; figB0 = figBase % 96; }
+#endif
     for (uint8_t y = 0x10; ; y--) {                          /* 17 cells, high offset first */
         uint8_t cell = mem[0x8F + y];
         screen_ptr_hi = cell;                                /* $0084 = cell (before the mask read) */
@@ -4331,8 +4340,17 @@ void hud_build_text_row(void) {
          * blitter draws the creature into the viewport field, which the Amiga sheds -> mirror each
          * byte into the paused-rescue figure overlay so renderFlightDirect composites it.  $0632 is
          * clear for ordinary overlay text, so those draws are untouched. */
-        if (mem[0x0632]) {
-            ROF_PLOT_ALIEN(dst, v);
+        if (alienKnock) {
+            int b = figB0 + y, r = figR0;
+            if (b >= 96) { b -= 96; r++; }                   /* single 96-wrap (y<=16, figB0<96) */
+            if ((unsigned)r < 43u && (unsigned)b < 40u) {
+                int i = r * 40 + b;
+                g_figM[i]  = 0xFF;
+                g_figP1[i] = kModeDP1[v];
+                g_figP2[i] = kModeDP2[v];
+                if (r < g_figRowLo) g_figRowLo = r;
+                if (r > g_figRowHi) g_figRowHi = r;
+            }
 #ifdef ROF_FLIGHT_PROBE
             rof_alien_crwrite(dst, v);      /* keep the capture (extent/geometry probe) */
 #endif
@@ -4344,6 +4362,9 @@ void hud_build_text_row(void) {
         if (dst >= 0x8B && dst <= 0x8E) {
             srcRow = (uint16_t)(dl_src_index | (terrain_scroll_reload << 8));
             dstRow = (uint16_t)(step_mode_flag | (mem[0x008E] << 8));
+#ifdef ROF_PLATFORM_AMIGA
+            if (alienKnock) { figBase = (int)dstRow - 0x10A4; figR0 = figBase / 96; figB0 = figBase % 96; }
+#endif
         }
         if (y == 0x00) break;
     }
