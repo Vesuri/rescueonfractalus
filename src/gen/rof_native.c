@@ -2879,6 +2879,19 @@ volatile uint8_t g_forceAlienRescue =
 #else
     0;
 #endif
+
+/* Debug test aid — auto-open the airlock at the phase-4 knock so a headless run can reach the
+ * alien-attack REVEAL without an interactive A-key press.  The reveal is gated on $003C != 0
+ * (event_sequence_dispatcher slot-1 first press does INC $003C 0->1 + lights the airlock cell
+ * $3388); this replicates exactly that first press, on the frame the knock is reached.  Default
+ * 0; `make FORCE_AIRLOCK=1` (or poke at runtime) turns it on.  Amiga-only so the oracle is
+ * unaffected.  Use with FORCE_ALIEN=1 to designate the alien in the first place. */
+volatile uint8_t g_forceAirlockOpen =
+#ifdef ROF_FORCE_AIRLOCK_OPEN
+    1;
+#else
+    0;
+#endif
 #endif
 
 #if defined(ROF_PLATFORM_AMIGA) && defined(ROF_FLIGHT_PROBE)
@@ -3101,6 +3114,15 @@ L_79a8:
         mem[0x007A] = 0x00;                              /* 79b0 */
     }
     /* L_79b2 */
+#ifdef ROF_PLATFORM_AMIGA
+    /* FORCE-AIRLOCK test aid: at the knock (phase 4, alien-designated, systems off, airlock still
+     * closed) simulate the A-key first press so the headless probe reaches the reveal below instead
+     * of stalling in game_sub_7EC7's knock-SFX loop.  Equivalent to the dispatcher slot-1 path. */
+    if (g_forceAirlockOpen && mem[0x281E] != 0 && clear_colors_done_003E != 0 && anim_flag_003C == 0) {
+        anim_flag_003C = 0x01;                           /* INC $003C (0 -> 1) */
+        mem[0x3388] = 0x34;                              /* light the Air Lock cockpit cell */
+    }
+#endif
     if (mem[0x281E] != 0) {                              /* 79b2/79b5 */
         cpu.A = anim_flag_003C;                          /* 79b7 */
         if (cpu.A == 0) {                                /* 79b9 */

@@ -202,6 +202,15 @@ ifdef FORCE_ALIEN
 EXTRA_DEFINES += -DROF_FORCE_ALIEN_RESCUE
 endif
 
+# Debug test aid: `make FORCE_AIRLOCK=1` auto-opens the airlock at the phase-4 knock
+# (rof_native.c g_forceAirlockOpen) so a HEADLESS run reaches the alien-attack reveal
+# without an interactive A-key press.  Combine with FORCE_ALIEN=1 to run the whole
+# jump-scare test headlessly (FORCE_ALIEN designates the alien; FORCE_AIRLOCK opens the
+# airlock that gates the reveal).  OFF by default; also runtime-pokable.
+ifdef FORCE_AIRLOCK
+EXTRA_DEFINES += -DROF_FORCE_AIRLOCK_OPEN
+endif
+
 # Objects (flattened into obj/ by basename).
 CXX_OBJS       := $(addprefix obj/,$(notdir $(CXX_SRCS:.cpp=.o)))
 CORE_C_OBJS    := $(addprefix obj/,$(notdir $(CORE_C_SRCS:.c=.o)))

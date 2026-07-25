@@ -20,6 +20,7 @@ set pagination off
 set confirm off
 printf "==== ALIEN-ATTACK RENDER PROBE ====\n"
 printf "g_forceAlienRescue = %u   (must be 1)\n", g_forceAlienRescue
+printf "g_forceAirlockOpen = %u   (1 => airlock auto-opened at the knock; reveal reachable headless)\n", g_forceAirlockOpen
 printf "-- rescue-wide (whole systems-off rescue, $003E!=0) --\n"
 printf "g_alRescueSeen=%u  g_alRescueFrames=%lu  maxPhase($3D)=%02x  airlock($3C) seen=%u max=%02x\n", \
   g_alRescueSeen, g_alRescueFrames, g_alMaxPhase, g_alAirlock, g_alAirlockMax
