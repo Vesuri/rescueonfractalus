@@ -194,6 +194,10 @@ extern int g_figRowLo, g_figRowHi;
  * mask=$FF) reproduces the field exactly.  Decode V -> plane1/plane2 via the same kModeDP1/kModeDP2
  * tables renderViewportModeD uses.  Cleared each creature frame by ROF_CLEAR_FIG (in game_sub_7EC7). */
 extern uint8_t kModeDP1[256]; extern uint8_t kModeDP2[256];
+#ifdef ROF_FLIGHT_PROBE
+extern volatile unsigned long g_alKnockFrames;   /* fwd decls (defined in the probe block below) */
+extern volatile unsigned char g_alPen[6];
+#endif
 #define ROF_PLOT_ALIEN(addr, V) do { \
     if (g_figP1) { \
         int _rel = (int)(addr) - 0x10A4; \
@@ -1579,6 +1583,11 @@ void game_sub_7EC7(void) {
         /* Fresh creature overlay for this knock frame — after the render above composited the
          * previous frame, before game_sub_7F85 (via hud_build_text_row/ROF_PLOT_ALIEN) redraws it. */
         ROF_CLEAR_FIG();
+#ifdef ROF_FLIGHT_PROBE
+        g_alKnockFrames++;
+        g_alPen[0]=mem[0x00DA]; g_alPen[1]=mem[0x00DB]; g_alPen[2]=mem[0x00DC];
+        g_alPen[3]=mem[0x00DD]; g_alPen[4]=mem[0x0047]; g_alPen[5]=mem[0x0044];
+#endif
 #endif
         game_sub_7F85();
     } while (clear_colors_done_003E != 0);
@@ -2999,6 +3008,12 @@ volatile int            g_alCrRowStride = 0;      /* $073D[1] - $073D[0] (row st
 volatile unsigned char  g_alCrPos0     = 0;       /* $2930 at first write (start row idx) */
 volatile unsigned char  g_alCrPos1     = 0;       /* $2931 at first write (col offset) */
 volatile unsigned char  g_alCrSeen     = 0;       /* creature blit ran at least once */
+/* Colour diagnosis: the viewport pen ramp ($00DA-$DD, read by updateFlightCopper into the flight
+ * copper color01/02/03) + the attack colour ($0047) + $0044, snapshot each knock frame.  If these
+ * render the creature's pens (2 = $DA, 3 = $DB, ...) near the sky/background colour, the shape is
+ * composited but invisible until the normal palette returns (the observed restore-frame flash). */
+volatile unsigned char  g_alPen[6];               /* [0]$DA [1]$DB [2]$DC [3]$DD [4]$47 [5]$44 */
+volatile unsigned long  g_alKnockFrames = 0;      /* game_sub_7EC7 loop iterations (knock frames) */
 #else
 #define ROF_ALIEN_PROBE()       ((void)0)
 #define ROF_ALIEN_PLOT()        ((void)0)

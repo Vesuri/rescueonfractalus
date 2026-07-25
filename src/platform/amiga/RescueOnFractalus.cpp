@@ -1484,6 +1484,7 @@ extern "C" volatile unsigned char  g_rf3E[RF_RING_N]    = {0};   // mem[0x3E]
 extern "C" volatile unsigned char  g_rfDisp[RF_RING_N]  = {0};   // flightDisplayed id
 extern "C" volatile unsigned char  g_rfBack[RF_RING_N]  = {0};   // back id (buffer to paint)
 extern "C" volatile unsigned char  g_rfClr[RF_RING_N]   = {0};   // flightClearPending id
+extern "C" volatile unsigned long  g_alComp = 0;   // live creature composites during the knock ($0632)
 extern "C" volatile unsigned char  g_rfFresh[RF_RING_N] = {0};   // g_flightTerrainFresh
 extern "C" volatile short          g_rfFigLo[RF_RING_N] = {0};   // g_figRowLo
 extern "C" volatile short          g_rfFigHi[RF_RING_N] = {0};   // g_figRowHi
@@ -1611,6 +1612,12 @@ void RescueOnFractalus::renderFlightDirect()
                 }
             }
             // Draw the new figure (replace only the recorded opaque pixels), and record its box.
+#if defined(ROF_FLIGHT_PROBE)
+            // Alien-colour diagnosis: count live composites of a non-empty overlay during the
+            // knock ($0632).  >0 confirms the creature IS composited+flipped live (so invisibility
+            // is a palette issue, not a render/flip one).
+            { extern volatile unsigned long g_alComp; if (mem[0x0632] && g_figRowHi >= g_figRowLo) g_alComp++; }
+#endif
             if (g_figRowHi >= g_figRowLo) {
                 for (int r = g_figRowLo; r <= g_figRowHi; r++) {
                     const uint8_t* fm = s_figM  + r * 40;

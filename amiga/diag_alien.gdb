@@ -55,6 +55,12 @@ printf "g_alCrAddr range = $%04X .. $%04X   valOR=$%02x  (which mode-D pixel bit
 printf "g_alCrRowBase=$%04X  rowStride=%d  pos $2930=%02x $2931=%02x\n", \
   g_alCrRowBase, g_alCrRowStride, g_alCrPos0, g_alCrPos1
 printf "  (field base $1010? stride 96? -> row=(addr-base)/stride; half=(addr-base)%%stride)\n"
+printf "-- creature COLOUR diagnosis (why invisible live) --\n"
+printf "g_alKnockFrames=%lu  g_alComp=%lu  (comp>0 => creature IS composited+flipped LIVE => palette issue)\n", \
+  g_alKnockFrames, g_alComp
+printf "viewport pens during knock: $DA=%02x $DB=%02x $DC=%02x $DD=%02x  attack $47=%02x $44=%02x\n", \
+  g_alPen[0], g_alPen[1], g_alPen[2], g_alPen[3], g_alPen[4], g_alPen[5]
+printf "  (Amiga color02<-$DA, color03<-$DB; if creature pens ~= sky/background, shape is invisible)\n"
 printf "--- live state right now ---\n"
 printf "  0633=%02x 003C=%02x 003D=%02x 003E=%02x\n", \
   mem[0x0633], mem[0x003C], mem[0x003D], mem[0x003E]
