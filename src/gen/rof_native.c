@@ -381,12 +381,19 @@ void clear_terrain_column_core(uint8_t startCol) {
      * walks column-major with byte-wide INX wrap; here we clear each row's 42 contiguous
      * columns in one batched run (row-major), splitting only if the byte column index
      * wraps past $FF (startCol > $D6 — never happens in flight, kept for bit-exactness). */
+#ifndef ROF_PLATFORM_AMIGA
+    /* The mode-D field BODY is SHED on Amiga: its only reader
+     * (fill_terrain_silhouette) is #ifndef ROF_PLATFORM_AMIGA, ROF_FIELD_PLOT is a
+     * no-op, and renderFlightDirect reads only the band cell $2094 (a scattered cell
+     * cleared below, NOT in body columns 0-41).  So skip this 44-row x 42-col clear on
+     * Amiga (~7% of the flight frame, cleared twice/frame).  SDL keeps it -> validate. */
     unsigned head = (startCol + 0x2Au <= 0x100u) ? 0x2Au : (0x100u - startCol);
     unsigned tail = 0x2Au - head;
     for (uint16_t row = 0x1010; row <= 0x2030; row += 0x60) {
         zero_run(mem + row + startCol, head);
         if (tail) zero_run(mem + row, tail);
     }
+#endif
 
     /* $ADF0-$AE52: scattered object-table cells, indexed by the ORIGINAL column. */
     static const uint16_t cells[] = {
