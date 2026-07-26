@@ -323,6 +323,12 @@ static bool    s_flightRescuePause = false;
 // edge frame).  s_prevRescueActive tracks "$3E was nonzero last frame".
 static bool    s_prevRescueActive   = false;
 static bool    s_resumeRestorePend  = false;
+// One-shot latched at the SAME $3E nonzero->zero (systems-back-on) edge: on resume, restore clean
+// terrain into BOTH terrain buffers AND clear the figure overlay, so a subsequent rescue pause can't
+// display a stale figure (esp. the alien creature) for a frame before its own figure composites.
+// Keyed on the true edge (not every non-rescueFigure frame) so the pilot approach's mid-zoom $3D
+// dips — where rescueActive stays set — never trigger it.  Fires for ANY rescue (alien or pilot).
+static bool    s_resumeClearPend    = false;
 // Called by the terrain draw (rof_native.c) before its first dot write, to ensure the kicked
 // off-screen-buffer clear has finished (the dots OR into freshly-zeroed plane2).
 extern "C" void rof_flight_wait_dotclear(void) { AmigaHardware::blitterWait(); }
@@ -1606,7 +1612,7 @@ void RescueOnFractalus::renderFlightDirect()
     // the restore there would copy STALE s_clean (from a prior rescue, or empty) over them, which is
     // the "resume shows a stale/incorrect frame" bug.  Only restore when a real rescue-figure pause
     // actually captured s_clean.
-    if (s_prevRescueActive && !rescueActive && s_cleanValid) s_resumeRestorePend = true;
+    if (s_prevRescueActive && !rescueActive && s_cleanValid) { s_resumeRestorePend = true; s_resumeClearPend = true; }
     s_prevRescueActive = rescueActive;
 #if defined(ROF_FLIGHT_PROBE) && !defined(ROF_PROFILE_NORING)
     // Record this entry into the rescue diagnostic ring (see the block above renderFlightDirect).
@@ -1731,6 +1737,29 @@ void RescueOnFractalus::renderFlightDirect()
         return;
     }
     s_flightRescuePause = false;   // not in the rescue pause — resume normal clears
+    // Rescue pause just ended (systems back on): wipe every trace of the pause's figure so the NEXT
+    // rescue can't flash a stale one for a frame.  Two parts, both needed:
+    //  1. Restore clean frozen terrain into BOTH terrain buffers (s_cleanBmp still valid here, reset
+    //     just below) — they hold the figure composited during the pause.  On the blitter; the
+    //     displayed buffer is restored to the terrain it should show on resume (harmless seam).
+    //  2. Clear the figure OVERLAY (s_figBmp/mask) + reset the extents and per-buffer erase boxes.
+    //     After a knock the overlay still holds the alien silhouette (ROF_CLEAR_FIG only clears at the
+    //     START of the next draw), and the next rescue's first composite can run BEFORE that draw
+    //     populates it — compositing the stale alien for one frame.  This was the actual flash (part 1
+    //     alone did NOT fix it — measured).  Keyed on the true systems-back-on edge (s_resumeClearPend)
+    //     so the pilot approach's mid-zoom $3D dips never trigger it.
+    if (s_resumeClearPend) {
+        s_resumeClearPend = false;
+        if (s_cleanValid) {
+            terrainBitmap->copy(*s_cleanBmp, 0, 0, 0, 0, kW, 47);
+            terrainBitmapBack->copy(*s_cleanBmp, 0, 0, 0, 0, kW, 47);
+        }
+        if (s_figBmp) { s_figBmp->clear(); s_figMaskBmp->clear(); }
+        AmigaHardware::blitterDrain();     // terrain restore + overlay clear both done before continuing
+        g_figRowLo = 99; g_figRowHi = -1; g_figColLo = 40; g_figColHi = -1;
+        s_boxLo[0] = 99; s_boxHi[0] = -1; s_boxLo[1] = 99; s_boxHi[1] = -1;
+        s_boxColHi[0] = -1; s_boxColHi[1] = -1;
+    }
     s_cleanValid = false;          // re-snapshot on the next rescue
 
     // Preserve the last terrain frame across rescue PAUSES (e.g. the knock phase).  When the main

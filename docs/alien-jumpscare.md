@@ -187,6 +187,15 @@ build; `make validate FN=hud` green (all changes `#ifdef ROF_PLATFORM_AMIGA`).
   mode-D value is nonzero) → value-0 pixels transparent → `s_cleanBmp` terrain shows through.  (Pilot `ROF_PLOT_FIG`
   already built a per-pixel mask, so it was fine.)  Caveat if ever needed: this treats value-0 as transparent; the
   fully faithful mask would derive opacity from the `$BE00[cell]` transparency table + shape byte.
+- **✅ STALE-FIGURE FLASH FIX (user-confirmed).** Switching systems off for a NEW rescue could flash the
+  PREVIOUS rescue's alien for one frame, before the run-up animation.  Cause = the figure OVERLAY
+  (`s_figBmp`/`s_figMaskBmp`): after a knock it still holds the alien silhouette (ROF_CLEAR_FIG only clears at
+  the START of the next draw), and the new rescue's first composite can run BEFORE its first figure draw
+  populates the overlay → composites the stale alien.  (The terrain double-buffers ALSO retain the composited
+  figure — measured: restoring only them did NOT fix it.)  Fix: on the true systems-back-on edge
+  (`$3E` nonzero→zero, `s_resumeClearPend`), restore clean terrain into BOTH buffers from `s_cleanBmp` AND
+  `clear()` the overlay + reset the figure extents / per-buffer erase boxes.  Keyed on the edge (not every
+  non-rescueFigure frame) so the pilot approach's mid-zoom `$3D` dips don't trigger it; fires for any rescue.
 - **★ NEXT = the DRAW (`hud_build_text_row`), nothing else moves the needle.**  Per-cell creature blit into the
   mode-D field (17 cells × ~44 rows) + the 4 hud_fill_field calls/row + the Amiga overlay mirror.  Levers: (a) the
   field `bus_write` is DEAD on the Amiga (the body is shed; only the overlay mirror matters) → skip it during the
