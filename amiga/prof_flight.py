@@ -197,15 +197,22 @@ def main():
                 base = int(ln.split()[0], 16); break
         if base is None:
             sys.exit(f"could not find ELF symbol base for {target}")
+        # addr2line -ife gives the INLINE stack (innermost first): func1 / file1:line1 /
+        # func2 / file2:line2 ...  Big -O3 apexes (game_main_loop, terrain_draw_frame) inline
+        # their leaves, so the innermost frame is the real hot function — attribute to it, and
+        # show the enclosing inline chain so you can see "zero_run <- clear_terrain_column_core".
         loc = collections.Counter()
         for off in offs:
-            r = subprocess.run(["m68k-amiga-elf-gdb", "-q", "-batch",
-                                "-ex", "info line *0x%x" % (base + off), ELF],
-                               capture_output=True, text=True).stdout
-            m = re.search(r'Line (\d+) of "([^"]+)"', r)
-            loc[(m.group(2).split("/")[-1], m.group(1)) if m else ("?", "?")] += 1
-        for (f, l), c in loc.most_common():
-            print(f"  {c:3d}  {f}:{l}")
+            out = subprocess.run(["m68k-amiga-elf-addr2line", "-ife", ELF, "0x%x" % (base + off)],
+                                 capture_output=True, text=True).stdout.strip().splitlines()
+            funcs = [out[j] for j in range(0, len(out), 2)]
+            flines = [out[j] for j in range(1, len(out), 2)]
+            inner = funcs[0] if funcs else "?"
+            line0 = flines[0].split("/")[-1] if flines else "?"
+            chain = " <- ".join(funcs[:3])
+            loc[(inner, line0, chain)] += 1
+        for (fn, l, chain), c in loc.most_common():
+            print(f"  {c:3d}  {fn} @ {l}   [{chain}]")
         return
 
     by_sym = collections.Counter(fname(sl) for _, _, sl in flight)
