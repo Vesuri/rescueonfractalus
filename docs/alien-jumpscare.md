@@ -170,10 +170,22 @@ build; `make validate FN=hud` green (all changes `#ifdef ROF_PLATFORM_AMIGA`).
 - **Pointer-walk for SEQUENTIAL loops (user-directed).** A sequential `for r … buf[kRow120[r]]` is better as a
   walked pointer (`p += 120`) than even a table read.  Converted rfPlaneSum, the resume-restore plane2 copy, the
   object-overlay apply, the crosshair stems, and the compass decode.  Tables stay for the non-sequential macros.
-- **⚠ Still DRAW-bound:** these trim the composite/clear but the step is dominated by `hud_build_text_row` (~65%).
-  Remaining levers: (1) **overlap** — double-buffer `s_figBmp`/mask + KICK the composite without draining so it runs
-  during the next step's CPU draw (needs the next ROF_CLEAR_FIG to not race the in-flight read); (2) the
-  **pre-rendered chip-Bitmap creature frames** rework (removes the per-cell CPU field blit entirely).
+- **✅ VERIFIED (PROFILE_NORING=1, 50 steps, user-run) — the composite is now CHEAP and the render is a non-issue.**
+  ⚠ **All the earlier "~119/116 ms composite" numbers were PROBE POLLUTION**: with the `RF_RING` debug ring on,
+  `renderFlightDirect` runs `rfPlaneSum` ×6 (six full 47×40 volatile scans) per frame ≈ 85% of the "render" sample.
+  With `PROFILE_NORING=1` the real split is:
+  - **`composite+drain` (blitter, `g_alTComp`) = 72 ticks ≈ 4.6 ms/step** (was a ~136 ms CPU loop — blitter +
+    narrow-rect DID work).  Bitmap addrs `fig=$15188 clean=$12578 mask=$15EF8`, all `<0x200000` → **blitter path
+    confirmed** (no CPU fallback).
+  - **render total = 343 ticks ≈ 22 ms/step** (scene 331: flipWait 248 ≈ 16 ms is now the biggest render cost,
+    composite 72, misc ~11).
+  - **DRAW = 4260 ticks ≈ 271 ms/step (~93% of the step); `hud_build_text_row` ≈ 104% of it.**  THE bottleneck.
+- **★ NEXT = the DRAW (`hud_build_text_row`), nothing else moves the needle.**  Per-cell creature blit into the
+  mode-D field (17 cells × ~44 rows) + the 4 hud_fill_field calls/row + the Amiga overlay mirror.  Levers: (a) the
+  field `bus_write` is DEAD on the Amiga (the body is shed; only the overlay mirror matters) → skip it during the
+  knock; (b) hand-asm the row composer; (c) the big one — **pre-rendered chip-Bitmap creature frames** blitted
+  straight in (removes the per-cell CPU work entirely).  The render side (composite/flip) is done — do NOT keep
+  optimising it (it's ~7% of the step).
 - **⚠ TODO (user-directed, tracked): per-pixel MULTIPLIES in the plot macros.** `r*40`/`r*80`/`r*120` per cell is
   a 68000 `mulu` in hot loops. Build GLOBAL mul-tables for the common widths (40/80/120) and route every plot/
   composite index through them. Audit `ROF_PLOT_*`, the hud inline, `ROF_PLOT_DOT`, etc.

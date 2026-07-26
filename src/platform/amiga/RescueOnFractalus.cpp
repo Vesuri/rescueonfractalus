@@ -950,6 +950,11 @@ void RescueOnFractalus::starVblankUpdate()
 static uint8_t s_dec2bppP1[256], s_dec2bppP2[256];
 static bool s_dec2bppReady = false;
 static void buildDecode2bppLut();
+#ifdef ROF_FLIGHT_PROBE
+// Rescue-figure/clean/mask Bitmap chip addresses (want <0x200000 => the combineWithMask blitter
+// path is taken, not the slow CPU fallback).  Defined before initialize() so it can set them.
+extern "C" volatile uint32_t g_figBmpAddr = 0, g_cleanBmpAddr = 0, g_maskBmpAddr = 0;
+#endif
 void RescueOnFractalus::initialize()
 {
     titleBitmap   = Bitmap::allocate(kW, kTitleHeight,   kBP2, true);
@@ -975,6 +980,10 @@ void RescueOnFractalus::initialize()
     g_figP1 = (uint8_t*)s_figBmp->data;          // plane1 base (row stride 80)
     g_figP2 = (uint8_t*)s_figBmp->data + 40;     // plane2 base (offset 40, row stride 80)
     g_figM  = (uint8_t*)s_figMaskBmp->data;      // mask (row stride 40)
+#ifdef ROF_FLIGHT_PROBE
+    g_figBmpAddr = (uint32_t)s_figBmp->data; g_cleanBmpAddr = (uint32_t)s_cleanBmp->data;
+    g_maskBmpAddr = (uint32_t)s_figMaskBmp->data;
+#endif
     cockpitBitmap = Bitmap::allocate(kW, kCockpitH, kBP3, true);  // 3bp: bit-7 chars → red
     tunnelBitmap  = Bitmap::allocate(kW, kTerrainHeight, kBP3, true);  // door-gap reveal
     titleScreenBitmap = Bitmap::allocate(kW, kH, kBP3, true);  // 3bp: black + COLPF0-3 text pens
@@ -1523,6 +1532,7 @@ extern "C" volatile unsigned char  g_rfDisp[RF_RING_N]  = {0};   // flightDispla
 extern "C" volatile unsigned char  g_rfBack[RF_RING_N]  = {0};   // back id (buffer to paint)
 extern "C" volatile unsigned char  g_rfClr[RF_RING_N]   = {0};   // flightClearPending id
 extern "C" volatile unsigned long  g_alComp = 0;   // live creature composites during the knock ($0632)
+extern "C" volatile unsigned long  g_alTComp = 0;    // ticks in the composite + blitterDrain (excl. flip wait), knock
 extern "C" volatile unsigned long  g_alRFD = 0;      // renderFlightDirect entries during the knock
 extern "C" volatile unsigned long  g_alRFDresc = 0;  // ...of those, rescueFigure true
 extern "C" volatile unsigned long  g_alRFDclean = 0; // ...of those, s_cleanValid true
@@ -1669,6 +1679,9 @@ void RescueOnFractalus::renderFlightDirect()
             // (rows AND columns) instead of full 320px, cutting the blitter work to the figure's actual
             // footprint.  Only planes 1+2 are touched (s_figBmp is 2-plane); plane3 (windscreen frame)
             // stays the clean seed.  Runs on the blitter, parallel to the CPU + the 50Hz ISR.
+#ifdef ROF_FLIGHT_PROBE
+            unsigned long _tc0 = rof_subclock();
+#endif
             int lo = g_figRowLo, hi = g_figRowHi;                 // current figure row extent
             int wlo = (g_figColHi >= g_figColLo) ? (g_figColLo >> 1) : 20;  // -> word columns (0..19)
             int whi = (g_figColHi >= g_figColLo) ? (g_figColHi >> 1) : -1;
@@ -1700,6 +1713,9 @@ void RescueOnFractalus::renderFlightDirect()
             // per plane (+ a possible seed copy), and blitterWait() returns after only the FIRST
             // completes — flipping then would show a half-composited buffer (missing plane/rows).
             AmigaHardware::blitterDrain();  // composite (+ any seed copy) fully done before the flip
+#ifdef ROF_FLIGHT_PROBE
+            if (mem[0x0632]) g_alTComp += rof_subclock() - _tc0;   // composite+drain only (excl. flip wait)
+#endif
             // Flip via the VBI (same torn-pointer-safe protocol as the normal render path).
             flightPendingFlip = back;
             flightSwapPending = true;

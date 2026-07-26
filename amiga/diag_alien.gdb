@@ -79,8 +79,12 @@ printf "renderFlightDirect during knock: g_alRFD=%lu  rescueFig=%lu  cleanValid=
 printf "  render split: scene(composite+flipwait)=%lu  frameSync(vbi==last wait)=%lu ticks/step\n", \
   (g_alKnockFrames ? g_alTRScene/g_alKnockFrames : 0), \
   (g_alKnockFrames ? g_alTRIdle/g_alKnockFrames : 0)
-printf "    of scene: flipWait(while flightSwapPending)=%lu ticks/step  (rest = the composite itself)\n", \
+printf "    of scene: flipWait(while flightSwapPending)=%lu ticks/step  (rest = composite + OTHER renderFrame work)\n", \
   (g_alKnockFrames ? g_alTFlipWait/g_alKnockFrames : 0)
+printf "    of scene: composite+drain(blitter)=%lu ticks/step  => scene - flipWait - composite = OTHER renderFrame work\n", \
+  (g_alKnockFrames ? g_alTComp/g_alKnockFrames : 0)
+printf "    bitmap addrs (want <0x200000 => blitter path, not CPU fallback): fig=$%08X clean=$%08X mask=$%08X\n", \
+  g_figBmpAddr, g_cleanBmpAddr, g_maskBmpAddr
 printf "    flightVblankSwap during knock: ran=%lu  didFlip=%lu  (ran/step=%lu; if ran>>steps ISR is live)\n", \
   g_alVSwapRun, g_alVSwapCleared, (g_alKnockFrames ? g_alVSwapRun/g_alKnockFrames : 0)
 printf "viewport pens during knock: $DA=%02x $DB=%02x $DC=%02x $DD=%02x  attack $47=%02x $44=%02x\n", \
