@@ -9115,6 +9115,112 @@ static void tunnel_prebuild_replay_exit(void) {
 }
 #endif
 
+/* cockpit_display @ $587B — render the Standby / Title-Screen scoreboard, then hand off to the
+ * idle input loop.  This is the apex of the Standby scene: the "cockpit" is a static template
+ * blitted into screen RAM overlaid with live score / high-score / level / initials digits, and
+ * input is polled by the loop this tail-calls.  NOT in `make validate` — it tail-calls the
+ * live-input standby_level_select_loop / sound_retrigger_random loops and busy-waits on the
+ * $00E5 latch, which would hang the headless harness; verified on FS-UAE by behaviour.
+ *
+ * Game-state block at $0600:  $0600-$0603 = current score (4 bytes, most-significant first),
+ * $0604 = level, $0605-$0608 = high score, $060A = a secondary counter.  Digits are rendered into
+ * Title-Screen RAM: $36A8 (counter), $36B7 (current score), $36CB (high score), $37F5 (level).
+ *
+ * cpu.A/cpu.Y are set only at the callee boundaries whose 6502 entry actually reads them
+ * (bin_to_bcd / render_bcd_* / emit_bcd_byte_digits consume A; music_init_state consumes Y). */
+void cockpit_display(void) {
+    /* Blit the 120-byte Standby template ($5A9F..$5B16) into Title-Screen RAM ($365B..$36D2).
+     * (The 6502 copies offsets $78..$01 downward; offset 0 is deliberately left untouched.) */
+    for (int y = 0x78; y >= 1; y--)
+        mem[0x365A + y] = mem[0x5A9E + y];
+    zp_flag_03   = 0x00;    /* $03 = 0 (the copy loop leaves Y at 0) */
+    joystick_raw = 0xFF;    /* $49 = neutral joystick latch */
+
+    int skip_hiscore = 0;
+    uint8_t e5 = mem[0x00E5];         /* game-active / results latch (unnamed $00E5) */
+    if (e5 != 0) {
+        /* Results / level-start entry: stash the latch, pause ~60 frames, (re)load the tune, and
+         * skip the high-score panel while a level is actually in progress ($0004 != 0). */
+        game_var_37F4 = e5;
+        cpu.A = 0xFF;     /* wait_frames_save_a PHAs the caller's A (still $FF from above) */
+        cpu.Y = e5;       /* survives into music_init_state, which indexes its song header by Y */
+        wait_frames_save_a();
+        music_init_state();
+        skip_hiscore = (level_or_state != 0);
+    } else if (game_var_E4 == 0) {
+        /* Plain standby (not mid name-entry): restore the display and clear the banner threshold. */
+        restore_display_if_E7();
+        altitude_threshold = 0x00;
+    }
+
+    if (!skip_hiscore) {
+        /* High-score update: if the current score ($0600..$0603) beats the stored high score
+         * ($0605..$0608), copy it over.  Unsigned big-endian compare from the top byte down;
+         * the first differing byte decides, so break either way once one is found. */
+        for (int y = 0; y < 4; y++) {
+            uint8_t cur = mem[0x0600 + y], hi = mem[0x0605 + y];
+            if (cur == hi) continue;
+            if (cur > hi)
+                for (int j = 3; j >= 0; j--) mem[0x0605 + j] = mem[0x0600 + j];
+            break;
+        }
+
+        /* Render the secondary counter ($060A -> $36A8) and the high score ($0605..$0608 -> $36CB). */
+        digit_dst_ptr_lo = 0xA8; digit_dst_ptr_hi = 0x36;
+        cpu.A = mem[0x060A]; bin_to_bcd(); render_bcd_digits_supp_all();
+        digit_dst_ptr_lo = 0xCB; digit_dst_ptr_hi = 0x36;
+        cpu.A = mem[0x0605]; render_bcd_digits_supp_all();   /* high score already BCD */
+        cpu.A = mem[0x0606]; emit_bcd_byte_digits();
+        cpu.A = mem[0x0607]; emit_bcd_byte_digits();
+        cpu.A = mem[0x0608]; emit_bcd_byte_digits();
+        setup_initials_ptr();
+    }
+
+    /* Render the current score ($0600..$0603 -> $36B7). */
+    digit_dst_ptr_lo = 0xB7; digit_dst_ptr_hi = 0x36;
+    cpu.A = mem[0x0600]; render_bcd_digits_supp_all();
+    cpu.A = score_display; emit_bcd_byte_digits();   /* $0601 */
+    render_bcd_low_bytes();                           /* $0602, $0603 */
+
+    /* Render the level ($0604 -> $37F5), or blank both digit bytes when the level is 0. */
+    digit_dst_ptr_lo = 0xF5; digit_dst_ptr_hi = 0x37;
+    if (level_count_acc != 0) {
+        cpu.A = level_count_acc; bin_to_bcd(); render_bcd_digits_supp_all();
+    } else {
+        mem[0x37F5] = 0x00; mem[0x37F6] = 0x00;
+    }
+
+    /* If the tune player is idle, zero the current-score record ($0600..$0604). */
+    if (sound_active_flag == 0)
+        for (int y = 4; y >= 0; y--) mem[0x0600 + y] = 0x00;
+
+    row_table_base_lo = 0x04;    /* $C3 = 4: the repeat counter standby_level_select_loop decrements */
+
+    if (game_var_E4 != 0) {
+        if (mem[0x36BD] != 0) {
+            name_entry_loop();          /* mid initials-entry: keep polling it, refresh the attract timer */
+            attract_timer = 0x64;
+        } else {
+            game_var_E4 = 0x00;         /* entry finished: leave name-entry mode + restore the display */
+            restore_display_if_E7();
+        }
+    }
+
+    display_list_init();
+    bus_write(0x022F, 0x22);   /* SDMCTL = normal playfield+PMG DMA.  LIVE on the Amiga too: the
+                                * empty-copper guard in RescueOnFractalus.cpp reads mem[$022F]. */
+
+    if (level_or_state != 0) { sound_retrigger_random(); return; }   /* level in progress: re-seed SFX */
+
+    /* Standby idle: if the game-active latch is already clear, enter the level-select loop directly;
+     * otherwise wait for it to clear (frame-driven) then run one initials-entry pass first. */
+    if (mem[0x00E5] == 0) { standby_level_select_loop(); return; }
+    do { platform_tick_vbi(); platform_render_frame(); } while (mem[0x00E5] != 0);
+    name_entry_loop();
+    attract_timer = 0x64;
+    standby_level_select_loop();
+}
+
 void display_setup(void) {
     /* 5f1d */
     if (!plot2bpp_lut_ready) build_plot2bpp_lut();   /* eager: keep the LUT build off the planet hot path */

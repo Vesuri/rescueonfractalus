@@ -5484,7 +5484,8 @@ L_5876:;
 }
 
 /* cockpit_display @ $587B: Cockpit/instrument display or main input handler (reads PORTA/CONSOL; called if $060B≠0) */
-void cockpit_display(void) {
+/* faithful transliteration kept as the validation oracle; native cockpit_display() lives in rof_native.c (see VALIDATE_FUNCS) */
+void cockpit_display__t6502(void) {
     /* 587b */
     LDY(0x78);
 L_587d:;

@@ -18,6 +18,30 @@ and `[A-Za-z0-9_]*OLD` and fix those variants too.
 > needs a live check before a canonical name can be trusted. Do NOT promote these without resolving
 > the aliasing / verifying the claim noted. ✓=confident, ?=verify.
 
+## New (found 2026-07-26, native-izing cockpit_display $587B — the Standby/Title scoreboard render)
+
+- **`$587B cockpit_display`** — the name is misleading: it does NOT draw the in-flight cockpit.  It
+  renders the **Standby / Title-Screen scoreboard** (blits a 120-byte template into Title RAM $365B,
+  then draws the current-score / high-score / level / initials BCD digits) and tail-calls the idle
+  input loop.  Suggested: **`standby_scoreboard_render`**. ✓
+- **`$00E5` — unnamed.** The game-active / results latch.  In cockpit_display: nonzero → the results/
+  level-start entry (stash to $37F4, 60-frame wait, music (re)init, then either re-seed SFX via
+  sound_retrigger_random or wait for it to clear before name entry).  Suggested: `game_active_latch`. ?
+  (dual-checked in sound_retrigger_random $5A21 + the $596d spin — verify it isn't overloaded first.)
+- **`$00C3 row_table_base_lo` — MISNAMED here.** In cockpit_display it is set to 4 as the level-select
+  **repeat counter** that standby_level_select_loop ($5978) decrements ($59A4 DEC $C3); NOT a row-table
+  base.  Its name comes from an unrelated primary use — verify both before renaming (context name:
+  `level_select_repeat_ctr`). ?
+- **`$36BD` — unnamed.** Read in cockpit_display's name-entry gate: when `game_var_E4 != 0`, `$36BD != 0`
+  keeps polling name_entry_loop (initials entry in progress) else finishes entry.  It sits in Title-Screen
+  RAM ($36xx), so it doubles as a screen cell — verify before naming. ?
+- **`$060A` — unnamed.** A secondary counter cockpit_display renders (via bin_to_bcd) into Title RAM
+  $36A8, above the high-score line.  Role unclear (a per-session counter?) — verify before naming. ?
+- **Game-state block layout at `$0600`** (documented for future var rows; several bytes still unnamed):
+  `$0600-$0603` = current score (4 bytes, MSB first; only $0601 is named score_display),
+  `$0604` = level (level_count_acc), `$0605-$0608` = high score (all unnamed).  A big-endian compare in
+  cockpit_display copies current→high when current wins.  Name the score/high-score bytes together. ?
+
 ## Deferred: aliased / dual-use cells (a single name would mislead one of the users)
 
 - `$0037` (`cockpit_dial_update`/`vbi_handler_flight`) — pushed to COLPF1 ($D014) but also

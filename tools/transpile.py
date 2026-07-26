@@ -335,6 +335,7 @@ VALIDATE_FUNCS = {
     #     reference; the native twin replaces the spin-wait SPINWAIT-hooks with ds_frame().
     0x5F1D,  # display_setup — main display setup + Standby/attract idle loop + launch cinematic driver
     0x3D48,  # game_main_loop — one-time game init + L_3e0f display_setup + the in-game flight loop (never returns)
+    0x587B,  # cockpit_display — Standby/Title scoreboard render + input dispatch; tail-calls the live-input standby_level_select_loop / sound_retrigger_random loops + spins on $00E5 (would hang the harness)
     # --- flight-init de-transpile (2026-06-22): the last transpiled orchestrator on the
     #     game/level-init path.  Every leaf it calls is already native; this just sheds the
     #     $73C8 body itself.  Like the apex it calls the wait_timer_4c_frames spin-pacer
