@@ -149,8 +149,8 @@ VALIDATE_FUNCS = {
     0xAAD4,  # plot_scanline_down — line-plot loop walking down (calls native terrain_plot_pixel)
     0xAACF,  # plot_scanline_rand_dir — RANDOM picks up vs down
     0xA99C,  # game_state_update — flight state machine (scanline plots + ring events)
-    0x7AB8,  # pmg_enemy_update — enemy PMG update (RANDOM; tail ring_push_marked + jitter_roll_pitch)
-    0x3FCD,  # enemy_check — event dispatch ($063D->game_sub_4f3f [transpiled] / $0633->pmg_enemy_update)
+    0x7AB8,  # alien_attack_tick — enemy PMG update (RANDOM; tail ring_push_marked + jitter_roll_pitch)
+    0x3FCD,  # enemy_check — event dispatch ($063D->game_sub_4f3f [transpiled] / $0633->alien_attack_tick)
     # --- in-game SFX engine (2026-06-12): the $548D voice/gauge engine, run each
     #     flight VBI (Atari VBI tail $534D), drains the $0719 event ring the native
     #     flight code already fills.  Leaves-first.  POKEY writes via bus_write ->
@@ -197,7 +197,7 @@ VALIDATE_FUNCS = {
     0x6BED,  # update_object_distance — clamped 16-bit dist subtract -> $08A4/$08A5[X]; up to 3 draw_vline_pair draws
     0x6BA8,  # advance_object_positions — INC $08D1, +$18 to $08D2/$08D3, then per slot (X=$2A..0 step2) update_object_distance
     # batch — clean pure-mem init/clear/fill/copy leaves:
-    0x7F74,  # clear_var_0632 — $0632 = 0
+    0x7F74,  # clear_alien_knock_active — $0632 = 0
     0x3FBF,  # clear_pm_state — fill $00DA-$00DD/$02C0-$02C3/$00D9 with entry A
     0x6B63,  # clear_terrain_lo_buffers — zero $0E32-$0E91/$0F32-$0F91
     0x6899,  # fill_four_bufs_ff — $FF into $0C87/$0D87/$0E87/$0F87 +8..+1
@@ -223,8 +223,8 @@ VALIDATE_FUNCS = {
     0x7238,  # music_init_state — copy 6 bytes $731E[Y..]-> $0657[5..0]; clear $0651/$D208; $0653/$0655=1 (entry Y)
     0x7253,  # music_player_tick — note-stream tune player: tick envelopes + advance cmd stream -> POKEY AUDF/AUDC
     0x75B8,  # count_up_to_level — bump $0604 + binary counter $C3 until $0604 == $006D
-    0x811F,  # hud_fill_field1 — INC $0081 when $0081 >= $2928 (+ 5-byte copy in the else path)
-    0x8168,  # hud_fill_field3_font — INC $0083 when $0083 >= $A8 (+ 7-byte font copy in the else path)
+    0x811F,  # alien_field1_fill — INC $0081 when $0081 >= $2928 (+ 5-byte copy in the else path)
+    0x8168,  # alien_field3_fill — INC $0083 when $0083 >= $A8 (+ 7-byte font copy in the else path)
     # batch — tail-wrappers + RANDOM/compute A-returning leaves:
     0x480B,  # clear_message_buffer — X=$0E,A=0, tail fill_message_buffer (zero $32B7..$32C4)
     0x66D3,  # plot_pixel_col93 — A=$0093, tail plot_pixel_masked
@@ -233,7 +233,7 @@ VALIDATE_FUNCS = {
     0x7047,  # test_marked_neighbor — $0900 marker-map 3-neighbor probe; result in A
     # batch — fill-region wrappers + RANDOM/compute leaves:
     0x3C83,  # fill_region_2000 — seed $C1=$2000/count $0F73, tail memset_or_copy ($00B7 fill)
-    0x7F60,  # silence_audio_channels — $0634=A + POKEY AUDF1-4 + AUDCTL=$60, tail clear_var_0632 (entry A)
+    0x7F60,  # silence_audio_channels — $0634=A + POKEY AUDF1-4 + AUDCTL=$60, tail clear_alien_knock_active (entry A)
     0x753B,  # init_terrain_render_buffers — $260E..$270D=$FF, then $1070 fill via memset_or_copy
     0x7813,  # init_terrain_col_tables — terrain_col_pixel_mask ($BC00) + clear terrain_col_byte_offset ($BD00) (pure)
     0x7B54,  # game_sub_7B54 — maybe-seed $2849 from (RANDOM|$08)&$3F shifted by 0/1/3
@@ -321,14 +321,14 @@ VALIDATE_FUNCS = {
     # batch — the 2D scaled-shape blitter (last portable display_setup-front leaf):
     0x7C9A,  # draw_scaled_shape — scale/blit a shape: div-by-subtraction count, nested row/col accum, mask bits -> plot_clipped_pixel
     # batch — empty the front: the deferred/HW leaves (faithfulness, little/no speedup):
-    0x8181,  # pack_byte_to_5bit_cells — interleave A + $0084 via ROL/ROR carry chain (result in A); unblocks hud_fill_field0/2
+    0x8181,  # reorder_cell_bits — interleave A + $0084 via ROL/ROR carry chain (result in A); unblocks alien_field0_fill/2
     0x5A78,  # read_console_trig_delta — A = (CONSOL & 1) - TRIG0 (HW $D01F/$D010 via bus_read; result in A)
     0x5D0D,  # validate_save_state — compare $3700/$3714 + 38-byte $37C7 vs $7BDA; result in Z (no mem writes)
     0x4430,  # cockpit_dial_update — $006F=A, derive $0022 (0 or $4457[A+$0625]), tail draw_cockpit_dial_bar
-    # batch — HUD fill fields (unblocked by pack_byte_to_5bit_cells):
-    0x8105,  # hud_fill_field0 — pack 5 bytes ($85)+Y via pack_byte_to_5bit_cells into $8F-$93 (or INC $0080)
-    0x8138,  # hud_fill_field2 — copy/pack ($89)+Y into $8F-$9A per $292D flag (or INC $0082)
-    0x80C5,  # hud_build_text_row — clear $8F-$9F, fill 4 fields, compose cells via $BE00 + ($8B)/($8D), advance ptrs
+    # batch — HUD fill fields (unblocked by reorder_cell_bits):
+    0x8105,  # alien_field0_fill — pack 5 bytes ($85)+Y via reorder_cell_bits into $8F-$93 (or INC $0080)
+    0x8138,  # alien_field2_fill — copy/pack ($89)+Y into $8F-$9A per $292D flag (or INC $0082)
+    0x80C5,  # alien_shape_blit — clear $8F-$9F, fill 4 fields, compose cells via $BE00 + ($8B)/($8D), advance ptrs
     # --- NATIVE APEX (2026-06-15): the orchestration apex, hand-written in rof_native.c.
     #     NOT validated by `make validate` (spin-waits on VBI state / live input would hang
     #     the harness) — verified on FS-UAE by behaviour.  Its __t6502 oracle is kept for
@@ -395,13 +395,13 @@ VALIDATE_FUNCS = {
     0x493D,  # show_ace_or_message — ACE ($3A bit7) vs pilot message driver (entry Y)
     # batch 3 — rescue FX loops (frame-driven; RTCLOK-tick fixture):
     0x7B94,  # level_clear_fx_loop — INC $283C; 15x ring pairs + waits; $3C-iter RANDOM $DB flash
-    0x7EC7,  # game_sub_7EC7 — rescue SFX/zoom setup + descending-pitch sweep (flight-snapshot fixture, $3E==0)
+    0x7EC7,  # alien_knock_setup_loop — rescue SFX/zoom setup + descending-pitch sweep (flight-snapshot fixture, $3E==0)
     # batch 4 — the in-flight keyboard-command dispatcher:
     0x4644,  # event_sequence_dispatcher — match keycode vs $4816, dispatch by mode/slot (flight-snapshot fixture)
     # batch 5 — the pilot-rescue state machine (the hold loop lives here):
     0x7854,  # pilot_render — pilot/rescue render + rescue state machine (validated $3E==0 path; loop inspection-only)
     # batch 6 — the alien-creature animation/blit driver (jump-scare hot path):
-    0x7F85,  # game_sub_7F85 — 3-voice frame sequencer + shape-table setup + the row-blit draw loop
+    0x7F85,  # alien_creature_animate_draw — 3-voice frame sequencer + shape-table setup + the row-blit draw loop
 }
 VALIDATE_SUFFIX = '__t6502'
 
@@ -530,7 +530,7 @@ PRE_INSN_HOOKS = {
     # returns+clears it (or $FF if none) — exactly mimicking the handler clobbering
     # X.  No-op everywhere it returns $FF (SDL / validate headless): X stays $FF.
     0x519c: '{ unsigned char _k = platform_flight_irq_key(); if (_k != 0xFFu) cpu.X = _k; }',
-    # (The creature-blit capture is NOT a hook here: $80C5 is a native twin (hud_build_text_row),
+    # (The creature-blit capture is NOT a hook here: $80C5 is a native twin (alien_shape_blit),
     #  so the running game never executes the transpiled oracle — the capture lives in the native
     #  twin in rof_native.c instead, gated on $0632 alien_knock_active.)
     # NB: vbi_handler_flight ($4FF5) is now a native twin (rof_native.c) — only its __t6502

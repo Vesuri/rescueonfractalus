@@ -541,7 +541,7 @@ uint8_t PlatformAmiga::hwRead(uint16_t addr)
 {
     if (addr == 0xD20Au) return pokey_random_step();  // POKEY RANDOM register
     // SKSTAT ($D20F read) is a STATUS register, distinct from the SKCTL we WRITE to the
-    // same address.  The standby level-select (engine_sound_update $5978, reached via the
+    // same address.  The standby level-select (standby_level_select_loop $5978, reached via the
     // Title Screen) reads bit3 = the SHIFT key, ACTIVE-LOW (1 = NOT pressed): shift idle →
     // the level-INCREMENT path (joystick-up / SELECT raise the starting level), shift held →
     // decrement.  Returning the POKEY write-shadow (pokey[$F], bit3=0) reads as "shift held",

@@ -218,7 +218,7 @@ combined input poll. (`$D010` is GTIA's TRIG0 on *read*; it is `GRAFP3` only on
      + `AUDCTL` from the interrupt for tighter-timed audio.
 - `music_init_state $7238` loads a 6-byte song header and sets `AUDCTL=1`
   (clock config). The attract melody is `station_audio $1B5B`.
-- Engine pitch tracks gameplay: `engine_sound_update $5978` ramps a pitch value
+- Engine pitch tracks gameplay: `standby_level_select_loop $5978` ramps a pitch value
   toward `level_progress $37EE` based on throttle/trigger bits.
 
 The port routes all of this through the platform audio callback; the OS VBI

@@ -1539,7 +1539,7 @@ L_3fc1:;
     return;
 }
 
-/* enemy_check @ $3FCD: Checks $063D (enemy active?) and $0633 (another trigger); dispatches to game_subsystem_4f3f or pmg_enemy_update */
+/* enemy_check @ $3FCD: Checks $063D (enemy active?) and $0633 (another trigger); dispatches to game_subsystem_4f3f or alien_attack_tick */
 /* faithful transliteration kept as the validation oracle; native enemy_check() lives in rof_native.c (see VALIDATE_FUNCS) */
 void enemy_check__t6502(void) {
     /* 3fcd */
@@ -1554,7 +1554,7 @@ L_3fd5:;
     /* 3fd8 */
     if (cpu.Z) goto L_3fdd;
     /* 3fda */
-    pmg_enemy_update();
+    alien_attack_tick();
 L_3fdd:;
     /* 3fdd */
     return;
@@ -3101,7 +3101,7 @@ L_46fd:;
     /* 46ff */
     if (cpu.Z) goto L_471a;
     /* 4701 */
-    LDA(anim_flag_003C);
+    LDA(airlock_state);
     /* 4703 */
     if (cpu.Z) goto L_471e;
     /* 4705 */
@@ -3118,7 +3118,7 @@ L_46fd:;
     if (cpu.Z) goto L_471a;
 L_4711:;
     /* 4711 */
-    DEC_M(MEM_anim_flag_003C);
+    DEC_M(MEM_airlock_state);
     /* 4713 */
     LDA(0xB4);
     /* 4715 */
@@ -3133,7 +3133,7 @@ L_471b:;
     goto L_4722;
 L_471e:;
     /* 471e */
-    INC_M(MEM_anim_flag_003C);
+    INC_M(MEM_airlock_state);
     /* 4720 */
     LDA(0x34);
 L_4722:;
@@ -4007,7 +4007,7 @@ L_505e:;
     /* 505e */
     CLC();
     /* 505f */
-    LDA(wing_bar_hpos_base);
+    LDA(crosshair_hpos_base);
     /* 5062 */
     bus_write(0xD007, cpu.A);
     /* 5065 */
@@ -4467,7 +4467,7 @@ L_5249:;
     /* 524e */
     if (!cpu.Z) goto L_52b4;
     /* 5250 */
-    LDA(var_0632);
+    LDA(alien_knock_active);
     /* 5253 */
     if (!cpu.Z) goto L_52b4;
     /* 5255 */
@@ -5688,7 +5688,7 @@ L_5969:;
     /* 5969 */
     LDA(mem[0x00E5]);
     /* 596b */
-    if (cpu.Z) { engine_sound_update(); return; }
+    if (cpu.Z) { standby_level_select_loop(); return; }
 L_596d:; platform_tick_vbi(); platform_render_frame();
     /* 596d */
     LDA(mem[0x00E5]);
@@ -5698,7 +5698,7 @@ L_596d:; platform_tick_vbi(); platform_render_frame();
     name_entry_loop();
     /* 5976 */
     attract_timer = 0x64;
-    engine_sound_update(); return;
+    standby_level_select_loop(); return;
 }
 
 /* random_alpha_index @ $5A4D: RANDOM $D20A & $1F, reject>=$1A, then ADC #$21; returns random value (alpha range) */
@@ -9168,7 +9168,7 @@ L_6ae7:;
     return;
 }
 
-/* scroll_field_columns @ $6AEE: Gated by state $0089; updates $A4/$A5 via add_multibyte_a1(24-bit add), shifts $0C32-$0F32 buffers left 1 col ($59 wide), appends new col via gen_terrain_column */
+/* scroll_field_columns @ $6AEE: Gated by state $0089; updates $A4/$A5 via add_multibyte_a1(24-bit add), shifts $0C32-$0F32 buffers left 1 col ($59 wide), appends new col via gen_terrain_column; the SAME shift renders as a VERTICAL star scroll when the buffers are the star players (scenes 4-6) */
 /* faithful transliteration kept as the validation oracle; native scroll_field_columns() lives in rof_native.c (see VALIDATE_FUNCS) */
 void scroll_field_columns__t6502(void) {
     /* 6aee */
@@ -10329,7 +10329,7 @@ L_714b:;
     INX();
 L_714c:;
     /* 714c */
-    LDA(mem[(0x71DB)+cpu.X]);
+    LDA(mem[MEM_sfx_seq_stream+cpu.X]);
     /* 714f */
     if (!cpu.Z) goto L_7154;
     /* 7151 */
@@ -10346,15 +10346,15 @@ L_7154:;
     /* 715a */
     TAY();
     /* 715e */
-    bus_write(0xD200, mem[(0x71AB)+cpu.Y]);
+    bus_write(0xD200, mem[MEM_sfx_audf1_table+cpu.Y]);
     /* 7164 */
-    bus_write(0xD202, mem[(0x719E)+cpu.Y]);
+    bus_write(0xD202, mem[MEM_sfx_audf2_table+cpu.Y]);
     /* 716a */
-    bus_write(0xD204, mem[(0x7191)+cpu.Y]);
+    bus_write(0xD204, mem[MEM_sfx_audf3_table+cpu.Y]);
     /* 7170 */
-    bus_write(0xD206, mem[(0x71B8)+cpu.Y]);
+    bus_write(0xD206, mem[MEM_sfx_audf4_table+cpu.Y]);
     /* 7173 */
-    LDA(mem[(0x71C5)+cpu.Y]);
+    LDA(mem[MEM_sfx_audc4_table+cpu.Y]);
     /* 7176 */
     bus_write(0xD207, cpu.A);
     /* 7179 */
@@ -10369,7 +10369,7 @@ L_717b:;
     /* 7181 */
     TAX();
     /* 7185 */
-    sfx_note_timer = mem[(0x71D2)+cpu.X];
+    sfx_note_timer = mem[MEM_sfx_note_duration_table+cpu.X];
     /* 7188 */
     TYA();
     /* 7189 */
@@ -10430,7 +10430,7 @@ void music_player_tick__t6502(void) {
     /* 725b */
     if (!cpu.Z) goto L_726c;
     /* 725d */
-    LDA(mem[0x065C]);
+    LDA(music_release_delta);
     /* 7260 */
     mem[0x064F] = cpu.A;
     /* 7263 */
@@ -10438,7 +10438,7 @@ void music_player_tick__t6502(void) {
     /* 7266 */
     mem[0x064B] = cpu.A;
     /* 7269 */
-    mem[0x0649] = cpu.A;
+    music_env_delta = cpu.A;
 L_726c:;
     /* 726c */
     goto L_7300;
@@ -10479,19 +10479,19 @@ L_728a:;
     /* 7292 */
     TAX();
     /* 7296 */
-    mem[0x0656] = mem[(0x7375)+cpu.X];
+    mem[0x0656] = mem[MEM_music_instrument_audf_table+cpu.X];
     /* 7299 */
     INX();
     /* 729d */
-    mem[0x0654] = mem[(0x7375)+cpu.X];
+    mem[0x0654] = mem[MEM_music_instrument_audf_table+cpu.X];
     /* 72a0 */
     INX();
     /* 72a4 */
-    mem[0x0652] = mem[(0x7375)+cpu.X];
+    mem[0x0652] = mem[MEM_music_instrument_audf_table+cpu.X];
     /* 72a7 */
     INX();
     /* 72ab */
-    mem[0x0650] = mem[(0x7375)+cpu.X];
+    music_voice_audf = mem[MEM_music_instrument_audf_table+cpu.X];
     /* 72ae */
     INY();
     /* 72af */
@@ -10528,9 +10528,9 @@ L_72cb:;
     /* 72ce */
     if (!cpu.Z) goto L_72d9;
     /* 72d0 */
-    mem[(0x0648)+cpu.X] = cpu.A;
+    mem[MEM_music_env_level+cpu.X] = cpu.A;
     /* 72d3 */
-    mem[(0x0649)+cpu.X] = cpu.A;
+    mem[MEM_music_env_delta+cpu.X] = cpu.A;
     /* 72d6 */
     goto L_72f9;
 L_72d9:;
@@ -10543,19 +10543,19 @@ L_72d9:;
     /* 72df */
     if (!cpu.Z) goto L_72e7;
     /* 72e1 */
-    LDA(mem[0x0659]);
+    LDA(music_note_on_level_c0);
     /* 72e4 */
     goto L_72ea;
 L_72e7:;
     /* 72e7 */
-    LDA(mem[0x065A]);
+    LDA(music_note_on_level_80);
 L_72ea:;
     /* 72ea */
-    mem[(0x0648)+cpu.X] = cpu.A;
+    mem[MEM_music_env_level+cpu.X] = cpu.A;
     /* 72f0 */
-    mem[(0x0649)+cpu.X] = mem[0x065B];
+    mem[MEM_music_env_delta+cpu.X] = music_attack_delta;
     /* 72f6 */
-    mem[(0xD200)+cpu.X] = mem[(0x0650)+cpu.X];
+    mem[(0xD200)+cpu.X] = mem[MEM_music_voice_audf+cpu.X];
 L_72f9:;
     /* 72f9 */
     TYA();
@@ -10576,16 +10576,16 @@ L_7302:;
     /* 7302 */
     CLC();
     /* 7303 */
-    LDA(mem[(0x0648)+cpu.X]);
+    LDA(mem[MEM_music_env_level+cpu.X]);
     /* 7306 */
-    ADC(mem[(0x0649)+cpu.X]);
+    ADC(mem[MEM_music_env_delta+cpu.X]);
     /* 7309 */
     if (!cpu.N) goto L_730d;
     /* 730b */
     LDA(0x00);
 L_730d:;
     /* 730d */
-    mem[(0x0648)+cpu.X] = cpu.A;
+    mem[MEM_music_env_level+cpu.X] = cpu.A;
     /* 7310 */
     LSR_A();
     /* 7311 */
@@ -10593,7 +10593,7 @@ L_730d:;
     /* 7312 */
     LSR_A();
     /* 7313 */
-    EOR(mem[(0x73C1)+cpu.X]);
+    EOR(mem[MEM_music_audc_distortion_table+cpu.X]);
     /* 7316 */
     mem[(0xD201)+cpu.X] = cpu.A;
     /* 7319 */
@@ -11810,7 +11810,7 @@ L_7879:;
     /* 78a5 */
     mem[0x0079] = 0x80;
     /* 78a9 */
-    mem[0x281E] = 0x01;
+    figure_is_alien = 0x01;
     /* 78ac */
     LDX(grid_slot_index);
     /* 78af */
@@ -11831,7 +11831,7 @@ L_7879:;
     goto L_78d6;
 L_78c3:;
     /* 78c3 */
-    DEC_M(0x281E);
+    DEC_M(MEM_figure_is_alien);
 L_78c6:;
     /* 78c6 */
     INC_M(MEM_game_state);
@@ -11866,7 +11866,7 @@ L_78d6:; if (mem[0x003E]) { platform_tick_vbi(); platform_render_frame(); }
     /* 78e6 */
     INC_M(0x2844);
     /* 78e9 */
-    pmg_enemy_update();
+    alien_attack_tick();
 L_78ec:;
     /* 78ec */
     goto L_78f2;
@@ -11879,7 +11879,7 @@ L_78f2:;
     /* 78f4 */
     if (!cpu.Z) goto L_792e;
     /* 78f6 */
-    LDY(anim_flag_003C);
+    LDY(airlock_state);
     /* 78f8 */
     if (cpu.Z) goto L_78fd;
     /* 78fa */
@@ -11911,7 +11911,7 @@ L_78fd:;
     return;
 L_7915:;
     /* 7915 */
-    LDA(mem[0x281E]);
+    LDA(figure_is_alien);
     /* 7918 */
     if (!cpu.Z) goto L_7924;
     /* 791a */
@@ -12020,7 +12020,7 @@ L_795a:;
     /* 7988 */
     ADC(RTCLOK_LOW);
     /* 798a */
-    LDY(mem[0x281E]);
+    LDY(figure_is_alien);
     /* 798d */
     if (cpu.Z) goto L_7991;
     /* 798f */
@@ -12063,24 +12063,24 @@ L_79a8:;
     mem[0x007A] = cpu.A;
 L_79b2:;
     /* 79b2 */
-    LDA(mem[0x281E]);
+    LDA(figure_is_alien);
     /* 79b5 */
     if (cpu.Z) goto L_79cc;
     /* 79b7 */
-    LDA(anim_flag_003C);
+    LDA(airlock_state);
     /* 79b9 */
     if (!cpu.Z) goto L_79c3;
     /* 79bb */
     game_state = cpu.A;
     /* 79bd */
-    game_sub_7EC7();
+    alien_knock_setup_loop();
     /* 79c0 */
     goto L_79c9;
 L_79c3:;
     /* 79c3 */
     LDA(0x80);
     /* 79c5 */
-    anim_flag_003C = cpu.A;
+    airlock_state = cpu.A;
     /* 79c7 */
     if (!cpu.Z) goto L_79d9;
 L_79c9:;
@@ -12088,7 +12088,7 @@ L_79c9:;
     goto L_7a0c;
 L_79cc:;
     /* 79cc */
-    LDY(anim_flag_003C);
+    LDY(airlock_state);
     /* 79ce */
     if (cpu.Z) goto L_7a09;
 L_79d0:; platform_tick_vbi(); platform_render_frame();
@@ -12099,7 +12099,7 @@ L_79d0:; platform_tick_vbi(); platform_render_frame();
     /* 79d5 */
     LDA(0xFF);
     /* 79d7 */
-    anim_flag_003C = cpu.A;
+    airlock_state = cpu.A;
 L_79d9:;
     /* 79d9 */
     clear_colors_sweep_5x();
@@ -12113,7 +12113,7 @@ L_79e1:;
     /* 79e4 */
     wait_frames_20();
     /* 79e7 */
-    LDA(anim_flag_003C);
+    LDA(airlock_state);
     /* 79e9 */
     CMP(0x80);
     /* 79eb */
@@ -12228,7 +12228,7 @@ L_7a54:;
     row_table_stride = cpu.A;
 L_7a58:;
     /* 7a58 */
-    LDA(anim_flag_003C);
+    LDA(airlock_state);
     /* 7a5a */
     if (!cpu.Z) goto L_7a6d;
     /* 7a5c */
@@ -12341,16 +12341,16 @@ void init_event_state_5815_x16__t6502(void) {
     /* 7aaf */
     LDA(0x00);
     /* 7ab1 */
-    anim_flag_003C = cpu.A;
+    airlock_state = cpu.A;
     /* 7ab3 */
     LDX(0x16);
     /* 7ab5 */
     ring_push_marked(); return;
 }
 
-/* pmg_enemy_update @ $7AB8: PMG enemy update (1 RANDOM read; called from enemy_check when $0633≠0) */
-/* faithful transliteration kept as the validation oracle; native pmg_enemy_update() lives in rof_native.c (see VALIDATE_FUNCS) */
-void pmg_enemy_update__t6502(void) {
+/* alien_attack_tick @ $7AB8: PMG enemy update (1 RANDOM read; called from enemy_check when $0633≠0) */
+/* faithful transliteration kept as the validation oracle; native alien_attack_tick() lives in rof_native.c (see VALIDATE_FUNCS) */
+void alien_attack_tick__t6502(void) {
     /* 7ab8 */
     LDA(bus_read(0xD20A));
     /* 7abb */
@@ -13104,13 +13104,13 @@ L_7d8a:;
     return;
 }
 
-/* game_sub_7EC7 @ $7EC7: Game sub (3 RANDOM reads) */
-/* faithful transliteration kept as the validation oracle; native game_sub_7EC7() lives in rof_native.c (see VALIDATE_FUNCS) */
-void game_sub_7EC7__t6502(void) {
+/* alien_knock_setup_loop @ $7EC7: Game sub (3 RANDOM reads) */
+/* faithful transliteration kept as the validation oracle; native alien_knock_setup_loop() lives in rof_native.c (see VALIDATE_FUNCS) */
+void alien_knock_setup_loop__t6502(void) {
     /* 7ec7 */
     LDX(0x01);
     /* 7ec9 */
-    var_0632 = cpu.X;
+    alien_knock_active = cpu.X;
     /* 7ecc */
     mem[0x005E] = cpu.X;
     /* 7ed0 */
@@ -13180,7 +13180,7 @@ void game_sub_7EC7__t6502(void) {
     /* 7f28 */
     LDA(clear_colors_done_003E);
     /* 7f2a */
-    if (cpu.Z) { clear_var_0632(); return; }
+    if (cpu.Z) { clear_alien_knock_active(); return; }
     /* 7f2c */
     LDA(bus_read(0xD20A));
     /* 7f2f */
@@ -13223,7 +13223,7 @@ L_7f51:;
     /* 7f57 */
     RTCLOK_LOW = cpu.A;
     /* 7f59 */
-    game_sub_7F85();
+    alien_creature_animate_draw();
     /* 7f5c */
     LDA(clear_colors_done_003E);
     /* 7f5e */
@@ -13246,15 +13246,15 @@ void silence_audio_channels__t6502(void) {
     bus_write(0xD207, cpu.A);
     /* 7f71 */
     bus_write(0xD208, 0x60);
-    clear_var_0632(); return;
+    clear_alien_knock_active(); return;
 }
 
-/* sound_step_preserve_a @ $7F7A: saves A in $2930, calls game_sub_7F85 (INC $2924 -> table $81E8), reloads A, SEC; returns A unchanged */
+/* sound_step_preserve_a @ $7F7A: saves A in $2930, calls alien_creature_animate_draw (INC $2924 -> table $81E8), reloads A, SEC; returns A unchanged */
 void sound_step_preserve_a(void) {
     /* 7f7a */
     mem[0x2930] = cpu.A;
     /* 7f7d */
-    game_sub_7F85();
+    alien_creature_animate_draw();
     /* 7f80 */
     LDA(mem[0x2930]);
     /* 7f83 */
@@ -13263,9 +13263,9 @@ void sound_step_preserve_a(void) {
     return;
 }
 
-/* game_sub_7F85 @ $7F85: Game sub (1 RANDOM read) */
-/* faithful transliteration kept as the validation oracle; native game_sub_7F85() lives in rof_native.c (see VALIDATE_FUNCS) */
-void game_sub_7F85__t6502(void) {
+/* alien_creature_animate_draw @ $7F85: Game sub (1 RANDOM read) */
+/* faithful transliteration kept as the validation oracle; native alien_creature_animate_draw() lives in rof_native.c (see VALIDATE_FUNCS) */
+void alien_creature_animate_draw__t6502(void) {
     /* 7f85 */
     INC_M(MEM_sound_table_idx);
     /* 7f88 */
@@ -13402,7 +13402,7 @@ L_800f:;
     /* 8022 */
     sync_flag = mem[(0x81B1)+cpu.X];
     /* 8027 */
-    hud_field0_limit = mem[(0x81B9)+cpu.X];
+    alien_field0_limit = mem[(0x81B9)+cpu.X];
     /* 802a */
     LDX(mem[0x292B]);
     /* 8030 */
@@ -13412,7 +13412,7 @@ L_800f:;
     /* 803a */
     dl_ptr_lo = mem[(0x81B1)+cpu.X];
     /* 803f */
-    hud_field1_limit = mem[(0x81B9)+cpu.X];
+    alien_field1_limit = mem[(0x81B9)+cpu.X];
     /* 8044 */
     mem[0x292D] = 0x00;
     /* 8047 */
@@ -13435,7 +13435,7 @@ L_8053:;
     /* 8061 */
     dl_ptr_hi = mem[(0x81D1)+cpu.X];
     /* 8066 */
-    hud_field2_limit = mem[(0x81D9)+cpu.X];
+    alien_field2_limit = mem[(0x81D9)+cpu.X];
     /* 806b */
     screen_ptr_lo = 0xE7;
     /* 806d */
@@ -13472,7 +13472,7 @@ L_808d:;
     /* 808d */
     mem[0x292F] = cpu.X;
     /* 8090 */
-    hud_build_text_row();
+    alien_shape_blit();
     /* 8093 */
     LDX(mem[0x292F]);
     /* 8096 */
@@ -13524,9 +13524,9 @@ L_80c4:;
     return;
 }
 
-/* hud_build_text_row @ $80C5: Zeroes 17-byte buf $8F..$9F; calls 4 field-fillers + $8181 packer; OR-merges glyph table $BE00 masked into screen RAM via ptr $8B/$8D; advances $8B by $60 */
-/* faithful transliteration kept as the validation oracle; native hud_build_text_row() lives in rof_native.c (see VALIDATE_FUNCS) */
-void hud_build_text_row__t6502(void) {
+/* alien_shape_blit @ $80C5: Zeroes 17-byte buf $8F..$9F; calls 4 field-fillers + $8181 packer; OR-merges glyph table $BE00 masked into screen RAM via ptr $8B/$8D; advances $8B by $60 */
+/* faithful transliteration kept as the validation oracle; native alien_shape_blit() lives in rof_native.c (see VALIDATE_FUNCS) */
+void alien_shape_blit__t6502(void) {
     /* 80c5 */
     LDX(0x10);
     /* 80c7 */
@@ -13539,13 +13539,13 @@ L_80c9:;
     /* 80cc */
     if (!cpu.N) goto L_80c9;
     /* 80ce */
-    hud_fill_field0();
+    alien_field0_fill();
     /* 80d1 */
-    hud_fill_field1();
+    alien_field1_fill();
     /* 80d4 */
-    hud_fill_field2();
+    alien_field2_fill();
     /* 80d7 */
-    hud_fill_field3_font();
+    alien_field3_fill();
     /* 80da */
     LDY(0x10);
 L_80dc:;
@@ -13596,13 +13596,13 @@ L_80fa:;
     return;
 }
 
-/* hud_fill_field0 @ $8105: Emits 5 bytes into buf+$8F[4..0] from source ptr $85, each passed through bit-packer $8181; gated by index $0080 vs limit $2927 */
-/* faithful transliteration kept as the validation oracle; native hud_fill_field0() lives in rof_native.c (see VALIDATE_FUNCS) */
-void hud_fill_field0__t6502(void) {
+/* alien_field0_fill @ $8105: Emits 5 bytes into buf+$8F[4..0] from source ptr $85, each passed through bit-packer $8181; gated by index $0080 vs limit $2927 */
+/* faithful transliteration kept as the validation oracle; native alien_field0_fill() lives in rof_native.c (see VALIDATE_FUNCS) */
+void alien_field0_fill__t6502(void) {
     /* 8105 */
     LDY(sync_flag);
     /* 8107 */
-    CPY(hud_field0_limit);
+    CPY(alien_field0_limit);
     /* 810a */
     if (!cpu.C) goto L_810f;
     /* 810c */
@@ -13616,7 +13616,7 @@ L_8111:;
     /* 8111 */
     LDA(bus_read(ZP_IND_Y(0x85)));
     /* 8113 */
-    pack_byte_to_5bit_cells();
+    reorder_cell_bits();
     /* 8116 */
     mem[(uint8_t)(MEM_sfx_toggle_8F+cpu.X)] = cpu.A;
     /* 8118 */
@@ -13631,13 +13631,13 @@ L_8111:;
     return;
 }
 
-/* hud_fill_field1 @ $811F: Copies 5 bytes into buf $8F[$0C..$10] from source ptr $87; gated by index $0081 vs limit $2928 */
-/* faithful transliteration kept as the validation oracle; native hud_fill_field1() lives in rof_native.c (see VALIDATE_FUNCS) */
-void hud_fill_field1__t6502(void) {
+/* alien_field1_fill @ $811F: Copies 5 bytes into buf $8F[$0C..$10] from source ptr $87; gated by index $0081 vs limit $2928 */
+/* faithful transliteration kept as the validation oracle; native alien_field1_fill() lives in rof_native.c (see VALIDATE_FUNCS) */
+void alien_field1_fill__t6502(void) {
     /* 811f */
     LDY(dl_ptr_lo);
     /* 8121 */
-    CPY(hud_field1_limit);
+    CPY(alien_field1_limit);
     /* 8124 */
     if (!cpu.C) goto L_8129;
     /* 8126 */
@@ -13666,13 +13666,13 @@ L_812b:;
     return;
 }
 
-/* hud_fill_field2 @ $8138: Fills buf $8F[$05..$0B] from ptr $89; if $292D!=0 raw copy else through bit-packer $8181; gated by index $0082 vs limit $2929 */
-/* faithful transliteration kept as the validation oracle; native hud_fill_field2() lives in rof_native.c (see VALIDATE_FUNCS) */
-void hud_fill_field2__t6502(void) {
+/* alien_field2_fill @ $8138: Fills buf $8F[$05..$0B] from ptr $89; if $292D!=0 raw copy else through bit-packer $8181; gated by index $0082 vs limit $2929 */
+/* faithful transliteration kept as the validation oracle; native alien_field2_fill() lives in rof_native.c (see VALIDATE_FUNCS) */
+void alien_field2_fill__t6502(void) {
     /* 8138 */
     LDY(dl_ptr_hi);
     /* 813a */
-    CPY(hud_field2_limit);
+    CPY(alien_field2_limit);
     /* 813d */
     if (!cpu.C) goto L_8142;
     /* 813f */
@@ -13710,7 +13710,7 @@ L_8158:;
     /* 8158 */
     LDA(bus_read(ZP_IND_Y(0x89)));
     /* 815a */
-    pack_byte_to_5bit_cells();
+    reorder_cell_bits();
     /* 815d */
     mem[(uint8_t)(MEM_sfx_toggle_8F+cpu.X)] = cpu.A;
     /* 815f */
@@ -13727,9 +13727,9 @@ L_8158:;
     return;
 }
 
-/* hud_fill_field3_font @ $8168: Copies 7 glyph bytes into buf $8F[$05..$0B] from font table $35CD+Y; gated by index $0083 vs fixed limit $A8 */
-/* faithful transliteration kept as the validation oracle; native hud_fill_field3_font() lives in rof_native.c (see VALIDATE_FUNCS) */
-void hud_fill_field3_font__t6502(void) {
+/* alien_field3_fill @ $8168: Copies 7 glyph bytes into buf $8F[$05..$0B] from font table $35CD+Y; gated by index $0083 vs fixed limit $A8 */
+/* faithful transliteration kept as the validation oracle; native alien_field3_fill() lives in rof_native.c (see VALIDATE_FUNCS) */
+void alien_field3_fill__t6502(void) {
     /* 8168 */
     LDY(screen_ptr_lo);
     /* 816a */
@@ -13762,9 +13762,9 @@ L_8173:;
     return;
 }
 
-/* pack_byte_to_5bit_cells @ $8181: Re-distributes A's bits across cells via repeated ROL/ROR through scratch $0084 (5-bit proportional-font/glyph bit-packing) */
-/* faithful transliteration kept as the validation oracle; native pack_byte_to_5bit_cells() lives in rof_native.c (see VALIDATE_FUNCS) */
-void pack_byte_to_5bit_cells__t6502(void) {
+/* reorder_cell_bits @ $8181: Re-distributes A's bits across cells via repeated ROL/ROR through scratch $0084 (5-bit proportional-font/glyph bit-packing) */
+/* faithful transliteration kept as the validation oracle; native reorder_cell_bits() lives in rof_native.c (see VALIDATE_FUNCS) */
+void reorder_cell_bits__t6502(void) {
     /* 8181 */
     ROL_A();
     /* 8182 */
@@ -14056,7 +14056,7 @@ L_8ce5:;
     /* 8cec */
     if (cpu.Z) goto L_8cf7;
     /* 8cee */
-    LDA(mem[0x281E]);
+    LDA(figure_is_alien);
     /* 8cf1 */
     if (cpu.Z) goto L_8cf7;
     /* 8cf3 */
@@ -19553,7 +19553,7 @@ L_a49a:;
     LDA(0x74);
 L_a4a1:;
     /* a4a1 */
-    wing_bar_hpos_base = cpu.A;
+    crosshair_hpos_base = cpu.A;
     /* a4a7 */
     mem[0x28FD] = map_x_scratch_lo;
     /* a4ad */
@@ -20588,7 +20588,7 @@ L_aa5c:;
     jitter_roll_pitch(); return;
 }
 
-/* jitter_roll_pitch @ $AA95: Random-walks roll $0029 and pitch $0026 accumulators toward limits via RANDOM $D20A; called from pmg_enemy_update (was game_sub_AA95) */
+/* jitter_roll_pitch @ $AA95: Random-walks roll $0029 and pitch $0026 accumulators toward limits via RANDOM $D20A; called from alien_attack_tick (was game_sub_AA95) */
 /* faithful transliteration kept as the validation oracle; native jitter_roll_pitch() lives in rof_native.c (see VALIDATE_FUNCS) */
 void jitter_roll_pitch__t6502(void) {
     /* aa95 */
@@ -24447,8 +24447,8 @@ L_560f:;
     return;
 }
 
-/* engine_sound_update @ $5978: Engine/SFX pitch update: ramps $006D toward target level_progress $37EE per PORTA $D300/SKCTL $D20F bits; reload $00C3=4; stop via $5a0e when $006C/console+trig */
-void engine_sound_update(void) {
+/* standby_level_select_loop @ $5978: Engine/SFX pitch update: ramps $006D toward target level_progress $37EE per PORTA $D300/SKCTL $D20F bits; reload $00C3=4; stop via $5a0e when $006C/console+trig */
+void standby_level_select_loop(void) {
 L_5978:;
     /* 5978 */
     LDA(zp_flag_03);
@@ -24612,7 +24612,7 @@ L_5a0e:;
     sound_check_trigger(); return;
 }
 
-/* sound_check_trigger @ $5A17: Read CONSOL $D01F bit2; if set continue engine_sound_update ($5978), else fall to $5a21 retrigger */
+/* sound_check_trigger @ $5A17: Read CONSOL $D01F bit2; if set continue standby_level_select_loop ($5978), else fall to $5a21 retrigger */
 void sound_check_trigger(void) {
     /* 5a17 */
     LDA(bus_read(0xD01F));
@@ -24621,7 +24621,7 @@ void sound_check_trigger(void) {
     /* 5a1c */
     if (cpu.Z) { sound_retrigger_random(); return; }
     /* 5a1e */
-    engine_sound_update(); return;
+    standby_level_select_loop(); return;
     sound_retrigger_random(); return;
 }
 
@@ -24800,13 +24800,13 @@ L_6a89:;
     reorder_sprite_slot(); return;
 }
 
-/* clear_var_0632 @ $7F74: $0632=0 */
-/* faithful transliteration kept as the validation oracle; native clear_var_0632() lives in rof_native.c (see VALIDATE_FUNCS) */
-void clear_var_0632__t6502(void) {
+/* clear_alien_knock_active @ $7F74: $0632=0 */
+/* faithful transliteration kept as the validation oracle; native clear_alien_knock_active() lives in rof_native.c (see VALIDATE_FUNCS) */
+void clear_alien_knock_active__t6502(void) {
     /* 7f74 */
     LDA(0x00);
     /* 7f76 */
-    var_0632 = cpu.A;
+    alien_knock_active = cpu.A;
     /* 7f79 */
     return;
 }

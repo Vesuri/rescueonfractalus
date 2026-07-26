@@ -108,7 +108,7 @@ $3C93,memset_or_copy,func,0,Utility: likely memset/memcopy (called from multiple
 $3CC3,wait_frames_1,func,0,PHA then LDA #$01 falling into wait_frames_set_count = wait 1 frame (accumulator preserved). NOT a colour clear (was misnamed clear_colors)
 $3CDE,game_entry,func,0,Game entry point (final INITAD=$3CDE); 737-byte mega-init + main game loop JMP chain
 $3FBF,clear_pm_state,func,0,Zeros $DA,$DB,$DC,$DD (player state?) + $D9; also clears PCOLR0-3 shadow
-$3FCD,enemy_check,func,0,Checks $063D (enemy active?) and $0633 (another trigger); dispatches to game_subsystem_4f3f or pmg_enemy_update
+$3FCD,enemy_check,func,0,Checks $063D (enemy active?) and $0633 (another trigger); dispatches to game_subsystem_4f3f or alien_attack_tick
 $3FDE,draw_compass_heading,func,0,Table lookup: reads $281C + index from $2836 into $3FF6 table; writes 4 bytes to $32E3 (display buffer)
 $3FFA,startup_init,func,0,Init: checks $0642 game state and $004B flag; calls display_sub if state=1 or 2
 $4258,lock_on_indicator_fill_cells,func,0,Lights all six lock-on indicator glyphs at once (mem[$3492-$3497]=$A9); fill-sweep opening frame + game-start (re)init (was misnamed game_sub_4258)
@@ -153,10 +153,10 @@ $76CB,game_init_76CB,func,0,Game init (called in game_entry setup sequence)
 $77DF,game_init_77DF,func,0,Game init (called in game_entry setup sequence)
 $7813,init_terrain_col_tables,func,0,One-time init of the per-column mode-D plot LUTs: fills terrain_col_pixel_mask ($BC00, the rotating $80/$20/$08/$02 high-bit-of-2bpp-pixel mask, 256 entries) and zeroes terrain_col_byte_offset ($BD00, rebuilt per frame by terrain_draw_frame). Atari analogue of the Amiga renderFlightDirect kMask[]/(c>>2).
 $7854,pilot_render,func,0,Pilot/rescue rendering + interaction (3 RANDOM reads; checks $288D/$288E rescue state; large function)
-$7AB8,pmg_enemy_update,func,0,PMG enemy update (1 RANDOM read; called from enemy_check when $0633≠0)
+$7AB8,alien_attack_tick,func,0,PMG enemy update (1 RANDOM read; called from enemy_check when $0633≠0)
 $7B54,game_sub_7B54,func,0,Game sub (1 RANDOM read; called in main loop)
-$7EC7,game_sub_7EC7,func,0,Game sub (3 RANDOM reads)
-$7F85,game_sub_7F85,func,0,Game sub (1 RANDOM read)
+$7EC7,alien_knock_setup_loop,func,0,Game sub (3 RANDOM reads)
+$7F85,alien_creature_animate_draw,func,0,Game sub (1 RANDOM read)
 $8237,audio_irq_handler,func,0,Audio IRQ handler (0 callers; writes AUDF1-4 + AUDCTL; timer-driven sound update)
 $9E54,terrain_frame_setup,func,0,Per-frame terrain view-transform setup: calls setup_projection_params + build_view_transform_matrix, then two loops over the per-column transform tables (was terrain_gen_1)
 $A31E,terrain_draw_frame,func,0,Main per-frame terrain draw driver (X=half*$30): row-xspans + object loop (project_terrain_points/terrain_plot_object/terrain_subdivide_column) + game-state tail; 2 RANDOM reads (was terrain_gen_2)
@@ -164,7 +164,7 @@ $A613,terrain_jitter_column,func,0,Random-jitters the freshly-scrolled terrain c
 $A822,terrain_plot_object_a,func,0,Plot one terrain object, variant A (reached indirectly from terrain_plot_object; 1 RANDOM read) (was terrain_sub_A822)
 $A90A,terrain_plot_object_b,func,0,Plot one terrain object, variant B (reached indirectly from terrain_plot_object; 4 callees) (was terrain_sub_A90A)
 $A99C,game_state_update,func,0,Game state update (2 RANDOM reads; called from main game loop)
-$AA95,jitter_roll_pitch,func,0,Random-walks roll $0029 and pitch $0026 accumulators toward limits via RANDOM $D20A; called from pmg_enemy_update (was game_sub_AA95)
+$AA95,jitter_roll_pitch,func,0,Random-walks roll $0029 and pitch $0026 accumulators toward limits via RANDOM $D20A; called from alien_attack_tick (was game_sub_AA95)
 $AACF,plot_scanline_rand_dir,func,0,Reads RANDOM $D20A: branches to plot_scanline_up else falls through to plot_scanline_down — random-direction scanline plot (was game_sub_AACF)
 $AD5F,clear_terrain_column,func,0,Clears one terrain column band (X=start column): 42 cols x 44 rows from base $1010 stride $60, plus scattered object-table cells (was terrain_gen_3)
 $AE53,fill_terrain_silhouette,func,0,Per-column terrain silhouette fill (NOT collision - the misread "$B12F crash handler" is actually the raster-fill entry). For each of 42 columns: scan the 48 bitmap rows ($1010, stride $60) for the topmost non-empty cell, fill $55 (sky) above it, then raster-fill the body down via the terrain_row_addr/$073D pointer tables + terrain_fill_chain_mask/terrain_fill_or_mask. Builds the bitmap renderFlightDirect reads for the dots plane. Real ship/object collision is object_step_and_collide ($9552), which uses the $0900/$0A00 cell maps, not this bitmap.
@@ -234,7 +234,7 @@ $061E,joystick_saved_2,var,0,Joystick raw $004A saved here at game_entry
 $0626,game_vars_626,data,0,7 bytes zeroed at game_entry ($0626-$062C)
 $0627,fresh_start_flag,var,0,0=first time through (run intro); non-zero=continue/skip intro
 $062F,life_counter,var,0,Life/fuel counter? — compared to $0E (14); game_entry branches on this
-$0633,alien_trigger,var,0,Alien/enemy trigger (if non-zero, enemy_check calls pmg_enemy_update)
+$0633,alien_trigger,var,0,Alien/enemy trigger (if non-zero, enemy_check calls alien_attack_tick)
 $063D,event_trigger,var,0,Event trigger (if non-zero, enemy_check calls intro_cinematic_loop)
 $0642,game_phase_flag,var,0,Game phase (0=intro 1/2=active 3=transition); used in startup_init + display loop
 $0645,shield_or_damage,var,0,Shield/damage counter (set $80 at game_entry start)
@@ -374,9 +374,9 @@ $5667,sfx_voice_write_freq,func,0,Write AUDF freq ($0679+Y) to POKEY AUDFn at $D
 $5673,sfx_voice_write_freq_ctrl,func,0,For voice Y write AUDF ($D1FE+X) freq and AUDC ($D1FF+X) = ($066B+Y &$0F vol/prio) | ($065D+Y distortion); skip if $0705+Y=0
 $568A,sfx_pick_top_voice,func,0,Scan 12 voice slots $0705+X; pick active slot with max prio nibble ($066B&$0F) below $10; store val->$0714/$0716, idx->$0715
 $56AF,sfx_pick_next_voice,func,0,Scan voice slots $0705+X for next-best prio nibble ($066B&$0F) excluding slot $0715; result val->$0716, idx->$0717
-$5978,engine_sound_update,func,0,Engine/SFX pitch update: ramps $006D toward target level_progress $37EE per PORTA $D300/SKCTL $D20F bits; reload $00C3=4; stop via $5a0e when $006C/console+trig
+$5978,standby_level_select_loop,func,0,Engine/SFX pitch update: ramps $006D toward target level_progress $37EE per PORTA $D300/SKCTL $D20F bits; reload $00C3=4; stop via $5a0e when $006C/console+trig
 $5A0E,sound_stop,func,0,Stop sound: audio_timer_setup, write A to SDMCTL shadow $022F, clear sound-active flag $006C
-$5A17,sound_check_trigger,func,0,Read CONSOL $D01F bit2; if set continue engine_sound_update ($5978), else fall to $5a21 retrigger
+$5A17,sound_check_trigger,func,0,Read CONSOL $D01F bit2; if set continue standby_level_select_loop ($5978), else fall to $5a21 retrigger
 $5A21,sound_retrigger_random,func,0,Wait on $00E5; if $060C==0 seed random freqs $060F/$0610 (5a4d) and $060D/$060E (5a59); set $006D/$060C/$0004=$10
 $5A4D,random_alpha_index,func,0,RANDOM $D20A & $1F, reject>=$1A, then ADC #$21; returns random value (alpha range)
 $5A59,random_digit,func,0,RANDOM $D20A & $0F, rejection-sample until <$0A; returns random 0-9 digit
@@ -435,7 +435,7 @@ $6A8F,step_accum_sub_7e,func,0,Subtracts $7E via sub_multibyte_a1, result->$00A4
 $6AB5,add_multibyte_a1,func,0,Multi-byte add: A (C clear) += $00A1, carry chains into $00A2,$00A3,$00A4; returns top byte in A
 $6AC9,sub_multibyte_a1,func,0,Multi-byte subtract: stores A to $08DA, $00A1 -= A, borrow chains through $00A2,$00A3,$00A4; mirror of add_multibyte_a1
 $6AE5,fill_terrain_columns,func,0,LDY #$59; loops 89x calling gen_terrain_column to fill all 4 parallel terrain buffers $0C32/$0D32/$0E32/$0F32
-$6AEE,scroll_field_columns,func,0,Gated by state $0089; updates $A4/$A5 via add_multibyte_a1(24-bit add), shifts $0C32-$0F32 buffers left 1 col ($59 wide), appends new col via gen_terrain_column
+$6AEE,scroll_field_columns,func,0,Gated by state $0089; updates $A4/$A5 via add_multibyte_a1(24-bit add), shifts $0C32-$0F32 buffers left 1 col ($59 wide), appends new col via gen_terrain_column; the SAME shift renders as a VERTICAL star scroll when the buffers are the star players (scenes 4-6)
 $6B2E,gen_terrain_column,func,0,Fills one column (index Y) of all 4 buffers $0C32/$0D32/$0E32/$0F32 with random heights from random_terrain_height
 $6B63,clear_terrain_lo_buffers,func,0,LDY #$5F..0: zeroes the $0E32 and $0F32 terrain buffers (96 bytes each)
 $6B71,clear_scroll_accum,func,0,Zeroes PCOLR0-3 shadow $02C0..$02C3 and 24-bit scroll accum $00A1..$00A4 plus $00A5
@@ -480,14 +480,14 @@ $7C01,animate_zoom_sequence,func,0,8-frame loop: wait RTCLOK_LOW($14)>=3; per-ph
 $7C9A,draw_scaled_shape,func,0,computes $C1/$C2 origin via $50/$51 subtract; row loop $53/$4E w/ tables $7DA9/7DBB/7DD3/7DA5; plots via plot_clipped_pixel
 $7D38,plot_clipped_pixel,func,0,A=value->$58; clip Y($4E) in[$6C,$97) X($4F) in[$28,$D8); addr via $073D/$0793; mask $4F3B/$7DEB[X&3]; RMW bitmap via $C1 ptr; INC $4F
 $7F60,silence_audio_channels,func,0,A->AUDC1/2/3/4 ($D201/03/05/07); AUDCTL($D208)=$60; tail clear_$0632
-$7F74,clear_var_0632,func,0,$0632=0
-$7F7A,sound_step_preserve_a,func,0,saves A in $2930, calls game_sub_7F85 (INC $2924 -> table $81E8), reloads A, SEC; returns A unchanged
-$80C5,hud_build_text_row,func,0,Zeroes 17-byte buf $8F..$9F; calls 4 field-fillers + $8181 packer; OR-merges glyph table $BE00 masked into screen RAM via ptr $8B/$8D; advances $8B by $60
-$8105,hud_fill_field0,func,0,Emits 5 bytes into buf+$8F[4..0] from source ptr $85, each passed through bit-packer $8181; gated by index $0080 vs limit $2927
-$811F,hud_fill_field1,func,0,Copies 5 bytes into buf $8F[$0C..$10] from source ptr $87; gated by index $0081 vs limit $2928
-$8138,hud_fill_field2,func,0,Fills buf $8F[$05..$0B] from ptr $89; if $292D!=0 raw copy else through bit-packer $8181; gated by index $0082 vs limit $2929
-$8168,hud_fill_field3_font,func,0,Copies 7 glyph bytes into buf $8F[$05..$0B] from font table $35CD+Y; gated by index $0083 vs fixed limit $A8
-$8181,pack_byte_to_5bit_cells,func,0,Re-distributes A's bits across cells via repeated ROL/ROR through scratch $0084 (5-bit proportional-font/glyph bit-packing)
+$7F74,clear_alien_knock_active,func,0,$0632=0
+$7F7A,sound_step_preserve_a,func,0,saves A in $2930, calls alien_creature_animate_draw (INC $2924 -> table $81E8), reloads A, SEC; returns A unchanged
+$80C5,alien_shape_blit,func,0,Zeroes 17-byte buf $8F..$9F; calls 4 field-fillers + $8181 packer; OR-merges glyph table $BE00 masked into screen RAM via ptr $8B/$8D; advances $8B by $60
+$8105,alien_field0_fill,func,0,Emits 5 bytes into buf+$8F[4..0] from source ptr $85, each passed through bit-packer $8181; gated by index $0080 vs limit $2927
+$811F,alien_field1_fill,func,0,Copies 5 bytes into buf $8F[$0C..$10] from source ptr $87; gated by index $0081 vs limit $2928
+$8138,alien_field2_fill,func,0,Fills buf $8F[$05..$0B] from ptr $89; if $292D!=0 raw copy else through bit-packer $8181; gated by index $0082 vs limit $2929
+$8168,alien_field3_fill,func,0,Copies 7 glyph bytes into buf $8F[$05..$0B] from font table $35CD+Y; gated by index $0083 vs fixed limit $A8
+$8181,reorder_cell_bits,func,0,Re-distributes A's bits across cells via repeated ROL/ROR through scratch $0084 (5-bit proportional-font/glyph bit-packing)
 $8C58,build_player2_sprite,func,0,Builds scaled P/M sprite into strip $0E32 from depth $0038/$0039; sets HPOSP2 $D002, SIZEP2 $D014, GRAFP2 $D00A; uses tables $8DB5/$8E2B/$8E32/$8E3E/$8E4A/$8E52/$8DD0
 $8E5B,flight_control_integrate,func,0,Master flight step: reads PORTA $D300 joystick + RANDOM $D20A; integrates pitch $0025/26 roll $0028/29 throttle $002D/2E & world pos $0033/34,$2885/87/89; clamps angles; updates PMG/audio
 $930E,object_integrate_position,func,0,16-bit signed integ: $2827/$0064/$0065 -= $2850/1; $2828/$0066/$0067 += $2852/3 then $2829/$282C; if hi bytes 0 use tbl $93F3[$0063] scaled by $282D, store screen pos $2821 & $2824, else $2824=0
@@ -558,7 +558,7 @@ $0035,indicator_pos,var,0,Gauge/indicator position byte computed by b70c (clampe
 $0036,object_anim_frame,var,0,Object explosion/anim frame & slot select; set $80 in 9677, index into tbl $96F5 in 9680
 $0038,vobj_row_count,var,0,P/M strip row count: loaded to X in $41e4 to choose erase-loop vs step-down and DEX'd over strip rows in $4207; also serves as object range/depth high byte for sprite vertical scale in build_player2_sprite and velocity in flight_control_integrate.
 $003B,vobj_path_flag,var,0,Gates vobj update path: if 0 use speed-accumulate ($416b) else active-decrement ($4166); also DEC'd in $4166
-$003C,anim_flag_003C,var,0,Set $FF/$00 around animate_clear_colors_timed sweep; tested vs $80; cleared in init_event_state_5815_x16
+$003C,airlock_state,var,0,Set $FF/$00 around animate_clear_colors_timed sweep; tested vs $80; cleared in init_event_state_5815_x16
 $003E,clear_colors_done_003E,var,0,Set non-zero to abort wait_frames_1 sweep loops in animate_clear_colors_timed/clear_colors_sweep_5x
 $0043,event_active_flag,var,0,event_sequence_dispatcher gating flag for mode 0/dispatch; inc at $4691, cleared at $469f
 $0045,bcd_delta_lo,var,0,16-bit BCD increment low byte added to bcd_counter $0603 in SED mode; cleared by set_zsupp_pos_clear_delta
@@ -580,7 +580,7 @@ $0065,object_pos_x_hi,var,0,High/overflow byte of object X; zero means on-screen
 $0066,object_pos_y_lo,var,0,16-bit object Y accumulator low (with $0067 hi); integrated in 930e, used for $2821
 $0067,object_pos_y_hi,var,0,High/overflow byte of object Y; zero means on-screen (gates 930e, 93bd)
 $006B,mul_multiplicand,var,0,Multiplicand for shift-add multiply mul_u8; LSR'd each step
-$006C,sound_active_flag,var,0,Sound-engine active flag gating the engine_sound_update path; cleared by sound_stop ($5a0e) and zeroed alongside game_vars_626 at init_game_vars (init_game_vars_attract_timer).
+$006C,sound_active_flag,var,0,Sound-engine active flag gating the standby_level_select_loop path; cleared by sound_stop ($5a0e) and zeroed alongside game_vars_626 at init_game_vars (init_game_vars_attract_timer).
 $006D,level_stage,var,0,Level/stage counter (read 26x, written 5x): CMP #1/#4 branches in game_setup_7460/unpack_bitmap_4d3e, loop limit in count_up_to_level; also feeds compute_stage_display_geometry gauge/display geometry and the engine-sound pitch ramp toward level_progress $37EE.
 $006E,blink_timer,var,0,Down-counter in update_blink_timer_006e ($4131); reloads to $0F, drives anim_counter_1 $00DE between $4E/$46
 $006F,dial_value,var,0,Cockpit dial/gauge value; loaded by redraw_dial_from_6f, stored+clamped in cockpit_dial_update, inc/dec in event_sequence_dispatcher ($475e/$4778)
@@ -590,7 +590,7 @@ $0075,trig_angle,var,0,Angle accumulator for sine_table_lookup/trig_interp_looku
 $0076,trig_result_lo,var,0,Low byte of 24-bit signed sine result from sine_table_lookup ($0076-$0078)
 $007B,anim_counter_007B,var,0,Animation step counter decremented in animate_clear_colors_timed sweep loops
 $007D,clear_color_count_007D,var,0,X loop count for wait_frames_1 in animate_clear_colors_timed/clear_colors_sweep_5x (clamped min $14); incremented +2 per step
-$0089,terrain_state,var,0,Terrain scroll state flag; gates scroll_field_columns (scroll_field_columns) in dispatcher $5375; set $7F then counted toward $04 in $6500
+$0089,terrain_state,var,0,Terrain scroll-phase gate; in scroll_field_columns 0=idle/<4=scroll every frame/>=4=distance-accum-paced (reset 2 at distance 100 = the stars/planet vertical star-scroll pacing); set $7F then counted toward $04 in $6500
 $008A,terrain_scroll_counter,var,0,Per-call countdown in scroll_terrain_dl (scroll_terrain_dl); at 0 resets $008C=8
 $008B,dl_src_index,var,0,Index into LMS source tables $073D/$0793 used by dl_lms_fill; reset/dec by 69dd/69e3
 $008C,terrain_scroll_reload,var,0,Reload value (8) set when $008A expires in scroll_terrain_dl
@@ -651,7 +651,7 @@ $062A,stage_geom_height_062A,var,0,Geometry value = clamp(($006D/2)+2,$14); push
 $062B,bcd_osc_dir,var,0,Direction flag for $0628 BCD osc: nonzero=decrement, 0=increment ($7AF4); incremented on carry
 $0630,saved_joy_4a,var,0,event_sequence_dispatcher saves $4A here ($467d) and restores it ($46a1) around event takeover
 $0631,lock_on_indicator_phase,var,0,Player-3 object phase counter/flag: LSR/INC in lock_on_indicator_phase_advance, low nibble compared to 7 to gate phase changes
-$0632,var_0632,var,0,flag/counter cleared to 0 by clear_var_0632 (called after silence_audio_channels)
+$0632,alien_knock_active,var,0,flag/counter cleared to 0 by clear_alien_knock_active (called after silence_audio_channels)
 $0634,sfx_state_0634,var,0,sfx_engine_step state: nonzero selects descending-pitch branch ($5585); set via INC at $55c9
 $0636,sfx_timer_0636,var,0,sfx_engine_step countdown; on underflow reseeds from RANDOM $D20A and writes AUDC $D204/AUDF $D200
 $0638,sfx_pitch_0638,var,0,AUDF1 ($D200) pitch accumulator decremented by table $55DC in sfx_engine_step
@@ -660,11 +660,11 @@ $063B,event_pending_flag,var,0,event_sequence_dispatcher reads/clears at entry; 
 $063E,msg_flash_timer,var,0,Message flash/display timer set by show_cockpit_message ($FF or $5A); decremented at $4489
 $063F,code_seq_progress,var,0,progress index into code-match table $5B3F; reset 0 on mismatch, advances on match (match_code_sequence)
 $0641,placed_item_count_bcd,var,0,BCD counter incremented by $7B88 (set $0045/$0046 + inc); count of placed items
-$0644,sound_event_flag,var,0,Set =Y in engine_sound_update when PORTA $D300&3==3 and CONSOL $D01F condition met
+$0644,sound_event_flag,var,0,Set =Y in standby_level_select_loop when PORTA $D300&3==3 and CONSOL $D01F condition met
 $0646,digit_cache_646,var,0,Cached $0628|$00BF value at $406b; change-detect before draw_2digit_value to $34xx screen pos
 $0647,digit_cache_647,var,0,Cached source compared at $4025 before calling draw_digit_low_nibble; change-detect for a status digit
-$0651,music_note_timer,var,0,Music note duration countdown in music_player_tick($7253); init 1 by music_init_state, reloaded #4 mid-stream
-$0653,music_tempo_timer,var,0,Music tempo/frame countdown in music_player_tick($7253); init 2 by music_init_state
+$0651,music_note_timer,var,0,Music note duration countdown in music_player_tick($7253); init 0 by music_init_state, reloaded #4 mid-stream
+$0653,music_tempo_timer,var,0,Music tempo/frame countdown in music_player_tick($7253); init 1 by music_init_state
 $0657,music_stream_ptr_lo,var,0,Music command-stream pointer low; copied to $0099 then ZP_IND read in music_player_tick($7253)
 $0658,music_stream_ptr_hi,var,0,Music command-stream pointer high; copied to $009A in music_player_tick($7253), incremented on carry
 $065D,sfx_voice_distortion,var,0,Per-voice POKEY AUDC distortion bits; ORed with vol nibble into AUDCn $D1FF+X in 5673
@@ -721,7 +721,7 @@ $2834,horizon_phase_toggle,var,0,LSR/INC toggle gating update_terrain_horizon_lr
 $2835,player3_prev_rows,var,0,Count of PMG rows drawn last frame; cleared at top of frame then re-stored (draw_player3_object $43a5) for erase loop
 $2837,target_hit_streak,var,0,Consecutive-frame counter in ac42; reaching 2 latches target index to 2838, else reset to 0
 $2838,target_latched_idx,var,0,Latched target/window index (X) stored by ac42 after 2 consecutive in-window frames
-$2840,wing_bar_hpos_base,var,0,Base HPOS for the wing-clearance bars (Atari missiles M3/M2/M1 = base+0/+$0C/+$11); read in vbi_handler_flight and pushed to HPOSM3/2/1.
+$2840,crosshair_hpos_base,var,0,Base HPOS for the wing-clearance bars (Atari missiles M3/M2/M1 = base+0/+$0C/+$11); read in vbi_handler_flight and pushed to HPOSM3/2/1.
 $2841,horizon_left_prev,var,0,Cached previous left horizon; compared to $282E to skip redundant game_sub_451d
 $2842,horizon_right_prev,var,0,Cached previous right horizon; compared to $282F in update_terrain_horizon_lr
 $2843,map_cell_hit_marker,var,0,Written $FC into map $0A00[$2864] to mark a struck/destroyed cell in 9552
@@ -750,10 +750,10 @@ $28EA,terrain_span_max,var,0,running max span/extent compared+updated in terrain
 $28EE,lock_on_indicator_complete,var,0,Set to 1 alongside $0048 when lock-on indicator animation completes (lock_on_indicator_step $427a)
 $290D,terrain_distance_acc,var,0,Manhattan distance accumulator in terrain_point_distance $A8AF (|dx|+|dy|)
 $291F,anim_phase,var,0,animation phase/frame counter in animate_zoom_sequence; reset 0, INC then AND #7 to wrap 8 frames; indexes tables $7D8D/$7D95/$7D9D
-$2924,sound_table_idx,var,0,index into table $81E8 in game_sub_7F85; INC'd each call (stepped sound/random sequence)
-$2927,hud_field0_limit,var,0,Upper limit for field0 index $0080 (hud_fill_field0)
-$2928,hud_field1_limit,var,0,Upper limit for field1 index $0081 (hud_fill_field1)
-$2929,hud_field2_limit,var,0,Upper limit for field2 index $0082 (hud_fill_field2)
+$2924,sound_table_idx,var,0,index into table $81E8 in alien_creature_animate_draw; INC'd each call (stepped sound/random sequence)
+$2927,alien_field0_limit,var,0,Upper limit for field0 index $0080 (alien_field0_fill)
+$2928,alien_field1_limit,var,0,Upper limit for field1 index $0081 (alien_field1_fill)
+$2929,alien_field2_limit,var,0,Upper limit for field2 index $0082 (alien_field2_fill)
 $32B7,cockpit_msg_buffer,var,0,14-byte cockpit text message buffer; decoded strings copied here by show_cockpit_message; filled by $47b8 loop CPY #$0E
 $3355,special_state_color,var,0,Set $34 entering / $B4 exiting terrain special state in enter_terrain_special_state/9b4c (likely color/display byte)
 $37EF,text_cell_col,var,0,column counter (0..7) in render_text_cell glyph expansion
@@ -863,3 +863,20 @@ $28DB,collapse_cur_obj,var,0,terrain_frame_setup: current object index saved acr
 $6B5F,terrain_height_table,data,0,4-entry preset terrain-height table the RNG picks from (1/32 of samples) in gen_terrain_column
 $6E0F,frame_span_thickness_tbl,data,0,door-frame / tunnel-ring span-thickness table (one entry per concentric rectangle)
 $5406,env_gate_table,data,0,sfx_voice_envelope_tick: ROM ramp/gate table (zero entry pauses the envelope step)
+$281E,figure_is_alien,var,0,Set 1 in pilot_render when the rescued figure's map-marker $0A00[$28E6]==$80 (alien-designated at spawn $4E58); DEC'd to 0 for a pilot; gates the alien jump-scare
+$0648,music_env_level,var,0,Per-voice music envelope amplitude 0-127 (stride 2: $0648/$064A/$064C/$064E); integrated each tick in music_player_tick, emitted as AUDC=(level>>3) EOR distortion
+$0649,music_env_delta,var,0,Per-voice music envelope slope (stride 2: $0649/$064B/$064D/$064F); +attack on note-on, -release once the note timer expires
+$0650,music_voice_audf,var,0,Per-voice POKEY AUDF pitch (stride 2: $0650/$0652/$0654/$0656); loaded from music_instrument_audf_table on an instrument cmd, written to $D200+x on note-on
+$0659,music_note_on_level_c0,var,0,Envelope level loaded into music_env_level on a $C0 (11) voice code in music_player_tick
+$065A,music_note_on_level_80,var,0,Envelope level loaded into music_env_level on a $80 (10) voice code in music_player_tick
+$065B,music_attack_delta,var,0,Envelope slope loaded into music_env_delta on note-on
+$065C,music_release_delta,var,0,Envelope slope all voices switch to when the note timer reaches 0 (decay/release phase)
+$7375,music_instrument_audf_table,var,0,AUDF preset per instrument cmd $C0..$FF (4 bytes/entry indexed (~cmd)*4 = the four voices' pitches, voice 3 first)
+$73C1,music_audc_distortion_table,var,0,Per-voice POKEY AUDC distortion bits (stride 2) EORed with the volume nibble before the $D201+x write
+$71DB,sfx_seq_stream,var,0,Theme score byte stream (sfx_seq_step): note bytes (bit7 clear), voice-param cmds (bit7 set), $00=end/loop-to-start marker
+$71D2,sfx_note_duration_table,var,0,Per-note duration (indexed note&$1F) loaded into sfx_note_timer $073A by sfx_seq_step
+$71AB,sfx_audf1_table,var,0,POKEY AUDF voice1 preset per voice-param cmd (indexed cmd low 5 bits) in sfx_seq_step
+$719E,sfx_audf2_table,var,0,POKEY AUDF voice2 preset per voice-param cmd (indexed cmd low 5 bits) in sfx_seq_step
+$7191,sfx_audf3_table,var,0,POKEY AUDF voice3 preset per voice-param cmd (indexed cmd low 5 bits) in sfx_seq_step
+$71B8,sfx_audf4_table,var,0,POKEY AUDF voice4 preset per voice-param cmd (indexed cmd low 5 bits) in sfx_seq_step
+$71C5,sfx_audc4_table,var,0,AUDC4 preset per voice-param cmd (same index); a 0 here acts as a rest (ends the cmd scan, note silent)

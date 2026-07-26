@@ -15,15 +15,15 @@ DRAW routine is not yet located.**
   not in the `$2276` table become `$80`). The level-derived threshold `$061B`
   (`compute_stage_display_geometry $75F5`, from `level_stage $006D`) makes aliens impossible on
   levels 1–10 and increasingly likely after (see [[flight-scene]] for the table).
-- ⚠ `pmg_enemy_update $7AB8` is MISNAMED — it's the per-frame **alien-attack tick** (ship-shake via
+- ⚠ `alien_attack_tick $7AB8` is MISNAMED — it's the per-frame **alien-attack tick** (ship-shake via
   `jitter_roll_pitch $AA95`, pounding SFX, phase toggle `$283D`); **no PMG**. See docs/rename.md.
 
 ## The knock, and the gate (why FORCE_ALIEN shows no visual)
 
 At the knock (`pilot_render` phase 4, `L_79a8`, native rof_native.c ~line 3098):
-- **`$281E != 0` (alien) and `$003C == 0` (airlock closed):** calls **`game_sub_7EC7`** every frame,
+- **`$281E != 0` (alien) and `$003C == 0` (airlock closed):** calls **`alien_knock_setup_loop`** every frame,
   which — because systems are off (`$003E != 0`) — enters a **blocking sound loop** driving
-  `game_sub_7F85` (an SFX sequencer over tables `$81E2/$81E8/$820A`) once per RTCLOK frame until
+  `alien_creature_animate_draw` (an SFX sequencer over tables `$81E2/$81E8/$820A`) once per RTCLOK frame until
   systems come back on. Pure SFX → **this is the "attack sounds", NO creature drawn.**
 - **`$281E == 0` (pilot) and `$003C == 0`:** calls `animate_clear_colors_timed $7A17` (RTCLOK-gated
   colour sweep) — the pilot "waiting/knocking" animation.
@@ -34,30 +34,30 @@ At the knock (`pilot_render` phase 4, `L_79a8`, native rof_native.c ~line 3098):
 
 **Conclusion:** the jump-scare reveal (and the `$0633`-gated ship-shake) require the **airlock to be
 opened**. `FORCE_ALIEN` (forces only the marker → `$281E`) without opening the airlock reaches only
-the `game_sub_7EC7` sound loop → matches the observed "attack sounds + explosion, no shake, no
+the `alien_knock_setup_loop` sound loop → matches the observed "attack sounds + explosion, no shake, no
 creature". `FORCE_ALIEN` + opening the airlock at the knock SHOULD reach the reveal (untested).
 
-## ★ RESOLVED 2026-07-25 — the creature draw is `game_sub_7F85` → `$80C5` (airlock-CLOSED path)
+## ★ RESOLVED 2026-07-25 — the creature draw is `alien_creature_animate_draw` → `$80C5` (airlock-CLOSED path)
 
 **Two mistakes in the earlier hunt** (both now corrected):
 1. **Wrong path.** The classic jump-scare (alien on the glass) is the airlock-**CLOSED** case, not
    the reveal. At the phase-4 knock (`pilot_render` L_79b2, `$281E!=0` alien): **`$003C==0` (airlock
-   closed)** → `game_sub_7EC7`, which is NOT "sound only" — it seeds a creature-animation state
+   closed)** → `alien_knock_setup_loop`, which is NOT "sound only" — it seeds a creature-animation state
    (`$0632=1`, `$005E/$005F`, `$2921/$2924/$2926`, `$2930/$2931` position, `$0635/$0638/$0639`) then
-   loops calling `game_sub_7F85` every frame while systems stay off. **`$003C!=0` (airlock OPEN)** →
+   loops calling `alien_creature_animate_draw` every frame while systems stay off. **`$003C!=0` (airlock OPEN)** →
    the reveal (`$0633` set) = the alien **BOARDS** = "ALIEN IN SHIP" + shake + energy drain, and draws
    **no** creature (verified: `g_alPlotCalls=0`, `g_alDrawShape=0` over 158 `$0633` frames). So opening
    the airlock is the *boarding* mechanic; the *scare* is keeping it closed.
 2. **Wrong routine + wrong probe gate.** The creature is NOT drawn by `plot_clipped_pixel` or
    `draw_scaled_shape` (the two the `g_al*` probe hooked), and NOT while `$0633` is set (the gate the
-   probe used). It is drawn by **`game_sub_7F85` ($7F85)** — misnamed "sfx_seq_step"; it animates the
+   probe used). It is drawn by **`alien_creature_animate_draw` ($7F85)** — misnamed "sfx_seq_step"; it animates the
    frame tables (`$81E2/$81E8/$820A`) *and* draws — via **`$80C5`**: a masked bitmap blit
    `LDA $BE00,X / AND ($8B),Y / ORA shapeByte / STA ($8D),Y`, 17 bytes wide, row stride `$60` (=96,
    the mode-D row), into the `+$30` display half, positioned from runtime row-address tables
    **`$073D`/`$0793`** (built at `$7464/$7469`) indexed by `$2930`/`$2931`. Shape geometry comes from
    tables `$81A1/$81A9/$81B1/$81B9` + `$81C1/$81C9/$81D1/$81D9` (loaded into ZP `$80-$8A`).
 
-**Why it's invisible on the Amiga (same class as the fixed ground-objects bug):** `game_sub_7F85` is
+**Why it's invisible on the Amiga (same class as the fixed ground-objects bug):** `alien_creature_animate_draw` is
 transpiled (`rof_gen.c:13267`) and DOES run on the Amiga (it's the knock loop that already produces
 the SFX). Its `$80C5` writes land in the mode-D field, but `renderFlightDirect` renders the terrain
 body from `$260E` + `g_flightDotPlane` and only reads the field for the band rows (43-46) → the
@@ -69,12 +69,12 @@ mirror its field writes into the Amiga flight plane(s) with the value→pen mapp
 ## ★★ RENDERS 2026-07-25 (session 2) — creature shows + animates + lights blink (user-confirmed). PERF is the open blocker.
 
 **What now works (committed 9e8a83c → e36b6a1):**
-- **Mirror:** `hud_build_text_row` ($80C5, the native twin the game actually runs — NOT the transpiled
+- **Mirror:** `alien_shape_blit` ($80C5, the native twin the game actually runs — NOT the transpiled
   oracle) mirrors each creature byte, gated on `$0632` (alien_knock_active), into the paused-rescue
   overlay **`g_figP1/P2/M`** via `ROF_PLOT_ALIEN` (rof_native.c). Geometry MEASURED + matches the figure
   overlay: field base `$1010`, stride 96; `rel = A-$10A4`, `r = rel/96`, `b = rel%96`; byte decoded via
-  `kModeDP1/kModeDP2` (now `extern "C"`). `game_sub_7EC7` clears the overlay each step (`ROF_CLEAR_FIG`).
-- **Render path fix (THE key unlock):** the knock is a *blocking* loop in `game_sub_7EC7` (main loop
+  `kModeDP1/kModeDP2` (now `extern "C"`). `alien_knock_setup_loop` clears the overlay each step (`ROF_CLEAR_FIG`).
+- **Render path fix (THE key unlock):** the knock is a *blocking* loop in `alien_knock_setup_loop` (main loop
   never runs). The old faithful pre-wait spinwait `while(RTCLOK<=4){render}` NEVER rendered on the Amiga
   (`g_alRF=0`, frozen screen) because RTCLOK is advanced by the **hardware flight VBI**, not renderFrame,
   so after the slow `$7F85` draw RTCLOK was already >4 → wait was a no-op. Restructured to faithful
@@ -87,21 +87,21 @@ mirror its field writes into the Amiga flight plane(s) with the value→pen mapp
   draws NO creature. The jump-scare is the airlock-CLOSED knock. (`FORCE_AIRLOCK` = boarding test only.)
 
 **★ OPEN #1 — PERF (the blocker, ~7.5× too slow).** Measured per knock STEP (beam ticks, 313=1 frame=20ms;
-faithful step = 5 frames = 1565): **draw `game_sub_7F85` ≈ 8438 ticks (~540ms), render ≈ 3284 (~210ms),
+faithful step = 5 frames = 1565): **draw `alien_creature_animate_draw` ≈ 8438 ticks (~540ms), render ≈ 3284 (~210ms),
 wait ≈ 0** (no pacing left — draw+render already blow past 5 frames).
 
-**★ MEASURED 2026-07-25 (session 3) — the hud-vs-wrapper split: `hud_build_text_row` is ~100% of
-`game_sub_7F85`; the wrapper is ~0%.** (`g_alTHud` ≈ `g_alTDraw` per step, `hud/draw`=111% within async-VBI
+**★ MEASURED 2026-07-25 (session 3) — the hud-vs-wrapper split: `alien_shape_blit` is ~100% of
+`alien_creature_animate_draw`; the wrapper is ~0%.** (`g_alTHud` ≈ `g_alTDraw` per step, `hud/draw`=111% within async-VBI
 noise; 40 hud calls/step.) So native-twinning the `$7F85` *wrapper* does NOT help — the lever is the row
 composer + cutting per-row work.
 
 **★ DONE 2026-07-25 (session 3, commit fa1d06b) — clean-C rewrite of the whole draw tree** (foundation for
 the next perf pass; all byte-identical `make validate`, both backends build):
-- `pack_byte_to_5bit_cells` → a fixed bit-permutation (no more 22-op ROL/ROR chain; **dropped ~12 `$0084`
+- `reorder_cell_bits` → a fixed bit-permutation (no more 22-op ROL/ROR chain; **dropped ~12 `$0084`
   bus ops/call**, ~480 pack calls/step) + a `_core` so callers keep the accumulator in a register.
-- `hud_fill_field0/1/2/3` → hoisted the ZP source-pointer reconstruction out of the per-byte loop.
-- `hud_build_text_row` → hoisted the mask/dest row-pointer bases out of the 17-cell inner loop.
-- `game_sub_7F85` → now a validated native twin (clean sequencer + setup + blit loop), no longer transpiled.
+- `alien_field0_fill/1/2/3` → hoisted the ZP source-pointer reconstruction out of the per-byte loop.
+- `alien_shape_blit` → hoisted the mask/dest row-pointer bases out of the 17-cell inner loop.
+- `alien_creature_animate_draw` → now a validated native twin (clean sequencer + setup + blit loop), no longer transpiled.
 
 **★★ SESSION 4 (2026-07-26) — measured wins committed; per-step ~750→~379ms (~50% faster).** Progression
 (noisy ±30% run-to-run; trust the trend): step ~750ms → ~440 → **~379ms**.  All committed, both backends build,
@@ -127,7 +127,7 @@ draw tree still `make validate` byte-identical.
 user's interactive perf/visual confirmation.** Done + build-clean (both backends; draw tree still `make validate`
 byte-identical — all changes are `#ifdef ROF_PLATFORM_AMIGA`):
 - **The alien composite AND the pilot-run composite are the SAME path** — both write the `g_figP1/P2/M` overlay
-  (alien via `ROF_PLOT_ALIEN`/`hud_build_text_row`, pilot via `ROF_PLOT_FIG`/`plot_clipped_pixel`) and both are
+  (alien via `ROF_PLOT_ALIEN`/`alien_shape_blit`, pilot via `ROF_PLOT_FIG`/`plot_clipped_pixel`) and both are
   drawn by `renderFlightDirect`'s `rescueFigure` branch. So this one change speeds up BOTH.
 - **The per-frame erase+draw is now ONE `Bitmap::combineWithMask` blit** (4-channel A=mask B=figure C=clean D=dest;
   dest = (clean & ~mask) | (figure & mask)). It erases the previous figure AND draws the new one in a single
@@ -153,10 +153,10 @@ byte-identical — all changes are `#ifdef ROF_PLATFORM_AMIGA`):
   `blitterFillUp` uses) fully drains the queue before the flip.  ⚠ RULE: after any multi-blit Bitmap op, use
   `blitterDrain()` (NOT `blitterWait()`) before reusing/reading/flipping the target.  User-confirmed glitch-free.
 - **⚠ PERF RESULT: the blitter composite is ~NEUTRAL (~119 ms vs the old ~136 ms CPU loop); per-step still ~379 ms.**
-  Measured (glitch-free, 40 steps): draw `game_sub_7F85` ~3851 ticks (~245 ms), render ~2103 (~134 ms; composite
+  Measured (glitch-free, 40 steps): draw `alien_creature_animate_draw` ~3851 ticks (~245 ms), render ~2103 (~134 ms; composite
   ~1870 = ~119 ms, flipWait ~227 = ~14 ms).  WHY no win: the knock is a BLOCKING loop, so the CPU has NO
   concurrent work to overlap the blitter with — it just `blitterDrain()`s.  Offloading to the blitter only pays
-  off when the CPU runs in parallel.  **★ The bottleneck is now the DRAW: `hud_build_text_row` = ~245 ms = ~65%
+  off when the CPU runs in parallel.  **★ The bottleneck is now the DRAW: `alien_shape_blit` = ~245 ms = ~65%
   of the step (hud ≈99–103% of the wrapper).**
 **★★ SESSION 6 (2026-07-26) — narrow-rect composite + row-offset mul-tables + pointer-walk loops.** Both backends
 build; `make validate FN=hud` green (all changes `#ifdef ROF_PLATFORM_AMIGA`).
@@ -179,7 +179,7 @@ build; `make validate FN=hud` green (all changes `#ifdef ROF_PLATFORM_AMIGA`).
     confirmed** (no CPU fallback).
   - **render total = 343 ticks ≈ 22 ms/step** (scene 331: flipWait 248 ≈ 16 ms is now the biggest render cost,
     composite 72, misc ~11).
-  - **DRAW = 4260 ticks ≈ 271 ms/step (~93% of the step); `hud_build_text_row` ≈ 104% of it.**  THE bottleneck.
+  - **DRAW = 4260 ticks ≈ 271 ms/step (~93% of the step); `alien_shape_blit` ≈ 104% of it.**  THE bottleneck.
 - **✅ TERRAIN-RETENTION FIX (user-confirmed).** The alien mirror marked the whole 17-cell blit rect opaque
   (`g_figM=0xFF`), so `combineWithMask` cleared the rect to pen 0 instead of letting the frozen terrain show —
   because on the Amiga the mode-D field body is SHED (blank), so the mirrored `v` is creature-on-blank (bug was
@@ -196,7 +196,7 @@ build; `make validate FN=hud` green (all changes `#ifdef ROF_PLATFORM_AMIGA`).
   (`$3E` nonzero→zero, `s_resumeClearPend`), restore clean terrain into BOTH buffers from `s_cleanBmp` AND
   `clear()` the overlay + reset the figure extents / per-buffer erase boxes.  Keyed on the edge (not every
   non-rescueFigure frame) so the pilot approach's mid-zoom `$3D` dips don't trigger it; fires for any rescue.
-- **★ NEXT = the DRAW (`hud_build_text_row`), nothing else moves the needle.**  Per-cell creature blit into the
+- **★ NEXT = the DRAW (`alien_shape_blit`), nothing else moves the needle.**  Per-cell creature blit into the
   mode-D field (17 cells × ~44 rows) + the 4 hud_fill_field calls/row + the Amiga overlay mirror.  Levers: (a) the
   field `bus_write` is DEAD on the Amiga (the body is shed; only the overlay mirror matters) → skip it during the
   knock; (b) hand-asm the row composer; (c) the big one — **pre-rendered chip-Bitmap creature frames** blitted
@@ -220,7 +220,7 @@ This is the concrete first step of the future "anim frames = pre-made chip `Bitm
 if the blitter render still leaves the draw dominant.)  bus_read/bus_write are inline+cheap for RAM (ruled out).
 
 **OPEN #2 — COLOUR.** The creature renders in the viewport pens 0-3 (terrain palette), so likely the WRONG
-hue. The attack colour is `$0047` (`$6D/$70/$D8` cycle, set by `pmg_enemy_update $7AB8`). Pens during the
+hue. The attack colour is `$0047` (`$6D/$70/$D8` cycle, set by `alien_attack_tick $7AB8`). Pens during the
 knock (measured): `$DA=10 $DB=b8 $DC=14 $DD=2a`. Wire `$0047` → the copper viewport pens during the knock
 so the alien shows in its proper colour. Do AFTER perf (shape is confirmed; colour is polish).
 
@@ -235,14 +235,17 @@ airlock CLOSED (do NOT set FORCE_AIRLOCK). `g_alTDraw/g_alTRender/g_alKnockFrame
 **(Superseded) original NEXT plan — now done:** re-gate the probe to `$0632` + hook `$80C5` + mirror the
 masked writes into the flight planes → all implemented; creature renders. Remaining = perf + colour above.
 
-## Rename candidates (add to symbols.csv later)
-- `$7EC7 game_sub_7EC7` → `alien_knock_setup_loop` (seeds the jump-scare creature-animation state
-  `$0632/$005E/$005F/$2921/$2924/$2930/$2931/$0635/$0638/$0639`, then loops `game_sub_7F85` per
-  frame while systems-off — the airlock-CLOSED knock; NOT "sfx only").
-- `$7F85 game_sub_7F85` → **`alien_creature_animate_draw`** (⚠ NOT an SFX sequencer — it steps the
-  frame tables `$81E2/$81E8/$820A` AND draws the creature via `$80C5`).
-- `$80C5 (FUN_80c5)` → `alien_shape_blit` (masked 17-byte-wide bitmap blit into the mode-D viewport
-  field: `$BE00` mask table, `($8D),Y` write, row stride `$60`, row addrs `$073D`/`$0793`).
-- `$003C anim_flag_003C` → `airlock_state` (0=closed → jump-scare; INC by airlock cmd → boarding;
-  promoted `$80`/`$FF` in the reveal). `$281E` (unnamed) → `figure_is_alien` (1 when marker `$80`).
-- `$0632` → `alien_knock_active` (set 1 by `$7EC7`, cleared at `$7F76`; gates VBI work at `$5250`).
+## Rename cluster — APPLIED (symbols.csv, 2026-07-26)
+The alien jump-scare names are now canonical in `disasm/symbols.csv` (and everywhere the
+transpiler propagates them):
+- `$7EC7` `alien_knock_setup_loop` — seeds the creature-animation state
+  (`$0632/$005E/$005F/$2921/$2924/$2930/$2931/$0635/$0638/$0639`) then loops
+  `alien_creature_animate_draw` per frame while systems-off (the airlock-CLOSED knock).
+- `$7F85` `alien_creature_animate_draw` — steps the frame tables `$81E2/$81E8/$820A` AND draws
+  the creature via `$80C5` (NOT an SFX sequencer).
+- `$80C5` `alien_shape_blit` — masked 17-byte-wide bitmap blit into the mode-D viewport field
+  (`$BE00` mask, `($8D),Y` write, row stride `$60`, row addrs `$073D`/`$0793`).
+- `$8105/$811F/$8138/$8168` `alien_field0_fill`..`alien_field3_fill`; `$8181` `reorder_cell_bits`.
+- `$003C` `airlock_state` (0=closed → jump-scare; nonzero → boarding/reveal);
+  `$281E` `figure_is_alien` (1 when marker `$80`); `$0632` `alien_knock_active`;
+  `$2927/$2928/$2929` `alien_field0_limit`..`alien_field2_limit`; `$7AB8` `alien_attack_tick`.

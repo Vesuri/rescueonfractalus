@@ -89,7 +89,7 @@ void platform_title_screen_dirty(uint16_t addr, uint8_t nCells);
 uint8_t platform_flight_irq_key(void);
 
 /* Alien jump-scare creature-blit capture: called from the PRE_INSN_HOOK at $80E9 (the
-   `STA ($8D),Y` in game_sub_7F85's $80C5 blit) with the target field address + stored byte.
+   `STA ($8D),Y` in alien_creature_animate_draw's $80C5 blit) with the target field address + stored byte.
    Records the write extent + row-table geometry (rof_native.c) so a real closed-airlock knock
    reveals the field->plane mapping.  No-op unless the Amiga probe build is active. */
 void rof_alien_crwrite(unsigned int addr, unsigned char val);

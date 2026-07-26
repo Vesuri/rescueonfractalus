@@ -1950,11 +1950,11 @@ static int test_game_state_update(void) {
     return mem_fail;
 }
 
-/* enemy_check @ $3FCD: force $063D=0 so it dispatches down the $0633->pmg_enemy_update
+/* enemy_check @ $3FCD: force $063D=0 so it dispatches down the $0633->alien_attack_tick
  * branch (the $063D!=0 branch tail-calls the still-transpiled intro_cinematic_loop, whose
  * closure spins on VCOUNT busy-waits the harness can't advance — and it is a trivial
  * identical tail-call to unchanged transpiled code, so it needs no diff).  Random mem
- * otherwise; pmg_enemy_update + its native callees have no unbounded loops. */
+ * otherwise; alien_attack_tick + its native callees have no unbounded loops. */
 static int test_enemy_check(void) {
     if (!want("enemy_check")) return 0;
     enum { N = 20000 };
@@ -2117,7 +2117,7 @@ static int test_music_player_tick(void) {
  * zero-page control bytes + the lock-on parity counter ($0643) + the message timer ($063E)
  * randomized for branch coverage (covers BOTH the "draw" and "sim" frame paths and the message
  * expire/idle branches — the latter exercises set_colpf0_from_flag's Y arg), plus anti-hang guards:
- *   - var_0632 ($0632) forced nonzero -> skips the tail's windscreen-static raster loop, which
+ *   - alien_knock_active ($0632) forced nonzero -> skips the tail's windscreen-static raster loop, which
  *     busy-waits on VCOUNT ($D40B) the harness can't advance (SDL-only / #ifndef AMIGA, and its
  *     $062C update falls straight into the loop, so it can't be diffed anyway).
  *   - the SFX ring tables ($56D4 valid slots, voice regs, head/tail) seeded like the sfx test,
@@ -2146,7 +2146,7 @@ static int test_vbi_handler_flight(void) {
         for (int i = 0; i < 128; i++) pre[0x56D4 + i] = (uint8_t)(1 + (xs() % 14)); /* valid SFX slots */
         pre[0x0073] = (uint8_t)(xs() % 0x20);        /* sfx ring head 0..$1F */
         pre[0x0074] = (uint8_t)(xs() % 0x20);        /* sfx ring tail 0..$1F */
-        pre[0x0632] = (uint8_t)(1 + (xs() & 0x7F));  /* var_0632 != 0 -> skip the VCOUNT static loop */
+        pre[0x0632] = (uint8_t)(1 + (xs() & 0x7F));  /* alien_knock_active != 0 -> skip the VCOUNT static loop */
         mem_fail += diff_run("vbi_handler_flight", pre, zero_cpu(),
                              vbi_handler_flight, vbi_handler_flight__t6502, t, &printed, &cpu_diff);
     }
@@ -2283,33 +2283,33 @@ static int test_animate_clear_colors_timed(void) {
     return mem_fail;
 }
 
-/* game_sub_7F85 @ $7F85: the alien-creature animator/blitter.  Seed from the flight RAM snapshot
- * (real $81xx/$82xx frame + shape tables, $073D/$0793 row tables) so the sequencer + hud_build_text_row
+/* alien_creature_animate_draw @ $7F85: the alien-creature animator/blitter.  Seed from the flight RAM snapshot
+ * (real $81xx/$82xx frame + shape tables, $073D/$0793 row tables) so the sequencer + alien_shape_blit
  * call tree follow valid paths and terminate, then randomize the small set of per-frame sequencer
  * STATE cells each case to exercise every voice/shape/loop path.  RANDOM ($D20A) varies per case too.
  * The JSR chain (ring_push_marked / audio_irq_handler) leaves a dead stack byte, so ignore $0100-$01FF. */
-static int test_game_sub_7F85(void) {
-    if (!want("game_sub_7F85")) return 0;
+static int test_alien_creature_animate_draw(void) {
+    if (!want("alien_creature_animate_draw")) return 0;
     static uint8_t snap[65536], pre[65536];
     static uint16_t stack_pg[256];
     for (int i = 0; i < 256; i++) stack_pg[i] = (uint16_t)(0x0100 + i);
     const char *path = "a800dumps/flight_ram_0000_BFFF.bin";
     FILE *f = fopen(path, "rb");
-    if (!f) { printf("game_sub_7F85: SKIP (%s not found)\n", path); return 0; }
+    if (!f) { printf("alien_creature_animate_draw: SKIP (%s not found)\n", path); return 0; }
     memset(snap, 0, sizeof snap);
     size_t got = fread(snap, 1, 0xC000, f); fclose(f);
-    if (got != 0xC000) { printf("game_sub_7F85: SKIP (short read %zu)\n", got); return 0; }
+    if (got != 0xC000) { printf("alien_creature_animate_draw: SKIP (short read %zu)\n", got); return 0; }
     int mem_fail = 0, cpu_diff = 0, printed = 0;
     /* Sequencer/loop state cells the routine reads — randomize to reach all branches.  NOTE: do
      * NOT randomize the voice-C recent-pick cells $2922/$2923 — the faithful pick loop retries
      * until (RANDOM&7)+1 avoids both, and a degenerate per-case LFSR low-bit cycle could then spin
      * forever on bogus values (the oracle would hang identically — such state never occurs in play).
-     * Keep them from the snapshot, exactly as the game_sub_7EC7 fixture does (proven non-hanging). */
+     * Keep them from the snapshot, exactly as the alien_knock_setup_loop fixture does (proven non-hanging). */
     /* Randomize the voice/frame state to reach all sequencer branches, but NOT the draw geometry
      * $2930/$2931 (the row-blit dest = rowtable[$2930]+$2931 must land in the display field; random
      * values would scribble over the $29xx control cells — corrupting $292E into the audio-IRQ tail,
      * a deep spinwait routine shared verbatim by both sides).  Keep them from the snapshot (real
-     * in-field addresses), exactly as the game_sub_7EC7 fixture does. */
+     * in-field addresses), exactly as the alien_knock_setup_loop fixture does. */
     const uint16_t st[] = { 0x2924, 0x005E, 0x005F, 0x2921, 0x2926,
                             0x292A, 0x292B, 0x292C };
     /* Keep the sustain counter $292E in 1..$80 so the retire-tail takes the ring-push branch (the
@@ -2319,41 +2319,41 @@ static int test_game_sub_7F85(void) {
         memcpy(pre, snap, sizeof pre);
         for (unsigned k = 0; k < sizeof st / sizeof st[0]; k++) pre[st[k]] = (uint8_t)(xs() & 0xFF);
         pre[0x292E] = (uint8_t)(xs() % 0x80 + 1);    /* 1..$80 -> ($292E-1) stays >=0, no underflow */
-        mem_fail += diff_run("game_sub_7F85", pre, zero_cpu(),
-                             game_sub_7F85, game_sub_7F85__t6502, t, &printed, &cpu_diff);
+        mem_fail += diff_run("alien_creature_animate_draw", pre, zero_cpu(),
+                             alien_creature_animate_draw, alien_creature_animate_draw__t6502, t, &printed, &cpu_diff);
     }
     set_ignore(0, 0);
-    printf("game_sub_7F85: %d cases (flight snapshot, randomized seq state), %d mem mismatch (must be 0), %d cpu diffs\n",
+    printf("alien_creature_animate_draw: %d cases (flight snapshot, randomized seq state), %d mem mismatch (must be 0), %d cpu diffs\n",
            20000, mem_fail, cpu_diff);
     return mem_fail;
 }
 
-/* game_sub_7EC7 @ $7EC7: force $003E=0 so the fixture exercises the setup + descending-pitch
- * sweep + tail (the diffable path).  Seed from the flight RAM snapshot so game_sub_7F85's
+/* alien_knock_setup_loop @ $7EC7: force $003E=0 so the fixture exercises the setup + descending-pitch
+ * sweep + tail (the diffable path).  Seed from the flight RAM snapshot so alien_creature_animate_draw's
  * table-driven call tree ($81xx/$82xx tables, $80C5 plot loop, $8237) follows real paths and
  * terminates; RANDOM ($D20A) still varies per case so the sweep values differ.  The 6502 JSR
  * chain leaves a dead byte at $01FF (stack), so ignore the stack page. */
-static int test_game_sub_7EC7(void) {
-    if (!want("game_sub_7EC7")) return 0;
+static int test_alien_knock_setup_loop(void) {
+    if (!want("alien_knock_setup_loop")) return 0;
     static uint8_t snap[65536], pre[65536];
     static uint16_t stack_pg[256];
     for (int i = 0; i < 256; i++) stack_pg[i] = (uint16_t)(0x0100 + i);
     const char *path = "a800dumps/flight_ram_0000_BFFF.bin";
     FILE *f = fopen(path, "rb");
-    if (!f) { printf("game_sub_7EC7: SKIP (%s not found)\n", path); return 0; }
+    if (!f) { printf("alien_knock_setup_loop: SKIP (%s not found)\n", path); return 0; }
     memset(snap, 0, sizeof snap);
     size_t got = fread(snap, 1, 0xC000, f); fclose(f);
-    if (got != 0xC000) { printf("game_sub_7EC7: SKIP (short read %zu)\n", got); return 0; }
+    if (got != 0xC000) { printf("alien_knock_setup_loop: SKIP (short read %zu)\n", got); return 0; }
     int mem_fail = 0, cpu_diff = 0, printed = 0;
     set_ignore(stack_pg, 256);
     for (int t = 0; t < 20000; t++) {
         memcpy(pre, snap, sizeof pre);
         pre[0x003E] = 0;                              /* stay on the diffable (systems-on) path */
-        mem_fail += diff_run("game_sub_7EC7", pre, zero_cpu(),
-                             game_sub_7EC7, game_sub_7EC7__t6502, t, &printed, &cpu_diff);
+        mem_fail += diff_run("alien_knock_setup_loop", pre, zero_cpu(),
+                             alien_knock_setup_loop, alien_knock_setup_loop__t6502, t, &printed, &cpu_diff);
     }
     set_ignore(0, 0);
-    printf("game_sub_7EC7: %d cases (flight snapshot, $3E=0), %d mem mismatch (must be 0), %d cpu diffs\n",
+    printf("alien_knock_setup_loop: %d cases (flight snapshot, $3E=0), %d mem mismatch (must be 0), %d cpu diffs\n",
            20000, mem_fail, cpu_diff);
     return mem_fail;
 }
@@ -2510,7 +2510,7 @@ int main(int argc, char **argv) {
     fails += test_draw_vline_pair();
     fails += test_update_object_distance();
     fails += test_advance_object_positions();
-    fails += test_mem_contract("clear_var_0632", clear_var_0632, clear_var_0632__t6502);
+    fails += test_mem_contract("clear_alien_knock_active", clear_alien_knock_active, clear_alien_knock_active__t6502);
     fails += test_mem_contract_regs("clear_pm_state", clear_pm_state, clear_pm_state__t6502);
     fails += test_mem_contract("clear_terrain_lo_buffers", clear_terrain_lo_buffers, clear_terrain_lo_buffers__t6502);
     fails += test_mem_contract("fill_four_bufs_ff", fill_four_bufs_ff, fill_four_bufs_ff__t6502);
@@ -2538,8 +2538,8 @@ int main(int argc, char **argv) {
     fails += test_sfx_theme("sfx_voice_tick", sfx_voice_tick, sfx_voice_tick__t6502);
     fails += test_music_player_tick();
     fails += test_mem_contract("count_up_to_level", count_up_to_level, count_up_to_level__t6502);
-    fails += test_mem_contract("hud_fill_field1", hud_fill_field1, hud_fill_field1__t6502);
-    fails += test_mem_contract("hud_fill_field3_font", hud_fill_field3_font, hud_fill_field3_font__t6502);
+    fails += test_mem_contract("alien_field1_fill", alien_field1_fill, alien_field1_fill__t6502);
+    fails += test_mem_contract("alien_field3_fill", alien_field3_fill, alien_field3_fill__t6502);
     /* batch — tail-wrappers + A-returning RANDOM/compute leaves */
     fails += test_mem_contract("clear_message_buffer", clear_message_buffer, clear_message_buffer__t6502);
     fails += test_mem_contract("plot_pixel_col93", plot_pixel_col93, plot_pixel_col93__t6502);
@@ -2642,8 +2642,8 @@ int main(int argc, char **argv) {
         platform_test_tick_rtclok(0);
     }
     fails += test_animate_clear_colors_timed();
-    fails += test_game_sub_7EC7();
-    fails += test_game_sub_7F85();
+    fails += test_alien_knock_setup_loop();
+    fails += test_alien_creature_animate_draw();
     fails += test_event_sequence_dispatcher();
     fails += test_pilot_render();
     /* level_clear_fx_loop: frame-driven (wait_frames_1 ×75) — enable the RTCLOK tick so both
@@ -2667,13 +2667,13 @@ int main(int argc, char **argv) {
     fails += test_mem_contract("dl_index_dec", dl_index_dec, dl_index_dec__t6502);
     fails += test_mem_contract("dl_index_dec_or_reset", dl_index_dec_or_reset, dl_index_dec_or_reset__t6502);
     fails += test_draw_scaled_shape();
-    fails += test_ret_a("pack_byte_to_5bit_cells", pack_byte_to_5bit_cells, pack_byte_to_5bit_cells__t6502);
+    fails += test_ret_a("reorder_cell_bits", reorder_cell_bits, reorder_cell_bits__t6502);
     fails += test_ret_a("read_console_trig_delta", read_console_trig_delta, read_console_trig_delta__t6502);
     fails += test_validate_save_state();
     fails += test_cockpit_dial_update();
-    fails += test_mem_contract("hud_fill_field0", hud_fill_field0, hud_fill_field0__t6502);
-    fails += test_mem_contract("hud_fill_field2", hud_fill_field2, hud_fill_field2__t6502);
-    fails += test_mem_contract("hud_build_text_row", hud_build_text_row, hud_build_text_row__t6502);
+    fails += test_mem_contract("alien_field0_fill", alien_field0_fill, alien_field0_fill__t6502);
+    fails += test_mem_contract("alien_field2_fill", alien_field2_fill, alien_field2_fill__t6502);
+    fails += test_mem_contract("alien_shape_blit", alien_shape_blit, alien_shape_blit__t6502);
     fails += test_mem_contract_regs("show_cockpit_message", show_cockpit_message, show_cockpit_message__t6502);
     fails += test_mem_contract_regs("mark_slot_and_countdown_char", mark_slot_and_countdown_char, mark_slot_and_countdown_char__t6502);
     fails += test_mem_contract_regs("mark_slot_and_inc_count", mark_slot_and_inc_count, mark_slot_and_inc_count__t6502);
@@ -2718,7 +2718,7 @@ int main(int argc, char **argv) {
     fails += test_scanline("plot_scanline_up", plot_scanline_up, plot_scanline_up__t6502);
     fails += test_scanline("plot_scanline_rand_dir", plot_scanline_rand_dir, plot_scanline_rand_dir__t6502);
     fails += test_game_state_update();
-    fails += test_mem_contract("pmg_enemy_update", pmg_enemy_update, pmg_enemy_update__t6502);
+    fails += test_mem_contract("alien_attack_tick", alien_attack_tick, alien_attack_tick__t6502);
     fails += test_enemy_check();
 
     /* in-game SFX engine ($548D subtree, run each flight VBI) */

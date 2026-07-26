@@ -511,7 +511,7 @@ player, so the attract jingle is bit-faithful by construction.
       (`src/cpu/`) + the converted audio functions from `rof_gen.c` into the
       Amiga build. For the attract that's `station_audio $1B5B` (+ whatever it
       calls) and its data tables; the game path later adds `music_player_tick`,
-      `audio_timer_setup`/`audio_irq_handler`, `engine_sound_update`. Keep this a
+      `audio_timer_setup`/`audio_irq_handler`, `standby_level_select_loop`. Keep this a
       *narrow* slice — link only what the player references.
 - [ ] **POKEY→Paula bus backend.** Route `bus_write` for `$D200–$D20F`
       (AUDF1-4/AUDC1-4/AUDCTL/SKCTL) into a POKEY model that drives Paula:

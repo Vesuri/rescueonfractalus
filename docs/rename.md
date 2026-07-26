@@ -1,59 +1,25 @@
-# Function rename backlog
+# Function / symbol rename backlog
 
-Functions whose current name (in `disasm/symbols.csv` → propagated everywhere by the
-transpiler) contradicts what the code actually does. Collected for a future batch rename.
-**Do not hand-rename in generated files** — fix `disasm/symbols.csv` (the source of truth)
-and regenerate (`make gen`). Hand-written twins (`rof_native.c`, `rof_native_amiga.cpp`,
+Functions and memory cells whose current name (in `disasm/symbols.csv` → propagated everywhere
+by the transpiler) contradicts what the code actually does, or which have no name at all.
+**Do not hand-rename in generated files** — fix `disasm/symbols.csv` (the source of truth) and
+regenerate (`make gen`). Hand-written twins (`rof_native.c`, `rof_native_amiga.cpp`,
 `validate_native.c`, the Amiga platform layer, `transpile.py` comments) reference the names
-directly and must be updated in the same pass. Each entry: address, current name, what it
-really does, suggested name.
+directly and must be updated in the same pass.
 
 ⚠ **Whole-word replace misses the generated suffixes.** A `\bOLD\b` sweep will NOT touch
 `OLD__t6502` (validation oracle), `OLD_core` (hand-written core helper), or `test_OLD`
 (harness test fn) because `_` is a word char. After a rename, grep for `OLD[A-Za-z0-9_]*`
-and `[A-Za-z0-9_]*OLD` and fix those variants too. (Conversely this is what keeps distinct
-siblings like `clear_colors_timed`/`_sweep_5x`/`_done_003E` safe when renaming `clear_colors`.)
+and `[A-Za-z0-9_]*OLD` and fix those variants too.
 
-## Open: function renames
+> Everything that was confidently applicable has been applied (functions, alien-jump-scare
+> cluster, music/SFX var rows, etc.). What remains below is **DEFERRED on purpose** — each entry
+> either aliases a cell that is dual-used across subsystems, or is a rename/var-row suggestion that
+> needs a live check before a canonical name can be trusted. Do NOT promote these without resolving
+> the aliasing / verifying the claim noted. ✓=confident, ?=verify.
 
-| Addr | Current name | What it actually does | Suggested |
-|------|--------------|------------------------|-----------|
-| `$7AB8` | `pmg_enemy_update` | NOT PMG-related. The per-frame alien-attack tick when `$0633 alien_trigger` is set: RANDOM gate, sets shape/colour selectors (`$0044`/`$0047`=`$70`, or `$6D`) + phase toggle `$283D`, calls `jitter_roll_pitch $AA95` (shakes the ship), bumps `$003B`, fires pounding SFX via `ring_push_marked $5815` (X=`$1A`/`$1B`). The alien creature is a **bitmap** (draw_scaled_shape), drawn elsewhere — this fn draws nothing. | `alien_attack_tick` |
-| `$7EC7` | `game_sub_7EC7` | Sets up + plays the rescue "knock"/alien-attack SFX (descending-pitch sweep); during a systems-off rescue (`$003E!=0`) it BLOCKS in a loop driving the SFX sequencer per-frame until systems come back on. See docs/alien-jumpscare.md. | `rescue_knock_sfx` |
-| `$7F85` | `game_sub_7F85` | Table-driven SFX sequencer step (tables `$81E2/$81E8/$820A`, idx `$2924`/`$005E`/`$005F`); stepped once per frame by the knock-SFX loop. NOT a draw. | `sfx_seq_step` |
+## Deferred: aliased / dual-use cells (a single name would mislead one of the users)
 
-## Notes
-- **"scroll" in the `scroll_*` names = Atari LMS / buffer-shift scrolling**, not pixel
-  motion: `scroll_terrain_dl` ($6953) shifts the viewport DL's per-scanline LMS pointers so
-  the door halves slide apart vertically (`dl_lms_scroll_up`/`down` $69A9/$69C3);
-  `scroll_field_columns` ($6AEE) shifts the $0C32-$0F32 buffers left a column (horizontal
-  starfield scroll). The tunnel rings "rushing in" are **palette cycling** ($08D4-$08D9
-  rotation), NOT a scroll.
-
-## Open: unnamed memory locations (add `symbols.csv` var rows)
-
-RAM/ZP cells read/written by the code but with **no `symbols.csv` var row** (the transpiler
-emits them as raw `mem[0xNNNN]`). Add var rows so the native + transpiled code read as named
-state. The confident, conflict-free cells were drained 2026-07-09 (see the Applied log).
-**What remains here is DEFERRED on purpose** — each entry aliases a cell that is dual-used
-across subsystems or needs a live check before a canonical name can be trusted. ✓=confident,
-?=verify. Do NOT promote these without resolving the aliasing noted.
-
-**Misnamed (rename in a future batch):**
-- `$003C` `anim_flag_003C` → **`airlock_state`** — 0=closed; INC'd by the airlock command
-  (`event_sequence_dispatcher $46EA`→`$471E`); promoted to `$80`/`$FF` in the pilot_render reveal.
-  Gates the rescue reveal (pilot boards / alien jumps). See docs/alien-jumpscare.md.
-- `$281E` (unnamed) → **`figure_is_alien`** — set 1 in pilot_render when the rescued figure's map
-  marker (`$0A00[$28E6]`) is `$80` (alien-designated at spawn `$4E58`); DEC'd to 0 for a pilot.
-- `$2840` `wing_bar_hpos_base` → **`crosshair_hpos_base`** (named 2026-06-30b, WRONG). It is the
-  Targeting-Crosshair (#10) HPOS base, NOT the wing-clearance bars (those are the mode-D band
-  BITMAP, per CLAUDE.md #3). The flight VBI ($505F) pushes `HPOSM3=mem[$2840]`, `M2=+$0C`, `M1=+$11`
-  (the "+" reticle's stem + arms); `$A49A` sets it `= ($28FC==0) ? $00 : $74` = the visibility gate
-  ($00 pushes the missiles off-screen). Confirmed: `flight1.bin`=$00 (hidden), `flight_saucer1`/
-  `flight_emplacement_scope`=$74 (visible). Also fix the `$00CD grafm_shadow` comment ($00CD is the
-  laser SIZEP2, per flight-pmg-map) and `$00CB hposp2_shadow` "wing-clearance" prose.
-
-**Aliased / dual-use cells (a single name would mislead one of the users):**
 - `$0037` (`cockpit_dial_update`/`vbi_handler_flight`) — pushed to COLPF1 ($D014) but also
   force-set to `$78` in the target-latch reset. Dual use unclear — verify before naming
   (`colpf1_shadow_or_terrain_h`?).
@@ -69,6 +35,9 @@ across subsystems or needs a live check before a canonical name can be trusted. 
   `terrain_frame_setup`. Cross-function scratch; naming for one misleads the other.
 - `$00B4`/`$00B6` — transient scratch in `terrain_frame_setup` (written once, dead within the
   fn). Low value; skip unless a cleanup needs them.
+- `$0091` `altitude_threshold` — named for its `copy_title_text_block_to_screen` use, but in
+  `sfx_seq_step` it is **dual-used as scratch** for the last voice-parameter command byte. Leave
+  `altitude_threshold`; do not rename.
 - `$0686`/`$0687` (would-be `engine_sound_pitch_a`/`_b` in `flight_control_integrate`) and
   `$066C`/`$066D` (would-be `engine_state_a`/`_b`) — these fall inside the `sfx_voice_envelope_tick`
   per-slot arrays ($0679/$066B/$0687/$0695/… each base+Y, ~13 entries). The flight code reads
@@ -83,321 +52,57 @@ across subsystems or needs a live check before a canonical name can be trusted. 
   and `$003A` bit7 (gates the shields-cell update) — `$0039` clash above; `$003A` role unclear.
   Verify the target-latch block before naming.
 
-**Music note-stream player state (`music_player_tick $7253` + `music_init_state $7238`)** —
-all confident (behaviour fully traced 2026-07-10 during the native rewrite); add `symbols.csv`
-var rows. Four voices, indexed by byte offset `x = voice*2` (voices 0-3). ✓
-- `$0648` (stride 2: `$0648/$064A/$064C/$064E`) → **`music_env_level`** — per-voice software
-  envelope amplitude (0-127); integrated each tick, emitted as `AUDC = (level>>3) EOR distortion`.
-- `$0649` (stride 2: `$0649/$064B/$064D/$064F`) → **`music_env_delta`** — per-voice envelope
-  slope added to the level each tick (+attack on note-on, −release once the note timer expires).
-- `$0650` (stride 2: `$0650/$0652/$0654/$0656`) → **`music_voice_audf`** — per-voice POKEY AUDF
-  (pitch), loaded from the preset table on an instrument command, written to `$D200+x` on note-on.
-- `$0659` → **`music_note_on_level_c0`** — envelope level loaded on a `11` (`$C0`) voice code.
-- `$065A` → **`music_note_on_level_80`** — envelope level loaded on a `10` (`$80`) voice code.
-- `$065B` → **`music_attack_delta`** — envelope slope loaded into `music_env_delta` on note-on.
-- `$065C` → **`music_release_delta`** — envelope slope all voices switch to when the note timer
-  reaches 0 (the note's decay/release phase).
-- `$7375` (table, 4 bytes/entry, indexed `(~cmd)*4`) → **`music_instrument_audf_table`** — AUDF
-  preset per instrument command (`$C0..$FF`); 4 bytes = the four voices' pitches (voice 3 first).
-- `$73C1` (table, stride 2) → **`music_audc_distortion_table`** — per-voice POKEY AUDC distortion
-  bits, EORed with the volume nibble before the `$D201+x` write.
+## Deferred: `sfx_voice_envelope_tick` ($548D) per-slot envelope arrays
 
-Also: the `$7238 music_init_state` var-row comments in `symbols.csv` are **stale** — they say
-`$0653=$0655=2`, but the code sets `$0651=0`, `$0653=1`, `$0655=1` (verified against the
-disassembly + the native twin). Fix the `$0651`/`$0653` comments in the same pass.
+The whole cluster overlaps itself and the `$068x` flight cells above — treat as one aliasing
+puzzle, name together after auditing the stride/overlap. Cells: `$06DB`/`$06E9`
+(`freq_env_step[]`/`_phase[]`), `$0679`(`hud_field_679`)/`$06BF`/`$06CD`
+(`freq_value[]`/`_delta[]`/`_target[]`), `$06A3`/`$06B1` (`dur_env_step[]`/`_phase[]`),
+`$066B`(`sfx_voice_distort_0e`)/`$0687`/`$0695` (`prio_value[]`/`_delta[]`/`_target[]`),
+`$06F7` (`slot_event_id[]`). (`$5406 env_gate_table` was the one non-overlapping table — applied.)
 
-**SFX theme sequencer state (`sfx_voice_tick $70F9` + `sfx_seq_step $7148`)** — the
-attract/standby-theme player (distinct from the note-stream `music_player_tick` above and the
-in-flight SFX engine `$548D`). Traced 2026-07-10 during the native rewrite. ✓
-- `$0091` is `altitude_threshold` (named for its `copy_title_text_block_to_screen` use), but in
-  `sfx_seq_step` it is **dual-used as scratch** for the last voice-parameter command byte. A single
-  name misleads one caller — leave `altitude_threshold` and note the aliasing (do not rename).
-- `$71DB` (byte stream) → **`sfx_seq_stream`** — the theme "score": note bytes (bit7 clear),
-  voice-parameter commands (bit7 set), `$00` = end/loop-to-start marker.
-- `$71D2` (table, indexed `note & $1F`) → **`sfx_note_duration_table`** — per-note duration
-  loaded into `sfx_note_timer $073A`.
-- `$71AB`/`$719E`/`$7191`/`$71B8` (tables, indexed by the command's low 5 bits) →
-  **`sfx_audf1_table`/`sfx_audf2_table`/`sfx_audf3_table`/`sfx_audf4_table`** — the four POKEY
-  AUDF (pitch) presets per voice-parameter command.
-- `$71C5` (table, same index) → **`sfx_audc4_table`** — the AUDC4 preset; a `0` here also acts as
-  a rest (ends the command scan with the note treated as silent).
+## Deferred: dual-role player buffers `$0C32/$0D32/$0E32/$0F32`
 
-**`sfx_voice_envelope_tick` ($548D) — per-slot envelope arrays (base+Y, Y=$0E..1):** the whole
-cluster overlaps itself and the `$068x` flight cells above — treat as one aliasing puzzle, name
-together after auditing the stride/overlap. Cells: `$06DB`/`$06E9` (`freq_env_step[]`/`_phase[]`),
-`$0679`(`hud_field_679`)/`$06BF`/`$06CD` (`freq_value[]`/`_delta[]`/`_target[]`), `$06A3`/`$06B1`
-(`dur_env_step[]`/`_phase[]`), `$066B`(`sfx_voice_distort_0e`)/`$0687`/`$0695`
-(`prio_value[]`/`_delta[]`/`_target[]`), `$06F7` (`slot_event_id[]`). (`$5406 env_gate_table` was
-the one non-overlapping table here — already applied.)
+The four parallel 89-byte column buffers ($0100 apart). Scrolling terrain-height columns in
+flight; reused as the canopy A-pillars (P0 $0C32 / P1 $0D32, RLE-decoded) + sparse star-field
+players (P2 $0E32 / P3 $0F32) during the launch/stars cinematic. A name must reflect the shared
+player-buffer role, not just "terrain" (`terrain_col_buf0..3` vs `star_player_buf*`). Deferred
+pending a role-neutral name.
 
-**Dual-role player buffers — `$0C32/$0D32/$0E32/$0F32`:** the four parallel 89-byte column
-buffers ($0100 apart). Scrolling terrain-height columns in flight; reused as the canopy A-pillars
-(P0 $0C32 / P1 $0D32, RLE-decoded) + sparse star-field players (P2 $0E32 / P3 $0F32) during the
-launch/stars cinematic. A name must reflect the shared player-buffer role, not just "terrain"
-(`terrain_col_buf0..3` vs `star_player_buf*`). Deferred pending a role-neutral name.
+## Deferred: door-frame drawer scratch `$0080/$0081`
 
-**Door-frame drawer scratch — `$0080/$0081`:** currently `sync_flag`/`dl_ptr_lo`, but in the
-plot/span path (`set_row_ptr`/`plot_masked_pixel`/`fill_*_span`) they are the 16-bit screen row
-pointer (`row_ptr_lo`/`_hi`). The DL-setup path may use the current names correctly — audit both
-before renaming.
+Currently `sync_flag`/`dl_ptr_lo`, but in the plot/span path (`set_row_ptr`/`plot_masked_pixel`/
+`fill_*_span`) they are the 16-bit screen row pointer (`row_ptr_lo`/`_hi`). The DL-setup path may
+use the current names correctly — audit both before renaming.
 
-**Description-only enhancements (keep the name, fix the `symbols.csv` note):**
-- `$0089` `terrain_state` — in `scroll_field_columns` it is the scroll-phase gate (0=idle,
-  <4=scroll every frame, >=4=distance-accumulator-paced, reset to 2 at distance 100). Note the
-  stars/planet scroll-pacing role.
-- `scroll_field_columns` ($6AEE) — accurate for the data, but the note hides that the same
-  column shift renders as a VERTICAL star scroll when the buffers are the star players.
+## Deferred: pilot-rescue cluster corrections (found 2026-07-11)
 
----
-
-# Applied log (newest first)
-
-## Applied 2026-07-09 (batch var rows + function renames)
-`symbols.csv` → `make gen` → `make validate` PASS (0 mem mismatch on every twin).
-
-**Function renames** (`symbols.csv` + all hand-written referrers — `rof_native.c`,
-`rof_native_amiga.cpp`, `PlatformAmiga.cpp`, `platform_c.h`, `validate_native.c`,
-`transpile.py` comments, `docs/memory-map.md`, `docs/startup-flow.md`; plus the `__t6502`
-oracle / `_core` helper / `test_*` harness variants):
-- `clear_colors`→`wait_frames_1` ($3CC3) — PHA + `LDA #$01` falling into the frame-wait; waits
-  1 frame preserving A. NOT a colour clear (the old note was wrong). (Distinct siblings
-  `clear_colors_timed`/`_sweep_5x`/`_done_003E` are real colour clearers — left untouched.)
-- `push_a_wait_frames`→`wait_frames` ($3CB1).
-- `wait_frames_4c`→`wait_timer_4c_frames` ($3CB2) — the `4c` was the `$004C` address it reads.
-- `wait_setcount`→`wait_frames_set_count` ($3CC6).
-- `timer_4C`→`frame_wait_count` ($004C, var) — the frame-wait target count.
-- `game_sub_4258`→`lock_on_indicator_fill_cells` ($4258) — lights all six lock-on glyphs.
-- `obj_state_dispatch_0043`→`lock_on_indicator_dispatch` ($4225).
-- `plot_glyph_pixel_masked`→`plot_masked_pixel` ($66DE) — no glyph; OR/ANDs one 2-bit pixel.
-- `draw_shape_rows_loop`→`draw_frame_guide_columns` ($6620) — three vertical guide columns.
-
-Also fixed the `$007E lock_on_indicator_state` note (state machine 0/1..7/$80/$81.., NOT a
-"score/rescued-pilot counter").
-
-**New var rows** (confident, conflict-free cells from the unnamed-memory backlog):
-- cockpit dials: `$0625 dial_base_offset`, `$4457 dial_bar_value_table`,
-  `$4581 dial_column_ptr_table`.
-- vbi_handler_flight shadows: `$00CB hposp2_shadow`, `$00CD grafm_shadow`,
-  `$2845 p3_object_state`, `$006A p3_object_mode`, `$3356 cockpit_shields_cell`,
-  `$3357 cockpit_shields_cell_hi`, `$062C static_dither_threshold`.
-- atmosphere fade: `$08A1 atmo_fade_countdown`, `$08A2 atmo_fade_phase`, `$08A3 atmo_band_base`,
-  `$00DB terrain_pen1_fade`, `$07F9 atmo_audc_table`, `$0823 atmo_pen0_table`,
-  `$084D atmo_pen1_table`, `$0877 atmo_anim_table`, `$364B atmo_fade_step_table`,
-  `$07E9 attract_palette_src`.
-- flight_control_integrate: `$005D ground_proximity_flag`, `$003D landing_seq_flag`,
-  `$0023/$0024 pitch_shadow_lo/hi`, `$002B/$002C world_dx_lo/hi`, `$2881/$2882 world_dz_lo/hi`,
-  `$2883/$2884 fwd_step_lo/hi`, `$28D6 roll_mag_scaled`, `$283C landing_inhibit_flag`,
-  `$283D heading_freeze_flag`, `$2917 lockon_rand_countdown`,
-  `$2871/$2873 canopy_pillar_y_left/right`, `$2850-$2853 obj_vel_x_lo/hi`/`obj_vel_y_lo/hi`,
-  `$2919-$291D ring_cur_0..4`, `$291E ring_head`, `$2893 ring_pitch_lo`, `$289A ring_pitch_hi`,
-  `$28A1 ring_roll_vel`, `$28A8 ring_pillar_l`, `$28AF ring_pillar_r`.
-- update_terrain_scanline_proj: `$2270-$2273 map_x/z_scratch_lo/hi`,
-  `$2801-$2804 map_x/z_mirror_lo/hi`, `$2274 scaled_depth_lo`, `$27F9 terrain_height_q2`,
-  `$281A/$281B viewport_top/bottom_row`, `$0070 terrain_clearance`, `$2879 proj_phase_flag`.
-- project_terrain_points: `$24B4 obj_proj_flags`, `$22A4/$22D2 obj_num1_lo/hi`,
-  `$235B/$2388 obj_num2_lo/hi`, `$2300/$232E obj_divisor_lo/hi`,
-  `$2400/$242D obj_screen_x_lo/hi`, `$245A/$2487 obj_screen_y_lo/hi`,
-  `$270E/$272D band_scroll_offset0/1`.
-- terrain_frame_setup: `$22A3/$22D1 obj_num1_in_lo/hi`, `$22FF/$232D obj_divisor_in_lo/hi`,
-  `$2276 obj_col_index`, `$23B5 obj_height_sample`, `$0900 terrain_height_map`,
-  `$B67C obj_draw_order`, `$28DB collapse_cur_obj`.
-- data tables: `$6B5F terrain_height_table`, `$6E0F frame_span_thickness_tbl`,
-  `$5406 env_gate_table`.
-
-(`$026F` prior_shadow and `$0632` static_enable_flag were dropped — already named GPRIOR /
-var_0632. `$2275` scaled_depth_hi already existed, confirming `$2274 scaled_depth_lo`.)
-
-## Applied 2026-06-30b (batch rename + var rows, committed)
-Functions (`symbols.csv` → `make gen` → `make validate` PASS, 0 mem mismatch on every twin):
-- `raster_fill_region`→`raster_scaled_object` ($AB9A) — scaled object-sprite rasteriser (samples a
-  distance-scaled source bitmap through the $52-$55 step accumulators), NOT a region/flood fill.
-- `draw_canopy_pillar_p2`→`draw_ah_ground_fill_p2` ($40B0) — Artificial-Horizon ground fill into the
-  P2 buffer ($0E87+), NOT the canopy pillars (those are P0/P1 $0C32/$0D32).
-
-New var rows (the ✓-confident cells from the 2026-06-30 unnamed-memory backlog):
-- `$00C7` `dli_dispatch_index`, `$00D9` `lockon_flash_color`, `$00DC` `terrain_pen0_fade`,
-  `$2840` `wing_bar_hpos_base`.
-
-Hand-written files updated in the same pass: `rof_native.c`, `validate_native.c`, `transpile.py`,
-`RescueOnFractalus.cpp`, `docs/terrain-{draw,render}-plan.md`; the `$2872`/`$2874` cache-var notes
-were repointed to `draw_ah_ground_fill_p2`. Amiga `out/RoF.exe` rebuilt clean.
-
-## 2026-06-26 (applied 2026-06-30b)
-- **`$40B0` `draw_canopy_pillar_p2` → `draw_ah_ground_fill_p2`** — see the 2026-06-30b entry above.
-  Despite the old name it did NOT draw the canopy A-pillars (those are P0/P1 `$0C32`/`$0D32`, built
-  once by `unpack_terrain_seed_cols`); it copies a 21-byte `$FF`-terminated slope from table `$4B57`
-  (index `$455B[$291C]`) into the P2 buffer at `$0E87+` — the Artificial Horizon ground fill
-  (`$0E92-$0EB2`, the brown ground whose boundary moves with pitch). Change-detected on
-  `$291C`/`$291D` vs cache `$2872`/`$2874`, so it redraws only when attitude changes.
-
-## Applied 2026-06-24 (batch rename, committed)
-Functions (`symbols.csv`, regenerated + `make validate` PASS, 0 mem mismatch):
-- `push_a_thunk_3cb2`→`push_a_wait_frames` ($3CB1) — PHA + frame-wait, no "thunk".
-- `wait_frames_60`→`wait_frames_4c` ($3CB2) — waits the caller-set $4C count, not a fixed 60.
-- `advance_message_column`→`draw_ring_frame_step` ($670D) — incremental tunnel-ring draw, not text.
-- `scroll_terrain_columns`→`scroll_field_columns` ($6AEE) — shifts the $0C32-$0F32 starfield/PMG
-  buffers (scenes 4-6), not flight terrain.
-- `scroll_event_dispatch`→`launch_anim_dispatch` ($5367) — launch-cinematic priority dispatcher
-  (only 2 of its 6 steps are "scroll"); also fixed the stale "sound flags"/"sfx" prose in notes.
-- `terrain_collision`→`terrain_collision_and_silhouette` ($AE53) — besides the ship-vs-terrain
-  collision scan it renders the terrain silhouette (sky fill + body + dot texture) every flight
-  frame; collision is a side-effect of the same row scan.
-
-Amiga platform twin renamed together: `scroll_event_dispatch_native`→`launch_anim_dispatch_native`.
-
-## Applied 2026-06-19 (batch rename, committed)
-The earlier backlog was applied wholesale. For the record, the renames made:
-
-**Functions (symbols.csv):** `terrain_lookup`→`draw_compass_heading` ($3FDE),
-`sound_event_dispatch`→`scroll_event_dispatch` ($5367),
-`font_display_init`→`sfx_engine_reset` ($5433),
-`update_gauge_digits`→`sfx_voice_envelope_tick` ($548D),
-`update_bar_gauge_291c`→`draw_canopy_pillar_p2` ($40B0),
-`update_gauge_281a`→`draw_altimeter_bars` ($40E5),
-`compute_gauge_geometry_from_006D`→`compute_stage_display_geometry` ($75F5),
-`copy_altitude_graphic_to_screen`→`copy_title_text_block_to_screen` ($782A).
-($3FFA stays `startup_init` — already correct.)
-
-**Variables (symbols.csv):** `bar_gauge_x_cache`→`canopy_pillar_x_cache` ($2872),
-`bar_gauge_y_cache`→`canopy_pillar_y_cache` ($2874),
-`gauge_281a_cache`→`altimeter_terrain_cache` ($2875),
-`gauge_281b_cache`→`altimeter_ship_cache` ($2876),
-`gauge_field_0617`→`stage_geom_0617` ($0617),
-`gauge_step_reload`→`lockon_step_reload` ($0618),
-`gauge_field_061F`→`stage_geom_061F` ($061F),
-`gauge_field_0620`→`stage_geom_0620` ($0620),
-`gauge_height_062A`→`stage_geom_height_062A` ($062A).
-
-**Amiga platform layer (hand-written C++):** `gauge*`→`energyIndicator*`/`*Energy*`
-(`gaugeSprite`→`energyIndicatorSprite`, `buildGaugeSprite`→`buildEnergyIndicatorSprite`,
-`rsGauge`→`rsEnergyIndicator`, `sbGauge`→`sbEnergyIndicator`,
-`setGaugeColor`→`setEnergyIndicatorColor`,
-`sb/pl/fl/dr/tnGaugeCol`→`*EnergyCol`, `INDEX_GAUGE_COL`→`INDEX_ENERGY_COL`,
-`gaugeCol`→`energyCol`); `gaugeStepReload`→`lockonStepReload` (AtariZp.h, lock-on #11,
-NOT energy); `update_cockpit_digits_native`→`startup_init_native` ($3FFA identity).
-
-Descriptive "gauge" prose still appears in some comments (Atari hardware-channel /
-"throttle gauge" descriptions) — left as-is where accurate; sweep opportunistically.
-
----
-
-**`$5978 engine_sound_update` → `standby_level_select_loop`** (found 2026-07-10). NOT engine
-sound. It is the **Standby / Title-Screen idle loop with the starting-level select**: reads
-joystick up/down (PORTA `$D300` bits 0/1) + SELECT (CONSOL `$D01F` bit1) + the SHIFT-key
-status (SKSTAT `$D20F` bit3, active-low), and increments/decrements `level_stage $006D`
-(`$59CC` decrement / `$59E4` increment, wrap at `level_progress $37EE`), re-rendering the
-STARTING-LEVEL digit via `setup_initials_ptr $5A63`. Loops (mutual tail-recursion with
-`sound_check_trigger $5A17`, TCO'd) once per ~2 frames (`wait_frames_2 $3CCA`) until a
-console/trigger delta launches the game. Called from `cockpit_display $587B` tail. (The
-"engine sound" name likely came from the `$006D` ramp resembling a pitch ramp.) Its callee
-`sound_check_trigger $5A17` and the `$5A0E sound_stop` are part of the same loop, not audio.
-
----
-
-**Pilot-rescue cluster corrections (found 2026-07-11, native-izing pilot_render group):**
 - **`$2830` — unnamed.** = the queued-landing-target slot flag. `reset_pilot_state_if_no_2830 $495F`
   reads it: if `$2830==0` (no target queued) it also clears `landing_seq_flag $003D`. Suggested
   name: `landing_target_queued_2830`.
 - **`$0047 colpf0_value` / `set_colpf0_from_flag $47A3` — symbols.csv comment is BACKWARDS.** The
   comment says "If Y bit5 set A=$CA else A=$0047"; the disasm (`$47a6 BNE`) is the opposite —
-  **bit5 CLEAR selects $CA**, bit5 SET selects `colpf0_value`. Verified via `make validate`.
-- **`$003E clear_colors_done_003E` — symbols.csv comment is misleading.** It says "Set non-zero to
-  abort wait_frames_1 sweep loops"; the loops in `clear_colors_sweep_5x $7A89` /
-  `animate_clear_colors_timed $7A17` actually **continue while `$003E != 0` and exit at `$003E == 0`**
-  (`$7a94`/`$7a66` `LDA $3E; BEQ return`). So `$003E` nonzero = "keep sweeping", zero = "done". This is
-  the flag the Systems key toggles and the pilot_render L_78d6↔L_792e hold-loop exit (see [[flight-scene]]).
+  **bit5 CLEAR selects $CA**, bit5 SET selects `colpf0_value`.
+- **`$003E clear_colors_done_003E` — symbols.csv comment is misleading.** The loops in
+  `clear_colors_sweep_5x $7A89` / `animate_clear_colors_timed $7A17` **continue while `$003E != 0`
+  and exit at `$003E == 0`**. So `$003E` nonzero = "keep sweeping", zero = "done".
+- **`$007C` — unnamed** (animate_clear_colors_timed). A pacing accumulator for the colour-clear
+  stepper (pulled down by 7 each pass; re-seeds RTCLOK on exit). Suggested: `clear_sweep_delay_007C`.
 
-**`$007C` — unnamed** (found 2026-07-11, animate_clear_colors_timed). A pacing accumulator
-for the colour-clear stepper: `animate_clear_colors_timed $7A17` pulls it down by 7 each pass
-(when the step counter `$7B < $0F`) and re-seeds RTCLOK ($0014) from it on exit, so it sets the
-inter-tick delay of the sweep. Suggested name: `clear_sweep_delay_007C`.
+## Deferred: `alien_knock_setup_loop` ($7EC7) unnamed cells (found 2026-07-12)
 
-**game_sub_7EC7 ($7EC7) unnamed cells** (found 2026-07-12, native-izing the rescue SFX/zoom
-setup). These are set/used by `game_sub_7EC7` + `game_sub_7F85`:
+Set/used by `alien_knock_setup_loop` + `alien_creature_animate_draw`. Suggested names deferred
+(need cross-referencing with the full SFX engine):
 - `$005E`/`$005F` — SFX voice-slot indices (set 1/$0B then 4/$12); indexed into `$81E8`/`$81E2`.
 - `$2921` — a second voice-slot index (set 2 then 5).
 - `$2922`/`$2923`/`$2926` — recently-used voice-value history (reroll excludes `$2922`/`$2923`).
-- `$2924 sound_table_idx` — already named; `$2930` — current SFX pitch (descending sweep);
-  `$2931` — pitch base offset (RANDOM&7 + $0C); `$292E` — zoom step count; `$2927`-`$292B` —
-  per-voice shape/params from the `$81xx` tables.
-- `$0635` — set $20 (unnamed); `$0637`/`$063A` — cleared (unnamed); `$061A` — zoom base (read).
-  Suggested names deferred (need cross-referencing with the full SFX engine).
+- `$2930` — current SFX pitch (descending sweep); `$2931` — pitch base offset (RANDOM&7 + $0C);
+  `$292E` — zoom step count; `$2927`-`$292B` — per-voice shape/params from the `$81xx` tables.
+- `$0635` — set $20; `$0637`/`$063A` — cleared; `$061A` — zoom base (read).
 
-**update_object_distance ($6BED) / draw_vline_pair ($6C4D) — scratch reuse of named ZP cells**
-(found 2026-07-22, clean-C rewrite of both twins). These routines reuse several cells purely as
-local scratch, so the cells' current symbol names are MEANINGLESS in this context (the names come
-from their PRIMARY use in unrelated code):
-- `$0084 screen_ptr_hi` — here it is the **draw fill-pattern byte** ($FF/$AA/$55 in
-  update_object_distance; the byte draw_vline_pair stores for rows < $2B). Not a screen pointer.
-  Suggested (context) name: `draw_fill_byte`.
-- `$0085 encounter_count` — here it is the **object-distance subtrahend high byte** on entry to
-  update_object_distance, then overwritten by draw_vline_pair with the **plot column** `(X>>1)+2`.
-  Not the encounter counter.
-- `$00B7 frame_counter` — here it is **object-distance-lo / draw row-counter scratch**. Not the
-  VBI frame counter. Suggested: `obj_dist_lo` (or a generic `draw_row_scratch`).
-- `$00B8 draw_row_ptr2_hi` — here it is the **object-distance high byte / draw END-row**. Suggested:
-  `obj_dist_hi`. (symbols.csv already notes this reuse.)
-- `$00B9 draw_pattern_byte` — here it is the **object-distance minuend low byte** (the object's
-  current 16-bit distance lo, set by advance_object_positions). Suggested: `obj_dist_in_lo`.
-- `$00BA obj_pos_hi` — the object-distance minuend high byte; name is acceptable.
-- `$0082 dl_ptr_hi` — draw_vline_pair sets it to `$C0` purely as a "any 2bpp pack happened" marker
-  (from plot_pixel_2bpp's BIT $0082), not a display-list pointer here.
-
-Not misnamed but worth confirming: `draw_vline_pair` draws a column and its `$2F`-mirror as a
-symmetric pair of vertical spans (the approaching-object trail) — the name is fine.
-
-**game_main_loop_body ($3D48) — unnamed OS-shadow + game-state cells** (found 2026-07-22, clean-C
-rewrite). These are written directly (raw `mem[]` / `bus_write`) with no `symbols.csv` name; most are
-well-known Atari OS shadow registers and should get standard names:
-- `$0222`/`$0223` — **VVBLKI** vertical-blank-immediate vector shadow (set to `$53CC` attract, then
-  `$4FF5` flight). Suggested: `vvblki_lo`/`vvblki_hi`. ⚠ The Amiga `game_vbi_isr` dispatches on this
-  live vector — NOT dead.
-- `$0200`/`$0201` — **VDSLST** display-list-interrupt vector shadow (set to `$49EE`). Suggested:
-  `vdslst_lo`/`vdslst_hi`.
-- `$022F` — **SDMCTL** (DMA control shadow), cleared. Suggested: `sdmctl`.
-- `$02C8` — **COLOR4/COLBK** background-colour shadow, cleared. Suggested: `color_bak_shadow`.
-- `$02C6`/`$02C7` — **COLOR2/COLOR3** shadows (set `$2C`/`$26`). Suggested: `color2_shadow`/`color3_shadow`.
-- `$026F` — **GPRIOR** priority shadow (set `$11`). Suggested: `gprior_shadow`.
-- `$066E` — cleared once at the level-clear handoff (part of a `$066B`+ block); unnamed. Needs analysis.
-- `$28D9`/`$28DA` — both set to `$80` at the level-clear handoff (object/anim state); unnamed.
-- `$0F1D`+ (0xA3 bytes) / `$0E8F`+ (0x1F bytes) — PMG/player buffers cleared with a `wait_frames`
-  residue byte at the handoff; part of the `$0Cxx`-`$0Fxx` player pages.
-- `$0B31`+ (0x57 bytes) — missile/DMA buffer region cleared per level; part of the `$0B00` PMG page.
-- `$0020`+ (0x2C bytes) / `$2830`+ (0xA6 bytes) — per-level ZP + object-state clears.
-- `$003A` — read at level-clear check (`==1` sets `level_cleared_flag`); unnamed. Needs analysis.
-- `$003D` — death/handoff phase byte (`!=0` → set to `2`); unnamed. Suggested: `death_phase`.
-
-## Alien jump-scare cluster (2026-07-25, creature draw located — see docs/alien-jumpscare.md)
-- `$7EC7 game_sub_7EC7` → `alien_knock_setup_loop`: seeds the jump-scare creature-animation state
-  (`$0632/$005E/$005F/$2921/$2924/$2930/$2931/$0635/$0638/$0639`) then loops `$7F85` per frame while
-  systems-off (the airlock-CLOSED knock). NOT "sfx only".
-- `$7F85 game_sub_7F85` → `alien_creature_animate_draw`: ⚠ MISNAMED "sfx_seq_step". Steps the frame
-  tables `$81E2/$81E8/$820A` AND draws the creature via `$80C5`. The actual jump-scare draw.
-- `$80C5 (FUN_80c5)` → `alien_shape_blit`: masked 17-byte-wide bitmap blit into the mode-D viewport
-  field (`$BE00` mask, `AND ($8B),Y / ORA / STA ($8D),Y`, row stride `$60`, row addrs `$073D`/`$0793`
-  built at `$7464/$7469`, position `$2930`/`$2931`, geometry tables `$81A1..$81D9`).
-- `$0632` → `alien_knock_active` (set 1 by `$7EC7`, cleared at `$7F76`; gates VBI work at `$5250`).
-- `$003C anim_flag_003C` → `airlock_state` (0=closed→scare; nonzero→boarding/reveal).
-- `$281E` (unnamed) → `figure_is_alien` (1 when rescue map-marker `$0A00[$28E6] == $80`).
-
-### The "hud_*"/"font" family is misleading — it is the creature composer, not HUD text (2026-07-25)
-User-flagged: none of these draw HUD text; they compose/blit the animated alien-creature rows into
-the mode-D viewport field during the airlock-closed knock. Suggested renames:
-- `$80C5 hud_build_text_row` → `alien_row_compose` (or `alien_shape_blit`, per the cluster note above):
-  clears the 17-cell buffer `$8F-$9F`, refills it from the four field sources, then for each cell expands
-  it through `$BE00`, masks against the source row `($8B)`, and stores to the dest row `($8D)`.
-- `$8105 hud_fill_field0` → `alien_field0_fill` (packs 5 source bytes into cells `$8F-$93`).
-- `$811F hud_fill_field1` → `alien_field1_fill` (copies 5 source bytes verbatim into cells `$9B-$9F`).
-- `$8138 hud_fill_field2` → `alien_field2_fill` (7 bytes into `$94-$9A`, verbatim or packed per `$292D`).
-- `$8168 hud_fill_field3_font` → `alien_field3_fill` (7 glyph bytes from `$35CD` into `$94-$9A`; "font" is
-  wrong — it is a shape/glyph table; and this field is idle in the knock path, cursor `$0083` starts `$E7`).
-- `$8181 pack_byte_to_5bit_cells` → `reorder_cell_bits` (reverses the four 2-bit groups of a byte and
-  folds it into accumulator `$0084`; the "5bit" is a misnomer — it's a fixed bit permutation).
-- `$2927/$2928/$2929 hud_field{0,1,2}_limit` → `alien_field{0,1,2}_limit` (per-field cursor limits).
-
-### ZP cells reused by the creature composer with a DIFFERENT meaning than their names (2026-07-25)
-These carry names from `display_list_build`/VBI code but the composer tree reuses them as text-source
-state. Consider per-context aliases (or just document the reuse):
+### The creature composer reuses these ZP cells with a DIFFERENT meaning than their names
+`alien_shape_blit`/`alien_field*_fill` carry names from `display_list_build`/VBI code but the
+composer tree reuses them as text-source state. Consider per-context aliases (or just document):
 - `$0080 sync_flag` / `$0081 dl_ptr_lo` / `$0082 dl_ptr_hi` / `$0083 screen_ptr_lo` = the four field
   **cursors** (field 0/1/2/3 source index).
 - `$0084 screen_ptr_hi` = the `reorder_cell_bits` **packing accumulator**.
@@ -409,3 +114,36 @@ state. Consider per-context aliases (or just document the reuse):
 - `$292A/$292B/$292C` = the three per-frame voice values; `$2921/$005E/$005F/$2924/$2926` = voice
   positions/link indices; `$2922/$2923` = voice-C last-two picks; `$292D` = field-2 pack flag;
   `$292E` = SFX sustain counter; `$292F` = the draw-loop row counter; `$2930/$2931` = draw start row/col.
+
+## Deferred: scratch reuse of named ZP cells (update_object_distance $6BED / draw_vline_pair $6C4D)
+
+These routines reuse several cells purely as local scratch, so the cells' current symbol names are
+MEANINGLESS in this context (the names come from their PRIMARY use in unrelated code):
+- `$0084 screen_ptr_hi` — here the **draw fill-pattern byte** ($FF/$AA/$55). Suggested: `draw_fill_byte`.
+- `$0085 encounter_count` — object-distance subtrahend hi byte, then the **plot column** `(X>>1)+2`.
+- `$00B7 frame_counter` — object-distance-lo / draw row-counter scratch. Suggested: `obj_dist_lo`.
+- `$00B8 draw_row_ptr2_hi` — object-distance hi byte / draw END-row. Suggested: `obj_dist_hi`.
+- `$00B9 draw_pattern_byte` — object-distance minuend lo byte. Suggested: `obj_dist_in_lo`.
+- `$0082 dl_ptr_hi` — draw_vline_pair sets it `$C0` purely as a "any 2bpp pack happened" marker.
+
+## Deferred: `game_main_loop_body` ($3D48) unnamed OS-shadow + game-state cells
+
+Written directly (raw `mem[]` / `bus_write`) with no `symbols.csv` name; most are standard Atari
+OS shadow registers:
+- `$0222`/`$0223` — **VVBLKI** vblank-immediate vector shadow (`$53CC` attract, then `$4FF5`
+  flight). Suggested: `vvblki_lo`/`vvblki_hi`. ⚠ The Amiga `game_vbi_isr` dispatches on this vector.
+- `$0200`/`$0201` — **VDSLST** DLI vector shadow ($49EE). Suggested: `vdslst_lo`/`vdslst_hi`.
+- `$022F` — **SDMCTL** (DMA control shadow), cleared. Suggested: `sdmctl`.
+- `$02C8` — **COLOR4/COLBK** background shadow, cleared. Suggested: `color_bak_shadow`.
+- `$02C6`/`$02C7` — **COLOR2/COLOR3** shadows ($2C/$26). Suggested: `color2_shadow`/`color3_shadow`.
+- `$026F` — **GPRIOR** priority shadow ($11). Suggested: `gprior_shadow`.
+- `$28D9`/`$28DA` — both set `$80` at the level-clear handoff (object/anim state); unnamed.
+- `$003A` — read at level-clear check (`==1` sets `level_cleared_flag`); role unclear.
+- `$003D` — death/handoff phase byte (`!=0` → set to `2`); unnamed. Suggested: `death_phase`.
+- `$066E`, and the `$0F1D`/`$0E8F`/`$0B31`/`$0020`/`$2830` block clears — need analysis.
+
+## Verify-later comment fixes
+
+- `$00CD grafm_shadow` — comment says "pushed to GRAFM ($D00A)…wing-clearance missile graphics",
+  but flight-pmg-map suggests `$00CD` is the laser **SIZEP2**, not GRAFM. Verify against a live
+  capture before rewording (kept as-is pending that check).

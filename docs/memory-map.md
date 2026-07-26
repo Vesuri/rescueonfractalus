@@ -110,7 +110,7 @@ $C000–$FFFF   OS ROM area     — OS ROM + hardware registers ($D000–$D7FF)
 | `$061D/$1E` | joystick_saved | Joystick raw $49/$4A copied here at start |
 | `$0627` | fresh_start_flag | 0 = first run (play intro); non-zero = skip intro |
 | `$062F` | life_counter | Compared to $0E (14); pilot rescue fuel/lives |
-| `$0633` | alien_trigger | Non-zero → pmg_enemy_update called each frame |
+| `$0633` | alien_trigger | Non-zero → alien_attack_tick called each frame |
 | `$063D` | event_trigger | Non-zero → game_sub_4f3f called each frame |
 | `$0642` | game_phase_flag | 0=intro / 1–2=active / 3=transition |
 | `$0645–47` | shield_damage | Set $80 at game start |

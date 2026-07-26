@@ -192,7 +192,7 @@ extern int g_figColLo, g_figColHi;   /* dirty byte-column extent (0..39) — for
             for (int _b = _cl; _b <= _ch; _b++) { g_figM[_om + _b] = 0; g_figP1[_op + _b] = 0; g_figP2[_op + _b] = 0; } } \
         g_figRowLo = 99; g_figRowHi = -1; g_figColLo = 40; g_figColHi = -1; \
     } } while (0)
-/* Alien jump-scare creature overlay.  The creature (game_sub_7F85 -> hud_build_text_row $80C5,
+/* Alien jump-scare creature overlay.  The creature (alien_creature_animate_draw -> alien_shape_blit $80C5,
  * airlock-CLOSED knock) blits into the mode-D field (base $1010, stride 96, +$30 display half),
  * which the Amiga sheds for the terrain body -> dropped.  Mirror each written byte into the SAME
  * figure overlay the paused-rescue compositor already draws (the approach-figure zoom = landing
@@ -201,14 +201,14 @@ extern int g_figColLo, g_figColHi;   /* dirty byte-column extent (0..39) — for
  * plane byte b = rel%96.  The stored byte V is the FINAL composited field byte (creature over the
  * frozen terrain, same frame the compositor draws over), so writing V wholesale (all pixels opaque,
  * mask=$FF) reproduces the field exactly.  Decode V -> plane1/plane2 via the same kModeDP1/kModeDP2
- * tables renderViewportModeD uses.  Cleared each creature frame by ROF_CLEAR_FIG (in game_sub_7EC7). */
+ * tables renderViewportModeD uses.  Cleared each creature frame by ROF_CLEAR_FIG (in alien_knock_setup_loop). */
 extern uint8_t kModeDP1[256]; extern uint8_t kModeDP2[256];
 #ifdef ROF_FLIGHT_PROBE
 extern volatile unsigned long g_alKnockFrames;   /* fwd decls (defined in the probe block below) */
 extern volatile unsigned char g_alPen[6];
 extern volatile unsigned long g_alTWait, g_alTDraw, g_alTRender;  /* per-step beam-tick accumulators */
-extern volatile unsigned long g_alTHud;          /* beam ticks inside hud_build_text_row (creature rows) */
-extern volatile unsigned long g_alHudCalls;      /* # hud_build_text_row calls during the knock */
+extern volatile unsigned long g_alTHud;          /* beam ticks inside alien_shape_blit (creature rows) */
+extern volatile unsigned long g_alHudCalls;      /* # alien_shape_blit calls during the knock */
 #endif
 #define ROF_PLOT_ALIEN(addr, V) do { \
     if (g_figP1) { \
@@ -1526,21 +1526,21 @@ void advance_object_positions(void) {
     }
 }
 
-/* clear_var_0632 @ $7F74 — $0632 = 0. */
-void clear_var_0632(void) { var_0632 = 0x00; }
+/* clear_alien_knock_active @ $7F74 — $0632 = 0. */
+void clear_alien_knock_active(void) { alien_knock_active = 0x00; }
 
-/* game_sub_7EC7 @ $7EC7 — set up the pilot-rescue SFX + zoom-animation state, then play a
+/* alien_knock_setup_loop @ $7EC7 — set up the pilot-rescue SFX + zoom-animation state, then play a
  * 4-step descending-pitch sweep (each step stashes the pitch in $2930 and advances the SFX
- * frame via game_sub_7F85).  If a colour-clear is active ($003E != 0 — systems off during a
- * rescue) it then runs the zoom animation loop, driving game_sub_7F85 once per RTCLOK frame
+ * frame via alien_creature_animate_draw).  If a colour-clear is active ($003E != 0 — systems off during a
+ * rescue) it then runs the zoom animation loop, driving alien_creature_animate_draw once per RTCLOK frame
  * until $003E clears, and finally silences the audio channels.
- * (2 RANDOM reads here + 3 in the $3E!=0 block + 1 per game_sub_7F85 call.)
+ * (2 RANDOM reads here + 3 in the $3E!=0 block + 1 per alien_creature_animate_draw call.)
  * $2930/$2931/$005E/$005F/$061A/$0635 are unnamed scratch — see docs/rename.md.
  * VALIDATION: diffed against the oracle on the $003E==0 path (setup + sweep + tail) over a real
- * flight RAM snapshot (so game_sub_7F85's table-driven call tree terminates).  The $003E!=0
+ * flight RAM snapshot (so alien_creature_animate_draw's table-driven call tree terminates).  The $003E!=0
  * zoom loop spins on RTCLOK (cleared externally by the VBI) — verified by inspection. */
-void game_sub_7EC7(void) {
-    var_0632 = 0x01;
+void alien_knock_setup_loop(void) {
+    alien_knock_active = 0x01;
     mem[0x005E] = 0x01;
     sound_table_idx = 0x09;                      /* $2924 */
     mem[0x2921] = 0x02;
@@ -1557,17 +1557,17 @@ void game_sub_7EC7(void) {
     mem[0x2931] = (uint8_t)((bus_read(0xD20A) & 0x07) + 0x0C);   /* RANDOM&7 + $0C */
 
     /* Descending-pitch sweep: seed, then 4 steps (each stashes the pitch in $2930, advances
-     * the SFX frame, then drops the pitch).  game_sub_7F85 is reached via sound_step_preserve_a
+     * the SFX frame, then drops the pitch).  alien_creature_animate_draw is reached via sound_step_preserve_a
      * which SECs, so every SBC is a plain subtract. */
     uint8_t pitch = (uint8_t)((bus_read(0xD20A) & 0x07) + 0x21);
-    mem[0x2930] = pitch; game_sub_7F85(); pitch = (uint8_t)(pitch - 0x10);
-    mem[0x2930] = pitch; game_sub_7F85(); pitch = (uint8_t)(pitch - 0x0A);
-    mem[0x2930] = pitch; game_sub_7F85(); pitch = (uint8_t)(pitch - 0x04);
-    mem[0x2930] = pitch; game_sub_7F85(); pitch = (uint8_t)(pitch - 0x02);
+    mem[0x2930] = pitch; alien_creature_animate_draw(); pitch = (uint8_t)(pitch - 0x10);
+    mem[0x2930] = pitch; alien_creature_animate_draw(); pitch = (uint8_t)(pitch - 0x0A);
+    mem[0x2930] = pitch; alien_creature_animate_draw(); pitch = (uint8_t)(pitch - 0x04);
+    mem[0x2930] = pitch; alien_creature_animate_draw(); pitch = (uint8_t)(pitch - 0x02);
     mem[0x2930] = pitch;
 
     if (clear_colors_done_003E == 0) {           /* no colour-clear active — done */
-        clear_var_0632();
+        clear_alien_knock_active();
         return;
     }
 
@@ -1609,7 +1609,7 @@ void game_sub_7EC7(void) {
         g_alPen[3]=mem[0x00DD]; g_alPen[4]=mem[0x0047]; g_alPen[5]=mem[0x0044];
         { unsigned long _td = rof_subclock();
 #endif
-        game_sub_7F85();                        /* step SFX + blit the creature -> overlay */
+        alien_creature_animate_draw();                        /* step SFX + blit the creature -> overlay */
 #ifdef ROF_FLIGHT_PROBE
           g_alTDraw += rof_subclock() - _td; }
         { unsigned long _tr = rof_subclock();
@@ -1621,7 +1621,7 @@ void game_sub_7EC7(void) {
 #else
         while (RTCLOK_LOW <= 0x04) { }          /* SDL/validate never enters this ($3E==0 fixture) */
         RTCLOK_LOW = 0x00;
-        game_sub_7F85();
+        alien_creature_animate_draw();
 #endif
     } while (clear_colors_done_003E != 0);
     cpu.A = 0x00;                                /* A = $3E (== 0 at loop exit) */
@@ -2067,26 +2067,26 @@ void count_up_to_level(void) {
     } while (level_count_acc != level_stage);
 }
 
-/* hud_fill_field1 @ $811F — advance HUD text field 1.  If its source cursor ($0081) has
+/* alien_field1_fill @ $811F — advance HUD text field 1.  If its source cursor ($0081) has
  * reached the field limit ($2928) just bump the cursor.  Otherwise copy 5 source bytes
  * (from the field-1 pointer $0087/$0088, indexed by the cursor) verbatim into cells
  * $9B..$9F and advance the cursor by 5.  ($0087/$0088 are the "vbi_phase/vbi_flags" cells
  * reused here as a text-source pointer — see docs/rename.md.) */
-void hud_fill_field1(void) {
+void alien_field1_fill(void) {
     uint8_t cursor = dl_ptr_lo;                                  /* $0081 field-1 cursor */
-    if (cursor >= hud_field1_limit) { dl_ptr_lo = (uint8_t)(cursor + 1); return; }  /* $2928 */
+    if (cursor >= alien_field1_limit) { dl_ptr_lo = (uint8_t)(cursor + 1); return; }  /* $2928 */
     uint16_t src = (uint16_t)(vbi_phase | (vbi_flags << 8));     /* $0087/$0088 field-1 ptr */
     for (uint8_t cell = 0x9B; cell <= 0x9F; cell++)              /* cells $9B..$9F */
         mem[cell] = bus_read((uint16_t)(src + cursor++));
     dl_ptr_lo = cursor;
 }
 
-/* hud_fill_field3_font @ $8168 — advance HUD text field 3 (font-glyph row).  If its cursor
+/* alien_field3_fill @ $8168 — advance HUD text field 3 (font-glyph row).  If its cursor
  * ($0083) has reached the fixed limit $A8 just bump it.  Otherwise copy 7 font bytes from
  * the glyph table $35CD (indexed by the cursor) into cells $94..$9A and advance the cursor
  * by 7.  (Shares cells $94..$9A with field 2 — the two are mutually exclusive per row via
  * their cursors, whichever last runs the fill path wins.) */
-void hud_fill_field3_font(void) {
+void alien_field3_fill(void) {
     uint8_t cursor = screen_ptr_lo;                             /* $0083 field-3 cursor */
     if (cursor >= 0xA8) { screen_ptr_lo = (uint8_t)(cursor + 1); return; }
     for (uint8_t cell = 0x94; cell <= 0x9A; cell++)             /* cells $94..$9A */
@@ -2162,14 +2162,14 @@ void fill_region_2000(void) {
 
 /* silence_audio_channels @ $7F60 — write entry A to the SFX gate $0634 and POKEY
  * AUDF1/2/3/4 ($D201/$D203/$D205/$D207), set AUDCTL ($D208) = $60, then tail-call
- * the (native) clear_var_0632.  POKEY writes go through bus_write (HW, no mem[]). */
+ * the (native) clear_alien_knock_active.  POKEY writes go through bus_write (HW, no mem[]). */
 void silence_audio_channels(void) {
     sfx_state_0634 = cpu.A;
     bus_write(0xD201, cpu.A); bus_write(0xD203, cpu.A);
     bus_write(0xD205, cpu.A); bus_write(0xD207, cpu.A);
     cpu.A = 0x60;
     bus_write(0xD208, cpu.A);
-    clear_var_0632();
+    clear_alien_knock_active();
 }
 
 /* init_terrain_render_buffers @ $753B — set the whole terrain boundary table
@@ -2340,7 +2340,7 @@ void intro_reset_score_slots(void) {
 /* init_event_state_5815_x16 @ $7AA8 — seed event state ($0044 = entry A, $3388 = $B4,
  * $003C = 0) and enqueue marked event X=$16 via the (native) ring_push_marked. */
 void init_event_state_5815_x16(void) {
-    timer_or_counter = cpu.A; mem[0x3388] = 0xB4; anim_flag_003C = 0x00;
+    timer_or_counter = cpu.A; mem[0x3388] = 0xB4; airlock_state = 0x00;
     cpu.X = 0x16;
     ring_push_marked();
 }
@@ -2718,16 +2718,16 @@ void event_sequence_dispatcher(void) {
             return;
         }
         if (clear_colors_done_003E == 0) return;         /* $003E == 0 */
-        if (anim_flag_003C == 0) {                       /* start the shake: INC $003C */
-            anim_flag_003C = (uint8_t)(anim_flag_003C + 1);
+        if (airlock_state == 0) {                       /* start the shake: INC $003C */
+            airlock_state = (uint8_t)(airlock_state + 1);
             mem[0x3388] = 0x34;                          /* cockpit cell */
             span_pixel_count = 0x16;                     /* $00DF = $16 */
             cpu.Y = 0x01; set_colpf0_from_flag();        /* Y = slot (1) */
             return;
         }
-        if (anim_flag_003C & 0x80) return;               /* $003C negative */
+        if (airlock_state & 0x80) return;               /* $003C negative */
         if (landing_seq_flag == 0x04 && mem[0x007A] == 0) return;
-        anim_flag_003C = (uint8_t)(anim_flag_003C - 1);  /* DEC $003C */
+        airlock_state = (uint8_t)(airlock_state - 1);  /* DEC $003C */
         mem[0x3388] = 0xB4;
         span_pixel_count = 0x16;                         /* $00DF = $16 */
         cpu.Y = 0x0A; set_colpf0_from_flag();
@@ -2876,7 +2876,7 @@ void clear_colors_sweep_5x(void) {
  *     landing_seq_flag = 2, timer_or_counter = 9.
  *   • else ($7B in 1..$7F): pick this tick's loop count from RANDOM (biased 3..7, halved unless
  *     $7B has reached 7), then run that many passes: each queues a $1B event + waits $007D frames
- *     (unless anim_flag_003C is set / already aborted), decays $7B, and while $7B < $0F grows $7D
+ *     (unless airlock_state is set / already aborted), decays $7B, and while $7B < $0F grows $7D
  *     by 2 and pulls $007C down by 7.  Finally re-seeds RTCLOK from $007C.
  * (6502 note: the $7B==0 path's 7a2e branch is ALWAYS taken because ring_push_marked exits with
  * Z=0 from its TAX of X=$19 — not from the ASL — so it never falls into the $7B-sign branch.) */
@@ -2917,7 +2917,7 @@ void animate_clear_colors_timed(void) {
 
     for (;;) {
         if (!skip_wait) {                                /* L_7a58 */
-            if (anim_flag_003C == 0) {                   /* 7a58/7a5a */
+            if (airlock_state == 0) {                   /* 7a58/7a5a */
                 cpu.X = 0x1B; ring_push_marked();        /* 7a5c/7a5e */
                 uint8_t x = row_table_stride;            /* 7a61 LDX $C1 */
                 do {                                     /* L_7a63 */
@@ -3026,7 +3026,7 @@ static void rof_alshape_note(unsigned short p) {
     if (mem[0x003E] || mem[0x0633]) rof_alshape_note(_p); \
     if (mem[0x0633]) { g_alDrawShape++; g_alShapePtr = _p; } } while (0)
 
-/* Creature-blit capture (game_sub_7F85 -> $80C5 `STA ($8D),Y`, hooked at $80E9 via a
+/* Creature-blit capture (alien_creature_animate_draw -> $80C5 `STA ($8D),Y`, hooked at $80E9 via a
  * PRE_INSN_HOOK).  The jump-scare creature is drawn ONLY here (airlock-closed knock), into the
  * mode-D field via a runtime-built row table ($073D/$0793), so the field->overlay geometry can't
  * be derived statically.  Record the write extent + row-table base/stride + the sample so a real
@@ -3045,12 +3045,12 @@ volatile unsigned char  g_alCrSeen     = 0;       /* creature blit ran at least 
  * render the creature's pens (2 = $DA, 3 = $DB, ...) near the sky/background colour, the shape is
  * composited but invisible until the normal palette returns (the observed restore-frame flash). */
 volatile unsigned char  g_alPen[6];               /* [0]$DA [1]$DB [2]$DC [3]$DD [4]$47 [5]$44 */
-volatile unsigned long  g_alKnockFrames = 0;      /* game_sub_7EC7 loop iterations (knock frames) */
+volatile unsigned long  g_alKnockFrames = 0;      /* alien_knock_setup_loop loop iterations (knock frames) */
 volatile unsigned long  g_alTWait = 0;            /* beam ticks in the 5-frame busy-wait (all steps) */
-volatile unsigned long  g_alTDraw = 0;            /* beam ticks in game_sub_7F85 (all steps) */
+volatile unsigned long  g_alTDraw = 0;            /* beam ticks in alien_creature_animate_draw (all steps) */
 volatile unsigned long  g_alTRender = 0;          /* beam ticks in platform_render_frame (all steps) */
-volatile unsigned long  g_alTHud = 0;             /* beam ticks inside hud_build_text_row (creature rows) */
-volatile unsigned long  g_alHudCalls = 0;         /* # hud_build_text_row calls during the knock */
+volatile unsigned long  g_alTHud = 0;             /* beam ticks inside alien_shape_blit (creature rows) */
+volatile unsigned long  g_alHudCalls = 0;         /* # alien_shape_blit calls during the knock */
 #else
 #define ROF_ALIEN_PROBE()       ((void)0)
 #define ROF_ALIEN_PLOT()        ((void)0)
@@ -3079,7 +3079,7 @@ void rof_alien_crwrite(unsigned int addr, unsigned char val) {
 
 /* pilot_render @ $7854 — the pilot/rescue render + rescue state machine.  Seeds the lock-on /
  * landing state from the pilot range ($0079), then runs a per-frame loop (L_78d6) that animates the
- * alien knock ($0633 / pmg_enemy_update), and:
+ * alien knock ($0633 / alien_attack_tick), and:
  *   • systems ON ($003E==0): finish/abort the rescue and return (via level_clear_fx_loop);
  *   • systems OFF ($003E!=0): step the landing sequence $003D — colour sweeps, the descending audio,
  *     the zoom, and the L_78d6 hold loop.  This is FAITHFUL: the real Atari hard-holds here too (see
@@ -3156,7 +3156,7 @@ L_78d6:
     ROF_ALIEN_PROBE();                                   /* diag: latch rescue/alien state each L_78d6 pass */
     if (alien_trigger != 0) {                            /* 78d6/78d9 */
         if (RTCLOK_LOW & 0x08) {                         /* 78db/78dd/78df */
-            if (mem[0x2844] == 0) { mem[0x2844] = (uint8_t)(mem[0x2844] + 1); pmg_enemy_update(); }  /* 78e1-78e9 */
+            if (mem[0x2844] == 0) { mem[0x2844] = (uint8_t)(mem[0x2844] + 1); alien_attack_tick(); }  /* 78e1-78e9 */
         } else {
             mem[0x2844] = 0x00;                          /* 78ef */
         }
@@ -3166,7 +3166,7 @@ L_78d6:
     if (clear_colors_done_003E != 0) goto L_792e;        /* 78f2/78f4: systems OFF -> rescue loop */
 
     /* --- systems ON ($003E==0): finish/abort the rescue, then return. --- */
-    if (anim_flag_003C != 0) trigger_effect_4a();        /* 78f6/78f8/78fa */
+    if (airlock_state != 0) trigger_effect_4a();        /* 78f6/78f8/78fa */
     {
         uint8_t phase = landing_seq_flag;                /* 78fd LDY $003D */
         mem[0x2830] = 0x00;
@@ -3236,35 +3236,35 @@ L_79a8:
 #ifdef ROF_PLATFORM_AMIGA
     /* FORCE-AIRLOCK test aid: at the knock (phase 4, alien-designated, systems off, airlock still
      * closed) simulate the A-key first press so the headless probe reaches the reveal below instead
-     * of stalling in game_sub_7EC7's knock-SFX loop.  Equivalent to the dispatcher slot-1 path. */
-    if (g_forceAirlockOpen && mem[0x281E] != 0 && clear_colors_done_003E != 0 && anim_flag_003C == 0) {
-        anim_flag_003C = 0x01;                           /* INC $003C (0 -> 1) */
+     * of stalling in alien_knock_setup_loop's knock-SFX loop.  Equivalent to the dispatcher slot-1 path. */
+    if (g_forceAirlockOpen && mem[0x281E] != 0 && clear_colors_done_003E != 0 && airlock_state == 0) {
+        airlock_state = 0x01;                           /* INC $003C (0 -> 1) */
         mem[0x3388] = 0x34;                              /* light the Air Lock cockpit cell */
     }
 #endif
     if (mem[0x281E] != 0) {                              /* 79b2/79b5 */
-        cpu.A = anim_flag_003C;                          /* 79b7 */
+        cpu.A = airlock_state;                          /* 79b7 */
         if (cpu.A == 0) {                                /* 79b9 */
             game_state = cpu.A;                          /* 79bb (=0) */
-            game_sub_7EC7();                             /* 79bd */
+            alien_knock_setup_loop();                             /* 79bd */
             goto L_78d6;                                 /* 79c0/79c9 -> L_7a0c -> L_7a14 */
         }
-        anim_flag_003C = 0x80;                           /* 79c3/79c5 -> L_79d9 */
+        airlock_state = 0x80;                           /* 79c3/79c5 -> L_79d9 */
         goto L_79d9;
     }
     /* L_79cc */
-    if (anim_flag_003C == 0) { animate_clear_colors_timed(); goto L_78d6; }   /* 79cc/79ce L_7a09 -> L_7a0c */
+    if (airlock_state == 0) { animate_clear_colors_timed(); goto L_78d6; }   /* 79cc/79ce L_7a09 -> L_7a0c */
 L_79d0:
     while (mem[0x06FF] != 0) {                           /* 79d0/79d3 sound-busy spin */
         platform_tick_vbi(); platform_render_frame();    /* SPINWAIT: keep audio/VBI live */
     }
-    anim_flag_003C = 0xFF;                               /* 79d5/79d7 */
+    airlock_state = 0xFF;                               /* 79d5/79d7 */
 L_79d9:
     clear_colors_sweep_5x();                             /* 79d9 (exit Z: aborted if $3E cleared) */
     if (cpu.Z) goto L_78d6;                              /* 79dc/79de */
     clear_message_buffer();                              /* 79e1 */
     wait_frames_20();                                    /* 79e4 */
-    cpu.A = anim_flag_003C;                              /* 79e7 */
+    cpu.A = airlock_state;                              /* 79e7 */
     if (cpu.A == 0x80) {                                 /* 79e9/79eb */
         mark_grid_slot_active();                         /* 79ed (leaves cpu.A = $3C for the next store) */
         alien_trigger = cpu.A;                           /* 79f0 */
@@ -4186,7 +4186,7 @@ void draw_scaled_shape(void) {
     } while (mem[0x0055] < 0x12);
 }
 
-/* pack_byte_to_5bit_cells @ $8181 — reorder a source byte into a mode-D cell byte and fold
+/* reorder_cell_bits @ $8181 — reorder a source byte into a mode-D cell byte and fold
  * it into the running accumulator ($0084).  The Atari does this with a 22-op ROL-A / ROR-$84 /
  * ROR-A carry chain; that chain is exactly equivalent to a fixed bit permutation (proven over
  * all 2^17 inputs):
@@ -4198,17 +4198,17 @@ void draw_scaled_shape(void) {
  * The entry carry and the accumulator's low 7 bits do NOT affect the output.  Returns the cell
  * byte in A.  (Was a faithful ROL/ROR macro chain — replaced with the equivalent permutation,
  * which drops all the $0084 bus traffic and lets callers keep the accumulator in a register.) */
-static uint8_t pack_byte_to_5bit_cells_core(uint8_t src, uint8_t *accum) {
+static uint8_t reorder_cell_bits_core(uint8_t src, uint8_t *accum) {
     uint8_t cell = (uint8_t)(((src & 3) << 6) | (((src >> 2) & 3) << 4)
                            | (((src >> 4) & 3) << 2) | ((src >> 6) & 3));
     *accum = (uint8_t)((cell << 1) | (*accum >> 7));
     return cell;
 }
 
-void pack_byte_to_5bit_cells(void) {
+void reorder_cell_bits(void) {
     uint8_t accum = screen_ptr_hi;               /* $0084 */
     uint8_t prev7 = (uint8_t)(accum >> 7);
-    cpu.A = pack_byte_to_5bit_cells_core(cpu.A, &accum);
+    cpu.A = reorder_cell_bits_core(cpu.A, &accum);
     screen_ptr_hi = accum;
     cpu.C = prev7;                                /* faithful: final carry = prior $0084 bit7 */
     cpu.N = (uint8_t)(cpu.A >> 7); cpu.Z = (cpu.A == 0);
@@ -4259,36 +4259,36 @@ static void cockpit_dial_update_core(uint8_t v) {
 
 void cockpit_dial_update(void) { cockpit_dial_update_core(cpu.A); }
 
-/* hud_fill_field0 @ $8105 — advance HUD text field 0.  If its source cursor ($0080) has
+/* alien_field0_fill @ $8105 — advance HUD text field 0.  If its source cursor ($0080) has
  * reached the field limit ($2927) just bump the cursor.  Otherwise pack the next 5 source
  * bytes (from the field-0 pointer $0085/$0086, indexed by the cursor) into cells $93..$8F
- * (high cell first) via pack_byte_to_5bit_cells — threading the shared accumulator $0084 —
+ * (high cell first) via reorder_cell_bits — threading the shared accumulator $0084 —
  * and advance the cursor by 5.  ($0085/$0086 are the "encounter_count/row_count" cells
  * reused here as a text-source pointer — see docs/rename.md.) */
-void hud_fill_field0(void) {
+void alien_field0_fill(void) {
     uint8_t cursor = sync_flag;                                  /* $0080 field-0 cursor */
-    if (cursor >= hud_field0_limit) { sync_flag = (uint8_t)(cursor + 1); return; }  /* $2927 */
+    if (cursor >= alien_field0_limit) { sync_flag = (uint8_t)(cursor + 1); return; }  /* $2927 */
     uint16_t src  = (uint16_t)(encounter_count | (row_count << 8));  /* $0085/$0086 field-0 ptr */
     uint8_t  accum = screen_ptr_hi;                              /* $0084 packing accumulator */
     for (uint8_t cell = 0x93; ; cell--) {                        /* cells $93..$8F, high first */
-        mem[cell] = pack_byte_to_5bit_cells_core(bus_read((uint16_t)(src + cursor++)), &accum);
+        mem[cell] = reorder_cell_bits_core(bus_read((uint16_t)(src + cursor++)), &accum);
         screen_ptr_hi = accum;   /* publish each step: a source read aliasing $0084 must see it live */
         if (cell == 0x8F) break;
     }
     sync_flag = cursor;
 }
 
-/* hud_fill_field2 @ $8138 — advance HUD text field 2.  If its source cursor ($0082) has
+/* alien_field2_fill @ $8138 — advance HUD text field 2.  If its source cursor ($0082) has
  * reached the field limit ($2929) just bump the cursor.  Otherwise consume 7 source bytes
  * (from the field-2 pointer $0089/$008A, indexed by the cursor) into cells $94..$9A:
  *   - when the pack flag $292D==0 they are copied verbatim, ascending ($94..$9A);
- *   - otherwise each is packed via pack_byte_to_5bit_cells and written descending ($9A..$94),
+ *   - otherwise each is packed via reorder_cell_bits and written descending ($9A..$94),
  *     threading the shared accumulator $0084.
  * Advances the cursor by 7 either way.  ($0089/$008A are the "terrain_state/terrain_scroll_
  * counter" cells reused here as a text-source pointer — see docs/rename.md.) */
-void hud_fill_field2(void) {
+void alien_field2_fill(void) {
     uint8_t cursor = dl_ptr_hi;                                  /* $0082 field-2 cursor */
-    if (cursor >= hud_field2_limit) { dl_ptr_hi = (uint8_t)(cursor + 1); return; }  /* $2929 */
+    if (cursor >= alien_field2_limit) { dl_ptr_hi = (uint8_t)(cursor + 1); return; }  /* $2929 */
     uint16_t src = (uint16_t)(terrain_state | (terrain_scroll_counter << 8));  /* $0089/$008A ptr */
     if (mem[0x292D] == 0x00) {                                   /* verbatim copy, ascending */
         for (uint8_t cell = 0x94; cell <= 0x9A; cell++)
@@ -4296,7 +4296,7 @@ void hud_fill_field2(void) {
     } else {                                                     /* packed, high cell first */
         uint8_t accum = screen_ptr_hi;                          /* $0084 */
         for (uint8_t cell = 0x9A; ; cell--) {
-            mem[cell] = pack_byte_to_5bit_cells_core(bus_read((uint16_t)(src + cursor++)), &accum);
+            mem[cell] = reorder_cell_bits_core(bus_read((uint16_t)(src + cursor++)), &accum);
             screen_ptr_hi = accum;   /* publish each step: a source read aliasing $0084 stays faithful */
             if (cell == 0x94) break;
         }
@@ -4304,11 +4304,11 @@ void hud_fill_field2(void) {
     dl_ptr_hi = cursor;
 }
 
-/* hud_build_text_row @ $80C5 — compose ONE 17-cell row of the animated overlay into the
- * mode-D viewport field.  (Despite the "hud_build_text_row" name this is the alien-creature /
+/* alien_shape_blit @ $80C5 — compose ONE 17-cell row of the animated overlay into the
+ * mode-D viewport field.  (Despite the "alien_shape_blit" name this is the alien-creature /
  * overlay row blitter — see docs/rename.md.)  Steps:
  *   1. clear the 17-byte cell buffer $8F..$9F;
- *   2. refill it from the four field sources (hud_fill_field0..3);
+ *   2. refill it from the four field sources (alien_field0_fill..3);
  *   3. for each cell, expand it through the $BE00 shape/bit table, AND it with the matching
  *      byte of the SOURCE row ($8B/$8C indirect = the mask), OR the raw cell back in, and store
  *      the result into the DEST row ($8D/$8E indirect, which is the source row + $30);
@@ -4318,16 +4318,16 @@ void hud_fill_field2(void) {
  * stays byte-identical even when the harness aims the pointer at hardware space); the cell buffer
  * and $0084 are always zero-page, so they use direct mem[].  The row-pointer reconstruction is
  * hoisted out of the inner loop (it is loop-invariant) — the reason this rewrite is faster. */
-void hud_build_text_row(void) {
+void alien_shape_blit(void) {
 #if defined(ROF_PLATFORM_AMIGA) && defined(ROF_FLIGHT_PROBE)
     unsigned long _thud = 0;
     if (mem[0x0632]) { g_alHudCalls++; _thud = rof_subclock(); }
 #endif
     for (uint8_t cell = 0x8F; cell <= 0x9F; cell++) mem[cell] = 0x00;   /* clear cell buffer */
-    hud_fill_field0();
-    hud_fill_field1();
-    hud_fill_field2();
-    hud_fill_field3_font();
+    alien_field0_fill();
+    alien_field1_fill();
+    alien_field2_fill();
+    alien_field3_fill();
 
     uint16_t srcRow = (uint16_t)(dl_src_index | (terrain_scroll_reload << 8));  /* $8B/$8C mask row */
     uint16_t dstRow = (uint16_t)(step_mode_flag | (mem[0x008E] << 8));          /* $8D/$8E dest row */
@@ -4352,16 +4352,16 @@ void hud_build_text_row(void) {
          * terrain and RETURNS before ever reading the field (the band-row decode is past that
          * return), so this per-cell field write has no consumer -> skip it, mirror to the overlay
          * only.  In real play alienKnock is ALWAYS true here: this routine (despite its name) is
-         * the alien-creature blitter, reached only via game_sub_7F85 <- game_sub_7EC7, which sets
+         * the alien-creature blitter, reached only via alien_creature_animate_draw <- alien_knock_setup_loop, which sets
          * $0632 first -- there is no non-knock caller.  The kept-write path below is thus taken
-         * only by the validation oracle (#else, non-Amiga) so hud_build_text_row stays byte-
+         * only by the validation oracle (#else, non-Amiga) so alien_shape_blit stays byte-
          * identical to its __t6502 twin, plus as a defensive guard should $0632 ever be clear. */
         if (!alienKnock) bus_write(dst, v);
 #else
         bus_write(dst, v);
 #endif
 #ifdef ROF_PLATFORM_AMIGA
-        /* Alien jump-scare: during the airlock-CLOSED knock ($0632, set by game_sub_7EC7) this
+        /* Alien jump-scare: during the airlock-CLOSED knock ($0632, set by alien_knock_setup_loop) this
          * blitter draws the creature into the viewport field, which the Amiga sheds -> mirror each
          * byte into the paused-rescue figure overlay so renderFlightDirect composites it.  (This is
          * the ONLY caller path -- see the write-skip note above -- so $0632 is set for every real
@@ -4415,7 +4415,7 @@ void hud_build_text_row(void) {
 #endif
 }
 
-/* Advance one voice of the game_sub_7F85 frame sequencer (voices A and B share this shape).
+/* Advance one voice of the alien_creature_animate_draw frame sequencer (voices A and B share this shape).
  * Walk the value table $81E8 forward one step; while still inside a run just return that value.
  * When the run ends (value 0) pick the next run through the link table $81E2 — resetting the
  * link index to 0 or 3 (chosen by whether the sustain counter $292E is still live) whenever it
@@ -4436,15 +4436,15 @@ static uint8_t seq_voice_step(unsigned posAddr, unsigned loopAddr) {
     return v;
 }
 
-/* game_sub_7F85 @ $7F85 — step the alien-creature animation and draw one full frame of it.
+/* alien_creature_animate_draw @ $7F85 — step the alien-creature animation and draw one full frame of it.
  * (Misnamed "sfx_seq" — it is the creature animator/blitter; see docs/rename.md.)  Runs once per
  * knock SFX step.  Three independent "voices" (A, B, C) each advance through frame tables to pick
  * this frame's three shape indices; those index the shape-parameter tables ($81A1/$81A9/$81B1/
  * $81B9 for A and B, $81C1/$81C9/$81D1/$81D9 for C) to load the four field-source pointers/limits
- * consumed by hud_build_text_row; then the row-blit loop draws rows $2930..$2B of the creature.
+ * consumed by alien_shape_blit; then the row-blit loop draws rows $2930..$2B of the creature.
  * The tail retires the SFX step: while the sustain counter $292E holds it queues two ring markers
  * ($1A/$1B); when it underflows it silences audio and hands off to the audio IRQ. */
-void game_sub_7F85(void) {
+void alien_creature_animate_draw(void) {
     /* --- Voice A / B: table-walked frame values --- */
     uint8_t frameA = seq_voice_step(0x2924, 0x005E);   /* $2924 pos, $005E link */
     mem[0x292A] = frameA;
@@ -4498,11 +4498,11 @@ void game_sub_7F85(void) {
     step_mode_flag = (uint8_t)dstRow;                    /* $8D */
     mem[0x008E]    = (uint8_t)(dstRow >> 8);             /* $8E */
 
-    /* --- Draw the creature: one hud_build_text_row per field row from $2930 up to $2B --- */
+    /* --- Draw the creature: one alien_shape_blit per field row from $2930 up to $2B --- */
     uint8_t r = mem[0x2930];
     do {
         mem[0x292F] = r;
-        hud_build_text_row();
+        alien_shape_blit();
         r++;
     } while (r < 0x2C);
 
@@ -8175,11 +8175,11 @@ void game_state_update(void) {
     cpu.X = 0x02; ring_push_marked();              /* aa46 LDX #$02 */
 }
 
-/* pmg_enemy_update @ $7AB8 — per-frame enemy PMG update.  When RANDOM is negative,
+/* alien_attack_tick @ $7AB8 — per-frame enemy PMG update.  When RANDOM is negative,
  * occasionally repositions the enemy ($0044/$0047 to $6D or $70, $283D phase) and
  * jitters roll/pitch; then advances $003B unless level-clear ($0072==2); finally
  * pushes ring events $1A/$1B.  Reads RANDOM once.  Contract: memory; exit cpu dead. */
-void pmg_enemy_update(void) {
+void alien_attack_tick(void) {
     uint8_t a = bus_read(0xD20A);                 /* 7ab8 LDA $D20A */
     if (a & 0x80) {                               /* 7abb BPL L_7af3 (return) */
         if ((a & 0x0F) != 0) {                    /* 7abd AND #$0F; BEQ L_7add */
@@ -8208,18 +8208,18 @@ void pmg_enemy_update(void) {
 
 /* enemy_check @ $3FCD — event dispatch.  $063D (event trigger) -> intro_cinematic_loop
  * (LEFT TRANSPILED: its closure reaches the whole-program init/teardown; it has
- * 0 callers in steady flight); else $0633 (alien trigger) -> pmg_enemy_update.
+ * 0 callers in steady flight); else $0633 (alien trigger) -> alien_attack_tick.
  * Contract: memory; exit cpu dead. */
 void enemy_check(void) {
     if (event_trigger != 0) { intro_cinematic_loop(); return; }   /* 3fcd LDA $063D; BNE */
-    if (alien_trigger != 0) pmg_enemy_update();            /* 3fd5 LDA $0633; BEQ skip */
+    if (alien_trigger != 0) alien_attack_tick();            /* 3fd5 LDA $0633; BEQ skip */
 }
 
 /* ===========================================================================
  * IN-GAME SFX ENGINE — the $548D voice/gauge engine and its subtree.
  *
  * Run once per flight VBI (the Atari VBI tail $534D -> $548D).  These drain the
- * $0719 event ring that the native flight code (enemy_check / pmg_enemy_update /
+ * $0719 event ring that the native flight code (enemy_check / alien_attack_tick /
  * ring_push_marked / the apex below) fills, advance per-voice envelopes, and
  * write POKEY AUDF/AUDC — which on the Amiga route through bus_write ->
  * platform_hw_write -> Paula, so the effects are audible automatically.
@@ -8918,7 +8918,7 @@ void vbi_handler_flight(void) {
     if (event_active_flag == 0) {
         if (indicator_pos != 0) compute_indicator_pos();
         sfx_voice_envelope_tick();
-        if (game_state == 0 && var_0632 == 0) {
+        if (game_state == 0 && alien_knock_active == 0) {
 #ifndef ROF_PLATFORM_AMIGA
             /* Windscreen "static" dither — SDL display only (dead on Amiga: GTIA colour pokes,
              * beam-synced; the copper has no equivalent).  Nudge the threshold $062C toward a
