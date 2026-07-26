@@ -4346,12 +4346,26 @@ void hud_build_text_row(void) {
         uint8_t v = (uint8_t)(mem[0xBE00 + cell] & bus_read((uint16_t)(srcRow + y)));
         v |= cell;                                           /* ORA $0084 (== cell) */
         uint16_t dst = (uint16_t)(dstRow + y);
+#ifdef ROF_PLATFORM_AMIGA
+        /* During the airlock-CLOSED knock ($0632) the mode-D field body is SHED on the Amiga:
+         * renderFlightDirect's rescueFigure branch composites the figure overlay over the FROZEN
+         * terrain and RETURNS before ever reading the field (the band-row decode is past that
+         * return), so this per-cell field write has no consumer -> skip it, mirror to the overlay
+         * only.  In real play alienKnock is ALWAYS true here: this routine (despite its name) is
+         * the alien-creature blitter, reached only via game_sub_7F85 <- game_sub_7EC7, which sets
+         * $0632 first -- there is no non-knock caller.  The kept-write path below is thus taken
+         * only by the validation oracle (#else, non-Amiga) so hud_build_text_row stays byte-
+         * identical to its __t6502 twin, plus as a defensive guard should $0632 ever be clear. */
+        if (!alienKnock) bus_write(dst, v);
+#else
         bus_write(dst, v);
+#endif
 #ifdef ROF_PLATFORM_AMIGA
         /* Alien jump-scare: during the airlock-CLOSED knock ($0632, set by game_sub_7EC7) this
          * blitter draws the creature into the viewport field, which the Amiga sheds -> mirror each
-         * byte into the paused-rescue figure overlay so renderFlightDirect composites it.  $0632 is
-         * clear for ordinary overlay text, so those draws are untouched. */
+         * byte into the paused-rescue figure overlay so renderFlightDirect composites it.  (This is
+         * the ONLY caller path -- see the write-skip note above -- so $0632 is set for every real
+         * call; the gate is a guard for the validation harness / any future non-knock use.) */
         if (alienKnock) {
             int b = figB0 + y, r = figR0;
             if (b >= 96) { b -= 96; r++; }                   /* single 96-wrap (y<=16, figB0<96) */
