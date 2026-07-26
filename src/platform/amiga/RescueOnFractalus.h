@@ -37,6 +37,10 @@ public:
     void flightVblankSwap();     // run from the INTB_VERTB ISR at vblank start: if a flight buffer
                                  // swap is pending, rewrite the copper's viewport bitplane pointers
                                  // (before the beam reaches them) and clear the flag.
+    // Dot side-buffer: read-and-clear the deferred-flip flag.  renderFrame() calls this once per
+    // frame — true means the flight normal path deferred its flip-wait, so renderFrame skips its own
+    // vblank wait and the next terrain compute overlaps the pending flip's vblank.
+    bool consumeDeferredFlip() { bool d = flightFlipDeferred; flightFlipDeferred = false; return d; }
     void starVblankUpdate();     // run from the INTB_VERTB ISR at vblank: zero-copy starfield scroll
     void decodeScannerBlinkCells(); // LR-scanner (#13) close-range blink cells $33DF/$33E0 -> cockpit
                                  // bitmap; PUBLIC because it runs in the flight VBI (via PlatformAmiga::
@@ -230,10 +234,20 @@ private:
     // mid-frame (caused plane1 flicker).  It renders into the off-screen one of these two and
     // re-points the flight copper's viewport bitplane ptrs to it; the swap latches next vblank.
     Bitmap*     terrainBitmapBack = nullptr;   // 2nd flight terrain buffer (== terrainBitmap dims)
+    // Dot side-buffer: the terrain rasterizer ORs its plane2 dots (the DOMINANT flight compute) into
+    // this DEDICATED off-display scratch, NOT a display buffer — so the compute no longer depends on
+    // the double-buffer flip and can run DURING the flip's vblank wait (reclaiming the idle spin).
+    // renderFlightDirect copies this plane2 into the display back buffer each frame (the "re-added
+    // plane2 copy"), then clears the scratch for the next frame.  Same dims/layout as terrainBitmap
+    // so the rasterizer's kRow120 (stride-120) geometry lands identically; only its plane2 is used.
+    Bitmap*     terrainDotBuffer  = nullptr;
     Bitmap*     flightDisplayed   = nullptr;   // which buffer the flight copper currently shows
     Bitmap*     flightPendingFlip = nullptr;   // buffer renderFlightDirect just painted, awaiting the
                                                // vblank-safe pointer swap (done by flightVblankSwap)
     volatile bool flightSwapPending = false;   // main thread raises it; the VBI does the swap + clears
+    volatile bool flightFlipDeferred = false;  // normal path deferred its flip-wait (no busy-wait after
+                                               // the flip); renderFrame then SKIPS its own vblank wait so
+                                               // the next terrain compute overlaps this flip's vblank.
     Bitmap*     flightClearPending = nullptr;  // back buffer whose terrain rows a post-vblank blitter
                                                // clear is currently clearing (overlapping the draw)
     Bitmap*     cockpitBitmap  = nullptr;

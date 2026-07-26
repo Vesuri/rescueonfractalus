@@ -967,6 +967,9 @@ void RescueOnFractalus::initialize()
     terrainBitmap = Bitmap::allocate(kW, kViewportFullHeight, kBP3, true);  // FLIGHT-ONLY (double-buffered); 47 rows incl. wing band
     // Second flight terrain buffer for double-buffering renderFlightDirect (see header).
     terrainBitmapBack = Bitmap::allocate(kW, kViewportFullHeight, kBP3, true);
+    // Dot side-buffer (see header): off-display scratch the rasterizer ORs plane2 dots into.
+    // Same 3bp interleaved layout as the terrain buffers so kRow120 geometry matches; MEMF_CLEAR'd.
+    terrainDotBuffer = Bitmap::allocate(kW, kViewportFullHeight, kBP3, true);
     // Shared single-buffered pre-flight viewport bitmap for Standby / Doors (door halves) / Planet /
     // Stars — the scenes that never composite together in one frame (unlike the tunnel reveal, which
     // coexists with the door halves during Doors, so it keeps its own tunnelBitmap).  Kept separate
@@ -1614,6 +1617,15 @@ void RescueOnFractalus::renderFlightDirect()
     // actually captured s_clean.
     if (s_prevRescueActive && !rescueActive && s_cleanValid) { s_resumeRestorePend = true; s_resumeClearPend = true; }
     s_prevRescueActive = rescueActive;
+
+    // Dot side-buffer flip DRAIN.  The normal path DEFERS its flip-wait: after requesting the flip it
+    // returns immediately so the next terrain compute overlaps the flip's vblank (that compute writes
+    // the dot side-buffer, NOT a display buffer, so it has no dependency on the flip).  Here — at the
+    // TOP of the next entry, AFTER that compute has run (and long since passed the vblank) — we finally
+    // block on the pending swap, so it is ~0.  Placed before every branch so flightDisplayed/`back` are
+    // always current (the rescue-pause composite + buffer selection depend on it) and any deferred flip
+    // is drained before the pause path takes over.  No-op when nothing is pending (first frame / pause).
+    while (flightSwapPending) { }
 #if defined(ROF_FLIGHT_PROBE) && !defined(ROF_PROFILE_NORING)
     // Record this entry into the rescue diagnostic ring (see the block above renderFlightDirect).
     if (!g_rfFrozen) {
@@ -1792,17 +1804,21 @@ void RescueOnFractalus::renderFlightDirect()
     // (plane1 rows 0-41) is kicked and only waited on just before the flip.  The edge plot DOES
     // depend on the clear (it ORs into freshly-zeroed plane1), so it sits behind a blitterWait.
 
-    // The back buffer's terrain rows were cleared by a blitter clear KICKED right after the
-    // previous frame's vblank (flightKickBackClear), so the clear overlapped the terrain draw
-    // that just ran into mem[] — the Amiga equivalent of the Atari clearing the off-screen half
-    // while the on-screen half is shown.  Just wait for it here.  First flight frame (nothing
-    // kicked, or a buffer mismatch): clear inline.  The clear spans all 47 rows (0-46): the
-    // terrain viewport (0-42) AND the windscreen-bottom band (43-46).  The terrain is now rendered
-    // full-height (47 rows): the edge plot + sky fill below cover the whole band width, so its L/R
-    // edges show real terrain; the windscreen-frame overlay (plane3) + salmon bars are punched into
-    // the band middle AFTER the fill (see below).
-    if (flightClearPending != back) AmigaHardware::blitterClear((uint16_t*)bp, 60, 47, 0);
-    AmigaHardware::blitterWait();
+    // Dot side-buffer model: `back` is the freshly-freed off-screen buffer (the flip that freed it was
+    // drained at the top of this function).  Clear it whole — all 3 planes, 47 rows (0-46): terrain
+    // viewport (0-42) + windscreen band (43-46) — then COPY the terrain dots (plane2) from the dot
+    // side-buffer into it.  The rasterizer ORed this frame's dots into terrainDotBuffer's plane2 (NOT
+    // a display buffer) during the upstream compute, so they survived the flip and simply copy in here
+    // (the "re-added plane2 copy").  plane2 is cleared then overwritten by the copy — the redundant
+    // clear of those 20 words/row is negligible and keeps a single whole-buffer clear blit.  Both are
+    // blitter ops queued in order (clear then copy); drain so plane1/2 are settled before the edge plot.
+    AmigaHardware::blitterClear((uint16_t*)bp, 60, 47, 0);
+    AmigaHardware::blitterCopy((uint16_t*)((uint8_t*)terrainDotBuffer->data + 40),  // src plane2
+                               (uint16_t*)(bp + 40),                                // dst plane2
+                               20 /*words*/, 47 /*rows*/,
+                               80 /*srcMod bytes = 120-40*/, 80 /*dstMod bytes*/,
+                               0 /*shift*/, 0xFFFF /*fwm*/, 0xFFFF /*lwm*/, 0xFFFF /*unused (minterm=A)*/);
+    AmigaHardware::blitterDrain();   // TWO queued blits (clear + copy) — blitterWait would settle only the first
     flightClearPending = nullptr;
     FD_LAP(g_fdClear);
 
@@ -1859,9 +1875,9 @@ void RescueOnFractalus::renderFlightDirect()
     AmigaHardware::blitterFillUp((uint16_t*)bp, 20, 46, 80);
     FD_LAP(g_fdEdge);
 
-    // plane2 = terrain dots/detail (mode-D value-2/3).  No decode scan any more: the terrain
-    // rasterizer (terrain_column_rasterize, rof_native.c) ORs its dots STRAIGHT into this buffer's
-    // plane2 (g_flightDotPlane) during the upstream draw, so they are already here.
+    // plane2 = terrain dots/detail (mode-D value-2/3).  The rasterizer ORed them into the dot
+    // side-buffer (g_flightDotPlane = terrainDotBuffer plane2) during the upstream compute; they were
+    // copied into `back`'s plane2 by the blitterCopy above, so they are already here.
     FD_LAP(g_fdScan);                                        // (now ~0)
     AmigaHardware::blitterWait();                            // sky fill must finish before the band overlay + flip
     FD_LAP(g_fdFill);
@@ -1940,13 +1956,22 @@ void RescueOnFractalus::renderFlightDirect()
     // the VERY START of the next vertical blank, i.e. BEFORE the beam reaches the WAIT(scanline
     // 85)/BPLxPT MOVEs the copper executes for the viewport.  Poking those 6 pointer words from
     // here (mid-frame, arbitrary beam position) could tear a pointer as the copper fetched it →
-    // a brown/garbage viewport for one frame.  Protocol: publish the target buffer + raise the
-    // swap flag, then busy-wait until the VBI (flightVblankSwap) has done the swap and cleared
-    // the flag — so on return the just-painted buffer is genuinely the one on screen and
-    // flightDisplayed is in sync (the next flightKickBackClear clears the true off-screen buffer).
+    // a brown/garbage viewport for one frame.  Protocol: publish the target buffer + raise the swap
+    // flag.  DEFERRED (dot side-buffer): we do NOT busy-wait for the swap here — instead we return so
+    // the next terrain compute (which writes only the dot side-buffer, never a display buffer) overlaps
+    // this flip's vblank.  The wait moves to the DRAIN at the top of the next entry, by which point the
+    // compute has run and the swap has long since latched (~0 wait).  flightFlipDeferred tells
+    // PlatformAmiga::renderFrame to SKIP its own vblank wait too, so that overlap actually happens.
     flightPendingFlip = back;
     flightSwapPending = true;
-    while (flightSwapPending) { }        // VBI clears it after rewriting the copper pointers
+    flightFlipDeferred = true;
+
+    // Kick the dot side-buffer plane2 clear for the NEXT frame's rasterize (it ORs into it, so it must
+    // start clean).  Kicked here and awaited later by the rasterizer's rof_flight_wait_dotclear —
+    // exactly the old flightKickBackClear "kick a clear now, wait at the next draw" idiom, but on the
+    // off-display scratch instead of a display buffer.  Runs concurrently with the game compute.
+    AmigaHardware::blitterClear((uint16_t*)((uint8_t*)terrainDotBuffer->data + 40),
+                                20 /*words*/, 47 /*rows*/, 80 /*mod bytes = 120-40*/);
 }
 
 // flightVblankSwap: run from the real INTB_VERTB ISR (PlatformAmiga vbiHandler) at the very start
@@ -1969,34 +1994,17 @@ void RescueOnFractalus::flightVblankSwap()
     flightSwapPending = false;
 }
 
-// flightKickBackClear: called by PlatformAmiga::renderFrame RIGHT AFTER the post-render vblank
-// wait — i.e. once the flip (done by the VBI, flightVblankSwap) has latched and `flightDisplayed`
-// is genuinely on screen.  Kick a non-blocking blitter clear of the OTHER buffer (the one
-// renderFlightDirect will convert into next), so the clear runs concurrently with the upcoming
-// terrain draw (game code writing mem[], no blitter) instead of serially inside the convert.
-// renderFlightDirect waits for it before the edge plot / vertical fill (both touch this buffer;
-// one blitter).  Mirrors the Atari clearing the off-screen mode-D half while the on-screen half
-// is displayed.
+// flightKickBackClear: called by PlatformAmiga::renderFrame after each flight frame.  In the dot
+// side-buffer model the terrain rasterizer targets the DEDICATED off-display scratch (terrainDotBuffer,
+// constant pointer), never a display buffer — so there is no per-frame display-buffer clear to kick
+// here any more.  That clear moved into renderFlightDirect (it clears the freed `back` after draining
+// the flip, then clears the scratch's plane2 for the next rasterize).  This now only (re)arms the
+// constant scratch pointers the rasterizer ORs into (cheap; safe to repeat every frame).
 void RescueOnFractalus::flightKickBackClear()
 {
-    if (!rsFlight || !terrainBitmap || !terrainBitmapBack || !flightDisplayed) return;
-    Bitmap* const back = (flightDisplayed == terrainBitmapBack) ? terrainBitmap : terrainBitmapBack;
-    // During the rescue-figure pause the dirty-rect path needs the off-screen buffer to RETAIN the
-    // frozen terrain, so don't wipe it — but still re-arm the dot/object plane pointers so flight
-    // resumes correctly when the pause ends.  No clear is left pending.
-    if (s_flightRescuePause) {
-        flightClearPending = nullptr;
-        g_flightDotPlane = (uint8_t*)back->data + 40;
-        g_flightObjP1    = s_flightObjP1;
-        return;
-    }
-    AmigaHardware::blitterClear((uint16_t*)back->data, 60, 47, 0);   // all 47 rows: viewport 0-42 + blanked band 43-46
-    flightClearPending = back;
-    // The upcoming terrain draw (rof_native.c) ORs its dots straight into this buffer's plane2
-    // (+40 = plane2 of an interleaved 120-byte scanline), replacing renderFlightDirect's old
-    // field-decode scan.  It waits (rof_flight_wait_dotclear) for the clear kicked just above.
-    g_flightDotPlane = (uint8_t*)back->data + 40;
-    g_flightObjP1    = s_flightObjP1;   // arm the object plane1 overlay (applied post-fill below)
+    if (!rsFlight || !terrainDotBuffer) return;
+    g_flightDotPlane = (uint8_t*)terrainDotBuffer->data + 40;   // rasterizer plane2 target (constant)
+    g_flightObjP1    = s_flightObjP1;                           // object plane1 overlay scratch
 }
 
 // run(): the whole game, driven by the genuine transpiled/native boot chain
@@ -3516,6 +3524,7 @@ void RescueOnFractalus::shutdown()
     delete titleBitmap;   titleBitmap   = nullptr;
     delete terrainBitmap; terrainBitmap = nullptr;
     delete terrainBitmapBack; terrainBitmapBack = nullptr;
+    delete terrainDotBuffer; terrainDotBuffer = nullptr;
     delete viewportBitmap;  viewportBitmap  = nullptr;
     delete cockpitBitmap; cockpitBitmap = nullptr;
     delete tunnelBitmap;  tunnelBitmap  = nullptr;

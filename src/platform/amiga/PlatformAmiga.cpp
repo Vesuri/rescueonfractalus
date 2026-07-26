@@ -850,7 +850,14 @@ void PlatformAmiga::renderFrame() {
     }
     unsigned long _ri0 = rof_subclock();
 #endif
-    while (g_vbiCount == last) { /* wait for next real VBI */ }
+    // Dot side-buffer: when the flight normal path DEFERRED its flip (returned without busy-waiting for
+    // the swap), SKIP this frame-sync vblank wait — that is the whole point of the scheme: the next
+    // terrain compute must run DURING the pending flip's vblank, not after an idle wait for it.  The
+    // deferred flip is drained at the top of the next renderFlightDirect (~0 by then).  Every other case
+    // (non-flight scenes, the rescue-figure pause's immediate-flip path, the no-fresh-terrain early
+    // return) leaves the flag clear and still paces to the display here.
+    const bool _deferredFlip = s_scene && s_scene->consumeDeferredFlip();
+    if (!_deferredFlip) while (g_vbiCount == last) { /* wait for next real VBI */ }
 #ifdef ROF_FLIGHT_PROBE
     if (_rFlight) { unsigned long _iw = rof_subclock() - _ri0; g_rIdleWall += _iw;
                     if (mem[0x0632]) g_alTRIdle += _iw; }   // knock: frame-sync wait
