@@ -180,6 +180,13 @@ build; `make validate FN=hud` green (all changes `#ifdef ROF_PLATFORM_AMIGA`).
   - **render total = 343 ticks ≈ 22 ms/step** (scene 331: flipWait 248 ≈ 16 ms is now the biggest render cost,
     composite 72, misc ~11).
   - **DRAW = 4260 ticks ≈ 271 ms/step (~93% of the step); `hud_build_text_row` ≈ 104% of it.**  THE bottleneck.
+- **✅ TERRAIN-RETENTION FIX (user-confirmed).** The alien mirror marked the whole 17-cell blit rect opaque
+  (`g_figM=0xFF`), so `combineWithMask` cleared the rect to pen 0 instead of letting the frozen terrain show —
+  because on the Amiga the mode-D field body is SHED (blank), so the mirrored `v` is creature-on-blank (bug was
+  in the CPU version too).  Fixed: alien mask = the SILHOUETTE (`kModeDP1[v]|kModeDP2[v]`, opaque only where the
+  mode-D value is nonzero) → value-0 pixels transparent → `s_cleanBmp` terrain shows through.  (Pilot `ROF_PLOT_FIG`
+  already built a per-pixel mask, so it was fine.)  Caveat if ever needed: this treats value-0 as transparent; the
+  fully faithful mask would derive opacity from the `$BE00[cell]` transparency table + shape byte.
 - **★ NEXT = the DRAW (`hud_build_text_row`), nothing else moves the needle.**  Per-cell creature blit into the
   mode-D field (17 cells × ~44 rows) + the 4 hud_fill_field calls/row + the Amiga overlay mirror.  Levers: (a) the
   field `bus_write` is DEAD on the Amiga (the body is shed; only the overlay mirror matters) → skip it during the
