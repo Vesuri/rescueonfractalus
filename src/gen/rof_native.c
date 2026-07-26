@@ -216,9 +216,10 @@ extern volatile unsigned long g_alHudCalls;      /* # hud_build_text_row calls d
         if (_rel >= 0) { int _r = _rel / 96, _b = _rel % 96; \
             if ((unsigned)_r < 43u && (unsigned)_b < 40u) { \
                 int _im = kRow40[_r] + _b, _ip = kRow80[_r] + _b; \
-                g_figM[_im]  = 0xFF; \
-                g_figP1[_ip] = kModeDP1[(unsigned char)(V)]; \
-                g_figP2[_ip] = kModeDP2[(unsigned char)(V)]; \
+                uint8_t _ap1 = kModeDP1[(unsigned char)(V)], _ap2 = kModeDP2[(unsigned char)(V)]; \
+                g_figM[_im]  = (uint8_t)(_ap1 | _ap2); /* silhouette: value-0 pixels transparent -> terrain shows */ \
+                g_figP1[_ip] = _ap1; \
+                g_figP2[_ip] = _ap2; \
                 if (_b < g_figColLo) g_figColLo = _b; \
                 if (_b > g_figColHi) g_figColHi = _b; \
                 if (_r < g_figRowLo) g_figRowLo = _r; \
@@ -4356,9 +4357,14 @@ void hud_build_text_row(void) {
             if (b >= 96) { b -= 96; r++; }                   /* single 96-wrap (y<=16, figB0<96) */
             if ((unsigned)r < 43u && (unsigned)b < 40u) {
                 int im = kRow40[r] + b, ip = kRow80[r] + b;   /* mask stride 40; interleaved figure planes stride 80 */
-                g_figM[im]  = 0xFF;
-                g_figP1[ip] = kModeDP1[v];
-                g_figP2[ip] = kModeDP2[v];
+                /* Opaque ONLY where the creature pixel is nonzero (silhouette), so combineWithMask
+                 * lets the frozen terrain (s_cleanBmp) show through the value-0 holes.  On the Amiga
+                 * the mode-D field body is shed, so v = creature-on-blank; a 0xFF mask would clear
+                 * the whole rect to pen 0 (was the "terrain not retained" bug). */
+                uint8_t _p1 = kModeDP1[v], _p2 = kModeDP2[v];
+                g_figM[im]  = (uint8_t)(_p1 | _p2);
+                g_figP1[ip] = _p1;
+                g_figP2[ip] = _p2;
                 if (r < g_figRowLo) g_figRowLo = r;
                 if (r > g_figRowHi) g_figRowHi = r;
                 if (b < g_figColLo) g_figColLo = b;
