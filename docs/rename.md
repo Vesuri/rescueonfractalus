@@ -18,6 +18,20 @@ and `[A-Za-z0-9_]*OLD` and fix those variants too.
 > needs a live check before a canonical name can be trusted. Do NOT promote these without resolving
 > the aliasing / verifying the claim noted. ✓=confident, ?=verify.
 
+## New (found 2026-07-27, profiling the flight loop)
+
+- **`$5F1D display_setup`** — badly misleading: "display setup" is only its first act.  It is the
+  top-of-main-loop **boot → Standby → launch orchestrator** with THREE parts: (1) display setup (VBI
+  `$52D7` / DLI `$6CC2` / display list / PMG bases + colours); (2) the **Standby / attract idle loop**
+  (`L_6141..L_634a`: CONSOL SELECT/OPTION poll at `$D01F`, `cockpit_flag`-gated dispatch, the attract
+  loop `L_62f6↔L_634a` with exits to `game_main_loop`, `copy_title_text_block_to_screen`); (3) once
+  launched, it **draws and drives the launch→descent cinematic to the flight hand-off** — tunnel rings,
+  terrain spans, canopy dial bar, `$02C0` colour fades, the `ds_frame()` stars-approach loops advancing
+  object positions until `terrain_state $0089 == 0` (Doors → Tunnel → Planet → Stars → flight).
+  Suggested: **`boot_standby_launch_driver`** (or `run_standby_and_launch`).  Also fix the stale
+  symbols.csv description ("Main game display setup … called at top of main game loop").  ✓ Native apex,
+  NOT `make validate`d (see [[feedback-clean-c-twin-rewrite]]).
+
 ## New (found 2026-07-26, native-izing cockpit_display $587B — the Standby/Title scoreboard render)
 
 - **`$587B cockpit_display`** — the name is misleading: it does NOT draw the in-flight cockpit.  It
