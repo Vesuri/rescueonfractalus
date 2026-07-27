@@ -24,8 +24,8 @@
 ;   a2 = mem+$260E  (COL_MAX per-column max-height base, indexed by plotCol)
 ;   a3 = current control-point slot ptr (interleaved [col,hgt,frac], walked +/-3)
 ;   a4 = control-point stack base (for the depth==0 underflow test)
-;   a5 = g_flightDotPlane (plane2 dot buffer; null on the first flight frame -> skip)
-;   a6 = kRow120 (row -> byte-offset table, word entries)
+;   a5 = g_flightDotPlane (plane2 dot buffer; armed once at init -> never null in flight)
+;   a6 = kDrawDotRowOff (oldMax -> plane2 row byte-offset, or $FFFF sentinel; word entries)
 
 	xdef	terrain_column_rasterize_core_asm
 	ifnd	ROF_RASTERIZE_VERIFY
@@ -33,7 +33,7 @@
 	endif
 	xdef	flight_edge_plot_asm
 	xref	mem
-	xref	kRow120
+	xref	kDrawDotRowOff
 	xref	kHeightRowOff
 	xref	g_flightDotPlane
 
@@ -51,8 +51,8 @@ terrain_column_rasterize_core_asm:
 	movea.l	sp,a4			; a4 = cp base
 	movea.l	a4,a3			; a3 = current slot (depth 0)
 	lea	mem+$260E,a2		; COL_MAX base
-	move.l	g_flightDotPlane,a5	; plane2 dot buffer (may be 0)
-	lea	kRow120,a6
+	move.l	g_flightDotPlane,a5	; plane2 dot buffer (armed at init -> non-null in flight)
+	lea	kDrawDotRowOff,a6	; oldMax -> plane2 row byte-offset (folds _sc + gate + kRow120)
 	; seed control-point slot [0] from mem[$95]/[$EA]/[$F4]
 	move.b	mem+$95,(a4)		; cp[0].col
 	move.b	mem+$EA,1(a4)		; cp[0].hgt
@@ -240,16 +240,13 @@ ph2_fe:
 	; two columns short: interpolated column, then endpoint, then pop
 	moveq	#0,d0
 	move.b	1(a3),d0		; chgt = cp[depth].hgt
-	moveq	#0,d1
-	move.b	d3,d1			; height
-	add.w	d1,d0
+	add.w	d3,d0			; + height (d3 is zero-extended, upper word 0)
 	addq.w	#1,d0
 	lsr.w	#1,d0			; (chgt + height + 1) >> 1
 	bsr	draw			; DRAW(interpolated)
 	addq.b	#1,d5			; plotCol++
 	move.b	1(a3),d3		; height = cp[depth].hgt
-	moveq	#0,d0
-	move.b	d3,d0
+	move.w	d3,d0			; _h = height (d3 zero-extended, upper word 0)
 	bsr	draw			; DRAW(endpoint)
 	addq.b	#1,d5			; plotCol++
 	cmpa.l	a4,a3
@@ -260,8 +257,7 @@ ph2_fe:
 ph2_ff:
 	; one column short: plot endpoint, pop
 	move.b	1(a3),d3		; height = cp[depth].hgt
-	moveq	#0,d0
-	move.b	d3,d0
+	move.w	d3,d0			; _h = height (d3 zero-extended, upper word 0)
 	bsr	draw
 	addq.b	#1,d5			; plotCol++
 	cmpa.l	a4,a3
@@ -283,29 +279,30 @@ draw:
 	bcs	draw_dot		; _h < $97
 	move.b	#$FF,(a2,d5.w)		; saturate: full column
 draw_dot:
-	; ROF_PLOT_DOT(plotCol, oldMax) — uses oldMax (the PREVIOUS top), not _h
-	move.l	a5,d7
-	beq	draw_ret		; g_flightDotPlane null -> skip (cheap An-zero test)
+	; ROF_PLOT_DOT(plotCol, oldMax) — uses oldMax (the PREVIOUS top), not _h.
+	; a5 (g_flightDotPlane) is armed once at init and never null in flight -> no per-plot
+	; null test.  a6 = kDrawDotRowOff folds the whole oldMax gate: bails on oldMax FIRST
+	; (before any _sc arithmetic) via the $FFFF sentinel, and yields kRow120[150-oldMax]
+	; directly for the accepted rows — replacing move#150/sub/cmp#47/cmp#43/add/kRow120[].
+	; Range-check plotCol reordered (per RoF perf review): reject the HIGH edge (>=208)
+	; BEFORE the sub, so an off-viewport column never pays for it; the LOW edge (<48) then
+	; falls out FREE as the borrow (carry) from that same sub.  Same accept set as the C
+	; oracle's (unsigned)(plotCol-48) < 160.
 	move.w	d5,d7			; plotCol
+	cmp.w	#208,d7
+	bcc	draw_ret		; plotCol >= 208 -> off viewport (skip the sub)
 	sub.w	#48,d7			; _ac = plotCol - 48
-	cmp.w	#160,d7
-	bcc	draw_ret		; (unsigned) _ac >= 160 -> off viewport
-	move.w	#150,d0			; (upper word irrelevant — all .w below)
-	sub.w	d6,d0			; _sc = 150 - oldMax
-	cmp.w	#47,d0
-	bcc	draw_ret		; (unsigned) _sc >= 47 -> off display
-	cmp.w	#43,d0
-	beq	draw_ret		; _sc == 43 -> the $6b per-frame reset floor, skip (band rows 44-46 pass)
-	add.w	d0,d0			; _sc * 2 (word index)
-	move.w	(a6,d0.w),d0		; kRow120[_sc]
-	move.w	d7,d1
-	lsr.w	#2,d1			; _ac >> 2
-	add.w	d1,d0			; byte offset = kRow120[_sc] + (_ac>>2)
+	bcs	draw_ret		; plotCol < 48 -> borrow set -> off viewport (free)
+	add.w	d6,d6			; oldMax * 2 (word index)
+	move.w	(a6,d6.w),d0		; kDrawDotRowOff[oldMax] = kRow120[150-oldMax], or $FFFF
+	bmi	draw_ret		; sentinel (bit15) -> off display / $6b reset-floor -> skip
 	move.w	d7,d1
 	and.w	#3,d1			; _ac & 3
 	add.w	d1,d1			; * 2
 	move.w	#$C0,d6
 	lsr.w	d1,d6			; mask = $C0 >> (2*(_ac&3))  ( = kColMask4[_ac&3] )
+	lsr.w	#2,d7			; _ac >> 2  (d7 dead after -> shift in place, saves a move.w d7,d1)
+	add.w	d7,d0			; byte offset = rowoff + (_ac>>2)
 	or.b	d6,(a5,d0.w)		; g_flightDotPlane[off] |= mask
 draw_ret:
 	rts

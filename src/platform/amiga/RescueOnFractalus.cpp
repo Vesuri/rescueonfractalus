@@ -350,6 +350,25 @@ static void buildHeightRowOff() {
     }
     kHeightRowOffBuilt = true;
 }
+// Dot-plot row-offset table for the rasterizer's inner DRAW/draw_dot (TerrainRasterizeAssembler.s):
+// kDrawDotRowOff[oldMax] folds the ROF_PLOT_DOT height gate for the *previous* top (oldMax) —
+// _sc = 150-oldMax, the off-display reject ((unsigned)_sc >= 47) and the $6b reset-floor skip
+// (_sc == 43) — plus the kRow120[_sc] lookup into ONE table read indexed by oldMax.  Entries that
+// fail the gate hold the sentinel $FFFF (bit15 set) so the asm rejects with a single `bmi`.  Byte
+// offsets kRow120[0..46] are 0..5520 (positive), so they never collide with the sentinel.  Built
+// once at initialize() (depends only on kRow120) — the rasterizer runs before renderFlightDirect,
+// so this must exist before the first flight frame (unlike kHeightRowOff, built lazily there).
+extern "C" uint16_t kDrawDotRowOff[256];
+uint16_t kDrawDotRowOff[256];
+static void buildDrawDotRowOff() {
+    for (int m = 0; m < 256; m++) {          // m = oldMax (the previous column top)
+        int sc = 150 - m;
+        if ((unsigned)sc < 47u && sc != 43)  // matches ROF_PLOT_DOT's _sc gate exactly
+            kDrawDotRowOff[m] = kRow120[sc];
+        else
+            kDrawDotRowOff[m] = 0xFFFF;       // off-display / reset-floor -> skip
+    }
+}
 // C reference / non-asm fallback for the plane1 skyline edge plot (see renderFlightDirect).
 // One bit per column at its skyline scanline; h==$FF (off-top, all body) plots nothing.
 static void edgePlotCore(uint8_t* bp) {
@@ -970,6 +989,12 @@ void RescueOnFractalus::initialize()
     // Dot side-buffer (see header): off-display scratch the rasterizer ORs plane2 dots into.
     // Same 3bp interleaved layout as the terrain buffers so kRow120 geometry matches; MEMF_CLEAR'd.
     terrainDotBuffer = Bitmap::allocate(kW, kViewportFullHeight, kBP3, true);
+    // Arm the rasterizer's plane2 dot target ONCE, here — terrainDotBuffer lives for the whole run
+    // and the rasterizer only runs in flight, so g_flightDotPlane is now never null when it plots.
+    // That lets draw_dot drop its per-plot null test (TerrainRasterizeAssembler.s).  flightKickBackClear
+    // re-affirms the same pointer each flight frame (harmless).
+    g_flightDotPlane = (uint8_t*)terrainDotBuffer->data + 40;
+    buildDrawDotRowOff();   // rasterizer dot row-offset table (before the first flight frame)
     // Shared single-buffered pre-flight viewport bitmap for Standby / Doors (door halves) / Planet /
     // Stars — the scenes that never composite together in one frame (unlike the tunnel reveal, which
     // coexists with the door halves during Doors, so it keeps its own tunnelBitmap).  Kept separate
