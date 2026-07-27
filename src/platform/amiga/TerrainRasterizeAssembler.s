@@ -180,9 +180,9 @@ ph2_loop:
 	move.b	d5,d1
 	sub.b	d0,d1			; gap = (uint8_t)(plotCol - ccol)
 	cmp.b	#$FE,d1
-	beq	ph2_fe
+	beq	ph2_fe		; .w: target past the far block, out of .s range
 	cmp.b	#$FF,d1
-	beq	ph2_ff
+	beq	ph2_ff		; .w: target past the far block, out of .s range
 	; --- far: bisect, push interpolated midpoint (d0 = ccol still) ---
 	move.l	d5,d6			; plotCol (already zero-extended)
 	add.w	d0,d6			; plotCol + ccol
@@ -202,19 +202,19 @@ ph2_loop:
 	lsr.w	#1,d1			; d1 = havg
 	and.w	#1,d0			; d0 = hsum & 1
 	btst	#7,d7
-	bne	ph2_far_disp
+	bne.s	ph2_far_disp
 	move.b	d1,4(a3)		; no roughness: hgt = havg
 	bra	ph2_far_adv
 ph2_far_disp:
 	btst	#8,d7
-	beq	ph2_far_down
+	beq.s	ph2_far_down
 	; up: disp = (uint8_t)(mid - col) >> 1 ; t = havg + disp + (hsum&1)
 	sub.b	d2,d6			; mid - col   (col == plotCol == d2; upper stays 0)
 	lsr.w	#1,d6			; d6 = disp
 	add.w	d6,d1			; havg + disp
 	add.w	d0,d1			; + (hsum&1)
 	cmp.w	#$FF,d1
-	bls	ph2_far_up_set
+	bls.s	ph2_far_up_set
 	move.w	#$FF,d1
 ph2_far_up_set:
 	move.b	d1,4(a3)
@@ -229,7 +229,7 @@ ph2_far_down:
 	add.w	d6,d1			; havg + ~disp
 	add.w	d0,d1			; + (hsum&1)
 	cmp.w	#$FF,d1
-	bhi	ph2_far_down_store	; t > 0xFF -> mh = t&0xFF (low byte)
+	bhi.s	ph2_far_down_store	; t > 0xFF -> mh = t&0xFF (low byte)
 	moveq	#0,d1			; else 0
 ph2_far_down_store:
 	move.b	d1,4(a3)
@@ -273,10 +273,10 @@ draw:
 	moveq	#0,d6
 	move.b	(a2,d5.w),d6		; oldMax = COL_MAX(plotCol)
 	cmp.b	d6,d0			; _h - oldMax
-	bls	draw_ret		; _h <= oldMax -> hidden, nothing
+	bls.s	draw_ret		; _h <= oldMax -> hidden, nothing
 	move.b	d0,(a2,d5.w)		; COL_MAX(plotCol) = _h
 	cmp.b	#$97,d0
-	bcs	draw_dot		; _h < $97
+	bcs.s	draw_dot		; _h < $97
 	move.b	#$FF,(a2,d5.w)		; saturate: full column
 draw_dot:
 	; ROF_PLOT_DOT(plotCol, oldMax) — uses oldMax (the PREVIOUS top), not _h.
@@ -290,12 +290,12 @@ draw_dot:
 	; oracle's (unsigned)(plotCol-48) < 160.
 	move.w	d5,d7			; plotCol
 	cmp.w	#208,d7
-	bcc	draw_ret		; plotCol >= 208 -> off viewport (skip the sub)
+	bcc.s	draw_ret		; plotCol >= 208 -> off viewport (skip the sub)
 	sub.w	#48,d7			; _ac = plotCol - 48
-	bcs	draw_ret		; plotCol < 48 -> borrow set -> off viewport (free)
+	bcs.s	draw_ret		; plotCol < 48 -> borrow set -> off viewport (free)
 	add.w	d6,d6			; oldMax * 2 (word index)
 	move.w	(a6,d6.w),d0		; kDrawDotRowOff[oldMax] = kRow120[150-oldMax], or $FFFF
-	bmi	draw_ret		; sentinel (bit15) -> off display / $6b reset-floor -> skip
+	bmi.s	draw_ret		; sentinel (bit15) -> off display / $6b reset-floor -> skip
 	move.w	d7,d1
 	and.w	#3,d1			; _ac & 3
 	add.w	d1,d1			; * 2
