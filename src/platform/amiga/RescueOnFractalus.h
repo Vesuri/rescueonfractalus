@@ -297,6 +297,7 @@ private:
     // agnostic — the enemy TYPE is just different table data, not different code):
     //   Targeting Scope (#8) copy = mem[$0F00+$98..$B8], behind the bitplanes, on ch3.
     Sprite*     scopeP3Sprite = nullptr;
+    int         p3ScopePrevRows = 0;     // rows written last frame (clear only those, not the full sprite)
     void buildScopeP3Sprite();    // mirror the P3 Targeting-Scope copy ($0F00 $98..$B8) -> scopeP3Sprite
 
     //   Main Window (#9) copy = mem[$0F00+$32..$85], IN FRONT of terrain, tracking X (HPOSP3
@@ -304,6 +305,7 @@ private:
     //   copper SPR7PT multiplex; colour COLPM3=$00D9 -> COLOR31.  Present only when the target is
     //   close enough to have a Main-Window body (far targets: Targeting-Scope copy only).
     Sprite*     viewportP3Sprite = nullptr;
+    int         p3ViewportPrevBase = 0, p3ViewportPrevRows = 0;  // rows written last frame (incremental clear)
     void buildViewportP3Sprite(); // mirror the P3 Main-Window copy ($0F00 $32..$85) -> viewportP3Sprite
 
     //   Long Range Scanner (#13) guide dot = Atari missile M2 (a 3-scanline blob).  Vertical
@@ -313,6 +315,7 @@ private:
     //   to VSTOP 180 → arms) via the copper SPR2PT re-point.  Read-only mirror: the native flight
     //   VBI already writes the buffer + $CE into mem[], so no writer port / dirty hook is needed.
     Sprite*     scannerDotSprite = nullptr;
+    int         scannerPrevRows = 0;  // rows written last frame (clear only those, not the whole sprite)
     void buildScannerDotSprite(); // mirror the M2 scanner dot (missile buf $0B00 + $CE) -> scannerDotSprite
 
     // Dirty-flag bitmap caching: bitmaps are rendered once on initialize() and

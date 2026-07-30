@@ -680,17 +680,20 @@ void RescueOnFractalus::buildShotSprite()
 static const int kScopeP3Rows = 24;
 void RescueOnFractalus::buildScopeP3Sprite()
 {
+    // Per-frame mirror of the P3 Targeting-Scope copy.  Runs every frame (position/shape track the
+    // object, whose coordinates are integrated per-frame elsewhere), with only the CLEAR made
+    // incremental — clear last frame's rows (p3ScopePrevRows), not the whole sprite.
     uint16_t* d = scopeP3Sprite->data() + 2;         // skip the 2 control words
     int top = -1, bot = -1;
     for (int o = 0x98; o <= 0xB8; o++)
         if (mem[0x0F00 + o]) { if (top < 0) top = o; bot = o; }
-    for (int i = 0; i < kScopeP3Rows * 2; i++) d[i] = 0;  // clear, then decode the run below
+    for (int i = 0; i < p3ScopePrevRows; i++) { d[i * 2] = 0; d[i * 2 + 1] = 0; }  // clear last frame's rows
     if (top >= 0) {
         int rows = bot - top + 1;
         if (rows > kScopeP3Rows) rows = kScopeP3Rows;
         for (int i = 0; i < rows; i++) {
             uint16_t m = expandShotRow(mem[0x0F00 + top + i]);
-            d[i * 2] = m; d[i * 2 + 1] = m;            // both planes → pen 11 → COLOR23 (cyan)
+            d[i * 2] = m; d[i * 2 + 1] = m;        // both planes → pen 11 → COLOR23 (cyan)
         }
         scopeP3Sprite->setY((uint16_t)(kTerrainLine + (top - 0x32) + 7));  // buffer row → Amiga line (+7 user-calibrated)
         // Scope-P3 X = mem[$00CC], NOT the viewport HPOSP3 ($2870): the flight dashboard DLI $4A78
@@ -698,8 +701,10 @@ void RescueOnFractalus::buildScopeP3Sprite()
         // viewport X clamped into the scope-box window.  (For a saucer $CC==$2870; they diverge for
         // other target positions.)  Same cc→hw-X transform as the viewport copy.
         scopeP3Sprite->setX((uint16_t)(0x81 + ((int)mem[0x00CC] - 0x32) * 2));
+        p3ScopePrevRows = rows;
+    } else {
+        p3ScopePrevRows = 0;                         // inactive: nothing to clear next frame
     }
-    // (inactive: data left zeroed → the sprite shows nothing regardless of Y)
     if (flightCopper) flightCopper->setScopeP3Color(atariToOCS(mem[0x00D9]));  // COLPM3 → COLOR23
 }
 
@@ -723,11 +728,20 @@ void RescueOnFractalus::buildScopeP3Sprite()
 static const int kViewportP3Rows = kViewportFullHeight;   // 94: VSTART 86 → VSTOP 180 (matches the frame posts / star sprites)
 void RescueOnFractalus::buildViewportP3Sprite()
 {
+    // Per-frame mirror of the P3 Main-Window copy.  Position ($2870 HPOSP3 shadow) and the shape's
+    // vertical offset both advance whenever the object moves (its inputs — player3_ytop $2824 — are
+    // integrated every frame by object_integrate_position, a DIFFERENT routine), so this must run
+    // every frame (a shape-dirty gate would freeze the position — the earlier regression).  The one
+    // avoidable cost is the tall CLEAR: instead of zeroing all 94 rows, clear only the rows written
+    // last frame (p3ViewportPrev*), which is just the object's on-screen height.  ("Sprite data
+    // modified only when needed" without losing per-frame position.)
     uint16_t* d = viewportP3Sprite->data() + 2;      // skip the 2 control words
     int top = -1, bot = -1;
     for (int o = 0x32; o <= 0x85; o++)
         if (mem[0x0F00 + o]) { if (top < 0) top = o; bot = o; }
-    for (int i = 0; i < kViewportP3Rows * 2; i++) d[i] = 0;   // clear the whole tall sprite
+    for (int i = 0; i < p3ViewportPrevRows; i++) {   // clear only last frame's rows (not all 94)
+        d[(p3ViewportPrevBase + i) * 2] = 0; d[(p3ViewportPrevBase + i) * 2 + 1] = 0;
+    }
     viewportP3Sprite->setY(kTerrainLine);            // FIXED VSTART: keep ch7 busy through the viewport
     if (top >= 0) {
         int base = top - 0x32;                       // object's row within the fixed-VSTART sprite
@@ -738,8 +752,10 @@ void RescueOnFractalus::buildViewportP3Sprite()
             d[(base + i) * 2] = m; d[(base + i) * 2 + 1] = m;  // both planes → pen 11 → COLOR31 (cyan)
         }
         viewportP3Sprite->setX((uint16_t)(0x81 + ((int)mem[0x2870] - 0x32) * 2));  // HPOSP3 shadow → X
+        p3ViewportPrevBase = base; p3ViewportPrevRows = rows;
+    } else {
+        p3ViewportPrevRows = 0;                      // inactive: nothing to clear next frame
     }
-    // (inactive: data left zeroed → transparent; ch7 still runs 86→180 so the altimeter re-arms)
     if (flightCopper) flightCopper->setViewportP3Color(atariToOCS(mem[0x00D9]));  // COLPM3 → COLOR31
 }
 
@@ -757,11 +773,14 @@ void RescueOnFractalus::buildScannerDotSprite()
 {
     // Scan the DASHBOARD band of the missile buffer for M2 (bits 5:4).  The crosshair M2 lives
     // higher ($0B4D-71, viewport) so start at $0B88; M1/M3 (other bits) don't trip the M2 mask.
-    uint16_t* d = scannerDotSprite->data() + 2;      // skip the 2 control words
+    // Per-frame position + incremental clear: the dot moves (bearing X $00CE, range Y) and blinks
+    // (M2 bits cleared) every frame, so run every frame; only clear the few rows written last frame
+    // (p3ScopePrev-style scannerPrevRows) rather than the whole sprite.
     int top = -1, bot = -1;
     for (int o = 0x88; o <= 0xB8; o++)
         if ((mem[0x0B00 + o] >> 4) & 3) { if (top < 0) top = o; bot = o; }
-    for (int i = 0; i < kScannerDotRows * 2; i++) d[i] = 0;   // clear, then decode the run below
+    uint16_t* d = scannerDotSprite->data() + 2;       // skip the 2 control words
+    for (int i = 0; i < scannerPrevRows; i++) { d[i * 2] = 0; d[i * 2 + 1] = 0; }   // clear last frame's rows
     if (top >= 0) {
         int rows = bot - top + 1;
         if (rows > kScannerDotRows) rows = kScannerDotRows;
@@ -776,8 +795,10 @@ void RescueOnFractalus::buildScannerDotSprite()
         // bearing X = mem[$00CE] (the HPOSM2 source the dashboard DLI $4AC7 loads); same Atari-HPOS
         // → Amiga hardware-X transform as the scope/viewport-P3 copies (+4 user-calibrated on FS-UAE).
         scannerDotSprite->setX((uint16_t)(0x85 + ((int)mem[0x00CE] - 0x32) * 2));
+        scannerPrevRows = rows;
+    } else {
+        scannerPrevRows = 0;                          // inactive: nothing to clear next frame ("off" blink)
     }
-    // (inactive: data left zeroed → the sprite shows nothing regardless of Y = the "off" blink)
 }
 
 // ---- throttle gauge sprite ---------------------------------------------------
