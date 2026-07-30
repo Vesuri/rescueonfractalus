@@ -179,10 +179,13 @@ ph2_loop:
 	move.b	(a3),d0			; ccol = cp[depth].col
 	move.b	d5,d1
 	sub.b	d0,d1			; gap = (uint8_t)(plotCol - ccol)
+	; gap in {$FE,$FF} are the only values >= $FE, so ONE compare separates the two
+	; endpoint cases (rare) from the common "far" bisect case (falls through).  Collapsing
+	; the old two-compare/two-.w-beq dispatch to a single not-taken .s branch on the far path
+	; shaves the span enough that ph2_special lands in .s range with no reorder cost:
+	; far path was 2x beq.w not-taken (24 cyc) -> now 1x bcc.s not-taken (8 cyc).
 	cmp.b	#$FE,d1
-	beq	ph2_fe		; .w: target past the far block, out of .s range
-	cmp.b	#$FF,d1
-	beq	ph2_ff		; .w: target past the far block, out of .s range
+	bcc.s	ph2_special	; gap >= $FE ($FE or $FF) -> endpoint handler; common far falls through
 	; --- far: bisect, push interpolated midpoint (d0 = ccol still) ---
 	move.l	d5,d6			; plotCol (already zero-extended)
 	add.w	d0,d6			; plotCol + ccol
@@ -236,6 +239,22 @@ ph2_far_down_store:
 ph2_far_adv:
 	addq.l	#3,a3			; depth++
 	bra	ph2_loop
+	; Endpoint handler.  Placed right after the far block so the ph2_special/ph2_fe forward
+	; branches stay in .s range.  ph2_ff first (the gap==$FF fall-through from ph2_special);
+	; ph2_fe below it (reached by the beq.s).  Z still holds the cmp #$FE result.
+ph2_special:
+	beq.s	ph2_fe		; gap == $FE (Z set) ; else gap == $FF -> fall through
+ph2_ff:
+	; one column short: plot endpoint, pop
+	move.b	1(a3),d3		; height = cp[depth].hgt
+	move.w	d3,d0			; _h = height (d3 zero-extended, upper word 0)
+	bsr	draw
+	addq.b	#1,d5			; plotCol++
+	cmpa.l	a4,a3
+	beq	done
+	subq.l	#3,a3
+	move.b	5(a3),d4
+	bra	ph2_loop
 ph2_fe:
 	; two columns short: interpolated column, then endpoint, then pop
 	moveq	#0,d0
@@ -253,17 +272,6 @@ ph2_fe:
 	beq	done			; depth was 0 -> done
 	subq.l	#3,a3			; pop
 	move.b	5(a3),d4		; frac = popped slot's fraction
-	bra	ph2_loop
-ph2_ff:
-	; one column short: plot endpoint, pop
-	move.b	1(a3),d3		; height = cp[depth].hgt
-	move.w	d3,d0			; _h = height (d3 zero-extended, upper word 0)
-	bsr	draw
-	addq.b	#1,d5			; plotCol++
-	cmpa.l	a4,a3
-	beq	done
-	subq.l	#3,a3
-	move.b	5(a3),d4
 	bra	ph2_loop
 
 	; ---- DRAW(h in d0) : keep topmost height per column, lag-plot the dot ----
