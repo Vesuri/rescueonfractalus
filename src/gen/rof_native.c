@@ -10120,6 +10120,19 @@ static void game_main_loop_body(void) {
     }
     for (;;) {                           /* L_3eba: in-game flight loop (one frame/iteration) */
     FP_ITER();
+#ifdef ROF_PLATFORM_AMIGA
+    /* ESC freeze/pause ($0043 event_active_flag): on the Atari the dispatcher's slot-7 takeover
+       does a faked RTI to $52BB (`JMP $52BB` self-loop), abandoning the whole main-loop context so
+       terrain_draw_frame + game_state_update + enemy_check all halt — the sim/enemies fully freeze.
+       Only the VBI (an NMI, immune to the I flag) keeps firing: it runs the colour-cycle screensaver
+       (its $5039 EOR-strobe of the $00CF-$00DD display params, which the DLIs / updateFlightCopper
+       push to the viewport pens) and polls the ESC-again unfreeze (the KEYWIN dispatcher, which
+       clears $0043).  We can't abandon the C call stack, so mirror the OBSERVABLE behaviour: spin
+       driving real frames (VBI + render, so the strobe reaches the copper and the unpause key is
+       seen) while running NO game logic, until the VBI clears $0043.  BREAK (Del) still restarts —
+       the KEYWIN dispatcher longjmps out via game_loop_reset_trampoline before the spin sees it. */
+    while (event_active_flag != 0) { g_flightRenderHalf = 0; ds_frame(); }
+#endif
     g_flightRenderHalf = 0;          /* this ds_frame shows the DISPLAY half (prev pass 2, offset 0) */
     ds_frame();
     FP_ITER_MARK();
