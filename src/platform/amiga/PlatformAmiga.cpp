@@ -507,6 +507,12 @@ void PlatformAmiga::audioInit()
         AUD_VOL(ch) = 0u;   // silent until AUDC writes activate channels
     }
 
+    // Disable the Paula "LED" audio low-pass filter (one-time HW write): CIA-A PRA bit 1
+    // ($BFE001, 0x02) HIGH = LED dim + filter OFF; LOW = LED bright + filter ON (~5-6 kHz RC).
+    // Kickstart leaves it ON after boot, which rolls off the highs.  The Atari POKEY has no such
+    // filter, so switching it off is the faithful choice (and keeps the SFX bright).
+    *ciaapraPointer |= 0x02u;
+
     // Enable audio DMA for all 4 channels (DMAF_AUD0..3 = bits 0..3)
     *dmaconPointer = (uint16_t)(DMAF_SETCLR | 0x000Fu);
 }
