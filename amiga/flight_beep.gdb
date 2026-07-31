@@ -21,7 +21,14 @@ while $i < g_bcResetN && $i < 64
   set $i = $i + 1
 end
 echo \n
-printf "display_setup entries=%u (last @vbi %u)\n", g_dsEntryN, g_dsEntryVbi
+printf "display_setup entries=%u (last @vbi %u)  |  g_iterCount(flight-loop iters)=%u\n", g_dsEntryN, g_dsEntryVbi, g_iterCount
+printf "setup_level_clear_state x%u  (the ONLY player_lives=2 => flight-loop break => display_setup re-invoke => event $01):\n", g_lclN
+set $i = 0
+while $i < g_lclN && $i < 64
+  printf "  @%-5u level_or_state(0004)=%02x range(0642)=%02x levelClearedFlag=%02x lives(0072)before=%02x 003A=%02x\n", \
+    g_lclVbi[$i], g_lclCtx[$i][0], g_lclCtx[$i][1], g_lclCtx[$i][2], g_lclCtx[$i][3], g_lclCtx[$i][4]
+  set $i = $i + 1
+end
 printf "LAST PATH-3 $5a78: A(result)=%02x CONSOLread(bus)=%02x TRIG0read=%02x memD01F=%02x  (bus!=mem=>routing with s_trig0State=1 => wrong read)\n", g_p3_a, g_p3_d01f, g_p3_d010, g_p3_memd01f
 printf "s_trig0State NOW=%02x   $60(fire) events seen=%u  lastFireEdge(1=down 0=up)=%u\n", \
   s_trig0State, g_bcKeyFireN, g_bcKeyFireLastDown

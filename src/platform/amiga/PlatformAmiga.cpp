@@ -367,6 +367,23 @@ extern "C" void rof_bc_ds_entry(void) { g_dsEntryN++; g_dsEntryVbi = g_vbiCount;
 extern "C" void rof_bc_reset_log(void) {   // hooked at sfx_engine_reset $5433
     unsigned i = g_bcResetN; if (i < BCE_N) { g_bcResetVbi[i] = g_vbiCount; g_bcResetN = (unsigned short)(i + 1u); }
 }
+// setup_level_clear_state ($7BC6) is the SOLE writer of player_lives($0072)=2 = the ONLY cause
+// of a game_main_loop_body flight-loop break -> outer-loop -> display_setup re-invocation ->
+// event $01 reload.  If this fires during a range-1 pilot PASS (not a genuine level advance),
+// that's the range-1 bug: a spurious level-clear.  Ctx: [0]=$0004(level_or_state) [1]=$0642(range)
+// [2]=$008F?level_cleared_flag  [3]=$0072 before  [4]=$003A.  g_lclN counts, ring holds vbis.
+extern "C" volatile unsigned short g_lclN = 0;
+extern "C" volatile unsigned short g_lclVbi[BCE_N] = {};
+extern "C" volatile unsigned char  g_lclCtx[BCE_N][5] = {};
+extern "C" void rof_bc_lcl_log(void) {     // hooked at setup_level_clear_state call ($5223x/9175)
+    unsigned i = g_lclN; if (i < BCE_N) {
+        g_lclVbi[i] = g_vbiCount;
+        g_lclCtx[i][0] = mem[0x0004]; g_lclCtx[i][1] = mem[0x0642];
+        g_lclCtx[i][2] = mem[0x2849]; g_lclCtx[i][3] = mem[0x0072];  // $2849 = level_cleared_flag
+        g_lclCtx[i][4] = mem[0x003A];
+        g_lclN = (unsigned short)(i + 1u);
+    }
+}
 extern "C" void rof_bc_ev01_log(void) {    // hooked in input_init/sfx_event_load when event id==1
     unsigned i = g_bc01N; if (i < BCE_N) {
         g_bc01Vbi[i] = g_vbiCount;

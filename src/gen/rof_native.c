@@ -9171,8 +9171,12 @@ void vbi_handler_flight(void) {
             /* Score: every ~30 frames ($00DF countdown) fold the pending delta + redraw. */
             { VP_T0();
             if ((uint8_t)(--mem[MEM_sfx_voice_distortion]) == 0) {
-                if (level_cleared_flag != 0 && (uint8_t)(--mem[MEM_level_cleared_flag]) == 0)
+                if (level_cleared_flag != 0 && (uint8_t)(--mem[MEM_level_cleared_flag]) == 0) {
+#ifdef ROF_BEEP_CAP
+                    { extern void rof_bc_lcl_log(void); rof_bc_lcl_log(); }
+#endif
                     setup_level_clear_state();
+                }
                 if (mem[0x0070] != 0) { mem[MEM_bcd_delta_lo]++; add_and_show_bcd_counter(); }
                 sfx_voice_distortion = 0x1E;
             }
