@@ -1223,6 +1223,49 @@ static int test_draw_player3_object(void) {
     return mem_fail;
 }
 
+/* --- build_player2_sprite @ $8C58: the depth-scaled object/explosion P2 sprite builder.  Reads
+ * fixed tables ($8DB5/$8E2B/$8E32/$8E3E/$8E4A/$8E52/$8DD0 + the accumulation table $28B6..) so seed
+ * from the flight snapshot; vary entry X (the anim-frame -> $2867, selecting the X<$1A / ==$1A /
+ * >$1A CFG branches) plus the scratch that steers each path: $0036 (object_anim_frame), $0037/38/39
+ * (row count / depth), $2865/$2866 (erase region), $286A-$286E (the $8D30 run-length state), and
+ * $283C/$281E/$007A (the special-figure branch).  No RANDOM / JSR; the 3 HW writes ($D002/D014/D00A)
+ * go through bus_write in both.  Writes stay in $0E32-$0F31 (y/x are uint8_t). --- */
+static int test_build_player2_sprite(void) {
+    if (!want("build_player2_sprite")) return 0;
+    static uint8_t snap[65536], pre[65536];
+    const char *path = "a800dumps/flight_ram_0000_BFFF.bin";
+    FILE *f = fopen(path, "rb");
+    if (!f) { printf("build_player2_sprite: SKIP (%s not found)\n", path); return 0; }
+    memset(snap, 0, sizeof snap);
+    size_t got = fread(snap, 1, 0xC000, f); fclose(f);
+    if (got != 0xC000) { printf("build_player2_sprite: SKIP (short read %zu)\n", got); return 0; }
+    int mem_fail = 0, cpu_diff = 0, printed = 0;
+    for (int t = 0; t < 20000; t++) {
+        memcpy(pre, snap, sizeof pre);
+        pre[0x0036] = (uint8_t)(xs() & 0x0F);        /* object_anim_frame (0..15) */
+        pre[0x0037] = (uint8_t)(xs() & 0xFF);
+        pre[0x0038] = (uint8_t)(xs() & 0xFF);        /* vobj_row_count (range/depth) */
+        pre[0x0039] = (uint8_t)(xs() & 0xFF);
+        pre[0x2865] = (uint8_t)(xs() & 0xFF);        /* erase start */
+        pre[0x2866] = (uint8_t)(xs() & 0x3F);        /* erase row count */
+        pre[0x286A] = (uint8_t)(xs() & 0xFF);        /* $8D30 run-length accumulator */
+        pre[0x286B] = (uint8_t)(xs() & 0xFF);
+        pre[0x286C] = (uint8_t)(xs() & 0xFF);
+        pre[0x286D] = (uint8_t)(xs() & 0xFF);
+        pre[0x286E] = (uint8_t)(xs() & 0xFF);
+        pre[0x283C] = (uint8_t)(xs() & 1);           /* landing_inhibit_flag */
+        pre[0x281E] = (uint8_t)(xs() & 1);           /* figure_is_alien */
+        pre[0x007A] = (uint8_t)(xs() & 1);
+        Cpu6502 c = zero_cpu();
+        c.X = (uint8_t)(xs() & 0xFF);                /* anim_frame -> $2867 (CFG branch selector) */
+        mem_fail += diff_run("build_player2_sprite", pre, c,
+                             build_player2_sprite, build_player2_sprite__t6502, t, &printed, &cpu_diff);
+    }
+    printf("build_player2_sprite: %d cases (flight snapshot), %d mem mismatch (must be 0), %d cpu diffs\n",
+           20000, mem_fail, cpu_diff);
+    return mem_fail;
+}
+
 /* --- intro_random_setup @ $6FBF: RANDOM-driven DFS maze generator on the $0900 map (+$2500
  * stack).  Self-contained (no entry regs / fixture); diff_run seeds the RANDOM stream so both
  * runs trace the same maze.  Fewer cases (each is hundreds of RANDOM reads). --- */
@@ -2660,6 +2703,7 @@ int main(int argc, char **argv) {
     }
     fails += test_draw_dial_bar_column();
     fails += test_draw_player3_object();
+    fails += test_build_player2_sprite();
     fails += test_dl_lms_build();
     fails += test_mem_contract("game_init_76CB", game_init_76CB, game_init_76CB__t6502);
     fails += test_emit_chain("setup_initials_ptr", setup_initials_ptr, setup_initials_ptr__t6502);

@@ -8592,11 +8592,149 @@ void sfx_voice_envelope_tick(void) { sfx_voice_envelope_tick_impl(); }
  *   set_colpf0_from_flag  reads Y  (the message index; it falls into show_cockpit_message);
  *   event_sequence_dispatcher reads X (and A=X) — the keyboard command id;
  *   ring_push_marked      reads X  -> pushed as X|$80 onto the $0719 event ring.) */
-static void build_player2_sprite_core(uint8_t anim_frame)    { cpu.X = anim_frame;      build_player2_sprite(); }
 static void draw_player3_object_core(uint8_t obj_byte)       { cpu.A = obj_byte;        draw_player3_object(); }
 static void set_colpf0_from_flag_core(uint8_t msg_index)     { cpu.Y = msg_index;       set_colpf0_from_flag(); }
 static void event_sequence_dispatcher_core(uint8_t keycode)  { cpu.A = cpu.X = keycode; event_sequence_dispatcher(); }
 static void ring_push_marked_core(uint8_t value)             { cpu.X = value;           ring_push_marked(); }
+
+/* build_player2_sprite @ $8C58 — the depth-scaled object/explosion P2 sprite builder.  Runs every
+ * flight VBI frame while object_anim_frame ($0036) != 0 (an object approaching / an emplacement
+ * exploding), rebuilding the P2 strip $0E32 at a vertical scale derived from range ($0038/$0039).
+ * Faithful CFG twin of the $8C58 oracle (goto labels = the $8Cxx/$8Dxx addresses); the transpiled
+ * form recomputed 6502 N/Z/C flags + a bus dispatch on every op in its erase / accumulate / draw
+ * loops — this native form drops all of that (the win) while writing byte-identical mem[].
+ * Entry: anim_frame = the 6502 entry X (stored to $2867).  All state is mem[]; the 3 HW writes
+ * (HPOSP2/SIZEP2/GRAFP2) go through bus_write to mirror the oracle (ignored on the Amiga). */
+static void build_player2_sprite_core(uint8_t anim_frame) {
+    uint8_t a, x, y;
+
+    /* 8c58: erase the previous strip region ($0E32+$2865, for $2866 rows). */
+    if (mem[0x2866] != 0) {
+        dl_y3 = mem[0x2866];
+        y = mem[0x2865];
+        do { mem[0x0E32 + y] = 0x00; y++; dl_y3--; } while (dl_y3 != 0);
+    }
+    /* L_8c6c */
+    mem[0x286E] = 0x00;
+    grafm_shadow = 0x00;
+    dl_y3 = 0x01;
+    mem[0x2867] = anim_frame;                       /* 8c75 STX $2867 */
+
+    /* 8c78: from the object row count derive a table index + a scaled accumulator. */
+    x = vobj_row_count;                             /* 8c78/8c7a */
+    mem[0x2868] = (uint8_t)(vobj_row_count & 0x03); /* 8c7b/8c7d */
+    a = (uint8_t)(x >> 2);                          /* 8c80-8c82 */
+    {                                               /* 8c83 SEC; 8c84 SBC #$10 */
+        int c = (a >= 0x10);
+        a = (uint8_t)(a - 0x10);
+        if (!c) { a = mem[0x28B6]; goto L_8cae; }   /* 8c86 BCS L_8c8d; else 8c88/8c8b BCC L_8cae */
+    }
+    /* L_8c8d */
+    if (a >= 0x1F) { a = mem[0x28D5]; goto L_8cae; } /* 8c8d CMP #$1F; 8c91/8c94 BCS L_8cae */
+    /* L_8c96: accumulate 4 table entries */
+    y = a; x = 0x03; a = 0x00;
+    do {                                            /* L_8c9b */
+        a = (uint8_t)(a + mem[0x28B6 + y]);         /* CLC; ADC $28B6,Y */
+        if (x == mem[0x2868]) y++;                  /* CPX $2868; BNE; INY */
+        x--;                                        /* DEX */
+    } while (!(x & 0x80));                          /* BPL */
+    { int c;                                        /* 8ca8-8cad CMP #$80;ROR x2 */
+      c = (a >= 0x80); a = (uint8_t)((c << 7) | (a >> 1));
+      c = (a >= 0x80); a = (uint8_t)((c << 7) | (a >> 1)); }
+L_8cae:
+    mem[0x2869] = a;
+    x = mem[0x2867];
+    if (x < 0x1A) goto L_8cc7;                      /* 8cb4/8cb6 */
+    if (x == 0x1A) goto L_8cba;                     /* 8cb8 (fall = Z) */
+    goto L_8d30;                                    /* 8cc4 */
+L_8cba:
+    object_anim_frame = 0x00;                       /* 8cbc */
+    mem[0x284A] = 0x01;                             /* 8cc0 */
+    return;
+L_8cc7:
+    mem[0x284A] = x;                                /* 8cc7 */
+    a = mem[0x8DB5 + x];                            /* 8cca */
+    a = (uint8_t)(a + mem[0x0039]);                 /* 8cce */
+    a = (uint8_t)(a + mem[0x2869]);                 /* 8cd1 */
+    if (a & 0x80) a = 0x58;                         /* 8cd4/8cd6 */
+    x = a;                                          /* 8cd8 TAX */
+    a = object_anim_frame;                          /* 8cd9 */
+    if (a >= 0x08) a = 0x07;                        /* 8cdb/8cdf */
+    y = a;                                          /* 8ce1 TAY */
+    a = mem[0x8E2B + y];                            /* 8ce2 -> fall into L_8ce5 */
+L_8ce5:
+    y = a;                                          /* 8ce5 TAY */
+    mem[0x2865] = x;                                /* 8ce6 STX $2865 */
+    if (landing_inhibit_flag != 0 && figure_is_alien != 0 && mem[0x007A] == 0)
+        goto L_8d00;                                /* 8ce9-8cf5 */
+L_8cf7:
+    dl_y4 = dl_y3;                                  /* 8cf7/8cf9 */
+    a = mem[0x8DD0 + y];                            /* 8cfb */
+    if (a != 0) goto L_8d20;                        /* 8cfe */
+L_8d00:
+    mem[0x2866] = (uint8_t)(x - mem[0x2865]);       /* 8d00-8d05 SEC;TXA;SBC $2865 */
+    object_anim_frame++;                            /* 8d08 */
+    a = (uint8_t)(vobj_row_count - mem[0x286E]);    /* 8d0a-8d0d SEC;LDA $0038;SBC $286E */
+    hposp2_shadow = a;                              /* 8d10 */
+    bus_write(0xD002, a);                           /* 8d12 HPOSP2 */
+    bus_write(0xD014, mem[0x0037]);                 /* 8d17 SIZEP2 */
+    bus_write(0xD00A, grafm_shadow);                /* 8d1a-8d1c GRAFP2 */
+    return;
+L_8d20:
+    if (x < 0x56) { mem[0x0E32 + x] = a; x++; }     /* 8d20-8d27 */
+    dl_y4--;                                        /* 8d28 */
+    if (dl_y4 != 0) goto L_8d20;                    /* 8d2a */
+    y++;                                            /* 8d2c */
+    goto L_8cf7;                                    /* 8d2d */
+L_8d30:
+    x = mem[0x284A];                                /* 8d30 */
+    a = mem[0x286A];                                /* 8d33 */
+    if (a == 0) {                                   /* 8d36 BNE L_8d54 */
+        mem[0x0037] = 0x0E;                         /* 8d3a */
+        y = mem[0x284A];                            /* 8d3c */
+        if (y >= 0x09) y = 0x08;                    /* 8d3f/8d43 */
+        mem[0x286C] = mem[0x8E52 + y];              /* 8d45-8d48 */
+        a = mem[0x8E4A + y];                        /* 8d4b */
+        mem[0x286D] = a;                            /* 8d4e */
+        mem[0x286A] = a;                            /* 8d51 */
+    }
+    /* L_8d54 */
+    if (a >= mem[0x286C]) {                         /* 8d54/8d57 */
+        mem[0x0037] = 0x3E;                         /* 8d5b */
+        mem[0x286B] = 0xFF;                         /* 8d5f */
+    }
+    /* L_8d62 */
+    a = (uint8_t)(a + mem[0x286B]);                 /* 8d62/8d63 */
+    mem[0x286A] = a;                                /* 8d66 */
+    y = a;                                          /* 8d69 TAY */
+    a = (uint8_t)(mem[0x8DB5 + x] - mem[0x8E3E + y]); /* 8d6a-8d6e SEC;SBC $8E3E,Y */
+    a = (uint8_t)(a + mem[0x0039]);                 /* 8d71/8d72 */
+    a = (uint8_t)(a + mem[0x2869]);                 /* 8d74/8d75 */
+    if (a & 0x80) a = 0x58;                         /* 8d78/8d7a */
+    x = a;                                          /* 8d7c TAX */
+    a = mem[0x286B];                                /* 8d7d */
+    if (!(a & 0x80)) goto L_8d8c;                   /* 8d80 BPL */
+    mem[0x0037]--;                                  /* 8d82 */
+    if (y >= mem[0x286D]) goto L_8d8c;              /* 8d84/8d87 BCS */
+    goto L_8cba;                                    /* 8d89 */
+L_8d8c:
+    a = y;                                          /* 8d8c TYA */
+    if (a < 0x07) goto L_8dae;                      /* 8d8d/8d8f BCC L_8dae */
+    if (a < 0x0A) {                                 /* 8d91/8d93 BCC L_8da2 (7<=a<$0A) */
+        mem[0x286E] = 0x04;                         /* 8da2/8da4 */
+        grafm_shadow = 0x01;                        /* 8da7/8da9 */
+        dl_y3 = 0x02;                               /* 8dab INY(=2); 8dac STY $BD */
+    } else {                                        /* a>=$0A: 8d97 fall-through */
+        mem[0x286E] = 0x0C;                         /* 8d97 */
+        grafm_shadow = 0x03;                        /* 8d9a/8d9c */
+        dl_y3 = 0x04;                               /* 8d9e INY(=4); 8dac STY $BD */
+    }
+L_8dae:
+    y = a;                                          /* 8dae TAY */
+    a = mem[0x8E32 + y];                            /* 8daf */
+    goto L_8ce5;                                    /* 8db2 */
+}
+void build_player2_sprite(void) { build_player2_sprite_core(cpu.X); }   /* 6502-ABI shim (entry X) */
 
 /* ===========================================================================================
  * Enemy lock-on indicator (#11) — the six targeting lights at the bottom centre of the

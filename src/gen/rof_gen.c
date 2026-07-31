@@ -13896,7 +13896,8 @@ L_827b:;
 }
 
 /* build_player2_sprite @ $8C58: Builds scaled P/M sprite into strip $0E32 from depth $0038/$0039; sets HPOSP2 $D002, SIZEP2 $D014, GRAFP2 $D00A; uses tables $8DB5/$8E2B/$8E32/$8E3E/$8E4A/$8E52/$8DD0 */
-void build_player2_sprite(void) {
+/* faithful transliteration kept as the validation oracle; native build_player2_sprite() lives in rof_native.c (see VALIDATE_FUNCS) */
+void build_player2_sprite__t6502(void) {
     /* 8c58 */
     LDA(0x00);
     /* 8c5a */
