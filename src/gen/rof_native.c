@@ -8736,6 +8736,37 @@ L_8dae:
 }
 void build_player2_sprite(void) { build_player2_sprite_core(cpu.X); }   /* 6502-ABI shim (entry X) */
 
+/* update_p3_indicator_stripe @ $4467 — rewrites the P3 scope-indicator PM buffer ($0F98) when the
+ * object cursor ($2846) differs from p3_object_state ($2845): clears 5 bytes at the old cursor,
+ * advances/clamps the cursor, and (if non-zero) copies a 5-byte glyph from table $44C7 selected by
+ * $2839/$283A; always finishes by latching $00CC + SIZEP3 from the object bottom-Y ($2847).  Runs
+ * 50Hz in the flight VBI whenever a P3 object/target is active.  Faithful native twin of the $4467
+ * oracle (byte-identical mem[]; the copy-loop counter dl_y1 is left at its final 0, as the oracle
+ * does — no register args, exit regs incidental). */
+void update_p3_indicator_stripe(void) {
+    uint8_t y = mem[0x2846];                              /* 4467 cursor */
+    if (y != p3_object_state) {                           /* 446a/446d CPY $2845; BNE */
+        for (uint8_t x = 5; x != 0; x--) mem[0x0F98 + y++] = 0x00;   /* 4471-4478 clear 5 bytes */
+        y = p3_object_state;                              /* 447a LDY $2845 */
+        if ((y & 0x80) || y >= 0x2B) y = 0x00;            /* 447d BMI / 447f CPY #$2B / 4483 TAY(0) */
+        mem[0x2846] = y;                                  /* 4484 */
+        p3_object_state = y;                              /* 4487 */
+        if (y == 0) return;                               /* 448b BEQ L_44c6 (skip the stripe rewrite) */
+        uint8_t x;                                        /* 448d select the glyph-table base */
+        if (mem[0x2839] & 0x80)        x = 0x00;          /* 4490 BPL not taken ($2839 negative) → X=0 */
+        else if (mem[0x283A] != 0)     x = 0x0A;          /* 449a BNE L_44a1 → X=$0A */
+        else                           x = 0x05;          /* 449c → X=5 */
+        for (uint8_t n = 5; n != 0; n--)                  /* L_44a7: copy 5 bytes from $44C7 */
+            mem[0x0F98 + y++] = mem[0x44C7 + x++];
+        dl_y1 = 0x00;                                     /* $00BB: the copy loop leaves it at 0 */
+    }
+    /* L_44b3 */
+    uint8_t a = mem[0x2847];                              /* 44b5 */
+    if (a < 0x6C || a >= 0x8D) a = 0x00;                  /* 44b8-44be: keep only $6C <= a < $8D */
+    player3_bottom_y = a;                                 /* 44c1 $00CC */
+    bus_write(0xD00B, 0x00);                              /* 44c3 SIZEP3 = Y(0) */
+}
+
 /* ===========================================================================================
  * Enemy lock-on indicator (#11) — the six targeting lights at the bottom centre of the
  * cockpit (glyph cells $3491-$3497).  A small state machine on $007E
@@ -8976,6 +9007,25 @@ void vbi_handler_flight(void) {
 #endif
         game_phase = 0x00;
     }
+
+#ifdef ROF_FORCE_SAUCER
+    /* PROFILING AID (Amiga, -DROF_FORCE_SAUCER): headless flight has no enemies, so the P3
+     * saucer sprite path (buildViewportP3Sprite / buildScopeP3Sprite) never runs under load.
+     * Inject a static flying-saucer diamond into the P3 PMG buffer ($0F00) viewport + scope
+     * windows every VBI frame and park HPOSP3 / scope-X mid-screen, so the Amiga per-frame P3
+     * mirror runs with a REAL object.  Hold $006A >= $80 (!= $FF) so draw_player3_object does
+     * NOT run and clear our injected rows.  NOT faithful — off unless the flag is set. */
+    if (joystick_saved != 0) {
+        static const uint8_t kSaucer[7] = { 0x18, 0x3C, 0x7E, 0xFF, 0x7E, 0x3C, 0x18 };
+        for (int i = 0; i < 7; i++) {
+            mem[0x0F00 + 0x50 + i] = kSaucer[i];   /* viewport copy (buildViewportP3 scans $32..$85) */
+            mem[0x0F00 + 0xA0 + i] = kSaucer[i];   /* scope copy    (buildScopeP3 scans $98..$B8) */
+        }
+        mem[0x2870] = 0x50;   /* HPOSP3 shadow → viewport X */
+        mem[0x00CC] = 0x50;   /* scope X */
+        mem[0x006A] = 0xFE;   /* bit7 set, != $FF → draw_player3_object skips its redraw/clear */
+    }
+#endif
 
     /* Alternate per-frame work via the lock-on parity counter ($00C8). */
     if ((uint8_t)(--mem[MEM_lock_on_indicator_tick_parity]) != 0) {

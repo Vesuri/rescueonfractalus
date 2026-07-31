@@ -1266,6 +1266,37 @@ static int test_build_player2_sprite(void) {
     return mem_fail;
 }
 
+/* --- update_p3_indicator_stripe @ $4467: rewrites the P3 scope-indicator PM buffer.  Reads the
+ * glyph table $44C7 (seed from the flight snapshot) and branches on the cursor ($2846) vs
+ * p3_object_state ($2845), the table selectors ($2839/$283A), and the object bottom-Y ($2847) —
+ * randomize all of those to cover the cursor==state skip, the clear+advance, the y==0 early return,
+ * the three table bases, and the $2847 clamp.  No entry registers. --- */
+static int test_update_p3_indicator_stripe(void) {
+    if (!want("update_p3_indicator_stripe")) return 0;
+    static uint8_t snap[65536], pre[65536];
+    const char *path = "a800dumps/flight_ram_0000_BFFF.bin";
+    FILE *f = fopen(path, "rb");
+    if (!f) { printf("update_p3_indicator_stripe: SKIP (%s not found)\n", path); return 0; }
+    memset(snap, 0, sizeof snap);
+    size_t got = fread(snap, 1, 0xC000, f); fclose(f);
+    if (got != 0xC000) { printf("update_p3_indicator_stripe: SKIP (short read %zu)\n", got); return 0; }
+    int mem_fail = 0, cpu_diff = 0, printed = 0;
+    for (int t = 0; t < 20000; t++) {
+        memcpy(pre, snap, sizeof pre);
+        pre[0x2846] = (uint8_t)(xs() & 0x3F);        /* cursor */
+        pre[0x2845] = (uint8_t)(xs() & 0xFF);        /* p3_object_state (covers <0 / >=$2B / ==cursor) */
+        pre[0x2839] = (uint8_t)(xs() & 0xFF);        /* table selector A (bit7) */
+        pre[0x283A] = (uint8_t)(xs() & 0xFF);        /* table selector B */
+        pre[0x2847] = (uint8_t)(xs() & 0xFF);        /* object bottom-Y (covers the $6C..$8D clamp) */
+        Cpu6502 c = zero_cpu();
+        mem_fail += diff_run("update_p3_indicator_stripe", pre, c,
+                             update_p3_indicator_stripe, update_p3_indicator_stripe__t6502, t, &printed, &cpu_diff);
+    }
+    printf("update_p3_indicator_stripe: %d cases (flight snapshot), %d mem mismatch (must be 0), %d cpu diffs\n",
+           20000, mem_fail, cpu_diff);
+    return mem_fail;
+}
+
 /* --- intro_random_setup @ $6FBF: RANDOM-driven DFS maze generator on the $0900 map (+$2500
  * stack).  Self-contained (no entry regs / fixture); diff_run seeds the RANDOM stream so both
  * runs trace the same maze.  Fewer cases (each is hundreds of RANDOM reads). --- */
@@ -2704,6 +2735,7 @@ int main(int argc, char **argv) {
     fails += test_draw_dial_bar_column();
     fails += test_draw_player3_object();
     fails += test_build_player2_sprite();
+    fails += test_update_p3_indicator_stripe();
     fails += test_dl_lms_build();
     fails += test_mem_contract("game_init_76CB", game_init_76CB, game_init_76CB__t6502);
     fails += test_emit_chain("setup_initials_ptr", setup_initials_ptr, setup_initials_ptr__t6502);

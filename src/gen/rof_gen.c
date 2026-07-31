@@ -2485,7 +2485,8 @@ void setup_dial_bar_draw__t6502(void) {
 }
 
 /* update_p3_indicator_stripe @ $4467: Clears/rewrites PM buffer $0F98 by cursor $2845/$2846, copies 5 bytes from tbl $44C7 sel by $2839/$283A, sets $CC + SIZEP3 $D00B */
-void update_p3_indicator_stripe(void) {
+/* faithful transliteration kept as the validation oracle; native update_p3_indicator_stripe() lives in rof_native.c (see VALIDATE_FUNCS) */
+void update_p3_indicator_stripe__t6502(void) {
     /* 4467 */
     LDY(mem[0x2846]);
     /* 446a */

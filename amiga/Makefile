@@ -211,6 +211,21 @@ ifdef FORCE_AIRLOCK
 EXTRA_DEFINES += -DROF_FORCE_AIRLOCK_OPEN
 endif
 
+# Profiling aid: `make AUTO_FIRE=1` (implies PROBES) holds the trigger down in flight
+# (PlatformAmiga.cpp ROF_AUTO_FIRE) so the player laser fires continuously — used to
+# profile the viewport-PMG sprite path (shot/explosion build) under load.  OFF by default.
+ifdef AUTO_FIRE
+EXTRA_DEFINES += -DROF_AUTO_FIRE
+endif
+
+# Profiling aid: `make FORCE_SAUCER=1` (implies PROBES) injects a static flying-saucer P3
+# object into the PMG buffer each flight VBI frame (rof_native.c ROF_FORCE_SAUCER) so the
+# Amiga per-frame P3 sprite mirror (buildViewportP3Sprite/buildScopeP3Sprite) runs under
+# load headlessly — used to profile the saucer sprite path.  OFF by default.
+ifdef FORCE_SAUCER
+EXTRA_DEFINES += -DROF_FORCE_SAUCER
+endif
+
 # Objects (flattened into obj/ by basename).
 CXX_OBJS       := $(addprefix obj/,$(notdir $(CXX_SRCS:.cpp=.o)))
 CORE_C_OBJS    := $(addprefix obj/,$(notdir $(CORE_C_SRCS:.c=.o)))

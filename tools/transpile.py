@@ -310,6 +310,7 @@ VALIDATE_FUNCS = {
     # batch — the big lock-on indicator sprite drawer (display_setup front, 311 bytes):
     0x42A7,  # draw_player3_object — player-3 lock-on sprite: HPOS/size via bus_write, mask blit $0F1E/$0F71, RANDOM
     0x8C58,  # build_player2_sprite — depth-scaled object/explosion P2 sprite builder (per-frame while object_anim_frame != 0)
+    0x4467,  # update_p3_indicator_stripe — rewrites the P3 scope-indicator PM buffer ($0F98) 50Hz when a P3 object/target is active
     # batch — DL-build wrappers + initials BCD (now unblocked by dl_lms_fill/render_bcd_digits_supp_all):
     0x69E5,  # dl_lms_build — set $C5/$C6=$300A, $0086=$56, tail dl_lms_fill
     0x76CB,  # game_init_76CB — build the flight display list ($30xx-$32xx) + 2x build_row_addr_table/dl_lms_fill

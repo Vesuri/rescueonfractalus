@@ -617,15 +617,29 @@ void RescueOnFractalus::buildAHSprite()
 // its VSTART (setY) moves to the current run each frame, unused rows stay blank (transparent).
 static const int kShotRows = 32;          // covers the 1× bolt + 1× impact burst
 
+// User-tweakable alignment nudge for the player laser sprite (viewport space).  The shot read
+// ~4px too far LEFT and ~2px too far DOWN vs the crosshair; kShotXOff moves it right (+),
+// kShotYOff moves it down (+).  Tune these two numbers to land it exactly.
+static const int kShotXOff = 4;    // + = right (Amiga sprite X units)
+static const int kShotYOff = -2;   // + = down  (Amiga scan lines)
+
 // Expand an 8-bit Atari player row (bit7 = leftmost) to 16 Amiga sprite px, each bit → 2 px
-// (the 1× player→viewport scale, 2 Amiga lores px per Atari colour clock).
-static inline uint16_t expandShotRow(uint8_t b)
+// (the 1× player→viewport scale, 2 Amiga lores px per Atari colour clock).  The per-call bit
+// loop cost 8 variable-shift iterations (no 68000 barrel shifter); a 256-entry LUT filled once
+// by buildShotExpandLut() replaces it for the per-frame shot / scope-P3 / viewport-P3 mirrors.
+static uint16_t s_shotExpand[256];
+static bool     s_shotExpandReady = false;
+static void buildShotExpandLut()
 {
-    uint16_t v = 0;
-    for (int k = 0; k < 8; k++)
-        if (b & (uint8_t)(0x80u >> k)) v |= (uint16_t)(3u << (14 - 2 * k));
-    return v;
+    for (int b = 0; b < 256; b++) {
+        uint16_t v = 0;
+        for (int k = 0; k < 8; k++)
+            if (b & (uint8_t)(0x80u >> k)) v |= (uint16_t)(3u << (14 - 2 * k));
+        s_shotExpand[b] = v;
+    }
+    s_shotExpandReady = true;
 }
+static inline uint16_t expandShotRow(uint8_t b) { return s_shotExpand[b]; }
 
 void RescueOnFractalus::buildShotSprite()
 {
@@ -657,8 +671,8 @@ void RescueOnFractalus::buildShotSprite()
             uint16_t m = expandShotRow(mem[0x0E00 + top + i]);
             d[i * 2] = m; d[i * 2 + 1] = m;            // both planes → pen 11 → COLOR27
         }
-        s->setY((uint16_t)(kTerrainLine + (top - 0x32)));            // buffer row → Amiga line
-        s->setX((uint16_t)(0x81 + ((int)mem[0x00CB] - 0x32) * 2));   // HPOSP2 → viewport X
+        s->setY((uint16_t)(kTerrainLine + (top - 0x32) + kShotYOff));            // buffer row → Amiga line
+        s->setX((uint16_t)(0x81 + ((int)mem[0x00CB] - 0x32) * 2 + kShotXOff));   // HPOSP2 → viewport X
     }
     if (flightCopper) {
         flightCopper->setHudSprite(4, *s);                            // display this buffer next frame
@@ -685,8 +699,10 @@ void RescueOnFractalus::buildScopeP3Sprite()
     // incremental — clear last frame's rows (p3ScopePrevRows), not the whole sprite.
     uint16_t* d = scopeP3Sprite->data() + 2;         // skip the 2 control words
     int top = -1, bot = -1;
-    for (int o = 0x98; o <= 0xB8; o++)
+    for (int o = 0x98; o <= 0xB8; o++) {
         if (mem[0x0F00 + o]) { if (top < 0) top = o; bot = o; }
+        else if (top >= 0) break;   // contiguous P3 object: run ended → stop the volatile scan
+    }
     for (int i = 0; i < p3ScopePrevRows; i++) { d[i * 2] = 0; d[i * 2 + 1] = 0; }  // clear last frame's rows
     if (top >= 0) {
         int rows = bot - top + 1;
@@ -737,8 +753,10 @@ void RescueOnFractalus::buildViewportP3Sprite()
     // modified only when needed" without losing per-frame position.)
     uint16_t* d = viewportP3Sprite->data() + 2;      // skip the 2 control words
     int top = -1, bot = -1;
-    for (int o = 0x32; o <= 0x85; o++)
+    for (int o = 0x32; o <= 0x85; o++) {
         if (mem[0x0F00 + o]) { if (top < 0) top = o; bot = o; }
+        else if (top >= 0) break;   // contiguous P3 object: run ended → stop the volatile scan
+    }
     for (int i = 0; i < p3ViewportPrevRows; i++) {   // clear only last frame's rows (not all 94)
         d[(p3ViewportPrevBase + i) * 2] = 0; d[(p3ViewportPrevBase + i) * 2 + 1] = 0;
     }
@@ -1027,6 +1045,7 @@ void RescueOnFractalus::initialize()
     g_terrainBmpAddr = (uint32_t)terrainBitmap->data;
 #endif
     if (!s_dec2bppReady) buildDecode2bppLut();   // 2bpp→Amiga plane-pair LUT (cockpit/title decode)
+    if (!s_shotExpandReady) buildShotExpandLut(); // 8-bit player row → 16px sprite LUT (shot/P3 mirrors)
     // Rescue-figure overlay + clean-terrain snapshot (chip Bitmaps for the blitter composite).
     // s_cleanBmp mirrors terrainBitmap's layout exactly so combineWithMask's per-row modulos line up.
     s_cleanBmp   = Bitmap::allocate(kW, kViewportFullHeight, kBP3, true);   // 3bp interleaved, == terrain
