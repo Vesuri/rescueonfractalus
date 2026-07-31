@@ -5147,6 +5147,9 @@ void ring_push_0719(void) {
     uint8_t x = alt_ring_head;                   /* 55FF LDX $0073 */
     if (x >= 0x20) x = 0x1F;                   /* 5601 CPX #$20; BCC; LDX #$1F  */
     mem[MEM_event_ring_0719 + x] = cpu.A;                    /* 5607 STA $0719,X */
+#ifdef ROF_BEEP_CAP
+    { extern void rof_bc_push(unsigned char v); rof_bc_push(cpu.A); }  /* log every SFX event push */
+#endif
     x = (uint8_t)(x - 1);                       /* 560A DEX */
     if (x & 0x80) x = 0x1F;                     /* 560B BPL; LDX #$1F (wrap $FF) */
     alt_ring_head = x;                            /* 560F STX $0073 */

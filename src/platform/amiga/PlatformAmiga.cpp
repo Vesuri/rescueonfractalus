@@ -319,6 +319,23 @@ extern "C" volatile unsigned char  g_bcRestart[BC_N] = {};    // channels that r
 extern "C" volatile unsigned char  g_bcAux[BC_N][8] = {};
 extern "C" volatile unsigned short g_bcIdx = 0;          // write cursor (mod BC_N)
 extern "C" volatile unsigned char  g_bcOn  = 0;          // armed once flight VBI is live
+// break-hook: gdb `break rof_bc_done` fires when the ring is full.  Must have a UNIQUE,
+// non-empty body or identical-code-folding merges it into another empty fn (e.g. a blitter
+// helper) → the breakpoint fires at boot.  The volatile bump defeats ICF.
+extern "C" volatile unsigned long g_bcDoneTick = 0;
+extern "C" void rof_bc_done(void) { g_bcDoneTick++; }
+// SFX-event-push log: rof_bc_push() records every ring_push_0719 (event id | $80) with the
+// frame it fired on, so we can see WHICH events drive the range-1 "wrong sound" and when.
+#define BCP_N 256
+extern "C" volatile unsigned char  g_bcPushId[BCP_N] = {};   // event id (low 7 bits of pushed byte)
+extern "C" volatile unsigned short g_bcPushVbi[BCP_N] = {};  // g_vbiCount at push
+extern "C" volatile unsigned short g_bcPushIdx = 0;          // fill cursor (stops at BCP_N)
+extern "C" void rof_bc_push(unsigned char v) {
+    if (!g_bcOn) return;                 // only log during the armed range-1 capture window
+    unsigned i = g_bcPushIdx; if (i >= BCP_N) return;   // stop at full (keep the onset, no wrap)
+    g_bcPushIdx = (unsigned short)(i + 1u);
+    g_bcPushId[i] = (unsigned char)(v & 0x7Fu); g_bcPushVbi[i] = g_vbiCount;
+}
 static unsigned char cur_vol_cap[4] = { 0, 0, 0, 0 };    // last VOL applied per channel
 static unsigned char bc_classify(uint32_t p) {
     if (p == (uint32_t)wave_pure) return 1;
@@ -392,19 +409,22 @@ extern "C" void flush_paula(void)
         g_bcVbi[s]     = g_vbiCount;
         g_bcRestart[s] = restart;
         for (int i = 0; i < 9; i++) g_bcPokey[s][i] = pokey[i];
-        // ring/accum + SFX-slot state: [0]=$0088 vbi_flags [1]=$008D step_mode
-        //  [2]=$00A0 iter [3]=$00A1 accB0 [4]=$00A4 accTop [5]=$00A5 accPrev
-        //  [6]=$0677 sfxVol(slot$0C) [7]=$0685 sfxFreq(slot$0C)
-        g_bcAux[s][0] = mem[0x0088]; g_bcAux[s][1] = mem[0x008D];
-        g_bcAux[s][2] = mem[0x00A0]; g_bcAux[s][3] = mem[0x00A1];
-        g_bcAux[s][4] = mem[0x00A4]; g_bcAux[s][5] = mem[0x00A5];
-        g_bcAux[s][6] = mem[0x0677]; g_bcAux[s][7] = mem[0x0685];
+        // flight range-1 context: [0]=$0642 range digit [1]=$003d descent flag
+        //  [2]=$0073 sfx ring head [3]=$0074 sfx ring tail
+        //  then the per-voice DISTORTION bytes $065D+Y for the 4 voices Paula is mapped to
+        //  (which voice sits on which POKEY channel is $0705+Y): [4..7]=$065D+ the reg-idx
+        //  used by ch0..ch3.  Lets us see if the beep channel's distortion flips pure<->noise.
+        g_bcAux[s][0] = mem[0x0642]; g_bcAux[s][1] = mem[0x003D];
+        g_bcAux[s][2] = mem[0x0073]; g_bcAux[s][3] = mem[0x0074];
+        // $065D+Y distortion for voice slots 1..4 (the SFX engine's active voices)
+        g_bcAux[s][4] = mem[0x065D + 1]; g_bcAux[s][5] = mem[0x065D + 2];
+        g_bcAux[s][6] = mem[0x065D + 3]; g_bcAux[s][7] = mem[0x065D + 4];
         for (int ch = 0; ch < 4; ch++) {
             g_bcKind[s][ch] = bc_classify(cur_ptr[ch]);   // waveform Paula is playing after this flush
             g_bcPer[s][ch]  = cur_per[ch];
             g_bcVol[s][ch]  = cur_vol_cap[ch];
         }
-        if (ni == 0u) g_bcOn = 0;   // captured a full ring from arming → freeze (keeps the doors window)
+        if (ni == 0u) { g_bcOn = 0; rof_bc_done(); }   // full ring → freeze + break-hook for gdb
     }
 #endif
 }
@@ -1369,13 +1389,16 @@ static uint32_t vbiHandler()
     // inside game_vbi_isr just below) then plays it.  Nothing else pushes $14 (no pilot in the
     // headless run), so ch3 sees exactly the fast beep.
     {
-        // The user identified the range-1 "distorted sound" as the SAME SFX that plays in the
-        // standby→doors launch sequence (a sweep, then a constant buzz that never stops).  That
-        // door-swoosh sound IS reachable headlessly (auto-launch runs the doors), so arm the
-        // capture across the launch cinematic — START is injected at g_vbiCount==350, doors open
-        // shortly after, so capture from ~360 onward and catch the stuck buzz.
+        // FLIGHT range-1 pilot-beep capture (interactive): arm the ring once the flight VBI
+        // ($4FF5) is live AND the range-to-pilot digit $0642 has ticked down to 1 or 2 (the
+        // user flies toward a downed pilot in the FS-UAE window).  The ring records 320 frames
+        // of all 4 Paula channels + POKEY shadow, then freezes (g_bcOn=0), catching the range
+        // 2→1→0 beep transition.  On the Atari (lrscanner.a8s) that beep is a PURE tone on ch3
+        // pulsing faster as range drops; if the Amiga shows NOISE distortion there, that's the bug.
         static unsigned char s_bcArmed = 0;
-        if (!s_bcArmed && g_vbiCount >= 355u) { g_bcOn = 1; s_bcArmed = 1; }  // one-shot; freeze in flush_paula sticks
+        if (!s_bcArmed && g_probeFlightVbi && mem[0x0642u] >= 1u && mem[0x0642u] <= 2u) {
+            g_bcOn = 1; s_bcArmed = 1;   // one-shot; freeze in flush_paula sticks
+        }
     }
 #endif
 
