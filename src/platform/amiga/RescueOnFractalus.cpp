@@ -620,8 +620,8 @@ static const int kShotRows = 32;          // covers the 1× bolt + 1× impact bu
 // User-tweakable alignment nudge for the player laser sprite (viewport space).  The shot read
 // ~4px too far LEFT and ~2px too far DOWN vs the crosshair; kShotXOff moves it right (+),
 // kShotYOff moves it down (+).  Tune these two numbers to land it exactly.
-static const int kShotXOff = 4;    // + = right (Amiga sprite X units)
-static const int kShotYOff = -2;   // + = down  (Amiga scan lines)
+static const int kShotXOff = 3;    // + = right (Amiga sprite X units)
+static const int kShotYOff = 0;    // + = down  (Amiga scan lines)
 
 // Expand an 8-bit Atari player row (bit7 = leftmost) to 16 Amiga sprite px, each bit → 2 px
 // (the 1× player→viewport scale, 2 Amiga lores px per Atari colour clock).  The per-call bit
