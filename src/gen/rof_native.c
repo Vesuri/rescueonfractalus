@@ -8032,6 +8032,46 @@ void flight_control_integrate(void) { flight_control_integrate_impl(); }
  * (flight_frame_native).  Leaves first.
  * ------------------------------------------------------------------------- */
 
+#ifdef ROF_PLATFORM_AMIGA
+/* Enemy-fire wedge dot span (Amiga).  The enemy laser bolt (plot_scanline_down, plot_pixel_mask
+ * = $FF = value-3) plots a SOLID horizontal run of columns per scanline into BOTH the plane2 dot
+ * buffer (g_flightDotPlane) and the plane1 object overlay (g_flightObjP1) — every column, since
+ * $FF & any col mask is set.  The per-pixel path routes each column through terrain_plot_pixel_core
+ * -> ROF_PLOT_DOT/ROF_PLOT_DOT_P1 (a scattered single-bit OR + call overhead each).  Batch it: the
+ * scanline is fixed (kRow120[sc] base constant), so OR whole bytes ($FF for full 4-col groups,
+ * partial masks at the ends) — the same dots, ~4x fewer stores + no per-pixel call.  kColMask4
+ * packs 4 cols/byte (2 bits each).  Column window = the ROF_PLOT_DOT gate [48,208) & sc in
+ * [0,47)\{43}; uint8 X-wrap reproduced as a second run. */
+static int laser_dot_run(uint8_t* p2, uint8_t* p1, unsigned c0, unsigned c1) {
+    if (c0 < 48u) c0 = 48u;
+    if (c1 > 208u) c1 = 208u;
+    if (c0 >= c1) return 0;
+    unsigned a = c0 - 48u, a1 = c1 - 48u;              /* _ac = col - 48 */
+    while (a < a1) {
+        unsigned byte = a >> 2; uint8_t m = 0;
+        do { m |= kColMask4[a & 3u]; a++; } while ((a & 3u) && a < a1);   /* accumulate this byte's cols */
+        p2[byte] |= m;
+        if (p1) p1[byte] |= m;
+    }
+    return 1;
+}
+static void laser_dot_span(uint8_t row, unsigned xstart, unsigned width) {
+    if (!g_flightDotPlane || width == 0u) return;
+    int sc = 150 - (int)row;                            /* height/row -> dot scanline (as ROF_PLOT_DOT) */
+    if ((unsigned)sc >= 47u || sc == 43) return;        /* row outside the dot band / the $6b floor */
+    int rb = kRow120[sc];
+    uint8_t* p2 = g_flightDotPlane + rb;
+    uint8_t* p1 = g_flightObjP1 ? g_flightObjP1 + rb : (uint8_t*)0;
+    unsigned end = xstart + width;                      /* columns visited: X, X+1, ... (uint8 wrap) */
+    int plotted = laser_dot_run(p2, p1, xstart, end < 256u ? end : 256u);
+    if (end > 256u) plotted |= laser_dot_run(p2, p1, 0u, end - 256u);
+    if (p1 && plotted) {                                /* ROF_PLOT_DOT_P1 dirty scanline range */
+        if (sc < g_objRowLo) g_objRowLo = sc;
+        if (sc > g_objRowHi) g_objRowHi = sc;
+    }
+}
+#endif
+
 /* plot_scanline_down @ $AAD4 — line-plot loop walking DOWN the screen.
  * Walks the {$28EF:$28F0} fixed-point X position by the step {$5B:$5C} (which is
  * first decremented by $40) and the sub-step {$28F3:$28F4}; for each scanline Y
@@ -8051,6 +8091,19 @@ void plot_scanline_down(void) {
     if (cpu.Y < 0x6C) return;                     /* CPY #$6C; BCC plot_line_done */
     for (;;) {                                    /* L_aae9 (per scanline) */
         mem[0x28FA] = mem[0x28F4];                /* LDA $28F4; STA $28FA */
+#ifdef ROF_PLATFORM_AMIGA
+        if (plot_pixel_mask == 0xFF) {
+            /* value-3 solid wedge (the enemy bolt): batch the scanline's run into byte ORs instead
+               of a per-pixel scatter (see laser_dot_span).  X advances by the full width and $28FA
+               reaches 0 — the per-pixel loop's exit state — so the accumulator arithmetic below and
+               the faithful mem[]/cpu contract are unchanged.  (The Amiga sheds the mode-D field, so
+               the per-pixel path's $28E2/$B5/field writes are already dead here.) */
+            unsigned w = mem[0x28FA];
+            laser_dot_span(cpu.Y, cpu.X, w);
+            cpu.X = (uint8_t)(cpu.X + w);
+            mem[0x28FA] = 0;
+        } else
+#endif
         do {                                      /* L_aaef (across the row) */
             if (cpu.X >= 0x2C && cpu.X < 0xD4)    /* CPX #$2C BCC; CPX #$D4 BCS */
                 terrain_plot_pixel_core(cpu.Y, cpu.X, plot_pixel_mask);             /* aaf7 (preserves X/Y) */
