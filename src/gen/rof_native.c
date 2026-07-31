@@ -1177,7 +1177,7 @@ void draw_frame_pattern_seq(void) {
  *   - draw_ring_frame_step publishes the tunnel dirty-band globals (g_tun*) under
  *     #ifdef ROF_PLATFORM_AMIGA so RescueOnFractalus re-decodes only the band it
  *     just wrote (a full 86-row field scan is > 1 PAL frame on the 68000).
- *   - advance_history_6a4d skips its reorder_sprite_slot tail on Amiga (the copper
+ *   - advance_history_6a4d skips its sfx_reorder_voice_slot tail on Amiga (the copper
  *     owns PMG and the confirmed standby cinematic omitted it); the validation/SDL
  *     build keeps the faithful tail so the twin matches its __t6502 oracle.
  * ============================================================================ */
@@ -1185,7 +1185,7 @@ void draw_frame_pattern_seq(void) {
 /* advance_history_6a4d @ $6A4D — rotate the 6-byte colour ring $08D4-$08D9 up one slot (old
  * $08D9 wraps back into $08D4; feeds COLOR01-06).  If $008D (step_mode_flag) is negative, copy
  * $08D8 -> $0071 (display_flags).  Then bump $0685 ($0679[$0C]) by $06CC (history_ring_step),
- * saturating a wrap-to-0 result to $FF.  Atari tail: reorder_sprite_slot (Y=$0C). */
+ * saturating a wrap-to-0 result to $FF.  Atari tail: sfx_reorder_voice_slot (Y=$0C). */
 void advance_history_6a4d(void) {
     uint8_t top = mem[0x08D9];
     mem[0x08D9] = mem[0x08D8];
@@ -1197,10 +1197,15 @@ void advance_history_6a4d(void) {
     if ((int8_t)step_mode_flag < 0) display_flags = mem[0x08D8];
     uint8_t s = (uint8_t)(mem[MEM_hud_field_679 + 0x0C] + history_ring_step);
     mem[MEM_hud_field_679 + 0x0C] = s ? s : 0xFF;
-#ifndef ROF_PLATFORM_AMIGA
     cpu.Y = 0x0C;                                         /* the $0685 index is still live in Y */
-    reorder_sprite_slot();                                /* Atari PMG/voice slot reorder */
-#endif
+    /* sfx_reorder_voice_slot ($5614) is the SFX VOICE-priority mixer (misnamed — NOT PMG): it
+     * writes the swept AUDF2/AUDC2 (this slot's $0685 freq + $0677 vol) to POKEY via
+     * sfx_voice_write_freq_ctrl.  It touches only mem[]/POKEY (Paula on Amiga), no display
+     * hardware, so it is safe on the Amiga.  It was previously #ifndef'd out here on the wrong
+     * assumption that it did copper-owned PMG work — that dropped the launch/tunnel noise-sweep
+     * SFX (slot $0C), freezing ch1 at $b4/$8f as a constant buzz instead of the descending
+     * whoosh that resolves.  Run it on both platforms (faithful; still matches the __t6502 oracle). */
+    sfx_reorder_voice_slot();
 }
 
 /* dl_lms_scroll_up @ $69A9 — shift the top-half 3-byte LMS entries from $300C,X up to $3009,X
@@ -8448,12 +8453,12 @@ void input_init(void) {
     cpu.A = savedX;
 }
 
-/* reorder_sprite_slot @ $5614 — the voice-priority mixer.  Entry cpu.Y = the voice
+/* sfx_reorder_voice_slot @ $5614 — the voice-priority mixer.  Entry cpu.Y = the voice
  * slot just touched, cpu.X = a selector (0 -> promote/compact an empty slot via
  * sfx_pick_next_voice; !=0 -> demote a lower-priority slot under the current top).
  * Writes the moved voice (sfx_voice_write_freq_ctrl) and re-latches the top voice
  * (sfx_pick_top_voice).  Y is saved/restored (PHA/PLA); X is clobbered. */
-void reorder_sprite_slot(void) {
+void sfx_reorder_voice_slot(void) {
     uint8_t savedY = cpu.Y;                              /* TYA; PHA */
     sfx_voice_write_freq_ctrl();                         /* 5616 (writes voice cpu.Y) */
     cpu.Y = savedY;
@@ -8568,7 +8573,7 @@ static void sfx_voice_envelope_tick_impl(void) {
             input_init();
         } else {                          /* sprite-slot reorder request */
             cpu.Y = entry;
-            reorder_sprite_slot();
+            sfx_reorder_voice_slot();
         }
         uint8_t t = (uint8_t)(ring_tail_0719 - 1);
         ring_tail_0719 = (t & 0x80) ? 0x1F : t;
@@ -9987,9 +9992,9 @@ L_63a7:
     } while (timer_676 != 0x04);
     /* wait for the gauge-fill VBI counter $0684 to reach $64 */
     do { ds_frame(); } while (mem[0x0684] != 0x64);
-    cpu.Y = 0x05;                        /* reorder_sprite_slot takes Y (also indexes $066B) */
+    cpu.Y = 0x05;                        /* sfx_reorder_voice_slot takes Y (also indexes $066B) */
     mem[0x066B + cpu.Y] = 0;
-    reorder_sprite_slot();
+    sfx_reorder_voice_slot();
     /* wait for $0684 to reach $1D */
     do { ds_frame(); } while (mem[0x0684] != 0x1D);
     mem[0x06E6] = 0xFF;
@@ -10004,10 +10009,10 @@ L_63a7:
     cpu.A = 0x00;                        /* draw_cockpit_dial_bar takes A */
     draw_color_idx = 0;
     draw_cockpit_dial_bar();
-    cpu.Y = 0x0C;                        /* reorder_sprite_slot takes Y */
+    cpu.Y = 0x0C;                        /* sfx_reorder_voice_slot takes Y */
     mem[0x066B + cpu.Y] = 0x0F;
     mem[0x0679 + cpu.Y] = 0xB4;
-    reorder_sprite_slot();
+    sfx_reorder_voice_slot();
     timer_676 = 0x02;
     mem[0x06E8] = 0;
     mem[0x06E9] = 0;
@@ -10032,13 +10037,13 @@ L_63a7:
     cpu.A = 0x04;                        /* draw_cockpit_dial_bar takes A */
     mem[0x0677] = 0x04;
     draw_cockpit_dial_bar();
-    cpu.Y = 0x0C;                        /* reorder_sprite_slot takes Y */
+    cpu.Y = 0x0C;                        /* sfx_reorder_voice_slot takes Y */
     mem[0x0679 + cpu.Y] = 0x65;
-    reorder_sprite_slot();
+    sfx_reorder_voice_slot();
     cpu.Y = 0x0B;
     mem[0x066B + cpu.Y] = 0x01;
     mem[0x0679 + cpu.Y] = 0x0E;
-    reorder_sprite_slot();
+    sfx_reorder_voice_slot();
     for (int i = 0; i <= 3; i++)          /* L_64ed */
         mem[0xD008 + i] = 0x01;
     HW_WRITE(0xD000, 0x38);              /* HPOSP0 */

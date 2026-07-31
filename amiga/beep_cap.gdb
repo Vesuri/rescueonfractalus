@@ -10,15 +10,15 @@ echo \n==== SIGINT (beep capture) ====\n
 printf "g_vbiCount=%u  VVBLKI=%04x  flightVbiInstall=%u  death(63D)=%02x  range(642)=%02x  gate72=%02x  ctr4B=%02x\n", \
   g_vbiCount, (mem[0x0222] | (mem[0x0223]<<8)), g_probeFlightVbi, mem[0x063D], mem[0x0642], mem[0x0072], mem[0x004B]
 printf "g_bcOn=%u  cursor(g_bcIdx)=%u   [ring newest = cursor-1]\n", g_bcOn, g_bcIdx
-echo idx vbi  R | F1 C1 F2 C2 F3 C3 F4 C4 ACTL | kind[0..3] vol[0..3]\n
+echo idx vbi  R | F1 C1 F2 C2 F3 C3 F4 C4 ACTL | 88 8D A0 A1 A4 A5 vol frq\n
 set $i = 0
 while $i < 320
-  printf "%3u %4u %x | %02x %02x %02x %02x %02x %02x %02x %02x  %02x | [%u %u %u %u] [%2u %2u %2u %2u]\n", \
+  printf "%3u %4u %x | %02x %02x %02x %02x %02x %02x %02x %02x  %02x | %02x %02x %02x %02x %02x %02x %02x %02x\n", \
     $i, g_bcVbi[$i], g_bcRestart[$i], \
     g_bcPokey[$i][0], g_bcPokey[$i][1], g_bcPokey[$i][2], g_bcPokey[$i][3], \
     g_bcPokey[$i][4], g_bcPokey[$i][5], g_bcPokey[$i][6], g_bcPokey[$i][7], g_bcPokey[$i][8], \
-    g_bcKind[$i][0], g_bcKind[$i][1], g_bcKind[$i][2], g_bcKind[$i][3], \
-    g_bcVol[$i][0], g_bcVol[$i][1], g_bcVol[$i][2], g_bcVol[$i][3]
+    g_bcAux[$i][0], g_bcAux[$i][1], g_bcAux[$i][2], g_bcAux[$i][3], \
+    g_bcAux[$i][4], g_bcAux[$i][5], g_bcAux[$i][6], g_bcAux[$i][7]
   set $i = $i + 1
 end
 echo ==== end ====\n

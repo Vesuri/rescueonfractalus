@@ -313,6 +313,10 @@ extern "C" volatile unsigned char  g_bcKind[BC_N][4] = {};    // 0 silent/other 
 extern "C" volatile unsigned short g_bcPer[BC_N][4] = {};
 extern "C" volatile unsigned char  g_bcVol[BC_N][4] = {};
 extern "C" volatile unsigned char  g_bcRestart[BC_N] = {};    // channels that restarted this flush
+// aux[]: theme/sfx sequencer + gate state per frame, to see who stalls across the freeze:
+//  [0]=$00E7 themeGate [1]=$062D attractSub [2]=$073A seqTimer [3]=$073B mute
+//  [4]=$073C seqPtr [5]=$0655 musicGate [6]=$060B cockpitFlag [7]=$0004 launchState
+extern "C" volatile unsigned char  g_bcAux[BC_N][8] = {};
 extern "C" volatile unsigned short g_bcIdx = 0;          // write cursor (mod BC_N)
 extern "C" volatile unsigned char  g_bcOn  = 0;          // armed once flight VBI is live
 static unsigned char cur_vol_cap[4] = { 0, 0, 0, 0 };    // last VOL applied per channel
@@ -388,6 +392,13 @@ extern "C" void flush_paula(void)
         g_bcVbi[s]     = g_vbiCount;
         g_bcRestart[s] = restart;
         for (int i = 0; i < 9; i++) g_bcPokey[s][i] = pokey[i];
+        // ring/accum + SFX-slot state: [0]=$0088 vbi_flags [1]=$008D step_mode
+        //  [2]=$00A0 iter [3]=$00A1 accB0 [4]=$00A4 accTop [5]=$00A5 accPrev
+        //  [6]=$0677 sfxVol(slot$0C) [7]=$0685 sfxFreq(slot$0C)
+        g_bcAux[s][0] = mem[0x0088]; g_bcAux[s][1] = mem[0x008D];
+        g_bcAux[s][2] = mem[0x00A0]; g_bcAux[s][3] = mem[0x00A1];
+        g_bcAux[s][4] = mem[0x00A4]; g_bcAux[s][5] = mem[0x00A5];
+        g_bcAux[s][6] = mem[0x0677]; g_bcAux[s][7] = mem[0x0685];
         for (int ch = 0; ch < 4; ch++) {
             g_bcKind[s][ch] = bc_classify(cur_ptr[ch]);   // waveform Paula is playing after this flush
             g_bcPer[s][ch]  = cur_per[ch];

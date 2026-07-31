@@ -2238,7 +2238,7 @@ static int test_vbi_handler_flight(void) {
  * step_accum_add_75 can reach draw_symmetric_span_loop, so they use the same safe drawing
  * fixture as test_draw_symmetric_span_loop (row-addr table -> $2000, small span coords) plus a
  * small ring-thickness table $6E0F and a bounded ring index $00A0.  step_accum_add_75 (and the
- * advance_history_6a4d it tail-calls) reaches reorder_sprite_slot on the validation build
+ * advance_history_6a4d it tail-calls) reaches sfx_reorder_voice_slot on the validation build
  * (#ifndef ROF_PLATFORM_AMIGA), so it also needs the SFX voice-slot seeding + POKEY/stack mask. */
 static void seed_ring_draw_fixture(uint8_t *pre) {
     for (int i = 0; i <= 0x54; i++) {                     /* row addr table -> $2000.. (safe RAM) */
@@ -2252,7 +2252,7 @@ static void seed_ring_draw_fixture(uint8_t *pre) {
     pre[0x009E] = (uint8_t)(0x30 + (xs() & 0x0F));        /* span row range (stays < $54) */
     pre[0x009F] = (uint8_t)(0x28 + (xs() & 0x0F));
 }
-static void seed_reorder_sprite_slot(uint8_t *pre) {
+static void seed_sfx_reorder_voice_slot(uint8_t *pre) {
     seed_voice_regs(pre);
     for (int i = 0; i < 128; i++) pre[0x56D4 + i] = (uint8_t)(1 + (xs() % 14)); /* valid voice slots */
 }
@@ -2276,11 +2276,11 @@ static int test_step_accum_add_75(void) {
     static uint8_t pre[65536];
     static uint16_t mask[272];
     int mem_fail = 0, cpu_diff = 0, printed = 0;
-    set_ignore(mask, build_sfx_mask(mask));               /* reorder_sprite_slot: mask stack + POKEY */
+    set_ignore(mask, build_sfx_mask(mask));               /* sfx_reorder_voice_slot: mask stack + POKEY */
     for (int t = 0; t < N; t++) {
         fill_random(pre);
         seed_ring_draw_fixture(pre);                      /* draw_ring_frame_step path */
-        seed_reorder_sprite_slot(pre);                    /* advance_history_6a4d tail */
+        seed_sfx_reorder_voice_slot(pre);                    /* advance_history_6a4d tail */
         mem_fail += diff_run("step_accum_add_75", pre, zero_cpu(),
                              step_accum_add_75, step_accum_add_75__t6502, t, &printed, &cpu_diff);
     }
@@ -2290,7 +2290,7 @@ static int test_step_accum_add_75(void) {
 }
 /* step_accum_sub_7e (the BOOST reverse ring-step) has the same reachability as
  * step_accum_add_75 — it can reach draw_symmetric_span_loop (via $6E0F[a] when the sub result
- * top byte a < $14) and advance_history_6a4d -> reorder_sprite_slot on the validation build — so
+ * top byte a < $14) and advance_history_6a4d -> sfx_reorder_voice_slot on the validation build — so
  * it uses the identical seeding + SFX/stack mask.  The draw index here is the accumulator top
  * byte (not $00A0); fill_random's random $00A1..$00A5 exercise both the <$14 draw and the
  * unchanged-top early-out. */
@@ -2300,11 +2300,11 @@ static int test_step_accum_sub_7e(void) {
     static uint8_t pre[65536];
     static uint16_t mask[272];
     int mem_fail = 0, cpu_diff = 0, printed = 0;
-    set_ignore(mask, build_sfx_mask(mask));               /* reorder_sprite_slot: mask stack + POKEY */
+    set_ignore(mask, build_sfx_mask(mask));               /* sfx_reorder_voice_slot: mask stack + POKEY */
     for (int t = 0; t < N; t++) {
         fill_random(pre);
         seed_ring_draw_fixture(pre);                      /* draw_symmetric_span_loop path */
-        seed_reorder_sprite_slot(pre);                    /* advance_history_6a4d tail */
+        seed_sfx_reorder_voice_slot(pre);                    /* advance_history_6a4d tail */
         mem_fail += diff_run("step_accum_sub_7e", pre, zero_cpu(),
                              step_accum_sub_7e, step_accum_sub_7e__t6502, t, &printed, &cpu_diff);
     }
@@ -2318,10 +2318,10 @@ static int test_advance_history_6a4d(void) {
     static uint8_t pre[65536];
     static uint16_t mask[272];
     int mem_fail = 0, cpu_diff = 0, printed = 0;
-    set_ignore(mask, build_sfx_mask(mask));               /* reorder_sprite_slot tail: mask stack + POKEY */
+    set_ignore(mask, build_sfx_mask(mask));               /* sfx_reorder_voice_slot tail: mask stack + POKEY */
     for (int t = 0; t < N; t++) {
         fill_random(pre);
-        seed_reorder_sprite_slot(pre);
+        seed_sfx_reorder_voice_slot(pre);
         mem_fail += diff_run("advance_history_6a4d", pre, zero_cpu(),
                              advance_history_6a4d, advance_history_6a4d__t6502, t, &printed, &cpu_diff);
     }
@@ -2804,7 +2804,7 @@ int main(int argc, char **argv) {
     fails += test_sfx_voice("input_init", input_init, input_init__t6502);
     fails += test_sfx_voice("sfx_voice_write_freq", sfx_voice_write_freq, sfx_voice_write_freq__t6502);
     fails += test_sfx_voice("sfx_voice_write_freq_ctrl", sfx_voice_write_freq_ctrl, sfx_voice_write_freq_ctrl__t6502);
-    fails += test_sfx_voice("reorder_sprite_slot", reorder_sprite_slot, reorder_sprite_slot__t6502);
+    fails += test_sfx_voice("sfx_reorder_voice_slot", sfx_reorder_voice_slot, sfx_reorder_voice_slot__t6502);
     fails += test_sfx_voice_envelope_tick();
 
     fails += test_clear_terrain_column();

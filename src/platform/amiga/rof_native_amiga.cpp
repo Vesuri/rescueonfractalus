@@ -471,7 +471,7 @@ extern "C" void update_indicator_blink_native(void)
 // dl_lms_*) are pure mem[] 6502 logic, not Amiga-specific, so they now live as faithful
 // native twins in src/gen/rof_native.c (VALIDATE_FUNCS).  draw_ring_frame_step's Amiga
 // tunnel dirty-band publish (the g_tun* globals, formerly defined here) is guarded there
-// under #ifdef ROF_PLATFORM_AMIGA; advance_history_6a4d skips its reorder_sprite_slot tail
+// under #ifdef ROF_PLATFORM_AMIGA; advance_history_6a4d skips its sfx_reorder_voice_slot tail
 // on Amiga.  The g_tun* globals are now defined by their writer's TU (rof_native.c).
 
 // launch_anim_dispatch @ $5367 (Standby subset): the per-frame priority dispatcher
@@ -759,7 +759,7 @@ void sfx_voice_envelope_tick(void);          // $548D: in-game SFX voice engine 
 // indicator stripe), the atmosphere colour ramp ($51C8: altitude→$00DA/$00DC/$00DB/$00DD),
 // the cockpit message dispatch (MANUAL), the gauges and the score all run as on the Atari.
 void vbi_handler_flight(void);           // $4FF5
-void reorder_sprite_slot(void);          // $5614: voice-priority mixer — assigns a POKEY channel ($0705) to slot cpu.Y
+void sfx_reorder_voice_slot(void);          // $5614: voice-priority mixer — assigns a POKEY channel ($0705) to slot cpu.Y
 }
 
 // flight_vbi_native: one in-flight VBI frame ($4FF5).  Runs the FULL faithful transpiled
@@ -877,7 +877,7 @@ extern "C" void game_vbi_isr(void)
 // flight_vbi_native — so the engine pitch tracks throttle.  All the Atari does to START
 // it is set the distortion (cold-init $3DE2/$3DE8), the priorities, and run the launch
 // engine-ramp ($63FF-$64E8) whose end-state hands these three voices their POKEY channels
-// via reorder_sprite_slot ($5614).  We install the launch end-state directly here, then let
+// via sfx_reorder_voice_slot ($5614).  We install the launch end-state directly here, then let
 // the mixer + flight_control_integrate + sfx_voice_envelope_tick (all ported) sustain it.
 //
 // ⚠ CURRENTLY UNWIRED: the genuine flight path (native game_main_loop's inline $3E12-$3EB8
@@ -903,7 +903,7 @@ extern "C" void seed_engine_drone_native(void)
     mem[0x0679 + 0x0E] = 0x68;            // $0687 slot 14 freq
     // hand each voice a POKEY channel via the priority mixer (launch does this with the
     // $5614 calls at $6493/$64D7/$64E6).  X=0 = the "newly active voice" promote path.
-    cpu.X = 0x00; cpu.Y = 0x0C; reorder_sprite_slot();   // slot 12 -> a channel (noise body)
-    cpu.X = 0x00; cpu.Y = 0x0D; reorder_sprite_slot();   // slot 13 -> a channel
-    cpu.X = 0x00; cpu.Y = 0x0E; reorder_sprite_slot();   // slot 14 -> a channel
+    cpu.X = 0x00; cpu.Y = 0x0C; sfx_reorder_voice_slot();   // slot 12 -> a channel (noise body)
+    cpu.X = 0x00; cpu.Y = 0x0D; sfx_reorder_voice_slot();   // slot 13 -> a channel
+    cpu.X = 0x00; cpu.Y = 0x0E; sfx_reorder_voice_slot();   // slot 14 -> a channel
 }

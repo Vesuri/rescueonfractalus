@@ -369,7 +369,7 @@ $5398,check_collision_sync,func,0,X=$FF, CLI/SEI; if !=$80 set $0002/0003/E2; el
 $548D,sfx_voice_envelope_tick,func,0,Loops Y=$0E..1 over digit arrays $06DB/E9/0679/06BF/CD/A3/B1/066B; BCD-step wrap $2D, calls 55FC/5815; sorts $0073/74 ring
 $5553,sfx_engine_step,func,0,POKEY sound engine: writes AUDF/AUDC $D200/201/204/205/208 from state $0634-$063A and table $55DC
 $55FF,ring_push_0719,func,0,Tail of game_sub_55FC: store A into ring buf $0719+X via head $0073, dec+wrap head mod $20, restore X
-$5614,reorder_sprite_slot,func,0,Swaps/moves entries in $0705 array by Y vs priority $0714/0715/0717,$066B; calls 5673/56af/568a
+$5614,sfx_reorder_voice_slot,func,0,Swaps/moves entries in $0705 array by Y vs priority $0714/0715/0717,$066B; calls 5673/56af/568a
 $5667,sfx_voice_write_freq,func,0,Write AUDF freq ($0679+Y) to POKEY AUDFn at $D1FE+X for voice Y; X=reg index from $0705+Y; skip if 0/inactive
 $5673,sfx_voice_write_freq_ctrl,func,0,For voice Y write AUDF ($D1FE+X) freq and AUDC ($D1FF+X) = ($066B+Y &$0F vol/prio) | ($065D+Y distortion); skip if $0705+Y=0
 $568A,sfx_pick_top_voice,func,0,Scan 12 voice slots $0705+X; pick active slot with max prio nibble ($066B&$0F) below $10; store val->$0714/$0716, idx->$0715
@@ -430,7 +430,7 @@ $6A0F,shift_object_table_up,func,0,Shifts a stride-3 record array up one slot: c
 $6A26,ret_stub_6a26,func,0,Empty routine, immediate RTS; tail-call target/no-op stub
 $6A27,clear_slot_0c87_0d87,func,0,DEC $008C, index Y=8-$008C, zeroes $0C87[Y] and $0D87[Y] in two parallel arrays
 $6A38,step_accum_add_75,func,0,Adds $75 via add_multibyte_a1, result->$00A4; if changed & store $00A5, if >=$90 call draw_ring_frame_step, then advance_history_6a4d
-$6A4D,advance_history_6a4d,func,0,Shifts 6-byte ring $08D4-$08D9 up one (insert old $08D9); if $008D<0 sets $0071=$08D8; bumps $0679[$0C] by $06CC; tail reorder_sprite_slot
+$6A4D,advance_history_6a4d,func,0,Shifts 6-byte ring $08D4-$08D9 up one (insert old $08D9); if $008D<0 sets $0071=$08D8; bumps $0679[$0C] by $06CC; tail sfx_reorder_voice_slot
 $6A8F,step_accum_sub_7e,func,0,Subtracts $7E via sub_multibyte_a1, result->$00A4; if changed & <$14 use as idx into $6E0F->$0096 then draw_symmetric_span_loop; sets $008D, INC $008E, advance_history_6a4d
 $6AB5,add_multibyte_a1,func,0,Multi-byte add: A (C clear) += $00A1, carry chains into $00A2,$00A3,$00A4; returns top byte in A
 $6AC9,sub_multibyte_a1,func,0,Multi-byte subtract: stores A to $08DA, $00A1 -= A, borrow chains through $00A2,$00A3,$00A4; mirror of add_multibyte_a1
@@ -680,7 +680,7 @@ $0715,sfx_top_voice_idx,var,0,Selected top voice slot index from $568a; excluded
 $0716,sfx_scan_prio,var,0,SFX voice-scan threshold/min priority accumulator ($10 init in 568a, 0 in 56af)
 $0717,sfx_next_voice_idx,var,0,Second/next selected voice slot index from sfx_pick_next_voice ($56af)
 $0718,sfx_voice_expired_flag,var,0,Per-slot "voice expired" flag in sfx_voice_envelope_tick; reset 0 per slot ($5499) INC'd when an envelope completes ($54cf/$5505) gates ring_push_marked ($5510). Dead after the call.
-$0719,event_ring_0719,var,0,32-entry ($20) circular buffer; pushed by ring_push_0719, drained in sfx_voice_envelope_tick (input_init/reorder_sprite_slot per entry)
+$0719,event_ring_0719,var,0,32-entry ($20) circular buffer; pushed by ring_push_0719, drained in sfx_voice_envelope_tick (input_init/sfx_reorder_voice_slot per entry)
 $073A,sfx_note_timer,var,0,SFX note/duration countdown; decremented each tick in sfx_voice_tick($70F9), reloaded from table $71D2 by sfx_seq_step
 $073B,sfx_voice_mute,var,0,SFX play/mute selector; nonzero -> write Y(=0) to AUDC1/2/3 silencing; set from note high-nibble in sfx_seq_step ($718D)
 $073C,sfx_seq_ptr,var,0,SFX sequence index into table $71DB; advanced by sfx_seq_step($7148), init 0 in reset_audctl_flags

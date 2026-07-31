@@ -5046,7 +5046,7 @@ L_5543:;
     /* 5543 */
     TAY();
     /* 5544 */
-    reorder_sprite_slot();
+    sfx_reorder_voice_slot();
 L_5547:;
     /* 5547 */
     DEC_M(MEM_ring_tail_0719);
@@ -5208,9 +5208,9 @@ void game_sub_55FC__t6502(void) {
     ring_push_0719(); return;
 }
 
-/* reorder_sprite_slot @ $5614: Swaps/moves entries in $0705 array by Y vs priority $0714/0715/0717,$066B; calls 5673/56af/568a */
-/* faithful transliteration kept as the validation oracle; native reorder_sprite_slot() lives in rof_native.c (see VALIDATE_FUNCS) */
-void reorder_sprite_slot__t6502(void) {
+/* sfx_reorder_voice_slot @ $5614: Swaps/moves entries in $0705 array by Y vs priority $0714/0715/0717,$066B; calls 5673/56af/568a */
+/* faithful transliteration kept as the validation oracle; native sfx_reorder_voice_slot() lives in rof_native.c (see VALIDATE_FUNCS) */
+void sfx_reorder_voice_slot__t6502(void) {
     /* 5614 */
     TYA();
     /* 5615 */
@@ -7541,7 +7541,7 @@ L_645b:; platform_tick_vbi(); platform_render_frame();
     /* 6464 */
     mem[MEM_sfx_voice_distort_0e+cpu.Y] = cpu.A;
     /* 6467 */
-    reorder_sprite_slot();
+    sfx_reorder_voice_slot();
     /* 646a */
     LDA(0x1D);
 L_646c:; platform_tick_vbi(); platform_render_frame();
@@ -7575,7 +7575,7 @@ L_6478:; platform_tick_vbi(); platform_render_frame();
     /* 6490 */
     mem[MEM_hud_field_679+cpu.Y] = cpu.A;
     /* 6493 */
-    reorder_sprite_slot();
+    sfx_reorder_voice_slot();
     /* 6498 */
     timer_676 = 0x02;
     /* 649d */
@@ -7628,7 +7628,7 @@ L_64c4:;
     /* 64d4 */
     mem[MEM_hud_field_679+cpu.Y] = cpu.A;
     /* 64d7 */
-    reorder_sprite_slot();
+    sfx_reorder_voice_slot();
     /* 64da */
     LDY(0x0B);
     /* 64de */
@@ -7638,7 +7638,7 @@ L_64c4:;
     /* 64e3 */
     mem[MEM_hud_field_679+cpu.Y] = cpu.A;
     /* 64e6 */
-    reorder_sprite_slot();
+    sfx_reorder_voice_slot();
     /* 64e9 */
     LDA(0x01);
     /* 64eb */
@@ -24756,7 +24756,7 @@ void ret_stub_6a26__t6502(void) {
     return;
 }
 
-/* advance_history_6a4d @ $6A4D: Shifts 6-byte ring $08D4-$08D9 up one (insert old $08D9); if $008D<0 sets $0071=$08D8; bumps $0679[$0C] by $06CC; tail reorder_sprite_slot */
+/* advance_history_6a4d @ $6A4D: Shifts 6-byte ring $08D4-$08D9 up one (insert old $08D9); if $008D<0 sets $0071=$08D8; bumps $0679[$0C] by $06CC; tail sfx_reorder_voice_slot */
 /* faithful transliteration kept as the validation oracle; native advance_history_6a4d() lives in rof_native.c (see VALIDATE_FUNCS) */
 void advance_history_6a4d__t6502(void) {
     /* 6a4d */
@@ -24800,7 +24800,7 @@ L_6a89:;
     /* 6a89 */
     mem[MEM_hud_field_679+cpu.Y] = cpu.A;
     /* 6a8c */
-    reorder_sprite_slot(); return;
+    sfx_reorder_voice_slot(); return;
 }
 
 /* clear_alien_knock_active @ $7F74: $0632=0 */
