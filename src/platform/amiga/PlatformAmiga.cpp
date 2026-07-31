@@ -351,10 +351,13 @@ static uint16_t pokey_period(uint8_t ch, uint8_t audf, uint8_t audctl)
     static const uint32_t PAULA_CLOCK = 3546895u;
 
     uint32_t base_div = (audctl & 0x01u) ? 114u : 28u;
-    bool use_179 = ((ch == 0) && (audctl & 0x20u)) ||
-                   ((ch == 2) && (audctl & 0x40u));
-    bool chain_lo = (ch == 0 && (audctl & 0x08u)) ||
-                    (ch == 2 && (audctl & 0x10u));
+    // AUDCTL bit→channel (atari800 pokey.h): CH1_179 $40 = 1.79MHz for Ch1 (0-indexed ch0),
+    // CH3_179 $20 = Ch3 (ch2); CH1_CH2 $10 joins Ch1+Ch2 (lo=ch0), CH3_CH4 $08 joins Ch3+Ch4
+    // (lo=ch2).  (These were previously transposed here.)
+    bool use_179 = ((ch == 0) && (audctl & 0x40u)) ||
+                   ((ch == 2) && (audctl & 0x20u));
+    bool chain_lo = (ch == 0 && (audctl & 0x10u)) ||
+                    (ch == 2 && (audctl & 0x08u));
 
     uint32_t divider;
     if (chain_lo) {
@@ -434,10 +437,10 @@ static void update_paula_channel(uint8_t ch)
         // pitched, punchy buzz — instead of the flat white noise.  Regenerate only when the
         // poly stride or gate mode changes (volume changes don't alter the shape).
         if (audctl & 0x80u) {
-            bool     use_179   = ((ch == 0) && (audctl & 0x20u)) ||
-                                 ((ch == 2) && (audctl & 0x40u));
-            bool     chain_lo  = (ch == 0 && (audctl & 0x08u)) ||
-                                 (ch == 2 && (audctl & 0x10u));
+            bool     use_179   = ((ch == 0) && (audctl & 0x40u)) ||   // CH1_179 $40 → ch0
+                                 ((ch == 2) && (audctl & 0x20u));     // CH3_179 $20 → ch2
+            bool     chain_lo  = (ch == 0 && (audctl & 0x10u)) ||     // CH1_CH2 $10 → ch0 lo
+                                 (ch == 2 && (audctl & 0x08u));       // CH3_CH4 $08 → ch2 lo
             uint32_t divider   = chain_lo ? ((uint32_t)audf + 256u * pokey[(ch + 1) * 2] + 1u)
                                           : ((uint32_t)audf + 1u);
             uint32_t stride    = use_179 ? divider : divider * ((audctl & 0x01u) ? 114u : 28u);
