@@ -180,6 +180,19 @@ OS shadow registers:
 - `$003D` — death/handoff phase byte (`!=0` → set to `2`); unnamed. Suggested: `death_phase`.
 - `$066E`, and the `$0F1D`/`$0E8F`/`$0B31`/`$0020`/`$2830` block clears — need analysis.
 
+## SFX / audio (found 2026-07-31 while decoding the event system — see docs/sfx-events.md)
+
+- ✓ `$581C input_init` → **`sfx_event_load`**. It is NOT any kind of input init — it's the SFX
+  event loader: `X`=event id, `DEX`→table index, reads the 12 parameter tables (`$56d4`…`$57f4`)
+  into voice slot `Y=$56d4[X]`. Called from the ring-drain in `$548d`, and directly at
+  `$3df5/$3df9/$61aa/$63a9/$63d2`.
+- ? `$5614`/`$568a`/`$56af` — the SFX **voice-priority mixer** (pick loudest ≤4 slots → assign
+  POKEY channels + evict). Give canonical names (`sfx_voice_mix`/`sfx_pick_loudest`/…) once verified.
+- ? `$0642 game_phase_flag` — the SFX/beep code and the corrected [[pilot-proximity-beep]] memory
+  treat `$0642` as the **range-to-pilot digit** (`($0079>>2)+1`, clamp 1..9), gating the range beep
+  at `$4000`. Reconcile with the current "game phase (0=intro/1-2=active/3=transition)" label — one
+  of them is wrong or it is dual-used. Verify against a live flight capture before renaming.
+
 ## Verify-later comment fixes
 
 - `$00CD grafm_shadow` — comment says "pushed to GRAFM ($D00A)…wing-clearance missile graphics",
