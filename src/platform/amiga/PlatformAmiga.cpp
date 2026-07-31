@@ -345,11 +345,21 @@ extern "C" volatile unsigned short g_bcResetVbi[BCE_N] = {};
 extern "C" volatile unsigned short g_bcResetN = 0;
 extern "C" volatile unsigned short g_bc01Vbi[BCE_N] = {};
 extern "C" volatile unsigned short g_bc01N = 0;
+// gate context at each event-$01 load: the $63a1 level/scanner-setup block is entered at $637d
+// (LDY $0004;BNE) or on $006d(level_stage)!=$0626.  Capture [0]=$0004 [1]=$006d [2]=$0626
+// [3]=$0627 [4]=$0642 range so we can see WHICH gate trips the spurious re-entry at range 1.
+extern "C" volatile unsigned char  g_bc01Ctx[BCE_N][5] = {};
 extern "C" void rof_bc_reset_log(void) {   // hooked at sfx_engine_reset $5433
     unsigned i = g_bcResetN; if (i < BCE_N) { g_bcResetVbi[i] = g_vbiCount; g_bcResetN = (unsigned short)(i + 1u); }
 }
 extern "C" void rof_bc_ev01_log(void) {    // hooked in input_init/sfx_event_load when event id==1
-    unsigned i = g_bc01N; if (i < BCE_N) { g_bc01Vbi[i] = g_vbiCount; g_bc01N = (unsigned short)(i + 1u); }
+    unsigned i = g_bc01N; if (i < BCE_N) {
+        g_bc01Vbi[i] = g_vbiCount;
+        g_bc01Ctx[i][0] = mem[0x0004]; g_bc01Ctx[i][1] = mem[0x006D];
+        g_bc01Ctx[i][2] = mem[0x0626]; g_bc01Ctx[i][3] = mem[0x0627];
+        g_bc01Ctx[i][4] = mem[0x0642];
+        g_bc01N = (unsigned short)(i + 1u);
+    }
 }
 static unsigned char cur_vol_cap[4] = { 0, 0, 0, 0 };    // last VOL applied per channel
 static unsigned char bc_classify(uint32_t p) {
@@ -438,7 +448,8 @@ extern "C" void flush_paula(void)
             g_bcPer[s][ch]  = cur_per[ch];
             g_bcVol[s][ch]  = cur_vol_cap[ch];
         }
-        if (ni == 0u) { g_bcOn = 0; rof_bc_done(); }   // full ring → freeze + break-hook for gdb
+        if (ni == 0u) rof_bc_done();   // full ring: keep WRAPPING (hold the last 320 frames so
+                                       // SIGINT catches the stuck poly4), just tick the break-hook
     }
 #endif
 }

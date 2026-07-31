@@ -21,24 +21,26 @@ while $i < g_bcResetN && $i < 64
   set $i = $i + 1
 end
 echo \n
-printf "event-$01 load x%u @:", g_bc01N
+printf "event-$01 load x%u  (vbi: $0004 $006d $0626 $0627 range):\n", g_bc01N
 set $i = 0
 while $i < g_bc01N && $i < 64
-  printf " %u", g_bc01Vbi[$i]
+  printf "  @%-5u s4=%02x s6d=%02x s626=%02x s627=%02x rng=%02x\n", \
+    g_bc01Vbi[$i], g_bc01Ctx[$i][0], g_bc01Ctx[$i][1], g_bc01Ctx[$i][2], g_bc01Ctx[$i][3], g_bc01Ctx[$i][4]
   set $i = $i + 1
 end
-echo \n
-# g_bcAux now = slot-5 lifecycle: [0]dist [1]vol [2]freq [3]chan [4]mix-prio [5]mix-voice [6]ph [7]range
-echo idx vbi | s5:dist vol freq chan | mix:prio voice | rng | F2 C2 F3 C3 | k v(0..3)\n
+# ring WRAPS (holds the last 320 frames); walk chronologically from g_bcIdx (oldest).
+# g_bcAux = slot-5 lifecycle: [0]dist [1]vol [2]freq [3]chan [4]mix-prio [5]mix-voice [6]ph [7]range
+echo vbi | s5:dist vol freq chan | mix:prio voice | rng | F2 C2 F3 C3 | k v(0..3)\n
 set $i = 0
 while $i < 320
-  printf "%3u %5u | %02x %2u %02x %02x | %02x %02x | %02x | %02x %02x %02x %02x | %u %u %u %u/%2u %2u %2u %2u\n", \
-    $i, g_bcVbi[$i], \
-    g_bcAux[$i][0], g_bcAux[$i][1], g_bcAux[$i][2], g_bcAux[$i][3], \
-    g_bcAux[$i][4], g_bcAux[$i][5], g_bcAux[$i][7], \
-    g_bcPokey[$i][2], g_bcPokey[$i][3], g_bcPokey[$i][4], g_bcPokey[$i][5], \
-    g_bcKind[$i][0], g_bcKind[$i][1], g_bcKind[$i][2], g_bcKind[$i][3], \
-    g_bcVol[$i][0], g_bcVol[$i][1], g_bcVol[$i][2], g_bcVol[$i][3]
+  set $k = (g_bcIdx + $i) % 320
+  printf "%5u | %02x %2u %02x %02x | %02x %02x | %02x | %02x %02x %02x %02x | %u %u %u %u/%2u %2u %2u %2u\n", \
+    g_bcVbi[$k], \
+    g_bcAux[$k][0], g_bcAux[$k][1], g_bcAux[$k][2], g_bcAux[$k][3], \
+    g_bcAux[$k][4], g_bcAux[$k][5], g_bcAux[$k][7], \
+    g_bcPokey[$k][2], g_bcPokey[$k][3], g_bcPokey[$k][4], g_bcPokey[$k][5], \
+    g_bcKind[$k][0], g_bcKind[$k][1], g_bcKind[$k][2], g_bcKind[$k][3], \
+    g_bcVol[$k][0], g_bcVol[$k][1], g_bcVol[$k][2], g_bcVol[$k][3]
   set $i = $i + 1
 end
 echo ==== SFX event pushes (id @ vbi), cursor order ====\n
