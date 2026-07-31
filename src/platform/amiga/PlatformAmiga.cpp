@@ -326,14 +326,19 @@ extern "C" void rof_bc_done(void) { g_bcDoneTick++; }
 // SFX-event-push log: rof_bc_push() records every ring_push_0719 (event id | $80) with the
 // frame it fired on, so we can see WHICH events drive the range-1 "wrong sound" and when.
 #define BCP_N 256
-extern "C" volatile unsigned char  g_bcPushId[BCP_N] = {};   // event id (low 7 bits of pushed byte)
+extern "C" volatile unsigned char  g_bcPushId[BCP_N] = {};   // FULL pushed byte (bit7 = marked/event)
 extern "C" volatile unsigned short g_bcPushVbi[BCP_N] = {};  // g_vbiCount at push
-extern "C" volatile unsigned short g_bcPushIdx = 0;          // fill cursor (stops at BCP_N)
+extern "C" volatile unsigned short g_bcPushIdx = 0;          // WRAP cursor (keeps last BCP_N)
+extern "C" volatile unsigned short g_bcPushN   = 0;          // total pushes ever
+extern "C" volatile unsigned short g_bcPush01N = 0;          // pushes whose low-7-bits == 1 (event $01)
 extern "C" void rof_bc_push(unsigned char v) {
-    if (!g_bcOn) return;                 // only log during the armed range-1 capture window
-    unsigned i = g_bcPushIdx; if (i >= BCP_N) return;   // stop at full (keep the onset, no wrap)
-    g_bcPushIdx = (unsigned short)(i + 1u);
-    g_bcPushId[i] = (unsigned char)(v & 0x7Fu); g_bcPushVbi[i] = g_vbiCount;
+    // Log EVERY push (not gated on g_bcOn) into a wrap ring so the range-1 window is always
+    // present; store the FULL byte so a marked event $01 ($81) is distinguishable from a raw $01.
+    unsigned i = g_bcPushIdx;
+    g_bcPushId[i] = v; g_bcPushVbi[i] = g_vbiCount;
+    g_bcPushIdx = (unsigned short)((i + 1u) % BCP_N);
+    g_bcPushN = (unsigned short)(g_bcPushN + 1u);
+    if ((v & 0x7Fu) == 1u) g_bcPush01N = (unsigned short)(g_bcPush01N + 1u);   // caught the $81 pusher
 }
 // slot-5 lifecycle logs (range-1 poly4 bug): does slot-5 volume ever get cleared on the Amiga?
 // On the Atari sfx_engine_reset ($5433) zeroes slot-5 vol (+ envelopes), leaving a SILENT poly4/$1f
@@ -383,6 +388,26 @@ extern "C" void rof_bc_lcl_log(void) {     // hooked at setup_level_clear_state 
         g_lclCtx[i][4] = mem[0x003A];
         g_lclN = (unsigned short)(i + 1u);
     }
+}
+// Envelope-expiry RE-QUEUE log (sfx_voice_envelope_tick line ~8568): whenever a voice slot's
+// envelope expires it re-queues that slot's FOLLOW-ON event id ($06F7+y) via ring_push_marked.
+// This is the self-sustaining chain that reloads event $01 (poly4, slot 5) during flight at
+// range 1 — and it is NOT captured by the existing ring_push_0719 push-log.  We log every
+// re-queue: [slot y, follow-on id $06F7+y, vbi] + slot-5 envelope state at the moment, so we
+// see WHICH slot re-arms event $01 and why it keeps expiring.  Ring wraps (last BCE_N).
+extern "C" volatile unsigned short g_rqN = 0;              // total re-queues seen (may exceed ring)
+extern "C" volatile unsigned short g_rqIdx = 0;            // write cursor into the wrap ring
+extern "C" volatile unsigned short g_rqVbi[BCE_N] = {};
+extern "C" volatile unsigned char  g_rqSlot[BCE_N] = {};
+extern "C" volatile unsigned char  g_rqId[BCE_N] = {};
+// count re-queues whose follow-on id == 1 (event $01) specifically, by originating slot
+extern "C" volatile unsigned short g_rq01BySlot[16] = {};
+extern "C" void rof_bc_requeue_log(unsigned char y, unsigned char id) {  // hooked at line ~8568
+    unsigned i = g_rqIdx;
+    g_rqVbi[i] = g_vbiCount; g_rqSlot[i] = y; g_rqId[i] = id;
+    g_rqIdx = (unsigned short)((i + 1u) % BCE_N);
+    g_rqN = (unsigned short)(g_rqN + 1u);
+    if (id == 1u && y < 16u) g_rq01BySlot[y] = (unsigned short)(g_rq01BySlot[y] + 1u);
 }
 extern "C" void rof_bc_ev01_log(void) {    // hooked in input_init/sfx_event_load when event id==1
     unsigned i = g_bc01N; if (i < BCE_N) {

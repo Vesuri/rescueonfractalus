@@ -4792,7 +4792,7 @@ L_53fa:;
     vbi_deferred_dispatch(); return;
 }
 
-/* sfx_engine_reset @ $5433: Font/display character setup (called in game_entry init) */
+/* sfx_engine_reset @ $5433: Zeroes SFX voice slots 1..$e: vol $066b + channel $0705 + all envelope params $0687-$06f7; LEAVES dist $065d + freq $0679 stale (hence a silenced voice keeps its poly/freq leftovers). Callers: game_entry $3d35, crash cinematic $4f3f, level/scene setup $6118 */
 /* faithful transliteration kept as the validation oracle; native sfx_engine_reset() lives in rof_native.c (see VALIDATE_FUNCS) */
 void sfx_engine_reset__t6502(void) {
     /* 5433 */

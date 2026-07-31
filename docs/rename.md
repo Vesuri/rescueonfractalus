@@ -89,6 +89,15 @@ and `[A-Za-z0-9_]*OLD` and fix those variants too.
 - `$0039`/`$286A`/`$286B`/`$286C` (would-be `target_obj_*`, latched target object indices/coords)
   and `$003A` bit7 (gates the shields-cell update) — `$0039` clash above; `$003A` role unclear.
   Verify the target-latch block before naming.
+- `$0072` `player_lives` — **MISNAMED, it is NOT a life counter** (the real per-life counter is
+  `life_counter`, compared `< $0E` in the flight loop). `$0072` is a small **flight/message game-mode
+  selector**: `game_state_update` (`$4A??`) dispatches on it — `==0` = normal flight
+  (`step_object_along_axes`), `==2` = **crash/landing auto-attitude** (forces roll + pitch-trim, the
+  landing "level-ready" gate), and `show_message_id_a` ($4956) stashes entry-A into it as the
+  **"event/message mode"**. Its sole writer to `2` is `setup_level_clear_state` ($7BC6, when
+  `level_or_state != 0`), and the game_main_loop_body flight loop breaks out (re-launch) only when it
+  `== 2`. Suggested: `flight_mode_state` / `game_mode_0072` (dual-used with the message mode — resolve
+  which owns it, cf. the aliasing entries above). Found 2026-08-01 tracing the range-1 poly4 bug.
 
 ## Deferred: `sfx_voice_envelope_tick` ($548D) per-slot envelope arrays
 

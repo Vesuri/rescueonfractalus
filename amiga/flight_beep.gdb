@@ -47,7 +47,24 @@ while $i < 512
   end
   set $i = $i + 1
 end
-printf "event-$01 load x%u  (path 1=$6150[$006c&$0644==0] 2=$62f4[$0004] 3=$5a78[CONSOL/TRIG]):\n", g_bc01N
+printf "envelope RE-QUEUE (sfx_voice_envelope_tick $548d line ~8568): total=%u; re-queues of event $01 by originating slot:\n", g_rqN
+set $i = 1
+while $i < 15
+  if g_rq01BySlot[$i] != 0
+    printf "  slot %-2u re-queued id=$01  x%u  <== the self-sustaining poly4 chain\n", $i, g_rq01BySlot[$i]
+  end
+  set $i = $i + 1
+end
+echo   --- last re-queues (vbi: slot -> follow-on id): ---\n
+set $i = 0
+while $i < g_rqN && $i < 40
+  set $k = (g_rqIdx + $i) % 128
+  if g_rqVbi[$k] != 0
+    printf "  @%-5u slot %-2u -> id=%02x%s\n", g_rqVbi[$k], g_rqSlot[$k], g_rqId[$k], (g_rqId[$k]==1 ? "  <== event $01" : "")
+  end
+  set $i = $i + 1
+end
+printf "event-$01 load x%u  (NOTE: PATH tag is STALE from launch — event $01 in flight comes from the ring-drain, not display_setup):\n", g_bc01N
 set $i = 0
 while $i < g_bc01N && $i < 64
   printf "  @%-5u PATH=%u | s4($0004)=%02x s6d(stage)=%02x s6c(sndAct)=%02x s644(sndEvt)=%02x rng=%02x CONSOLread=%02x TRIG0read=%02x\n", \

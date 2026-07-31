@@ -2980,6 +2980,13 @@ volatile uint8_t g_forceAirlockOpen =
 #else
     0;
 #endif
+
+/* Debug test aid (range-1 poly4) — headlessly simulate a downed pilot at range 1 so the
+ * pilot/scanner code paths run without an interactive fly-over.  Poke g_forcePilotR1=1 at
+ * runtime (gdb) once flight is stable; the flight loop then holds pilot-visible ($003E) +
+ * pilot distance ($0079=1, range digit 1) each iteration so pilot_render runs at close range.
+ * Off by default; Amiga-only so the oracle/validation are unaffected. */
+volatile uint8_t g_forcePilotR1 = 0;
 #endif
 
 #if defined(ROF_PLATFORM_AMIGA) && defined(ROF_FLIGHT_PROBE)
@@ -8566,6 +8573,9 @@ static void sfx_voice_envelope_tick_impl(void) {
         /* Either envelope finished -> re-queue this slot's event id (bit7-marked) on the ring. */
         if (expired != 0) {
             cpu.X = mem[0x06F7 + y];
+#ifdef ROF_BEEP_CAP
+            { extern void rof_bc_requeue_log(unsigned char, unsigned char); rof_bc_requeue_log(y, mem[0x06F7 + y]); }
+#endif
             ring_push_marked();
         }
     }
@@ -10398,6 +10408,14 @@ static void game_main_loop_body(void) {
     if (game_state != 0) pilot_state = game_state;   /* keep pilot_state while game_state is active */
     game_state_update();
     enemy_check();
+#if defined(ROF_PLATFORM_AMIGA) && defined(ROF_FLIGHT_PROBE)
+    { extern volatile uint8_t g_forcePilotR1;
+      if (g_forcePilotR1 && g_iterCount > 8) {       /* headless range-1 pilot simulation */
+          clear_colors_done_003E = 0x01;             /* $003E: pilot visible (pilot_visible gate) */
+          mem[0x0079] = 0x01;                        /* pilot distance -> range digit 1 */
+          pilot_prev = 0x01; pilot_visible = 0x01;   /* force the render gate */
+      } }
+#endif
     if (pilot_prev != 0 && pilot_visible != 0) pilot_render();  /* render only when prev && current visible */
     pilot_prev = pilot_visible;
     pilot_visible = (pilot_state == 0) ? clear_colors_done_003E : 0x00;
