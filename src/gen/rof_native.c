@@ -2445,6 +2445,9 @@ void intro_unmark_random_cells(void) {
  * seed the voice-priority slots ($0705[2..8] / POKEY AUDF via $D1FF+X) and the music
  * timer fields $0712/$0713 = 2/6, AUDCTL ($D208) = $60.  Pure init (POKEY via bus_write). */
 void sfx_engine_reset(void) {
+#ifdef ROF_BEEP_CAP
+    { extern void rof_bc_reset_log(void); rof_bc_reset_log(); }  /* log slot-vol clears (range-1 poly4 probe) */
+#endif
     alt_ring_head = 0x00; ring_tail_0719 = 0x00;
     static const uint16_t cols[11] = { 0x066B, 0x0705, 0x0687, 0x0695, 0x06A3, 0x06B1,
                                         0x06BF, 0x06CD, 0x06DB, 0x06E9, 0x06F7 };
@@ -8433,6 +8436,9 @@ void input_init(void) {
     uint8_t i = (uint8_t)(cpu.X - 1);                    /* DEX */
     if (!(i & 0x80)) {                                   /* BMI L_5876: skip when (X-1) negative */
         uint8_t y = mem[0x56D4 + i];                     /* voice slot */
+#ifdef ROF_BEEP_CAP
+        if (i == 0) { extern void rof_bc_ev01_log(void); rof_bc_ev01_log(); }  /* event $01 load (range-1 probe) */
+#endif
         uint8_t ctl = mem[0x56F5 + i];
         mem[MEM_sfx_voice_distortion + y] = (uint8_t)(ctl & 0xF0);         /* distortion */
         mem[MEM_sfx_voice_distort_0e + y] = (uint8_t)(ctl & 0x0F);         /* prio/vol */

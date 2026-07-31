@@ -12,16 +12,33 @@ echo \n>>> connected — fly toward a downed pilot; capture auto-arms at range<=
 continue
 echo \n==== SIGINT — dumping ring ====\n
 printf "range(642)=%02x descent(3d)=%02x pilotdist(79)=%02x g_bcIdx=%u g_bcOn=%u\n", mem[0x0642],mem[0x003D],mem[0x0079],g_bcIdx,g_bcOn
-echo idx vbi rng | F0 C0 F1 C1 F2 C2 F3 C3 | k3 v3 | vDist1234 | ring h/t\n
+printf "slot5 NOW: dist=%02x vol=%02x freq=%02x chan=%02x  mixer top-prio=%02x top-voice=%02x\n", \
+  mem[0x0662],mem[0x0670],mem[0x067E],mem[0x070A],mem[0x0714],mem[0x0715]
+printf "sfx_engine_reset x%u @:", g_bcResetN
+set $i = 0
+while $i < g_bcResetN && $i < 64
+  printf " %u", g_bcResetVbi[$i]
+  set $i = $i + 1
+end
+echo \n
+printf "event-$01 load x%u @:", g_bc01N
+set $i = 0
+while $i < g_bc01N && $i < 64
+  printf " %u", g_bc01Vbi[$i]
+  set $i = $i + 1
+end
+echo \n
+# g_bcAux now = slot-5 lifecycle: [0]dist [1]vol [2]freq [3]chan [4]mix-prio [5]mix-voice [6]ph [7]range
+echo idx vbi | s5:dist vol freq chan | mix:prio voice | rng | F2 C2 F3 C3 | k v(0..3)\n
 set $i = 0
 while $i < 320
-  printf "%3u %5u %02x | %02x %02x %02x %02x %02x %02x %02x %02x | k%u v%2u | %02x %02x %02x %02x | %02x/%02x\n", \
-    $i, g_bcVbi[$i], g_bcAux[$i][0], \
-    g_bcPokey[$i][0], g_bcPokey[$i][1], g_bcPokey[$i][2], g_bcPokey[$i][3], \
-    g_bcPokey[$i][4], g_bcPokey[$i][5], g_bcPokey[$i][6], g_bcPokey[$i][7], \
-    g_bcKind[$i][3], g_bcVol[$i][3], \
-    g_bcAux[$i][4], g_bcAux[$i][5], g_bcAux[$i][6], g_bcAux[$i][7], \
-    g_bcAux[$i][2], g_bcAux[$i][3]
+  printf "%3u %5u | %02x %2u %02x %02x | %02x %02x | %02x | %02x %02x %02x %02x | %u %u %u %u/%2u %2u %2u %2u\n", \
+    $i, g_bcVbi[$i], \
+    g_bcAux[$i][0], g_bcAux[$i][1], g_bcAux[$i][2], g_bcAux[$i][3], \
+    g_bcAux[$i][4], g_bcAux[$i][5], g_bcAux[$i][7], \
+    g_bcPokey[$i][2], g_bcPokey[$i][3], g_bcPokey[$i][4], g_bcPokey[$i][5], \
+    g_bcKind[$i][0], g_bcKind[$i][1], g_bcKind[$i][2], g_bcKind[$i][3], \
+    g_bcVol[$i][0], g_bcVol[$i][1], g_bcVol[$i][2], g_bcVol[$i][3]
   set $i = $i + 1
 end
 echo ==== SFX event pushes (id @ vbi), cursor order ====\n

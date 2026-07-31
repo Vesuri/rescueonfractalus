@@ -313,9 +313,8 @@ extern "C" volatile unsigned char  g_bcKind[BC_N][4] = {};    // 0 silent/other 
 extern "C" volatile unsigned short g_bcPer[BC_N][4] = {};
 extern "C" volatile unsigned char  g_bcVol[BC_N][4] = {};
 extern "C" volatile unsigned char  g_bcRestart[BC_N] = {};    // channels that restarted this flush
-// aux[]: theme/sfx sequencer + gate state per frame, to see who stalls across the freeze:
-//  [0]=$00E7 themeGate [1]=$062D attractSub [2]=$073A seqTimer [3]=$073B mute
-//  [4]=$073C seqPtr [5]=$0655 musicGate [6]=$060B cockpitFlag [7]=$0004 launchState
+// aux[]: slot-5 lifecycle per frame (see the flush_paula population for the exact bytes) —
+//  slot5 dist/vol/freq/chan + mixer top-prio/top-voice + slot5 freq-env phase + range digit.
 extern "C" volatile unsigned char  g_bcAux[BC_N][8] = {};
 extern "C" volatile unsigned short g_bcIdx = 0;          // write cursor (mod BC_N)
 extern "C" volatile unsigned char  g_bcOn  = 0;          // armed once flight VBI is live
@@ -335,6 +334,22 @@ extern "C" void rof_bc_push(unsigned char v) {
     unsigned i = g_bcPushIdx; if (i >= BCP_N) return;   // stop at full (keep the onset, no wrap)
     g_bcPushIdx = (unsigned short)(i + 1u);
     g_bcPushId[i] = (unsigned char)(v & 0x7Fu); g_bcPushVbi[i] = g_vbiCount;
+}
+// slot-5 lifecycle logs (range-1 poly4 bug): does slot-5 volume ever get cleared on the Amiga?
+// On the Atari sfx_engine_reset ($5433) zeroes slot-5 vol (+ envelopes), leaving a SILENT poly4/$1f
+// leftover; the bug is the Amiga leaving slot-5 vol nonzero → audible poly4 warble.  These two logs
+// (UNGATED — they must catch the level-start reset/push that precedes flight arming) record the
+// g_vbiCount of every sfx_engine_reset call and every event-$01 load so we can see the ORDER.
+#define BCE_N 64
+extern "C" volatile unsigned short g_bcResetVbi[BCE_N] = {};
+extern "C" volatile unsigned short g_bcResetN = 0;
+extern "C" volatile unsigned short g_bc01Vbi[BCE_N] = {};
+extern "C" volatile unsigned short g_bc01N = 0;
+extern "C" void rof_bc_reset_log(void) {   // hooked at sfx_engine_reset $5433
+    unsigned i = g_bcResetN; if (i < BCE_N) { g_bcResetVbi[i] = g_vbiCount; g_bcResetN = (unsigned short)(i + 1u); }
+}
+extern "C" void rof_bc_ev01_log(void) {    // hooked in input_init/sfx_event_load when event id==1
+    unsigned i = g_bc01N; if (i < BCE_N) { g_bc01Vbi[i] = g_vbiCount; g_bc01N = (unsigned short)(i + 1u); }
 }
 static unsigned char cur_vol_cap[4] = { 0, 0, 0, 0 };    // last VOL applied per channel
 static unsigned char bc_classify(uint32_t p) {
@@ -409,16 +424,15 @@ extern "C" void flush_paula(void)
         g_bcVbi[s]     = g_vbiCount;
         g_bcRestart[s] = restart;
         for (int i = 0; i < 9; i++) g_bcPokey[s][i] = pokey[i];
-        // flight range-1 context: [0]=$0642 range digit [1]=$003d descent flag
-        //  [2]=$0073 sfx ring head [3]=$0074 sfx ring tail
-        //  then the per-voice DISTORTION bytes $065D+Y for the 4 voices Paula is mapped to
-        //  (which voice sits on which POKEY channel is $0705+Y): [4..7]=$065D+ the reg-idx
-        //  used by ch0..ch3.  Lets us see if the beep channel's distortion flips pure<->noise.
-        g_bcAux[s][0] = mem[0x0642]; g_bcAux[s][1] = mem[0x003D];
-        g_bcAux[s][2] = mem[0x0073]; g_bcAux[s][3] = mem[0x0074];
-        // $065D+Y distortion for voice slots 1..4 (the SFX engine's active voices)
-        g_bcAux[s][4] = mem[0x065D + 1]; g_bcAux[s][5] = mem[0x065D + 2];
-        g_bcAux[s][6] = mem[0x065D + 3]; g_bcAux[s][7] = mem[0x065D + 4];
+        // slot-5 lifecycle (the range-1 poly4 = a stale event-$01 voice in slot 5):
+        //  [0]=$0662 slot5 distortion  [1]=$0670 slot5 vol(&0f)  [2]=$067e slot5 freq
+        //  [3]=$070a slot5 POKEY-channel idx (0=unassigned)  [4]=$0714 mixer top-prio-val
+        //  [5]=$0715 mixer top-voice-idx  [6]=$06e0 slot5 freq-env phase  [7]=$0642 range digit
+        // Atari-correct in flight: dist=$40 freq=$1f but vol=0, chan=0 (silent leftover).
+        g_bcAux[s][0] = mem[0x0662]; g_bcAux[s][1] = (unsigned char)(mem[0x0670] & 0x0F);
+        g_bcAux[s][2] = mem[0x067E]; g_bcAux[s][3] = mem[0x070A];
+        g_bcAux[s][4] = mem[0x0714]; g_bcAux[s][5] = mem[0x0715];
+        g_bcAux[s][6] = mem[0x06E0]; g_bcAux[s][7] = mem[0x0642];
         for (int ch = 0; ch < 4; ch++) {
             g_bcKind[s][ch] = bc_classify(cur_ptr[ch]);   // waveform Paula is playing after this flush
             g_bcPer[s][ch]  = cur_per[ch];
@@ -1395,6 +1409,13 @@ static uint32_t vbiHandler()
         // of all 4 Paula channels + POKEY shadow, then freezes (g_bcOn=0), catching the range
         // 2→1→0 beep transition.  On the Atari (lrscanner.a8s) that beep is a PURE tone on ch3
         // pulsing faster as range drops; if the Amiga shows NOISE distortion there, that's the bug.
+        // Arm the per-frame slot-5 ring at the range-1/2 pilot approach (needs interactive
+        // flying to a downed pilot; the headless auto-launch never gets there, and a headless
+        // no-pilot run already CONFIRMED slot 5 is correctly vol=0 through standby + flight).
+        // The reset/ev01 logs above are ungated so they catch the level-start reset+push
+        // regardless.  On the Atari (lrscanner) slot 5 stays vol=0 at range 1..2; if the Amiga
+        // shows slot-5 vol nonzero (audible poly4) here, that's the bug — and whether event $01
+        // is re-loaded (g_bc01N ticks up) or slot-5 vol is bumped in place tells us the cause.
         static unsigned char s_bcArmed = 0;
         if (!s_bcArmed && g_probeFlightVbi && mem[0x0642u] >= 1u && mem[0x0642u] <= 2u) {
             g_bcOn = 1; s_bcArmed = 1;   // one-shot; freeze in flush_paula sticks
