@@ -296,6 +296,36 @@ static void wait_rasterlines(uint8_t lines)
     }
 }
 
+// g_vbiCount: bumped once per REAL vertical-blank interrupt (vbiHandler).  Defined here (ahead
+// of its main use below) so flush_paula's beep capture can timestamp frames.
+static volatile uint16_t g_vbiCount = 0;
+
+#ifdef ROF_BEEP_CAP
+// ---- pilot-proximity-beep capture (make PROBES=1 BEEP_CAP=1) ------------------------
+// Records, each flush_paula, the POKEY shadow + per-channel Paula waveform class / period /
+// volume + the restart bitmask into a ring, so amiga/beep_cap.gdb can read how ch3 (the beep
+// channel) behaves under the fast every-2-frame range-1 re-push forced in vbiHandler().  This
+// isolates whether the distortion is the flush restart dance, a stuck voice, or a ring/order race.
+#define BC_N 320
+extern "C" volatile unsigned short g_bcVbi[BC_N] = {};
+extern "C" volatile unsigned char  g_bcPokey[BC_N][9] = {};   // AUDF1,AUDC1,..,AUDF4,AUDC4,AUDCTL
+extern "C" volatile unsigned char  g_bcKind[BC_N][4] = {};    // 0 silent/other 1 pure 2 poly4 3 poly5 4 noise 5 polydist
+extern "C" volatile unsigned short g_bcPer[BC_N][4] = {};
+extern "C" volatile unsigned char  g_bcVol[BC_N][4] = {};
+extern "C" volatile unsigned char  g_bcRestart[BC_N] = {};    // channels that restarted this flush
+extern "C" volatile unsigned short g_bcIdx = 0;          // write cursor (mod BC_N)
+extern "C" volatile unsigned char  g_bcOn  = 0;          // armed once flight VBI is live
+static unsigned char cur_vol_cap[4] = { 0, 0, 0, 0 };    // last VOL applied per channel
+static unsigned char bc_classify(uint32_t p) {
+    if (p == (uint32_t)wave_pure) return 1;
+    if (p >= (uint32_t)noise_buf     && p < (uint32_t)noise_buf     + sizeof(noise_buf))     return 4;
+    if (p >= (uint32_t)poly4_wave    && p < (uint32_t)poly4_wave    + sizeof(poly4_wave))    return 2;
+    if (p >= (uint32_t)poly5_wave    && p < (uint32_t)poly5_wave    + sizeof(poly5_wave))    return 3;
+    if (p >= (uint32_t)poly_dist_buf && p < (uint32_t)poly_dist_buf + sizeof(poly_dist_buf)) return 5;
+    return 0;
+}
+#endif
+
 // Apply all channels recorded since the last flush.  Waveform changes are batched through a
 // single DMA off → wait → on so the rasterline wait is paid once.  Called once per frame from
 // game_vbi_isr, after both audio engines have recorded their POKEY writes for the frame: the
@@ -304,44 +334,68 @@ extern "C" void flush_paula(void)
 {
     uint8_t valid = want_valid;
     want_valid = 0;
-    if (!valid) return;
-
-    // Split into "restart" (waveform changed) and "live" (same waveform → just VOL/PER).
     uint8_t restart = 0;
-    for (uint8_t ch = 0; ch < 4; ch++) {
-        if (!(valid & (1u << ch))) continue;
-        if (want_ptr[ch] != cur_ptr[ch] || want_len[ch] != cur_len[ch])
-            restart |= (uint8_t)(1u << ch);
-        else { AUD_PER(ch) = want_per[ch]; AUD_VOL(ch) = want_vol[ch];     // live, no click
-               cur_per[ch] = want_per[ch]; }
-    }
-    if (!restart) return;
 
-    // The channel must stay OFF for >2 sample periods of the period STILL LOADED (the old
-    // note's) or it "stays on and continues" (§5-2-7).  A PAL rasterline is ~227 Paula
-    // ticks, so size the wait from the slowest old period among the restarting channels:
-    // 2*per/227 lines, plus margin.  Fast old notes wait the ~7-line floor; a slow old bass
-    // note (per~6011) needs ~53 lines (~3.4 ms) — fine on the title screen.
-    uint16_t max_per = 0;
-    for (uint8_t ch = 0; ch < 4; ch++)
-        if ((restart & (1u << ch)) && cur_per[ch] > max_per) max_per = cur_per[ch];
-    uint16_t wl = (uint16_t)((2u * (uint32_t)max_per) / 227u + 4u);
-    if (wl < 7u)  wl = 7u;
-    if (wl > 110u) wl = 110u;
+    if (valid) {
+        // Split into "restart" (waveform changed) and "live" (same waveform → just VOL/PER).
+        for (uint8_t ch = 0; ch < 4; ch++) {
+            if (!(valid & (1u << ch))) continue;
+            if (want_ptr[ch] != cur_ptr[ch] || want_len[ch] != cur_len[ch])
+                restart |= (uint8_t)(1u << ch);
+            else { AUD_PER(ch) = want_per[ch]; AUD_VOL(ch) = want_vol[ch];     // live, no click
+                   cur_per[ch] = want_per[ch];
+#ifdef ROF_BEEP_CAP
+                   cur_vol_cap[ch] = want_vol[ch];
+#endif
+            }
+        }
 
-    *dmaconPointer = (uint16_t)restart;            // AUDxEN off for all changed channels
-    wait_rasterlines((uint8_t)wl);                 // hold off >2 OLD sample periods → resets
-    for (uint8_t ch = 0; ch < 4; ch++) {
-        if (!(restart & (1u << ch))) continue;
-        AUD_PTR(ch) = want_ptr[ch];
-        AUD_LEN(ch) = want_len[ch];
-        AUD_PER(ch) = want_per[ch];
-        AUD_VOL(ch) = want_vol[ch];
-        cur_ptr[ch] = want_ptr[ch];
-        cur_len[ch] = want_len[ch];
-        cur_per[ch] = want_per[ch];
+        if (restart) {
+            // The channel must stay OFF for >2 sample periods of the period STILL LOADED (the old
+            // note's) or it "stays on and continues" (§5-2-7).  A PAL rasterline is ~227 Paula
+            // ticks, so size the wait from the slowest old period among the restarting channels:
+            // 2*per/227 lines, plus margin.  Fast old notes wait the ~7-line floor; a slow old bass
+            // note (per~6011) needs ~53 lines (~3.4 ms) — fine on the title screen.
+            uint16_t max_per = 0;
+            for (uint8_t ch = 0; ch < 4; ch++)
+                if ((restart & (1u << ch)) && cur_per[ch] > max_per) max_per = cur_per[ch];
+            uint16_t wl = (uint16_t)((2u * (uint32_t)max_per) / 227u + 4u);
+            if (wl < 7u)  wl = 7u;
+            if (wl > 110u) wl = 110u;
+
+            *dmaconPointer = (uint16_t)restart;            // AUDxEN off for all changed channels
+            wait_rasterlines((uint8_t)wl);                 // hold off >2 OLD sample periods → resets
+            for (uint8_t ch = 0; ch < 4; ch++) {
+                if (!(restart & (1u << ch))) continue;
+                AUD_PTR(ch) = want_ptr[ch];
+                AUD_LEN(ch) = want_len[ch];
+                AUD_PER(ch) = want_per[ch];
+                AUD_VOL(ch) = want_vol[ch];
+                cur_ptr[ch] = want_ptr[ch];
+                cur_len[ch] = want_len[ch];
+                cur_per[ch] = want_per[ch];
+#ifdef ROF_BEEP_CAP
+                cur_vol_cap[ch] = want_vol[ch];
+#endif
+            }
+            *dmaconPointer = (uint16_t)(0x8000u | restart); // AUDxEN on — all at once, one wait paid
+        }
     }
-    *dmaconPointer = (uint16_t)(0x8000u | restart); // AUDxEN on — all at once, one wait paid
+
+#ifdef ROF_BEEP_CAP
+    if (g_bcOn) {
+        unsigned s = g_bcIdx; unsigned ni = (s + 1u) % BC_N; g_bcIdx = (unsigned short)ni;
+        g_bcVbi[s]     = g_vbiCount;
+        g_bcRestart[s] = restart;
+        for (int i = 0; i < 9; i++) g_bcPokey[s][i] = pokey[i];
+        for (int ch = 0; ch < 4; ch++) {
+            g_bcKind[s][ch] = bc_classify(cur_ptr[ch]);   // waveform Paula is playing after this flush
+            g_bcPer[s][ch]  = cur_per[ch];
+            g_bcVol[s][ch]  = cur_vol_cap[ch];
+        }
+        if (ni == 0u) g_bcOn = 0;   // captured a full ring from arming → freeze (keeps the doors window)
+    }
+#endif
 }
 
 // ---- POKEY→Paula frequency conversion ----------------------------------------
@@ -630,7 +684,7 @@ int  PlatformAmiga::loadImage(const char* /*path*/) { return 0; }  // image is e
 // left-mouse.  g_vbiCount: bumped once per REAL vertical-blank interrupt (vbiHandler
 // below); renderFrame spins on it.  All file-local.
 static volatile uint8_t  g_pumpQuit = 0;
-static volatile uint16_t g_vbiCount = 0;
+// g_vbiCount defined earlier (ahead of flush_paula's beep capture).
 static RescueOnFractalus* s_scene   = 0;   // running scene; set by run()
 
 // flightShotTick: rebuild the player laser sprite from mem[] in the flight VBI (called from
@@ -1292,6 +1346,25 @@ static uint32_t vbiHandler()
             s_pendingFlightKey = 0x15;     // Atari KBCODE 'B' (boosters) → $519c CLI window
             s_retPhase = 2;
         }
+    }
+#endif
+
+#ifdef ROF_BEEP_CAP
+    // Force the pilot-proximity beep (SFX event $14) at the range-1 rate so the fast-beep
+    // distortion reproduces headlessly.  Once the flight VBI ($4FF5) has been live a moment,
+    // arm the flush_paula capture and, every 2 frames (= range-1 blink rate), replicate what
+    // startup_init $3FFA does at $4016: ring_push_marked(X=$14) into the SFX event ring $0719
+    // (head $0073, ring_push_0719 $55FF) — the in-flight SFX engine (sfx_voice_envelope_tick,
+    // inside game_vbi_isr just below) then plays it.  Nothing else pushes $14 (no pilot in the
+    // headless run), so ch3 sees exactly the fast beep.
+    {
+        // The user identified the range-1 "distorted sound" as the SAME SFX that plays in the
+        // standby→doors launch sequence (a sweep, then a constant buzz that never stops).  That
+        // door-swoosh sound IS reachable headlessly (auto-launch runs the doors), so arm the
+        // capture across the launch cinematic — START is injected at g_vbiCount==350, doors open
+        // shortly after, so capture from ~360 onward and catch the stuck buzz.
+        static unsigned char s_bcArmed = 0;
+        if (!s_bcArmed && g_vbiCount >= 355u) { g_bcOn = 1; s_bcArmed = 1; }  // one-shot; freeze in flush_paula sticks
     }
 #endif
 

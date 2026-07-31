@@ -291,6 +291,13 @@ endif
 ifdef FORCE_RETURN
 EXTRA_DEFINES += -DROF_FORCE_RETURN
 endif
+# `make PROBES=1 BEEP_CAP=1`: once flight is running, force the pilot-proximity beep (SFX event
+# $14) at the range-1 rate (re-push into the SFX ring every 2 frames, as startup_init $3FFA does),
+# and capture the 4 Paula channels + pokey shadow each flush_paula into a ring, dumped via
+# amiga/beep_cap.gdb.  Diagnoses why the fast beep distorts on Paula.  Requires PROBES.
+ifdef BEEP_CAP
+EXTRA_DEFINES += -DROF_BEEP_CAP
+endif
 # `make PROBES=1 TITLE=1`: force-enter the Title Screen (inject its screen RAM + palette and
 # pin rsTitle) instead of auto-launching to flight — a visual test path for the Title Screen
 # render before its real attract-mode entry is wired.  Requires PROBES.
