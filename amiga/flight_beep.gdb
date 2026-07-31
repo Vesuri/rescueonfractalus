@@ -22,21 +22,39 @@ while $i < g_bcResetN && $i < 64
 end
 echo \n
 printf "display_setup entries=%u (last @vbi %u)\n", g_dsEntryN, g_dsEntryVbi
+printf "LAST PATH-3 $5a78: A(result)=%02x CONSOLread(bus)=%02x TRIG0read=%02x memD01F=%02x  (bus!=mem=>routing with s_trig0State=1 => wrong read)\n", g_p3_a, g_p3_d01f, g_p3_d010, g_p3_memd01f
+printf "s_trig0State NOW=%02x   $60(fire) events seen=%u  lastFireEdge(1=down 0=up)=%u\n", \
+  s_trig0State, g_bcKeyFireN, g_bcKeyFireLastDown
+echo --- CONSOL $D01F transitions (vbi -> value; $07=idle $06=START-held): ---\n
+set $i = 0
+while $i < g_bcD01FN && $i < 128
+  printf "  @%-5u D01F=%02x\n", g_bcD01FVbi[$i], g_bcD01FVal[$i]
+  set $i = $i + 1
+end
+echo --- keyboard events (last 128, chronological from g_bcKeyIdx): vbi raw down ---\n
+set $i = 0
+while $i < 512
+  set $k = (g_bcKeyIdx + $i) % 512
+  if g_bcKeyVbi[$k] != 0
+    printf "  @%-5u raw=%02x down=%u%s\n", g_bcKeyVbi[$k], g_bcKeyRaw[$k], g_bcKeyDown[$k], (g_bcKeyRaw[$k]==0x60 ? "  <== FIRE $60" : "")
+  end
+  set $i = $i + 1
+end
 printf "event-$01 load x%u  (path 1=$6150[$006c&$0644==0] 2=$62f4[$0004] 3=$5a78[CONSOL/TRIG]):\n", g_bc01N
 set $i = 0
 while $i < g_bc01N && $i < 64
-  printf "  @%-5u PATH=%u | s4($0004)=%02x s6d(stage)=%02x s6c(sndAct)=%02x s644(sndEvt)=%02x rng=%02x D01F=%02x s627=%02x\n", \
+  printf "  @%-5u PATH=%u | s4($0004)=%02x s6d(stage)=%02x s6c(sndAct)=%02x s644(sndEvt)=%02x rng=%02x CONSOLread=%02x TRIG0read=%02x\n", \
     g_bc01Vbi[$i], g_bc01Ctx[$i][7], \
     g_bc01Ctx[$i][0], g_bc01Ctx[$i][1], g_bc01Ctx[$i][2], g_bc01Ctx[$i][3], \
     g_bc01Ctx[$i][4], g_bc01Ctx[$i][5], g_bc01Ctx[$i][6]
   set $i = $i + 1
 end
-# ring WRAPS (holds the last 320 frames); walk chronologically from g_bcIdx (oldest).
-# g_bcAux = slot-5 lifecycle: [0]dist [1]vol [2]freq [3]chan [4]mix-prio [5]mix-voice [6]ph [7]range
-echo vbi | s5:dist vol freq chan | mix:prio voice | rng | F2 C2 F3 C3 | k v(0..3)\n
+# Per-frame slot-5 ring dump SKIPPED for speed (reading 640 rows over the gdb stub took minutes).
+# Re-enable by changing the loop bound below back to 640 if the per-frame trace is needed.
+echo (per-frame ring dump skipped for speed; summaries above are the decisive data)\n
 set $i = 0
-while $i < 320
-  set $k = (g_bcIdx + $i) % 320
+while $i < 0
+  set $k = (g_bcIdx + $i) % 640
   printf "%5u | %02x %2u %02x %02x | %02x %02x | %02x | %02x %02x %02x %02x | %u %u %u %u/%2u %2u %2u %2u\n", \
     g_bcVbi[$k], \
     g_bcAux[$k][0], g_bcAux[$k][1], g_bcAux[$k][2], g_bcAux[$k][3], \

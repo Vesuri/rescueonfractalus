@@ -9900,7 +9900,9 @@ L_634a:
     read_console_trig_delta();
     if (cpu.Z) goto L_62f6;
 #ifdef ROF_BEEP_CAP
-    { extern volatile unsigned char g_l634fPath; g_l634fPath = 3; }  /* $5a78 (CONSOL/TRIG) fall-through */
+    { extern volatile unsigned char g_l634fPath; g_l634fPath = 3;      /* $5a78 (CONSOL/TRIG) fall-through */
+      extern void rof_bc_p3(unsigned char, unsigned char, unsigned char, unsigned char);
+      rof_bc_p3(cpu.A, bus_read(0xD01F), bus_read(0xD010), mem[0xD01F]); }
 #endif
 L_634f:
     DS_MILE(0);

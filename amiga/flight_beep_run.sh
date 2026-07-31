@@ -34,7 +34,7 @@ for i in $(seq 1 60); do
   sleep 1
 done
 echo ">>> FS-UAE up (pid=$FSPID). Fly to a pilot; then: kill -INT \$(cat $RUN/flightbeep.gdbpid) <<<"
-env HOME="$GDBHOME" XDG_CACHE_HOME="$GDBHOME" "$GDB" -q -l 10 -x flight_beep.gdb out/RoF.elf > "$RUN/flightbeep-gdb.out" 2>&1 &
+env HOME="$GDBHOME" XDG_CACHE_HOME="$GDBHOME" "$GDB" -q -l 10 -x "${BEEPGDB:-flight_beep.gdb}" out/RoF.elf > "$RUN/flightbeep-gdb.out" 2>&1 &
 GDBPID=$!; echo "$GDBPID" > "$RUN/flightbeep.gdbpid"
 echo ">>> gdb pid=$GDBPID; dump lands in $RUN/flightbeep-gdb.out <<<"
 wait "$GDBPID"

@@ -306,7 +306,7 @@ static volatile uint16_t g_vbiCount = 0;
 // volume + the restart bitmask into a ring, so amiga/beep_cap.gdb can read how ch3 (the beep
 // channel) behaves under the fast every-2-frame range-1 re-push forced in vbiHandler().  This
 // isolates whether the distortion is the flush restart dance, a stuck voice, or a ring/order race.
-#define BC_N 320
+#define BC_N 640
 extern "C" volatile unsigned short g_bcVbi[BC_N] = {};
 extern "C" volatile unsigned char  g_bcPokey[BC_N][9] = {};   // AUDF1,AUDC1,..,AUDF4,AUDC4,AUDCTL
 extern "C" volatile unsigned char  g_bcKind[BC_N][4] = {};    // 0 silent/other 1 pure 2 poly4 3 poly5 4 noise 5 polydist
@@ -340,7 +340,7 @@ extern "C" void rof_bc_push(unsigned char v) {
 // leftover; the bug is the Amiga leaving slot-5 vol nonzero → audible poly4 warble.  These two logs
 // (UNGATED — they must catch the level-start reset/push that precedes flight arming) record the
 // g_vbiCount of every sfx_engine_reset call and every event-$01 load so we can see the ORDER.
-#define BCE_N 64
+#define BCE_N 256
 extern "C" volatile unsigned short g_bcResetVbi[BCE_N] = {};
 extern "C" volatile unsigned short g_bcResetN = 0;
 extern "C" volatile unsigned short g_bc01Vbi[BCE_N] = {};
@@ -354,6 +354,13 @@ extern "C" volatile unsigned short g_bc01N = 0;
 // it's being re-invoked every game_main_loop iteration during flight.
 extern "C" volatile unsigned char  g_bc01Ctx[BCE_N][8] = {};
 extern "C" volatile unsigned char  g_l634fPath = 0;      // set at each L_634f entry (1/2/3)
+// $5a78 evaluation at the last PATH-3 (fall-through) entry: a=result A ($01-TRIG0), d01f/d010 =
+// what bus_read actually returned for CONSOL/TRIG0.  If d010==0 while s_trig0State is live=$01,
+// the trigger read is wrong (the poly4 root cause); if d010==1 the flag logic is.
+extern "C" volatile unsigned char  g_p3_a = 0, g_p3_d01f = 0, g_p3_d010 = 0, g_p3_memd01f = 0;
+extern "C" void rof_bc_p3(unsigned char a, unsigned char d01f, unsigned char d010, unsigned char memd01f) {
+    g_p3_a = a; g_p3_d01f = d01f; g_p3_d010 = d010; g_p3_memd01f = memd01f;
+}
 extern "C" volatile unsigned short g_dsEntryN = 0;       // display_setup ($5f1d) invocation count
 extern "C" volatile unsigned short g_dsEntryVbi = 0;     // g_vbiCount of the most recent entry
 extern "C" void rof_bc_ds_entry(void) { g_dsEntryN++; g_dsEntryVbi = g_vbiCount; }  // hooked at $5f1d
@@ -365,10 +372,37 @@ extern "C" void rof_bc_ev01_log(void) {    // hooked in input_init/sfx_event_loa
         g_bc01Vbi[i] = g_vbiCount;
         g_bc01Ctx[i][0] = mem[0x0004]; g_bc01Ctx[i][1] = mem[0x006D];
         g_bc01Ctx[i][2] = mem[0x006C]; g_bc01Ctx[i][3] = mem[0x0644];
-        g_bc01Ctx[i][4] = mem[0x0642]; g_bc01Ctx[i][5] = mem[0xD01F];
-        g_bc01Ctx[i][6] = mem[0x0627]; g_bc01Ctx[i][7] = g_l634fPath;
+        g_bc01Ctx[i][4] = mem[0x0642]; g_bc01Ctx[i][5] = g_p3_d01f;    // [5]=CONSOL $5a78 read
+        g_bc01Ctx[i][6] = g_p3_d010; g_bc01Ctx[i][7] = g_l634fPath;    // [6]=TRIG0 $5a78 read
         g_bc01N = (unsigned short)(i + 1u);
     }
+}
+// Keyboard event log (from boot): every decoded (raw,down) the CIA-A keyboard ISR sees, to catch
+// the PHANTOM Left Shift ($60)-down that stalls s_trig0State at 0 without the user firing.  The
+// ring wraps (holds the last BCK_N events); g_bcKeyFireN counts ALL $60 events ever (down or up)
+// so a boot-time phantom is caught even if the ring later wraps past it.
+#define BCK_N 512
+extern "C" volatile unsigned short g_bcKeyVbi[BCK_N] = {};
+extern "C" volatile unsigned char  g_bcKeyRaw[BCK_N] = {};
+extern "C" volatile unsigned char  g_bcKeyDown[BCK_N] = {};
+extern "C" volatile unsigned short g_bcKeyIdx = 0;       // wraps mod BCK_N
+extern "C" volatile unsigned short g_bcKeyFireN = 0;     // count of raw==$60 events (any edge)
+extern "C" volatile unsigned char  g_bcKeyFireLastDown = 0xFF;  // last $60 edge seen (1=down 0=up)
+extern "C" void rof_bc_key(unsigned char raw, unsigned char down) {   // hooked in keyboardHandler
+    unsigned k = g_bcKeyIdx % BCK_N; g_bcKeyIdx = (unsigned short)(g_bcKeyIdx + 1u);
+    g_bcKeyVbi[k] = g_vbiCount; g_bcKeyRaw[k] = raw; g_bcKeyDown[k] = down;
+    if (raw == 0x60u) { g_bcKeyFireN++; g_bcKeyFireLastDown = down; }
+}
+// EDGE-LOG of mem[$D01F] (CONSOL): store (vbi,value) only when it CHANGES, from boot.  This shows
+// exactly when/how CONSOL becomes $06 (START held) — the value $5a78 reads as launch.  Non-wrapping.
+#define BCD_N 128
+extern "C" volatile unsigned short g_bcD01FVbi[BCD_N] = {};
+extern "C" volatile unsigned char  g_bcD01FVal[BCD_N] = {};
+extern "C" volatile unsigned short g_bcD01FN = 0;
+extern "C" void rof_bc_d01f(void) {   // called every vbi
+    static unsigned char last = 0xAA;
+    unsigned char v = mem[0xD01Fu];
+    if (v != last) { last = v; unsigned k = g_bcD01FN; if (k < BCD_N) { g_bcD01FVbi[k] = g_vbiCount; g_bcD01FVal[k] = v; g_bcD01FN = (unsigned short)(k + 1u); } }
 }
 static unsigned char cur_vol_cap[4] = { 0, 0, 0, 0 };    // last VOL applied per channel
 static unsigned char bc_classify(uint32_t p) {
@@ -664,6 +698,14 @@ extern "C" unsigned short rof_beam_line(void);
 // hwRead — defined above the keyboard section — can see them.
 static volatile uint8_t s_portaState = 0xFFu;   // joystick directions, active-low (neutral)
 static volatile uint8_t s_trig0State = 0x01u;   // fire button, active-low ($00 = pressed)
+// CONSOL ($D01F) console keys (START/SELECT/OPTION), active-low; idle $07.  Kept in a DEDICATED
+// state var (like s_portaState/s_trig0State) — NOT read from mem[$D01F] — so a stray/aliased RAM
+// write to the $D000 hardware-mirror page can't corrupt this hardware INPUT register.  (It used to
+// read mem[$D01F], which was being clobbered to $06 sub-frame during flight → read_console_trig_delta
+// $5A78 saw START "held" → spuriously re-entered display_setup's launch block L_634f → event $01
+// poly4 over the range beep, and sound_retrigger_random between beeps.  Matches the Atari, where the
+// CONSOL read is a hardware register isolated from RAM.)
+static volatile uint8_t s_consolState = 0x07u;
 
 uint8_t PlatformAmiga::hwRead(uint16_t addr)
 {
@@ -687,7 +729,7 @@ uint8_t PlatformAmiga::hwRead(uint16_t addr)
     // pressed and auto-starts the DEMO DROID demo within seconds.  ($D01F writes go
     // through platform_hw_write, which drops non-POKEY addresses, so the keyboard's
     // mem[$D01F] is never clobbered by genuine code.)
-    if (addr == 0xD01Fu) return mem[0xD01Fu];
+    if (addr == 0xD01Fu) return s_consolState;   // dedicated input state, isolated from mem[] corruption
     // TRIG0-3 ($D010-$D013): joystick fire buttons, ACTIVE-LOW ($01 = released,
     // $00 = pressed).  TRIG0 is driven by the keyboard ISR from the Control key; the
     // others stay released.  (Default $01 also matters at Standby: read_console_trig_delta
@@ -1195,10 +1237,15 @@ static uint32_t keyboardHandler()
     uint8_t raw  = (uint8_t)(code & 0x7Fu);
     bool    down = (code & 0x80u) == 0u;
 
+#ifdef ROF_BEEP_CAP
+    { extern void rof_bc_key(unsigned char, unsigned char); rof_bc_key(raw, down ? 1u : 0u); }
+#endif
+
     // Drive the CONSOL START switch (bit0) from RETURN's down/up edges, so the register
     // continuously reflects the key's level — just like the real GTIA switch.
     if (raw == kRawReturn) {
-        mem[kConsol] = down ? kConsolStart : kConsolIdle;
+        s_consolState = down ? kConsolStart : kConsolIdle;   // the read source (hwRead $D01F)
+        mem[kConsol]  = s_consolState;                        // keep RAM mirror in sync (Station-scene reader)
         return 0;
     }
 
@@ -1231,7 +1278,8 @@ static bool keyboardInit()
     s_ciaaBase = (struct Library*)OpenResource((UBYTE*)CIAANAME);
     if (!s_ciaaBase) return false;
 
-    mem[kConsol] = kConsolIdle;   // power-on CONSOL state: no switch down (START up)
+    s_consolState = kConsolIdle;  // power-on CONSOL state: no switch down (START up)
+    mem[kConsol]  = kConsolIdle;
 
     s_kbInterrupt.is_Node.ln_Type = NT_INTERRUPT;
     s_kbInterrupt.is_Node.ln_Pri  = 0;
@@ -1278,6 +1326,9 @@ static uint32_t vbiHandler()
     // Exception: ATTRACT VBI ($1B30) bumps RTCLOK in its own transpiled body.
     // (Do NOT touch $0080 — sync_flag, reused as the $80/$81 zp pointer.)
     g_vbiCount++;
+#ifdef ROF_BEEP_CAP
+    { extern void rof_bc_d01f(void); rof_bc_d01f(); }   // edge-log CONSOL ($D01F) transitions
+#endif
 
     // Flight terrain double-buffer swap — do this FIRST, while the beam is still in vertical
     // blank (well above the viewport WAIT at scanline 85).  If renderFlightDirect has published a
@@ -1354,6 +1405,7 @@ static uint32_t vbiHandler()
             // 060B latches makes the catch race-free regardless of emulation speed.
 #ifndef ROF_NO_AUTOLAUNCH
             if (d >= 60) {
+                s_consolState = (mem[0x060Bu] != 0x23u) ? 0x06u : 0x07u;  // hwRead source
                 if (mem[0x060Bu] != 0x23u) mem[0xD01Fu] = 0x06;   // START held until launched
                 else                       mem[0xD01Fu] = 0x07;   // launched → release
             }
