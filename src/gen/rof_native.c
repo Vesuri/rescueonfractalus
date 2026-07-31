@@ -9491,6 +9491,9 @@ void cockpit_display(void) {
 
 void display_setup(void) {
     /* 5f1d */
+#ifdef ROF_BEEP_CAP
+    { extern void rof_bc_ds_entry(void); rof_bc_ds_entry(); }   /* count display_setup entries (range-1 poly4 probe) */
+#endif
     if (!plot2bpp_lut_ready) build_plot2bpp_lut();   /* eager: keep the LUT build off the planet hot path */
     /* Amiga: arm the one-shot door-field ($2000) decode for THIS Standby build.  The renderer
        decodes the door "LEVEL NN" bitmap once on the g_doorFieldReady 0→1 edge (set at L_6118,
@@ -9697,6 +9700,9 @@ L_6141:
     goto L_6332;
 L_614d:
     wait_frames_save_a();
+#ifdef ROF_BEEP_CAP
+    { extern volatile unsigned char g_l634fPath; g_l634fPath = 1; }  /* $6150: $006c==0 && $0644==0 */
+#endif
     goto L_634f;
 L_6153:
     if (osc_step_counter == 0) goto L_61f8;
@@ -9852,7 +9858,11 @@ L_62eb:
     reset_audctl_flags();
 L_62ee:
     attract_timer = 0x64;
+#ifdef ROF_BEEP_CAP
+    if (level_or_state != 0) { extern volatile unsigned char g_l634fPath; g_l634fPath = 2; goto L_634f; }  /* $62f4: $0004!=0 */
+#else
     if (level_or_state != 0) goto L_634f;
+#endif
 L_62f6:
     ds_frame();
     if (cockpit_flag != 0) goto L_6309;
@@ -9889,6 +9899,9 @@ L_634a:
     platform_poll_events();
     read_console_trig_delta();
     if (cpu.Z) goto L_62f6;
+#ifdef ROF_BEEP_CAP
+    { extern volatile unsigned char g_l634fPath; g_l634fPath = 3; }  /* $5a78 (CONSOL/TRIG) fall-through */
+#endif
 L_634f:
     DS_MILE(0);
     SA_TIMED(0, audio_timer_setup());

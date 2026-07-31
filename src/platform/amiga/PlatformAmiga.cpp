@@ -345,10 +345,18 @@ extern "C" volatile unsigned short g_bcResetVbi[BCE_N] = {};
 extern "C" volatile unsigned short g_bcResetN = 0;
 extern "C" volatile unsigned short g_bc01Vbi[BCE_N] = {};
 extern "C" volatile unsigned short g_bc01N = 0;
-// gate context at each event-$01 load: the $63a1 level/scanner-setup block is entered at $637d
-// (LDY $0004;BNE) or on $006d(level_stage)!=$0626.  Capture [0]=$0004 [1]=$006d [2]=$0626
-// [3]=$0627 [4]=$0642 range so we can see WHICH gate trips the spurious re-entry at range 1.
-extern "C" volatile unsigned char  g_bc01Ctx[BCE_N][5] = {};
+// event $01 lives in display_setup's standby_level_select_loop block L_634f, reachable by THREE
+// paths: (1) $6150 when $006c(sound_active_flag)==0 && $0644(sound_event_flag)==0; (2) $62f4 when
+// $0004(level_or_state)!=0; (3) the $5a78 (CONSOL/TRIG) fall-through.  g_l634fPath is set to 1/2/3
+// at each entry (rof_native.c, under ROF_BEEP_CAP) so we see WHICH fires during flight.  Ctx per
+// load: [0]=$0004 [1]=$006d(level_stage) [2]=$006c [3]=$0644 [4]=$0642 range [5]=mem[$D01F]
+// [6]=$0627(fresh_start_flag) [7]=g_l634fPath.  Plus count display_setup ($5f1d) entries to see if
+// it's being re-invoked every game_main_loop iteration during flight.
+extern "C" volatile unsigned char  g_bc01Ctx[BCE_N][8] = {};
+extern "C" volatile unsigned char  g_l634fPath = 0;      // set at each L_634f entry (1/2/3)
+extern "C" volatile unsigned short g_dsEntryN = 0;       // display_setup ($5f1d) invocation count
+extern "C" volatile unsigned short g_dsEntryVbi = 0;     // g_vbiCount of the most recent entry
+extern "C" void rof_bc_ds_entry(void) { g_dsEntryN++; g_dsEntryVbi = g_vbiCount; }  // hooked at $5f1d
 extern "C" void rof_bc_reset_log(void) {   // hooked at sfx_engine_reset $5433
     unsigned i = g_bcResetN; if (i < BCE_N) { g_bcResetVbi[i] = g_vbiCount; g_bcResetN = (unsigned short)(i + 1u); }
 }
@@ -356,8 +364,9 @@ extern "C" void rof_bc_ev01_log(void) {    // hooked in input_init/sfx_event_loa
     unsigned i = g_bc01N; if (i < BCE_N) {
         g_bc01Vbi[i] = g_vbiCount;
         g_bc01Ctx[i][0] = mem[0x0004]; g_bc01Ctx[i][1] = mem[0x006D];
-        g_bc01Ctx[i][2] = mem[0x0626]; g_bc01Ctx[i][3] = mem[0x0627];
-        g_bc01Ctx[i][4] = mem[0x0642];
+        g_bc01Ctx[i][2] = mem[0x006C]; g_bc01Ctx[i][3] = mem[0x0644];
+        g_bc01Ctx[i][4] = mem[0x0642]; g_bc01Ctx[i][5] = mem[0xD01F];
+        g_bc01Ctx[i][6] = mem[0x0627]; g_bc01Ctx[i][7] = g_l634fPath;
         g_bc01N = (unsigned short)(i + 1u);
     }
 }

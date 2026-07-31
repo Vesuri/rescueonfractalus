@@ -21,11 +21,14 @@ while $i < g_bcResetN && $i < 64
   set $i = $i + 1
 end
 echo \n
-printf "event-$01 load x%u  (vbi: $0004 $006d $0626 $0627 range):\n", g_bc01N
+printf "display_setup entries=%u (last @vbi %u)\n", g_dsEntryN, g_dsEntryVbi
+printf "event-$01 load x%u  (path 1=$6150[$006c&$0644==0] 2=$62f4[$0004] 3=$5a78[CONSOL/TRIG]):\n", g_bc01N
 set $i = 0
 while $i < g_bc01N && $i < 64
-  printf "  @%-5u s4=%02x s6d=%02x s626=%02x s627=%02x rng=%02x\n", \
-    g_bc01Vbi[$i], g_bc01Ctx[$i][0], g_bc01Ctx[$i][1], g_bc01Ctx[$i][2], g_bc01Ctx[$i][3], g_bc01Ctx[$i][4]
+  printf "  @%-5u PATH=%u | s4($0004)=%02x s6d(stage)=%02x s6c(sndAct)=%02x s644(sndEvt)=%02x rng=%02x D01F=%02x s627=%02x\n", \
+    g_bc01Vbi[$i], g_bc01Ctx[$i][7], \
+    g_bc01Ctx[$i][0], g_bc01Ctx[$i][1], g_bc01Ctx[$i][2], g_bc01Ctx[$i][3], \
+    g_bc01Ctx[$i][4], g_bc01Ctx[$i][5], g_bc01Ctx[$i][6]
   set $i = $i + 1
 end
 # ring WRAPS (holds the last 320 frames); walk chronologically from g_bcIdx (oldest).
