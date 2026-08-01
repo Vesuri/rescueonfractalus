@@ -2,7 +2,7 @@
 #include "../cpu/cpu.h"
 #include "../cpu/bus.h"
 #include "rof_decl.h"
-#define ROF_MEM_ALIASES  /* enable bare lvalue aliases (player_lives = ...) */
+#define ROF_MEM_ALIASES  /* enable bare lvalue aliases (level_stage = ...) */
 #include "mem.h"   /* MEM_<name> offsets + bare aliases for named RAM/state */
 #include "../platform/platform_c.h"
 
@@ -1598,7 +1598,7 @@ void startup_init__t6502(void) {
     /* 3ffe */
     LDY(0x1E);
     /* 4000 */
-    LDA(game_phase_flag);
+    LDA(range_to_pilot);
     /* 4003 */
     CMP(0x01);
     /* 4005 */
@@ -1614,7 +1614,7 @@ void startup_init__t6502(void) {
     /* 400f */
     PHA();
     /* 4010 */
-    LDA(player_lives);
+    LDA(flight_mode_state);
     /* 4012 */
     CMP(0x00);
     /* 4014 */
@@ -2599,7 +2599,7 @@ void update_altitude_digit_display(void) {
     /* 44da */
     SEC();
     /* 44db */
-    SBC(mem[0x28DA]);
+    SBC(altimeter_alt_ref);
     /* 44de */
     if (cpu.N) goto L_44e4;
     /* 44e0 */
@@ -2650,7 +2650,7 @@ L_44fe:;
     if (!cpu.Z) goto L_44fe;
 L_450a:;
     /* 450a */
-    LDA(mem[0x28D9]);
+    LDA(altimeter_color_base);
     /* 450d */
     CLC();
     /* 450e */
@@ -3034,7 +3034,7 @@ L_46b3:;
     /* 46b9 */
     span_pixel_count = cpu.A;
     /* 46bb */
-    CPY(player_lives);
+    CPY(flight_mode_state);
     /* 46bd */
     if (cpu.Z) goto L_471a;
     /* 46bf */
@@ -3166,7 +3166,7 @@ L_4733:;
     /* 473c */
     LDX(0xFF);
     /* 473e */
-    player_lives = cpu.X;
+    flight_mode_state = cpu.X;
     /* 4740 */
     LDA(landing_seq_flag);
     /* 4742 */
@@ -3214,7 +3214,7 @@ L_4766:;
     /* 476e */
     LDX(0xFF);
     /* 4770 */
-    player_lives = cpu.X;
+    flight_mode_state = cpu.X;
     /* 4772 */
     LDA(0x06);
     /* 4774 */
@@ -3261,7 +3261,7 @@ L_479e:;
     show_message_id_a(); return;
 L_47a1:;
     /* 47a1 */
-    player_lives = cpu.Y;
+    flight_mode_state = cpu.Y;
     set_colpf0_from_flag(); return;
 }
 
@@ -3329,7 +3329,7 @@ L_480f:;
 /* faithful transliteration kept as the validation oracle; native show_ace_or_message() lives in rof_native.c (see VALIDATE_FUNCS) */
 void show_ace_or_message__t6502(void) {
     /* 493d */
-    LDA(mem[0x003A]);
+    LDA(mission_event_flag);
     /* 493f */
     if (cpu.N) goto L_4949;
     /* 4943 */
@@ -3360,7 +3360,7 @@ void reset_pilot_state_if_no_2830__t6502(void) {
     /* 495f */
     LDA(0x00);
     /* 4961 */
-    CMP(mem[0x2830]);
+    CMP(landing_target_queued_2830);
     /* 4964 */
     if (!cpu.Z) { clear_pilot_rescue_state(); return; }
     /* 4966 */
@@ -3764,7 +3764,7 @@ void set_hud_fields_678_679__t6502(void) {
     /* 4ea5 */
     hud_field_678 = cpu.A;
     /* 4ea8 */
-    hud_field_679 = cpu.A;
+    sfx_env_freq_val = cpu.A;
     refresh_hud_field_0b(); return;
 }
 
@@ -3956,7 +3956,7 @@ void vbi_handler_flight__t6502(void) {
     /* 500c */
     bus_write(0xD013, cpu.A);
     /* 5011 */
-    bus_write(0xD014, mem[0x0037]);
+    bus_write(0xD014, colpm2_shadow);
     /* 5016 */
     bus_write(0xD016, text_color_pf0);
     /* 501b */
@@ -4153,7 +4153,7 @@ L_50f5:;
     /* 50f7 */
     startup_init();
     /* 50fa */
-    LDA(mem[0x003A]);
+    LDA(mission_event_flag);
     /* 50fc */
     if (!cpu.N) goto L_5112;
     /* 50fe */
@@ -4293,7 +4293,7 @@ L_5178:;
     /* 518c */
     vobj_row_count = 0x7C;
     /* 5190 */
-    mem[0x0037] = 0x78;
+    colpm2_shadow = 0x78;
     /* 5192 */
     LDA(0x0C);
     /* 5194 */
@@ -4805,27 +4805,27 @@ void sfx_engine_reset__t6502(void) {
     ring_tail_0719 = cpu.A;
 L_543b:;
     /* 543b */
-    mem[MEM_sfx_voice_distort_0e+cpu.Y] = cpu.A;
+    mem[MEM_sfx_env_prio_val+cpu.Y] = cpu.A;
     /* 543e */
     mem[MEM_sfx_voice_reg_idx+cpu.Y] = cpu.A;
     /* 5441 */
-    mem[(0x0687)+cpu.Y] = cpu.A;
+    mem[MEM_sfx_env_prio_delta+cpu.Y] = cpu.A;
     /* 5444 */
-    mem[(0x0695)+cpu.Y] = cpu.A;
+    mem[MEM_sfx_env_prio_target+cpu.Y] = cpu.A;
     /* 5447 */
-    mem[(0x06A3)+cpu.Y] = cpu.A;
+    mem[MEM_sfx_env_prio_step+cpu.Y] = cpu.A;
     /* 544a */
-    mem[(0x06B1)+cpu.Y] = cpu.A;
+    mem[MEM_sfx_env_prio_phase+cpu.Y] = cpu.A;
     /* 544d */
-    mem[(0x06BF)+cpu.Y] = cpu.A;
+    mem[MEM_sfx_env_freq_delta+cpu.Y] = cpu.A;
     /* 5450 */
-    mem[(0x06CD)+cpu.Y] = cpu.A;
+    mem[MEM_sfx_env_freq_target+cpu.Y] = cpu.A;
     /* 5453 */
-    mem[(0x06DB)+cpu.Y] = cpu.A;
+    mem[MEM_sfx_env_freq_step+cpu.Y] = cpu.A;
     /* 5456 */
-    mem[(0x06E9)+cpu.Y] = cpu.A;
+    mem[MEM_sfx_env_freq_phase+cpu.Y] = cpu.A;
     /* 5459 */
-    mem[(0x06F7)+cpu.Y] = cpu.A;
+    mem[MEM_sfx_env_event_id+cpu.Y] = cpu.A;
     /* 545c */
     DEY();
     /* 545d */
@@ -4887,13 +4887,13 @@ L_5497:;
     /* 5499 */
     sfx_voice_expired_flag = cpu.A;
     /* 549c */
-    LDA(mem[(0x06DB)+cpu.Y]);
+    LDA(mem[MEM_sfx_env_freq_step+cpu.Y]);
     /* 549f */
     if (cpu.Z) goto L_54d5;
     /* 54a1 */
     CLC();
     /* 54a2 */
-    ADC(mem[(0x06E9)+cpu.Y]);
+    ADC(mem[MEM_sfx_env_freq_phase+cpu.Y]);
     /* 54a5 */
     if (!cpu.N) goto L_54ac;
     /* 54a7 */
@@ -4909,7 +4909,7 @@ L_54ac:;
     LDA(0x2C);
 L_54b2:;
     /* 54b2 */
-    mem[(0x06E9)+cpu.Y] = cpu.A;
+    mem[MEM_sfx_env_freq_phase+cpu.Y] = cpu.A;
     /* 54b5 */
     TAX();
     /* 54b6 */
@@ -4919,19 +4919,19 @@ L_54b2:;
     /* 54bb */
     CLC();
     /* 54bc */
-    LDA(mem[MEM_hud_field_679+cpu.Y]);
+    LDA(mem[MEM_sfx_env_freq_val+cpu.Y]);
     /* 54bf */
-    ADC(mem[(0x06BF)+cpu.Y]);
+    ADC(mem[MEM_sfx_env_freq_delta+cpu.Y]);
     /* 54c2 */
-    mem[MEM_hud_field_679+cpu.Y] = cpu.A;
+    mem[MEM_sfx_env_freq_val+cpu.Y] = cpu.A;
     /* 54c5 */
-    CMP(mem[(0x06CD)+cpu.Y]);
+    CMP(mem[MEM_sfx_env_freq_target+cpu.Y]);
     /* 54c8 */
     if (!cpu.Z) goto L_54d2;
     /* 54ca */
     LDA(0x00);
     /* 54cc */
-    mem[(0x06DB)+cpu.Y] = cpu.A;
+    mem[MEM_sfx_env_freq_step+cpu.Y] = cpu.A;
     /* 54cf */
     INC_M(MEM_sfx_voice_expired_flag);
 L_54d2:;
@@ -4939,13 +4939,13 @@ L_54d2:;
     sfx_voice_write_freq();
 L_54d5:;
     /* 54d5 */
-    LDA(mem[(0x06A3)+cpu.Y]);
+    LDA(mem[MEM_sfx_env_prio_step+cpu.Y]);
     /* 54d8 */
     if (cpu.Z) goto L_5510;
     /* 54da */
     CLC();
     /* 54db */
-    ADC(mem[(0x06B1)+cpu.Y]);
+    ADC(mem[MEM_sfx_env_prio_phase+cpu.Y]);
     /* 54de */
     if (!cpu.N) goto L_54e5;
     /* 54e0 */
@@ -4961,7 +4961,7 @@ L_54e5:;
     LDA(0x2C);
 L_54eb:;
     /* 54eb */
-    mem[(0x06B1)+cpu.Y] = cpu.A;
+    mem[MEM_sfx_env_prio_phase+cpu.Y] = cpu.A;
     /* 54ee */
     TAX();
     /* 54ef */
@@ -4971,21 +4971,21 @@ L_54eb:;
     /* 54f4 */
     CLC();
     /* 54f5 */
-    LDA(mem[MEM_sfx_voice_distort_0e+cpu.Y]);
+    LDA(mem[MEM_sfx_env_prio_val+cpu.Y]);
     /* 54f8 */
-    ADC(mem[(0x0687)+cpu.Y]);
+    ADC(mem[MEM_sfx_env_prio_delta+cpu.Y]);
     /* 54fb */
     AND(0x0F);
     /* 54fd */
-    mem[MEM_sfx_voice_distort_0e+cpu.Y] = cpu.A;
+    mem[MEM_sfx_env_prio_val+cpu.Y] = cpu.A;
     /* 5500 */
-    CMP(mem[(0x0695)+cpu.Y]);
+    CMP(mem[MEM_sfx_env_prio_target+cpu.Y]);
     /* 5503 */
     if (!cpu.Z) goto L_550d;
     /* 5505 */
     LDA(0x00);
     /* 5507 */
-    mem[(0x06A3)+cpu.Y] = cpu.A;
+    mem[MEM_sfx_env_prio_step+cpu.Y] = cpu.A;
     /* 550a */
     INC_M(MEM_sfx_voice_expired_flag);
 L_550d:;
@@ -4997,7 +4997,7 @@ L_5510:;
     /* 5513 */
     if (cpu.Z) goto L_551b;
     /* 5515 */
-    LDX(mem[(0x06F7)+cpu.Y]);
+    LDX(mem[MEM_sfx_env_event_id+cpu.Y]);
     /* 5518 */
     ring_push_marked();
 L_551b:;
@@ -5115,7 +5115,7 @@ L_557b:;
     goto L_55d3;
 L_5585:;
     /* 5585 */
-    LDY(mem[0x0635]);
+    LDY(sfx_pitch_0635);
     /* 5588 */
     DEY();
     /* 5589 */
@@ -5124,7 +5124,7 @@ L_5585:;
     LDY(0x07);
 L_558d:;
     /* 558d */
-    mem[0x0635] = cpu.Y;
+    sfx_pitch_0635 = cpu.Y;
     /* 5590 */
     SEC();
     /* 5591 */
@@ -5146,9 +5146,9 @@ L_558d:;
     /* 55a7 */
     bus_write(0xD204, cpu.A);
     /* 55aa */
-    LDY(mem[0x0637]);
+    LDY(sfx_state_0637);
     /* 55ad */
-    DEC_M(0x063A);
+    DEC_M(MEM_sfx_counter_063a);
     /* 55b0 */
     if (!cpu.N) goto L_55c2;
     /* 55b2 */
@@ -5162,7 +5162,7 @@ L_558d:;
     /* 55b8 */
     LDY(0x0F);
     /* 55bc */
-    mem[0x063A] = 0x32;
+    sfx_counter_063a = 0x32;
 L_55bf:;
     /* 55bf */
     goto L_55cf;
@@ -5179,10 +5179,10 @@ L_55c2:;
     INC_M(MEM_sfx_state_0634);
 L_55cc:;
     /* 55cc */
-    INC_M(0x063A);
+    INC_M(MEM_sfx_counter_063a);
 L_55cf:;
     /* 55cf */
-    mem[0x0637] = cpu.Y;
+    sfx_state_0637 = cpu.Y;
     /* 55d2 */
     TYA();
 L_55d3:;
@@ -5222,7 +5222,7 @@ void sfx_reorder_voice_slot__t6502(void) {
     /* 561a */
     if (!cpu.Z) goto L_5641;
     /* 561c */
-    LDA(mem[MEM_sfx_voice_distort_0e+cpu.Y]);
+    LDA(mem[MEM_sfx_env_prio_val+cpu.Y]);
     /* 561f */
     AND(0x0F);
     /* 5621 */
@@ -5291,7 +5291,7 @@ void sfx_voice_write_freq__t6502(void) {
     /* 566a */
     if (cpu.Z) goto L_5672;
     /* 566c */
-    LDA(mem[MEM_hud_field_679+cpu.Y]);
+    LDA(mem[MEM_sfx_env_freq_val+cpu.Y]);
     /* 566f */
     mem[(0xD1FE)+cpu.X] = cpu.A;
 L_5672:;
@@ -5307,9 +5307,9 @@ void sfx_voice_write_freq_ctrl__t6502(void) {
     /* 5676 */
     if (cpu.Z) goto L_5689;
     /* 567b */
-    mem[(0xD1FE)+cpu.X] = mem[MEM_hud_field_679+cpu.Y];
+    mem[(0xD1FE)+cpu.X] = mem[MEM_sfx_env_freq_val+cpu.Y];
     /* 567e */
-    LDA(mem[MEM_sfx_voice_distort_0e+cpu.Y]);
+    LDA(mem[MEM_sfx_env_prio_val+cpu.Y]);
     /* 5681 */
     AND(0x0F);
     /* 5683 */
@@ -5336,7 +5336,7 @@ L_5691:;
     /* 5695 */
     if (cpu.Z) goto L_56aa;
     /* 5697 */
-    LDA(mem[MEM_sfx_voice_distort_0e+cpu.X]);
+    LDA(mem[MEM_sfx_env_prio_val+cpu.X]);
     /* 569a */
     AND(0x0F);
     /* 569c */
@@ -5378,7 +5378,7 @@ L_56b4:;
     if (!cpu.Z) goto L_56cf;
 L_56bf:;
     /* 56bf */
-    LDA(mem[MEM_sfx_voice_distort_0e+cpu.X]);
+    LDA(mem[MEM_sfx_env_prio_val+cpu.X]);
     /* 56c2 */
     AND(0x0F);
     /* 56c4 */
@@ -5441,34 +5441,34 @@ void sfx_event_load__t6502(void) {
     /* 5830 */
     AND(0x0F);
     /* 5832 */
-    mem[MEM_sfx_voice_distort_0e+cpu.Y] = cpu.A;
+    mem[MEM_sfx_env_prio_val+cpu.Y] = cpu.A;
     /* 5838 */
-    mem[MEM_hud_field_679+cpu.Y] = mem[(0x5716)+cpu.X];
+    mem[MEM_sfx_env_freq_val+cpu.Y] = mem[(0x5716)+cpu.X];
     /* 583e */
-    mem[(0x06A3)+cpu.Y] = mem[(0x5737)+cpu.X];
+    mem[MEM_sfx_env_prio_step+cpu.Y] = mem[(0x5737)+cpu.X];
     /* 5844 */
-    mem[(0x0687)+cpu.Y] = mem[(0x5758)+cpu.X];
+    mem[MEM_sfx_env_prio_delta+cpu.Y] = mem[(0x5758)+cpu.X];
     /* 584a */
-    mem[(0x0695)+cpu.Y] = mem[(0x5779)+cpu.X];
+    mem[MEM_sfx_env_prio_target+cpu.Y] = mem[(0x5779)+cpu.X];
     /* 5850 */
-    mem[(0x06B1)+cpu.Y] = mem[(0x579A)+cpu.X];
+    mem[MEM_sfx_env_prio_phase+cpu.Y] = mem[(0x579A)+cpu.X];
     /* 5853 */
     LDA(mem[(0x57BB)+cpu.X]);
     /* 5856 */
-    mem[(0x06DB)+cpu.Y] = cpu.A;
+    mem[MEM_sfx_env_freq_step+cpu.Y] = cpu.A;
     /* 5859 */
     if (cpu.Z) goto L_586d;
     /* 585e */
-    mem[(0x06BF)+cpu.Y] = mem[(0x57DC)+cpu.X];
+    mem[MEM_sfx_env_freq_delta+cpu.Y] = mem[(0x57DC)+cpu.X];
     /* 5864 */
-    mem[(0x06CD)+cpu.Y] = mem[(0x57E4)+cpu.X];
+    mem[MEM_sfx_env_freq_target+cpu.Y] = mem[(0x57E4)+cpu.X];
     /* 586a */
-    mem[(0x06E9)+cpu.Y] = mem[(0x57EC)+cpu.X];
+    mem[MEM_sfx_env_freq_phase+cpu.Y] = mem[(0x57EC)+cpu.X];
 L_586d:;
     /* 586d */
     LDA(mem[(0x57F4)+cpu.X]);
     /* 5870 */
-    mem[(0x06F7)+cpu.Y] = cpu.A;
+    mem[MEM_sfx_env_event_id+cpu.Y] = cpu.A;
     /* 5873 */
     game_sub_55FC();
 L_5876:;
@@ -5505,7 +5505,7 @@ L_587d:;
     /* 588a */
     joystick_raw = cpu.A;
     /* 588c */
-    LDY(mem[0x00E5]);
+    LDY(game_over_latch);
     /* 588e */
     if (cpu.Z) goto L_58a0;
     /* 5890 */
@@ -5536,7 +5536,7 @@ L_58ad:;
     /* 58ad */
     LDA(mem[(0x0600)+cpu.Y]);
     /* 58b0 */
-    CMP(mem[(0x0605)+cpu.Y]);
+    CMP(mem[MEM_high_score_b0+cpu.Y]);
     /* 58b3 */
     if (cpu.Z) goto L_58c6;
     /* 58b5 */
@@ -5547,7 +5547,7 @@ L_58b9:;
     /* 58b9 */
     LDA(mem[(0x0600)+cpu.Y]);
     /* 58bc */
-    mem[(0x0605)+cpu.Y] = cpu.A;
+    mem[MEM_high_score_b0+cpu.Y] = cpu.A;
     /* 58bf */
     DEY();
     /* 58c0 */
@@ -5572,7 +5572,7 @@ L_58cb:;
     /* 58d1 */
     digit_dst_ptr_hi = 0x36;
     /* 58d3 */
-    LDA(mem[0x060A]);
+    LDA(ranking_level);
     /* 58d6 */
     bin_to_bcd();
     /* 58d9 */
@@ -5582,19 +5582,19 @@ L_58cb:;
     /* 58e2 */
     digit_dst_ptr_hi = 0x36;
     /* 58e4 */
-    LDA(mem[0x0605]);
+    LDA(high_score_b0);
     /* 58e7 */
     render_bcd_digits_supp_all();
     /* 58ea */
-    LDA(mem[0x0606]);
+    LDA(high_score_b1);
     /* 58ed */
     emit_bcd_byte_digits();
     /* 58f0 */
-    LDA(mem[0x0607]);
+    LDA(high_score_b2);
     /* 58f3 */
     emit_bcd_byte_digits();
     /* 58f6 */
-    LDA(mem[0x0608]);
+    LDA(high_score_b3);
     /* 58f9 */
     emit_bcd_byte_digits();
     /* 58fc */
@@ -5659,7 +5659,7 @@ L_593e:;
     /* 5944 */
     if (cpu.Z) goto L_595a;
     /* 5946 */
-    LDA(mem[0x36BD]);
+    LDA(name_entry_gate_cell);
     /* 5949 */
     if (cpu.Z) goto L_5955;
     /* 594b */
@@ -5688,12 +5688,12 @@ L_595a:;
     sound_retrigger_random(); return;
 L_5969:;
     /* 5969 */
-    LDA(mem[0x00E5]);
+    LDA(game_over_latch);
     /* 596b */
     if (cpu.Z) { standby_level_select_loop(); return; }
 L_596d:; platform_tick_vbi(); platform_render_frame();
     /* 596d */
-    LDA(mem[0x00E5]);
+    LDA(game_over_latch);
     /* 596f */
     if (!cpu.Z) goto L_596d;
     /* 5971 */
@@ -6976,11 +6976,11 @@ L_61c6:; platform_tick_vbi(); platform_render_frame();
     /* 61cd */
     row_table_stride = cpu.A;
     /* 61cf */
-    CMP(mem[0x060A]);
+    CMP(ranking_level);
     /* 61d2 */
     if (!cpu.C) goto L_61d7;
     /* 61d4 */
-    mem[0x060A] = cpu.A;
+    ranking_level = cpu.A;
 L_61d7:;
     /* 61d7 */
     count_up_to_level();
@@ -7478,7 +7478,7 @@ L_63d7:; platform_tick_vbi(); platform_render_frame();
     /* 640e */
     mem[0x0686] = 0xFB;
     /* 6413 */
-    mem[0x0687] = 0xFF;
+    sfx_env_prio_delta = 0xFF;
     /* 6416 */
     LDA(0x01);
     /* 6418 */
@@ -7489,7 +7489,7 @@ L_641b:;
     /* 641e */
     INC_M(MEM_hud_field_678);
     /* 6421 */
-    INC_M(MEM_hud_field_679);
+    INC_M(MEM_sfx_env_freq_val);
     /* 6424 */
     LDA(hud_field_678);
     /* 6427 */
@@ -7501,13 +7501,13 @@ L_641b:;
     /* 6430 */
     history_ring_step = 0xFF;
     /* 6433 */
-    mem[0x06CD] = 0xFF;
+    sfx_env_freq_target = 0xFF;
     /* 6438 */
     mem[0x06E6] = 0x01;
     /* 643b */
     mem[0x06E8] = 0x01;
     /* 643e */
-    mem[0x06E9] = 0x01;
+    sfx_env_freq_phase = 0x01;
     /* 6441 */
     LDA(0x00);
     /* 6443 */
@@ -7515,7 +7515,7 @@ L_641b:;
     /* 6446 */
     mem[0x06F6] = cpu.A;
     /* 6449 */
-    mem[0x06F7] = cpu.A;
+    sfx_env_event_id = cpu.A;
 L_644c:;
     /* 644c */
     DEC_M(MEM_timer_676);
@@ -7539,7 +7539,7 @@ L_645b:; platform_tick_vbi(); platform_render_frame();
     /* 6462 */
     LDA(0x00);
     /* 6464 */
-    mem[MEM_sfx_voice_distort_0e+cpu.Y] = cpu.A;
+    mem[MEM_sfx_env_prio_val+cpu.Y] = cpu.A;
     /* 6467 */
     sfx_reorder_voice_slot();
     /* 646a */
@@ -7569,11 +7569,11 @@ L_6478:; platform_tick_vbi(); platform_render_frame();
     /* 6487 */
     LDY(0x0C);
     /* 648b */
-    mem[MEM_sfx_voice_distort_0e+cpu.Y] = 0x0F;
+    mem[MEM_sfx_env_prio_val+cpu.Y] = 0x0F;
     /* 648e */
     LDA(0xB4);
     /* 6490 */
-    mem[MEM_hud_field_679+cpu.Y] = cpu.A;
+    mem[MEM_sfx_env_freq_val+cpu.Y] = cpu.A;
     /* 6493 */
     sfx_reorder_voice_slot();
     /* 6498 */
@@ -7581,7 +7581,7 @@ L_6478:; platform_tick_vbi(); platform_render_frame();
     /* 649d */
     mem[0x06E8] = 0x00;
     /* 64a0 */
-    mem[0x06E9] = 0x00;
+    sfx_env_freq_phase = 0x00;
     /* 64a3 */
     LDA(0x01);
     /* 64a5 */
@@ -7626,17 +7626,17 @@ L_64c4:;
     /* 64d2 */
     LDA(0x65);
     /* 64d4 */
-    mem[MEM_hud_field_679+cpu.Y] = cpu.A;
+    mem[MEM_sfx_env_freq_val+cpu.Y] = cpu.A;
     /* 64d7 */
     sfx_reorder_voice_slot();
     /* 64da */
     LDY(0x0B);
     /* 64de */
-    mem[MEM_sfx_voice_distort_0e+cpu.Y] = 0x01;
+    mem[MEM_sfx_env_prio_val+cpu.Y] = 0x01;
     /* 64e1 */
     LDA(0x0E);
     /* 64e3 */
-    mem[MEM_hud_field_679+cpu.Y] = cpu.A;
+    mem[MEM_sfx_env_freq_val+cpu.Y] = cpu.A;
     /* 64e6 */
     sfx_reorder_voice_slot();
     /* 64e9 */
@@ -9214,15 +9214,15 @@ L_6b0f:;
     /* 6b0f */
     LDA(mem[(0x0C33)+cpu.Y]);
     /* 6b12 */
-    mem[(0x0C32)+cpu.Y] = cpu.A;
+    mem[MEM_player_col_buf0+cpu.Y] = cpu.A;
     /* 6b18 */
-    mem[(0x0D32)+cpu.Y] = mem[(0x0D33)+cpu.Y];
+    mem[MEM_player_col_buf1+cpu.Y] = mem[(0x0D33)+cpu.Y];
     /* 6b1e */
-    mem[(0x0E32)+cpu.Y] = mem[(0x0E33)+cpu.Y];
+    mem[MEM_player_col_buf2+cpu.Y] = mem[(0x0E33)+cpu.Y];
     /* 6b21 */
     LDA(mem[(0x0F33)+cpu.Y]);
     /* 6b24 */
-    mem[(0x0F32)+cpu.Y] = cpu.A;
+    mem[MEM_player_col_buf3+cpu.Y] = cpu.A;
     /* 6b27 */
     INY();
     /* 6b28 */
@@ -9240,19 +9240,19 @@ void gen_terrain_column__t6502(void) {
     /* 6b2e */
     random_terrain_height();
     /* 6b31 */
-    mem[(0x0C32)+cpu.Y] = cpu.A;
+    mem[MEM_player_col_buf0+cpu.Y] = cpu.A;
     /* 6b34 */
     random_terrain_height();
     /* 6b37 */
-    mem[(0x0D32)+cpu.Y] = cpu.A;
+    mem[MEM_player_col_buf1+cpu.Y] = cpu.A;
     /* 6b3a */
     random_terrain_height();
     /* 6b3d */
-    mem[(0x0E32)+cpu.Y] = cpu.A;
+    mem[MEM_player_col_buf2+cpu.Y] = cpu.A;
     /* 6b40 */
     random_terrain_height();
     /* 6b43 */
-    mem[(0x0F32)+cpu.Y] = cpu.A;
+    mem[MEM_player_col_buf3+cpu.Y] = cpu.A;
     /* 6b46 */
     return;
 }
@@ -9295,9 +9295,9 @@ void clear_terrain_lo_buffers__t6502(void) {
     LDA(0x00);
 L_6b67:;
     /* 6b67 */
-    mem[(0x0E32)+cpu.Y] = cpu.A;
+    mem[MEM_player_col_buf2+cpu.Y] = cpu.A;
     /* 6b6a */
-    mem[(0x0F32)+cpu.Y] = cpu.A;
+    mem[MEM_player_col_buf3+cpu.Y] = cpu.A;
     /* 6b6d */
     DEY();
     /* 6b6e */
@@ -10304,7 +10304,7 @@ void audio_timer_setup__t6502(void) {
     /* 7131 */
     mem[0x0655] = cpu.A;
     /* 7134 */
-    mem[0x00E5] = cpu.A;
+    game_over_latch = cpu.A;
     /* 7136 */
     bus_write(0xD201, cpu.A);
     /* 7139 */
@@ -10671,7 +10671,7 @@ L_7406:;
     /* 740e */
     player3_dither_flag = cpu.A;
     /* 7411 */
-    player_lives = cpu.A;
+    flight_mode_state = cpu.A;
     /* 7413 */
     mem[0x0079] = cpu.A;
     /* 7415 */
@@ -10730,7 +10730,7 @@ L_7419:;
     /* 7457 */
     if (cpu.C) goto L_745b;
     /* 7459 */
-    INC_M(0x003A);
+    INC_M(MEM_mission_event_flag);
 L_745b:;
     /* 745b */
     LDA(0x07);
@@ -11330,7 +11330,7 @@ L_7675:;
     LSR_A();
 L_7680:;
     /* 7680 */
-    mem[0x061A] = cpu.A;
+    display_zoom_base = cpu.A;
     /* 7683 */
     if (cpu.N) goto L_7689;
     /* 7685 */
@@ -11743,7 +11743,7 @@ void pilot_render__t6502(void) {
     /* 7858 */
     mem[0x004D] = 0x80;
     /* 785a */
-    mem[0x2830] = 0x80;
+    landing_target_queued_2830 = 0x80;
     /* 785d */
     mem[0x007A] = 0x80;
     /* 785f */
@@ -11786,7 +11786,7 @@ L_7879:;
     /* 7883 */
     LDA(0x00);
     /* 7885 */
-    game_phase_flag = cpu.A;
+    range_to_pilot = cpu.A;
     /* 7888 */
     plot_step_lo = cpu.A;
     /* 788a */
@@ -11802,13 +11802,13 @@ L_7879:;
     /* 7893 */
     anim_counter_007B = cpu.A;
     /* 7897 */
-    mem[0x007C] = 0xA5;
+    clear_sweep_delay_007C = 0xA5;
     /* 789b */
     clear_color_count_007D = 0x0F;
     /* 789f */
-    mem[0x28D9] = 0x80;
+    altimeter_color_base = 0x80;
     /* 78a2 */
-    mem[0x28DA] = 0x80;
+    altimeter_alt_ref = 0x80;
     /* 78a5 */
     mem[0x0079] = 0x80;
     /* 78a9 */
@@ -11892,7 +11892,7 @@ L_78fd:;
     /* 78ff */
     LDA(0x00);
     /* 7901 */
-    mem[0x2830] = cpu.A;
+    landing_target_queued_2830 = cpu.A;
     /* 7904 */
     landing_seq_flag = cpu.A;
     /* 7906 */
@@ -12267,11 +12267,11 @@ L_7a73:;
     /* 7a79 */
     INC_M(MEM_clear_color_count_007D);
     /* 7a7b */
-    LDA(mem[0x007C]);
+    LDA(clear_sweep_delay_007C);
     /* 7a7d */
     SBC(0x06);
     /* 7a7f */
-    mem[0x007C] = cpu.A;
+    clear_sweep_delay_007C = cpu.A;
 L_7a81:;
     /* 7a81 */
     DEY();
@@ -12279,7 +12279,7 @@ L_7a81:;
     if (!cpu.Z) goto L_7a58;
 L_7a84:;
     /* 7a84 */
-    LDA(mem[0x007C]);
+    LDA(clear_sweep_delay_007C);
     /* 7a86 */
     RTCLOK_LOW = cpu.A;
 L_7a88:;
@@ -12362,7 +12362,7 @@ void alien_attack_tick__t6502(void) {
     /* 7abf */
     if (cpu.Z) goto L_7add;
     /* 7ac1 */
-    LDY(mem[0x003A]);
+    LDY(mission_event_flag);
     /* 7ac3 */
     if (cpu.N) goto L_7acb;
     /* 7ac5 */
@@ -12390,7 +12390,7 @@ L_7acb:;
     jitter_roll_pitch();
 L_7add:;
     /* 7add */
-    LDA(player_lives);
+    LDA(flight_mode_state);
     /* 7adf */
     CMP(0x02);
     /* 7ae1 */
@@ -12530,7 +12530,7 @@ L_7b53:;
 /* faithful transliteration kept as the validation oracle; native game_sub_7B54() lives in rof_native.c (see VALIDATE_FUNCS) */
 void game_sub_7B54__t6502(void) {
     /* 7b54 */
-    LDA(mem[0x003A]);
+    LDA(mission_event_flag);
     /* 7b56 */
     if (cpu.N) goto L_7b73;
     /* 7b58 */
@@ -12672,13 +12672,13 @@ L_7bb5:;
 /* setup_level_clear_state @ $7BC6: sets $3A=$FF; if level_or_state($04) set lives($72)=2; timer($44)=$52; X=$1D; tail ring_push_marked */
 void setup_level_clear_state(void) {
     /* 7bc8 */
-    mem[0x003A] = 0xFF;
+    mission_event_flag = 0xFF;
     /* 7bca */
     LDA(level_or_state);
     /* 7bcc */
     if (cpu.Z) goto L_7bd2;
     /* 7bd0 */
-    player_lives = 0x02;
+    flight_mode_state = 0x02;
 L_7bd2:;
     /* 7bd2 */
     LDA(0x52);
@@ -13114,31 +13114,31 @@ void alien_knock_setup_loop__t6502(void) {
     /* 7ec9 */
     alien_knock_active = cpu.X;
     /* 7ecc */
-    mem[0x005E] = cpu.X;
+    sfx_voice_slot_a = cpu.X;
     /* 7ed0 */
     sound_table_idx = 0x09;
     /* 7ed3 */
     INX();
     /* 7ed4 */
-    mem[0x2921] = cpu.X;
+    sfx_voice_slot_c = cpu.X;
     /* 7ed9 */
-    mem[0x005F] = 0x0B;
+    sfx_voice_slot_b = 0x0B;
     /* 7edb */
     LDX(0x00);
     /* 7edd */
-    mem[0x2922] = cpu.X;
+    sfx_used_val_prev = cpu.X;
     /* 7ee0 */
-    mem[0x2926] = cpu.X;
+    sfx_shape_idx = cpu.X;
     /* 7ee3 */
     INC_M(MEM_sfx_state_0634);
     /* 7ee6 */
-    mem[0x0637] = cpu.X;
+    sfx_state_0637 = cpu.X;
     /* 7ee9 */
-    mem[0x063A] = cpu.X;
+    sfx_counter_063a = cpu.X;
     /* 7eec */
     bus_write(0xD208, cpu.X);
     /* 7ef1 */
-    mem[0x0635] = 0x20;
+    sfx_pitch_0635 = 0x20;
     /* 7ef6 */
     sfx_pitch_0638 = 0xBF;
     /* 7efb */
@@ -13152,7 +13152,7 @@ void alien_knock_setup_loop__t6502(void) {
     /* 7f04 */
     ADC(0x0C);
     /* 7f06 */
-    mem[0x2931] = cpu.A;
+    sfx_pitch_base = cpu.A;
     /* 7f09 */
     CLC();
     /* 7f0a */
@@ -13178,7 +13178,7 @@ void alien_knock_setup_loop__t6502(void) {
     /* 7f23 */
     SBC(0x02);
     /* 7f25 */
-    mem[0x2930] = cpu.A;
+    sfx_pitch_cur = cpu.A;
     /* 7f28 */
     LDA(clear_colors_done_003E);
     /* 7f2a */
@@ -13190,7 +13190,7 @@ void alien_knock_setup_loop__t6502(void) {
     /* 7f31 */
     CLC();
     /* 7f32 */
-    ADC(mem[0x061A]);
+    ADC(display_zoom_base);
     /* 7f35 */
     if (!cpu.N) goto L_7f39;
     /* 7f37 */
@@ -13199,19 +13199,19 @@ L_7f39:;
     /* 7f39 */
     ADC(0x01);
     /* 7f3b */
-    mem[0x292E] = cpu.A;
+    zoom_step_count = cpu.A;
     /* 7f3e */
     LDX(0x04);
     /* 7f40 */
-    mem[0x005E] = cpu.X;
+    sfx_voice_slot_a = cpu.X;
     /* 7f44 */
     sound_table_idx = 0x0F;
     /* 7f47 */
     INX();
     /* 7f48 */
-    mem[0x2921] = cpu.X;
+    sfx_voice_slot_c = cpu.X;
     /* 7f4d */
-    mem[0x005F] = 0x12;
+    sfx_voice_slot_b = 0x12;
 L_7f4f:;
     /* 7f4f */
     LDA(0x04);
@@ -13254,11 +13254,11 @@ void silence_audio_channels__t6502(void) {
 /* sound_step_preserve_a @ $7F7A: saves A in $2930, calls alien_creature_animate_draw (INC $2924 -> table $81E8), reloads A, SEC; returns A unchanged */
 void sound_step_preserve_a(void) {
     /* 7f7a */
-    mem[0x2930] = cpu.A;
+    sfx_pitch_cur = cpu.A;
     /* 7f7d */
     alien_creature_animate_draw();
     /* 7f80 */
-    LDA(mem[0x2930]);
+    LDA(sfx_pitch_cur);
     /* 7f83 */
     SEC();
     /* 7f84 */
@@ -13277,7 +13277,7 @@ void alien_creature_animate_draw__t6502(void) {
     /* 7f8e */
     if (!cpu.Z) goto L_7fb0;
     /* 7f90 */
-    LDX(mem[0x005E]);
+    LDX(sfx_voice_slot_a);
     /* 7f92 */
     if (cpu.Z) goto L_7f98;
     /* 7f94 */
@@ -13286,7 +13286,7 @@ void alien_creature_animate_draw__t6502(void) {
     if (!cpu.C) goto L_7fa6;
 L_7f98:;
     /* 7f98 */
-    LDA(mem[0x292E]);
+    LDA(zoom_step_count);
     /* 7f9b */
     if (!cpu.Z) goto L_7fa2;
     /* 7f9d */
@@ -13298,7 +13298,7 @@ L_7fa2:;
     LDX(0x00);
 L_7fa4:;
     /* 7fa4 */
-    mem[0x005E] = cpu.X;
+    sfx_voice_slot_a = cpu.X;
 L_7fa6:;
     /* 7fa6 */
     LDA(mem[(0x81E2)+cpu.X]);
@@ -13310,17 +13310,17 @@ L_7fa6:;
     LDA(mem[(0x81E8)+cpu.X]);
 L_7fb0:;
     /* 7fb0 */
-    mem[0x292A] = cpu.A;
+    sfx_voice_val_a = cpu.A;
     /* 7fb3 */
-    INC_M(0x005F);
+    INC_M(MEM_sfx_voice_slot_b);
     /* 7fb5 */
-    LDX(mem[0x005F]);
+    LDX(sfx_voice_slot_b);
     /* 7fb7 */
     LDA(mem[(0x81E8)+cpu.X]);
     /* 7fba */
     if (!cpu.Z) goto L_7fdd;
     /* 7fbc */
-    LDX(mem[0x2921]);
+    LDX(sfx_voice_slot_c);
     /* 7fbf */
     if (cpu.Z) goto L_7fc5;
     /* 7fc1 */
@@ -13329,7 +13329,7 @@ L_7fb0:;
     if (!cpu.C) goto L_7fd4;
 L_7fc5:;
     /* 7fc5 */
-    LDA(mem[0x292E]);
+    LDA(zoom_step_count);
     /* 7fc8 */
     if (!cpu.Z) goto L_7fcf;
     /* 7fca */
@@ -13341,23 +13341,23 @@ L_7fcf:;
     LDX(0x00);
 L_7fd1:;
     /* 7fd1 */
-    mem[0x2921] = cpu.X;
+    sfx_voice_slot_c = cpu.X;
 L_7fd4:;
     /* 7fd4 */
     LDA(mem[(0x81E2)+cpu.X]);
     /* 7fd7 */
-    mem[0x005F] = cpu.A;
+    sfx_voice_slot_b = cpu.A;
     /* 7fd9 */
     TAX();
     /* 7fda */
     LDA(mem[(0x81E8)+cpu.X]);
 L_7fdd:;
     /* 7fdd */
-    mem[0x292B] = cpu.A;
+    sfx_voice_val_b = cpu.A;
     /* 7fe0 */
-    INC_M(0x2926);
+    INC_M(MEM_sfx_shape_idx);
     /* 7fe3 */
-    LDX(mem[0x2926]);
+    LDX(sfx_shape_idx);
     /* 7fe6 */
     LDA(mem[(0x820A)+cpu.X]);
     /* 7fe9 */
@@ -13372,31 +13372,31 @@ L_7feb:;
     /* 7ff1 */
     INX();
     /* 7ff2 */
-    CPX(mem[0x2922]);
+    CPX(sfx_used_val_prev);
     /* 7ff5 */
     if (cpu.Z) goto L_7ffa;
     /* 7ff7 */
-    CPX(mem[0x2923]);
+    CPX(sfx_used_val_prev2);
 L_7ffa:;
     /* 7ffa */
     if (cpu.Z) goto L_7feb;
     /* 7fff */
-    mem[0x2923] = mem[0x2922];
+    sfx_used_val_prev2 = sfx_used_val_prev;
     /* 8002 */
-    mem[0x2922] = cpu.X;
+    sfx_used_val_prev = cpu.X;
     /* 8005 */
     LDA(mem[(0x8201)+cpu.X]);
     /* 8008 */
-    mem[0x2926] = cpu.A;
+    sfx_shape_idx = cpu.A;
     /* 800b */
     TAX();
     /* 800c */
     LDA(mem[(0x820A)+cpu.X]);
 L_800f:;
     /* 800f */
-    mem[0x292C] = cpu.A;
+    sfx_voice_val_c = cpu.A;
     /* 8012 */
-    LDX(mem[0x292A]);
+    LDX(sfx_voice_val_a);
     /* 8018 */
     encounter_count = mem[(0x81A1)+cpu.X];
     /* 801d */
@@ -13406,7 +13406,7 @@ L_800f:;
     /* 8027 */
     alien_field0_limit = mem[(0x81B9)+cpu.X];
     /* 802a */
-    LDX(mem[0x292B]);
+    LDX(sfx_voice_val_b);
     /* 8030 */
     vbi_phase = mem[(0x81A1)+cpu.X];
     /* 8035 */
@@ -13416,9 +13416,9 @@ L_800f:;
     /* 803f */
     alien_field1_limit = mem[(0x81B9)+cpu.X];
     /* 8044 */
-    mem[0x292D] = 0x00;
+    field2_pack_flag = 0x00;
     /* 8047 */
-    LDA(mem[0x292C]);
+    LDA(sfx_voice_val_c);
     /* 804a */
     CMP(0x0C);
     /* 804c */
@@ -13426,7 +13426,7 @@ L_800f:;
     /* 804e */
     SBC(0x0B);
     /* 8050 */
-    INC_M(0x292D);
+    INC_M(MEM_field2_pack_flag);
 L_8053:;
     /* 8053 */
     TAX();
@@ -13441,13 +13441,13 @@ L_8053:;
     /* 806b */
     screen_ptr_lo = 0xE7;
     /* 806d */
-    LDX(mem[0x2930]);
+    LDX(sfx_pitch_cur);
     /* 8070 */
     CLC();
     /* 8071 */
     LDA(mem[MEM_row_base_lo+cpu.X]);
     /* 8074 */
-    ADC(mem[0x2931]);
+    ADC(sfx_pitch_base);
     /* 8077 */
     dl_src_index = cpu.A;
     /* 8079 */
@@ -13472,11 +13472,11 @@ L_8053:;
     mem[0x008E] = cpu.A;
 L_808d:;
     /* 808d */
-    mem[0x292F] = cpu.X;
+    draw_row_counter = cpu.X;
     /* 8090 */
     alien_shape_blit();
     /* 8093 */
-    LDX(mem[0x292F]);
+    LDX(draw_row_counter);
     /* 8096 */
     INX();
     /* 8097 */
@@ -13492,7 +13492,7 @@ L_808d:;
     /* 80a2 */
     if (cpu.Z) goto L_80ac;
     /* 80a4 */
-    LDA(mem[0x005F]);
+    LDA(sfx_voice_slot_b);
     /* 80a6 */
     if (cpu.Z) goto L_80ac;
     /* 80a8 */
@@ -13501,7 +13501,7 @@ L_808d:;
     if (!cpu.Z) goto L_80c4;
 L_80ac:;
     /* 80ac */
-    DEC_M(0x292E);
+    DEC_M(MEM_zoom_step_count);
     /* 80af */
     if (!cpu.N) goto L_80bb;
     /* 80b1 */
@@ -13683,7 +13683,7 @@ void alien_field2_fill__t6502(void) {
     return;
 L_8142:;
     /* 8142 */
-    LDA(mem[0x292D]);
+    LDA(field2_pack_flag);
     /* 8145 */
     if (!cpu.Z) goto L_8156;
     /* 8147 */
@@ -13911,7 +13911,7 @@ void build_player2_sprite__t6502(void) {
     LDY(mem[0x2865]);
 L_8c64:;
     /* 8c64 */
-    mem[(0x0E32)+cpu.Y] = cpu.A;
+    mem[MEM_player_col_buf2+cpu.Y] = cpu.A;
     /* 8c67 */
     INY();
     /* 8c68 */
@@ -14097,7 +14097,7 @@ L_8d00:;
     /* 8d12 */
     bus_write(0xD002, cpu.A);
     /* 8d17 */
-    bus_write(0xD014, mem[0x0037]);
+    bus_write(0xD014, colpm2_shadow);
     /* 8d1a */
     LDA(grafm_shadow);
     /* 8d1c */
@@ -14110,7 +14110,7 @@ L_8d20:;
     /* 8d22 */
     if (cpu.C) goto L_8d28;
     /* 8d24 */
-    mem[(0x0E32)+cpu.X] = cpu.A;
+    mem[MEM_player_col_buf2+cpu.X] = cpu.A;
     /* 8d27 */
     INX();
 L_8d28:;
@@ -14130,7 +14130,7 @@ L_8d30:;
     /* 8d36 */
     if (!cpu.Z) goto L_8d54;
     /* 8d3a */
-    mem[0x0037] = 0x0E;
+    colpm2_shadow = 0x0E;
     /* 8d3c */
     LDY(mem[0x284A]);
     /* 8d3f */
@@ -14156,7 +14156,7 @@ L_8d54:;
     /* 8d57 */
     if (!cpu.C) goto L_8d62;
     /* 8d5b */
-    mem[0x0037] = 0x3E;
+    colpm2_shadow = 0x3E;
     /* 8d5f */
     mem[0x286B] = 0xFF;
 L_8d62:;
@@ -14194,7 +14194,7 @@ L_8d7c:;
     /* 8d80 */
     if (!cpu.N) goto L_8d8c;
     /* 8d82 */
-    DEC_M(0x0037);
+    DEC_M(MEM_colpm2_shadow);
     /* 8d84 */
     CPY(mem[0x286D]);
     /* 8d87 */
@@ -14371,7 +14371,7 @@ L_8ec5:;
     compute_target_blip_position();
 L_8ecc:;
     /* 8ecc */
-    LDA(player_lives);
+    LDA(flight_mode_state);
     /* 8ece */
     CMP(0x02);
     /* 8ed0 */
@@ -14985,7 +14985,7 @@ L_9134:;
     /* 9138 */
     LDY(0xFF);
     /* 913a */
-    LDX(player_lives);
+    LDX(flight_mode_state);
     /* 913c */
     CPX(0x02);
     /* 913e */
@@ -15076,7 +15076,7 @@ L_9174:;
     /* 918e */
     SBC(0x04);
     /* 9190 */
-    mem[0x0687] = cpu.A;
+    sfx_env_prio_delta = cpu.A;
     /* 9193 */
     refresh_hud_field_0d_entry();
     /* 9196 */
@@ -15151,7 +15151,7 @@ L_91cf:;
     LDA(0x04);
 L_91dc:;
     /* 91dc */
-    mem[MEM_sfx_voice_distort_0e+cpu.Y] = cpu.A;
+    mem[MEM_sfx_env_prio_val+cpu.Y] = cpu.A;
     /* 91df */
     LDA(throttle_accum_lo);
     /* 91e1 */
@@ -15170,7 +15170,7 @@ L_91dc:;
     LDA(0x0C);
 L_91ed:;
     /* 91ed */
-    mem[MEM_hud_field_679+cpu.Y] = cpu.A;
+    mem[MEM_sfx_env_freq_val+cpu.Y] = cpu.A;
     /* 91f0 */
     game_sub_55FC();
     /* 91f6 */
@@ -15227,15 +15227,15 @@ L_9228:;
     /* 9228 */
     CLC();
     /* 9229 */
-    ADC(mem[0x2829]);
+    ADC(obj_delta_x_lo);
     /* 922c */
-    mem[0x2829] = cpu.A;
+    obj_delta_x_lo = cpu.A;
     /* 922f */
     TYA();
     /* 9230 */
-    ADC(mem[0x0068]);
+    ADC(obj_delta_x_hi);
     /* 9232 */
-    mem[0x0068] = cpu.A;
+    obj_delta_x_hi = cpu.A;
     /* 9234 */
     LDY(0x00);
     /* 9236 */
@@ -15260,15 +15260,15 @@ L_9245:;
     /* 9245 */
     CLC();
     /* 9246 */
-    ADC(mem[0x282C]);
+    ADC(obj_delta_y_lo);
     /* 9249 */
-    mem[0x282C] = cpu.A;
+    obj_delta_y_lo = cpu.A;
     /* 924c */
     TYA();
     /* 924d */
-    ADC(mem[0x0069]);
+    ADC(obj_delta_y_hi);
     /* 924f */
-    mem[0x0069] = cpu.A;
+    obj_delta_y_hi = cpu.A;
     /* 9251 */
     LDA(object_anim_frame);
     /* 9253 */
@@ -15492,17 +15492,17 @@ L_9350:;
     /* 9351 */
     LDA(mem[0x2827]);
     /* 9354 */
-    SBC(mem[0x2829]);
+    SBC(obj_delta_x_lo);
     /* 9357 */
     mem[0x2827] = cpu.A;
     /* 935a */
     LDA(object_pos_x_lo);
     /* 935c */
-    SBC(mem[0x0068]);
+    SBC(obj_delta_x_hi);
     /* 935e */
     object_pos_x_lo = cpu.A;
     /* 9360 */
-    LDA(mem[0x0068]);
+    LDA(obj_delta_x_hi);
     /* 9362 */
     if (!cpu.N) goto L_936b;
     /* 9364 */
@@ -15523,17 +15523,17 @@ L_936f:;
     /* 9370 */
     LDA(mem[0x2828]);
     /* 9373 */
-    ADC(mem[0x282C]);
+    ADC(obj_delta_y_lo);
     /* 9376 */
     mem[0x2828] = cpu.A;
     /* 9379 */
     LDA(object_pos_y_lo);
     /* 937b */
-    ADC(mem[0x0069]);
+    ADC(obj_delta_y_hi);
     /* 937d */
     object_pos_y_lo = cpu.A;
     /* 937f */
-    LDA(mem[0x0069]);
+    LDA(obj_delta_y_hi);
     /* 9381 */
     if (cpu.N) goto L_938a;
     /* 9383 */
@@ -16695,7 +16695,7 @@ L_98ce:;
     goto L_98ec;
 L_98d1:;
     /* 98d1 */
-    LDA(player_lives);
+    LDA(flight_mode_state);
     /* 98d3 */
     CMP(0x00);
     /* 98d5 */
@@ -19469,15 +19469,15 @@ L_a433:;
     /* a433 */
     LDA(mem[0x28E7]);
     /* a436 */
-    mem[0x28D9] = cpu.A;
+    altimeter_color_base = cpu.A;
     /* a43c */
-    mem[0x28DA] = mem[0x28E8];
+    altimeter_alt_ref = mem[0x28E8];
     /* a43f */
     LDA(mem[0x0079]);
     /* a441 */
     if (!cpu.N) goto L_a44b;
     /* a445 */
-    game_phase_flag = 0x00;
+    range_to_pilot = 0x00;
     /* a448 */
     goto L_a46c;
 L_a44b:;
@@ -19497,7 +19497,7 @@ L_a44b:;
     LDA(0x09);
 L_a456:;
     /* a456 */
-    game_phase_flag = cpu.A;
+    range_to_pilot = cpu.A;
     /* a459 */
     CMP(mem[0x283F]);
     /* a45c */
@@ -19874,9 +19874,9 @@ L_a5b5:;
     /* a5f7 */
     object_pos_y_hi = cpu.A;
     /* a5f9 */
-    mem[0x0068] = cpu.A;
+    obj_delta_x_hi = cpu.A;
     /* a5fb */
-    mem[0x0069] = cpu.A;
+    obj_delta_y_hi = cpu.A;
     /* a5fd */
     terrain_jitter_column();
     /* a602 */
@@ -19906,7 +19906,7 @@ void terrain_jitter_column__t6502(void) {
     /* a617 */
     ADC(bus_read(0xD20A));
     /* a61a */
-    mem[0x2829] = cpu.A;
+    obj_delta_x_lo = cpu.A;
     /* a61d */
     LDA(0x00);
     /* a61f */
@@ -19921,7 +19921,7 @@ void terrain_jitter_column__t6502(void) {
     EOR(0xFF);
 L_a628:;
     /* a628 */
-    mem[0x0068] = cpu.A;
+    obj_delta_x_hi = cpu.A;
     /* a62a */
     SEC();
     /* a62b */
@@ -19936,9 +19936,9 @@ L_a628:;
     DEY();
 L_a635:;
     /* a635 */
-    mem[0x0069] = cpu.Y;
+    obj_delta_y_hi = cpu.Y;
     /* a637 */
-    mem[0x282C] = cpu.A;
+    obj_delta_y_lo = cpu.A;
     terrain_plot_return(); return;
 }
 
@@ -23092,10 +23092,10 @@ L_b561:;
     goto L_b446;
 }
 
-/* compute_indicator_pos @ $B70C: Gated by player_lives($0072)!=2 & $0063>=0: builds gauge/indicator pos in $0035 from coords $0064/65,$0066/67 (via b76f) & $0063; jiffy-paced via $0014; tail-calls b756 */
+/* compute_indicator_pos @ $B70C: Gated by flight_mode_state($0072)!=2 & $0063>=0: builds gauge/indicator pos in $0035 from coords $0064/65,$0066/67 (via b76f) & $0063; jiffy-paced via $0014; tail-calls b756 */
 void compute_indicator_pos(void) {
     /* b70c */
-    LDA(player_lives);
+    LDA(flight_mode_state);
     /* b70e */
     CMP(0x02);
     /* b710 */
@@ -23450,7 +23450,7 @@ L_3dd7:;
     /* 3ded */
     sfx_voice_distort_0d = cpu.A;
     /* 3df0 */
-    sfx_voice_distort_0e = cpu.A;
+    sfx_env_prio_val = cpu.A;
     /* 3df3 */
     LDX(0x1F);
     /* 3df5 */
@@ -23503,7 +23503,7 @@ L_3e34:;
     /* 3e34 */
     DEY();
     /* 3e35 */
-    mem[(0x2830)+cpu.Y] = cpu.A;
+    mem[MEM_landing_target_queued_2830+cpu.Y] = cpu.A;
     /* 3e38 */
     if (!cpu.Z) goto L_3e34;
     /* 3e3a */
@@ -23641,7 +23641,7 @@ L_3eba:; platform_tick_vbi(); platform_render_frame();
     goto L_3ef5;
 L_3eec:;
     /* 3eec */
-    LDA(mem[0x003A]);
+    LDA(mission_event_flag);
     /* 3eee */
     CMP(0x01);
     /* 3ef0 */
@@ -23712,7 +23712,7 @@ L_3f33:;
     /* 3f3c */
     if (cpu.Z) goto L_3f50;
     /* 3f3e */
-    LDX(player_lives);
+    LDX(flight_mode_state);
     /* 3f40 */
     CPX(0x02);
     /* 3f42 */
@@ -23731,7 +23731,7 @@ L_3f33:;
     timer_or_counter = cpu.Y;
 L_3f50:;
     /* 3f50 */
-    LDX(player_lives);
+    LDX(flight_mode_state);
     /* 3f52 */
     CPX(0x02);
     /* 3f54 */
@@ -23746,9 +23746,9 @@ L_3f59:;
     /* 3f5c */
     LDY(0x80);
     /* 3f5e */
-    mem[0x28D9] = cpu.Y;
+    altimeter_color_base = cpu.Y;
     /* 3f61 */
-    mem[0x28DA] = cpu.Y;
+    altimeter_alt_ref = cpu.Y;
     /* 3f64 */
     LDA(terrain_depth_step);
     /* 3f66 */
@@ -23769,7 +23769,7 @@ L_3f6d:; platform_tick_vbi(); platform_render_frame();
     /* 3f76 */
     bcd_osc_dir = cpu.A;
     /* 3f79 */
-    game_phase_flag = cpu.A;
+    range_to_pilot = cpu.A;
     /* 3f7c */
     wait_frames_10();
     /* 3f7f */
@@ -23829,7 +23829,7 @@ L_3fab:;
     /* 3fb4 */
     LDY(0x03);
     /* 3fb6 */
-    mem[MEM_sfx_voice_distort_0e+cpu.Y] = cpu.A;
+    mem[MEM_sfx_env_prio_val+cpu.Y] = cpu.A;
     /* 3fb9 */
     game_sub_55FC();
     /* 3fbc */
@@ -23891,7 +23891,7 @@ L_418c:;
     /* 4190 */
     if (cpu.Z) goto L_41a4;
     /* 4192 */
-    LDA(player_lives);
+    LDA(flight_mode_state);
     /* 4194 */
     CMP(0x02);
     /* 4196 */
@@ -24284,7 +24284,7 @@ L_480a:;
 /* faithful transliteration kept as the validation oracle; native show_message_id_a() lives in rof_native.c (see VALIDATE_FUNCS) */
 void show_message_id_a__t6502(void) {
     /* 4956 */
-    player_lives = cpu.A;
+    flight_mode_state = cpu.A;
     show_message_with_d8(); return;
 }
 
@@ -24362,7 +24362,7 @@ L_4f7e:;
     /* 4f98 */
     LDY(0x05);
     /* 4f9a */
-    mem[0x00E5] = cpu.Y;
+    game_over_latch = cpu.Y;
     /* 4f9c */
     init_game_vars_attract_timer(); return;
 }
@@ -24632,7 +24632,7 @@ void sound_check_trigger(void) {
 void sound_retrigger_random(void) {
 L_5a21:;
     /* 5a21 */
-    LDA(mem[0x00E5]);
+    LDA(game_over_latch);
     /* 5a23 */
     if (!cpu.Z) goto L_5a21;
     /* 5a25 */
@@ -24789,7 +24789,7 @@ L_6a7c:;
     /* 6a7e */
     CLC();
     /* 6a7f */
-    LDA(mem[MEM_hud_field_679+cpu.Y]);
+    LDA(mem[MEM_sfx_env_freq_val+cpu.Y]);
     /* 6a82 */
     ADC(history_ring_step);
     /* 6a85 */
@@ -24798,7 +24798,7 @@ L_6a7c:;
     LDA(0xFF);
 L_6a89:;
     /* 6a89 */
-    mem[MEM_hud_field_679+cpu.Y] = cpu.A;
+    mem[MEM_sfx_env_freq_val+cpu.Y] = cpu.A;
     /* 6a8c */
     sfx_reorder_voice_slot(); return;
 }

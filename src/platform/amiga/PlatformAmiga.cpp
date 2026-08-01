@@ -372,7 +372,7 @@ extern "C" void rof_bc_ds_entry(void) { g_dsEntryN++; g_dsEntryVbi = g_vbiCount;
 extern "C" void rof_bc_reset_log(void) {   // hooked at sfx_engine_reset $5433
     unsigned i = g_bcResetN; if (i < BCE_N) { g_bcResetVbi[i] = g_vbiCount; g_bcResetN = (unsigned short)(i + 1u); }
 }
-// setup_level_clear_state ($7BC6) is the SOLE writer of player_lives($0072)=2 = the ONLY cause
+// setup_level_clear_state ($7BC6) is the SOLE writer of flight_mode_state($0072)=2 = the ONLY cause
 // of a game_main_loop_body flight-loop break -> outer-loop -> boot_standby_launch_driver re-invocation ->
 // event $01 reload.  If this fires during a range-1 pilot PASS (not a genuine level advance),
 // that's the range-1 bug: a spurious level-clear.  Ctx: [0]=$0004(level_or_state) [1]=$0642(range)

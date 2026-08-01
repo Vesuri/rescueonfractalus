@@ -580,9 +580,9 @@ def load_symbols(path):
     return sym
 
 def mem_alias(addr):
-    """Bare lvalue alias (e.g. `player_lives`) for a named non-hardware address,
+    """Bare lvalue alias (e.g. `level_stage`) for a named non-hardware address,
     else None.  Used for DIRECT single-byte accesses, which read cleanest as
-    `player_lives = cpu.A` (the alias expands to mem[MEM_player_lives] via the
+    `level_stage = cpu.A` (the alias expands to mem[MEM_level_stage] via the
     ROF_MEM_ALIASES block of mem.h)."""
     return VAR_NAMES.get(addr)
 
@@ -618,7 +618,7 @@ def write_atari_mem_header(path):
         '// Named offsets into the shared mem[65536] snapshot of the Atari 6502',
         '// address space.  symbols.csv is the source of truth for the names.',
         '//',
-        '//   MEM_<name>   numeric offset (C and C++).  Use as mem[MEM_player_lives].',
+        '//   MEM_<name>   numeric offset (C and C++).  Use as mem[MEM_level_stage].',
         '//   <name>       OPT-IN bare lvalue alias for mem[MEM_<name>]; enable with',
         '//                `#define ROF_MEM_ALIASES` before including (C only — a macro',
         '//                of a plain name would clobber same-named locals / C++ members).',
@@ -637,7 +637,7 @@ def write_atari_mem_header(path):
     lines += [
         '',
         '#ifdef ROF_MEM_ALIASES',
-        '// Bare lvalue aliases: write `player_lives` for `mem[MEM_player_lives]`.',
+        '// Bare lvalue aliases: write `level_stage` for `mem[MEM_level_stage]`.',
     ]
     for addr, name in items:
         lines.append(f'#define {name:<{width}} mem[MEM_{name}]')
@@ -867,7 +867,7 @@ def parse_operand(op, nbytes, symbols):
 
 def operand_read(mode, addr, idx):
     """C expression that reads the source value.  Direct (zp/abs) named accesses
-    read as the bare alias (player_lives); indexed accesses keep the MEM_<name>
+    read as the bare alias (level_stage); indexed accesses keep the MEM_<name>
     base in the index arithmetic (mem[MEM_foo+cpu.X])."""
     if mode == 'imm':   return f'0x{addr:02X}'
     if mode in ('zp','abs'):
@@ -913,7 +913,7 @@ def write_expr(mode, addr, idx, val_expr):
             return f'bus_write({mem_index(addr)}, {val_expr})'
         alias = mem_alias(addr)
         if alias:
-            return f'{alias} = {val_expr}'           # bare lvalue: player_lives = ...
+            return f'{alias} = {val_expr}'           # bare lvalue: level_stage = ...
         return f'mem[0x{addr:04X}] = {val_expr}'
     ea = operand_addr_expr(mode, addr, idx)
     if mode in ('absx','absy','zpx','zpy'):
@@ -1591,7 +1591,7 @@ def main():
         '#include "../cpu/cpu.h"',
         '#include "../cpu/bus.h"',
         '#include "rof_decl.h"',
-        '#define ROF_MEM_ALIASES  /* enable bare lvalue aliases (player_lives = ...) */',
+        '#define ROF_MEM_ALIASES  /* enable bare lvalue aliases (level_stage = ...) */',
         '#include "mem.h"   /* MEM_<name> offsets + bare aliases for named RAM/state */',
         '#include "../platform/platform_c.h"',
         '',

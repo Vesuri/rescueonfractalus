@@ -157,7 +157,7 @@ $5367` → `step_accum_sub_7e $6A8F`, which `boot_standby_launch_driver` syncs t
 
 Sequence (all under VBI `$52D7` + DLI chain `VDSLST=$6CAD`, `$0200==$AD`, gate `$003A==$FF`):
 
-1. **Ascent** (flight VBI `$4FF5`): `game_main_loop` dock branch `$3F50` (`player_lives $0072==2`),
+1. **Ascent** (flight VBI `$4FF5`): `game_main_loop` dock branch `$3F50` (`flight_mode_state $0072==2`),
    ascend while depth `$0034` `$40`→`$60`, spin on `level_ready_flag $283B` bit7, seed
    `display_flags $0071 = $2A` (salmon), zero COLPM shadows, JMP `boot_standby_launch_driver`. ✅ WORKS on Amiga
    (FlightCopperList).
@@ -414,7 +414,7 @@ Already-native callees (reuse as-is): `boot_standby_launch_driver $5F1D`, `draw_
 ### Atari 6502 / transpiled+native logic (drives the cinematic; runs faithfully on both backends)
 | Addr | Name | File | Role in the boost |
 |---|---|---|---|
-| `$3D48/$3E0F` | `game_main_loop` / `game_main_loop_body` | rof_native.c | Loops over `boot_standby_launch_driver`; the dock branch (`$3F50`, `player_lives $0072==2`) runs the ASCENT (depth `$0034` $40→$60), then breaks back to re-enter `boot_standby_launch_driver` for the reverse cinematic. |
+| `$3D48/$3E0F` | `game_main_loop` / `game_main_loop_body` | rof_native.c | Loops over `boot_standby_launch_driver`; the dock branch (`$3F50`, `flight_mode_state $0072==2`) runs the ASCENT (depth `$0034` $40→$60), then breaks back to re-enter `boot_standby_launch_driver` for the reverse cinematic. |
 | `$4644` | `event_sequence_dispatcher` | rof_gen.c | In-flight keyboard dispatch; routes the **B** key ($15) to the boosters handler. |
 | `$493D` | boosters handler (misnamed — see docs/rename.md) | rof_gen.c | Gated on `$003A` negative: sets mother-ship light `$0676=1`, clears rescue state, sets **`$0072=2`** (handoff sentinel), shows "FIRE BOOSTERS". |
 | `$7BC6` | `setup_level_clear_state` | rof_gen.c | Mother-ship arrival: sets **`$003A=$FF`**, lights the indicator, "MOTHER SHIP!". (The boost render gate keys on `$003A==$FF`.) |

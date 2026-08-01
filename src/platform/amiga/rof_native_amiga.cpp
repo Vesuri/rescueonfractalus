@@ -383,10 +383,10 @@ extern "C" void startup_init_native(void)
 
     mem[MEM_bar_col_threshold] = 0u;
     uint8_t y = 0x1Eu;
-    uint8_t a = mem[MEM_game_phase_flag];
+    uint8_t a = mem[MEM_range_to_pilot];
 
     if (a >= 1u && a < 3u && (a & mem[MEM_collision_flags]) == 0u) {
-        if (mem[MEM_player_lives] != 0u) {
+        if (mem[MEM_flight_mode_state] != 0u) {
             // ring_push_marked(X=$14): push (a|$80) into altitude ring buffer at $0719
             uint8_t ptr = mem[MEM_alt_ring_head];
             if (ptr >= 0x20u) ptr = 0x1Fu;

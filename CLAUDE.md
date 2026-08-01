@@ -280,7 +280,7 @@ Per-op flag computation + bus dispatch is the overhead that native rewrites remo
 **Named memory accesses (`mem.h`):** `symbols.csv` is the single source of truth not just for
 function names but for named RAM/shadow addresses. The transpiler builds a `VAR_NAMES` map from
 its var rows and emits named accesses instead of raw `mem[$NNNN]`: a direct access becomes a bare
-lvalue alias (`player_lives = cpu.X`, via the `ROF_MEM_ALIASES` block in `mem.h`), while
+lvalue alias (`level_stage = cpu.X`, via the `ROF_MEM_ALIASES` block in `mem.h`), while
 indexed / RMW / `bus_write` forms use `mem[MEM_<name> + i]`. `rof_native.c` is auto-converted to
 the same named forms; `rof_native_amiga.cpp` + `RescueOnFractalus.cpp` use `mem[MEM_*]` directly.
 (The old `zp::`/`AtariZp.h` namespace was removed — these are general RAM/shadow addresses, not

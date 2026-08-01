@@ -40,7 +40,7 @@ flowchart TD
     D2 --> D3["stars / space<br/>draw_symmetric_span_loop<br/>+ scroll_field_columns"]
     D3 --> D4["planet<br/>gen_terrain_column +<br/>draw_vline_pair + P3 obj"]
     D4 --> N["inner flight loop L_3eba<br/>mode-D terrain (MANUAL)<br/>terrain_gen_1"]
-    N -->|"player_lives ($0072) == 2<br/>→ segment clear"| O["level-clear $3F59"]
+    N -->|"flight_mode_state ($0072) == 2<br/>→ segment clear"| O["level-clear $3F59"]
     O --> M
     N -->|else| N
 ```
@@ -213,12 +213,12 @@ L_3eba:                         // frame top (tick VBI + render)
     game_state_update;  enemy_check
     pilot_render ($288D/$288E)  // if a pilot is on-screen
     ...rescue / event state machine ($003D, $003E, $0044)...
-    if (player_lives $0072 == 2) goto L_3f59;   // segment/level complete
+    if (flight_mode_state $0072 == 2) goto L_3f59;   // segment/level complete
     goto L_3eba;                                 // otherwise next frame
 ```
 
 ### 5d. Level-clear / transition (`L_3f59` $3F59)
-Reached when `player_lives ($0072)` hits 2. Advances state, waits for the
+Reached when `flight_mode_state ($0072)` hits 2. Advances state, waits for the
 ship-position settle (`$0034 ≥ $40`, then `$283B` sign), clears the
 `$0F1D/$0E8F` buffers, fixes up shape pointers, `game_sub_4606`,
 `game_sub_55FC`, then **`goto L_3e0f`** — back to the outer reset for the next
@@ -364,10 +364,10 @@ INITAD order — is a possible future step if attract-mode parity is wanted.
 | `$0041` | `game_state` | global state flag (set to 3 in `game_entry`, latched each frame) |
 | `$0042` | — | sub-pass marker within the flight loop (2 then 1) |
 | `$004A` | `joystick_saved` | start sub-state (`$01`/`$02`); level index on clear |
-| `$0072` | `player_lives` | inner-loop terminator — `== 2` ⇒ segment/level clear |
+| `$0072` | `flight_mode_state` | flight/message MODE (NOT lives): `== 2` (crash/landing/level-clear) terminates the inner loop ⇒ segment/level clear |
 | `$006D` | `level_stage` | level/stage counter (seeded to 4) |
 | `$00E2` | `attract_timer` | seeded to 100 by `init_game_vars_attract_timer` |
 | `$0627` | `fresh_start_flag` | `0` ⇒ run the intro once; non-zero ⇒ skip |
-| `$0642` | `game_phase_flag` | 0=intro, 1/2=active, 3=transition (`startup_init`) |
+| `$0642` | `range_to_pilot` | range-to-pilot digit 1..9 (0=no pilot); gates the range beep at 1/2 (`startup_init`) |
 | `$37EE` | `level_progress` | distance/progress counter (min `$10`) |
 | `$0012/13/14` | `RTCLOK*` | jiffy clock; attract timeout & frame waits |

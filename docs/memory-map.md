@@ -53,7 +53,7 @@ $C000–$FFFF   OS ROM area     — OS ROM + hardware registers ($D000–$D7FF)
 | `$6C` | game_var_6C | Zeroed at $3D42 in game_entry |
 | `$6D` | game_var_6D | Set $04 then cleared; loop counter in game_entry init |
 | `$71` | display_flags | $C0 at init → $00 attract → $2A game mode flags |
-| `$72` | player_lives | Life/continue counter; compared to 2 in main loop |
+| `$72` | flight_mode_state | Flight/message MODE selector (NOT lives — real counter is $062F): 0=normal, 2=crash/landing/level-clear, $FF/id=message |
 | `$7E` | score_display | Set $80 at game start |
 | `$80` | vbi_sync | VBI sync flag: VBI sets, main code waits then clears |
 | `$81/$82` | dl_ptr | 16-bit pointer to display list being built ($B800 during attract) |
@@ -112,7 +112,7 @@ $C000–$FFFF   OS ROM area     — OS ROM + hardware registers ($D000–$D7FF)
 | `$062F` | life_counter | Compared to $0E (14); pilot rescue fuel/lives |
 | `$0633` | alien_trigger | Non-zero → alien_attack_tick called each frame |
 | `$063D` | event_trigger | Non-zero → game_sub_4f3f called each frame |
-| `$0642` | game_phase_flag | 0=intro / 1–2=active / 3=transition |
+| `$0642` | range_to_pilot | Range-to-pilot digit 1..9 (0=no pilot); clamp(($0079>>2)+1); gates the range beep at 1/2 |
 | `$0645–47` | shield_damage | Set $80 at game start |
 
 ## Main game RAM ($2800+)

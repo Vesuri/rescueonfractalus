@@ -187,25 +187,25 @@ $004A,joystick_saved,var,0,Joystick processed value / level sub-state
 $004B,collision_flags,var,0,Collision/event flags (BIT-tested in startup_init)
 $004C,frame_wait_count,var,0,Counter/timer written by many subs
 $0071,display_flags,var,0,Display mode flags ($C0 during init $00 in attract $2A in game)
-$0072,player_lives,var,0,Player lives counter (compared to 2 in main loop; X+1 stored to $4A when lives=2)
+$0072,flight_mode_state,var,0,Flight/message MODE selector (NOT lives; real life counter is $062F life_counter). 0=normal flight (init_gameplay_state $7411; ==0 gate $4010); 2=crash/landing/level-clear path (setup_level_clear_state $7BD0 when $0004!=0; ==2 dispatch $4192/$3F3E/$3F50); $FF or message-id via the event dispatcher ($473E/$4770/$47A1) and show_message_id_a $4956. Was misnamed player_lives
 $007E,lock_on_indicator_state,var,0,Lock-on indicator state machine (0 init / 1..7 fill sweep / $80 blink / $81.. reverse sweep)
-$0080,sync_flag,var,0,VBI sync flag (game_entry waits for non-zero then clears; VBI sets it)
-$0081,dl_ptr_lo,var,0,Display list pointer low (used by display_list_build as indirect ptr to $B800)
-$0082,dl_ptr_hi,var,0,Display list pointer high
+$0080,sync_flag,var,0,VBI sync flag (game_entry waits non-zero then clears; VBI sets); ALSO the LOW byte of the 16-bit bitmap row pointer ($80/$81) in the plot/span path (set_row_ptr $66C8 / plot_masked_pixel $66DE / fill_*_span) and the LMS push ptr (dl_lms_push_top $6973); ALSO reused by the alien-creature composer as a field cursor. One name cannot fit all three
+$0081,dl_ptr_lo,var,0,Display-list indirect ptr low in display_list_build $1C40; ALSO the HIGH byte of the plot/span 16-bit bitmap row pointer ($80/$81); ALSO alien-composer field-1 cursor. Not renamed - polysemous 6502 ZP scratch across disjoint paths
+$0082,dl_ptr_hi,var,0,DL/LMS pointer high (dl_lms ring; terrain column base); locally reused in plot_pixel_2bpp $6C92 as the $C0 BIT-mask for 2bpp top-2-bit packing
 $0083,screen_ptr_lo,var,0,Screen data pointer low (used by display_list_build)
-$0084,screen_ptr_hi,var,0,Screen data pointer high
-$0085,encounter_count,var,0,Encounter placement counter (counts down from $1E=30 in display_list_build)
+$0084,screen_ptr_hi,var,0,General ZP pointer/scratch (X-coord $6805; table index $669C; pointer hi); in update_object_distance/draw_vline_pair holds the fill-pattern byte $FF/$AA/$55 plotted via ($80),Y. Name is generic - not exclusively a screen pointer
+$0085,encounter_count,var,0,Encounter placement counter ($1E->0 in display_list_build); reused as the object-distance subtrahend hi in update_object_distance and as the plot column (X>>1)+2 in draw_vline_pair
 $0086,row_count,var,0,Row loop counter in display_list_build ($DA=218 rows)
 $0087,vbi_phase,var,0,VBI phase counter (0 or 1)
 $0088,vbi_flags,var,0,VBI display flags
-$00B7,frame_counter,var,0,Frame counter (zeroed by station_init; ticked by VBI; used for timing)
-$00BB,dl_y1,var,0,Display region Y1 or scroll offset (set in station_init and boot_standby_launch_driver)
-$00BC,dl_y2,var,0,Display region Y2
-$00BD,dl_y3,var,0,Display region Y3
+$00B7,frame_counter,var,0,VBI/timing frame counter (zeroed by station_init); reused as object-distance lo and the draw row-counter scratch in update_object_distance/draw_vline_pair
+$00BB,dl_y1,var,0,MISNOMER (not a DL Y coord): general ZP scratch = 16-bit pointer LOW byte ($BB/$BC) in draw_object_column (tbl $4581) / station_init ($1BF4) / boot_standby ($6E59); multi-byte math accum in flight_control_integrate/FUN_9552/9680/b70c
+$00BC,dl_y2,var,0,MISNOMER: pointer HIGH byte paired with $00BB (draw_object_column $43F3 etc); also a math-accumulator byte. Not a DL Y coord
+$00BD,dl_y3,var,0,MISNOMER: loop counter in draw_object_column ($43E6 init 7/$4425 DEC/$4429 CMP $BE) + setup_dial_bar_draw; general math scratch ($8C5F/$B76F). Not a DL Y coord
 $00BE,dl_y4,var,0,Display region Y4
 $00C1,row_table_stride,var,0,Per-scanline screen base-address table STRIDE used by game_setup_7460 to build $073D/$0793 (=$60=96 in flight; $00 in boot_standby_launch_driver). Was misnamed player_x.
 $00C2,player_speed,var,0,Player speed (set $10 in boot_standby_launch_driver)
-$00C3,row_table_base_lo,var,0,Row base-address table BASE low byte for game_setup_7460 (=$10 flight -> base $1010; $0F boot_standby_launch_driver). Was misnamed player_y.
+$00C3,row_table_base_lo,var,0,Row base-address table BASE low byte for game_setup_7460 (=$10 flight base $1010; $0F boot_standby). REUSED as transient scratch: 4-count level-select repeat ctr in standby ($5940/$59A4 DEC/$59BC); parallel BCD accum in count_up_to_level ($75BA); arith scratch $A518+. Was misnamed player_y
 $00C4,row_table_base_hi,var,0,Row base-address table BASE high byte for game_setup_7460 (=$10 flight -> base $1010; $08 boot_standby_launch_driver). Was misnamed altitude_limit.
 $00CF,display_param_0,var,0,Display parameter 0 — loaded from $4DF1+0 table ($04)
 $00D0,display_param_1,var,0,Display parameter 1 — from $4DF1+1 ($26)
@@ -236,13 +236,13 @@ $0627,fresh_start_flag,var,0,0=first time through (run intro); non-zero=continue
 $062F,life_counter,var,0,Life/fuel counter? — compared to $0E (14); game_entry branches on this
 $0633,alien_trigger,var,0,Alien/enemy trigger (if non-zero, enemy_check calls alien_attack_tick)
 $063D,event_trigger,var,0,Event trigger (if non-zero, enemy_check calls intro_cinematic_loop)
-$0642,game_phase_flag,var,0,Game phase (0=intro 1/2=active 3=transition); used in startup_init + display loop
+$0642,range_to_pilot,var,0,Range-to-pilot digit 1..9 (0 = no pilot / $0079 negative); computed at $A456 as clamp(($0079>>2)+1 1..9); reset 0 at $3F79/$7885. Read at startup_init $4000 to gate the range beep (SFX event $14) when 1 or 2. Was misnamed game_phase_flag (no game-phase semantics exist)
 $0645,shield_or_damage,var,0,Shield/damage counter (set $80 at game_entry start)
 $0663,sfx_voice_distort_06,var,0,SFX voice slot 6 distortion ($065D+6); =$A0 pure at cold-init $3DEA; read via mem[$065D+Y] by the voice engine
 $0668,sfx_voice_distort_0b,var,0,SFX voice slot 11 distortion ($065D+$0B); =$80 NOISE at cold-init $3DDF; read via mem[$065D+Y] (NOT score)
 $0669,sfx_voice_distort_0c,var,0,SFX voice slot 12 distortion ($065D+$0C); =$80 NOISE (engine body) at cold-init $3DE2; read via mem[$065D+Y] (NOT score)
 $066A,sfx_voice_distort_0d,var,0,SFX voice slot 13 distortion ($065D+$0D); =$A0 pure at cold-init $3DED; read via mem[$065D+Y]
-$066B,sfx_voice_distort_0e,var,0,SFX voice slot 14 distortion ($065D+$0E); =$A0 pure at cold-init $3DF0; read via mem[$065D+Y]
+$066B,sfx_env_prio_val,var,0,SFX priority/volume envelope VALUE column base mem[$066B+Y] Y=voice slot (AUDC lo-nibble = mixer priority; sfx_voice_envelope_tick/mixer $5614). Was misnamed sfx_voice_distort_0e. SEAM: $066B = distortion[$0E] ($065D+$0E); slots 1&2 ($066C/$066D) also written by flight_control_integrate as gauge slots
 #
 # --- Terrain data tables ($1010+ in the loaded code segment) ---
 $1010,terrain_row0,data,0,Terrain column data row 0 ($60=96 bytes wide); loaded terrain heightmap strip
@@ -532,7 +532,7 @@ $AC93,setup_projection_params,func,0,Builds 16-bit fixed-pt scratch from 2887/28
 $AD2B,compute_row_xspans,func,0,Fills 271F.. (15 entries) by adding A4/A5 step to 271E seed, then fills 270E.. (downward) by subtracting A4/A5; builds per-row horizontal span endpoints
 $B2CC,terrain_midpoint_displace,func,0,16-bit fixed-pt midpoint averaging of segment endpoints ($0082-86 + tables $25B4/$25D2/$25F0/$24E2/$23E2) via CMP #$80/ROR, then sign-aware SBC/ADC perturbation -> $008D-$0091; fractal midpoint step
 $B33D,terrain_column_rasterize,func,0,Walks columns $0082..$D4 interpolating heights $00EA[]/$00F4[], clamps to $97, tracks max-height array $260E, OR-plots bitmap via ($80),Y using $BC00/$BD00 bit tables + $28CA/$28FA addr tables; fractal terrain fill
-$B70C,compute_indicator_pos,func,0,Gated by player_lives($0072)!=2 & $0063>=0: builds gauge/indicator pos in $0035 from coords $0064/65,$0066/67 (via b76f) & $0063; jiffy-paced via $0014; tail-calls b756
+$B70C,compute_indicator_pos,func,0,Gated by flight_mode_state($0072)!=2 & $0063>=0: builds gauge/indicator pos in $0035 from coords $0064/65,$0066/67 (via b76f) & $0063; jiffy-paced via $0014; tail-calls b756
 $B756,enqueue_indicator_event,func,0,Writes indicator params $0673=$0035(pos), $0665=$A0(char), $0681=($0014&5)+2(jiffy), Y=8, then game_sub_55FC enqueues event id 8
 $B76F,abs_scaled_hi_nibble,func,0,Shifts 16-bit $00BD:A right 4 (>>4), SBC #$08, returns absolute value (EOR $FF/ADC #1 if negative); scaled-distance helper for b70c
 $B786,reset_indicator_event,func,0,Sets $0035=0 then tail-calls b756 to enqueue indicator event 8 at position 0; called from gameplay pickup logic ($93dd)
@@ -556,14 +556,14 @@ $0033,terrain_depth_frac,var,0,Sub-step fraction; ASL'd twice into $2275:$2274 a
 $0034,terrain_depth_step,var,0,Range/depth step counter; INC at 98da, compared to $40/$2A/$37 to clamp projection and horizon in update_terrain_scanline_proj/9713
 $0035,indicator_pos,var,0,Gauge/indicator position byte computed by b70c (clamped, >>2 +2), zeroed by b786, copied to $0673 in b756; read in main loop $5242
 $0036,object_anim_frame,var,0,Object explosion/anim frame & slot select; set $80 in 9677, index into tbl $96F5 in 9680
-$0038,vobj_row_count,var,0,P/M strip row count: loaded to X in $41e4 to choose erase-loop vs step-down and DEX'd over strip rows in $4207; also serves as object range/depth high byte for sprite vertical scale in build_player2_sprite and velocity in flight_control_integrate.
+$0038,vobj_row_count,var,0,P/M strip row count ($41E4 LDX/$4207 DEX); ALSO object depth-hi in build_player2_sprite/check_player_proximity_hit; ALSO the HIGH byte of a 16-bit object-position accumulator (low byte $284E) in flight_control_integrate ($9268-$9287)
 $003B,vobj_path_flag,var,0,Gates vobj update path: if 0 use speed-accumulate ($416b) else active-decrement ($4166); also DEC'd in $4166
 $003C,airlock_state,var,0,Set $FF/$00 around animate_clear_colors_timed sweep; tested vs $80; cleared in init_event_state_5815_x16
-$003E,clear_colors_done_003E,var,0,Set non-zero to abort wait_frames_1 sweep loops in animate_clear_colors_timed/clear_colors_sweep_5x
+$003E,clear_colors_done_003E,var,0,Colour-clear sweep-active gate: NONZERO keeps the sweep looping ZERO ends it (clear_colors_sweep_5x $7A96 / animate_clear_colors_timed $7A66 both LDA/BEQ->RTS). Cleared by reset_pilot_state_if_no_2830 / clear_pilot_rescue_state
 $0043,event_active_flag,var,0,event_sequence_dispatcher gating flag for mode 0/dispatch; inc at $4691, cleared at $469f
 $0045,bcd_delta_lo,var,0,16-bit BCD increment low byte added to bcd_counter $0603 in SED mode; cleared by set_zsupp_pos_clear_delta
 $0046,bcd_delta_hi,var,0,16-bit BCD increment high byte added to bcd_counter $0602; cleared by set_zsupp_pos_clear_delta
-$0047,colpf0_value,var,0,Cockpit playfield color; loaded into COLPF0 $D016 by set_colpf0_from_flag (set_colpf0_from_flag)
+$0047,colpf0_value,var,0,Cockpit playfield colour loaded into COLPF0 $D016 by set_colpf0_from_flag: when Y bit5 CLEAR A=$CA else (bit5 SET) A=$0047 ($47A6 BNE $47AD)
 $0048,lock_on_indicator_active,var,0,Set to 1 (also $28EE=1) when lock-on indicator animation reaches count 7 (lock_on_indicator_step); seeded by A in lock_on_indicator_tick
 $004E,terrain_pt_coord_b,var,0,coord component used in terrain_point_distance $A8AF (abs(0x80-$004E)); set from $245A[X] in terrain_plot_object_a
 $004F,terrain_pt_coord_a,var,0,coord component in terrain_point_distance $A8AF (abs($004F-0x80)); set from $2400[X], also index into $260E[X]
@@ -596,7 +596,7 @@ $008B,dl_src_index,var,0,Index into LMS source tables $073D/$0793 used by dl_lms
 $008C,terrain_scroll_reload,var,0,Reload value (8) set when $008A expires in scroll_terrain_dl
 $008D,step_mode_flag,var,0,Selects step routine in launch_anim_dispatch (nonzero->step_accum_sub_7e); set/tested by step_accum_sub_7e and advance_history_6a4d
 $008F,sfx_toggle_8F,var,0,Alternating flag in launch_anim_dispatch: LSR then INC gates every-other-frame sfx ($008C/$008A)
-$0091,altitude_threshold,var,0,Compared to $C0/$E0 in copy_title_text_block_to_screen to pick which 20-byte graphic block to copy into screen $32B6
+$0091,altitude_threshold,var,0,General ZP scratch (~10 fns); meaningful only in copy_title_text_block_to_screen (compared to $C0/$E0 to pick the 20-byte graphic block for $32B6). In sfx_seq_step $7156 it is a dead spill of the voice-param cmd byte
 $0092,draw_row,var,0,Current row counter for the draw loop: init 0x55 (85) in draw_frame_guide_columns, used as index into the row_base tables via set_row_ptr_from_count; also stepped by 8 as the glyph blitter pixel-column ($54/$2E/$38) in blit_message_block.
 $0093,blit_pixel_x,var,0,per-pixel X within row, passed to plot_pixel_masked (LSR->plane index), INC each shifted bit in blit_glyph_8rows
 $0094,draw_color_idx,var,0,2-bit pixel colour/pattern selector in draw_frame_pattern_seq/draw_symmetric_span_loop/plot_pixel_masked/plot_masked_pixel: cycled 1..6, ORed with mask table $66E9 (into $00B9), and used to pick the AND/OR mask masked into the screen byte.
@@ -610,10 +610,10 @@ $009C,draw_x_left,var,0,Left X coordinate of a symmetric span, decremented each 
 $009D,draw_x_right,var,0,Right X coordinate of a symmetric span, incremented each step in draw_symmetric_span_loop; reused as the incremented plot-column high accumulator in plot_terrain_span.
 $009E,draw_row_top,var,0,Top row index (into row_base tables) of a symmetric span, incremented each step in draw_symmetric_span_loop; plot_terrain_span adds $0085 each span (paired with $009F window top).
 $009F,draw_row_bottom,var,0,Bottom row index (into row_base tables) of a symmetric span, decremented each step in draw_symmetric_span_loop; plot_terrain_span subtracts $0085 each span (window bottom) and it also saves the Y shift-count across divide_16x16 calls in project_terrain_points.
-$00A0,draw_iter_count,var,0,Outer iteration count in draw_frame_pattern_seq (init $13 by init_row_coords_9c), decremented per drawn frame; also reused as the message column index counted down in draw_ring_frame_step (CPY #$06).
-$00A1,scroll_accum_b0,var,0,LSB (byte 0) of the multi-byte scroll/distance accumulator ($00A1..$00A4); add_multibyte_a1 adds A into it, sub_multibyte_a1 subtracts.
-$00A2,scroll_accum_b1,var,0,Byte 1 of multi-byte accumulator; carry/borrow propagation in add/sub_multibyte_a1
-$00A3,scroll_accum_b2,var,0,Byte 2 of multi-byte accumulator (add_multibyte_a1/sub_multibyte_a1)
+$00A0,draw_iter_count,var,0,Cinematic outer iteration count (draw_frame_pattern_seq init $13; draw_ring_frame_step CPY #$06). OVERLAID in flight as view-vector byte 0: setup_projection_params loads $2809->$A0 ($ACE5) for terrain_frame_setup/build_view_transform_matrix (cinematic and flight never coexist)
+$00A1,scroll_accum_b0,var,0,Byte 0 of the multi-byte scroll/distance accumulator (add/sub_multibyte_a1). OVERLAID in flight as view rotation vector rot_a low ($2809+1->$A1 $ACEA); pair {rot_a=$A1:$A0 rot_b=$A3:$A2}
+$00A2,scroll_accum_b1,var,0,Byte 1 of the multi-byte accumulator; OVERLAID as rot_b low in flight ($ACEF) for terrain_frame_setup/build_view_transform_matrix
+$00A3,scroll_accum_b2,var,0,Byte 2 of the multi-byte accumulator; OVERLAID as rot_b high in flight ($ACF4)
 $00A4,scroll_accum_b3,var,0,Top byte (byte 3) of the multi-byte scroll/distance accumulator; result of step_accum_add_75/sub_7e; also the per-row X-span increment high byte (from heading $24) used by ad2b.
 $00A5,scroll_accum_prev,var,0,Previous top byte of the scroll accumulator, compared against $00A4 to detect a column step in scroll_field_columns/6a38/6a8f; also the per-row X-span increment low byte (from heading $23) used by ad2b.
 $00A6,horizon_row_index,var,0,Horizon/center row index = 6 - (signextend $28<<2); seeds 271E span table in ad2b
@@ -634,8 +634,8 @@ $00D9,lockon_flash_color,var,0,Enemy/lock-on flash colour (P3 altimeter bar COLP
 $00DA,audc_shadow_0,var,0,RANDOM($D20A)|4 written to $00DA-$00DD in $4f9f; staged POKEY audio control bytes
 $00DC,terrain_pen0_fade,var,0,Salmon->brown terrain pen 0 fade colour; copied from the atmosphere altitude-band table $0823+y in vbi_handler_flight, drives the FlightCopperList terrain fade.
 $00DF,span_pixel_count,var,0,Down-counter for pixels/rows within a single span in fill_horizontal_span/fill_vertical_span (loop ends when negative); also holds the current event glyph id output by event_sequence_dispatcher.
-$0601,score_display,var,0,Displayed score, 3-byte packed BCD $0601-$0603 (6 digits); rendered to the top text line $32C5 by render_bcd_counter
-$0604,level_count_acc,var,0,Counter incremented in count_up_to_level($75B8) until it equals level_stage $006D
+$0601,score_display,var,0,Current-score BCD; add_and_show_bcd_counter $497D and the compare/copy at $58AB treat $0600-$0603 as one big-endian counter (MSB $0600); rendered to top text line $32C5 by render_bcd_counter
+$0604,level_count_acc,var,0,Current level/stage byte between the current-score ($0600-$0603) and high-score ($0605-$0608) BCD blocks; INC'd in count_up_to_level $75BC until it equals level_stage $006D
 $060D,sfx_rand_freq_lo1,var,0,Random freq value (random_digit, RANDOM $D20A &$0F<$0A) for SFX retrigger
 $060E,sfx_rand_freq_lo2,var,0,Random freq value (random_digit) for SFX retrigger
 $060F,sfx_rand_freq_hi1,var,0,Random freq value (random_alpha_index, RANDOM $D20A &$1F+$21) for SFX retrigger
@@ -672,7 +672,7 @@ $0665,indicator_evt_char,var,0,Event param array entry set to $A0 by b756 (indic
 $0673,indicator_evt_pos,var,0,Event param array entry written =$0035 by b756 before enqueueing event 8 via game_sub_55FC
 $0676,timer_676,var,0,Countdown/display field byte set from A by store_676_init before the game_sub_55FC refresh chain; DEC'd at $8035 and compared at $14932/$15231.
 $0678,hud_field_678,var,0,HUD/display field value byte; set from A ($4ea5) and to $0C ($4fce); decremented in intro fade loop $4f7e
-$0679,hud_field_679,var,0,HUD/display field byte set from A at $4ea5 before the game_sub_55FC refresh; same slot also written per-voice when SFX frequencies are pushed to AUDFn $D1FE+X (5667/5673).
+$0679,sfx_env_freq_val,var,0,SFX frequency envelope VALUE column base mem[$0679+Y]; pushed to AUDF via sfx_voice_write_freq. Was misnamed hud_field_679. SEAM: $0679 = prio_target[$0E] ($0695+$0E); also a standalone $4EA5 write before a game_sub_55FC gauge refresh
 $0681,indicator_evt_phase,var,0,Event param set to ($0014&$05)+2 by b756; jiffy-clock-derived phase/blink value
 $0705,sfx_voice_reg_idx,var,0,Per-voice POKEY AUDF reg index table (base, +X/Y); 0=inactive; idx 2->AUDF1 $D200; voices 1..12 scanned in 568a/56af
 $0714,sfx_top_prio_val,var,0,Selected top voice priority nibble value from sfx_pick_top_voice ($568a)
@@ -777,7 +777,7 @@ $0625,dial_base_offset,var,0,cockpit_dial_update: per-dial base index ADC'd to t
 $4457,dial_bar_value_table,data,0,cockpit_dial_update: bar-value lookup table (Y = dial value + dial_base_offset) mapping a dial value to its drawn bar fill
 $4581,dial_column_ptr_table,data,0,draw_object_column: per-column 16-bit target cockpit-cell pointer table (indexed by 2*column)
 $00CB,hposp2_shadow,var,0,vbi_handler_flight: shadow pushed to HPOSP2 ($D002) — the laser-shot HPOSP2 (see CLAUDE.md flight-pmg correction)
-$00CD,grafm_shadow,var,0,vbi_handler_flight: shadow pushed to GRAFM ($D00A) — wing-clearance missile graphics
+$00CD,grafm_shadow,var,0,GRAFM ($D00A) shadow pushed in the flight missile block ($5028/$502A and $8D1A/$8D1C); set $03/$01 at $8D9C/$8DA9. Drives the flight missile graphics (crosshair/altimeter) NOT the wing-clearance bars (a mode-D bitmap) and NOT SIZEP2
 $08A1,atmo_fade_countdown,var,0,vbi_handler_flight atmosphere fade: counts down then bumps atmo_fade_phase
 $08A2,atmo_fade_phase,var,0,vbi_handler_flight atmosphere fade: phase counter indexing atmo_fade_step_table into atmo_band_base
 $08A3,atmo_band_base,var,0,vbi_handler_flight atmosphere fade: depth-band base offset into the atmo_* lookup tables
@@ -880,3 +880,51 @@ $719E,sfx_audf2_table,var,0,POKEY AUDF voice2 preset per voice-param cmd (indexe
 $7191,sfx_audf3_table,var,0,POKEY AUDF voice3 preset per voice-param cmd (indexed cmd low 5 bits) in sfx_seq_step
 $71B8,sfx_audf4_table,var,0,POKEY AUDF voice4 preset per voice-param cmd (indexed cmd low 5 bits) in sfx_seq_step
 $71C5,sfx_audc4_table,var,0,AUDC4 preset per voice-param cmd (same index); a 0 here acts as a rest (ends the cmd scan, note silent)
+$00E5,game_over_latch,var,0,Set 5 by the death cinematic ($4F9A before JMP $3D38); cleared 0 by audio_timer_setup ($7134). Nonzero drives the results/level-start branch in standby_scoreboard_render ($588C) and is spin-waited to zero before name entry ($596D) and in sound_retrigger_random ($5A21). Nonzero = a game just ENDED
+$36BD,name_entry_gate_cell,var,0,Title-Screen RAM cell (in $365B-$36D2 copied from template $5A9E by standby_scoreboard_render); = $36B7+6 in the score/initials line. Read at $5946 as the name-entry gate: when game_var_E4!=0 nonzero keeps calling name_entry_loop ($5B6C) zero clears E4. Dual: screen byte + entry-active flag
+$060A,ranking_level,var,0,Highest starting level/stage reached this session; max-tracked vs level_stage $006D at $61CF-$61D4 (STA only when $006D >= $060A); zeroed at game_entry; rendered via bin_to_bcd to Title line $36A8 = the RANKING LEVEL readout
+$0605,high_score_b0,var,0,MSB (byte 0) of the 4-byte big-endian BCD high score $0605-$0608; overwritten from current score $0600-$0603 when current wins the big-endian compare ($58B7-$58C0); rendered to $36CB in standby
+$0606,high_score_b1,var,0,Byte 1 of the 4-byte big-endian BCD high score $0605-$0608
+$0607,high_score_b2,var,0,Byte 2 of the 4-byte big-endian BCD high score $0605-$0608
+$0608,high_score_b3,var,0,LSB (byte 3) of the 4-byte big-endian BCD high score $0605-$0608
+$0037,colpm2_shadow,var,0,Player-2 (COLPM2 $D014) colour shadow pushed in vbi_handler_flight ($5011) and build_player2_sprite ($8D17); animated as the artificial-horizon P2 ground-fill colour (force-set $78/$0E/$3E DEC at $5190/$8D3A/$8D5B/$8D82). $D014=COLPM2 not COLPF1
+$06DB,sfx_env_freq_step,var,0,SFX freq-envelope STEP column mem[$06DB+Y] (!=0 = active); init from tbl $57BB in sfx_event_load
+$06E9,sfx_env_freq_phase,var,0,SFX freq-envelope PHASE accumulator mem[$06E9+Y]; gated by tbl $5406; init tbl $57EC
+$06BF,sfx_env_freq_delta,var,0,SFX per-step freq increment mem[$06BF+Y] added to the freq value each tick; init tbl $57DC
+$06CD,sfx_env_freq_target,var,0,SFX freq-envelope TARGET mem[$06CD+Y]; on match step:=0 and the slot is re-queued; init tbl $57E4
+$06A3,sfx_env_prio_step,var,0,SFX priority/volume-envelope STEP column mem[$06A3+Y]; init from the 'duration' tbl $5737
+$06B1,sfx_env_prio_phase,var,0,SFX prio/vol-envelope PHASE accumulator mem[$06B1+Y]; init tbl $579A
+$0687,sfx_env_prio_delta,var,0,SFX per-step prio/vol (AUDC lo-nibble) increment column mem[$0687+Y]; init tbl $5758. NOTE slot 0 ($0687 itself) is untouched by the envelope loop (Y=$0E..1) and is reused by flight_control_integrate ($918A/$9190) as a gauge scalar
+$0695,sfx_env_prio_target,var,0,SFX prio/vol-envelope TARGET nibble mem[$0695+Y]; init tbl $5779
+$06F7,sfx_env_event_id,var,0,SFX per-slot event id mem[$06F7+Y]; re-pushed bit7-marked onto the $0719 ring when an envelope expires ($548D)
+$2829,obj_delta_x_lo,var,0,Low byte of the 16-bit object screen-delta X accumulator (hi $0068); written as RANDOM jitter in terrain_jitter_column ($A61A) accumulated in flight_control_integrate ($9229) consumed in object_integrate_position ($9354). Per-frame flight scratch
+$0068,obj_delta_x_hi,var,0,High byte of the 16-bit object screen-delta X accumulator (low $2829); see obj_delta_x_lo
+$282C,obj_delta_y_lo,var,0,Low byte of the 16-bit object screen-delta Y accumulator (hi $0069); jitter $A637 / integrate $9246 / consume $9373
+$0069,obj_delta_y_hi,var,0,High byte of the 16-bit object screen-delta Y accumulator (low $282C)
+$2830,landing_target_queued_2830,var,0,Queued-landing-target slot flag; reset_pilot_state_if_no_2830 ($495F) LDA #0/CMP $2830/BNE: only when $2830==0 (no target queued) does it also clear landing_seq_flag $003D ($4966). (The $3E34 STA $2830,Y level-clear loop clears $2831+ not this byte.)
+$007C,clear_sweep_delay_007C,var,0,Pacing accumulator for animate_clear_colors_timed ($7A17): pulled down by 7 each pass ($7A7D SBC #$06 with carry clear) then reseeds RTCLOK low $0014 on exit ($7A84)
+$005E,sfx_voice_slot_a,var,0,Alien-encounter SFX voice-slot index A: set 1 at alien_knock_setup_loop $7ECC then 4 at $7F40; read $7F90 to index reroll tables $81E2/$81E8
+$005F,sfx_voice_slot_b,var,0,Alien-encounter SFX voice-slot index B: set $0B at $7ED9 $12 at $7F4D; INC'd $7FB3; indexes $81E8/$81E2
+$2921,sfx_voice_slot_c,var,0,Alien-encounter SFX voice-slot index C: set 2 at $7ED4 5 at $7F48; read/rerolled $7FBC via $81E2
+$2922,sfx_used_val_prev,var,0,Alien SFX most-recent used voice value; reroll at $7FEB-$8002 rejects a new RANDOM&7+1 equal to $2922 or $2923; on accept shifts $2922->$2923 new->$2922
+$2923,sfx_used_val_prev2,var,0,Alien SFX 2nd-most-recent used voice value; the 2-deep no-repeat history checked at $7FF7
+$2926,sfx_shape_idx,var,0,Alien SFX shape/param cursor into $820A; INC'd $7FE0; on rollover reseeded from $8201 at $8005
+$2930,sfx_pitch_cur,var,0,Current alien SFX pitch (descending sweep) from the SBC cascade $7F0A-$7F25; indexes row-addr tables $073D/$0793 at $806D
+$2931,sfx_pitch_base,var,0,Alien SFX pitch base offset = (RANDOM&7)+$0C set $7F06; added to the $073D-indexed low byte at $8074
+$292E,zoom_step_count,var,0,Alien zoom-in step count seeded $7F3B from RANDOM&3+$061A; DEC'd $80AC each animate pass (BPL loops; <0 ends the encounter)
+$292A,sfx_voice_val_a,var,0,Alien per-frame voice-A shape value ($81E8->$292A $7FB0); indexes field-0 tables $81A1/$81B9 at $8012
+$292B,sfx_voice_val_b,var,0,Alien per-frame voice-B shape value ($81E8->$292B $7FDD); indexes field-1 tables at $802A
+$292C,sfx_voice_val_c,var,0,Alien per-frame voice-C shape value ($820A->$292C $800F); at $8047 selects field-2 source (CMP #$0C) and sets pack flag $292D
+$292D,field2_pack_flag,var,0,Alien field-2 pack-mode flag: cleared $8042 INC'd $8050 when $292C>=$0C; alien_field2_fill $8138 raw-copies when nonzero else bit-packs
+$292F,draw_row_counter,var,0,Alien composer draw-loop row index 0..$2B saved across the row-emit call ($808D) reloaded/incremented ($8093) = 44-row loop
+$0635,sfx_pitch_0635,var,0,sfx_engine_step descending-pitch state (LDY/STY in the $5585 branch); seeded $20 by the alien encounter at $7EF1 (same engine state)
+$0637,sfx_state_0637,var,0,sfx_engine_step state (LDY $55AA/STY $55CF); cleared by the alien encounter at $7EE6
+$063A,sfx_counter_063a,var,0,sfx_engine_step counter (DEC $55AD/INC $55CC); cleared by the alien encounter at $7EE9
+$061A,display_zoom_base,var,0,Display-geometry value from compute_stage_display_geometry $75F5; read as the alien zoom-step base at $7F32
+$0C32,player_col_buf0,var,0,P0 89-byte column buffer; flight = scrolling terrain-height column; launch/stars = left canopy A-pillar (RLE $4DFA via unpack_terrain_seed_cols $7558) / starfield player. R/W fill_terrain_columns/gen_terrain_column/scroll_field_columns
+$0D32,player_col_buf1,var,0,P1 89-byte column buffer; flight = terrain column; launch = right canopy A-pillar (RLE $4E09)
+$0E32,player_col_buf2,var,0,P2 89-byte column buffer; flight = terrain column + depth-scaled object/explosion sprite (build_player2_sprite $8C58); stars = starfield player; cleared by clear_terrain_lo_buffers $6B63
+$0F32,player_col_buf3,var,0,P3 89-byte column buffer; flight = terrain column; stars = starfield player; cleared by clear_terrain_lo_buffers $6B63
+$28D9,altimeter_color_base,var,0,Altimeter colour source; $28D9+$AB -> altitude glyph/colour $CE ($450A clamped); snapshot from $28E7 ($A436); reset $80 at init $789F and level-clear handoff $3F5E
+$28DA,altimeter_alt_ref,var,0,Altitude reference; $1C-$28DA = altimeter digit/bar row in update_altitude_digit_display ($44DB); snapshot from $28E8 ($A43C); reset $80 at init $78A2 and level-clear handoff $3F61
+$003A,mission_event_flag,var,0,Mission/event state flag: init $FF (bit7 set) by setup_level_clear_state $7BC8; INC'd on a random draw $7459; bit7-gated (BPL/BMI) to gate cockpit-cell $3356/57 ($50FA) the message path ($493D) and random object spawn ($7B54); when ==1 game_main_loop $3EEC raises level_cleared_flag $2849

@@ -17,7 +17,7 @@
 #include "rof_decl.h"   /* declarations for transpiled routines native code calls */
 #include "rof_native.h" /* typed cores shared with the hand-written Amiga ports */
 #include "../platform/platform_c.h" /* platform_tick_vbi/render_frame/poll_events for the apex spin-waits */
-#define ROF_MEM_ALIASES /* bare lvalue aliases: player_lives == mem[MEM_player_lives] */
+#define ROF_MEM_ALIASES /* bare lvalue aliases: flight_mode_state == mem[MEM_flight_mode_state] */
 #include "mem.h"        /* MEM_<name> offsets + bare aliases (symbols.csv var rows) */
 
 /* Display hardware register writes (ANTIC/GTIA/PMG, $D000-$D4xx) are DEAD on the Amiga — the
@@ -1195,8 +1195,8 @@ void advance_history_6a4d(void) {
     mem[0x08D5] = color_ring;                             /* $08D5 <- $08D4 */
     color_ring = top;                                     /* $08D4 <- old $08D9 */
     if ((int8_t)step_mode_flag < 0) display_flags = mem[0x08D8];
-    uint8_t s = (uint8_t)(mem[MEM_hud_field_679 + 0x0C] + history_ring_step);
-    mem[MEM_hud_field_679 + 0x0C] = s ? s : 0xFF;
+    uint8_t s = (uint8_t)(mem[MEM_sfx_env_freq_val + 0x0C] + history_ring_step);
+    mem[MEM_sfx_env_freq_val + 0x0C] = s ? s : 0xFF;
     cpu.Y = 0x0C;                                         /* the $0685 index is still live in Y */
     /* sfx_reorder_voice_slot ($5614) is the SFX VOICE-priority mixer (misnamed — NOT PMG): it
      * writes the swept AUDF2/AUDC2 (this slot's $0685 freq + $0677 vol) to POKEY via
@@ -2606,7 +2606,7 @@ static void show_message_with_d8_core(uint8_t id) { cpu.Y = id; show_message_wit
 /* show_message_id_a @ $4956 — stash the message/event mode ($0072 = entry A), then show
  * the message via show_message_with_d8 (entry Y = message id). */
 void show_message_id_a(void) {
-    player_lives = cpu.A;                       /* $0072 (event/message mode) = A */
+    flight_mode_state = cpu.A;                       /* $0072 (event/message mode) = A */
     show_message_with_d8();                     /* uses cpu.Y (id) */
 }
 static void show_message_id_a_core(uint8_t a, uint8_t id) {
@@ -2655,7 +2655,7 @@ void level_clear_fx_loop(void) {
 /* event_sequence_dispatcher @ $4644 — the in-flight keyboard-command handler.  Entry X = the
  * KBCODE the POKEY keyboard IRQ left (see CLAUDE.md "Controls").  Matches it against the command
  * table $4816[0..7] and dispatches by the matched SLOT (0=Land 1=? 2=ACE/msg 3=Systems 4=AirLock
- * 5=Boosters/thrust-up 6=? 7=BREAK/restart) plus the current flight mode ($0072 player_lives).
+ * 5=Boosters/thrust-up 6=? 7=BREAK/restart) plus the current flight mode ($0072 flight_mode_state).
  * Faithful to the 6502 stack tricks the takeover (slot 7) uses: a PHA;PHA;PHA;RTI that the
  * transpiler models as PLP;return, and a PLA x8 unwind — both stack-only, so the fixture ignores
  * the stack page and cpu diffs are incidental.  All callees are native/transpiled twins. */
@@ -2708,7 +2708,7 @@ void event_sequence_dispatcher(void) {
     /* --- slots 0..6 --- */
     if (event_active_flag != 0) return;                  /* $0043: ignore commands during takeover */
     span_pixel_count = 0x21;                             /* $00DF = $21 (default event glyph) */
-    if (slot == (int)player_lives) return;               /* CPY $0072: no-op if slot == current mode */
+    if (slot == (int)flight_mode_state) return;               /* CPY $0072: no-op if slot == current mode */
 
     if (slot == 3) {                                     /* Systems key: toggle systems ($003E) */
         if (landing_seq_flag < 0x02) return;             /* only >= landing phase 2 */
@@ -2754,7 +2754,7 @@ void event_sequence_dispatcher(void) {
     if (life_counter == 0) return;                       /* $062F: no fuel/lives -> ignore */
 
     if (slot == 4) {                                     /* Air Lock */
-        player_lives = 0xFF;                             /* $0072 = $FF */
+        flight_mode_state = 0xFF;                             /* $0072 = $FF */
         if (landing_seq_flag != 0) {                     /* $003D */
             if (pilot_prev == 0) timer_or_counter = 0x00;    /* $0044 = $288E (== 0) */
             reset_pilot_state_if_no_2830();              /* leaves A = 0 */
@@ -2771,7 +2771,7 @@ void event_sequence_dispatcher(void) {
     if (landing_seq_flag != 0) return;                   /* $003D: slots 5/0/6 only when landed */
 
     if (slot == 5) {                                     /* Boosters — thrust up (cap 6) */
-        player_lives = 0xFF;
+        flight_mode_state = 0xFF;
         if (0x06 >= dial_value) {                        /* CMP #6 vs $6F; INC unless dial > 6 */
             dial_value = (uint8_t)(dial_value + 1);
             redraw_dial_from_6f();
@@ -2792,7 +2792,7 @@ void event_sequence_dispatcher(void) {
     }
 
     /* slot == 6 */
-    player_lives = (uint8_t)slot;                        /* $0072 = Y (= 6) */
+    flight_mode_state = (uint8_t)slot;                        /* $0072 = Y (= 6) */
     cpu.Y = (uint8_t)slot; set_colpf0_from_flag();
 }
 
@@ -4081,12 +4081,12 @@ void setup_initials_ptr(void) {
 void startup_init(void) {
     bar_col_threshold = 0x00;
     cpu.Y = 0x1E;
-    LDA(game_phase_flag);
+    LDA(range_to_pilot);
     uint8_t v = cpu.A;
     int skip = (v < 0x01) || (v >= 0x03) || ((v & collision_flags) != 0);
     if (!skip) {
         PHA();
-        if (player_lives != 0x00) {            /* LDA $0072; CMP #0; BEQ skips ring_push */
+        if (flight_mode_state != 0x00) {            /* LDA $0072; CMP #0; BEQ skips ring_push */
             cpu.X = 0x14;
             ring_push_marked();
         }
@@ -4846,7 +4846,7 @@ static void update_terrain_scanline_proj_impl(void) {
         if (mem[0x283C] == 0) exit_terrain_special_state();
     } else {
         /* Sank into the terrain: enter the special state and step to the next depth row. */
-        if (player_lives != 0) enter_terrain_special_state();
+        if (flight_mode_state != 0) enter_terrain_special_state();
         terrain_depth_step++;
         terrain_depth_frac = 0;
         mem[0x0070] = 0;
@@ -6910,7 +6910,7 @@ void terrain_draw_frame_core(uint8_t entryX) {
     if (!(mem[0x0079] & 0x80)) {
         uint8_t lvl = (uint8_t)((mem[0x0079] >> 2) + 1);
         if (lvl >= 0x0A) lvl = 0x09;
-        game_phase_flag = lvl;
+        range_to_pilot = lvl;
         if (lvl != mem[0x283F]) {
             uint8_t prev = mem[0x283F];
             mem[0x283F] = lvl;
@@ -6918,7 +6918,7 @@ void terrain_draw_frame_core(uint8_t entryX) {
                 { cpu.X = 0x14; ring_push_marked(); }
         }
     } else {
-        game_phase_flag = 0x00;
+        range_to_pilot = 0x00;
     }
     /* Derive HUD sprite positions from the span extents ($2912/$2913).  The shift is a
        sign-preserving (arithmetic) >>1. */
@@ -7366,7 +7366,7 @@ void refresh_hud_field_0b(void) {                /* $4EAB */
 }
 void set_hud_fields_678_679(void) {              /* $4EA5 */
     hud_field_678 = cpu.A;                          /* 4ea5 */
-    hud_field_679 = cpu.A;                          /* 4ea8 */
+    sfx_env_freq_val = cpu.A;                          /* 4ea8 */
     refresh_hud_field_0b();
 }
 void store_676_init(void) {                      /* $4EA2 */
@@ -7720,7 +7720,7 @@ static void flight_control_integrate_impl(void) {
     if (level_or_state != 0) compute_target_blip_position();
 
     /* ---- Per-state dispatch; every branch falls through to the $3E shutdown check ---- */
-    if (player_lives == 0x02) {
+    if (flight_mode_state == 0x02) {
         /* Crash/landing auto-attitude: force roll, set pitch trim = -(pitch_pos >> 6). */
         roll_velocity = 0x30;
         uint8_t v = (uint8_t)((((uint16_t)pitch_pos_hi << 8) | pitch_pos_lo) >> 6);
@@ -7735,7 +7735,7 @@ static void flight_control_integrate_impl(void) {
             cpu.Y = 0x02; game_sub_55FC();
             special_state_color = 0x34;
         }
-    } else if (player_lives == 0) {
+    } else if (flight_mode_state == 0) {
         step_object_along_axes();
     } else {
         /* Active flight: arm the HUD once (timer_676), then shadow the pitch angle. */
@@ -7901,7 +7901,7 @@ static void flight_control_integrate_impl(void) {
         uint8_t step = (uint8_t)(d >> 8);
         if (step == 0xFF) step = 0x00;
         if (step >= 0x50) {                             /* depth past the far cap */
-            if (player_lives == 0x02) {
+            if (flight_mode_state == 0x02) {
                 if (step >= 0x60) level_ready_flag = 0xFF;  /* landing: signal level ready */
             } else {
                 terrain_depth_frac = 0xFF; step = 0x4F;     /* clamp at the cap */
@@ -7956,13 +7956,13 @@ static void flight_control_integrate_impl(void) {
             voice = (uint8_t)((terrain_depth_step >> 3) ^ 0x0F);
             if (voice < 0x04) voice = 0x04;
         }
-        mem[MEM_sfx_voice_distort_0e + 0x0C] = voice;   /* $0677 */
+        mem[MEM_sfx_env_prio_val + 0x0C] = voice;   /* $0677 */
     }
     /* ---- HUD field ($0679[$0C]) = same ~(throttle<<1) value, floored at $0C ---- */
     {
         uint8_t fld = (uint8_t)(~((throttle_accum_hi << 1) | (throttle_accum_lo >> 7)));
         if (fld < 0x0C) fld = 0x0C;
-        mem[MEM_hud_field_679 + 0x0C] = fld;            /* $0685 */
+        mem[MEM_sfx_env_freq_val + 0x0C] = fld;            /* $0685 */
         cpu.Y = 0x0C; game_sub_55FC();
     }
 
@@ -8284,7 +8284,7 @@ void alien_attack_tick(void) {
             }
         }
         /* L_7add LDA $0072; CMP #$02; BEQ L_7aea */
-        if (player_lives != 0x02) {
+        if (flight_mode_state != 0x02) {
             vobj_path_flag = (uint8_t)(vobj_path_flag + 0x04);   /* 7ae3 CLC; LDA $3B; ADC #$04; STA $3B */
         }
         /* L_7aea LDX #$1A; ring; INX; ring */
@@ -8329,7 +8329,7 @@ void sfx_voice_write_freq(void) {
     uint8_t x = mem[MEM_sfx_voice_reg_idx + y];
     cpu.X = x;
     if (x == 0) return;
-    cpu.A = mem[MEM_hud_field_679 + y];
+    cpu.A = mem[MEM_sfx_env_freq_val + y];
     bus_write((uint16_t)(0xD1FE + x), cpu.A);            /* AUDFn */
 }
 
@@ -8340,8 +8340,8 @@ void sfx_voice_write_freq_ctrl(void) {
     uint8_t x = mem[MEM_sfx_voice_reg_idx + y];
     cpu.X = x;
     if (x == 0) return;
-    bus_write((uint16_t)(0xD1FE + x), mem[MEM_hud_field_679 + y]);  /* AUDFn freq */
-    cpu.A = (uint8_t)((mem[MEM_sfx_voice_distort_0e + y] & 0x0F) | mem[MEM_sfx_voice_distortion + y]);
+    bus_write((uint16_t)(0xD1FE + x), mem[MEM_sfx_env_freq_val + y]);  /* AUDFn freq */
+    cpu.A = (uint8_t)((mem[MEM_sfx_env_prio_val + y] & 0x0F) | mem[MEM_sfx_voice_distortion + y]);
     bus_write((uint16_t)(0xD1FF + x), cpu.A);            /* AUDCn ctrl */
 }
 
@@ -8354,7 +8354,7 @@ void sfx_pick_top_voice(void) {
     do {
         x++;                                             /* INX */
         if (mem[MEM_sfx_voice_reg_idx + x] != 0) {                      /* LDA $0705+X; BEQ skip */
-            uint8_t a = (uint8_t)(mem[MEM_sfx_voice_distort_0e + x] & 0x0F);
+            uint8_t a = (uint8_t)(mem[MEM_sfx_env_prio_val + x] & 0x0F);
             if (a < sfx_scan_prio) {                       /* CMP $0716; BCS skip (a>=M) */
                 sfx_scan_prio = a;
                 sfx_top_prio_val = a;
@@ -8376,7 +8376,7 @@ void sfx_pick_next_voice(void) {
         int consider = (mem[MEM_sfx_voice_reg_idx + x] == 0)            /* BEQ -> consider */
                      || (x == sfx_top_voice_idx);              /* else only the $0715 slot */
         if (consider) {
-            uint8_t a = (uint8_t)(mem[MEM_sfx_voice_distort_0e + x] & 0x0F);
+            uint8_t a = (uint8_t)(mem[MEM_sfx_env_prio_val + x] & 0x0F);
             if (a >= sfx_scan_prio) {                      /* CMP $0716; BCC skip (a<M) */
                 sfx_scan_prio = a;
                 sfx_next_voice_idx = x;
@@ -8453,8 +8453,8 @@ static void sfx_event_load_core(uint8_t event_id) {
 #endif
     uint8_t ctl = mem[0x56F5 + i];
     mem[MEM_sfx_voice_distortion + y] = (uint8_t)(ctl & 0xF0);         /* distortion */
-    mem[MEM_sfx_voice_distort_0e + y] = (uint8_t)(ctl & 0x0F);         /* prio/vol */
-    mem[MEM_hud_field_679 + y] = mem[0x5716 + i];               /* freq */
+    mem[MEM_sfx_env_prio_val + y] = (uint8_t)(ctl & 0x0F);         /* prio/vol */
+    mem[MEM_sfx_env_freq_val + y] = mem[0x5716 + i];               /* freq */
     mem[0x06A3 + y] = mem[0x5737 + i];               /* duration */
     mem[0x0687 + y] = mem[0x5758 + i];
     mem[0x0695 + y] = mem[0x5779 + i];
@@ -8490,7 +8490,7 @@ void sfx_reorder_voice_slot(void) {
     cpu.Y = savedY;
     int do_pick_top = 1;
     if (cpu.X == 0) {                                    /* TXA; BNE L_5641 -> here X==0 */
-        uint8_t a = (uint8_t)(mem[MEM_sfx_voice_distort_0e + cpu.Y] & 0x0F);
+        uint8_t a = (uint8_t)(mem[MEM_sfx_env_prio_val + cpu.Y] & 0x0F);
         if (a < sfx_top_prio_val) {                           /* CMP $0714; BCC L_5664 */
             do_pick_top = 0;
         } else {
@@ -8561,8 +8561,8 @@ static void sfx_voice_envelope_tick_impl(void) {
             uint8_t ph = sfx_phase_wrap(mem[0x06DB + y], mem[0x06E9 + y]);
             mem[0x06E9 + y] = ph;
             if (mem[0x5406 + ph] != 0) {  /* gate table: zero entry pauses the step */
-                uint8_t f = (uint8_t)(mem[MEM_hud_field_679 + y] + mem[0x06BF + y]);
-                mem[MEM_hud_field_679 + y] = f;
+                uint8_t f = (uint8_t)(mem[MEM_sfx_env_freq_val + y] + mem[0x06BF + y]);
+                mem[MEM_sfx_env_freq_val + y] = f;
                 if (f == mem[0x06CD + y]) { mem[0x06DB + y] = 0; expired++; }  /* hit target */
                 cpu.Y = y; sfx_voice_write_freq();
             }
@@ -8573,8 +8573,8 @@ static void sfx_voice_envelope_tick_impl(void) {
             uint8_t ph = sfx_phase_wrap(mem[0x06A3 + y], mem[0x06B1 + y]);
             mem[0x06B1 + y] = ph;
             if (mem[0x5406 + ph] != 0) {
-                uint8_t p = (uint8_t)((mem[MEM_sfx_voice_distort_0e + y] + mem[0x0687 + y]) & 0x0F);
-                mem[MEM_sfx_voice_distort_0e + y] = p;
+                uint8_t p = (uint8_t)((mem[MEM_sfx_env_prio_val + y] + mem[0x0687 + y]) & 0x0F);
+                mem[MEM_sfx_env_prio_val + y] = p;
                 if (p == mem[0x0695 + y]) { mem[0x06A3 + y] = 0; expired++; }
                 cpu.Y = y; game_sub_55FC();
             }
@@ -9319,7 +9319,7 @@ void init_gameplay_state(void) {
         mem[0x2210 + y] = 0xFF;
     object_index_signed = 0xFF;                                /* 740c */
     player3_dither_flag = 0xFF;                                /* 740e */
-    player_lives = 0xFF;                                /* 7411 */
+    flight_mode_state = 0xFF;                                /* 7411 */
     mem[0x0079] = 0xFF;                                /* 7413 */
     for (int y = 0x37; y >= 0; y--)                    /* 7419 Y=$37..0 */
         mem[0x0B98 + y] = 0xC0;
@@ -10026,7 +10026,7 @@ L_63a7:
     do {                                 /* door-open HUD sweep, one 10-frame tick per step */
         wait_frames_10();
         hud_field_678++;
-        hud_field_679++;
+        sfx_env_freq_val++;
         if (hud_field_678 == 0x03) {     /* mid-sweep: arm the door/ring state */
             mem[0x06CA] = 0xFF;
             history_ring_step = 0xFF;
@@ -10281,7 +10281,7 @@ static void game_main_loop_body(void) {
     startup_init();
     sfx_voice_distort_06 = 0xA0;
     sfx_voice_distort_0d = 0xA0;
-    sfx_voice_distort_0e = 0xA0;
+    sfx_env_prio_val = 0xA0;
     cpu.X = 0x1F; sfx_event_load();                /* init input slot $1F, then $20 (X = slot arg) */
     cpu.X = 0x20; sfx_event_load();
 #ifndef ROF_PLATFORM_AMIGA
@@ -10434,17 +10434,17 @@ static void game_main_loop_body(void) {
     pilot_visible = (pilot_state == 0) ? clear_colors_done_003E : 0x00;
     game_phase = 0x01;
     if (clear_colors_done_003E != 0x01) {            /* not in the colour-clear (death) phase */
-        if (player_lives != 0x02) {
+        if (flight_mode_state != 0x02) {
             if (mem[0x003D] != 0) {                  /* a death handoff is pending */
                 mem[0x003D] = 0x02;
                 timer_or_counter = 0x0E;
             }
         }
     }
-    /* Stay in the flight loop unless this life is over (player_lives == 2). */
-    if (player_lives != 0x02) continue;
+    /* Stay in the flight loop unless this life is over (flight_mode_state == 2). */
+    if (flight_mode_state != 0x02) continue;
     /* Life over — set up the level-clear / crash handoff. */
-    joystick_saved = 0x03;               /* player_lives(2) + 1 (used if we keep flying below) */
+    joystick_saved = 0x03;               /* flight_mode_state(2) + 1 (used if we keep flying below) */
     cpu.Y = 0x80;
     mem[0x28D9] = cpu.Y;
     mem[0x28DA] = cpu.Y;
@@ -10460,7 +10460,7 @@ static void game_main_loop_body(void) {
        cleared with garbage (crash after game over). */
     cpu.A = 0x00;
     bcd_osc_dir = cpu.A;
-    game_phase_flag = cpu.A;
+    range_to_pilot = cpu.A;
     wait_frames_10();
     joystick_saved = cpu.A;              /* 0 (preserved through wait_frames_10) */
     wait_frames();

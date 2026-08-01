@@ -2965,9 +2965,9 @@ void RescueOnFractalus::deriveRenderSignals()
     // FORWARD-launch gates never match this path ($0200 is $AD not $C2; the door/ring flags
     // $008A/$0088 stay 0; the reverse ring uses $008D instead), so without a dedicated gate the
     // wrong Standby door copper is shown over a stale/mispositioned field (the confirmed bug).
-    // GATE on level_clear_gate($003A)==$FF (set only when the mother ship arrives, held through
-    // the whole cinematic) — NOT on player_lives($0072)==2, which is a NORMAL lives count that
-    // also matches the forward launch and mis-fires there.
+    // GATE on mission_event_flag($003A)==$FF (set only when the mother ship arrives, held through
+    // the whole cinematic) — NOT on flight_mode_state($0072)==2, which is the crash/landing/
+    // level-clear MODE (NOT a lives count) that also matches the forward launch and mis-fires there.
     // Sub-phase by the reverse-ring flags (measured live, FORCE_RETURN):
     //   stars   : $008D==0 && $008E==0   reverse ring not started — starfield in the $1000 field
     //   tunnel  : $008D!=0               reverse ring active      — concentric rings in $1000

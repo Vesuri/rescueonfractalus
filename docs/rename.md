@@ -7,180 +7,38 @@ regenerate (`make gen`). Hand-written twins (`rof_native.c`, `rof_native_amiga.c
 `validate_native.c`, the Amiga platform layer, `transpile.py` comments) reference the names
 directly and must be updated in the same pass.
 
-⚠ **Whole-word replace misses the generated suffixes.** A `\bOLD\b` sweep will NOT touch
-`OLD__t6502` (validation oracle), `OLD_core` (hand-written core helper), or `test_OLD`
-(harness test fn) because `_` is a word char. After a rename, grep for `OLD[A-Za-z0-9_]*`
-and `[A-Za-z0-9_]*OLD` and fix those variants too.
+⚠ **Whole-word replace misses the generated suffixes AND the `MEM_` prefix.** A `\bOLD\b` sweep
+will NOT touch `OLD__t6502` / `OLD_core` / `test_OLD` (trailing `_`) **nor `MEM_OLD`** (leading
+`_` — `\b` doesn't match between `_` and a letter). Sweep the **bare token without `\b`**
+(`s/OLD/NEW/g`) so both `MEM_OLD` and the bare lvalue alias `OLD` are caught, then verify with
+`grep -rn 'MEM_OLD\|\bOLD\b'`. (This bit the 2026-08-02 `player_lives`→`flight_mode_state` pass.)
 
-## New (found 2026-07-26)
+> The backlog is otherwise **empty** (cleared 2026-08-02): every prior entry was investigated
+> against the disasm and either renamed, had its `symbols.csv` comment corrected, or — for a
+> genuinely dual-/multi-used cell — had **both roles documented directly in its `symbols.csv`
+> description** (the source of truth), so the knowledge no longer needs a floating backlog.
 
-- **`$00E5` — unnamed.** The game-active / results latch.  In cockpit_display: nonzero → the results/
-  level-start entry (stash to $37F4, 60-frame wait, music (re)init, then either re-seed SFX via
-  sound_retrigger_random or wait for it to clear before name entry).  Suggested: `game_active_latch`. ?
-  (dual-checked in sound_retrigger_random $5A21 + the $596d spin — verify it isn't overloaded first.)
-- **`$00C3 row_table_base_lo` — MISNAMED here.** In cockpit_display it is set to 4 as the level-select
-  **repeat counter** that standby_level_select_loop ($5978) decrements ($59A4 DEC $C3); NOT a row-table
-  base.  Its name comes from an unrelated primary use — verify both before renaming (context name:
-  `level_select_repeat_ctr`). ?
-- **`$36BD` — unnamed.** Read in cockpit_display's name-entry gate: when `game_var_E4 != 0`, `$36BD != 0`
-  keeps polling name_entry_loop (initials entry in progress) else finishes entry.  It sits in Title-Screen
-  RAM ($36xx), so it doubles as a screen cell — verify before naming. ?
-- **`$060A` — unnamed.** A secondary counter cockpit_display renders (via bin_to_bcd) into Title RAM
-  $36A8, above the high-score line.  Role unclear (a per-session counter?) — verify before naming. ?
-- **Game-state block layout at `$0600`** (documented for future var rows; several bytes still unnamed):
-  `$0600-$0603` = current score (4 bytes, MSB first; only $0601 is named score_display),
-  `$0604` = level (level_count_acc), `$0605-$0608` = high score (all unnamed).  A big-endian compare in
-  cockpit_display copies current→high when current wins.  Name the score/high-score bytes together. ?
+## Investigated → intentionally left UNNAMED (do not re-litigate)
 
-## Deferred: aliased / dual-use cells (a single name would mislead one of the users)
+These were verified (2026-08-02) and deliberately have no `symbols.csv` name: each is either
+pure single-use scratch not worth a name, or multi-role scratch where any single name would
+mislead the other callers. Listed so they aren't re-flagged as "unnamed → needs a name".
 
-> What remains below is **DEFERRED on purpose** — each entry
-> either aliases a cell that is dual-used across subsystems, or is a rename/var-row suggestion that
-> needs a live check before a canonical name can be trusted. Do NOT promote these without resolving
-> the aliasing / verifying the claim noted. ✓=confident, ?=verify.
+- `$0020` — pure ROL scratch in `flight_control_integrate` (`$9093-$90B4`, builds the `$28D6`
+  fwd-step sign). No use outside that function.
+- `$00B4` — dead store (single write `$9EA7` in `terrain_frame_setup`, never read).
+- `$00B5` — cross-function terrain-math fold/shift scratch, reloaded fresh by ~15 terrain fns
+  (~60 refs); any semantic name misleads all but one caller.
+- `$00B6` — transient scratch in `terrain_frame_setup` + `FUN_b2cc/b33d`; no cross-frame lifetime.
+- `$0039` — multi-role: target-latch index / sprite depth-lo (`build_player2_sprite`) / hi byte of
+  an object-position accumulator; no single meaning.
+- `$284E`/`$284F` — low bytes of the two 16-bit object-position accumulators in
+  `flight_control_integrate` whose hi bytes are `$0038`/`$0039` (themselves multi-role).
+- `$286A`/`$286B`/`$286C` — object/spawn-slot latch (flight-VBI `$517C-$5194`) **reused** as the
+  sprite vertical-scale accumulator/step/limit in `build_player2_sprite` (`$8D33-$8D97`). Do NOT
+  name `target_obj_*` — misleading.
+- `$008E` — composer dest-row-ptr hi (`$808B`) AND a `step_accum_sub_7e` INC target; multi-role.
 
-- `$0037` (`cockpit_dial_update`/`vbi_handler_flight`) — pushed to COLPF1 ($D014) but also
-  force-set to `$78` in the target-latch reset. Dual use unclear — verify before naming
-  (`colpf1_shadow_or_terrain_h`?).
-- `$0020` — used as `cockpit_dial_update` DL scratch AND as pure ROL scratch for the
-  `$28D6`/fwd-step sign in `flight_control_integrate`. Keep the DL name; do not rename.
-- `$00BB/$00BC/$00BD` (`dl_y1`/`dl_y2`/`dl_y3`) — in `draw_object_column` these are the
-  current column's cell pointer (`dial_col_ptr_lo`/`_hi`) + loop counter (`dial_col_counter`),
-  NOT DL Y coords. They may be genuine DL coords elsewhere — verify both uses before renaming.
-- `$00A0-$00A3` (`draw_iter_count`/`scroll_accum_b0..b2`) — dual-used in `terrain_frame_setup`
-  as the view-transform rotation vector `{rot_a=$A1:$A0, rot_b=$A3:$A2}`. Wants a union/overlay,
-  not a flat rename.
-- `$00B5` — `proj_fold_scratch` in `project_terrain_points`, but also loop-1/loop-2 scratch in
-  `terrain_frame_setup`. Cross-function scratch; naming for one misleads the other.
-- `$00B4`/`$00B6` — transient scratch in `terrain_frame_setup` (written once, dead within the
-  fn). Low value; skip unless a cleanup needs them.
-- `$0091` `altitude_threshold` — named for its `copy_title_text_block_to_screen` use, but in
-  `sfx_seq_step` it is **dual-used as scratch** for the last voice-parameter command byte. Leave
-  `altitude_threshold`; do not rename.
-- `$0686`/`$0687` (would-be `engine_sound_pitch_a`/`_b` in `flight_control_integrate`) and
-  `$066C`/`$066D` (would-be `engine_state_a`/`_b`) — these fall inside the `sfx_voice_envelope_tick`
-  per-slot arrays ($0679/$066B/$0687/$0695/… each base+Y, ~13 entries). The flight code reads
-  them as scalars, the audio code as array elements. Genuinely aliased — resolve which owns the
-  bytes before naming either side.
-- `$2829`/`$0068` and `$282C`/`$0069` — 16-bit accumulators used as object-position accumulators
-  in `flight_control_integrate` (`obj_accum_*`) AND as the random jitter offsets in
-  `terrain_jitter_column` (`obj_jitter_x/y_*`). One name can't cover both.
-- `$284E`/`$0038` (`vobj_row_count`) and `$284F`/`$0039` (would-be `obj_pos2_*`) — `$0038`/`$0039`
-  already carry other names and `$0039` is also a target-latch index. Dual-context; verify.
-- `$0039`/`$286A`/`$286B`/`$286C` (would-be `target_obj_*`, latched target object indices/coords)
-  and `$003A` bit7 (gates the shields-cell update) — `$0039` clash above; `$003A` role unclear.
-  Verify the target-latch block before naming.
-- `$0072` `player_lives` — **MISNAMED, it is NOT a life counter** (the real per-life counter is
-  `life_counter`, compared `< $0E` in the flight loop). `$0072` is a small **flight/message game-mode
-  selector**: `game_state_update` (`$4A??`) dispatches on it — `==0` = normal flight
-  (`step_object_along_axes`), `==2` = **crash/landing auto-attitude** (forces roll + pitch-trim, the
-  landing "level-ready" gate), and `show_message_id_a` ($4956) stashes entry-A into it as the
-  **"event/message mode"**. Its sole writer to `2` is `setup_level_clear_state` ($7BC6, when
-  `level_or_state != 0`), and the game_main_loop_body flight loop breaks out (re-launch) only when it
-  `== 2`. Suggested: `flight_mode_state` / `game_mode_0072` (dual-used with the message mode — resolve
-  which owns it, cf. the aliasing entries above). Found 2026-08-01 tracing the range-1 poly4 bug.
-
-## Deferred: `sfx_voice_envelope_tick` ($548D) per-slot envelope arrays
-
-The whole cluster overlaps itself and the `$068x` flight cells above — treat as one aliasing
-puzzle, name together after auditing the stride/overlap. Cells: `$06DB`/`$06E9`
-(`freq_env_step[]`/`_phase[]`), `$0679`(`hud_field_679`)/`$06BF`/`$06CD`
-(`freq_value[]`/`_delta[]`/`_target[]`), `$06A3`/`$06B1` (`dur_env_step[]`/`_phase[]`),
-`$066B`(`sfx_voice_distort_0e`)/`$0687`/`$0695` (`prio_value[]`/`_delta[]`/`_target[]`),
-`$06F7` (`slot_event_id[]`). (`$5406 env_gate_table` was the one non-overlapping table — applied.)
-
-## Deferred: dual-role player buffers `$0C32/$0D32/$0E32/$0F32`
-
-The four parallel 89-byte column buffers ($0100 apart). Scrolling terrain-height columns in
-flight; reused as the canopy A-pillars (P0 $0C32 / P1 $0D32, RLE-decoded) + sparse star-field
-players (P2 $0E32 / P3 $0F32) during the launch/stars cinematic. A name must reflect the shared
-player-buffer role, not just "terrain" (`terrain_col_buf0..3` vs `star_player_buf*`). Deferred
-pending a role-neutral name.
-
-## Deferred: door-frame drawer scratch `$0080/$0081`
-
-Currently `sync_flag`/`dl_ptr_lo`, but in the plot/span path (`set_row_ptr`/`plot_masked_pixel`/
-`fill_*_span`) they are the 16-bit screen row pointer (`row_ptr_lo`/`_hi`). The DL-setup path may
-use the current names correctly — audit both before renaming.
-
-## Deferred: pilot-rescue cluster corrections (found 2026-07-11)
-
-- **`$2830` — unnamed.** = the queued-landing-target slot flag. `reset_pilot_state_if_no_2830 $495F`
-  reads it: if `$2830==0` (no target queued) it also clears `landing_seq_flag $003D`. Suggested
-  name: `landing_target_queued_2830`.
-- **`$0047 colpf0_value` / `set_colpf0_from_flag $47A3` — symbols.csv comment is BACKWARDS.** The
-  comment says "If Y bit5 set A=$CA else A=$0047"; the disasm (`$47a6 BNE`) is the opposite —
-  **bit5 CLEAR selects $CA**, bit5 SET selects `colpf0_value`.
-- **`$003E clear_colors_done_003E` — symbols.csv comment is misleading.** The loops in
-  `clear_colors_sweep_5x $7A89` / `animate_clear_colors_timed $7A17` **continue while `$003E != 0`
-  and exit at `$003E == 0`**. So `$003E` nonzero = "keep sweeping", zero = "done".
-- **`$007C` — unnamed** (animate_clear_colors_timed). A pacing accumulator for the colour-clear
-  stepper (pulled down by 7 each pass; re-seeds RTCLOK on exit). Suggested: `clear_sweep_delay_007C`.
-
-## Deferred: `alien_knock_setup_loop` ($7EC7) unnamed cells (found 2026-07-12)
-
-Set/used by `alien_knock_setup_loop` + `alien_creature_animate_draw`. Suggested names deferred
-(need cross-referencing with the full SFX engine):
-- `$005E`/`$005F` — SFX voice-slot indices (set 1/$0B then 4/$12); indexed into `$81E8`/`$81E2`.
-- `$2921` — a second voice-slot index (set 2 then 5).
-- `$2922`/`$2923`/`$2926` — recently-used voice-value history (reroll excludes `$2922`/`$2923`).
-- `$2930` — current SFX pitch (descending sweep); `$2931` — pitch base offset (RANDOM&7 + $0C);
-  `$292E` — zoom step count; `$2927`-`$292B` — per-voice shape/params from the `$81xx` tables.
-- `$0635` — set $20; `$0637`/`$063A` — cleared; `$061A` — zoom base (read).
-
-### The creature composer reuses these ZP cells with a DIFFERENT meaning than their names
-`alien_shape_blit`/`alien_field*_fill` carry names from `display_list_build`/VBI code but the
-composer tree reuses them as text-source state. Consider per-context aliases (or just document):
-- `$0080 sync_flag` / `$0081 dl_ptr_lo` / `$0082 dl_ptr_hi` / `$0083 screen_ptr_lo` = the four field
-  **cursors** (field 0/1/2/3 source index).
-- `$0084 screen_ptr_hi` = the `reorder_cell_bits` **packing accumulator**.
-- `$0085/$0086 encounter_count/row_count` = field-0 **source pointer** (lo/hi).
-- `$0087/$0088 vbi_phase/vbi_flags` = field-1 **source pointer**.
-- `$0089/$008A terrain_state/terrain_scroll_counter` = field-2 **source pointer**.
-- `$008B/$008C dl_src_index/terrain_scroll_reload` = the composer **mask-row pointer**.
-- `$008D/$008E step_mode_flag/(unnamed)` = the composer **dest-row pointer** (mask row + `$30`).
-- `$292A/$292B/$292C` = the three per-frame voice values; `$2921/$005E/$005F/$2924/$2926` = voice
-  positions/link indices; `$2922/$2923` = voice-C last-two picks; `$292D` = field-2 pack flag;
-  `$292E` = SFX sustain counter; `$292F` = the draw-loop row counter; `$2930/$2931` = draw start row/col.
-
-## Deferred: scratch reuse of named ZP cells (update_object_distance $6BED / draw_vline_pair $6C4D)
-
-These routines reuse several cells purely as local scratch, so the cells' current symbol names are
-MEANINGLESS in this context (the names come from their PRIMARY use in unrelated code):
-- `$0084 screen_ptr_hi` — here the **draw fill-pattern byte** ($FF/$AA/$55). Suggested: `draw_fill_byte`.
-- `$0085 encounter_count` — object-distance subtrahend hi byte, then the **plot column** `(X>>1)+2`.
-- `$00B7 frame_counter` — object-distance-lo / draw row-counter scratch. Suggested: `obj_dist_lo`.
-- `$00B8 draw_row_ptr2_hi` — object-distance hi byte / draw END-row. Suggested: `obj_dist_hi`.
-- `$00B9 draw_pattern_byte` — object-distance minuend lo byte. Suggested: `obj_dist_in_lo`.
-- `$0082 dl_ptr_hi` — draw_vline_pair sets it `$C0` purely as a "any 2bpp pack happened" marker.
-
-## Deferred: `game_main_loop_body` ($3D48) unnamed OS-shadow + game-state cells
-
-Written directly (raw `mem[]` / `bus_write`) with no `symbols.csv` name; most are standard Atari
-OS shadow registers:
-- `$0222`/`$0223` — **VVBLKI** vblank-immediate vector shadow (`$53CC` attract, then `$4FF5`
-  flight). Suggested: `vvblki_lo`/`vvblki_hi`. ⚠ The Amiga `game_vbi_isr` dispatches on this vector.
-- `$0200`/`$0201` — **VDSLST** DLI vector shadow ($49EE). Suggested: `vdslst_lo`/`vdslst_hi`.
-- `$022F` — **SDMCTL** (DMA control shadow), cleared. Suggested: `sdmctl`.
-- `$02C8` — **COLOR4/COLBK** background shadow, cleared. Suggested: `color_bak_shadow`.
-- `$02C6`/`$02C7` — **COLOR2/COLOR3** shadows ($2C/$26). Suggested: `color2_shadow`/`color3_shadow`.
-- `$026F` — **GPRIOR** priority shadow ($11). Suggested: `gprior_shadow`.
-- `$28D9`/`$28DA` — both set `$80` at the level-clear handoff (object/anim state); unnamed.
-- `$003A` — read at level-clear check (`==1` sets `level_cleared_flag`); role unclear.
-- `$003D` — death/handoff phase byte (`!=0` → set to `2`); unnamed. Suggested: `death_phase`.
-- `$066E`, and the `$0F1D`/`$0E8F`/`$0B31`/`$0020`/`$2830` block clears — need analysis.
-
-## SFX / audio (found 2026-07-31 while decoding the event system — see docs/sfx-events.md)
-
-- ? `$5614`/`$568a`/`$56af` — the SFX **voice-priority mixer** (pick loudest ≤4 slots → assign
-  POKEY channels + evict). Give canonical names (`sfx_voice_mix`/`sfx_pick_loudest`/…) once verified.
-- ? `$0642 game_phase_flag` — the SFX/beep code and the corrected [[pilot-proximity-beep]] memory
-  treat `$0642` as the **range-to-pilot digit** (`($0079>>2)+1`, clamp 1..9), gating the range beep
-  at `$4000`. Reconcile with the current "game phase (0=intro/1-2=active/3=transition)" label — one
-  of them is wrong or it is dual-used. Verify against a live flight capture before renaming.
-
-## Verify-later comment fixes
-
-- `$00CD grafm_shadow` — comment says "pushed to GRAFM ($D00A)…wing-clearance missile graphics",
-  but flight-pmg-map suggests `$00CD` is the laser **SIZEP2**, not GRAFM. Verify against a live
-  capture before rewording (kept as-is pending that check).
+The `$0080-$008D` display/VBI/terrain ZP cells are additionally reused by the alien-creature
+composer (documented in `docs/alien-jumpscare.md` + the twin comments); they keep their
+primary-use names — the composer reuse is inherent 6502 ZP sharing, not a misnomer.

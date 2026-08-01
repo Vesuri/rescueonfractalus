@@ -71,7 +71,7 @@ private:
     bool rsViewport = false;   // stars || flight      — mode-D viewport band active
     bool rsTitle    = false;   // VVBLKI $53CC && title active — attract/level-select Title Screen
     bool rsLaunched = false;   // doors armed || viewport — door-gap g2 (doors..flight)
-    bool rsBoostReturn   = false;  // $52D7 && player_lives($0072)==2 — BOOSTERS return reverse cinematic
+    bool rsBoostReturn   = false;  // $52D7 && flight_mode_state($0072)==2 — BOOSTERS return reverse cinematic
     bool rsBoostViewport = false;  // rsBoostReturn && (reverse-ring active || pre-ring) — boost stars/tunnel
     bool doorsOpenedLatch = false;  // door scroll finished; hold the tunnel view through the
     uint8_t prevScrollCtr = 0;      // gap before the ring/viewport arms (see deriveRenderSignals)
