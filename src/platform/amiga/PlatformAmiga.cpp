@@ -417,13 +417,26 @@ extern "C" volatile unsigned short g_drainN = 0, g_drainOOR = 0, g_drain81 = 0, 
 extern "C" volatile unsigned char  g_drainEvt[BCE_N] = {};   // full entry byte (wrap ring)
 extern "C" volatile unsigned char  g_drainTail[BCE_N] = {};  // ring index it was read from
 extern "C" volatile unsigned short g_drainVbi[BCE_N] = {};
+// FIRST $81 snapshot: the ring index + absolute address (for a HW watchpoint) + head/tail geometry
+// + a full 32-byte ring copy, so ONE full-speed flight pins where the stale $81 sits and what
+// surrounds it (nothing pushes $81, so it must be written OOB by a non-ring writer).
+extern "C" volatile unsigned char  g_drain81Tail = 0xFF, g_drain81Head = 0;
+extern "C" volatile unsigned short g_drain81Addr = 0;              // $0719 + tail (watch this)
+extern "C" volatile unsigned char  g_drain81Ring[32] = {};
 extern "C" void rof_bc_drain_evt(unsigned char entry, unsigned char tail) {
     unsigned i = g_drainIdx;
     g_drainEvt[i] = entry; g_drainTail[i] = tail; g_drainVbi[i] = g_vbiCount;
     g_drainIdx = (unsigned short)((i + 1u) % BCE_N);
     g_drainN = (unsigned short)(g_drainN + 1u);
     if ((entry & 0x7Fu) > 0x21u) g_drainOOR = (unsigned short)(g_drainOOR + 1u);  // out-of-range id
-    if (entry == 0x81u)          g_drain81  = (unsigned short)(g_drain81  + 1u);  // event $01
+    if (entry == 0x81u) {
+        if (g_drain81 == 0) {   // snapshot the FIRST occurrence
+            g_drain81Tail = tail; g_drain81Head = mem[0x0073];
+            g_drain81Addr = (unsigned short)(0x0719u + tail);
+            for (int k = 0; k < 32; k++) g_drain81Ring[k] = mem[0x0719u + k];
+        }
+        g_drain81 = (unsigned short)(g_drain81 + 1u);  // event $01
+    }
 }
 // $81 (event $01) push capture: the exact caller chain at the moment a $81 is written to the
 // ring, recorded in CODE (no gdb breakpoint => full-speed flight => keyboard key-ups still
