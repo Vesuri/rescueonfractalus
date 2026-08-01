@@ -390,7 +390,11 @@ extern "C" void startup_init_native(void)
             // ring_push_marked(X=$14): push (a|$80) into altitude ring buffer at $0719
             uint8_t ptr = mem[MEM_alt_ring_head];
             if (ptr >= 0x20u) ptr = 0x1Fu;
-            mem[0x0719u + ptr] = a | 0x80u;
+            // $4016 LDX #$14; $4018 JSR $5815 (ring_push_marked): push X|$80 = $94 = event
+            // $14 (range-to-pilot beep) — a CONSTANT, NOT the range value `a`.  The old
+            // `a | 0x80` used the $0642 range digit as the event id, so range 1 pushed $81
+            // (event $01, poly4 = the "wrong sound") and range 2 pushed $82.
+            mem[0x0719u + ptr] = 0x14u | 0x80u;
             mem[MEM_alt_ring_head] = (ptr == 0u) ? 0x1Fu : (uint8_t)(ptr - 1u);
         }
         y = 0x9Eu;
