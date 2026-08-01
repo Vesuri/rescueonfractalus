@@ -12,12 +12,6 @@ directly and must be updated in the same pass.
 (harness test fn) because `_` is a word char. After a rename, grep for `OLD[A-Za-z0-9_]*`
 and `[A-Za-z0-9_]*OLD` and fix those variants too.
 
-> Everything that was confidently applicable has been applied (functions, alien-jump-scare
-> cluster, music/SFX var rows, etc.). What remains below is **DEFERRED on purpose** — each entry
-> either aliases a cell that is dual-used across subsystems, or is a rename/var-row suggestion that
-> needs a live check before a canonical name can be trusted. Do NOT promote these without resolving
-> the aliasing / verifying the claim noted. ✓=confident, ?=verify.
-
 ## New (found 2026-07-27, profiling the flight loop)
 
 - **`$5F1D display_setup`** — badly misleading: "display setup" is only its first act.  It is the
@@ -57,6 +51,11 @@ and `[A-Za-z0-9_]*OLD` and fix those variants too.
   cockpit_display copies current→high when current wins.  Name the score/high-score bytes together. ?
 
 ## Deferred: aliased / dual-use cells (a single name would mislead one of the users)
+
+> What remains below is **DEFERRED on purpose** — each entry
+> either aliases a cell that is dual-used across subsystems, or is a rename/var-row suggestion that
+> needs a live check before a canonical name can be trusted. Do NOT promote these without resolving
+> the aliasing / verifying the claim noted. ✓=confident, ?=verify.
 
 - `$0037` (`cockpit_dial_update`/`vbi_handler_flight`) — pushed to COLPF1 ($D014) but also
   force-set to `$78` in the target-latch reset. Dual use unclear — verify before naming

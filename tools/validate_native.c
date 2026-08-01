@@ -2801,7 +2801,7 @@ int main(int argc, char **argv) {
     fails += test_mem_contract_regs("sfx_pick_top_voice", sfx_pick_top_voice, sfx_pick_top_voice__t6502);
     fails += test_mem_contract_regs("sfx_pick_next_voice", sfx_pick_next_voice, sfx_pick_next_voice__t6502);
     fails += test_mem_contract_regs("sfx_engine_step", sfx_engine_step, sfx_engine_step__t6502);
-    fails += test_sfx_voice("input_init", input_init, input_init__t6502);
+    fails += test_sfx_voice("sfx_event_load", sfx_event_load, sfx_event_load__t6502);
     fails += test_sfx_voice("sfx_voice_write_freq", sfx_voice_write_freq, sfx_voice_write_freq__t6502);
     fails += test_sfx_voice("sfx_voice_write_freq_ctrl", sfx_voice_write_freq_ctrl, sfx_voice_write_freq_ctrl__t6502);
     fails += test_sfx_voice("sfx_reorder_voice_slot", sfx_reorder_voice_slot, sfx_reorder_voice_slot__t6502);

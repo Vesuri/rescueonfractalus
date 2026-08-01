@@ -8435,36 +8435,42 @@ void sfx_engine_step(void) {
     cpu.Y = yy;
 }
 
-/* input_init @ $581C — load a new voice into slot mem[$56D4+(X-1)] from the event
- * tables, where the entry cpu.X is the event id (1-based; X==0 is a no-op).  Saves
- * and restores X/Y (PHA/PLA).  Tail-calls game_sub_55FC (push the slot to the ring). */
-void input_init(void) {
-    uint8_t savedX = cpu.X, savedY = cpu.Y;
-    uint8_t i = (uint8_t)(cpu.X - 1);                    /* DEX */
-    if (!(i & 0x80)) {                                   /* BMI L_5876: skip when (X-1) negative */
-        uint8_t y = mem[0x56D4 + i];                     /* voice slot */
+/* sfx_event_load_core @ $581C — load a new voice into slot mem[$56D4+(event_id-1)] from the
+ * SFX event parameter tables.  event_id is 1-based; 0 (or any value whose -1 goes negative)
+ * is a no-op.  Populates the voice's distortion/vol/freq/envelope/follow-on fields, then pushes
+ * the slot to the event ring via game_sub_55FC (which leaves cpu.Y = the slot).  Idiomatic
+ * entry — the 6502-ABI shim sfx_event_load() below marshals cpu.X into event_id. */
+static void sfx_event_load_core(uint8_t event_id) {
+    uint8_t i = (uint8_t)(event_id - 1);                 /* DEX */
+    if (i & 0x80) return;                                /* BMI L_5876: event_id 0 -> no-op */
+    uint8_t y = mem[0x56D4 + i];                         /* voice slot */
 #ifdef ROF_BEEP_CAP
-        if (i == 0) { extern void rof_bc_ev01_log(void); rof_bc_ev01_log(); }  /* event $01 load (range-1 probe) */
+    if (i == 0) { extern void rof_bc_ev01_log(void); rof_bc_ev01_log(); }  /* event $01 load (range-1 probe) */
 #endif
-        uint8_t ctl = mem[0x56F5 + i];
-        mem[MEM_sfx_voice_distortion + y] = (uint8_t)(ctl & 0xF0);         /* distortion */
-        mem[MEM_sfx_voice_distort_0e + y] = (uint8_t)(ctl & 0x0F);         /* prio/vol */
-        mem[MEM_hud_field_679 + y] = mem[0x5716 + i];               /* freq */
-        mem[0x06A3 + y] = mem[0x5737 + i];               /* duration */
-        mem[0x0687 + y] = mem[0x5758 + i];
-        mem[0x0695 + y] = mem[0x5779 + i];
-        mem[0x06B1 + y] = mem[0x579A + i];
-        uint8_t e = mem[0x57BB + i];
-        mem[0x06DB + y] = e;
-        if (e != 0) {                                    /* BEQ L_586d (skip these 3) */
-            mem[0x06BF + y] = mem[0x57DC + i];
-            mem[0x06CD + y] = mem[0x57E4 + i];
-            mem[0x06E9 + y] = mem[0x57EC + i];
-        }
-        mem[0x06F7 + y] = mem[0x57F4 + i];               /* L_586d */
-        cpu.Y = y;
-        game_sub_55FC();                                 /* push slot Y to the ring */
+    uint8_t ctl = mem[0x56F5 + i];
+    mem[MEM_sfx_voice_distortion + y] = (uint8_t)(ctl & 0xF0);         /* distortion */
+    mem[MEM_sfx_voice_distort_0e + y] = (uint8_t)(ctl & 0x0F);         /* prio/vol */
+    mem[MEM_hud_field_679 + y] = mem[0x5716 + i];               /* freq */
+    mem[0x06A3 + y] = mem[0x5737 + i];               /* duration */
+    mem[0x0687 + y] = mem[0x5758 + i];
+    mem[0x0695 + y] = mem[0x5779 + i];
+    mem[0x06B1 + y] = mem[0x579A + i];
+    uint8_t e = mem[0x57BB + i];
+    mem[0x06DB + y] = e;
+    if (e != 0) {                                    /* BEQ L_586d (skip these 3) */
+        mem[0x06BF + y] = mem[0x57DC + i];
+        mem[0x06CD + y] = mem[0x57E4 + i];
+        mem[0x06E9 + y] = mem[0x57EC + i];
     }
+    mem[0x06F7 + y] = mem[0x57F4 + i];               /* L_586d */
+    cpu.Y = y;
+    game_sub_55FC();                                 /* push slot Y to the ring */
+}
+/* sfx_event_load @ $581C — 6502-ABI shim: event id in cpu.X, saves/restores X/Y (PHA/PLA),
+ * exit cpu.A = the (pulled) event id, exactly like the transliterated oracle. */
+void sfx_event_load(void) {
+    uint8_t savedX = cpu.X, savedY = cpu.Y;
+    sfx_event_load_core(cpu.X);
     cpu.Y = savedY; cpu.X = savedX;                      /* PLA;TAY; PLA;TAX */
     cpu.A = savedX;
 }
@@ -8592,7 +8598,7 @@ static void sfx_voice_envelope_tick_impl(void) {
 #ifdef ROF_BEEP_CAP
             { extern void rof_bc_drain_evt(unsigned char, unsigned char); rof_bc_drain_evt(entry, ring_tail_0719); }
 #endif
-            input_init();
+            sfx_event_load();
         } else {                          /* sprite-slot reorder request */
             cpu.Y = entry;
             sfx_reorder_voice_slot();
@@ -9755,7 +9761,7 @@ L_6185:
 L_61a4:
     bcd_delta_hi = 0x10;
     cpu.X = 0x10;                         /* input_init takes X */
-    input_init();
+    sfx_event_load();
     wait_frames_5();
     decrement_bcd_0628_restart();
     if (--mem[0x00E3] != 0) goto L_61a4;
@@ -9955,7 +9961,7 @@ L_634f:
     SA_TIMED(4, compute_stage_display_geometry());
 L_63a7:
     cpu.X = 0x1D;                         /* input_init takes X */
-    SA_TIMED(5, input_init());
+    SA_TIMED(5, sfx_event_load());
     SA_TIMED(6, vobj_draw_dispatch());
     SA_TIMED(7, render_bcd_counter());
     clear_scroll_accum();
@@ -9989,7 +9995,7 @@ L_63a7:
     g_saPhase = 22;   /* after the ring branch / DS_MILE(1), before input_init */
 #endif
     cpu.X = 0x01;                        /* input_init takes X */
-    input_init();
+    sfx_event_load();
 #ifdef ROF_FLIGHT_PROBE
     g_saPhase = 23;   /* after input_init, entering the $067E door-wait ds_frame loop */
 #endif
@@ -10272,8 +10278,8 @@ static void game_main_loop_body(void) {
     sfx_voice_distort_06 = 0xA0;
     sfx_voice_distort_0d = 0xA0;
     sfx_voice_distort_0e = 0xA0;
-    cpu.X = 0x1F; input_init();                /* init input slot $1F, then $20 (X = slot arg) */
-    cpu.X = 0x20; input_init();
+    cpu.X = 0x1F; sfx_event_load();                /* init input slot $1F, then $20 (X = slot arg) */
+    cpu.X = 0x20; sfx_event_load();
 #ifndef ROF_PLATFORM_AMIGA
     bus_write(0xD40E, 0x40);                   /* ANTIC NMIEN: enable DLI (dead on Amiga) */
 #endif

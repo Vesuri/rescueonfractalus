@@ -128,7 +128,7 @@ $5433,sfx_engine_reset,func,0,Zeroes SFX voice slots 1..$e: vol $066b + channel 
 $53CC,vbi_handler_1,func,0,First in-game VBI handler (VVBLKI=$53CC set at $3D63 in game_entry)
 $52D7,vbi_handler_standby,func,0,Standby + launch-cinematic VBI handler (VVBLKI=$52D7 set in display_setup $5F50); active from the Standby screen through the doors/tunnel/stars/planet cinematic, until flight init swaps in vbi_handler_flight ($4FF5). Per-frame: attract timer, attract input poll ($5398), launch_anim_dispatch ($5367), lock_on_indicator_tick every other frame, SFX/music tick, sfx_voice_envelope_tick. Was vbi_handler_standby.
 $5815,ring_push_marked,func,0,TXA;ORA #$80;JMP ring_push_0719 — push object index X marked with bit7 ($80=active) into the $0719 event ring
-$581C,input_init,func,0,Input/controller init (called twice: X=$1F then X=$20)
+$581C,sfx_event_load,func,0,SFX event loader (NOT input init): X=event id (1-based; 0=no-op); DEX->table index i; loads voice slot Y=mem[$56D4+i] from the 12 param tables ($56d4..$57f4); tail game_sub_55FC pushes the slot to the ring. Called from the $548d ring-drain + directly at $3df5/$3df9/$61aa/$63a9/$63d2
 $587B,cockpit_display,func,0,Cockpit/instrument display or main input handler (reads PORTA/CONSOL; called if $060B≠0)
 $55FC,game_sub_55FC,func,0,Called at end of each main game loop iteration before JMP $3E0F
 $5D0D,validate_save_state,func,0,Compares save-state blocks ($3700/$3714 vs $28/$EE, 39 bytes $7BDA vs $37C7); returns Z=1 if all match; called early in game_entry

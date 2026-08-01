@@ -161,7 +161,7 @@ VALIDATE_FUNCS = {
     0x56AF,  # sfx_pick_next_voice — scan for next-best priority excluding $0715 -> $0716/0717
     0x5553,  # sfx_engine_step — explosion/noise engine (RANDOM x2, descending-pitch via $55DC); entry A=$0634
     0x5614,  # reorder_sprite_slot — voice-priority mixer (calls 5673/568a/56af); entry X/Y, Y restored
-    0x581C,  # input_init — load a new voice from event tables $56D4..$57F4 (stack-aware; tail game_sub_55FC)
+    0x581C,  # sfx_event_load — load a new voice from event tables $56D4..$57F4 (stack-aware; tail game_sub_55FC)
     0x548D,  # sfx_voice_envelope_tick — APEX: per-frame voice/gauge envelope engine + ring drain (Atari VBI tail)
     # --- startup/cinematic de-transpile (2026-06-15): the display_setup ($5F1D)
     #     subtree that drives the Standby + Doors/Tunnel/Planet cinematic — the

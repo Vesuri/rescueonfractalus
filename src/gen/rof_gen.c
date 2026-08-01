@@ -5039,7 +5039,7 @@ L_552f:;
     /* 553c */
     TAX();
     /* 553d */
-    input_init();
+    sfx_event_load();
     /* 5540 */
     goto L_5547;
 L_5543:;
@@ -5411,9 +5411,9 @@ void ring_push_marked__t6502(void) {
     ring_push_0719(); return;
 }
 
-/* input_init @ $581C: Input/controller init (called twice: X=$1F then X=$20) */
-/* faithful transliteration kept as the validation oracle; native input_init() lives in rof_native.c (see VALIDATE_FUNCS) */
-void input_init__t6502(void) {
+/* sfx_event_load @ $581C: SFX event loader (NOT input init): X=event id (1-based; 0=no-op); DEX->table index i; loads voice slot Y=mem[$56D4+i] from the 12 param tables ($56d4..$57f4); tail game_sub_55FC pushes the slot to the ring. Called from the $548d ring-drain + directly at $3df5/$3df9/$61aa/$63a9/$63d2 */
+/* faithful transliteration kept as the validation oracle; native sfx_event_load() lives in rof_native.c (see VALIDATE_FUNCS) */
+void sfx_event_load__t6502(void) {
     /* 581c */
     TXA();
     /* 581d */
@@ -6944,7 +6944,7 @@ L_61a4:;
     /* 61a8 */
     LDX(0x10);
     /* 61aa */
-    input_init();
+    sfx_event_load();
     /* 61ad */
     wait_frames_5();
     /* 61b0 */
@@ -7408,7 +7408,7 @@ L_63a7:;
     /* 63a7 */
     LDX(0x1D);
     /* 63a9 */
-    input_init();
+    sfx_event_load();
     /* 63ac */
     vobj_draw_dispatch();
     /* 63af */
@@ -7443,7 +7443,7 @@ L_63b9:;
     /* 63d0 */
     LDX(0x01);
     /* 63d2 */
-    input_init();
+    sfx_event_load();
     /* 63d5 */
     LDA(0x1F);
 L_63d7:; platform_tick_vbi(); platform_render_frame();
@@ -23454,11 +23454,11 @@ L_3dd7:;
     /* 3df3 */
     LDX(0x1F);
     /* 3df5 */
-    input_init();
+    sfx_event_load();
     /* 3df8 */
     INX();
     /* 3df9 */
-    input_init();
+    sfx_event_load();
     /* 3dfe */
     bus_write(0xD40E, 0x40);
     /* 3e03 */
