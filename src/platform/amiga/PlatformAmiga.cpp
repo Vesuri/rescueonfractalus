@@ -409,6 +409,22 @@ extern "C" void rof_bc_requeue_log(unsigned char y, unsigned char id) {  // hook
     g_rqN = (unsigned short)(g_rqN + 1u);
     if (id == 1u && y < 16u) g_rq01BySlot[y] = (unsigned short)(g_rq01BySlot[y] + 1u);
 }
+// Ring-drain EVENT log: every bit7-set entry the drain feeds to input_init, with the ring index
+// it came from.  Catches (a) event $01 ($81), (b) OUT-OF-RANGE event ids (>33=$21) that make
+// input_init read $56D4+i out of bounds -> a garbage slot y (possibly bit7-set) -> game_sub_55FC
+// pushes $8x -> the $81 cascade.  g_drainOOR counts out-of-range events; g_drain81 counts $81.
+extern "C" volatile unsigned short g_drainN = 0, g_drainOOR = 0, g_drain81 = 0, g_drainIdx = 0;
+extern "C" volatile unsigned char  g_drainEvt[BCE_N] = {};   // full entry byte (wrap ring)
+extern "C" volatile unsigned char  g_drainTail[BCE_N] = {};  // ring index it was read from
+extern "C" volatile unsigned short g_drainVbi[BCE_N] = {};
+extern "C" void rof_bc_drain_evt(unsigned char entry, unsigned char tail) {
+    unsigned i = g_drainIdx;
+    g_drainEvt[i] = entry; g_drainTail[i] = tail; g_drainVbi[i] = g_vbiCount;
+    g_drainIdx = (unsigned short)((i + 1u) % BCE_N);
+    g_drainN = (unsigned short)(g_drainN + 1u);
+    if ((entry & 0x7Fu) > 0x21u) g_drainOOR = (unsigned short)(g_drainOOR + 1u);  // out-of-range id
+    if (entry == 0x81u)          g_drain81  = (unsigned short)(g_drain81  + 1u);  // event $01
+}
 extern "C" void rof_bc_ev01_log(void) {    // hooked in input_init/sfx_event_load when event id==1
     unsigned i = g_bc01N; if (i < BCE_N) {
         g_bc01Vbi[i] = g_vbiCount;

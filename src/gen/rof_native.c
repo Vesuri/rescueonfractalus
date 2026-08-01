@@ -8589,6 +8589,9 @@ static void sfx_voice_envelope_tick_impl(void) {
         cpu.A = entry;                    /* preserve the 6502 register state the callees see */
         if (entry & 0x80) {               /* new-voice request */
             cpu.X = (uint8_t)(entry & 0x7F);
+#ifdef ROF_BEEP_CAP
+            { extern void rof_bc_drain_evt(unsigned char, unsigned char); rof_bc_drain_evt(entry, ring_tail_0719); }
+#endif
             input_init();
         } else {                          /* sprite-slot reorder request */
             cpu.Y = entry;
