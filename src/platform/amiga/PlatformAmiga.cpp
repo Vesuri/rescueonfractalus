@@ -425,6 +425,18 @@ extern "C" void rof_bc_drain_evt(unsigned char entry, unsigned char tail) {
     if ((entry & 0x7Fu) > 0x21u) g_drainOOR = (unsigned short)(g_drainOOR + 1u);  // out-of-range id
     if (entry == 0x81u)          g_drain81  = (unsigned short)(g_drain81  + 1u);  // event $01
 }
+// $81 (event $01) push capture: the exact caller chain at the moment a $81 is written to the
+// ring, recorded in CODE (no gdb breakpoint => full-speed flight => keyboard key-ups still
+// register).  g_push81Ra0 = ring_push_0719's caller (ring_push_marked vs game_sub_55FC =
+// distinguishes an X=1 event push from a Y=$81 slot push); Ra1/Ra2 = up the chain to the real
+// culprit.  Resolve with `info symbol` in gdb after a normal flight to a range-1 pilot.
+extern "C" volatile unsigned short g_push81N = 0;
+extern "C" volatile void *g_push81Ra0 = 0;
+extern "C" volatile unsigned short g_push81Vbi = 0;
+extern "C" void rof_bc_push81(void *ra0) {
+    if (g_push81N == 0) { g_push81Ra0 = ra0; g_push81Vbi = g_vbiCount; }
+    g_push81N++;   // keep the FIRST caller (later ones may be re-entrant cascades)
+}
 extern "C" void rof_bc_ev01_log(void) {    // hooked in input_init/sfx_event_load when event id==1
     unsigned i = g_bc01N; if (i < BCE_N) {
         g_bc01Vbi[i] = g_vbiCount;
