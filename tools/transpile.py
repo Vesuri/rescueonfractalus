@@ -163,7 +163,7 @@ VALIDATE_FUNCS = {
     0x5614,  # reorder_sprite_slot — voice-priority mixer (calls 5673/568a/56af); entry X/Y, Y restored
     0x581C,  # sfx_event_load — load a new voice from event tables $56D4..$57F4 (stack-aware; tail game_sub_55FC)
     0x548D,  # sfx_voice_envelope_tick — APEX: per-frame voice/gauge envelope engine + ring drain (Atari VBI tail)
-    # --- startup/cinematic de-transpile (2026-06-15): the display_setup ($5F1D)
+    # --- startup/cinematic de-transpile (2026-06-15): the boot_standby_launch_driver ($5F1D)
     #     subtree that drives the Standby + Doors/Tunnel/Planet cinematic — the
     #     slow part of boot (the flight loop is already native).  Leaves-first. ---
     0x4E84,  # bin_to_bcd — A(0-99)->packed BCD; units->$00C1, tens->Y, BCD->A (pure leaf)
@@ -212,7 +212,7 @@ VALIDATE_FUNCS = {
     0x7483,  # copy_row_addr_subset — copy 48 row-addr entries $073D/$0793[Y] -> $2932/$2962[X]
     0x3C93,  # memset_or_copy — fill $00B7 to dest ptr $C1/$C2, 16-bit count $C3/$C4 (pointer fill)
     0x3C61,  # copy_bytes_to_dst — write entry A to dest ptr $BD/$BE, X times; then INC $BB/$BC (pointer fill)
-    # batch — display_setup-subtree mem-effect leaves:
+    # batch — boot_standby_launch_driver-subtree mem-effect leaves:
     0x3FDE,  # draw_compass_heading — copy 4 bytes $4B0B[base..base-3] -> $32E3[3..0] (base from $281C/$2836/$3FF6)
     0x45A1,  # fill_buffer2_region_ff — 8x 32-byte $FF runs from $2098 stride $30
     0x4606,  # game_sub_4606 — init target-state cells $32E3[0..3]/$3355-$3357/$3388/$33DF/$33E0
@@ -288,26 +288,26 @@ VALIDATE_FUNCS = {
     0x74D7,  # unpack_bitmap_4d3e — bit-reversal bitmap unpacker via $4D3E ptr table (8x4 passes)
     0x6FBF,  # intro_random_setup — DFS maze gen on $0900 grid (RANDOM; scan_grid_neighbors/test_marked_neighbor)
     0x68CF,  # emit_dl_coord_pairs — emit DL LMS coord pairs into $300A/$308B from row table, tail plot_terrain_span
-    # batch — the largest remaining display_setup leaf:
+    # batch — the largest remaining boot_standby_launch_driver leaf:
     0x75F5,  # compute_stage_display_geometry — derive gauge param block $0617-$062A from $006D (branchy clamps; native bin_to_bcd)
-    # batch — the message-text blitters (display_setup front):
+    # batch — the message-text blitters (boot_standby_launch_driver front):
     0x6750,  # blit_label_row — blit 5 glyphs ($6E23[$00C5..] codes) via glyph_ptr_from_index; index base 0/5 from $0004
     0x672D,  # blit_message_block — 11 rows of 3 pixels ($15/$2E/$47) via set_row_ptr_from_count/plot_pixel_masked, tail blit_label_row
-    # batch — tail-call wrappers on the display_setup front (compose native callees):
+    # batch — tail-call wrappers on the boot_standby_launch_driver front (compose native callees):
     0x4095,  # draw_digit_low_nibble — A=(A&$0F)<<2, tail draw_glyph_2rows
     0x4084,  # draw_2digit_value — draw hi nibble glyph, advance dest ptr $BD/$BE->$BB/$BC, tail draw_digit_low_nibble
     0x6802,  # glyph_ptr_shift3 — A<<3, tail set_coord_y_e0
     0x49C0,  # render_bcd_top_byte — Y=5, X=$0600, tail set_zsupp_pos_clear_delta (renders entry-A byte via emit chain)
-    # batch — RLE-composer init wrappers (display_setup front; compose native RLE):
+    # batch — RLE-composer init wrappers (boot_standby_launch_driver front; compose native RLE):
     0x7558,  # unpack_terrain_seed_cols — set src/dst ptrs, 2x rle_expand_list ($4DFA->$0C32, $4E09->$0D32)
     0x7588,  # game_init_7588 — fill $32FD..$332C=$AA, then rle_decompress $6E6E -> $332D
-    # batch — score/HUD digit renderers (display_setup front; compose native glyph/bcd):
+    # batch — score/HUD digit renderers (boot_standby_launch_driver front; compose native glyph/bcd):
     0x49BA,  # render_bcd_digits_supp_all — Y=7,X=0 -> set_zsupp_pos_clear_delta (LDX#0 makes BEQ unconditional)
     0x67C3,  # blit_numeric_readout — $0004!=0: 4 glyphs from $060D-$0610; else BCD of $006D (clamp $63) as 2 glyphs
-    # batch — DL LMS fill + cockpit dial-bar column (display_setup front):
+    # batch — DL LMS fill + cockpit dial-bar column (boot_standby_launch_driver front):
     0x69F1,  # dl_lms_fill — copy $073D/$0793[X=$8B..$0086] pairs into ($C5)+Y (Y+=3), tail shift_object_table_up/ret_stub
     0x43CB,  # draw_dial_bar_column — gate on Y vs $062E/8, set bar params, tail draw_object_column (entry Y)
-    # batch — the big lock-on indicator sprite drawer (display_setup front, 311 bytes):
+    # batch — the big lock-on indicator sprite drawer (boot_standby_launch_driver front, 311 bytes):
     0x42A7,  # draw_player3_object — player-3 lock-on sprite: HPOS/size via bus_write, mask blit $0F1E/$0F71, RANDOM
     0x8C58,  # build_player2_sprite — depth-scaled object/explosion P2 sprite builder (per-frame while object_anim_frame != 0)
     0x4467,  # update_p3_indicator_stripe — rewrites the P3 scope-indicator PM buffer ($0F98) 50Hz when a P3 object/target is active
@@ -320,7 +320,7 @@ VALIDATE_FUNCS = {
     # batch — DL index wrappers (now unblocked by dl_lms_build):
     0x69E3,  # dl_index_dec — DEC $8B, tail dl_lms_build
     0x69DD,  # dl_index_dec_or_reset — $8B=0 (LDA#0 makes BEQ unconditional), tail dl_lms_build
-    # batch — the 2D scaled-shape blitter (last portable display_setup-front leaf):
+    # batch — the 2D scaled-shape blitter (last portable boot_standby_launch_driver-front leaf):
     0x7C9A,  # draw_scaled_shape — scale/blit a shape: div-by-subtraction count, nested row/col accum, mask bits -> plot_clipped_pixel
     # batch — empty the front: the deferred/HW leaves (faithfulness, little/no speedup):
     0x8181,  # reorder_cell_bits — interleave A + $0084 via ROL/ROR carry chain (result in A); unblocks alien_field0_fill/2
@@ -335,9 +335,9 @@ VALIDATE_FUNCS = {
     #     NOT validated by `make validate` (spin-waits on VBI state / live input would hang
     #     the harness) — verified on FS-UAE by behaviour.  Its __t6502 oracle is kept for
     #     reference; the native twin replaces the spin-wait SPINWAIT-hooks with ds_frame().
-    0x5F1D,  # display_setup — main display setup + Standby/attract idle loop + launch cinematic driver
-    0x3D48,  # game_main_loop — one-time game init + L_3e0f display_setup + the in-game flight loop (never returns)
-    0x587B,  # cockpit_display — Standby/Title scoreboard render + input dispatch; tail-calls the live-input standby_level_select_loop / sound_retrigger_random loops + spins on $00E5 (would hang the harness)
+    0x5F1D,  # boot_standby_launch_driver — main display setup + Standby/attract idle loop + launch cinematic driver
+    0x3D48,  # game_main_loop — one-time game init + L_3e0f boot_standby_launch_driver + the in-game flight loop (never returns)
+    0x587B,  # standby_scoreboard_render — Standby/Title scoreboard render + input dispatch; tail-calls the live-input standby_level_select_loop / sound_retrigger_random loops + spins on $00E5 (would hang the harness)
     # --- flight-init de-transpile (2026-06-22): the last transpiled orchestrator on the
     #     game/level-init path.  Every leaf it calls is already native; this just sheds the
     #     $73C8 body itself.  Like the apex it calls the wait_timer_4c_frames spin-pacer
@@ -425,7 +425,7 @@ SPINWAIT_HOOKS = {
     # Atari (the 6502 polls VCOUNT thousands of times/frame under a SHORT VBI, so it never skips the
     # target value).  On the Amiga the emulated VCOUNT ($D40B = rof_beam_line()>>1) is read far less
     # often AND the loop can be preempted by the HEAVY flight VBI ($4FF5) — which is still the active
-    # VBI when display_setup is re-entered on the mother-ship RETURN path (game_main_loop only sets
+    # VBI when boot_standby_launch_driver is re-entered on the mother-ship RETURN path (game_main_loop only sets
     # the light $53CC VBI once at the top, not on the outer-loop re-entry) — so consecutive reads step
     # OVER the target and the exact-equality test HANGS, blocking the $52D7 install (no launch
     # cinematic on the return).  The beam sync guards writes that are copper-irrelevant on the Amiga
@@ -465,7 +465,7 @@ SPINWAIT_HOOKS = {
     0x646C: 'platform_tick_vbi(); platform_render_frame();',
     0x6478: 'platform_tick_vbi(); platform_render_frame();',
     0x656E: 'platform_tick_vbi(); platform_render_frame();',
-    # L_6578: planet-rise loop in display_setup — paces FUN_6ba8 every 2 VBI
+    # L_6578: planet-rise loop in boot_standby_launch_driver — paces FUN_6ba8 every 2 VBI
     # frames off RTCLOK ($14) until $1002==$FF. Without a VBI tick here the
     # frame counter never advances and the loop spins forever (planet never
     # rises into view after the star scroll).
@@ -500,7 +500,7 @@ SPINWAIT_HOOKS = {
     0x62EB: 'platform_tick_vbi(); platform_render_frame();',
     0x62F6: 'platform_tick_vbi(); platform_render_frame();',
     0x634A: 'platform_poll_events();',
-    # L_596d: cockpit_display's game-over / high-score wait — "LDA $00E5; BNE L_596d" spins
+    # L_596d: standby_scoreboard_render's game-over / high-score wait — "LDA $00E5; BNE L_596d" spins
     # while the game-over countdown $00E5 (set to 5 by the death teardown $4F76) is nonzero,
     # played out under the $53CC in-game VBI while the game-over jingle runs.  On real HW ANTIC
     # keeps showing screen RAM and the VBI decrements $00E5, so the LAST/HIGH SCORE + level

@@ -350,12 +350,12 @@ extern "C" volatile unsigned short g_bcResetVbi[BCE_N] = {};
 extern "C" volatile unsigned short g_bcResetN = 0;
 extern "C" volatile unsigned short g_bc01Vbi[BCE_N] = {};
 extern "C" volatile unsigned short g_bc01N = 0;
-// event $01 lives in display_setup's standby_level_select_loop block L_634f, reachable by THREE
+// event $01 lives in boot_standby_launch_driver's standby_level_select_loop block L_634f, reachable by THREE
 // paths: (1) $6150 when $006c(sound_active_flag)==0 && $0644(sound_event_flag)==0; (2) $62f4 when
 // $0004(level_or_state)!=0; (3) the $5a78 (CONSOL/TRIG) fall-through.  g_l634fPath is set to 1/2/3
 // at each entry (rof_native.c, under ROF_BEEP_CAP) so we see WHICH fires during flight.  Ctx per
 // load: [0]=$0004 [1]=$006d(level_stage) [2]=$006c [3]=$0644 [4]=$0642 range [5]=mem[$D01F]
-// [6]=$0627(fresh_start_flag) [7]=g_l634fPath.  Plus count display_setup ($5f1d) entries to see if
+// [6]=$0627(fresh_start_flag) [7]=g_l634fPath.  Plus count boot_standby_launch_driver ($5f1d) entries to see if
 // it's being re-invoked every game_main_loop iteration during flight.
 extern "C" volatile unsigned char  g_bc01Ctx[BCE_N][8] = {};
 extern "C" volatile unsigned char  g_l634fPath = 0;      // set at each L_634f entry (1/2/3)
@@ -366,14 +366,14 @@ extern "C" volatile unsigned char  g_p3_a = 0, g_p3_d01f = 0, g_p3_d010 = 0, g_p
 extern "C" void rof_bc_p3(unsigned char a, unsigned char d01f, unsigned char d010, unsigned char memd01f) {
     g_p3_a = a; g_p3_d01f = d01f; g_p3_d010 = d010; g_p3_memd01f = memd01f;
 }
-extern "C" volatile unsigned short g_dsEntryN = 0;       // display_setup ($5f1d) invocation count
+extern "C" volatile unsigned short g_dsEntryN = 0;       // boot_standby_launch_driver ($5f1d) invocation count
 extern "C" volatile unsigned short g_dsEntryVbi = 0;     // g_vbiCount of the most recent entry
 extern "C" void rof_bc_ds_entry(void) { g_dsEntryN++; g_dsEntryVbi = g_vbiCount; }  // hooked at $5f1d
 extern "C" void rof_bc_reset_log(void) {   // hooked at sfx_engine_reset $5433
     unsigned i = g_bcResetN; if (i < BCE_N) { g_bcResetVbi[i] = g_vbiCount; g_bcResetN = (unsigned short)(i + 1u); }
 }
 // setup_level_clear_state ($7BC6) is the SOLE writer of player_lives($0072)=2 = the ONLY cause
-// of a game_main_loop_body flight-loop break -> outer-loop -> display_setup re-invocation ->
+// of a game_main_loop_body flight-loop break -> outer-loop -> boot_standby_launch_driver re-invocation ->
 // event $01 reload.  If this fires during a range-1 pilot PASS (not a genuine level advance),
 // that's the range-1 bug: a spurious level-clear.  Ctx: [0]=$0004(level_or_state) [1]=$0642(range)
 // [2]=$008F?level_cleared_flag  [3]=$0072 before  [4]=$003A.  g_lclN counts, ring holds vbis.
@@ -409,9 +409,9 @@ extern "C" void rof_bc_requeue_log(unsigned char y, unsigned char id) {  // hook
     g_rqN = (unsigned short)(g_rqN + 1u);
     if (id == 1u && y < 16u) g_rq01BySlot[y] = (unsigned short)(g_rq01BySlot[y] + 1u);
 }
-// Ring-drain EVENT log: every bit7-set entry the drain feeds to input_init, with the ring index
+// Ring-drain EVENT log: every bit7-set entry the drain feeds to sfx_event_load, with the ring index
 // it came from.  Catches (a) event $01 ($81), (b) OUT-OF-RANGE event ids (>33=$21) that make
-// input_init read $56D4+i out of bounds -> a garbage slot y (possibly bit7-set) -> game_sub_55FC
+// sfx_event_load read $56D4+i out of bounds -> a garbage slot y (possibly bit7-set) -> game_sub_55FC
 // pushes $8x -> the $81 cascade.  g_drainOOR counts out-of-range events; g_drain81 counts $81.
 extern "C" volatile unsigned short g_drainN = 0, g_drainOOR = 0, g_drain81 = 0, g_drainIdx = 0;
 extern "C" volatile unsigned char  g_drainEvt[BCE_N] = {};   // full entry byte (wrap ring)
@@ -450,7 +450,7 @@ extern "C" void rof_bc_push81(void *ra0) {
     if (g_push81N == 0) { g_push81Ra0 = ra0; g_push81Vbi = g_vbiCount; }
     g_push81N++;   // keep the FIRST caller (later ones may be re-entrant cascades)
 }
-extern "C" void rof_bc_ev01_log(void) {    // hooked in input_init/sfx_event_load when event id==1
+extern "C" void rof_bc_ev01_log(void) {    // hooked in sfx_event_load/sfx_event_load when event id==1
     unsigned i = g_bc01N; if (i < BCE_N) {
         g_bc01Vbi[i] = g_vbiCount;
         g_bc01Ctx[i][0] = mem[0x0004]; g_bc01Ctx[i][1] = mem[0x006D];
@@ -785,7 +785,7 @@ static volatile uint8_t s_trig0State = 0x01u;   // fire button, active-low ($00 
 // state var (like s_portaState/s_trig0State) — NOT read from mem[$D01F] — so a stray/aliased RAM
 // write to the $D000 hardware-mirror page can't corrupt this hardware INPUT register.  (It used to
 // read mem[$D01F], which was being clobbered to $06 sub-frame during flight → read_console_trig_delta
-// $5A78 saw START "held" → spuriously re-entered display_setup's launch block L_634f → event $01
+// $5A78 saw START "held" → spuriously re-entered boot_standby_launch_driver's launch block L_634f → event $01
 // poly4 over the range beep, and sound_retrigger_random between beeps.  Matches the Atari, where the
 // CONSOL read is a hardware register isolated from RAM.)
 static volatile uint8_t s_consolState = 0x07u;
@@ -938,7 +938,7 @@ extern "C" volatile unsigned long g_dfVCalls = 0, g_dfVRows = 0, g_dfHCalls = 0,
 extern "C" volatile unsigned long g_ckFullTicks = 0, g_ckFullCount = 0;
 // fill_terrain_columns one-shot timing (tunnel->stars setup gap).
 extern "C" volatile unsigned long g_fillTerrTicks = 0, g_fillTerrIsr = 0;
-// display_setup launch-tail milestone stamps: rof_ds_mile(i) records g_vbiCount at milestone i,
+// boot_standby_launch_driver launch-tail milestone stamps: rof_ds_mile(i) records g_vbiCount at milestone i,
 // so a big jump between consecutive stamps localises the ~580ms cinematic freeze to one stretch.
 extern "C" volatile unsigned short g_dsMile[16] = {0};
 extern "C" volatile unsigned long g_burstClrTicks = 0, g_burstClrIsr = 0;   // L_650b field-clear cost
@@ -1177,7 +1177,7 @@ void PlatformAmiga::tickVBI() {}
 extern "C" volatile uint8_t g_tunnelFieldDirty;
 extern "C" volatile uint8_t g_tunRowLo, g_tunRowHi, g_tunBandMode;
 void PlatformAmiga::tunnelRingsDrawn() {
-    // display_setup's draw_frame_pattern_seq just rendered the full ring pattern into the
+    // boot_standby_launch_driver's draw_frame_pattern_seq just rendered the full ring pattern into the
     // $1000 field.  Flag the whole field dirty (band mode 0 = full extent) so the next
     // renderFrame decodes it once into the tunnel bitmap (then draw_ring_frame_step publishes
     // the per-frame band updates in mode 1).
@@ -1448,8 +1448,8 @@ static uint32_t vbiHandler()
 #endif
 
     // Auto-launch: replicate a RETURN/START press once Standby's idle loop is actually
-    // polling CONSOL.  A fixed vbi==350 fired before display_setup's standby poll was live
-    // (g_standbyRevealReady latches at display_setup entry, when the idle loop starts), so the
+    // polling CONSOL.  A fixed vbi==350 fired before boot_standby_launch_driver's standby poll was live
+    // (g_standbyRevealReady latches at boot_standby_launch_driver entry, when the idle loop starts), so the
     // press was never seen.  Gate on the reveal latch + a settle delay, and HOLD START for a
     // wide window so the once-per-frame poll catches it.
     {

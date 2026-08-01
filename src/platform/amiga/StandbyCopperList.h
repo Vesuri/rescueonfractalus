@@ -16,7 +16,7 @@ class Sprite;
 // reads at most once per frame (a one-frame torn colour is invisible).
 //
 // Used only while g_doorFieldReady is latched, which is AFTER g_standbyRevealReady
-// (display_setup entry) — so the global fade is always 16 (fadeColor identity)
+// (boot_standby_launch_driver entry) — so the global fade is always 16 (fadeColor identity)
 // here: the setters take already-OCS colours (= atariToOCS(byte)) with no fade.
 class StandbyCopperList : public CopperList {
 public:

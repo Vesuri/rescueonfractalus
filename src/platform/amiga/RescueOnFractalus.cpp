@@ -47,14 +47,14 @@ extern "C" volatile uint8_t g_boostStarsDirty;                 // set by fill_re
 extern "C" volatile unsigned short g_starScrollGen;            // rof_native.c: bumped per scrolled star row
 extern "C" volatile uint8_t g_activeVbi;                       // 0=none 1=standby($52D7) 2=flight($4FF5); read by game_vbi_isr
 
-// The genuine transpiled launch cinematic ($5F1D, src/gen/rof_gen.c): display_setup()'s
+// The genuine transpiled launch cinematic ($5F1D, src/gen/rof_gen.c): boot_standby_launch_driver()'s
 // frame-wait spin loops call platform_render_frame, which renders then waits for a real VBI.
-extern "C" void display_setup(void);
+extern "C" void boot_standby_launch_driver(void);
 
-// Black-until-ready reveal gate, latched on at display_setup entry (rof_native.c); renderFrame
+// Black-until-ready reveal gate, latched on at boot_standby_launch_driver entry (rof_native.c); renderFrame
 // holds the EmptyCopperList on screen until it sets, then switches to the real lists.
 extern "C" volatile unsigned char g_standbyRevealReady;
-// Door-field-ready gate, latched on in display_setup once the doors/dots/LEVEL field has been
+// Door-field-ready gate, latched on in boot_standby_launch_driver once the doors/dots/LEVEL field has been
 // drawn into $2000 but BEFORE delay_loop_c2_to_c9 ramps the green colour $0071 (rof_native.c).
 // render() decodes $2000 -> viewportBitmap once when this rises, so the door pixels exist before
 // the fade and the per-frame color03 ramp shows the dark->bright green build on them.
@@ -65,7 +65,7 @@ extern "C" volatile unsigned char g_doorFieldReady;
 // overhead (~7 ms/frame, the dominant door-cinematic cost).  The title region is driven by
 // g_titleToRender (below); g_cockpitDirty by update_cockpit_digits / lock_on_indicator_tick
 // at their store sites.  These are force-set at phase transitions in deriveRenderSignals() so
-// the initial build (by the transpiled display_setup, not those writers) + flight updates are
+// the initial build (by the transpiled boot_standby_launch_driver, not those writers) + flight updates are
 // never missed.
 
 // Top-bar title text: no shadow / per-cell compare.  Two counts drive the re-decode:
@@ -166,7 +166,7 @@ extern "C" unsigned short platform_frame_count(void);
 // platform_compass_changed() from the housing init (game_sub_4606) / heading updater ($3FDE).
 extern "C" volatile unsigned char g_compassDirty = 1;
 // The genuine boot chain (src/gen/rof_gen.c): station_init = attract ($195D, returns on
-// START); game_entry = $3CDE -> game_main_loop (game-display setup -> display_setup
+// START); game_entry = $3CDE -> game_main_loop (game-display setup -> boot_standby_launch_driver
 // cinematic -> flight loop, never returns).  g_quitJmp = the __builtin_setjmp buffer
 // (defined in PlatformAmiga.cpp) the pump longjmps to on quit, unwinding the transpiled chain.
 extern "C" void station_init(void);
@@ -466,9 +466,9 @@ static const uint16_t kSprXRight = 0x81 + 285;
 // playfield/sprites) on screen until g_standbyRevealReady latches, then switch to the real
 // lists — see renderFrame.  (Previously this was a palette fade-to-black; the fade is gone.)
 //
-// g_standbyRevealReady LATCHES on at display_setup entry (rof_native.c) — by then
+// g_standbyRevealReady LATCHES on at boot_standby_launch_driver entry (rof_native.c) — by then
 // game_main_loop has drawn the cockpit/top bar and scene.initialize has set up the sprites.
-// It latches (never clears) on purpose: the launch sequence re-runs display_setup and
+// It latches (never clears) on purpose: the launch sequence re-runs boot_standby_launch_driver and
 // transiently clears the music gate $00E7, so gating on $00E7 would black the screen out
 // again when START is pressed — the latch keeps it revealed through the cinematic and flight.
 
@@ -889,7 +889,7 @@ void RescueOnFractalus::buildAltimeterShipSprite()
 }
 
 // ---- starfield sprites -------------------------------------------------------
-// During the stars phase display_setup positions players P0/P2/P3 as a sparse
+// During the stars phase boot_standby_launch_driver positions players P0/P2/P3 as a sparse
 // scrolling starfield (random_terrain_height $6B47: POKEY RANDOM, 1/32 chance of a dot
 // from table $6B5F = [$80,$20,$04,$01]; scroll_field_columns $6AEE shifts each
 // player up one scanline/frame and appends a new bottom byte).  The genuine
@@ -903,7 +903,7 @@ static const uint16_t kStarSrc[3]  = { 0x0C32, 0x0E32, 0x0F32 };  // P0, P2, P3
 // viewport scale, so the columns spread across the screen as on the Atari).  Each player's
 // two-sprite pair then spans 32 px internally (the HIGH sprite sits +16 px right), rendering
 // the quad at 1:1 so a 4-cc dot is 4 px wide.  HPOSP0=$38, HPOSP2=$8E, HPOSP3=$B8
-// (display_setup $64F3-$6503).
+// (boot_standby_launch_driver $64F3-$6503).
 static const uint16_t kStarX[3]    = { (uint16_t)(0x81 + (0x38 - 0x32) * 2),    // P0 lo = 141
                                        (uint16_t)(0x81 + (0x8E - 0x32) * 2),    // P2 lo = 313
                                        (uint16_t)(0x81 + (0xB8 - 0x32) * 2) };  // P3 lo = 397
@@ -1064,7 +1064,7 @@ void RescueOnFractalus::initialize()
 
     // (The tunnel rings are decoded into tunnelBitmap from the $1000 field by
     // decodeTunnelRect/decodeTunnelBand, triggered by the platform_tunnel_rings_drawn() hook
-    // when the genuine display_setup draws them — not at init; see decodeTunnelRect.)
+    // when the genuine boot_standby_launch_driver draws them — not at init; see decodeTunnelRect.)
 
     leftPost   = Sprite::allocate(kHT);
     rightPost  = Sprite::allocate(kHT);
@@ -1340,7 +1340,7 @@ void RescueOnFractalus::initialize()
     // This captures the closed-door terrain image from $2000 into terrainBitmap.
     render();
 
-    // The tunnel bitmap is NOT decoded here: the genuine display_setup draws the ring
+    // The tunnel bitmap is NOT decoded here: the genuine boot_standby_launch_driver draws the ring
     // pattern into the $1000 field via draw_frame_pattern_seq, and the platform_tunnel_
     // rings_drawn() hook flags it for decode then (draw_ring_frame_step streams the
     // per-frame ring-clear updates).  Decoding at init would capture an empty $1000.
@@ -1356,7 +1356,7 @@ void RescueOnFractalus::initialize()
 
 // decodeTunnelRect: decode the sub-rectangle rows [rowLo..rowHi] × displayed bytes
 // [byteLo..byteHi] of the GTIA-10 tunnel-ring field at mem[$1000] into the tunnel bitmap.
-// $1000 (NOT $2000, which holds the door field) is where the genuine display_setup renders
+// $1000 (NOT $2000, which holds the door field) is where the genuine boot_standby_launch_driver renders
 // the rings — draw_frame_pattern_seq plots through the $073D/$0793 row-address table built
 // for base $1000 (so table index r == row r == $1000 + r*46), and draw_ring_frame_step streams
 // its expanding black ring-clear frames into the same buffer.  No shadow / compare: decoding a
@@ -2073,7 +2073,7 @@ void RescueOnFractalus::flightKickBackClear()
 }
 
 // run(): the whole game, driven by the genuine transpiled/native boot chain
-// (game_entry -> game_main_loop -> display_setup -> flight).  That chain is
+// (game_entry -> game_main_loop -> boot_standby_launch_driver -> flight).  That chain is
 // straight-line 6502 control flow that busy-waits between phases while its VBI/DLI
 // interrupts animate the screen; each original wait point is a SPINWAIT_HOOK that
 // calls platform_render_frame -> renderFrame (render + wait for next VBI),
@@ -2246,7 +2246,7 @@ void RescueOnFractalus::renderFrame()
     if (staticTitle) {
         // Atari game-over black: the Title screen comes up while ANTIC DMA is still OFF (the
         // death teardown $4F76 left SDMCTL/$D400 off; game_main_loop re-clears the $022F shadow
-        // at entry).  cockpit_display ($587B) writes the LAST/HIGH SCORE + level digits into
+        // at entry).  standby_scoreboard_render ($587B) writes the LAST/HIGH SCORE + level digits into
         // $365B and STARTS the game-over music, and only THEN, at its $595a, does
         // display_list_init + SDMCTL($022F)=$22 turn DMA back on — so on the Atari the screen is
         // completely BLACK from game-over entry until the music begins, and the text + score
@@ -2279,7 +2279,7 @@ void RescueOnFractalus::renderFrame()
         } else {
             // Thereafter only the VALUES change, and we know exactly when: the STARTING
             // LEVEL digit as joystick up/down selects the level (setup_initials_ptr $5A63)
-            // and the LAST/HIGH SCORE digits on the game-over build (cockpit_display $587B,
+            // and the LAST/HIGH SCORE digits on the game-over build (standby_scoreboard_render $587B,
             // whose template copy trips rsTitle BEFORE the digits are plotted a few
             // instructions later).  Those writers mark a dirty cell range via the
             // rof_title_screen_dirty() hook; redraw only that range so the screen never fully
@@ -2312,7 +2312,7 @@ void RescueOnFractalus::renderFrame()
     // wins over the (mispositioned) Standby door copper the forward gates would otherwise select.
     if (rsBoostViewport && tunnelCopper) {
         if (!tunnelCopperInstalled) {
-            // Defer the install until the star pens are seeded.  display_setup writes the star
+            // Defer the install until the star pens are seeded.  boot_standby_launch_driver writes the star
             // pens $08D4-$08D9 (=color_ring) ONE frame after the boost viewport becomes active,
             // so on the very first boost frame they are still $00 (black) while the fade bg $0071
             // is salmon.  Installing the copper here (with black color01-07) and then decoding the
@@ -2322,7 +2322,7 @@ void RescueOnFractalus::renderFrame()
             // salmon fade — and install only once the pens are valid, with correct colours.
             if (mem[0x008D] == 0u && mem[MEM_color_ring] == 0u)
                 return;   // pens not ready yet — hold the ascent copper one more frame
-            // First boost-viewport frame: the faithful display_setup writes the $2000 starfield
+            // First boost-viewport frame: the faithful boot_standby_launch_driver writes the $2000 starfield
             // ONE frame later, so the source field may still hold the stale standby door-field
             // ("LEVEL NN") content and would decode as a garbage flash.  Clear the bitmap instead
             // (→ pen0 = color00 = $0071, the salmon fade bg) and skip this frame's decode; the next
@@ -2372,7 +2372,7 @@ void RescueOnFractalus::renderFrame()
 
     // Boost handoff hold (T6).  When the reverse tunnel ends ($008D clears) rsBoostViewport
     // goes false (its gate is $008D!=0 || $008E==0, and the VBI has bumped $008E by then), but
-    // display_setup then spends ~13 frames finishing the NEXT-level Standby door field: it
+    // boot_standby_launch_driver then spends ~13 frames finishing the NEXT-level Standby door field: it
     // rebuilds $2000 via fill_region_2000 + blit_message_block/blit_numeric_readout at L_6118,
     // and only THEN latches g_doorFieldReady (rof_native.c ~8783).  In that window rsBoostViewport
     // is false (so we've left the boost branch above) but g_doorFieldReady is still 0 (so
@@ -2388,7 +2388,7 @@ void RescueOnFractalus::renderFrame()
           extern volatile unsigned long g_boostHandoffHoldFrames; g_boostHandoffHoldFrames++; }
 #endif
         // Row-by-row band-triangle recede (teal -> dark green) while the viewport stays frozen.
-        // display_setup fills the canopy-wedge buffer $0C88-$0C8F with $FF TOP-DOWN, one row per
+        // boot_standby_launch_driver fills the canopy-wedge buffer $0C88-$0C8F with $FF TOP-DOWN, one row per
         // frame (rof_native.c ~8763-8767) — on the Atari the green quad-player corner triangle
         // (COLPM0/1 = mem[$0071] = $C0 dark green) grows over the tunnel teal (the outermost-ring
         // corner mem[$08D8]).  Mirror it: band top = the dark-green door colour, then flip color00
@@ -2915,11 +2915,11 @@ void RescueOnFractalus::updateTunnelCopper(bool force)
 // deriveRenderSignals(): recompute the renderer's phase-gating signals from mem[]
 // hardware state, once per frame.  These replace the C++ launchPhase enum as the
 // renderer's source of truth, so the copper-list selection/render/perFrameWork keep
-// working as the transpiled game_entry/game_main_loop/display_setup drive the program.
+// working as the transpiled game_entry/game_main_loop/boot_standby_launch_driver drive the program.
 //
 // Scene identity comes from the LIVE VVBLKI vector ($0222/$0223) the genuine flow
 // installs per scene — NOT the raw DLI byte $0200.  game_main_loop loops over
-// display_setup; while display_setup BUILDS the Standby display it sets $0200 to many
+// boot_standby_launch_driver; while boot_standby_launch_driver BUILDS the Standby display it sets $0200 to many
 // DLI handlers in turn (including the $6CC2 mode-D one), so the old `$0200==$C2` test
 // faked "stars" during Standby and drew an empty mode-D viewport (the black-middle bug).
 //   $53CC  game_main_loop init / transitional (screen rebuilding)
@@ -2983,7 +2983,7 @@ void RescueOnFractalus::deriveRenderSignals()
 #endif
 
     // launched = doors scroll armed / ring armed / viewport active.  Safe to derive
-    // now that the transpiled display_setup drives: it arms the ring before the next
+    // now that the transpiled boot_standby_launch_driver drives: it arms the ring before the next
     // platform_render_frame, so no frame renders in the doors-fully-open gap where this
     // would briefly read false (the artifact that kept this as a C++ bool through C4).
     rsLaunched = (mem[MEM_terrain_scroll_counter] != 0) || (mem[MEM_vbi_flags] != 0) || rsViewport;
@@ -3009,13 +3009,13 @@ void RescueOnFractalus::deriveRenderSignals()
     // music off (building / not yet there), launched, or a viewport scene.  So each
     // fresh entry into Standby re-decodes the doors exactly once and then idles.
     // (The level-select round-trip's re-decode is armed by resetting g_doorFieldReady
-    // to 0 at display_setup entry — see rof_native.c — so this ==0 clause fires and the
+    // to 0 at boot_standby_launch_driver entry — see rof_native.c — so this ==0 clause fires and the
     // g_doorFieldReady 0→1 edge at L_6118, set right AFTER the door blits, decodes the
     // freshly-written $2000 with the new level.  A scene-based re-arm here fired too
     // early: rsTitle drops when the VBI vector flips, BEFORE L_6118 redraws $2000.)
     if (g_doorFieldReady == 0u || rsLaunched || rsViewport) terrainDirty = true;
 
-    // Force a one-time full title + cockpit repaint when the transpiled display_setup (NOT a
+    // Force a one-time full title + cockpit repaint when the transpiled boot_standby_launch_driver (NOT a
     // hooked writer) builds the cockpit: while the scene is transitional (boot/building), and
     // ONCE on entry to the stars/planet viewport or to flight.  The cockpit is otherwise
     // WRITER-DRIVEN (the g_ck* span registry) — in flight the instrument writers register the
@@ -3026,10 +3026,10 @@ void RescueOnFractalus::deriveRenderSignals()
         g_titleToRender = 20;
     // The cockpit full repaint (decodeCockpitFull = 560 cells) is EXPENSIVE (~300ms even after
     // the decode LUT) and must run only when the static dashboard is actually (re)built.  That
-    // happens exactly ONCE: the transpiled display_setup builds it during the standby
+    // happens exactly ONCE: the transpiled boot_standby_launch_driver builds it during the standby
     // construction, latched by the g_doorFieldReady 0->nonzero edge below.  There is a SINGLE
     // persistent cockpitBitmap shared by every copper list (never cleared on a scene switch), and
-    // cockpit_display ($587B) is an input handler that writes NO cockpit cells — so the decoded
+    // standby_scoreboard_render ($587B) is an input handler that writes NO cockpit cells — so the decoded
     // dashboard survives Standby->Doors->Tunnel->Stars->Flight unchanged, with dial/digit deltas
     // caught incrementally by the g_ck* writer registry.  So the old stars-/flight-ENTRY repaints
     // were redundant; they cost a ~580ms tunnel->stars freeze and a ~700ms flight-entry freeze.
@@ -3220,7 +3220,7 @@ void RescueOnFractalus::decodeScannerBlinkCells()
 }
 
 // Decode the whole cockpit region once (scene-entry repaint / registry overflow): all 4
-// modeD rows + 10 mode4 rows.  The transpiled display_setup (not a hooked writer) builds
+// modeD rows + 10 mode4 rows.  The transpiled boot_standby_launch_driver (not a hooked writer) builds
 // the cockpit on entry, so the writer-driven registry alone would miss the initial paint.
 void RescueOnFractalus::decodeCockpitFull()
 {
@@ -3385,9 +3385,9 @@ void RescueOnFractalus::render()
         }
     } else if (terrainDirty && g_doorFieldReady != 0u && !rsLaunched) {
         // Standby doors: decode the GTIA mode-10 door field at $2000 to the bitplanes
-        // ONCE, then leave it.  The genuine display_setup builds $2000 AFTER
+        // ONCE, then leave it.  The genuine boot_standby_launch_driver builds $2000 AFTER
         // initialize() ran (so a capture at init grabbed the empty pristine RAM — the
-        // garbled-doors bug).  g_doorFieldReady (latched in display_setup right after
+        // garbled-doors bug).  g_doorFieldReady (latched in boot_standby_launch_driver right after
         // blit_message_block/blit_numeric_readout draw the doors into $2000, BEFORE the
         // green fade delay_loop_c2_to_c9) is that "$2000 is built" signal — decode once
         // here, BEFORE the fade, so the live color03 (= mem[$0071]) ramp animates the
@@ -3399,7 +3399,7 @@ void RescueOnFractalus::render()
         terrainDirty = false;
         // GTIA mode-10 nibble field → 3bp interleaved bitplanes via the precomputed
         // kDoorP1/kDoorP2 tables (one lookup per byte, no per-byte nibble math).  Read the
-        // source through a non-volatile pointer — display_setup has finished writing $2000 by
+        // source through a non-volatile pointer — boot_standby_launch_driver has finished writing $2000 by
         // now ($00E7 is set), so the volatile per-byte reloads the old loop forced were pure
         // overhead.  plane3 is always 0 for the doors, so clear it once per row by longs.
         // The plane bytes go to CHIP RAM (DMA-contended), so throughput is dominated by the
@@ -3505,7 +3505,7 @@ void RescueOnFractalus::render()
     // WRITER-DRIVEN decode (replaces the per-frame full shadow scan): instrument writers
     // register the exact cell spans they changed in the g_ck* registry; we decode only those.
     // On scene entry (cockpitForceFull) the whole region is painted once (the transpiled
-    // display_setup built it — not a hooked writer); steady state is span-only, ~0 cost on
+    // boot_standby_launch_driver built it — not a hooked writer); steady state is span-only, ~0 cost on
     // frames where nothing moved.  Layout note: the cockpit shares the terrain WIDE playfield
     // (48 bytes/DL row) — modeD $350D (4 entries × 2 scan lines) then mode4 $332D (10 × 8),
     // 40 visible cols of each 48-byte row (+4 crop) — all handled by decodeCockpitSpan().

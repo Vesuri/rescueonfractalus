@@ -12,26 +12,8 @@ directly and must be updated in the same pass.
 (harness test fn) because `_` is a word char. After a rename, grep for `OLD[A-Za-z0-9_]*`
 and `[A-Za-z0-9_]*OLD` and fix those variants too.
 
-## New (found 2026-07-27, profiling the flight loop)
+## New (found 2026-07-26)
 
-- **`$5F1D display_setup`** — badly misleading: "display setup" is only its first act.  It is the
-  top-of-main-loop **boot → Standby → launch orchestrator** with THREE parts: (1) display setup (VBI
-  `$52D7` / DLI `$6CC2` / display list / PMG bases + colours); (2) the **Standby / attract idle loop**
-  (`L_6141..L_634a`: CONSOL SELECT/OPTION poll at `$D01F`, `cockpit_flag`-gated dispatch, the attract
-  loop `L_62f6↔L_634a` with exits to `game_main_loop`, `copy_title_text_block_to_screen`); (3) once
-  launched, it **draws and drives the launch→descent cinematic to the flight hand-off** — tunnel rings,
-  terrain spans, canopy dial bar, `$02C0` colour fades, the `ds_frame()` stars-approach loops advancing
-  object positions until `terrain_state $0089 == 0` (Doors → Tunnel → Planet → Stars → flight).
-  Suggested: **`boot_standby_launch_driver`** (or `run_standby_and_launch`).  Also fix the stale
-  symbols.csv description ("Main game display setup … called at top of main game loop").  ✓ Native apex,
-  NOT `make validate`d (see [[feedback-clean-c-twin-rewrite]]).
-
-## New (found 2026-07-26, native-izing cockpit_display $587B — the Standby/Title scoreboard render)
-
-- **`$587B cockpit_display`** — the name is misleading: it does NOT draw the in-flight cockpit.  It
-  renders the **Standby / Title-Screen scoreboard** (blits a 120-byte template into Title RAM $365B,
-  then draws the current-score / high-score / level / initials BCD digits) and tail-calls the idle
-  input loop.  Suggested: **`standby_scoreboard_render`**. ✓
 - **`$00E5` — unnamed.** The game-active / results latch.  In cockpit_display: nonzero → the results/
   level-start entry (stash to $37F4, 60-frame wait, music (re)init, then either re-seed SFX via
   sound_retrigger_random or wait for it to clear before name entry).  Suggested: `game_active_latch`. ?
@@ -190,10 +172,6 @@ OS shadow registers:
 
 ## SFX / audio (found 2026-07-31 while decoding the event system — see docs/sfx-events.md)
 
-- ✓ `$581C input_init` → **`sfx_event_load`**. It is NOT any kind of input init — it's the SFX
-  event loader: `X`=event id, `DEX`→table index, reads the 12 parameter tables (`$56d4`…`$57f4`)
-  into voice slot `Y=$56d4[X]`. Called from the ring-drain in `$548d`, and directly at
-  `$3df5/$3df9/$61aa/$63a9/$63d2`.
 - ? `$5614`/`$568a`/`$56af` — the SFX **voice-priority mixer** (pick loudest ≤4 slots → assign
   POKEY channels + evict). Give canonical names (`sfx_voice_mix`/`sfx_pick_loudest`/…) once verified.
 - ? `$0642 game_phase_flag` — the SFX/beep code and the corrected [[pilot-proximity-beep]] memory

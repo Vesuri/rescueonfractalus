@@ -3,7 +3,7 @@
 ## Update 2026-07-02 — full-repaint cost slashed + scene-entry repaint dropped
 - **`cockpitForceFull` now fires ONLY on the standby-build edge** (`g_doorFieldReady` 0→nonzero), NOT on
   stars/flight entry. The single persistent `cockpitBitmap` is shared by every copper list (never cleared
-  on a scene switch) and `cockpit_display` ($587B) writes no cockpit cells, so the dashboard decoded once
+  on a scene switch) and `standby_scoreboard_render` ($587B) writes no cockpit cells, so the dashboard decoded once
   at the standby build survives Standby→Doors→Tunnel→Stars→Flight; dial/digit deltas are caught
   incrementally. The old stars-/flight-ENTRY repaints were redundant and cost a ~580ms tunnel→stars freeze
   + a ~700ms flight-entry freeze (77ad113).

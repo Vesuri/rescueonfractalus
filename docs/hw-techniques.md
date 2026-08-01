@@ -33,14 +33,14 @@ runtime by functions** — only the loader screen is static bytes in the binary.
 | Loader (INITAD) | `$B832` | **static data** (`init_B800 $B800` just points to it) | Homesoft "LOADING" screen — see §1.2 |
 | Attract | `$B800` | `display_list_build $1C40` | 122 LMS text rows from `$0600`; up to 30 sprites scattered by `RANDOM` |
 | Intro / init | `$5A82` | `display_list_init $5D29` | early text/title list in the `$5xxx` data region |
-| **Title / launch cinematic** | `$3000` | `display_setup` + the `dl_lms_*` family | cockpit chrome + **mode-F (GR.8 hi-res)** per-row-LMS viewport — the title-terrain, doors, tunnel, stars, planet (see `startup-flow.md` §6) |
-| **Flight (gameplay)** | `$3210` (live) | `display_setup $5F1D` family | cockpit chrome + **mode-D (GR.7) 4-colour** per-row-LMS terrain viewport — see §1.3 |
+| **Title / launch cinematic** | `$3000` | `boot_standby_launch_driver` + the `dl_lms_*` family | cockpit chrome + **mode-F (GR.8 hi-res)** per-row-LMS viewport — the title-terrain, doors, tunnel, stars, planet (see `startup-flow.md` §6) |
+| **Flight (gameplay)** | `$3210` (live) | `boot_standby_launch_driver $5F1D` family | cockpit chrome + **mode-D (GR.7) 4-colour** per-row-LMS terrain viewport — see §1.3 |
 
 > The game keeps **several copies** of the cockpit display list (`$3000`,
 > `$3120`, `$3210`, …) and switches `DLISTL/H` between them. Only the **live**
 > ANTIC `DLIST` (captured from the running emulator) tells you which is active;
 > a static memory image or single-frame dump will show inactive copies too, and
-> the `display_setup` source writes several DLIST values in turn — so neither is
+> the `boot_standby_launch_driver` source writes several DLIST values in turn — so neither is
 > reliable on its own. The active DLs were confirmed live: `$3000` (mode F) for
 > title/launch, `$3210` (mode D) for gameplay.
 
@@ -170,7 +170,7 @@ set to `$C0` to enable both VBI and DLI NMIs.
 - The four players + missiles are used for moving sprites over the terrain
   playfield: the ship's gunsight/reticle, enemy saucers/gun emplacements, and
   the rescued pilot. `pmg_missile_init $1910` sets missile X positions;
-  `pmg_colors_station $1F0B` and the `display_setup` block set `HPOSPx`,
+  `pmg_colors_station $1F0B` and the `boot_standby_launch_driver` block set `HPOSPx`,
   `SIZEPx`, `COLPMx`/`PCOLRx`.
 - Horizontal position is set directly via `HPOSP0-3` / `HPOSM0-3`
   (`$D000–$D007`); vertical position is by where the shape bytes sit in the P/M
@@ -365,7 +365,7 @@ see 11.3.
 ### 11.3 The canopy frame & sprites — Player/Missile graphics
 
 PMBASE=`$08`, single-line resolution → Missiles `$0B00`, P0 `$0C00`, P1 `$0D00`,
-P2 `$0E00`, P3 `$0F00`. Positions/sizes are set in `display_setup` and re-stamped
+P2 `$0E00`, P3 `$0F00`. Positions/sizes are set in `boot_standby_launch_driver` and re-stamped
 every frame by `vbi_handler_game ($52D7)`:
 
 | Channel | HPOS | Size | Role | Conf |

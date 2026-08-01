@@ -250,20 +250,20 @@ extern volatile unsigned long g_alHudCalls;      /* # alien_shape_blit calls dur
 volatile unsigned char g_flightRenderHalf = 0;
 
 /* Amiga black-until-ready reveal gate (read by animatePalette in RescueOnFractalus.cpp).
- * Set at display_setup entry — by then game_main_loop has drawn the cockpit + top bar and
+ * Set at boot_standby_launch_driver entry — by then game_main_loop has drawn the cockpit + top bar and
  * scene.initialize has set up the sprites, so the window build is about to begin: the point
  * the user wants the screen to appear (cockpit pops in, then the window builds visibly).
  * Harmless on SDL (nothing reads it there). */
 volatile unsigned char g_standbyRevealReady = 0;
 
 /* Amiga door-field-ready gate (read by render() in RescueOnFractalus.cpp).  Latched on in
- * display_setup once the doors/dots/LEVEL field has been drawn into $2000 (after
+ * boot_standby_launch_driver once the doors/dots/LEVEL field has been drawn into $2000 (after
  * blit_message_block/blit_numeric_readout) but BEFORE delay_loop_c2_to_c9 ramps the green
  * background colour $0071.  The Amiga decodes $2000 -> terrainBitmap once when this rises, so
  * the door shapes exist before the fade and the live color03 (= atariToOCS(mem[$0071])) ramp
  * shows the dark->bright green build on the real door pixels (was gated on $00E7 = build end,
  * AFTER the fade -> doors popped in already-green).  Latches like g_standbyRevealReady so the
- * launch re-run of display_setup doesn't transiently re-arm it.  Harmless on SDL. */
+ * launch re-run of boot_standby_launch_driver doesn't transiently re-arm it.  Harmless on SDL. */
 volatile unsigned char g_doorFieldReady = 0;
 
 /* ---------------------------------------------------------------------------
@@ -601,7 +601,7 @@ void init_object_positions(void) {
  * sound_stop ($5A0E) RELIES on A=0: `JSR $712D; STA $022F; STA $006C` stores this
  * A into sound_active_flag ($006C).  As a `void` twin that left cpu.A stale,
  * sound_stop wrote the caller's stale A ($FF on the level-select→START path) into
- * $006C instead of 0, so the game_main_loop→display_setup re-entry (enters at
+ * $006C instead of 0, so the game_main_loop→boot_standby_launch_driver re-entry (enters at
  * $3D48, past the $3D42 zeroing) saw $006C!=0 and took the ~10 s Standby-
  * construction path instead of the fast L_6118 path.  make validate never caught
  * it (diffs mem[] only; exit cpu regs are treated as incidental).  Restore them. */
@@ -1042,7 +1042,7 @@ extern void fill_terrain_columns_core(void);     /* FillTerrainAssembler.s */
 void fill_terrain_columns_core(void) { fill_terrain_columns_core_c(); }
 #endif
 
-/* fill_terrain_columns @ $6AE5 — public entry (called by display_setup; validated twin). */
+/* fill_terrain_columns @ $6AE5 — public entry (called by boot_standby_launch_driver; validated twin). */
 void fill_terrain_columns(void) { fill_terrain_columns_core(); }
 
 /* Advance the multi-byte scroll/distance accumulator ($00A1..$00A4) by $FF and return the
@@ -1288,7 +1288,7 @@ volatile uint8_t g_boostStarsDirty = 0;
 /* draw_ring_frame_step @ $670D — draw ONE tunnel-ring frame group via draw_symmetric_span_loop
  * (thickness = $6E0F[$00A0]); when $00A0 < 6 (signed) clear $08D8 (the inner-ring colour)
  * instead.  Then DEC $00A0 and set $0088 = $00A0 + 1 — the gate that stops the ring cycle once
- * $00A0 wraps past 0 (display_setup then advances to the stars/space phase). */
+ * $00A0 wraps past 0 (boot_standby_launch_driver then advances to the stars/space phase). */
 void draw_ring_frame_step(void) {
     uint8_t a0 = draw_iter_count;                         /* $00A0 */
     if ((int8_t)a0 >= 6) {                                /* CPY #$06; BMI -> clear branch */
@@ -1333,7 +1333,7 @@ void step_accum_add_75(void) {
  * if the top byte is unchanged do nothing.  Otherwise store it, and when it is < $14 use it
  * as an index into the ring-thickness table $6E0F -> $0096 and draw ONE reverse ring group
  * via draw_symmetric_span_loop (it also latches $008D = the accumulator top byte).  Finally,
- * while $008D is non-zero, INC $008E (the row-arm counter display_setup spins on) and rotate
+ * while $008D is non-zero, INC $008E (the row-arm counter boot_standby_launch_driver spins on) and rotate
  * the colour ring via advance_history_6a4d (which copies $08D8 -> $0071 while $008D<0).
  *
  * Amiga: mirror draw_ring_frame_step's dirty-band publish around the span loop so the reverse
@@ -1743,7 +1743,7 @@ void memset_or_copy(void) {
        ~9.5 KB clear cost ~23 VBIs / ~0.46s of the boot path).  bus_write only differs from
        a direct mem[] store for the hardware range ($D000-$D7FF) and the page-2 OS shadows
        ($0200-$02FF, which notify the platform).  All real callers (loader_util,
-       fill_region_2000, init_terrain_render_buffers, display_setup) target plain RAM, so
+       fill_region_2000, init_terrain_render_buffers, boot_standby_launch_driver) target plain RAM, so
        fill mem[] directly there and fall back to the faithful loop only when the region
        overlaps those ranges (or wraps $FFFF).  Leaves $C1-$C4/Y exactly as the loop would. */
     uint16_t start = (uint16_t)(row_table_stride | (player_speed << 8));
@@ -1791,7 +1791,7 @@ void copy_bytes_to_dst(void) {
     if (dl_y1 == 0x00) dl_y2 = (uint8_t)(dl_y2 + 1);  /* INC $BC on carry */
 }
 
-/* --- display_setup-subtree leaves (batch 2026-06-15): pure mem-effect leaves. --- */
+/* --- boot_standby_launch_driver-subtree leaves (batch 2026-06-15): pure mem-effect leaves. --- */
 
 /* draw_compass_heading @ $3FDE — copy 4 bytes from the table $4B0B (descending) into
  * $32E3[3..0].  The base index is ($281C + $3FF6[$2836]) & $FF; the 6502 $4B0B,Y
@@ -3602,7 +3602,7 @@ void emit_dl_coord_pairs(void) {
  * Pure-compute leaf: a chain of clamps/shifts of X writing the gauge geometry
  * cells $0617-$062A (+ $08A2, scratch $00C1), with the displayed value run
  * through the native bin_to_bcd for $0628.  No loops.  Contract: mem[] — exit
- * regs are dead at the display_setup call site; the PHA/PLA byte at $01FF that
+ * regs are dead at the boot_standby_launch_driver call site; the PHA/PLA byte at $01FF that
  * the 6502 leaves behind (S=$FF in the harness) is masked in validate_native.c. */
 void compute_stage_display_geometry(void) {
     uint8_t x = level_stage;
@@ -8543,7 +8543,7 @@ static uint8_t sfx_phase_wrap(uint8_t step, uint8_t phase) {
  *      - duration/priority: same, on the 4-bit priority field, re-queuing via game_sub_55FC.
  *    A slot that finished either envelope re-queues its event id (bit7-marked) on the ring.
  * 3. Drain the $0719 event ring (tail $0074 -> head $0073, wrapping at $1F): bit7-set entries
- *    start a new voice (input_init), the rest reorder a sprite slot.
+ *    start a new voice (sfx_event_load), the rest reorder a sprite slot.
  *
  * Contract: memory only.  No hardware writes here (the AUDF pokes live inside the callees). */
 static void sfx_voice_envelope_tick_impl(void) {
@@ -9341,7 +9341,7 @@ void init_gameplay_state(void) {
     cpu.A = 0x07; cockpit_dial_update();               /* 745b-745d tail call */
 }
 
-/* display_setup @ $5F1D — the orchestration APEX: main game display setup + the
+/* boot_standby_launch_driver @ $5F1D — the orchestration APEX: main game display setup + the
  * Standby/attract idle loop + the launch (doors/tunnel/stars/planet) cinematic
  * driver.  game_main_loop ($3D48) calls it at the top of every game pass; it RTSes
  * back into game_main_loop's flight setup once START (or the demo timeout) fires.
@@ -9410,7 +9410,7 @@ static void tunnel_prebuild_replay_exit(void) {
 }
 #endif
 
-/* cockpit_display @ $587B — render the Standby / Title-Screen scoreboard, then hand off to the
+/* standby_scoreboard_render @ $587B — render the Standby / Title-Screen scoreboard, then hand off to the
  * idle input loop.  This is the apex of the Standby scene: the "cockpit" is a static template
  * blitted into screen RAM overlaid with live score / high-score / level / initials digits, and
  * input is polled by the loop this tail-calls.  NOT in `make validate` — it tail-calls the
@@ -9423,7 +9423,7 @@ static void tunnel_prebuild_replay_exit(void) {
  *
  * cpu.A/cpu.Y are set only at the callee boundaries whose 6502 entry actually reads them
  * (bin_to_bcd / render_bcd_* / emit_bcd_byte_digits consume A; music_init_state consumes Y). */
-void cockpit_display(void) {
+void standby_scoreboard_render(void) {
     /* Blit the 120-byte Standby template ($5A9F..$5B16) into Title-Screen RAM ($365B..$36D2).
      * (The 6502 copies offsets $78..$01 downward; offset 0 is deliberately left untouched.) */
     for (int y = 0x78; y >= 1; y--)
@@ -9516,10 +9516,10 @@ void cockpit_display(void) {
     standby_level_select_loop();
 }
 
-void display_setup(void) {
+void boot_standby_launch_driver(void) {
     /* 5f1d */
 #ifdef ROF_BEEP_CAP
-    { extern void rof_bc_ds_entry(void); rof_bc_ds_entry(); }   /* count display_setup entries (range-1 poly4 probe) */
+    { extern void rof_bc_ds_entry(void); rof_bc_ds_entry(); }   /* count boot_standby_launch_driver entries (range-1 poly4 probe) */
 #endif
     if (!plot2bpp_lut_ready) build_plot2bpp_lut();   /* eager: keep the LUT build off the planet hot path */
     /* Amiga: arm the one-shot door-field ($2000) decode for THIS Standby build.  The renderer
@@ -9528,10 +9528,10 @@ void display_setup(void) {
        level_stage $6D).  It is otherwise latched at 1 forever, so a fast re-entry from the
        Title/level-select (which rebuilds $2000 with a new level but never leaves to a launched/
        viewport scene) would never re-decode → doors stuck on the first-boot level.  Clearing it
-       at every display_setup entry restores the edge, so each fresh Standby build re-decodes the
+       at every boot_standby_launch_driver entry restores the edge, so each fresh Standby build re-decodes the
        doors exactly once with the current level.  (No-op on SDL, which never reads it.) */
     g_doorFieldReady = 0;
-    /* g_standbyRevealReady is NOT set here (display_setup ENTRY): the screen must stay black
+    /* g_standbyRevealReady is NOT set here (boot_standby_launch_driver ENTRY): the screen must stay black
        through the whole ~30-frame paced construction below — setting it here revealed the
        half-built screen and forced a full render() on every construction frame (slow).  It is
        set at the construction-done point ($6118 region, alongside g_doorFieldReady) instead. */
@@ -9764,7 +9764,7 @@ L_6185:
     text_color_pf0 = 0x7C;
 L_61a4:
     bcd_delta_hi = 0x10;
-    cpu.X = 0x10;                         /* input_init takes X */
+    cpu.X = 0x10;                         /* sfx_event_load takes X */
     sfx_event_load();
     wait_frames_5();
     decrement_bcd_0628_restart();
@@ -9964,7 +9964,7 @@ L_634f:
     fresh_start_flag = 0;                  /* L_63a1 ($0627) */
     SA_TIMED(4, compute_stage_display_geometry());
 L_63a7:
-    cpu.X = 0x1D;                         /* input_init takes X */
+    cpu.X = 0x1D;                         /* sfx_event_load takes X */
     SA_TIMED(5, sfx_event_load());
     SA_TIMED(6, vobj_draw_dispatch());
     SA_TIMED(7, render_bcd_counter());
@@ -9996,12 +9996,12 @@ L_63a7:
     }
     DS_MILE(1);                          /* end of stretch A (L_634f -> here: pure compute, no ds_frame) */
 #ifdef ROF_FLIGHT_PROBE
-    g_saPhase = 22;   /* after the ring branch / DS_MILE(1), before input_init */
+    g_saPhase = 22;   /* after the ring branch / DS_MILE(1), before sfx_event_load */
 #endif
-    cpu.X = 0x01;                        /* input_init takes X */
+    cpu.X = 0x01;                        /* sfx_event_load takes X */
     sfx_event_load();
 #ifdef ROF_FLIGHT_PROBE
-    g_saPhase = 23;   /* after input_init, entering the $067E door-wait ds_frame loop */
+    g_saPhase = 23;   /* after sfx_event_load, entering the $067E door-wait ds_frame loop */
 #endif
     do { ds_frame(); } while (mem[0x067E] != 0x1F);   /* wait for the door VBI to set $067E==$1F */
 #ifdef ROF_FLIGHT_PROBE
@@ -10193,16 +10193,16 @@ L_63a7:
 /* game_main_loop @ $3D48 — the second half of the orchestration apex.  game_entry
  * (-> init_game_vars_attract_timer) chains here; it does the one-time game init
  * (display list, sound, PMG, player, cockpit gated on $060B), then loops:
- *   L_3e0f  display_setup()      (Standby/attract + launch cinematic; RTSes after launch)
+ *   L_3e0f  boot_standby_launch_driver()      (Standby/attract + launch cinematic; RTSes after launch)
  *           flight init ($3e12)  (clear PMG/colours, VVBLKI=$4FF5, terrain seed, gameplay state)
  *   L_3eba  the in-game flight loop (two terrain passes/iteration for double-buffering),
  *           level-clear handoff at L_3f59, then back to L_3eba or L_3e0f.
  * The flight loop never returns (the user-quit path longjmps out of the pump); the
- * L_631b display_setup->game_main_loop tail call and the L_3e0f display_setup() call
+ * L_631b boot_standby_launch_driver->game_main_loop tail call and the L_3e0f boot_standby_launch_driver() call
  * mirror the genuine mutual structure (both are TCO'd / return-normally, as in the
  * shipped transpiled build — no unbounded recursion).
  *
- * Same seam/contract as display_setup: NOT in `make validate` (it spin-waits on VBI
+ * Same seam/contract as boot_standby_launch_driver: NOT in `make validate` (it spin-waits on VBI
  * state, and never returns), verified on FS-UAE.  Faithful transcription preserving
  * cpu/mem so the (mostly-native) leaf callees behave identically; the two hooked
  * spin labels L_3eba/L_3f6d become one real Amiga frame via ds_frame(); the
@@ -10264,7 +10264,7 @@ static void game_main_loop_body(void) {
     game_init_7588();
     game_init_76CB();
     bus_write(0xD20E, 0xC0);                   /* POKEY IRQEN: enable timer/keyboard IRQs */
-    if (cockpit_flag != 0) cockpit_display();  /* draw the static cockpit bitmap when enabled */
+    if (cockpit_flag != 0) standby_scoreboard_render();  /* draw the static cockpit bitmap when enabled */
     lock_on_indicator_fill_cells();
     cpu.Y = 0x09; draw_dial_bar_column();      /* Y = dial column index (callee arg) */
     game_sub_4606();
@@ -10292,9 +10292,9 @@ static void game_main_loop_body(void) {
     dl_param_hi = 0x35;
     for (;;) {  /* game / attract outer loop — re-entered after each level or crash */
 #ifdef ROF_FLIGHT_PROBE
-    { unsigned long _ds = rof_subclock(); display_setup(); g_probeDispSetup = rof_subclock() - _ds; }
+    { unsigned long _ds = rof_subclock(); boot_standby_launch_driver(); g_probeDispSetup = rof_subclock() - _ds; }
 #else
-    display_setup();                           /* Standby/attract + launch cinematic (RTSes after launch) */
+    boot_standby_launch_driver();                           /* Standby/attract + launch cinematic (RTSes after launch) */
 #endif
     cpu.A = 0x2A; clear_pm_state();            /* A = PMG clear fill (callee arg) */
     wait_frames_1();
@@ -10480,7 +10480,7 @@ static void game_main_loop_body(void) {
     }
     mem[0x066E] = 0;
     game_sub_55FC();
-    break;                               /* restart the outer loop (re-run display_setup) */
+    break;                               /* restart the outer loop (re-run boot_standby_launch_driver) */
     }   /* end inner in-game flight loop (L_3eba) */
     }   /* end outer game / attract loop (L_3e0f) */
 }

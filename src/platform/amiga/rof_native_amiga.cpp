@@ -498,7 +498,7 @@ extern "C" void launch_anim_dispatch_native(void)
     // $008D (step_mode_flag): the DL-CONSTRUCTION step, NOT a "reverse ring" — the Atari
     // $5367 does `if ($008D != 0) JMP $6A8F` (step_accum_sub_7e), which subtracts $7E from the
     // scroll accumulator, arms the next DL row (INC $008E) and counts $008D down to 0.  The
-    // standby REBUILD path in display_setup (the $006C!=0 branch, taken when re-entering Standby
+    // standby REBUILD path in boot_standby_launch_driver (the $006C!=0 branch, taken when re-entering Standby
     // from the Title/level-select) spins on this handshake (`while(step_mode_flag) ds_frame()`),
     // so stubbing it as a bare return hung the rebuild at black doors (no green fade).  Drive it.
     if (mem[MEM_step_mode_flag]) { step_accum_sub_7e(); return; }   // $008D: JMP $6A8F
@@ -534,7 +534,7 @@ extern "C" void launch_anim_dispatch_native(void)
 // faithful shared native twins in src/gen/rof_native.c (declared in rof_decl.h).
 // They are pure mem[] 6502 logic — not Amiga-specific — so the duplicate copies
 // that used to live here were removed.  The Amiga standby builds the rings once via
-// rof_native.c's display_setup (the g_tunnelPrebuilt path); draw_ring_frame_step
+// rof_native.c's boot_standby_launch_driver (the g_tunnelPrebuilt path); draw_ring_frame_step
 // (above) drives the per-frame ring-clear and calls draw_symmetric_span_loop from
 // rof_native.c.  The former Amiga-only entry points draw_tunnel_rings_native and
 // tunnel_ring_arm_native were dead (no callers) and are gone with them.
@@ -663,7 +663,7 @@ extern "C" void vbi_handler_1_native(void)
 
 // Native in-game FLIGHT ports — the continuation of the launch cinematic.
 //
-// On the Atari the whole game is one program: display_setup ($5F1D) runs the
+// On the Atari the whole game is one program: boot_standby_launch_driver ($5F1D) runs the
 // launch cinematic (doors/tunnel/stars/planet) and RTSes back into game_entry
 // ($3CDE), which does the flight init ($3E12-$3EA6) and then runs the flight
 // main loop at $3EBA.  The Amiga is frame-driven (RescueOnFractalus::update per
@@ -847,7 +847,7 @@ extern "C" void game_vbi_isr(void)
 {
     if (!g_activeVbi) return;                        // scene still initialising — stay inert
     // Dispatch on the LIVE VVBLKI vector ($0222/$0223), exactly as the Atari OS VBLANK
-    // jumps through it.  The genuine station_init/display_setup/game_main_loop install
+    // jumps through it.  The genuine station_init/boot_standby_launch_driver/game_main_loop install
     // $1B30 (attract) / $52D7 (standby+cinematic) / $4FF5 (flight) in turn, so the right
     // body runs automatically — including across the internal cinematic->flight switch
     // inside game_main_loop.  An unknown or half-written vector falls back to standby

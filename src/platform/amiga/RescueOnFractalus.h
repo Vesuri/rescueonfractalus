@@ -50,7 +50,7 @@ public:
 
     // run(): the whole game as a faithful straight-line transcription of the
     // Atari control flow — station_init's attract loop (wait for START) ->
-    // display_setup's launch cinematic (gauge/doors/tunnel/stars/planet, each
+    // boot_standby_launch_driver's launch cinematic (gauge/doors/tunnel/stars/planet, each
     // phase set up then blocked-on with REAL frame-waits) -> game_entry's flight
     // loop.  Replaces the old per-frame update() launchPhase state machine: the
     // original is straight-line code that busy-waits, so this is too.  Returns
@@ -60,7 +60,7 @@ private:
     void perFrameWork();    // per-frame non-phase work (title/blink/digits/sprites)
 
     // Render-gating signals derived from mem[] hardware state each frame: the genuine
-    // transpiled/native game_entry -> game_main_loop -> display_setup drives the program
+    // transpiled/native game_entry -> game_main_loop -> boot_standby_launch_driver drives the program
     // and swaps the live VVBLKI vector per scene; render/perFrameWork key
     // off these mem[]-derived signals to pick the render mode for the current phase.
     void deriveRenderSignals();
@@ -336,7 +336,7 @@ private:
     // Cockpit decode is writer-driven per instrument: each writer raises one g_ck* boolean
     // (digits / lock-on / dial) and render() decodes only that instrument's cells — no
     // per-frame full scan / shadow compare.  cockpitForceFull forces a one-time full repaint
-    // of the whole region (scene entry, when the transpiled display_setup — not a hooked
+    // of the whole region (scene entry, when the transpiled boot_standby_launch_driver — not a hooked
     // writer — built the cockpit).
     bool    cockpitForceFull = true;
 };

@@ -2066,7 +2066,7 @@ static int build_sfx_mask(uint16_t *buf) {
     for (int a = 0xD200; a <= 0xD20F; a++) buf[n++] = (uint16_t)a;
     return n;
 }
-/* Voice writers, the mixer, and input_init: random entry A/X/C, entry Y a real
+/* Voice writers, the mixer, and sfx_event_load: random entry A/X/C, entry Y a real
  * voice slot 1..14.  Mask stack + POKEY. */
 static int test_sfx_voice(const char *name, void (*nat)(void), void (*t6502)(void)) {
     if (!want(name)) return 0;
@@ -2078,7 +2078,7 @@ static int test_sfx_voice(const char *name, void (*nat)(void), void (*t6502)(voi
     for (int t = 0; t < N; t++) {
         fill_random(pre);
         seed_voice_regs(pre);
-        for (int i = 0; i < 128; i++) pre[0x56D4 + i] = (uint8_t)(1 + (xs() % 14)); /* valid slots (input_init) */
+        for (int i = 0; i < 128; i++) pre[0x56D4 + i] = (uint8_t)(1 + (xs() % 14)); /* valid slots (sfx_event_load) */
         Cpu6502 c = zero_cpu();
         c.A = (uint8_t)(xs() & 0xFF);
         c.X = (uint8_t)(xs() & 0xFF);
@@ -2093,8 +2093,8 @@ static int test_sfx_voice(const char *name, void (*nat)(void), void (*t6502)(voi
 /* sfx_voice_envelope_tick @ $548D — the apex.  The ring drain ($0719, head $0073 /
  * tail $0074, both decremented & wrapped at $1F) only terminates when the SFX
  * event-table $56D4 holds VALID voice-slot indices (1..14, bit7 clear): a bit7-set
- * ring entry runs input_init, whose tail game_sub_55FC re-pushes mem[$56D4+i] — if
- * that were bit7-set garbage it would re-dispatch input_init forever (the __t6502
+ * ring entry runs sfx_event_load, whose tail game_sub_55FC re-pushes mem[$56D4+i] — if
+ * that were bit7-set garbage it would re-dispatch sfx_event_load forever (the __t6502
  * twin hangs identically, so timeout can't diff it).  Seed $56D4 valid, the voice
  * register indices, and head/tail in 0..$1F; mask the POKEY range. */
 static int test_sfx_voice_envelope_tick(void) {
@@ -2599,7 +2599,7 @@ int main(int argc, char **argv) {
     fails += test_mem_contract("copy_row_addr_subset", copy_row_addr_subset, copy_row_addr_subset__t6502);
     fails += test_memset_or_copy();
     fails += test_copy_bytes_to_dst();
-    /* batch — display_setup-subtree mem-effect leaves */
+    /* batch — boot_standby_launch_driver-subtree mem-effect leaves */
     fails += test_mem_contract("draw_compass_heading", draw_compass_heading, draw_compass_heading__t6502);
     fails += test_mem_contract("fill_buffer2_region_ff", fill_buffer2_region_ff, fill_buffer2_region_ff__t6502);
     fails += test_mem_contract("game_sub_4606", game_sub_4606, game_sub_4606__t6502);

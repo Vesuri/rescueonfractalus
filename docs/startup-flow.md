@@ -33,7 +33,7 @@ flowchart TD
     I --> J["INITAD $3CDE<br/>game_entry — final entry"]
     J --> K["game_entry mega-init<br/>($3CDE, 737 bytes)"]
     K --> L["game_main_loop $3D48<br/>per-life full init"]
-    L --> M["outer reset L_3e0f<br/>calls display_setup $5F1D"]
+    L --> M["outer reset L_3e0f<br/>calls boot_standby_launch_driver $5F1D"]
     M --> T["title screen @ $5A78<br/>1985 LUCASFILM LTD<br/>wait for START"]
     T -->|START| D1["STAND BY + doors<br/>unpack_bitmap_4d3e<br/>+ scroll_terrain_dl"]
     D1 --> D2["tunnel<br/>unpack_bitmap_4d3e<br/>+ step_accum_add_75"]
@@ -46,8 +46,8 @@ flowchart TD
 ```
 
 > The launch cinematic — title → STAND BY → doors → tunnel → stars → planet
-> (the `T … D4` nodes) — all runs **inside `display_setup` ($5F1D)**, only on a
-> fresh start; on later resets `display_setup` just rebuilds the gameplay screen.
+> (the `T … D4` nodes) — all runs **inside `boot_standby_launch_driver` ($5F1D)**, only on a
+> fresh start; on later resets `boot_standby_launch_driver` just rebuilds the gameplay screen.
 > Each cinematic phase's viewport is **mode F** (hi-res); gameplay switches to
 > **mode D**. Per-phase render routines and how this was recovered are in §6.
 
@@ -170,15 +170,15 @@ Runs once before each life. Highlights:
   VBI** `VVBLKI = $53CC` (`vbi_handler_1`); `display_list_init ($5D29)`.
 - Program POKEY (`AUDCTL`, dividers), then the subsystem inits
   `game_init_7813 / 77DF / 7588 / 76CB`, `loader_util ($3C00)`.
-- If `cockpit_flag ($060B) ≠ 0` → `cockpit_display ($587B)`.
+- If `cockpit_flag ($060B) ≠ 0` → `standby_scoreboard_render ($587B)`.
 - `lock_on_indicator_fill_cells`, `game_sub_43CB`, `game_sub_4606`, `game_sub_4447`.
 - Copy 9-byte display-param block `$4DF1→$00CF`; seed scores `$0663/066A/066B`;
-  `startup_init ($3FFA)`; `input_init ($581C)` twice (X=$1F, X=$20).
+  `startup_init ($3FFA)`; `sfx_event_load ($581C)` twice (X=$1F, X=$20).
 
 ### 5b. Outer reset loop — `L_3e0f` ($3E0F)
 The re-entry point after every death / level transition (the tail at `$3FBC`
 does `goto L_3e0f`). Each pass:
-- `display_setup ($5F1D)` — the **main game display**: installs the gameplay VBI
+- `boot_standby_launch_driver ($5F1D)` — the **main game display**: installs the gameplay VBI
   `VVBLKI = $52D7` (`vbi_handler_game`), the DLI `VDSLST = $6CC2`, the gameplay
   display list (active **`$3210`**, confirmed live; the game keeps several DL
   copies), PMG bases and colours. The flight terrain is ANTIC mode D (GR.7)
@@ -266,13 +266,13 @@ which is why the table below shows it blank.
 > register) identifies the active one — a static memory image can show inactive
 > copies. See `hw-techniques.md` §1.
 
-### 6.2 The cinematic is driven by `display_setup` ($5F1D)
+### 6.2 The cinematic is driven by `boot_standby_launch_driver` ($5F1D)
 
 The launch cinematic is **not** a separate routine — it runs *inside*
-`display_setup`, which `game_main_loop` calls at `$3E0F` (top of the outer reset
+`boot_standby_launch_driver`, which `game_main_loop` calls at `$3E0F` (top of the outer reset
 loop). Every cinematic-phase call stack ends in `… → game_main_loop+$CA`
-(`$3E12`, the return from that call) **→ a `display_setup+<offset>` frame whose
-offset increases monotonically as the cinematic advances**. So `display_setup`
+(`$3E12`, the return from that call) **→ a `boot_standby_launch_driver+<offset>` frame whose
+offset increases monotonically as the cinematic advances**. So `boot_standby_launch_driver`
 walks linearly through its body (`≈$634D → $6585`), drawing one phase, waiting a
 few frames (`wait_timer_4c_frames $3CB2`), then the next — a scripted sequence. When it
 returns, `game_main_loop` drops into the flight loop (`L_3eba`) and gameplay
@@ -281,7 +281,7 @@ begins.
 Recovered by reconstructing the **6502 call stack** from each phase savestate
 (`a800dumps/launch_*.a8s`) and resolving return addresses to named functions:
 
-| Phase | `display_setup` position | Render routines on the stack (innermost → out) | DLI (`VDSLST`) |
+| Phase | `boot_standby_launch_driver` position | Render routines on the stack (innermost → out) | DLI (`VDSLST`) |
 |---|---|---|---|
 | **Title** | waits for START at `$5A78` (`LDA $D01F` CONSOL poll) | static title; `dli_handler_game`/`vbi_deferred_dispatch` hold the image | `$6CAD` |
 | **STAND BY / doors** | `+$501` (`$641E`) | **`unpack_bitmap_4d3e $74D7`** (RLE-expand the door bitmap) → **`scroll_terrain_dl $6953`** (animate the LMS ring) → `audf2_sweep_clear_colors`; `wait_timer_4c_frames` | `$6CAD` |
@@ -306,14 +306,14 @@ Notes:
 
 - **[C]** Active display list, viewport mode, on-screen text, CPU PC, and the
   DLI/VBI vectors per phase — from live captures.
-- **[C]** The cinematic runs inside `display_setup` (the `$3E12`/`game_main_loop`
+- **[C]** The cinematic runs inside `boot_standby_launch_driver` (the `$3E12`/`game_main_loop`
   return frame is on every cinematic stack); the title waits for START via a
   `CONSOL` poll at `$5A78`.
 - **[~]** The render-routine lists are reconstructed from the live call stacks,
   so they reflect the call chain *at the captured instant*; a routine that had
   already returned for that frame won't appear, and stale stack bytes are
   possible. They line up with each phase's visuals and with the monotonic
-  `display_setup` progression, but treat the exact per-phase routine set as
+  `boot_standby_launch_driver` progression, but treat the exact per-phase routine set as
   strong evidence rather than a complete disassembly trace. The savestates are
   kept in `a800dumps/launch_*.a8s` for a full static trace later.
 
@@ -327,7 +327,7 @@ The game swaps the ANTIC/OS vectors several times as it moves between phases:
 |---|---|---|---|
 | Attract | `$1B30` `vbi_handler_station` | `$1E01` (suspected) | — |
 | `game_entry` init | `$53CC` `vbi_handler_1` | — | `$462A` `irq_handler` |
-| Gameplay (`display_setup`) | `$52D7` `vbi_handler_game` | `$6CC2` | `$462A` |
+| Gameplay (`boot_standby_launch_driver`) | `$52D7` `vbi_handler_game` | `$6CC2` | `$462A` |
 | Outer reset hand-off | `$4FF5` `vbi_handler_2` | `$49EE` `dli_handler_game` | `$462A` |
 
 `vbi_handler_game` tails into `vbi_deferred_dispatch ($534D)` (SFX/music ticks,

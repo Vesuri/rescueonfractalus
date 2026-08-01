@@ -29,7 +29,7 @@ Render bugs fixed through 2026-07-17 (commits 792e6d0, c347749, 6abc6cd, 53f4d86
 
 **2026-07-19 session — T6 reverse-tunnel→standby handoff DONE + user-verified (commits d8d7c18, 89a57f1):**
 - **T6 handoff hold (3 bugs, d8d7c18)** — when the reverse ring ends ($008D clears) rsBoostViewport goes
-  false but display_setup spends ~13 frames finishing the next-level door field before latching
+  false but boot_standby_launch_driver spends ~13 frames finishing the next-level door field before latching
   g_doorFieldReady; in that window render() fell through to the forward doors/tunnel path.
   (1) HOLD the last reverse-ring frame while `rsBoostReturn && !g_doorFieldReady` — staticStandby takes
   over on the g_doorFieldReady 0→1 edge (kills the black-top/green-doors flash; measured exactly 13 hold
@@ -42,7 +42,7 @@ Render bugs fixed through 2026-07-17 (commits 792e6d0, c347749, 6abc6cd, 53f4d86
   also caught a brief rsStars phase DURING the boost and cleared viewportBitmap mid-cinematic.
 - **Row-by-row band-triangle recede (89a57f1)** — the band corner triangle now transitions teal→dark-green
   one row at a time (mirror of the forward doors→tunnel green→purple reveal), instead of snapping. The
-  recede runs inside the T6 hold: display_setup fills the wedge buffer $0C88-$0C8F with $FF top-down (one
+  recede runs inside the T6 hold: boot_standby_launch_driver fills the wedge buffer $0C88-$0C8F with $FF top-down (one
   row/frame); mirror it with band-top = dark-green ($0071=$C0) + `setBandReveal(k, teal=$08D8)` where k =
   first still-empty wedge row (rows 0..k-1 green, k..7 teal, k growing 0→8). Measured on the Amiga.
 
@@ -149,19 +149,19 @@ Atari (truth) `~/Pictures/Screenshots/rof_boost_frames_atari/`. Recording of the
 --------------------------------------------------------------------------------
 ## 1. THE MECHANISM (what actually runs — all correct on the Amiga already)
 
-The ENTIRE cinematic body lives in **`display_setup $5F1D`** (NATIVE twin `rof_native.c:8541`,
+The ENTIRE cinematic body lives in **`boot_standby_launch_driver $5F1D`** (NATIVE twin `rof_native.c:8541`,
 oracle `rof_gen.c:6400`), re-entered from `game_main_loop` after the ascent. It drives real Amiga
 frames through the SPINWAIT/`ds_frame` hooks, so its colour pokes DO execute per frame. The reverse
 tunnel rings are animated by the standby VBI `vbi_handler_standby $52D7` → `launch_anim_dispatch
-$5367` → `step_accum_sub_7e $6A8F`, which `display_setup` syncs to by spinning on counter `$008E`.
+$5367` → `step_accum_sub_7e $6A8F`, which `boot_standby_launch_driver` syncs to by spinning on counter `$008E`.
 
 Sequence (all under VBI `$52D7` + DLI chain `VDSLST=$6CAD`, `$0200==$AD`, gate `$003A==$FF`):
 
 1. **Ascent** (flight VBI `$4FF5`): `game_main_loop` dock branch `$3F50` (`player_lives $0072==2`),
    ascend while depth `$0034` `$40`→`$60`, spin on `level_ready_flag $283B` bit7, seed
-   `display_flags $0071 = $2A` (salmon), zero COLPM shadows, JMP `display_setup`. ✅ WORKS on Amiga
+   `display_flags $0071 = $2A` (salmon), zero COLPM shadows, JMP `boot_standby_launch_driver`. ✅ WORKS on Amiga
    (FlightCopperList).
-2. **Salmon→black viewport fade** (`display_setup` ~`rof_native.c:8617`): ramp **`$0071` (COLBK)**
+2. **Salmon→black viewport fade** (`boot_standby_launch_driver` ~`rof_native.c:8617`): ramp **`$0071` (COLBK)**
    from `$2A` salmon → `$1F` → `$00`, 2 frames/step. Then ramp the ring `$08D4-$08D9` UP `idx..$0E`.
 3. **Stars fade one-by-one** (~`rof_native.c:8654`): for each of the 6 ring slots `$08D4..$08D9`,
    ramp its luminance `$0E`→`$00` (1 frame/step) — pens go black one at a time. Then fade the blue
@@ -372,7 +372,7 @@ attempts + the root cause:
 | `$5367` | `launch_anim_dispatch` | transpiled | runs fine; leave (or fold into a native reverse driver) |
 | `$52D7` | `vbi_handler_standby` | transpiled | runs fine; leave |
 
-Already-native callees (reuse as-is): `display_setup $5F1D`, `draw_symmetric_span_loop $6642`,
+Already-native callees (reuse as-is): `boot_standby_launch_driver $5F1D`, `draw_symmetric_span_loop $6642`,
 `fill_horizontal_span $665D`, `fill_vertical_span $669C`, `advance_history_6a4d $6A4D`,
 `draw_vline_pair $6C4D` (publishes `g_planetRowLo/Hi`), `update_object_distance $6BED`,
 `advance_object_positions $6BA8`, `scroll_field_columns $6AEE`, `fill_terrain_columns $6AE5`,
@@ -414,14 +414,14 @@ Already-native callees (reuse as-is): `display_setup $5F1D`, `draw_symmetric_spa
 ### Atari 6502 / transpiled+native logic (drives the cinematic; runs faithfully on both backends)
 | Addr | Name | File | Role in the boost |
 |---|---|---|---|
-| `$3D48/$3E0F` | `game_main_loop` / `game_main_loop_body` | rof_native.c | Loops over `display_setup`; the dock branch (`$3F50`, `player_lives $0072==2`) runs the ASCENT (depth `$0034` $40→$60), then breaks back to re-enter `display_setup` for the reverse cinematic. |
+| `$3D48/$3E0F` | `game_main_loop` / `game_main_loop_body` | rof_native.c | Loops over `boot_standby_launch_driver`; the dock branch (`$3F50`, `player_lives $0072==2`) runs the ASCENT (depth `$0034` $40→$60), then breaks back to re-enter `boot_standby_launch_driver` for the reverse cinematic. |
 | `$4644` | `event_sequence_dispatcher` | rof_gen.c | In-flight keyboard dispatch; routes the **B** key ($15) to the boosters handler. |
 | `$493D` | boosters handler (misnamed — see docs/rename.md) | rof_gen.c | Gated on `$003A` negative: sets mother-ship light `$0676=1`, clears rescue state, sets **`$0072=2`** (handoff sentinel), shows "FIRE BOOSTERS". |
 | `$7BC6` | `setup_level_clear_state` | rof_gen.c | Mother-ship arrival: sets **`$003A=$FF`**, lights the indicator, "MOTHER SHIP!". (The boost render gate keys on `$003A==$FF`.) |
-| `$5F1D` | **`display_setup`** | rof_native.c:8541 | **The cinematic APEX.** Re-entered after ascent; runs construction → salmon→black fade (`display_flags $0071` ramp) → draws the `$2000` starfield + `$1000` ring field → star-pen fade → reverse tunnel (`emit_dl_coord_pairs` loop) → standby handoff. Drives real Amiga frames via `ds_frame()`. |
+| `$5F1D` | **`boot_standby_launch_driver`** | rof_native.c:8541 | **The cinematic APEX.** Re-entered after ascent; runs construction → salmon→black fade (`display_flags $0071` ramp) → draws the `$2000` starfield + `$1000` ring field → star-pen fade → reverse tunnel (`emit_dl_coord_pairs` loop) → standby handoff. Drives real Amiga frames via `ds_frame()`. |
 | `$52D7` | `vbi_handler_standby` | rof_gen.c | The VBI active for the whole cinematic (VVBLKI). Calls `launch_anim_dispatch`. |
 | `$5367` | `launch_anim_dispatch` | rof_gen.c | Per-frame step dispatch by flag precedence; the BOOST uses the **`$008D` reverse ring** branch → `step_accum_sub_7e`. |
-| `$6A8F` | `step_accum_sub_7e` | rof_gen.c (⚠ transpiled-only, no `g_tun*` publish) | The `$008D` reverse ring-step; bumps `$008E` (the row-arm counter `display_setup` spins on). T4 target: native twin + Amiga dirty-band publish. |
+| `$6A8F` | `step_accum_sub_7e` | rof_gen.c (⚠ transpiled-only, no `g_tun*` publish) | The `$008D` reverse ring-step; bumps `$008E` (the row-arm counter `boot_standby_launch_driver` spins on). T4 target: native twin + Amiga dirty-band publish. |
 | `$6A4D` | `advance_history_6a4d` | rof_native.c | During the reverse ring (`$008D<0`) copies `$08D8→$0071` each rotation (COLBK tracks the decaying ring). |
 | `$6A27` | `clear_slot_0c87_0d87` | rof_gen.c (transpiled-only) | Row-by-row corner/band-triangle clear at the standby handoff. T6 target. |
 | — | `draw_frame_pattern_seq` (`$6047`/`L_635f`) | rof_native.c | Plots the concentric ring field into **`$1000`** (deterministic geometry). |
@@ -443,5 +443,5 @@ Already-native callees (reuse as-is): `display_setup $5F1D`, `draw_symmetric_spa
 ### Fixed so far vs OPEN
 - **FIXED + confirmed (2026-07-14):** stars decode the `$2000` field (not `$1000`); boost palette (color00/pillars/band); BPLCON2 sprites-on-top (pillars visible over stars + tunnel).
 - **FIXED (logic, 1-frame, not visually confirmable):** issue-1 stale-`$2000` garbage frame → clear-on-install.
-- **FIXED + screencapture-confirmed (2026-07-16, commit 792e6d0):** issue-3 the stars→tunnel row-by-row REVEAL (the bowtie flash). `decodeBoostViewport()` decodes each viewport row from its per-row mode-F LMS in the LIVE `$3000` launch DL (`mem[$300A+3r]|mem[$300B+3r]<<8`) — `emit_dl_coord_pairs` (native twin, driven by `display_setup`) maintains those DL bytes faithfully on the Amiga. LMS in `[$1000,$2000)` = revealed rings (decode straight from that LMS → also gets the rev strand's mirrored bottom-half addresses); else stars from `$2000+row*46` (NOT the raw `$2f74` leftover, which points one row past the stars field). The reverse-ring emit converts rows from the CENTRE (42/57) outward over 20 VBI steps, so the rings grow from the centre — a mid-reveal frame shows the innermost rings emerging over black. **⚠ KEY: the `$3000` DL bytes ARE maintained on the Amiga** (the earlier "uniform `$2f74` / DL not maintained in mem[]" note was just step-0 before any emit; mid-reveal shows the exact sweep matching an offline simulation of the emit pointer math). No T4 twin was needed for this. Do NOT use `$073D/$0793` (plotter target).
+- **FIXED + screencapture-confirmed (2026-07-16, commit 792e6d0):** issue-3 the stars→tunnel row-by-row REVEAL (the bowtie flash). `decodeBoostViewport()` decodes each viewport row from its per-row mode-F LMS in the LIVE `$3000` launch DL (`mem[$300A+3r]|mem[$300B+3r]<<8`) — `emit_dl_coord_pairs` (native twin, driven by `boot_standby_launch_driver`) maintains those DL bytes faithfully on the Amiga. LMS in `[$1000,$2000)` = revealed rings (decode straight from that LMS → also gets the rev strand's mirrored bottom-half addresses); else stars from `$2000+row*46` (NOT the raw `$2f74` leftover, which points one row past the stars field). The reverse-ring emit converts rows from the CENTRE (42/57) outward over 20 VBI steps, so the rings grow from the centre — a mid-reveal frame shows the innermost rings emerging over black. **⚠ KEY: the `$3000` DL bytes ARE maintained on the Amiga** (the earlier "uniform `$2f74` / DL not maintained in mem[]" note was just step-0 before any emit; mid-reveal shows the exact sweep matching an offline simulation of the emit pointer math). No T4 twin was needed for this. Do NOT use `$073D/$0793` (plotter target).
 - **OPEN:** Reverse-ring perf (full-decode/frame; T4 native `$6A8F` twin + dirty band). Standby handoff / band-triangle clear (`$6A27`; T6). Pink-vs-teal ring cycle to verify.

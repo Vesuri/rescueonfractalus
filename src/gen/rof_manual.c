@@ -188,7 +188,7 @@ void dli_handler_game2(void) {
 }
 
 /* dli_handler_cockpit ($6CAD): cockpit DLI (layout 2), uses table $6DBB/$6DBC.
-   Installed as VDSLST = $6CAD by display_setup; registered so indirectJmp
+   Installed as VDSLST = $6CAD by boot_standby_launch_driver; registered so indirectJmp
    can dispatch to it from the renderer.                                      */
 void dli_handler_cockpit(void) {
     dli_dispatch(0x6DBB, 0x6DBC);

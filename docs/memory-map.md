@@ -32,7 +32,7 @@ $C000–$FFFF   OS ROM area     — OS ROM + hardware registers ($D000–$D7FF)
 | Addr | Name | Description |
 |---|---|---|
 | `$02` | zp_flag_02 | Zeroed in game_entry; purpose TBD |
-| `$03` | zp_flag_03 | Multi-sub game flag; read by cockpit_display |
+| `$03` | zp_flag_03 | Multi-sub game flag; read by standby_scoreboard_render |
 | `$04` | level_or_state | Level number / game phase; $00=fresh; drives branching in game_entry |
 | `$05` | zp_flag_05 | Zeroed in game_entry |
 | `$09` | zp_flag_09 | Set $01 by XEX INITAD signal |
@@ -65,9 +65,9 @@ $C000–$FFFF   OS ROM area     — OS ROM + hardware registers ($D000–$D7FF)
 | `$BB–$BE` | dl_y1–y4 | Display region Y limits / scroll offsets (different per game mode) |
 | `$BF` | attract_count | Attract mode counter (zeroed in startup_init) |
 | `$C1` | player_x | Horizontal position ($60 before game loop) |
-| `$C2` | player_speed | Ship speed ($10 in display_setup) |
-| `$C3` | player_altitude | Altitude / Y position ($0F in display_setup) |
-| `$C4` | altitude_limit | Altitude floor limit ($08 in display_setup) |
+| `$C2` | player_speed | Ship speed ($10 in boot_standby_launch_driver) |
+| `$C3` | player_altitude | Altitude / Y position ($0F in boot_standby_launch_driver) |
+| `$C4` | altitude_limit | Altitude floor limit ($08 in boot_standby_launch_driver) |
 | `$C7` | game_var_C7 | Zeroed at $3D76 |
 | `$CF–$D7` | display_params_0-8 | 9-byte display config table (loaded from $4DF1: `04 26 2C 90 00 06 44 9A 78`) |
 | `$D9` | clear_pm_state_D9 | Zeroed by clear_pm_state ($3FBF) |
@@ -81,7 +81,7 @@ $C000–$FFFF   OS ROM area     — OS ROM + hardware registers ($D000–$D7FF)
 
 | Addr | Name | Value(s) during game | Notes |
 |---|---|---|---|
-| `$0200/$01` | VDSLST | $49EE → $6CC2 | DLI vector; changes from game_entry to display_setup |
+| `$0200/$01` | VDSLST | $49EE → $6CC2 | DLI vector; changes from game_entry to boot_standby_launch_driver |
 | `$0216/$17` | VIMIRQ | $462A | IRQ handler (POKEY timer IRQ) |
 | `$0222/$23` | VVBLKI | $1B30→$53CC→$4FF5→$52D7 | VBI handler; cycles through 4 addresses as game progresses |
 | `$022F` | SDMCTL | $22 (normal) / $00 (disabled) | Playfield + PM DMA control shadow |
@@ -105,7 +105,7 @@ $C000–$FFFF   OS ROM area     — OS ROM + hardware registers ($D000–$D7FF)
 
 | Addr | Name | Notes |
 |---|---|---|
-| `$060B` | cockpit_flag | Non-zero → cockpit_display runs |
+| `$060B` | cockpit_flag | Non-zero → standby_scoreboard_render runs |
 | `$060C` | screen_state | Cleared; display/mode state |
 | `$061D/$1E` | joystick_saved | Joystick raw $49/$4A copied here at start |
 | `$0627` | fresh_start_flag | 0 = first run (play intro); non-zero = skip intro |
@@ -152,8 +152,8 @@ Three display list locations; only one active at a time:
 |---|---|---|
 | `$B832` | display_list_init | Immediately after init_B800 INITAD runs |
 | `$B800` | display_list_attract | After display_list_build ($1C40) builds attract mode DL |
-| `$3120` | display_list_game | During game; DLISTL/H = $20/$31; set by display_setup |
-| `$316B` | display_list_alt | Alternate game DL; set by display_setup for different screens |
+| `$3120` | display_list_game | During game; DLISTL/H = $20/$31; set by boot_standby_launch_driver |
+| `$316B` | display_list_alt | Alternate game DL; set by boot_standby_launch_driver for different screens |
 
 ## Custom font
 
@@ -169,9 +169,9 @@ Loaded/referenced at page `$04` (address `$0400`). `CHBAS = $04` set by
 | `vbi_handler_station` | `$1B30` | station_init | VBI during attract |
 | `vbi_handler_1` | `$53CC` | game_entry ($3D63) | VBI early in-game init |
 | `vbi_handler_2` | `$4FF5` | game_entry ($3E50) | VBI mid-game-entry setup |
-| `vbi_handler_game` | `$52D7` | display_setup ($5F50) | VBI during gameplay |
+| `vbi_handler_game` | `$52D7` | boot_standby_launch_driver ($5F50) | VBI during gameplay |
 | `dli_handler_game` | `$49EE` | game_entry ($3E6D) | DLI (mid-screen) |
-| `dli_handler_game2` | `$6CC2` | display_setup ($5F5F) | DLI during gameplay |
+| `dli_handler_game2` | `$6CC2` | boot_standby_launch_driver ($5F5F) | DLI during gameplay |
 | `audio_irq_handler` | `$8237` | (timer) | Timer-driven sound update |
 
 ## POKEY RANDOM usage

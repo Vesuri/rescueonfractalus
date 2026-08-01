@@ -119,7 +119,7 @@ loop). Target screen 3. Supersedes M6b–M6e below.
   `$332D` (charset `$3800`). Validate static frame vs `attract_target.a8s`.
 
 **R2 — Animation (native reimpl)**
-- Reverse-engineer the screen-3 drivers near `$5A78`/`display_setup`: title flip
+- Reverse-engineer the screen-3 drivers near `$5A78`/`boot_standby_launch_driver`: title flip
   (RESCUE ↔ ©1985 LUCASFILM + palette change), door open/close, blinking lights
   (NOT `station_anim_frame`, which is `$195D`). Native-C reimpl mutating `mem[]`.
 

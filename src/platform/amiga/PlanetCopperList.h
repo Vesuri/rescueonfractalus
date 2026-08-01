@@ -17,7 +17,7 @@ class Sprite;
 // the handful of per-frame-varying colours are poked in place via the setters — no
 // per-frame full rebuild, no double buffer.  Mirrors StandbyCopperList.
 //
-// Used only after g_standbyRevealReady has latched (display_setup entry), so the
+// Used only after g_standbyRevealReady has latched (boot_standby_launch_driver entry), so the
 // global fade is always 16 (identity): the setters take already-OCS colours
 // (= atariToOCS(byte)) with no fade, and the constant palette slots are baked.
 class PlanetCopperList : public CopperList {

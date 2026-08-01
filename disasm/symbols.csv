@@ -126,19 +126,19 @@ $4F3F,intro_cinematic_loop,func,0,Intro/cinematic blocking loop (spins on $2891 
 $4FF5,vbi_handler_flight,func,0,In-flight VBI handler (VVBLKI=$4FF5 set at $3E50 during flight init); $51B9 block = flight_control_integrate + terrain projection, mirrored by flight_vbi_native
 $5433,sfx_engine_reset,func,0,Zeroes SFX voice slots 1..$e: vol $066b + channel $0705 + all envelope params $0687-$06f7; LEAVES dist $065d + freq $0679 stale (hence a silenced voice keeps its poly/freq leftovers). Callers: game_entry $3d35, crash cinematic $4f3f, level/scene setup $6118
 $53CC,vbi_handler_1,func,0,First in-game VBI handler (VVBLKI=$53CC set at $3D63 in game_entry)
-$52D7,vbi_handler_standby,func,0,Standby + launch-cinematic VBI handler (VVBLKI=$52D7 set in display_setup $5F50); active from the Standby screen through the doors/tunnel/stars/planet cinematic, until flight init swaps in vbi_handler_flight ($4FF5). Per-frame: attract timer, attract input poll ($5398), launch_anim_dispatch ($5367), lock_on_indicator_tick every other frame, SFX/music tick, sfx_voice_envelope_tick. Was vbi_handler_standby.
+$52D7,vbi_handler_standby,func,0,Standby + launch-cinematic VBI handler (VVBLKI=$52D7 set in boot_standby_launch_driver $5F50); active from the Standby screen through the doors/tunnel/stars/planet cinematic, until flight init swaps in vbi_handler_flight ($4FF5). Per-frame: attract timer, attract input poll ($5398), launch_anim_dispatch ($5367), lock_on_indicator_tick every other frame, SFX/music tick, sfx_voice_envelope_tick. Was vbi_handler_standby.
 $5815,ring_push_marked,func,0,TXA;ORA #$80;JMP ring_push_0719 — push object index X marked with bit7 ($80=active) into the $0719 event ring
 $581C,sfx_event_load,func,0,SFX event loader (NOT input init): X=event id (1-based; 0=no-op); DEX->table index i; loads voice slot Y=mem[$56D4+i] from the 12 param tables ($56d4..$57f4); tail game_sub_55FC pushes the slot to the ring. Called from the $548d ring-drain + directly at $3df5/$3df9/$61aa/$63a9/$63d2
-$587B,cockpit_display,func,0,Cockpit/instrument display or main input handler (reads PORTA/CONSOL; called if $060B≠0)
+$587B,standby_scoreboard_render,func,0,Renders the Standby/Title-Screen scoreboard (blits a 120-byte template into Title RAM $365B; draws current-score/high-score/level/initials BCD digits) then tail-calls the idle input loop. Does NOT draw the in-flight cockpit. Called if $060B≠0. Was cockpit_display.
 $55FC,game_sub_55FC,func,0,Called at end of each main game loop iteration before JMP $3E0F
 $5D0D,validate_save_state,func,0,Compares save-state blocks ($3700/$3714 vs $28/$EE, 39 bytes $7BDA vs $37C7); returns Z=1 if all match; called early in game_entry
 $5D29,display_list_init,func,0,Display list initial setup; writes DLISTL/H (called in game_entry at $3D6B)
 $5D50,game_init_5D50,func,0,Called with Y=$52 param; sets VIMIRQ twice (attract and game IRQ vectors)
 $5DDB,game_init_first,func,0,Very first call in game_entry; large initializer
-$5F1D,display_setup,func,0,Main game display setup: sets VBI ($52D7) DLI ($6CC2) display-list ($3120/$316B) PMG bases colors; called at top of main game loop
+$5F1D,boot_standby_launch_driver,func,0,Top-of-main-loop boot->Standby->launch orchestrator: (1) display setup (VBI $52D7 / DLI $6CC2 / display list $3120/$316B / PMG bases+colours); (2) the Standby/attract idle loop (CONSOL poll L_6141..L_634a); (3) once launched draws+drives the launch->descent cinematic (tunnel rings/terrain spans/canopy dial/$02C0 fades/ds_frame stars-approach) to the flight hand-off. Was display_setup.
 $6811,game_sub_6811,func,0,Game sub with 2 RANDOM reads (enemy/event randomization)
 $6B47,random_terrain_height,func,0,Generates one random terrain-height value (2 RANDOM reads, masks $1F/$03); called 4x per column by gen_terrain_column
-$6CC2,dli_handler_game2,func,0,Second game DLI handler (VDSLST=$6CC2 set in display_setup $5F5F-$64)
+$6CC2,dli_handler_game2,func,0,Second game DLI handler (VDSLST=$6CC2 set in boot_standby_launch_driver $5F5F-$64)
 $6FBF,intro_random_setup,func,0,Intro/startup sequence with 5 RANDOM reads; called only on fresh start ($0627=0)
 $70B3,intro_unmark_random_cells,func,0,Randomly clears bit7 (marked flag) of $0900 grid/height-map cells below a RANDOM($D20A) threshold; intro continuation after intro_random_setup (3 RANDOM reads)
 $712D,audio_timer_setup,func,0,Clears POKEY AUDF1-4 + sets AUDCTL=$60 (audio timer reset; NOT an IRQ arm — IRQEN=$C0 is keyboard+BREAK bits6/7 not timers and is set/re-armed by irq_handler $462A not here)
@@ -173,7 +173,7 @@ $B800,init_B800,func,0,INITAD stub (segment 13): sets CHBAS=$04 SDLSTL/H=$B832 C
 #
 # --- Zero page variables ---
 $0002,rtclok_frac,var,0,Jiffy-clock fraction byte (INC'd each VBI in vbi_handler_1, clamped to $80); finer companion to RTCLOK $0012-$0014
-$0003,zp_flag_03,var,0,Read in cockpit_display; written in multiple game subs
+$0003,zp_flag_03,var,0,Read in standby_scoreboard_render; written in multiple game subs
 $0004,level_or_state,var,0,Level number or game phase flag; $00=fresh start; controls game flow in game_entry and startup
 $0005,zp_flag_05,var,0,Zeroed in game_entry
 $0009,initad_signal,var,0,XEX INITAD signal flag — set to $01 by an XEX segment to mark init-address dispatch
@@ -199,14 +199,14 @@ $0086,row_count,var,0,Row loop counter in display_list_build ($DA=218 rows)
 $0087,vbi_phase,var,0,VBI phase counter (0 or 1)
 $0088,vbi_flags,var,0,VBI display flags
 $00B7,frame_counter,var,0,Frame counter (zeroed by station_init; ticked by VBI; used for timing)
-$00BB,dl_y1,var,0,Display region Y1 or scroll offset (set in station_init and display_setup)
+$00BB,dl_y1,var,0,Display region Y1 or scroll offset (set in station_init and boot_standby_launch_driver)
 $00BC,dl_y2,var,0,Display region Y2
 $00BD,dl_y3,var,0,Display region Y3
 $00BE,dl_y4,var,0,Display region Y4
-$00C1,row_table_stride,var,0,Per-scanline screen base-address table STRIDE used by game_setup_7460 to build $073D/$0793 (=$60=96 in flight; $00 in display_setup). Was misnamed player_x.
-$00C2,player_speed,var,0,Player speed (set $10 in display_setup)
-$00C3,row_table_base_lo,var,0,Row base-address table BASE low byte for game_setup_7460 (=$10 flight -> base $1010; $0F display_setup). Was misnamed player_y.
-$00C4,row_table_base_hi,var,0,Row base-address table BASE high byte for game_setup_7460 (=$10 flight -> base $1010; $08 display_setup). Was misnamed altitude_limit.
+$00C1,row_table_stride,var,0,Per-scanline screen base-address table STRIDE used by game_setup_7460 to build $073D/$0793 (=$60=96 in flight; $00 in boot_standby_launch_driver). Was misnamed player_x.
+$00C2,player_speed,var,0,Player speed (set $10 in boot_standby_launch_driver)
+$00C3,row_table_base_lo,var,0,Row base-address table BASE low byte for game_setup_7460 (=$10 flight -> base $1010; $0F boot_standby_launch_driver). Was misnamed player_y.
+$00C4,row_table_base_hi,var,0,Row base-address table BASE high byte for game_setup_7460 (=$10 flight -> base $1010; $08 boot_standby_launch_driver). Was misnamed altitude_limit.
 $00CF,display_param_0,var,0,Display parameter 0 — loaded from $4DF1+0 table ($04)
 $00D0,display_param_1,var,0,Display parameter 1 — from $4DF1+1 ($26)
 $00D1,display_param_2,var,0,Display parameter 2 — from $4DF1+2 ($2C)
@@ -227,7 +227,7 @@ $00F4,terrain_ctl_frac,var,0,Control-point sub-pixel fraction stack (the slope c
 # --- RAM workspace ($0600 area) ---
 $0600,screen_data_start,data,0,Start of screen data (122 rows × 40 bytes = $0600-$1306); also game state at $0600-$062B
 $0600,game_state_area,data,0,First 13 bytes zeroed at game_entry ($0600-$060C)
-$060B,cockpit_flag,var,0,Non-zero → cockpit_display called in game_entry
+$060B,cockpit_flag,var,0,Non-zero → standby_scoreboard_render called in game_entry
 $060C,screen_state,var,0,Cleared to 0 at game_entry $3E3A
 $061D,joystick_saved_1,var,0,Joystick raw $0049 saved here at game_entry
 $061E,joystick_saved_2,var,0,Joystick raw $004A saved here at game_entry
@@ -255,8 +255,8 @@ $1250,terrain_row6,data,0,Terrain column data row 6
 $12B0,terrain_row7,data,0,Terrain column data row 7 (8 rows total; checked by terrain_collision_and_silhouette in order)
 #
 # --- Display list RAM ($3120 / $316B — BSS, built at runtime) ---
-$3120,display_list_game,data,0,Game display list (built at runtime by display_setup; DLISTL=$20 DLISTH=$31)
-$316B,display_list_alt,data,0,Alternate game display list (second display-list address used in display_setup)
+$3120,display_list_game,data,0,Game display list (built at runtime by boot_standby_launch_driver; DLISTL=$20 DLISTH=$31)
+$316B,display_list_alt,data,0,Alternate game display list (second display-list address used in boot_standby_launch_driver)
 #
 # --- Game data in main code segment ---
 $2849,level_cleared_flag,var,0,Set when $3A=1 (level-cleared condition)
@@ -272,7 +272,7 @@ $288A,world_z_hi,var,0,Ground-plane world position Z high byte (paired with worl
 $288D,pilot_visible,var,0,Pilot visible/alive flag
 $288E,pilot_prev,var,0,Previous pilot visible state (for edge detection in main loop)
 $288F,pilot_state,var,0,Pilot rescue state ($game_entry uses to store $0041)
-$3157,dl_param_lo,var,0,Display list parameter low (set $0D at game_entry; used by display_setup)
+$3157,dl_param_lo,var,0,Display list parameter low (set $0D at game_entry; used by boot_standby_launch_driver)
 $3158,dl_param_hi,var,0,Display list parameter high (set $35 → address $350D)
 $36CA,grafp_shadow,data,0,GRAFP shadow area (8 bytes zeroed alongside GTIA regs at $3D52)
 $37EE,level_progress,var,0,Level progress/distance counter (min $10; clamped)
@@ -387,7 +387,7 @@ $5B6C,name_entry_loop,func,0,initials entry: cursor $37F0-F6, buf $36B7, joystic
 $5CA7,render_text_cell,func,0,expand glyph from table $5E50[$0049] into display buf $3700+X; control codes $0D/$08, $3F fill
 $5D02,restore_display_if_E7,func,0,if mem[$00E7]!=0 call reset_audctl_flags then wait_frames_2 (display restore/cleanup)
 $5D3B,copy_4byte_table_to_02c4,func,0,Copies 4 bytes from table $5D48 (indexed by X) into buffer $02C4..$02C7 (Y=3..0 loop)
-$5EFE,rle_unpack_to_07f9,func,0,RLE/run-length unpacker: reads $5E90 stream, ASL: hi-bit=run count else literal, writes $07F9+; then display_setup
+$5EFE,rle_unpack_to_07f9,func,0,RLE/run-length unpacker: reads $5E90 stream, ASL: hi-bit=run count else literal, writes $07F9+; then boot_standby_launch_driver
 $65A8,intro_screen_build_seq,func,0,Timed build seq: delay-loop $0071->$BF via wait_frames_2, sets $0095, blit_label_row/67c3 display setup, tail delay_loop_c2_to_c9
 $65D0,build_line_addr_table_1000,func,0,A=$2E stride; tail-calls build_line_addr_table ($65d2) -> table for graphics buffer base $1000
 $65D2,build_line_addr_table_1000_stride,func,0,Sets base=$00C3:$00C4=$1000, stride=$00C1=A; game_setup_7460 builds 85-entry row-addr table
@@ -680,7 +680,7 @@ $0715,sfx_top_voice_idx,var,0,Selected top voice slot index from $568a; excluded
 $0716,sfx_scan_prio,var,0,SFX voice-scan threshold/min priority accumulator ($10 init in 568a, 0 in 56af)
 $0717,sfx_next_voice_idx,var,0,Second/next selected voice slot index from sfx_pick_next_voice ($56af)
 $0718,sfx_voice_expired_flag,var,0,Per-slot "voice expired" flag in sfx_voice_envelope_tick; reset 0 per slot ($5499) INC'd when an envelope completes ($54cf/$5505) gates ring_push_marked ($5510). Dead after the call.
-$0719,event_ring_0719,var,0,32-entry ($20) circular buffer; pushed by ring_push_0719, drained in sfx_voice_envelope_tick (input_init/sfx_reorder_voice_slot per entry)
+$0719,event_ring_0719,var,0,32-entry ($20) circular buffer; pushed by ring_push_0719, drained in sfx_voice_envelope_tick (sfx_event_load/sfx_reorder_voice_slot per entry)
 $073A,sfx_note_timer,var,0,SFX note/duration countdown; decremented each tick in sfx_voice_tick($70F9), reloaded from table $71D2 by sfx_seq_step
 $073B,sfx_voice_mute,var,0,SFX play/mute selector; nonzero -> write Y(=0) to AUDC1/2/3 silencing; set from note high-nibble in sfx_seq_step ($718D)
 $073C,sfx_seq_ptr,var,0,SFX sequence index into table $71DB; advanced by sfx_seq_step($7148), init 0 in reset_audctl_flags

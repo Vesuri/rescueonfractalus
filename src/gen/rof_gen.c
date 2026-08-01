@@ -4562,7 +4562,7 @@ L_52b4:;
     game_loop_reset_trampoline(); return;
 }
 
-/* vbi_handler_standby @ $52D7: Standby + launch-cinematic VBI handler (VVBLKI=$52D7 set in display_setup $5F50); active from the Standby screen through the doors/tunnel/stars/planet cinematic, until flight init swaps in vbi_handler_flight ($4FF5). Per-frame: attract timer, attract input poll ($5398), launch_anim_dispatch ($5367), lock_on_indicator_tick every other frame, SFX/music tick, sfx_voice_envelope_tick. Was vbi_handler_standby. */
+/* vbi_handler_standby @ $52D7: Standby + launch-cinematic VBI handler (VVBLKI=$52D7 set in boot_standby_launch_driver $5F50); active from the Standby screen through the doors/tunnel/stars/planet cinematic, until flight init swaps in vbi_handler_flight ($4FF5). Per-frame: attract timer, attract input poll ($5398), launch_anim_dispatch ($5367), lock_on_indicator_tick every other frame, SFX/music tick, sfx_voice_envelope_tick. Was vbi_handler_standby. */
 void vbi_handler_standby(void) {
     /* 52da */
     bus_write(0xD400, mem[0x022F]);
@@ -5484,9 +5484,9 @@ L_5876:;
     return;
 }
 
-/* cockpit_display @ $587B: Cockpit/instrument display or main input handler (reads PORTA/CONSOL; called if $060B≠0) */
-/* faithful transliteration kept as the validation oracle; native cockpit_display() lives in rof_native.c (see VALIDATE_FUNCS) */
-void cockpit_display__t6502(void) {
+/* standby_scoreboard_render @ $587B: Renders the Standby/Title-Screen scoreboard (blits a 120-byte template into Title RAM $365B; draws current-score/high-score/level/initials BCD digits) then tail-calls the idle input loop. Does NOT draw the in-flight cockpit. Called if $060B≠0. Was cockpit_display. */
+/* faithful transliteration kept as the validation oracle; native standby_scoreboard_render() lives in rof_native.c (see VALIDATE_FUNCS) */
+void standby_scoreboard_render__t6502(void) {
     /* 587b */
     LDY(0x78);
 L_587d:;
@@ -6356,7 +6356,7 @@ void game_init_first__t6502(void) {
     return;
 }
 
-/* rle_unpack_to_07f9 @ $5EFE: RLE/run-length unpacker: reads $5E90 stream, ASL: hi-bit=run count else literal, writes $07F9+; then display_setup */
+/* rle_unpack_to_07f9 @ $5EFE: RLE/run-length unpacker: reads $5E90 stream, ASL: hi-bit=run count else literal, writes $07F9+; then boot_standby_launch_driver */
 void rle_unpack_to_07f9(void) {
     /* 5efe */
     LDX(0x00);
@@ -6395,12 +6395,12 @@ L_5f13:;
     if (!cpu.Z) goto L_5f13;
     /* 5f1b */
     if (cpu.Z) goto L_5f04;
-    display_setup(); return;
+    boot_standby_launch_driver(); return;
 }
 
-/* display_setup @ $5F1D: Main game display setup: sets VBI ($52D7) DLI ($6CC2) display-list ($3120/$316B) PMG bases colors; called at top of main game loop */
-/* faithful transliteration kept as the validation oracle; native display_setup() lives in rof_native.c (see VALIDATE_FUNCS) */
-void display_setup__t6502(void) {
+/* boot_standby_launch_driver @ $5F1D: Top-of-main-loop boot->Standby->launch orchestrator: (1) display setup (VBI $52D7 / DLI $6CC2 / display list $3120/$316B / PMG bases+colours); (2) the Standby/attract idle loop (CONSOL poll L_6141..L_634a); (3) once launched draws+drives the launch->descent cinematic (tunnel rings/terrain spans/canopy dial/$02C0 fades/ds_frame stars-approach) to the flight hand-off. Was display_setup. */
+/* faithful transliteration kept as the validation oracle; native boot_standby_launch_driver() lives in rof_native.c (see VALIDATE_FUNCS) */
+void boot_standby_launch_driver__t6502(void) {
     /* 5f1d */
     LDA(0x06);
     /* 5f1f */
@@ -23395,7 +23395,7 @@ L_3d7a:;
     /* 3da9 */
     if (cpu.Z) goto L_3dae;
     /* 3dab */
-    cockpit_display();
+    standby_scoreboard_render();
 L_3dae:;
     /* 3dae */
     lock_on_indicator_fill_cells();
@@ -23471,7 +23471,7 @@ L_3dd7:;
     dl_param_hi = cpu.A;
 L_3e0f:;
     /* 3e0f */
-    display_setup();
+    boot_standby_launch_driver();
     /* 3e12 */
     LDA(0x2A);
     /* 3e14 */

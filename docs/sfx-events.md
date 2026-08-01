@@ -18,7 +18,7 @@ frame a voice engine walks the slots, advances their frequency/volume **envelope
 |---|---|---|
 | `$5815` | `game_sub_5815` (ring_push_marked) | Push event id `X` onto the SFX ring `$0719+` with bit7 SET (`ORA #$80`) → "load immediately" marker. Callers pass the event id in X. |
 | `$55fc` | `game_sub_55FC` (ring_push_0719) | Push a raw byte (bit7 clear) onto the ring at `$0073` = a **slot index** for the priority path. |
-| `$581c` | `input_init` **(MISNOMER — it's the SFX event loader; see docs/rename.md)** | Load event: `X` = event id, `DEX` → table index. Reads the 12 parameter tables (below) and writes them into voice slot `Y=slot[X]`. |
+| `$581c` | `sfx_event_load` **(MISNOMER — it's the SFX event loader; see docs/rename.md)** | Load event: `X` = event id, `DEX` → table index. Reads the 12 parameter tables (below) and writes them into voice slot `Y=slot[X]`. |
 | `$548d` | `FUN_548d` (sfx_voice_envelope_tick) | Per-frame: for each slot Y=$e..1, advance the **freq envelope** (`$6db+Y` phase → `$679+Y` freq += `$6bf+Y` toward target `$6cd+Y`) and **vol envelope** (`$6a3+Y` phase → `$66b+Y` vol += `$687+Y` toward `$695+Y`). When a phase completes it pushes the **follow-on event** `$6f7+Y` (event-chaining). Then drains the ring. |
 | `$5614` / `$568a` / `$56af` | priority mixer | Pick the loudest ≤4 slots, assign POKEY channels, evict lower-priority voices. |
 | `$5673` | `FUN_5673` (sfx_voice_write_freq_ctrl) | Write a slot's freq → `AUDF`, dist\|vol → `AUDC` for its assigned POKEY channel (`$05+Y`). |

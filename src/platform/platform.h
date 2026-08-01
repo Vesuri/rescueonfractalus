@@ -71,7 +71,7 @@ public:
     /* Runtime indirect JMP dispatch (DLI chain pattern: JMP ($E0)).     */
     virtual void indirectJmp(uint16_t addr) { (void)addr; }
 
-    /* Notification that display_setup just drew the launch tunnel rings into the
+    /* Notification that boot_standby_launch_driver just drew the launch tunnel rings into the
        $1000 GTIA field.  A platform that mirrors mem[] into its own framebuffer
        (the Amiga copper/bitplane backend) converts them to bitplanes here.
        No-op on platforms that render mem[] directly (SDL).                */
