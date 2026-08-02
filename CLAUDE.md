@@ -413,6 +413,18 @@ Rewrite hot functions in idiomatic C:
   → `move.l` of a clean reg). This beat the C on `terrain_column_rasterize_core` (~27%) where four C
   restructurings had all regressed. Verify with the in-process differential (see the budget section),
   NOT cross-run. See `docs/asm-migration-plan.md` + `TerrainRasterizeAssembler.s`.
+- **⚠ NEVER emit a 32-bit software multiply/divide (`__mulsi3`/`__divsi3`/`__udivsi3`/`__modsi3`/
+  `__umodsi3`).** The 68000 has NO 32-bit mul/div — GCC lowers any `uint32_t`/`int32_t` `*` / `/` / `%`
+  into those slow (~200-600 cyc) software routines. It has only `MULU.W`/`MULS.W` (16×16→32) and
+  `DIVU.W`/`DIVS.W` (32÷16→16q+16r). Use the helpers in **`src/cpu/m68k_math.h`** — `rof_mulu16`,
+  `rof_divu16`, `rof_modu16`, `rof_muls16`, `rof_divs16`, `rof_mods16` (inline asm on Amiga, plain-C
+  on the SDL/validate host) — wherever a product's factors fit 16 bits and a quotient fits 16 bits
+  (verify the ranges!). Techniques when a value looks 32-bit: fold constant factors with the exact
+  identity `⌊n/(a·b)⌋ = ⌊⌊n/a⌋/b⌋` so the runtime divide shrinks to 16-bit (see `pokey_period`);
+  reduce with `(a·b)%m = ((a%m)·(b%m))%m` (see `build_poly_dist`); replace a small-modulus wrap in a
+  loop with compare-subtract (`if (x>=m) x-=m`); clamp an input so `2·x` stays <2^16. **Audit after
+  any perf/math change:** `m68k-amiga-elf-objdump -d out/RoF.elf | grep -E '__(u?div|u?mod|mul)si3'`
+  must be empty (bodies unreferenced → not even linked). The whole codebase was swept clean 2026-08-02.
 
 **Correctness + measurement:** every rewrite must stay byte-identical — `make validate FN=<name>`
 diffs full `mem[]` state vs the transliterated `__t6502` oracle (exit `cpu` regs are usually dead
