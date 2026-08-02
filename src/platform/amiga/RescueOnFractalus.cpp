@@ -23,6 +23,7 @@
 #include <hardware/custom.h>
 #include <graphics/display.h>
 #include "framework/AmigaHardware.h"
+#include "../../cpu/m68k_math.h"
 #include "framework/CopperList.h"
 #include "framework/Bitmap.h"
 #include "framework/Palette.h"
@@ -1540,9 +1541,9 @@ void RescueOnFractalus::renderViewportModeD(uint16_t srcBase, int stride, int ro
         if (rEnd >= rows) rEnd = rows - 1;
     }
 
-    const uint8_t* src = (const uint8_t*)&mem[srcBase + kCrop] + (unsigned)rStart * stride;
-    uint8_t* vdest    = (uint8_t*)viewportBitmap->data + (unsigned)rStart * 120;
-    uint32_t* shadow  = viewportShadow + rStart * 10;
+    const uint8_t* src = (const uint8_t*)&mem[srcBase + kCrop] + rof_mulu16((uint16_t)rStart, (uint16_t)stride);
+    uint8_t* vdest    = (uint8_t*)viewportBitmap->data + rof_mulu16((uint16_t)rStart, 120u);
+    uint32_t* shadow  = viewportShadow + rof_mulu16((uint16_t)rStart, 10u);
 #ifdef ROF_FLIGHT_PROBE
     extern volatile unsigned long g_vpDecMax, g_vpDecMaxVbi, g_vpDecMaxRows;
     unsigned long _vp0 = rof_subclock();
@@ -3172,8 +3173,8 @@ void RescueOnFractalus::decodeCockpitSpan(uint16_t addr, uint8_t nCells)
     // CALLS on every cell (2/cell x 560 cells in a full repaint).
     if (addr >= 0x350Du) {                          // modeD raster band (2 identical scan lines)
         unsigned off   = (unsigned)(addr - 0x350Du);
-        unsigned entry = off / (unsigned)kStride;
-        int      col   = (int)(off % (unsigned)kStride) - kCrop;
+        unsigned entry = rof_divu16(off, (uint16_t)kStride);
+        int      col   = (int)rof_modu16(off, (uint16_t)kStride) - kCrop;
         if (entry >= 4u) return;
         uint8_t* d0 = cdest + (entry * 2) * kRowBytes;
         uint8_t* d1 = d0 + kRowBytes;
@@ -3185,8 +3186,8 @@ void RescueOnFractalus::decodeCockpitSpan(uint16_t addr, uint8_t nCells)
         }
     } else {                                        // mode4 dashboard (8 scan lines, glyph)
         unsigned off   = (unsigned)(addr - 0x332Du);
-        unsigned entry = off / (unsigned)kStride;
-        int      col   = (int)(off % (unsigned)kStride) - kCrop;
+        unsigned entry = rof_divu16(off, (uint16_t)kStride);
+        int      col   = (int)rof_modu16(off, (uint16_t)kStride) - kCrop;
         if (entry >= 10u) return;
         uint8_t* base = cdest + (8 + entry * 8) * kRowBytes;
         for (uint8_t i = 0; i < nCells; i++, col++) {

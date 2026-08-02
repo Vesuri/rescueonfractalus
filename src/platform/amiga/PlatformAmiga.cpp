@@ -24,6 +24,7 @@
 #include <proto/graphics.h>
 #include <proto/cia.h>
 #include <exec/interrupts.h>
+#include "../../cpu/m68k_math.h"
 #include <exec/nodes.h>
 #include <exec/memory.h>
 #include <graphics/gfxbase.h>
@@ -97,8 +98,9 @@ static __chip uint8_t poly5_wave[31][62];
 #define POLY_DIST_LEN  1022
 static uint8_t        kBit9[POLY9_SIZE];              // poly9 bit stream (filled at init)
 static __chip uint8_t poly_dist_buf[4][POLY_DIST_LEN];
-static uint32_t       poly_dist_stride[4] = { 0, 0, 0, 0 };  // cache key: last stride built
-static uint8_t        poly_dist_gate[4]   = { 0, 0, 0, 0 };  // cache key: last gate mode (+1=valid)
+static uint32_t       poly_dist_divider[4] = { 0, 0, 0, 0 }; // cache key: last AUDF divider built
+static uint16_t       poly_dist_bd[4]      = { 0, 0, 0, 0 };  // cache key: last base_div (1/28/114)
+static uint8_t        poly_dist_gate[4]    = { 0, 0, 0, 0 };  // cache key: last gate mode (+1=valid)
 
 // POKEY "noise" distortion (AUDC with PURE clear AND POLY4 clear: $80 ungated,
 // $00 poly5-gated) is pseudo-random noise, which Paula cannot synthesise.  We DMA a
@@ -167,8 +169,8 @@ static void build_poly_one(uint8_t* dst, bool poly4, uint8_t s4, uint8_t s5, uin
 {
     uint8_t out = 0, p4 = 0, p5 = 0;
     for (uint16_t i = 0; i < lenBytes; i++) {
-        p4 = (uint8_t)((p4 + s4) % 15u);   // advance polys by stride, then sample
-        p5 = (uint8_t)((p5 + s5) % 31u);
+        p4 = (uint8_t)(p4 + s4); if (p4 >= 15u) p4 = (uint8_t)(p4 - 15u);  // p4,s4<15 → wrap = subtract
+        p5 = (uint8_t)(p5 + s5); if (p5 >= 31u) p5 = (uint8_t)(p5 - 31u);  // p5,s5<31 → wrap = subtract
         bool toggle = poly4 ? (kBit4[p4] == (out ^ 1u))  // flip per poly4 vs current output
                             : (kBit5[p5] != 0);          // poly5-gated pure tone: flip when gate passes
         if (toggle) out ^= 1u;
@@ -200,13 +202,16 @@ static void build_poly_tables(void)
 #ifdef ROF_FLIGHT_PROBE
 extern "C" volatile unsigned long g_polyDistCalls = 0;
 #endif
-static void build_poly_dist(uint8_t ch, uint32_t stride, bool gateAlways)
+static void build_poly_dist(uint8_t ch, uint32_t divider, uint16_t bd, bool gateAlways)
 {
 #ifdef ROF_FLIGHT_PROBE
     g_polyDistCalls++;
 #endif
-    uint16_t s5 = (uint16_t)(stride % 31u);
-    uint16_t s9 = (uint16_t)(stride % (uint32_t)POLY9_SIZE);
+    // s5 = (divider*bd) % 31, s9 = (divider*bd) % 511 — via (a*b)%m = ((a%m)*(b%m))%m so every
+    // op is a 16-bit hardware DIVU.W/MULU.W (divider≤65536 → quotient fits 16 bits), no 32-bit
+    // software mul/div even for the chain case.  bd<511 so bd%511==bd.
+    uint16_t s5 = rof_modu16(rof_mulu16(rof_modu16(divider, 31u), rof_modu16(bd, 31u)), 31u);
+    uint16_t s9 = rof_modu16(rof_mulu16(rof_modu16(divider, POLY9_SIZE), bd), POLY9_SIZE);
     uint16_t p5 = 0, p9 = 0;
     uint8_t  out = 0;
     uint8_t* dst = poly_dist_buf[ch];
@@ -541,7 +546,10 @@ extern "C" void flush_paula(void)
             uint16_t max_per = 0;
             for (uint8_t ch = 0; ch < 4; ch++)
                 if ((restart & (1u << ch)) && cur_per[ch] > max_per) max_per = cur_per[ch];
-            uint16_t wl = (uint16_t)((2u * (uint32_t)max_per) / 227u + 4u);
+            // wl clamps to [7,110]; wl>=110 once max_per>=12031, so clamp max_per to 32000 (keeps
+            // 2*max_per<65536) and use a 16-bit DIVU.W — byte-identical wl for every input.
+            uint16_t mp = max_per > 32000u ? 32000u : max_per;
+            uint16_t wl = rof_divu16(2u * (uint32_t)mp, 227u) + 4u;
             if (wl < 7u)  wl = 7u;
             if (wl > 110u) wl = 110u;
 
@@ -598,15 +606,17 @@ extern "C" void flush_paula(void)
 //   counted-clock rate: f = clock/(2*divider).  Omitting the ÷2 makes every voice an octave high.
 static uint16_t pokey_period_compute(uint32_t divider, bool use_179, uint32_t base_div)
 {
-    static const uint32_t POKEY_CLOCK = 1789773u;
-    static const uint32_t PAULA_CLOCK = 3546895u;
-    uint32_t freq = use_179 ? POKEY_CLOCK / (2u * divider)
-                            : POKEY_CLOCK / (2u * base_div * divider);
-    if (freq < 20u || freq > 28000u) return 0u;   // out of range → silence (floor 20 Hz)
-    uint32_t per = PAULA_CLOCK / (2u * freq);
-    if (per < 124u)   per = 124u;                  // Paula minimum period
-    if (per > 0xFFFFu) per = 0xFFFFu;
-    return (uint16_t)per;
+    // freq = clock / (2*base_div*divider); via the exact integer identity ⌊n/(a·b)⌋ = ⌊⌊n/a⌋/b⌋
+    // pre-fold the constant a = 2·base_div so the runtime divide is 16-bit (DIVU.W), no __udivsi3.
+    //   num = ⌊1789773/(2·base_div)⌋ : base_div 28 → 31960, 114 → 7849 ; use_179 (÷2 only) → 894886.
+    if (divider == 0u || divider > 0xFFFFu) return 0u;     // chain wrap → freq≈0 → silence
+    uint32_t num = use_179 ? 894886u : (base_div == 114u ? 7849u : 31960u);
+    if (use_179 && divider < 32u) return 0u;               // freq > 28000 → silence (keeps quotient ≤16b)
+    uint16_t freq = rof_divu16(num, (uint16_t)divider);    // num≤894886 (32b), quotient ≤16b here
+    if (freq < 20u || freq > 28000u) return 0u;            // out of range → silence
+    if (freq < 28u) return 0xFFFFu;                        // per = 3546895/(2·freq) > 65535 → saturate
+    uint16_t per = rof_divu16(3546895u, (uint16_t)(2u * freq));   // 2·freq ≤ 56000; quotient ≤ 63337
+    return per < 124u ? 124u : per;                        // Paula minimum period
 }
 
 // Precomputed period tables for the common single-byte-AUDF (non-chain) case — the period is a
@@ -688,21 +698,16 @@ static void update_paula_channel(uint8_t ch)
                                  ((ch == 2) && (audctl & 0x20u));     // CH3_179 $20 → ch2
             bool     chain_lo  = (ch == 0 && (audctl & 0x10u)) ||     // CH1_CH2 $10 → ch0 lo
                                  (ch == 2 && (audctl & 0x08u));       // CH3_CH4 $08 → ch2 lo
-            uint32_t stride;
-            if (chain_lo) {   // rare 16-bit chain: divider up to 65536 → needs 32-bit math
-                uint32_t divider = (uint32_t)audf + 256u * pokey[(ch + 1) * 2] + 1u;
-                stride = use_179 ? divider : divider * ((audctl & 0x01u) ? 114u : 28u);
-            } else {          // common: divider = audf+1 ≤ 256, so stride ≤ 29184 fits 16 bits →
-                uint16_t div16 = (uint16_t)((uint16_t)audf + 1u);      // hardware mulu.w, not __mulsi3
-                uint16_t bd    = (audctl & 0x01u) ? 114u : 28u;
-                stride = use_179 ? (uint32_t)div16 : (uint32_t)((uint16_t)(div16 * bd));
-            }
-            bool     gateAlways = (audc & POKEY_NOTPOLY5) != 0u;   // $80 = ungated poly9
-            if (poly_dist_stride[ch] != stride ||
-                poly_dist_gate[ch]   != (uint8_t)(gateAlways ? 2u : 1u)) {
-                build_poly_dist(ch, stride, gateAlways);
-                poly_dist_stride[ch] = stride;
-                poly_dist_gate[ch]   = (uint8_t)(gateAlways ? 2u : 1u);
+            // Cache key = (divider, base_div, gate) instead of the full stride product, so no
+            // 32-bit multiply is needed even for the 16-bit chain (stride = divider*base_div is
+            // only ever used mod 31 / mod 511 inside build_poly_dist, computed there in 16-bit).
+            uint32_t divider = chain_lo ? ((uint32_t)audf + 256u * pokey[(ch + 1) * 2] + 1u)
+                                        : ((uint32_t)audf + 1u);
+            uint16_t bd = use_179 ? 1u : ((audctl & 0x01u) ? 114u : 28u);
+            uint8_t  g  = (uint8_t)((audc & POKEY_NOTPOLY5) != 0u ? 2u : 1u);   // $80 = ungated poly9
+            if (poly_dist_divider[ch] != divider || poly_dist_bd[ch] != bd || poly_dist_gate[ch] != g) {
+                build_poly_dist(ch, divider, bd, g == 2u);
+                poly_dist_divider[ch] = divider; poly_dist_bd[ch] = bd; poly_dist_gate[ch] = g;
             }
             noiseOn[ch] = false;   // deterministic loop, not the evolving noise_buf
             want_set(ch, (uint32_t)poly_dist_buf[ch], (uint16_t)(POLY_DIST_LEN / 2), per, vol);
@@ -729,11 +734,11 @@ static void update_paula_channel(uint8_t ch)
         sel_ptr = (uint32_t)wave_pure; sel_len = 1u;       // pure tone / unmodelled
     } else {
         uint16_t baseDiv = (audctl & 0x01u) ? 114u : 28u;
-        uint32_t stride  = (uint32_t)(audf + 1u) * baseDiv;
+        uint32_t stride  = rof_mulu16((uint16_t)(audf + 1u), baseDiv);     // ≤29184, MULU.W
         if (poly4) {
-            sel_ptr = (uint32_t)poly4_wave[stride % 15u]; sel_len = 15u;   // 30 bytes
+            sel_ptr = (uint32_t)poly4_wave[rof_modu16(stride, 15u)]; sel_len = 15u;   // 30 bytes
         } else {
-            sel_ptr = (uint32_t)poly5_wave[stride % 31u]; sel_len = 31u;   // 62 bytes
+            sel_ptr = (uint32_t)poly5_wave[rof_modu16(stride, 31u)]; sel_len = 31u;   // 62 bytes
         }
     }
     want_set(ch, sel_ptr, sel_len, per ? per : 124u, vol);

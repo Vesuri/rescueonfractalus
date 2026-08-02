@@ -3,6 +3,7 @@
 #include <hardware/intbits.h>
 #include <hardware/cia.h>
 #include <hardware/blit.h>
+#include "../../../cpu/m68k_math.h"
 #include <hardware/custom.h>
 #include <graphics/display.h>
 #include "AmigaHardware.h"
@@ -675,7 +676,7 @@ void AmigaHardware::blitterFillUp(uint16_t* dest, uint16_t width, uint16_t heigh
     // Minterm 0xFA = ABC|ABNC|ANBC|ANBNC|NABC|NANBC = A|C.  `modulo` = bytes between rows of
     // this plane (e.g. interleaved plane stride - row bytes).
     const int32_t rowBytes = (int32_t)width * 2 + modulo;          // stride between plane rows
-    uint8_t* dLast = (uint8_t*)dest + (int32_t)(height - 1) * rowBytes + (int32_t)(width - 1) * 2;
+    uint8_t* dLast = (uint8_t*)dest + rof_muls16((int16_t)(height - 1), (int16_t)rowBytes) + (int32_t)(width - 1) * 2;
     uint8_t* aLast = dLast + rowBytes;                             // one row below
     AmigaHardware::setInterrupts(INTF_BLIT, false);
     while (hasQueuedBlits) processBlitterQueue();

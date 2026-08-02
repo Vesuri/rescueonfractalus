@@ -2,6 +2,7 @@
 #include <exec/memory.h>
 #include "AmigaHardware.h"
 #include "Bitmap.h"
+#include "../../../cpu/m68k_math.h"
 
 Bitmap::Bitmap(void* data, uint16_t width, uint16_t height, uint16_t bitplanes, bool interleaved, bool takeOwnership, uint16_t bitmapDataWidth) :
     data(data),
@@ -42,7 +43,8 @@ uint16_t Bitmap::bitplaneSizeInWords() const
 
 uint32_t Bitmap::dataSize() const
 {
-    return (dataWidth >> 3) * height * bitplanes;
+    // (dataWidth/8)*height fits 16 bits for every bitmap this game allocates (<~13 KB/plane).
+    return rof_mulu16((uint16_t)rof_mulu16((uint16_t)(dataWidth >> 3), height), bitplanes);
 }
 
 Bitmap* Bitmap::allocate(uint16_t width, uint16_t height, uint16_t bitplanes, bool interleaved, uint16_t dataWidth)
@@ -51,7 +53,7 @@ Bitmap* Bitmap::allocate(uint16_t width, uint16_t height, uint16_t bitplanes, bo
         dataWidth = width;
     }
 
-    uint32_t bitmapSize = (dataWidth >> 3) * height * bitplanes;
+    uint32_t bitmapSize = rof_mulu16((uint16_t)rof_mulu16((uint16_t)(dataWidth >> 3), height), bitplanes);
     void* data = AllocMem(bitmapSize, MEMF_CHIP | MEMF_CLEAR);
     return data ? new Bitmap(data, width, height, bitplanes, interleaved, true, dataWidth) : 0;
 }
@@ -508,10 +510,10 @@ void Bitmap::combineWithMask(const Bitmap& background, const Bitmap& source, con
     uint16_t* destData = (uint16_t*)data;
     if (sourceShift >= 0) {
         // Shift is to the right: blit forward starting from the first word
-        backgroundData += backgroundY * background.rowSizeInWords() + backgroundFirstWord;
-        sourceData += sourceY * source.rowSizeInWords() + sourceFirstWord;
-        maskData += maskY * mask.rowSizeInWords() + maskFirstWord;
-        destData += destY * this->rowSizeInWords() + destFirstWord;
+        backgroundData += rof_mulu16((uint16_t)backgroundY, background.rowSizeInWords()) + backgroundFirstWord;
+        sourceData += rof_mulu16((uint16_t)sourceY, source.rowSizeInWords()) + sourceFirstWord;
+        maskData += rof_mulu16((uint16_t)maskY, mask.rowSizeInWords()) + maskFirstWord;
+        destData += rof_mulu16((uint16_t)destY, this->rowSizeInWords()) + destFirstWord;
         lastWordMask <<= ((sourceLastWord << 4) + 16 - sourceX - width);
         firstWordMask >>= sourceLeftShift;
 
@@ -520,10 +522,10 @@ void Bitmap::combineWithMask(const Bitmap& background, const Bitmap& source, con
         }
     } else {
         // Shift is to the left: blit reverse starting from the last word
-        backgroundData += (backgroundY + height) * background.rowSizeInWords() - backgroundWidthWords + backgroundLastWord;
-        sourceData += (sourceY + height) * source.rowSizeInWords() - sourceWidthWords + sourceLastWord;
-        maskData += (maskY + height) * mask.rowSizeInWords() - maskWidthWords + maskLastWord;
-        destData += (destY + height) * this->rowSizeInWords() - destWidthWords + destLastWord;
+        backgroundData += rof_mulu16((uint16_t)(backgroundY + height), background.rowSizeInWords()) - backgroundWidthWords + backgroundLastWord;
+        sourceData += rof_mulu16((uint16_t)(sourceY + height), source.rowSizeInWords()) - sourceWidthWords + sourceLastWord;
+        maskData += rof_mulu16((uint16_t)(maskY + height), mask.rowSizeInWords()) - maskWidthWords + maskLastWord;
+        destData += rof_mulu16((uint16_t)(destY + height), this->rowSizeInWords()) - destWidthWords + destLastWord;
         firstWordMask <<= ((sourceLastWord << 4) + 16 - sourceX - width);
         lastWordMask >>= sourceLeftShift;
 

@@ -16,6 +16,7 @@
 #include "../cpu/bus.h"  /* bus_read/bus_write + ZP_IND_Y for indirect bitmap access */
 #include "rof_decl.h"   /* declarations for transpiled routines native code calls */
 #include "rof_native.h" /* typed cores shared with the hand-written Amiga ports */
+#include "../cpu/m68k_math.h" /* rof_mulu16/rof_divu16/... hardware 16-bit mul/div */
 #include "../platform/platform_c.h" /* platform_tick_vbi/render_frame/poll_events for the apex spin-waits */
 #define ROF_MEM_ALIASES /* bare lvalue aliases: flight_mode_state == mem[MEM_flight_mode_state] */
 #include "mem.h"        /* MEM_<name> offsets + bare aliases (symbols.csv var rows) */
@@ -4427,7 +4428,7 @@ void alien_shape_blit(void) {
      * col is figB0+y with a single 96-wrap.  (Was ROF_PLOT_ALIEN doing rel/96 + rel%96 per cell.) */
     const int alienKnock = (mem[0x0632] != 0) && (g_figP1 != 0);
     int figBase = (int)dstRow - 0x10A4, figR0 = 0, figB0 = 0;
-    if (alienKnock) { figR0 = figBase / 96; figB0 = figBase % 96; }
+    if (alienKnock) { figR0 = rof_divs16(figBase, 96); figB0 = rof_mods16(figBase, 96); }
 #endif
     for (uint8_t y = 0x10; ; y--) {                          /* 17 cells, high offset first */
         uint8_t cell = mem[0x8F + y];
@@ -4485,7 +4486,7 @@ void alien_shape_blit(void) {
             srcRow = (uint16_t)(dl_src_index | (terrain_scroll_reload << 8));
             dstRow = (uint16_t)(step_mode_flag | (mem[0x008E] << 8));
 #ifdef ROF_PLATFORM_AMIGA
-            if (alienKnock) { figBase = (int)dstRow - 0x10A4; figR0 = figBase / 96; figB0 = figBase % 96; }
+            if (alienKnock) { figBase = (int)dstRow - 0x10A4; figR0 = rof_divs16(figBase, 96); figB0 = rof_mods16(figBase, 96); }
 #endif
         }
         if (y == 0x00) break;
