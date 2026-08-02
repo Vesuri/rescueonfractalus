@@ -220,6 +220,9 @@ uint8_t kModeDP2[256];
 static uint8_t kBandP1[256];
 static uint8_t kBandP2[256];
 static uint8_t kBandP3[256];
+static uint8_t kBandOW[256];   // = kBandP1[s] | kBandP2[s]: the terrain-overwriting (bar|marker)
+                               // pixels.  ow==0 for pure grey-frame / L-R-edge bytes (the band
+                               // majority) -> the plane1/2 RMW is a no-op there and can be skipped.
 // Row -> byte offset within the flight bitmap (120 bytes/scanline = plane1 40 + plane2 40 +
 // plane3 40).  The 68000 has no fast multiply, so the per-column horizon plotter (and the
 // direct-to-plane2 terrain rasterizer in rof_native.c) index this instead of computing scan*120.
@@ -1290,7 +1293,7 @@ void RescueOnFractalus::initialize()
             else if (px == 2) bp2 |= mask;                    // centre marker -> hole -> color02
             // px == 0: L/R edge -> all planes 0 -> color00 (terrain body); sprite triangle on top
         }
-        kBandP1[s] = bp1; kBandP2[s] = bp2; kBandP3[s] = bp3;
+        kBandP1[s] = bp1; kBandP2[s] = bp2; kBandP3[s] = bp3; kBandOW[s] = (uint8_t)(bp1 | bp2);
         uint8_t ph = (uint8_t)((s >> 4) & 0xF), pl = (uint8_t)(s & 0xF);   // GTIA-10
         // FORWARD tunnel (kGtia10P*, decodeTunnelRect) — the long-working mapping, UNCHANGED:
         // value-0 (exit-clear) -> spare pen7 (color07=black); value-8 (background/corner) -> pen0
@@ -2004,10 +2007,11 @@ void RescueOnFractalus::renderFlightDirect()
             uint8_t* d1 = vrow; uint8_t* d2 = vrow + 40; uint8_t* d3 = vrow + 80;
             for (int b = 0; b < 40; b++, s++, d1++, d2++, d3++) {
                 uint8_t v = *s;
-                uint8_t bar = kBandP1[v], mark = kBandP2[v];
-                uint8_t ow  = (uint8_t)(bar | mark);         // pixels that overwrite the terrain
-                *d1 = (uint8_t)((*d1 & ~ow) | bar);          // salmon bar; terrain kept elsewhere
-                *d2 = (uint8_t)((*d2 & ~ow) | mark);         // centre marker; terrain kept elsewhere
+                uint8_t ow = kBandOW[v];                      // (bar|marker) = pixels that overwrite terrain
+                if (ow) {                                     // rare: only the central clearance-bar strip
+                    *d1 = (uint8_t)((*d1 & ~ow) | kBandP1[v]);   // salmon bar; terrain kept elsewhere
+                    *d2 = (uint8_t)((*d2 & ~ow) | kBandP2[v]);   // centre marker; terrain kept elsewhere
+                }                                             // ow==0 (grey frame / L-R edge): d1/d2 RMW is a no-op
                 *d3 = kBandP3[v];                             // grey windscreen frame -> color04-07
             }
         }
