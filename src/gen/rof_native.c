@@ -3859,6 +3859,73 @@ void dl_lms_fill(void) {
     shift_object_table_up();
 }
 
+/* draw_ah_ground_fill_p2 @ $40B0 — flight HUD: the artificial-horizon ground-fill column.
+ * Cache-gated on ($0026,$0027): if unchanged since last frame, no-op.  Else re-latch the
+ * cache, decode a 0x15-byte column from table $4B57[X..] into P2 buffer $0E87+Y (Y walked),
+ * cap with $FF.  Faithful twin of the $40B0 oracle (dl_y3 loop counter ends 0). */
+void draw_ah_ground_fill_p2(void) {
+    uint8_t x = ring_cur_3, y = ring_cur_4;
+    if (x == canopy_pillar_x_cache && y == canopy_pillar_y_cache) return;
+    canopy_pillar_x_cache = x;
+    x = mem[0x455B + x];                       /* X = table[$455B + ring_cur_3] */
+    canopy_pillar_y_cache = y;
+    mem[0x0E87 + y] = 0x00;
+    uint8_t n = 0x15;                          /* dl_y3 loop count */
+    do { y++; mem[0x0E87 + y] = mem[0x4B57 + x]; x++; } while (--n != 0);
+    dl_y3 = 0x00;                              /* oracle DEC_M($dl_y3) leaves it 0 */
+    mem[0x0E88 + y] = 0xFF;
+}
+
+/* draw_altimeter_bars @ $40E5 — flight HUD altimeter: two cache-gated bar columns.
+ * Terrain bar (cache $2875 vs viewport_top_row): clear $0C97+Y downward to 0, then $FF-fill
+ * $0C98+Y up to col $38.  Ship bar (cache $2876 vs viewport_bottom_row): mask the 4 edge
+ * bytes $0B96..$0B99 (&$3F, &$3F, |$C0, |$C0).  Faithful twin of the $40E5 oracle. */
+void draw_altimeter_bars(void) {
+    uint8_t y = viewport_top_row;
+    if (y != altimeter_terrain_cache) {
+        altimeter_terrain_cache = y;
+        uint8_t yy = y;                        /* DEY;BPL clear: writes y..0 */
+        do { mem[0x0C97 + yy] = 0x00; yy--; } while ((yy & 0x80) == 0);
+        yy = altimeter_terrain_cache;          /* INY;CPY#$38;BCC fill (write-then-check) */
+        do { mem[0x0C98 + yy] = 0xFF; yy++; } while (yy < 0x38);
+    }
+    y = viewport_bottom_row;
+    if (y != altimeter_ship_cache) {
+        altimeter_ship_cache = y;
+        mem[0x0B96 + y] &= 0x3F;
+        mem[0x0B97 + y] &= 0x3F;
+        mem[0x0B98 + y] |= 0xC0;
+        mem[0x0B99 + y] |= 0xC0;
+    }
+}
+
+/* dispatch_43cb_half_70 @ $43C7 — flight HUD: Y = terrain_clearance>>1, tail the native
+ * draw_dial_bar_column (which gates on Y).  Faithful twin of the $43C7 oracle. */
+void dispatch_43cb_half_70(void) {
+    cpu.A = cpu.Y = (uint8_t)(terrain_clearance >> 1);   /* LDA;LSR;TAY (A also = clearance>>1) */
+    draw_dial_bar_column();
+}
+
+/* update_altitude_digit_display @ $44D6 — flight HUD altitude readout.
+ * Clamp a digit index (0x1C-altimeter_alt_ref, else 0x1E), and if it changed vs the previous
+ * (draw_pattern_byte) rewrite 3 glyph cells $0B91+ (&$CF old, |$30 new).  Then derive the
+ * altitude colour/glyph ($062x+$AB, clamped to $B5 outside [$A3,$B4)).  Faithful $44D6 twin. */
+void update_altitude_digit_display(void) {
+    uint8_t oldP = draw_pattern_byte;
+    uint8_t a = (uint8_t)(0x1C - altimeter_alt_ref);     /* SEC;SBC */
+    if ((a & 0x80) || a >= 0x1D) a = 0x1E;               /* BMI / CMP#$1D BCS -> 0x1E */
+    draw_pattern_byte = a;
+    if (oldP != a) {
+        uint8_t y = oldP;
+        for (uint8_t k = 3; k != 0; k--) { mem[0x0B91 + y] &= 0xCF; y++; }
+        y = a;
+        for (uint8_t k = 3; k != 0; k--) { mem[0x0B91 + y] |= 0x30; y++; }
+    }
+    uint8_t c = (uint8_t)(altimeter_color_base + 0xAB);  /* CLC;ADC#$AB */
+    if (c < 0xA3 || c >= 0xB4) c = 0xB5;                 /* keep only if $A3<=c<$B4 */
+    altitude_color_or_glyph = c;
+}
+
 /* draw_dial_bar_column @ $43CB — update one cockpit dial-bar column to value Y.
  * No-op if (Y>=9 && $062E==8) or Y already == $062E; otherwise latch $062E=Y, set the
  * bar params ($00BF=Y threshold, $00BE=$FF loop end, $00BD=$07 start) and draw via the
@@ -8546,11 +8613,20 @@ static uint8_t sfx_phase_wrap(uint8_t step, uint8_t phase) {
  *    start a new voice (sfx_event_load), the rest reorder a sprite slot.
  *
  * Contract: memory only.  No hardware writes here (the AUDF pokes live inside the callees). */
+#ifdef ROF_FLIGHT_PROBE
+extern volatile unsigned long g_pSfxEng, g_pSfxLoop, g_pSfxRing;
+#endif
 static void sfx_voice_envelope_tick_impl(void) {
+#ifdef ROF_FLIGHT_PROBE
+    unsigned long _e0 = rof_subclock();
+#endif
     if (sfx_state_0634 != 0) {
         cpu.A = sfx_state_0634;          /* sfx_engine_step reads its mode from A */
         sfx_engine_step();
     }
+#ifdef ROF_FLIGHT_PROBE
+    g_pSfxEng += rof_subclock() - _e0; unsigned long _l0 = rof_subclock();
+#endif
 
     uint8_t expired = 0;
     for (uint8_t y = 0x0E; y != 0; y--) {
@@ -8590,6 +8666,9 @@ static void sfx_voice_envelope_tick_impl(void) {
         }
     }
     sfx_voice_expired_flag = expired;     /* final state = the last slot's flag */
+#ifdef ROF_FLIGHT_PROBE
+    g_pSfxLoop += rof_subclock() - _l0; unsigned long _r0 = rof_subclock();
+#endif
 
     /* Drain the event ring from tail down to head, wrapping the index at $1F. */
     if (alt_ring_head  > 0x1F) alt_ring_head  = 0x1F;
@@ -8610,6 +8689,9 @@ static void sfx_voice_envelope_tick_impl(void) {
         uint8_t t = (uint8_t)(ring_tail_0719 - 1);
         ring_tail_0719 = (t & 0x80) ? 0x1F : t;
     }
+#ifdef ROF_FLIGHT_PROBE
+    g_pSfxRing += rof_subclock() - _r0;
+#endif
 }
 #ifdef ROF_FLIGHT_PROBE
 extern volatile unsigned long g_pSfx;

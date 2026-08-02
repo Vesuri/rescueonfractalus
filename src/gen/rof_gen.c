@@ -1778,7 +1778,8 @@ L_40ab:;
 }
 
 /* draw_ah_ground_fill_p2 @ $40B0: Artificial-Horizon ground fill (NOT the canopy pillars): if $291C/$291D changed vs cache $2872/$2874, redraw 21-byte slope from $4B57 (idx $455B[$291C]) into the P2 buffer $0E87+ ($FF-term) */
-void draw_ah_ground_fill_p2(void) {
+/* faithful transliteration kept as the validation oracle; native draw_ah_ground_fill_p2() lives in rof_native.c (see VALIDATE_FUNCS) */
+void draw_ah_ground_fill_p2__t6502(void) {
     /* 40b0 */
     LDX(ring_cur_3);
     /* 40b3 */
@@ -1825,7 +1826,8 @@ L_40e4:;
 }
 
 /* draw_altimeter_bars @ $40E5: On $281A change vs $2875: clear $0C97 row + $FF fill to col $38; on $281B change vs $2876: mask $0B96..$0B99 edge bytes */
-void draw_altimeter_bars(void) {
+/* faithful transliteration kept as the validation oracle; native draw_altimeter_bars() lives in rof_native.c (see VALIDATE_FUNCS) */
+void draw_altimeter_bars__t6502(void) {
     /* 40e5 */
     LDY(viewport_top_row);
     /* 40e8 */
@@ -2379,7 +2381,8 @@ L_43c4:;
 }
 
 /* dispatch_43cb_half_70 @ $43C7: Loads $0070, LSR to halve into Y, tail-calls draw_dial_bar_column with that index */
-void dispatch_43cb_half_70(void) {
+/* faithful transliteration kept as the validation oracle; native dispatch_43cb_half_70() lives in rof_native.c (see VALIDATE_FUNCS) */
+void dispatch_43cb_half_70__t6502(void) {
     /* 43c7 */
     LDA(terrain_clearance);
     /* 43c9 */
@@ -2591,7 +2594,8 @@ L_44c6:;
 }
 
 /* update_altitude_digit_display @ $44D6: Computes $B9 from $1C-$28DA clamped, AND $CF/ORA $30 nibble-toggles digits in $0B91 buf, sets $CE from $28D9+$AB */
-void update_altitude_digit_display(void) {
+/* faithful transliteration kept as the validation oracle; native update_altitude_digit_display() lives in rof_native.c (see VALIDATE_FUNCS) */
+void update_altitude_digit_display__t6502(void) {
     /* 44d6 */
     LDY(draw_pattern_byte);
     /* 44d8 */

@@ -61,6 +61,10 @@ MANUAL_FUNCS = {
 # seam: drop an address in, write the native twin, prove equivalence, ship it;
 # everything not listed here stays transliterated and fully regenerable.
 VALIDATE_FUNCS = {
+    0x40B0,  # draw_ah_ground_fill_p2 — AH ground-fill column (flight HUD draw, cache-gated) [native]
+    0x40E5,  # draw_altimeter_bars — altimeter terrain/ship bar columns (flight HUD draw, cache-gated) [native]
+    0x43C7,  # dispatch_43cb_half_70 — Y=terrain_clearance>>1, tail draw_dial_bar_column (flight HUD draw) [native]
+    0x44D6,  # update_altitude_digit_display — altitude digit glyph + colour (flight HUD draw, cache-gated) [native]
     0x9D6F,  # divide_16x16 — restoring 16-bit divide (prototype target)
     0xAD5F,  # clear_terrain_column — clear a terrain column band + object-table cells (flight leaf #1)
     0x9C97,  # signed_mul_8x16 — fixed-point signed 8x16 multiply (flight leaf #2)

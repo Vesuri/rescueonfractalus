@@ -1297,6 +1297,56 @@ static int test_update_p3_indicator_stripe(void) {
     return mem_fail;
 }
 
+/* --- flight HUD draws (draw_ah_ground_fill_p2 $40B0 / draw_altimeter_bars $40E5 /
+ * dispatch_43cb_half_70 $43C7 / update_altitude_digit_display $44D6): all cache-gated column
+ * draws with no entry registers (dispatch_43cb reads terrain_clearance then tail-calls the
+ * already-native draw_dial_bar_column, which gates on $062E).  Randomize the input rows +
+ * caches so each covers both the skip and the redraw path. --- */
+void draw_ah_ground_fill_p2__t6502(void);
+void draw_altimeter_bars__t6502(void);
+void dispatch_43cb_half_70__t6502(void);
+void update_altitude_digit_display__t6502(void);
+static int test_hud_draws(void) {
+    static uint8_t snap[65536], pre[65536];
+    const char *path = "a800dumps/flight_ram_0000_BFFF.bin";
+    FILE *f = fopen(path, "rb");
+    if (!f) { printf("hud_draws: SKIP (%s not found)\n", path); return 0; }
+    memset(snap, 0, sizeof snap);
+    size_t got = fread(snap, 1, 0xC000, f); fclose(f);
+    if (got != 0xC000) { printf("hud_draws: SKIP (short read %zu)\n", got); return 0; }
+    struct { const char *name; void (*nat)(void); void (*ora)(void); } fns[4] = {
+        { "draw_ah_ground_fill_p2",       draw_ah_ground_fill_p2,       draw_ah_ground_fill_p2__t6502 },
+        { "draw_altimeter_bars",          draw_altimeter_bars,          draw_altimeter_bars__t6502 },
+        { "dispatch_43cb_half_70",        dispatch_43cb_half_70,        dispatch_43cb_half_70__t6502 },
+        { "update_altitude_digit_display",update_altitude_digit_display,update_altitude_digit_display__t6502 },
+    };
+    int total_fail = 0;
+    for (int fi = 0; fi < 4; fi++) {
+        if (!want(fns[fi].name)) continue;
+        int mem_fail = 0, cpu_diff = 0, printed = 0;
+        for (int t = 0; t < 20000; t++) {
+            memcpy(pre, snap, sizeof pre);
+            /* draw_ah_ground_fill_p2 inputs + caches */
+            pre[0x291C] = (uint8_t)(xs() & 0xFF); pre[0x291D] = (uint8_t)(xs() & 0x3F);
+            pre[0x2872] = (uint8_t)(xs() & 0xFF); pre[0x2874] = (uint8_t)(xs() & 0x3F);
+            /* draw_altimeter_bars inputs + caches */
+            pre[0x281A] = (uint8_t)(xs() & 0x3F); pre[0x281B] = (uint8_t)(xs() & 0x3F);
+            pre[0x2875] = (uint8_t)(xs() & 0x3F); pre[0x2876] = (uint8_t)(xs() & 0x3F);
+            /* dispatch_43cb_half_70: terrain_clearance + draw_dial_bar_column gate $062E */
+            pre[0x0070] = (uint8_t)(xs() & 0xFF); pre[0x062E] = (uint8_t)(xs() & 0x0F);
+            /* update_altitude_digit_display inputs */
+            pre[0x00B9] = (uint8_t)(xs() & 0xFF); pre[0x28DA] = (uint8_t)(xs() & 0xFF);
+            pre[0x28D9] = (uint8_t)(xs() & 0xFF);
+            Cpu6502 c = zero_cpu();
+            mem_fail += diff_run(fns[fi].name, pre, c, fns[fi].nat, fns[fi].ora, t, &printed, &cpu_diff);
+        }
+        printf("%s: %d cases (flight snapshot), %d mem mismatch (must be 0), %d cpu diffs\n",
+               fns[fi].name, 20000, mem_fail, cpu_diff);
+        total_fail += mem_fail;
+    }
+    return total_fail;
+}
+
 /* --- intro_random_setup @ $6FBF: RANDOM-driven DFS maze generator on the $0900 map (+$2500
  * stack).  Self-contained (no entry regs / fixture); diff_run seeds the RANDOM stream so both
  * runs trace the same maze.  Fewer cases (each is hundreds of RANDOM reads). --- */
@@ -2736,6 +2786,7 @@ int main(int argc, char **argv) {
     fails += test_draw_player3_object();
     fails += test_build_player2_sprite();
     fails += test_update_p3_indicator_stripe();
+    fails += test_hud_draws();
     fails += test_dl_lms_build();
     fails += test_mem_contract("game_init_76CB", game_init_76CB, game_init_76CB__t6502);
     fails += test_emit_chain("setup_initials_ptr", setup_initials_ptr, setup_initials_ptr__t6502);
