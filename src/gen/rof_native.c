@@ -5358,79 +5358,82 @@ extern void build_view_transform_matrix(void);  /* BuildViewAssembler.s */
 void build_view_transform_matrix(void) { build_view_transform_matrix_core_c(); }
 #endif
 
-/* setup_projection_params @ $AC93 — per-frame projection/view setup.
+/* setup_projection_params @ $AC93 — per-frame view/projection setup for the terrain renderer.
+ * Called once per frame by terrain_frame_setup, ahead of build_view_transform_matrix.  From
+ * the ship's world position and attitude it derives the fixed-point inputs the projection maths
+ * consumes downstream:
  *
- * Builds {$0088:$0087}={$2888:$2887}>>4 and {$008A:$0089}={$288A:$2889}>>4
- * (16-bit logical >>4); sign-extends/<<2 the pitch delta {$0034:$0033} into
- * {$008C:$008B} (clamped to $FF when $0034>=$40); forms $0092=$2886<<2; calls
- * compute_heading_sincos and loads the sin/cos view vector into $00A0-$00A3;
- * derives the row step {$00A4:$00A5} = signed({$0024:$0023})>>1, the span seed
- * $00A6 = 6 - ({$0028:$0029}<<2 hi), and clamps an altitude index to $2822 in 0..8.
+ *   • {vbi_flags:vbi_phase} ($0088:$0087)               = world X ({world_x_hi:world_x_lo}) >> 4
+ *   • {terrain_scroll_counter:terrain_state} ($008A:$0089) = world Z ({world_z_hi:world_z_lo}) >> 4
+ *       — the 12.4 fixed-point map coords logically scaled down by 16 into projection units.
+ *   • {terrain_scroll_reload:dl_src_index} ($008C:$008B) = pitch-depth delta
+ *       {terrain_depth_step:terrain_depth_frac} << 2, but saturated to a negative hi byte ($FF)
+ *       when the delta's hi byte is steep (>= $40); the low byte then keeps its raw value.
+ *   • draw_row ($0092)                                   = heading_hi ($2886) << 2.
+ *   • the sin/cos view vector $00A0-$00A3                = $2809-$280C, latched after
+ *       compute_heading_sincos() rebuilds it for the current heading.
+ *   • horizon_row_index ($00A6)                          = 6 - hi(roll {roll_pos_hi:roll_pos_lo} << 2)
+ *       — the screen row the horizon sits on.
+ *   • {scroll_accum_b3:scroll_accum_prev} ($00A4:$00A5)  = signed pitch
+ *       {pitch_shadow_hi:pitch_shadow_lo} >> 1 (arithmetic) — the per-row pitch step.
+ *   • player3_xbase ($2822)                              = clamp(pitch_shadow_hi + 4, 0..8)
+ *       — an altitude/attitude index.
  *
- * Faithful transliteration: carry is threaded through a local `c` (the result
- * bytes $0092/$00A6 depend on it).  The PHA;PLA pair is replayed against the
- * 6502 stack (it leaves the pushed $0024 byte at mem[$0100+S]) for byte-identity.
- * Native compute_heading_sincos leaves carry untouched (matches the 6502 here).
- * Contract: memory only (the sole caller, terrain_frame_setup, reloads A via build_view).
+ * Two faithfulness details preserved from the 6502 original: the pitch-delta << 2 uses ROL, so
+ * when it saturates, its "hi byte >= $40" flag is what the 6502 carry-threaded into draw_row's
+ * bit1 (see below); and the low bits of draw_row are exactly what ROL A;ROL A leaves.  Contract:
+ * memory only (the caller reloads registers; cpu diffs are incidental).  Byte-identical to the
+ * __t6502 oracle (make validate FN=setup_projection_params).
  */
 void setup_projection_params(void) {
-    uint8_t A, c = cpu.C;
-    #define LSRA()  do { c = A & 1; A = (uint8_t)(A >> 1); } while (0)
-    #define RORM(a) do { uint8_t v = mem[a], nc = v & 1; mem[a] = (uint8_t)((v >> 1) | (c << 7)); c = nc; } while (0)
-    #define ASLM(a) do { uint8_t v = mem[a]; c = v >> 7; mem[a] = (uint8_t)(v << 1); } while (0)
-    #define ROLA()  do { uint8_t nc = A >> 7; A = (uint8_t)((A << 1) | c); c = nc; } while (0)
-    #define ROLM(a) do { uint8_t v = mem[a], nc = v >> 7; mem[a] = (uint8_t)((v << 1) | c); c = nc; } while (0)
-    #define RORA()  do { uint8_t nc = A & 1; A = (uint8_t)((A >> 1) | (c << 7)); c = nc; } while (0)
+    /* World X/Z scaled into projection units (16-bit logical >> 4). */
+    uint16_t wx = (uint16_t)(world_x_lo | (world_x_hi << 8)) >> 4;
+    vbi_phase = (uint8_t)wx; vbi_flags = (uint8_t)(wx >> 8);
+    uint16_t wz = (uint16_t)(world_z_lo | (world_z_hi << 8)) >> 4;
+    terrain_state = (uint8_t)wz; terrain_scroll_counter = (uint8_t)(wz >> 8);
 
-    A = world_x_lo; vbi_phase = A;            /* {0088:0087} = {2888:2887} >> 4 */
-    A = world_x_hi;
-    LSRA(); RORM(0x0087); LSRA(); RORM(0x0087);
-    LSRA(); RORM(0x0087); LSRA(); RORM(0x0087);
-    vbi_flags = A;
+    /* Pitch-depth delta << 2.  A steep delta (hi byte >= $40) saturates to a negative ($FFxx)
+       result, leaving the low byte untouched.  This "steep" test is also the carry the 6502
+       fed into draw_row's bit1 below, so capture it. */
+    int deltaSteep = (terrain_depth_step >= 0x40);
+    if (deltaSteep) {
+        dl_src_index = terrain_depth_frac;              /* $008B unchanged */
+        terrain_scroll_reload = 0xFF;
+    } else {
+        uint16_t d = (uint16_t)(terrain_depth_frac | (terrain_depth_step << 8)) << 2;
+        dl_src_index = (uint8_t)d;
+        terrain_scroll_reload = (uint8_t)(d >> 8);
+    }
 
-    A = world_z_lo; terrain_state = A;            /* {008A:0089} = {288A:2889} >> 4 */
-    A = world_z_hi;
-    LSRA(); RORM(0x0089); LSRA(); RORM(0x0089);
-    LSRA(); RORM(0x0089); LSRA(); RORM(0x0089);
-    terrain_scroll_counter = A;
+    /* heading_hi << 2, with the exact low bits ROL A;ROL A leaves: bit0 = heading_hi bit7,
+       bit1 = the "delta steep" carry threaded in from the block above. */
+    draw_row = (uint8_t)((heading_hi << 2) | (deltaSteep << 1) | (heading_hi >> 7));
 
-    dl_src_index = terrain_depth_frac;                   /* {008C:008B} = sign/<<2 of {0034:0033} */
-    A = terrain_depth_step;
-    c = (A >= 0x40) ? 1 : 0;                     /* CMP #$40 */
-    if (A >= 0x40) { terrain_scroll_reload = 0xFF; }       /* >=$40: clamp hi to $FF (negative) */
-    else { ASLM(0x008B); ROLA(); ROLM(0x008B); ROLA(); terrain_scroll_reload = A; }
-
-    A = heading_hi; ROLA(); ROLA();             /* $0092 = $2886 <<2 (carry-threaded) */
-    draw_row = A;
-
+    /* Rebuild the sin/cos view vector for the current heading, then latch it into $00A0-$00A3. */
     compute_heading_sincos();
-    draw_iter_count = mem[0x2809]; scroll_accum_b0 = mem[0x280A];   /* sin/cos view vector */
+    draw_iter_count = mem[0x2809]; scroll_accum_b0 = mem[0x280A];   /* $00A0-$00A3 = $2809-$280C */
     scroll_accum_b1 = mem[0x280B]; scroll_accum_b2 = mem[0x280C];
 
-    horizon_row_index = roll_pos_hi;                   /* $00A6 = 6 - ({0028:0029}<<2 hi) */
-    A = roll_pos_lo; ROLA(); ROLM(0x00A6); ROLA(); ROLM(0x00A6);
-    A = 0x06; c = 1;                             /* SEC; SBC $00A6 */
-    { uint16_t t = (uint16_t)A + (uint8_t)~horizon_row_index + c; c = t >> 8; A = (uint8_t)t; }
-    horizon_row_index = A;
+    /* Horizon screen row = 6 - hi(roll << 2). */
+    uint16_t roll = (uint16_t)(roll_pos_lo | (roll_pos_hi << 8)) << 2;
+    horizon_row_index = (uint8_t)(0x06 - (uint8_t)(roll >> 8));
 
-    A = mem[0x0024];                             /* {00A4:00A5} = signed({0024:0023})>>1 */
-    mem[0x0100 | cpu.S] = A; cpu.S--;            /* PHA (leaves the byte at $0100+S) */
-    c = (A >= 0x80) ? 1 : 0;                     /* CMP #$80 -> sign bit into carry */
-    RORA(); scroll_accum_b3 = A;                     /* ROR A (arithmetic >>1, hi) */
-    A = mem[0x0023]; RORA(); scroll_accum_prev = A;    /* ROR A (lo, carry from hi) */
-    c = 0;                                       /* CLC */
-    cpu.S++; A = mem[0x0100 | cpu.S];            /* PLA -> A = original $0024 */
-    { uint16_t t = (uint16_t)A + 0x04 + c; c = t >> 8; A = (uint8_t)t; }   /* ADC #$04 */
-    if (A & 0x80) A = 0x00;                      /* BPL: negative -> 0 */
-    else if (A >= 0x09) A = 0x08;                /* else clamp >=9 -> 8 */
-    player3_xbase = A;
+    /* Per-row pitch step = signed pitch >> 1 (arithmetic), split hi/lo. */
+    int16_t pitch     = (int16_t)(uint16_t)(mem[0x0023] | (mem[0x0024] << 8));  /* {pitch_shadow_hi:_lo} */
+    int16_t pitchHalf = (int16_t)(pitch >> 1);
+    scroll_accum_b3   = (uint8_t)((uint16_t)pitchHalf >> 8);
+    scroll_accum_prev = (uint8_t)pitchHalf;
 
-    #undef LSRA
-    #undef RORM
-    #undef ASLM
-    #undef ROLA
-    #undef ROLM
-    #undef RORA
+    /* The 6502 preserved pitch_shadow_hi across the shift with PHA/PLA; we use a local, but the
+       PHA still deposits that byte on the stack page — reproduce that lone side-effect so the
+       twin stays byte-identical to the oracle (net cpu.S is unchanged). */
+    mem[0x0100 | cpu.S] = mem[0x0024];
+
+    /* Altitude/attitude index = clamp(pitch_shadow_hi + 4, 0..8): negative -> 0, >= 9 -> 8. */
+    uint8_t idx = (uint8_t)(mem[0x0024] + 0x04);
+    if (idx & 0x80)      idx = 0x00;
+    else if (idx >= 0x09) idx = 0x08;
+    player3_xbase = idx;
 }
 
 /* set_plot_mask_and_halve_step @ $AB7B — pick a plot base ptr + quarter the step.
