@@ -5062,27 +5062,21 @@ void signed_mul_8x16(void) {
  * A/flags from $0076.. immediately after, so the 6502 exit registers are dead.
  */
 void sine_table_lookup(void) {
-    uint8_t angle = trig_angle;
-    uint8_t quad  = (uint8_t)(angle >> 6);            /* ASL;ROL x2 -> top 2 bits */
-    uint8_t idx   = (uint8_t)(angle & 0x3F);          /* ASLx2;LSRx2 -> low 6 bits */
-    mem[0x280E] = quad;
+    uint8_t angle = trig_angle;                       /* $0075: 0..255 = full circle */
+    uint8_t quad  = (uint8_t)(angle >> 6);            /* top 2 bits = quadrant */
+    uint8_t idx   = (uint8_t)(angle & 0x3F);          /* low 6 bits = quarter-wave index */
+    mem[0x280E] = quad;                               /* $280E = quadrant (see docs/rename.md) */
 
-    uint8_t y    = (uint8_t)(idx ^ mem[0x9B9C + quad]);   /* reflect per quadrant */
-    uint8_t sign = mem[0x9B98 + quad];
+    /* Reflect the index for the descending quadrants, then read the 16-bit magnitude. */
+    uint8_t  y = (uint8_t)(idx ^ mem[0x9B9C + quad]);            /* $9B9C = per-quadrant reflect mask */
+    uint16_t v = (uint16_t)((mem[0x4EB9 + y] << 8) | mem[0x4EFA + y]);  /* $4EB9/$4EFA = sine table hi/lo */
 
-    if (sign == 0) {                                  /* 9C70 BNE not taken: positive */
-        mem[0x0078] = 0x00;
-        mem[0x0077] = mem[0x4EB9 + y];
-        trig_result_lo = mem[0x4EFA + y];
-    } else {                                          /* negate 24-bit (SEC; 0-x...) */
-        uint8_t c = 1, acc;
-        #define N_SBC(v) do { uint16_t _t = (uint16_t)acc + (uint8_t)~(uint8_t)(v) + c; \
-                              c = (_t > 0xFF) ? 1 : 0; acc = (uint8_t)_t; } while (0)
-        acc = 0x00; N_SBC(mem[0x4EFA + y]); trig_result_lo = acc;
-        acc = 0x00; N_SBC(mem[0x4EB9 + y]); mem[0x0077] = acc;
-        acc = 0x00; N_SBC(0x00);            mem[0x0078] = acc;
-        #undef N_SBC
-    }
+    /* Store the signed 24-bit result in {$0078:$0077:$0076}; negate it in the negative quadrants. */
+    uint32_t r = (mem[0x9B98 + quad] == 0) ? v                  /* $9B98 = sign: 0 = positive */
+                                           : ((uint32_t)(-(int32_t)v) & 0xFFFFFFu);  /* 24-bit two's complement */
+    trig_result_lo = (uint8_t)r;                      /* $0076 */
+    mem[0x0077]    = (uint8_t)(r >> 8);
+    mem[0x0078]    = (uint8_t)(r >> 16);
 }
 
 /* trig_interp_lookup @ $9BDB — interpolate the sine table between angle & angle+1.
@@ -5100,43 +5094,34 @@ void sine_table_lookup(void) {
  * Calls the native sine_table_lookup (above), itself validated byte-identical.
  */
 void trig_interp_lookup(void) {
-    trig_angle++;                       /* INC $0075 — sample angle+1 */
+    /* Sample the sine at angle+1, then at angle (the base). */
+    trig_angle++;
     sine_table_lookup();
-    mem[0x2816] = trig_result_lo;
-    mem[0x2817] = mem[0x0077];
-    mem[0x2818] = mem[0x0078];
-
-    trig_angle--;                       /* DEC $0075 — sample angle (the base) */
+    uint32_t s1 = (uint32_t)trig_result_lo | ((uint32_t)mem[0x0077] << 8) | ((uint32_t)mem[0x0078] << 16);
+    trig_angle--;
     sine_table_lookup();
-    mem[0x2813] = trig_result_lo;
-    mem[0x2814] = mem[0x0077];
-    mem[0x2815] = mem[0x0078];
+    uint32_t s0  = (uint32_t)trig_result_lo | ((uint32_t)mem[0x0077] << 8) | ((uint32_t)mem[0x0078] << 16);
+    uint32_t acc = s0;                   /* the interpolation accumulator starts at the angle sample */
 
-    mem[0x280F] = trig_octant;           /* octant fraction bits, consumed lo->hi */
-
-    for (int step = 3; step > 0; step--) {
-        uint8_t bit = mem[0x280F] & 1;   /* LSR $280F -> carry = fraction bit */
-        mem[0x280F] >>= 1;
-        uint16_t src = bit ? 0x2816 : 0x2813;   /* select angle+1 or angle sample */
-
-        /* CLC; 24-bit ADC chain: $0076-$0078 += sample. */
-        uint8_t c = 0;
-        #define T_ADC(dst, v) do { uint16_t _t = (uint16_t)mem[dst] + (uint8_t)(v) + c; \
-                                   c = (_t > 0xFF) ? 1 : 0; mem[dst] = (uint8_t)_t; } while (0)
-        T_ADC(0x0076, mem[src + 0]);
-        T_ADC(0x0077, mem[src + 1]);
-        T_ADC(0x0078, mem[src + 2]);
-        #undef T_ADC
-
-        /* Double both samples: ASL lo; ROL mid; ROL hi (24-bit <<1). */
-        #define T_SHL(lo) do { uint8_t _c = mem[lo] >> 7; \
-            mem[lo] = (uint8_t)(mem[lo] << 1); \
-            { uint8_t _n = mem[(lo)+1] >> 7; mem[(lo)+1] = (uint8_t)((mem[(lo)+1] << 1) | _c); _c = _n; } \
-            mem[(lo)+2] = (uint8_t)((mem[(lo)+2] << 1) | _c); } while (0)
-        T_SHL(0x2813);
-        T_SHL(0x2816);
-        #undef T_SHL
+    /* Blend across the 3 octant-fraction bits (low bit first): each step adds the selected
+       sample (angle+1 if the bit is set, else angle), then doubles both samples (24-bit <<1). */
+    uint8_t frac = trig_octant;          /* $280D */
+    for (int step = 0; step < 3; step++) {
+        acc = (acc + ((frac & 1) ? s1 : s0)) & 0xFFFFFFu;
+        frac >>= 1;
+        s0 = (s0 << 1) & 0xFFFFFFu;
+        s1 = (s1 << 1) & 0xFFFFFFu;
     }
+
+    /* Publish the interpolated signed 24-bit value in {$0078:$0077:$0076}, and leave the
+       doubled samples ($2813-$2815 angle, $2816-$2818 angle+1) and the consumed fraction
+       ($280F) in their scratch cells exactly as the 6502 does (part of the mem contract). */
+    trig_result_lo = (uint8_t)acc;
+    mem[0x0077] = (uint8_t)(acc >> 8);
+    mem[0x0078] = (uint8_t)(acc >> 16);
+    mem[0x2813] = (uint8_t)s0; mem[0x2814] = (uint8_t)(s0 >> 8); mem[0x2815] = (uint8_t)(s0 >> 16);
+    mem[0x2816] = (uint8_t)s1; mem[0x2817] = (uint8_t)(s1 >> 8); mem[0x2818] = (uint8_t)(s1 >> 16);
+    mem[0x280F] = frac;
 }
 
 /* compute_row_xspans @ $AD2B — per-row horizontal span endpoints.

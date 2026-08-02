@@ -54,6 +54,16 @@ in `symbols.csv` rather than renaming:
 - `game_sub_55FC` ($55FC) — pushes entry Y (unmarked) into the $0719 event ring → `ring_push_y`
   or `ring_push_unmarked` (mirrors `ring_push_marked`).
 
+**Trig lookup tables + scratch (`sine_table_lookup` $9C55 / `trig_interp_lookup` $9BDB) — UNNAMED.**
+- `$0077` / `$0078` — mid / hi bytes of the signed 24-bit trig result (`$0076` is `trig_result_lo`)
+  → `trig_result_mid` / `trig_result_hi`.
+- `$280E` — quadrant (angle >> 6) written by `sine_table_lookup` → `trig_quadrant`.
+- `$280F` — the octant-fraction working copy consumed by `trig_interp_lookup` → `trig_octant_work`.
+- `$2813-$2815` / `$2816-$2818` — the 24-bit angle / angle+1 samples, doubled per blend step
+  → `trig_sample_angle` / `trig_sample_angle1`.
+- `$9B98` / `$9B9C` — per-quadrant sign flag / index-reflect mask → `trig_quad_sign` / `trig_quad_reflect`.
+- `$4EB9` / `$4EFA` — quarter-wave sine table hi / lo bytes → `trig_table_hi` / `trig_table_lo`.
+
 ## Investigated → intentionally left UNNAMED (do not re-litigate)
 
 These were verified (2026-08-02) and deliberately have no `symbols.csv` name: each is either
