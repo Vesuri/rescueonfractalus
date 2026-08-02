@@ -4662,17 +4662,40 @@ void init_proj_scratch_pointers(void) {
     audc_shadow_0 = 0x34;
 }
 
-/* ring_push_marked @ $5815 — push (entry X)|$80 into the $0719 event ring; X preserved.
+/* ring_push_0719_core — push one event byte into the 32-entry $0719 SFX event ring.
+ * alt_ring_head ($0073) is the write cursor: a corrupt cursor is clamped into 0..$1F, the
+ * byte is stored, then the cursor pre-decrements with wraparound ($00 -> $1F).  The ring is
+ * drained by the $548D voice engine each flight VBI.  Pure: no registers, no stack. */
+static void ring_push_0719_core(uint8_t ev) {
+    uint8_t head = alt_ring_head;
+    if (head >= 0x20) head = 0x1F;
+    mem[MEM_event_ring_0719 + head] = ev;
+#ifdef ROF_BEEP_CAP
+    { extern void rof_bc_push(unsigned char v); rof_bc_push(ev); }      /* log every SFX event push */
+    if (ev == 0x81) { extern void rof_bc_push81(void *ra0); rof_bc_push81(__builtin_return_address(0)); }
+#endif
+    alt_ring_head = (head == 0x00) ? 0x1F : (uint8_t)(head - 1);
+}
+
+/* ring_push_marked @ $5815 — push (entry X)|$80 into the $0719 event ring ($80 = the "marked"
+ * bit the SFX engine keys on); X preserved.
  * game_sub_55FC @ $55FC — push entry Y into the ring; X preserved.
- * Both are stack-aware: the 6502 PHAs the saved index, then ring_push_0719 (native)
- * does PLA;TAX to hand it back, so cpu.A/X/S AND the $01xx stack byte are part of the
- * contract.  Mirroring the exact 6502 ops via the cpu.h macros keeps them bit-identical
- * (these are 3-7 byte routines — the perf win is in the larger subtree members). */
+ * Both are 6502-ABI entries (for the transpiled callers + the validation oracle).  The 6502
+ * PHA'd the saved index and ring_push_0719's PLA;TAX handed it back, so cpu.A/X AND the lone
+ * $01xx stack-page byte are part of the contract; reproduce them (net cpu.S unchanged). */
 void ring_push_marked(void) {
-    TXA(); PHA(); ORA(0x80); ring_push_0719();   /* $5815-$5819 */
+    uint8_t id = cpu.X;
+    mem[0x0100 | cpu.S] = id;                     /* PHA (the one stack-page side-effect) */
+    ring_push_0719_core((uint8_t)(id | 0x80));
+    cpu.A = id; cpu.X = id;                        /* PLA;TAX -> index handed back */
+    cpu.N = (id >> 7) & 1; cpu.Z = (id == 0) ? 1 : 0;
 }
 void game_sub_55FC(void) {
-    TXA(); PHA(); TYA(); ring_push_0719();        /* $55FC-$55FE -> $55FF */
+    uint8_t id = cpu.X;
+    mem[0x0100 | cpu.S] = id;                     /* PHA X */
+    ring_push_0719_core(cpu.Y);                    /* push Y (unmarked) */
+    cpu.A = id; cpu.X = id;                        /* PLA;TAX */
+    cpu.N = (id >> 7) & 1; cpu.Z = (id == 0) ? 1 : 0;
 }
 
 /* sample_terrain_height_bilerp @ $9A36 — bilinear-sample the 16x16 height map $0900.
@@ -5212,33 +5235,12 @@ void obj_table_set_active(void) {
     } while (idx != 0x00);                     /* 4E81 BNE */
 }
 
-/* ring_push_0719 @ $55FF — push A into the $0719 ring buffer; restore caller's X.
- *
- * The tail of game_sub_55FC: store A at $0719+head, decrement the head modulo
- * $20 (wrapping $00->$1F, clamping a head >= $20 to $1F first), then PULL the X
- * that game_sub_55FC saved off the 6502 stack (PLA; TAX) before its RTS.
- *
- * Inputs : cpu.A = byte to push, $0073 = ring head, and the 6502 stack
- *          (cpu.S + mem[$0100+S]) holding the saved X.
- * Outputs: mem[$0719+head], $0073 = new head; cpu.A = cpu.X = pulled value;
- *          cpu.S incremented.  UNLIKE the other leaves the CPU state IS part of
- *          the contract here — the pulled X is handed back to game_sub_55FC's
- *          caller — so the harness checks cpu.A/X/S, not just mem[].
- */
+/* ring_push_0719 @ $55FF — 6502-ABI entry: push cpu.A into the ring (via ring_push_0719_core),
+ * then PLA;TAX hands the caller's saved index back in A and X.  Callers (game_sub_55FC /
+ * ring_push_marked) PHA'd that index first, so the pulled value IS part of the contract — the
+ * harness checks cpu.A/X/S here, not just mem[].  (Body is ring_push_0719_core, defined above.) */
 void ring_push_0719(void) {
-    uint8_t x = alt_ring_head;                   /* 55FF LDX $0073 */
-    if (x >= 0x20) x = 0x1F;                   /* 5601 CPX #$20; BCC; LDX #$1F  */
-    mem[MEM_event_ring_0719 + x] = cpu.A;                    /* 5607 STA $0719,X */
-#ifdef ROF_BEEP_CAP
-    { extern void rof_bc_push(unsigned char v); rof_bc_push(cpu.A); }  /* log every SFX event push */
-    if (cpu.A == 0x81) {   /* the event-$01 push: capture the caller (no gdb overhead) */
-        extern void rof_bc_push81(void *ra0);
-        rof_bc_push81(__builtin_return_address(0));   /* level 0 only: safe under -fomit-frame-pointer */
-    }
-#endif
-    x = (uint8_t)(x - 1);                       /* 560A DEX */
-    if (x & 0x80) x = 0x1F;                     /* 560B BPL; LDX #$1F (wrap $FF) */
-    alt_ring_head = x;                            /* 560F STX $0073 */
+    ring_push_0719_core(cpu.A);
 
     cpu.S++; cpu.A = mem[0x0100 | cpu.S];       /* 5611 PLA */
     cpu.X = cpu.A;                              /* 5612 TAX */
@@ -8731,7 +8733,10 @@ void sfx_voice_envelope_tick(void) { sfx_voice_envelope_tick_impl(); }
 static void draw_player3_object_core(uint8_t obj_byte)       { cpu.A = obj_byte;        draw_player3_object(); }
 static void set_colpf0_from_flag_core(uint8_t msg_index)     { cpu.Y = msg_index;       set_colpf0_from_flag(); }
 static void event_sequence_dispatcher_core(uint8_t keycode)  { cpu.A = cpu.X = keycode; event_sequence_dispatcher(); }
-static void ring_push_marked_core(uint8_t value)             { cpu.X = value;           ring_push_marked(); }
+/* ring_push_marked_core — typed entry for native callers: push (id | $80) into the event ring.
+ * The 6502 ring_push_marked PHA'd the id, so reproduce that one stack-page byte for byte-identity
+ * with validated callers' oracles (a dead byte on the Amiga); no cpu register contract needed. */
+static void ring_push_marked_core(uint8_t id) { mem[0x0100 | cpu.S] = id; ring_push_0719_core((uint8_t)(id | 0x80)); }
 
 /* build_player2_sprite @ $8C58 — the depth-scaled object/explosion P2 sprite builder.  Runs every
  * flight VBI frame while object_anim_frame ($0036) != 0 (an object approaching / an emplacement
