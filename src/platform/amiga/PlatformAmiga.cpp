@@ -591,51 +591,52 @@ extern "C" void flush_paula(void)
 }
 
 // ---- POKEY→Paula frequency conversion ----------------------------------------
-static uint16_t pokey_period(uint8_t ch, uint8_t audf, uint8_t audctl)
+// Pure POKEY-AUDF → Paula-period math.  Uses 32-bit divides (POKEY/PAULA clocks are >16 bits →
+// GCC emits the slow __udivsi3 software routine, the 68000 has no 32-bit divide).  This is called
+// only to PRE-BUILD the tables below at init, NOT per-frame.
+//   POKEY's output flip-flop toggles once per counter underflow → the square wave is HALF the
+//   counted-clock rate: f = clock/(2*divider).  Omitting the ÷2 makes every voice an octave high.
+static uint16_t pokey_period_compute(uint32_t divider, bool use_179, uint32_t base_div)
 {
     static const uint32_t POKEY_CLOCK = 1789773u;
     static const uint32_t PAULA_CLOCK = 3546895u;
-
-    uint32_t base_div = (audctl & 0x01u) ? 114u : 28u;
-    // AUDCTL bit→channel (atari800 pokey.h): CH1_179 $40 = 1.79MHz for Ch1 (0-indexed ch0),
-    // CH3_179 $20 = Ch3 (ch2); CH1_CH2 $10 joins Ch1+Ch2 (lo=ch0), CH3_CH4 $08 joins Ch3+Ch4
-    // (lo=ch2).  (These were previously transposed here.)
-    bool use_179 = ((ch == 0) && (audctl & 0x40u)) ||
-                   ((ch == 2) && (audctl & 0x20u));
-    bool chain_lo = (ch == 0 && (audctl & 0x10u)) ||
-                    (ch == 2 && (audctl & 0x08u));
-
-    uint32_t divider;
-    if (chain_lo) {
-        // 16-bit chain: AUDF[lo] + 256*AUDF[hi] + 1
-        uint8_t audf_hi = pokey[(ch + 1) * 2];  // next channel AUDF
-        divider = (uint32_t)audf + 256u * audf_hi + 1u;
-    } else {
-        divider = (uint32_t)audf + 1u;
-    }
-
-    // POKEY's output flip-flop toggles once per counter underflow, so the audible
-    // square wave is HALF the counted-clock rate: f = clock / (2 * divider).  Omitting
-    // this ÷2 makes every voice an octave too high — most audible on the bass, whose
-    // octave-up shift destroys its bass character (measured on the Standby tune: ch2
-    // AUDF=$3B/15kHz reads 130.8 Hz on real POKEY but 261.6 Hz without the ÷2).  The
-    // separate 2u in the Paula-period line below is the 2-sample wave_pure cycle, NOT
-    // this toggle.
-    uint32_t freq;
-    if (use_179) {
-        freq = POKEY_CLOCK / (2u * divider);
-    } else {
-        freq = POKEY_CLOCK / (2u * base_div * divider);
-    }
-
-    if (freq < 20u || freq > 28000u) return 0u;  // out of range → silence
-                                                  // (floor 20 Hz: a deep 15kHz bass note
-                                                  // is ~30 Hz after the ÷2 above)
-
+    uint32_t freq = use_179 ? POKEY_CLOCK / (2u * divider)
+                            : POKEY_CLOCK / (2u * base_div * divider);
+    if (freq < 20u || freq > 28000u) return 0u;   // out of range → silence (floor 20 Hz)
     uint32_t per = PAULA_CLOCK / (2u * freq);
-    if (per < 124u)   per = 124u;   // Paula minimum period
+    if (per < 124u)   per = 124u;                  // Paula minimum period
     if (per > 0xFFFFu) per = 0xFFFFu;
     return (uint16_t)per;
+}
+
+// Precomputed period tables for the common single-byte-AUDF (non-chain) case — the period is a
+// pure function of (audf, clock config), so it's a lookup, not a per-frame divide.  3 configs:
+//   [0] use_179 (1.79 MHz direct)   [1] base_div 28 (÷64k default)   [2] base_div 114 (15 kHz).
+// Filled once at audioInit; this removes the ~18 32-bit software divide/mul calls that
+// update_paula_channel→pokey_period otherwise ran on every AUDF/AUDC change (the 50 Hz VBI path).
+static uint16_t s_perTable[3][256];
+static void build_period_table(void)
+{
+    for (int a = 0; a < 256; a++) {
+        uint32_t divider = (uint32_t)a + 1u;
+        s_perTable[0][a] = pokey_period_compute(divider, true,  28u);   // use_179 (base_div unused)
+        s_perTable[1][a] = pokey_period_compute(divider, false, 28u);
+        s_perTable[2][a] = pokey_period_compute(divider, false, 114u);
+    }
+}
+
+static uint16_t pokey_period(uint8_t ch, uint8_t audf, uint8_t audctl)
+{
+    uint32_t base_div = (audctl & 0x01u) ? 114u : 28u;
+    // AUDCTL bit→channel (atari800 pokey.h): CH1_179 $40 = 1.79MHz for Ch1 (0-indexed ch0),
+    // CH3_179 $20 = Ch3 (ch2); CH1_CH2 $10 joins Ch1+Ch2 (lo=ch0), CH3_CH4 $08 joins Ch3+Ch4.
+    bool use_179  = ((ch == 0) && (audctl & 0x40u)) || ((ch == 2) && (audctl & 0x20u));
+    bool chain_lo = ((ch == 0) && (audctl & 0x10u)) || ((ch == 2) && (audctl & 0x08u));
+    if (chain_lo) {   // rare 16-bit chain (AUDF lo + 256*hi + 1) — compute directly (not tabled)
+        uint8_t audf_hi = pokey[(ch + 1) * 2];
+        return pokey_period_compute((uint32_t)audf + 256u * audf_hi + 1u, use_179, base_div);
+    }
+    return s_perTable[use_179 ? 0 : (base_div == 114u ? 2 : 1)][audf];   // common case: table lookup
 }
 
 static void update_paula_channel(uint8_t ch)
@@ -742,6 +743,7 @@ void PlatformAmiga::audioInit()
     rof_lfsr_state = 0x1FFFFu;
     fill_noise_buf();   // pre-render the poly17 noise sample for noise-distortion voices
     build_poly_tables(); // pre-render every distinct poly distortion waveform (immutable)
+    build_period_table(); // pre-render AUDF->Paula-period (kills the per-frame 32-bit soft divide)
 
     // SFX is initialised by the mem[$0090] gate in RescueOnFractalus::update():
     // the snapshot has $0090=1, so the first update() call resets $073C/$073A
