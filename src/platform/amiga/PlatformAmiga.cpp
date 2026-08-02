@@ -688,9 +688,15 @@ static void update_paula_channel(uint8_t ch)
                                  ((ch == 2) && (audctl & 0x20u));     // CH3_179 $20 → ch2
             bool     chain_lo  = (ch == 0 && (audctl & 0x10u)) ||     // CH1_CH2 $10 → ch0 lo
                                  (ch == 2 && (audctl & 0x08u));       // CH3_CH4 $08 → ch2 lo
-            uint32_t divider   = chain_lo ? ((uint32_t)audf + 256u * pokey[(ch + 1) * 2] + 1u)
-                                          : ((uint32_t)audf + 1u);
-            uint32_t stride    = use_179 ? divider : divider * ((audctl & 0x01u) ? 114u : 28u);
+            uint32_t stride;
+            if (chain_lo) {   // rare 16-bit chain: divider up to 65536 → needs 32-bit math
+                uint32_t divider = (uint32_t)audf + 256u * pokey[(ch + 1) * 2] + 1u;
+                stride = use_179 ? divider : divider * ((audctl & 0x01u) ? 114u : 28u);
+            } else {          // common: divider = audf+1 ≤ 256, so stride ≤ 29184 fits 16 bits →
+                uint16_t div16 = (uint16_t)((uint16_t)audf + 1u);      // hardware mulu.w, not __mulsi3
+                uint16_t bd    = (audctl & 0x01u) ? 114u : 28u;
+                stride = use_179 ? (uint32_t)div16 : (uint32_t)((uint16_t)(div16 * bd));
+            }
             bool     gateAlways = (audc & POKEY_NOTPOLY5) != 0u;   // $80 = ungated poly9
             if (poly_dist_stride[ch] != stride ||
                 poly_dist_gate[ch]   != (uint8_t)(gateAlways ? 2u : 1u)) {
