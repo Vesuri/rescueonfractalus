@@ -8674,6 +8674,9 @@ static void sfx_voice_envelope_tick_impl(void) {
     if (alt_ring_head  > 0x1F) alt_ring_head  = 0x1F;
     if (ring_tail_0719 > 0x1F) ring_tail_0719 = 0x1F;
     while (ring_tail_0719 != alt_ring_head) {
+#ifdef ROF_FLIGHT_PROBE
+        { extern volatile unsigned long g_sfxRingIters; g_sfxRingIters++; }
+#endif
         uint8_t entry = mem[MEM_event_ring_0719 + ring_tail_0719];
         cpu.A = entry;                    /* preserve the 6502 register state the callees see */
         if (entry & 0x80) {               /* new-voice request */

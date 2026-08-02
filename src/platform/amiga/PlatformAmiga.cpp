@@ -197,16 +197,26 @@ static void build_poly_tables(void)
 // (the divide-by-N count in master-clock ticks), and while the poly5 gate is open (always, if
 // `gateAlways`) the 2-level output flips toward the current poly9 bit.  Output bytes are the
 // same bipolar ±127 as wave_pure so AUDxVOL scales them identically.
+#ifdef ROF_FLIGHT_PROBE
+extern "C" volatile unsigned long g_polyDistCalls = 0;
+#endif
 static void build_poly_dist(uint8_t ch, uint32_t stride, bool gateAlways)
 {
+#ifdef ROF_FLIGHT_PROBE
+    g_polyDistCalls++;
+#endif
     uint16_t s5 = (uint16_t)(stride % 31u);
     uint16_t s9 = (uint16_t)(stride % (uint32_t)POLY9_SIZE);
     uint16_t p5 = 0, p9 = 0;
     uint8_t  out = 0;
     uint8_t* dst = poly_dist_buf[ch];
+    /* p5,s5 < 31 so p5+s5 < 62 → the phase wrap is a compare-subtract, NOT a modulo; same
+     * for p9,s9 < 511.  This kills 2 DIVU/byte (~2044 divides over the 1022-byte buffer,
+     * ~40ms) that fired on every poly9-voice stride change (SFX freq sweeps / explosions) —
+     * byte-identical output. */
     for (int i = 0; i < POLY_DIST_LEN; i++) {
-        p5 = (uint16_t)((p5 + s5) % 31u);
-        p9 = (uint16_t)((p9 + s9) % (uint32_t)POLY9_SIZE);
+        p5 = (uint16_t)(p5 + s5); if (p5 >= 31u)  p5 = (uint16_t)(p5 - 31u);
+        p9 = (uint16_t)(p9 + s9); if (p9 >= POLY9_SIZE) p9 = (uint16_t)(p9 - POLY9_SIZE);
         if (gateAlways || kBit5[p5]) {
             if (kBit9[p9] == (out ^ 1u)) out ^= 1u;   // output follows the poly9 bit
         }
@@ -1009,6 +1019,7 @@ extern "C" volatile unsigned long g_fCockpit=0, g_fCockpitScans=0;
 // partition was retired when vbi_handler_flight went native — it had done its diagnostic job.)
 extern "C" volatile unsigned long g_pProj=0, g_pInteg=0, g_pSfx=0;
 extern "C" volatile unsigned long g_pSfxEng=0, g_pSfxLoop=0, g_pSfxRing=0;
+extern "C" volatile unsigned long g_sfxRingIters=0;   // ring entries drained; /isrCalls = per-firing
 // VBI handler section partition (the chunks NOT covered by integ/proj/sfx; see rof_native.c
 // vbi_handler_flight).  Per-call = acc/isrCalls; sum(all sections)+integ+proj ≈ isrLines.
 extern "C" volatile unsigned long g_pDrawBr=0, g_pSimHead=0, g_pAtmo=0, g_pHud=0, g_pScore=0, g_pTail=0;
