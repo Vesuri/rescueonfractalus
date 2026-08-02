@@ -843,6 +843,18 @@ extern "C" void vbi_handler_station(void);
 // `cpu` when this interrupt preempts it.  mem[] needs no saving — it is the shared
 // "RAM", and the VBI bodies touch scratch disjoint from the main loop (as on the
 // Atari, where $52D7/$4FF5 ran concurrently with the main loop and it worked).
+#ifdef ROF_FLIGHT_PROBE
+// Precise flight-VBI cost measurement (VPOSR/VHPOSR beam-line deltas).  Split into the
+// three components game_vbi_isr runs for the $4FF5 flight frame, so we can attribute the
+// per-firing scanline cost.  All three EXCLUDE the ZP-write-set audit inside flight_vbi_native
+// (that audit is bracketed out separately there) — these are clean, real-VBI spans:
+//   g_vbiHandlerLines = vbi_handler_flight (== g_flightProf.isrLines, mirrored here for the sum)
+//   g_vbiSpriteLines  = flightShotTick + flightScannerTick (laser + LR-scanner blink)
+//   g_vbiAudioLines   = flush_paula + noiseTick (Paula channel flush + noise-sample refresh)
+// Per-firing scanlines = lines/calls; time = scanlines * 63.56 us; PAL frame = 313 lines.
+extern "C" volatile unsigned long g_vbiSpriteLines = 0, g_vbiAudioLines = 0, g_vbiFullCalls = 0;
+#endif
+
 extern "C" void game_vbi_isr(void)
 {
     if (!g_activeVbi) return;                        // scene still initialising — stay inert
@@ -855,8 +867,18 @@ extern "C" void game_vbi_isr(void)
     uint16_t vbi = (uint16_t)(mem[0x0222] | (mem[0x0223] << 8));
     Cpu6502 saved = cpu;                            // == OS VBLANK PHA;TXA;PHA;TYA;PHA
     if      (vbi == 0x4FF5) { flight_vbi_native();    // $4FF5 in-flight VBI
+#ifdef ROF_FLIGHT_PROBE
+                              unsigned short _s0 = rof_beam_line();
+#endif
                               PlatformAmiga::flightShotTick();      // laser sprite @ 50Hz (VBI, faithful)
-                              PlatformAmiga::flightScannerTick(); }  // LR-scanner close-range blink @ 50Hz
+                              PlatformAmiga::flightScannerTick();   // LR-scanner close-range blink @ 50Hz
+#ifdef ROF_FLIGHT_PROBE
+                              { unsigned short _s1 = rof_beam_line();
+                                g_vbiSpriteLines += (_s1 >= _s0) ? (unsigned short)(_s1 - _s0)
+                                                                 : (unsigned short)(_s1 + 313 - _s0);
+                                g_vbiFullCalls++; }
+#endif
+                            }
     else if (vbi == 0x1B30) vbi_handler_station();   // $1B30 attract VBI (sets $0080 + RTCLOK)
     else if (vbi == 0x53CC) vbi_handler_1_native();  // $53CC attract/Title/game-over card VBI
     else                    standby_vbi_native();    // $52D7 standby/launch VBI (and fallback)
@@ -865,8 +887,16 @@ extern "C" void game_vbi_isr(void)
     // (sfx_voice_tick) AND the in-game SFX engine (sfx_voice_envelope_tick, run in the VBI
     // bodies above).  One flush per frame: it silences released channels (vol=0) and
     // starts new notes/SFX, so without it stuck notes never stop and SFX never sound.
+#ifdef ROF_FLIGHT_PROBE
+    unsigned short _a0 = (vbi == 0x4FF5) ? rof_beam_line() : 0;
+#endif
     flush_paula();
-    PlatformAmiga::noiseTick();                     // refresh a 128-byte slice of the noise sample (cheap)
+    PlatformAmiga::noiseTick();                     // refresh a slice of the noise sample (cheap)
+#ifdef ROF_FLIGHT_PROBE
+    if (vbi == 0x4FF5) { unsigned short _a1 = rof_beam_line();
+        g_vbiAudioLines += (_a1 >= _a0) ? (unsigned short)(_a1 - _a0)
+                                        : (unsigned short)(_a1 + 313 - _a0); }
+#endif
 }
 
 // seed_engine_drone_native: install the continuous engine-drone voices for flight.

@@ -25,8 +25,15 @@
    still exercises the same reference LFSR as the 6502 oracle. */
 #ifdef __cplusplus
 extern "C" uint8_t rof_pokey_random(void);
+/* Direct, non-virtual POKEY register write ($D200-$D20F → Paula).  Same rationale as
+   rof_pokey_random above: the generic platform_hw_write path is a C bridge + a VIRTUAL
+   hwWrite dispatch, paid on EVERY POKEY write — and the 50Hz SFX envelope engine issues
+   many per firing (per-voice AUDF + sfx_engine_step's 5 regs).  Route them straight to the
+   shadow + Paula update here; the change-detect (skip unchanged) lives inside. */
+extern "C" void rof_pokey_write(uint8_t reg, uint8_t val);
 #else
 extern uint8_t rof_pokey_random(void);
+extern void rof_pokey_write(uint8_t reg, uint8_t val);
 #endif
 #endif
 
@@ -46,12 +53,11 @@ static inline void bus_write(uint16_t addr, uint8_t val) {
         /* Amiga: hwWrite only acts on the POKEY audio range ($D200-$D20F → Paula) plus
            DMACTL ($D400 — the death-cinematic teardown $4F76 writes it =0 to blank the
            playfield, latched as g_flightBlank); every other hardware write is ignored, so
-           skip the (virtual) platform call entirely.  Behaviourally identical otherwise — the
-           call had no side effect — but it drops ~20 dead GTIA/ANTIC virtual calls per
-           flight-VBI firing (and elsewhere).  (The flight VBI never writes $D400, so the
-           extra compare is off the hot path.) */
-        if ((addr >= 0xD200 && addr < 0xD210) || addr == 0xD400)
-            platform_hw_write(addr, val);
+           skip the (virtual) platform call entirely.  POKEY writes go through the direct,
+           non-virtual rof_pokey_write() fast-path (no C-bridge + no vtable); only $D400 (rare,
+           off the hot path) still takes the virtual platform call. */
+        if (addr >= 0xD200 && addr < 0xD210) { rof_pokey_write((uint8_t)(addr - 0xD200), val); return; }
+        if (addr == 0xD400) platform_hw_write(addr, val);
         return;
 #else
         platform_hw_write(addr, val);

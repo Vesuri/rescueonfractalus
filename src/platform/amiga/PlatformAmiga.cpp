@@ -146,9 +146,9 @@ void PlatformAmiga::noiseTick()
 {
     if (!(noiseOn[0] || noiseOn[1] || noiseOn[2] || noiseOn[3])) return;
     static int off = 0;
-    fill_noise_words(off, 32);          // 128 bytes / VBI
-    off += 128;
-    if (off >= NOISE_LEN) off = 0;
+    fill_noise_words(off, 16);          // 64 bytes / VBI (was 128) — halves the per-frame fill cost.
+    off += 64;                          // Refill rate only sets the texture-evolution speed (full cycle
+    if (off >= NOISE_LEN) off = 0;      // now ~2.6s vs 1.3s); buffer LENGTH is what keeps it sub-audible.
 }
 
 // POKEY poly patterns (1 bit/entry) and AUDC distortion bits (atari800 pokeysnd.c/pokey.h)
@@ -840,26 +840,48 @@ uint8_t PlatformAmiga::hwRead(uint16_t addr)
 // when the scene leaves flight).  See the death-cinematic memory.
 extern "C" volatile unsigned char g_flightBlank = 0;
 
-void PlatformAmiga::hwWrite(uint16_t addr, uint8_t val)
+// rof_pokey_write: the direct, non-virtual POKEY write fast-path (bus.h routes $D200-$D20F
+// here, skipping the C-bridge + virtual hwWrite dispatch).  Change-detect first: the 50Hz SFX
+// envelope engine rewrites AUDF/AUDC every tick, often with the same value; recomputing the
+// Paula channel (period divide + waveform select) for an unchanged register is pure waste.
+#ifdef ROF_FLIGHT_PROBE
+extern "C" unsigned short rof_beam_line(void);
+extern "C" volatile unsigned long g_pUPC = 0, g_upcCalls = 0, g_pokeyWrites = 0, g_pokeyChanged = 0;
+static inline void upc_timed(uint8_t ch) {
+    unsigned short a = rof_beam_line(); update_paula_channel(ch);
+    unsigned short b = rof_beam_line();
+    g_pUPC += (b >= a) ? (unsigned short)(b - a) : (unsigned short)(b + 313 - a);
+    g_upcCalls++;
+}
+#else
+static inline void upc_timed(uint8_t ch) { update_paula_channel(ch); }
+#endif
+extern "C" void rof_pokey_write(uint8_t reg, uint8_t val)
 {
-    if (addr == 0xD400u) { g_flightBlank = (val == 0u) ? 1u : 0u; return; }  // DMACTL: 0 = playfield blanked
-    if (addr < 0xD200u || addr >= 0xD210u) return;  // only POKEY range
-    uint8_t reg = (uint8_t)(addr - 0xD200u);
-    // Change-detect: the 50Hz SFX envelope engine rewrites AUDF/AUDC every tick, often with
-    // the same value; recomputing the Paula channel (period divide + waveform select) for an
-    // unchanged register is pure waste.  Skip it when nothing changed.
+    uint16_t addr = (uint16_t)(0xD200u + reg);
+#ifdef ROF_FLIGHT_PROBE
+    g_pokeyWrites++;
+#endif
     if (pokey[reg] == val) { mem[addr] = val; return; }
+#ifdef ROF_FLIGHT_PROBE
+    g_pokeyChanged++;
+#endif
     pokey[reg] = val;
     mem[addr]  = val;   // keep Atari-RAM mirror in sync (matches transpile bus_write)
 
     if (reg <= 7u) {
-        // AUDF or AUDC write — update the affected channel
-        uint8_t ch = reg >> 1u;
-        update_paula_channel(ch);
+        uint8_t ch = reg >> 1u;             // AUDF or AUDC write — update the affected channel
+        upc_timed(ch);
     } else if (reg == 8u) {
-        // AUDCTL — recompute all channel periods
-        for (uint8_t ch = 0; ch < 4; ch++) update_paula_channel(ch);
+        for (uint8_t ch = 0; ch < 4; ch++) upc_timed(ch);   // AUDCTL — all channels
     }
+}
+
+void PlatformAmiga::hwWrite(uint16_t addr, uint8_t val)
+{
+    if (addr == 0xD400u) { g_flightBlank = (val == 0u) ? 1u : 0u; return; }  // DMACTL: 0 = playfield blanked
+    if (addr < 0xD200u || addr >= 0xD210u) return;  // only POKEY range
+    rof_pokey_write((uint8_t)(addr - 0xD200u), val);
 }
 
 // shadowWrite / registerVBI / indirectJmp / setInterrupt are no-ops on Amiga (the 6502
@@ -986,6 +1008,7 @@ extern "C" volatile unsigned long g_fCockpit=0, g_fCockpitScans=0;
 // flight_vbi_native (g_flightProf.isrLines).  (The old top/atmo/hud/score/tail PRE_INSN_HOOK
 // partition was retired when vbi_handler_flight went native — it had done its diagnostic job.)
 extern "C" volatile unsigned long g_pProj=0, g_pInteg=0, g_pSfx=0;
+extern "C" volatile unsigned long g_pSfxEng=0, g_pSfxLoop=0, g_pSfxRing=0;
 // VBI handler section partition (the chunks NOT covered by integ/proj/sfx; see rof_native.c
 // vbi_handler_flight).  Per-call = acc/isrCalls; sum(all sections)+integ+proj ≈ isrLines.
 extern "C" volatile unsigned long g_pDrawBr=0, g_pSimHead=0, g_pAtmo=0, g_pHud=0, g_pScore=0, g_pTail=0;
