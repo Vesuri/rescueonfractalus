@@ -65,11 +65,17 @@ static inline void bus_write(uint16_t addr, uint8_t val) {
 #endif
     }
     mem[addr] = val;
+#ifndef ROF_PLATFORM_AMIGA
     /* Notify platform about writes to key OS shadow registers so it
        can react immediately (e.g. display list pointer changes).
-       This is optional in Phase 2 / stub — kept for later phases. */
+       Amiga does NOT override shadowWrite (the copper owns the display and the
+       VBI reads the shadow cells straight from mem[]), so there the notify is a
+       C-bridge + null-check + virtual dispatch to an EMPTY base method — pure
+       overhead paid on every $0200-$02FF write.  Compile it out on Amiga; the
+       SDL/validation build keeps it (PlatformSDL::shadowWrite drives its display). */
     if (addr >= 0x0200 && addr < 0x0300)
         platform_shadow_write(addr, val);
+#endif
 }
 
 /* Helpers for zero-page direct access (no hardware routing needed) */
