@@ -18,6 +18,42 @@ will NOT touch `OLD__t6502` / `OLD_core` / `test_OLD` (trailing `_`) **nor `MEM_
 > genuinely dual-/multi-used cell — had **both roles documented directly in its `symbols.csv`
 > description** (the source of truth), so the knowledge no longer needs a floating backlog.
 
+## Backlog — found during the idiomatic-C rewrites (2026-08-03)
+
+Surfaced while rewriting `game_state_update`, `setup_projection_params`, and the `ring_push*`
+family into idiomatic C. Not yet renamed (needs a `symbols.csv` edit + `make gen` + twin sweep).
+
+**Enemy-fire / target-blip state machine (`game_state_update` $A99C) — UNNAMED cells.**
+The whole bolt line-plot working set is nameless. Suggested names:
+- `$28EB` / `$28EC` — fire target cell (column / row) that seeds the bolt start → `fire_target_col` / `fire_target_row`.
+- `$28F0` / `$28F2` — bolt plot start point (X / Y), seeded from the target cell → `fire_plot_x` / `fire_plot_y`.
+- `$28EF` / `$28F1` / `$28F3` — `$80`-midpoint sub-pixel accumulators → `fire_plot_xfrac` / `fire_plot_yfrac` / `fire_plot_wfrac`.
+- `$28F4` — bolt width seed (=1) → `fire_plot_width`.
+- `$28F7` — random vertical step → `fire_plot_vstep`.
+- `$28F8` — bolt row counter (seeded $FF) → `fire_plot_rowcount`.
+- `$28F9` — bolt end row → `fire_plot_endrow`.
+- `$28ED` — "shot queued" flag gating the fire → `fire_queued`.
+- `$0624` — random mask AND-ed with RANDOM to reseed the fire countdown ($28EE) → `fire_delay_mask`.
+
+**Misnamed / multi-role cells reused by the projection setup (`setup_projection_params` $AC93).**
+These carry projection inputs here that have nothing to do with their `symbols.csv` names (classic
+6502 ZP scratch sharing, like the `$0080-$008D` note below). Best fixed by documenting BOTH roles
+in `symbols.csv` rather than renaming:
+- `$0087`/`$0088` (`vbi_phase`/`vbi_flags`) — here = world-X fixed-point >> 4.
+- `$0089`/`$008A` (`terrain_state`/`terrain_scroll_counter`) — here = world-Z >> 4.
+- `$008B`/`$008C` (`dl_src_index`/`terrain_scroll_reload`) — here = pitch-depth delta << 2.
+- `$0092` (`draw_row`) — here = heading_hi << 2.
+- `$00A0-$00A3` (`draw_iter_count`/`scroll_accum_b0..b2`) — here = the sin/cos view vector.
+- `$00A4`/`$00A5` (`scroll_accum_b3`/`scroll_accum_prev`) — here = the signed-pitch >> 1 per-row step.
+- `$00A6` (`horizon_row_index`) — here = the horizon screen row (this one's name fits).
+- `$28EE` (`lock_on_indicator_complete`) — in `game_state_update` it's the enemy-fire countdown
+  timer, unrelated to lock-on completion. Dual role → document both in `symbols.csv`.
+- `$0041` (`game_state`) — in `game_state_update` it's specifically the explosion/fire-frame counter.
+
+**Genericly-named function.**
+- `game_sub_55FC` ($55FC) — pushes entry Y (unmarked) into the $0719 event ring → `ring_push_y`
+  or `ring_push_unmarked` (mirrors `ring_push_marked`).
+
 ## Investigated → intentionally left UNNAMED (do not re-litigate)
 
 These were verified (2026-08-02) and deliberately have no `symbols.csv` name: each is either

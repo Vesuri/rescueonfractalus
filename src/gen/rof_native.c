@@ -4666,6 +4666,7 @@ void init_proj_scratch_pointers(void) {
  * alt_ring_head ($0073) is the write cursor: a corrupt cursor is clamped into 0..$1F, the
  * byte is stored, then the cursor pre-decrements with wraparound ($00 -> $1F).  The ring is
  * drained by the $548D voice engine each flight VBI.  Pure: no registers, no stack. */
+static void ring_push_marked_core(uint8_t id);   /* defined below ($5815 typed entry) */
 static void ring_push_0719_core(uint8_t ev) {
     uint8_t head = alt_ring_head;
     if (head >= 0x20) head = 0x1F;
@@ -8267,83 +8268,81 @@ void plot_scanline_rand_dir(void) {
     plot_scanline_down();
 }
 
-/* game_state_update @ $A99C — the flight state machine.  Counts down $28EE; on
- * timeout reseeds it ($0624 & RANDOM) and resets state.  When the counter hits 0
- * with a queued event ($28ED!=0) it sets up the target-blip line-plot ($28EF-$28F9
- * seeded from RANDOM + the target column $28EB/$28EC) and draws it via the scanline
- * plotters, then pushes ring events ($0041 explosion-frame counter).  $007E==7 is
- * the special (impact?) branch with its own geometry + jitter_roll_pitch.
- * Contract: memory; exit cpu dead.  All callees native. */
+/* game_state_update @ $A99C — the enemy gun-emplacement fire / target-blip state machine, run
+ * once per flight main-loop pass.  A countdown ($28EE) paces fire events; when it elapses with a
+ * shot queued ($28ED != 0) it seeds a growing bolt and draws it with the scanline plotters, bumps
+ * the explosion-frame counter ($0041 = game_state), and pushes the matching SFX ring events.
+ * $007E == 7 selects the impact variant (its own wedge geometry + colour flash + roll/pitch jitter).
+ * Contract: memory only (exit cpu dead).  All callees are native.
+ * (Several cells here are unnamed — see docs/rename.md: $28EB/$28EC target cell, $28EF-$28F9
+ * bolt line-plot state, $0624 fire-delay mask, $28ED shot-queued flag.) */
 void game_state_update(void) {
-    uint8_t a;
-    /* a99c DEC $28EE; BPL L_a9c3 */
-    lock_on_indicator_complete--;
-    if (lock_on_indicator_complete & 0x80) {                     /* N set: counter went negative */
-        /* a9a1 LDA $0624; AND $D20A; STA $28EE */
+    /* Pace the next fire.  When the countdown underflows, pick a fresh random delay
+       ($0624 & RANDOM), clear the fire/queue state, and (unless crashed) reset the blip colour. */
+    uint8_t timer = (uint8_t)(lock_on_indicator_complete - 1);
+    lock_on_indicator_complete = timer;
+    if (timer & 0x80) {                                   /* underflowed */
         lock_on_indicator_complete = mem[0x0624] & bus_read(0xD20A);
-        if (player3_dither_flag == 0) reset_flags_ff();   /* a9aa LDA $2826; BNE skip */
-        if (mem[0x003D] == 0) special_state_color = 0xB4; /* a9b2 LDA $003D; BNE skip */
-        game_state = 0x00;                       /* a9bb */
+        if (player3_dither_flag == 0) reset_flags_ff();
+        if (landing_seq_flag == 0)    special_state_color = 0xB4;
+        game_state = 0x00;
         mem[0x28ED] = 0x00;
         return;
     }
-    /* L_a9c3: BPL taken — proceed only when the counter is exactly 0 with an event */
-    if (lock_on_indicator_complete != 0) return;                 /* a9c3 BNE L_a9c2 */
-    if (mem[0x28ED] == 0) return;                 /* a9c5 LDA $28ED; BEQ L_a9c2 */
-    /* a9ca seed the line-plot from the target column $28EB/$28EC */
+    if (timer != 0)       return;                         /* not time to fire yet */
+    if (mem[0x28ED] == 0) return;                         /* no shot queued */
+
+    /* Seed the bolt line-plot from the target cell ($28EB/$28EC): start point ($28F0/$28F2),
+       the $80-midpoint sub-pixel accumulators ($28EF/$28F1/$28F3), a width seed ($28F4=1), a
+       solid plot mask, and a random signed horizontal step {plot_x_step_hi:plot_x_step_lo}. */
     mem[0x28F0] = mem[0x28EB];
     mem[0x28F2] = mem[0x28EC];
     mem[0x28F4] = 0x01;
-    mem[0x28EF] = 0x80;
-    mem[0x28F1] = 0x80;
-    mem[0x28F3] = 0x80;
-    plot_pixel_mask = 0xFF;                            /* plot mask */
-    plot_x_step_hi = 0x00;
+    mem[0x28EF] = 0x80; mem[0x28F1] = 0x80; mem[0x28F3] = 0x80;
+    plot_pixel_mask = 0xFF;
     mem[0x28F8] = 0x00;
-    /* a9f1 LDA $D20A; ASL A; STA $5B; BCC; DEC $5C */
-    a = bus_read(0xD20A);
-    { int c = (a >> 7) & 1; plot_x_step_lo = (uint8_t)(a << 1); if (c) plot_x_step_hi--; }
-    /* a9fb LDA $291A; BPL L_aa0b */
-    a = mem[0x291A];
-    if (a & 0x80) {                               /* N set */
-        if (a < 0xFF) plot_x_step_hi = 0x00;         /* aa00 CMP #$FF; BCS skip */
-    } else {                                      /* L_aa0b */
-        if (a >= 0x02) plot_x_step_hi = 0xFF;        /* aa0b CMP #$02; BCC skip */
+    {
+        uint8_t r = bus_read(0xD20A);                     /* RANDOM */
+        plot_x_step_lo = (uint8_t)(r << 1);
+        plot_x_step_hi = (r & 0x80) ? 0xFF : 0x00;        /* sign of the doubled random */
     }
-    /* L_aa13 LDA $D20A; ASL A; STA $28F7; DEC $28F8 */
-    mem[0x28F7] = (uint8_t)(bus_read(0xD20A) << 1);
-    mem[0x28F8]--;
-    if (lock_on_indicator_state == 0x07) {                     /* aa1d CMP #$07; BEQ L_aa4b */
-        /* L_aa4b — special-state geometry */
-        plot_x_step_hi = 0x00;                        /* aa4b */
-        /* aa4f SEC; LDA #$67; SBC $28EB; ASL A; STA $5B; BCC; DEC $5C */
-        a = (uint8_t)(0x67 - mem[0x28EB]);
-        { int c = (a >> 7) & 1; plot_x_step_lo = (uint8_t)(a << 1); if (c) plot_x_step_hi--; }
-        /* aa5c SEC; LDA #$6B; SBC $28EC; STA $28F9 */
-        mem[0x28F9] = (uint8_t)(0x6B - mem[0x28EC]);
-        plot_scanline_down();                      /* aa65 */
-        vobj_path_flag = 0x10;                        /* aa68 */
-        game_state++;                             /* aa6c INC $0041 */
-        mem[0x00DB] = 0xBE;                        /* aa6e */
-        anim_counter_2 = 0xBC;                        /* aa72 */
-        mem[0x00DC] = 0xB6;                        /* aa76 */
-        audc_shadow_0 = 0xB8;                        /* aa7a */
-        special_state_color = 0x34;                        /* aa7e */
-        cpu.X = 0x03; ring_push_marked();          /* aa83 LDX #$03 */
-        cpu.X++;      ring_push_marked();          /* aa88 INX (X=$04) */
-        cpu.X = 0x0A; ring_push_marked();          /* aa8c LDX #$0A */
-        cpu.X++;      ring_push_marked();          /* aa91 INX (X=$0B) */
-        jitter_roll_pitch();                       /* aa94 */
+    /* Override the drift direction from the delayed pitch-history field (ring_cur_1 $291A):
+       steeply negative -> leftward (hi=0); positive and >= 2 -> rightward (hi=$FF). */
+    {
+        uint8_t p = ring_cur_1;
+        if (p & 0x80) { if (p < 0xFF) plot_x_step_hi = 0x00; }
+        else          { if (p >= 0x02) plot_x_step_hi = 0xFF; }
+    }
+    mem[0x28F7] = (uint8_t)(bus_read(0xD20A) << 1);        /* random vertical step */
+    mem[0x28F8] = 0xFF;                                    /* row counter = 0 - 1 */
+
+    if (lock_on_indicator_state == 0x07) {
+        /* Impact variant: aim the wedge at the fixed impact point (col $67, row $6B) offset by the
+           target cell, draw the horizontal wedge, flash the explosion colours, push impact SFX. */
+        uint8_t dx = (uint8_t)(0x67 - mem[0x28EB]);
+        plot_x_step_lo = (uint8_t)(dx << 1);
+        plot_x_step_hi = (dx & 0x80) ? 0xFF : 0x00;
+        mem[0x28F9] = (uint8_t)(0x6B - mem[0x28EC]);      /* end row */
+        plot_scanline_down();
+        vobj_path_flag = 0x10;
+        game_state++;                                     /* explosion-frame counter */
+        terrain_pen1_fade = 0xBE; anim_counter_2 = 0xBC;
+        terrain_pen0_fade = 0xB6; audc_shadow_0 = 0xB8;
+        special_state_color = 0x34;
+        ring_push_marked_core(0x03); ring_push_marked_core(0x04);   /* impact SFX events */
+        ring_push_marked_core(0x0A); ring_push_marked_core(0x0B);
+        jitter_roll_pitch();
         return;
     }
-    /* aa23 LDA $004D; EOR #$FF; LSR;LSR;LSR; CLC; ADC #$0C; STA $28F9 */
+
+    /* Normal shot: end row from the downed-object distance ($004D), draw the drifting bolt,
+       flash terrain pen 1, seed the explosion-frame counter on the first frame, push fire SFX. */
     mem[0x28F9] = (uint8_t)(((uint8_t)(mem[0x004D] ^ 0xFF) >> 3) + 0x0C);
-    plot_scanline_rand_dir();                      /* aa30 */
-    mem[0x00DB] = 0xBE;                            /* aa33 */
-    if (game_state == 0) anim_counter_2 = 0x28;      /* aa37 LDA $0041; BNE skip */
-    game_state++;                                 /* aa3f INC $0041 */
-    cpu.X = 0x07; ring_push_marked();              /* aa41 LDX #$07 */
-    cpu.X = 0x02; ring_push_marked();              /* aa46 LDX #$02 */
+    plot_scanline_rand_dir();
+    terrain_pen1_fade = 0xBE;
+    if (game_state == 0) anim_counter_2 = 0x28;
+    game_state++;
+    ring_push_marked_core(0x07); ring_push_marked_core(0x02);
 }
 
 /* alien_attack_tick @ $7AB8 — per-frame enemy PMG update.  When RANDOM is negative,
