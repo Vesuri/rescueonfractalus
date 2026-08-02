@@ -1641,12 +1641,14 @@ void alien_knock_setup_loop(void) {
     silence_audio_channels();
 }
 
-/* clear_pm_state @ $3FBF — fill $00DA-$00DD, $02C0-$02C3 and $00D9 with entry cpu.A. */
-void clear_pm_state(void) {
-    uint8_t a = cpu.A;
-    for (int y = 0; y < 4; y++) { mem[MEM_audc_shadow_0 + y] = a; mem[0x02C0 + y] = a; }
-    mem[0x00D9] = a;
+/* clear_pm_state @ $3FBF — fill $00DA-$00DD, $02C0-$02C3 and $00D9 with the fill byte
+   (entry cpu.A in the 6502 ABI).  _core takes the fill directly; the void shim preserves the
+   6502-ABI entry for the transpiled callers + the validation harness. */
+static void clear_pm_state_core(uint8_t fill) {
+    for (int y = 0; y < 4; y++) { mem[MEM_audc_shadow_0 + y] = fill; mem[0x02C0 + y] = fill; }
+    mem[0x00D9] = fill;
 }
+void clear_pm_state(void) { clear_pm_state_core(cpu.A); }
 
 /* clear_terrain_lo_buffers @ $6B63 — zero the two low terrain buffers $0E32/$0F32 (96 bytes). */
 void clear_terrain_lo_buffers(void) {
@@ -2653,6 +2655,8 @@ void level_clear_fx_loop(void) {
     landing_inhibit_flag = 0x00;
 }
 
+static void cockpit_dial_update_core(uint8_t v);   /* defined below ($8371); used here via the direct core call */
+
 /* event_sequence_dispatcher @ $4644 — the in-flight keyboard-command handler.  Entry X = the
  * KBCODE the POKEY keyboard IRQ left (see CLAUDE.md "Controls").  Matches it against the command
  * table $4816[0..7] and dispatches by the matched SLOT (0=Land 1=? 2=ACE/msg 3=Systems 4=AirLock
@@ -2760,7 +2764,7 @@ void event_sequence_dispatcher(void) {
             if (pilot_prev == 0) timer_or_counter = 0x00;    /* $0044 = $288E (== 0) */
             reset_pilot_state_if_no_2830();              /* leaves A = 0 */
             pitch_pos_lo = 0x00; pitch_pos_hi = 0x00;    /* $0025/$0026 = A(0) */
-            cpu.A = 0x07; cockpit_dial_update();
+            cockpit_dial_update_core(0x07);
         } else if (dial_value != 0) {                    /* $006F: nudge dial down */
             dial_value = (uint8_t)(dial_value - 1);
             redraw_dial_from_6f();
@@ -2786,7 +2790,7 @@ void event_sequence_dispatcher(void) {
             span_pixel_count = 0x1C;                     /* $00DF = $1C */
             cpu.A = 0xFF; cpu.Y = 0xC5; show_message_id_a();
         } else {
-            cpu.A = 0x08; cockpit_dial_update();
+            cockpit_dial_update_core(0x08);
             cpu.A = 0x00; cpu.Y = 0x04; show_message_id_a();
         }
         return;
@@ -7800,7 +7804,7 @@ static void flight_control_integrate_impl(void) {
         uint8_t v = (uint8_t)((((uint16_t)pitch_pos_hi << 8) | pitch_pos_lo) >> 6);
         pitch_velocity = (uint8_t)(0u - v);
         dial_draw_index = 0xF0;
-        cpu.A = 0x00; draw_cockpit_dial_bar();
+        draw_cockpit_dial_bar_core(0x00);
     } else if (mem[0x003D] != 0) {
         /* Landing sequence: enter the $3355 special state once (engine_state $066C latch). */
         if (mem[0x283C] == 0 && mem[0x066C] != 0x01) {
@@ -9430,7 +9434,7 @@ void init_gameplay_state(void) {
     obj_pos_hi = 0x0B;                                /* 744e */
     if ((uint8_t)bus_read(0xD20A) < 0x1F)              /* 7452 CMP#$1F; BCS skip */
         mem[0x003A] = (uint8_t)(mem[0x003A] + 1);      /* 7459 INC $3A (when A < $1F) */
-    cpu.A = 0x07; cockpit_dial_update();               /* 745b-745d tail call */
+    cockpit_dial_update_core(0x07);                    /* 745b-745d tail call */
 }
 
 /* boot_standby_launch_driver @ $5F1D — the orchestration APEX: main game display setup + the
@@ -10388,7 +10392,7 @@ static void game_main_loop_body(void) {
 #else
     boot_standby_launch_driver();                           /* Standby/attract + launch cinematic (RTSes after launch) */
 #endif
-    cpu.A = 0x2A; clear_pm_state();            /* A = PMG clear fill (callee arg) */
+    clear_pm_state_core(0x2A);                 /* PMG clear fill */
     wait_frames_1();
     dl_param_lo = 0x0D;                         /* windscreen-band DL params ($350D) */
     dl_param_hi = 0x35;
@@ -10568,7 +10572,7 @@ static void game_main_loop_body(void) {
       if (a >= 0x2B) { a = 0x2A; anim_counter_2 = 0x2A; }
       game_state = a;
       display_flags = a;
-      cpu.A = a; clear_pm_state();        /* clear_pm_state consumes A = the clamped value */
+      clear_pm_state_core(a);             /* clear_pm_state consumes A = the clamped value */
     }
     mem[0x066E] = 0;
     game_sub_55FC();
