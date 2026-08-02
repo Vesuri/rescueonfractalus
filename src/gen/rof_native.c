@@ -6943,25 +6943,31 @@ void terrain_draw_frame_core(uint8_t entryX) {
     for (;;) {
         TDPAIR(g_tdPairs);
         uint8_t obj0 = mem[0xB67C + order_idx++];        /* primary endpoint of the next pair */
+        /* Base pointer for obj0's per-object arrays ($23B5/$2400/$242D/$245A/$2487/$24B4 all
+           indexed by obj): one address register + 16-bit displacement per access, instead of
+           recomputing base+index every read (the terrain_frame_setup addressing win). */
+        volatile uint8_t *o0 = &mem[obj0];
         mem[0x28DB] = obj0;
-        if (mem[0x24B4 + obj0] & 0xA0) {                 /* primary off-screen or culled: skip the whole pair */
+        if (o0[0x24B4] & 0xA0) {                          /* primary off-screen or culled: skip the whole pair */
             TDPAIR(g_tdCulled);
             order_idx++;
         } else {
             uint8_t obj1 = mem[0xB67C + order_idx++];     /* companion endpoint */
+            volatile uint8_t *o1 = &mem[obj1];            /* base for obj1's per-object arrays */
+            uint8_t cls1 = o1[0x24B4];                    /* companion visibility class (read once, reused below) */
             mem[0x272E] = order_idx;                      /* scratch-save the index across the calls (6502 used Y) */
-            if (!(mem[0x24B4 + obj1] & 0xC0)) {          /* companion on-screen and not culled */
+            if (!(cls1 & 0xC0)) {                         /* companion on-screen and not culled */
                 TDPAIR(g_tdVisPairs);
-                if (!(mem[0x24B4 + obj1] & 0x10))        /* project the companion unless already projected */
+                if (!(cls1 & 0x10))                       /* project the companion unless already projected */
                     { TDPAIR(g_tdProjCount); PB(_pp1); cpu.X = obj1; project_terrain_points(); cpu.X = obj1; terrain_plot_object(); PE(_pp1, g_tdProjPlot); }
                 /* seed subdivide sub-point [0] with the companion's projected vector */
-                mem[0x25B4]=mem[0x2400+obj1]; mem[0x25D2]=mem[0x242D+obj1]; mem[0x25F0]=mem[0x245A+obj1];
-                mem[0x24E2]=mem[0x2487+obj1]; mem[0x23E2]=mem[0x23B5+obj1];
-                if (!(mem[0x24B4 + obj0] & 0x10))        /* project the primary unless already projected */
+                mem[0x25B4]=o1[0x2400]; mem[0x25D2]=o1[0x242D]; mem[0x25F0]=o1[0x245A];
+                mem[0x24E2]=o1[0x2487]; mem[0x23E2]=o1[0x23B5];
+                if (!(o0[0x24B4] & 0x10))                 /* project the primary unless already projected */
                     { TDPAIR(g_tdProjCount); PB(_pp2); cpu.X = obj0; project_terrain_points(); cpu.X = obj0; terrain_plot_object(); PE(_pp2, g_tdProjPlot); }
                 /* load the primary's projected vector as the running span endpoint, then subdivide */
-                dl_ptr_hi=mem[0x2400+obj0]; screen_ptr_lo=mem[0x242D+obj0]; screen_ptr_hi=mem[0x245A+obj0];
-                encounter_count=mem[0x2487+obj0]; row_count=mem[0x23B5+obj0];
+                dl_ptr_hi=o0[0x2400]; screen_ptr_lo=o0[0x242D]; screen_ptr_hi=o0[0x245A];
+                encounter_count=o0[0x2487]; row_count=o0[0x23B5];
                 PB(_sd); terrain_subdivide_column_core(0x00, order_idx); PE(_sd, g_tdSubdiv);
                 order_idx = mem[0x272E];                 /* restore the index (the calls leave $272E untouched) */
                 if (order_idx == 0) order_idx++;
