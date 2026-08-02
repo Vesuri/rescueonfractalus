@@ -6959,12 +6959,12 @@ void terrain_draw_frame_core(uint8_t entryX) {
             if (!(cls1 & 0xC0)) {                         /* companion on-screen and not culled */
                 TDPAIR(g_tdVisPairs);
                 if (!(cls1 & 0x10))                       /* project the companion unless already projected */
-                    { TDPAIR(g_tdProjCount); PB(_pp1); cpu.X = obj1; project_terrain_points(); cpu.X = obj1; terrain_plot_object(); PE(_pp1, g_tdProjPlot); }
+                    { TDPAIR(g_tdProjCount); PB(_pp1); project_terrain_points_core(obj1); cpu.X = obj1; terrain_plot_object(); PE(_pp1, g_tdProjPlot); }
                 /* seed subdivide sub-point [0] with the companion's projected vector */
                 mem[0x25B4]=o1[0x2400]; mem[0x25D2]=o1[0x242D]; mem[0x25F0]=o1[0x245A];
                 mem[0x24E2]=o1[0x2487]; mem[0x23E2]=o1[0x23B5];
                 if (!(o0[0x24B4] & 0x10))                 /* project the primary unless already projected */
-                    { TDPAIR(g_tdProjCount); PB(_pp2); cpu.X = obj0; project_terrain_points(); cpu.X = obj0; terrain_plot_object(); PE(_pp2, g_tdProjPlot); }
+                    { TDPAIR(g_tdProjCount); PB(_pp2); project_terrain_points_core(obj0); cpu.X = obj0; terrain_plot_object(); PE(_pp2, g_tdProjPlot); }
                 /* load the primary's projected vector as the running span endpoint, then subdivide */
                 dl_ptr_hi=o0[0x2400]; screen_ptr_lo=o0[0x242D]; screen_ptr_hi=o0[0x245A];
                 encounter_count=o0[0x2487]; row_count=o0[0x23B5];
@@ -10374,8 +10374,8 @@ static void game_main_loop_body(void) {
     sfx_voice_distort_06 = 0xA0;
     sfx_voice_distort_0d = 0xA0;
     sfx_env_prio_val = 0xA0;
-    cpu.X = 0x1F; sfx_event_load();                /* init input slot $1F, then $20 (X = slot arg) */
-    cpu.X = 0x20; sfx_event_load();
+    sfx_event_load_core(0x1F);                     /* init input slot $1F, then $20 */
+    sfx_event_load_core(0x20);
 #ifndef ROF_PLATFORM_AMIGA
     bus_write(0xD40E, 0x40);                   /* ANTIC NMIEN: enable DLI (dead on Amiga) */
 #endif
