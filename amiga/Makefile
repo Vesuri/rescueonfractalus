@@ -291,6 +291,15 @@ endif
 ifdef FORCE_RETURN
 EXTRA_DEFINES += -DROF_FORCE_RETURN
 endif
+# `make FORCE_MOTHERSHIP=1`: INTERACTIVE — makes pressing BOOSTERS (B) in flight force the mother
+# ship "present" ($003A=$FF + HUD indicator) at that instant, so B always triggers the return-to-
+# mother-ship cinematic WITHOUT having rescued the pilot quota.  Lets you test the return + the
+# post-mother-ship Standby level select by hand.  Normal flight is untouched until you press B.
+# Needs NO PROBES/auto-launch — builds a normal playable RoF.exe; boot with run.sh, press START to
+# launch, fly a moment, then press B to return.
+ifdef FORCE_MOTHERSHIP
+EXTRA_DEFINES += -DROF_FORCE_MOTHERSHIP
+endif
 # `make PROBES=1 BEEP_CAP=1`: once flight is running, force the pilot-proximity beep (SFX event
 # $14) at the range-1 rate (re-push into the SFX ring every 2 frames, as startup_init $3FFA does),
 # and capture the 4 Paula channels + pokey shadow each flush_paula into a ring, dumped via

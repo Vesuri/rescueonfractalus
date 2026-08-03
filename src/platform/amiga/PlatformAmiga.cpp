@@ -1479,6 +1479,17 @@ static uint32_t keyboardHandler()
         for (unsigned i = 0; i < sizeof(kFlightKeys) / sizeof(kFlightKeys[0]); i++)
             if (kFlightKeys[i].rawkey == raw) {
                 s_pendingFlightKey = kFlightKeys[i].kbcode;
+#ifdef ROF_FORCE_MOTHERSHIP
+                // Debug: make the mother ship "present" the instant BOOSTERS (B, KBCODE $15) is
+                // pressed, so you can test the return cinematic + post-mother-ship Standby without
+                // rescuing the pilot quota.  The BOOSTERS handler (show_ace_or_message $493D) only
+                // takes the return branch when mission flag $003A bit7 is set, and the return
+                // cinematic gates on $003A==$FF (rsBoostReturn) — so force $003A=$FF (+ light the
+                // mother-ship HUD indicator $0676) right here, one key edge, before the flight VBI's
+                // $519c window dispatches this keycode.  Untouched otherwise, so normal flight is
+                // unaffected until you actually press B.  (make FORCE_MOTHERSHIP=1)
+                if (kFlightKeys[i].kbcode == 0x15u) { mem[0x003Au] = 0xFFu; mem[0x0676u] = 0x01u; }
+#endif
                 break;
             }
     }
