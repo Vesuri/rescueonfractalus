@@ -61,7 +61,7 @@ extern "C" volatile unsigned char g_standbyRevealReady;
 // otherwise the STALE flight/launch copper + bitplanes flash for a beat (garbage from the launch
 // sequence, black+brown from flight), and rsLaunched (stale terrain-scroll/vbi flags left in mem[])
 // can even re-install the doors/tunnel copper over old data before the card exists.
-static bool g_restartHoldBlack = false;
+extern "C" volatile unsigned char g_restartHoldBlack = 0;
 // Door-field-ready gate, latched on in boot_standby_launch_driver once the doors/dots/LEVEL field has been
 // drawn into $2000 but BEFORE delay_loop_c2_to_c9 ramps the green colour $0071 (rof_native.c).
 // render() decodes $2000 -> viewportBitmap once when this rises, so the door pixels exist before
@@ -2080,6 +2080,28 @@ void RescueOnFractalus::flightVblankSwap()
     flightSwapPending = false;
 }
 
+// blankForRestart(): called from the VBI ISR (vbiHandler) once a BREAK/Restart is armed but not yet
+// taken — VVBLKI = the trampoline's $52B4 — which persists for several vblanks because a single
+// flight terrain-compute iteration spans ~4 frames, so the main loop doesn't reach the rof_check_
+// restart at the top of renderFlightDirect (→ the longjmp) for that long.  Across those frames the
+// OLD FlightCopperList stays live and the flight loop keeps computing + swapping buffers, so the
+// viewport shows stale / mid-swap flight (the "brown rectangle" flash).  We are in the VBI ISR here,
+// i.e. the beam is parked at the top of the frame, so an immediate COPJMP1 to the black
+// EmptyCopperList is safe (its sprite MOVEs at the top of the list execute before the beam reaches
+// the sprites — the smear that made a MID-FRAME COPJMP unusable can't happen).  Also cancel any
+// pending flight flip so flightVblankSwap doesn't re-point the (now hidden) flight copper.  Idempotent:
+// re-jumping to the same list each armed vblank is harmless.
+void RescueOnFractalus::blankForRestart()
+{
+#ifdef ROF_FLIGHT_PROBE
+    { extern volatile unsigned char g_blankForRestartCount; g_blankForRestartCount++; }
+#endif
+    flightSwapPending = false;                       // don't chase a flip into the hidden flight copper
+    if (!emptyCopper) return;
+    emptyCopper->setColor00(atariToOCS(0));          // pure black
+    AmigaHardware::setCopperList(*emptyCopper, true); // immediate COPJMP1 — safe: we're at vblank (beam top)
+}
+
 // flightKickBackClear: called by PlatformAmiga::renderFrame after each flight frame.  In the dot
 // side-buffer model the terrain rasterizer targets the DEDICATED off-display scratch (terrainDotBuffer,
 // constant pointer), never a display buffer — so there is no per-frame display-buffer clear to kick
@@ -2134,23 +2156,19 @@ void RescueOnFractalus::run()
 #ifdef ROF_FLIGHT_PROBE
         extern volatile unsigned char g_restartCount; g_restartCount++;
 #endif
-        // Kill the stale scene's display IMMEDIATELY: install the black EmptyCopperList (via the VBI
-        // so the pointer swap is vblank-safe) and hold it until the level-selector card is rebuilt.
-        // Without this the old flight/launch copper keeps rendering its stale bitplanes (garbage /
-        // black+brown) for the frames between here and the card being ready — bugs 2 & 3.
-        if (emptyCopper) {
-            emptyCopper->setColor00(atariToOCS(0));             // pure black
-            // Deferred (vblank-latched) swap: the copper reloads COP1LC at the next vblank.  An
-            // immediate COPJMP1 mid-frame is NOT usable here — EmptyCopperList carries no sprite
-            // MOVEs past the beam's current position, so the old sprites keep their DMA/pointers
-            // and smear over the partial frame.  The residual single stale frame is the price of a
-            // clean vblank swap.
-            AmigaHardware::setCopperList(*emptyCopper, false);
-            emptyCopperInstalled = true;
-            standbyCopperInstalled = false; planetCopperInstalled = false;
-            flightCopperInstalled = false; tunnelCopperInstalled = false;
-            titleScreenCopperInstalled = false;
-        }
+        // "Bug 2": keep the screen black across the WHOLE restart so no stale/mid-swap scene flashes.
+        // The real flash was the flight case: the trampoline sets VVBLKI=$52B4 from inside the VBI
+        // ISR, but the main loop doesn't reach the rof_check_restart at the top of renderFlightDirect
+        // (→ this longjmp) for ~4 frames, because a flight terrain-compute iteration spans that long;
+        // across those frames the old FlightCopperList stays live and the flight loop keeps computing
+        // + swapping buffers, so the viewport shows stale/mid-swap flight (the "brown rectangle").
+        // That window is blanked by blankForRestart(), called from the VBI ISR while VVBLKI==$52B4
+        // (safe immediate COPJMP there — beam parked at top).  Here we just keep it black:
+        //   - g_restartHoldBlack FIRST, so if any renderFrame pump runs before the resting scene is
+        //     ready it holds black (never installs a viewport copper from stale rsLaunched flags).
+        //   - install the black EmptyCopperList (deferred) as the resting COP1LC.
+        //   - waitBeamLine for the latch so the NON-flight paths (whose $52B4 is consumed in the same
+        //     rof_check_restart call, so the ISR never blanks them) are black before init mutates buffers.
         g_restartHoldBlack = true;
         g_flightBlank = 0;                                      // never carry a death-blank into the restart
         // Reset the standby door-field latch so the black hold's "standby ready" edge is REAL:
@@ -2159,10 +2177,17 @@ void RescueOnFractalus::run()
         // previous boot's stale latch).  g_standbyRevealReady is deliberately NOT reset — the card
         // ($53CC) landing path never sets it, and the top-of-renderFrame gate keys off it.
         g_doorFieldReady = 0;
-        // Clear the $52B4 restart marker IMMEDIATELY — game_main_loop only installs its real VVBLKI
-        // ($53CC) a few instructions in, and its early spin points call rof_check_restart; if VVBLKI
-        // still read $52B4 there it would longjmp straight back here (an infinite restart loop).
-        mem[0x0222] = 0xCC; mem[0x0223] = 0x53;                 // = $53CC (game_main_loop re-sets it)
+        mem[0x0222] = 0xCC; mem[0x0223] = 0x53;                 // VVBLKI = $53CC (also clears the $52B4 marker)
+        if (emptyCopper) {
+            emptyCopper->setColor00(atariToOCS(0));             // pure black
+            AmigaHardware::setCopperList(*emptyCopper, false);  // COP1LC = empty (latches next vblank)
+            emptyCopperInstalled = true;
+            standbyCopperInstalled = false; planetCopperInstalled = false;
+            flightCopperInstalled = false; tunnelCopperInstalled = false;
+            titleScreenCopperInstalled = false;
+            AmigaHardware::waitBeamLine(250);                   // wait one full vblank crossing so the
+            AmigaHardware::waitBeamLine(20);                    // black list is displaying before init runs
+        }
         mem[0x0041] = 3;                                        // $3D1F-21: game_state = 3
         mem[0x0216] = 0x2A; mem[0x0217] = 0x46;                 // $3D28-2F: IRQ vector $462A (inert on Amiga)
         audio_timer_setup();                                    // $3D32

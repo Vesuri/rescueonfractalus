@@ -875,6 +875,12 @@ extern "C" volatile unsigned short g_doorDecodeVbi   = 0;
 extern "C" volatile unsigned char  g_doorTopBlack = 0;
 extern "C" volatile unsigned char  g_doorTopG2    = 0xFF;
 extern "C" volatile unsigned char  g_doorTopSeen  = 0;
+// Restart-flash ring: per-vblank VVBLKI + hold flag, armed at the trampoline/restart.
+extern "C" volatile unsigned short g_vvRing[32] = {};
+extern "C" volatile unsigned char  g_vvHold[32] = {};
+extern "C" volatile unsigned char  g_vvIdx  = 0;
+extern "C" volatile unsigned char  g_vvArmed = 0;
+extern "C" volatile unsigned char  g_blankForRestartCount = 0;
 #endif
 
 // rof_pokey_write: the direct, non-virtual POKEY write fast-path (bus.h routes $D200-$D20F
@@ -1530,6 +1536,22 @@ static uint32_t vbiHandler()
     { extern void rof_bc_d01f(void); rof_bc_d01f(); }   // edge-log CONSOL ($D01F) transitions
 #endif
 
+    // BREAK/Restart flash blank — do it here, at vblank (beam parked at top), so a COPJMP to the black
+    // EmptyCopperList is safe (its sprite MOVEs at the top of the list run before the beam reaches the
+    // sprites; a mid-frame COPJMP would smear them).  Two cases, both showing stale/mid-swap flight
+    // otherwise (the "brown rectangle"):
+    //   (a) VVBLKI==$52B4: the trampoline armed the restart on a PREVIOUS frame and the main loop
+    //       hasn't reached the rof_check_restart longjmp yet (a flight compute iteration spans ~4
+    //       frames), so $52B4 persists — blank every such frame.
+    //   (b) in flight ($4FF5) with a BREAK ($80) still pending: the trampoline will set $52B4 LATER
+    //       THIS frame, inside game_vbi_isr below — too late for (a) to catch it at beam-top — so blank
+    //       pre-emptively now.  (This is the fast case: the loop longjmps next frame, one $52B4 frame.)
+    {
+        const uint16_t _vv = (uint16_t)(mem[0x0222] | (mem[0x0223] << 8));
+        if (s_scene && (_vv == 0x52B4u || (_vv == 0x4FF5u && s_pendingFlightKey == 0x80u)))
+            s_scene->blankForRestart();
+    }
+
     // Flight terrain double-buffer swap — do this FIRST, while the beam is still in vertical
     // blank (well above the viewport WAIT at scanline 85).  If renderFlightDirect has published a
     // freshly-painted buffer, rewrite the copper's viewport bitplane pointers now so the copper
@@ -1792,6 +1814,23 @@ static uint32_t vbiHandler()
 #endif
 
     game_vbi_isr();
+#ifdef ROF_FLIGHT_PROBE
+    // Restart-flash diagnosis: ring-record VVBLKI + the hold flag every vblank once a restart is in
+    // flight, so the post-run dump shows the exact per-frame VVBLKI timeline around the BREAK (and
+    // whether any viewport vector is live while the hold is off = the flash frame).
+    {
+        extern volatile unsigned char g_restartCount, g_restartHoldBlack;
+        extern volatile unsigned short g_vvRing[32]; extern volatile unsigned char g_vvHold[32];
+        extern volatile unsigned char g_vvIdx; extern volatile unsigned char g_vvArmed;
+        const uint16_t _vv = (uint16_t)(mem[0x0222] | (mem[0x0223] << 8));
+        if (_vv == 0x52B4u || g_restartCount) g_vvArmed = 1;   // arm at the trampoline or the restart
+        if (g_vvArmed && g_vvIdx < 32) {
+            g_vvRing[g_vvIdx] = (unsigned short)(mem[0x0222] | (mem[0x0223] << 8));
+            g_vvHold[g_vvIdx] = g_restartHoldBlack;
+            g_vvIdx++;
+        }
+    }
+#endif
     return 0;
 }
 

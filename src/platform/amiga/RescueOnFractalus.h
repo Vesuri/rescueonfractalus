@@ -37,6 +37,11 @@ public:
     void flightVblankSwap();     // run from the INTB_VERTB ISR at vblank start: if a flight buffer
                                  // swap is pending, rewrite the copper's viewport bitplane pointers
                                  // (before the beam reaches them) and clear the flag.
+    void blankForRestart();      // run from the INTB_VERTB ISR when a BREAK/Restart is armed (VVBLKI=
+                                 // $52B4): jump the copper to the black EmptyCopperList NOW (safe at
+                                 // vblank — beam at top, so its sprite MOVEs still execute), so the
+                                 // ~4 flight-compute frames between the trampoline and the main-loop
+                                 // longjmp show black instead of stale/mid-swap flight (the flash).
     // Dot side-buffer: read-and-clear the deferred-flip flag.  renderFrame() calls this once per
     // frame — true means the flight normal path deferred its flip-wait, so renderFrame skips its own
     // vblank wait and the next terrain compute overlaps the pending flip's vblank.
