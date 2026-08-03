@@ -54,6 +54,25 @@ in `symbols.csv` rather than renaming:
 - `game_sub_55FC` ($55FC) — pushes entry Y (unmarked) into the $0719 event ring → `ring_push_y`
   or `ring_push_unmarked` (mirrors `ring_push_marked`).
 
+**Door/viewport DL LMS vertical-scroll family (the Standby level-select "elevator" scroll + the
+launch doors-open scroll).** These names describe an "index" / generic "terrain" op but actually
+manipulate the launch DL's per-scanline mode-F LMS entries ($300A+) to scroll the $2000 door field
+(or $1070 flight field) vertically. Found while implementing the post-mother-ship in-place level
+scroll (2026-08-04).
+- `dl_lms_fill` ($69F1) — writes the viewport DL's per-scanline LMS pointer words ($300A+, 3 bytes/
+  scanline) from the row-address tables `$073D`/`$0793` (`row_base_lo`/`row_base_hi`), for row index
+  X=`$008B`(`dl_src_index`) up to `$0086`(`row_count`). Not a generic "fill" — it's the LMS-window
+  writer. → `dl_write_lms_window` (and `row_count` → `dl_lms_end_index`).
+- `dl_lms_build` ($69E5) — set dest ptr $300A + end index $56, tail `dl_lms_fill`; i.e. rebuild the
+  whole viewport LMS window from the current start index. → `dl_rebuild_lms_window`.
+- `dl_index_dec` ($69E3) — DEC `$008B` then rebuild → scroll the viewport window DOWN one row (one
+  smooth LMS scroll step). Name says "index dec" but the effect is a scroll step. → `dl_lms_scroll_step`.
+- `dl_index_dec_or_reset` ($69DD) — reset `$008B`=0 then rebuild (no-scroll full window). → `dl_lms_reset_window`.
+- `dl_src_index` (`$008B`) — the LMS-window START row index the above scroll through. → `dl_lms_start_row`.
+- `scroll_terrain_dl` ($6953) — NOT generic terrain: the launch doors-OPEN split scroll (top half
+  LMS entries shift up, bottom half shift down, splitting apart) via `dl_lms_scroll_up`/`_down` +
+  `dl_lms_push_top`/`_bottom`. → `dl_doors_open_split_step`.
+
 **Trig lookup tables + scratch (`sine_table_lookup` $9C55 / `trig_interp_lookup` $9BDB) — UNNAMED.**
 - `$0077` / `$0078` — mid / hi bytes of the signed 24-bit trig result (`$0076` is `trig_result_lo`)
   → `trig_result_mid` / `trig_result_hi`.
