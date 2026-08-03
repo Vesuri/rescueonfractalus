@@ -1081,6 +1081,29 @@ extern "C" volatile uint32_t g_viewportP3SprAddr=0, g_scopeP3SprAddr=0, g_flight
 // initializer forces the definition).  extern "C" — RescueOnFractalus.cpp references it.
 extern "C" void* g_quitJmp[5] = { 0, 0, 0, 0, 0 };
 
+// g_restartJmp: the __builtin_setjmp buffer for the BREAK/Restart path (game_loop_reset).  The
+// Atari trampoline ($52BE) restarts via a 6502 RTS stack trick that C control flow can't
+// reproduce (and it runs in the VBI ISR, where longjmp is unsafe) — but it DOES leave its
+// observable side-effect in mem[]: VVBLKI ($0222/3) = $52B4.  renderFrame/pollEvents (main-loop
+// context) detect that and longjmp here; run() then re-enters game_main_loop with the faithful
+// $3D1F init (which preserves the high score $0605-0608, unlike a full game_entry re-run).
+extern "C" void* g_restartJmp[5] = { 0, 0, 0, 0, 0 };
+// The trampoline's persistent Amiga side-effect — VVBLKI left at this value = "restart requested".
+static const uint16_t kRestartVvblki = 0x52B4u;
+
+// rof_check_restart: the single pump-exit gate — quit / BREAK-restart.  Called from renderFrame +
+// pollEvents AND from the flight render path (renderFlightDirect), because the flight loop busy-waits
+// in renderFlightDirect and never reaches renderFrame — so a BREAK pressed mid-flight (VVBLKI left at
+// $52B4 by the trampoline) would otherwise never be seen and the viewport would stay stuck (the
+// black+brown state).  Runs in the MAIN loop (never the ISR), so the __builtin_longjmp back to run()'s
+// setjmp buffers is safe.
+extern "C" void rof_check_restart(void)
+{
+    if (AmigaHardware::isLeftMouseButtonPressed()) g_pumpQuit = 1;
+    if (g_pumpQuit) __builtin_longjmp(g_quitJmp, 1);
+    if ((uint16_t)(mem[0x0222] | (mem[0x0223] << 8)) == kRestartVvblki) __builtin_longjmp(g_restartJmp, 1);
+}
+
 // renderFrame: called from the transpiled frame-wait hooks (platform_render_frame).
 // Render first so the display reflects the state the spin-wait just advanced, then
 // wait for the next real VBI (or return immediately if one already fired during
@@ -1194,8 +1217,7 @@ void PlatformAmiga::renderFrame() {
         mem[0x0014]++;
         if (!mem[0x0014]) mem[0x0013]++;
     }
-    if (AmigaHardware::isLeftMouseButtonPressed()) g_pumpQuit = 1;
-    if (g_pumpQuit) __builtin_longjmp(g_quitJmp, 1);
+    rof_check_restart();   // quit / BREAK-restart / SYSTEM-RESET (may __builtin_longjmp out)
 #ifdef ROF_FLIGHT_PROBE
     g_pollAfterRender = true;   // next pollEvents starts a fresh VCOUNT-spin span measurement
 #endif
@@ -1212,8 +1234,7 @@ void PlatformAmiga::pollEvents() {
     uint16_t span = (uint16_t)(g_vbiCount - g_pollSpinStartVbi);
     if (span > g_maxPollSpinFrames && g_vbiCount > 360) { g_maxPollSpinFrames = span; g_maxPollSpinAtVbi = g_vbiCount; }
 #endif
-    if (AmigaHardware::isLeftMouseButtonPressed()) g_pumpQuit = 1;
-    if (g_pumpQuit) __builtin_longjmp(g_quitJmp, 1);
+    rof_check_restart();   // quit / BREAK-restart / SYSTEM-RESET (may __builtin_longjmp out)
 }
 
 // tickVBI: no-op — RTCLOK is advanced by renderFrame() after each VBI wait.
@@ -1298,15 +1319,25 @@ uint8_t PlatformAmiga::flightIrqKey() {
 // normally owns the vector, so we steal it (saving the
 // previous) and restore it on shutdown, leaving the OS keyboard working afterwards.
 //
-// This handler IS the Atari console-switch hardware abstraction: it maps RETURN onto
-// the START switch in CONSOL ($D01F / 53279), writing $06 while RETURN is held and
-// $07 when idle.  CONSOL reads active-low in bits 0-2 (START/SELECT/OPTION); idle = $07,
-// START down clears bit0 -> $06, the value the genuine attract poll
-// (station_poll_start_native) tests for.  We never touch SELECT/OPTION.
+// This handler IS the Atari console-switch hardware abstraction: it maps the Amiga
+// function keys onto the CONSOL switches ($D01F / 53279), which read active-low in
+// bits 0-2 (START/SELECT/OPTION); idle = $07, a switch down clears its bit.
+//   F1 -> START  (bit0)  — the value the attract poll station_poll_start_native tests
+//   F2 -> SELECT (bit1)  — Standby starting-level select
+//   F3 -> OPTION (bit2)  — attract DEMO DROID
+// SELECT/OPTION are read by the Standby driver's idle loop (boot_standby_launch_driver $5F1D:
+// $D01F&$02 / &$04) and the level selector (standby_level_select_loop $5978).  Measured
+// behaviour (2026-08-03): from the INITIAL cockpit Standby, SELECT (or joystick-up — faithful)
+// opens the separate level-selector card ($53CC); inside it joystick up/down cycles the starting
+// level.  In the POST-mother-ship Standby ($003A==$FF), SELECT cycles the level in place (cockpit
+// door-scroll).  All faithful to the transpiled binary.
+// (BREAK/Restart = Backspace is handled below, not via CONSOL.  SYSTEM RESET is a hardware reset,
+// not an application key — deliberately not mapped.)
 static const uint16_t kConsol      = 0xD01F;
 static const uint8_t  kConsolIdle  = 0x07;
-static const uint8_t  kConsolStart = 0x06;
-static const uint8_t  kRawReturn   = 0x44;   // RETURN rawkey (cf. RETURN=$44, ESC=$45)
+static const uint8_t  kRawF1       = 0x50;   // F1 -> CONSOL START  (bit0)
+static const uint8_t  kRawF2       = 0x51;   // F2 -> CONSOL SELECT (bit1)
+static const uint8_t  kRawF3       = 0x52;   // F3 -> CONSOL OPTION (bit2)
 
 // In-flight keyboard commands.  On the Atari these arrive as a POKEY keyboard/BREAK
 // IRQ (IRQEN=$C0) whose handler (irq_handler $462A) leaves the event id — KBCODE&$3F,
@@ -1330,7 +1361,7 @@ static const FlightKeyMap kFlightKeys[] = {
     { 0x39, 0x06 },   // Amiga '.'   -> Atari +   $06  Increase Thrust
     { 0x38, 0x07 },   // Amiga ','   -> Atari *   $07  Decrease Thrust
     { 0x45, 0x1C },   // Amiga 'Esc' -> Atari ESC $1c  Freeze/pause
-    { 0x46, 0x80 },   // Amiga 'Del' -> Atari BREAK $80 Restart
+    { 0x41, 0x80 },   // Amiga 'Backspace' -> Atari BREAK $80 Restart
 };
 
 // Amiga rawkeys for the held joystick/fire inputs (driven into s_portaState/s_trig0State).
@@ -1371,12 +1402,25 @@ static uint32_t keyboardHandler()
     { extern void rof_bc_key(unsigned char, unsigned char); rof_bc_key(raw, down ? 1u : 0u); }
 #endif
 
-    // Drive the CONSOL START switch (bit0) from RETURN's down/up edges, so the register
-    // continuously reflects the key's level — just like the real GTIA switch.
-    if (raw == kRawReturn) {
-        s_consolState = down ? kConsolStart : kConsolIdle;   // the read source (hwRead $D01F)
-        mem[kConsol]  = s_consolState;                        // keep RAM mirror in sync (Station-scene reader)
-        return 0;
+    // Drive the CONSOL console switches from their keys' down/up edges, so the register
+    // continuously reflects each key's level — just like the real GTIA switches.  CONSOL is
+    // active-low (bit clear = pressed).  Bitwise (not full assignment) so simultaneous presses
+    // compose; mem[$D01F] mirror kept in sync for the Station-scene reader.
+    switch (raw) {
+        case kRawF1:      // START (bit0)
+            if (down) s_consolState &= (uint8_t)~0x01u; else s_consolState |= 0x01u;
+            mem[kConsol] = s_consolState;
+            return 0;
+        case kRawF2:      // SELECT (bit1)
+            if (down) s_consolState &= (uint8_t)~0x02u; else s_consolState |= 0x02u;
+            mem[kConsol] = s_consolState;
+            return 0;
+        case kRawF3:      // OPTION (bit2)
+            if (down) s_consolState &= (uint8_t)~0x04u; else s_consolState |= 0x04u;
+            mem[kConsol] = s_consolState;
+            return 0;
+        default:
+            break;
     }
 
     // Held joystick/fire inputs — track the active-low PORTA/TRIG0 level across down/up
@@ -1545,6 +1589,36 @@ static uint32_t vbiHandler()
 #endif
         }
     }
+
+#ifdef ROF_FORCE_SELECT
+    // Headless SELECT verification: in the INITIAL Standby (VVBLKI $52D7, no mother ship
+    // $003A==0), replicate a SELECT press (F2) (CONSOL bit1 clear) once the idle loop is
+    // polling, to confirm the wired SELECT drives the transition to the SEPARATE level-
+    // selector card (VVBLKI $53CC, $365B=$72).  Build: make PROBES=1 FORCE_SELECT=1 NO_AUTOLAUNCH=1.
+    {
+        extern volatile unsigned char g_standbyRevealReady;
+        static uint16_t s_selRevealVbi = 0;
+        if (g_standbyRevealReady && s_selRevealVbi == 0) s_selRevealVbi = g_vbiCount;
+        if (s_selRevealVbi) {
+            uint16_t d2 = (uint16_t)(g_vbiCount - s_selRevealVbi);
+            const uint16_t vv = (uint16_t)(mem[0x0222u] | (mem[0x0223u] << 8));
+            // Hold SELECT (bit1 clear) while still in the cockpit standby; release once the
+            // selector card is up so its own up/down poll isn't jammed.
+            if (d2 >= 60 && vv == 0x52D7u) s_consolState &= (uint8_t)~0x02u;
+            else                           s_consolState |= 0x02u;
+            // Once the selector card is up ($53CC), pulse joystick-UP (PORTA bit0) every
+            // ~40 frames to confirm the in-selector up/down toggle re-renders the STARTING
+            // LEVEL digit (level_stage $006D + $3694/5).
+            if (vv == 0x53CCu) {
+                uint16_t ph = (uint16_t)(d2 % 40u);
+                if (ph < 8u) s_portaState &= (uint8_t)~0x01u;   // up pressed
+                else         s_portaState |= 0x01u;             // released
+            } else {
+                s_portaState |= 0x01u;
+            }
+        }
+    }
+#endif
 #endif
 
 #ifdef ROF_FORCE_DEATH
@@ -1580,7 +1654,7 @@ static uint32_t vbiHandler()
     //   (make PROBES=1 FORCE_RETURN=1)
     {
         const uint16_t vv = (uint16_t)(mem[0x0222u] | (mem[0x0223u] << 8));
-        static uint16_t s_flightVbi = 0; static uint8_t s_retPhase = 0;
+        static uint16_t s_flightVbi = 0; static uint8_t s_retPhase = 0; static uint16_t s_retSelVbi = 0;
         if (vv == 0x4FF5u && s_flightVbi == 0) s_flightVbi = g_vbiCount;
         const uint16_t dt = s_flightVbi ? (uint16_t)(g_vbiCount - s_flightVbi) : 0;
         if (s_flightVbi && s_retPhase == 0 && dt >= 250) {
@@ -1593,6 +1667,29 @@ static uint32_t vbiHandler()
             s_pendingFlightKey = 0x15;     // Atari KBCODE 'B' (boosters) → $519c CLI window
             s_retPhase = 2;
         }
+        // Phase 3: once the return cinematic has landed back in the POST-mother-ship Standby
+        // cockpit ($52D7 + $003A==$FF), pulse Del/SELECT (CONSOL bit1) to confirm SELECT drives
+        // the IN-PLACE level cycle (door-scroll level_stage++ / fade-rebuild) — NOT the separate
+        // selector card.  Pulsed (down ~8f / up) so each press is a distinct edge.
+        if (s_retPhase >= 2 && vv == 0x52D7u && mem[0x003Au] == 0xFFu) {
+            if (s_retSelVbi == 0) s_retSelVbi = g_vbiCount;
+            uint16_t ds = (uint16_t)(g_vbiCount - s_retSelVbi);
+            if (ds >= 60) { uint16_t ph = (uint16_t)((ds - 60) % 60u);
+                            if (ph < 8u) s_consolState &= (uint8_t)~0x02u; else s_consolState |= 0x02u; }
+        }
+    }
+#endif
+
+#ifdef ROF_FORCE_BREAK
+    // Headless BREAK/Restart verification: once flight has been live a moment, inject BREAK ($80)
+    // via the flight keyboard path and verify the restart recovers (VVBLKI leaves $52B4 and
+    // returns to a real scene instead of the black/brown stuck state).  Build: PROBES=1 FORCE_BREAK=1.
+    {
+        const uint16_t vv = (uint16_t)(mem[0x0222u] | (mem[0x0223u] << 8));
+        static uint16_t s_fbVbi = 0; static uint8_t s_fbPhase = 0;
+        if (vv == 0x4FF5u && s_fbVbi == 0) s_fbVbi = g_vbiCount;
+        uint16_t dt = s_fbVbi ? (uint16_t)(g_vbiCount - s_fbVbi) : 0;
+        if (s_fbVbi && s_fbPhase == 0 && dt >= 150) { s_pendingFlightKey = 0x80; s_fbPhase = 1; }  // BREAK
     }
 #endif
 

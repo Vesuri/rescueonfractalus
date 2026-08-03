@@ -15,7 +15,7 @@ The boot→flight sequence has 7 canonical scenes (user-approved). Code ids are 
 | 1 | **Logo** | Lucasfilm Games boot logo |
 | 2 | **Station** | Space-station cinematic (stars scroll, station animates). `station_init $195D` |
 | 3 | **Standby** | Cockpit + "RESCUE ON FRACTALUS!" title + LEVEL doors, awaiting START |
-| 3b | **Title Screen** | Attract/level-select/results card: big mode-7 "RESCUE ON FRACTALUS!" + mode-6 copyright / STARTING LEVEL / RANKING LEVEL / LAST SCORE / HIGH SCORE on black, text pens cycle. Shown on Standby idle, joystick-up, or after a crash. DL `$5A82`, charset `$0400`, screen RAM `$365B`. (Was "Scoreboard".) |
+| 3b | **Title Screen** | Attract/level-select/results card: big mode-7 "RESCUE ON FRACTALUS!" + mode-6 copyright / STARTING LEVEL / RANKING LEVEL / LAST SCORE / HIGH SCORE on black, text pens cycle. Shown on Standby idle (attract timeout), on **SELECT or joystick-up from the initial Standby** (both faithful — same dispatch branch, measured 2026-08-03), or after a crash. DL `$5A82`, charset `$0400`, screen RAM `$365B`. (Was "Scoreboard".) |
 | 4 | **Doors** | Hangar doors opening (start of launch) |
 | 5 | **Tunnel** | Tunnel/descent |
 | 6 | **Planet** | Planet approach |
@@ -136,8 +136,8 @@ the flight VBI's CLI window). Faithful 1:1 — the dispatcher logic is the Atari
 
 | Atari control | Action | Atari KBCODE | Amiga key (rawkey) | Path |
 |---|---|---|---|---|
-| START | Start the game | — (CONSOL) | RETURN ($44) | CONSOL $D01F bit0 |
-| BREAK | Restart (score lost, highs kept) → `game_loop_reset` | $80 | Del ($46) | kbd cmd $519c |
+| START | Start the game | — (CONSOL) | **F1 ($50)** | CONSOL $D01F bit0 |
+| BREAK | Restart (score lost, highs kept) → `game_loop_reset` | $80 | **Backspace ($41)** | kbd cmd $519c |
 | ESC | Freeze/pause mission (toggle) | $1c | Esc ($45) | kbd cmd |
 | CURSOR RIGHT | Increase Thrust (`INC $006F`, Y5) | $06 (Ctrl-`+`, masked) | **. period ($39)** | kbd cmd |
 | CURSOR LEFT | Decrease Thrust (`DEC $006F`, Y4) | $07 (Ctrl-`*`, masked) | **, comma ($38)** | kbd cmd |
@@ -147,14 +147,44 @@ the flight VBI's CLI window). Faithful 1:1 — the dispatcher logic is the Atari
 | B | Boosters | $15 | B ($15) | kbd cmd |
 | (joystick) | Steer (pitch/roll) | — | **arrow keys** ($4C/$4D/$4F/$4E) | PORTA $D300 bits 0/1/2/3 = up/down/left/right |
 | (trigger) | Fire | — | **Left Shift ($60)** | TRIG0 $D010 |
-| Joystick up / down | Starting level up / down (Standby) | — | **arrow up/down** ($4C/$4D) | PORTA $D300 bits 0/1 |
-| SELECT / SHIFT-SELECT | Starting level up / down (Standby) | — | not wired | CONSOL |
-| OPTION | Demo (DEMO DROID) | — | not wired | CONSOL |
-| SYSTEM RESET | Reboot disk | — | not wired (Amiga reset) | — |
+| Joystick up / down | Starting level up / down (inside the level-selector card only) | — | **arrow up/down** ($4C/$4D) | PORTA $D300 bits 0/1 |
+| SELECT | Open the level-selector card (initial Standby) / cycle level in place (post-mother-ship Standby) | — | **F2 ($51)** | CONSOL $D01F bit1 |
+| OPTION | Demo (DEMO DROID) | — | **F3 ($52)** | CONSOL $D01F bit2 |
+| SYSTEM RESET | Reboot disk | — | not mapped (hardware reset, not application-controlled) | — |
 
 Implementation: `PlatformAmiga.cpp` `kFlightKeys` (one-shot command keycodes), `s_portaState`/
-`s_trig0State` (held joystick/fire level read by `hwRead`). SDL build delivers none of these
-(`flightIrqKey`→$FF, PORTA neutral) — Amiga-only for now.
+`s_trig0State` (held joystick/fire level read by `hwRead`), `s_consolState` (CONSOL bits 0/1/2 =
+START/SELECT/OPTION, driven bitwise from F1/F2/F3 edges in `keyboardHandler`). SDL build
+delivers none of these (`flightIrqKey`→$FF, PORTA neutral) — Amiga-only for now.
+
+**Standby SELECT — two contexts, gated on the mother-ship flag `$003A` (measured 2026-08-03 via
+FS-UAE `FORCE_SELECT`/`FORCE_RETURN` probes; all logic is the faithful transpiled binary):**
+- **Initial Standby (`$003A==0`):** SELECT (F2) opens the *separate* level-selector card
+  (scene 3b) — the binary jumps to `standby_scoreboard_render $587B` → installs the `$53CC` VBI,
+  writes the title text into `$365B` (`=$72`), so the Amiga's `rsTitle` renderer engages. Inside
+  the card, **joystick up/down** cycles `level_stage $006D`, re-rendered via the
+  `platform_title_screen_dirty($3694,2)` hook. **NOTE (measured, clean test):** joystick-up from
+  the cockpit ALSO opens the card — the standby dispatch (`rof_native.c` L_6324) reads joystick-up
+  and SELECT into the SAME branch, so this is FAITHFUL binary behaviour (the game manual agrees:
+  "joystick up/down → starting level, Standby"). An earlier "joystick-up does nothing" note was a
+  test-harness artifact and is retracted.
+- **Post-mother-ship Standby (`$003A==$FF`, after a boost/return cinematic):** SELECT cycles the
+  level *in place* in the cockpit (VVBLKI stays `$52D7`, no separate card) — the door field `$2000`
+  is rebuilt with the new LEVEL digits (`$622d` door-scroll if `level_stage < max $0609`, else
+  `intro_screen_build_seq $65a8` fade-rebuild wrap), and the `g_doorFieldReady` 0→1 edge re-arms the
+  Amiga `terrainDirty` bitplane re-decode (RescueOnFractalus.cpp `deriveRenderSignals`). Joystick
+  up/down does NOT cycle here. This is the `rsBoostReturn = standbyVbi && mem[$003A]==$FF` tail.
+
+**BREAK (Backspace) — restart via `__builtin_setjmp`/`longjmp` (like the quit path):** `game_loop_reset`
+restarts through a 6502 RTS stack trick C can't reproduce, and it fires from the VBI ISR where longjmp
+is unsafe.  Instead: the trampoline ($52BE) leaves its observable side-effect VVBLKI=`$52B4` in mem[];
+the MAIN-loop pump gate **`rof_check_restart()`** (called from `renderFrame`, `pollEvents`, AND
+`renderFlightDirect` — the flight loop busy-waits in the latter and never reaches renderFrame, so a
+BREAK pressed mid-flight would otherwise stay stuck at `$52B4` = the black+brown viewport) detects it and
+longjmps `g_restartJmp`.  run() then replicates the faithful `$3D1F→$3D48` init (skips the `$3D0C` clear,
+so the **high score `$0605-$0608` is kept**) and calls `game_main_loop` → the `$53CC` level-selector card
++ standby music (measured on the Atari: BREAK from ANY scene → that card).  SYSTEM RESET is a hardware
+reset, not an application key — deliberately not mapped.
 
 ## Build / run / debug
 

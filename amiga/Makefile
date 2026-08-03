@@ -309,6 +309,17 @@ endif
 ifdef NOAUTO
 EXTRA_DEFINES += -DROF_NO_AUTOLAUNCH
 endif
+# `make PROBES=1 FORCE_SELECT=1 NOAUTO=1`: in the initial Standby, inject a Del/SELECT press
+# (CONSOL bit1) instead of START, to verify the wired SELECT drives the transition to the
+# separate level-selector card (VVBLKI $53CC).  Requires PROBES; pair with NOAUTO.
+ifdef FORCE_SELECT
+EXTRA_DEFINES += -DROF_FORCE_SELECT
+endif
+# `make PROBES=1 FORCE_BREAK=1`: seed a high score, then inject BREAK ($80) during flight to verify
+# the game_loop_reset restart recovers (VVBLKI leaves $52B4) and the high score survives.
+ifdef FORCE_BREAK
+EXTRA_DEFINES += -DROF_FORCE_BREAK
+endif
 CORE_CFLAGS   = -g -MP -MMD -m68000 -msoft-float $(OPT) -nostdlib \
                 -fno-tree-loop-distribution -ffunction-sections -fdata-sections \
                 -Wno-unused-function -Wno-unused-parameter -Wno-unused-variable \

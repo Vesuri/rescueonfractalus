@@ -172,7 +172,12 @@ extern "C" volatile unsigned char g_compassDirty = 1;
 // (defined in PlatformAmiga.cpp) the pump longjmps to on quit, unwinding the transpiled chain.
 extern "C" void station_init(void);
 extern "C" void game_entry(void);
+extern "C" void game_main_loop(void);     // $3D48: DL/sound/PMG init -> scoreboard/standby
+extern "C" void audio_timer_setup(void);  // $712D: clear POKEY AUDF, AUDCTL=$60
+extern "C" void sfx_engine_reset(void);   // $5433: zero SFX voice slots
+extern "C" void rof_check_restart(void);  // pump-exit gate: quit / BREAK-restart (PlatformAmiga.cpp)
 extern "C" void* g_quitJmp[];   // definition (sized) lives in PlatformAmiga.cpp
+extern "C" void* g_restartJmp[];   // BREAK/Restart re-entry buffer (defined in PlatformAmiga.cpp)
 
 extern "C" volatile uint8_t mem[65536];
 // Which terrain field half renderFlightDirect displays (defined in rof_native.c, set by
@@ -1656,6 +1661,10 @@ static unsigned long rfPlaneSum(const uint8_t* base, int planeOff)
 // (0/13760); ~2.8x cheaper per frame (fDirect 120 vs fConvert 339 beam ticks).
 void RescueOnFractalus::renderFlightDirect()
 {
+    // The flight loop renders here and busy-waits on flightSwapPending — it never reaches the
+    // renderFrame/pollEvents pump, so honour quit / BREAK-restart / SYSTEM-RESET here too (else a
+    // BREAK pressed mid-flight leaves the viewport stuck on the trampoline's VVBLKI=$52B4).
+    rof_check_restart();   // may __builtin_longjmp out
     if (!terrainBitmap || !terrainBitmapBack || !flightCopper) return;
 
     // Rescue "figure walks to the airlock": during a systems-off rescue at landing phase >=3 the
@@ -2107,6 +2116,27 @@ void RescueOnFractalus::run()
     // (platform_render_frame); the VBI body follows the live VVBLKI vector
     // game_entry installs (game_vbi_isr dispatches $52D7/$4FF5 automatically).
     if (__builtin_setjmp(g_quitJmp) != 0) return;   // quit: unwound here from renderFrame/pollEvents
+
+    // BREAK/Restart (game_loop_reset): the Atari trampoline ($52BE) does a 6502 RTS stack trick to
+    // re-enter game_entry at $3D1F — which SKIPS the $3D0C clear of $0600-$060C, so the high score
+    // ($0605-$0608) survives ("score lost, highs kept").  That stack trick can't run in C (and fires
+    // from the VBI ISR), so the pump longjmps here when it sees the trampoline's VVBLKI=$52B4.  We
+    // replicate the faithful $3D1F->$3D48 init (NOT a full game_entry re-run, which would clear the
+    // highs) and fall into game_main_loop.  cockpit_flag/$00E4 keep the =4 the trampoline set.
+    if (__builtin_setjmp(g_restartJmp) != 0) {
+        // Clear the $52B4 restart marker IMMEDIATELY — game_main_loop only installs its real VVBLKI
+        // ($53CC) a few instructions in, and its early spin points call rof_check_restart; if VVBLKI
+        // still read $52B4 there it would longjmp straight back here (an infinite restart loop).
+        mem[0x0222] = 0xCC; mem[0x0223] = 0x53;                 // = $53CC (game_main_loop re-sets it)
+        mem[0x0041] = 3;                                        // $3D1F-21: game_state = 3
+        mem[0x0216] = 0x2A; mem[0x0217] = 0x46;                 // $3D28-2F: IRQ vector $462A (inert on Amiga)
+        audio_timer_setup();                                    // $3D32
+        sfx_engine_reset();                                     // $3D35
+        for (uint16_t a = 0x0626; a <= 0x062B; a++) mem[a] = 0; // $3D38-40: clear $0626-$062B
+        mem[0x006C] = 0;                                        // $3D42: sound_active_flag
+        mem[0x00E2] = 0x64;                                     // $3D44: attract_timer
+        game_main_loop();                                       // $3D48: never returns
+    }
 
     game_entry();     // $3CDE: mega-init -> game_main_loop (Standby -> cinematic -> flight); never returns
 }
