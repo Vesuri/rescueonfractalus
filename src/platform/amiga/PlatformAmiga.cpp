@@ -881,6 +881,7 @@ extern "C" volatile unsigned char  g_vvHold[32] = {};
 extern "C" volatile unsigned char  g_vvIdx  = 0;
 extern "C" volatile unsigned char  g_vvArmed = 0;
 extern "C" volatile unsigned char  g_blankForRestartCount = 0;
+extern "C" volatile unsigned char  g_l3d0cFired = 0;   // $3D23 level_or_state!=0 clear branch fired
 #endif
 
 // rof_pokey_write: the direct, non-virtual POKEY write fast-path (bus.h routes $D200-$D20F
@@ -1667,6 +1668,29 @@ static uint32_t vbiHandler()
         }
     }
 #endif
+#endif
+
+#ifdef ROF_FORCE_DEMO
+    // Headless DEMO DROID + BREAK verification: in the initial Standby, hold OPTION (CONSOL bit2)
+    // to launch the self-playing demo, then once the demo flight ($4FF5) has run a moment inject
+    // BREAK ($80) and confirm the restart does NOT re-run the demo (VVBLKI should settle on the
+    // card/standby, level_or_state $0004 cleared).  Build: PROBES=1 FORCE_DEMO=1.
+    {
+        extern volatile unsigned char g_standbyRevealReady;
+        static uint16_t s_dRevealVbi = 0, s_dFlightVbi = 0; static uint8_t s_dPhase = 0;
+        if (g_standbyRevealReady && s_dRevealVbi == 0) s_dRevealVbi = g_vbiCount;
+        const uint16_t vv = (uint16_t)(mem[0x0222u] | (mem[0x0223u] << 8));
+        if (s_dRevealVbi && s_dPhase == 0) {
+            uint16_t d2 = (uint16_t)(g_vbiCount - s_dRevealVbi);
+            if (d2 >= 60 && vv == 0x52D7u) s_consolState &= (uint8_t)~0x04u;   // OPTION down → DEMO DROID
+            else { s_consolState |= 0x04u; if (vv == 0x4FF5u) s_dPhase = 1; }  // released once demo flight starts
+            mem[0xD01Fu] = s_consolState;
+        }
+        if (s_dPhase == 1) {
+            if (s_dFlightVbi == 0) s_dFlightVbi = g_vbiCount;
+            if ((uint16_t)(g_vbiCount - s_dFlightVbi) >= 120) { s_pendingFlightKey = 0x80; s_dPhase = 2; }  // BREAK
+        }
+    }
 #endif
 
 #ifdef ROF_FORCE_DEATH

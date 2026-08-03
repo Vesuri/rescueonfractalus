@@ -331,6 +331,11 @@ endif
 ifdef FORCE_BREAK_CARD
 EXTRA_DEFINES += -DROF_FORCE_BREAK_CARD
 endif
+# `make PROBES=1 FORCE_DEMO=1 NOAUTO=1`: launch DEMO DROID (OPTION) then BREAK, to verify the
+# restart does NOT re-run the demo (bug: level_or_state $0004 left non-zero).
+ifdef FORCE_DEMO
+EXTRA_DEFINES += -DROF_FORCE_DEMO
+endif
 CORE_CFLAGS   = -g -MP -MMD -m68000 -msoft-float $(OPT) -nostdlib \
                 -fno-tree-loop-distribution -ffunction-sections -fdata-sections \
                 -Wno-unused-function -Wno-unused-parameter -Wno-unused-variable \

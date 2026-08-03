@@ -2188,7 +2188,25 @@ void RescueOnFractalus::run()
             AmigaHardware::waitBeamLine(250);                   // wait one full vblank crossing so the
             AmigaHardware::waitBeamLine(20);                    // black list is displaying before init runs
         }
-        mem[0x0041] = 3;                                        // $3D1F-21: game_state = 3
+        mem[0x0041] = 3;                                        // $3D21: game_state = 3
+        // $3D23-25: if level_or_state ($0004) != 0, loop back through the $3D0C clear.  The trampoline
+        // re-enters game_entry at $3D1F, and $3D23 branches on $0004: a NORMAL flight/standby break has
+        // $0004==0 so this is skipped and the trampoline's cockpit_flag/game_var_E4 = 4 + the high score
+        // survive (→ the results/level-select card).  A DEMO DROID break leaves $0004 != 0, so the real
+        // game runs $3D0C — clearing $0600-$060C (incl. cockpit_flag + high score) and $0004/$37F4/$00E4/
+        // level_stage — then re-checks with $0004==0 and falls through.  My handler previously omitted
+        // this, so the demo state persisted and the demo re-ran; replicate it faithfully.
+        if (mem[0x0004] != 0) {                                 // $3D23-25 (taken on a DEMO DROID break)
+#ifdef ROF_FLIGHT_PROBE
+            { extern volatile unsigned char g_l3d0cFired; g_l3d0cFired++; }
+#endif
+            for (uint16_t a = 0x0600; a <= 0x060C; a++) mem[a] = 0;  // $3D0C-12: clear $0600-$060C
+            mem[0x0004] = 0;                                    // $3D14: level_or_state = 0
+            mem[0x37F4] = 0;                                    // $3D16: game_var_37F4 = 0
+            mem[0x00E4] = 0;                                    // $3D19: game_var_E4 = 0
+            mem[0x006D] = 4;                                    // $3D1D: level_stage = 4
+            mem[0x0041] = 3;                                    // $3D21 (loop): game_state = 3
+        }
         mem[0x0216] = 0x2A; mem[0x0217] = 0x46;                 // $3D28-2F: IRQ vector $462A (inert on Amiga)
         audio_timer_setup();                                    // $3D32
         sfx_engine_reset();                                     // $3D35
