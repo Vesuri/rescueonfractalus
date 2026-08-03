@@ -171,9 +171,16 @@ FS-UAE `FORCE_SELECT`/`FORCE_RETURN` probes; all logic is the faithful transpile
 - **Post-mother-ship Standby (`$003A==$FF`, after a boost/return cinematic):** SELECT cycles the
   level *in place* in the cockpit (VVBLKI stays `$52D7`, no separate card) — the door field `$2000`
   is rebuilt with the new LEVEL digits (`$622d` door-scroll if `level_stage < max $0609`, else
-  `intro_screen_build_seq $65a8` fade-rebuild wrap), and the `g_doorFieldReady` 0→1 edge re-arms the
-  Amiga `terrainDirty` bitplane re-decode (RescueOnFractalus.cpp `deriveRenderSignals`). Joystick
-  up/down does NOT cycle here. This is the `rsBoostReturn = standbyVbi && mem[$003A]==$FF` tail.
+  `intro_screen_build_seq $65a8` fade-rebuild wrap). This in-place rebuild does NOT re-enter
+  `boot_standby_launch_driver`, so it can't rely on the driver-entry `g_doorFieldReady` reset —
+  instead the driver's SELECT dispatch clears `g_doorFieldReady` at **L_6332** (before the rebuild)
+  and re-latches it at the **L_62f6** idle-loop top (after both rebuild branches converge), and that
+  0→1 edge arms the Amiga `terrainDirty` door re-decode (RescueOnFractalus.cpp `deriveRenderSignals`)
+  with the finished field — without which the new level digits never appeared (fixed 2026-08-04,
+  commit 86e07f7). Joystick up/down does NOT cycle here. This is the
+  `rsBoostReturn = standbyVbi && mem[$003A]==$FF` tail. Repro headlessly with `FORCE_RETURN=1` (the
+  genuine boot→flight→boosters→standby path; the standby dispatch is measured by the
+  `g_ipDispatch/g_ipInPlace/g_ipDoorScroll/g_ipIntroWrap` `ROF_FLIGHT_PROBE` counters).
 
 **BREAK (Backspace) — restart via `__builtin_setjmp`/`longjmp` (like the quit path):** `game_loop_reset`
 restarts through a 6502 RTS stack trick C can't reproduce, and it fires from the VBI ISR where longjmp
