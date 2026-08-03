@@ -9986,6 +9986,12 @@ L_62ee:
     if (level_or_state != 0) goto L_634f;
 #endif
 L_62f6:
+    /* Amiga: idle-loop top = the convergence point after both in-place level-rebuild branches
+       (L_622d door-scroll and intro_screen_build_seq).  Re-latch the door-field-ready gate that
+       the in-place SELECT cycle cleared at L_6332, BEFORE ds_frame renders, so the 0->1 edge
+       fires the door re-decode with the finished LEVEL-NN field.  Idempotent on the normal idle
+       path (already 1).  Harmless on SDL (never read). */
+    g_doorFieldReady = 1;
     ds_frame();
     if (cockpit_flag != 0) goto L_6309;
     /* 6502 $62F6 does LDY $060B before the JSR; copy_title_text_block_to_screen uses
@@ -10007,11 +10013,30 @@ L_631b:
 L_631e:
     if (altitude_threshold == 0xC0) goto L_6311;
 L_6324:
+#ifdef ROF_FLIGHT_PROBE
+    { extern volatile unsigned short g_ipDispatch; g_ipDispatch++; }
+#endif
     if ((bus_read(0xD300) & 0x01) == 0) goto L_6332;   /* PORTA joystick */
     if ((bus_read(0xD01F) & 0x02) != 0) goto L_634a;   /* CONSOL SELECT */
 L_6332:
+#ifdef ROF_FLIGHT_PROBE
+    { extern volatile unsigned short g_ipInPlace; g_ipInPlace++; }
+#endif
     if (cockpit_flag == 0) goto L_6311;
+    /* Amiga: the post-mother-ship SELECT in-place level cycle rewrites the door field $2000
+       (with the new LEVEL-NN digits) via the L_622d door-scroll or intro_screen_build_seq
+       WITHOUT re-entering boot_standby_launch_driver, so the g_doorFieldReady latch would
+       stay 1 and the render's edge-triggered door re-decode would never fire (the new level
+       digits never appeared).  Re-arm the edge: clear it here (the render holds the frozen
+       old doors while it is 0 — see the rsBoostReturn hold in RescueOnFractalus.cpp) and set
+       it back at the L_62f6 idle-loop top once the rebuild has finished, giving one re-decode
+       of the finished field.  Harmless on SDL (never read). */
+    g_doorFieldReady = 0;
     audio_timer_setup();
+#ifdef ROF_FLIGHT_PROBE
+    { extern volatile unsigned short g_ipDoorScroll, g_ipIntroWrap;
+      if (level_stage < mem[0x0609]) g_ipDoorScroll++; else g_ipIntroWrap++; }
+#endif
     if (level_stage < mem[0x0609]) goto L_6347;
     intro_screen_build_seq();
     goto L_634a;

@@ -871,6 +871,11 @@ extern "C" volatile unsigned char g_restartCount = 0;
 // g_doorDecodeVbi stamps the last one.  Lets the restart runs confirm the doors were (re)decoded.
 extern "C" volatile unsigned char  g_doorDecodeCount = 0;
 extern "C" volatile unsigned short g_doorDecodeVbi   = 0;
+// In-place SELECT level-cycle dispatch probes (post-mother-ship standby; read via FORCE_RETURN).
+extern "C" volatile unsigned short g_ipDispatch   = 0;   // L_6324 idle dispatch reached
+extern "C" volatile unsigned short g_ipInPlace    = 0;   // L_6332 in-place branch taken
+extern "C" volatile unsigned short g_ipDoorScroll = 0;   // level<max → door-scroll rebuild
+extern "C" volatile unsigned short g_ipIntroWrap  = 0;   // level>=max → intro_screen_build_seq wrap
 // Bug-3 probe: whether the top door band was black at the earliest (smallest-g2) doors frame.
 extern "C" volatile unsigned char  g_doorTopBlack = 0;
 extern "C" volatile unsigned char  g_doorTopG2    = 0xFF;
