@@ -2,6 +2,20 @@
 
 ## 0. STATUS 2026-07-20 — START HERE (boost render DONE incl. T6 handoff + 2nd launch; one perf item remains)
 
+**2026-08-04 REGRESSION FIXED (commit b61791e):** the whole boost cinematic (ascent→stars→reverse
+tunnel) was painting SOLID BLACK. Cause: the `renderFrame()` "black-until-ready" hold (added later,
+during the BREAK/restart work, to mask the piecemeal standby door build — keyed on
+`g_standbyRevealReady`) also masked the boost cinematic, because `boot_standby_launch_driver`
+re-enters with `g_standbyRevealReady=0` and the reverse cinematic plays DURING that construction
+window (reveal only re-latches at construction-done `$6118`). The `rsBoostViewport` render branch was
+never reached (measured ~506 black-held frames, 0 stars/tunnel decodes). Fix: skip the black hold
+during the boost VIEWPORT phase (inline `rsBoostViewport`: `VVBLKI=$52D7 && $003A==$FF && ($008D!=0
+|| $008E==0)`); the final door BUILD (`$008D==0 && $008E!=0`) still black-holds. Verified via
+FORCE_RETURN: black 506→19, stars 0→2, tunnel 0→104. ⚠ Lesson: any new global render-gate/black-hold
+in `renderFrame()` must exempt the boost cinematic (and any other visible-during-construction scene).
+Reproduce interactively with `make FORCE_MOTHERSHIP=1` (press B in flight); headlessly with FORCE_RETURN.
+
+
 The whole boost cinematic (ascent → stars → reverse tunnel → standby) renders and is committed+pushed.
 Render bugs fixed through 2026-07-17 (commits 792e6d0, c347749, 6abc6cd, 53f4d86, 45f02c7, f824503):
 - forward stars-behind-planet sprite priority (PlanetCopperList BPLCON2 PFxP=1);
