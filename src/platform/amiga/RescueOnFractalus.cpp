@@ -2232,7 +2232,21 @@ void RescueOnFractalus::renderFrame()
     // EmptyCopperList on screen and do no rendering — the bitmaps are mid-build and the real
     // lists would show garbage.  When g_standbyRevealReady latches, fall through and the copper
     // path below installs the real (standby / viewport / dynamic) list for this frame.
-    if (emptyCopper && !g_standbyRevealReady) {
+    //
+    // EXCEPT the boost return-to-mother-ship reverse cinematic: it plays (stars, then reverse
+    // tunnel rings) WHILE boot_standby_launch_driver is re-entered with g_standbyRevealReady still
+    // 0 (it only re-latches at construction-done, rof_native.c $6118).  That cinematic is VISIBLE
+    // content, not the piecemeal door BUILD the black hold exists to mask — so black-holding it
+    // paints the whole "ship ascends to space → stars → reverse tunnel" sequence solid black.
+    // Detect the boost VIEWPORT phase (identical to rsBoostViewport, but computed inline here since
+    // deriveRenderSignals hasn't run for this frame yet: VVBLKI=$52D7, mother-ship flag $003A=$FF,
+    // reverse ring active $008D!=0 OR pre-ring stars $008E==0) and skip the hold so the
+    // rsBoostViewport branch below renders it.  The final next-level door BUILD ($008D==0 &&
+    // $008E!=0) is NOT a viewport phase, so it still black-holds until reveal (masking the build).
+    const uint16_t vvblkiRF = (uint16_t)(mem[0x0222] | (mem[0x0223] << 8));
+    const bool boostViewportCine = (vvblkiRF == 0x52D7u) && (mem[0x003A] == 0xFFu)
+                                   && (mem[0x008D] != 0u || mem[0x008E] == 0u);
+    if (emptyCopper && !g_standbyRevealReady && !boostViewportCine) {
         // Track the render signals EVERY held frame so the g_doorFieldReady 0->1 edge that fires
         // mid-build (boot_standby_launch_driver clears it at entry, re-sets it at construction-done)
         // is observed HERE and arms the one-time door decode (terrainDirty, line ~3115) + full
@@ -2243,6 +2257,10 @@ void RescueOnFractalus::renderFrame()
         // wrong until something else redraws it) — the reason bug 3 survived the earlier fixes.  On
         // first boot terrainDirty starts true so it worked by luck; this makes every build correct.
         deriveRenderSignals();
+#ifdef ROF_FLIGHT_PROBE
+        { extern volatile unsigned char g_liveCopper; g_liveCopper = 9;   // 9 = black EmptyCopperList
+          extern volatile unsigned long g_blackHoldFrames; g_blackHoldFrames++; }
+#endif
         if (!emptyCopperInstalled) {
             AmigaHardware::setCopperList(*emptyCopper, false);
             emptyCopperInstalled = true;

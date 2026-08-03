@@ -876,6 +876,7 @@ extern "C" volatile unsigned short g_ipDispatch   = 0;   // L_6324 idle dispatch
 extern "C" volatile unsigned short g_ipInPlace    = 0;   // L_6332 in-place branch taken
 extern "C" volatile unsigned short g_ipDoorScroll = 0;   // level<max → door-scroll rebuild
 extern "C" volatile unsigned short g_ipIntroWrap  = 0;   // level>=max → intro_screen_build_seq wrap
+extern "C" volatile unsigned long  g_blackHoldFrames = 0;  // frames the EmptyCopperList (black) was held
 // Bug-3 probe: whether the top door band was black at the earliest (smallest-g2) doors frame.
 extern "C" volatile unsigned char  g_doorTopBlack = 0;
 extern "C" volatile unsigned char  g_doorTopG2    = 0xFF;
