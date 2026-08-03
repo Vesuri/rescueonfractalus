@@ -55,6 +55,13 @@ extern "C" void boot_standby_launch_driver(void);
 // Black-until-ready reveal gate, latched on at boot_standby_launch_driver entry (rof_native.c); renderFrame
 // holds the EmptyCopperList on screen until it sets, then switches to the real lists.
 extern "C" volatile unsigned char g_standbyRevealReady;
+// BREAK/Restart black hold: set by the g_restartJmp handler in run() the instant a Backspace/BREAK
+// restart is taken.  Until the level-selector card ($53CC) is genuinely rebuilt (VVBLKI=$53CC, title
+// text in $365B, DMA shadow $022F back on), renderFrame keeps the EmptyCopperList (black) on screen —
+// otherwise the STALE flight/launch copper + bitplanes flash for a beat (garbage from the launch
+// sequence, black+brown from flight), and rsLaunched (stale terrain-scroll/vbi flags left in mem[])
+// can even re-install the doors/tunnel copper over old data before the card exists.
+static bool g_restartHoldBlack = false;
 // Door-field-ready gate, latched on in boot_standby_launch_driver once the doors/dots/LEVEL field has been
 // drawn into $2000 but BEFORE delay_loop_c2_to_c9 ramps the green colour $0071 (rof_native.c).
 // render() decodes $2000 -> viewportBitmap once when this rises, so the door pixels exist before
@@ -2124,6 +2131,34 @@ void RescueOnFractalus::run()
     // replicate the faithful $3D1F->$3D48 init (NOT a full game_entry re-run, which would clear the
     // highs) and fall into game_main_loop.  cockpit_flag/$00E4 keep the =4 the trampoline set.
     if (__builtin_setjmp(g_restartJmp) != 0) {
+#ifdef ROF_FLIGHT_PROBE
+        extern volatile unsigned char g_restartCount; g_restartCount++;
+#endif
+        // Kill the stale scene's display IMMEDIATELY: install the black EmptyCopperList (via the VBI
+        // so the pointer swap is vblank-safe) and hold it until the level-selector card is rebuilt.
+        // Without this the old flight/launch copper keeps rendering its stale bitplanes (garbage /
+        // black+brown) for the frames between here and the card being ready — bugs 2 & 3.
+        if (emptyCopper) {
+            emptyCopper->setColor00(atariToOCS(0));             // pure black
+            // Deferred (vblank-latched) swap: the copper reloads COP1LC at the next vblank.  An
+            // immediate COPJMP1 mid-frame is NOT usable here — EmptyCopperList carries no sprite
+            // MOVEs past the beam's current position, so the old sprites keep their DMA/pointers
+            // and smear over the partial frame.  The residual single stale frame is the price of a
+            // clean vblank swap.
+            AmigaHardware::setCopperList(*emptyCopper, false);
+            emptyCopperInstalled = true;
+            standbyCopperInstalled = false; planetCopperInstalled = false;
+            flightCopperInstalled = false; tunnelCopperInstalled = false;
+            titleScreenCopperInstalled = false;
+        }
+        g_restartHoldBlack = true;
+        g_flightBlank = 0;                                      // never carry a death-blank into the restart
+        // Reset the standby door-field latch so the black hold's "standby ready" edge is REAL:
+        // boot_standby_launch_driver re-sets it to 1 only AFTER rebuilding the $2000 door field, so
+        // this makes the hold release exactly when the fresh standby cockpit is built (not on the
+        // previous boot's stale latch).  g_standbyRevealReady is deliberately NOT reset — the card
+        // ($53CC) landing path never sets it, and the top-of-renderFrame gate keys off it.
+        g_doorFieldReady = 0;
         // Clear the $52B4 restart marker IMMEDIATELY — game_main_loop only installs its real VVBLKI
         // ($53CC) a few instructions in, and its early spin points call rof_check_restart; if VVBLKI
         // still read $52B4 there it would longjmp straight back here (an infinite restart loop).
@@ -2155,6 +2190,16 @@ void RescueOnFractalus::renderFrame()
     // lists would show garbage.  When g_standbyRevealReady latches, fall through and the copper
     // path below installs the real (standby / viewport / dynamic) list for this frame.
     if (emptyCopper && !g_standbyRevealReady) {
+        // Track the render signals EVERY held frame so the g_doorFieldReady 0->1 edge that fires
+        // mid-build (boot_standby_launch_driver clears it at entry, re-sets it at construction-done)
+        // is observed HERE and arms the one-time door decode (terrainDirty, line ~3115) + full
+        // cockpit repaint (cockpitForceFull rising-edge, line ~3136).  Those flags aren't consumed
+        // until render() runs (skipped while held), so they survive to the reveal frame's decode.
+        // Without this, a REBUILD (post-crash / post-BREAK / START-from-the-card) leaves the screen
+        // black through the build but then reveals a STALE viewportBitmap (doors' top half black/
+        // wrong until something else redraws it) — the reason bug 3 survived the earlier fixes.  On
+        // first boot terrainDirty starts true so it worked by luck; this makes every build correct.
+        deriveRenderSignals();
         if (!emptyCopperInstalled) {
             AmigaHardware::setCopperList(*emptyCopper, false);
             emptyCopperInstalled = true;
@@ -2165,6 +2210,42 @@ void RescueOnFractalus::renderFrame()
         return;
     }
     emptyCopperInstalled = false;
+
+    // BREAK/Restart black hold (bugs 2 & 3): from the instant a restart is taken (g_restartJmp
+    // handler in run()) keep the screen black until the fresh resting scene is genuinely rebuilt,
+    // so the STALE flight/launch copper + bitplanes (garbage / black+brown) never flash, and
+    // rsLaunched (stale terrain-scroll/vbi flags in mem[]) can't install the doors/tunnel copper
+    // over old data in the transitional frames.  game_main_loop lands on ONE of two rest scenes,
+    // by cockpit_flag ($060B): the $53CC results/level-select CARD (standby_scoreboard_render, when
+    // a game was played) or the $52D7 standby COCKPIT (fresh start).  Release on whichever is ready:
+    //   card    : VVBLKI=$53CC + title text in $365B ('R'=$72) + DMA shadow $022F back on
+    //   standby : VVBLKI=$52D7 + door field rebuilt (g_doorFieldReady, reset to 0 on restart above,
+    //             re-set by boot_standby_launch_driver only after the $2000 field is drawn)
+    if (g_restartHoldBlack) {
+        // Track the render signals EVERY hold frame (not just on release): boot_standby_launch_driver
+        // drives g_doorFieldReady 0->1 while we're holding, and deriveRenderSignals turns that edge
+        // into the one-time door-field decode (terrainDirty) + full cockpit repaint (cockpitForceFull,
+        // rising-edge on prevDoorFieldReady).  If we returned BEFORE deriveRenderSignals during the
+        // hold, prevDoorFieldReady would never see the 0, the edge would be missed, and the doors
+        // would come up half-decoded on release (bug 3).  Those flags aren't consumed until render()
+        // runs (skipped while holding), so they persist to the release frame's decode.
+        deriveRenderSignals();
+        const uint16_t vv = (uint16_t)(mem[0x0222] | (mem[0x0223] << 8));
+        const bool cardReady    = (vv == 0x53CCu) && (mem[0x365B] == 0x72u) && (mem[0x022F] != 0);
+        const bool standbyReady = (vv == 0x52D7u) && g_doorFieldReady;
+        if (!cardReady && !standbyReady) {
+            if (emptyCopper && !emptyCopperInstalled) {
+                emptyCopper->setColor00(atariToOCS(0));   // pure black
+                AmigaHardware::setCopperList(*emptyCopper, false);
+                emptyCopperInstalled = true;
+                standbyCopperInstalled = false; planetCopperInstalled = false;
+                flightCopperInstalled = false; tunnelCopperInstalled = false;
+                titleScreenCopperInstalled = false;
+            }
+            return;
+        }
+        g_restartHoldBlack = false;   // resting scene rebuilt — resume normal rendering (decode fires)
+    }
 
     // Lighter knock render path: during the airlock-closed alien knock ($0632) the whole flight
     // scene is frozen except the animating creature overlay, yet the game is parked in a blocking
@@ -2551,6 +2632,16 @@ void RescueOnFractalus::renderFrame()
         // (avoids the ±1px tunnel-reveal jitter an in-place poke of the live list causes).
         const uint8_t back = (uint8_t)(1 - doorsActive);
         updateDoorsCopper(doorsCopper[back]);
+#ifdef ROF_FLIGHT_PROBE
+        // Bug 3 probe: at the moment a doors frame is shown, is the TOP of viewportBitmap (the top
+        // door band, rows g2..) blank?  Sample the first 6 rows across all 3 planes; if every byte is
+        // 0 the top door is black.  Record the worst (earliest, smallest g2) case per run.
+        { extern volatile unsigned char g_doorTopBlack, g_doorTopG2, g_doorTopSeen;
+          const uint8_t* vp = (const uint8_t*)viewportBitmap->data + (uint32_t)g2 * 120u;
+          int nz = 0; for (int i = 0; i < 6 * 120; i++) if (vp[i]) { nz = 1; break; }
+          if (!g_doorTopSeen || (unsigned char)g2 <= g_doorTopG2) {   // earliest / smallest-g2 doors frame
+              g_doorTopBlack = nz ? 0 : 1; g_doorTopG2 = (unsigned char)g2; g_doorTopSeen = 1; } }
+#endif
         AmigaHardware::setCopperList(*doorsCopper[back], false);
         doorsActive = back;
         tunnelCopperInstalled = false;
@@ -3432,6 +3523,10 @@ void RescueOnFractalus::render()
         // deriveRenderSignals re-arms terrainDirty when the scene leaves Standby, so
         // re-entering it re-captures the doors once.
         terrainDirty = false;
+#ifdef ROF_FLIGHT_PROBE
+        { extern volatile unsigned char g_doorDecodeCount; extern volatile unsigned short g_doorDecodeVbi;
+          g_doorDecodeCount++; g_doorDecodeVbi = (unsigned short)(rof_subclock() / 313u); }
+#endif
         // GTIA mode-10 nibble field → 3bp interleaved bitplanes via the precomputed
         // kDoorP1/kDoorP2 tables (one lookup per byte, no per-byte nibble math).  Read the
         // source through a non-volatile pointer — boot_standby_launch_driver has finished writing $2000 by

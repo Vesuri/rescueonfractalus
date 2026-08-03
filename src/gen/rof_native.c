@@ -9619,10 +9619,17 @@ void boot_standby_launch_driver(void) {
        at every boot_standby_launch_driver entry restores the edge, so each fresh Standby build re-decodes the
        doors exactly once with the current level.  (No-op on SDL, which never reads it.) */
     g_doorFieldReady = 0;
-    /* g_standbyRevealReady is NOT set here (boot_standby_launch_driver ENTRY): the screen must stay black
-       through the whole ~30-frame paced construction below — setting it here revealed the
-       half-built screen and forced a full render() on every construction frame (slow).  It is
-       set at the construction-done point ($6118 region, alongside g_doorFieldReady) instead. */
+    /* g_standbyRevealReady: RESET to 0 at boot_standby_launch_driver ENTRY so the screen stays black
+       through the whole ~30-frame paced construction below (it is set back to 1 at the construction-
+       done point, $6118 region, alongside g_doorFieldReady).  It is a latch, so a re-entry (post-
+       crash / post-BREAK restart / START-from-the-$53CC-card) would otherwise arrive with it already
+       1 and the half-built standby — including a STALE, not-yet-decoded viewportBitmap under the
+       doors copper — would show for the ~30 build frames (the doors' TOP HALF black until the
+       g_doorFieldReady 0→1 edge re-decodes it: bug 3).  On first boot it starts 0 so this is a no-op;
+       resetting it makes EVERY fresh Standby build masked, matching first-boot.  Must NOT be set to 1
+       here (that reveals the half-built screen + forces a full render() per construction frame).
+       (No-op on SDL, which never reads it.) */
+    g_standbyRevealReady = 0;
     bus_write(0x02C7, 0x06);
     build_line_addr_table_2000();
     dl_index_dec_or_reset();

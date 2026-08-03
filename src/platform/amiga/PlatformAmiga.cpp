@@ -863,6 +863,20 @@ uint8_t PlatformAmiga::hwRead(uint16_t addr)
 // when the scene leaves flight).  See the death-cinematic memory.
 extern "C" volatile unsigned char g_flightBlank = 0;
 
+#ifdef ROF_FLIGHT_PROBE
+// BREAK/Restart probe: bumped by the g_restartJmp handler in run() each time a restart is taken.
+// Lets the headless FORCE_BREAK / FORCE_BREAK_EARLY runs confirm the longjmp actually fired.
+extern "C" volatile unsigned char g_restartCount = 0;
+// Standby door-field decode probe: bumped each time the $2000->viewportBitmap door decode runs;
+// g_doorDecodeVbi stamps the last one.  Lets the restart runs confirm the doors were (re)decoded.
+extern "C" volatile unsigned char  g_doorDecodeCount = 0;
+extern "C" volatile unsigned short g_doorDecodeVbi   = 0;
+// Bug-3 probe: whether the top door band was black at the earliest (smallest-g2) doors frame.
+extern "C" volatile unsigned char  g_doorTopBlack = 0;
+extern "C" volatile unsigned char  g_doorTopG2    = 0xFF;
+extern "C" volatile unsigned char  g_doorTopSeen  = 0;
+#endif
+
 // rof_pokey_write: the direct, non-virtual POKEY write fast-path (bus.h routes $D200-$D20F
 // here, skipping the C-bridge + virtual hwWrite dispatch).  Change-detect first: the 50Hz SFX
 // envelope engine rewrites AUDF/AUDC every tick, often with the same value; recomputing the
@@ -1091,6 +1105,12 @@ extern "C" void* g_restartJmp[5] = { 0, 0, 0, 0, 0 };
 // The trampoline's persistent Amiga side-effect — VVBLKI left at this value = "restart requested".
 static const uint16_t kRestartVvblki = 0x52B4u;
 
+// Pending in-flight command keycode set by the keyboard ISR (keyboardHandler, below), consumed by
+// the flight VBI through flightIrqKey().  $FF = none.  Volatile: written in the SP interrupt, read on
+// the main thread (mirrors the Atari's X-register handoff out of the IRQ).  Declared here (ahead of
+// flightIrqKey and the keyboard section) so rof_check_restart can see it for the out-of-flight BREAK.
+static volatile uint8_t s_pendingFlightKey = 0xFF;
+
 // rof_check_restart: the single pump-exit gate — quit / BREAK-restart.  Called from renderFrame +
 // pollEvents AND from the flight render path (renderFlightDirect), because the flight loop busy-waits
 // in renderFlightDirect and never reaches renderFrame — so a BREAK pressed mid-flight (VVBLKI left at
@@ -1101,6 +1121,18 @@ extern "C" void rof_check_restart(void)
 {
     if (AmigaHardware::isLeftMouseButtonPressed()) g_pumpQuit = 1;
     if (g_pumpQuit) __builtin_longjmp(g_quitJmp, 1);
+    // BREAK (Backspace = Atari BREAK $80) OUTSIDE flight: only the flight VBI's $519c CLI window
+    // consumes s_pendingFlightKey and runs game_loop_reset (the trampoline that leaves VVBLKI=$52B4).
+    // In Standby / the doors-tunnel-stars launch cinematic nothing consumes it, so BREAK would do
+    // nothing there — yet the Atari processes BREAK from its keyboard IRQ in ANY scene.  Model that
+    // here: seeing a pending BREAK while NOT in the flight VBI ($4FF5), leave the same $52B4 marker
+    // the trampoline would, so the restart longjmp below fires from any scene.  During flight leave it
+    // for the dispatcher (the already-working trampoline path).
+    if (s_pendingFlightKey == 0x80u && (uint16_t)(mem[0x0222] | (mem[0x0223] << 8)) != 0x4FF5u) {
+        s_pendingFlightKey = 0xFF;
+        mem[0x0222] = (uint8_t)(kRestartVvblki & 0xFFu);
+        mem[0x0223] = (uint8_t)(kRestartVvblki >> 8);
+    }
     if ((uint16_t)(mem[0x0222] | (mem[0x0223] << 8)) == kRestartVvblki) __builtin_longjmp(g_restartJmp, 1);
 }
 
@@ -1294,12 +1326,6 @@ void PlatformAmiga::titleChanged() {
     g_titleToRender = 20;
 }
 
-// Pending in-flight command keycode set by the keyboard ISR (keyboardHandler, below),
-// consumed by the flight VBI through flightIrqKey().  $FF = none.  Volatile: written in
-// the SP interrupt, read on the main thread (mirrors the Atari's X-register handoff out
-// of the IRQ).  Declared here so flightIrqKey() — defined before the keyboard section —
-// can see it.
-static volatile uint8_t s_pendingFlightKey = 0xFF;
 
 uint8_t PlatformAmiga::flightIrqKey() {
     // Consume the keycode the keyboard ISR stashed (if any) and reset to "none".  The flight
@@ -1690,6 +1716,49 @@ static uint32_t vbiHandler()
         if (vv == 0x4FF5u && s_fbVbi == 0) s_fbVbi = g_vbiCount;
         uint16_t dt = s_fbVbi ? (uint16_t)(g_vbiCount - s_fbVbi) : 0;
         if (s_fbVbi && s_fbPhase == 0 && dt >= 150) { s_pendingFlightKey = 0x80; s_fbPhase = 1; }  // BREAK
+    }
+#endif
+
+#ifdef ROF_FORCE_BREAK_EARLY
+    // Headless BREAK-outside-flight verification (bug 1): inject BREAK ($80) while still in the
+    // Standby / launch cinematic ($52D7), i.e. BEFORE flight, and confirm the restart fires from a
+    // non-flight scene (nothing consumes s_pendingFlightKey there — rof_check_restart must).  Fires
+    // once, before the vbi==350 auto-START.  After it we should reach the $53CC selector card.
+    {
+        static uint8_t s_fbeDone = 0;
+        if (!s_fbeDone && g_vbiCount >= 240) { s_pendingFlightKey = 0x80; s_fbeDone = 1; }  // BREAK in Standby
+        // After the restart lands on the rebuilt Standby ($52D7), hold START (CONSOL bit0) to launch
+        // the doors so bug 3 (doors top-half missing post-restart) is reproducible headlessly.  Gate
+        // on the restart having happened + the door field rebuilt; hold until launched ($060B==$23).
+        extern volatile unsigned char g_restartCount, g_doorFieldReady;
+        const uint16_t vv2 = (uint16_t)(mem[0x0222u] | (mem[0x0223u] << 8));
+        if (g_restartCount && vv2 == 0x52D7u && g_doorFieldReady) {
+            s_consolState = (mem[0x060Bu] != 0x23u) ? 0x06u : 0x07u;
+            mem[0xD01Fu]  = (mem[0x060Bu] != 0x23u) ? 0x06u : 0x07u;  // START held until launched
+        }
+    }
+#endif
+
+#ifdef ROF_FORCE_BREAK_CARD
+    // Headless bug-3 repro via the $53CC results/level-select CARD path (the scene the user tests):
+    // break during the STARS cinematic ($060B==$23 under the standby VBI $52D7, NOT flight), so the
+    // restart preserves cockpit_flag($060B)!=0 and game_main_loop shows the card.  Auto-launch (NOT
+    // NOAUTO) then holds START from the card -> standby rebuild -> doors, exercising the card->doors
+    // transition where the top half was reported missing.  Fires once.
+    {
+        static uint8_t s_fbcDone = 0;
+        const uint16_t vvc = (uint16_t)(mem[0x0222u] | (mem[0x0223u] << 8));
+        if (!s_fbcDone && vvc == 0x52D7u && mem[0x060Bu] == 0x23u && g_vbiCount > 400) {
+            s_pendingFlightKey = 0x80; s_fbcDone = 1;   // BREAK during stars
+        }
+        // Once the restart lands on the $53CC card, hold START (CONSOL bit0) to launch from it ->
+        // game_main_loop outer loop -> boot_standby_launch_driver rebuild -> doors (the bug-3 path).
+        extern volatile unsigned char g_restartCount;
+        if (g_restartCount && vvc == 0x53CCu && mem[0x365Bu] == 0x72u) {
+            s_consolState &= (uint8_t)~0x01u; mem[0xD01Fu] = s_consolState;   // START down
+        } else if (g_restartCount) {
+            s_consolState |= 0x01u; mem[0xD01Fu] = s_consolState;             // START up once off the card
+        }
     }
 #endif
 

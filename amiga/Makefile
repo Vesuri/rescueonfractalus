@@ -320,6 +320,17 @@ endif
 ifdef FORCE_BREAK
 EXTRA_DEFINES += -DROF_FORCE_BREAK
 endif
+# `make PROBES=1 FORCE_BREAK_EARLY=1`: inject BREAK ($80) during the Standby/launch cinematic
+# (before flight) to verify BREAK now restarts from a non-flight scene (bug 1) -> $53CC card.
+ifdef FORCE_BREAK_EARLY
+EXTRA_DEFINES += -DROF_FORCE_BREAK_EARLY
+endif
+# `make PROBES=1 FORCE_BREAK_CARD=1` (WITHOUT NOAUTO): break during the stars cinematic so the
+# restart lands on the $53CC card, then auto-launch drives START -> the card->doors transition
+# (bug 3 repro).
+ifdef FORCE_BREAK_CARD
+EXTRA_DEFINES += -DROF_FORCE_BREAK_CARD
+endif
 CORE_CFLAGS   = -g -MP -MMD -m68000 -msoft-float $(OPT) -nostdlib \
                 -fno-tree-loop-distribution -ffunction-sections -fdata-sections \
                 -Wno-unused-function -Wno-unused-parameter -Wno-unused-variable \
