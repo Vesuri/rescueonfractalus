@@ -1071,55 +1071,55 @@ void RescueOnFractalus::decodeDoorScrollField()
 // offset by $008B rows.  Repoint at vblank ONLY (a torn BPLxPT garbles the whole viewport).
 void RescueOnFractalus::doorScrollVblankUpdate()
 {
-    // Active only when the settled standby cockpit is the live display ($008B drives the scroll
-    // exclusively there; the forward-launch door open uses $008A, the boost return uses $008D).
-    // standbyCopperInstalled stays true across the spin (the last renderFrame before SELECT was the
-    // static standby).  g_standbyRevealReady gates out the initial boot build, where the same
-    // L_6244 door-roll runs but the screen is black-held (emptyCopper live, not standbyCopper).
+    // Runs only when the settled standby cockpit is the live display (its terrain region is the door
+    // field; the forward-launch doors use a different copper).  standbyCopperInstalled stays true
+    // across the SELECT scroll spin (renderFrame doesn't run then), and g_standbyRevealReady gates
+    // out the initial black-held boot build.
     if (!(standbyCopperInstalled && g_standbyRevealReady && standbyCopper)) return;
-    // Drive the per-scanline runs for EVERY frame the in-place scroll/build is active — i.e. while
-    // g_doorFieldReady is cleared (boot_standby_launch_driver clears it at L_6332 when the SELECT
-    // cycle starts and re-sets it at L_62f6 once the field is fully rebuilt).  $008B is NOT a
-    // reliable "done" signal: the final L_62b9 settle sets $008B=0 BETWEEN its fills while the DL
-    // still shows a partial window, so gating on $008B==0 froze the text 14px short of centre.  At
-    // rest (g_doorFieldReady!=0) staticStandby owns the display, so stop.
-    if (g_doorFieldReady != 0u) { doorScrollActive = false; return; }
 
-    // Re-decode the tall door bitmap ONLY when blit_numeric_readout marked the digit dirty (a couple
-    // of times per scroll), NOT every frame.  The digit is rewritten while the shown window is in
-    // the blank bottom rows (the LEVEL text is off-screen then), so the decode is tear-free.
-    if (g_doorScrollFieldDirty) { decodeDoorScrollField(); g_doorScrollFieldDirty = 0; }
-
-    // Parse the live door DL ($300A, 86 mode-F LMS entries, stride 3) into runs of consecutive field
-    // rows.  Consecutive rows are +46 in the LMS address, so work in ADDRESSES and divide (→ field
-    // row) only once per run start.  Guard: entry 0 must be a $2000-field address (else $300A isn't
-    // the door DL — a scene transition — so leave the last runs in place).
+    // MIRROR the live door DL ($300A) into the copper EVERY standby frame — scroll, settle, AND idle
+    // rest — so the copper always equals the DL.  There is no freeze/stale point, which is what made
+    // repeated scrolls start 1px off: the earlier gates stopped updating at rest and froze the copper
+    // at whatever frame the DL happened to be on, 1px from where the next scroll's first render put
+    // it.  Guard: entry 0 must be a $2000-field address (else $300A isn't the door DL — a scene
+    // transition — so leave the copper alone).
     unsigned a0 = mem[0x300A] | (mem[0x300B] << 8);
     if (a0 < 0x2000u || a0 >= 0x3000u) return;
-    static const int kMaxDoorRuns = 20;         // == StandbyCopperList MAX_TERRAIN_RUNS
+
+    // Re-decode the tall door bitmap only when blit_numeric_readout marked the digit dirty (a couple
+    // of times per scroll).  The pointers below are unchanged by a decode, so the fresh pixels show
+    // automatically.  The digit is rewritten while its rows are off-screen, so the decode is tear-free.
+    if (g_doorScrollFieldDirty) { decodeDoorScrollField(); g_doorScrollFieldDirty = 0; }
+
+    // Parse the DL (86 mode-F LMS entries, stride 3) into runs of consecutive field rows.  Consecutive
+    // rows are +46 in the LMS address, so work in ADDRESSES and divide (→ field row) only per run.
+    static const int kMaxDoorRuns = 20;          // == StandbyCopperList MAX_TERRAIN_RUNS
     uint8_t  runScan[kMaxDoorRuns];
     uint16_t runRow[kMaxDoorRuns];
     int nRuns = 0;
-    unsigned prevA = 0xFFFFu;                    // sentinel: forces a run break at k=0
+    unsigned prevA = 0xFFFFu;                     // sentinel: forces a run break at k=0
     for (int k = 0; k < 86; k++) {
         unsigned a = mem[0x300A + 3*k] | (mem[0x300A + 3*k + 1] << 8);
         if (a != prevA + 46u && nRuns < kMaxDoorRuns) {   // discontinuity -> new run
             uint16_t off = (a >= 0x2000u) ? (uint16_t)(a - 0x2000u) : 0u;
             uint16_t fr  = rof_divu16(off, 46u);
-            if (fr > 171u) fr = 171u;            // clamp into the 172-row door bitmap (green pad)
+            if (fr > 171u) fr = 171u;             // clamp into the 172-row door bitmap (green pad)
             runScan[nRuns] = (uint8_t)k;
             runRow[nRuns]  = fr;
             nRuns++;
         }
         prevA = a;
     }
+    // Skip the copper rewrite when the run structure is unchanged since last frame (the common idle
+    // case) — the bitmap-content refresh above is enough then.  Keeps idle standby free of redundant
+    // per-frame copper writes while still tracking every DL change during the scroll.
+    static uint8_t  sScan[kMaxDoorRuns]; static uint16_t sRow[kMaxDoorRuns]; static int sN = -1;
+    bool same = (nRuns == sN);
+    for (int i = 0; same && i < nRuns; i++) if (sScan[i] != runScan[i] || sRow[i] != runRow[i]) same = false;
+    if (same) return;
+    for (int i = 0; i < nRuns; i++) { sScan[i] = runScan[i]; sRow[i] = runRow[i]; }
+    sN = nRuns;
     standbyCopper->setTerrainRuns(*doorScrollBitmap, runScan, runRow, nRuns);
-    doorScrollActive = true;
-#ifdef ROF_FLIGHT_PROBE
-    { extern volatile unsigned short g_dsRepoints, g_dsMaxRow, g_dsMinRow;   // dsMax/Min = run count
-      g_dsRepoints++; if ((unsigned)nRuns > g_dsMaxRow) g_dsMaxRow = (unsigned short)nRuns;
-      if ((unsigned)nRuns < g_dsMinRow) g_dsMinRow = (unsigned short)nRuns; }
-#endif
 }
 
 // ---- public interface --------------------------------------------------------
