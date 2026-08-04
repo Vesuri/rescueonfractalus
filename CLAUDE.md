@@ -376,8 +376,17 @@ by the raster leaf-fills it drives, so removing GCC's spills barely helps)] · V
 firings/iter, faithful — `integ` ~13→~8/firing after the mul_u8 table below) · renderFlightDirect ~24ms ·
 setup+clear ~31ms [terrain_frame_setup loops asm'd ~26% — `TerrainFrameSetupAssembler.s`]. **mul_u8 bit-serial
 multiply → byte-exact 64KB lookup table** (`g_mulTable`, rof_native.c; mul_u8 is NOT a plain product so no
-single mulu is byte-identical — see docs/asm-migration-plan.md). NEXT (open): deeper rasterize restructure
-(keep control-point TOS in registers); signed_mul_8x16 (bit-serial, 8× in build_view — 16MB table infeasible).
+single mulu is byte-identical — see docs/asm-migration-plan.md).
+**✅ The rasterize restructure is DONE (2026-08-05, c636951): −36% beam-ticks/call (24→15), share 34.5%→29.8%,
+byte-identical.** It did NOT need fewer subdivisions — it dropped the control-point COLUMN representation for
+a tracked `span` (so the ccol load / `gap` subtract / midpoint store all vanish), put the TOS control-point
+height in a register, and straight-lined spans 3+4 (47.7% of all far-bisects, found by shape-probing the
+algorithm's input distribution — `make RASTER_C=1 RAS_SHAPE=1 PROBES=1` + `amiga/ras_shape.gdb` — not by PC
+sampling). Design, the shape data and the evaluated-and-rejected follow-ups: `docs/asm-migration-plan.md`
+§Phase 4. **Recipe worth reusing: shape-probe the algorithm → prove the algebra on the HOST
+(`tools/ras_restructure_test.c`, 1.6M randomised cases) → then write the asm → then the on-target
+differential, A/B'd against the SAME C oracle.** NEXT (open): signed_mul_8x16 (bit-serial, 8× in
+build_view — 16MB table infeasible).
 
 ⚠ **Measure asm twins with the in-process differential** (`make VERIFY=1 PROBES=1` +
 `amiga/raster_verify.gdb`): asm + C oracle run back-to-back on the SAME inputs in ONE run, byte-compared
