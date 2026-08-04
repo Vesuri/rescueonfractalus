@@ -68,6 +68,7 @@ def group_of(sym):
     if sym == "PlatformAmiga::renderFrame()":        return "renderFrame (flip busy-wait + orch.)"
     if sym in ("game_main_loop", "game_main_loop_body"):
                                                      return "game_main_loop (flight-loop orch.)"
+    if sym == "terrain_draw_objects":                return "object draw-order loop"
     if sym == "project_terrain_points_core_asm":     return "project_terrain_points"
     if sym in ("draw_dot", "terrain_plot_object", "terrain_plot_object_b",
                "raster_scaled_object", "plot_clipped_pixel"):

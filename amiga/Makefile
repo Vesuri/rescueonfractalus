@@ -265,8 +265,19 @@ NATIVE_OPT ?= -O3 -funroll-loops
 # alone pokes ~20 GTIA/ANTIC registers that did nothing but cost an indirect call.
 EXTRA_DEFINES += -DROF_HW_WRITE_POKEY_ONLY
 ifdef PROBES
-EXTRA_DEFINES += -DROF_FLIGHT_PROBE -DROF_TDRAW_PROF
+EXTRA_DEFINES += -DROF_FLIGHT_PROBE
+ifndef NO_TDRAW_PROF
+EXTRA_DEFINES += -DROF_TDRAW_PROF
 endif
+endif
+# `make PROBES=1 PROFILE_NORING=1 NO_TDRAW_PROF=1`: same idea as PROFILE_NORING, for the OTHER
+# probe that distorts a PC-sample profile.  ROF_TDRAW_PROF instruments terrain_draw_frame_core's
+# object-pair loop itself — TDPAIR counters per pair plus PB/PE brackets that each read the live
+# beam (VPOSR/VHPOSR) around every project/plot/subdivide call, ~6 chip-register reads per visible
+# pair.  That cost lands ON the object-loop source lines, inflating the `game_main_loop` bucket.
+# Use this flag when profiling the object loop; drop it when you actually want g_td* read out
+# (the g_td*/g_tdSubdiv/g_tdProjPlot globals lose their only writer and get DCE'd, so a gdb
+# script that prints them will abort with `Missing ELF symbol` — that is expected).
 # `make PROBES=1 PROFILE_NORING=1`: compile out the ROF_FLIGHT_PROBE rescue-debug ring
 # (rfPlaneSum — 4x full-plane 47x120 byte-sum walks EVERY frame; it only freezes after a
 # rescue, so in steady flight it runs forever and eats ~half the PC-profile samples).
