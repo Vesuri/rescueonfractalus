@@ -35,37 +35,24 @@ static const uint16_t kBPLCON0_3P   = (uint16_t)((3 << PLNCNTSHFT) | USE_BPLCON3
 #define INDEX_ENERGY_COL       (INDEX_SPRITES + 16)     // 39: COLOR21 ($1AA) (1)
 #define INDEX_COMPASS_WAIT    (INDEX_ENERGY_COL + 1)    // 40: WAIT(compass scanline) (1)
 #define INDEX_COMPASS_COL     (INDEX_COMPASS_WAIT + 1) // 41: color01 = compass COLPF0 (1)
-#define INDEX_TERRAIN_WAIT    (INDEX_COMPASS_COL + 1)  // 42: WAIT(kTerrainLine-1) (1)
-#define INDEX_TERRAIN_BPL     (INDEX_TERRAIN_WAIT + 1) // 41: terrain bitmap ptrs (3bp = 6)
-#define INDEX_TERRAIN_BPLCON0 (INDEX_TERRAIN_BPL + 6)  // 47: bplcon0 3P (1)
-#define INDEX_TERRAIN_MOD     (INDEX_TERRAIN_BPLCON0 + 1) // 48: bpl1mod,bpl2mod (2)
-#define INDEX_TERRAIN_PAL     (INDEX_TERRAIN_MOD + 2)  // 50: color00..03 (4)
-#define INDEX_COCKPIT_WAIT    (INDEX_TERRAIN_PAL + 4)  // 54: WAIT(kCockpitLine-1) (1)
-#define INDEX_COCKPIT_BPL     (INDEX_COCKPIT_WAIT + 1) // 55: cockpit bitmap ptrs (3bp = 6)
-#define INDEX_COCKPIT_BPLCON0 (INDEX_COCKPIT_BPL + 6)  // 61: bplcon0 3P (1)
-#define INDEX_COCKPIT_MOD     (INDEX_COCKPIT_BPLCON0 + 1) // 62: bpl1mod,bpl2mod (2)
-#define INDEX_COCKPIT_PAL     (INDEX_COCKPIT_MOD + 2)  // 64: color01..07 (7; color00 inherited)
-// Windscreen-bottom band + cockpit COLBK splits (measured live on launch_1_title; absolute
-// atari scanlines map to Amiga copper lines with offset +43, i.e. atari 129 = kCockpitLine):
-//   atari 129-136 green $C8  -> Amiga 172-179  windscreen band (value-0 corners; per-frame)
-//   atari 137-145 black $00  -> Amiga 180-188  divider strip below the band
-//   atari 146-208 blue  $90  -> Amiga 182-251  DASHBOARD instrument backgrounds (was wrong: black)
-//   atari 209+    black $00  -> Amiga 252+      cockpit floor (bottom 8 rows)
-// On the Atari these are DLI COLBK writes ($6CF6=$C8 band, $6D86=$00, $6DB5=$90, $6D86=$00 floor);
-// only COLBK changes, so we poke only color00.  Band green is per-frame (ramps with the doors);
-// the strip-black/dash-blue/floor-black are hard immediates -> baked here.
-#define INDEX_DASH_BG_WAIT    (INDEX_COCKPIT_PAL + 7)  // 71: WAIT(kCockpitLine+8-1)  (divider strip)
-#define INDEX_DASH_BG         (INDEX_DASH_BG_WAIT + 1) // 73: color00 = black (strip 180-188)
-#define INDEX_DASH_BLUE_WAIT  (INDEX_DASH_BG + 1)      // 74: WAIT(kCockpitLine+10-1 = 181)
-#define INDEX_DASH_BLUE       (INDEX_DASH_BLUE_WAIT + 1) // 75: color00 = $90 dark blue (dashboard)
-#define INDEX_FLOOR_WAIT      (INDEX_DASH_BLUE + 1)     // 76: WAIT(kCockpitLine+80-1 = 251)
-#define INDEX_FLOOR           (INDEX_FLOOR_WAIT + 1)    // 77: color00 = black (floor)
-// The energy/fuel gauge (sprite 2, COLOR21) is a fixed 56-row SOLID sprite whose Y tracks the bar
-// value (setY), so a short/high bar overflows below the dial into the black floor.  On the same line
-// color00 goes black, switch the energy bar colour (COLOR21) to black too so the overflow vanishes.
-#define INDEX_FLOOR_ENERGY    (INDEX_FLOOR + 1)         // 78: COLOR21 = black (energy bar overflow)
-#define INDEX_TERMINATOR      (INDEX_FLOOR_ENERGY + 1)  // 79: copperWait(255,254)
-#define LIST_LENGTH           (INDEX_TERMINATOR + 1)    // 80
+// Terrain (door) region — per-scanline-LMS "runs" for the level-select "elevator" scroll.  The
+// Atari launch DL gives each mode-F scanline its own LMS ($300A, stride 3); during the digit roll
+// dl_lms_fill leaves stale entries so the viewport shows several RUNS of consecutive field rows
+// (measured).  setTerrainRuns emits: a fixed prologue (WAIT + bplcon0 + modulo + palette) + run 0's
+// BPLxPT, then runs 1.. (each WAIT + 6 BPLxPT), then the CONSTANT cockpit region IMMEDIATELY after
+// the last run (emitCockpitRegion) — NO no-op padding, so the copper never churns into / delays the
+// cockpit WAIT.  The interleaved modulo (80) auto-advances the pointers one row/scanline within a run.
+#define MAX_TERRAIN_RUNS      20
+#define INDEX_TERRAIN_WAIT    (INDEX_COMPASS_COL + 1)     // WAIT(kTerrainLine-1) — run-0 entry (1)
+#define INDEX_TERRAIN_BPLCON0 (INDEX_TERRAIN_WAIT + 1)    // bplcon0 3P (1)
+#define INDEX_TERRAIN_MOD     (INDEX_TERRAIN_BPLCON0 + 1) // bpl1mod,bpl2mod (2)
+#define INDEX_TERRAIN_PAL     (INDEX_TERRAIN_MOD + 2)     // color00..03 (4) — poked by updateStandbyCopper
+#define INDEX_TERRAIN_BPL0    (INDEX_TERRAIN_PAL + 4)     // run-0 bitmap ptrs (3bp = 6)
+#define INDEX_TERRAIN_RUNS    (INDEX_TERRAIN_BPL0 + 6)    // FLOATING: runs 1.. (WAIT+6) then cockpit region
+// Cockpit region (re-emitted after the last run): WAIT(1) + BPLxPT(6) + bplcon0(1) + mod(2) +
+// color01..07(7) + 3×(WAIT+color00 band/dash/floor splits)(6) + FLOOR_ENERGY(1) + terminator(1) = 25.
+#define COCKPIT_REGION_LEN    25
+#define LIST_LENGTH           (INDEX_TERRAIN_RUNS + (MAX_TERRAIN_RUNS - 1) * 7 + COCKPIT_REGION_LEN)
 
 StandbyCopperList::StandbyCopperList()
     : CopperList((uint32_t*)AllocMem(LIST_LENGTH << 2, MEMF_CHIP | MEMF_CLEAR), LIST_LENGTH, true)
@@ -107,49 +94,47 @@ void StandbyCopperList::buildLayout(const Bitmap& title, const Bitmap& terrain, 
     d[INDEX_COMPASS_WAIT] = copperWait(kDisplayTop + 33 - 1, 0xE0);
     setCompassColor(0);                        // poked from $00CF
 
-    // ---- terrain region: WAIT (end of prev line), pointers, 2bp->3bp, modulo ----
+    // ---- terrain region: WAIT (end of prev line) + prologue, then run segments ----
     d[INDEX_TERRAIN_WAIT] = copperWait(kTerrainLine - 1, 0xE0);
-    showBitmap(INDEX_TERRAIN_BPL, terrain);    // 3bp interleaved = 6 ptr moves
     d[INDEX_TERRAIN_BPLCON0] = copperMove(bplcon0, kBPLCON0_3P);
     d[INDEX_TERRAIN_MOD]     = copperMove(bpl1mod, 80);   // 3bp interleaved = (3-1)*40
     d[INDEX_TERRAIN_MOD + 1] = copperMove(bpl2mod, 80);
     setTerrainPalette(0, 0, 0, 0);             // seeded; caller refreshes
+    // Seed a single run (rows 0..85 at offset 0 = resting doors); setTerrainRuns also emits the
+    // cockpit region + terminator right after it.  doorScrollVblankUpdate rewrites the runs during
+    // the level-select scroll.  Store the cockpit bitmap so setTerrainRuns can re-emit its region.
+    cockpitBmp_ = &cockpit;
+    { uint8_t scan0 = 0; uint16_t row0 = 0; setTerrainRuns(terrain, &scan0, &row0, 1); }
+}
 
-    // ---- cockpit region: WAIT, pointers, 3bp, modulo, constant palette ----
-    d[INDEX_COCKPIT_WAIT] = copperWait(kCockpitLine - 1, 0xE0);
-    showBitmap(INDEX_COCKPIT_BPL, cockpit);    // 3bp interleaved = 6 ptr moves
-    d[INDEX_COCKPIT_BPLCON0] = copperMove(bplcon0, kBPLCON0_3P);
-    d[INDEX_COCKPIT_MOD]     = copperMove(bpl1mod, 80);
-    d[INDEX_COCKPIT_MOD + 1] = copperMove(bpl2mod, 80);
-    // Cockpit palette: the cockpit DLIs ($6D4F/$6D67/$6D7C) reload these registers
-    // with hardcoded immediates (NOT the title/terrain shadows) — constant, and the
-    // fade is 16 throughout StandbyCopperList's life, so bake them once here.
-    //   01=COLPF0 $04, 02=COLPF1 $06, 03=COLPF2 $2C salmon, 04..06 mirror 00..02,
-    //   07=COLPF3 $26 red (bit-7 chars via plane3 -> colour 7).
-    // color00 (COLBK) is NOT set here: it carries the windscreen-band green forward from the
-    // terrain region (the door field decodes COLBK→pen0; see kNibbleColour), exactly as the
-    // Atari's COLBK stays green across the viewport/band boundary.  INDEX_DASH_BG flips it to
-    // black below the 8-row band.
-    d[INDEX_COCKPIT_PAL + 0] = copperMove(color01, atariToOCS(0x04));
-    d[INDEX_COCKPIT_PAL + 1] = copperMove(color02, atariToOCS(0x06));
-    d[INDEX_COCKPIT_PAL + 2] = copperMove(color03, atariToOCS(0x2C));
-    d[INDEX_COCKPIT_PAL + 3] = copperMove(color04, atariToOCS(0x00));
-    d[INDEX_COCKPIT_PAL + 4] = copperMove(color05, atariToOCS(0x04));
-    d[INDEX_COCKPIT_PAL + 5] = copperMove(color06, atariToOCS(0x06));
-    d[INDEX_COCKPIT_PAL + 6] = copperMove(color07, atariToOCS(0x26));
-
-    // Below the 8-row band: a black divider strip (Amiga 180-188 = atari 137-145).
-    d[INDEX_DASH_BG_WAIT] = copperWait(kCockpitLine + 8 - 1, 0xE0);
-    d[INDEX_DASH_BG]      = copperMove(color00, atariToOCS(0x00));
-    // Dashboard instrument backgrounds: dark blue COLBK $90 (Amiga 182-251).
-    d[INDEX_DASH_BLUE_WAIT] = copperWait(kCockpitLine + 10 - 1, 0xE0);
-    d[INDEX_DASH_BLUE]      = copperMove(color00, atariToOCS(0x90));
-    // Cockpit floor: COLBK back to black for the bottom 8 rows (Amiga 252+ = atari 209+).
-    d[INDEX_FLOOR_WAIT] = copperWait(kCockpitLine + 80 - 1, 0xE0);
-    d[INDEX_FLOOR]        = copperMove(color00, atariToOCS(0x00));
-    d[INDEX_FLOOR_ENERGY] = copperMove(0x1AA, 0x000);   // energy bar (sprite 2 / COLOR21) → black (hide overflow)
-
-    d[INDEX_TERMINATOR] = copperWait(255, 254);
+// emitCockpitRegion(): write the CONSTANT cockpit region (+ terminator) at list index `idx`, right
+// after the last terrain run — so no no-op padding sits between the runs and the cockpit WAIT (that
+// churn used to delay/garble the cockpit).  The cockpit content never varies during Standby (the
+// cockpit DLIs reload hardcoded immediates; updateStandbyCopper never touches it), so re-emitting it
+// per frame is just ~25 constant writes.  Returns the next free index.
+uint32_t StandbyCopperList::emitCockpitRegion(uint32_t idx)
+{
+    uint32_t* d = data_;
+    d[idx++] = copperWait(kCockpitLine - 1, 0xE0);
+    showBitmap(idx, *cockpitBmp_, 1, 1, 0, 0, 3);  idx += 6;   // 3bp interleaved = 6 ptr moves
+    d[idx++] = copperMove(bplcon0, kBPLCON0_3P);
+    d[idx++] = copperMove(bpl1mod, 80);
+    d[idx++] = copperMove(bpl2mod, 80);
+    // Cockpit palette (hardcoded immediates the cockpit DLIs reload; color00 inherited from terrain).
+    d[idx++] = copperMove(color01, atariToOCS(0x04));
+    d[idx++] = copperMove(color02, atariToOCS(0x06));
+    d[idx++] = copperMove(color03, atariToOCS(0x2C));
+    d[idx++] = copperMove(color04, atariToOCS(0x00));
+    d[idx++] = copperMove(color05, atariToOCS(0x04));
+    d[idx++] = copperMove(color06, atariToOCS(0x06));
+    d[idx++] = copperMove(color07, atariToOCS(0x26));
+    // Windscreen-band / dash / floor COLBK splits (see the atari-scanline map above).
+    d[idx++] = copperWait(kCockpitLine + 8 - 1, 0xE0);   d[idx++] = copperMove(color00, atariToOCS(0x00));
+    d[idx++] = copperWait(kCockpitLine + 10 - 1, 0xE0);  d[idx++] = copperMove(color00, atariToOCS(0x90));
+    d[idx++] = copperWait(kCockpitLine + 80 - 1, 0xE0);  d[idx++] = copperMove(color00, atariToOCS(0x00));
+    d[idx++] = copperMove(0x1AA, 0x000);   // energy bar (sprite 2 / COLOR21) → black (hide overflow)
+    d[idx++] = copperWait(255, 254);       // terminator
+    return idx;
 }
 
 // ---- per-frame setters -------------------------------------------------------
@@ -181,12 +166,24 @@ void StandbyCopperList::setCompassColor(uint16_t c)
     data_[INDEX_COMPASS_COL] = copperMove(color01, c);
 }
 
-void StandbyCopperList::setTerrainScroll(const Bitmap& b, uint16_t row)
+void StandbyCopperList::setTerrainRuns(const Bitmap& b, const uint8_t* startScan,
+                                       const uint16_t* startRow, int count)
 {
-    // Rewrite the 6 terrain BPLxPT words (3bp interleaved) to b.data + row*rowSizeInBytes,
-    // exactly as buildLayout's showBitmap(INDEX_TERRAIN_BPL, terrain) did, plus a yOffset.
-    showBitmap(INDEX_TERRAIN_BPL, b, /*firstBitplane*/1, /*delta*/1, /*xOffset*/0,
-               /*yOffset*/(int16_t)row, /*bitplaneCount*/3);
+    if (count < 1) count = 1;
+    if (count > MAX_TERRAIN_RUNS) count = MAX_TERRAIN_RUNS;
+    // Run 0 always begins at the region-entry WAIT (INDEX_TERRAIN_WAIT = kTerrainLine-1); only its
+    // 6 BPLxPT words are per-run.  showBitmap(idx, b, .., yOffset=row, 3) writes b.data + row*120
+    // (+{0,40,80}); the interleaved 80-modulo then advances one row/scanline within the run.
+    showBitmap(INDEX_TERRAIN_BPL0, b, 1, 1, 0, (int16_t)startRow[0], 3);
+    // Runs 1..count-1: each = WAIT(scanline) + 6 BPLxPT.
+    uint32_t idx = INDEX_TERRAIN_RUNS;
+    for (int i = 1; i < count; i++) {
+        data_[idx++] = copperWait(kTerrainLine + startScan[i] - 1, 0xE0);
+        showBitmap(idx, b, 1, 1, 0, (int16_t)startRow[i], 3);
+        idx += 6;
+    }
+    // Cockpit region immediately after the last run — no padding, so zero churn into the cockpit.
+    emitCockpitRegion(idx);
 }
 
 void StandbyCopperList::setTerrainPalette(uint16_t p0, uint16_t p1, uint16_t p2, uint16_t p3)

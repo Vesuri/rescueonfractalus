@@ -39,10 +39,16 @@ public:
     // the windscreen band, so there is no separate band-bg setter.
     void setTerrainPalette(uint16_t p0, uint16_t p1, uint16_t p2, uint16_t p3);
     void setTerrainBgColor(uint16_t c);                            // terrain color03 only
-    // Repoint the terrain-region (door field) bitplane pointers at bitmap `b`, offset down by
-    // `row` bitmap rows — the level-select "elevator" door scroll (post-mother-ship SELECT).
-    // Drives the same uniform vertical scroll the Atari's dl_index_dec ($008B) DL-LMS window
-    // does: viewport top scanline shows field row `row`.  MUST be called at vblank start (the
-    // door-scroll ISR hook), never mid-frame — a torn BPLxPT garbles the whole viewport.
-    void setTerrainScroll(const Bitmap& b, uint16_t row);
+    // Rewrite the terrain (door) region as up to MAX_TERRAIN_RUNS per-scanline-LMS "runs" — the
+    // level-select "elevator" door scroll (post-mother-ship SELECT).  Reproduces the Atari launch
+    // DL's per-scanline mode-F LMS: each run is a maximal block of consecutive field rows the DL
+    // maps to consecutive scanlines (the interleaved modulo auto-advances within a run).  Then the
+    // CONSTANT cockpit region is re-emitted immediately after the last run (NO no-op padding), so
+    // the copper never churns into / delays the cockpit.  startScan[0] must be 0.  Vblank-only —
+    // a torn BPLxPT garbles the whole viewport.
+    void setTerrainRuns(const Bitmap& b, const uint8_t* startScan, const uint16_t* startRow, int count);
+
+private:
+    const Bitmap* cockpitBmp_ = nullptr;   // stored by buildLayout; re-emitted after the runs
+    uint32_t emitCockpitRegion(uint32_t idx);  // write the constant cockpit region + terminator; returns next idx
 };

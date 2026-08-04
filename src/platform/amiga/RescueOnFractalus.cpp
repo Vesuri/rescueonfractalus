@@ -1077,27 +1077,49 @@ void RescueOnFractalus::doorScrollVblankUpdate()
     // static standby).  g_standbyRevealReady gates out the initial boot build, where the same
     // L_6244 door-roll runs but the screen is black-held (emptyCopper live, not standbyCopper).
     if (!(standbyCopperInstalled && g_standbyRevealReady && standbyCopper)) return;
-    const uint8_t d = mem[0x008B];
-    if (d != 0u) {
-        // Re-decode the tall door bitmap ONLY when blit_numeric_readout marked the digit dirty (a
-        // couple of times per scroll) — NOT every frame.  The scroll is otherwise a pure BPLxPT
-        // move (one 6-word pointer poke).  The digit is rewritten while the shown window is in the
-        // blank bottom rows (the LEVEL text is off-screen then), so the decode is tear-free.
-        if (g_doorScrollFieldDirty) { decodeDoorScrollField(); g_doorScrollFieldDirty = 0; }
-        uint16_t row = d > 86u ? 86u : d;   // clamp into the 172-row bitmap (86-row viewport)
-        standbyCopper->setTerrainScroll(*doorScrollBitmap, row);
-        doorScrollActive = true;
-#ifdef ROF_FLIGHT_PROBE
-        { extern volatile unsigned short g_dsRepoints, g_dsMaxRow, g_dsMinRow;
-          g_dsRepoints++; if (row > g_dsMaxRow) g_dsMaxRow = row; if (row < g_dsMinRow) g_dsMinRow = row; }
-#endif
-    } else if (doorScrollActive) {
-        // Scroll finished ($008B back to 0): settle the pointer at row 0 — the resting doors, which
-        // doorScrollBitmap already holds with the NEW level (single buffer, so no stale-text flash
-        // on handoff).  The static-standby render path keeps decoding into doorScrollBitmap.
-        standbyCopper->setTerrainScroll(*doorScrollBitmap, 0);
-        doorScrollActive = false;
+    // Drive the per-scanline runs for EVERY frame the in-place scroll/build is active — i.e. while
+    // g_doorFieldReady is cleared (boot_standby_launch_driver clears it at L_6332 when the SELECT
+    // cycle starts and re-sets it at L_62f6 once the field is fully rebuilt).  $008B is NOT a
+    // reliable "done" signal: the final L_62b9 settle sets $008B=0 BETWEEN its fills while the DL
+    // still shows a partial window, so gating on $008B==0 froze the text 14px short of centre.  At
+    // rest (g_doorFieldReady!=0) staticStandby owns the display, so stop.
+    if (g_doorFieldReady != 0u) { doorScrollActive = false; return; }
+
+    // Re-decode the tall door bitmap ONLY when blit_numeric_readout marked the digit dirty (a couple
+    // of times per scroll), NOT every frame.  The digit is rewritten while the shown window is in
+    // the blank bottom rows (the LEVEL text is off-screen then), so the decode is tear-free.
+    if (g_doorScrollFieldDirty) { decodeDoorScrollField(); g_doorScrollFieldDirty = 0; }
+
+    // Parse the live door DL ($300A, 86 mode-F LMS entries, stride 3) into runs of consecutive field
+    // rows.  Consecutive rows are +46 in the LMS address, so work in ADDRESSES and divide (→ field
+    // row) only once per run start.  Guard: entry 0 must be a $2000-field address (else $300A isn't
+    // the door DL — a scene transition — so leave the last runs in place).
+    unsigned a0 = mem[0x300A] | (mem[0x300B] << 8);
+    if (a0 < 0x2000u || a0 >= 0x3000u) return;
+    static const int kMaxDoorRuns = 20;         // == StandbyCopperList MAX_TERRAIN_RUNS
+    uint8_t  runScan[kMaxDoorRuns];
+    uint16_t runRow[kMaxDoorRuns];
+    int nRuns = 0;
+    unsigned prevA = 0xFFFFu;                    // sentinel: forces a run break at k=0
+    for (int k = 0; k < 86; k++) {
+        unsigned a = mem[0x300A + 3*k] | (mem[0x300A + 3*k + 1] << 8);
+        if (a != prevA + 46u && nRuns < kMaxDoorRuns) {   // discontinuity -> new run
+            uint16_t off = (a >= 0x2000u) ? (uint16_t)(a - 0x2000u) : 0u;
+            uint16_t fr  = rof_divu16(off, 46u);
+            if (fr > 171u) fr = 171u;            // clamp into the 172-row door bitmap (green pad)
+            runScan[nRuns] = (uint8_t)k;
+            runRow[nRuns]  = fr;
+            nRuns++;
+        }
+        prevA = a;
     }
+    standbyCopper->setTerrainRuns(*doorScrollBitmap, runScan, runRow, nRuns);
+    doorScrollActive = true;
+#ifdef ROF_FLIGHT_PROBE
+    { extern volatile unsigned short g_dsRepoints, g_dsMaxRow, g_dsMinRow;   // dsMax/Min = run count
+      g_dsRepoints++; if ((unsigned)nRuns > g_dsMaxRow) g_dsMaxRow = (unsigned short)nRuns;
+      if ((unsigned)nRuns < g_dsMinRow) g_dsMinRow = (unsigned short)nRuns; }
+#endif
 }
 
 // ---- public interface --------------------------------------------------------
