@@ -6874,6 +6874,69 @@ extern unsigned long g_tdPairs, g_tdCulled, g_tdVisPairs, g_tdProjCount;
 #define PE(v,acc) ((void)0)
 #endif
 
+/* Object draw-order pass of terrain_draw_frame_core (below), split out into its own function
+ * PURELY FOR CODEGEN — the behaviour is unchanged.
+ *
+ * Inlined into terrain_draw_frame_core, which is itself inlined into the enormous
+ * game_main_loop, GCC ran out of registers and spilled the loop's entire working set
+ * (order_idx, obj0, obj1 and BOTH per-object base pointers) to the frame, reloading them —
+ * and re-materialising `lea mem,aN` — every iteration.  The PC profile showed that spill
+ * traffic, not the work: the bucket stayed at 11.2% even with the ROF_TDRAW_PROF
+ * instrumentation compiled out (measured 2026-08-04).  On its own, with `noinline` to stop
+ * GCC folding it straight back in, the loop has registers to spare.
+ *
+ * Two hints beyond that, both worth keeping: the draw-order table and the mem base are hoisted
+ * into locals so they stay in address registers (instead of a 32-bit `addi.l #0xB67C` + `lea
+ * mem` per lookup), and each of the ten per-pair vector copies is written as one
+ * memory-to-memory `mem[k] = oN[j]` so GCC emits a single MOVE.B (d16,An),(d16,An) rather than
+ * a load into a data register plus an absolute-long store. */
+__attribute__((noinline)) static void terrain_draw_objects(void) {
+    volatile uint8_t *M = mem;                       /* one base register for the whole loop */
+    volatile const uint8_t *order = mem + 0xB67C;    /* draw-order table base */
+#ifdef __mc68000__
+    /* Hide both bases from the optimiser.  Left as plain initialisers GCC knows they are the
+       address of a symbol and constant-folds every use back into an absolute-long address
+       (`addi.l #443882` / `adda.l #397166` per lookup, MOVE.B Dn,(xxx).L = 16 cycles per store).
+       Forced into address registers it uses (d16,An) / (0,An,Dn.w) instead — 12 cycles, and no
+       per-iteration address arithmetic at all. */
+    __asm__ ("" : "+a" (M));
+    __asm__ ("" : "+a" (order));
+#endif
+    uint8_t order_idx = 0x00;
+    for (;;) {
+        TDPAIR(g_tdPairs);
+        uint8_t obj0 = order[order_idx++];           /* primary endpoint of the next pair */
+        volatile uint8_t *o0 = M + obj0;             /* base for obj0's per-object arrays */
+        M[0x28DB] = obj0;
+        if (o0[0x24B4] & 0xA0) {                     /* primary off-screen or culled: skip the pair */
+            TDPAIR(g_tdCulled);
+            order_idx++;
+        } else {
+            uint8_t obj1 = order[order_idx++];       /* companion endpoint */
+            volatile uint8_t *o1 = M + obj1;         /* base for obj1's per-object arrays */
+            uint8_t cls1 = o1[0x24B4];               /* companion visibility class (read once) */
+            M[0x272E] = order_idx;                   /* scratch-save the index across the calls */
+            if (!(cls1 & 0xC0)) {                    /* companion on-screen and not culled */
+                TDPAIR(g_tdVisPairs);
+                if (!(cls1 & 0x10))                  /* project the companion unless already projected */
+                    { TDPAIR(g_tdProjCount); PB(_pp1); project_terrain_points_core(obj1); cpu.X = obj1; terrain_plot_object(); PE(_pp1, g_tdProjPlot); }
+                /* seed subdivide sub-point [0] with the companion's projected vector */
+                M[0x25B4]=o1[0x2400]; M[0x25D2]=o1[0x242D]; M[0x25F0]=o1[0x245A];
+                M[0x24E2]=o1[0x2487]; M[0x23E2]=o1[0x23B5];
+                if (!(o0[0x24B4] & 0x10))            /* project the primary unless already projected */
+                    { TDPAIR(g_tdProjCount); PB(_pp2); project_terrain_points_core(obj0); cpu.X = obj0; terrain_plot_object(); PE(_pp2, g_tdProjPlot); }
+                /* load the primary's projected vector as the running span endpoint, then subdivide */
+                M[MEM_dl_ptr_hi]=o0[0x2400]; M[MEM_screen_ptr_lo]=o0[0x242D]; M[MEM_screen_ptr_hi]=o0[0x245A];
+                M[MEM_encounter_count]=o0[0x2487]; M[MEM_row_count]=o0[0x23B5];
+                PB(_sd); terrain_subdivide_column_core(0x00, order_idx); PE(_sd, g_tdSubdiv);
+                order_idx = M[0x272E];               /* restore the index (the calls leave $272E untouched) */
+                if (order_idx == 0) order_idx++;
+            }
+        }
+        if (order_idx == 0x90) break;
+    }
+}
+
 /* terrain_draw_frame @ $A31E — render one frame's terrain + objects (the flight top-level draw).
  *
  * For one double-buffer half (entryX = $00 display / $30 back):
@@ -6954,43 +7017,9 @@ void terrain_draw_frame_core(uint8_t entryX) {
        between them.  $24B4[obj] is the per-object visibility class: bit7 off-screen, bit6/bit5
        cull flags, bit4 "already projected this frame".  project_terrain_points and
        terrain_plot_object take the object id in the 6502 X register (still 6502-ABI twins).
-       The pass ends once the draw-order index reaches $90. */
-    uint8_t order_idx = 0x00;
-    for (;;) {
-        TDPAIR(g_tdPairs);
-        uint8_t obj0 = mem[0xB67C + order_idx++];        /* primary endpoint of the next pair */
-        /* Base pointer for obj0's per-object arrays ($23B5/$2400/$242D/$245A/$2487/$24B4 all
-           indexed by obj): one address register + 16-bit displacement per access, instead of
-           recomputing base+index every read (the terrain_frame_setup addressing win). */
-        volatile uint8_t *o0 = &mem[obj0];
-        mem[0x28DB] = obj0;
-        if (o0[0x24B4] & 0xA0) {                          /* primary off-screen or culled: skip the whole pair */
-            TDPAIR(g_tdCulled);
-            order_idx++;
-        } else {
-            uint8_t obj1 = mem[0xB67C + order_idx++];     /* companion endpoint */
-            volatile uint8_t *o1 = &mem[obj1];            /* base for obj1's per-object arrays */
-            uint8_t cls1 = o1[0x24B4];                    /* companion visibility class (read once, reused below) */
-            mem[0x272E] = order_idx;                      /* scratch-save the index across the calls (6502 used Y) */
-            if (!(cls1 & 0xC0)) {                         /* companion on-screen and not culled */
-                TDPAIR(g_tdVisPairs);
-                if (!(cls1 & 0x10))                       /* project the companion unless already projected */
-                    { TDPAIR(g_tdProjCount); PB(_pp1); project_terrain_points_core(obj1); cpu.X = obj1; terrain_plot_object(); PE(_pp1, g_tdProjPlot); }
-                /* seed subdivide sub-point [0] with the companion's projected vector */
-                mem[0x25B4]=o1[0x2400]; mem[0x25D2]=o1[0x242D]; mem[0x25F0]=o1[0x245A];
-                mem[0x24E2]=o1[0x2487]; mem[0x23E2]=o1[0x23B5];
-                if (!(o0[0x24B4] & 0x10))                 /* project the primary unless already projected */
-                    { TDPAIR(g_tdProjCount); PB(_pp2); project_terrain_points_core(obj0); cpu.X = obj0; terrain_plot_object(); PE(_pp2, g_tdProjPlot); }
-                /* load the primary's projected vector as the running span endpoint, then subdivide */
-                dl_ptr_hi=o0[0x2400]; screen_ptr_lo=o0[0x242D]; screen_ptr_hi=o0[0x245A];
-                encounter_count=o0[0x2487]; row_count=o0[0x23B5];
-                PB(_sd); terrain_subdivide_column_core(0x00, order_idx); PE(_sd, g_tdSubdiv);
-                order_idx = mem[0x272E];                 /* restore the index (the calls leave $272E untouched) */
-                if (order_idx == 0) order_idx++;
-            }
-        }
-        if (order_idx == 0x90) break;
-    }
+       The pass ends once the draw-order index reaches $90.  Body split into
+       terrain_draw_objects() above — for codegen only, see the comment there. */
+    terrain_draw_objects();
 
     /* Publish this frame's span extents for the HUD / next frame. */
     mem[0x28D9] = mem[0x28E7];
