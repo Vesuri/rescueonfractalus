@@ -1430,10 +1430,18 @@ static uint32_t keyboardHandler()
 
     // Acknowledge: pulse SP to output mode (drives KDAT low) then back to input, so the
     // keyboard releases the next keycode.  HRM Appendix G (node G-2): "Software MUST pulse
-    // the line low for 85 microseconds"; resync timeout is 143 ms, so this ~2 ms busy-wait
-    // is safe.
+    // the line low for 85 microseconds"; resync timeout is 143 ms.
+    // ⚠ This busy-wait runs INSIDE the CIA-A keyboard ISR, so it steals the CPU from the main
+    // thread every key event.  It was 1500 iters (~2 ms — ~23x the required 85 us): harmless for a
+    // single keypress, but when a key is HELD (repeat) the ISR fires often enough that ~2 ms/event
+    // preempts the main-loop for whole frames at a time.  That starved the post-mother-ship Standby
+    // level-select spin (boot_standby_launch_driver `while ($008B != 0x3E)`), which relies on the
+    // faithful Atari invariant that the main loop re-checks $008B every frame: the VBI kept
+    // decrementing $008B past the 0x3E target into 0 (where the VBI stops touching it) → deadlock
+    // (measured 2026-08-04: held/repeated F2 jammed the scroll).  ~200 iters (~270 us) keeps a
+    // comfortable ~3x margin over the 85 us minimum while cutting the per-event ISR cost ~7x.
     *ciaacraPointer |= CIACRAF_SPMODE;
-    for (volatile uint16_t d = 0; d < 1500; d++) { /* >=85us handshake */ }
+    for (volatile uint16_t d = 0; d < 200; d++) { /* >=85us KDAT-low handshake pulse */ }
     *ciaacraPointer &= (uint8_t)~CIACRAF_SPMODE;
 
     // Wire protocol (HRM Appendix G): the keycode is sent ROL'd one bit and KDAT is
