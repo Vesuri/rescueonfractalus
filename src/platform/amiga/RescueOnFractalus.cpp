@@ -1091,6 +1091,17 @@ void RescueOnFractalus::doorScrollVblankUpdate()
     // automatically.  The digit is rewritten while its rows are off-screen, so the decode is tear-free.
     if (g_doorScrollFieldDirty) { decodeDoorScrollField(); g_doorScrollFieldDirty = 0; }
 
+    // Lock-on indicator blink (cells $3491-$3497).  The faithful standby VBI keeps running
+    // lock_on_indicator_tick ($4229) throughout the scroll, so it toggles the cell bytes in mem[]
+    // exactly as the Atari does — but on the Amiga those cells only reach the display via the
+    // cockpit decode in renderFrame, and renderFrame is stalled while boot_standby_launch_driver
+    // busy-spins the scroll.  So complete the ISR-side display bridge here: whenever the tick has
+    // flagged the strip dirty, re-decode those 7 cockpit cells straight into cockpitBitmap.  The
+    // cockpit sits at Amiga lines 172+, decoded here at vblank start before the beam reaches it →
+    // tear-free (same discipline as decodeScannerBlinkCells).  Clearing the flag also means the
+    // main-loop renderFrame won't redundantly re-decode when it is running (idle standby).
+    if (g_ckLockon) { g_ckLockon = 0u; decodeCockpitSpan(0x3491u, 7u); }
+
     // Parse the DL (86 mode-F LMS entries, stride 3) into runs of consecutive field rows.  Consecutive
     // rows are +46 in the LMS address, so work in ADDRESSES and divide (→ field row) only per run.
     static const int kMaxDoorRuns = 20;          // == StandbyCopperList MAX_TERRAIN_RUNS
