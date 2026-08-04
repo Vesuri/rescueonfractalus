@@ -273,6 +273,18 @@ volatile unsigned char g_doorFieldReady = 0;
  * pointer poke); the field is re-decoded ONLY when this flag says the digit actually changed,
  * so the ISR does not re-convert the whole door field every frame.  Harmless on SDL. */
 volatile unsigned char g_doorScrollFieldDirty = 0;
+/* Raise the door-scroll dirty flag AFTER the $2000 field has been fully written (call at the END
+ * of a field-writing routine, never before).  The VBI ISR (doorScrollVblankUpdate) decodes the
+ * tall door bitmap when this is set; if it were raised before the digit glyph is drawn, the ISR
+ * could preempt the main-thread glyph write mid-store and decode a half-drawn / stale digit, then
+ * clear the flag so no later decode corrects it (the intermittent "part of LEVEL NN not cleared /
+ * half-drawn digit" in the fade-rebuild wrap).  Raising it only once the field is COMPLETE means
+ * every decode captures a whole digit.  Amiga-only; no-op on SDL/validate. */
+#ifdef ROF_PLATFORM_AMIGA
+  #define ROF_DOOR_FIELD_DIRTY()  do { g_doorScrollFieldDirty = 1; } while (0)
+#else
+  #define ROF_DOOR_FIELD_DIRTY()  do { } while (0)
+#endif
 
 /* ---------------------------------------------------------------------------
  * Idiomatic-C migration seam.
@@ -3826,11 +3838,6 @@ void render_bcd_digits_supp_all(void) {
  * column $009C=$27.  The PHA/PLA across the tens draw is kept in a local (the $01FF
  * scribble is masked in the test). */
 void blit_numeric_readout(void) {
-#ifdef ROF_PLATFORM_AMIGA
-    /* The $2000 door field is about to be rewritten with the (new) LEVEL digit — mark it so the
-     * level-select door-scroll ISR re-decodes the tall door bitmap ONCE (not every frame). */
-    g_doorScrollFieldDirty = 1;
-#endif
     draw_row = 0x38;
     if (level_or_state != 0) {
         draw_x_left = 0x1F;
@@ -3838,6 +3845,7 @@ void blit_numeric_readout(void) {
         cpu.A = sfx_rand_freq_lo1; glyph_ptr_shift3();
         cpu.A = sfx_rand_freq_hi2; glyph_ptr_from_index();
         cpu.A = sfx_rand_freq_lo2; glyph_ptr_shift3();
+        ROF_DOOR_FIELD_DIRTY();
         return;
     }
     draw_x_left = 0x27;
@@ -3850,6 +3858,7 @@ void blit_numeric_readout(void) {
     LDA(bcd);                           /* PLA */
     AND(0x0F);                          /* units index */
     glyph_ptr_shift3();
+    ROF_DOOR_FIELD_DIRTY();
 }
 
 /* dl_lms_fill @ $69F1 — build display-list LMS coordinate words.  For X=$008B up to
