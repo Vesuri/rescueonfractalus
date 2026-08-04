@@ -55,6 +55,7 @@ extern "C" void boot_standby_launch_driver(void);
 // Black-until-ready reveal gate, latched on at boot_standby_launch_driver entry (rof_native.c); renderFrame
 // holds the EmptyCopperList on screen until it sets, then switches to the real lists.
 extern "C" volatile unsigned char g_standbyRevealReady;
+extern "C" volatile unsigned char g_doorScrollFieldDirty;   // rof_native.c: LEVEL digit rewritten (door scroll)
 // BREAK/Restart black hold: set by the g_restartJmp handler in run() the instant a Backspace/BREAK
 // restart is taken.  Until the level-selector card ($53CC) is genuinely rebuilt (VVBLKI=$53CC, title
 // text in $365B, DMA shadow $022F back on), renderFrame keeps the EmptyCopperList (black) on screen —
@@ -1024,6 +1025,81 @@ void RescueOnFractalus::starVblankUpdate()
 #endif
 }
 
+// decodeDoorScrollField(): decode the whole $2000 GTIA mode-10 door field (85 rows, stride 46)
+// into the TALL doorScrollBitmap, then pad the rows below the field with the green closed-door
+// row so the elevator scroll always reads valid pixels.  Same packing as the render() door decode
+// (kDoorP1/kDoorP2 LUTs, 4-byte overscan crop, 10 longs/plane/row, plane3=0) — see that comment.
+void RescueOnFractalus::decodeDoorScrollField()
+{
+    if (!doorScrollBitmap) return;
+#ifdef ROF_FLIGHT_PROBE
+    { extern volatile unsigned short g_dsDecodes; g_dsDecodes++; }
+#endif
+    const uint8_t* sbase = (const uint8_t*)mem + 0x2000 + 4;   // +4 = wide-playfield overscan crop
+    uint8_t* vdest = (uint8_t*)doorScrollBitmap->data;
+    // Rows 0..84: the live field.  Rows 85..171: green closed-door pad (field byte $88, which the
+    // field itself uses for the blank door area above/below the LEVEL text).
+    const uint32_t g1 = (uint32_t)kDoorP1[0x88] * 0x01010101u;
+    const uint32_t g2 = (uint32_t)kDoorP2[0x88] * 0x01010101u;
+    for (int row = 0; row < 172; row++) {
+        uint32_t* p1 = (uint32_t*)vdest;
+        uint32_t* p2 = (uint32_t*)(vdest + 40);
+        uint32_t* p3 = (uint32_t*)(vdest + 80);
+        if (row < 85) {
+            const uint8_t* src = sbase + row * 46;
+            for (int b = 0; b < 10; b++) {
+                uint8_t s0 = *src++, s1 = *src++, s2 = *src++, s3 = *src++;
+                *p1++ = ((uint32_t)kDoorP1[s0] << 24) | ((uint32_t)kDoorP1[s1] << 16) |
+                        ((uint32_t)kDoorP1[s2] <<  8) |  (uint32_t)kDoorP1[s3];
+                *p2++ = ((uint32_t)kDoorP2[s0] << 24) | ((uint32_t)kDoorP2[s1] << 16) |
+                        ((uint32_t)kDoorP2[s2] <<  8) |  (uint32_t)kDoorP2[s3];
+                *p3++ = 0u;
+            }
+        } else {
+            for (int b = 0; b < 10; b++) { *p1++ = g1; *p2++ = g2; *p3++ = 0u; }
+        }
+        vdest += 120;
+    }
+}
+
+// doorScrollVblankUpdate(): the level-select "elevator" door scroll, driven from the INTB_VERTB
+// ISR at vblank start (the main thread is spinning in boot_standby_launch_driver's L_626a/L_628f
+// level-select loops, so renderFrame never runs during the scroll — only this ISR does).  The
+// Atari scrolls by DECrementing dl_src_index ($008B) per frame (dl_index_dec), which rebuilds the
+// per-scanline DL LMS window so the viewport top shows field row $008B (measured 2026-08-04).
+// Reproduce it with a single BPLxPT offset: point the standby terrain region at doorScrollBitmap
+// offset by $008B rows.  Repoint at vblank ONLY (a torn BPLxPT garbles the whole viewport).
+void RescueOnFractalus::doorScrollVblankUpdate()
+{
+    // Active only when the settled standby cockpit is the live display ($008B drives the scroll
+    // exclusively there; the forward-launch door open uses $008A, the boost return uses $008D).
+    // standbyCopperInstalled stays true across the spin (the last renderFrame before SELECT was the
+    // static standby).  g_standbyRevealReady gates out the initial boot build, where the same
+    // L_6244 door-roll runs but the screen is black-held (emptyCopper live, not standbyCopper).
+    if (!(standbyCopperInstalled && g_standbyRevealReady && standbyCopper)) return;
+    const uint8_t d = mem[0x008B];
+    if (d != 0u) {
+        // Re-decode the tall door bitmap ONLY when blit_numeric_readout marked the digit dirty (a
+        // couple of times per scroll) — NOT every frame.  The scroll is otherwise a pure BPLxPT
+        // move (one 6-word pointer poke).  The digit is rewritten while the shown window is in the
+        // blank bottom rows (the LEVEL text is off-screen then), so the decode is tear-free.
+        if (g_doorScrollFieldDirty) { decodeDoorScrollField(); g_doorScrollFieldDirty = 0; }
+        uint16_t row = d > 86u ? 86u : d;   // clamp into the 172-row bitmap (86-row viewport)
+        standbyCopper->setTerrainScroll(*doorScrollBitmap, row);
+        doorScrollActive = true;
+#ifdef ROF_FLIGHT_PROBE
+        { extern volatile unsigned short g_dsRepoints, g_dsMaxRow, g_dsMinRow;
+          g_dsRepoints++; if (row > g_dsMaxRow) g_dsMaxRow = row; if (row < g_dsMinRow) g_dsMinRow = row; }
+#endif
+    } else if (doorScrollActive) {
+        // Scroll finished ($008B back to 0): settle the pointer at row 0 — the resting doors, which
+        // doorScrollBitmap already holds with the NEW level (single buffer, so no stale-text flash
+        // on handoff).  The static-standby render path keeps decoding into doorScrollBitmap.
+        standbyCopper->setTerrainScroll(*doorScrollBitmap, 0);
+        doorScrollActive = false;
+    }
+}
+
 // ---- public interface --------------------------------------------------------
 // 2bpp→Amiga plane-pair decode LUT (filled by buildDecode2bppLut below; used by the
 // cockpit/title/compass decoders).
@@ -1056,6 +1132,10 @@ void RescueOnFractalus::initialize()
     // from the flight terrainBitmap so flight-side rendering can never clobber a still-displayed
     // pre-flight frame at a scene handoff (was the one-frame planet→flight black-band glitch).
     viewportBitmap  = Bitmap::allocate(kW, kViewportFullHeight, kBP3, true);
+    // Level-select elevator door scroll: tall door bitmap = 85 field rows + a full viewport (86)
+    // of green-door pad below, so BPLxPT + dl_src_index*rowstride (max $55=85) always stays in
+    // bounds with the 86-row viewport reading rows [D..D+85].
+    doorScrollBitmap = Bitmap::allocate(kW, 172, kBP3, true);
 #ifdef ROF_FLIGHT_PROBE
     extern volatile uint32_t g_terrainBmpAddr;   // chip addr of terrainBitmap->data (Stage 1 verifier dump)
     g_terrainBmpAddr = (uint32_t)terrainBitmap->data;
@@ -1216,7 +1296,10 @@ void RescueOnFractalus::initialize()
     // Standby; until then the EmptyCopperList holds the screen black.
     standbyCopper = new StandbyCopperList();
     if (standbyCopper && standbyCopper->data())
-        standbyCopper->buildLayout(*titleBitmap, *viewportBitmap, *cockpitBitmap,
+        // Terrain (door) region points at the TALL doorScrollBitmap (row 0 == the resting doors),
+        // so the level-select "elevator" scroll is a pure BPLxPT row-offset with no buffer handoff:
+        // the standby door decode writes doorScrollBitmap and the scroll just moves the pointer.
+        standbyCopper->buildLayout(*titleBitmap, *doorScrollBitmap, *cockpitBitmap,
                                    *leftPost, *rightPost, *nullSprite);
 
     // Static stars/planet viewport fixed copper list (the line-doubled mode-D band),
@@ -3598,32 +3681,17 @@ void RescueOnFractalus::render()
         // per plane (10 longs/plane/row instead of 40 byte writes) and use *p++ post-increment
         // (the 68000's (An)+ mode).  vdest is chip-aligned; +40/+80 keep each plane long-
         // aligned.  Big-endian packing so plane[4k+n] = kDoorPx[src[4k+n]].  plane3 = 0.
-        const uint8_t* sbase = (const uint8_t*)mem + 0x2000 + kTerrainXByteOffset;
-        uint8_t* vdest = (uint8_t*)viewportBitmap->data;   // Standby/Doors door field -> shared pre-flight viewport
-        for (int row = 0; row < (int)kTerrainHeight; row++) {
-            const uint8_t* src = sbase + row * 46;
-            uint32_t* p1 = (uint32_t*)vdest;
-            uint32_t* p2 = (uint32_t*)(vdest + 40);
-            uint32_t* p3 = (uint32_t*)(vdest + 80);
-            for (int b = 0; b < 10; b++) {                 // 10 longs = 40 bytes
-                uint8_t s0 = *src++, s1 = *src++, s2 = *src++, s3 = *src++;
-                *p1++ = ((uint32_t)kDoorP1[s0] << 24) | ((uint32_t)kDoorP1[s1] << 16) |
-                        ((uint32_t)kDoorP1[s2] <<  8) |  (uint32_t)kDoorP1[s3];
-                *p2++ = ((uint32_t)kDoorP2[s0] << 24) | ((uint32_t)kDoorP2[s1] << 16) |
-                        ((uint32_t)kDoorP2[s2] <<  8) |  (uint32_t)kDoorP2[s3];
-                *p3++ = 0u;
-            }
-            vdest += 120;
-        }
-        // The door field ($2000) shares viewportBitmap with the stars/planet renderer, but this
-        // decoder does NOT go through renderViewportModeD, so viewportLastBase still holds the
-        // previous stars base ($1000).  Stamp it to $2000 here so the NEXT renderViewportModeD
-        // ($1000, planet) sees a base mismatch -> full blitter-clear before decoding the stars.
-        // Without this, a re-launch (e.g. after the BOOSTERS return) re-enters the planet with the
-        // same $1000 base and viewportForceFull already consumed, so the clear is skipped and the
-        // door field's "LEVEL NN" text + band remnants bleed through the sparse starfield (bug 3;
-        // invisible on first boot only because chip RAM starts zeroed).  The clear lives inside
-        // renderViewportModeD (planet phase only) so it can never wipe the doors/tunnel bitmaps.
+        // Decode the whole $2000 GTIA mode-10 door field into the TALL doorScrollBitmap that
+        // standbyCopper's terrain region points at (plus the green-door pad below, so the level-
+        // select scroll offset never reads past the bitmap).  This is the authoritative decode for
+        // the current field, so clear the scroll dirty flag it may have raised.
+        decodeDoorScrollField();
+        g_doorScrollFieldDirty = 0;
+        // The stars/planet renderer decodes $1000 into viewportBitmap via renderViewportModeD; the
+        // door field no longer touches viewportBitmap, but a re-launch after the BOOSTERS return
+        // must still force a full planet clear (the door "LEVEL NN"/band remnants used to bleed
+        // through the sparse starfield — bug 3).  Stamp viewportLastBase to $2000 so the NEXT
+        // renderViewportModeD($1000) sees a base mismatch and blitter-clears first.
         viewportLastBase = 0x2000u;
     }
 

@@ -39,4 +39,10 @@ public:
     // the windscreen band, so there is no separate band-bg setter.
     void setTerrainPalette(uint16_t p0, uint16_t p1, uint16_t p2, uint16_t p3);
     void setTerrainBgColor(uint16_t c);                            // terrain color03 only
+    // Repoint the terrain-region (door field) bitplane pointers at bitmap `b`, offset down by
+    // `row` bitmap rows — the level-select "elevator" door scroll (post-mother-ship SELECT).
+    // Drives the same uniform vertical scroll the Atari's dl_index_dec ($008B) DL-LMS window
+    // does: viewport top scanline shows field row `row`.  MUST be called at vblank start (the
+    // door-scroll ISR hook), never mid-frame — a torn BPLxPT garbles the whole viewport.
+    void setTerrainScroll(const Bitmap& b, uint16_t row);
 };

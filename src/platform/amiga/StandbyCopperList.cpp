@@ -181,6 +181,14 @@ void StandbyCopperList::setCompassColor(uint16_t c)
     data_[INDEX_COMPASS_COL] = copperMove(color01, c);
 }
 
+void StandbyCopperList::setTerrainScroll(const Bitmap& b, uint16_t row)
+{
+    // Rewrite the 6 terrain BPLxPT words (3bp interleaved) to b.data + row*rowSizeInBytes,
+    // exactly as buildLayout's showBitmap(INDEX_TERRAIN_BPL, terrain) did, plus a yOffset.
+    showBitmap(INDEX_TERRAIN_BPL, b, /*firstBitplane*/1, /*delta*/1, /*xOffset*/0,
+               /*yOffset*/(int16_t)row, /*bitplaneCount*/3);
+}
+
 void StandbyCopperList::setTerrainPalette(uint16_t p0, uint16_t p1, uint16_t p2, uint16_t p3)
 {
     data_[INDEX_TERRAIN_PAL + 0] = copperMove(color00, p0);

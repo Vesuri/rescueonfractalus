@@ -267,6 +267,13 @@ volatile unsigned char g_standbyRevealReady = 0;
  * launch re-run of boot_standby_launch_driver doesn't transiently re-arm it.  Harmless on SDL. */
 volatile unsigned char g_doorFieldReady = 0;
 
+/* Amiga level-select door-scroll dirty flag (read by doorScrollVblankUpdate in
+ * RescueOnFractalus.cpp).  Set whenever blit_numeric_readout rewrites the $2000 LEVEL digit
+ * (during the SELECT "elevator" roll).  The scroll itself is a pure per-frame BPLxPT move (one
+ * pointer poke); the field is re-decoded ONLY when this flag says the digit actually changed,
+ * so the ISR does not re-convert the whole door field every frame.  Harmless on SDL. */
+volatile unsigned char g_doorScrollFieldDirty = 0;
+
 /* ---------------------------------------------------------------------------
  * Idiomatic-C migration seam.
  *
@@ -3819,6 +3826,11 @@ void render_bcd_digits_supp_all(void) {
  * column $009C=$27.  The PHA/PLA across the tens draw is kept in a local (the $01FF
  * scribble is masked in the test). */
 void blit_numeric_readout(void) {
+#ifdef ROF_PLATFORM_AMIGA
+    /* The $2000 door field is about to be rewritten with the (new) LEVEL digit — mark it so the
+     * level-select door-scroll ISR re-decodes the tall door bitmap ONCE (not every frame). */
+    g_doorScrollFieldDirty = 1;
+#endif
     draw_row = 0x38;
     if (level_or_state != 0) {
         draw_x_left = 0x1F;

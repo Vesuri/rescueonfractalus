@@ -493,6 +493,7 @@ extern "C" void scroll_field_columns(void);  // $6AEE transpiled (entered with A
 extern "C" void step_accum_sub_7e(void);      // $6A8F transpiled — the $008D DL-construction step
 extern "C" void step_accum_add_75(void);      // $6A38 native twin (rof_native.c) — tunnel ring cycle
 extern "C" void scroll_terrain_dl(void);      // $6953 native twin (rof_native.c) — one door-open step
+extern "C" void dl_index_dec(void);           // $69E3 native twin (rof_native.c) — level-select DL scroll step
 extern "C" void launch_anim_dispatch_native(void)
 {
     // $008D (step_mode_flag): the DL-CONSTRUCTION step, NOT a "reverse ring" — the Atari
@@ -507,7 +508,21 @@ extern "C" void launch_anim_dispatch_native(void)
         cpu.A = g; scroll_field_columns();                 // $6AEE: $0089 gate in A (>=4 advances accum)
         return;
     }
-    if (mem[MEM_dl_src_index]) return;                        // $008B: dl_index_dec (unused)
+    // $008B (dl_src_index): the level-select door "elevator" scroll.  The Atari $5367 does
+    // `if ($008B) JMP $69E3` (dl_index_dec) — run EVERY frame, ahead of the $008F gate — which
+    // DECs $008B and rebuilds the whole per-scanline DL LMS window (a uniform vertical scroll of
+    // the $2000 door field).  The post-mother-ship SELECT in-place level cycle
+    // (boot_standby_launch_driver L_622d..L_628f) busy-spins waiting for this ISR-driven decrement
+    // (`while ($008B != $0F)`); stubbing the branch inert froze the 2nd SELECT.  Drive it — the
+    // real INTB_VERTB ISR decrements $008B during the main-thread spin, and the render side
+    // (RescueOnFractalus door-scroll copper) repoints the viewport BPLxPT from $008B each frame.
+    if (mem[MEM_dl_src_index]) {
+        dl_index_dec();                                      // $008B: JMP $69E3
+#ifdef ROF_FLIGHT_PROBE
+        { extern volatile unsigned short g_dlScrollCount; g_dlScrollCount++; }   // liveness (scroll active)
+#endif
+        return;
+    }
     uint8_t ph = mem[MEM_sfx_toggle_8F];                // $008F every-other-frame toggle
     mem[MEM_sfx_toggle_8F] = (uint8_t)(ph >> 1);        // LSR $008F
     if (ph & 1u) return;                                     // carry set -> skip this frame

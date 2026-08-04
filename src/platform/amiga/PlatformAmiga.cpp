@@ -876,6 +876,13 @@ extern "C" volatile unsigned short g_ipDispatch   = 0;   // L_6324 idle dispatch
 extern "C" volatile unsigned short g_ipInPlace    = 0;   // L_6332 in-place branch taken
 extern "C" volatile unsigned short g_ipDoorScroll = 0;   // level<max → door-scroll rebuild
 extern "C" volatile unsigned short g_ipIntroWrap  = 0;   // level>=max → intro_screen_build_seq wrap
+// Door-scroll liveness: total dl_index_dec calls via the $008B branch (level-select elevator scroll).
+extern "C" volatile unsigned short g_dlScrollCount = 0;
+// Door-scroll render-side probe: BPLxPT repoints + the row range the ISR scrolled through.
+extern "C" volatile unsigned short g_dsRepoints = 0;
+extern "C" volatile unsigned short g_dsMaxRow   = 0;
+extern "C" volatile unsigned short g_dsMinRow   = 0xFFFF;
+extern "C" volatile unsigned short g_dsDecodes  = 0;   // full-field decodes (should be few: dirty-gated)
 extern "C" volatile unsigned long  g_blackHoldFrames = 0;  // frames the EmptyCopperList (black) was held
 // Bug-3 probe: whether the top door band was black at the earliest (smallest-g2) doors frame.
 extern "C" volatile unsigned char  g_doorTopBlack = 0;
@@ -1583,6 +1590,10 @@ static uint32_t vbiHandler()
     if (s_scene) s_scene->starVblankUpdate();
 
     if (s_scene) s_scene->flightVblankSwap();
+
+    // Level-select "elevator" door scroll (post-mother-ship SELECT): repoint the standby terrain
+    // BPLxPT from dl_src_index ($008B) each vblank while the scroll spins.  No-op unless active.
+    if (s_scene) s_scene->doorScrollVblankUpdate();
 
 #ifdef ROF_FLIGHT_PROBE
     // Probe: track the range of the atmosphere terrain pens ($00DC/$00DD) during flight to

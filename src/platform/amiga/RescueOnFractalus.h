@@ -47,6 +47,12 @@ public:
     // vblank wait and the next terrain compute overlaps the pending flip's vblank.
     bool consumeDeferredFlip() { bool d = flightFlipDeferred; flightFlipDeferred = false; return d; }
     void starVblankUpdate();     // run from the INTB_VERTB ISR at vblank: zero-copy starfield scroll
+    void doorScrollVblankUpdate(); // run from the INTB_VERTB ISR at vblank: level-select "elevator"
+                                 // door scroll (post-mother-ship SELECT).  While dl_src_index ($008B)
+                                 // is non-zero (boot_standby_launch_driver's level-select scroll spins
+                                 // on the ISR-driven decrement), repoint the standby terrain BPLxPT to
+                                 // the tall door bitmap offset by dl_src_index rows — the uniform DL-LMS
+                                 // window scroll.  No-op unless the settled standby is live.
     void decodeScannerBlinkCells(); // LR-scanner (#13) close-range blink cells $33DF/$33E0 -> cockpit
                                  // bitmap; PUBLIC because it runs in the flight VBI (via PlatformAmiga::
                                  // flightScannerTick) at 50Hz so the blink animates at full rate, not
@@ -234,6 +240,14 @@ private:
     // $1000/$2000 field) and only flight double-buffers ($1070, two halves).  Written by the Standby/
     // Doors door-field decode and by renderViewportModeD (planet/stars).
     Bitmap*     viewportBitmap   = nullptr;
+    // Level-select "elevator" door scroll (post-mother-ship SELECT).  A TALL door bitmap (the 85
+    // $2000 field rows + a viewport-height green-door pad below) that the door-scroll ISR points the
+    // standby terrain BPLxPT into, offset by dl_src_index ($008B) rows, to reproduce the Atari's
+    // dl_index_dec DL-LMS window scroll.  Decoded per active scroll frame in doorScrollVblankUpdate;
+    // doorScrollActive tracks whether we've repointed away from viewportBitmap (to restore on rest).
+    Bitmap*     doorScrollBitmap  = nullptr;
+    bool        doorScrollActive  = false;
+    void        decodeDoorScrollField();   // decode $2000 (85 rows) + green pad -> doorScrollBitmap
     // Flight terrain double-buffer: renderFlightDirect rebuilds the whole terrain region
     // every frame (blitter clear + sky fill), so it must NOT paint the live displayed buffer
     // mid-frame (caused plane1 flicker).  It renders into the off-screen one of these two and
