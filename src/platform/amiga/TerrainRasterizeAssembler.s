@@ -1,31 +1,68 @@
 ; TerrainRasterizeAssembler.s — hand-written m68k twin of terrain_column_rasterize_core
-; (asm-migration-plan Phase 2).  Plain C linkage (our own function, no SAS/C wrapper):
+; (asm-migration-plan Phase 2 / the 2026-08-05 phase-2 RESTRUCTURE).  Plain C linkage:
 ;   void terrain_column_rasterize_core(uint8_t entryDepth, uint8_t colBase)
 ; GCC m68k passes both args int-promoted ON THE STACK; at entry (before any push)
 ; entryDepth's byte is at 7(sp), colBase's at 11(sp), return address at 0(sp).
 ;
-; This is the AMIGA path of the C oracle (terrain_column_rasterize_core_c in
-; rof_native.c) — verified byte-identical to it by headless render-diff of the
-; terrainBitmap silhouette ($260E) + the plane2 dot buffer over the deterministic
-; auto-flight.  The Amiga path differs from SDL/validate in two ways the C #ifdef's:
+; This is the AMIGA path of the C oracle (terrain_column_rasterize_core_c in rof_native.c).
+; The Amiga path differs from SDL/validate in two ways the C #ifdef's:
 ;   - ROF_FIELD_PLOT is a NO-OP (nothing reads the mode-D field on Amiga), so the
 ;     $80/$81 bitmap-row scratch is never touched.
 ;   - $B5 ("b5=depth"/disp), the $95/$EA/$F4 control-point STACK residue for depth>0,
-;     and $60 are all dead after the call (CLAUDE.md VBI ZP audit + the subdivide
-;     caller only reads $82/$84/$86 + the sub-point stacks back).  So the control-
-;     point stack lives in a PRIVATE register-walked scratch buffer (the win GCC
-;     could not realise: one base reg `a3` walked by +/-3, cheap displacement
-;     addressing, no scaled index) and only slot [0] is seeded from mem[$95/$EA/$F4].
-;     The sole live writeback is the running cursor -> $82(col)/$84(height)/$86(frac).
+;     and $60 are all dead after the call (CLAUDE.md VBI ZP audit + the subdivide caller
+;     only reads $82/$84/$86 + the sub-point stacks back).  So the control-point stack
+;     lives in a PRIVATE register-walked scratch buffer and only slot [0] is seeded from
+;     mem[$95/$EA/$F4].  The sole live writeback is the running cursor -> $82/$84/$86.
+; entryDepth is dead (the C assigns it to `depth` then overwrites with 0).
+;
+; ---------------------------------------------------------------------------------------
+; STRUCTURE (2026-08-05).  Five changes, together ~2x fewer cycles than the previous asm.
+; Proven byte-identical to the oracle over 1.6M randomised host cases (including a fully
+; adversarial pass) by tools/ras_restructure_test.c, then on-target by the in-process
+; differential (make VERIFY=1 PROBES=1 + amiga/raster_verify.gdb).
+;
+;  1. NO CONTROL-POINT COLUMNS.  The old loop head re-read cp[depth].col from the stack and
+;     derived `gap = plotCol - ccol` every iteration, and the far path materialised
+;     `mid = (plotCol+ccol)>>1` and stored it.  All of that is replaced by a tracked
+;     SPAN = cp[depth].col - plotCol, kept in d2:
+;         mid          = plotCol + (span>>1)      (never materialised)
+;         child span   = span>>1
+;         parent span, after the child's whole subtree = span - (span>>1)
+;         disp (up)    = (span>>1)>>1
+;         disp (down)  = ((span>>1)-1)>>1
+;         gap==$FF <=> span==1 ;  gap==$FE <=> span==2
+;     Identities: floor((a+b)/2) = a + floor((b-a)/2), and a finished subtree always leaves
+;     plotCol exactly AT its control point's column.  Phase 1 tracks the same span (its
+;     advance leaves span = span - (span>>1)).  Span is >= 1 throughout phase 2 (a push
+;     needs span >= 3, so the parent's remainder is >= 2 and a pop lands >= 1); span == 0
+;     is unreachable and would not terminate in the C either.
+;  2. TOS CONTROL-POINT HEIGHT IN A REGISTER (d6).  The pushed midpoint height is simply
+;     LEFT in d6 (never stored), the parent's is spilled on the way down, and the leaf
+;     handlers read it for free.  Kills a store + 1-2 loads per node.
+;  3. `r = hsum&1` FOLDED into ceil: havg + (hsum&1) == (hsum+1)>>1.  One register and two
+;     instructions fewer on the roughness path.
+;  4. THE `plotCol >= $D4` BOUND AND `col = plotCol` MOVED OUT OF THE LOOP HEAD into the
+;     leaf handlers — the only places plotCol changes (the far path leaves it alone, so its
+;     loop-top re-test was always redundant), plus one test at phase-2 entry.
+;  5. SPANS 3 AND 4 ARE STRAIGHT-LINE BLOCKS (ras_sp3 / ras_sp4): no push, no pop, no
+;     dispatch, no stack traffic — the whole 3- or 4-column leaf group inline.  Measured on
+;     a real deep flight (6013 calls, 84842 far-bisects): span 3 = 31.2% and span 4 = 16.5%
+;     of all far-bisects, and they subsume 98.6% of the ff leaves and 86% of the fe leaves.
+;     Loop-top dispatches drop 174820 -> 93986 for the same picture.
 ;
 ; Register map (callee-saved d2-d7/a2-a6 saved at entry):
-;   d2=col  d3=height  d4=frac  d5=plotCol         (running state, low byte significant)
-;   d0/d1/d6/d7 = scratch        a0/a1 = scratch
+;   d0/d1/d7 = scratch (also the DRAW macro's scratch)
+;   d2 = span (cp[depth].col - plotCol)   d3 = height (cursor)   d4 = frac (cursor)
+;   d5 = plotCol   d6 = chgt (TOS control-point height)
+;     (all six hold a BYTE with the upper bits kept clean, so .w arithmetic is safe)
+;   a0 = col — the $82 writeback value; only the leaf handlers update it
+;   a1 = free
 ;   a2 = mem+$260E  (COL_MAX per-column max-height base, indexed by plotCol)
-;   a3 = current control-point slot ptr (interleaved [col,hgt,frac], walked +/-3)
+;   a3 = current control-point slot ptr; slot = [postSpan, hgt, frac], walked +/-3
 ;   a4 = control-point stack base (for the depth==0 underflow test)
 ;   a5 = g_flightDotPlane (plane2 dot buffer; armed once at init -> never null in flight)
 ;   a6 = kDrawDotRowOff (oldMax -> plane2 row byte-offset, or $FFFF sentinel; word entries)
+;   d5 doubles as phase-1 scratch (plotCol is not live until ph2_enter).
 
 	xdef	terrain_column_rasterize_core_asm
 	ifnd	ROF_RASTERIZE_VERIFY
@@ -37,10 +74,64 @@
 	xref	kHeightRowOff
 	xref	g_flightDotPlane
 
-CPBUF	equ	96		; 32 control-point slots * 3 bytes (depth stays < ~12)
+CPBUF	equ	96		; 32 control-point slots * 3 bytes (depth stays < ~16)
 
 	section	code
 
+; ---------------------------------------------------------------------------
+; DRAW(_h in d0) — keep the topmost height per column, lag-plot the dot.
+; Inlined at every call site (11 of them): the old `bsr draw`/`rts` pair cost 34 cycles
+; per DRAW, and DRAW runs once per terrain column (582/frame measured).
+; Reads  d0 = _h (zero-extended), d5 = plotCol (clean), a2/a5/a6.
+; Clobbers d0/d1/d7.  Leaves d2/d3/d4/d5/d6 and a0-a6 untouched.
+;
+; a6 = kDrawDotRowOff folds the whole oldMax gate: bails on oldMax FIRST (before any _sc
+; arithmetic) via the $FFFF sentinel, and yields kRow120[150-oldMax] directly for the
+; accepted rows.  a5 (g_flightDotPlane) is armed once at init and never null in flight ->
+; no per-plot null test.  Range-check plotCol: reject the HIGH edge (>=208) BEFORE the sub,
+; so an off-viewport column never pays for it; the LOW edge (<48) then falls out FREE as the
+; borrow from that same sub.  Same accept set as the C oracle's (unsigned)(plotCol-48) < 160.
+DRAWDOT	macro
+	moveq	#0,d1
+	move.b	(a2,d5.w),d1		; oldMax = COL_MAX(plotCol)
+	cmp.b	d1,d0			; _h - oldMax
+	bls.s	.dend\@			; _h <= oldMax -> hidden, nothing
+	move.b	d0,(a2,d5.w)		; COL_MAX(plotCol) = _h
+	cmp.b	#$97,d0
+	bcs.s	.ddot\@			; _h < $97
+	move.b	#$FF,(a2,d5.w)		; saturate: full column
+.ddot\@:
+	; ROF_PLOT_DOT(plotCol, oldMax) — uses oldMax (the PREVIOUS top), not _h.
+	add.w	d1,d1			; oldMax * 2 (word index)
+	move.w	(a6,d1.w),d1		; kDrawDotRowOff[oldMax], or $FFFF
+	bmi.s	.dend\@			; sentinel -> off display / $6b reset-floor -> skip
+	move.w	d5,d7			; plotCol
+	cmp.w	#208,d7
+	bcc.s	.dend\@			; plotCol >= 208 -> off viewport (skip the sub)
+	sub.w	#48,d7			; _ac = plotCol - 48
+	bcs.s	.dend\@			; plotCol < 48 -> borrow -> off viewport (free)
+	move.w	d7,d0			; _ac  (d0/_h is dead from here)
+	and.w	#3,d0
+	add.w	d0,d0			; shift count = 2*(_ac&3)
+	lsr.w	#2,d7			; _ac >> 2
+	add.w	d7,d1			; byte offset = rowoff + (_ac>>2)
+	move.w	#$C0,d7
+	lsr.w	d0,d7			; mask = $C0 >> (2*(_ac&3))  ( = kColMask4[_ac&3] )
+	or.b	d7,(a5,d1.w)		; g_flightDotPlane[off] |= mask
+.dend\@:
+	endm
+
+; ---------------------------------------------------------------------------
+; POP to the parent control point.  frac comes from the slot we are LEAVING (the oracle's
+; `frac = CTL_FRAC(depth+1)` after `depth--`), span/chgt from the parent's slot.
+RASPOP	macro
+	move.b	2(a3),d4		; frac  = this leaf's fraction
+	subq.l	#3,a3			; depth--
+	move.b	(a3),d2			; span  = the parent's post-child span
+	move.b	1(a3),d6		; chgt  = the parent's control-point height
+	endm
+
+; ---------------------------------------------------------------------------
 terrain_column_rasterize_core:
 terrain_column_rasterize_core_asm:
 	movem.l	d2-d7/a2-a6,-(sp)	; 11 longs = 44 bytes; args now shift +44
@@ -52,272 +143,346 @@ terrain_column_rasterize_core_asm:
 	movea.l	a4,a3			; a3 = current slot (depth 0)
 	lea	mem+$260E,a2		; COL_MAX base
 	move.l	g_flightDotPlane,a5	; plane2 dot buffer (armed at init -> non-null in flight)
-	lea	kDrawDotRowOff,a6	; oldMax -> plane2 row byte-offset (folds _sc + gate + kRow120)
-	; seed control-point slot [0] from mem[$95]/[$EA]/[$F4]
-	move.b	mem+$95,(a4)		; cp[0].col
-	move.b	mem+$EA,1(a4)		; cp[0].hgt
-	move.b	mem+$F4,2(a4)		; cp[0].frac
-	; load running cursor col/height/frac from $82/$84/$86 (zero-extended)
-	moveq	#0,d2
-	move.b	mem+$82,d2		; col
+	lea	kDrawDotRowOff,a6	; oldMax -> plane2 row byte-offset
+	; seed control-point slot [0] from mem[$EA]/[$F4]; its column becomes the span below
+	moveq	#0,d6
+	move.b	mem+$EA,d6		; chgt = CTL_HEIGHT(0)
+	move.b	d6,1(a4)		; slot[0].hgt
+	move.b	mem+$F4,2(a4)		; slot[0].frac
+	; load running cursor height/frac from $84/$86 (zero-extended)
 	moveq	#0,d3
 	move.b	mem+$84,d3		; height
 	moveq	#0,d4
 	move.b	mem+$86,d4		; frac
-	moveq	#0,d5			; plotCol (set later)
+	moveq	#0,d2			; span   (set below)
+	moveq	#0,d5			; plotCol / phase-1 scratch
 
 	; ---- setup: trivial-segment early-outs --------------------------------
 	moveq	#0,d0
-	move.b	(a4),d0			; endCol = cp[0].col
+	move.b	mem+$95,d0		; endCol = CTL_COL(0)
+	moveq	#0,d1
+	move.b	mem+$82,d1		; col (the cursor / segment left end)
+	move.w	d1,a0			; a0 = col
 	cmp.b	#$2D,d0
 	bcs	done			; endCol < $2D -> nothing on screen
-	cmp.b	d2,d0			; endCol - col
+	cmp.b	d1,d0			; endCol - col
 	bcs	done			; endCol < col -> empty segment
-	bne	ph1_loop		; endCol > col -> phase 1
+	bne.s	ph1_init		; endCol > col -> phase 1
 	; endCol == col: one column wide -> plot it and done
 	move.l	d0,d5			; plotCol = endCol
-	moveq	#0,d0
-	move.b	1(a4),d0		; cp[0].hgt
-	bsr	draw
+	move.l	d6,d0			; _h = CTL_HEIGHT(0)
+	DRAWDOT
 	bra	done
 
 	; ---- phase 1: left-clip ----------------------------------------------
-	; depth = 0 (a3 == a4).  Bisect cursor->endpoint; advance the cursor onto
-	; off-screen midpoints, push the first in-view one, until col reaches $2C.
+	; depth = 0.  Bisect cursor->endpoint; advance the cursor onto the off-screen
+	; midpoints, push the first in-view one, until col reaches $2C.  d7 = col,
+	; d2 = span (= cp[depth].col - col), d5/d0/d1 = scratch.
+ph1_init:
+	sub.b	d1,d0			; endCol - col
+	move.l	d0,d2			; span
+	move.l	d1,d7			; d7 = col (phase-1 working cursor)
 ph1_loop:
-	cmp.b	#$2C,d2
+	cmp.b	#$2C,d7
 	bcc	ph2_enter		; col >= $2C -> start filling
-	moveq	#0,d0
-	move.b	(a3),d0			; ccol
-	move.l	d2,d6			; col (already zero-extended)
-	add.w	d0,d6			; col + ccol
-	lsr.w	#1,d6			; d6 = mid
-	move.l	d4,d7			; frac (already zero-extended)
+	move.w	d2,d0
+	lsr.w	#1,d0			; d0 = child = span>>1  ( = mid - col )
+	move.w	d7,d1
+	add.w	d0,d1			; d1 = mid
+	cmp.b	#$2C,d1
+	bhi.s	ph1_push		; mid > $2C -> push midpoint as control point
+	; --- advance: col = mid; span = span - child; frac = fsum&$FF; height per roughness
+	move.l	d1,d7			; col = mid
+	sub.b	d0,d2			; span = span - child  ( = cp.col - mid )
 	moveq	#0,d1
 	move.b	2(a3),d1		; cfrac
-	add.w	d1,d7
-	addq.w	#1,d7			; d7 = fsum (bit8 = carry)
-	move.l	d3,d1			; height (already zero-extended)
-	moveq	#0,d0
-	move.b	1(a3),d0		; chgt
-	add.w	d0,d1
-	lsr.w	#1,d1			; d1 = havg = (height+chgt)>>1
-	cmp.b	#$2C,d6
-	bhi	ph1_push		; mid > $2C -> push midpoint as control point
-	; --- advance: col = mid; frac = fsum&0xFF ---
-	move.b	d6,d2			; col = mid
-	move.b	d7,d4			; frac = (uint8_t)fsum
-	btst	#7,d4
-	bne	ph1_adv_disp
-	move.b	d1,d3			; no roughness: height = havg
-	bra	ph1_loop
-ph1_adv_disp:
-	moveq	#0,d0
-	move.b	(a3),d0			; ccol
-	sub.b	d2,d0			; (ccol - col) low byte  (col == mid now; upper stays 0)
-	lsr.w	#1,d0			; d0 = disp = (uint8_t)(ccol-col) >> 1
-	btst	#8,d7
-	beq	ph1_adv_down
-	add.w	d0,d1			; up: t = havg + disp
-	cmp.w	#$FF,d1
-	bls	ph1_adv_setH
-	move.w	#$FF,d1			; saturate $FF
-ph1_adv_setH:
-	move.b	d1,d3
-	bra	ph1_loop
+	add.w	d4,d1
+	addq.w	#1,d1			; d1 = fsum (bit8 = carry)
+	move.b	d1,d4			; frac = (uint8_t)fsum
+	move.w	d6,d0
+	add.w	d3,d0
+	lsr.w	#1,d0			; d0 = havg = (height+chgt)>>1
+	btst	#7,d1
+	beq.s	ph1_adv_set		; no roughness: height = havg
+	btst	#8,d1
+	beq.s	ph1_adv_down
+	move.w	d2,d1
+	lsr.w	#1,d1			; disp = span>>1  (span == cp.col - mid now)
+	add.w	d1,d0			; up: t = havg + disp
+	cmp.w	#$FF,d0
+	bls.s	ph1_adv_set
+	move.w	#$FF,d0			; saturate $FF
+	bra.s	ph1_adv_set
 ph1_adv_down:
-	cmp.w	d0,d1			; havg - disp
-	bcs	ph1_adv_zero		; havg < disp -> floor 0
-	sub.w	d0,d1
-	move.b	d1,d3
-	bra	ph1_loop
+	move.w	d2,d1
+	lsr.w	#1,d1			; disp
+	cmp.w	d1,d0			; havg - disp
+	bcs.s	ph1_adv_zero		; havg < disp -> floor 0
+	sub.w	d1,d0
+	bra.s	ph1_adv_set
 ph1_adv_zero:
-	moveq	#0,d3
+	moveq	#0,d0
+ph1_adv_set:
+	move.l	d0,d3			; height
 	bra	ph1_loop
 ph1_push:
-	; push midpoint as control point depth+1 (col still old in d2)
-	move.b	d6,3(a3)		; cp[d+1].col = mid
-	move.b	d7,5(a3)		; cp[d+1].frac = (uint8_t)fsum
-	btst	#7,d7
-	bne	ph1_push_disp
-	move.b	d1,4(a3)		; no roughness: hgt = havg
-	bra	ph1_push_adv
-ph1_push_disp:
-	moveq	#0,d0
-	move.b	d6,d0			; mid
-	sub.b	d2,d0			; (mid - col) low byte  (upper stays 0)
-	lsr.w	#1,d0			; disp = (uint8_t)(mid-col) >> 1
-	btst	#8,d7
-	beq	ph1_push_down
-	add.w	d0,d1			; up: t = havg + disp
-	cmp.w	#$FF,d1
-	bls	ph1_push_setH
-	move.w	#$FF,d1
-ph1_push_setH:
-	move.b	d1,4(a3)
-	bra	ph1_push_adv
+	; push mid as control point depth+1 (d0 = child = mid - col, still the old col)
+	move.l	d0,d5			; keep child
+	moveq	#0,d1
+	move.b	2(a3),d1		; cfrac
+	add.w	d4,d1
+	addq.w	#1,d1			; d1 = fsum
+	move.b	d1,5(a3)		; slot[depth+1].frac = (uint8_t)fsum
+	move.w	d6,d0
+	add.w	d3,d0
+	lsr.w	#1,d0			; d0 = havg
+	btst	#7,d1
+	beq.s	ph1_push_set		; no roughness: hgt = havg
+	btst	#8,d1
+	beq.s	ph1_push_down
+	move.w	d5,d1
+	lsr.w	#1,d1			; disp = child>>1  ( = (mid-col)>>1 )
+	add.w	d1,d0
+	cmp.w	#$FF,d0
+	bls.s	ph1_push_set
+	move.w	#$FF,d0
+	bra.s	ph1_push_set
 ph1_push_down:
-	cmp.w	d0,d1
-	bcs	ph1_push_zero
-	sub.w	d0,d1
-	move.b	d1,4(a3)
-	bra	ph1_push_adv
+	move.w	d5,d1
+	lsr.w	#1,d1			; disp
+	cmp.w	d1,d0
+	bcs.s	ph1_push_zero
+	sub.w	d1,d0
+	bra.s	ph1_push_set
 ph1_push_zero:
-	clr.b	4(a3)
-ph1_push_adv:
+	moveq	#0,d0
+ph1_push_set:
+	sub.b	d5,d2			; this node's post-child span = span - child
+	move.b	d2,(a3)			; spill it
+	move.b	d6,1(a3)		; spill the parent's control-point height
+	move.l	d5,d2			; span = child
+	move.l	d0,d6			; chgt = mh
 	addq.l	#3,a3			; depth++
 	bra	ph1_loop
 
 	; ---- phase 2: trace ---------------------------------------------------
 ph2_enter:
-	move.l	d2,d5			; plotCol = col
-ph2_loop:
+	move.l	d7,d5			; plotCol = col
+	move.w	d7,a0			; a0 = col
 	cmp.b	#$D4,d5
-	bcc	done			; plotCol >= $D4 -> done
-	move.b	d5,d2			; col = plotCol (the displacement base)
-	moveq	#0,d0
-	move.b	(a3),d0			; ccol = cp[depth].col
-	move.b	d5,d1
-	sub.b	d0,d1			; gap = (uint8_t)(plotCol - ccol)
-	; gap in {$FE,$FF} are the only values >= $FE, so ONE compare separates the two
-	; endpoint cases (rare) from the common "far" bisect case (falls through).  Collapsing
-	; the old two-compare/two-.w-beq dispatch to a single not-taken .s branch on the far path
-	; shaves the span enough that ph2_special lands in .s range with no reorder cost:
-	; far path was 2x beq.w not-taken (24 cyc) -> now 1x bcc.s not-taken (8 cyc).
-	cmp.b	#$FE,d1
-	bcc.s	ph2_special	; gap >= $FE ($FE or $FF) -> endpoint handler; common far falls through
-	; --- far: bisect, push interpolated midpoint (d0 = ccol still) ---
-	move.l	d5,d6			; plotCol (already zero-extended)
-	add.w	d0,d6			; plotCol + ccol
-	lsr.w	#1,d6			; d6 = mid
-	move.b	d6,3(a3)		; cp[d+1].col = mid
-	move.l	d4,d7			; frac (already zero-extended)
+	bcc	done
+	; Dispatch on span.  Measured mix at the loop top (per frame, deep flight):
+	; span>=5 47% / span==3 28% / span==4 15% / span==2 9% / span==1 0.4%, so the
+	; generic far bisect FALLS THROUGH (one not-taken .s branch) and span 3 is next.
+ph2_loop:
+	cmp.b	#4,d2
+	bls.s	ph2_small		; span <= 4 -> the specialised blocks
+
+	; --- far: push an interpolated midpoint, descend --------------------------
+ph2_far:
+	move.w	d2,d0
+	lsr.w	#1,d0			; d0 = child span
+	sub.b	d0,d2			; d2 = this node's post-child span
+	move.b	d2,(a3)			; spill it
+	move.b	d6,1(a3)		; spill the parent's control-point height
+	move.l	d0,d2			; span = child   (d0 keeps child for disp)
 	moveq	#0,d1
 	move.b	2(a3),d1		; cfrac
-	add.w	d1,d7
-	addq.w	#1,d7			; d7 = fsum
-	move.b	d7,5(a3)		; cp[d+1].frac
-	move.l	d3,d1			; height (already zero-extended)
-	moveq	#0,d0
-	move.b	1(a3),d0		; chgt
-	add.w	d0,d1			; d1 = hsum
-	move.w	d1,d0			; d0 = hsum (saved for &1 rounding)
-	lsr.w	#1,d1			; d1 = havg
-	and.w	#1,d0			; d0 = hsum & 1
-	btst	#7,d7
-	bne.s	ph2_far_disp
-	move.b	d1,4(a3)		; no roughness: hgt = havg
-	bra	ph2_far_adv
-ph2_far_disp:
-	btst	#8,d7
-	beq.s	ph2_far_down
-	; up: disp = (uint8_t)(mid - col) >> 1 ; t = havg + disp + (hsum&1)
-	sub.b	d2,d6			; mid - col   (col == plotCol == d2; upper stays 0)
-	lsr.w	#1,d6			; d6 = disp
-	add.w	d6,d1			; havg + disp
-	add.w	d0,d1			; + (hsum&1)
-	cmp.w	#$FF,d1
-	bls.s	ph2_far_up_set
-	move.w	#$FF,d1
-ph2_far_up_set:
-	move.b	d1,4(a3)
-	bra	ph2_far_adv
-ph2_far_down:
-	; down: disp = (uint8_t)(mid - col - 1) >> 1
-	;       t = havg + (uint8_t)~disp + (hsum&1) ; mh = (t>0xFF)? t&0xFF : 0
-	sub.b	d2,d6			; mid - col   (upper stays 0)
-	subq.b	#1,d6			; mid - col - 1
-	lsr.w	#1,d6			; disp
-	not.b	d6			; ~disp = (uint8_t)~disp (upper already 0)
-	add.w	d6,d1			; havg + ~disp
-	add.w	d0,d1			; + (hsum&1)
-	cmp.w	#$FF,d1
-	bhi.s	ph2_far_down_store	; t > 0xFF -> mh = t&0xFF (low byte)
-	moveq	#0,d1			; else 0
-ph2_far_down_store:
-	move.b	d1,4(a3)
-ph2_far_adv:
+	add.w	d4,d1
+	addq.w	#1,d1			; d1 = fsum (bit8 = carry)
+	move.b	d1,5(a3)		; slot[depth+1].frac
+	add.w	d3,d6			; d6 = hsum = chgt + height
+	btst	#7,d1
+	bne.s	ph2_far_rough
+	lsr.w	#1,d6			; no roughness: chgt = havg = hsum>>1
+ph2_far_next:
 	addq.l	#3,a3			; depth++
 	bra	ph2_loop
-	; Endpoint handler.  Placed right after the far block so the ph2_special/ph2_fe forward
-	; branches stay in .s range.  ph2_ff first (the gap==$FF fall-through from ph2_special);
-	; ph2_fe below it (reached by the beq.s).  Z still holds the cmp #$FE result.
-ph2_special:
-	beq.s	ph2_fe		; gap == $FE (Z set) ; else gap == $FF -> fall through
+ph2_far_rough:
+	addq.w	#1,d6
+	lsr.w	#1,d6			; d6 = ceil(hsum/2) = havg + (hsum&1)
+	btst	#8,d1
+	beq.s	ph2_far_down
+	lsr.w	#1,d0			; disp = child>>1
+	add.w	d0,d6			; up: t = ceil + disp
+	cmp.w	#$FF,d6
+	bls.s	ph2_far_next
+	move.w	#$FF,d6			; saturate $FF
+	bra.s	ph2_far_next
+ph2_far_down:
+	subq.b	#1,d0			; child - 1   (span>=5 -> child>=2, no borrow)
+	lsr.w	#1,d0			; disp
+	not.b	d0			; ~disp (upper byte already 0)
+	add.w	d0,d6			; t = ceil + ~disp
+	cmp.w	#$FF,d6
+	bhi.s	ph2_far_dmask		; t > $FF -> mh = t & $FF
+	moveq	#0,d6			; else 0
+	bra.s	ph2_far_next
+ph2_far_dmask:
+	and.w	#$FF,d6
+	bra.s	ph2_far_next
+
+	; --- small-span dispatch (span is 1..4 here) ------------------------------
+ph2_small:
+	cmp.b	#3,d2
+	beq	ras_sp3
+	bhi	ras_sp4			; span == 4
+	cmp.b	#2,d2
+	beq	ph2_fe
+	; span == 1 -> fall through to ph2_ff
+
+	; --- span 1 (the oracle's gap==$FF): plot the endpoint column, pop -------
 ph2_ff:
-	; one column short: plot endpoint, pop
-	move.b	1(a3),d3		; height = cp[depth].hgt
-	move.w	d3,d0			; _h = height (d3 zero-extended, upper word 0)
-	bsr	draw
-	addq.b	#1,d5			; plotCol++
-	cmpa.l	a4,a3
-	beq	done
-	subq.l	#3,a3
-	move.b	5(a3),d4
-	bra	ph2_loop
-ph2_fe:
-	; two columns short: interpolated column, then endpoint, then pop
-	moveq	#0,d0
-	move.b	1(a3),d0		; chgt = cp[depth].hgt
-	add.w	d3,d0			; + height (d3 is zero-extended, upper word 0)
-	addq.w	#1,d0
-	lsr.w	#1,d0			; (chgt + height + 1) >> 1
-	bsr	draw			; DRAW(interpolated)
-	addq.b	#1,d5			; plotCol++
-	move.b	1(a3),d3		; height = cp[depth].hgt
-	move.w	d3,d0			; _h = height (d3 zero-extended, upper word 0)
-	bsr	draw			; DRAW(endpoint)
+	move.w	d5,a0			; col = plotCol
+	move.l	d6,d3			; height = chgt
+	move.l	d3,d0			; _h
+	DRAWDOT
 	addq.b	#1,d5			; plotCol++
 	cmpa.l	a4,a3
 	beq	done			; depth was 0 -> done
-	subq.l	#3,a3			; pop
-	move.b	5(a3),d4		; frac = popped slot's fraction
+	RASPOP
+	cmp.b	#$D4,d5
+	bcc	done
 	bra	ph2_loop
 
-	; ---- DRAW(h in d0) : keep topmost height per column, lag-plot the dot ----
-	; Clobbers d0/d1/d6/d7.  Reads d5=plotCol (clean, zero-extended), a2=COL_MAX,
-	; a5=dotplane, a6=kRow120.  _h (d0) arrives zero-extended from every caller.
-draw:
-	moveq	#0,d6
-	move.b	(a2,d5.w),d6		; oldMax = COL_MAX(plotCol)
-	cmp.b	d6,d0			; _h - oldMax
-	bls.s	draw_ret		; _h <= oldMax -> hidden, nothing
-	move.b	d0,(a2,d5.w)		; COL_MAX(plotCol) = _h
-	cmp.b	#$97,d0
-	bcs.s	draw_dot		; _h < $97
-	move.b	#$FF,(a2,d5.w)		; saturate: full column
-draw_dot:
-	; ROF_PLOT_DOT(plotCol, oldMax) — uses oldMax (the PREVIOUS top), not _h.
-	; a5 (g_flightDotPlane) is armed once at init and never null in flight -> no per-plot
-	; null test.  a6 = kDrawDotRowOff folds the whole oldMax gate: bails on oldMax FIRST
-	; (before any _sc arithmetic) via the $FFFF sentinel, and yields kRow120[150-oldMax]
-	; directly for the accepted rows — replacing move#150/sub/cmp#47/cmp#43/add/kRow120[].
-	; Range-check plotCol reordered (per RoF perf review): reject the HIGH edge (>=208)
-	; BEFORE the sub, so an off-viewport column never pays for it; the LOW edge (<48) then
-	; falls out FREE as the borrow (carry) from that same sub.  Same accept set as the C
-	; oracle's (unsigned)(plotCol-48) < 160.
-	move.w	d5,d7			; plotCol
-	cmp.w	#208,d7
-	bcc.s	draw_ret		; plotCol >= 208 -> off viewport (skip the sub)
-	sub.w	#48,d7			; _ac = plotCol - 48
-	bcs.s	draw_ret		; plotCol < 48 -> borrow set -> off viewport (free)
-	add.w	d6,d6			; oldMax * 2 (word index)
-	move.w	(a6,d6.w),d0		; kDrawDotRowOff[oldMax] = kRow120[150-oldMax], or $FFFF
-	bmi.s	draw_ret		; sentinel (bit15) -> off display / $6b reset-floor -> skip
-	move.w	d7,d1
-	and.w	#3,d1			; _ac & 3
-	add.w	d1,d1			; * 2
-	move.w	#$C0,d6
-	lsr.w	d1,d6			; mask = $C0 >> (2*(_ac&3))  ( = kColMask4[_ac&3] )
-	lsr.w	#2,d7			; _ac >> 2  (d7 dead after -> shift in place, saves a move.w d7,d1)
-	add.w	d7,d0			; byte offset = rowoff + (_ac>>2)
-	or.b	d6,(a5,d0.w)		; g_flightDotPlane[off] |= mask
-draw_ret:
-	rts
+	; --- span 2 (the oracle's gap==$FE): interpolated column, endpoint, pop --
+ph2_fe:
+	move.w	d5,a0			; col = plotCol
+	move.w	d6,d0
+	add.w	d3,d0
+	addq.w	#1,d0
+	lsr.w	#1,d0			; (chgt + height + 1) >> 1
+	DRAWDOT
+	addq.b	#1,d5
+	move.l	d6,d3			; height = chgt
+	move.l	d3,d0
+	DRAWDOT
+	addq.b	#1,d5
+	cmpa.l	a4,a3
+	beq	done
+	RASPOP
+	cmp.b	#$D4,d5
+	bcc	done
+	bra	ph2_loop
+
+	; --- span 3 = far(child span 1) + ff(child) + fe(parent), inline ---------
+	; child span 1 -> disp is 0 in BOTH directions, so the midpoint is just
+	; ceil(hsum/2) (up) / ceil(hsum/2)-1 floored at 0 (down) / hsum>>1 (flat), and
+	; the up case cannot overflow (ceil(hsum/2) <= 255).  3 columns, one real pop.
+ras_sp3:
+	moveq	#0,d1
+	move.b	2(a3),d1		; cfrac
+	add.w	d4,d1
+	addq.w	#1,d1			; d1 = fsum
+	move.w	d6,d0
+	add.w	d3,d0			; d0 = hsum
+	btst	#7,d1
+	bne.s	ras_sp3_rough
+	lsr.w	#1,d0			; mh = hsum>>1
+	bra.s	ras_sp3_go
+ras_sp3_rough:
+	addq.w	#1,d0
+	lsr.w	#1,d0			; ceil(hsum/2)
+	btst	#8,d1
+	bne.s	ras_sp3_go		; up: mh = ceil (no clamp possible)
+	subq.w	#1,d0			; down: ceil - 1 ...
+	bcc.s	ras_sp3_go
+	moveq	#0,d0			; ... floored at 0
+ras_sp3_go:
+	; child (span 1) ff: col = plotCol; height = mh; DRAW(mh); plotCol++; frac = fsum
+	move.w	d5,a0
+	move.b	d1,d4			; frac = (uint8_t)fsum  (before DRAWDOT clobbers d1)
+	move.l	d0,d3			; height = mh
+	DRAWDOT
+	addq.b	#1,d5
+	cmp.b	#$D4,d5
+	bcc	done
+	; parent (span 2) fe
+	move.w	d5,a0
+	move.w	d6,d0
+	add.w	d3,d0
+	addq.w	#1,d0
+	lsr.w	#1,d0			; (chgt + mh + 1) >> 1
+	DRAWDOT
+	addq.b	#1,d5
+	move.l	d6,d3			; height = chgt
+	move.l	d3,d0
+	DRAWDOT
+	addq.b	#1,d5
+	cmpa.l	a4,a3
+	beq	done
+	RASPOP
+	cmp.b	#$D4,d5
+	bcc	done
+	bra	ph2_loop
+
+	; --- span 4 = far(child span 2) + fe(child) + fe(parent), inline ---------
+	; child span 2 -> disp_up = 2>>1 = 1, disp_down = (2-1)>>1 = 0.  4 columns, one
+	; real pop.  d2 (span) is dead inside this block, so it carries mh across DRAWDOT.
+ras_sp4:
+	moveq	#0,d1
+	move.b	2(a3),d1		; cfrac
+	add.w	d4,d1
+	addq.w	#1,d1			; d1 = fsum
+	move.w	d6,d0
+	add.w	d3,d0			; d0 = hsum
+	btst	#7,d1
+	bne.s	ras_sp4_rough
+	lsr.w	#1,d0			; mh = hsum>>1
+	bra.s	ras_sp4_go
+ras_sp4_rough:
+	addq.w	#1,d0
+	lsr.w	#1,d0			; ceil(hsum/2)
+	btst	#8,d1
+	beq.s	ras_sp4_down
+	addq.w	#1,d0			; up: ceil + 1
+	cmp.w	#$FF,d0
+	bls.s	ras_sp4_go
+	move.w	#$FF,d0			; saturate $FF
+	bra.s	ras_sp4_go
+ras_sp4_down:
+	subq.w	#1,d0			; down: ceil - 1 ...
+	bcc.s	ras_sp4_go
+	moveq	#0,d0			; ... floored at 0
+ras_sp4_go:
+	move.b	d1,d4			; frac = (uint8_t)fsum  (before DRAWDOT clobbers d1)
+	move.l	d0,d2			; keep mh (span is dead in this block)
+	; child (span 2) fe: col = plotCol; DRAW((mh+height+1)>>1); ++; height = mh; DRAW(mh); ++
+	move.w	d5,a0
+	add.w	d3,d0			; mh + height
+	addq.w	#1,d0
+	lsr.w	#1,d0
+	DRAWDOT
+	addq.b	#1,d5
+	move.l	d2,d3			; height = mh
+	move.l	d3,d0
+	DRAWDOT
+	addq.b	#1,d5
+	cmp.b	#$D4,d5
+	bcc	done
+	; parent (span 2) fe
+	move.w	d5,a0
+	move.w	d6,d0
+	add.w	d3,d0
+	addq.w	#1,d0
+	lsr.w	#1,d0
+	DRAWDOT
+	addq.b	#1,d5
+	move.l	d6,d3			; height = chgt
+	move.l	d3,d0
+	DRAWDOT
+	addq.b	#1,d5
+	cmpa.l	a4,a3
+	beq	done
+	RASPOP
+	cmp.b	#$D4,d5
+	bcc	done
+	bra	ph2_loop
 
 	; ---- exit: write back the live cursor, free scratch, restore regs -------
 done:
-	move.b	d2,mem+$82		; col
+	move.l	a0,d0
+	move.b	d0,mem+$82		; col
 	move.b	d3,mem+$84		; height
 	move.b	d4,mem+$86		; frac
 	lea	CPBUF(sp),sp		; free the control-point stack

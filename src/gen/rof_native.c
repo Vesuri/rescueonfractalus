@@ -101,6 +101,40 @@ extern unsigned short rof_beam_line(void);
 #define TDSPAN(stmt, acc) do { stmt; } while (0)
 #endif
 
+/* Rasterizer SHAPE probe (`make RASTER_C=1 RAS_SHAPE=1 PROBES=1`, read via
+ * amiga/ras_shape.gdb).  Answers "where does terrain_column_rasterize_core's time actually
+ * go" structurally rather than by PC sampling: the phase-2 entry-span and far-bisect-span
+ * histograms plus the leaf / phase-1 mix.  This is what sized the 2026-08-05 phase-2
+ * restructure (span 3 = 31.2% and span 4 = 16.5% of all far-bisects -> worth straight-lining;
+ * 36.8% of DRAWs actually plot -> the hidden-surface reject path is the common one).
+ *
+ * Deliberately OFF even under PROBES: these are volatile counters inside the C ORACLE, so
+ * leaving them on would inflate the oracle's beam-ticks and wreck the asm-vs-C in-process
+ * differential's perf reading (measured: C 41 vs 15 ticks/call with them on, 20 vs 15 off). */
+#ifdef ROF_RAS_SHAPE
+extern volatile unsigned long g_rasSpanHist[16];   /* phase-2 entry span (bucketed)           */
+extern volatile unsigned long g_rasFarHist[16];    /* far-bisect span at each push (bucketed)  */
+extern volatile unsigned long g_rasFe, g_rasFf, g_rasPh1Adv, g_rasPh1Push, g_rasSat, g_rasBail;
+/* buckets: [1..8] exact, 9=9-12, 10=13-16, 11=17-24, 12=25-32, 13=33-64, 14=65-128, 15=129+ */
+static inline int ras_bucket(unsigned s) {
+    if (s <= 8)   return (int)s;
+    if (s <= 12)  return 9;
+    if (s <= 16)  return 10;
+    if (s <= 24)  return 11;
+    if (s <= 32)  return 12;
+    if (s <= 64)  return 13;
+    if (s <= 128) return 14;
+    return 15;
+}
+#define RSCNT(c)      (++(c))
+#define RSSAT(h)      do { if ((h) >= 0x97) ++g_rasSat; } while (0)
+#define RSHIST(a, s)  (++(a)[ras_bucket(s)])
+#else
+#define RSCNT(c)      ((void)0)
+#define RSSAT(h)      ((void)0)
+#define RSHIST(a, s)  ((void)0)
+#endif
+
 /* Direct-to-plane2 terrain dots (Amiga).  Instead of OR-ing each surface pixel into the mode-D
  * field and letting renderFlightDirect decode-scan it, terrain_column_rasterize writes the dots
  * STRAIGHT into the off-screen buffer's bitplane 2 (g_flightDotPlane; null on the first flight
@@ -5925,14 +5959,15 @@ void terrain_column_rasterize_core_c(uint8_t entryDepth, uint8_t colBase) {
             if (_h >= 0x97) { COL_MAX(plotCol) = 0xFF; _h = 0x97; } \
             TDCNT(g_tdPlots); b5 = depth; \
             ROF_FIELD_PLOT(_h); /* SDL/validate: OR value-2 into the mode-D field (the dots source) */ \
+            RSSAT(_h); \
             ROF_PLOT_DOT(plotCol, _oldMax); /* Amiga: lag-plot the PREVIOUS top into plane2 (see below) */ \
         } } while(0)
 
     mem[0x0060] = colBase;                   /* save the caller's column base ($60) */
 
     const uint8_t endCol = CTL_COL(0);       /* right endpoint of this segment */
-    if (endCol < 0x2D) { WB(); return; }     /* endpoint left of the viewport -> nothing on screen */
-    if (endCol < col)  { WB(); return; }     /* endpoint behind the cursor    -> empty segment     */
+    if (endCol < 0x2D) { RSCNT(g_rasBail); WB(); return; }     /* endpoint left of the viewport -> nothing on screen */
+    if (endCol < col)  { RSCNT(g_rasBail); WB(); return; }     /* endpoint behind the cursor    -> empty segment     */
     if (endCol == col) {                     /* one column wide -> plot it and done */
         plotCol = endCol;
         DRAW(CTL_HEIGHT(0));
@@ -5948,11 +5983,13 @@ void terrain_column_rasterize_core_c(uint8_t entryDepth, uint8_t colBase) {
        midpoint, the push path has not. ---- */
     depth = 0;
     for (;;) {
-        if (col >= 0x2C) { plotCol = col; break; }       /* reached the viewport -> start filling */
+        if (col >= 0x2C) { plotCol = col;
+                           RSHIST(g_rasSpanHist, (unsigned)(uint8_t)(CTL_COL(depth) - col)); break; }
         const uint8_t mid   = (uint8_t)(((unsigned)col + CTL_COL(depth)) >> 1);
         const unsigned fsum = (unsigned)frac + CTL_FRAC(depth) + 1u;       /* fraction accumulate (9-bit) */
         const unsigned havg = ((unsigned)height + CTL_HEIGHT(depth)) >> 1; /* height midpoint */
         if (mid <= 0x2C) {                               /* midpoint still off-screen: take it as the cursor */
+            RSCNT(g_rasPh1Adv);
             col  = mid;
             frac = (uint8_t)fsum;
             if (!(frac & 0x80)) height = (uint8_t)havg;  /* fraction not yet rolled: no roughness */
@@ -5963,6 +6000,7 @@ void terrain_column_rasterize_core_c(uint8_t entryDepth, uint8_t colBase) {
                 else height = (havg >= disp) ? (uint8_t)(havg - disp) : 0;                                /* down, floor 0 */
             }
         } else {                                         /* midpoint in-view: push it as control point depth+1 */
+            RSCNT(g_rasPh1Push);
             CTL_COL(depth + 1)  = mid;
             CTL_FRAC(depth + 1) = (uint8_t)fsum;
             uint8_t mh;
@@ -5991,6 +6029,7 @@ void terrain_column_rasterize_core_c(uint8_t entryDepth, uint8_t colBase) {
         col = plotCol;                                   /* the cursor tracks the running column (disp base) */
         const uint8_t gap = (uint8_t)(plotCol - CTL_COL(depth));
         if (gap == 0xFE) {                               /* two columns short: fill both, then pop */
+            RSCNT(g_rasFe);
             DRAW((uint8_t)(((unsigned)CTL_HEIGHT(depth) + height + 1u) >> 1));  /* interpolated column */
             plotCol++;
             height = CTL_HEIGHT(depth);
@@ -5999,6 +6038,7 @@ void terrain_column_rasterize_core_c(uint8_t entryDepth, uint8_t colBase) {
             if (depth-- == 0) { WB(); return; }              /* pop; underflow -> done */
             frac = CTL_FRAC(depth + 1);                       /* restore this leaf's midpoint fraction ($F5[depth]) */
         } else if (gap == 0xFF) {                        /* one column short: plot endpoint, pop */
+            RSCNT(g_rasFf);
             height = CTL_HEIGHT(depth);
             DRAW(height);
             plotCol++;
@@ -6006,6 +6046,7 @@ void terrain_column_rasterize_core_c(uint8_t entryDepth, uint8_t colBase) {
             frac = CTL_FRAC(depth + 1);                       /* $F5[depth] */
         } else {                                         /* far: bisect, push an interpolated midpoint */
             TDCNT(g_tdRasBisect);
+            RSHIST(g_rasFarHist, (unsigned)(uint8_t)(CTL_COL(depth) - plotCol));
             const uint8_t mid   = (uint8_t)(((unsigned)plotCol + CTL_COL(depth)) >> 1);
             CTL_COL(depth + 1)  = mid;
             const unsigned fsum = (unsigned)frac + CTL_FRAC(depth) + 1u;

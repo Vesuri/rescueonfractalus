@@ -56,8 +56,11 @@ ELF  = os.path.join(HERE, "out", "RoF.elf")
 # matters: first match wins.  Add rows here as the code grows.
 def group_of(sym):
     if sym in ("<unresolved/ROM>",):                 return "unresolved / Kickstart ROM / IRQ"
-    if sym.startswith(("ph1_", "ph2_")) or sym in (
-        "draw", "draw_ret", "load_far", "terrain_column_rasterize_core_asm"):
+    # "ras_sp3*"/"ras_sp4*" are the 2026-08-05 restructure's straight-line span-3/span-4 leaf
+    # groups; "done" is the rasterizer's shared writeback/epilogue label.  Without these rows
+    # they show up as separate "misc:" lines and the rasterizer bucket reads ~half its real cost.
+    if sym.startswith(("ph1_", "ph2_", "ras_sp")) or sym in (
+        "draw", "draw_ret", "load_far", "done", "terrain_column_rasterize_core_asm"):
                                                      return "rasterizer (ph1/ph2 + leaf draw)"
     if sym.startswith("sd_") or sym in ("submid", "terrain_subdivide_column_core_asm"):
                                                      return "subdivide (sd_*)"

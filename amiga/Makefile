@@ -194,6 +194,17 @@ EXTRA_DEFINES += -DROF_MULTABLE_VERIFY
 endif
 endif
 
+# Profiling aid: `make RASTER_C=1 RAS_SHAPE=1 PROBES=1` + amiga/ras_shape.gdb — the flight
+# rasterizer's STRUCTURAL shape counters (phase-2 entry-span and far-bisect-span histograms,
+# fe/ff leaf mix, phase-1 advance/push counts, hidden-surface accept rate).  These live inside
+# the C ORACLE, so RASTER_C=1 is required to reach them, and they are OFF even under PROBES
+# because their volatile increments would inflate the oracle's beam-ticks and wreck the
+# asm-vs-C in-process differential's perf reading.  This is what sized the 2026-08-05 phase-2
+# restructure — re-run it before any further rasterizer algorithm change.
+ifdef RAS_SHAPE
+EXTRA_DEFINES += -DROF_RAS_SHAPE
+endif
+
 # Debug test aid: `make FORCE_ALIEN=1` forces EVERY rescued figure to be the alien
 # jump-scare (pilot_render marker override, rof_native.c g_forceAlienRescue).  For testing
 # the alien-on-windshield animation without waiting for the level-scaled random roll.  OFF

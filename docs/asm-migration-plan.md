@@ -273,6 +273,91 @@ EXHAUSTED as a lever.** Do NOT pick from this list — it is kept only as the hi
 3. ~~Deeper rasterize restructure~~ — `TerrainRasterizeAssembler.s` (~27%, near instruction floor).
    ~~Also `terrain_frame_setup`~~ — DONE, `TerrainFrameSetupAssembler.s`.
 
+## Phase 4 — the rasterizer's PHASE-2 RESTRUCTURE ✅ DONE 2026-08-05 (−36% beam-ticks)
+
+This is the "structural, not micro-opt" step the [[flight-pc-profiler]] bottleneck map kept
+pointing at (`ph2_loop` was the single richest bucket in the whole flight frame and per-insn
+shaves there had gone thin). **Result: `terrain_column_rasterize_core` 24 → 15 beam-ticks/call
+(−36%)** measured by the in-process differential with the C oracle as the stable reference
+(oracle read 35 vs 34 ticks/call across the two runs); **0 mismatch over 1827/2007 real-flight
+calls**; `make validate FN=terrain_column_rasterize` green (4000 cases, 0 mem mismatch). The
+PC profile share went **34.5% → 29.8%** of the flight frame.
+
+### Measure first — the shape data that sized it
+Added a permanent shape probe (`make RASTER_C=1 RAS_SHAPE=1 PROBES=1` + `amiga/ras_shape.gdb`;
+off by default because its volatile counters live in the C oracle and would wreck the
+differential's perf reading). Deep flight, 263 half-frames / 6013 calls:
+
+| quantity | value | what it says |
+|---|---|---|
+| draws / call | 25.5 (153150 total) | one DRAW per terrain column |
+| accept rate | **36.8%** (56300 plots) | the hidden-surface REJECT path is the common one |
+| far-bisects | 84842 | ≈ 0.55 per column |
+| fe / ff leaves | 63172 / 26806 | fe:ff ≈ 2.4:1 |
+| phase 1 | 2309 advances + 1356 pushes | **0.6 iterations per call — cold, ignore it** |
+| far-bisect span | **3 → 31.2%, 4 → 16.5%** | half of all bisects are the two smallest cases |
+| entry span | mostly 17–64 | segments are wide; the tree is deep enough to matter |
+
+The span-3/4 dominance is just the shape of a binary subdivision tree (most internal nodes are
+penultimate), and it is the whole reason step 5 below pays.
+
+### The five changes (all in `TerrainRasterizeAssembler.s`)
+1. **No control-point COLUMNS at all** — replaced by a tracked `span = cp[depth].col - plotCol`
+   in `d2`. Kills, per far iteration: the `cp[depth].col` load, the `gap = plotCol - ccol`
+   subtract, the `mid = (plotCol+ccol)>>1` computation AND its store. Identities:
+   `mid = plotCol + (span>>1)`, `child = span>>1`, `parent-after-child = span - (span>>1)`,
+   `disp_up = (span>>1)>>1`, `disp_down = ((span>>1)-1)>>1`, `gap==$FF ⇔ span==1`,
+   `gap==$FE ⇔ span==2`. Rests on `floor((a+b)/2) = a + floor((b-a)/2)` and on a finished
+   subtree leaving plotCol exactly AT its control point's column. Phase 1 tracks the same span.
+2. **TOS control-point HEIGHT in a register** (`d6`) — the pushed midpoint height is simply left
+   there (never stored), the parent's is spilled on the way down, leaves read it free.
+3. **`r = hsum&1` folded into `ceil`**: `havg + (hsum&1) == (hsum+1)>>1` — one register and two
+   instructions fewer, and it freed the register budget for 1 and 2.
+4. **`plotCol >= $D4` and `col = plotCol` moved OUT of the loop head** into the leaf handlers —
+   the only places plotCol changes, so the far path's re-test was always redundant.
+5. **Spans 3 and 4 are straight-line blocks** (`ras_sp3` / `ras_sp4`): no push, no pop, no
+   dispatch, no stack traffic, DRAW inlined — the whole 3- or 4-column leaf group in one block.
+   They absorb 47.7% of the far-bisects, 98.6% of the ff leaves and 86% of the fe leaves;
+   loop-top dispatches drop **174820 → 93986** for the same picture.
+   (DRAW is inlined at all 11 sites — the old `bsr`/`rts` pair was 34 cycles per column.)
+
+Net on the hot far path: **230 → 140 cycles** (hand-counted from the objdump). Code size is
+unchanged (~1560 bytes) despite the 11 inline DRAWs.
+
+### Verification recipe (reusable — this is the strong part)
+1. **Host equivalence FIRST** — `tools/ras_restructure_test.c` runs a verbatim copy of the C
+   oracle's Amiga path and the restructured algorithm on identical inputs and diffs `$260E`, the
+   whole plane-2 dot buffer, the `$82/$84/$86` writeback and the draw/plot counts:
+   **1.6M randomised cases, 0 mismatches**, over four input regimes (realistic, phase-1-heavy,
+   right-edge-heavy, fully adversarial bytes). `cc -O2 -o /tmp/rast tools/ras_restructure_test.c`.
+   Doing the algebra proof on the host, before writing a line of m68k, is what made a ~400-line
+   asm rewrite tractable — every identity in step 1 above was validated there first.
+2. **Then on-target**: `make clean && make -j4 VERIFY=1 PROBES=1` +
+   `GDBSCRIPT=raster_verify.gdb ./raster_diff.sh <label> 300`.
+3. **A/B the two asm versions against the SAME C oracle** (`git show HEAD:...s` into place,
+   rebuild, re-run). The oracle's ticks/call is the stable reference; raw `effFPS` and the PC
+   profile share are both too noisy to size a change this size.
+
+### Evaluated and NOT done (with the numbers, so nobody re-derives them)
+- **Whole-subtree occlusion culling.** 63% of DRAWs are rejected by the hidden-surface test, and
+  a span-3 group's three heights are EXACTLY bounded by `max(height, chgt)` — so
+  `if max(height,chgt) <= min(colMax[p..p+2])` the entire group can be skipped (its exit state
+  `(plotCol+3, chgt, cfrac)` is known in advance and independent of the midpoint). Cost with a
+  `lea (a2,d5.w),a1` + three `cmp.b (a1)+,dM` = ~60 cycles; saving when it fires = ~136.
+  **Break-even needs >44% of span-3 groups FULLY occluded** — plausible (per-draw rejects are
+  spatially correlated) but a coin flip, and it loses on every miss. Measure
+  `P(all-3-rejected)` with a shape probe before attempting.
+- **Incremental dot column** (mask in a register rotated `ror.b #2` + the plane byte pointer in
+  `a1`, advanced on the mask's wrap) instead of the per-draw `cmp #208/sub #48/and #3/lsr`
+  arithmetic: ~86 cycles saved per ACCEPTED draw (36.8% of them) for ~20 per column ⇒ only
+  ~5% of the rasterizer, and the `plotCol` range gate needs either a padded dot buffer or a
+  per-column compare that eats the win. Not worth the risk yet.
+- **Running `COL_MAX` pointer** for the consecutive columns inside `ras_sp3`/`ras_sp4`: the
+  `lea` + `addq.l #1,a1` per column costs more than the 6 cycles/access it saves. Measured
+  negative on paper; don't.
+- **`$97` saturation via a 256-byte store-value table** (`move.b (aX,d0.w),(a2,d5.w)` replacing
+  `move.b`+`cmp`+`bcs`): ~10 cycles per accepted draw ⇒ ~1.5%. Marginal.
+
 **ACTUAL open lever (2026-07-20, user-directed):** the remaining waste is mem[]→bitplane
 *conversion* on the hot path, NOT the terrain math. All hot-path graphics should write bitplanes
 directly. Prime suspect = **object drawing** (ground objects / downed pilot / enemy fire): the

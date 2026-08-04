@@ -709,6 +709,16 @@ extern "C" unsigned long g_tdMidpoints = 0, g_tdPlots = 0, g_tdRasterCalls = 0, 
 extern "C" unsigned long g_tdRaster = 0;
 // terrain_column_rasterize shape split: phase-2 bisect-push steps vs. DRAW() attempts.
 extern "C" unsigned long g_tdRasBisect = 0, g_tdRasDraw = 0;
+#ifdef ROF_RAS_SHAPE
+// Rasterizer SHAPE probe (`make RASTER_C=1 RAS_SHAPE=1 PROBES=1`, read via amiga/ras_shape.gdb)
+// — the structural counters that sized the 2026-08-05 phase-2 restructure.  See the header
+// comment on ROF_RAS_SHAPE in rof_native.c for why this is off even under PROBES.
+// Buckets: [1..8] exact span, 9=9-12, 10=13-16, 11=17-24, 12=25-32, 13=33-64, 14=65-128, 15=129+.
+extern "C" volatile unsigned long g_rasSpanHist[16] = { 0 };
+extern "C" volatile unsigned long g_rasFarHist[16] = { 0 };
+extern "C" volatile unsigned long g_rasFe = 0, g_rasFf = 0, g_rasPh1Adv = 0,
+                                 g_rasPh1Push = 0, g_rasSat = 0, g_rasBail = 0;
+#endif
 // object draw-order loop shape (-DROF_TDRAW_PROF): total pairs scanned, pairs culled at the
 // primary gate (cheap skip), visible pairs reaching the companion/subdivide path, and total
 // project_terrain_points calls.  Divide by g_tdFrames.  Tells whether the loop cost is the
