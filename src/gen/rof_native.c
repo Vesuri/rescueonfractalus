@@ -8167,6 +8167,42 @@ static int laser_dot_run(uint8_t* p2, uint8_t* p1, unsigned c0, unsigned c1) {
     }
     return 1;
 }
+/* The OTHER half of the bolt (plot_scanline_up): a vertical run of `count` pixels in ONE column,
+ * walking UP the screen (row, row-1, ...) = DOWN the dot buffer (scanline 150-row upwards).  The
+ * column is fixed, so the byte offset and the 2-bit column mask are loop invariants and the run is
+ * a strided pointer walk (+120/scanline) — one OR per pixel with no per-pixel call, no table
+ * lookups and no re-derived geometry.  Same ROF_PLOT_DOT/_P1 gate as laser_dot_span (column window
+ * [48,208), scanline [0,47) minus the $6b floor at 43). */
+static void laser_dot_column(int rowStart, unsigned col, unsigned count) {
+    if (!g_flightDotPlane || count == 0u) return;
+    if (col < 48u || col >= 208u) return;
+    unsigned ac = col - 48u;
+    uint8_t m = kColMask4[ac & 3u];
+    int lo = 150 - rowStart;                            /* first scanline (rows walk upward) */
+    int hi = lo + (int)count - 1;                       /* last scanline */
+    if (lo < 0)  lo = 0;
+    if (hi > 46) hi = 46;
+    if (lo == 43) lo++;                                 /* the $6b floor scanline is never plotted */
+    if (hi == 43) hi--;
+    if (lo > hi) return;
+    unsigned b = (ac >> 2) + kRow120[lo];
+    uint8_t* p2 = g_flightDotPlane + b;
+    uint8_t* p1 = g_flightObjP1 ? g_flightObjP1 + b : (uint8_t*)0;
+    int n = hi - lo + 1;
+    if (p1) {
+        for (int sc = lo; n--; sc++) {
+            if (sc != 43) { *p2 |= m; *p1 |= m; }
+            p2 += 120; p1 += 120;
+        }
+        if (lo < g_objRowLo) g_objRowLo = lo;           /* ROF_PLOT_DOT_P1 dirty scanline range */
+        if (hi > g_objRowHi) g_objRowHi = hi;
+    } else {
+        for (int sc = lo; n--; sc++) {
+            if (sc != 43) *p2 |= m;
+            p2 += 120;
+        }
+    }
+}
 static void laser_dot_span(uint8_t row, unsigned xstart, unsigned width) {
     if (!g_flightDotPlane || width == 0u) return;
     int sc = 150 - (int)row;                            /* height/row -> dot scanline (as ROF_PLOT_DOT) */
@@ -8248,6 +8284,27 @@ void plot_scanline_up(void) {
         if (cpu.X >= 0xD4) return;                /* CPX #$D4; BCS done */
         if (cpu.Y < 0x6C) return;                 /* CPY #$6C; BCC done */
         mem[0x28FA] = mem[0x28F4];                /* LDA $28F4; STA $28FA */
+#ifdef ROF_PLATFORM_AMIGA
+        if (plot_pixel_mask == 0xFF) {
+            /* value-3 solid bolt: batch the column's vertical run (see laser_dot_column).  The
+               loop below plots at Y, Y-1, ... and stops either when Y drops under $6C (the DEC
+               $28FA is skipped on that exit) or when the counter reaches 0 — reproduce both exits
+               exactly so the mem[]/cpu contract is unchanged.  ($28E2/$80/$81/$B5, the per-pixel
+               path's other residue, are dead here as in plot_scanline_down.) */
+            unsigned n     = mem[0x28FA];
+            unsigned neff  = n ? n : 256u;        /* $28FA==0 wraps: 256 pixels */
+            unsigned avail = (unsigned)cpu.Y - 0x6Cu + 1u;   /* rows down to the $6C floor */
+            if (avail <= neff) {                  /* Y-exhaustion wins the tie (tested first) */
+                laser_dot_column(cpu.Y, cpu.X, avail);
+                cpu.Y = 0x6B;
+                mem[0x28FA] = (uint8_t)(n - (avail - 1u));
+            } else {
+                laser_dot_column(cpu.Y, cpu.X, neff);
+                cpu.Y = (uint8_t)(cpu.Y - neff);
+                mem[0x28FA] = 0;
+            }
+        } else
+#endif
         do {                                      /* L_ab3f (up the column) */
             terrain_plot_pixel_core(cpu.Y, cpu.X, plot_pixel_mask);                 /* ab3f (preserves X/Y) */
             cpu.Y--;                              /* DEY */
