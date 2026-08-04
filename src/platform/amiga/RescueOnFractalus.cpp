@@ -2642,6 +2642,25 @@ void RescueOnFractalus::renderFrame()
     // Hold instead: keep whatever copper is live (the last reverse-ring frame) and skip re-decode
     // until the door field is ready; staticStandby then takes over cleanly on the g_doorFieldReady
     // 0->1 edge with the finished LEVEL-NN field.
+    // In-place level cycle (post-mother-ship SELECT): both the door scroll (level<max) and the
+    // intro_screen_build_seq fade-rebuild WRAP (level>=max) run with g_doorFieldReady cleared (at
+    // L_6332) while rsBoostReturn holds ($003A==$FF).  Unlike the boost reverse-tunnel handoff below
+    // (which arrives on the tunnel copper), this comes from the live static standby
+    // (standbyCopperInstalled && !tunnelCopperInstalled).  Keep the standby copper live and ANIMATE
+    // it rather than freezing: poke the per-frame colours so the WRAP's $0071 dark-green fade shows
+    // (was frozen by the boost-handoff-hold below), and re-decode the door bitmap when the LEVEL
+    // digit changes (g_doorScrollFieldDirty) so the fade-up reveals the new level.  The door-scroll
+    // case spins in the main loop (renderFrame isn't called mid-scroll; doorScrollVblankUpdate drives
+    // the scroll from the ISR), so this only refreshes colours + the decode at the scroll boundaries.
+    if (rsBoostReturn && !g_doorFieldReady && standbyCopperInstalled && !tunnelCopperInstalled) {
+        if (g_doorScrollFieldDirty) { decodeDoorScrollField(); g_doorScrollFieldDirty = 0; }
+        updateStandbyCopper(false);   // pokes terrain color00/03 = atariToOCS(mem[$0071]) fade ramp
+#ifdef ROF_FLIGHT_PROBE
+        { extern volatile unsigned char g_liveCopper; g_liveCopper = 10; }   // 10 = in-place wrap fade
+#endif
+        return;
+    }
+
     if (rsBoostReturn && !g_doorFieldReady) {
 #ifdef ROF_FLIGHT_PROBE
         { extern volatile unsigned char g_liveCopper; g_liveCopper = 8;
