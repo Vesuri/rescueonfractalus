@@ -339,14 +339,13 @@ unchanged (~1560 bytes) despite the 11 inline DRAWs.
    profile share are both too noisy to size a change this size.
 
 ### Evaluated and NOT done (with the numbers, so nobody re-derives them)
-- **Whole-subtree occlusion culling.** 63% of DRAWs are rejected by the hidden-surface test, and
-  a span-3 group's three heights are EXACTLY bounded by `max(height, chgt)` — so
-  `if max(height,chgt) <= min(colMax[p..p+2])` the entire group can be skipped (its exit state
-  `(plotCol+3, chgt, cfrac)` is known in advance and independent of the midpoint). Cost with a
-  `lea (a2,d5.w),a1` + three `cmp.b (a1)+,dM` = ~60 cycles; saving when it fires = ~136.
-  **Break-even needs >44% of span-3 groups FULLY occluded** — plausible (per-draw rejects are
-  spatially correlated) but a coin flip, and it loses on every miss. Measure
-  `P(all-3-rejected)` with a shape probe before attempting.
+- **Whole-subtree occlusion culling. MEASURED 2026-08-05 (commit 24346f9) — verdict NO; see
+  Phase 5 below for the numbers.** The idea was sound and P turned out HIGH (58% of span-3 and
+  56% of span-4 groups are fully hidden), but the saving is only ~2% of the rasterizer because a
+  rejected DRAWDOT is already 32 cycles and the test has to re-read the same `COL_MAX` byte.
+  Both older sizings on this line were wrong: the "~44% break-even" ignored that 98% of misses
+  bail on the FIRST compare (so a miss is cheap), and the "saving = ~136" over-counted what a
+  fully-rejected group actually costs. Do not re-derive — re-run the committed probe instead.
 - **Incremental dot column** (mask in a register rotated `ror.b #2` + the plane byte pointer in
   `a1`, advanced on the mask's wrap) instead of the per-draw `cmp #208/sub #48/and #3/lsr`
   arithmetic: ~86 cycles saved per ACCEPTED draw (36.8% of them) for ~20 per column ⇒ only
@@ -392,9 +391,41 @@ never writes; only later ones do. Consequences, both load-bearing:
 - **DRAWDOT is only ~23% of the rasterizer** (~61 of 269 cycles/draw at the measured 61/27/12
   reject / accept-no-dot / dot mix). The other ~77% is TREE TRAVERSAL. Any further per-plot
   micro-opt is capped at ~2%; the lever is the traversal, or not emitting the draw at all.
-- **Whole-subtree occlusion culling is now the best-sized candidate** (61% of draws rejected, and
-  ras_sp3+ras_sp4 still absorb 47.7% of far-bisects). Still needs `P(all-3-rejected)` measured
-  before writing any asm — add it to the shape probe next to `g_rasDots`.
+- **Whole-subtree occlusion culling** looked like the best-sized candidate here (61% of draws
+  rejected, ras_sp3+ras_sp4 absorb 47.7% of far-bisects). It was measured next, and closed —
+  see below.
+
+### `P(all-3-rejected)`: occlusion culling measured and CLOSED (commit 24346f9)
+
+New permanent counters `g_rasSp3Grp/Occl/Edge/Cons[]`, `g_rasSp4*` (`ras_occl_probe`, ROF_RAS_SHAPE,
+hooked into the C oracle's far-bisect branch — the oracle has no literal `ras_sp3` block, a
+"span-3 group" there is a far-bisect whose span is 3). Build `make clean && make -j4 PROBES=1
+PROFILE_NORING=1 RASTER_C=1 SUBDIV_C=1 RAS_SHAPE=1`, run `GDBSCRIPT=ras_shape.gdb ./diag_run.sh 150`.
+411 half-frames of real flight:
+
+| | groups | all-rejected (exact) | cheap `max()` test | misses bailing on the 1st compare | edge-truncated |
+|---|---|---|---|---|---|
+| span 3 | 40576 | 23755 = **58%** | 23148 = 57% | 17053/17428 = **98%** | 267 = 0.7% |
+| span 4 | 21201 | 11884 = **56%** | 11083 = 52% | 9851/10118 = **97%** | 288 = 1.4% |
+
+**P is high and misses are cheap — and it still does not pay.** Skipping a fully-hidden group
+saves only ~172 (sp3) / ~232 (sp4) cycles, because a rejected DRAWDOT is already just 32 cycles
+(`moveq` + indexed byte load + `cmp` + taken branch). The cull test must load the SAME `COL_MAX`
+byte and compare it — 22 cycles a column — costing ~132 / ~174 back, plus a `#$D3`/`#$D2` guard
+to replace the group's mid-block `$D4` right-edge exit (the edge-truncated groups above are not
+cullable as written). Net ~13 / ~22 cycles a group ≈ **100 cycles per rasterize call against
+~4200 = ~2% of the rasterizer, ~0.6% of the frame.** A FREE perfect oracle would reach ~17% of
+the rasterizer, so **the test eats ~85% of its own ceiling.**
+
+**Generalisable lesson:** the reject path is already at the floor — any "check before drawing"
+scheme re-reads the very byte the check was meant to avoid, and can only recover the ~10 cycles
+of bookkeeping around that load. The sub-variants die the same way: *cull only span-4* is the
+better half but ~1%, and a *coarse min-summary array* (one load covering 4 columns) needs a 4-min
+recomputed on every accepted draw (~70 cycles × 9.6/call) = a large net loss.
+**Not measured, if ever revisited:** culling at a LARGER span, where one hit skips a whole subtree.
+Blocker: for span ≥ 5 the roughness displacement can lift midpoints above both endpoints, so
+`max(ends)` is unsound — it needs `+ ~S/2` slack (far less likely to fire) *and* a min over S
+columns (S loads = as costly as the draws). That is a redesign, not a micro-opt.
 
 ### `terrain_subdivide_column_core` — dead mem[] round-trips (commit 17622b6)
 - The `mid` ($8D-$91) **entry load is a pure round-trip**: every read of `mid` is preceded by an
