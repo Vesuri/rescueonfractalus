@@ -730,6 +730,17 @@ extern "C" volatile unsigned long g_rasSp3Grp = 0, g_rasSp3Occl = 0, g_rasSp3Edg
 extern "C" volatile unsigned long g_rasSp4Grp = 0, g_rasSp4Occl = 0, g_rasSp4Edge = 0;
 extern "C" volatile unsigned long g_rasSp3Cons[4] = { 0 };
 extern "C" volatile unsigned long g_rasSp4Cons[5] = { 0 };
+// terrain_subdivide_column shape: the per-call helper mix that sizes TerrainSubdivideAssembler.s.
+// FarKnown/P2Known count the far-endpoint reloads that are provably redundant (the slot was just
+// written from `mid`, which is still in registers) — the twin's 2x `lsl.w #8` per load is 44
+// cycles before the four byte loads.
+extern "C" volatile unsigned long g_sdCalls = 0, g_sdBail = 0, g_sdP2Adopt = 0,
+                                  g_sdP2Push = 0, g_sdP2Known = 0;
+extern "C" volatile unsigned long g_sdInner = 0, g_sdInnerFarKnown = 0, g_sdFarEsc = 0,
+                                  g_sdSteep = 0;
+extern "C" volatile unsigned long g_sdRas = 0, g_sdSkip = 0, g_sdPop = 0, g_sdMid = 0,
+                                  g_sdRough = 0;
+extern "C" volatile unsigned long g_sdDepthHist[16] = { 0 };
 #endif
 // object draw-order loop shape (-DROF_TDRAW_PROF): total pairs scanned, pairs culled at the
 // primary gate (cheap skip), visible pairs reaching the companion/subdivide path, and total

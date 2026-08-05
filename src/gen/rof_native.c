@@ -182,12 +182,28 @@ static inline void ras_occl_probe(unsigned span, unsigned mh, unsigned chgt, uns
     else            { g_rasSp4Occl += all; ++g_rasSp4Cons[k]; }
 }
 #define RSOCCL(span, mh, chgt, hgt, pc, cm) ras_occl_probe((span), (mh), (chgt), (hgt), (pc), (cm))
+
+/* --- terrain_subdivide_column SHAPE probe (2026-08-05) -----------------------------------
+ * Same flag/build/readout as the rasterizer probe above (the counters live in the C ORACLE,
+ * so SUBDIV_C=1 is required as well as RASTER_C=1).  Sizes the asm twin's per-call helper
+ * mix, because TerrainSubdivideAssembler.s pays for its 16-bit points in `lsl.w #8` /
+ * `lsr.w #8` byte-pair<->word conversions at 22 cycles each (the terrain_frame_setup lesson):
+ * load_far and load_span cost 2 apiece, push_mid 2, submid 2 (+1 on roughness).
+ * The counter that matters is FarKnown: after ANY push the far endpoint at the new depth IS
+ * the midpoint we just wrote, so the reload at the top of the next inner iteration (and
+ * submid's own far load in phase 2) is provably redundant. */
+extern volatile unsigned long g_sdCalls, g_sdBail, g_sdP2Adopt, g_sdP2Push, g_sdP2Known;
+extern volatile unsigned long g_sdInner, g_sdInnerFarKnown, g_sdFarEsc, g_sdSteep;
+extern volatile unsigned long g_sdRas, g_sdSkip, g_sdPop, g_sdMid, g_sdRough;
+extern volatile unsigned long g_sdDepthHist[16];
+#define SDCNT(c) (++(c))
 #else
 #define RSCNT(c)      ((void)0)
 #define RSSAT(h)      ((void)0)
 #define RSHIST(a, s)  ((void)0)
 #define RSDOT(col, h) ((void)0)
 #define RSOCCL(span, mh, chgt, hgt, pc, cm) ((void)0)
+#define SDCNT(c)      ((void)0)
 #endif
 
 /* Direct-to-plane2 terrain dots (Amiga).  Instead of OR-ing each surface pixel into the mode-D
@@ -6261,9 +6277,11 @@ static inline SubPt subdiv_midpoint(SubPt span, SubPt far, uint8_t *M) {
     uint16_t midHgt = (uint16_t)((hgtSum >> 1) | (hgtSum & 0x8000u));
     uint16_t fracSum = (uint16_t)(span.frac + far.frac + 1u);
     SubPt mid;
+    SDCNT(g_sdMid);
     mid.frac = (uint8_t)fracSum;
     mid.col  = midCol;
     if (mid.frac & 0x80u) {                                  /* roughness: displace the height */
+        SDCNT(g_sdRough);
         uint16_t disp = (uint16_t)(midCol - span.col) >> 1;
         midHgt = (fracSum >= 0x100u) ? (uint16_t)(midHgt + disp) : (uint16_t)(midHgt - disp);
         M[0x00B5] = (uint8_t)disp; M[0x00B6] = (uint8_t)(disp >> 8);
@@ -6294,11 +6312,16 @@ uint8_t terrain_subdivide_column_core_c(uint8_t startDepth, uint8_t rasterEntryD
        if the span already sits at/past it there is nothing to subdivide.  $B5 keeps the
        sign-flipped endpoint high byte (observable residue). */
     SubPt far0 = subpt_load(M, 0);
+    SDCNT(g_sdCalls);
     mem[0x00B5] = (uint8_t)((far0.col >> 8) ^ 0x80);
     if ((int16_t)span.col >= (int16_t)far0.col) {
+        SDCNT(g_sdBail);
         return (uint8_t)depth;                            /* span >= far endpoint -> done */
     }
     budget = 0x14;
+    /* SHAPE: is the far endpoint at the current depth already in registers?  True exactly
+       after a push (we just wrote that slot from `mid`); false at entry and after a pop. */
+    int farKnown = 0; (void)farKnown;
 
     /* Descend: bisect repeatedly.  If the midpoint column is "near" (negative, or < $28) pull the
        span's near end onto it and keep bisecting; otherwise push the midpoint as a parent
@@ -6307,12 +6330,17 @@ uint8_t terrain_subdivide_column_core_c(uint8_t startDepth, uint8_t rasterEntryD
     for (;;) {
         if (!(span.col & 0x8000)) break;
         if (budget-- == 0) goto out;                      /* budget exhausted */
+        if (farKnown) SDCNT(g_sdP2Known);   /* submid's far load here is redundant */
         mid = subdiv_midpoint(span, subpt_load(M, depth), M);
         if ((mid.col & 0x8000) || mid.col < 0x28) {
+            SDCNT(g_sdP2Adopt);
             span = mid;                                   /* near midpoint: adopt it as the span */
+            /* far@depth is unchanged by an adopt, so it stays known if it already was */
         } else {
+            SDCNT(g_sdP2Push);
             subpt_store(M, depth + 1, mid);               /* push the midpoint, descend */
             if (++depth >= 0x0F) goto out;                /* stack full */
+            farKnown = 1;                                 /* far@newdepth == the mid we just wrote */
         }
     }
 
@@ -6327,14 +6355,20 @@ uint8_t terrain_subdivide_column_core_c(uint8_t startDepth, uint8_t rasterEntryD
         int recurseAgain = 0;        /* steep leaf: re-enter the subdivide path next iteration */
         for (;;) {
             SubPt far = subpt_load(M, depth);             /* the segment's far endpoint */
+            SDCNT(g_sdInner);
+            if (farKnown) SDCNT(g_sdInnerFarKnown);       /* this load_far is redundant */
+            farKnown = 0;
+            SDCNT(g_sdDepthHist[depth & 0x0F]);
             /* Subdivide while the far endpoint's column still escapes the $00xx range; once it is
                in $00xx, fall to the cascade. */
             int subdivide = recurseAgain ? (recurseAgain = 0, 1) : (far.col > 0xFF);
+            if (subdivide && far.col > 0xFF) SDCNT(g_sdFarEsc);  /* far.hgt just loaded is dead here */
             if (subdivide) {
                 if (budget-- == 0) goto out;              /* budget exhausted */
                 mid = subdiv_midpoint(span, far, M);
                 subpt_store(M, depth + 1, mid);           /* push the midpoint */
                 if (++depth >= 0x0F) goto out;            /* stack full */
+                farKnown = 1;                             /* far@newdepth == the mid we just wrote */
                 continue;
             }
 
@@ -6365,12 +6399,13 @@ uint8_t terrain_subdivide_column_core_c(uint8_t startDepth, uint8_t rasterEntryD
                     const uint8_t q = (uint8_t)(width >> 2); mem[0x00B5] = q;  /* $B5 observable */
                     const uint16_t hgt = useSpanHeight ? span.hgt : far.hgt;
                     if (!((uint16_t)(hgt - q) & 0x8000u)) rasterize = 1;      /* shallow -> rasterize */
-                    else { recurseAgain = 1; continue; }                     /* steep -> subdivide */
+                    else { SDCNT(g_sdSteep); recurseAgain = 1; continue; }   /* steep -> subdivide */
                 }
             }
             break;   /* decision made (skip or rasterize) */
         }
 
+        if (rasterize) SDCNT(g_sdRas); else SDCNT(g_sdSkip);
         if (rasterize) {
             /* Set up the pixel renderer's control point [0] from the leaf's far endpoint
                (column / height / fraction), clamping each 16-bit height to 0 or $FF by its
@@ -6395,8 +6430,9 @@ uint8_t terrain_subdivide_column_core_c(uint8_t startDepth, uint8_t rasterEntryD
 
         /* pop the parent endpoint off the stack and continue with it */
         if (depth == 0) goto out;
+        SDCNT(g_sdPop);
         span = subpt_load(M, depth);
-        depth--;
+        depth--;                       /* far@depth-1 was NOT just written -> stays unknown */
     }
 
 out:

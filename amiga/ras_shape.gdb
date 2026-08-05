@@ -45,5 +45,20 @@ printf "sp4: groups=%lu  allRejected=%lu (%lu%%)  cheapCull=%lu (%lu%%)  edgeTru
   g_rasSp4Cons[4], (g_rasSp4Grp? 100*g_rasSp4Cons[4]/g_rasSp4Grp : 0), g_rasSp4Edge
 printf "     cheap-test early-out (cols passed before 1st failure) 0..4: %lu %lu %lu %lu %lu\n", \
   g_rasSp4Cons[0], g_rasSp4Cons[1], g_rasSp4Cons[2], g_rasSp4Cons[3], g_rasSp4Cons[4]
+echo --- terrain_subdivide_column shape (helper mix per call; needs SUBDIV_C=1 too) ---\n
+printf "calls=%lu (bail=%lu) mid=%lu (rough=%lu) inner=%lu pop=%lu ras=%lu skip=%lu\n", \
+  g_sdCalls, g_sdBail, g_sdMid, g_sdRough, g_sdInner, g_sdPop, g_sdRas, g_sdSkip
+printf "  ph2: adopt=%lu push=%lu (far already in regs: %lu)   ph3: farEsc=%lu steep=%lu\n", \
+  g_sdP2Adopt, g_sdP2Push, g_sdP2Known, g_sdFarEsc, g_sdSteep
+printf "  *** REDUNDANT far reloads: inner=%lu/%lu (%lu%%)  +ph2=%lu  => %lu of %lu total loads\n", \
+  g_sdInnerFarKnown, g_sdInner, (g_sdInner? 100*g_sdInnerFarKnown/g_sdInner : 0), \
+  g_sdP2Known, (g_sdInnerFarKnown+g_sdP2Known), (g_sdInner+g_sdP2Adopt+g_sdP2Push+g_sdPop)
+echo --- inner-loop depth histogram (0..15) ---\n
+set $i = 0
+while $i < 16
+  printf "%lu ", g_sdDepthHist[$i]
+  set $i = $i + 1
+end
+printf "\n"
 detach
 quit
