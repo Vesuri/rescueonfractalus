@@ -11,11 +11,23 @@
 ; single `move.b (d16,a0)` (signed 16-bit displacement covers the whole cluster).  All loop
 ; INPUTS ($92/$8A/$88/$A0-$A3/$8B/$8C/$22A3.. vectors/$0900 heights) are VBI-stable.
 ;
+; ⭐ The per-cell column vectors are CARRIED IN REGISTERS across cells (2026-08-05).  The output
+; arrays ARE the input arrays shifted by one — $22A4+Y == $22A3+(Y+1) and $232E+Y == $232D+(Y+1) —
+; so cell Y+1's in_u/in_v is exactly the u/v cell Y just stored, and the per-cell reassembly of it
+; from memory (4 indexed byte loads + 2 `lsl.w #8` at 22 cycles each + 2 moveq ~= 100 cycles) was
+; pure redundancy: representation, not work.  Proven twice before it was written: statically, only
+; 1 of the 180 pattern-table cells is non-storing ($B622[0]) and at runtime the recurrence held on
+; 18072/18072 claimable cells (make TFSETUP_C=1 TFS_SHAPE=1, amiga/shape_probe.gdb, g_tfsRecurBad).
+; The one non-storing cell re-syncs from memory at tf_resync, so this is exact for ANY table.
+; Same class of find as the rasterizer's phase-2 restructure — see docs/asm-migration-plan.md.
+;
 ; Loop-1 registers:
 ;   a0 = mem + Y (walk +1)   a1 = mem + srcptr + Y (pattern table, walk +1)
+;   a2 = v   (the CARRIED depth vector; adda/suba.w, low word only)
 ;   a3 = rot_a   a4 = rot_b   (16-bit; used as add.w/sub.w aN,dN)
 ;   a5 = mem + $0900 (height base, indexed by X)   a6 = mem + $2D (loop-1 end sentinel)
-;   d7 = X   d6 = b6   d5 = SUB   d4 = K   d2 = b5 (running)   d0/d1/d3 = scratch
+;   d1 = u   (the CARRIED screen-X vector)
+;   d7 = X   d6 = b6   d5 = SUB   d4 = K   d2 = b5 (running)   d0/d3 = the ONLY scratch
 ;
 ; d5/d4 are the HOISTED forms of the screen-Y numerator's two alt terms (both loop-invariant —
 ; they derive only from alt_b $8B / alt_c $8C, which neither loop writes):
@@ -116,98 +128,125 @@ tf_noborrow:
 	lea	mem+$2D,a6
 	lea	mem,a0			; a0 = mem + Y (Y=0)
 
-	; ================= LOOP 1 (45 cells) =================
-tf_l1:
-	move.b	(a1),d0			; pat
+	; ---- seed the CARRIED column vectors from cell 0's inputs (see the recurrence note) ----
 	moveq	#0,d1
 	move.b	(0+$22D1,a0),d1
 	lsl.w	#8,d1
-	move.b	(0+$22A3,a0),d1		; in_u -> d1
-	moveq	#0,d2
-	move.b	(0+$232D,a0),d2
-	lsl.w	#8,d2
-	move.b	(0+$22FF,a0),d2		; in_v -> d2
-	; ---- pattern decode (d1=u, d2=v) ----
+	move.b	(0+$22A3,a0),d1		; u = in_u[0]  -> carried in d1
+	moveq	#0,d0
+	move.b	(0+$232D,a0),d0
+	lsl.w	#8,d0
+	move.b	(0+$22FF,a0),d0
+	movea.w	d0,a2			; v = in_v[0]  -> carried in a2
+
+	; ================= LOOP 1 (45 cells) =================
+tf_l1:
+	move.b	(a1),d0			; pat
+	; ---- pattern decode.  u is carried in d1 and v in a2 from the PREVIOUS cell (the
+	; recurrence: this cell's in_u/in_v IS the vector the previous cell stored), so there is
+	; nothing to load or byte-assemble here.  v lives in an address register because that is
+	; the only register left, and adda/suba.w serve it exactly as add/sub.w serve d1; only the
+	; low word is ever read back, so their sign-extension to 32 bits is harmless. ----
 	btst	#7,d0
 	beq.s	tf_p40
 	; pat & $80
 	add.b	#$F0,d6			; b6 += $F0
-	add.w	a3,d1			; u = in_u + rot_a
-	sub.w	a4,d2			; v = in_v - rot_b
+	add.w	a3,d1			; u += rot_a
+	suba.w	a4,a2			; v -= rot_b
 	btst	#6,d0
 	beq.s	tf_p80_20
 	subq.b	#1,d7			; X--
 	sub.w	a4,d1			; u -= rot_b
-	sub.w	a3,d2			; v -= rot_a
+	suba.w	a3,a2			; v -= rot_a
 	bra.s	tf_fired
 tf_p80_20:
 	btst	#5,d0
 	beq.s	tf_fired
 	addq.b	#1,d7			; X++
 	add.w	a4,d1			; u += rot_b
-	add.w	a3,d2			; v += rot_a
+	adda.w	a3,a2			; v += rot_a
 	bra.s	tf_fired
 tf_p40:
 	btst	#6,d0
 	beq.s	tf_p20
 	; pat & $40
 	add.b	#$10,d6			; b6 += $10
-	sub.w	a3,d1			; u = in_u - rot_a
-	add.w	a4,d2			; v = in_v + rot_b
+	sub.w	a3,d1			; u -= rot_a
+	adda.w	a4,a2			; v += rot_b
 	btst	#5,d0
 	beq.s	tf_p40_10
 	subq.b	#1,d7			; X--
 	sub.w	a4,d1
-	sub.w	a3,d2
+	suba.w	a3,a2
 	bra.s	tf_fired
 tf_p40_10:
 	btst	#4,d0
 	beq.s	tf_fired
 	addq.b	#1,d7			; X++
 	add.w	a4,d1
-	add.w	a3,d2
+	adda.w	a3,a2
 	bra.s	tf_fired
 tf_p20:
 	btst	#5,d0
 	beq.s	tf_p10
 	subq.b	#1,d7			; X--
-	sub.w	a4,d1			; u = in_u - rot_b
-	sub.w	a3,d2			; v = in_v - rot_a
+	sub.w	a4,d1			; u -= rot_b
+	suba.w	a3,a2			; v -= rot_a
 	bra.s	tf_fired
 tf_p10:
 	btst	#4,d0
-	beq.s	tf_afterstore		; pattern empty: leave the column unchanged
+	beq.s	tf_resync		; pattern empty: leave the column unchanged
 	addq.b	#1,d7			; X++
-	add.w	a4,d1			; u = in_u + rot_b
-	add.w	a3,d2			; v = in_v + rot_a
+	add.w	a4,d1			; u += rot_b
+	adda.w	a3,a2			; v += rot_a
 tf_fired:
-	; store u/v.  d1/d2 are dead afterwards, so rotate the hi byte down in place instead of
-	; copying to a scratch first (rol.w #8 == lsr.w #8 for a byte read, one instruction less).
+	; Store u/v, keeping BOTH carried registers intact for the next cell (so the hi byte goes
+	; out through the d0 scratch instead of rotating d1/a2 in place: +4 cycles a cell against
+	; the ~100 the removed per-cell reassembly cost).
 	move.b	d1,(0+$22A4,a0)		; u lo
-	rol.w	#8,d1
-	move.b	d1,(0+$22D2,a0)		; u hi
-	move.b	d2,(0+$2300,a0)		; v lo
-	rol.w	#8,d2
-	move.b	d2,(0+$232E,a0)		; v hi
+	move.w	d1,d0
+	lsr.w	#8,d0
+	move.b	d0,(0+$22D2,a0)		; u hi
+	move.w	a2,d0
+	move.b	d0,(0+$2300,a0)		; v lo
+	lsr.w	#8,d0
+	move.b	d0,(0+$232E,a0)		; v hi
+	bra.s	tf_afterstore
+tf_resync:
+	; Empty pattern: the 6502 leaves this column's output slot UNTOUCHED, so the next cell's
+	; input is whatever memory holds there (a seed or last frame's value) — NOT our carried
+	; register.  Re-sync from that slot so the recurrence stays exact for any pattern table.
+	; Measured: exactly 1 of the 180 table cells is empty ($B622[0], and the dr==00 branch
+	; pre-seeds column 0 precisely because of it), so this runs ~once a frame.
+	moveq	#0,d1
+	move.b	(0+$22D2,a0),d1
+	lsl.w	#8,d1
+	move.b	(0+$22A4,a0),d1		; u = mem[{$22D2:$22A4}+Y]
+	moveq	#0,d0
+	move.b	(0+$232E,a0),d0
+	lsl.w	#8,d0
+	move.b	(0+$2300,a0),d0
+	movea.w	d0,a2			; v = mem[{$232E:$2300}+Y]
 tf_afterstore:
-	; ---- screen-Y numerator ----
+	; ---- screen-Y numerator ----  (d1/a2 are OFF LIMITS below: they carry u/v.  The diff
+	; scratch moved from d1 to d0, and the classify's u_hi/lo scratch from d1 to d0/d3.)
 	and.b	#$0F,d7			; X = (X & $0F) | b6   (d7's upper word stays 0)
 	or.b	d6,d7
 	move.b	(a5,d7.w),d3		; h = mem[$0900 + X]
 	move.b	d3,(0+$23B5,a0)		; mem[$23B5+Y] = h
-	; diff = h - SUB  (SUB = alt_c + borrow, hoisted)   -> d1, signed word
-	moveq	#0,d1
-	move.b	d3,d1			; h
-	sub.w	d5,d1
+	; diff = h - SUB  (SUB = alt_c + borrow, hoisted)   -> d0, signed word
+	moveq	#0,d0
+	move.b	d3,d0			; h
+	sub.w	d5,d0
 	; b5 = (y_hi << 4) | K     (== (uint8)pair; y_hi = diff's low byte, K = y_lo>>4)
-	move.b	d1,d2
+	move.b	d0,d2
 	lsl.b	#4,d2
 	or.b	d4,d2			; b5 (kept in d2)
 	move.b	d2,(0+$235B,a0)		; mem[$235B+Y] = b5
 	; r_hi = y_hi >> 4         (== pair >> 8), high nibble flipped on borrow
-	move.b	d1,d3
+	move.b	d0,d3
 	lsr.b	#4,d3
-	btst	#15,d1			; diff < 0 ?
+	btst	#15,d0			; diff < 0 ?
 	beq.s	tf_nosign
 	eori.b	#$F0,d3			; r_hi ^= $F0
 tf_nosign:
@@ -221,28 +260,30 @@ tf_nosign:
 	cmp.b	#$20,d0
 	bcs.s	tf_cls80
 tf_vismain:
-	move.b	(0+$22D2,a0),d1		; u_hi
+	move.b	(0+$22D2,a0),d0		; u_hi
 	bmi.s	tf_visneg
 	; positive u
-	cmp.b	d3,d1			; u_hi - v_hi
+	cmp.b	d3,d0			; u_hi - v_hi
 	bcs.s	tf_cls00
 	bne.s	tf_cls20
 	move.b	(0+$22A4,a0),d0		; u_hi==v_hi: u_lo < v_lo ?
-	move.b	(0+$2300,a0),d1
-	cmp.b	d1,d0
+	move.b	(0+$2300,a0),d3
+	cmp.b	d3,d0
 	bcs.s	tf_cls00
 	bra.s	tf_cls20
 tf_visneg:
-	; nu = (uint16)(0 - u) byte-wise: neg the lo half, negx the hi half (d1 already = u_hi)
-	move.b	(0+$22A4,a0),d0		; u_lo
-	neg.b	d0			; nu_lo  (X = borrow)
-	move.b	d0,d2			; b5 = (uint8)nu   (MOVE leaves X alone)
-	negx.b	d1			; nu_hi
-	cmp.b	d3,d1			; nu_hi - v_hi
+	; nu = (uint16)(0 - u) byte-wise: neg the lo half, negx the hi half (d0 already = u_hi).
+	; u_lo is loaded straight into d2 (the b5 slot — the oracle leaves nu_lo in $B5), which
+	; also drops the original's separate `move.b d0,d2` copy.  Nothing between neg and negx
+	; touches X.
+	move.b	(0+$22A4,a0),d2		; u_lo
+	neg.b	d2			; nu_lo  (X = borrow) ; b5 = (uint8)nu
+	negx.b	d0			; nu_hi
+	cmp.b	d3,d0			; nu_hi - v_hi
 	bcs.s	tf_cls00
 	bne.s	tf_cls40
-	move.b	(0+$2300,a0),d0		; v_lo
-	cmp.b	d0,d2			; nu_lo - v_lo
+	move.b	(0+$2300,a0),d3		; v_lo
+	cmp.b	d3,d2			; nu_lo - v_lo
 	bcs.s	tf_cls00
 	bra.s	tf_cls40
 tf_cls80:
