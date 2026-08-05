@@ -14,6 +14,22 @@
 	xref	_hasQueuedBlits__13AmigaHardware
 	xref	_octants__13AmigaHardware
 
+; The blitter helpers below bracket every blit with INTENA writes: disable INTF_BLIT while the
+; blitter registers are set up, then "re-arm" it after starting the blit.  Re-arming made sense
+; in the original framework, where a blit-done ISR drained the queue — this port has NO blit
+; ISR (processBlitterQueue is only ever called synchronously, blitterWait polls DMACONR BLTBUSY
+; and blitterDrain spin-drains), so an armed blit-done interrupt is pure overhead: measured 6
+; interrupts per flight iteration, each dispatching into graphics.library's queue handler
+; ($F901C0) via the level-3 autovector for nothing (~52us apiece, amiga/int_probe.gdb).
+; So the "re-arm" writes assemble as another DISABLE by default; `make BLIT_IRQ=1` restores the
+; original arming behaviour for A/B.  Keeping the write (instead of deleting it) leaves the
+; instruction sequence and cycle count of these routines untouched.
+	ifd	ROF_BLIT_IRQ
+BLIT_IRQ_ARM	equ	$8040		; INTF_SETCLR|INTF_BLIT — arm blit-done
+	else
+BLIT_IRQ_ARM	equ	$0040		; INTF_BLIT, no SETCLR — leave blit-done DISABLED
+	endif
+
 	section	code
 
 _getVBR__13AmigaHardwareFv:
@@ -58,7 +74,7 @@ _blitterClear__13AmigaHardwareFPUsUsUss:
 	lsl.w	#6,d1
 	or.w	d0,d1
 	move.w	d1,$dff058					; *bltsizePointer = (uint16_t)((height << 6) | width);
-	move.w	#$8040,$dff09a					; AmigaHardware::setInterrupts(INTF_BLIT, true);
+	move.w	#BLIT_IRQ_ARM,$dff09a					; AmigaHardware::setInterrupts(INTF_BLIT, true) — see BLIT_IRQ_ARM
 	rts
 
 bCl_queueClear:
@@ -97,7 +113,7 @@ bCl_queuePositionOk:
 
 	bsr	_processBlitterQueue__13AmigaHardwareFv
 
-	move.w	#$8040,$dff09a				; AmigaHardware::setInterrupts(INTF_BLIT, true);
+	move.w	#BLIT_IRQ_ARM,$dff09a				; AmigaHardware::setInterrupts(INTF_BLIT, true) — see BLIT_IRQ_ARM
 	rts
 
 _blitterCopy__13AmigaHardwareFPUsPUsUsUssssUsUsUs:
@@ -128,7 +144,7 @@ bC_shiftOk1:
 	lsl.w	#6,d1
 	or.w	d0,d1
 	move.w	d1,$dff058				; *bltsizePointer = (uint16_t)((height << 6) | width);
-	move.w	#$8040,$dff09a				; AmigaHardware::setInterrupts(INTF_BLIT, true);
+	move.w	#BLIT_IRQ_ARM,$dff09a				; AmigaHardware::setInterrupts(INTF_BLIT, true) — see BLIT_IRQ_ARM
 	rts
 
 bC_queueCopy:
@@ -184,7 +200,7 @@ bC_shiftOk2:
 
 	bsr	_processBlitterQueue__13AmigaHardwareFv
 
-	move.w	#$8040,$dff09a				; AmigaHardware::setInterrupts(INTF_BLIT, true);
+	move.w	#BLIT_IRQ_ARM,$dff09a				; AmigaHardware::setInterrupts(INTF_BLIT, true) — see BLIT_IRQ_ARM
 	rts
 
 _blitterCopyWithMask__13AmigaHardwareFPUsPUsPUsUsUssssssUsUsUc:
@@ -226,7 +242,7 @@ bCWM_clearMaskedOk1:
 	lsl.w	#6,d1
 	or.w	d0,d1
 	move.w	d1,$dff058				; *bltsizePointer = (uint16_t)((height << 6) | width);
-	move.w	#$8040,$dff09a				; AmigaHardware::setInterrupts(INTF_BLIT, true);
+	move.w	#BLIT_IRQ_ARM,$dff09a				; AmigaHardware::setInterrupts(INTF_BLIT, true) — see BLIT_IRQ_ARM
 	rts
 
 bCWM_queueCopyWithMask:
@@ -301,7 +317,7 @@ bCWM_clearMaskedOk2:
 
 	bsr	_processBlitterQueue__13AmigaHardwareFv
 
-	move.w	#$8040,$dff09a				; AmigaHardware::setInterrupts(INTF_BLIT, true);
+	move.w	#BLIT_IRQ_ARM,$dff09a				; AmigaHardware::setInterrupts(INTF_BLIT, true) — see BLIT_IRQ_ARM
 	rts
 
 _blitterLine__13AmigaHardwareFPUsUsUsUsUsUsUc:
@@ -397,7 +413,7 @@ bL_vPositive1:
 	lsl.w	#6,d3					; *bltsizePointer = (uint16_t)((dy << 6) | 2);
 	or.w	#2,d3
 	move.w	d3,$dff058
-	move.w	#$8040,$dff09a				; AmigaHardware::setInterrupts(INTF_BLIT, true);
+	move.w	#BLIT_IRQ_ARM,$dff09a				; AmigaHardware::setInterrupts(INTF_BLIT, true) — see BLIT_IRQ_ARM
 	movem.l	(sp)+,d2-d7
 	rts
 
@@ -460,7 +476,7 @@ bL_vPositive2:
 
 	bsr	_processBlitterQueue__13AmigaHardwareFv
 
-	move.w	#$8040,$dff09a				; AmigaHardware::setInterrupts(INTF_BLIT, true);
+	move.w	#BLIT_IRQ_ARM,$dff09a				; AmigaHardware::setInterrupts(INTF_BLIT, true) — see BLIT_IRQ_ARM
 	movem.l	(sp)+,d2-d7
 	rts
 
@@ -482,7 +498,7 @@ _blitterFill__13AmigaHardwareFPUsUsUss:
 	lsl.w	#6,d1
 	or.w	d0,d1
 	move.w	d1,$dff058					; *bltsizePointer = (uint16_t)((height << 6) | width);
-	move.w	#$8040,$dff09a					; AmigaHardware::setInterrupts(INTF_BLIT, true);
+	move.w	#BLIT_IRQ_ARM,$dff09a					; AmigaHardware::setInterrupts(INTF_BLIT, true) — see BLIT_IRQ_ARM
 	rts
 
 bF_queueFill:
@@ -529,7 +545,7 @@ bF_queuePositionOk:
 
 	bsr	_processBlitterQueue__13AmigaHardwareFv
 
-	move.w	#$8040,$dff09a				; AmigaHardware::setInterrupts(INTF_BLIT, true);
+	move.w	#BLIT_IRQ_ARM,$dff09a				; AmigaHardware::setInterrupts(INTF_BLIT, true) — see BLIT_IRQ_ARM
 	rts
 
 _processBlitterQueue__13AmigaHardwareFv:

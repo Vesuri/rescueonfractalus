@@ -1076,6 +1076,31 @@ extern "C" volatile unsigned short g_irqLatVmax=0, g_irqLatHmax=0;
 // INTENAR/INTREQR snapshot at VBI entry: which level-3 sources (bit4 COPER, bit5 VERTB,
 // bit6 BLIT) are actually enabled decides the level-3 interrupt RATE — 50/s if only VERTB.
 extern "C" volatile unsigned short g_irqIntena=0, g_irqIntreq=0;
+// ---------------------------------------------------------------------------------------
+// OS interrupt-chain taps — how OFTEN does an interrupt we do NOT own fire, and how long
+// does its whole exec server chain run?  Each tap is a PAIR of servers on one chain: a
+// pri-127 head (stamps the beam) and a pri-(-128) tail (accumulates the delta), both
+// returning 0 so the walk continues untouched.  headCnt == tailCnt means nobody in between
+// claimed the interrupt (a server returning non-zero ENDS the walk, so the tail is skipped).
+//   [0] EXTER (level 6, CIA-B: timer A/B, TOD, FLG, SP — timer.device's MICROHZ unit etc.)
+//   [1] PORTS (level 2, CIA-A: our keyboard handler hangs here via ciaa.resource)
+//   [2] BLIT  (level 3, blit-done: the framework's blitter* helpers re-enable INTF_BLIT
+//              right after starting a blit, so EVERY blit we issue raises one)
+// Beam stamps are kept as separate v/h sums (as g_irqLat* does) so the target needs no
+// 32-bit multiply; int_probe.gdb folds them into colour clocks (1 line = 227 cc = 63.56us).
+// Chain duration only — the exception + Kickstart stub + walker ahead of the head tap is
+// NOT included (that part is what the VERTB g_irqLat* number sizes).
+// Slots: [0] EXTER whole chain, [1] PORTS whole chain, [2] PORTS up to pri 50 (= time in
+// ciaa.resource), [3] PORTS up to pri 10 (= ciaa.resource + FS-UAE's "UAE fs" server).  Slots
+// 2/3 are cumulative-from-the-head splits of slot 1, so subtracting them attributes the chain.
+extern "C" volatile unsigned long g_tapHeadCnt[4] = {0,0,0,0}, g_tapTailCnt[4] = {0,0,0,0};
+extern "C" volatile unsigned long g_tapVsum[4]    = {0,0,0,0};
+extern "C" volatile long          g_tapHsum[4]    = {0,0,0,0};
+static   volatile unsigned short  s_tapV0[4]      = {0,0,0,0}, s_tapH0[4] = {0,0,0,0};
+// Firings of OUR OWN level-2 handler in the PORTS-takeover build.  In that build the tap slots
+// above read 0 — the taps are exec chain servers and exec's walker is no longer in the vector —
+// so this is the PORTS rate, and a storm check on it (see portsHandler).
+extern "C" volatile unsigned long g_portsIrqCnt = 0;
 // VBI-body sub-profiling (beam-line deltas inside the flight VBI; normalize by isrCalls).
 // integ/proj/sfx wrap individual native twins (rof_native.c).  The whole handler is timed by
 // flight_vbi_native (g_flightProf.isrLines).  (The old top/atmo/hud/score/tail PRE_INSN_HOOK
@@ -1108,6 +1133,13 @@ extern "C" volatile unsigned long g_fdClear=0, g_fdEdge=0, g_fdFill=0, g_fdScan=
 // g_rCopper (updateFlightCopper poke).
 extern "C" volatile unsigned long g_isrBeamLines;  // defined in rof_native_amiga.cpp
 extern "C" volatile unsigned long g_rRenderCompute=0, g_rRenderWall=0, g_rIdleWall=0, g_rCalls=0;
+// INTEGER frame counters for the two flight pacing waits — immune to the beam-read race that
+// poisons the tick accumulators above (g_fDraw et al. can run BACKWARDS).  g_idleFrames = VBI
+// frames burned in renderFrame's "wait for the next real VBI" spin; g_flipWaitFrames = frames
+// burned draining a deferred buffer flip at the top of renderFlightDirect.  Frames-per-iteration
+// MINUS these is the compute, so an A/B can tell "this build does more work" from "this build
+// lost a frame to vblank quantisation" — which a throughput number alone cannot.
+extern "C" volatile unsigned long g_idleFrames=0, g_flipWaitFrames=0, g_flipWaitCalls=0;
 extern "C" volatile unsigned long g_rPerFrame=0, g_rRenderFn=0, g_rCopper=0;
 // Knock-gated ($0632) split of platform_render_frame: g_alTRScene = scene->renderFrame() (the
 // dirty-rect composite + the renderFlightDirect while(flightSwapPending) flip wait); g_alTRIdle =
@@ -1248,8 +1280,12 @@ void PlatformAmiga::renderFrame() {
     // (non-flight scenes, the rescue-figure pause's immediate-flip path, the no-fresh-terrain early
     // return) leaves the flag clear and still paces to the display here.
     const bool _deferredFlip = s_scene && s_scene->consumeDeferredFlip();
+#ifdef ROF_FLIGHT_PROBE
+    const uint16_t _vSpin0 = g_vbiCount;
+#endif
     if (!_deferredFlip) while (g_vbiCount == last) { /* wait for next real VBI */ }
 #ifdef ROF_FLIGHT_PROBE
+    if (_rFlight) g_idleFrames += (unsigned long)(uint16_t)(g_vbiCount - _vSpin0);
     if (_rFlight) { unsigned long _iw = rof_subclock() - _ri0; g_rIdleWall += _iw;
                     if (mem[0x0632]) g_alTRIdle += _iw; }   // knock: frame-sync wait
 #endif
@@ -1440,9 +1476,25 @@ static struct Interrupt* s_savedVector = 0;   // keyboard.device's vector, resto
 // CIA-A SP interrupt: a full keycode has shifted into the serial register.  ciaa.resource
 // has already read+cleared the ICR before dispatching us, so we only touch the serial data
 // register (read the code) and CRA (handshake).
+#ifdef ROF_FLIGHT_PROBE
+// Who is generating PORTS (level 2) interrupts?  The int_probe tap counted ~11/s during a
+// headless flight with NOTHING pressed, at ~250us each — suspiciously close to this handler's
+// own handshake spin.  g_kbCalls counts entries here; g_kbRing keeps the last 16 raw codes
+// (bit7 = key-up) so the source is identifiable.  If g_kbCalls << the PORTS firing count, the
+// interrupts are some other CIA-A source (timer A/B, TOD, FLG) and never reach us.
+extern "C" volatile unsigned long  g_kbCalls = 0;
+extern "C" volatile unsigned char  g_kbRing[16] = {0};
+extern "C" volatile unsigned char  g_kbRingIdx = 0;
+#endif
+
 static uint32_t keyboardHandler()
 {
     uint8_t sdr = *ciaasdrPointer;
+#ifdef ROF_FLIGHT_PROBE
+    g_kbCalls++;
+    g_kbRing[g_kbRingIdx & 15u] = sdr;
+    g_kbRingIdx++;
+#endif
 
     // Acknowledge: pulse SP to output mode (drives KDAT low) then back to input, so the
     // keyboard releases the next keycode.  HRM Appendix G (node G-2): "Software MUST pulse
@@ -1528,6 +1580,75 @@ static uint32_t keyboardHandler()
     return 0;
 }
 
+// ============================================================================
+//  INTB_PORTS (level 2) vector takeover — OPT-IN, and measured NOT worth it
+// ============================================================================
+// `make PORTS_TAKEOVER=1`.  OFF by default.  Kept because the experiment is worth preserving:
+//
+// The idea was the VERTB takeover one level down.  Reaching the keyboard through
+// ciaa.resource's ICR dispatcher means every level-2 interrupt walks exec's PORTS server chain,
+// and that chain measures (amiga/int_probe.gdb, 60 s of flight) ~11 firings/s at ~250 us each =
+// ~0.3% of all wall clock — with OUR handler running ZERO times.  All of it is ciaa.resource
+// (~220 us) plus FS-UAE's "UAE fs" server (~90 us).
+//
+// Two measured reasons it is off:
+//  1. "UAE fs" is the UAE Boot ROM's host-filesystem/clipboard trap server — an EMULATOR
+//     artifact.  A bare A500 (floppy / WHDLoad) has no such server and no ~11 Hz CIA-A source,
+//     so on the real target this reclaims ~nothing.
+//  2. Taking the vector starves that trap server, and FS-UAE responds by RESETTING the machine:
+//     with the takeover on, the session reboots before flight every time (2/2 runs), while the
+//     same tree with it off runs clean (bisected 2026-08-05).  It would also break the harness
+//     every measurement depends on, since diag_run.sh boots from a host directory.
+//
+// If it is ever re-enabled: the handler does what ciaa.resource did for us — read CIA-A's ICR
+// (that is what releases the CIA's IRQ line, so it MUST come before clearing Paula's INTREQ, or
+// the still-asserted line re-latches the request at once), then dispatch the serial-port bit.
+// Other CIA-A sources (timer A/B, TOD alarm, FLG) are swallowed for the duration.  keyboardInit()
+// must still run first: its AddICRVector is what arms SP in the CIA's write-only ICR mask.
+#ifdef ROF_PORTS_TAKEOVER
+static struct Interrupt portsServer;
+static struct IntVector s_savedPorts;
+static bool             s_portsTaken = false;
+
+static uint32_t portsHandler(void)
+{
+    const uint8_t icr = *ciaaicrPointer;                    // read = clear + release CIA-A IRQ
+    *(volatile unsigned short*)0xDFF09Cu = (unsigned short)INTF_PORTS;   // then ack Paula
+#ifdef ROF_FLIGHT_PROBE
+    g_portsIrqCnt++;
+#endif
+    if (icr & CIAICRF_SP)
+        keyboardHandler();
+    return 0;
+}
+
+static void portsTakeover(void)
+{
+    portsServer.is_Node.ln_Type = NT_INTERRUPT;
+    portsServer.is_Node.ln_Pri  = 127;
+    portsServer.is_Node.ln_Name = (char*)"RoF PORTS";
+    portsServer.is_Data = 0;
+    portsServer.is_Code = (void(*)())portsHandler;
+    struct IntVector* iv = &SysBase->IntVects[INTB_PORTS];
+    Disable();
+    s_savedPorts = *iv;
+    iv->iv_Data  = 0;
+    iv->iv_Code  = (void(*)())portsHandler;
+    iv->iv_Node  = &portsServer.is_Node;
+    Enable();
+    s_portsTaken = true;
+}
+
+static void portsRestore(void)
+{
+    if (!s_portsTaken) return;
+    Disable();
+    SysBase->IntVects[INTB_PORTS] = s_savedPorts;
+    Enable();
+    s_portsTaken = false;
+}
+#endif  // ROF_PORTS_TAKEOVER
+
 static bool keyboardInit()
 {
     s_ciaaBase = (struct Library*)OpenResource((UBYTE*)CIAANAME);
@@ -1586,6 +1707,7 @@ static void keyboardShutdown()
 // it.  The original IntVector is saved verbatim and put back on the way out.
 // `make VERTB_SERVER=1` falls back to the old AddIntServer chain for A/B testing.
 static struct Interrupt vbiServer;
+static uint16_t         s_savedIntena = 0;   // INTENAR at takeover, restored verbatim on exit
 #ifndef ROF_VERTB_SERVER
 static struct IntVector s_savedVertb;      // exec's original VERTB IntVector, restored on exit
 static bool             s_vertbTaken = false;
@@ -1959,6 +2081,143 @@ static uint32_t vbiHandler()
     return 0;
 }
 
+#ifdef ROF_FLIGHT_PROBE
+// ============================================================================
+//  Interrupt-chain taps (probe only) — see the g_tap* declarations above
+// ============================================================================
+// One head/tail server pair per chain, both returning 0 so the real chain runs untouched.
+// The beam is read from VHPOSR only (low 8 bits of vpos): a chain runs for microseconds, so
+// the one-per-frame vpos-255->0 wrap is the only ambiguity and the &0xFF wrap absorbs it.
+#define ROF_INT_TAP(name, idx)                                                            \
+    static uint32_t tapHead_##name(void) {                                                \
+        const volatile unsigned short* _c = (const volatile unsigned short*)0xDFF000u;     \
+        unsigned short _vh = _c[0x006u / 2];                                              \
+        s_tapV0[idx] = (unsigned short)(_vh >> 8);                                        \
+        s_tapH0[idx] = (unsigned short)(_vh & 0xFFu);                                     \
+        g_tapHeadCnt[idx]++;                                                              \
+        return 0;                                                                          \
+    }                                                                                      \
+    static uint32_t tapTail_##name(void) {                                                \
+        const volatile unsigned short* _c = (const volatile unsigned short*)0xDFF000u;     \
+        unsigned short _vh = _c[0x006u / 2];                                              \
+        g_tapVsum[idx] += (unsigned long)(((_vh >> 8) - s_tapV0[idx]) & 0xFFu);            \
+        g_tapHsum[idx] += (long)(short)((_vh & 0xFFu) - s_tapH0[idx]);                     \
+        g_tapTailCnt[idx]++;                                                              \
+        return 0;                                                                          \
+    }
+ROF_INT_TAP(exter, 0)
+ROF_INT_TAP(ports, 1)
+
+// A follower tap: no stamp of its own, it accumulates the elapsed time since the pri-127 HEAD
+// of chain `src` into slot `dst`.  Slotted between the OS servers by priority, a set of these
+// gives a cumulative timeline through one chain (see the slot map above).
+#define ROF_INT_TAP_FOLLOW(name, src, dst)                                                \
+    static uint32_t tapFollow_##name(void) {                                              \
+        const volatile unsigned short* _c = (const volatile unsigned short*)0xDFF000u;      \
+        unsigned short _vh = _c[0x006u / 2];                                              \
+        g_tapVsum[dst] += (unsigned long)(((_vh >> 8) - s_tapV0[src]) & 0xFFu);             \
+        g_tapHsum[dst] += (long)(short)((_vh & 0xFFu) - s_tapH0[src]);                      \
+        g_tapTailCnt[dst]++;                                                              \
+        g_tapHeadCnt[dst]++;                                                              \
+        return 0;                                                                          \
+    }
+ROF_INT_TAP_FOLLOW(portsAfterCiaa, 1, 2)   // pri 50: after ciaa.resource (120), before UAE fs (20)
+ROF_INT_TAP_FOLLOW(portsAfterUaefs, 1, 3)  // pri 10: after FS-UAE's "UAE fs" server
+
+// EXTER + PORTS only.  There is deliberately NO BLIT tap: only PORTS/COPER/VERTB/EXTER/NMI are
+// exec SERVER CHAINS (iv_Data = a List); BLIT is a single-handler vector, so AddIntServer would
+// Enqueue into whatever its owner put in iv_Data.  Blit-interrupt traffic is measured instead by
+// intvec_dump.gdb (who owns IntVects[6]) + the end-to-end INTF_BLIT A/B.
+static struct Interrupt s_tapInt[4];       // [i*2] = head (pri 127), [i*2+1] = tail (pri -128)
+static struct Interrupt s_tapMid[2];       // PORTS followers at pri 50 / pri 10
+static const unsigned char kTapChain[2] = { INTB_EXTER, INTB_PORTS };
+
+// BLIT-interrupt RATE probe.  IntVects[6] belongs to graphics.library ($F901C0 — its QBlit
+// queue handler), so it cannot be tapped with AddIntServer; instead swap the whole vector for
+// a bare counter (restored verbatim on exit, as the VERTB takeover does).  This measures how
+// many level-3 interrupts our blits raise — the framework's blitter* helpers re-enable
+// INTF_BLIT right after starting each blit, even though nothing in this port needs it
+// (blitterWait polls DMACONR BLTBUSY and blitterDrain spin-drains the queue itself).
+extern "C" volatile unsigned long g_blitIrqCnt = 0;
+static struct IntVector s_savedBlitVec;
+static struct Interrupt s_blitCntInt;
+static bool             s_blitVecTaken = false;
+
+static uint32_t blitCountHandler(void)
+{
+    *(volatile unsigned short*)0xDFF09Cu = (unsigned short)INTF_BLIT;   // ack (no SETCLR = clear)
+    g_blitIrqCnt++;
+    return 0;
+}
+
+static void intTapsInstall(void)
+{
+    static uint32_t (*const kHeads[2])(void) = { tapHead_exter, tapHead_ports };
+    static uint32_t (*const kTails[2])(void) = { tapTail_exter, tapTail_ports };
+    static const char* const kNames[4] = { "RoF tapH0", "RoF tapT0",
+                                           "RoF tapH1", "RoF tapT1" };
+    for (unsigned i = 0; i < 2; i++) {
+        for (unsigned half = 0; half < 2; half++) {
+            struct Interrupt* it = &s_tapInt[i * 2 + half];
+            it->is_Node.ln_Type = NT_INTERRUPT;
+            it->is_Node.ln_Pri  = half ? -128 : 127;
+            it->is_Node.ln_Name = (char*)kNames[i * 2 + half];
+            it->is_Data = 0;
+            it->is_Code = (void(*)())(half ? kTails[i] : kHeads[i]);
+            AddIntServer(kTapChain[i], it);
+        }
+    }
+
+    {   // PORTS chain splitters: pri 50 lands between ciaa.resource (120) and "UAE fs" (20),
+        // pri 10 after both — so slot2 = ciaa.resource's own time and slot3-slot2 = UAE fs's.
+        static uint32_t (*const kMids[2])(void) = { tapFollow_portsAfterCiaa,
+                                                   tapFollow_portsAfterUaefs };
+        static const signed char kMidPri[2]     = { 50, 10 };
+        static const char* const kMidName[2]    = { "RoF tapM2", "RoF tapM3" };
+        for (unsigned i = 0; i < 2; i++) {
+            s_tapMid[i].is_Node.ln_Type = NT_INTERRUPT;
+            s_tapMid[i].is_Node.ln_Pri  = kMidPri[i];
+            s_tapMid[i].is_Node.ln_Name = (char*)kMidName[i];
+            s_tapMid[i].is_Data = 0;
+            s_tapMid[i].is_Code = (void(*)())kMids[i];
+            AddIntServer(INTB_PORTS, &s_tapMid[i]);
+        }
+    }
+
+    s_blitCntInt.is_Node.ln_Type = NT_INTERRUPT;
+    s_blitCntInt.is_Node.ln_Pri  = 0;
+    s_blitCntInt.is_Node.ln_Name = (char*)"RoF BLITcnt";
+    s_blitCntInt.is_Data = 0;
+    s_blitCntInt.is_Code = (void(*)())blitCountHandler;
+    {
+        struct IntVector* iv = &SysBase->IntVects[INTB_BLIT];
+        Disable();
+        s_savedBlitVec = *iv;
+        iv->iv_Data    = 0;
+        iv->iv_Code    = (void(*)())blitCountHandler;
+        iv->iv_Node    = &s_blitCntInt.is_Node;
+        Enable();
+        s_blitVecTaken = true;
+    }
+}
+
+static void intTapsRemove(void)
+{
+    for (unsigned i = 0; i < 2; i++)
+        for (unsigned half = 0; half < 2; half++)
+            RemIntServer(kTapChain[i], &s_tapInt[i * 2 + half]);
+    for (unsigned i = 0; i < 2; i++)
+        RemIntServer(INTB_PORTS, &s_tapMid[i]);
+
+    if (s_blitVecTaken) {
+        Disable();
+        SysBase->IntVects[INTB_BLIT] = s_savedBlitVec;
+        Enable();
+        s_blitVecTaken = false;
+    }
+}
+#endif  // ROF_FLIGHT_PROBE
+
 // ============================================================================
 //  PlatformAmiga construction + run — takeover, install interrupts, run scene, restore
 // ============================================================================
@@ -1996,6 +2255,22 @@ void PlatformAmiga::run()
     // Disable raster (bitplane) and sprite DMA so old state doesn't leak through.  Keep
     // exec's disk/blitter/audio DMA as-is; copper DMA gets re-enabled below.
     *dmaconPointer = (uint16_t)(DMAF_RASTER | DMAF_SPRITE | DMAF_COPPER);
+
+    // --- interrupt sources: keep only what we actually service --------------------
+    // Measured in flight (amiga/int_probe.gdb) with everything the OS left enabled: EXTER
+    // (CIA-B) fires 0 times in 60 s, PORTS ~11/s (all of it ciaa.resource + FS-UAE's "UAE fs"
+    // server — our own keyboard handler ran 0 times), and BLIT ~6 times per flight iteration,
+    // every one of them a pointless level-3 dispatch (nothing here consumes blit-done; see
+    // blitIrqArm in AmigaHardware.cpp).  So mask INTF_BLIT for the whole takeover window —
+    // belt-and-braces alongside blitIrqArm, since something may have armed it before we ran —
+    // and clear any request already latched so re-enabling it on the way out can't fire a
+    // stale one into graphics.library.  INTENA is saved here and restored verbatim at the end
+    // (the OS needs its blit interrupt back for QBlit once we hand the machine over).
+    s_savedIntena = (uint16_t)(*intenarPointer);
+#ifndef ROF_BLIT_IRQ
+    *intenaPointer = (uint16_t)INTF_BLIT;        // no SETCLR = disable
+    *intreqPointer = (uint16_t)INTF_BLIT;        // drop any latched blit-done request
+#endif
 
     // Display window — standard PAL lores 320x200 visible area.  No bitplanes (bplcon0=0):
     // the whole area shows COLOR00 (copper-set background).
@@ -2060,7 +2335,25 @@ void PlatformAmiga::run()
     // copper never runs again, so BPLCON3 (and the rest of setPlayfield) persists.
     *dmaconPointer = (uint16_t)(DMAF_SETCLR | DMAF_MASTER | DMAF_COPPER | DMAF_RASTER | DMAF_SPRITE);
 
-    keyboardInit();       // RETURN = START for the launch cinematic
+    keyboardInit();       // RETURN = START for the launch cinematic (also arms SP in CIA-A's ICR mask)
+#ifdef ROF_PORTS_TAKEOVER
+    portsTakeover();      // opt-in, measured NOT worth it — see the portsHandler comment
+#endif
+
+#ifdef ROF_FLIGHT_PROBE
+    intTapsInstall();     // measure the EXTER/PORTS/BLIT chains we do NOT own (int_probe.gdb)
+#endif
+
+    // --- multitasking off for the duration ------------------------------------
+    // Nothing here needs exec's scheduler and we never Wait(), so hold task switching off for
+    // the whole window: no other task can steal the CPU or dirty the caches/bus mid-frame, and
+    // no OS task can be woken by an interrupt we don't own.  Measured cost of NOT doing this
+    // (amiga/int_probe.gdb, 60 s of flight): ExecBase->DispCount +0, IdleCount +0 — i.e. zero
+    // task dispatches already, because the VERTB vector takeover removed exec's only scheduling
+    // heartbeat (its VBlank server did the quantum accounting).  So this is insurance against
+    // regressions, not a measured win.  ⚠ Everything between Forbid() and Permit() must be
+    // Wait()-free: the WaitTOF() pairs and every library open/close are deliberately outside.
+    Forbid();
 
     // --- run -----------------------------------------------------------------
     // The whole game runs inside scene.run(): the genuine transpiled/native boot chain,
@@ -2069,6 +2362,13 @@ void PlatformAmiga::run()
     scene.run();
 
     // --- restore system ------------------------------------------------------
+    Permit();
+#ifdef ROF_FLIGHT_PROBE
+    intTapsRemove();
+#endif
+#ifdef ROF_PORTS_TAKEOVER
+    portsRestore();       // hand level 2 back to ciaa.resource before the OS needs it again
+#endif
     keyboardShutdown();
     scene.shutdown();     // calls PlatformAmiga::audioShutdown
 
@@ -2088,6 +2388,13 @@ void PlatformAmiga::run()
 
     // Disable our display DMA before handing back.
     *dmaconPointer = (uint16_t)(DMAF_COPPER | DMAF_RASTER | DMAF_SPRITE);
+
+    // Put the interrupt enables back as the OS had them: INTF_BLIT is the only bit we masked for
+    // the window, and we never enabled anything the OS had off, so re-setting the saved set is a
+    // complete restore (graphics.library needs blit-done again for QBlit).  Drop a latched blit
+    // request first so re-enabling can't immediately fire a stale one into its handler.
+    *intreqPointer = (uint16_t)INTF_BLIT;
+    *intenaPointer = (uint16_t)(INTF_SETCLR | (s_savedIntena & 0x7FFFu));
 
     LoadView(savedView);
     WaitTOF();

@@ -1966,7 +1966,17 @@ void RescueOnFractalus::renderFlightDirect()
     // block on the pending swap, so it is ~0.  Placed before every branch so flightDisplayed/`back` are
     // always current (the rescue-pause composite + buffer selection depend on it) and any deferred flip
     // is drained before the pause path takes over.  No-op when nothing is pending (first frame / pause).
+#ifdef ROF_FLIGHT_PROBE
+    {   // integer frame cost of this drain (see g_flipWaitFrames in PlatformAmiga.cpp)
+        extern volatile unsigned long g_flipWaitFrames, g_flipWaitCalls;
+        const unsigned short _fw0 = platform_frame_count();
+        while (flightSwapPending) { }
+        g_flipWaitFrames += (unsigned long)(unsigned short)(platform_frame_count() - _fw0);
+        g_flipWaitCalls++;
+    }
+#else
     while (flightSwapPending) { }
+#endif
 #if defined(ROF_FLIGHT_PROBE) && !defined(ROF_PROFILE_NORING)
     // Record this entry into the rescue diagnostic ring (see the block above renderFlightDirect).
     if (!g_rfFrozen) {

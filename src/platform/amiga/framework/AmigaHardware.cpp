@@ -123,6 +123,23 @@ void AmigaHardware::setInterrupts(uint16_t interrupts, bool enabled)
     }
 }
 
+// Re-arm the blit-done interrupt after starting a blit — what the original framework did so a
+// blit-done ISR could drain the queue.  This port has NO blit ISR: processBlitterQueue() is only
+// ever called synchronously, blitterWait() polls DMACONR BLTBUSY and blitterDrain() spin-drains.
+// So an armed blit-done is pure overhead — a level-3 autovector dispatch into graphics.library's
+// queue handler ($F901C0) that does nothing for us, ~52us apiece, measured 6 per flight iteration
+// (amiga/int_probe.gdb).  Hence: leave INTF_BLIT DISABLED.  `make BLIT_IRQ=1` restores the
+// original arming for A/B (it also flips BLIT_IRQ_ARM in AmigaHardwareAssembler.s, which is the
+// copy that actually runs while ASSEMBLER is on).
+static inline void blitIrqArm()
+{
+#ifdef ROF_BLIT_IRQ
+    AmigaHardware::setInterrupts(INTF_BLIT, true);
+#else
+    AmigaHardware::setInterrupts(INTF_BLIT, false);
+#endif
+}
+
 uint16_t AmigaHardware::enabledDMAChannels()
 {
     return *dmaconrPointer;
@@ -202,7 +219,7 @@ void AmigaHardware::blitterClear(uint16_t* data, uint16_t width, uint16_t height
         hasQueuedBlits = true;
         processBlitterQueue();
     }
-    AmigaHardware::setInterrupts(INTF_BLIT, true);
+    blitIrqArm();
 }
 
 void AmigaHardware::blitterCopy(uint16_t* source, uint16_t* destination, uint16_t width, uint16_t height, int16_t sourceModulo, int16_t destinationModulo, int16_t shift, uint16_t firstWordMask, uint16_t lastWordMask, uint16_t mask)
@@ -254,7 +271,7 @@ void AmigaHardware::blitterCopy(uint16_t* source, uint16_t* destination, uint16_
         hasQueuedBlits = true;
         processBlitterQueue();
     }
-    AmigaHardware::setInterrupts(INTF_BLIT, true);
+    blitIrqArm();
 }
 
 void AmigaHardware::blitterCopyWithMask(uint16_t* source, uint16_t* destination, uint16_t* mask, uint16_t width, uint16_t height, int16_t sourceModulo, int16_t destinationModulo, int16_t maskModulo, int16_t sourceShift, int16_t maskShift, uint16_t firstWordMask, uint16_t lastWordMask, bool clearMasked)
@@ -319,7 +336,7 @@ void AmigaHardware::blitterCopyWithMask(uint16_t* source, uint16_t* destination,
         hasQueuedBlits = true;
         processBlitterQueue();
     }
-    AmigaHardware::setInterrupts(INTF_BLIT, true);
+    blitIrqArm();
 }
 
 void AmigaHardware::blitterLine(uint16_t* data, uint16_t x1, uint16_t y1, uint16_t x2, uint16_t y2, uint16_t bytesPerRow, bool singleBitPerRow)
@@ -438,7 +455,7 @@ void AmigaHardware::blitterLine(uint16_t* data, uint16_t x1, uint16_t y1, uint16
         hasQueuedBlits = true;
         processBlitterQueue();
     }
-    AmigaHardware::setInterrupts(INTF_BLIT, true);
+    blitIrqArm();
 }
 
 void AmigaHardware::blitterFill(uint16_t* data, uint16_t width, uint16_t height, int16_t modulo)
@@ -486,7 +503,7 @@ void AmigaHardware::blitterFill(uint16_t* data, uint16_t width, uint16_t height,
         hasQueuedBlits = true;
         processBlitterQueue();
     }
-    AmigaHardware::setInterrupts(INTF_BLIT, true);
+    blitIrqArm();
 }
 
 void AmigaHardware::processBlitterQueue()
@@ -693,7 +710,7 @@ void AmigaHardware::blitterFillUp(uint16_t* dest, uint16_t width, uint16_t heigh
     *bltcptPointer = (uint16_t*)dLast;
     *bltdptPointer = (uint16_t*)dLast;
     *bltsizePointer = (uint16_t)((height << 6) | width);
-    AmigaHardware::setInterrupts(INTF_BLIT, true);
+    blitIrqArm();
 }
 
 void AmigaHardware::blitterDrain()
@@ -705,7 +722,7 @@ void AmigaHardware::blitterDrain()
     AmigaHardware::setInterrupts(INTF_BLIT, false);
     while (hasQueuedBlits) processBlitterQueue();
     blitterWait();
-    AmigaHardware::setInterrupts(INTF_BLIT, true);
+    blitIrqArm();
 }
 
 void AmigaHardware::blitterCombineWithMask(uint16_t* background, uint16_t* source, uint16_t* destination, uint16_t* mask, uint16_t width, uint16_t height, int16_t backgroundModulo, int16_t sourceModulo, int16_t destinationModulo, int16_t maskModulo, int16_t sourceShift, int16_t maskShift, uint16_t firstWordMask, uint16_t lastWordMask, bool clearMasked)
@@ -779,7 +796,7 @@ void AmigaHardware::blitterCombineWithMask(uint16_t* background, uint16_t* sourc
         hasQueuedBlits = true;
         processBlitterQueue();
     }
-    AmigaHardware::setInterrupts(INTF_BLIT, true);
+    blitIrqArm();
 }
 
 void AmigaHardware::blitterPatternWithMask(uint16_t pattern, uint16_t* destination, uint16_t* mask, uint16_t width, uint16_t height, int16_t sourceModulo, int16_t destinationModulo, int16_t maskModulo, int16_t sourceShift, int16_t maskShift, uint16_t firstWordMask, uint16_t lastWordMask, bool clearMasked)
@@ -839,5 +856,5 @@ void AmigaHardware::blitterPatternWithMask(uint16_t pattern, uint16_t* destinati
         hasQueuedBlits = true;
         processBlitterQueue();
     }
-    AmigaHardware::setInterrupts(INTF_BLIT, true);
+    blitIrqArm();
 }

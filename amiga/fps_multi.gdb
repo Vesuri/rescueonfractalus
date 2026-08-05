@@ -24,6 +24,6 @@ printf "WINDOW B: %d iters / %d vbi -> iter/frame = 0.%04d\n", \
   $i2-$i1, $v2-$v1, (($i2-$i1)*10000)/($v2-$v1)
 printf "TOTAL   : %d iters / %d vbi -> iter/frame = 0.%04d\n", \
   $i2-$i0, $v2-$v0, (($i2-$i0)*10000)/($v2-$v0)
-printf "  (still in flight? VVBLKI=$%02x%02x should be $4ff5)\n", mem[0x225], mem[0x224]
+printf "  (still in flight? VVBLKI=$%02x%02x should be $4ff5)\n", mem[0x223], mem[0x222]
 detach
 quit

@@ -267,6 +267,30 @@ ifdef VERTB_SERVER
 EXTRA_DEFINES += -DROF_VERTB_SERVER
 endif
 
+# A/B fallback: `make BLIT_IRQ=1` goes back to ARMING the blit-done interrupt after every blit
+# (INTENA bit 6), as the dA JoRMaS framework did for its blit-done queue ISR.  This port has no
+# such ISR — blitterWait() polls DMACONR BLTBUSY and blitterDrain() spin-drains the queue — so by
+# default blit-done stays masked: every armed one was a level-3 autovector dispatch into
+# graphics.library's queue handler ($F901C0) doing nothing for us, measured at 6 per flight
+# iteration x ~52us (amiga/int_probe.gdb).  Needs to reach the vasm side too (BLIT_IRQ_ARM in
+# AmigaHardwareAssembler.s is the copy that runs while ASSEMBLER is on).
+ifdef BLIT_IRQ
+EXTRA_DEFINES  += -DROF_BLIT_IRQ
+EXTRA_VASMDEFS += -DROF_BLIT_IRQ
+endif
+
+# Experiment, OFF by default: `make PORTS_TAKEOVER=1` takes over the level-2 PORTS IntVector
+# (our own CIA-A ICR read + keyboard dispatch) instead of reaching the keyboard through
+# ciaa.resource's ICR dispatcher on exec's PORTS server chain.  That chain measures ~11
+# firings/s x ~250us = ~0.3% of wall clock in flight with our own handler running ZERO times
+# (amiga/int_probe.gdb) — but it is ciaa.resource + FS-UAE's "UAE fs" host-filesystem/clipboard
+# trap server, i.e. an emulator artifact that a bare A500 does not have, AND starving that trap
+# server makes FS-UAE reset the machine (bisected: session reboots before flight, 2/2 runs).
+# So: kept for the record, not enabled.  See the portsHandler comment in PlatformAmiga.cpp.
+ifdef PORTS_TAKEOVER
+EXTRA_DEFINES += -DROF_PORTS_TAKEOVER
+endif
+
 # Debug test aid: `make FORCE_ALIEN=1` forces EVERY rescued figure to be the alien
 # jump-scare (pilot_render marker override, rof_native.c g_forceAlienRescue).  For testing
 # the alien-on-windshield animation without waiting for the level-scaled random roll.  OFF
@@ -451,7 +475,7 @@ ASFLAGS   = -mcpu=68000 -g --register-prefix-optional -I"$(SDKDIR)" -I"$(CURDIR)
 # vasm (Motorola syntax) for the framework *Assembler.s.  -m68010: the only >68000
 # instruction is `movec vbr,d0` in getVBR (the C++ getVBR already emits movec via raw
 # bytes through Supervisor(), so this is behaviour-neutral on the A500 68000 target).
-VASMFLAGS = -m68010 -Felf -quiet -x -no-opt -nowarn=62
+VASMFLAGS = -m68010 -Felf -quiet -x -no-opt -nowarn=62 $(EXTRA_VASMDEFS)
 LDFLAGS   = -Wl,--emit-relocs,--gc-sections,-Ttext=0,-Map=$(OUT).map
 
 # ---------------------------------------------------------------------------
