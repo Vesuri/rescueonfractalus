@@ -382,6 +382,17 @@ endif
 ifdef PROFILE_NORING
 EXTRA_DEFINES += -DROF_PROFILE_NORING
 endif
+# `make FPSCOUNT=1` — the HONEST framerate build.  Adds exactly two things to an otherwise
+# shipping binary: the headless auto-launch (so flight is reachable with no keypress) and ONE
+# increment per painted terrain frame (g_fpsFrames).  Deliberately does NOT imply PROBES:
+# ROF_FLIGHT_PROBE's FP_TIME brackets read two CHIP custom registers plus a 16x16 multiply
+# several times per iteration, and ROF_TDRAW_PROF adds ~6 more per visible object pair — that
+# instrumentation is what this build exists to measure against.  g_vbiCount is bumped by the
+# real VERTB handler in every build, so:  FPS = 50 * g_fpsFrames / g_vbiCount.
+# Run: . ./env.sh && GDBSCRIPT=fps_seg.gdb ./diag_run.sh 200
+ifdef FPSCOUNT
+EXTRA_DEFINES += -DROF_FPSCOUNT
+endif
 # `make PROBES=1 AUTOFIRE=1`: hold the trigger once in flight so the player laser fires
 # continuously — a capture path for the shot PMG (dump mem[$0E00 page] + shadows via gdb).
 ifdef AUTOFIRE

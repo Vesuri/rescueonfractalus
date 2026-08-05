@@ -2456,6 +2456,15 @@ void RescueOnFractalus::renderFlightDirect()
 #ifdef ROF_FLIGHT_PROBE
     g_fdCalls++;
 #endif
+#ifdef ROF_FPSCOUNT
+    // Near-clean framerate counter (`make FPSCOUNT=1`): ONE increment per painted terrain
+    // frame.  Paired with g_vbiCount (bumped unconditionally by the real VERTB handler), so
+    // FPS = 50 * g_fpsFrames / g_vbiCount.  Deliberately independent of ROF_FLIGHT_PROBE:
+    // that flag's FP_TIME brackets read two CHIP custom registers and do a 16x16 multiply
+    // several times per iteration, which is exactly the instrumentation cost this build
+    // exists to measure.  See amiga/fps_seg.gdb.
+    { extern volatile unsigned long g_fpsFrames; g_fpsFrames++; }
+#endif
 #undef FD_LAP
 
     // Flip — handed to the VBI so the copper's viewport bitplane-pointer words are rewritten at

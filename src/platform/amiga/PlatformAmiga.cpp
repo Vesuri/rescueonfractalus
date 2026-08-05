@@ -316,6 +316,13 @@ static void wait_rasterlines(uint8_t lines)
 // of its main use below) so flush_paula's beep capture can timestamp frames.
 static volatile uint16_t g_vbiCount = 0;
 
+#ifdef ROF_FPSCOUNT
+// Painted terrain frames, bumped once in renderFlightDirect (`make FPSCOUNT=1`).  The whole
+// point of this build is that it carries NO other instrumentation, so the framerate it
+// reports is the shipping build's.  FPS = 50 * g_fpsFrames / g_vbiCount.
+extern "C" volatile unsigned long g_fpsFrames = 0;
+#endif
+
 #ifdef ROF_BEEP_CAP
 // ---- pilot-proximity-beep capture (make PROBES=1 BEEP_CAP=1) ------------------------
 // Records, each flush_paula, the POKEY shadow + per-channel Paula waveform class / period /
@@ -1809,7 +1816,10 @@ static uint32_t vbiHandler()
     // delays catches every phase of the shot animation (travel scale/pos + impact).
     if ((mem[0x0222] | (mem[0x0223] << 8)) == 0x4FF5u) s_trig0State = 0x00u;
 #endif
+#endif  // ROF_FLIGHT_PROBE — probe-only taps above; the auto-launch below is also wanted by
+        // the near-clean ROF_FPSCOUNT build, which has none of those probe globals.
 
+#if defined(ROF_FLIGHT_PROBE) || defined(ROF_FPSCOUNT)
     // Auto-launch: replicate a RETURN/START press once Standby's idle loop is actually
     // polling CONSOL.  A fixed vbi==350 fired before boot_standby_launch_driver's standby poll was live
     // (g_standbyRevealReady latches at boot_standby_launch_driver entry, when the idle loop starts), so the
@@ -1891,7 +1901,7 @@ static uint32_t vbiHandler()
         }
     }
 #endif
-#endif
+#endif  // ROF_FLIGHT_PROBE || ROF_FPSCOUNT (auto-launch)
 
 #ifdef ROF_FORCE_DEMO
     // Headless DEMO DROID + BREAK verification: in the initial Standby, hold OPTION (CONSOL bit2)
