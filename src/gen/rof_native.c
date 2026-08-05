@@ -115,6 +115,7 @@ extern unsigned short rof_beam_line(void);
 extern volatile unsigned long g_rasSpanHist[16];   /* phase-2 entry span (bucketed)           */
 extern volatile unsigned long g_rasFarHist[16];    /* far-bisect span at each push (bucketed)  */
 extern volatile unsigned long g_rasFe, g_rasFf, g_rasPh1Adv, g_rasPh1Push, g_rasSat, g_rasBail;
+extern volatile unsigned long g_rasDots;           /* DRAWs that actually WROTE a plane2 dot   */
 /* buckets: [1..8] exact, 9=9-12, 10=13-16, 11=17-24, 12=25-32, 13=33-64, 14=65-128, 15=129+ */
 static inline int ras_bucket(unsigned s) {
     if (s <= 8)   return (int)s;
@@ -129,10 +130,18 @@ static inline int ras_bucket(unsigned s) {
 #define RSCNT(c)      (++(c))
 #define RSSAT(h)      do { if ((h) >= 0x97) ++g_rasSat; } while (0)
 #define RSHIST(a, s)  (++(a)[ras_bucket(s)])
+/* An ACCEPTED draw (g_tdPlots) is not the same thing as a DOT: ROF_PLOT_DOT plots at the
+ * column's PREVIOUS top, and the per-frame reset floor puts that at $6B -> _sc == 43, the one
+ * scanline the gate excludes.  So a column's first accepted draw never writes, and only the
+ * later ones do.  This counts the draws that actually reach the plane2 write — the real
+ * denominator for any "cycles saved per plotted dot" estimate. */
+#define RSDOT(col, h) do { int _rc = (int)(col) - 48, _rs = 150 - (int)(h); \
+    if ((unsigned)_rc < 160u && (unsigned)_rs < 47u && _rs != 43) ++g_rasDots; } while (0)
 #else
 #define RSCNT(c)      ((void)0)
 #define RSSAT(h)      ((void)0)
 #define RSHIST(a, s)  ((void)0)
+#define RSDOT(col, h) ((void)0)
 #endif
 
 /* Direct-to-plane2 terrain dots (Amiga).  Instead of OR-ing each surface pixel into the mode-D
@@ -5959,7 +5968,7 @@ void terrain_column_rasterize_core_c(uint8_t entryDepth, uint8_t colBase) {
             if (_h >= 0x97) { COL_MAX(plotCol) = 0xFF; _h = 0x97; } \
             TDCNT(g_tdPlots); b5 = depth; \
             ROF_FIELD_PLOT(_h); /* SDL/validate: OR value-2 into the mode-D field (the dots source) */ \
-            RSSAT(_h); \
+            RSSAT(_h); RSDOT(plotCol, _oldMax); \
             ROF_PLOT_DOT(plotCol, _oldMax); /* Amiga: lag-plot the PREVIOUS top into plane2 (see below) */ \
         } } while(0)
 

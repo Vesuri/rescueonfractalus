@@ -56,13 +56,16 @@
 ;   d5 = plotCol   d6 = chgt (TOS control-point height)
 ;     (all six hold a BYTE with the upper bits kept clean, so .w arithmetic is safe)
 ;   a0 = col — the $82 writeback value; only the leaf handlers update it
-;   a1 = free
+;   a1 = kDotColMask (plotCol -> pixel mask, 0 = off-viewport)
 ;   a2 = mem+$260E  (COL_MAX per-column max-height base, indexed by plotCol)
 ;   a3 = current control-point slot ptr; slot = [postSpan, hgt, frac], walked +/-3
-;   a4 = control-point stack base (for the depth==0 underflow test)
+;   a4 = kDotColOff  (plotCol -> plane byte offset within the row)
 ;   a5 = g_flightDotPlane (plane2 dot buffer; armed once at init -> never null in flight)
 ;   a6 = kDrawDotRowOff (oldMax -> plane2 row byte-offset, or $FFFF sentinel; word entries)
 ;   d5 doubles as phase-1 scratch (plotCol is not live until ph2_enter).
+; The control-point stack base (for the depth==0 underflow test) used to sit in a4; it is just
+; SP — nothing between the `lea -CPBUF(sp),sp` and `done` touches the stack (no bsr/jsr since
+; DRAW was inlined) — so the test is `cmpa.l sp,a3` and a4 is free for the second dot table.
 
 	xdef	terrain_column_rasterize_core_asm
 	ifnd	ROF_RASTERIZE_VERIFY
@@ -71,6 +74,8 @@
 	xdef	flight_edge_plot_asm
 	xref	mem
 	xref	kDrawDotRowOff
+	xref	kDotColMask
+	xref	kDotColOff
 	xref	kHeightRowOff
 	xref	g_flightDotPlane
 
@@ -88,9 +93,13 @@ CPBUF	equ	96		; 32 control-point slots * 3 bytes (depth stays < ~16)
 ; a6 = kDrawDotRowOff folds the whole oldMax gate: bails on oldMax FIRST (before any _sc
 ; arithmetic) via the $FFFF sentinel, and yields kRow120[150-oldMax] directly for the
 ; accepted rows.  a5 (g_flightDotPlane) is armed once at init and never null in flight ->
-; no per-plot null test.  Range-check plotCol: reject the HIGH edge (>=208) BEFORE the sub,
-; so an off-viewport column never pays for it; the LOW edge (<48) then falls out FREE as the
-; borrow from that same sub.  Same accept set as the C oracle's (unsigned)(plotCol-48) < 160.
+; no per-plot null test.
+; The COLUMN half is folded the same way, into a1/a4 (RescueOnFractalus.cpp): the plot's
+; `_ac = plotCol-48`, its (unsigned)_ac < 160 gate, the `_ac>>2` byte offset and the
+; `kColMask4[_ac&3]` pixel mask are all pure functions of plotCol, so they are two table
+; reads indexed by the RAW column.  kDotColMask is 0 outside [48,208) — a value no real
+; 2-bit mask has — so the SAME `move.b` that fetches the mask is also the range gate.
+; That is 6 instructions (~62 cycles) in place of 13 (~104, one a variable-count LSR).
 DRAWDOT	macro
 	moveq	#0,d1
 	move.b	(a2,d5.w),d1		; oldMax = COL_MAX(plotCol)
@@ -105,18 +114,11 @@ DRAWDOT	macro
 	add.w	d1,d1			; oldMax * 2 (word index)
 	move.w	(a6,d1.w),d1		; kDrawDotRowOff[oldMax], or $FFFF
 	bmi.s	.dend\@			; sentinel -> off display / $6b reset-floor -> skip
-	move.w	d5,d7			; plotCol
-	cmp.w	#208,d7
-	bcc.s	.dend\@			; plotCol >= 208 -> off viewport (skip the sub)
-	sub.w	#48,d7			; _ac = plotCol - 48
-	bcs.s	.dend\@			; plotCol < 48 -> borrow -> off viewport (free)
-	move.w	d7,d0			; _ac  (d0/_h is dead from here)
-	and.w	#3,d0
-	add.w	d0,d0			; shift count = 2*(_ac&3)
-	lsr.w	#2,d7			; _ac >> 2
-	add.w	d7,d1			; byte offset = rowoff + (_ac>>2)
-	move.w	#$C0,d7
-	lsr.w	d0,d7			; mask = $C0 >> (2*(_ac&3))  ( = kColMask4[_ac&3] )
+	move.b	(a1,d5.w),d7		; kDotColMask[plotCol]  (0 <=> off viewport)
+	beq.s	.dend\@
+	moveq	#0,d0			; (d0/_h is dead from here; clear for the byte index)
+	move.b	(a4,d5.w),d0		; kDotColOff[plotCol] = (plotCol-48)>>2
+	add.w	d0,d1			; byte offset = rowoff + colOff
 	or.b	d7,(a5,d1.w)		; g_flightDotPlane[off] |= mask
 .dend\@:
 	endm
@@ -139,16 +141,18 @@ terrain_column_rasterize_core_asm:
 	move.b	55(sp),d0		; colBase  (11 + 44)
 	move.b	d0,mem+$60		; mem[$60] = colBase   (faithful; dead on Amiga)
 	lea	-CPBUF(sp),sp		; allocate the private control-point stack
-	movea.l	sp,a4			; a4 = cp base
-	movea.l	a4,a3			; a3 = current slot (depth 0)
+	movea.l	sp,a3			; a3 = current slot (depth 0); the base for the
+					;      depth==0 test is SP itself (see the header)
 	lea	mem+$260E,a2		; COL_MAX base
 	move.l	g_flightDotPlane,a5	; plane2 dot buffer (armed at init -> non-null in flight)
 	lea	kDrawDotRowOff,a6	; oldMax -> plane2 row byte-offset
+	lea	kDotColMask,a1		; plotCol -> pixel mask (0 = off viewport)
+	lea	kDotColOff,a4		; plotCol -> plane byte offset
 	; seed control-point slot [0] from mem[$EA]/[$F4]; its column becomes the span below
 	moveq	#0,d6
 	move.b	mem+$EA,d6		; chgt = CTL_HEIGHT(0)
-	move.b	d6,1(a4)		; slot[0].hgt
-	move.b	mem+$F4,2(a4)		; slot[0].frac
+	move.b	d6,1(a3)		; slot[0].hgt
+	move.b	mem+$F4,2(a3)		; slot[0].frac
 	; load running cursor height/frac from $84/$86 (zero-extended)
 	moveq	#0,d3
 	move.b	mem+$84,d3		; height
@@ -338,7 +342,7 @@ ph2_ff:
 	move.l	d3,d0			; _h
 	DRAWDOT
 	addq.b	#1,d5			; plotCol++
-	cmpa.l	a4,a3
+	cmpa.l	sp,a3			; depth == 0 ? (cp base == SP; a4 is a dot table now)
 	beq	done			; depth was 0 -> done
 	RASPOP
 	cmp.b	#$D4,d5
@@ -358,7 +362,7 @@ ph2_fe:
 	move.l	d3,d0
 	DRAWDOT
 	addq.b	#1,d5
-	cmpa.l	a4,a3
+	cmpa.l	sp,a3			; depth == 0 ? (cp base == SP; a4 is a dot table now)
 	beq	done
 	RASPOP
 	cmp.b	#$D4,d5
@@ -409,7 +413,7 @@ ras_sp3_go:
 	move.l	d3,d0
 	DRAWDOT
 	addq.b	#1,d5
-	cmpa.l	a4,a3
+	cmpa.l	sp,a3			; depth == 0 ? (cp base == SP; a4 is a dot table now)
 	beq	done
 	RASPOP
 	cmp.b	#$D4,d5
@@ -472,7 +476,7 @@ ras_sp4_go:
 	move.l	d3,d0
 	DRAWDOT
 	addq.b	#1,d5
-	cmpa.l	a4,a3
+	cmpa.l	sp,a3			; depth == 0 ? (cp base == SP; a4 is a dot table now)
 	beq	done
 	RASPOP
 	cmp.b	#$D4,d5

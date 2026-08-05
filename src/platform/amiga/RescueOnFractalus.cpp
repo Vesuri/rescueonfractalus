@@ -386,6 +386,33 @@ static void buildDrawDotRowOff() {
             kDrawDotRowOff[m] = 0xFFFF;       // off-display / reset-floor -> skip
     }
 }
+// Dot-plot COLUMN tables for the rasterizer's inlined DRAWDOT (TerrainRasterizeAssembler.s).
+// ROF_PLOT_DOT's per-plot column work is: _ac = col-48, gate (unsigned)_ac < 160, plane byte
+// offset _ac>>2, pixel mask kColMask4[_ac&3].  All three are pure functions of the column, so
+// they fold into two tables indexed by the RAW column (48 is a multiple of 4, so no shifting is
+// needed to keep _ac&3 == col&3).  kDotColMask doubles as the range gate: it is 0 outside
+// [48,208), a value no real 2-bit mask can take, so the asm rejects an off-viewport column with
+// the same `move.b` that fetches the mask.  That replaces the per-plot
+// `cmp #208 / sub #48 / and #3 / add / lsr #2 / move #$C0 / lsr d0` chain (13 instructions,
+// ~104 cycles, one of them a variable-count shift) with two table reads and an add (~62).
+// Built once at initialize() next to kDrawDotRowOff — the rasterizer runs before the first
+// renderFlightDirect, so both must exist by then.
+extern "C" uint8_t kDotColMask[256];
+extern "C" uint8_t kDotColOff[256];
+uint8_t kDotColMask[256];
+uint8_t kDotColOff[256];
+static void buildDotColTables() {
+    for (int c = 0; c < 256; c++) {
+        const int ac = c - 48;
+        if ((unsigned)ac < 160u) {                  // matches ROF_PLOT_DOT's _ac gate exactly
+            kDotColMask[c] = kColMask4[ac & 3];
+            kDotColOff[c]  = (uint8_t)(ac >> 2);    // 0..39
+        } else {
+            kDotColMask[c] = 0;                     // off-viewport -> the asm skips the plot
+            kDotColOff[c]  = 0;
+        }
+    }
+}
 // C reference / non-asm fallback for the plane1 skyline edge plot (see renderFlightDirect).
 // One bit per column at its skyline scanline; h==$FF (off-top, all body) plots nothing.
 static void edgePlotCore(uint8_t* bp) {
@@ -1159,6 +1186,7 @@ void RescueOnFractalus::initialize()
     // re-affirms the same pointer each flight frame (harmless).
     g_flightDotPlane = (uint8_t*)terrainDotBuffer->data + 40;
     buildDrawDotRowOff();   // rasterizer dot row-offset table (before the first flight frame)
+    buildDotColTables();    // ...and its column mask/offset pair (same deadline)
     // Shared single-buffered pre-flight viewport bitmap for Standby / Doors (door halves) / Planet /
     // Stars — the scenes that never composite together in one frame (unlike the tunnel reveal, which
     // coexists with the door halves during Doors, so it keeps its own tunnelBitmap).  Kept separate

@@ -718,6 +718,10 @@ extern "C" volatile unsigned long g_rasSpanHist[16] = { 0 };
 extern "C" volatile unsigned long g_rasFarHist[16] = { 0 };
 extern "C" volatile unsigned long g_rasFe = 0, g_rasFf = 0, g_rasPh1Adv = 0,
                                  g_rasPh1Push = 0, g_rasSat = 0, g_rasBail = 0;
+// Draws that actually WROTE a plane2 dot — strictly fewer than the accepted draws (g_tdPlots),
+// because the dot is plotted at the column's PREVIOUS top and the per-frame $6B reset floor
+// lands on the one excluded scanline.  This is the denominator for any per-plotted-dot estimate.
+extern "C" volatile unsigned long g_rasDots = 0;
 #endif
 // object draw-order loop shape (-DROF_TDRAW_PROF): total pairs scanned, pairs culled at the
 // primary gate (cheap skip), visible pairs reaching the companion/subdivide path, and total

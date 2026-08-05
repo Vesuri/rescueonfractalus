@@ -18,6 +18,8 @@ printf "frames(halves)=%lu rasterCalls=%lu subdivCalls=%lu iter=%u vbi=%u\n", \
 printf "far=%lu draws=%lu plots=%lu (accept=%lu%%) sat=%lu bail=%lu fe=%lu ff=%lu ph1adv=%lu ph1push=%lu\n", \
   g_tdRasBisect, g_tdRasDraw, g_tdPlots, (g_tdRasDraw? 100*g_tdPlots/g_tdRasDraw : 0), \
   g_rasSat, g_rasBail, g_rasFe, g_rasFf, g_rasPh1Adv, g_rasPh1Push
+printf "dots=%lu  (%lu%% of draws, %lu%% of accepted) <- the ONLY draws that reach the plot code\n", \
+  g_rasDots, (g_tdRasDraw? 100*g_rasDots/g_tdRasDraw : 0), (g_tdPlots? 100*g_rasDots/g_tdPlots : 0)
 echo --- entry-span histogram (idx 1..8 exact, 9=9-12,10=13-16,11=17-24,12=25-32,13=33-64,14=65-128,15=129+) ---\n
 set $i = 0
 while $i < 16
