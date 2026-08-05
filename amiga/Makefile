@@ -393,6 +393,15 @@ endif
 ifdef FPSCOUNT
 EXTRA_DEFINES += -DROF_FPSCOUNT
 endif
+# `make PROBES=1 BLIT_SHAPE=1` + amiga/blit_shape.gdb — WHERE the flight frame stalls.
+# The PC profile puts ~4-5% in bW_waitUntilBlitterNotBusy/processBlitterQueue/blitterDrain and
+# ~7% on the frame-sync vblank spin, but a PC sample cannot name the CALL SITE — and that is the
+# only thing that matters, because the fix for a stall is to give the CPU work during it (or to
+# split the blit), which is a per-site decision.  This brackets each wait in the flight path with
+# ISR-corrected beam ticks.  Needs PROBES=1 (it uses rof_subclock/g_isrBeamLines).
+ifdef BLIT_SHAPE
+EXTRA_DEFINES += -DROF_BLIT_SHAPE
+endif
 # `make PROBES=1 AUTOFIRE=1`: hold the trigger once in flight so the player laser fires
 # continuously — a capture path for the shot PMG (dump mem[$0E00 page] + shadows via gdb).
 ifdef AUTOFIRE

@@ -83,7 +83,12 @@ def group_of(sym):
                                                      return "terrain_frame_setup (tf_*)"
     if sym.startswith("ep_") or sym == "RescueOnFractalus::renderFlightDirect()":
                                                      return "renderFlightDirect (+edge-plot asm)"
-    if sym == "PlatformAmiga::renderFrame()":        return "renderFrame (flip busy-wait + orch.)"
+    # NOT a busy-wait — measured 2026-08-06 (blit_shape.gdb): the frame-sync vblank spin is
+    # 682 ticks over 3001 vbi = 0.07% of flight, 1 tick per call (the deferred-flip scheme
+    # normally skips it entirely).  ~21/22 of this bucket's samples resolve to the spin's
+    # source line, but that is GCC line attribution for the surrounding orchestration, not
+    # time in the loop.  Do not mine this bucket for "idle time" — there is none.
+    if sym == "PlatformAmiga::renderFrame()":        return "renderFrame (per-frame orch.)"
     if sym in ("game_main_loop", "game_main_loop_body"):
                                                      return "game_main_loop (flight-loop orch.)"
     if sym == "terrain_draw_objects":                return "object draw-order loop"

@@ -382,7 +382,33 @@ static bool    s_resumeRestorePend  = false;
 static bool    s_resumeClearPend    = false;
 // Called by the terrain draw (rof_native.c) before its first dot write, to ensure the kicked
 // off-screen-buffer clear has finished (the dots OR into freshly-zeroed plane2).
-extern "C" void rof_flight_wait_dotclear(void) { AmigaHardware::blitterWait(); }
+#ifdef ROF_BLIT_SHAPE
+// ---- blitter-STALL attribution probe (`make PROBES=1 BLIT_SHAPE=1`, amiga/blit_shape.gdb) ----
+// The PC profile puts ~5% of the flight frame inside bW_waitUntilBlitterNotBusy /
+// processBlitterQueue / blitterDrain, but a PC sample cannot say WHICH call site is stalling —
+// and that is the only thing that matters, because the fix for a stall is to give the CPU work
+// to do during it (or to split the blit), which is a per-site decision.  So: bracket each wait
+// in the flight path and tally its beam-ticks separately.  ISR beam-lines are subtracted (a
+// blitter wait very often spans a VBI firing, which would otherwise be counted as stall).
+extern "C" volatile unsigned long g_bwDotClear = 0, g_bwClearCopy = 0, g_bwSkyFill = 0,
+                                  g_bwPendClear = 0, g_bwFlip = 0, g_bwCalls = 0;
+#define BW_AT(acc, stmt) do { unsigned long _t = rof_subclock(), _i = g_isrBeamLines; \
+    stmt; unsigned long _d = rof_subclock() - _t, _di = g_isrBeamLines - _i; \
+    (acc) += (_d > _di) ? (_d - _di) : 0; } while (0)
+#else
+#define BW_AT(acc, stmt) do { stmt; } while (0)
+#endif
+
+// Waits for the dot-side-buffer clear kicked at the end of the previous renderFlightDirect.
+// Called from terrain_draw_frame_core BEFORE the first rasterizer dot lands.
+extern "C" void rof_flight_wait_dotclear(void) {
+#ifdef ROF_BLIT_SHAPE
+    BW_AT(g_bwDotClear, AmigaHardware::blitterWait());
+    g_bwCalls++;
+#else
+    AmigaHardware::blitterWait();
+#endif
+}
 // Edge-plot height->plane1-row-byte-offset table: kHeightRowOff[h] = kRow120[clamp(150-h,0,46)].
 // Folds the per-column "scanline = 150-h, clamp to the terrain rows" arithmetic out of the
 // skyline plot loop (a pure table index), so the loop has no per-column clamp branches — used by
@@ -2026,7 +2052,7 @@ void RescueOnFractalus::renderFlightDirect()
             Bitmap* const back = (flightDisplayed == terrainBitmapBack) ? terrainBitmap : terrainBitmapBack;
             const int bi = (back == terrainBitmapBack) ? 1 : 0;
             // A clear may still be pending on this buffer from the frame we entered the pause on.
-            if (flightClearPending == back) { AmigaHardware::blitterWait(); flightClearPending = nullptr; }
+            if (flightClearPending == back) { BW_AT(g_bwPendClear, AmigaHardware::blitterWait()); flightClearPending = nullptr; }
             if (!s_bufSeeded[bi]) {
                 // First use of this buffer in the pause — it was cleared blank; seed clean terrain.
                 back->copy(*s_cleanBmp, 0, 0, 0, 0, kW, 47);
@@ -2081,7 +2107,7 @@ void RescueOnFractalus::renderFlightDirect()
             // FULLY drain the queue (not just blitterWait): combineWithMask enqueues one blit
             // per plane (+ a possible seed copy), and blitterWait() returns after only the FIRST
             // completes — flipping then would show a half-composited buffer (missing plane/rows).
-            AmigaHardware::blitterDrain();  // composite (+ any seed copy) fully done before the flip
+            BW_AT(g_bwFlip, AmigaHardware::blitterDrain());  // composite (+ any seed copy) fully done before the flip
 #ifdef ROF_FLIGHT_PROBE
             if (mem[0x0632]) g_alTComp += rof_subclock() - _tc0;   // composite+drain only (excl. flip wait)
 #endif
@@ -2118,7 +2144,7 @@ void RescueOnFractalus::renderFlightDirect()
             terrainBitmapBack->copy(*s_cleanBmp, 0, 0, 0, 0, kW, 47);
         }
         if (s_figBmp) { s_figBmp->clear(); s_figMaskBmp->clear(); }
-        AmigaHardware::blitterDrain();     // terrain restore + overlay clear both done before continuing
+        BW_AT(g_bwFlip, AmigaHardware::blitterDrain());     // terrain restore + overlay clear both done before continuing
         g_figRowLo = 99; g_figRowHi = -1; g_figColLo = 40; g_figColHi = -1;
         s_boxLo[0] = 99; s_boxHi[0] = -1; s_boxLo[1] = 99; s_boxHi[1] = -1;
         s_boxColHi[0] = -1; s_boxColHi[1] = -1;
@@ -2169,7 +2195,7 @@ void RescueOnFractalus::renderFlightDirect()
                                20 /*words*/, 47 /*rows*/,
                                80 /*srcMod bytes = 120-40*/, 80 /*dstMod bytes*/,
                                0 /*shift*/, 0xFFFF /*fwm*/, 0xFFFF /*lwm*/, 0xFFFF /*unused (minterm=A)*/);
-    AmigaHardware::blitterDrain();   // TWO queued blits (clear + copy) — blitterWait would settle only the first
+    BW_AT(g_bwClearCopy, AmigaHardware::blitterDrain());   // TWO queued blits (clear + copy) — blitterWait would settle only the first
     flightClearPending = nullptr;
     FD_LAP(g_fdClear);
 
@@ -2233,7 +2259,7 @@ void RescueOnFractalus::renderFlightDirect()
     // side-buffer (g_flightDotPlane = terrainDotBuffer plane2) during the upstream compute; they were
     // copied into `back`'s plane2 by the blitterCopy above, so they are already here.
     FD_LAP(g_fdScan);                                        // (now ~0)
-    AmigaHardware::blitterWait();                            // sky fill must finish before the band overlay + flip
+    BW_AT(g_bwSkyFill, AmigaHardware::blitterWait());                            // sky fill must finish before the band overlay + flip
     FD_LAP(g_fdFill);
 
     // Object plane1 overlay: OR the value-3 ground-object low bits (recorded by terrain_plot_pixel
