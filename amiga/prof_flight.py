@@ -59,10 +59,15 @@ def group_of(sym):
     # "ras_sp3*"/"ras_sp4*" are the 2026-08-05 restructure's straight-line span-3/span-4 leaf
     # groups; "done" is the rasterizer's shared writeback/epilogue label.  Without these rows
     # they show up as separate "misc:" lines and the rasterizer bucket reads ~half its real cost.
+    # NB "load_far" is a TerrainSubdivideAssembler.s label, NOT a rasterizer one (the old
+    # rasterizer had a same-named helper; the 2026-08-05 restructure dropped it, along with
+    # the `draw`/`draw_ret` subroutine that DRAWDOT now inlines).  Listing it here cost the
+    # subdivide bucket 1.6 points and handed them to the rasterizer.
     if sym.startswith(("ph1_", "ph2_", "ras_sp")) or sym in (
-        "draw", "draw_ret", "load_far", "done", "terrain_column_rasterize_core_asm"):
+        "done", "terrain_column_rasterize_core_asm"):
                                                      return "rasterizer (ph1/ph2 + leaf draw)"
-    if sym.startswith("sd_") or sym in ("submid", "terrain_subdivide_column_core_asm"):
+    if sym.startswith("sd_") or sym in ("submid", "push_mid", "load_far", "load_span",
+                                        "terrain_subdivide_column_core_asm"):
                                                      return "subdivide (sd_*)"
     if sym.startswith("tf_") or sym == "terrain_frame_setup_core_asm":
                                                      return "terrain_frame_setup (tf_*)"

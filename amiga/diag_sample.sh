@@ -39,9 +39,30 @@ set remotetimeout 90
 target remote 127.0.0.1:2345
 EOF
 
+# Sample command STREAM on stdin, not a `while` loop in a -x script.  A SIGINT that
+# lands inside the print block (instead of inside `continue`) raises gdb's Quit; that
+# unwinds a sourced `while` loop for good, after which gdb reads stdin, hits EOF and
+# exits — which used to truncate a 250-sample run at ~30.  Fed as a flat stream, a Quit
+# only aborts the ONE block it interrupted: gdb reads the next `continue` and keeps
+# sampling.  (diag_sample.gdb is kept for reference / manual use.)
+{
+  echo "set pagination off"
+  echo "set confirm off"
+  echo "set height 0"
+  i=0
+  while [ "$i" -lt $((COUNT + 40)) ]; do
+    echo "continue"
+    echo "printf \"S$i vbi=%u VVBLKI=%02x%02x 365B=%02x sp=%08x pc=0x%x SYM=\", g_vbiCount, mem[0x0223], mem[0x0222], mem[0x365B], \$sp, \$pc"
+    echo "info symbol \$pc"
+    i=$((i + 1))
+  done
+  echo "detach"
+  echo "quit"
+} > "$RUN/sample_cmds.gdb"
+
 env HOME="$GDBHOME" XDG_CACHE_HOME="$GDBHOME" \
-  "$GDB" -q -l 10 -x "$RUN/connect.gdb" -x diag_sample.gdb out/RoF.elf \
-  > "$RUN/gdb-sample.log" 2>&1 &
+  "$GDB" -q -l 10 -x "$RUN/connect.gdb" out/RoF.elf \
+  < "$RUN/sample_cmds.gdb" > "$RUN/gdb-sample.log" 2>&1 &
 GDB_PID=$!
 echo "gdb pid=$GDB_PID; warmup ${WARMUP}s then ${COUNT} samples @ ${INTERVAL}s..."
 sleep "$WARMUP"
@@ -53,7 +74,14 @@ done
 sleep 1
 kill -9 "$GDB_PID" 2>/dev/null || true
 pkill -9 fs-uae 2>/dev/null || true
-echo "=== samples (door phase = 060B=35) ==="
-grep -E "^S[0-9]" "$RUN/gdb-sample.log"
-echo "=== hot functions (door phase only) ==="
+# Normalise the log back to the two-line "S<i> ... SYM=" / "<symbol> + N in section" shape
+# prof_flight.py parses.  Reading commands from stdin makes gdb echo its "(gdb) " prompt, and
+# since the sample printf ends without a newline the prompt+symbol land on the SAME line.
+# Strip the prompts and split at SYM=.  (Raw stream kept alongside for debugging.)
+cp -f "$RUN/gdb-sample.log" "$RUN/gdb-sample.raw.log"
+sed -e 's/(gdb) //g' -e 's/ SYM=/ SYM=\'$'\n''/' "$RUN/gdb-sample.raw.log" > "$RUN/gdb-sample.log"
+
+echo "=== samples by scene (VVBLKI: 4ff5=flight, 52d7=standby/cinematic) ==="
+grep -oE "VVBLKI=[0-9a-f]+" "$RUN/gdb-sample.log" | sort | uniq -c | sort -rn
+echo "=== hot functions (all scenes; use prof_flight.py for the flight-only profile) ==="
 grep -E "in .* \(" "$RUN/gdb-sample.log" | sed -E 's/.* in ([A-Za-z0-9_:]+).*/\1/' | sort | uniq -c | sort -rn | head
