@@ -53,6 +53,34 @@ printf "  ph2: adopt=%lu push=%lu (far already in regs: %lu)   ph3: farEsc=%lu s
 printf "  *** REDUNDANT far reloads: inner=%lu/%lu (%lu%%)  +ph2=%lu  => %lu of %lu total loads\n", \
   g_sdInnerFarKnown, g_sdInner, (g_sdInner? 100*g_sdInnerFarKnown/g_sdInner : 0), \
   g_sdP2Known, (g_sdInnerFarKnown+g_sdP2Known), (g_sdInner+g_sdP2Adopt+g_sdP2Push+g_sdPop)
+echo --- PER-SEGMENT occlusion cull (one subdivide call from the object draw-order loop) ---\n
+printf "segments=%lu  offscreen=%lu  drewNOTHING=%lu (%lu%%) <- the CEILING for any cull\n", \
+  g_segCalls, g_segOffscr, g_segNoDraw, (g_segCalls? 100*g_segNoDraw/g_segCalls : 0)
+printf "  SOUND bound max(ends)+W/2 : culls=%lu (%lu%%)  UNSOUND-fires=%lu (MUST be 0)\n", \
+  g_segSound, (g_segCalls? 100*g_segSound/g_segCalls : 0), g_segSoundBad
+printf "  NAIVE bound max(ends)     : culls=%lu (%lu%%)  UNSOUND-fires=%lu (proves the slack)\n", \
+  g_segNaive, (g_segCalls? 100*g_segNaive/g_segCalls : 0), g_segNaiveBad
+printf "  test cost: hits=%lu cols=%lu (%lu/hit)   misses=%lu cols=%lu (%lu/miss)\n", \
+  g_segSound, g_segScanCull, (g_segSound? g_segScanCull/g_segSound : 0), \
+  g_segMisses, g_segScanMiss, (g_segMisses? g_segScanMiss/g_segMisses : 0)
+printf "  WORK REMOVED by the sound cull: draws=%lu/%lu (%lu%%)  rasterCalls=%lu/%lu (%lu%%)\n", \
+  g_segDrawsCull, g_tdRasDraw, (g_tdRasDraw? 100*g_segDrawsCull/g_tdRasDraw : 0), \
+  g_segRasCull, g_tdRasterCalls, (g_tdRasterCalls? 100*g_segRasCull/g_tdRasterCalls : 0)
+echo --- SAME test one level down: cull a whole terrain_column_rasterize CALL ---\n
+printf "rasCalls=%lu  acceptedNOTHING=%lu (%lu%%) <- ceiling   SOUND culls=%lu (%lu%%)  UNSOUND=%lu\n", \
+  g_rcCalls, g_rcNoAccept, (g_rcCalls? 100*g_rcNoAccept/g_rcCalls : 0), \
+  g_rcSound, (g_rcCalls? 100*g_rcSound/g_rcCalls : 0), g_rcSoundBad
+printf "  cost: hits=%lu cols=%lu (%lu/hit)  misses=%lu cols=%lu (%lu/miss)   draws removed=%lu/%lu (%lu%%)\n", \
+  g_rcSound, g_rcScanHit, (g_rcSound? g_rcScanHit/g_rcSound : 0), \
+  g_rcMisses, g_rcScanMiss, (g_rcMisses? g_rcScanMiss/g_rcMisses : 0), \
+  g_rcDrawsCull, g_tdRasDraw, (g_tdRasDraw? 100*g_rcDrawsCull/g_tdRasDraw : 0)
+echo --- clipped segment width histogram (1..8 exact, 9=9-12,10=13-16,11=17-24,12=25-32,13=33-64,14=65-128,15=129+) ---\n
+set $i = 0
+while $i < 16
+  printf "%lu ", g_segWidthHist[$i]
+  set $i = $i + 1
+end
+printf "\n"
 echo --- inner-loop depth histogram (0..15) ---\n
 set $i = 0
 while $i < 16

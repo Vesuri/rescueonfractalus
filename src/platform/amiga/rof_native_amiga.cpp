@@ -741,6 +741,21 @@ extern "C" volatile unsigned long g_sdInner = 0, g_sdInnerFarKnown = 0, g_sdFarE
 extern "C" volatile unsigned long g_sdRas = 0, g_sdSkip = 0, g_sdPop = 0, g_sdMid = 0,
                                   g_sdRough = 0;
 extern "C" volatile unsigned long g_sdDepthHist[16] = { 0 };
+// Per-SEGMENT occlusion-cull sizing (one subdivide call from the object draw-order loop):
+// NoDraw = the ceiling (segments that accepted no draw at all), Sound = the derived
+// max(ends)+W/2 bound's hit rate, Naive = the leaf version's unsound max(ends) bound,
+// *Bad = a bound that culled a segment which DID draw (Sound must stay 0), Scan* = the
+// test's own cost in COL_MAX compares.  See seg_occl_pre() in rof_native.c for the bound.
+extern "C" volatile unsigned long g_segCalls = 0, g_segNoDraw = 0, g_segOffscr = 0,
+                                  g_segSound = 0, g_segSoundBad = 0, g_segNaive = 0,
+                                  g_segNaiveBad = 0, g_segScanCull = 0, g_segScanMiss = 0,
+                                  g_segMisses = 0;
+extern "C" volatile unsigned long g_segWidthHist[16] = { 0 };
+extern "C" volatile unsigned long g_segDrawsCull = 0, g_segRasCull = 0;
+// Same occlusion test one level down: cull a whole terrain_column_rasterize_core CALL.
+extern "C" volatile unsigned long g_rcCalls = 0, g_rcNoAccept = 0, g_rcSound = 0,
+                                  g_rcSoundBad = 0, g_rcScanHit = 0, g_rcScanMiss = 0,
+                                  g_rcMisses = 0, g_rcDrawsCull = 0;
 #endif
 // object draw-order loop shape (-DROF_TDRAW_PROF): total pairs scanned, pairs culled at the
 // primary gate (cheap skip), visible pairs reaching the companion/subdivide path, and total

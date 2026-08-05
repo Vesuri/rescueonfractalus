@@ -197,6 +197,125 @@ extern volatile unsigned long g_sdInner, g_sdInnerFarKnown, g_sdFarEsc, g_sdStee
 extern volatile unsigned long g_sdRas, g_sdSkip, g_sdPop, g_sdMid, g_sdRough;
 extern volatile unsigned long g_sdDepthHist[16];
 #define SDCNT(c) (++(c))
+
+/* --- per-SEGMENT occlusion-cull sizing probe (2026-08-06) --------------------------------
+ * The LEAF-level cull (a span-3/4 DRAW group) was measured and closed at ~2% of the
+ * rasterizer, because a rejected DRAWDOT already costs only 32 cycles and the cull test has
+ * to re-read the same COL_MAX byte.  A whole SEGMENT — one terrain_subdivide_column_core
+ * call from the object draw-order loop — is three orders of magnitude bigger, so the same
+ * test amortises far better IF a segment is ever entirely hidden.  This probe measures that
+ * at the call site, on the state the real cull would see.
+ *
+ * THE HEIGHT BOUND, DERIVED (this is the part that had to be checked before any asm).
+ * Both roughness sites displace a midpoint by half the remaining COLUMN span:
+ *     subdivide  subdiv_midpoint():        disp = (uint16)(mid.col - span.col) >> 1
+ *     rasterizer phase-2 far bisect:       disp = (uint8 )(mid     - col     ) >> 1
+ * and in both the pre-displacement height is ceil((a+b)/2), which never exceeds max(a,b)
+ * (the `+1` / `hsum&1` rounding rounds the AVERAGE up, it cannot pass the larger endpoint).
+ * So the only way a subtree rises above its two endpoints is the displacement chain.  With
+ * f(W) = floor(ceil(W/2)/2) the worst-case cumulative rise over a width-W segment is
+ *     S(W) = f(W) + S(ceil(W/2)),  S(1) = 0
+ *     S(4)=1  S(8)=3  S(16)=7  S(32)=15  S(64)=31   =>   S(W) <= W/2, exactly.
+ * Hence NO height the segment can draw exceeds  max(h_span, h_far) + W/2, and that bound is
+ * TIGHT enough to be worth testing — but the bare max(ends) the leaf version used is
+ * **UNSOUND** at this scale (a 40-column segment can legally rise 20 above both ends).
+ * g_segNaiveBad counts the segments that prove it; g_segSoundBad must stay 0.
+ *
+ * Counters (all per subdivide call from the object draw-order loop):
+ *   Calls    segments seen                Offscr  segments whose clipped range is empty
+ *   NoDraw   segments that accepted ZERO draws — the CEILING for any cull test
+ *   Sound    the +W/2 bound culls it      SoundBad  it culled one that DID draw (must be 0)
+ *   Naive    the max(ends) bound culls it NaiveBad  ditto (expected > 0 = the proof)
+ *   ScanCull columns compared on a hit    ScanMiss  columns compared before the first miss
+ *   WidthHist  clipped column width, ras_bucket()ed — the test's cost distribution
+ */
+extern volatile unsigned long g_segCalls, g_segNoDraw, g_segOffscr, g_segSound,
+    g_segSoundBad, g_segNaive, g_segNaiveBad, g_segScanCull, g_segScanMiss,
+    g_segMisses, g_segWidthHist[16];
+/* What a cull would actually REMOVE, measured rather than modelled: the DRAW attempts and
+ * rasterize calls that happen inside the segments the sound bound culls. */
+extern volatile unsigned long g_segDrawsCull, g_segRasCull;
+extern unsigned long g_tdPlots;            /* accepted draws — the oracle for "drew nothing" */
+extern unsigned long g_tdRasDraw, g_tdRasterCalls;
+static unsigned long seg_plots0, seg_draws0, seg_ras0;
+static int seg_firedSound, seg_firedNaive;
+/* Scan [lo,hi] for the first column the bound does NOT clear; returns the count compared. */
+static inline int seg_scan(const uint8_t *cm, int lo, int hi, int h) {
+    int c = lo;
+    while (c <= hi && h <= (int)cm[c]) ++c;
+    return c - lo + (c <= hi);          /* columns actually compared (incl. the failing one) */
+}
+static inline void seg_occl_pre(void) {
+    const uint8_t *M = (const uint8_t *)mem;
+    const uint8_t *cm = M + MEM_terrain_height_max;
+    ++g_segCalls;
+    seg_firedSound = seg_firedNaive = 0;
+    seg_plots0 = g_tdPlots; seg_draws0 = g_tdRasDraw; seg_ras0 = g_tdRasterCalls;
+    /* span = $82:$83 col / $84:$85 hgt ; far = SubPt slot 0 (the segment's other endpoint) */
+    int sc = (int)(int16_t)(uint16_t)(M[0x82] | (M[0x83] << 8));
+    int fc = (int)(int16_t)(uint16_t)(M[0x25B4] | (M[0x25D2] << 8));
+    int sh = (int)(int16_t)(uint16_t)(M[0x84] | (M[0x85] << 8));
+    int fh = (int)(int16_t)(uint16_t)(M[0x25F0] | (M[0x24E2] << 8));
+    if (sc >= fc) return;                              /* the entry guard bails: nothing drawn */
+    /* Clipped column range.  LEFT: phase 1 fast-forwards the cursor to $2C, and the
+       one-column fast path bails below $2D, so nothing is drawn left of $2C.  RIGHT: the
+       loop-top guard is `plotCol >= $D4`, but the gap==$FE leaf draws TWO columns per guard
+       (so $D4 is reachable) and the `endCol == col` fast path has no guard at all — its only
+       limit is the subdivide leaf's `span.col < $D8`.  Hence $D7, not $D3: scanning to $D3
+       let 12 of 15833 segments draw past the end of the test (measured 2026-08-06). */
+    int lo = sc < 0x2C ? 0x2C : sc;
+    int hi = fc > 0xD7 ? 0xD7 : fc;
+    if (lo > hi) { ++g_segOffscr; return; }
+    ++g_segWidthHist[ras_bucket((unsigned)(hi - lo + 1))];
+    int hmax = sh > fh ? sh : fh;
+    int hs = hmax + ((fc - sc) >> 1);                  /* SOUND bound: + S(W) = W/2            */
+    if (hs > 0xFF) hs = 0xFF; if (hs < 0) hs = 0;      /* the drawn height is a clamped byte   */
+    int hn = hmax > 0xFF ? 0xFF : (hmax < 0 ? 0 : hmax);   /* NAIVE bound (unsound, for A/B)   */
+    int n = seg_scan(cm, lo, hi, hs);
+    if (n == hi - lo + 1) { ++g_segSound; seg_firedSound = 1; g_segScanCull += (unsigned)n; }
+    else                  { ++g_segMisses; g_segScanMiss += (unsigned)n; }
+    if (seg_scan(cm, lo, hi, hn) == hi - lo + 1) { ++g_segNaive; seg_firedNaive = 1; }
+}
+static inline void seg_occl_post(void) {
+    int drew = (g_tdPlots != seg_plots0);
+    if (!drew) ++g_segNoDraw;
+    if (seg_firedSound) {
+        if (drew) ++g_segSoundBad;
+        g_segDrawsCull += g_tdRasDraw - seg_draws0;        /* the work a cull would remove */
+        g_segRasCull   += g_tdRasterCalls - seg_ras0;
+    }
+    if (seg_firedNaive && drew) ++g_segNaiveBad;
+}
+#define SEGPRE()  seg_occl_pre()
+#define SEGPOST() seg_occl_post()
+
+/* Same test one level DOWN: cull a whole terrain_column_rasterize_core CALL.  Between the
+ * segment (too coarse — see the result) and the span-3/4 group (too fine — closed at ~2%).
+ * Here both endpoints are already bytes: span = (col, height) at entry, far = CTL[0].
+ * Bound and scan range are derived exactly as in seg_occl_pre(). */
+extern volatile unsigned long g_rcCalls, g_rcNoAccept, g_rcSound, g_rcSoundBad,
+    g_rcScanHit, g_rcScanMiss, g_rcMisses, g_rcDrawsCull;
+static unsigned long rc_plots0, rc_draws0;
+static int rc_fired;
+static inline void rc_occl_pre(int col, int height, int endCol, int ctlHgt) {
+    const uint8_t *cm = (const uint8_t *)mem + MEM_terrain_height_max;
+    ++g_rcCalls; rc_fired = 0; rc_plots0 = g_tdPlots; rc_draws0 = g_tdRasDraw;
+    int lo = col < 0x2C ? 0x2C : col;
+    int hi = endCol > 0xD7 ? 0xD7 : endCol;
+    if (lo > hi) return;
+    int h = (height > ctlHgt ? height : ctlHgt) + ((endCol - col) >> 1);
+    if (h > 0xFF) h = 0xFF;
+    int n = seg_scan(cm, lo, hi, h);
+    if (n == hi - lo + 1) { ++g_rcSound; rc_fired = 1; g_rcScanHit += (unsigned)n; }
+    else                  { ++g_rcMisses; g_rcScanMiss += (unsigned)n; }
+}
+static inline void rc_occl_post(void) {
+    int drew = (g_tdPlots != rc_plots0);
+    if (!drew) ++g_rcNoAccept;
+    if (rc_fired) { if (drew) ++g_rcSoundBad; g_rcDrawsCull += g_tdRasDraw - rc_draws0; }
+}
+#define RCPRE(c, h, e, ch) rc_occl_pre((c), (h), (e), (ch))
+#define RCPOST()           rc_occl_post()
 #else
 #define RSCNT(c)      ((void)0)
 #define RSSAT(h)      ((void)0)
@@ -204,6 +323,10 @@ extern volatile unsigned long g_sdDepthHist[16];
 #define RSDOT(col, h) ((void)0)
 #define RSOCCL(span, mh, chgt, hgt, pc, cm) ((void)0)
 #define SDCNT(c)      ((void)0)
+#define SEGPRE()      ((void)0)
+#define SEGPOST()     ((void)0)
+#define RCPRE(c, h, e, ch) ((void)0)
+#define RCPOST()      ((void)0)
 #endif
 
 /* Direct-to-plane2 terrain dots (Amiga).  Instead of OR-ing each surface pixel into the mode-D
@@ -6439,7 +6562,9 @@ uint8_t terrain_subdivide_column_core_c(uint8_t startDepth, uint8_t rasterEntryD
                ($83/$85 it never touches). */
             dl_ptr_hi = (uint8_t)span.col; screen_ptr_lo = (uint8_t)(span.col >> 8);
             screen_ptr_hi = (uint8_t)span.hgt; encounter_count = (uint8_t)(span.hgt >> 8); row_count = span.frac;
+            RCPRE((uint8_t)span.col, (uint8_t)span.hgt, blit_color_src, terrain_ctl_height);
             TDSPAN(terrain_column_rasterize_core(rasterEntryDepth, (uint8_t)depth), g_tdRaster);
+            RCPOST();
             span.col = (span.col & 0xFF00) | dl_ptr_hi;        /* rasterizer rewrote the low bytes */
             span.hgt = (span.hgt & 0xFF00) | screen_ptr_hi;
             span.frac = row_count;
@@ -7135,7 +7260,7 @@ __attribute__((noinline)) static void terrain_draw_objects(void) {
                 /* load the primary's projected vector as the running span endpoint, then subdivide */
                 M[MEM_dl_ptr_hi]=o0[0x2400]; M[MEM_screen_ptr_lo]=o0[0x242D]; M[MEM_screen_ptr_hi]=o0[0x245A];
                 M[MEM_encounter_count]=o0[0x2487]; M[MEM_row_count]=o0[0x23B5];
-                PB(_sd); terrain_subdivide_column_core(0x00, order_idx); PE(_sd, g_tdSubdiv);
+                PB(_sd); SEGPRE(); terrain_subdivide_column_core(0x00, order_idx); SEGPOST(); PE(_sd, g_tdSubdiv);
                 order_idx = M[0x272E];               /* restore the index (the calls leave $272E untouched) */
                 if (order_idx == 0) order_idx++;
             }
