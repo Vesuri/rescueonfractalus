@@ -4,7 +4,7 @@
 # (rof_native.c, ROF_SUBDIV_VERIFY path).
 set pagination off
 set confirm off
-tbreak RescueOnFractalus::renderFlightDirect if g_fdCalls >= 320
+tbreak RescueOnFractalus::renderFlightDirect if g_fdCalls >= 150
 continue
 printf "VERIFY fdCalls=%u vbi=%u subdivCalls=%lu mismatch=%lu firstBad=%lu\n", \
   g_fdCalls, g_vbiCount, g_subdivCalls, g_subdivMismatch, g_subdivFirstBad

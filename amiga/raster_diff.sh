@@ -24,6 +24,8 @@ for i in $(seq 1 60); do
   kill -0 "$FSUAE_PID" 2>/dev/null || { echo "FS-UAE exited early"; exit 1; }
   lsof -nP -iTCP:2345 -sTCP:LISTEN >/dev/null 2>&1 && break; sleep 1
 done
+sleep 2   # the stub BINDS a moment before it will accept — without this gdb intermittently
+          # dies on "could not connect: Connection refused" and the whole run yields no data
 cat > "$RUN/connect.gdb" <<EOF
 set pagination off
 set confirm off
@@ -36,8 +38,14 @@ env HOME="$GDBHOME" XDG_CACHE_HOME="$GDBHOME" \
 GDB_PID=$!
 echo "gdb pid=$GDB_PID; running up to ${DELAY}s for the breakpoint..."
 for i in $(seq 1 "$DELAY"); do kill -0 "$GDB_PID" 2>/dev/null || break; sleep 1; done
-kill -INT "$GDB_PID" 2>/dev/null || true; sleep 2; kill -9 "$GDB_PID" 2>/dev/null || true
+# SIGINT breaks gdb's `continue`; the rest of $GDBSCRIPT (the printf tallies) then runs.  Give
+# it a real grace period — over the remote stub those printfs read dozens of globals and take
+# seconds, and killing early is why an unreached breakpoint used to yield an EMPTY log.
+kill -INT "$GDB_PID" 2>/dev/null || true; sleep 8; kill -9 "$GDB_PID" 2>/dev/null || true
 pkill -9 fs-uae 2>/dev/null || true
 [ -f "$RUN/diff_heights.bin" ] && cp -f "$RUN/diff_heights.bin" "$RUN/heights-$LABEL.bin"
 [ -f "$RUN/diff_terrain.bin" ] && cp -f "$RUN/diff_terrain.bin" "$RUN/terrain-$LABEL.bin"
-echo "=== $LABEL ==="; grep -E "BREAK|dumped|VERIFY|mismatch" "$RUN/gdb-$LABEL.log" | tail -6
+# PERF/FIRSTBAD were missing from this filter, so the per-call beam-tick comparison — the whole
+# point of the differential — never reached the console and had to be grepped out of the log.
+echo "=== $LABEL ==="
+grep -E "BREAK|dumped|VERIFY|PERF|EDGE|FIRSTBAD|mismatch" "$RUN/gdb-$LABEL.log" | tail -8
