@@ -60,16 +60,12 @@ terrain_subdivide_column_core_asm:
 	lsl.w	#8,d3
 	move.b	mem+$84,d3
 	move.b	mem+$86,d4
-	; mid = {$8D:$8E col, $8F:$90 hgt, $91 frac}
-	moveq	#0,d5
-	move.b	mem+$8E,d5
-	lsl.w	#8,d5
-	move.b	mem+$8D,d5
-	moveq	#0,d6
-	move.b	mem+$90,d6
-	lsl.w	#8,d6
-	move.b	mem+$8F,d6
-	move.b	mem+$91,d7
+	; mid ($8D-$91) is deliberately NOT loaded.  The oracle seeds it from ZP purely so that
+	; its `out:` flush can write the same bytes back when no midpoint was ever computed —
+	; every read of `mid` in the body is preceded by an assignment from subdiv_midpoint.  So
+	; we skip the load (9 instructions, 2 of them 22-cycle `lsl.w #8`) and instead make the
+	; flush CONDITIONAL at sd_out: if no midpoint ran, mem[$8D-$91] still holds exactly what
+	; the oracle would write back, so leaving it alone is byte-identical.  See sd_out.
 
 	; --- entry guard: far0 = subpt_load(0); $B5 = (far0.col>>8)^$80; bail if span.col>=far0.col
 	moveq	#0,d0
@@ -207,15 +203,12 @@ sd_lh_neg:
 	moveq	#0,d1			; > $FF, negative -> $00
 sd_lh_store:
 	move.b	d1,mem+$EA
-	; flush span to $82-$86 (rasterizer reads/rewrites $82/$84/$86)
+	; Flush span to $82/$84/$86 — the ONLY three the rasterizer reads (and rewrites).  The
+	; oracle stores the high bytes $83/$85 here too, but nothing reads them before sd_out
+	; rewrites them from d2/d3, so on the Amiga they are dead here: skipping them drops two
+	; 22-cycle `lsr.w #8` (plus their move.l/move.b) per rasterized leaf.
 	move.b	d2,mem+$82
-	move.l	d2,d0
-	lsr.w	#8,d0
-	move.b	d0,mem+$83
 	move.b	d3,mem+$84
-	move.l	d3,d0
-	lsr.w	#8,d0
-	move.b	d0,mem+$85
 	move.b	d4,mem+$86
 	; terrain_column_rasterize_core(rasterEntryDepth, depth)  (args pushed right-to-left)
 	move.l	a2,d0			; depth (2nd arg)
@@ -256,6 +249,15 @@ sd_out:
 	lsr.w	#8,d0
 	move.b	d0,mem+$85
 	move.b	d4,mem+$86
+	; Flush mid ($8D-$91) only if one was actually computed.  The budget is the flag for
+	; free: it is set to $14 after the entry guard and decremented ONCE immediately before
+	; each of the two `bsr submid` sites, so `budget != $14` <=> at least one midpoint ran.
+	; (The exhaustion exit needs 21 decrements, so it implies ~20 midpoints — still dirty.)
+	; When it is clean, d5/d6/d7 hold the CALLER's registers, not a midpoint — and mem[]
+	; already holds what the oracle would write back, so skipping the flush is what makes
+	; dropping the entry load correct.
+	cmpa.w	#$14,a3
+	beq.s	sd_out_nomid
 	move.b	d5,mem+$8D		; flush mid
 	move.l	d5,d0
 	lsr.w	#8,d0
@@ -265,6 +267,7 @@ sd_out:
 	lsr.w	#8,d0
 	move.b	d0,mem+$90
 	move.b	d7,mem+$91
+sd_out_nomid:
 	move.l	a3,d0			; $9F = budget (low byte; $FF if exhausted)
 	move.b	d0,mem+$9F
 sd_ret:
