@@ -432,6 +432,59 @@ extern "C" void flight_edge_plot_asm(uint8_t* bp);           // TerrainRasterize
 extern "C" volatile unsigned long g_edgeCalls = 0, g_edgeMismatch = 0, g_edgeAsmTicks = 0, g_edgeCTicks = 0;
 // rof_subclock / g_isrBeamLines come from the ROF_FLIGHT_PROBE block above (VERIFY pairs with PROBES).
 #endif
+#ifdef ROF_EDGE_SHAPE
+// ---- Edge-plot STRUCTURAL shape probe (make EDGE_SHAPE=1 + amiga/shape_probe.gdb) -----------
+// The edge plot is a 160-column scatter-OR: per column, one table lookup (kHeightRowOff[h]) and
+// one indexed byte-OR of a 2-bit mask into the plane-1 row.  Whether that can be restructured
+// depends entirely on the SHAPE of the skyline it is fed (mem[$260E+48..]), which the PC profile
+// cannot see:
+//   * consecutive columns landing on the SAME row can share ONE lookup, and — when they also fall
+//     in the same 4-column plane-1 byte — merge their masks into ONE byte-OR.  So the achievable
+//     access count is "distinct rows per group", not 4 per group; g_epORs sums exactly that.
+//   * a whole group at one row is a single `or.b #$FF`; two adjacent such groups at the same row
+//     would be a single `or.w #$FFFF` (g_epWordSame) — only if the runs are that long AND aligned.
+// Off by default: the scan itself costs more than the loop it measures.
+extern "C" volatile unsigned long
+    g_epFrames = 0, g_epFF = 0, g_epSameH = 0, g_epSameRow = 0, g_epLookups = 0, g_epORs = 0,
+    g_epRow0 = 0, g_epRow46 = 0, g_epGroupAllSame = 0, g_epWordSame = 0,
+    g_epGroupDistinct[5] = {0,0,0,0,0}, g_epRunHist[9] = {0,0,0,0,0,0,0,0,0};
+static void edgeShapeProbe() {
+    const uint8_t* y = (const uint8_t*)mem + 0x260E + 48;
+    g_epFrames++;
+    int  prevH = -1;             // previous column's raw height (-1 = none/$FF)
+    long prevRow = -1;           // previous column's row offset (-1 = none/$FF)
+    int  run = 0;                // current run length of equal row offsets
+    long prevGroupRow = -2;      // the row a fully-uniform previous group sat at (-2 = not uniform)
+    for (int g = 0; g < 40; g++) {
+        long gr[4]; int distinct = 0; long seen[4];
+        for (int k = 0; k < 4; k++) {
+            const uint8_t h = y[g * 4 + k];
+            if (h == 0xFFu) { gr[k] = -1; g_epFF++; prevH = -1; prevRow = -1;
+                              if (run) { g_epRunHist[run > 8 ? 8 : run]++; run = 0; } continue; }
+            const long row = kHeightRowOff[h];
+            gr[k] = row;
+            if (row == kRow120[0])  g_epRow0++;
+            if (row == kRow120[46]) g_epRow46++;
+            if ((int)h == prevH) g_epSameH++; else g_epLookups++;   // lookups needed if h is cached
+            if (row == prevRow) { g_epSameRow++; run++; }
+            else { if (run) g_epRunHist[run > 8 ? 8 : run]++; run = 1; }
+            prevH = h; prevRow = row;
+            int dup = 0;
+            for (int j = 0; j < distinct; j++) if (seen[j] == row) { dup = 1; break; }
+            if (!dup) seen[distinct++] = row;
+        }
+        g_epGroupDistinct[distinct]++;
+        g_epORs += distinct;                                  // byte-ORs a merged loop would issue
+        const int uniform = (distinct == 1 && gr[0] >= 0 && gr[1] >= 0 && gr[2] >= 0 && gr[3] >= 0);
+        if (uniform) {
+            g_epGroupAllSame++;
+            if ((g & 1) && prevGroupRow == gr[0]) g_epWordSame++;   // even+odd pair, same row -> or.w
+        }
+        prevGroupRow = uniform ? gr[0] : -2;
+    }
+    if (run) g_epRunHist[run > 8 ? 8 : run]++;
+}
+#endif
 //   GTIA mode-10 (tunnel field at $2000): byte = 2 nibbles; nibble bit k → 4px.
 static uint8_t kGtia10P1[256];   // nibble bit0
 static uint8_t kGtia10P2[256];   // nibble bit1
@@ -2083,6 +2136,9 @@ void RescueOnFractalus::renderFlightDirect()
     // The crest row IS the silhouette top; the rasterizer lags its plane2 dots by one so it never
     // plots at COL_MAX, so plane1 sky safely covers down to and INCLUDING the crest with no overlap.
     if (!kHeightRowOffBuilt) buildHeightRowOff();
+#ifdef ROF_EDGE_SHAPE
+    edgeShapeProbe();          // structural shape of the skyline this loop is fed (off by default)
+#endif
 #if defined(ROF_RASTERIZE_ASM) && defined(ROF_RASTERIZE_VERIFY)
     // Differential verify (same run, deterministic): C reference and asm into fresh scratch planes
     // from the same $260E, byte-compare; perf timed back-to-back.  Live plane uses the proven C.

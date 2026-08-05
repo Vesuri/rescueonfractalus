@@ -6571,6 +6571,32 @@ void terrain_jitter_column(void) {
  * terrain_scroll_counter $8A, vbi_flags $88, rot $A0-$A3, alt $8B/$8C, the $22A3/$22D1/$22FF/$232D
  * input vectors, $0900 heights) are all VBI-stable, so the differential need only snapshot the
  * loop outputs. */
+#ifdef ROF_TFS_SHAPE
+/* ---- terrain_frame_setup loop-1 STRUCTURAL shape probe -------------------------------------
+ * Build: make TFSETUP_C=1 TFS_SHAPE=1 PROBES=1  (the counters live in the C oracle, so the C
+ * fallback is mandatory — same rule as ROF_RAS_SHAPE); read with amiga/shape_probe.gdb.  Kept
+ * OFF by default so the volatile increments can never inflate the asm-vs-C differential.
+ *
+ * What it answers, which the PC profile cannot:
+ *  1. g_tfsRecurBad — does the per-cell u/v RECURRENCE hold on live data?  The output arrays are
+ *     the input arrays shifted by one ($22A4+Y == $22A3+(Y+1), $232E+Y == $232D+(Y+1)), so cell
+ *     Y+1's in_u/in_v should be exactly the u/v cell Y just stored — meaning the 4 byte loads and
+ *     2 `lsl.w #8` per cell that re-assemble them from memory are redundant.  The static pattern
+ *     tables say the chain only breaks on a non-storing (empty) cell, of which there is exactly
+ *     one in 180 ($B622[0], the dr==00 table's cell 0 — which is why that branch pre-seeds col 0).
+ *  2. g_tfsPat[] — the pattern-decode branch mix, i.e. how deep the btst chain runs per cell.
+ *  3. g_tfsCls[]/g_tfsUneg — the classify mix, for branch ordering.
+ *  4. g_tfsDr[] — which of the 4 pattern tables flight actually uses (does the empty cell occur?).
+ */
+volatile unsigned long g_tfsFrames = 0, g_tfsRecurOK = 0, g_tfsRecurBad = 0, g_tfsCells = 0,
+                       g_tfsUneg = 0, g_tfsDiffNeg = 0, g_tfsY0Empty = 0;
+volatile unsigned long g_tfsDr[4]  = {0,0,0,0};
+/* pattern classes: 0=$80 only 1=$80+$40 2=$80+$20 3=$40 only 4=$40+$20 5=$40+$10 6=$20 7=$10 8=empty */
+volatile unsigned long g_tfsPat[9] = {0,0,0,0,0,0,0,0,0};
+/* classify classes: 0=$00 visible 1=$20 behind-right 2=$40 behind-left 3=$80 off-screen */
+volatile unsigned long g_tfsCls[4] = {0,0,0,0};
+#endif
+
 void terrain_frame_setup_core_c(void) {
     /* draw_row's top two bits pick the cell-pattern source table ($B5xx/$B6xx) and the
      * starting column screen index; only the 00 case seeds output column 0 from its input. */
@@ -6605,6 +6631,12 @@ void terrain_frame_setup_core_c(void) {
 
     uint8_t b5 = 0;                               /* loop-1 cell-pattern / low-byte scratch */
     uint8_t Y = 0;
+#ifdef ROF_TFS_SHAPE
+    g_tfsFrames++;
+    g_tfsDr[(dr >> 6) & 3]++;
+    uint16_t sh_prev_u = 0, sh_prev_v = 0;        /* u/v cell Y-1 stored (the recurrence claim) */
+    int      sh_have_prev = 0;
+#endif
     do {
         /* Decode the cell's rotation pattern (MSB first) into a rotate/translate of this
          * column's vectors u = {$22D2:$22A4}, v = {$232E:$2300}, and a ±1 column-index step. */
@@ -6630,6 +6662,25 @@ void terrain_frame_setup_core_c(void) {
         } else {
             fired = 0;                            /* pattern empty: leave column unchanged */
         }
+#ifdef ROF_TFS_SHAPE
+        {   /* pattern-decode branch mix (pure function of pat, so recomputed rather than
+             * threaded through the branches above) */
+            const int cls_pat = (pat & 0x80) ? ((pat & 0x40) ? 1 : ((pat & 0x20) ? 2 : 0))
+                              : (pat & 0x40) ? ((pat & 0x20) ? 4 : ((pat & 0x10) ? 5 : 3))
+                              : (pat & 0x20) ? 6 : (pat & 0x10) ? 7 : 8;
+            g_tfsPat[cls_pat]++;
+            g_tfsCells++;
+            if (cls_pat == 8 && Y == 0) g_tfsY0Empty++;
+            /* THE recurrence test: is this cell's in_u/in_v exactly what cell Y-1 stored? */
+            if (sh_have_prev) {
+                if (in_u == sh_prev_u && in_v == sh_prev_v) g_tfsRecurOK++; else g_tfsRecurBad++;
+            }
+            sh_prev_u = fired ? u : in_u;   /* not-fired leaves the (stale) output in place, so the
+                                             * claim for the next cell is whatever is in memory */
+            sh_prev_v = fired ? v : in_v;
+            sh_have_prev = fired;           /* only claim the chain across a storing cell */
+        }
+#endif
         if (fired) {
             mem[0x22A4 + Y] = (uint8_t)u; mem[0x22D2 + Y] = (uint8_t)(u >> 8);
             mem[0x2300 + Y] = (uint8_t)v; mem[0x232E + Y] = (uint8_t)(v >> 8);
@@ -6675,6 +6726,11 @@ void terrain_frame_setup_core_c(void) {
             }
         }
         mem[0x24B4 + Y] = cls;
+#ifdef ROF_TFS_SHAPE
+        g_tfsCls[cls == 0x00 ? 0 : cls == 0x20 ? 1 : cls == 0x40 ? 2 : 3]++;
+        if (diff < 0) g_tfsDiffNeg++;
+        if (mem[0x22D2 + Y] & 0x80) g_tfsUneg++;
+#endif
         Y++;
     } while (Y != 0x2D);
 

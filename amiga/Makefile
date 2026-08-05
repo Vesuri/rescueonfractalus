@@ -205,6 +205,26 @@ ifdef RAS_SHAPE
 EXTRA_DEFINES += -DROF_RAS_SHAPE
 endif
 
+# Profiling aid: `make TFSETUP_C=1 TFS_SHAPE=1 PROBES=1` + amiga/shape_probe.gdb — the
+# terrain_frame_setup loop-1 STRUCTURAL shape counters (per-cell pattern-decode branch mix,
+# classify mix, and the u/v RECURRENCE test: is cell Y+1's input vector exactly the vector cell Y
+# just stored?  If so the per-cell re-assembly of it from memory — 4 byte loads + 2 `lsl.w #8` —
+# is redundant).  Same rules as RAS_SHAPE: the counters live in the C ORACLE so TFSETUP_C=1 is
+# mandatory, and they stay off by default so they can never inflate the asm-vs-C differential.
+ifdef TFS_SHAPE
+EXTRA_DEFINES += -DROF_TFS_SHAPE
+endif
+
+# Profiling aid: `make EDGE_SHAPE=1 PROBES=1` + amiga/shape_probe.gdb — the SHAPE of the skyline
+# fed to renderFlightDirect's 160-column plane-1 scatter-OR edge plot (mem[$260E+48..]): how often
+# consecutive columns land on the SAME plane-1 row (one shared table lookup), how many DISTINCT
+# rows a 4-column plane-1 byte spans (= the byte-ORs a mask-merging loop would issue instead of 4),
+# and whether runs are long/aligned enough for word-wide ORs.  The probe scans all 160 heights, so
+# it costs more than the loop it measures — off by default.
+ifdef EDGE_SHAPE
+EXTRA_DEFINES += -DROF_EDGE_SHAPE
+endif
+
 # Benchmark determinism: `make FIXED_RNG=1` re-pins the POKEY LFSR ($D20A) at two points —
 # immediately before the fresh-start level seeding (rof_native.c intro_random_setup) and on the
 # flight rising edge (RescueOnFractalus.cpp deriveRenderSignals).  Our $D20A is read-clocked
