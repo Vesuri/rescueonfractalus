@@ -235,6 +235,15 @@ ifdef BAND_SHAPE
 EXTRA_DEFINES += -DROF_BAND_SHAPE
 endif
 
+# Correctness aid: `make BAND_VERIFY=1 PROBES=1` + amiga/band_verify.gdb — in-process differential
+# for the CACHED windscreen-band composite and the box-narrowed object overlay.  Rendering cannot be
+# judged from a headless run (the remote debugger greys the display), so instead the frame is
+# composited BOTH ways and byte-compared (g_bandMismatch must be 0), and the object scratch is swept
+# for any nonzero byte left outside the tracked dirty box (g_objLeak must be 0).
+ifdef BAND_VERIFY
+EXTRA_DEFINES += -DROF_BAND_VERIFY
+endif
+
 # Benchmark determinism: `make FIXED_RNG=1` re-pins the POKEY LFSR ($D20A) at two points —
 # immediately before the fresh-start level seeding (rof_native.c intro_random_setup) and on the
 # flight rising edge (RescueOnFractalus.cpp deriveRenderSignals).  Our $D20A is read-clocked

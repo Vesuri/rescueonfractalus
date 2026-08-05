@@ -294,6 +294,37 @@ extern "C" volatile int g_flightTerrainFresh = 1;
 static uint8_t s_flightObjP1[47 * 120];
 extern "C" uint8_t* g_flightObjP1 = nullptr;      // = s_flightObjP1 during flight; null otherwise
 extern "C" int g_objRowLo = 47, g_objRowHi = -1;  // dirty scanline range in s_flightObjP1 (empty)
+// Windscreen-band composite cache (see the band overlay at the end of renderFlightDirect).  The
+// band is re-composited every frame because the whole 47-row buffer is cleared and the terrain
+// repainted under it — but the SOURCE it decodes barely moves: measured (BAND_SHAPE probe,
+// 2026-08-05, 420 frames) only ~0.9 of 160 field bytes change per frame, all of them in row 45
+// (the wing-clearance bar); rows 43/44/46 changed exactly twice = the flight-entry transient.
+// So cache the DECODED bytes and refresh only what changed:
+//   * change detection = 40 long compares of the field against a per-half shadow (writer-agnostic,
+//     so no assumption about who writes the field and no coupling into the 6502 twins).
+//   * plane3 (the static grey frame, ~130 of 160 bytes) becomes a straight long COPY, no per-byte
+//     table lookups at all.  A byte-for-byte copy is endianness-neutral, unlike a value alias.
+//   * planes 1&2 are RMW'd only over each row's cached ow!=0 range (measured 34 bytes: row 44
+//     [19,20], row 45 [5,34], row 46 [19,20]) instead of testing all 160.
+// The field is written by game_sub_451d from the flight VBI ISR (update_terrain_scanline_proj), so
+// the reads stay volatile.  A long read torn by the ISR is harmless and self-correcting: the shadow
+// holds exactly the bytes read, so the next frame's compare sees the settled value and re-decodes
+// (the pre-cache code had the same one-frame exposure, re-reading the field every frame).
+static uint32_t s_bandShadow[2][10 * 4];                  // field bytes last seen, per half
+static uint32_t s_bandP3c[2][10 * 4];                     // decoded plane3 (long-copied out)
+static uint8_t  s_bandP1c[2][40 * 4], s_bandP2c[2][40 * 4], s_bandOWc[2][40 * 4];
+static signed char s_bandOwLo[2][4] = {{40,40,40,40},{40,40,40,40}};
+static signed char s_bandOwHi[2][4] = {{-1,-1,-1,-1},{-1,-1,-1,-1}};
+#ifdef ROF_BAND_VERIFY
+extern "C" volatile unsigned long g_bandCalls = 0, g_bandMismatch = 0, g_bandFirstBad = 0,
+                                  g_objLeak = 0;
+#endif
+// ...and the dirty BYTE-COLUMN range (0..39) of the same scratch.  Ground objects / enemy fire are
+// narrow, so the row range alone left the apply loop scanning all 40 bytes of each dirty row to find
+// them: measured 577 nonzero of 31840 bytes scanned = 1.8% (BAND_SHAPE probe, 2026-08-05).  Tracked
+// as a bounding box by the same three writers that set the bytes (ROF_PLOT_DOT_P1, laser_dot_column,
+// laser_dot_run), so every nonzero byte is inside it and the narrowed apply still clears them all.
+extern "C" int g_objColLo = 40, g_objColHi = -1;
 
 // Rescue-figure scratch overlay (43 mode-D rows × 40 plane bytes): the ONLY figure pixels
 // plot_clipped_pixel actually drew (mirrored via ROF_PLOT_FIG in rof_native.c) — plane1, plane2,
@@ -442,9 +473,10 @@ extern "C" volatile unsigned long g_edgeCalls = 0, g_edgeMismatch = 0, g_edgeAsm
 // the two halves alternate).  Off by default — the shadow compare costs more than the loop.
 extern "C" volatile unsigned long
     g_bsPre = 0, g_bsObj = 0, g_bsCross = 0, g_bsBand = 0,
-    g_bsObjFrames = 0, g_bsObjRows = 0, g_bsObjBytes = 0,
+    g_bsObjFrames = 0, g_bsObjRows = 0, g_bsObjBytes = 0, g_bsObjBox = 0,
     g_bsBandFrames = 0, g_bsBandChanged = 0, g_bsBandClean = 0, g_bsBandMaxChg = 0,
-    g_bsBandOwNz = 0;
+    g_bsBandOwNz = 0, g_bsChgLate = 0;
+extern "C" volatile unsigned short g_bsChgPos[160] = {0}, g_bsOwPos[160] = {0};
 static uint8_t s_bsShadow[2][4 * 40];
 // Lap timer.  rof_beam_line() races the ISR's g_vbiCount++ between its VPOSR and VHPOSR reads, so
 // a single bad sample can make the ISR-corrected delta negative and poison an unsigned accumulator
@@ -2205,18 +2237,26 @@ void RescueOnFractalus::renderFlightDirect()
     if (g_objRowHi >= g_objRowLo) {
         g_bsObjFrames++;
         g_bsObjRows += (unsigned long)(g_objRowHi - g_objRowLo + 1);
+        g_bsObjBox  += (unsigned long)(g_objRowHi - g_objRowLo + 1)
+                     * (unsigned long)(g_objColHi - g_objColLo + 1);   // bytes the box walk visits
         const uint8_t* sp = s_flightObjP1 + kRow120[g_objRowLo];
         for (int sc = g_objRowLo; sc <= g_objRowHi; sc++, sp += 120)
             for (int b = 0; b < 40; b++) if (sp[b]) g_bsObjBytes++;   // nonzero = real work
     }
 #endif
+    // Walk only the dirty bounding BOX (rows AND byte-columns).  The row range alone left this
+    // scanning all 40 bytes of each dirty row for the handful of object bytes actually in it —
+    // 1.8% of bytes scanned were nonzero (BAND_SHAPE probe).  Every nonzero byte is inside the box
+    // (the three writers maintain both ranges together), so the narrowed walk still clears them all.
     if (g_objRowHi >= g_objRowLo) {
-        uint8_t* d = bp            + kRow120[g_objRowLo];   // plane1 row, walked +120/scanline
-        uint8_t* s = s_flightObjP1 + kRow120[g_objRowLo];   // scratch row (same base offset)
+        const int cl = g_objColLo, n = g_objColHi - cl + 1;
+        uint8_t* d = bp            + kRow120[g_objRowLo] + cl;  // plane1, walked +120/scanline
+        uint8_t* s = s_flightObjP1 + kRow120[g_objRowLo] + cl;  // scratch (same base offset)
         for (int sc = g_objRowLo; sc <= g_objRowHi; sc++, d += 120, s += 120) {
-            for (int b = 0; b < 40; b++) { if (s[b]) { d[b] |= s[b]; s[b] = 0; } }
+            for (int b = 0; b < n; b++) { if (s[b]) { d[b] |= s[b]; s[b] = 0; } }
         }
         g_objRowLo = 47; g_objRowHi = -1;                       // range consumed
+        g_objColLo = 40; g_objColHi = -1;
     }
 #ifdef ROF_BAND_SHAPE
     BS_LAP(g_bsObj);
@@ -2261,6 +2301,25 @@ void RescueOnFractalus::renderFlightDirect()
         const unsigned fieldHalf = g_flightRenderHalf ? 0x30u : 0x00u;
         const uint8_t* srow = (const uint8_t*)mem + 0x1074 + fieldHalf + 43 * 96;
         uint8_t* vrow = bp + 43 * 120;
+#ifdef ROF_BAND_VERIFY
+        // In-process differential for the cached band composite (make BAND_VERIFY=1 +
+        // amiga/band_verify.gdb).  This is a RENDERING change, and rendering cannot be judged from
+        // a headless run (the remote debugger greys the display), so prove byte-identity instead:
+        // snapshot the band rows, run the cache path, stash its output, restore, run the ORIGINAL
+        // per-byte composite (which stays LIVE, as the edge-plot verify keeps its C reference live),
+        // then compare.  g_bandMismatch must be 0.
+        static uint8_t bvSnap[4 * 120], bvNew[4 * 120];
+        for (int i = 0; i < 4 * 120; i++) bvSnap[i] = vrow[i];
+        // The field is written by game_sub_451d from the flight VBI ISR, so the two passes below
+        // would otherwise read DIFFERENT source bytes whenever the ISR fires between them — a
+        // harness artifact, not a logic difference (the same effect the tfsetup differential
+        // documents for $2270-$2274).  Freeze one copy and point BOTH passes at it, so any
+        // surviving mismatch is genuinely the cache's fault.
+        static uint8_t bvField[4 * 96] __attribute__((aligned(4)));
+        for (int r = 0; r < 4; r++)
+            for (int b = 0; b < 40; b++) bvField[r * 96 + b] = srow[r * 96 + b];
+        srow = bvField;
+#endif
 #ifdef ROF_BAND_SHAPE
         // Is the band field worth re-compositing every frame?  Compare it against a per-HALF
         // shadow (the two double-buffer halves alternate, so one shadow would read as "all
@@ -2272,8 +2331,12 @@ void RescueOnFractalus::renderFlightDirect()
             for (int row = 0; row < 4; row++)
                 for (int b = 0; b < 40; b++) {
                     const uint8_t v = srow[row * 96 + b];
-                    if (kBandOW[v]) ow_nz++;
-                    if (s_bsShadow[hi][row * 40 + b] != v) { changed++; s_bsShadow[hi][row*40+b] = v; }
+                    const int p = row * 40 + b;
+                    if (kBandOW[v]) { ow_nz++; g_bsOwPos[p]++; }   // where the bars/marker live
+                    if (s_bsShadow[hi][p] != v) {                  // WHICH positions are dynamic
+                        changed++; g_bsChgPos[p]++; s_bsShadow[hi][p] = v;
+                        if (g_bsBandFrames > 8) g_bsChgLate++;     // ...after the entry transient
+                    }
                 }
             g_bsBandFrames++;
             g_bsBandChanged += changed;
@@ -2283,19 +2346,98 @@ void RescueOnFractalus::renderFlightDirect()
         }
         BS_RESET();     // exclude the shadow-compare above from the band composite's own lap
 #endif
-        for (int row = 0; row < 4; row++, srow += 96, vrow += 120) {
-            const uint8_t* s = srow;
-            uint8_t* d1 = vrow; uint8_t* d2 = vrow + 40; uint8_t* d3 = vrow + 80;
-            for (int b = 0; b < 40; b++, s++, d1++, d2++, d3++) {
-                uint8_t v = *s;
-                uint8_t ow = kBandOW[v];                      // (bar|marker) = pixels that overwrite terrain
-                if (ow) {                                     // rare: only the central clearance-bar strip
-                    *d1 = (uint8_t)((*d1 & ~ow) | kBandP1[v]);   // salmon bar; terrain kept elsewhere
-                    *d2 = (uint8_t)((*d2 & ~ow) | kBandP2[v]);   // centre marker; terrain kept elsewhere
-                }                                             // ow==0 (grey frame / L-R edge): d1/d2 RMW is a no-op
-                *d3 = kBandP3[v];                             // grey windscreen frame -> color04-07
+        // Every per-half base is hoisted to a running pointer and every walk is an autoincrement:
+        // the first cut of this indexed the caches as s_bandXc[hf][row*40+b], which put a 2D
+        // address computation (and a row*40) inside a 40-iteration loop and measured almost no
+        // better than the per-byte decode it replaced (39 -> 36 ticks).  See the "pointer-walk with
+        // autoincrement, never multiply+index in a loop" rule in CLAUDE.md.
+        const unsigned hf = g_flightRenderHalf ? 1u : 0u;
+        uint32_t* shad = s_bandShadow[hf];                    // 10 longs/row
+        uint32_t* p3c  = s_bandP3c[hf];                       // 10 longs/row
+        uint8_t*  p1c  = s_bandP1c[hf];                       // 40 bytes/row
+        uint8_t*  p2c  = s_bandP2c[hf];
+        uint8_t*  owc  = s_bandOWc[hf];
+        signed char* owLo = s_bandOwLo[hf];
+        signed char* owHi = s_bandOwHi[hf];
+        // 1. Refresh the decode cache for whatever the ISR changed since this half's last frame
+        //    (typically nothing, or one long in row 45).  Compared as longs; decoded byte-wise.
+        {
+            const uint8_t* fs = srow;
+            uint32_t* sh = shad; uint32_t* p3w = p3c;
+            uint8_t* p1w = p1c; uint8_t* p2w = p2c; uint8_t* oww = owc;
+            for (int row = 0; row < 4; row++, fs += 96, sh += 10, p3w += 10,
+                                             p1w += 40, p2w += 40, oww += 40) {
+                const volatile uint32_t* f4 = (const volatile uint32_t*)fs;
+                bool rowChanged = false;
+                for (int g = 0; g < 10; g++) {
+                    const uint32_t fv = f4[g];
+                    if (fv == sh[g]) continue;
+                    sh[g] = fv;
+                    rowChanged = true;
+                    uint8_t* const p3b = (uint8_t*)p3w;
+                    const int k0 = g * 4;
+                    for (int k = k0; k < k0 + 4; k++) {       // re-decode just this long's 4 bytes
+                        const uint8_t v = fs[k];
+                        p3b[k] = kBandP3[v]; p1w[k] = kBandP1[v];
+                        p2w[k] = kBandP2[v]; oww[k] = kBandOW[v];
+                    }
+                }
+                if (rowChanged) {                             // re-derive this row's ow!=0 range
+                    int lo = 40, hi = -1;
+                    for (int b = 0; b < 40; b++) if (oww[b]) { if (b < lo) lo = b; hi = b; }
+                    owLo[row] = (signed char)lo; owHi[row] = (signed char)hi;
+                }
             }
         }
+        // 2. Paint: plane3 = a straight long copy of the cached grey frame; planes 1&2 RMW only
+        //    over each row's ow!=0 range (the clearance bar / centre marker punching through).
+        for (int row = 0; row < 4; row++, vrow += 120, p3c += 10, p1c += 40, p2c += 40, owc += 40) {
+            uint32_t* p3d = (uint32_t*)(vrow + 80);
+            const uint32_t* p3s = p3c;
+            p3d[0] = p3s[0]; p3d[1] = p3s[1]; p3d[2] = p3s[2]; p3d[3] = p3s[3]; p3d[4] = p3s[4];
+            p3d[5] = p3s[5]; p3d[6] = p3s[6]; p3d[7] = p3s[7]; p3d[8] = p3s[8]; p3d[9] = p3s[9];
+            const int lo = owLo[row], hi = owHi[row];
+            if (hi < lo) continue;                            // no bar bytes in this row (43)
+            const uint8_t* ow = owc + lo;
+            const uint8_t* p1s = p1c + lo;
+            const uint8_t* p2s = p2c + lo;
+            uint8_t* d1 = vrow + lo; uint8_t* d2 = vrow + 40 + lo;
+            for (int n = hi - lo + 1; n--; d1++, d2++, ow++, p1s++, p2s++) {
+                const uint8_t m = *ow;
+                if (!m) continue;
+                *d1 = (uint8_t)((*d1 & ~m) | *p1s);           // salmon bar; terrain kept elsewhere
+                *d2 = (uint8_t)((*d2 & ~m) | *p2s);           // centre marker; terrain kept elsewhere
+            }
+        }
+#ifdef ROF_BAND_VERIFY
+        {   // stash the cache path's output, restore the pre-composite state, run the ORIGINAL
+            // per-byte composite live, and compare (see the snapshot above).
+            uint8_t* const v0 = bp + 43 * 120;
+            for (int i = 0; i < 4 * 120; i++) { bvNew[i] = v0[i]; v0[i] = bvSnap[i]; }
+            const uint8_t* s_ = srow;
+            uint8_t* v_ = v0;
+            for (int row = 0; row < 4; row++, s_ += 96, v_ += 120) {
+                const uint8_t* s = s_;
+                uint8_t* d1 = v_; uint8_t* d2 = v_ + 40; uint8_t* d3 = v_ + 80;
+                for (int b = 0; b < 40; b++, s++, d1++, d2++, d3++) {
+                    uint8_t v = *s;
+                    uint8_t ow = kBandOW[v];
+                    if (ow) {
+                        *d1 = (uint8_t)((*d1 & ~ow) | kBandP1[v]);
+                        *d2 = (uint8_t)((*d2 & ~ow) | kBandP2[v]);
+                    }
+                    *d3 = kBandP3[v];
+                }
+            }
+            g_bandCalls++;
+            for (int i = 0; i < 4 * 120; i++)
+                if (bvNew[i] != v0[i]) { g_bandMismatch++; if (!g_bandFirstBad) g_bandFirstBad = (unsigned long)i + 1; break; }
+        }
+        // Object-overlay invariant: after the box-narrowed apply, NO nonzero byte may remain
+        // anywhere in the scratch — that is exactly the claim that every nonzero byte was inside
+        // the tracked bounding box.  A leak here would show as a stale object pixel next frame.
+        for (int i = 0; i < 47 * 120; i++) if (s_flightObjP1[i]) { g_objLeak++; break; }
+#endif
 #ifdef ROF_BAND_SHAPE
         BS_LAP(g_bsBand);
 #endif

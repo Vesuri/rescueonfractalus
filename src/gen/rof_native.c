@@ -230,6 +230,7 @@ extern volatile unsigned long g_sdDepthHist[16];
 extern uint8_t* g_flightDotPlane;
 extern uint8_t* g_flightObjP1;    /* object plane1 overlay (value-3 low bit), applied post sky-fill */
 extern int g_objRowLo, g_objRowHi;
+extern int g_objColLo, g_objColHi;   /* dirty BYTE-COLUMN range (0..39) of g_flightObjP1 */
 extern const uint16_t kRow120[48];   /* row*120 (interleaved terrain scanline) */
 extern const uint16_t kRow40[48];    /* row*40  (one mode-D plane / figure mask stride) */
 extern const uint16_t kRow80[48];    /* row*80  (interleaved 2-plane figure stride) */
@@ -250,9 +251,12 @@ extern void rof_flight_wait_dotclear(void);
         int _ac = (int)(col) - 48; \
         int _sc = 150 - (int)(h); \
         if ((unsigned)_ac < 160u && (unsigned)_sc < 47u && _sc != 43) { \
-            g_flightObjP1[kRow120[_sc] + (_ac >> 2)] |= kColMask4[_ac & 3]; \
+            int _bc = _ac >> 2; \
+            g_flightObjP1[kRow120[_sc] + _bc] |= kColMask4[_ac & 3]; \
             if (_sc < g_objRowLo) g_objRowLo = _sc; \
             if (_sc > g_objRowHi) g_objRowHi = _sc; \
+            if (_bc < g_objColLo) g_objColLo = _bc; \
+            if (_bc > g_objColHi) g_objColHi = _bc; \
         } } } while (0)
 /* Amiga sheds the mode-D field entirely: the dots come from ROF_PLOT_DOT (plane2) and the sky
  * from $260E (blitterFillUp), so nothing reads the field — fill_terrain_silhouette is skipped and
@@ -8391,6 +8395,11 @@ static int laser_dot_run(uint8_t* p2, uint8_t* p1, unsigned c0, unsigned c1) {
     if (c1 > 208u) c1 = 208u;
     if (c0 >= c1) return 0;
     unsigned a = c0 - 48u, a1 = c1 - 48u;              /* _ac = col - 48 */
+    if (p1) {                                          /* dirty byte-column range (see g_objColLo) */
+        const int bl = (int)(a >> 2), bh = (int)((a1 - 1u) >> 2);
+        if (bl < g_objColLo) g_objColLo = bl;
+        if (bh > g_objColHi) g_objColHi = bh;
+    }
     while (a < a1) {
         unsigned byte = a >> 2; uint8_t m = 0;
         do { m |= kColMask4[a & 3u]; a++; } while ((a & 3u) && a < a1);   /* accumulate this byte's cols */
@@ -8428,6 +8437,9 @@ static void laser_dot_column(int rowStart, unsigned col, unsigned count) {
         }
         if (lo < g_objRowLo) g_objRowLo = lo;           /* ROF_PLOT_DOT_P1 dirty scanline range */
         if (hi > g_objRowHi) g_objRowHi = hi;
+        {   const int bc = (int)(ac >> 2);              /* one fixed column for the whole run */
+            if (bc < g_objColLo) g_objColLo = bc;
+            if (bc > g_objColHi) g_objColHi = bc; }
     } else {
         for (int sc = lo; n--; sc++) {
             if (sc != 43) *p2 |= m;

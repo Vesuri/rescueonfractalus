@@ -56,13 +56,32 @@ printf "ticks/call: object-overlay=%lu crosshair=%lu band-composite=%lu\n", \
   (g_bsBandFrames? g_bsBand/g_bsBandFrames:0)
 printf "  raw: obj=%lu cross=%lu band=%lu  (frames=%lu)\n", \
   g_bsObj, g_bsCross, g_bsBand, g_bsBandFrames
-printf "object overlay: activeFrames=%lu rows/activeFrame=%lu/10 bytesScanned=%lu nonzero=%lu (%lu%%)\n", \
-  g_bsObjFrames, (g_bsObjFrames? 10*g_bsObjRows/g_bsObjFrames:0), g_bsObjRows*40, g_bsObjBytes, \
-  ((g_bsObjRows*40)? 100*g_bsObjBytes/(g_bsObjRows*40) : 0)
+printf "object overlay: activeFrames=%lu rows/activeFrame=%lu/10 fullScan=%lu boxScan=%lu nonzero=%lu (%lu%% of box)\n", \
+  g_bsObjFrames, (g_bsObjFrames? 10*g_bsObjRows/g_bsObjFrames:0), g_bsObjRows*40, g_bsObjBox, \
+  g_bsObjBytes, (g_bsObjBox? 100*g_bsObjBytes/g_bsObjBox : 0)
 printf "*** BAND FIELD STABILITY: changed bytes/frame = %lu/10 of 160  (clean frames=%lu/%lu, max chg=%lu)\n", \
   (g_bsBandFrames? 10*g_bsBandChanged/g_bsBandFrames:0), g_bsBandClean, g_bsBandFrames, g_bsBandMaxChg
 printf "    overwrite(ow!=0) bytes/frame = %lu of 160  (the rest are plane3-only stores)\n", \
   (g_bsBandFrames? g_bsBandOwNz/g_bsBandFrames:0)
+printf "    changes after the first 8 frames (entry transient excluded) = %lu\n", g_bsChgLate
+echo     WHICH positions are dynamic / carry bars — per row, byte 0..39 (chg | ow):\n
+set $r = 0
+while $r < 4
+  printf "      row %d chg: ", 43 + $r
+  set $b = 0
+  while $b < 40
+    printf "%d ", g_bsChgPos[$r*40 + $b]
+    set $b = $b + 1
+  end
+  printf "\n      row %d ow : ", 43 + $r
+  set $b = 0
+  while $b < 40
+    printf "%d ", g_bsOwPos[$r*40 + $b]
+    set $b = $b + 1
+  end
+  printf "\n"
+  set $r = $r + 1
+end
 echo \n---- terrain_frame_setup LOOP 1 (45 cells/frame) ----\n
 printf "frames=%lu cells=%lu\n", g_tfsFrames, g_tfsCells
 printf "*** u/v RECURRENCE: ok=%lu BAD=%lu  (BAD must be 0 to carry u/v in registers)\n", \
