@@ -315,6 +315,18 @@ static uint32_t s_bandP3c[2][10 * 4];                     // decoded plane3 (lon
 static uint8_t  s_bandP1c[2][40 * 4], s_bandP2c[2][40 * 4], s_bandOWc[2][40 * 4];
 static signed char s_bandOwLo[2][4] = {{40,40,40,40},{40,40,40,40}};
 static signed char s_bandOwHi[2][4] = {{-1,-1,-1,-1},{-1,-1,-1,-1}};
+// ...and the plane3 long copy itself is skipped when the destination already holds the right bytes.
+// Same invariant the crosshair one-shot relies on (see s_p3Clean): nothing else in the frame writes
+// plane3 rows 43-46, so once a display buffer holds a given decoded band it keeps holding it.  Per
+// FIELD HALF, version each of the 4 rows' decoded plane3 (bumped whenever the decode cache changes);
+// per DISPLAY BUFFER, remember which half and which versions are actually painted in it.  Measured
+// shape (BAND_SHAPE, 1cab6f4): rows 43/44/46 changed exactly twice in 420 frames and row 45 carries
+// the wing-clearance bar — so this normally skips 30 of the 40 long copies, and all 40 when the bar
+// is steady.  s_bandP3SeenHalf = -1 means "unknown, repaint": the initial state, and what the
+// one-shot plane3 clear re-arms (that clear wipes rows 43-46 along with the rest of the plane).
+static uint16_t    s_bandP3Ver[2][4]   = {{0,0,0,0},{0,0,0,0}};   // [half]   content version per row
+static uint16_t    s_bandP3Seen[2][4]  = {{0,0,0,0},{0,0,0,0}};   // [buffer] version painted per row
+static signed char s_bandP3SeenHalf[2] = { -1, -1 };              // [buffer] which half that was
 #ifdef ROF_BAND_VERIFY
 extern "C" volatile unsigned long g_bandCalls = 0, g_bandMismatch = 0, g_bandFirstBad = 0,
                                   g_objLeak = 0;
@@ -2069,6 +2081,10 @@ void RescueOnFractalus::renderFlightDirect()
                 // First use of this buffer in the pause — it was cleared blank; seed clean terrain.
                 back->copy(*s_cleanBmp, 0, 0, 0, 0, kW, 47);
                 s_bufSeeded[bi] = true; s_boxLo[bi] = 99; s_boxHi[bi] = -1; s_boxColHi[bi] = -1;
+                // The seed brought in the SNAPSHOT's band plane3 (rows 43-46), which came from the
+                // other buffer and so may be the other field half's — while this buffer's
+                // s_bandP3Seen record still describes what it held before.  Drop the record.
+                s_bandP3SeenHalf[bi] = -1;
             }
 #if defined(ROF_FLIGHT_PROBE)
             // Alien-colour diagnosis: count live composites of a non-empty overlay during the
@@ -2154,6 +2170,9 @@ void RescueOnFractalus::renderFlightDirect()
         if (s_cleanValid) {
             terrainBitmap->copy(*s_cleanBmp, 0, 0, 0, 0, kW, 47);
             terrainBitmapBack->copy(*s_cleanBmp, 0, 0, 0, 0, kW, 47);
+            // Both buffers' band plane3 (rows 43-46) now hold the snapshot's, not what their
+            // s_bandP3Seen records claim — drop both records so the next paint re-copies.
+            s_bandP3SeenHalf[0] = -1; s_bandP3SeenHalf[1] = -1;
         }
         if (s_figBmp) { s_figBmp->clear(); s_figMaskBmp->clear(); }
         BW_AT(g_bwFlip, AmigaHardware::blitterDrain());     // terrain restore + overlay clear both done before continuing
@@ -2287,6 +2306,7 @@ void RescueOnFractalus::renderFlightDirect()
     if (p3Fresh) {
         AmigaHardware::blitterClear((uint16_t*)(bp + 80), 20, 47, 80);
         s_p3Clean[p3i] = true;
+        s_bandP3SeenHalf[p3i] = -1;   // that clear wiped rows 43-46 too: force the band's plane3 copy
     }
     // Settle whatever is still in flight (the dot copy, and the clear just above on an entry frame)
     // before the sky fill.  blitterFillUp would drain in its own prologue anyway; spelling it out
@@ -2474,16 +2494,23 @@ void RescueOnFractalus::renderFlightDirect()
                     int lo = 40, hi = -1;
                     for (int b = 0; b < 40; b++) if (oww[b]) { if (b < lo) lo = b; hi = b; }
                     owLo[row] = (signed char)lo; owHi[row] = (signed char)hi;
+                    s_bandP3Ver[hf][row]++;                   // this row's decoded plane3 moved on
                 }
             }
         }
-        // 2. Paint: plane3 = a straight long copy of the cached grey frame; planes 1&2 RMW only
-        //    over each row's ow!=0 range (the clearance bar / centre marker punching through).
+        // 2. Paint: plane3 = a straight long copy of the cached grey frame, but ONLY into a buffer
+        //    that isn't already showing this half's current version of that row (see s_bandP3Ver —
+        //    normally just row 45, the wing-clearance bar); planes 1&2 RMW every frame over each
+        //    row's ow!=0 range (the bar / centre marker punching through the live terrain).
+        const bool p3HalfChanged = (s_bandP3SeenHalf[p3i] != (signed char)hf);
         for (int row = 0; row < 4; row++, vrow += 120, p3c += 10, p1c += 40, p2c += 40, owc += 40) {
-            uint32_t* p3d = (uint32_t*)(vrow + 80);
-            const uint32_t* p3s = p3c;
-            p3d[0] = p3s[0]; p3d[1] = p3s[1]; p3d[2] = p3s[2]; p3d[3] = p3s[3]; p3d[4] = p3s[4];
-            p3d[5] = p3s[5]; p3d[6] = p3s[6]; p3d[7] = p3s[7]; p3d[8] = p3s[8]; p3d[9] = p3s[9];
+            if (p3HalfChanged || s_bandP3Seen[p3i][row] != s_bandP3Ver[hf][row]) {
+                uint32_t* p3d = (uint32_t*)(vrow + 80);
+                const uint32_t* p3s = p3c;
+                p3d[0] = p3s[0]; p3d[1] = p3s[1]; p3d[2] = p3s[2]; p3d[3] = p3s[3]; p3d[4] = p3s[4];
+                p3d[5] = p3s[5]; p3d[6] = p3s[6]; p3d[7] = p3s[7]; p3d[8] = p3s[8]; p3d[9] = p3s[9];
+                s_bandP3Seen[p3i][row] = s_bandP3Ver[hf][row];
+            }
             const int lo = owLo[row], hi = owHi[row];
             if (hi < lo) continue;                            // no bar bytes in this row (43)
             const uint8_t* ow = owc + lo;
@@ -2497,6 +2524,7 @@ void RescueOnFractalus::renderFlightDirect()
                 *d2 = (uint8_t)((*d2 & ~m) | *p2s);           // centre marker; terrain kept elsewhere
             }
         }
+        s_bandP3SeenHalf[p3i] = (signed char)hf;   // this buffer's band plane3 now holds half `hf`
 #ifdef ROF_BAND_VERIFY
         {   // stash the cache path's output, restore the pre-composite state, run the ORIGINAL
             // per-byte composite live, and compare (see the snapshot above).
