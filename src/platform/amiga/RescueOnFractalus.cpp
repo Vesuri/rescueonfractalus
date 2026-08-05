@@ -432,6 +432,30 @@ extern "C" void flight_edge_plot_asm(uint8_t* bp);           // TerrainRasterize
 extern "C" volatile unsigned long g_edgeCalls = 0, g_edgeMismatch = 0, g_edgeAsmTicks = 0, g_edgeCTicks = 0;
 // rof_subclock / g_isrBeamLines come from the ROF_FLIGHT_PROBE block above (VERIFY pairs with PROBES).
 #endif
+#ifdef ROF_BAND_SHAPE
+// ---- Band-block STRUCTURAL shape probe (make BAND_SHAPE=1 + amiga/shape_probe.gdb) ----------
+// The g_fdBand bucket is the BIGGEST CPU part of renderFlightDirect (59 ticks/call = 1.97% of
+// flight, measured 2026-08-05) but it is THREE loops, not one: the object plane-1 overlay, the
+// crosshair, and the windscreen-band composite.  Split them, and measure the one thing that
+// decides whether the band composite can be replaced by a pre-built masked blit: how much of the
+// mode-D band field actually CHANGES from frame to frame (shadowed per double-buffer half, since
+// the two halves alternate).  Off by default — the shadow compare costs more than the loop.
+extern "C" volatile unsigned long
+    g_bsPre = 0, g_bsObj = 0, g_bsCross = 0, g_bsBand = 0,
+    g_bsObjFrames = 0, g_bsObjRows = 0, g_bsObjBytes = 0,
+    g_bsBandFrames = 0, g_bsBandChanged = 0, g_bsBandClean = 0, g_bsBandMaxChg = 0,
+    g_bsBandOwNz = 0;
+static uint8_t s_bsShadow[2][4 * 40];
+// Lap timer.  rof_beam_line() races the ISR's g_vbiCount++ between its VPOSR and VHPOSR reads, so
+// a single bad sample can make the ISR-corrected delta negative and poison an unsigned accumulator
+// for the whole run (the known g_fDraw/g_fDirect failure).  Compute signed and drop absurd laps.
+static unsigned long s_bsT = 0, s_bsI = 0;
+#define BS_RESET()  do { s_bsT = rof_subclock(); s_bsI = g_isrBeamLines; } while (0)
+#define BS_LAP(acc) do { unsigned long _n = rof_subclock(), _ni = g_isrBeamLines; \
+        long _d = (long)(_n - s_bsT) - (long)(_ni - s_bsI); \
+        if (_d >= 0 && _d < 1000) (acc) += (unsigned long)_d; \
+        s_bsT = _n; s_bsI = _ni; } while (0)
+#endif
 #ifdef ROF_EDGE_SHAPE
 // ---- Edge-plot STRUCTURAL shape probe (make EDGE_SHAPE=1 + amiga/shape_probe.gdb) -----------
 // The edge plot is a 160-column scatter-OR: per column, one table lookup (kHeightRowOff[h]) and
@@ -2176,6 +2200,16 @@ void RescueOnFractalus::renderFlightDirect()
     // here because a plane1 bit present during blitterFillUp would seed a spurious sky-coloured
     // vertical streak.  Walk only the dirty scanline range; clear each byte as it is applied so the
     // scratch is ready for the next frame.  (Objects are sparse, so this is a few rows x 40 bytes.)
+#ifdef ROF_BAND_SHAPE
+    BS_RESET();            // start of the g_fdBand window (object overlay + crosshair + band)
+    if (g_objRowHi >= g_objRowLo) {
+        g_bsObjFrames++;
+        g_bsObjRows += (unsigned long)(g_objRowHi - g_objRowLo + 1);
+        const uint8_t* sp = s_flightObjP1 + kRow120[g_objRowLo];
+        for (int sc = g_objRowLo; sc <= g_objRowHi; sc++, sp += 120)
+            for (int b = 0; b < 40; b++) if (sp[b]) g_bsObjBytes++;   // nonzero = real work
+    }
+#endif
     if (g_objRowHi >= g_objRowLo) {
         uint8_t* d = bp            + kRow120[g_objRowLo];   // plane1 row, walked +120/scanline
         uint8_t* s = s_flightObjP1 + kRow120[g_objRowLo];   // scratch row (same base offset)
@@ -2184,6 +2218,9 @@ void RescueOnFractalus::renderFlightDirect()
         }
         g_objRowLo = 47; g_objRowHi = -1;                       // range consumed
     }
+#ifdef ROF_BAND_SHAPE
+    BS_LAP(g_bsObj);
+#endif
 
     // Targeting crosshair (#10): the Atari's "+" reticle rendered into the otherwise-empty plane3
     // of the terrain body (plane3 is 0 across rows 0-42; only the band below uses it).  The copper
@@ -2207,6 +2244,9 @@ void RescueOnFractalus::renderFlightDirect()
         for (int c = 68; c <= 75; c++) h[c >> 2] |= kColMask4[c & 3];   // left arm (M3)
         for (int c = 85; c <= 92; c++) h[c >> 2] |= kColMask4[c & 3];   // right arm (M1)
     }
+#ifdef ROF_BAND_SHAPE
+    BS_LAP(g_bsCross);
+#endif
 
     // Windscreen-bottom band overlay (rows 43-46 = scanlines 172-179): the cockpit frame + the
     // wing-clearance bars, punched OVER the now-rendered terrain.  Source = the mode-D band field
@@ -2221,6 +2261,28 @@ void RescueOnFractalus::renderFlightDirect()
         const unsigned fieldHalf = g_flightRenderHalf ? 0x30u : 0x00u;
         const uint8_t* srow = (const uint8_t*)mem + 0x1074 + fieldHalf + 43 * 96;
         uint8_t* vrow = bp + 43 * 120;
+#ifdef ROF_BAND_SHAPE
+        // Is the band field worth re-compositing every frame?  Compare it against a per-HALF
+        // shadow (the two double-buffer halves alternate, so one shadow would read as "all
+        // changed" every frame) and tally changed bytes + how many bytes take the rare
+        // overwrite (ow != 0) path vs the plane3-only path.
+        {
+            const unsigned hi = g_flightRenderHalf ? 1u : 0u;
+            unsigned long changed = 0, ow_nz = 0;
+            for (int row = 0; row < 4; row++)
+                for (int b = 0; b < 40; b++) {
+                    const uint8_t v = srow[row * 96 + b];
+                    if (kBandOW[v]) ow_nz++;
+                    if (s_bsShadow[hi][row * 40 + b] != v) { changed++; s_bsShadow[hi][row*40+b] = v; }
+                }
+            g_bsBandFrames++;
+            g_bsBandChanged += changed;
+            g_bsBandOwNz    += ow_nz;
+            if (!changed) g_bsBandClean++;
+            if (changed > g_bsBandMaxChg) g_bsBandMaxChg = changed;
+        }
+        BS_RESET();     // exclude the shadow-compare above from the band composite's own lap
+#endif
         for (int row = 0; row < 4; row++, srow += 96, vrow += 120) {
             const uint8_t* s = srow;
             uint8_t* d1 = vrow; uint8_t* d2 = vrow + 40; uint8_t* d3 = vrow + 80;
@@ -2234,6 +2296,9 @@ void RescueOnFractalus::renderFlightDirect()
                 *d3 = kBandP3[v];                             // grey windscreen frame -> color04-07
             }
         }
+#ifdef ROF_BAND_SHAPE
+        BS_LAP(g_bsBand);
+#endif
     }
     FD_LAP(g_fdBand);
 #ifdef ROF_FLIGHT_PROBE

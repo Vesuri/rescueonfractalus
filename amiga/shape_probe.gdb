@@ -50,6 +50,19 @@ while $i < 9
   set $i = $i + 1
 end
 printf "\n"
+echo \n---- BAND BLOCK (the g_fdBand bucket, 3 loops; needs BAND_SHAPE=1) ----\n
+printf "ticks/call: object-overlay=%lu crosshair=%lu band-composite=%lu\n", \
+  (g_bsBandFrames? g_bsObj/g_bsBandFrames:0), (g_bsBandFrames? g_bsCross/g_bsBandFrames:0), \
+  (g_bsBandFrames? g_bsBand/g_bsBandFrames:0)
+printf "  raw: obj=%lu cross=%lu band=%lu  (frames=%lu)\n", \
+  g_bsObj, g_bsCross, g_bsBand, g_bsBandFrames
+printf "object overlay: activeFrames=%lu rows/activeFrame=%lu/10 bytesScanned=%lu nonzero=%lu (%lu%%)\n", \
+  g_bsObjFrames, (g_bsObjFrames? 10*g_bsObjRows/g_bsObjFrames:0), g_bsObjRows*40, g_bsObjBytes, \
+  ((g_bsObjRows*40)? 100*g_bsObjBytes/(g_bsObjRows*40) : 0)
+printf "*** BAND FIELD STABILITY: changed bytes/frame = %lu/10 of 160  (clean frames=%lu/%lu, max chg=%lu)\n", \
+  (g_bsBandFrames? 10*g_bsBandChanged/g_bsBandFrames:0), g_bsBandClean, g_bsBandFrames, g_bsBandMaxChg
+printf "    overwrite(ow!=0) bytes/frame = %lu of 160  (the rest are plane3-only stores)\n", \
+  (g_bsBandFrames? g_bsBandOwNz/g_bsBandFrames:0)
 echo \n---- terrain_frame_setup LOOP 1 (45 cells/frame) ----\n
 printf "frames=%lu cells=%lu\n", g_tfsFrames, g_tfsCells
 printf "*** u/v RECURRENCE: ok=%lu BAD=%lu  (BAD must be 0 to carry u/v in registers)\n", \

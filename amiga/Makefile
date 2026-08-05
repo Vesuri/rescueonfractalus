@@ -225,6 +225,16 @@ ifdef EDGE_SHAPE
 EXTRA_DEFINES += -DROF_EDGE_SHAPE
 endif
 
+# Profiling aid: `make BAND_SHAPE=1 PROBES=1` + amiga/shape_probe.gdb — splits the g_fdBand
+# bucket (the BIGGEST CPU part of renderFlightDirect, 59 ticks/call) into its THREE loops (object
+# plane-1 overlay / crosshair / windscreen-band composite) and measures how much of the mode-D
+# band field actually CHANGES per frame, shadowed per double-buffer half.  A field that is mostly
+# static means the composite can become a pre-built masked blitter pass instead of 160 per-byte
+# read-modify-writes.  Off by default (the shadow compare costs more than the loop it measures).
+ifdef BAND_SHAPE
+EXTRA_DEFINES += -DROF_BAND_SHAPE
+endif
+
 # Benchmark determinism: `make FIXED_RNG=1` re-pins the POKEY LFSR ($D20A) at two points —
 # immediately before the fresh-start level seeding (rof_native.c intro_random_setup) and on the
 # flight rising edge (RescueOnFractalus.cpp deriveRenderSignals).  Our $D20A is read-clocked
