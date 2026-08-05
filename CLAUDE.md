@@ -409,9 +409,37 @@ must re-read the same `COL_MAX` byte; and *subdivide's far-endpoint reload elisi
 too SHALLOW to matter (1.23 inner iterations / 0.40 midpoints per call), measured 0 ± 0.5% and reverted.
 **The generalisable rule: the reject path is at the floor — any "check before drawing" scheme re-reads
 the very byte the check was meant to avoid, so it can only recover the ~10 cycles of bookkeeping around
-that load.** ⭐ **The profile is now FLAT (nothing >29%) and flight is ~6 FPS vs the 25 FPS fallback — a
-~4× gap that per-function asm cannot close (deleting the rasterizer entirely buys 1.4×). The next win has
-to be architectural.** The ranked TODO lives in the `flight-pc-profiler` memory.
+that load.**
+
+### ⭐ Where flight actually stands — 14.4 FPS (measured 2026-08-06, commit 8c8b97c)
+
+**`make FPSCOUNT=1` + `GDBSCRIPT=fps_seg.gdb ./diag_run.sh 200` is the ONLY way to quote a
+flight framerate.** It adds just the headless auto-launch and one increment per painted terrain
+frame; `g_vbiCount` is bumped by the real VERTB handler in every build, so
+**FPS = 50 · g_fpsFrames / g_vbiCount** — frames per *emulated* vblank, which makes it immune to
+host speed and to the gdb stub. Measured over 3000 vbi of confirmed live flight: **866 painted
+frames = 14.4 FPS** (12.3–17.8 per window).
+
+⚠ **Every framerate figure in an older note or commit is wrong — do not quote one, re-measure.**
+Two traps, both of which produced badly wrong numbers before this was built:
+- **Instrumentation.** Even a lean `PROBES=1 PROFILE_NORING=1 NO_TDRAW_PROF=1` build reads 9.4
+  FPS — ~35% slower, because `FP_TIME` is two CHIP register reads plus a 16×16 multiply several
+  times per iteration. The older "~2 fps"/"~6 FPS" figures came from probe builds and/or the
+  `FP_TIME` accumulators (known-poisoned: `rof_beam_line` races the ISR's `g_vbiCount++`).
+  Corollary: the PC profile's own shares are taken on a probe build, so buckets containing
+  `FP_TIME` brackets (`renderFlightDirect`, `game_main_loop`) are inflated.
+- **The crash.** The auto-launch flies with NO input and eventually hits a mountain;
+  `renderFlightDirect` then stops while `g_vbiCount` keeps ticking, so a wide window straddling
+  the death cinematic under-reports (a 3000-vbi window read 9.0 where its live segments read
+  12–17). Sample in SHORT windows and discard any row not at `VVBLKI=$4ff5` / `$3D=00`.
+
+**So the 25 FPS fallback is a 1.7× gap = remove 42% of the frame; 50 FPS needs −71%.** The
+profile is FLAT (nothing >32%), so no single function gets there — but **the smaller gains are
+worth taking**: at this gap, eight or nine honest 5-point wins reach the fallback. Size a
+candidate, and if the win is real and the risk is low, do it. What is CLOSED is only what
+*measured* at ~0 or negative (the occlusion family, Phase-5 dot tables, subdivide reload
+elisions) — closed on data, not on pessimism about small numbers. The ranked TODO lives in the
+`flight-pc-profiler` memory.
 
 ⚠ **Measure asm twins with the in-process differential** (`make VERIFY=1 PROBES=1` +
 `amiga/raster_verify.gdb`): asm + C oracle run back-to-back on the SAME inputs in ONE run, byte-compared
