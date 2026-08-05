@@ -380,6 +380,17 @@ static bool    s_resumeRestorePend  = false;
 // Keyed on the true edge (not every non-rescueFigure frame) so the pilot approach's mid-zoom $3D
 // dips — where rescueActive stays set — never trigger it.  Fires for ANY rescue (alien or pilot).
 static bool    s_resumeClearPend    = false;
+// Per terrain buffer (0 = terrainBitmap, 1 = terrainBitmapBack): is its plane3 already the content
+// renderFlightDirect wants?  plane3 has exactly two writers in the terrain region and NEITHER needs
+// a cleared canvas: rows 0-42 hold only the targeting crosshair, whose geometry is a compile-time
+// constant (visibility is a copper palette swap, not a draw skip), and rows 43-46 are overwritten
+// wholesale by the band composite's plane3 long copy.  So the per-frame plane3 clear was pure cost
+// (11 beam ticks/painted frame of CPU stall) and BOTH it and the crosshair draw are now one-shot per
+// buffer, armed on the flight rising edge in deriveRenderSignals — the one place a foreign scene's
+// bits can reach plane3, since terrainBitmap is shared with the doors/tunnel/planet viewport decode.
+// (The rescue paths' 3-plane copies from s_cleanBmp cannot dirty it: that snapshot is itself a live
+// flight buffer, so its plane3 is already crosshair + band and nothing else.)
+static bool    s_p3Clean[2]         = { false, false };
 // Called by the terrain draw (rof_native.c) before its first dot write, to ensure the kicked
 // off-screen-buffer clear has finished (the dots OR into freshly-zeroed plane2).
 #ifdef ROF_BLIT_SHAPE
@@ -2196,8 +2207,9 @@ void RescueOnFractalus::renderFlightDirect()
     //   plane2 (+40) copy  — a straight A->D copy covering all 20 words x 47 rows, so it needs no
     //                        clear at all (the old code cleared those words, then overwrote them).
     //                        Kicked here; runs UNDER the edge plot.
-    //   plane3 (+80) clear — first touched by the CPU far below (crosshair/band): deferred past the
-    //                        edge plot.
+    //   plane3 (+80) clear — first touched by the CPU far below (crosshair/band), and needed at all
+    //                        only on a buffer's first flight frame: moved past the edge plot and
+    //                        made one-shot (s_p3Clean).
     // Dropping the redundant plane2 clear also cuts total blitter work here by ~20%.
     AmigaHardware::blitterClear((uint16_t*)bp, 20, 47, 80);   // plane1 only (mod = 120 stride - 40 row bytes)
     BW_AT(g_bwClearCopy, AmigaHardware::blitterDrain());      // the one blocking wait: plane1 must be clean for the edge plot
@@ -2265,13 +2277,20 @@ void RescueOnFractalus::renderFlightDirect()
 #else
     edgePlotCore(bp);
 #endif
-    // plane3 clear, deferred from the clear/copy block above to here: nothing between there and now
-    // reads or writes plane3, and the CPU's first plane3 write (the crosshair) is well below — so it
-    // does not belong in front of the edge plot.  By now the plane2 dot copy has finished underneath
-    // that plot, so this is another direct register kick.  The explicit drain is what blitterFillUp
-    // would do in its own prologue anyway; spelling it out lets the BLIT_SHAPE probe attribute the
-    // wait to this site instead of hiding it inside the fill.
-    AmigaHardware::blitterClear((uint16_t*)(bp + 80), 20, 47, 80);
+    // plane3: ONE-SHOT clear per buffer, not per frame (see s_p3Clean).  Both of plane3's writers
+    // are self-sufficient — the crosshair below ORs the same fixed bytes every frame and the band
+    // composite long-COPIES rows 43-46 — so once a buffer's plane3 is right it stays right, and the
+    // clear is only needed where a foreign scene could have left bits in it (flight entry, armed in
+    // deriveRenderSignals).  Steady state: no clear at all.
+    const int p3i = (back == terrainBitmapBack) ? 1 : 0;
+    const bool p3Fresh = !s_p3Clean[p3i];    // this buffer's plane3 is being rebuilt this frame
+    if (p3Fresh) {
+        AmigaHardware::blitterClear((uint16_t*)(bp + 80), 20, 47, 80);
+        s_p3Clean[p3i] = true;
+    }
+    // Settle whatever is still in flight (the dot copy, and the clear just above on an entry frame)
+    // before the sky fill.  blitterFillUp would drain in its own prologue anyway; spelling it out
+    // lets the BLIT_SHAPE probe attribute the wait here instead of hiding it inside the fill.
     BW_AT(g_bwP3Clear, AmigaHardware::blitterDrain());
 
     // Sky fill: propagate each edge bit UP in ONE descending blit (writes rows 0-45, seed 46).
@@ -2325,7 +2344,14 @@ void RescueOnFractalus::renderFlightDirect()
 #endif
 
     // Targeting crosshair (#10): the Atari's "+" reticle rendered into the otherwise-empty plane3
-    // of the terrain body (plane3 is 0 across rows 0-42; only the band below uses it).  The copper
+    // of the terrain body (plane3 is 0 across rows 0-42; only the band below uses it).  Drawn ONCE
+    // per buffer, together with that buffer's one-shot plane3 clear (p3Fresh) — this is the SOLE
+    // writer of plane3 in the terrain body, the geometry is a compile-time constant, and nothing
+    // clears plane3 between frames any more, so the reticle simply stays where it was put.  Its
+    // visibility is a copper palette swap (color04-07), never a redraw, so there is nothing
+    // per-frame to do here at all.  ⚠ Any position- or state-dependent plane3 pixel added to the
+    // terrain body would break BOTH halves of that: it would need its own erase, and this block
+    // would have to go back to running every frame (with the per-frame clear restored).  The copper
     // sets color04-07 in the viewport = the reticle salmon ($26, #833c2d) so a plane3 pixel reads
     // that colour over any terrain in planes 1&2.  The "+" is missiles M2/M1/M3 (flight VBI
     // $505F-$5071: HPOSM3=$74, HPOSM2=$80, HPOSM1=$85, SIZEM=$CC → M1/M3 quad-width); measured
@@ -2336,7 +2362,7 @@ void RescueOnFractalus::renderFlightDirect()
     //     the horizon (rows 21-24).
     //   • HORIZONTAL arms at the gap-centre line (buffer $0B5F → row 22): M3 @ $74 quad = columns
     //     68-75 (left), M1 @ $85 quad = columns 85-92 (right), leaving the centre gap around col 80.
-    {
+    if (p3Fresh) {
         uint8_t* const p3 = bp + 80;                            // plane3 base (offset 80 per 120B scanline)
         uint8_t* vu = p3 + kRow120[13] + 20;                    // vertical stem, walked +120/row
         for (int r = 13; r <= 20; r++, vu += 120) *vu |= 0xC0u;        // upper (col 80)
@@ -3722,6 +3748,12 @@ void RescueOnFractalus::deriveRenderSignals()
     // Title just repaints its 20 cells, so forcing it every transitional frame is fine.
     if (g_doorFieldReady == 0u || (rsStars && !prevRsStars) || (rsFlight && !prevRsFlight))
         g_titleToRender = 20;
+    // Flight ENTRY: invalidate both terrain buffers' plane3 so renderFlightDirect clears it once
+    // per buffer (see s_p3Clean there — the per-frame plane3 clear is gone).  Needed because
+    // terrainBitmap is SHARED with the doors/tunnel/planet viewport decode, so it arrives here
+    // holding that scene's bits in plane3.  Runs before render() -> renderFlightDirect in the same
+    // frame, so the very first painted flight frame is already covered.
+    if (rsFlight && !prevRsFlight) { s_p3Clean[0] = false; s_p3Clean[1] = false; }
     // The cockpit full repaint (decodeCockpitFull = 560 cells) is EXPENSIVE (~300ms even after
     // the decode LUT) and must run only when the static dashboard is actually (re)built.  That
     // happens exactly ONCE: the transpiled boot_standby_launch_driver builds it during the standby
