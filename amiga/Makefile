@@ -205,6 +205,20 @@ ifdef RAS_SHAPE
 EXTRA_DEFINES += -DROF_RAS_SHAPE
 endif
 
+# Benchmark determinism: `make FIXED_RNG=1` re-pins the POKEY LFSR ($D20A) at two points —
+# immediately before the fresh-start level seeding (rof_native.c intro_random_setup) and on the
+# flight rising edge (RescueOnFractalus.cpp deriveRenderSignals).  Our $D20A is read-clocked
+# from a fixed power-on seed, not free-running like the Atari's, so WHICH LEVEL you get is
+# decided by how many RANDOM reads the attract sequence happened to make first.  Any code change
+# shifts the free-running main loop against the real-time 50Hz VBI, shifts that read count, and
+# hands the next build a different level — the reason cross-build beam-tick numbers have never
+# been comparable and only the in-process differential was trusted.  With this on, every build
+# flies the same level.  OFF by default: it deliberately removes real gameplay variety, so never
+# judge RENDERING or gameplay from a FIXED_RNG build.
+ifdef FIXED_RNG
+EXTRA_DEFINES += -DROF_FIXED_RNG
+endif
+
 # Debug test aid: `make FORCE_ALIEN=1` forces EVERY rescued figure to be the alien
 # jump-scare (pilot_render marker override, rof_native.c g_forceAlienRescue).  For testing
 # the alien-on-windshield animation without waiting for the level-scaled random roll.  OFF

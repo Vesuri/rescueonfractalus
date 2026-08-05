@@ -181,6 +181,9 @@ extern "C" volatile unsigned char g_compassDirty = 1;
 extern "C" void station_init(void);
 extern "C" void game_entry(void);
 extern "C" void game_main_loop(void);     // $3D48: DL/sound/PMG init -> scoreboard/standby
+#ifdef ROF_FIXED_RNG
+extern "C" uint32_t rof_lfsr_state;       // PlatformAmiga.cpp — re-pinned by FIXED_RNG builds
+#endif
 extern "C" void audio_timer_setup(void);  // $712D: clear POKEY AUDF, AUDCTL=$60
 extern "C" void sfx_engine_reset(void);   // $5433: zero SFX voice slots
 extern "C" void rof_check_restart(void);  // pump-exit gate: quit / BREAK-restart (PlatformAmiga.cpp)
@@ -3297,6 +3300,17 @@ void RescueOnFractalus::deriveRenderSignals()
 
     rsStandby  = standbyVbi;
     rsFlight   = flightVbi;
+#ifdef ROF_FIXED_RNG
+    // Benchmark determinism (make FIXED_RNG=1) — see rof_native.c intro_random_setup.  Re-pin
+    // the POKEY LFSR on the flight RISING EDGE so the in-flight terrain sequence
+    // (random_terrain_height / terrain_jitter_column) starts from the same place in every
+    // build, not just the level maps.  Deliberately a different constant from the level seed.
+    {
+        static bool s_wasFlight = false;
+        if (flightVbi && !s_wasFlight) rof_lfsr_state = 0x0ACE1u;
+        s_wasFlight = flightVbi;
+    }
+#endif
     // Title Screen (attract/level-select/results): runs under the $53CC in-game VBI, which
     // ALSO covers early-boot transitional frames — so additionally require the title text to
     // be present in its screen RAM ($365B holds 'R' of "RESCUE" = internal $32 | COLPF1<<6 =

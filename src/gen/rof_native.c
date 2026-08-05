@@ -3653,6 +3653,19 @@ void unpack_bitmap_4d3e(void) {
  * retried until test_marked_neighbor confirms it), carve through the wall + next cell (bit7
  * cleared), advance; when a cell has no marked neighbours, pop the stack until it empties. */
 void intro_random_setup(void) {
+#if defined(ROF_PLATFORM_AMIGA) && defined(ROF_FIXED_RNG)
+    /* Benchmark determinism (`make FIXED_RNG=1`, OFF by default).  Our $D20A is a read-clocked
+       LFSR from a fixed power-on seed, NOT the Atari's free-running one, so "which level you
+       get" is decided purely by how many RANDOM reads the Logo/Station attract happened to make
+       before this call.  A code change shifts the free-running main loop against the real-time
+       50Hz VBI, shifts that read count, and silently hands the next build a DIFFERENT LEVEL —
+       which is why cross-build beam-tick numbers were never comparable.  Re-pinning the LFSR
+       here (immediately before the only fresh-start level seeding: this fn -> $70B3 -> $7498,
+       which build the $0900 marker grid and $0A00 object map) makes every build generate the
+       SAME level.  Amiga+probe-only: the SDL/validate oracle path is untouched. */
+    extern uint32_t rof_lfsr_state;
+    rof_lfsr_state = 0x1F0A5u;
+#endif
     uint8_t x = 0x00, y = 0x00;
     do {                                            /* fill $0900[0..255] = RANDOM&$3F|$80 */
         mem[0x0900 + x] = (uint8_t)((bus_read(0xD20A) & 0x3F) | 0x80);
