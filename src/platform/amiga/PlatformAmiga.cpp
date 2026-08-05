@@ -24,6 +24,7 @@
 #include <proto/graphics.h>
 #include <proto/cia.h>
 #include <exec/interrupts.h>
+#include <exec/execbase.h>
 #include "../../cpu/m68k_math.h"
 #include <exec/nodes.h>
 #include <exec/memory.h>
@@ -1060,6 +1061,21 @@ extern "C" volatile unsigned char g_dcMin=0xFF, g_dcMax=0, g_ddMin=0xFF, g_ddMax
 // Cockpit-decode probe (beam sub-frame ticks): g_fCockpit accumulates the time spent in the
 // render() cockpit scan/decode block; g_fCockpitScans counts the frames it actually ran.
 extern "C" volatile unsigned long g_fCockpit=0, g_fCockpitScans=0;
+// OS interrupt-dispatch overhead probe ("the 8% unresolved/ROM bucket").  The flight PC
+// profiler puts ~8% of its samples at Kickstart $F811F8 — the level-3 autovector entry
+// (`movem.l d0-d1/a0-a1/a5-a6,-(sp)`, which then btsts INTREQR for BLIT/VERTB/COPER and
+// jumps through ExecBase->IntVects[]).  That is exec's interrupt wrapper, not our code.
+// VERTB is raised at the start of line 0, so the beam position when OUR AddIntServer
+// handler finally runs measures EVERYTHING in between: the interrupted instruction
+// finishing, the 68000 exception stacking, exec's wrapper, and any higher-priority VERTB
+// server ahead of us — i.e. exactly the cost a raw autovector takeover could remove.
+// Recorded as separate vpos/hpos sums so the target never needs a 32-bit multiply;
+// irq_probe.gdb folds them into colour-clocks (1 line = 227 cc = 63.56us).
+extern "C" volatile unsigned long g_irqLatVsum=0, g_irqLatHsum=0, g_irqLatCnt=0;
+extern "C" volatile unsigned short g_irqLatVmax=0, g_irqLatHmax=0;
+// INTENAR/INTREQR snapshot at VBI entry: which level-3 sources (bit4 COPER, bit5 VERTB,
+// bit6 BLIT) are actually enabled decides the level-3 interrupt RATE — 50/s if only VERTB.
+extern "C" volatile unsigned short g_irqIntena=0, g_irqIntreq=0;
 // VBI-body sub-profiling (beam-line deltas inside the flight VBI; normalize by isrCalls).
 // integ/proj/sfx wrap individual native twins (rof_native.c).  The whole handler is timed by
 // flight_vbi_native (g_flightProf.isrLines).  (The old top/atmo/hud/score/tail PRE_INSN_HOOK
@@ -1549,9 +1565,35 @@ static void keyboardShutdown()
 }
 
 // ============================================================================
-//  Real INTB_VERTB VBI server — the per-frame VBI body + RTCLOK clock
+//  Real INTB_VERTB VBI handler — the per-frame VBI body + RTCLOK clock
 // ============================================================================
+// We do not hang this off exec's VERTB server CHAIN (AddIntServer) — we replace the
+// whole VERTB IntVector, so ours is the only VERTB code that runs.  Why: measured with
+// the g_irqLat* probe, the OS servers ahead of us in the chain (graphics.library pri 10,
+// gameport.device, timer.device) delayed our handler to beam line ~12.7 on average
+// (max line 20) = ~780 us of every 20 ms frame = ~3.9% of ALL wall clock, spent on
+// bookkeeping this game does not use: graphics.library refreshes a view we replaced
+// (LoadView(NULL) + our own copper), gameport.device generates mouse events we never
+// read (the left-mouse quit polls CIA-A PRA directly), timer.device services the VBLANK
+// timer unit nothing in the run window requests.  Taking the vector gets those cycles
+// back AND puts our beam-critical work (flightVblankSwap's bitplane-pointer rewrite
+// before the copper's line-85 fetch, starVblankUpdate's sprite control words before the
+// sprite DMA fetch at ~line 25) at the very top of the vblank instead of in its tail.
+//
+// Safe because the takeover window (install → scene.run() → restore) contains no OS
+// service that needs VERTB: the xex image is incbin-embedded so there is no disk I/O,
+// and both WaitTOF() pairs (which DO need graphics.library's VERTB server) are outside
+// it.  The original IntVector is saved verbatim and put back on the way out.
+// `make VERTB_SERVER=1` falls back to the old AddIntServer chain for A/B testing.
 static struct Interrupt vbiServer;
+#ifndef ROF_VERTB_SERVER
+static struct IntVector s_savedVertb;      // exec's original VERTB IntVector, restored on exit
+static bool             s_vertbTaken = false;
+// exec puts IntVects[] at ExecBase+84, so VERTB (bit 5) is ExecBase+144 — which is exactly
+// the offset Kickstart's level-3 autovector stub dispatches through (`movem.l 144(a6),a1/a5`).
+static_assert(__builtin_offsetof(struct ExecBase, IntVects) == 84,
+              "ExecBase::IntVects moved — re-check the VERTB vector takeover");
+#endif
 
 // Real vertical-blank frame counter (50 Hz PAL), exposed to the scene so time-based
 // animations (e.g. the flight terrain colour fade) run at wall-clock rate regardless of
@@ -1560,6 +1602,29 @@ extern "C" unsigned short platform_frame_count(void) { return g_vbiCount; }
 
 static uint32_t vbiHandler()
 {
+    // Clearing the interrupt request is the HANDLER's job — exec's server-chain walker
+    // used to do it for us, and we replaced it (see the vbiServer comment above).  Miss
+    // this and level 3 re-triggers forever.  No SETCLR bit = clear.  Harmless in the
+    // VERTB_SERVER fallback build, where exec clears it as well.
+    *(volatile unsigned short*)0xDFF09Cu = (unsigned short)INTF_VERTB;
+#ifdef ROF_FLIGHT_PROBE
+    // FIRST statement in the server: how far has the beam travelled since VERTB was
+    // raised at line 0?  That delta IS exec's interrupt-dispatch overhead (see the
+    // g_irqLat* comment above).  Read VHPOSR once; V8 is ignored (the latency is only
+    // ever a handful of lines, so the low 8 bits of vpos never wrap).
+    {
+        extern volatile unsigned long g_irqLatVsum, g_irqLatHsum, g_irqLatCnt;
+        extern volatile unsigned short g_irqLatVmax, g_irqLatHmax, g_irqIntena, g_irqIntreq;
+        const volatile unsigned short* _cst = (const volatile unsigned short*)0xDFF000u;
+        unsigned short _vh = _cst[0x006u / 2];          // VHPOSR: hi = V7..V0, lo = HPOS
+        unsigned short _vp = (unsigned short)(_vh >> 8), _hp = (unsigned short)(_vh & 0xFFu);
+        g_irqLatVsum += _vp; g_irqLatHsum += _hp; g_irqLatCnt++;
+        if (_vp > g_irqLatVmax || (_vp == g_irqLatVmax && _hp > g_irqLatHmax))
+            { g_irqLatVmax = _vp; g_irqLatHmax = _hp; }
+        g_irqIntena = _cst[0x01Cu / 2];                 // INTENAR
+        g_irqIntreq = _cst[0x01Eu / 2];                 // INTREQR
+    }
+#endif
     // RTCLOK is owned by renderFrame() in the main thread (advanced exactly once per
     // spin-wait iteration, immune to ISR timing races with the equality spin).
     // Exception: ATTRACT VBI ($1B30) bumps RTCLOK in its own transpiled body.
@@ -1942,13 +2007,34 @@ void PlatformAmiga::run()
     *bplcon1Pointer = 0x0000;
     *bplcon2Pointer = 0x0000;
 
-    // --- VBI interrupt server ------------------------------------------------
+    // --- VBI interrupt handler: take over the whole VERTB vector --------------
     vbiServer.is_Node.ln_Type = NT_INTERRUPT;
-    vbiServer.is_Node.ln_Pri  = 0;
+    // ln_Pri only matters in the VERTB_SERVER fallback (the takeover has no chain): 127 puts
+    // us at the HEAD, ahead of graphics.library (pri 10) / gameport.device / timer.device.
+    // Measured, pinned level, vbi-gated 60 s window: head-of-chain is +9.4% flight throughput
+    // over the original pri 0 (0.0409 -> 0.0447 iterations/frame).  See amiga/fps_ab.gdb.
+    vbiServer.is_Node.ln_Pri  = 127;
     vbiServer.is_Node.ln_Name = (char*)"RoF VBI";
     vbiServer.is_Data = 0;
     vbiServer.is_Code = (void(*)())vbiHandler;
-    AddIntServer(INTB_VERTB, &vbiServer);
+#ifdef ROF_VERTB_SERVER
+    AddIntServer(INTB_VERTB, &vbiServer);       // A/B fallback: share exec's server chain
+#else
+    // Replace exec's VERTB IntVector wholesale (see the long note at vbiServer): its
+    // iv_Code is the server-chain walker, so overwriting it drops graphics.library /
+    // gameport.device / timer.device off the vblank entirely.  iv_Node is cosmetic —
+    // it is what OS debug tools report as the vector's owner.
+    {
+        struct IntVector* iv = &SysBase->IntVects[INTB_VERTB];
+        Disable();
+        s_savedVertb  = *iv;
+        iv->iv_Data   = 0;
+        iv->iv_Code   = (void(*)())vbiHandler;
+        iv->iv_Node   = &vbiServer.is_Node;
+        Enable();
+        s_vertbTaken = true;
+    }
+#endif
 
     // (The attract/standby-theme SFX tick sfx_voice_tick ($70F9) now runs in the
     // INTB_VERTB VBI body — standby_vbi_native, gated $00E7 & BIT $062D = 25 Hz —
@@ -1986,7 +2072,19 @@ void PlatformAmiga::run()
     keyboardShutdown();
     scene.shutdown();     // calls PlatformAmiga::audioShutdown
 
+    // Hand VERTB back BEFORE the LoadView/WaitTOF restore below — WaitTOF() is signalled
+    // by graphics.library's VERTB server, which only runs again once exec's chain walker
+    // is back in the vector.
+#ifdef ROF_VERTB_SERVER
     RemIntServer(INTB_VERTB, &vbiServer);
+#else
+    if (s_vertbTaken) {
+        Disable();
+        SysBase->IntVects[INTB_VERTB] = s_savedVertb;
+        Enable();
+        s_vertbTaken = false;
+    }
+#endif
 
     // Disable our display DMA before handing back.
     *dmaconPointer = (uint16_t)(DMAF_COPPER | DMAF_RASTER | DMAF_SPRITE);

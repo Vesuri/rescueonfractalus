@@ -219,6 +219,15 @@ ifdef FIXED_RNG
 EXTRA_DEFINES += -DROF_FIXED_RNG
 endif
 
+# A/B fallback: `make VERTB_SERVER=1` goes back to hanging the game VBI off exec's VERTB
+# server CHAIN (AddIntServer) instead of taking the whole VERTB IntVector over.  The default
+# (takeover) drops graphics.library / gameport.device / timer.device off the vblank, which
+# measured ~780us per 20ms frame = ~3.9% of all wall clock (amiga/irq_probe.gdb, g_irqLat*).
+# Use this flag if an interrupt-delivery regression needs bisecting against the old behaviour.
+ifdef VERTB_SERVER
+EXTRA_DEFINES += -DROF_VERTB_SERVER
+endif
+
 # Debug test aid: `make FORCE_ALIEN=1` forces EVERY rescued figure to be the alien
 # jump-scare (pilot_render marker override, rof_native.c g_forceAlienRescue).  For testing
 # the alien-on-windshield animation without waiting for the level-scaled random roll.  OFF

@@ -55,7 +55,17 @@ ELF  = os.path.join(HERE, "out", "RoF.elf")
 # Each rule maps a symbol (exact name or prefix) to a display group.  Order
 # matters: first match wins.  Add rows here as the code grows.
 def group_of(sym):
-    if sym in ("<unresolved/ROM>",):                 return "unresolved / Kickstart ROM / IRQ"
+    # ⚠ This bucket's SHARE IS A SAMPLER ARTIFACT — do not treat it as reclaimable time.
+    # Identified 2026-08-05: essentially every sample in it is the SAME instruction,
+    # $F811F8 = the first instruction of Kickstart's level-3 autovector stub
+    # (`movem.l d0-d1/a0-a1/a5-a6,-(sp)`), always with the same supervisor sp.  FS-UAE's
+    # gdb stub takes its SIGINT break right after a pending interrupt has been dispatched,
+    # so the sample lands on the vector's entry PC — the count tracks how many interrupts
+    # were taken, not how long ROM ran.  Proof: taking the VERTB vector over removed
+    # exec's chain walker AND the three OS VERTB servers (measured 846us -> 52us per
+    # firing with amiga/irq_probe.gdb) and this bucket only moved 8.0% -> 7.3%.
+    # Measure interrupt-dispatch cost with irq_probe.gdb's beam probe, never from here.
+    if sym in ("<unresolved/ROM>",):                 return "exec IRQ-entry stub (sampler artifact)"
     # "ras_sp3*"/"ras_sp4*" are the 2026-08-05 restructure's straight-line span-3/span-4 leaf
     # groups; "done" is the rasterizer's shared writeback/epilogue label.  Without these rows
     # they show up as separate "misc:" lines and the rasterizer bucket reads ~half its real cost.
