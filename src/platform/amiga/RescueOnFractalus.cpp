@@ -391,7 +391,8 @@ static bool    s_resumeClearPend    = false;
 // in the flight path and tally its beam-ticks separately.  ISR beam-lines are subtracted (a
 // blitter wait very often spans a VBI firing, which would otherwise be counted as stall).
 extern "C" volatile unsigned long g_bwDotClear = 0, g_bwClearCopy = 0, g_bwSkyFill = 0,
-                                  g_bwPendClear = 0, g_bwFlip = 0, g_bwCalls = 0;
+                                  g_bwPendClear = 0, g_bwFlip = 0, g_bwCalls = 0,
+                                  g_bwP3Clear = 0;
 #define BW_AT(acc, stmt) do { unsigned long _t = rof_subclock(), _i = g_isrBeamLines; \
     stmt; unsigned long _d = rof_subclock() - _t, _di = g_isrBeamLines - _i; \
     (acc) += (_d > _di) ? (_d - _di) : 0; } while (0)
@@ -2182,27 +2183,39 @@ void RescueOnFractalus::renderFlightDirect()
     // depend on the clear (it ORs into freshly-zeroed plane1), so it sits behind a blitterWait.
 
     // Dot side-buffer model: `back` is the freshly-freed off-screen buffer (the flip that freed it was
-    // drained at the top of this function).  Clear it whole — all 3 planes, 47 rows (0-46): terrain
-    // viewport (0-42) + windscreen band (43-46) — then COPY the terrain dots (plane2) from the dot
-    // side-buffer into it.  The rasterizer ORed this frame's dots into terrainDotBuffer's plane2 (NOT
-    // a display buffer) during the upstream compute, so they survived the flip and simply copy in here
-    // (the "re-added plane2 copy").  plane2 is cleared then overwritten by the copy — the redundant
-    // clear of those 20 words/row is negligible and keeps a single whole-buffer clear blit.  Both are
-    // blitter ops queued in order (clear then copy); drain so plane1/2 are settled before the edge plot.
-    AmigaHardware::blitterClear((uint16_t*)bp, 60, 47, 0);
+    // drained at the top of this function).  It needs 47 rows (0-46) — terrain viewport (0-42) +
+    // windscreen band (43-46) — of fresh content, and the terrain dots (plane2) COPIED in from the dot
+    // side-buffer (the rasterizer ORed this frame's dots into terrainDotBuffer's plane2, NOT a display
+    // buffer, during the upstream compute, so they survived the flip).
+    //
+    // That used to be one whole-buffer 3-plane clear + the copy, both drained before continuing — 43
+    // beam-ticks of pure CPU stall per painted frame (2.7% of flight, BLIT_SHAPE probe 835c942).  But
+    // the only thing the CPU needs next is the edge plot, and that touches plane1 ALONE.  So the work
+    // is split by plane and only plane1 is awaited:
+    //   plane1 (+0)  clear — the edge plot ORs the skyline into it, so it must be zero first: awaited.
+    //   plane2 (+40) copy  — a straight A->D copy covering all 20 words x 47 rows, so it needs no
+    //                        clear at all (the old code cleared those words, then overwrote them).
+    //                        Kicked here; runs UNDER the edge plot.
+    //   plane3 (+80) clear — first touched by the CPU far below (crosshair/band): deferred past the
+    //                        edge plot.
+    // Dropping the redundant plane2 clear also cuts total blitter work here by ~20%.
+    AmigaHardware::blitterClear((uint16_t*)bp, 20, 47, 80);   // plane1 only (mod = 120 stride - 40 row bytes)
+    BW_AT(g_bwClearCopy, AmigaHardware::blitterDrain());      // the one blocking wait: plane1 must be clean for the edge plot
+    // Blitter idle here, so blitterCopy pokes the registers directly and starts NOW (a queued blit
+    // would not: nothing drains the queue asynchronously — INTF_BLIT is masked and
+    // processBlitterQueue() only runs from a wait).  It overlaps the edge plot below.
     AmigaHardware::blitterCopy((uint16_t*)((uint8_t*)terrainDotBuffer->data + 40),  // src plane2
                                (uint16_t*)(bp + 40),                                // dst plane2
                                20 /*words*/, 47 /*rows*/,
                                80 /*srcMod bytes = 120-40*/, 80 /*dstMod bytes*/,
                                0 /*shift*/, 0xFFFF /*fwm*/, 0xFFFF /*lwm*/, 0xFFFF /*unused (minterm=A)*/);
-    BW_AT(g_bwClearCopy, AmigaHardware::blitterDrain());   // TWO queued blits (clear + copy) — blitterWait would settle only the first
     flightClearPending = nullptr;
     FD_LAP(g_fdClear);
 
     // Resume-frame terrain-dot recovery.  On the single normal frame that ends a rescue-figure
     // pause the off-screen buffer was NEVER pre-cleared (flightKickBackClear suppressed the clear
     // for the whole pause), so the terrain rasterizer ORed this frame's fresh dots into the
-    // un-cleared buffer and the safety clear just above wiped BOTH planes — measured: the painted
+    // un-cleared buffer and the safety clear/copy just above replaced BOTH planes — measured: the painted
     // buffer's plane2 byte-sum collapses ~10209->1290 for exactly one displayed frame, then
     // self-corrects once flightKickBackClear re-arms the pre-clear.  The fresh dots are
     // unrecoverable (ORed on top of stale content, inseparable), but the ship is stationary across
@@ -2215,6 +2228,10 @@ void RescueOnFractalus::renderFlightDirect()
     // (s_resumeRestorePend), so it fires exactly once at the true resume and never during the zoom.
     if (s_resumeRestorePend) {
         s_resumeRestorePend = false;
+        // The plane2 dot copy kicked above is still in flight and targets exactly these bytes, so
+        // settle it before overwriting them by CPU (the copy must land FIRST, then be replaced — the
+        // old whole-buffer drain gave that ordering for free).  One-shot per rescue; cost irrelevant.
+        AmigaHardware::blitterDrain();
         const uint8_t* s2 = (const uint8_t*)s_cleanBmp->data + 40;   // plane2 base, walked +120/row
         uint8_t* d2 = bp + 40;                                       // plane2 in the back buffer
         for (int r = 0; r <= 42; r++, s2 += 120, d2 += 120) {
@@ -2248,6 +2265,15 @@ void RescueOnFractalus::renderFlightDirect()
 #else
     edgePlotCore(bp);
 #endif
+    // plane3 clear, deferred from the clear/copy block above to here: nothing between there and now
+    // reads or writes plane3, and the CPU's first plane3 write (the crosshair) is well below — so it
+    // does not belong in front of the edge plot.  By now the plane2 dot copy has finished underneath
+    // that plot, so this is another direct register kick.  The explicit drain is what blitterFillUp
+    // would do in its own prologue anyway; spelling it out lets the BLIT_SHAPE probe attribute the
+    // wait to this site instead of hiding it inside the fill.
+    AmigaHardware::blitterClear((uint16_t*)(bp + 80), 20, 47, 80);
+    BW_AT(g_bwP3Clear, AmigaHardware::blitterDrain());
+
     // Sky fill: propagate each edge bit UP in ONE descending blit (writes rows 0-45, seed 46).
     // Full-height (47 rows) so the terrain silhouette continues into the windscreen band — the
     // band's L/R edges then show real terrain.  (Was 43 rows / seed 42; buildHeightRowOff clamps

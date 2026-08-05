@@ -25,6 +25,7 @@ set $sVbi = (int)g_vbiCount
 set $sFd = (int)g_fdCalls
 set $sDot = (int)g_bwDotClear
 set $sCC = (int)g_bwClearCopy
+set $sP3 = (int)g_bwP3Clear
 set $sSky = (int)g_bwSkyFill
 set $sPend = (int)g_bwPendClear
 set $sFlip = (int)g_bwFlip
@@ -46,9 +47,12 @@ printf "-- STALLS (beam ticks, ISR-corrected) --------------------------------\n
 printf "  frame-sync vblank spin  %7d  = %2d.%d%% of flight   (%d/renderFrame)\n", \
   (int)g_rIdleWall-$sIdle, (100*((int)g_rIdleWall-$sIdle))/$tot, \
   ((1000*((int)g_rIdleWall-$sIdle))/$tot)%10, ((int)g_rIdleWall-$sIdle)/$dk
-printf "  blit: clear+copy drain  %7d  = %2d.%d%%             (%d/painted)\n", \
+printf "  blit: plane1-clear wait %7d  = %2d.%d%%             (%d/painted)\n", \
   (int)g_bwClearCopy-$sCC, (100*((int)g_bwClearCopy-$sCC))/$tot, \
   ((1000*((int)g_bwClearCopy-$sCC))/$tot)%10, ((int)g_bwClearCopy-$sCC)/$df
+printf "  blit: plane3-clear wait %7d  = %2d.%d%%             (%d/painted)\n", \
+  (int)g_bwP3Clear-$sP3, (100*((int)g_bwP3Clear-$sP3))/$tot, \
+  ((1000*((int)g_bwP3Clear-$sP3))/$tot)%10, ((int)g_bwP3Clear-$sP3)/$df
 printf "  blit: sky-fill wait     %7d  = %2d.%d%%             (%d/painted)\n", \
   (int)g_bwSkyFill-$sSky, (100*((int)g_bwSkyFill-$sSky))/$tot, \
   ((1000*((int)g_bwSkyFill-$sSky))/$tot)%10, ((int)g_bwSkyFill-$sSky)/$df
