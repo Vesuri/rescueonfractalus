@@ -137,11 +137,57 @@ static inline int ras_bucket(unsigned s) {
  * denominator for any "cycles saved per plotted dot" estimate. */
 #define RSDOT(col, h) do { int _rc = (int)(col) - 48, _rs = 150 - (int)(h); \
     if ((unsigned)_rc < 160u && (unsigned)_rs < 47u && _rs != 43) ++g_rasDots; } while (0)
+
+/* --- whole-subtree OCCLUSION-CULLING sizing probe (2026-08-05) --------------------------
+ * A far-bisect of span 3 or 4 expands into a straight-line group of 3 / 4 DRAWs at
+ * consecutive columns (the asm's ras_sp3 / ras_sp4 blocks), and the group's exit state
+ * (plotCol+N, height = chgt, frac = fsum) does NOT depend on the midpoint.  Every height it
+ * draws is bounded by
+ *     span 3: bound = max(mh, chgt)                 heights mh, (chgt+mh+1)>>1, chgt
+ *     span 4: bound = max(mh, chgt, height)         heights (mh+height+1)>>1, mh,
+ *                                                            (chgt+mh+1)>>1, chgt
+ * so `bound <= COL_MAX(c)` for every column c in the group proves the whole group is hidden
+ * and can be skipped outright.  This probe measures whether that is worth any cycles:
+ *   Grp     groups seen
+ *   Occl    groups where all N draws are EXACTLY rejected — the ceiling for ANY cull test
+ *   Cons[k] the cheap bound-vs-COL_MAX test's early-out profile: k = columns that passed
+ *           before the first failure, so Cons[N] = the cheap test culls the group, and
+ *           Cons[0] = it bails on the very first compare (the cheapest miss).
+ *   Edge    groups the asm truncates at the right edge ($D4) mid-block — not cullable as-is.
+ * The cost model needs the WHOLE distribution, not just P: the test loses cycles on a miss,
+ * and how much it loses depends on which compare failed. */
+extern volatile unsigned long g_rasSp3Grp, g_rasSp3Occl, g_rasSp3Edge, g_rasSp3Cons[4];
+extern volatile unsigned long g_rasSp4Grp, g_rasSp4Occl, g_rasSp4Edge, g_rasSp4Cons[5];
+static inline void ras_occl_probe(unsigned span, unsigned mh, unsigned chgt, unsigned hgt,
+                                  unsigned plotCol, const uint8_t *cm) {
+    unsigned h[4], bound, n, k, all = 1u;
+    if (span == 3u) {
+        h[0] = mh;                    h[1] = (chgt + mh + 1u) >> 1;  h[2] = chgt;
+        bound = (mh > chgt) ? mh : chgt;
+        n = 3u; ++g_rasSp3Grp;
+        if (plotCol + 1u >= 0xD4u) ++g_rasSp3Edge;   /* ras_sp3 checks $D4 after DRAW #1 */
+    } else if (span == 4u) {
+        h[0] = (mh + hgt + 1u) >> 1;  h[1] = mh;
+        h[2] = (chgt + mh + 1u) >> 1; h[3] = chgt;
+        bound = (mh > chgt) ? mh : chgt;  if (hgt > bound) bound = hgt;
+        n = 4u; ++g_rasSp4Grp;
+        if (plotCol + 2u >= 0xD4u) ++g_rasSp4Edge;   /* ras_sp4 checks $D4 after DRAW #2 */
+    } else return;
+    /* exact: would every one of the N draws be rejected?  (the columns are distinct, so the
+       draws do not interact — each is just `_h > COL_MAX(c)`) */
+    for (k = 0; k < n; ++k) if (h[k] > cm[k]) { all = 0u; break; }
+    /* cheap: the single `bound` compared against each column, stopping at the first failure */
+    for (k = 0; k < n; ++k) if (bound > cm[k]) break;
+    if (span == 3u) { g_rasSp3Occl += all; ++g_rasSp3Cons[k]; }
+    else            { g_rasSp4Occl += all; ++g_rasSp4Cons[k]; }
+}
+#define RSOCCL(span, mh, chgt, hgt, pc, cm) ras_occl_probe((span), (mh), (chgt), (hgt), (pc), (cm))
 #else
 #define RSCNT(c)      ((void)0)
 #define RSSAT(h)      ((void)0)
 #define RSHIST(a, s)  ((void)0)
 #define RSDOT(col, h) ((void)0)
+#define RSOCCL(span, mh, chgt, hgt, pc, cm) ((void)0)
 #endif
 
 /* Direct-to-plane2 terrain dots (Amiga).  Instead of OR-ing each surface pixel into the mode-D
@@ -6075,6 +6121,8 @@ void terrain_column_rasterize_core_c(uint8_t entryDepth, uint8_t colBase) {
                 unsigned t = havg + (unsigned)(uint8_t)~disp + (hsum & 1u);
                 mh = (t > 0xFF) ? (uint8_t)t : 0;
             }
+            RSOCCL((unsigned)(uint8_t)(CTL_COL(depth) - plotCol), mh, CTL_HEIGHT(depth),
+                   height, plotCol, &COL_MAX(plotCol));
             CTL_HEIGHT(depth + 1) = mh;
             depth++;
         }

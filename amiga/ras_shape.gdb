@@ -34,5 +34,16 @@ while $i < 16
   set $i = $i + 1
 end
 printf "\n"
+echo --- whole-subtree occlusion culling: is a span-3/4 group ever fully hidden? ---\n
+printf "sp3: groups=%lu  allRejected=%lu (%lu%%)  cheapCull=%lu (%lu%%)  edgeTrunc=%lu\n", \
+  g_rasSp3Grp, g_rasSp3Occl, (g_rasSp3Grp? 100*g_rasSp3Occl/g_rasSp3Grp : 0), \
+  g_rasSp3Cons[3], (g_rasSp3Grp? 100*g_rasSp3Cons[3]/g_rasSp3Grp : 0), g_rasSp3Edge
+printf "     cheap-test early-out (cols passed before 1st failure) 0..3: %lu %lu %lu %lu\n", \
+  g_rasSp3Cons[0], g_rasSp3Cons[1], g_rasSp3Cons[2], g_rasSp3Cons[3]
+printf "sp4: groups=%lu  allRejected=%lu (%lu%%)  cheapCull=%lu (%lu%%)  edgeTrunc=%lu\n", \
+  g_rasSp4Grp, g_rasSp4Occl, (g_rasSp4Grp? 100*g_rasSp4Occl/g_rasSp4Grp : 0), \
+  g_rasSp4Cons[4], (g_rasSp4Grp? 100*g_rasSp4Cons[4]/g_rasSp4Grp : 0), g_rasSp4Edge
+printf "     cheap-test early-out (cols passed before 1st failure) 0..4: %lu %lu %lu %lu %lu\n", \
+  g_rasSp4Cons[0], g_rasSp4Cons[1], g_rasSp4Cons[2], g_rasSp4Cons[3], g_rasSp4Cons[4]
 detach
 quit

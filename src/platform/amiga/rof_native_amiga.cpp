@@ -722,6 +722,14 @@ extern "C" volatile unsigned long g_rasFe = 0, g_rasFf = 0, g_rasPh1Adv = 0,
 // because the dot is plotted at the column's PREVIOUS top and the per-frame $6B reset floor
 // lands on the one excluded scanline.  This is the denominator for any per-plotted-dot estimate.
 extern "C" volatile unsigned long g_rasDots = 0;
+// Whole-subtree occlusion-culling sizing (span-3 / span-4 straight-line DRAW groups): groups
+// seen, groups where every draw is EXACTLY rejected, groups the asm truncates at the right
+// edge, and the cheap bound-vs-COL_MAX test's early-out profile (Cons[k] = k columns passed
+// before the first failure; Cons[N] = the cheap test culls it).  See ras_occl_probe().
+extern "C" volatile unsigned long g_rasSp3Grp = 0, g_rasSp3Occl = 0, g_rasSp3Edge = 0;
+extern "C" volatile unsigned long g_rasSp4Grp = 0, g_rasSp4Occl = 0, g_rasSp4Edge = 0;
+extern "C" volatile unsigned long g_rasSp3Cons[4] = { 0 };
+extern "C" volatile unsigned long g_rasSp4Cons[5] = { 0 };
 #endif
 // object draw-order loop shape (-DROF_TDRAW_PROF): total pairs scanned, pairs culled at the
 // primary gate (cheap skip), visible pairs reaching the companion/subdivide path, and total
