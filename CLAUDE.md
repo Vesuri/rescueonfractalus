@@ -385,8 +385,22 @@ algorithm's input distribution — `make RASTER_C=1 RAS_SHAPE=1 PROBES=1` + `ami
 sampling). Design, the shape data and the evaluated-and-rejected follow-ups: `docs/asm-migration-plan.md`
 §Phase 4. **Recipe worth reusing: shape-probe the algorithm → prove the algebra on the HOST
 (`tools/ras_restructure_test.c`, 1.6M randomised cases) → then write the asm → then the on-target
-differential, A/B'd against the SAME C oracle.** NEXT (open): signed_mul_8x16 (bit-serial, 8× in
-build_view — 16MB table infeasible).
+differential, A/B'd against the SAME C oracle.** (The old "NEXT: signed_mul_8x16" item was already
+STALE — `BuildViewAssembler.s` retired it 2026-07-05: its product core is a plain unsigned `mulu.w`,
+not a bit-serial multiply. Don't re-open it.)
+
+**⭐ Phase 5 + the number that should steer the next attempt (2026-08-05, `docs/asm-migration-plan.md`
+§Phase 5).** DRAWDOT's column arithmetic → two plotCol tables (0 mismatch, host-proven over all 65536
+input pairs) measured only **~0.9%**, and the shape probe says why: **an accepted draw is NOT a plotted
+dot.** The dot is plotted at the column's PREVIOUS top and the per-frame `$6B` reset floor sits on the
+one excluded scanline, so a column's first accepted draw never writes. Measured over 489 half-frames:
+286590 draws → 39% accepted → **only 12% actually write a dot**. So **DRAWDOT is ~23% of the rasterizer
+and the other ~77% is tree traversal**; every remaining per-plot micro-opt is capped at ~2% (this also
+retires the "incremental dot column ⇒ ~5%" estimate — wrong denominator). Best-sized remaining
+candidate: **whole-subtree occlusion culling** (61% of draws rejected) — measure `P(all-3-rejected)`
+with the shape probe FIRST. Subdivide's dead mem[] round-trips (the `$8D-$91` entry load — a pure
+round-trip, flushed conditionally with the BUDGET as a free dirty flag — and the dead `$83/$85` stores
+before each rasterize) took its asm-vs-oracle margin **7.4% → 12.5%**.
 
 ⚠ **Measure asm twins with the in-process differential** (`make VERIFY=1 PROBES=1` +
 `amiga/raster_verify.gdb`): asm + C oracle run back-to-back on the SAME inputs in ONE run, byte-compared

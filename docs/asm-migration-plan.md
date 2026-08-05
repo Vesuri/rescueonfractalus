@@ -352,11 +352,64 @@ unchanged (~1560 bytes) despite the 11 inline DRAWs.
   arithmetic: ~86 cycles saved per ACCEPTED draw (36.8% of them) for ~20 per column ⇒ only
   ~5% of the rasterizer, and the `plotCol` range gate needs either a padded dot buffer or a
   per-column compare that eats the win. Not worth the risk yet.
+  ⚠ **2026-08-05: that ~5% is on the WRONG DENOMINATOR — see Phase 5 below. An accepted draw is
+  not a plotted dot; only 12% of draws ever reach this code, so the real ceiling here is ~2%.**
 - **Running `COL_MAX` pointer** for the consecutive columns inside `ras_sp3`/`ras_sp4`: the
   `lea` + `addq.l #1,a1` per column costs more than the 6 cycles/access it saves. Measured
   negative on paper; don't.
 - **`$97` saturation via a 256-byte store-value table** (`move.b (aX,d0.w),(a2,d5.w)` replacing
   `move.b`+`cmp`+`bcs`): ~10 cycles per accepted draw ⇒ ~1.5%. Marginal.
+
+## Phase 5 — dot-plot tables + subdivide's dead round-trips (2026-08-05)
+
+Two changes, both byte-identical, plus the measurement that should steer the NEXT one.
+
+### `terrain_column_rasterize_core` — DRAWDOT column tables (~0.9%, commit 8bf4a48)
+`_ac = plotCol-48`, the `(unsigned)_ac < 160` gate, `_ac>>2` and `$C0 >> (2*(_ac&3))` are all
+pure functions of plotCol ⇒ two byte tables indexed by the RAW column (`kDotColMask` /
+`kDotColOff`, RescueOnFractalus.cpp). `kDotColMask == 0` outside `[48,208)` is impossible for a
+real 2-bit mask, so the mask fetch IS the range gate. 13 instructions (~104 cycles) → 6 (~62).
+The second table base came from **a4: the control-point stack base is just SP** (nothing touches
+the stack between `lea -CPBUF(sp),sp` and `done` now that DRAW is inlined), so the depth==0 test
+is `cmpa.l sp,a3`.
+Proof: `tools/dot_table_test.c` diffs (offset, mask) against the `ROF_PLOT_DOT` oracle over the
+ENTIRE domain — all 65536 `(plotCol, oldMax)` byte pairs, 0 mismatches. On target 0 mismatch /
+2698 calls; `make validate FN=terrain_column_rasterize` green.
+
+### ⭐ The measurement that matters: **an accepted draw is NOT a plotted dot**
+New permanent shape counter `g_rasDots` (`RSDOT`, ROF_RAS_SHAPE). Deep flight, 489 half-frames:
+
+| quantity | value |
+|---|---|
+| draws | 286590 (24.7/call) |
+| accepted (COL_MAX updated) | 112124 = **39%** |
+| **dots actually written** | 34450 = **12% of draws, 30% of accepted** |
+
+Why: the dot is plotted at the column's **PREVIOUS** top, and the per-frame `$6B` reset floor puts
+that at `_sc == 43` — the single scanline the gate excludes. So a column's FIRST accepted draw
+never writes; only later ones do. Consequences, both load-bearing:
+- The table change saves 42 cycles × 0.12 ≈ 5 of a ~269-cycle draw ⇒ the measured 0.9%, exactly.
+- **DRAWDOT is only ~23% of the rasterizer** (~61 of 269 cycles/draw at the measured 61/27/12
+  reject / accept-no-dot / dot mix). The other ~77% is TREE TRAVERSAL. Any further per-plot
+  micro-opt is capped at ~2%; the lever is the traversal, or not emitting the draw at all.
+- **Whole-subtree occlusion culling is now the best-sized candidate** (61% of draws rejected, and
+  ras_sp3+ras_sp4 still absorb 47.7% of far-bisects). Still needs `P(all-3-rejected)` measured
+  before writing any asm — add it to the shape probe next to `g_rasDots`.
+
+### `terrain_subdivide_column_core` — dead mem[] round-trips (commit 17622b6)
+- The `mid` ($8D-$91) **entry load is a pure round-trip**: every read of `mid` is preceded by an
+  assignment from `subdiv_midpoint`, so the oracle loads it only so `out:` can write the same
+  bytes back. Dropped; the flush is now conditional — and **the budget is the dirty flag for
+  free** ($14 after the entry guard, decremented once immediately before each of the two `bsr
+  submid` sites ⇒ `budget != $14` ⇔ a midpoint ran).
+- `sd_doras` flushed the span HIGH bytes **$83/$85**, which the rasterizer never reads (it takes
+  $82/$84/$86 + $95/$EA/$F4 and writes back only $82/$84/$86) and which `sd_out` rewrites anyway.
+Measured A/B against the same in-run C oracle, both runs fdCalls=150 / ~5120 calls: the asm's
+margin over the oracle goes **7.4% → 12.5%** (ratio 0.9261 → 0.8755, ~1.2 beam-ticks/call).
+0 mismatch / 5117 calls (all 5 SubPt stacks + the ZP residue incl. $8D-$91 and $83/$85 + the
+return value); `make validate FN=terrain_subdivide` green.
+⚠ Read the ratio, not the raw per-call figure: the differential's bracket includes the rasterizer
+leaf-fills the recursion drives, identical in both arms and dominant.
 
 **ACTUAL open lever (2026-07-20, user-directed):** the remaining waste is mem[]→bitplane
 *conversion* on the hot path, NOT the terrain math. All hot-path graphics should write bitplanes
