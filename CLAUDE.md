@@ -396,17 +396,40 @@ dot.** The dot is plotted at the column's PREVIOUS top and the per-frame `$6B` r
 one excluded scanline, so a column's first accepted draw never writes. Measured over 489 half-frames:
 286590 draws → 39% accepted → **only 12% actually write a dot**. So **DRAWDOT is ~23% of the rasterizer
 and the other ~77% is tree traversal**; every remaining per-plot micro-opt is capped at ~2% (this also
-retires the "incremental dot column ⇒ ~5%" estimate — wrong denominator). Best-sized remaining
-candidate: **whole-subtree occlusion culling** (61% of draws rejected) — measure `P(all-3-rejected)`
-with the shape probe FIRST. Subdivide's dead mem[] round-trips (the `$8D-$91` entry load — a pure
-round-trip, flushed conditionally with the BUDGET as a free dirty flag — and the dead `$83/$85` stores
-before each rasterize) took its asm-vs-oracle margin **7.4% → 12.5%**.
+retires the "incremental dot column ⇒ ~5%" estimate — wrong denominator). Subdivide's dead mem[]
+round-trips (the `$8D-$91` entry load — a pure round-trip, flushed conditionally with the BUDGET as a
+free dirty flag — and the dead `$83/$85` stores before each rasterize) took its asm-vs-oracle margin
+**7.4% → 12.5%**.
+
+**⚠ Two more candidates measured and CLOSED 2026-08-05 — do NOT re-open them (`docs/asm-migration-plan.md`
+§Phase 5):** *whole-subtree (leaf) occlusion culling* — P is HIGH (58%/56% of span-3/span-4 groups fully
+hidden, and 98% of misses bail on the first compare, so the old ~81% break-even fear was wrong) but it is
+worth only ~2% of the rasterizer, because a rejected DRAWDOT is already just 32 cycles and the cull test
+must re-read the same `COL_MAX` byte; and *subdivide's far-endpoint reload elisions* — the recursion is
+too SHALLOW to matter (1.23 inner iterations / 0.40 midpoints per call), measured 0 ± 0.5% and reverted.
+**The generalisable rule: the reject path is at the floor — any "check before drawing" scheme re-reads
+the very byte the check was meant to avoid, so it can only recover the ~10 cycles of bookkeeping around
+that load.** ⭐ **The profile is now FLAT (nothing >29%) and flight is ~6 FPS vs the 25 FPS fallback — a
+~4× gap that per-function asm cannot close (deleting the rasterizer entirely buys 1.4×). The next win has
+to be architectural.** The ranked TODO lives in the `flight-pc-profiler` memory.
 
 ⚠ **Measure asm twins with the in-process differential** (`make VERIFY=1 PROBES=1` +
 `amiga/raster_verify.gdb`): asm + C oracle run back-to-back on the SAME inputs in ONE run, byte-compared
-+ beam-ticks tallied per-impl. This is DETERMINISTIC. **Cross-run comparison (render-diff, or beam-probe
-asm-build-vs-C-build) is NOT** — the async 50Hz VBI desyncs frames vs the free-running main loop when
-render speed changes (vbi 2204 vs 2217 at the same `fdCalls`).
++ beam-ticks tallied per-impl. **Cross-run comparison (render-diff, or beam-probe
+asm-build-vs-C-build) is NOT valid by default** — the async 50Hz VBI desyncs frames vs the free-running
+main loop when render speed changes (vbi 2204 vs 2217 at the same `fdCalls`), and that shift changes the
+POKEY RANDOM read count, which picks a **different level** (measured: plain vs `RASTER_C=1` generated
+entirely different `$0900`/`$0A00` maps, 23 vs 25 pilots).
+- ⭐ **`make FIXED_RNG=1`** re-pins the `$D20A` LFSR before the fresh-start level seeding and on the
+  flight rising edge, so **every build flies the same level** (proven byte-identical across builds via
+  `amiga/rngcheck.gdb`). **Use it for every perf measurement.** OFF by default — it removes real
+  gameplay variety, so never judge rendering or gameplay from a `FIXED_RNG` build. Note the level
+  seeding happens at **vbi≈1732 (~35 s)** on the launch path, not at power-on: give probes ≥45 s.
+- ⚠ **The differential's metric is the asm/C RATIO, not the absolute ticks/call** — the same binary
+  swings 15% run-to-run on absolutes while the ratio holds to ~0.5%. And **run any baseline ≥2× after
+  a rebuild** before believing a delta; an n=1 baseline once produced a bogus "4% regression" verdict.
+  Its bracket also INCLUDES nested callees (subdivide's includes the rasterizer), so it is not that
+  function's own cost — the PC profile is.
 **Target: A500, 50 FPS goal (25 FPS acceptable fallback only if 50 is genuinely not doable).**
 Surface the numbers honestly.
 
