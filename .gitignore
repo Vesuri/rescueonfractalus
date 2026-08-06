@@ -48,3 +48,5 @@ amiga/wing_run.sh
 amiga/wing_probe.gdb
 amiga/assets/attract.raw
 amiga/assets/attract_pal.h
+amiga/RoF-asm.exe
+amiga/RoF-cmixer.exe

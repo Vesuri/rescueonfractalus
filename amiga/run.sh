@@ -4,18 +4,30 @@
 #   ./run.sh [path-to-kickstart-rom]
 # Use KS 3.1 (auto-boots directory HDs). Left mouse button quits.
 # Override ROM via $1 or $KICKSTART.
+#
+# Run a DIFFERENT binary than out/RoF.exe with $ROF_EXE — handy for A/B-ing two builds by
+# eye or ear without rebuilding between each look, e.g.
+#   ROF_EXE=RoF-asm.exe ./run.sh      vs      ROF_EXE=RoF-cmixer.exe ./run.sh
 set -euo pipefail
 cd "$(dirname "$0")"
 
 FSUAE="${FSUAE:-fs-uae}"
 ROM="${1:-${KICKSTART:-$HOME/Documents/RetroPie/BIOS/kick31.rom}}"
 [ -f "$ROM" ] || { echo "Kickstart ROM not found: $ROM  (pass as \$1 or set \$KICKSTART)"; exit 1; }
-[ -f out/RoF.exe ] || { echo "build first: make"; exit 1; }
+EXE="${ROF_EXE:-out/RoF.exe}"
+[ -f "$EXE" ] || { echo "not found: $EXE  (build first: make, or set \$ROF_EXE)"; exit 1; }
 
 RUN=.run; DH0="$RUN/dh0"; DH1="$RUN/dh1"
 mkdir -p "$DH0/s" "$DH1" "$RUN/state"
 printf 'cd dh1:\nRoF\n' > "$DH0/s/startup-sequence"
-cp -f out/RoF.exe "$DH1/RoF"
+cp -f "$EXE" "$DH1/RoF"
+echo "running $EXE"
+
+# ⚠ ALWAYS start from a clean FS-UAE state.  diag_run.sh / the gdb-stub harnesses share this
+# --state_dir, and they leave a .uss saved while the CPU was halted on the grey first frame —
+# resuming that makes ANY build look frozen and grey, which has cost hours of false bisecting.
+# There is no reason to resume state here (the game needs none), so just wipe it every run.
+rm -f "$RUN"/state/*.uss
 
 # Screenshots: this fsemu-core FS-UAE takes them with HOST-KEY + S = hold F12, press S.
 # The screenshot code reads the FSEMU_SCREENSHOTS_DIR env var (the --screenshots_output_dir
