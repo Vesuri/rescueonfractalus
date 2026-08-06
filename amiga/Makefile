@@ -367,6 +367,29 @@ EXTRA_DEFINES += -DROF_COMBAT_QUIET
 else
 EXTRA_DEFINES += -DROF_AUTO_FIRE
 endif
+# An enemy bolt impact calls jitter_roll_pitch, which banks the ship — and with the auto-fire
+# autopilot that bank steers it into a mountain within seconds, so the benchmark window was
+# spent shooting terrain instead of emplacements.  Hold the attitude accumulators still under
+# COMBAT so the ship flies straight; the RANDOM read and the $002E decay are kept, so only the
+# steering is suppressed.  `make COMBAT=1 COMBAT_JITTER=1` restores the faithful bank.
+ifndef COMBAT_JITTER
+EXTRA_DEFINES += -DROF_COMBAT_NO_JITTER
+endif
+endif
+
+# ===========================================================================================
+# `make COMBAT=1 PROBES=1 OBJ_SHAPE=1` + amiga/obj_shape.gdb — SHAPE-PROBE THE OBJECT PLOTTER.
+# The combat attribution (d05a72e) put 69% of the combat frame-time delta in DRAW and reasoned
+# that ~25 occupied map cells per iteration enter terrain_plot_object while only ONE reaches
+# raster_scaled_object, so the cost must be the per-visit plotter overhead.  That was an
+# INFERENCE from a count ("25 visits x ~50 ticks"), never a measurement — and 50 ticks is
+# ~22000 cycles, far more than the handful of table loads a bailing visit executes.  This probe
+# brackets the plotter chain and raster_scaled_object separately and counts the shape of both
+# (which early-out fires, the scaled-blit's cell/plot/row counts, the entry-depth histogram) so
+# the split is measured instead of assumed.  Counters are flushed once per call from locals, so
+# the per-cell loops carry no volatile traffic.
+ifdef OBJ_SHAPE
+EXTRA_DEFINES += -DROF_OBJ_SHAPE
 endif
 
 # Debug / benchmark toggle: `make INVULNERABLE=1` — never die in flight.  Tops the energy bar

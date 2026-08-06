@@ -213,11 +213,58 @@ extern volatile unsigned char g_clExplSeen;
  * rather than an end-to-end one, so the cross-build trajectory objection does not apply. */
 extern volatile unsigned long g_clAltDraw[8], g_clAltIter[8];
 extern volatile unsigned char g_clAltBucket;
+
+/* ── OBJECT-PLOTTER SHAPE PROBE (`make COMBAT=1 PROBES=1 OBJ_SHAPE=1`) ───────────────────────
+ * The combat attribution said DRAW carries 69% of combat's extra frame time and that ~25
+ * occupied cells enter terrain_plot_object per iteration while only ONE reaches
+ * raster_scaled_object, and concluded the cost must be the per-visit plotter overhead.  That
+ * step was an INFERENCE from a count ("25 x ~50 ticks ~= the +1161 t/it delta") — and 50 ticks
+ * is ~22000 68000 cycles, which a visit that bails on a table compare cannot spend.  So measure:
+ *   OP_TIME   brackets the whole per-object chain at its two call sites in the draw-order loop.
+ *   RS_SHAPE  is flushed once per scaled blit with that call's own ISR-corrected tick span,
+ *             BUCKETED BY CELL COUNT — the blit's cost is quadratic in 1/step (0x2000/step
+ *             columns x 0x0C00/step rows, capped 32x12 = 384), so its mean says nothing about
+ *             the near/exploding-object calls that are the actual complaint.  Comparing the same
+ *             size bucket across builds keeps it a per-call metric.
+ * ⚠ The OP_TIME bracket is NOT free: a QUIET run reaches it with zero A822 calls, so nearly all
+ * ~48 visits/iteration are the two-load "empty cell" bail, yet the chain still measures ~110
+ * t/it.  That floor IS the bracket (~2.2 t/call).  Subtract it before quoting a cost.
+ * Per-cell counts accumulate in LOCALS and flush once per call, so the hot loops stay clean. */
+#ifdef ROF_OBJ_SHAPE
+#define ROF_OBJ_SHAPE_ON 1
+extern volatile unsigned long g_opTicks, g_opCalls, g_opEmpty, g_opStep, g_opPathA, g_opPathB;
+extern volatile unsigned long g_opaBusy, g_opaMask, g_opaBelow, g_opaDist, g_opaFire, g_opaDepth;
+extern volatile unsigned long g_opbCross;
+extern volatile unsigned long g_rsCalls, g_rsTicks, g_rsRows, g_rsCells, g_rsPlots, g_rsCellMax;
+extern volatile unsigned long g_rsCellsByStep[14];
+extern volatile unsigned short g_rsCallsByStep[14];
+extern volatile unsigned long g_rsBktCalls[5], g_rsBktCells[5], g_rsBktTicks[5];
+#define OP_CNT(c)  (++(c))
+#define OP_TIME(stmt)  do { unsigned long _p = rof_subclock(); unsigned long _i = g_isrBeamLines; \
+    stmt; unsigned long _d = rof_subclock() - _p, _id = g_isrBeamLines - _i; \
+    g_opTicks += (_d > _id) ? (_d - _id) : 0; ++g_opCalls; } while (0)
+/* cells -> size bucket: <16, 16-63, 64-127, 128-255, 256+ (the 384-cell cap is bucket 4). */
+#define RS_SHAPE(step, rows, cells, plots, ticks) do { \
+    unsigned char _s = (unsigned char)(step); if (_s > 13) _s = 13; \
+    unsigned char _b = ((cells) >= 256u) ? 4u : ((cells) >= 128u) ? 3u \
+                     : ((cells) >=  64u) ? 2u : ((cells) >= 16u) ? 1u : 0u; \
+    ++g_rsCalls; ++g_rsCallsByStep[_s]; g_rsCellsByStep[_s] += (cells); \
+    g_rsRows += (rows); g_rsCells += (cells); g_rsPlots += (plots); g_rsTicks += (ticks); \
+    ++g_rsBktCalls[_b]; g_rsBktCells[_b] += (cells); g_rsBktTicks[_b] += (ticks); \
+    if ((cells) > g_rsCellMax) g_rsCellMax = (cells); } while (0)
+#else
+#define OP_CNT(c)      ((void)0)
+#define OP_TIME(stmt)  do { stmt; } while (0)
+#define RS_SHAPE(step, rows, cells, plots, ticks) ((void)0)
+#endif
 #else
 #define CL_CNT(c)      ((void)0)
 #define CL_OBJ(depth)  ((void)0)
 #define CL_PH(i, stmt, acc) FP_TIME(stmt, acc)
 #define CL_PH_ITER()   ((void)0)
+#define OP_CNT(c)      ((void)0)
+#define OP_TIME(stmt)  do { stmt; } while (0)
+#define RS_SHAPE(step, rows, cells, plots, ticks) ((void)0)
 #define CL_PH_DRAW_ALT 0
 #define CL_PH_SETUP 0
 #define CL_PH_CLEAR 1
@@ -6017,12 +6064,30 @@ void terrain_clip_row_top(void) {
  * column index reflected via $1F-col when $28DF is set) and, when set, plots it
  * through terrain_clip_row_top (native) at ($004F,$004E).
  *
+ * THIS IS THE SCALED OBJECT BLIT, and its cost is quadratic in 1/step: the loops run
+ * 0x2000/step columns by 0x0C00/step rows, capped at 32x12 = 384 cells.  Measured in combat:
+ * 3 cells at depth 12, 384 at depth 0, mean 15 — so the mean says nothing about the calls that
+ * matter.  A DESTROYED emplacement takes terrain_plot_object_a's `occupant >= $FA` branch, which
+ * QUARTERS the step, so an explosion both passes the `< $0D` gate it used to fail and blits at up
+ * to 4x the scale; the field is rendered twice per iteration.  That is the "an enemy exploding
+ * close by drops the frame rate" spike.
+ *
  * Contract: memory (the bitmap writes + the accumulators).  Exit X=$28E1 is
  * restored (callers read it); A/Y/flags are dead.  Faithful carry threading:
  * the start-row subtract chains carry ACROSS iterations (one SEC before the
  * loop, none inside), a 6502 quirk reproduced exactly.
  */
 void raster_scaled_object(void) {
+#ifdef ROF_OBJ_SHAPE_ON
+    /* Shape counters + this call's own tick span, all in locals; flushed once at the end so the
+       12x32 loops keep exactly the memory traffic they would have without the probe.  The entry
+       depth is captured BEFORE the nonzero-step fixup, since that is what the caller's < $0D
+       gate tested. */
+    unsigned long _rows = 0, _cells = 0, _plots = 0;
+    const uint8_t _step0 = plot_step_hi;
+    const unsigned long _t0 = rof_subclock(), _i0 = g_isrBeamLines;
+#endif
+
     uint8_t A, c;
 
     if (plot_step_hi == 0) { plot_step_lo = 0x00; plot_step_hi++; }   /* AB9A nonzero step */
@@ -6058,7 +6123,13 @@ void raster_scaled_object(void) {
             if (bus_read(ZP_IND_Y(0xC3)) & mem[0xAC3A + bx]) {    /* cell bit set? */
                 cpu.X = terrain_pt_coord_a; cpu.Y = terrain_pt_coord_b;
                 terrain_clip_row_top();
+#ifdef ROF_OBJ_SHAPE_ON
+                _plots++;
+#endif
             }
+#ifdef ROF_OBJ_SHAPE_ON
+            _cells++;
+#endif
             terrain_pt_coord_a++;                                        /* INC $4F */
             c = 0; { uint16_t t = (uint16_t)mem[0x0052] + plot_step_lo + c; c = t >> 8; mem[0x0052] = (uint8_t)t; }
             { uint16_t t = (uint16_t)mem[0x0053] + plot_step_hi + c; mem[0x0053] = (uint8_t)t; }
@@ -6067,8 +6138,15 @@ void raster_scaled_object(void) {
         terrain_pt_coord_b--;                                            /* DEC $4E */
         c = 0; { uint16_t t = (uint16_t)mem[0x0054] + plot_step_lo + c; c = t >> 8; mem[0x0054] = (uint8_t)t; }
         { uint16_t t = (uint16_t)mem[0x0055] + plot_step_hi + c; mem[0x0055] = (uint8_t)t; }
+#ifdef ROF_OBJ_SHAPE_ON
+        _rows++;
+#endif
     } while (mem[0x0055] < 0x0C);                                 /* CMP #$0C; BCS done */
 
+#ifdef ROF_OBJ_SHAPE_ON
+    { const unsigned long _d = rof_subclock() - _t0, _id = g_isrBeamLines - _i0;
+      RS_SHAPE(_step0, _rows, _cells, _plots, (_d > _id) ? (_d - _id) : 0); }
+#endif
     cpu.X = terrain_cur_obj_idx;                                          /* AC36: LDX $28E1 */
 }
 
@@ -6085,8 +6163,8 @@ void raster_scaled_object(void) {
  * explicit a868 path); other regs dead.
  */
 void terrain_plot_object_a(void) {
-    if (mem[0x2487 + cpu.X] != 0) { terrain_obj_skip_return(); return; }   /* A822 */
-    if (mem[0x242D + cpu.X] != 0) { terrain_obj_skip_return(); return; }   /* A827 */
+    if (mem[0x2487 + cpu.X] != 0) { OP_CNT(g_opaBusy); terrain_obj_skip_return(); return; }   /* A822 */
+    if (mem[0x242D + cpu.X] != 0) { OP_CNT(g_opaBusy); terrain_obj_skip_return(); return; }   /* A827 */
     plot_base_ptr_lo = 0xF9; plot_base_ptr_hi = 0xA6;
     plot_pixel_mask = 0xFF;
     plot_step_hi = mem[0x232E + cpu.X];
@@ -6098,14 +6176,17 @@ void terrain_plot_object_a(void) {
     cpu.A = mem[0x0A00 + cpu.X];
 
     if (cpu.A >= 0xFA) {                           /* CMP #$FA; BCC a860 */
+        OP_CNT(g_opaMask);
         set_plot_mask_and_halve_step();
     } else {                                       /* a860 */
         cpu.A = cpu.Y;                             /* TYA */
         cpu.X = terrain_pt_coord_a;                       /* LDX $4F */
-        if (cpu.A < mem[MEM_terrain_height_max + cpu.X]) { cpu.X = terrain_cur_obj_idx; return; }  /* CMP 260E,X; BCC a868 */
+        if (cpu.A < mem[MEM_terrain_height_max + cpu.X]) { OP_CNT(g_opaBelow); cpu.X = terrain_cur_obj_idx; return; }  /* CMP 260E,X; BCC a868 */
+        OP_CNT(g_opaDist);
         cpu.A = 0x80; terrain_point_distance();    /* a86c-a86e */
         cpu.X--; terrain_clip_row_top(); cpu.X++;  /* DEX; a872; INX */
         if (terrain_depth_step < 0x37) {                  /* CMP #$37; BCS a8a1 */
+            OP_CNT(g_opaFire);
             mem[0x28FC] = 0x01; mem[0x28FB] = 0x01;
             /* gates: $6A negative, $3E==0, RANDOM negative, $28ED==0 (short-circuit
                matches the 6502: the $D20A read only happens if the prior gates pass) */
@@ -6118,7 +6199,7 @@ void terrain_plot_object_a(void) {
         }
     }
     /* L_a8a1 */
-    if (plot_step_hi >= 0x0D) { cpu.X = terrain_cur_obj_idx; return; }   /* CMP #$0D; BCS a868 */
+    if (plot_step_hi >= 0x0D) { OP_CNT(g_opaDepth); cpu.X = terrain_cur_obj_idx; return; }   /* CMP #$0D; BCS a868 */
     shape_col_base = 0x00;
     CL_OBJ(plot_step_hi);                        /* combat-load: a ground object is drawn */
     raster_scaled_object();
@@ -6159,6 +6240,7 @@ void terrain_plot_object_b(void) {
         cpu.Y = mem[0x2276 + cpu.X];              /* LDY $2276,X */
         cpu.A = mem[0x0A00 + cpu.Y];
         if (cpu.A >= 0x02 && cpu.A < 0xF8) {      /* CMP #2 BCC; CMP #$F8 BCS -> [2,$F8) */
+            OP_CNT(g_opbCross);
             plot_pixel_mask = 0xFF;
             cpu.Y = mem[0x245A + cpu.X];          /* LDY $245A,X */
             cpu.X = mem[0x2400 + cpu.X];          /* LDA $2400,X; TAX */
@@ -6186,7 +6268,7 @@ void terrain_plot_object_b(void) {
 void terrain_plot_object(void) {
     uint8_t A, c;
     cpu.Y = mem[0x2276 + cpu.X];                              /* LDY $2276,X */
-    if (mem[0x0A00 + cpu.Y] == 0) { terrain_plot_return(); return; }   /* a641 BEQ */
+    if (mem[0x0A00 + cpu.Y] == 0) { OP_CNT(g_opEmpty); terrain_plot_return(); return; }   /* a641 BEQ */
     /* Combat-load: every cell that has an OCCUPANT, i.e. all real object work.  Counted here and
      * not at raster_scaled_object because the plotters do most of their work BEFORE that call
      * (distance, row clip, the half-width span, the RANDOM fire-queue gate) and skip it entirely
@@ -6195,10 +6277,11 @@ void terrain_plot_object(void) {
      * one sees the whole population. */
     CL_CNT(g_clObjEnter);
     if (mem[0x232E + cpu.X] == 0 && mem[0x2300 + cpu.X] < 0x22) {      /* a646/a64b */
-        terrain_plot_return(); return;
+        OP_CNT(g_opStep); terrain_plot_return(); return;
     }
     terrain_cur_obj_idx = cpu.X;                                      /* a64f STX $28E1 */
-    if (mem[0x0900 + cpu.Y] & 0x80) { terrain_plot_object_a(); return; }    /* a655 BPL -> N set: A822 */
+    if (mem[0x0900 + cpu.Y] & 0x80) { OP_CNT(g_opPathA); terrain_plot_object_a(); return; }  /* a655 BPL -> N set: A822 */
+    OP_CNT(g_opPathB);
 
     int go = 0;                                              /* a65a: take the a66c path? */
     if (mem[0x00A7] == 0) {
@@ -7386,12 +7469,12 @@ __attribute__((noinline)) static void terrain_draw_objects(void) {
             if (!(cls1 & 0xC0)) {                    /* companion on-screen and not culled */
                 TDPAIR(g_tdVisPairs);
                 if (!(cls1 & 0x10))                  /* project the companion unless already projected */
-                    { TDPAIR(g_tdProjCount); PB(_pp1); project_terrain_points_core(obj1); cpu.X = obj1; terrain_plot_object(); PE(_pp1, g_tdProjPlot); }
+                    { TDPAIR(g_tdProjCount); PB(_pp1); project_terrain_points_core(obj1); cpu.X = obj1; OP_TIME(terrain_plot_object()); PE(_pp1, g_tdProjPlot); }
                 /* seed subdivide sub-point [0] with the companion's projected vector */
                 M[0x25B4]=o1[0x2400]; M[0x25D2]=o1[0x242D]; M[0x25F0]=o1[0x245A];
                 M[0x24E2]=o1[0x2487]; M[0x23E2]=o1[0x23B5];
                 if (!(o0[0x24B4] & 0x10))            /* project the primary unless already projected */
-                    { TDPAIR(g_tdProjCount); PB(_pp2); project_terrain_points_core(obj0); cpu.X = obj0; terrain_plot_object(); PE(_pp2, g_tdProjPlot); }
+                    { TDPAIR(g_tdProjCount); PB(_pp2); project_terrain_points_core(obj0); cpu.X = obj0; OP_TIME(terrain_plot_object()); PE(_pp2, g_tdProjPlot); }
                 /* load the primary's projected vector as the running span endpoint, then subdivide */
                 M[MEM_dl_ptr_hi]=o0[0x2400]; M[MEM_screen_ptr_lo]=o0[0x242D]; M[MEM_screen_ptr_hi]=o0[0x245A];
                 M[MEM_encounter_count]=o0[0x2487]; M[MEM_row_count]=o0[0x23B5];
@@ -7756,6 +7839,21 @@ void object_integrate_position(void) {
  * Reads POKEY RANDOM $D20A once (harness seeds it identically).  mem-only contract. */
 void jitter_roll_pitch(void) {
     uint8_t A, Y;
+#ifdef ROF_COMBAT_NO_JITTER
+    /* COMBAT benchmark only (`make COMBAT=1`; restore with COMBAT_JITTER=1): hold the attitude
+     * accumulators still so the ship flies straight.  Every enemy bolt impact calls this from
+     * game_state_update's $A99C impact path, and with the AUTO_FIRE autopilot the resulting bank
+     * steered the ship into a mountain within seconds — the benchmark window was spent shooting
+     * terrain instead of emplacements (measured: 46 impacts, only 3 kills).  It also made the
+     * COMBAT vs COMBAT_QUIET pair fly visibly different trajectories, which is the cross-build
+     * trap that invalidates their comparison; with this on, both hold heading $0200 / roll 0.
+     * The RANDOM read and the $002E decay are KEPT, so only the steering is suppressed. */
+    (void)bus_read(0xD20A);                            /* aaa5, kept so RNG consumption is unchanged */
+    A = throttle_accum_hi;                             /* aac4 */
+    throttle_accum_hi = (A >= 0x08) ? (uint8_t)(A - 0x08) : 0x00;
+    (void)Y;
+    return;
+#endif
     Y = roll_pos_hi;                                   /* aa95 */
     if (Y != 0xF4) { Y--; if (Y != 0xF4) Y--; }        /* aa97-aaa0 */
     roll_pos_hi = Y;                                   /* aaa1 */

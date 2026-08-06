@@ -949,6 +949,44 @@ extern "C" volatile unsigned long g_clIsrN[2] = {0,0};
 extern "C" volatile unsigned long g_clAltDraw[8] = {};
 extern "C" volatile unsigned long g_clAltIter[8] = {};
 extern "C" volatile unsigned char g_clAltBucket  = 0;
+#ifdef ROF_OBJ_SHAPE
+// OBJECT-PLOTTER SHAPE PROBE (`make COMBAT=1 PROBES=1 OBJ_SHAPE=1` + amiga/obj_shape.gdb).
+// The combat attribution INFERRED the object plotter's cost from a visit count ("25 visits x
+// ~50 ticks ~= the +1161 t/it DRAW delta") — but 50 ticks is ~22000 cycles, orders of magnitude
+// more than the handful of table loads a bailing visit runs, so the arithmetic was numerology.
+// These measure it: two brackets (the whole plotter chain at its call sites, and the scaled
+// blit nested inside it) plus the shape of every early-out.  The per-cell counts accumulate in
+// LOCALS inside raster_scaled_object and are flushed once per call, so the hot loops carry no
+// volatile traffic.
+extern "C" volatile unsigned long g_opTicks = 0;   // ISR-corrected ticks in project+plot_object
+extern "C" volatile unsigned long g_opCalls = 0;   // plotter-chain calls (incl. the empty bail)
+extern "C" volatile unsigned long g_opEmpty = 0;   // $0A00 occupant == 0 -> immediate return
+extern "C" volatile unsigned long g_opStep  = 0;   // $232E==0 && $2300<$22 -> return
+extern "C" volatile unsigned long g_opPathA = 0;   // $0900 peak (emplacement) -> A822 plotter
+extern "C" volatile unsigned long g_opPathB = 0;   // -> A90A plotter
+extern "C" volatile unsigned long g_opaBusy  = 0;  // A822: $2487/$242D busy -> return
+extern "C" volatile unsigned long g_opaMask  = 0;  // A822: occupant >= $FA (dying) -> step/4
+extern "C" volatile unsigned long g_opaBelow = 0;  // A822: below the column clip -> return
+extern "C" volatile unsigned long g_opaDist  = 0;  // A822: ran point_distance + clip_row_top
+extern "C" volatile unsigned long g_opaFire  = 0;  // A822: reached the RANDOM fire-queue gate
+extern "C" volatile unsigned long g_opaDepth = 0;  // A822: step_hi >= $0D -> no scaled blit
+extern "C" volatile unsigned long g_opbCross = 0;  // A90A: the trailing 4-pixel cross ran
+extern "C" volatile unsigned long g_rsCalls  = 0;  // raster_scaled_object calls
+extern "C" volatile unsigned long g_rsTicks  = 0;  // ...ticks inside it (NESTED in g_opTicks)
+extern "C" volatile unsigned long g_rsRows   = 0;  // outer-loop rows walked
+extern "C" volatile unsigned long g_rsCells  = 0;  // inner-loop cells visited
+extern "C" volatile unsigned long g_rsPlots  = 0;  // ...of those, shape bit set -> clip_row_top
+extern "C" volatile unsigned long g_rsCellMax = 0; // worst single call (cap is 12 rows x 32 = 384)
+extern "C" volatile unsigned long g_rsCellsByStep[14] = {};  // cells, by entry depth $0051 (13=other)
+extern "C" volatile unsigned short g_rsCallsByStep[14] = {}; // calls, same buckets
+// ...and by CALL SIZE (<16 / 16-63 / 64-127 / 128-255 / 256+ cells).  The blit's mean call is 15
+// cells and its worst is the 384-cell cap, so a mean is useless for judging a change aimed at the
+// near/exploding-object calls.  Comparing the SAME size bucket across two builds keeps this a
+// per-call metric rather than an end-to-end one.
+extern "C" volatile unsigned long g_rsBktCalls[5] = {};
+extern "C" volatile unsigned long g_rsBktCells[5] = {};
+extern "C" volatile unsigned long g_rsBktTicks[5] = {};
+#endif
 #endif
 // Door-scroll liveness: total dl_index_dec calls via the $008B branch (level-select elevator scroll).
 extern "C" volatile unsigned short g_dlScrollCount = 0;
