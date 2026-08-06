@@ -71,6 +71,9 @@ set $s_nopT = g_sxNopT
 set $s_leaf = g_sxLeafCalls
 set $s_upcC = g_upcCalls
 set $s_upcT = g_pUPC
+set $s_vsp  = g_vbiSpriteLines
+set $s_vau  = g_vbiAudioLines
+set $s_vfc  = g_vbiFullCalls
 set $s_pw   = g_pokeyWrites
 set $s_pwc  = g_pokeyChanged
 set $s_ured = g_upcRedund
@@ -87,6 +90,21 @@ set $n  = g_flightProf.isrCalls - $s_isrn
 set $il = g_flightProf.isrLines - $s_isrl
 printf "\n=== flight VBI over the in-flight window: %lu firings, %lu t/firing ===\n", $n, \
   ($n ? $il/$n : 0)
+# ⚠ $il is vbi_handler_flight ONLY.  game_vbi_isr brackets its three parts SEPARATELY
+# (rof_native_amiga.cpp): handler = g_flightProf.isrLines, sprites = g_vbiSpriteLines
+# (flightShotTick + flightScannerTick), audio = g_vbiAudioLines (flush_paula + noiseTick).  So a
+# change that MOVES work between them (e.g. deferring the POKEY->Paula recompute out of the sfx
+# engine into flush_paula) shows up as a big handler win that is not a win at all.  Always read
+# the WHOLE-VBI line before quoting a delta.
+set $vsp = g_vbiSpriteLines - $s_vsp
+set $vau = g_vbiAudioLines  - $s_vau
+set $vfc = g_vbiFullCalls   - $s_vfc
+printf "    whole VBI = handler %lu.%02lu + sprites %lu.%02lu + audio %lu.%02lu = %lu.%02lu t/firing", \
+  ($n ? $il/$n : 0), ($n ? ((100*$il)/$n)%100 : 0), \
+  ($vfc ? $vsp/$vfc : 0), ($vfc ? ((100*$vsp)/$vfc)%100 : 0), \
+  ($vfc ? $vau/$vfc : 0), ($vfc ? ((100*$vau)/$vfc)%100 : 0), \
+  ($vfc ? ($il+$vsp+$vau)/$vfc : 0), ($vfc ? ((100*($il+$vsp+$vau))/$vfc)%100 : 0)
+printf "  (%lu%% of ALL wall clock)\n", ($vfc ? (100*($il+$vsp+$vau))/(313*$vfc) : 0)
 define d
   printf "  %-30s %8lu t  %lu.%03lu t/firing  = %2lu%% of the ISR\n", $arg1, $arg0, \
     ($n ? $arg0/$n : 0), ($n ? ((1000*$arg0)/$n)%1000 : 0), ($il ? (100*$arg0)/$il : 0)
