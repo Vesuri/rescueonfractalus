@@ -306,6 +306,18 @@ static uint16_t want_len[4], want_per[4];
 static uint8_t  want_vol[4];
 static uint8_t  want_valid = 0;               // bitmask of channels written this tick
 
+#ifdef ROF_FLIGHT_PROBE
+// Sizing probe for the "defer the Paula recompute to flush_paula" candidate.  Paula is only
+// PROGRAMMED once per frame (flush_paula), so every update_paula_channel except the last one per
+// channel per frame is pure waste — but how much waste is an empirical question (the recipe's
+// estimate spanned 0.4%-3.2% of wall clock).  s_upcSeen = channels already recomputed since the
+// last flush; g_upcRedund counts the recomputes a per-channel dirty bit would have collapsed,
+// g_upcDistinct the ones it would still have to do.  Declared here (not with the other g_p*
+// probes further down) because flush_paula, which resets the mask, is defined above them.
+extern "C" volatile unsigned long g_upcRedund = 0, g_upcDistinct = 0, g_upcFlushes = 0;
+static uint8_t s_upcSeen = 0;
+#endif
+
 // Record a channel's desired Paula state; applied by flush_paula().
 static void want_set(uint8_t ch, uint32_t ptr, uint16_t len, uint16_t per, uint8_t vol)
 {
@@ -547,6 +559,9 @@ extern "C" void flush_paula(void)
     uint8_t valid = want_valid;
     want_valid = 0;
     uint8_t restart = 0;
+#ifdef ROF_FLIGHT_PROBE
+    s_upcSeen = 0; g_upcFlushes++;   // sizing probe: a new frame's worth of recomputes starts here
+#endif
 
     if (valid) {
         // Split into "restart" (waveform changed) and "live" (same waveform → just VOL/PER).
@@ -1034,6 +1049,8 @@ extern "C" volatile unsigned char  g_l3d0cFired = 0;   // $3D23 level_or_state!=
 extern "C" unsigned short rof_beam_line(void);
 extern "C" volatile unsigned long g_pUPC = 0, g_upcCalls = 0, g_pokeyWrites = 0, g_pokeyChanged = 0;
 static inline void upc_timed(uint8_t ch) {
+    if (s_upcSeen & (1u << ch)) g_upcRedund++;                  // a dirty bit would collapse this one
+    else { g_upcDistinct++; s_upcSeen |= (uint8_t)(1u << ch); }  // ...this one it would still do
     unsigned short a = rof_beam_line(); update_paula_channel(ch);
     unsigned short b = rof_beam_line();
     g_pUPC += (b >= a) ? (unsigned short)(b - a) : (unsigned short)(b + 313 - a);

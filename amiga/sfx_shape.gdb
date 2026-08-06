@@ -73,6 +73,9 @@ set $s_upcC = g_upcCalls
 set $s_upcT = g_pUPC
 set $s_pw   = g_pokeyWrites
 set $s_pwc  = g_pokeyChanged
+set $s_ured = g_upcRedund
+set $s_udis = g_upcDistinct
+set $s_ufl  = g_upcFlushes
 printf "  (snapshot taken in flight at vbi %u; all figures below are DELTAS over this window)\n", g_vbiCount
 
 seg 3300
@@ -156,5 +159,26 @@ printf "  POKEY writes %lu (%lu%% changed)   update_paula_channel %lu calls, %lu
   ((g_upcCalls-$s_upcC) ? ((100*(g_pUPC-$s_upcT))/(g_upcCalls-$s_upcC))%100 : 0)
 printf "\n=== build_poly_dist (1022-byte rebuild) : %lu calls in-window (0 = path not taken) ===\n", \
   g_polyDistCalls
+
+# --- SIZING: would a per-channel dirty bit (recompute once in flush_paula) pay? --------------
+# Paula is only PROGRAMMED by flush_paula, once per frame, so every update_paula_channel except
+# the last one per channel per frame is waste.  "redundant" = the recomputes a dirty bit collapses;
+# "distinct" = the ones flush_paula would still have to do.  The win is redundant * t/call.
+printf "\n=== POKEY->Paula deferral sizing (redundant recomputes a dirty bit would collapse) ===\n"
+set $ured = g_upcRedund   - $s_ured
+set $udis = g_upcDistinct - $s_udis
+set $ufl  = g_upcFlushes  - $s_ufl
+set $uall = $ured + $udis
+set $utpc = (g_upcCalls-$s_upcC) ? (100*(g_pUPC-$s_upcT))/(g_upcCalls-$s_upcC) : 0
+printf "  %lu recomputes over %lu flushes: %lu redundant (%lu%%) + %lu distinct\n", \
+  $uall, $ufl, $ured, ($uall ? (100*$ured)/$uall : 0), $udis
+printf "  per firing: %lu.%02lu total -> %lu.%02lu after deferral   (distinct %lu.%02lu/flush)\n", \
+  ($n ? $uall/$n : 0), ($n ? ((100*$uall)/$n)%100 : 0), \
+  ($n ? $udis/$n : 0), ($n ? ((100*$udis)/$n)%100 : 0), \
+  ($ufl ? $udis/$ufl : 0), ($ufl ? ((100*$udis)/$ufl)%100 : 0)
+printf "  at %lu.%02lu t/call that saves %lu.%02lu t/firing = %lu%% of the ISR (ISR is ~31%% of wall)\n", \
+  $utpc/100, $utpc%100, ($n ? ($utpc*$ured)/(100*$n) : 0), \
+  ($n ? ((100*$utpc*$ured)/(100*$n))%100 : 0), \
+  ($il ? ($utpc*$ured)/$il : 0)
 detach
 quit
