@@ -2165,7 +2165,11 @@ static uint32_t vbiHandler()
     }
 #endif
 
-#ifdef ROF_COMBAT_LOAD
+// ⚠ The g_cl* counters are defined under ROF_FLIGHT_PROBE *and* ROF_COMBAT_LOAD, so this use
+// site needs BOTH guards — every other g_cl* use site already has them.  With a bare
+// `#ifdef ROF_COMBAT_LOAD` the documented `make COMBAT=1 FPSCOUNT=1 FIXED_RNG=1` recipe (the
+// only valid way to quote a combat framerate) did not compile at all.
+#if defined(ROF_COMBAT_LOAD) && defined(ROF_FLIGHT_PROBE)
     // Combat-state framerate split (see the g_clVbi/g_clFrm definitions above).  Classify this
     // flight vblank and hand it, plus every terrain frame painted since the previous vblank, to
     // that state's pair of counters.  EXPLOSION wins over SAUCER when both are true.
