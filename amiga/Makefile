@@ -323,6 +323,64 @@ ifdef FORCE_SAUCER
 EXTRA_DEFINES += -DROF_FORCE_SAUCER
 endif
 
+# ===========================================================================================
+# `make COMBAT=1` — THE COMBAT-LOAD BENCHMARK.  Headless flight normally meets no enemies at
+# all, and firing into the VOID measures nothing (2026-07-31: AUTO_FIRE alone read IDENTICAL
+# FPS, because the shot hit nothing — no target, no impact, no explosion).  The reason is that
+# the auto-launch always flies LEVEL 1, and compute_stage_display_geometry ($75F2) derives all
+# three combat knobs from the level:
+#     $0623 emplacement density  = (lvl==1) ? 0 : min(lvl,$2B)<<2
+#     $0621 saucer spawn period  = (lvl< 4) ? 0 : $58 - 2*min(lvl,$22)     (0 = never)
+#     $0624 enemy-fire delay mask= ($2C - min(lvl,$28)) >> 1               (smaller = more)
+# At level 1 that is 0 / 0 / $2B — no gun emplacements, no saucers, no fire.
+# COMBAT=1 pins the starting level to COMBAT_LEVEL (default 40), so the whole combat cascade
+# comes out of the FAITHFUL binary logic: 63% of terrain peaks carry a jaggi gun emplacement,
+# a saucer spawns every 20 draw passes, and the emplacements shoot back almost continuously.
+# It also implies AUTO_FIRE (hold the trigger, so the emplacements get destroyed and explode)
+# and adds a flight-VBI top-up that re-seeds emplacement cells whose destroyed marker ($FA-$FF)
+# has aged back to 0, so a long profiling run does not slowly drain the map.
+# Pair with FIXED_RNG=1 so every build flies the same level.
+#   make clean && make -j4 COMBAT=1 PROBES=1 FIXED_RNG=1     # verify the load (g_cl* counters)
+#   make clean && make -j4 COMBAT=1 FPSCOUNT=1 FIXED_RNG=1   # honest combat framerate
+#   ./prof_flight.sh --build ...  with COMBAT=1               # combat PC profile
+# ⚠ Deliberately NOT faithful — never judge rendering or gameplay from such a build.
+# COMBAT_SAUCER overrides the saucer spawn period $0621 (default 6).  The level's own floor is
+# $14 and it counts down per terrain_draw_frame pass, which at flight's real rate measured ZERO
+# saucers in a 30 s window — the saucer sprite path never entered the profile.  Set it to 20 to
+# get the faithful level-$22+ value back.
+COMBAT_LEVEL  ?= 40
+COMBAT_SAUCER ?= 6
+ifdef COMBAT
+EXTRA_DEFINES += -DROF_COMBAT_LOAD -DROF_COMBAT_LEVEL=$(COMBAT_LEVEL) \
+                 -DROF_COMBAT_SAUCER=$(COMBAT_SAUCER) -DROF_INVULNERABLE
+ifdef COMBAT_QUIET
+# `make COMBAT=1 COMBAT_QUIET=1` — the CONTROL build for the combat benchmark.  Same forced
+# level (so the same terrain and the same sim tuning), same everything else, but $0623/$0621
+# are zeroed and the trigger is not held: no emplacements, no saucers, no firing.  Quote the
+# combat cost as COMBAT vs COMBAT_QUIET, never as COMBAT vs a plain build — a plain build flies
+# LEVEL 1, so that delta is mostly "level 40 has rougher terrain", not combat.
+EXTRA_DEFINES += -DROF_COMBAT_QUIET
+else
+EXTRA_DEFINES += -DROF_AUTO_FIRE
+endif
+endif
+
+# Debug / benchmark toggle: `make INVULNERABLE=1` — never die in flight.  Tops the energy bar
+# (life_counter $062F) up before it can reach 0 and clears the death-cinematic trigger $063D,
+# so a headless run keeps flying instead of ending in the game-over sequence.  Implied by
+# COMBAT=1, which would otherwise be shot down in ~30 s of emulated time.  Also useful on its
+# own for any long headless flight measurement.  OFF by default.
+ifdef INVULNERABLE
+EXTRA_DEFINES += -DROF_INVULNERABLE
+endif
+
+# `make COMBAT=1 FORCE_EMPLACEMENTS=1` — saturated worst case on top of COMBAT: pin $0623 to
+# $FF so EVERY terrain peak carries a gun emplacement instead of the level's 63%.  Peaks are
+# the cells terrain_plot_object routes to the A822 plotter, i.e. the ones that shoot back.
+ifdef FORCE_EMPLACEMENTS
+EXTRA_DEFINES += -DROF_FORCE_EMPLACEMENTS
+endif
+
 # Objects (flattened into obj/ by basename).
 CXX_OBJS       := $(addprefix obj/,$(notdir $(CXX_SRCS:.cpp=.o)))
 CORE_C_OBJS    := $(addprefix obj/,$(notdir $(CORE_C_SRCS:.c=.o)))

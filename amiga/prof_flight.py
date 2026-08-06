@@ -93,9 +93,19 @@ def group_of(sym):
                                                      return "game_main_loop (flight-loop orch.)"
     if sym == "terrain_draw_objects":                return "object draw-order loop"
     if sym == "project_terrain_points_core_asm":     return "project_terrain_points"
-    if sym in ("draw_dot", "terrain_plot_object", "terrain_plot_object_b",
-               "raster_scaled_object", "plot_clipped_pixel"):
+    if sym in ("draw_dot", "terrain_plot_object", "terrain_plot_object_a",
+               "terrain_plot_object_b", "raster_scaled_object", "plot_clipped_pixel",
+               "terrain_clip_row_top", "terrain_point_distance",
+               "set_plot_mask_and_halve_step", "terrain_plot_pixel_core"):
                                                      return "objects (dots / plot_object)"
+    # Enemy gun-emplacement / player bolt: the per-pixel wedge scatter into g_flightDotPlane.
+    # Only ever non-zero under a COMBAT=1 profile — a quiet run never fires a bolt at anything,
+    # which is exactly why this class went unmeasured for so long.
+    if sym.startswith(("laser_dot_", "plot_scanline_")) or sym in ("game_state_update",):
+                                                     return "enemy fire / bolt plot"
+    if sym.startswith(("flush_paula", "pokey_", "sfx_", "ring_push")) or sym in (
+               "PlatformAmiga::noiseTick()", "voice_engine_tick"):
+                                                     return "audio (POKEY->Paula, SFX ring)"
     if sym.startswith("RescueOnFractalus::build") or sym.startswith("Sprite::"):
                                                      return "sprites (P3/scope/scanner build)"
     if sym in ("rof_beam_line", "rof_subclock", "rof_time_now"):

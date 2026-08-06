@@ -2562,6 +2562,24 @@ void RescueOnFractalus::renderFlightDirect()
 #ifdef ROF_FLIGHT_PROBE
     g_fdCalls++;
 #endif
+#ifdef ROF_COMBAT_LOAD
+    // Combat-load split (see PlatformAmiga.cpp): one increment per painted terrain frame, in
+    // EVERY combat build, so the VBI can attribute painted frames to the combat state they were
+    // painted in.  That split is the only cross-state comparison this harness can make honestly
+    // — it is one binary, one run, one trajectory, so it is immune to the cross-build trap.
+    { extern volatile unsigned long g_clFrames; g_clFrames++; }
+#ifdef ROF_FLIGHT_PROBE
+    // Bucket this frame by how many ground objects it rastered, so the VBI can price the
+    // PERSISTENT object load (not just the explosion animation).  0 / 1-2 / 3-5 / 6+.
+    {
+        extern volatile unsigned short g_clObjFrame;
+        extern volatile unsigned char  g_clObjBucket;
+        const unsigned n = g_clObjFrame;
+        g_clObjBucket = (unsigned char)(n == 0 ? 0 : n <= 2 ? 1 : n <= 5 ? 2 : 3);
+        g_clObjFrame = 0;
+    }
+#endif
+#endif
 #ifdef ROF_FPSCOUNT
     // Near-clean framerate counter (`make FPSCOUNT=1`): ONE increment per painted terrain
     // frame.  Paired with g_vbiCount (bumped unconditionally by the real VERTB handler), so

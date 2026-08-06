@@ -101,6 +101,53 @@ extern unsigned short rof_beam_line(void);
 #define TDSPAN(stmt, acc) do { stmt; } while (0)
 #endif
 
+/* ===========================================================================================
+ * COMBAT-LOAD BENCHMARK  (`make COMBAT=1`, -DROF_COMBAT_LOAD; Amiga profiling aid, NOT faithful)
+ *
+ * WHY: headless flight (the PROBES/FPSCOUNT auto-launch) always starts at LEVEL 1, and level 1
+ * is exactly the level with NO combat.  compute_stage_display_geometry ($75F2) derives all three
+ * difficulty knobs from level_stage $006D:
+ *     $0623 = (lvl==1) ? 0 : min(lvl,$2B)<<2     gun-emplacement density (RANDOM gate in
+ *                                                intro_seed_object_map -> 0 = no emplacements)
+ *     $0621 = (lvl< 4) ? 0 : $58 - 2*min(lvl,$22) flying-saucer spawn period (0 = never spawn)
+ *     $0624 = ($2C - min(lvl,$28)) >> 1           enemy-fire delay mask (smaller = fires more)
+ * At level 1 those are 0 / 0 / $2B: no emplacements, no saucers, and the rare enemy bolt has
+ * nothing to fire it.  That is why `make AUTO_FIRE=1` alone measured IDENTICAL FPS in 2026-07-31
+ * — the shot flew into an empty world and hit nothing.
+ *
+ * WHAT THIS DOES: forces level_stage to ROF_COMBAT_LEVEL before the launch, so the ENTIRE combat
+ * cascade is produced by the faithful binary logic rather than by injected objects.  At the
+ * default level 40 that is $0623=$A0 (63% of terrain peaks carry a jaggi gun emplacement),
+ * $0621=$14 (a saucer every 20 draw passes) and $0624=$02 (enemy bolts fire almost continuously).
+ * Two small unfaithful extras keep the load SUSTAINED and REPEATABLE for a long profiling run:
+ *   - a flight-VBI top-up that re-seeds emplacement cells whose destroyed marker ($FA..$FF) has
+ *     aged back to 0, so the map never empties out (COMBAT alone: same $0623 gate as the
+ *     original seeding; with FORCE_EMPLACEMENTS=1: every peak, no gate).
+ *   - FORCE_EMPLACEMENTS=1 additionally pins $0623=$FF -> EVERY peak is an emplacement, the
+ *     saturated worst case.
+ * Pair with AUTO_FIRE=1 (COMBAT implies it) so the emplacements are actually shot and explode,
+ * and FIXED_RNG=1 so every build flies the same level.
+ *
+ * The g_cl* counters below exist to PROVE the load is real (and near-camera): they are compiled
+ * only into a PROBES build, so the FPSCOUNT and PC-profile builds stay clean.  Distance here is
+ * the object's $0051 depth step: raster_scaled_object only runs for depth < $0D, and SMALLER
+ * depth = CLOSER = a bigger on-screen object, so g_clObjDist[] is the "how close did the targets
+ * actually get" histogram and g_clObjNear counts the biggest (depth < 4) draws.
+ * =========================================================================================== */
+#if defined(ROF_COMBAT_LOAD) && defined(ROF_FLIGHT_PROBE)
+extern volatile unsigned short g_clExplode, g_clEnemyFire, g_clImpact, g_clSaucer,
+    g_clObjDraw, g_clObjNear, g_clReseed, g_clShotHit;
+extern volatile unsigned short g_clObjDist[13];
+extern volatile unsigned char  g_clLevel, g_cl0621, g_cl0623, g_cl0624;
+extern volatile unsigned short g_clObjFrame;   /* ground objects drawn since the last painted frame */
+#define CL_CNT(c)      (++(c))
+#define CL_OBJ(depth)  do { unsigned char _d = (unsigned char)(depth); ++g_clObjDraw; ++g_clObjFrame; \
+                            if (_d < 13) ++g_clObjDist[_d]; if (_d < 4) ++g_clObjNear; } while (0)
+#else
+#define CL_CNT(c)      ((void)0)
+#define CL_OBJ(depth)  ((void)0)
+#endif
+
 /* Rasterizer SHAPE probe (`make RASTER_C=1 RAS_SHAPE=1 PROBES=1`, read via
  * amiga/ras_shape.gdb).  Answers "where does terrain_column_rasterize_core's time actually
  * go" structurally rather than by PC sampling: the phase-2 entry-span and far-bisect-span
@@ -5987,12 +6034,14 @@ void terrain_plot_object_a(void) {
                 (bus_read(0xD20A) & 0x80) && mem[0x28ED] == 0) {
                 mem[0x28EB] = cpu.X; mem[0x28EC] = cpu.Y;
                 mem[0x28ED] = plot_step_hi;
+                CL_CNT(g_clEnemyFire);           /* an emplacement queued a bolt at us */
             }
         }
     }
     /* L_a8a1 */
     if (plot_step_hi >= 0x0D) { cpu.X = terrain_cur_obj_idx; return; }   /* CMP #$0D; BCS a868 */
     shape_col_base = 0x00;
+    CL_OBJ(plot_step_hi);                        /* combat-load: a ground object is drawn */
     raster_scaled_object();
 }
 
@@ -6023,7 +6072,7 @@ void terrain_plot_object_b(void) {
     if (cpu.A >= mem[MEM_terrain_height_max + cpu.Y]) {           /* CMP 260E,Y; BCC a965 */
         cpu.A = 0x00; terrain_point_distance();   /* a953-a955 */
         plot_pixel_mask = 0xAA;
-        if (plot_step_hi < 0x0D) raster_scaled_object();          /* CMP #$0D; BCS a965 */
+        if (plot_step_hi < 0x0D) { CL_OBJ(plot_step_hi); raster_scaled_object(); }  /* CMP #$0D; BCS a965 */
     }
 
     /* L_a965 */
@@ -7464,6 +7513,7 @@ void terrain_draw_frame_core(uint8_t entryX) {
     mem[0x006A] = 0x7F; object_index_signed = 0x7F; mem[0x2845] = 0x7F;  /* mark the slot occupied */
     indicator_pos = 0x01;
     mem[0x282D] = terrain_depth_step;
+    CL_CNT(g_clSaucer);                                  /* combat-load: a saucer spawned */
 }
 void terrain_draw_frame(void) { terrain_draw_frame_core(cpu.X); }
 
@@ -7547,6 +7597,7 @@ void set_place_params_inc_count(void) {
 /* trigger_object_explosion @ $96D9 — INC $0041, seed the explosion sprite/anim
  * pointers ($00DA-$00DD, $28EE), then push X=$0F to the event ring. */
 void trigger_object_explosion(void) {
+    CL_CNT(g_clExplode);                       /* combat-load: an explosion started */
     game_state = (uint8_t)(game_state + 1);  /* 96d9 INC $0041 */
     mem[0x00DB] = 0x7E;                        /* 96db-96dd */
     anim_counter_2 = 0x7C;                        /* 96df-96e1 */
@@ -7993,6 +8044,7 @@ void object_step_and_collide(void) {
     uint8_t occ = mem[0x0A00 + cell];
     if (occ == 0 || occ >= 0xF8) { reset_object_slot(); return; }
     mem[0x0100 | cpu.S] = occ; cpu.S--;          /* PHA: preserve occ across the explosion (mem-equivalent) */
+    CL_CNT(g_clShotHit);                         /* combat-load: our shot destroyed an occupant */
     mem[0x0A00 + cell] = 0xFC;
     map_cell_hit_marker = 0xFC;
     trigger_object_explosion();
@@ -8755,6 +8807,7 @@ void game_state_update(void) {
         plot_x_step_lo = (uint8_t)(dx << 1);
         plot_x_step_hi = (dx & 0x80) ? 0xFF : 0x00;
         mem[0x28F9] = (uint8_t)(0x6B - mem[0x28EC]);      /* end row */
+        CL_CNT(g_clImpact);      /* combat-load: a bolt HIT us — the near-camera wedge */
         plot_scanline_down();
         vobj_path_flag = 0x10;
         game_state++;                                     /* explosion-frame counter */
@@ -9579,6 +9632,28 @@ void vbi_handler_flight(void) {
 #endif
         game_phase = 0x00;
     }
+
+#ifdef ROF_COMBAT_LOAD
+    /* COMBAT-LOAD top-up (see the header block).  A destroyed emplacement is marked $FC and
+     * aged $FD..$FF -> 0 by terrain_draw_frame_core, so over a long profiling run the map
+     * would slowly empty and the load would fade.  Re-seed emptied PEAK cells (the $0900
+     * bit7 = "marked" cells intro_seed_object_map targets) with the same $64 marker, using
+     * the same $0623 density gate — the FORCE_EMPLACEMENTS build pins that to $FF so every
+     * peak comes back.  One 16-cell slice per frame (a full sweep every 16 frames) keeps the
+     * per-frame cost off the profile: 16 byte tests, not 256. */
+    if (joystick_saved != 0) {
+        static uint8_t s_clSlice = 0;
+        uint16_t base = (uint16_t)(s_clSlice << 4);
+        s_clSlice = (uint8_t)((s_clSlice + 1) & 0x0F);
+        for (uint16_t i = base; i < base + 16; i++) {
+            if (mem[0x0A00 + i] != 0) continue;                 /* occupied, or still aging */
+            if (!(mem[0x0900 + i] & 0x80)) continue;            /* not a peak: no emplacement */
+            if (bus_read(0xD20A) >= mem[0x0623]) continue;      /* same density gate as $7498 */
+            mem[0x0A00 + i] = 0x64;
+            CL_CNT(g_clReseed);
+        }
+    }
+#endif
 
 #ifdef ROF_FORCE_SAUCER
     /* PROFILING AID (Amiga, -DROF_FORCE_SAUCER): headless flight has no enemies, so the P3
@@ -10514,6 +10589,14 @@ L_634f:
     cpu.A = 0xEA;
     SA_TIMED(3, save_color_clear_y_bit5());            /* takes A + Y */
     osc_step_counter = 0;
+#ifdef ROF_COMBAT_LOAD
+    /* COMBAT-LOAD BENCHMARK (see the header block): pin the starting level so
+     * compute_stage_display_geometry below derives a real combat difficulty.  Everything
+     * downstream — emplacement density $0623, saucer period $0621, enemy-fire mask $0624,
+     * terrain roughness — then comes out of the faithful binary logic.  The headless
+     * auto-launch would otherwise fly level 1, which has none of the three. */
+    level_stage = (uint8_t)ROF_COMBAT_LEVEL;
+#endif
     if (level_or_state == 0) {
         uint8_t prev = mem[0x0626];
         mem[0x0626] = level_stage;
@@ -10530,6 +10613,36 @@ L_634f:
     }
     fresh_start_flag = 0;                  /* L_63a1 ($0627) */
     SA_TIMED(4, compute_stage_display_geometry());
+#ifdef ROF_COMBAT_QUIET
+    /* The CONTROL for the combat benchmark: same forced level, so the same terrain, the same
+     * sim tuning and the same binary shape — but no combat at all ($0623 = no emplacements,
+     * $0621 = no saucers; the Makefile also drops AUTO_FIRE).  Comparing COMBAT against this
+     * attributes the delta to COMBAT rather than to "level 40 has rougher terrain than the
+     * level-1 auto-launch", which is what a plain no-COMBAT baseline would really be measuring. */
+    mem[0x0621] = 0; mem[0x0622] = 0; mem[0x0623] = 0;
+#else
+#ifdef ROF_COMBAT_LOAD
+    /* Saucer spawn period.  $0621 bottoms out at $14 even at level $22+, and it counts down
+     * once per terrain_draw_frame pass — at flight's real frame rate that is one spawn
+     * OPPORTUNITY every ~4 s, half of which the RANDOM gate throws away and more of which the
+     * "must sit above the terrain" gate rejects.  A 30 s probe window measured ZERO saucers,
+     * so the saucer sprite path (draw_player3_object + the Amiga P3 viewport/scope mirrors)
+     * never entered the profile at all.  Over-drive the period so a saucer is nearly always
+     * up, and closes to point-blank often.  Deliberately UNFAITHFUL; combat_probe.gdb prints
+     * the value it ran with so the number is never quoted as the level's own. */
+    mem[0x0621] = (uint8_t)ROF_COMBAT_SAUCER;
+    mem[0x0622] = (uint8_t)ROF_COMBAT_SAUCER;
+#endif
+#endif  /* ROF_COMBAT_QUIET */
+#if defined(ROF_COMBAT_LOAD) && defined(ROF_FORCE_EMPLACEMENTS)
+    /* Saturated worst case: $0623 is the RANDOM gate intro_seed_object_map tests before
+     * turning a terrain peak into a gun emplacement, so $FF = EVERY peak carries one. */
+    mem[0x0623] = 0xFF;
+#endif
+#if defined(ROF_COMBAT_LOAD) && defined(ROF_FLIGHT_PROBE)
+    g_clLevel = level_stage; g_cl0621 = mem[0x0621];
+    g_cl0623 = mem[0x0623];  g_cl0624 = mem[0x0624];
+#endif
 L_63a7:
     cpu.X = 0x1D;                         /* sfx_event_load takes X */
     SA_TIMED(5, sfx_event_load());

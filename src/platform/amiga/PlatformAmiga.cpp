@@ -884,6 +884,43 @@ extern "C" volatile unsigned short g_ipDispatch   = 0;   // L_6324 idle dispatch
 extern "C" volatile unsigned short g_ipInPlace    = 0;   // L_6332 in-place branch taken
 extern "C" volatile unsigned short g_ipDoorScroll = 0;   // level<max → door-scroll rebuild
 extern "C" volatile unsigned short g_ipIntroWrap  = 0;   // level>=max → intro_screen_build_seq wrap
+#ifdef ROF_COMBAT_LOAD
+// COMBAT-LOAD benchmark counters (`make COMBAT=1 PROBES=1`, read via amiga/combat_probe.gdb).
+// They exist to PROVE the combat load is real before any timing is quoted from it — a run
+// with g_clExplode==0 is the 2026-07-31 "firing into the void" mistake all over again.
+extern "C" volatile unsigned short g_clExplode   = 0;  // trigger_object_explosion calls
+extern "C" volatile unsigned short g_clShotHit   = 0;  // our shot destroyed a map occupant
+extern "C" volatile unsigned short g_clEnemyFire = 0;  // emplacement queued a bolt at us
+extern "C" volatile unsigned short g_clImpact    = 0;  // bolt HIT us (near-camera wedge)
+extern "C" volatile unsigned short g_clSaucer    = 0;  // flying saucers spawned
+extern "C" volatile unsigned short g_clObjDraw   = 0;  // ground objects rastered
+extern "C" volatile unsigned short g_clObjNear   = 0;  // ...of those, depth < 4 (biggest)
+extern "C" volatile unsigned short g_clReseed    = 0;  // VBI top-ups of aged-out emplacements
+extern "C" volatile unsigned short g_clObjDist[13] = {0};  // draws by $0051 depth (0 = closest)
+extern "C" volatile unsigned char  g_clLevel = 0, g_cl0621 = 0, g_cl0623 = 0, g_cl0624 = 0;
+// COMBAT-STATE FRAMERATE SPLIT — the only honest way this harness can price combat.
+// Cross-BUILD end-to-end is invalid (a combat build and a quiet build fly different
+// trajectories, so their bucket shares are not comparable), but splitting ONE run's frames by
+// the combat state they were painted in is immune to that: same binary, same trajectory, same
+// terrain.  vbiHandler classifies every flight vblank and attributes the painted frames since
+// the previous vblank to it, so  FPS(state) = 50 * g_clFrm[state] / g_clVbi[state].
+//   0 = EXPLOSION  ($0041 game_state != 0 — an explosion or bolt impact is animating)
+//   1 = SAUCER     (a flying-saucer object slot is live: $006A bit7 clear)
+//   2 = SHOT       (our own laser is in flight: $0036 object slot != $80 = reset_object_slot's
+//                   idle marker) — separates the PLAYER's weapon from the enemies'
+//   3 = QUIET      (none of the above; note emplacements are still drawn in this state)
+extern "C" volatile unsigned long g_clFrames = 0;          // painted terrain frames (all states)
+extern "C" volatile unsigned long g_clVbi[4] = {0,0,0,0};  // flight vblanks per state
+extern "C" volatile unsigned long g_clFrm[4] = {0,0,0,0};  // painted frames per state
+// Same idea, but split by HOW MANY ground objects (gun emplacements / bases / pilots) the last
+// painted frame actually rastered: 0 / 1-2 / 3-5 / 6+.  The explosion split above only priced
+// the animation; this prices the PERSISTENT load — objects on screen every frame — which is
+// where most of the combat cost turned out to live.  Again one binary, one trajectory.
+extern "C" volatile unsigned short g_clObjFrame  = 0;      // objects drawn since the last frame
+extern "C" volatile unsigned char  g_clObjBucket = 0;      // that count, bucketed
+extern "C" volatile unsigned long  g_clVbiObj[4] = {0,0,0,0};
+extern "C" volatile unsigned long  g_clFrmObj[4] = {0,0,0,0};
+#endif
 // Door-scroll liveness: total dl_index_dec calls via the $008B branch (level-select elevator scroll).
 extern "C" volatile unsigned short g_dlScrollCount = 0;
 // Door-scroll render-side probe: BPLxPT repoints + the row range the ISR scrolled through.
@@ -1809,15 +1846,19 @@ static uint32_t vbiHandler()
         }
     }
 
+#endif  // ROF_FLIGHT_PROBE — probe-only taps above; the auto-fire + auto-launch below are also
+        // wanted by the near-clean ROF_FPSCOUNT build, which has none of those probe globals.
+
 #ifdef ROF_AUTO_FIRE
-    // Auto-fire probe (capture only): once the flight VBI ($4FF5) is live, HOLD the trigger
-    // ($D010=0, active-low) so the player laser fires continuously.  A held trigger auto-repeats
-    // (the $5178 fire path re-arms whenever $0036 returns to 0), so snapshotting mem[] at varying
-    // delays catches every phase of the shot animation (travel scale/pos + impact).
+    // Auto-fire: once the flight VBI ($4FF5) is live, HOLD the trigger ($D010=0, active-low) so
+    // the player laser fires continuously.  A held trigger auto-repeats (the $5178 fire path
+    // re-arms whenever $0036 returns to 0), so snapshotting mem[] at varying delays catches every
+    // phase of the shot animation (travel scale/pos + impact).
+    // ⚠ This used to live inside the ROF_FLIGHT_PROBE block above, which silently compiled it out
+    // of an FPSCOUNT build — i.e. `make FPSCOUNT=1 AUTO_FIRE=1` did not actually fire.  It is
+    // outside now so the honest-framerate build can measure a COMBAT=1 run.
     if ((mem[0x0222] | (mem[0x0223] << 8)) == 0x4FF5u) s_trig0State = 0x00u;
 #endif
-#endif  // ROF_FLIGHT_PROBE — probe-only taps above; the auto-launch below is also wanted by
-        // the near-clean ROF_FPSCOUNT build, which has none of those probe globals.
 
 #if defined(ROF_FLIGHT_PROBE) || defined(ROF_FPSCOUNT)
     // Auto-launch: replicate a RETURN/START press once Standby's idle loop is actually
@@ -1937,6 +1978,48 @@ static uint32_t vbiHandler()
         if (s_flightVbi && !s_forcedDeath && (uint16_t)(g_vbiCount - s_flightVbi) >= 120) {
             mem[0x063Du] = 1; s_forcedDeath = 1;
         }
+    }
+#endif
+
+#ifdef ROF_INVULNERABLE
+    // Debug / benchmark toggle (`make INVULNERABLE=1`): never die in flight.
+    //
+    // The energy gauge is life_counter $062F, a 0..$DC bar position.  vobj_advance ($4184)
+    // decrements it as damage lands and, the moment it reaches 0, writes event_trigger $063D,
+    // which sends enemy_check into intro_cinematic_loop ($4F3F) = the energy-out death
+    // cinematic.  Topping the bar up before it can reach 0, and clearing $063D outright,
+    // removes both the trigger and its consequence.
+    //
+    // This exists for COMBAT=1: at level 40 the gun emplacements shoot back hard enough to
+    // kill the no-input auto-pilot in ~1500 vbi (measured: 12 hits, dead at vbi 3400), which
+    // is far too short a window to profile — and any sampling window that straddles the death
+    // cinematic silently deflates every rate inside it (the same trap fps_seg.gdb warns about).
+    // The top-up is a compare + occasional byte store per vblank, i.e. free.
+    //
+    // Deliberately leaves the bar draining between top-ups instead of pinning it at full, so
+    // the gauge sprite keeps being rebuilt and that work stays in the profile.
+    if ((mem[0x0222u] | (mem[0x0223u] << 8)) == 0x4FF5u) {
+        if (mem[0x062Fu] < 0x60u) mem[0x062Fu] = 0xDCu;   // refill before it can hit 0
+        mem[0x063Du] = 0;                                 // disarm the death cinematic
+    }
+#endif
+
+#ifdef ROF_COMBAT_LOAD
+    // Combat-state framerate split (see the g_clVbi/g_clFrm definitions above).  Classify this
+    // flight vblank and hand it, plus every terrain frame painted since the previous vblank, to
+    // that state's pair of counters.  EXPLOSION wins over SAUCER when both are true.
+    if ((mem[0x0222u] | (mem[0x0223u] << 8)) == 0x4FF5u) {
+        static unsigned long s_clPrevFrames = 0;
+        const unsigned long now = g_clFrames;
+        const int st = (mem[0x0041u] != 0)        ? 0    // an explosion / impact is animating
+                     : !(mem[0x006Au] & 0x80u)    ? 1    // a saucer object slot is live
+                     : (mem[0x0036u] != 0x80u)    ? 2    // our own laser is in flight
+                                                  : 3;   // quiet
+        g_clVbi[st] += 1;
+        g_clFrm[st] += now - s_clPrevFrames;
+        g_clVbiObj[g_clObjBucket] += 1;
+        g_clFrmObj[g_clObjBucket] += now - s_clPrevFrames;
+        s_clPrevFrames = now;
     }
 #endif
 
