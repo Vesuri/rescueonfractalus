@@ -1654,15 +1654,18 @@ static const uint8_t  kRawF3       = 0x52;   // F3 -> CONSOL OPTION (bit2)
 //     $07 * (Y4) Decrease Thrust (DEC $006F)      $06 + (Y5) Increase Thrust (INC $006F, cap 6)
 //     $80 BREAK ($519e -> game_loop_reset = "Restart")    $1c ESC (Y7) Freeze/pause
 //   ($07/$06 are the Atari cursor-right/left keys, masked to base code by the IRQ's AND #$3F.
-//    We put thrust on '.'/',' so the Amiga arrow keys stay free for the joystick directions.)
+//    Thrust goes on the two keys immediately RIGHT OF '0' — Amiga '-' ($0b) and '=' ($0c) —
+//    because on an Atari 800 keyboard those same two positions carry the '< -' / '> =' legends
+//    the game uses for thrust down/up.  Raw keycodes, so '=' fires unshifted as well as as '+'.
+//    The Amiga arrow keys stay free for the joystick directions.)
 struct FlightKeyMap { uint8_t rawkey; uint8_t kbcode; };
 static const FlightKeyMap kFlightKeys[] = {
     { 0x28, 0x00 },   // Amiga 'L'   -> Atari L   $00  Land
     { 0x20, 0x3F },   // Amiga 'A'   -> Atari A   $3f  Air Lock
     { 0x35, 0x15 },   // Amiga 'B'   -> Atari B   $15  Boosters
     { 0x21, 0x3E },   // Amiga 'S'   -> Atari S   $3e  Systems
-    { 0x39, 0x06 },   // Amiga '.'   -> Atari +   $06  Increase Thrust
-    { 0x38, 0x07 },   // Amiga ','   -> Atari *   $07  Decrease Thrust
+    { 0x0C, 0x06 },   // Amiga '='/'+' -> Atari + $06  Increase Thrust
+    { 0x0B, 0x07 },   // Amiga '-'   -> Atari *   $07  Decrease Thrust
     { 0x45, 0x1C },   // Amiga 'Esc' -> Atari ESC $1c  Freeze/pause
     { 0x41, 0x80 },   // Amiga 'Backspace' -> Atari BREAK $80 Restart
 };

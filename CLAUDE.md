@@ -139,18 +139,23 @@ the flight VBI's CLI window). Faithful 1:1 — the dispatcher logic is the Atari
 | START | Start the game | — (CONSOL) | **F1 ($50)** | CONSOL $D01F bit0 |
 | BREAK | Restart (score lost, highs kept) → `game_loop_reset` | $80 | **Backspace ($41)** | kbd cmd $519c |
 | ESC | Freeze/pause mission (toggle) | $1c | Esc ($45) | kbd cmd |
-| CURSOR RIGHT | Increase Thrust (`INC $006F`, Y5) | $06 (Ctrl-`+`, masked) | **. period ($39)** | kbd cmd |
-| CURSOR LEFT | Decrease Thrust (`DEC $006F`, Y4) | $07 (Ctrl-`*`, masked) | **, comma ($38)** | kbd cmd |
+| CURSOR RIGHT | Increase Thrust (`INC $006F`, Y5) | $06 (Ctrl-`+`, masked) | **`=`/`+` ($0C)** | kbd cmd |
+| CURSOR LEFT | Decrease Thrust (`DEC $006F`, Y4) | $07 (Ctrl-`*`, masked) | **`-` ($0B)** | kbd cmd |
 | L | Land | $00 | L ($28) | kbd cmd |
 | S | Systems | $3e | S ($21) | kbd cmd |
 | A | Air Lock | $3f | A ($20) | kbd cmd |
-| B | Boosters | $15 | B ($15) | kbd cmd |
+| B | Boosters | $15 | B ($35) | kbd cmd |
 | (joystick) | Steer (pitch/roll) | — | **arrow keys** ($4C/$4D/$4F/$4E) | PORTA $D300 bits 0/1/2/3 = up/down/left/right |
 | (trigger) | Fire | — | **Left Shift ($60)** | TRIG0 $D010 |
 | Joystick up / down | Starting level up / down (inside the level-selector card only) | — | **arrow up/down** ($4C/$4D) | PORTA $D300 bits 0/1 |
 | SELECT | Open the level-selector card (initial Standby) / cycle level in place (post-mother-ship Standby) | — | **F2 ($51)** | CONSOL $D01F bit1 |
 | OPTION | Demo (DEMO DROID) | — | **F3 ($52)** | CONSOL $D01F bit2 |
 | SYSTEM RESET | Reboot disk | — | not mapped (hardware reset, not application-controlled) | — |
+
+Thrust sits on the two keys immediately **right of `0`** (`-` and `=`/`+`) because those are the
+physical positions carrying the Atari 800's `< -` / `> =` legends, i.e. the keys the original uses
+for thrust down/up. The path is raw-keycode based with no shift decoding, so `=` fires thrust-up
+unshifted as well as as `+`.
 
 Implementation: `PlatformAmiga.cpp` `kFlightKeys` (one-shot command keycodes), `s_portaState`/
 `s_trig0State` (held joystick/fire level read by `hwRead`), `s_consolState` (CONSOL bits 0/1/2 =
