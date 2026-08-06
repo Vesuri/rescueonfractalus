@@ -194,6 +194,27 @@ EXTRA_DEFINES += -DROF_MULTABLE_VERIFY
 endif
 endif
 
+# Hand-written m68k twin of the SFX voice-priority MIXER chain (sfx_reorder_voice_slot $5614
+# plus its three leaves $5673/$568A/$56AF, all inlined into one routine).  Not a rendering
+# path: it is the biggest single item inside the 50 Hz flight VBI, which fires 50x/s regardless
+# of frame rate, so it taxes ALL wall clock (measured 22.4 t/firing = ~7% of it in combat).
+# ON by default; `make SFXMIX_C=1` falls back to the clean-C twin — REQUIRED for the SFX_SHAPE
+# probe, whose SX_LEAF brackets live inside the C bodies this asm replaces, so SFX_SHAPE=1
+# forces the fallback rather than silently reporting zeros.  Same VERIFY
+# pattern as the others: `make VERIFY=1 PROBES=1` runs the asm + the C twin back-to-back on
+# identical state each call (rof_native.c, ROF_SFXMIX_VERIFY), read via amiga/sfxmix_verify.gdb.
+ifdef SFX_SHAPE
+SFXMIX_C := 1
+endif
+ifndef SFXMIX_C
+FRAMEWORK_ASM_SRCS += $(AMIGA_SRC)/SfxMixerAssembler.s
+EXTRA_DEFINES += -DROF_SFXMIX_ASM
+ifdef VERIFY
+EXTRA_DEFINES += -DROF_SFXMIX_VERIFY
+obj/SfxMixerAssembler.o : VASMFLAGS += -DROF_SFXMIX_VERIFY
+endif
+endif
+
 # Profiling aid: `make RASTER_C=1 RAS_SHAPE=1 PROBES=1` + amiga/ras_shape.gdb — the flight
 # rasterizer's STRUCTURAL shape counters (phase-2 entry-span and far-bisect-span histograms,
 # fe/ff leaf mix, phase-1 advance/push counts, hidden-surface accept rate).  These live inside
