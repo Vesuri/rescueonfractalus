@@ -896,6 +896,9 @@ extern "C" volatile unsigned short g_clSaucer    = 0;  // flying saucers spawned
 extern "C" volatile unsigned short g_clObjDraw   = 0;  // ground objects rastered
 extern "C" volatile unsigned short g_clObjNear   = 0;  // ...of those, depth < 4 (biggest)
 extern "C" volatile unsigned short g_clReseed    = 0;  // VBI top-ups of aged-out emplacements
+extern "C" volatile unsigned long  g_clObjEnter  = 0;  // cells with an occupant = ALL object work
+                                                       // (g_clObjDraw only counts the ones that
+                                                       //  reached raster_scaled_object, depth<$0D)
 extern "C" volatile unsigned short g_clObjDist[13] = {0};  // draws by $0051 depth (0 = closest)
 extern "C" volatile unsigned char  g_clLevel = 0, g_cl0621 = 0, g_cl0623 = 0, g_cl0624 = 0;
 // COMBAT-STATE FRAMERATE SPLIT — the only honest way this harness can price combat.
@@ -920,6 +923,32 @@ extern "C" volatile unsigned short g_clObjFrame  = 0;      // objects drawn sinc
 extern "C" volatile unsigned char  g_clObjBucket = 0;      // that count, bucketed
 extern "C" volatile unsigned long  g_clVbiObj[4] = {0,0,0,0};
 extern "C" volatile unsigned long  g_clFrmObj[4] = {0,0,0,0};
+// PER-PHASE FRAME DECOMPOSITION, split by combat state (see the CL_PH block in rof_native.c).
+// [phase][state], state 0 = an explosion/bolt is live this iteration, 1 = not.
+// Phases: 0 SETUP, 1 CLEAR, 2 DRAW (terrain+objects), 3 BOLT (game_state_update),
+//         4 ENEMY (enemy_check), 5 FRAME (ds_frame = renderFlightDirect+sprites+copper+audio).
+// Both terrain passes are bracketed now — they were not before, which is why every historical
+// "terrain is N% of the frame" figure was taken over half the work.
+extern "C" volatile unsigned long g_clPh[6][2]  = {};
+extern "C" volatile unsigned long g_clPhIter[2] = {0,0};
+extern "C" volatile unsigned char g_clPhState   = 1;
+// RAW iteration wall time (no ISR subtraction) so the budget can be closed:
+//     wall = ISR (g_isrBeamLines) + sum(phases) + unbracketed
+extern "C" volatile unsigned long g_clIterWall[2] = {0,0};
+extern "C" volatile unsigned long g_clIterPrev    = 0;
+// Sticky "an explosion/bolt was live at some point during this iteration", set by the VBI and
+// consumed by CL_PH_ITER.  A flight iteration spans many vblanks at these frame rates, so an
+// instantaneous sample of $0041 at the top of the iteration is a near-useless classifier.
+extern "C" volatile unsigned char g_clExplSeen = 0;
+// REAL flight-VBI handler ticks + firings, split by combat state (accumulated in
+// rof_native_amiga.cpp's flight_vbi_native from dHandler, which excludes the ZP-audit probe).
+extern "C" volatile unsigned long g_clIsr[2]  = {0,0};
+extern "C" volatile unsigned long g_clIsrN[2] = {0,0};
+// DRAW ticks + iterations bucketed by ship altitude ($28DA >> 5).  Lets the combat and quiet runs
+// be compared at MATCHED altitude — a per-call comparison, immune to the cross-build objection.
+extern "C" volatile unsigned long g_clAltDraw[8] = {};
+extern "C" volatile unsigned long g_clAltIter[8] = {};
+extern "C" volatile unsigned char g_clAltBucket  = 0;
 #endif
 // Door-scroll liveness: total dl_index_dec calls via the $008B branch (level-select elevator scroll).
 extern "C" volatile unsigned short g_dlScrollCount = 0;
@@ -1028,8 +1057,24 @@ void PlatformAmiga::flightScannerTick()
 // stub (amiga/diag_timing.gdb).  Compiled out by default so the SDL/release builds don't carry
 // (or need to link) any of these symbols.
 #ifdef ROF_FLIGHT_PROBE
+// ⚠ RACE-FREE, and it MUST be.  This used to be a plain
+//     g_vbiCount * 313 + rof_beam_line()
+// which reads the two halves of the clock non-atomically.  The VERTB ISR bumps g_vbiCount at
+// beam line 0, so an ISR landing BETWEEN the two reads pairs the OLD frame number with a beam
+// line that has already wrapped to ~0 — the clock jumps ~313 ticks BACKWARD.  Every FP_TIME
+// bracket then computes `rof_subclock() - start` on unsigned longs and underflows to ~4.29e9,
+// so one unlucky sample poisons a whole accumulator.  That is the "g_fDraw/g_fDirect are
+// poisoned" note in the flight-pc-profiler memory, and it is why the phase decomposition had to
+// be distrusted for months.  A vbi-count read on either side, retried until they agree, proves
+// no VBI fired between the two halves and makes the pairing consistent.  Cost: two extra
+// volatile short reads, i.e. nothing next to the CHIP register read it already does.
 extern "C" unsigned long rof_subclock(void) {
-    return (unsigned long)g_vbiCount * 313u + (unsigned long)rof_beam_line();
+    for (;;) {
+        const unsigned short v0 = g_vbiCount;
+        const unsigned short ln = rof_beam_line();
+        const unsigned short v1 = g_vbiCount;
+        if (v0 == v1) return (unsigned long)v0 * 313u + (unsigned long)ln;
+    }
 }
 extern "C" volatile unsigned long g_renderFrameCount = 0;
 extern "C" volatile unsigned long g_probeDispSetup = 0, g_probeGameInit = 0,
@@ -1098,6 +1143,10 @@ static bool g_pollAfterRender = false;
 extern "C" volatile unsigned long g_iterMax = 0, g_iterLast = 0, g_iterPostDs = 0;
 extern "C" volatile unsigned short g_iterCount = 0, g_iterMaxAt = 0;
 extern "C" volatile unsigned long g_fSetup=0,g_fClear=0,g_fDraw=0,g_fColl=0,g_fState=0,g_fEnemy=0;
+// ds_frame() total (both displayed halves per iteration) = renderFlightDirect + sprite builds +
+// copper update + the audio flush.  Never bracketed before 2026-08-06, so the phase sum used to
+// miss the entire render side of the frame as well as all of terrain pass 2.
+extern "C" volatile unsigned long g_clFrameTicks = 0;
 // Stage-0 convert-pass cost (flight renderViewportModeD), beam-based, ISR-decontaminated.
 extern "C" volatile unsigned long g_fConvert=0;
 // atmosphere terrain-pen range during flight ($00DC/$00DD salmon→brown fade):
@@ -2015,6 +2064,7 @@ static uint32_t vbiHandler()
                      : !(mem[0x006Au] & 0x80u)    ? 1    // a saucer object slot is live
                      : (mem[0x0036u] != 0x80u)    ? 2    // our own laser is in flight
                                                   : 3;   // quiet
+        if (st == 0) g_clExplSeen = 1;   // sticky for the phase decomposition's classifier
         g_clVbi[st] += 1;
         g_clFrm[st] += now - s_clPrevFrames;
         g_clVbiObj[g_clObjBucket] += 1;

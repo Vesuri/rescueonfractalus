@@ -59,7 +59,7 @@ extern unsigned long rof_subclock(void);
 extern volatile unsigned long g_probeDispSetup, g_probeGameInit, g_probeIntro,
     g_probeInitTotal, g_probeRowAddr;
 extern volatile unsigned long g_iterMax, g_iterLast, g_iterPostDs,
-    g_fSetup, g_fClear, g_fDraw, g_fColl, g_fState, g_fEnemy;
+    g_fSetup, g_fClear, g_fDraw, g_fColl, g_fState, g_fEnemy, g_clFrameTicks;
 extern volatile unsigned short g_probeFlightVbi, g_iterCount, g_iterMaxAt;
 extern void rof_ds_mile(int i);
 #define DS_MILE(i) rof_ds_mile(i)
@@ -104,16 +104,18 @@ extern unsigned short rof_beam_line(void);
 /* ===========================================================================================
  * COMBAT-LOAD BENCHMARK  (`make COMBAT=1`, -DROF_COMBAT_LOAD; Amiga profiling aid, NOT faithful)
  *
- * WHY: headless flight (the PROBES/FPSCOUNT auto-launch) always starts at LEVEL 1, and level 1
- * is exactly the level with NO combat.  compute_stage_display_geometry ($75F2) derives all three
- * difficulty knobs from level_stage $006D:
- *     $0623 = (lvl==1) ? 0 : min(lvl,$2B)<<2     gun-emplacement density (RANDOM gate in
- *                                                intro_seed_object_map -> 0 = no emplacements)
+ * WHY: headless flight (the PROBES/FPSCOUNT auto-launch) starts at the boot default LEVEL 4
+ * ($3D1D writes level_stage $006D = 4), and compute_stage_display_geometry ($75F2) derives all
+ * three difficulty knobs from that level:
+ *     $0623 = (lvl==1) ? 0 : min(lvl,$2B)<<2     gun-emplacement density (a RANDOM/256 gate in
+ *                                                intro_seed_object_map, per terrain peak)
  *     $0621 = (lvl< 4) ? 0 : $58 - 2*min(lvl,$22) flying-saucer spawn period (0 = never spawn)
  *     $0624 = ($2C - min(lvl,$28)) >> 1           enemy-fire delay mask (smaller = fires more)
- * At level 1 those are 0 / 0 / $2B: no emplacements, no saucers, and the rare enemy bolt has
- * nothing to fire it.  That is why `make AUTO_FIRE=1` alone measured IDENTICAL FPS in 2026-07-31
- * — the shot flew into an empty world and hit nothing.
+ * At level 4 those are $10 / $50 / $14 = only 6.2% of peaks armed, a saucer spawn OPPORTUNITY
+ * every 80 terrain-draw passes (half of them thrown away by a RANDOM gate, more by the
+ * must-be-above-terrain gate), and enemy fire paced 10x slower than at level 40.  SPARSE, not
+ * absent — which is why `make AUTO_FIRE=1` alone measured IDENTICAL FPS in 2026-07-31: in a short
+ * window the shot statistically hit nothing.
  *
  * WHAT THIS DOES: forces level_stage to ROF_COMBAT_LEVEL before the launch, so the ENTIRE combat
  * cascade is produced by the faithful binary logic rather than by injected objects.  At the
@@ -137,15 +139,92 @@ extern unsigned short rof_beam_line(void);
 #if defined(ROF_COMBAT_LOAD) && defined(ROF_FLIGHT_PROBE)
 extern volatile unsigned short g_clExplode, g_clEnemyFire, g_clImpact, g_clSaucer,
     g_clObjDraw, g_clObjNear, g_clReseed, g_clShotHit;
+extern volatile unsigned long  g_clObjEnter;   /* cells with an occupant = ALL object work */
 extern volatile unsigned short g_clObjDist[13];
 extern volatile unsigned char  g_clLevel, g_cl0621, g_cl0623, g_cl0624;
 extern volatile unsigned short g_clObjFrame;   /* ground objects drawn since the last painted frame */
 #define CL_CNT(c)      (++(c))
 #define CL_OBJ(depth)  do { unsigned char _d = (unsigned char)(depth); ++g_clObjDraw; ++g_clObjFrame; \
                             if (_d < 13) ++g_clObjDist[_d]; if (_d < 4) ++g_clObjNear; } while (0)
+
+/* ── PER-PHASE FRAME DECOMPOSITION, split by combat state ────────────────────────────────────
+ * The point: finish attributing the ~2x combat slowdown WITHOUT a cross-build throughput
+ * comparison.  Bracketing every phase of one flight iteration inside ONE binary says what a
+ * combat frame is actually MADE of, and splitting each phase by whether an explosion/bolt is
+ * live says which phase inflates when it is.
+ *
+ * Two reasons the pre-existing g_fSetup/g_fClear/g_fDraw could never answer this:
+ *  1. rof_subclock() raced the VERTB ISR and could run BACKWARDS -> unsigned underflow poisoned
+ *     whole accumulators.  Fixed 2026-08-06 in PlatformAmiga.cpp (retry until the vbi count
+ *     agrees either side of the beam read).
+ *  2. **They only ever bracketed PASS 1.**  The flight loop renders the terrain field TWICE per
+ *     iteration and pass 2 (`terrain_frame_setup(); clear_terrain_column_core(0x03);
+ *     terrain_draw_frame_core(0x00);`) carried no brackets at all — so half of all terrain work
+ *     was invisible and every "terrain is N% of the frame" number from these was ~half of the
+ *     truth.  CL_PH now brackets BOTH passes into the same accumulators.
+ * 6 brackets/iteration (12 clock reads) against a ~135 ms combat frame is negligible; per-OBJECT
+ * bracketing is deliberately NOT done — that is what ROF_TDRAW_PROF does, and it distorts the
+ * very loop it measures (and the object-count split already showed objects are nearly free). */
+extern volatile unsigned long g_clPh[6][2];     /* ticks per phase, [state] 0 = explosion live */
+extern volatile unsigned long g_clPhIter[2];    /* iterations per state */
+extern volatile unsigned char g_clPhState;      /* latched once per iteration */
+#define CL_PH_SETUP 0
+#define CL_PH_CLEAR 1
+#define CL_PH_DRAW  2
+#define CL_PH_BOLT  3
+#define CL_PH_ENEMY 4
+#define CL_PH_FRAME 5
+#define CL_PH(i, stmt, acc) do { \
+    unsigned long _p = rof_subclock(); unsigned long _i0 = g_isrBeamLines; \
+    stmt; \
+    unsigned long _d = rof_subclock() - _p, _id = g_isrBeamLines - _i0; \
+    unsigned long _t = (_d > _id) ? (_d - _id) : 0; \
+    (acc) += _t; g_clPh[i][g_clPhState] += _t; \
+    if ((i) == CL_PH_DRAW) g_clAltDraw[g_clAltBucket] += _t; } while (0)
+/* Latch the state for the whole iteration, so every phase of one frame lands in one bucket, AND
+ * accumulate the iteration's RAW wall time (no ISR subtraction) so the budget can be closed:
+ *     wall = ISR + sum(phases) + unbracketed
+ * Without that total there is no way to tell a complete decomposition from a partial one — and
+ * the first run of this probe covered under half the iteration, which would have been invisible.
+ *
+ * ⚠ The explosion classifier is STICKY-over-the-previous-iteration, not "state at this instant".
+ * A flight iteration is ~0.5-1 s of emulated time at these frame rates, so `$0041 != 0` sampled
+ * once at the top says almost nothing about the iteration as a whole — the first version of this
+ * probe latched instantaneously and duly reported a ~0 explosion effect, contradicting the
+ * per-vblank split. The VBI sets g_clExplSeen whenever an explosion/bolt is live; this consumes
+ * it. Still imperfect (it lags by one iteration) — treat the split as indicative and prefer the
+ * per-phase totals, which need no classifier at all. */
+#define CL_PH_ITER() do { \
+    unsigned long _now = rof_subclock(); \
+    if (g_clIterPrev) g_clIterWall[g_clPhState] += _now - g_clIterPrev; \
+    g_clIterPrev = _now; \
+    g_clPhState = g_clExplSeen ? 0u : 1u; g_clExplSeen = 0u; \
+    g_clPhIter[g_clPhState]++; \
+    g_clAltBucket = (unsigned char)(mem[0x28DA] >> 5); \
+    g_clAltIter[g_clAltBucket]++; } while (0)
+extern volatile unsigned long g_clIterWall[2], g_clIterPrev;
+extern volatile unsigned char g_clExplSeen;
+/* DRAW ticks + iterations bucketed by ship altitude ($28DA altimeter_alt_ref, >>5 = 8 buckets).
+ * The point: the attribution showed DRAW (terrain + objects, both passes) is where combat's extra
+ * frame time goes, but the object-COUNT split says objects are nearly free — so the suspicion is
+ * that combat's ~30 bolt impacts (jitter_roll_pitch) throw the ship around and a disturbed
+ * attitude/altitude simply puts MORE TERRAIN in view.  Comparing DRAW t/iteration at MATCHED
+ * altitude between the combat and quiet runs tests exactly that, and it is a per-call comparison
+ * rather than an end-to-end one, so the cross-build trajectory objection does not apply. */
+extern volatile unsigned long g_clAltDraw[8], g_clAltIter[8];
+extern volatile unsigned char g_clAltBucket;
 #else
 #define CL_CNT(c)      ((void)0)
 #define CL_OBJ(depth)  ((void)0)
+#define CL_PH(i, stmt, acc) FP_TIME(stmt, acc)
+#define CL_PH_ITER()   ((void)0)
+#define CL_PH_DRAW_ALT 0
+#define CL_PH_SETUP 0
+#define CL_PH_CLEAR 1
+#define CL_PH_DRAW  2
+#define CL_PH_BOLT  3
+#define CL_PH_ENEMY 4
+#define CL_PH_FRAME 5
 #endif
 
 /* Rasterizer SHAPE probe (`make RASTER_C=1 RAS_SHAPE=1 PROBES=1`, read via
@@ -6108,6 +6187,13 @@ void terrain_plot_object(void) {
     uint8_t A, c;
     cpu.Y = mem[0x2276 + cpu.X];                              /* LDY $2276,X */
     if (mem[0x0A00 + cpu.Y] == 0) { terrain_plot_return(); return; }   /* a641 BEQ */
+    /* Combat-load: every cell that has an OCCUPANT, i.e. all real object work.  Counted here and
+     * not at raster_scaled_object because the plotters do most of their work BEFORE that call
+     * (distance, row clip, the half-width span, the RANDOM fire-queue gate) and skip it entirely
+     * for depth >= $0D.  Counting only the raster calls is what produced the misleading "ground
+     * objects on screen are nearly free" reading — that counter saw ~1 per iteration while this
+     * one sees the whole population. */
+    CL_CNT(g_clObjEnter);
     if (mem[0x232E + cpu.X] == 0 && mem[0x2300 + cpu.X] < 0x22) {      /* a646/a64b */
         terrain_plot_return(); return;
     }
@@ -11057,15 +11143,16 @@ static void game_main_loop_body(void) {
        the KEYWIN dispatcher longjmps out via game_loop_reset_trampoline before the spin sees it. */
     while (event_active_flag != 0) { g_flightRenderHalf = 0; ds_frame(); }
 #endif
+    CL_PH_ITER();                    /* latch the combat state for this whole iteration */
     g_flightRenderHalf = 0;          /* this ds_frame shows the DISPLAY half (prev pass 2, offset 0) */
-    ds_frame();
+    CL_PH(CL_PH_FRAME, ds_frame(), g_clFrameTicks);
     FP_ITER_MARK();
     /* --- PASS 1: render terrain field BACK half (draw col-base $30; clear/collision $33). ---
        On the Atari this half is double-buffered against the display (offset-0) half below; the
        two halves alternate on screen each vblank.  (clear/collision use the draw base + 3.) */
-    FP_TIME(terrain_frame_setup(), g_fSetup);
-    FP_TIME(clear_terrain_column_core(0x33), g_fClear);
-    FP_TIME(terrain_draw_frame_core(0x30), g_fDraw);
+    CL_PH(CL_PH_SETUP, terrain_frame_setup(), g_fSetup);
+    CL_PH(CL_PH_CLEAR, clear_terrain_column_core(0x33), g_fClear);
+    CL_PH(CL_PH_DRAW,  terrain_draw_frame_core(0x30), g_fDraw);
 #ifndef ROF_PLATFORM_AMIGA
     /* Builds the mode-D field's sky + dot texture (the SDL display + the silhouette scan).  On the
        Amiga nothing reads the field (dots->plane2, sky->$260E, band blanked), so it is skipped —
@@ -11077,11 +11164,11 @@ static void game_main_loop_body(void) {
        on the Atari both halves alternate on screen; here we render+show each as it completes, so
        neither pass is dropped (smoother motion, ~2x displayed framerate). */
     g_flightRenderHalf = 1;
-    ds_frame();
+    CL_PH(CL_PH_FRAME, ds_frame(), g_clFrameTicks);
     pilot_state = game_state;
-    FP_TIME(game_state_update(), g_fState);
+    CL_PH(CL_PH_BOLT,  game_state_update(), g_fState);
     game_phase = 0x02;
-    FP_TIME(enemy_check(), g_fEnemy);
+    CL_PH(CL_PH_ENEMY, enemy_check(), g_fEnemy);
     if (life_counter < 0x0E) {
         if (level_or_state != 0) {
             game_sub_7B54();
@@ -11091,10 +11178,14 @@ static void game_main_loop_body(void) {
     }
     /* L_3ef5 */
     /* --- PASS 2: render terrain field DISPLAY half (draw col-base $00; clear/collision $03). ---
-       This offset-0 half is what the Amiga port currently shows every frame. --- */
-    terrain_frame_setup();
-    clear_terrain_column_core(0x03);
-    terrain_draw_frame_core(0x00);
+       This offset-0 half is what the Amiga port currently shows every frame. ---
+       ⚠ These three carried NO timing brackets until 2026-08-06, so every historical
+       "terrain = N% of the frame" figure from g_fSetup/g_fClear/g_fDraw was taken over PASS 1
+       ONLY — i.e. roughly half the real terrain work.  They accumulate into the same buckets as
+       pass 1 now, so the phase totals finally cover the whole iteration. */
+    CL_PH(CL_PH_SETUP, terrain_frame_setup(), g_fSetup);
+    CL_PH(CL_PH_CLEAR, clear_terrain_column_core(0x03), g_fClear);
+    CL_PH(CL_PH_DRAW,  terrain_draw_frame_core(0x00), g_fDraw);
 #ifndef ROF_PLATFORM_AMIGA
     fill_terrain_silhouette_core(0x03);   /* Amiga: skipped — see PASS 1 note */
 #endif

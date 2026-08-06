@@ -31,8 +31,11 @@ tbreak RescueOnFractalus::renderFrame if g_vbiCount >= 1900
 continue
 set $pv = (int)g_vbiCount
 set $pf = (int)g_fdCalls
-printf "=== combat setup: level=%u  $0623 emplace-gate=%02x  $0621 saucer-period=%02x  $0624 fire-mask=%02x ===\n", \
-  g_clLevel, g_cl0623, g_cl0621, g_cl0624
+# Read the knobs straight out of mem[] rather than from the g_cl* copies, so this line also works
+# on a build WITHOUT COMBAT=1 — that is how the "what level does the auto-launch actually fly"
+# question gets settled by measurement instead of by reading the boot code.
+printf "=== level=%u ($006D)  $0623 emplace-gate=%02x  $0621 saucer-period=%02x  $0624 fire-mask=%02x ===\n", \
+  mem[0x6D], mem[0x623], mem[0x621], mem[0x624]
 printf "=== start: vbi=%u VVBLKI=$%02x%02x ===\n", g_vbiCount, mem[0x223], mem[0x222]
 
 cseg 2200
@@ -83,5 +86,97 @@ printf "  3-5       : %6lu vbi  %5lu painted  FPS=%2lu.%lu\n", g_clVbiObj[2], g_
   (g_clVbiObj[2] ? (50*g_clFrmObj[2])/g_clVbiObj[2] : 0), (g_clVbiObj[2] ? ((500*g_clFrmObj[2])/g_clVbiObj[2])%10 : 0)
 printf "  6+        : %6lu vbi  %5lu painted  FPS=%2lu.%lu\n", g_clVbiObj[3], g_clFrmObj[3], \
   (g_clVbiObj[3] ? (50*g_clFrmObj[3])/g_clVbiObj[3] : 0), (g_clVbiObj[3] ? ((500*g_clFrmObj[3])/g_clVbiObj[3])%10 : 0)
+# ── PER-PHASE FRAME DECOMPOSITION (the attribution) ─────────────────────────────────────────
+# ticks = raster scanlines, 63.56 us each; 313 = one PAL frame = 20 ms.  ISR-subtracted, so a
+# phase excludes VBI firings inside its window.  BOTH terrain passes are bracketed (they were
+# not before 2026-08-06) and ds_frame is bracketed, so PHASE SUM should ~= the whole iteration.
+# state 0 = an explosion/bolt was live for that iteration, 1 = not.  Same binary, same run.
+define phase
+  set $t0 = g_clPh[$arg0][0]
+  set $t1 = g_clPh[$arg0][1]
+  printf "  %-22s expl %6lu t (%4lu t/it, %2lu.%01lu ms)   noexpl %6lu t (%4lu t/it, %2lu.%01lu ms)\n", \
+    $arg1, \
+    $t0, (g_clPhIter[0] ? $t0/g_clPhIter[0] : 0), \
+    (g_clPhIter[0] ? ($t0*20)/(g_clPhIter[0]*313) : 0), (g_clPhIter[0] ? (($t0*200)/(g_clPhIter[0]*313))%10 : 0), \
+    $t1, (g_clPhIter[1] ? $t1/g_clPhIter[1] : 0), \
+    (g_clPhIter[1] ? ($t1*20)/(g_clPhIter[1]*313) : 0), (g_clPhIter[1] ? (($t1*200)/(g_clPhIter[1]*313))%10 : 0)
+end
+printf "\n=== per-phase frame decomposition, ticks/iteration (1 tick = 63.56us, 313 = 20ms) ===\n"
+printf "  iterations: explosion=%lu  no-explosion=%lu\n", g_clPhIter[0], g_clPhIter[1]
+phase 0 "SETUP  (frame_setup x2)"
+phase 1 "CLEAR  (clear_col x2)"
+phase 2 "DRAW   (terrain+obj x2)"
+phase 3 "BOLT   (game_state_update)"
+phase 4 "ENEMY  (enemy_check)"
+phase 5 "FRAME  (ds_frame x2)"
+set $s0 = g_clPh[0][0]+g_clPh[1][0]+g_clPh[2][0]+g_clPh[3][0]+g_clPh[4][0]+g_clPh[5][0]
+set $s1 = g_clPh[0][1]+g_clPh[1][1]+g_clPh[2][1]+g_clPh[3][1]+g_clPh[4][1]+g_clPh[5][1]
+printf "  %-22s expl %6lu t (%4lu t/it, %2lu.%01lu ms)   noexpl %6lu t (%4lu t/it, %2lu.%01lu ms)\n", \
+  "SUM", \
+  $s0, (g_clPhIter[0] ? $s0/g_clPhIter[0] : 0), \
+  (g_clPhIter[0] ? ($s0*20)/(g_clPhIter[0]*313) : 0), (g_clPhIter[0] ? (($s0*200)/(g_clPhIter[0]*313))%10 : 0), \
+  $s1, (g_clPhIter[1] ? $s1/g_clPhIter[1] : 0), \
+  (g_clPhIter[1] ? ($s1*20)/(g_clPhIter[1]*313) : 0), (g_clPhIter[1] ? (($s1*200)/(g_clPhIter[1]*313))%10 : 0)
+printf "  (an iteration paints 2 terrain frames, so ms/painted-frame = ms/it / 2)\n"
+# CLOSE THE BUDGET.  wall = ISR + sum(phases) + unbracketed.  Without this the decomposition
+# cannot be trusted: the first version of this probe covered under HALF the iteration and looked
+# perfectly plausible.  Quote a phase share only when `covered` below is near 100%.
+set $it = g_clPhIter[0] + g_clPhIter[1]
+set $wall = g_clIterWall[0] + g_clIterWall[1]
+set $sum  = $s0 + $s1
+printf "\n=== budget check (all states, %lu iterations) ===\n", $it
+printf "  wall           %8lu t  (%4lu t/it, %3lu.%01lu ms/it)\n", $wall, \
+  ($it ? $wall/$it : 0), ($it ? ($wall*20)/($it*313) : 0), ($it ? (($wall*200)/($it*313))%10 : 0)
+# NB the denominator is g_flightProf.isrCalls (FLIGHT VBI firings), not g_vbiCount — the latter
+# counts every vblank since power-on, including the ~1900 of boot/cinematic, and dividing by it
+# understated the per-firing cost by ~30%.
+printf "  VBI ISR        %8lu t  (%4lu t/it)  = %2lu%% of wall   [%lu firings, %lu t each]\n", \
+  g_isrBeamLines, ($it ? g_isrBeamLines/$it : 0), \
+  ($wall ? (100*g_isrBeamLines)/$wall : 0), g_flightProf.isrCalls, \
+  (g_flightProf.isrCalls ? g_isrBeamLines/g_flightProf.isrCalls : 0)
+printf "  phases (sum)   %8lu t  (%4lu t/it)  = %2lu%% of wall\n", $sum, \
+  ($it ? $sum/$it : 0), ($wall ? (100*$sum)/$wall : 0)
+# Clamp: phases+ISR can exceed wall by a hair because the wall sample is taken at the iteration
+# TOP while an ISR firing can straddle that boundary.  Printing the raw signed-negative remainder
+# as unsigned produced a nonsense 11-digit "unbracketed" figure.
+set $acct = $sum + g_isrBeamLines
+printf "  covered        %2lu%% of wall", ($wall ? (100*$acct)/$wall : 0)
+if $acct < $wall
+  printf "  -> unbracketed %lu t/it\n", ($it ? ($wall - $acct)/$it : 0)
+else
+  printf "  -> fully accounted (overlap %lu t/it at iteration boundaries)\n", \
+    ($it ? ($acct - $wall)/$it : 0)
+end
+# ⚠ g_isrBeamLines above is the FULL probe-ISR span and deliberately INCLUDES the 2x256-iteration
+# ZP write-set audit (~70 lines/firing of pure probe overhead) so the main-loop buckets come out
+# right.  The REAL flight-VBI handler cost is g_flightProf.isrLines / isrCalls — that is the
+# number to quote, and the only one that means anything for the shipping build.
+printf "\n=== flight VBI handler, REAL cost (ZP-audit probe excluded) ===\n"
+printf "  all states : %lu firings, %lu t total, %lu t/firing (%lu%% of a 313-t PAL frame)\n", \
+  g_flightProf.isrCalls, g_flightProf.isrLines, \
+  (g_flightProf.isrCalls ? g_flightProf.isrLines/g_flightProf.isrCalls : 0), \
+  (g_flightProf.isrCalls ? (100*g_flightProf.isrLines)/(g_flightProf.isrCalls*313) : 0)
+printf "  EXPLOSION  : %lu firings, %lu t/firing\n", g_clIsrN[0], \
+  (g_clIsrN[0] ? g_clIsr[0]/g_clIsrN[0] : 0)
+printf "  no-explosion: %lu firings, %lu t/firing\n", g_clIsrN[1], \
+  (g_clIsrN[1] ? g_clIsr[1]/g_clIsrN[1] : 0)
+# DRAW cost vs ship altitude.  Run this on BOTH the combat and the quiet build and compare a row
+# to the SAME row: equal DRAW t/it at matched altitude means combat's extra terrain cost is not
+# combat rendering at all, it is combat throwing the ship to a cheaper/dearer viewpoint.
+printf "\n=== object work inside DRAW ===\n"
+printf "  cells WITH an occupant (all object work) : %lu  = %lu per iteration\n", \
+  g_clObjEnter, ($it ? g_clObjEnter/$it : 0)
+printf "  ...of those, reached raster_scaled_object: %u  = %lu per iteration\n", \
+  g_clObjDraw, ($it ? g_clObjDraw/$it : 0)
+printf "\n=== DRAW (terrain+obj x2) vs ship altitude ($28DA>>5) ===\n"
+set $b = 0
+while $b < 8
+  if g_clAltIter[$b] > 0
+    printf "  alt bucket %d ($%02x-$%02x): %5lu iters  DRAW %5lu t/it (%3lu.%01lu ms)\n", \
+      $b, $b*32, $b*32+31, g_clAltIter[$b], g_clAltDraw[$b]/g_clAltIter[$b], \
+      (g_clAltDraw[$b]*20)/(g_clAltIter[$b]*313), ((g_clAltDraw[$b]*200)/(g_clAltIter[$b]*313))%10
+  end
+  set $b = $b + 1
+end
 detach
 quit

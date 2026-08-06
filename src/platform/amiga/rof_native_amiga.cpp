@@ -875,6 +875,18 @@ extern "C" void flight_vbi_native(void)
                                          : (unsigned short)(b2 + 313 - a2);  // PAL wrap
     g_flightProf.isrLines += dHandler;   // report the real handler cost (excludes the ZP audit)
     g_flightProf.isrCalls++;
+#if defined(ROF_COMBAT_LOAD) && defined(ROF_FLIGHT_PROBE)
+    // Split the REAL handler cost by combat state.  This is the measurement that finished the
+    // combat attribution: the flight VBI carries the faithful 50 Hz sim + all of the audio, it
+    // fires 50x/second no matter how slow the frame is, and its cost is NOT constant — an
+    // explosion floods the SFX ring, so the handler gets more expensive exactly when combat is
+    // heaviest.  Must use dHandler, NOT g_isrBeamLines: the latter deliberately includes the
+    // 2x256-iteration ZP write-set audit above (~70 lines/firing of pure probe overhead), which
+    // would swamp the real signal.
+    {   extern volatile unsigned long g_clIsr[2]; extern volatile unsigned long g_clIsrN[2];
+        const int st = (mem[0x0041u] != 0) ? 0 : 1;
+        g_clIsr[st] += dHandler; g_clIsrN[st]++; }
+#endif
 #ifdef ROF_FLIGHT_PROBE
     unsigned short dFull = (b >= a) ? (unsigned short)(b - a)
                                     : (unsigned short)(b + 313 - a);

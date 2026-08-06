@@ -324,15 +324,19 @@ EXTRA_DEFINES += -DROF_FORCE_SAUCER
 endif
 
 # ===========================================================================================
-# `make COMBAT=1` — THE COMBAT-LOAD BENCHMARK.  Headless flight normally meets no enemies at
-# all, and firing into the VOID measures nothing (2026-07-31: AUTO_FIRE alone read IDENTICAL
-# FPS, because the shot hit nothing — no target, no impact, no explosion).  The reason is that
-# the auto-launch always flies LEVEL 1, and compute_stage_display_geometry ($75F2) derives all
-# three combat knobs from the level:
-#     $0623 emplacement density  = (lvl==1) ? 0 : min(lvl,$2B)<<2
+# `make COMBAT=1` — THE COMBAT-LOAD BENCHMARK.  Headless flight meets almost no enemies, and
+# firing into a near-empty world measures nothing (2026-07-31: AUTO_FIRE alone read IDENTICAL
+# FPS, because the shot hit nothing — no impact, no explosion).  The reason is the LEVEL: the
+# boot init ($3D1D) sets level_stage $006D = 4, and compute_stage_display_geometry ($75F2)
+# derives all three combat knobs from it:
+#     $0623 emplacement density  = (lvl==1) ? 0 : min(lvl,$2B)<<2   (RANDOM gate, /256)
 #     $0621 saucer spawn period  = (lvl< 4) ? 0 : $58 - 2*min(lvl,$22)     (0 = never)
 #     $0624 enemy-fire delay mask= ($2C - min(lvl,$28)) >> 1               (smaller = more)
-# At level 1 that is 0 / 0 / $2B — no gun emplacements, no saucers, no fire.
+# At the default level 4 that is $10 / $50 / $14 = only 6.2% of terrain peaks carry a gun
+# emplacement, a saucer spawn OPPORTUNITY every 80 terrain-draw passes (then half of those are
+# thrown away by a RANDOM gate and more by the "must sit above the terrain" gate), and the
+# enemy-fire pacing mask is 10x slower than at level 40.  Sparse, not absent — which is exactly
+# why a short AUTO_FIRE window saw nothing.
 # COMBAT=1 pins the starting level to COMBAT_LEVEL (default 40), so the whole combat cascade
 # comes out of the FAITHFUL binary logic: 63% of terrain peaks carry a jaggi gun emplacement,
 # a saucer spawns every 20 draw passes, and the emplacements shoot back almost continuously.
