@@ -104,6 +104,8 @@ private:
     Sprite*  shotSpriteBack = nullptr;   // buffer 1
     uint8_t  shotBuildIdx   = 0;         // which buffer buildShotSprite writes this frame (toggles)
     bool     shotWasActive  = false;     // last frame's mem[$0036]!=0 (blank both buffers once on end)
+    uint8_t  shotPrevRows[2] = {0, 0};   // rows each buffer's last build wrote = the incremental
+                                         // clear's extent (the buffers alternate, so per-buffer)
 
     // Stars/space starfield: the 3 Atari players P0/P2/P3 ($0C32/$0E32/$0F32),
     // scrolled + sparsely seeded by the genuine scroll_field_columns ($6AEE).  Each is a

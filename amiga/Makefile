@@ -272,6 +272,36 @@ ifdef BAND_VERIFY
 EXTRA_DEFINES += -DROF_BAND_VERIFY
 endif
 
+# Profiling aid: `make SPRITE_SHAPE=1 PROBES=1` + amiga/sprite_shape.gdb — splits the flight VBI's
+# g_vbiSpriteLines bracket (29 t/firing = ~9% of ALL wall clock, and never examined) into its two
+# callees, buildShotSprite and decodeScannerBlinkCells, and then buildShotSprite into its four
+# internal parts (the 94-byte run scan / the whole-sprite clear / the row decode / the copper+
+# Sprite header pokes) plus the shape counters that say which path each firing took.  Includes an
+# empty-bracket floor sample (g_spNop) — subtract one floor per bracketed part or a cheap part
+# reads as ~the bracket.  Off by default (the brackets are ~0.3 t each on a 29 t population).
+ifdef SPRITE_SHAPE
+EXTRA_DEFINES += -DROF_SPRITE_SHAPE
+endif
+
+# Correctness aid: `make SHOT_VERIFY=1 PROBES=1` + amiga/shot_verify.gdb — in-process differential
+# for buildShotSprite's strip extent.  It now READS the extent from mem[$2865]/mem[$2866] (which
+# build_player2_sprite $8C58 maintains so it can erase the strip next frame) instead of re-deriving
+# it with a 94-byte volatile scan.  That is an Amiga-only render mirror, so `make validate` cannot
+# check it — this runs the old scan alongside the new derivation every call and compares
+# (g_svBad must stay 0).  Off by default: it reinstates exactly the scan the change removed.
+ifdef SHOT_VERIFY
+EXTRA_DEFINES += -DROF_SHOT_VERIFY
+endif
+
+# A/B baseline: `make SHOT_SCAN=1` restores buildShotSprite's ORIGINAL body — the 94-byte volatile
+# scan for the strip extent plus the unconditional 128-byte sprite clear — so the win can be
+# re-measured in one tree (GDBSCRIPT=isr_ab.gdb on this build vs the default; the metric is the
+# WHOLE-VBI t/firing, which is a legitimate cross-build number because the ISR fires 50x/s
+# regardless of frame rate).  Do not combine with SHOT_VERIFY.
+ifdef SHOT_SCAN
+EXTRA_DEFINES += -DROF_SHOT_SCAN
+endif
+
 # Benchmark determinism: `make FIXED_RNG=1` re-pins the POKEY LFSR ($D20A) at two points —
 # immediately before the fresh-start level seeding (rof_native.c intro_random_setup) and on the
 # flight rising edge (RescueOnFractalus.cpp deriveRenderSignals).  Our $D20A is read-clocked

@@ -810,12 +810,14 @@ void RescueOnFractalus::buildAHSprite()
 }
 
 // ---- player laser shot sprite (instrument-free gameplay PMG) ------------------
-// The player's laser is Atari player P2, rendered by draw_player_shot ($8c58) into the P2
-// buffer's UPPER region (mem[$0E32+], separate from the AH ground fill at $0E92+).  The
-// transpiled $8c58 already fills mem[] on the Amiga every flight frame (only its $D0xx writes
-// are ignored), so we mirror it into a sprite exactly like buildAHSprite:
+// The player's laser is Atari player P2, drawn by build_player2_sprite ($8C58 — symbols.csv's
+// name; earlier comments here called it "draw_player_shot", which is not a symbol) into the P2
+// buffer's UPPER region (mem[$0E32+], separate from the AH ground fill at $0E87+).  $8C58 already
+// fills mem[] on the Amiga every flight frame (only its $D0xx writes are ignored), and it also
+// latches $00CB (HPOSP2) and the strip's extent, so we mirror it into a sprite like buildAHSprite:
 //   active  = mem[$0036] != 0   (0 = no shot; 1..~$11 = travel; $81..$8a = impact burst)
 //   pixels  = mem[$0E00 + O]    (8 GRAFP2 bits per row; O in $34..$91)
+//   extent  = mem[$2865] (strip top, relative to $0E32) + mem[$2866] (row count) — see below
 //   HPOS    = mem[$00CB]        (true HPOSP2 shadow → viewport X = 0x81 + (hpos-$32)*2)
 //   colour  = mem[$0037]        (COLPM2 → COLOR27; blue $78 travel → white/orange impact)
 //   size    = mem[$00CD]        (0=1×/1=2×/3=4×; milestone renders 1×, each bit → 2 Amiga px)
@@ -833,6 +835,50 @@ static const int kShotYOff = 0;    // + = down  (Amiga scan lines)
 // (the 1× player→viewport scale, 2 Amiga lores px per Atari colour clock).  The per-call bit
 // loop cost 8 variable-shift iterations (no 68000 barrel shifter); a 256-entry LUT filled once
 // by buildShotExpandLut() replaces it for the per-frame shot / scope-P3 / viewport-P3 mirrors.
+#ifdef ROF_SPRITE_SHAPE
+// ---- Flight-VBI sprite bracket shape probe (make SPRITE_SHAPE=1 + amiga/sprite_shape.gdb) -----
+// game_vbi_isr brackets buildShotSprite + decodeScannerBlinkCells TOGETHER as g_vbiSpriteLines,
+// and that bracket measures 29 t/firing = ~9% of ALL wall clock (the ISR fires 50x/s regardless of
+// frame rate) — with neither function ever profiled.  ~13000 cycles is far more than either looks
+// like it should cost, so split it: WHICH of the two, which PATH inside buildShotSprite, and how
+// the active path divides between the 94-byte no-early-exit run scan / the whole-sprite clear /
+// the row decode / the copper + Sprite-header pokes.
+// g_spNop is one EMPTY lap sampled per call = the lap's own floor; subtract one floor per lap or a
+// cheap part reads as ~the bracket (the SFX_SHAPE lesson: use the split as SHARES, not absolutes).
+extern "C" unsigned short rof_beam_line(void);
+extern "C" volatile unsigned long
+    g_spShotCalls = 0, g_spScanCalls = 0,                          // entries
+    g_spIdle = 0, g_spBlank = 0, g_spActive = 0, g_spNoRun = 0,    // which buildShotSprite path
+    g_spIdleT = 0, g_spRunT = 0, g_spClearT = 0, g_spDecT = 0, g_spCopT = 0,
+    g_spScanT = 0, g_spScanDecodes = 0,
+    g_spRows = 0, g_spRowsMax = 0, g_spTopSum = 0, g_spBotSum = 0,
+    g_spNop = 0, g_spNopT = 0;
+static unsigned short s_spB = 0;
+#define SP_RESET()  (s_spB = rof_beam_line())
+#define SP_LAP(acc) do { unsigned short _n = rof_beam_line(); \
+    (acc) += (_n >= s_spB) ? (unsigned long)(_n - s_spB) : (unsigned long)(_n + 313 - s_spB); \
+    s_spB = _n; } while (0)
+#define SP_NOP()    do { ++g_spNop; SP_RESET(); SP_LAP(g_spNopT); } while (0)
+#define SP_CNT(c)   (++(c))
+#else
+#define SP_RESET()  ((void)0)
+#define SP_LAP(acc) ((void)0)
+#define SP_NOP()    ((void)0)
+#define SP_CNT(c)   ((void)0)
+#endif
+
+#ifdef ROF_SHOT_VERIFY
+// ---- buildShotSprite extent differential (make SHOT_VERIFY=1 + amiga/shot_verify.gdb) ----------
+// buildShotSprite now reads the P2 strip's extent from mem[$2865]/mem[$2866] (written by
+// build_player2_sprite $8C58) instead of re-deriving it with a 94-byte scan.  That is an
+// Amiga-only render mirror, so `make validate` cannot check it — this runs the old scan alongside
+// and byte-compares the two.  g_svBad must stay 0 over a long flight.
+extern "C" volatile unsigned long
+    g_svCalls = 0, g_svBad = 0, g_svBenign = 0,
+    g_svLastTop = 0, g_svLastRows = 0, g_svOraTop = 0, g_svOraRows = 0, g_svLastLit = 0,
+    g_svLast36 = 0, g_svLast2865 = 0, g_svLast2866 = 0;
+#endif
+
 static uint16_t s_shotExpand[256];
 static bool     s_shotExpandReady = false;
 static void buildShotExpandLut()
@@ -849,42 +895,123 @@ static inline uint16_t expandShotRow(uint8_t b) { return s_shotExpand[b]; }
 
 void RescueOnFractalus::buildShotSprite()
 {
+    SP_CNT(g_spShotCalls); SP_NOP(); SP_RESET();
     if (mem[0x0036] == 0) {                            // no shot active
+        SP_CNT(g_spIdle);
         if (shotWasActive) {                           // shot just ended: blank BOTH buffers once so
+            SP_CNT(g_spBlank);
             uint16_t* a = shotSprite->data()     + 2;  // whichever is on-screen shows nothing, then
             uint16_t* b = shotSpriteBack->data() + 2;  // leave ch4 pointing at a blank buffer (no more
-            for (int i = 0; i < kShotRows * 2; i++) { a[i] = 0; b[i] = 0; }   // per-frame work while idle)
+            int n = (shotPrevRows[0] > shotPrevRows[1] ? shotPrevRows[0] : shotPrevRows[1]) * 2;
+            for (int i = 0; i < n; i++) { a[i] = 0; b[i] = 0; }   // per-frame work while idle)
+            shotPrevRows[0] = shotPrevRows[1] = 0;     // both buffers are blank again
             if (flightCopper) flightCopper->setHudSprite(4, *shotSprite);
             shotWasActive = false;
         }
+        SP_LAP(g_spIdleT);
         return;
     }
+    SP_CNT(g_spActive);
     shotWasActive = true;
     // Build into the OFF-screen buffer (the one NOT latched for display this frame): the copper
     // fetched SPR4PT at the top of the frame, before this VBI-time build, so re-pointing it now
     // takes effect NEXT frame — the displayed buffer is always a fully-built one, never mid-write.
     Sprite* s = shotBuildIdx ? shotSpriteBack : shotSprite;
     uint16_t* d = s->data() + 2;                       // skip the 2 control words
-    // Find the shot's non-zero run in the P2 UPPER region ($34..$91; $92+ is the AH ground fill).
+#ifdef ROF_SHOT_SCAN
+    // A/B baseline (make SHOT_SCAN=1): the ORIGINAL scan + unconditional clear, kept so the win can
+    // be re-measured in one tree (`GDBSCRIPT=isr_ab.gdb` on this build vs the default).  Do not
+    // combine with SHOT_VERIFY — the differential would then compare the scan against itself.
     int top = -1, bot = -1;
     for (int o = 0x34; o <= 0x91; o++)
         if (mem[0x0E00 + o]) { if (top < 0) top = o; bot = o; }
+    int rows = (top < 0) ? 0 : bot - top + 1;
+    if (rows > kShotRows) rows = kShotRows;
+    if (top < 0) top = 0x34;
+    SP_LAP(g_spRunT);
     for (int i = 0; i < kShotRows * 2; i++) d[i] = 0;  // clear, then decode the run below
-    if (top >= 0) {
-        int rows = bot - top + 1;
-        if (rows > kShotRows) rows = kShotRows;
+    SP_LAP(g_spClearT);
+#else
+    // The strip's extent is ALREADY in mem[]: build_player2_sprite ($8C58, which draws it) records
+    // the start row in $2865 and the length in $2866 precisely so it can erase exactly that region
+    // on its NEXT call, and every drawing path sets both ($8ce6 STX $2865, $8d00 $2866 = end-start).
+    // Nothing else in the binary writes either byte.  So the 94-byte volatile scan that used to
+    // re-derive them was pure waste — and expensive waste: GCC compiled it as a 32-bit loop counter
+    // with a `.l`-indexed load and a 32-bit immediate compare, ~72 cycles/iteration x 94 with no
+    // early exit.  Measured (SPRITE_SHAPE): 53% of this function, and this function is 88% of the
+    // flight VBI's whole sprite bracket, which the ISR pays 50x/s regardless of frame rate.
+    // The scan was also NOT strictly correct: draw_ah_ground_fill_p2 ($40B0) writes as low as
+    // $0E87, inside the scanned window, so the artificial-horizon fill could extend the run it
+    // found.  Reading the extent is immune to that.
+    // $8C58 is skipped on some frames (the $00C8 parity gate / event_active_flag) — but then the
+    // buffer and $2865/$2866 are BOTH unchanged, so they still describe it.
+    // The $34 lower bound is the old scan's window: a strip starting at $32/$33 was clipped to $34
+    // and setY placed accordingly, so clip identically here.
+    int top = 0x32 + (int)mem[0x2865], rows = (int)mem[0x2866];
+    if (top < 0x34) { rows -= 0x34 - top; top = 0x34; }
+    if (rows > kShotRows) rows = kShotRows;            // $2866 can reach $56; the sprite is 32 rows
+    if (rows < 0) rows = 0;
+#ifdef ROF_SHOT_VERIFY
+    // In-process differential (make SHOT_VERIFY=1 + amiga/shot_verify.gdb).  make validate cannot
+    // check this: it is an Amiga-only render mirror, not a mem[] contract.  So re-derive the extent
+    // the OLD way (the 94-byte scan) every call and compare — but compare what actually reaches the
+    // screen, the 32 decoded SPRITE ROWS plus (only when some row is lit) the VSTART.  An extent
+    // difference over rows that are all ZERO produces a byte-identical, still-invisible sprite;
+    // that is counted separately as g_svBenign, and g_svBad must stay 0.
+    { int oTop = -1, oBot = -1;
+      for (int o = 0x34; o <= 0x91; o++)
+          if (mem[0x0E00 + o]) { if (oTop < 0) oTop = o; oBot = o; }
+      int oRows = (oTop < 0) ? 0 : oBot - oTop + 1;
+      if (oRows > kShotRows) oRows = kShotRows;
+      if (oTop < 0) oTop = top;                        // no run: the old code left top untouched
+      int differs = 0, lit = 0;
+      for (int i = 0; i < kShotRows; i++) {
+          uint16_t o = (i < oRows) ? expandShotRow(mem[0x0E00 + oTop + i]) : 0;
+          uint16_t n = (i < rows)  ? expandShotRow(mem[0x0E00 + top  + i]) : 0;
+          if (o != n) differs = 1;
+          if (n | o) lit = 1;
+      }
+      g_svCalls++;
+      if (differs || (lit && oTop != top)) g_svBad++;
+      else if (oRows != rows || oTop != top) g_svBenign++;
+      if (differs || (lit && oTop != top) || oRows != rows || oTop != top) {
+          g_svLastTop = (unsigned long)top;  g_svLastRows = (unsigned long)rows;
+          g_svOraTop = (unsigned long)oTop; g_svOraRows = (unsigned long)oRows;
+          g_svLastLit = (unsigned long)lit;
+          g_svLast36 = mem[0x0036];  g_svLast2865 = mem[0x2865]; g_svLast2866 = mem[0x2866];
+      } }
+#endif
+    SP_LAP(g_spRunT);
+    // Incremental clear (the buildScopeP3Sprite/buildViewportP3Sprite pattern): the decode below
+    // overwrites rows 0..rows-1 anyway, so only rows this build does NOT reach need zeroing — and
+    // only as far as THIS buffer's last build reached.  Mean run is 4.3 rows, so the old
+    // unconditional 128-byte clear (which GCC turned into a `jsr memset` byte loop, 7.7 t/call =
+    // 25% of the function) is ~0 work in steady state.  Per-buffer because the two alternate.
+    for (int i = rows; i < (int)shotPrevRows[shotBuildIdx]; i++) { d[i * 2] = 0; d[i * 2 + 1] = 0; }
+    shotPrevRows[shotBuildIdx] = (uint8_t)rows;
+    SP_LAP(g_spClearT);
+#endif
+    if (rows > 0) {
+#ifdef ROF_SPRITE_SHAPE
+        g_spRows += (unsigned long)rows; g_spTopSum += (unsigned long)top;
+        g_spBotSum += (unsigned long)(top + rows - 1);
+        if ((unsigned long)rows > g_spRowsMax) g_spRowsMax = (unsigned long)rows;
+#endif
+        const volatile uint8_t* src = mem + 0x0E00 + top;   // walked, not re-indexed per row
         for (int i = 0; i < rows; i++) {
-            uint16_t m = expandShotRow(mem[0x0E00 + top + i]);
+            uint16_t m = expandShotRow(*src++);
             d[i * 2] = m; d[i * 2 + 1] = m;            // both planes → pen 11 → COLOR27
         }
         s->setY((uint16_t)(kTerrainLine + (top - 0x32) + kShotYOff));            // buffer row → Amiga line
         s->setX((uint16_t)(0x81 + ((int)mem[0x00CB] - 0x32) * 2 + kShotXOff));   // HPOSP2 → viewport X
-    }
+    } else SP_CNT(g_spNoRun);
+    SP_LAP(g_spDecT);
     if (flightCopper) {
         flightCopper->setHudSprite(4, *s);                            // display this buffer next frame
         flightCopper->setShotColor(atariToOCS(mem[0x0037]));          // COLPM2 → COLOR27
     }
     shotBuildIdx ^= 1;                                                // next frame builds the other buffer
+    SP_LAP(g_spCopT);
 }
 
 // ---- Targeting Scope (#8) P3 object -------------------------------------------------
@@ -3990,11 +4117,14 @@ void RescueOnFractalus::decodeCockpitSpan(uint16_t addr, uint8_t nCells)
 // after startup_init() has written this frame's value (flightScannerTick runs after the handler).
 void RescueOnFractalus::decodeScannerBlinkCells()
 {
+    SP_CNT(g_spScanCalls); SP_RESET();
     static uint8_t last = 0xFFu;
     uint8_t v = mem[0x33DFu];
-    if (v == last) return;
+    if (v == last) { SP_LAP(g_spScanT); return; }
     last = v;
+    SP_CNT(g_spScanDecodes);
     decodeCockpitSpan(0x33DFu, 2u);
+    SP_LAP(g_spScanT);
 }
 
 // Decode the whole cockpit region once (scene-entry repaint / registry overflow): all 4
