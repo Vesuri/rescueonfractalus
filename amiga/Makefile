@@ -213,6 +213,13 @@ ifdef VERIFY
 EXTRA_DEFINES += -DROF_SFXMIX_VERIFY
 obj/SfxMixerAssembler.o : VASMFLAGS += -DROF_SFXMIX_VERIFY
 endif
+# `make FUZZ=1` — ONE-SHOT on-target fuzz of the asm twin vs its C oracle at boot (20000 random
+# mem[] states, every path, incl. the ones flight rarely reaches), read via amiga/sfxmix_fuzz.gdb.
+# This is the check VERIFY cannot make: sfxmix_verify only ever sees states real flight produces,
+# and `make validate` can only exercise the C twin on the host.  Costs a few seconds at startup.
+ifdef FUZZ
+EXTRA_DEFINES += -DROF_SFXMIX_FUZZ
+endif
 endif
 
 # Profiling aid: `make RASTER_C=1 RAS_SHAPE=1 PROBES=1` + amiga/ras_shape.gdb — the flight

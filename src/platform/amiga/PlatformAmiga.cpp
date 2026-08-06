@@ -1063,7 +1063,7 @@ extern "C" void rof_pokey_write(uint8_t reg, uint8_t val)
     }
 }
 
-#ifdef ROF_SFXMIX_VERIFY
+#if defined(ROF_SFXMIX_VERIFY) || defined(ROF_SFXMIX_FUZZ)
 // The sfxmix in-process differential runs the asm twin and the C twin back-to-back on the same
 // state.  rof_pokey_write's change-detect (pokey[reg] == val -> skip update_paula_channel) would
 // otherwise make the SECOND run free — it re-writes the values the first run just latched — so
@@ -1072,6 +1072,9 @@ extern "C" void rof_pokey_write(uint8_t reg, uint8_t val)
 // compared observable is mem[$D200-$D20F], which rof_pokey_write writes on BOTH paths.
 extern "C" void rof_pokey_shadow_save(uint8_t* dst) { for (int i = 0; i < 16; i++) dst[i] = pokey[i]; }
 extern "C" void rof_pokey_shadow_load(const uint8_t* src) { for (int i = 0; i < 16; i++) pokey[i] = src[i]; }
+// ...and for the boot-time fuzz: discard the garbage "want" its random POKEY writes
+// recorded, so the first real flush_paula does not program Paula from fuzz state.
+extern "C" void rof_pokey_want_reset(void) { want_valid = 0; }
 #endif
 
 void PlatformAmiga::hwWrite(uint16_t addr, uint8_t val)

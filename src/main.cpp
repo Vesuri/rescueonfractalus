@@ -16,6 +16,11 @@
 /* Native (rof_native.c) one-shot builder for the 64KB mul_u8 lookup table. */
 extern "C" void rof_mul_table_init(void);
 
+#ifdef ROF_SFXMIX_FUZZ
+/* One-shot on-target fuzz of the hand-asm SFX mixer twin (rof_native.c, `make FUZZ=1`). */
+extern "C" void sfx_mixer_fuzz(unsigned long cases);
+#endif
+
 /* Default to the pristine rof.xex so every build boots the SAME initial state and
    game_entry code path.  Pass a path to boot a different image where the platform
    supports it (SDL: a flat 64 KB .bin; Amiga ignores it — the image is embedded).
@@ -38,6 +43,14 @@ int main(int argc, char* argv[]) {
        Otherwise it is built lazily on the first flight VBI ISR firing, a ~3.6s (7MHz 68000)
        stall that freezes the display right at flight entry.  See rof_mul_table_init(). */
     rof_mul_table_init();
+
+#ifdef ROF_SFXMIX_FUZZ
+    /* One-shot on-target fuzz of the hand-asm SFX mixer twin vs its C oracle over randomised
+       mem[] state, covering the paths flight rarely reaches (sfxmix_verify only sees the ones it
+       does, and `make validate` can only exercise the C twin on the host).  Restores all state
+       it touches; read the tallies with amiga/sfxmix_fuzz.gdb.  `make FUZZ=1` only. */
+    sfx_mixer_fuzz(20000uL);
+#endif
 
     plt.run();   /* runs the game; returns when the user quits */
     return 0;

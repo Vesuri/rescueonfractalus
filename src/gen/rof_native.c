@@ -9446,6 +9446,141 @@ extern void sfx_reorder_voice_slot(void);   /* SfxMixerAssembler.s */
 void sfx_reorder_voice_slot(void) { sfx_reorder_voice_slot_c(); }
 #endif
 
+#if defined(ROF_SFXMIX_ASM) && defined(ROF_SFXMIX_FUZZ)
+/* ── ON-TARGET FUZZ of the asm mixer twin (`make FUZZ=1`, read via amiga/sfxmix_fuzz.gdb) ─────
+ * WHY THIS EXISTS, and why the flight differential was not enough: sfxmix_verify only compares
+ * the two twins on states flight actually reaches, so a path flight rarely takes (e.g. the
+ * y >= $0D early-out at $5641, or a voice reg index outside the POKEY window) can be wrong and
+ * never show up.  `make validate` does cover those — but only for the C twin, on the host; it
+ * cannot run m68k asm.  This closes that gap: randomised mem[] state, every path, on target.
+ *
+ * Runs ONCE at startup from main() (before any game code), so it is free at runtime.  It seeds
+ * mem[$0600-$0820] — wide enough to cover every cell the chain READS ($065D/$066B/$0679 columns,
+ * $0705+ reg idx, $0714-$0717) and every cell it can WRITE (the moves index $0705 by an
+ * arbitrary byte, so up to $0705+$FF = $0804) — plus cpu.Y over 0..15 so the $0D boundary and
+ * both scan branches are hit.  Everything is restored afterwards: the window, pokey[], the
+ * pending-Paula flag and cpu, so the game boots into untouched state. */
+#define SFXF_LO 0x0600u
+#define SFXF_HI 0x0820u
+#define SFXF_N  (SFXF_HI - SFXF_LO)
+extern void rof_pokey_want_reset(void);
+volatile unsigned long g_sfxFuzzCases = 0, g_sfxFuzzBad = 0, g_sfxFuzzFirstBad = 0;
+volatile unsigned long g_sfxFuzzBadCell = 0, g_sfxFuzzBadY = 0;
+volatile unsigned long g_sfxFuzzBadAsm = 0, g_sfxFuzzBadC = 0;
+/* Path coverage, derived from the inputs in the driver (no instrumentation inside the twins):
+ * 0 = idle slot, a < top ($5624 done)          1 = idle slot, promote ($562d move)
+ * 2 = idle slot, a == top and y < topidx       3 = active slot, y >= $0D ($5643 early-out)
+ * 4 = active slot, next-best == top (no move)  5 = active slot, move to next-best ($5650) */
+volatile unsigned long g_sfxFuzzPath[6] = { 0, 0, 0, 0, 0, 0 };
+static unsigned long sfxf_rng = 0x1D872B41uL;
+static uint8_t sfxf_rand(void) {
+    sfxf_rng ^= sfxf_rng << 13; sfxf_rng ^= sfxf_rng >> 17; sfxf_rng ^= sfxf_rng << 5;
+    return (uint8_t)(sfxf_rng >> 11);
+}
+void sfx_mixer_fuzz(unsigned long cases) {
+    uint8_t* const M = (uint8_t*)mem;
+    static uint8_t keep[SFXF_N], seed[SFXF_N], asmv[SFXF_N], pokeyKeep[16], pokeySeed[16];
+    const Cpu6502 cpuKeep = cpu;
+    for (unsigned i = 0; i < SFXF_N; i++) keep[i] = M[SFXF_LO + i];
+    rof_pokey_shadow_save(pokeyKeep);
+
+    /* Seed only the columns the chain READS ($065D-$0717) — seeding the whole compare window
+     * cost 544 PRNG calls/case and made boot take minutes on the 7 MHz 68000.  The compare still
+     * spans $0600-$0820 to catch a stray write; the unseeded parts are restored identically
+     * before each of the two runs, so they compare equal unless something writes out of bounds. */
+    for (unsigned long t = 0; t < cases; t++) {
+        for (unsigned i = 0; i < SFXF_N; i++) seed[i] = keep[i];
+        for (unsigned a = 0x065Du; a <= 0x0717u; a++) seed[a - SFXF_LO] = sfxf_rand();
+        for (int i = 0; i < 16; i++) pokeySeed[i] = sfxf_rand();
+        const uint8_t y = (uint8_t)(sfxf_rand() & 0x0F);   /* 0..15: straddles the $0D boundary */
+        /* tx = mem[$0715] is a voice SLOT index in the real game, so keep it 0..15; that also
+         * bounds the two moves' writes to $0705+0..15 instead of $0705+$FF. */
+        seed[0x0715u - SFXF_LO] &= 0x0F;
+        /* ⚠ BIAS, or the interesting branches never run.  With uniform bytes mem[$0705+y] is 0
+         * only 1/256 of the time, so the first fuzz run hit the three idle-slot paths 10/2/0
+         * times out of 4543 — and the exact-priority-TIE path ($5628 CPY $0715, the y-vs-topidx
+         * tiebreak) not at all.  Force an idle slot in half the cases, and inside those force
+         * a == $0714 in a quarter so the tiebreak is exercised from both sides. */
+        {
+            const uint8_t sel = sfxf_rand();
+            if (sel & 1) {
+                seed[(0x0705u + y) - SFXF_LO] = 0;              /* idle slot -> the 561c path */
+                if ((sel & 6) == 0) {
+                    const uint8_t a = (uint8_t)(sfxf_rand() & 0x0F);
+                    seed[(0x066Bu + y) - SFXF_LO] = a;          /* a == top: exact tie */
+                    seed[0x0714u - SFXF_LO] = a;
+                }
+            } else if ((sel & 6) == 0) {
+                seed[(0x0705u + y) - SFXF_LO] = (uint8_t)(2 + (sfxf_rand() % 7));  /* in-range reg */
+            }
+        }
+
+        /* Classify the path from the seeded inputs, for the coverage report. */
+        {
+            const uint8_t x0 = seed[(0x0705u + y) - SFXF_LO];
+            if (x0 == 0) {
+                const uint8_t a   = (uint8_t)(seed[(0x066Bu + y) - SFXF_LO] & 0x0F);
+                const uint8_t top = seed[0x0714u - SFXF_LO];
+                if (a < top)                                   g_sfxFuzzPath[0]++;
+                else if (a != top || y >= seed[0x0715u - SFXF_LO]) g_sfxFuzzPath[1]++;
+                else                                           g_sfxFuzzPath[2]++;
+            } else if (y >= 0x0D)                              g_sfxFuzzPath[3]++;
+            else {
+                /* the pick_next result is not known without running it; count both buckets by
+                 * the post-run $0715 vs $0717 comparison instead (done after the asm run). */
+            }
+        }
+
+        for (unsigned i = 0; i < SFXF_N; i++) M[SFXF_LO + i] = seed[i];
+        rof_pokey_shadow_load(pokeySeed);
+        cpu.A = sfxf_rand(); cpu.X = sfxf_rand(); cpu.Y = y;
+        const Cpu6502 cpuIn = cpu;
+
+        sfx_reorder_voice_slot();                       /* the asm twin */
+        for (unsigned i = 0; i < SFXF_N; i++) asmv[i] = M[SFXF_LO + i];
+        uint8_t asmPokey[16]; rof_pokey_shadow_save(asmPokey);
+        const Cpu6502 cpuAsm = cpu;
+
+        if (seed[(0x0705u + y) - SFXF_LO] != 0 && y < 0x0D)
+            g_sfxFuzzPath[asmv[0x0715u - SFXF_LO] == asmv[0x0717u - SFXF_LO] ? 4 : 5]++;
+
+        for (unsigned i = 0; i < SFXF_N; i++) M[SFXF_LO + i] = seed[i];
+        rof_pokey_shadow_load(pokeySeed);
+        cpu = cpuIn;
+        sfx_reorder_voice_slot_c();                     /* the oracle */
+        uint8_t cPokey[16]; rof_pokey_shadow_save(cPokey);
+
+        g_sfxFuzzCases++;
+        int bad = 0;
+        for (unsigned i = 0; i < SFXF_N; i++)
+            if (M[SFXF_LO + i] != asmv[i]) {
+                bad = 1;
+                if (!g_sfxFuzzBad) { g_sfxFuzzBadCell = SFXF_LO + i;
+                                     g_sfxFuzzBadAsm = asmv[i]; g_sfxFuzzBadC = M[SFXF_LO + i]; }
+            }
+        /* pokey[] is the real AUDF/AUDC the channel ends up with — the distortion + volume
+         * nibble the reported bugs are about — so compare it, not just the mem[] mirror. */
+        for (int i = 0; i < 16; i++)
+            if (cPokey[i] != asmPokey[i]) {
+                bad = 1;
+                if (!g_sfxFuzzBad) { g_sfxFuzzBadCell = (unsigned long)(0xD200 + i);
+                                     g_sfxFuzzBadAsm = asmPokey[i]; g_sfxFuzzBadC = cPokey[i]; }
+            }
+        if (cpu.A != cpuAsm.A || cpu.X != cpuAsm.X || cpu.Y != cpuAsm.Y) {
+            bad = 1;
+            if (!g_sfxFuzzBad) g_sfxFuzzBadCell = 0xC0FFu;
+        }
+        if (bad) { if (!g_sfxFuzzBad) { g_sfxFuzzFirstBad = g_sfxFuzzCases; g_sfxFuzzBadY = y; }
+                   g_sfxFuzzBad++; }
+    }
+
+    for (unsigned i = 0; i < SFXF_N; i++) M[SFXF_LO + i] = keep[i];
+    rof_pokey_shadow_load(pokeyKeep);
+    rof_pokey_want_reset();            /* drop the garbage Paula "want" the fuzz just recorded */
+    cpu = cpuKeep;
+}
+#endif
+
 /* Advance one envelope phase by its step, wrapping like the 6502 BCD-ish accumulator:
  * a sum that goes negative ($80+) wraps forward by $0A; otherwise it saturates just below
  * the $2D table size (at $2C). */
