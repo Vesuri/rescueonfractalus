@@ -451,3 +451,127 @@ directly. Prime suspect = **object drawing** (ground objects / downed pilot / en
 for terrain-body rows (only band rows 43-46 are read back). And `draw_scaled_shape` (rescue-figure
 zoom) writes a bitmap into the field via `plot_clipped_pixel`. **Measure first** with the current
 all-asm build (`make PROBES=1` + `diag_run.sh`) before committing scope.
+
+---
+
+## Phase 6 — the SFX voice-priority mixer ✅ DONE 2026-08-06 (commit a2f331f)
+
+**First asm twin outside the terrain pipeline.** `SfxMixerAssembler.s` replaces
+`sfx_reorder_voice_slot` ($5614) and inlines all three leaves — `sfx_voice_write_freq_ctrl`
+($5673), `sfx_pick_top_voice` ($568A), `sfx_pick_next_voice` ($56AF) — into one routine.
+Seam: `ROF_SFXMIX_ASM`, fallback `make SFXMIX_C=1` (which `SFX_SHAPE=1` forces, because the
+shape probe's `SX_LEAF` brackets live in the C bodies the asm replaces).
+
+**Why a non-rendering routine was worth asm'ing.** It sits in the 50 Hz flight VBI, which fires
+50×/s *regardless of frame rate* — so unlike the terrain pipeline it is a flat tax on all wall
+clock (~31% of it), not something a slow frame dilutes. In combat: ISR ~96 t/firing, sfx block
+43 t, event-ring drain 27.7 t, and this chain alone 22.4 t/firing (3.32 calls × 6.70 t).
+
+### Measure first — the leaf split that resized the job (commit e6e296a)
+The plan had sized this at "30-40% of 21.8 t/firing = 2-3% of all wall clock". Floor-corrected
+`SX_SPAN` brackets on each leaf said otherwise, per 6.70 t call:
+
+| part | t/call | share | asm-addressable? |
+|---|---|---|---|
+| the two `rof_pokey_write` calls (C++ change-detect + `update_paula_channel`) | 2.95 | 44% | **no** |
+| `write_freq_ctrl`'s own mem[] loads + call plumbing | 1.05 | 16% | yes |
+| `sfx_pick_next_voice` (12-slot scan) | 1.04 | 16% | yes |
+| `sfx_pick_top_voice` (12-slot scan) | 0.90 | 13% | yes |
+| reorder's own compare/move logic | 0.85 | 13% | yes |
+
+Only 57% was reachable ⇒ ceiling ~1.5%, not 2-3%. **Method:** `g_sxNop`/`g_sxNopT` is an EMPTY
+bracket sampled once per call = the bracket's own floor (0.29 t); subtract one floor per leaf
+call. The five added brackets took the call's own reading 6.70 → 10.83 t, so the split is only
+usable as *shares*.
+
+### ⚠⚠ v1 was 5% SLOWER than the C — the most transferable lesson in this document
+GCC fully inlines **and fully unrolls** both 12-slot scans into straight-line
+absolute-addressed code:
+
+```
+move.b (mem+$0706).l,d1   ; 16 cyc
+beq.s  next               ; 10 cyc      => 26 cycles for an inactive slot
+```
+
+The textbook pointer-walked loop v1 used is *worse*:
+
+```
+tst.b  (a0)+   ;  8
+beq.s  .nx     ; 10
+addq.l #1,a1   ;  8
+dbra   d2,.lp  ; 10        => 36 cycles for an inactive slot
+```
+
+Ten cycles per slot × 12 slots × 1.14 scans/call. **On the 68000 the loop bookkeeping (18 cyc)
+costs more than autoincrement saves over absolute addressing (8 cyc).** This is the boundary of
+CLAUDE.md's "pointer-walk with autoincrement, never multiply+index in a loop" rule: that rule
+kills a `mulu`+index, it does **not** beat an unrolled absolute scan. v1 also imposed a
+10-register `movem` (~180 cycles of prologue+epilogue) against GCC's 3 (~68) — a handicap on its
+own larger than everything the twin saved.
+
+⇒ **New standing step: disassemble what GCC actually emitted before designing the asm.** If it
+already inlined and unrolled, the headroom is small and the design must beat *straight-line*
+code, not a loop.
+
+### What v2 keeps (the parts where hand-asm genuinely wins)
+- **Unrolled** scans (a `PT_SLOT`/`PN_SLOT` macro × 12), but with `tst.b (a0)+` for the per-slot
+  active test — 18 cyc/slot vs GCC's 26. Autoincrement wins *once the loop is gone*.
+- A **5-register** `movem` (`d2/d5/a2-a4`). `cpu.Y` needs no register at all: nothing in the
+  chain writes it, so the epilogue just copies `cpu.Y` into `cpu.A`.
+- The four table bases pinned in address registers, chosen so one base reaches several columns
+  with an 8-bit displacement: `a2 = mem+$0705` also gives `$0714-$0717` at `$0F-$12(a2)`;
+  `a4 = mem+$066B` also gives freq at `$0E(a4)` and distortion at `-$0E(a4)`. Every mem[]/cpu
+  touch is then a 12-cycle `d(An)` instead of a 16-cycle absolute.
+- The slot index is a compile-time constant per unrolled slot, so the `$0715`/`$0717` store
+  needs no counter register, and `pick_next`'s exclusion test is an 8-cycle `cmpi.b #slot,d2`.
+
+### Faithfulness traps specific to this twin
+- **`bus_write`'s hardware-range test must be reproduced.** The POKEY writes are
+  `bus_write($D1FE+x)` / `bus_write($D1FF+x)` with `x = mem[$0705+y]` an arbitrary byte, and
+  bus.h routes only $D200-$D20F to `rof_pokey_write`; anything else in $D000-$D7FF is dropped
+  **without touching mem[]**. So AUDF lands only for x ∈ [2,17], AUDC only for x ∈ [1,16] —
+  hence a `cmp.w #16 / bcc` guard on each, not an unconditional call.
+- **The entry `cpu.X` is NOT an input.** `5619 TXA; 561a BNE 5641` tests X as the JSR at 5616
+  *left* it (= `mem[$0705+Y]`), so the branch is "is this slot ACTIVE?". The C twin always read
+  it in the right place but its doc comment called cpu.X "a selector"; building the asm from
+  that comment produced a first-call mismatch. Comment corrected in e6e296a.
+- `cpu.A` is computed even when the AUDC write is dropped; each scan's `$0716` init happens even
+  when no slot wins (while `$0714/$0715/$0717` keep their old values).
+
+### Verification — and the two harness traps it exposed
+`make VERIFY=1 PROBES=1 COMBAT=1 FIXED_RNG=1` + **`amiga/sfxmix_verify.gdb`**: 0 mismatch over
+8443 on-target calls, comparing `mem[$0705-$0717]`, the POKEY mirror `mem[$D200-$D20F]` and
+cpu.A/X/Y. `make validate FN=sfx` stays green on all 11 sfx fixtures.
+
+- ⚠ **The differential must ALTERNATE the two implementations' order**, unlike every other twin
+  here, because the callee is **not pure**: `rof_pokey_write` → `update_paula_channel` sits
+  behind several global caches, so whoever runs first warms them and the second side gets its
+  Paula work free. Always-asm-first read the asm as **24-34% slower**, and rewinding `pokey[]`
+  alone did not fix it. Alternating per call puts the bias on both sides equally so it cancels
+  in the ratio. **Generalise: check the callee for caches before trusting a fixed-order A/B.**
+- ⚠ **`$a0`/`$a1` are m68k register names in gdb.** `set $a0 = g_fooTicks` writes the target's
+  address register — it corrupted the run past the first breakpoint and produced a *plausible*
+  "21% faster" reading that was pure garbage. Name convenience variables `$sa0`/`$sc0`/….
+
+### Result
+Per-call **asm/C = 0.77-0.80** over two runs (the shared ~2.2 t `FP_TIME` floor is in both, so
+the true body speedup is larger). End-to-end via the new **`amiga/isr_ab.gdb`**: flight VBI
+**95.52 → 89.78 t/firing**, activity-normalised for the two runs' unequal fight (ring/firing
+3.57 vs 3.74) ⇒ **−4.7 t/firing = −5% of the ISR ≈ 1.5% of ALL wall clock**. `integ` (16.72 vs
+16.81) and `proj` (11.22 vs 11.10) confirm the runs were otherwise comparable.
+
+`isr_ab.gdb` is a **legitimate cross-build A/B**, unlike iter/frame throughput: the metric is
+ticks *per firing* and the ISR runs 50×/s regardless of how far the main loop got. It still
+depends on a comparable audio/combat workload, which is what its ACTIVITY line is for.
+
+### NEXT in this area — the sibling the leaf split exposed (NOT started)
+The **POKEY→Paula write path is 44% of the mixer call ≈ 3.2% of all wall clock and nothing has
+been tried on it.** `update_paula_channel` only records into `want_*`; `flush_paula` programs
+Paula once per frame from `game_vbi_isr` — so every recompute except the last one per channel
+per frame is waste, and `rof_pokey_write` could just set a per-channel dirty bit. It is also
+strictly *more* correct: `sfx_voice_write_freq_ctrl` writes AUDF then AUDC for the same channel,
+so a changed pair recomputes twice and the first pass runs against the stale AUDC — a transient
+`update_paula_channel`'s own comment describes as a hazard it works around.
+⚠ **Size it first:** 6383 upc calls / 2798 firings = 2.28/firing over only 4 channels, so the
+redundancy may be ~0.5-1 call/firing (≈0.4-0.8% of wall), not the full 3.2%. And it is not
+`mem[]`-observable, so `make validate` cannot check it — verify by ear + `ROF_BEEP_CAP`.

@@ -210,7 +210,9 @@ make validate FN="name"    # only tests whose name contains a substring
 > the flight terrain rasterizer (`TerrainRasterizeAssembler.s`: `terrain_column_rasterize_core` +
 > `flight_edge_plot_asm`); `project_terrain_points` (`ProjectTerrainAssembler.s`);
 > `terrain_subdivide_column` (`TerrainSubdivideAssembler.s`); `terrain_frame_setup` loops
-> (`TerrainFrameSetupAssembler.s`); `fill_terrain` (`FillTerrainAssembler.s`). Each has an
+> (`TerrainFrameSetupAssembler.s`); `fill_terrain` (`FillTerrainAssembler.s`); the SFX
+> voice-priority mixer chain (`SfxMixerAssembler.s` — the first twin outside the terrain
+> pipeline; it lives in the 50Hz VBI, so it taxes wall clock regardless of frame rate). Each has an
 > `ROF_<NAME>_ASM` seam + a `make <NAME>_C=1` C-fallback. Verify asm twins with `make VERIFY=1 PROBES=1`
 > + the matching `amiga/*_verify.gdb` (in-process differential vs the C oracle — NOT cross-run
 > render-diff). See `docs/asm-migration-plan.md`.
@@ -491,6 +493,16 @@ Rewrite hot functions in idiomatic C:
   `p += stride` / `p -= stride` (`move (a0)+` / `-(a0)`). Reuse a walked pointer across phases
   where the geometry allows (collision's scan leaves the pointer at row k, so the waterfall
   steps it back down with no fresh multiply).
+  ⚠ **This rule kills a `mulu`+index — it does NOT beat an UNROLLED absolute scan.** Over a
+  short fixed-length array GCC often emits straight-line absolute code (`move.b (base+i).l,dn`
+  16 cyc + `beq.s` 10 = 26/element), which is *cheaper* than a pointer loop (`tst.b (a0)+` 8 +
+  `beq.s` 10 + `addq.l #1,a1` 8 + `dbra` 10 = 36/element): the 18 cycles of loop bookkeeping
+  exceed the 8 that autoincrement saves on addressing. Measured on the SFX mixer's 12-slot
+  scans, where a "clean" pointer-walked asm twin came out **5% slower than the C**; the fix was
+  to unroll as well and keep `(a0)+` only for the per-element test. **So: disassemble what GCC
+  emitted BEFORE designing the asm** — if it already inlined and unrolled, you must beat
+  straight-line code, and the headroom is small. Watch the prologue too: a 10-register `movem`
+  costs ~180 cycles against GCC's 3-register ~68, which can exceed the whole win.
 - **Batch bulk clears/copies with `move.l` through a NON-VOLATILE alias** of `mem[]`
   (`uint8_t* M = (uint8_t*)mem;`). Casting away `volatile` lets the compiler emit 4-byte stores
   and a tight loop. SAFE only for buffers the ISR doesn't touch concurrently — the main loop
