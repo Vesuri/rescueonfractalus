@@ -121,13 +121,28 @@ extern unsigned short rof_beam_line(void);   /* ROF_TDRAW_PROF normally declares
 extern volatile unsigned long g_sxEvLoad, g_sxEvLoadT, g_sxReord, g_sxReordT;
 extern volatile unsigned long g_sxTopScan, g_sxNextScan, g_sxWrCtrl, g_sxWrFreq, g_sxRingPush;
 extern volatile unsigned long g_sxExpired, g_sxActFreq, g_sxActDur, g_sxEnvGated;
+/* Leaf split of sfx_reorder_voice_slot's 6.7 t/call (added 2026-08-06, to SIZE an asm twin before
+ * writing it): per-leaf tick accumulators, plus g_sxNopT/g_sxNop = an EMPTY bracket sampled once
+ * per reorder call.  The empty bracket is the whole point — subtract its floor from every leaf
+ * total or the probe reads as the thing being probed (the mistake that oversized the object
+ * plotter 5x).  The three leaf totals sum to the ticks reorder spends in its callees, so
+ * reorder's OWN logic = g_sxReordT - that sum + (g_sxLeafCalls-1)/g_sxNop worth of floor —
+ * every figure is measured with the SAME bracket, so the floors cancel where they nest. */
+extern volatile unsigned long g_sxTopScanT, g_sxNextScanT, g_sxWrCtrlT;
+extern volatile unsigned long g_sxNop, g_sxNopT, g_sxLeafCalls;
+extern volatile unsigned long g_sxPokeyT;
 #define SX_CNT(c) (++(c))
 #define SX_SPAN(stmt, acc) do { unsigned short _b0 = rof_beam_line(); stmt; \
     unsigned short _b1 = rof_beam_line(); \
     (acc) += (_b1 >= _b0) ? (unsigned long)(_b1 - _b0) : (unsigned long)(_b1 + 313 - _b0); } while (0)
+/* A leaf call inside reorder: same bracket, plus a call tally so the floor can be subtracted. */
+#define SX_LEAF(stmt, acc) do { ++g_sxLeafCalls; SX_SPAN(stmt, acc); } while (0)
+#define SX_NOP() do { ++g_sxNop; SX_SPAN((void)0, g_sxNopT); } while (0)
 #else
 #define SX_CNT(c) ((void)0)
 #define SX_SPAN(stmt, acc) do { stmt; } while (0)
+#define SX_LEAF(stmt, acc) do { stmt; } while (0)
+#define SX_NOP() ((void)0)
 #endif
 
 /* ===========================================================================================
@@ -9142,9 +9157,12 @@ void sfx_voice_write_freq_ctrl(void) {
     uint8_t x = mem[MEM_sfx_voice_reg_idx + y];
     cpu.X = x;
     if (x == 0) return;
-    bus_write((uint16_t)(0xD1FE + x), mem[MEM_sfx_env_freq_val + y]);  /* AUDFn freq */
+    /* Shape probe: the two POKEY writes are the bulk of this leaf (each is a rof_pokey_write
+     * call + a change-detect + possibly a whole update_paula_channel recompute), so they are
+     * bracketed separately from the mem[] loads — an asm twin of the MIXER cannot touch them. */
+    SX_LEAF(bus_write((uint16_t)(0xD1FE + x), mem[MEM_sfx_env_freq_val + y]), g_sxPokeyT); /* AUDFn */
     cpu.A = (uint8_t)((mem[MEM_sfx_env_prio_val + y] & 0x0F) | mem[MEM_sfx_voice_distortion + y]);
-    bus_write((uint16_t)(0xD1FF + x), cpu.A);            /* AUDCn ctrl */
+    SX_LEAF(bus_write((uint16_t)(0xD1FF + x), cpu.A), g_sxPokeyT);   /* AUDCn ctrl */
 }
 
 /* sfx_pick_top_voice @ $568A — scan slots X=1..12; latch the active slot
@@ -9304,14 +9322,27 @@ void sfx_event_load(void) {
     cpu.A = savedX;
 }
 
-/* sfx_reorder_voice_slot @ $5614 — the voice-priority mixer.  Entry cpu.Y = the voice
- * slot just touched, cpu.X = a selector (0 -> promote/compact an empty slot via
- * sfx_pick_next_voice; !=0 -> demote a lower-priority slot under the current top).
- * Writes the moved voice (sfx_voice_write_freq_ctrl) and re-latches the top voice
- * (sfx_pick_top_voice).  Y is saved/restored (PHA/PLA); X is clobbered. */
-void sfx_reorder_voice_slot(void) {
+/* sfx_reorder_voice_slot @ $5614 — the voice-priority mixer.  Entry cpu.Y = the voice slot
+ * just touched.  ⚠ The entry cpu.X is NOT read: `5619 TXA; 561a BNE` tests X as the JSR at
+ * 5616 LEFT it, i.e. x = mem[$0705+Y] — the voice's POKEY register index — so the two-way
+ * branch is "is this slot ACTIVE?", not a caller-supplied mode.  x == 0 (idle slot) takes the
+ * 561c promote/compact path (steal the current top's register); x != 0 takes the 5641 demote
+ * path (sfx_pick_next_voice, then move the top's register to the next-best slot).  Either way
+ * the moved voice is re-emitted (sfx_voice_write_freq_ctrl) and the top voice re-latched
+ * (sfx_pick_top_voice).  Y is saved/restored (PHA/PLA); X is clobbered.
+ * (The old comment here called cpu.X "a selector (0 -> ... ; !=0 -> ...)" — wrong about WHERE
+ * the value comes from, though the code below has always read it in the right place.  Building
+ * the asm twin from that comment produced a first-call mismatch; see SfxMixerAssembler.s.)
+ *
+ * HOT: the biggest single item inside the 50 Hz flight VBI (3.32 calls/firing at 6.70 t =
+ * 22.4 t/firing = ~7% of ALL wall clock in combat — the ISR fires 50x/s regardless of frame
+ * rate, so it is a flat tax).  On the Amiga a hand-asm twin (SfxMixerAssembler.s) replaces
+ * this whole chain — all three leaves inlined, table bases pinned in address registers —
+ * via the ROF_SFXMIX_ASM seam below; this stays the SDL/validate oracle. */
+void sfx_reorder_voice_slot_c(void) {
     uint8_t savedY = cpu.Y;                              /* TYA; PHA */
-    sfx_voice_write_freq_ctrl();                         /* 5616 (writes voice cpu.Y) */
+    SX_NOP();                                            /* empty-bracket floor, 1 per call */
+    SX_LEAF(sfx_voice_write_freq_ctrl(), g_sxWrCtrlT);    /* 5616 (writes voice cpu.Y) */
     cpu.Y = savedY;
     int do_pick_top = 1;
     if (cpu.X == 0) {                                    /* TXA; BNE L_5641 -> here X==0 */
@@ -9325,27 +9356,95 @@ void sfx_reorder_voice_slot(void) {
                 uint8_t tx = sfx_top_voice_idx;
                 mem[MEM_sfx_voice_reg_idx + cpu.Y] = mem[MEM_sfx_voice_reg_idx + tx];
                 mem[MEM_sfx_voice_reg_idx + tx] = 0x00;
-                sfx_voice_write_freq_ctrl();             /* 563b (re-uses cpu.Y) */
+                SX_LEAF(sfx_voice_write_freq_ctrl(), g_sxWrCtrlT);   /* 563b (re-uses cpu.Y) */
             } else {
                 do_pick_top = 0;                         /* a==top && Y<topidx -> L_5664 */
             }
         }
     } else {                                             /* L_5641: X!=0 */
         if (cpu.Y < 0x0D) {                              /* CPY #$0D; BCS L_5661 */
-            sfx_pick_next_voice();
+            SX_LEAF(sfx_pick_next_voice(), g_sxNextScanT);
             uint8_t tx = sfx_top_voice_idx;
             if (tx != sfx_next_voice_idx) {                     /* LDX $0715; CPX $0717; BEQ L_5661 */
                 cpu.Y = sfx_next_voice_idx;                     /* LDY $0717 */
                 mem[MEM_sfx_voice_reg_idx + cpu.Y] = mem[MEM_sfx_voice_reg_idx + tx];
                 mem[MEM_sfx_voice_reg_idx + tx] = 0x00;
-                sfx_voice_write_freq_ctrl();             /* 565e */
+                SX_LEAF(sfx_voice_write_freq_ctrl(), g_sxWrCtrlT);  /* 565e */
             }
         }
     }
-    if (do_pick_top) sfx_pick_top_voice();               /* L_5661 */
+    if (do_pick_top) SX_LEAF(sfx_pick_top_voice(), g_sxTopScanT);  /* L_5661 */
     cpu.Y = savedY;                                      /* L_5664: PLA; TAY */
     cpu.A = savedY;
 }
+
+/* Dispatcher seam (asm-migration-plan Phase 6), mirrors project_terrain_points_core.
+ * On the Amiga (ROF_SFXMIX_ASM) sfx_reorder_voice_slot is the hand-written m68k twin in
+ * SfxMixerAssembler.s; elsewhere it is the clean-C twin above.  `make SFXMIX_C=1` falls back
+ * to the C on the Amiga too — needed for the SFX_SHAPE probe, whose SX_LEAF brackets live in
+ * the C bodies the asm replaces (the documented "asm twins kill their C shape-counters"). */
+#if defined(ROF_SFXMIX_ASM) && defined(ROF_SFXMIX_VERIFY)
+/* On-target differential (single run, deterministic): run the asm twin on the real state,
+ * snapshot everything it can write, restore, run the C twin on the same inputs, compare.
+ * The C twin's output is left LIVE so audio stays correct on an asm bug.  Read via
+ * amiga/sfxmix_verify.gdb.
+ *
+ * The window is exact: the chain writes only mem[$0705-$0717] (the voice reg-idx table plus
+ * the four scan cells $0714-$0717), the POKEY mirror mem[$D200-$D20F], and cpu.A/X/Y.
+ *
+ * ⚠⚠ THE ORDER MUST ALTERNATE, because the callee is NOT pure.  Unlike the other asm twins in
+ * this tree, this chain calls out to rof_pokey_write -> update_paula_channel, which sits behind
+ * several global caches (pokey[] change-detect, poly_dist_* rebuild key, noiseOn[]).  Whichever
+ * side runs FIRST warms them and the second side gets its Paula work for free — measured as the
+ * asm being 24-34% "slower" when it always ran first, and rewinding pokey[] alone did NOT fix
+ * it (the other caches remain).  So each call runs the pair in alternating order and each side
+ * accumulates its own ticks; the bias then lands equally on both and cancels in the ratio.
+ * Consequence: the LIVE result is the asm's on odd calls and the C's on even ones — fine only
+ * because mismatch is 0.  If you ever see mismatch != 0 here, audio state is half-corrupt by
+ * construction; fix the asm, don't chase the audio. */
+extern void sfx_reorder_voice_slot_asm(void);
+extern void rof_pokey_shadow_save(uint8_t* dst);
+extern void rof_pokey_shadow_load(const uint8_t* src);
+volatile unsigned long g_sfxmixCalls = 0, g_sfxmixMismatch = 0, g_sfxmixFirstBad = 0;
+volatile unsigned long g_sfxmixBadCell = 0, g_sfxmixAsmTicks = 0, g_sfxmixCTicks = 0;
+#define SFXMIX_NCELL 35   /* $0705-$0717 (19) + $D200-$D20F (16) */
+static uint16_t sfxmix_cell(int i) {
+    return (uint16_t)(i < 19 ? 0x0705 + i : 0xD200 + (i - 19));
+}
+void sfx_reorder_voice_slot(void) {
+    const unsigned long n = ++g_sfxmixCalls;
+    uint8_t* const M = (uint8_t*)mem;
+    uint8_t snap[SFXMIX_NCELL], firstv[SFXMIX_NCELL], pokeySnap[16];
+    const Cpu6502 cpuSnap = cpu;
+    const int asmFirst = (int)(n & 1u);              /* alternate — see the header comment */
+    for (int i = 0; i < SFXMIX_NCELL; i++) snap[i] = M[sfxmix_cell(i)];
+    rof_pokey_shadow_save(pokeySnap);
+
+    if (asmFirst) FP_TIME(sfx_reorder_voice_slot_asm(), g_sfxmixAsmTicks);
+    else          FP_TIME(sfx_reorder_voice_slot_c(),   g_sfxmixCTicks);
+    for (int i = 0; i < SFXMIX_NCELL; i++) firstv[i] = M[sfxmix_cell(i)];
+    const Cpu6502 cpuFirst = cpu;
+
+    for (int i = 0; i < SFXMIX_NCELL; i++) M[sfxmix_cell(i)] = snap[i];
+    cpu = cpuSnap;
+    rof_pokey_shadow_load(pokeySnap);
+
+    if (asmFirst) FP_TIME(sfx_reorder_voice_slot_c(),   g_sfxmixCTicks);
+    else          FP_TIME(sfx_reorder_voice_slot_asm(), g_sfxmixAsmTicks);
+
+    int bad = 0;
+    for (int i = 0; i < SFXMIX_NCELL; i++)
+        if (M[sfxmix_cell(i)] != firstv[i]) { bad = 1; g_sfxmixBadCell = sfxmix_cell(i); }
+    if (cpu.A != cpuFirst.A || cpu.X != cpuFirst.X || cpu.Y != cpuFirst.Y) {
+        bad = 1; g_sfxmixBadCell = 0xC0FF;
+    }
+    if (bad) { if (!g_sfxmixMismatch) g_sfxmixFirstBad = n; g_sfxmixMismatch++; }
+}
+#elif defined(ROF_SFXMIX_ASM)
+extern void sfx_reorder_voice_slot(void);   /* SfxMixerAssembler.s */
+#else
+void sfx_reorder_voice_slot(void) { sfx_reorder_voice_slot_c(); }
+#endif
 
 /* Advance one envelope phase by its step, wrapping like the 6502 BCD-ish accumulator:
  * a sum that goes negative ($80+) wraps forward by $0A; otherwise it saturates just below

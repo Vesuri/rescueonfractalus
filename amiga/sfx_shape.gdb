@@ -62,6 +62,13 @@ set $s_push = g_sxRingPush
 set $s_exp  = g_sxExpired
 set $s_af   = g_sxActFreq
 set $s_ad   = g_sxActDur
+set $s_topT = g_sxTopScanT
+set $s_nxtT = g_sxNextScanT
+set $s_wrcT = g_sxWrCtrlT
+set $s_pkT  = g_sxPokeyT
+set $s_nop  = g_sxNop
+set $s_nopT = g_sxNopT
+set $s_leaf = g_sxLeafCalls
 set $s_upcC = g_upcCalls
 set $s_upcT = g_pUPC
 set $s_pw   = g_pokeyWrites
@@ -100,6 +107,33 @@ printf "  sfx_reorder_voice_slot: %6lu calls (%lu.%02lu/firing)  %7lu t  %lu.%02
   ($reo ? $reot/$reo : 0), ($reo ? ((100*$reot)/$reo)%100 : 0)
 printf "  reorder = %lu.%02lu t/firing = %lu%% of the ISR\n", \
   ($n ? $reot/$n : 0), ($n ? ((100*$reot)/$n)%100 : 0), ($il ? (100*$reot)/$il : 0)
+
+printf "\n=== INSIDE sfx_reorder_voice_slot: leaf split (SX_SPAN, floor-corrected) ===\n"
+# The empty bracket sampled once per reorder call IS the floor.  Report it first, in
+# milli-ticks, then subtract one floor per leaf call from each leaf total: without that
+# correction a cheap leaf reads as ~the bracket and the split is meaningless.
+set $nop  = g_sxNop  - $s_nop
+set $nopT = g_sxNopT - $s_nopT
+set $leaf = g_sxLeafCalls - $s_leaf
+set $fl   = $nop ? (1000*$nopT)/$nop : 0
+printf "  empty-bracket floor : %lu samples, %lu.%03lu t each  (%lu leaf calls => %lu t of floor)\n", \
+  $nop, $fl/1000, $fl%1000, $leaf, ($fl*$leaf)/1000
+define leaf
+  set $raw = $arg0
+  set $cnt = $arg1
+  set $net = $raw - ($fl*$cnt)/1000
+  printf "  %-26s %6lu calls  %7lu t raw  %7lu t net  %lu.%03lu t/call net  %2lu%% of reorder\n", \
+    $arg2, $cnt, $raw, $net, ($cnt ? $net/$cnt : 0), ($cnt ? ((1000*$net)/$cnt)%1000 : 0), \
+    ($reot ? (100*$net)/$reot : 0)
+end
+leaf (g_sxWrCtrlT-$s_wrcT)  (g_sxWrCtrl-$s_wrc)    "voice_write_freq_ctrl"
+leaf (g_sxPokeyT-$s_pkT) (2*(g_sxWrCtrl-$s_wrc)) "  ..its 2 rof_pokey_write"
+leaf (g_sxTopScanT-$s_topT) (g_sxTopScan-$s_top)   "pick_top_voice (12-slot)"
+leaf (g_sxNextScanT-$s_nxtT) (g_sxNextScan-$s_next) "pick_next_voice (12-slot)"
+set $nest = (g_sxWrCtrlT-$s_wrcT) + (g_sxTopScanT-$s_topT) + (g_sxNextScanT-$s_nxtT)
+printf "  reorder's OWN logic (reordT - leaf raw - its own nop) : %lu t, %lu%% of reorder\n", \
+  ($reot - $nest - $nopT), ($reot ? (100*($reot - $nest - $nopT))/$reot : 0)
+printf "  ^ ASM TARGET = own logic + the two scans; write_freq_ctrl's cost is mostly rof_pokey_write\n"
 
 printf "\n=== what those branches drive (per firing) ===\n"
 define per

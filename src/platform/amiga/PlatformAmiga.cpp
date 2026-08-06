@@ -1063,6 +1063,17 @@ extern "C" void rof_pokey_write(uint8_t reg, uint8_t val)
     }
 }
 
+#ifdef ROF_SFXMIX_VERIFY
+// The sfxmix in-process differential runs the asm twin and the C twin back-to-back on the same
+// state.  rof_pokey_write's change-detect (pokey[reg] == val -> skip update_paula_channel) would
+// otherwise make the SECOND run free — it re-writes the values the first run just latched — so
+// the harness would report the asm as ~1.6x SLOWER purely from running first.  These let it
+// rewind the shadow so both sides do identical Paula work.  Only pokey[] needs rewinding: the
+// compared observable is mem[$D200-$D20F], which rof_pokey_write writes on BOTH paths.
+extern "C" void rof_pokey_shadow_save(uint8_t* dst) { for (int i = 0; i < 16; i++) dst[i] = pokey[i]; }
+extern "C" void rof_pokey_shadow_load(const uint8_t* src) { for (int i = 0; i < 16; i++) pokey[i] = src[i]; }
+#endif
+
 void PlatformAmiga::hwWrite(uint16_t addr, uint8_t val)
 {
     if (addr == 0xD400u) { g_flightBlank = (val == 0u) ? 1u : 0u; return; }  // DMACTL: 0 = playfield blanked
@@ -1273,6 +1284,14 @@ extern "C" volatile unsigned long g_sxExpired = 0;   // envelope expiries (each 
 extern "C" volatile unsigned long g_sxActFreq = 0;   // active frequency envelopes visited
 extern "C" volatile unsigned long g_sxActDur  = 0;   // active duration envelopes visited
 extern "C" volatile unsigned long g_sxEnvGated = 0;  // ...of the freq ones, paused by the $5406 gate
+// Leaf split of sfx_reorder_voice_slot's 6.7 t/call, to size an asm twin BEFORE writing one.
+// g_sxNop/g_sxNopT is an EMPTY SX_SPAN sampled once per reorder call = the bracket's own floor;
+// every leaf total must have it subtracted per call or the probe measures itself.
+extern "C" volatile unsigned long g_sxTopScanT = 0, g_sxNextScanT = 0, g_sxWrCtrlT = 0;
+extern "C" volatile unsigned long g_sxNop = 0, g_sxNopT = 0, g_sxLeafCalls = 0;
+// ...and inside voice_write_freq_ctrl: the two rof_pokey_write calls, bracketed apart from
+// its mem[] loads.  This is the part an asm MIXER twin cannot touch.
+extern "C" volatile unsigned long g_sxPokeyT = 0;
 #endif
 // VBI handler section partition (the chunks NOT covered by integ/proj/sfx; see rof_native.c
 // vbi_handler_flight).  Per-call = acc/isrCalls; sum(all sections)+integ+proj ≈ isrLines.
