@@ -9152,19 +9152,32 @@ void sfx_voice_write_freq_ctrl(void) {
  * $0716 (running min) / $0714 (value) / $0715 (index). */
 void sfx_pick_top_voice(void) {
     SX_CNT(g_sxTopScan);
+    /* Hot: ~2.4 calls per 50 Hz VBI firing, inside sfx_reorder_voice_slot (measured 24% of the
+       whole flight VBI in combat).  Two changes, both byte-identical: walk the two slot arrays
+       with autoincrement pointers instead of recomputing mem[base+x] every step (12 indexed
+       volatile byte reads -> 12 (aN)+ reads, no index arithmetic), and keep the running minimum
+       in a register instead of re-reading $0716 for every compare.  The pointers stay volatile,
+       so each byte is still read exactly once, in order — only the addressing changes.  $0716 is
+       still stored on every improvement so the exit state is untouched, and $0714/$0715 keep
+       their previous values when no slot wins, exactly as before. */
     sfx_scan_prio = 0x10;
-    uint8_t x = 0;
-    do {
-        x++;                                             /* INX */
-        if (mem[MEM_sfx_voice_reg_idx + x] != 0) {                      /* LDA $0705+X; BEQ skip */
-            uint8_t a = (uint8_t)(mem[MEM_sfx_env_prio_val + x] & 0x0F);
-            if (a < sfx_scan_prio) {                       /* CMP $0716; BCS skip (a>=M) */
+    uint8_t best = 0x10;                                 /* running min, mirrors $0716 */
+    const volatile uint8_t* r = &mem[MEM_sfx_voice_reg_idx + 1];
+    const volatile uint8_t* v = &mem[MEM_sfx_env_prio_val + 1];
+    uint8_t x = 1;                                       /* body runs x = 1..12 */
+    for (;;) {
+        if (*r != 0) {                                   /* LDA $0705+X; BEQ skip */
+            const uint8_t a = (uint8_t)(*v & 0x0F);
+            if (a < best) {                              /* CMP $0716; BCS skip (a>=M) */
+                best = a;
                 sfx_scan_prio = a;
                 sfx_top_prio_val = a;
                 sfx_top_voice_idx = x;
             }
         }
-    } while (x < 0x0C);                                  /* CPX #$0C; BCC loop */
+        if (x >= 0x0C) break;                            /* CPX #$0C; BCC loop */
+        x++; r++; v++;
+    }
     cpu.X = x;
 }
 
@@ -9173,20 +9186,28 @@ void sfx_pick_top_voice(void) {
  * $0717.  (Faithful to the code: BEQ considers empty slots, else only X==$0715.) */
 void sfx_pick_next_voice(void) {
     SX_CNT(g_sxNextScan);
+    /* Same treatment as sfx_pick_top_voice above: autoincrement pointer walk, the running
+       max ($0716) and the excluded-slot index ($0715, loop-invariant — nothing in the loop
+       writes it) held in registers.  Note the compare is >=, so the LAST maximum wins; that
+       is preserved. */
     sfx_scan_prio = 0x00;
-    uint8_t x = 0;
-    do {
-        x++;                                             /* INX */
-        int consider = (mem[MEM_sfx_voice_reg_idx + x] == 0)            /* BEQ -> consider */
-                     || (x == sfx_top_voice_idx);              /* else only the $0715 slot */
-        if (consider) {
-            uint8_t a = (uint8_t)(mem[MEM_sfx_env_prio_val + x] & 0x0F);
-            if (a >= sfx_scan_prio) {                      /* CMP $0716; BCC skip (a<M) */
+    uint8_t best = 0x00;                                 /* running max, mirrors $0716 */
+    const uint8_t topIdx = sfx_top_voice_idx;            /* $0715, invariant across the scan */
+    const volatile uint8_t* r = &mem[MEM_sfx_voice_reg_idx + 1];
+    const volatile uint8_t* v = &mem[MEM_sfx_env_prio_val + 1];
+    uint8_t x = 1;
+    for (;;) {
+        if (*r == 0 || x == topIdx) {                    /* BEQ -> consider; else only $0715 */
+            const uint8_t a = (uint8_t)(*v & 0x0F);
+            if (a >= best) {                             /* CMP $0716; BCC skip (a<M) */
+                best = a;
                 sfx_scan_prio = a;
                 sfx_next_voice_idx = x;
             }
         }
-    } while (x < 0x0C);                                  /* CPX #$0C; BCC loop */
+        if (x >= 0x0C) break;
+        x++; r++; v++;
+    }
     cpu.X = x;
 }
 
