@@ -6072,6 +6072,13 @@ void terrain_clip_row_top(void) {
  * to 4x the scale; the field is rendered twice per iteration.  That is the "an enemy exploding
  * close by drops the frame rate" spike.
  *
+ * The per-cell work was pure transliteration: two byte-pair accumulators re-read and re-written
+ * through volatile mem[] every cell, the source pointer re-assembled from ($C3),Y every cell, and
+ * $4F/$4E round-tripped for the plot coordinates — ~15 volatile accesses per cell for arithmetic
+ * that is single 16-bit word ops on a 68000.  All of it is carried in locals now and only the
+ * state the oracle leaves behind is written back (nothing reads these cells mid-call, and none of
+ * $4E-$55/$C3/$C4 is in the flight VBI's audited ZP write-set, so the hoist is ISR-safe).
+ *
  * Contract: memory (the bitmap writes + the accumulators).  Exit X=$28E1 is
  * restored (callers read it); A/Y/flags are dead.  Faithful carry threading:
  * the start-row subtract chains carry ACROSS iterations (one SEC before the
@@ -6088,40 +6095,47 @@ void raster_scaled_object(void) {
     const unsigned long _t0 = rof_subclock(), _i0 = g_isrBeamLines;
 #endif
 
-    uint8_t A, c;
-
     if (plot_step_hi == 0) { plot_step_lo = 0x00; plot_step_hi++; }   /* AB9A nonzero step */
 
-    row_table_base_hi = 0x10; row_table_base_lo = 0x00;                        /* ABA4: $C4:$C3 = $1000 */
-    c = 1;                                                         /* SEC (once, chains) */
-    do {                                                           /* ABAD subtract loop */
-        uint16_t t;
-        t = (uint16_t)row_table_base_lo + (uint8_t)~plot_step_lo + c; c = t >> 8; row_table_base_lo = (uint8_t)t;
-        t = (uint16_t)row_table_base_hi + (uint8_t)~plot_step_hi + c; c = t >> 8; row_table_base_hi = (uint8_t)t;
-        terrain_pt_coord_a--;                                            /* DEC $4F (no carry effect) */
-    } while (c);                                                  /* BCS */
+    /* Loop invariants, read ONCE.  The transliteration re-read every one of these out of
+       volatile mem[] on every cell. */
+    const uint16_t step     = (uint16_t)(plot_step_lo | (plot_step_hi << 8));          /* {$51:$50} */
+    const uint16_t plotBase = (uint16_t)(plot_base_ptr_lo | (plot_base_ptr_hi << 8));  /* shape source */
+    const uint8_t  reflect  = shape_col_base;                                          /* $28DF */
 
-    shape_row_width = terrain_pt_coord_a;                                    /* ABBD */
-    mem[0x0054] = 0x00; mem[0x0055] = 0x00;
+    /* ABAD start-row search: subtract the step from $1000 until it borrows, counting $4F down
+       once per pass (the borrowing pass included).  The 6502's SEC sits outside the loop, but the
+       loop only continues while carry is SET, so every continuing pass enters with carry=1 — this
+       is a plain repeated 16-bit subtract, not a cross-iteration carry chain.  $C3/$C4 are left
+       dead here: the outer loop always runs at least once and rewrites both before any read. */
+    uint8_t col = terrain_pt_coord_a;
+    {
+        uint16_t acc = 0x1000;
+        for (;;) {
+            const uint8_t borrow = (acc < step);
+            acc = (uint16_t)(acc - step);
+            col--;                                                /* DEC $4F */
+            if (borrow) break;                                    /* BCS: fall through on no-borrow */
+        }
+    }
+    shape_row_width = col;                                        /* ABBD */
 
-    do {                                                          /* ABC8 outer (12 rows) */
-        mem[0x0052] = 0x00; mem[0x0053] = 0x00; row_table_base_hi = 0x00;
-        A = mem[0x0055];                                          /* {$C4:A} = $55 << 2 */
-        c = A >> 7; A = (uint8_t)(A << 1); row_table_base_hi = (uint8_t)((row_table_base_hi << 1) | c);
-        c = A >> 7; A = (uint8_t)(A << 1); row_table_base_hi = (uint8_t)((row_table_base_hi << 1) | c);
-        c = 0; { uint16_t t = (uint16_t)A + plot_base_ptr_lo + c; c = t >> 8; A = (uint8_t)t; } row_table_base_lo = A;
-        { uint16_t t = (uint16_t)row_table_base_hi + plot_base_ptr_hi + c; row_table_base_hi = (uint8_t)t; }
-        terrain_pt_coord_a = shape_row_width;
+    uint8_t  row     = terrain_pt_coord_b;   /* $4E, one step down per row */
+    uint16_t outer   = 0x0000;               /* {$55:$54} row accumulator */
+    uint16_t inner   = 0x0000;               /* {$53:$52} column accumulator */
+    uint16_t rowBase = 0x0000;               /* {$C4:$C3} this row's shape-source pointer */
 
-        do {                                                      /* ABEA inner (32 cols) */
-            A = mem[0x0053];                                      /* LDA $53 */
-            if (shape_col_base != 0) {                               /* LDX $28DF; BNE -> reflect */
-                c = 1; uint16_t t = (uint16_t)0x1F + (uint8_t)~mem[0x0053] + c; c = t >> 8; A = (uint8_t)t;
-            }
-            uint8_t bx = (uint8_t)(A & 0x07);                     /* bit within byte */
-            cpu.Y = (uint8_t)(A >> 3);                            /* byte offset (for ($C3),Y) */
-            if (bus_read(ZP_IND_Y(0xC3)) & mem[0xAC3A + bx]) {    /* cell bit set? */
-                cpu.X = terrain_pt_coord_a; cpu.Y = terrain_pt_coord_b;
+    do {                                                          /* ABC8 outer (<= 12 rows) */
+        /* {$C4:A} = $55 << 2, then + the shape source pointer (one 16-bit add, wrapping). */
+        rowBase = (uint16_t)(plotBase + (uint16_t)((outer >> 8) << 2));
+        col     = shape_row_width;                                /* faithful re-read of $28DE */
+        inner   = 0x0000;
+
+        do {                                                      /* ABEA inner (<= 32 cols) */
+            uint8_t a = (uint8_t)(inner >> 8);                    /* LDA $53 */
+            if (reflect != 0) a = (uint8_t)(0x1F - a);            /* $28DF set: mirror the shape */
+            if (bus_read((uint16_t)(rowBase + (a >> 3))) & mem[0xAC3A + (a & 7)]) {
+                cpu.X = col; cpu.Y = row;                         /* the plot's 6502-ABI args */
                 terrain_clip_row_top();
 #ifdef ROF_OBJ_SHAPE_ON
                 _plots++;
@@ -6130,18 +6144,23 @@ void raster_scaled_object(void) {
 #ifdef ROF_OBJ_SHAPE_ON
             _cells++;
 #endif
-            terrain_pt_coord_a++;                                        /* INC $4F */
-            c = 0; { uint16_t t = (uint16_t)mem[0x0052] + plot_step_lo + c; c = t >> 8; mem[0x0052] = (uint8_t)t; }
-            { uint16_t t = (uint16_t)mem[0x0053] + plot_step_hi + c; mem[0x0053] = (uint8_t)t; }
-        } while (mem[0x0053] < 0x20);                             /* CMP #$20; BCC */
+            col++;                                                /* INC $4F */
+            inner = (uint16_t)(inner + step);
+        } while ((uint8_t)(inner >> 8) < 0x20);                   /* CMP #$20; BCC */
 
-        terrain_pt_coord_b--;                                            /* DEC $4E */
-        c = 0; { uint16_t t = (uint16_t)mem[0x0054] + plot_step_lo + c; c = t >> 8; mem[0x0054] = (uint8_t)t; }
-        { uint16_t t = (uint16_t)mem[0x0055] + plot_step_hi + c; mem[0x0055] = (uint8_t)t; }
+        row--;                                                    /* DEC $4E */
+        outer = (uint16_t)(outer + step);
 #ifdef ROF_OBJ_SHAPE_ON
         _rows++;
 #endif
-    } while (mem[0x0055] < 0x0C);                                 /* CMP #$0C; BCS done */
+    } while ((uint8_t)(outer >> 8) < 0x0C);                       /* CMP #$0C; BCS done */
+
+    /* Write back exactly the exit state the transliterated oracle leaves in mem[]. */
+    mem[0x0052] = (uint8_t)inner;   mem[0x0053] = (uint8_t)(inner >> 8);
+    mem[0x0054] = (uint8_t)outer;   mem[0x0055] = (uint8_t)(outer >> 8);
+    row_table_base_lo = (uint8_t)rowBase;  row_table_base_hi = (uint8_t)(rowBase >> 8);
+    terrain_pt_coord_a = col;
+    terrain_pt_coord_b = row;
 
 #ifdef ROF_OBJ_SHAPE_ON
     { const unsigned long _d = rof_subclock() - _t0, _id = g_isrBeamLines - _i0;
