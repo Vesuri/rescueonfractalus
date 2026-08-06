@@ -202,11 +202,23 @@ static void build_poly_tables(void)
 // same bipolar ±127 as wave_pure so AUDxVOL scales them identically.
 #ifdef ROF_FLIGHT_PROBE
 extern "C" volatile unsigned long g_polyDistCalls = 0;
+#ifdef ROF_SFX_SHAPE
+// build_poly_dist writes 1022 bytes per call.  Its cache key is (divider, base_div, gate), and an
+// explosion / engine pitch sweep changes AUDF on every 50 Hz firing, so a poly9 noise voice can
+// force a FULL REBUILD EVERY FRAME.  Time it: this is the prime suspect for
+// update_paula_channel's ~2.55 t/call, which the shape probe put at 6.4 t/firing inside
+// sfx_reorder_voice_slot (itself 23.2 t/firing = 24% of the whole flight VBI).
+extern "C" unsigned short rof_beam_line(void);   // declared again: the one below is further down
+extern "C" volatile unsigned long g_polyDistTicks = 0;
+#endif
 #endif
 static void build_poly_dist(uint8_t ch, uint32_t divider, uint16_t bd, bool gateAlways)
 {
 #ifdef ROF_FLIGHT_PROBE
     g_polyDistCalls++;
+#endif
+#ifdef ROF_SFX_SHAPE
+    const unsigned short _pd0 = rof_beam_line();
 #endif
     // s5 = (divider*bd) % 31, s9 = (divider*bd) % 511 — via (a*b)%m = ((a%m)*(b%m))%m so every
     // op is a 16-bit hardware DIVU.W/MULU.W (divider≤65536 → quotient fits 16 bits), no 32-bit
@@ -228,6 +240,11 @@ static void build_poly_dist(uint8_t ch, uint32_t divider, uint16_t bd, bool gate
         }
         dst[i] = out ? 0x7Fu : 0x81u;
     }
+#ifdef ROF_SFX_SHAPE
+    { const unsigned short _pd1 = rof_beam_line();
+      g_polyDistTicks += (_pd1 >= _pd0) ? (unsigned long)(_pd1 - _pd0)
+                                        : (unsigned long)(_pd1 + 313 - _pd0); }
+#endif
 }
 
 // Shadow of POKEY registers $D200..$D20F (bus_write doesn't update mem[] for
@@ -1239,6 +1256,24 @@ extern "C" volatile unsigned long g_portsIrqCnt = 0;
 extern "C" volatile unsigned long g_pProj=0, g_pInteg=0, g_pSfx=0;
 extern "C" volatile unsigned long g_pSfxEng=0, g_pSfxLoop=0, g_pSfxRing=0;
 extern "C" volatile unsigned long g_sfxRingIters=0;   // ring entries drained; /isrCalls = per-firing
+#ifdef ROF_SFX_SHAPE
+// SFX SHAPE PROBE (`make COMBAT=1 PROBES=1 SFX_SHAPE=1`, read via amiga/sfx_shape.gdb).  Splits
+// the event-ring drain's two branches and counts the 12-slot mixer scans + voice writes they
+// drive.  The ticks use a single beam-line read per side (SX_SPAN), NOT FP_TIME: an FP_TIME
+// bracket costs ~2.2 t/call, which sampled 3.4x per firing would be ~30% of the very 24 t/firing
+// bucket being measured.
+extern "C" volatile unsigned long g_sxEvLoad = 0, g_sxEvLoadT = 0;   // sfx_event_load calls/ticks
+extern "C" volatile unsigned long g_sxReord  = 0, g_sxReordT  = 0;   // sfx_reorder_voice_slot
+extern "C" volatile unsigned long g_sxTopScan  = 0;  // sfx_pick_top_voice   (12-slot scan)
+extern "C" volatile unsigned long g_sxNextScan = 0;  // sfx_pick_next_voice  (12-slot scan)
+extern "C" volatile unsigned long g_sxWrCtrl = 0;    // sfx_voice_write_freq_ctrl (AUDF+AUDC)
+extern "C" volatile unsigned long g_sxWrFreq = 0;    // sfx_voice_write_freq      (AUDF only)
+extern "C" volatile unsigned long g_sxRingPush = 0;  // game_sub_55FC -> ring_push_0719_core
+extern "C" volatile unsigned long g_sxExpired = 0;   // envelope expiries (each RE-PUSHES an entry)
+extern "C" volatile unsigned long g_sxActFreq = 0;   // active frequency envelopes visited
+extern "C" volatile unsigned long g_sxActDur  = 0;   // active duration envelopes visited
+extern "C" volatile unsigned long g_sxEnvGated = 0;  // ...of the freq ones, paused by the $5406 gate
+#endif
 // VBI handler section partition (the chunks NOT covered by integ/proj/sfx; see rof_native.c
 // vbi_handler_flight).  Per-call = acc/isrCalls; sum(all sections)+integ+proj ≈ isrLines.
 extern "C" volatile unsigned long g_pDrawBr=0, g_pSimHead=0, g_pAtmo=0, g_pHud=0, g_pScore=0, g_pTail=0;

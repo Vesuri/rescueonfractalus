@@ -101,6 +101,35 @@ extern unsigned short rof_beam_line(void);
 #define TDSPAN(stmt, acc) do { stmt; } while (0)
 #endif
 
+/* ── SFX SHAPE PROBE (`make COMBAT=1 PROBES=1 SFX_SHAPE=1` + amiga/sfx_shape.gdb) ────────────
+ * The combat re-attribution put ~47% of the flight VBI in sfx_voice_envelope_tick, with the
+ * event-ring drain alone at ~24 t/firing = ~8% of ALL wall clock (the ISR runs at a fixed 50 Hz,
+ * so a slower frame does not dilute it).  The drain does 3.39 entries/firing at ~7.2 t (~3200
+ * cycles) each, and it is NOT the Paula recompute (update_paula_channel is only 5.8 t/firing).
+ * This splits the two drain branches and counts the mixer scans they drive, so the fix is chosen
+ * from the shape rather than guessed.
+ *
+ * ⚠ Deliberately NOT FP_TIME: that bracket costs ~2.2 t/call (2 rof_subclock + 2 volatile reads),
+ * which on a 24 t/firing bucket sampled 3.4x per firing would be ~30% distortion — the exact
+ * mistake that made the object plotter look 5x its real size.  These use a single beam-line read
+ * per side (SX_SPAN, ~10x cheaper) and no ISR subtraction, which is right because we are already
+ * INSIDE the ISR.  Counts are plain increments and cost nothing measurable. */
+#if defined(ROF_SFX_SHAPE) && defined(ROF_FLIGHT_PROBE)
+#ifndef ROF_TDRAW_PROF
+extern unsigned short rof_beam_line(void);   /* ROF_TDRAW_PROF normally declares this */
+#endif
+extern volatile unsigned long g_sxEvLoad, g_sxEvLoadT, g_sxReord, g_sxReordT;
+extern volatile unsigned long g_sxTopScan, g_sxNextScan, g_sxWrCtrl, g_sxWrFreq, g_sxRingPush;
+extern volatile unsigned long g_sxExpired, g_sxActFreq, g_sxActDur, g_sxEnvGated;
+#define SX_CNT(c) (++(c))
+#define SX_SPAN(stmt, acc) do { unsigned short _b0 = rof_beam_line(); stmt; \
+    unsigned short _b1 = rof_beam_line(); \
+    (acc) += (_b1 >= _b0) ? (unsigned long)(_b1 - _b0) : (unsigned long)(_b1 + 313 - _b0); } while (0)
+#else
+#define SX_CNT(c) ((void)0)
+#define SX_SPAN(stmt, acc) do { stmt; } while (0)
+#endif
+
 /* ===========================================================================================
  * COMBAT-LOAD BENCHMARK  (`make COMBAT=1`, -DROF_COMBAT_LOAD; Amiga profiling aid, NOT faithful)
  *
@@ -5131,6 +5160,7 @@ void ring_push_marked(void) {
     cpu.N = (id >> 7) & 1; cpu.Z = (id == 0) ? 1 : 0;
 }
 void game_sub_55FC(void) {
+    SX_CNT(g_sxRingPush);
     uint8_t id = cpu.X;
     mem[0x0100 | cpu.S] = id;                     /* PHA X */
     ring_push_0719_core(cpu.Y);                    /* push Y (unmarked) */
@@ -9095,6 +9125,7 @@ void enemy_check(void) {
 /* sfx_voice_write_freq @ $5667 — write AUDF for voice (cpu.Y) to POKEY $D1FE+X,
  * where X = the POKEY register index mem[$0705+Y]; skip if 0 (inactive slot). */
 void sfx_voice_write_freq(void) {
+    SX_CNT(g_sxWrFreq);
     uint8_t y = cpu.Y;
     uint8_t x = mem[MEM_sfx_voice_reg_idx + y];
     cpu.X = x;
@@ -9106,6 +9137,7 @@ void sfx_voice_write_freq(void) {
 /* sfx_voice_write_freq_ctrl @ $5673 — write AUDF ($D1FE+X) freq AND AUDC ($D1FF+X)
  * = (prio/vol nibble $066B+Y & $0F) | (distortion $065D+Y) for voice cpu.Y. */
 void sfx_voice_write_freq_ctrl(void) {
+    SX_CNT(g_sxWrCtrl);
     uint8_t y = cpu.Y;
     uint8_t x = mem[MEM_sfx_voice_reg_idx + y];
     cpu.X = x;
@@ -9119,6 +9151,7 @@ void sfx_voice_write_freq_ctrl(void) {
  * ($0705+X != 0) with the smallest priority nibble below $10 into
  * $0716 (running min) / $0714 (value) / $0715 (index). */
 void sfx_pick_top_voice(void) {
+    SX_CNT(g_sxTopScan);
     sfx_scan_prio = 0x10;
     uint8_t x = 0;
     do {
@@ -9139,6 +9172,7 @@ void sfx_pick_top_voice(void) {
  * excluded slot $0715, latch the largest priority nibble into $0716 / index
  * $0717.  (Faithful to the code: BEQ considers empty slots, else only X==$0715.) */
 void sfx_pick_next_voice(void) {
+    SX_CNT(g_sxNextScan);
     sfx_scan_prio = 0x00;
     uint8_t x = 0;
     do {
@@ -9337,8 +9371,10 @@ static void sfx_voice_envelope_tick_impl(void) {
 
         /* Frequency envelope. */
         if (mem[0x06DB + y] != 0) {       /* nonzero step = active */
+            SX_CNT(g_sxActFreq);
             uint8_t ph = sfx_phase_wrap(mem[0x06DB + y], mem[0x06E9 + y]);
             mem[0x06E9 + y] = ph;
+            if (mem[0x5406 + ph] == 0) SX_CNT(g_sxEnvGated);
             if (mem[0x5406 + ph] != 0) {  /* gate table: zero entry pauses the step */
                 uint8_t f = (uint8_t)(mem[MEM_sfx_env_freq_val + y] + mem[0x06BF + y]);
                 mem[MEM_sfx_env_freq_val + y] = f;
@@ -9349,6 +9385,7 @@ static void sfx_voice_envelope_tick_impl(void) {
 
         /* Duration / priority envelope (priority field kept to 4 bits). */
         if (mem[0x06A3 + y] != 0) {
+            SX_CNT(g_sxActDur);
             uint8_t ph = sfx_phase_wrap(mem[0x06A3 + y], mem[0x06B1 + y]);
             mem[0x06B1 + y] = ph;
             if (mem[0x5406 + ph] != 0) {
@@ -9361,6 +9398,7 @@ static void sfx_voice_envelope_tick_impl(void) {
 
         /* Either envelope finished -> re-queue this slot's event id (bit7-marked) on the ring. */
         if (expired != 0) {
+            SX_CNT(g_sxExpired);
             cpu.X = mem[0x06F7 + y];
 #ifdef ROF_BEEP_CAP
             { extern void rof_bc_requeue_log(unsigned char, unsigned char); rof_bc_requeue_log(y, mem[0x06F7 + y]); }
@@ -9387,10 +9425,10 @@ static void sfx_voice_envelope_tick_impl(void) {
 #ifdef ROF_BEEP_CAP
             { extern void rof_bc_drain_evt(unsigned char, unsigned char); rof_bc_drain_evt(entry, ring_tail_0719); }
 #endif
-            sfx_event_load();
+            SX_CNT(g_sxEvLoad); SX_SPAN(sfx_event_load(), g_sxEvLoadT);
         } else {                          /* sprite-slot reorder request */
             cpu.Y = entry;
-            sfx_reorder_voice_slot();
+            SX_CNT(g_sxReord); SX_SPAN(sfx_reorder_voice_slot(), g_sxReordT);
         }
         uint8_t t = (uint8_t)(ring_tail_0719 - 1);
         ring_tail_0719 = (t & 0x80) ? 0x1F : t;

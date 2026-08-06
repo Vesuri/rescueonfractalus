@@ -392,6 +392,15 @@ ifdef OBJ_SHAPE
 EXTRA_DEFINES += -DROF_OBJ_SHAPE
 endif
 
+# `make COMBAT=1 PROBES=1 SFX_SHAPE=1` + amiga/sfx_shape.gdb — SHAPE-PROBE THE SFX ENGINE.
+# The combat re-attribution (f1c3633) found the flight VBI's sfx block is ~47% of the handler and
+# the event-ring drain alone ~24 t/firing = ~8% of ALL wall clock (the ISR is a fixed 50 Hz tax).
+# This splits the drain's two branches (sfx_event_load vs sfx_reorder_voice_slot) and counts the
+# 12-slot mixer scans, voice writes, ring pushes and envelope expiries that drive them.
+ifdef SFX_SHAPE
+EXTRA_DEFINES += -DROF_SFX_SHAPE
+endif
+
 # Debug / benchmark toggle: `make INVULNERABLE=1` — never die in flight.  Tops the energy bar
 # (life_counter $062F) up before it can reach 0 and clears the death-cinematic trigger $063D,
 # so a headless run keeps flying instead of ending in the game-over sequence.  Implied by
