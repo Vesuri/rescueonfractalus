@@ -15,6 +15,11 @@
 # delta if they are close.  If they diverge, the two runs are not flying the same fight and the
 # comparison is void — say so instead of quoting the number.
 #
+# ⚠ game_vbi_isr brackets its THREE parts separately — handler (g_flightProf.isrLines) + sprites
+# (g_vbiSpriteLines) + audio (g_vbiAudioLines).  This script prints all three plus the WHOLE-VBI
+# total; quote the total.  The handler alone hides any change in the other two, and a change that
+# MOVES work between brackets reads as a win that is not one.
+#
 # ⚠ Read the handler cost as g_flightProf.isrLines / isrCalls.  NOT g_isrBeamLines (it
 # deliberately includes a ~68 t/firing ZP-audit probe) and NOT over g_vbiCount (which counts the
 # ~1900 boot/cinematic vblanks too).  And SNAPSHOT: g_pSfx/g_pSfxRing/g_pInteg/g_pProj all
@@ -37,6 +42,9 @@ set $s_proj  = g_pProj
 set $s_iters = g_sfxRingIters
 set $s_fd   = g_fdCalls
 set $s_vbi  = g_vbiCount
+set $s_vsp  = g_vbiSpriteLines
+set $s_vau  = g_vbiAudioLines
+set $s_vfc  = g_vbiFullCalls
 
 tbreak RescueOnFractalus::renderFrame if g_vbiCount >= 5400
 continue
@@ -49,8 +57,21 @@ printf "  ACTIVITY  ring/firing=%lu.%02lu  expl=%u fire=%u impact=%u  painted=%u
   g_clExplode, g_clEnemyFire, g_clImpact, (g_fdCalls-$s_fd), \
   mem[0x2886], mem[0x2885], mem[0x0029], mem[0x0028]
 printf "  VVBLKI=$%02x%02x $3D=%02x  (must be $4ff5 / 00)\n", mem[0x223], mem[0x222], mem[0x3D]
-printf "\n  *** flight VBI = %lu.%02lu t/firing  <-- THE A/B NUMBER ***\n", \
+printf "\n  handler (vbi_handler_flight) = %lu.%02lu t/firing\n", \
   ($n ? $il/$n : 0), ($n ? ((100*$il)/$n)%100 : 0)
+# ⚠ The handler is only ONE of game_vbi_isr's three brackets.  Quoting it alone hides any change in
+# the other two — and makes a change that MOVES work between them read as a win that is not one.
+# sprites = buildShotSprite + decodeScannerBlinkCells; audio = flush_paula + noiseTick.
+set $vsp = g_vbiSpriteLines - $s_vsp
+set $vau = g_vbiAudioLines  - $s_vau
+set $vfc = g_vbiFullCalls   - $s_vfc
+printf "  sprites (shot + scanner blink) = %lu.%02lu t/firing\n", \
+  ($vfc ? $vsp/$vfc : 0), ($vfc ? ((100*$vsp)/$vfc)%100 : 0)
+printf "  audio   (flush_paula + noise)  = %lu.%02lu t/firing\n", \
+  ($vfc ? $vau/$vfc : 0), ($vfc ? ((100*$vau)/$vfc)%100 : 0)
+printf "\n  *** WHOLE flight VBI = %lu.%02lu t/firing = %lu%% of ALL wall clock  <-- THE A/B NUMBER ***\n", \
+  ($vfc ? ($il+$vsp+$vau)/$vfc : 0), ($vfc ? ((100*($il+$vsp+$vau))/$vfc)%100 : 0), \
+  ($vfc ? (100*($il+$vsp+$vau))/(313*$vfc) : 0)
 define d
   printf "  %-28s %8lu t   %lu.%02lu t/firing  = %2lu%% of the ISR\n", $arg1, $arg0, \
     ($n ? $arg0/$n : 0), ($n ? ((100*$arg0)/$n)%100 : 0), ($il ? (100*$arg0)/$il : 0)
