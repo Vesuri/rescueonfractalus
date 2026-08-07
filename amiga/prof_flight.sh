@@ -42,10 +42,28 @@ if ! command -v fs-uae >/dev/null 2>&1 || ! command -v m68k-amiga-elf-gdb >/dev/
   exit 1
 fi
 
+# Pass the measurement flags through from the environment, e.g.
+#   COMBAT=1 ./prof_flight.sh --build 55 0.4 300
+# ⚠ Without COMBAT=1 (or INVULNERABLE=1) the auto-launch flies with no input, hits a mountain and
+# dies mid-window — renderFlightDirect stops while the sampler keeps sampling, so the profile is
+# partly the DEATH CINEMATIC.  That has produced badly wrong numbers (a frame-sync spin that read
+# 32% of wall clock and is really 0.1%).  COMBAT=1 implies ROF_INVULNERABLE and flies straight;
+# add COMBAT_QUIET=1 for the no-enemies control.  FIXED_RNG=1 pins the level across builds.
+PASSTHRU=""
+for f in COMBAT COMBAT_QUIET COMBAT_LEVEL COMBAT_SAUCER COMBAT_JITTER INVULNERABLE FIXED_RNG; do
+  eval "v=\${$f:-}"
+  [ -n "$v" ] && PASSTHRU="$PASSTHRU $f=$v"
+done
+
 if [ "$BUILD" = 1 ]; then
-  echo "=== building out/RoF.exe (PROBES=1 PROFILE_NORING=1 NO_TDRAW_PROF=1) ==="
-  make clean >/dev/null && make -j4 PROBES=1 PROFILE_NORING=1 NO_TDRAW_PROF=1 \
+  echo "=== building out/RoF.exe (PROBES=1 PROFILE_NORING=1 NO_TDRAW_PROF=1$PASSTHRU) ==="
+  # shellcheck disable=SC2086
+  make clean >/dev/null && make -j4 PROBES=1 PROFILE_NORING=1 NO_TDRAW_PROF=1 $PASSTHRU \
     || { echo "build failed" >&2; exit 1; }
+fi
+if [ -z "${COMBAT:-}${INVULNERABLE:-}" ]; then
+  echo "⚠ neither COMBAT=1 nor INVULNERABLE=1 — the ship will crash mid-window and the profile"
+  echo "  will include the death cinematic.  Re-run as: COMBAT=1 ./prof_flight.sh --build ..." >&2
 fi
 
 echo "=== sampling: warmup ${WARMUP}s, ${COUNT} samples @ ${INTERVAL}s ==="

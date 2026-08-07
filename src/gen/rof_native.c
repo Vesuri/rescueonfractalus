@@ -571,6 +571,19 @@ extern uint8_t* g_flightDotPlane;
 extern uint8_t* g_flightObjP1;    /* object plane1 overlay (value-3 low bit), applied post sky-fill */
 extern int g_objRowLo, g_objRowHi;
 extern int g_objColLo, g_objColHi;   /* dirty BYTE-COLUMN range (0..39) of g_flightObjP1 */
+/* Exact offsets of the bytes made nonzero in g_flightObjP1, so renderFlightDirect's post-sky-fill
+ * apply walks ~10 entries instead of searching a ~447-byte box (see g_objTouch in
+ * RescueOnFractalus.cpp).  Append on the 0->nonzero transition only, so there are no duplicates;
+ * on overflow set the flag and let the apply fall back to the box walk (still maintained below).
+ * ⚠ ROF_OBJ_TOUCH_CAP must match the definition in RescueOnFractalus.cpp (same extern-in-both-files
+ * pattern as g_objRowLo/g_objColLo); a larger value here would overrun the array. */
+#define ROF_OBJ_TOUCH_CAP 256
+extern uint16_t g_objTouch[ROF_OBJ_TOUCH_CAP];
+extern int g_objTouchN, g_objTouchOvf;
+#define ROF_OBJ_TOUCH(off) do { \
+    if (g_objTouchN < ROF_OBJ_TOUCH_CAP) g_objTouch[g_objTouchN++] = (uint16_t)(off); \
+    else g_objTouchOvf = 1; \
+} while (0)
 extern const uint16_t kRow120[48];   /* row*120 (interleaved terrain scanline) */
 extern const uint16_t kRow40[48];    /* row*40  (one mode-D plane / figure mask stride) */
 extern const uint16_t kRow80[48];    /* row*80  (interleaved 2-plane figure stride) */
@@ -592,7 +605,9 @@ extern void rof_flight_wait_dotclear(void);
         int _sc = 150 - (int)(h); \
         if ((unsigned)_ac < 160u && (unsigned)_sc < 47u && _sc != 43) { \
             int _bc = _ac >> 2; \
-            g_flightObjP1[kRow120[_sc] + _bc] |= kColMask4[_ac & 3]; \
+            int _of = kRow120[_sc] + _bc; \
+            if (!g_flightObjP1[_of]) ROF_OBJ_TOUCH(_of); \
+            g_flightObjP1[_of] |= kColMask4[_ac & 3]; \
             if (_sc < g_objRowLo) g_objRowLo = _sc; \
             if (_sc > g_objRowHi) g_objRowHi = _sc; \
             if (_bc < g_objColLo) g_objColLo = _bc; \
@@ -8837,7 +8852,10 @@ static int laser_dot_run(uint8_t* p2, uint8_t* p1, unsigned c0, unsigned c1) {
         unsigned byte = a >> 2; uint8_t m = 0;
         do { m |= kColMask4[a & 3u]; a++; } while ((a & 3u) && a < a1);   /* accumulate this byte's cols */
         p2[byte] |= m;
-        if (p1) p1[byte] |= m;
+        if (p1) {
+            if (!p1[byte]) ROF_OBJ_TOUCH(p1 + byte - g_flightObjP1);
+            p1[byte] |= m;
+        }
     }
     return 1;
 }
@@ -8865,7 +8883,11 @@ static void laser_dot_column(int rowStart, unsigned col, unsigned count) {
     int n = hi - lo + 1;
     if (p1) {
         for (int sc = lo; n--; sc++) {
-            if (sc != 43) { *p2 |= m; *p1 |= m; }
+            if (sc != 43) {
+                *p2 |= m;
+                if (!*p1) ROF_OBJ_TOUCH(p1 - g_flightObjP1);
+                *p1 |= m;
+            }
             p2 += 120; p1 += 120;
         }
         if (lo < g_objRowLo) g_objRowLo = lo;           /* ROF_PLOT_DOT_P1 dirty scanline range */

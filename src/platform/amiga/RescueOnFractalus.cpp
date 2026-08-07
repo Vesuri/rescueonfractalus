@@ -337,6 +337,21 @@ extern "C" volatile unsigned long g_bandCalls = 0, g_bandMismatch = 0, g_bandFir
 // as a bounding box by the same three writers that set the bytes (ROF_PLOT_DOT_P1, laser_dot_column,
 // laser_dot_run), so every nonzero byte is inside it and the narrowed apply still clears them all.
 extern "C" int g_objColLo = 40, g_objColHi = -1;
+// ...and, better still, the exact byte OFFSETS.  The box narrowed the walk but did not change its
+// nature: it is still a search.  Measured (objp1_shape.gdb, COMBAT+FIXED_RNG, 358 painted frames)
+// the box is 447 bytes/frame of which 2.2% -- about ten -- are nonzero, and the COMBAT PC profile
+// put 20/300 samples on the inner test.  But every one of those bytes is written by a writer that
+// already computed its offset, so the reader never needs to search at all: each writer appends the
+// offset the first time it makes a byte nonzero (0->nonzero transition, so no duplicates), and the
+// apply walks that list instead of the box.  Capacity is generous next to the ~10/frame measured;
+// on overflow the flag makes the apply fall back to the box walk, which is still correct because
+// the writers keep maintaining the box too.  g_objLeak (BAND_VERIFY) is the invariant check: after
+// the apply NO nonzero byte may remain anywhere in the scratch.
+#define ROF_OBJ_TOUCH_CAP 256
+extern "C" uint16_t g_objTouch[ROF_OBJ_TOUCH_CAP];
+extern "C" int g_objTouchN = 0;      // entries in use
+extern "C" int g_objTouchOvf = 0;    // list overflowed -> apply must use the box walk
+uint16_t g_objTouch[ROF_OBJ_TOUCH_CAP];
 
 // Rescue-figure scratch overlay (43 mode-D rows × 40 plane bytes): the ONLY figure pixels
 // plot_clipped_pixel actually drew (mirrored via ROF_PLOT_FIG in rof_native.c) — plane1, plane2,
@@ -2477,14 +2492,25 @@ void RescueOnFractalus::renderFlightDirect()
     // 1.8% of bytes scanned were nonzero (BAND_SHAPE probe).  Every nonzero byte is inside the box
     // (the three writers maintain both ranges together), so the narrowed walk still clears them all.
     if (g_objRowHi >= g_objRowLo) {
-        const int cl = g_objColLo, n = g_objColHi - cl + 1;
-        uint8_t* d = bp            + kRow120[g_objRowLo] + cl;  // plane1, walked +120/scanline
-        uint8_t* s = s_flightObjP1 + kRow120[g_objRowLo] + cl;  // scratch (same base offset)
-        for (int sc = g_objRowLo; sc <= g_objRowHi; sc++, d += 120, s += 120) {
-            for (int b = 0; b < n; b++) { if (s[b]) { d[b] |= s[b]; s[b] = 0; } }
+        if (!g_objTouchOvf) {
+            // Normal path: apply exactly the bytes the writers reported (~10/frame), no search.
+            for (int i = 0; i < g_objTouchN; i++) {
+                const unsigned off = g_objTouch[i];
+                bp[off] |= s_flightObjP1[off];
+                s_flightObjP1[off] = 0;
+            }
+        } else {
+            // Overflow fallback: the writers kept the bounding box up to date, so walk that.
+            const int cl = g_objColLo, n = g_objColHi - cl + 1;
+            uint8_t* d = bp            + kRow120[g_objRowLo] + cl;  // plane1, walked +120/scanline
+            uint8_t* s = s_flightObjP1 + kRow120[g_objRowLo] + cl;  // scratch (same base offset)
+            for (int sc = g_objRowLo; sc <= g_objRowHi; sc++, d += 120, s += 120) {
+                for (int b = 0; b < n; b++) { if (s[b]) { d[b] |= s[b]; s[b] = 0; } }
+            }
         }
         g_objRowLo = 47; g_objRowHi = -1;                       // range consumed
         g_objColLo = 40; g_objColHi = -1;
+        g_objTouchN = 0; g_objTouchOvf = 0;
     }
 #ifdef ROF_BAND_SHAPE
     BS_LAP(g_bsObj);
