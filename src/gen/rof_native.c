@@ -7942,14 +7942,38 @@ void terrain_draw_frame_core(uint8_t entryX) {
         while (p < end) { *p++ = grp; grp += 0x01010101u; }
         mem[0x00B3] = (uint8_t)(entryX + 0x5C);          /* $00B3 = far column id (entryX + $5C) */
     }
-    {   /* L_a351: $263A/$26CE[0..$13] = $67 (20 bytes, 2-aligned) -> uniform word stores */
+    {   /* L_a351: $263A/$26CE[0..$13] = $67 (20 bytes, 2-aligned) -> uniform word stores.
+           ⚠ GCC actually splits these back into 40 individual byte stores (checked in the
+           disassembly).  Batching them the same way as the $6B run below was TRIED and is worse:
+           with two interleaved volatile long pointers over a 5-trip loop GCC emitted a redundant
+           volatile READ before every byte store.  40 bytes is ~0.05% of wall, so it is not worth
+           chasing further — left as-is deliberately. */
         uint16_t *a = (uint16_t *)(mem + 0x263A), *b = (uint16_t *)(mem + 0x26CE);
         for (int i = 0; i < 0x0A; i++) { a[i] = 0x6767; b[i] = 0x6767; }
     }
-    /* L_a35e: $264E/$266F/$2690/$26B1[0..$20] = $6B — byte loop ($266F/$26B1 are odd
-       addresses, so word/long batching would fault on the 68000; $21 is odd too). */
-    for (int i = 0; i < 0x21; i++) {
-        mem[0x264E + i]=0x6B; mem[0x266F + i]=0x6B; mem[0x2690 + i]=0x6B; mem[0x26B1 + i]=0x6B;
+    /* L_a35e: the oracle writes $6B as four $21-byte runs at $264E/$266F/$2690/$26B1 — but those
+       ABUT: $264E+$21 == $266F, $266F+$21 == $2690, $2690+$21 == $26B1.  So the four together are
+       ONE CONTIGUOUS 132-byte run $264E..$26D1, which is exactly 33 longs — this is the COL_MAX
+       ($260E) horizon reset for columns $40..$C3.  (The old comment claimed $266F/$26B1 were "odd
+       addresses" so batching would fault; they are odd only as OFFSETS — every address here is even,
+       which is all move.l needs on a 68000.)
+       Batched as 33 long stores instead of 132 volatile byte stores: $6B broadcast to all four
+       lanes is endianness-neutral, so the store is identical on the big-endian Amiga and the
+       little-endian validate host (same condition as the $BD00 fill above).  The region is
+       main-loop-owned — the rasterizer's COL_MAX writes are the only other writer, and no flight-VBI
+       path touches $26xx (the $260E+x struct writes in rof_native_amiga.cpp are the STATION scene's
+       animation channels).  GCC had fully UNROLLED the byte loop into 132 `lea` + `move.b
+       #$6B,(0,aN,aM.l)` pairs plus repeated `lea mem,aN` rematerialisations, ~26 cycles a byte.
+       ⚠ Order vs the $67 fill above is preserved, and it matters: $26CE..$26D1 belongs to BOTH
+       runs and must end up $6B.  It does, because this fill still comes second.
+       ⚠ The pointer MUST stay volatile.  A plain `uint32_t*` loop here is recognised by GCC as a
+       memset and turned into `jsr memset` — and this build's freestanding memset
+       (support/gcc8_c_support.c) is a byte-at-a-time `move.b d0,(a0)+` / `cmpa.l` / `bne` loop at
+       ~24 cycles a byte, i.e. it hands all 132 byte writes straight back.  volatile is what keeps
+       the 33 long stores. */
+    {
+        volatile uint32_t *p = (volatile uint32_t *)(mem + 0x264E);
+        for (int i = 0; i < 33; i++) p[i] = 0x6B6B6B6Bu;
     }
 
     mem[0x2907] = roll_pos_lo;                           /* stash the current roll into the param block */
