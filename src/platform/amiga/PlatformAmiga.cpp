@@ -981,6 +981,38 @@ extern "C" volatile unsigned long g_clIsrN[2] = {0,0};
 extern "C" volatile unsigned long g_clAltDraw[8] = {};
 extern "C" volatile unsigned long g_clAltIter[8] = {};
 extern "C" volatile unsigned char g_clAltBucket  = 0;
+// DRAW SUB-SPLIT (see the CL_SUB block in rof_native.c).  Localises combat's +474 t/it inside the
+// DRAW phase without any cross-build reasoning:
+//   [0] head = per-frame table fills + compute_row_xspans   [1] obj = terrain_draw_objects
+//   [2] age  = the $0A00 near-max cell aging scan (256 volatile reads, only impacts arm it)
+// tail = DRAW_total - head - obj, computed in combat_probe.gdb so the four early returns in the
+// function's tail need no bracket.  g_clDrawSubN = bracketed calls, for the bracket-floor subtraction.
+extern "C" volatile unsigned long g_clDrawSub[3] = {};
+extern "C" volatile unsigned long g_clAgeScans   = 0;
+extern "C" volatile unsigned long g_clDrawSubN   = 0;
+// Terrain tree entries (one subdivide call per visible pair).  A count, so no bracket floor.
+extern "C" volatile unsigned long g_clSubCalls   = 0;
+// CALIBRATION LOAD (`make CALIBRATE=1`, see the CL_CAL block in rof_native.c).  Two fixed-trip,
+// data-independent loops run once per flight iteration, so their cost prices the MACHINE rather
+// than the work: if they inflate in combat, so does every phase, and that part of the combat
+// delta is DMA contention rather than computation.
+extern "C" volatile unsigned long g_clCalMem  = 0;   // 1024 scattered volatile mem[] byte reads
+extern "C" volatile unsigned long g_clCalCpu  = 0;   // 1024-step 16-bit LFSR, registers only
+extern "C" volatile unsigned long g_clCalN    = 0;   // iterations calibrated
+extern "C" volatile unsigned long g_clCalSink = 0;   // keeps the loops alive against DCE
+extern "C" volatile unsigned long g_clCalNoDma = 0;  // the MEM loop again, AUD+SPRITE DMA masked
+// A 128-read window counted only when NO ISR fired inside it — the one calibration that needs
+// no ISR subtraction, so it tells a slower machine apart from a subtraction artifact.
+extern "C" volatile unsigned long g_clCalIsrFree  = 0;
+extern "C" volatile unsigned long g_clCalIsrFreeN = 0;
+// Same window again but BEAM-LOCKED to scanline 200, so both builds measure the same slice of
+// the same frame — bitplane DMA only steals CPU slots inside the display window.
+extern "C" volatile unsigned long g_clCalLocked  = 0;
+extern "C" volatile unsigned long g_clCalLockedN = 0;
+// The 1024-read load again, measured as 8 short ISR-free sub-windows: the row that tells a
+// slower machine apart from the long bracket's ISR-subtraction bias.
+extern "C" volatile unsigned long g_clCalSplit  = 0;
+extern "C" volatile unsigned long g_clCalSplitN = 0;
 #ifdef ROF_OBJ_SHAPE
 // OBJECT-PLOTTER SHAPE PROBE (`make COMBAT=1 PROBES=1 OBJ_SHAPE=1` + amiga/obj_shape.gdb).
 // The combat attribution INFERRED the object plotter's cost from a visit count ("25 visits x

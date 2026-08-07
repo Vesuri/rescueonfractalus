@@ -178,5 +178,27 @@ while $b < 8
   end
   set $b = $b + 1
 end
+# ── WHERE INSIDE DRAW ────────────────────────────────────────────────────────────────────────
+# The altitude table above tests the "combat throws the ship to a dearer viewpoint" hypothesis by
+# matching rows across the combat and quiet runs.  This table answers the complementary question
+# with no cross-build reasoning at all: which SEGMENT of terrain_draw_frame_core carries the
+# delta.  tail is DERIVED (DRAW - head - obj) so the function's early returns need no bracket.
+printf "\n=== where inside DRAW (t/iteration; 2 calls per iteration) ===\n"
+set $draw = g_clPh[2][0] + g_clPh[2][1]
+set $head = g_clDrawSub[0]
+set $objs = g_clDrawSub[1]
+set $age  = g_clDrawSub[2]
+set $tail = $draw - $head - $objs
+printf "  DRAW total (both passes) : %6lu t/it\n", ($it ? $draw/$it : 0)
+printf "    head  (fills+xspans)   : %6lu t/it  = %2lu%% of DRAW\n", \
+  ($it ? $head/$it : 0), ($draw ? (100*$head)/$draw : 0)
+printf "    obj   (draw-order loop): %6lu t/it  = %2lu%% of DRAW\n", \
+  ($it ? $objs/$it : 0), ($draw ? (100*$objs)/$draw : 0)
+printf "    tail  (derived)        : %6lu t/it  = %2lu%% of DRAW\n", \
+  ($it ? $tail/$it : 0), ($draw ? (100*$tail)/$draw : 0)
+printf "      ...of which the $0A00 aging scan: %6lu t/it  [%lu scans over %lu draw calls = %lu%%]\n", \
+  ($it ? $age/$it : 0), g_clAgeScans, g_clDrawSubN, \
+  (g_clDrawSubN ? (100*g_clAgeScans)/g_clDrawSubN : 0)
+printf "  (3 sub-brackets x 2 passes add ~13 t/it of floor to DRAW; identical in both builds)\n"
 detach
 quit

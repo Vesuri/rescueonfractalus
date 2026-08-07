@@ -548,6 +548,18 @@ endif
 ifdef PROFILE_NORING
 EXTRA_DEFINES += -DROF_PROFILE_NORING
 endif
+# `make COMBAT=1 PROBES=1 CALIBRATE=1` (+ the QUIET control) + amiga/combat_probe.gdb —
+# PRICE THE MACHINE, NOT THE WORK.  Every phase of a combat iteration measures slower than the
+# quiet control, including terrain_frame_setup, whose 45-cell loop cannot know about combat.  A
+# phase bracket cannot tell computation from DMA stolen by sprites/audio/blitter, so this adds two
+# fixed-trip, data-independent loops (scattered mem[] byte reads; a register-only LFSR) once per
+# flight iteration.  Their delta between the two builds IS the machine slowdown; subtract it
+# before attributing any phase delta to extra work.  Costs ~160 t/it, so never leave it on for a
+# framerate or profile run, and expect the budget check's `covered` to fall below 100% (the
+# calibration deliberately sits outside every phase bracket).
+ifdef CALIBRATE
+EXTRA_DEFINES += -DROF_CALIBRATE
+endif
 # `make FPSCOUNT=1` — the HONEST framerate build.  Adds exactly two things to an otherwise
 # shipping binary: the headless auto-launch (so flight is reachable with no keypress) and ONE
 # increment per painted terrain frame (g_fpsFrames).  Deliberately does NOT imply PROBES:

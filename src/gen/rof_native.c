@@ -258,6 +258,142 @@ extern volatile unsigned char g_clExplSeen;
 extern volatile unsigned long g_clAltDraw[8], g_clAltIter[8];
 extern volatile unsigned char g_clAltBucket;
 
+/* ── DRAW SUB-SPLIT: *where inside* DRAW combat's extra time lands ───────────────────────────
+ * DRAW is 46% of wall and reads +474 t/it in combat vs the quiet control at the SAME pinned
+ * level and the same straight trajectory — more than the entire object plotter costs.  The
+ * altitude bucketing above tests one hypothesis (a disturbed attitude puts more terrain in
+ * view); this tests the complementary one by localising the delta inside the function, which
+ * needs no cross-build reasoning at all.
+ *   [0] head = the per-frame table fills + compute_row_xspans (fixed work, must NOT move)
+ *   [1] obj  = terrain_draw_objects (projection / subdivision / rasterize / plot_object)
+ *   [2] age  = the $0A00 near-max cell aging scan, bracketed separately inside the tail
+ * tail = DRAW_total - head - obj, computed in the gdb script, so the function's four early
+ * returns need no bracket of their own.
+ * The aging scan is called out because it is 256 volatile byte reads gated on
+ * map_cell_hit_marker, which only SHOT/BOLT impacts set — so it is structurally a combat-only
+ * cost that the quiet control can never show. */
+extern volatile unsigned long g_clDrawSub[3], g_clAgeScans, g_clDrawSubN;
+/* Tree entries per iteration — one subdivide call per both-endpoints-visible pair.  A COUNT, not
+ * a bracket, so it carries no probe floor: it says whether combat drives MORE terrain tree work
+ * or the same amount of work more slowly. */
+extern volatile unsigned long g_clSubCalls;
+#define CL_SUB_BEG()  unsigned long _sp = rof_subclock(), _si = g_isrBeamLines; ++g_clDrawSubN
+#define CL_SUB_END(i) do { unsigned long _d = rof_subclock() - _sp, _id = g_isrBeamLines - _si; \
+    g_clDrawSub[i] += (_d > _id) ? (_d - _id) : 0; \
+    _sp = rof_subclock(); _si = g_isrBeamLines; } while (0)
+#define CL_AGE(stmt)  do { unsigned long _p = rof_subclock(); unsigned long _i = g_isrBeamLines; \
+    stmt; unsigned long _d = rof_subclock() - _p, _id = g_isrBeamLines - _i; \
+    g_clDrawSub[2] += (_d > _id) ? (_d - _id) : 0; ++g_clAgeScans; } while (0)
+
+/* ── THE CALIBRATION LOAD: how a phase bracket lies about combat ─────────────────────────────
+ * WHY IT EXISTS.  Every phase of a combat iteration measures slower than the quiet control,
+ * including ones whose work cannot vary with combat — terrain_frame_setup's fixed 45-cell loop
+ * read +12%, ds_frame +18%.  Nothing in the harness could say whether that was a slower MACHINE
+ * (DMA stolen by sprites/audio/blitter is indistinguishable from computation inside a bracket) or
+ * the harness itself.  So: run a load whose cost CANNOT vary — fixed trip count, data-independent
+ * — once per flight iteration, and measure it five different ways.
+ *
+ * WHAT IT FOUND (2026-08-07, COMBAT vs COMBAT_QUIET at level 40, FIXED_RNG, five paired runs):
+ * the machine is NOT slower in combat, and the ordinary phase bracket says it is by ~15%.
+ *
+ *   row                                        combat   quiet   ratio
+ *   MEM      1024 reads, ONE bracket            272.7   236.2   1.155   <- the lie
+ *   MEM      the same 1024 reads, 8 ISR-FREE
+ *            sub-windows (no subtraction)       226     224     1.010   <- the truth
+ *   MEM x128 beam-locked to scanline 200         18.08   18.05  1.002   <- and again
+ *   MEM      1024 reads, AUD+SPRITE DMA masked  269.1   237.8   1.132   (so not audio/sprite DMA)
+ *   CPU      1024-step LFSR, one bracket         96.1    93.4   1.029
+ *
+ * ⚠ THE LESSON, and it applies to every bracket in this tree: `elapsed - g_isrBeamLines` is not a
+ * safe estimator when the two builds have DIFFERENT ISR rates.  g_isrBeamLines is credited at ISR
+ * EXIT, so an ISR straddling the bracket's start is over-subtracted and one straddling its end is
+ * under-subtracted.  Those cancel only if the two ends are independent — and for a window near
+ * the 313 t ISR period they are not, because start and end land at nearly the same phase of the
+ * ISR cycle.  Combat's window sat at 87% of the period and the control's at 75%, so the bias did
+ * not cancel between the builds either.  Short ISR-FREE windows need no subtraction and agree
+ * with each other; trust those.
+ *
+ * The loads:
+ *   MEM = 1024 scattered volatile byte reads out of mem[] — the traffic the terrain code is built
+ *         from, so it feels chip-RAM contention the same way.
+ *   CPU = a 1024-step 16-bit LFSR in registers (no 32-bit multiply — see m68k_math.h).  Still
+ *         fetches its instructions, so it is not contention-free, just far less memory-hungry.
+ * ⚠ This runs OUTSIDE the phase brackets, so it lands in the budget check's `unbracketed` line —
+ * `covered` will read below 100% on a CALIBRATE build.  That is expected, not a broken budget. */
+extern volatile unsigned long g_clCalMem, g_clCalCpu, g_clCalN, g_clCalSink, g_clCalNoDma,
+    g_clCalIsrFree, g_clCalIsrFreeN, g_clCalLocked, g_clCalLockedN,
+    g_clCalSplit, g_clCalSplitN;
+extern unsigned short rof_beam_line(void);
+#ifdef ROF_CALIBRATE
+/* The same MEM loop with AUD0-3 + SPRITE DMA masked off around it.  Audio and sprite DMA steal
+ * chip-RAM slots from the CPU, and combat has all four Paula channels busy where the quiet
+ * control has almost none — so if MEM_NODMA converges between the two builds while MEM does not,
+ * that IS the mechanism, and it is a real A500 effect rather than an emulator artifact.
+ * Deliberately blunt: it re-enables both unconditionally (flight always has them on) and will
+ * click the audio.  A measurement build only. */
+#define CL_CAL_DMA(reg) (*(volatile unsigned short *)0xDFF096u = (unsigned short)(reg))
+#define CL_CAL() do { \
+    { unsigned long _p = rof_subclock(); unsigned long _i = g_isrBeamLines; \
+      unsigned long _s = 0; \
+      for (int _k = 0; _k < 1024; _k++) _s += mem[0x0900 + (_k & 0xFF)]; \
+      g_clCalSink = _s; \
+      unsigned long _d = rof_subclock() - _p, _id = g_isrBeamLines - _i; \
+      g_clCalMem += (_d > _id) ? (_d - _id) : 0; } \
+    { unsigned long _p = rof_subclock(); unsigned long _i = g_isrBeamLines; \
+      unsigned long _s = 0; \
+      CL_CAL_DMA(0x002Fu); \
+      for (int _k = 0; _k < 1024; _k++) _s += mem[0x0900 + (_k & 0xFF)]; \
+      CL_CAL_DMA(0x802Fu); \
+      g_clCalSink += _s; \
+      unsigned long _d = rof_subclock() - _p, _id = g_isrBeamLines - _i; \
+      g_clCalNoDma += (_d > _id) ? (_d - _id) : 0; } \
+    /* The same traffic in a window SHORT enough to usually fit between two ISR firings, counted
+       ONLY when none fired inside it.  This is the one calibration that needs no ISR subtraction
+       at all, so it separates a genuinely slower machine from an artifact of subtracting
+       g_isrBeamLines (combat fires ~21 ISRs per iteration against the control's ~12, so any
+       per-firing residue in the subtraction scales with exactly the thing being measured). */ \
+    { unsigned long _p = rof_subclock(); unsigned long _i = g_isrBeamLines; \
+      unsigned long _s = 0; \
+      for (int _k = 0; _k < 128; _k++) _s += mem[0x0900 + _k]; \
+      g_clCalSink += _s; \
+      unsigned long _d = rof_subclock() - _p; \
+      if (g_isrBeamLines == _i) { g_clCalIsrFree += _d; ++g_clCalIsrFreeN; } } \
+    /* ⭐ THE DECIDING ROW.  The SAME 1024 reads as the first row, but measured as eight short
+       sub-windows and counted only where no ISR fired — so the identical work is priced with and
+       without the subtraction, in one run.  Same inner body (the & 0xFF is kept) so the per-read
+       cost is comparable.  Verdict: 226 t (combat) vs 224 t (quiet) against the single bracket's
+       272.7 vs 236.2 — the whole gap was the estimator. */ \
+    { for (int _j = 0; _j < 8; _j++) { \
+        unsigned long _p = rof_subclock(); unsigned long _i = g_isrBeamLines; \
+        unsigned long _s = 0; \
+        for (int _k = 0; _k < 128; _k++) _s += mem[0x0900 + ((_j*128 + _k) & 0xFF)]; \
+        g_clCalSink += _s; \
+        unsigned long _d = rof_subclock() - _p; \
+        if (g_isrBeamLines == _i) { g_clCalSplit += _d; ++g_clCalSplitN; } } } \
+    /* And once more BEAM-LOCKED: spin to a fixed scanline first, so both builds measure the same
+       slice of the same frame.  This kills the last confound — bitplane DMA only steals CPU slots
+       inside the display window, and the two builds do not sample the frame alike (the iteration
+       top drifts with the ISR length).  Line 200 is mid-display and far from the vblank, so the
+       window is ISR-free by construction.  It agrees with the split row: 18.08 vs 18.05. */ \
+    { while (rof_beam_line() != 200u) { } \
+      unsigned long _p = rof_subclock(); unsigned long _i = g_isrBeamLines; \
+      unsigned long _s = 0; \
+      for (int _k = 0; _k < 128; _k++) _s += mem[0x0900 + _k]; \
+      g_clCalSink += _s; \
+      unsigned long _d = rof_subclock() - _p; \
+      if (g_isrBeamLines == _i) { g_clCalLocked += _d; ++g_clCalLockedN; } } \
+    { unsigned long _p = rof_subclock(); unsigned long _i = g_isrBeamLines; \
+      unsigned short _x = 0xACE1u; \
+      for (int _k = 0; _k < 1024; _k++) \
+          _x = (unsigned short)((_x >> 1) ^ ((unsigned short)(-(int)(_x & 1u)) & 0xB400u)); \
+      g_clCalSink += _x; \
+      unsigned long _d = rof_subclock() - _p, _id = g_isrBeamLines - _i; \
+      g_clCalCpu += (_d > _id) ? (_d - _id) : 0; } \
+    ++g_clCalN; } while (0)
+#else
+#define CL_CAL() ((void)0)
+#endif
+
 /* ── OBJECT-PLOTTER SHAPE PROBE (`make COMBAT=1 PROBES=1 OBJ_SHAPE=1`) ───────────────────────
  * The combat attribution said DRAW carries 69% of combat's extra frame time and that ~25
  * occupied cells enter terrain_plot_object per iteration while only ONE reaches
@@ -306,6 +442,10 @@ extern volatile unsigned long g_rsBktCalls[5], g_rsBktCells[5], g_rsBktTicks[5];
 #define CL_OBJ(depth)  ((void)0)
 #define CL_PH(i, stmt, acc) FP_TIME(stmt, acc)
 #define CL_PH_ITER()   ((void)0)
+#define CL_SUB_BEG()   ((void)0)
+#define CL_SUB_END(i)  ((void)0)
+#define CL_AGE(stmt)   do { stmt; } while (0)
+#define CL_CAL()       ((void)0)
 #define OP_CNT(c)      ((void)0)
 #define OP_TIME(stmt)  do { stmt; } while (0)
 #define RS_SHAPE(step, rows, cells, plots, ticks) ((void)0)
@@ -7565,6 +7705,7 @@ __attribute__((noinline)) static void terrain_draw_objects(void) {
                 /* load the primary's projected vector as the running span endpoint, then subdivide */
                 M[MEM_dl_ptr_hi]=o0[0x2400]; M[MEM_screen_ptr_lo]=o0[0x242D]; M[MEM_screen_ptr_hi]=o0[0x245A];
                 M[MEM_encounter_count]=o0[0x2487]; M[MEM_row_count]=o0[0x23B5];
+                CL_CNT(g_clSubCalls);                /* tree entries: a pure COUNT, no bracket */
                 PB(_sd); SEGPRE(); terrain_subdivide_column_core(0x00, order_idx); SEGPOST(); PE(_sd, g_tdSubdiv);
                 order_idx = M[0x272E];               /* restore the index (the calls leave $272E untouched) */
                 if (order_idx == 0) order_idx++;
@@ -7592,6 +7733,7 @@ __attribute__((noinline)) static void terrain_draw_objects(void) {
  * (harness seeds it identically per run).
  */
 void terrain_draw_frame_core(uint8_t entryX) {
+    CL_SUB_BEG();                                        /* DRAW sub-split: start the head segment */
     mem[0x00A7] = entryX;                                /* remember which double-buffer half we're drawing */
 #ifdef ROF_PLATFORM_AMIGA
     /* Signal the flight renderer that a fresh terrain frame is being drawn, so renderFlightDirect
@@ -7656,7 +7798,9 @@ void terrain_draw_frame_core(uint8_t entryX) {
        terrain_plot_object take the object id in the 6502 X register (still 6502-ABI twins).
        The pass ends once the draw-order index reaches $90.  Body split into
        terrain_draw_objects() above — for codegen only, see the comment there. */
+    CL_SUB_END(0);                                       /* head done */
     terrain_draw_objects();
+    CL_SUB_END(1);                                       /* object draw-order pass done */
 
     /* Publish this frame's span extents for the HUD / next frame. */
     mem[0x28D9] = mem[0x28E7];
@@ -7738,6 +7882,7 @@ void terrain_draw_frame_core(uint8_t entryX) {
         obj_table_set_active();
     /* Age every near-max ($FA-$FF) terrain-map cell by one, re-flagging if any remain. */
     if (map_cell_hit_marker != 0) {
+        CL_AGE({
         map_cell_hit_marker = 0;
         for (int x = 0; x < 0x100; x++) {
             if (mem[0x0A00 + x] > 0xF9) {
@@ -7745,6 +7890,7 @@ void terrain_draw_frame_core(uint8_t entryX) {
                 map_cell_hit_marker++;
             }
         }
+        });
     }
     /* Occasionally spawn a random enemy above the terrain; bail out on any failed precondition:
        a free object slot, not crashed, a configured spawn period, and the per-spawn countdown
@@ -11584,6 +11730,7 @@ static void game_main_loop_body(void) {
     while (event_active_flag != 0) { g_flightRenderHalf = 0; ds_frame(); }
 #endif
     CL_PH_ITER();                    /* latch the combat state for this whole iteration */
+    CL_CAL();                        /* price the MACHINE (CALIBRATE builds only; see CL_CAL) */
     g_flightRenderHalf = 0;          /* this ds_frame shows the DISPLAY half (prev pass 2, offset 0) */
     CL_PH(CL_PH_FRAME, ds_frame(), g_clFrameTicks);
     FP_ITER_MARK();
