@@ -12,6 +12,11 @@ Two goals, in order:
 > **There is NO `NO_ASSEMBLER` constraint.** It was an early simplification, now being removed.
 > The shipping build should use hand-written asm for hot paths.
 
+> **Companion docs:** `docs/flight-perf-log.md` holds the flight-perf investigation archive — the
+> closed candidates with their numbers (§2), the 68000 codegen lessons harvested from these twins
+> (§3), and the retracted conclusions (§5). Current numbers and the ranked TODO are in the
+> `flight-pc-profiler` memory; measurement rules in `flight-measurement-rules`.
+
 ---
 
 ## Background facts (verified 2026-06-30)
