@@ -139,8 +139,8 @@ the flight VBI's CLI window). Faithful 1:1 — the dispatcher logic is the Atari
 | START | Start the game | — (CONSOL) | **F1 ($50)** | CONSOL $D01F bit0 |
 | BREAK | Restart (score lost, highs kept) → `game_loop_reset` | $80 | **Backspace ($41)** | kbd cmd $519c |
 | ESC | Freeze/pause mission (toggle) | $1c | Esc ($45) | kbd cmd |
-| CURSOR RIGHT | Increase Thrust (`INC $006F`, Y5) | $06 (Ctrl-`+`, masked) | **`=`/`+` ($0C)** | kbd cmd |
-| CURSOR LEFT | Decrease Thrust (`DEC $006F`, Y4) | $07 (Ctrl-`*`, masked) | **`-` ($0B)** | kbd cmd |
+| CURSOR RIGHT | Increase Thrust (Y4) | $07 (Ctrl-`*`, masked) | **`=`/`+` ($0C)** | kbd cmd |
+| CURSOR LEFT | Decrease Thrust (Y5) | $06 (Ctrl-`+`, masked) | **`-` ($0B)** | kbd cmd |
 | L | Land | $00 | L ($28) | kbd cmd |
 | S | Systems | $3e | S ($21) | kbd cmd |
 | A | Air Lock | $3f | A ($20) | kbd cmd |

@@ -1729,7 +1729,7 @@ static const uint8_t  kRawF3       = 0x52;   // F3 -> CONSOL OPTION (bit2)
 // The dispatcher itself filters unknown ids, so only the 8 table keys do anything.
 //   Atari KBCODE -> command (event_sequence_dispatcher index Y), from the game manual:
 //     $00 L (Y0) Land     $3f A (Y1) Air Lock    $15 B (Y2) Boosters    $3e S (Y3) Systems
-//     $07 * (Y4) Decrease Thrust (DEC $006F)      $06 + (Y5) Increase Thrust (INC $006F, cap 6)
+//     $07 * (Y4) Increase Thrust      $06 + (Y5) Decrease Thrust
 //     $80 BREAK ($519e -> game_loop_reset = "Restart")    $1c ESC (Y7) Freeze/pause
 //   ($07/$06 are the Atari cursor-right/left keys, masked to base code by the IRQ's AND #$3F.
 //    Thrust goes on the two keys immediately RIGHT OF '0' — Amiga '-' ($0b) and '=' ($0c) —
@@ -1742,8 +1742,8 @@ static const FlightKeyMap kFlightKeys[] = {
     { 0x20, 0x3F },   // Amiga 'A'   -> Atari A   $3f  Air Lock
     { 0x35, 0x15 },   // Amiga 'B'   -> Atari B   $15  Boosters
     { 0x21, 0x3E },   // Amiga 'S'   -> Atari S   $3e  Systems
-    { 0x0C, 0x06 },   // Amiga '='/'+' -> Atari + $06  Increase Thrust
-    { 0x0B, 0x07 },   // Amiga '-'   -> Atari *   $07  Decrease Thrust
+    { 0x0C, 0x07 },   // Amiga '='/'+' -> Atari * $07  Increase Thrust
+    { 0x0B, 0x06 },   // Amiga '-'   -> Atari +   $06  Decrease Thrust
     { 0x45, 0x1C },   // Amiga 'Esc' -> Atari ESC $1c  Freeze/pause
     { 0x41, 0x80 },   // Amiga 'Backspace' -> Atari BREAK $80 Restart
 };
