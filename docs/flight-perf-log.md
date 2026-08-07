@@ -648,3 +648,92 @@ combat's altitude leaving `$80` where the control holds it). Nothing in it is ex
 
 New tooling, all off by default: `make CALIBRATE=1`, `amiga/calibrate.gdb`, the `CL_SUB`/`CL_AGE`
 split and `g_clSubCalls` in `rof_native.c`, and the extra block in `combat_probe.gdb`.
+
+---
+
+## 9. 2026-08-07 (last) — ranked item 1: inside `integ`, and the bilerp blend
+
+### 9.1 Two corrections before the numbers
+
+**`integ` runs on HALF the ISR firings.** `vbi_handler_flight` alternates its per-frame work on
+the `$00C8` parity counter, so `flight_control_integrate` fired 1399× per 2798 ISR firings. Every
+recorded "15.3 t/firing" is therefore an average over all firings; per CALL it is **30.7 t**. The
+same halving applies to `proj` (`update_terrain_scanline_proj`), its neighbour in the same branch.
+
+**`compute_target_blip_position` is never called in flight** — 0 of 1399 firings, because `$0004`
+(`level_or_state`) is 0. It is not a cost.
+
+### 9.2 The shape (`amiga/integ_shape.gdb`, new)
+
+13 regions lapped off ONE running beam stamp (a single `rof_beam_line()` per boundary, not an
+`SX_SPAN`'s two), plus an empty lap as the per-bucket floor and a path counter per conditional
+callee. Floor-corrected the regions sum to 30.24 t against the unprobed 30.68 — so the split is
+the function, not the probe.
+
+| region | net t/call | share |
+|---|---|---|
+| **obj — `object_step_and_collide`** | **11.2** | **37%** |
+| ang — heading + `compute_obj_rel_angle_scale` | 3.18 | 10% |
+| thr — throttle kick + clamp | 2.39 | 8% |
+| slot — slot dispatch | 2.19 | 7% |
+| pos · attc · level · head · objv · lock · hud · tail · disp | 0.47–2.00 each | 3–6% |
+
+Level 2 said the bucket is not really `integ`'s at all: inside `object_step_and_collide`,
+**`sample_terrain_height_bilerp` is 78%**; inside the bilerp, **the three `terr_blend` calls are
+82%**. And the bilerp ran 3326× in the window — 1232 from `integ`, ~2094 from `proj`, where it is
+likewise ~79% of the bucket. Summed it was **~11 t per ISR firing ≈ 10% of the whole flight VBI ≈
+3.5% of all wall clock**: the biggest single block in the 50 Hz ISR after the sfx engine.
+
+### 9.3 The fix — an 8-iteration bit-serial loop that is a separable sum
+
+`terr_blend`'s loop shifts BOTH operands exactly once on BOTH branches. So at the start of
+iteration `i` the operands are always `L0>>i` / `H0>>i` whatever path the fraction took, and the
+term added is `T(X,i) = (X>>(i+1)) + ((X>>i)&1)` with `X = H` when f's bit `7-i` is set, else `L`.
+`A` is a plain 8-bit accumulator ⇒ the total is a sum mod 256 ⇒ **order-independent** ⇒ separable
+into "the terms f selects, from H" plus "the terms it does not, from L" — and the second is the
+first applied to `~f`. Splitting the selector by nibble gives two 256×16 tables:
+
+    A = Bhi[H][f>>4] + Blo[H][f&15] + Bhi[L][15-(f>>4)] + Blo[L][15-(f&15)]   (mod 256)
+
+`tools/terr_blend_table_test.c` checks it over **all 2^24 (f,L,H) triples: 0 mismatches**, for
+this 8 KB form and for the 2-lookup 64 KB single-table form. The mem[] contract is untouched
+(the one `terr_blend_test.c` already proved). `make validate` stays 0 mem mismatch on the bilerp
+and all four of its callers.
+
+**8 KB, not 64 KB, on a RAM budget measured rather than guessed** (`amiga/memreport.gdb`, new —
+`AvailMem` snapshotted either side of the scene constructor). Load image 505 KB + **158,544 bytes
+of runtime CHIP `AllocMem`** = ~675 KB total, ~170 KB of it chip-mandatory. The game therefore
+does NOT fit a bare 512 KB A500 and needs 1 MB. On a 512+512 machine the non-chip image is the
+binding constraint: 490 KB against a 512 KB slow bank. +8 KB leaves 13 KB spare; +64 KB would
+have overflowed it by 42 KB. Both forms measured the same speed, so the 64 KB one buys nothing.
+
+### 9.4 Measured (`isr_ab.gdb`, `make BLEND_LOOP=1` restores the loop in the same tree)
+
+`COMBAT=1 PROBES=1 PROFILE_NORING=1 NO_TDRAW_PROF=1 FIXED_RNG=1`, both sides bit-reproducible
+over two runs:
+
+| | loop | tables | delta |
+|---|---|---|---|
+| **whole flight VBI** | **109.35** | **104.12** t/firing | **−5.23 (−4.8%)** |
+| handler | 88.50 | 82.46 | −6.04 |
+| `integ` | 14.79 | 12.96 | −1.83 (−12%) |
+| `proj` | 9.91 | 6.22 | −3.69 (−37%) |
+| sfx total | 36.77 | 36.42 | −0.35 |
+| painted frames in window | 359 | 372 | +3.6% |
+
+**−5.23 t/firing = −1.67% of ALL wall clock.** The two builds did not fly quite the same fight
+(expl 21→27, fire 213→200) but the fight-sensitive bucket — sfx — moved only 1%, and `integ`+`proj`
+account for 5.52 of the 6.04 t handler delta. `.bss` +8,196 bytes; `.text` +486 (the builder),
+and the bilerp itself shrank 1644 → 1176 bytes.
+
+### 9.5 The lesson worth keeping
+
+**A lapped shape probe over-states the buckets it splits — read it as SHARES, never as absolutes.**
+The probe put the three blends at 7.45 t/call; the end-to-end A/B recovered 5.52 t/firing ÷ 1.19
+bilerp calls/firing = **4.6 t/call**, i.e. the probe over-read by ~40%. The RANKING was right and
+the sizing was 40% optimistic — which is exactly the failure mode the "shares, not absolutes"
+rule exists for. Estimate given before measuring: −2.3%. Actual: −1.67%.
+
+And structurally this is the FOURTH win of the same shape as §6/§7: not the profile's top entry,
+but a hot leaf doing work that its own structure had already made redundant. Here the redundancy
+was in the algorithm itself — an accumulator whose associativity nobody had checked.

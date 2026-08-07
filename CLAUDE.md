@@ -380,10 +380,17 @@ regs, force `(a0)+`/`(d8,a0)`, shave every redundant insn), not the transliterat
 (dominant) [rasterize ~64% (asm'd) · project_terrain_points ~20% (asm'd, ~2.2× — `ProjectTerrainAssembler.s`)
 · subdivide ~16% (asm'd, but only ~0.6 tick/call — `TerrainSubdivideAssembler.s`; its bracket is dominated
 by the raster leaf-fills it drives, so removing GCC's spills barely helps)] · VBI ~71ms (3.6ms × ~20
-firings/iter, faithful — `integ` ~13→~8/firing after the mul_u8 table below) · renderFlightDirect ~24ms ·
-setup+clear ~31ms [terrain_frame_setup loops asm'd ~26% — `TerrainFrameSetupAssembler.s`]. **mul_u8 bit-serial
-multiply → byte-exact 64KB lookup table** (`g_mulTable`, rof_native.c; mul_u8 is NOT a plain product so no
-single mulu is byte-identical — see docs/asm-migration-plan.md).
+firings/iter, faithful) · renderFlightDirect ~24ms ·
+setup+clear ~31ms [terrain_frame_setup loops asm'd ~26% — `TerrainFrameSetupAssembler.s`]. **Two bit-serial
+loops are now byte-exact lookup tables:** `mul_u8` → the 64KB `g_mulTable` (mul_u8 is NOT a plain product so
+no single mulu is byte-identical — see docs/asm-migration-plan.md), and `terr_blend` → the 8KB
+`g_blendHi`/`g_blendLo` nibble pair, which took the whole flight VBI 109.35 → 104.12 t/firing (−1.67% of ALL
+wall clock; `sample_terrain_height_bilerp` was ~10% of the ISR). ⚠ The VBI's `integ`/`proj` buckets run on
+only HALF the ISR firings (the `$00C8` parity alternation) — per CALL they cost double their t/firing figure.
+⚠ **RAM budget (measured 2026-08-07, `amiga/memreport.gdb`): load image ~505KB + 158,544 bytes of runtime
+CHIP `AllocMem` = ~675KB, ~170KB chip-mandatory — so the port needs 1MB and does NOT fit a bare 512KB A500.
+On a 512+512 machine the binding limit is the ~499KB non-chip image against the 512KB slow bank; check it
+before adding another table.**
 **✅ The rasterize restructure is DONE (2026-08-05, c636951): −36% beam-ticks/call (24→15), share 34.5%→29.8%,
 byte-identical.** It did NOT need fewer subdivisions — it dropped the control-point COLUMN representation for
 a tracked `span` (so the ccol load / `gap` subtract / midpoint store all vanish), put the TOS control-point
