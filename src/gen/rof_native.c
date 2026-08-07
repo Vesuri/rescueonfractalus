@@ -5390,16 +5390,66 @@ void game_sub_55FC(void) {
  *
  * The blend's ADC adds the byte AFTER an in-place LSR plus the bit that LSR shifted
  * out (rounding) — reproduced exactly. */
+/* ---- terr_blend's 8-iteration bit-serial loop as two 4 KB tables -------------------------
+ *
+ * SHAPE (amiga/integ_shape.gdb, 2026-08-07): sample_terrain_height_bilerp is ~79% of the flight
+ * VBI's `proj` bucket AND 78% of the `obj` bucket inside `integ` — together ~11 t per ISR firing
+ * = ~10% of the whole flight VBI = ~3.5% of ALL wall clock — and 82% of the bilerp is these
+ * three blends.  It is the single biggest block in the 50 Hz ISR after the sfx engine.
+ *
+ * WHY IT COLLAPSES: BOTH branches of the loop shift BOTH operands exactly once, so at the start
+ * of iteration i the operands are always L0>>i and H0>>i whatever path the fraction took, and
+ * the term added is
+ *       T(X,i) = (X >> (i+1)) + ((X >> i) & 1)        (round-half-up of (X>>i)/2)
+ * with X = H when f's bit (7-i) is set, else L.  A is a plain 8-bit accumulator, so the total is
+ * a sum mod 256 and therefore ORDER-INDEPENDENT — which makes it separable into "the terms f
+ * selects from H" plus "the terms f does not select, from L".  The second is the first applied
+ * to ~f.  Splitting the selector by nibble gives two 256x16 tables instead of one 256x256:
+ *
+ *       A = Bhi[H][f>>4] + Blo[H][f&15] + Bhi[L][15-(f>>4)] + Blo[L][15-(f&15)]   (mod 256)
+ *
+ * 8 KB total.  (The one-table 64 KB form works too and needs only 2 lookups, but the non-chip
+ * load image is already 490 KB against a 512 KB slow bank on a 512+512 A500 — see the RAM
+ * budget in amiga/memreport.gdb — and the two forms measured the same speed.)
+ *
+ * EXACTNESS: tools/terr_blend_table_test.c checks the identity over ALL 2^24 (f,L,H) triples —
+ * 0 mismatches, for both the 8 KB and 64 KB forms.  The mem[] contract is unchanged and is the
+ * one tools/terr_blend_test.c already proved: the fraction shifts left 8 times and each operand
+ * right 8 times, so all three cells end at 0 for every input.
+ *
+ * `make BLEND_LOOP=1` restores the bit-serial loop so the win can be re-measured in one tree
+ * (GDBSCRIPT=isr_ab.gdb; the metric is whole-VBI t/firing, which IS cross-build-legitimate). */
+uint8_t g_blendHi[256u * 16u];      /* Bhi[(X<<4)|n] — f's bits 7..4, i.e. iterations 0..3 */
+uint8_t g_blendLo[256u * 16u];      /* Blo[(X<<4)|n] — f's bits 3..0, i.e. iterations 4..7 */
+static int g_blendTableReady = 0;
+
+/* Public one-shot builder: call ONCE at startup, like rof_mul_table_init (main.cpp).  8192
+ * entries of at most 8 adds — microseconds, not the mul table's seconds — but building it in
+ * the flight VBI would still be a visible hitch.  Idempotent. */
+void rof_blend_table_init(void) {
+    if (g_blendTableReady) return;
+    for (unsigned X = 0; X < 256; X++) {
+        for (unsigned n = 0; n < 16; n++) {
+            uint8_t sh = 0, sl = 0;
+            for (int i = 0; i < 4; i++)                     /* f bits 7..4 -> iterations 0..3 */
+                if ((n >> (3 - i)) & 1)
+                    sh = (uint8_t)(sh + (uint8_t)((X >> (i + 1)) + ((X >> i) & 1)));
+            for (int i = 4; i < 8; i++)                     /* f bits 3..0 -> iterations 4..7 */
+                if ((n >> (7 - i)) & 1)
+                    sl = (uint8_t)(sl + (uint8_t)((X >> (i + 1)) + ((X >> i) & 1)));
+            g_blendHi[(X << 4) | n] = sh;
+            g_blendLo[(X << 4) | n] = sl;
+        }
+    }
+    g_blendTableReady = 1;
+}
+
 static uint8_t terr_blend(uint16_t fa, uint16_t lo, uint16_t hi) {
-    /* The 6502 shifts all three operands in place in scratch.  Doing that literally costs
-     * 8 volatile mem[] byte accesses per iteration (GCC unrolls the loop but must still
-     * emit every one), so keep them in registers and restore the mem[] contract at the end.
-     * That contract is trivial: the fraction is shifted LEFT 8 times and lo/hi RIGHT 8
-     * times each — exactly once per iteration, on both branches — so all three cells end
-     * at 0 for every input.  Proven exhaustively over all 2^24 (fraction,lo,hi) triples by
-     * tools/terr_blend_test.c: 0 return mismatches, 0 mem mismatches.
-     * Callers never pass overlapping addresses (fa is $27FA/$27FB, lo/hi are $27F0-$27F5). */
-    uint8_t f = mem[fa], L = mem[lo], H = mem[hi], A = 0;
+    /* Callers never pass overlapping addresses (fa is $27FA/$27FB, lo/hi are $27F0-$27F5). */
+    unsigned f = mem[fa];
+#ifdef ROF_BLEND_LOOP
+    /* A/B baseline (`make BLEND_LOOP=1`): the original bit-serial loop, register-hoisted. */
+    uint8_t L = mem[lo], H = mem[hi], A = 0;
     for (int i = 0; i < 8; i++) {
         uint8_t bit = (uint8_t)(f >> 7);
         f = (uint8_t)(f << 1);                        /* ASL fraction -> carry=bit */
@@ -5415,11 +5465,18 @@ static uint8_t terr_blend(uint16_t fa, uint16_t lo, uint16_t hi) {
             A = (uint8_t)(A + L + c);                 /* ADC lo */
         }
     }
+#else
+    unsigned L = (unsigned)mem[lo] << 4, H = (unsigned)mem[hi] << 4;
+    unsigned fh = f >> 4, fl = f & 15;                /* ~f's nibbles are 15-fh / 15-fl */
+    uint8_t A = (uint8_t)(g_blendHi[H | fh] + g_blendLo[H | fl]
+                        + g_blendHi[L | (15u - fh)] + g_blendLo[L | (15u - fl)]);
+#endif
     mem[fa] = 0; mem[lo] = 0; mem[hi] = 0;            /* the shifted-out final state */
     return A;
 }
 void sample_terrain_height_bilerp(void) {
     O2_DECL(); O2_START(g_blCalls); O2_LAP(g_blNop);   /* empty lap = this level's floor */
+    if (!g_blendTableReady) rof_blend_table_init();    /* safety net if init was skipped */
     uint8_t row = (uint8_t)(map_z_hi << 4);                       /* $9A36: $0061 */
     terrain_lerp_index = row;
     uint8_t y = (uint8_t)((map_x_hi & 0x0F) | row);

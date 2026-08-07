@@ -15,6 +15,8 @@
 
 /* Native (rof_native.c) one-shot builder for the 64KB mul_u8 lookup table. */
 extern "C" void rof_mul_table_init(void);
+/* ...and for the 8KB terr_blend nibble tables (sample_terrain_height_bilerp). */
+extern "C" void rof_blend_table_init(void);
 
 #ifdef ROF_SFXMIX_FUZZ
 /* One-shot on-target fuzz of the hand-asm SFX mixer twin (rof_native.c, `make FUZZ=1`). */
@@ -43,6 +45,10 @@ int main(int argc, char* argv[]) {
        Otherwise it is built lazily on the first flight VBI ISR firing, a ~3.6s (7MHz 68000)
        stall that freezes the display right at flight entry.  See rof_mul_table_init(). */
     rof_mul_table_init();
+
+    /* Same idea, 8KB: the terr_blend nibble tables that replace sample_terrain_height_bilerp's
+       three bit-serial blend loops.  Cheap to build, but not inside the flight VBI. */
+    rof_blend_table_init();
 
 #ifdef ROF_SFXMIX_FUZZ
     /* One-shot on-target fuzz of the hand-asm SFX mixer twin vs its C oracle over randomised

@@ -247,6 +247,15 @@ ifdef INTEG_SHAPE
 EXTRA_DEFINES += -DROF_INTEG_SHAPE
 endif
 
+# A/B baseline: `make BLEND_LOOP=1` restores terr_blend's ORIGINAL 8-iteration bit-serial loop
+# in place of the two 4 KB nibble tables (rof_native.c), so the win can be re-measured in one
+# tree: GDBSCRIPT=isr_ab.gdb on this build vs the default.  The metric is the WHOLE-VBI
+# t/firing, which is a legitimate cross-build number because the ISR fires 50x/s regardless of
+# frame rate.  Both forms are byte-identical (tools/terr_blend_table_test.c, all 2^24 inputs).
+ifdef BLEND_LOOP
+EXTRA_DEFINES += -DROF_BLEND_LOOP
+endif
+
 # Profiling aid: `make RASTER_C=1 RAS_SHAPE=1 PROBES=1` + amiga/ras_shape.gdb — the flight
 # rasterizer's STRUCTURAL shape counters (phase-2 entry-span and far-bisect-span histograms,
 # fe/ff leaf mix, phase-1 advance/push counts, hidden-surface accept rate).  These live inside
