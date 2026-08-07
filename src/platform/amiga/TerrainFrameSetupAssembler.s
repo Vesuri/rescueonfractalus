@@ -147,58 +147,158 @@ tf_l1:
 	; nothing to load or byte-assemble here.  v lives in an address register because that is
 	; the only register left, and adda/suba.w serve it exactly as add/sub.w serve d1; only the
 	; low word is ever read back, so their sign-extension to 32 bits is harmless. ----
-	btst	#7,d0
-	beq.s	tf_p40
-	; pat & $80
-	add.b	#$F0,d6			; b6 += $F0
-	add.w	a3,d1			; u += rot_a
-	suba.w	a4,a2			; v -= rot_b
-	btst	#6,d0
-	beq.s	tf_p80_20
-	subq.b	#1,d7			; X--
-	sub.w	a4,d1			; u -= rot_b
-	suba.w	a3,a2			; v -= rot_a
-	bra.s	tf_fired
-tf_p80_20:
-	btst	#5,d0
-	beq.s	tf_fired
+	;
+	; ⭐ JUMP TABLE, not the oracle's nested btst chain (2026-08-07).  The decode is a pure
+	; function of pat's TOP NIBBLE — the low nibble is never tested on any path, and every
+	; branch outcome collapses to two independent signs:
+	;       u += sA*rot_a + sB*rot_b        v += -sA*rot_b + sB*rot_a
+	;       b6 += (sA>0) ? $F0 : (sA<0) ? $10 : 0            X += sB
+	; with (sA,sB) read straight off the nibble (n=0 is the empty pattern -> resync):
+	;   n: 0 1  2  3  4  5  6  7  8 9 A  B  C  D  E  F
+	;  sA: - 0  0  0 -1 -1 -1 -1 +1 +1 +1 +1 +1 +1 +1 +1
+	;  sB: - +1 -1 -1  0 +1 -1 -1  0  0 +1 +1 -1 -1 -1 -1
+	; (Derived from the oracle branch-for-branch — note n=9 and n=3 ignore bit4/bit5 exactly as
+	; the chain does, because the chain stops testing once its branch is decided.)
+	;
+	; So `pat & $F0` IS the table index already, and one `and.w` + one `jmp` replaces 2-4
+	; btst/beq pairs at 18-20 cycles each.  Blocks are 32 bytes (hence the `add.w d0,d0`) so the
+	; longest body — a primary AND a secondary step, 14 bytes — fits with a uniform `bra.w`
+	; exit; the `dcb.b` after each block pads it out and would fail to assemble if one grew too
+	; big.  The table must sit here rather than out of line: `jmp (d8,PC,Dn.W)` has only an
+	; 8-bit displacement, so tf_jt has to be within 127 bytes of the jmp (the INDEX is added
+	; afterwards and is unbounded).
+	;
+	; Cost, weighted by the real pattern tables (all four are pure top-nibble, low nibble
+	; always 0; the dr==00 table $B622 is used on 408/420 frames and its 45 cells are
+	; n=8 x12, n=1 x12, n=2 x8, n=4 x8, n=6 x2, n=A x2, n=0 x1):
+	;   chain 4008 cycles/pass -> table 2484 = -1524, i.e. 89 -> 55 cycles/cell.
+	; x45 cells x2 calls/iteration = ~3.0k cycles/it = ~6.8 beam ticks of the SETUP phase's
+	; 168 t/it (~4% of the function, ~0.2% of flight wall clock).
+	and.w	#$F0,d0			; index = top nibble * 16 (low nibble is a don't-care)
+	add.w	d0,d0			; * 2 -> 32-byte blocks
+	jmp	tf_jt(pc,d0.w)
+
+tf_jt:
+tf_n0:	; ---- $0x: no bit set — empty pattern, leave the column unchanged ----
+	bra.w	tf_resync
+	dcb.b	tf_jt+32*1-*,0
+tf_n1:	; ---- $1x: sB=+1 ----
 	addq.b	#1,d7			; X++
 	add.w	a4,d1			; u += rot_b
 	adda.w	a3,a2			; v += rot_a
-	bra.s	tf_fired
-tf_p40:
-	btst	#6,d0
-	beq.s	tf_p20
-	; pat & $40
+	bra.w	tf_fired
+	dcb.b	tf_jt+32*2-*,0
+tf_n2:	; ---- $2x: sB=-1 ----
+	subq.b	#1,d7			; X--
+	sub.w	a4,d1			; u -= rot_b
+	suba.w	a3,a2			; v -= rot_a
+	bra.w	tf_fired
+	dcb.b	tf_jt+32*3-*,0
+tf_n3:	; ---- $3x: sB=-1 (bit4 never tested once bit5 decided it) ----
+	subq.b	#1,d7
+	sub.w	a4,d1
+	suba.w	a3,a2
+	bra.w	tf_fired
+	dcb.b	tf_jt+32*4-*,0
+tf_n4:	; ---- $4x: sA=-1 ----
 	add.b	#$10,d6			; b6 += $10
 	sub.w	a3,d1			; u -= rot_a
 	adda.w	a4,a2			; v += rot_b
-	btst	#5,d0
-	beq.s	tf_p40_10
-	subq.b	#1,d7			; X--
-	sub.w	a4,d1
-	suba.w	a3,a2
-	bra.s	tf_fired
-tf_p40_10:
-	btst	#4,d0
-	beq.s	tf_fired
-	addq.b	#1,d7			; X++
+	bra.w	tf_fired
+	dcb.b	tf_jt+32*5-*,0
+tf_n5:	; ---- $5x: sA=-1, sB=+1 ----
+	add.b	#$10,d6
+	sub.w	a3,d1
+	adda.w	a4,a2
+	addq.b	#1,d7
 	add.w	a4,d1
 	adda.w	a3,a2
-	bra.s	tf_fired
-tf_p20:
-	btst	#5,d0
-	beq.s	tf_p10
-	subq.b	#1,d7			; X--
-	sub.w	a4,d1			; u -= rot_b
-	suba.w	a3,a2			; v -= rot_a
-	bra.s	tf_fired
-tf_p10:
-	btst	#4,d0
-	beq.s	tf_resync		; pattern empty: leave the column unchanged
-	addq.b	#1,d7			; X++
-	add.w	a4,d1			; u += rot_b
-	adda.w	a3,a2			; v += rot_a
+	bra.w	tf_fired
+	dcb.b	tf_jt+32*6-*,0
+tf_n6:	; ---- $6x: sA=-1, sB=-1 ----
+	add.b	#$10,d6
+	sub.w	a3,d1
+	adda.w	a4,a2
+	subq.b	#1,d7
+	sub.w	a4,d1
+	suba.w	a3,a2
+	bra.w	tf_fired
+	dcb.b	tf_jt+32*7-*,0
+tf_n7:	; ---- $7x: sA=-1, sB=-1 ----
+	add.b	#$10,d6
+	sub.w	a3,d1
+	adda.w	a4,a2
+	subq.b	#1,d7
+	sub.w	a4,d1
+	suba.w	a3,a2
+	bra.w	tf_fired
+	dcb.b	tf_jt+32*8-*,0
+tf_n8:	; ---- $8x: sA=+1 ----
+	add.b	#$F0,d6			; b6 += $F0
+	add.w	a3,d1			; u += rot_a
+	suba.w	a4,a2			; v -= rot_b
+	bra.w	tf_fired
+	dcb.b	tf_jt+32*9-*,0
+tf_n9:	; ---- $9x: sA=+1 (the bit7 branch never tests bit4) ----
+	add.b	#$F0,d6
+	add.w	a3,d1
+	suba.w	a4,a2
+	bra.w	tf_fired
+	dcb.b	tf_jt+32*10-*,0
+tf_nA:	; ---- $Ax: sA=+1, sB=+1 ----
+	add.b	#$F0,d6
+	add.w	a3,d1
+	suba.w	a4,a2
+	addq.b	#1,d7
+	add.w	a4,d1
+	adda.w	a3,a2
+	bra.w	tf_fired
+	dcb.b	tf_jt+32*11-*,0
+tf_nB:	; ---- $Bx: sA=+1, sB=+1 ----
+	add.b	#$F0,d6
+	add.w	a3,d1
+	suba.w	a4,a2
+	addq.b	#1,d7
+	add.w	a4,d1
+	adda.w	a3,a2
+	bra.w	tf_fired
+	dcb.b	tf_jt+32*12-*,0
+tf_nC:	; ---- $Cx: sA=+1, sB=-1 ----
+	add.b	#$F0,d6
+	add.w	a3,d1
+	suba.w	a4,a2
+	subq.b	#1,d7
+	sub.w	a4,d1
+	suba.w	a3,a2
+	bra.w	tf_fired
+	dcb.b	tf_jt+32*13-*,0
+tf_nD:	; ---- $Dx: sA=+1, sB=-1 ----
+	add.b	#$F0,d6
+	add.w	a3,d1
+	suba.w	a4,a2
+	subq.b	#1,d7
+	sub.w	a4,d1
+	suba.w	a3,a2
+	bra.w	tf_fired
+	dcb.b	tf_jt+32*14-*,0
+tf_nE:	; ---- $Ex: sA=+1, sB=-1 ----
+	add.b	#$F0,d6
+	add.w	a3,d1
+	suba.w	a4,a2
+	subq.b	#1,d7
+	sub.w	a4,d1
+	suba.w	a3,a2
+	bra.w	tf_fired
+	dcb.b	tf_jt+32*15-*,0
+tf_nF:	; ---- $Fx: sA=+1, sB=-1 ----
+	add.b	#$F0,d6
+	add.w	a3,d1
+	suba.w	a4,a2
+	subq.b	#1,d7
+	sub.w	a4,d1
+	suba.w	a3,a2
+	bra.w	tf_fired
+	dcb.b	tf_jt+32*16-*,0
 tf_fired:
 	; Store u/v, keeping BOTH carried registers intact for the next cell (so the hi byte goes
 	; out through the d0 scratch instead of rotating d1/a2 in place: +4 cycles a cell against
