@@ -5194,23 +5194,31 @@ void game_sub_55FC(void) {
  * The blend's ADC adds the byte AFTER an in-place LSR plus the bit that LSR shifted
  * out (rounding) — reproduced exactly. */
 static uint8_t terr_blend(uint16_t fa, uint16_t lo, uint16_t hi) {
-    uint8_t A = 0;
+    /* The 6502 shifts all three operands in place in scratch.  Doing that literally costs
+     * 8 volatile mem[] byte accesses per iteration (GCC unrolls the loop but must still
+     * emit every one), so keep them in registers and restore the mem[] contract at the end.
+     * That contract is trivial: the fraction is shifted LEFT 8 times and lo/hi RIGHT 8
+     * times each — exactly once per iteration, on both branches — so all three cells end
+     * at 0 for every input.  Proven exhaustively over all 2^24 (fraction,lo,hi) triples by
+     * tools/terr_blend_test.c: 0 return mismatches, 0 mem mismatches.
+     * Callers never pass overlapping addresses (fa is $27FA/$27FB, lo/hi are $27F0-$27F5). */
+    uint8_t f = mem[fa], L = mem[lo], H = mem[hi], A = 0;
     for (int i = 0; i < 8; i++) {
-        uint8_t f = mem[fa];
         uint8_t bit = (uint8_t)(f >> 7);
-        mem[fa] = (uint8_t)(f << 1);                 /* ASL fraction -> carry=bit */
+        f = (uint8_t)(f << 1);                        /* ASL fraction -> carry=bit */
         if (bit) {                                    /* B1: LSR lo; LSR hi; ADC hi */
-            mem[lo] = (uint8_t)(mem[lo] >> 1);        /* LSR lo (carry discarded) */
-            uint8_t h = mem[hi], c = (uint8_t)(h & 1);
-            mem[hi] = (uint8_t)(h >> 1);
-            A = (uint8_t)(A + mem[hi] + c);           /* ADC hi (+ shifted-out bit) */
+            L = (uint8_t)(L >> 1);                    /* LSR lo (carry discarded) */
+            uint8_t c = (uint8_t)(H & 1);
+            H = (uint8_t)(H >> 1);
+            A = (uint8_t)(A + H + c);                 /* ADC hi (+ shifted-out bit) */
         } else {                                      /* bit0: LSR hi; LSR lo; ADC lo */
-            mem[hi] = (uint8_t)(mem[hi] >> 1);
-            uint8_t l = mem[lo], c = (uint8_t)(l & 1);
-            mem[lo] = (uint8_t)(l >> 1);
-            A = (uint8_t)(A + mem[lo] + c);           /* ADC lo */
+            H = (uint8_t)(H >> 1);
+            uint8_t c = (uint8_t)(L & 1);
+            L = (uint8_t)(L >> 1);
+            A = (uint8_t)(A + L + c);                 /* ADC lo */
         }
     }
+    mem[fa] = 0; mem[lo] = 0; mem[hi] = 0;            /* the shifted-out final state */
     return A;
 }
 void sample_terrain_height_bilerp(void) {
