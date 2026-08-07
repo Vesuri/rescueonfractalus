@@ -317,6 +317,84 @@ sd_ret:
 	rts
 
 ; ---------------------------------------------------------------------------
+; terrain_subdivide_column_obj — the OBJECT-INDEXED entry.
+;   uint8_t terrain_subdivide_column_obj(uint8_t startDepth, uint8_t rasterEntryDepth,
+;                                        uint8_t obj0)
+;
+; Same body as the core entry; only where the running span comes from differs.
+; terrain_draw_objects used to copy the primary endpoint's projected vector into mem[$82-$86]
+; (5 memory-to-memory MOVE.B, ~120 cycles) purely so the prologue above could load it straight
+; back out — the same shape as the rasterizer span handoff (Phase 5), one level up.  Take the
+; object id instead and load the span from $2400/$242D/$245A/$2487/$23B5 directly.  That also
+; makes the five loads CHEAPER: (d16,a0) is 12 cycles against 16 for absolute-long.
+;
+; ⚠ The one observable difference is the ENTRY-GUARD BAIL.  sd_out flushes $82-$86 from
+; d2/d3/d4 on every other exit, so the caller's seeded values are dead there — but sd_ret does
+; NOT flush, so on that path those 5 writes WERE the visible residue.  So publish them here
+; instead: the same bytes, since d2/d3/d4 were just loaded from the same object arrays (only the
+; write ORDER vs $B5 changes, and nothing reads them in between).  Measured over 12630 real
+; subdivide calls the bail fires on 137 = 1.1%, so it costs ~1 cycle/call amortised.
+;
+; a0 is free here (the m68k C ABI's scratch set is d0/d1/a0/a1) and is dead after the guard.
+	ifd	ROF_SUBDIV_VERIFY
+	xdef	terrain_subdivide_column_obj_asm
+	else
+	xdef	terrain_subdivide_column_obj
+	endc
+terrain_subdivide_column_obj:
+terrain_subdivide_column_obj_asm:
+	movem.l	d2-d7/a2-a4,-(sp)	; 9 longs = 36 bytes; args shift +36
+	moveq	#0,d0
+	move.b	43(sp),d0		; startDepth (7 + 36)
+	movea.l	d0,a2			; a2 = depth = startDepth
+	lea	mem,a1
+	adda.l	d0,a1			; a1 = mem + depth
+	moveq	#0,d0
+	move.b	47(sp),d0		; rasterEntryDepth (11 + 36)
+	movea.l	d0,a4
+	moveq	#0,d0
+	move.b	51(sp),d0		; obj0 (15 + 36)
+	lea	mem,a0
+	adda.l	d0,a0			; a0 = mem + obj0
+
+	; span = {$2400:$242D col, $245A:$2487 hgt, $23B5 frac} of object obj0
+	moveq	#0,d2
+	move.b	($242D,a0),d2
+	lsl.w	#8,d2
+	move.b	($2400,a0),d2
+	moveq	#0,d3
+	move.b	($2487,a0),d3
+	lsl.w	#8,d3
+	move.b	($245A,a0),d3
+	move.b	($23B5,a0),d4
+	; mid ($8D-$91) deliberately NOT loaded — same reason as the core entry (see there).
+
+	; --- entry guard: $B5 = (far0.col>>8)^$80; bail if span.col >= far0.col
+	moveq	#0,d0
+	move.b	mem+SDCOL_HI,d0		; far0.col hi (slot 0)
+	move.b	d0,d1
+	eori.b	#$80,d1
+	move.b	d1,mem+$B5
+	lsl.w	#8,d0
+	move.b	mem+SDCOL_LO,d0		; d0 = far0.col
+	cmp.w	d0,d2			; span.col - far0.col (signed)
+	blt.s	sd_obj_go		; span.col < far0.col -> subdivide
+	; bail: publish the span, i.e. exactly the 5 bytes the caller used to write
+	move.b	d2,mem+$82
+	move.l	d2,d0
+	lsr.w	#8,d0
+	move.b	d0,mem+$83
+	move.b	d3,mem+$84
+	move.l	d3,d0
+	lsr.w	#8,d0
+	move.b	d0,mem+$85
+	move.b	d4,mem+$86
+	bra	sd_ret
+sd_obj_go:
+	movea.w	#$14,a3			; budget = $14
+	bra	sd_phase2
+
+; ---------------------------------------------------------------------------
 ; submid — mid = subdiv_midpoint(span, far@depth).  Reads span (d2/d3/d4), loads far from
 ; (a1)[depth], writes mid (d5/d6/d7) and (on roughness) $B5/$B6.  Clobbers d0/d1.
 ; midCol = signed-avg = asr.w of (span.col+far.col+1); likewise midHgt; fracSum 9-bit.

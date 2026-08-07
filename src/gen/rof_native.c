@@ -7162,19 +7162,22 @@ static uint8_t subv_snapS[SUBV_STK][16], subv_asmS[SUBV_STK][16];
 static const uint16_t subv_zp[16] = { 0x60, 0x80,0x81,0x82,0x83,0x84,0x85,0x86,
                                       0x8D,0x8E,0x8F,0x90,0x91, 0x9F, 0xB5,0xB6 };
 static uint8_t subv_snapZ[16], subv_asmZ[16];
-uint8_t terrain_subdivide_column_core(uint8_t startDepth, uint8_t rasterEntryDepth) {
-    g_subdivCalls++;
+/* Split into the four phases so BOTH entries (the mem[]-contract core and the object-indexed
+   one below) get a real differential without duplicating the snapshot/compare. */
+static void subv_snapshot(void) {
     uint8_t* const M = (uint8_t*)mem;
     for (int s = 0; s < SUBV_STK; s++) for (int i = 0; i < 16; i++) subv_snapS[s][i] = M[subv_stkBase[s] + i];
     for (int i = 0; i < 16; i++) subv_snapZ[i] = M[subv_zp[i]];
-    uint8_t asmRet;
-    FP_TIME(asmRet = terrain_subdivide_column_core_asm(startDepth, rasterEntryDepth), g_subdivAsmTicks);
+}
+static void subv_capture_and_restore(void) {
+    uint8_t* const M = (uint8_t*)mem;
     for (int s = 0; s < SUBV_STK; s++) for (int i = 0; i < 16; i++) subv_asmS[s][i] = M[subv_stkBase[s] + i];
     for (int i = 0; i < 16; i++) subv_asmZ[i] = M[subv_zp[i]];
     for (int s = 0; s < SUBV_STK; s++) for (int i = 0; i < 16; i++) M[subv_stkBase[s] + i] = subv_snapS[s][i];
     for (int i = 0; i < 16; i++) M[subv_zp[i]] = subv_snapZ[i];
-    uint8_t cRet;
-    FP_TIME(cRet = terrain_subdivide_column_core_c(startDepth, rasterEntryDepth), g_subdivCTicks);
+}
+static void subv_compare(uint8_t asmRet, uint8_t cRet) {
+    uint8_t* const M = (uint8_t*)mem;
     int bad = 0, first = !g_subdivMismatch;
     if (cRet != asmRet) { bad = 1; if (first) { g_subdivBadKind=1; g_subdivBadRetA=asmRet; g_subdivBadRetC=cRet; } }
     for (int s = 0; s < SUBV_STK; s++) for (int i = 0; i < 16; i++)
@@ -7188,6 +7191,16 @@ uint8_t terrain_subdivide_column_core(uint8_t startDepth, uint8_t rasterEntryDep
             if (first && g_subdivBadKind != 2 && g_subdivBadKind != 3) { g_subdivBadKind=3; g_subdivBadIdx=subv_zp[i]; g_subdivBadAsm=subv_asmZ[i]; g_subdivBadC=M[subv_zp[i]]; }
         }
     if (bad) { if (first) g_subdivFirstBad = g_subdivCalls; g_subdivMismatch++; }
+}
+uint8_t terrain_subdivide_column_core(uint8_t startDepth, uint8_t rasterEntryDepth) {
+    g_subdivCalls++;
+    subv_snapshot();
+    uint8_t asmRet;
+    FP_TIME(asmRet = terrain_subdivide_column_core_asm(startDepth, rasterEntryDepth), g_subdivAsmTicks);
+    subv_capture_and_restore();
+    uint8_t cRet;
+    FP_TIME(cRet = terrain_subdivide_column_core_c(startDepth, rasterEntryDepth), g_subdivCTicks);
+    subv_compare(asmRet, cRet);
     return cRet;
 }
 #elif defined(ROF_SUBDIV_ASM)
@@ -7197,6 +7210,63 @@ __attribute__((noinline)) uint8_t terrain_subdivide_column_core(uint8_t startDep
     return terrain_subdivide_column_core_c(startDepth, rasterEntryDepth);
 }
 #endif
+
+/* terrain_subdivide_column_obj — the OBJECT-INDEXED entry to the same routine.
+ *
+ * terrain_draw_objects seeds the running span from the primary endpoint's projected vector.  It
+ * did that by copying 5 bytes THROUGH mem[$82-$86] (five memory-to-memory MOVE.B, ~120 cycles)
+ * so the subdivide prologue could load them straight back out — the rasterizer span-handoff
+ * shape (asm-migration-plan Phase 5) one level up.  Passing the object id instead lets the
+ * callee load the span from $2400/$242D/$245A/$2487/$23B5 directly, and (d16,a0) is cheaper
+ * than the absolute-long loads it replaces.  ~68 calls/iteration => ~0.9% of flight wall clock.
+ *
+ * This C version IS the oracle for the new ABI's observable behaviour, and deliberately so: it
+ * is literally the old caller code — seed the 5 cells, then run the mem[]-contract entry.  The
+ * asm twin skips the seeding and instead publishes those 5 bytes on the ONE path where they are
+ * observable (the entry-guard bail, which unlike every other exit does not flush the span).
+ */
+static inline uint8_t terrain_subdivide_column_obj_c(uint8_t startDepth, uint8_t rasterEntryDepth,
+                                                    uint8_t obj0) {
+    volatile const uint8_t *o0 = mem + obj0;
+    mem[MEM_dl_ptr_hi]       = o0[0x2400];
+    mem[MEM_screen_ptr_lo]   = o0[0x242D];
+    mem[MEM_screen_ptr_hi]   = o0[0x245A];
+    mem[MEM_encounter_count] = o0[0x2487];
+    mem[MEM_row_count]       = o0[0x23B5];
+#if defined(ROF_SUBDIV_ASM) && defined(ROF_SUBDIV_VERIFY)
+    return terrain_subdivide_column_core_c(startDepth, rasterEntryDepth);   /* stay on the oracle */
+#else
+    return terrain_subdivide_column_core(startDepth, rasterEntryDepth);
+#endif
+}
+#if defined(ROF_SUBDIV_ASM) && defined(ROF_SUBDIV_VERIFY)
+/* Same in-process differential as the core entry, so the FAST path is the one under test.
+ * (`make VERIFY=1 NO_RASTER_VERIFY=1 PROBES=1` + subdiv_verify.gdb — plain VERIFY=1 sends the
+ * nested rasterize calls through the C dispatcher, i.e. not this routine's fast path.) */
+extern uint8_t terrain_subdivide_column_obj_asm(uint8_t startDepth, uint8_t rasterEntryDepth,
+                                                uint8_t obj0);
+uint8_t terrain_subdivide_column_obj(uint8_t startDepth, uint8_t rasterEntryDepth, uint8_t obj0) {
+    g_subdivCalls++;
+    subv_snapshot();
+    uint8_t asmRet;
+    FP_TIME(asmRet = terrain_subdivide_column_obj_asm(startDepth, rasterEntryDepth, obj0), g_subdivAsmTicks);
+    subv_capture_and_restore();
+    uint8_t cRet;
+    FP_TIME(cRet = terrain_subdivide_column_obj_c(startDepth, rasterEntryDepth, obj0), g_subdivCTicks);
+    subv_compare(asmRet, cRet);
+    return cRet;
+}
+#elif defined(ROF_SUBDIV_OBJ_ABI)
+extern uint8_t terrain_subdivide_column_obj(uint8_t startDepth, uint8_t rasterEntryDepth,
+                                            uint8_t obj0);   /* TerrainSubdivideAssembler.s */
+#else
+/* SDL / SUBDIV_C=1: the C oracle above is the implementation. */
+static inline uint8_t terrain_subdivide_column_obj(uint8_t startDepth, uint8_t rasterEntryDepth,
+                                                  uint8_t obj0) {
+    return terrain_subdivide_column_obj_c(startDepth, rasterEntryDepth, obj0);
+}
+#endif
+
 #undef SUBPT_COL_LO
 #undef SUBPT_COL_HI
 #undef SUBPT_HGT_LO
@@ -7807,11 +7877,12 @@ __attribute__((noinline)) static void terrain_draw_objects(void) {
                 M[0x24E2]=o1[0x2487]; M[0x23E2]=o1[0x23B5];
                 if (!(o0[0x24B4] & 0x10))            /* project the primary unless already projected */
                     { TDPAIR(g_tdProjCount); PB(_pp2); project_terrain_points_core(obj0); cpu.X = obj0; OP_TIME(terrain_plot_object()); PE(_pp2, g_tdProjPlot); }
-                /* load the primary's projected vector as the running span endpoint, then subdivide */
-                M[MEM_dl_ptr_hi]=o0[0x2400]; M[MEM_screen_ptr_lo]=o0[0x242D]; M[MEM_screen_ptr_hi]=o0[0x245A];
-                M[MEM_encounter_count]=o0[0x2487]; M[MEM_row_count]=o0[0x23B5];
+                /* Subdivide, with the primary's projected vector as the running span endpoint.
+                   The five bytes used to be copied into $82-$86 here purely for the callee's
+                   prologue to load back out; terrain_subdivide_column_obj takes the object id
+                   and loads them itself (see the ABI note at its definition). */
                 CL_CNT(g_clSubCalls);                /* tree entries: a pure COUNT, no bracket */
-                PB(_sd); SEGPRE(); terrain_subdivide_column_core(0x00, order_idx); SEGPOST(); PE(_sd, g_tdSubdiv);
+                PB(_sd); SEGPRE(); terrain_subdivide_column_obj(0x00, order_idx, obj0); SEGPOST(); PE(_sd, g_tdSubdiv);
                 order_idx = M[0x272E];               /* restore the index (the calls leave $272E untouched) */
                 if (order_idx == 0) order_idx++;
             }

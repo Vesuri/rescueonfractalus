@@ -133,6 +133,12 @@ endif
 ifndef SUBDIV_C
 FRAMEWORK_ASM_SRCS += $(AMIGA_SRC)/TerrainSubdivideAssembler.s
 EXTRA_DEFINES += -DROF_SUBDIV_ASM
+# terrain_draw_objects reaches the subdivide through its OBJECT-INDEXED entry
+# (terrain_subdivide_column_obj), which loads the running span from the object arrays instead of
+# having the caller copy it through mem[$82-$86].  That entry only exists in the asm; under
+# VERIFY the C wrapper owns the name and the asm is reached as *_obj_asm, so this define is
+# harmless there (the #if in rof_native.c prefers the VERIFY branch).
+EXTRA_DEFINES += -DROF_SUBDIV_OBJ_ABI
 ifdef VERIFY
 EXTRA_DEFINES += -DROF_SUBDIV_VERIFY
 obj/TerrainSubdivideAssembler.o : VASMFLAGS += -DROF_SUBDIV_VERIFY
