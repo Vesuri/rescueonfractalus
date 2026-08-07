@@ -339,6 +339,21 @@ private:
     int         scannerPrevRows = 0;  // rows written last frame (clear only those, not the whole sprite)
     void buildScannerDotSprite(); // mirror the M2 scanner dot (missile buf $0B00 + $CE) -> scannerDotSprite
 
+    // ---- the six flight sprite builders, DEFERRED into renderFlightDirect's blitter shadows ----
+    // They are pure CPU on sprite buffers and touch neither the terrain bitmap nor the dot side
+    // buffer, so they have no dependency on any of the terrain blits — yet they used to run in
+    // perFrameWork(), i.e. BEFORE renderFlightDirect kicked those blits, leaving the CPU to stall
+    // on them afterwards (measured, blit_shape.gdb: 12 ticks/painted frame on the plane1 clear +
+    // 17 on the sky fill = ~1.2% of all flight wall clock).  Now perFrameWork only marks them
+    // owed and renderFlightDirect runs them in the two blits' shadows.
+    // ⚠ renderFlightDirect has three early-return paths (no bitmaps / the rescue-figure pause / a
+    // frame with no fresh terrain), so buildFlightSpritesFlush() runs after render() as the safety
+    // net — without it the sprites would freeze on exactly those frames.
+    uint8_t flightSpritesOwed = 0;    // bit0 = early slot owed, bit1 = late slot owed
+    void buildFlightSpritesEarly();   // in the plane1-clear blit's shadow
+    void buildFlightSpritesLate();    // in the sky-fill blit's shadow
+    void buildFlightSpritesFlush();   // whatever the render path skipped
+
     // Dirty-flag bitmap caching: bitmaps are rendered once on initialize() and
     // only re-rendered when the underlying mem[] data changes.
     bool    terrainDirty = true;   // re-render terrain rows from $2000

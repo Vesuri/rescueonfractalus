@@ -2373,6 +2373,9 @@ void RescueOnFractalus::renderFlightDirect()
     //                        made one-shot (s_p3Clean).
     // Dropping the redundant plane2 clear also cuts total blitter work here by ~20%.
     AmigaHardware::blitterClear((uint16_t*)bp, 20, 47, 80);   // plane1 only (mod = 120 stride - 40 row bytes)
+    // Fill the clear's shadow with the deferred sprite work (altimeter pair + artificial horizon):
+    // pure CPU on sprite buffers, no dependency on this blit, so the drain below drops toward 0.
+    buildFlightSpritesEarly();
     BW_AT(g_bwClearCopy, AmigaHardware::blitterDrain());      // the one blocking wait: plane1 must be clean for the edge plot
     // Blitter idle here, so blitterCopy pokes the registers directly and starts NOW (a queued blit
     // would not: nothing drains the queue asynchronously — INTF_BLIT is masked and
@@ -2465,7 +2468,12 @@ void RescueOnFractalus::renderFlightDirect()
     // plane2 = terrain dots/detail (mode-D value-2/3).  The rasterizer ORed them into the dot
     // side-buffer (g_flightDotPlane = terrainDotBuffer plane2) during the upstream compute; they were
     // copied into `back`'s plane2 by the blitterCopy above, so they are already here.
-    FD_LAP(g_fdScan);                                        // (now ~0)
+    //
+    // The sky fill is now IN FLIGHT and nothing below needs it until the band overlay, so spend the
+    // wait on the rest of the deferred sprite work (scope P3 / viewport P3 / scanner dot) instead of
+    // stalling on it.  g_fdScan measures exactly this slot (it read ~0 before).
+    buildFlightSpritesLate();
+    FD_LAP(g_fdScan);                                        // = the late sprite slot
     BW_AT(g_bwSkyFill, AmigaHardware::blitterWait());                            // sky fill must finish before the band overlay + flip
     FD_LAP(g_fdFill);
 
@@ -3092,6 +3100,11 @@ void RescueOnFractalus::renderFrame()
                   _p0 = rof_subclock(); _pi = g_isrBeamLines; }
 #endif
     render();
+    // Safety net for the deferred flight sprite builders: renderFlightDirect normally runs them
+    // inside its two blitter shadows, but it has three early-return paths (no bitmaps / the
+    // rescue-figure pause / a frame with no fresh terrain).  Run whatever it skipped, so the
+    // sprites still update exactly once per frame on those frames too.
+    buildFlightSpritesFlush();
 #ifdef ROF_FLIGHT_PROBE
     if (_profR) g_rRenderFn += (rof_subclock() - _p0) - (g_isrBeamLines - _pi);
 #endif
@@ -4053,7 +4066,44 @@ void RescueOnFractalus::perFrameWork()
     // The laser shot (buildShotSprite) is NOT built here — it runs in the flight VBI (50Hz) via
     // PlatformAmiga::flightShotTick, faithful to the Atari (the shot is a VBI op), so it animates
     // at full rate even while the terrain render is much slower.
-    if (rsFlight) { buildAltimeterSprite(); buildAltimeterShipSprite(); buildAHSprite(); buildScopeP3Sprite(); buildViewportP3Sprite(); buildScannerDotSprite(); }
+    // The six flight sprite builders are DEFERRED, not run here: they are pure CPU on sprite
+    // buffers with no dependency on any of the terrain blits, so renderFlightDirect runs them in
+    // the shadow of the plane1-clear and sky-fill blits it would otherwise stall on.  Just mark
+    // them owed; see buildFlightSpritesEarly/Late/Flush.
+    if (rsFlight) flightSpritesOwed = 0x03;
+}
+
+// Slot A — runs between the plane1-clear KICK and the drain the edge plot needs.
+void RescueOnFractalus::buildFlightSpritesEarly()
+{
+    if (!(flightSpritesOwed & 0x01)) return;
+    flightSpritesOwed &= (uint8_t)~0x01u;
+    buildAltimeterSprite();          // one-shot solid fill, then a setY
+    buildAltimeterShipSprite();      // setY
+    buildAHSprite();                 // artificial-horizon ground fill
+    // Those three together are only ~2 ticks — not enough to cover the plane1 clear (~12), so the
+    // scanner dot joins them.  It is the independent one of the three "late" builders (M2 scanner
+    // dot; the two P3 builders share the target/saucer state), so it is the safe one to move.
+    buildScannerDotSprite();
+}
+
+// Slot B — runs between the sky-fill KICK (blitterFillUp) and the wait before the band overlay.
+void RescueOnFractalus::buildFlightSpritesLate()
+{
+    if (!(flightSpritesOwed & 0x02)) return;
+    flightSpritesOwed &= (uint8_t)~0x02u;
+    buildScopeP3Sprite();
+    buildViewportP3Sprite();
+}
+
+// Safety net after render(): renderFlightDirect returns early on three paths (no bitmaps, the
+// rescue-figure pause, a frame with no fresh terrain).  Without this the sprites would freeze on
+// exactly those frames — the altimeter/AH/scope would stop tracking during a rescue.
+void RescueOnFractalus::buildFlightSpritesFlush()
+{
+    if (!flightSpritesOwed) return;
+    buildFlightSpritesEarly();
+    buildFlightSpritesLate();
 }
 
 // ---- cockpit helpers ---------------------------------------------------------
