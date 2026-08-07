@@ -1319,6 +1319,37 @@ extern "C" volatile unsigned long g_portsIrqCnt = 0;
 extern "C" volatile unsigned long g_pProj=0, g_pInteg=0, g_pSfx=0;
 extern "C" volatile unsigned long g_pSfxEng=0, g_pSfxLoop=0, g_pSfxRing=0;
 extern "C" volatile unsigned long g_sfxRingIters=0;   // ring entries drained; /isrCalls = per-firing
+#ifdef ROF_INTEG_SHAPE
+// INTEG SHAPE PROBE (`make COMBAT=1 PROBES=1 INTEG_SHAPE=1`, read via amiga/integ_shape.gdb).
+// Splits flight_control_integrate's 15.3 t/firing (17% of the flight VBI = ~4.8% of ALL wall
+// clock, and never examined) into its 13 straight-line regions + the callees each one makes.
+// The regions LAP off a single running beam stamp — one rof_beam_line() per boundary, not two —
+// so the floor is one read per bucket; g_inNop is an EMPTY lap sampled once per firing and is
+// exactly that floor.  Subtract it from every bucket, and read the result as SHARES: the lap
+// points also inhibit GCC's reordering across them, so the sum runs above the unprobed 15.3.
+extern "C" volatile unsigned long g_inHead=0, g_inDisp=0, g_inLevel=0, g_inThr=0, g_inAttc=0,
+                                  g_inAng=0,  g_inPos=0,  g_inHud=0,   g_inLock=0, g_inObjv=0,
+                                  g_inObj=0,  g_inSlot=0, g_inTail=0,  g_inNop=0;
+// Path counters (plain increments, no measurable cost): which branches each firing took.
+extern "C" volatile unsigned long g_inCalls=0;      // firings of flight_control_integrate
+extern "C" volatile unsigned long g_inBlipCalls=0;  // compute_target_blip_position
+extern "C" volatile unsigned long g_inAutoP=0, g_inAutoR=0;   // pitch / roll auto-level taken
+extern "C" volatile unsigned long g_inThrKick=0, g_inThrClamp=0;
+extern "C" volatile unsigned long g_inObjStep=0;    // object_step_and_collide (the bilerp caller)
+extern "C" volatile unsigned long g_inObjLoad=0;    // load_velocity_from_param_block
+extern "C" volatile unsigned long g_inObjPos=0;     // object_integrate_position
+extern "C" volatile unsigned long g_inObjBox=0;     // check_object_in_target_box
+extern "C" volatile unsigned long g_inJitter=0;     // terrain_jitter_column
+extern "C" volatile unsigned long g_inSlotIdle=0;   // slot index already negative -> nothing to do
+// Level 2: inside object_step_and_collide (the `obj` bucket = 37% of integ, its one big block),
+// and inside sample_terrain_height_bilerp (called from BOTH object_step_and_collide and
+// update_terrain_scanline_proj, so g_blCalls counts every caller).  Same lap-and-floor rules.
+extern "C" volatile unsigned long g_osAcc=0, g_osHit=0, g_osCell=0, g_osLerp=0, g_osTail=0,
+                                  g_osNop=0, g_osCalls=0, g_osHitCalls=0, g_osLerpCalls=0,
+                                  g_osExplode=0, g_osEarlyRet=0;
+extern "C" volatile unsigned long g_blFetch=0, g_blB1=0, g_blB2=0, g_blB3=0, g_blTail=0,
+                                  g_blNop=0, g_blCalls=0;
+#endif
 #ifdef ROF_SFX_SHAPE
 // SFX SHAPE PROBE (`make COMBAT=1 PROBES=1 SFX_SHAPE=1`, read via amiga/sfx_shape.gdb).  Splits
 // the event-ring drain's two branches and counts the 12-slot mixer scans + voice writes they
@@ -2534,8 +2565,22 @@ PlatformAmiga::~PlatformAmiga()
     if (GfxBase) { CloseLibrary((struct Library*)GfxBase); GfxBase = 0; }
 }
 
+// RAM budget readout (always built — 6 longs and 6 AvailMem calls at startup).  The load image
+// is fixed and readable offline (m68k-amiga-elf-objdump -h out/RoF.elf, the non-debug sections),
+// but the RUNTIME allocations are not: the framework AllocMem()s every bitmap, copper list,
+// sprite and audio buffer in CHIP.  These snapshot exec's free pools before and after the
+// scene's constructor + display takeover, so "how much RAM does the game need" is a measurement
+// rather than a sum of guesses.  Read with amiga/memreport.gdb.
+extern "C" volatile unsigned long g_memChipBefore = 0, g_memFastBefore = 0, g_memAnyBefore = 0;
+extern "C" volatile unsigned long g_memChipAfter  = 0, g_memFastAfter  = 0, g_memAnyAfter  = 0;
+extern "C" volatile unsigned long g_memChipLargest = 0;
+
 void PlatformAmiga::run()
 {
+    g_memChipBefore = AvailMem(MEMF_CHIP);
+    g_memFastBefore = AvailMem(MEMF_FAST);
+    g_memAnyBefore  = AvailMem(MEMF_ANY);
+
     // The scene holds several KB of shadow buffers; keep it in BSS (static), NOT on the
     // stack (which the PlatformAmiga instance lives on in main), to avoid stack overflow.
     static RescueOnFractalus scene;
@@ -2648,6 +2693,13 @@ void PlatformAmiga::run()
     // regressions, not a measured win.  ⚠ Everything between Forbid() and Permit() must be
     // Wait()-free: the WaitTOF() pairs and every library open/close are deliberately outside.
     Forbid();
+
+    // Everything the game allocates (scene ctor: bitmaps, copper lists, sprites, audio
+    // buffers) has happened by here, so this pair is the true runtime footprint.
+    g_memChipAfter   = AvailMem(MEMF_CHIP);
+    g_memFastAfter   = AvailMem(MEMF_FAST);
+    g_memAnyAfter    = AvailMem(MEMF_ANY);
+    g_memChipLargest = AvailMem(MEMF_CHIP | MEMF_LARGEST);
 
     // --- run -----------------------------------------------------------------
     // The whole game runs inside scene.run(): the genuine transpiled/native boot chain,

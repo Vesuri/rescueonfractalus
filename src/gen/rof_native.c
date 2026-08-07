@@ -145,6 +145,48 @@ extern volatile unsigned long g_sxPokeyT;
 #define SX_NOP() ((void)0)
 #endif
 
+/* INTEG SHAPE PROBE (`make COMBAT=1 PROBES=1 INTEG_SHAPE=1`; read via amiga/integ_shape.gdb).
+ * flight_control_integrate is 15.3 t/firing = 17% of the flight VBI = ~4.8% of ALL wall clock,
+ * and nothing has ever measured INSIDE it.  This laps its 13 straight-line regions off ONE
+ * running beam stamp — a single rof_beam_line() per boundary rather than an SX_SPAN's two —
+ * so the per-bucket floor is one read, sampled as the empty lap g_inNop.  Subtract that floor
+ * per bucket and read the rest as SHARES (the lap points block GCC reordering, so the probed
+ * total exceeds the unprobed 15.3).  Counters say which branches the firing took. */
+#if defined(ROF_INTEG_SHAPE) && defined(ROF_FLIGHT_PROBE)
+#if !defined(ROF_TDRAW_PROF) && !defined(ROF_SFX_SHAPE)
+extern unsigned short rof_beam_line(void);   /* ROF_TDRAW_PROF normally declares this */
+#endif
+extern volatile unsigned long g_inHead, g_inDisp, g_inLevel, g_inThr, g_inAttc, g_inAng,
+                              g_inPos, g_inHud, g_inLock, g_inObjv, g_inObj, g_inSlot,
+                              g_inTail, g_inNop;
+extern volatile unsigned long g_inCalls, g_inBlipCalls, g_inAutoP, g_inAutoR, g_inThrKick,
+                              g_inThrClamp, g_inObjStep, g_inObjLoad, g_inObjPos, g_inObjBox,
+                              g_inJitter, g_inSlotIdle;
+extern volatile unsigned long g_osAcc, g_osHit, g_osCell, g_osLerp, g_osTail, g_osNop,
+                              g_osCalls, g_osHitCalls, g_osLerpCalls, g_osExplode, g_osEarlyRet;
+extern volatile unsigned long g_blFetch, g_blB1, g_blB2, g_blB3, g_blTail, g_blNop, g_blCalls;
+#define IN_DECL()    unsigned short _inPrev = 0
+#define IN_START()   do { ++g_inCalls; _inPrev = rof_beam_line(); } while (0)
+#define IN_LAP(acc)  do { unsigned short _n = rof_beam_line(); \
+    (acc) += (_n >= _inPrev) ? (unsigned long)(_n - _inPrev) \
+                             : (unsigned long)(_n + 313 - _inPrev); _inPrev = _n; } while (0)
+#define IN_CNT(c)    (++(c))
+/* Level-2 laps use their own running stamp so they can nest inside an IN_LAP region. */
+#define O2_DECL()    unsigned short _o2Prev = 0
+#define O2_START(c)  do { ++(c); _o2Prev = rof_beam_line(); } while (0)
+#define O2_LAP(acc)  do { unsigned short _n = rof_beam_line(); \
+    (acc) += (_n >= _o2Prev) ? (unsigned long)(_n - _o2Prev) \
+                             : (unsigned long)(_n + 313 - _o2Prev); _o2Prev = _n; } while (0)
+#else
+#define IN_DECL()    ((void)0)
+#define IN_START()   ((void)0)
+#define IN_LAP(acc)  ((void)0)
+#define IN_CNT(c)    ((void)0)
+#define O2_DECL()    ((void)0)
+#define O2_START(c)  ((void)0)
+#define O2_LAP(acc)  ((void)0)
+#endif
+
 /* ===========================================================================================
  * COMBAT-LOAD BENCHMARK  (`make COMBAT=1`, -DROF_COMBAT_LOAD; Amiga profiling aid, NOT faithful)
  *
@@ -5377,6 +5419,7 @@ static uint8_t terr_blend(uint16_t fa, uint16_t lo, uint16_t hi) {
     return A;
 }
 void sample_terrain_height_bilerp(void) {
+    O2_DECL(); O2_START(g_blCalls); O2_LAP(g_blNop);   /* empty lap = this level's floor */
     uint8_t row = (uint8_t)(map_z_hi << 4);                       /* $9A36: $0061 */
     terrain_lerp_index = row;
     uint8_t y = (uint8_t)((map_x_hi & 0x0F) | row);
@@ -5389,15 +5432,20 @@ void sample_terrain_height_bilerp(void) {
     y = (uint8_t)(((uint8_t)(y + 1) & 0x0F) | row);
     mem[0x27F3] = mem[0x0900 + y];
 
+    O2_LAP(g_blFetch);
     mem[0x27FA] = map_x_lo; mem[0x27F4] = terr_blend(0x27FA, 0x27F0, 0x27F1);
+    O2_LAP(g_blB1);
     mem[0x27FA] = map_x_lo; mem[0x27F5] = terr_blend(0x27FA, 0x27F2, 0x27F3);
+    O2_LAP(g_blB2);
     mem[0x27FB] = map_z_lo; uint8_t R = terr_blend(0x27FB, 0x27F4, 0x27F5);
+    O2_LAP(g_blB3);
 
     terrain_height_sample = R;                                                 /* $9AFA */
     uint8_t hi4 = (uint8_t)(R >> 4);                                 /* LSRx4 / TAY */
     terrain_height_sample = (uint8_t)(hi4 + terrain_height_sample);                      /* CLC; ADC $0062 */
     uint8_t c = (uint8_t)(hi4 & 1);                                  /* TYA; LSR -> carry */
     terrain_height_sample = (uint8_t)((hi4 >> 1) + terrain_height_sample + c);           /* ADC $0062 */
+    O2_LAP(g_blTail);
 }
 
 /* game_sub_451d @ $451D — fill 14 cells of $2159+Y / $2189+Y from table $4553[X],
@@ -8398,6 +8446,7 @@ void draw_cockpit_dial_bar(void) { draw_cockpit_dial_bar_core(cpu.A); }
  * trigger_object_explosion -> ring_push consumes it; the same native chain runs in both
  * the native and oracle paths, so it stays equivalent.  mem-only contract. */
 void object_step_and_collide(void) {
+    O2_DECL(); O2_START(g_osCalls); O2_LAP(g_osNop);   /* empty lap = this level's floor */
     /* Integrate the three position accumulators by their velocities.  X and Z are 24-bit
      * with the high byte masked to 12-bit map coords (mirrored to $27FD-$2800); altitude
      * is 16-bit with a signed saturating clamp. */
@@ -8429,9 +8478,12 @@ void object_step_and_collide(void) {
         vel_z_clamp_hi = a;
     }
 
+    O2_LAP(g_osAcc);
+
     /* The player hit-test reads the altitude add's carry-out as its entry carry. */
     cpu.C = altCarry;
-    if (!(object_index_signed & 0x80)) check_player_proximity_hit();
+    if (!(object_index_signed & 0x80)) { IN_CNT(g_osHitCalls); check_player_proximity_hit(); }
+    O2_LAP(g_osHit);
 
     /* Map cell index $2864 = (Z high-nibble << 4) | X high-nibble. */
     uint8_t zHi = (uint8_t)((mem[0x2859] + (mem[0x2858] >> 7)) << 4);
@@ -8450,32 +8502,37 @@ void object_step_and_collide(void) {
                   !(mem[0x2855] >= 0x30 && mem[0x2855] < 0xD0) &&
                   !(mem[0x2858] >= 0x30 && mem[0x2858] < 0xD0);
     }
+    if (explode) IN_CNT(g_osExplode);
+    O2_LAP(g_osCell);
     if (!explode) {
+        IN_CNT(g_osLerpCalls);
         sample_terrain_height_bilerp();
-        if (terrain_height_sample < vel_z_clamp_hi) return;
-        if (mem[0x2855] >= 0x30 && mem[0x2855] < 0xD0) { reset_object_slot(); return; }
-        if (mem[0x2858] >= 0x30 && mem[0x2858] < 0xD0) { reset_object_slot(); return; }
+        O2_LAP(g_osLerp);
+        if (terrain_height_sample < vel_z_clamp_hi) { IN_CNT(g_osEarlyRet); return; }
+        if (mem[0x2855] >= 0x30 && mem[0x2855] < 0xD0) { reset_object_slot(); O2_LAP(g_osTail); return; }
+        if (mem[0x2858] >= 0x30 && mem[0x2858] < 0xD0) { reset_object_slot(); O2_LAP(g_osTail); return; }
     }
 
     /* $9635: explode the occupant, then dispatch by its pickup type. */
     uint8_t occ = mem[0x0A00 + cell];
-    if (occ == 0 || occ >= 0xF8) { reset_object_slot(); return; }
+    if (occ == 0 || occ >= 0xF8) { reset_object_slot(); O2_LAP(g_osTail); return; }
     mem[0x0100 | cpu.S] = occ; cpu.S--;          /* PHA: preserve occ across the explosion (mem-equivalent) */
     CL_CNT(g_clShotHit);                         /* combat-load: our shot destroyed an occupant */
     mem[0x0A00 + cell] = 0xFC;
     map_cell_hit_marker = 0xFC;
     trigger_object_explosion();
     cpu.S++; occ = mem[0x0100 | cpu.S];          /* PLA */
-    if (occ < 0x64) { reset_object_slot(); return; }
+    if (occ < 0x64) { reset_object_slot(); O2_LAP(g_osTail); return; }
     if (occ != 0x64) {
         if (occ == 0x80) { set_place_params_inc_count(); timer_or_counter = 0x40; }
         else             { countdown_show_char_0620(); timer_or_counter = 0x49; }
-        reset_object_slot(); return;
+        reset_object_slot(); O2_LAP(g_osTail); return;
     }
     set_place_params_inc_count();                /* occ == $64 (pilot pickup) */
     mem[0x004D] = 0x28;
     lock_on_indicator_state = (uint8_t)(lock_on_indicator_state | 0x80);
     reset_object_slot();
+    O2_LAP(g_osTail);
 }
 
 /* reset_indicator_event @ $B786 — clear $0035, then enqueue the indicator event. */
@@ -8612,6 +8669,7 @@ void compute_obj_rel_angle_scale(void) {
  * No bus_write() here is a no-op on the Amiga — the only hardware touched is the two
  * bus_read()s (PORTA joystick + POKEY RANDOM), both of which are real reads on Amiga. */
 static void flight_control_integrate_impl(void) {
+    IN_DECL(); IN_START();
     /* ---- Steering: derive the roll rate (and a dial-based pitch trim) from the stick ----
      * Only while joystick_saved==2 (active flight) and no colour-clear sweep in progress. */
     if (joystick_saved == 0x02 && clear_colors_done_003E == 0) {
@@ -8637,7 +8695,8 @@ static void flight_control_integrate_impl(void) {
     }
 
     /* Targeting blip position (skipped during level 0 / intro). */
-    if (level_or_state != 0) compute_target_blip_position();
+    if (level_or_state != 0) { IN_CNT(g_inBlipCalls); compute_target_blip_position(); }
+    IN_LAP(g_inHead);
 
     /* ---- Per-state dispatch; every branch falls through to the $3E shutdown check ---- */
     if (flight_mode_state == 0x02) {
@@ -8668,6 +8727,7 @@ static void flight_control_integrate_impl(void) {
         mem[0x0023] = pitch_pos_lo;
         mem[0x0024] = pitch_pos_hi;
     }
+    IN_LAP(g_inDisp);
 
     /* ---- Colour-clear shutdown: tear the special state back down and bail ---- */
     if (clear_colors_done_003E != 0) {
@@ -8682,6 +8742,7 @@ static void flight_control_integrate_impl(void) {
 
     /* ---- Pitch auto-level: when no pitch input, bleed pitch_pos toward 0 by ~(pos*32>>8) ---- */
     if (pitch_velocity == 0) {
+        IN_CNT(g_inAutoP);
         uint16_t pp  = ((uint16_t)pitch_pos_hi << 8) | pitch_pos_lo;
         uint8_t  sub = (uint8_t)((pp << 5) >> 8);
         if ((pp >> 11) & 1) {                           /* shift carry set */
@@ -8698,6 +8759,7 @@ static void flight_control_integrate_impl(void) {
 
     /* ---- Roll auto-level: same idea, ~(pos*4>>8), only when no roll input and not landing ---- */
     if (mem[0x003D] == 0 && roll_velocity == 0) {
+        IN_CNT(g_inAutoR);
         uint16_t rp  = ((uint16_t)roll_pos_hi << 8) | roll_pos_lo;
         uint8_t  sub = (uint8_t)((rp << 2) >> 8);
         if ((rp >> 14) & 1) {
@@ -8712,12 +8774,15 @@ static void flight_control_integrate_impl(void) {
         }
     }
 
+    IN_LAP(g_inLevel);
+
     /* ---- Throttle: add a RANDOM-modulated kick, scaled by the dial index ----
      * loops_y also picks the shift count for the throttle clamp below. */
     uint8_t loops_y;
     if (dial_draw_index == 0) {
         loops_y = 3;
     } else {
+        IN_CNT(g_inThrKick);
         loops_y = 1;
         /* base = dial - 2*roll_pos_hi (two chained 6502 subtracts preserve the borrow) */
         int t = (int)dial_draw_index - roll_pos_hi;
@@ -8733,6 +8798,7 @@ static void flight_control_integrate_impl(void) {
 
     /* ---- Throttle clamp (near-ground only): cap the throttle to (hi+2)<<loops_y ---- */
     if (mem[0x005D] != 0) {
+        IN_CNT(g_inThrClamp);
         uint16_t hi2 = (uint16_t)throttle_accum_hi + 2;
         uint32_t v = ((uint32_t)(uint8_t)(hi2 >> 8) << 16)
                    | ((uint32_t)(uint8_t)hi2 << 8) | throttle_accum_lo;
@@ -8747,6 +8813,8 @@ static void flight_control_integrate_impl(void) {
             if (timer_676 != 0) { cpu.A = 0; store_676_init(); }
         }
     }
+
+    IN_LAP(g_inThr);
 
     /* ---- Integrate + clamp pitch angle ($25/$26) to [-5 .. +4] = [$FB .. $04] ---- */
     {
@@ -8791,6 +8859,7 @@ static void flight_control_integrate_impl(void) {
         mem[0x2883] = (uint8_t)shifted;                 /* forward/depth step lo */
         mem[0x2884] = (uint8_t)(shifted >> 8);          /* forward/depth step hi */
     }
+    IN_LAP(g_inAttc);
 
     /* ---- Heading: heading += (signed pitch_pos >> 4); carry feeds the angle-scale call ---- */
     {
@@ -8804,6 +8873,7 @@ static void flight_control_integrate_impl(void) {
         cpu.C = (uint8_t)(hhi >> 8);                    /* entry carry for the call */
         compute_obj_rel_angle_scale();                  /* -> world velocity $2B/$2C, $2881/$2882 */
     }
+    IN_LAP(g_inAng);
 
     /* ---- Integrate world position + depth accumulator ---- */
     {
@@ -8849,8 +8919,10 @@ static void flight_control_integrate_impl(void) {
         mem[0x0686] = v;
         mem[0x0687] = (uint8_t)(v - 0x04);
     }
+    IN_LAP(g_inPos);
 
     refresh_hud_field_0d_entry();
+    IN_LAP(g_inHud);
 
     /* ---- Near-ground flag $5D + lock-on RANDOM countdown $2917 ---- */
     if (dial_draw_index == 0xF0) {
@@ -8885,6 +8957,7 @@ static void flight_control_integrate_impl(void) {
         mem[MEM_sfx_env_freq_val + 0x0C] = fld;            /* $0685 */
         cpu.Y = 0x0C; game_sub_55FC();
     }
+    IN_LAP(g_inLock);
 
     /* ---- Object velocity from the delayed history ring ($2919/$291A/$291B) ---- */
     {
@@ -8909,14 +8982,15 @@ static void flight_control_integrate_impl(void) {
         mem[0x282C] = (uint8_t)s;
         mem[0x0069] = (uint8_t)(mem[0x0069] + (a < 0 ? 0xFF : 0x00) + (uint8_t)(s >> 8));
     }
+    IN_LAP(g_inObjv);
 
     /* ---- Step the active world object, then integrate its position by the ring velocity ---- */
     {
         uint8_t af = object_anim_frame;
         if (af != 0) {
             if (!(af & 0x80)) {
-                if (af == 0x01) load_velocity_from_param_block();
-                else            object_step_and_collide();
+                if (af == 0x01) { IN_CNT(g_inObjLoad); load_velocity_from_param_block(); }
+                else            { IN_CNT(g_inObjStep); object_step_and_collide(); }
             }
             int lo = (int)mem[0x284E] - mem[0x2850];
             mem[0x284E]    = (uint8_t)lo;
@@ -8926,6 +9000,7 @@ static void flight_control_integrate_impl(void) {
             mem[0x0039] = (uint8_t)(mem[0x0039] + mem[0x2853] + (uint8_t)(s >> 8));
         }
     }
+    IN_LAP(g_inObj);
 
     /* ---- Decrement the object slot index; dispatch its per-frame work ---- */
     {
@@ -8935,7 +9010,7 @@ static void flight_control_integrate_impl(void) {
             object_index_signed = y;
             if (y & 0x80) {                             /* slot ran out */
                 reset_flags_ff();
-                if (player3_dither_flag != 0) check_object_in_target_box();
+                if (player3_dither_flag != 0) { IN_CNT(g_inObjBox); check_object_in_target_box(); }
             } else {
                 mem[0x006A] = y >> 2;
                 int jitter;
@@ -8944,11 +9019,15 @@ static void flight_control_integrate_impl(void) {
                 else if (y == 0x3C)           jitter = 1;
                 else if (level_stage < 0x3D)  jitter = 0;
                 else                          jitter = (y == 0x28);
-                if (jitter) terrain_jitter_column();
+                if (jitter) { IN_CNT(g_inJitter); terrain_jitter_column(); }
+                IN_CNT(g_inObjPos);
                 object_integrate_position();
             }
+        } else {
+            IN_CNT(g_inSlotIdle);
         }
     }
+    IN_LAP(g_inSlot);
 
     /* ---- Roll the 7-frame attitude history ring (delays the canopy/horizon geometry) ---- */
     {
@@ -8961,6 +9040,8 @@ static void flight_control_integrate_impl(void) {
         mem[0x291C] = mem[0x28A8 + y]; mem[0x28A8 + y] = mem[0x2871];
         mem[0x291D] = mem[0x28AF + y]; mem[0x28AF + y] = mem[0x2873];
     }
+    IN_LAP(g_inTail);
+    IN_LAP(g_inNop);          /* empty lap = the per-bucket floor; subtract it from each bucket */
 }
 #ifdef ROF_FLIGHT_PROBE
 void flight_control_integrate(void) { unsigned long _p = rof_subclock(); flight_control_integrate_impl(); g_pInteg += rof_subclock() - _p; }

@@ -236,6 +236,17 @@ EXTRA_DEFINES += -DROF_SFXMIX_FUZZ
 endif
 endif
 
+# Profiling aid: `make COMBAT=1 PROBES=1 INTEG_SHAPE=1` + amiga/integ_shape.gdb — splits
+# flight_control_integrate's 15.3 t/firing (17% of the flight VBI = ~4.8% of ALL wall clock,
+# never examined before 2026-08-07) into its 13 straight-line regions, with path counters for
+# every conditional callee.  The regions LAP off one running beam stamp (a single
+# rof_beam_line() per boundary, not an SX_SPAN's two); g_inNop is an empty lap = the per-bucket
+# floor to subtract.  Read the result as SHARES: the lap points also block GCC's reordering, so
+# the probed total runs above the unprobed 15.3.  OFF by default.
+ifdef INTEG_SHAPE
+EXTRA_DEFINES += -DROF_INTEG_SHAPE
+endif
+
 # Profiling aid: `make RASTER_C=1 RAS_SHAPE=1 PROBES=1` + amiga/ras_shape.gdb — the flight
 # rasterizer's STRUCTURAL shape counters (phase-2 entry-span and far-bisect-span histograms,
 # fe/ff leaf mix, phase-1 advance/push counts, hidden-surface accept rate).  These live inside
