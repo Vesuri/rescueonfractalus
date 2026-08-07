@@ -580,11 +580,45 @@ extern "C" uint8_t platform_hw_read(uint16_t addr);  // $D01F/$D010/$D300 live i
 // console keys ($D01F), fire trigger ($D010), and joystick ($D300) — all maintained on
 // the Amiga now (the keyboard ISR keeps mem[$D01F]; hwRead maps $D010/$D300 to
 // s_trig0State/s_portaState), so route them through platform_hw_read exactly as bus_read
-// would.  On ANY input it resets the attract-mode timeout ($0049/$0002/$00E2/$0003).  The
-// DEMO-DROID branch ($52BE, taken via CPX #$80) is unreachable — X is loaded #$FF and
-// never becomes $80 — so it is omitted.
+// would.  On ANY input it resets the attract-mode timeout ($0049/$0002/$00E2/$0003).
+//
+// ⭐ $5398 OPENS A KEYBOARD WINDOW, and dropping it caused a soft hang.  The 6502:
+//     5398  LDX #$FF
+//     539A  CLI / SEI        <- one-instruction window; a PENDING POKEY keyboard IRQ lands here
+//     539C  CPX #$80 / JMP $52BE      BREAK -> the restart trampoline
+//     53A3  TXA / BMI $53B4           X still $FF (no key) -> fall through to the console poll
+//     53A6  STX $0049 ... / BNE $53CB a REAL key: reset the attract timeout and RETURN
+// The game runs with IRQs masked ($3D27 SEI) and POKEY's keyboard IRQ armed (IRQEN=$C0 at
+// $3DA1), so a keypress stays PENDING until a CLI window opens and irq_handler ($462A) drops
+// KBCODE&$3F (or $80 for BREAK) into X.  There are only two such windows: this one, and the
+// flight VBI's $519C.  Note that NEITHER standby-family path routes the code to
+// event_sequence_dispatcher ($4644) — out of flight a command key does nothing but reset the
+// attract timeout.
+//
+// This port previously omitted the window on the reasoning that "X is loaded #$FF and never
+// becomes $80".  That is only true if no IRQ can fire in the window, which is exactly backwards:
+// the window exists to let one fire.  The consequence was that a command key pressed OUTSIDE
+// flight stayed latched in s_pendingFlightKey across the whole launch cinematic and was consumed
+// by the FIRST flight VBI $519C window instead — so pressing ESC on the Standby screen
+// dispatched the freeze takeover ($0043) the instant flight began, parking the main loop in its
+// `while (event_active_flag)` spin: measured as VVBLKI=$4FF5 with $0043=01 and the painted-frame
+// counter frozen (amiga/esc_standby.gdb).  Consuming the key here is what the Atari does.
+extern "C" uint8_t rof_attract_poll_key(void);   // PlatformAmiga.cpp — leaves a pending $80
+
 static void vbi_attract_poll(void)
 {
+    const uint8_t x = rof_attract_poll_key();   // $5398 LDX #$FF + the $539A CLI/SEI window
+    // $539C-$53A0: BREAK -> JMP $52BE.  rof_check_restart drives the restart from main-loop
+    // context (it re-reads the same pending code), so leave it alone and stop here.
+    if (x == 0x80u) return;
+    if (!(x & 0x80u)) {                 // $53A3/$53A4: TXA; BMI -> only a REAL key comes here
+        mem[MEM_joystick_raw]  = x;     // $53A6 STX $0049 (the keycode itself)
+        mem[MEM_rtclok_frac]   = 0x00u; // $53A8
+        mem[MEM_attract_timer] = 0x64u; // $53AC
+        mem[MEM_zp_flag_03]    = 0x64u; // $53B0
+        return;                         // $53B2 BNE $53CB (A=$64, always taken)
+    }
+
     // $53B4-$53C9: input iff a console key is down, OR fire is pressed, OR the stick is up/down.
     bool input = ((platform_hw_read(0xD01Fu) & 0x07u) != 0x07u)     // CONSOL START/SELECT/OPTION
               || (platform_hw_read(0xD010u) == 0x00u)               // TRIG0 fire

@@ -1667,6 +1667,21 @@ void PlatformAmiga::titleChanged() {
 }
 
 
+// rof_attract_poll_key: the keycode handoff for the OTHER CLI window — $539A, inside the
+// $5398 console/attract poll that both standby-family VBI bodies run every frame (the standby
+// cockpit + launch cinematic $52D7 at $533C, and the title/results card $53CC at $5400).
+// Same one-shot semantics as flightIrqKey(), with ONE difference: a pending BREAK ($80) is
+// LEFT pending.  On the Atari $5398 answers BREAK with `JMP $52BE` (the restart trampoline);
+// here the restart has to be driven from MAIN-loop context by rof_check_restart (longjmp is
+// unsafe in the ISR), and that gate reads s_pendingFlightKey itself — so consuming $80 here
+// would swallow the restart.  Every other keycode IS consumed, which is the whole point:
+// see vbi_attract_poll in rof_native_amiga.cpp.
+extern "C" uint8_t rof_attract_poll_key(void) {
+    uint8_t k = s_pendingFlightKey;
+    if (k != 0x80u) s_pendingFlightKey = 0xFF;
+    return k;
+}
+
 uint8_t PlatformAmiga::flightIrqKey() {
     // Consume the keycode the keyboard ISR stashed (if any) and reset to "none".  The flight
     // VBI's CLI window ($519c) calls this once per frame; returning the code here is exactly
@@ -2353,6 +2368,19 @@ static uint32_t vbiHandler()
         } else if (g_restartCount) {
             s_consolState |= 0x01u; mem[0xD01Fu] = s_consolState;             // START up once off the card
         }
+    }
+#endif
+
+#ifdef ROF_FORCE_ESC_STANDBY
+    // Headless repro of "ESC in Standby soft-hangs on the way into flight": inject ESC
+    // (KBCODE $1c) once while the STANDBY VBI ($52D7) is live, i.e. BEFORE the auto-START.
+    // Only the flight VBI's $519c CLI window consumes s_pendingFlightKey, so an unfixed build
+    // carries the keycode across the whole launch cinematic and dispatches it as the freeze
+    // takeover ($0043) on the first flight VBI firing.  Build: PROBES=1 FORCE_ESC_STANDBY=1.
+    {
+        static uint8_t s_fesDone = 0;
+        const uint16_t vvE = (uint16_t)(mem[0x0222u] | (mem[0x0223u] << 8));
+        if (!s_fesDone && vvE == 0x52D7u && g_vbiCount > 200) { s_pendingFlightKey = 0x1C; s_fesDone = 1; }
     }
 #endif
 

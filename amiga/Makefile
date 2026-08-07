@@ -660,6 +660,12 @@ endif
 ifdef FORCE_BREAK_EARLY
 EXTRA_DEFINES += -DROF_FORCE_BREAK_EARLY
 endif
+# `make PROBES=1 FORCE_ESC_STANDBY=1`: inject ESC ($1c) during the Standby cockpit (before the
+# auto-START) to verify a command key pressed OUTSIDE flight no longer survives into flight as
+# the freeze takeover ($0043) — the "ESC in Standby soft-hangs on the way into flight" bug.
+ifdef FORCE_ESC_STANDBY
+EXTRA_DEFINES += -DROF_FORCE_ESC_STANDBY
+endif
 # `make PROBES=1 FORCE_BREAK_CARD=1` (WITHOUT NOAUTO): break during the stars cinematic so the
 # restart lands on the $53CC card, then auto-launch drives START -> the card->doors transition
 # (bug 3 repro).
