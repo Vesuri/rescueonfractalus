@@ -563,3 +563,88 @@ consistent with the ~1% static estimate but does not independently establish it.
 fewer stack-argument frame per call are visible in the disassembly, the call count is measured, and
 the result is proven byte-identical. Useful side-note for the harness itself: the baseline
 reproduced the recorded 13.09 to 0.1%.
+
+## 8. 2026-08-07 (later still) — item 3: the combat DRAW delta, and the estimator that inflated it
+
+Ranked item 3 was *"DRAW's unexplained +474 t/it in combat (1588 vs 1181 in the terrain remainder,
+SAME pinned level, SAME straight trajectory) — larger than the whole object plotter, and nobody
+knows why."* The standing hypothesis: bolt impacts disturb the attitude ⇒ more terrain in view.
+`g_clAltDraw[8]`/`g_clAltIter[8]` had been written to test it and **never run**.
+
+Five `COMBAT=1` vs `COMBAT=1 COMBAT_QUIET=1` pairs, level 40, `FIXED_RNG=1`, lean probes.
+
+### 8.1 The viewpoint hypothesis — refuted, twice
+
+Running the altitude table settles it immediately:
+
+| alt bucket (`$28DA>>5`) | combat DRAW t/it | quiet | ratio | iteration share (c / q) |
+|---|---|---|---|---|
+| 0 (`$00-$1f`) | 1363 | 1107 | 1.231 | 0.443 / 0.425 |
+| 1 (`$20-$3f`) | 1520 | 1201 | 1.266 | 0.055 / 0.041 |
+| 4 (`$80-$9f`) | 1553 | 1203 | 1.291 | 0.502 / 0.535 |
+
+The ratio is the same inside every matched bucket and the *mix* is near-identical, so the viewpoint
+distribution explains none of the delta.
+
+A second, stronger refutation came free. `g_clSubCalls` (new) counts terrain **tree entries** — one
+`terrain_subdivide_column_core` call per both-endpoints-visible pair. It is a COUNT, so it carries
+no bracket floor: **68 per iteration in BOTH builds, in all five runs.** Combat does not subdivide
+more terrain. Whatever the delta is, it is not "more terrain in view".
+
+### 8.2 Where inside DRAW (new: the `CL_SUB` three-segment split)
+
+`terrain_draw_frame_core` split into head (per-frame table fills + `compute_row_xspans`) /
+obj (`terrain_draw_objects`) / tail (derived, so the function's four early returns need no bracket):
+
+| segment | combat t/it | quiet t/it |
+|---|---|---|
+| head | 65 | 60 |
+| **obj** | **1553** | **1099** |
+| tail | 54 | 33 |
+
+92% of DRAW is the object draw-order loop, and effectively all of the delta is there. The `$0A00`
+near-max cell aging scan — 256 volatile byte reads gated on `map_cell_hit_marker`, which only
+SHOT/BOLT impacts set, so structurally a combat-only cost — is **16 t/it over ~70 scans**. Real but
+small; it is inside the tail figure above.
+
+With `OBJ_SHAPE=1` the obj segment splits further: plotter chain 319 vs 102 t/it over 48 calls/it in
+both (the ~105 t/it bracket floor is therefore the whole of the quiet figure) ⇒ **~215 t/it of real
+object work**, driven by 21 occupied cells visited per iteration against 1-2.
+
+### 8.3 ⭐ The finding that matters more: a phase bracket exaggerates combat by ~15%
+
+Every phase read slower in combat, **including ones whose work cannot vary with it** —
+`terrain_frame_setup` +12%, `ds_frame` +18%. That is the signature of a slower *machine*, and a
+phase bracket cannot tell DMA stolen by sprites/audio/blitter from computation. So `CALIBRATE=1`
+runs a fixed-trip, data-independent load once per flight iteration and measures it five ways:
+
+| row | combat | quiet | ratio |
+|---|---|---|---|
+| MEM 1024 reads, ONE bracket | 272.7 | 236.2 | **1.155** |
+| MEM the same 1024 reads, 8 **ISR-free** sub-windows | 226 | 224 | **1.010** |
+| MEM ×128 **beam-locked** to scanline 200 | 18.08 | 18.05 | **1.002** |
+| MEM 1024 reads, AUD+SPRITE DMA masked | 269.1 | 237.8 | 1.132 |
+| CPU 1024-step LFSR (registers), one bracket | 96.1 | 93.4 | 1.029 |
+
+Masking audio and sprite DMA changes nothing, so it is not contention. Two independent
+subtraction-free estimators agree the machine is identical. **The 15% is `elapsed −
+g_isrBeamLines`.** `g_isrBeamLines` is credited at ISR **exit** (`rof_native_amiga.cpp`
+`flight_vbi_native`), so an ISR straddling the bracket's start is over-subtracted and one
+straddling its end is under-subtracted. Those cancel only when the two ends are independent — and
+for a window near the 313 t ISR period they are not, because start and end land at nearly the same
+phase of the ISR cycle. Combat's window sat at **87%** of the period, the control's at **75%**, so
+the bias did not cancel between the builds either.
+
+**Consequence:** every cross-build phase comparison in this tree is inflated on the side with more
+ISR firings (combat ~21/iteration vs ~12-16). That includes the historical "combat costs N×" phase
+tables. Same-build comparisons are unaffected; so are short brackets.
+
+### 8.4 What item 3's number actually was
+
+The object plotter doing real object work (~215 t/it), harness inflation of order 15% of the quiet
+baseline, the aging scan (16 t/it), and a small per-tree-entry residual at an identical call count —
+consistent with the two builds' trajectories separating late in the window (the `seg` lines show
+combat's altitude leaving `$80` where the control holds it). Nothing in it is extra terrain.
+
+New tooling, all off by default: `make CALIBRATE=1`, `amiga/calibrate.gdb`, the `CL_SUB`/`CL_AGE`
+split and `g_clSubCalls` in `rof_native.c`, and the extra block in `combat_probe.gdb`.
