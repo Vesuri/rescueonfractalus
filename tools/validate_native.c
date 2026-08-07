@@ -1827,11 +1827,51 @@ static int test_mem_contract_regs(const char *name, void (*native)(void), void (
     return mem_fail;
 }
 
+/* --- The object plotters' two pointers, seeded the way the machine builds them. -----
+ *
+ * terrain_plot_pixel writes the field through ($80),Y, where {$81:$80} comes from the
+ * row-address tables $28CA (lo) / $28FA (hi) indexed by the plot row.  Those tables are
+ * exactly 47 entries wide and cover rows $68-$96 only — row R -> $1070 + ($96-R)*$60,
+ * i.e. the mode-D viewport field at $1070-$21B0 (verified against
+ * a800dumps/flight_ram_0000_BFFF.bin; the two tables abut at $2932-$2960 / $2962-$2990,
+ * so 47 rows is the widest they can be without overlapping each other).
+ *
+ * fill_random() leaves those tables holding garbage, which turns the field write into a
+ * WILD write anywhere in the 64 KB.  That matters because the native twins hoist 6502
+ * scratch into locals: raster_scaled_object carries $4E/$4F/$52-$55/$C3/$C4 in registers
+ * and reads $50/$51/$28DC-$28DF once, while the transliterated oracle re-reads every one
+ * of them from mem[] on every one of the 384 cells.  A wild self-write onto one of those
+ * cells therefore steers the oracle and not the twin, and they diverge — on a machine
+ * state the game cannot produce, since the real pointer never leaves the field.  (The
+ * same wild pointer can also make the SHAPE SOURCE ($28DC/$28DD + up to $2F) alias
+ * $52/$53, which the oracle zeroes per row and the twin keeps in a register.)
+ *
+ * So seed both pointers realistically, exactly as the step below is seeded: the row
+ * tables, and an entry plot row whose 12 walked rows ($4E down to $4E-11) all either
+ * clip (>= $97) or land inside the seeded range.  Everything else stays fully random, so
+ * the whole 12x32 walk — bit sampling, the column reflect, both accumulators, the clip
+ * test, the coordinates — is still diffed. */
+#define PLOT_ROW_MIN 0x68
+#define PLOT_ROW_MAX 0x96
+static void seed_terrain_row_tables(uint8_t *pre) {
+    for (int row = PLOT_ROW_MIN; row <= PLOT_ROW_MAX; row++) {
+        uint16_t a = (uint16_t)(0x1070 + (PLOT_ROW_MAX - row) * 0x60);
+        pre[0x28CA + row] = (uint8_t)a;
+        pre[0x28FA + row] = (uint8_t)(a >> 8);
+    }
+}
+/* $4E in [$73, $A1]: row $4E-11 >= $68, and rows above $96 take the clip return before
+ * the table is read.  Spans both the all-visible and the partially-clipped cases. */
+static uint8_t realistic_plot_row(void) {
+    return (uint8_t)(PLOT_ROW_MIN + 11 + xs() % (PLOT_ROW_MAX - PLOT_ROW_MIN + 1));
+}
+
 /* raster_scaled_object @ $AB9A: nested fill driven by the fixed-point step
  * {$0051:$0050}.  The game's step is a sub-pixel increment (high byte $0051 is
  * small — set_plot_mask_and_halve_step divides by 4); a fully random $0051 could
  * make the accumulator loops run pathologically long, so seed a realistic step
- * ($0051 in 0..$3F).  Both runs share it, so the logic is still fully diffed. */
+ * ($0051 in 0..$3F).  Both runs share it, so the logic is still fully diffed.
+ * The row tables / plot row / shape pointer are seeded for the reason above. */
 static int test_raster_scaled_object(void) {
     if (!want("raster_scaled_object")) return 0;
     enum { N = 20000 };
@@ -1841,6 +1881,12 @@ static int test_raster_scaled_object(void) {
     for (int t = 0; t < N; t++) {
         fill_random(pre);
         pre[0x0051] = (uint8_t)(xs() % 0x40);   /* realistic step high byte (0..$3F) */
+        seed_terrain_row_tables(pre);
+        pre[0x004E] = realistic_plot_row();
+        /* The shape source is a constant in each caller: $A6F9 (terrain_plot_object_a)
+           or $A7F1 (terrain_plot_object_b).  Alternate so both are exercised. */
+        if (xs() & 1) { pre[0x28DC] = 0xF9; pre[0x28DD] = 0xA6; }
+        else          { pre[0x28DC] = 0xF1; pre[0x28DD] = 0xA7; }
         mem_fail += diff_run("raster_scaled_object", pre, zero_cpu(),
                              raster_scaled_object, raster_scaled_object__t6502, t, &printed, &cpu_diff);
     }
@@ -1852,7 +1898,10 @@ static int test_raster_scaled_object(void) {
 /* terrain_plot_object_a/A90A @ $A822/$A90A: plot one terrain object indexed by entry
  * X.  Force the two slot-guard cells ($2487/$242D[X]) to 0 so the body runs every
  * case (the nonzero early-out is a trivial empty return), and seed a realistic
- * step ($232E[X] in 0..$3F -> $0051) so the raster_scaled_object loops terminate. */
+ * step ($232E[X] in 0..$3F -> $0051) so the raster_scaled_object loops terminate.
+ * These both tail-call raster_scaled_object, so they need its realistic field pointer
+ * too (see seed_terrain_row_tables): the plot row reaches $004E via $245A[X], and the
+ * cross-stamp in the A90A tail plots at that row +-1, still inside the seeded range. */
 static int test_terrain_sub_obj(const char *name, void (*nat)(void), void (*t6502)(void)) {
     if (!want(name)) return 0;
     enum { N = 20000 };
@@ -1865,6 +1914,8 @@ static int test_terrain_sub_obj(const char *name, void (*nat)(void), void (*t650
         pre[0x2487 + x] = 0x00;                  /* pass both slot guards -> run the body */
         pre[0x242D + x] = 0x00;
         pre[0x232E + x] = (uint8_t)(xs() % 0x40); /* realistic step ($0051) */
+        seed_terrain_row_tables(pre);
+        pre[0x245A + x] = realistic_plot_row();   /* -> $004E, the plot row */
         Cpu6502 c = zero_cpu(); c.X = x;
         mem_fail += diff_run(name, pre, c, nat, t6502, t, &printed, &cpu_diff);
     }
