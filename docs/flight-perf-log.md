@@ -737,3 +737,122 @@ rule exists for. Estimate given before measuring: −2.3%. Actual: −1.67%.
 And structurally this is the FOURTH win of the same shape as §6/§7: not the profile's top entry,
 but a hot leaf doing work that its own structure had already made redundant. Here the redundancy
 was in the algorithm itself — an accumulator whose associativity nobody had checked.
+
+## 10. 2026-08-08 — clearing the ranked list: items 2-5, and two harness lessons
+
+Four items filed in the `flight-pc-profiler` ranked list, done in order. All four are small
+(0.2-1.2% each); together the static counts sum to ~2.5%. Read §10.5 before quoting a framerate
+for them.
+
+### 10.1 Item 2 — `terrain_draw_objects` copied the span into `mem[]` for subdivide to load back
+
+The caller-side half of the §7.3 handoff shape. `terrain_draw_objects` seeded the running span by
+copying the primary endpoint's projected vector into `mem[$82-$86]` — five memory-to-memory
+`MOVE.B`, 24 cycles each confirmed off the disassembly — purely so
+`terrain_subdivide_column_core`'s prologue could load the same five bytes straight back out.
+
+`terrain_subdivide_column_obj` takes the object id instead and loads the span from
+`$2400/$242D/$245A/$2487/$23B5` itself, which also makes those loads cheaper: `(d16,a0)` is 12
+cycles against 16 for the absolute-long they replace.
+
+⚠ **The one path where the caller's writes were observable is the entry-guard bail.** `sd_out`
+flushes `$82-$86` from `d2/d3/d4` on every other exit, but `sd_ret` does not — so on that path the
+caller's five writes WERE the visible residue. The asm publishes them there instead (the same
+values, since `d2/d3/d4` were just loaded from the same arrays). **Measured before writing it:** the
+bail fires on **137 of 12630** real subdivide calls (1.1%), so it costs ~1 cycle/call amortised.
+
+Net off the disassembly: caller −120 +12 (third arg push), callee +12 = **~−96 cycles per call ×
+~68 calls/iteration = ~6.5k cycles/it ≈ 0.66% of wall.** Correctness on the FAST path:
+`make VERIFY=1 NO_RASTER_VERIFY=1 PROBES=1` + `subdiv_verify.gdb`, **0 mismatch over 5196 calls**
+against a C oracle that is literally the old caller code. The verify wrapper is split into
+snapshot/capture/compare helpers so both entries get a real differential without duplication.
+
+### 10.2 Item 3 — the six sprite builders ran BEFORE the blits the CPU then stalled on
+
+`renderFlightDirect` kicks two blits and blocks on both: the plane1 clear (the edge plot ORs the
+skyline into it) and the sky fill (the band overlay needs it). Meanwhile the six flight sprite
+builders are pure CPU on SPRITE buffers — they touch neither the terrain bitmap nor the dot side
+buffer, so they have no dependency on either blit. They just happened to run in `perFrameWork()`,
+called BEFORE `render()`, so all 124 t/it of them landed outside both blitter shadows.
+
+`perFrameWork` now only marks them owed and `renderFlightDirect` runs them in the two shadows.
+**The split is measured, not guessed:** the first attempt put the altimeter pair + AH in the early
+slot and they turned out to be only ~2 ticks together, leaving the plane1 clear still stalling 10;
+moving the scanner dot across (the independent one of the three, since both P3 builders share the
+target state) covers it.
+
+| wait (beam ticks per painted frame) | before | after |
+|---|---|---|
+| plane1 clear | 12 | 2 |
+| sky fill | 17 | 1 |
+| dot clear | 12 | 5 |
+| **total over a ~938k-tick window** | **13856** | **2538** |
+
+**−1.21% of wall clock**, reproduced identically on a second run; `renderFrame`'s whole scene
+bracket 21.3% → 19.3% of flight. This is the biggest of the four.
+
+⚠ `renderFlightDirect` has three early-return paths (no bitmaps / the rescue-figure pause / a frame
+with no fresh terrain), so `buildFlightSpritesFlush()` after `render()` is the safety net — without
+it the altimeter/AH/scope would freeze on exactly those frames. The knock fast path at
+`renderFrame`'s top still skips the builders entirely as before (it returns before `perFrameWork`,
+so nothing is ever owed there).
+
+### 10.3 Item 4 — `terrain_frame_setup`'s pattern decode is a top-nibble jump table
+
+The oracle's decode is a nested `btst`/`beq` chain 2-4 levels deep at 18-20 cycles a level. But it
+never tests the pattern byte's low nibble on any path, and every branch outcome collapses to two
+independent signs:
+
+    u += sA*rot_a + sB*rot_b     v += -sA*rot_b + sB*rot_a
+    b6 += (sA>0) ? $F0 : (sA<0) ? $10 : 0        X += sB
+
+with `(sA,sB)` a pure function of the top nibble. So `pat & $F0` IS the table index: one `and.w` +
+one `add.w` + one `jmp (d8,PC,Dn.W)` replaces the chain. Blocks are 32 bytes so the longest body
+fits with a uniform `bra.w` exit; a `dcb.b` pad after each block fails to assemble if one grows too
+big. The table must sit inline — `jmp (d8,PC,Dn.W)` has only an 8-bit displacement.
+
+**Verified three ways, because 7 of the 16 blocks are unreachable from the real data.** Host-
+exhaustive: the derived `(sA,sB)` table matches the oracle branch-for-branch on all 256 pattern
+bytes. On target: `tfsetup_verify.gdb`, 0 mismatch over 60 calls across the whole `$2276-$24FF`
+output block + the `$80/$81/$B4/$B5/$B6/$28DB` residue — that covers the 9 nibbles the four real
+tables contain (`{0,1,2,4,5,6,8,A,C}`; every byte's low nibble is 0). Blocks 3,7,9,B,D,E,F are
+host-proven only, since no table can produce them.
+
+Paired differential runs stopped at the SAME 60 calls (`FIXED_RNG`, vbi 17960 vs 17954): asm
+3587 → 3379 beam ticks, and normalising by the unchanged C arm's own 2.3% drift gives −2.1 to −3.5
+ticks/call ⇒ **−4 to −7 t/it ≈ 0.2% of wall**, against −6.8 predicted from the real tables (89 → 55
+cycles/cell weighted by `$B622`'s mix). Table costs 512 bytes of code.
+
+### 10.4 Item 5 — the four `$6B` runs are ONE contiguous 132-byte fill
+
+`$264E/$266F/$2690/$26B1` ABUT (`$264E+$21 == $266F`, and so on), so the four `$21`-byte runs are
+one contiguous 132-byte run `$264E..$26D1` = exactly 33 longs (the COL_MAX `$260E` horizon reset for
+columns `$40..$C3`). `$6B` broadcast to all four lanes is endianness-neutral, and every address is
+even — all `move.l` needs on a 68000. The old comment claimed `$266F/$26B1` were "odd addresses" so
+batching would fault; **they are odd only as OFFSETS.**
+
+⚠ **The pointer must stay `volatile`.** A plain `uint32_t*` loop is recognised as a memset and
+becomes `jsr memset` — and this build's freestanding memset (`support/gcc8_c_support.c`) is a
+byte-at-a-time `move.b d0,(a0)+`/`cmpa.l`/`bne` loop at ~24 cycles a byte, handing all 132 byte
+writes straight back. That is a NEW trap worth remembering: hand-batching a fill can be silently
+undone by GCC's memset recognition, and whether that is a win or a loss depends entirely on the
+freestanding CRT's memset.
+
+Measured (`combat_probe.gdb`, paired runs): **DRAW head 67 → 53 t/it**, with `obj` (1536 → 1534) and
+`tail` (53 → 53) unchanged as controls, so the delta is isolated to the code changed. **−14 t/it ≈
+−0.39% of wall**, against −11.6 predicted.
+
+**Tried and reverted:** the neighbouring `$67` fill at `$263A/$26CE`. GCC splits those `uint16_t`
+stores back into 40 byte stores, but batching them the same way is WORSE — with two interleaved
+volatile long pointers over a 5-trip loop GCC emitted a redundant volatile READ before every byte
+store. 40 bytes is ~0.05% of wall, so it is noted in the comment rather than chased.
+
+### 10.5 The two lessons
+
+1. **An internal control beats a cross-build phase bracket.** §8 established that a phase bracket
+   over-reports the build with more ISR firings by ~15%, which makes cross-build brackets suspect.
+   Item 5 dodged that entirely: the DRAW split has three sub-brackets and only ONE of them could
+   possibly move, so `obj` and `tail` holding still (1536→1534, 53→53) is direct evidence that the
+   −14 t/it in `head` is real and not drift. **Prefer a measurement that contains its own control.**
+2. **GCC can undo hand-batching.** See the memset trap above. Always re-read the disassembly after
+   a batching change — the source saying `move.l` guarantees nothing.

@@ -134,6 +134,19 @@ CONSOL `$D01F` START/SELECT/OPTION, all active-low, polled), and **in-flight key
 the Amiga via the CIA-A keyboard ISR; the transpiler `PRE_INSN_HOOKS[$519c]` feeds the keycode into
 the flight VBI's CLI window). Faithful 1:1 — the dispatcher logic is the Atari binary's.
 
+⚠ **There are TWO keyboard windows, and both must consume.** The game runs with IRQs masked
+(`$3D27 SEI`) and POKEY's keyboard IRQ armed (`IRQEN=$C0` at `$3DA1`), so a keypress stays PENDING
+until a one-instruction `CLI`/`SEI` gap opens and `irq_handler $462A` drops `KBCODE&$3F` (or `$80`
+for BREAK) into X. There are exactly two such gaps: **`$519c`** in the flight VBI, and **`$539a`**
+inside the `$5398` console/attract poll that BOTH standby-family VBI bodies run every frame
+(`$52D7` at `$533C`, the `$53CC` card at `$5400`). `$5398` does NOT route the code to
+`event_sequence_dispatcher` — out of flight a command key only resets the attract timeout — but it
+DOES consume it. Porting `$5398` without its window (the state before 2026-08-08) left a keycode
+pressed outside flight latched across the whole launch cinematic for the first `$519c` window to
+dispatch: pressing ESC on Standby then froze the game (`$0043`) the instant flight began.
+`rof_attract_poll_key()` deliberately leaves a pending `$80` alone, because out of flight the
+restart must longjmp from main-loop context (`rof_check_restart`).
+
 | Atari control | Action | Atari KBCODE | Amiga key (rawkey) | Path |
 |---|---|---|---|---|
 | START | Start the game | — (CONSOL) | **F1 ($50)** | CONSOL $D01F bit0 |
