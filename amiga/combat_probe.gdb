@@ -161,8 +161,11 @@ printf "  EXPLOSION  : %lu firings, %lu t/firing\n", g_clIsrN[0], \
 printf "  no-explosion: %lu firings, %lu t/firing\n", g_clIsrN[1], \
   (g_clIsrN[1] ? g_clIsr[1]/g_clIsrN[1] : 0)
 # DRAW cost vs ship altitude.  Run this on BOTH the combat and the quiet build and compare a row
-# to the SAME row: equal DRAW t/it at matched altitude means combat's extra terrain cost is not
-# combat rendering at all, it is combat throwing the ship to a cheaper/dearer viewpoint.
+# to the SAME row.  ⭐ RESULT (2026-08-07, log §8.1): the viewpoint hypothesis is REFUTED — the
+# combat/quiet ratio is 1.231 / 1.266 / 1.291 in the three populated buckets and the two runs spend
+# near-identical fractions of their iterations in each, so the mix explains none of the delta.
+# ⚠ And do not read the raw ratio as work: a phase bracket over-reports the build with more ISR
+# firings by ~15% (`make CALIBRATE=1` + calibrate.gdb, [[flight-measurement-rules]]).
 printf "\n=== object work inside DRAW ===\n"
 printf "  cells WITH an occupant (all object work) : %lu  = %lu per iteration\n", \
   g_clObjEnter, ($it ? g_clObjEnter/$it : 0)
