@@ -93,6 +93,12 @@ FRAMEWORK_ASM_SRCS := \
 ifndef RASTER_C
 FRAMEWORK_ASM_SRCS += $(AMIGA_SRC)/TerrainRasterizeAssembler.s
 EXTRA_DEFINES += -DROF_RASTERIZE_ASM
+# The subdivide asm hands the running cursor to the rasterizer through a PRIVATE register ABI
+# (terrain_column_rasterize_span) instead of mem[$82/$84/$86].  That entry only exists when the
+# rasterizer asm is built, and must NOT be used under the raster differential (there every call
+# has to go through the C dispatcher or raster_verify.gdb sees none of them).  Cleared below in
+# that case; the subdivide .s then keeps its old stack+mem[] call.
+RASTER_SPAN_ABI := 1
 # `make VERIFY=1` (implies PROBES): on-target differential check of the asm twin vs
 # the C oracle each call (rof_native.c), read via amiga/raster_verify.gdb.  The define
 # goes to BOTH the C (the diff wrapper) and the raster .s (drops its plain xdef so the
@@ -103,6 +109,7 @@ ifdef VERIFY
 ifndef NO_RASTER_VERIFY
 EXTRA_DEFINES += -DROF_RASTERIZE_VERIFY
 obj/TerrainRasterizeAssembler.o : VASMFLAGS += -DROF_RASTERIZE_VERIFY
+RASTER_SPAN_ABI :=
 endif
 endif
 endif
@@ -129,6 +136,13 @@ EXTRA_DEFINES += -DROF_SUBDIV_ASM
 ifdef VERIFY
 EXTRA_DEFINES += -DROF_SUBDIV_VERIFY
 obj/TerrainSubdivideAssembler.o : VASMFLAGS += -DROF_SUBDIV_VERIFY
+endif
+# Use the rasterizer's register-ABI entry when it exists (see RASTER_SPAN_ABI above).  To put
+# the fast path under a differential, build `make VERIFY=1 NO_RASTER_VERIFY=1` — that keeps
+# this on while subdiv_verify.gdb compares the asm subdivide (register handoff) against the C
+# oracle (mem[] handoff) call-for-call.
+ifdef RASTER_SPAN_ABI
+obj/TerrainSubdivideAssembler.o : VASMFLAGS += -DROF_RASTER_SPAN_ABI
 endif
 endif
 

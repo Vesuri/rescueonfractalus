@@ -74,7 +74,7 @@ def group_of(sym):
     # the `draw`/`draw_ret` subroutine that DRAWDOT now inlines).  Listing it here cost the
     # subdivide bucket 1.6 points and handed them to the rasterizer.
     if sym.startswith(("ph1_", "ph2_", "ras_sp")) or sym in (
-        "done", "terrain_column_rasterize_core_asm"):
+        "done", "terrain_column_rasterize_core_asm", "terrain_column_rasterize_span"):
                                                      return "rasterizer (ph1/ph2 + leaf draw)"
     if sym.startswith("sd_") or sym in ("submid", "push_mid", "load_far", "load_span",
                                         "terrain_subdivide_column_core_asm"):

@@ -27,7 +27,11 @@
 	xdef	terrain_subdivide_column_core		; ships as the core symbol directly
 	endif
 	xref	mem
+	ifd	ROF_RASTER_SPAN_ABI
+	xref	terrain_column_rasterize_span
+	else
 	xref	terrain_column_rasterize_core
+	endc
 
 ; SubPt stacks (parallel byte arrays, indexed by depth; a1 = mem+depth -> (base,a1))
 SDCOL_LO	equ	$25B4
@@ -207,6 +211,42 @@ sd_lh_store:
 	; oracle stores the high bytes $83/$85 here too, but nothing reads them before sd_out
 	; rewrites them from d2/d3, so on the Amiga they are dead here: skipping them drops two
 	; 22-cycle `lsr.w #8` (plus their move.l/move.b) per rasterized leaf.
+	ifd	ROF_RASTER_SPAN_ABI
+	; Hand the running cursor over in REGISTERS (terrain_column_rasterize_span, the private
+	; entry in TerrainRasterizeAssembler.s).  Both sides keep col/height/frac in registers, so
+	; the old mem[$82/$84/$86] round trip — 3 stores here, 3 loads there, 3 stores back, 3
+	; loads plus two high-byte merges here — was ~220 cycles of pure handoff on every call.
+	; The span entry preserves d2/d3/d5-d7/a2-a6 and returns the three bytes in d0/d1/d4, so
+	; our 16-bit span.col/span.hgt keep their high bytes and only the low byte is merged.
+	; a2 already holds `depth`, which IS the colBase argument.  rasterEntryDepth (a4) is dead
+	; in the rasterizer (the C assigns it to `depth` then overwrites with 0), so it is not
+	; passed.  mem[$82/$84/$86] stay stale until sd_out flushes them from d2/d3/d4 — nothing
+	; between here and there reads them (grep: the only other refs in either file are that
+	; flush and the entry load).
+	moveq	#0,d0
+	move.b	d2,d0			; col    (zero-extended: the body does .w arithmetic)
+	moveq	#0,d1
+	move.b	d3,d1			; height
+	and.w	#$FF,d4			; frac — OUR d4's high byte is dirty (every writer here
+					; is a bare move.b, which is why submid masks it before
+					; `add.w`), and the rasterizer adds d4 as a WORD.  It used
+					; to zero-extend on its own `moveq #0,d4` reload; now that
+					; the value is handed over live, the clean-up is ours.
+					; Bits 16-31 stay dirty and are never read (both sides are
+					; .b/.w only), and inside the rasterizer every later write
+					; to d4 is a move.b, so it stays clean for the whole call.
+	jsr	terrain_column_rasterize_span
+	lea	mem,a1			; raster clobbers a1 -> recompute a1 = mem+depth
+	adda.l	a2,a1
+	and.w	#$FF00,d2
+	or.w	d0,d2			; span.col low byte = the cursor the rasterizer left
+	and.w	#$FF00,d3
+	or.w	d1,d3			; span.hgt low byte
+	;      d4 already holds the rasterizer's frac
+	else
+	; Fallback for the builds where the span entry does not exist or must not be used:
+	; RASTER_C=1 (no rasterizer asm at all) and the raster differential (ROF_RASTERIZE_VERIFY,
+	; where every call has to go through the C dispatcher so raster_verify.gdb still sees it).
 	move.b	d2,mem+$82
 	move.b	d3,mem+$84
 	move.b	d4,mem+$86
@@ -228,6 +268,7 @@ sd_lh_store:
 	move.b	mem+$84,d0
 	or.w	d0,d3
 	move.b	mem+$86,d4
+	endc
 	; fall through to pop
 
 sd_pop:

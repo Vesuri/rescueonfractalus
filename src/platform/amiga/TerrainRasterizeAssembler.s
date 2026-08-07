@@ -134,12 +134,53 @@ RASPOP	macro
 	endm
 
 ; ---------------------------------------------------------------------------
+; PUBLIC C-ABI entry:  void terrain_column_rasterize_core(uint8_t entryDepth, uint8_t colBase)
+; Keeps the exact mem[$82/$84/$86] contract that the C oracle, `make validate` and the
+; in-process differential (raster_verify.gdb) check — it is a thin shim that loads the running
+; cursor out of mem[], runs the body, and stores it back.  entryDepth is dead (the C assigns it
+; to `depth` then immediately overwrites with 0), so it is not forwarded.
+; The HOT caller (the subdivide asm) does NOT come through here: it calls
+; terrain_column_rasterize_span below, which takes and returns the cursor in registers.
 terrain_column_rasterize_core:
 terrain_column_rasterize_core_asm:
-	movem.l	d2-d7/a2-a6,-(sp)	; 11 longs = 44 bytes; args now shift +44
+	movem.l	d4/a2,-(sp)		; d4/a2 are callee-saved in the C ABI; args shift +8
 	moveq	#0,d0
-	move.b	55(sp),d0		; colBase  (11 + 44)
-	move.b	d0,mem+$60		; mem[$60] = colBase   (faithful; dead on Amiga)
+	move.b	19(sp),d0		; colBase  (11 + 8)
+	movea.l	d0,a2			; -> the span entry's colBase register
+	moveq	#0,d0
+	move.b	mem+$82,d0		; col
+	moveq	#0,d1
+	move.b	mem+$84,d1		; height
+	moveq	#0,d4
+	move.b	mem+$86,d4		; frac
+	bsr	terrain_column_rasterize_span
+	move.b	d0,mem+$82		; the live writeback the caller reads back
+	move.b	d1,mem+$84
+	move.b	d4,mem+$86
+	movem.l	(sp)+,d4/a2
+	rts
+
+; ---------------------------------------------------------------------------
+; PRIVATE register ABI — the entry the subdivide asm calls.
+;
+; Subdivide holds the running cursor in registers and so does this function, yet the two used
+; to hand it over through mem[$82/$84/$86]: 3 stores in the caller, 3 loads here, 3 stores here
+; at `done`, 3 loads (plus two high-byte merges) back in the caller.  That round trip was ~220
+; cycles on EVERY call — measured at ~49 calls per flight iteration — for a value both sides
+; already had in a register.  Passing it in registers removes all twelve accesses, the
+; stack-argument push/pop, and one long from the movem.
+;   in : d0.b = col ($82)   d1.b = height ($84)   d4.b = frac ($86)   a2.l = colBase
+;        (all three must arrive ZERO-EXTENDED — the body does .w arithmetic on them)
+;   out: d0.b = col         d1.b = height         d4.b = frac
+;   clobbers d0/d1/d4 (the results) + a0/a1; d2/d3/d5-d7/a2-a6 are preserved, so the caller's
+;   16-bit span.col/span.hgt keep their high bytes and only need an or.w of the low byte.
+	xdef	terrain_column_rasterize_span
+terrain_column_rasterize_span:
+	movem.l	d2-d3/d5-d7/a2-a6,-(sp)	; 10 longs = 40 bytes (d4 is in/out -> not saved)
+	move.l	a2,d2
+	move.b	d2,mem+$60		; mem[$60] = colBase   (faithful; dead on Amiga)
+	move.l	d1,d3			; height -> the body's cursor register
+	move.l	d0,d1			; col    -> the body's d1 (a0 below)
 	lea	-CPBUF(sp),sp		; allocate the private control-point stack
 	movea.l	sp,a3			; a3 = current slot (depth 0); the base for the
 					;      depth==0 test is SP itself (see the header)
@@ -153,20 +194,14 @@ terrain_column_rasterize_core_asm:
 	move.b	mem+$EA,d6		; chgt = CTL_HEIGHT(0)
 	move.b	d6,1(a3)		; slot[0].hgt
 	move.b	mem+$F4,2(a3)		; slot[0].frac
-	; load running cursor height/frac from $84/$86 (zero-extended)
-	moveq	#0,d3
-	move.b	mem+$84,d3		; height
-	moveq	#0,d4
-	move.b	mem+$86,d4		; frac
+	; running cursor height (d3) / frac (d4) came in from the caller — no mem[] load
 	moveq	#0,d2			; span   (set below)
 	moveq	#0,d5			; plotCol / phase-1 scratch
 
 	; ---- setup: trivial-segment early-outs --------------------------------
 	moveq	#0,d0
 	move.b	mem+$95,d0		; endCol = CTL_COL(0)
-	moveq	#0,d1
-	move.b	mem+$82,d1		; col (the cursor / segment left end)
-	move.w	d1,a0			; a0 = col
+	move.w	d1,a0			; a0 = col (arrived in d0, moved to d1 above)
 	cmp.b	#$2D,d0
 	bcs	done			; endCol < $2D -> nothing on screen
 	cmp.b	d1,d0			; endCol - col
@@ -483,14 +518,13 @@ ras_sp4_go:
 	bcc	done
 	bra	ph2_loop
 
-	; ---- exit: write back the live cursor, free scratch, restore regs -------
+	; ---- exit: hand the live cursor back in registers, free scratch, restore -
+	; d4 already holds frac (it is in/out and never saved), so only col and height move.
 done:
-	move.l	a0,d0
-	move.b	d0,mem+$82		; col
-	move.b	d3,mem+$84		; height
-	move.b	d4,mem+$86		; frac
+	move.l	a0,d0			; col out
+	move.l	d3,d1			; height out (before the movem restores the caller's d3)
 	lea	CPBUF(sp),sp		; free the control-point stack
-	movem.l	(sp)+,d2-d7/a2-a6
+	movem.l	(sp)+,d2-d3/d5-d7/a2-a6
 	rts
 
 ; ---------------------------------------------------------------------------

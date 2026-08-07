@@ -473,3 +473,93 @@ build the bucket disappears from the PC profile entirely. Do not re-open.
 
 `prof_flight.sh` now passes the measurement flags through and warns when neither `COMBAT` nor
 `INVULNERABLE` is set.
+
+---
+
+## 7. 2026-08-07 (later) — the phase budget closed, and the handoff one level down
+
+### 7.1 A 100%-covered map of a flight iteration (`amiga/phase_budget.gdb`, new)
+`obj_shape.gdb` already printed the CL_PH phase table, but only on an `OBJ_SHAPE=1` build whose
+`OP_TIME` brackets add ~110 t/it *inside* the DRAW phase. `phase_budget.gdb` is the same table with
+every `OBJ_SHAPE`/`RS_SHAPE` global dropped, so it runs on a lean probe build, and it additionally
+opens up the FRAME phase from brackets that already existed in the tree but were never printed next
+to it. `COMBAT=1 FIXED_RNG=1 PROFILE_NORING=1 NO_TDRAW_PROF=1`, 271 iterations, **covered 100%**:
+
+| phase | t/it (probe) | ~% of honest wall |
+|---|---|---|
+| DRAW (terrain+objects ×2) | 1483 | 46 |
+| VBI ISR (104 t/firing × 3 brackets) | — | 25-33 |
+| FRAME (ds_frame ×2) | 494 | 15 |
+| SETUP (frame_setup ×2) | 168 | 5 |
+| CLEAR + BOLT + ENEMY | 28 | ~1 |
+
+**FRAME, opened up (t/it, probe):** perFrameWork/6 sprite builders **124** · renderFlightDirect
+**260** (clear+copy 31 · edge+fillUp 78 · sky-fill blitter wait 35 · band+overlay 89 · 27 other) ·
+cockpit scan **49** · updateFlightCopper **16**. **Nothing in FRAME is over 3% of wall** — so the PC
+profile's "sprites 7.3%" is really ~3.8%, and that whole block can come off the TODO. (The profile
+over-states every non-ISR bucket by ~1.4×, because ISR samples land on the Kickstart autovector
+stub — 7% of samples for 25-33% of the time.)
+
+### 7.2 Sized and CLOSED with numbers
+- **`compute_row_xspans`** (a §6.1 terr_blend-shaped in-place `mem[$00B5]` accumulator): 31
+  iterations × 2 calls/it = **~0.09% of wall**. Not worth the edit.
+- **A hand-asm twin of `terrain_draw_objects`** (the 8.3% PC bucket, the largest non-asm one).
+  Shape measured (`amiga/objloop_shape.gdb`, new): **72 pairs/pass, 34 both-endpoints-visible, 28
+  culled at the primary, 10 companion-culled, 23 projections** — dead stable across 5 segments.
+  Cost counted off the actual disassembly: **126 cycles per culled pair, 616 per visible pair**
+  (240 of those the ten mem-to-mem vector copies), = ~53.5k cycles/it ≈ 5% of wall. The fat hand-asm
+  could remove — `andi.l #255` on a promoted `uint8_t`, the redundant `moveq`+`move.b` zero-extends,
+  a `lea` per table lookup, mem-to-mem `move.b` for the copies — totals **~0.8%**. Not worth an asm
+  twin of the third-hottest function.
+
+### 7.3 The subdivide→rasterizer span handoff — the 6.2 shape, one level down
+`terrain_column_rasterize_core` and `terrain_subdivide_column_core` are both hand-written asm and
+both keep the running cursor (col / height / frac) in registers — yet every call passed it through
+`mem[$82/$84/$86]`: 3 stores in subdivide, 3 loads in the rasterizer prologue, 3 stores back at
+`done`, then 3 loads plus two high-byte merges in subdivide. ~220 cycles per call of pure handoff,
+plus ~38 of stack-argument ABI, for a value both sides already had in a register.
+
+§2.8 had spotted it ("the handoff third is **not** addressed by fusion — that is the rasterizer's
+call ABI, one level down") but never sized it, because nothing measured the CALL COUNT.
+`amiga/ras_count.gdb` (new) does: **~49 rasterize calls per flight iteration** (17-31 per pass).
+So ~11k cycles/it ≈ 1% of wall.
+
+The public `terrain_column_rasterize_core` entry keeps its exact `mem[]` contract — it is now a thin
+shim that loads the cursor into registers, runs the body and stores it back — so the C oracle,
+`make validate` and `raster_verify.gdb` are untouched. The body becomes
+`terrain_column_rasterize_span`: cursor in/out in `d0`/`d1`/`d4`, colBase in `a2` (subdivide already
+holds `depth` there). `d4` being in/out also drops it from the `movem` (11 longs → 10).
+
+⚠ **The trap, and it is generalisable: converting a `mem[]` handoff to a register handoff makes you
+inherit the callee's zero-extension precondition — and the byte-width invariant held on only one
+side.** The rasterizer adds `d4` with `add.w` in five places and relied on its own
+`moveq #0,d4` reload to clean it; subdivide's `d4` has a DIRTY high byte (every writer there is a
+bare `move.b`, which is exactly why its own `submid` does `move.w d4,d1 / and.w #$FF,d1` before
+adding). Without an `and.w #$FF,d4` at the call site the differential reported **126 mismatches in
+3812 subdivide calls, first at call 14, on `$84` (height)** — frac feeds the height accumulation.
+
+Verified with **`make VERIFY=1 NO_RASTER_VERIFY=1 PROBES=1` + `subdiv_verify.gdb`** — that
+combination is the one that puts the FAST path under a differential: it keeps the register handoff
+live while the subdivide differential compares it, call for call, against the C oracle (which still
+goes through the `mem[]` shim). **0 mismatches over 3686 calls** across the 5 SubPt stacks,
+`$60`/`$80-$86` and the return value. All four build variants (`RASTER_C=1`, `SUBDIV_C=1`,
+`VERIFY=1`, `VERIFY=1 NO_RASTER_VERIFY=1`) still link; the Makefile clears `RASTER_SPAN_ABI` under
+the raster differential so every call there still goes through the C dispatcher.
+
+**Framerate (`COMBAT=1 FPSCOUNT=1 FIXED_RNG=1` + `fps_seg.gdb`, ~2997-vbi window):**
+
+| build | run 1 | run 2 |
+|---|---|---|
+| baseline | 13.09 *(recorded, 36c4248)* | **13.10** |
+| span handoff | **13.38** | **13.18** |
+
+Mean 13.10 → 13.28, **+1.4%**. ⚠ **The end-to-end harness cannot resolve this change**: the change
+build's own two samples differ by 1.5%, as large as the effect, and only 6 of 15 individual segments
+moved up in the paired run. All four points do fall on the right side of each other (both change
+samples above both baseline samples), and that is the whole of the end-to-end evidence — it is
+consistent with the ~1% static estimate but does not independently establish it.
+
+**So this one is kept on the static count, not the framerate**: 12 fewer memory accesses and one
+fewer stack-argument frame per call are visible in the disassembly, the call count is measured, and
+the result is proven byte-identical. Useful side-note for the harness itself: the baseline
+reproduced the recorded 13.09 to 0.1%.
