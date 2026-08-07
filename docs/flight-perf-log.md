@@ -408,3 +408,68 @@ part was the one NOT on the TODO.
 | "`mem[]` is in fast RAM (`&mem ≈ 0x264fe8`) so it isn't chip-DMA-contended" | **Retired as wrong-headed** — the target A500 has no real fast RAM; treat all RAM as uniformly expensive. |
 | "the `ph2_loop` far-bisect math is irreducible; further gains are STRUCTURAL and faithfulness-bound" | **Disproven** by the phase-2 restructure (−36%, same subdivision count, byte-identical). |
 | "the dot-plot is <0.3% of the draw, not a lever" | **Superseded** post-restructure — DRAW bodies are roughly half the rasterizer now — but see §2.2: the remaining levers there are still ~2%. |
+
+---
+
+## 6. 2026-08-07 — two wins of the same shape, and a harness trap that faked a third
+
+### 6.1 `terr_blend` (8e02185) — loop-carried scratch living in volatile `mem[]`
+`sample_terrain_height_bilerp`'s bit-serial blend ran three 8-step loops, fully unrolled by GCC, and
+kept the fraction and both operands in `$27Fx` scratch, shifting them IN PLACE. That is 8 absolute
+byte accesses per iteration (~128 of the ~170 cycles) purely to carry values from one iteration to
+the next. Hoisting the three into registers needed the `mem[]` contract to still hold, and it turned
+out to be trivial: the fraction shifts left 8 times and lo/hi right 8 times each, once per iteration
+on BOTH branches, so all three end at 0 for every input. `tools/terr_blend_test.c` proves it over
+all 2^24 triples (0 return mismatches, 0 mem mismatches).
+
+Measured with `isr_ab.gdb` under `COMBAT=1 COMBAT_QUIET=1 FIXED_RNG=1` — the QUIET control, because
+a plain COMBAT A/B drifted the fight (fire 241→220, impact 56→39) and contaminated the sfx bucket:
+
+    proj   11.17 -> 8.95 t/firing   -19.9%    (~0.7% of all wall clock)
+
+`integ` appeared to gain 1.50 t/firing in the combat run but held flat in the quiet control — that
+part was the drifted fight, not the change. (integ does contain a second bilerp call, inside
+`object_step_and_collide`, so it gains when objects are actually active; the quiet control cannot
+show it.)
+
+### 6.2 The object plane-1 overlay (36c4248) — a search for bytes the writers already knew
+`renderFlightDirect` ORs the value-3 ground-object bits from `s_flightObjP1` into plane1 after the
+sky fill. An earlier pass narrowed that walk from whole rows to a dirty bounding BOX, which made it
+smaller but left it a SEARCH — and the search is almost all miss. `objp1_shape.gdb` (COMBAT,
+FIXED_RNG, 358 painted frames): **447 box bytes visited per frame, 2.2% of them nonzero** (~10). The
+COMBAT PC profile put 20/300 samples on the inner test, the largest single non-asm line.
+
+The fix is not a faster search but no search: all three writers (`ROF_PLOT_DOT_P1`, `laser_dot_run`,
+`laser_dot_column`) already compute the byte offset before OR-ing into it, so each appends it to
+`g_objTouch` on the 0→nonzero transition and the apply walks the list. The box is still maintained,
+so a 256-entry overflow just falls back to the old walk.
+
+    PC profile   renderFlightDirect  10.0% -> 5.7%  (hot line gone from the drill)
+    framerate    12.38 -> 13.09 FPS  (+5.7%), 12 of 15 disjoint segments up
+
+Correctness: `make BAND_VERIFY=1` + `band_verify.gdb`, 300 painted frames, **objLeak=0** — no
+nonzero byte remains anywhere in the scratch after the apply, which is exactly the claim that the
+list covered every byte the box would have.
+
+**Generalisable:** both wins are the same shape — *a hot loop redoing work its own callers already
+did.* Neither was found by staring at the profile's top entry (the top two are asm and heavily
+worked); both came from reading what a mid-sized bucket actually does. Worth sweeping for more.
+
+### 6.3 CLOSED — the frame-sync vblank spin, and why it looked like 32%
+`PlatformAmiga::renderFrame` ends with `while (g_vbiCount == last) {}`. `idle_probe.gdb` reported
+**149 spin calls (42.7% of renderFrame) burning 32.3% of "flight wall"**, and the PC profile put
+5-7% on that one line. Both were wrong, for two compounding reasons:
+
+1. **The build was not invulnerable.** `prof_flight.sh` hardcoded its build and silently dropped
+   `COMBAT=1`, so the ship crashed mid-window; after that `renderFlightDirect` stops painting while
+   `renderFrame` keeps being called and spinning. The spin calls were the DEATH CINEMATIC.
+2. **The denominator was wrong.** `idle_probe.gdb` prints power-on totals and divides `idleWall` by
+   `renderWall` — the renderFrame subtotal, not wall clock. It also does not subtract the VBI ISR
+   that runs inside the spin (and would run anyway, so is not recoverable).
+
+Measured properly (`idle_window.gdb`: snapshot/delta, asserts `VVBLKI=$4ff5` and `$3D=00`,
+normalises against `vbiDelta × 313`): **0 spin calls, 0.1% of wall clock.** With an invulnerable
+build the bucket disappears from the PC profile entirely. Do not re-open.
+
+`prof_flight.sh` now passes the measurement flags through and warns when neither `COMBAT` nor
+`INVULNERABLE` is set.
