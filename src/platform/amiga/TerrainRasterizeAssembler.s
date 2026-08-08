@@ -72,6 +72,14 @@
 ;     for a `frac = CTL_FRAC(depth+1)` the oracle genuinely does BEFORE the bound test, so
 ;     they get `tst.w d5` (-4 each).  ~-110 cycles a call against +12 to un-bias `col` once.
 ;
+;  9. SPANS 9..16 GET THEIR OWN ph2_far STUBS (2026-08-08, ras_f9..ras_f16 + the FARFUSE
+;     macro).  Such a node's child span c = S>>1 and parent remainder p = S-c are constants,
+;     so the span arithmetic and the roughness displacement become immediates and the stub
+;     branches STRAIGHT into the child block instead of `bra ph2_loop` + a 36-cycle dispatch.
+;     ~60 cycles on 1.94 nodes a call.  This is the part of a span-9..16 FUSION that needs no
+;     duplicated code: the child's own tail still pops and dispatches generically, so the
+;     parent half is reached exactly as before and every existing block is untouched.
+;
 ; Register map (callee-saved d2-d7/a2-a6 saved at entry):
 ;   d0/d1/d7 = scratch (also the DRAW macro's scratch)
 ;   d2 = span (cp[depth].col - plotCol)   d3 = height (cursor)   d4 = frac (cursor)
@@ -173,6 +181,55 @@ RASPOP	macro
 					; 4 cycles on ~3.2 pops/call).  See ph2_loop.
 	move.b	(a3),d2			; span  = the parent's post-child span
 	move.b	1(a3),d6		; chgt  = the parent's control-point height
+	endm
+
+; ---------------------------------------------------------------------------
+; FARFUSE p, childBlock, dispUp, dSub — ph2_far specialised to a KNOWN span (see 9. below).
+; For a node of span S in 9..16 the child span c = S>>1 and the parent remainder p = S-c are
+; compile-time constants, so this is ph2_far with:
+;   - the child/parent span arithmetic (move.w/lsr/sub.b/move.l = 28 cycles) replaced by one
+;     12-cycle immediate store of p into the slot RASPOP reads back;
+;   - the roughness displacement (c>>1 up, ((c-1)>>1)+1 down) an IMMEDIATE, which also collapses
+;     the down path's not.b/add.w/cmp.w 9-bit-add spelling into a subq + bcc, exactly as the
+;     shipped ras_s5..s8 blocks already do (same identity: `t = ceil + ~disp; mh = (t > $FF) ?
+;     t&$FF : 0` is `ceil - (disp+1)` floored at 0);
+;   - `bra ph2_loop` + the child's 36-cycle loop-top dispatch replaced by a direct `bra` into
+;     the child block.
+; Everything else is byte-for-byte ph2_far: the same three spills in the same order, the same
+; a3 advance, and the child's own tail still does the generic cmpa/RASPOP/dispatch, so the
+; parent half is reached exactly as it is today.  d2 is left holding S — dead, because every
+; leaf block writes d2 before reading it (only ph2_far reads a dispatched span; see the ⚠ at
+; ph2_loop) and RASPOP reloads it from (a3).
+FARFUSE	macro
+	move.b	#\1,(a3)		; post-child span p (RASPOP reads it back)
+	move.b	d6,1(a3)		; spill this node's control-point height
+	moveq	#0,d1
+	move.b	2(a3),d1		; cfrac
+	add.w	d4,d1
+	addq.w	#1,d1			; d1 = fsum1 (bit8 = carry)
+	move.b	d1,5(a3)		; slot[depth+1].frac = the child's cfrac
+	add.w	d3,d6			; d6 = hsum = chgt + height
+	btst	#7,d1
+	bne.s	.rough\@
+	lsr.w	#1,d6			; no roughness: mh1 = hsum>>1
+.go\@:
+	addq.l	#3,a3			; depth++
+	bra	\2			; straight into the child block — no dispatch
+.rough\@:
+	addq.w	#1,d6
+	lsr.w	#1,d6			; ceil = (hsum+1)>>1
+	btst	#8,d1
+	beq.s	.down\@
+	addq.w	#\3,d6			; up: disp = c>>1
+	cmp.w	#$FF,d6
+	bls.s	.go\@
+	move.w	#$FF,d6			; saturate $FF
+	bra.s	.go\@
+.down\@:
+	subq.w	#\4,d6			; down: ceil - (((c-1)>>1) + 1) ...
+	bcc.s	.go\@
+	moveq	#0,d6			; ... floored at 0
+	bra.s	.go\@
 	endm
 
 ; ---------------------------------------------------------------------------
@@ -400,8 +457,16 @@ ras_jt:
 	bra.w	ras_s6			; span 6
 	bra.w	ras_s7			; span 7
 	bra.w	ras_s8			; span 8
-	rept	247
-	bra.w	ph2_far			; spans 9..255
+	bra.w	ras_f9			; span 9   \
+	bra.w	ras_f10			; span 10   |
+	bra.w	ras_f11			; span 11   |  ph2_far with c/p and the roughness
+	bra.w	ras_f12			; span 12   >  displacement as CONSTANTS, branching
+	bra.w	ras_f13			; span 13   |  straight into the child block (see 9.)
+	bra.w	ras_f14			; span 14   |
+	bra.w	ras_f15			; span 15   |
+	bra.w	ras_f16			; span 16  /
+	rept	239
+	bra.w	ph2_far			; spans 17..255
 	endr
 
 	; --- far: push an interpolated midpoint, descend --------------------------
@@ -447,6 +512,35 @@ ph2_far_down:
 ph2_far_dmask:
 	and.w	#$FF,d6
 	bra.s	ph2_far_next
+
+	; --- spans 9..16: ph2_far with the child's DISPATCH removed ---------------
+	; A node of span S in 9..16 bisects into a child of span c = S>>1 (= 4..8) and a parent
+	; remainder p = S-c (= 5..8), and BOTH of those are straight-line blocks already.  Full
+	; fusion (inlining the child chain so the parent is a fall-through as well) was priced at
+	; ~144 cycles a node but needs ~950 lines — a duplicate child chain per S, because S=2c and
+	; S=2c+1 share a child but not a parent — and the `bsr`/`rts` variant at ~110 for ~500 lines
+	; with a return address under `done`'s `lea CPBUF(sp),sp`.  Neither clears 1% of wall: the
+	; span-5..8 fusion removed the SAME scaffolding per node and measured -8.0% of this function
+	; at 3.61 nodes a call, and spans 9-16 are only 1.94 a call (17507 of the far-bisect
+	; histogram), so the whole family caps at ~1.1% of wall even fused to infinity.
+	;
+	; What IS free is the half that needs no duplication at all.  With c and p constant the
+	; stub can branch straight to the child block instead of going `bra ph2_loop` -> 36-cycle
+	; dispatch, and the span arithmetic and the displacement collapse into immediates:
+	; **~60 cycles a node, ~1.4% of this function**, with every existing block untouched, a3
+	; moving exactly as it does now, and no register or stack change.  The parent half still
+	; costs a dispatch, because that would need the child's tail duplicated (= the other two
+	; designs).  See FARFUSE above for the per-item accounting.
+	;
+	;		 p  child    disp_up  ceil-(disp_down+1)
+ras_f9:		FARFUSE	5,ras_sp4,2,2	; c=4
+ras_f10:	FARFUSE	5,ras_s5,2,3	; c=5
+ras_f11:	FARFUSE	6,ras_s5,2,3	; c=5
+ras_f12:	FARFUSE	6,ras_s6,3,3	; c=6
+ras_f13:	FARFUSE	7,ras_s6,3,3	; c=6
+ras_f14:	FARFUSE	7,ras_s7,3,4	; c=7
+ras_f15:	FARFUSE	8,ras_s7,3,4	; c=7
+ras_f16:	FARFUSE	8,ras_s8,4,4	; c=8
 
 	; --- span 1 (the oracle's gap==$FF): plot the endpoint column, pop -------
 ph2_ff:
