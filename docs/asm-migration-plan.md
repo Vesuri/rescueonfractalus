@@ -663,3 +663,27 @@ not the trajectory), so **the defensible number is the differential's −8%.**
   existing `addq`, at the price of rebasing a1/a2/a4 by +$D4 and un-biasing `col` once at `done`
   — net ~76 cycles/call ≈ 1.2% of the rasterizer, but it touches EVERY DRAWDOT and every leaf.
 
+---
+
+## Phase 7b — `project_terrain_points`: three dead things (2026-08-08)
+
+Not a restructure, just three items visible in the disassembly of the existing twin:
+- **The depth divisor `{$232E:$2300}[X]` is shared by both axes and written by neither**, yet
+  `PAXIS` re-assembled it from its two bytes each time (`moveq` + 2 × `move.b (d16,a0)` +
+  `lsl.w #8` = 50 cycles). Loaded once into d3; each axis takes a `move.w d3,d2` copy for its
+  scaling loop to shift — 2×50 becomes 50 + 2×4. **−42.**
+- **`and.l #$FFFF,d0` after each DIVU was dead.** Every later use of d0 is a `.w`/`.b` op
+  (`lsl.w d5,d0`, `move.w d0,d1`, `add.w d0,d1`, `lsr.w #8,d0`), so the remainder left in the
+  high word can never reach memory. **−28.**
+- **d7 held X only to `adda.l d7,a0`** (d0 does that) and d4 was never used, so the entry
+  `movem` drops 6 longs → 4. **−32.**
+- Plus: every branch in the file was assembling as a WORD branch (the build passes vasm
+  `-no-opt`), and all of them are in `.s` range. A not-taken word `Bcc` is 12 cycles against a
+  short one's 8, and the scaling loop's `bcs .fits` is not-taken once per doubling. **~−35.**
+
+**~140 cycles/call.** `project_verify.gdb`: **0 mismatch**, twice. ⚠ Its *magnitude* reading
+(per-call asm 6.59 → 4.22 beam-ticks, reproduced on two runs) is **not trustworthy at this
+size** — a project call is only ~4-10 scanlines against an ISR of ~80, so `FP_TIME`'s
+credited-at-exit `g_isrBeamLines` subtraction distorts a large minority of samples, and the
+distortion's sign depends on the phase relationship, which shifts when the bracket gets shorter.
+Size this one from the disassembly, not from the differential.

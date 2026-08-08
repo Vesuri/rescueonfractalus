@@ -21,9 +21,29 @@
 ; into the low byte, hi=0; count!=0: undo the <<count scaling into a 16-bit screen X
 ; around $80, $B5 = hi-fold scratch).
 ;
-; Registers (callee-saved d2-d7 saved at entry; a0/a1/d0/d1 are scratch/caller-saved):
-;   d7 = X (word, zero-extended)   a0 = mem + X   a1 = scratch address base
+; Registers (callee-saved d2-d6 saved at entry; a0/a1/d0/d1 are scratch/caller-saved):
+;   a0 = mem + X (X itself is dead after the adda)   a1 = scratch address base
+;   d3 = the shared depth divisor, loaded ONCE (see below)
 ;   d6 = neg (per-axis)  d5 = count (per-axis)  d0/d1/d2 = scratch
+;
+; 2026-08-08 shave (~140 cycles/call, ~10% of this function; counts are 68000 cycles):
+;   - THE DEPTH DIVISOR IS THE SAME FOR BOTH AXES and neither axis writes it (axis 1 stores
+;     only to $2400/$242D), yet PAXIS re-assembled it from its two bytes each time: moveq 4
+;     + 2 * move.b (d16,a0) 12 + lsl.w #8 22 = 50.  Now loaded ONCE into d3, and each axis
+;     takes a `move.w d3,d2` copy for its scaling loop to shift: 2*50 -> 50 + 2*4.  -42.
+;   - `and.l #$FFFF,d0` after each DIVU (to drop the remainder) was DEAD: every later use of
+;     d0 is a .w or .b op (lsl.w d5,d0 / move.w d0,d1 / add.w d0,d1 / lsr.w #8,d0), so the
+;     high word never reaches memory.  -28.
+;   - d7 held X only to `adda.l d7,a0`; d0 does that, and d4 was never used, so the entry
+;     movem drops from 6 longs to 4.  -32.
+;   - every branch here was assembling as a WORD branch (the build passes vasm -no-opt, so
+;     branch size is whatever the source says).  All of them are in .s range; a not-taken
+;     word Bcc is 12 cycles against a short one's 8, and the scaling loop's `bcs .fits` is
+;     not-taken once per doubling.  ~-35 at a few doublings per axis.
+; ⚠ Do NOT size a change this small from project_verify.gdb's beam-ticks: a call is only
+; ~4-10 scanlines against an ISR of ~80, so FP_TIME's credited-at-exit g_isrBeamLines
+; subtraction distorts a large minority of samples (it read -2.4 t/call for the above).
+; The differential's job here is the mismatch count.
 
 	xdef	project_terrain_points_core_asm
 	ifnd	ROF_PROJECT_VERIFY
@@ -42,41 +62,38 @@ PAXIS	macro
 	move.b	(\1,a0),d1		; d1 = numer (16-bit, upper word 0)
 	moveq	#0,d6			; neg = 0
 	tst.w	d1
-	bpl	.abs\@
+	bpl.s	.abs\@
 	neg.w	d1			; absn = -numer
 	moveq	#1,d6			; neg = 1
 .abs\@:
-	; divisor word = (mem[$232E]<<8)|mem[$2300]
-	moveq	#0,d2
-	move.b	($232E,a0),d2
-	lsl.w	#8,d2
-	move.b	($2300,a0),d2		; d2 = divisor (16-bit)
+	move.w	d3,d2			; divisor = the shared depth word (loaded once at entry)
 	moveq	#0,d5			; count = 0
 .scale\@:
 	cmp.w	d2,d1			; absn - divisor (unsigned)
-	bcs	.fits\@			; absn < divisor -> fits
+	bcs.s	.fits\@			; absn < divisor -> fits
 	lsl.w	#1,d2			; divisor <<= 1 (uint16 wrap)
 	addq.w	#1,d5
 	cmp.w	#8,d5
-	bne	.scale\@
+	bne.s	.scale\@
 	; count == 8: never fit -> off-screen edge
 	tst.w	d6
-	bne	.edgeN\@
+	bne.s	.edgeN\@
 	move.b	#$40,(\4,a0)
-	bra	.edgeL\@
+	bra.s	.edgeL\@
 .edgeN\@:
 	move.b	#$C0,(\4,a0)
 .edgeL\@:
 	clr.b	(\3,a0)
-	bra	.done\@
+	bra.s	.done\@
 .fits\@:
 	move.b	d5,mem+$9F		; draw_row_bottom = count
 	move.l	d1,d0			; absn (upper word 0)
 	lsl.l	#8,d0			; numerator = absn << 8
 	divu.w	d2,d0			; d0 low word = quotient (<256), high = remainder
-	and.l	#$FFFF,d0		; d0 = q (drop remainder)
+					; (the remainder is left in the high word: every use of
+					;  d0 below is .w/.b, so it can never reach memory)
 	tst.w	d5
-	beq	.c0\@
+	beq.s	.c0\@
 	; count != 0 : scaled = q<<count ; mag = (scaled + scaled>>1)>>2 ; screen = $80 +/- mag
 	lsl.w	d5,d0			; d0 = scaled (uint16)
 	move.w	d0,d1
@@ -87,9 +104,9 @@ PAXIS	macro
 	lsr.w	#8,d0
 	move.b	d0,mem+$B5		; $B5 = mag>>8
 	tst.w	d6
-	bne	.cN\@
+	bne.s	.cN\@
 	add.w	#$80,d1			; screen = $80 + mag
-	bra	.cS\@
+	bra.s	.cS\@
 .cN\@:
 	move.w	#$80,d0
 	sub.w	d1,d0			; screen = $80 - mag (16-bit)
@@ -98,7 +115,7 @@ PAXIS	macro
 	move.b	d1,(\3,a0)		; out_lo = screen low
 	lsr.w	#8,d1
 	move.b	d1,(\4,a0)		; out_hi = screen high
-	bra	.done\@
+	bra.s	.done\@
 .c0\@:
 	; count == 0 : mag = (((q>>1)+q+1)>>2) & $7F ; out_lo = $80 +/- mag ; out_hi = 0
 	move.w	d0,d1
@@ -108,9 +125,9 @@ PAXIS	macro
 	lsr.w	#2,d1
 	and.w	#$7F,d1			; d1 = mag (7-bit)
 	tst.w	d6
-	bne	.c0N\@
+	bne.s	.c0N\@
 	add.w	#$80,d1
-	bra	.c0S\@
+	bra.s	.c0S\@
 .c0N\@:
 	move.w	#$80,d0
 	sub.w	d1,d0
@@ -123,13 +140,20 @@ PAXIS	macro
 
 project_terrain_points_core:
 project_terrain_points_core_asm:
-	movem.l	d2-d7,-(sp)		; 6 longs = 24 bytes; arg X now at 7+24 = 31(sp)
-	moveq	#0,d7
-	move.b	31(sp),d7		; X (int-promoted byte)
+	movem.l	d2-d3/d5-d6,-(sp)	; 4 longs = 16 bytes; arg X now at 7+16 = 23(sp)
+	moveq	#0,d0
+	move.b	23(sp),d0		; X (int-promoted byte)
 	lea	mem,a0
-	adda.l	d7,a0			; a0 = mem + X (all per-object cells are (disp16,a0))
+	adda.l	d0,a0			; a0 = mem + X (all per-object cells are (disp16,a0))
 
 	or.b	#$10,($24B4,a0)		; mark object projected this frame
+
+	; The depth divisor {$232E:$2300}[X] is shared by both axes and written by neither,
+	; so assemble it ONCE; each PAXIS copies it into d2 for its scaling loop to shift.
+	moveq	#0,d3
+	move.b	($232E,a0),d3
+	lsl.w	#8,d3
+	move.b	($2300,a0),d3		; d3 = divisor (16-bit)
 
 	PAXIS	$22A4,$22D2,$2400,$242D	; screen X
 	PAXIS	$235B,$2388,$245A,$2487	; screen Y
@@ -137,19 +161,19 @@ project_terrain_points_core_asm:
 	; --- band scroll offset -> add (signed) into screen Y ---
 	move.b	($242D,a0),d0		; x_hi
 	btst	#7,d0
-	bne	.offL
+	bne.s	.offL
 	tst.b	d0
-	bne	.offR
+	bne.s	.offR
 	; on-screen band: off = mem[$270E + (mem[$2400+X] >> 3)]
 	moveq	#0,d1
 	move.b	($2400,a0),d1
 	lsr.w	#3,d1			; band index (0..31)
 	lea	mem+$270E,a1
 	move.b	(a1,d1.w),d1		; off
-	bra	.haveOff
+	bra.s	.haveOff
 .offL:
 	move.b	mem+$270E,d1		; X off left edge
-	bra	.haveOff
+	bra.s	.haveOff
 .offR:
 	move.b	mem+$272D,d1		; X off right edge
 .haveOff:
@@ -162,10 +186,10 @@ project_terrain_points_core_asm:
 	move.b	($2487,a0),d2		; current y_hi
 	add.b	d0,d2			; += carry
 	btst	#7,d1			; off & 0x80 ?
-	beq	.noSext
+	beq.s	.noSext
 	subq.b	#1,d2			; += 0xFF  (sign-extend of off)
 .noSext:
 	move.b	d2,($2487,a0)
 
-	movem.l	(sp)+,d2-d7
+	movem.l	(sp)+,d2-d3/d5-d6
 	rts
