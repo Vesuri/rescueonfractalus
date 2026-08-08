@@ -374,7 +374,7 @@ own scanline-85 fetch). Colour-only pokes mid-frame are tolerable; POINTER pokes
 ### Performance budget (judge every number against this)
 
 **⭐ TARGET (user decision, 2026-08-08): 25 FPS = 40 ms/frame, judged on the BEST-CASE baseline
-(`COMBAT=1 COMBAT_QUIET=1 FIXED_RNG=1`, currently 18.41 FPS ⇒ −26% of frame time to go).
+(`COMBAT=1 COMBAT_QUIET=1 FIXED_RNG=1`, currently 19.49 FPS ⇒ −22% of frame time to go).
 Combat-load slowdown is expected and does NOT have to reach 25.** 50 FPS remains the ideal, not
 the bar. Spending 10 ms on *anything* is HALF the budget. The A500 (7 MHz 68000)
 is slow — there is no room for half measures; be conscious of absolute milliseconds, always.
@@ -440,20 +440,27 @@ too SHALLOW to matter (1.23 inner iterations / 0.40 midpoints per call), measure
 the very byte the check was meant to avoid, so it can only recover the ~10 cycles of bookkeeping around
 that load.**
 
-### ⭐ Where flight actually stands — 18.41 FPS best case / 14.32 combat (re-measured 2026-08-08, e35d904)
+### ⭐ Where flight actually stands — 19.49 FPS best case / 14.32 combat (2026-08-08, 24ee76d)
 
 **`make FPSCOUNT=1` + `GDBSCRIPT=fps_seg.gdb ./diag_run.sh 200` is the ONLY way to quote a
 flight framerate.** It adds just the headless auto-launch and one increment per painted terrain
 frame; `g_vbiCount` is bumped by the real VERTB handler in every build, so
 **FPS = 50 · g_fpsFrames / g_vbiCount** — frames per *emulated* vblank, which makes it immune to
-host speed and to the gdb stub. Measured 2026-08-08 over vbi 1901→4900, all 15 segments valid:
+host speed and to the gdb stub. Measured 2026-08-08 **at e35d904** over vbi 1901→4900, all 15
+segments valid:
 **best case (`COMBAT=1 COMBAT_QUIET=1 FIXED_RNG=1`) 1105 painted / 3001 vbi = 18.41 FPS** (15.0–20.5
 per segment) · **combat load (`COMBAT=1 FIXED_RNG=1`) 859 / 2999 = 14.32 FPS** (10.3–16.2). Combat
 costs 22% of throughput = +28.6% frame time; both arms are level 40, which is the only legitimate
 combat framing. ⚠ `COMBAT_QUIET` also drops `ROF_AUTO_FIRE`, so the best case is "no enemies AND no
 firing". *(Re-run at 5a626b3, same window, all 15 segments valid: 1122/3001 = **18.69** best case.
 One sample, and the change it followed was statically worth 0.8% — i.e. inside this harness's ~1.5%
-resolution, so treat 18.41 as the standing baseline until a multi-window run says otherwise.)*
+resolution, so 18.41 stayed the standing baseline.)* **At 24ee76d — the rasterizer's span-5..8
+fusion (b71a405, differential-measured −8.0% of the rasterizer) plus the `project_terrain_points`
+shave — the same window, all 15 segments valid, reads 1170/3001 = 19.49 (16.0–21.7), and the whole
+per-segment distribution moved up. That is +5.9% against a differential-backed prediction of +1.9%;
+a cross-build end-to-end delta is confounded (`FIXED_RNG` pins the LEVEL, not the trajectory), so
+19.49 is the standing baseline but −8.0% of the rasterizer is the claim. The COMBAT arm has NOT
+been re-measured since e35d904 — 14.32 is stale by the same two changes.**
 
 ⚠ **Every framerate figure in an older note or commit is wrong — do not quote one, re-measure.**
 Two traps, both of which produced badly wrong numbers before this was built:
@@ -468,7 +475,7 @@ Two traps, both of which produced badly wrong numbers before this was built:
   the death cinematic under-reports (a 3000-vbi window read 9.0 where its live segments read
   12–17). Sample in SHORT windows and discard any row not at `VVBLKI=$4ff5` / `$3D=00`.
 
-**So the 25 FPS target is a 1.36× gap on the best case = remove 26% of the frame** (from the combat
+**So the 25 FPS target is a 1.28× gap on the best case = remove 22% of the frame** (from the combat
 baseline it would be 1.75× / −43%, which is explicitly NOT the bar). The
 profile is FLAT (nothing >32%), so no single function gets there — but **the smaller gains are
 worth taking**: at this gap, five or six honest 5-point wins reach the target. Size a
