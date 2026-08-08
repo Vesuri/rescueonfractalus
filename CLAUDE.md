@@ -374,7 +374,7 @@ own scanline-85 fetch). Colour-only pokes mid-frame are tolerable; POINTER pokes
 ### Performance budget (judge every number against this)
 
 **⭐ TARGET (user decision, 2026-08-08): 25 FPS = 40 ms/frame, judged on the BEST-CASE baseline
-(`COMBAT=1 COMBAT_QUIET=1 FIXED_RNG=1`, currently 19.49 FPS ⇒ −22% of frame time to go).
+(`COMBAT=1 COMBAT_QUIET=1 FIXED_RNG=1`, currently 20.05 FPS ⇒ −20% of frame time to go).
 Combat-load slowdown is expected and does NOT have to reach 25.** 50 FPS remains the ideal, not
 the bar. Spending 10 ms on *anything* is HALF the budget. The A500 (7 MHz 68000)
 is slow — there is no room for half measures; be conscious of absolute milliseconds, always.
@@ -393,8 +393,10 @@ regs, force `(a0)+`/`(d8,a0)`, shave every redundant insn), not the transliterat
 
 **CURRENT MEASURED BUDGET (per iteration, deep flight, all asm in):** terrain draw both passes ~167ms
 (dominant) [rasterize ~64% (asm'd) · project_terrain_points ~20% (asm'd, ~2.2× — `ProjectTerrainAssembler.s`)
-· subdivide ~16% (asm'd, but only ~0.6 tick/call — `TerrainSubdivideAssembler.s`; its bracket is dominated
-by the raster leaf-fills it drives, so removing GCC's spills barely helps)] · VBI ~71ms (3.6ms × ~20
+· subdivide ~16% (asm'd — `TerrainSubdivideAssembler.s`; ⚠ the old note here said its bracket is dominated
+by the raster leaf-fills it drives "so removing GCC's spills barely helps" — TRUE of spills, but it made
+the whole twin look spent and it is NOT: **~50% of a subdivide call is MARSHALLING**, and 2026-08-08 took
+~245 cyc/call out of it, `docs/asm-migration-plan.md` §Phase 8)] · VBI ~71ms (3.6ms × ~20
 firings/iter, faithful) · renderFlightDirect ~24ms ·
 setup+clear ~31ms [terrain_frame_setup loops asm'd ~26% — `TerrainFrameSetupAssembler.s`]. **Two bit-serial
 loops are now byte-exact lookup tables:** `mul_u8` → the 64KB `g_mulTable` (mul_u8 is NOT a plain product so
@@ -440,7 +442,7 @@ too SHALLOW to matter (1.23 inner iterations / 0.40 midpoints per call), measure
 the very byte the check was meant to avoid, so it can only recover the ~10 cycles of bookkeeping around
 that load.**
 
-### ⭐ Where flight actually stands — 19.49 FPS best case / 14.32 combat (2026-08-08, 24ee76d)
+### ⭐ Where flight actually stands — 20.05 FPS best case / 14.32 combat (2026-08-08, 962fd79)
 
 **`make FPSCOUNT=1` + `GDBSCRIPT=fps_seg.gdb ./diag_run.sh 200` is the ONLY way to quote a
 flight framerate.** It adds just the headless auto-launch and one increment per painted terrain
@@ -459,8 +461,11 @@ fusion (b71a405, differential-measured −8.0% of the rasterizer) plus the `proj
 shave — the same window, all 15 segments valid, reads 1170/3001 = 19.49 (16.0–21.7), and the whole
 per-segment distribution moved up. That is +5.9% against a differential-backed prediction of +1.9%;
 a cross-build end-to-end delta is confounded (`FIXED_RNG` pins the LEVEL, not the trajectory), so
-19.49 is the standing baseline but −8.0% of the rasterizer is the claim. The COMBAT arm has NOT
-been re-measured since e35d904 — 14.32 is stale by the same two changes.**
+19.49 is the standing baseline but −8.0% of the rasterizer is the claim.** **At 962fd79 — the
+`terrain_subdivide_column` marshalling pass (`docs/asm-migration-plan.md` §Phase 8, ~245 cyc/call
+≈ 1.9% of wall counted off the disassembly) — the same window, all 15 segments valid, reads
+1203/3000 = 20.05 (16.4–22.1). The COMBAT arm has NOT been re-measured since e35d904 — 14.32 is
+stale by all three changes.**
 
 ⚠ **Every framerate figure in an older note or commit is wrong — do not quote one, re-measure.**
 Two traps, both of which produced badly wrong numbers before this was built:
@@ -475,7 +480,7 @@ Two traps, both of which produced badly wrong numbers before this was built:
   the death cinematic under-reports (a 3000-vbi window read 9.0 where its live segments read
   12–17). Sample in SHORT windows and discard any row not at `VVBLKI=$4ff5` / `$3D=00`.
 
-**So the 25 FPS target is a 1.28× gap on the best case = remove 22% of the frame** (from the combat
+**So the 25 FPS target is a 1.25× gap on the best case = remove 20% of the frame** (from the combat
 baseline it would be 1.75× / −43%, which is explicitly NOT the bar). The
 profile is FLAT (nothing >32%), so no single function gets there — but **the smaller gains are
 worth taking**: at this gap, five or six honest 5-point wins reach the target. Size a
