@@ -373,8 +373,10 @@ own scanline-85 fetch). Colour-only pokes mid-frame are tolerable; POINTER pokes
 
 ### Performance budget (judge every number against this)
 
-**Target: 50 FPS on the Amiga = 20 ms/frame. Fallback 25 FPS = 40 ms/frame, only if 50 is
-genuinely not doable.** Spending 10 ms on *anything* is HALF the budget. The A500 (7 MHz 68000)
+**⭐ TARGET (user decision, 2026-08-08): 25 FPS = 40 ms/frame, judged on the BEST-CASE baseline
+(`COMBAT=1 COMBAT_QUIET=1 FIXED_RNG=1`, currently 18.41 FPS ⇒ −26% of frame time to go).
+Combat-load slowdown is expected and does NOT have to reach 25.** 50 FPS remains the ideal, not
+the bar. Spending 10 ms on *anything* is HALF the budget. The A500 (7 MHz 68000)
 is slow — there is no room for half measures; be conscious of absolute milliseconds, always.
 
 Units: 1 probe "tick" = 1 raster scanline = 63.56 µs; a PAL frame = 313 ticks = 20 ms. The flight
@@ -438,14 +440,18 @@ too SHALLOW to matter (1.23 inner iterations / 0.40 midpoints per call), measure
 the very byte the check was meant to avoid, so it can only recover the ~10 cycles of bookkeeping around
 that load.**
 
-### ⭐ Where flight actually stands — 14.4 FPS (measured 2026-08-06, commit 8c8b97c)
+### ⭐ Where flight actually stands — 18.41 FPS best case / 14.32 combat (re-measured 2026-08-08, e35d904)
 
 **`make FPSCOUNT=1` + `GDBSCRIPT=fps_seg.gdb ./diag_run.sh 200` is the ONLY way to quote a
 flight framerate.** It adds just the headless auto-launch and one increment per painted terrain
 frame; `g_vbiCount` is bumped by the real VERTB handler in every build, so
 **FPS = 50 · g_fpsFrames / g_vbiCount** — frames per *emulated* vblank, which makes it immune to
-host speed and to the gdb stub. Measured over 3000 vbi of confirmed live flight: **866 painted
-frames = 14.4 FPS** (12.3–17.8 per window).
+host speed and to the gdb stub. Measured 2026-08-08 over vbi 1901→4900, all 15 segments valid:
+**best case (`COMBAT=1 COMBAT_QUIET=1 FIXED_RNG=1`) 1105 painted / 3001 vbi = 18.41 FPS** (15.0–20.5
+per segment) · **combat load (`COMBAT=1 FIXED_RNG=1`) 859 / 2999 = 14.32 FPS** (10.3–16.2). Combat
+costs 22% of throughput = +28.6% frame time; both arms are level 40, which is the only legitimate
+combat framing. ⚠ `COMBAT_QUIET` also drops `ROF_AUTO_FIRE`, so the best case is "no enemies AND no
+firing".
 
 ⚠ **Every framerate figure in an older note or commit is wrong — do not quote one, re-measure.**
 Two traps, both of which produced badly wrong numbers before this was built:
@@ -460,9 +466,10 @@ Two traps, both of which produced badly wrong numbers before this was built:
   the death cinematic under-reports (a 3000-vbi window read 9.0 where its live segments read
   12–17). Sample in SHORT windows and discard any row not at `VVBLKI=$4ff5` / `$3D=00`.
 
-**So the 25 FPS fallback is a 1.7× gap = remove 42% of the frame; 50 FPS needs −71%.** The
+**So the 25 FPS target is a 1.36× gap on the best case = remove 26% of the frame** (from the combat
+baseline it would be 1.75× / −43%, which is explicitly NOT the bar). The
 profile is FLAT (nothing >32%), so no single function gets there — but **the smaller gains are
-worth taking**: at this gap, eight or nine honest 5-point wins reach the fallback. Size a
+worth taking**: at this gap, five or six honest 5-point wins reach the target. Size a
 candidate, and if the win is real and the risk is low, do it. What is CLOSED is only what
 *measured* at ~0 or negative (the occlusion family, Phase-5 dot tables, subdivide reload
 elisions) — closed on data, not on pessimism about small numbers. The ranked TODO lives in the
@@ -485,7 +492,7 @@ entirely different `$0900`/`$0A00` maps, 23 vs 25 pilots).
   a rebuild** before believing a delta; an n=1 baseline once produced a bogus "4% regression" verdict.
   Its bracket also INCLUDES nested callees (subdivide's includes the rasterizer), so it is not that
   function's own cost — the PC profile is.
-**Target: A500, 50 FPS goal (25 FPS acceptable fallback only if 50 is genuinely not doable).**
+**Target: A500, 25 FPS on the BEST-CASE baseline (user decision 2026-08-08); combat may sit lower.**
 Surface the numbers honestly.
 
 ### Optimising a native twin for the 68000 (hard-won; apply when a function is hot)
