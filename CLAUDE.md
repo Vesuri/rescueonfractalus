@@ -374,7 +374,7 @@ own scanline-85 fetch). Colour-only pokes mid-frame are tolerable; POINTER pokes
 ### Performance budget (judge every number against this)
 
 **⭐ TARGET (user decision, 2026-08-08): 25 FPS = 40 ms/frame, judged on the BEST-CASE baseline
-(`COMBAT=1 COMBAT_QUIET=1 FIXED_RNG=1`, currently 20.05 FPS ⇒ −20% of frame time to go).
+(`COMBAT=1 COMBAT_QUIET=1 FIXED_RNG=1`, currently 20.20 FPS ⇒ −19% of frame time to go).
 Combat-load slowdown is expected and does NOT have to reach 25.** 50 FPS remains the ideal, not
 the bar. Spending 10 ms on *anything* is HALF the budget. The A500 (7 MHz 68000)
 is slow — there is no room for half measures; be conscious of absolute milliseconds, always.
@@ -442,7 +442,7 @@ too SHALLOW to matter (1.23 inner iterations / 0.40 midpoints per call), measure
 the very byte the check was meant to avoid, so it can only recover the ~10 cycles of bookkeeping around
 that load.**
 
-### ⭐ Where flight actually stands — 20.05 FPS best case / 14.32 combat (2026-08-08, 962fd79)
+### ⭐ Where flight actually stands — 20.20 FPS best case / 14.32 combat (2026-08-08, b0ecce3)
 
 **`make FPSCOUNT=1` + `GDBSCRIPT=fps_seg.gdb ./diag_run.sh 200` is the ONLY way to quote a
 flight framerate.** It adds just the headless auto-launch and one increment per painted terrain
@@ -464,8 +464,12 @@ a cross-build end-to-end delta is confounded (`FIXED_RNG` pins the LEVEL, not th
 19.49 is the standing baseline but −8.0% of the rasterizer is the claim.** **At 962fd79 — the
 `terrain_subdivide_column` marshalling pass (`docs/asm-migration-plan.md` §Phase 8, ~245 cyc/call
 ≈ 1.9% of wall counted off the disassembly) — the same window, all 15 segments valid, reads
-1203/3000 = 20.05 (16.4–22.1). The COMBAT arm has NOT been re-measured since e35d904 — 14.32 is
-stale by all three changes.**
+1203/3000 = 20.05 (16.4–22.1). **At b0ecce3 — the rasterizer's loop-top jump table + short exit
+branches (§Phase 9, −133 cyc/call ≈ −0.69% of wall) — the same window, all 15 segments valid,
+reads 1211/2997 = **20.20** (16.5–22.3). ⚠ That +0.75% is BELOW this harness's resolution and is
+agreement, not evidence: the claim is the static count plus the differential's ratio (0.4210 →
+0.4060 = −3.6% of the rasterizer, against a +1.4% oracle-arm drift). The COMBAT arm has NOT been
+re-measured since e35d904 — 14.32 is stale by all four changes.**
 
 ⚠ **Every framerate figure in an older note or commit is wrong — do not quote one, re-measure.**
 Two traps, both of which produced badly wrong numbers before this was built:
