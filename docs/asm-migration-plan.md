@@ -687,3 +687,81 @@ size** — a project call is only ~4-10 scanlines against an ISR of ~80, so `FP_
 credited-at-exit `g_isrBeamLines` subtraction distorts a large minority of samples, and the
 distortion's sign depends on the phase relationship, which shifts when the bracket gets shorter.
 Size this one from the disassembly, not from the differential.
+
+---
+
+## Phase 8 — `terrain_subdivide_column`: half the call was MARSHALLING (2026-08-08, 962fd79)
+
+The #2 flight bucket (PC profile 8.3% + 2.8% for the obj entry, ISR-corrected ⇒ ~11% of wall)
+and the one hot twin nobody had revisited since its Phase-3 asm was written. **Measure the
+shape first** — `amiga/ras_shape.gdb` already prints it, on the quiet baseline (16342 calls /
+239 iterations, i.e. **68.4 calls per flight iteration**):
+
+| per call | value |
+|---|---|
+| inner-loop iterations | **1.21** |
+| rasterize calls | **0.55** (45% of calls only ever *skip*) |
+| midpoints (`submid`+`push_mid`) | 0.40 |
+| pops | 0.11 · phase-2 adopts 0.19 · entry-guard bails 1.1% |
+| `far.col > $FF` escapes | 2900 / 19794 inner iterations = **14.6%** |
+
+Hand-counted off the disassembly, a call is **~1400 cycles** and **~50% of it is prologue,
+span load, entry guard, flush and epilogue** — for a body that averages one rasterize call.
+That framing, not the profile, is what found the seven items:
+
+1. **`rasterEntryDepth` is dead** under `ROF_RASTER_SPAN_ABI`. It exists only to be forwarded
+   as the rasterizer's first C argument, and the register-ABI entry does not take it. `a4`, its
+   load, and its long in the movem at **both** ends. **−36.**
+2. **`sd_phase3`'s two exits are one test.** `span.col > $FF` and `span.col >= $D8` (unsigned)
+   are the same predicate: any value with a non-zero high byte is `>= $0100 > $D8`. Holds for a
+   negative `span.col` off the pop path too (`>= $8000`). **−24 × 1.11.**
+3. **`load_far` inlined and split on the high byte.** `far.col > $FF` ⇔ `hi != 0`, so the
+   escape is decided *before* the low byte and the 22-cycle `lsl.w #8`; the 85% that continue
+   then have `far.col` = the low byte alone. Kills the `bsr`/`rts` (34) as a bonus.
+   **−76 × 1.21.**
+4. **`btst #15,Dn` → `tst.w Dn`** at all eight sign tests (10 cycles → 4), `btst #7,d7` →
+   `tst.b d7` in `submid`. **−6 each.**
+5. **The cascade's branches were all WORD** (`-no-opt` never sizes them) and all in `.s` range.
+   A not-taken word `Bcc` is 12 against a short one's 8, and the cascade runs 3-6 per inner
+   iteration. **With 3, the inner loop's common path goes 268 → 168 cycles.**
+6. **`sd_out`'s span flush is two WORD stores.** `mem[]` is little-endian, the 68000
+   big-endian, so `{lo,hi}` is one store of the byte-swapped register — 42 cycles against 58.
+   `mem` is now `aligned(4)` (cpu.c) so the precondition is stated, not inherited from GCC.
+7. **Two `bra`s to the very next instruction** (`spanlow`→`wtSpanH`, `wtFarH`→`dosub`), 10
+   cycles each. vasm found them for free: `bra.s` with displacement 0 is illegal, so marking
+   them short is what surfaced that they were no-ops.
+
+**~245 cycles/call ≈ 17.5% of the twin ≈ 1.9% of all wall clock.** End-to-end (`FPSCOUNT=1
+FIXED_RNG=1 COMBAT=1 COMBAT_QUIET=1`, `fps_seg.gdb`, vbi 1901→4900, all 15 segments valid):
+**1203 painted / 3000 vbi = 20.05 FPS** against the standing 19.49, per-segment 16.4–22.1
+against 16.0–21.7.
+
+### ⚠ The differential's magnitude was junk here — and said the opposite
+`subdiv_verify.gdb` (`VERIFY=1 NO_RASTER_VERIFY=1`, the shipping fast path): **0 mismatch /
+5175 calls** ✓. Its PERF column read **asm 11.91 → 12.20 t/call (+2.4%)** — a *regression* —
+while its own C control arm drifted **+1.0%**. A subdivide bracket is ~12 beam-ticks against an
+ISR of ~80, exactly the regime Phase 7b documented: `FP_TIME` credits `g_isrBeamLines` at ISR
+*exit*, so a large minority of samples straddle an ISR, and the bias flips sign as the bracket
+shortens. **Same lesson, opposite sign, and worth restating: at this bracket size the
+differential is a CORRECTNESS instrument only.** The disassembly diff settled it — every
+changed line is a removal or a strictly cheaper equivalent, so no reading of "+2.4%" can be
+about the code.
+
+### The bug it DID catch (and why the baseline run mattered)
+Making the two prologue `movem`s conditional without the epilogue popped 9 longs after pushing
+8; the game died on the first flight frame (`fdCalls=1`, `vbi` frozen at 2139). A 120 s and a
+300 s run returning *identical* numbers is the tell that a machine has stopped, not that it is
+slow. Confirming it against a **stashed baseline build** is what separated "my change" from
+"this harness config never worked" in one run.
+
+### Still on the table here (measured, not taken)
+- **`$95`/`$F4`/`$EA` are a third mem[] handoff between these same two asm twins.** `sd_doras`
+  writes them (24+24+16) purely for `terrain_column_rasterize_span`'s prologue to read back
+  (~52). Passing `a1` and letting the rasterizer read the SubPt slot itself is worth
+  **~104 cycles per rasterize call ≈ 57/subdivide call ≈ 0.55% of wall** — but `$95` is
+  `blit_color_src`, a polysemous ZP cell with non-flight readers, and `subdiv_verify` does not
+  compare those three, so the deadness would have to be *proved* rather than checked. Priced,
+  not done.
+- **The entry guard's `$B5` write** (28 cycles/call ≈ 0.26%) is dead on the Amiga by the same
+  argument the rasterizer already uses for `$B5`/`$95`/`$EA`/`$F4` — but `$B5` **is** in
+  `subdiv_verify`'s compare set, so removing it blinds the instrument. Not worth it.
