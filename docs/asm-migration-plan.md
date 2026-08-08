@@ -765,3 +765,75 @@ slow. Confirming it against a **stashed baseline build** is what separated "my c
 - **The entry guard's `$B5` write** (28 cycles/call ≈ 0.26%) is dead on the Amiga by the same
   argument the rasterizer already uses for `$B5`/`$95`/`$EA`/`$F4` — but `$B5` **is** in
   `subdiv_verify`'s compare set, so removing it blinds the instrument. Not worth it.
+
+---
+
+## Phase 9 — the rasterizer's loop-top DISPATCH and its exit branches (2026-08-08)
+
+Two independent items in `TerrainRasterizeAssembler.s`, both pure control flow — no algebra, no
+state change, so the whole risk is register liveness and branch range.
+
+### 9.1 The loop-top compare chain → a 256-entry PC-relative jump table
+
+Phase 7 changed the dispatch MIX without repricing the dispatch. Post-fusion it is span >= 9
+**44%** · spans 5-8 **49.5%** · span 4 5.5% · span 1 1% · spans 2-3 ~0, over **~7.3 dispatches a
+call** (derived from the `ras_shape.gdb` far-bisect histogram: the fused blocks absorb 5.86 of the
+6.27 span-3/4 nodes a call, so almost no span 3 reaches the loop top any more). That is essentially
+a binary choice with a long tail — and the chain priced it backwards, because **every branch in it
+assembles as a WORD branch under `-no-opt`, and a not-taken word `Bcc` is 12 cycles against a short
+one's 8**:
+
+| span | >= 9 | 5 | 6 | 7 | 8 | 4 | 3 | 2 | 1 |
+|---|---|---|---|---|---|---|---|---|---|
+| chain cycles | 34 | 50 | 62 | 82 | 94 | 48 | 36 | 68 | 70 |
+
+Weighted: **49.5 cycles a dispatch.** The table is a flat **36** for every span —
+`move.w d2,d0` + two `add.w` (12) + `jmp ras_jt(pc,d0.w)` (14) + the slot's `bra.w` (10) — and
+needs no compare at all. **−13.5 × 7.3 = −99 cycles a call**, and it is now MIX-INDEPENDENT, which
+matters because a span-9..16 fusion would move the mix again.
+
+- 256 entries (1024 bytes in `section code`), so no range guard is needed; slots 9..255 all hold
+  `bra.w ph2_far`, so even a corrupted index lands on real code rather than mid-instruction.
+- The table must sit immediately after the `jmp`: `jmp (d8,PC,Dn.W)` has only an **8-bit
+  displacement** (the index is added afterwards and is unbounded). `ph2_far` therefore moved below
+  the table. Same constraint `TerrainFrameSetupAssembler.s`'s `tf_jt` already documents.
+- `RASPOP` gained a `moveq #0,d2` before its `move.b (a3),d2` (+4 × 3.23 pops = **+13**): the index
+  is taken from d2's low word, so bits 8-15 must be 0. Every writer of d2 in the file already
+  leaves them clear, but that was an unstated invariant and the table makes it load-bearing.
+
+⚠ **The bug this cost a run, and it is the generalisable one: a dispatch must not modify the value
+it dispatches on.** The first cut scaled in place (`add.w d2,d2` twice, 4 cycles cheaper) on the
+strength of the file's own note that "span is dead once dispatched". That is true of the LEAF
+blocks — but `ph2_far` reads the span twice (`move.w d2,d0`, `sub.b d0,d2`) immediately on entry.
+The game died on its first flight frame (`fdCalls=1 rasterCalls=3` after 300 s — the
+different-length-runs tell from Phase 8 again). Scaling into **d0** costs 4 cycles and is safe:
+all nine targets write d0 before reading it.
+
+### 9.2 The `done` exits were word branches — 13 of the 17 are now short
+
+`cmp.b #$D4,d5 / bcc done` (the right-edge bound) and `cmpa.l sp,a3 / beq done` (the depth-0 exit)
+run **~18 times a call** and are essentially never taken — exactly one exit fires per call. Under
+`-no-opt` every one of them was a word `Bcc` at 12 cycles not-taken. One 4-byte `bra done`
+trampoline per block (`rdn_ff`/`rdn_fe`/`rdn_sp3`/`rdn_sp4`/`rdn_s5`/`rdn_s6`/`rdn_s7`) brings 13
+of the 17 into short range: **−4 × 14.2 not-taken = −57**, `+10` for the one taken exit now going
+via a trampoline = **−47 cycles a call**. vasm ENFORCES the ±127 range, so a block that later grows
+past it fails to assemble rather than going quietly wrong. The four remaining sites are the
+mid-block bound tests in `ras_sp4`/`ras_s6`/`ras_s7`/`ras_s8`, each ~140 bytes from the nearest
+legal stub point (a stub may only sit after an unconditional branch); worth ~9 cycles a call, left
+alone.
+
+### Result
+
+**−133 cycles/call ≈ −3.1% of the rasterizer ≈ −0.69% of all wall clock**, counted off the
+disassembly against the measured shape.
+
+| verification | result |
+|---|---|
+| `raster_verify.gdb` (`VERIFY=1 PROBES=1`, the C-ABI entry) — `$260E` + the `$82/$84/$86` writeback + the whole plane-2 dot buffer | **0 mismatch / 1616 calls** |
+| `subdiv_verify.gdb` (`VERIFY=1 NO_RASTER_VERIFY=1`, the shipping private-register fast path) | **0 mismatch / 5122 calls** |
+| A/B against the SAME C oracle, comparable windows (1616 vs Phase 7's 1611 calls) | asm **13.40** t/call, oracle 33.01, ratio **0.4210 → 0.4060 = −3.6%**; the oracle arm drifted +1.4%, its noise floor |
+| end-to-end (`FPSCOUNT=1 FIXED_RNG=1 COMBAT=1 COMBAT_QUIET=1`, `fps_seg.gdb`, vbi 1901→4900, all 15 segments valid) | 1211 / 2997 = **20.20 FPS** against the standing 20.05, per-segment 16.5–22.3 |
+
+⚠ **The framerate cannot resolve this and is not the claim.** +0.75% end-to-end against a harness
+whose single-window noise is ±2% is agreement, not evidence; the defensible numbers are the static
+−133 cycles/call and the differential's −3.6% ratio (2.5× its own oracle-arm drift). Quote those.

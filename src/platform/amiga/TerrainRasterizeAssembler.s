@@ -49,6 +49,10 @@
 ;     a real deep flight (6013 calls, 84842 far-bisects): span 3 = 31.2% and span 4 = 16.5%
 ;     of all far-bisects, and they subsume 98.6% of the ff leaves and 86% of the fe leaves.
 ;     Loop-top dispatches drop 174820 -> 93986 for the same picture.
+;  7. THE LOOP-TOP DISPATCH IS A 256-ENTRY PC-RELATIVE JUMP TABLE (2026-08-08).  After 6. the
+;     loop top was a chain of up to five compares whose WEIGHTED cost was 49.5 cycles (span >= 9
+;     44% / 5-8 49.5% / 4 5.5% / 1 1%, i.e. essentially a binary choice with a long tail); the
+;     table is a flat 36 (move/add/add/jmp/bra.w) for EVERY span.  ~99 cycles a call.
 ;  6. SPANS 5-8 ARE FUSED BLOCKS (ras_s5/s6/s7/s8, 2026-08-08).  Such a node bisects into a
 ;     child of span S>>1 (2/3/3/4) and a parent remainder of S-(S>>1) (3/3/4/4), so BOTH
 ;     halves are leaf blocks: the push spill, the pop, the child's underflow test and exit
@@ -136,6 +140,11 @@ DRAWDOT	macro
 RASPOP	macro
 	move.b	2(a3),d4		; frac  = this leaf's fraction
 	subq.l	#3,a3			; depth--
+	moveq	#0,d2			; the loop-top jump table indexes on d2.w, so bits 8-15
+					; must be 0 — a bare move.b would inherit them from
+					; whatever the leaf block last left in d2 (a control height
+					; or a midpoint, both <= $FF, so this is belt-and-braces at
+					; 4 cycles on ~3.2 pops/call).  See ph2_loop.
 	move.b	(a3),d2			; span  = the parent's post-child span
 	move.b	1(a3),d6		; chgt  = the parent's control-point height
 	endm
@@ -317,23 +326,49 @@ ph2_enter:
 	move.w	d7,a0			; a0 = col
 	cmp.b	#$D4,d5
 	bcc	done
-	; Dispatch on span.  Measured mix at the loop top (QUIET baseline, 2026-08-08,
-	; 481 half-frames / 9102 calls, amiga/ras_shape.gdb): span 3 28% / span >= 9 22% /
-	; span 4 15% / span 2 9% / span 5 9% / span 6 7% / span 7 5% / span 8 4% /
-	; span 1 0.5%.  span <= 4 keeps the cheapest paths, spans 5-8 go to the FUSED
-	; blocks (see ras_s5 below), and the generic bisect is what is left.
+	; Dispatch on span, through a 256-entry PC-relative jump table.  The mix POST-FUSION
+	; (derived from the amiga/ras_shape.gdb far-bisect histogram, quiet baseline 2026-08-08:
+	; the fused blocks absorb 5.86 of the 6.27 span-3/4 nodes a call) is span >= 9 44% /
+	; spans 5-8 49.5% / span 4 5.5% / span 1 1% / spans 2-3 ~0, over ~7.3 dispatches a call.
+	; That is essentially a binary choice with a long tail, and the compare chain it replaces
+	; priced it badly: 34 cycles for span >= 9 but 50/62/82/94 for spans 5/6/7/8 (every branch
+	; in it assembles as a WORD branch under -no-opt, so each not-taken test cost 12), i.e. a
+	; weighted 49.5.  The table is a FLAT 36 for every span — move/add/add (12) + jmp (14) +
+	; the entry's bra.w (10) — and needs no compare at all.  ~99 cycles a call.
+	;
+	; ⚠ The index is scaled in d0, NOT in place: `add.w d2,d2` twice is two cycles cheaper
+	; but ph2_far READS the span (`move.w d2,d0` / `sub.b d0,d2`) after it is dispatched, so
+	; scaling d2 destroys it — the first cut did exactly that and the game died on its first
+	; flight frame.  "d2 is dead once dispatched" is true only of the LEAF blocks.  d0 is the
+	; safe choice: every one of the nine targets writes d0 before reading it.
+	; d2's bits 8-15 must be 0 for the `.w` index: every writer of d2 in this file either
+	; clears them (moveq / a move.l of a value <= $FF) or is a move.b into a register that
+	; already had them clear, and RASPOP now states that explicitly.
+	; The table has to sit HERE, immediately after the jmp: `jmp (d8,PC,Dn.W)` has only an
+	; 8-bit displacement (the INDEX is added afterwards and is unbounded), so ras_jt must be
+	; within 127 bytes of the extension word.  ph2_far therefore follows the table.
 ph2_loop:
-	cmp.b	#4,d2
-	bls.s	ph2_small		; span <= 4 -> the specialised leaf blocks
-	cmp.b	#8,d2
-	bhi.s	ph2_far			; span >= 9 -> the generic bisect
-	; span 5..8: BOTH halves of the bisect are leaf blocks -> one fused block
-	cmp.b	#6,d2
-	bcs	ras_s5
-	beq	ras_s6
-	cmp.b	#7,d2
-	beq	ras_s7
-	bra	ras_s8
+	move.w	d2,d0			; span -> scratch (see the warning above)
+	add.w	d0,d0
+	add.w	d0,d0			; span * 4 = byte offset of its 4-byte table slot
+	jmp	ras_jt(pc,d0.w)
+
+	; Slot 0 is unreachable — span 0 would not terminate in the oracle either — and slots
+	; 9..255 are all the generic bisect, so a hypothetical out-of-range span still lands on
+	; real code rather than in the middle of an instruction.
+ras_jt:
+	bra.w	ph2_far			; span 0 (unreachable)
+	bra.w	ph2_ff			; span 1
+	bra.w	ph2_fe			; span 2
+	bra.w	ras_sp3			; span 3
+	bra.w	ras_sp4			; span 4
+	bra.w	ras_s5			; span 5
+	bra.w	ras_s6			; span 6
+	bra.w	ras_s7			; span 7
+	bra.w	ras_s8			; span 8
+	rept	247
+	bra.w	ph2_far			; spans 9..255
+	endr
 
 	; --- far: push an interpolated midpoint, descend --------------------------
 ph2_far:
@@ -379,15 +414,6 @@ ph2_far_dmask:
 	and.w	#$FF,d6
 	bra.s	ph2_far_next
 
-	; --- small-span dispatch (span is 1..4 here) ------------------------------
-ph2_small:
-	cmp.b	#3,d2
-	beq	ras_sp3
-	bhi	ras_sp4			; span == 4
-	cmp.b	#2,d2
-	beq	ph2_fe
-	; span == 1 -> fall through to ph2_ff
-
 	; --- span 1 (the oracle's gap==$FF): plot the endpoint column, pop -------
 ph2_ff:
 	move.w	d5,a0			; col = plotCol
@@ -396,11 +422,20 @@ ph2_ff:
 	DRAWDOT
 	addq.b	#1,d5			; plotCol++
 	cmpa.l	sp,a3			; depth == 0 ? (cp base == SP; a4 is a dot table now)
-	beq	done			; depth was 0 -> done
+	beq.s	rdn_ff			; depth was 0 -> done
 	RASPOP
 	cmp.b	#$D4,d5
-	bcc	done
+	bcc.s	rdn_ff
 	bra	ph2_loop
+
+	; A local `bra done` trampoline so the block's exits above can be SHORT branches.  The
+	; build passes vasm -no-opt, so every `Bcc done` assembled as a WORD branch — and a
+	; NOT-taken word Bcc costs 12 cycles against a short one's 8, over ~18 bound/depth tests
+	; a call (~14 of them within reach of a stub; the four mid-block sites that no stub can
+	; reach stay word branches).  Exactly one exit is ever TAKEN per call, so the stub's
+	; extra `bra` is paid once.  vasm ENFORCES the +/-127 range: if a block grows past it the
+	; `.s` fails to assemble rather than going quietly wrong.
+rdn_ff:	bra	done
 
 	; --- span 2 (the oracle's gap==$FE): interpolated column, endpoint, pop --
 ph2_fe:
@@ -416,11 +451,12 @@ ph2_fe:
 	DRAWDOT
 	addq.b	#1,d5
 	cmpa.l	sp,a3			; depth == 0 ? (cp base == SP; a4 is a dot table now)
-	beq	done
+	beq.s	rdn_fe
 	RASPOP
 	cmp.b	#$D4,d5
-	bcc	done
+	bcc.s	rdn_fe
 	bra	ph2_loop
+rdn_fe:	bra	done
 
 	; --- span 3 = far(child span 1) + ff(child) + fe(parent), inline ---------
 	; child span 1 -> disp is 0 in BOTH directions, so the midpoint is just
@@ -453,7 +489,7 @@ ras_sp3_go:
 	DRAWDOT
 	addq.b	#1,d5
 	cmp.b	#$D4,d5
-	bcc	done
+	bcc.s	rdn_fe
 	; parent (span 2) fe
 	move.w	d5,a0
 	move.w	d6,d0
@@ -467,11 +503,12 @@ ras_sp3_go:
 	DRAWDOT
 	addq.b	#1,d5
 	cmpa.l	sp,a3			; depth == 0 ? (cp base == SP; a4 is a dot table now)
-	beq	done
+	beq.s	rdn_sp3
 	RASPOP
 	cmp.b	#$D4,d5
-	bcc	done
+	bcc.s	rdn_sp3
 	bra	ph2_loop
+rdn_sp3:	bra	done
 
 	; --- span 4 = far(child span 2) + fe(child) + fe(parent), inline ---------
 	; child span 2 -> disp_up = 2>>1 = 1, disp_down = (2-1)>>1 = 0.  4 columns, one
@@ -530,11 +567,12 @@ ras_sp4_go:
 	DRAWDOT
 	addq.b	#1,d5
 	cmpa.l	sp,a3			; depth == 0 ? (cp base == SP; a4 is a dot table now)
-	beq	done
+	beq.s	rdn_sp4
 	RASPOP
 	cmp.b	#$D4,d5
-	bcc	done
+	bcc.s	rdn_sp4
 	bra	ph2_loop
+rdn_sp4:	bra	done
 
 	; --- spans 5..8: the bisect FUSED with both of its leaf halves ------------
 	; A node of span S in 5..8 bisects into a child of span c = S>>1 (= 2/3/3/4) and a
@@ -604,8 +642,9 @@ ras_s5_go:
 	addq.b	#1,d5
 	move.l	d2,d6			; chgt = this node's control height again
 	cmp.b	#$D4,d5
-	bcc	done
+	bcc.s	rdn_s5
 	bra	ras_sp3			; parent remainder = 3
+rdn_s5:	bra	done
 
 	; --- span 6 = bisect(child 3) + sp3(child) + sp3(parent) ------------------
 ras_s6:
@@ -676,8 +715,9 @@ ras_s6_go2:
 	move.l	d2,d6			; chgt = this node's control height
 	move.b	5(a3),d4		; frac = fsum1
 	cmp.b	#$D4,d5
-	bcc	done
+	bcc.s	rdn_s6
 	bra	ras_sp3			; parent remainder = 3
+rdn_s6:	bra	done
 
 	; --- span 7 = bisect(child 3) + sp3(child) + sp4(parent) ------------------
 	; Identical to ras_s6 except the parent remainder is 4.
@@ -747,8 +787,9 @@ ras_s7_go2:
 	move.l	d2,d6			; chgt = this node's control height
 	move.b	5(a3),d4		; frac = fsum1
 	cmp.b	#$D4,d5
-	bcc	done
+	bcc.s	rdn_s7
 	bra	ras_sp4			; parent remainder = 4
+rdn_s7:	bra	done
 
 	; --- span 8 = bisect(child 4) + sp4(child) + sp4(parent) ------------------
 	; The child is a span-4 group; unlike ras_sp4 it must not use d2 (this node's
@@ -835,7 +876,7 @@ ras_s8_go2:
 	move.l	d2,d6			; chgt = this node's control height
 	move.b	5(a3),d4		; frac = fsum1
 	cmp.b	#$D4,d5
-	bcc	done
+	bcc.s	done
 	bra	ras_sp4			; parent remainder = 4
 
 	; ---- exit: hand the live cursor back in registers, free scratch, restore -
