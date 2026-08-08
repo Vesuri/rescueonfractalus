@@ -451,7 +451,9 @@ host speed and to the gdb stub. Measured 2026-08-08 over vbi 1901→4900, all 15
 per segment) · **combat load (`COMBAT=1 FIXED_RNG=1`) 859 / 2999 = 14.32 FPS** (10.3–16.2). Combat
 costs 22% of throughput = +28.6% frame time; both arms are level 40, which is the only legitimate
 combat framing. ⚠ `COMBAT_QUIET` also drops `ROF_AUTO_FIRE`, so the best case is "no enemies AND no
-firing".
+firing". *(Re-run at 5a626b3, same window, all 15 segments valid: 1122/3001 = **18.69** best case.
+One sample, and the change it followed was statically worth 0.8% — i.e. inside this harness's ~1.5%
+resolution, so treat 18.41 as the standing baseline until a multi-window run says otherwise.)*
 
 ⚠ **Every framerate figure in an older note or commit is wrong — do not quote one, re-measure.**
 Two traps, both of which produced badly wrong numbers before this was built:
@@ -574,6 +576,16 @@ Rewrite hot functions in idiomatic C:
   (per-writer dirty flags; dirty row/cell ranges, cf. planet viewport `g_planetRowLo/Hi` and the
   cockpit plan `docs/cockpit-render-plan.md`). Shadow-compare scans are themselves a full
   volatile scan — a 68000 no-go; prefer dirty flags.
+- **A transliterated loop's 6502 shape can BLIND GCC's loop analysis — that costs far more than the
+  instructions it emits.** Two habits do it, and both look harmless: a loop counter/index typed
+  `uint8_t` because the 6502 held it in a register (every use then pays an `andi.l #255` + a
+  `moveq`/`move.b` zero-extend, and the wrap semantics hide the stride), and a `mem[]` round trip
+  the 6502 needed to save a register across a `JSR` (which, being `volatile`, is an opaque write GCC
+  must assume changes the index). Remove both and GCC can suddenly see a constant stride and a fixed
+  trip count. On `terrain_draw_objects` (log §11) that turned an un-analysable loop into a ×3 unroll
+  with ONE exit test — amortising the loop tail 22 → 6 cycles a pair, the largest single component
+  of the win. **So when a hot loop's index is a byte or round-trips through `mem[]`, fix that
+  first and re-read the disassembly before designing anything cleverer.**
 - **When the idiomatic-C twin is still hot, ESCALATE to hand-written m68k asm** (vasm). GCC won't
   emit `(a0)+`, has no scaled index, and spills under the register pressure these loops create — so
   the C floor is GCC's floor, not the algorithm's. In asm you control the regs (pin the working set,
