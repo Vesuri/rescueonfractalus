@@ -49,6 +49,13 @@
 ;     a real deep flight (6013 calls, 84842 far-bisects): span 3 = 31.2% and span 4 = 16.5%
 ;     of all far-bisects, and they subsume 98.6% of the ff leaves and 86% of the fe leaves.
 ;     Loop-top dispatches drop 174820 -> 93986 for the same picture.
+;  6. SPANS 5-8 ARE FUSED BLOCKS (ras_s5/s6/s7/s8, 2026-08-08).  Such a node bisects into a
+;     child of span S>>1 (2/3/3/4) and a parent remainder of S-(S>>1) (3/3/4/4), so BOTH
+;     halves are leaf blocks: the push spill, the pop, the child's underflow test and exit
+;     sequence, and two loop-top dispatches are all removable, and the block simply falls
+;     into ras_sp3 / ras_sp4 for its parent half.  Re-shape-probed on the QUIET baseline
+;     (9102 calls): spans 5-8 are 27.5% of all far-bisects and 53% of the ones 5. does not
+;     already absorb = 3.6 per call.  ~160 cycles a node, ~8% of this function.
 ;
 ; Register map (callee-saved d2-d7/a2-a6 saved at entry):
 ;   d0/d1/d7 = scratch (also the DRAW macro's scratch)
@@ -310,12 +317,23 @@ ph2_enter:
 	move.w	d7,a0			; a0 = col
 	cmp.b	#$D4,d5
 	bcc	done
-	; Dispatch on span.  Measured mix at the loop top (per frame, deep flight):
-	; span>=5 47% / span==3 28% / span==4 15% / span==2 9% / span==1 0.4%, so the
-	; generic far bisect FALLS THROUGH (one not-taken .s branch) and span 3 is next.
+	; Dispatch on span.  Measured mix at the loop top (QUIET baseline, 2026-08-08,
+	; 481 half-frames / 9102 calls, amiga/ras_shape.gdb): span 3 28% / span >= 9 22% /
+	; span 4 15% / span 2 9% / span 5 9% / span 6 7% / span 7 5% / span 8 4% /
+	; span 1 0.5%.  span <= 4 keeps the cheapest paths, spans 5-8 go to the FUSED
+	; blocks (see ras_s5 below), and the generic bisect is what is left.
 ph2_loop:
 	cmp.b	#4,d2
-	bls.s	ph2_small		; span <= 4 -> the specialised blocks
+	bls.s	ph2_small		; span <= 4 -> the specialised leaf blocks
+	cmp.b	#8,d2
+	bhi.s	ph2_far			; span >= 9 -> the generic bisect
+	; span 5..8: BOTH halves of the bisect are leaf blocks -> one fused block
+	cmp.b	#6,d2
+	bcs	ras_s5
+	beq	ras_s6
+	cmp.b	#7,d2
+	beq	ras_s7
+	bra	ras_s8
 
 	; --- far: push an interpolated midpoint, descend --------------------------
 ph2_far:
@@ -517,6 +535,308 @@ ras_sp4_go:
 	cmp.b	#$D4,d5
 	bcc	done
 	bra	ph2_loop
+
+	; --- spans 5..8: the bisect FUSED with both of its leaf halves ------------
+	; A node of span S in 5..8 bisects into a child of span c = S>>1 (= 2/3/3/4) and a
+	; parent remainder p = S-c (= 3/3/4/4).  BOTH are straight-line leaf blocks, so the
+	; generic path's push/pop round trip through the control-point slot, the child's
+	; loop-top dispatch, its whole exit sequence (cmpa/beq/RASPOP/bra) and the parent's
+	; dispatch are all dead weight: the entire 5-to-8-column group runs as one block
+	; that falls into ras_sp3 / ras_sp4 for its parent half.  Shape (quiet baseline,
+	; 2026-08-08, 9102 calls): spans 5/6/7/8 = 12404/9147/6494/4855 far-bisects = 27.5%
+	; of all of them and 53% of those the sp3/sp4 blocks do not already absorb, i.e.
+	; 3.6 per rasterize call.  ~160 cycles saved per node, ~8% of this function.
+	;
+	; State handling vs the generic push:
+	;   - the child's control height (mh1) lives in d6 exactly as a pushed one would;
+	;   - this node's OWN control height goes to d2 (span is dead once dispatched)
+	;     instead of 1(a3), and comes back with a register move;
+	;   - fsum1 still goes to 5(a3) (the slot a push would have used) for c = 3 and 4,
+	;     because those child bodies overwrite d4 with their own fsum; for c = 2
+	;     (ras_s5) the fe child never touches d4, so fsum1 simply stays in it;
+	;   - a3 never moves, so the child's `cmpa.l sp,a3` underflow test — which can never
+	;     fire at depth+1 — is gone, and 2(a3) is still this node's cfrac for the parent.
+	; The roughness displacement is a CONSTANT here (disp_up = c>>1, disp_down =
+	; (c-1)>>1), and the oracle's `t = ceil + ~disp; mh = (t > $FF) ? t&$FF : 0` is
+	; exactly `ceil - (disp+1)` floored at 0.  So: c=2 -> +1 / -1, c=3 -> +1 / -2,
+	; c=4 -> +2 / -2.  (c=2 and c=3's child-of-child span 1 give disp 0 both ways,
+	; which is why ras_sp3's inner midpoint has no add at all.)
+
+	; --- span 5 = bisect(child 2) + fe(child) + sp3(parent) -------------------
+ras_s5:
+	move.l	d6,d2			; stash this node's control height (span is dead)
+	moveq	#0,d1
+	move.b	2(a3),d1		; cfrac
+	add.w	d4,d1
+	addq.w	#1,d1			; d1 = fsum1 (bit8 = carry)
+	move.b	d1,d4			; frac = fsum1 — the fe child never touches d4
+	add.w	d3,d6			; d6 = hsum = chgt + height
+	btst	#7,d1
+	bne.s	ras_s5_rough
+	lsr.w	#1,d6			; mh1 = hsum>>1
+	bra.s	ras_s5_go
+ras_s5_rough:
+	addq.w	#1,d6
+	lsr.w	#1,d6			; ceil = (hsum+1)>>1
+	btst	#8,d1
+	beq.s	ras_s5_down
+	addq.w	#1,d6			; up: disp = 2>>1 = 1
+	cmp.w	#$FF,d6
+	bls.s	ras_s5_go
+	move.w	#$FF,d6			; saturate $FF
+	bra.s	ras_s5_go
+ras_s5_down:
+	subq.w	#1,d6			; down: disp = (2-1)>>1 = 0 -> ceil-1 ...
+	bcc.s	ras_s5_go
+	moveq	#0,d6			; ... floored at 0
+ras_s5_go:
+	; child (span 2) fe, control height = mh1 in d6
+	move.w	d5,a0
+	move.w	d6,d0
+	add.w	d3,d0
+	addq.w	#1,d0
+	lsr.w	#1,d0			; (mh1 + height + 1) >> 1
+	DRAWDOT
+	addq.b	#1,d5
+	move.l	d6,d3			; height = mh1
+	move.l	d3,d0
+	DRAWDOT
+	addq.b	#1,d5
+	move.l	d2,d6			; chgt = this node's control height again
+	cmp.b	#$D4,d5
+	bcc	done
+	bra	ras_sp3			; parent remainder = 3
+
+	; --- span 6 = bisect(child 3) + sp3(child) + sp3(parent) ------------------
+ras_s6:
+	move.l	d6,d2			; stash this node's control height
+	moveq	#0,d1
+	move.b	2(a3),d1		; cfrac
+	add.w	d4,d1
+	addq.w	#1,d1			; d1 = fsum1
+	move.b	d1,5(a3)		; the sp3 child overwrites d4 -> park fsum1
+	add.w	d3,d6			; hsum
+	btst	#7,d1
+	bne.s	ras_s6_rough
+	lsr.w	#1,d6			; mh1 = hsum>>1
+	bra.s	ras_s6_go
+ras_s6_rough:
+	addq.w	#1,d6
+	lsr.w	#1,d6			; ceil
+	btst	#8,d1
+	beq.s	ras_s6_down
+	addq.w	#1,d6			; up: disp = 3>>1 = 1
+	cmp.w	#$FF,d6
+	bls.s	ras_s6_go
+	move.w	#$FF,d6
+	bra.s	ras_s6_go
+ras_s6_down:
+	subq.w	#2,d6			; down: disp = (3-1)>>1 = 1 -> ceil-2 ...
+	bcc.s	ras_s6_go
+	moveq	#0,d6			; ... floored at 0
+ras_s6_go:
+	; child (span 3): its own midpoint (child span 1 -> disp 0 both ways), then ff+fe.
+	; d1 still holds fsum1, so the child's cfrac needs no reload from 5(a3).
+	and.w	#$FF,d1
+	add.w	d4,d1
+	addq.w	#1,d1			; d1 = fsum2
+	move.w	d6,d0
+	add.w	d3,d0			; d0 = hsum2
+	btst	#7,d1
+	bne.s	ras_s6_r2
+	lsr.w	#1,d0			; mh2 = hsum2>>1
+	bra.s	ras_s6_go2
+ras_s6_r2:
+	addq.w	#1,d0
+	lsr.w	#1,d0			; ceil
+	btst	#8,d1
+	bne.s	ras_s6_go2		; up: disp 0 -> mh2 = ceil (no clamp possible)
+	subq.w	#1,d0			; down: ceil - 1 ...
+	bcc.s	ras_s6_go2
+	moveq	#0,d0			; ... floored at 0
+ras_s6_go2:
+	move.w	d5,a0
+	move.b	d1,d4			; frac = fsum2 (before DRAWDOT clobbers d1)
+	move.l	d0,d3			; height = mh2
+	DRAWDOT
+	addq.b	#1,d5
+	cmp.b	#$D4,d5
+	bcc	done
+	move.w	d5,a0
+	move.w	d6,d0
+	add.w	d3,d0
+	addq.w	#1,d0
+	lsr.w	#1,d0			; (mh1 + mh2 + 1) >> 1
+	DRAWDOT
+	addq.b	#1,d5
+	move.l	d6,d3			; height = mh1
+	move.l	d3,d0
+	DRAWDOT
+	addq.b	#1,d5
+	move.l	d2,d6			; chgt = this node's control height
+	move.b	5(a3),d4		; frac = fsum1
+	cmp.b	#$D4,d5
+	bcc	done
+	bra	ras_sp3			; parent remainder = 3
+
+	; --- span 7 = bisect(child 3) + sp3(child) + sp4(parent) ------------------
+	; Identical to ras_s6 except the parent remainder is 4.
+ras_s7:
+	move.l	d6,d2
+	moveq	#0,d1
+	move.b	2(a3),d1		; cfrac
+	add.w	d4,d1
+	addq.w	#1,d1			; d1 = fsum1
+	move.b	d1,5(a3)
+	add.w	d3,d6			; hsum
+	btst	#7,d1
+	bne.s	ras_s7_rough
+	lsr.w	#1,d6
+	bra.s	ras_s7_go
+ras_s7_rough:
+	addq.w	#1,d6
+	lsr.w	#1,d6			; ceil
+	btst	#8,d1
+	beq.s	ras_s7_down
+	addq.w	#1,d6			; up: disp = 3>>1 = 1
+	cmp.w	#$FF,d6
+	bls.s	ras_s7_go
+	move.w	#$FF,d6
+	bra.s	ras_s7_go
+ras_s7_down:
+	subq.w	#2,d6			; down: disp = (3-1)>>1 = 1
+	bcc.s	ras_s7_go
+	moveq	#0,d6
+ras_s7_go:
+	and.w	#$FF,d1
+	add.w	d4,d1
+	addq.w	#1,d1			; d1 = fsum2
+	move.w	d6,d0
+	add.w	d3,d0			; hsum2
+	btst	#7,d1
+	bne.s	ras_s7_r2
+	lsr.w	#1,d0
+	bra.s	ras_s7_go2
+ras_s7_r2:
+	addq.w	#1,d0
+	lsr.w	#1,d0			; ceil
+	btst	#8,d1
+	bne.s	ras_s7_go2		; up: disp 0
+	subq.w	#1,d0			; down: ceil - 1
+	bcc.s	ras_s7_go2
+	moveq	#0,d0
+ras_s7_go2:
+	move.w	d5,a0
+	move.b	d1,d4			; frac = fsum2
+	move.l	d0,d3			; height = mh2
+	DRAWDOT
+	addq.b	#1,d5
+	cmp.b	#$D4,d5
+	bcc	done
+	move.w	d5,a0
+	move.w	d6,d0
+	add.w	d3,d0
+	addq.w	#1,d0
+	lsr.w	#1,d0
+	DRAWDOT
+	addq.b	#1,d5
+	move.l	d6,d3			; height = mh1
+	move.l	d3,d0
+	DRAWDOT
+	addq.b	#1,d5
+	move.l	d2,d6			; chgt = this node's control height
+	move.b	5(a3),d4		; frac = fsum1
+	cmp.b	#$D4,d5
+	bcc	done
+	bra	ras_sp4			; parent remainder = 4
+
+	; --- span 8 = bisect(child 4) + sp4(child) + sp4(parent) ------------------
+	; The child is a span-4 group; unlike ras_sp4 it must not use d2 (this node's
+	; control height lives there), so it parks its own midpoint in d1 and sets
+	; height = mh2 BEFORE the first DRAW — DRAWDOT never reads d3.
+ras_s8:
+	move.l	d6,d2			; stash this node's control height
+	moveq	#0,d1
+	move.b	2(a3),d1		; cfrac
+	add.w	d4,d1
+	addq.w	#1,d1			; d1 = fsum1
+	move.b	d1,5(a3)		; the sp4 child overwrites d4 -> park fsum1
+	add.w	d3,d6			; hsum
+	btst	#7,d1
+	bne.s	ras_s8_rough
+	lsr.w	#1,d6
+	bra.s	ras_s8_go
+ras_s8_rough:
+	addq.w	#1,d6
+	lsr.w	#1,d6			; ceil
+	btst	#8,d1
+	beq.s	ras_s8_down
+	addq.w	#2,d6			; up: disp = 4>>1 = 2
+	cmp.w	#$FF,d6
+	bls.s	ras_s8_go
+	move.w	#$FF,d6
+	bra.s	ras_s8_go
+ras_s8_down:
+	subq.w	#2,d6			; down: disp = (4-1)>>1 = 1 -> ceil-2
+	bcc.s	ras_s8_go
+	moveq	#0,d6
+ras_s8_go:
+	; child (span 4): midpoint with ITS child span 2 -> disp +1 / -1, then fe + fe
+	and.w	#$FF,d1
+	add.w	d4,d1
+	addq.w	#1,d1			; d1 = fsum2
+	move.w	d6,d0
+	add.w	d3,d0			; hsum2
+	btst	#7,d1
+	bne.s	ras_s8_r2
+	lsr.w	#1,d0			; mh2 = hsum2>>1
+	bra.s	ras_s8_go2
+ras_s8_r2:
+	addq.w	#1,d0
+	lsr.w	#1,d0			; ceil
+	btst	#8,d1
+	beq.s	ras_s8_d2
+	addq.w	#1,d0			; up: disp = 2>>1 = 1
+	cmp.w	#$FF,d0
+	bls.s	ras_s8_go2
+	move.w	#$FF,d0
+	bra.s	ras_s8_go2
+ras_s8_d2:
+	subq.w	#1,d0			; down: disp = (2-1)>>1 = 0 -> ceil-1
+	bcc.s	ras_s8_go2
+	moveq	#0,d0
+ras_s8_go2:
+	move.b	d1,d4			; frac = fsum2
+	move.w	d5,a0
+	move.w	d0,d1			; park mh2 (d2 holds this node's control height)
+	add.w	d3,d0
+	addq.w	#1,d0
+	lsr.w	#1,d0			; (mh2 + height + 1) >> 1
+	move.l	d1,d3			; height = mh2 (DRAWDOT does not read d3)
+	DRAWDOT
+	addq.b	#1,d5
+	move.l	d3,d0			; _h = mh2
+	DRAWDOT
+	addq.b	#1,d5
+	cmp.b	#$D4,d5
+	bcc	done
+	; the child's parent half (span 2) fe, control height = mh1 in d6
+	move.w	d5,a0
+	move.w	d6,d0
+	add.w	d3,d0
+	addq.w	#1,d0
+	lsr.w	#1,d0
+	DRAWDOT
+	addq.b	#1,d5
+	move.l	d6,d3			; height = mh1
+	move.l	d3,d0
+	DRAWDOT
+	addq.b	#1,d5
+	move.l	d2,d6			; chgt = this node's control height
+	move.b	5(a3),d4		; frac = fsum1
+	cmp.b	#$D4,d5
+	bcc	done
+	bra	ras_sp4			; parent remainder = 4
 
 	; ---- exit: hand the live cursor back in registers, free scratch, restore -
 	; d4 already holds frac (it is in/out and never saved), so only col and height move.

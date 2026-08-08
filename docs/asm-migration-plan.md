@@ -580,3 +580,86 @@ so a changed pair recomputes twice and the first pass runs against the stale AUD
 ⚠ **Size it first:** 6383 upc calls / 2798 firings = 2.28/firing over only 4 channels, so the
 redundancy may be ~0.5-1 call/firing (≈0.4-0.8% of wall), not the full 3.2%. And it is not
 `mem[]`-observable, so `make validate` cannot check it — verify by ear + `ROF_BEEP_CAP`.
+
+---
+
+## Phase 7 — the rasterizer's SPAN-5..8 FUSION ✅ DONE 2026-08-08 (−8.0% of the rasterizer)
+
+The first re-shape-probe of `terrain_column_rasterize_core` since the Phase-4 restructure, run on
+the **quiet** (target) baseline this time: `make clean && make -j4 PROBES=1 PROFILE_NORING=1
+RASTER_C=1 SUBDIV_C=1 RAS_SHAPE=1 COMBAT=1 COMBAT_QUIET=1 FIXED_RNG=1` +
+`GDBSCRIPT=ras_shape.gdb ./diag_run.sh 150`. 481 half-frames / 9102 calls / 216780 draws.
+
+### What the probe said that the PC profile could not
+The far-bisect span histogram is nearly unchanged from 2026-08-05 (span 3 = 31.2%, span 4 = 16.6%),
+but the interesting column is the one nobody had read: **spans 5-8 are 12404/9147/6494/4855 =
+27.5% of all far-bisects, which is 53% of the ones `ras_sp3`/`ras_sp4` do NOT already absorb.**
+Reconstructing what the asm's loop top actually dispatches on (total 132581 = 14.6/call):
+
+| span | 3 | >=9 | 4 | 2 | 5 | 6 | 7 | 8 | 1 |
+|---|---|---|---|---|---|---|---|---|---|
+| share | 28% | 22% | 15% | 9% | 9% | 7% | 5% | 4% | 0.5% |
+
+**A node of span 5..8 bisects into a child of span `S>>1` = 2/3/3/4 and a parent remainder of
+`S-(S>>1)` = 3/3/4/4 — so BOTH halves are already straight-line leaf blocks.** Everything the
+generic path does to get between them is therefore dead weight: the push's two spills, the
+`addq.l #3,a3`/`subq.l #3,a3`, the whole `RASPOP`, the child's `cmpa.l sp,a3` underflow test
+(which at depth+1 can never fire), its exit `bra`, and **two** loop-top dispatches.
+
+### The change (4 new blocks, `ras_s5`/`s6`/`s7`/`s8`)
+Each block computes the bisect midpoint, inlines the child leaf, restores two registers and
+falls into `ras_sp3` / `ras_sp4` for its parent half. State handling vs the generic push:
+- the child's control height (mh1) lives in **d6**, exactly as a pushed one would;
+- the node's OWN control height goes to **d2** (span is dead once dispatched) rather than
+  `1(a3)`, and comes back with a register move — `ras_s8`'s child had to be restructured to
+  free d2 (it parks its own midpoint in d1 and sets `height = mh2` *before* the first DRAW,
+  which is safe because DRAWDOT never reads d3);
+- **fsum1** still goes to `5(a3)` for c = 3 and 4 (those child bodies overwrite d4 with their
+  own fsum); for c = 2 the `fe` child never touches d4, so it simply stays there;
+- a3 never moves, so `2(a3)` is still this node's cfrac when the parent half reads it, and the
+  child's cfrac needs **no reload** — it is `and.w #$FF,d1` off the fsum1 already in a register.
+- the roughness displacement becomes an IMMEDIATE (`disp_up = c>>1`, `disp_down = (c-1)>>1`),
+  and the oracle's `t = ceil + ~disp; mh = (t > $FF) ? t&$FF : 0` is exactly `ceil - (disp+1)`
+  floored at 0 — an 8-bit borrow spelled as a 9-bit add, so `subq`/`bcc`/`moveq` covers it.
+
+Dispatch: `cmp.b #4,d2 / bls.s ph2_small` is untouched (span 3, the most common case, keeps its
+cheapest path); the new `cmp.b #8,d2 / bls.s ph2_mid` sits between it and `ph2_far`, so only the
+span>=9 path pays for the new test (+16 cycles on 3.2 nodes/call).
+
+### Verification
+1. **Host, exhaustive** — `tools/ras_fused_midpoint_test.c` enumerates every reachable
+   `(hsum 0..510, fsum 0..511)` against the oracle's generic far-branch midpoint for each child
+   span, **2 093 056 cases, 0 mismatches**, and includes `ras_sp3`/`ras_sp4`'s already-shipping
+   constants as controls (a failure there would indict the model, not the new blocks).
+   `cc -O2 -o /tmp/rasfused tools/ras_fused_midpoint_test.c && /tmp/rasfused`.
+2. **On target** — `make clean && make -j4 VERIFY=1 PROBES=1 FIXED_RNG=1 COMBAT=1
+   COMBAT_QUIET=1` + `GDBSCRIPT=raster_verify.gdb ./raster_diff.sh fused 300`:
+   **0 mismatch / 1611 calls** (≈5800 fused-block executions) on `$260E` + the `$82/$84/$86`
+   writeback + the whole plane-2 dot buffer.
+3. **The shipping FAST path** (the subdivide→rasterizer private register ABI, which plain
+   `VERIFY=1` bypasses) separately under `VERIFY=1 NO_RASTER_VERIFY=1` + `subdiv_verify.gdb`.
+
+### Result
+A/B against the SAME C oracle, near-identical windows (1619 vs 1611 calls, vbi 14558 vs 14557):
+
+| | asm t/call | oracle t/call | ratio |
+|---|---|---|---|
+| pre-fusion | 14.97 | 32.73 | 0.4574 |
+| **fused** | **13.70** | 32.55 | **0.4210** |
+
+**−8.0% of the rasterizer.** The oracle arm moved −0.55% — its own noise floor — which is what
+makes the −8% signal rather than drift. At the rasterizer's measured 23.6% of wall that is
+**~1.9% of all wall clock**. End-to-end (`FPSCOUNT=1`, `fps_seg.gdb`, all 15 segments valid) read
+**19.49 FPS against the standing 18.41**, i.e. +5.9% — consistent in direction and bigger than the
+static prediction, but a cross-build end-to-end delta is confounded (`FIXED_RNG` pins the level,
+not the trajectory), so **the defensible number is the differential's −8%.**
+
+### Evaluated, NOT done
+- **Fall-through layout.** Each block ends `bra ras_sp3`/`bra ras_sp4` (10 cycles). Ordering the
+  blocks so the two biggest consumers fall through instead is worth ~21 cycles/call ≈ 0.3% of the
+  rasterizer, at the cost of a much harder-to-review file order.
+- **Biasing d5 so the right-edge test is free.** `cmp.b #$D4,d5 / bcc done` runs ~15×/call = ~300
+  cycles. Keeping `plotCol - $D4` in d5 (negative in range) makes the test a bare `bpl` after the
+  existing `addq`, at the price of rebasing a1/a2/a4 by +$D4 and un-biasing `col` once at `done`
+  — net ~76 cycles/call ≈ 1.2% of the rasterizer, but it touches EVERY DRAWDOT and every leaf.
+
