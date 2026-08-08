@@ -18,9 +18,16 @@
 ;   d0/d1 = scratch (far endpoint load + arithmetic)
 ;   a1 = mem + depth   (single (d16,a1) covers every SubPt stack — the 68000 has no wide
 ;                       indexed mode, so we fold `depth` into the base instead of indexing)
-;   a2 = depth (scalar, kept in lockstep with a1)   a3 = budget   a4 = rasterEntryDepth
+;   a2 = depth (scalar, kept in lockstep with a1)   a3 = budget
+;   a4 = rasterEntryDepth — ONLY in the mem[]-handoff fallback; see FRM below
 ; The 5 SubPt stacks + all ZP live in mem[] (main-RAM scratch the flight VBI never writes),
 ; addressed absolutely (mem+$xx) or via a1; a signed 16-bit displacement covers each base.
+;
+; 2026-08-08: this twin's cost is ~50% per-call MARSHALLING (prologue, span load, entry
+; guard, flush, epilogue) for a body that averages 1.21 inner iterations and 0.55
+; rasterize calls (amiga/ras_shape.gdb, quiet baseline, 16342 calls / 239 iterations =
+; 68.4 calls per flight iteration).  Five dead or over-priced things removed — see the
+; comments at FRM, sd_phase3, sd_inner, sd_pop and sd_out.
 
 	xdef	terrain_subdivide_column_core_asm
 	ifnd	ROF_SUBDIV_VERIFY
@@ -40,19 +47,39 @@ SDHGT_LO	equ	$25F0
 SDHGT_HI	equ	$24E2
 SDFRAC		equ	$23E2
 
+; rasterEntryDepth is DEAD in the shipping build: it exists only to be forwarded as the
+; rasterizer's first C argument, and the register-ABI entry does not take it (the rasterizer
+; assigns it to `depth` and immediately overwrites it with 0).  So under ROF_RASTER_SPAN_ABI
+; neither a4 nor its two-instruction load is emitted, and the movem drops a long — 36 cycles
+; a call.  FRM is the frame the movem pushes, i.e. what the incoming args shift by.
+	ifd	ROF_RASTER_SPAN_ABI
+FRM		equ	32		; 8 longs: d2-d7/a2-a3
+	else
+FRM		equ	36		; 9 longs: d2-d7/a2-a4
+	endc
+ARG_START	equ	7+FRM		; startDepth
+ARG_RASENT	equ	11+FRM		; rasterEntryDepth
+ARG_OBJ0	equ	15+FRM		; obj0 (the object-indexed entry only)
+
 	section	code
 
 terrain_subdivide_column_core:
 terrain_subdivide_column_core_asm:
-	movem.l	d2-d7/a2-a4,-(sp)	; 9 longs = 36 bytes; args shift +36
+	ifd	ROF_RASTER_SPAN_ABI
+	movem.l	d2-d7/a2-a3,-(sp)	; 8 longs = FRM bytes; args shift +FRM
+	else
+	movem.l	d2-d7/a2-a4,-(sp)	; 9 longs
+	endc
 	moveq	#0,d0
-	move.b	43(sp),d0		; startDepth (7 + 36)
+	move.b	(ARG_START,sp),d0	; startDepth
 	movea.l	d0,a2			; a2 = depth = startDepth
 	lea	mem,a1
 	adda.l	d0,a1			; a1 = mem + depth
+	ifnd	ROF_RASTER_SPAN_ABI
 	moveq	#0,d0
-	move.b	47(sp),d0		; rasterEntryDepth (11 + 36)
+	move.b	(ARG_RASENT,sp),d0	; rasterEntryDepth
 	movea.l	d0,a4
+	endc
 
 	; span = {$82:$83 col, $84:$85 hgt, $86 frac}
 	moveq	#0,d2
@@ -84,9 +111,11 @@ terrain_subdivide_column_core_asm:
 	movea.w	#$14,a3			; budget = $14
 
 	; ================= phase 2: descend =================
+	; `btst #15,Dn` is 10 cycles and needs a following Bcc; `tst.w Dn` is 4 and sets N from
+	; the same bit.  Used for every `span/far & $8000` test in this file.
 sd_phase2:
-	btst	#15,d2			; span.col & $8000 ?
-	beq	sd_phase3		; non-negative -> start leaf pass
+	tst.w	d2			; span.col & $8000 ?
+	bpl	sd_phase3		; non-negative -> start leaf pass
 	subq.l	#1,a3			; budget--
 	cmpa.w	#-1,a3
 	beq	sd_out			; budget was 0 -> exhausted
@@ -107,37 +136,51 @@ sd_p2push:
 
 	; ================= phase 3: leaf + unwind =================
 sd_phase3:
-	move.w	d2,d0			; span.col > $FF ?
-	and.w	#$FF00,d0
-	bne	sd_out
-	cmp.w	#$D8,d2			; span.col >= $D8 ? (unsigned; span.col is $00xx here)
+	; The oracle's two exits — `span.col > $FF` and `span.col >= $D8` — are ONE test.  Any
+	; value with a non-zero high byte is >= $0100 > $D8, so the UNSIGNED `>= $D8` compare
+	; already covers it (including a negative span.col off the pop path, which is >= $8000).
+	; The `move.w`/`and.w #$FF00`/`bne` triple was 24 cycles per phase-3 entry, of which
+	; there are 1.11 a call.
+	cmp.w	#$D8,d2			; span.col >= $D8 ? (unsigned)
 	bcc	sd_out
 sd_inner:
-	bsr	load_far		; d0 = far.col, d1 = far.hgt
-	cmp.w	#$FF,d0			; far.col > $FF ?
-	bhi	sd_dosub		; -> subdivide
+	; load_far, INLINED at its ONE call site and split on the high byte first.  The
+	; oracle's `far.col > $FF` is exactly `far.col hi != 0`, so the escape to sd_dosub is
+	; decided before the low byte and the 22-cycle `lsl.w #8` are ever touched — and the
+	; 85% that continue then have far.col's high byte known 0, i.e. far.col IS the low
+	; byte.  (Shape: the escape fires on 2900 of 19794 inner iterations = 14.6%.)  Also
+	; kills the bsr/rts pair, 34 cycles an iteration on its own.
+	moveq	#0,d0
+	move.b	(SDCOL_HI,a1),d0	; far.col hi
+	bne.s	sd_dosub		; far.col > $FF -> subdivide (submid reloads it there)
+	move.b	(SDCOL_LO,a1),d0	; d0 = far.col (high byte known 0)
+	moveq	#0,d1
+	move.b	(SDHGT_HI,a1),d1
+	lsl.w	#8,d1
+	move.b	(SDHGT_LO,a1),d1	; d1 = far.hgt
 	; ---- CASCADE ----
-	btst	#15,d3			; span.hgt & $8000 ?
-	bne	sd_spanlow
+	tst.w	d3			; span.hgt & $8000 ?
+	bmi.s	sd_spanlow
 	cmp.w	#$6C,d3			; span.hgt < $6C ?
-	bcs	sd_spanlow
+	bcs.s	sd_spanlow
 	; spanHIGH: default rasterize
-	btst	#15,d1			; far.hgt & $8000 ?
-	bne	sd_wtFarH		; -> width test (far height)
+	tst.w	d1			; far.hgt & $8000 ?
+	bmi.s	sd_wtFarH		; -> width test (far height)
 	cmp.w	#$FF,d1
-	bhi	sd_doras		; far.hgt > $FF -> rasterize
+	bhi.s	sd_doras		; far.hgt > $FF -> rasterize
 	cmp.w	#$6C,d1
-	bcs	sd_wtFarH		; far.hgt < $6C -> width test (far height)
-	bra	sd_doras		; else rasterize
+	bcs.s	sd_wtFarH		; far.hgt < $6C -> width test (far height)
+	bra.s	sd_doras		; else rasterize
 sd_spanlow:
 	; spanLOW: default skip
-	btst	#15,d1			; far.hgt & $8000 ?
-	bne	sd_pop			; skip
+	tst.w	d1			; far.hgt & $8000 ?
+	bmi	sd_pop			; skip
 	cmp.w	#$FF,d1
-	bhi	sd_wtSpanH		; far.hgt > $FF -> width test (span height)
+	bhi.s	sd_wtSpanH		; far.hgt > $FF -> width test (span height)
 	cmp.w	#$6C,d1
 	bcs	sd_pop			; far.hgt < $6C -> skip
-	bra	sd_wtSpanH		; else width test (span height)
+	; else: fall through to the width test (span height).  The oracle's `bra sd_wtSpanH`
+	; here branched to the very next instruction — 10 cycles for nothing.
 
 	; width/steepness: width = (far.col - span.col) low byte; narrow -> rasterize, else
 	; rasterize if the chosen height is shallower than width/4, else subdivide (steep).
@@ -145,25 +188,25 @@ sd_wtSpanH:				; useSpanHeight = 1
 	sub.w	d2,d0			; far.col - span.col (d0 was far.col)
 	and.w	#$FF,d0			; width (byte)
 	cmp.w	#$14,d0
-	bcs	sd_doras		; width < $14 -> rasterize
+	bcs.s	sd_doras		; width < $14 -> rasterize
 	lsr.w	#2,d0			; q = width>>2
 	move.b	d0,mem+$B5
 	move.w	d3,d1			; hgt = span.hgt
 	sub.w	d0,d1			; hgt - q
-	btst	#15,d1
-	beq	sd_doras		; shallow -> rasterize
-	bra	sd_dosub		; steep -> subdivide
+	tst.w	d1
+	bpl.s	sd_doras		; shallow -> rasterize
+	bra.s	sd_dosub		; steep -> subdivide
 sd_wtFarH:				; useSpanHeight = 0 (hgt = far.hgt, still in d1)
 	sub.w	d2,d0			; far.col - span.col
 	and.w	#$FF,d0			; width
 	cmp.w	#$14,d0
-	bcs	sd_doras
+	bcs.s	sd_doras
 	lsr.w	#2,d0			; q
 	move.b	d0,mem+$B5
 	sub.w	d0,d1			; far.hgt - q
-	btst	#15,d1
-	beq	sd_doras		; shallow -> rasterize
-	bra	sd_dosub		; steep -> subdivide
+	tst.w	d1
+	bpl.s	sd_doras		; shallow -> rasterize
+	; steep: fall through to sd_dosub (the oracle branched to the next instruction)
 
 sd_dosub:
 	subq.l	#1,a3			; budget--
@@ -180,11 +223,11 @@ sd_dosub:
 sd_doras:
 	; clamp span.hgt to a byte if >$FF (keep hi byte; lo = $00 neg / $FF pos)
 	cmp.w	#$FF,d3
-	bls	sd_r_noclamp
-	btst	#15,d3
-	bne	sd_r_neg
+	bls.s	sd_r_noclamp
+	tst.w	d3
+	bmi.s	sd_r_neg
 	or.w	#$00FF,d3
-	bra	sd_r_noclamp
+	bra.s	sd_r_noclamp
 sd_r_neg:
 	and.w	#$FF00,d3
 sd_r_noclamp:
@@ -198,11 +241,11 @@ sd_r_noclamp:
 	moveq	#0,d1
 	move.w	d0,d1			; d1 = leaf.hgt (upper word 0)
 	cmp.w	#$FF,d1
-	bls	sd_lh_store		; <= $FF -> use low byte
-	btst	#15,d0
-	bne	sd_lh_neg
+	bls.s	sd_lh_store		; <= $FF -> use low byte
+	tst.w	d0
+	bmi.s	sd_lh_neg
 	moveq	#-1,d1			; > $FF, positive -> $FF
-	bra	sd_lh_store
+	bra.s	sd_lh_store
 sd_lh_neg:
 	moveq	#0,d1			; > $FF, negative -> $00
 sd_lh_store:
@@ -272,8 +315,9 @@ sd_lh_store:
 	; fall through to pop
 
 sd_pop:
-	cmpa.w	#0,a2			; depth == 0 ?
-	beq	sd_out
+	; `cmpa.w #0,An` is 10 cycles; a MOVE sets N/Z from its source, and d0 is dead here.
+	move.l	a2,d0			; depth == 0 ?
+	beq.s	sd_out
 	bsr	load_span		; span = subpt_load(depth)
 	subq.l	#1,a2			; depth--
 	subq.l	#1,a1
@@ -281,14 +325,17 @@ sd_pop:
 
 	; ================= exit =================
 sd_out:
-	move.b	d2,mem+$82		; flush span
-	move.l	d2,d0
-	lsr.w	#8,d0
-	move.b	d0,mem+$83
-	move.b	d3,mem+$84
-	move.l	d3,d0
-	lsr.w	#8,d0
-	move.b	d0,mem+$85
+	; Flush span.  mem[] is LITTLE-endian (6502: mem[a] = lo) and the 68000 is big-endian,
+	; so the {lo at $82, hi at $83} pair is one word store of the BYTE-SWAPPED d2 — 42
+	; cycles against the 58 of move.b/move.l/lsr.w #8/move.b.  $82 and $84 are even and
+	; mem is aligned(4) (cpu.c), so the word access cannot fault; the flight VBI writes
+	; none of $82-$86 (CLAUDE.md ZP write-set), so the wider store races nothing.
+	move.w	d2,d0			; flush span
+	ror.w	#8,d0
+	move.w	d0,mem+$82		; $82 = span.col lo, $83 = hi
+	move.w	d3,d0
+	ror.w	#8,d0
+	move.w	d0,mem+$84		; $84 = span.hgt lo, $85 = hi
 	move.b	d4,mem+$86
 	; Flush mid ($8D-$91) only if one was actually computed.  The budget is the flag for
 	; free: it is set to $14 after the entry guard and decremented ONCE immediately before
@@ -313,7 +360,11 @@ sd_out_nomid:
 	move.b	d0,mem+$9F
 sd_ret:
 	move.l	a2,d0			; return depth
+	ifd	ROF_RASTER_SPAN_ABI
+	movem.l	(sp)+,d2-d7/a2-a3	; must mirror the prologue's list exactly (FRM)
+	else
 	movem.l	(sp)+,d2-d7/a2-a4
+	endc
 	rts
 
 ; ---------------------------------------------------------------------------
@@ -343,17 +394,23 @@ sd_ret:
 	endc
 terrain_subdivide_column_obj:
 terrain_subdivide_column_obj_asm:
-	movem.l	d2-d7/a2-a4,-(sp)	; 9 longs = 36 bytes; args shift +36
+	ifd	ROF_RASTER_SPAN_ABI
+	movem.l	d2-d7/a2-a3,-(sp)	; 8 longs = FRM bytes; args shift +FRM
+	else
+	movem.l	d2-d7/a2-a4,-(sp)	; 9 longs
+	endc
 	moveq	#0,d0
-	move.b	43(sp),d0		; startDepth (7 + 36)
+	move.b	(ARG_START,sp),d0	; startDepth
 	movea.l	d0,a2			; a2 = depth = startDepth
 	lea	mem,a1
 	adda.l	d0,a1			; a1 = mem + depth
+	ifnd	ROF_RASTER_SPAN_ABI
 	moveq	#0,d0
-	move.b	47(sp),d0		; rasterEntryDepth (11 + 36)
+	move.b	(ARG_RASENT,sp),d0	; rasterEntryDepth
 	movea.l	d0,a4
+	endc
 	moveq	#0,d0
-	move.b	51(sp),d0		; obj0 (15 + 36)
+	move.b	(ARG_OBJ0,sp),d0	; obj0
 	lea	mem,a0
 	adda.l	d0,a0			; a0 = mem + obj0
 
@@ -380,14 +437,12 @@ terrain_subdivide_column_obj_asm:
 	cmp.w	d0,d2			; span.col - far0.col (signed)
 	blt.s	sd_obj_go		; span.col < far0.col -> subdivide
 	; bail: publish the span, i.e. exactly the 5 bytes the caller used to write
-	move.b	d2,mem+$82
-	move.l	d2,d0
-	lsr.w	#8,d0
-	move.b	d0,mem+$83
-	move.b	d3,mem+$84
-	move.l	d3,d0
-	lsr.w	#8,d0
-	move.b	d0,mem+$85
+	move.w	d2,d0			; (byte-swapped word stores — see sd_out)
+	ror.w	#8,d0
+	move.w	d0,mem+$82
+	move.w	d3,d0
+	ror.w	#8,d0
+	move.w	d0,mem+$84
 	move.b	d4,mem+$86
 	bra	sd_ret
 sd_obj_go:
@@ -422,8 +477,8 @@ submid:
 	add.w	d0,d1
 	addq.w	#1,d1			; d1 = fracSum (0..511)
 	move.b	d1,d7			; mid.frac = low byte
-	btst	#7,d7
-	beq	sm_done
+	tst.b	d7			; bit 7 of the byte == N after tst.b
+	bpl.s	sm_done
 	; roughness: disp = (uint16)(mid.col - span.col) >> 1
 	move.w	d5,d0
 	sub.w	d2,d0
@@ -455,17 +510,7 @@ push_mid:
 	move.b	d7,(SDFRAC+1,a1)
 	rts
 
-; load_far — d0 = far.col, d1 = far.hgt from slot depth (a1).  (frac not needed by callers.)
-load_far:
-	moveq	#0,d0
-	move.b	(SDCOL_HI,a1),d0
-	lsl.w	#8,d0
-	move.b	(SDCOL_LO,a1),d0
-	moveq	#0,d1
-	move.b	(SDHGT_HI,a1),d1
-	lsl.w	#8,d1
-	move.b	(SDHGT_LO,a1),d1
-	rts
+; (load_far was inlined into sd_inner — its one call site — and split on the high byte.)
 
 ; load_span — span (d2/d3/d4) = subpt_load(depth) from slot depth (a1).
 load_span:
