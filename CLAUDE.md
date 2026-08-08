@@ -549,6 +549,20 @@ Rewrite hot functions in idiomatic C:
   `grp = b*0x01010101u`, walk a `uint32_t*`): all bytes equal ⇒ endianness-neutral (identical on
   host + Amiga). Used for `terrain_draw_frame_core`'s `$BD00` column-id fill (commit ac3a9a8) —
   46 long stores; still needs the 4-aligned + ISR-untouched + non-overflowing-lane conditions.
+  ⚠⚠ **GCC CAN SILENTLY UNDO THE BATCHING — always re-read the disassembly.** A uniform fill written
+  as a plain `uint32_t*` loop is recognised as a **memset** and becomes `jsr memset`, and this build's
+  freestanding memset (`support/gcc8_c_support.c`) is a byte-at-a-time `move.b d0,(a0)+`/`cmpa.l`/
+  `bne` loop at ~24 cycles a byte — i.e. it hands every byte write straight back and the "batching"
+  is worth nothing. Keeping the pointer **`volatile`** is what pins the long stores (commit 688069d,
+  `terrain_draw_frame_core`'s `$264E..$26D1` fill). ⚠ But volatile is not a free win either: over a
+  SHORT trip count with two interleaved volatile long pointers GCC emitted a redundant volatile READ
+  before every byte store — measured on the adjacent `$67` fill and reverted. So: batch, then LOOK at
+  what was emitted; the source saying `move.l` guarantees nothing.
+  ⚠ Also worth knowing: **"odd address" can mean odd OFFSET, not odd address.** The four `$6B` runs
+  at `$264E/$266F/$2690/$26B1` carried a comment saying they could not be batched because
+  `$266F`/`$26B1` are odd — they are odd only as offsets from `$260E`; every actual address is even,
+  which is all `move.l` needs on a 68000 (it faults on ODD, 4-alignment is a 68020+ perf matter). And
+  those four `$21`-byte runs ABUT, so they are really one contiguous 132-byte fill = 33 longs.
 - **Skip redundant work the original wasted.** Avoid re-decoding/-scanning what hasn't changed
   (per-writer dirty flags; dirty row/cell ranges, cf. planet viewport `g_planetRowLo/Hi` and the
   cockpit plan `docs/cockpit-render-plan.md`). Shadow-compare scans are themselves a full
