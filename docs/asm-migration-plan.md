@@ -837,3 +837,111 @@ disassembly against the measured shape.
 ⚠ **The framerate cannot resolve this and is not the claim.** +0.75% end-to-end against a harness
 whose single-window noise is ±2% is agreement, not evidence; the defensible numbers are the static
 −133 cycles/call and the differential's −3.6% ratio (2.5× its own oracle-arm drift). Quote those.
+
+---
+
+## Phase 10 — the rasterizer's two per-column taxes (2026-08-08, 08ef7c3 + 7604664)
+
+Neither is a restructure. Both are things the hottest inner code paid on EVERY column for a
+case that is in the minority, found by pricing the two sequences that run most often in the
+function rather than by looking at the profile.
+
+**First, the audit that came up empty**, so nobody repeats it. Phase 8's "what fraction of
+this twin is MARSHALLING?" was the standing lead, aimed at `project_terrain_points`,
+`terrain_frame_setup` and `terrain_plot_object`. Counted off the sources, all three are dead:
+
+| twin | calls/it | marshalling | why it cannot pay |
+|---|---|---|---|
+| `project_terrain_points` | 48 | ~136 of ~1440 cyc = **9%** | 84 of the 136 is the `movem` for d2/d3/d5/d6, which the two PAXIS expansions genuinely need |
+| `terrain_frame_setup` | **2** | ~196 cyc of ~22000 = **0.9%** | a 45-cell loop amortises an 11-long `movem` to nothing — non-starter by construction |
+| `terrain_plot_object` | 48 | — | the whole bucket is ~2.8% of wall and the quiet hot path is already a two-load early-out |
+
+Phase 8's ~50% was a property of *subdivide* (68.4 calls/iteration for a body averaging 1.21
+inner iterations), not a general law. **The question to ask is not "is there marshalling?" but
+"is the call count high AND the body small?"** — only subdivide had both.
+
+### 10.1 DRAWDOT: read COL_MAX into d7, not d1 (08ef7c3)
+
+The macro is inlined at 23 sites and runs 23.8 times a call, so its first three instructions
+are the most-executed sequence in the file:
+
+```
+moveq   #0,d1                4
+move.b  (a2,d5.w),d1        14      oldMax = COL_MAX(plotCol)
+cmp.b   d1,d0                4
+```
+
+The `moveq` exists only for the **accepted** path, where oldMax becomes a word index into
+`kDrawDotRowOff` — and only 36% of draws are accepted. It cannot simply be dropped while the
+value lands in d1, because DRAWDOT itself leaves the row byte-offset (up to 5640) in d1, so
+the second DRAW of a leaf block would compare against a dirty high byte.
+
+**d7 can hold it.** Every writer of d7 in this file is either a `move.b` inside DRAWDOT or
+phase 1's `move.l d1,d7`, whose value is a column `<= $AA` (col < `$2C` plus child `<= $7F`),
+so bits 8-15 are already clear. The accepted path pays 4 back with `move.w d7,d1` before the
+doubling — `add.w d7,d7` in place would put oldMax's bit 7 into d7's high byte and break the
+invariant for the *next* draw.
+
+**-4 on every draw, +4 on the 8.6 accepted = ~-61 cycles/call.** The invariant is now
+load-bearing; the one path that reaches a draw before phase 1 has written d7 (the
+`endCol == col` one-column early-out) clears it explicitly.
+
+### 10.2 Bias plotCol by -$D4 so the right-edge test is a bare `bpl` (7604664)
+
+`plotCol >= $D4` is tested ~14 times a call and fires exactly **once**. Each site was
+`cmp.b #$D4,d5` + `bcc` = 16 cycles not-taken. Biased, "still on screen" means "negative",
+which the column step has already computed.
+
+- **It cannot be a signed BYTE.** In `[$2C,$D4)` the biased column is -168..-1. So d5 is
+  stepped `addq.w #1,d5` and tested as a WORD, and the three plotCol-indexed bases
+  (`mem+$260E`, `kDotColMask`, `kDotColOff`) are rebased by `+$D4` — the `.w` index
+  sign-extends, so the negative index lands back on the real entry. a5/a6 are indexed by the
+  height, not the column, and are untouched.
+- **Nine sites** take the branch straight off the step's own N flag: **-8 each**.
+- **Four cannot.** They sit after `RASPOP`, and the oracle's loop genuinely pops —
+  `frac = CTL_FRAC(depth+1)` included — *before* testing the bound (`rof_native.c`: the test
+  is at the loop top and `col = plotCol` follows it). An early exit there must still carry the
+  popped frac, so the pop cannot move: they get `tst.w d5`, **-4 each**.
+- Three of the fused blocks move the test ahead of their `move.l d2,d6` / `move.b 5(a3),d4`
+  restores and grow a stub that redoes the frac restore on the way out. d6 is callee-saved and
+  not an output, so **only frac has to be redone**.
+- **Two exit tails.** Leaf blocks store the biased d5 into a0, so `done` adds `$D4` back —
+  into a CLEAN d0, because the subdivide fast path merges the result with `or.w d0,d2` and
+  `move.w d5,a0` is a sign-extending MOVEA.W. ⚠ The C-ABI shim only keeps the low byte, so
+  `raster_verify` alone would NOT have caught a dirty high byte here — `subdiv_verify` is the
+  instrument that covers it. The paths exiting before phase 2 biases anything (the two
+  trivial-segment early-outs, the one-column case, ph2_enter's own bound test) leave a plain
+  column in a0 and take `done_raw`.
+
+**~-110 cycles/call** weighted by the far-bisect histogram, against +12 to un-bias col once.
+
+### Result
+
+| verification | result |
+|---|---|
+| `raster_verify.gdb` (`VERIFY=1 PROBES=1`, C-ABI entry) | 10.1: **0 / 1751** · 10.2: **0 / 1753** |
+| `subdiv_verify.gdb` (`VERIFY=1 NO_RASTER_VERIFY=1`, the shipping fast path) | 10.1: **0 / 5110** · 10.2: **0 / 5117** |
+| A/B vs the SAME C oracle, comparable windows (1751-1762 calls, vbi 14294-14347) | ratio **0.4127 -> 0.3934 -> 0.3845**, i.e. -4.7% then -2.3% = **-6.8%**, against oracle-arm drifts of +1.9% and +1.1% |
+| end-to-end (`FPSCOUNT=1 FIXED_RNG=1 COMBAT=1 COMBAT_QUIET=1`, `fps_seg.gdb`, vbi 1902->4902, all 15 segments valid) | 1237 / 3000 = **20.62 FPS** against the standing 20.20; per-segment 16.6-23.0 vs 16.5-22.3 |
+
+**The claim is the differential's -6.8% of the rasterizer** (~1.5% of wall at its ~21.5%
+share); the static counts say ~170 cycles of a ~4200-cycle call, i.e. ~4%. +2.1% end-to-end
+against a harness with ±2% single-window noise is agreement, not evidence — and note this
+harness has over-read every win in the table's history.
+
+### Evaluated, NOT done
+- **Fall-through layout for the fused blocks** (Phase 7's leftover, ~21 cyc/call) is now worth
+  LESS than it was: after 10.2 the block tail is `bpl.s rdn_s5` / `move.l d2,d6` / `bra
+  ras_sp3`, so making ras_sp3 fall through means moving `rdn_s5` out of short range and
+  turning the `bpl` into a word branch — +4 not-taken eats 4 of the 10 saved. ~8-20 cyc/call
+  = 0.2-0.5% of the rasterizer, for a file order in which the blocks no longer read 3,4,5,6,7,8.
+  Not worth it in the file where two crashes this week came from layout/liveness slips.
+- **DRAWDOT's `$97` saturation** (`cmp.b #$97,d0` + `bcs` = 18 cycles on every accept = ~154
+  a call) is the biggest remaining per-draw item. A 256-byte `sat[h]` table would make it one
+  `move.b (aX,d0.w),(a2,d5.w)` — but **there is no free address register** (a0=col, a1/a2/a4/
+  a5/a6 = tables, a3 = the control-point stack). The branchless `scs`/`not`/`or` form prices at
+  40 cycles against the common path's 36. Closed unless a register frees up.
+- **Sentinel-slot elimination of the `cmpa.l sp,a3` depth-0 test** (14 cycles × ~4 pops a call):
+  seed a slot below the base whose span dispatches to `done` and the test disappears. **Wrong:**
+  the oracle at depth 0 returns WITHOUT the pop, so it keeps the running frac, while RASPOP
+  would overwrite d4 with the depth-0 slot's `mem[$F4]`. Observable — frac is an output.
