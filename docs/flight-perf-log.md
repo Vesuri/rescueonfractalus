@@ -856,3 +856,107 @@ store. 40 bytes is ~0.05% of wall, so it is noted in the comment rather than cha
    −14 t/it in `head` is real and not drift. **Prefer a measurement that contains its own control.**
 2. **GCC can undo hand-batching.** See the memset trap above. Always re-read the disassembly after
    a batching change — the source saying `move.l` guarantees nothing.
+
+## 11. 2026-08-08 (later) — pricing the object draw-order walk, the last unpriced item in the pipeline
+
+The PC profile's third-largest bucket, `terrain_draw_objects`, is the loop that walks the `$B67C`
+draw-order table. Its callees (project / plot_object / subdivide / rasterize) are separate symbols,
+so the bucket is pure BOOKKEEPING — and it holds **8.3% of wall with literally zero objects on the
+map**. It was the one item in the terrain pipeline nobody had costed properly; §7.2 had counted the
+hand-asm headroom (~0.8%) but not the *work*.
+
+### 11.1 Shape — re-measured on the target (quiet) baseline
+
+`objloop_shape.gdb`, `COMBAT=1 COMBAT_QUIET=1 PROBES=1 FIXED_RNG=1 PROFILE_NORING=1`, 462 passes
+over vbi 1900→4003, every segment at `VVBLKI=$4ff5`/`$3D=00`:
+
+    pairs/pass 72   primary-culled 28   both-visible 34   projections 24
+
+Dead stable across all 7 segments and **identical to the combat shape** (§7.2's 72/28/34/23), so the
+recorded numbers transfer to the target baseline unchanged. 72 − 28 − 34 = 10 companion-culled.
+
+The trip count is not data-dependent: `$B67C` is static ROM data (dumped from `rof.xex`: 144 bytes,
+72 pairs over 45 distinct object ids `$00-$2C`, no pair with `obj0 == obj1`), every path through the
+body advances the index by exactly 2, and the only exit is `idx == $90`. **72 iterations, always.**
+
+### 11.2 The honest price — 4.4% of wall, not 8.3%
+
+Counted off the lean-build disassembly (cycles per pair, callees excluded):
+
+| path | per pair | count/pass | cycles/pass |
+|---|---|---|---|
+| primary-culled | 120 | 28 | 3360 |
+| companion-culled | 216 | 10 | 2160 |
+| both-visible | 476 | 34 | 16184 |
+| | | | **21704** |
+
+× 2 passes = **43.4k cycles/iteration ≈ 4.4% of wall** (the §10.1 denominator, ~985k cycles/it).
+**So the PC profile over-states this bucket by ~1.8×** — consistent with the standing ~1.4× ISR-stub
+warning plus call-boundary attribution. Any plan sized off the 8.3% was sized off roughly double the
+real thing.
+
+### 11.3 What came out — three pieces of 6502 register-save residue, and a free unroll
+
+None of it is drawing; all of it is the transliteration keeping the 6502's habits:
+
+1. **`$28DB` (`collapse_cur_obj`) was stored every pair.** It is the 6502's save slot for X across
+   the calls; the C already keeps `obj0` in a register. Nothing reads it in between — its only other
+   user is `terrain_frame_setup`, long returned — and the loop always ends on the pair at `$8E`, so
+   the oracle's final value is just the last `obj0`. Written ONCE after the loop.
+2. **The `$272E` reload after `terrain_subdivide_column_obj` was a pure round trip**, plus a dead
+   `if (idx == 0) idx++` (the 6502 shares that INY with the culled path; the reload is even and
+   `<= $90`, so it can never be 0). The STORE stays — that residue is observable.
+3. **The draw-order index was a `uint8_t`**, costing an `andi.l #255` plus a `moveq`/`move.b`
+   zero-extend at each of the three places it indexes a table. It cannot wrap, so it is now an
+   `unsigned`.
+4. **`$24B4` (the visibility class) got its own address-register base**, so a cull test no longer
+   materialises the per-object base pointer; that `lea` is now built only on the visible path, where
+   the five vector copies need it. GCC also keeps the pointer live across the calls, which makes the
+   primary's second class read 8 cycles instead of 12.
+
+**The unroll is a bonus that falls out of (2)+(3).** With the reload gone and the index no longer a
+byte, GCC can finally see that the stride is a constant 2 and the trip count is exactly 72 — so it
+unrolls ×3 with a single `cmpi.l #144,d2` exit test, amortising the loop tail from 22 cycles a pair
+to 6. That is the largest single component of the culled path's saving.
+
+| path | before | after | Δ |
+|---|---|---|---|
+| primary-culled | 120 | **80** | −40 |
+| companion-culled | 216 | **160** | −56 |
+| both-visible | 476 | **406** | −70 |
+| **cycles/pass** | **21704** | **17644** | **−4060** |
+
+**−8120 cycles/iteration = −0.82% of wall**, and the walk drops 4.4% → 3.6%. The prologue grows from
+7 saved registers to 11 (+64 cycles per call × 2 calls/it) and the code from 355 to ~800 bytes;
+both are already inside the figure above / negligible against the ~499 KB image.
+
+**Correctness: `make validate FN=terrain_draw_frame` — 2000 cases (real flight snapshot, X in
+{0,$30}), 0 mem mismatch.** This function is a validated twin, so unlike the asm work in §9-10 the
+proof is exhaustive over the fixture and needs no on-target differential.
+
+### 11.4 What is left in the walk, and why it stops here
+
+3.6% of wall remains, in three roughly equal pieces: the five per-pair vector copies that seed
+subdivide's sub-point [0] (~0.83%), the per-pair table + class loads (~1.1%), and the stack-argument
+call ABI into subdivide/project (~0.47%).
+
+- **The five copies cannot go the way §10.1's five did.** Those went through `$82-$86`, which the
+  subdivide asm holds in registers and only publishes on the entry-guard bail. These write SubPt[0],
+  which subdivide genuinely reads back from memory — the entry guard reads the column, and `load_far`
+  reads the whole point on every inner iteration at depth 0. The stores are load-bearing.
+- **A hand-asm twin would be worth maybe 1.4% but is effectively unverifiable.** Every other asm twin
+  here is proven by an in-process differential: run both implementations on the same inputs, compare.
+  That is impossible for this one — it calls `terrain_plot_object`, which reads POKEY RANDOM and
+  writes the terrain bitmap, the object arrays and HUD state, so a second run is neither
+  side-effect-free nor repeatable. It would be the first asm twin in the tree with no differential.
+  **Not taken.** If it is ever revisited, the price of admission is an RNG-replay harness, not the asm.
+
+### 11.5 End-to-end, for what it is worth
+
+`make COMBAT=1 COMBAT_QUIET=1 FIXED_RNG=1 FPSCOUNT=1` + `fps_seg.gdb`, same vbi 1901→4900 window as
+the recorded baseline, all 15 segments valid (`VVBLKI=$4ff5`, `$3D=00`, alt bucket `$80` throughout):
+**1122 painted / 3001 vbi = 18.69 FPS**, against the recorded **18.41** (1105/3001). That is +1.5%,
+against +0.83% predicted from the static count — i.e. **the harness cannot resolve this change**
+(one sample each, and `FIXED_RNG` pins the level, not the trajectory). The number to quote is the
+static one. Recorded here only as a smoke test: the game still flies the same level, paints every
+segment, and nothing regressed.

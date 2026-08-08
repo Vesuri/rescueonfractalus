@@ -7841,54 +7841,77 @@ extern unsigned long g_tdPairs, g_tdCulled, g_tdVisPairs, g_tdProjCount;
  * into locals so they stay in address registers (instead of a 32-bit `addi.l #0xB67C` + `lea
  * mem` per lookup), and each of the ten per-pair vector copies is written as one
  * memory-to-memory `mem[k] = oN[j]` so GCC emits a single MOVE.B (d16,An),(d16,An) rather than
- * a load into a data register plus an absolute-long store. */
+ * a load into a data register plus an absolute-long store.
+ *
+ * The loop itself is pure BOOKKEEPING — it does no drawing (its callees do), yet with zero
+ * objects on the map it still costs ~4.5% of flight wall clock, over exactly 72 pairs per pass.
+ * Three pieces of that were the 6502's, not ours, and are gone (2026-08-08):
+ *   - the $24B4 visibility class gets its OWN base register, so a cull test is one
+ *     `move.b (0,a5,dn.l)` instead of `lea (0,a2,dn.l),aN` + `move.b (9396,aN)`;
+ *   - the draw-order index is an `unsigned`, not a `uint8_t` — see below;
+ *   - $28DB and the $272E reload are 6502 register-save residue — see below.
+ * Counted off the disassembly, see the log. */
 __attribute__((noinline)) static void terrain_draw_objects(void) {
     volatile uint8_t *M = mem;                       /* one base register for the whole loop */
     volatile const uint8_t *order = mem + 0xB67C;    /* draw-order table base */
+    volatile const uint8_t *cls = mem + 0x24B4;      /* per-object visibility class, own base */
 #ifdef __mc68000__
-    /* Hide both bases from the optimiser.  Left as plain initialisers GCC knows they are the
+    /* Hide the bases from the optimiser.  Left as plain initialisers GCC knows they are the
        address of a symbol and constant-folds every use back into an absolute-long address
        (`addi.l #443882` / `adda.l #397166` per lookup, MOVE.B Dn,(xxx).L = 16 cycles per store).
        Forced into address registers it uses (d16,An) / (0,An,Dn.w) instead — 12 cycles, and no
        per-iteration address arithmetic at all. */
     __asm__ ("" : "+a" (M));
     __asm__ ("" : "+a" (order));
+    __asm__ ("" : "+a" (cls));
 #endif
-    uint8_t order_idx = 0x00;
+    /* NOT a uint8_t.  The index only ever takes the values 0,2,4..$90 — every path adds 1 or 2
+       and the loop's sole exit is the == $90 test — so it cannot wrap, and a byte type made GCC
+       spend an `andi.l #255` plus a `moveq #0`/`move.b` zero-extend at each of the three places
+       it indexes a table with it. */
+    unsigned order_idx = 0;
+    uint8_t obj0 = 0;
     for (;;) {
         TDPAIR(g_tdPairs);
-        uint8_t obj0 = order[order_idx++];           /* primary endpoint of the next pair */
-        volatile uint8_t *o0 = M + obj0;             /* base for obj0's per-object arrays */
-        M[0x28DB] = obj0;
-        if (o0[0x24B4] & 0xA0) {                     /* primary off-screen or culled: skip the pair */
+        obj0 = order[order_idx++];                   /* primary endpoint of the next pair */
+        /* $28DB (collapse_cur_obj) is the 6502's save slot for X across the calls below — the C
+           keeps obj0 in a register, so the per-pair store is pure mem[] residue.  Nothing reads
+           it in between (its only other user is terrain_frame_setup, which has long returned),
+           and the loop always ends on the pair at $8E, so the oracle's final value is just the
+           last obj0: written ONCE after the loop instead of 72 times. */
+        if (cls[obj0] & 0xA0) {                      /* primary off-screen or culled: skip the pair */
             TDPAIR(g_tdCulled);
             order_idx++;
         } else {
             uint8_t obj1 = order[order_idx++];       /* companion endpoint */
-            volatile uint8_t *o1 = M + obj1;         /* base for obj1's per-object arrays */
-            uint8_t cls1 = o1[0x24B4];               /* companion visibility class (read once) */
-            M[0x272E] = order_idx;                   /* scratch-save the index across the calls */
+            uint8_t cls1 = cls[obj1];                /* companion visibility class (read once) */
+            M[0x272E] = (uint8_t)order_idx;          /* scratch-save the index across the calls */
             if (!(cls1 & 0xC0)) {                    /* companion on-screen and not culled */
+                volatile const uint8_t *o1 = M + obj1;   /* base for obj1's per-object arrays */
                 TDPAIR(g_tdVisPairs);
                 if (!(cls1 & 0x10))                  /* project the companion unless already projected */
                     { TDPAIR(g_tdProjCount); PB(_pp1); project_terrain_points_core(obj1); cpu.X = obj1; OP_TIME(terrain_plot_object()); PE(_pp1, g_tdProjPlot); }
                 /* seed subdivide sub-point [0] with the companion's projected vector */
                 M[0x25B4]=o1[0x2400]; M[0x25D2]=o1[0x242D]; M[0x25F0]=o1[0x245A];
                 M[0x24E2]=o1[0x2487]; M[0x23E2]=o1[0x23B5];
-                if (!(o0[0x24B4] & 0x10))            /* project the primary unless already projected */
+                if (!(cls[obj0] & 0x10))             /* project the primary unless already projected */
                     { TDPAIR(g_tdProjCount); PB(_pp2); project_terrain_points_core(obj0); cpu.X = obj0; OP_TIME(terrain_plot_object()); PE(_pp2, g_tdProjPlot); }
                 /* Subdivide, with the primary's projected vector as the running span endpoint.
                    The five bytes used to be copied into $82-$86 here purely for the callee's
                    prologue to load back out; terrain_subdivide_column_obj takes the object id
                    and loads them itself (see the ABI note at its definition). */
                 CL_CNT(g_clSubCalls);                /* tree entries: a pure COUNT, no bracket */
-                PB(_sd); SEGPRE(); terrain_subdivide_column_obj(0x00, order_idx, obj0); SEGPOST(); PE(_sd, g_tdSubdiv);
-                order_idx = M[0x272E];               /* restore the index (the calls leave $272E untouched) */
-                if (order_idx == 0) order_idx++;
+                PB(_sd); SEGPRE(); terrain_subdivide_column_obj(0x00, (uint8_t)order_idx, obj0); SEGPOST(); PE(_sd, g_tdSubdiv);
+                /* The oracle reloads the index from $272E here, and re-increments it when the
+                   reload reads 0 — the 6502 shares that INY with the primary-culled path.  Both
+                   are dropped: no callee writes $272E (it is this routine's private scratch),
+                   and the reload can never be 0 (the index is even and <= $90).  The store above
+                   stays, because the residue it leaves is observable. */
             }
         }
         if (order_idx == 0x90) break;
     }
+    M[0x28DB] = obj0;                                /* the $28DB residue the oracle leaves */
 }
 
 /* terrain_draw_frame @ $A31E — render one frame's terrain + objects (the flight top-level draw).
