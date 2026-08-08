@@ -61,16 +61,30 @@
 ;     (9102 calls): spans 5-8 are 27.5% of all far-bisects and 53% of the ones 5. does not
 ;     already absorb = 3.6 per call.  ~160 cycles a node, ~8% of this function.
 ;
+;  8. plotCol IS BIASED BY -$D4 THROUGHOUT PHASE 2 (2026-08-08), so the right-edge bound
+;     test is a bare `bpl` on the flags the column step already set.  `plotCol >= $D4` runs
+;     ~14 times a call and was `cmp.b #$D4,d5` + `bcc` = 16 cycles not-taken, for a branch
+;     that fires exactly once per call.  In [$2C,$D4) the biased column is -168..-1, which
+;     does NOT fit a signed BYTE — so d5 is stepped with `addq.w #1,d5` and tested as a WORD,
+;     and a1/a2/a4 are rebased by +$D4 (the .w index sign-extends, so the negative index
+;     lands back on the real entry).  Nine of the sites take the branch straight off the
+;     step's own N flag (-8 each); the other four sit after RASPOP, which clobbers the flags
+;     for a `frac = CTL_FRAC(depth+1)` the oracle genuinely does BEFORE the bound test, so
+;     they get `tst.w d5` (-4 each).  ~-110 cycles a call against +12 to un-bias `col` once.
+;
 ; Register map (callee-saved d2-d7/a2-a6 saved at entry):
 ;   d0/d1/d7 = scratch (also the DRAW macro's scratch)
 ;   d2 = span (cp[depth].col - plotCol)   d3 = height (cursor)   d4 = frac (cursor)
-;   d5 = plotCol   d6 = chgt (TOS control-point height)
-;     (all six hold a BYTE with the upper bits kept clean, so .w arithmetic is safe)
-;   a0 = col — the $82 writeback value; only the leaf handlers update it
-;   a1 = kDotColMask (plotCol -> pixel mask, 0 = off-viewport)
-;   a2 = mem+$260E  (COL_MAX per-column max-height base, indexed by plotCol)
+;   d5 = plotCol - $D4 in phase 2 (see 8. — NEGATIVE while on-screen, and a WORD)
+;   d6 = chgt (TOS control-point height)
+;     (d2/d3/d4/d6 hold a BYTE with the upper bits kept clean, so .w arithmetic is safe)
+;   a0 = col — the $82 writeback value; only the leaf handlers update it, and they store the
+;        BIASED d5, so `done` adds $D4 back.  The paths that exit before phase 2 has biased
+;        anything leave a plain column there and exit through `done_raw` instead.
+;   a1 = kDotColMask + $D4 (plotCol -> pixel mask, 0 = off-viewport)
+;   a2 = mem+$260E + $D4  (COL_MAX per-column max-height base, indexed by plotCol)
 ;   a3 = current control-point slot ptr; slot = [postSpan, hgt, frac], walked +/-3
-;   a4 = kDotColOff  (plotCol -> plane byte offset within the row)
+;   a4 = kDotColOff + $D4  (plotCol -> plane byte offset within the row)
 ;   a5 = g_flightDotPlane (plane2 dot buffer; armed once at init -> never null in flight)
 ;   a6 = kDrawDotRowOff (oldMax -> plane2 row byte-offset, or $FFFF sentinel; word entries)
 ;   d5 doubles as phase-1 scratch (plotCol is not live until ph2_enter).
@@ -212,11 +226,13 @@ terrain_column_rasterize_span:
 	lea	-CPBUF(sp),sp		; allocate the private control-point stack
 	movea.l	sp,a3			; a3 = current slot (depth 0); the base for the
 					;      depth==0 test is SP itself (see the header)
-	lea	mem+$260E,a2		; COL_MAX base
+	; The three plotCol-indexed bases carry the +$D4 that d5's bias took out (see 8. above);
+	; a5/a6 are indexed by the height, not the column, so they are untouched.
+	lea	mem+$260E+$D4,a2	; COL_MAX base
 	move.l	g_flightDotPlane,a5	; plane2 dot buffer (armed at init -> non-null in flight)
 	lea	kDrawDotRowOff,a6	; oldMax -> plane2 row byte-offset
-	lea	kDotColMask,a1		; plotCol -> pixel mask (0 = off viewport)
-	lea	kDotColOff,a4		; plotCol -> plane byte offset
+	lea	kDotColMask+$D4,a1	; plotCol -> pixel mask (0 = off viewport)
+	lea	kDotColOff+$D4,a4	; plotCol -> plane byte offset
 	; seed control-point slot [0] from mem[$EA]/[$F4]; its column becomes the span below
 	moveq	#0,d6
 	move.b	mem+$EA,d6		; chgt = CTL_HEIGHT(0)
@@ -231,18 +247,21 @@ terrain_column_rasterize_span:
 	move.b	mem+$95,d0		; endCol = CTL_COL(0)
 	move.w	d1,a0			; a0 = col (arrived in d0, moved to d1 above)
 	cmp.b	#$2D,d0
-	bcs	done			; endCol < $2D -> nothing on screen
+	bcs	done_raw		; endCol < $2D -> nothing on screen
 	cmp.b	d1,d0			; endCol - col
-	bcs	done			; endCol < col -> empty segment
+	bcs	done_raw		; endCol < col -> empty segment
 	bne.s	ph1_init		; endCol > col -> phase 1
-	; endCol == col: one column wide -> plot it and done
-	move.l	d0,d5			; plotCol = endCol
+	; endCol == col: one column wide -> plot it and done.  There is no bound test on this
+	; path (DRAWDOT's own kDotColMask==0 gate covers it), but d5 still has to carry the
+	; bias, because the three tables it indexes are rebased.
+	move.w	d0,d5			; plotCol = endCol
+	sub.w	#$D4,d5			; ...biased
 	move.l	d6,d0			; _h = CTL_HEIGHT(0)
 	moveq	#0,d7			; the ONLY DRAW that runs before phase 1's `move.l d1,d7`
 					; has established DRAWDOT's d7 bits-8-15-clear invariant,
 					; so this path has to establish it itself (see DRAWDOT)
 	DRAWDOT
-	bra	done
+	bra	done_raw		; a0 is still the plain col from the setup above
 
 	; ---- phase 1: left-clip ----------------------------------------------
 	; depth = 0.  Bisect cursor->endpoint; advance the cursor onto the off-screen
@@ -337,10 +356,10 @@ ph1_push_set:
 
 	; ---- phase 2: trace ---------------------------------------------------
 ph2_enter:
-	move.l	d7,d5			; plotCol = col
-	move.w	d7,a0			; a0 = col
-	cmp.b	#$D4,d5
-	bcc	done
+	move.w	d7,d5			; plotCol = col ...
+	move.w	d7,a0			; a0 = col (plain — only done_raw below can read this one)
+	sub.w	#$D4,d5			; ...biased; N = "still on screen" from here on
+	bpl	done_raw
 	; Dispatch on span, through a 256-entry PC-relative jump table.  The mix POST-FUSION
 	; (derived from the amiga/ras_shape.gdb far-bisect histogram, quiet baseline 2026-08-08:
 	; the fused blocks absorb 5.86 of the 6.27 span-3/4 nodes a call) is span >= 9 44% /
@@ -435,12 +454,12 @@ ph2_ff:
 	move.l	d6,d3			; height = chgt
 	move.l	d3,d0			; _h
 	DRAWDOT
-	addq.b	#1,d5			; plotCol++
+	addq.w	#1,d5			; plotCol++
 	cmpa.l	sp,a3			; depth == 0 ? (cp base == SP; a4 is a dot table now)
 	beq.s	rdn_ff			; depth was 0 -> done
-	RASPOP
-	cmp.b	#$D4,d5
-	bcc.s	rdn_ff
+	RASPOP				; ...clobbers the step's N, and the oracle really does pop
+	tst.w	d5			;    (frac included) BEFORE testing the bound
+	bpl.s	rdn_ff
 	bra	ph2_loop
 
 	; A local `bra done` trampoline so the block's exits above can be SHORT branches.  The
@@ -460,16 +479,16 @@ ph2_fe:
 	addq.w	#1,d0
 	lsr.w	#1,d0			; (chgt + height + 1) >> 1
 	DRAWDOT
-	addq.b	#1,d5
+	addq.w	#1,d5
 	move.l	d6,d3			; height = chgt
 	move.l	d3,d0
 	DRAWDOT
-	addq.b	#1,d5
+	addq.w	#1,d5
 	cmpa.l	sp,a3			; depth == 0 ? (cp base == SP; a4 is a dot table now)
 	beq.s	rdn_fe
-	RASPOP
-	cmp.b	#$D4,d5
-	bcc.s	rdn_fe
+	RASPOP				; clobbers the step's N (see ph2_ff)
+	tst.w	d5
+	bpl.s	rdn_fe
 	bra	ph2_loop
 rdn_fe:	bra	done
 
@@ -502,9 +521,8 @@ ras_sp3_go:
 	move.b	d1,d4			; frac = (uint8_t)fsum  (before DRAWDOT clobbers d1)
 	move.l	d0,d3			; height = mh
 	DRAWDOT
-	addq.b	#1,d5
-	cmp.b	#$D4,d5
-	bcc.s	rdn_fe
+	addq.w	#1,d5
+	bpl.s	rdn_fe
 	; parent (span 2) fe
 	move.w	d5,a0
 	move.w	d6,d0
@@ -512,16 +530,16 @@ ras_sp3_go:
 	addq.w	#1,d0
 	lsr.w	#1,d0			; (chgt + mh + 1) >> 1
 	DRAWDOT
-	addq.b	#1,d5
+	addq.w	#1,d5
 	move.l	d6,d3			; height = chgt
 	move.l	d3,d0
 	DRAWDOT
-	addq.b	#1,d5
+	addq.w	#1,d5
 	cmpa.l	sp,a3			; depth == 0 ? (cp base == SP; a4 is a dot table now)
 	beq.s	rdn_sp3
-	RASPOP
-	cmp.b	#$D4,d5
-	bcc.s	rdn_sp3
+	RASPOP				; clobbers the step's N (see ph2_ff)
+	tst.w	d5
+	bpl.s	rdn_sp3
 	bra	ph2_loop
 rdn_sp3:	bra	done
 
@@ -562,13 +580,13 @@ ras_sp4_go:
 	addq.w	#1,d0
 	lsr.w	#1,d0
 	DRAWDOT
-	addq.b	#1,d5
+	addq.w	#1,d5
 	move.l	d2,d3			; height = mh
 	move.l	d3,d0
 	DRAWDOT
-	addq.b	#1,d5
-	cmp.b	#$D4,d5
-	bcc	done
+	addq.w	#1,d5
+	bpl	done			; no stub reaches this mid-block site: still a word branch,
+					; but 12 cycles instead of the cmp's 8 + 12
 	; parent (span 2) fe
 	move.w	d5,a0
 	move.w	d6,d0
@@ -576,16 +594,16 @@ ras_sp4_go:
 	addq.w	#1,d0
 	lsr.w	#1,d0
 	DRAWDOT
-	addq.b	#1,d5
+	addq.w	#1,d5
 	move.l	d6,d3			; height = chgt
 	move.l	d3,d0
 	DRAWDOT
-	addq.b	#1,d5
+	addq.w	#1,d5
 	cmpa.l	sp,a3			; depth == 0 ? (cp base == SP; a4 is a dot table now)
 	beq.s	rdn_sp4
-	RASPOP
-	cmp.b	#$D4,d5
-	bcc.s	rdn_sp4
+	RASPOP				; clobbers the step's N (see ph2_ff)
+	tst.w	d5
+	bpl.s	rdn_sp4
 	bra	ph2_loop
 rdn_sp4:	bra	done
 
@@ -650,14 +668,13 @@ ras_s5_go:
 	addq.w	#1,d0
 	lsr.w	#1,d0			; (mh1 + height + 1) >> 1
 	DRAWDOT
-	addq.b	#1,d5
+	addq.w	#1,d5
 	move.l	d6,d3			; height = mh1
 	move.l	d3,d0
 	DRAWDOT
-	addq.b	#1,d5
+	addq.w	#1,d5
+	bpl.s	rdn_s5			; out of bounds -> done (d6 is callee-saved, not an output)
 	move.l	d2,d6			; chgt = this node's control height again
-	cmp.b	#$D4,d5
-	bcc.s	rdn_s5
 	bra	ras_sp3			; parent remainder = 3
 rdn_s5:	bra	done
 
@@ -713,26 +730,25 @@ ras_s6_go2:
 	move.b	d1,d4			; frac = fsum2 (before DRAWDOT clobbers d1)
 	move.l	d0,d3			; height = mh2
 	DRAWDOT
-	addq.b	#1,d5
-	cmp.b	#$D4,d5
-	bcc	done
+	addq.w	#1,d5
+	bpl	done			; mid-block: no stub in reach, so still a word branch
 	move.w	d5,a0
 	move.w	d6,d0
 	add.w	d3,d0
 	addq.w	#1,d0
 	lsr.w	#1,d0			; (mh1 + mh2 + 1) >> 1
 	DRAWDOT
-	addq.b	#1,d5
+	addq.w	#1,d5
 	move.l	d6,d3			; height = mh1
 	move.l	d3,d0
 	DRAWDOT
-	addq.b	#1,d5
+	addq.w	#1,d5
+	bpl.s	rdn_s6			; out of bounds -> the frac restore still has to happen
 	move.l	d2,d6			; chgt = this node's control height
 	move.b	5(a3),d4		; frac = fsum1
-	cmp.b	#$D4,d5
-	bcc.s	rdn_s6
 	bra	ras_sp3			; parent remainder = 3
-rdn_s6:	bra	done
+rdn_s6:	move.b	5(a3),d4		; frac = fsum1 — the oracle pops (frac included) before it
+	bra	done			;   tests the bound, so this is the exit value either way
 
 	; --- span 7 = bisect(child 3) + sp3(child) + sp4(parent) ------------------
 	; Identical to ras_s6 except the parent remainder is 4.
@@ -785,26 +801,25 @@ ras_s7_go2:
 	move.b	d1,d4			; frac = fsum2
 	move.l	d0,d3			; height = mh2
 	DRAWDOT
-	addq.b	#1,d5
-	cmp.b	#$D4,d5
-	bcc	done
+	addq.w	#1,d5
+	bpl	done			; mid-block: no stub in reach, so still a word branch
 	move.w	d5,a0
 	move.w	d6,d0
 	add.w	d3,d0
 	addq.w	#1,d0
 	lsr.w	#1,d0
 	DRAWDOT
-	addq.b	#1,d5
+	addq.w	#1,d5
 	move.l	d6,d3			; height = mh1
 	move.l	d3,d0
 	DRAWDOT
-	addq.b	#1,d5
+	addq.w	#1,d5
+	bpl.s	rdn_s7			; out of bounds -> the frac restore still has to happen
 	move.l	d2,d6			; chgt = this node's control height
 	move.b	5(a3),d4		; frac = fsum1
-	cmp.b	#$D4,d5
-	bcc.s	rdn_s7
 	bra	ras_sp4			; parent remainder = 4
-rdn_s7:	bra	done
+rdn_s7:	move.b	5(a3),d4		; frac = fsum1 (see rdn_s6)
+	bra	done
 
 	; --- span 8 = bisect(child 4) + sp4(child) + sp4(parent) ------------------
 	; The child is a span-4 group; unlike ras_sp4 it must not use d2 (this node's
@@ -870,12 +885,11 @@ ras_s8_go2:
 	lsr.w	#1,d0			; (mh2 + height + 1) >> 1
 	move.l	d1,d3			; height = mh2 (DRAWDOT does not read d3)
 	DRAWDOT
-	addq.b	#1,d5
+	addq.w	#1,d5
 	move.l	d3,d0			; _h = mh2
 	DRAWDOT
-	addq.b	#1,d5
-	cmp.b	#$D4,d5
-	bcc	done
+	addq.w	#1,d5
+	bpl	done			; mid-block: no stub in reach, so still a word branch
 	; the child's parent half (span 2) fe, control height = mh1 in d6
 	move.w	d5,a0
 	move.w	d6,d0
@@ -883,23 +897,41 @@ ras_s8_go2:
 	addq.w	#1,d0
 	lsr.w	#1,d0
 	DRAWDOT
-	addq.b	#1,d5
+	addq.w	#1,d5
 	move.l	d6,d3			; height = mh1
 	move.l	d3,d0
 	DRAWDOT
-	addq.b	#1,d5
+	addq.w	#1,d5
+	bpl.s	rdn_s8			; out of bounds -> the frac restore still has to happen
 	move.l	d2,d6			; chgt = this node's control height
 	move.b	5(a3),d4		; frac = fsum1
-	cmp.b	#$D4,d5
-	bcc.s	done
 	bra	ras_sp4			; parent remainder = 4
+rdn_s8:	move.b	5(a3),d4		; frac = fsum1 (see rdn_s6) — falls through to done
 
 	; ---- exit: hand the live cursor back in registers, free scratch, restore -
 	; d4 already holds frac (it is in/out and never saved), so only col and height move.
+	;
+	; TWO tails.  Every leaf block stores the BIASED plotCol into a0 (see 8. in the header),
+	; so this one adds $D4 back — and it must land in a CLEAN d0: the C-ABI shim only keeps
+	; the low byte, but the subdivide fast path merges the result with `or.w d0,d2`, so a
+	; sign-extension left in the high byte would corrupt the caller's span.col.  `move.w d5,a0`
+	; is a MOVEA.W, which sign-extends, hence the moveq.
 done:
-	move.l	a0,d0			; col out
+	moveq	#0,d0
+	move.w	a0,d0			; biased col
+	add.w	#$D4,d0			; -> the real column, 0..255
 	move.l	d3,d1			; height out (before the movem restores the caller's d3)
 	lea	CPBUF(sp),sp		; free the control-point stack
+	movem.l	(sp)+,d2-d3/d5-d7/a2-a6
+	rts
+
+	; ...and the tail for the exits that happen BEFORE phase 2 biases anything: the two
+	; trivial-segment early-outs, the one-column case and ph2_enter's bound test all leave a
+	; plain column in a0.
+done_raw:
+	move.l	a0,d0			; col out
+	move.l	d3,d1			; height out
+	lea	CPBUF(sp),sp
 	movem.l	(sp)+,d2-d3/d5-d7/a2-a6
 	rts
 
