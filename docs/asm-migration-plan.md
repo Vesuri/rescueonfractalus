@@ -945,3 +945,113 @@ harness has over-read every win in the table's history.
   seed a slot below the base whose span dispatches to `done` and the test disappears. **Wrong:**
   the oracle at depth 0 returns WITHOUT the pop, so it keeps the running frac, while RASPOP
   would overwrite d4 with the depth-0 slot's `mem[$F4]`. Observable — frac is an output.
+
+---
+
+## Phase 11 — the span-9..16 fusion: PRICED, one third of it built, family CLOSED (2026-08-08, 4d25815)
+
+The standing #1 item was "fuse the rasterizer's spans 9..16 — the b71a405 trick one more level
+up", filed at ~1.9% of wall. The user's instruction was to **price the two candidate designs
+before writing either**. That was the right call: the filed number was 2.5× optimistic, the
+cheap design was 1.5× under-counted, and the whole family turned out to be worth ~1% of wall.
+
+### The anchor: price it as a fraction of the change it copies
+
+Spans 9..16 are structurally the SAME change as Phase 7, one level up — the child (span 4..8)
+and the parent (span 5..8) are both already blocks, and the scaffolding between them is the same
+instruction set. So count that scaffolding once and convert through a change that was *measured*,
+which avoids the absolute call cost entirely (the doc's own "~4200 cycles/call" and Phase 5's
+"269 cyc/draw ⇒ ~6400" disagree by 1.5×).
+
+Per span-9..16 node, excluding its own entry dispatch and the fsum/midpoint arithmetic (which
+every design keeps):
+
+| item | cyc |
+|---|---|
+| child-span arithmetic (`move.w`/`lsr`/`sub.b`/`move.l`) + variable disp shift | 28 |
+| the three spills: post-child span `(a3)` · chgt `1(a3)` · fsum `5(a3)` | 32 |
+| `addq.l #3,a3` + `bra ph2_loop` | 18 |
+| child loop-top dispatch | 36 |
+| child tail `cmpa.l sp,a3` + `beq.s` (can never fire at depth+1) | 14 |
+| RASPOP | 44 |
+| child tail `tst.w d5` + `bpl.s` + `bra ph2_loop` | 22 |
+| parent loop-top dispatch | 36 |
+| **total** | **230** |
+
+The same count on a span-5..8 node gives **182 removed**, and that change measured **−8.0% of
+the rasterizer at 3.61 nodes/call**. Spans 9-16 are **1.94 nodes/call** (17507 of the far-bisect
+histogram). Everything below is that ratio.
+
+### The four designs
+
+| design | cyc/node | cyc/call | % of rasterizer | % of wall | lines |
+|---|---|---|---|---|---|
+| **(A)** as filed — freeze a3, cfrac in a register | 160 | 310 | 3.8% | 0.76% | ~950 |
+| **(A′)** full inline, a3 still advances | 144 | 279 | 3.4% | 0.68% | ~950 |
+| **(B)** `bsr`/`rts` | 110 | 213 | 2.6% | 0.52% | ~500 |
+| **(C)** child-dispatch stubs only ← **BUILT** | 52-94 | 116 | 1.4% | 0.28% | ~100 |
+
+Corrections to what was filed, all of which changed the decision:
+
+1. **(A) is ~160 cyc/node, not ~196**, and its ~1.9% of wall was sized on node count with no
+   empirical anchor.
+2. **(B) is ~110 cyc/node, not ~74.** The sketch missed that the stub knows `c` and `p` as
+   *constants*, so the span arithmetic, the post-child-span spill and the variable disp shift
+   (32 cycles) go too. (B) is **~76% of (A′)'s win for ~53% of the code**, not 38%/75% — the
+   premise that made (B) look pointless was arithmetic, not judgement.
+3. **The d7 blocker was void.** The second control-height stash does not need a register: it
+   belongs at `1(a3)`, which the generic push already writes and RASPOP already reads, so it is
+   free. Phase 10.1 was never at risk. *(Generalisable: "no free register" is only a blocker if
+   the value has to be in a register — check for a slot the existing code already maintains.)*
+4. **(A) as filed has an aliasing hazard (A′) does not.** Freezing a3 forces every `2(a3)` in the
+   duplicated chain to `5(a3)` — but for c=5..8 the child *itself* parks its fsum1 at `5(a3)`,
+   which is then the outer node's slot. Keeping the a3 advance costs 16 cyc/node and makes the
+   duplicates textually identical to the originals except their tail.
+5. **(A′) needs 8 duplicated chains, not 6.** S=10 and S=11 share c=5 but differ in parent, and a
+   fall-through tail cannot branch to a variable parent. That is the whole reason (B) exists.
+
+### Why the family is closed
+
+Each level can only be fused once the level below it is, for fewer nodes and roughly double the
+code: 9-16 = 1.94/call, 17-32 = 0.97, 33-64 = 0.30, 65+ = 0.02. **Fusing everything above span 8,
+to infinity, is 3.23 nodes/call × 144 = 465 cyc/call = 5.7% of the rasterizer ≈ 1.1% of wall.**
+
+### What was built — (C), the part that needs no duplication
+
+`ras_f9`..`ras_f16` + the `FARFUSE` macro: `ph2_far` with `c`/`p`/disp as immediates, branching
+straight into the child block. Every existing block untouched, a3 unchanged, no register or stack
+change; the child's own tail still pops and dispatches generically, so the parent half is reached
+exactly as before. The one instruction that got dearer is the constant span store
+(`move.b #p,(a3)` 12 against `move.b d2,(a3)` 8) — 12 is the floor either way, since
+`moveq`+`move.b` is also 12.
+
+| verification | result |
+|---|---|
+| `raster_verify` (C-ABI entry) | **0 mismatch / 1611 calls** |
+| `subdiv_verify` (shipping private-register fast path — covers the returned `col`'s width) | **0 / 5172** |
+| end-to-end `fps_seg.gdb`, 15/15 valid | 1235/2998 = **20.60** vs the standing 20.62 — unchanged, as predicted |
+
+### ⚠⚠ The differential's PERF column is SIGN-WRONG at this scale — now demonstrated, not inferred
+
+Phase 7b and Phase 8 both said "at this bracket size the differential is a correctness instrument
+only". This session **calibrated it**, which is worth more than either assertion:
+
+| build | asm t/call | oracle t/call | ratio | truth |
+|---|---|---|---|---|
+| baseline | 12.205 | 32.049 | 0.38084 | — |
+| + the stubs | 12.586 | 32.335 | 0.38900 (+2.1%) | **−116 cyc/call** |
+| + the stubs + 2 `nop`s in DRAWDOT | 12.403 | 32.073 | 0.38672 (−0.6%) | **+190 cyc/call** |
+
+**A known +190 cycles/call reads as a 0.6% speed-up.** There is no usable gain and the sign is
+not reliable. A ~12-tick bracket against an ~80-tick ISR is the regime where `FP_TIME`'s
+credited-at-ISR-exit `g_isrBeamLines` subtraction dominates. **Below roughly 500 cycles/call,
+size the change off the disassembly and say so; do not report the PERF column at all.**
+
+A second, independent trap found on the way, and it applies to every future build-vs-build A/B:
+**`raster_verify.gdb`'s window is wall-clock, not work.** Its `g_fdCalls >= 150` breakpoint is
+never reached in a VERIFY build (the comment in the script says so), so `raster_diff.sh`'s SIGINT
+defines the window — and a faster build lands DEEPER into the flight, on different terrain. The
+asm arm has a special-cased block per span and the oracle does not, so **the asm/C ratio is a
+function of the span mix**: 30 vbi of drift moved it ~2%. Pinning `fdCalls` does not fix it
+either — the sim advances with the VBI, not with painted frames (1598 vs 1522 calls at the same
+fdCalls). **`amiga/raster_verifyV.gdb` pins `g_vbiCount`**, which gave 1598 calls in both arms.
