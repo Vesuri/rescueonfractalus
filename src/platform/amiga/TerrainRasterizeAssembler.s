@@ -111,10 +111,20 @@ CPBUF	equ	96		; 32 control-point slots * 3 bytes (depth stays < ~16)
 ; reads indexed by the RAW column.  kDotColMask is 0 outside [48,208) — a value no real
 ; 2-bit mask has — so the SAME `move.b` that fetches the mask is also the range gate.
 ; That is 6 instructions (~62 cycles) in place of 13 (~104, one a variable-count LSR).
+;
+; ⭐ oldMax is read into d7, NOT d1, so the head needs no `moveq #0` (2026-08-08).  The read
+; has to land in a register whose bits 8-15 are already 0, because the accepted path uses it
+; as a WORD index into kDrawDotRowOff — and d1 cannot be that register: DRAWDOT itself leaves
+; the row byte-offset (up to 5640) in d1, so back-to-back DRAWs inside one leaf block would
+; see a dirty high byte.  d7 can: every writer of d7 in this file is either a `move.b` (here)
+; or phase 1's `move.l d1,d7`, whose value is a column <= $AA (col < $2C plus child <= $7F).
+; That INVARIANT IS NOW LOAD-BEARING — the one path that reaches a DRAW before phase 1 has
+; written d7 (the one-column early-out at ph1_init's `bne`) clears it explicitly.
+; Worth -4 cycles on EVERY draw against +4 (the `move.w d7,d1` below) on the 36% that are
+; accepted: 23.8 draws and 8.6 accepts a call = ~-61 cycles a call.
 DRAWDOT	macro
-	moveq	#0,d1
-	move.b	(a2,d5.w),d1		; oldMax = COL_MAX(plotCol)
-	cmp.b	d1,d0			; _h - oldMax
+	move.b	(a2,d5.w),d7		; oldMax = COL_MAX(plotCol)   (d7 bits 8-15 stay 0)
+	cmp.b	d7,d0			; _h - oldMax
 	bls.s	.dend\@			; _h <= oldMax -> hidden, nothing
 	move.b	d0,(a2,d5.w)		; COL_MAX(plotCol) = _h
 	cmp.b	#$97,d0
@@ -122,7 +132,9 @@ DRAWDOT	macro
 	move.b	#$FF,(a2,d5.w)		; saturate: full column
 .ddot\@:
 	; ROF_PLOT_DOT(plotCol, oldMax) — uses oldMax (the PREVIOUS top), not _h.
-	add.w	d1,d1			; oldMax * 2 (word index)
+	move.w	d7,d1			; the doubling goes through d1: an `add.w d7,d7` here
+	add.w	d1,d1			; would put oldMax's bit 7 into d7's high byte and
+					; break the invariant the head depends on
 	move.w	(a6,d1.w),d1		; kDrawDotRowOff[oldMax], or $FFFF
 	bmi.s	.dend\@			; sentinel -> off display / $6b reset-floor -> skip
 	move.b	(a1,d5.w),d7		; kDotColMask[plotCol]  (0 <=> off viewport)
@@ -226,6 +238,9 @@ terrain_column_rasterize_span:
 	; endCol == col: one column wide -> plot it and done
 	move.l	d0,d5			; plotCol = endCol
 	move.l	d6,d0			; _h = CTL_HEIGHT(0)
+	moveq	#0,d7			; the ONLY DRAW that runs before phase 1's `move.l d1,d7`
+					; has established DRAWDOT's d7 bits-8-15-clear invariant,
+					; so this path has to establish it itself (see DRAWDOT)
 	DRAWDOT
 	bra	done
 
