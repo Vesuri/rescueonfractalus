@@ -349,7 +349,11 @@ extern "C" int g_objRowLo = 47, g_objRowHi = -1;  // dirty scanline range in s_f
 // (the pre-cache code had the same one-frame exposure, re-reading the field every frame).
 static uint32_t s_bandShadow[2][10 * 4];                  // field bytes last seen, per half
 static uint32_t s_bandP3c[2][10 * 4];                     // decoded plane3 (long-copied out)
-static uint8_t  s_bandP1c[2][40 * 4], s_bandP2c[2][40 * 4], s_bandOWc[2][40 * 4];
+// 4-aligned because the paint reads them a LONG at a time (see the band overlay); every row base is
+// a multiple of 40 and every group offset a multiple of 4, so the whole walk stays aligned.
+static uint8_t  s_bandP1c[2][40 * 4] __attribute__((aligned(4))),
+                s_bandP2c[2][40 * 4] __attribute__((aligned(4))),
+                s_bandOWc[2][40 * 4] __attribute__((aligned(4)));
 static signed char s_bandOwLo[2][4] = {{40,40,40,40},{40,40,40,40}};
 static signed char s_bandOwHi[2][4] = {{-1,-1,-1,-1},{-1,-1,-1,-1}};
 // ...and the plane3 long copy itself is skipped when the destination already holds the right bytes.
@@ -2865,16 +2869,29 @@ void RescueOnFractalus::renderFlightDirect()
             }
             const int lo = owLo[row], hi = owHi[row];
             if (hi < lo) continue;                            // no bar bytes in this row (43)
-            const uint8_t* ow = owc + lo;
-            const uint8_t* p1s = p1c + lo;
-            const uint8_t* p2s = p2c + lo;
-            uint8_t* d1 = vrow + lo; uint8_t* d2 = vrow + 40 + lo;
-            for (int n = hi - lo + 1; n--; d1++, d2++, ow++, p1s++, p2s++) {
-                const uint8_t m = *ow;
-                if (!m) continue;
-                *d1 = (uint8_t)((*d1 & ~m) | *p1s);           // salmon bar; terrain kept elsewhere
-                *d2 = (uint8_t)((*d2 & ~m) | *p2s);           // centre marker; terrain kept elsewhere
-            }
+            // RMW a LONG at a time over the ow range rounded out to whole 4-byte groups.  Bytes the
+            // rounding pulls in are a genuine no-op, so this is byte-identical to the per-byte
+            // version it replaces (which cost 146 cycles a byte — every access an indexed
+            // `(0,An,Dn.L)`, see the disassembly): kBandOW = kBandP1|kBandP2, so ow==0 implies
+            // p1==p2==0 and (d & ~0)|0 == d.  Every lane's AND/OR/NOT is independent of the others,
+            // so the uint32_t alias is byte-order neutral — the safe case of the endianness rule in
+            // CLAUDE.md, like the plane3 long copy above.  No per-long zero test: the measured ow
+            // map (BAND_SHAPE, amiga/band_shape.gdb) has no all-zero group inside any row's range
+            // — row 44 `...11...`, row 45 `.111 1111 ... 111.`, row 46 `...11...` — so the test
+            // would be pure cost.  Alignment: vrow = bp (AllocMem, 8-aligned) + 120*row, the plane
+            // stride is 40, the cache row bases are multiples of 40 and g0 of 4.
+            const int g0 = lo & ~3, gn = ((hi | 3) - g0 + 1) >> 2;
+            const uint32_t* ow4 = (const uint32_t*)(owc + g0);
+            const uint32_t* q1  = (const uint32_t*)(p1c + g0);
+            const uint32_t* q2  = (const uint32_t*)(p2c + g0);
+            uint32_t* e1 = (uint32_t*)(vrow + g0);
+            uint32_t* e2 = (uint32_t*)(vrow + 40 + g0);
+            const uint32_t* const ow4End = ow4 + gn;
+            do {
+                const uint32_t m = *ow4++;
+                *e1 = (*e1 & ~m) | *q1++; e1++;               // salmon bar; terrain kept elsewhere
+                *e2 = (*e2 & ~m) | *q2++; e2++;               // centre marker; terrain kept elsewhere
+            } while (ow4 != ow4End);
         }
         s_bandP3SeenHalf[p3i] = (signed char)hf;   // this buffer's band plane3 now holds half `hf`
 #ifdef ROF_BAND_VERIFY

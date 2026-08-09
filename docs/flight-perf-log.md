@@ -1199,3 +1199,114 @@ The note that saved it was the ⚠ its own author had attached — "measure whic
 believing the ~2%". One counter, one run. **When a ranked item's size came from reading code rather
 than from a counter, the counter is the first thing to write, and it is cheap.** The corollary is
 worth as much: the item next to it, never ranked at all, was 4x bigger.
+
+## 14. 2026-08-09 (last) — the band paint RMW goes long-wise: 146 cycles a byte -> 121 a long
+
+The last sized, unclaimed item left in FRAME after §12/§13. `renderFlightDirect`'s windscreen-band
+composite paints the wing-clearance bars over the live terrain with a read-modify-write per byte,
+across each row's cached `ow != 0` range:
+
+```c
+for (int n = hi - lo + 1; n--; d1++, d2++, ow++, p1s++, p2s++) {
+    const uint8_t m = *ow;
+    if (!m) continue;
+    *d1 = (uint8_t)((*d1 & ~m) | *p1s);      // plane1: salmon bar
+    *d2 = (uint8_t)((*d2 & ~m) | *p2s);      // plane2: centre marker
+}
+```
+
+### 14.1 The filed size was right, and the disassembly is why
+
+Unlike §13's item, this one's number came from the disassembly rather than from reading the source,
+and it held. GCC compiled the loop with a single index IV and five invariant bases, so **every one of
+the seven memory accesses is `(0,An,Dn.L)`** — 14 cycles of EA on a 68000, against 8 for `(An)+`:
+
+```
+95c4: move.b (0,a5,d0.l),d1   ; ow      14      95da: and.b  (0,a3,d0.l),d1   ; plane2  14
+95c8: beq.s  ...              ;          8      95de: or.b   (0,a2,d0.l),d1   ;         14
+95ca: not.b  d1               ;          4      95e2: move.b d1,(0,a3,d0.l)   ;         14
+95cc: move.b d1,d6            ;          4      95e6: cmp.l  a1,d0            ;          6
+95ce: and.b  (0,a4,d0.l),d6   ; plane1  14      95e8: beq.s  ...              ;          8
+95d2: or.b   (0,a0,d0.l),d6   ;         14      95ea: addq.l #1,d0            ;          8
+95d6: move.b d6,(0,a4,d0.l)   ;         14      95ec: bra.s  ...              ;         10
+```
+= **146 cycles per painted byte**, 56 per skipped one.
+
+### 14.2 Why the long-wise version is byte-identical, and why it needs no zero test
+
+`kBandOW = kBandP1 | kBandP2`, so a byte with `ow == 0` also has `p1 == p2 == 0` and
+`(d & ~0) | 0 == d`. Rounding each row's `[lo,hi]` out to whole 4-byte groups therefore pulls in
+lanes that are a **genuine no-op RMW**, not an approximation — and since AND/OR/NOT are per-lane, the
+`uint32_t` alias is byte-order neutral (the safe case of CLAUDE.md's endianness rule, same as the
+plane3 long copy directly above it). Destination and caches are 4-aligned: `bp` is `AllocMem`'d, the
+scanline stride is 120, the plane stride 40, the cache row bases multiples of 40 — plus
+`__attribute__((aligned(4)))` on `s_bandP1c/P2c/OWc` to pin it.
+
+**A per-long `if (!m) skip` was measured out rather than assumed in.** `amiga/band_shape.gdb` (new —
+`shape_probe.gdb` prints this section too, but only after EDGE and TFS lines that a BAND_SHAPE-only
+build has no symbols for, and a gdb script aborts on the first missing one) dumps the per-row ow map:
+
+```
+row 43 ow : .... .... .... .... .... .... .... .... .... ....     (no bar bytes at all)
+row 44 ow : .... .... .... .... ...1 1... .... .... .... ....
+row 45 ow : .... .111 1111 1111 1111 1111 1111 1111 111. ....
+row 46 ow : .... .... .... .... ...1 1... .... .... .... ....
+```
+
+Read in fours, **no group inside any row's range is all-zero** — 12 longs, every one of them real
+work. The test would have been pure cost.
+
+### 14.3 The end-pointer test is what got `(An)+` out of GCC
+
+The first cut (`for (int n = gn; n--; )`) kept GCC on the same one-index-five-bases form it had
+chosen for the byte loop: **170 cycles a long** (18 for the indexed `move.l`, 20 for each indexed
+`and.l`/`or.l`). Changing the exit test to a pointer compare against a precomputed end
+(`do { ... } while (ow4 != ow4End);`) forces one of the five to be a real IV and ivopts then keeps
+all five:
+
+```
+80cc: move.l (a3)+,d0   12      80d8: and.l  (a1),d0    14
+80ce: not.l  d0          6      80da: or.l   (a5)+,d0   14
+80d0: move.l (a2),d1    12      80dc: move.l d0,(a1)+   12
+80d2: and.l  d0,d1       8      80de: cmpa.l d5,a3       6
+80d4: or.l   (a6)+,d1   14      80e0: beq.w  ...        12
+80d6: move.l d1,(a2)+   12
+```
+= **121 cycles per long** (120 on the unrolled second copy, which exits `bne.s`). So 4 bytes of band
+went 584 -> 121.
+
+⭐ **Generalisable, and cheaper than the alternatives: when GCC strength-reduces a multi-pointer walk
+into indexed addressing, make the loop's exit test a pointer compare.** On a 68000 that swap is worth
+6 cycles per long access. The two escalations considered first were both worse: a `noinline` helper
+pays ~150 cycles of stack-passed args and prologue per row against the ~230 it recovers, and inline
+asm is an outsized instrument for a ~1% item.
+
+### 14.4 What it measured
+
+`amiga/band_shape.gdb`, quiet baseline, ~690 painted frames each arm, and the two neighbouring
+sub-brackets are the same-run control (they are essentially all bracket floor and cannot move):
+
+| bracket (t/painted frame) | before | after |
+|---|---|---|
+| object plane1 overlay | 1.89 | 1.66 |
+| crosshair | 1.73 | 1.52 |
+| **band composite (paint)** | **17.41** | **9.19** |
+
+**-8.23 t/frame = -47% of the paint = -16.5 t/it ≈ -1.15% of the 1434 t/it shipping frame.** The
+static count predicts -7.1 t/frame (32 painted bytes x 146 + 2 skipped x 56 = 4784 cycles, against 12
+longs x 121 = 1452 plus ~150 of extra per-row group arithmetic); measurement and count agree to 17%,
+with the controls drifting 0.2 t/frame = 3% of the effect.
+
+`BAND_VERIFY` (which composites the frame both ways and byte-compares all 4 rows x 3 planes against
+the ORIGINAL per-byte loop, kept live for exactly this): **0 mismatch / 300 calls, objLeak 0.**
+
+End-to-end `fps_seg`: **22.12 FPS** (1327 painted / 3000 vbi, 15/15 segments live, 17.7-24.6) against
+the standing 21.82. **+1.4% against a predicted 1.15% is agreement, not evidence** — it is inside the
+±2% single-window noise, and three of this run's segments sat at `alt=f7/fd/08` where the baseline
+was uniformly `alt=80`, i.e. the trajectory diverged as it always does. The bracket and the cycle
+count are the claim.
+
+### 14.5 What is left in FRAME
+
+Only the change-detect loop (~0.45%: 40 volatile long compares/frame at ~90 cycles, GCC indexing
+because the loop juggles six pointers — and §14.3 is now the known fix for exactly that shape).
