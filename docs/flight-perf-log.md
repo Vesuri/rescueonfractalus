@@ -1411,3 +1411,83 @@ and re-running a `FIXED_RNG` binary is n=1 anyway — two runs of it are bit-ide
 session wants real end-to-end variance it must use `fps_multi.gdb`'s disjoint windows, and even
 then the resolution floor stands: **at this point in the project, individual wins are below what any
 framerate measurement can see, and the phase budget is the only instrument that can price them.**
+
+## 16. 2026-08-09 — `terrain_subdivide_column` RE-PRICED (analysis only, nothing shipped)
+
+The standing ⭐⭐⭐ "START HERE" item said subdivide is "the biggest bucket that has been examined
+only once". That framing predates **ea8edc0** (the 1-arg object ABI) and **54e7999** (the ZP-residue
+reader survey), and it does not survive them. Nothing was changed here; this section exists so the
+next session starts from the numbers instead of the framing.
+
+### 16.1 The shipping call path
+
+`grep` of the linked build: **there is exactly ONE subdivide call site in flight** —
+`SUBDIV_OBJ(0x00, order_idx, obj0)` in `terrain_draw_objects` (rof_native.c ~L7955), which resolves
+to `terrain_subdivide_column_obj(obj0)` under `ROF_SUBDIV_OBJ1ARG`. The `_core` entry is reached only
+through the 6502-ABI shim `terrain_subdivide_column()`, i.e. the validation oracle. **So all tuning
+belongs to the OBJ entry, whose span already comes from the object arrays, not from `$82-$86`.**
+
+### 16.2 The dominant path, hand-counted
+
+Shape (unchanged, `ras_shape.gdb` 2026-08-08): 68.4 calls/iteration · 1.21 inner iterations ·
+**0.55 rasterize calls, so 45% of calls only ever skip** · 0.40 midpoints · 0.11 pops · 1.1%
+entry-guard bails. Counting the 45% path off `TerrainSubdivideAssembler.s`:
+
+| block | cyc/call | verdict |
+|---|---|---|
+| `sd_out` flush (`$82-$86` span, `$8D-$91` mid guard, `$9F`) | ~140 | **the only live item — see 16.3** |
+| prologue + epilogue `movem` (8 longs) + `rts` | 164 | all 8 registers live; see below |
+| span load from the object arrays | 112 | **at the 68000's floor** |
+| entry guard (`$B5` + far0.col + the compare) | 96 | `$B5` has a live in-flight reader |
+| entry setup (`a0`/`a1`/`a2`) | 44 | already minimal under the 1-arg ABI |
+| **actual work** (phase 2, phase 3, inner, cascade, pop) | **~182** | |
+| **total** | **~742** | **~75% marshalling** |
+
+**Why the span load cannot use the entry guard's word trick.** The guard replaces a 22-cycle
+`lsl.w #8` with `move.w mem+SDCOL_HI,d0`, which works because `SDCOL_HI` is a fixed EVEN address and
+the 68000 is big-endian, so slot 0's byte lands in bits 8-15. Neither precondition holds elsewhere:
+the object arrays are at `$242D`/`$2487` (**odd**), so `mem + $242D + obj0` is even only for odd
+`obj0`; and inside the body the base is `a1 = mem + depth` with depth variable, so a word read faults
+on half the depths. A `hi<<8` word table was priced too: `moveq/move.b/add.w/move.w(0,a4,d0.w)` = 46
+against the current 50, i.e. **+4 saved per load against +16 for putting `a4` back in the `movem`** —
+a net loss. **The two `lsl.w #8` are the floor.**
+
+**Why the `movem` cannot shrink.** d2/d3/d4 = span, d5/d6/d7 = mid, a2 = depth, a3 = budget, with
+d0/d1/a0/a1 as the ABI scratch. Dropping `a2` (deriving depth from `a1 - mem`) was counted: −16 on
+the `movem` pair and −8 per push/pop, against +16 for computing the return value and +4 on each of
+two compares — **a wash**.
+
+**Why `sd_out`'s two `ror.w #8` are the floor.** The alternative byte-wise flush is 58 cycles
+against 42, `movep` writes bytes 2 apart (`$82`/`$84`, not `$82`/`$83`), and `swap` is a 16/16
+exchange, not a byte one.
+
+### 16.3 The one live item, and the reason it was NOT taken unilaterally
+
+`sd_out` writes `$82-$86` on **every** call — but subdivide itself no longer reads them (the OBJ
+entry loads its span from the object arrays), so the flush is now **pure residue**. If nothing
+between two subdivide calls reads those cells in flight, it can be deferred to **once per frame**:
+~100 cycles × 67.4 calls = **~6.7k cycles/iteration ≈ 1.0-1.5% of the frame**, the largest single
+item left outside DRAW's inner loops.
+
+⚠ **It is also exactly the risk class that burned the previous session.** §"CLOSED — subdivide's
+exit ZP residue": the drop was built, `subdiv_verify` read **0 mismatch over 5104 calls**, and three
+live consumers were broken — because a differential compares what the function WRITES and is
+structurally blind to a reader outside the call. Deferring the flush makes `subdiv_verify` stop
+comparing those cells, i.e. it **installs the same blindness**. The known readers are in other
+scenes (`dl_lms_push_bottom_core` RMWs `$82/$83` as the door-scroll LMS pointer; `alien_field0_fill`
+seeds from `$84`), which a once-per-frame flush would still satisfy — but "still satisfy" has to be
+*proved by a reader survey*, not assumed, and the survey must cover the `.s` files and the linked
+disassembly, not just the C.
+
+**Decision deferred to the user (2026-08-09): survey first, then decide.** Nothing built.
+
+### 16.4 Also priced here, both small and both fully inside `subdiv_verify`
+
+- **Inline `submid` + `push_mid`** at their call sites: `bsr`+`rts` is 34 cycles, two of them per
+  midpoint × 0.40 midpoints/call ≈ **27 cyc/call ≈ 0.33% of the frame**. `submid` has two call sites
+  (phase 2 and `sd_dosub`), so inlining duplicates it.
+- **Classify `far.hgt` on its HIGH byte first**, the way the `far.col` escape already does: negative
+  ⇔ `hi & $80`, `> $FF` ⇔ `hi != 0`, `< $6C` ⇔ `hi == 0 && lo < $6C`. That skips the 22-cycle
+  `lsl.w #8` on the common path, ~24 cyc × 1.03 inner iterations ≈ **0.27%**. ⚠ `sd_wtFarH` needs the
+  full 16-bit `far.hgt`, so the negative path must still assemble it — **shape-probe how often
+  `far.hgt < 0` before building this**, or the win could invert.
