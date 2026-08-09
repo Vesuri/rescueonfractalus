@@ -143,6 +143,17 @@ ifdef VERIFY
 EXTRA_DEFINES += -DROF_SUBDIV_VERIFY
 obj/TerrainSubdivideAssembler.o : VASMFLAGS += -DROF_SUBDIV_VERIFY
 endif
+# The exit residue ($82-$86 span, $8D-$91 midpoint) is published ONCE PER DRAW PASS instead of
+# on each of the ~68 subdivide calls: the twin parks it in g_sdResidue with a single MOVEM.W
+# (28 cycles against 100 for the byte-swapped span flush, and 28 against 132 for the mid), and
+# terrain_draw_objects seeds the scratch before its loop and writes it through afterwards.
+# Sound because NOTHING inside that loop, and nothing in the flight VBI, reads those cells --
+# reader survey over the linked image, see the DEFER note in TerrainSubdivideAssembler.s.
+# `make SUBDIV_EAGER=1` restores the per-call flush (for an A/B or if a new reader appears).
+ifndef SUBDIV_EAGER
+EXTRA_DEFINES += -DROF_SUBDIV_DEFER_RESIDUE
+obj/TerrainSubdivideAssembler.o : VASMFLAGS += -DROF_SUBDIV_DEFER_RESIDUE
+endif
 # Use the rasterizer's register-ABI entry when it exists (see RASTER_SPAN_ABI above).  To put
 # the fast path under a differential, build `make VERIFY=1 NO_RASTER_VERIFY=1` — that keeps
 # this on while subdiv_verify.gdb compares the asm subdivide (register handoff) against the C

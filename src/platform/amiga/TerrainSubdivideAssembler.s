@@ -54,12 +54,47 @@
 ; twins or in a helper GCC inlined into its caller, so grep the .s files and the linked
 ; disassembly too.  (2) "6502 scratch nothing reads" is a hypothesis about a HEAVILY REUSED
 ; address, and these cells are reused as persistent pointers/toggles by other scenes.
+;
+; ⭐ DEFER (ROF_SUBDIV_DEFER_RESIDUE, 2026-08-09) — what DEADZP could not do, done the other way.
+; DEADZP is about DROPPING the residue and stays closed.  But the nine live consumers it found
+; are all OUTSIDE the terrain draw loop, so the residue does not have to be published on every
+; call: sd_out and the object entry's guard bail park the span (and, when one ran, the midpoint)
+; in g_sdResidue with a single MOVEM.W, and terrain_draw_objects writes it through to mem[] once
+; the loop is done.  28 cycles against 100 for the span and 28 against 132 for the midpoint, on
+; ~68 calls an iteration.
+; The licensing survey (linked shipping image, objdump; the call graph followed jsr/bsr/jmp/Bcc/
+; lea plus fall-through between labels, so it over-approximates):
+;   * closure of terrain_draw_objects = 104 functions (the rasterizer span entry and all its
+;     ras_* blocks, project_terrain_points_core, terrain_plot_object, rof_pokey_random):
+;     ZERO readers of $82-$86, and zero of $8D-$91.
+;   * closure of vbi_handler_flight = 74 functions: ZERO readers of either range.  (The whole
+;     Amiga VBI closure has two — scroll_terrain_dl reads $82/$83 and dl_lms_fill reads
+;     $84/$86 — but both are reached only via standby_vbi_native -> launch_anim_dispatch_native,
+;     the door-scroll cinematic, which cannot run while the flight VBI is installed.)
+;   * no indexed, (d16,An) or wide access anywhere in the image can reach either range outside
+;     this file: every mem[] access to them is absolute (the generated C has no mem[base+i] with
+;     a base below $88), the only (d16,An) displacements of 130-134 / 141-145 are C++ `this` and
+;     ExecBase offsets, and nothing reads a word/long at mem+$7E..$81 or mem+$89..$8C spanning in.
+;   * terrain_subdivide_column_obj is the ONLY live subdivide entry in the shipping image (one
+;     `lea` of it, inside terrain_draw_objects); _core and the 6502 shim have no caller at all.
+;   * the loop has no non-local exit that could skip the publish — the only platform call in its
+;     whole closure is platform_hw_read (POKEY RANDOM); no spin-wait hook, no rof_check_restart.
+; Because the midpoint half is still conditional, terrain_draw_objects must SEED g_sdResidue
+; from mem[] before its loop — a call that computes no midpoint relies on the scratch already
+; holding what mem[$8D-$91] holds, exactly as the old code relied on mem[] itself.
+; ⚠ Deferring would normally blind subdiv_verify on those ten cells, which is the precise trap
+; DEADZP fell into.  It does not here: the differential runs the same seed/publish pair around
+; each call (see subv_snapshot / subv_capture_and_restore), so all sixteen ZP bytes are still
+; compared.  `make SUBDIV_EAGER=1` restores the per-call flush for an A/B.
 
 	xdef	terrain_subdivide_column_core_asm
 	ifnd	ROF_SUBDIV_VERIFY
 	xdef	terrain_subdivide_column_core		; ships as the core symbol directly
 	endif
 	xref	mem
+	ifd	ROF_SUBDIV_DEFER_RESIDUE
+	xref	g_sdResidue		; rof_native.c — the deferred exit residue, see DEFER above
+	endc
 	ifd	ROF_RASTER_SPAN_ABI
 	xref	terrain_column_rasterize_span
 	else
@@ -360,6 +395,13 @@ sd_pop:
 
 	; ================= exit =================
 sd_out:
+	ifd	ROF_SUBDIV_DEFER_RESIDUE
+	; Park the span in g_sdResidue — see the DEFER note at the top of this file.  MOVEM.W
+	; register->memory stores the LOW WORD of each register in the 68000's native order, so
+	; the two 22-cycle `ror.w #8` byte swaps disappear along with two of the three stores:
+	; 16+4*3 = 28 cycles against 100, for a value nothing reads until the pass ends.
+	movem.w	d2-d4,g_sdResidue	; [0] span.col  [1] span.hgt  [2] span.frac (hi byte dirty)
+	else
 	; Flush span.  mem[] is LITTLE-endian (6502: mem[a] = lo) and the 68000 is big-endian,
 	; so the {lo at $82, hi at $83} pair is one word store of the BYTE-SWAPPED d2 — 42
 	; cycles against the 58 of move.b/move.l/lsr.w #8/move.b.  $82 and $84 are even and
@@ -372,15 +414,19 @@ sd_out:
 	ror.w	#8,d0
 	move.w	d0,mem+$84		; $84 = span.hgt lo, $85 = hi
 	move.b	d4,mem+$86
+	endc
 	; Flush mid ($8D-$91) only if one was actually computed.  The budget is the flag for
 	; free: it is set to $14 after the entry guard and decremented ONCE immediately before
 	; each of the two `bsr submid` sites, so `budget != $14` <=> at least one midpoint ran.
 	; (The exhaustion exit needs 21 decrements, so it implies ~20 midpoints — still dirty.)
-	; When it is clean, d5/d6/d7 hold the CALLER's registers, not a midpoint — and mem[]
-	; already holds what the oracle would write back, so skipping the flush is what makes
-	; dropping the entry load correct.
+	; When it is clean, d5/d6/d7 hold the CALLER's registers, not a midpoint — and the
+	; residue (mem[], or g_sdResidue under DEFER) already holds what the oracle would write
+	; back, so skipping the flush is what makes dropping the entry load correct.
 	cmpa.w	#$14,a3
 	beq.s	sd_out_nomid
+	ifd	ROF_SUBDIV_DEFER_RESIDUE
+	movem.w	d5-d7,g_sdResidue+6	; [3] mid.col  [4] mid.hgt  [5] mid.frac — 28 cyc vs 132
+	else
 	move.b	d5,mem+$8D		; flush mid
 	move.l	d5,d0
 	lsr.w	#8,d0
@@ -390,6 +436,7 @@ sd_out:
 	lsr.w	#8,d0
 	move.b	d0,mem+$90
 	move.b	d7,mem+$91
+	endc
 sd_out_nomid:
 	move.l	a3,d0			; $9F = budget (low byte; $FF if exhausted)
 	move.b	d0,mem+$9F
@@ -492,6 +539,9 @@ terrain_subdivide_column_obj_asm:
 	cmp.w	d0,d2			; span.col - far0.col (signed)
 	blt.s	sd_obj_go		; span.col < far0.col -> subdivide
 	; bail: publish the span, i.e. exactly the 5 bytes the caller used to write
+	ifd	ROF_SUBDIV_DEFER_RESIDUE
+	movem.w	d2-d4,g_sdResidue	; deferred like sd_out's; the mid slot stays as it was
+	else
 	move.w	d2,d0			; (byte-swapped word stores — see sd_out)
 	ror.w	#8,d0
 	move.w	d0,mem+$82
@@ -499,6 +549,7 @@ terrain_subdivide_column_obj_asm:
 	ror.w	#8,d0
 	move.w	d0,mem+$84
 	move.b	d4,mem+$86
+	endc
 	bra	sd_ret
 sd_obj_go:
 	movea.w	#$14,a3			; budget = $14

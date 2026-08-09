@@ -6996,6 +6996,47 @@ static inline SubPt subdiv_midpoint(SubPt span, SubPt far, uint8_t *M) {
     return mid;
 }
 
+#ifdef ROF_SUBDIV_DEFER_RESIDUE
+/* DEFERRED EXIT RESIDUE — the twin's `sd_out` (and the object entry's guard bail) parks the span
+ * and midpoint HERE with one MOVEM.W instead of writing them byte-swapped into mem[$82-$86] /
+ * mem[$8D-$91] on each of the ~68 subdivide calls an iteration.  28 cycles against 100 for the
+ * span (two 22-cycle `ror.w #8` plus three absolute stores) and 28 against 132 for the midpoint.
+ *
+ * Layout mirrors what MOVEM.W d2-d4 / d5-d7 writes — the LOW WORD of each register, in the
+ * 68000's native big-endian order, so no byte swapping happens on the hot path at all:
+ *   [0] span.col  [1] span.hgt  [2] span.frac   (d4's high byte is dirty by design; ignored)
+ *   [3] mid.col   [4] mid.hgt   [5] mid.frac
+ *
+ * terrain_draw_objects seeds this from mem[] before its loop and writes it back after, so at
+ * every point OUTSIDE the loop mem[] holds exactly the residue the per-call flush left.  The
+ * midpoint half is still written CONDITIONALLY (only when a midpoint actually ran), which is
+ * what makes the seed load-bearing: on a call that computes none, the scratch must already hold
+ * what mem[$8D-$91] holds, exactly as the old code relied on mem[] already holding it.
+ * See the DEFER note in TerrainSubdivideAssembler.s for the reader survey that licenses this. */
+uint16_t g_sdResidue[6] __attribute__((aligned(4)));
+void rof_subdiv_residue_seed(void) {
+    g_sdResidue[0] = (uint16_t)(dl_ptr_hi     | (screen_ptr_lo   << 8));
+    g_sdResidue[1] = (uint16_t)(screen_ptr_hi | (encounter_count << 8));
+    g_sdResidue[2] = row_count;
+    g_sdResidue[3] = (uint16_t)(step_mode_flag | (mem[0x008E]     << 8));
+    g_sdResidue[4] = (uint16_t)(sfx_toggle_8F  | (sfx_reinit_gate << 8));
+    g_sdResidue[5] = altitude_threshold;
+}
+void rof_subdiv_residue_publish(void) {
+    dl_ptr_hi      = (uint8_t)g_sdResidue[0]; screen_ptr_lo   = (uint8_t)(g_sdResidue[0] >> 8);
+    screen_ptr_hi  = (uint8_t)g_sdResidue[1]; encounter_count = (uint8_t)(g_sdResidue[1] >> 8);
+    row_count      = (uint8_t)g_sdResidue[2];
+    step_mode_flag = (uint8_t)g_sdResidue[3]; mem[0x008E]     = (uint8_t)(g_sdResidue[3] >> 8);
+    sfx_toggle_8F  = (uint8_t)g_sdResidue[4]; sfx_reinit_gate = (uint8_t)(g_sdResidue[4] >> 8);
+    altitude_threshold = (uint8_t)g_sdResidue[5];
+}
+#define SD_RESIDUE_SEED()    rof_subdiv_residue_seed()
+#define SD_RESIDUE_PUBLISH() rof_subdiv_residue_publish()
+#else
+#define SD_RESIDUE_SEED()    ((void)0)
+#define SD_RESIDUE_PUBLISH() ((void)0)
+#endif
+
 /* Returns the final recursion depth (the 6502 left it in X); callers that care put it in cpu.X.
  * This clean-C body is the SDL/validate oracle; on the Amiga the hand-asm twin
  * (TerrainSubdivideAssembler.s) replaces it via the ROF_SUBDIV_ASM seam below. */
@@ -7180,13 +7221,21 @@ static const uint16_t subv_zp[16] = { 0x60, 0x80,0x81,0x82,0x83,0x84,0x85,0x86,
 static uint8_t subv_snapZ[16], subv_asmZ[16];
 /* Split into the four phases so BOTH entries (the mem[]-contract core and the object-indexed
    one below) get a real differential without duplicating the snapshot/compare. */
+/* ⚠ The deferred-residue twin does not write $82-$86 / $8D-$91 itself — terrain_draw_objects
+   publishes them once per pass.  Rather than drop those ten cells from the compare window (which
+   is EXACTLY the blindness that let a previous residue attempt read 0 mismatch over 5104 calls
+   while breaking three live consumers), the harness runs the same seed/publish pair around each
+   call: seed before the asm arm so a call that computes no midpoint inherits the right value,
+   publish before capturing so the compare still tests all sixteen ZP bytes. */
 static void subv_snapshot(void) {
     uint8_t* const M = (uint8_t*)mem;
     for (int s = 0; s < SUBV_STK; s++) for (int i = 0; i < 16; i++) subv_snapS[s][i] = M[subv_stkBase[s] + i];
     for (int i = 0; i < 16; i++) subv_snapZ[i] = M[subv_zp[i]];
+    SD_RESIDUE_SEED();
 }
 static void subv_capture_and_restore(void) {
     uint8_t* const M = (uint8_t*)mem;
+    SD_RESIDUE_PUBLISH();
     for (int s = 0; s < SUBV_STK; s++) for (int i = 0; i < 16; i++) subv_asmS[s][i] = M[subv_stkBase[s] + i];
     for (int i = 0; i < 16; i++) subv_asmZ[i] = M[subv_zp[i]];
     for (int s = 0; s < SUBV_STK; s++) for (int i = 0; i < 16; i++) M[subv_stkBase[s] + i] = subv_snapS[s][i];
@@ -7922,6 +7971,10 @@ __attribute__((noinline)) static void terrain_draw_objects(void) {
        it indexes a table with it. */
     unsigned order_idx = 0;
     uint8_t obj0 = 0;
+    /* The subdivide twin parks its exit residue in g_sdResidue rather than writing mem[$82-$86] /
+       mem[$8D-$91] on every call; seed it here so a pass whose calls all bail (or compute no
+       midpoint) still publishes what mem[] already held, then write it through after the loop. */
+    SD_RESIDUE_SEED();
     for (;;) {
         TDPAIR(g_tdPairs);
         obj0 = order[order_idx++];                   /* primary endpoint of the next pair */
@@ -7963,6 +8016,7 @@ __attribute__((noinline)) static void terrain_draw_objects(void) {
         if (order_idx == 0x90) break;
     }
     M[0x28DB] = obj0;                                /* the $28DB residue the oracle leaves */
+    SD_RESIDUE_PUBLISH();                            /* the deferred $82-$86 / $8D-$91 residue */
 }
 
 /* terrain_draw_frame @ $A31E — render one frame's terrain + objects (the flight top-level draw).
