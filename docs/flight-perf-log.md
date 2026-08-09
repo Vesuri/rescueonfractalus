@@ -1310,3 +1310,85 @@ count are the claim.
 
 Only the change-detect loop (~0.45%: 40 volatile long compares/frame at ~90 cycles, GCC indexing
 because the loop juggles six pointers — and §14.3 is now the known fix for exactly that shape).
+
+## 15. 2026-08-09 (last) — the band's change-detect scan, and the blit shadow that turned out not to be one
+
+The last sized item in FRAME, and the third instance of §14's pathology in the same 60 lines of code.
+The band's decode cache is refreshed by comparing 40 longs of the mode-D field against a per-half
+shadow. The compare was fused with the (rare) decode, so the loop carried **six** pointers — field,
+shadow, and the four decode outputs — and GCC strength-reduced them all to one index plus six bases:
+
+```
+7b9a: lea    (0,a2,a0.l),a4    12       7bfa: addq.l #4,a0       8
+7b9e: move.l (a4),d0           12       7bfc: addq.l #4,a1       8   <- bound for the RARE path
+7ba0: cmp.l  (0,a0,d6.l),d0    20       7bfe: moveq  #40,d0      4
+7ba4: beq.s  ...(taken)        10       7c00: cmp.l  a0,d0       6
+                                        7c02: bne.s  ...        10
+```
+**90 cycles to compare one UNCHANGED long**, ×40 a frame, on a path that in half of all frames finds
+nothing at all — and 8 of those cycles maintain `a1`, a loop bound only the rare decode path reads.
+
+### 15.1 Three things had to line up to reach 46
+
+Splitting the scan out (two pointers) and applying §14's pointer-compare exit test got 70, not the
+58 predicted: GCC emitted `move.l (a0),d0` plus two `addq.l #4` because only `f` post-incremented.
+Post-incrementing **both** and adding `#pragma GCC unroll 10` — the trip count is a compile-time
+constant — removed the loop entirely:
+
+```
+7b6c: move.l  (a2),d0    12        7b74: move.l 4(a2),d0   16
+7b6e: cmp.l   (a3),d0    14        7b78: cmp.l  4(a3),d0   18
+7b70: bne.w   ...        12        7b7c: bne.w  ...        12
+```
+**46 cycles a long** (38 for the first), no bookkeeping at all. The scan needs no index, because the
+decode below rescans from `g = 0`; all it has to report is "something differs". `rowChanged` went
+with it — reaching the decode now means the scan tripped, so the `owLo/owHi` re-derive is
+unconditional, which is idempotent even in the rare case where the ISR heals the difference in
+between.
+
+⭐ **Worth remembering as a pair with §14: the pointer-compare exit test is what stops the
+strength-reduction, and `#pragma GCC unroll` is what pays off a constant trip count.** Neither alone
+got there — 90 → 70 → 46.
+
+### 15.2 The blit shadow was NOT a shadow, and that is the more valuable finding
+
+This loop sits between `blitterFillUp` and its `blitterWait`, so §12.5 says the win should be
+absorbed: cheapening CPU work inside a blit's shadow only pays for the part that exceeded the blit.
+The prediction was that some of the 9.3 t/it would come back as `fill wait` growth. It did not:
+
+| bracket (t/it) | before | after |
+|---|---|---|
+| late sprite (holds the scan) | 54 | **45** |
+| **fill wait** | 4 | **1** |
+| renderFlightDirect | 198 | **189** |
+| FRAME | 299 | **291** |
+| DRAW *(control)* | 971 | **971** |
+| SETUP *(control)* | 140 | 142 |
+
+**−9 t/it, matching the static count to within 0.3, and the wait went DOWN.** So the 2-4 t/it those
+wait brackets had been reading was **their own floor, not a stall** — the sky-fill blit had already
+finished by the time the CPU arrived, at W = 54 and still at W = 45.
+
+⭐ **The reusable correction: "wait ≈ 2 t/it" is not evidence that a shadow is full — it is at the
+FD_LAP floor, and a floor-valued bracket cannot distinguish "just barely stalled" from "not stalled
+at all". Read the wait as a DELTA across the change, in both directions.** Here the delta settled in
+one run what the absolute could not, and it also brackets the blit: combining this with §12.5 (W=35
+→ wait 15) puts the sky-fill at **B ≈ 45-50 t/it**. So at W = 45 the shadow is now essentially
+exactly full — **the NEXT saving taken out of this slot will start being absorbed**, and moving more
+work into it is worth nothing. That number prices every future scheduling decision in
+`renderFlightDirect`.
+
+`BAND_VERIFY` (the cache path against the original per-byte composite, which is exactly the
+instrument for "did the refresh miss a change"): **0 mismatch / 300 calls, objLeak 0.**
+
+⚠ Noise floor from the same run: `cockpit scan` 20 → 17 and `band+overlay` 18 → 20 are brackets this
+change cannot touch, so ±3 t/it is the drift on a sub-bracket of that size. The −9 is well outside
+it; DRAW landing on 971 t/it in both runs is the tightest control the harness has produced.
+
+### 15.3 A harness trap this session paid for
+
+The two runs overlapped, and the tell was unmistakable: **the first task's trailing
+`grep .run/gdb-out.log` printed the SECOND run's output.** gdb streams into that log live, so a
+complete-looking table can be read while `diag_run.sh` is still in its ~25 s shutdown — whose final
+`pkill -9 fs-uae` can kill the emulator the next run just started. Wait for the task notification,
+not for the log to look finished. (Recorded in [[flight-measurement-rules]].)

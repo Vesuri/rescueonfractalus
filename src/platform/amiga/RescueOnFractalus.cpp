@@ -2723,12 +2723,34 @@ void RescueOnFractalus::renderFlightDirect()
         for (int row = 0; row < 4; row++, fs += 96, sh += 10, p3w += 10,
                                          p1w += 40, p2w += 40, oww += 40) {
             const volatile uint32_t* f4 = (const volatile uint32_t*)fs;
-            bool rowChanged = false;
+            // The scan for "did anything change" is split off from the decode, because the two
+            // want opposite things from the register allocator.  Fused, the loop juggled six
+            // pointers, so GCC strength-reduced them to one index plus six bases and every access
+            // became `(0,An,Dn.L)`: 90 cycles to compare one unchanged long, x40/frame, on a path
+            // that in half of all frames finds nothing at all.  Split, the scan holds only two.
+            {
+                const volatile uint32_t* f = f4;
+                const uint32_t* s = sh;
+                const uint32_t* const sEnd = sh + 10;
+                // Three things had to line up to get 46 cycles a long out of this, and each was
+                // worth reading the disassembly for:
+                //  * POST-increment BOTH pointers and make the exit test a pointer compare.
+                //    Incrementing `s` in the while condition instead (the obvious spelling) kept
+                //    GCC on `move.l (a0),d0` + two `addq.l #4` = 70.
+                //  * the trip count is the constant 10, so `#pragma GCC unroll` removes the loop
+                //    entirely; GCC then addresses with `(d16,An)` and there is no bookkeeping at
+                //    all — `move.l 4(a2),d0` 16 + `cmp.l 4(a3),d0` 18 + a never-taken `bne.w` 12.
+                //  * the scan needs no index, because the decode below rescans from g=0.  All
+                //    this has to report is "something differs".
+                #pragma GCC unroll 10
+                do { if (*f++ != *s++) goto rowDirty; } while (s != sEnd);
+                continue;                                 // row unchanged — the common case
+            rowDirty: ;
+            }
             for (int g = 0; g < 10; g++) {
                 const uint32_t fv = f4[g];
                 if (fv == sh[g]) continue;
                 sh[g] = fv;
-                rowChanged = true;
                 uint8_t* const p3b = (uint8_t*)p3w;
                 const int k0 = g * 4;
                 for (int k = k0; k < k0 + 4; k++) {       // re-decode just this long's 4 bytes
@@ -2737,7 +2759,11 @@ void RescueOnFractalus::renderFlightDirect()
                     p2w[k] = kBandP2[v]; oww[k] = kBandOW[v];
                 }
             }
-            if (rowChanged) {                             // re-derive this row's ow!=0 range
+            {                                             // re-derive this row's ow!=0 range
+                // Unconditional now: reaching here means the scan saw a difference.  It may have
+                // healed by the time the decode re-reads (the field is ISR-written), in which case
+                // this re-derives the same lo/hi and bumps a version nobody's output depends on —
+                // idempotent, and cheaper than carrying a flag through the loop above.
                 int lo = 40, hi = -1;
                 for (int b = 0; b < 40; b++) if (oww[b]) { if (b < lo) lo = b; hi = b; }
                 owLo[row] = (signed char)lo; owHi[row] = (signed char)hi;
