@@ -1491,3 +1491,105 @@ disassembly, not just the C.
   `lsl.w #8` on the common path, ~24 cyc × 1.03 inner iterations ≈ **0.27%**. ⚠ `sd_wtFarH` needs the
   full 16-bit `far.hgt`, so the negative path must still assemble it — **shape-probe how often
   `far.hgt < 0` before building this**, or the win could invert.
+
+## 17. 2026-08-09 — the subdivide reader survey, and what it licensed (4cb3e3f)
+
+§16.3 handed this session one job: **survey first, then decide.** The survey came back clean, the
+change shipped, and the interesting part is that the survey was cheap (about twenty minutes) while
+the thing it licensed turned out to be worth **less than half** what §16.3 filed — for a reason
+§16.3 did not consider.
+
+### 17.1 The survey — method, and the two holes an absolute-address grep leaves
+
+Built the shipping image, `objdump -d`, then a call graph in ~40 lines of Python. Two details did
+all the work and both were wrong on the first pass:
+
+- **Follow only control transfers** (`jsr`/`bsr`/`jmp`/`Bcc`/`dbcc`/`lea`), not every `<sym>` the
+  disassembly prints. objdump annotates *immediate constants* against the nearest preceding symbol,
+  so `pea 7` prints as `pea 7 <_start+0x7>` and `pea a3` as `<main+0x15>`. Taking those as edges made
+  the flight VBI "reach" `boot_standby_launch_driver` — i.e. the entire program.
+- **Add fall-through edges between consecutive labels** unless the block ends in `bra`/`jmp`/`rts`.
+  vasm emits every local label into the symtab, so an asm twin is chopped into ~20 "functions";
+  without fall-through, `sd_phase3` did not reach `sd_inner` and the closure silently omitted the
+  rasterizer. (Same family as the `group_of()` prefix bug in §Phase 9 — **asm labels are the thing
+  that quietly breaks every tool that walks symbols.**)
+
+Result: 17 functions in the whole image read `$82-$86`. In the closure of `terrain_draw_objects`
+(104 functions, including `terrain_column_rasterize_span` and all its `ras_*` blocks,
+`project_terrain_points_core`, `terrain_plot_object`, `rof_pokey_random`) — **none**, and none reads
+`$8D-$91` either. In the closure of `vbi_handler_flight` (74 functions) — **none**. The full Amiga
+VBI closure has exactly two (`scroll_terrain_dl` reads `$82/$83`, `dl_lms_fill` reads `$84/$86`) and
+both hang off `standby_vbi_native → launch_anim_dispatch_native`, the door-scroll cinematic, which
+cannot run while the flight VBI is installed.
+
+⭐ **The two holes worth remembering, because a `<mem+0x82>` grep cannot see either:**
+1. **Displacement mode.** `move.b 130(a0),d0` carries no `<mem+...>` annotation. Searched every
+   `13[0-4](aN)` and `14[1-5](aN)` in the image: 15 and 5 hits, all C++ `this` offsets (copper
+   lists, `RescueOnFractalus`) and one AmigaOS `jsr -132(a6)`. None has `mem` in the base register.
+2. **Wide accesses spanning in from below.** A `move.w mem+$81` reads `$82` too. There are none —
+   the only word stores in the range are `sd_out`'s own.
+   Plus the C-side check: the generated C has no `mem[base + i]` with a base below `$88`
+   (`mem[0x0020 + i]`, the flight-entry clear, stops at `$4B`).
+
+Two more facts fell out that are worth as much as the readers: **`terrain_subdivide_column_obj` is
+the ONLY live subdivide entry in the shipping image** (one `lea`, inside `terrain_draw_objects`;
+`_core` and the 6502 shim have no caller at all — they survive only because vasm does not split
+sections per symbol), and **the loop has no non-local exit** — the only platform call in its whole
+closure is `platform_hw_read`, so no spin-wait hook and no `rof_check_restart` longjmp can strand
+the residue in the scratch.
+
+### 17.2 ⚠ Deferring is not removing — the number §16.3 filed was the GROSS
+
+§16.3 priced this as "~100 cycles × 67.4 calls ≈ 1.0-1.5% of the frame". That is the cost of the
+flush, and it is right. But **the last call's residue still has to exist somewhere**, and subdivide
+cannot know which call is last, so every call still has to record it. The saving is therefore
+`flush − record`, not `flush`:
+
+| | cyc/call | |
+|---|---|---|
+| span flush, `ror.w #8` ×2 + 3 absolute stores | 100 | the old code |
+| `movem.w d2-d4,g_sdResidue` | **28** | `16+4n`, R→M, native order, no swap |
+| midpoint flush (conditional) | 132 | |
+| `movem.w d5-d7,g_sdResidue+6` | **28** | |
+
+plus `terrain_draw_objects` seeding the scratch before the loop (408 cyc) and publishing after
+(328), twice an iteration = **+1472 cyc/it**. Net: −4925 (span) − 104·p·68.4 (midpoint) + 1472.
+
+**Measured: DRAW 971 → 963 t/it = −8, ≈ −0.56% of the frame**, with FRAME (291→292), SETUP
+(142→143), CLEAR+BOLT+ENEMY (13→14) and the ISR (64 t/firing) all flat as the internal controls —
+i.e. the ±3 t/it noise floor. That is the p≈0 end of the prediction, which says midpoints CLUSTER:
+0.40 midpoints/call is a small fraction of calls doing several each, not a third of calls doing one.
+
+⭐ **Generalisable: when pricing a "defer this to once per frame" candidate, price the RECORD, not
+just the write you are removing.** The question to ask first is *"can the last iteration's value be
+reconstructed at the end?"* — if not, the per-call cost floor is whatever it takes to keep it, and
+here that floor was 28 of the 100 cycles before the seed/publish pair took another 30% of the gross.
+The seed is load-bearing and not removable without a second survey: the midpoint half is written
+conditionally, so a call that computes none needs the scratch to already agree with `mem[$8D-$91]`,
+exactly as the old code needed `mem[]` to already agree with itself.
+
+### 17.3 The instrument stayed honest, and that was a design requirement
+
+Deferring makes the twin stop writing ten of the sixteen ZP bytes `subdiv_verify` compares — which
+is **exactly** the blindness that let the previous residue attempt read 0 mismatch over 5104 calls
+while breaking three live consumers (§"CLOSED — subdivide's exit ZP residue"). The fix is not to
+drop those cells from the compare window but to give the harness the same seed/publish pair the
+shipping caller uses: `subv_snapshot` seeds, `subv_capture_and_restore` publishes before capturing.
+The window is unchanged at sixteen bytes and the differential still tests all of them:
+**0 mismatch / 5272 calls** on the shipping fast path (`VERIFY=1 NO_RASTER_VERIFY=1`), plus
+`make validate FN=terrain_draw_frame` 0 mem mismatch / 2000 cases.
+
+⭐ **The move that generalises: when a change relocates state, relocate the ORACLE'S VIEW of it too,
+rather than narrowing the comparison.** A differential's blind spots are almost always introduced by
+the person trying to keep it green.
+
+### 17.4 A harness trap that cost two runs
+
+Both phase-budget runs died at their first `continue` with `Remote connection closed`, and the
+cause was the one already in [[flight-measurement-rules]]: a finished-looking `diag_run.sh` is still
+inside its ~25 s teardown, whose trailing `pkill -9 fs-uae` kills the *next* run's emulator.
+⚠ **What is new is that the window is much wider than 25 s: `diag_run.sh` sleeps the FULL delay
+before tearing down, regardless of whether gdb already detached.** A `700` run whose script detaches
+after 90 s still fires its `pkill` ten minutes later. So "the log looks complete" and even "the task
+notification arrived" are both insufficient — **check `ps` for a stray `diag_run.sh`/`sleep <delay>`
+before starting the next run**, or kill them outright.
