@@ -319,6 +319,16 @@ ifdef BAND_VERIFY
 EXTRA_DEFINES += -DROF_BAND_VERIFY
 endif
 
+# Correctness aid: `make SCAN_VERIFY=1 PROBES=1` + amiga/scan_verify.gdb — in-process differential
+# for the long-striding PMG run scans (pmgScanFirst / pmgScanBounds) that the scope-P3, viewport-P3
+# and scanner-dot sprite mirrors use to locate their object.  Those are Amiga-only render mirrors,
+# so `make validate` cannot see them; instead every call re-derives the run with the ORIGINAL
+# per-byte loop and compares (g_scanBad must be 0, g_scanHit > 0 or the run never had an object to
+# find and the test proved nothing).
+ifdef SCAN_VERIFY
+EXTRA_DEFINES += -DROF_SCAN_VERIFY
+endif
+
 # Profiling aid: `make SPRITE_SHAPE=1 PROBES=1` + amiga/sprite_shape.gdb — splits the flight VBI's
 # g_vbiSpriteLines bracket (29 t/firing = ~9% of ALL wall clock, and never examined) into its two
 # callees, buildShotSprite and decodeScannerBlinkCells, and then buildShotSprite into its four

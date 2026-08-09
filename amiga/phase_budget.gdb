@@ -114,8 +114,13 @@ printf "   updateFlightCopper     %6lu t/it\n", ($it ? g_rCopper/$it : 0)
 printf "\n=== renderFlightDirect internals, ticks/iteration over %lu calls ===\n", g_fdCalls
 printf "  clear/copy  %6lu t (%4lu t/it)\n", g_fdClear, ($it ? g_fdClear/$it : 0)
 printf "  edge+fillup %6lu t (%4lu t/it)\n", g_fdEdge,  ($it ? g_fdEdge/$it  : 0)
+printf "  late sprite %6lu t (%4lu t/it)  <- g_fdScan: buildFlightSpritesLate, in the fill's shadow\n", \
+  g_fdScan, ($it ? g_fdScan/$it : 0)
 printf "  fill wait   %6lu t (%4lu t/it)\n", g_fdFill,  ($it ? g_fdFill/$it  : 0)
 printf "  band+overlay%6lu t (%4lu t/it)\n", g_fdBand,  ($it ? g_fdBand/$it  : 0)
+printf "  SUM of laps %6lu t (%4lu t/it)  vs g_fDirect %lu t/it (rest = entry/probe)\n", \
+  (g_fdClear+g_fdEdge+g_fdScan+g_fdFill+g_fdBand), \
+  ($it ? (g_fdClear+g_fdEdge+g_fdScan+g_fdFill+g_fdBand)/$it : 0), ($it ? g_fDirect/$it : 0)
 
 printf "\n=== iterations %lu, painted frames %lu ===\n", $it, g_fdCalls
 detach

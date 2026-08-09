@@ -1029,6 +1029,131 @@ void RescueOnFractalus::buildShotSprite()
     SP_LAP(g_spCopT);
 }
 
+// ---- PMG run-scan helpers ------------------------------------------------------------
+// Three per-frame sprite mirrors (scope P3, viewport P3, scanner dot) locate their object by
+// scanning a window of the Atari PMG buffers in mem[] for the first/last byte with a bit set.
+// Written the obvious way — `for (int o = lo; o <= hi; o++) if (mem[base + o] & m)` — GCC turns
+// each byte test into `move.l d,d1 / addi.l #base,d1 / move.b (0,a2,d1.l),d1 / ... /
+// cmpi.l #hi,d / bne`: 78-84 cycles PER BYTE TESTED, essentially all of it addressing.  Over the
+// three windows (84 + 33 + 49 bytes) that is ~13.2k cycles a frame — measured 58 t/it, ~3.9% of
+// ALL wall clock (phase_budget, 2026-08-09), for three loops that normally find nothing at all.
+//
+// These helpers walk a POINTER and test FOUR BYTES AT A TIME.  A test against a mask replicated
+// into all four lanes is BYTE-ORDER INDEPENDENT (nonzero iff some byte matches, whichever end the
+// bytes come from), so aliasing mem[] as a volatile uint32_t is safe here — unlike a value read,
+// which would byte-swap between the big-endian Amiga and the little-endian validation host (see
+// CLAUDE.md, "Endianness when aliasing mem[]").  No value ever leaves the long: once a long tests
+// nonzero its four bytes are re-read individually through mem[] to find which one matched.
+// Alignment is taken from the POINTER, not from the mem[] offset, so nothing depends on where the
+// linker put mem[] (a misaligned long read is an address fault on the 68000).
+//
+// Same family as the fix in buildShotSprite above, one level along: there the scan was replaced by
+// the extent its writer already publishes ($2865/$2866).  The P3/missile buffers have no such
+// published extent, so these keep the scan and make it cheap instead — writer-agnostic, and
+// equivalent by construction rather than by an argument about who writes what.
+
+// Lowest offset in [lo,hi] whose mem[] byte has any bit of `mask` set; -1 if none.
+static int pmgScanFirst(unsigned lo, unsigned hi, uint8_t mask)
+{
+    const volatile uint8_t* const M = mem;
+    const volatile uint8_t* p = M + lo;
+    const volatile uint8_t* const e = M + hi;               // inclusive
+    while (p <= e && (((unsigned long)p) & 3u)) { if (*p & mask) return (int)(p - M); p++; }
+    const uint32_t m4 = (uint32_t)mask * 0x01010101u;
+    // Counted, not `for (; p + 3 <= e; p += 4)`: written that way GCC re-derives the limit inside
+    // the loop (`move.l (a0),d0 / addq.l #4,a0 / lea 3(a0),a1 / cmpa.l d1,a1 / bls`) = 52 cyc per
+    // long.  The trip count is a compile-time constant at both call sites, so a countdown lets it
+    // hoist the end pointer: `addq.l #4,a0 / cmpa.l a0,a1 / beq.s / move.l (a0),d0 / beq.s` = 44,
+    // i.e. 11 cycles per byte tested against the byte loop's 78.  (Verified in the disassembly —
+    // GCC keeps the limit compare rather than taking the `(a0)+` the source suggests.)
+    const volatile uint32_t* q = (const volatile uint32_t*)p;
+    for (int n = (int)((e - p + 1) >> 2); n > 0; n--) {
+        if (*q++ & m4) {
+            p = (const volatile uint8_t*)(q - 1);
+            if (p[0] & mask) return (int)(p - M);
+            if (p[1] & mask) return (int)(p + 1 - M);
+            if (p[2] & mask) return (int)(p + 2 - M);
+            return (int)(p + 3 - M);
+        }
+    }
+    for (p = (const volatile uint8_t*)q; p <= e; p++) if (*p & mask) return (int)(p - M);
+    return -1;
+}
+
+// Lowest AND highest offset in [lo,hi] with any bit of `mask` set (gaps allowed, unlike
+// pmgScanFirst's callers, which stop at the end of the first run).  One forward pass.
+static void pmgScanBounds(unsigned lo, unsigned hi, uint8_t mask, int* firstOut, int* lastOut)
+{
+    const volatile uint8_t* const M = mem;
+    const volatile uint8_t* p = M + lo;
+    const volatile uint8_t* const e = M + hi;               // inclusive
+    int first = -1, last = -1;
+    while (p <= e && (((unsigned long)p) & 3u)) {
+        if (*p & mask) { if (first < 0) first = (int)(p - M); last = (int)(p - M); }
+        p++;
+    }
+    const uint32_t m4 = (uint32_t)mask * 0x01010101u;
+    const volatile uint32_t* q = (const volatile uint32_t*)p;   // countdown + (a0)+, as above
+    for (int n = (int)((e - p + 1) >> 2); n > 0; n--) {
+        if (*q++ & m4) {
+            const volatile uint8_t* b = (const volatile uint8_t*)(q - 1);
+            for (int k = 0; k < 4; k++)
+                if (b[k] & mask) { if (first < 0) first = (int)(b + k - M); last = (int)(b + k - M); }
+        }
+    }
+    for (p = (const volatile uint8_t*)q; p <= e; p++)
+        if (*p & mask) { if (first < 0) first = (int)(p - M); last = (int)(p - M); }
+    *firstOut = first; *lastOut = last;
+}
+
+#ifdef ROF_SCAN_VERIFY
+// In-process differential (make SCAN_VERIFY=1 + amiga/scan_verify.gdb).  `make validate` cannot
+// check any of this: these are Amiga-only render mirrors, not a mem[] contract.  So every call
+// re-derives the run the ORIGINAL byte-loop way and compares — the helper result is what goes
+// live, so a surviving mismatch is the helper's fault.  g_scanBad must stay 0.
+//
+// ⚠ The oracle is run TWICE, once either side of the helper, and a call where the two oracle
+// passes disagree is discarded as RACED rather than counted bad.  The P3/missile buffers are
+// written by the flight VBI ISR (draw_player3_object clears and redraws the strip, $44E0 moves
+// the scanner blob), so an ISR landing between the two passes makes them read different bytes —
+// a harness artifact, not a logic difference, and the same one band_verify freezes its source to
+// avoid.  Without this the first run reported 24 "mismatches" in 2244 calls, every one of them a
+// run whose top or bottom had moved by a single row.  Sandwiching the oracle proves which it is
+// instead of assuming: a genuine helper bug cannot depend on the buffer changing.
+extern "C" volatile unsigned long g_scanCalls = 0, g_scanBad = 0, g_scanHit = 0, g_scanRaced = 0,
+                                  g_scanLastBadTop = 0, g_scanLastBadBot = 0;
+// The oracle: the original per-byte loop, verbatim.  `contiguous` = the two P3 mirrors' early
+// break at the end of the first run; the scanner dot takes first/last over the whole window.
+static void scanOracle(unsigned base, int lo, int hi, uint8_t mask, int contiguous,
+                       int* topOut, int* botOut)
+{
+    int t = -1, b = -1;
+    for (int o = lo; o <= hi; o++) {
+        if (mem[base + o] & mask) { if (t < 0) t = o; b = o; }
+        else if (contiguous && t >= 0) break;
+    }
+    *topOut = t; *botOut = b;
+}
+#define SCAN_PRE(base, lo, hi, mask, contiguous)                                                  \
+    int _svPT, _svPB; scanOracle((base), (lo), (hi), (mask), (contiguous), &_svPT, &_svPB)
+#define SCAN_CHK(top, bot, base, lo, hi, mask, contiguous) do {                                   \
+        int _t, _b; scanOracle((base), (lo), (hi), (mask), (contiguous), &_t, &_b);               \
+        g_scanCalls++;                                                                            \
+        if (_t != _svPT || _b != _svPB) { g_scanRaced++; break; }   /* ISR moved the buffer */    \
+        if (_t >= 0) g_scanHit++;                                                                 \
+        if (_t != (top) || _b != (bot)) {                                                         \
+            g_scanBad++;                                                                          \
+            g_scanLastBadTop = (unsigned long)((((unsigned)_t & 0xFFFFu) << 16)                   \
+                                             | ((unsigned)(top) & 0xFFFFu));                      \
+            g_scanLastBadBot = (unsigned long)((((unsigned)_b & 0xFFFFu) << 16)                   \
+                                             | ((unsigned)(bot) & 0xFFFFu));                      \
+        }                                                                                         \
+    } while (0)
+#else
+#define SCAN_PRE(base, lo, hi, mask, contiguous) ((void)0)
+#define SCAN_CHK(top, bot, base, lo, hi, mask, contiguous) ((void)0)
+#endif
+
 // ---- Targeting Scope (#8) P3 object -------------------------------------------------
 // The object shown in the Targeting Scope (#8) is a generic Atari player-3 object (the
 // gun emplacement renders as a half-ball $38 7C FE FE FE; the saucer as a diamond) that draw_player3_object $42A7 plots into the P3 buffer $0F00 in the
@@ -1046,11 +1171,16 @@ void RescueOnFractalus::buildScopeP3Sprite()
     // object, whose coordinates are integrated per-frame elsewhere), with only the CLEAR made
     // incremental — clear last frame's rows (p3ScopePrevRows), not the whole sprite.
     uint16_t* d = scopeP3Sprite->data() + 2;         // skip the 2 control words
-    int top = -1, bot = -1;
-    for (int o = 0x98; o <= 0xB8; o++) {
-        if (mem[0x0F00 + o]) { if (top < 0) top = o; bot = o; }
-        else if (top >= 0) break;   // contiguous P3 object: run ended → stop the volatile scan
+    // Contiguous P3 object: find its first byte with the long-striding scan, then walk the run out
+    // byte-wise (a run is a handful of rows, so only the SEARCH was worth widening).
+    SCAN_PRE(0x0F00, 0x98, 0xB8, 0xFF, 1);
+    int top = pmgScanFirst(0x0F98u, 0x0FB8u, 0xFFu), bot = -1;
+    if (top >= 0) {
+        bot = top;
+        while (bot < 0x0FB8 && mem[bot + 1]) bot++;
+        top -= 0x0F00; bot -= 0x0F00;                // back to the buffer-offset space used below
     }
+    SCAN_CHK(top, bot, 0x0F00, 0x98, 0xB8, 0xFF, 1);
     for (int i = 0; i < p3ScopePrevRows; i++) { d[i * 2] = 0; d[i * 2 + 1] = 0; }  // clear last frame's rows
     if (top >= 0) {
         int rows = bot - top + 1;
@@ -1100,11 +1230,15 @@ void RescueOnFractalus::buildViewportP3Sprite()
     // last frame (p3ViewportPrev*), which is just the object's on-screen height.  ("Sprite data
     // modified only when needed" without losing per-frame position.)
     uint16_t* d = viewportP3Sprite->data() + 2;      // skip the 2 control words
-    int top = -1, bot = -1;
-    for (int o = 0x32; o <= 0x85; o++) {
-        if (mem[0x0F00 + o]) { if (top < 0) top = o; bot = o; }
-        else if (top >= 0) break;   // contiguous P3 object: run ended → stop the volatile scan
+    // Contiguous P3 object — same shape as buildScopeP3Sprite: long-striding search, byte-wise run.
+    SCAN_PRE(0x0F00, 0x32, 0x85, 0xFF, 1);
+    int top = pmgScanFirst(0x0F32u, 0x0F85u, 0xFFu), bot = -1;
+    if (top >= 0) {
+        bot = top;
+        while (bot < 0x0F85 && mem[bot + 1]) bot++;
+        top -= 0x0F00; bot -= 0x0F00;                // back to the buffer-offset space used below
     }
+    SCAN_CHK(top, bot, 0x0F00, 0x32, 0x85, 0xFF, 1);
     for (int i = 0; i < p3ViewportPrevRows; i++) {   // clear only last frame's rows (not all 94)
         d[(p3ViewportPrevBase + i) * 2] = 0; d[(p3ViewportPrevBase + i) * 2 + 1] = 0;
     }
@@ -1142,9 +1276,16 @@ void RescueOnFractalus::buildScannerDotSprite()
     // Per-frame position + incremental clear: the dot moves (bearing X $00CE, range Y) and blinks
     // (M2 bits cleared) every frame, so run every frame; only clear the few rows written last frame
     // (p3ScopePrev-style scannerPrevRows) rather than the whole sprite.
+    // Unlike the two P3 mirrors this one takes the first AND last hit over the whole window (the
+    // blob may in principle have gaps), so it cannot stop at the end of a run — which is why it was
+    // the only one of the three scanning its window unconditionally, every frame.  One long-striding
+    // pass now does both bounds.  Mask $30 = the M2 bit pair; replicated per lane it stays
+    // byte-order independent.
+    SCAN_PRE(0x0B00, 0x88, 0xB8, 0x30, 0);
     int top = -1, bot = -1;
-    for (int o = 0x88; o <= 0xB8; o++)
-        if ((mem[0x0B00 + o] >> 4) & 3) { if (top < 0) top = o; bot = o; }
+    pmgScanBounds(0x0B88u, 0x0BB8u, 0x30u, &top, &bot);
+    if (top >= 0) { top -= 0x0B00; bot -= 0x0B00; }   // back to the buffer-offset space used below
+    SCAN_CHK(top, bot, 0x0B00, 0x88, 0xB8, 0x30, 0);
     uint16_t* d = scannerDotSprite->data() + 2;       // skip the 2 control words
     for (int i = 0; i < scannerPrevRows; i++) { d[i * 2] = 0; d[i * 2 + 1] = 0; }   // clear last frame's rows
     if (top >= 0) {
