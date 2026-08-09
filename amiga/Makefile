@@ -329,6 +329,19 @@ ifdef SCAN_VERIFY
 EXTRA_DEFINES += -DROF_SCAN_VERIFY
 endif
 
+# Correctness aid: `make CK_VERIFY=1 PROBES=1` + amiga/ck_verify.gdb — coverage check for the
+# PER-CELL cockpit registries (lock-on strip $3491-$3497, digit blocks).  Those decoders now
+# re-render only the cells a writer flagged, so the risk is not arithmetic but a MISSED write
+# leaving a stale cell — which no in-process arithmetic differential can see.  Instead, right
+# after the targeted decode, the whole group is decoded again and the destination bytes are
+# compared: if the targeted decode was complete, the full decode is a no-op (g_ckVerBad must be 0).
+# The source cells are written by the VBI ISR, so the full decode runs TWICE and any call whose two
+# full passes disagree is counted as `raced` and discarded (the sandwich rule in
+# flight-measurement-rules) rather than reported as a mismatch.
+ifdef CK_VERIFY
+EXTRA_DEFINES += -DROF_CK_VERIFY
+endif
+
 # Profiling aid: `make SPRITE_SHAPE=1 PROBES=1` + amiga/sprite_shape.gdb — splits the flight VBI's
 # g_vbiSpriteLines bracket (29 t/firing = ~9% of ALL wall clock, and never examined) into its two
 # callees, buildShotSprite and decodeScannerBlinkCells, and then buildShotSprite into its four

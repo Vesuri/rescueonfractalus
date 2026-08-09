@@ -4830,7 +4830,19 @@ void setup_initials_ptr(void) {
  * ring_push_marked so the CPU stack page matches the oracle exactly (ring_push's internal
  * PLA reads the byte this PHA pushed — eliminating the PHA would diverge mem[$01FF] and the
  * pulled index).  Digit dests are fixed safe screen RAM.  Contract: mem[].
- */
+ *
+ * ⚠ This runs in the flight VBI and shares the $0645/$0646/$0647 change caches with the Amiga's
+ * startup_init_native (perFrameWork), so it is usually the one that CONSUMES a digit change — and
+ * it writes the glyph cells through draw_glyph_2rows, which raises no dirty flag.  On the Amiga
+ * those cells only reach the display through the cockpit decode, so an unflagged write showed a
+ * STALE digit (user-reported: the pilot-range readout #17 sometimes kept an old value) until some
+ * unrelated writer happened to repaint the block.  digit_block_dirty() closes that: each rewritten
+ * 2x2 block registers its four cells (two DL rows) for re-decode.  No-op off Amiga. */
+static inline void digit_block_dirty(uint16_t dest) {
+    platform_cockpit_dirty(dest, 2);
+    platform_cockpit_dirty((uint16_t)(dest + 0x30), 2);
+}
+
 void startup_init(void) {
     bar_col_threshold = 0x00;
     cpu.Y = 0x1E;
@@ -4854,6 +4866,7 @@ void startup_init(void) {
         dl_y1 = 0xB4; dl_y2 = 0x33;
         digit_cache_647 = cpu.A;
         draw_digit_low_nibble();
+        digit_block_dirty(0x33B4);                 /* #17 Range To Pilot */
     }
     /* L_4038 */
     LDA(placed_item_count_bcd);
@@ -4862,6 +4875,7 @@ void startup_init(void) {
         dl_y3 = 0x45; dl_y4 = 0x34;
         dl_y1 = 0x13; dl_y2 = 0x34;
         draw_2digit_value();
+        digit_block_dirty(0x3413); digit_block_dirty(0x3445);   /* #18 Enemies Destroyed */
     }
     /* L_4056 */
     if (bcd_osc_dir != 0x00) {
@@ -4877,6 +4891,7 @@ void startup_init(void) {
     dl_y3 = 0xA4; dl_y4 = 0x34;
     dl_y1 = 0x72; dl_y2 = 0x34;
     draw_2digit_value();
+    digit_block_dirty(0x3472); digit_block_dirty(0x34A4);       /* #19 Pilot Quota/Rescued */
 }
 
 /* dl_index_dec @ $69E3 — DEC $008B, then tail dl_lms_build (rebuild the DL from the

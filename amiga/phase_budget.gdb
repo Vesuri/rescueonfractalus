@@ -117,8 +117,11 @@ printf "   updateFlightCopper     %6lu t/it\n", ($it ? g_rCopper/$it : 0)
 # writer counters size a per-digit mask (writeDigit calls per digit fire == blocks that changed).
 printf "\n=== cockpit scan per group (total %lu t/it, %lu scans) ===\n", \
   ($it ? g_fCockpit/$it : 0), g_fCockpitScans
-printf "  digits  %6lu t/it  %5lu fires (%lu.%02lu/it)\n", ($it ? g_ckDigitT/$it : 0), \
-  g_ckDigitFires, ($it ? g_ckDigitFires/$it : 0), ($it ? ((100*g_ckDigitFires)/$it)%100 : 0)
+printf "  digits  %6lu t/it  %5lu fires (%lu.%02lu/it), %lu blocks decoded (%lu.%02lu/fire, was 6)\n", \
+  ($it ? g_ckDigitT/$it : 0), \
+  g_ckDigitFires, ($it ? g_ckDigitFires/$it : 0), ($it ? ((100*g_ckDigitFires)/$it)%100 : 0), \
+  g_ckDigitBlocks, (g_ckDigitFires ? g_ckDigitBlocks/g_ckDigitFires : 0), \
+  (g_ckDigitFires ? ((100*g_ckDigitBlocks)/g_ckDigitFires)%100 : 0)
 printf "  lockon  %6lu t/it  %5lu fires (%lu.%02lu/it), %lu cells decoded (%lu.%02lu/fire, was 7)\n", \
   ($it ? g_ckLockT/$it : 0), g_ckLockFires, \
   ($it ? g_ckLockFires/$it : 0), ($it ? ((100*g_ckLockFires)/$it)%100 : 0), g_ckLockCells, \

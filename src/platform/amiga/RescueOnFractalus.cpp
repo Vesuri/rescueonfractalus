@@ -138,6 +138,19 @@ extern "C" void rof_cockpit_lockon_dirty(unsigned char cellIdx)
     g_ckLockFlag[cellIdx] = 1u;
     g_ckLockon = 1u;
 }
+
+// The five digit 2×2 blocks + the DL-stride pair, one flag each — the writer (startup_init_native)
+// knows exactly which block it rewrote, and measurement says exactly ONE changes per fire, so
+// decoding all 22 cells was ~5x the work.  Main-thread writer (perFrameWork) and main-thread
+// consumer (render), so no ISR race here; kept as bytes to match the lock-on/dial registries.
+static const int CK_DIGIT_N = 6;                      // 0-4 = the 2x2 blocks, 5 = $33DF/$33E0
+static volatile unsigned char g_ckDigitFlag[8] __attribute__((aligned(4))) = {};
+extern "C" void rof_cockpit_digit_dirty(unsigned char slot)
+{
+    if (slot >= (unsigned char)CK_DIGIT_N) return;
+    g_ckDigitFlag[slot] = 1u;
+    g_ckDigits = 1u;
+}
 // The two dial bars are the one instrument without a fixed cell span — their cells come from the
 // $4581 column table — so the dial alone needs per-cell precision (a fixed-box decode re-paints
 // dozens of static cells every time one bar cell moves, which measured ~4x worse).  Per-cell
@@ -166,6 +179,7 @@ extern "C" volatile unsigned long g_ckFullTicks, g_ckFullCount;  // decodeCockpi
 extern "C" volatile unsigned long g_ckDigitFires = 0, g_ckLockFires = 0, g_ckDialFires = 0;
 extern "C" volatile unsigned long g_ckDigitT = 0, g_ckLockT = 0, g_ckDialT = 0, g_ckDialCells = 0;
 extern "C" volatile unsigned long g_ckLockCells = 0;   // lock-on cells actually decoded (was always 7)
+extern "C" volatile unsigned long g_ckDigitBlocks = 0;  // digit blocks actually decoded (was always 6)
 extern "C" volatile unsigned short g_ckFullVbi[4] = {0,0,0,0};       // g_vbiCount at each ckFull call
 // Boost-return probe: last-installed copper id (1=title 2=standby 3=planet 4=flight 5=tunnel
 // 6=doors 7=empty 8=boost-handoff-hold) + the live boost signals, sampled per render() to
@@ -4361,6 +4375,80 @@ void RescueOnFractalus::decodeCockpitSpan(uint16_t addr, uint8_t nCells)
     }
 }
 
+#ifdef ROF_CK_VERIFY
+// Coverage check for the per-cell cockpit registries (see the CK_VERIFY block in amiga/Makefile).
+// The risk of a targeted decode is not arithmetic — decodeCockpitSpan is unchanged — but a MISSED
+// write leaving a cell stale, which no arithmetic differential can see.  So: a targeted decode is
+// COMPLETE iff decoding the whole group afterwards changes nothing.
+//
+// The check brackets the WHOLE cockpit block (snap the source bytes before it, verify after it),
+// for two reasons: a group's cells may legitimately be decoded by a LATER group's registry, and
+// snapshotting the source before the decode is what makes the race filter sound — a write landing
+// between the decode and the snapshot would otherwise read as a coverage hole (it did: 1 in 284).
+// Any group whose source moved during the bracket, or whose two full passes disagree, is discarded
+// as `raced` (the sandwich rule in flight-measurement-rules).
+extern "C" volatile unsigned long g_ckVerCalls = 0, g_ckVerBad = 0, g_ckVerRaced = 0;
+extern "C" volatile unsigned long g_ckVerCallsG[2] = {0,0}, g_ckVerBadG[2] = {0,0};
+
+// Every cockpit group the registries are responsible for: the lock-on strip, the five digit blocks
+// (two DL rows each) and the DL-stride pair.  group 0 = lock-on, 1 = digits.
+struct CkVerGroup { uint16_t addr; uint8_t nCells; uint8_t group; };
+static const CkVerGroup kCkVerGroups[] = {
+    { 0x3491u, 7u, 0u },
+    { 0x33B4u, 2u, 1u }, { 0x33E4u, 2u, 1u },
+    { 0x3413u, 2u, 1u }, { 0x3443u, 2u, 1u },
+    { 0x3445u, 2u, 1u }, { 0x3475u, 2u, 1u },
+    { 0x3472u, 2u, 1u }, { 0x34A2u, 2u, 1u },
+    { 0x34A4u, 2u, 1u }, { 0x34D4u, 2u, 1u },
+    { 0x33DFu, 2u, 1u },
+};
+static const int kCkVerN = (int)(sizeof(kCkVerGroups) / sizeof(kCkVerGroups[0]));
+static uint8_t s_ckVerSrc[kCkVerN][8];
+
+void RescueOnFractalus::ckVerifySnap()
+{
+    for (int g = 0; g < kCkVerN; g++)
+        for (int c = 0; c < kCkVerGroups[g].nCells; c++)
+            s_ckVerSrc[g][c] = mem[(uint16_t)(kCkVerGroups[g].addr + c)];
+}
+
+void RescueOnFractalus::ckVerifyAll()
+{
+    static const int kRowBytes = 120;
+    for (int g = 0; g < kCkVerN; g++) {
+        const uint16_t addr   = kCkVerGroups[g].addr;
+        const uint8_t  nCells = kCkVerGroups[g].nCells;
+        const uint8_t  grp    = kCkVerGroups[g].group;
+        unsigned off   = (unsigned)(addr - 0x332Du);
+        unsigned entry = rof_divu16(off, 48u);
+        int      col   = (int)rof_modu16(off, 48u) - 4;
+        if (entry >= 10u || col < 0 || col + nCells > 40) continue;
+        const uint8_t* base = (const uint8_t*)cockpitBitmap->data + (8 + entry * 8) * kRowBytes + col;
+
+        uint8_t snap[3][8 * 8 * 3];               // [pass][((scan*nCells)+cell)*3 + plane]
+        for (int pass = 0; pass < 3; pass++) {
+            if (pass) decodeCockpitSpan(addr, nCells);
+            int k = 0;
+            for (int scan = 0; scan < 8; scan++)
+                for (int c = 0; c < nCells; c++) {
+                    const uint8_t* p = base + scan * kRowBytes + c;
+                    snap[pass][k++] = p[0]; snap[pass][k++] = p[40]; snap[pass][k++] = p[80];
+                }
+        }
+        g_ckVerCalls++; g_ckVerCallsG[grp]++;
+        bool raced = false;
+        for (int c = 0; c < nCells; c++)
+            if (s_ckVerSrc[g][c] != mem[(uint16_t)(addr + c)]) raced = true;
+        const int n = 8 * nCells * 3;
+        for (int k = 0; k < n && !raced; k++)
+            if (snap[1][k] != snap[2][k]) raced = true;
+        if (raced) { g_ckVerRaced++; continue; }
+        for (int k = 0; k < n; k++)
+            if (snap[0][k] != snap[1][k]) { g_ckVerBad++; g_ckVerBadG[grp]++; break; }
+    }
+}
+#endif
+
 // Decode the lock-on indicator cells that a writer actually touched (see g_ckLockFlag).  Runs from
 // BOTH consumers: the main-loop render() and the standby door-scroll vblank bridge.  Consecutive
 // dirty cells are merged into one decodeCockpitSpan call, so the 6-cell fill sweep still costs one
@@ -4683,6 +4771,10 @@ void RescueOnFractalus::render()
 #ifdef ROF_FLIGHT_PROBE
     unsigned long _ckp0 = rof_subclock();
 #endif
+#ifdef ROF_CK_VERIFY
+    ckVerifySnap();          // source cells BEFORE any decode — makes the race filter sound
+#endif
+    bool any = false;
     if (cockpitForceFull) {
         cockpitForceFull = false;
 #ifdef ROF_FLIGHT_PROBE
@@ -4697,14 +4789,13 @@ void RescueOnFractalus::render()
         // The full paint covers every cell — drop all instrument flags + the per-cell registries.
         g_ckDigits = g_ckLockon = g_ckDial = 0u;
         for (int i = 0; i < CK_DIAL_N; i++) g_ckDialFlag[i] = 0u;
-        for (int i = 0; i < 8; i++) g_ckLockFlag[i] = 0u;
+        for (int i = 0; i < 8; i++) g_ckLockFlag[i] = g_ckDigitFlag[i] = 0u;
 #ifdef ROF_FLIGHT_PROBE
         if (rsFlight) g_fCockpitScans++;
 #endif
     } else {
-        bool any = false;
-        // Digits (#17-19) + DL-stride: 5 two-tall 2×2 blocks + the $33DF/$33E0 stride pair.
-        // Decoding all five whenever any digit changes is ~22 cells and digits change rarely.
+        // Digits (#17-19) + DL-stride: 5 two-tall 2×2 blocks + the $33DF/$33E0 stride pair, one
+        // registry slot each — exactly one block changes per fire (measured), so decode only it.
         if (g_ckDigits) {
             g_ckDigits = 0u;
 #ifdef ROF_FLIGHT_PROBE
@@ -4712,10 +4803,21 @@ void RescueOnFractalus::render()
 #endif
             static const uint16_t kDigit[5] = { 0x33B4u, 0x3413u, 0x3445u, 0x3472u, 0x34A4u };
             for (int i = 0; i < 5; i++) {
+                if (!g_ckDigitFlag[i]) continue;
+                g_ckDigitFlag[i] = 0u;
                 decodeCockpitSpan(kDigit[i], 2u);                 // top row
                 decodeCockpitSpan((uint16_t)(kDigit[i] + 0x30u), 2u);  // bottom row (one DL row down)
+#ifdef ROF_FLIGHT_PROBE
+                g_ckDigitBlocks++;
+#endif
             }
-            decodeCockpitSpan(0x33DFu, 2u);                       // DL-stride control bytes
+            if (g_ckDigitFlag[5]) {
+                g_ckDigitFlag[5] = 0u;
+                decodeCockpitSpan(0x33DFu, 2u);                   // DL-stride control bytes
+#ifdef ROF_FLIGHT_PROBE
+                g_ckDigitBlocks++;
+#endif
+            }
             any = true;
 #ifdef ROF_FLIGHT_PROBE
             if (rsFlight) { g_ckDigitT += rof_subclock() - _ckd0; g_ckDigitFires++; }
@@ -4765,6 +4867,14 @@ void RescueOnFractalus::render()
     }
 #ifdef ROF_FLIGHT_PROBE
     if (rsFlight) g_fCockpit += rof_subclock() - _ckp0;   // flight-only: cockpitTicks/tdFrames is per-flight-frame
+#endif
+#ifdef ROF_CK_VERIFY
+    // Only on frames that decoded something: checking EVERY frame costs ~36 extra span decodes and
+    // slowed the launch cinematic so much the probe never reached flight.  A stale cell survives
+    // until the next decode frame anyway, and those are ~44% of frames, so nothing hides for long.
+    if (any) ckVerifyAll();
+#else
+    (void)any;
 #endif
     if (rsFlight) g_flightProf.renderTot += (unsigned short)(flight_vbi_tick() - profR0);
 }

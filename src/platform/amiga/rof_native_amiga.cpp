@@ -369,16 +369,33 @@ extern "C" void vbi_attract_timer_native(void)
 //
 // Additionally writes mem[$33DF]/$33E0 (display-list stride control) as $9E/$9D
 // when mem[$0642] is 1 or 2 and mem[$004B] passes the BIT test; otherwise $1E/$1D.
+#ifdef ROF_FLIGHT_PROBE
+// How many of the five 2×2 digit blocks actually change per g_ckDigits fire, and how often the
+// $33DF/$33E0 stride pair alone raises the flag.  Measured 2026-08-09: exactly ONE block per fire,
+// zero stride flips — which is why render() now decodes per block instead of all five.
+extern "C" volatile unsigned long g_ckWdigCalls = 0, g_ckStrideFlips = 0, g_ckSiNative = 0;
+#endif
+// Which of the six digit groups changed (0-4 = the 2×2 blocks $33B4/$3413/$3445/$3472/$34A4,
+// 5 = the $33DF/$33E0 DL-stride pair).  Defined in RescueOnFractalus.cpp next to the decoder.
+extern "C" void rof_cockpit_digit_dirty(unsigned char slot);
+
 extern "C" void startup_init_native(void)
 {
-    // helper: write a 2×2 digit block from table $4AE3[idx*4] to dest, OR'ing flag
-    auto writeDigit = [](uint16_t dest, uint8_t idx, uint8_t flag) {
+#ifdef ROF_FLIGHT_PROBE
+    g_ckSiNative++;
+#endif
+    // helper: write a 2×2 digit block from table $4AE3[idx*4] to dest, OR'ing flag.  `slot` is the
+    // block's index in the decoder's registry — only the block that changed gets re-decoded.
+    auto writeDigit = [](uint16_t dest, uint8_t idx, uint8_t flag, uint8_t slot) {
+#ifdef ROF_FLIGHT_PROBE
+        g_ckWdigCalls++;
+#endif
         uint16_t t = (uint16_t)(0x4AE3u + (uint16_t)(idx << 2u));
         mem[dest + 0u]     = mem[t + 0u] | flag;
         mem[dest + 1u]     = mem[t + 1u] | flag;
         mem[dest + 0x30u]  = mem[t + 2u] | flag;
         mem[dest + 0x31u]  = mem[t + 3u] | flag;
-        g_ckDigits = 1u;   // a digit 2×2 block changed → render decodes the digit instruments
+        rof_cockpit_digit_dirty(slot);   // this block changed → render decodes its 4 cells
     };
 
     mem[MEM_bar_col_threshold] = 0u;
@@ -401,12 +418,17 @@ extern "C" void startup_init_native(void)
     }
     // $33DF/$33E0 are in the scanned mode-4 region; only dirty when the value actually
     // changes (this runs every call, so an unconditional dirty would defeat the skip).
-    if (mem[0x33DFu] != y) { mem[0x33DFu] = y; mem[0x33E0u] = (uint8_t)(y - 1u); g_ckDigits = 1u; }
+    if (mem[0x33DFu] != y) {
+        mem[0x33DFu] = y; mem[0x33E0u] = (uint8_t)(y - 1u); rof_cockpit_digit_dirty(5u);
+#ifdef ROF_FLIGHT_PROBE
+        g_ckStrideFlips++;
+#endif
+    }
 
     // Digit 1: lower nibble of mem[$0642], change-detected against mem[$0647]
     if (a != mem[MEM_digit_cache_647]) {
         mem[MEM_digit_cache_647] = a;
-        writeDigit(0x33B4u, (uint8_t)(a & 0x0Fu), 0u);
+        writeDigit(0x33B4u, (uint8_t)(a & 0x0Fu), 0u, 0u);
     }
 
     // Digit 2: BCD byte mem[$0641], upper nibble → $3413, lower nibble → $3445
@@ -415,8 +437,8 @@ extern "C" void startup_init_native(void)
         mem[MEM_shield_or_damage] = a;
         uint8_t hi = (uint8_t)(a >> 4u);  // upper nibble (BCD tens)
         uint8_t lo = (uint8_t)(a & 0x0Fu);                   // lower nibble (BCD units)
-        writeDigit(0x3413u, hi, 0u);
-        writeDigit(0x3445u, lo, 0u);
+        writeDigit(0x3413u, hi, 0u, 1u);
+        writeDigit(0x3445u, lo, 0u, 2u);
     }
 
     // Digit 3: BCD byte mem[$0628] with optional $80 flag
@@ -429,8 +451,8 @@ extern "C" void startup_init_native(void)
         mem[MEM_digit_cache_646] = a | bf;
         uint8_t hi = (uint8_t)(((a >> 2u) & 0x3Cu) >> 2u);
         uint8_t lo = (uint8_t)(a & 0x0Fu);
-        writeDigit(0x3472u, hi, bf);
-        writeDigit(0x34A4u, lo, bf);
+        writeDigit(0x3472u, hi, bf, 3u);
+        writeDigit(0x34A4u, lo, bf, 4u);
     }
 }
 

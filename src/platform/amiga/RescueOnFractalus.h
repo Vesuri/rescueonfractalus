@@ -150,6 +150,10 @@ private:
     void decodeCockpitSpan(uint16_t addr, uint8_t nCells);  // decode nCells cockpit cells from Atari screen addr
     void decodeCockpitFull();  // decode the whole cockpit region (modeD + mode4) once (scene-entry repaint)
     void decodeLockonDirty();  // decode only the lock-on cells ($3491+) a writer actually touched
+#ifdef ROF_CK_VERIFY
+    void ckVerifySnap();   // snapshot the verified groups' SOURCE cells before the cockpit block
+    void ckVerifyAll();    // after it: prove every targeted decode left the cockpit fully up to date
+#endif
     void decodeTitleScreen();  // decode the whole Title Screen text ($365B/charset $0400) -> titleScreenBitmap
     void decodeTitleCells(int cellLo, int cellHi);  // (re)decode Title Screen cells [lo..hi] (clears+ORs); targeted value updates
     uint16_t tunnelSrcBase = 0x1000;               // decodeTunnelRect source base: $1000 rings (forward tunnel + boost tunnel) / $2000 starfield (boost stars — the $3000 DL displays $2000 while $008D==0, then emit_dl_coord_pairs rewrites its LMS to $1000 for the reverse tunnel)
