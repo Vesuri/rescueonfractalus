@@ -28,6 +28,32 @@
 ; rasterize calls (amiga/ras_shape.gdb, quiet baseline, 16342 calls / 239 iterations =
 ; 68.4 calls per flight iteration).  Five dead or over-priced things removed — see the
 ; comments at FRM, sd_phase3, sd_inner, sd_pop and sd_out.
+;
+; ⛔ DEADZP — CLOSED 2026-08-09, do NOT re-open without new evidence.  The exit residue
+; (sd_out's $82-$86 span flush + $8D-$91 mid flush + $9F, and the $B5/$B6 writes at the entry
+; guard, both width tests and submid's roughness tail) is ~200 of the ~1000 cycles a call,
+; ~2% of the quiet frame, and it LOOKS like pure 6502 bookkeeping no Amiga code consumes.
+; It is not.  A reader survey over every function still in the linked image (--gc-sections
+; drops 51 of the 68 that reference these cells) plus the four sibling asm twins found a live
+; read-before-write consumer for nine of the twelve cells:
+;   $B5   — TerrainFrameSetupAssembler.s reads the OLD $B5 to build $B4 ("reads OLD $B5, before
+;           the loop overwrites it").  terrain_frame_setup runs TWICE PER ITERATION, right after
+;           a pass's subdivide calls, so subdivide is normally its last writer.  IN FLIGHT.
+;   $82/$83 — dl_lms_push_bottom_core (inlined into scroll_terrain_dl) read-modify-writes them
+;           as the door-scroll cinematic's persistent bottom-LMS pointer, +$2E a step.
+;   $84   — alien_field0_fill seeds its bit-packing accumulator from it and its caller does not
+;           write it; that is the jump-scare creature overlay, also IN FLIGHT.
+;   $8F   — scroll_field_columns_core does `sfx_toggle_8F >>= 1`, a persistent frame toggle.
+;   $90/$91 — read by boot_standby_launch_driver / standby_level_select_loop.
+;   $9F   — read by draw_ring_frame_step / draw_symmetric_span_loop as a span coordinate their
+;           callers do not set.
+; Only $86 survived the survey (both readers — dl_lms_fill and alien_field0_fill — are written
+; by their callers immediately before the call), and one byte store is 16 cycles = 0.16% of
+; wall, not worth an asymmetric residue contract.
+; ⭐ Two lessons.  (1) A C-only grep is NOT the survey: three of the consumers are in hand-asm
+; twins or in a helper GCC inlined into its caller, so grep the .s files and the linked
+; disassembly too.  (2) "6502 scratch nothing reads" is a hypothesis about a HEAVILY REUSED
+; address, and these cells are reused as persistent pointers/toggles by other scenes.
 
 	xdef	terrain_subdivide_column_core_asm
 	ifnd	ROF_SUBDIV_VERIFY
