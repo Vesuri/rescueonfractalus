@@ -66,22 +66,35 @@ def group_of(sym):
     # firing with amiga/irq_probe.gdb) and this bucket only moved 8.0% -> 7.3%.
     # Measure interrupt-dispatch cost with irq_probe.gdb's beam probe, never from here.
     if sym in ("<unresolved/ROM>",):                 return "exec IRQ-entry stub (sampler artifact)"
-    # "ras_sp3*"/"ras_sp4*" are the 2026-08-05 restructure's straight-line span-3/span-4 leaf
-    # groups; "done" is the rasterizer's shared writeback/epilogue label.  Without these rows
-    # they show up as separate "misc:" lines and the rasterizer bucket reads ~half its real cost.
+    # Every straight-line leaf/fused block in TerrainRasterizeAssembler.s: "ras_sp3/sp4" (the
+    # 2026-08-05 restructure), "ras_s5..s8" (the Phase-7 span-5..8 fusion), "ras_f9..f16" (the
+    # Phase-11 span-9..16 stubs), the "rdn_*" done-trampolines (Phase 9) and "done"/"done_raw",
+    # the shared writeback/epilogues.  Without these rows they show up as separate "misc:" lines
+    # and the rasterizer bucket reads ~half its real cost.
+    # ⚠ The prefix is "ras_" and NOT "ras_sp": that older, narrower test silently stopped
+    # covering ras_s5..s8 the moment Phase 7 landed — i.e. it excluded the blocks absorbing ~49.5%
+    # of all loop-top dispatches.  Any profile taken between b71a405 and this fix under-reports
+    # the rasterizer.  vasm emits every local label into the ELF symtab, so a new block is
+    # invisible here until its name matches.  "raster_scaled_object" does NOT start with "ras_",
+    # so the object-plotter bucket below is unaffected.
     # NB "load_far" is a TerrainSubdivideAssembler.s label, NOT a rasterizer one (the old
     # rasterizer had a same-named helper; the 2026-08-05 restructure dropped it, along with
     # the `draw`/`draw_ret` subroutine that DRAWDOT now inlines).  Listing it here cost the
     # subdivide bucket 1.6 points and handed them to the rasterizer.
-    if sym.startswith(("ph1_", "ph2_", "ras_sp")) or sym in (
-        "done", "terrain_column_rasterize_core_asm", "terrain_column_rasterize_span"):
+    if sym.startswith(("ph1_", "ph2_", "ras_", "rdn_")) or sym in (
+        "done", "done_raw", "terrain_column_rasterize_core_asm",
+        "terrain_column_rasterize_span"):
                                                      return "rasterizer (ph1/ph2 + leaf draw)"
     if sym.startswith("sd_") or sym in ("submid", "push_mid", "load_far", "load_span",
                                         "terrain_subdivide_column_core_asm"):
                                                      return "subdivide (sd_*)"
     if sym.startswith("tf_") or sym == "terrain_frame_setup_core_asm":
                                                      return "terrain_frame_setup (tf_*)"
-    if sym.startswith("ep_") or sym == "RescueOnFractalus::renderFlightDirect()":
+    # startswith, NOT ==: GCC splits this one into a "[clone .part.0]" that carried as many
+    # samples as the main body (4.7% each, 2026-08-08) and sat in "misc:" until it was noticed,
+    # halving the bucket.  Check for `.part`/`.constprop`/`.isra` clones whenever a C++ bucket
+    # looks suspiciously small next to its phase-budget number.
+    if sym.startswith(("ep_", "RescueOnFractalus::renderFlightDirect()")):
                                                      return "renderFlightDirect (+edge-plot asm)"
     # NOT a busy-wait — measured 2026-08-06 (blit_shape.gdb): the frame-sync vblank spin is
     # 682 ticks over 3001 vbi = 0.07% of flight, 1 tick per call (the deferred-flip scheme
