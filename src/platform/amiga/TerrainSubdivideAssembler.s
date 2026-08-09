@@ -59,7 +59,13 @@ FRM		equ	36		; 9 longs: d2-d7/a2-a4
 	endc
 ARG_START	equ	7+FRM		; startDepth
 ARG_RASENT	equ	11+FRM		; rasterEntryDepth
+; Under ROF_SUBDIV_OBJ1ARG the object entry takes obj0 ALONE (see its header): startDepth is
+; the literal 0 at its one call site and rasterEntryDepth is dead, so obj0 is the first arg.
+	ifd	ROF_SUBDIV_OBJ1ARG
+ARG_OBJ0	equ	7+FRM		; obj0 (the only argument)
+	else
 ARG_OBJ0	equ	15+FRM		; obj0 (the object-indexed entry only)
+	endc
 
 	section	code
 
@@ -99,13 +105,16 @@ terrain_subdivide_column_core_asm:
 	; the oracle would write back, so leaving it alone is byte-identical.  See sd_out.
 
 	; --- entry guard: far0 = subpt_load(0); $B5 = (far0.col>>8)^$80; bail if span.col>=far0.col
-	moveq	#0,d0
-	move.b	mem+SDCOL_HI,d0		; far0.col hi (slot 0)
-	move.b	d0,d1
+	; far0.col's high byte gets into bits 8-15 by a WORD read, not a 22-cycle `lsl.w #8`:
+	; SDCOL_HI is an even address and the 68000 is big-endian, so `move.w mem+SDCOL_HI` puts
+	; SLOT 0's byte in bits 8-15 (bits 0-7 take slot 1's, which the next move.b overwrites).
+	; d0's upper WORD is left dirty by that — every later read of d0 here is .w, and the next
+	; writer on each path (submid/sd_inner's `moveq #0,d0`, sd_out's `move.w d2,d0`) is full.
+	move.b	mem+SDCOL_HI,d1		; far0.col hi (slot 0)
 	eori.b	#$80,d1
 	move.b	d1,mem+$B5
-	lsl.w	#8,d0
-	move.b	mem+SDCOL_LO,d0		; d0 = far0.col
+	move.w	mem+SDCOL_HI,d0		; d0 bits 8-15 = far0.col hi
+	move.b	mem+SDCOL_LO,d0		; d0.w = far0.col
 	cmp.w	d0,d2			; span.col - far0.col (signed)
 	bge	sd_ret			; span.col >= far0.col -> return depth
 	movea.w	#$14,a3			; budget = $14
@@ -369,8 +378,17 @@ sd_ret:
 
 ; ---------------------------------------------------------------------------
 ; terrain_subdivide_column_obj — the OBJECT-INDEXED entry.
+;   uint8_t terrain_subdivide_column_obj(uint8_t obj0)                 [ROF_SUBDIV_OBJ1ARG]
 ;   uint8_t terrain_subdivide_column_obj(uint8_t startDepth, uint8_t rasterEntryDepth,
-;                                        uint8_t obj0)
+;                                        uint8_t obj0)                 [otherwise]
+;
+; ⚠ The 1-argument form is the SHIPPING ABI (2026-08-09).  Of the three arguments this entry
+; used to take, two were never live: `rasterEntryDepth` is dead the moment the rasterizer's
+; register ABI exists (terrain_column_rasterize_core_c assigns it to `depth` and then does
+; `depth = 0` before any read — and 5172 differential calls agree), and `startDepth` is the
+; literal 0x00 at the ONE call site (terrain_draw_objects).  The caller was paying 12 cycles
+; for a `move.l` and 20 for a `clr.l -(sp)`, plus 8 more of stack clean-up, so the CALL is 32
+; cycles cheaper and the prologue another 32.
 ;
 ; Same body as the core entry; only where the running span comes from differs.
 ; terrain_draw_objects used to copy the primary endpoint's projected vector into mem[$82-$86]
@@ -399,6 +417,17 @@ terrain_subdivide_column_obj_asm:
 	else
 	movem.l	d2-d7/a2-a4,-(sp)	; 9 longs
 	endc
+	ifd	ROF_SUBDIV_OBJ1ARG
+	; startDepth is the literal 0 at the one call site, so `depth` is a constant here and
+	; a1 = mem + depth IS mem — which also makes a0 one `movea.l` off a1 instead of a second
+	; 12-cycle `lea mem`.  (The general startDepth still lives in the core entry above.)
+	moveq	#0,d0
+	movea.l	d0,a2			; a2 = depth = 0
+	lea	mem,a1			; a1 = mem + depth
+	move.b	(ARG_OBJ0,sp),d0	; obj0
+	movea.l	a1,a0
+	adda.l	d0,a0			; a0 = mem + obj0
+	else
 	moveq	#0,d0
 	move.b	(ARG_START,sp),d0	; startDepth
 	movea.l	d0,a2			; a2 = depth = startDepth
@@ -413,6 +442,7 @@ terrain_subdivide_column_obj_asm:
 	move.b	(ARG_OBJ0,sp),d0	; obj0
 	lea	mem,a0
 	adda.l	d0,a0			; a0 = mem + obj0
+	endc
 
 	; span = {$2400:$242D col, $245A:$2487 hgt, $23B5 frac} of object obj0
 	moveq	#0,d2
@@ -427,13 +457,12 @@ terrain_subdivide_column_obj_asm:
 	; mid ($8D-$91) deliberately NOT loaded — same reason as the core entry (see there).
 
 	; --- entry guard: $B5 = (far0.col>>8)^$80; bail if span.col >= far0.col
-	moveq	#0,d0
-	move.b	mem+SDCOL_HI,d0		; far0.col hi (slot 0)
-	move.b	d0,d1
+	; (word read for the high byte instead of `lsl.w #8` — see the core entry's guard)
+	move.b	mem+SDCOL_HI,d1		; far0.col hi (slot 0)
 	eori.b	#$80,d1
 	move.b	d1,mem+$B5
-	lsl.w	#8,d0
-	move.b	mem+SDCOL_LO,d0		; d0 = far0.col
+	move.w	mem+SDCOL_HI,d0		; d0 bits 8-15 = far0.col hi
+	move.b	mem+SDCOL_LO,d0		; d0.w = far0.col
 	cmp.w	d0,d2			; span.col - far0.col (signed)
 	blt.s	sd_obj_go		; span.col < far0.col -> subdivide
 	; bail: publish the span, i.e. exactly the 5 bytes the caller used to write

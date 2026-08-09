@@ -7239,10 +7239,40 @@ static inline uint8_t terrain_subdivide_column_obj_c(uint8_t startDepth, uint8_t
     return terrain_subdivide_column_core(startDepth, rasterEntryDepth);
 #endif
 }
+/* ⚠ ROF_SUBDIV_OBJ1ARG: the shipping ABI passes obj0 ALONE.  `startDepth` is the literal 0x00
+ * at the one call site below and `rasterEntryDepth` is dead under the rasterizer's register ABI
+ * (terrain_column_rasterize_core_c above assigns it to `depth` and then does `depth = 0` before
+ * any read), so both were pure call overhead: a `move.l` + a `clr.l -(sp)` + wider stack
+ * clean-up in the caller and the arg decode in the callee, ~64 cycles over 68 calls/iteration.
+ * The flag is tied to RASTER_SPAN_ABI, which is exactly the condition that kills rasterEntryDepth.
+ * The oracle keeps all three parameters — it IS the general routine — and is handed the two
+ * constants. */
+#ifdef ROF_SUBDIV_OBJ1ARG
+#define SUBDIV_OBJ(startDepth, rasEnt, obj0) terrain_subdivide_column_obj(obj0)
+#else
+#define SUBDIV_OBJ(startDepth, rasEnt, obj0) terrain_subdivide_column_obj(startDepth, rasEnt, obj0)
+#endif
+
 #if defined(ROF_SUBDIV_ASM) && defined(ROF_SUBDIV_VERIFY)
 /* Same in-process differential as the core entry, so the FAST path is the one under test.
  * (`make VERIFY=1 NO_RASTER_VERIFY=1 PROBES=1` + subdiv_verify.gdb — plain VERIFY=1 sends the
- * nested rasterize calls through the C dispatcher, i.e. not this routine's fast path.) */
+ * nested rasterize calls through the C dispatcher, i.e. not this routine's fast path.  That
+ * build also has no RASTER_SPAN_ABI, hence no OBJ1ARG, so each VERIFY config exercises the same
+ * ABI its shipping counterpart would.) */
+#ifdef ROF_SUBDIV_OBJ1ARG
+extern uint8_t terrain_subdivide_column_obj_asm(uint8_t obj0);
+uint8_t terrain_subdivide_column_obj(uint8_t obj0) {
+    g_subdivCalls++;
+    subv_snapshot();
+    uint8_t asmRet;
+    FP_TIME(asmRet = terrain_subdivide_column_obj_asm(obj0), g_subdivAsmTicks);
+    subv_capture_and_restore();
+    uint8_t cRet;
+    FP_TIME(cRet = terrain_subdivide_column_obj_c(0x00, 0x00, obj0), g_subdivCTicks);
+    subv_compare(asmRet, cRet);
+    return cRet;
+}
+#else
 extern uint8_t terrain_subdivide_column_obj_asm(uint8_t startDepth, uint8_t rasterEntryDepth,
                                                 uint8_t obj0);
 uint8_t terrain_subdivide_column_obj(uint8_t startDepth, uint8_t rasterEntryDepth, uint8_t obj0) {
@@ -7256,9 +7286,14 @@ uint8_t terrain_subdivide_column_obj(uint8_t startDepth, uint8_t rasterEntryDept
     subv_compare(asmRet, cRet);
     return cRet;
 }
+#endif
 #elif defined(ROF_SUBDIV_OBJ_ABI)
+#ifdef ROF_SUBDIV_OBJ1ARG
+extern uint8_t terrain_subdivide_column_obj(uint8_t obj0);            /* TerrainSubdivideAssembler.s */
+#else
 extern uint8_t terrain_subdivide_column_obj(uint8_t startDepth, uint8_t rasterEntryDepth,
                                             uint8_t obj0);   /* TerrainSubdivideAssembler.s */
+#endif
 #else
 /* SDL / SUBDIV_C=1: the C oracle above is the implementation. */
 static inline uint8_t terrain_subdivide_column_obj(uint8_t startDepth, uint8_t rasterEntryDepth,
@@ -7901,7 +7936,7 @@ __attribute__((noinline)) static void terrain_draw_objects(void) {
                    prologue to load back out; terrain_subdivide_column_obj takes the object id
                    and loads them itself (see the ABI note at its definition). */
                 CL_CNT(g_clSubCalls);                /* tree entries: a pure COUNT, no bracket */
-                PB(_sd); SEGPRE(); terrain_subdivide_column_obj(0x00, (uint8_t)order_idx, obj0); SEGPOST(); PE(_sd, g_tdSubdiv);
+                PB(_sd); SEGPRE(); SUBDIV_OBJ(0x00, (uint8_t)order_idx, obj0); SEGPOST(); PE(_sd, g_tdSubdiv);
                 /* The oracle reloads the index from $272E here, and re-increments it when the
                    reload reads 0 — the 6502 shares that INY with the primary-culled path.  Both
                    are dropped: no callee writes $272E (it is this routine's private scratch),

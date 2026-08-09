@@ -149,6 +149,13 @@ endif
 # oracle (mem[] handoff) call-for-call.
 ifdef RASTER_SPAN_ABI
 obj/TerrainSubdivideAssembler.o : VASMFLAGS += -DROF_RASTER_SPAN_ABI
+# ...and once rasterEntryDepth is dead (that is exactly what RASTER_SPAN_ABI means), the object
+# entry's only LIVE argument is obj0: startDepth is the literal 0 at its one call site.  So the
+# shipping ABI passes just obj0 — the caller drops a `move.l`+`clr.l -(sp)` pair (32 cycles) and
+# the callee drops the arg decode (32).  Tied to RASTER_SPAN_ABI because a plain `make VERIFY=1`
+# build routes the rasterize through the C dispatcher, where rasterEntryDepth is still passed.
+EXTRA_DEFINES += -DROF_SUBDIV_OBJ1ARG
+obj/TerrainSubdivideAssembler.o : VASMFLAGS += -DROF_SUBDIV_OBJ1ARG
 endif
 endif
 
