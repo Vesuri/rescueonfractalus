@@ -1062,3 +1062,46 @@ repayment is to move other independent work in (§12.6).
 flew a varying altitude where the recorded baseline was uniformly `$80` — and neither is downstream
 of the change. Read the brackets that CONTAIN the change and the one bracket mechanically coupled to
 it; treat the rest of a cross-run phase table as noise.
+
+### 12.6 Repaying the shadow — the band's cache refresh moves into it
+
+The windscreen-band composite splits cleanly along the dependency. **Step 1** (change-detect the
+mode-D band field against the per-half shadow, refresh the decode caches) reads only `mem[]` and the
+caches and writes only the caches. **Step 2** (the paint) writes `vrow`, the very bitmap the sky fill
+is filling. So step 1 was hoisted above the `blitterWait` and step 2 left below it — pure code
+motion, no logic change.
+
+Sampling the band field a few hundred cycles earlier adds no exposure: it is ISR-written and a torn
+read was already documented as harmless and self-correcting. The `BAND_VERIFY` source freeze moves
+with `srow`, so both passes still see identical bytes; `band_verify.gdb` reports **calls=300
+mismatch=0 objLeak=0**.
+
+Measured, same window, and this run's trajectory matches the recorded baseline (uniform `alt=$80`),
+with the untouched siblings as the internal control — **SETUP 142→141, DRAW 985→970, cockpit 40→39**:
+
+| bracket (t/it) | baseline | after §12.3 | after §12.6 |
+|---|---|---|---|
+| clear/copy | 45 | 34 | 33 |
+| edge+fillup | 69 | 70 | 70 |
+| late sprite | 55 | 20 | **56** ← step 1 moved IN |
+| **fill wait** | 2 | **15** | **2** ← stall fully reabsorbed |
+| band+overlay | 71 | 73 | **34** ← step 1 moved OUT |
+| `renderFlightDirect` | 259 | 230 | **215** |
+| **FRAME** | **375** | 352 | **329** |
+
+The shadow swallowed the whole 13 t/it it had taken back. Both commits together: **FRAME 375 → 329
+= −46 t/it = ~3.1% of the shipping frame** (1505 t/it at 20.80 FPS).
+
+### 12.7 End-to-end
+
+`make COMBAT=1 COMBAT_QUIET=1 FIXED_RNG=1 FPSCOUNT=1` + `fps_seg.gdb`, vbi 1902→4900, **all 15
+segments valid** (`VVBLKI=$4ff5`, `$3D=00`): **1303 painted / 2998 vbi = 21.73 FPS**, against the
+recorded **20.80** (1248/3000). Per-segment **17.5 – 24.1** against the baseline's 17.2 – 22.8.
+
++4.5% throughput against the +3.2% predicted from the phase brackets — agreement within this
+harness's documented upward bias, not independent confirmation of the size. The number to quote as
+the win is the bracket delta; the framerate is the standing baseline. What *is* worth noting is that
+the whole per-segment distribution moved, both ends, which is the one end-to-end signal this harness
+gives that a single mean does not.
+
+**Target check: 25 FPS from 21.73 is a 1.15× gap = −13% of frame time still to go** (it was −18%).
