@@ -1392,3 +1392,22 @@ The two runs overlapped, and the tell was unmistakable: **the first task's trail
 complete-looking table can be read while `diag_run.sh` is still in its ~25 s shutdown — whose final
 `pkill -9 fs-uae` can kill the emulator the next run just started. Wait for the task notification,
 not for the log to look finished. (Recorded in [[flight-measurement-rules]].)
+
+### 15.4 The end-to-end harness read this real win BACKWARDS — and that is the expected outcome
+
+`fps_seg`, 15/15 segments live, ~3000-vbi window: **21.92 FPS (1315 painted / 3000)** against
+304f7bf's 22.12 (1327). **−0.9%, for a change the phase budget measured at −9 t/it = −0.64%.**
+
+Nothing is wrong with either number. A ~0.6% change is a quarter of this harness's ±2%
+single-window noise, and `FIXED_RNG` pins the LEVEL, not the trajectory — the 304f7bf run had three
+segments off `alt=$80`, this one has one, so the two flew different frames. The phase-budget arm is
+the trustworthy instrument here and it is not close: same build for both arms of the comparison,
+sibling brackets as controls, and **DRAW landing on exactly 971 t/it in both runs.**
+
+⚠ **So the standing baseline is now 21.92, recorded lower than the previous row even though the
+frame got 9 t/it cheaper.** That is the honest entry. The temptation to re-run until the number
+goes up is exactly what [[flight-measurement-rules]] forbids ("never quote the better of two runs"),
+and re-running a `FIXED_RNG` binary is n=1 anyway — two runs of it are bit-identical. If a future
+session wants real end-to-end variance it must use `fps_multi.gdb`'s disjoint windows, and even
+then the resolution floor stands: **at this point in the project, individual wins are below what any
+framerate measurement can see, and the phase budget is the only instrument that can price them.**
