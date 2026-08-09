@@ -546,6 +546,15 @@ Rewrite hot functions in idiomatic C:
   emitted BEFORE designing the asm** — if it already inlined and unrolled, you must beat
   straight-line code, and the headroom is small. Watch the prologue too: a 10-register `movem`
   costs ~180 cycles against GCC's 3-register ~68, which can exceed the whole win.
+  ⚠⚠ **GCC UNDOES this rule when a loop walks 3+ pointers — and the exit test is the one-line fix.**
+  ivopts strength-reduces N pointer IVs into ONE index register plus N invariant bases, so every
+  access becomes `(0,An,Dn.L)`: **14 cycles of EA for a long against `(An)+`'s 8**, on top of losing
+  the free increment. Writing `for (int n = count; n--; )` invites it; writing
+  `do { … } while (p != pEnd);` against a precomputed end pointer forces one IV to be a real
+  pointer and it then keeps them all. Measured on the band paint (log §14): **170 → 121 cycles per
+  long, same source otherwise.** Three wins in this tree have now turned on this one pathology
+  (band paint, the PMG run-scans, the pre-cache band byte loop at 146 cyc/byte), so **read the
+  disassembly of any hot multi-pointer loop before assuming its cost is the work it does.**
 - **Batch bulk clears/copies with `move.l` through a NON-VOLATILE alias** of `mem[]`
   (`uint8_t* M = (uint8_t*)mem;`). Casting away `volatile` lets the compiler emit 4-byte stores
   and a tight loop. SAFE only for buffers the ISR doesn't touch concurrently — the main loop
