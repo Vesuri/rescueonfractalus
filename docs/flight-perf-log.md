@@ -960,3 +960,105 @@ against +0.83% predicted from the static count — i.e. **the harness cannot res
 (one sample each, and `FIXED_RNG` pins the level, not the trajectory). The number to quote is the
 static one. Recorded here only as a smoke test: the game still flies the same level, paints every
 segment, and nothing regressed.
+
+## 12. 2026-08-09 — attacking FRAME: three run-scans at 80 cycles a byte
+
+FRAME had been the second-biggest phase for weeks (375 t/it, ~20% of the shipping frame) and the
+`flight-pc-profiler` note said of it only that "nothing here exceeds ~3% of wall individually, so it
+is 5-point-win territory". That was true of the buckets that had been *printed*. One had not been.
+
+### 12.1 The bucket nobody had looked at
+
+`renderFlightDirect` has five `FD_LAP` accumulators and `phase_budget.gdb` printed four of them.
+The fifth, `g_fdScan`, was accumulated in the tree and never read by any script — so the split
+looked like `clear/copy 45 + edge+fillup 70 + fill wait 2 + band+overlay 71 = 188` against a
+`g_fDirect` of 259, with 71 t/it unattributed and quietly ascribed to "the sprite builders, which
+run in the blitter shadows anyway". Printing it: **`late sprite` = 55 t/it**, the two P3 sprite
+mirrors, on their own, in one slot.
+
+**Generalisable: a probe that is accumulated but never printed is worse than no probe**, because
+the residual it leaves gets explained away rather than measured. Grep the tree for `FP_TIME`/`FD_LAP`
+accumulators and check every one appears in some script.
+
+### 12.2 What they were doing — 78-84 cycles to test one byte
+
+Three per-frame sprite mirrors locate their object by scanning a window of the Atari PMG buffers:
+
+| mirror | window | bytes | cyc/byte | cyc/frame |
+|---|---|---|---|---|
+| viewport P3 | `$0F32-$0F85` | 84 | 78 | 6552 |
+| scope P3 | `$0F98-$0FB8` | 33 | 78 | 2574 |
+| scanner dot | `$0B88-$0BB8` (mask `$30`) | 49 | 84 | 4116 |
+
+All three are written the obvious way, `for (int o = lo; o <= hi; o++) if (mem[base + o] & m)`, and
+GCC compiles each byte test into `move.l d,d1 / addi.l #base,d1 / move.b (0,a2,d1.l),d1 / ... /
+cmpi.l #hi,d / bne`. **Essentially all of it is addressing** — the `int` index plus the volatile
+`mem[]` base defeat any strength reduction, so the loop re-derives a long-indexed effective address
+every iteration. ~13.2k cycles a frame, in three loops that in the quiet baseline normally find
+nothing at all.
+
+Cross-check before touching anything: 2 × 9126 cycles = 40 t/it for the two P3 scans against a
+measured `late sprite` bracket of 55, i.e. 73% of it. The count and the bracket agree.
+
+### 12.3 The fix, and why it is a scan and not a published extent
+
+`buildShotSprite` had exactly this shape and was fixed in 538e811 by reading the extent its writer
+already publishes (`$2865`/`$2866`). The P3/missile buffers publish no extent — `draw_player3_object`
+does track `player3_draw_y`/`player3_prev_rows`, but claiming them means proving no other writer
+touches those windows, and the whole family of scenes shares those buffers (the stars phase uses
+`$0F32` as a starfield player). So these keep the scan and make it cheap: `pmgScanFirst` /
+`pmgScanBounds` walk a pointer and test **four bytes at a time**.
+
+- A test against a mask replicated into all four lanes is **byte-order independent** — nonzero iff
+  some byte matches, whichever end they come from — so aliasing `mem[]` as a `volatile uint32_t` is
+  safe here, unlike a value read (CLAUDE.md's endianness rule). No value leaves the long: once a
+  long tests nonzero its bytes are re-read individually through `mem[]`.
+- **Alignment is taken from the pointer, not the `mem[]` offset**, so nothing depends on where the
+  linker put `mem[]`. (`$0F32` is even but not long-aligned; the prologue peels 2 bytes.)
+- Counted loop, not `for (; p + 3 <= e; p += 4)`: written that way GCC re-derives the limit inside
+  the loop (52 cyc/long). A countdown lets it hoist the end pointer — 44 cyc/long = **11 cyc/byte**
+  for the unmasked scans, 17 for the masked one.
+
+### 12.4 ⚠ The differential caught what reasoning would have shipped
+
+`make SCAN_VERIFY=1` + `amiga/scan_verify.gdb` re-derives the run the original byte-loop way on
+every call and compares. First run: **24 mismatches in 2244 calls** — every one a run whose top or
+bottom had moved by exactly one row. The P3/missile buffers are ISR-written
+(`draw_player3_object` clears and redraws the strip), so an ISR landing between the helper and the
+oracle makes them read different bytes.
+
+The temptation is to write that off as "obviously a race" and ship. Instead the oracle is now run
+**twice, once either side of the helper**, and a call whose two oracle passes disagree is discarded
+as `raced`. Re-run: **0 mismatches, 31 raced (1%), 59% of calls with a real object present.** All 24
+reappeared on the other side of the ledger. A genuine helper bug cannot depend on the buffer
+changing, so this separates the two mechanically rather than by assertion.
+⭐ **The reusable trick: when a differential's two arms read live ISR-written state, sandwich the
+oracle. It costs one extra pass in a test build and converts "probably a race" into evidence.**
+(`band_verify` solves the same problem the other way, by freezing the source.)
+
+### 12.5 Measured — and the third of it that comes straight back
+
+`phase_budget.gdb`, quiet arm, same vbi 1901→5400 window, all 7 segments valid:
+
+| bracket (t/it) | before | after | Δ |
+|---|---|---|---|
+| clear/copy (scanner scan) | 45 | 34 | −11 |
+| late sprite (two P3 scans) | 55 | 20 | **−35** (−34.6 predicted) |
+| **fill wait** | **2** | **15** | **+13** |
+| `renderFlightDirect` | 259 | **230** | **−29** |
+
+The targeted brackets moved as counted. But `buildFlightSpritesLate` sat in the **shadow of the
+sky-fill blit**, so making it cheaper just means the CPU reaches the `blitterWait` sooner and stalls
+there instead: 13 of the 35 t/it are handed straight back. Net −29 t/it = **~1.9% of the shipping
+frame**, not the 3.5% the raw cycle count promised.
+
+⭐⭐ **Generalisable, and it cuts against a habit this log has: cheapening CPU work that sits inside
+a blit's shadow only pays for the part that EXCEEDED the blit.** §10.2 moved work *into* the
+shadows and was measured as a win for exactly the same reason, in the same place — the shadow is a
+fixed-size bucket, and both directions have to be priced against how full it currently is. The
+repayment is to move other independent work in (§12.6).
+
+⚠ DRAW read +86 t/it and the cockpit scan +12 in the same run. Both are trajectory drift — this run
+flew a varying altitude where the recorded baseline was uniformly `$80` — and neither is downstream
+of the change. Read the brackets that CONTAIN the change and the one bracket mechanically coupled to
+it; treat the rest of a cross-run phase table as noise.
