@@ -1647,14 +1647,15 @@ void PlatformAmiga::compassChanged() {
     g_compassDirty = 1;
 }
 
-extern "C" volatile unsigned char g_ckLockon;
-void PlatformAmiga::lockonChanged() {
-    // The enemy lock-on indicator cells $3491-$3497 were rewritten by the native lock-on
+extern "C" void rof_cockpit_lockon_dirty(unsigned char cellIdx);
+void PlatformAmiga::lockonChanged(uint8_t cellIdx) {
+    // ONE enemy lock-on indicator cell ($3491 + cellIdx) was rewritten by the native lock-on
     // animation twins (lock_on_indicator_tick / _step / _write_cell / lock_on_indicator_fill_cells in
-    // rof_native.c, driven by both the standby and flight VBIs).  Flag them so the next
-    // renderFrame re-decodes those 7 cells — this keeps the indicator randomly blinking
-    // through the planet descent and into flight.
-    g_ckLockon = 1;
+    // rof_native.c, driven by both the standby and flight VBIs).  Flag just that cell so the next
+    // renderFrame re-decodes it — this keeps the indicator randomly blinking through the planet
+    // descent and into flight.  (The blink rewrites a single cell ~9x/second and the old
+    // strip-wide flag re-decoded all 7 = ~1.2% of the whole flight frame; measured 2026-08-09.)
+    rof_cockpit_lockon_dirty(cellIdx);
 }
 
 extern "C" volatile int g_titleToRender;

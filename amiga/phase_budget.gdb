@@ -111,6 +111,29 @@ printf "     ...renderFlightDirect%6lu t/it\n", ($it ? g_fDirect/$it : 0)
 printf "     ...cockpit scan      %6lu t/it   (%lu scans)\n", ($it ? g_fCockpit/$it : 0), g_fCockpitScans
 printf "   updateFlightCopper     %6lu t/it\n", ($it ? g_rCopper/$it : 0)
 
+# ── the cockpit scan, split PER GROUP ───────────────────────────────────────────────────────
+# g_fCockpit lumps digits + lock-on + dial together, so "something decoded on ~0.9 of iterations"
+# cannot tell a 22-cell digit block from a 1-cell dial cell.  fires/it and t/it per group; the
+# writer counters size a per-digit mask (writeDigit calls per digit fire == blocks that changed).
+printf "\n=== cockpit scan per group (total %lu t/it, %lu scans) ===\n", \
+  ($it ? g_fCockpit/$it : 0), g_fCockpitScans
+printf "  digits  %6lu t/it  %5lu fires (%lu.%02lu/it)\n", ($it ? g_ckDigitT/$it : 0), \
+  g_ckDigitFires, ($it ? g_ckDigitFires/$it : 0), ($it ? ((100*g_ckDigitFires)/$it)%100 : 0)
+printf "  lockon  %6lu t/it  %5lu fires (%lu.%02lu/it), %lu cells decoded (%lu.%02lu/fire, was 7)\n", \
+  ($it ? g_ckLockT/$it : 0), g_ckLockFires, \
+  ($it ? g_ckLockFires/$it : 0), ($it ? ((100*g_ckLockFires)/$it)%100 : 0), g_ckLockCells, \
+  (g_ckLockFires ? g_ckLockCells/g_ckLockFires : 0), \
+  (g_ckLockFires ? ((100*g_ckLockCells)/g_ckLockFires)%100 : 0)
+printf "  dial    %6lu t/it  %5lu fires (%lu.%02lu/it), %lu cells decoded (%lu.%02lu/fire)\n", \
+  ($it ? g_ckDialT/$it : 0), g_ckDialFires, \
+  ($it ? g_ckDialFires/$it : 0), ($it ? ((100*g_ckDialFires)/$it)%100 : 0), g_ckDialCells, \
+  (g_ckDialFires ? g_ckDialCells/g_ckDialFires : 0), \
+  (g_ckDialFires ? ((100*g_ckDialCells)/g_ckDialFires)%100 : 0)
+printf "  writers: startup_init_native %lu calls, writeDigit %lu (%lu.%02lu per digit fire), stride flips %lu\n", \
+  g_ckSiNative, g_ckWdigCalls, \
+  (g_ckDigitFires ? g_ckWdigCalls/g_ckDigitFires : 0), \
+  (g_ckDigitFires ? ((100*g_ckWdigCalls)/g_ckDigitFires)%100 : 0), g_ckStrideFlips
+
 printf "\n=== renderFlightDirect internals, ticks/iteration over %lu calls ===\n", g_fdCalls
 printf "  clear/copy  %6lu t (%4lu t/it)\n", g_fdClear, ($it ? g_fdClear/$it : 0)
 printf "  edge+fillup %6lu t (%4lu t/it)\n", g_fdEdge,  ($it ? g_fdEdge/$it  : 0)

@@ -119,8 +119,25 @@ extern "C" void rof_title_screen_dirty(unsigned short addr, unsigned char nCells
 // is caught next frame.  Other instruments (status lights, scope, scanner) are static after the
 // scene-entry full paint until a writer is hooked — see docs/cockpit-render-plan.md "TODO".
 extern "C" volatile unsigned char g_ckDigits = 0;   // score/kills/quota digits + DL-stride (startup_init)
-extern "C" volatile unsigned char g_ckLockon = 0;   // lock-on indicator $3491-$3497
+extern "C" volatile unsigned char g_ckLockon = 0;   // lock-on indicator $3491-$3497 (any cell)
 extern "C" volatile unsigned char g_ckDial   = 0;   // thrust/danger-alt dial bars (draw_object_column)
+// The lock-on indicator is the ONE cockpit instrument that changes continuously in flight: its
+// random-blink state ($007E == $80) flips bit7 of a SINGLE cell about 9x/second, and the strip-wide
+// flag then re-decoded all 7 ($3491-$3497) — measured 2026-08-09 at 24 of the cockpit scan's 39
+// t/iteration, ~1.7% of the whole flight frame, for ~1.9 cells of real work.  So the strip keeps
+// per-cell flags like the dial, but over 8 bytes (7 cells + pad) so the walk is two long tests.
+// Byte stores are atomic on the 68000 and each cell owns its byte, so the VBI-ISR writer cannot
+// lose an update to the main loop's clear (a bitmask's |= could) — worst case is a duplicate decode.
+static volatile unsigned char g_ckLockFlag[8] __attribute__((aligned(4))) = {};
+
+// The lock-on writer (lockon_write, rof_native.c) reports each rewritten cell here via
+// PlatformAmiga::lockonChanged.  cellIdx = addr - $3491, 0..6.
+extern "C" void rof_cockpit_lockon_dirty(unsigned char cellIdx)
+{
+    if (cellIdx > 6u) return;
+    g_ckLockFlag[cellIdx] = 1u;
+    g_ckLockon = 1u;
+}
 // The two dial bars are the one instrument without a fixed cell span — their cells come from the
 // $4581 column table — so the dial alone needs per-cell precision (a fixed-box decode re-paints
 // dozens of static cells every time one bar cell moves, which measured ~4x worse).  Per-cell
@@ -143,6 +160,12 @@ extern "C" unsigned long rof_subclock(void);
 extern "C" volatile unsigned long g_fConvert, g_isrBeamLines;  // Stage-0 convert-pass probe
 extern "C" volatile unsigned long g_fCockpit, g_fCockpitScans;
 extern "C" volatile unsigned long g_ckFullTicks, g_ckFullCount;  // decodeCockpitFull one-shot timing
+// Per-GROUP split of the cockpit scan (g_fCockpit lumps all three together, so "something decoded
+// on ~0.9 of iterations" cannot tell the 22-cell digit block from a 1-cell dial cell).  Counts =
+// how often each group fired; T = ticks inside it; g_ckDialCells = dial cells actually decoded.
+extern "C" volatile unsigned long g_ckDigitFires = 0, g_ckLockFires = 0, g_ckDialFires = 0;
+extern "C" volatile unsigned long g_ckDigitT = 0, g_ckLockT = 0, g_ckDialT = 0, g_ckDialCells = 0;
+extern "C" volatile unsigned long g_ckLockCells = 0;   // lock-on cells actually decoded (was always 7)
 extern "C" volatile unsigned short g_ckFullVbi[4] = {0,0,0,0};       // g_vbiCount at each ckFull call
 // Boost-return probe: last-installed copper id (1=title 2=standby 3=planet 4=flight 5=tunnel
 // 6=doors 7=empty 8=boost-handoff-hold) + the live boost signals, sampled per render() to
@@ -1572,7 +1595,7 @@ void RescueOnFractalus::doorScrollVblankUpdate()
     // cockpit sits at Amiga lines 172+, decoded here at vblank start before the beam reaches it →
     // tear-free (same discipline as decodeScannerBlinkCells).  Clearing the flag also means the
     // main-loop renderFrame won't redundantly re-decode when it is running (idle standby).
-    if (g_ckLockon) { g_ckLockon = 0u; decodeCockpitSpan(0x3491u, 7u); }
+    if (g_ckLockon) { g_ckLockon = 0u; decodeLockonDirty(); }
 
     // Parse the DL (86 mode-F LMS entries, stride 3) into runs of consecutive field rows.  Consecutive
     // rows are +46 in the LMS address, so work in ADDRESSES and divide (→ field row) only per run.
@@ -4338,6 +4361,27 @@ void RescueOnFractalus::decodeCockpitSpan(uint16_t addr, uint8_t nCells)
     }
 }
 
+// Decode the lock-on indicator cells that a writer actually touched (see g_ckLockFlag).  Runs from
+// BOTH consumers: the main-loop render() and the standby door-scroll vblank bridge.  Consecutive
+// dirty cells are merged into one decodeCockpitSpan call, so the 6-cell fill sweep still costs one
+// call while the far more frequent single-cell blink costs one cell.  Clear-then-decode: a writer
+// racing the clear re-raises its own byte and is caught next frame (never lost).
+void RescueOnFractalus::decodeLockonDirty()
+{
+    const unsigned long* fl = (const unsigned long*)(const void*)g_ckLockFlag;
+    if ((fl[0] | fl[1]) == 0u) return;                 // flag set but cells already consumed
+    for (int i = 0; i < 7; ) {
+        if (!g_ckLockFlag[i]) { i++; continue; }
+        int run = 0;
+        while (i + run < 7 && g_ckLockFlag[i + run]) { g_ckLockFlag[i + run] = 0u; run++; }
+        decodeCockpitSpan((uint16_t)(0x3491u + i), (uint8_t)run);
+#ifdef ROF_FLIGHT_PROBE
+        g_ckLockCells += (unsigned long)run;
+#endif
+        i += run;
+    }
+}
+
 // LR Scanner (#13) close-range blink: $33DF/$33E0 are two mode-4 cells whose bit7 startup_init()
 // ($3FFA, in the flight VBI) toggles $1E/$1D<->$9E/$9D at 50Hz when the pilot range ($0642) is 1
 // or 2 (bit7 swaps the pen COLPF2 $2C <-> COLPF3 $26 — a two-speed proximity blink).  Called from
@@ -4650,9 +4694,10 @@ void RescueOnFractalus::render()
         if (g_ckFullCount < 4) g_ckFullVbi[g_ckFullCount] = (unsigned short)(rof_subclock()/313u);
         g_ckFullCount++;
 #endif
-        // The full paint covers every cell — drop all instrument flags + the dial cell flags.
+        // The full paint covers every cell — drop all instrument flags + the per-cell registries.
         g_ckDigits = g_ckLockon = g_ckDial = 0u;
         for (int i = 0; i < CK_DIAL_N; i++) g_ckDialFlag[i] = 0u;
+        for (int i = 0; i < 8; i++) g_ckLockFlag[i] = 0u;
 #ifdef ROF_FLIGHT_PROBE
         if (rsFlight) g_fCockpitScans++;
 #endif
@@ -4662,6 +4707,9 @@ void RescueOnFractalus::render()
         // Decoding all five whenever any digit changes is ~22 cells and digits change rarely.
         if (g_ckDigits) {
             g_ckDigits = 0u;
+#ifdef ROF_FLIGHT_PROBE
+            unsigned long _ckd0 = rof_subclock();
+#endif
             static const uint16_t kDigit[5] = { 0x33B4u, 0x3413u, 0x3445u, 0x3472u, 0x34A4u };
             for (int i = 0; i < 5; i++) {
                 decodeCockpitSpan(kDigit[i], 2u);                 // top row
@@ -4669,17 +4717,29 @@ void RescueOnFractalus::render()
             }
             decodeCockpitSpan(0x33DFu, 2u);                       // DL-stride control bytes
             any = true;
+#ifdef ROF_FLIGHT_PROBE
+            if (rsFlight) { g_ckDigitT += rof_subclock() - _ckd0; g_ckDigitFires++; }
+#endif
         }
         // Lock-on indicator (#11): the 7 cells $3491-$3497.
         if (g_ckLockon) {
             g_ckLockon = 0u;
-            decodeCockpitSpan(0x3491u, 7u);
+#ifdef ROF_FLIGHT_PROBE
+            unsigned long _ckl0 = rof_subclock();
+#endif
+            decodeLockonDirty();
             any = true;
+#ifdef ROF_FLIGHT_PROBE
+            if (rsFlight) { g_ckLockT += rof_subclock() - _ckl0; g_ckLockFires++; }
+#endif
         }
         // Thrust (#4) / Dangerous-Altitude (#5) dial bars: per-cell, walked only now (dial moved).
         // Long-batched skip so the all-clear runs between bar cells are cheap.
         if (g_ckDial) {
             g_ckDial = 0u;
+#ifdef ROF_FLIGHT_PROBE
+            unsigned long _cka0 = rof_subclock();
+#endif
             const unsigned long* fl = (const unsigned long*)(const void*)g_ckDialFlag;
             for (int i = 0; i < CK_DIAL_N / 4; i++) {
                 if (fl[i] == 0u) continue;
@@ -4688,10 +4748,16 @@ void RescueOnFractalus::render()
                     if (g_ckDialFlag[base + b]) {
                         g_ckDialFlag[base + b] = 0u;
                         decodeCockpitSpan((uint16_t)(0x332Du + base + b), 1u);
+#ifdef ROF_FLIGHT_PROBE
+                        if (rsFlight) g_ckDialCells++;
+#endif
                     }
                 }
             }
             any = true;
+#ifdef ROF_FLIGHT_PROBE
+            if (rsFlight) { g_ckDialT += rof_subclock() - _cka0; g_ckDialFires++; }
+#endif
         }
 #ifdef ROF_FLIGHT_PROBE
         if (rsFlight && any) g_fCockpitScans++;

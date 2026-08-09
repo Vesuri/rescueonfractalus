@@ -90,10 +90,12 @@ public:
        re-decodes just those 4 cells.  No-op on direct-mem[] platforms (SDL).     */
     virtual void compassChanged() {}
 
-    /* Notification that the enemy lock-on indicator cells ($3491-$3497, #11) were
-       rewritten by the lock-on animation.  A bitplane-mirroring platform flags those
-       7 cells for re-decode; no-op on direct-mem[] platforms (SDL / headless).       */
-    virtual void lockonChanged() {}
+    /* Notification that ONE enemy lock-on indicator cell (#11, $3491 + cellIdx, cellIdx
+       0..6) was rewritten by the lock-on animation.  A bitplane-mirroring platform flags
+       just that cell for re-decode; no-op on direct-mem[] platforms (SDL / headless).
+       The random blink rewrites a SINGLE cell ~9x/second, so decoding the whole 7-cell
+       strip on each write was ~6x the necessary work (measured 2026-08-09).            */
+    virtual void lockonChanged(uint8_t /*cellIdx*/) {}
 
     /* Notification that an instrument writer changed a span of nCells cockpit cells
        starting at Atari screen-RAM address `addr`.  A bitplane-mirroring platform records

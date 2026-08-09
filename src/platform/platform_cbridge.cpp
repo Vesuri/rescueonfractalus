@@ -56,8 +56,8 @@ void platform_compass_changed(void) {
     if (platform) platform->compassChanged();
 }
 
-void platform_lockon_changed(void) {
-    if (platform) platform->lockonChanged();
+void platform_lockon_changed(uint8_t cellIdx) {
+    if (platform) platform->lockonChanged(cellIdx);
 }
 
 void platform_cockpit_dirty(uint16_t addr, uint8_t nCells) {

@@ -4829,7 +4829,8 @@ void setup_initials_ptr(void) {
  * The PHA/ring_push_marked/PLA bracket is reproduced with the real op-macros + native
  * ring_push_marked so the CPU stack page matches the oracle exactly (ring_push's internal
  * PLA reads the byte this PHA pushed — eliminating the PHA would diverge mem[$01FF] and the
- * pulled index).  Digit dests are fixed safe screen RAM.  Contract: mem[]. */
+ * pulled index).  Digit dests are fixed safe screen RAM.  Contract: mem[].
+ */
 void startup_init(void) {
     bar_col_threshold = 0x00;
     cpu.Y = 0x1E;
@@ -10371,10 +10372,12 @@ void update_p3_indicator_stripe(void) {
  * originals raised no such dirty signal, which froze the lights once flight began.
  * ========================================================================================= */
 
-/* Write one glyph into the indicator strip and flag it for re-decode on the Amiga. */
+/* Write one glyph into the indicator strip and flag THAT CELL for re-decode on the Amiga
+ * (the hook takes the cell's offset from $3491: the blink rewrites one cell at a time, so a
+ * strip-wide flag made the decoder re-render all seven). */
 static inline void lockon_write(uint16_t addr, uint8_t glyph) {
     mem[addr] = glyph;
-    platform_lockon_changed();
+    platform_lockon_changed((uint8_t)(addr - 0x3491u));
 }
 
 /* $428D lock_on_indicator_return — shared exit landing pad; the 6502 parked a bare RTS here. */
