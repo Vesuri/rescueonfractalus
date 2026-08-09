@@ -442,34 +442,27 @@ too SHALLOW to matter (1.23 inner iterations / 0.40 midpoints per call), measure
 the very byte the check was meant to avoid, so it can only recover the ~10 cycles of bookkeeping around
 that load.**
 
-### ⭐ Where flight actually stands — 20.20 FPS best case / 14.32 combat (2026-08-08, b0ecce3)
+### ⭐ Where flight actually stands — 20.60 FPS best case / 16.00 combat (2026-08-08, 4d25815)
 
 **`make FPSCOUNT=1` + `GDBSCRIPT=fps_seg.gdb ./diag_run.sh 200` is the ONLY way to quote a
 flight framerate.** It adds just the headless auto-launch and one increment per painted terrain
 frame; `g_vbiCount` is bumped by the real VERTB handler in every build, so
 **FPS = 50 · g_fpsFrames / g_vbiCount** — frames per *emulated* vblank, which makes it immune to
-host speed and to the gdb stub. Measured 2026-08-08 **at e35d904** over vbi 1901→4900, all 15
-segments valid:
-**best case (`COMBAT=1 COMBAT_QUIET=1 FIXED_RNG=1`) 1105 painted / 3001 vbi = 18.41 FPS** (15.0–20.5
-per segment) · **combat load (`COMBAT=1 FIXED_RNG=1`) 859 / 2999 = 14.32 FPS** (10.3–16.2). Combat
-costs 22% of throughput = +28.6% frame time; both arms are level 40, which is the only legitimate
-combat framing. ⚠ `COMBAT_QUIET` also drops `ROF_AUTO_FIRE`, so the best case is "no enemies AND no
-firing". *(Re-run at 5a626b3, same window, all 15 segments valid: 1122/3001 = **18.69** best case.
-One sample, and the change it followed was statically worth 0.8% — i.e. inside this harness's ~1.5%
-resolution, so 18.41 stayed the standing baseline.)* **At 24ee76d — the rasterizer's span-5..8
-fusion (b71a405, differential-measured −8.0% of the rasterizer) plus the `project_terrain_points`
-shave — the same window, all 15 segments valid, reads 1170/3001 = 19.49 (16.0–21.7), and the whole
-per-segment distribution moved up. That is +5.9% against a differential-backed prediction of +1.9%;
-a cross-build end-to-end delta is confounded (`FIXED_RNG` pins the LEVEL, not the trajectory), so
-19.49 is the standing baseline but −8.0% of the rasterizer is the claim.** **At 962fd79 — the
-`terrain_subdivide_column` marshalling pass (`docs/asm-migration-plan.md` §Phase 8, ~245 cyc/call
-≈ 1.9% of wall counted off the disassembly) — the same window, all 15 segments valid, reads
-1203/3000 = 20.05 (16.4–22.1). **At b0ecce3 — the rasterizer's loop-top jump table + short exit
-branches (§Phase 9, −133 cyc/call ≈ −0.69% of wall) — the same window, all 15 segments valid,
-reads 1211/2997 = **20.20** (16.5–22.3). ⚠ That +0.75% is BELOW this harness's resolution and is
-agreement, not evidence: the claim is the static count plus the differential's ratio (0.4210 →
-0.4060 = −3.6% of the rasterizer, against a +1.4% oracle-arm drift). The COMBAT arm has NOT been
-re-measured since e35d904 — 14.32 is stale by all four changes.**
+host speed and to the gdb stub. Both arms re-measured **2026-08-08 at 4d25815**, ~3000-vbi window,
+all 15 segments valid:
+**best case (`COMBAT=1 COMBAT_QUIET=1 FIXED_RNG=1`) 1235 painted / 2998 vbi = 20.60 FPS** (17.0–22.6
+per segment) · **combat load (`COMBAT=1 FIXED_RNG=1`) 959 / 2997 = 16.00 FPS** (12.2–18.7). Both arms
+are level 40, which is the only legitimate combat framing. Combat costs **22.3% of throughput =
++28.8% frame time** — unchanged from e35d904's 22.2% / +28.6%, because every change since is in the
+terrain pipeline that both loads run (quiet 18.41 → 20.60 = +11.9%, combat 14.32 → 16.00 = +11.7%,
+which is the consistency check). ⚠ `COMBAT_QUIET` also drops `ROF_AUTO_FIRE`, so the best case is
+"no enemies AND no firing"; and the combat run's altitude varies across segments where the quiet
+run's does not, so **size changes off the quiet arm, never the combat one.**
+⚠ **This harness routinely OVER-reads a win** — 18.41 → 19.49 read +5.9% for two changes whose
+differentials predicted +1.9%. A cross-build end-to-end delta is confounded (`FIXED_RNG` pins the
+LEVEL, not the trajectory), and single-window noise is ±2%, so anything under ~3% is agreement, not
+evidence. **Quote the static cycle count or a differential ratio as the win and the FPS row only as
+the standing baseline.** Per-change history + the full table: the `flight-pc-profiler` memory.
 
 ⚠ **Every framerate figure in an older note or commit is wrong — do not quote one, re-measure.**
 Two traps, both of which produced badly wrong numbers before this was built:
@@ -484,8 +477,8 @@ Two traps, both of which produced badly wrong numbers before this was built:
   the death cinematic under-reports (a 3000-vbi window read 9.0 where its live segments read
   12–17). Sample in SHORT windows and discard any row not at `VVBLKI=$4ff5` / `$3D=00`.
 
-**So the 25 FPS target is a 1.25× gap on the best case = remove 20% of the frame** (from the combat
-baseline it would be 1.75× / −43%, which is explicitly NOT the bar). The
+**So the 25 FPS target is a 1.21× gap on the best case = remove 18% of the frame** (from the combat
+baseline it would be 1.56× / −36%, which is explicitly NOT the bar). The
 profile is FLAT (nothing >32%), so no single function gets there — but **the smaller gains are
 worth taking**: at this gap, five or six honest 5-point wins reach the target. Size a
 candidate, and if the win is real and the risk is low, do it. What is CLOSED is only what
