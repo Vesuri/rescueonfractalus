@@ -1105,3 +1105,97 @@ the whole per-segment distribution moved, both ends, which is the one end-to-end
 gives that a single mean does not.
 
 **Target check: 25 FPS from 21.73 is a 1.15× gap = −13% of frame time still to go** (it was −18%).
+
+## 13. 2026-08-09 (later) — the cockpit scan: the filed candidate was 6.5x too big, and the real one was next door
+
+The ranked list said: "**the cockpit digit decode, 39 t/it (~2.6% of wall)** — `render()` decodes all
+five digit 2x2 blocks whenever `g_ckDigits` is set at all... a 5-bit mask would cut it ~5x", with a
+⚠ attached: *measure first which group fires; `g_fCockpitScans` says something decodes on ~0.9 of
+iterations, but it could be `g_ckDial` rather than the digits.* Taking that ⚠ seriously is the whole
+story of this entry.
+
+### 13.1 The measurement, which cost one run and redirected the session
+
+Three per-group brackets in the cockpit block (`g_ckDigitT/g_ckLockT/g_ckDialT` + fire counts),
+printed by `phase_budget.gdb`. Quiet baseline, 474 iterations, 7/7 segments live, covered 100%:
+
+| group | t/it | fires | per iteration | cells decoded |
+|---|---|---|---|---|
+| **lock-on (#11)** | **24** | 415 | **0.88** | 7 every fire |
+| digits (#17-19) | 6 | 27 | 0.05 | 22 cells every fire |
+| dial (#4/#5) | 2 | 15 | 0.03 | 4.06 |
+
+So the digit decode is **~0.4% of wall, not 2.6%** — it is expensive *per fire* and fires almost
+never — and the "~0.9 of iterations" the note could not attribute is the **lock-on indicator**, which
+had never been named as a perf item at all. The writer counter settled the digit sub-question in the
+same run: `writeDigit` 1.00 calls per fire, 0 stride flips, i.e. exactly one of the five blocks
+changes when any does.
+
+**The lock-on's mechanism.** Its random-blink state (`$007E == $80`) reads POKEY RANDOM for a 0..7
+frame delay and flips **bit7 of one cell** when the delay underflows — ~9 times a second at 50Hz,
+against a ~21Hz render, so it dirties the strip on 44% of painted frames. `platform_lockon_changed()`
+was a strip-wide boolean, so each of those re-decoded all seven cells of `$3491-$3497`.
+
+Fix (b9258cb): the hook carries the cell index; the strip keeps per-cell byte flags over 8 bytes so
+the walk is two long tests; consecutive dirty cells merge into one `decodeCockpitSpan` (the 6-cell
+fill sweep still costs one call). **24 -> 9 t/it, 7 -> 1.50 cells per fire.**
+
+⭐ **Why byte flags and not a bitmask.** The writer is the VBI ISR and the consumer the main loop. A
+`mask |= bit` from the ISR can be lost inside the consumer's byte-wide `mask = 0`; a per-cell byte
+cannot, because each cell owns its byte and every store is atomic on the 68000. Clear-then-decode
+then makes the worst case a duplicate decode, never a dropped one. Same reasoning as the dial
+registry — the difference is only that 7 cells fit in two long tests, so it needs no 480-entry walk.
+
+### 13.2 The bug the perf change uncovered — and a class of risk a differential cannot see
+
+Making the digits per-block (one registry slot each) is the same edit, and it broke something. There
+are **two writers of the digit cells**: the faithful `startup_init` ($3FFA) in the flight VBI, and
+the Amiga's `startup_init_native` from `perFrameWork`. They share the `$0645/$0646/$0647` change
+caches, so the VBI one — 25Hz against render's ~21Hz — usually *consumes* the change, and it writes
+its glyphs through `draw_glyph_2rows`, **which raises no dirty flag at all**. The old strip-wide flag
+hid that: any native fire repainted all five blocks and swept up whatever the VBI had written. Per
+block, it no longer does.
+
+This is not a new bug, it is an old one made visible: the user had independently noticed the **Range
+To Pilot readout (#17) sometimes showing a stale value** — which is `$33B4`, the block whose cache
+(`digit_cache_647`) the VBI writer owns. 368affe hooks the faithful writer (each rewritten 2x2 block
+registers its four cells through the existing per-cell registry) and *then* takes the per-block
+decode: **6 -> 1 t/it, 6 blocks -> 1.00 per fire.** `make validate FN=startup_init` 0 mismatch/20000.
+
+⭐⭐ **`make CK_VERIFY=1` + `amiga/ck_verify.gdb`, and the reason it had to exist.** The risk in a
+targeted-decode change is not arithmetic — `decodeCockpitSpan` is untouched, so every in-process
+differential in the tree would have reported a clean 0 — it is a **missed write**. The harness tests
+that instead: snapshot the group's destination bytes, decode the whole group again, and assert the
+second decode changed nothing. *A targeted decode is complete iff the full decode is a no-op.*
+
+Three things it took to make that instrument trustworthy, each a reusable correction:
+- **Snapshot the SOURCE before the change under test, not after.** The first version snapped the
+  source inside the verifier, i.e. after `decodeLockonDirty` had already read the cells — so an ISR
+  write landing in that gap looked like a coverage hole. It reported exactly **1 bad in 284** lock-on
+  checks, which is the most dangerous kind of result: small enough to hand-wave, large enough to
+  block. Moving the snapshot ahead of the whole cockpit block took it to 0 and cost nothing.
+- **Bracket the whole block, not each group** — a group's cells may legitimately be decoded by a
+  *later* group's registry (the hooked faithful writer flags through the dial registry, which runs
+  after the digits), so a per-group check reports a false hole.
+- **Verify-every-frame was too slow to reach the thing being verified.** 12 groups x 3 full decodes
+  per frame slowed the launch cinematic so much the probe sat in Standby for the whole window:
+  `VVBLKI=$52d7`, `painted 0`, and a cheerful `0 bad / 23352 checks`. The live-flight assertion
+  caught it; gating on "this frame decoded something" restored flight and still gives ~3.7k checks.
+
+Before the writer hook, on the same instrument: **20 bad / 209 digit checks.** After: **0 bad in live
+flight over 306 lock-on and 3366 digit checks, 4 raced.**
+
+### 13.3 What it came to
+
+Whole cockpit scan **39/42 -> 22 t/it** (the 42 and the 22 both carry the ~3 t/it of new group
+brackets), with **DRAW 961 -> 964 and SETUP 142 -> 141 as untouched internal controls** in the same
+runs. That is ~**1.4% of the 1440 t/it shipping frame**. End-to-end `fps_seg` reads **21.82 FPS**
+(1309/3000, 15/15 segments live) against the standing 21.73 — **+0.4%, which is agreement with the
+bracket, not evidence of it**; a 1.4% change is below this harness's ±2% resolution.
+
+⭐ **The generalisable lesson, and it is about the ranked list itself, not the code: a filed size is a
+hypothesis, and this one was wrong by 6.5x in the item's favour *and* pointed at the wrong function.**
+The note that saved it was the ⚠ its own author had attached — "measure which group fires before
+believing the ~2%". One counter, one run. **When a ranked item's size came from reading code rather
+than from a counter, the counter is the first thing to write, and it is cheap.** The corollary is
+worth as much: the item next to it, never ranked at all, was 4x bigger.
