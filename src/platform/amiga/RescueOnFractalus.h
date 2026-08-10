@@ -272,6 +272,8 @@ private:
     Bitmap*     doorScrollBitmap  = nullptr;
     bool        doorScrollActive  = false;
     void        decodeDoorScrollField();   // decode $2000 (85 rows) + green pad -> doorScrollBitmap
+    void        decodeDoorScrollRows(unsigned r0, unsigned r1);  // ...just field rows r0..r1
+    void        decodeDoorScrollDirty();   // consume g_doorScrollFieldDirty over its marked rows
     // Flight terrain double-buffer: renderFlightDirect rebuilds the whole terrain region
     // every frame (blitter clear + sky fill), so it must NOT paint the live displayed buffer
     // mid-frame (caused plane1 flicker).  It renders into the off-screen one of these two and

@@ -984,6 +984,17 @@ volatile unsigned char g_doorFieldReady = 0;
  * pointer poke); the field is re-decoded ONLY when this flag says the digit actually changed,
  * so the ISR does not re-convert the whole door field every frame.  Harmless on SDL. */
 volatile unsigned char g_doorScrollFieldDirty = 0;
+/* ...and WHICH $2000 field rows (0..$54, inclusive) that decode has to cover.  An EMPTY range
+ * (row0 > row1) means "no range recorded" => decode the whole field.
+ * This range is load-bearing, not an optimisation for its own sake: the full 172-row decode
+ * measures 310 raster lines (~19.7 ms) — a whole PAL frame — and it runs inside the vblank ISR.
+ * That overran the frame every time the LEVEL digit was rewritten mid-scroll, so one displayed
+ * frame of the level-select elevator scroll was lost (seen as a one-frame stall then a 2-pixel
+ * jump, with the dots landing a row low), and it occasionally pushed the same ISR's copper-list
+ * rewrite behind the beam, which is what misaligned the cockpit for a frame.  A digit rewrite
+ * only dirties 8 rows. */
+volatile unsigned char g_doorDirtyRow0 = 0xFF;   /* first dirty field row (inclusive) */
+volatile unsigned char g_doorDirtyRow1 = 0x00;   /* last  dirty field row (inclusive) */
 /* Raise the door-scroll dirty flag AFTER the $2000 field has been fully written (call at the END
  * of a field-writing routine, never before).  The VBI ISR (doorScrollVblankUpdate) decodes the
  * tall door bitmap when this is set; if it were raised before the digit glyph is drawn, the ISR
@@ -992,9 +1003,35 @@ volatile unsigned char g_doorScrollFieldDirty = 0;
  * half-drawn digit" in the fade-rebuild wrap).  Raising it only once the field is COMPLETE means
  * every decode captures a whole digit.  Amiga-only; no-op on SDL/validate. */
 #ifdef ROF_PLATFORM_AMIGA
+  /* Widen the pending range to the whole field WITHOUT raising the flag — for the routines that
+   * rewrite $2000 wholesale (fill_region_2000, blit_message_block).  They are always followed by
+   * the blit_numeric_readout that DOES raise it, so the "raise only when the field is complete"
+   * invariant above is preserved exactly. */
+  #define ROF_DOOR_FIELD_TOUCH_ALL()  do { g_doorDirtyRow0 = 0x00; g_doorDirtyRow1 = 0x54; } while (0)
+  /* Widen by the 8 rows a glyph blit at row counter `rc` ($0092) just wrote — again without
+   * raising the flag.  Hooked into blit_glyph_8rows, the choke point EVERY glyph write goes
+   * through, so a caller cannot forget it (blit_label_row's "LEVEL" word was missed when only
+   * blit_numeric_readout marked its rows, and the wiped word kept stale pixels across the
+   * level-wrap rebuild).  build_line_addr_table_2000 makes row_base[i] = $2000 + $2E*i, so the
+   * table INDEX is the field row, and blit_glyph_8rows starts at row_base[$0092] and walks UP one
+   * row per glyph row => rows rc-7..rc.  If entry 0 isn't $2000 the row table has been repointed
+   * (the cockpit readouts use $1000), so this glyph did not touch the door field at all. */
+  #define ROF_DOOR_FIELD_TOUCH_ROWS(rc)  do { rof_door_field_touch_rows((unsigned char)(rc)); } while (0)
+static void rof_door_field_touch_rows(unsigned char rc) {
+    if (row_base_lo == 0x00 && row_base_hi == 0x20 && rc <= 0x54) {
+        unsigned char r0 = (unsigned char)((rc >= 0x07) ? (rc - 0x07) : 0x00);
+        if (r0 < g_doorDirtyRow0) g_doorDirtyRow0 = r0;
+        if (rc > g_doorDirtyRow1) g_doorDirtyRow1 = rc;
+    }
+}
+  /* Raise the flag.  The rows were marked as they were written; an EMPTY range here means the
+   * writes went somewhere other than the $2000 field (or a marker was missed), and the consumer
+   * then decodes the whole field — i.e. exactly the pre-range behaviour. */
   #define ROF_DOOR_FIELD_DIRTY()  do { g_doorScrollFieldDirty = 1; } while (0)
 #else
-  #define ROF_DOOR_FIELD_DIRTY()  do { } while (0)
+  #define ROF_DOOR_FIELD_TOUCH_ALL()     do { } while (0)
+  #define ROF_DOOR_FIELD_TOUCH_ROWS(rc)  do { } while (0)
+  #define ROF_DOOR_FIELD_DIRTY()         do { } while (0)
 #endif
 
 /* ---------------------------------------------------------------------------
@@ -2884,6 +2921,10 @@ void fill_region_2000(void) {
      * EVERY frame.  Harmless for the Standby door-field fills that also call this (nobody
      * consumes the flag outside the boost stars branch, which forces it true on entry anyway). */
     g_boostStarsDirty = 1;
+    /* ...and the Standby door field lives at $2000 too: this wipes ALL of it, so widen the
+     * door-decode dirty range to the whole field (the flag itself stays down until the
+     * blit_numeric_readout that ends the rebuild raises it). */
+    ROF_DOOR_FIELD_TOUCH_ALL();
 #endif
     row_table_stride = 0x00; player_speed = 0x20;   /* dest $2000 */
     row_table_base_lo = 0x73; row_table_base_hi = 0x0F;   /* count $0F73 */
@@ -3113,6 +3154,10 @@ void blit_glyph_8rows(void) {
         blit_row_counter = (uint8_t)(blit_row_counter - 1);
     } while (!(blit_row_counter & 0x80));                /* BPL: loop while $0097 >= 0 */
     draw_x_left = (uint8_t)(draw_x_left + 0x08);
+    /* Amiga: record the 8 field rows this glyph just wrote, so the door-field decode can redo
+     * only those instead of all 85 (see ROF_DOOR_FIELD_TOUCH_ROWS).  No-op unless the row table
+     * is the $2000 one. */
+    ROF_DOOR_FIELD_TOUCH_ROWS(draw_row);
 }
 
 /* intro_seed_object_map @ $7498 — seed the intro object map.  Clear $0A00[0..255], place
@@ -4466,6 +4511,9 @@ void blit_message_block(void) {
         draw_row = (uint8_t)(draw_row - 0x08);
     } while (!(draw_row & 0x80));                  /* BPL: loop while bit7 clear */
     blit_label_row();
+    /* Amiga: spans the whole $2000 field (rows $54 down to 0) — widen the door-decode dirty
+     * range without raising the flag; the trailing blit_numeric_readout raises it. */
+    ROF_DOOR_FIELD_TOUCH_ALL();
 }
 
 /* draw_digit_low_nibble @ $4095 — A = (A & $0F) << 2, then tail draw_glyph_2rows

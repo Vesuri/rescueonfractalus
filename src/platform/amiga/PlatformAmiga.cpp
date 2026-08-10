@@ -1059,6 +1059,33 @@ extern "C" volatile unsigned short g_dsRepoints = 0;
 extern "C" volatile unsigned short g_dsMaxRow   = 0;
 extern "C" volatile unsigned short g_dsMinRow   = 0xFFFF;
 extern "C" volatile unsigned short g_dsDecodes  = 0;   // full-field decodes (should be few: dirty-gated)
+// Door-scroll copper-rewrite TIMING probe (the "one misaligned-cockpit frame between levels" bug):
+// the raster line the ISR has reached when it rewrites the live standby copper's terrain runs.  The
+// cockpit region's WAIT is kCockpitLine-1 = 171; a rewrite that lands at/after that line writes the
+// cockpit BPLxPT moves behind the beam -> the already-satisfied WAIT fires mid-line and the cockpit
+// bitplanes shift horizontally for that frame.
+extern "C" volatile unsigned short g_dsRunLine[24]  = {};   // ring: beam line AT the setTerrainRuns call
+extern "C" volatile unsigned char  g_dsRunDec[24]   = {};   // ring: did the full-field decode run first?
+extern "C" volatile unsigned char  g_dsRunN[24]     = {};   // ring: run count written
+extern "C" volatile unsigned char  g_dsRunIdx   = 0;
+extern "C" volatile unsigned short g_dsRunWrites = 0;  // total setTerrainRuns calls from the ISR
+extern "C" volatile unsigned short g_dsRunLate   = 0;  // ...of which landed at/after line 171
+extern "C" volatile unsigned short g_dsRunMaxLn  = 0;  // worst beam line seen at a rewrite
+// ...and the cost of the thing that makes it late: the full-field decode, in raster lines
+// (PAL frame = 312, so >312 means the decode alone outlasts a whole frame).
+extern "C" volatile unsigned short g_dsDecLines    = 0;  // last decode's cost in raster lines
+extern "C" volatile unsigned short g_dsDecLinesMax = 0;
+extern "C" volatile unsigned short g_dsDecEntryLn  = 0;  // beam line when the decode started (last)
+extern "C" volatile unsigned short g_dsDecRows     = 0;  // field rows the last decode covered
+extern "C" volatile unsigned char  g_dsDecRing[24] = {}; // ...and the last 24 decodes' row counts
+extern "C" volatile unsigned char  g_dsDecRingIdx  = 0;
+// why each decode ran: 1 = dirty flag with no marked range, 2 = dirty flag with a marked range,
+// 3 = renderFrame's terrainDirty full re-decode.
+extern "C" volatile unsigned char  g_dsDecWhy = 0, g_dsDecWhyRing[24] = {};
+// Whole-VBI-ISR cost while the standby body ($52D7) is live, in raster lines (PAL frame = 312).
+extern "C" volatile unsigned short g_isrEntryLine = 0, g_isrStbyLines = 0, g_isrStbyMax = 0;
+extern "C" volatile unsigned short g_isrStbyOver = 0;    // ISRs that outlasted ~a whole frame
+extern "C" volatile unsigned long  g_isrStbyCnt  = 0;
 extern "C" volatile unsigned long  g_blackHoldFrames = 0;  // frames the EmptyCopperList (black) was held
 // Bug-3 probe: whether the top door band was black at the earliest (smallest-g2) doors frame.
 extern "C" volatile unsigned char  g_doorTopBlack = 0;
@@ -2070,6 +2097,16 @@ static uint32_t vbiHandler()
         g_irqIntena = _cst[0x01Cu / 2];                 // INTENAR
         g_irqIntreq = _cst[0x01Eu / 2];                 // INTREQR
     }
+    // ...and stamp the entry beam line for the WHOLE-ISR cost probe (paired at the return below).
+    // An ISR longer than a PAL frame (312 lines) means the next VERTB is already pending when we
+    // return, so one displayed frame is lost — which is what made the level-select elevator scroll
+    // stall for a frame and then jump two pixels.
+    {
+        extern volatile unsigned short g_isrEntryLine;
+        unsigned short _vp2 = *(const volatile unsigned short*)0xDFF004u;
+        unsigned short _vh2 = *(const volatile unsigned short*)0xDFF006u;
+        g_isrEntryLine = (unsigned short)(((_vp2 & 1u) << 8) | (_vh2 >> 8));
+    }
 #endif
     // RTCLOK is owned by renderFrame() in the main thread (advanced exactly once per
     // spin-wait iteration, immune to ISR timing races with the equality spin).
@@ -2466,6 +2503,23 @@ static uint32_t vbiHandler()
             g_vvRing[g_vvIdx] = (unsigned short)(mem[0x0222] | (mem[0x0223] << 8));
             g_vvHold[g_vvIdx] = g_restartHoldBlack;
             g_vvIdx++;
+        }
+    }
+    // Whole-ISR cost, in raster lines, while the STANDBY VBI ($52D7) is the live body — the
+    // level-select elevator scroll runs entirely in here.  >312 = the ISR outlasted the frame,
+    // so the next VERTB was already pending on return and one displayed scroll step was lost.
+    {
+        extern volatile unsigned short g_isrEntryLine, g_isrStbyLines, g_isrStbyMax, g_isrStbyOver;
+        extern volatile unsigned long  g_isrStbyCnt;
+        if ((uint16_t)(mem[0x0222] | (mem[0x0223] << 8)) == 0x52D7u) {
+            unsigned short _vp3 = *(const volatile unsigned short*)0xDFF004u;
+            unsigned short _vh3 = *(const volatile unsigned short*)0xDFF006u;
+            unsigned short ln = (unsigned short)(((_vp3 & 1u) << 8) | (_vh3 >> 8));
+            unsigned short d  = (unsigned short)((ln >= g_isrEntryLine) ? (ln - g_isrEntryLine)
+                                                                       : (ln + 312u - g_isrEntryLine));
+            g_isrStbyLines = d; g_isrStbyCnt++;
+            if (d > g_isrStbyMax) g_isrStbyMax = d;
+            if (d >= 290u) g_isrStbyOver++;   // ~a whole frame: the next VERTB is already pending
         }
     }
 #endif

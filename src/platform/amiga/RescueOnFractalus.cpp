@@ -50,6 +50,8 @@ extern "C" void boot_standby_launch_driver(void);
 // holds the EmptyCopperList on screen until it sets, then switches to the real lists.
 extern "C" volatile unsigned char g_standbyRevealReady;
 extern "C" volatile unsigned char g_doorScrollFieldDirty;   // rof_native.c: LEVEL digit rewritten (door scroll)
+// ...and which $2000 field rows that rewrite touched (empty range = "unknown" -> full decode).
+extern "C" volatile unsigned char g_doorDirtyRow0, g_doorDirtyRow1;
 // BREAK/Restart black hold: set by the g_restartJmp handler in run() the instant a Backspace/BREAK
 // restart is taken.  Until the level-selector card ($53CC) is genuinely rebuilt (VVBLKI=$53CC, title
 // text in $365B, DMA shadow $022F back on), renderFrame keeps the EmptyCopperList (black) on screen —
@@ -1582,41 +1584,85 @@ void RescueOnFractalus::starVblankUpdate()
 #endif
 }
 
-// decodeDoorScrollField(): decode the whole $2000 GTIA mode-10 door field (85 rows, stride 46)
-// into the TALL doorScrollBitmap, then pad the rows below the field with the green closed-door
-// row so the elevator scroll always reads valid pixels.  Same packing as the render() door decode
-// (kDoorP1/kDoorP2 LUTs, 4-byte overscan crop, 10 longs/plane/row, plane3=0) — see that comment.
-void RescueOnFractalus::decodeDoorScrollField()
+// decodeDoorScrollRows(): decode field rows r0..r1 (inclusive) of the $2000 GTIA mode-10 door
+// field (85 rows, stride 46) into the TALL doorScrollBitmap.  Same packing as the render() door
+// decode (kDoorP1/kDoorP2 LUTs, 4-byte overscan crop, 10 longs/plane/row, plane3=0) — see that
+// comment.  Row-ranged because this runs in the vblank ISR: see decodeDoorScrollDirty below.
+void RescueOnFractalus::decodeDoorScrollRows(unsigned r0, unsigned r1)
 {
     if (!doorScrollBitmap) return;
+    if (r1 > 84u) r1 = 84u;              // rows 85..171 are the constant pad (see below)
+    if (r0 > r1) return;
 #ifdef ROF_FLIGHT_PROBE
-    { extern volatile unsigned short g_dsDecodes; g_dsDecodes++; }
+    { extern volatile unsigned short g_dsDecodes, g_dsDecRows;
+      extern volatile unsigned char g_dsDecRing[24]; extern volatile unsigned char g_dsDecRingIdx;
+      g_dsDecodes++; g_dsDecRows = (unsigned short)(r1 - r0 + 1u);
+      extern volatile unsigned char g_dsDecWhy, g_dsDecWhyRing[24];
+      g_dsDecRing[g_dsDecRingIdx] = (unsigned char)(r1 - r0 + 1u);
+      g_dsDecWhyRing[g_dsDecRingIdx] = g_dsDecWhy;
+      g_dsDecRingIdx = (unsigned char)((g_dsDecRingIdx + 1u >= 24u) ? 0u : g_dsDecRingIdx + 1u); }
 #endif
-    const uint8_t* sbase = (const uint8_t*)mem + 0x2000 + 4;   // +4 = wide-playfield overscan crop
-    uint8_t* vdest = (uint8_t*)doorScrollBitmap->data;
-    // Rows 0..84: the live field.  Rows 85..171: green closed-door pad (field byte $88, which the
-    // field itself uses for the blank door area above/below the LEVEL text).
-    const uint32_t g1 = (uint32_t)kDoorP1[0x88] * 0x01010101u;
-    const uint32_t g2 = (uint32_t)kDoorP2[0x88] * 0x01010101u;
-    for (int row = 0; row < 172; row++) {
+    const uint8_t* src = (const uint8_t*)mem + 0x2000 + 4 + r0 * 46;   // +4 = overscan crop
+    uint8_t* vdest = (uint8_t*)doorScrollBitmap->data + r0 * 120;
+    for (unsigned row = r0; row <= r1; row++) {
         uint32_t* p1 = (uint32_t*)vdest;
         uint32_t* p2 = (uint32_t*)(vdest + 40);
         uint32_t* p3 = (uint32_t*)(vdest + 80);
-        if (row < 85) {
-            const uint8_t* src = sbase + row * 46;
-            for (int b = 0; b < 10; b++) {
-                uint8_t s0 = *src++, s1 = *src++, s2 = *src++, s3 = *src++;
-                *p1++ = ((uint32_t)kDoorP1[s0] << 24) | ((uint32_t)kDoorP1[s1] << 16) |
-                        ((uint32_t)kDoorP1[s2] <<  8) |  (uint32_t)kDoorP1[s3];
-                *p2++ = ((uint32_t)kDoorP2[s0] << 24) | ((uint32_t)kDoorP2[s1] << 16) |
-                        ((uint32_t)kDoorP2[s2] <<  8) |  (uint32_t)kDoorP2[s3];
-                *p3++ = 0u;
-            }
-        } else {
-            for (int b = 0; b < 10; b++) { *p1++ = g1; *p2++ = g2; *p3++ = 0u; }
+        for (int b = 0; b < 10; b++) {
+            uint8_t s0 = *src++, s1 = *src++, s2 = *src++, s3 = *src++;
+            *p1++ = ((uint32_t)kDoorP1[s0] << 24) | ((uint32_t)kDoorP1[s1] << 16) |
+                    ((uint32_t)kDoorP1[s2] <<  8) |  (uint32_t)kDoorP1[s3];
+            *p2++ = ((uint32_t)kDoorP2[s0] << 24) | ((uint32_t)kDoorP2[s1] << 16) |
+                    ((uint32_t)kDoorP2[s2] <<  8) |  (uint32_t)kDoorP2[s3];
+            *p3++ = 0u;
         }
+        src   += 46 - 40;                // 46-byte field stride, 40 bytes consumed
         vdest += 120;
     }
+}
+
+void RescueOnFractalus::decodeDoorScrollField()
+{
+    if (!doorScrollBitmap) return;
+    // Rows 85..171 are the green closed-door pad (field byte $88, which the field itself uses for
+    // the blank door area above/below the LEVEL text).  They are CONSTANT — nothing else writes
+    // doorScrollBitmap — so paint them once rather than on every full decode.
+    static bool s_padDone = false;
+    if (!s_padDone) {
+        const uint32_t g1 = (uint32_t)kDoorP1[0x88] * 0x01010101u;
+        const uint32_t g2 = (uint32_t)kDoorP2[0x88] * 0x01010101u;
+        uint8_t* vdest = (uint8_t*)doorScrollBitmap->data + 85 * 120;
+        for (int row = 85; row < 172; row++) {
+            uint32_t* p1 = (uint32_t*)vdest;
+            uint32_t* p2 = (uint32_t*)(vdest + 40);
+            uint32_t* p3 = (uint32_t*)(vdest + 80);
+            for (int b = 0; b < 10; b++) { *p1++ = g1; *p2++ = g2; *p3++ = 0u; }
+            vdest += 120;
+        }
+        s_padDone = true;
+    }
+    decodeDoorScrollRows(0, 84);
+}
+
+// decodeDoorScrollDirty(): consume g_doorScrollFieldDirty, decoding ONLY the field rows the
+// writer marked (rof_native.c's g_doorDirtyRow0/1).  Called from the vblank ISR, where the full
+// 85-row decode costs ~19.7 ms = a whole PAL frame: doing it there overran the frame on every
+// mid-scroll LEVEL-digit rewrite, losing one displayed step of the elevator scroll (a one-frame
+// stall then a 2-pixel jump) and sometimes pushing the copper rewrite below behind the beam.
+// A digit rewrite marks 8 rows.  Clear the flag FIRST so a re-dirty raised by the preempted main
+// thread mid-decode is not lost — it just re-arms for the next frame (with an empty range, which
+// falls back to a full decode).
+void RescueOnFractalus::decodeDoorScrollDirty()
+{
+    if (!g_doorScrollFieldDirty) return;
+    g_doorScrollFieldDirty = 0;
+    const unsigned r0 = g_doorDirtyRow0, r1 = g_doorDirtyRow1;
+    g_doorDirtyRow0 = 0xFF; g_doorDirtyRow1 = 0x00;
+#ifdef ROF_FLIGHT_PROBE
+    { extern volatile unsigned char g_dsDecWhy; g_dsDecWhy = (r0 > r1) ? 1 : 2; }  // 1=empty range, 2=marked
+#endif
+    if (r0 > r1) decodeDoorScrollField();        // no range recorded → whole field
+    else         decodeDoorScrollRows(r0, r1);
 }
 
 // doorScrollVblankUpdate(): the level-select "elevator" door scroll, driven from the INTB_VERTB
@@ -1646,7 +1692,27 @@ void RescueOnFractalus::doorScrollVblankUpdate()
     // Re-decode the tall door bitmap only when blit_numeric_readout marked the digit dirty (a couple
     // of times per scroll).  The pointers below are unchanged by a decode, so the fresh pixels show
     // automatically.  The digit is rewritten while its rows are off-screen, so the decode is tear-free.
-    if (g_doorScrollFieldDirty) { decodeDoorScrollField(); g_doorScrollFieldDirty = 0; }
+#ifdef ROF_FLIGHT_PROBE
+    const bool didDecode = (g_doorScrollFieldDirty != 0);
+    uint16_t decLn0 = 0;
+    if (didDecode) {
+        extern volatile unsigned short g_dsDecEntryLn;
+        uint16_t vp = *(volatile uint16_t*)0xDFF004u, vh = *(volatile uint16_t*)0xDFF006u;
+        decLn0 = (uint16_t)(((vp & 1) << 8) | (vh >> 8));
+        g_dsDecEntryLn = decLn0;
+    }
+#endif
+    decodeDoorScrollDirty();
+#ifdef ROF_FLIGHT_PROBE
+    if (didDecode) {
+        extern volatile unsigned short g_dsDecLines, g_dsDecLinesMax;
+        uint16_t vp = *(volatile uint16_t*)0xDFF004u, vh = *(volatile uint16_t*)0xDFF006u;
+        uint16_t ln1 = (uint16_t)(((vp & 1) << 8) | (vh >> 8));
+        uint16_t d = (uint16_t)((ln1 >= decLn0) ? (ln1 - decLn0) : (ln1 + 312u - decLn0));
+        g_dsDecLines = d;
+        if (d > g_dsDecLinesMax) g_dsDecLinesMax = d;
+    }
+#endif
 
     // Lock-on indicator blink (cells $3491-$3497).  The faithful standby VBI keeps running
     // lock_on_indicator_tick ($4229) throughout the scroll, so it toggles the cell bytes in mem[]
@@ -1687,6 +1753,22 @@ void RescueOnFractalus::doorScrollVblankUpdate()
     if (same) return;
     for (int i = 0; i < nRuns; i++) { sScan[i] = runScan[i]; sRow[i] = runRow[i]; }
     sN = nRuns;
+#ifdef ROF_FLIGHT_PROBE
+    // Where is the beam when we rewrite the LIVE copper list?  (see the g_dsRun* comment)
+    {
+        extern volatile unsigned short g_dsRunLine[24]; extern volatile unsigned char g_dsRunDec[24];
+        extern volatile unsigned char g_dsRunN[24]; extern volatile unsigned char g_dsRunIdx;
+        extern volatile unsigned short g_dsRunWrites, g_dsRunLate, g_dsRunMaxLn;
+        uint16_t vp = *(volatile uint16_t*)0xDFF004u, vh = *(volatile uint16_t*)0xDFF006u;
+        uint16_t ln = (uint16_t)(((vp & 1) << 8) | (vh >> 8));
+        unsigned char i = g_dsRunIdx;
+        g_dsRunLine[i] = ln; g_dsRunDec[i] = didDecode; g_dsRunN[i] = (unsigned char)nRuns;
+        g_dsRunIdx = (unsigned char)((i + 1u >= 24u) ? 0u : i + 1u);   // no 32-bit modulo on 68000
+        g_dsRunWrites++;
+        if (ln >= kCockpitLine - 1) g_dsRunLate++;
+        if (ln > g_dsRunMaxLn) g_dsRunMaxLn = ln;
+    }
+#endif
     standbyCopper->setTerrainRuns(*doorScrollBitmap, runScan, runRow, nRuns);
 }
 
@@ -3763,7 +3845,7 @@ void RescueOnFractalus::renderFrame()
     // case spins in the main loop (renderFrame isn't called mid-scroll; doorScrollVblankUpdate drives
     // the scroll from the ISR), so this only refreshes colours + the decode at the scroll boundaries.
     if (rsBoostReturn && !g_doorFieldReady && standbyCopperInstalled && !tunnelCopperInstalled) {
-        if (g_doorScrollFieldDirty) { decodeDoorScrollField(); g_doorScrollFieldDirty = 0; }
+        decodeDoorScrollDirty();
         updateStandbyCopper(false);   // pokes terrain color00/03 = atariToOCS(mem[$0071]) fade ramp
 #ifdef ROF_FLIGHT_PROBE
         { extern volatile unsigned char g_liveCopper; g_liveCopper = 10; }   // 10 = in-place wrap fade
@@ -5052,8 +5134,16 @@ void RescueOnFractalus::render()
         // standbyCopper's terrain region points at (plus the green-door pad below, so the level-
         // select scroll offset never reads past the bitmap).  This is the authoritative decode for
         // the current field, so clear the scroll dirty flag it may have raised.
+#ifdef ROF_FLIGHT_PROBE
+        { extern volatile unsigned char g_dsDecWhy; g_dsDecWhy = 3; }   // 3 = terrainDirty full decode
+#endif
         decodeDoorScrollField();
         g_doorScrollFieldDirty = 0;
+        // NOTE: deliberately do NOT reset g_doorDirtyRow0/1 here.  A pending "whole field" mark is
+        // left by fill_region_2000/blit_message_block BEFORE the rebuild finishes, and it has to
+        // survive until the blit_numeric_readout that ends the rebuild raises the flag.  Clearing
+        // it here narrowed that decode to the 8 digit rows, so the wiped LEVEL text kept its stale
+        // pixels across the level-04->01 wrap while only the digits changed.
         // The stars/planet renderer decodes $1000 into viewportBitmap via renderViewportModeD; the
         // door field no longer touches viewportBitmap, but a re-launch after the BOOSTERS return
         // must still force a full planet clear (the door "LEVEL NN"/band remnants used to bleed
