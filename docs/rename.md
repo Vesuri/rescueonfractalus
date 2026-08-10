@@ -83,6 +83,22 @@ scroll (2026-08-04).
 - `$9B98` / `$9B9C` — per-quadrant sign flag / index-reflect mask → `trig_quad_sign` / `trig_quad_reflect`.
 - `$4EB9` / `$4EFA` — quarter-wave sine table hi / lo bytes → `trig_table_hi` / `trig_table_lo`.
 
+## Backlog — found during the open-item triage (2026-08-10)
+
+**`$00CD` `grafm_shadow` is NOT GRAFM — it is the SIZEP2 shadow.** `symbols.csv` describes it as
+"GRAFM ($D00A) shadow pushed in the flight missile block", but **$D00A is SIZEP2** (GTIA: $D008-$D00B
+= SIZEP0-3, $D00C = SIZEM, $D00D-$D010 = GRAFP0-3, $D011 = GRAFM). Both writers agree with SIZEP2 and
+not with GRAFM:
+- `build_player2_sprite $8C58` stores only `$00`/`$01`/`$03` into it (`$8da7`/`$8d9a`) — exactly the
+  SIZEP2 encoding 1×/2×/4×, not an 8-bit missile bitmap.
+- The flight VBI's `$5011-$5030` block is the **player-2** block (COLPM2 `$D014`, HPOSP2 `$D002`,
+  `$D00A`, HPOSP3 `$D003`), not a missile block.
+Suggested: `$00CD` → `sizep2_shadow`, and fix the description. Also correct the two stale comments in
+`rof_native.c` `build_player2_sprite_core` (`bus_write(0xD014, …)` is labelled `SIZEP2` but is COLPM2;
+`bus_write(0xD00A, …)` is labelled `GRAFP2` but is SIZEP2) and `rof_manual.c:61`'s `SIZEP2` label,
+which happens to be right, on `$D00A`. This is the register the flight open item "laser-impact
+explosion renders at 1× width" needs (`docs/flight-scene.md` / the `flight-scene` memory).
+
 ## Investigated → intentionally left UNNAMED (do not re-litigate)
 
 These were verified (2026-08-02) and deliberately have no `symbols.csv` name: each is either
