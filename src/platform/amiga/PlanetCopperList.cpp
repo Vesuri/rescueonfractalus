@@ -214,10 +214,11 @@ void PlanetCopperList::setEnergyIndicatorColor(uint16_t c)
 void PlanetCopperList::setStarOperand(int i, const uint16_t* data)
 {
     // Point star channel (2+i) at the current ring window by updating the copper-list SPRxPT MOVE
-    // operand.  MUST be called during the PREVIOUS frame's render pass (not the VBI): the copper
-    // reads this operand at the very top of the next frame (scanline 0), before the sprite control
-    // DMA fetch (~line 14-24).  Setting it a frame ahead means it is stable when read — no race with
-    // the fetch — so the pointer lands on the same frame as the VBI-written control words (lockstep).
+    // operand.  ⚠ MUST be called from the VBI ISR (RescueOnFractalus::starVblankUpdate), NOT from
+    // the render pass: the copper executes this list's sprite-pointer MOVEs at scanline 16 (the
+    // CopperList ctor's d[0] = copperWait(16,0)), so the operand has to be final by then AND has to
+    // agree with the sprite control words the same ISR writes at the window slot.  Publishing it
+    // from the render pass raced both — see the beam-deadline note in starVblankUpdate.
     // (The mid-screen ch2 gauge re-point at INDEX_GAUGE_PTR is separate and untouched.)
     uint32_t d = (uint32_t)data;
     uint16_t ch = (uint16_t)(2 + i);

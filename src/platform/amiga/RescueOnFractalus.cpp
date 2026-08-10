@@ -244,15 +244,20 @@ extern "C" volatile unsigned short g_starSprVbi = 0;
 extern "C" volatile unsigned long  g_starSprTicks = 0;             // first buildStarSprites cost
 extern "C" volatile unsigned long  g_starGroups = 0;              // non-skipped groups on the entry decode
 extern "C" volatile unsigned long  g_starClrTicks = 0;
-// starVblankUpdate exit-beam probe: the max scanline at which the control-word write finished
-// (must beat the sprite's ~line-25 control fetch or channel-2's star VSTOP reads stale → gauge drop).
+// starVblankUpdate beam-deadline probes.  The star update has three of them, all policed here
+// (see the starVblankUpdate header comment for why each one exists):
+//   entry / pub  — the copper executes the copper list's sprite-pointer MOVEs at scanline 16, so
+//                  the SPRxPT operand publish must be finished before then;
+//   exit         — the control words must beat the sprite's ~line-25 control DMA fetch, else
+//                  channel-2's star VSTOP reads stale and the throttle gauge drops with it.
+extern "C" volatile unsigned short g_starVbiEntryLineMax = 0;                    // ISR entry beam line
+extern "C" volatile unsigned short g_starPubLineMax = 0;                         // after the SPRxPT publish
+extern "C" volatile unsigned short g_starPubLate = 0, g_starPubLateAtVbi = 0;    // publish at/after line 16
 extern "C" volatile unsigned short g_starVbiExitLine = 0, g_starVbiExitLineAtVbi = 0;
 extern "C" volatile unsigned short g_starVbiLateCount = 0, g_starVbiCalls = 0;
-// Gauge-drop detector: ISR firings where the copper operand (starWindow) points at a slot whose
-// control words were NOT (re)written because starVbiRows was reset to 0 by a 2nd perFrameWork call.
-extern "C" volatile unsigned short g_starDropRisk = 0, g_starDropRiskAtVbi = 0;
-extern "C" volatile unsigned short g_pfwStarCalls = 0, g_pfwStarZeroAfterAdv = 0;
+extern "C" volatile unsigned short g_pfwStarCalls = 0;
 extern "C" unsigned short platform_frame_count(void);
+extern "C" unsigned short rof_beam_line(void);
 #endif
 // Compass (#2): the heading cells $32E3-$32E6 (mode-4 line below the title) — flagged by
 // platform_compass_changed() from the housing init (game_sub_4606) / heading updater ($3FDE).
@@ -1513,48 +1518,73 @@ void RescueOnFractalus::buildStarSprites()
     starLastGen = g_starScrollGen;
 }
 
-// starVblankUpdate: the per-vblank zero-copy star scroll, called from the real VBI ISR
-// (PlatformAmiga::vbiHandler) so the copper SPRxPT + control-word writes are tear-free.
-// The field scrolls up by N rows since last frame (g_starScrollGen delta, 0 or 1 normally).
-// We advance the window by N (re-pointing the copper), convert ONLY the N new bottom rows into
-// the ring, and write the (constant) control words at the new window slot.  Everything else —
-// the already-converted rows, the 5 blank padding rows and the terminator — is untouched (the
-// padding/terminator are the still-zero slots below the star region).  See RescueOnFractalus.h.
+// starVblankUpdate: the WHOLE per-vblank zero-copy star scroll — window advance, copper SPRxPT
+// re-point, sprite control words, and the new-row pixel conversion — called from the real VBI ISR
+// (PlatformAmiga::vbiHandler), ahead of game_vbi_isr.  The field scrolls up by N rows since the
+// last vblank (g_starScrollGen delta, 0 or 1 normally): advance the window by N, re-point the
+// copper, write the (constant) control words at the new window slot, and convert ONLY the N new
+// bottom rows into the ring.  Everything else — the already-converted rows, the 5 blank padding
+// rows and the terminator — is untouched (the padding/terminator are the still-zero slots below
+// the star region).  See RescueOnFractalus.h.
+//
+// ⚠ ALL FOUR STEPS MUST RUN HERE, in this order.  Each has a beam deadline, and doing any of them
+// from the main loop races the beam on a fast CPU:
+//   pointer  — the copper executes the list's sprite-pointer MOVEs at scanline 16 (CopperList's
+//              d[0] = copperWait(16,0)), so the operand must be final by then;
+//   control  — the sprite's control-word DMA fetch is at ~scanline 25;
+//   pixels   — a row is fetched at VSTART+row, i.e. scanline 44 and below.
+// The pointer half used to live in perFrameWork "a frame ahead", which held only because the A500
+// render is slow enough to land it late in the frame (measured beam line 78..307).  On a faster
+// CPU the main loop resumes from the frame-sync wait much earlier: A1200 measured 18..307, and a
+// 68040 published 31 of 32 advances at line <= 16 — the copper then latched the NEW window in the
+// SAME frame while the control words still sat at the OLD slot, so the sprite fetched star PIXELS
+// as its control words (garbage VSTART/VSTOP).  That dropped the star sprites AND, because
+// channel 2's mid-screen re-point to the throttle gauge depends on the star sprite's VSTOP
+// landing at the cockpit line, the gauge with them = the reported A1200 star+instrument flicker.
+// At vblank the beam is above every one of those deadlines, so the four steps are one atomic
+// update.  (Bonus: the window now advances once per real vblank instead of once per render pass,
+// so the field scrolls at a steady 50 Hz — what the Atari VBI does — instead of in render-rate
+// bursts.)
 void RescueOnFractalus::starVblankUpdate()
 {
-    // Pixel half of the zero-copy star scroll (pointer half is in perFrameWork).  Runs at vblank —
-    // after the previous frame's display (so overwriting the now-scrolled-off control slot doesn't
-    // tear it) and before this frame's sprite control fetch (~line 14-24, so the fresh control
-    // words are in place when fetched).  perFrameWork already advanced starWindow + set the copper
-    // pointer operand for this frame and handed us the new-row count in starVbiRows.
     if (!starPhaseActive) return;
-    int N = starVbiRows;
-    starVbiRows = 0;
-    const int nw = starWindow;                                  // window perFrameWork advanced to
-    // Write the CONTROL WORDS for all 6 sprites at the current window head — UNCONDITIONALLY, even
-    // when N<=0.  perFrameWork runs more than once per vblank when the planet bitplane conversion is
-    // slow, and a 2nd zero-scroll call resets starVbiRows to 0.  Gating this write on N>0 therefore
-    // left the (already-advanced) window-head slot holding stale star pixel data → the sprite read
-    // it as its control words → corrupt VSTOP → the channel-2 throttle-gauge re-arm dropped for a
-    // frame (measured: ~24 drops/rise via g_starDropRisk).  The write is cheap (12 words) and
-    // idempotent when the window is static, so always do it — the operand always finds fresh control
-    // words at nw.  (The old "top-of-frame race" theory was disproven: exitLineMax=21, lateCount=0.)
+#ifdef ROF_FLIGHT_PROBE
+    { extern volatile unsigned short g_starVbiEntryLineMax;
+      unsigned short _el = rof_beam_line();
+      if (_el > g_starVbiEntryLineMax) g_starVbiEntryLineMax = _el; }
+#endif
+    // ---- 1. advance the ring window by the rows scrolled since the last vblank ----
+    // g_starScrollGen is bumped by scroll_field_columns ($6AEE) inside game_vbi_isr, which runs
+    // LATER in this same ISR — so the delta seen here is the previous frame's scroll, exactly the
+    // one-frame relationship the old perFrameWork placement had.
+    extern volatile unsigned short g_starScrollGen;
+    const unsigned short gen = g_starScrollGen;
+    int N = (int)(unsigned short)(gen - starLastGen);
+    if (N > 0) {
+        starLastGen = gen;
+        if (starWindow + N > kStarMaxScroll)                     // clamp: freeze rather than overrun
+            N = (starWindow >= kStarMaxScroll) ? 0 : (kStarMaxScroll - starWindow);
+        starWindow += N;
+    }
+    const int nw = starWindow;
+    // ---- 2. re-point the copper at the new window (tightest deadline: scanline 16) ----
+    if (planetCopper)
+        for (int i = 0; i < 6; i++) planetCopper->setStarOperand(i, starRing[i] + 2 * nw);
+#ifdef ROF_FLIGHT_PROBE
+    { extern volatile unsigned short g_starPubLineMax, g_starPubLate, g_starPubLateAtVbi;
+      unsigned short _pl = rof_beam_line();
+      if (_pl > g_starPubLineMax) g_starPubLineMax = _pl;
+      if (_pl >= 16) { g_starPubLate++; g_starPubLateAtVbi = platform_frame_count(); } }
+#endif
+    // ---- 3. control words at the new window head (deadline: the ~line-25 control fetch) ----
+    // Written UNCONDITIONALLY, even when N==0: cheap (12 words), idempotent when the window is
+    // static, and it guarantees the operand published above always finds control words at nw.
     for (int i = 0; i < 6; i++) {
         uint16_t* ring = starRing[i];
         ring[2 * nw]     = starCtl[i][0];
         ring[2 * nw + 1] = starCtl[i][1];
     }
-#ifdef ROF_FLIGHT_PROBE
-    {
-        // Post-fix verifier: nw always has fresh control words now, so dropRisk must stay 0.
-        extern volatile unsigned short g_starDropRisk, g_starDropRiskAtVbi;
-        static int s_lastCtlWindow = -1;
-        if (s_lastCtlWindow >= 0 && nw != s_lastCtlWindow && N <= 0) {   // skip first-firing sentinel
-            g_starDropRisk++; g_starDropRiskAtVbi = platform_frame_count();
-        }
-        s_lastCtlWindow = nw;
-    }
-#endif
+    // ---- 4. convert the N brand-new bottom rows (deadline: their own fetch, line 44+) ----
     if (N <= 0) return;                                          // control refreshed above; no new rows
     if (N > kStarRows) N = kStarRows;                            // safety clamp (never underflow the loop)
     // Convert the N new bottom rows (mem visible rows [kStarRows-N .. kStarRows-1]) into the
@@ -4658,38 +4688,27 @@ void RescueOnFractalus::perFrameWork()
         AmigaHardware::blitterClear((uint16_t*)viewportBitmap->data, 60, 47, 0);
         viewportClearKicked = true;
     }
-    // Starfield zero-copy scroll — the pointer half runs HERE (during the frame's render pass),
-    // the pixel half in the VBI.  Advancing the ring window means re-pointing the copper SPRxPT
-    // operand; done here it is read cleanly at the NEXT frame's top (no race with the sprite's
-    // early control DMA fetch).  The VBI (starVblankUpdate) then writes the control words + converts
-    // the new rows for that same window at vblank (after this frame's display, before the fetch) —
-    // so pointer and pixels land in lockstep.  starVbiRows hands the new-row count to the VBI.
+    // Starfield zero-copy scroll — the main loop only does the ONE-TIME full build here; the whole
+    // per-frame update (window advance, copper SPRxPT re-point, control words, new-row conversion)
+    // belongs to the VBI ISR (starVblankUpdate), which is the only place the beam is guaranteed to
+    // be above all three of its deadlines.  Publishing the copper operand from here instead used to
+    // work only by the grace of the A500's slow render landing it late in the frame; see the beam
+    // deadlines in the starVblankUpdate header comment.
     if (rsStars) {
-        extern volatile unsigned short g_starScrollGen;
         if (!starSpritesValid) {
+            extern volatile unsigned short g_starScrollGen;
             buildStarSprites();                         // full build at window 0 (one transient frame)
             starLastGen = g_starScrollGen;
-            starVbiRows = 0;
+            // Publish window 0 for the entry frame.  Safe to do from the main loop even though the
+            // copper may latch it the same frame: buildStarSprites just wrote the control words at
+            // slot 0, so the operand is self-consistent the instant it is written.  From the next
+            // vblank on, starVblankUpdate owns it.
+            if (planetCopper) for (int i = 0; i < 6; i++) planetCopper->setStarOperand(i, starRing[i]);
             starSpritesValid = true;
-        } else {
-            unsigned short gen = g_starScrollGen;
-            int N = (int)(unsigned short)(gen - starLastGen);   // rows scrolled since last frame
-            if (N > 0) {
-                starLastGen = gen;
-                if (starWindow + N > kStarMaxScroll)            // clamp: freeze rather than overrun
-                    N = (starWindow >= kStarMaxScroll) ? 0 : (kStarMaxScroll - starWindow);
-                starWindow += N;
-                starVbiRows += N;   // ACCUMULATE rows pending conversion (ISR zeroes on consume) — a
-                                    // 2nd perFrameWork call before the VBI must not drop pending rows.
-            }
-            // N==0: leave starVbiRows untouched so a zero-scroll call can't clobber a pending count.
-#ifdef ROF_FLIGHT_PROBE
-            { extern volatile unsigned short g_pfwStarCalls, g_pfwStarZeroAfterAdv;
-              g_pfwStarCalls++;
-              if (N == 0) g_pfwStarZeroAfterAdv++; }   // zero-scroll calls (no longer clobber starVbiRows)
-#endif
         }
-        if (planetCopper) for (int i = 0; i < 6; i++) planetCopper->setStarOperand(i, starRing[i] + 2 * starWindow);
+#ifdef ROF_FLIGHT_PROBE
+        { extern volatile unsigned short g_pfwStarCalls; g_pfwStarCalls++; }
+#endif
         starPhaseActive = true;
     } else {
         starPhaseActive = false;

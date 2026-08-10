@@ -15,6 +15,10 @@ FSUAE="${FSUAE:-fs-uae}"
 ROM="${1:-${KICKSTART:-$HOME/Documents/RetroPie/BIOS/kick31.rom}}"
 [ -f "$ROM" ] || { echo "Kickstart ROM not found: $ROM  (pass as \$1 or set \$KICKSTART)"; exit 1; }
 EXE="${ROF_EXE:-out/RoF.exe}"
+# Emulated machine: A500+ by default (the target; ECS Denise for BPLCON3 border-blanking).
+# `AMIGA_MODEL=A1200 ./run.sh` checks the port on a faster CPU — beam-timing races that the
+# slow A500 happens to land safely show up there.
+MODEL="${AMIGA_MODEL:-A500+}"
 [ -f "$EXE" ] || { echo "not found: $EXE  (build first: make, or set \$ROF_EXE)"; exit 1; }
 
 RUN=.run; DH0="$RUN/dh0"; DH1="$RUN/dh1"
@@ -38,7 +42,7 @@ export FSEMU_SCREENSHOTS_DIR="$SHOTS"
 
 pkill -9 fs-uae 2>/dev/null || true; sleep 1
 exec "$FSUAE" \
-  --amiga_model=A500+ \
+  --amiga_model="$MODEL" \
   --chip_memory=1024 --fast_memory=8192 \
   --kickstart_file="$ROM" \
   --hard_drive_0="$DH0" --hard_drive_1="$DH1" \

@@ -135,14 +135,15 @@ private:
     // (which was a star row that has since scrolled off the top); the 5 blank padding rows + the
     // terminator are simply the not-yet-written (zero, MEMF_CLEAR) slots below the star region.
     // The whole update runs at vblank (starVblankUpdate, from the VBI ISR) so the pointer +
-    // control-word writes are tear-free — the flightVblankSwap pattern.
+    // control-word writes are tear-free — the flightVblankSwap pattern.  ⚠ Do NOT move any part
+    // of it back into the render pass: each step has a beam deadline (scanline 16 / 25 / 44) and
+    // a fast CPU lands the render pass above them.  starVblankUpdate's header has the detail.
     uint16_t* starRing[6] = { nullptr, nullptr, nullptr, nullptr, nullptr, nullptr };
     uint16_t  starCtl[6][2] = {};          // precomputed POS/CTL words per sprite (constant)
     int       starWindow = 0;              // current window start slot in the ring (control slot)
     unsigned short starLastGen = 0;        // last consumed g_starScrollGen (delta = rows scrolled)
     bool      starSpritesValid = false;    // false → perFrameWork does the full (re)build
     volatile bool starPhaseActive = false; // set by perFrameWork (rsStars); read by the VBI ISR
-    volatile int  starVbiRows = 0;         // perFrameWork → VBI handoff: # new rows to convert this frame
     void buildStarSprites();               // full (re)build: convert all rows into the ring at window 0
 
     // Tunnel reveal: a 3bp concentric-rectangle bitmap shown in the door gap.

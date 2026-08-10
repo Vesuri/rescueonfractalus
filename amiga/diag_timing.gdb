@@ -46,10 +46,10 @@ printf "starEntry: vbi=%u decode=%lu ticks (~%lums)  sprites vbi=%u %lu ticks (~
   g_starEntryVbi, (g_starEntryTicks-g_starEntryIsr), (g_starEntryTicks-g_starEntryIsr)/16, \
   g_starSprVbi, g_starSprTicks, g_starSprTicks/16
 printf "starGroups decoded on entry = %lu / 470  clr+shadow=%lu ticks (~%lums)\n", g_starGroups, g_starClrTicks, g_starClrTicks/16
-printf "starVbiUpdate: exitLineMax=%u atVbi=%u  lateCount(>25)=%u / calls=%u  [sprite ctrl fetch ~line25; late=stale-read risk]\n", \
-  g_starVbiExitLine, g_starVbiExitLineAtVbi, g_starVbiLateCount, g_starVbiCalls
-printf "GAUGE-DROP: dropRisk=%u atVbi=%u (last)  | perFrameWork star calls=%u zeroAfterAdv=%u  [operand advanced w/ no ctrl write = gauge flash]\n", \
-  g_starDropRisk, g_starDropRiskAtVbi, g_pfwStarCalls, g_pfwStarZeroAfterAdv
+printf "starVbiUpdate: entryLine<=%u exitLineMax=%u atVbi=%u  lateCount(>25)=%u / calls=%u  [sprite ctrl fetch ~line25; late=stale-read risk]\n", \
+  g_starVbiEntryLineMax, g_starVbiExitLine, g_starVbiExitLineAtVbi, g_starVbiLateCount, g_starVbiCalls
+printf "STAR-PUB: pubLine<=%u LATE(>=16)=%u atVbi=%u | perFrameWork star calls=%u  [copper reads SPRxPT at line 16; late=star+gauge flicker]\n", \
+  g_starPubLineMax, g_starPubLate, g_starPubLateAtVbi, g_pfwStarCalls
 printf "vbi=%u VVBLKI=%02x%02x joy=%u 060B=%02x\n", g_vbiCount, mem[0x0223], mem[0x0222], mem[0x004A], mem[0x060B]
 printf "reveal=%u D01F=%02x\n", g_standbyRevealReady, mem[0xD01F]
 echo --- Title Screen probe (rsTitle = VVBLKI==53cc && 365B==72) ---\n
