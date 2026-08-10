@@ -448,6 +448,22 @@ ifdef FORCE_AIRLOCK
 EXTRA_DEFINES += -DROF_FORCE_AIRLOCK_OPEN
 endif
 
+# Measurement aid: `make ALIEN_BENCH=1 PROBES=1` times ONE synthetic 43-row alien-creature draw
+# from main-loop context at boot (rof_native.c rof_alien_bench, called once from renderFrame), so
+# the knock's cost can be A/B'd HEADLESSLY.  The knock itself needs a fly->land->systems-off, which
+# is why every figure for it used to cost a human a flight.  Read with amiga/alien_bench.gdb.
+# ⚠ It is a bench, not the game: it proves cost, never appearance.
+ifdef ALIEN_BENCH
+EXTRA_DEFINES += -DROF_ALIEN_BENCH
+endif
+
+# `make ALIEN_BENCH=1 ALIEN_BENCH_SPLIT=1 PROBES=1` additionally brackets the clear / the four
+# field fills / the 17-cell loop inside each row.  Six rof_subclock calls per row = ~19% of the
+# step, so read the SPLIT for proportions and a plain ALIEN_BENCH run for the absolute.
+ifdef ALIEN_BENCH_SPLIT
+EXTRA_DEFINES += -DROF_ALIEN_BENCH_SPLIT
+endif
+
 # Profiling aid: `make AUTO_FIRE=1` (implies PROBES) holds the trigger down in flight
 # (PlatformAmiga.cpp ROF_AUTO_FIRE) so the player laser fires continuously — used to
 # profile the viewport-PMG sprite path (shot/explosion build) under load.  OFF by default.

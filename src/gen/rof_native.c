@@ -5158,27 +5158,168 @@ void alien_field2_fill(void) {
  * stays byte-identical even when the harness aims the pointer at hardware space); the cell buffer
  * and $0084 are always zero-page, so they use direct mem[].  The row-pointer reconstruction is
  * hoisted out of the inner loop (it is loop-invariant) — the reason this rewrite is faster. */
+#ifdef ROF_PLATFORM_AMIGA
+/* --- The overlay-mirror WINDOW for one creature row (alien_shape_blit, below) ---------------
+ * The mirror used to re-derive, for each of the 17 cells, the wrap (`b >= 96`), two unsigned
+ * range tests, two row-table lookups, the three overlay base pointers and four extent compares
+ * — ~40 instructions per cell, 731 cells per knock step, all but a handful of them recomputing
+ * the same thing.  They ARE the same thing: the drawn cells always form ONE CONTIGUOUS y-window
+ * on ONE row, so all of it hoists out of the loop and the per-cell cost collapses to two table
+ * reads, three stores and a pair of compares.
+ *
+ * Why one window: b = figB0 + y with y in [0,16] and figB0 in (-96,96), so at most one 96-wrap.
+ *   figB0 in [0,39]  -> b in [figB0, figB0+16], never wraps; drawn while b <= 39.
+ *   figB0 in [40,79] -> b in [40,95]: past the 40-byte bitmap but short of the wrap => NOTHING.
+ *   figB0 in [80,95] -> wraps to b-96 in [0,15] once y >= 96-figB0; the unwrapped part is >= 40
+ *                       so it draws nothing, and the wrapped part always does.
+ *   figB0 < 0 (dstRow below the field base) -> drawn once y >= -figB0.
+ * The [40,79] hole is what makes the two cases mutually exclusive, i.e. the row constant.
+ *
+ * PROVEN EXHAUSTIVELY ON THE HOST — tools/alien_mirror_test.c walks all 65536 dstRow values x
+ * all 17 y and compares (drawn?, row, col) against the original per-cell form: 1114112 cases,
+ * 0 mismatches, and the window is contiguous with a constant row in every one.  (The method is
+ * [[rasterizer-restructure]]'s: shape the algebra, prove it off-target, then write the code.) */
+struct alien_mirror_win {
+    int lo, hi;                 /* y-window that draws; lo > hi means "this row draws nothing" */
+    int row, off;               /* the constant overlay row; byte column = y + off */
+    uint8_t *mask, *p1, *p2;    /* pre-offset so [y] addresses the slot directly ((d8,An), no index) */
+};
+
+static void alien_mirror_window(uint16_t dstRow, struct alien_mirror_win *w) {
+    int figBase = (int)dstRow - 0x10A4;
+    int figR0 = rof_divs16(figBase, 96), figB0 = rof_mods16(figBase, 96);
+    if (figB0 >= 80) {                       /* the wrapped group */
+        w->row = figR0 + 1; w->off = figB0 - 96;
+        w->lo  = 96 - figB0; w->hi = 16;
+    } else {                                 /* unwrapped; empty for figB0 in [40,79] (hi < lo) */
+        w->row = figR0; w->off = figB0;
+        w->lo  = (figB0 < 0) ? -figB0 : 0;
+        w->hi  = 39 - figB0;
+        if (w->hi > 16) w->hi = 16;
+    }
+    if ((unsigned)w->row >= 43u) { w->lo = 1; w->hi = 0; }   /* row off-bitmap => draw nothing */
+    if (w->lo <= w->hi) {
+        /* Bases carry `off`, which is negative when the row starts below the field base; the
+         * window guarantees every y actually used lands back inside the buffer. */
+        w->mask = g_figM  + kRow40[w->row] + w->off;
+        w->p1   = g_figP1 + kRow80[w->row] + w->off;
+        w->p2   = g_figP2 + kRow80[w->row] + w->off;
+    } else {
+        w->mask = w->p1 = w->p2 = (uint8_t *)0;
+    }
+}
+
+/* Publish the dirty extents for the cells this window actually drew — once per row instead of
+ * four compares per cell.  yLo..yHi is the y span the loop covered while this window was live
+ * (the whole row, unless the never-taken self-modify branch swapped windows mid-loop). */
+static void alien_mirror_commit(const struct alien_mirror_win *w, int yLo, int yHi) {
+    int lo = w->lo > yLo ? w->lo : yLo;
+    int hi = w->hi < yHi ? w->hi : yHi;
+    if (lo > hi) return;                                  /* nothing drawn under this window */
+    if (w->row < g_figRowLo) g_figRowLo = w->row;
+    if (w->row > g_figRowHi) g_figRowHi = w->row;
+    { int bLo = lo + w->off, bHi = hi + w->off;
+      if (bLo < g_figColLo) g_figColLo = bLo;
+      if (bHi > g_figColHi) g_figColHi = bHi; }
+}
+#endif /* ROF_PLATFORM_AMIGA */
+
+#if defined(ROF_PLATFORM_AMIGA) && defined(ROF_ALIEN_BENCH)
+/* --- Headless bench for the alien-knock creature draw (`make ALIEN_BENCH=1 PROBES=1`) --------
+ * The knock can only be reached by flying to a pilot, landing and switching systems off, so every
+ * perf figure for it has cost a human a flight.  But alien_shape_blit's cost barely depends on the
+ * game state: it always clears 17 cells, runs the four field fills and walks the same 17-cell loop.
+ * So drive it directly on SEEDED state from main-loop context and time one synthetic 43-row
+ * creature "step" — the same shape alien_creature_animate_draw drives (43 rows = $2C - $2930).
+ *
+ * The seed uses the game's OWN frame tables ($81A1/$81A9/$81B1/$81B9 field 0/1, $81C1/$81C9/
+ * $81D1/$81D9 field 2) so the sources, cursors and limits are the real ones, and $0083 = $E7
+ * (field 3 idle) exactly as alien_creature_animate_draw leaves it.  dstRow is placed at
+ * $10A4 + 96*20 so figB0 = 0 and all 17 cells fall inside the overlay, matching the real knock
+ * (measured: 752 mirrored cells per 43-row step = every cell of every row).
+ *
+ * ⚠ VALIDATE THE BENCH BEFORE TRUSTING A DELTA: a real user-flown knock at 1dea72e measured
+ * 3725 ticks/step for this work.  If g_abTicks lands near that, the bench is representative.
+ * It is a BENCH, not the game — it proves nothing about what the creature looks like. */
+volatile unsigned long g_abTicks = 0;    /* ISR-corrected beam ticks for the last 43-row step */
+volatile unsigned long g_abRaw   = 0;    /* ...and uncorrected, for reference */
+volatile unsigned long g_abRows  = 0;    /* rows actually blitted (want 43) */
+/* Where a row's time goes — `make ALIEN_BENCH=1 ALIEN_BENCH_SPLIT=1 PROBES=1`.  Six rof_subclock
+ * calls per row cost ~19% of the step, so a SPLIT build's total is NOT the headline: take the
+ * proportions from a split run and the absolute from a plain ALIEN_BENCH run. */
+volatile unsigned long g_abTClear = 0, g_abTFills = 0, g_abTLoop = 0;
+volatile unsigned char g_abDone  = 0;
+
+void rof_alien_bench(void) {
+    const uint8_t frameA = 1, frameB = 2, idxC = 1;   /* representative animation frames */
+    unsigned long t0, i0, d, id;
+
+    mem[0x0632] = 0x01;                               /* alien_knock_active: take the mirror path */
+    screen_ptr_hi = 0x00;                             /* $0084 packing accumulator */
+    encounter_count = mem[0x81A1 + frameA];  row_count = mem[0x81A9 + frameA];   /* field 0 src */
+    sync_flag       = mem[0x81B1 + frameA];  mem[0x2927] = mem[0x81B9 + frameA];
+    vbi_phase       = mem[0x81A1 + frameB];  vbi_flags = mem[0x81A9 + frameB];   /* field 1 src */
+    dl_ptr_lo       = mem[0x81B1 + frameB];  mem[0x2928] = mem[0x81B9 + frameB];
+    terrain_state   = mem[0x81C1 + idxC];    terrain_scroll_counter = mem[0x81C9 + idxC];
+    dl_ptr_hi       = mem[0x81D1 + idxC];    mem[0x2929] = mem[0x81D9 + idxC];
+    mem[0x292D]     = 0x01;                           /* field 2 packed (the glyph-set path) */
+    screen_ptr_lo   = 0xE7;                           /* $0083: field 3 idle, as the animator sets it */
+
+    {   /* dstRow = $10A4 + 96*20 -> figB0 = 0, figR0 = 20: every cell inside the overlay */
+        uint16_t dstRow = (uint16_t)(0x10A4 + 96 * 20), srcRow = (uint16_t)(dstRow - 0x30);
+        dl_src_index = (uint8_t)srcRow; terrain_scroll_reload = (uint8_t)(srcRow >> 8);
+        step_mode_flag = (uint8_t)dstRow; mem[0x008E] = (uint8_t)(dstRow >> 8);
+    }
+
+    g_abRows = 0;
+    t0 = rof_subclock(); i0 = g_isrBeamLines;
+    for (int r = 0; r < 43; r++) { alien_shape_blit(); g_abRows++; }   /* one creature step */
+    d = rof_subclock() - t0; id = g_isrBeamLines - i0;
+    g_abRaw   = d;
+    g_abTicks = (d > id) ? (d - id) : 0;
+    mem[0x0632] = 0x00;                               /* leave the knock flag as we found it */
+    g_abDone  = 1;
+}
+#endif /* ROF_ALIEN_BENCH */
+
 void alien_shape_blit(void) {
-#if defined(ROF_PLATFORM_AMIGA) && defined(ROF_FLIGHT_PROBE)
+#if defined(ROF_PLATFORM_AMIGA) && defined(ROF_FLIGHT_PROBE) && !defined(ROF_ALIEN_BENCH)
     unsigned long _thud = 0;
     if (mem[0x0632]) { g_alHudCalls++; _thud = rof_subclock(); }
 #endif
+#ifdef ROF_ALIEN_BENCH_SPLIT
+    { unsigned long _t0 = rof_subclock();
+#endif
     for (uint8_t cell = 0x8F; cell <= 0x9F; cell++) mem[cell] = 0x00;   /* clear cell buffer */
+#ifdef ROF_ALIEN_BENCH_SPLIT
+      g_abTClear += rof_subclock() - _t0; }
+    { unsigned long _t1 = rof_subclock();
+#endif
     alien_field0_fill();
     alien_field1_fill();
     alien_field2_fill();
     alien_field3_fill();
+#ifdef ROF_ALIEN_BENCH_SPLIT
+      g_abTFills += rof_subclock() - _t1; }
+#endif
 
     uint16_t srcRow = (uint16_t)(dl_src_index | (terrain_scroll_reload << 8));  /* $8B/$8C mask row */
     uint16_t dstRow = (uint16_t)(step_mode_flag | (mem[0x008E] << 8));          /* $8D/$8E dest row */
 #ifdef ROF_PLATFORM_AMIGA
-    /* Alien jump-scare mirror geometry (see the block below).  The 17 cells are CONSECUTIVE field
-     * addresses and dstRow is loop-invariant, so the field-byte -> overlay (row,col) map needs only
-     * ONE divide per hud-row (figR0/figB0 from the row base) instead of two per cell — the cell's
-     * col is figB0+y with a single 96-wrap.  (Was ROF_PLOT_ALIEN doing rel/96 + rel%96 per cell.) */
+    /* Alien jump-scare mirror geometry: the whole per-cell map (wrap, range tests, row lookups,
+     * base pointers, extents) collapses to ONE window per row — see alien_mirror_window above,
+     * proven exhaustively by tools/alien_mirror_test.c.  The table bases go in locals too, so the
+     * loop addresses them as (d8,An) instead of reloading g_figM/g_figP1/g_figP2 and re-`lea`ing
+     * kModeDP1/kModeDP2 out of absolute memory on every one of the 17 cells. */
     const int alienKnock = (mem[0x0632] != 0) && (g_figP1 != 0);
-    int figBase = (int)dstRow - 0x10A4, figR0 = 0, figB0 = 0;
-    if (alienKnock) { figR0 = rof_divs16(figBase, 96); figB0 = rof_mods16(figBase, 96); }
+    const uint8_t *mdp1 = kModeDP1, *mdp2 = kModeDP2;
+    struct alien_mirror_win w;
+    int winTopY = 0x10;                  /* highest y the live window has covered */
+    if (alienKnock) alien_mirror_window(dstRow, &w);
+    else { w.lo = 1; w.hi = 0; w.row = w.off = 0; w.mask = w.p1 = w.p2 = (uint8_t *)0; }
+#endif
+#ifdef ROF_ALIEN_BENCH_SPLIT
+    { unsigned long _t2 = rof_subclock();
 #endif
     for (uint8_t y = 0x10; ; y--) {                          /* 17 cells, high offset first */
         uint8_t cell = mem[0x8F + y];
@@ -5207,25 +5348,19 @@ void alien_shape_blit(void) {
          * the ONLY caller path -- see the write-skip note above -- so $0632 is set for every real
          * call; the gate is a guard for the validation harness / any future non-knock use.) */
         if (alienKnock) {
-            int b = figB0 + y, r = figR0;
-            if (b >= 96) { b -= 96; r++; }                   /* single 96-wrap (y<=16, figB0<96) */
-            if ((unsigned)r < 43u && (unsigned)b < 40u) {
-                int im = kRow40[r] + b, ip = kRow80[r] + b;   /* mask stride 40; interleaved figure planes stride 80 */
+            if ((int)y >= w.lo && (int)y <= w.hi) {
                 /* Opaque ONLY where the creature pixel is nonzero (silhouette), so combineWithMask
                  * lets the frozen terrain (s_cleanBmp) show through the value-0 holes.  On the Amiga
                  * the mode-D field body is shed, so v = creature-on-blank; a 0xFF mask would clear
                  * the whole rect to pen 0 (was the "terrain not retained" bug). */
-                uint8_t _p1 = kModeDP1[v], _p2 = kModeDP2[v];
-                g_figM[im]  = (uint8_t)(_p1 | _p2);
-                g_figP1[ip] = _p1;
-                g_figP2[ip] = _p2;
-                if (r < g_figRowLo) g_figRowLo = r;
-                if (r > g_figRowHi) g_figRowHi = r;
-                if (b < g_figColLo) g_figColLo = b;
-                if (b > g_figColHi) g_figColHi = b;
+                uint8_t _p1 = mdp1[v], _p2 = mdp2[v];
+                w.mask[y] = (uint8_t)(_p1 | _p2);   /* extents committed once per row, below */
+                w.p1[y]   = _p1;
+                w.p2[y]   = _p2;
             }
-#ifdef ROF_FLIGHT_PROBE
-            rof_alien_crwrite(dst, v);      /* keep the capture (extent/geometry probe) */
+#if defined(ROF_FLIGHT_PROBE) && !defined(ROF_ALIEN_BENCH)
+            rof_alien_crwrite(dst, v);      /* capture probe: NOT in the bench, it is per-CELL
+                                             * and the shipping build has no such call */
 #endif
         }
 #endif
@@ -5236,11 +5371,26 @@ void alien_shape_blit(void) {
             srcRow = (uint16_t)(dl_src_index | (terrain_scroll_reload << 8));
             dstRow = (uint16_t)(step_mode_flag | (mem[0x008E] << 8));
 #ifdef ROF_PLATFORM_AMIGA
-            if (alienKnock) { figBase = (int)dstRow - 0x10A4; figR0 = rof_divs16(figBase, 96); figB0 = rof_mods16(figBase, 96); }
+            if (alienKnock) {
+                /* Never taken in real play.  Close out the extents this window earned over the
+                 * cells already walked (y..winTopY, descending), then re-window on the new row. */
+                alien_mirror_commit(&w, (int)y, winTopY);
+                alien_mirror_window(dstRow, &w);
+                winTopY = (int)y - 1;
+            }
 #endif
         }
         if (y == 0x00) break;
     }
+#ifdef ROF_ALIEN_BENCH_SPLIT
+      g_abTLoop += rof_subclock() - _t2; }
+#endif
+#ifdef ROF_PLATFORM_AMIGA
+    /* One dirty-extent publish for the whole row (the loop reached y=0), replacing four compares
+     * and up to four absolute stores per cell.  min/max is order-independent, so the result is
+     * identical to updating it cell by cell. */
+    if (alienKnock) alien_mirror_commit(&w, 0, winTopY);
+#endif
 
     /* advance $8B/$8C += $60, then $8D/$8E = $8B/$8C + $30 (both 16-bit).  Read the pointer cells
      * fresh — a self-modifying store above may have changed them (matches the 6502, which reloads). */
@@ -5250,7 +5400,7 @@ void alien_shape_blit(void) {
     uint16_t nextDst = (uint16_t)(nextSrc + 0x30);
     step_mode_flag = (uint8_t)nextDst;
     mem[0x008E]    = (uint8_t)(nextDst >> 8);
-#if defined(ROF_PLATFORM_AMIGA) && defined(ROF_FLIGHT_PROBE)
+#if defined(ROF_PLATFORM_AMIGA) && defined(ROF_FLIGHT_PROBE) && !defined(ROF_ALIEN_BENCH)
     if (_thud) g_alTHud += rof_subclock() - _thud;
 #endif
 }

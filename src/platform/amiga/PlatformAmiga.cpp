@@ -1198,6 +1198,14 @@ extern "C" void platform_tunnel_vspan(uint16_t rowBase, uint8_t r0, uint8_t r1, 
     if (s_scene) s_scene->drawTunnelVSpan(rowBase, r0, r1, colL, colR, colour);
 }
 
+#ifdef ROF_ALIEN_BENCH
+// Headless alien-knock creature-draw bench (`make ALIEN_BENCH=1 PROBES=1`), driven once from
+// renderFrame below.  Defined in rof_native.c next to the code it times.
+extern "C" void rof_alien_bench(void);
+extern "C" volatile unsigned char g_abDone;
+extern "C" uint8_t* g_figP1;
+#endif
+
 // Flight/init timing probes (enable with `make PROBES=1` → -DROF_FLIGHT_PROBE).  Sub-frame
 // clock rof_subclock() = g_vbiCount*313 + beam_line, plus the accumulators that rof_native.c's
 // FP_* macros and the renderFrame/atmosphere probes below write into.  All read from the gdb
@@ -1509,6 +1517,11 @@ extern "C" void rof_check_restart(void)
 // per iteration regardless of how long rendering takes.
 // Exception: ATTRACT VBI ($1B30) bumps RTCLOK in its own transpiled body; skip here.
 void PlatformAmiga::renderFrame() {
+#ifdef ROF_ALIEN_BENCH
+    // Headless alien-knock draw bench (rof_native.c rof_alien_bench).  Main-loop context, once,
+    // after boot has settled so the figure-overlay chip Bitmaps exist.  Read with amiga/alien_bench.gdb.
+    if (!g_abDone && g_vbiCount > 400 && g_figP1) rof_alien_bench();
+#endif
 #ifdef ROF_FLIGHT_PROBE
     // Probe: track the largest gap (in real VBI frames) between successive renderFrame
     // calls — a long gap = a no-yield compute stretch where the display (and blink lights)
