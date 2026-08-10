@@ -24,218 +24,45 @@ The boot→flight sequence has 7 canonical scenes (user-approved). Code ids are 
 The Amiga app's main class is `RescueOnFractalus` (flight is a continuation of it, not a
 separate scene). Atari entry is `game_entry $3CDE`; main blob `$3CDE–$B7FF`.
 
-## Scene composition reference (DL / screen modes / PMG / windscreen-frame elements)
+## Reference docs — READ ON DEMAND (this file stays small on purpose)
 
-Hard-won base findings so we don't re-derive them. **Verify addresses against a live dump
-before trusting** (use `/atari-dl-analyzer` + headless `atari800`).
+Hard-won detail lives in `docs/`, not here. **Read the relevant one BEFORE working in its area**;
+these are the derived facts we must not re-derive or contradict.
 
-**Launch cockpit DL (Standby / Doors / Tunnel / Planet share it) = `$3000`**, set *directly*
-in ANTIC `DLISTL/H`; the `$0230` shadow points at `$B832` (a stale blank text DL — don't walk
-it). Layout (DL-relative scanlines): y+20 **mode 6** top bar (Score `$32E3`, Compass `$32C9`);
-y+32 mode 4; y+40 mode D; y+42..127 **mode F** viewport (one LMS/scanline stepping `$1000+`,
-stride `$2E`) rendered under **GTIA mode 10** (`PRIOR=$94`, 9-colour — pixel value selects a
-COLPM*/COLPF* register, NOT normal 1bpp); y+128..135 **mode D `$350D`** windscreen-bottom band
-(4 rows × 2 = Amiga scanlines 172-179); y+136..215 **mode 4 `$332D`** dashboard.
-
-**Launch DLI chain** (`VDSLST=$6CAD`): dispatch on index `$C7` through word table **`$6DBB`** =
-`[$4A0C, $6CD7, $6CF1, $6D28, $6D42, $6D4F, $6D7C, $6D99]`; tail `$4A05` does `INC $C7`; `$4ACD`
-resets `$C7`. Key: `$6CD7` PMG colours `COLPM1/2/3=mem[$08D7/8/9]`+`PRIOR=$94`; `$6CF1`
-`COLBK=mem[$0071]`+`COLPF0/1/2=mem[$08D4/5/6]`; `$6D4F` `COLPF=$04/$06/$2C` grey; `$6D7C`
-`COLBK=$00`. (DLIs are reachable only via this indirect-jump table, so Ghidra never disassembles
-them → absent from `listing.txt`; seed each DLI addr as a Ghidra entry point to persist them —
-now done via `ghidra_scripts/entrypoints.csv`.)
-
-**Stars/Planet DLI chain (`VDSLST=$6CC2`, a SEPARATE dispatcher from `$6CAD` above):** `$6CC2`
-dispatches `$C7` through word table **`$6DCF`** (not `$6DBB`). Its key handlers, top→bottom:
-`$6D0E` viewport playfield pens `COLPF0/1/2=$24/$28/$2A` (the 3-tone planet/star body); `$6D67`
-**windscreen-bottom band frame** — writes ONLY `COLPF0=$04`/`COLPF1=$06` (the two cockpit greys)
-and **deliberately leaves COLPF2 and COLBK untouched**, so COLPF2 stays `$2A` (the planet's
-brightest tone) = the salmon seen through the corner triangles, and COLBK stays black; `$6DA1`
-dashboard `COLPF2=$2C`+`COLBK=$90` (dark blue). ⚠ `$6D4F` (`$04/$06/$2C`) is a LAUNCH-chain
-handler that governs the **dashboard**, NOT this band — don't use it for the stars/planet band.
-**Faithful copper rule:** if a DLI leaves a register untouched, the CopperList must too — emit
-only the MOVEs the DLI actually makes (e.g. `PlanetCopperList`'s band block emits just
-`color01`/`color02`, inheriting `color00`/`color03` from the viewport).
-
-**Windscreen-frame PMG (measured `launch_1_title`):**
-- **Pillars (window edges):** MISSILES — M0+M1 (right), M2+M3 (left), `SIZEM=$00`, **grey**
-  (`COLPF3=$06`, 5th-player). `HPOS` converges inward going down (perspective); `GRAFM` cycles
-  per region. (NOT players. Amiga `leftPost`/`rightPost` 16px sprites approximate these.)
-- **Corner-triangle wedge:** PLAYERS P0 (left `HPOS$2D`) / P1 (right `HPOS$BE`), **`SIZEP=$03`
-  quad (~32px)**, `GRAFP=$FF` at scanlines 136-143 only, **green** (`COLPM0/1=mem[$0071]`),
-  buffer `$0C88-$0C8F`/`$0D88-$0D8F`. The narrowing comes from the grey frame masking the block.
-
-**Windscreen-corner triangle per scene:**
-| Scene | Implementation |
+| Doc | Read it when |
 |---|---|
-| **Standby** | band mode-D corners = `COLBK` (DLI background, green). On the Atari COLBK is ONE register, green continuously from the viewport top through the band (measured `launch_1_title`: COLBK=`$C8` y50-136 → `$00` y138). The Amiga mirrors this: the door field decodes COLBK (GTIA-10 value 8) → **`color00`** via `kNibbleColour` (8→pen0; road dots value-0→pen3), so `color00`=green flows from the terrain region straight into the band — no per-band poke. `INDEX_DASH_BG` flips `color00`→black below. (Was a `setBandBgColor` `color00` split; removed.) The green quad-player wedge is present/full below it. |
-| **Doors** | band green (`color00`), inherited the same way as Standby — COLBK is green across the WHOLE Doors viewport *including the tunnel reveal* (measured `doors_mid`: rings are playfield pens `$34/$36/$38` over green COLBK), so `color00`=green set once on band0 flows through all 3 terrain bands into the band. (Was `setBandBgColor`; removed.) Reveal hasn't started. |
-| **Tunnel** | the green wedge **recedes top-down** = the green→purple reveal. `FUN_6a27` (called from `$538D` in `launch_anim_dispatch $5367`) does `DEC $008C` (wedge height 8→0) + clears `$0C88+` one line/frame, **gated behind `$0088==0 && $0089==0 && $008B==0`** (ring tick paused). Native `launch_anim_dispatch_native` was missing this `$008C` branch; restored — recede now runs on the Amiga, rendered by `TunnelCopperList::setBandReveal`. |
-| **Flight (7)** | The windscreen-bottom band (bitmap rows 43-46 = scanlines 172-179) is rendered as PART of the direct terrain render (2026-07-05, `renderFlightDirect`): terrain fills all **47 rows** (skyline clamp→row 46 + sky-fill rows 0-45), so planes 1&2 hold live terrain full-width and the band's **L/R 32px show real terrain**. The grey windscreen frame is on the otherwise-unused **plane3** across the middle (`color04-07` all = frame grey `$00D4`); the salmon wing-clearance bars (mode-D field value 1) + centre marker (value 2) OVERWRITE planes 1&2 as holes in plane3 (bar→`color01` salmon, fades with terrain) and plane-2 terrain **dots reach band rows 44-46** (scanline 43 excluded = the `$6B` COL_MAX reset floor). The band overlay is a RMW after the sky fill, sourced from the live mode-D band field (`mem[$1074+43*96]`, written per frame by `game_sub_451d`). Corner triangles are separate **PMG sprites** on top. See [[flight-scene]]. |
-| **Planet/Stars (6)** | **bitmap**, NOT PMG (the planet is the mode-D viewport bitmap). The windscreen-bottom band ($1810, Amiga scanlines 172-179) is the bottom 4 mode-D viewport rows under the `$6D67` frame palette: black bg + two greys (`$04/$06`) + `COLPF2=$2A` (planet) — value-2-dominant bitmap reads as the grey frame, value-3 edges = the salmon planet in the corner gaps. `PlanetCopperList` band block emits only `color01/color02` (mirrors `$6D67`). The grey **edge pillars** (5th-player missiles, `COLPF3=$06`) are ported (as with all scenes' corner frame — DONE 2026-07-05). |
+| `docs/scene-composition.md` | Working on any scene's DL / screen modes / PMG / copper list / windscreen frame |
+| `docs/instruments.md` | Touching the cockpit HUD, a named instrument, enemies or terrain objects |
+| `docs/controls.md` | Touching input, the keyboard/console path, Standby SELECT, or BREAK/restart |
+| `docs/perf-budget.md` | Quoting, sizing or judging ANY performance number; measuring an asm twin |
+| `docs/m68k-optimisation.md` | Optimising a hot function or writing an asm twin (68000 rules) |
+| `docs/headless-fsuae.md` | Writing a probe, driving FS-UAE headlessly, or suspecting a stale build |
+| `docs/transpiler.md` | Working on `tools/transpile.py`, or when generated-code shape surprises you |
+| `docs/asm-migration-plan.md` | Any asm twin work — the per-phase design record |
+| `docs/flight-perf-log.md` | The perf investigation archive: what was tried, what it measured, what closed |
+| `docs/sfx-events.md` | Audio: the 33 SFX events, the voice engine, captured POKEY streams |
+| `docs/rename.md` | A function's name contradicts its behaviour (append to it — see conventions) |
+| `docs/startup-flow.md`, `docs/phases.md`, `docs/boost-cinematic-plan.md`, `docs/boost-tunnel-direct-handoff.md`, `docs/alien-jumpscare.md`, `docs/cockpit-render-plan.md`, `docs/terrain-render-plan.md`, `docs/terrain-draw-plan.md`, `docs/rescue-figure-render.md`, `docs/sprite-multiplex-plan.md`, `docs/amiga-attract-plan.md` | Per-area plans/records — check for one before designing |
+| `docs/memory-map.md`, `docs/atari-hardware.md`, `docs/hw-access.md`, `docs/hw-techniques.md`, `docs/toolchain.md` | Atari/Amiga hardware + toolchain reference |
 
-## Instrument vocabulary — "Valkyrie Fighter Control Panel" (use these names everywhere)
-
-The 19 cockpit instruments (game manual p.6), with their Amiga-screen position `x,y` and
-`WxH` (user-supplied 2026-06-18). Use these names in code/comments/commits. Positions are
-in the 320×216 display space; use them to identify each instrument's Atari hardware source
-(player P0–P3 / missile M0–M3 / mode-4·mode-D cockpit cell range).
-
-| # | Instrument | x,y | WxH | Notes / source (✓=confirmed, ?=to verify) |
-|---|---|---|---|---|
-| 1 | **Score** | 304,20 | 16×8 | top-bar mode-6 text ~`$32E3` ✓ |
-| 2 | **Compass** | 144,32 | 32×8 | top-bar mode-6 cells `$32C9-$32CA`, varies with heading octant `$280D` ✓ |
-| 3 | **Wing Clearance Bars** | 40,128 | 240×10 | **BITMAP** (mode-D band field), NOT missiles — viewport row LMS `$2150` (flight) / `$1870` (planet), row 45. value-1 `$55`=salmon bar fill, value-2 `$AA`=centre marker, value-3 `$FF`=end caps. Width = clearance. ✓ (superseded the earlier missiles-M1/M2/M3 guess — see [[flight-scene]]) |
-| 4 | **Thrust Level** | 8,152 | 40×60 | mode-4 dial-bar cells (x≈8-16), drawn via `$4581`/`draw_object_column` ✓ |
-| 5 | **Dangerous Altitude** | 24,144 | 40×60 | mode-4 dial-bar cells (x≈24-32, e.g. `$3394`), lights near ground ✓ |
-| 6 | **Artificial Horizon** | 56,138 | 32×28 | **PMG (NOT cells)** — dial frame is static $33xx bitmap; brown ground fill is Atari player P2 (COLPM2=`$26`, SIZEP2 dbl, buffer `$0E92-$0EB2`), boundary moves with pitch. Amiga = 2 sprites (`buildAHSprite`). See [[flight-scene]]. ✓ |
-| 7 | **Altimeter** | 108,144 | 8×56 | **terrain-height bar = player P0** (`$0C98`, COLPM0 purple `$00D5`) + **ship-height bar = missile M3** (`$0B98`, light-blue `$00D6`). (CORRECTED 2026-07-07 from a firing capture — the old "P3 ship / P2 terrain, HPOSP2=`$00CB`" was WRONG: P3 is parked in flight and `$00CB` is the **laser shot**'s HPOSP2. See [[flight-pmg-map]].) |
-| 8 | **Targeting Scope** | 136,151 | 50×33 | centre-lower mode-4 **bitmap** cells (x≈136); locked-target blip = cells `$2E-$31` + a generic P3 dome blob (`38 7C FE FE FE`); a flying saucer also mirrors as **P3** here. ✓ blip renders/updates on Amiga (DONE 2026-07-09, user-confirmed — was frozen; fixed via the lock-on dirty-hook pattern). ✓ (2026-07-07) |
-| 9 | **Main Window** | — | — | the terrain viewport |
-| 10 | **Cross Hairs** | 136,69 | 50×37 | **a "+" of PMG missiles**: M2 = vertical stem @ HPOS `$80` (centre), two segments (`$0B4D-5A`+`$64-71`) w/ a horizon gap; M3 @ `$74` + M1 @ `$85` (quad-width, `SIZEM=$CC`) = horizontal arms, lit only at the gap-centre line (`$0B5F`). Set in flight VBI `$505F-$5071`. Colour = Atari `$26` salmon (NOT grey). Visibility = the HPOS gate: `$A49A` sets `mem[$2840]=($28FC==0)?$00:$74` (`$00`=off-screen/hidden). **✓ PORTED 2026-07-09 as a plane3 overlay** (NOT a sprite — plane3 is free in the terrain body; `color04-07`=`$26` when visible, =terrain pens `color00-03` when hidden). See [[flight-pmg-map]] §3. |
-| 11 | **Enemy Lock-On Indicator** | 136,193 | 48×6 | mode-4 cells `$3492-$3496` (`lock_on_indicator_tick $4229`, state `$007E`) ✓ |
-| 12 | **Energy Level Indicator** | 204,144 | 8×56 | **P1 strip `$0D98`** gauge sprite, HPOSP1=`$00B5` (the working "right gauge") ✓ |
-| 13 | **Long Range Scanner** | 232,138 | 32×28 | mode-4 cells (x≈232) |
-| 14 | **Shields On** | 288,136 | 6×4 | tiny status light |
-| 15 | **Mother Ship** | 300,140 | 6×4 | tiny status light |
-| 16 | **Air Lock Open** | 312,144 | 6×4 | tiny status light |
-| 17 | **Range To Pilot** | 284,155 | 8×10 | small digit |
-| 18 | **Enemies Destroyed** | 276,171 | 8×10 | small digit |
-| 19 | **Pilot Quota/Rescued** | 268,187 | 8×10 | small digit |
-
-The **canopy posts** (cockpit window A-pillars) are a separate frame element = Atari players
-P0 (`$0C32`, left) / P1 (`$0D32`, right), RLE-decoded from tables `$4DFA`/`$4E09`.
-
-**Enemies / terrain objects (render paths mapped 2026-07-07 via live atari800 captures; detail in
-the `flight-pmg-map` memory):** the two enemy classes render differently. A **flying saucer = player
-P3 PMG** (diamond `18 3C 7E FF 7E 3C`, grows with proximity), drawn in the viewport at `HPOSP3`=objX
-and mirrored into the targeting scope (2nd P3 copy ~83 lines lower, scope-X via an HPOSP3 DLI); on the
-Amiga reuse ch6/ch7 (altimeter, dashboard-only) via a copper `SPRxPT` mid-screen swap. **Ground objects
-(gun emplacement, base, downed pilot) = terrain BITMAP value-2/3** (`terrain_plot_object $A63B`, from
-`$0A00` map markers — pilot = `$64`); `terrain_plot_object $A63B` → `terrain_plot_pixel $A6D3` writes them
-into the mode-D field via `($80),Y`. ✅ **These objects RENDER on the Amiga (DONE + user-confirmed 2026-07-09;
-perf could be better but they're visible).** `renderFlightDirect` no longer converts the mode-D field for the
-terrain body (rows 0–42) — the rasterizer writes plane2 dots straight to `g_flightDotPlane`, and the field is
-read only for the windscreen band — so object pixels written into the field were being DROPPED; fixed by
-hooking `terrain_plot_pixel` to also OR the object pixel into `g_flightDotPlane` (mirror `ROF_PLOT_DOT`, same
-kRow120/kColMask4 geometry). See [[flight-pmg-map]]. (Flying saucers ARE fine — they're P3 PMG sprites, ported.) The **downed-pilot "blink" is a COLOUR-REGISTER CYCLE on `$00D9`** (hue 9, luminance
-pulsing `$4`↔`$B`), NOT a graphics toggle → animated with a per-frame pen poke, don't redraw. **Flying saucer
-P3 + scope mirror + altimeter multiplex are DONE (user-confirmed 2026-07-09); the M2/M1/M3 crosshair "+"
-is DONE too (plane3 overlay, `$26` salmon, mem[$2840] visibility gate — user-confirmed 2026-07-09); the
-downed-pilot blink, the targeting-scope blip, and the ground objects (emplacement/pilot/base/enemy fire)
-all render on the Amiga too (user-confirmed 2026-07-09).**
-
-## Controls (Atari manual → Amiga port)
-
-The Atari controls (game manual) and the Amiga key chosen for each in the port. Two distinct
-input paths: **console/joystick** (PIA PORTA `$D300` directional bits + TRIG0 `$D010` fire +
-CONSOL `$D01F` START/SELECT/OPTION, all active-low, polled), and **in-flight keyboard commands**
-(POKEY keyboard IRQ `irq_handler $462A` → KBCODE → `event_sequence_dispatcher $4644`, delivered on
-the Amiga via the CIA-A keyboard ISR; the transpiler `PRE_INSN_HOOKS[$519c]` feeds the keycode into
-the flight VBI's CLI window). Faithful 1:1 — the dispatcher logic is the Atari binary's.
-
-⚠ **There are TWO keyboard windows, and both must consume.** The game runs with IRQs masked
-(`$3D27 SEI`) and POKEY's keyboard IRQ armed (`IRQEN=$C0` at `$3DA1`), so a keypress stays PENDING
-until a one-instruction `CLI`/`SEI` gap opens and `irq_handler $462A` drops `KBCODE&$3F` (or `$80`
-for BREAK) into X. There are exactly two such gaps: **`$519c`** in the flight VBI, and **`$539a`**
-inside the `$5398` console/attract poll that BOTH standby-family VBI bodies run every frame
-(`$52D7` at `$533C`, the `$53CC` card at `$5400`). `$5398` does NOT route the code to
-`event_sequence_dispatcher` — out of flight a command key only resets the attract timeout — but it
-DOES consume it. Porting `$5398` without its window (the state before 2026-08-08) left a keycode
-pressed outside flight latched across the whole launch cinematic for the first `$519c` window to
-dispatch: pressing ESC on Standby then froze the game (`$0043`) the instant flight began.
-`rof_attract_poll_key()` deliberately leaves a pending `$80` alone, because out of flight the
-restart must longjmp from main-loop context (`rof_check_restart`).
-
-| Atari control | Action | Atari KBCODE | Amiga key (rawkey) | Path |
-|---|---|---|---|---|
-| START | Start the game | — (CONSOL) | **F1 ($50)** | CONSOL $D01F bit0 |
-| BREAK | Restart (score lost, highs kept) → `game_loop_reset` | $80 | **Backspace ($41)** | kbd cmd $519c |
-| ESC | Freeze/pause mission (toggle) | $1c | Esc ($45) | kbd cmd |
-| CURSOR RIGHT | Increase Thrust (Y4) | $07 (Ctrl-`*`, masked) | **`=`/`+` ($0C)** | kbd cmd |
-| CURSOR LEFT | Decrease Thrust (Y5) | $06 (Ctrl-`+`, masked) | **`-` ($0B)** | kbd cmd |
-| L | Land | $00 | L ($28) | kbd cmd |
-| S | Systems | $3e | S ($21) | kbd cmd |
-| A | Air Lock | $3f | A ($20) | kbd cmd |
-| B | Boosters | $15 | B ($35) | kbd cmd |
-| (joystick) | Steer (pitch/roll) | — | **arrow keys** ($4C/$4D/$4F/$4E) | PORTA $D300 bits 0/1/2/3 = up/down/left/right |
-| (trigger) | Fire | — | **Left Shift ($60)** | TRIG0 $D010 |
-| Joystick up / down | Starting level up / down (inside the level-selector card only) | — | **arrow up/down** ($4C/$4D) | PORTA $D300 bits 0/1 |
-| SELECT | Open the level-selector card (initial Standby) / cycle level in place (post-mother-ship Standby) | — | **F2 ($51)** | CONSOL $D01F bit1 |
-| OPTION | Demo (DEMO DROID) | — | **F3 ($52)** | CONSOL $D01F bit2 |
-| SYSTEM RESET | Reboot disk | — | not mapped (hardware reset, not application-controlled) | — |
-
-Thrust sits on the two keys immediately **right of `0`** (`-` and `=`/`+`) because those are the
-physical positions carrying the Atari 800's `< -` / `> =` legends, i.e. the keys the original uses
-for thrust down/up. The path is raw-keycode based with no shift decoding, so `=` fires thrust-up
-unshifted as well as as `+`.
-
-Implementation: `PlatformAmiga.cpp` `kFlightKeys` (one-shot command keycodes), `s_portaState`/
-`s_trig0State` (held joystick/fire level read by `hwRead`), `s_consolState` (CONSOL bits 0/1/2 =
-START/SELECT/OPTION, driven bitwise from F1/F2/F3 edges in `keyboardHandler`). SDL build
-delivers none of these (`flightIrqKey`→$FF, PORTA neutral) — Amiga-only for now.
-
-**Standby SELECT — two contexts, gated on the mother-ship flag `$003A` (measured 2026-08-03 via
-FS-UAE `FORCE_SELECT`/`FORCE_RETURN` probes; all logic is the faithful transpiled binary):**
-- **Initial Standby (`$003A==0`):** SELECT (F2) opens the *separate* level-selector card
-  (scene 3b) — the binary jumps to `standby_scoreboard_render $587B` → installs the `$53CC` VBI,
-  writes the title text into `$365B` (`=$72`), so the Amiga's `rsTitle` renderer engages. Inside
-  the card, **joystick up/down** cycles `level_stage $006D`, re-rendered via the
-  `platform_title_screen_dirty($3694,2)` hook. **NOTE (measured, clean test):** joystick-up from
-  the cockpit ALSO opens the card — the standby dispatch (`rof_native.c` L_6324) reads joystick-up
-  and SELECT into the SAME branch, so this is FAITHFUL binary behaviour (the game manual agrees:
-  "joystick up/down → starting level, Standby"). An earlier "joystick-up does nothing" note was a
-  test-harness artifact and is retracted.
-- **Post-mother-ship Standby (`$003A==$FF`, after a boost/return cinematic):** SELECT cycles the
-  level *in place* in the cockpit (VVBLKI stays `$52D7`, no separate card) — the door field `$2000`
-  is rebuilt with the new LEVEL digits (`$622d` door-scroll if `level_stage < max $0609`, else
-  `intro_screen_build_seq $65a8` fade-rebuild wrap). This in-place rebuild does NOT re-enter
-  `boot_standby_launch_driver`, so it can't rely on the driver-entry `g_doorFieldReady` reset —
-  instead the driver's SELECT dispatch clears `g_doorFieldReady` at **L_6332** (before the rebuild)
-  and re-latches it at the **L_62f6** idle-loop top (after both rebuild branches converge), and that
-  0→1 edge arms the Amiga `terrainDirty` door re-decode (RescueOnFractalus.cpp `deriveRenderSignals`)
-  with the finished field — without which the new level digits never appeared (fixed 2026-08-04,
-  commit 86e07f7). Joystick up/down does NOT cycle here. This is the
-  `rsBoostReturn = standbyVbi && mem[$003A]==$FF` tail. Repro headlessly with `FORCE_RETURN=1` (the
-  genuine boot→flight→boosters→standby path; the standby dispatch is measured by the
-  `g_ipDispatch/g_ipInPlace/g_ipDoorScroll/g_ipIntroWrap` `ROF_FLIGHT_PROBE` counters).
-
-**BREAK (Backspace) — restart via `__builtin_setjmp`/`longjmp` (like the quit path):** `game_loop_reset`
-restarts through a 6502 RTS stack trick C can't reproduce, and it fires from the VBI ISR where longjmp
-is unsafe.  Instead: the trampoline ($52BE) leaves its observable side-effect VVBLKI=`$52B4` in mem[];
-the MAIN-loop pump gate **`rof_check_restart()`** (called from `renderFrame`, `pollEvents`, AND
-`renderFlightDirect` — the flight loop busy-waits in the latter and never reaches renderFrame, so a
-BREAK pressed mid-flight would otherwise stay stuck at `$52B4` = the black+brown viewport) detects it and
-longjmps `g_restartJmp`.  run() then replicates the faithful `$3D1F→$3D48` init (skips the `$3D0C` clear,
-so the **high score `$0605-$0608` is kept**) and calls `game_main_loop` → the `$53CC` level-selector card
-+ standby music (measured on the Atari: BREAK from ANY scene → that card).  SYSTEM RESET is a hardware
-reset, not an application key — deliberately not mapped.
+Cross-session in-progress notes live in the auto-memory (`~/.claude/projects/.../memory/`,
+`MEMORY.md` is its index) — open bugs, current measurements, method lessons. Stable facts live
+here or in `docs/`; memory holds what is still moving.
 
 ## Build / run / debug
 
-### SDL (macOS dev + profiling)  — from repo root
+### SDL (macOS dev + profiling) — from repo root
 ```
 make            # debug build (-O0 -g)  -> build/rof
 make RELEASE=1  # release (-O2 -g)
 make gen        # regenerate transliterated C from Ghidra disasm (tools/transpile.py)
-make validate              # run the native-vs-transpiled equivalence suite
-make validate FN="name"    # only tests whose name contains a substring
+make validate              # run the native-vs-transpiled equivalence suite (~7 min)
+make validate FN="name"    # only tests whose name contains a substring — prefer this
 ```
 
 ### Amiga cross-build (m68k-amiga-elf-gcc) — from `amiga/`
-> Hand-written m68k asm is the norm for hot paths + framework routines (`-DNO_ASSEMBLER` is gone;
-> `vasmm68k_mot -m68010 -Felf` assembles the `.s`). Done: the framework `*Assembler.s` (GCC bridges);
-> the flight terrain rasterizer (`TerrainRasterizeAssembler.s`: `terrain_column_rasterize_core` +
-> `flight_edge_plot_asm`); `project_terrain_points` (`ProjectTerrainAssembler.s`);
-> `terrain_subdivide_column` (`TerrainSubdivideAssembler.s`); `terrain_frame_setup` loops
-> (`TerrainFrameSetupAssembler.s`); `fill_terrain` (`FillTerrainAssembler.s`); the SFX
-> voice-priority mixer chain (`SfxMixerAssembler.s` — the first twin outside the terrain
-> pipeline; it lives in the 50Hz VBI, so it taxes wall clock regardless of frame rate). Each has an
-> `ROF_<NAME>_ASM` seam + a `make <NAME>_C=1` C-fallback. Verify asm twins with `make VERIFY=1 PROBES=1`
-> + the matching `amiga/*_verify.gdb` (in-process differential vs the C oracle — NOT cross-run
-> render-diff). See `docs/asm-migration-plan.md`.
 ```
-. env.sh        # put the ~/.local Amiga toolchain on PATH (source it first)
+. env.sh        # put the ~/.local Amiga toolchain on PATH (source it first, SAME command)
 make            # build out/RoF.exe (+ RoF.elf for debug)
 ./run.sh        # boot in FS-UAE (Kickstart 3.1; left mouse button quits)
 ./debug.sh      # source-level debug via FS-UAE GDB stub (m68k-amiga-elf-gdb, port 2345)
@@ -243,50 +70,25 @@ make            # build out/RoF.exe (+ RoF.elf for debug)
 Toolchain lives at `~/.local`. `OPT=-O2`/`NATIVE_OPT=-O3` by default; override for debug
 backtraces with `make OPT='-O0' NATIVE_OPT='-O0'`.
 
-⚠ **Always `make clean && make -j4 PROBES=1` before a headless probe run** (a plain `make`
-may have built a non-probe binary in between), and **run `make clean` after toggling `PROBES`
-OR after editing a widely-included header** (`RescueOnFractalus.h`, `PlatformAmiga.h`, the
-framework headers, …). The Amiga Makefile does **not** track the `PROBES` flag or header
-dependencies, so a partial rebuild links **stale object files** against new code. The failure
-mode is NOT just a link error — it
-often links a **working-but-wrong binary** that runs with **silent runtime breakage**
-(e.g. struct layout / member-offset mismatches when a header changed, manifesting as
-unrelated corrupted rendering or wrong behaviour). Treat any unexplained runtime
-regression right after a header edit or a `PROBES` toggle as a stale build until a clean
-rebuild rules it out — don't chase it as a logic bug first.
+Hand-written m68k asm is the norm for hot paths + framework routines (`vasmm68k_mot -m68010
+-Felf` assembles the `.s`). Each twin has an `ROF_<NAME>_ASM` seam + a `make <NAME>_C=1`
+C-fallback; verify with `make VERIFY=1 PROBES=1` + the matching `amiga/*_verify.gdb`
+(in-process differential vs the C oracle — **NOT** cross-run render-diff). See
+`docs/asm-migration-plan.md`.
 
-### Headless FS-UAE measure→fix→verify loop (works great — use it instead of guessing)
-The agent can drive FS-UAE + gdb itself, with no display interaction, to measure real
-runtime state. This loop diagnosed several timing/render bugs precisely where static
-reasoning kept failing — **measure, don't theorize.**
-- **`. ./env.sh` MUST be sourced in the SAME shell command** as the run — it puts BOTH
-  `fs-uae` (`~/.local/fs-uae`) and `m68k-amiga-elf-gdb` on PATH. The Bash tool doesn't
-  persist a separate `. env.sh`, so `fs-uae` looks "not found" otherwise.
-- **`amiga/diag_run.sh [delay]`** = the batch harness: boots `out/RoF.exe` under the
-  FS-UAE gdb stub, runs `[delay]` seconds, SIGINTs gdb (breaks its `continue`), runs the
-  print commands in **`amiga/diag_timing.gdb`**, and writes everything to
-  `amiga/.run/gdb-out.log` (also echoes a filtered tail). Edit `diag_timing.gdb` to print
-  whatever globals/`mem[0xNNNN]` you need (a `while $i < N ... end` loop dumps arrays).
-  `-g` is always on (CORE_CFLAGS), so all globals are readable by name.
-- **Build with probes:** `cd amiga && make clean && make -j4 PROBES=1` (→ `-DROF_FLIGHT_PROBE
-  -DROF_TDRAW_PROF`); the `make clean` is mandatory (see the stale-build ⚠ above).
-  This is OFF by default — the probes + auto-launch + timing accumulators are now PERMANENT,
-  guarded code (committed), not throwaway edits. With probes off, the SDL build + `make validate`
-  link cleanly. ⚠ `diag_run.sh`/`diag_sample.sh` need an `out/RoF.exe` built with `PROBES=1`.
-- **Auto-launch (reach the launch cinematic with no keypress):** `PlatformAmiga.cpp`'s
-  `vbiHandler` (under `ROF_FLIGHT_PROBE`) replicates a real RETURN press —
-  `if (g_vbiCount==350) mem[0xD01Fu]=0x06;` (START down) then `=0x07` (up). ⚠ `0x00` (all
-  console keys) triggers the DEMO DROID path, NOT a clean START.
-- **Probe pattern:** for one-off probes add `volatile` globals under `#ifdef ROF_FLIGHT_PROBE`
-  (defs in `PlatformAmiga.cpp`, hooks via the `FP_*` macros in `rof_native.c`), stamp
-  `g_vbiCount`/`rof_subclock()` at milestones, and print them from `diag_timing.gdb`. Edit
-  `diag_timing.gdb` freely to print whatever globals/`mem[0xNNNN]` you need (a
-  `while $i < N ... end` loop dumps arrays); `-g` is always on so all globals are readable.
-  Pure-compute stretches show up as `g_vbiCount` deltas (the real VBI ISR bumps the counter).
+⚠ **`make clean` before any `PROBES=1` build and after editing a widely-included header.** The
+Amiga Makefile tracks neither, so a partial rebuild links stale objects into a
+**working-but-wrong** binary with silent runtime breakage. Treat any unexplained regression right
+after a header edit or a `PROBES` toggle as a stale build first. Full text + the whole headless
+harness: `docs/headless-fsuae.md`.
 
-### Atari reference (ground truth)
-Drive the `atari800` debugger in **FIFO mode**. Always `kill -9` stray `atari800`/`fs-uae`
-processes (avoids stale copies). RAM dumps: `tools/extract_a8s_ram.py` (RAM base is `0x86`).
+### Headless FS-UAE loop — **measure, don't theorize**
+The agent can drive FS-UAE + gdb itself with no display interaction, and should: this loop has
+diagnosed timing/render bugs precisely where static reasoning kept failing.
+`. ./env.sh` (same shell command) then `amiga/diag_run.sh [delay]`, editing `amiga/diag_timing.gdb`
+to print whatever globals/`mem[0xNNNN]` you need. Needs a `PROBES=1` build. Details, the probe
+pattern and the auto-launch trick: `docs/headless-fsuae.md`. Atari ground truth = `atari800` in
+FIFO mode; RAM dumps via `tools/extract_a8s_ram.py` (RAM base `0x86`).
 
 ## Transpiler / native-reimplementation architecture
 
@@ -318,43 +120,16 @@ truth for names** (the transpiler reads it; never hand-rename in generated files
 5. Once a transpiled caller is also shed, the `VALIDATE_FUNCS` entry can be dropped and the
    plain native twin lives directly in `rof_native.c`.
 
-**Which file a native twin belongs in.** `rof_native.c` = FAITHFUL twins (byte-identical to the
-`__t6502` oracle, `make validate`d, linked into BOTH the SDL and Amiga backends). `rof_native_amiga.cpp`
-= genuinely Amiga-only code (deliberately "lossy" — drops HW-register writes, routes audio to Paula,
-frame-driven entry points), NOT validated. **A faithful, pure-`mem[]` 6502 routine that merely needs a
-small Amiga variation does NOT go in the .cpp — it stays a validated twin in `rof_native.c` with the
-variation guarded by `#ifdef ROF_PLATFORM_AMIGA`** (Amiga-only code, e.g. a dirty-band publish or a
-skipped Atari HW tail) or `#ifndef ROF_PLATFORM_AMIGA` (Atari-faithful behavior the validation/SDL
-build keeps so the twin still matches its oracle). Amiga-only globals a twin writes go in that twin's TU
-(the writer's TU), also under `#ifdef ROF_PLATFORM_AMIGA` (cf. `g_planetRowLo/Hi`, `g_tun*`). Precedent:
-the tunnel-ring/door-scroll standby cinematic (`draw_ring_frame_step`, `step_accum_add_75`,
-`advance_history_6a4d`, `dl_lms_*`, `scroll_terrain_dl`, …) lives entirely in `rof_native.c` this way.
+**Which file a twin belongs in:** `rof_native.c` = FAITHFUL, `make validate`d twins linked into
+BOTH backends; `rof_native_amiga.cpp` = genuinely Amiga-only, unvalidated code. A faithful
+pure-`mem[]` routine that merely needs a small Amiga variation **stays in `rof_native.c`** with the
+variation under `#ifdef ROF_PLATFORM_AMIGA`. Full rationale: `docs/transpiler.md`.
 
 Transpiled code uses `mem[]` for RAM, a global `cpu` struct + flag-setting macros
 (`LDA`/`CMP`/`ADC`…) per 6502 op, and `bus_read`/`bus_write` for hardware ($D000–$D7FF).
-Per-op flag computation + bus dispatch is the overhead that native rewrites remove.
-
-**Named memory accesses (`mem.h`):** `symbols.csv` is the single source of truth not just for
-function names but for named RAM/shadow addresses. The transpiler builds a `VAR_NAMES` map from
-its var rows and emits named accesses instead of raw `mem[$NNNN]`: a direct access becomes a bare
-lvalue alias (`level_stage = cpu.X`, via the `ROF_MEM_ALIASES` block in `mem.h`), while
-indexed / RMW / `bus_write` forms use `mem[MEM_<name> + i]`. `rof_native.c` is auto-converted to
-the same named forms; `rof_native_amiga.cpp` + `RescueOnFractalus.cpp` use `mem[MEM_*]` directly.
-(The old `zp::`/`AtariZp.h` namespace was removed — these are general RAM/shadow addresses, not
-zero page.)
-
-**Peephole folding (liveness-gated):** the transpiler runs a backward-CFG register/flag liveness
-fixpoint (over A/X/Y/N/Z/C/V; function exits = all-live) and folds the faithful-but-ugly 6502
-load→store idioms into direct C assignments when the loaded register **and** the N/Z flags it set
-are provably dead after the store and the sequence is straight-line (no end is a branch
-target / split / injected hook):
-- `LD{R}(#imm); ST{R} addr` → `addr = imm;` (or `bus_write(addr, imm)` for hw/shadow), including a
-  run of consecutive same-reg stores (`LDA #0; STA a; STA b` → `a = 0; b = 0;`).
-- `LDA $x; STA $y` → `$y = $x;` (load-memory, **single store only**, so a later store in a run
-  can't change what an earlier-read source should hold).
-Indexed/indirect modes count their index register as a read, and `JSR` reads+clobbers everything,
-so no live value/flag is ever dropped. This shrank `rof_gen.c` by ~1490 lines vs the pre-peephole
-baseline while keeping `make validate` fully green (0 `mem[]` mismatch).
+Per-op flag computation + bus dispatch is the overhead that native rewrites remove. Named RAM
+addresses are emitted as `mem[MEM_<name> + i]` or bare lvalue aliases from `symbols.csv`; the
+transpiler also peephole-folds dead 6502 load→store idioms (both detailed in `docs/transpiler.md`).
 
 **Amiga specifics:** VBI bodies run in the *real* INTB_VERTB ISR (`game_vbi_isr` dispatches
 on the live VVBLKI vector to standby `$52D7` / flight `$4FF5` / station `$1B30` native
@@ -362,289 +137,42 @@ bodies). Spin-wait points in transpiled code are `SPINWAIT_HOOKS` that drive one
 frame (`platform_tick_vbi(); platform_render_frame()`). Copper does the display; `bus_write`
 to hardware is largely ignored on Amiga.
 
-⚠ **Swapping copper bitplane POINTERS (double-buffer flip) must happen in the VBI ISR, not
-mid-frame.** Poking a copper list's `BPLxPT` words while it's the live list, at an arbitrary beam
-position, can coincide with the copper fetching them → a **torn pointer** → whole viewport shows
-garbage/brown for one frame. The flight terrain double-buffer does it right (`renderFlightDirect`
-publishes the painted buffer + raises `flightSwapPending` then busy-waits; the INTB_VERTB ISR
-`flightVblankSwap()` rewrites the pointers at vblank START — before the beam reaches them — then
-clears the flag). Deferring the poke to *after* the VBI wait is NOT enough (it races the copper's
-own scanline-85 fetch). Colour-only pokes mid-frame are tolerable; POINTER pokes are not.
+## Performance — the headline
 
-### Performance budget (judge every number against this)
+**⭐ TARGET (user decision, 2026-08-08): 25 FPS = 40 ms/frame on the BEST-CASE baseline**
+(`COMBAT=1 COMBAT_QUIET=1 FIXED_RNG=1`). Standing measurement: **20.60 FPS best case / 16.00
+combat** (2026-08-08, 4d25815) ⇒ **remove ~18% of the frame**. Combat may sit lower; it is not the
+bar. 50 FPS is the ideal, not the target. The A500 is a 7 MHz 68000 — spending 10 ms on *anything*
+is half the budget; be conscious of absolute milliseconds always. The profile is FLAT (nothing
+>32%), so no single function closes the gap — five or six honest 5-point wins do. Surface numbers
+honestly.
 
-**⭐ TARGET (user decision, 2026-08-08): 25 FPS = 40 ms/frame, judged on the BEST-CASE baseline
-(`COMBAT=1 COMBAT_QUIET=1 FIXED_RNG=1`, currently 20.20 FPS ⇒ −19% of frame time to go).
-Combat-load slowdown is expected and does NOT have to reach 25.** 50 FPS remains the ideal, not
-the bar. Spending 10 ms on *anything* is HALF the budget. The A500 (7 MHz 68000)
-is slow — there is no room for half measures; be conscious of absolute milliseconds, always.
+Three rules that must survive without opening the doc:
+- **`make FPSCOUNT=1` + `GDBSCRIPT=fps_seg.gdb ./diag_run.sh 200` is the ONLY way to quote a
+  framerate**, and it over-reads wins — under ~3% is noise. Quote a static cycle count or a
+  differential ratio as the win; quote FPS only as the standing baseline.
+- **Measure an asm twin with the in-process differential**, never cross-run (a render-speed change
+  shifts the RNG read count and flies a *different level*). `make FIXED_RNG=1` for every perf run.
+- **Every framerate figure in an older note or commit is wrong — re-measure, don't quote.**
 
-Units: 1 probe "tick" = 1 raster scanline = 63.56 µs; a PAL frame = 313 ticks = 20 ms. The flight
-VBI ISR fires once per real frame; its per-firing cost (~56 ticks ≈ 3.6 ms) is mostly the faithful
-50Hz sim+audio (hard to cut). The terrain draw dominates flight compute.
-
-⚠ **The old "mem-bound ALGORITHMIC FLOOR / 50 FPS needs an algorithmic change / micro-opt EXHAUSTED"
-conclusion (2026-06-29) is RETIRED — it was disproven.** Hand-written m68k ASM broke that floor with
-NO faithfulness loss (the C *was* near GCC's floor; the floor was GCC, not the algorithm). Done
-2026-06-30: `terrain_column_rasterize_core` asm twin (~27% faster than the C oracle) + instruction-
-shaving (another ~9%); `renderFlightDirect`'s plane-1 edge-plot asm (~2.8×). See
-`docs/asm-migration-plan.md` + [[flight-scene]]. **The lever for hot code is hand-asm (control the
-regs, force `(a0)+`/`(d8,a0)`, shave every redundant insn), not the transliteration model.**
-
-**CURRENT MEASURED BUDGET (per iteration, deep flight, all asm in):** terrain draw both passes ~167ms
-(dominant) [rasterize ~64% (asm'd) · project_terrain_points ~20% (asm'd, ~2.2× — `ProjectTerrainAssembler.s`)
-· subdivide ~16% (asm'd — `TerrainSubdivideAssembler.s`; ⚠ the old note here said its bracket is dominated
-by the raster leaf-fills it drives "so removing GCC's spills barely helps" — TRUE of spills, but it made
-the whole twin look spent and it is NOT: **~50% of a subdivide call is MARSHALLING**, and 2026-08-08 took
-~245 cyc/call out of it, `docs/asm-migration-plan.md` §Phase 8)] · VBI ~71ms (3.6ms × ~20
-firings/iter, faithful) · renderFlightDirect ~24ms ·
-setup+clear ~31ms [terrain_frame_setup loops asm'd ~26% — `TerrainFrameSetupAssembler.s`]. **Two bit-serial
-loops are now byte-exact lookup tables:** `mul_u8` → the 64KB `g_mulTable` (mul_u8 is NOT a plain product so
-no single mulu is byte-identical — see docs/asm-migration-plan.md), and `terr_blend` → the 8KB
-`g_blendHi`/`g_blendLo` nibble pair, which took the whole flight VBI 109.35 → 104.12 t/firing (−1.67% of ALL
-wall clock; `sample_terrain_height_bilerp` was ~10% of the ISR). ⚠ The VBI's `integ`/`proj` buckets run on
-only HALF the ISR firings (the `$00C8` parity alternation) — per CALL they cost double their t/firing figure.
-⚠ **RAM budget (measured 2026-08-07, `amiga/memreport.gdb`): load image ~505KB + 158,544 bytes of runtime
-CHIP `AllocMem` = ~675KB, ~170KB chip-mandatory — so the port needs 1MB and does NOT fit a bare 512KB A500.
-On a 512+512 machine the binding limit is the ~499KB non-chip image against the 512KB slow bank; check it
-before adding another table.**
-**✅ The rasterize restructure is DONE (2026-08-05, c636951): −36% beam-ticks/call (24→15), share 34.5%→29.8%,
-byte-identical.** It did NOT need fewer subdivisions — it dropped the control-point COLUMN representation for
-a tracked `span` (so the ccol load / `gap` subtract / midpoint store all vanish), put the TOS control-point
-height in a register, and straight-lined spans 3+4 (47.7% of all far-bisects, found by shape-probing the
-algorithm's input distribution — `make RASTER_C=1 RAS_SHAPE=1 PROBES=1` + `amiga/ras_shape.gdb` — not by PC
-sampling). Design, the shape data and the evaluated-and-rejected follow-ups: `docs/asm-migration-plan.md`
-§Phase 4. **Recipe worth reusing: shape-probe the algorithm → prove the algebra on the HOST
-(`tools/ras_restructure_test.c`, 1.6M randomised cases) → then write the asm → then the on-target
-differential, A/B'd against the SAME C oracle.** (The old "NEXT: signed_mul_8x16" item was already
-STALE — `BuildViewAssembler.s` retired it 2026-07-05: its product core is a plain unsigned `mulu.w`,
-not a bit-serial multiply. Don't re-open it.)
-
-**⭐ Phase 5 + the number that should steer the next attempt (2026-08-05, `docs/asm-migration-plan.md`
-§Phase 5).** DRAWDOT's column arithmetic → two plotCol tables (0 mismatch, host-proven over all 65536
-input pairs) measured only **~0.9%**, and the shape probe says why: **an accepted draw is NOT a plotted
-dot.** The dot is plotted at the column's PREVIOUS top and the per-frame `$6B` reset floor sits on the
-one excluded scanline, so a column's first accepted draw never writes. Measured over 489 half-frames:
-286590 draws → 39% accepted → **only 12% actually write a dot**. So **DRAWDOT is ~23% of the rasterizer
-and the other ~77% is tree traversal**; every remaining per-plot micro-opt is capped at ~2% (this also
-retires the "incremental dot column ⇒ ~5%" estimate — wrong denominator). Subdivide's dead mem[]
-round-trips (the `$8D-$91` entry load — a pure round-trip, flushed conditionally with the BUDGET as a
-free dirty flag — and the dead `$83/$85` stores before each rasterize) took its asm-vs-oracle margin
-**7.4% → 12.5%**.
-
-**⚠ Two more candidates measured and CLOSED 2026-08-05 — do NOT re-open them (`docs/asm-migration-plan.md`
-§Phase 5):** *whole-subtree (leaf) occlusion culling* — P is HIGH (58%/56% of span-3/span-4 groups fully
-hidden, and 98% of misses bail on the first compare, so the old ~81% break-even fear was wrong) but it is
-worth only ~2% of the rasterizer, because a rejected DRAWDOT is already just 32 cycles and the cull test
-must re-read the same `COL_MAX` byte; and *subdivide's far-endpoint reload elisions* — the recursion is
-too SHALLOW to matter (1.23 inner iterations / 0.40 midpoints per call), measured 0 ± 0.5% and reverted.
-**The generalisable rule: the reject path is at the floor — any "check before drawing" scheme re-reads
-the very byte the check was meant to avoid, so it can only recover the ~10 cycles of bookkeeping around
-that load.**
-
-### ⭐ Where flight actually stands — 20.60 FPS best case / 16.00 combat (2026-08-08, 4d25815)
-
-**`make FPSCOUNT=1` + `GDBSCRIPT=fps_seg.gdb ./diag_run.sh 200` is the ONLY way to quote a
-flight framerate.** It adds just the headless auto-launch and one increment per painted terrain
-frame; `g_vbiCount` is bumped by the real VERTB handler in every build, so
-**FPS = 50 · g_fpsFrames / g_vbiCount** — frames per *emulated* vblank, which makes it immune to
-host speed and to the gdb stub. Both arms re-measured **2026-08-08 at 4d25815**, ~3000-vbi window,
-all 15 segments valid:
-**best case (`COMBAT=1 COMBAT_QUIET=1 FIXED_RNG=1`) 1235 painted / 2998 vbi = 20.60 FPS** (17.0–22.6
-per segment) · **combat load (`COMBAT=1 FIXED_RNG=1`) 959 / 2997 = 16.00 FPS** (12.2–18.7). Both arms
-are level 40, which is the only legitimate combat framing. Combat costs **22.3% of throughput =
-+28.8% frame time** — unchanged from e35d904's 22.2% / +28.6%, because every change since is in the
-terrain pipeline that both loads run (quiet 18.41 → 20.60 = +11.9%, combat 14.32 → 16.00 = +11.7%,
-which is the consistency check). ⚠ `COMBAT_QUIET` also drops `ROF_AUTO_FIRE`, so the best case is
-"no enemies AND no firing"; and the combat run's altitude varies across segments where the quiet
-run's does not, so **size changes off the quiet arm, never the combat one.**
-⚠ **This harness routinely OVER-reads a win** — 18.41 → 19.49 read +5.9% for two changes whose
-differentials predicted +1.9%. A cross-build end-to-end delta is confounded (`FIXED_RNG` pins the
-LEVEL, not the trajectory), and single-window noise is ±2%, so anything under ~3% is agreement, not
-evidence. **Quote the static cycle count or a differential ratio as the win and the FPS row only as
-the standing baseline.** Per-change history + the full table: the `flight-pc-profiler` memory.
-
-⚠ **Every framerate figure in an older note or commit is wrong — do not quote one, re-measure.**
-Two traps, both of which produced badly wrong numbers before this was built:
-- **Instrumentation.** Even a lean `PROBES=1 PROFILE_NORING=1 NO_TDRAW_PROF=1` build reads 9.4
-  FPS — ~35% slower, because `FP_TIME` is two CHIP register reads plus a 16×16 multiply several
-  times per iteration. The older "~2 fps"/"~6 FPS" figures came from probe builds and/or the
-  `FP_TIME` accumulators (known-poisoned: `rof_beam_line` races the ISR's `g_vbiCount++`).
-  Corollary: the PC profile's own shares are taken on a probe build, so buckets containing
-  `FP_TIME` brackets (`renderFlightDirect`, `game_main_loop`) are inflated.
-- **The crash.** The auto-launch flies with NO input and eventually hits a mountain;
-  `renderFlightDirect` then stops while `g_vbiCount` keeps ticking, so a wide window straddling
-  the death cinematic under-reports (a 3000-vbi window read 9.0 where its live segments read
-  12–17). Sample in SHORT windows and discard any row not at `VVBLKI=$4ff5` / `$3D=00`.
-
-**So the 25 FPS target is a 1.21× gap on the best case = remove 18% of the frame** (from the combat
-baseline it would be 1.56× / −36%, which is explicitly NOT the bar). The
-profile is FLAT (nothing >32%), so no single function gets there — but **the smaller gains are
-worth taking**: at this gap, five or six honest 5-point wins reach the target. Size a
-candidate, and if the win is real and the risk is low, do it. What is CLOSED is only what
-*measured* at ~0 or negative (the occlusion family, Phase-5 dot tables, subdivide reload
-elisions) — closed on data, not on pessimism about small numbers. The ranked TODO lives in the
+Everything else — the per-phase budget, the RAM budget, the closed candidates (do not re-open),
+the measurement traps — is in **`docs/perf-budget.md`**. The ranked TODO is in the
 `flight-pc-profiler` memory.
 
-⚠ **Measure asm twins with the in-process differential** (`make VERIFY=1 PROBES=1` +
-`amiga/raster_verify.gdb`): asm + C oracle run back-to-back on the SAME inputs in ONE run, byte-compared
-+ beam-ticks tallied per-impl. **Cross-run comparison (render-diff, or beam-probe
-asm-build-vs-C-build) is NOT valid by default** — the async 50Hz VBI desyncs frames vs the free-running
-main loop when render speed changes (vbi 2204 vs 2217 at the same `fdCalls`), and that shift changes the
-POKEY RANDOM read count, which picks a **different level** (measured: plain vs `RASTER_C=1` generated
-entirely different `$0900`/`$0A00` maps, 23 vs 25 pilots).
-- ⭐ **`make FIXED_RNG=1`** re-pins the `$D20A` LFSR before the fresh-start level seeding and on the
-  flight rising edge, so **every build flies the same level** (proven byte-identical across builds via
-  `amiga/rngcheck.gdb`). **Use it for every perf measurement.** OFF by default — it removes real
-  gameplay variety, so never judge rendering or gameplay from a `FIXED_RNG` build. Note the level
-  seeding happens at **vbi≈1732 (~35 s)** on the launch path, not at power-on: give probes ≥45 s.
-- ⚠ **The differential's metric is the asm/C RATIO, not the absolute ticks/call** — the same binary
-  swings 15% run-to-run on absolutes while the ratio holds to ~0.5%. And **run any baseline ≥2× after
-  a rebuild** before believing a delta; an n=1 baseline once produced a bogus "4% regression" verdict.
-  Its bracket also INCLUDES nested callees (subdivide's includes the rasterizer), so it is not that
-  function's own cost — the PC profile is.
-**Target: A500, 25 FPS on the BEST-CASE baseline (user decision 2026-08-08); combat may sit lower.**
-Surface the numbers honestly.
+## Hard rules (violating these costs a day)
 
-### Optimising a native twin for the 68000 (hard-won; apply when a function is hot)
-
-The transliteration→native step gets you a *correct* twin; it is NOT fast. The transliterated
-style (`mem[addr]` for every access, `bus_read`/`bus_write`, per-op temporaries) is memory-bound
-on the 68000. **The dominant cost is the number of memory accesses, not arithmetic** — the
-68000 has no cache, every load/store goes to RAM, and `mem[]` is `volatile` (shared with the
-VBI/audio ISRs) so the compiler can't cache, batch, or reorder a single access.
-
-⚠ **RAM is slow REGARDLESS of address — do NOT reason in terms of "FAST RAM vs CHIP RAM".** The
-target is a bare **A500 with NO real fast RAM**. Any "fast RAM" an A500 has is almost always
-"slow RAM" (trapdoor/ranger) on the SAME bus as chip RAM, and even genuine fast RAM is not much
-faster. So treat **every** memory access — `mem[]`, chip bitmaps/sprites, the stack (hence every
-subroutine call/return) — as uniformly expensive. The lever is **reducing the number of reads and
-writes**, full stop; never justify one buffer being cheaper than another by which "kind" of RAM it
-lives in, and never dismiss a copy as cheap because it's "fast RAM". (This has been a recurring
-mistake — the old `&mem[0]`≈`0x264fe8` "it's fast RAM" note was wrong-headed and is retired.)
-A zero-copy scheme that avoids moving data beats any scheme that moves it, independent of address.
-Rewrite hot functions in idiomatic C:
-
-- **Keep loop scratch / running pointers / loop-invariants in locals (registers), not `mem[]`.**
-  The transliteration re-reads/-writes ZP scratch every iteration (e.g. `terrain_collision_and_silhouette` hit
-  `$80/$81/$95/$96` ~13×/iter). Hoist them into locals; write back only the *final* value the
-  6502 oracle leaves in `mem[]` (the harness only compares post-return state, so intermediate
-  ZP writes that the next iteration overwrites are dead — skip them). Cache invariants
-  (`$00A0-$00A3` etc.) into locals once before the loop.
-- **Pointer-walk with autoincrement, never multiply+index in a loop.** Replace
-  `M[base + i*stride + Y]` (a 68000 `mulu` + indexed load each step) with a pointer advanced by
-  `p += stride` / `p -= stride` (`move (a0)+` / `-(a0)`). Reuse a walked pointer across phases
-  where the geometry allows (collision's scan leaves the pointer at row k, so the waterfall
-  steps it back down with no fresh multiply).
-  ⚠ **This rule kills a `mulu`+index — it does NOT beat an UNROLLED absolute scan.** Over a
-  short fixed-length array GCC often emits straight-line absolute code (`move.b (base+i).l,dn`
-  16 cyc + `beq.s` 10 = 26/element), which is *cheaper* than a pointer loop (`tst.b (a0)+` 8 +
-  `beq.s` 10 + `addq.l #1,a1` 8 + `dbra` 10 = 36/element): the 18 cycles of loop bookkeeping
-  exceed the 8 that autoincrement saves on addressing. Measured on the SFX mixer's 12-slot
-  scans, where a "clean" pointer-walked asm twin came out **5% slower than the C**; the fix was
-  to unroll as well and keep `(a0)+` only for the per-element test. **So: disassemble what GCC
-  emitted BEFORE designing the asm** — if it already inlined and unrolled, you must beat
-  straight-line code, and the headroom is small. Watch the prologue too: a 10-register `movem`
-  costs ~180 cycles against GCC's 3-register ~68, which can exceed the whole win.
-  ⚠⚠ **GCC UNDOES this rule when a loop walks 3+ pointers — and the exit test is the one-line fix.**
-  ivopts strength-reduces N pointer IVs into ONE index register plus N invariant bases, so every
-  access becomes `(0,An,Dn.L)`: **14 cycles of EA for a long against `(An)+`'s 8**, on top of losing
-  the free increment. The full recipe, all three parts measured (log §14/§15):
-  1. **Exit test = a POINTER COMPARE against a precomputed end** (`do { … } while (p != pEnd);`).
-     `for (int n = count; n--; )` invites the strength-reduction; the pointer compare forces one IV
-     to be a real pointer and GCC then keeps them all. Band paint **170 → 121 cyc/long**.
-  2. **Post-increment EVERY pointer.** Leaving one as `*p` with a separate `addq` cost **16
-     cyc/long** — GCC emitted `move.l (a0),d0` plus two `addq.l #4` instead of two `(a0)+`.
-  3. **Constant trip count ⇒ `#pragma GCC unroll N`**, which deletes the loop bookkeeping outright
-     (`(d16,An)` displacement compares, no counter at all). Change-detect scan **70 → 46**.
-  Also **split a fused loop that carries pointers only its RARE path needs** — the band's scan was
-  maintaining a decode-loop bound on every unchanged long. Four wins in this tree have now turned on
-  this one pathology, so **read the disassembly of any hot multi-pointer loop before assuming its
-  cost is the work it does.**
-- **Batch bulk clears/copies with `move.l` through a NON-VOLATILE alias** of `mem[]`
-  (`uint8_t* M = (uint8_t*)mem;`). Casting away `volatile` lets the compiler emit 4-byte stores
-  and a tight loop. SAFE only for buffers the ISR doesn't touch concurrently — the main loop
-  owns the `$1010+` terrain field (verified the flight VBI never writes it); ZP and ISR-shared
-  regions must stay `volatile`. `move.l` needs an even/4-aligned address (odd → 68000 address
-  fault) — align first (see `zero_run`). ⚠ The win is from **`move.l` batching of SEQUENTIAL
-  bytes**, NOT from dropping `volatile` per se. For SCATTERED single-byte access (e.g. the terrain
-  rasterizer's per-column PLOT + Y-walked interpolation arrays) a non-volatile alias is a measured
-  **no-op** — GCC already keeps the base in a register, so there is nothing to batch. Don't chase
-  volatile-vs-non-volatile for scattered access; that whole class of "cheaper mem access" is
-  exhausted there — the cost is instruction count / algorithm, not the `volatile` barrier.
-  ⚠ **Endianness when aliasing `mem[]` as `uint16_t*`/`uint32_t*`:** `mem[]` is little-endian
-  (6502: `mem[a]`=lo). The Amiga 68000 is **big-endian**, so a word/long read through such an
-  alias returns the **byte-swapped** value — and worse, the SDL validation host is little-endian,
-  so `make validate` passes GREEN while the Amiga silently renders garbage. So do NOT alias for
-  general 16/32-bit values; lift them into `uint16_t`/`int16_t` LOCALS and touch `mem[]` byte-wise
-  at the boundaries (`mem[a] | (mem[a+1]<<8)`), as the rasterizer/`MIDPOINT` twins do. The ONE
-  safe alias case is a **uniform-byte broadcast** store (e.g. fill 4 lanes with the same byte via
-  `grp = b*0x01010101u`, walk a `uint32_t*`): all bytes equal ⇒ endianness-neutral (identical on
-  host + Amiga). Used for `terrain_draw_frame_core`'s `$BD00` column-id fill (commit ac3a9a8) —
-  46 long stores; still needs the 4-aligned + ISR-untouched + non-overflowing-lane conditions.
-  ⚠⚠ **GCC CAN SILENTLY UNDO THE BATCHING — always re-read the disassembly.** A uniform fill written
-  as a plain `uint32_t*` loop is recognised as a **memset** and becomes `jsr memset`, and this build's
-  freestanding memset (`support/gcc8_c_support.c`) is a byte-at-a-time `move.b d0,(a0)+`/`cmpa.l`/
-  `bne` loop at ~24 cycles a byte — i.e. it hands every byte write straight back and the "batching"
-  is worth nothing. Keeping the pointer **`volatile`** is what pins the long stores (commit 688069d,
-  `terrain_draw_frame_core`'s `$264E..$26D1` fill). ⚠ But volatile is not a free win either: over a
-  SHORT trip count with two interleaved volatile long pointers GCC emitted a redundant volatile READ
-  before every byte store — measured on the adjacent `$67` fill and reverted. So: batch, then LOOK at
-  what was emitted; the source saying `move.l` guarantees nothing.
-  ⚠ Also worth knowing: **"odd address" can mean odd OFFSET, not odd address.** The four `$6B` runs
-  at `$264E/$266F/$2690/$26B1` carried a comment saying they could not be batched because
-  `$266F`/`$26B1` are odd — they are odd only as offsets from `$260E`; every actual address is even,
-  which is all `move.l` needs on a 68000 (it faults on ODD, 4-alignment is a 68020+ perf matter). And
-  those four `$21`-byte runs ABUT, so they are really one contiguous 132-byte fill = 33 longs.
-- **Skip redundant work the original wasted.** Avoid re-decoding/-scanning what hasn't changed
-  (per-writer dirty flags; dirty row/cell ranges, cf. planet viewport `g_planetRowLo/Hi` and the
-  cockpit plan `docs/cockpit-render-plan.md`). Shadow-compare scans are themselves a full
-  volatile scan — a 68000 no-go; prefer dirty flags.
-- **A transliterated loop's 6502 shape can BLIND GCC's loop analysis — that costs far more than the
-  instructions it emits.** Two habits do it, and both look harmless: a loop counter/index typed
-  `uint8_t` because the 6502 held it in a register (every use then pays an `andi.l #255` + a
-  `moveq`/`move.b` zero-extend, and the wrap semantics hide the stride), and a `mem[]` round trip
-  the 6502 needed to save a register across a `JSR` (which, being `volatile`, is an opaque write GCC
-  must assume changes the index). Remove both and GCC can suddenly see a constant stride and a fixed
-  trip count. On `terrain_draw_objects` (log §11) that turned an un-analysable loop into a ×3 unroll
-  with ONE exit test — amortising the loop tail 22 → 6 cycles a pair, the largest single component
-  of the win. **So when a hot loop's index is a byte or round-trips through `mem[]`, fix that
-  first and re-read the disassembly before designing anything cleverer.**
-- **When the idiomatic-C twin is still hot, ESCALATE to hand-written m68k asm** (vasm). GCC won't
-  emit `(a0)+`, has no scaled index, and spills under the register pressure these loops create — so
-  the C floor is GCC's floor, not the algorithm's. In asm you control the regs (pin the working set,
-  walk a private stack with `(a3)±3`), force the addressing, and shave every redundant insn
-  (`movea` copies, `and.w #$FF` after a `sub.b` into an already-zero-extended reg, `moveq#0;move.b`
-  → `move.l` of a clean reg). This beat the C on `terrain_column_rasterize_core` (~27%) where four C
-  restructurings had all regressed. Verify with the in-process differential (see the budget section),
-  NOT cross-run. See `docs/asm-migration-plan.md` + `TerrainRasterizeAssembler.s`.
-- **⚠ NEVER emit a 32-bit software multiply/divide (`__mulsi3`/`__divsi3`/`__udivsi3`/`__modsi3`/
-  `__umodsi3`).** The 68000 has NO 32-bit mul/div — GCC lowers any `uint32_t`/`int32_t` `*` / `/` / `%`
-  into those slow (~200-600 cyc) software routines. It has only `MULU.W`/`MULS.W` (16×16→32) and
-  `DIVU.W`/`DIVS.W` (32÷16→16q+16r). Use the helpers in **`src/cpu/m68k_math.h`** — `rof_mulu16`,
-  `rof_divu16`, `rof_modu16`, `rof_muls16`, `rof_divs16`, `rof_mods16` (inline asm on Amiga, plain-C
-  on the SDL/validate host) — wherever a product's factors fit 16 bits and a quotient fits 16 bits
-  (verify the ranges!). Techniques when a value looks 32-bit: fold constant factors with the exact
-  identity `⌊n/(a·b)⌋ = ⌊⌊n/a⌋/b⌋` so the runtime divide shrinks to 16-bit (see `pokey_period`);
-  reduce with `(a·b)%m = ((a%m)·(b%m))%m` (see `build_poly_dist`); replace a small-modulus wrap in a
-  loop with compare-subtract (`if (x>=m) x-=m`); clamp an input so `2·x` stays <2^16. **Audit after
-  any perf/math change:** `m68k-amiga-elf-objdump -d out/RoF.elf | grep -E '__(u?div|u?mod|mul)si3'`
-  must be empty (bodies unreferenced → not even linked). The whole codebase was swept clean 2026-08-02.
-
-**Correctness + measurement:** every rewrite must stay byte-identical — `make validate FN=<name>`
-diffs full `mem[]` state vs the transliterated `__t6502` oracle (exit `cpu` regs are usually dead
-→ "incidental cpu diffs" are fine; **0 mem mismatch is mandatory**). Measure on real hardware via
-the headless beam probe (`make PROBES=1` + `diag_run.sh`); `FP_TIME` subtracts the flight-VBI ISR
-beam-lines (`g_isrBeamLines`) so a phase bucket excludes ISR firings in its window. ⚠ Per-phase
-flight numbers are **terrain-dependent and noisy run-to-run** (±30%) — trust large deltas, not
-small ones, and confirm the real cause by reasoning about access counts.
-
-**Flight VBI ($4FF5) ZP write-set (audited 1872 firings + static cross-check):** the in-flight
-VBI writes only `$14 $20 $27-$2E $33 $34 $42 $44 $4B $5D $61 $62 $70 $73 $74 $B9-$BF $CE $D8-$DC
-$E6` (attitude/throttle/altitude, HUD/atmosphere colour ramp, object+sprite state). It writes
-NONE of the terrain rasterizer/subdivide cells (`$60/$80/$81/$82-$86/$8D-$91/$95/$96/$9F/$B5/$B6/
-$EA/$EB/$F4/$F5`) nor `$260E`. So the main-loop terrain renderer's working set is disjoint from
-the VBI's — useful when reasoning about ISR-safety of a main-loop optimisation.
+- **Faithfulness first.** Byte-identical twins: `make validate FN=<name>` must show **0 mem
+  mismatch** (incidental exit-`cpu` diffs are fine). Validate against the 6502 + `atari800`.
+- **RAM is uniformly slow — there is no "fast RAM" on the target A500.** Optimise by reducing the
+  NUMBER of reads/writes, never by moving data to a "cheaper" buffer. (`docs/m68k-optimisation.md`)
+- **NEVER emit a 32-bit software mul/div** (`__mulsi3`/`__divsi3`/`__udivsi3`/`__modsi3`/
+  `__umodsi3`) — the 68000 has none. Use `src/cpu/m68k_math.h`'s 16-bit helpers, and audit with
+  `m68k-amiga-elf-objdump -d out/RoF.elf | grep -E '__(u?div|u?mod|mul)si3'` (must be empty).
+- **Copper bitplane POINTER swaps happen in the VBI ISR, never mid-frame** — a torn pointer
+  garbages the whole viewport for a frame. Colour-only pokes mid-frame are tolerable. See the
+  `amiga-copper-lessons` memory.
+- **A DLI that leaves a register untouched ⇒ the CopperList must too.** Emit only the MOVEs the
+  DLI actually makes. (`docs/scene-composition.md`)
 
 ## Working conventions
 
@@ -658,8 +186,8 @@ the VBI's — useful when reasoning about ISR-safety of a main-loop optimisation
   `ghidra_scripts/entrypoints.csv` so Ghidra disassembles it into `listing.txt` (DLIs are
   reachable only via indirect-jump tables, so Ghidra never finds them on its own). Same spirit
   as the `docs/rename.md` rule — record it the moment you find it, don't defer.
+- **Keep this file small.** New hard-won detail goes in the matching `docs/` file (add a row to
+  the index above if it's a new one), not here. This file is re-read in full on every turn of
+  every session; `docs/` is read only when relevant.
 - Ask the user at genuine decision points (they're an experienced retro-porter and want to
   steer architecture/scope choices).
-- Persistent cross-session notes live in the auto-memory at
-  `~/.claude/projects/.../memory/` (`MEMORY.md` is its index). Stable facts live *here* in
-  CLAUDE.md; memory holds in-progress/learned specifics.

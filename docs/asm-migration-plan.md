@@ -17,6 +17,20 @@ Two goals, in order:
 > (§3), and the retracted conclusions (§5). Current numbers and the ranked TODO are in the
 > `flight-pc-profiler` memory; measurement rules in `flight-measurement-rules`.
 
+## Current asm roster (moved verbatim from CLAUDE.md 2026-08-10)
+
+Hand-written m68k asm is the norm for hot paths + framework routines (`-DNO_ASSEMBLER` is gone;
+`vasmm68k_mot -m68010 -Felf` assembles the `.s`). Done: the framework `*Assembler.s` (GCC bridges);
+the flight terrain rasterizer (`TerrainRasterizeAssembler.s`: `terrain_column_rasterize_core` +
+`flight_edge_plot_asm`); `project_terrain_points` (`ProjectTerrainAssembler.s`);
+`terrain_subdivide_column` (`TerrainSubdivideAssembler.s`); `terrain_frame_setup` loops
+(`TerrainFrameSetupAssembler.s`); `fill_terrain` (`FillTerrainAssembler.s`); the SFX
+voice-priority mixer chain (`SfxMixerAssembler.s` — the first twin outside the terrain
+pipeline; it lives in the 50Hz VBI, so it taxes wall clock regardless of frame rate). Each has an
+`ROF_<NAME>_ASM` seam + a `make <NAME>_C=1` C-fallback. Verify asm twins with `make VERIFY=1 PROBES=1`
++ the matching `amiga/*_verify.gdb` (in-process differential vs the C oracle — NOT cross-run
+render-diff).
+
 ---
 
 ## Background facts (verified 2026-06-30)
