@@ -77,6 +77,17 @@ Render bugs fixed through 2026-07-17 (commits 792e6d0, c347749, 6abc6cd, 53f4d86
   (tci=1), then SKIP=0 the next frame (tci=0). `!rsLaunched` still lets the 2nd launch's own tunnel
   descent decode normally.
 
+**2026-08-10 — ITEM 2 IS CLOSED, and the whole decode with it (commit fd28b05).** The reverse
+tunnel no longer decodes `$1000` at all: `draw_symmetric_span_loop` / `draw_frame_guide_columns` /
+`plot_terrain_span` hand every ring write straight to the Amiga painter, and the copper picks
+between the ring bitmap and the star bitmap per band (`TunnelCopperList::setRevealBands`), so the
+reveal is copper geometry rather than a recomposite. ~65900 beam ticks per cinematic → 1621 (the two
+starfield decodes are all that remain). The content shadow and its `BOOST_VERIFY` differential are
+deleted — a shadow is a memoized decode, and the decode is gone. Everything below about item 2 is
+kept for the reasoning, not as current behaviour; **the live account is
+`docs/boost-tunnel-direct-handoff.md`**, which also carries the next step (the same treatment for
+the FORWARD tunnel's clearing).
+
 **OPEN / next-session items:**
 1. ✅ **VERIFIED (user-confirmed 2026-07-18)** — the reveal (f824f82) grows cleanly from the centre
    in real play, and the pink-vs-teal tunnel ring cycle looks right.
