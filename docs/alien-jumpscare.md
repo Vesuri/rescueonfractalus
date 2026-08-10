@@ -5,7 +5,9 @@ renders, animates and composites (user-confirmed).  The open half is **perf**, a
 worth knowing before touching it are both in **§SESSION 8** at the bottom: there is now a
 **headless bench** (`make ALIEN_BENCH=1 PROBES=1`, 50 s, repeats to the exact tick — you no longer
 have to fly to measure), and **every figure recorded before it was inflated ~35% by its own
-per-cell probe.**  Plus **OPEN #2 (colour)**.  ⚠ The sections below are a CHRONOLOGICAL record:
+per-cell probe.**  **OPEN #2 (colour) is CLOSED as NOT-A-BUG — §8.7: `$0047` cannot reach the viewport,
+it is dead during the knock, and the creature's pens already match the Atari's, measured.**
+⚠ The sections below are a CHRONOLOGICAL record:
 every "OPEN" and every number above session 8 has been superseded at least once.
 **Read §SESSION 8 first, then §SESSION 7.**
 (This header used to read "IN PROGRESS / creature draw still unlocated" — resolved 2026-07-25.)
@@ -344,10 +346,77 @@ Split after the two-pass (SPLIT build; its brackets inflate the total, take prop
    composed from FOUR field sources through the `$BE00` shape table, and the set has to be *proven*
    bounded before caching it.  Everything in 1-2 together is maybe 6% and lands the step at ~1.7×.
 
-**OPEN #2 — COLOUR.** The creature renders in the viewport pens 0-3 (terrain palette), so likely the WRONG
-hue. The attack colour is `$0047` (`$6D/$70/$D8` cycle, set by `alien_attack_tick $7AB8`). Pens during the
-knock (measured): `$DA=10 $DB=b8 $DC=14 $DD=2a`. Wire `$0047` → the copper viewport pens during the knock
-so the alien shows in its proper colour. Do AFTER perf (shape is confirmed; colour is polish).
+### 7. OPEN #2 (COLOUR) — ⛔ NOT A BUG. The premise was wrong and the creature's hue is already faithful (2026-08-10)
+
+**The old text of this item said:** *"the creature renders in the viewport pens 0-3 (terrain palette), so
+likely the WRONG hue … wire `$0047` → the copper viewport pens during the knock."* ⛔ **Both halves are
+retracted.** Traced statically end-to-end:
+
+- **`$0047` is `colpf0_value`, and it never reaches the viewport on the Atari.** Its only consumer is
+  `set_colpf0_from_flag $47A3`: `A = (Y & $20) ? mem[$0047] : $CA`, which falls into
+  `save_color_clear_y_bit5 $47B2` → **`$00D8` = the top-bar / cockpit-message text colour**, plus a
+  direct `$D016` (COLPF0) poke from main-loop/VBI context. That poke governs only the scanlines above
+  the first DLI (the mode-6 top bar) — **DLI `$4A1F` reloads COLPF0 from `$00DD` for the viewport on
+  every frame** (`rof_manual.c`), so a main-loop COLPF0 write can never colour the creature. Wiring
+  `$0047` to the viewport pens would have been an *invention*, and it would have recoloured the frozen
+  terrain too (creature and terrain share the four mode-D pens).
+- **The creature is drawn in the viewport pens BY DESIGN, and that is faithful.** It is a mode-D bitmap
+  blitted into the viewport field, so its pens ARE the viewport pens: value0→COLBK`$00DC`,
+  1→COLPF0`$00DD`, 2→COLPF1`$00DA`, 3→COLPF2`$00DB` — exactly what `updateFlightCopper` already maps to
+  `color00-03`. There is no separate creature palette to wire.
+- **★ The actual defect: during the knock the Amiga never refreshed the copper colours at all.**
+  `renderFrame`'s "lighter knock render path" (added for perf) jumped straight to `renderFlightDirect()`
+  and returned — skipping `updateFlightCopper` — so **the entire flight palette was frozen at whatever
+  the last pre-knock frame published**, while the Atari's DLI chain keeps reloading all of it every
+  frame of the scare.
+- **⛔ `$0047` has NO live consumer during the knock — MEASURED, and this retracts my own first answer.**
+  I predicted the flight VBI's "draw" half would keep feeding it through: that branch is
+  `else if (timer_or_counter != 0) set_colpf0_from_flag_core(mem[$0044]);` (`vbi_handler_flight`, the
+  `$00C8` parity branch, ungated by `joystick_saved`, so it *does* run with systems off). But the
+  user-flown capture shows **`$0044 = 00` through the knock**, so the branch never fires: `$00D8` sits
+  at the `$CA` constant and `$0047` (`$29` in that capture — not the `$24` the old note quoted, and
+  none of the `$6D/$70/$D8` cycle either) is simply **dead** for the whole scare. `alien_attack_tick`,
+  which is what cycles `$0047`, runs only on the `$0633` BOARDING path — never during the knock.
+  ⇒ There is nothing to wire from `$0047`, by either route.
+
+**MEASURED VERDICT — the creature's colour is already FAITHFUL; OPEN #2 is not a rendering bug.**
+Knock capture: pens `$DA=10` (pen2 dots, near-black) · `$DB=b8` (pen3 highlight, bright green) ·
+`$DC=14` (pen0 body, dark brown) · `$DD=2a` (pen1 sky, salmon), `valOR=$ff` so the blit uses all four
+mode-D values. Those are exactly the four bytes DLI `$4A1F` loads into COLPF1/COLPF2/COLBK/COLPF0, and
+exactly what `updateFlightCopper` maps to `color02/03/00/01`. **The Amiga shows the Atari's colours.**
+And `g_alPenChg = 0 of 8 knock frames` ⇒ the palette does not move during the scare either.
+
+**FIX (`RescueOnFractalus.cpp`, `renderFrame` knock path) — correctness-only, NOT a visible change:**
+refresh the flight copper's colour slots
+during the knock — `if (flightCopper && flightCopperInstalled) updateFlightCopper(false);` before
+`renderFlightDirect()`. Only the *colours* come back; `deriveRenderSignals()` (the six per-frame sprite
+rebuilds that made the light path worth having) stays skipped. Cost is ~15 `mem[]` byte reads plus
+poke-on-change — nothing against the ~80 ms creature draw. Amiga-only file ⇒ `make validate` and the SDL
+build are untouched; plain + `PROBES=1 FORCE_ALIEN=1` both build clean, softmul audit empty.
+
+It is worth keeping anyway: the Atari reloads the whole palette from `mem[]` every frame of the knock,
+so a frozen copper is a latent trap for anything that ever *does* move a pen in there (a future
+`animate_clear_colors_timed` port, the death-cinematic ramp, an ESC pause during a rescue). It costs
+~15 byte reads. But it fixes nothing you can see today — do not credit it with one.
+
+**Probe (`diag_alien.gdb`).** Prints the pens **as published to the copper** beside the live `mem[]`
+ones, plus `g_alPenCalls` / `g_alPenChg`. ⚠ **Read them together:** a refresh that never ran reports
+`chg = 0` too, so only `calls == knock frames && chg == 0` means "the palette is static"; `calls == 0`
+means `flightCopperInstalled` was false and the zero is vacuous ([[feedback-native-twin-validation-gaps]]
+§6). The first capture predated `g_alPenCalls`, so its `chg = 0` is one re-run short of airtight.
+
+⚠ Also fixed in the script: the `wrapper` figure printed `536870149` (unsigned underflow). `g_alTHud`
+counts the **4 un-bracketed `alien_creature_animate_draw` calls `alien_knock_setup_loop` makes before
+the timed loop**, while `g_alTDraw` brackets only the loop — so on a short capture `hud > draw`
+(here 27913 vs 21810, `hud/draw = 127%`, 54 calls/step against the true 44). The hud-vs-wrapper split
+is only meaningful on a full ~50-step knock.
+
+**Still genuinely open in this area (known, documented, NOT this fix):** the alien mask treats mode-D
+value 0 as transparent (§6/session 6). The Atari blit is `(mask & field) | cell` written OPAQUELY, so
+value-0 pixels inside the creature rect overwrite terrain with COLBK; on the Amiga the frozen terrain
+shows through instead. Session 6 chose this deliberately (the Amiga sheds the field body, so the read
+half of that AND is blank) and the user confirmed the result looks right — reopen only if the creature
+ever reads as "see-through".
 
 **OPEN #3 — >1 MINUTE to REACH the alien.** Separate from the knock: the rescue APPROACH (colour sweeps
 `animate_clear_colors_timed`/`clear_colors_sweep_5x` + the figure zoom `animate_zoom_sequence`) + general

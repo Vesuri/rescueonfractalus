@@ -2490,6 +2490,16 @@ extern "C" volatile unsigned long  g_alRF = 0;       // renderFrame entries duri
 extern "C" volatile unsigned short g_alVV = 0;       // VVBLKI during the knock (want $4FF5)
 extern "C" volatile unsigned char  g_alRFfl = 0;     // rsFlight at renderFrame during the knock
 extern "C" volatile unsigned char  g_alRFvw = 0;     // rsViewport at renderFrame during the knock
+// Knock palette liveness (OPEN #2): how many knock render frames actually MOVED a copper colour
+// slot once the light path started refreshing them.  0 across a whole knock = the pens are static
+// through the scare and the refresh is a correctness-only no-op; >0 = the frozen palette really was
+// showing the creature in stale colours.  g_alPenPub = the pens as last PUBLISHED to the copper
+// (Atari values), the counterpart to g_alPen[] which samples the live mem[] cells.
+// g_alPenCalls makes the 0 READABLE: a refresh that never ran also reports 0 changes.  Only
+// (calls == knock frames && chg == 0) means "the palette really is static through the scare".
+extern "C" volatile unsigned long  g_alPenChg = 0;
+extern "C" volatile unsigned long  g_alPenCalls = 0;     // knock frames that reached updateFlightCopper
+extern "C" volatile unsigned char  g_alPenPub[6] = {0};  // [0]$DA [1]$DB [2]$DC [3]$DD [4]$D8 [5]$D4
 extern "C" volatile unsigned char  g_rfFresh[RF_RING_N] = {0};   // g_flightTerrainFresh
 extern "C" volatile short          g_rfFigLo[RF_RING_N] = {0};   // g_figRowLo
 extern "C" volatile short          g_rfFigHi[RF_RING_N] = {0};   // g_figRowHi
@@ -3497,7 +3507,37 @@ void RescueOnFractalus::renderFrame()
     // checks and the flight-copper install/refresh.  All of those are stable across the pause (set by
     // the frames before the knock), so recomputing them per knock frame is the dominant render cost.
     // Gate == renderFlightDirect's own rescueFigure branch ($3E!=0 && $3D>=3) AND the knock flag.
+    //
+    // ...but the COLOURS are NOT stable across the pause and must keep tracking mem[].  The creature
+    // is a mode-D BITMAP drawn into the viewport field, so on the Atari it is painted in the viewport
+    // pens — and DLI $4A1F reloads those from $00DA/$00DB/$00DC/$00DD (COLPF1/COLPF2/COLBK/COLPF0)
+    // on EVERY frame of the knock, exactly as in normal flight.  Skipping updateFlightCopper here
+    // froze the whole flight palette at whatever the last pre-knock frame published, so any pen the
+    // rescue/knock moves was simply not shown — the creature kept the pre-knock terrain palette.
+    // (This is also where the "$0047 attack colour" actually lands: $0047 is colpf0_value, which
+    // set_colpf0_from_flag $47A3 stores into $00D8 = the top-bar/message text colour, read below as
+    // titlePf0.  It never reaches the viewport pens on the Atari — the DLI overwrites COLPF0 from
+    // $00DD every frame — so there is nothing to wire from $0047 to the viewport.)
+    // Cost is ~15 mem[] byte reads plus poke-on-change: nothing against the ~80 ms creature draw,
+    // and unlike deriveRenderSignals() (six sprite rebuilds) it does no per-frame recomputation.
     if (mem[0x0632] && mem[0x003E] != 0 && mem[0x003D] >= 3) {
+        if (flightCopper && flightCopperInstalled) {
+#ifdef ROF_FLIGHT_PROBE
+            const uint16_t _p0 = flTerr0, _p1 = flTerr1, _p2 = flTerr2, _p3 = flTerr3,
+                           _pt = flTitlePf0, _pb = flBand3;
+#endif
+            updateFlightCopper(false);
+#ifdef ROF_FLIGHT_PROBE
+            { extern volatile unsigned long g_alPenChg, g_alPenCalls;
+              extern volatile unsigned char g_alPenPub[6];
+              g_alPenCalls++;
+              if (_p0 != flTerr0 || _p1 != flTerr1 || _p2 != flTerr2 || _p3 != flTerr3
+                  || _pt != flTitlePf0 || _pb != flBand3) g_alPenChg++;
+              g_alPenPub[0] = mem[0x00DA]; g_alPenPub[1] = mem[0x00DB];
+              g_alPenPub[2] = mem[0x00DC]; g_alPenPub[3] = mem[0x00DD];
+              g_alPenPub[4] = mem[0x00D8]; g_alPenPub[5] = mem[0x00D4]; }
+#endif
+        }
         renderFlightDirect();
         return;
     }

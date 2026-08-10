@@ -69,11 +69,15 @@ printf "  per-step avg: wait=%lu draw=%lu render=%lu ticks  (draw>>1565 => nativ
   (g_alKnockFrames ? g_alTRender/g_alKnockFrames : 0)
 printf "  hud split: g_alHudCalls=%lu  g_alTHud=%lu ticks  (hud vs wrapper: draw-hud = wrapper cost)\n", \
   g_alHudCalls, g_alTHud
-printf "  per-step: hud=%lu ticks (%lu calls/step)  wrapper=%lu ticks  hud/draw=%lu%%\n", \
+printf "  per-step: hud=%lu ticks (%lu calls/step)  wrapper=%ld ticks  hud/draw=%lu%%\n", \
   (g_alKnockFrames ? g_alTHud/g_alKnockFrames : 0), \
   (g_alKnockFrames ? g_alHudCalls/g_alKnockFrames : 0), \
-  (g_alKnockFrames ? (g_alTDraw-g_alTHud)/g_alKnockFrames : 0), \
+  (g_alKnockFrames ? ((long)g_alTDraw-(long)g_alTHud)/(long)g_alKnockFrames : 0), \
   (g_alTDraw ? (g_alTHud*100)/g_alTDraw : 0)
+printf "    (wrapper<0 / hud>100%% is EXPECTED on a short capture, NOT a measurement of the wrapper:\n"
+printf "     g_alTHud also counts the 4 un-bracketed alien_creature_animate_draw calls that\n"
+printf "     alien_knock_setup_loop makes BEFORE the timed loop, while g_alTDraw brackets only the loop.\n"
+printf "     Their weight decays as steps grow; only judge the split on a full ~50-step knock.)\n"
 printf "renderFlightDirect during knock: g_alRFD=%lu  rescueFig=%lu  cleanValid=%lu  (locates the drop-out)\n", \
   g_alRFD, g_alRFDresc, g_alRFDclean
 printf "  render split: scene(composite+flipwait)=%lu  frameSync(vbi==last wait)=%lu ticks/step\n", \
@@ -90,6 +94,13 @@ printf "    flightVblankSwap during knock: ran=%lu  didFlip=%lu  (ran/step=%lu; 
 printf "viewport pens during knock: $DA=%02x $DB=%02x $DC=%02x $DD=%02x  attack $47=%02x $44=%02x\n", \
   g_alPen[0], g_alPen[1], g_alPen[2], g_alPen[3], g_alPen[4], g_alPen[5]
 printf "  (Amiga color02<-$DA, color03<-$DB; if creature pens ~= sky/background, shape is invisible)\n"
+printf "  as PUBLISHED to the copper: $DA=%02x $DB=%02x $DC=%02x $DD=%02x  text $D8=%02x  bandgrey $D4=%02x\n", \
+  g_alPenPub[0], g_alPenPub[1], g_alPenPub[2], g_alPenPub[3], g_alPenPub[4], g_alPenPub[5]
+printf "  g_alPenCalls=%lu of %lu knock frames reached updateFlightCopper; g_alPenChg=%lu moved a slot\n", \
+  g_alPenCalls, g_alKnockFrames, g_alPenChg
+printf "    (calls==frames && chg==0 => the palette really IS static through the scare, refresh is\n"
+printf "     correctness-only.  calls==0 => the refresh never ran (flightCopperInstalled false) and the\n"
+printf "     chg=0 is VACUOUS.  chg>0 => the old frozen-palette path was showing stale colours.)\n"
 printf "--- live state right now ---\n"
 printf "  0633=%02x 003C=%02x 003D=%02x 003E=%02x\n", \
   mem[0x0633], mem[0x003C], mem[0x003D], mem[0x003E]
