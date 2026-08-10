@@ -1,10 +1,13 @@
 # Alien "Jaggi" jump-scare — trace map
 
 **STATUS (2026-08-10):** trigger, gate and creature draw are all mapped and PORTED — the creature
-renders, animates and composites (user-confirmed).  The one open half is **perf: the step is 2.6×
-slower than faithful, and 93% of it is the draw** — see **§SESSION 7** at the bottom for the current
-numbers; plus **OPEN #2 (colour)**.  ⚠ The sections below are a CHRONOLOGICAL record: every "OPEN"
-and every number above session 7 has been superseded at least once.  **Read session 7 first.**
+renders, animates and composites (user-confirmed).  The open half is **perf**, and the two things
+worth knowing before touching it are both in **§SESSION 8** at the bottom: there is now a
+**headless bench** (`make ALIEN_BENCH=1 PROBES=1`, 50 s, repeats to the exact tick — you no longer
+have to fly to measure), and **every figure recorded before it was inflated ~35% by its own
+per-cell probe.**  Plus **OPEN #2 (colour)**.  ⚠ The sections below are a CHRONOLOGICAL record:
+every "OPEN" and every number above session 8 has been superseded at least once.
+**Read §SESSION 8 first, then §SESSION 7.**
 (This header used to read "IN PROGRESS / creature draw still unlocated" — resolved 2026-07-25.)
 
 The classic *Rescue on Fractalus!* jump-scare: a rescued figure runs to the ship, and at the
@@ -265,6 +268,56 @@ read with `amiga/diag_alien.gdb`.  Beam ticks; 313 t = 1 frame = 20 ms; faithful
 - ⚠ `PROFILE_NORING=1` remains load-bearing (session 6: without it the debug ring's `rfPlaneSum`
   scans are ~85% of the "render" sample).  ⚠ A `PROBES=1` build shows 9 `jsr __udivsi3` sites
   (probe math); the CLAUDE.md audit is only meaningful on a **plain** build — verified empty at 1dea72e.
+
+## ★★ SESSION 8 (2026-08-10, 50869ee) — a headless bench, a 35% measurement artifact, and −21.7%
+
+### 1. The bench — `make ALIEN_BENCH=1 PROBES=1` + `amiga/alien_bench.gdb` (⭐ use this, not a flight)
+Times ONE synthetic 43-row creature step (`rof_alien_bench`, rof_native.c) from main-loop context
+at boot, seeded from the game's own frame tables.  **50 seconds headless, and it repeats to the
+EXACT tick** (1638/1638/1638, 1283/1283) — a precision instrument, unlike anything else in this
+project.  `ALIEN_BENCH_SPLIT=1` adds per-phase brackets, but its six `rof_subclock` calls per row
+cost ~19% of the step: **take proportions from a SPLIT run and absolutes from a plain one.**
+⚠ It proves COST, never APPEARANCE — the creature still needs eyes on it.
+
+### 2. ⚠⚠ Every jump-scare figure ever recorded was inflated ~35% by its own instrument
+`rof_alien_crwrite` — the capture probe — runs **per CELL** (731×/step) and exists only in PROBES
+builds.  Measured: **826 ticks/step, ~35% of what a probe build calls "the draw"**.  Sessions 4-7
+all measured probe builds, so **the shipping game has always been materially faster than the doc
+said**, on top of the real wins.  The bench excludes it (`&& !defined(ROF_ALIEN_BENCH)`) and so
+measures the shipping shape.  ⭐ Generalisable: *price the probe before believing the profile* —
+a per-item probe on a per-item loop can outweigh the item.
+
+### 3. The win — one window per row instead of a map per cell (−21.7%)
+The mirror re-derived, per cell, what is constant per ROW.  `b = figB0 + y` (y in [0,16], figB0 in
+(-96,96)) wraps at most once, and **figB0 in [40,79] draws nothing** (past the 40-byte bitmap,
+short of the wrap) — which makes the wrapped and unwrapped cases mutually exclusive, so the row is
+CONSTANT and the drawn cells are ONE CONTIGUOUS y-WINDOW.  Row, bases and the four dirty-extent
+compares all hoist out; a cell is now two table reads, three stores and two compares.
+**Proven off-target first** — `tools/alien_mirror_test.c`, all 65536 dstRow × 17 y = 1,114,112
+cases, 0 mismatches ([[rasterizer-restructure]]'s method).
+
+| bench, shipping shape | before | after |
+|---|---|---|
+| step (43 rows) | 1638 t = 104 ms | **1283 t = 81 ms** (−21.7%) |
+| the 17-cell loop | 1082 t | **779 t** (−28%) |
+
+Split after the change (SPLIT build): **loop 779 t (52%) · fills 375 t (25%) · clear 64 t (4%)**,
+rest instrument.  A cell is still ~480 cycles, so the loop remains the target.
+
+### 4. Tried, measured, REJECTED — do not re-open without new numbers
+**Folding `kModeDP1`/`kModeDP2` into one 512-byte table + addressing plane2 as `p1[40+y]`** (both
+free a register, aimed at the stack spills GCC emits per cell): **+6.5%** (1500 → 1597).  Reverted.
+
+### 5. What is left, ranked
+1. **The 17-cell loop, 52%.** The remaining fat is register pressure — GCC spills the overlay
+   pointers and re-`lea`s the tables per cell. §4 shows freeing registers naively backfires; the
+   real fix is a **two-pass row** (pass 1 computes the 17 `v` into a stack array, pass 2 mirrors the
+   window with `(a0)+` walks and nothing else live). ⚠ The `dst >= $8B` self-modify branch can
+   change the window mid-row, so a two-pass split needs a fallback for that never-taken path.
+2. **The fills, 25%** — ~226 cycles per source byte through `bus_read` + `reorder_cell_bits` +
+   volatile cell writes.  Sized small individually (each idea ~1-2%).
+3. **Pre-rendered chip-`Bitmap` creature frames** (session 6's option (c)) — still the only idea
+   that removes the per-cell CPU work rather than shaving it.
 
 **OPEN #2 — COLOUR.** The creature renders in the viewport pens 0-3 (terrain palette), so likely the WRONG
 hue. The attack colour is `$0047` (`$6D/$70/$D8` cycle, set by `alien_attack_tick $7AB8`). Pens during the
