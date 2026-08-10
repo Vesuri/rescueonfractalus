@@ -1062,6 +1062,7 @@ extern "C" volatile unsigned short g_dsDecodes  = 0;   // full-field decodes (sh
 extern "C" volatile unsigned long  g_blackHoldFrames = 0;  // frames the EmptyCopperList (black) was held
 // Bug-3 probe: whether the top door band was black at the earliest (smallest-g2) doors frame.
 extern "C" volatile unsigned char  g_doorTopBlack = 0;
+extern "C" volatile unsigned char  g_doorTopBlackVp = 0;   // same sample taken from viewportBitmap (the pre-fix door source)
 extern "C" volatile unsigned char  g_doorTopG2    = 0xFF;
 extern "C" volatile unsigned char  g_doorTopSeen  = 0;
 // Restart-flash ring: per-vblank VVBLKI + hold flag, armed at the trampoline/restart.

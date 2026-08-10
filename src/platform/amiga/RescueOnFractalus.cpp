@@ -3812,14 +3812,22 @@ void RescueOnFractalus::renderFrame()
         const uint8_t back = (uint8_t)(1 - doorsActive);
         updateDoorsCopper(doorsCopper[back]);
 #ifdef ROF_FLIGHT_PROBE
-        // Bug 3 probe: at the moment a doors frame is shown, is the TOP of viewportBitmap (the top
+        // Bug 3 probe: at the moment a doors frame is shown, is the TOP of the door source (the top
         // door band, rows g2..) blank?  Sample the first 6 rows across all 3 planes; if every byte is
         // 0 the top door is black.  Record the worst (earliest, smallest g2) case per run.
-        { extern volatile unsigned char g_doorTopBlack, g_doorTopG2, g_doorTopSeen;
-          const uint8_t* vp = (const uint8_t*)viewportBitmap->data + (uint32_t)g2 * 120u;
+        // Follows updateDoorsCopper's source bitmap — doorScrollBitmap; while this read viewportBitmap
+        // and updateDoorsCopper had already been left behind pointing there too, the probe agreed with
+        // the copper and so could never flag the missing door content.
+        // Sample BOTH candidate sources so the fix is a measurement, not a code reading:
+        // g_doorTopBlack is the bitmap the copper now reads, g_doorTopBlackVp the one it used to.
+        { extern volatile unsigned char g_doorTopBlack, g_doorTopBlackVp, g_doorTopG2, g_doorTopSeen;
+          const uint8_t* vp = (const uint8_t*)doorScrollBitmap->data + (uint32_t)g2 * 120u;
+          const uint8_t* vo = (const uint8_t*)viewportBitmap->data + (uint32_t)g2 * 120u;
           int nz = 0; for (int i = 0; i < 6 * 120; i++) if (vp[i]) { nz = 1; break; }
+          int nzo = 0; for (int i = 0; i < 6 * 120; i++) if (vo[i]) { nzo = 1; break; }
           if (!g_doorTopSeen || (unsigned char)g2 <= g_doorTopG2) {   // earliest / smallest-g2 doors frame
-              g_doorTopBlack = nz ? 0 : 1; g_doorTopG2 = (unsigned char)g2; g_doorTopSeen = 1; } }
+              g_doorTopBlack = nz ? 0 : 1; g_doorTopBlackVp = nzo ? 0 : 1;
+              g_doorTopG2 = (unsigned char)g2; g_doorTopSeen = 1; } }
 #endif
         AmigaHardware::setCopperList(*doorsCopper[back], false);
         doorsActive = back;
@@ -4113,7 +4121,18 @@ void RescueOnFractalus::updateDoorsCopper(DoorsCopperList* dc)
     // (half - g2) (the reveal centred on the vanishing point); botBase = terrain row half.
     const uint16_t half = (uint16_t)(kTerrainHeight / 2);
     const uint16_t g2   = rsLaunched ? (uint16_t)(0x2Bu - mem[MEM_terrain_scroll_counter]) : 0;
-    const uint32_t ta   = (uint32_t)viewportBitmap->data;   // door halves live in the shared pre-flight viewport bitmap
+    // Door halves come from the TALL doorScrollBitmap — the ONLY bitmap the door field is decoded
+    // into (decodeDoorScrollField: rows 0..84 = the live $2000 field, 85..171 = green pad).  This
+    // used to read viewportBitmap, from the era when the standby decoded the doors there; the
+    // level-select elevator scroll moved that decode to doorScrollBitmap and render() now states
+    // outright that "the door field no longer touches viewportBitmap".  Nothing repointed this, so
+    // the moment the doors began to part the copper started reading a bitmap holding no door
+    // content at all and both halves came out flat green — the LEVEL NN text and dots vanished on
+    // the first opening frame (user-observed 2026-08-10; bisect put it before 39f4d8a, i.e. it
+    // arrived with the scroll work, not with this session).  Same geometry either way (kW wide,
+    // 3 interleaved planes, 120-byte rows, field row 0 = the resting doors), and the 172-row
+    // height means the sliding g2 offset cannot run off the end the way an 86-row bitmap could.
+    const uint32_t ta   = (uint32_t)doorScrollBitmap->data;
     // pen0 = COLBK green ($0071), pen3 = road-dot dark ($02C0): the door field decodes
     // COLBK (value 8)→pen0 and the dark dots (value 0)→pen3 (see kNibbleColour).  color00
     // green then flows unbroken through all three terrain bands AND the tunnel reveal into
