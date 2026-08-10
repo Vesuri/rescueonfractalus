@@ -659,6 +659,17 @@ endif
 ifdef FORCE_DEATH
 EXTRA_DEFINES += -DROF_FORCE_DEATH
 endif
+# `make PROBES=1 TUNDIFF=1`: run the tunnel direct-painter fidelity differential — decode the live
+# $1000 GTIA field through the owner's LUT and diff it against what the painter left in
+# tunnelBitmap (docs/boost-tunnel-direct-handoff.md §3, read with amiga/boost_probe.gdb).
+# ⚠ OFF by default even under PROBES, and it MUST stay that way: the scan is ~10k volatile mem[]
+# reads a frame, which pushes render past one vblank.  That is enough to break the launch
+# cinematic's `while (mem[$0684] != $64)` style polls (they step OVER the target value and spin
+# forever), and it inflates the tunnel->stars gap by ~60ms.  A run with this on measures FIDELITY,
+# never TIMING.
+ifdef TUNDIFF
+EXTRA_DEFINES += -DROF_TUNNEL_DIFF
+endif
 # `make PROBES=1 FORCE_RETURN=1`: once flight has been running a while, replicate the B/boosters
 # handler (level-clear gate $003A + player_lives $0072=2) once — headless verification of the
 # return-to-mother-ship ascent + flight→launch-cinematic handoff.  Requires PROBES.

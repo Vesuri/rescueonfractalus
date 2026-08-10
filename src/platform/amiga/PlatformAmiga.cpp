@@ -1641,17 +1641,12 @@ void PlatformAmiga::pollEvents() {
 // tickVBI: no-op — RTCLOK is advanced by renderFrame() after each VBI wait.
 void PlatformAmiga::tickVBI() {}
 
-// The tunnel-ring "dirty field" flags draw_ring_frame_step already uses to stream the
-// ring-clear frames from the $1000 GTIA field into the tunnel bitmap (NativeHandlers.cpp).
-extern "C" volatile uint8_t g_tunnelFieldDirty;
-extern "C" volatile uint8_t g_tunRowLo, g_tunRowHi, g_tunBandMode;
-void PlatformAmiga::tunnelRingsDrawn() {
-    // boot_standby_launch_driver's draw_frame_pattern_seq just rendered the full ring pattern into the
-    // $1000 field.  Flag the whole field dirty (band mode 0 = full extent) so the next
-    // renderFrame decodes it once into the tunnel bitmap (then draw_ring_frame_step publishes
-    // the per-frame band updates in mode 1).
-    g_tunRowLo = 0; g_tunRowHi = 85; g_tunBandMode = 0;
-    g_tunnelFieldDirty = 1;
+// boot_standby_launch_driver is about to run draw_frame_pattern_seq for the FORWARD launch
+// tunnel.  Claim tunnelBitmap for the forward direction and prime it to the field's background
+// pen; the 43 rectangles + 3 guide columns then paint themselves through platform_tunnel_rect /
+// platform_tunnel_columns as the draw emits them.  Nothing is decoded back out of $1000.
+void PlatformAmiga::tunnelRingsBegin() {
+    if (s_scene) s_scene->tunnelPaintBegin();
 }
 
 extern "C" void rof_cockpit_dial_dirty(unsigned short addr);

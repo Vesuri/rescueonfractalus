@@ -89,3 +89,10 @@ while $i < 16 && $i < g_trRunN
     g_trRun8D[$i], g_trRun8E[$i]
   set $i = $i + 1
 end
+printf "=== tunnelPaintBegin claims (tunInst MUST be 0 — else a displayed bitmap was repainted) ===\n"
+printf "claims=%u\n", g_tpbN
+set $i = 0
+while $i < 4 && $i < g_tpbN
+  printf "  [%d] vbi=%u tunnelCopperInstalled=%u liveCopper=%u\n", $i, g_tpbVbi[$i], g_tpbTunInst[$i], g_tpbCopper[$i]
+  set $i = $i + 1
+end

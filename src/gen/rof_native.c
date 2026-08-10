@@ -2014,16 +2014,10 @@ void scroll_terrain_dl(void) {
 }
 
 #ifdef ROF_PLATFORM_AMIGA
-/* Tunnel dirty-band publish (draw_ring_frame_step is the sole writer of the $1000 GTIA field
- * during the tunnel-exit clear).  RescueOnFractalus::decodeTunnelBand turns these into four
- * thin decode strips; it clears g_tunnelFieldDirty after re-decoding.  See the phase-table
- * "Tunnel" row in CLAUDE.md.  Defined here (the writer's TU) like g_planetRowLo/Hi above. */
-volatile uint8_t g_tunnelFieldDirty = 0;
-volatile uint8_t g_tunRowLo = 0, g_tunRowHi = 0;       /* outer rows $009F .. $009E after  */
-volatile uint8_t g_tunInRowLo = 0, g_tunInRowHi = 0;   /* inner rows $009F .. $009E before */
-volatile uint8_t g_tunColLpx = 0, g_tunColRpx = 0;     /* outer $009C / $009D after        */
-volatile uint8_t g_tunInColLpx = 0, g_tunInColRpx = 0; /* inner $009C / $009D before       */
-volatile uint8_t g_tunBandMode = 0;                    /* 1 = band decode, 0 = full extent */
+/* (The tunnel dirty-band publish that used to live here is gone.  Both ring directions are now
+ * painted straight into the Amiga bitmap by the ROF_TUNNEL_* hooks as the spans are drawn, so
+ * there is no $1000 decode left to bound and nothing to flag.  See docs/boost-tunnel-direct-
+ * handoff.md.) */
 /* Boost stars viewport ($2000) dirty flag — set by fill_region_2000 (the sole $2000 writer),
  * consumed by the boost stars render branch so it decodes only when the field content actually
  * changes (measured: twice per boost) instead of every frame.  See fill_region_2000. */
@@ -2037,24 +2031,11 @@ volatile uint8_t g_boostStarsDirty = 0;
 void draw_ring_frame_step(void) {
     uint8_t a0 = draw_iter_count;                         /* $00A0 */
     if ((int8_t)a0 >= 6) {                                /* CPY #$06; BMI -> clear branch */
-#ifdef ROF_PLATFORM_AMIGA
-        /* snapshot the rectangle BEFORE the span loop expands it (= this band's inner edge) */
-        uint8_t inTop = draw_row_bottom, inBot = draw_row_top;   /* $009F / $009E */
-        uint8_t inL   = draw_x_left,     inR   = draw_x_right;   /* $009C / $009D */
-#endif
         span_row_count = mem[0x6E0F + a0];                /* $0096 = ring thickness */
         ROF_TR_SRC_SAVE(trSave);                          /* ISR site: restore, we may have preempted the pre-draw */
         ROF_TR_SRC_SET(2);
         draw_symmetric_span_loop();                       /* steps $9C--/$9D++/$9E++/$9F-- */
         ROF_TR_SRC_RESTORE(trSave);
-#ifdef ROF_PLATFORM_AMIGA
-        g_tunRowLo = draw_row_bottom; g_tunRowHi = draw_row_top; /* outer rows after  */
-        g_tunInRowLo = inTop; g_tunInRowHi = inBot;             /* inner rows before */
-        g_tunColLpx = draw_x_left; g_tunColRpx = draw_x_right;  /* outer cols after  */
-        g_tunInColLpx = inL;       g_tunInColRpx = inR;         /* inner cols before */
-        g_tunBandMode = 1;
-        g_tunnelFieldDirty = 1;
-#endif
     } else {
         mem[0x08D8] = 0;                                  /* $671E: LDA #$00; STA $08D8 */
     }
@@ -2083,10 +2064,7 @@ void step_accum_add_75(void) {
  * via draw_symmetric_span_loop (it also latches $008D = the accumulator top byte).  Finally,
  * while $008D is non-zero, INC $008E (the row-arm counter boot_standby_launch_driver spins on) and rotate
  * the colour ring via advance_history_6a4d (which copies $08D8 -> $0071 while $008D<0).
- *
- * Amiga: mirror draw_ring_frame_step's dirty-band publish around the span loop so the reverse
- * ring uses the cheap decodeTunnelBand incremental decode at stride 46 instead of a full
- * 86-row field scan (> 1 PAL frame on the 68000). */
+ */
 void step_accum_sub_7e(void) {
     cpu.A = 0x7E;
     sub_multibyte_a1();                                    /* $08DA=$7E; 24-bit sub; A=new top */
@@ -2096,24 +2074,11 @@ void step_accum_sub_7e(void) {
     scroll_accum_prev = a;                                /* $00A5 = A */
     if (a < 0x14) {                                        /* CMP #$14; BCC -> draw a ring group */
         step_mode_flag = a;                               /* $008D = A (TAY; STA) */
-#ifdef ROF_PLATFORM_AMIGA
-        /* snapshot the rectangle BEFORE the span loop expands it (= this band's inner edge) */
-        uint8_t inTop = draw_row_bottom, inBot = draw_row_top;   /* $009F / $009E */
-        uint8_t inL   = draw_x_left,     inR   = draw_x_right;   /* $009C / $009D */
-#endif
         span_row_count = mem[0x6E0F + a];                 /* $0096 = ring thickness */
         ROF_TR_SRC_SAVE(trSave);                          /* ISR site: restore, we may have preempted the pre-draw */
         ROF_TR_SRC_SET(3);
         draw_symmetric_span_loop();                       /* steps $9C--/$9D++/$9E++/$9F-- */
         ROF_TR_SRC_RESTORE(trSave);
-#ifdef ROF_PLATFORM_AMIGA
-        g_tunRowLo = draw_row_bottom; g_tunRowHi = draw_row_top; /* outer rows after  */
-        g_tunInRowLo = inTop; g_tunInRowHi = inBot;             /* inner rows before */
-        g_tunColLpx = draw_x_left; g_tunColRpx = draw_x_right;  /* outer cols after  */
-        g_tunInColLpx = inL;       g_tunInColRpx = inR;         /* inner cols before */
-        g_tunBandMode = 1;
-        g_tunnelFieldDirty = 1;
-#endif
     }
     if (step_mode_flag == 0) return;                      /* LDA $008D; BEQ -> return */
     mem[0x008E]++;                                        /* INC $008E */
@@ -11095,15 +11060,27 @@ static inline void ds_frame(void) { platform_tick_vbi(); platform_render_frame()
 #ifdef ROF_PLATFORM_AMIGA
 /* Tunnel-ring pre-build (user-directed 2026-07-03): the launch-time draw_frame_pattern_seq
  * (the L_635f site below) plots ~5900 pixels into mem[$1000] on a no-render stretch = the
- * ~140ms standby->doors freeze.  Build the identical ring field into $1000 HERE, during
- * standby construction (behind the black EmptyCopperList reveal curtain, where there is no
- * frame-timing pressure), flag the $1000->tunnelBitmap decode (which runs at the standby
- * reveal), and snapshot the ZP scratch the draw leaves.  At the launch site we replay that
- * scratch instead of re-plotting.  The geometry is deterministic (init_row_coords_9c
- * constants + the $6E0F table + a fixed colour cycle, no runtime input), so it is
- * byte-identical to the launch draw; mem[$1000] is untouched between the two points
- * (measured), so the pre-built field survives.  Construction ZP + the resting $2000 addr
- * table are restored around the build so the rest of construction is unaffected. */
+ * standby->doors freeze.  Build the identical ring field HERE instead, off the launch path,
+ * and snapshot the ZP scratch the draw leaves; at the launch site we replay that scratch
+ * instead of re-plotting.  The geometry is deterministic (init_row_coords_9c constants + the
+ * $6E0F table + a fixed colour cycle, no runtime input), so it is byte-identical to the launch
+ * draw; mem[$1000] is untouched between the two points (measured), so the pre-built field
+ * survives.  Construction ZP + the resting $2000 addr table are restored around the build so
+ * the rest of construction is unaffected.
+ *
+ * ⚠ THE HACK IS NOT DELETABLE, and direct bitplane painting did not make it so (measured
+ * 2026-08-10, PROBES=1 with the prebuild forced off): the cost it dodges is the 6502's OWN
+ * mem[$1000] plot — SA_TIMED bucket `framepat` = 1378 beam ticks = 86 ms — not the decode that
+ * painting removed.  Forcing the launch-site draw took the standby->doors render gap from 1
+ * frame to 5 (~100 ms).  So keep it, and keep the Amiga painter's claim/prime paired with it.
+ *
+ * ⚠ WHERE IT IS CALLED FROM MATTERS.  Because the rings are now PAINTED into tunnelBitmap
+ * synchronously (no deferred decode to postpone), this must not run while that bitmap is on
+ * screen.  On the boost return it would be: the T6 handoff hold is still displaying the last
+ * reverse-ring frame for ~13 frames after the ring ends.  The call site is therefore AFTER
+ * delay_loop_c2_to_c9() — past the standby reveal, so staticStandby has taken the display and
+ * tunnelBitmap is free.  (The old site, before g_doorFieldReady, was fine only because the
+ * decode it flagged could be deferred a frame; the paint cannot.) */
 volatile unsigned char g_tunnelPrebuilt = 0;
 static struct { uint8_t s80,s81,s84,s92,s94,s96,s9c,s9d,s9e,s9f,sa0,sb7,sb8,sb9,sdf; }
     g_tunnelPrebuildExit;
@@ -11112,10 +11089,10 @@ static void tunnel_prebuild_rings(void) {
     uint8_t zp[0x80];
     for (int i = 0; i < 0x80; i++) zp[i] = mem[0x80 + i];   /* protect construction ZP */
     build_line_addr_table_1000();      /* row-addr table for base $1000 (the draw needs it) */
+    platform_tunnel_rings_begin();     /* Amiga: claim + prime the ring bitmap for the FORWARD LUT */
     ROF_TR_PRESITE(4);                 /* tag the rectangles as coming from THIS site, not L_6047 */
-    draw_frame_pattern_seq();          /* plot the rings into $1000 (deterministic geometry) */
+    draw_frame_pattern_seq();          /* plot the rings into $1000 (and paint them, span by span) */
     ROF_TR_PRESITE(1);
-    platform_tunnel_rings_drawn();     /* flag $1000 -> tunnelBitmap decode (runs at reveal) */
     /* snapshot the draw's exit ZP scratch (its write-set) for the launch-site replay */
     g_tunnelPrebuildExit.s80 = sync_flag;        g_tunnelPrebuildExit.s81 = dl_ptr_lo;
     g_tunnelPrebuildExit.s84 = screen_ptr_hi;    g_tunnelPrebuildExit.s92 = draw_row;
@@ -11360,7 +11337,6 @@ void boot_standby_launch_driver(void) {
         save_color_clear_y_bit5();        /* takes A + Y */
     }
     draw_frame_pattern_seq();             /* L_6047; reloads its own Y ($00A0) */
-    platform_tunnel_rings_drawn();   /* hook: convert the freshly-drawn $1000 ring field to bitplanes */
     init_row_coords_9c();
     draw_pattern_byte = 0x13;             /* init_row_coords_9c leaves cpu.A; faithful exit A=$13 */
     draw_color_idx = 0x08;
@@ -11439,10 +11415,6 @@ L_6118:
     fill_region_2000();
     blit_message_block();
     blit_numeric_readout();
-#ifdef ROF_PLATFORM_AMIGA
-    tunnel_prebuild_rings();   /* build the tunnel rings into $1000 + flag decode BEFORE reveal
-                                  (off the launch hot path — kills the standby->doors freeze) */
-#endif
     g_doorFieldReady = 1;   /* Amiga: doors/LEVEL drawn into $2000 — decode now, before the green fade */
     /* Standby construction complete (cockpit/top-bar/doors/LEVEL all drawn) — reveal now.  The
        black EmptyCopperList held the screen (and skipped all rendering) through the build above;
@@ -11451,6 +11423,14 @@ L_6118:
     g_standbyRevealReady = 1;
     dl_index_dec_or_reset();
     delay_loop_c2_to_c9();
+#ifdef ROF_PLATFORM_AMIGA
+    /* Build the tunnel rings into $1000 (and paint them into tunnelBitmap) off the launch hot
+       path — this is the standby->doors freeze fix.  It sits AFTER delay_loop_c2_to_c9 because
+       that loop renders frames: by here the standby reveal has happened and staticStandby owns
+       the display, so on the BOOST return the T6 hold has let go of tunnelBitmap and the paint
+       cannot be seen.  $1000 is untouched from here to the launch site. */
+    SA_TIMED(10, tunnel_prebuild_rings());   /* `rings` bucket: the 6502 plot + the direct paint */
+#endif
     mem[0x00E3] = 0xFF;
     /* ---- L_6141..L_634a: standby/launch dispatch + attract/rebuild event loop ----
        This region is IRREDUCIBLE control flow (overlapping back-edges L_6347->L_622d and
@@ -11793,8 +11773,10 @@ L_63a7:
     } else
 #endif
     {
+        /* Fallback only — the pre-build above normally leaves g_tunnelPrebuilt set.  Claim + prime
+           first so the draw's spans paint with the forward LUT into a clean bitmap. */
+        platform_tunnel_rings_begin();
         SA_TIMED(9, draw_frame_pattern_seq());             /* consumes Y */
-        SA_TIMED(10, platform_tunnel_rings_drawn());   /* hook: convert the freshly-drawn $1000 ring field to bitplanes */
     }
     DS_MILE(1);                          /* end of stretch A (L_634f -> here: pure compute, no ds_frame) */
 #ifdef ROF_FLIGHT_PROBE

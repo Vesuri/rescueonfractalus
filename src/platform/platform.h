@@ -71,11 +71,11 @@ public:
     /* Runtime indirect JMP dispatch (DLI chain pattern: JMP ($E0)).     */
     virtual void indirectJmp(uint16_t addr) { (void)addr; }
 
-    /* Notification that boot_standby_launch_driver just drew the launch tunnel rings into the
-       $1000 GTIA field.  A platform that mirrors mem[] into its own framebuffer
-       (the Amiga copper/bitplane backend) converts them to bitplanes here.
-       No-op on platforms that render mem[] directly (SDL).                */
-    virtual void tunnelRingsDrawn() {}
+    /* Notification that boot_standby_launch_driver is ABOUT TO draw the launch tunnel rings
+       into the $1000 GTIA field.  A platform that mirrors mem[] into its own framebuffer
+       (the Amiga copper/bitplane backend) claims + primes its ring bitmap here, then paints
+       each span as the draw emits it.  No-op on platforms that render mem[] directly (SDL). */
+    virtual void tunnelRingsBegin() {}
 
     /* Notification that the genuine $782A title writer (copy_altitude_graphic_to_
        screen) just rewrote the Standby banner text in screen RAM $32B7-$32CA (the

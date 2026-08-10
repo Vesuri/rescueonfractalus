@@ -60,7 +60,8 @@ public:
     void drawTunnelVSpan(uint16_t rowBase, uint8_t r0, uint8_t r1, uint8_t colL, uint8_t colR,
                          uint8_t colour);   // ROF_TUNNEL_VSPAN hook: one plot_terrain_span vertical pair
     void paintVSpan(uint8_t rowBot, uint8_t rowTop, uint8_t xL, uint8_t xR, uint16_t pen);
-    uint16_t boostPen(uint8_t colour) const;  // GTIA nibble -> Amiga pen through the live boost LUT
+    uint16_t tunnelPen(uint8_t colour) const;  // GTIA nibble -> Amiga pen through the live owner's LUT
+    void tunnelPaintBegin();     // arm the FORWARD ring painter + prime tunnelBitmap (before the pre-draw)
     void decodeScannerBlinkCells(); // LR-scanner (#13) close-range blink cells $33DF/$33E0 -> cockpit
                                  // bitmap; PUBLIC because it runs in the flight VBI (via PlatformAmiga::
                                  // flightScannerTick) at 50Hz so the blink animates at full rate, not
@@ -164,11 +165,17 @@ private:
 #endif
     void decodeTitleScreen();  // decode the whole Title Screen text ($365B/charset $0400) -> titleScreenBitmap
     void decodeTitleCells(int cellLo, int cellHi);  // (re)decode Title Screen cells [lo..hi] (clears+ORs); targeted value updates
-    uint16_t tunnelSrcBase = 0x1000;               // decodeTunnelRect source base: $1000 rings (forward tunnel + boost tunnel) / $2000 starfield (boost stars — the $3000 DL displays $2000 while $008D==0, then emit_dl_coord_pairs rewrites its LMS to $1000 for the reverse tunnel)
-    void decodeTunnelRect(int rowLo, int rowHi, int byteLo, int byteHi);  // decode a tunnelSrcBase sub-rect -> tunnelBitmap (no shadow)
     void decodeBoostStars();                       // boost cinematic: the $2000 starfield -> viewportBitmap (the rings are painted, not decoded)
-    bool boostRingsArmed = false;                  // drawTunnelRect paints only while the boost owns tunnelBitmap
-    void decodeTunnelBand();                       // decode only the ring-clear frame band (outer\inner rect) from the g_tun* bounds
+    // Who owns tunnelBitmap right now — nobody, the FORWARD launch tunnel, or the BOOST reverse
+    // cinematic.  The two directions share every field writer (draw_symmetric_span_loop /
+    // plot_terrain_span / draw_frame_guide_columns) and differ ONLY in the GTIA->pen LUT, so the
+    // owner is what tunnelPen() and the prime pen select on.  NONE = the hooks don't paint.
+    enum : uint8_t { kTunnelOwnerNone = 0, kTunnelOwnerForward = 1, kTunnelOwnerBoost = 2 };
+    uint8_t tunnelOwner = kTunnelOwnerNone;
+#ifdef ROF_TUNNEL_DIFF
+    void tunnelPaintDiff(uint16_t K);   // painted bitmap vs a decode of the live $1000 field, rows [K, 85-K]
+    bool tunnelDiffPending = false;     // check the finished forward pre-draw on the next render
+#endif
     void renderViewportModeD(uint16_t srcBase, int stride, int rows); // decode CHANGED mode-D bytes -> viewportBitmap (stars/planet: $1000/48/47)
     void renderFlightDirect();   // flight terrain: plot sky straight to bitplanes from $260E (replaces the convert)
 

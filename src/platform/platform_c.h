@@ -41,12 +41,13 @@ void platform_poll_events(void);
    (FUN_3c7b) — VBI resets vcountReg and would prevent them from exiting. */
 void platform_tick_vbi(void);
 
-/* Called by boot_standby_launch_driver right after draw_frame_pattern_seq() has rendered the
-   launch tunnel rings into the $1000 GTIA field, so a platform that mirrors mem[]
-   into its own framebuffer (the Amiga copper/bitplane backend) can convert the
-   freshly-drawn rings to bitplanes.  No-op on the host/SDL build, which renders
-   mem[] directly. */
-void platform_tunnel_rings_drawn(void);
+/* Called by boot_standby_launch_driver immediately BEFORE draw_frame_pattern_seq() renders the
+   launch tunnel rings into the $1000 GTIA field, so a platform that mirrors mem[] into its own
+   framebuffer (the Amiga copper/bitplane backend) can claim + prime its ring bitmap.  The rings
+   themselves then arrive span by span through platform_tunnel_rect/_columns/_vspan as the draw
+   emits them — the field is never read back.  No-op on the host/SDL build, which renders mem[]
+   directly. */
+void platform_tunnel_rings_begin(void);
 
 /* Called by copy_title_text_block_to_screen ($782A) right after it rewrites the
    Standby banner text in screen RAM $32B7-$32CA (the SFX sequencer alternates

@@ -44,8 +44,8 @@ void platform_poll_events(void) {
     if (platform) platform->pollEvents();
 }
 
-void platform_tunnel_rings_drawn(void) {
-    if (platform) platform->tunnelRingsDrawn();
+void platform_tunnel_rings_begin(void) {
+    if (platform) platform->tunnelRingsBegin();
 }
 
 void platform_title_changed(void) {
