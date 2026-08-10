@@ -22,7 +22,7 @@ printf "ticks/row   = %lu\n", (g_abRows ? g_abTicks / g_abRows : 0)
 printf "vs faithful 1565 t/step: %lu%%\n", (g_abTicks * 100) / 1565
 printf "reference: 3725 t/step measured on a real knock at 1dea72e\n"
 printf "===================================\n"
-printf "-- where a row goes (bench builds; ~2%% of this is the instrument) --\n"
+printf "-- where a row goes: ALIEN_BENCH_SPLIT builds only --\n"
 printf "  clear=%lu  fills=%lu  loop=%lu  (total ticks over all 43 rows)\n", \
   g_abTClear, g_abTFills, g_abTLoop
 printf "  per row: clear=%lu fills=%lu loop=%lu  | sum=%lu vs step %lu\n", \
@@ -30,5 +30,4 @@ printf "  per row: clear=%lu fills=%lu loop=%lu  | sum=%lu vs step %lu\n", \
   (g_abRows ? g_abTLoop/g_abRows : 0), \
   (g_abRows ? (g_abTClear+g_abTFills+g_abTLoop)/g_abRows : 0), \
   (g_abRows ? g_abTicks/g_abRows : 0)
-printf "layoutBad=%u (must be 0)
-", g_figLayoutBad
+printf "  flush(pass2)=%lu total, %lu/row\n", g_abTFlush, (g_abRows ? g_abTFlush/g_abRows : 0)
