@@ -6,9 +6,12 @@ the ring code draws, so **draw it straight into the bitmap**. No field decode, a
 shadow: the shadow (236592c, 847 → 190 ticks/frame) was a *memoized decode*, and the point was to
 delete the decode, not to memoize it faster.
 
-**STATUS: landed 2026-08-10.** The reverse cinematic no longer decodes its ring field at all.
-Boost decode cost went from ~65900 beam ticks per cinematic (324 full ring decodes + 2 star
-decodes) to **1621** — the two starfield decodes, nothing else.
+**STATUS: landed 2026-08-10 (fd28b05), user-confirmed on screen.** The reverse cinematic no longer
+decodes its ring field at all. Boost decode cost went from ~65900 beam ticks per cinematic (324 full
+ring decodes + 2 star decodes) to **1621** — the two starfield decodes, nothing else. The visual
+check also covers the one change the §3 differential cannot see: the `!rsBoostViewport` guard on
+`render()`'s terrain-view branch (without it the brief in-boost `rsStars` window decodes the $1000
+RING field as a mode-D field straight over the starfield).
 
 ---
 
