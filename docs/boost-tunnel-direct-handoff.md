@@ -1,12 +1,14 @@
-# Boost reverse tunnel — direct bitplane painting
+# The tunnel — direct bitplane painting (both directions)
 
-**Goal (user directive, 2026-08-10):** the reverse tunnel was painted by the 6502 into a GTIA field
+**Goal (user directive, 2026-08-10):** the tunnel was painted by the 6502 into a GTIA field
 in `mem[]`, which the Amiga then decoded to bitplanes. That model was wrong — we know exactly what
 the ring code draws, so **draw it straight into the bitmap**. No field decode, and no content
 shadow: the shadow (236592c, 847 → 190 ticks/frame) was a *memoized decode*, and the point was to
-delete the decode, not to memoize it faster.
+delete the decode, not to memoize it faster.  §1-§4 are the reverse (boost) tunnel, which went
+first; §5 is the forward launch tunnel, which reused all of it.
 
-**STATUS: landed 2026-08-10 (fd28b05), user-confirmed on screen.** The reverse cinematic no longer
+**STATUS: reverse tunnel landed 2026-08-10 (fd28b05), user-confirmed on screen; the FORWARD
+tunnel followed the same day — see §5.  Neither direction reads `$1000` back any more.** The reverse cinematic no longer
 decodes its ring field at all. Boost decode cost went from ~65900 beam ticks per cinematic (324 full
 ring decodes + 2 star decodes) to **1621** — the two starfield decodes, nothing else. The visual
 check also covers the one change the §3 differential cannot see: the `!rsBoostViewport` guard on
@@ -161,75 +163,102 @@ the screen, not after.
 
 ---
 
-## 5. NEXT SESSION: the same treatment for the FORWARD tunnel
+## 5. The FORWARD tunnel — DONE 2026-08-10
 
-**Goal:** the forward tunnel's clear/descent should paint straight to the bitplanes too, so no part
-of the tunnel round-trips through `mem[]`. Everything needed is already in place — the hooks fire
-for the forward path today and are simply gated off by `boostRingsArmed`.
+The forward launch tunnel now paints straight to the bitplanes too, so **no part of either tunnel
+round-trips through `mem[]`**.  Both decodes are gone:
 
-### Two decodes to delete
-
-| decode | source | when |
+| deleted | what fed it | when it ran |
 |---|---|---|
-| `platform_tunnel_rings_drawn` → full-field decode (`g_tunBandMode==0`, rows 0-85) | the 43-rectangle pre-draw + 3 guide columns | once, at the standby reveal |
+| `platform_tunnel_rings_drawn` → full-field decode (rows 0-85, ~847 ticks ≈ 54 ms) | the 43-rectangle pre-draw + 3 guide columns | once, at the standby reveal |
 | `decodeTunnelBand()` → 4 thin strips from the `g_tun*` bounds | `draw_ring_frame_step`'s expanding clear | once per descent step |
 
-Both are already covered by hooks that ALREADY FIRE (measured, §1 table): run 0 = `src 4`
-(`tunnel_prebuild_rings` → `draw_frame_pattern_seq`, 43 rectangles + `draw_frame_guide_columns`),
-run 1 = `src 2` (`draw_ring_frame_step`, 15 rectangles over 14 steps). Deleting the decodes also
-deletes `decodeTunnelRect`, `tunnelSrcBase`, `g_tunnelFieldDirty`, the `g_tun*` band-bound publish
-in `draw_ring_frame_step`/`step_accum_sub_7e`, and the `boostOwnsTunnel` defer logic.
+Gone with them: `decodeTunnelRect`, `decodeTunnelBand`, `tunnelSrcBase`, `g_tunnelFieldDirty`,
+`g_tunBandMode`, the four `g_tun*` bound pairs and their publishes in `draw_ring_frame_step` /
+`step_accum_sub_7e`, and the whole `boostOwnsTunnel` defer gate.
 
-### The prize beyond the decode itself
+### What it actually took
 
-`tunnel_prebuild_rings` / `tunnel_prebuild_replay_exit` / `g_tunnelPrebuilt` exist for exactly ONE
-reason: the launch-time `draw_frame_pattern_seq` + its full-field decode was the ~140 ms
-standby→doors freeze, so the whole thing was moved to standby construction behind the black
-curtain and the launch site replays its exit ZP scratch. **A direct painter removes the cost that
-hack was dodging**, so the hack itself becomes deletable and the launch site can go back to the
-faithful `draw_frame_pattern_seq()` call. That is the real win here — the decode is a cinematic
-cost, not a flight-loop one.
+1. **An owner, not an armed flag.**  `boostRingsArmed` became `tunnelOwner` ∈ {`None`, `Forward`,
+   `Boost`}.  Both directions share every field writer and every bit of geometry; **the entire
+   direction split is which LUT `tunnelPen()` reads** (`kGtia10P*` vs `kGtia10BoostP*`), and the
+   prime pen falls out of the same call (`tunnelPen(8)`).  Forward value-8 → pen 0, so the forward
+   prime is a plain blitter clear.
+2. **Claim + prime BEFORE the draw, at `platform_tunnel_rings_begin()`** (the renamed
+   `platform_tunnel_rings_drawn`, moved from after the draw to before it).  The boost keeps claiming
+   at its copper install; the forward path claims inside `tunnel_prebuild_rings`.
+3. **`tunnel_prebuild_rings()` MOVED past `delay_loop_c2_to_c9()`** — see the trap below.
+4. Boost release drops to `None`, not `Forward`, so nothing can paint until a pre-draw claims.
 
-### The pen difference, precisely (this is the "unfortunate difference in the pens")
+### ⛔ The premise this section used to carry was WRONG — the pre-build hack is NOT deletable
 
-It is only a LUT choice, and both LUTs are built in the same loop in `initialize()`:
+The old §5 said `tunnel_prebuild_rings` / `tunnel_prebuild_replay_exit` / `g_tunnelPrebuilt` existed
+only to dodge the full-field decode, so a direct painter would make them deletable and the launch
+site could go back to the faithful `draw_frame_pattern_seq()` call.  **Measured, and it is not
+true.**  Forcing the launch-site draw (`PROBES=1`, pre-build branch disabled):
 
-| GTIA value | forward `kGtia10P*` | boost `kGtia10BoostP*` |
-|---|---|---|
-| 0 (exit clear) | pen 7 | pen 7 |
-| 2 (outermost ring) | pen 2 | **pen 0** |
-| 8 (background / corner) | **pen 0** | **pen 2** |
-| others | pen = value | pen = value |
+- `SA_TIMED` bucket `framepat` = **1378 ticks ≈ 86 ms** — that is the 6502's OWN `mem[$1000]` plot,
+  which is faithful and stays no matter how the Amiga renders.
+- the standby→doors render gap went **1 frame → 5 frames (~100 ms)**.
 
-So `boostPen(colour)` becomes `tunnelPen(colour, boost)`, and the §2 prime pen follows the same
-rule — derive it from `kGtia10P*[0x88]` for the forward path instead of `kGtia10BoostP*[0x88]`.
+So the cost the hack dodges is the plot, not the decode.  The hack stays, and the painter's
+claim/prime is paired with it.  *Generalisable:* before believing "removing X makes workaround Y
+deletable", measure what Y was actually dodging — here the decode was the smaller half.
 
-### Concrete order of work
+### ⚠ Traps this cost real time on
 
-1. **Measure first (one probe run, the harness exists).** Build `PROBES=1` *without* `FORCE_RETURN`
-   and read the `§0a run timeline`. On the FORCE_RETURN boot the L_6047 pre-draw never ran on the
-   forward path — `src 1` totalled exactly 43 rectangles and all 43 were in the boost phase, while
-   boot showed only `src 4`. **Confirm that on a plain launch**, because if `L_6047` *does* run
-   there it brings its colour-8 `plot_terrain_span` erase and the `emit_dl_coord_pairs` reveal
-   spans with it. All three hooks already cover those, so only the arming changes — but know it
-   before designing the arming, not after. (The branch that skips it is somewhere in the driver's
-   early returns, e.g. the `mem[$00E5]==0 → standby_level_select_loop(); return;` at rof_native.c
-   ~11244; that is a code-reading question, the probe is the answer.)
-2. **Replace `boostRingsArmed` with an owner** (`none` / `boost` / `forward`). The hard part is
-   already solved and must be reused, not re-derived: `boostOwnsTunnel` encodes the two cases that
-   look identical from `mem[]` — the T6 handoff EDGE frame vs the next level's standby pre-build.
-   `$003A` stays `$FF` into the next level and `g_doorFieldReady` is 1 at both, so **the only
-   signal that separates them is which copper is live** (`tunnelCopperInstalled`). See commit
-   8339175.
-3. **Prime before the pre-draw, not at the copper install.** The forward pre-build runs during
-   standby construction behind the black `EmptyCopperList`, long before any tunnel copper exists,
-   so the boost's "prime at install" point is too late. Prime at construction entry.
-4. **Verify numerically before looking**: point the §2 differential at the forward path — full 86
-   rows (no reveal band), `kGtia10P*` — and require EXTRA 0 / MISSING 0 as the boost path now gets.
-5. **Then look**, and specifically at the **2nd launch after a boost**: a stale `tunnelBitmap`
-   there is the exact trap 8339175 fixed (doors opening onto salmon/cycling with no rings).
+- **A paint cannot be deferred the way a decode could.**  Commit 8339175 handled the post-boost
+  pre-build by keeping `g_tunnelFieldDirty` set and decoding a frame later, off-screen.  The painter
+  writes synchronously, so that escape is gone — and the post-boost pre-build fires ~40 frames after
+  the reverse ring, inside the window where the T6 handoff hold is still displaying `tunnelBitmap`.
+  Fix: move the call site past `delay_loop_c2_to_c9()` (that loop renders frames, so by then
+  `g_doorFieldReady` has flipped and staticStandby owns the display).  Verified, not reasoned — the
+  `g_tpb*` claim log records `tunnelCopperInstalled` at every claim and both read 0
+  (boot vbi 96, post-boost vbi 2707).
+- **⛔⛔ The §2 differential is too slow to leave running, and its failure looks like a game bug.**
+  It is ~10k volatile `mem[]` reads per frame, which pushes render past one vblank.  The launch
+  cinematic polls counters the VBI decrements with `while (mem[$0684] != $64)` — one frame per poll —
+  so a slow render **steps over the target value and spins forever**.  This presented as "the tunnel
+  descent never runs" (`draw_ring_frame_step` = 0 rectangles, 659 frames stuck in the tunnel branch),
+  and it cost a bisect to find that the probe, not the change, was the bug.  It now lives behind
+  **`make TUNDIFF=1`**, off even under `PROBES`, and the live arm is gated to the descent
+  (`mem[$0088] != 0`).  **A run with `TUNDIFF=1` measures FIDELITY, never TIMING.**
+- **`make clean` on every flag toggle** (again).  Building plain and then `PROBES=1` without a clean
+  produced `undefined reference to g_isrBeamLines`.
+
+### Verification (all re-run at this change)
+
+| check | result |
+|---|---|
+| forward boot pre-draw, full 86 rows | **0** bad |
+| forward descent, 71 frames | **0** bad / 244,240 bytes |
+| forward, plain run (pre-draw + descent) | **0** bad / 247,680 bytes |
+| boost path (pre-draw + reverse rings), 138 frames | **1** bad / 422,560 bytes — the known multi-writer race, same as at landing |
+| post-boost pre-build claim | `tunnelCopperInstalled=0`, `liveCopper=2` (staticStandby) |
+| `make validate` | 0 mem mismatch on all 8 touched twins |
+| standby→doors gap | 1 frame — **unchanged** |
+| tunnel→stars gap | 5 frames — **unchanged** |
+| `dsMile` launch milestones | match baseline within noise |
+
+### The one honest regression
+
+The forward **static pre-draw** got more expensive: the whole pre-build bracket
+(`SA_TIMED` slot 10, `prebuild(plot+paint)`) is **4201 ticks ≈ 263 ms**, of which the 6502 plot is
+~1378, so the paint is **~2800 ticks ≈ 177 ms** against the ~847 ticks (54 ms) of the decode it
+replaced.  The reason is structural: the decode writes each of the 86×40×3 bytes exactly once (and
+batches by the long), while the painter draws 43 *nested outlines* — the vertical edges alone are
+Σ heights ≈ 3784 row-columns × 3 planes of masked word RMW.
+
+It is off every hot path (standby idle, static screen, music is VBI-driven) and no measured
+cinematic gap moved, which is why it was left.  **If it ever needs fixing, the lever is the blitter,
+not the loop:** the pre-build runs in MAIN-LOOP context (only the descent's `draw_ring_frame_step`
+is ISR), so a blitter masked-fill path in `Bitmap::fillColor` — `BLTADAT=0xffff` +
+`BLTAFWM/BLTALWM` as the mask, `BLTBDAT` = the plane value, C=D=dest, minterm `0xca`, as that
+function's own comment already spells out — would apply.  It needs a main-loop-vs-ISR context flag,
+for which `platform_tunnel_rings_begin()` is the natural place to set and a matching `_end()` the
+natural place to clear.
 
 ### Still not done after that
 
-- Nothing else: the doors keep their own `$2000` decode by design, and every hook already skips
-  `rowBase >= 0x2000`.
+Nothing.  The doors keep their own `$2000` decode by design, and every hook skips
+`rowBase >= 0x2000`.

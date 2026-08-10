@@ -76,6 +76,13 @@ Render bugs fixed through 2026-07-17 (commits 792e6d0, c347749, 6abc6cd, 53f4d86
   off-screen) and decodes the full field there. Measured (decode-event ring): pre-build SKIP=1 at the edge
   (tci=1), then SKIP=0 the next frame (tci=0). `!rsLaunched` still lets the 2nd launch's own tunnel
   descent decode normally.
+  **SUPERSEDED 2026-08-10 (the forward painter):** there is no forward pre-build decode left to defer,
+  so `boostOwnsTunnel` and the deferral are both gone.  The same collision is now avoided *structurally*
+  — the pre-build's PAINT cannot be postponed the way its decode could, so `tunnel_prebuild_rings()` was
+  moved past `delay_loop_c2_to_c9()`, where the T6 hold has already released tunnelBitmap.  Measured:
+  both `tunnelPaintBegin` claims (boot vbi 96, post-boost vbi 2707) report `tunnelCopperInstalled=0`.
+  The lesson that survives is the diagnosis — **which copper is live is the only signal that separates
+  the handoff edge from the next level's standby pre-build.**
 
 **2026-08-10 — ITEM 2 IS CLOSED, and the whole decode with it (commit fd28b05).** The reverse
 tunnel no longer decodes `$1000` at all: `draw_symmetric_span_loop` / `draw_frame_guide_columns` /
