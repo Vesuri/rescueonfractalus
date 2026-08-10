@@ -192,6 +192,13 @@ extern "C" volatile unsigned long g_boostHandoffHoldFrames = 0;
 // g_bStarDec = $2000 stars decodes (dirty-gated, ~2/cinematic); g_bTunDec = reverse-tunnel full
 // decodes (per-frame — the field is a VBI-written multi-writer reveal, unsafe to gate).
 extern "C" volatile unsigned long g_bStarDec = 0, g_bTunDec = 0;
+// ...and what those decodes COST.  g_bTunTicks/g_bStarTicks are rof_subclock beam-lines summed over
+// decodeBoostViewport itself (ISR firings subtracted, as FP_TIME does), so ticks/decode is directly
+// comparable to the rest of the flight budget (1 tick = 1 scanline = 63.56us).  g_bTunGroups counts
+// the 4-byte source groups actually STORED (vs 86*10 = 860 possible per decode) — the headroom a
+// content shadow could reclaim.  (g_bTunDec already == frames in that sub-phase: it decodes every
+// one.)
+extern "C" volatile unsigned long g_bTunTicks = 0, g_bStarTicks = 0, g_bTunGroups = 0;
 extern "C" volatile unsigned short g_starEntryVbi = 0;              // vbi at first rsStars viewport decode
 extern "C" volatile unsigned long  g_starEntryTicks = 0, g_starEntryIsr = 0; // its cost
 extern "C" volatile unsigned short g_starSprVbi = 0;
@@ -2000,6 +2007,70 @@ void RescueOnFractalus::initialize()
     g_activeVbi = 1;
 }
 
+// Long-granular content shadow for decodeBoostViewport: s_boostShadow[row*10 + group] holds the 4
+// source bytes that were last decoded into that group of tunnelBitmap.  INVARIANT: the shadow always
+// describes the bitmap's current contents, with 0 meaning "cleared" (source byte 0 decodes to 0 in
+// all three planes, so a zeroed shadow is exactly consistent with a zeroed bitmap).  It is therefore
+// validated ONLY where tunnelBitmap is fully cleared — the boost-entry clear — and any other painter
+// of that bitmap must raise s_boostShadowStale.
+static const int kBoostShadowLongs = (int)kTerrainHeight * 10;   // 10 four-byte groups per 40-byte row
+static uint32_t  s_boostShadow[kBoostShadowLongs];
+static bool      s_boostShadowStale = false;
+
+#ifdef ROF_BOOST_VERIFY
+// ---- decodeBoostViewport shadow differential (make BOOST_VERIFY=1 PROBES=1 FORCE_RETURN=1
+//      + amiga/boost_verify.gdb) ---------------------------------------------------------------
+// The content shadow is an Amiga-only render mirror, so `make validate` cannot check it.  This
+// verifies the INVARIANT the shadow rests on: for every group, the bitmap holds exactly what an
+// unconditional decode of the current source would have stored.
+//
+// The check is RACE-AWARE, which matters because the VBI writes the $1000 ring field while the main
+// loop decodes it.  Re-read each group's source key: if it no longer equals the shadow, the source
+// changed AFTER the decode read it (a race, which the next frame heals by construction) — counted as
+// g_bvRace and skipped.  Only groups whose source still matches the shadow are compared against the
+// bitmap, and any difference there is a REAL defect in the skip logic.  g_bvBad must stay 0.
+extern "C" volatile unsigned long
+    g_bvGroups = 0, g_bvBad = 0, g_bvRace = 0,
+    g_bvFirstRow = 0xFFFFFFFFu, g_bvFirstGrp = 0, g_bvFirstKey = 0,
+    g_bvGotP1 = 0, g_bvWantP1 = 0, g_bvGotP2 = 0, g_bvWantP2 = 0, g_bvGotP3 = 0, g_bvWantP3 = 0;
+
+void RescueOnFractalus::verifyBoostViewport(bool tunnel, int K)
+{
+    const uint8_t* p1 = (const uint8_t*)tunnelBitmap->data;
+    const uint32_t* sh = s_boostShadow;
+    for (int row = 0; row < (int)kTerrainHeight; row++, p1 += 120, sh += 10) {
+        const bool rings = tunnel && row >= K && row <= 85 - K;
+        const uint16_t base = (uint16_t)((rings ? 0x1000u : 0x2000u) + row * 46);
+        const uint32_t* rs = (const uint32_t*)(const void*)&mem[base + 4];
+        for (int g = 0; g < 10; g++) {
+            const uint32_t key = rs[g];
+            if (key != sh[g]) { g_bvRace++; continue; }        // source moved under us — benign
+            const uint8_t s0 = (uint8_t)(key >> 24), s1 = (uint8_t)(key >> 16),
+                          s2 = (uint8_t)(key >>  8), s3 = (uint8_t)key;
+            const uint32_t w1 = ((uint32_t)kGtia10BoostP1[s0] << 24) | ((uint32_t)kGtia10BoostP1[s1] << 16) |
+                                ((uint32_t)kGtia10BoostP1[s2] <<  8) |  (uint32_t)kGtia10BoostP1[s3];
+            const uint32_t w2 = ((uint32_t)kGtia10BoostP2[s0] << 24) | ((uint32_t)kGtia10BoostP2[s1] << 16) |
+                                ((uint32_t)kGtia10BoostP2[s2] <<  8) |  (uint32_t)kGtia10BoostP2[s3];
+            const uint32_t w3 = ((uint32_t)kGtia10BoostP3[s0] << 24) | ((uint32_t)kGtia10BoostP3[s1] << 16) |
+                                ((uint32_t)kGtia10BoostP3[s2] <<  8) |  (uint32_t)kGtia10BoostP3[s3];
+            const uint32_t g1 = ((const uint32_t*)p1)[g];
+            const uint32_t g2 = ((const uint32_t*)(p1 + 40))[g];
+            const uint32_t g3 = ((const uint32_t*)(p1 + 80))[g];
+            g_bvGroups++;
+            if (g1 != w1 || g2 != w2 || g3 != w3) {
+                g_bvBad++;
+                if (g_bvFirstRow == 0xFFFFFFFFu) {
+                    g_bvFirstRow = (unsigned long)row; g_bvFirstGrp = (unsigned long)g;
+                    g_bvFirstKey = key;
+                    g_bvGotP1 = g1; g_bvWantP1 = w1; g_bvGotP2 = g2; g_bvWantP2 = w2;
+                    g_bvGotP3 = g3; g_bvWantP3 = w3;
+                }
+            }
+        }
+    }
+}
+#endif
+
 // decodeTunnelRect: decode the sub-rectangle rows [rowLo..rowHi] × displayed bytes
 // [byteLo..byteHi] of the GTIA-10 tunnel-ring field at mem[$1000] into the tunnel bitmap.
 // $1000 (NOT $2000, which holds the door field) is where the genuine boot_standby_launch_driver renders
@@ -2028,6 +2099,10 @@ void RescueOnFractalus::decodeTunnelRect(int rowLo, int rowHi, int byteLo, int b
         }
         src += 46; p1 += 120;                        // walk to next row
     }
+    // This just painted tunnelBitmap through the FORWARD LUT, so decodeBoostViewport's content
+    // shadow no longer describes the bitmap.  (In practice the next boost cinematic re-clears it
+    // on entry anyway — this keeps the invariant true regardless of how the phase gates evolve.)
+    s_boostShadowStale = true;
 }
 
 // decodeBoostViewport: the boost reverse-tunnel row-by-row REVEAL.  Each viewport row's
@@ -2062,20 +2137,81 @@ void RescueOnFractalus::decodeBoostViewport()
             if (lms >= 0x1000u && lms < 0x2000u) { K = row; break; }
         }
     }
-    uint8_t* p1 = (uint8_t*)tunnelBitmap->data;
-    for (int row = 0; row < (int)kTerrainHeight; row++) {
+    // The shadow can only be trusted while it still describes what is IN tunnelBitmap.  The forward
+    // tunnel paints the same bitmap through a DIFFERENT LUT (decodeTunnelRect / kGtia10P*), so if it
+    // has run since, restore the invariant the same way boost entry does — clear the bitmap, zero the
+    // shadow — and let the pass below repaint every non-zero group.  Once per cinematic at most.
+    if (s_boostShadowStale) {
+        AmigaHardware::blitterClear((uint16_t*)tunnelBitmap->data, 60, kTerrainHeight, 0);
+        for (int i = 0; i < (int)(sizeof s_boostShadow / sizeof s_boostShadow[0]); i++) s_boostShadow[i] = 0u;
+        AmigaHardware::blitterWait();
+        s_boostShadowStale = false;
+    }
+#ifdef ROF_FLIGHT_PROBE
+    unsigned long _b0 = rof_subclock(), _bi = g_isrBeamLines;
+#endif
+    // Scan the source a LONG at a time against a content shadow and decode only the four-byte
+    // groups that changed: skip the group when its 4 source bytes are byte-identical to what was
+    // last decoded into the bitmap.
+    //
+    // ⚠ This is memoization, NOT the frame-level decode-on-change gate that was tried and abandoned
+    // in 2026-07 (docs/boost-cinematic-plan.md item 2).  That gate SKIPPED whole frames, which HELD
+    // any mid-reveal state a writer had not settled yet (a stray teal reveal row; the final clear's
+    // outermost-ring colour).  This runs the full pass EVERY frame and compares actual content, so
+    // the output is byte-identical to the unconditional decode: a group is skipped only when
+    // re-decoding it would have stored exactly the bytes already there.  Multi-writer races are
+    // self-healing for the same reason — the key is read ONCE into a local and recorded only when
+    // the group is stored, so a VBI write landing after the read simply mismatches next frame.
+    // The row's source BASE is deliberately not part of the key: the same 4 bytes decode to the
+    // same output through the same LUT whichever field they came from, so a row crossing the
+    // reveal boundary into identical content correctly stores nothing.
+    //
+    // Measured (2026-08-10, FORCE_RETURN, 96 reverse-tunnel decodes): only 35 of the 860 groups per
+    // decode actually change — 4% — so this skips ~96% of a pass that cost 847 beam ticks (54 ms).
+    uint8_t*  p1 = (uint8_t*)tunnelBitmap->data;
+    uint32_t* sh = s_boostShadow;      // walks CONTINUOUSLY (the inner loop advances it 10 per row;
+                                       // do NOT also step it in the for-increment)
+    for (int row = 0; row < (int)kTerrainHeight; row++, p1 += 120) {
         // Stars ($008D==0): whole viewport = $2000 starfield.  Tunnel: rings ($1000+row*46) inside
         // the symmetric reveal band [K, 85-K]; the black space surround OUTSIDE it.
         const bool rings = tunnel && row >= K && row <= 85 - K;
         const uint16_t base = (uint16_t)((rings ? 0x1000u : 0x2000u) + row * 46);
-        const uint8_t* src = (const uint8_t*)&mem[base + 4];   // +4: wide-field crop
-        uint8_t* pp2 = p1 + 40; uint8_t* pp3 = p1 + 80;
-        for (int b = 0; b < 40; b++) {
-            uint8_t s = src[b];
-            p1[b] = kGtia10BoostP1[s]; pp2[b] = kGtia10BoostP2[s]; pp3[b] = kGtia10BoostP3[s];  // boost LUT: value-2->color00, value-8->color02
-        }
-        p1 += 120;
+        // +4: wide-field crop.  base+4 is EVEN but not always 4-aligned (stride 46), which is all a
+        // 68000 long access needs — it faults on ODD only; 4-alignment is a 68020+ perf matter.
+        const uint32_t* rs = (const uint32_t*)(const void*)&mem[base + 4];
+        uint8_t* d = p1;                               // plane1 byte 0 of this group (plane2 +40, +80)
+        const uint32_t* const rsEnd = rs + 10;
+        do {                                           // pointer-compare exit test: without it ivopts
+            const uint32_t key = *rs;                  // rewrites all three IVs into (0,An,Dn.L) forms
+            if (key != *sh) {                          // (CLAUDE.md, the 3+-pointer-loop pathology)
+                *sh = key;
+                // Compare by the long, but STORE by the byte.  Packing the four LUT results back
+                // into one long per plane looked like the door-decoder trick, and it is — for that
+                // decoder.  Here it measured WORSE (the stars full decode went 818 -> 1593 ticks):
+                // the 9 extra swap/clr.w/or.l ops the packing needs cost more than the 9 chip-RAM
+                // byte stores they replace.  Only the SCAN needed to be long-granular.
+                const uint8_t* s = (const uint8_t*)rs; // big-endian: s[0] is key's high byte
+                const uint8_t s0 = s[0], s1 = s[1], s2 = s[2], s3 = s[3];
+                d[ 0] = kGtia10BoostP1[s0]; d[ 1] = kGtia10BoostP1[s1];
+                d[ 2] = kGtia10BoostP1[s2]; d[ 3] = kGtia10BoostP1[s3];
+                d[40] = kGtia10BoostP2[s0]; d[41] = kGtia10BoostP2[s1];
+                d[42] = kGtia10BoostP2[s2]; d[43] = kGtia10BoostP2[s3];
+                d[80] = kGtia10BoostP3[s0]; d[81] = kGtia10BoostP3[s1];
+                d[82] = kGtia10BoostP3[s2]; d[83] = kGtia10BoostP3[s3];
+#ifdef ROF_FLIGHT_PROBE
+                g_bTunGroups++;
+#endif
+            }
+            rs++; sh++; d += 4;
+        } while (rs != rsEnd);
     }
+#ifdef ROF_BOOST_VERIFY
+    verifyBoostViewport(tunnel, K);
+#endif
+#ifdef ROF_FLIGHT_PROBE
+    { unsigned long _d = (rof_subclock() - _b0) - (g_isrBeamLines - _bi);
+      if (tunnel) g_bTunTicks += _d; else g_bStarTicks += _d; }
+#endif
 }
 
 // decodeTunnelBand: re-decode only the frame band draw_ring_frame_step just wrote — the
@@ -3461,6 +3597,11 @@ void RescueOnFractalus::renderFrame()
             // frame decodes the ready starfield.
             uint8_t* bd = (uint8_t*)tunnelBitmap->data;
             for (int i = 0; i < 120 * (int)kTerrainHeight; i++) bd[i] = 0;
+            // This is the one place tunnelBitmap is fully cleared, so it is where
+            // decodeBoostViewport's content shadow becomes valid: zero = "this group is cleared",
+            // which is exactly what the bitmap now holds (source byte 0 decodes to 0 in all planes).
+            for (int i = 0; i < (int)(sizeof s_boostShadow / sizeof s_boostShadow[0]); i++) s_boostShadow[i] = 0u;
+            s_boostShadowStale = false;
             updateTunnelCopper(true);
             AmigaHardware::setCopperList(*tunnelCopper, false);
             tunnelCopperInstalled = true;

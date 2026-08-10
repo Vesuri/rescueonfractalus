@@ -159,6 +159,9 @@ private:
     uint16_t tunnelSrcBase = 0x1000;               // decodeTunnelRect source base: $1000 rings (forward tunnel + boost tunnel) / $2000 starfield (boost stars — the $3000 DL displays $2000 while $008D==0, then emit_dl_coord_pairs rewrites its LMS to $1000 for the reverse tunnel)
     void decodeTunnelRect(int rowLo, int rowHi, int byteLo, int byteHi);  // decode a tunnelSrcBase sub-rect -> tunnelBitmap (no shadow)
     void decodeBoostViewport();                    // boost reverse-tunnel reveal: per-row source from the live $3000 DL LMS ($1xxx rings / $2000 stars)
+#ifdef ROF_BOOST_VERIFY
+    void verifyBoostViewport(bool tunnel, int K);  // race-aware differential on the boost decode's content shadow (g_bvBad must stay 0)
+#endif
     bool boostRingRevealed = false;                // latched once the boost reverse tunnel's outermost ring is drawn ($008D went negative). Until then the band-corner triangle stays BLACK (the outer tunnel rows are not revealed yet); after, it follows color00 = the outermost ring $08D8. Reset at the stars phase ($008D==0 && $008E==0).
     void decodeTunnelBand();                       // decode only the ring-clear frame band (outer\inner rect) from the g_tun* bounds
     void renderViewportModeD(uint16_t srcBase, int stride, int rows); // decode CHANGED mode-D bytes -> viewportBitmap (stars/planet: $1000/48/47)
