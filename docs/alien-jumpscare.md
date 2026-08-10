@@ -269,7 +269,11 @@ read with `amiga/diag_alien.gdb`.  Beam ticks; 313 t = 1 frame = 20 ms; faithful
   scans are ~85% of the "render" sample).  ⚠ A `PROBES=1` build shows 9 `jsr __udivsi3` sites
   (probe math); the CLAUDE.md audit is only meaningful on a **plain** build — verified empty at 1dea72e.
 
-## ★★ SESSION 8 (2026-08-10, 50869ee) — a headless bench, a 35% measurement artifact, and −21.7%
+## ★★ SESSION 8 (2026-08-10, 50869ee + aedac9c) — a headless bench, a 35% measurement artifact, −22.7%
+
+**Net for the session: the creature draw went 1638 → 1266 t/step (104 → 80 ms), −22.7%**, confirmed
+independently on a real user-flown knock (−23.2% per row).  Two changes: the window mirror (§3,
+−21.7%) and the two-pass row (§4, −1.3%).  **The per-cell shaving is now spent — see §6.**
 
 ### 1. The bench — `make ALIEN_BENCH=1 PROBES=1` + `amiga/alien_bench.gdb` (⭐ use this, not a flight)
 Times ONE synthetic 43-row creature step (`rof_alien_bench`, rof_native.c) from main-loop context
@@ -304,20 +308,41 @@ cases, 0 mismatches ([[rasterizer-restructure]]'s method).
 Split after the change (SPLIT build): **loop 779 t (52%) · fills 375 t (25%) · clear 64 t (4%)**,
 rest instrument.  A cell is still ~480 cycles, so the loop remains the target.
 
-### 4. Tried, measured, REJECTED — do not re-open without new numbers
+### 4. The two-pass row (aedac9c) — right codegen, wrong size: −1.3%
+Pass 1 walks the 17 cells doing only the faithful work and records each `v`; pass 2
+(`alien_mirror_flush`) mirrors the window in one walk and publishes the extents.  Safe to reorder:
+the overlay is chip RAM outside `mem[]`, nothing reads it until `renderFlightDirect` composites,
+and each y hits a distinct slot.  The never-taken `$8B` self-modify branch flushes the current
+segment before re-windowing, so a mid-row pointer change still draws what the per-cell form would.
+
+The codegen came out exactly as intended — alone in its own function nothing else is live, so GCC
+emits `(a0)+` reads, three post-increment stores, both table bases pinned across iterations and a
+×4 unroll; **the cell loop went 779 → 434 t** and the function shrank 224 bytes.  **But the flush
+costs back 290 t of the 345 t saved, so the row is only −1.3%** (1283 → 1266 t/step, reproducible
+to the tick).  ⭐ **The lesson: the mirror was never ~40% of the cell — that was my read of the
+disassembly, not a measurement.  Price a block by ABLATION before restructuring around it.**
+
+Kept (user's call): the win is real, and pass 1 is register-rich for the first time, which is what
+makes the remaining pass-1 shaves possible at all.
+
+### 5. Tried, measured, REJECTED — do not re-open without new numbers
 **Folding `kModeDP1`/`kModeDP2` into one 512-byte table + addressing plane2 as `p1[40+y]`** (both
 free a register, aimed at the stack spills GCC emits per cell): **+6.5%** (1500 → 1597).  Reverted.
 
-### 5. What is left, ranked
-1. **The 17-cell loop, 52%.** The remaining fat is register pressure — GCC spills the overlay
-   pointers and re-`lea`s the tables per cell. §4 shows freeing registers naively backfires; the
-   real fix is a **two-pass row** (pass 1 computes the 17 `v` into a stack array, pass 2 mirrors the
-   window with `(a0)+` walks and nothing else live). ⚠ The `dst >= $8B` self-modify branch can
-   change the window mid-row, so a two-pass split needs a fallback for that never-taken path.
-2. **The fills, 25%** — ~226 cycles per source byte through `bus_read` + `reorder_cell_bits` +
-   volatile cell writes.  Sized small individually (each idea ~1-2%).
-3. **Pre-rendered chip-`Bitmap` creature frames** (session 6's option (c)) — still the only idea
-   that removes the per-cell CPU work rather than shaving it.
+### 6. What is left, ranked — ⛔ the shaving is spent; only #3 can reach 1×
+Split after the two-pass (SPLIT build; its brackets inflate the total, take proportions only):
+**pass1 loop 434 · fills 425 · flush 290 · clear 117**.
+1. **Pass-1 shaves, ~3% and ~1-2%** — hoist `bus_read`'s hardware-range test out of the loop (GCC
+   emits it per cell and parks the RAM path out of line), and walk the cell buffer instead of
+   `mem[0x8F + y]`.  Both only became possible now that pass 1 has registers to spare.
+2. **The fills, ~25%** — ~226 cycles per source byte through `bus_read` + `reorder_cell_bits` +
+   volatile cell writes.  Fragments into ~1% pieces; no single idea is sized above that.
+3. ⭐ **Pre-rendered chip-`Bitmap` creature frames** (session 6's option (c)) — the ONLY remaining
+   idea that removes the per-cell CPU work instead of shaving it, and the only one that could reach
+   the faithful 1565 t.  The animation draws from a bounded set of frame-table combinations, so each
+   distinct frame could be composed once and blitted thereafter.  ⚠ Real design risk: the frames are
+   composed from FOUR field sources through the `$BE00` shape table, and the set has to be *proven*
+   bounded before caching it.  Everything in 1-2 together is maybe 6% and lands the step at ~1.7×.
 
 **OPEN #2 — COLOUR.** The creature renders in the viewport pens 0-3 (terrain palette), so likely the WRONG
 hue. The attack colour is `$0047` (`$6D/$70/$D8` cycle, set by `alien_attack_tick $7AB8`). Pens during the
