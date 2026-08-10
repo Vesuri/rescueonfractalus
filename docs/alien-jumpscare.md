@@ -1,4 +1,11 @@
-# Alien "Jaggi" jump-scare — trace map (2026-07-25, IN PROGRESS / creature draw still unlocated)
+# Alien "Jaggi" jump-scare — trace map
+
+**STATUS (2026-08-10):** trigger, gate and creature draw are all mapped and PORTED — the creature
+renders, animates and composites (user-confirmed).  The one open half is **perf: the step is 2.6×
+slower than faithful, and 93% of it is the draw** — see **§SESSION 7** at the bottom for the current
+numbers; plus **OPEN #2 (colour)**.  ⚠ The sections below are a CHRONOLOGICAL record: every "OPEN"
+and every number above session 7 has been superseded at least once.  **Read session 7 first.**
+(This header used to read "IN PROGRESS / creature draw still unlocated" — resolved 2026-07-25.)
 
 The classic *Rescue on Fractalus!* jump-scare: a rescued figure runs to the ship, and at the
 "knock" an alien jumps onto the canopy instead of a pilot boarding. This is the port target for
@@ -86,9 +93,11 @@ mirror its field writes into the Amiga flight plane(s) with the value→pen mapp
 - **Airlock-OPEN path** = the *boarding* mechanic ("ALIEN IN SHIP" + shake + energy drain, `$0633` set),
   draws NO creature. The jump-scare is the airlock-CLOSED knock. (`FORCE_AIRLOCK` = boarding test only.)
 
-**★ OPEN #1 — PERF (the blocker, ~7.5× too slow).** Measured per knock STEP (beam ticks, 313=1 frame=20ms;
-faithful step = 5 frames = 1565): **draw `alien_creature_animate_draw` ≈ 8438 ticks (~540ms), render ≈ 3284 (~210ms),
-wait ≈ 0** (no pacing left — draw+render already blow past 5 frames).
+**★ OPEN #1 — PERF (the blocker, ~7.5× too slow).** ⚠ **SUPERSEDED — these are the session-4 numbers;
+the current ones are 2.6× / 238 ms / 18 ms in §SESSION 7.  This paragraph is the figure that leaked into
+the `flight-scene` open item and stayed there for two weeks.** Measured per knock STEP (beam ticks,
+313=1 frame=20ms; faithful step = 5 frames = 1565): **draw `alien_creature_animate_draw` ≈ 8438 ticks
+(~540ms), render ≈ 3284 (~210ms), wait ≈ 0** (no pacing left — draw+render already blow past 5 frames).
 
 **★ MEASURED 2026-07-25 (session 3) — the hud-vs-wrapper split: `alien_shape_blit` is ~100% of
 `alien_creature_animate_draw`; the wrapper is ~0%.** (`g_alTHud` ≈ `g_alTDraw` per step, `hud/draw`=111% within async-VBI
@@ -218,6 +227,44 @@ likely already provides the blit/cookie-cut methods — prefer reusing them over
 This is the concrete first step of the future "anim frames = pre-made chip `Bitmap`s" rework the user described.
 (Also still open, lower priority: the draw's ~44 hud rows × masked blit is now near the C floor; hand-asm only
 if the blitter render still leaves the draw dominant.)  bus_read/bus_write are inline+cheap for RAM (ruled out).
+
+## ★★ SESSION 7 (2026-08-10, HEAD 1dea72e) — RE-MEASURED: the step is 2.6× off, not 7.5×
+
+Re-measured because the `flight-scene` open item still quoted the SESSION-4 numbers (draw ~540 ms +
+render ~210 ms ⇒ "~7.5× too slow"), which sessions 5 and 6 had already superseded twice.  Interactive
+knock (user-flown), **50 steps = one complete knock**, `PROBES=1 FORCE_ALIEN=1 PROFILE_NORING=1`,
+read with `amiga/diag_alien.gdb`.  Beam ticks; 313 t = 1 frame = 20 ms; faithful step = 5 frames = 1565 t.
+
+| per step | session 6 (2026-07-26) | **session 7 (2026-08-10)** | |
+|---|---|---|---|
+| draw `alien_creature_animate_draw` | 4260 t ≈ 271 ms | **3725 t ≈ 238 ms** | **93% of the step** |
+| render (`platform_render_frame`) | 343 t ≈ 22 ms | **280 t ≈ 18 ms** | 7% |
+| wait (SFX interval pacing) | ~0 | **1 t** | no headroom left |
+| **step total** | ~4603 t ≈ 294 ms (2.9×) | **≈4006 t ≈ 256 ms (2.6×)** | vs 1565 t faithful |
+
+- **−13% since session 6, and nothing was aimed at it** — the credit goes to **bf4c7cd** ("skip the
+  dead mode-D field write during the knock", ~748 volatile stores/step), which shipped right after
+  session 6 and was never measured.  Session 6's own lever (a) is therefore now spent.
+- **`alien_shape_blit` = 104% of the draw** (44 calls/step, 2212 total; 752 creature-cell writes/step)
+  — the wrapper is still ~0%, matching session 3's 99-103%.  Two independent runs a fortnight apart
+  agreeing to 1 point makes this the most reproducible number in the file.
+- **Render breakdown confirms it is FINISHED:** of 280 t, **flipWait 228 t is idle vblank wait**,
+  composite+drain (blitter) **37 t ≈ 2.4 ms**, misc ~15.  Bitmap addrs `fig=$1CE38 clean=$1A228
+  mask=$1DBA8`, all `<$200000` ⇒ blitter path, no CPU fallback.  ⛔ Do not optimise the render again.
+- **⇒ The ONLY remaining lever is the draw**, i.e. session 6's (b) hand-asm the row composer or (c)
+  pre-rendered chip-`Bitmap` creature frames.  At 93% of the step, halving it lands the step at ~1.3×.
+- **`ROF_PLOT_ALIEN` is DEAD CODE** — zero call sites (`rof_native.c:860`), the mirror having moved
+  inline into `alien_shape_blit` in 1e75d7e.  It still carries the `_rel / 96` + `_rel % 96` the
+  open item kept listing as a perf TODO; deleting it is cleanup, not a win.
+- **A knock is a FIXED ~50 steps** — the alien then smashes through the windscreen and the game ends
+  (user).  Letting a run go longer gathers **no** extra steps; more samples means another rescue.
+- ⚠ **No headless harness.** A `FORCE_KNOCK` seed of the phase-4 knock state (systems off + close
+  range + phase 3 + airlock closed, so pilot_render's entry INC lands on 4) was written and then
+  abandoned on the user's call — a synthetic entry into that state machine is not worth trusting for
+  a perf number.  The knock stays user-flown; see [[interactive-fsuae-gdb]] for the SIGINT recipe.
+- ⚠ `PROFILE_NORING=1` remains load-bearing (session 6: without it the debug ring's `rfPlaneSum`
+  scans are ~85% of the "render" sample).  ⚠ A `PROBES=1` build shows 9 `jsr __udivsi3` sites
+  (probe math); the CLAUDE.md audit is only meaningful on a **plain** build — verified empty at 1dea72e.
 
 **OPEN #2 — COLOUR.** The creature renders in the viewport pens 0-3 (terrain palette), so likely the WRONG
 hue. The attack colour is `$0047` (`$6D/$70/$D8` cycle, set by `alien_attack_tick $7AB8`). Pens during the
