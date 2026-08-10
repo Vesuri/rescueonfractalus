@@ -53,6 +53,14 @@ public:
                                  // on the ISR-driven decrement), repoint the standby terrain BPLxPT to
                                  // the tall door bitmap offset by dl_src_index rows — the uniform DL-LMS
                                  // window scroll.  No-op unless the settled standby is live.
+    void drawTunnelRect(uint16_t rowBase, uint8_t rowTop, uint8_t rowBot, uint8_t xL, uint8_t xR,
+                        uint8_t byteLo, uint8_t byteHi, uint8_t colour);  // ROF_TUNNEL_RECT hook: paint one ring rectangle straight into tunnelBitmap
+    void drawTunnelColumns(uint16_t rowBase, uint8_t colL, uint8_t colR, uint8_t colR1,
+                           uint8_t colour);   // ROF_TUNNEL_COLS hook: the pre-draw's three full-height guide columns
+    void drawTunnelVSpan(uint16_t rowBase, uint8_t r0, uint8_t r1, uint8_t colL, uint8_t colR,
+                         uint8_t colour);   // ROF_TUNNEL_VSPAN hook: one plot_terrain_span vertical pair
+    void paintVSpan(uint8_t rowBot, uint8_t rowTop, uint8_t xL, uint8_t xR, uint16_t pen);
+    uint16_t boostPen(uint8_t colour) const;  // GTIA nibble -> Amiga pen through the live boost LUT
     void decodeScannerBlinkCells(); // LR-scanner (#13) close-range blink cells $33DF/$33E0 -> cockpit
                                  // bitmap; PUBLIC because it runs in the flight VBI (via PlatformAmiga::
                                  // flightScannerTick) at 50Hz so the blink animates at full rate, not
@@ -158,10 +166,8 @@ private:
     void decodeTitleCells(int cellLo, int cellHi);  // (re)decode Title Screen cells [lo..hi] (clears+ORs); targeted value updates
     uint16_t tunnelSrcBase = 0x1000;               // decodeTunnelRect source base: $1000 rings (forward tunnel + boost tunnel) / $2000 starfield (boost stars — the $3000 DL displays $2000 while $008D==0, then emit_dl_coord_pairs rewrites its LMS to $1000 for the reverse tunnel)
     void decodeTunnelRect(int rowLo, int rowHi, int byteLo, int byteHi);  // decode a tunnelSrcBase sub-rect -> tunnelBitmap (no shadow)
-    void decodeBoostViewport();                    // boost reverse-tunnel reveal: per-row source from the live $3000 DL LMS ($1xxx rings / $2000 stars)
-#ifdef ROF_BOOST_VERIFY
-    void verifyBoostViewport(bool tunnel, int K);  // race-aware differential on the boost decode's content shadow (g_bvBad must stay 0)
-#endif
+    void decodeBoostStars();                       // boost cinematic: the $2000 starfield -> viewportBitmap (the rings are painted, not decoded)
+    bool boostRingsArmed = false;                  // drawTunnelRect paints only while the boost owns tunnelBitmap
     void decodeTunnelBand();                       // decode only the ring-clear frame band (outer\inner rect) from the g_tun* bounds
     void renderViewportModeD(uint16_t srcBase, int stride, int rows); // decode CHANGED mode-D bytes -> viewportBitmap (stars/planet: $1000/48/47)
     void renderFlightDirect();   // flight terrain: plot sky straight to bitplanes from $260E (replaces the convert)
@@ -220,21 +226,23 @@ private:
     // copper — the beam can read a half-updated band and the tunnel reveal jitters ±1px
     // (render() runs before the poke, so the beam is usually already past the top border).
     // So updateDoorsCopper() fully populates the BACK buffer and setCopperList swaps it at
-    // the next vblank (atomic).  The Tunnel list has FIXED geometry (one band, constant
-    // pointers) so its in-place colour pokes are safe (a one-frame torn colour is
-    // invisible) — single-buffered.
+    // the next vblank (atomic).
+    //
+    // The Tunnel list is DOUBLE-BUFFERED for the same reason.  Its FORWARD geometry is fixed
+    // (one full-height band), but the boost reverse cinematic drives setRevealBands(), which
+    // moves band WAIT lines AND bitplane pointers every frame — and a pointer poked on the live
+    // list can be read half-written by the copper, garbaging the whole viewport for a frame.
+    // Since every slot is rewritten into the back buffer anyway, the old tn* poke-on-change
+    // cache is gone: it would have been comparing against the wrong buffer's state.
     DoorsCopperList*  doorsCopper[2] = { nullptr, nullptr };
     uint8_t doorsActive = 0;
     void updateDoorsCopper(DoorsCopperList* dc);  // fully populate one buffer (colours + geometry)
-    TunnelCopperList* tunnelCopper = nullptr;
+    TunnelCopperList* tunnelCopper[2] = { nullptr, nullptr };
+    uint8_t tunnelActive = 0;
     bool tunnelCopperInstalled = false;
-    void updateTunnelCopper(bool force);  // poke title/gauge/compass + the ring palette
-    // Last-poked colour values (tn* — poke-on-change for the single-buffered tunnel list).
-    uint16_t tnTitleBg = 0xFFFF, tnTitlePf0 = 0xFFFF, tnEnergyCol = 0xFFFF, tnCompassCol = 0xFFFF;
-    uint16_t tnPen0 = 0xFFFF, tnRing[6] = { 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF };
-    uint16_t tnCorner = 0xFFFF;   // color00 = outermost ring / windscreen-band triangle (value-2 -> color00; mem[$08D8] tunnel / $0071 boost-stars)
-    uint16_t tnColBK  = 0xFFFF;   // color02 = value-8 background (COLBK = mem[$0071]: star field + reverse-tunnel unrevealed rows)
-    uint16_t tnPostCol = 0xFFFF;  // canopy-post/pillar grey (forward: title bg $02C8; boost: fixed $06)
+    void updateTunnelCopper(TunnelCopperList* tc);  // fully populate one buffer (colours + reveal bands)
+    void showTunnelCopper();      // populate the back buffer and swap it in at the next vblank
+    uint16_t boostRevealK() const;  // first viewport row showing rings (43 = nothing revealed yet)
 
     Bitmap*     titleBitmap    = nullptr;
     Bitmap*     terrainBitmap  = nullptr;

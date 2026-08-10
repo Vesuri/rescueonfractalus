@@ -189,19 +189,55 @@ extern "C" volatile unsigned char g_boostRet = 0, g_boostVp = 0, g_liveCopper = 
 extern "C" volatile unsigned long g_boostHandoffHoldFrames = 0;
 // Boost-viewport decode-cost probe (item 2, decode-consume): count decode events, to confirm the
 // decode-on-change gating runs and quantify the win vs the old always-full decode EVERY frame.
-// g_bStarDec = $2000 stars decodes (dirty-gated, ~2/cinematic); g_bTunDec = reverse-tunnel full
-// decodes (per-frame — the field is a VBI-written multi-writer reveal, unsafe to gate).
-extern "C" volatile unsigned long g_bStarDec = 0, g_bTunDec = 0;
-// ...and what those decodes COST.  g_bTunTicks/g_bStarTicks are rof_subclock beam-lines summed over
-// decodeBoostViewport itself (ISR firings subtracted, as FP_TIME does), so ticks/decode is directly
-// comparable to the rest of the flight budget (1 tick = 1 scanline = 63.56us).  g_bTunGroups counts
-// the 4-byte source groups actually STORED (vs 86*10 = 860 possible per decode) — the headroom a
-// content shadow could reclaim.  (g_bTunDec already == frames in that sub-phase: it decodes every
-// one.)
-extern "C" volatile unsigned long g_bTunTicks = 0, g_bStarTicks = 0, g_bTunGroups = 0;
+// g_bStarDec = $2000 starfield decodes into viewportBitmap, and what they cost in rof_subclock
+// beam-lines with the ISR's own firings subtracted (as FP_TIME does), so it is comparable to the
+// rest of the budget (1 tick = 1 scanline = 63.56us).  There is no reverse-tunnel decode counter
+// any more: the rings are PAINTED (drawTunnelRect), never decoded.
+extern "C" volatile unsigned long g_bStarDec = 0;
+extern "C" volatile unsigned long g_bStarTicks = 0;
 // Boost band-corner split histogram: how many frames of each sub-phase derived each greenLine
 // (0 = whole band the door colour / wedge still full, 8 = whole band the carried ring colour).
 extern "C" volatile unsigned long g_bwLine[9] = {0}, g_bwLineStars[9] = {0};
+#ifdef ROF_FLIGHT_PROBE
+// ROF_TUNNEL_RECT plumbing probe: g_trCalls = ring rectangles handed to the direct painter,
+// g_trDoors = rectangles that belonged to the $2000 door field (skipped).  The first 8 ring
+// rectangles are captured packed so their geometry can be eyeballed against the field.
+extern "C" volatile unsigned long g_trCalls = 0, g_trDoors = 0,
+    g_trRows[8] = {0}, g_trCols[8] = {0}, g_trPen[8] = {0};
+// §0a of docs/boost-tunnel-direct-handoff.md: the previous session BUCKETED the rectangles by
+// render phase and then LABELLED the biggest bucket "the forward launch's tunnel descent" without
+// measuring it — the handoff calls that label the prime suspect.  So tag each rectangle with the
+// call site that produced it (g_trSrc, set by rof_native.c at the draw_symmetric_span_loop call
+// sites) and cross it with the phase, which is what actually decides whether the painter may
+// paint.  src: 1 = draw_frame_pattern_seq @ L_6047 (43-rectangle static PRE-DRAW), 2 =
+// draw_ring_frame_step (forward descent), 3 = step_accum_sub_7e (boost reverse), 4 =
+// draw_frame_pattern_seq @ tunnel_prebuild_rings (the Amiga-only pre-draw).
+// phase: 0 = neither flag, 1 = rsBoostReturn only, 2 = rsBoostViewport.
+extern "C" volatile unsigned char g_trSrc = 0, g_trPreSite = 1;
+extern "C" volatile unsigned long g_trBySrc[5] = {0};       // rectangles per call site
+extern "C" volatile unsigned long g_trPhase[15] = {0};      // [src*3 + phase]
+// Per-RUN timeline: a run is a burst of rectangles from ONE site with no >8-vbi gap inside it.
+// Totals alone cannot say WHERE on the timeline a pre-draw sits, and that placement (stars
+// sub-phase vs reverse-tunnel sub-phase) is what decides whether painting it is safe.
+#define TR_RUNS 16
+extern "C" volatile unsigned long  g_trRunN = 0;            // runs seen (may exceed TR_RUNS)
+extern "C" volatile unsigned char  g_trRunSrc[TR_RUNS] = {0}, g_trRunPhase[TR_RUNS] = {0};
+// §2 fidelity differential: decode the live $1000 field through the boost LUT and diff it against
+// what the direct painter actually left in tunnelBitmap, over the revealed band [K, 85-K].  This
+// is the check that makes the rewrite verifiable — it caught both wrong turns of the 2026-08-10
+// session before either was visible on screen.  Race-aware by construction: the VBI writes the
+// field while this reads it, so a small transient count is expected (~2% observed floor).
+//   EXTRA   = the bitmap has ink where the field is pure background ($88) -> the painter drew
+//             something the field does not have, or a stale pixel was never cleared.
+//   MISSING = the field has content the painter never saw -> an unhooked field writer.
+extern "C" volatile unsigned long g_dpBytes = 0, g_dpBad = 0, g_dpFirst = 0, g_dpGot = 0, g_dpWant = 0;
+extern "C" volatile unsigned long g_dpExtra = 0, g_dpMissing = 0, g_dpCol[40] = {0}, g_dpFrames = 0;
+extern "C" volatile unsigned long g_dpSnapDone = 0;
+extern "C" volatile unsigned char g_dpSrc42[40] = {0}, g_dpB1[40] = {0};
+extern "C" volatile unsigned char  g_trRun8D[TR_RUNS] = {0}, g_trRun8E[TR_RUNS] = {0};
+extern "C" volatile unsigned short g_trRunVbi0[TR_RUNS] = {0}, g_trRunVbi1[TR_RUNS] = {0};
+extern "C" volatile unsigned short g_trRunCnt[TR_RUNS] = {0};
+#endif
 extern "C" volatile unsigned short g_starEntryVbi = 0;              // vbi at first rsStars viewport decode
 extern "C" volatile unsigned long  g_starEntryTicks = 0, g_starEntryIsr = 0; // its cost
 extern "C" volatile unsigned short g_starSprVbi = 0;
@@ -661,7 +697,7 @@ static void edgeShapeProbe() {
 static uint8_t kGtia10P1[256];   // nibble bit0
 static uint8_t kGtia10P2[256];   // nibble bit1
 static uint8_t kGtia10P3[256];   // nibble bit2
-// BOOST reverse-tunnel variant of the GTIA-10 LUT (decodeBoostViewport only): value-2 (outermost
+// BOOST reverse-tunnel variant of the GTIA-10 LUT (the boost cinematic only): value-2 (outermost
 // ring) -> pen0/color00, value-8 (background) -> pen2/color02.  See the constructor build + the
 // updateTunnelCopper boost palette branch.  Kept separate so the FORWARD tunnel LUT is untouched.
 static uint8_t kGtia10BoostP1[256];
@@ -1889,10 +1925,12 @@ void RescueOnFractalus::initialize()
             doorsCopper[i]->buildLayout(*titleBitmap, *cockpitBitmap,
                                         *leftPost, *rightPost, *energyIndicatorSprite, *nullSprite);
     }
-    tunnelCopper = new TunnelCopperList();
-    if (tunnelCopper && tunnelCopper->data())
-        tunnelCopper->buildLayout(*titleBitmap, *tunnelBitmap, *cockpitBitmap,
-                                  *leftPost, *rightPost, *energyIndicatorSprite, *nullSprite);
+    for (int i = 0; i < 2; i++) {
+        tunnelCopper[i] = new TunnelCopperList();
+        if (tunnelCopper[i] && tunnelCopper[i]->data())
+            tunnelCopper[i]->buildLayout(*titleBitmap, *tunnelBitmap, *cockpitBitmap,
+                                         *leftPost, *rightPost, *energyIndicatorSprite, *nullSprite);
+    }
 
     // Title Screen fixed copper list (attract/level-select/results); renderFrame installs it
     // during rsTitle.  Full-screen text bitmap, black COLBK, 4 cycling text pens.
@@ -1955,7 +1993,7 @@ void RescueOnFractalus::initialize()
         kGtia10P1[s] = (uint8_t)(((gh & 1) ? 0xF0u : 0u) | ((gl & 1) ? 0x0Fu : 0u));
         kGtia10P2[s] = (uint8_t)(((gh & 2) ? 0xF0u : 0u) | ((gl & 2) ? 0x0Fu : 0u));
         kGtia10P3[s] = (uint8_t)(((gh & 4) ? 0xF0u : 0u) | ((gl & 4) ? 0x0Fu : 0u));
-        // BOOST reverse tunnel (kGtia10BoostP*, decodeBoostViewport only) — additionally move value-2
+        // BOOST reverse tunnel (kGtia10BoostP*, the boost cinematic only) — additionally move value-2
         // (the outermost ring, COLPM2) -> pen0 (color00) so the ring is DRAWN in the same register as
         // the windscreen-band corner triangle (mode-D value-0 -> color00), and value-8 (COLBK
         // background: star field + unrevealed rows) -> the freed pen2 (color02) so the background keeps
@@ -2010,70 +2048,6 @@ void RescueOnFractalus::initialize()
     g_activeVbi = 1;
 }
 
-// Long-granular content shadow for decodeBoostViewport: s_boostShadow[row*10 + group] holds the 4
-// source bytes that were last decoded into that group of tunnelBitmap.  INVARIANT: the shadow always
-// describes the bitmap's current contents, with 0 meaning "cleared" (source byte 0 decodes to 0 in
-// all three planes, so a zeroed shadow is exactly consistent with a zeroed bitmap).  It is therefore
-// validated ONLY where tunnelBitmap is fully cleared — the boost-entry clear — and any other painter
-// of that bitmap must raise s_boostShadowStale.
-static const int kBoostShadowLongs = (int)kTerrainHeight * 10;   // 10 four-byte groups per 40-byte row
-static uint32_t  s_boostShadow[kBoostShadowLongs];
-static bool      s_boostShadowStale = false;
-
-#ifdef ROF_BOOST_VERIFY
-// ---- decodeBoostViewport shadow differential (make BOOST_VERIFY=1 PROBES=1 FORCE_RETURN=1
-//      + amiga/boost_verify.gdb) ---------------------------------------------------------------
-// The content shadow is an Amiga-only render mirror, so `make validate` cannot check it.  This
-// verifies the INVARIANT the shadow rests on: for every group, the bitmap holds exactly what an
-// unconditional decode of the current source would have stored.
-//
-// The check is RACE-AWARE, which matters because the VBI writes the $1000 ring field while the main
-// loop decodes it.  Re-read each group's source key: if it no longer equals the shadow, the source
-// changed AFTER the decode read it (a race, which the next frame heals by construction) — counted as
-// g_bvRace and skipped.  Only groups whose source still matches the shadow are compared against the
-// bitmap, and any difference there is a REAL defect in the skip logic.  g_bvBad must stay 0.
-extern "C" volatile unsigned long
-    g_bvGroups = 0, g_bvBad = 0, g_bvRace = 0,
-    g_bvFirstRow = 0xFFFFFFFFu, g_bvFirstGrp = 0, g_bvFirstKey = 0,
-    g_bvGotP1 = 0, g_bvWantP1 = 0, g_bvGotP2 = 0, g_bvWantP2 = 0, g_bvGotP3 = 0, g_bvWantP3 = 0;
-
-void RescueOnFractalus::verifyBoostViewport(bool tunnel, int K)
-{
-    const uint8_t* p1 = (const uint8_t*)tunnelBitmap->data;
-    const uint32_t* sh = s_boostShadow;
-    for (int row = 0; row < (int)kTerrainHeight; row++, p1 += 120, sh += 10) {
-        const bool rings = tunnel && row >= K && row <= 85 - K;
-        const uint16_t base = (uint16_t)((rings ? 0x1000u : 0x2000u) + row * 46);
-        const uint32_t* rs = (const uint32_t*)(const void*)&mem[base + 4];
-        for (int g = 0; g < 10; g++) {
-            const uint32_t key = rs[g];
-            if (key != sh[g]) { g_bvRace++; continue; }        // source moved under us — benign
-            const uint8_t s0 = (uint8_t)(key >> 24), s1 = (uint8_t)(key >> 16),
-                          s2 = (uint8_t)(key >>  8), s3 = (uint8_t)key;
-            const uint32_t w1 = ((uint32_t)kGtia10BoostP1[s0] << 24) | ((uint32_t)kGtia10BoostP1[s1] << 16) |
-                                ((uint32_t)kGtia10BoostP1[s2] <<  8) |  (uint32_t)kGtia10BoostP1[s3];
-            const uint32_t w2 = ((uint32_t)kGtia10BoostP2[s0] << 24) | ((uint32_t)kGtia10BoostP2[s1] << 16) |
-                                ((uint32_t)kGtia10BoostP2[s2] <<  8) |  (uint32_t)kGtia10BoostP2[s3];
-            const uint32_t w3 = ((uint32_t)kGtia10BoostP3[s0] << 24) | ((uint32_t)kGtia10BoostP3[s1] << 16) |
-                                ((uint32_t)kGtia10BoostP3[s2] <<  8) |  (uint32_t)kGtia10BoostP3[s3];
-            const uint32_t g1 = ((const uint32_t*)p1)[g];
-            const uint32_t g2 = ((const uint32_t*)(p1 + 40))[g];
-            const uint32_t g3 = ((const uint32_t*)(p1 + 80))[g];
-            g_bvGroups++;
-            if (g1 != w1 || g2 != w2 || g3 != w3) {
-                g_bvBad++;
-                if (g_bvFirstRow == 0xFFFFFFFFu) {
-                    g_bvFirstRow = (unsigned long)row; g_bvFirstGrp = (unsigned long)g;
-                    g_bvFirstKey = key;
-                    g_bvGotP1 = g1; g_bvWantP1 = w1; g_bvGotP2 = g2; g_bvWantP2 = w2;
-                    g_bvGotP3 = g3; g_bvWantP3 = w3;
-                }
-            }
-        }
-    }
-}
-#endif
-
 // decodeTunnelRect: decode the sub-rectangle rows [rowLo..rowHi] × displayed bytes
 // [byteLo..byteHi] of the GTIA-10 tunnel-ring field at mem[$1000] into the tunnel bitmap.
 // $1000 (NOT $2000, which holds the door field) is where the genuine boot_standby_launch_driver renders
@@ -2102,118 +2076,196 @@ void RescueOnFractalus::decodeTunnelRect(int rowLo, int rowHi, int byteLo, int b
         }
         src += 46; p1 += 120;                        // walk to next row
     }
-    // This just painted tunnelBitmap through the FORWARD LUT, so decodeBoostViewport's content
-    // shadow no longer describes the bitmap.  (In practice the next boost cinematic re-clears it
-    // on entry anyway — this keeps the invariant true regardless of how the phase gates evolve.)
-    s_boostShadowStale = true;
 }
 
-// decodeBoostViewport: the boost reverse-tunnel row-by-row REVEAL.  Each viewport row's
-// source is read from the live $3000 launch DL's per-row mode-F LMS word (maintained by the
-// faithful emit_dl_coord_pairs, which the reverse-ring loop calls once per VBI-paced step to
-// convert rows $2000→$1000 from the centre outward — verified on-Amiga: at draw_pattern_byte
-// $09 exactly rows 33-42 + 57-66 held $1xxx, everything else still the DL leftover $2f74).
-// So: a row whose LMS is in [$1000,$2000) has been converted → decode the rings straight from
-// that LMS (this also gives the rev strand's mirrored bottom-half addresses for free); every
-// other row is not yet revealed → decode stars from $2000+row*46 (NOT the raw $2f74 leftover,
-// which points one row past the stars field).  During the stars sub-phase ($008D==0) the DL is
-// all $2f74 so every row is stars — identical to the old whole-buffer $2000 decode.  This
-// reproduces the Atari's row-by-row reveal and removes the whole-buffer $008D snap (the bowtie
-// flash) at the stars→tunnel handoff.  Full-viewport decode/frame is fine for a brief cinematic.
-void RescueOnFractalus::decodeBoostViewport()
+// GTIA nibble -> Amiga pen, read back out of the live boost LUT rather than re-deriving the remap:
+// the LUT is what the copper palette is wired to (plane k's byte carries pen bit k), so this cannot
+// drift from it, and it follows the boost's value-2/value-8 moves automatically.
+uint16_t RescueOnFractalus::boostPen(uint8_t colour) const
 {
-    if (!tunnelBitmap) return;
-    const bool tunnel = (mem[0x008D] != 0u);   // reverse-ring active (0 = stars sub-phase)
-    // Reverse-tunnel reveal band.  The $1000 ring field is a FULL nested-rectangle tunnel; the
-    // reveal shows a CONTIGUOUS band of rows centred on the vanishing point (rows 42/43), growing
-    // symmetrically outward, decoded LINEARLY (row r -> $1000+r*46, as the forward tunnel).  A
-    // symmetric band around the centre is a clean small tunnel; the earlier bugs came from decoding
-    // an ASYMMETRIC set (the Amiga emit converts fwd rows 42->0 but rev rows 57->85, skipping the
-    // centre 43-56) — a lopsided slice reads as a bowtie/staircase.  Measured on the Atari (rv_8.6,
-    // 22 rows in: rows 32-53 revealed = symmetric around 42.5).  So derive the band from the FWD
-    // strand alone: K = the topmost DL row (0..42) that emit has pointed at $1xxx; reveal [K, 85-K]
-    // and black (stars) outside.  As the reverse ring runs, K falls 42->0 and the tunnel grows.
-    int K = 43;
-    if (tunnel) {
-        for (int row = 0; row <= 42; row++) {
-            uint16_t lms = (uint16_t)(mem[0x300Au + row * 3] | (mem[0x300Bu + row * 3] << 8));
-            if (lms >= 0x1000u && lms < 0x2000u) { K = row; break; }
+    const uint8_t pat = (uint8_t)((colour << 4) | colour);
+    return (uint16_t)(((kGtia10BoostP1[pat] & 0x80u) ? 1u : 0u) |
+                      ((kGtia10BoostP2[pat] & 0x80u) ? 2u : 0u) |
+                      ((kGtia10BoostP3[pat] & 0x80u) ? 4u : 0u));
+}
+
+// drawTunnelColumns: the tail of draw_frame_pattern_seq (draw_frame_guide_columns) plots three
+// FULL-HEIGHT columns through plot_pixel_masked_core — a field writer OUTSIDE the span loop, so
+// the rectangle hook never sees it.  They sit at the vanishing point and are part of the static
+// image, so the painter has to reproduce them or the centre of the tunnel comes out empty.
+// Same 4-px nibble geometry as a rectangle's vertical edge, but each column picks its own parity
+// (plot_pixel_masked_core is per-pixel; the xL-parity quirk is fill_vertical_span_core's alone).
+void RescueOnFractalus::drawTunnelColumns(uint16_t rowBase, uint8_t colL, uint8_t colR,
+                                          uint8_t colR1, uint8_t colour)
+{
+    if (!boostRingsArmed || !tunnelBitmap || rowBase >= 0x2000u) return;
+    const uint16_t pen = boostPen(colour);
+    const uint8_t cols[3] = { colL, colR, colR1 };
+    for (int i = 0; i < 3; i++) {
+        const int byteCol = (int)(cols[i] >> 1);
+        if (byteCol < 4 || byteCol > 43) continue;
+        const uint16_t x = (uint16_t)((byteCol - 4) * 8 + ((cols[i] & 1) ? 4 : 0));
+        tunnelBitmap->fillColor(x, 0, 4, kTerrainHeight, pen);
+    }
+}
+
+// ---- direct tunnel-ring painting (the ROF_TUNNEL_RECT hook) --------------------------------
+// draw_symmetric_span_loop hands us each concentric rectangle it draws, so the rings are painted
+// straight into tunnelBitmap instead of being decoded back out of the mem[] GTIA field afterwards.
+// This is one hook for BOTH directions — the forward ring (draw_ring_frame_step) and the reverse
+// one (step_accum_sub_7e) share that loop.
+//
+// A rectangle is four solid runs of ONE pen.  Nothing here needs the field's previous contents:
+// the 6502's two mask tables ($66E9/$66FB, dumped 2026-08-10) are exactly "set this nibble to
+// colour, preserve the other" — OR = colour<<4 / AND = (colour<<4)|$0F for an even column, OR =
+// colour / AND = $F0|colour for an odd one — so every write is prev-independent.
+//
+// Geometry.  A field byte is 2 GTIA pixels and 8 Amiga pixels; the displayed window is field bytes
+// 4..43 (the wide-field crop).  So field pixel column p -> Amiga x = ((p>>1) - 4) * 8 + (p&1)*4,
+// and a field row is one bitmap row (the copper line-doubles the viewport).
+//   horizontal edges: whole bytes [byteLo..byteHi], on rows rowTop AND rowBot
+//   vertical edges:   one nibble (4 px) at columns xL and xR, rows rowBot..rowTop inclusive
+// ⚠ rowBot ($009F) is the SMALL row index (screen top) and rowTop ($009E) the large one — the
+// 6502's names are inverted with respect to the screen, and the span loop grows the rectangle by
+// stepping rowTop up and rowBot down.
+// ⚠ FAITHFUL QUIRK, do not "fix": fill_vertical_span_core picks its nibble mask from xL's parity
+// and applies that SAME mask at both columns, so when xL and xR have different parity the right
+// edge lands in the nibble xL selected, not its own.  Mirrored here.
+void RescueOnFractalus::drawTunnelRect(uint16_t rowBase, uint8_t rowTop, uint8_t rowBot,
+                                       uint8_t xL, uint8_t xR, uint8_t byteLo, uint8_t byteHi,
+                                       uint8_t colour)
+{
+    // NOTE: the probes below run BEFORE the tunnelBitmap null check deliberately — a probe that
+    // silently drops the very calls it is meant to account for is worse than no probe.
+#ifdef ROF_FLIGHT_PROBE
+    // Plumbing probe: does the hook fire, from which field, and with what geometry?
+    { extern volatile unsigned long g_trCalls, g_trDoors, g_trRows[8], g_trCols[8], g_trPen[8];
+      if (rowBase >= 0x2000u) g_trDoors++;
+      else { if (g_trCalls < 8) {
+                 g_trRows[g_trCalls] = ((unsigned long)rowTop << 8) | rowBot;
+                 g_trCols[g_trCalls] = ((unsigned long)xL << 24) | ((unsigned long)xR << 16) |
+                                       ((unsigned long)byteLo << 8) | byteHi;
+                 g_trPen[g_trCalls]  = colour; }
+             g_trCalls++; } }
+    // §0a: call site x render phase, measured, plus the run timeline.  A "run" ends when the call
+    // site changes or more than 8 vbi pass, so each pre-draw shows up as its own 43-rectangle burst
+    // with the sub-phase state ($008D/$008E) it ran under.
+    if (rowBase < 0x2000u) {
+        extern volatile unsigned char g_trSrc;
+        extern volatile unsigned long g_trBySrc[5], g_trPhase[15], g_trRunN;
+        extern volatile unsigned char g_trRunSrc[TR_RUNS], g_trRunPhase[TR_RUNS],
+                                      g_trRun8D[TR_RUNS], g_trRun8E[TR_RUNS];
+        extern volatile unsigned short g_trRunVbi0[TR_RUNS], g_trRunVbi1[TR_RUNS], g_trRunCnt[TR_RUNS];
+        const unsigned src = (g_trSrc < 5u) ? g_trSrc : 0u;
+        const unsigned phase = rsBoostViewport ? 2u : (rsBoostReturn ? 1u : 0u);
+        const unsigned short vbi = platform_frame_count();
+        g_trBySrc[src]++;
+        g_trPhase[src * 3u + phase]++;
+        const unsigned long r = g_trRunN;              // index of the run in progress (r-1)
+        const bool sameRun = r != 0 && r <= TR_RUNS &&
+                             g_trRunSrc[r - 1] == (unsigned char)src &&
+                             (unsigned short)(vbi - g_trRunVbi1[r - 1]) <= 8u;
+        if (!sameRun) {
+            g_trRunN = r + 1;
+            if (r < TR_RUNS) {
+                g_trRunSrc[r] = (unsigned char)src;
+                g_trRunPhase[r] = (unsigned char)phase;
+                g_trRun8D[r] = mem[0x008Du];
+                g_trRun8E[r] = mem[0x008Eu];
+                g_trRunVbi0[r] = vbi;
+                g_trRunCnt[r] = 0;
+            }
         }
+        { const unsigned long i = g_trRunN - 1u;
+          if (i < TR_RUNS) { g_trRunVbi1[i] = vbi; g_trRunCnt[i]++; } }
     }
-    // The shadow can only be trusted while it still describes what is IN tunnelBitmap.  The forward
-    // tunnel paints the same bitmap through a DIFFERENT LUT (decodeTunnelRect / kGtia10P*), so if it
-    // has run since, restore the invariant the same way boost entry does — clear the bitmap, zero the
-    // shadow — and let the pass below repaint every non-zero group.  Once per cinematic at most.
-    if (s_boostShadowStale) {
-        AmigaHardware::blitterClear((uint16_t*)tunnelBitmap->data, 60, kTerrainHeight, 0);
-        for (int i = 0; i < (int)(sizeof s_boostShadow / sizeof s_boostShadow[0]); i++) s_boostShadow[i] = 0u;
-        AmigaHardware::blitterWait();
-        s_boostShadowStale = false;
+#endif
+    // ARMED ONLY DURING THE BOOST.  Ring rectangles are emitted at four points in a session and
+    // only two of them are ours (measured 2026-08-10, run timeline in the §0a table of
+    // docs/boost-tunnel-direct-handoff.md): the boost's static pre-draw (L_6047, during the stars
+    // sub-phase) and the reverse groups (step_accum_sub_7e).  The other two — the boot pre-build
+    // and the NEXT launch's pre-build — belong to the FORWARD tunnel, which keeps its own decode
+    // path, and painting them here would corrupt whatever the boost is displaying.
+    if (!boostRingsArmed) return;
+    if (!tunnelBitmap) return;
+    if (rowBase >= 0x2000u) return;         // the $2000 door field keeps its own decode path
+
+    const uint16_t pen = boostPen(colour);
+    const int kRows = (int)kTerrainHeight;
+    // Horizontal edges — whole bytes, clipped to the displayed window [4..43].
+    int bLo = (int)byteLo, bHi = (int)byteHi;
+    if (bLo < 4) bLo = 4;
+    if (bHi > 43) bHi = 43;
+    if (bLo <= bHi) {
+        const uint16_t hx = (uint16_t)((bLo - 4) * 8);
+        const uint16_t hw = (uint16_t)((bHi - bLo + 1) * 8);
+        if ((int)rowTop < kRows) tunnelBitmap->fillColor(hx, rowTop, hw, 1, pen);
+        if ((int)rowBot < kRows) tunnelBitmap->fillColor(hx, rowBot, hw, 1, pen);
     }
+    paintVSpan(rowBot, rowTop, xL, xR, pen);   // vertical edges
+}
+
+// paintVSpan: the two 4-px vertical edges of a span pair, rows rowBot..rowTop inclusive.
+// ⚠ FAITHFUL QUIRK, do not "fix": fill_vertical_span_core picks its nibble mask from xL's parity
+// and applies that SAME mask at BOTH columns, so when xL and xR have different parity the right
+// edge lands in the nibble xL selected, not its own.  Mirrored here.
+void RescueOnFractalus::paintVSpan(uint8_t rowBot, uint8_t rowTop, uint8_t xL, uint8_t xR,
+                                   uint16_t pen)
+{
+    if (rowBot > rowTop) return;
+    const int kRows = (int)kTerrainHeight;
+    int vy = (int)rowBot, vh = (int)rowTop - (int)rowBot + 1;
+    if (vy >= kRows) return;
+    if (vy + vh > kRows) vh = kRows - vy;
+    const int nib = (xL & 1) ? 4 : 0;             // the quirk: xL's parity picks BOTH nibbles
+    const int cL = (int)(xL >> 1), cR = (int)(xR >> 1);
+    if (cL >= 4 && cL <= 43)
+        tunnelBitmap->fillColor((uint16_t)((cL - 4) * 8 + nib), (uint16_t)vy, 4, (uint16_t)vh, pen);
+    if (cR >= 4 && cR <= 43)
+        tunnelBitmap->fillColor((uint16_t)((cR - 4) * 8 + nib), (uint16_t)vy, 4, (uint16_t)vh, pen);
+}
+
+// drawTunnelVSpan: the ROF_TUNNEL_VSPAN hook — one vertical span pair from plot_terrain_span, the
+// third $1000 writer.  It both ERASES the static pre-draw (colour 8, straight after it) and draws
+// one coloured pair per revealed row (emit_dl_coord_pairs tail-calls it during the reveal), so the
+// painter is wrong in both directions without it.
+void RescueOnFractalus::drawTunnelVSpan(uint16_t rowBase, uint8_t r0, uint8_t r1, uint8_t colL,
+                                        uint8_t colR, uint8_t colour)
+{
+    if (!boostRingsArmed || !tunnelBitmap || rowBase >= 0x2000u) return;
+    paintVSpan(r0, r1, colL, colR, boostPen(colour));
+}
+
+// decodeBoostStars: convert the $2000 GTIA-10 starfield into viewportBitmap for the boost
+// cinematic.  This is the ONLY decode left in the reverse cinematic — the rings are painted
+// straight into tunnelBitmap by drawTunnelRect, and the copper picks between the two bitmaps per
+// band, so the reveal itself costs nothing and the $1000 field is never read back.
+//
+// fill_region_2000 is the sole $2000 writer and re-fills only twice per cinematic, so the caller
+// gates this on g_boostStarsDirty.  That is a CONTENT-change gate on a single-writer field, not
+// the per-frame decode-on-change gate that rendered a bowtie (docs/boost-cinematic-plan.md item 2):
+// there is no multi-writer mid-update state here to freeze.
+void RescueOnFractalus::decodeBoostStars()
+{
+    if (!viewportBitmap) return;
 #ifdef ROF_FLIGHT_PROBE
     unsigned long _b0 = rof_subclock(), _bi = g_isrBeamLines;
 #endif
-    // Scan the source a LONG at a time against a content shadow and decode only the four-byte
-    // groups that changed: skip the group when its 4 source bytes are byte-identical to what was
-    // last decoded into the bitmap.
-    //
-    // ⚠ This is memoization, NOT the frame-level decode-on-change gate that was tried and abandoned
-    // in 2026-07 (docs/boost-cinematic-plan.md item 2).  That gate SKIPPED whole frames, which HELD
-    // any mid-reveal state a writer had not settled yet (a stray teal reveal row; the final clear's
-    // outermost-ring colour).  This runs the full pass EVERY frame and compares actual content, so
-    // the output is byte-identical to the unconditional decode: a group is skipped only when
-    // re-decoding it would have stored exactly the bytes already there.  Multi-writer races are
-    // self-healing for the same reason — the key is read ONCE into a local and recorded only when
-    // the group is stored, so a VBI write landing after the read simply mismatches next frame.
-    // The row's source BASE is deliberately not part of the key: the same 4 bytes decode to the
-    // same output through the same LUT whichever field they came from, so a row crossing the
-    // reveal boundary into identical content correctly stores nothing.
-    //
-    // Measured (2026-08-10, FORCE_RETURN, 96 reverse-tunnel decodes): only 35 of the 860 groups per
-    // decode actually change — 4% — so this skips ~96% of a pass that cost 847 beam ticks (54 ms).
-    uint8_t*  p1 = (uint8_t*)tunnelBitmap->data;
-    uint32_t* sh = s_boostShadow;      // walks CONTINUOUSLY (the inner loop advances it 10 per row;
-                                       // do NOT also step it in the for-increment)
-    for (int row = 0; row < (int)kTerrainHeight; row++, p1 += 120) {
-        // Stars ($008D==0): whole viewport = $2000 starfield.  Tunnel: rings ($1000+row*46) inside
-        // the symmetric reveal band [K, 85-K]; the black space surround OUTSIDE it.
-        const bool rings = tunnel && row >= K && row <= 85 - K;
-        const uint16_t base = (uint16_t)((rings ? 0x1000u : 0x2000u) + row * 46);
-        // +4: wide-field crop.  base+4 is EVEN but not always 4-aligned (stride 46), which is all a
-        // 68000 long access needs — it faults on ODD only; 4-alignment is a 68020+ perf matter.
-        const uint32_t* rs = (const uint32_t*)(const void*)&mem[base + 4];
-        uint8_t* d = p1;                               // plane1 byte 0 of this group (plane2 +40, +80)
-        const uint32_t* const rsEnd = rs + 10;
-        do {                                           // pointer-compare exit test: without it ivopts
-            const uint32_t key = *rs;                  // rewrites all three IVs into (0,An,Dn.L) forms
-            if (key != *sh) {                          // (CLAUDE.md, the 3+-pointer-loop pathology)
-                *sh = key;
-                // Compare by the long, but STORE by the byte.  Packing the four LUT results back
-                // into one long per plane looked like the door-decoder trick, and it is — for that
-                // decoder.  Here it measured WORSE (the stars full decode went 818 -> 1593 ticks):
-                // the 9 extra swap/clr.w/or.l ops the packing needs cost more than the 9 chip-RAM
-                // byte stores they replace.  Only the SCAN needed to be long-granular.
-                const uint8_t* s = (const uint8_t*)rs; // big-endian: s[0] is key's high byte
-                const uint8_t s0 = s[0], s1 = s[1], s2 = s[2], s3 = s[3];
-                d[ 0] = kGtia10BoostP1[s0]; d[ 1] = kGtia10BoostP1[s1];
-                d[ 2] = kGtia10BoostP1[s2]; d[ 3] = kGtia10BoostP1[s3];
-                d[40] = kGtia10BoostP2[s0]; d[41] = kGtia10BoostP2[s1];
-                d[42] = kGtia10BoostP2[s2]; d[43] = kGtia10BoostP2[s3];
-                d[80] = kGtia10BoostP3[s0]; d[81] = kGtia10BoostP3[s1];
-                d[82] = kGtia10BoostP3[s2]; d[83] = kGtia10BoostP3[s3];
-#ifdef ROF_FLIGHT_PROBE
-                g_bTunGroups++;
-#endif
-            }
-            rs++; sh++; d += 4;
-        } while (rs != rsEnd);
+    uint8_t* d = (uint8_t*)viewportBitmap->data;
+    // +4: wide-field crop.  base+4 is EVEN but not always 4-aligned (stride 46), which is all a
+    // 68000 long access needs — it faults on ODD only; 4-alignment is a 68020+ perf matter.
+    const uint8_t* src = (const uint8_t*)(const void*)&mem[0x2000u + 4];
+    for (int row = 0; row < (int)kTerrainHeight; row++, d += 120, src += 46) {
+        for (int b = 0; b < 40; b++) {
+            const uint8_t s = src[b];
+            d[b] = kGtia10BoostP1[s]; d[b + 40] = kGtia10BoostP2[s]; d[b + 80] = kGtia10BoostP3[s];
+        }
     }
-#ifdef ROF_BOOST_VERIFY
-    verifyBoostViewport(tunnel, K);
-#endif
+    // The boost has just filled viewportBitmap with something renderViewportModeD did not put
+    // there, so make the next stars/planet decode see a base mismatch and full-clear first.
+    viewportLastBase = 0x2000u;
 #ifdef ROF_FLIGHT_PROBE
-    { unsigned long _d = (rof_subclock() - _b0) - (g_isrBeamLines - _bi);
-      if (tunnel) g_bTunTicks += _d; else g_bStarTicks += _d; }
+    g_bStarTicks += (rof_subclock() - _b0) - (g_isrBeamLines - _bi);
 #endif
 }
 
@@ -3424,13 +3476,13 @@ void RescueOnFractalus::renderFrame()
     // (g_tunBandMode==0); thereafter the $52D7 VBI's draw_ring_frame_step draws each expanding
     // black clear frame into mem[$1000] and publishes the exact band it touched (g_tunBandMode==1
     // + the g_tun* bounds).  Decode only that band into tunnelBitmap — no shadow scan.
-    // ⚠ SKIP during the boost: decodeBoostViewport owns the tunnelBitmap there.  The boost's
+    // ⚠ SKIP during the boost: the direct ring painter owns the tunnelBitmap there.  The boost's
     // draw_frame_pattern_seq plots its ring field into $1000 and sets g_tunnelFieldDirty during
     // the STARS sub-phase; if this forward-tunnel path decodes it, the $1000 rings (whose value-0
     // exit-clear pixels are pen7 black) flash over the starfield on any frame where the boost
-    // branch's decodeBoostViewport doesn't re-overwrite it = the bowtie + black-stars-on-salmon.
+    // branch doesn't re-overwrite it = the bowtie + black-stars-on-salmon.
     // ⚠ SKIP only while the BOOST owns tunnelBitmap.  The boost owns it during:
-    //   (a) rsBoostViewport — decodeBoostViewport is painting the stars / reverse tunnel; and
+    //   (a) rsBoostViewport — drawTunnelRect is painting the reverse-tunnel rings into it; and
     //   (b) the T6 handoff hold AND its g_doorFieldReady 0->1 EDGE frame, where the tunnel copper
     //       is still the live display (copper installs defer to vblank, so staticStandby's list only
     //       takes over next frame) — a decode there re-paints $1000 rings into the still-shown
@@ -3581,7 +3633,14 @@ void RescueOnFractalus::renderFrame()
     // (The committed code always decoded $1000 → stars showed the empty/bowtie ring field instead
     // of the starfield.  See docs/boost-cinematic-plan.md §1b.)  Placed before staticStandby so it
     // wins over the (mispositioned) Standby door copper the forward gates would otherwise select.
-    if (rsBoostViewport && tunnelCopper) {
+    if (rsBoostViewport && tunnelCopper[0]) {
+        // The rings and the stars live in SEPARATE bitmaps and the copper picks between them per
+        // band (setRevealBands), so nothing is composited and the $1000 ring field is never
+        // decoded: draw_symmetric_span_loop hands each ring rectangle straight to drawTunnelRect.
+        //   tunnelBitmap   = the rings, painted directly, shown only inside the reveal band.
+        //   viewportBitmap = the $2000 starfield, decoded twice per cinematic.  It is genuinely
+        //     free here — renderViewportModeD is skipped by boostOwnsTunnel and the Standby door
+        //     field decodes into doorScrollBitmap.
         if (!tunnelCopperInstalled) {
             // Defer the install until the star pens are seeded.  boot_standby_launch_driver writes the star
             // pens $08D4-$08D9 (=color_ring) ONE frame after the boost viewport becomes active,
@@ -3595,49 +3654,67 @@ void RescueOnFractalus::renderFrame()
                 return;   // pens not ready yet — hold the ascent copper one more frame
             // First boost-viewport frame: the faithful boot_standby_launch_driver writes the $2000 starfield
             // ONE frame later, so the source field may still hold the stale standby door-field
-            // ("LEVEL NN") content and would decode as a garbage flash.  Clear the bitmap instead
-            // (→ pen0 = color00 = $0071, the salmon fade bg) and skip this frame's decode; the next
-            // frame decodes the ready starfield.
-            uint8_t* bd = (uint8_t*)tunnelBitmap->data;
-            for (int i = 0; i < 120 * (int)kTerrainHeight; i++) bd[i] = 0;
-            // This is the one place tunnelBitmap is fully cleared, so it is where
-            // decodeBoostViewport's content shadow becomes valid: zero = "this group is cleared",
-            // which is exactly what the bitmap now holds (source byte 0 decodes to 0 in all planes).
-            for (int i = 0; i < (int)(sizeof s_boostShadow / sizeof s_boostShadow[0]); i++) s_boostShadow[i] = 0u;
-            s_boostShadowStale = false;
-            updateTunnelCopper(true);
-            AmigaHardware::setCopperList(*tunnelCopper, false);
+            // ("LEVEL NN") content and would decode as a garbage flash.  Clear the STAR bitmap
+            // instead (→ pen0 = color00 = $0071, the salmon fade bg) and skip this frame's decode;
+            // the next frame decodes the ready starfield.
+            AmigaHardware::blitterClear((uint16_t*)viewportBitmap->data, 60, kTerrainHeight, 0);
+            // ⚠ Prime the RING bitmap to the field's BACKGROUND pen, NOT pen 0.  The painter writes
+            // only rectangles; the decode it replaces also wrote everything BETWEEN them, which is
+            // the untouched field value $88 = GTIA value 8.  Priming to 0 left ~6% of the revealed
+            // band wrong and read on screen as teal "gates opening" instead of a rectangle growing
+            // from the centre (measured 2026-08-10).  Derive the pen from the LUT so it follows the
+            // boost's value-8 -> color02 remap instead of hardcoding it.
+            const uint16_t bgPen = (uint16_t)(((kGtia10BoostP1[0x88] & 0x80u) ? 1u : 0u) |
+                                              ((kGtia10BoostP2[0x88] & 0x80u) ? 2u : 0u) |
+                                              ((kGtia10BoostP3[0x88] & 0x80u) ? 4u : 0u));
+            AmigaHardware::blitterWait();
+            tunnelBitmap->fillColor(0, 0, kW, kTerrainHeight, bgPen);
+            boostRingsArmed = true;      // from here every ring rectangle is painted, not decoded
             tunnelCopperInstalled = true;
             g_boostStarsDirty = 1;          // force the first stars decode once the field is ready
-        } else if (mem[0x008D] == 0u) {
-            // STARS sub-phase: whole viewport = the $2000 starfield.  fill_region_2000 is the sole
-            // $2000 writer and re-fills the field only twice per cinematic (the star fade in between
-            // is palette-only, read live by the copper), so decode ONLY when g_boostStarsDirty says
-            // the content changed — not the old ~56ms full decode EVERY frame.
-            if (g_boostStarsDirty) {
-                decodeBoostViewport();
-                g_boostStarsDirty = 0;
+        } else if (g_boostStarsDirty) {
+            // fill_region_2000 is the sole $2000 writer and re-fills the starfield only twice per
+            // cinematic (the fade in between is palette-only, read live by the copper), so decode
+            // only when the content actually changed.
+            decodeBoostStars();
+            g_boostStarsDirty = 0;
 #ifdef ROF_FLIGHT_PROBE
-                { extern volatile unsigned long g_bStarDec; g_bStarDec++; }
+            { extern volatile unsigned long g_bStarDec; g_bStarDec++; }
 #endif
-            }
-            updateTunnelCopper(false);
-        } else {
-            // REVERSE TUNNEL sub-phase: decode the full boost viewport every frame.  The $1000 ring
-            // field is written by BOTH the main loop (draw_frame_pattern_seq's one-shot pre-draw)
-            // AND the VBI (step_accum_sub_7e's ring draws), progressively REVEALED row by row as
-            // emit_dl_coord_pairs rewrites the $3000 DL LMS $2000->$1000 (the symmetric band
-            // decodeBoostViewport reads).  A decode-on-change gate here proved fragile: skipping a
-            // frame HOLDS any mid-reveal / mid-clear state the next writer hasn't settled yet (a
-            // stray teal reveal row; the final clear's outermost-ring colour), which per-frame
-            // re-decoding heals automatically.  This sub-phase is brief, so pay the full decode.
-            // (The big win — the ~150-frame STARS sub-phase — is safely dirty-gated above.)
-            decodeBoostViewport();
-#ifdef ROF_FLIGHT_PROBE
-            { extern volatile unsigned long g_bTunDec; g_bTunDec++; }
-#endif
-            updateTunnelCopper(false);
         }
+#ifdef ROF_FLIGHT_PROBE
+        // §2 fidelity differential — prove the painted bitmap numerically BEFORE trusting the screen.
+        if (mem[0x008D] != 0u) {
+            const uint16_t Kv = boostRevealK();
+            const uint8_t* bp = (const uint8_t*)tunnelBitmap->data + (uint32_t)Kv * 120u;
+            g_dpFrames++;
+            for (int row = Kv; row <= 85 - (int)Kv; row++, bp += 120) {
+                const uint8_t* src = (const uint8_t*)(const void*)&mem[0x1000u + row * 46 + 4];
+                for (int b = 0; b < 40; b++) {
+                    const uint8_t sb = src[b];
+                    g_dpBytes++;
+                    if (bp[b] != kGtia10BoostP1[sb] || bp[b + 40] != kGtia10BoostP2[sb] ||
+                        bp[b + 80] != kGtia10BoostP3[sb]) {
+                        if (!g_dpBad) {
+                            g_dpFirst = ((unsigned long)row << 8) | (unsigned)b;
+                            g_dpGot  = ((unsigned long)bp[b] << 16) | ((unsigned long)bp[b + 40] << 8) | bp[b + 80];
+                            g_dpWant = ((unsigned long)kGtia10BoostP1[sb] << 16) |
+                                       ((unsigned long)kGtia10BoostP2[sb] << 8) | kGtia10BoostP3[sb];
+                        }
+                        if (sb == 0x88u) g_dpExtra++; else g_dpMissing++;
+                        g_dpCol[b]++;
+                        g_dpBad++;
+                    }
+                }
+                // Row-42 side-by-side snapshot — reading the bytes beats inferring from counters.
+                if (row == 42 && !g_dpSnapDone && Kv <= 20) {
+                    for (int i = 0; i < 40; i++) { g_dpSrc42[i] = src[i]; g_dpB1[i] = bp[i]; }
+                    g_dpSnapDone = 1;
+                }
+            }
+        }
+#endif
+        showTunnelCopper();     // reveal band K + palette, into the back buffer, swapped at vblank
         standbyCopperInstalled = false; planetCopperInstalled = false;
         flightCopperInstalled = false; titleScreenCopperInstalled = false;
 #ifdef ROF_FLIGHT_PROBE
@@ -3691,11 +3768,13 @@ void RescueOnFractalus::renderFrame()
         // green and k..7 read teal, with k = filled-row count growing 0->8.  (Analogous to the
         // FORWARD doors->tunnel green->purple reveal, just the opposite colour + fill direction.)
         // Measured: $0C88 fills 00->ff top-down over the 8 hold frames; $0071 = $C0 throughout.
-        if (tunnelCopper && tunnelCopperInstalled) {
+        if (tunnelCopper[tunnelActive] && tunnelCopperInstalled) {
             uint16_t k = 8;
             for (uint16_t i = 0; i < 8; i++) if (mem[0x0C88 + i] == 0u) { k = i; break; }
-            tunnelCopper->setBandTopColor00(true, atariToOCS(mem[0x0071]));   // band top = dark green
-            tunnelCopper->setBandReveal(k, atariToOCS(mem[0x08D8]));          // teal from row k down
+            // Poked in place on the LIVE list: these are COLOUR moves, which are safe mid-frame
+            // (a torn colour is invisible for one frame).  Only POINTER moves need the swap.
+            tunnelCopper[tunnelActive]->setBandTopColor00(true, atariToOCS(mem[0x0071]));  // band top = dark green
+            tunnelCopper[tunnelActive]->setBandReveal(k, atariToOCS(mem[0x08D8]));         // teal from row k down
         }
         return;
     }
@@ -3795,15 +3874,10 @@ void RescueOnFractalus::renderFrame()
     // half-height the doors are fully open and the single full tunnel band takes over.
     const uint16_t half = (uint16_t)(kTerrainHeight / 2);
     const uint16_t g2   = rsLaunched ? (uint16_t)(0x2Bu - mem[MEM_terrain_scroll_counter]) : 0;
-    if (tunnelCopper && g2 >= half) {
+    if (tunnelCopper[0] && g2 >= half) {
         // ---- scene 5: tunnel descent (doors fully open) ----
-        if (!tunnelCopperInstalled) {
-            updateTunnelCopper(true);
-            AmigaHardware::setCopperList(*tunnelCopper, false);
-            tunnelCopperInstalled = true;
-        } else {
-            updateTunnelCopper(false);
-        }
+        showTunnelCopper();          // one full-height ring band (setRevealBands K = 0)
+        tunnelCopperInstalled = true;
     } else if (doorsCopper[0]) {
         // ---- scene 4: hangar doors parting (also the closed g2==0 first frame) ----
         // Populate the BACK buffer fully (geometry + colours), then swap it in — the swap
@@ -4154,11 +4228,41 @@ void RescueOnFractalus::updateDoorsCopper(DoorsCopperList* dc)
                         atariToOCS(mem[MEM_color_ring + 5]));     // tunnel pen3 ($08D9)
 }
 
-// updateTunnelCopper(): refresh the TunnelCopperList for the full tunnel descent (scene 5,
-// doors fully open).  Constant title/gauge/compass via poke-on-change; the tunnel ring
-// palette (pen0 black + pens 1-6 fed by the rotating $08D4-$08D9 ring, +3 rotated as the
-// Atari tunnel DLI applies) is poked when any entry changed.
-void RescueOnFractalus::updateTunnelCopper(bool force)
+// boostRevealK(): how far the reverse-tunnel reveal has opened, as the first viewport row that
+// shows rings — 43 means nothing yet, 0 means the rings fill the region.  Read from the live
+// $3000 launch DL's per-row mode-F LMS words, which the faithful emit_dl_coord_pairs rewrites
+// $2000 -> $1000 one row per reverse-ring step.
+// ⚠ Derive it from the FORWARD strand (rows 0..42) alone and MIRROR it.  Reading the converted
+// rows directly gives an asymmetric set (fwd rows 42->0 but rev rows 57->85) and renders as a
+// bowtie; the Atari's reveal is symmetric about the vanishing point (measured rv_8.6, 22 rows in:
+// rows 32-53 = symmetric around 42.5).
+uint16_t RescueOnFractalus::boostRevealK() const
+{
+    for (int row = 0; row <= 42; row++) {
+        const uint16_t lms = (uint16_t)(mem[0x300Au + row * 3] | (mem[0x300Bu + row * 3] << 8));
+        if (lms >= 0x1000u && lms < 0x2000u) return (uint16_t)row;
+    }
+    return 43;
+}
+
+// showTunnelCopper(): populate the BACK tunnel buffer and swap it in.  setCopperList only writes
+// COP1LC, which the copper re-reads at the next vblank, so the swap is atomic with respect to the
+// beam — which is the whole point: the reveal moves bitplane POINTERS, and poking one on the live
+// list can be read half-written (a torn pointer garbages the entire viewport for a frame).
+void RescueOnFractalus::showTunnelCopper()
+{
+    const uint8_t back = (uint8_t)(1 - tunnelActive);
+    if (!tunnelCopper[back]) return;
+    updateTunnelCopper(tunnelCopper[back]);
+    AmigaHardware::setCopperList(*tunnelCopper[back], false);
+    tunnelActive = back;
+}
+
+// updateTunnelCopper(): fully populate ONE TunnelCopperList buffer — the tunnel descent (scene 5,
+// doors fully open) and the boost reverse cinematic both use it.  Every dynamic slot is written
+// unconditionally: this always targets the BACK buffer, whose contents are two frames stale, so a
+// poke-on-change cache would be comparing against the wrong list.
+void RescueOnFractalus::updateTunnelCopper(TunnelCopperList* tunnelCopper)
 {
     const uint16_t titleBg  = atariToOCS(mem[0x02C8]);
     const uint16_t titlePf0 = atariToOCS(mem[MEM_text_color_pf0]);
@@ -4170,13 +4274,18 @@ void RescueOnFractalus::updateTunnelCopper(bool force)
     // boost_stars/boost_tunnel savestates), so use that in boost mode.
     const uint16_t postCol = rsBoostViewport ? atariToOCS(0x06) : titleBg;
 
-    if (force || titleBg != tnTitleBg || titlePf0 != tnTitlePf0) {
-        tunnelCopper->setTitlePalette(titleBg, titlePf0, atariToOCS(0x78));
-        tnTitleBg = titleBg; tnTitlePf0 = titlePf0;
-    }
-    if (force || postCol != tnPostCol) { tunnelCopper->setSpritePostColor(postCol); tnPostCol = postCol; }
-    if (force || energyCol != tnEnergyCol)   { tunnelCopper->setEnergyIndicatorColor(energyCol);   tnEnergyCol = energyCol; }
-    if (force || compassCol != tnCompassCol) { tunnelCopper->setCompassColor(compassCol); tnCompassCol = compassCol; }
+    tunnelCopper->setTitlePalette(titleBg, titlePf0, atariToOCS(0x78));
+    tunnelCopper->setSpritePostColor(postCol);
+    tunnelCopper->setEnergyIndicatorColor(energyCol);
+    tunnelCopper->setCompassColor(compassCol);
+    // Terrain-region bitmap bands.  FORWARD descent: one full-height band from tunnelBitmap
+    // (K = 0).  BOOST: the reverse-tunnel reveal — rings from tunnelBitmap in [K, 85-K], the
+    // starfield from viewportBitmap outside it.  Nothing is composited; the copper picks.
+    if (rsBoostViewport)
+        tunnelCopper->setRevealBands(boostRevealK(), (uint32_t)tunnelBitmap->data,
+                                     (uint32_t)viewportBitmap->data);
+    else
+        tunnelCopper->setRevealBands(0, (uint32_t)tunnelBitmap->data, (uint32_t)tunnelBitmap->data);
     // Windscreen-band corner + tunnel palette.  FORWARD and BOOST share the copper but use DIFFERENT
     // GTIA->pen mappings (kGtia10P vs kGtia10BoostP), so their palette wiring differs.  Shared bits:
     uint16_t ring[6];
@@ -4226,15 +4335,9 @@ void RescueOnFractalus::updateTunnelCopper(bool force)
           if (mem[0x008D] != 0u) g_bwLine[bGreenLine]++; else g_bwLineStars[bGreenLine]++; }
 #endif
 
-        bool changed = (col00 != tnCorner) || (black != tnPen0) || (colBK != tnColBK);
-        for (int i = 0; i < 6; i++) if (ring[i] != tnRing[i]) changed = true;
-        if (force || changed) {
-            // pen0=color00 (value-2 outermost ring); pen1/3=ring[3]/ring[5] (COLPM1/3); pen2=color02
-            // (value-8 COLBK); pen4/5/6=ring[0..2] (COLPF0/1/2); pen7=value-0 black.
-            tunnelCopper->setTunnelColors(col00, ring[3], colBK, ring[5], ring[0], ring[1], ring[2], black);
-            tnCorner = col00; tnPen0 = black; tnColBK = colBK;
-            for (int i = 0; i < 6; i++) tnRing[i] = ring[i];
-        }
+        // pen0=color00 (value-2 outermost ring); pen1/3=ring[3]/ring[5] (COLPM1/3); pen2=color02
+        // (value-8 COLBK); pen4/5/6=ring[0..2] (COLPF0/1/2); pen7=value-0 black.
+        tunnelCopper->setTunnelColors(col00, ring[3], colBK, ring[5], ring[0], ring[1], ring[2], black);
     } else {
         // FORWARD tunnel (kGtia10P) — the long-working mapping, UNCHANGED.  The corner triangle is the
         // quad-width canopy-post player ($0C88-$0C8F), green (COLPM0/1 = mem[$0071]); the launch clears
@@ -4247,14 +4350,8 @@ void RescueOnFractalus::updateTunnelCopper(bool force)
         tunnelCopper->setBandReveal(greenLine, atariToOCS(mem[0x0071]));
 
         const uint16_t corner = atariToOCS(mem[0x08D8]);    // color00 = value-8 = the tunnel corner
-        bool ringChanged = (corner != tnCorner) || (black != tnPen0);
-        for (int i = 0; i < 6; i++) if (ring[i] != tnRing[i]) ringChanged = true;
-        if (force || ringChanged) {
-            // pen0/color00 = corner ($08D8); pens 1-3 = ring[3..5]; pens 4-6 = ring[0..2]; pen7 = black.
-            tunnelCopper->setTunnelColors(corner, ring[3], ring[4], ring[5], ring[0], ring[1], ring[2], black);
-            tnCorner = corner; tnPen0 = black;
-            for (int i = 0; i < 6; i++) tnRing[i] = ring[i];
-        }
+        // pen0/color00 = corner ($08D8); pens 1-3 = ring[3..5]; pens 4-6 = ring[0..2]; pen7 = black.
+        tunnelCopper->setTunnelColors(corner, ring[3], ring[4], ring[5], ring[0], ring[1], ring[2], black);
     }
 }
 
@@ -4334,6 +4431,12 @@ void RescueOnFractalus::deriveRenderSignals()
     // falls through to the normal rsStandby path.
     rsBoostReturn   = standbyVbi && (mem[0x003A] == 0xFFu);
     rsBoostViewport = rsBoostReturn && (mem[0x008D] != 0u || mem[0x008E] == 0u);
+    // Disarm the direct ring painter the moment the boost stops owning tunnelBitmap.  It is armed
+    // at the copper install and must NOT survive past here: the very next pre-draw is
+    // tunnel_prebuild_rings building the NEXT launch's forward rings (measured 2026-08-10 — 43
+    // rectangles at vbi 2678, ~17 frames after the reverse ring ended), and those would land in the
+    // bitmap the T6 handoff hold is still displaying.
+    if (!rsBoostViewport) boostRingsArmed = false;
 #ifdef ROF_FLIGHT_PROBE
     { extern volatile unsigned char g_boostRet, g_boostVp;
       g_boostRet = rsBoostReturn ? 1 : 0; g_boostVp = rsBoostViewport ? 1 : 0; }
@@ -4439,7 +4542,10 @@ void RescueOnFractalus::perFrameWork()
     // (pure CPU, ~7ms) — the blit runs in parallel with the sprite build and the shadow-zero loop,
     // so renderViewportModeD only has to blitterWait() for it (≈free) instead of stalling the CPU
     // ~7ms on it.  viewportForceFull is still set here (renderViewportModeD consumes it later).
-    if (rsStars && viewportForceFull && viewportBitmap && !viewportClearKicked) {
+    // ⚠ NOT during the boost: rsStars can be true while the reverse cinematic owns viewportBitmap
+    // as its STARFIELD buffer (the copper reads it for the rows outside the reveal band), and this
+    // clear would blank the starfield mid-cinematic.
+    if (rsStars && !rsBoostViewport && viewportForceFull && viewportBitmap && !viewportClearKicked) {
         AmigaHardware::blitterClear((uint16_t*)viewportBitmap->data, 60, 47, 0);
         viewportClearKicked = true;
     }
@@ -4848,6 +4954,12 @@ void RescueOnFractalus::render()
     // is the central 40 bytes — skip the 4 left overscan bytes (pure green fill).
     // This matches the title region, which already crops 2 mode-6 chars (= 16cc).
     static const int kTerrainXByteOffset = 4;
+    // ⚠ The BOOST cinematic owns BOTH viewport bitmaps — tunnelBitmap holds the painted rings and
+    // viewportBitmap holds its starfield — so no terrain-view decode may run while it is up.
+    // rsViewport is not enough on its own: there is a brief rsStars window DURING the boost (the
+    // same one that made the perFrameWork entry clear blank the starfield), and taking the branch
+    // below would decode the $1000 RING field as a mode-D field straight over the stars.
+    if (!rsBoostViewport) {
     if (rsViewport) {
         // Stars/planet (mem[$1000], stride 48) or flight (mem[$1070], stride 96 —
         // displayed offset-0 half).  Content changes every frame, so re-decode each
@@ -4922,6 +5034,7 @@ void RescueOnFractalus::render()
         // renderViewportModeD($1000) sees a base mismatch and blitter-clears first.
         viewportLastBase = 0x2000u;
     }
+    }   // !rsBoostViewport (the boost owns tunnelBitmap AND viewportBitmap)
 
     // ---- title region -------------------------------------------------------
     // Count-driven: repaint g_titleToRender cells straight from screen RAM (no shadow / compare).
@@ -5113,7 +5226,7 @@ void RescueOnFractalus::shutdown()
     delete planetCopper; planetCopper = nullptr;
     delete flightCopper; flightCopper = nullptr;
     for (int i = 0; i < 2; i++) { delete doorsCopper[i]; doorsCopper[i] = nullptr; }
-    delete tunnelCopper; tunnelCopper = nullptr;
+    for (int i = 0; i < 2; i++) { delete tunnelCopper[i]; tunnelCopper[i] = nullptr; }
     delete titleScreenCopper; titleScreenCopper = nullptr;
     delete emptyCopper;   emptyCopper   = nullptr;
     PlatformAmiga::audioShutdown();

@@ -46,6 +46,14 @@ public:
     // as a stripe).  active=true -> color00=color; active=false -> no-op (color00 inherits the
     // viewport register: the ring $08D8 once drawn, or the $0071 star fade).
     void setBandTopColor00(bool active, uint16_t color);
+    // Boost reverse-tunnel reveal: split the terrain region between the RING bitmap (rows
+    // [K, 85-K]) and the STAR bitmap (the rows outside it), so the reveal is two WAITs and 12
+    // pointer moves instead of recompositing both fields into one bitmap every frame.  K is the
+    // first ring row: >= 43 = nothing revealed (stars fill the region), 0 = rings fill it (which
+    // is also how the FORWARD descent asks for its plain full-height band — pass K = 0).
+    // ⚠ This moves band WAIT lines AND bitplane pointers, so it must only ever be written into
+    // the BACK buffer of a double-buffered list (a torn pointer garbages the whole viewport).
+    void setRevealBands(uint16_t K, uint32_t ringBase, uint32_t starBase);
     // Tunnel band colours: pen0 = color00 = the band corner (tunnel purple mem[$08D8], carried
     // into the band); pens 1-3 = ring[3..5] ($08D7-$08D9); pens 4-6 = ring[0..2] ($08D4-$08D6)
     // — the GTIA mode-10 pixel→ring +3 rotation the Atari tunnel DLI ($6CD7/$6CF1) applies;

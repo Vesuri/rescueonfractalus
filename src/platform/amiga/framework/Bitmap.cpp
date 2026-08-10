@@ -443,6 +443,66 @@ void Bitmap::fill(uint16_t x, uint16_t y, uint16_t fillWidth, uint16_t fillHeigh
 // Higher-level drawing (imported from DanceDiverse3) — unconditional C++ on both
 // compilers: these build on the clear/copy/line/fill primitives above (asm or C++,
 // per ASSEMBLER) and the masked blitter ops, so they need no asm counterpart.
+// Set a rectangle to a solid PEN.  A pen is planar, so plane k's fill value is 0xffff when bit k
+// of `color` is set and 0x0000 when it is clear — which makes each word either an OR with the
+// in-rect mask or an AND with its complement, one op either way, no read-shift-merge.
+//
+// x/width are in pixels and need no alignment: the two partial edge words are masked (fwm/lwm),
+// the interior is stored whole.  A single-word rect folds both masks together.
+//
+// CPU, deliberately, even though the class prefers the blitter: the caller that needs this is the
+// tunnel-ring span loop, which runs inside the 50 Hz VBI ISR, and the rectangles it draws are thin
+// (a ring edge is one row tall or 4 px wide).  Blitter setup per rect would exceed the copy, and
+// starting blits from the ISR races the main loop's queued ones.  A wide-rect blitter path can be
+// added behind a size test if a caller ever wants big fills — the masked-fill idiom is
+// BLTADAT=0xffff + BLTAFWM/BLTALWM as the mask, BLTBDAT = the plane value, C=D=dest, minterm 0xca.
+void Bitmap::fillColor(uint16_t x, uint16_t y, uint16_t fillWidth, uint16_t fillHeight, uint16_t color)
+{
+    if (fillWidth == 0) {
+        fillWidth = width;
+    }
+    if (fillHeight == 0) {
+        fillHeight = height;
+    }
+
+    uint16_t firstWord = x >> 4;
+    uint16_t lastWord = (x + fillWidth - 1) >> 4;
+    uint16_t widthWords = lastWord - firstWord + 1;
+    uint16_t destWidthWords = widthInWords();
+    uint16_t rowWords = rowSizeInWords();
+
+    // Masks carry 1 where the pixel is INSIDE the rectangle (bit 15 = leftmost pixel).
+    uint16_t firstMask = (uint16_t)(0xffff >> (x & 15));
+    uint16_t lastMask = (uint16_t)(0xffff << (15 - ((x + fillWidth - 1) & 15)));
+    if (widthWords == 1) {
+        firstMask &= lastMask;
+    }
+
+    uint16_t* planeStart = (uint16_t*)data + rof_mulu16(y, rowWords) + firstWord;
+
+    for (uint16_t plane = 0; plane < bitplanes; plane++) {
+        const bool set = ((color >> plane) & 1) != 0;
+        uint16_t* rowPtr = planeStart;
+
+        for (uint16_t row = 0; row < fillHeight; row++, rowPtr += rowWords) {
+            uint16_t* p = rowPtr;
+
+            if (widthWords == 1) {
+                if (set) *p |= firstMask; else *p &= (uint16_t)~firstMask;
+                continue;
+            }
+            if (set) *p |= firstMask; else *p &= (uint16_t)~firstMask;
+            p++;
+            for (uint16_t w = widthWords - 2; w != 0; w--) {
+                *p++ = set ? 0xffff : 0x0000;
+            }
+            if (set) *p |= lastMask; else *p &= (uint16_t)~lastMask;
+        }
+
+        planeStart += interleaved ? destWidthWords : bitplaneSizeInWords();
+    }
+}
+
 void Bitmap::polygon(const Polygon& polygon, uint16_t color, bool fillMode)
 {
     int point = 0;

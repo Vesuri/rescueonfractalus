@@ -1170,6 +1170,34 @@ void PlatformAmiga::flightScannerTick()
     if (s_scene) s_scene->decodeScannerBlinkCells();
 }
 
+// ROF_TUNNEL_RECT bridge: draw_symmetric_span_loop (rof_native.c) emits one concentric-rectangle
+// group member per call and we paint it straight into the tunnel bitmap.  Deliberately a plain
+// extern "C" call rather than a Platform virtual through platform_cbridge — this fires several
+// times per ring group from inside the 50 Hz VBI ISR, where the indirection is not free and the
+// work is Amiga-only rendering with no host counterpart.
+extern "C" void platform_tunnel_rect(uint16_t rowBase, uint8_t rowTop, uint8_t rowBot,
+                                     uint8_t xL, uint8_t xR, uint8_t byteLo, uint8_t byteHi,
+                                     uint8_t colour)
+{
+    if (s_scene) s_scene->drawTunnelRect(rowBase, rowTop, rowBot, xL, xR, byteLo, byteHi, colour);
+}
+
+// ROF_TUNNEL_COLS bridge: the pre-draw's three full-height guide columns, which are plotted
+// outside the span loop and so never reach platform_tunnel_rect.
+extern "C" void platform_tunnel_columns(uint16_t rowBase, uint8_t colL, uint8_t colR,
+                                        uint8_t colR1, uint8_t colour)
+{
+    if (s_scene) s_scene->drawTunnelColumns(rowBase, colL, colR, colR1, colour);
+}
+
+// ROF_TUNNEL_VSPAN bridge: plot_terrain_span's vertical pairs (the pre-draw erase + the reveal's
+// per-row coloured spans), which also bypass the rectangle hook.
+extern "C" void platform_tunnel_vspan(uint16_t rowBase, uint8_t r0, uint8_t r1, uint8_t colL,
+                                      uint8_t colR, uint8_t colour)
+{
+    if (s_scene) s_scene->drawTunnelVSpan(rowBase, r0, r1, colL, colR, colour);
+}
+
 // Flight/init timing probes (enable with `make PROBES=1` → -DROF_FLIGHT_PROBE).  Sub-frame
 // clock rof_subclock() = g_vbiCount*313 + beam_line, plus the accumulators that rof_native.c's
 // FP_* macros and the renderFrame/atmosphere probes below write into.  All read from the gdb

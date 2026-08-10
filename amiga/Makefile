@@ -330,16 +330,6 @@ ifdef BAND_VERIFY
 EXTRA_DEFINES += -DROF_BAND_VERIFY
 endif
 
-# Correctness aid: `make BOOST_VERIFY=1 PROBES=1 FORCE_RETURN=1` + amiga/boost_verify.gdb —
-# in-process differential for decodeBoostViewport's content shadow (the boost return-to-mother-ship
-# reverse-tunnel decode).  That shadow skips any 4-byte source group whose bytes are unchanged since
-# it was last decoded, which is only sound if the bitmap really still holds that group's decode; this
-# re-derives the expected planes for every group and compares.  RACE-AWARE: the VBI writes the $1000
-# ring field while the main loop decodes it, so a group whose source no longer matches the shadow is
-# counted as g_bvRace (benign, healed next frame) and skipped.  g_bvBad must stay 0.
-ifdef BOOST_VERIFY
-EXTRA_DEFINES += -DROF_BOOST_VERIFY
-endif
 
 # Correctness aid: `make SCAN_VERIFY=1 PROBES=1` + amiga/scan_verify.gdb — in-process differential
 # for the long-striding PMG run scans (pmgScanFirst / pmgScanBounds) that the scope-P3, viewport-P3

@@ -30,6 +30,15 @@ public:
     // Higher-level drawing (imported from DanceDiverse3). Portable C++ on both
     // compilers — they build on clear/copy/line/fill and the masked blitter ops,
     // so they need no hand-written asm counterpart and are always available.
+
+    // fillColor(): set a rectangle to a solid PEN.  clear() is the color==0 case and stays the
+    // better path for it (whole-plane, no read-modify-write, blitter-queued); this one exists for
+    // the cases that need an arbitrary pen — the tunnel-ring rectangles, which are drawn straight
+    // into the bitmap rather than decoded out of a mem[] field.  x/width are in PIXELS and need no
+    // alignment: the partial words at each end are masked.  Same CPU/blitter convention as the
+    // rest of the class (see the note in the body about why the ring path stays CPU-side).
+    void fillColor(uint16_t x, uint16_t y, uint16_t width, uint16_t height, uint16_t color);
+
     void polygon(const Polygon& polygon, uint16_t color = 1, bool fillMode = false);
     void combineWithMask(const Bitmap& background, const Bitmap& source, const Bitmap& mask, uint16_t destX = 0, uint16_t destY = 0, uint16_t backgroundX = 0, uint16_t backgroundY = 0, uint16_t sourceX = 0, uint16_t sourceY = 0, uint16_t maskX = 0, uint16_t maskY = 0, uint16_t width = 0, uint16_t height = 0, bool clearMasked = false);
     void patternWithMask(const Bitmap& mask, uint16_t destX = 0, uint16_t destY = 0, uint16_t maskX = 0, uint16_t maskY = 0, uint16_t width = 0, uint16_t height = 0, uint16_t pattern = 0xffff);

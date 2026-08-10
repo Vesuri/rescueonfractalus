@@ -887,6 +887,71 @@ extern volatile unsigned long g_alHudCalls;      /* # alien_shape_blit calls dur
 } while (0)
 #endif
 
+/* ---- direct tunnel-ring painting hooks (Amiga renderer) -------------------------------------
+ * The boost reverse cinematic does NOT decode its ring field: draw_symmetric_span_loop hands each
+ * concentric rectangle straight to the Amiga renderer, which paints it into the ring bitmap the
+ * copper shows inside the reveal band.  So these are part of the shipped Amiga build, not a probe
+ * or a build flag — the rings would simply be missing without them.
+ *
+ * ROF_TUNNEL_RECT: one rectangle.  Coordinates are the loop's own, in FIELD units: rowTop/rowBot
+ * index the $073D/$0793 row-address table, xL/xR are GTIA pixel columns (2 per byte), byteLo/byteHi
+ * are the horizontal edge's inclusive byte columns after the odd/even nudge.  rowBase identifies
+ * the target field ($1000 rings vs $2000 doors) — the same table entry the loop already loaded, so
+ * the hook costs an argument rather than a lookup.  colour is the GTIA nibble the fills use.
+ * ROF_TUNNEL_COLS: the pre-draw's tail (draw_frame_guide_columns) plots three FULL-HEIGHT columns
+ * through plot_pixel_masked_core, i.e. a field writer OUTSIDE the span loop that the rectangle hook
+ * cannot see.  They land at the vanishing point, so a painter that skips them leaves the middle of
+ * the tunnel empty.
+ * ROF_TUNNEL_VSPAN: one vertical span PAIR from the fill_vertical_span shim — i.e. plot_terrain_span,
+ * the third field writer.  It runs twice in the reverse cinematic and both matter: once with colour
+ * 8 straight after the static pre-draw (the pass that ERASES that image back to background), and
+ * then once per revealed row as emit_dl_coord_pairs tail-calls it with the cycling ring colour.
+ * Measured 2026-08-10: without this the painted bitmap carried the erased pre-draw as 6% stale ink.
+ *
+ * Nothing here needs the field's previous contents: the 6502's two mask tables ($66E9/$66FB) are
+ * exactly "set this nibble to colour, preserve the other", so every write is prev-independent.
+ * That is the fact the whole no-decode design rests on. */
+#ifdef ROF_PLATFORM_AMIGA
+extern void platform_tunnel_rect(uint16_t rowBase, uint8_t rowTop, uint8_t rowBot,
+                                 uint8_t xL, uint8_t xR, uint8_t byteLo, uint8_t byteHi,
+                                 uint8_t colour);
+extern void platform_tunnel_columns(uint16_t rowBase, uint8_t colL, uint8_t colR, uint8_t colR1,
+                                    uint8_t colour);
+extern void platform_tunnel_vspan(uint16_t rowBase, uint8_t r0, uint8_t r1, uint8_t colL,
+                                  uint8_t colR, uint8_t colour);
+#define ROF_TUNNEL_RECT(rowBase, rowTop, rowBot, xL, xR, byteLo, byteHi, colour) \
+    platform_tunnel_rect((rowBase), (rowTop), (rowBot), (xL), (xR), (byteLo), (byteHi), (colour))
+#define ROF_TUNNEL_COLS(rowBase, colL, colR, colR1, colour) \
+    platform_tunnel_columns((rowBase), (colL), (colR), (colR1), (colour))
+#define ROF_TUNNEL_VSPAN(rowBase, r0, r1, colL, colR, colour) \
+    platform_tunnel_vspan((rowBase), (r0), (r1), (colL), (colR), (colour))
+#else
+#define ROF_TUNNEL_RECT(rowBase, rowTop, rowBot, xL, xR, byteLo, byteHi, colour) ((void)0)
+#define ROF_TUNNEL_COLS(rowBase, colL, colR, colR1, colour) ((void)0)
+#define ROF_TUNNEL_VSPAN(rowBase, r0, r1, colL, colR, colour) ((void)0)
+#endif
+
+/* Which CALL SITE produced the rectangle the hook is about to emit — a measurement aid, so the
+ * painter's buckets are measured rather than labelled (docs/boost-tunnel-direct-handoff.md §0a):
+ * 1 = draw_frame_pattern_seq @ L_6047, 2 = draw_ring_frame_step (forward descent),
+ * 3 = step_accum_sub_7e (boost reverse), 4 = draw_frame_pattern_seq @ tunnel_prebuild_rings.
+ * Sites 2 and 3 fire from the 50 Hz VBI ISR and can interrupt site 1's main-loop loop, so they
+ * save and restore the tag around their span-loop call; site 1 re-arms it every iteration.
+ * Without that the ISR would silently relabel the pre-draw's remaining rectangles. */
+#if defined(ROF_PLATFORM_AMIGA) && defined(ROF_FLIGHT_PROBE)
+extern volatile unsigned char g_trSrc;
+extern volatile unsigned char g_trPreSite;
+#define ROF_TR_SRC_SAVE(v)    const uint8_t v = g_trSrc
+#define ROF_TR_SRC_SET(n)     g_trSrc = (unsigned char)(n)
+#define ROF_TR_SRC_RESTORE(v) g_trSrc = (v)
+#define ROF_TR_PRESITE(n)     g_trPreSite = (unsigned char)(n)
+#else
+#define ROF_TR_SRC_SAVE(v)    ((void)0)
+#define ROF_TR_SRC_SET(n)     ((void)0)
+#define ROF_TR_SRC_RESTORE(v) ((void)0)
+#define ROF_TR_PRESITE(n)     ((void)0)
+#endif
+
 /* Flight terrain double-buffer: which field half renderFlightDirect should display.
  * The flight loop renders TWO field halves per iteration (pass 1 = back/offset-$30,
  * pass 2 = display/offset-0).  game_main_loop sets this before each ds_frame so BOTH
@@ -1515,6 +1580,11 @@ void fill_vertical_span(void) {
     uint8_t r0 = draw_row_bottom, r1 = draw_row_top;
     uint8_t colL = draw_x_left, colR = draw_x_right, maskSel = draw_color_idx;
     fill_vertical_span_core(r0, r1, colL, colR, maskSel);
+    /* Hand the pair to the platform painter.  draw_symmetric_span_loop deliberately calls
+     * fill_vertical_span_CORE directly, so this shim is exactly plot_terrain_span's writes and
+     * there is no double-paint.  Row r1's table entry identifies the field, as elsewhere. */
+    ROF_TUNNEL_VSPAN((uint16_t)(mem[MEM_row_base_lo + r1] | (mem[MEM_row_base_hi + r1] << 8)),
+                     r0, r1, colL, colR, maskSel);
     /* Faithful exit state: $0084 = last row + 1; $80/$81 = addr table[last row];
      * $00DF = $FF; cpu.X = mask index, cpu.Y = colR>>1 (cpu state is incidental). */
     screen_ptr_hi = (uint8_t)(r1 + 1);
@@ -1591,6 +1661,11 @@ void draw_symmetric_span_loop(void) {
 #endif
         fill_horizontal_span_core(baseTop, baseBot, hi, (uint8_t)(hi - lo), pat);
         fill_vertical_span_core(bot, top, xL, xR, colour);
+        /* Hand this rectangle to the platform so it can paint the ring straight into its bitmap.
+         * Emitted HERE because this is the only point that knows a rectangle and its colour for
+         * both the forward ring (draw_ring_frame_step) and the reverse one (step_accum_sub_7e).
+         * baseTop identifies which field the row table currently points at. */
+        ROF_TUNNEL_RECT(baseTop, top, bot, xL, xR, lo, hi, colour);
         lxL = xL; lxR = xR; ltop = top; lbot = bot;
         xL = (uint8_t)(xL - 1); xR = (uint8_t)(xR + 1);
         top = (uint8_t)(top + 1); bot = (uint8_t)(bot - 1);
@@ -1809,6 +1884,9 @@ void draw_frame_guide_columns(void) {
     draw_row = 0xFF;
     sync_flag = mem[MEM_row_base_lo];
     dl_ptr_lo = mem[MEM_row_base_hi];
+    /* Hand the three columns to the platform painter (row 0's table entry identifies the field,
+     * the same way the rectangle hook uses baseTop). */
+    ROF_TUNNEL_COLS((uint16_t)(sync_flag | (dl_ptr_lo << 8)), colL, colR, colR1, colour);
 }
 
 /* draw_frame_pattern_seq @ $65FB — the per-frame doors/tunnel frame drawer.  After
@@ -1826,6 +1904,7 @@ void draw_frame_pattern_seq(void) {
     uint8_t colour = 0x01;
     for (int8_t ring = 0x13; ring >= 0; ring--, thick--) {
         span_row_count = *thick;                          /* $0096 = this rectangle's thickness */
+        ROF_TR_SRC_SET(g_trPreSite);                      /* re-armed every iteration: the ring VBI can preempt us */
         draw_symmetric_span_loop();                       /* draws it in the current colour */
         colour = (colour == 0x06) ? 0x01 : (uint8_t)(colour + 1);   /* cycle pattern colour 1..6 */
         draw_color_idx = colour;
@@ -1964,7 +2043,10 @@ void draw_ring_frame_step(void) {
         uint8_t inL   = draw_x_left,     inR   = draw_x_right;   /* $009C / $009D */
 #endif
         span_row_count = mem[0x6E0F + a0];                /* $0096 = ring thickness */
+        ROF_TR_SRC_SAVE(trSave);                          /* ISR site: restore, we may have preempted the pre-draw */
+        ROF_TR_SRC_SET(2);
         draw_symmetric_span_loop();                       /* steps $9C--/$9D++/$9E++/$9F-- */
+        ROF_TR_SRC_RESTORE(trSave);
 #ifdef ROF_PLATFORM_AMIGA
         g_tunRowLo = draw_row_bottom; g_tunRowHi = draw_row_top; /* outer rows after  */
         g_tunInRowLo = inTop; g_tunInRowHi = inBot;             /* inner rows before */
@@ -2020,7 +2102,10 @@ void step_accum_sub_7e(void) {
         uint8_t inL   = draw_x_left,     inR   = draw_x_right;   /* $009C / $009D */
 #endif
         span_row_count = mem[0x6E0F + a];                 /* $0096 = ring thickness */
+        ROF_TR_SRC_SAVE(trSave);                          /* ISR site: restore, we may have preempted the pre-draw */
+        ROF_TR_SRC_SET(3);
         draw_symmetric_span_loop();                       /* steps $9C--/$9D++/$9E++/$9F-- */
+        ROF_TR_SRC_RESTORE(trSave);
 #ifdef ROF_PLATFORM_AMIGA
         g_tunRowLo = draw_row_bottom; g_tunRowHi = draw_row_top; /* outer rows after  */
         g_tunInRowLo = inTop; g_tunInRowHi = inBot;             /* inner rows before */
@@ -11027,7 +11112,9 @@ static void tunnel_prebuild_rings(void) {
     uint8_t zp[0x80];
     for (int i = 0; i < 0x80; i++) zp[i] = mem[0x80 + i];   /* protect construction ZP */
     build_line_addr_table_1000();      /* row-addr table for base $1000 (the draw needs it) */
+    ROF_TR_PRESITE(4);                 /* tag the rectangles as coming from THIS site, not L_6047 */
     draw_frame_pattern_seq();          /* plot the rings into $1000 (deterministic geometry) */
+    ROF_TR_PRESITE(1);
     platform_tunnel_rings_drawn();     /* flag $1000 -> tunnelBitmap decode (runs at reveal) */
     /* snapshot the draw's exit ZP scratch (its write-set) for the launch-site replay */
     g_tunnelPrebuildExit.s80 = sync_flag;        g_tunnelPrebuildExit.s81 = dl_ptr_lo;

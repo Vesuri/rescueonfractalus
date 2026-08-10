@@ -22,6 +22,13 @@ static const uint16_t kTerrainLine  = kDisplayTop + kTitleHeight;     // = 0x56
 static const uint16_t kCockpitLine  = kTerrainLine + kTerrainHeight;  // = 172
 static const uint16_t kCenterY      = kDisplayTop + kH / 2;           // = 0x98
 static const uint16_t kBPLCON0_3P   = (uint16_t)((3 << PLNCNTSHFT) | USE_BPLCON3);
+// Park lines for a collapsed reveal band — mid-region, so its NOPs run in a harmless H-blank
+// and never crowd the cockpit pointer writes (same convention as DoorsCopperList).
+static const uint16_t kBand1ParkLine = kTerrainLine + 28;
+static const uint16_t kBand2ParkLine = kTerrainLine + 57;
+
+// A copper NOP: MOVE to register $1FE (unused) changes nothing.
+#define COPPER_NOP copperMove(0x1FE, 0)
 
 // ---- fixed list layout (indices into data_, in 32-bit MOVE/WAIT words) -------
 // d[0] = copperWait(16,0) (CopperList ctor).  Title region is identical to
@@ -40,7 +47,18 @@ static const uint16_t kBPLCON0_3P   = (uint16_t)((3 << PLNCNTSHFT) | USE_BPLCON3
 #define INDEX_TERRAIN_BPLCON0 (INDEX_TERRAIN_BPL + 6)  // bplcon0 3P (1)
 #define INDEX_TERRAIN_MOD     (INDEX_TERRAIN_BPLCON0 + 1) // bpl1mod,bpl2mod (2)
 #define INDEX_TERRAIN_PAL     (INDEX_TERRAIN_MOD + 2)  // color00..07 (8: corner-carry pen0 + ring pens 1-6 + spare pen7=black)
-#define INDEX_COCKPIT_WAIT    (INDEX_TERRAIN_PAL + 8)  // WAIT(kCockpitLine-1) (1)
+// Boost reverse-tunnel REVEAL bands.  The reverse cinematic shows a centre band of ring rows
+// [K, 85-K] growing outward over a starfield; the two live in SEPARATE bitmaps and the copper
+// picks between them, so the reveal costs two WAITs + 12 pointer moves per frame instead of
+// recompositing both into one bitmap every frame.  Geometry mirrors DoorsCopperList's sliding
+// gap with g2 = 43-K, so both cinematics share one proven band layout.  All three bands inherit
+// the region-top BPLCON0/modulo/palette, so a band needs only its WAIT + bitplane pointers.
+// Parked as copper NOPs by default — the FORWARD descent (setRevealBands(0, ...)) is untouched.
+#define INDEX_RB1_WAIT        (INDEX_TERRAIN_PAL + 8)  // WAIT(kTerrainLine+K-1) (1)
+#define INDEX_RB1_BPL         (INDEX_RB1_WAIT + 1)     // ring bitmap ptrs at row K (6)
+#define INDEX_RB2_WAIT        (INDEX_RB1_BPL + 6)      // WAIT(kTerrainLine+86-K-1) (1)
+#define INDEX_RB2_BPL         (INDEX_RB2_WAIT + 1)     // star bitmap ptrs at row 86-K (6)
+#define INDEX_COCKPIT_WAIT    (INDEX_RB2_BPL + 6)      // WAIT(kCockpitLine-1) (1)
 #define INDEX_BANDTOP_COL00   (INDEX_COCKPIT_WAIT + 1) // boost band-top color00, BEFORE the bitplane ptrs (1)
 #define INDEX_COCKPIT_BPL     (INDEX_BANDTOP_COL00 + 1)// cockpit bitmap ptrs (3bp = 6)
 #define INDEX_COCKPIT_BPLCON0 (INDEX_COCKPIT_BPL + 6)  // bplcon0 3P (1)
@@ -69,6 +87,25 @@ static const uint16_t kBPLCON0_3P   = (uint16_t)((3 << PLNCNTSHFT) | USE_BPLCON3
 #define INDEX_FLOOR           (INDEX_FLOOR_WAIT + 1)    // color00 = black (floor) (1)
 #define INDEX_TERMINATOR      (INDEX_FLOOR + 1)         // copperWait(255,254)
 #define LIST_LENGTH           (INDEX_TERMINATOR + 1)
+
+// emitBpl: 3bp interleaved bitplane pointers (120 B/row) at list index `at`.
+static void emitBpl(uint32_t* d, uint32_t at, uint32_t base)
+{
+    d[at + 0] = copperMove(bpl1pth, (uint16_t)(base >> 16));
+    d[at + 1] = copperMove(bpl1ptl, (uint16_t)(base & 0xFFFF));
+    d[at + 2] = copperMove(bpl2pth, (uint16_t)((base + 40) >> 16));
+    d[at + 3] = copperMove(bpl2ptl, (uint16_t)((base + 40) & 0xFFFF));
+    d[at + 4] = copperMove(bpl3pth, (uint16_t)((base + 80) >> 16));
+    d[at + 5] = copperMove(bpl3ptl, (uint16_t)((base + 80) & 0xFFFF));
+}
+
+// parkBand: collapse one reveal band — its WAIT moves mid-region and its 6 pointer moves
+// become NOPs, so the band above simply extends through it.
+static void parkBand(uint32_t* d, uint32_t waitAt, uint16_t parkLine)
+{
+    d[waitAt] = copperWait(parkLine, 0xE0);
+    for (int i = 1; i <= 6; i++) d[waitAt + i] = COPPER_NOP;
+}
 
 TunnelCopperList::TunnelCopperList()
     : CopperList((uint32_t*)AllocMem(LIST_LENGTH << 2, MEMF_CHIP | MEMF_CLEAR), LIST_LENGTH, true)
@@ -122,6 +159,9 @@ void TunnelCopperList::buildLayout(const Bitmap& title, const Bitmap& tunnel, co
     d[INDEX_TERRAIN_MOD]     = copperMove(bpl1mod, 80);   // 3bp interleaved = (3-1)*40
     d[INDEX_TERRAIN_MOD + 1] = copperMove(bpl2mod, 80);
     setTunnelColors(0, 0, 0, 0, 0, 0, 0, 0);   // seeded; caller refreshes (ring cycles)
+    // Reveal bands collapsed: the forward descent is one full-height band from `tunnel`.
+    parkBand(d, INDEX_RB1_WAIT, kBand1ParkLine);
+    parkBand(d, INDEX_RB2_WAIT, kBand2ParkLine);
 
     // ---- cockpit region: WAIT, pointers, 3bp, modulo, constant palette ----
     d[INDEX_COCKPIT_WAIT] = copperWait(kCockpitLine - 1, 0xE0);
@@ -203,6 +243,40 @@ void TunnelCopperList::setBandReveal(uint16_t greenLine, uint16_t greenColor)
 void TunnelCopperList::disableBandReveal()
 {
     data_[INDEX_BAND_GREEN] = copperMove(color31, 0);   // no-op: leave color00 = the viewport's
+}
+
+// setRevealBands(): point each band of the terrain region at the bitmap that owns it.
+//   K  = the first viewport row showing RINGS (the reverse-tunnel reveal band is [K, 85-K]);
+//        K >= 43 means nothing is revealed yet, K == 0 means the rings fill the region.
+//   ringBase / starBase = the two source bitmaps' row-0 addresses.
+// Band 0 (the region-top pointers) takes whichever bitmap owns the top rows, so a caller that
+// wants a plain full-height ring band — the forward descent — passes K = 0 and both bases equal.
+void TunnelCopperList::setRevealBands(uint16_t K, uint32_t ringBase, uint32_t starBase)
+{
+    uint32_t* d = data_;
+    if (K == 0) {                                   // rings fill the region (forward descent too)
+        emitBpl(d, INDEX_TERRAIN_BPL, ringBase);
+        parkBand(d, INDEX_RB1_WAIT, kBand1ParkLine);
+        parkBand(d, INDEX_RB2_WAIT, kBand2ParkLine);
+        return;
+    }
+    emitBpl(d, INDEX_TERRAIN_BPL, starBase);        // band 0 = the stars above the reveal
+    if (K >= kTerrainHeight / 2) {                  // nothing revealed: stars fill the region
+        parkBand(d, INDEX_RB1_WAIT, kBand1ParkLine);
+        parkBand(d, INDEX_RB2_WAIT, kBand2ParkLine);
+        return;
+    }
+    d[INDEX_RB1_WAIT] = copperWait((uint16_t)(kTerrainLine + K - 1), 0xE0);
+    emitBpl(d, INDEX_RB1_BPL, ringBase + (uint32_t)K * 120u);
+    // Band 2 restores the stars below the reveal.  At K < 2 its WAIT would sit within a line or
+    // two of the cockpit WAIT, too tight for 6 pointer moves — park it and let the ring band run
+    // to the bottom instead (one row wrong on the very last reveal step, imperceptible).
+    if (K >= 2) {
+        d[INDEX_RB2_WAIT] = copperWait((uint16_t)(kTerrainLine + kTerrainHeight - K - 1), 0xE0);
+        emitBpl(d, INDEX_RB2_BPL, starBase + (uint32_t)(kTerrainHeight - K) * 120u);
+    } else {
+        parkBand(d, INDEX_RB2_WAIT, kBand2ParkLine);
+    }
 }
 
 void TunnelCopperList::setBandTopColor00(bool active, uint16_t color)
