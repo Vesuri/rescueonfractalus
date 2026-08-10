@@ -162,7 +162,6 @@ private:
 #ifdef ROF_BOOST_VERIFY
     void verifyBoostViewport(bool tunnel, int K);  // race-aware differential on the boost decode's content shadow (g_bvBad must stay 0)
 #endif
-    bool boostRingRevealed = false;                // latched once the boost reverse tunnel's outermost ring is drawn ($008D went negative). Until then the band-corner triangle stays BLACK (the outer tunnel rows are not revealed yet); after, it follows color00 = the outermost ring $08D8. Reset at the stars phase ($008D==0 && $008E==0).
     void decodeTunnelBand();                       // decode only the ring-clear frame band (outer\inner rect) from the g_tun* bounds
     void renderViewportModeD(uint16_t srcBase, int stride, int rows); // decode CHANGED mode-D bytes -> viewportBitmap (stars/planet: $1000/48/47)
     void renderFlightDirect();   // flight terrain: plot sky straight to bitplanes from $260E (replaces the convert)

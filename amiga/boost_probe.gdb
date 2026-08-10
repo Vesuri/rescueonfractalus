@@ -20,6 +20,14 @@ end
 if g_bStarDec > 0
   printf "  stars ticks/dec  : %lu\n", g_bStarTicks / g_bStarDec
 end
+printf "=== band-corner split (greenLine: 0 = door colour whole band, 8 = carried ring colour) ===\n"
+set $i = 0
+while $i < 9
+  printf "  greenLine %d : tunnel %lu  stars %lu\n", $i, g_bwLine[$i], g_bwLineStars[$i]
+  set $i = $i + 1
+end
+printf "wedge $0C88-8F now: %02x %02x %02x %02x %02x %02x %02x %02x\n", \
+  mem[0xC88], mem[0xC89], mem[0xC8A], mem[0xC8B], mem[0xC8C], mem[0xC8D], mem[0xC8E], mem[0xC8F]
 printf "=== phase routing ===\n"
 printf "vbi=%u  boostRet=%u boostVp=%u liveCopper=%u handoffHold=%lu\n", g_vbiCount, g_boostRet, g_boostVp, g_liveCopper, g_boostHandoffHoldFrames
 printf "mem[$3A]=%02x mem[$8D]=%02x mem[$8E]=%02x VVBLKI=%02x%02x\n", mem[0x3A], mem[0x8D], mem[0x8E], mem[0x223], mem[0x222]

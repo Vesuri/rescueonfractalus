@@ -199,6 +199,9 @@ extern "C" volatile unsigned long g_bStarDec = 0, g_bTunDec = 0;
 // content shadow could reclaim.  (g_bTunDec already == frames in that sub-phase: it decodes every
 // one.)
 extern "C" volatile unsigned long g_bTunTicks = 0, g_bStarTicks = 0, g_bTunGroups = 0;
+// Boost band-corner split histogram: how many frames of each sub-phase derived each greenLine
+// (0 = whole band the door colour / wedge still full, 8 = whole band the carried ring colour).
+extern "C" volatile unsigned long g_bwLine[9] = {0}, g_bwLineStars[9] = {0};
 extern "C" volatile unsigned short g_starEntryVbi = 0;              // vbi at first rsStars viewport decode
 extern "C" volatile unsigned long  g_starEntryTicks = 0, g_starEntryIsr = 0; // its cost
 extern "C" volatile unsigned short g_starSprVbi = 0;
@@ -4168,19 +4171,41 @@ void RescueOnFractalus::updateTunnelCopper(bool force)
         //   color00 = the outermost ring $08D8 during the tunnel; the COLBK fade $0071 during stars.
         const uint16_t col00 = (mem[0x008D] == 0u) ? atariToOCS(mem[0x0071]) : atariToOCS(mem[0x08D8]);
         const uint16_t colBK = atariToOCS(mem[0x0071]);     // color02 = value-8 background (COLBK)
-        // The band triangle must stay BLACK until the OUTER tunnel rows are actually drawn (early in
-        // the expansion they're still the value-8 background = dark), then follow the ring.  Latch on
-        // $008D going negative (= outermost ring rendered); reset at the stars phase.
-        if (mem[0x008D] == 0u && mem[0x008E] == 0u) boostRingRevealed = false;
-        if ((int8_t)mem[0x008D] < 0)                boostRingRevealed = true;
-        // The band triangle needs its color00 set BLACK only during expansion; during stars (inherit
-        // the $0071 fade) and once the outermost ring is drawn (inherit the ring $08D8) it must NOT be
-        // re-touched — else the copper flip lands ~16px into the band's first line (teal stripe).  Do
-        // the black flip EARLY (band-top slot, before the cockpit bitplane overrun) and NO-OP the late
-        // slot; the no-touch phases no-op BOTH so color00 simply carries in from the viewport.
-        const bool bandBlack = (mem[0x008D] != 0u) && !boostRingRevealed;   // expanding only
-        tunnelCopper->setBandTopColor00(bandBlack, atariToOCS(0x00));
-        tunnelCopper->disableBandReveal();                                  // late slot unused by boost
+        // Band corner triangle: the FORWARD tunnel's mechanism, verbatim (see the else-branch below).
+        // color00 already holds the colour the corner should show — in the boost LUT that is value-2,
+        // the outermost ring — and it carries from the viewport into the band untouched; one moving
+        // WAIT flips it to the green door colour from the topmost still-set canopy-wedge row down.
+        // Wedge empty (the whole reverse tunnel) -> greenLine 8 -> the band shows the ring.
+        //
+        // ⚠ This REPLACES a phase latch (boostRingRevealed: absolute-poke color00 black at the band
+        // top until $008D went negative = "the outermost ring has been drawn").  That latch was
+        // sampled by the main loop from a byte the VBI animates, so whether it ever saw the negative
+        // window depended on the render cadence — the corner came out black for the whole cinematic
+        // on some runs and correct on others (user-observed 2026-08-10, and the odds moved when the
+        // decode got 4.5x faster).  Nothing here is sampled: the split is re-derived from the live
+        // wedge buffer every frame, which is why the forward path has never shown this class of bug.
+        uint16_t bGreenLine = 8;                            // first still-green band scanline
+        for (uint16_t i = 0; i < 8; i++) { if (mem[0x0C88 + i]) { bGreenLine = i; break; } }
+        if (bGreenLine == 0) {
+            // Whole band takes the door colour (the wedge is still up), so the moving WAIT has no
+            // work to do — and at greenLine 0 it sits at kCockpitLine-1, the slot the cockpit
+            // bitplane-pointer moves OVERRUN by ~16px into the band's first line, leaving the
+            // carried ring colour showing there (user-observed teal stripe over black, 2026-08-10;
+            // the same artifact commit 8481ec0 fixed for the old boost path).  Flip color00 EARLY
+            // instead, before those moves — the pairing the T6 recede branch above already uses.
+            tunnelCopper->setBandTopColor00(true, atariToOCS(mem[0x0071]));
+            tunnelCopper->disableBandReveal();
+        } else {
+            tunnelCopper->setBandTopColor00(false, 0);      // no absolute band-top poke
+            tunnelCopper->setBandReveal(bGreenLine, atariToOCS(mem[0x0071]));
+        }
+#ifdef ROF_FLIGHT_PROBE
+        // Does the canopy wedge actually CLEAR during the boost?  In flight $0C88-$0C8F is all $FF
+        // (the corner-triangle players), which would pin bGreenLine at 0 = the corner never shows
+        // the ring.  Tally the derived split per sub-phase so that is a measurement, not a guess.
+        { extern volatile unsigned long g_bwLine[9], g_bwLineStars[9];
+          if (mem[0x008D] != 0u) g_bwLine[bGreenLine]++; else g_bwLineStars[bGreenLine]++; }
+#endif
 
         bool changed = (col00 != tnCorner) || (black != tnPen0) || (colBK != tnColBK);
         for (int i = 0; i < 6; i++) if (ring[i] != tnRing[i]) changed = true;
