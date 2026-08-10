@@ -88,7 +88,25 @@ Render bugs fixed through 2026-07-17 (commits 792e6d0, c347749, 6abc6cd, 53f4d86
      ROF_PLATFORM_AMIGA`); the boost stars render branch decodes only on that flag. **149 → 2 full
      decodes** (each ~56ms), race-free (fill_region_2000 is main-loop). `make validate
      FN=fill_region_2000` green.
-   - ❌ **TUNNEL decode-consume — abandoned (reverted to per-frame decode).** The reverse-tunnel `$1000`
+   - ✅ **SUPERSEDED 2026-08-10 by a CONTENT SHADOW (236592c) — 847 → 190 ticks/frame, 4.5×.** The
+     paragraph below is still correct about why *frame-level* gating fails, and is kept for that.
+     What it missed is that the choice was never "gate the frame or pay the full decode": keep
+     decoding EVERY frame, but scan the source a long at a time against a shadow of what was last
+     decoded into the bitmap and store only the four-byte groups whose bytes actually differ. That
+     is memoization, not a gate — output byte-identical to the unconditional decode, and races
+     self-heal for the same reason the per-frame decode does (the key is read once into a local and
+     recorded only when the group is stored, so a VBI write landing after the read simply mismatches
+     next frame). Measured: only 35 of 860 groups per decode change, 4%. Because the sub-phase is
+     VBI-paced the reclaimed time becomes frames — 96 → 327 painted over the same span, i.e. the
+     cinematic went from ~15 fps to painting every vblank. Verified with a race-aware in-process
+     differential (`make BOOST_VERIFY=1` + `amiga/boost_verify.gdb`): 40951 groups checked, 0 bad.
+     ⚠ Store by the BYTE, not the long — packing the four LUT results into one long per plane (the
+     door-decoder trick) measured WORSE here (stars full decode 818 → 1593 ticks); only the SCAN
+     wanted to be long-granular. ⚠ What the shadow canNOT help is the FULL repaints — boost entry
+     and the two starfield re-fills still cost 1082 ticks ≈ 3.5 frames each, since nothing is
+     skippable there. That is what the direct-rectangle rewrite is for; see the `boost-tunnel-direct`
+     memory.
+   - ❌ **TUNNEL decode-consume (frame-level gating) — abandoned; see the ✅ above for what replaced it.** The reverse-tunnel `$1000`
      field is a MULTI-WRITER reveal: the main loop pre-draws the full ring field once
      (`draw_frame_pattern_seq`) AND the VBI (`step_accum_sub_7e`) draws ring groups into it, while
      `emit_dl_coord_pairs` reveals it row-by-row. There is NO clean "content settled" signal (`$008D`
