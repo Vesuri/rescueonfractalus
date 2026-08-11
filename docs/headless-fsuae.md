@@ -32,6 +32,11 @@ where static reasoning kept failing — **measure, don't theorize.**
   `diag_timing.gdb` freely to print whatever globals/`mem[0xNNNN]` you need (a
   `while $i < N ... end` loop dumps arrays); `-g` is always on so all globals are readable.
   Pure-compute stretches show up as `g_vbiCount` deltas (the real VBI ISR bumps the counter).
+- ⚠ **A gdb script ABORTS THE WHOLE SOURCED FILE at the first unknown symbol**, so deleting a probe
+  global silently kills every committed `.gdb` that still prints it — from that line onward, not just
+  that column. `amiga/title_start.gdb` printed nothing but its header for a day after `d6bc58a`
+  removed `g_tsRingB2` (fixed 020e045). **When you delete or rename a probe global, grep `amiga/*.gdb`
+  for it**, and treat "the trace stopped after the header" as a stale script, not a dead probe.
 
 ## ⚠ The stale-build trap (full text)
 
