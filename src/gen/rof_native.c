@@ -596,6 +596,16 @@ extern volatile unsigned long g_sdInner, g_sdInnerFarKnown, g_sdFarEsc, g_sdStee
 extern volatile unsigned long g_sdRas, g_sdSkip, g_sdPop, g_sdMid, g_sdRough;
 extern volatile unsigned long g_sdDepthHist[16];
 #define SDCNT(c) (++(c))
+/* The cascade's two 16-bit classifications, jointly (2026-08-11).  The twin assembles far.hgt
+ * from its byte pair with a 22-cycle `lsl.w #8` BEFORE classifying it, but the classification
+ * only needs the high byte: negative <=> hi & $80, > $FF <=> hi != 0, < $6C <=> hi == 0 && lo <
+ * $6C.  Only the paths that reach the width test on the FAR height need the assembled value, so
+ * whether splitting on the high byte first wins depends on this joint distribution.
+ *   span class: 0 = high (>= $6C, positive)  1 = negative  2 = positive but < $6C
+ *   far class:  0 = hi == 0 (i.e. <= $FF, non-negative)  1 = negative  2 = > $FF positive     */
+extern volatile unsigned long g_sdFhClass[9];
+#define SDCLASS(sh, fh) (++(g_sdFhClass[(((sh) & 0x8000u) ? 1 : ((sh) < 0x6Cu ? 2 : 0)) * 3 \
+                                      + (((fh) & 0x8000u) ? 1 : ((fh) > 0xFFu ? 2 : 0))]))
 
 /* --- per-SEGMENT occlusion-cull sizing probe (2026-08-06) --------------------------------
  * The LEAF-level cull (a span-3/4 DRAW group) was measured and closed at ~2% of the
@@ -722,6 +732,7 @@ static inline void rc_occl_post(void) {
 #define RSDOT(col, h) ((void)0)
 #define RSOCCL(span, mh, chgt, hgt, pc, cm) ((void)0)
 #define SDCNT(c)      ((void)0)
+#define SDCLASS(sh, fh) ((void)0)
 #define SEGPRE()      ((void)0)
 #define SEGPOST()     ((void)0)
 #define RCPRE(c, h, e, ch) ((void)0)
@@ -7397,6 +7408,7 @@ uint8_t terrain_subdivide_column_core_c(uint8_t startDepth, uint8_t rasterEntryD
                span's vs the far sub-point's) from sign + magnitude vs the $6C threshold, then
                applies a width/steepness test.  "low" = negative or < $6C. */
             const int spanLow = (span.hgt & 0x8000) || span.hgt < 0x6C;
+            SDCLASS(span.hgt, far.hgt);
             int doWidthTest = 0;       /* run the width/steepness test below */
             int useSpanHeight = 0;     /* test the span height (1) or the far sub-point height (0) */
             if (spanLow) {             /* judge by the far sub-point height, default to skip */

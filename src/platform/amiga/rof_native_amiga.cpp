@@ -802,6 +802,10 @@ extern "C" volatile unsigned long g_sdInner = 0, g_sdInnerFarKnown = 0, g_sdFarE
 extern "C" volatile unsigned long g_sdRas = 0, g_sdSkip = 0, g_sdPop = 0, g_sdMid = 0,
                                   g_sdRough = 0;
 extern "C" volatile unsigned long g_sdDepthHist[16] = { 0 };
+// The cascade's joint span-height x far-height classification (see SDCLASS in rof_native.c):
+// sizes whether far.hgt can be classified on its HIGH byte alone, skipping the 22-cycle
+// `lsl.w #8` on every path that never needs the assembled 16-bit value.
+extern "C" volatile unsigned long g_sdFhClass[9] = { 0 };
 // Per-SEGMENT occlusion-cull sizing (one subdivide call from the object draw-order loop):
 // NoDraw = the ceiling (segments that accepted no draw at all), Sound = the derived
 // max(ends)+W/2 bound's hit rate, Naive = the leaf version's unsound max(ends) bound,

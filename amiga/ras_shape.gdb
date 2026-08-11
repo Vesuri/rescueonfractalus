@@ -53,6 +53,18 @@ printf "  ph2: adopt=%lu push=%lu (far already in regs: %lu)   ph3: farEsc=%lu s
 printf "  *** REDUNDANT far reloads: inner=%lu/%lu (%lu%%)  +ph2=%lu  => %lu of %lu total loads\n", \
   g_sdInnerFarKnown, g_sdInner, (g_sdInner? 100*g_sdInnerFarKnown/g_sdInner : 0), \
   g_sdP2Known, (g_sdInnerFarKnown+g_sdP2Known), (g_sdInner+g_sdP2Adopt+g_sdP2Push+g_sdPop)
+echo --- cascade classification: span.hgt (rows) x far.hgt (cols), the sd_inner 16-bit tests ---\n
+echo "          far hi==0   far<0    far>$FF     (a row that never needs the ASSEMBLED far.hgt\n"
+printf "spanHIGH  %8lu %8lu %8lu    can classify it on the high byte alone)\n", \
+  g_sdFhClass[0], g_sdFhClass[1], g_sdFhClass[2]
+printf "span<0    %8lu %8lu %8lu\n", g_sdFhClass[3], g_sdFhClass[4], g_sdFhClass[5]
+printf "span<$6C  %8lu %8lu %8lu\n", g_sdFhClass[6], g_sdFhClass[7], g_sdFhClass[8]
+printf "totals: cascades=%lu  far hi==0=%lu  far<0=%lu  far>$FF=%lu  spanLOW=%lu\n", \
+  g_sdFhClass[0]+g_sdFhClass[1]+g_sdFhClass[2]+g_sdFhClass[3]+g_sdFhClass[4]+g_sdFhClass[5] \
+  +g_sdFhClass[6]+g_sdFhClass[7]+g_sdFhClass[8], \
+  g_sdFhClass[0]+g_sdFhClass[3]+g_sdFhClass[6], g_sdFhClass[1]+g_sdFhClass[4]+g_sdFhClass[7], \
+  g_sdFhClass[2]+g_sdFhClass[5]+g_sdFhClass[8], \
+  g_sdFhClass[3]+g_sdFhClass[4]+g_sdFhClass[5]+g_sdFhClass[6]+g_sdFhClass[7]+g_sdFhClass[8]
 echo --- PER-SEGMENT occlusion cull (one subdivide call from the object draw-order loop) ---\n
 printf "segments=%lu  offscreen=%lu  drewNOTHING=%lu (%lu%%) <- the CEILING for any cull\n", \
   g_segCalls, g_segOffscr, g_segNoDraw, (g_segCalls? 100*g_segNoDraw/g_segCalls : 0)
