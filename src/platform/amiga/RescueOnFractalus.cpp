@@ -4520,21 +4520,55 @@ void RescueOnFractalus::renderFrame()
     // Hold instead: keep whatever copper is live (the last reverse-ring frame) and skip re-decode
     // until the door field is ready; staticStandby then takes over cleanly on the g_doorFieldReady
     // 0->1 edge with the finished LEVEL-NN field.
-    // In-place level cycle (post-mother-ship SELECT): both the door scroll (level<max) and the
-    // intro_screen_build_seq fade-rebuild WRAP (level>=max) run with g_doorFieldReady cleared (at
-    // L_6332) while rsBoostReturn holds ($003A==$FF).  Unlike the boost reverse-tunnel handoff below
-    // (which arrives on the tunnel copper), this comes from the live static standby
-    // (standbyCopperInstalled && !tunnelCopperInstalled).  Keep the standby copper live and ANIMATE
-    // it rather than freezing: poke the per-frame colours so the WRAP's $0071 dark-green fade shows
-    // (was frozen by the boost-handoff-hold below), and re-decode the door bitmap when the LEVEL
-    // digit changes (g_doorScrollFieldDirty) so the fade-up reveals the new level.  The door-scroll
-    // case spins in the main loop (renderFrame isn't called mid-scroll; doorScrollVblankUpdate drives
-    // the scroll from the ISR), so this only refreshes colours + the decode at the scroll boundaries.
-    if (rsBoostReturn && !g_doorFieldReady && standbyCopperInstalled && !tunnelCopperInstalled) {
+    // In-place level cycle (post-mother-ship SELECT): both the "elevator" door scroll (level<max)
+    // and the intro_screen_build_seq fade-rebuild WRAP (level>=max) rebuild the $2000 door field
+    // WITHOUT re-entering boot_standby_launch_driver, so they run with g_doorFieldReady cleared (at
+    // L_6332) while g_standbyRevealReady stays LATCHED.
+    //
+    // ⭐ That PAIR is what identifies this window, and it is the whole gate.  Every fresh
+    // construction clears BOTH flags at boot_standby_launch_driver entry (rof_native.c ~$5F1D) and
+    // re-latches both together at construction-done ($6118); L_6332 is the ONLY site that clears
+    // the door flag alone.  So `revealed && !doorFieldReady` cannot be the boot build, a post-
+    // BREAK/crash rebuild, or the boost reverse-tunnel handoff below (all of which have
+    // g_standbyRevealReady == 0) — it is exactly the in-place cycle.
+    //
+    // The gate USED to be `rsBoostReturn && ... && standbyCopperInstalled && !tunnelCopperInstalled`,
+    // borrowing the mother-ship flag $003A==$FF as a "we came back from a launch" proxy.  97a6b70
+    // then correctly narrowed rsBoostReturn with boostCineLatch to the ONE construction after the
+    // ascent — which silently switched this branch OFF, since the SELECT cycle runs long after the
+    // latch releases.  Every in-place level change then fell through to the forward-launch DOORS
+    // copper below, which clears standbyCopperInstalled — the gate on doorScrollVblankUpdate — so
+    // the elevator scroll stopped happening at all (measured: 18 in-place cycles, ONE setTerrainRuns
+    // rewrite, live copper id 6 = doors).  Derive the window from the state that DEFINES it, never
+    // from a flag that merely co-occurs with it.
+    //
+    // Keep the standby copper live and ANIMATE it rather than freezing: poke the per-frame colours
+    // so the WRAP's $0071 dark-green fade shows, and re-decode the door bitmap when the LEVEL digit
+    // changes (g_doorScrollFieldDirty) so the fade-up reveals the new level.  The door-scroll case
+    // spins in the main loop between its paced steps (doorScrollVblankUpdate drives the scroll
+    // itself from the ISR), so this mostly refreshes colours + the decode at the step boundaries.
+    // !rsLaunched keeps the branch out of a launch that escapes the cycle with the flag still clear
+    // (L_62ee's `$0004 != 0` jump to L_634f skips the L_62f6 re-latch).
+    const bool inPlaceLevelCycle = rsStandby && g_standbyRevealReady && !g_doorFieldReady
+                                   && !rsLaunched && !rsBoostReturn;
+    if (inPlaceLevelCycle && standbyCopper) {
         decodeDoorScrollDirty();
-        updateStandbyCopper(false);   // pokes terrain color00/03 = atariToOCS(mem[$0071]) fade ramp
+        // Normally already live (the cycle starts from the settled standby), so this is the poke
+        // path.  Installing when it is NOT makes the branch self-healing instead of self-latching:
+        // one frame that ever slips past it used to clear standbyCopperInstalled and kill the
+        // scroll for the rest of the cycle.
+        if (!standbyCopperInstalled) {
+            setSpritePriority(kSpritePriorityCockpit);
+            updateStandbyCopper(true);
+            AmigaHardware::setCopperList(*standbyCopper, false);
+            standbyCopperInstalled = true;
+            planetCopperInstalled = false; flightCopperInstalled = false;
+            tunnelCopperInstalled = false; titleScreenCopperInstalled = false;
+        } else {
+            updateStandbyCopper(false);   // pokes terrain color00/03 = atariToOCS(mem[$0071]) fade ramp
+        }
 #ifdef ROF_FLIGHT_PROBE
-        { extern volatile unsigned char g_liveCopper; g_liveCopper = 10; }   // 10 = in-place wrap fade
+        { extern volatile unsigned char g_liveCopper; g_liveCopper = 10; }   // 10 = in-place level cycle
 #endif
         return;
     }
