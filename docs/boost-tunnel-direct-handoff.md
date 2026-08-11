@@ -356,3 +356,77 @@ seam went away.  Ending state is still `liveCopper=2` (staticStandby).
 - Probe: `g_brBlackFrames` (+ the gating flags sampled at the first black frame) in
   `amiga/tunnel_tear.gdb`.  It counts EmptyCopperList frames **during the return only** —
   `g_blackHoldFrames` cannot answer the question because it also counts the legitimate boot build.
+
+---
+
+## 8. The forward tunnel's LAST frame held 6 frames instead of 1 — CLOSED 2026-08-11
+
+**Symptom (user, on a 68000):** the last forward-tunnel frame — only the outermost ring left, just
+before the stars — stays on screen a beat too long.  On a 68020 it goes in one frame, so something
+too slow was running there.  Measured on an A500+ run (`make PROBES=1`, `diag_timing.gdb`):
+
+| | last ring image on screen | tunnel->stars renderFrame gap | first-stars renderFrame |
+|---|---|---|---|
+| before | **6 frames** (vbi 844 -> 850) | 5 frames | 1594 ticks = **5.09 frames** |
+| after | **1 frame** (vbi 844 -> 845) | 2 frames | 602 ticks = 1.92 frames |
+
+Two independent causes, both fixed; the metric is `g_planetInstVbi - g_tunLastVbi`, stamped at the
+two `setCopperList` calls, because that — not the renderFrame gap — is what the eye sees (each list
+goes live one vblank after its install).
+
+### 8a. `buildStarSprites`'s ring clear: 1182 ticks (72 ms) of CPU, now 185 (12 ms)
+
+The whole first-stars frame was ONE function.  Each of the 6 star sprites is backed by a 736-slot
+zero-copy scroll ring, and entry cleared **all** of it — 8832 words of CHIP RAM in a `for (w) ring[w]
+= 0` loop.  Split the ring instead:
+
+- **head** = slot 0 (control words) + slots 1..89 (the converted strip) — fully overwritten by the
+  conversion anyway, so pre-zeroing it was pure waste;
+- **tail** = slots 90..735 — the padding rows + terminator the window scrolls into, which
+  `starVblankUpdate` never writes (it only ever writes the ONE new bottom row per advance), so they
+  really must arrive at zero.  That is the part worth clearing, and it goes to the **blitter**.
+
+The two regions are disjoint, so the CPU conversion runs while the blit is in flight; only the
+closing `blitterDrain()` waits (measured 18/136/21 ticks kick/convert/drain).  ⚠ The drain is
+load-bearing: `INTF_BLIT` is disabled in this port, so a queued blit runs only when something pumps
+the queue.
+
+### 8b. The copper switch was at the TAIL of the entry frame — moved to the head
+
+Even at 12 ms the star build is not the whole story: the planet copper is installed by
+`renderFrame`'s `staticPlanet` branch, i.e. AFTER `perFrameWork` + `render()`.  So the previous
+scene — the tunnel's last frame — is displayed for the entire stars-entry frame, which is still
+~1.9 frames of decode.
+
+The faithful instant to switch is the moment `rsStars` first reads true: it keys on the 6502 having
+written `VDSLST=$C2` + `DLIST=$3120` in `boot_standby_launch_driver`'s stretch-C burst, and on the
+Atari ANTIC starts displaying the stars DL from the next vblank — it waits for nothing.  So
+`renderFrame` now installs the planet copper right after `deriveRenderSignals()`, before any of the
+entry work.
+
+Nothing has to be finished first, and that is the point: `setCopperList(..., false)` only writes
+COP1LC, so the list goes live at the NEXT vblank, by which time `perFrameWork`'s star rebuild and
+`render()`'s viewport decode (both later in the SAME frame) have run.  Three details make it safe:
+
+- **A cleared viewport is CORRECT, not a compromise** — the same stretch-C burst `zero_run`s the
+  `$1000` field, so the first stars frame is genuinely black on the Atari too.  The early install
+  kicks the `viewportBitmap` blitter clear itself, but **only when `renderViewportModeD` is going to
+  take its full-redecode path** (`viewportForceFull || viewportLastBase != $1000`, evaluated there):
+  on the incremental path nothing would consume `viewportClearKicked` and the clear would wipe
+  content nothing repaints.
+- **Publish the star `SPRxPT` operands at window 0 before installing.**  `starWindow` still holds
+  the PREVIOUS pass's value at this point; `buildStarSprites` resets it to 0 a few lines later, and
+  `perFrameWork` republishes the same value.  (`STAR-PUB LATE=0` / `starVbiUpdate lateCount=0` after
+  the change — the scanline-16 and ~25 deadlines are still met.)
+- **Gated `!rsBoostReturn`**, so the brief `rsStars` window inside the boost cinematic cannot take
+  it — that window belongs to the reverse-tunnel branch.
+
+`dsMile` is unchanged end to end (`3B=845 4clr=845 5C=845 6fade=872 7ts4=1072 8done=1560`), i.e. the
+cinematic's own pacing did not move; only the display switch did.
+
+### What is left (deliberately)
+
+The first-stars frame still costs 1.92 frames of compute (`perFrameWork` 196 + `render` 383 ticks,
+with 2 standby-VBI ISR firings of 79-153 raster lines inside that).  It no longer matters — the
+copper has already switched — and the remaining cost is the viewport decode (269 ticks, of which
+~101 is the clear + the 470-long shadow zero), which is real work on real content.

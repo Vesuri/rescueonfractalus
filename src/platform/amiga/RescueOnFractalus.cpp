@@ -3825,6 +3825,50 @@ void RescueOnFractalus::renderFrame()
 #ifdef ROF_TUNNEL_DIFF
     if (tunnelDiffPending) { tunnelDiffPending = false; tunnelPaintDiff(0); }   // finished pre-draw
 #endif
+    // ---- stars ENTRY: switch the copper FIRST, then do the entry work ------------------------
+    // The planet copper is normally installed by render()'s staticPlanet branch, i.e. at the TAIL
+    // of this frame — so the previous scene stays on screen for the whole of the stars-entry work.
+    // At the forward launch that previous scene is the tunnel's last frame (outermost ring only),
+    // and the entry work is ~2 frames on a 68000, so the ring image visibly froze there (a 68020
+    // is fast enough to hide it).
+    //
+    // NOW is the faithful instant to switch.  rsStars keys on the 6502 having written VDSLST=$C2 +
+    // DLIST=$3120 in boot_standby_launch_driver's stretch-C burst, and on the Atari ANTIC starts
+    // displaying the stars DL from the very next vblank — it waits for nothing.  The $1000 field is
+    // legitimately BLACK at that instant (the same burst zero_run's it), so a cleared viewport is
+    // the correct first stars frame, not a compromise for our sake.
+    //
+    // Nothing has to be finished for this: setCopperList only writes COP1LC, so the list goes live
+    // at the NEXT vblank, and perFrameWork's star-sprite rebuild + render()'s viewport decode —
+    // both below, both in this same frame — still get there first.  The one thing that must be
+    // right BEFORE the list goes live is the star SPRxPT operands (the copper reads them at
+    // scanline 16): starWindow still holds the previous pass's value here, so publish window 0,
+    // which is exactly what buildStarSprites resets it to a few lines below.
+    // The guard is exactly "no branch below can pre-empt render()'s staticPlanet this frame":
+    // staticTitle needs VVBLKI $53CC (rsStars needs $52D7) and staticStandby needs !rsViewport
+    // (rsStars implies it), so only the two boost branches can — the reverse-tunnel viewport and
+    // the T6 handoff hold.  ⚠ NOT a plain !rsBoostReturn: mission_event_flag $003A stays $FF into
+    // the NEXT level, so that would switch the fix off for every launch after a mother-ship return.
+    const bool boostOwnsDisplay = rsBoostViewport || (rsBoostReturn && !g_doorFieldReady);
+    if (rsStars && !boostOwnsDisplay && !planetCopperInstalled && planetCopper && viewportBitmap) {
+        // Kick the viewport clear on the blitter now, and ONLY when renderViewportModeD is going
+        // to take its full-redecode path — its `full` test, evaluated here.  If it were to take
+        // the incremental path instead it would never consume viewportClearKicked, and the clear
+        // would wipe content nothing repaints.
+        if ((viewportForceFull || viewportLastBase != 0x1000u) && !viewportClearKicked) {
+            AmigaHardware::blitterClear((uint16_t*)viewportBitmap->data, 60, 47, 0);
+            viewportClearKicked = true;
+        }
+        for (int i = 0; i < 6; i++) planetCopper->setStarOperand(i, starRing[i]);
+        updatePlanetCopper(true);
+        AmigaHardware::setCopperList(*planetCopper, false);
+        planetCopperInstalled = true;
+        standbyCopperInstalled = false; flightCopperInstalled = false;
+        tunnelCopperInstalled  = false; titleScreenCopperInstalled = false;
+#ifdef ROF_FLIGHT_PROBE
+        if (!g_planetInstVbi) g_planetInstVbi = platform_frame_count();
+#endif
+    }
 #if defined(ROF_FLIGHT_PROBE)
     // Diagnose why renderFlightDirect isn't reached during the knock: is renderFrame even entered
     // ($0632), what is VVBLKI, and is rsFlight/rsViewport true at that moment?
