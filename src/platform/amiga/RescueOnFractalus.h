@@ -102,16 +102,12 @@ private:
     void updateBoostCinematicLatch();
 
     // BPLCON2 (sprite-vs-playfield priority) is write-only hardware that persists across copper
-    // lists.  The Standby and Doors lists emit no BPLCON2 MOVE, so their priority is set by a
-    // one-off CPU write at the scene transition (setSpritePriority); bplcon2Cpu remembers what we
-    // last wrote so the write happens once per entry, and is invalidated (kSpritePriorityUnknown)
-    // wherever a list that carries its OWN BPLCON2 MOVE is installed — Tunnel, Planet and Flight —
-    // because the copper then changes the register behind our back.
-    static const uint16_t kSpritePriorityUnknown = 0xFFFFu;
+    // lists.  The Standby and Doors lists emit no BPLCON2 MOVE, so their priority is a one-off CPU
+    // write at the scene transition — setSpritePriority(), called at those two copper installs.
     // PF2P=PF1P=1: sprite pair 0 (canopy posts) in FRONT of the playfield, pairs 1+ (the
-    // throttle/energy gauge on sprite 2) BEHIND it.  The value initialize() seeds.
+    // throttle/energy gauge on sprite 2) BEHIND it, which is what hides the 56-row bar's overflow
+    // below its dial.  The value initialize() seeds.
     static const uint16_t kSpritePriorityCockpit = (uint16_t)((1u << 3) | 1u);
-    uint16_t bplcon2Cpu = kSpritePriorityUnknown;
     void setSpritePriority(uint16_t v);
     bool doorsOpenedLatch = false;  // door scroll finished; hold the tunnel view through the
     uint8_t prevScrollCtr = 0;      // gap before the ring/viewport arms (see deriveRenderSignals)

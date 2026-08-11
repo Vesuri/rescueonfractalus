@@ -13,13 +13,14 @@
 # Rows are RECORDED ON CHANGE (VV / cop / flg / $060B), so one row = one routing state.
 continue
 echo \n==== SIGINT ====\n
-printf "transitions=%u  (recorded on change, from the Title appearing)\n", g_tsRingN
-printf "  vbi    VV   3A 8D 8E 60B cop flg\n"
+printf "transitions=%u  (recorded on change, from the FIRST Standby reveal)\n", g_tsRingN
+printf "  vbi    VV   3A 8D 8E 60B cop flg  62F sprY  BPLCON2\n"
 set $i = 0
 while $i < g_tsRingN
-  printf "%6u  %04x  %02x %02x %02x  %02x  %2u  %x\n", \
+  printf "%6u  %04x  %02x %02x %02x  %02x  %2u  %2x  %02x  %3u    %04x\n", \
     g_tsRingVbi[$i], g_tsRingVV[$i], g_tsRing3A[$i], g_tsRing8D[$i], g_tsRing8E[$i], \
-    g_tsRing60B[$i], g_tsRingCop[$i], g_tsRingFlg[$i]
+    g_tsRing60B[$i], g_tsRingCop[$i], g_tsRingFlg[$i], g_tsRing62F[$i], g_tsRingSprY[$i], \
+    g_tsRingB2[$i]
   set $i = $i + 1
 end
 printf "\nNOW: vbi=%u VV=%04x 3A=%02x 8D=%02x 8E=%02x 60B=%02x cop=%u boostRet=%u boostVp=%u doorRdy=%u revealRdy=%u\n", \
@@ -31,5 +32,10 @@ printf "attract: 00E2=%02x 062D=%02x  title RAM 365B=%02x  DMA 022F=%02x  E5=%02
 # CPU owns its priority (Standby/Doors/Title, by design).  PF2P=bits5-3, PF1P=bits2-0; 0009 = pair 0
 # (canopy posts) in front + the gauge BEHIND the playfield, 0024 = all sprites in front (the
 # gauge-on-top bug).  cpu= the last value setSpritePriority wrote, n= how many transitions wrote it.
+# Direct read-back of Denise's registers from the emulator.  Both are write-only on real hardware,
+# so this is only meaningful if UAE returns the stored value — BPLCON0 is the control: it must read
+# back as a plausible bitplane-count word (e.g. 3201 = 3 planes + ECSENA) for BPLCON2 to be trusted.
+printf "LIVE regs: BPLCON0($DFF100)=%04x  BPLCON2($DFF104)=%04x\n", \
+  *(unsigned short*)0xDFF100, *(unsigned short*)0xDFF104
 printf "BPLCON2 lists: standby=%04x doors=%04x tunnel=%04x planet=%04x flight=%04x title=%04x | cpu=%04x n=%lu\n", \
   g_cl2Standby, g_cl2Doors, g_cl2Tunnel, g_cl2Planet, g_cl2Flight, g_cl2Title, g_cl2Cpu, g_cl2CpuN

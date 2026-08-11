@@ -190,6 +190,7 @@ extern "C" volatile unsigned char g_boostRet = 0, g_boostVp = 0, g_liveCopper = 
 extern "C" volatile unsigned short g_cl2Standby = 0, g_cl2Doors = 0, g_cl2Tunnel = 0,
                                    g_cl2Planet = 0, g_cl2Flight = 0, g_cl2Title = 0;
 extern "C" volatile unsigned short g_cl2Cpu = 0xFFFF;
+extern "C" volatile unsigned short g_energySprY = 0;   // live gauge-sprite VSTART line
 extern "C" volatile unsigned long  g_cl2CpuN = 0;
 extern "C" volatile unsigned long g_boostHandoffHoldFrames = 0;
 // Boost-viewport decode-cost probe (item 2, decode-consume): count decode events, to confirm the
@@ -1773,6 +1774,9 @@ void RescueOnFractalus::buildEnergyIndicatorSprite()
         if (top > (uint16_t)kEnergyRows) top = 0u;       // clamp garbage → full bar
     }
     energyIndicatorSprite->setY((uint16_t)(kBase + top));
+#ifdef ROF_FLIGHT_PROBE
+    { extern volatile unsigned short g_energySprY; g_energySprY = (unsigned short)(kBase + top); }
+#endif
     // ch5 carries a wide-object segment ahead of this bar, and that segment is double-buffered, so
     // the bar is chained into BOTH chains — keep the spare copy in step (control words each frame,
     // pixels only on the one-time solid fill).
@@ -2395,7 +2399,7 @@ void RescueOnFractalus::initialize()
     AmigaHardware::setPlayfield(kW, kH, kBP2, /*interleaved*/true, /*hires*/false,
                                 /*interlace*/false, /*dualPlayfield*/false,
                                 /*holdAndModify*/false, kCenterY);
-    setSpritePriority(kSpritePriorityCockpit);   // seeds bplcon2Cpu too (see setSpritePriority)
+    setSpritePriority(kSpritePriorityCockpit);   // the Standby priority (see setSpritePriority)
 
     deriveRenderSignals();   // seed the render signals from the initial mem[] (standby) state
 
@@ -4046,14 +4050,26 @@ void RescueOnFractalus::updateBoostCinematicLatch()
 // → START path).  It looked right only on a fresh boot, because initialize() had just written the
 // Standby value by hand a moment earlier.
 //
-// bplcon2Cpu makes this a write per TRANSITION, not per frame; the three lists that carry their own
-// BPLCON2 MOVE (Tunnel, Planet, Flight) invalidate it at their install, since the copper then moves
-// the register without us.
+// It is called only at scene ENTRY (the copper-list install), so this is one write per transition,
+// not per frame.  ⚠ Deliberately NOT cached against a "last value we wrote" shadow: the copper also
+// writes this register, so any such shadow goes stale the moment a list moves it, and a stale
+// shadow suppresses exactly the corrective write this exists to make.  One 16-bit store is far
+// cheaper than reasoning about who wrote it last.
+#ifdef ROF_FLIGHT_PROBE
+// gdb breakpoint markers: BPLCON2 is write-only, and a CPU read of $DFF104 returns the FLOATING BUS
+// (measured — ffff/7f81/6441, varying frame to frame), while gdb's read of the same address returns
+// the real stored value (cross-checked against $DFF100 BPLCON0).  So the only way to see the live
+// priority is to stop the emulator on a marker and let gdb read it.  TWO functions, not one with a
+// tag argument: a breakpoint fires at function ENTRY, before the body can record which call it is,
+// so a tag global reads one call stale.  See amiga/b2_probe.gdb.
+extern "C" volatile unsigned long g_b2MarkPreN = 0, g_b2MarkPostN = 0;
+extern "C" __attribute__((noinline)) void rof_b2_mark_pre(void)  { g_b2MarkPreN++;  }
+extern "C" __attribute__((noinline)) void rof_b2_mark_post(void) { g_b2MarkPostN++; }
+#endif
+
 void RescueOnFractalus::setSpritePriority(uint16_t v)
 {
-    if (v == bplcon2Cpu) return;
     *bplcon2Pointer = v;
-    bplcon2Cpu = v;
 #ifdef ROF_FLIGHT_PROBE
     { extern volatile unsigned short g_cl2Cpu; extern volatile unsigned long g_cl2CpuN;
       g_cl2Cpu = v; g_cl2CpuN++; }
@@ -4280,7 +4296,6 @@ void RescueOnFractalus::renderFrame()
         planetCopperInstalled = true;
         standbyCopperInstalled = false; flightCopperInstalled = false;
         tunnelCopperInstalled  = false; titleScreenCopperInstalled = false;
-        bplcon2Cpu = kSpritePriorityUnknown;   // PlanetCopperList carries its own BPLCON2 MOVE
 
 #ifdef ROF_FLIGHT_PROBE
         if (!g_planetInstVbi) g_planetInstVbi = platform_frame_count();
@@ -4481,7 +4496,6 @@ void RescueOnFractalus::renderFrame()
         if (mem[0x008D] != 0u) tunnelPaintDiff(boostRevealK());   // §2: prove it numerically first
 #endif
         showTunnelCopper();     // reveal band K + palette, into the back buffer, swapped at vblank
-        bplcon2Cpu = kSpritePriorityUnknown;   // TunnelCopperList carries its own BPLCON2 MOVE
         standbyCopperInstalled = false; planetCopperInstalled = false;
         flightCopperInstalled = false; titleScreenCopperInstalled = false;
 #ifdef ROF_FLIGHT_PROBE
@@ -4551,7 +4565,13 @@ void RescueOnFractalus::renderFrame()
     if (staticStandby) {
         if (!standbyCopperInstalled) {
             // Scene transition: reclaim BPLCON2 from whatever list ran last (see setSpritePriority).
+#ifdef ROF_FLIGHT_PROBE
+            { extern void rof_b2_mark_pre(void); rof_b2_mark_pre(); }     // gdb reads $DFF104 here:
+#endif                                                                    //   what the scene inherited
             setSpritePriority(kSpritePriorityCockpit);
+#ifdef ROF_FLIGHT_PROBE
+            { extern void rof_b2_mark_post(void); rof_b2_mark_post(); }   // ...and here: after the write
+#endif
             updateStandbyCopper(true);
             AmigaHardware::setCopperList(*standbyCopper, false);
             standbyCopperInstalled = true;
@@ -4576,8 +4596,7 @@ void RescueOnFractalus::renderFrame()
             updatePlanetCopper(true);
             AmigaHardware::setCopperList(*planetCopper, false);
             planetCopperInstalled = true;
-            bplcon2Cpu = kSpritePriorityUnknown;   // PlanetCopperList carries its own BPLCON2 MOVE
-#ifdef ROF_FLIGHT_PROBE
+    #ifdef ROF_FLIGHT_PROBE
             if (!g_planetInstVbi) g_planetInstVbi = platform_frame_count();
 #endif
         } else {
@@ -4608,7 +4627,6 @@ void RescueOnFractalus::renderFrame()
             updateFlightCopper(true);
             AmigaHardware::setCopperList(*flightCopper, false);
             flightCopperInstalled = true;
-            bplcon2Cpu = kSpritePriorityUnknown;   // FlightCopperList carries its own BPLCON2 MOVEs
 #ifdef ROF_FLIGHT_PROBE
             extern volatile unsigned short g_fadeEntryVbi, g_fadeEntryIter, g_fadeEntryFd, g_iterCount;
             extern volatile unsigned long g_fdCalls;
@@ -4669,7 +4687,6 @@ void RescueOnFractalus::renderFrame()
 #endif
         showTunnelCopper();          // one full-height ring band (setRevealBands K = 0)
         tunnelCopperInstalled = true;
-        bplcon2Cpu = kSpritePriorityUnknown;   // TunnelCopperList carries its own BPLCON2 MOVE
 #ifdef ROF_FLIGHT_PROBE
         { extern volatile unsigned char g_liveCopper; g_liveCopper = 5; }
 #endif

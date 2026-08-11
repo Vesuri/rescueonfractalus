@@ -52,6 +52,15 @@ extern "C" volatile unsigned char g_forceTitleScreen = 0;
 extern "C" volatile unsigned short g_tsRingVbi[96] = {0}, g_tsRingVV[96] = {0}, g_tsRingN = 0;
 extern "C" volatile unsigned char  g_tsRing3A[96] = {0}, g_tsRing8D[96] = {0}, g_tsRing8E[96] = {0},
                                    g_tsRing60B[96] = {0}, g_tsRingCop[96] = {0}, g_tsRingFlg[96] = {0};
+// ...and the gauge state at each routing transition: fuel $062F (drives the bar's Y) and the
+// sprite VSTART the renderer actually published.  Lets the FIRST-boot Standby (correct) and the
+// post-Title Standby (reported wrong) be diffed instead of reasoned about.
+extern "C" volatile unsigned char  g_tsRing62F[96] = {0};
+extern "C" volatile unsigned short g_tsRingSprY[96] = {0};
+// ⚠ NOT a BPLCON2 read-back column: a CPU read of $DFF104 returns the floating bus, not the stored
+// value (measured — it came back ffff/7f81/6441 varying frame to frame, while gdb's read of the
+// same address returns the real value).  Sample the register from gdb at the rof_b2_mark()
+// breakpoint instead; see amiga/b2_probe.gdb.
 #endif
 
 // GfxBase is opened in main() (GCCRuntime.cpp defines it); set before run() is called.
@@ -2343,10 +2352,14 @@ static uint32_t vbiHandler()
         {
             extern volatile unsigned short g_tsRingVbi[96], g_tsRingVV[96], g_tsRingN;
             extern volatile unsigned char g_tsRing3A[96], g_tsRing8D[96], g_tsRing8E[96],
-                                          g_tsRing60B[96], g_tsRingCop[96], g_tsRingFlg[96];
+                                          g_tsRing60B[96], g_tsRingCop[96], g_tsRingFlg[96],
+                                          g_tsRing62F[96];
+            extern volatile unsigned short g_tsRingSprY[96], g_energySprY;
             extern volatile unsigned char g_boostRet, g_boostVp, g_liveCopper,
                                           g_standbyRevealReady, g_doorFieldReady;
-            if (s_tsVbi && g_tsRingN < 96) {
+            // Record from the FIRST Standby reveal, not from the Title: the first-boot Standby is
+            // the known-good reference this trace exists to diff the post-Title one against.
+            if (g_standbyRevealReady && g_tsRingN < 96) {
                 const unsigned char flg = (unsigned char)((g_doorFieldReady ? 1 : 0)
                                         | (g_standbyRevealReady ? 2 : 0)
                                         | (g_boostVp ? 4 : 0) | (g_boostRet ? 8 : 0)
@@ -2354,10 +2367,13 @@ static uint32_t vbiHandler()
                 const unsigned n = g_tsRingN;
                 if (n == 0 || g_tsRingVV[n - 1] != vv || g_tsRingCop[n - 1] != g_liveCopper
                            || g_tsRingFlg[n - 1] != flg || g_tsRing60B[n - 1] != mem[0x060Bu]) {
+                    // (62F/sprY are SAMPLED, never a record trigger — the standby's gauge fill
+                    // ramps them every frame and would eat the whole ring.)
                     g_tsRingVbi[n] = g_vbiCount;      g_tsRingVV[n]  = vv;
                     g_tsRing3A[n]  = mem[0x003Au];    g_tsRing8D[n]  = mem[0x008Du];
                     g_tsRing8E[n]  = mem[0x008Eu];    g_tsRing60B[n] = mem[0x060Bu];
                     g_tsRingCop[n] = g_liveCopper;    g_tsRingFlg[n] = flg;
+                    g_tsRing62F[n] = mem[0x062Fu];    g_tsRingSprY[n] = g_energySprY;
                     g_tsRingN = (unsigned short)(n + 1);
                 }
             }

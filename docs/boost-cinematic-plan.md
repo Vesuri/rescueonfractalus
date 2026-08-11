@@ -154,6 +154,33 @@ split stays honest rather than being re-derived from the source.
 "unchanged" — it is *whatever the previous scene left*, and that only looks correct until the scene
 order changes. Same shape as this file's earlier `tunnelBitmap` ownership lesson.
 
+**2026-08-11 (c) — where the BPLCON2 bug actually ENTERS, measured.** (b) fixed the mechanism but
+guessed at the entry point. It is the **post-mother-ship Standby**, not the Title. Measured with
+`amiga/b2_probe.gdb` (gdb breakpoints bracketing the priority write at every Standby copper install):
+
+| vbi | Standby | inherited BPLCON2 | after the write |
+|---|---|---|---|
+| 84 | first boot | `0009` | `0009` |
+| **2687** | **post-mother-ship** | **`0024`** (boost TunnelCopperList) | `0009` |
+| 2983 | post-Title | `0009` | `0009` |
+
+So the boost cinematic hands the next Standby PFxP=4 (all sprites in front), and every Standby after
+it — including the one the Title's START rebuilds — keeps that until something writes the register.
+The first-boot Standby only looks right because `initialize()` wrote `0009` moments earlier.
+
+**Method notes worth keeping:**
+- **BPLCON2 cannot be read by the 68000** — a CPU read of `$DFF104` returns the FLOATING BUS
+  (measured: `ffff`/`7f81`/`6441`, varying frame to frame). **gdb's** read of the same address *does*
+  return the stored value; cross-check it against `$DFF100` BPLCON0, which must read back as the
+  live list's bitplane word (`3001` under a 3-plane list, `1001` under the black hold). Any probe
+  that samples a write-only register from the Amiga side is measuring nothing.
+- **A gdb breakpoint fires at function ENTRY**, so a marker that records "which call am I" in its own
+  body reads one call stale. Use two marker functions, not one with a tag argument.
+- The shadow that made the CPU write "one per transition" was **removed**: the copper also writes
+  this register, so a last-value-we-wrote cache goes stale the moment a list moves it, and a stale
+  cache suppresses exactly the corrective write. One 16-bit store beats reasoning about who wrote
+  it last.
+
 **OPEN / next-session items:**
 1. ✅ **VERIFIED (user-confirmed 2026-07-18)** — the reveal (f824f82) grows cleanly from the centre
    in real play, and the pink-vs-teal tunnel ring cycle looks right.
