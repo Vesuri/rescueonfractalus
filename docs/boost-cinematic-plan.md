@@ -181,6 +181,20 @@ The first-boot Standby only looks right because `initialize()` wrote `0009` mome
   cache suppresses exactly the corrective write. One 16-bit store beats reasoning about who wrote
   it last.
 
+**2026-08-11 (d) — ⚠ (b)/(c) DID NOT CLOSE IT. Sprite priority is still wrong.** User, on the build
+carrying both commits: *"Sprite priorities are broken in the reverse tunnel and in the
+post-mothership-return standby screen."* So the BPLCON2-inheritance mechanism in (b)/(c) is real and
+measured, but the fix is incomplete — and the **reverse tunnel** is in scope too, which (b) did not
+touch: `TunnelCopperList` sets PFxP=4 for the WHOLE frame, on every launch including the first, so
+the gauge has always drawn over the cockpit there. Its stated reason for 4 is "canopy posts over the
+viewport", but the posts are sprite pair 0 and are already in front at PFxP=1 — the 4 buys nothing
+except putting sprites 2-7 in front, which is the bug. Unresolved contradiction to chase first: the
+gauge is sprite 2 (pair 1), so the measured `0009` at the Standby *should* already put it behind.
+
+Ranked next steps, the harness, and everything measured are in the **`sprite-priority-boost-standby`
+memory** — read it before touching this; do not re-derive. Note the scene-ROUTING fix (the latch,
+`97a6b70`) is unaffected by this and stands.
+
 **OPEN / next-session items:**
 1. ✅ **VERIFIED (user-confirmed 2026-07-18)** — the reveal (f824f82) grows cleanly from the centre
    in real play, and the pink-vs-teal tunnel ring cycle looks right.
