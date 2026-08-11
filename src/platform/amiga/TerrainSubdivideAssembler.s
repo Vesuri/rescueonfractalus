@@ -28,6 +28,11 @@
 ; rasterize calls (amiga/ras_shape.gdb, quiet baseline, 16342 calls / 239 iterations =
 ; 68.4 calls per flight iteration).  Five dead or over-priced things removed — see the
 ; comments at FRM, sd_phase3, sd_inner, sd_pop and sd_out.
+; 2026-08-11 re-measure (332 iterations, quiet best-case arm): 68.1 calls/iteration, 1.23
+; inner iterations, 0.397 midpoints and 0.61 rasterize calls a call — the same shape.  Two
+; things came out of what was left: the three `bsr` helpers became the SUBMID / PUSHMID /
+; LOADSPAN macros below, and the cascade's far.hgt classification moved onto the HIGH byte
+; (see sd_inner).  Together ~4.3k cycles an iteration.
 ;
 ; ⛔ DEADZP — CLOSED 2026-08-09, do NOT re-open without new evidence.  The exit residue
 ; (sd_out's $82-$86 span flush + $8D-$91 mid flush + $9F, and the $B5/$B6 writes at the entry
@@ -107,6 +112,91 @@ SDCOL_HI	equ	$25D2
 SDHGT_LO	equ	$25F0
 SDHGT_HI	equ	$24E2
 SDFRAC		equ	$23E2
+
+; ---------------------------------------------------------------------------
+; The three helpers below used to be `bsr`-called subroutines.  Every one of them is short,
+; leaf, and called from at most two places, so the `bsr`+`rts` pair (18 + 16 = 34 cycles) was a
+; third of what some of them did.  They are MACROS now, expanded at their call sites — one
+; source copy each, so there is still exactly one place to change the arithmetic.
+; Shape (amiga/ras_shape.gdb, 2026-08-11, quiet best-case arm, 332 iterations): 27.0 SUBMID and
+; 14.4 PUSHMID expansions an iteration (0.397 midpoints/call over 68.1 calls/it, and only 53% of
+; midpoints are pushed — the rest are adopted as the near endpoint in phase 2), plus 8.1 for the
+; pop's span load ⇒ 49.5 x 34 = ~1.7k cycles an iteration of pure call overhead removed.
+; ⚠ Local labels inside a macro MUST carry `\@` (vasm's per-expansion counter) or the second
+; expansion redefines the first's.
+
+; SUBMID — mid = subdiv_midpoint(span, far@depth).  Reads span (d2/d3/d4), loads far from
+; (a1)[depth], writes mid (d5/d6/d7) and (on roughness) $B5/$B6.  Clobbers d0/d1.
+; midCol = signed-avg = asr.w of (span.col+far.col+1); likewise midHgt; fracSum 9-bit.
+SUBMID	macro
+	moveq	#0,d0
+	move.b	(SDCOL_HI,a1),d0
+	lsl.w	#8,d0
+	move.b	(SDCOL_LO,a1),d0	; d0 = far.col
+	move.w	d2,d5
+	add.w	d0,d5
+	addq.w	#1,d5
+	asr.w	#1,d5			; d5 = mid.col
+	moveq	#0,d0
+	move.b	(SDHGT_HI,a1),d0
+	lsl.w	#8,d0
+	move.b	(SDHGT_LO,a1),d0	; d0 = far.hgt
+	move.w	d3,d6
+	add.w	d0,d6
+	addq.w	#1,d6
+	asr.w	#1,d6			; d6 = mid.hgt (pre-roughness)
+	moveq	#0,d0
+	move.b	(SDFRAC,a1),d0		; far.frac
+	move.w	d4,d1
+	and.w	#$FF,d1			; span.frac byte
+	add.w	d0,d1
+	addq.w	#1,d1			; d1 = fracSum (0..511)
+	move.b	d1,d7			; mid.frac = low byte
+	tst.b	d7			; bit 7 of the byte == N after tst.b
+	bpl.s	.smdone\@
+	; roughness: disp = (uint16)(mid.col - span.col) >> 1
+	move.w	d5,d0
+	sub.w	d2,d0
+	lsr.w	#1,d0			; d0 = disp
+	btst	#8,d1			; fracSum >= $100 ?
+	beq.s	.smdown\@
+	add.w	d0,d6			; midHgt += disp
+	bra.s	.smwrb\@
+.smdown\@:
+	sub.w	d0,d6			; midHgt -= disp
+.smwrb\@:
+	move.b	d0,mem+$B5
+	lsr.w	#8,d0
+	move.b	d0,mem+$B6
+.smdone\@:
+	endm
+
+; PUSHMID — subpt_store(depth+1, mid): write mid (d5/d6/d7) to slot depth+1 (a1+1).
+; Clobbers d0.
+PUSHMID	macro
+	move.b	d5,(SDCOL_LO+1,a1)
+	move.l	d5,d0
+	lsr.w	#8,d0
+	move.b	d0,(SDCOL_HI+1,a1)
+	move.b	d6,(SDHGT_LO+1,a1)
+	move.l	d6,d0
+	lsr.w	#8,d0
+	move.b	d0,(SDHGT_HI+1,a1)
+	move.b	d7,(SDFRAC+1,a1)
+	endm
+
+; LOADSPAN — span (d2/d3/d4) = subpt_load(depth) from slot depth (a1).  One call site (the pop).
+LOADSPAN	macro
+	moveq	#0,d2
+	move.b	(SDCOL_HI,a1),d2
+	lsl.w	#8,d2
+	move.b	(SDCOL_LO,a1),d2
+	moveq	#0,d3
+	move.b	(SDHGT_HI,a1),d3
+	lsl.w	#8,d3
+	move.b	(SDHGT_LO,a1),d3
+	move.b	(SDFRAC,a1),d4
+	endm
 
 ; rasterEntryDepth is DEAD in the shipping build: it exists only to be forwarded as the
 ; rasterizer's first C argument, and the register-ABI entry does not take it (the rasterizer
@@ -189,7 +279,7 @@ sd_phase2:
 	subq.l	#1,a3			; budget--
 	cmpa.w	#-1,a3
 	beq	sd_out			; budget was 0 -> exhausted
-	bsr	submid			; mid = midpoint(span, far@depth)
+	SUBMID				; mid = midpoint(span, far@depth)
 	cmp.w	#$28,d5			; (int16)mid.col < $28 ?
 	bge	sd_p2push
 	move.w	d5,d2			; adopt mid as span (near midpoint)
@@ -197,12 +287,48 @@ sd_phase2:
 	move.b	d7,d4
 	bra	sd_phase2
 sd_p2push:
-	bsr	push_mid		; store mid at depth+1
+	PUSHMID				; store mid at depth+1
 	addq.l	#1,a2			; depth++
 	addq.l	#1,a1
 	cmpa.w	#$0F,a2
 	bcc	sd_out			; depth >= $0F -> stack full
 	bra	sd_phase2
+
+	; sd_dosub itself now lives past sd_ret, because inlining SUBMID + PUSHMID into it made it
+	; ~140 bytes and it used to sit between the width test and sd_doras — far enough to push
+	; sd_doras out of `.s` reach of every branch that targets it.  Only sd_inner's far.col
+	; escape wants it CLOSE, and that one is 12.1 of 83.6 inner iterations, so it goes through
+	; this trampoline: the 71.5 that fall through keep their 8-cycle short branch, and the
+	; escape pays 10 for the extra `bra` instead of all 71.5 paying 4 for a word branch.
+sd_dosubT:
+	bra	sd_dosub
+
+	; ---- cold: far.hgt's high byte is non-zero (8.3% of leaves) ----
+	; Out of line, and placed BEFORE sd_inner rather than after: dropping it into the middle
+	; of the leaf code pushed sd_doras out of every width test's `.s` reach (5 assembler
+	; errors' worth), and the entry branch reaches back here perfectly well.
+	; It keeps N from sd_inner's `move.b` — a Bcc does not touch the CCR — so the sign test
+	; costs one branch and no reload.
+sd_fhWide:
+	bmi.s	sd_fhNeg
+	; far.hgt > $FF, positive.  ZERO of 23261 measured leaves reach here — it exists so the
+	; twin stays byte-identical to the oracle's `far.hgt > $FF` arm.
+	tst.w	d3			; span.hgt & $8000 ?
+	bmi	sd_wtSpanH		; spanLOW -> width test (span height)
+	cmp.w	#$6C,d3
+	bcs	sd_wtSpanH		; spanLOW -> width test (span height)
+	bra	sd_doras		; spanHIGH -> rasterize
+sd_fhNeg:
+	; far.hgt < 0.  spanLOW skips (the 90% case, and it never needs the value); spanHIGH runs
+	; the width test on the far height, which is the ONE consumer of the assembled 16-bit
+	; far.hgt — so this is the only path that still pays the `lsl.w #8`.
+	tst.w	d3			; span.hgt & $8000 ?
+	bmi	sd_pop			; spanLOW -> skip
+	cmp.w	#$6C,d3
+	bcs	sd_pop			; spanLOW -> skip
+	lsl.w	#8,d1
+	move.b	(SDHGT_LO,a1),d1	; d1 = far.hgt, assembled at last
+	bra	sd_wtFarH		; -> width test (far height)
 
 	; ================= phase 3: leaf + unwind =================
 sd_phase3:
@@ -218,35 +344,40 @@ sd_inner:
 	; oracle's `far.col > $FF` is exactly `far.col hi != 0`, so the escape to sd_dosub is
 	; decided before the low byte and the 22-cycle `lsl.w #8` are ever touched — and the
 	; 85% that continue then have far.col's high byte known 0, i.e. far.col IS the low
-	; byte.  (Shape: the escape fires on 2900 of 19794 inner iterations = 14.6%.)  Also
+	; byte.  (Shape: the escape fires on 4023 of 27754 inner iterations = 14.5%.)  Also
 	; kills the bsr/rts pair, 34 cycles an iteration on its own.
 	moveq	#0,d0
 	move.b	(SDCOL_HI,a1),d0	; far.col hi
-	bne.s	sd_dosub		; far.col > $FF -> subdivide (submid reloads it there)
+	bne.s	sd_dosubT		; far.col > $FF -> subdivide (SUBMID reloads it there)
 	move.b	(SDCOL_LO,a1),d0	; d0 = far.col (high byte known 0)
+	; far.hgt gets the SAME high-byte-first treatment, and here it pays three times over: all
+	; THREE tests the cascade makes on far.hgt are answered by the high byte alone —
+	; negative <=> hi & $80,  > $FF <=> hi != 0 (and not negative),  < $6C <=> hi == 0 &&
+	; lo < $6C.  So on the common path the 22-cycle `lsl.w #8` disappears AND the sign and
+	; > $FF tests disappear with it, leaving one compare.  The assembled 16-bit value is
+	; needed by exactly one consumer, sd_wtFarH's `far.hgt - q`, reached only when far.hgt is
+	; negative — so that assembly moves into the cold block below.
+	; Shape (amiga/ras_shape.gdb, 2026-08-11, quiet best-case arm, 23261 leaf cascades):
+	; far.hgt has hi == 0 on 21328 = 91.7%, is negative on 1933 = 8.3%, and is > $FF positive
+	; on ZERO — that arm survives for byte-identity, not for the profile.  Of the 8.3%, 90%
+	; (spanLOW) need only the SIGN and never assemble the value at all.
 	moveq	#0,d1
-	move.b	(SDHGT_HI,a1),d1
-	lsl.w	#8,d1
-	move.b	(SDHGT_LO,a1),d1	; d1 = far.hgt
-	; ---- CASCADE ----
+	move.b	(SDHGT_HI,a1),d1	; far.hgt hi.  Z = (hi == 0), N = (far.hgt < 0)
+	bne.s	sd_fhWide		; > $FF or negative -> the cold block
+	move.b	(SDHGT_LO,a1),d1	; d1 = far.hgt, known 0..$FF (hi is 0, so no shift)
+	; ---- CASCADE, far.hgt in [0,$FF] ----
+	; Neither `far.hgt & $8000` nor `far.hgt > $FF` can fire, so both collapse out and the
+	; whole cascade is the $6C compare against the chosen height.
 	tst.w	d3			; span.hgt & $8000 ?
-	bmi.s	sd_spanlow
+	bmi.s	sd_fhLoSpanLow
 	cmp.w	#$6C,d3			; span.hgt < $6C ?
-	bcs.s	sd_spanlow
+	bcs.s	sd_fhLoSpanLow
 	; spanHIGH: default rasterize
-	tst.w	d1			; far.hgt & $8000 ?
-	bmi.s	sd_wtFarH		; -> width test (far height)
-	cmp.w	#$FF,d1
-	bhi.s	sd_doras		; far.hgt > $FF -> rasterize
 	cmp.w	#$6C,d1
 	bcs.s	sd_wtFarH		; far.hgt < $6C -> width test (far height)
 	bra.s	sd_doras		; else rasterize
-sd_spanlow:
+sd_fhLoSpanLow:
 	; spanLOW: default skip
-	tst.w	d1			; far.hgt & $8000 ?
-	bmi	sd_pop			; skip
-	cmp.w	#$FF,d1
-	bhi.s	sd_wtSpanH		; far.hgt > $FF -> width test (span height)
 	cmp.w	#$6C,d1
 	bcs	sd_pop			; far.hgt < $6C -> skip
 	; else: fall through to the width test (span height).  The oracle's `bra sd_wtSpanH`
@@ -254,41 +385,24 @@ sd_spanlow:
 
 	; width/steepness: width = (far.col - span.col) low byte; narrow -> rasterize, else
 	; rasterize if the chosen height is shallower than width/4, else subdivide (steep).
+	; The two variants were separate blocks that differed in ONE instruction — which height
+	; lands in d1 — so useSpanHeight is now just an extra entry point above the shared body.
+	; Hoisting `move.w d3,d1` above the width test is invisible: nothing between the old
+	; position and here touches d1 or d3, and on this entry far.hgt (d1's old value) is dead
+	; either way (the early `width < $14` exit goes to sd_doras, which does not read d1).
 sd_wtSpanH:				; useSpanHeight = 1
+	move.w	d3,d1			; hgt = span.hgt
+sd_wtFarH:				; useSpanHeight = 0 (hgt = far.hgt, already in d1)
 	sub.w	d2,d0			; far.col - span.col (d0 was far.col)
 	and.w	#$FF,d0			; width (byte)
 	cmp.w	#$14,d0
 	bcs.s	sd_doras		; width < $14 -> rasterize
 	lsr.w	#2,d0			; q = width>>2
 	move.b	d0,mem+$B5
-	move.w	d3,d1			; hgt = span.hgt
 	sub.w	d0,d1			; hgt - q
 	tst.w	d1
 	bpl.s	sd_doras		; shallow -> rasterize
-	bra.s	sd_dosub		; steep -> subdivide
-sd_wtFarH:				; useSpanHeight = 0 (hgt = far.hgt, still in d1)
-	sub.w	d2,d0			; far.col - span.col
-	and.w	#$FF,d0			; width
-	cmp.w	#$14,d0
-	bcs.s	sd_doras
-	lsr.w	#2,d0			; q
-	move.b	d0,mem+$B5
-	sub.w	d0,d1			; far.hgt - q
-	tst.w	d1
-	bpl.s	sd_doras		; shallow -> rasterize
-	; steep: fall through to sd_dosub (the oracle branched to the next instruction)
-
-sd_dosub:
-	subq.l	#1,a3			; budget--
-	cmpa.w	#-1,a3
-	beq	sd_out
-	bsr	submid			; mid = midpoint(span, far@depth)
-	bsr	push_mid		; store mid at depth+1
-	addq.l	#1,a2			; depth++
-	addq.l	#1,a1
-	cmpa.w	#$0F,a2
-	bcc	sd_out			; depth >= $0F
-	bra	sd_inner		; continue inner loop
+	bra	sd_dosub		; steep -> subdivide
 
 sd_doras:
 	; clamp span.hgt to a byte if >$FF (keep hi byte; lo = $00 neg / $FF pos)
@@ -388,7 +502,7 @@ sd_pop:
 	; `cmpa.w #0,An` is 10 cycles; a MOVE sets N/Z from its source, and d0 is dead here.
 	move.l	a2,d0			; depth == 0 ?
 	beq.s	sd_out
-	bsr	load_span		; span = subpt_load(depth)
+	LOADSPAN			; span = subpt_load(depth)
 	subq.l	#1,a2			; depth--
 	subq.l	#1,a1
 	bra	sd_phase3
@@ -417,7 +531,7 @@ sd_out:
 	endc
 	; Flush mid ($8D-$91) only if one was actually computed.  The budget is the flag for
 	; free: it is set to $14 after the entry guard and decremented ONCE immediately before
-	; each of the two `bsr submid` sites, so `budget != $14` <=> at least one midpoint ran.
+	; each of the two SUBMID sites, so `budget != $14` <=> at least one midpoint ran.
 	; (The exhaustion exit needs 21 decrements, so it implies ~20 midpoints — still dirty.)
 	; When it is clean, d5/d6/d7 hold the CALLER's registers, not a midpoint — and the
 	; residue (mem[], or g_sdResidue under DEFER) already holds what the oracle would write
@@ -448,6 +562,24 @@ sd_ret:
 	movem.l	(sp)+,d2-d7/a2-a4
 	endc
 	rts
+
+	; ================= descend one level (the inner loop's subdivide arm) =================
+	; Past the exit on purpose: with SUBMID + PUSHMID expanded in line this block is ~140
+	; bytes, and everything it used to separate (the width test and sd_doras) wants to reach
+	; across it with a short branch.  Nothing falls through to it — the width test's steep
+	; exit and sd_dosubT both branch here — and its own three exits are backward word
+	; branches to sd_out / sd_inner, which cost the same as forward ones.
+sd_dosub:
+	subq.l	#1,a3			; budget--
+	cmpa.w	#-1,a3
+	beq	sd_out
+	SUBMID				; mid = midpoint(span, far@depth)
+	PUSHMID				; store mid at depth+1
+	addq.l	#1,a2			; depth++
+	addq.l	#1,a1
+	cmpa.w	#$0F,a2
+	bcc	sd_out			; depth >= $0F
+	bra	sd_inner		; continue inner loop
 
 ; ---------------------------------------------------------------------------
 ; terrain_subdivide_column_obj — the OBJECT-INDEXED entry.
@@ -555,78 +687,6 @@ sd_obj_go:
 	movea.w	#$14,a3			; budget = $14
 	bra	sd_phase2
 
-; ---------------------------------------------------------------------------
-; submid — mid = subdiv_midpoint(span, far@depth).  Reads span (d2/d3/d4), loads far from
-; (a1)[depth], writes mid (d5/d6/d7) and (on roughness) $B5/$B6.  Clobbers d0/d1.
-; midCol = signed-avg = asr.w of (span.col+far.col+1); likewise midHgt; fracSum 9-bit.
-submid:
-	moveq	#0,d0
-	move.b	(SDCOL_HI,a1),d0
-	lsl.w	#8,d0
-	move.b	(SDCOL_LO,a1),d0	; d0 = far.col
-	move.w	d2,d5
-	add.w	d0,d5
-	addq.w	#1,d5
-	asr.w	#1,d5			; d5 = mid.col
-	moveq	#0,d0
-	move.b	(SDHGT_HI,a1),d0
-	lsl.w	#8,d0
-	move.b	(SDHGT_LO,a1),d0	; d0 = far.hgt
-	move.w	d3,d6
-	add.w	d0,d6
-	addq.w	#1,d6
-	asr.w	#1,d6			; d6 = mid.hgt (pre-roughness)
-	moveq	#0,d0
-	move.b	(SDFRAC,a1),d0		; far.frac
-	move.w	d4,d1
-	and.w	#$FF,d1			; span.frac byte
-	add.w	d0,d1
-	addq.w	#1,d1			; d1 = fracSum (0..511)
-	move.b	d1,d7			; mid.frac = low byte
-	tst.b	d7			; bit 7 of the byte == N after tst.b
-	bpl.s	sm_done
-	; roughness: disp = (uint16)(mid.col - span.col) >> 1
-	move.w	d5,d0
-	sub.w	d2,d0
-	lsr.w	#1,d0			; d0 = disp
-	btst	#8,d1			; fracSum >= $100 ?
-	beq	sm_down
-	add.w	d0,d6			; midHgt += disp
-	bra	sm_wrb
-sm_down:
-	sub.w	d0,d6			; midHgt -= disp
-sm_wrb:
-	move.b	d0,mem+$B5
-	lsr.w	#8,d0
-	move.b	d0,mem+$B6
-sm_done:
-	rts
-
-; push_mid — subpt_store(depth+1, mid): write mid (d5/d6/d7) to slot depth+1 (a1+1).
-; Clobbers d0.
-push_mid:
-	move.b	d5,(SDCOL_LO+1,a1)
-	move.l	d5,d0
-	lsr.w	#8,d0
-	move.b	d0,(SDCOL_HI+1,a1)
-	move.b	d6,(SDHGT_LO+1,a1)
-	move.l	d6,d0
-	lsr.w	#8,d0
-	move.b	d0,(SDHGT_HI+1,a1)
-	move.b	d7,(SDFRAC+1,a1)
-	rts
-
-; (load_far was inlined into sd_inner — its one call site — and split on the high byte.)
-
-; load_span — span (d2/d3/d4) = subpt_load(depth) from slot depth (a1).
-load_span:
-	moveq	#0,d2
-	move.b	(SDCOL_HI,a1),d2
-	lsl.w	#8,d2
-	move.b	(SDCOL_LO,a1),d2
-	moveq	#0,d3
-	move.b	(SDHGT_HI,a1),d3
-	lsl.w	#8,d3
-	move.b	(SDHGT_LO,a1),d3
-	move.b	(SDFRAC,a1),d4
-	rts
+; (load_far, submid, push_mid and load_span are all gone as CALLABLE routines: each was inlined
+; at its call sites — load_far directly into sd_inner, the other three as the SUBMID / PUSHMID /
+; LOADSPAN macros at the top of this file — killing 34 cycles of bsr+rts a piece.)
