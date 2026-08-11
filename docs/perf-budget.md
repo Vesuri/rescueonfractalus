@@ -8,7 +8,7 @@
 > TODO and per-change history).
 
 **⭐ TARGET (user decision, 2026-08-08): 25 FPS = 40 ms/frame, judged on the BEST-CASE baseline
-(`COMBAT=1 COMBAT_QUIET=1 FIXED_RNG=1`, currently 20.20 FPS ⇒ −19% of frame time to go).
+(`COMBAT=1 COMBAT_QUIET=1 FIXED_RNG=1`, **22.49 FPS at HEAD 2026-08-12 ⇒ ~+11% of throughput to go**).
 Combat-load slowdown is expected and does NOT have to reach 25.** 50 FPS remains the ideal, not
 the bar. Spending 10 ms on *anything* is HALF the budget. The A500 (7 MHz 68000)
 is slow — there is no room for half measures; be conscious of absolute milliseconds, always.
@@ -80,7 +80,14 @@ too SHALLOW to matter (1.23 inner iterations / 0.40 midpoints per call), measure
 the very byte the check was meant to avoid, so it can only recover the ~10 cycles of bookkeeping around
 that load.**
 
-## ⭐ Where flight actually stands — 20.60 FPS best case / 16.00 combat (2026-08-08, 4d25815)
+## ⭐ Where flight actually stands — 22.49 FPS best case (2026-08-12, HEAD) / 16.00 combat (4d25815)
+
+**Re-measured 2026-08-12 at HEAD on the lean arm: 1349 painted / 2999 vbi = 22.49 FPS best case**
+(per-segment 18.0–25.1), the best recorded. ⚠ The combat row below is from 4d25815 and is stale.
+⚠ This metric carries ~1% of trajectory noise (§19.8) — measured, not assumed, by re-running the
+same binary with the flight started 120 frames later: 22.49 vs 22.21.
+
+### The 2026-08-08 baseline it replaces — 20.60 FPS best case / 16.00 combat (2026-08-08, 4d25815)
 
 **`make FPSCOUNT=1` + `GDBSCRIPT=fps_seg.gdb ./diag_run.sh 200` is the ONLY way to quote a
 flight framerate.** It adds just the headless auto-launch and one increment per painted terrain

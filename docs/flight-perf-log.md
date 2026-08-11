@@ -1829,3 +1829,33 @@ sd ≈ 95, `amiga/seg_budget.gdb`).
 3. **The first run after a build differs slightly from later runs** — FS-UAE carries state in
    `.run/state`: 963 t/it & 482 iters on the first run of a binary, 960 & 485 on the second and
    third. Small, but "bit-identical repeats" only holds from the second run on.
+
+### 19.8 …but the LEAN framerate harness barely moves — so `fps_seg` is the safer tracker
+
+The same launch-shift control, run on the instrument the target is defined against
+(`make FPSCOUNT=1 FIXED_RNG=1 COMBAT=1 COMBAT_QUIET=1` + `fps_seg.gdb`, HEAD = eabdeab, ~3000-vbi
+window, all 15 segments valid):
+
+| eabdeab, best-case arm | painted / vbi | **FPS** |
+|---|---|---|
+| auto-launch `d >= 60` | 1349 / 2999 | **22.49** |
+| auto-launch `d >= 180` | 1332 / 2999 | **22.21** |
+
+**1.2% apart, for the perturbation that moved the probe build's DRAW t/it by 11.8%** — and the true
+difference is zero, so that 1.2% *is* the trajectory noise of this metric. Converted to the same
+units, the probe build's own throughput moved 13.35 → 12.31 painted-frames-per-vbi-window (−7.8%)
+under that shift, i.e. **the probe build is ~6× more trajectory-sensitive than the lean one.**
+Plausible mechanism (not proven): a PROBES build is ~35% slower, so each iteration spans more
+vblanks and the sim advances further per rendered frame, which tightens the render↔flight coupling.
+
+**How to apply — this partly inverts the standing advice:**
+- **Track cumulative progress with `fps_seg` on a LEAN `FPSCOUNT=1` build** (~1–2% of trajectory
+  noise), not with the probe build's t/it ledger (~±10%).
+- **Use `phase_budget.gdb` for WHERE the frame goes** — the DRAW:FRAME:SETUP shares within one run
+  are fine, and that is what it was built for. **Never for "did my change help".**
+- An individual 8–16 t/it win is still below *both* instruments; it is priced by the in-process
+  differential and the static count, exactly as before.
+
+**Standing baseline, re-measured at HEAD (eabdeab), lean build: 22.49 FPS best case** — the best
+recorded (against 22.12 at 304f7bf, 20.60 at 4d25815), though the gap to 22.12 is itself inside
+the ±1% above. 25 FPS needs ~+11% of throughput from here.
