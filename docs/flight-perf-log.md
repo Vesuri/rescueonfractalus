@@ -1679,6 +1679,11 @@ its per-ITERATION share falls mechanically when iterations rise. Solving
 `wall = N × X + ISR_total` for the per-iteration non-ISR work gives 1524 → 1512 = **−12**, the same
 number the DRAW bracket reports.
 
+⛔ **RETRACTED by §19 — the paragraph below is wrong.** The "8% dearer" step is not a code
+regression: a change that cannot touch the flight path (moving the probe auto-launch's START press
+120 frames later) reproduces it at a single commit, +111 t/it. Read §19 before acting on anything
+in §18.4.
+
 ⭐⭐ **The finding that matters more than the win: per-iteration work is 1530 t/it at 098eb5c
 against 1412 at 4cb3e3f — the flight got ~8% dearer while fifteen correctness commits shipped**
 (DRAW +101, FRAME +19). Converted the ledger's way, `31300 / t_it` = **20.5 FPS** best case against
@@ -1697,3 +1702,130 @@ own write-up (`docs/asm-migration-plan.md`) established that below ~500 cyc/call
 credited-at-ISR-exit subtraction makes the sign unreliable, and a subdivide bracket is ~12 ticks
 against an ~80-tick ISR. Host side: `make validate FN=terrain_subdivide` 2000 cases, 0 mem mismatch;
 `objdump | grep __*si3` empty.
+
+---
+
+## §19 — The "+101 t/it DRAW regression" does not exist (2026-08-12)
+
+**The claim under test** (§18.4, and menu item 0 of the `flight-pc-profiler` memory, filed as *the*
+highest-value perf action): between `4cb3e3f` and `098eb5c` the frame silently got ~8% dearer —
+DRAW 963 → 1064 t/it, FRAME 292 → 311 — and the commit that did it was "one bisect away".
+
+**Verdict: there is nothing to bisect.** The step reproduces perfectly, but it is not a property of
+the code. It is what `phase_budget.gdb`'s DRAW row does whenever *anything* perturbs the run's
+timing — including a change that provably cannot touch the flight code at all.
+
+### 19.1 The step is real and reproducible
+
+All rows `PROBES=1 PROFILE_NORING=1 NO_TDRAW_PROF=1 FIXED_RNG=1 COMBAT=1 COMBAT_QUIET=1`, window
+vbi 1900→5400, `covered 100%`, `VVBLKI=$4ff5` on every segment:
+
+| build | DRAW t/it | iterations | painted |
+|---|---|---|---|
+| `4cb3e3f` — 4 runs over 3 clean builds | 958 / 960 / 960 / 963 | 482–487 | 963–972 |
+| `fd28b05` — 2 runs over 2 clean builds | 1062 / 1063 | 450 | 899 |
+| `b61e00b` | 1064 | 448 | 895 |
+| `a80a898` | 1097 | 434 | 867 |
+
+The ledger's two endpoints reproduce to the digit, and the step is *already complete* at
+**`fd28b05`, the 4th commit after `4cb3e3f`** — the other three being small boost/doors fixes.
+
+### 19.2 No code in the DRAW path changed
+
+- **No `.s` file changed in the range.** The assembled `code` section is 0x2ed8 bytes in both
+  builds and its instruction stream is identical once relocations are normalised. `.rodata`
+  (0x1e614) and `.MEMF_CHIP` (0x393e) match byte-for-byte in size.
+- **Every DRAW-path C function fingerprints identical** (per-function normalised disassembly):
+  `terrain_draw_objects`, `terrain_plot_object{,_a,_b}`, `raster_scaled_object`,
+  `compute_row_xspans`, `sample_terrain_height_bilerp`, `terrain_point_distance`,
+  `terrain_clip_row_top`, `setup_projection_params`, `update_terrain_horizon_lr`,
+  `update_terrain_scanline_proj`, `scroll_terrain_dl`.
+- Exactly **13 functions in the whole binary changed size**, every one tunnel / boost /
+  `renderFrame`. `rof_native.c`'s diff is confined to the tunnel/ring/door span writers;
+  `RescueOnFractalus.cpp`'s adds `!rsBoostViewport` guards to `render()`/`perFrameWork()`.
+
+The recipe, worth reusing before any future bisect: `objdump -t` both ELFs and diff the symbol
+sizes (13 hits out of ~450), then fingerprint the suspects with
+`objdump -d --disassemble=<sym> | sed 's/[0-9a-f]{4,8}/H/g' | md5`. Two builds, no emulator, and it
+rules the code in or out in minutes.
+
+### 19.3 Every obvious confound is ruled out
+
+- **Terrain content** — the four terrain-height column buffers ($0C32/$0D32/$0E32/$0F32) hold the
+  *identical* field in both builds at every segment: 180/360 non-flat, heightsum 9048. `FIXED_RNG`
+  pins them, and they are static during flight.
+- **Window alignment** — flight entry is vbi **1560** (`4cb3e3f`) vs **1561** (`fd28b05`), so the
+  fixed window covers the same stretch.
+- **A global slowdown** — SETUP 141 vs 141, CLEAR 11 vs 10, the VBI ISR **64 t/firing in both**,
+  `perFrameWork` 9 vs 9. Only DRAW (+10.7%), `renderFlightDirect` (+2.6%) and the cockpit scan
+  (20 → 29) move at all.
+- **⚠ The "altitude" table is not an altitude table.** `g_clAltBucket` buckets on `mem[$28DA]`,
+  which `terrain_draw_frame_core` writes *at its own end* as the frame's terrain SPAN EXTENT
+  (`rof_native.c` ~8135, "publish this frame's span extents for the HUD"). It is a render OUTPUT,
+  not ship state: a cost proxy, never a control, and a differing value never demonstrates a
+  differing trajectory. ($80 is the reset/invalid sentinel, which is why "bucket 4" dominates.)
+
+### 19.4 The control experiment — one commit, two builds, +111 t/it
+
+Build `4cb3e3f` twice, changing **only the probe auto-launch's START press** (`d >= 60` →
+`d >= 180` in `PlatformAmiga.cpp`). Not one instruction that executes during flight differs; the
+flight simply starts 120 vbi later. Measured over an **entry-anchored** window
+(entry+400 .. entry+3900, `amiga/anchor_budget.gdb`) so window alignment cannot contribute either:
+
+| `4cb3e3f` | entry vbi | iters | painted | SETUP | **DRAW** | FRAME |
+|---|---|---|---|---|---|---|
+| auto-launch `d >= 60`, run A | 1561 | 470 | 939 | 140 | **941** | 289 |
+| auto-launch `d >= 60`, run B | 1561 | 465 | 930 | 143 | **947** | 290 |
+| auto-launch `d >= 180`, run A | 1679 | 431 | 862 | 142 | **1052** | 300 |
+| auto-launch `d >= 180`, run B | 1679 | 431 | 862 | 141 | **1053** | 300 |
+
+**+106 to +111 t/it of DRAW and +11 of FRAME, with SETUP and CLEAR flat** — the exact signature of
+the "regression" (+101 DRAW, +19 FRAME, SETUP/CLEAR flat), produced by pressing a button 2.4
+seconds later. Two independent replications per arm.
+
+### 19.5 The mechanism: the flight is coupled to the render rate
+
+`amiga/traj_budget.gdb` prints the ship's ground-plane position (`world_x` {$2888:$2887} /
+`world_z` {$288A:$2889}, integrated by `flight_control_integrate` in the 50 Hz ISR) at matched
+entry-offsets. The two control arms — *identical flight code* — are not in the same place:
+
+| entry offset | `world_x` d≥60 | `world_x` d≥180 | `world_z` d≥60 | `world_z` d≥180 |
+|---|---|---|---|---|
+| +900 | 1757 | 188e | 7a55 | 7fcf |
+| +1400 | 28cf | 2a22 | d39b | dadf |
+| +1900 | 3a51 | 3b98 | 2eee | 3522 |
+| +3900 | 80a1 | 81e8 | 9f33 | a3fb |
+
+So each build flies its own path over the (identical, pinned) fractal map, and DRAW's cost is a
+property of the VIEW. The size of the effect is set by how much DRAW varies along a flight, and
+that is large: **within one run, DRAW t/it over 250-vbi segments ranges 836 – 1141** (±15%,
+sd ≈ 95, `amiga/seg_budget.gdb`).
+
+### 19.6 What this invalidates
+
+- **§18.4's headline and menu item 0 are retired.** There is no accidental regression; the frame at
+  `c2a90e5` is not "8% dearer than it should be", and the 25 FPS gap should be re-derived, not
+  doubled.
+- **A cross-build DRAW t/it delta carries ~±10% of trajectory noise — not the ±3 t/it the ledger
+  claims.** That floor came from SAME-BINARY repeats, which are bit-identical from the second run
+  on and therefore prove only determinism. Every 8–12 t/it win in the ledger is *below the
+  cross-build noise of the instrument that recorded it*; those wins are credible only because they
+  were also counted statically or measured with an in-process differential. **The ledger's columns
+  are "the frame as that build happened to fly it" — do not diff them.**
+- The in-process differential and the static cycle count remain the only instruments that price a
+  change. That was already the standing rule; this is the proof of why.
+
+### 19.7 Three harness traps found on the way
+
+1. **`$ps` in a gdb script is the m68k STATUS REGISTER.** A script using `set $ps = …` as a
+   convenience variable writes the emulated CPU's SR at every breakpoint. Same class as the
+   existing `$a0-$a7`/`$d0-$d7` rule — the safe convention is `$sXxx` for *everything*, and
+   `$pc`/`$sp`/`$fp` are in the same trap.
+2. **Killing a measurement batch mid-build leaves a stale binary, and it measures as a phantom
+   regression.** A run launched straight after `pkill`-ing a batch reported `4cb3e3f` at 1062 t/it
+   (true value 960) — numerically *identical* to the previous point's build, which is the tell.
+   Record the binary md5 with every row. (⚠ Two clean builds of one commit are not byte-identical
+   here, so md5 proves "not the previous binary", not "the right source".)
+3. **The first run after a build differs slightly from later runs** — FS-UAE carries state in
+   `.run/state`: 963 t/it & 482 iters on the first run of a binary, 960 & 485 on the second and
+   third. Small, but "bit-identical repeats" only holds from the second run on.

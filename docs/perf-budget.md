@@ -95,7 +95,18 @@ are level 40, which is the only legitimate combat framing. Combat costs **22.3% 
 terrain pipeline that both loads run (quiet 18.41 → 20.60 = +11.9%, combat 14.32 → 16.00 = +11.7%,
 which is the consistency check). ⚠ `COMBAT_QUIET` also drops `ROF_AUTO_FIRE`, so the best case is
 "no enemies AND no firing"; and the combat run's altitude varies across segments where the quiet
-run's does not, so **size changes off the quiet arm, never the combat one.**
+run's does not, so **size changes off the quiet arm, never the combat one.** (⚠ The "altitude" in
+that last clause is `mem[$28DA]`, which is really the frame's terrain SPAN EXTENT, a render output
+— see `docs/flight-perf-log.md` §19.3.)
+
+⚠⚠ **The same confound applies to `phase_budget.gdb`'s t/it rows, which had been treated as
+exempt.** `FIXED_RNG` pins the level and re-pins the LFSR at the flight rising edge, but the flown
+path is still coupled to the render rate, so each build flies its own ground and DRAW's cost is a
+property of the view. Proven 2026-08-12: moving the probe auto-launch's START press 120 frames
+later — no flight-code change at all — moves DRAW by **+111 t/it**, the full size of the "8%
+regression" that was filed as the top perf item. **Cross-build t/it deltas carry ~±10% of
+trajectory noise; price a change with an in-process differential or a static cycle count.**
+Full account: `docs/flight-perf-log.md` §19.
 
 ⚠ **This harness routinely OVER-reads a win** — 18.41 → 19.49 read +5.9% for two changes whose
 differentials predicted +1.9%. A cross-build end-to-end delta is confounded (`FIXED_RNG` pins the
