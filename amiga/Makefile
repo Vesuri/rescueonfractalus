@@ -745,6 +745,21 @@ endif
 ifdef FORCE_ESC_STANDBY
 EXTRA_DEFINES += -DROF_FORCE_ESC_STANDBY
 endif
+# `make PAUSE_NOW=1`: INTERACTIVE — skip the ~11-minute event_pending_flag ($063B 1->$80) warmup that
+# gates the ESC-pause colour cycle, and clock the $5039 strobe every 8 frames instead of every 256, so
+# pressing ESC in flight starts the "screensaver" cycle within a second instead of after ~11 min.  ESC
+# is still yours to press.  The strobe block itself is untouched/genuine.  Use with ./run.sh to eyeball
+# that the cycle reaches the top bar, the canopy pillars and the dashboard body — not just the terrain.
+ifdef PAUSE_NOW
+EXTRA_DEFINES += -DROF_PAUSE_NOW
+endif
+# `make PROBES=1 FORCE_PAUSE=1`: the headless half of the same harness — also injects ESC ($1c) during
+# flight (retrying until $0043 latches) so no keypress is needed.  Pair with
+# `GDBSCRIPT=pause_cycle.gdb ./diag_run.sh 45`, which diffs the strobed $00CF-$00DD bytes against the
+# live FlightCopperList colour MOVEs.
+ifdef FORCE_PAUSE
+EXTRA_DEFINES += -DROF_FORCE_PAUSE
+endif
 # `make PROBES=1 FORCE_BREAK_CARD=1` (WITHOUT NOAUTO): break during the stars cinematic so the
 # restart lands on the $53CC card, then auto-launch drives START -> the card->doors transition
 # (bug 3 repro).

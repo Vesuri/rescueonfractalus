@@ -921,6 +921,11 @@ uint8_t PlatformAmiga::hwRead(uint16_t addr)
 extern "C" volatile unsigned char g_flightBlank = 0;
 
 #ifdef ROF_FLIGHT_PROBE
+// FORCE_PAUSE probe: how many ESC presses the harness had to inject before the freeze took
+// ($0043 != 0), and the g_vbiCount at which it did.  g_fpFreezeVbi == 0 = the pause never engaged,
+// so any "the strobe didn't reach X" reading from that run is vacuous.
+extern "C" volatile unsigned short g_fpTries     = 0;
+extern "C" volatile unsigned short g_fpFreezeVbi = 0;
 // BREAK/Restart probe: bumped by the g_restartJmp handler in run() each time a restart is taken.
 // Lets the headless FORCE_BREAK / FORCE_BREAK_EARLY runs confirm the longjmp actually fired.
 extern "C" volatile unsigned char g_restartCount = 0;
@@ -2599,6 +2604,56 @@ static uint32_t vbiHandler()
         static uint8_t s_fesDone = 0;
         const uint16_t vvE = (uint16_t)(mem[0x0222u] | (mem[0x0223u] << 8));
         if (!s_fesDone && vvE == 0x52D7u && g_vbiCount > 200) { s_pendingFlightKey = 0x1C; s_fesDone = 1; }
+    }
+#endif
+
+#if defined(ROF_PAUSE_NOW) || defined(ROF_FORCE_PAUSE)
+    // ESC-pause colour-cycle harness (the "screensaver" strobe).  Every nudge here leaves the strobe
+    // itself entirely genuine — the real flight-VBI block at $5039 (rof_native.c, `mem[$07E9+y] ^
+    // RTCLOK & $F6 -> $00CF+y`) is what writes the pens; we only cut the wait:
+    //   * PAUSE_NOW (interactive) skips the WARMUP.  The strobe needs event_pending_flag $063B to
+    //     have climbed 1 -> $80, and $063B only ticks on each 256-frame wrap of the jiffy low byte
+    //     $0014 — ~127*256 frames ~= 11 MINUTES (see the pause-mechanism memory).  Seed $063B=$80 to
+    //     land at the end of that climb, then force the jiffy wrap every 8 frames instead of every
+    //     256 so the cycle steps ~6x/second.  RTCLOK $0012 still advances one step per fire, so the
+    //     pens walk the same sequence — just clocked faster.  ESC stays the user's to press.
+    //   * FORCE_PAUSE (headless) additionally injects ESC (KBCODE $1c) so the freeze takeover engages
+    //     the way a keypress does ($0043=1 via event_sequence_dispatcher $4644).
+    //   (make PAUSE_NOW=1 + ./run.sh, or make PROBES=1 FORCE_PAUSE=1 +
+    //    GDBSCRIPT=pause_cycle.gdb ./diag_run.sh 45)
+    // ⚠ FORCE_PAUSE must RETRY the ESC until the freeze actually engages.  A single shot silently
+    // does nothing: the flight VBI reaches its KEYWIN window ($519A) only while joystick_saved $004A
+    // != 0, and the headless auto-flight (no stick input) crashes into terrain after a couple of
+    // hundred frames, which zeroes $004A — after that the keycode just sits in s_pendingFlightKey
+    // forever, unconsumed, and the run reads as "the strobe never reached anything".
+    {
+        const uint16_t vvP = (uint16_t)(mem[0x0222u] | (mem[0x0223u] << 8));
+        static uint16_t s_fpVbi = 0; static uint8_t s_fpPhase = 0;
+        if (vvP == 0x4FF5u && s_fpVbi == 0) s_fpVbi = g_vbiCount;
+        const uint16_t dtP = s_fpVbi ? (uint16_t)(g_vbiCount - s_fpVbi) : 0;
+        // ⚠ Seed $063B ONLY once the freeze has actually latched ($0043 != 0).  Doing it up front
+        // wedges the game: bit7 of event_pending_flag gates live gameplay (e.g. the atmosphere colour
+        // ramp, rof_native.c `game_state == 0 && !(event_pending_flag & 0x80)`), so a build that set it
+        // at flight+40 hung on the way into flight — altimeter up, wing-clearance bars never arriving,
+        // and ESC dead because the flight loop never reached its KEYWIN window.  Gating on $0043 is
+        // also the faithful order: $503D only starts climbing $063B once $0043|$003E is nonzero, i.e.
+        // the warmup runs DURING the pause, never before it.
+        if (s_fpVbi && s_fpPhase == 0 && dtP >= 40) {
+            if (mem[0x0043u] != 0) {              // frozen — now skip the warmup
+#ifdef ROF_FLIGHT_PROBE
+                g_fpFreezeVbi = g_vbiCount;
+#endif
+                mem[0x063Bu] = 0x80;              // end of the ~11-minute event_pending_flag warmup
+                s_fpPhase = 1;
+            }
+#ifdef ROF_FORCE_PAUSE
+            else if ((dtP & 15u) == 0) {          // headless only: press ESC (a 2nd press unfreezes)
+                s_pendingFlightKey = 0x1C; g_fpTries++;
+            }
+#endif
+        }
+        // Clock the jiffy wrap only WHILE frozen, so an un-pause hands $0014 straight back to the game.
+        if (s_fpPhase == 1 && mem[0x0043u] != 0 && (g_vbiCount & 7u) == 7u) mem[0x0014u] = 0xFF;
     }
 #endif
 
