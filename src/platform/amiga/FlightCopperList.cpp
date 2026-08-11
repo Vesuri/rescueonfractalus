@@ -507,6 +507,16 @@ void FlightCopperList::setAHGroundColor(uint16_t c)
     data_[INDEX_AH_COL] = copperMove(color17, c);       // COLOR17 (line-180 re-MOVE) = AH ground-fill (P2 ← $00D0)
 }
 
+// Long-Range-Scanner dot (Atari missile M2 on ch2 pen10).  In the DASHBOARD the dashboard DLI $4A78
+// sets PRIOR=$04, so the fifth-player bit is CLEAR and M2 takes its player's colour = COLPM2, which
+// the same DLI loads from $00D0 ($4A80) — i.e. the SAME source as the AH ground fill above, hence the
+// shared caller-side cache.  (In the VIEWPORT the VBI's PRIOR=mem[$026F]=$11 DOES set the fifth-player
+// bit, which is why the crosshair missiles up there are COLPF3 instead — a different, static pen.)
+void FlightCopperList::setScannerDotColor(uint16_t c)
+{
+    data_[INDEX_SCANNER_COL] = copperMove(kColor22, c); // COLOR22 (line-180 re-MOVE) = scanner dot (M2 ← $00D0)
+}
+
 void FlightCopperList::setCompassColor(uint16_t c)
 {
     data_[INDEX_COMPASS_COL] = copperMove(color01, c);

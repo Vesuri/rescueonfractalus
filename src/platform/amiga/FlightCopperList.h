@@ -40,6 +40,7 @@ public:
     void setAltimeterColor(uint16_t c);                            // COLOR25 ($1B2) altimeter terrain-height bar (P0)
     void setAltimeterShipColor(uint16_t c);                        // COLOR29 ($1BA) altimeter ship-height bar (M3)
     void setAHGroundColor(uint16_t c);                             // COLOR17 (line-180) artificial-horizon ground fill (P2 ← $00D0)
+    void setScannerDotColor(uint16_t c);                           // COLOR22 (line-180) Long-Range-Scanner dot (M2 ← COLPM2 ← $00D0)
     void setCompassColor(uint16_t c);                              // color01 over the compass band (COLPF0 $00CF, housing)
     void setCompassNeedleColor(uint16_t c);                        // color03 over the compass band (COLPF2 salmon, needle/letters)
     // Viewport (terrain) pens.  pen0 = terrain body (the salmon→brown fade target),

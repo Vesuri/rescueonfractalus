@@ -23,6 +23,53 @@ resets `$C7`. Key: `$6CD7` PMG colours `COLPM1/2/3=mem[$08D7/8/9]`+`PRIOR=$94`; 
 them → absent from `listing.txt`; seed each DLI addr as a Ghidra entry point to persist them —
 now done via `ghidra_scripts/entrypoints.csv`.)
 
+**FLIGHT DLI chain (`VDSLST=$49EE`)** — dispatch on `$C7` through word table **`$4AD9`/`$4ADE`** =
+`[$4A11, $4A1F, $4A40, $4A78, $4ACD]`; tail `$4A05` does `INC $C7`. Also absent from `listing.txt`
+(indirect JMP), so this map was disassembled from the raw `.xex` bytes at `$4A11-$4AD8`. **Every
+colour here is reloaded from a `$00CF-$00DE` display param on EVERY frame with no gating flag** — the
+whole cockpit follows those bytes, which is why the ESC-pause `$5039` strobe repaints all of it (see
+the `pause-mechanism` memory) and why `updateFlightCopper` must drive these slots live, not bake them.
+
+| Region (DLI) | Writes |
+|---|---|
+| top bar — set in the **VBI** `$4FF5`, before any DLI | `COLBK`/`COLPM0`/`COLPM1` ← **`$00D4`** (bar bg + BOTH canopy pillars), `COLPM2` ← `$0037`, `COLPF0` ← `$00D8` (text), `COLPF1` ← **`$00D7`**, `COLPM3` ← `$00D9`, `HPOSP2` ← `$00CB`, `SIZEP2` ← `$00CD`, `HPOSP3` ← `$2870`, `PRIOR` ← `$026F` |
+| compass line (`$4A11`) | `CHBASE=$38`, `COLPF0` ← `$00CF`. ⚠ leaves COLPF2 untouched, so the needle/heading (mode-4 value 3) show the PREVIOUS frame's `$4A78` value = **`$00D1`** — the same pen as the dashboard's value-3 pixels, one frame late |
+| viewport (`$4A1F`) | `HPOSP0=$39`, `HPOSP1=$BF`, `COLPF1` ← `$00DA` (dots), `COLPF0` ← `$00DD` (sky), `COLPF2` ← `$00DB` (highlight), `COLBK` ← `$00DC` (body) |
+| wing-clearance band (`$4A40`) | `SIZEM=$C0`, `HPOSM1=$BE`, `COLPM0`/`COLPM1` ← `$00CF` (wedges), `COLPF2` ← `$00D4` (frame grey), `HPOSP0=$30`, `HPOSP1=$C0`, `SIZEP0/1/2=1`, `PRIOR=$02` |
+| dashboard (`$4A78`) | `COLPM2` ← `$00D0` (AH ground), WSYNC, `COLPF0` ← `$00CF`, `COLPF1` ← `$00D4`, `COLPF2` ← `$00D1`, `COLBK` ← `$00D2` (dash blue), `HPOSP2=$4C`, `HPOSP0=$5C`, `COLPM0` ← `$00D5` (altim terrain), `COLPM3` ← `$00D6` (altim ship), `HPOSP1=$94`, `COLPM1` ← `$00DE` (energy), `HPOSP3` ← `$00CC` (scope P3 X), `PRIOR=$04`, `HPOSM3=$64`, `HPOSM2` ← `$00CE` |
+| bottom (`$4ACD`) | `COLBK` ← `$00D3`, then `$C7=0` |
+
+⚠ **PRIOR changes mid-screen, so a MISSILE's colour source depends on which region it is in.** The VBI
+sets `PRIOR = mem[$026F] = $11` — **bit 4 (fifth player) SET** ⇒ in the top bar/compass/viewport all
+four missiles take **COLPF3**. The band (`$4A40`) resets it to `$02` and the dashboard (`$4A78`) to
+`$04` — bit 4 CLEAR ⇒ below the viewport each missile takes its own player's colour. Consequences:
+- **targeting crosshair** (M1/M2/M3, viewport) = **COLPF3**, and a raw-binary scan for `STA $D019` over
+  the whole main blob finds only `$4FEF`, `$52EE`, `$6D76`, `$6D93` — **none in the flight VBI or any
+  flight DLI**. So COLPF3 keeps the stale `$26` the launch chain left (`$6D76`/`$6D93` `LDA #$26`) for
+  the entire flight: the crosshair is a genuine CONSTANT and must NOT colour-cycle on pause (it does
+  fade on death — `$4FEF` is the death ramp — but it is gated hidden unless the scope is locked).
+- **Long-Range-Scanner dot** (M2, dashboard) = **COLPM2 ← `$00D0`** (`$4A80`), i.e. the same source as
+  the artificial-horizon ground fill, so the two always match and both cycle.
+The same missile (M2) serves both: the VBI points HPOSM2 at the crosshair for the viewport, then
+`$4A78` re-points it to `$00CE` for the scanner dot — the classic reuse-by-scanline trick.
+
+Base values for `$00CF-$00D7` are the game's own table **`$4DF1`** = `04 26 2C 90 00 06 44 9A 78`. Use
+it to check any "is this baked constant right?" question from the binary alone — no emulator needed.
+
+**Two writers move this block, and their ranges differ — that difference is load-bearing:**
+- **death explosion** `intro_fill_display_params $4FE0`: `LDY #$07 / LDA $4DF1,Y / AND #$0F / ORA $00C2 /
+  STA $CF,Y / DEY / BPL` ⇒ **`$00CF-$00D6` only**. Keeps each param's `$4DF1` luma and forces the HUE
+  nibble to 2 = salmon, with `$00C2` walking `$20`→`$2A` (`$4F5C..$4F74`). Then `$4F76` blanks DMACTL and
+  `$4F7E-$4F92` ramps **`$00D4`** (COLBK) down to `$1F` for the post-blank fade.
+- **ESC pause strobe** `$5039`: `LDY #$0E / LDA $07E9,Y / EOR $0012 / AND #$F6 / STA $CF,Y` ⇒
+  **`$00CF-$00DD`**, on each 256-frame jiffy wrap once `$063B` reaches `$80` (~11 min of pause).
+
+So `$00D7`/`$00D8` (top-bar pf1 / text) cycle on pause but correctly do NOT fade on death, and `$00DE`
+(energy) sits one byte past the strobe's top so it never cycles at all. Because the VBI + DLIs
+republish the whole block every frame with **no gating flag**, the Amiga copper slots must be driven
+live and ungated — gating them on the death trigger `mem[$063D]` is what used to freeze the top bar,
+pillars, dashboard body and compass needle during a pause.
+
 **Stars/Planet DLI chain (`VDSLST=$6CC2`, a SEPARATE dispatcher from `$6CAD` above):** `$6CC2`
 dispatches `$C7` through word table **`$6DCF`** (not `$6DBB`). Its key handlers, top→bottom:
 `$6D0E` viewport playfield pens `COLPF0/1/2=$24/$28/$2A` (the 3-tone planet/star body); `$6D67`

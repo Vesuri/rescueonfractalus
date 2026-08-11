@@ -4889,20 +4889,30 @@ void RescueOnFractalus::updatePlanetCopper(bool force)
 // colours live.
 void RescueOnFractalus::updateFlightCopper(bool force)
 {
-    // Death cinematic: while it runs (event_trigger $063D != 0, DMA still on before $4F76) the
-    // frame greys must fade to salmon with the cockpit.  On the Atari the top-bar background +
-    // canopy pillars are COLBK = mem[$00D4] (the frame-grey display param $4FE0 ramps to hue-2);
-    // normal flight uses the $02C8 shadow.  Drive titleBg from $00D4 during the cinematic so the
-    // top bar + pillars (setSpritePostColor(titleBg)) fade too — not just the band.
-    const bool cine = (mem[0x063D] != 0);
-    const uint16_t titleBg  = atariToOCS(cine ? mem[0x00D4] : mem[0x02C8]);  // COLBK = top-bar bg / canopy posts
+    // Top-bar region (above the viewport): the flight VBI $4FF5 reloads its three GTIA colours from
+    // display params on EVERY frame, before any DLI fires —
+    //   $5004 COLBK  ($D01A) <- $00D4   = top-bar background
+    //         COLPM0 ($D012) <- $00D4   = left canopy pillar   (players P0/P1, setSpritePostColor)
+    //         COLPM1 ($D013) <- $00D4   = right canopy pillar
+    //   $5014 COLPF0 ($D016) <- $00D8   = top-bar / message text
+    //   $5019 COLPF1 ($D017) <- $00D7   = top-bar pf1 (blue)
+    // so all three track mem[] live, not just during the death cinematic.  This used to read the
+    // $02C8 COLOR4 shadow for the background and bake pf1 at $78, which is indistinguishable in
+    // normal flight — the game's OWN base table $4DF1 (which intro_fill_display_params $4FE0 loads
+    // into $00CF+y) is $04 $26 $2C $90 $00 $06 $44 $9A $78, so $00D4 == $06 == $02C8 and $00D7 == $78
+    // — but it froze the top bar and the pillars during the ESC pause: the $5039 strobe rewrites ALL
+    // of $00CF-$00DD (VBI $504F-$5058) and $02C8 is outside that range, so they never moved.  Sourcing
+    // them the way the VBI does fixes the pause and the cinematic with one rule.  ($00DE, the energy
+    // bar, sits one byte past the strobe's `LDY #$0E` top and correctly does NOT cycle.)
+    const uint16_t titleBg  = atariToOCS(mem[MEM_display_param_5]);  // COLBK = top-bar bg / canopy posts
     const uint16_t titlePf0 = atariToOCS(mem[MEM_text_color_pf0]);   // COLPF0 = top-bar text ($00D8)
+    const uint16_t titlePf1 = atariToOCS(mem[MEM_display_param_8]);  // COLPF1 = top-bar blue ($00D7)
     const uint16_t energyCol = atariToOCS(mem[0x00DE]);             // gauge bar colour
 
-    if (force || titleBg != flTitleBg || titlePf0 != flTitlePf0) {
-        flightCopper->setTitlePalette(titleBg, titlePf0, atariToOCS(0x78));  // pf1 = blue (const)
+    if (force || titleBg != flTitleBg || titlePf0 != flTitlePf0 || titlePf1 != flTitlePf1) {
+        flightCopper->setTitlePalette(titleBg, titlePf0, titlePf1);
         flightCopper->setSpritePostColor(titleBg);
-        flTitleBg = titleBg; flTitlePf0 = titlePf0;
+        flTitleBg = titleBg; flTitlePf0 = titlePf0; flTitlePf1 = titlePf1;
     }
     if (force || energyCol != flEnergyCol) {
         flightCopper->setEnergyIndicatorColor(energyCol);
@@ -4952,7 +4962,14 @@ void RescueOnFractalus::updateFlightCopper(bool force)
     const uint16_t ahGround  = atariToOCS(mem[0x00D0]);
     if (force || altimCol != flAltimCol)     { flightCopper->setAltimeterColor(altimCol);      flAltimCol = altimCol; }
     if (force || shipCol  != flAltimShipCol) { flightCopper->setAltimeterShipColor(shipCol);   flAltimShipCol = shipCol; }
-    if (force || ahGround != flAHGround)     { flightCopper->setAHGroundColor(ahGround);       flAHGround = ahGround; }
+    // $00D0 drives TWO dashboard slots, both COLPM2 via DLI $4A78 ($4A80): the AH ground fill (P2)
+    // and the Long-Range-Scanner guide dot (missile M2 — the dashboard's PRIOR=$04 leaves the
+    // fifth-player bit clear, so M2 takes its player's colour).  The scanner dot was baked at $26 in
+    // buildLayout, which is exactly $00D0's $4DF1 base, so this is a no-op in normal flight and only
+    // shows up under the pause strobe / the death ramp — where it must move with the AH fill.
+    if (force || ahGround != flAHGround)     { flightCopper->setAHGroundColor(ahGround);
+                                               flightCopper->setScannerDotColor(ahGround);
+                                               flAHGround = ahGround; }
     // (The wing-clearance centre plane symbol is part of the mode-D band bitmap — the value-2
     // $AA $AA centre marker decoded into the viewport rows — so it needs no separate sprite.)
 
@@ -4967,8 +4984,20 @@ void RescueOnFractalus::updateFlightCopper(bool force)
         flightCopper->setTriangleColor(compassCol);
         flCompassCol = compassCol;
     }
-    // Compass needle / heading letters (value-3 = COLPF2) are salmon ($2A); set once.
-    if (force) flightCopper->setCompassNeedleColor(atariToOCS(0x2A));
+    // Compass needle / heading letters (mode-4 value-3 = COLPF2).  NOTHING writes COLPF2 before the
+    // compass line: the VBI $4FF5 doesn't touch $D018 and DLI $4A11 sets only CHBASE + COLPF0, so the
+    // compass shows whatever the PREVIOUS frame's dashboard DLI left there — $4A78's `STX COLPF2` at
+    // $4A8E, i.e. **$00D1**.  The needle is therefore the same pen as the dashboard's value-3 pixels
+    // and must track $00D1 with them.  This was baked at $2A while the cockpit bake used $2C for the
+    // same register, which cannot both be right; $4DF1+2 = $2C settles it, so $2A was simply one luma
+    // step dark.  Being a param, it also fades salmon in the death cinematic ($4FE0 ramps $00CF-$00D6,
+    // and $00D1 is in range) and cycles under the ESC-pause strobe — neither of which it used to do.
+    // (The Atari shows it one frame late, since the value is last frame's; not worth emulating.)
+    const uint8_t needleD1 = mem[MEM_display_param_2];
+    if (force || needleD1 != flNeedleD1) {
+        flightCopper->setCompassNeedleColor(atariToOCS(needleD1));
+        flNeedleD1 = needleD1;
+    }
 
     // Terrain salmon→brown fade (#2): the flight VBI atmosphere ramp ($51C8) computes ALL
     // FOUR terrain pens each frame from altitude ($0034 → tables $07F9/$0823/$084D/$0877),
@@ -5005,6 +5034,17 @@ void RescueOnFractalus::updateFlightCopper(bool force)
     // three missiles sit off the left edge (hidden).  The plane3 "+" is drawn unconditionally
     // (renderFlightDirect); we gate visibility purely by colour — visible → salmon $26; hidden →
     // the terrain pens (color00-03) so the plane3 pixels read identical to the terrain = invisible.
+    //
+    // ⚠ $26 is a CONSTANT here on purpose — do NOT "fix" it to track a display param.  Up here the
+    // VBI's PRIOR = mem[$026F] = $11 has the fifth-player bit ($10) SET, so all four missiles take
+    // **COLPF3**, not their players' colours.  And a raw scan of the whole main blob for `STA $D019`
+    // finds only $4FEF, $52EE, $6D76, $6D93 — none of them in the flight VBI or any flight DLI.  So
+    // COLPF3 holds the stale $26 the launch chain left ($6D76/$6D93 `LDA #$26 STA $D019`) for the
+    // entire flight, and the ESC-pause strobe (which only rewrites RAM $00CF-$00DD) can never reach
+    // it: the crosshair correctly does NOT colour-cycle, unlike everything else in the cockpit.
+    // (The lone flight-adjacent writer $4FEF is the death ramp, so on the Atari the crosshair alone
+    // fades on death without cycling on pause; it is gated hidden — $2840 = 0 unless the scope is
+    // locked on — so that path is not worth the poke.)
     if (mem[0x2840] != 0) {
         const uint16_t cross = atariToOCS(0x26);
         flightCopper->setCrosshairPalette(cross, cross, cross, cross);
@@ -5012,26 +5052,32 @@ void RescueOnFractalus::updateFlightCopper(bool force)
         flightCopper->setCrosshairPalette(terr0, terr1, terr2, terr3);
     }
 
-    // Death-cinematic cockpit fade: the Atari cockpit DLI loads its pens from the display params
-    // $00CF-$00D6, which intro_fill_display_params ($4FE0) ramps to salmon (hue 2) during the
-    // cinematic.  Drive the FlightCopperList cockpit palette + dashboard-blue bg from them while
-    // the cinematic runs, so the WHOLE dashboard (body, divider, gauge housings) tints gray→salmon
-    // with the frame — not just the band.  Mapping mirrors the buildLayout bake (each baked value
-    // equals a $00CF-$00D6 base): color00/04←$D3, 01/05←$CF, 02/06←$D4, 03←$D1, 07←$D0, dash←$D2.
-    // Normal flight leaves the baked palette alone (those params hold their base values then); the
-    // baked constants are restored once when the cinematic ends (or on the next flight-entry force).
-    if (cine) {
-        flightCopper->setCockpitPalette(
-            atariToOCS(mem[0x00D3]), atariToOCS(mem[0x00CF]), atariToOCS(mem[0x00D4]), atariToOCS(mem[0x00D1]),
-            atariToOCS(mem[0x00D3]), atariToOCS(mem[0x00CF]), atariToOCS(mem[0x00D4]), atariToOCS(mem[0x00D0]));
-        flightCopper->setDashBg(atariToOCS(mem[0x00D2]));
-        flCinePrev = true;
-    } else if (flCinePrev || force) {
-        flightCopper->setCockpitPalette(
-            atariToOCS(0x00), atariToOCS(0x04), atariToOCS(0x06), atariToOCS(0x2C),
-            atariToOCS(0x00), atariToOCS(0x04), atariToOCS(0x06), atariToOCS(0x26));
-        flightCopper->setDashBg(atariToOCS(0x90));
-        flCinePrev = false;
+    // Cockpit body pens.  The Atari dashboard DLI $4A78 reloads them from the display params on EVERY
+    // frame — COLPF0 <- $00CF ($4A88), COLPF1 <- $00D4 ($4A8B), COLPF2 <- $00D1 ($4A8E), COLBK <- $00D2
+    // ($4A93); the bottom DLI $4ACD then puts $00D3 in COLBK ($4ACF) — so the whole dashboard follows
+    // whatever writes those bytes, with no gating flag anywhere.  Mapping mirrors the buildLayout bake:
+    // color00/04<-$D3, 01/05<-$CF, 02/06<-$D4, 03<-$D1, 07<-$D0 (COLPM2, the AH ground), dash<-$D2.
+    //
+    // This used to run ONLY during the death cinematic (event_trigger $063D != 0), which is one of the
+    // two things that move these params — intro_fill_display_params $4FE0 ramps $00CF-$00D6 to salmon.
+    // The other is the ESC-pause strobe ($5039: `LDA $07E9,Y EOR $0012 AND #$F6 STA $CF,Y`, Y=$0E..0),
+    // which the gate excluded, so the cockpit body stayed frozen while the terrain cycled.  Driving it
+    // live with no gate matches the DLI and covers both.  Each baked constant equals its param's base
+    // value in the game's own $4DF1 table — $D3=$00, $CF=$04, $D4=$06, $D1=$2C, $D0=$26, $D2=$90 — so
+    // normal flight is byte-identical to the bake and, the params being constant there, pokes nothing.
+    const uint8_t ckD3 = mem[MEM_display_param_4], ckCF = mem[MEM_display_param_0];
+    const uint8_t ckD4 = mem[MEM_display_param_5], ckD1 = mem[MEM_display_param_2];
+    const uint8_t ckD0 = mem[MEM_display_param_1], ckD2 = mem[MEM_display_param_3];
+    if (force || ckD3 != flCkD3 || ckCF != flCkCF || ckD4 != flCkD4
+              || ckD1 != flCkD1 || ckD0 != flCkD0) {
+        const uint16_t c0 = atariToOCS(ckD3), c1 = atariToOCS(ckCF), c2 = atariToOCS(ckD4);
+        flightCopper->setCockpitPalette(c0, c1, c2, atariToOCS(ckD1),
+                                        c0, c1, c2, atariToOCS(ckD0));
+        flCkD3 = ckD3; flCkCF = ckCF; flCkD4 = ckD4; flCkD1 = ckD1; flCkD0 = ckD0;
+    }
+    if (force || ckD2 != flCkD2) {
+        flightCopper->setDashBg(atariToOCS(ckD2));
+        flCkD2 = ckD2;
     }
 }
 

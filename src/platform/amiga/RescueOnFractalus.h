@@ -279,7 +279,8 @@ private:
     bool flightCopperInstalled = false;  // is flightCopper the currently-installed list?
     void updateFlightCopper(bool force); // poke changed colour/sprite slots (force = all)
     // Last-poked values (fl* — separate from sb*/pl* so a phase switch force-refreshes).
-    uint16_t flTitleBg = 0xFFFF, flTitlePf0 = 0xFFFF, flEnergyCol = 0xFFFF, flCompassCol = 0xFFFF;
+    uint16_t flTitleBg = 0xFFFF, flTitlePf0 = 0xFFFF, flTitlePf1 = 0xFFFF;
+    uint16_t flEnergyCol = 0xFFFF, flCompassCol = 0xFFFF;
     uint16_t flTerr0 = 0xFFFF, flTerr1 = 0xFFFF;   // terrain pen0/pen1 (atmosphere ramp $00DC/$00DD)
     uint16_t flTerr2 = 0xFFFF, flTerr3 = 0xFFFF;   // terrain pen2/pen3 (atmosphere ramp $00DA/$00DB)
     uint16_t flBand3 = 0xFFFF;   // wing-band color03 = COLPF2 frame grey ($00D4); other pens inherit terrain
@@ -287,7 +288,12 @@ private:
     // cinematic ($4FE0) ramps to salmon — poked on change so they fade with the cockpit (constant in
     // normal flight → free): altimeter terrain P0 ← $00D5, ship M3 ← $00D6, AH ground P2 ← $00D0.
     uint16_t flAltimCol = 0xFFFF, flAltimShipCol = 0xFFFF, flAHGround = 0xFFFF;
-    bool     flCinePrev = false; // death-cinematic salmon fade was active last frame (restore cockpit palette on exit)
+    // Cockpit-region pens: the Atari dashboard DLI $4A78 reloads them from $00CF-$00D4 EVERY frame,
+    // so they are driven live + poked on change (constant in normal flight → free).  Cached as the
+    // six mem[] SOURCE bytes rather than the eight OCS words: the mapping duplicates $00D3/$00CF/
+    // $00D4, so six byte compares settle it and no atariToOCS runs on an unchanged frame.
+    uint8_t  flCkD3 = 0xFF, flCkCF = 0xFF, flCkD4 = 0xFF, flCkD1 = 0xFF, flCkD0 = 0xFF, flCkD2 = 0xFF;
+    uint8_t  flNeedleD1 = 0xFF;  // compass needle/heading COLPF2 — also $00D1 (see updateFlightCopper)
 
     // Launch-cinematic fixed copper lists:
     //   DoorsCopperList (scene 4) — hangar doors parting, sliding 3-band geometry poked
