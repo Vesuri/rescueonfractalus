@@ -266,6 +266,13 @@ extern "C" volatile unsigned short g_rkFirstVbi = 0, g_rkLastVbi = 0;
 extern "C" volatile unsigned short g_rkN = 0;
 extern "C" volatile unsigned char  g_rkK[RK_STEPS] = {0};
 extern "C" volatile unsigned short g_rkVbi[RK_STEPS] = {0}, g_rkHold[RK_STEPS] = {0};
+// EmptyCopperList frames taken while RETURNING to the mother ship ($52D7 + $003A=$FF) — the black
+// seam between the reverse tunnel ending and the standby appearing.  Must be 0: render()'s T6
+// handoff hold is supposed to own that window, freezing the last reverse-ring frame on screen.
+extern "C" volatile unsigned long  g_brBlackFrames = 0;
+extern "C" volatile unsigned short g_brBlackFirstVbi = 0, g_brBlackLastVbi = 0;
+extern "C" volatile unsigned char  g_brBlack8D = 0, g_brBlack8E = 0;   // the gating flags at entry
+extern "C" volatile unsigned char  g_brBlackDoorRdy = 0, g_brBlackTunInst = 0;
 #endif
 extern "C" volatile unsigned short g_starEntryVbi = 0;              // vbi at first rsStars viewport decode
 extern "C" volatile unsigned long  g_starEntryTicks = 0, g_starEntryIsr = 0; // its cost
@@ -3612,9 +3619,23 @@ void RescueOnFractalus::renderFrame()
     // rsBoostViewport branch below renders it.  The final next-level door BUILD ($008D==0 &&
     // $008E!=0) is NOT a viewport phase, so it still black-holds until reveal (masking the build).
     const uint16_t vvblkiRF = (uint16_t)(mem[0x0222] | (mem[0x0223] << 8));
-    const bool boostViewportCine = (vvblkiRF == 0x52D7u) && (mem[0x003A] == 0xFFu)
-                                   && (mem[0x008D] != 0u || mem[0x008E] == 0u);
-    if (emptyCopper && !g_standbyRevealReady && !boostViewportCine) {
+    const bool boostReturnRF = (vvblkiRF == 0x52D7u) && (mem[0x003A] == 0xFFu);
+    const bool boostViewportCine = boostReturnRF && (mem[0x008D] != 0u || mem[0x008E] == 0u);
+    // ...and NEITHER may the handoff window that follows the reverse tunnel ($008D==0 && $008E!=0,
+    // the final next-level door build).  b61791e left that one black-holding on the grounds that it
+    // IS the piecemeal door build the hold exists to mask — but render()'s T6 handoff hold (added
+    // by d8d7c18 for exactly this transition) already covers it, and covers it better: it freezes
+    // the last reverse-ring tunnel frame on screen, decodes nothing, and animates only the band
+    // recede, until staticStandby takes over on the g_doorFieldReady 0->1 edge with the finished
+    // LEVEL-NN field.  Black-holding here pre-empts it entirely — measured, the handoff hold ran
+    // ZERO frames and 13 frames of EmptyCopperList (~0.26 s, vbi 2658-2670) flashed between the
+    // reverse tunnel and the standby.  Holding the tunnel image is also the faithful choice: on the
+    // Atari, ANTIC keeps displaying the ring field through this window.  Nothing is black there.
+    // ⚠ Gated on the tunnel copper actually being LIVE.  With no reverse-tunnel frame to freeze
+    // there is nothing seamless to show, and falling through would put a stale list on screen — so
+    // a return that somehow reaches here without one still black-holds.
+    const bool boostReturnHandoff = boostReturnRF && tunnelCopperInstalled && !g_doorFieldReady;
+    if (emptyCopper && !g_standbyRevealReady && !boostViewportCine && !boostReturnHandoff) {
         // Track the render signals EVERY held frame so the g_doorFieldReady 0->1 edge that fires
         // mid-build (boot_standby_launch_driver clears it at entry, re-sets it at construction-done)
         // is observed HERE and arms the one-time door decode (terrainDirty, line ~3115) + full
@@ -3628,6 +3649,19 @@ void RescueOnFractalus::renderFrame()
 #ifdef ROF_FLIGHT_PROBE
         { extern volatile unsigned char g_liveCopper; g_liveCopper = 9;   // 9 = black EmptyCopperList
           extern volatile unsigned long g_blackHoldFrames; g_blackHoldFrames++; }
+        // Black frames taken during the RETURN to the mother ship specifically — the seam the user
+        // sees between the reverse tunnel ending and the standby appearing.  g_blackHoldFrames
+        // alone cannot answer this: it also counts the initial boot build, which is legitimate.
+        if (vvblkiRF == 0x52D7u && mem[0x003A] == 0xFFu) {
+            if (!g_brBlackFrames) {
+                g_brBlackFirstVbi = platform_frame_count();
+                g_brBlack8D = mem[0x008D]; g_brBlack8E = mem[0x008E];
+                g_brBlackDoorRdy = g_doorFieldReady;
+                g_brBlackTunInst = tunnelCopperInstalled ? 1 : 0;
+            }
+            g_brBlackFrames++;
+            g_brBlackLastVbi = platform_frame_count();
+        }
 #endif
         if (!emptyCopperInstalled) {
             AmigaHardware::setCopperList(*emptyCopper, false);

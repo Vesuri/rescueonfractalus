@@ -40,6 +40,13 @@ while $i < 48 && $i < g_rkN
   printf "    vbi %5u  K=%2u  held %3u frames\n", g_rkVbi[$i], g_rkK[$i], g_rkHold[$i]
   set $i = $i + 1
 end
+printf "=== return-to-mother-ship black seam (MUST be 0 frames) ===\n"
+printf "EmptyCopperList frames during the return=%lu  vbi %u..%u\n", \
+  g_brBlackFrames, g_brBlackFirstVbi, g_brBlackLastVbi
+printf "  at the first black frame: $8D=%02x $8E=%02x doorFieldReady=%u tunnelCopperInstalled=%u\n", \
+  g_brBlack8D, g_brBlack8E, g_brBlackDoorRdy, g_brBlackTunInst
+printf "T6 handoff-hold frames (the tunnel frame frozen on screen)=%lu   all black holds=%lu\n", \
+  g_boostHandoffHoldFrames, g_blackHoldFrames
 printf "=== context ===\n"
 printf "vbi=%u  boostRet=%u boostVp=%u liveCopper=%u\n", g_vbiCount, g_boostRet, g_boostVp, g_liveCopper
 printf "ring rects=%lu  door rects skipped=%lu\n", g_trCalls, g_trDoors

@@ -309,3 +309,45 @@ is structural and needs no counter — the mixed-pen window per pixel drops from
 What is LEFT is a plain single-buffer tear: when the paint front crosses the beam (it moves ~12x
 faster, so at most once) one row can be half-written.  That is what the Atari does too — its own
 field writes race ANTIC the same way — so it is faithful and was deliberately not chased further.
+
+---
+
+## 7. The black seam at the end of the return — CLOSED 2026-08-11
+
+Between the reverse tunnel ending and the standby appearing, the **`EmptyCopperList` flashed for
+~0.26 s**.  It should be seamless.
+
+`renderFrame()`'s black-until-ready hold runs BEFORE `render()`, and `b61791e` exempted only the
+boost VIEWPORT phase from it (`$008D!=0 || $008E==0`), deliberately leaving the final next-level
+door build (`$008D==0 && $008E!=0`) to black-hold "so the piecemeal door construction stays
+masked".  But `render()`'s **T6 handoff hold** (`d8d7c18`, `rsBoostReturn && !g_doorFieldReady`)
+was built for exactly that window and covers it properly: it freezes the last reverse-ring tunnel
+frame on screen, decodes nothing, and animates only the band recede, until `staticStandby` takes
+over on the `g_doorFieldReady` 0->1 edge with the finished LEVEL-NN field.  The black hold sits
+upstream of it and returns early, so the handoff hold **never ran at all**.
+
+Fix: one more exemption in `renderFrame()`, gated on there actually being a tunnel frame to freeze.
+
+```c
+const bool boostReturnHandoff = boostReturnRF && tunnelCopperInstalled && !g_doorFieldReady;
+```
+
+| | black frames in the return | T6 handoff-hold frames | all black holds |
+|---|---|---|---|
+| before | **13** (vbi 2658-2670) | **0** | 19 |
+| after | **0** | **13** | 6 (the boot build only) |
+
+The 13 frames move one-for-one from one owner to the other, and the 6 that remain are the initial
+boot build — that arithmetic is the check that the exemption is scoped correctly, not just that the
+seam went away.  Ending state is still `liveCopper=2` (staticStandby).
+
+- ⚠ **`tunnelCopperInstalled` in that condition is LOAD-BEARING, not defensive.** The
+  post-mother-ship **SELECT** level cycle also runs with `$003A==$FF` and `g_doorFieldReady`
+  cleared (at `L_6332`), but arrives on the live STATIC STANDBY with no tunnel copper — the
+  `render()` branch just above the handoff hold is that case.  Without the gate this exemption
+  would swallow it too.
+- Holding the tunnel image is also the FAITHFUL choice: on the Atari, ANTIC keeps displaying the
+  ring field through this window.  Nothing is black there.
+- Probe: `g_brBlackFrames` (+ the gating flags sampled at the first black frame) in
+  `amiga/tunnel_tear.gdb`.  It counts EmptyCopperList frames **during the return only** —
+  `g_blackHoldFrames` cannot answer the question because it also counts the legitimate boot build.
