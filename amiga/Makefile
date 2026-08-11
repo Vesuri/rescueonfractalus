@@ -752,6 +752,23 @@ endif
 ifdef FORCE_DEMO
 EXTRA_DEFINES += -DROF_FORCE_DEMO
 endif
+# `make ATTRACT_NOW=1|2`: shorten the Standby attract timeout so the Title Screen (scene 3b)
+# appears a few seconds after the Standby settles instead of after ~7000 idle frames (~2.5 min:
+# $062D wraps 256 frames per attract_timer $00E2 tick, $64 -> $80).  ONE-SHOT — it sets $00E2 bit7
+# once, so the Title reached this way behaves like the genuine timeout and the Standby that
+# follows it does NOT immediately bounce back to the Title.
+#   ATTRACT_NOW=1  any Standby (use for the INITIAL-standby A/B)
+#   ATTRACT_NOW=2  only the POST-MOTHER-SHIP Standby ($003A==$FF) — the mothership-title repro
+# Works in a plain interactive build too (`make FORCE_MOTHERSHIP=1 ATTRACT_NOW=2` + ./run.sh).
+ifdef ATTRACT_NOW
+EXTRA_DEFINES += -DROF_ATTRACT_NOW=$(ATTRACT_NOW)
+endif
+# `make TITLE_START=1`: once the Title Screen has been up ~2.4 s, HOLD START (CONSOL bit0) so the
+# card exits and the Standby behind it launches — the headless equivalent of the user pressing F1
+# on the Title.  Released once flight ($4FF5) is reached.  Pair with ATTRACT_NOW.
+ifdef TITLE_START
+EXTRA_DEFINES += -DROF_TITLE_START
+endif
 CORE_CFLAGS   = -g -MP -MMD -m68000 -msoft-float $(OPT) -nostdlib \
                 -fno-tree-loop-distribution -ffunction-sections -fdata-sections \
                 -Wno-unused-function -Wno-unused-parameter -Wno-unused-variable \

@@ -177,10 +177,11 @@ extern "C" volatile unsigned long g_ckDigitT = 0, g_ckLockT = 0, g_ckDialT = 0, 
 extern "C" volatile unsigned long g_ckLockCells = 0;   // lock-on cells actually decoded (was always 7)
 extern "C" volatile unsigned long g_ckDigitBlocks = 0;  // digit blocks actually decoded (was always 6)
 extern "C" volatile unsigned short g_ckFullVbi[4] = {0,0,0,0};       // g_vbiCount at each ckFull call
-// Boost-return probe: last-installed copper id (1=title 2=standby 3=planet 4=flight 5=tunnel
-// 6=doors 7=empty 8=boost-handoff-hold) + the live boost signals, sampled per render() to
-// confirm phase routing.  g_boostHandoffHoldFrames counts the T6 handoff-hold frames (proves
-// the reverse-tunnel->standby window exists and the guard catches it).
+// Boost-return probe: last-installed copper id (1=title 2=standby 3=planet 4=flight
+// 5=forward tunnel 6=doors 8=boost-handoff-hold 9=black EmptyCopperList 10=in-place wrap fade
+// 11=boost REVERSE tunnel) + the live boost signals, sampled per render() to confirm phase
+// routing.  g_boostHandoffHoldFrames counts the T6 handoff-hold frames (proves the
+// reverse-tunnel->standby window exists and the guard catches it).
 extern "C" volatile unsigned char g_boostRet = 0, g_boostVp = 0, g_liveCopper = 0;
 extern "C" volatile unsigned long g_boostHandoffHoldFrames = 0;
 // Boost-viewport decode-cost probe (item 2, decode-consume): count decode events, to confirm the
@@ -3967,6 +3968,39 @@ void RescueOnFractalus::run()
     game_entry();     // $3CDE: mega-init -> game_main_loop (Standby -> cinematic -> flight); never returns
 }
 
+// updateBoostCinematicLatch(): decide WHICH boot_standby_launch_driver construction is the
+// BOOSTERS return-to-mother-ship reverse cinematic.  Called once at the top of renderFrame(),
+// before anything reads rsBoostReturn / the inline boostReturnRF copy.
+//
+// The gate used to be mission_event_flag $003A == $FF alone.  That flag is set when the mother
+// ship arrives and STAYS $FF into the next level (see the rsBoostReturn comment in
+// deriveRenderSignals), and the reverse cinematic is not a scene of its own — it IS
+// boot_standby_launch_driver's paced construction, played with the boost LUT and shown instead of
+// black-held.  So every LATER construction under the same $003A was also rendered as a reverse
+// cinematic: the Title Screen (attract timeout / SELECT) re-enters game_main_loop, which calls
+// boot_standby_launch_driver afresh, and that rebuild came up through the boost branch — reverse
+// ring palette, and the $2000 starfield decode reading the LEVEL-NN door field instead (measured
+// 2026-08-11: 33 consecutive frames at copper id 11 with $008D==0 && $008E==0, i.e. rsBoostViewport
+// held true by its pre-ring clause).  That is the "post-mother-ship Standby -> Title -> START =
+// broken cockpit / wrong tunnel / white rectangle in the stars viewport" bug.
+//
+// The cinematic is exactly the construction that FOLLOWS the ascent, so latch that:
+//   ARM    in flight ($4FF5) once the mother ship has arrived ($003A==$FF) — the ascent is still
+//          flying at that point, and the very next VVBLKI is the $52D7 construction.
+//   CLEAR  on VVBLKI $53CC — game_main_loop's re-init (Title Screen, results card, restart).  The
+//          genuine cinematic never passes through it: the level-clear handoff goes straight from
+//          the flight loop back to boot_standby_launch_driver, $4FF5 -> $52D7.
+//   CLEAR  on the g_doorFieldReady 0->1 edge — construction complete, which is already the T6
+//          handoff hold's release point, so the cinematic ends exactly where it did before.
+void RescueOnFractalus::updateBoostCinematicLatch()
+{
+    const uint16_t vv = (uint16_t)(mem[0x0222] | (mem[0x0223] << 8));
+    if (vv == 0x53CCu)                                boostCineLatch = false;
+    else if (vv == 0x4FF5u && mem[0x003A] == 0xFFu)   boostCineLatch = true;
+    else if (g_doorFieldReady && !latchPrevDoorRdy)   boostCineLatch = false;
+    latchPrevDoorRdy = g_doorFieldReady;
+}
+
 // renderFrame(): the per-frame repaint body, called from PlatformAmiga::renderFrame()
 // at each transpiled frame-wait hook.  Does the non-phase per-frame work, repaints the
 // bitmaps, rebuilds the back copper list and flips to it.  The VBI has not yet fired
@@ -3976,6 +4010,7 @@ void RescueOnFractalus::renderFrame()
 #ifdef ROF_FLIGHT_PROBE
     extern volatile unsigned long g_renderFrameCount; g_renderFrameCount++;
 #endif
+    updateBoostCinematicLatch();   // must precede every rsBoostReturn / boostReturnRF read below
     // Black-until-ready: while the boot/standby build is still in progress, keep the blank
     // EmptyCopperList on screen and do no rendering — the bitmaps are mid-build and the real
     // lists would show garbage.  When g_standbyRevealReady latches, fall through and the copper
@@ -3992,7 +4027,7 @@ void RescueOnFractalus::renderFrame()
     // rsBoostViewport branch below renders it.  The final next-level door BUILD ($008D==0 &&
     // $008E!=0) is NOT a viewport phase, so it still black-holds until reveal (masking the build).
     const uint16_t vvblkiRF = (uint16_t)(mem[0x0222] | (mem[0x0223] << 8));
-    const bool boostReturnRF = (vvblkiRF == 0x52D7u) && (mem[0x003A] == 0xFFu);
+    const bool boostReturnRF = (vvblkiRF == 0x52D7u) && (mem[0x003A] == 0xFFu) && boostCineLatch;
     const bool boostViewportCine = boostReturnRF && (mem[0x008D] != 0u || mem[0x008E] == 0u);
     // ...and NEITHER may the handoff window that follows the reverse tunnel ($008D==0 && $008E!=0,
     // the final next-level door build).  b61791e left that one black-holding on the grounds that it
@@ -4025,7 +4060,7 @@ void RescueOnFractalus::renderFrame()
         // Black frames taken during the RETURN to the mother ship specifically — the seam the user
         // sees between the reverse tunnel ending and the standby appearing.  g_blackHoldFrames
         // alone cannot answer this: it also counts the initial boot build, which is legitimate.
-        if (vvblkiRF == 0x52D7u && mem[0x003A] == 0xFFu) {
+        if (boostReturnRF) {
             if (!g_brBlackFrames) {
                 g_brBlackFirstVbi = platform_frame_count();
                 g_brBlack8D = mem[0x008D]; g_brBlack8E = mem[0x008E];
@@ -4166,8 +4201,10 @@ void RescueOnFractalus::renderFrame()
     // The guard is exactly "no branch below can pre-empt render()'s staticPlanet this frame":
     // staticTitle needs VVBLKI $53CC (rsStars needs $52D7) and staticStandby needs !rsViewport
     // (rsStars implies it), so only the two boost branches can — the reverse-tunnel viewport and
-    // the T6 handoff hold.  ⚠ NOT a plain !rsBoostReturn: mission_event_flag $003A stays $FF into
-    // the NEXT level, so that would switch the fix off for every launch after a mother-ship return.
+    // the T6 handoff hold.  (Historically this could not be a plain !rsBoostReturn, because
+    // mission_event_flag $003A stays $FF into the NEXT level and would switch the fix off for every
+    // launch after a mother-ship return.  boostCineLatch now scopes rsBoostReturn to the one
+    // cinematic, so the two forms agree — the explicit pair is kept as documentation of the intent.)
     const bool boostOwnsDisplay = rsBoostViewport || (rsBoostReturn && !g_doorFieldReady);
     if (rsStars && !boostOwnsDisplay && !planetCopperInstalled && planetCopper && viewportBitmap) {
         // Kick the viewport clear on the blitter now, and ONLY when renderViewportModeD is going
@@ -4310,6 +4347,9 @@ void RescueOnFractalus::renderFrame()
         }
         standbyCopperInstalled = false; planetCopperInstalled = false;
         flightCopperInstalled = false; tunnelCopperInstalled = false;
+#ifdef ROF_FLIGHT_PROBE
+        { extern volatile unsigned char g_liveCopper; g_liveCopper = 1; }
+#endif
         return;
     }
 
@@ -4383,7 +4423,7 @@ void RescueOnFractalus::renderFrame()
         standbyCopperInstalled = false; planetCopperInstalled = false;
         flightCopperInstalled = false; titleScreenCopperInstalled = false;
 #ifdef ROF_FLIGHT_PROBE
-        { extern volatile unsigned char g_liveCopper; g_liveCopper = 5; }
+        { extern volatile unsigned char g_liveCopper; g_liveCopper = 11; }   // 11 = boost REVERSE tunnel
 #endif
         return;
     }
@@ -4482,6 +4522,7 @@ void RescueOnFractalus::renderFrame()
         flightCopperInstalled = false;
         tunnelCopperInstalled = false; titleScreenCopperInstalled = false;
 #ifdef ROF_FLIGHT_PROBE
+        { extern volatile unsigned char g_liveCopper; g_liveCopper = 3; }
         if (g_seArmed) { g_seTail = rof_subclock() - g_seTail;
                          g_seWall = rof_subclock() - g_seWall; g_seArmed = 0; }
 #endif
@@ -4537,6 +4578,9 @@ void RescueOnFractalus::renderFrame()
         standbyCopperInstalled = false;
         planetCopperInstalled = false;
         tunnelCopperInstalled = false; titleScreenCopperInstalled = false;
+#ifdef ROF_FLIGHT_PROBE
+        { extern volatile unsigned char g_liveCopper; g_liveCopper = 4; }
+#endif
         return;
     }
 
@@ -4559,6 +4603,9 @@ void RescueOnFractalus::renderFrame()
 #endif
         showTunnelCopper();          // one full-height ring band (setRevealBands K = 0)
         tunnelCopperInstalled = true;
+#ifdef ROF_FLIGHT_PROBE
+        { extern volatile unsigned char g_liveCopper; g_liveCopper = 5; }
+#endif
     } else if (doorsCopper[0]) {
         // ---- scene 4: hangar doors parting (also the closed g2==0 first frame) ----
         // Populate the BACK buffer fully (geometry + colours), then swap it in — the swap
@@ -4587,6 +4634,9 @@ void RescueOnFractalus::renderFrame()
         AmigaHardware::setCopperList(*doorsCopper[back], false);
         doorsActive = back;
         tunnelCopperInstalled = false;
+#ifdef ROF_FLIGHT_PROBE
+        { extern volatile unsigned char g_liveCopper; g_liveCopper = 6; }
+#endif
     }
     standbyCopperInstalled = false;   // left Standby — next static entry re-seeds + re-installs
     planetCopperInstalled = false;
@@ -5122,6 +5172,10 @@ void RescueOnFractalus::deriveRenderSignals()
     // GATE on mission_event_flag($003A)==$FF (set only when the mother ship arrives, held through
     // the whole cinematic) — NOT on flight_mode_state($0072)==2, which is the crash/landing/
     // level-clear MODE (NOT a lives count) that also matches the forward launch and mis-fires there.
+    // ...AND on boostCineLatch, because $003A alone is not enough: it stays $FF into the next level,
+    // so every later boot_standby_launch_driver construction (notably the one the Title Screen's
+    // START re-enters game_main_loop to run) was rendered as a second reverse cinematic.  The latch
+    // picks out the ONE construction that follows the ascent — see updateBoostCinematicLatch().
     // Sub-phase by the reverse-ring flags (measured live, FORCE_RETURN):
     //   stars   : $008D==0 && $008E==0   reverse ring not started — starfield in the $1000 field
     //   tunnel  : $008D!=0               reverse ring active      — concentric rings in $1000
@@ -5129,7 +5183,7 @@ void RescueOnFractalus::deriveRenderSignals()
     // Stars+tunnel share the launch-cockpit mode-D VIEWPORT bitmap (decoded from $1000, per the
     // user's faithful-to-$6CAD decision — NOT the forward $6CC2 PMG starfield); the final standby
     // falls through to the normal rsStandby path.
-    rsBoostReturn   = standbyVbi && (mem[0x003A] == 0xFFu);
+    rsBoostReturn   = standbyVbi && (mem[0x003A] == 0xFFu) && boostCineLatch;
     rsBoostViewport = rsBoostReturn && (mem[0x008D] != 0u || mem[0x008E] == 0u);
     // Release the tunnel bitmap the moment the boost stops owning it.  Boost ownership is taken at
     // the boost copper install and must NOT survive past here — the very next pre-draw is

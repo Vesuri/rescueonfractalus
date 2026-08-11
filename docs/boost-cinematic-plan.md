@@ -95,6 +95,41 @@ kept for the reasoning, not as current behaviour; **the live account is
 `docs/boost-tunnel-direct-handoff.md`**, which also carries the next step (the same treatment for
 the FORWARD tunnel's clearing).
 
+**2026-08-11 — the boost gate needed a LATCH: `$003A==$FF` alone was picking the wrong constructions.**
+Bug (user, 2026-08-10): from the POST-MOTHER-SHIP Standby, idle to the attract Title Screen and press
+START — the launch came up with misplaced sprites, a wrong tunnel and a white rectangle where the
+starfield should be. Cause: the reverse cinematic is not a scene of its own, it IS
+`boot_standby_launch_driver`'s paced construction rendered with the boost LUT (and shown instead of
+black-held). The only gate was `mission_event_flag $003A == $FF`, which **stays `$FF` into the next
+level** — so every LATER construction under the same flag was rendered as a second reverse cinematic.
+START on the Title re-enters `game_main_loop`, which calls `boot_standby_launch_driver` afresh, and
+that rebuild took the boost branch. Measured (`amiga/title_start.gdb`): 33+ consecutive frames at
+copper id 11 (boost reverse tunnel) with `$008D==0 && $008E==0` — `rsBoostViewport` held true by its
+**pre-ring** clause — and it never let go, because the standby idle loop never writes `$008E` again.
+So the wrong copper stayed live through the Standby AND the whole forward launch, decoding the
+`$2000` LEVEL-NN door field as "starfield" (that is the white rectangle).
+
+Fix: `RescueOnFractalus::updateBoostCinematicLatch()` (called at the top of `renderFrame`, before any
+`rsBoostReturn` / inline `boostReturnRF` read). `rsBoostReturn = $52D7 && $003A==$FF && boostCineLatch`,
+with the latch **armed** in flight (`$4FF5`) once `$003A==$FF` — the ascent is still flying then, and
+the very next VVBLKI is the construction — and **released** on either VVBLKI `$53CC` (game_main_loop
+re-init: Title, results card, restart; the genuine cinematic never passes through it, the level-clear
+handoff goes `$4FF5`→`$52D7` directly) or the `g_doorFieldReady` 0→1 edge (construction complete,
+already the T6 hold's release point). Verified with
+`make PROBES=1 FORCE_RETURN=1 ATTRACT_NOW=2 TITLE_START=1` +
+`GDBSCRIPT=title_start.gdb ./diag_run.sh 360`: the post-Title rebuild now goes black-hold (9) →
+standby (2) → doors (6) → forward tunnel (5) → stars (3) → flight (4), with `rsBoostReturn` /
+`rsBoostViewport` false throughout, and it repeats correctly on the following crash→Title→launch cycle.
+
+⭐ **The general lesson: a flag that says WHAT happened cannot say WHICH pass is showing it.** `$003A`
+answers "has the mother ship arrived" — it never answered "is this the cinematic". The same trace also
+caught `$003A` reaching `$FF` by its own random INC (`$7459`) during ordinary flight, which under the
+old gate would have mis-rendered the next construction too, with no mother ship anywhere near.
+**New harness:** `make ATTRACT_NOW=1|2` (force the Standby attract timeout: 1 = any Standby,
+2 = post-mother-ship only) + `make TITLE_START=1` (hold START on the Title). Both work in a plain
+interactive build — `make FORCE_MOTHERSHIP=1 ATTRACT_NOW=2` + `./run.sh` reaches the Title a few
+seconds after the return instead of ~2.5 minutes.
+
 **OPEN / next-session items:**
 1. ✅ **VERIFIED (user-confirmed 2026-07-18)** — the reveal (f824f82) grows cleanly from the centre
    in real play, and the pink-vs-teal tunnel ring cycle looks right.

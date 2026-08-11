@@ -91,8 +91,15 @@ private:
     bool rsViewport = false;   // stars || flight      — mode-D viewport band active
     bool rsTitle    = false;   // VVBLKI $53CC && title active — attract/level-select Title Screen
     bool rsLaunched = false;   // doors armed || viewport — door-gap g2 (doors..flight)
-    bool rsBoostReturn   = false;  // $52D7 && flight_mode_state($0072)==2 — BOOSTERS return reverse cinematic
+    bool rsBoostReturn   = false;  // $52D7 && $003A==$FF && boostCineLatch — BOOSTERS return reverse cinematic
     bool rsBoostViewport = false;  // rsBoostReturn && (reverse-ring active || pre-ring) — boost stars/tunnel
+    // mission_event_flag $003A stays $FF into the NEXT level, so it alone cannot say WHICH
+    // boot_standby_launch_driver construction is the reverse cinematic.  This latch does: armed
+    // in flight when the mother ship has arrived, released when that construction completes.
+    // updateBoostCinematicLatch() maintains it; see the comment there.
+    bool    boostCineLatch = false;
+    uint8_t latchPrevDoorRdy = 1;   // previous g_doorFieldReady, for the latch's release edge
+    void updateBoostCinematicLatch();
     bool doorsOpenedLatch = false;  // door scroll finished; hold the tunnel view through the
     uint8_t prevScrollCtr = 0;      // gap before the ring/viewport arms (see deriveRenderSignals)
     bool    prevRsStars = false;    // rising edge → one-time title/cockpit rescan on stars entry

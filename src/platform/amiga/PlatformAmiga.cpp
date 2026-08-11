@@ -46,6 +46,14 @@ extern "C" volatile uint8_t mem[65536];
 // build references a real symbol with zero effect.
 extern "C" volatile unsigned char g_forceTitleScreen = 0;
 
+#if defined(ROF_TITLE_START) && defined(ROF_FLIGHT_PROBE)
+// Title-Screen -> START -> launch scene-routing trace (make PROBES=1 TITLE_START=1).  Filled from
+// the vblank ISR every 2nd frame once the Title appears; dumped by amiga/title_start.gdb.
+extern "C" volatile unsigned short g_tsRingVbi[96] = {0}, g_tsRingVV[96] = {0}, g_tsRingN = 0;
+extern "C" volatile unsigned char  g_tsRing3A[96] = {0}, g_tsRing8D[96] = {0}, g_tsRing8E[96] = {0},
+                                   g_tsRing60B[96] = {0}, g_tsRingCop[96] = {0}, g_tsRingFlg[96] = {0};
+#endif
+
 // GfxBase is opened in main() (GCCRuntime.cpp defines it); set before run() is called.
 extern struct GfxBase* GfxBase;
 
@@ -2279,6 +2287,85 @@ static uint32_t vbiHandler()
 #endif
 #endif  // ROF_FLIGHT_PROBE || ROF_FPSCOUNT (auto-launch)
 
+#ifdef ROF_ATTRACT_NOW
+    // `make ATTRACT_NOW=1|2` — force the Standby attract timeout early so the Title Screen
+    // (scene 3b) is reachable in seconds instead of ~2.5 minutes of idling.
+    //
+    // The genuine path: the standby VBI ($52D7) INCs the sub-counter $062D every frame and bumps
+    // attract_timer $00E2 on each 256-wrap; boot_standby_launch_driver's idle loop seeds $00E2=$64
+    // at L_62ee and tests bit7 at L_6309, so the card needs 28 wraps = 7168 frames.  Setting bit7
+    // ourselves takes exactly the same branch (L_6309 -> L_6311 -> game_main_loop), so what the
+    // Title sees is the real timeout, just sooner.
+    //
+    // ONE-SHOT on purpose: $00E2 is re-seeded to $64 only at idle-loop ENTRY, so a repeating poke
+    // would send the Standby that FOLLOWS the Title straight back to the Title.
+    {
+        const uint16_t vv = (uint16_t)(mem[0x0222u] | (mem[0x0223u] << 8));
+        extern volatile unsigned char g_doorFieldReady;
+        static uint16_t s_anVbi = 0; static uint8_t s_anDone = 0;
+        const bool inStandby = (vv == 0x52D7u) && g_doorFieldReady
+#if ROF_ATTRACT_NOW >= 2
+                               && (mem[0x003Au] == 0xFFu)   // POST-MOTHER-SHIP standby only
+#endif
+                               ;
+        if (!s_anDone) {
+            if (!inStandby) s_anVbi = 0;                       // wait for a settled standby
+            else if (s_anVbi == 0) s_anVbi = g_vbiCount;
+            else if ((uint16_t)(g_vbiCount - s_anVbi) >= 150) { mem[0x00E2u] |= 0x80u; s_anDone = 1; }
+        }
+    }
+#endif
+
+#ifdef ROF_TITLE_START
+    // `make TITLE_START=1` — press START on the Title Screen, headlessly.  Once the card has been
+    // up ~2.4 s, hold CONSOL bit0: read_console_trig_delta ($5A78, (CONSOL&1)-TRIG0) then returns
+    // non-zero at the title loop's L_5a09 poll, which exits standby_scoreboard_render back into
+    // game_main_loop, and again at the following Standby's L_634a poll, which launches.  Released
+    // on reaching flight so nothing in-flight sees a stuck console switch.
+    {
+        const uint16_t vv = (uint16_t)(mem[0x0222u] | (mem[0x0223u] << 8));
+        const bool titleUp = (vv == 0x53CCu) && (mem[0x365Bu] == 0x72u) && (mem[0x022Fu] != 0);
+        static uint16_t s_tsVbi = 0; static uint8_t s_tsHold = 0;
+        if (titleUp && s_tsVbi == 0) s_tsVbi = g_vbiCount;
+        if (s_tsVbi && !s_tsHold && (uint16_t)(g_vbiCount - s_tsVbi) >= 120) s_tsHold = 1;
+        if (s_tsHold) {
+            if (vv == 0x4FF5u) s_consolState |= 0x01u;                 // in flight: release START
+            else               s_consolState &= (uint8_t)~0x01u;       // otherwise hold it down
+            mem[0xD01Fu] = s_consolState;
+        }
+#ifdef ROF_FLIGHT_PROBE
+        // Scene-routing trace for the title->launch transition (the mothership-title-launch bug).
+        // RECORD-ON-CHANGE from the frame the Title appears: append a row only when the routing
+        // state (VVBLKI / live copper / the gate flags / whether $008D,$008E are non-zero) differs
+        // from the last one recorded.  A per-frame ring cannot span this — the Title hold plus the
+        // Standby rebuild plus the whole launch cinematic is ~1000 frames — and every frame in
+        // between is a repeat.  Dumped by amiga/title_start.gdb.
+        {
+            extern volatile unsigned short g_tsRingVbi[96], g_tsRingVV[96], g_tsRingN;
+            extern volatile unsigned char g_tsRing3A[96], g_tsRing8D[96], g_tsRing8E[96],
+                                          g_tsRing60B[96], g_tsRingCop[96], g_tsRingFlg[96];
+            extern volatile unsigned char g_boostRet, g_boostVp, g_liveCopper,
+                                          g_standbyRevealReady, g_doorFieldReady;
+            if (s_tsVbi && g_tsRingN < 96) {
+                const unsigned char flg = (unsigned char)((g_doorFieldReady ? 1 : 0)
+                                        | (g_standbyRevealReady ? 2 : 0)
+                                        | (g_boostVp ? 4 : 0) | (g_boostRet ? 8 : 0)
+                                        | (mem[0x008Du] ? 0x10 : 0) | (mem[0x008Eu] ? 0x20 : 0));
+                const unsigned n = g_tsRingN;
+                if (n == 0 || g_tsRingVV[n - 1] != vv || g_tsRingCop[n - 1] != g_liveCopper
+                           || g_tsRingFlg[n - 1] != flg || g_tsRing60B[n - 1] != mem[0x060Bu]) {
+                    g_tsRingVbi[n] = g_vbiCount;      g_tsRingVV[n]  = vv;
+                    g_tsRing3A[n]  = mem[0x003Au];    g_tsRing8D[n]  = mem[0x008Du];
+                    g_tsRing8E[n]  = mem[0x008Eu];    g_tsRing60B[n] = mem[0x060Bu];
+                    g_tsRingCop[n] = g_liveCopper;    g_tsRingFlg[n] = flg;
+                    g_tsRingN = (unsigned short)(n + 1);
+                }
+            }
+        }
+#endif
+    }
+#endif
+
 #ifdef ROF_FORCE_DEMO
     // Headless DEMO DROID + BREAK verification: in the initial Standby, hold OPTION (CONSOL bit2)
     // to launch the self-playing demo, then once the demo flight ($4FF5) has run a moment inject
@@ -2399,12 +2486,18 @@ static uint32_t vbiHandler()
         // cockpit ($52D7 + $003A==$FF), pulse Del/SELECT (CONSOL bit1) to confirm SELECT drives
         // the IN-PLACE level cycle (door-scroll level_stage++ / fade-rebuild) — NOT the separate
         // selector card.  Pulsed (down ~8f / up) so each press is a distinct edge.
+        // ⚠ Suppressed under ATTRACT_NOW: that harness wants the post-mother-ship Standby to sit
+        // IDLE until the attract timeout fires, and a SELECT press refreshes the idle state.
+#ifndef ROF_ATTRACT_NOW
         if (s_retPhase >= 2 && vv == 0x52D7u && mem[0x003Au] == 0xFFu) {
             if (s_retSelVbi == 0) s_retSelVbi = g_vbiCount;
             uint16_t ds = (uint16_t)(g_vbiCount - s_retSelVbi);
             if (ds >= 60) { uint16_t ph = (uint16_t)((ds - 60) % 60u);
                             if (ph < 8u) s_consolState &= (uint8_t)~0x02u; else s_consolState |= 0x02u; }
         }
+#else
+        (void)s_retSelVbi;
+#endif
     }
 #endif
 
