@@ -22,6 +22,15 @@ CopperList::CopperList(uint32_t* data, uint32_t length, bool takeOwnership) :
     owner(takeOwnership)
 {
     if (length > 0) {
+        // Pre-fill every slot with a copper NOP (MOVE #0 -> $1FE, the standard dummy register).
+        // These are FIXED-LAYOUT lists: buildLayout writes ~40 scattered INDEX_* slots, and a slot
+        // that no writer ever reaches would otherwise keep the allocation's MEMF_CLEAR zeros —
+        // and an all-zero copper word is MOVE #0 -> register $000, which is below the CDANG
+        // threshold and HALTS THE COPPER for the rest of the frame.  The whole display below that
+        // point then freezes on whatever pointers/modulos were last set (symptom: the entire
+        // screen renders with the top bar's bitplane parameters).  Cost is one-time; the payoff is
+        // that forgetting a slot degrades to a wasted copper cycle instead of a dead display.
+        for (uint32_t i = 0; i < length; i++) data_[i] = copperMove(0x1FE, 0);
         data_[0] = copperWait(16, 0);
         data_[length - 1] = copperWait(255, 254);
     }
