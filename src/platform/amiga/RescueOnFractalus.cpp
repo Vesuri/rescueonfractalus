@@ -237,6 +237,35 @@ extern "C" volatile unsigned char g_dpSrc42[40] = {0}, g_dpB1[40] = {0};
 extern "C" volatile unsigned char  g_trRun8D[TR_RUNS] = {0}, g_trRun8E[TR_RUNS] = {0};
 extern "C" volatile unsigned short g_trRunVbi0[TR_RUNS] = {0}, g_trRunVbi1[TR_RUNS] = {0};
 extern "C" volatile unsigned short g_trRunCnt[TR_RUNS] = {0};
+// Ring paint vs the BEAM — the "multi-coloured rectangle edges on single reveal frames" report
+// (2026-08-10).  A pen is three PLANES, so a pixel only carries the new colour once all three are
+// written; while a paint is in flight the pixel shows a mix of the old and the new pen, i.e. a
+// colour that is in NEITHER image.  That is the difference from the Atari, where a field byte is
+// one store and a pixel can only ever be old-or-new.  This probe measures the two halves of the
+// claim on the tall vertical edges (the worst case: one 4-px column up to 86 rows high), and only
+// while the copper is actually displaying tunnelBitmap:
+//   g_tbLines*  = how long one vertical-edge paint lasts, in raster lines
+//   g_tbBeamIn  = paints during which the beam was inside the rows being painted (= visible tear)
+extern "C" volatile unsigned long  g_tbCalls = 0, g_tbBeamIn = 0, g_tbLinesSum = 0;
+extern "C" volatile unsigned short g_tbLinesMax = 0;
+extern "C" volatile unsigned short g_tbEntryMin = 0xFFFF, g_tbEntryMax = 0;
+#define TB_SAMP 12
+extern "C" volatile unsigned short g_tbN = 0;
+extern "C" volatile unsigned short g_tbIn[TB_SAMP] = {0}, g_tbOut[TB_SAMP] = {0};
+extern "C" volatile unsigned short g_tbY0[TB_SAMP] = {0}, g_tbY1[TB_SAMP] = {0};
+// Reverse-reveal K timeline (user report 2026-08-11: "the top and bottom of the viewport stayed
+// black, the rectangles were only drawn to the vertically middle part").  K is the first viewport
+// row the copper takes from tunnelBitmap; outside [K, 85-K] it shows the STARFIELD, which is black
+// by this point in the cinematic.  So "black top and bottom" == the reveal never reached K = 0.
+extern "C" volatile unsigned char  g_rkMin = 43;         // smallest K the reveal ever reached
+extern "C" volatile unsigned long  g_rkHist[44] = {0};   // boost frames spent at each K
+extern "C" volatile unsigned short g_rkFirstVbi = 0, g_rkLastVbi = 0;
+// ...and the TIMELINE, which is what says whether the middle-only band is a brief pass or a stall:
+// one entry per CHANGE of K, with the vbi it changed at and how many frames it then held.
+#define RK_STEPS 48
+extern "C" volatile unsigned short g_rkN = 0;
+extern "C" volatile unsigned char  g_rkK[RK_STEPS] = {0};
+extern "C" volatile unsigned short g_rkVbi[RK_STEPS] = {0}, g_rkHold[RK_STEPS] = {0};
 #endif
 extern "C" volatile unsigned short g_starEntryVbi = 0;              // vbi at first rsStars viewport decode
 extern "C" volatile unsigned long  g_starEntryTicks = 0, g_starEntryIsr = 0; // its cost
@@ -2352,10 +2381,47 @@ void RescueOnFractalus::paintVSpan(uint8_t rowBot, uint8_t rowTop, uint8_t xL, u
     if (vy + vh > kRows) vh = kRows - vy;
     const int nib = (xL & 1) ? 4 : 0;             // the quirk: xL's parity picks BOTH nibbles
     const int cL = (int)(xL >> 1), cR = (int)(xR >> 1);
+#ifdef ROF_FLIGHT_PROBE
+    // Beam race on the tall edges (see the g_tb* block up top).  Only meaningful while the copper
+    // is showing tunnelBitmap — a paint into an off-screen bitmap cannot tear.
+    const bool _tbOn = tunnelCopperInstalled;
+    const unsigned short _tbIn = _tbOn ? rof_beam_line() : 0;
+#endif
     if (cL >= 4 && cL <= 43)
         tunnelBitmap->fillColor((uint16_t)((cL - 4) * 8 + nib), (uint16_t)vy, 4, (uint16_t)vh, pen);
     if (cR >= 4 && cR <= 43)
         tunnelBitmap->fillColor((uint16_t)((cR - 4) * 8 + nib), (uint16_t)vy, 4, (uint16_t)vh, pen);
+#ifdef ROF_FLIGHT_PROBE
+    if (_tbOn) {
+        const unsigned short out = rof_beam_line();
+        const unsigned short d = (unsigned short)((out >= _tbIn) ? (out - _tbIn) : (out + 313u - _tbIn));
+        // Painted rows vy..vy+vh-1 are Amiga scanlines kTerrainLine+vy .. kTerrainLine+vy+vh-1.
+        const unsigned short y0 = (unsigned short)(kTerrainLine + vy);
+        const unsigned short y1 = (unsigned short)(kTerrainLine + vy + vh - 1);
+        g_tbCalls++;
+        g_tbLinesSum += d;
+        if (d > g_tbLinesMax) g_tbLinesMax = d;
+        if (_tbIn < g_tbEntryMin) g_tbEntryMin = _tbIn;
+        if (_tbIn > g_tbEntryMax) g_tbEntryMax = _tbIn;
+        // Did the beam sweep through the painted rows while the paint was in flight?  O(1) on
+        // purpose: this runs in the VBI ISR on the very path being measured, so a scan loop here
+        // would be a probe that changes its own answer.  The beam covers lines [_tbIn, _tbIn+d]
+        // mod 313; walking l up through the contiguous range [y0,y1] makes (l - _tbIn) mod 313
+        // increase by one a step and wrap at most once, so the closest the beam gets is 0 when it
+        // started inside the range and (y0 - _tbIn) mod 313 otherwise.
+        // (subtract-or-add-313 rather than a modulo: the 68000 has no 32-bit divide)
+        const unsigned short reach = (unsigned short)((y0 >= _tbIn) ? (y0 - _tbIn)
+                                                                    : (y0 + 313u - _tbIn));
+        const bool hit = (_tbIn >= y0 && _tbIn <= y1) || reach <= d;
+        if (hit) {
+            g_tbBeamIn++;
+            if (g_tbN < TB_SAMP) {
+                g_tbIn[g_tbN] = _tbIn; g_tbOut[g_tbN] = out;
+                g_tbY0[g_tbN] = y0;    g_tbY1[g_tbN] = y1;  g_tbN++;
+            }
+        }
+    }
+#endif
 }
 
 // drawTunnelVSpan: the ROF_TUNNEL_VSPAN hook — one vertical span pair from plot_terrain_span, the
@@ -4419,10 +4485,21 @@ void RescueOnFractalus::updateTunnelCopper(TunnelCopperList* tunnelCopper)
     // Terrain-region bitmap bands.  FORWARD descent: one full-height band from tunnelBitmap
     // (K = 0).  BOOST: the reverse-tunnel reveal — rings from tunnelBitmap in [K, 85-K], the
     // starfield from viewportBitmap outside it.  Nothing is composited; the copper picks.
-    if (rsBoostViewport)
-        tunnelCopper->setRevealBands(boostRevealK(), (uint32_t)tunnelBitmap->data,
+    if (rsBoostViewport) {
+        const uint16_t _k = boostRevealK();
+#ifdef ROF_FLIGHT_PROBE
+        if (_k <= 43) { g_rkHist[_k]++; if (_k < g_rkMin) g_rkMin = (unsigned char)_k; }
+        if (!g_rkFirstVbi) g_rkFirstVbi = platform_frame_count();
+        g_rkLastVbi = platform_frame_count();
+        { const unsigned short n = g_rkN;
+          if (n == 0 || (n <= RK_STEPS && g_rkK[n - 1] != (unsigned char)_k)) {
+              if (n < RK_STEPS) { g_rkK[n] = (unsigned char)_k; g_rkVbi[n] = g_rkLastVbi; g_rkHold[n] = 1; }
+              g_rkN = (unsigned short)(n + 1);
+          } else if (n <= RK_STEPS) { g_rkHold[n - 1]++; } }
+#endif
+        tunnelCopper->setRevealBands(_k, (uint32_t)tunnelBitmap->data,
                                      (uint32_t)viewportBitmap->data);
-    else
+    } else
         tunnelCopper->setRevealBands(0, (uint32_t)tunnelBitmap->data, (uint32_t)tunnelBitmap->data);
     // Windscreen-band corner + tunnel palette.  FORWARD and BOOST share the copper but use DIFFERENT
     // GTIA->pen mappings (kGtia10P vs kGtia10BoostP), so their palette wiring differs.  Shared bits:

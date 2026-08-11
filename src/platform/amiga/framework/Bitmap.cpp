@@ -456,6 +456,25 @@ void Bitmap::fill(uint16_t x, uint16_t y, uint16_t fillWidth, uint16_t fillHeigh
 // starting blits from the ISR races the main loop's queued ones.  A wide-rect blitter path can be
 // added behind a size test if a caller ever wants big fills — the masked-fill idiom is
 // BLTADAT=0xffff + BLTAFWM/BLTALWM as the mask, BLTBDAT = the plane value, C=D=dest, minterm 0xca.
+//
+// ⚠ ROW-MAJOR, PLANES INNER — this loop order is LOAD-BEARING, do not transpose it back.  A pen is
+// three planes, so a pixel only carries the new colour once ALL of its planes are written; until
+// then it displays a mix of the old and the new pen, i.e. a colour that is in neither image.  This
+// used to run plane-outer (plane 0 for every row, then plane 1, then plane 2), which left every
+// row of a tall rectangle in that mixed state for the whole call.  The tunnel ring painter draws
+// straight into the DISPLAYED bitmap from the VBI ISR, and measured on the reverse (return-to-
+// mother-ship) tunnel one vertical-edge paint spans a mean of 33 raster lines (max 74), with the
+// beam sweeping through the rows being painted on 20% of them — so 4-5 consecutive rows of a ring
+// edge came out in colours the tunnel palette does not contain.  That was the "multi-coloured
+// rectangle edges on single reveal frames" bug, filed 2026-08-10.
+//
+// Finishing a row before starting the next bounds the damage to the ONE row the paint front is on
+// when it crosses the beam: the front moves ~12x faster than the beam, so it crosses at most once.
+// What is left is a plain single-buffer tear (some rows the new ring, some the old) — which is
+// what the Atari does too, since its own field writes race ANTIC the same way.  A wrong PEN is the
+// part that has no Atari counterpart, and that is the part this ordering removes.
+// The op count is unchanged (the same masked words are written, in a different order), and for an
+// interleaved bitmap the locality improves: a row's planes are 40 bytes apart, not a bitplane apart.
 void Bitmap::fillColor(uint16_t x, uint16_t y, uint16_t fillWidth, uint16_t fillHeight, uint16_t color)
 {
     if (fillWidth == 0) {
@@ -468,8 +487,8 @@ void Bitmap::fillColor(uint16_t x, uint16_t y, uint16_t fillWidth, uint16_t fill
     uint16_t firstWord = x >> 4;
     uint16_t lastWord = (x + fillWidth - 1) >> 4;
     uint16_t widthWords = lastWord - firstWord + 1;
-    uint16_t destWidthWords = widthInWords();
     uint16_t rowWords = rowSizeInWords();
+    const uint16_t planeStride = interleaved ? widthInWords() : bitplaneSizeInWords();
 
     // Masks carry 1 where the pixel is INSIDE the rectangle (bit 15 = leftmost pixel).
     uint16_t firstMask = (uint16_t)(0xffff >> (x & 15));
@@ -477,29 +496,65 @@ void Bitmap::fillColor(uint16_t x, uint16_t y, uint16_t fillWidth, uint16_t fill
     if (widthWords == 1) {
         firstMask &= lastMask;
     }
+    const uint16_t keepFirst = (uint16_t)~firstMask;
+    const uint16_t keepLast = (uint16_t)~lastMask;
 
-    uint16_t* planeStart = (uint16_t*)data + rof_mulu16(y, rowWords) + firstWord;
+    // Plane k of a solid pen is all-ones when bit k of `color` is set.  Hoisted out of both loops:
+    // with planes on the inside the test would otherwise be re-run once per plane PER ROW.
+    uint16_t planeVal[8];                       // 8 = the hardware's bitplane maximum
+    const uint16_t planeCount = (bitplanes > 8) ? 8 : bitplanes;
+    for (uint16_t k = 0; k < planeCount; k++) {
+        planeVal[k] = ((color >> k) & 1) ? (uint16_t)0xffff : (uint16_t)0x0000;
+    }
 
-    for (uint16_t plane = 0; plane < bitplanes; plane++) {
-        const bool set = ((color >> plane) & 1) != 0;
-        uint16_t* rowPtr = planeStart;
+    uint16_t* rowStart = (uint16_t*)data + rof_mulu16(y, rowWords) + firstWord;
 
-        for (uint16_t row = 0; row < fillHeight; row++, rowPtr += rowWords) {
-            uint16_t* p = rowPtr;
+    // Tall single-word column, planes UNROLLED.  Every tall caller lands here — a tunnel ring's
+    // vertical edge and a guide column are both 4 px wide, so they never straddle a word — and
+    // this is the one shape where the transposition above costs real time: the generic loop below
+    // wraps three words of work in a 3-iteration loop once per ROW, and gcc reloads the plane
+    // table and shuffles registers around it every time.  Measured on the reverse tunnel, that
+    // doubled a vertical-edge paint from 33 to 71 raster lines, which more than gave back the
+    // tearing this change is here to remove.  Unrolled and branchless it is ~24 cycles a plane,
+    // and the three writes stay adjacent, which is exactly the ordering guarantee we want.
+    if (widthWords == 1 && planeCount == 3 && fillHeight > 1) {
+        //   set plane -> *p |= mask   ==  (*p & 0xffff) | mask
+        // clear plane -> *p &= ~mask  ==  (*p & ~mask)  | 0
+        const uint16_t a0 = planeVal[0] ? (uint16_t)0xffff : keepFirst;
+        const uint16_t a1 = planeVal[1] ? (uint16_t)0xffff : keepFirst;
+        const uint16_t a2 = planeVal[2] ? (uint16_t)0xffff : keepFirst;
+        const uint16_t o0 = (uint16_t)(planeVal[0] & firstMask);
+        const uint16_t o1 = (uint16_t)(planeVal[1] & firstMask);
+        const uint16_t o2 = (uint16_t)(planeVal[2] & firstMask);
+        uint16_t* p0 = rowStart;
+        uint16_t* p1 = p0 + planeStride;
+        uint16_t* p2 = p1 + planeStride;
+        for (uint16_t row = fillHeight; row != 0; row--) {
+            *p0 = (uint16_t)((*p0 & a0) | o0);  p0 += rowWords;
+            *p1 = (uint16_t)((*p1 & a1) | o1);  p1 += rowWords;
+            *p2 = (uint16_t)((*p2 & a2) | o2);  p2 += rowWords;
+        }
+        return;
+    }
+
+    for (uint16_t row = 0; row < fillHeight; row++, rowStart += rowWords) {
+        uint16_t* planePtr = rowStart;
+
+        for (uint16_t k = 0; k < planeCount; k++, planePtr += planeStride) {
+            const uint16_t v = planeVal[k];
+            uint16_t* p = planePtr;
 
             if (widthWords == 1) {
-                if (set) *p |= firstMask; else *p &= (uint16_t)~firstMask;
+                if (v) *p |= firstMask; else *p &= keepFirst;
                 continue;
             }
-            if (set) *p |= firstMask; else *p &= (uint16_t)~firstMask;
+            if (v) *p |= firstMask; else *p &= keepFirst;
             p++;
             for (uint16_t w = widthWords - 2; w != 0; w--) {
-                *p++ = set ? 0xffff : 0x0000;
+                *p++ = v;
             }
-            if (set) *p |= lastMask; else *p &= (uint16_t)~lastMask;
+            if (v) *p |= lastMask; else *p &= keepLast;
         }
-
-        planeStart += interleaved ? destWidthWords : bitplaneSizeInWords();
     }
 }
 

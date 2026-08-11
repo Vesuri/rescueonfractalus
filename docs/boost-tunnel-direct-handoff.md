@@ -262,3 +262,50 @@ natural place to clear.
 
 Nothing.  The doors keep their own `$2000` decode by design, and every hook skips
 `rowBase >= 0x2000`.
+
+---
+
+## 6. Multi-coloured rectangle edges — CLOSED 2026-08-11
+
+The reverse tunnel's ring rectangles showed **multi-coloured edges on single reveal frames**.  The
+user's filed hypothesis was right: `Bitmap::fillColor` ran **plane-outer** — plane 0 for every row,
+then plane 1, then plane 2.  A pen is three planes, so a pixel only carries the new colour once all
+three are written; until then it displays a mix of the old and the new pen, i.e. **a colour that is
+in neither image**.  That is precisely the difference from the Atari, where a field byte is one
+store and a pixel can only ever be old-or-new.
+
+**Measured before theorising** (`make PROBES=1 FORCE_RETURN=1` + `amiga/tunnel_tear.gdb`, which
+brackets `paintVSpan` with `rof_beam_line()` and only counts paints made while the copper is
+displaying `tunnelBitmap`):
+
+| | mean paint | max | beam inside the painted rows |
+|---|---|---|---|
+| plane-outer (the bug) | 33 lines | 74 | 39 / 191 |
+| naive row-outer | **71** lines | 179 | 69 / 191 |
+| row-outer + unrolled single-word path | **24-25** lines | 78-91 | 29-46 / 191 |
+
+⚠ **`beam inside` is NOISY — do not quote it as the win.**  Whether the beam happens to be inside
+the painted rows when the ISR fires is close to a coin flip per paint, and it read 29 and 46 on two
+runs of the *identical* binary.  It is only good for proving the race EXISTS (it is consistently
+non-zero).  The paint length is the stable number: 24 and 25 on those same two runs.  The real win
+is structural and needs no counter — the mixed-pen window per pixel drops from the whole paint
+(~2/3 of 33 lines ≈ 1.4 ms) to three adjacent word writes (~2 µs).
+
+### Two things this cost, worth keeping
+
+- **The transposition ALONE is a 2x regression.**  gcc wraps three words of work in a 3-iteration
+  loop once per ROW and reloads the plane table around it every time, which doubled a vertical-edge
+  paint from 33 to 71 lines — more than giving back the tearing the change is there to remove.  The
+  single-word column path (every ring edge and guide column is 4 px, so it never straddles a word)
+  therefore has the planes **unrolled and branchless**, `*p = (*p & andv) | orv` three times with
+  three pointers.  That lands at 24-25 lines, ~25% FASTER than the plane-outer original.
+- **Prove a reordering byte-identical on the HOST, not on target.**  The two implementations were
+  compiled side by side and run on the same buffers: 160,000 randomized cases (interleaved and
+  planar, 1-5 bitplanes, plus the exact tunnel shapes — 4-px vertical edge, 1-row horizontal edge,
+  whole-bitmap prime), **0 mismatching bytes**.  Seconds to run, and it rules the painter out as
+  the cause of any visual change far faster than an FS-UAE round trip can.  `fillColor` is
+  Amiga-only, so `make validate` cannot see it at all.
+
+What is LEFT is a plain single-buffer tear: when the paint front crosses the beam (it moves ~12x
+faster, so at most once) one row can be half-written.  That is what the Atari does too — its own
+field writes race ANTIC the same way — so it is faithful and was deliberately not chased further.
