@@ -22,6 +22,8 @@ static const uint16_t kTerrainLine  = kDisplayTop + kTitleHeight;     // = 0x56
 static const uint16_t kCockpitLine  = kTerrainLine + kTerrainHeight;  // = 172
 static const uint16_t kCenterY      = kDisplayTop + kH / 2;           // = 0x98
 static const uint16_t kBPLCON0_3P   = (uint16_t)((3 << PLNCNTSHFT) | USE_BPLCON3);
+// First scanline BELOW the energy-gauge dial (see StandbyCopperList's kGaugeBottomLine).
+static const uint16_t kGaugeBottomLine = 0x2c + 144 + 56;             // = 244
 // Park lines for a collapsed reveal band — mid-region, so its NOPs run in a harmless H-blank
 // and never crowd the cockpit pointer writes (same convention as DoorsCopperList).
 static const uint16_t kBand1ParkLine = kTerrainLine + 28;
@@ -34,7 +36,7 @@ static const uint16_t kBand2ParkLine = kTerrainLine + 57;
 // d[0] = copperWait(16,0) (CopperList ctor).  Title region is identical to
 // StandbyCopperList; the terrain region is one tunnel band with pens 4-6.
 #define INDEX_PLAYFIELD       1
-#define INDEX_BPLCON2         (INDEX_PLAYFIELD + 3)    // BPLCON2 PFxP=4 sprites-on-top (1)
+#define INDEX_BPLCON2         (INDEX_PLAYFIELD + 3)    // BPLCON2 PFxP=1 (game GPRIOR=$14) (1)
 #define INDEX_TITLE_PAL       (INDEX_BPLCON2 + 1)      // color00..03 (4)
 #define INDEX_TITLE_BPL       (INDEX_TITLE_PAL + 4)    // title bitmap ptrs (2bp = 4)
 #define INDEX_SPRITE_COL      (INDEX_TITLE_BPL + 4)    // color16,color17 (2)
@@ -83,7 +85,12 @@ static const uint16_t kBand2ParkLine = kTerrainLine + 57;
 // Dashboard instrument backgrounds = dark blue COLBK $90 (Amiga 182-251); floor black (252+).
 #define INDEX_DASH_BLUE_WAIT  (INDEX_DASH_BG + 1)      // WAIT(kCockpitLine+10-1 = 181) (1)
 #define INDEX_DASH_BLUE       (INDEX_DASH_BLUE_WAIT + 1) // color00 = $90 dark blue (dashboard) (1)
-#define INDEX_FLOOR_WAIT      (INDEX_DASH_BLUE + 1)     // WAIT(kCockpitLine+80-1 = 251) (1)
+// Energy bar (ch2 / COLOR21) → black below the gauge DIAL, not at the floor: the Amiga bar is one
+// solid 56-row sprite whose VSTART tracks the fuel, so below full fuel its bottom hangs past the
+// dial, where the Atari's per-row P1 strip just stops.  See the same block in StandbyCopperList.
+#define INDEX_GAUGE_BOT_WAIT  (INDEX_DASH_BLUE + 1)     // WAIT(kGaugeBottomLine-1 = 243) (1)
+#define INDEX_GAUGE_BOT       (INDEX_GAUGE_BOT_WAIT + 1)// COLOR21 = black (1)
+#define INDEX_FLOOR_WAIT      (INDEX_GAUGE_BOT + 1)     // WAIT(kCockpitLine+80-1 = 251) (1)
 #define INDEX_FLOOR           (INDEX_FLOOR_WAIT + 1)    // color00 = black (floor) (1)
 #define INDEX_TERMINATOR      (INDEX_FLOOR + 1)         // copperWait(255,254)
 #define LIST_LENGTH           (INDEX_TERMINATOR + 1)
@@ -123,12 +130,18 @@ void TunnelCopperList::buildLayout(const Bitmap& title, const Bitmap& tunnel, co
                  /*hires*/false, /*interlace*/false, /*dualPlayfield*/false,
                  /*holdAndModify*/false, kCenterY);
 
-    // BPLCON2 PFxP=4 = sprites in FRONT of the playfield (canopy posts over the viewport).
+    // BPLCON2 PFxP=1 = sprite pair 0 (the canopy posts, ch0/ch1) in FRONT of the playfield, pairs
+    // 1+ (the throttle gauge on ch2) BEHIND it — the game's GPRIOR=$14 priority, same value as
+    // PlanetCopperList and the Standby's CPU write.
     // MUST be set explicitly: the boost reverse cinematic reaches this list straight from the
-    // FlightCopperList, whose dashboard band leaves BPLCON2 at PFxP=0 (sprites BEHIND playfield,
-    // for the HUD gauges) and never restores it — so without this the starfield/rings would draw
-    // in front of the pillars.  (CopperList::setPlayfield sets only bitplane geometry, not BPLCON2.)
-    d[INDEX_BPLCON2] = copperMove(bplcon2, (uint16_t)((4u << 3) | 4u));
+    // FlightCopperList, whose dashboard band leaves BPLCON2 at PFxP=0 (ALL sprites behind the
+    // playfield, for the HUD gauges) and never restores it — so without this the rings/starfield
+    // would draw over the pillars.  It was PFxP=4 (all sprites in front) until 2026-08-11, which
+    // bought the pillars nothing they don't already get at 1 and put the energy gauge on top of the
+    // dashboard for the whole reverse cinematic (user-reported).  ⚠ This value is also what the
+    // NEXT scene inherits — BPLCON2 persists across copper lists; see setSpritePriority().
+    // (CopperList::setPlayfield sets only bitplane geometry, not BPLCON2.)
+    d[INDEX_BPLCON2] = copperMove(bplcon2, (uint16_t)((1u << 3) | 1u));
 
     setTitlePalette(0, 0, 0);                  // seeded; caller refreshes
     showBitmap(INDEX_TITLE_BPL, title);        // 2bp interleaved = 4 ptr moves
@@ -197,6 +210,8 @@ void TunnelCopperList::buildLayout(const Bitmap& title, const Bitmap& tunnel, co
     d[INDEX_DASH_BG]      = copperMove(color00, atariToOCS(0x00));
     d[INDEX_DASH_BLUE_WAIT] = copperWait(kCockpitLine + 10 - 1, 0xE0);
     d[INDEX_DASH_BLUE]      = copperMove(color00, atariToOCS(0x90));
+    d[INDEX_GAUGE_BOT_WAIT] = copperWait(kGaugeBottomLine - 1, 0xE0);
+    d[INDEX_GAUGE_BOT]      = copperMove(color21, 0x000);   // clip the bar at its dial
     d[INDEX_FLOOR_WAIT] = copperWait(kCockpitLine + 80 - 1, 0xE0);
     d[INDEX_FLOOR]      = copperMove(color00, atariToOCS(0x00));
 
@@ -219,7 +234,7 @@ void TunnelCopperList::setSpritePostColor(uint16_t c)
 
 void TunnelCopperList::setEnergyIndicatorColor(uint16_t c)
 {
-    data_[INDEX_ENERGY_COL] = copperMove(0x1AA, c);   // COLOR21 (sprite pair 2/3 pen 01)
+    data_[INDEX_ENERGY_COL] = copperMove(color21, c);   // sprite pair 1 pen 01 (the gauge bar)
 }
 
 void TunnelCopperList::setCompassColor(uint16_t c)

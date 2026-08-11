@@ -34,6 +34,32 @@ mode-4·mode-D cockpit cell range).
 The **canopy posts** (cockpit window A-pillars) are a separate frame element = Atari players
 P0 (`$0C32`, left) / P1 (`$0D32`, right), RLE-decoded from tables `$4DFA`/`$4E09`.
 
+## ⚠ The bar instruments hang BELOW their dial — clip the pen at `kGaugeBottomLine` (2026-08-11)
+
+Energy (#12), Altimeter terrain + ship (#7): the Atari **redraws** each player/missile strip every
+frame (`draw_altimeter_bars $40E5`), so its bar is exactly `56 - top` rows and stops at the dial. The
+Amiga keeps ONE **solid 56-row sprite and only moves its VSTART** (a deliberate perf trade — one `setY`
+instead of 56 row decodes), so below the full value its bottom overhangs the dial by `top` rows. Every
+cockpit copper list must therefore blank that pen at the dial bottom, `kGaugeBottomLine = 0x2c+144+56 =
+line 244` — NOT at the floor line 252, which leaves 8 rows showing (user-reported in the reverse tunnel
+and the post-mother-ship Standby, fixed 2026-08-11 in Standby/Doors/Tunnel/Planet; Flight already
+blanks its three pens and additionally runs the dashboard at BPLCON2 PFxP=0).
+
+Measured geometry of the energy column (gdb dump of `cockpitBitmap`, matching the screen pixel for
+pixel — sprite hardware X `0x81+203` lands on screen x204):
+
+| Amiga line | bitmap row | playfield at x204-211 |
+|---|---|---|
+| 188-243 | 16-71 | the dial slot: pen **0** = COLOR00 `$90` — the only rows where the bar belongs |
+| 244-251 | 72-79 | dashboard closes over it: pen **2** = `$06` grey |
+| 252-259 | 80-87 | floor: pen **0** = COLOR00 black |
+
+**Sprite priority cannot substitute for the pen blank**: over a pen-0 playfield a sprite wins at every
+BPLCON2 value, so the floor rows are only ever hidden by blanking the pen (see
+`amiga/framework` notes + the `amiga-copper-lessons` memory). A bar at its FULL value fills the dial
+exactly, so it hides this whole class of bug — set the value mid-range before judging one
+(`make FORCE_MOTHERSHIP=1` halves energy at the B press).
+
 ## Enemies / terrain objects
 
 Render paths mapped 2026-07-07 via live atari800 captures; detail in the `flight-pmg-map` memory.

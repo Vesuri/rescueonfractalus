@@ -22,6 +22,11 @@ static const uint16_t kTerrainLine  = kDisplayTop + kTitleHeight;     // = 0x56
 static const uint16_t kCockpitLine  = kTerrainLine + kTerrainHeight;  // = 172
 static const uint16_t kCenterY      = kDisplayTop + kH / 2;           // = 0x98
 static const uint16_t kBPLCON0_3P   = (uint16_t)((3 << PLNCNTSHFT) | USE_BPLCON3);
+// First scanline BELOW the energy-gauge dial = the gauge sprite's base line + its row count
+// (RescueOnFractalus.cpp: setY base 0x2c+144, kEnergyRows 56 — instrument #12, 8x56 at y=144).
+// Measured in the cockpit bitmap: the dial slot (pen 0, x204-211) is open on rows 16..71 and
+// the dashboard closes over it with pen 2 from row 72 = this line.
+static const uint16_t kGaugeBottomLine = 0x2c + 144 + 56;             // = 244
 
 // ---- fixed list layout (indices into data_, in 32-bit MOVE/WAIT words) -------
 // d[0] = copperWait(16,0) (CopperList ctor).  setPlayfield now emits 3 words
@@ -50,8 +55,9 @@ static const uint16_t kBPLCON0_3P   = (uint16_t)((3 << PLNCNTSHFT) | USE_BPLCON3
 #define INDEX_TERRAIN_BPL0    (INDEX_TERRAIN_PAL + 4)     // run-0 bitmap ptrs (3bp = 6)
 #define INDEX_TERRAIN_RUNS    (INDEX_TERRAIN_BPL0 + 6)    // FLOATING: runs 1.. (WAIT+6) then cockpit region
 // Cockpit region (re-emitted after the last run): WAIT(1) + BPLxPT(6) + bplcon0(1) + mod(2) +
-// color01..07(7) + 3×(WAIT+color00 band/dash/floor splits)(6) + FLOOR_ENERGY(1) + terminator(1) = 25.
-#define COCKPIT_REGION_LEN    25
+// color01..07(7) + 3×(WAIT+color00 band/dash/floor splits)(6) + WAIT+GAUGE_BOTTOM COLOR21(2) +
+// terminator(1) = 26.
+#define COCKPIT_REGION_LEN    26
 #define LIST_LENGTH           (INDEX_TERRAIN_RUNS + (MAX_TERRAIN_RUNS - 1) * 7 + COCKPIT_REGION_LEN)
 
 StandbyCopperList::StandbyCopperList()
@@ -131,8 +137,16 @@ uint32_t StandbyCopperList::emitCockpitRegion(uint32_t idx)
     // Windscreen-band / dash / floor COLBK splits (see the atari-scanline map above).
     d[idx++] = copperWait(kCockpitLine + 8 - 1, 0xE0);   d[idx++] = copperMove(color00, atariToOCS(0x00));
     d[idx++] = copperWait(kCockpitLine + 10 - 1, 0xE0);  d[idx++] = copperMove(color00, atariToOCS(0x90));
+    // Energy bar (sprite 2 / COLOR21) → black at the DIAL BOTTOM, not at the floor.  The Amiga bar
+    // is one SOLID kEnergyRows sprite whose VSTART tracks the fuel (buildEnergyIndicatorSprite),
+    // so at anything below full fuel its bottom hangs `top` rows past the dial — where the Atari's
+    // per-row P1 strip simply stops.  Clipping the pen at the dial bottom reproduces the strip
+    // exactly and does it independently of BPLCON2: below the dial the dashboard is playfield pen 2
+    // for 8 rows and then COLOR00 for the floor, and NO sprite/playfield priority can hide a sprite
+    // over COLOR00.  (Also covers the fuel==0 park at line 252.)  COLOR21 is pair 1 pen 01 = this
+    // bar alone here — ch3 is the null sprite.
+    d[idx++] = copperWait(kGaugeBottomLine - 1, 0xE0);   d[idx++] = copperMove(color21, 0x000);
     d[idx++] = copperWait(kCockpitLine + 80 - 1, 0xE0);  d[idx++] = copperMove(color00, atariToOCS(0x00));
-    d[idx++] = copperMove(0x1AA, 0x000);   // energy bar (sprite 2 / COLOR21) → black (hide overflow)
     d[idx++] = copperWait(255, 254);       // terminator
     return idx;
 }
@@ -158,7 +172,7 @@ void StandbyCopperList::setSprite2(const Sprite& s)
 
 void StandbyCopperList::setEnergyIndicatorColor(uint16_t c)
 {
-    data_[INDEX_ENERGY_COL] = copperMove(0x1AA, c);   // COLOR21 (sprite pair 2/3 pen 01)
+    data_[INDEX_ENERGY_COL] = copperMove(color21, c);   // sprite pair 1 pen 01 (the gauge bar)
 }
 
 void StandbyCopperList::setCompassColor(uint16_t c)

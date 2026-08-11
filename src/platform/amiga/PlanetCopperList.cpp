@@ -25,9 +25,10 @@ static const uint16_t kTerrainLine  = kDisplayTop + kTitleHeight;     // = 0x56
 static const uint16_t kCockpitLine  = kTerrainLine + kViewportHeight; // = 180 (dashboard start)
 static const uint16_t kCenterY      = kDisplayTop + kH / 2;           // = 0x98
 static const uint16_t kBPLCON0_3P   = (uint16_t)((3 << PLNCNTSHFT) | USE_BPLCON3);
+// First scanline BELOW the energy-gauge dial (see StandbyCopperList's kGaugeBottomLine).
+static const uint16_t kGaugeBottomLine = 0x2c + 144 + 56;             // = 244
 
 // Sprite colour-register addresses (custom-chip offsets).
-static const uint16_t kColor21 = 0x1AA;   // sprite pair 2/3 pen 01 (gauge bar)
 static const uint16_t kColor25 = 0x1B2;   // sprite pair 4/5 pen 01 (starfield)
 static const uint16_t kColor29 = 0x1BA;   // sprite pair 6/7 pen 01 (starfield)
 
@@ -74,7 +75,12 @@ static const uint16_t kColor29 = 0x1BA;   // sprite pair 6/7 pen 01 (starfield)
 // dark-blue $90 dashboard instrument backgrounds (182-251); then black floor (252+).
 #define INDEX_DASH_BLUE_WAIT  (INDEX_COCKPIT_PAL + 8)      // WAIT(kCockpitLine+2-1 = 181) (1)
 #define INDEX_DASH_BLUE       (INDEX_DASH_BLUE_WAIT + 1)   // color00 = $90 dark blue (dashboard) (1)
-#define INDEX_FLOOR_WAIT      (INDEX_DASH_BLUE + 1)        // WAIT(kCockpitLine+72-1 = 251) (1)
+// Energy bar (ch2 / COLOR21) -> black below the gauge DIAL, not at the floor: the Amiga bar is
+// one solid 56-row sprite whose VSTART tracks the fuel, so below full fuel its bottom hangs past
+// the dial, where the Atari's per-row P1 strip just stops.  Same block as StandbyCopperList.
+#define INDEX_GAUGE_BOT_WAIT  (INDEX_DASH_BLUE + 1)        // WAIT(kGaugeBottomLine-1 = 243) (1)
+#define INDEX_GAUGE_BOT       (INDEX_GAUGE_BOT_WAIT + 1)   // COLOR21 = black (1)
+#define INDEX_FLOOR_WAIT      (INDEX_GAUGE_BOT + 1)        // WAIT(kCockpitLine+72-1 = 251) (1)
 #define INDEX_FLOOR           (INDEX_FLOOR_WAIT + 1)       // color00 = black (floor) (1)
 #define INDEX_TERMINATOR      (INDEX_FLOOR + 1)            // copperWait(255,254)
 #define LIST_LENGTH           (INDEX_TERMINATOR + 1)
@@ -185,6 +191,8 @@ void PlanetCopperList::buildLayout(const Bitmap& title, const Bitmap& terrain, c
     // Only COLBK (color00) changes; baked color00=$00 above covers the divider strip (180-188).
     d[INDEX_DASH_BLUE_WAIT] = copperWait(kCockpitLine + 2 - 1, 0xE0);
     d[INDEX_DASH_BLUE]      = copperMove(color00, atariToOCS(0x90));
+    d[INDEX_GAUGE_BOT_WAIT] = copperWait(kGaugeBottomLine - 1, 0xE0);
+    d[INDEX_GAUGE_BOT]      = copperMove(color21, 0x000);   // clip the bar at its dial
     d[INDEX_FLOOR_WAIT] = copperWait(kCockpitLine + 72 - 1, 0xE0);
     d[INDEX_FLOOR]      = copperMove(color00, atariToOCS(0x00));
 
@@ -208,7 +216,7 @@ void PlanetCopperList::setSpritePostColor(uint16_t c)
 void PlanetCopperList::setEnergyIndicatorColor(uint16_t c)
 {
     // COLOR21 (sprite pair 2/3 pen 01) — poked BELOW the starfield, where channel 2 is the gauge.
-    data_[INDEX_GAUGE_COL] = copperMove(kColor21, c);
+    data_[INDEX_GAUGE_COL] = copperMove(color21, c);
 }
 
 void PlanetCopperList::setStarOperand(int i, const uint16_t* data)
@@ -230,7 +238,7 @@ void PlanetCopperList::setStarColor(uint16_t c)
 {
     // Star pen for all three quad players in the viewport: pair 2/3 (P0), 4/5 (P2), 6/7 (P3).
     // COLOR21 is switched to the gauge colour again below the starfield (setEnergyIndicatorColor).
-    data_[INDEX_STAR_COL + 0] = copperMove(kColor21, c);
+    data_[INDEX_STAR_COL + 0] = copperMove(color21, c);
     data_[INDEX_STAR_COL + 1] = copperMove(kColor25, c);
     data_[INDEX_STAR_COL + 2] = copperMove(kColor29, c);
 }

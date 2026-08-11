@@ -21,6 +21,8 @@ static const uint16_t kTerrainLine  = kDisplayTop + kTitleHeight;     // = 0x56
 static const uint16_t kCockpitLine  = kTerrainLine + kTerrainHeight;  // = 172
 static const uint16_t kCenterY      = kDisplayTop + kH / 2;           // = 0x98
 static const uint16_t kBPLCON0_3P   = (uint16_t)((3 << PLNCNTSHFT) | USE_BPLCON3);
+// First scanline BELOW the energy-gauge dial (see StandbyCopperList's kGaugeBottomLine).
+static const uint16_t kGaugeBottomLine = 0x2c + 144 + 56;             // = 244
 
 // A copper NOP: MOVE to register $1FE (unused) changes nothing.  Used to fill the
 // slots of a collapsed terrain band so a fixed-length list can hold a variable band
@@ -70,7 +72,12 @@ static const uint16_t kBPLCON0_3P   = (uint16_t)((3 << PLNCNTSHFT) | USE_BPLCON3
 // (252+).  Measured identical to Standby; only COLBK changes so we poke only color00.
 #define INDEX_DASH_BLUE_WAIT  (INDEX_DASH_BG + 1)       // WAIT(kCockpitLine+10-1 = 181) (1)
 #define INDEX_DASH_BLUE       (INDEX_DASH_BLUE_WAIT + 1) // color00 = $90 dark blue (dashboard) (1)
-#define INDEX_FLOOR_WAIT      (INDEX_DASH_BLUE + 1)      // WAIT(kCockpitLine+80-1 = 251) (1)
+// Energy bar (ch2 / COLOR21) -> black below the gauge DIAL, not at the floor: the Amiga bar is
+// one solid 56-row sprite whose VSTART tracks the fuel, so below full fuel its bottom hangs past
+// the dial, where the Atari's per-row P1 strip just stops.  Same block as StandbyCopperList.
+#define INDEX_GAUGE_BOT_WAIT  (INDEX_DASH_BLUE + 1)      // WAIT(kGaugeBottomLine-1 = 243) (1)
+#define INDEX_GAUGE_BOT       (INDEX_GAUGE_BOT_WAIT + 1) // COLOR21 = black (1)
+#define INDEX_FLOOR_WAIT      (INDEX_GAUGE_BOT + 1)      // WAIT(kCockpitLine+80-1 = 251) (1)
 #define INDEX_FLOOR           (INDEX_FLOOR_WAIT + 1)     // color00 = black (floor) (1)
 #define INDEX_TERMINATOR      (INDEX_FLOOR + 1)
 #define LIST_LENGTH           (INDEX_TERMINATOR + 1)
@@ -155,6 +162,8 @@ void DoorsCopperList::buildLayout(const Bitmap& title, const Bitmap& cockpit,
     d[INDEX_DASH_BG]      = copperMove(color00, atariToOCS(0x00));
     d[INDEX_DASH_BLUE_WAIT] = copperWait(kCockpitLine + 10 - 1, 0xE0);
     d[INDEX_DASH_BLUE]      = copperMove(color00, atariToOCS(0x90));
+    d[INDEX_GAUGE_BOT_WAIT] = copperWait(kGaugeBottomLine - 1, 0xE0);
+    d[INDEX_GAUGE_BOT]      = copperMove(color21, 0x000);   // clip the bar at its dial
     d[INDEX_FLOOR_WAIT] = copperWait(kCockpitLine + 80 - 1, 0xE0);
     d[INDEX_FLOOR]      = copperMove(color00, atariToOCS(0x00));
 
@@ -177,7 +186,7 @@ void DoorsCopperList::setSpritePostColor(uint16_t c)
 
 void DoorsCopperList::setEnergyIndicatorColor(uint16_t c)
 {
-    data_[INDEX_ENERGY_COL] = copperMove(0x1AA, c);   // COLOR21 (sprite pair 2/3 pen 01)
+    data_[INDEX_ENERGY_COL] = copperMove(color21, c);   // sprite pair 1 pen 01 (the gauge bar)
 }
 
 void DoorsCopperList::setCompassColor(uint16_t c)
