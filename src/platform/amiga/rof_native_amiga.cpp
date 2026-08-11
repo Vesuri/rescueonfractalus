@@ -23,6 +23,11 @@
 
 extern "C" volatile uint8_t mem[65536];
 
+// SIZEP3 ($D00B) latched out of bus_write (src/cpu/bus.h) — the player-3 width has no shadow in
+// the game's own RAM the way SIZEP2 does in $00CD, so this is where the Amiga Main-Window sprite
+// mirror learns that the object is 2×/4× wide.  Written in the flight VBI, read at render rate.
+extern "C" volatile uint8_t g_sizep3_shadow = 0;
+
 
 // ============================================================================
 // SFX engine  (was SfxPlayer.cpp)

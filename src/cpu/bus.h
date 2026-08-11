@@ -23,7 +23,15 @@
    it ~360x in one go → ~35ms of pure call-chain overhead), so route $D20A straight to the
    LFSR here.  Amiga-only: the SDL build keeps the platform_hw_read path so `make validate`
    still exercises the same reference LFSR as the 6502 oracle. */
+/* SIZEP3 ($D00B) shadow.  SIZEP2 has a real one in the game's own RAM (mem[$00CD]), but the
+   player-3 width does NOT: draw_player3_object writes it straight to GTIA ($42AE = 0 for the
+   distant/1× branch, $42C0 = table $4566[mem[$006A]] = $03/$01/$01 for the three closest frames)
+   and update_p3_indicator_stripe clears it again at $44C3.  The Amiga sprite mirror has to know
+   how wide to draw the Main-Window object — a 4× P3 is 64 lores px, four sprite segments — so
+   latch the value at the one seam every writer passes through.  Call sites with a CONSTANT
+   address (all of them, in the generated code) fold the test away at compile time. */
 #ifdef __cplusplus
+extern "C" volatile uint8_t g_sizep3_shadow;
 extern "C" uint8_t rof_pokey_random(void);
 /* Direct, non-virtual POKEY register write ($D200-$D20F → Paula).  Same rationale as
    rof_pokey_random above: the generic platform_hw_write path is a C bridge + a VIRTUAL
@@ -32,6 +40,7 @@ extern "C" uint8_t rof_pokey_random(void);
    shadow + Paula update here; the change-detect (skip unchanged) lives inside. */
 extern "C" void rof_pokey_write(uint8_t reg, uint8_t val);
 #else
+extern volatile uint8_t g_sizep3_shadow;
 extern uint8_t rof_pokey_random(void);
 extern void rof_pokey_write(uint8_t reg, uint8_t val);
 #endif
@@ -57,6 +66,7 @@ static inline void bus_write(uint16_t addr, uint8_t val) {
            non-virtual rof_pokey_write() fast-path (no C-bridge + no vtable); only $D400 (rare,
            off the hot path) still takes the virtual platform call. */
         if (addr >= 0xD200 && addr < 0xD210) { rof_pokey_write((uint8_t)(addr - 0xD200), val); return; }
+        if (addr == 0xD00B) { g_sizep3_shadow = val; return; }   /* SIZEP3 — see the note above */
         if (addr == 0xD400) platform_hw_write(addr, val);
         return;
 #else

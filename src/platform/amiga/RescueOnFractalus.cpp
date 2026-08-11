@@ -334,6 +334,13 @@ extern "C" void* g_quitJmp[];   // definition (sized) lives in PlatformAmiga.cpp
 extern "C" void* g_restartJmp[];   // BREAK/Restart re-entry buffer (defined in PlatformAmiga.cpp)
 
 extern "C" volatile uint8_t mem[65536];
+// SIZEP3 latched out of bus_write (src/cpu/bus.h; defined in rof_native_amiga.cpp).  The player-3
+// width has no shadow in the game's RAM the way SIZEP2 does in mem[$00CD], so this is how the
+// Main-Window sprite mirror learns the object is 2×/4× wide.  Declared rather than #including
+// bus.h: that header pulls in cpu.h, whose `mem` declaration has a different language linkage.
+extern "C" volatile uint8_t g_sizep3_shadow;
+// Defined with the wide-object machinery below; used earlier by buildFlightFrameSprites.
+static void mirrorSprite(Sprite* dst, const Sprite* src, int rows);
 // Which terrain field half renderFlightDirect displays (defined in rof_native.c, set by
 // game_main_loop before each ds_frame): 0 = display half (offset 0), 1 = back half (offset $30).
 extern "C" volatile unsigned char g_flightRenderHalf;
@@ -918,6 +925,8 @@ void RescueOnFractalus::buildFlightFrameSprites()
         lp[lr * 2] = 0; lp[lr * 2 + 1] = (uint16_t)(Lf & 0xFFFF);  // left  inner (right sprite, 0x92)
         rp[lr * 2] = 0; rp[lr * 2 + 1] = (uint16_t)(Rf >> 16);     // right inner (left sprite, 0x19E)
         rt[i  * 2] = 0; rt[i  * 2 + 1] = (uint16_t)(Rf & 0xFFFF);  // right outer (right sprite, 0x1AE)
+        // (flLeftTri is chained behind ch1's wide-object segment, which is double-buffered, so its
+        // second copy is mirrored after this loop — it is fully static, hence once and never again.)
 
         // Missiles M0 (left) / M1 (right) — the SECOND dark element of the band triangle,
         // measured live in atari800: on scanlines L138-143 (band rows i>=2) GRAFM=$06 turns on
@@ -931,6 +940,7 @@ void RescueOnFractalus::buildFlightFrameSprites()
             rp[lr * 2 + 1] |= 0xC000;   // M1: +2px on the right triangle's inner (left) edge
         }
     }
+    mirrorSprite(wideLow[2][1], flLeftTri, 8);   // ch1's second chain (static: control + pixels, once)
 }
 
 // ---- artificial-horizon ground-fill sprites (instrument #6) ------------------
@@ -982,10 +992,27 @@ void RescueOnFractalus::buildAHSprite()
 //   extent  = mem[$2865] (strip top, relative to $0E32) + mem[$2866] (row count) — see below
 //   HPOS    = mem[$00CB]        (true HPOSP2 shadow → viewport X = 0x81 + (hpos-$32)*2)
 //   colour  = mem[$0037]        (COLPM2 → COLOR27; blue $78 travel → white/orange impact)
-//   size    = mem[$00CD]        (0=1×/1=2×/3=4×; milestone renders 1×, each bit → 2 Amiga px)
-// The sprite lives on the otherwise-idle ch4 (energy is ch5, altimeter ch6/7).  Fixed height;
-// its VSTART (setY) moves to the current run each frame, unused rows stay blank (transparent).
-static const int kShotRows = 32;          // covers the 1× bolt + 1× impact burst
+//   size    = mem[$00CD]        (SIZEP2: 0=1×, 1=2×, 3=4× — the burst zooms as it peaks)
+// The sprite lives on the otherwise-idle ch4, as SEGMENT 0 of a wide object: at 2×/4× the burst
+// is 32/64 lores px and spills onto the shared extension channels (see RescueOnFractalus.h).
+//
+// ⚠ `size` is the real meaning of mem[$00CD], whose symbols.csv name `grafm_shadow` is WRONG —
+// $D00A is SIZEP2, not GRAFM (docs/rename.md, backlog 2026-08-10).  build_player2_sprite stores
+// only $00/$01/$03 there, which is the SIZEP2 encoding, and pairs each with an HPOSP2 shift of
+// 0/4/12 colour clocks ($286E) — exactly what re-centres a player 8/16/32 colour clocks wide.
+//
+// FIXED VSTART (kTerrainLine) with the strip at an internal row offset, like viewportP3: the old
+// 32-row moving-VSTART sprite also CLIPPED the burst, which reaches ~52 rows at 4× (13 shape rows
+// from $8DD0, each drawn 4× vertically).  94 rows covers the whole viewport, so nothing clips.
+static const int kShotRows = kViewportFullHeight;     // 94: VSTART 86 → VSTOP 180
+
+// Extension-segment sprite heights.  ch5/ch6 span the whole viewport (VSTOP 180, chained ahead of
+// the energy bar / altimeter at VSTART 188+).  ch1 stops at VSTOP 171 so its chained band triangle
+// keeps VSTART 172 — a chained VSTART must be strictly past the preceding VSTOP, so segment 3
+// gives up the viewport's last scanline.  (Only reachable at 4×, where seg 3 is the rightmost 2
+// source bits.)
+static const int kWideExtRows    = kViewportFullHeight;      // 94: ch5, ch6
+static const int kWideExtRowsCh1 = kTerrainHeight - 1;       // 85: ch1 (VSTOP 171, triangle at 172)
 
 // User-tweakable alignment nudge for the player laser sprite (viewport space).  The shot read
 // ~4px too far LEFT and ~2px too far DOWN vs the crosshair; kShotXOff moves it right (+),
@@ -1043,6 +1070,11 @@ extern "C" volatile unsigned long
 
 static uint16_t s_shotExpand[256];
 static bool     s_shotExpandReady = false;
+// 2× expansion: one NIBBLE of the source byte fills a whole 16px segment, each bit → 4 px.
+static uint16_t s_wideExpand4[16];
+// 4× expansion: one BIT PAIR fills a whole 16px segment, each bit → 8 px.  Small enough to be a
+// constant — no build step, and the index (b >> 6/4/2/0) & 3 needs only immediate shifts.
+static const uint16_t kWideExpand8[4] = { 0x0000u, 0x00FFu, 0xFF00u, 0xFFFFu };
 static void buildShotExpandLut()
 {
     for (int b = 0; b < 256; b++) {
@@ -1051,9 +1083,174 @@ static void buildShotExpandLut()
             if (b & (uint8_t)(0x80u >> k)) v |= (uint16_t)(3u << (14 - 2 * k));
         s_shotExpand[b] = v;
     }
+    for (int n = 0; n < 16; n++) {
+        uint16_t v = 0;
+        for (int k = 0; k < 4; k++)
+            if (n & (uint8_t)(0x8u >> k)) v |= (uint16_t)(0xFu << (12 - 4 * k));
+        s_wideExpand4[n] = v;
+    }
     s_shotExpandReady = true;
 }
 static inline uint16_t expandShotRow(uint8_t b) { return s_shotExpand[b]; }
+
+// GTIA SIZEPn ($D008-$D00B) → the Amiga horizontal scale.  Only bits 1-0 reach the hardware, and
+// value 2 is a SECOND encoding of "normal" — so mask exactly as GTIA does rather than comparing
+// the shadow byte to 0/1/3.  That also makes a stale shadow harmless: mem[$00CD] read $62 in
+// a800dumps/saucerbigpause.a8s (no shot active, so nothing had written it since the last one).
+static inline int sizepScale(uint8_t sizep)
+{
+    switch (sizep & 3) { case 1: return 2; case 3: return 4; default: return 1; }
+}
+
+// ---- shared wide-object (SIZEPn) segment machinery -------------------------------------------
+// See the WIDE OBJECTS block in RescueOnFractalus.h for the channel map and why the extensions
+// are chained rather than copper re-pointed.  Both users (the laser impact burst on ch4 and the
+// Main-Window P3 object on ch7) call buildWideObject with their own segment-0 sprite.
+
+// Copy a chained lower element's live state into its second copy.  Each extension channel has TWO
+// chains (the double buffer), so the energy bar / altimeter / left band triangle behind them exists
+// twice.  All three are build-once solids, so `rows` is passed only on the build that fills the
+// pixels; every other frame this is the two control words (the setY that moves a gauge bar).
+static void mirrorSprite(Sprite* dst, const Sprite* src, int rows)
+{
+    if (!dst || !src) return;
+    const uint16_t* a = src->data();
+    uint16_t* b = dst->data();
+    b[0] = a[0]; b[1] = a[1];
+    for (int i = 0; i < rows * 2; i++) b[2 + i] = a[2 + i];
+}
+
+bool RescueOnFractalus::wideExtAcquire(uint8_t owner)
+{
+    if (wideOwner == owner) return true;
+    // The burst outranks the P3 object: it is the shorter, louder event, and the object that
+    // explodes is deactivated by the hit anyway, so a real contest should never happen.
+    if (wideOwner == kWideShot) return false;
+    // FULL clear on a handover — the outgoing owner's incremental clear only ever tracked ITS
+    // rows, so anything it left outside the incoming object's extent would linger.  Both buffers.
+    for (int s = 0; s < 3; s++) {
+        const int h = (s == 2) ? kWideExtRowsCh1 : kWideExtRows;
+        for (int b = 0; b < 2; b++) {
+            uint16_t* d = wideExt[s][b]->data() + 2;
+            for (int i = 0; i < h * 2; i++) d[i] = 0;
+            widePrevBase[s][b] = 0; widePrevRows[s][b] = 0;
+        }
+    }
+    wideOwner = owner;
+    return true;
+}
+
+void RescueOnFractalus::wideExtRelease(uint8_t owner)
+{
+    if (wideOwner != owner) return;
+    for (int s = 0; s < 3; s++)
+        for (int b = 0; b < 2; b++) {
+            uint16_t* d = wideExt[s][b]->data() + 2;
+            for (int i = 0; i < widePrevRows[s][b]; i++) {
+                d[(widePrevBase[s][b] + i) * 2] = 0; d[(widePrevBase[s][b] + i) * 2 + 1] = 0;
+            }
+            widePrevRows[s][b] = 0;
+        }
+    wideOwner = kWideNone;
+}
+
+void RescueOnFractalus::buildWideObject(uint16_t* dst0, const volatile uint8_t* src,
+                                        int base, int rows, int scale, uint16_t x, uint8_t owner)
+{
+    int segs = (scale >= 4) ? 4 : ((scale >= 2) ? 2 : 1);
+    const int wanted = segs;
+    if (segs > 1 && !wideExtAcquire(owner)) segs = 1;   // lost the contest: render 1× wide
+#ifdef ROF_FLIGHT_PROBE
+    { extern volatile unsigned long g_wideShotScale[3], g_wideP3Scale[3], g_wideMaxRows, g_wideDenied;
+      const int bucket = (scale >= 4) ? 2 : ((scale >= 2) ? 1 : 0);
+      if (owner == kWideShot) g_wideShotScale[bucket]++; else g_wideP3Scale[bucket]++;
+      if (wanted != segs) g_wideDenied++;
+      if (segs > 1 && (unsigned long)rows > g_wideMaxRows) g_wideMaxRows = (unsigned long)rows; }
+#endif
+    if (segs == 1) {
+        // Narrow (or beaten to the channels): give the extensions back so the other object can
+        // have them, and blank whatever we last drew there.
+        wideExtRelease(owner);
+        for (int i = 0; i < rows; i++) {
+            const uint16_t m = s_shotExpand[src[i]];
+            dst0[(base + i) * 2] = m; dst0[(base + i) * 2 + 1] = m;   // both planes → pen 11
+        }
+        return;
+    }
+
+    // Which chain to write.  FLIP only for the burst: its segment 0 (shotSprite/shotSpriteBack) is
+    // double-buffered and therefore reaches the screen a frame after it is built, so its segments
+    // must be latched on that same boundary or they run a frame ahead of it.  The Main-Window P3
+    // object's segment 0 (viewportP3Sprite) is single-buffered and written at render rate, so its
+    // segments stay in the DISPLAYED chain and are likewise immediate — in phase either way.
+    const bool flip = (owner == kWideShot);
+    const int  w    = flip ? (wideDispIdx ^ 1) : wideDispIdx;
+
+    // Incremental clear of this chain's extensions (the buildViewportP3Sprite pattern), then
+    // rewrite.  Per-buffer, because the two alternate — same reason shotPrevRows is per-buffer.
+    uint16_t* ed[3];
+    for (int s = 0; s < 3; s++) {
+        ed[s] = wideExt[s][w]->data() + 2;
+        for (int i = 0; i < widePrevRows[s][w]; i++) {
+            ed[s][(widePrevBase[s][w] + i) * 2] = 0; ed[s][(widePrevBase[s][w] + i) * 2 + 1] = 0;
+        }
+        widePrevRows[s][w] = 0;
+    }
+    // Per-segment row clip.  Segments 1 and 2 are as tall as segment 0, so only segment 3 (ch1,
+    // 85 rows) can lose rows off the bottom.
+    int segRows[4];
+    segRows[0] = segRows[1] = segRows[2] = rows;
+    segRows[3] = (base + rows > kWideExtRowsCh1) ? (kWideExtRowsCh1 - base) : rows;
+    if (segRows[3] < 0) segRows[3] = 0;
+
+    // One pass over the source: every segment of a row comes from the same byte, and each
+    // segment's slice is an IMMEDIATE shift (no 68000 barrel shifter — a variable shift here
+    // would cost more than the store).
+    // ⚠ PEN per segment differs, because each channel had to borrow a pen its PAIR was not
+    // already using in the viewport.  Sprite data word 0 is the LOW plane, word 1 the HIGH one:
+    //   pen 01 = (data, 0) · pen 10 = (0, data) · pen 11 = (data, data)
+    // seg 0 (ch4/ch7) and seg 3 (ch1) use pen 11; seg 1 (ch5) pen 10 = COLOR26; seg 2 (ch6)
+    // pen 01 = COLOR29.  All four colour registers are poked to the same value each frame.
+    if (segs == 2) {
+        for (int i = 0; i < rows; i++) {
+            const uint8_t b = src[i];
+            const uint16_t w0 = s_wideExpand4[b >> 4];
+            dst0[(base + i) * 2] = w0; dst0[(base + i) * 2 + 1] = w0;          // seg 0, pen 11
+            const uint16_t w1 = s_wideExpand4[b & 0x0F];
+            ed[0][(base + i) * 2] = 0;  ed[0][(base + i) * 2 + 1] = w1;        // seg 1 ch5, pen 10
+        }
+    } else {
+        for (int i = 0; i < rows; i++) {
+            const uint8_t b = src[i];
+            const uint16_t w0 = kWideExpand8[(b >> 6) & 3];
+            dst0[(base + i) * 2] = w0; dst0[(base + i) * 2 + 1] = w0;          // seg 0, pen 11
+            const uint16_t w1 = kWideExpand8[(b >> 4) & 3];
+            ed[0][(base + i) * 2] = 0;  ed[0][(base + i) * 2 + 1] = w1;        // seg 1 ch5, pen 10
+            const uint16_t w2 = kWideExpand8[(b >> 2) & 3];
+            ed[1][(base + i) * 2] = w2; ed[1][(base + i) * 2 + 1] = 0;         // seg 2 ch6, pen 01
+        }
+        for (int i = 0; i < segRows[3]; i++) {
+            const uint16_t w3 = kWideExpand8[src[i] & 3];
+            ed[2][(base + i) * 2] = w3; ed[2][(base + i) * 2 + 1] = w3;        // seg 3 ch1, pen 11
+        }
+        widePrevBase[1][w] = base; widePrevRows[1][w] = rows;
+        widePrevBase[2][w] = base; widePrevRows[2][w] = segRows[3];
+        wideExt[1][w]->setX((uint16_t)(x + 32));
+        wideExt[2][w]->setX((uint16_t)(x + 48));
+    }
+    widePrevBase[0][w] = base; widePrevRows[0][w] = rows;
+    wideExt[0][w]->setX((uint16_t)(x + 16));
+    if (flip) {
+        // Latch the whole segment set with segment 0: the copper picks these up at the top of the
+        // next frame, the same frame shotSprite's own SPR4PT re-point takes effect.
+        if (flightCopper) {
+            flightCopper->setHudSprite(5, *wideExt[0][w]);
+            flightCopper->setHudSprite(6, *wideExt[1][w]);
+            flightCopper->setHudSprite(1, *wideExt[2][w]);
+        }
+        wideDispIdx = (uint8_t)w;
+    }
+}
 
 void RescueOnFractalus::buildShotSprite()
 {
@@ -1064,9 +1261,15 @@ void RescueOnFractalus::buildShotSprite()
             SP_CNT(g_spBlank);
             uint16_t* a = shotSprite->data()     + 2;  // whichever is on-screen shows nothing, then
             uint16_t* b = shotSpriteBack->data() + 2;  // leave ch4 pointing at a blank buffer (no more
-            int n = (shotPrevRows[0] > shotPrevRows[1] ? shotPrevRows[0] : shotPrevRows[1]) * 2;
-            for (int i = 0; i < n; i++) { a[i] = 0; b[i] = 0; }   // per-frame work while idle)
-            shotPrevRows[0] = shotPrevRows[1] = 0;     // both buffers are blank again
+            for (int k = 0; k < 2; k++) {              // per-frame work while idle).  Base-aware:
+                uint16_t* d = k ? b : a;               // the strip sits at an internal row offset now
+                for (int i = 0; i < (int)shotPrevRows[k]; i++) {
+                    const int r = (shotPrevBase[k] + i) * 2;
+                    d[r] = 0; d[r + 1] = 0;
+                }
+                shotPrevRows[k] = 0; shotPrevBase[k] = 0;
+            }
+            wideExtRelease(kWideShot);                 // hand the wide segments back to the P3 object
             if (flightCopper) flightCopper->setHudSprite(4, *shotSprite);
             shotWasActive = false;
         }
@@ -1088,8 +1291,10 @@ void RescueOnFractalus::buildShotSprite()
     for (int o = 0x34; o <= 0x91; o++)
         if (mem[0x0E00 + o]) { if (top < 0) top = o; bot = o; }
     int rows = (top < 0) ? 0 : bot - top + 1;
-    if (rows > kShotRows) rows = kShotRows;
     if (top < 0) top = 0x34;
+    const int shotBase = (top - 0x32) + kShotYOff;
+    if (shotBase + rows > kShotRows) rows = kShotRows - shotBase;
+    if (rows < 0) rows = 0;
     SP_LAP(g_spRunT);
     for (int i = 0; i < kShotRows * 2; i++) d[i] = 0;  // clear, then decode the run below
     SP_LAP(g_spClearT);
@@ -1111,7 +1316,10 @@ void RescueOnFractalus::buildShotSprite()
     // and setY placed accordingly, so clip identically here.
     int top = 0x32 + (int)mem[0x2865], rows = (int)mem[0x2866];
     if (top < 0x34) { rows -= 0x34 - top; top = 0x34; }
-    if (rows > kShotRows) rows = kShotRows;            // $2866 can reach $56; the sprite is 32 rows
+    // Clip to the sprite, which is now the FULL viewport height at a fixed VSTART, so a 4× burst
+    // (up to ~52 rows) no longer loses its bottom the way the old 32-row moving-VSTART one did.
+    const int shotBase = (top - 0x32) + kShotYOff;
+    if (shotBase + rows > kShotRows) rows = kShotRows - shotBase;
     if (rows < 0) rows = 0;
 #ifdef ROF_SHOT_VERIFY
     // In-process differential (make SHOT_VERIFY=1 + amiga/shot_verify.gdb).  make validate cannot
@@ -1149,8 +1357,13 @@ void RescueOnFractalus::buildShotSprite()
     // only as far as THIS buffer's last build reached.  Mean run is 4.3 rows, so the old
     // unconditional 128-byte clear (which GCC turned into a `jsr memset` byte loop, 7.7 t/call =
     // 25% of the function) is ~0 work in steady state.  Per-buffer because the two alternate.
-    for (int i = rows; i < (int)shotPrevRows[shotBuildIdx]; i++) { d[i * 2] = 0; d[i * 2 + 1] = 0; }
+    for (int i = 0; i < (int)shotPrevRows[shotBuildIdx]; i++) {
+        const int r = (shotPrevBase[shotBuildIdx] + i) * 2;
+        if (r >= shotBase * 2 && r < (shotBase + rows) * 2) continue;   // about to be overwritten
+        d[r] = 0; d[r + 1] = 0;
+    }
     shotPrevRows[shotBuildIdx] = (uint8_t)rows;
+    shotPrevBase[shotBuildIdx] = (uint8_t)shotBase;
     SP_LAP(g_spClearT);
 #endif
     if (rows > 0) {
@@ -1159,18 +1372,24 @@ void RescueOnFractalus::buildShotSprite()
         g_spBotSum += (unsigned long)(top + rows - 1);
         if ((unsigned long)rows > g_spRowsMax) g_spRowsMax = (unsigned long)rows;
 #endif
-        const volatile uint8_t* src = mem + 0x0E00 + top;   // walked, not re-indexed per row
-        for (int i = 0; i < rows; i++) {
-            uint16_t m = expandShotRow(*src++);
-            d[i * 2] = m; d[i * 2 + 1] = m;            // both planes → pen 11 → COLOR27
-        }
-        s->setY((uint16_t)(kTerrainLine + (top - 0x32) + kShotYOff));            // buffer row → Amiga line
-        s->setX((uint16_t)(0x81 + ((int)mem[0x00CB] - 0x32) * 2 + kShotXOff));   // HPOSP2 → viewport X
-    } else SP_CNT(g_spNoRun);
+        // SIZEP2 (mem[$00CD]) widens the impact burst to 2×/4× as it peaks — 32/64 lores px, i.e.
+        // 2 or 4 sprite segments.  The Atari has already shifted HPOSP2 left by $286E (4 or 12
+        // colour clocks) so mem[$00CB] is the widened player's LEFT edge; segment n sits 16 px on.
+        const uint16_t x = (uint16_t)(0x81 + ((int)mem[0x00CB] - 0x32) * 2 + kShotXOff);
+        buildWideObject(d, mem + 0x0E00 + top, shotBase, rows,
+                        sizepScale(mem[0x00CD]), x, kWideShot);
+        s->setY(kTerrainLine);                         // FIXED VSTART; the strip sits at shotBase
+        s->setX(x);
+    } else {
+        SP_CNT(g_spNoRun);
+        wideExtRelease(kWideShot);                     // nothing to draw: let the P3 object have them
+    }
     SP_LAP(g_spDecT);
     if (flightCopper) {
         flightCopper->setHudSprite(4, *s);                            // display this buffer next frame
-        flightCopper->setShotColor(atariToOCS(mem[0x0037]));          // COLPM2 → COLOR27
+        const uint16_t col = atariToOCS(mem[0x0037]);
+        flightCopper->setShotColor(col);                              // COLPM2 → COLOR27 (segment 0)
+        if (wideOwner == kWideShot) flightCopper->setWideExtColor(col);   // segments 1-3 match
     }
     shotBuildIdx ^= 1;                                                // next frame builds the other buffer
     SP_LAP(g_spCopT);
@@ -1394,16 +1613,26 @@ void RescueOnFractalus::buildViewportP3Sprite()
         int base = top - 0x32;                       // object's row within the fixed-VSTART sprite
         int rows = bot - top + 1;
         if (base + rows > kViewportP3Rows) rows = kViewportP3Rows - base;
-        for (int i = 0; i < rows; i++) {
-            uint16_t m = expandShotRow(mem[0x0F00 + top + i]);
-            d[(base + i) * 2] = m; d[(base + i) * 2 + 1] = m;  // both planes → pen 11 → COLOR31 (cyan)
-        }
-        viewportP3Sprite->setX((uint16_t)(0x81 + ((int)mem[0x2870] - 0x32) * 2));  // HPOSP3 shadow → X
+        // SIZEP3 widens the object exactly as SIZEP2 widens the laser burst: draw_player3_object
+        // loads it from table $4566 = {$03,$01,$01} indexed by mem[$006A] (= $0063>>2, counting
+        // down as the target closes), so the last three approach frames are 4×, 2×, 2× — 64/32
+        // lores px.  Ground-truthed on a800dumps/saucerbigpause.a8s: $006A = 0 ⇒ SIZEP3 = $03 = 4×,
+        // with the Main-Window strip spanning all 8 source bits over its 19 rows.  There is no
+        // mem[] shadow for it, so the value comes from the bus_write latch (src/cpu/bus.h).
+        const uint16_t x = (uint16_t)(0x81 + ((int)mem[0x2870] - 0x32) * 2);      // HPOSP3 shadow → X
+        buildWideObject(d, mem + 0x0F00 + top, base, rows,
+                        sizepScale(g_sizep3_shadow), x, kWideP3);
+        viewportP3Sprite->setX(x);
         p3ViewportPrevBase = base; p3ViewportPrevRows = rows;
     } else {
         p3ViewportPrevRows = 0;                      // inactive: nothing to clear next frame
+        wideExtRelease(kWideP3);                     // and give the wide segments back
     }
-    if (flightCopper) flightCopper->setViewportP3Color(atariToOCS(mem[0x00D9]));  // COLPM3 → COLOR31
+    if (flightCopper) {
+        const uint16_t col = atariToOCS(mem[0x00D9]);
+        flightCopper->setViewportP3Color(col);                            // COLPM3 → COLOR31 (segment 0)
+        if (wideOwner == kWideP3) flightCopper->setWideExtColor(col);     // segments 1-3 match
+    }
 }
 
 // ---- Long Range Scanner (#13) guide dot ------------------------------------------
@@ -1470,10 +1699,11 @@ void RescueOnFractalus::buildEnergyIndicatorSprite()
     // $41DA).  fuel 0 (empty / out of fuel) parks the bar below the floor (line 252) where the
     // COLOR25 black-out hides it.  Gauge is 8px wide → plane A = 0xFF00 (left half of the 16px sprite).
     static const uint16_t kBase = 0x2c + 144;            // buffer offset 0 → line 188 (same base as the altimeter)
+    bool filled = false;
     if (!energySolidBuilt) {
         uint16_t* d = energyIndicatorSprite->data() + 2; // skip the 2 control words
         for (int i = 0; i < kEnergyRows; i++) { d[i * 2] = 0xFF00u; d[i * 2 + 1] = 0x0000u; }
-        energySolidBuilt = true;
+        energySolidBuilt = true; filled = true;
     }
     uint8_t  fuel = mem[0x062F];
     uint16_t top;
@@ -1483,6 +1713,10 @@ void RescueOnFractalus::buildEnergyIndicatorSprite()
         if (top > (uint16_t)kEnergyRows) top = 0u;       // clamp garbage → full bar
     }
     energyIndicatorSprite->setY((uint16_t)(kBase + top));
+    // ch5 carries a wide-object segment ahead of this bar, and that segment is double-buffered, so
+    // the bar is chained into BOTH chains — keep the spare copy in step (control words each frame,
+    // pixels only on the one-time solid fill).
+    mirrorSprite(wideLow[0][1], energyIndicatorSprite, filled ? kEnergyRows : 0);
 }
 
 static const int      kAltimRows    = 56;             // 8×56 rectangle ($0C98..$0CCF / $0B98..$0BCF)
@@ -1499,6 +1733,7 @@ static const uint16_t kAltimTopLine = 0x2c + 144;     // buffer offset 0 → Ami
 // lazily on the first flight frame, so pre-flight the (zeroed) sprites stay invisible.
 void RescueOnFractalus::buildAltimeterSprite()
 {
+    bool filled = false;
     if (!altimSolidBuilt) {
         uint16_t* at = altimeterSprite->data() + 2;       // skip the 2 control words
         uint16_t* sh = altimeterShipSprite->data() + 2;
@@ -1506,7 +1741,7 @@ void RescueOnFractalus::buildAltimeterSprite()
             at[i * 2] = 0xFFFFu; at[i * 2 + 1] = 0x0000u; // terrain bar: plane A (pen 01 / COLOR29)
             sh[i * 2] = 0x0000u; sh[i * 2 + 1] = 0xFFFFu; // ship bar:    plane B (pen 10 / COLOR30)
         }
-        altimSolidBuilt = true;
+        altimSolidBuilt = true; filled = true;
     }
     // top = bar-top offset (0 = full bar at the dial top, kAltimRows = empty).  Pre-flight (and the
     // first flight frame before the VBI computes it) $281A holds garbage (e.g. $88); an out-of-range
@@ -1515,6 +1750,7 @@ void RescueOnFractalus::buildAltimeterSprite()
     uint16_t top = mem[0x281A];
     if (top > (uint16_t)kAltimRows) top = 0;
     altimeterSprite->setY((uint16_t)(kAltimTopLine + top));
+    mirrorSprite(wideLow[1][1], altimeterSprite, filled ? kAltimRows : 0);   // ch6's second chain
 }
 
 void RescueOnFractalus::buildAltimeterShipSprite()
@@ -1959,15 +2195,39 @@ void RescueOnFractalus::initialize()
     leftPost   = Sprite::allocate(kHT);
     rightPost  = Sprite::allocate(kHT);
     nullSprite = Sprite::allocate(0);
-    energyIndicatorSprite = Sprite::allocate(kEnergyRows);    // energy bar: 56 px high when full (same as the altimeter)
-    altimeterSprite = Sprite::allocate(kAltimRows);   // P0 $0C98 terrain-height bar (flight)
     altimeterShipSprite = Sprite::allocate(kAltimRows);   // M3 $0B98 ship-height bar (flight)
     // Flight windscreen frame: posts span the A-pillar (86 rows) + the 8 band scanlines
     // (= kHT+8 = 94); the triangle outer-half sprites cover only the 8 band scanlines.
     flLeftPost  = Sprite::allocate(kHT + 8);
     flRightPost = Sprite::allocate(kHT + 8);
-    flLeftTri   = Sprite::allocate(8);
     flRightTri  = Sprite::allocate(8);
+    // Wide-object extension channels (see RescueOnFractalus.h): segments 1-3 of a SIZEPn-widened
+    // player, on the three channels idle across the viewport.  Each is CHAINED in front of that
+    // channel's lower-region element in one chip buffer, so the channel shows both with no copper
+    // re-point — segment first, then energy (ch5) / altimeter terrain (ch6) / left band triangle
+    // (ch1).  ch5/ch6 run the full viewport (VSTOP 180, then VSTART 188+); ch1's stops one line
+    // early (VSTOP 171) so its triangle keeps line 172 — the chained VSTART must be strictly past
+    // the preceding VSTOP.  These allocations replace the standalone energy/altimeter/leftTri ones.
+    // TWO chains per channel — the double buffer (see RescueOnFractalus.h): the owner writes the
+    // off-screen one and re-points SPRxPT so all four segments latch together with segment 0.
+    // The chained element exists in both; wideLow[s][0] is the live Sprite the rest of the code
+    // already uses, wideLow[s][1] its mirror (mirrorSprite keeps the control words in step).
+    static const int kLowRows[3] = { kEnergyRows, kAltimRows, 8 };
+    for (int s = 0; s < 3; s++) {
+        const int extRows = (s == 2) ? kWideExtRowsCh1 : kWideExtRows;
+        for (int b = 0; b < 2; b++) {
+            wideChain[s][b] = Sprite::allocateChain((uint16_t)extRows, (uint16_t)kLowRows[s],
+                                                    wideExt[s][b], wideLow[s][b]);
+            if (!wideChain[s][b]) return;
+            // FIXED VSTART: the extensions must be armed across the whole viewport whether or not
+            // anything is wide, or the chained element below never gets its control re-fetch.
+            wideExt[s][b]->setY(kTerrainLine);
+            wideExt[s][b]->setX(0);
+        }
+    }
+    energyIndicatorSprite = wideLow[0][0];
+    altimeterSprite       = wideLow[1][0];
+    flLeftTri             = wideLow[2][0];
     // AH ground-fill: two 16px sprites (32px dial) reusing ch0/1 below the frame.
     ahLeft  = Sprite::allocate(kAHRows);
     ahRight = Sprite::allocate(kAHRows);
@@ -2034,6 +2294,10 @@ void RescueOnFractalus::initialize()
       g_energySprAddr    = (uint32_t)energyIndicatorSprite->data();
       g_viewportP3SprAddr = (uint32_t)viewportP3Sprite->data();
       g_scopeP3SprAddr    = (uint32_t)scopeP3Sprite->data(); }
+    // Wide-object extension chain heads (amiga/wide_probe.gdb walks each chain's two control-word
+    // pairs to check the extension's VSTOP and the chained gauge/triangle's VSTART behind it).
+    { extern volatile uint32_t g_wideExtAddr[3];
+      for (int s = 0; s < 3; s++) g_wideExtAddr[s] = (uint32_t)wideExt[s][0]->data(); }
 #endif
 
     // Post graphics are decoded once from the real RLE source tables (buildPostSprites,
@@ -2051,6 +2315,7 @@ void RescueOnFractalus::initialize()
     const uint16_t kBandSprY = kTerrainLine + kTerrainHeight;   // 172
     flLeftPost->setX(kSprXLeft);        flLeftPost->setY(kTerrainLine);   // 0x92, inner (toward centre)
     flLeftTri->setX(kSprXLeft - 16);    flLeftTri->setY(kBandSprY);       // 0x82, outer (toward edge)
+    mirrorSprite(wideLow[2][1], flLeftTri, 0);   // ch1's second chain: same X/Y (pixels come later)
     flRightPost->setX(kSprXRight);      flRightPost->setY(kTerrainLine);  // 0x19E, inner (toward centre)
     flRightTri->setX(kSprXRight + 16);  flRightTri->setY(kBandSprY);      // 0x1AE, outer (toward edge)
 
@@ -2108,8 +2373,11 @@ void RescueOnFractalus::initialize()
     // ported flight VBI; buildLayout seeds posts + gauge + nulls.
     flightCopper = new FlightCopperList();
     if (flightCopper && flightCopper->data())
+        // ch1's entry pointer is the wide-object extension, which is CHAINED in front of
+        // flLeftTri in one chip buffer — the channel shows segment 3 across the viewport and
+        // then the left band triangle at 172.  (ch3 still points straight at flRightTri.)
         flightCopper->buildLayout(*titleBitmap, *terrainBitmap, *cockpitBitmap,
-                                  *flLeftPost, *flLeftTri, *flRightPost, *flRightTri, *nullSprite,
+                                  *flLeftPost, *wideExt[2][0], *flRightPost, *flRightTri, *nullSprite,
                                   *ahLeft, *ahRight, *scopeP3Sprite);
 #ifdef ROF_FLIGHT_PROBE
     { extern volatile uint32_t g_flightCopperAddr;
@@ -4429,8 +4697,13 @@ void RescueOnFractalus::updateFlightCopper(bool force)
         // Player laser (P2) — ch4 is otherwise idle.  Point at the BACK buffer so the first
         // buildShotSprite (which writes shotSprite, idx 0) never touches the displayed buffer.
         flightCopper->setHudSprite(4, *shotSpriteBack);
-        flightCopper->setHudSprite(5, *energyIndicatorSprite);
-        flightCopper->setHudSprite(6, *altimeterSprite);
+        // ch5/ch6 point at the WIDE-OBJECT EXTENSION segments, not straight at the gauges: each
+        // extension is chained in front of its gauge in one chip buffer, so the channel shows the
+        // segment across the viewport and then the gauge below (see RescueOnFractalus.h).  The
+        // gauges' own setX/setY still drive them — only the copper's entry pointer moves up.
+        flightCopper->setHudSprite(5, *wideExt[0][wideDispIdx]);
+        flightCopper->setHudSprite(6, *wideExt[1][wideDispIdx]);
+        flightCopper->setHudSprite(1, *wideExt[2][wideDispIdx]);
         // ch7 is multiplexed: the VIEWPORT half shows the Main-Window P3 object (ch7 top pointer,
         // SPR7PT via setHudSprite), the DASHBOARD half shows the altimeter-ship gauge (the
         // SPR7PT re-point at the cockpit WAIT, setDashboardSprite(7, ...)).
@@ -5623,12 +5896,25 @@ void RescueOnFractalus::shutdown()
     delete leftPost;      leftPost      = nullptr;
     delete rightPost;     rightPost     = nullptr;
     delete nullSprite;    nullSprite    = nullptr;
-    delete energyIndicatorSprite;   energyIndicatorSprite   = nullptr;
-    delete altimeterSprite; altimeterSprite = nullptr;
+    // ⚠ energy / altimeter-terrain / left band triangle are ALIASES of wideLow[0..2][0] — non-owning
+    // views into the wide-object sprite chains.  Just drop the aliases; the wideLow loop below is
+    // what deletes them (deleting here too would be a double free).
+    energyIndicatorSprite = nullptr;
+    altimeterSprite       = nullptr;
+    flLeftTri             = nullptr;
     delete altimeterShipSprite; altimeterShipSprite = nullptr;
     delete flLeftPost;  flLeftPost  = nullptr;
     delete flRightPost; flRightPost = nullptr;
-    delete flLeftTri;   flLeftTri   = nullptr;
     delete flRightTri;  flRightTri  = nullptr;
+    { static const int kLowRows[3] = { kEnergyRows, kAltimRows, 8 };
+      for (int s = 0; s < 3; s++)
+          for (int b = 0; b < 2; b++) {
+              delete wideExt[s][b]; wideExt[s][b] = nullptr;
+              delete wideLow[s][b]; wideLow[s][b] = nullptr;
+              Sprite::freeChain(wideChain[s][b],
+                                (uint16_t)((s == 2) ? kWideExtRowsCh1 : kWideExtRows),
+                                (uint16_t)kLowRows[s]);
+              wideChain[s][b] = nullptr;
+          } }
     for (int c = 0; c < 6; c++) { delete starSprite[c]; starSprite[c] = nullptr; }
 }

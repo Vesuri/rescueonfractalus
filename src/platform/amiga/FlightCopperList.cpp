@@ -43,6 +43,20 @@ static const uint16_t kColor27 = 0x1B6;   // pair 4/5 pen 11 (player laser shot 
 static const uint16_t kColor30 = 0x1BC;   // pair 6/7 pen 10 (altimeter ship-height bar, M3)
 static const uint16_t kColor23 = 0x1AE;   // pair 2/3 pen 11 (Targeting-Scope P3 object — unused by the frame's pen01/pen10)
 static const uint16_t kColor31 = 0x1BE;   // pair 6/7 pen 11 (Main-Window P3 object — unused by the altimeter's pen01/pen10)
+// ---- WIDE-OBJECT EXTENSION pens (see the channel map below) --------------------------------
+// An Atari player widened by SIZEPn spans 16/32/64 Amiga lores px at 1×/2×/4×, i.e. up to FOUR
+// 16px sprite channels.  ch1/ch5/ch6 are recruited as segment carriers; each takes a pen its
+// channel's pair does not otherwise use in the VIEWPORT, so no existing element changes colour:
+//   ch1 -> pair 0/1 pen 11 = COLOR19.  Pair 0/1 is the LEFT windscreen pair and stays that way:
+//          the left A-pillar keeps pen 01 (COLOR17) and the left band triangle pen 10 (COLOR18),
+//          so pylon and corner triangle still share one palette, as they must (same colour).
+//   ch5 -> pair 4/5 pen 10 = COLOR26.  Free everywhere (energy = pen 01, laser shot = pen 11).
+//   ch6 -> pair 6/7 pen 01 = COLOR29.  Pair 6/7 has NO free pen (29 altimeter terrain, 30
+//          altimeter ship, 31 Main-Window P3), so COLOR29 is the only one that is split by
+//          region: the extension colour above, re-MOVEd back to the altimeter's at line 180
+//          (INDEX_ALTIM_COL_DASH) — the same trick COLOR22 already uses for the scanner dot.
+static const uint16_t kColor19 = 0x1A6;   // pair 0/1 pen 11 (wide-object segment on ch1)
+static const uint16_t kColor26 = 0x1B4;   // pair 4/5 pen 10 (wide-object segment on ch5)
 
 // ---- fixed list layout (indices into data_, in 32-bit MOVE/WAIT words) -------
 // d[0] = copperWait(16,0) (CopperList ctor).  The line-doubling band is 85 rows ×
@@ -74,9 +88,15 @@ static const uint16_t kColor31 = 0x1BE;   // pair 6/7 pen 11 (Main-Window P3 obj
 // viewport) multiplexed via SPR7PT (see INDEX_ALTIM_SHIP_SPR).  COLOR31 = pair 6/7 pen 11
 // (unused by the altimeter's COLOR29/30), poked per frame from mem[$00D9] (COLPM3, cyan).
 #define INDEX_VP_P3_COL       (INDEX_SCOPE_COL + 1)        // COLOR31 (Main-Window P3 colour) (1)
+// Wide-object extension pens (ch1/ch5/ch6 segment carriers — see kColor19/kColor26 above).  All
+// three hold the colour of whichever wide object currently owns the extension channels (the laser
+// impact burst's COLPM2 $0037, or the Main-Window P3 object's COLPM3 $00D9); poked together by
+// setWideExtColor().  COLOR29 is re-MOVEd back to the altimeter's colour at line 180.
+// (COLOR29's viewport half reuses the existing INDEX_ALTIM_COL slot — see setWideExtColor.)
+#define INDEX_EXT_COL         (INDEX_VP_P3_COL + 1)        // COLOR19, COLOR26 (2)
 // Compass band: between the title text and the viewport, re-point color01 to the compass
 // COLPF0 ($00CF, dark grey) for the mode-4 compass line — the $49EE slot-0 DLI's colour.
-#define INDEX_COMPASS_WAIT    (INDEX_VP_P3_COL + 1)        // WAIT(compass scanline) (1)
+#define INDEX_COMPASS_WAIT    (INDEX_EXT_COL + 2)          // WAIT(compass scanline) (1)
 #define INDEX_COMPASS_COL     (INDEX_COMPASS_WAIT + 1)     // 32: color01 = compass COLPF0 (housing) (1)
 #define INDEX_COMPASS_COL3    (INDEX_COMPASS_COL + 1)      // 33: color03 = compass COLPF2 (needle salmon) (1)
 #define INDEX_VP_WAIT         (INDEX_COMPASS_COL3 + 1)     // 34: WAIT(kTerrainLine-1) (1)
@@ -138,10 +158,16 @@ static const uint16_t kColor31 = 0x1BE;   // pair 6/7 pen 11 (Main-Window P3 obj
 // here (line 180, after the band) so the ch2 scanner dot in the dashboard reads red.  Nothing else
 // uses pair 2/3 pen10 in the dashboard (the scope on ch3 uses pen11 = COLOR23).
 #define INDEX_SCANNER_COL     (INDEX_AH_BPLCON2 + 1)       // COLOR22 = $26 red (scanner dot) (1)
+// COLOR29 is the ONE pen a wide-object extension has to share by region: pair 6/7 has no free
+// pen, so ch6's segment borrows pen 01 in the viewport and the altimeter terrain bar takes it
+// back here (line 180, below the band) — exactly the COLOR22 split above.  Nothing on pair 6/7
+// uses pen 01 above line 180, and the altimeter starts at 188, so the handover is unconstrained
+// (unlike an SPRxPT re-point it is a plain colour poke, with no arming deadline).
+#define INDEX_ALTIM_COL_DASH  (INDEX_SCANNER_COL + 1)      // COLOR29 = altimeter terrain bar (1)
 // Cockpit bitmap starts at kCockpitLine=180 (yOffset 8 skips the $350D band).  COLBK splits
 // match the launch cockpit: baked color00=$00 covers the black divider strip (180-188); then
 // dark-blue $90 dashboard instrument backgrounds (182-251); then black floor (252+).
-#define INDEX_DASH_BLUE_WAIT  (INDEX_SCANNER_COL + 1)      // WAIT(kCockpitLine+2-1 = 181) (1)
+#define INDEX_DASH_BLUE_WAIT  (INDEX_ALTIM_COL_DASH + 1)   // WAIT(kCockpitLine+2-1 = 181) (1)
 #define INDEX_DASH_BLUE       (INDEX_DASH_BLUE_WAIT + 1)   // color00 = $90 dark blue (dashboard) (1)
 #define INDEX_FLOOR_WAIT_BASE (INDEX_DASH_BLUE + 1)
 // The gauge sprites (altimeter pair 6/7, energy pair 4/5) are fixed 56-row SOLID sprites whose Y
@@ -166,15 +192,37 @@ static const uint16_t kColor31 = 0x1BE;   // pair 6/7 pen 11 (Main-Window P3 obj
 //   ch | viewport (86-171)      | band (172-179)     | dashboard (180-267)   | dashboard re-point
 //   ---+------------------------+--------------------+-----------------------+-------------------
 //    0 | left A-pillar (P0)     | left-tri inner     | AH fill left (P2)     | INDEX_AH_SPR+0
-//    1 | idle                   | left-tri outer     | AH fill right (P2)    | INDEX_AH_SPR+2
+//    1 | WIDE ext seg 3         | left-tri outer     | AH fill right (P2)    | INDEX_AH_SPR+2
 //    2 | right A-pillar (P1)    | right-tri inner    | idle                  | —
 //    3 | idle                   | right-tri outer    | scope-P3 dome (P3)    | INDEX_SCOPE_SPR
-//    4 | laser shot (P2)        | (laser)            | idle                  | —
-//    5 | free (crosshair TODO)  | —                  | energy (P1)           | (non-mux)
-//    6 | free (crosshair TODO)  | —                  | altimeter terrain (P0)| (non-mux)
+//    4 | laser shot (P2) seg 0  | (laser)            | idle                  | —
+//    5 | WIDE ext seg 1         | (ext)              | energy (P1)           | CHAINED
+//    6 | WIDE ext seg 2         | (ext)              | altimeter terrain (P0)| CHAINED
 //    7 | viewport-P3 (P3, tall) | (P3 tall)          | altimeter ship (M3)   | INDEX_ALTIM_SHIP_SPR
 // ALL re-points sit in the line-179 boundary group (INDEX_COCKPIT_WAIT @ 0xC0, before the bitmap
 // ptrs) — a re-point at line 181 fires after the channel's post-VSTOP re-fetch and never arms.
+//
+// ---- WIDE-OBJECT EXTENSION CHANNELS (ch1/ch5/ch6): CHAINED, not copper re-pointed -----------
+// A player widened by SIZEPn to 2×/4× is 32/64 lores px = 2/4 sprites, so the laser impact burst
+// (P2) and the Main-Window P3 object each need up to three extra channels.  ch1/ch5/ch6 were the
+// only ones idle across the viewport, but all three already carry a LOWER-region element, and the
+// arming rule says a reused channel needs an unbroken sprite to the boundary.
+//
+// These three use HARDWARE CHAINING instead of a copper re-point: both sprites live in ONE chip
+// buffer, [extension][lower element][0,0], so the channel's post-VSTOP control re-fetch reads the
+// next sprite's control words straight out of the buffer.  That needs no copper words at all —
+// which matters, because the only free slot was inside the line-179 @0xC0 group whose hpos was
+// measured to the colour clock (see INDEX_COCKPIT_WAIT); five more MOVEs there would have pushed
+// the bitplane pointers past line 180's DDFSTRT.  The chains are:
+//   ch5: [ext seg1  VSTART  86, 94 rows -> VSTOP 180][energy    VSTART 188+][0,0]
+//   ch6: [ext seg2  VSTART  86, 94 rows -> VSTOP 180][altimeter VSTART 188+][0,0]
+//   ch1: [ext seg3  VSTART  86, 85 rows -> VSTOP 171][leftTri   VSTART 172 ][0,0]
+// ⚠ The second sprite's VSTART must be STRICTLY GREATER than the first's VSTOP: the re-fetch
+// happens ON the VSTOP line, so an exactly-adjacent VSTART races the same line's start-compare.
+// ch5/ch6 have 8 lines of slack (180 -> 188); ch1's triangle must land exactly on 172, so its
+// extension stops at VSTOP 171 and seg 3 simply loses the viewport's last scanline.
+// ch1 keeps flLeftTri, so the left pylon (pair 0 pen 01) and the left corner triangle (pen 10)
+// still share pair 0's palette — the extension only borrows the pair's unused pen 11 (COLOR19).
 //
 // The dashboard re-points (channels reused viewport→dashboard) are table-driven — setDashboardSprite()
 // looks the channel up here, so adding an element (e.g. the crosshair on ch5/6) is a one-row change.
@@ -236,6 +284,7 @@ void FlightCopperList::buildLayout(const Bitmap& title, const Bitmap& terrain, c
     d[INDEX_SHOT_COL] = copperMove(kColor27, 0);         // player laser shot colour (poked per frame)
     d[INDEX_SCOPE_COL] = copperMove(kColor23, 0);        // Targeting-Scope P3 colour (poked per frame from $00D9)
     d[INDEX_VP_P3_COL] = copperMove(kColor31, 0);        // Main-Window P3 object colour (poked per frame from $00D9)
+    setWideExtColor(0);                         // COLOR19/26/29 — wide-object extension segments (ch1/ch5/ch6)
     setEnergyIndicatorColor(0);                 // COLOR25 (setter) — energy bar (sprite pair 4/5)
     setAltimeterColor(0);                       // COLOR29 (setter) — altimeter terrain bar (pair 6/7 pen01)
     setAltimeterShipColor(0);                   // COLOR30 (setter) — altimeter ship bar (pair 6/7 pen10)
@@ -425,9 +474,27 @@ void FlightCopperList::setDashboardSprite(int ch, const Sprite& s)
         if (kDashRepoints[i].ch == ch) { showSprite(kDashRepoints[i].copperIndex, (uint16_t)ch, s); return; }
 }
 
+// COLOR29 (pair 6/7 pen 01) is region-split: the wide-object extension on ch6 borrows it across
+// the viewport (setWideExtColor writes INDEX_EXT_COL+2) and the altimeter terrain bar takes it
+// back at line 180 — so THIS setter writes the line-180 slot, not the top-of-frame one.
 void FlightCopperList::setAltimeterColor(uint16_t c)
 {
-    data_[INDEX_ALTIM_COL] = copperMove(kColor29, c);   // COLOR29 = sprite pair 6/7 pen 01 (terrain bar)
+    data_[INDEX_ALTIM_COL_DASH] = copperMove(kColor29, c);
+}
+
+// The three wide-object extension pens, all set to the colour of whichever object currently owns
+// the extension channels: the laser impact burst (COLPM2 mem[$0037]) or the Main-Window P3 object
+// (COLPM3 mem[$00D9]).  One call keeps all three segments the same colour as their base sprite.
+void FlightCopperList::setWideExtColor(uint16_t c)
+{
+    data_[INDEX_EXT_COL + 0] = copperMove(kColor19, c);  // ch1 seg 3 (pair 0/1 pen 11)
+    data_[INDEX_EXT_COL + 1] = copperMove(kColor26, c);  // ch5 seg 1 (pair 4/5 pen 10)
+    // ch6 seg 2 is pair 6/7 pen 01 = COLOR29, which the altimeter terrain bar also uses — so it
+    // reuses that pen's EXISTING top-of-frame slot as the viewport half of the split, and
+    // setAltimeterColor writes the line-180 half.  (Leaving INDEX_ALTIM_COL unwritten is not an
+    // option: an all-zero copper word is a MOVE to register $000, which is below the CDANG
+    // threshold and HALTS THE COPPER for the rest of the frame.)
+    data_[INDEX_ALTIM_COL]   = copperMove(kColor29, c);
 }
 
 void FlightCopperList::setAltimeterShipColor(uint16_t c)

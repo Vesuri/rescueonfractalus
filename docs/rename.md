@@ -99,6 +99,13 @@ Suggested: `$00CD` → `sizep2_shadow`, and fix the description. Also correct th
 which happens to be right, on `$D00A`. This is the register the flight open item "laser-impact
 explosion renders at 1× width" needs (`docs/flight-scene.md` / the `flight-scene` memory).
 
+**ACTED ON 2026-08-11** (the widening is implemented; the rename itself is still pending): the
+Amiga burst/P3 widening reads `mem[$00CD]` as SIZEP2 via `sizepScale()` in
+`src/platform/amiga/RescueOnFractalus.cpp`, masking bits 1-0 exactly as GTIA does. ⚠ Do NOT compare
+the shadow to `0`/`1`/`3` — `a800dumps/saucerbigpause.a8s` has `$00CD = $62` with no shot active
+(stale zero page; `build_player2_sprite` is its only writer and had not run since the last shot).
+Value `2` is also a second encoding of "normal", so only the masked pair is meaningful.
+
 ## Investigated → intentionally left UNNAMED (do not re-litigate)
 
 These were verified (2026-08-02) and deliberately have no `symbols.csv` name: each is either

@@ -1488,6 +1488,17 @@ extern "C" volatile unsigned long g_alVSwapRun=0, g_alVSwapCleared=0;
 // VSTOP control words and confirm the bar Y vs mem[$281A]/$281B.
 extern "C" volatile uint32_t g_altimSprAddr=0, g_altimShipSprAddr=0, g_energySprAddr=0;
 extern "C" volatile uint32_t g_viewportP3SprAddr=0, g_scopeP3SprAddr=0, g_flightCopperAddr=0;
+// Wide-object extension chain heads (segments 1-3 on ch5/ch6/ch1).  Each buffer holds TWO chained
+// sprites, so amiga/wide_probe.gdb can read the extension's VSTART/VSTOP and then the chained
+// element's control words right behind its data — the check that the energy bar / altimeter /
+// left band triangle still arm now that they hang off the extension rather than SPRxPT directly.
+extern "C" volatile uint32_t g_wideExtAddr[3] = { 0, 0, 0 };
+// Wide-object histograms: how often each SIZEPn scale was actually rendered (index 0/1/2 = 1×/2×/4×)
+// and the widest burst seen.  A headless COMBAT run must show non-zero 2×/4× buckets, or the
+// widening path never ran and a visual check would prove nothing.
+extern "C" volatile unsigned long g_wideShotScale[3] = { 0, 0, 0 };
+extern "C" volatile unsigned long g_wideP3Scale[3]   = { 0, 0, 0 };
+extern "C" volatile unsigned long g_wideMaxRows = 0, g_wideDenied = 0;
 #endif
 
 // g_quitJmp: the __builtin_setjmp buffer armed by RescueOnFractalus::run() so we can

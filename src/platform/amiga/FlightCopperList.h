@@ -61,6 +61,11 @@ public:
     void setShotColor(uint16_t c);                                 // COLOR27 (player laser shot, ch4 pen11)
     void setScopeP3Color(uint16_t c);                            // COLOR23 (Targeting-Scope P3 object, ch3 pen11, from $00D9)
     void setViewportP3Color(uint16_t c);                         // COLOR31 (Main-Window P3 object, ch7 pen11, from $00D9)
+    // Wide-object extension pens: COLOR19 (ch1 pen11) + COLOR26 (ch5 pen10) + COLOR29 (ch6 pen01,
+    // viewport half only — setAltimeterColor owns its line-180 half).  A player widened by SIZEPn
+    // to 2×/4× spans 2/4 sprite channels; these carry segments 1..3 and take the colour of whoever
+    // owns them (laser impact burst $0037, or the Main-Window P3 object $00D9).
+    void setWideExtColor(uint16_t c);
     // Dashboard sprite re-point (the region-boundary SPRxPT rewrite that reuses a viewport channel
     // for a dashboard element — AH ch0/1, scope ch3, altimeter-ship ch7).  Data-driven: the channel
     // is looked up in the kDashRepoints table (FlightCopperList.cpp) which owns the copper index +

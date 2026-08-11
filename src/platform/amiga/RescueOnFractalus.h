@@ -114,7 +114,55 @@ private:
     uint8_t  shotBuildIdx   = 0;         // which buffer buildShotSprite writes this frame (toggles)
     bool     shotWasActive  = false;     // last frame's mem[$0036]!=0 (blank both buffers once on end)
     uint8_t  shotPrevRows[2] = {0, 0};   // rows each buffer's last build wrote = the incremental
-                                         // clear's extent (the buffers alternate, so per-buffer)
+    uint8_t  shotPrevBase[2] = {0, 0};   // clear's extent (the buffers alternate, so per-buffer)
+
+    // ---- WIDE OBJECTS (SIZEP2 / SIZEP3) and the shared extension channels --------------------
+    // An Atari player widened by SIZEPn covers 8/16/32 colour clocks at 1×/2×/4× — 16/32/64 Amiga
+    // lores px, i.e. up to FOUR 16px sprites.  Two objects do this: the LASER IMPACT BURST (P2,
+    // SIZEP2 = mem[$00CD], set 0/1/3 by build_player2_sprite $8C58 as the burst zooms) and the
+    // MAIN-WINDOW P3 OBJECT (saucer / gun emplacement, SIZEP3 from table $4566 by mem[$006A], so
+    // 4× on its very last approach frame).  In both cases the Atari also shifts HPOSn left (by
+    // $286E = 0/4/12 colour clocks for P2) so the widened player stays centred — the shadow we
+    // read is therefore already the LEFT edge, and segment n simply sits at baseX + 16*n.
+    //
+    // Segment 0 is the object's own channel (ch4 burst / ch7 P3); segments 1-3 are these shared
+    // extensions on ch5/ch6/ch1 — the only channels idle across the viewport.  Each is the HEAD of
+    // a chained chip buffer whose second sprite is that channel's lower-region element (energy,
+    // altimeter terrain, left band triangle), so they need no copper re-point at all; see the
+    // chaining note in FlightCopperList.cpp for why that mattered.
+    //
+    // The burst builds in the flight VBI (50Hz) and the P3 object at render rate, so ownership is
+    // arbitrated: the burst wins.  In practice they never overlap — the object that explodes is
+    // deactivated ($006A = $FF) by the hit, so draw_player3_object stops drawing it.
+    // ⚠ DOUBLE-BUFFERED, and it has to be: segment 0 of the burst (shotSprite/shotSpriteBack)
+    // already is, so single-buffered extensions would reach the screen ONE FRAME EARLIER than
+    // segment 0 — during a burst that changes shape every VBI that reads as a torn, misshapen
+    // explosion.  The same argument the shot's own double buffer rests on applies twice over: the
+    // VBI sprite bracket measures ~29 beam-lines and runs AFTER the heavy vbi_handler_flight, so
+    // the build routinely lands past scanline 86 and an in-place write races the sprite DMA.
+    // So each channel gets TWO chains; the owner writes the off-screen one and re-points SPRxPT,
+    // and the copper latches all four segments together at the next frame.  The chained lower
+    // element (energy / altimeter / left triangle) therefore exists in BOTH chains — cheap,
+    // because all three are build-once solids whose only per-frame change is setY (mirrorSprite).
+    enum WideOwner { kWideNone = 0, kWideShot = 1, kWideP3 = 2 };
+    Sprite*   wideExt[3][2]   = { { nullptr, nullptr }, { nullptr, nullptr }, { nullptr, nullptr } };
+    Sprite*   wideLow[3][2]   = { { nullptr, nullptr }, { nullptr, nullptr }, { nullptr, nullptr } };
+    uint16_t* wideChain[3][2] = { { nullptr, nullptr }, { nullptr, nullptr }, { nullptr, nullptr } };
+    uint8_t   wideOwner       = kWideNone;
+    uint8_t   wideDispIdx     = 0;              // which chain the copper currently enters
+    int       widePrevBase[3][2] = { {0,0}, {0,0}, {0,0} };  // rows each extension buffer's last
+    int       widePrevRows[3][2] = { {0,0}, {0,0}, {0,0} };  // build wrote = its clear extent
+    // Claim the extensions for `owner` (full-clearing on a handover, since the outgoing owner's
+    // incremental clear only tracked its own rows); false if the burst already holds them.
+    bool wideExtAcquire(uint8_t owner);
+    // Blank the extensions and drop ownership — call when the object goes narrow or inactive.
+    void wideExtRelease(uint8_t owner);
+    // Render one widened player strip across 1/2/4 segments.  dst0 = the object's own sprite data
+    // (past the 2 control words); src = &mem[<PMG page> + top], `rows` consecutive bytes; base =
+    // the strip's first row within the FIXED-VSTART sprites; scale = 1/2/4; x = segment 0's Amiga
+    // sprite X.  Falls back to segment 0 alone if a higher-priority owner holds the extensions.
+    void buildWideObject(uint16_t* dst0, const volatile uint8_t* src, int base, int rows,
+                         int scale, uint16_t x, uint8_t owner);
 
     // Stars/space starfield: the 3 Atari players P0/P2/P3 ($0C32/$0E32/$0F32),
     // scrolled + sparsely seeded by the genuine scroll_field_columns ($6AEE).  Each is a
