@@ -7,20 +7,22 @@
 # frame where the launch cinematic routes to the WRONG branch is visible.
 #   VV   $0222/3 VVBLKI: 53CC=title/transitional  52D7=standby+launch cinematic  4FF5=flight
 #   cop  1=title 2=standby 3=planet/stars 4=flight 5=fwd tunnel 6=doors
-#        8=boost-handoff-hold 9=black 10=wrap-fade 11=boost REVERSE tunnel
+#        8=boost-handoff-hold 9=black 10=in-place level cycle 11=boost REVERSE tunnel
 #   flg  bit0 doorFieldReady  bit1 standbyRevealReady  bit2 rsBoostViewport  bit3 rsBoostReturn
 #        bit4 $008D!=0        bit5 $008E!=0
 # Rows are RECORDED ON CHANGE (VV / cop / flg / $060B), so one row = one routing state.
 continue
 echo \n==== SIGINT ====\n
 printf "transitions=%u  (recorded on change, from the FIRST Standby reveal)\n", g_tsRingN
-printf "  vbi    VV   3A 8D 8E 60B cop flg  62F sprY  BPLCON2\n"
+# ⚠ No per-row BPLCON2 column: d6bc58a measured that a 68000 read of $DFF104 returns the FLOATING
+# BUS, so nothing the Amiga side samples into this ring can be trusted.  The only honest read is
+# gdb's own, at the bottom of this script (and per-install in amiga/b2_probe.gdb).
+printf "  vbi    VV   3A 8D 8E 60B cop flg  62F sprY\n"
 set $i = 0
 while $i < g_tsRingN
-  printf "%6u  %04x  %02x %02x %02x  %02x  %2u  %2x  %02x  %3u    %04x\n", \
+  printf "%6u  %04x  %02x %02x %02x  %02x  %2u  %2x  %02x  %3u\n", \
     g_tsRingVbi[$i], g_tsRingVV[$i], g_tsRing3A[$i], g_tsRing8D[$i], g_tsRing8E[$i], \
-    g_tsRing60B[$i], g_tsRingCop[$i], g_tsRingFlg[$i], g_tsRing62F[$i], g_tsRingSprY[$i], \
-    g_tsRingB2[$i]
+    g_tsRing60B[$i], g_tsRingCop[$i], g_tsRingFlg[$i], g_tsRing62F[$i], g_tsRingSprY[$i]
   set $i = $i + 1
 end
 printf "\nNOW: vbi=%u VV=%04x 3A=%02x 8D=%02x 8E=%02x 60B=%02x cop=%u boostRet=%u boostVp=%u doorRdy=%u revealRdy=%u\n", \
