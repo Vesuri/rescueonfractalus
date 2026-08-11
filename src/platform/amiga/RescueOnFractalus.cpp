@@ -183,6 +183,14 @@ extern "C" volatile unsigned short g_ckFullVbi[4] = {0,0,0,0};       // g_vbiCou
 // routing.  g_boostHandoffHoldFrames counts the T6 handoff-hold frames (proves the
 // reverse-tunnel->standby window exists and the guard catches it).
 extern "C" volatile unsigned char g_boostRet = 0, g_boostVp = 0, g_liveCopper = 0;
+// BPLCON2 audit (PROBES only): the value each BUILT copper list MOVEs to $104, or 0xFFFF if the
+// list emits none — which for Standby/Doors/Title is BY DESIGN: their priority is a one-off CPU
+// write at the scene transition (setSpritePriority).  g_cl2Cpu/g_cl2CpuN are that write's last
+// value and its count, so the pair says who owns the register and what it currently holds.
+extern "C" volatile unsigned short g_cl2Standby = 0, g_cl2Doors = 0, g_cl2Tunnel = 0,
+                                   g_cl2Planet = 0, g_cl2Flight = 0, g_cl2Title = 0;
+extern "C" volatile unsigned short g_cl2Cpu = 0xFFFF;
+extern "C" volatile unsigned long  g_cl2CpuN = 0;
 extern "C" volatile unsigned long g_boostHandoffHoldFrames = 0;
 // Boost-viewport decode-cost probe (item 2, decode-consume): count decode events, to confirm the
 // decode-on-change gating runs and quantify the win vs the old always-full decode EVERY frame.
@@ -2387,7 +2395,7 @@ void RescueOnFractalus::initialize()
     AmigaHardware::setPlayfield(kW, kH, kBP2, /*interleaved*/true, /*hires*/false,
                                 /*interlace*/false, /*dualPlayfield*/false,
                                 /*holdAndModify*/false, kCenterY);
-    *bplcon2Pointer = (uint16_t)((1u << 3) | 1u);
+    setSpritePriority(kSpritePriorityCockpit);   // seeds bplcon2Cpu too (see setSpritePriority)
 
     deriveRenderSignals();   // seed the render signals from the initial mem[] (standby) state
 
@@ -2458,6 +2466,34 @@ void RescueOnFractalus::initialize()
     titleScreenCopper = new TitleScreenCopperList();
     if (titleScreenCopper && titleScreenCopper->data())
         titleScreenCopper->buildLayout(*titleScreenBitmap, *nullSprite);
+
+#ifdef ROF_FLIGHT_PROBE
+    // BPLCON2 audit.  BPLCON2 (sprite-vs-playfield priority) is WRITE-ONLY hardware that persists
+    // across copper lists, so a list that emits none inherits whatever ran before it — which is how
+    // the throttle/energy gauge ended up in FRONT of the cockpit on every Standby entered after a
+    // launch (TunnelCopperList leaves PFxP=4).  Standby/Doors/Title deliberately stay MOVE-free and
+    // are driven by setSpritePriority's one-off CPU write instead, so this scan exists to keep that
+    // split honest: it reads the list the copper really executes, not the constants in the source.
+    // 0xFFFF = the list emits none (CPU-owned).  Read with amiga/title_start.gdb.
+    {
+        extern volatile unsigned short g_cl2Standby, g_cl2Doors, g_cl2Tunnel,
+                                       g_cl2Planet, g_cl2Flight, g_cl2Title;
+        struct { CopperList* cl; volatile unsigned short* out; } audit[] = {
+            { standbyCopper,     &g_cl2Standby }, { doorsCopper[0],  &g_cl2Doors  },
+            { tunnelCopper[0],   &g_cl2Tunnel  }, { planetCopper,    &g_cl2Planet },
+            { flightCopper,      &g_cl2Flight  }, { titleScreenCopper, &g_cl2Title },
+        };
+        for (unsigned a = 0; a < sizeof(audit) / sizeof(audit[0]); a++) {
+            *audit[a].out = 0xFFFFu;
+            if (!audit[a].cl || !audit[a].cl->data()) continue;
+            const uint32_t* d = audit[a].cl->data();
+            for (uint32_t i = 0; i < 512u; i++) {
+                if (d[i] == 0xFFFFFFFEu) break;                       // list terminator
+                if ((d[i] >> 16) == 0x104u) { *audit[a].out = (unsigned short)(d[i] & 0xFFFFu); break; }
+            }
+        }
+    }
+#endif
 
     // Precompute glyph doubling table: each byte → 16-bit pattern (each bit → 2 bits).
     for (int i = 0; i < 256; i++) {
@@ -4001,6 +4037,29 @@ void RescueOnFractalus::updateBoostCinematicLatch()
     latchPrevDoorRdy = g_doorFieldReady;
 }
 
+// setSpritePriority(): one-off CPU write of BPLCON2 (sprite-vs-playfield priority) at a scene
+// transition.  BPLCON2 is write-only hardware that PERSISTS across copper lists, and the Standby /
+// Doors lists deliberately emit no MOVE for it — so whichever list ran last owned it.  After any
+// launch that is TunnelCopperList's PFxP=4 (all sprites in front of the playfield), which put the
+// throttle/energy gauge (sprite 2) ON TOP of the cockpit dashboard instead of behind it, on every
+// Standby entered after a launch (user-reported 2026-08-11 on the post-mother-ship Standby → Title
+// → START path).  It looked right only on a fresh boot, because initialize() had just written the
+// Standby value by hand a moment earlier.
+//
+// bplcon2Cpu makes this a write per TRANSITION, not per frame; the three lists that carry their own
+// BPLCON2 MOVE (Tunnel, Planet, Flight) invalidate it at their install, since the copper then moves
+// the register without us.
+void RescueOnFractalus::setSpritePriority(uint16_t v)
+{
+    if (v == bplcon2Cpu) return;
+    *bplcon2Pointer = v;
+    bplcon2Cpu = v;
+#ifdef ROF_FLIGHT_PROBE
+    { extern volatile unsigned short g_cl2Cpu; extern volatile unsigned long g_cl2CpuN;
+      g_cl2Cpu = v; g_cl2CpuN++; }
+#endif
+}
+
 // renderFrame(): the per-frame repaint body, called from PlatformAmiga::renderFrame()
 // at each transpiled frame-wait hook.  Does the non-phase per-frame work, repaints the
 // bitmaps, rebuilds the back copper list and flips to it.  The VBI has not yet fired
@@ -4221,6 +4280,8 @@ void RescueOnFractalus::renderFrame()
         planetCopperInstalled = true;
         standbyCopperInstalled = false; flightCopperInstalled = false;
         tunnelCopperInstalled  = false; titleScreenCopperInstalled = false;
+        bplcon2Cpu = kSpritePriorityUnknown;   // PlanetCopperList carries its own BPLCON2 MOVE
+
 #ifdef ROF_FLIGHT_PROBE
         if (!g_planetInstVbi) g_planetInstVbi = platform_frame_count();
 #endif
@@ -4420,6 +4481,7 @@ void RescueOnFractalus::renderFrame()
         if (mem[0x008D] != 0u) tunnelPaintDiff(boostRevealK());   // §2: prove it numerically first
 #endif
         showTunnelCopper();     // reveal band K + palette, into the back buffer, swapped at vblank
+        bplcon2Cpu = kSpritePriorityUnknown;   // TunnelCopperList carries its own BPLCON2 MOVE
         standbyCopperInstalled = false; planetCopperInstalled = false;
         flightCopperInstalled = false; titleScreenCopperInstalled = false;
 #ifdef ROF_FLIGHT_PROBE
@@ -4488,6 +4550,8 @@ void RescueOnFractalus::renderFrame()
                                && !rsViewport && !rsLaunched && !rsBoostViewport;
     if (staticStandby) {
         if (!standbyCopperInstalled) {
+            // Scene transition: reclaim BPLCON2 from whatever list ran last (see setSpritePriority).
+            setSpritePriority(kSpritePriorityCockpit);
             updateStandbyCopper(true);
             AmigaHardware::setCopperList(*standbyCopper, false);
             standbyCopperInstalled = true;
@@ -4512,6 +4576,7 @@ void RescueOnFractalus::renderFrame()
             updatePlanetCopper(true);
             AmigaHardware::setCopperList(*planetCopper, false);
             planetCopperInstalled = true;
+            bplcon2Cpu = kSpritePriorityUnknown;   // PlanetCopperList carries its own BPLCON2 MOVE
 #ifdef ROF_FLIGHT_PROBE
             if (!g_planetInstVbi) g_planetInstVbi = platform_frame_count();
 #endif
@@ -4543,6 +4608,7 @@ void RescueOnFractalus::renderFrame()
             updateFlightCopper(true);
             AmigaHardware::setCopperList(*flightCopper, false);
             flightCopperInstalled = true;
+            bplcon2Cpu = kSpritePriorityUnknown;   // FlightCopperList carries its own BPLCON2 MOVEs
 #ifdef ROF_FLIGHT_PROBE
             extern volatile unsigned short g_fadeEntryVbi, g_fadeEntryIter, g_fadeEntryFd, g_iterCount;
             extern volatile unsigned long g_fdCalls;
@@ -4603,6 +4669,7 @@ void RescueOnFractalus::renderFrame()
 #endif
         showTunnelCopper();          // one full-height ring band (setRevealBands K = 0)
         tunnelCopperInstalled = true;
+        bplcon2Cpu = kSpritePriorityUnknown;   // TunnelCopperList carries its own BPLCON2 MOVE
 #ifdef ROF_FLIGHT_PROBE
         { extern volatile unsigned char g_liveCopper; g_liveCopper = 5; }
 #endif
@@ -4631,6 +4698,10 @@ void RescueOnFractalus::renderFrame()
               g_doorTopBlack = nz ? 0 : 1; g_doorTopBlackVp = nzo ? 0 : 1;
               g_doorTopG2 = (unsigned char)g2; g_doorTopSeen = 1; } }
 #endif
+        // Same priority as the Standby the doors part from.  Normally already set by the
+        // staticStandby transition above; written here too so a rebuild that reaches the doors
+        // without a settled Standby frame cannot inherit the tunnel's PFxP=4 (gauge on top).
+        setSpritePriority(kSpritePriorityCockpit);
         AmigaHardware::setCopperList(*doorsCopper[back], false);
         doorsActive = back;
         tunnelCopperInstalled = false;

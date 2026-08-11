@@ -130,6 +130,30 @@ old gate would have mis-rendered the next construction too, with no mother ship 
 interactive build — `make FORCE_MOTHERSHIP=1 ATTRACT_NOW=2` + `./run.sh` reaches the Title a few
 seconds after the return instead of ~2.5 minutes.
 
+**2026-08-11 (b) — BPLCON2 is per-SCENE state, and nothing owned it.** Follow-up the user found on
+the same path once the latch fix landed: the cockpit energy/throttle gauge sprite drew ON TOP of the
+cockpit bitmap instead of behind it. BPLCON2 (sprite-vs-playfield priority) is **write-only hardware
+that persists across copper lists**, and StandbyCopperList / DoorsCopperList emit no MOVE for it —
+they inherited whatever list ran last. On a fresh boot that is `initialize()`'s hand-written
+PF2P=PF1P=1 (canopy posts in front, gauge behind), so the Standby looked right; after ANY launch it
+is TunnelCopperList's PFxP=4 (**all** sprites in front), so the gauge sat over the dashboard. It is
+not specific to the Title path — every Standby re-entered after a launch had it.
+
+Fix (the user's call on mechanism: **copper lists should not write BPLCON2 — one-off CPU writes at
+the appropriate transitions should**): `RescueOnFractalus::setSpritePriority()` pokes `$DFF104`
+once per scene transition, called at the Standby copper install and at the Doors install. A
+`bplcon2Cpu` shadow keeps it one write per ENTRY rather than per frame, and the three lists that DO
+carry their own MOVE (Tunnel PFxP=4, Planet PFxP=1, Flight PFxP=4 then 0 at the dashboard split —
+that one genuinely needs the copper, it is a mid-frame change) invalidate the shadow at their
+install. `make PROBES=1` scans every built list for a `$104` MOVE and reports it next to the last
+CPU-written value (`amiga/title_start.gdb`, "BPLCON2 lists:" line), so the CPU/copper ownership
+split stays honest rather than being re-derived from the source.
+
+⭐ **Lesson: treat every write-only display register as SCENE state with a named owner.** The
+"emit only what the DLI emits" rule keeps lists minimal, but a register no list emits is not
+"unchanged" — it is *whatever the previous scene left*, and that only looks correct until the scene
+order changes. Same shape as this file's earlier `tunnelBitmap` ownership lesson.
+
 **OPEN / next-session items:**
 1. ✅ **VERIFIED (user-confirmed 2026-07-18)** — the reveal (f824f82) grows cleanly from the centre
    in real play, and the pink-vs-teal tunnel ring cycle looks right.

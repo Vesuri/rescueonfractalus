@@ -27,3 +27,9 @@ printf "\nNOW: vbi=%u VV=%04x 3A=%02x 8D=%02x 8E=%02x 60B=%02x cop=%u boostRet=%
   mem[0x060B], g_liveCopper, g_boostRet, g_boostVp, g_doorFieldReady, g_standbyRevealReady
 printf "attract: 00E2=%02x 062D=%02x  title RAM 365B=%02x  DMA 022F=%02x  E5=%02x 0004=%02x\n", \
   mem[0x00E2], mem[0x062D], mem[0x365B], mem[0x022F], mem[0x00E5], mem[0x0004]
+# BPLCON2 ($104) ownership audit.  Per list: the value it MOVEs, or ffff = it emits none and the
+# CPU owns its priority (Standby/Doors/Title, by design).  PF2P=bits5-3, PF1P=bits2-0; 0009 = pair 0
+# (canopy posts) in front + the gauge BEHIND the playfield, 0024 = all sprites in front (the
+# gauge-on-top bug).  cpu= the last value setSpritePriority wrote, n= how many transitions wrote it.
+printf "BPLCON2 lists: standby=%04x doors=%04x tunnel=%04x planet=%04x flight=%04x title=%04x | cpu=%04x n=%lu\n", \
+  g_cl2Standby, g_cl2Doors, g_cl2Tunnel, g_cl2Planet, g_cl2Flight, g_cl2Title, g_cl2Cpu, g_cl2CpuN
