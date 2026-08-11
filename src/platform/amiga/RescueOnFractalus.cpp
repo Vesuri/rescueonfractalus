@@ -1140,17 +1140,57 @@ bool RescueOnFractalus::wideExtAcquire(uint8_t owner)
     return true;
 }
 
-void RescueOnFractalus::wideExtRelease(uint8_t owner)
+// ⚠ PHASE.  The burst's segment 0 (shotSprite/shotSpriteBack) is DOUBLE BUFFERED, so the strip on
+// screen right now is the one built LAST frame — still the wide one on the frame the burst narrows.
+// Blanking the DISPLAYED extension chain here therefore takes the right-hand segments away one
+// frame BEFORE segment 0 stops being wide, and that single frame is visible: the 2×→1× step near
+// the end of the explosion showed the left half only (user-observed, 2026-08-11).  A release is a
+// build of blank rows and has to be latched on the same boundary as one — so for the burst we
+// clear the OFF-SCREEN chain and re-point SPR5/6/1PT, exactly as buildWideObject does.  The
+// displayed chain keeps its wide segments for the one frame its segment 0 still needs them; the
+// stale rows it is left holding never reach the screen again, because whoever writes that chain
+// next has to come through wideExtAcquire, which full-clears BOTH chains.
+// `now` forces the old immediate both-chain blank for the one caller that has no frame to defer to
+// — buildShotSprite's shot-just-ended path, which likewise blanks segment 0 in BOTH its buffers.
+void RescueOnFractalus::wideExtRelease(uint8_t owner, bool now)
 {
     if (wideOwner != owner) return;
-    for (int s = 0; s < 3; s++)
-        for (int b = 0; b < 2; b++) {
-            uint16_t* d = wideExt[s][b]->data() + 2;
-            for (int i = 0; i < widePrevRows[s][b]; i++) {
-                d[(widePrevBase[s][b] + i) * 2] = 0; d[(widePrevBase[s][b] + i) * 2 + 1] = 0;
+    // Only the burst is double buffered; the Main-Window P3 object writes the displayed chain at
+    // render rate (single-buffered segment 0), so its release is immediate either way.
+    if (owner == kWideShot && !now) {
+        const int w = wideDispIdx ^ 1;
+#ifdef ROF_FLIGHT_PROBE
+        // Count the frames this deferral is FOR: a burst release with pixels still live in the
+        // DISPLAYED chain.  Each one was a frame the old immediate both-chain blank corrupted
+        // (right half gone while segment 0 was still wide).  Zero here = the run never reached the
+        // 2x->1x step, so it proves nothing either way — check g_wideShotScale[1]/[2] first.
+        { extern volatile unsigned long g_wideLateBlank;
+          if (widePrevRows[0][wideDispIdx] | widePrevRows[1][wideDispIdx]
+                                           | widePrevRows[2][wideDispIdx]) g_wideLateBlank++; }
+#endif
+        for (int s = 0; s < 3; s++) {
+            uint16_t* d = wideExt[s][w]->data() + 2;
+            for (int i = 0; i < widePrevRows[s][w]; i++) {
+                d[(widePrevBase[s][w] + i) * 2] = 0; d[(widePrevBase[s][w] + i) * 2 + 1] = 0;
             }
-            widePrevRows[s][b] = 0;
+            widePrevRows[s][w] = 0;
         }
+        if (flightCopper) {
+            flightCopper->setHudSprite(5, *wideExt[0][w]);
+            flightCopper->setHudSprite(6, *wideExt[1][w]);
+            flightCopper->setHudSprite(1, *wideExt[2][w]);
+        }
+        wideDispIdx = (uint8_t)w;
+    } else {
+        for (int s = 0; s < 3; s++)
+            for (int b = 0; b < 2; b++) {
+                uint16_t* d = wideExt[s][b]->data() + 2;
+                for (int i = 0; i < widePrevRows[s][b]; i++) {
+                    d[(widePrevBase[s][b] + i) * 2] = 0; d[(widePrevBase[s][b] + i) * 2 + 1] = 0;
+                }
+                widePrevRows[s][b] = 0;
+            }
+    }
     wideOwner = kWideNone;
 }
 
@@ -1169,7 +1209,8 @@ void RescueOnFractalus::buildWideObject(uint16_t* dst0, const volatile uint8_t* 
 #endif
     if (segs == 1) {
         // Narrow (or beaten to the channels): give the extensions back so the other object can
-        // have them, and blank whatever we last drew there.
+        // have them, and blank whatever we last drew there — for the burst, in the OFF-SCREEN
+        // chain, because the wide segment 0 it pairs with is still the one on screen.
         wideExtRelease(owner);
         for (int i = 0; i < rows; i++) {
             const uint16_t m = s_shotExpand[src[i]];
@@ -1269,7 +1310,11 @@ void RescueOnFractalus::buildShotSprite()
                 }
                 shotPrevRows[k] = 0; shotPrevBase[k] = 0;
             }
-            wideExtRelease(kWideShot);                 // hand the wide segments back to the P3 object
+            // IMMEDIATE (now = true): this path blanks segment 0 in BOTH buffers, so the wide
+            // strip leaves the screen THIS frame and the extensions must go with it — there is no
+            // later frame to defer the blank to.  (In practice both chains are already empty: the
+            // burst always shrinks back through 1× before $8CBA kills it.)
+            wideExtRelease(kWideShot, true);           // hand the wide segments back to the P3 object
             if (flightCopper) flightCopper->setHudSprite(4, *shotSprite);
             shotWasActive = false;
         }
@@ -1366,6 +1411,11 @@ void RescueOnFractalus::buildShotSprite()
     shotPrevBase[shotBuildIdx] = (uint8_t)shotBase;
     SP_LAP(g_spClearT);
 #endif
+    // Did we hold the extension channels ENTERING this frame?  On the frame the burst narrows, the
+    // deferred wideExtRelease drops ownership but the displayed chain still shows our right-hand
+    // segments for one more frame (it is in phase with the displayed segment 0) — so they still
+    // want this frame's COLPM2, or the two halves of the same burst differ by a luminance step.
+    const bool heldWideExt = (wideOwner == kWideShot);
     if (rows > 0) {
 #ifdef ROF_SPRITE_SHAPE
         g_spRows += (unsigned long)rows; g_spTopSum += (unsigned long)top;
@@ -1389,7 +1439,8 @@ void RescueOnFractalus::buildShotSprite()
         flightCopper->setHudSprite(4, *s);                            // display this buffer next frame
         const uint16_t col = atariToOCS(mem[0x0037]);
         flightCopper->setShotColor(col);                              // COLPM2 → COLOR27 (segment 0)
-        if (wideOwner == kWideShot) flightCopper->setWideExtColor(col);   // segments 1-3 match
+        if (wideOwner == kWideShot || heldWideExt)
+            flightCopper->setWideExtColor(col);                        // segments 1-3 match
     }
     shotBuildIdx ^= 1;                                                // next frame builds the other buffer
     SP_LAP(g_spCopT);

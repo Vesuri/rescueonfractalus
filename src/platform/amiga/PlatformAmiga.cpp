@@ -1499,6 +1499,10 @@ extern "C" volatile uint32_t g_wideExtAddr[3] = { 0, 0, 0 };
 extern "C" volatile unsigned long g_wideShotScale[3] = { 0, 0, 0 };
 extern "C" volatile unsigned long g_wideP3Scale[3]   = { 0, 0, 0 };
 extern "C" volatile unsigned long g_wideMaxRows = 0, g_wideDenied = 0;
+// Burst releases that found pixels still live in the DISPLAYED extension chain — i.e. the 2×→1×
+// (or 4×→1×) step, where the wide segment 0 is still on screen because it is double buffered.
+// Each is one frame the old immediate both-chain blank showed with its right half missing.
+extern "C" volatile unsigned long g_wideLateBlank = 0;
 #endif
 
 // g_quitJmp: the __builtin_setjmp buffer armed by RescueOnFractalus::run() so we can

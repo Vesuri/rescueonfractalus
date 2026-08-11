@@ -156,7 +156,10 @@ private:
     // incremental clear only tracked its own rows); false if the burst already holds them.
     bool wideExtAcquire(uint8_t owner);
     // Blank the extensions and drop ownership — call when the object goes narrow or inactive.
-    void wideExtRelease(uint8_t owner);
+    // ⚠ For the burst this is DEFERRED like a build (off-screen chain + SPRxPT re-point), because
+    // its segment 0 is double buffered and still shows the wide strip this frame; pass now = true
+    // only from a caller that blanks segment 0 in both buffers at once.  See the definition.
+    void wideExtRelease(uint8_t owner, bool now = false);
     // Render one widened player strip across 1/2/4 segments.  dst0 = the object's own sprite data
     // (past the 2 control words); src = &mem[<PMG page> + top], `rows` consecutive bytes; base =
     // the strip's first row within the FIXED-VSTART sprites; scale = 1/2/4; x = segment 0's Amiga

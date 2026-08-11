@@ -8,6 +8,10 @@ printf "vbiNOW=%u iterCount=%u  flightCopper=0x%08x\n", g_vbiCount, g_iterCount,
 printf "shot scale 1x/2x/4x = %u / %u / %u\n", g_wideShotScale[0], g_wideShotScale[1], g_wideShotScale[2]
 printf "P3   scale 1x/2x/4x = %u / %u / %u\n", g_wideP3Scale[0],   g_wideP3Scale[1],   g_wideP3Scale[2]
 printf "widest wide-object run = %u rows   contested (denied) = %u\n", g_wideMaxRows, g_wideDenied
+# The 2x->1x step with the wide segment 0 still displayed (it is double buffered).  Each of these
+# was a frame the OLD immediate both-chain blank showed with its right half missing; the deferred
+# release now blanks the off-screen chain instead.  Must be > 0 for this run to have tested it.
+printf "burst releases with the DISPLAYED chain still lit (deferred) = %u\n", g_wideLateBlank
 printf "mem: 0036(shot)=%02x  00CD(SIZEP2)=%02x  00CB(HPOSP2)=%02x  0037(COLPM2)=%02x\n", \
   mem[0x0036], mem[0x00CD], mem[0x00CB], mem[0x0037]
 printf "     006A(p3mode)=%02x 0063(objidx)=%02x  2870(P3 X)=%02x  SIZEP3 latch=%02x\n", \
