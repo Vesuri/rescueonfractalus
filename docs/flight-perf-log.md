@@ -1593,3 +1593,107 @@ before tearing down, regardless of whether gdb already detached.** A `700` run w
 after 90 s still fires its `pkill` ten minutes later. So "the log looks complete" and even "the task
 notification arrived" are both insufficient — **check `ps` for a stray `diag_run.sh`/`sleep <delay>`
 before starting the next run**, or kill them outright.
+
+## 18. 2026-08-11 — subdivide's last two filed items, and the baseline that had moved 8% under them
+
+§16.4 sized two small things and left them: inline the `bsr` helpers, and classify `far.hgt` on its
+high byte. Both shipped (e64c96b probe, c2a90e5). The measured win is **−12 t/it**; the more
+important result of the session is in §18.4, which is that **the ledger row every plan was resting
+on had gone stale by ~8% of the frame.**
+
+### 18.1 The shape re-measure, which changed one of the two prices before a line was written
+
+`ras_shape.gdb` on the quiet best-case arm, 332 iterations (`RASTER_C=1 SUBDIV_C=1 RAS_SHAPE=1`):
+68.1 subdivide calls/it · 1.23 inner iterations · 0.397 midpoints · 0.61 rasterize calls — the same
+shape §16.2 recorded, so nothing in the analysis needed redoing. But the helper COUNT did:
+
+| helper | calls/it | why |
+|---|---|---|
+| `submid` | 27.0 | = the midpoints (8969 over 22617 calls) |
+| `push_mid` | **14.4** | only 4789 of 8969 midpoints are pushed — **53%** |
+| `load_span` | 8.1 | the pop path |
+
+⭐ **§16.4's "two of them per midpoint" was wrong by ~25%**: phase 2 *adopts* the midpoint as the
+near endpoint on 4180 of 4476 of its bisections and never pushes it. 49.5 expansions × 34 cycles
+(`bsr` 18 + `rts` 16) = **−1683 cyc/it**, not the filed 27 cyc/call ≈ 1850. `load_span` was not in
+the filed item at all and is free to take — one call site, so inlining it duplicates nothing.
+
+### 18.2 The far.hgt split is worth 1.6× what was filed, for a reason the filing missed
+
+§16.4 priced this as "skips the 22-cycle `lsl.w #8` on the common path, ~24 cyc". It is more than
+that, because the assembled 16-bit value was feeding THREE tests, and the high byte answers all
+three: negative ⇔ `hi & $80`, `> $FF` ⇔ `hi != 0`, `< $6C` ⇔ `hi == 0 && lo < $6C`. So on the
+common path the shift disappears **and both the sign and the `> $FF` test disappear with it**,
+leaving a single compare. New per-leaf shape counter (`g_sdFhClass`, the joint span×far
+classification, 23261 leaf cascades):
+
+| | far hi==0 | far < 0 | far > $FF |
+|---|---|---|---|
+| spanHIGH | 8993 | 196 | **0** |
+| span < 0 | 821 | 1159 | **0** |
+| span < $6C | 11514 | 578 | **0** |
+
+- `far.hgt > $FF` positive: **never happens** — the arm exists for byte-identity, not for the profile.
+- The ASSEMBLED value has exactly one consumer, `sd_wtFarH`'s `far.hgt - q`, reached only from
+  spanHIGH+negative = **196 of 23261 = 0.8%**. That is the whole cost of the cold path, and it is
+  why the shape probe was the right first move: §16.4 flagged that "the win can invert" if negatives
+  were common. They are 8.3%, and 90% of those are spanLOW, which needs the sign and nothing else.
+
+Hand-counted per leaf: **−42** (spanHIGH), **−46** (spanLOW), **+16** on the 0.8% cold path ⇒
+**−2984 cyc/it**. Total with §18.1: **−4530 cyc/it ≈ −10 t/it** predicted.
+
+### 18.3 What inlining cost, which is a layout tax nobody prices in advance
+
+Expanding SUBMID+PUSHMID made `sd_dosub` ~140 bytes, and it sat between the width test and
+`sd_doras` — **five `.s` branches to `sd_doras` went out of range**, which is how the assembler
+reported it (vasm `-no-opt` never re-sizes, so it errors instead of silently widening). Three moves
+fixed it and each has a rule in it:
+
+1. **`sd_dosub` moved past `sd_ret`.** Its own three exits become backward word branches, which
+   cost the same as forward ones — a block whose exits are all `Bcc`-to-far-labels is free to move.
+2. **The far.col escape reaches it through a 2-byte trampoline** (`sd_dosubT: bra sd_dosub`).
+   ⭐ **The asymmetry is the point: a not-taken `Bcc.w` is 12 cycles against `Bcc.s`'s 8, and the
+   escape is taken on 12.1 of 83.6 inner iterations.** Paying 10 extra on the 12.1 beats paying 4
+   extra on all 83.6 — 121 cyc/it against 286. Price a branch WIDENING by its not-taken frequency.
+3. **The two width tests merged.** They differed in one instruction (which height lands in d1), so
+   `useSpanHeight` is now an extra entry point above a shared body. Hoisting `move.w d3,d1` above
+   the width test is invisible: nothing between touches d1/d3, and on that entry `far.hgt` is dead.
+
+### 18.4 ⚠⚠ The measurement — and the baseline that was 8% stale
+
+The new build read **DRAW 1052 t/it against the ledger's 963**, i.e. an apparent +89 REGRESSION
+from a change hand-counted at −10. The ledger row is code at **4cb3e3f**; HEAD was **098eb5c**,
+fifteen commits later. So the A/B was re-run in the same session on the same flags, and:
+
+| row | 098eb5c baseline | + both changes | Δ | |
+|---|---|---|---|---|
+| **DRAW** | 1064 | **1052** | **−12** | predicted −10 |
+| SETUP | 142 | 144 | +2 | control |
+| CLEAR | 11 | 11 | 0 | control |
+| FRAME | 311 | 310 | −1 | control |
+| iterations / painted, same 3500-vbi window | 444 / 886 | 449 / **896** | **+1.13%** | |
+
+Both runs: level 40, `emplace=00 saucer=00`, `VVBLKI=$4ff5 $3D=00` on all 7 segments, `covered 100%`.
+The ISR row moves −18 t/it, which is **not** a control failure: the ISR fires 50×/s regardless, so
+its per-ITERATION share falls mechanically when iterations rise. Solving
+`wall = N × X + ISR_total` for the per-iteration non-ISR work gives 1524 → 1512 = **−12**, the same
+number the DRAW bracket reports.
+
+⭐⭐ **The finding that matters more than the win: per-iteration work is 1530 t/it at 098eb5c
+against 1412 at 4cb3e3f — the flight got ~8% dearer while fifteen correctness commits shipped**
+(DRAW +101, FRAME +19). Converted the ledger's way, `31300 / t_it` = **20.5 FPS** best case against
+the standing 22.12, and the 25 FPS target's gap is **~266 t/it, not 154**. Which commit did it is
+one bisect away and was not run here.
+
+⭐ **The rule, third time it has cost a session: a ledger row is a measurement, not a baseline.**
+`docs/perf-budget.md` already says every framerate figure in an older note is wrong; this extends it
+to t/it. **Re-measure the baseline in the SAME session as the change, on the SAME binary flags.**
+Fifteen commits is enough to hide a −12 inside a +101.
+
+### 18.5 Instruments used, and the one that was skipped
+`subdiv_verify` (`VERIFY=1 NO_RASTER_VERIFY=1`): **0 mismatch / 5115 calls** ✓. Its PERF column read
+asm 10 t/call vs C 15 — **not quoted**, and no build-vs-build A/B was attempted with it: Phase 8's
+own write-up (`docs/asm-migration-plan.md`) established that below ~500 cyc/call `FP_TIME`'s
+credited-at-ISR-exit subtraction makes the sign unreliable, and a subdivide bracket is ~12 ticks
+against an ~80-tick ISR. Host side: `make validate FN=terrain_subdivide` 2000 cases, 0 mem mismatch;
+`objdump | grep __*si3` empty.

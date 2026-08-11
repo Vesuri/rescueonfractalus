@@ -1069,3 +1069,30 @@ asm arm has a special-cased block per span and the oracle does not, so **the asm
 function of the span mix**: 30 vbi of drift moved it ~2%. Pinning `fdCalls` does not fix it
 either — the sim advances with the VBI, not with painted frames (1598 vs 1522 calls at the same
 fdCalls). **`amiga/raster_verifyV.gdb` pins `g_vbiCount`**, which gave 1598 calls in both arms.
+
+---
+
+## Phase 8b — subdivide's helper inlining + the far.hgt high-byte split (2026-08-11, c2a90e5)
+
+The two items Phase 8 sized and left, both inside `subdiv_verify`'s compare set. Full write-up with
+the shape tables and the measurement: `docs/flight-perf-log.md` §18. What belongs here is the three
+design records:
+
+- **`submid` / `push_mid` / `load_span` are vasm MACROS now** (`SUBMID` / `PUSHMID` / `LOADSPAN`),
+  expanded at their call sites — one source copy each, so the arithmetic still has one home. Local
+  labels inside them MUST carry `\@`; the same idiom is in `BuildViewAssembler.s` and
+  `ProjectTerrainAssembler.s`. 49.5 expansions/iteration × 34 cycles of `bsr`+`rts`.
+- **`far.hgt` is classified on its high byte**, like `far.col` at the same site. The win is not the
+  shift alone — the cascade's sign and `> $FF` tests collapse too, because `hi == 0` decides both.
+  The assembled 16-bit value has ONE consumer (`sd_wtFarH`) reached on 0.8% of leaves, so it lives
+  in a cold out-of-line block (`sd_fhWide` / `sd_fhNeg`) placed BEFORE `sd_inner` — dropping it
+  after the leaf code pushed `sd_doras` out of five branches' `.s` range.
+- **Block order is now load-bearing in this file.** `sd_dosub` sits past `sd_ret` because inlining
+  made it ~140 bytes; the far.col escape reaches it via the `sd_dosubT` trampoline. ⭐ **Price a
+  branch widening by its NOT-TAKEN frequency** (`Bcc.w` not taken is 12 vs `Bcc.s`'s 8): 10 extra
+  cycles on the 12.1 escapes beat 4 extra on all 83.6 inner iterations, 121 cyc/it against 286.
+  Anyone editing this file should expect a vasm "branch destination out of range" as the normal
+  feedback signal for a size change, not as a mistake.
+
+Also folded in: the two width-test variants (`sd_wtSpanH` / `sd_wtFarH`) differed in ONE instruction,
+so `useSpanHeight` is an extra entry point above a shared body rather than a duplicated block.
