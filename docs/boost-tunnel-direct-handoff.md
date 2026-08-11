@@ -7,8 +7,8 @@ shadow: the shadow (236592c, 847 → 190 ticks/frame) was a *memoized decode*, a
 delete the decode, not to memoize it faster.  §1-§4 are the reverse (boost) tunnel, which went
 first; §5 is the forward launch tunnel, which reused all of it.
 
-**STATUS: reverse tunnel landed 2026-08-10 (fd28b05), user-confirmed on screen; the FORWARD
-tunnel followed the same day — see §5.  Neither direction reads `$1000` back any more.** The reverse cinematic no longer
+**STATUS: DONE, both directions user-confirmed on screen — reverse 2026-08-10 (fd28b05), forward
+2026-08-11 (§5).  Neither direction reads `$1000` back any more.** The reverse cinematic no longer
 decodes its ring field at all. Boost decode cost went from ~65900 beam ticks per cinematic (324 full
 ring decodes + 2 star decodes) to **1621** — the two starfield decodes, nothing else. The visual
 check also covers the one change the §3 differential cannot see: the `!rsBoostViewport` guard on
@@ -239,6 +239,11 @@ deletable", measure what Y was actually dodging — here the decode was the smal
 | standby→doors gap | 1 frame — **unchanged** |
 | tunnel→stars gap | 5 frames — **unchanged** |
 | `dsMile` launch milestones | match baseline within noise |
+| forward descent **on screen** | user-confirmed 2026-08-11 — works as expected |
+
+The last row was the one gap this section carried for a while: the forward path was committed on
+numeric evidence alone (0 mismatching bytes) with nobody having watched it. It is closed now, so
+**both** directions are visually confirmed — the reverse at fd28b05, the forward here.
 
 ### The one honest regression
 
