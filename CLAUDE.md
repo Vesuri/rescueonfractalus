@@ -140,9 +140,9 @@ to hardware is largely ignored on Amiga.
 ## Performance — the headline
 
 **⭐ TARGET (user decision, 2026-08-08): 25 FPS = 40 ms/frame on the BEST-CASE baseline**
-(`COMBAT=1 COMBAT_QUIET=1 FIXED_RNG=1`). Standing measurement: **20.60 FPS best case / 16.00
-combat** (2026-08-08, 4d25815) ⇒ **remove ~18% of the frame**. Combat may sit lower; it is not the
-bar. 50 FPS is the ideal, not the target. The A500 is a 7 MHz 68000 — spending 10 ms on *anything*
+(`COMBAT=1 COMBAT_QUIET=1 FIXED_RNG=1`). Standing measurement: **22.49 FPS best case**
+(2026-08-12, HEAD) ⇒ **~+11% of throughput to go**; combat 16.00 (stale, 4d25815). Combat may sit
+lower; it is not the bar. 50 FPS is the ideal, not the target. The A500 is a 7 MHz 68000 — spending 10 ms on *anything*
 is half the budget; be conscious of absolute milliseconds always. The profile is FLAT (nothing
 >32%), so no single function closes the gap — five or six honest 5-point wins do. Surface numbers
 honestly.
@@ -150,7 +150,10 @@ honestly.
 Three rules that must survive without opening the doc:
 - **`make FPSCOUNT=1` + `GDBSCRIPT=fps_seg.gdb ./diag_run.sh 200` is the ONLY way to quote a
   framerate**, and it over-reads wins — under ~3% is noise. Quote a static cycle count or a
-  differential ratio as the win; quote FPS only as the standing baseline.
+  differential ratio as the win; quote FPS only as the standing baseline. ⚠ **`phase_budget.gdb`'s
+  t/it rows are NOT a safer alternative — they carry ~±10% of trajectory noise and must never be
+  diffed across builds** (`docs/flight-perf-log.md` §19: a change that cannot touch flight code
+  moved DRAW +111 t/it). Use the phase budget for SHARES, `fps_seg` for progress.
 - **Measure an asm twin with the in-process differential**, never cross-run (a render-speed change
   shifts the RNG read count and flies a *different level*). `make FIXED_RNG=1` for every perf run.
 - **Every framerate figure in an older note or commit is wrong — re-measure, don't quote.**
