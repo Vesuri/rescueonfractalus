@@ -2362,6 +2362,10 @@ void RescueOnFractalus::initialize()
     // pairs to check the extension's VSTOP and the chained gauge/triangle's VSTART behind it).
     { extern volatile uint32_t g_wideExtAddr[3];
       for (int s = 0; s < 3; s++) g_wideExtAddr[s] = (uint32_t)wideExt[s][0]->data(); }
+    // Cockpit bitmap base — amiga/b2_probe.gdb dumps the dashboard PEN under the energy-gauge
+    // column to tell "playfield hides the sprite" (non-zero pen, a priority question) apart from
+    // "background shows it through" (pen 0 = COLOR00, which no BPLCON2 value can hide).
+    { extern volatile uint32_t g_cockpitBmpAddr; g_cockpitBmpAddr = (uint32_t)cockpitBitmap->data; }
 #endif
 
     // Post graphics are decoded once from the real RLE source tables (buildPostSprites,

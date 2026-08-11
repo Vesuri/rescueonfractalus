@@ -689,6 +689,9 @@ endif
 # `make PROBES=1 FORCE_RETURN=1`: once flight has been running a while, replicate the B/boosters
 # handler (level-clear gate $003A + player_lives $0072=2) once — headless verification of the
 # return-to-mother-ship ascent + flight→launch-cinematic handoff.  Requires PROBES.
+# Also knocks energy $062F down to half at the boost: the forced return fires before the ship has
+# taken any damage, and a FULL energy bar exactly fills its dial, which hides every gauge-vs-
+# cockpit rendering bug (user, 2026-08-11).
 ifdef FORCE_RETURN
 EXTRA_DEFINES += -DROF_FORCE_RETURN
 endif
@@ -697,7 +700,8 @@ endif
 # mother-ship cinematic WITHOUT having rescued the pilot quota.  Lets you test the return + the
 # post-mother-ship Standby level select by hand.  Normal flight is untouched until you press B.
 # Needs NO PROBES/auto-launch — builds a normal playable RoF.exe; boot with run.sh, press START to
-# launch, fly a moment, then press B to return.
+# launch, fly a moment, then press B to return.  B also halves energy $062F, for the same reason
+# FORCE_RETURN does: a full bar fills its dial exactly and hides any gauge overflow/priority bug.
 ifdef FORCE_MOTHERSHIP
 EXTRA_DEFINES += -DROF_FORCE_MOTHERSHIP
 endif

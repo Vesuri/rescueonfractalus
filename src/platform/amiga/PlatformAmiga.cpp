@@ -1510,6 +1510,10 @@ extern "C" volatile uint32_t g_viewportP3SprAddr=0, g_scopeP3SprAddr=0, g_flight
 // element's control words right behind its data — the check that the energy bar / altimeter /
 // left band triangle still arm now that they hang off the extension rather than SPRxPT directly.
 extern "C" volatile uint32_t g_wideExtAddr[3] = { 0, 0, 0 };
+// Cockpit bitmap base (set in initialize) — lets amiga/b2_probe.gdb read the dashboard PEN under
+// the energy-gauge column, which decides whether sprite priority can hide the bar's overflow at
+// all (pen 0 = COLOR00 background, which every sprite beats regardless of BPLCON2).
+extern "C" volatile uint32_t g_cockpitBmpAddr=0;
 // Wide-object histograms: how often each SIZEPn scale was actually rendered (index 0/1/2 = 1×/2×/4×)
 // and the widest burst seen.  A headless COMBAT run must show non-zero 2×/4× buckets, or the
 // widening path never ran and a visual check would prove nothing.
@@ -1955,7 +1959,12 @@ static uint32_t keyboardHandler()
                 // mother-ship HUD indicator $0676) right here, one key edge, before the flight VBI's
                 // $519c window dispatches this keycode.  Untouched otherwise, so normal flight is
                 // unaffected until you actually press B.  (make FORCE_MOTHERSHIP=1)
-                if (kFlightKeys[i].kbcode == 0x15u) { mem[0x003Au] = 0xFFu; mem[0x0676u] = 0x01u; }
+                // ...and knock energy $062F down to half at the same edge: pressing B early
+                // leaves it FULL, and a full bar exactly fills its dial, so nothing hangs below
+                // the gauge and every gauge-vs-cockpit priority bug stays invisible (user,
+                // 2026-08-11).  $DC = full (bar-top index ($DC-$062F)>>2 = 0); $6E = index 27.
+                if (kFlightKeys[i].kbcode == 0x15u) { mem[0x003Au] = 0xFFu; mem[0x0676u] = 0x01u;
+                                                      mem[0x062Fu] = 0x6Eu; }
 #endif
                 break;
             }
@@ -2496,6 +2505,13 @@ static uint32_t vbiHandler()
         }
         if (s_retPhase == 1 && dt >= 340) {
             s_pendingFlightKey = 0x15;     // Atari KBCODE 'B' (boosters) → $519c CLI window
+            // HALF ENERGY at the boost.  The forced return fires before the ship has taken any
+            // damage, so energy $062F is still FULL — and a full bar is exactly 56 rows tall,
+            // filling its dial with nothing hanging below it.  Every gauge-vs-cockpit priority
+            // bug is invisible in that state (user, 2026-08-11): the overflow only exists when
+            // the bar top has moved down.  $DC = full (bar top index ($DC-$062F)>>2 = 0), so
+            // $6E parks the top mid-dial (index 27) and leaves 27 rows hanging below it.
+            mem[0x062Fu] = 0x6E;
             s_retPhase = 2;
         }
         // Phase 3: once the return cinematic has landed back in the POST-mother-ship Standby
