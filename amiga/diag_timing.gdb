@@ -46,6 +46,18 @@ printf "starEntry: vbi=%u decode=%lu ticks (~%lums)  sprites vbi=%u %lu ticks (~
   g_starEntryVbi, (g_starEntryTicks-g_starEntryIsr), (g_starEntryTicks-g_starEntryIsr)/16, \
   g_starSprVbi, g_starSprTicks, g_starSprTicks/16
 printf "starGroups decoded on entry = %lu / 470  clr+shadow=%lu ticks (~%lums)\n", g_starGroups, g_starClrTicks, g_starClrTicks/16
+printf "TUNNEL->STARS last ring image ON SCREEN for %u frames (1 = the Atari)  tunnelInst=%u planetInst=%u\n", \
+  (g_planetInstVbi - g_tunLastVbi), g_tunLastVbi, g_planetInstVbi
+printf "  first-stars renderFrame: entryVbi=%u decodeAtVbi=%u (held %u frames)\n", \
+  g_seEntryVbi, g_starEntryVbi, (g_starEntryVbi - g_seEntryVbi)
+printf "  wall=%lu ticks -> %lu.%02lu frames  [standby VBI ISR firings are INSIDE this]\n", \
+  g_seWall, g_seWall/313, ((g_seWall%313)*100)/313
+printf "  stages (beam ticks, 313=1 frame): drs=%lu perFrameWork=%lu render=%lu tail=%lu\n", \
+  g_seDrs, g_sePfw, g_seRender, g_seTail
+printf "  buildStarSprites=%lu (kick=%lu convert=%lu drain=%lu)\n", \
+  g_seSpr, g_seSprKick, g_seSprConv, g_seSprDrain
+printf "  standby VBI ISR (raster lines/firing): last=%u max=%u over=%u count=%lu  [not subtracted above]\n", \
+  g_isrStbyLines, g_isrStbyMax, g_isrStbyOver, g_isrStbyCnt
 printf "starVbiUpdate: entryLine<=%u exitLineMax=%u atVbi=%u  lateCount(>25)=%u / calls=%u  [sprite ctrl fetch ~line25; late=stale-read risk]\n", \
   g_starVbiEntryLineMax, g_starVbiExitLine, g_starVbiExitLineAtVbi, g_starVbiLateCount, g_starVbiCalls
 printf "STAR-PUB: pubLine<=%u LATE(>=16)=%u atVbi=%u | perFrameWork star calls=%u  [copper reads SPRxPT at line 16; late=star+gauge flicker]\n", \

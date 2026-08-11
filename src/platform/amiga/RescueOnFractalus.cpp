@@ -280,6 +280,25 @@ extern "C" volatile unsigned short g_starSprVbi = 0;
 extern "C" volatile unsigned long  g_starSprTicks = 0;             // first buildStarSprites cost
 extern "C" volatile unsigned long  g_starGroups = 0;              // non-skipped groups on the entry decode
 extern "C" volatile unsigned long  g_starClrTicks = 0;
+// ── tunnel->stars transition: WHERE do the frozen frames go? ───────────────────
+// The last forward-tunnel frame (outermost ring only) is held on screen for the whole of the
+// FIRST rsStars renderFrame, because the planet copper is not installed until that frame's tail.
+// Stamp every stage of that one frame (beam ticks; 313 = one 50 Hz frame) so the hold is
+// attributed to a stage instead of guessed at.
+extern "C" volatile unsigned short g_seEntryVbi = 0;    // g_vbiCount at renderFrame entry
+extern "C" volatile unsigned long  g_seDrs     = 0;     // deriveRenderSignals
+extern "C" volatile unsigned long  g_sePfw     = 0;     // perFrameWork (whole)
+extern "C" volatile unsigned long  g_seSpr     = 0;     //   ...of which buildStarSprites
+extern "C" volatile unsigned long  g_seRender  = 0;     // render() (whole; incl. the viewport decode)
+extern "C" volatile unsigned long  g_seTail    = 0;     // the copper-install tail (to the planet install)
+// The number the user actually sees: how many frames the LAST forward-tunnel image is displayed.
+// The tunnel copper goes live one vblank after its install, the planet copper one vblank after
+// ITS install, so the ring image is on screen for exactly (planet install vbi - last tunnel
+// install vbi) frames.  1 = the Atari's behaviour.
+extern "C" volatile unsigned short g_tunLastVbi = 0, g_planetInstVbi = 0;
+extern "C" volatile unsigned long  g_seSprKick = 0, g_seSprConv = 0, g_seSprDrain = 0;  // buildStarSprites split
+extern "C" volatile unsigned long  g_seWall    = 0;     // whole frame, entry -> planet copper installed
+extern "C" volatile unsigned char  g_seArmed   = 0;     // 1 while that first stars frame is in flight
 // starVblankUpdate beam-deadline probes.  The star update has three of them, all policed here
 // (see the starVblankUpdate header comment for why each one exists):
 //   entry / pub  — the copper executes the copper list's sprite-pointer MOVEs at scanline 16, so
@@ -1538,18 +1557,53 @@ static const int       kStarRingSlots = kStarMaxScroll + kViewportFullHeight + 2
 // Clears each ring (so a previous pass's rows above the window / stale terminator are gone),
 // re-seeds the window-0 control slot, then converts the 89 visible rows into slots [1..89].
 // Each set star bit becomes a 4-px dot at its faithful 0/8/20/28-cc offset via kStarGlyphLo/Hi.
+//
+// The clear is BLITTED, and only over the TAIL.  Two disjoint regions:
+//   head — slot 0 (control words) + slots 1..89 (the converted strip): fully overwritten below,
+//          so pre-zeroing it would be wasted work;
+//   tail — slots 90..kStarRingSlots-1: the padding rows and terminator the window scrolls into.
+//          starVblankUpdate only ever writes the ONE new bottom row per advance, so those slots
+//          must already read zero when the window reaches them — and on a re-entry they still
+//          hold the previous pass's rows.
+// The CPU loop that used to clear all 8832 words of the 6 rings cost ~1180 beam ticks ≈ 75 ms —
+// on its own the whole of the tunnel->stars freeze (measured 185 ticks after this change).  Because head and tail are disjoint, the conversion below runs
+// while the blit is in flight and nothing has to wait for it until the closing drain.
 void RescueOnFractalus::buildStarSprites()
 {
+    static const int kHeadSlots = kStarRows + 1;                    // control slot + the 89 rows
+    static const int kTailSlots = kStarRingSlots - kHeadSlots;
+#ifdef ROF_FLIGHT_PROBE
+    g_seSprKick = 0; g_seSprConv = 0;
+#endif
     for (int i = 0; i < 6; i++) {
         uint16_t* ring = starRing[i];
         if (!ring) continue;
-        for (int w = 0; w < kStarRingSlots * 2; w++) ring[w] = 0;   // clear whole ring (rare — entry only)
+#ifdef ROF_FLIGHT_PROBE
+        const unsigned long _k0 = rof_subclock();
+#endif
+        // 2 words per slot, no modulo → one contiguous kTailSlots*2-word wipe.
+        AmigaHardware::blitterClear(ring + kHeadSlots * 2, 2, (uint16_t)kTailSlots, 0);
+#ifdef ROF_FLIGHT_PROBE
+        const unsigned long _k1 = rof_subclock(); g_seSprKick += _k1 - _k0;
+#endif
         ring[0] = starCtl[i][0];  ring[1] = starCtl[i][1];          // window-0 control slot
         const uint8_t* src = (const uint8_t*)&mem[kStarSrc[i >> 1]];
         const uint16_t* tbl = (i & 1) ? kStarGlyphHi : kStarGlyphLo;
         uint16_t* dst = ring + 2;                                   // slot 1 (skip control slot 0)
         for (int r = 0; r < kStarRows; r++) { *dst++ = tbl[src[r]]; *dst++ = 0x0000; }
+#ifdef ROF_FLIGHT_PROBE
+        g_seSprConv += rof_subclock() - _k1;
+#endif
     }
+    // The blitter interrupt is disabled in this port, so a queued blit only runs when something
+    // pumps the queue — drain here rather than leave the later rings' clears pending.
+#ifdef ROF_FLIGHT_PROBE
+    const unsigned long _d0 = rof_subclock();
+#endif
+    AmigaHardware::blitterDrain();
+#ifdef ROF_FLIGHT_PROBE
+    g_seSprDrain = rof_subclock() - _d0;
+#endif
     starWindow  = 0;
     starLastGen = g_starScrollGen;
 }
@@ -3754,7 +3808,20 @@ void RescueOnFractalus::renderFrame()
         return;
     }
 
+#ifdef ROF_FLIGHT_PROBE
+    // Tunnel->stars stage timeline (see the g_se* block).  t0/v0 are taken unconditionally; they
+    // are only KEPT if deriveRenderSignals turns out to have raised rsStars for the first time.
+    static bool s_seSeen = false;
+    const unsigned long  _se0 = s_seSeen ? 0 : rof_subclock();
+    const unsigned short _seV = s_seSeen ? 0 : platform_frame_count();
+#endif
     deriveRenderSignals();   // recompute the mem[]-derived render-gating signals for this frame
+#ifdef ROF_FLIGHT_PROBE
+    if (rsStars && !s_seSeen) {
+        s_seSeen = true; g_seArmed = 1; g_seEntryVbi = _seV; g_seDrs = rof_subclock() - _se0;
+        g_seWall = _se0;                            // absolute; turned into a delta at the install
+    }
+#endif
 #ifdef ROF_TUNNEL_DIFF
     if (tunnelDiffPending) { tunnelDiffPending = false; tunnelPaintDiff(0); }   // finished pre-draw
 #endif
@@ -3777,13 +3844,19 @@ void RescueOnFractalus::renderFrame()
     extern volatile unsigned long g_rPerFrame, g_rRenderFn;
     const bool _profR = rsFlight;
     unsigned long _p0 = _profR ? rof_subclock() : 0, _pi = _profR ? g_isrBeamLines : 0;
+    const unsigned long _sePfw0 = g_seArmed ? rof_subclock() : 0;
 #endif
     perFrameWork();
 #ifdef ROF_FLIGHT_PROBE
+    if (g_seArmed) g_sePfw = rof_subclock() - _sePfw0;
     if (_profR) { g_rPerFrame += (rof_subclock() - _p0) - (g_isrBeamLines - _pi);
                   _p0 = rof_subclock(); _pi = g_isrBeamLines; }
+    const unsigned long _seRen0 = g_seArmed ? rof_subclock() : 0;
 #endif
     render();
+#ifdef ROF_FLIGHT_PROBE
+    if (g_seArmed) { g_seRender = rof_subclock() - _seRen0; g_seTail = rof_subclock(); }
+#endif
     // Safety net for the deferred flight sprite builders: renderFlightDirect normally runs them
     // inside its two blitter shadows, but it has three early-return paths (no bitmaps / the
     // rescue-figure pause / a frame with no fresh terrain).  Run whatever it skipped, so the
@@ -4036,12 +4109,19 @@ void RescueOnFractalus::renderFrame()
             updatePlanetCopper(true);
             AmigaHardware::setCopperList(*planetCopper, false);
             planetCopperInstalled = true;
+#ifdef ROF_FLIGHT_PROBE
+            if (!g_planetInstVbi) g_planetInstVbi = platform_frame_count();
+#endif
         } else {
             updatePlanetCopper(false);
         }
         standbyCopperInstalled = false;
         flightCopperInstalled = false;
         tunnelCopperInstalled = false; titleScreenCopperInstalled = false;
+#ifdef ROF_FLIGHT_PROBE
+        if (g_seArmed) { g_seTail = rof_subclock() - g_seTail;
+                         g_seWall = rof_subclock() - g_seWall; g_seArmed = 0; }
+#endif
         return;
     }
 
@@ -4494,6 +4574,9 @@ void RescueOnFractalus::showTunnelCopper()
     updateTunnelCopper(tunnelCopper[back]);
     AmigaHardware::setCopperList(*tunnelCopper[back], false);
     tunnelActive = back;
+#ifdef ROF_FLIGHT_PROBE
+    g_tunLastVbi = platform_frame_count();
+#endif
 }
 
 // updateTunnelCopper(): fully populate ONE TunnelCopperList buffer — the tunnel descent (scene 5,
@@ -4808,7 +4891,15 @@ void RescueOnFractalus::perFrameWork()
     if (rsStars) {
         if (!starSpritesValid) {
             extern volatile unsigned short g_starScrollGen;
+#ifdef ROF_FLIGHT_PROBE
+            { const unsigned long _ss0 = rof_subclock();
+              buildStarSprites();
+              if (g_starSprVbi == 0) { g_starSprVbi = platform_frame_count();
+                                       g_starSprTicks = rof_subclock() - _ss0; }
+              if (g_seArmed) g_seSpr = rof_subclock() - _ss0; }
+#else
             buildStarSprites();                         // full build at window 0 (one transient frame)
+#endif
             starLastGen = g_starScrollGen;
             // Publish window 0 for the entry frame.  Safe to do from the main loop even though the
             // copper may latch it the same frame: buildStarSprites just wrote the control words at
