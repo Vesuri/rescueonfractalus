@@ -1,9 +1,48 @@
 # Scenes 1 (Logo) + 2 (Station) — what they are, and what it takes to run them on the Amiga
 
-**Status: investigation only (2026-08-12). Nothing implemented.**
-The port currently skips both scenes: `RescueOnFractalus::run()` enters at `game_entry ($3CDE)`
-and the comment there calls them "deferred". This document is the derived fact base for building
-them, so it does not have to be re-derived.
+## ⭐ STATUS 2026-08-12 (read this first)
+
+| Build-order step (§5) | State |
+|---|---|
+| 0. `SKIPBOOT` + SDL `ROF_START=logo\|station` | ✅ **DONE** (fd1ab66) |
+| 1. Staged XEX load; Station on SDL | ✅ **DONE** — plays end to end, hands off to a Standby pixel-identical to a plain boot (fd1ab66) |
+| 2. Restore `display_scroll`'s dropped writes | ✅ **DONE** (61b5613) — both PMG paints confirmed on screen |
+| 3. Amiga Station: decoder, copper list, tall bitmap, scroll | ✅ **DONE** (120719e) |
+| 4. Amiga Station: sprites | ✅ **DONE** (27a24ae, +ad10385) — **user-confirmed on screen** |
+| 5. **Logo** | 🚧 **IN PROGRESS** — all facts derived, the asset is baked and committed, the sequencer is not written. **See §1.4 for the complete hand-off.** |
+| 6. Cleanup + docs | ⬜ TODO — the dead `station_*_native` block (§2.5 defect 2) is still there |
+
+Deviations from the plan as written, all deliberate:
+* **One `Gtia9CopperList` serves BOTH scenes** instead of separate Station/Logo lists — they are
+  the same screen mode and differ only in leading blank lines, row count and palette hue, which
+  are now `buildLayout()` parameters.  One field bitmap and one decoder likewise.
+* **16 luminances, not 8.** `amiga/assets/atari_pal.h` ignores bit 0 of the colour byte (a GTIA
+  colour *register* has three luminance bits) but GTIA mode 9 is the one case where all four
+  count — that is what "one hue, sixteen luminances" means.  `tools/gen_gtia9_pal.py` extends the
+  port's own YIQ formula to half steps; even entries reproduce `atariToOCS(hue | n)` exactly.
+* **The logo bitmap is a generated C header, not `assets/logo.raw` + incbin.** It lives in mem[]
+  at `$60A3` where the Atari puts it, so SDL renders it through its own ANTIC/GTIA path for free
+  and there is no incbin/Makefile plumbing.
+* **The Logo's display list is NOT baked** — `rof_logo_run()` will call the genuine
+  `rle_decompress()` on the real RLE at `$52E7`, exactly as `$5000` does.
+
+Two bugs the work turned up (both fixed, both worth remembering):
+* `PlatformSDL::tickVBI` re-seeds `colHW[]`/`gprior` from the OS page-2 shadows every frame,
+  standing in for the OS vblank's stage-2 shadow→hardware copy.  **Both boot scenes REPLACE the
+  OS vblank** (`$51EF`/`$1B30` are reached before any OS stage-1/2 work and return with an
+  RTI-equivalent — which is why each increments RTCLOK itself), so no copy happens on real
+  hardware and both program GTIA directly.  Re-seeding forced GPRIOR back to 0 and the station's
+  GTIA-mode-9 field came out as mono hi-res against an all-zero palette: a **black screen**.
+* `game_vbi_isr` falls back to the STANDBY body for an unknown VVBLKI.  The staged loader zeroes
+  mem[], so VVBLKI reads 0 from the stage load until `station_init`'s `$198D` — and in that window
+  a whole standby VBI ran over the station's fresh memory, writing lock-on glyphs into its P0 PMG
+  page at `$3492`, which the sprite mirror then drew as a phantom sprite.  Found with a hardware
+  watchpoint after the arithmetic refused to explain a shape at a buffer offset the `$277A` table
+  does not contain.  Now a boot scene dispatches ONLY its own vector.
+
+---
+
+*(Original derivation follows; it was investigation-only when written.)*
 
 Ground truth used:
 * `a800dumps/station.a8s` — live atari800 savestate, 5 frames into the Station cinematic
@@ -126,21 +165,87 @@ out verbatim. Keep it as the raw GTIA-9 nibble field rather than pre-converted b
 one shared decoder (§1.3 table) handles both scenes and the asset stays inspectable.
 ⚠ Do **not** regenerate it from a screenshot — the dump is the byte-exact source.
 
-New pieces:
+### 1.4 HAND-OFF: what is done and what is left (2026-08-12)
 
-| Piece | Size | Notes |
-|---|---|---|
-| `assets/logo.raw` | 2480 B ROM | GTIA-9 nibble field, 62 rows × 40 B |
-| `LogoCopperList` | ~60 lines | Clone of `TitleScreenCopperList` with **4** bitplanes and a 16-entry palette; bitmap placed 64 display lines down |
-| GTIA-9 nibble → 4-plane decoder | ~40 lines | **Shared with the Station.** `t0..t3[256]` byte→plane-byte tables, built in `initialize()` |
-| `logo_vbi_native()` | ~30 lines | The `$51EF` body; POKEY writes go through the existing `bus_write` → Paula path |
-| `logo_run()` | ~60 lines | The `$5000` flow, using `platform_tick_vbi(); platform_render_frame();` for each blocking wait — same idiom as the SPINWAIT hooks |
-| 1 hardware sprite | — | P0 sparkle: 8 Atari player bits = 8 colour clocks = **16 lores px**, fits one sprite exactly. X = `0x81 + (0xC1 - 0x32) * 2` (the established mapping) |
-| Palette | — | `atariToOCS(0x10 \| lum)` for lum 0..15; pen 0 = `COLBK` = `$10` |
+**DONE and committed:**
 
-Scene routing: set `mem[$0222/$0223] = $51EF` on entry so `game_vbi_isr` can dispatch it and
-`deriveRenderSignals()` can raise an `rsLogo` flag, exactly like `$1B30`/`$52D7`/`$4FF5` today.
-No per-frame decode at all — the bitmap is static; only the sprite and palette move.
+| Piece | Where |
+|---|---|
+| The baked bitmap, **both phases** | `src/rof_logo_field.h` (generated), `tools/gen_logo_field.py` |
+| The copper list (4bp, 16 gold luminances, 64 blank lines + 62 rows) | `Gtia9CopperList`, already parameterised — `buildLayout(field, kLogoTopLines=64, kLogoRows=62, kGtia9Pal1, nullSprite)` |
+| The GTIA-9 → 4-plane decoder + the shared 320×340 field bitmap | `RescueOnFractalus.cpp` `gtia9Row()` / `bootFieldBitmap` |
+| Scene routing | `rof_boot_chain()` sets `g_bootScene = ROF_BOOTSCENE_LOGO` around `rof_logo_run()`; `renderBootScene()` already has the logo branch and builds the logo layout |
+| The stub to fill in | `src/rof_logo.c` — `rof_logo_run()` returns immediately, so the chain currently behaves as `ROF_BOOT_STATION` |
+
+**TWO PHASES — the reveal is not the end of the drawing.** `$5000` draws "LUCASFILM", reveals it
+(DMACTL `$3A`), blocks 86 frames on ZP `$90`, and only THEN draws "GAMES".  Both states are
+captured from real savestates and differ in exactly one **11 × 13-byte rectangle** (rows 50-60,
+bytes 13-25), so `rof_logo_field.h` carries the LUCASFILM field whole plus that overlay
+(`ROF_LOGO_GAMES_ROW/COL/ROWS/COLS`).  Paste the overlay into mem[] at the GAMES cue and mark the
+field dirty so `renderBootScene` re-decodes those rows.
+
+**`$51EF` — the VBI, disassembled from segment 5 (verified against `lucasfilm.a8s`: at RTCLOK
+`$14` its four AUDF accumulators are exactly their `$5254` seeds plus 12 steps of 1/2/3/0):**
+
+```
+INC $14                                  ; it increments RTCLOK itself — it REPLACES the OS vblank
+if ($90 != 0):                           ; phase 1, 86 frames ($90 seeded $56)
+    if ($90 & $80) -> XITVBV             ; ...and idles forever once $90 wraps to $FF
+    audc_sweep(); $92++
+    for X in 6,4,2,0: AUDF(X) = $93+X ; $93+X += step[X]     ; steps $5258+X = 01 02 03 00
+    $90--
+else if ($91 & $80):                     ; phase 3, 36 frames
+    audc_sweep(); if (--$92 == 0) $90--  ; -> $90 = $FF, silent
+else:                                    ; phase 2, 127 frames of silence
+    if (--$91 == 0): AUDCTL=$60; AUDF1=$FA; AUDF3=$FF; $92=$24
+JMP $E462 (XITVBV)
+
+audc_sweep ($523C):  A = ($92 >> 3) | $A0
+    AUDC1 = A ; AUDC2 = A ; A += 0 (carry!) ; AUDC3 = A ; AUDC4 = A ^ $60
+```
+ZP `$90..$99` ← `$5254..$525D` = `56 7F 00 2A 01 22 02 00 03 87`
+(so `$90`=$56, `$91`=$7F, `$92`=0, and the AUDF seeds `$93/$95/$97/$99` = `2A/22/00/87`).
+
+**`$5000` — the sequencer, disassembled from segment 5.** Everything it calls already exists:
+`rle_decompress()` (`$3C3D`), `wait_vcount_ge_7a()` (`$3C7B`, a no-op here), `wait_frames_2()`
+(`$3CCA`).  Steps, in order:
+1. `$90 = $FF`; AUDCTL = 0; NMIEN = 0; `$78 = $BD = 0`.
+2. `$BB/$BC = $52E7`, `$BD/$BE = $6000`; **`rle_decompress()`** → the display list (8 × `$70`,
+   `4F A3 60`, 61 × `$0F`, `41 00 60` = JVB `$6000`; verified byte-for-byte in the dump).
+3. DLISTL/H = `$6000`; **DMACTL = `$20`** (DL DMA only — the drawing is invisible, which is what
+   makes baking faithful).
+4. **VVBLKI = `$51EF`.**
+5. Build the 64-entry row-pointer table `$7F`/`$BF` = `$6053 + 40n`. *(Not needed — that is the
+   stroke plotter's addressing.)*
+6. Three `JSR $5111` passes = "LUCASFILM". **→ paste `kLogoField` to `$60A3` instead.**
+7. PMBASE = `$08` (P0 at `$0C00`); PRIOR = `$41`; `wait_vcount_ge_7a()`; COLBK = COLPF2 = `$10`;
+   **DMACTL = `$3A` (the reveal)**; NMIEN = `$40`; GRACTL = `$02`.
+8. Copy `$5254-$525D` → ZP `$90-$99`; fill P0 rows `$0C40-$0C4E` = `$10` and `$0C45-$0C49` = `$38`
+   (the 15-scanline "✦").
+9. **Block while `$90 != 0`** (86 frames — `platform_tick_vbi(); platform_render_frame();`).
+10. Two `JSR $5117` passes = "GAMES". **→ paste `kLogoGames` instead.**
+11. **Block while `$91` is positive** (127 frames).
+12. The sparkle: `$80 = $FF`, `$81 = $FE`, P0 row `$0C47 = $FE`, HPOSP0 = `$C1`, COLPM0 = `$08`,
+    `wait_frames_2()`; then `for Y = $0F down to 0`: COLPM0 = Y, `wait_frames_2()`, zero P0 rows
+    `$0C40+Y` and `$0C40+$82` (`$82` starts `$FF`, `$82++` each pass), and while `$82 <= 3` also
+    `for X = 4..0: $0C45+X &= $80 & $81` then `LSR $80; ASL $81` — an erosion from both ends and
+    inward.  16 × 2 = 32 frames.  Finally HPOSP0 = 0, **RTS**.
+
+**Amiga specifics still to write:**
+* `bus_write($D000-$D007)` is now a mem[] shadow (added for the station's missiles), so HPOSP0 is
+  readable; **COLPM0 (`$D012`) is NOT** — expose it as a `g_logoSparkleCol` global from
+  `rof_logo.c` (the same trick the station avoids by reading `pmg_colors_station`'s source table).
+* The sparkle is one sprite on ch0 (pair 0 → COLOR17).  Read the P0 page at `$0C00` with the same
+  `pmRun()` + `kDoubleGlyph` mirror the station uses; buffer offset → raster line is
+  `kDisplayTop + off - 8`, X is `0x81 + (hpos - 0x32) * 2` → `$C1` = 415.
+* `game_vbi_isr` needs a `vbi == 0x51EF -> rof_logo_vbi()` case (the boot-scene branch there
+  currently falls through to inert), and `rof_logo_run()` should
+  `platform_register_vbi(0x51EF, rof_logo_vbi)` for SDL.
+* `make LOGO_START=1` (`ROF_LOGO_START_ABORT`, already in the Makefile) should let START abort the
+  wait loops — OFF by default, since the Atari's `$5000` is unconditional.
+
+Total timing: **86 + 127 + 36-ish + 32 ≈ 280 frames ≈ 5.6 s** (the plan's earlier ≈250 estimate
+missed that phase 2 is 127 frames of silence, not 128 of sound).
 
 ---
 
