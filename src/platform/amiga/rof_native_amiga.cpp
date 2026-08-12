@@ -993,6 +993,11 @@ extern "C" void vbi_handler_station(void);
 //   g_vbiAudioLines   = flush_paula + noiseTick (Paula channel flush + noise-sample refresh)
 // Per-firing scanlines = lines/calls; time = scanlines * 63.56 us; PAL frame = 313 lines.
 extern "C" volatile unsigned long g_vbiSpriteLines = 0, g_vbiAudioLines = 0, g_vbiFullCalls = 0;
+// Split of the audio bracket (2026-08-12): flush_paula alone vs PlatformAmiga::noiseTick alone.
+// The bracket reads 8.0 t/firing on the quiet arm = 12% of the WHOLE flight VBI, and the two
+// halves are completely different animals — flush_paula can busy-wait 7..110 rasterlines on a
+// waveform restart, noiseTick runs a 16-step 32-bit xorshift.  Attribute before optimising.
+extern "C" volatile unsigned long g_vbiFlushLines = 0, g_vbiNoiseLines = 0;
 #endif
 
 extern "C" void game_vbi_isr(void)
@@ -1031,11 +1036,18 @@ extern "C" void game_vbi_isr(void)
     unsigned short _a0 = (vbi == 0x4FF5) ? rof_beam_line() : 0;
 #endif
     flush_paula();
+#ifdef ROF_FLIGHT_PROBE
+    unsigned short _af = (vbi == 0x4FF5) ? rof_beam_line() : 0;
+#endif
     PlatformAmiga::noiseTick();                     // refresh a slice of the noise sample (cheap)
 #ifdef ROF_FLIGHT_PROBE
     if (vbi == 0x4FF5) { unsigned short _a1 = rof_beam_line();
         g_vbiAudioLines += (_a1 >= _a0) ? (unsigned short)(_a1 - _a0)
-                                        : (unsigned short)(_a1 + 313 - _a0); }
+                                        : (unsigned short)(_a1 + 313 - _a0);
+        g_vbiFlushLines += (_af >= _a0) ? (unsigned short)(_af - _a0)
+                                        : (unsigned short)(_af + 313 - _a0);
+        g_vbiNoiseLines += (_a1 >= _af) ? (unsigned short)(_a1 - _af)
+                                        : (unsigned short)(_a1 + 313 - _af); }
 #endif
 }
 
