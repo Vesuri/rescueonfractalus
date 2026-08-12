@@ -140,14 +140,29 @@ static uint32_t       noise_rng = 0x13579BDFu;   // PERSISTENT xorshift state �
 static bool           noiseOn[4] = { false, false, false, false };
 
 // Fill `words` longwords (4 bytes each) at byte offset `off` with fresh white noise.
+//
+// ⭐ The triple is chosen for the 68000, not copied from the textbook.  Marsaglia's 13/17/5
+// costs 104 cycles of shift+eor per longword because `x << 13` has no short form: GCC must
+// load the count into a data register and pay `lsl.l dN` = 8+2*13 = 34 cycles.  **1/5/16 is
+// also a full-period (2^32-1) xorshift32 and costs 72** — `x << 1` is `add.l d0,d0` (8),
+// `x >> 5` is `lsr.l #5` (18), and `x << 16` is `swap`+`clr.w` (8).  Verified full period the
+// rigorous way, not by assertion: the map is linear over GF(2), so its 32x32 matrix M must
+// satisfy M^(2^32-1) = I and M^((2^32-1)/p) != I for every prime p | 2^32-1 = 3*5*17*257*65537
+// (tools/xorshift_triple_test.c — it also ranks every triple by 68000 cycle cost, which is
+// how 1/5/16 was found; `cc -O2 -o /tmp/xs tools/xorshift_triple_test.c && /tmp/xs`).
+//
+// No hand asm: at -O2 GCC already emits the optimal 12-instruction body for this form
+// (98 cycles/longword vs the old 136).  The only thing left on the table is a `dbf` back-edge
+// instead of `cmp.l/jne` — 6 cycles per longword, ~0.06 t/firing at the current slice size,
+// which is below every instrument in the tree.
 static void fill_noise_words(int off, int words)
 {
     uint32_t* p = (uint32_t*)(noise_buf + off);
     uint32_t  x = noise_rng;
     for (int i = 0; i < words; i++) {
-        x ^= x << 13;
-        x ^= x >> 17;
-        x ^= x << 5;          // xorshift32 (Marsaglia 13/17/5) — full period, fast
+        x ^= x << 1;
+        x ^= x >> 5;
+        x ^= x << 16;         // xorshift32 (1/5/16) — full period, cheapest trio on 68000
         p[i] = x;             // 4 sample bytes per step
     }
     noise_rng = x;
@@ -155,20 +170,29 @@ static void fill_noise_words(int off, int words)
 // Refill the whole buffer (init / channel-start prime).
 static void fill_noise_buf(void) { fill_noise_words(0, NOISE_LEN / 4); }
 
-// Called once per VBI: while any channel is in noise mode, refill a small slice
-// (128 bytes = 32 longwords, ~0.7 ms or less) round-robin through the buffer so the
-// noise texture slowly evolves (full cycle ~1.3 s) without ever statically repeating.
-// The buffer LENGTH (not the refill) is what keeps the DMA loop sub-audible, so this
-// is cheap insurance, not a per-frame full regeneration — that full regen in the VBI
-// ISR overran the 20 ms vblank budget and dropped the launch cinematic to 25 Hz.
-// Overwriting bytes Paula is mid-DMA on is inaudible for noise (random over random).
+// Called once per VBI: while any channel is in noise mode, refill a small slice round-robin
+// through the buffer so the noise texture keeps evolving instead of statically repeating.
+// The buffer LENGTH (not the refill) is what keeps the DMA loop sub-audible, so this is cheap
+// insurance, not a per-frame full regeneration — that full regen in the VBI ISR overran the
+// 20 ms vblank budget and dropped the launch cinematic to 25 Hz.  Overwriting bytes Paula is
+// mid-DMA on is inaudible for noise (random over random).
+//
+// ⭐ SIZED 2026-08-12 (amiga/isr_full.gdb): at 16 longwords/VBI this was **5.71 t/firing —
+// 8.5% of the WHOLE flight VBI and 1.8% of ALL wall clock**, the single largest Amiga-side
+// item in the ISR, for a texture nobody can hear.  The refresh rate only has to keep up with
+// the rate Paula READS the buffer, and the old 64 B/VBI = 3200 B/s was ~5x faster than that:
+// the engine drone (the only steady noise voice in flight) runs AUDF ~$65 => Paula period
+// ~5666 => a playback rate of ~626 B/s, i.e. one pass through the 8 KB buffer every ~13 s.
+// 4 longwords = 16 B/VBI = 800 B/s still re-randomises the buffer FASTER than the drone reads
+// it (full cycle ~10 s), and for the only faster consumer — a short, loud explosion tail — no
+// loop structure is audible at all.  Cost drops to ~1.4 t/firing.
 void PlatformAmiga::noiseTick()
 {
     if (!(noiseOn[0] || noiseOn[1] || noiseOn[2] || noiseOn[3])) return;
     static int off = 0;
-    fill_noise_words(off, 16);          // 64 bytes / VBI (was 128) — halves the per-frame fill cost.
-    off += 64;                          // Refill rate only sets the texture-evolution speed (full cycle
-    if (off >= NOISE_LEN) off = 0;      // now ~2.6s vs 1.3s); buffer LENGTH is what keeps it sub-audible.
+    fill_noise_words(off, 4);           // 16 bytes / VBI = 800 B/s (see the sizing above)
+    off += 16;
+    if (off >= NOISE_LEN) off = 0;
 }
 
 // POKEY poly patterns (1 bit/entry) and AUDC distortion bits (atari800 pokeysnd.c/pokey.h)
