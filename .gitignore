@@ -1,6 +1,6 @@
 # Large / regenerable artifacts
-tools/ghidra/            # extracted Ghidra install (~2 GB)
-tools/ghidra-proj/       # Ghidra project (annotation DB) — large, machine-local
+# (gitignore has no inline-comment syntax -- a trailing "# ..." on a pattern line
+# is taken as literal glob text and matches nothing, so comments go on their own line)
 *.zip
 
 # Game ROM and image artifacts — kept LOCAL only, never committed.
@@ -28,7 +28,10 @@ src/gen/rof_decl.h
 src/**/*.o
 
 # Ghidra install + project and local probe scratch under tools/ (never commit)
-tools/ghidra/
+# tools/ghidra has no trailing slash: it's a symlink to a shared install
+# (~/.local/share/ghidra), and a trailing-slash gitignore pattern only matches a
+# real directory, not a symlink to one.
+tools/ghidra
 tools/ghidra-proj/
 tools/__pycache__/
 tools/live_*.sh

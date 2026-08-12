@@ -16,6 +16,15 @@ Not yet installed (later phases): SDL2/SDL3 (Phase 3), an Amiga cross-compiler
 + FS-UAE/WinUAE (Phase 6), optionally `cc65`/`da65` (round-trip checks) and
 Altirra via CrossOver or Atari800MacX (reference emulator, Phase 4).
 
+> **2026-08-12:** `tools/ghidra` is now a symlink to a shared install at
+> `~/.local/share/ghidra`, also used by the Revs repo, rather than its own copy — saves
+> ~900 MB of duplication between binary-only-port repos. No trailing slash on the
+> `tools/ghidra` gitignore entry, since a trailing-slash pattern doesn't match a symlink
+> to a directory. The extracted copy that had been here was found to be missing
+> `support/` (pruned to ~180 MB at some point, breaking headless use); it was
+> re-extracted from a fresh copy of the same `ghidra_12.1_PUBLIC_20260513.zip` release
+> before being moved to the shared location.
+
 > `brew install` on this machine triggers the Privileges.app elevation prompt,
 > so kick off installs yourself or approve the prompt when one appears.
 
