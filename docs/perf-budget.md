@@ -8,14 +8,24 @@
 > TODO and per-change history).
 
 **⭐ TARGET (user decision, 2026-08-08): 25 FPS = 40 ms/frame, judged on the BEST-CASE baseline
-(`COMBAT=1 COMBAT_QUIET=1 FIXED_RNG=1`, **22.49 FPS at HEAD 2026-08-12 ⇒ ~+11% of throughput to go**).
+(`COMBAT=1 COMBAT_QUIET=1 FIXED_RNG=1`, **23.91 FPS after the 2026-08-12 ISR pass ⇒ ~+4.6% of throughput to go**).
 Combat-load slowdown is expected and does NOT have to reach 25.** 50 FPS remains the ideal, not
 the bar. Spending 10 ms on *anything* is HALF the budget. The A500 (7 MHz 68000)
 is slow — there is no room for half measures; be conscious of absolute milliseconds, always.
 
 Units: 1 probe "tick" = 1 raster scanline = 63.56 µs; a PAL frame = 313 ticks = 20 ms. The flight
-VBI ISR fires once per real frame; its per-firing cost (~56 ticks ≈ 3.6 ms) is mostly the faithful
-50Hz sim+audio (hard to cut). The terrain draw dominates flight compute.
+VBI ISR fires once per real frame; its per-firing cost is mostly the faithful 50Hz sim+audio. The
+terrain draw dominates flight compute.
+
+⭐ **The ISR was opened up and cut 14.7% on 2026-08-12 — 66.95 → 57.09 t/firing, 21.3% → 18.2% of
+all wall clock** (probe build, quiet arm; `docs/flight-perf-log.md` §20). The "there is no 5-point
+win in the ISR" filing was right about each item and wrong about the sum: five changes, none over
+4 t/firing, add up to a sixth of it. Use **`amiga/isr_full.gdb`** for the breakdown — it is the
+only script that WINDOWS every bucket (isr_ab windows three of them; phase_budget divides
+power-on accumulators by a flight-only call count). ⚠ And read a single bucket carefully: the
+"the ISR fires 50×/s so per-firing cost is cross-build legitimate" argument holds for the TOTAL,
+but the cache-gated buckets (HUD, draw branch, proj) do work proportional to how much the view is
+changing and therefore carry the same trajectory noise as DRAW t/it (§19).
 
 ⚠ **The old "mem-bound ALGORITHMIC FLOOR / 50 FPS needs an algorithmic change / micro-opt EXHAUSTED"
 conclusion (2026-06-29) is RETIRED — it was disproven.** Hand-written m68k ASM broke that floor with
@@ -32,8 +42,8 @@ regs, force `(a0)+`/`(d8,a0)`, shave every redundant insn), not the transliterat
 · subdivide ~16% (asm'd — `TerrainSubdivideAssembler.s`; ⚠ the old note here said its bracket is dominated
 by the raster leaf-fills it drives "so removing GCC's spills barely helps" — TRUE of spills, but it made
 the whole twin look spent and it is NOT: **~50% of a subdivide call is MARSHALLING**, and 2026-08-08 took
-~245 cyc/call out of it, `docs/asm-migration-plan.md` §Phase 8)] · VBI ~71ms (3.6ms × ~20
-firings/iter, faithful) · renderFlightDirect ~24ms ·
+~245 cyc/call out of it, `docs/asm-migration-plan.md` §Phase 8)] · VBI ~3.63ms/firing × ~20
+firings/iter (was 4.25ms before the 2026-08-12 ISR pass — §20) · renderFlightDirect ~24ms ·
 setup+clear ~31ms [terrain_frame_setup loops asm'd ~26% — `TerrainFrameSetupAssembler.s`]. **Two bit-serial
 loops are now byte-exact lookup tables:** `mul_u8` → the 64KB `g_mulTable` (mul_u8 is NOT a plain product so
 no single mulu is byte-identical — see docs/asm-migration-plan.md), and `terr_blend` → the 8KB
@@ -80,12 +90,14 @@ too SHALLOW to matter (1.23 inner iterations / 0.40 midpoints per call), measure
 the very byte the check was meant to avoid, so it can only recover the ~10 cycles of bookkeeping around
 that load.**
 
-## ⭐ Where flight actually stands — 22.49 FPS best case (2026-08-12, HEAD) / 16.00 combat (4d25815)
+## ⭐ Where flight actually stands — 23.91 FPS best case (2026-08-12, after the ISR pass) / 16.00 combat (4d25815, STALE)
 
-**Re-measured 2026-08-12 at HEAD on the lean arm: 1349 painted / 2999 vbi = 22.49 FPS best case**
-(per-segment 18.0–25.1), the best recorded. ⚠ The combat row below is from 4d25815 and is stale.
-⚠ This metric carries ~1% of trajectory noise (§19.8) — measured, not assumed, by re-running the
-same binary with the flight started 120 frames later: 22.49 vs 22.21.
+**23.91 FPS best case — 1435 painted / 3001 vbi, all 15 segments valid** (per-segment 19.5–26.8),
+the best recorded, measured on the lean arm after the flight-VBI pass (`docs/flight-perf-log.md`
+§20). **The control was re-measured in the SAME session on the SAME flags: 1335 / 3000 = 22.25 FPS,
+so the pass is +7.5%** — well outside this metric's ~1% trajectory noise (§19.8), and it is the
+in-session A/B, not a diff against a ledger row. **25 FPS now needs ~+4.6%.**
+⚠ The combat row below is from 4d25815 and is stale.
 
 ### The 2026-08-08 baseline it replaces — 20.60 FPS best case / 16.00 combat (2026-08-08, 4d25815)
 

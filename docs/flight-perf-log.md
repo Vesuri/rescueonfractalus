@@ -1859,3 +1859,144 @@ vblanks and the sim advances further per rendered frame, which tightens the rend
 **Standing baseline, re-measured at HEAD (eabdeab), lean build: 22.49 FPS best case** — the best
 recorded (against 22.12 at 304f7bf, 20.60 at 4d25815), though the gap to 22.12 is itself inside
 the ±1% above. 25 FPS needs ~+11% of throughput from here.
+
+## §20 — The flight VBI, opened up and cut 15% (2026-08-12)
+
+**Result: the whole flight VBI 66.95 → 57.09 t/firing (−14.7%), 21.3% → 18.2% of all wall clock
+on the probe build; end-to-end the lean best-case arm went 22.25 → 23.91 FPS in one session (+7.5%),
+which takes the gap to the 25 FPS target from ~+11% to ~+4.6%.**
+The ISR had been filed as "~20% of wall, and there is no 5-point win in it". That was right about
+the individual items and wrong about the total: five independent changes, none of them larger than
+4 t/firing on its own, add up to a sixth of the ISR.
+
+### 20.1 The instrument that was missing — `amiga/isr_full.gdb`
+
+`isr_ab.gdb` windows only sfx/integ/proj; `phase_budget.gdb` prints the whole `g_p*` set but
+divides POWER-ON accumulators by the FLIGHT-ONLY `isrCalls` (the sfx tick also runs on standby
+vblanks), which overstates the sfx share. `isr_full.gdb` snapshots **every** bucket at the window
+open and prints deltas, so the parts sum to the handler — plus a new split of the audio bracket
+into `flush_paula` vs `PlatformAmiga::noiseTick` (`g_vbiFlushLines` / `g_vbiNoiseLines`). The very
+first run of it found the largest single item in the ISR, which no previous probe could see.
+
+⚠ **A caveat this run established: the ISR's PER-BUCKET t/firing is NOT trajectory-free.** The
+"fires 50×/s so it is cross-build legitimate" argument (isr_ab.gdb's header) holds for the ISR
+TOTAL, but the cache-gated buckets — HUD, draw branch, proj — do work proportional to how much the
+view is changing, so they move with the flown path exactly like DRAW t/it does (§19). Seen here:
+an intermediate build measured HUD at **+48%** for a change that cannot touch it, and the final
+build measured it at −21%. Read a single bucket only when its delta is large and has a mechanism.
+
+### 20.2 The big one: `volatile mem[]` was a 68000 codegen tax (~5% of the handler, more elsewhere)
+
+`mem[]` is declared `volatile` — with a comment explaining that the SDL host runs the VBI on a real
+audio THREAD and that spin-waits like `while (mem[$8E]==0)` fold to infinite loops without it. True
+on the host. On the Amiga there is no second thread, and the cost is severe. GCC cannot CSE a
+repeated load, cannot keep a cell in a register, and — the expensive one — cannot fold
+`mem[CONST + var]` into a base pointer plus a displacement:
+
+```
+    volatile:  move.l var,d1 ; add.l #CONST,d1 ; lea mem,a0 ; move.b (a0,d1.l),d1     34 cycles
+    plain:     (a0 = mem + var, hoisted once)   move.b CONST(a0),d1                   12 cycles
+```
+
+`make MEMNVC=1` restores the qualifier; the Amiga build now drops it by default
+(`ROF_MEM_NONVOLATILE`, src/cpu/cpu.h). It is sound here because the flight VBI is a level-3
+interrupt that HALTS the main loop for its whole duration and cannot itself be preempted (CIA-A
+keyboard is level 2), and every `mem[]` spin in the tree has an opaque call (`ds_frame` /
+`platform_tick_vbi`) in its body, which is already a reload barrier. Only the C core is affected —
+the Amiga C++ TUs declare `extern volatile uint8_t mem[65536]` themselves and keep the
+conservative view.
+
+Static effect at -O2 (identical `__udivsi3`/`__mulsi3` reloc counts both ways — the mandatory
+audit is unchanged): `vbi_handler_flight` 1764 → 1686 bytes, `flight_control_integrate_impl`
+4346 → 4134, `sample_terrain_height_bilerp` 632 → 528, `draw_altimeter_bars` 182 → 142.
+
+⛔ **Dead end, do not re-try: a global register variable holding a `mem` base.** `register uint8_t*
+memp asm("a5")` would make constant accesses 12 cycles instead of absolute-long's 16 across the
+whole core. It is unsafe here: the hand-written `.s` files use a2/a3/a4/a5 as scratch (245/227/287
+counts by grep), so the flight VBI — which can fire in the middle of any of them — would read a
+garbage base. There is no free address register to reserve.
+
+### 20.3 `noiseTick` — 5.71 t/firing (8.5% of the whole VBI) for a texture nobody can hear
+
+The white-noise buffer refresh was the single largest Amiga-side item in the ISR and had never been
+measured. Two independent fixes, both in `PlatformAmiga.cpp`:
+
+- **Rate.** The refresh only has to keep up with the rate Paula READS the buffer. The engine drone
+  is the only steady noise voice in flight: AUDF ≈ $65 → Paula period ≈ 5666 → **~626 B/s**, one
+  pass through the 8 KB buffer every ~13 s. The old 64 B/VBI = 3200 B/s was ~5× that. 16 B/VBI =
+  800 B/s still re-randomises faster than the drone reads, and for the one faster consumer (a
+  short, loud explosion tail) no loop structure is audible at all.
+- **Generator.** Marsaglia's xorshift32 **13/17/5 costs 104 cycles of shift+eor per longword on a
+  68000** because `x << 13` has no short form (`lsl.l dN` = 8+2·13). **1/5/16 is also full period
+  and costs 72**: `x<<1` is `add.l d0,d0` (8, and GCC picks it), `x>>5` is `lsr.l #5` (18), `x<<16`
+  is `swap`+`clr.w` (8). Full period was *verified*, not asserted — the map is linear over GF(2),
+  so `tools/xorshift_triple_test.c` builds its 32×32 matrix M and checks M^(2^32−1) = I and
+  M^((2^32−1)/p) ≠ I for every prime p | 2^32−1 = 3·5·17·257·65537. That tool also ranks every
+  triple by 68000 cycle cost, which is how 1/5/16 was found.
+
+  **No hand asm.** At -O2 GCC already emits the optimal 12-instruction body for this form (98
+  cycles/longword vs the old 136); the only thing left is a `dbf` back-edge instead of
+  `cmp.l/jne`, 6 cycles a longword ≈ 0.06 t/firing — below every instrument in the tree.
+
+**5.71 → 1.71 t/firing.**
+
+### 20.4 The 8-bit-index tax: contiguous runs written as `mem[base + y]`
+
+The 6502's index is 8 bits, so a transliterated `mem[base + y]` run makes GCC mask every step. At
+-O3 it also unrolls, so the *fill* loop in `draw_altimeter_bars` came out as five instructions per
+stored byte:
+
+```
+    move.b d1,d2 / addq.b #k,d2 / andi.l #255,d2 / addi.l #3224,d2 / move.b #-1,(a0,d2.l)   ~58 cyc
+```
+
+— to store **one** byte, up to 56 of them, twice. Every such run in the ISR is contiguous, so a
+pointer walk is byte-identical and ~5× cheaper. Done in four places, each still 0-mismatch under
+`make validate`:
+
+| twin | shape |
+|---|---|
+| `draw_altimeter_bars` | two runs of up to 56 bytes; the descending clear needs no guard (index and pointer step together, and `0x0C97+yy` never wraps 16 bits), the ascending fill keeps the exact indexed form for the wrapping case |
+| `draw_ah_ground_fill_p2` | 21-byte table copy, two pointers, guarded on neither index wrapping |
+| `game_sub_451d` | 14 iterations × 2 destinations (called by `update_terrain_horizon_lr`) |
+| `sfx_voice_envelope_tick` | the 14-slot loop: **all eleven per-slot arrays live in $066B..$06F7**, a 140-byte window, so ONE pointer at `$06DB+y` reaches every one of them with a displacement in [−112,+28] |
+
+⚠ The wrap guards are not theoretical: `validate_native.c`'s HUD fixture masked its row inputs with
+`& 0x3F`, which can never produce a wrap. **The masks were widened to `& 0xFF`** so the fallback
+branches are actually exercised — 20000 cases each, still 0 mismatch.
+
+### 20.5 The compass dirty flag (a FRAME win, found from the ISR side)
+
+`draw_compass_heading` raised `platform_compass_changed()` unconditionally every sim frame, so
+`renderFrame` re-decoded the 4 mode-4 cells (4 × 8 scanlines × 2 planes) every frame although the
+glyphs only move while turning. Flagging on change is safe because the cells have exactly two
+writers and both are hooked (this one and `game_sub_4606`) — the survey that [[flight-pc-profiler]]
+insists on before narrowing a dirty flag.
+
+### 20.6 Scoreboard
+
+Probe build, quiet arm, ~2800-firing window, t/firing:
+
+| bucket | before | after |
+|---|---|---|
+| **WHOLE flight VBI** | **66.95** | **57.09** |
+| handler | 57.29 | 52.13 |
+| ├ sfx total | 17.95 | 17.04 |
+| │  ├ event-ring drain | 9.74 | 9.30 |
+| │  └ 14-slot envelope loop | 4.04 | 3.68 |
+| ├ integ | 9.02 | 8.43 |
+| ├ proj | 6.35 | 4.97 |
+| ├ HUD instruments | 3.53 | 2.80 |
+| ├ sim head | 2.68 | 2.60 |
+| └ draw branch / atmo / score | 3.16 | 3.06 |
+| sprites bracket | 1.46 | 1.49 |
+| audio bracket | 8.20 | 3.47 |
+| ├ flush_paula | 2.49 | 1.77 |
+| └ noiseTick | 5.71 | 1.71 |
+
+**What is left in the ISR, in order:** the event-ring drain (9.3 — the mixer is hand-asm and its
+own header prices the remaining headroom at ~0.5% of wall), `flight_control_integrate` (8.4 — an
+asm twin is the only lever and it is a 400-line faithful function), `proj` (5.0), the 14-slot
+envelope loop (3.7). ~11 t/firing of the handler is unaccounted, and most of that is the probe's
+own `VP_T0`/`VP_ACC` brackets plus the `COMBAT=1` map top-up — i.e. the SHIPPING ISR is several
+ticks cheaper than any number in this table.

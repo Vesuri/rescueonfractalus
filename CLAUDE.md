@@ -127,6 +127,9 @@ variation under `#ifdef ROF_PLATFORM_AMIGA`. Full rationale: `docs/transpiler.md
 
 Transpiled code uses `mem[]` for RAM, a global `cpu` struct + flag-setting macros
 (`LDA`/`CMP`/`ADC`…) per 6502 op, and `bus_read`/`bus_write` for hardware ($D000–$D7FF).
+⚠ **`mem[]` is NOT `volatile` in the Amiga C core** (`ROF_MEM_NONVOLATILE`, on by default;
+`make MEMNVC=1` reverts). It still is on the SDL host, which runs the VBI on a real thread — so
+any new mem[] spin-wait must keep an opaque call in its body. Why + the cycle counts: `src/cpu/cpu.h`.
 Per-op flag computation + bus dispatch is the overhead that native rewrites remove. Named RAM
 addresses are emitted as `mem[MEM_<name> + i]` or bare lvalue aliases from `symbols.csv`; the
 transpiler also peephole-folds dead 6502 load→store idioms (both detailed in `docs/transpiler.md`).
@@ -140,16 +143,17 @@ to hardware is largely ignored on Amiga.
 ## Performance — the headline
 
 **⭐ TARGET (user decision, 2026-08-08): 25 FPS = 40 ms/frame on the BEST-CASE baseline**
-(`COMBAT=1 COMBAT_QUIET=1 FIXED_RNG=1`). Standing measurement: **22.49 FPS best case**
-(2026-08-12, HEAD) ⇒ **~+11% of throughput to go**; combat 16.00 (stale, 4d25815). Combat may sit
+(`COMBAT=1 COMBAT_QUIET=1 FIXED_RNG=1`). Standing measurement: **23.91 FPS best case**
+(2026-08-12, after the flight-VBI pass; in-session control 22.25 ⇒ +7.5%) ⇒ **~+4.6% of throughput
+to go**; combat 16.00 (stale, 4d25815). Combat may sit
 lower; it is not the bar. 50 FPS is the ideal, not the target. The A500 is a 7 MHz 68000 — spending 10 ms on *anything*
 is half the budget; be conscious of absolute milliseconds always. The profile is FLAT (nothing
 >32%), so no single function closes the gap — five or six honest 5-point wins do. Surface numbers
 honestly.
 
 Three rules that must survive without opening the doc:
-- **`make FPSCOUNT=1` + `GDBSCRIPT=fps_seg.gdb ./diag_run.sh 200` is the ONLY way to quote a
-  framerate**, and it over-reads wins — under ~3% is noise. Quote a static cycle count or a
+- **`make FPSCOUNT=1` + `GDBSCRIPT=fps_seg.gdb ./diag_run.sh 400` is the ONLY way to quote a
+  framerate** (400 s: 200 no longer reaches the last segment), and it over-reads wins — under ~3% is noise. Quote a static cycle count or a
   differential ratio as the win; quote FPS only as the standing baseline. ⚠ **`phase_budget.gdb`'s
   t/it rows are NOT a safer alternative — they carry ~±10% of trajectory noise and must never be
   diffed across builds** (`docs/flight-perf-log.md` §19: a change that cannot touch flight code
