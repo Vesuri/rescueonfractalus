@@ -2090,3 +2090,129 @@ header already flags that as the prime suspect for `update_paula_channel`'s cost
 ⚠ This also reframes the **combat** arm. The standing combat penalty (22.3% of throughput at
 4d25815) was attributed to object work; a sustained-fire fight pays this audio spike continuously,
 and no one has separated the two.
+
+## §23 — The two codegen taxes, generalised; and the edge plot (2026-08-12)
+
+**Result: 24.09 → 24.78 FPS on the quiet arm (+2.87%), measured as an IN-SESSION A/B —
+baseline and arm built and run back to back on the same flags, script and window, 15/15
+segments valid both times.** (Before the last shave; see §23.4.) The gap to the 25 FPS target
+went from ~+3.8% to ~+0.9%.
+
+⚠ **Read the baseline number, not the ledger.** The standing row said 24.38; re-measuring the
+SAME commit in this session read **24.09**. That is a 1.2% wander, exactly the size of the
+flight-neutral control in §19.8, and it is why the honest headline is the A/B delta and not the
+absolute. Quoting 24.38 as the baseline would have turned +2.87% into +1.6%.
+
+### 23.1 The base fold generalises — but only where the register is free
+
+038786d folded `mem` onto a base register in `flight_control_integrate` and left the technique
+"untried on `update_terrain_scanline_proj` and `vbi_handler_flight`". It is now a shared macro
+(`ROF_MEMBASE` / `ROF_MEMBASE_DECL`) applied to 13 routines. Per-function `.text` at -O3:
+
+| routine | before | after | note |
+|---|---|---|---|
+| `vbi_handler_flight` | 2392 | 2076 | 178 absolute operands; runs 50×/s |
+| `terrain_draw_frame_core` | 2202 | 1980 | **and −510 more inside `game_main_loop`** |
+| `build_player2_sprite_core` | 2010 | 1506 | |
+| `update_terrain_scanline_proj_impl` | 1408 | 1204 | |
+| `game_state_update` | 1128 | 974 | 2×/iteration |
+| `draw_player3_object` · `compute_row_xspans` · `setup_projection_params` · `update_terrain_horizon_lr` · `object_integrate_position` · `plot_scanline_up` · `lock_on_indicator_tick` · `terrain_plot_object_b` | | | −22 … −106 each |
+
+Two findings worth keeping:
+
+- ⭐ **Fold at the CALLEE, not at the giant caller.** Folding the whole `game_main_loop_body`
+  (867 absolute operands, the single biggest count in the tree) was **+36 bytes** — GCC cannot
+  hold a base across a 13 KB body, which is the same register starvation that made
+  `terrain_draw_objects` a `noinline` function in the first place. Folding
+  `terrain_draw_frame_core` instead — which GCC INLINES into `game_main_loop` twice — got the
+  fold applied inside those two copies anyway, for −510 bytes there plus −222 in the
+  out-of-line body. The base only has to survive the region that uses it.
+- ⚠ **The reloc count is not the acceptance test; the function's own `.text` is.** Five folds
+  removed real absolute operands and still grew the code: `sample_terrain_height_bilerp`
+  (−0 relocs, **+220 bytes**), `trig_interp_lookup` (−14, +72), `raster_scaled_object` (−34,
+  +28), `terrain_plot_object_a` (−22, +2). All reverted. The nastiest was
+  `plot_scanline_down`: it shrank itself by 38 bytes and grew its **two inline sites**
+  (`flight_control_integrate_impl` +150, `terrain_draw_frame_core` +130) — visible only in a
+  whole-TU size diff, never in the function under test.
+
+### 23.2 The volatile tax was still being paid by the frame's hottest non-asm loop
+
+§20.2 dropped `volatile` from `mem[]` itself, but several routines hold their own **local
+pointer views** of it, written when the qualifier was still there and still declared
+`volatile`. `terrain_draw_objects` — the object draw-order walk, the biggest non-asm bucket in
+the PC profile at **6.9%** — had three. With the views plain (`ROF_MEM_VIEW`, still `volatile`
+on the SDL host) GCC:
+
+- walks `order` as a pointer (`move.b 1(a2),d4`) instead of `lea (0,a4,d2.l),a0` + `move.b (a0),d7`;
+- issues each class lookup as one `move.b (0,An,Dn.l),Dn` (14 cyc) instead of `lea`+`move.b` (20);
+- emits each of the five per-pair vector copies as one memory-to-memory
+  `move.b d16(An),d16(Am)` (20 cyc) instead of a load plus a store (24).
+
+Hand-counted off the disassembly: **−12 cycles on a culled pair, −42 on a visible one**, 144
+pairs an iteration. ⚠ The function's `.text` GREW (998 → 1150) because `-funroll-loops` then
+unrolls it three deep — another reason size alone is not the test.
+
+### 23.3 The edge plot: a sentinel the header had ruled out, and two restructures the shape data killed
+
+`renderFlightDirect`'s plane-1 skyline scatter is 160 columns twice an iteration, ~4.6% of
+flight wall clock and five symbols in the PC profile, and it had **never been shape-probed**.
+`amiga/edge_shape.gdb` (the EDGE section of `shape_probe.gdb` split out, because that script
+bundles EDGE+BAND+TFS and gdb aborts on the first missing symbol) over 1026 frames / 164160
+columns:
+
+```
+$FF(skipped) = 5622 (3%)      same-height-as-prev-col = 52%      same-ROW-as-prev = 52%
+byte-ORs needed (merge in group) = 88/frame vs 154      uniform 4-col groups = 32%
+distinct rows per group: [1] 13457  [2] 9862  [3] 8233  [4] 8158
+```
+
+- ⭐ **The 3% is what unlocked the sentinel.** The routine's own header said there was "no safe
+  table sentinel without an extra buffer row". That is true of a sentinel **offset** (it would
+  have to address a gutter past the bitmap) and false of a sentinel **value**:
+  `kHeightRowOff[$FF] = $FFFF`, so the `move.w` that fetches the offset already sets N and one
+  not-taken `bmi` replaces the per-column `cmp.b #$FF / beq`. Exactly what `kDrawDotRowOff`
+  next door already does. Break-even is $FF ≈ 38%; measured 3%.
+- Masks moved from immediates into d3-d6: `or.b dN,(a2,d1.w)` is 18 cycles against ORI's 22.
+- **68 → 56 cycles a column.**
+
+⛔ **Both bigger restructures the shape numbers suggested are CLOSED, on arithmetic:**
+- *Merge same-row columns inside a 4-column group* (154 → 88 ORs a frame looks like a 43% cut):
+  the flush-per-run bookkeeping costs more than the ORs it removes — **238 cycles a group
+  against 242**, because a deferred flush (`or.b d3,(a2,d1.w)` + its `bmi`) is 26 cycles where
+  the OR it replaces is 18, and a run has to be started and ended.
+- *Cache the previous column's row offset* (52% hit): saves the 22-cycle lookup half the time
+  and costs a 13-cycle compare-and-branch every time → **+1.6 cycles a column, a loss.**
+- A pairwise (0,1)/(2,3) merge survives arithmetic at only −3.6 a column once the split path is
+  out of line. ⭐ **The general shape of all three: when a loop body is already ~56 cycles, any
+  scheme whose bookkeeping is a compare plus a branch is spending 12-14 to save 18-22, and it
+  needs a hit rate well above 50% to break even.**
+
+### 23.4 What DID survive in the edge plot: deleting the loop
+
+`addq.l #1,a2` + `dbra` was 18 cycles of bookkeeping per group against 224 of work — but the
+plane-1 byte index *is* the group number 0..39, and `(d8,An,Xn)`'s displacement is an 8-bit
+signed field. So all 40 groups are reachable from one unmoved `a2` at **no extra cycles and no
+extra bytes**, and a `rept` unroll deletes the pointer walk and the counter outright:
+**−720 cycles a call for 2594 bytes of code.** ⭐ Generalises: *before optimising a loop's body,
+check whether the addressing mode makes the loop itself free to delete.*
+
+### 23.5 Also measured and closed
+
+- **`-O3` (± `-funroll-loops`) on `RescueOnFractalus.cpp`**, the ~16%-of-wall flight C++ TU:
+  `.text` 31506 → **66640** with unrolling, 45598 without. The image already sits at ~505 KB
+  against a ~512 KB slow-RAM ceiling, so +14 KB is not affordable for an unmeasured gain. Not
+  taken — but the numbers are here if the RAM budget ever moves.
+- **`unsigned obj0/obj1` in `terrain_draw_objects`** (the trick that worked for `order_idx`):
+  **byte-identical codegen**, GCC already inferred it. Reverted.
+
+### 23.6 Proof
+
+- `make validate MEMBASE=1 MEMVIEW=1` — new host arms that compile both Amiga-only source
+  transformations here (portable `"r"` constraint, `volatile` cast off; TEST ONLY, sound
+  because the harness is single-threaded), so the oracle can prove the `#define mem` rescan
+  reached every access. **Full suite: 0 mem mismatch**, including `vbi_handler_flight`,
+  `terrain_draw_frame`, `game_state_update` and `update_terrain_scanline_proj`.
+- `make VERIFY=1 PROBES=1` + `amiga/raster_verifyV.gdb` — the edge plot's C oracle and the asm
+  run into separate scratch planes from the same `$260E` and all 47×120 bytes are compared:
+  **EDGE mismatch=0**. The oracle keeps its explicit `h != $FF` test and so never indexes the
+  sentinel entry, which is what keeps it a valid oracle.

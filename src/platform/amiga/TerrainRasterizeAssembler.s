@@ -1066,47 +1066,62 @@ done_raw:
 ; ⚠ The C oracle edgePlotCore keeps its explicit `h != $FF` test and therefore
 ; never indexes the sentinel entry, which is what keeps it a valid oracle for
 ; the `make VERIFY=1` differential that byte-compares the whole 47x120 plane.
+
+;   3. THE LOOP IS GONE.  `addq.l #1,a2` + `dbra` was 18 cycles of pure
+;      bookkeeping per 4-column group against 224 of work — but the plane-1 byte
+;      index IS the group number 0..39, and (d8,An,Xn)'s displacement is an
+;      8-bit SIGNED field, so all 40 groups are reachable from the SAME a2 at no
+;      extra cycles and no extra bytes.  Fully unrolled through `rept`, the
+;      pointer walk and the counter both disappear: −18 × 40 = −720 cycles a
+;      call for ~3.4 KB of code.  d7 is now unused but stays in the movem list —
+;      it costs 8 cycles once a call and keeps the frame size (and hence the
+;      28(sp) argument offset) in one place.
+EPGRP	macro				; \1 = group number 0..39 = the plane-1 byte index
+	move.b	(a0)+,d0		; col 4k
+	move.w	d0,d1
+	add.w	d1,d1
+	move.w	(a1,d1.w),d1		; kHeightRowOff[h]; $FFFF = off-top ($FF) -> skip
+	bmi.s	.c1\@
+	or.b	d3,(\1,a2,d1.w)
+.c1\@:
+	move.b	(a0)+,d0		; col 4k+1
+	move.w	d0,d1
+	add.w	d1,d1
+	move.w	(a1,d1.w),d1
+	bmi.s	.c2\@
+	or.b	d4,(\1,a2,d1.w)
+.c2\@:
+	move.b	(a0)+,d0		; col 4k+2
+	move.w	d0,d1
+	add.w	d1,d1
+	move.w	(a1,d1.w),d1
+	bmi.s	.c3\@
+	or.b	d5,(\1,a2,d1.w)
+.c3\@:
+	move.b	(a0)+,d0		; col 4k+3
+	move.w	d0,d1
+	add.w	d1,d1
+	move.w	(a1,d1.w),d1
+	bmi.s	.d\@
+	or.b	d6,(\1,a2,d1.w)
+.d\@:
+	endm
+
 flight_edge_plot_asm:
 	movem.l	d3-d7/a2,-(sp)		; 6 callee-saved longs = 24 bytes; arg shifts +24
 	movea.l	28(sp),a2		; bp  (4 + 24)
 	lea	mem+$260E+48,a0		; per-column max-height ($260E[48..])
 	lea	kHeightRowOff,a1
-	moveq	#0,d0			; d0 high stays 0 for the whole loop
+	moveq	#0,d0			; d0 high stays 0 for the whole run
 	moveq	#$C0-256,d3		; the four column masks (kColMask4), low byte only
 	moveq	#$30,d4
 	moveq	#$0C,d5
 	moveq	#$03,d6
-	move.w	#40-1,d7
-ep_loop:
-	move.b	(a0)+,d0		; col 4k
-	move.w	d0,d1
-	add.w	d1,d1
-	move.w	(a1,d1.w),d1		; kHeightRowOff[h]; $FFFF = off-top ($FF) -> skip
-	bmi.s	ep_c1
-	or.b	d3,(a2,d1.w)
-ep_c1:
-	move.b	(a0)+,d0		; col 4k+1
-	move.w	d0,d1
-	add.w	d1,d1
-	move.w	(a1,d1.w),d1
-	bmi.s	ep_c2
-	or.b	d4,(a2,d1.w)
-ep_c2:
-	move.b	(a0)+,d0		; col 4k+2
-	move.w	d0,d1
-	add.w	d1,d1
-	move.w	(a1,d1.w),d1
-	bmi.s	ep_c3
-	or.b	d5,(a2,d1.w)
-ep_c3:
-	move.b	(a0)+,d0		; col 4k+3
-	move.w	d0,d1
-	add.w	d1,d1
-	move.w	(a1,d1.w),d1
-	bmi.s	ep_next
-	or.b	d6,(a2,d1.w)
-ep_next:
-	addq.l	#1,a2			; next 4-column plane-1 byte
-	dbra	d7,ep_loop
+ep_loop:				; kept as a label so prof_flight.py still buckets this
+EPG	set	0
+	rept	40
+	EPGRP	EPG
+EPG	set	EPG+1
+	endr
 	movem.l	(sp)+,d3-d7/a2
 	rts
