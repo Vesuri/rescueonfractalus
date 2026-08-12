@@ -14,7 +14,28 @@ typedef struct {
 } Cpu6502;
 
 extern Cpu6502 cpu;
-extern volatile uint8_t mem[65536]; /* shared between main thread and VBI audio thread */
+/* ROF_MEM_NONVOLATILE (Amiga default; `make MEMNVC=1` puts it back): drop the volatile
+ * qualifier on mem[].
+ * `volatile` costs a LOT of 68000 codegen — GCC cannot CSE a repeated load, cannot keep a
+ * cell in a register, and (the expensive one) cannot fold `mem[CONST + var]` into a base
+ * pointer plus a 16-bit displacement, so every such access becomes
+ *   move.l var,d1 ; add.l #CONST,d1 ; move.b (a0,d1.l),d  = 34 cycles instead of 12.
+ * It is needed on the SDL host, where a real audio THREAD shares mem[] with the game loop and
+ * spin-wait conditions like `while (mem[$8E]==0)` would fold to infinite loops.  On the Amiga
+ * there is no second thread: the flight VBI is a level-3 interrupt that HALTS the main loop
+ * for its whole duration (and cannot itself be preempted — CIA-A keyboard is level 2), and
+ * every mem[] spin in the tree has an opaque call (ds_frame / platform_tick_vbi) in its body,
+ * which is already a reload barrier.  See docs/perf-budget.md.
+ * Scope: this only reaches the C core (cpu.c / rof_gen.c / rof_native.c / rof_manual.c).  The
+ * Amiga C++ TUs declare `extern volatile uint8_t mem[65536]` themselves and keep the
+ * conservative view — volatility is a property of the ACCESS, not of the object, so the two
+ * views coexist with no ABI consequence, and the display side stays unchanged. */
+#ifdef ROF_MEM_NONVOLATILE
+#define ROF_MEM_QUAL
+#else
+#define ROF_MEM_QUAL volatile
+#endif
+extern ROF_MEM_QUAL uint8_t mem[65536]; /* the 6502 RAM image */
 
 /* ---------- flag helpers ------------------------------------------ */
 #define UPD_NZ(v)  do { uint8_t _nzv=(uint8_t)(v); cpu.N=_nzv>>7; cpu.Z=(_nzv==0); } while(0)

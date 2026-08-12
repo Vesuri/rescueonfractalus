@@ -398,6 +398,16 @@ ifdef FIXED_RNG
 EXTRA_DEFINES += -DROF_FIXED_RNG
 endif
 
+# `make MEMNVC=1` — A/B fallback: keep the `volatile` qualifier on the 6502 RAM image mem[].
+# The Amiga build drops it by DEFAULT (src/cpu/cpu.h), which is what lets GCC fold
+# `mem[CONST + var]` into a base pointer + 16-bit displacement (12 cycles) instead of the
+# volatile form's move/add-immediate/indexed-load chain (34 cycles), and lets a cell live in a
+# register across statements.  volatile is still the default OFF-Amiga: the SDL host runs the
+# VBI on a real audio thread.  See the comment in src/cpu/cpu.h.
+ifndef MEMNVC
+EXTRA_DEFINES += -DROF_MEM_NONVOLATILE
+endif
+
 # A/B fallback: `make VERTB_SERVER=1` goes back to hanging the game VBI off exec's VERTB
 # server CHAIN (AddIntServer) instead of taking the whole VERTB IntVector over.  The default
 # (takeover) drops graphics.library / gameport.device / timer.device off the vblank, which
