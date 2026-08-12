@@ -7492,6 +7492,73 @@ void rof_subdiv_residue_publish(void) {
 #define SD_RESIDUE_PUBLISH() ((void)0)
 #endif
 
+/* SubPt slot 0 = the companion endpoint's projected vector.  Under ROF_SUBDIV_OBJ_SEED0 the
+ * shipping caller no longer writes this on every visible pair (5 memory-to-memory MOVE.B, 20
+ * cycles each, 68.1 pairs an iteration): the asm twin's depth-0 arm reads the far endpoint
+ * straight out of obj1's object arrays and only materialises slot 0 when the recursion descends.
+ * This helper is what remains — terrain_draw_objects publishes it ONCE per pass for the last
+ * visible pair, and the differential harness runs it around BOTH arms so the C oracle keeps its
+ * slot-0 view (docs/flight-perf-log.md §24.2, and §17.3 for why widening the oracle's view beats
+ * narrowing the comparison). */
+#ifdef ROF_SUBDIV_OBJ_SEED0
+static void rof_subdiv_seed0(uint8_t obj) {
+    ROF_MEM_VIEW uint8_t *const M = (ROF_MEM_VIEW uint8_t *)mem;
+    M[0x25B4] = M[0x2400 + obj];   /* col lo  */
+    M[0x25D2] = M[0x242D + obj];   /* col hi  */
+    M[0x25F0] = M[0x245A + obj];   /* hgt lo  */
+    M[0x24E2] = M[0x2487 + obj];   /* hgt hi  */
+    M[0x23E2] = M[0x23B5 + obj];   /* frac    */
+}
+#define SD_SEED0(obj) rof_subdiv_seed0(obj)
+
+#ifdef ROF_SEED0_VERIFY
+/* Does publishing slot 0 ONCE PER PASS leave what the per-pair seed used to?
+ *
+ * No differential can answer this and neither can a cross-build run: nothing in the linked image
+ * reads these five cells (survey, §24.2), and two builds that differ in render speed fly
+ * different ground within a few frames (§19), so the cells legitimately diverge.  A probe that
+ * re-read obj1's vector at the end would also be vacuous — that is what the publish itself does.
+ *
+ * So: shadow the vector AT THE TIME OF EACH PAIR (which is what the eager seed captured) and
+ * compare the shadow to what the publish left.  That tests the actual claim — that obj1's
+ * projected vector cannot move between its pair and the end of the pass, because the only
+ * writers are project_terrain_points (gated by the $24B4 bit-4 already-projected flag) and
+ * terrain_frame_setup (long returned).  `make SEED0_VERIFY=1 PROBES=1` + amiga/seed0_verify.gdb. */
+volatile unsigned long g_seed0Passes = 0, g_seed0Mismatch = 0, g_seed0BadIdx = 0;
+volatile unsigned long g_seed0BadWant = 0, g_seed0BadGot = 0;
+static uint8_t seed0_shadow[5];
+static int     seed0_have;
+static const uint16_t seed0_src[5] = { 0x2400, 0x242D, 0x245A, 0x2487, 0x23B5 };
+static const uint16_t seed0_dst[5] = { 0x25B4, 0x25D2, 0x25F0, 0x24E2, 0x23E2 };
+static void rof_seed0_shadow(uint8_t obj) {
+    ROF_MEM_VIEW uint8_t *const M = (ROF_MEM_VIEW uint8_t *)mem;
+    for (int i = 0; i < 5; i++) seed0_shadow[i] = M[seed0_src[i] + obj];
+    seed0_have = 1;
+}
+static void rof_seed0_check(void) {
+    ROF_MEM_VIEW uint8_t *const M = (ROF_MEM_VIEW uint8_t *)mem;
+    if (!seed0_have) return;
+    g_seed0Passes++;
+    for (int i = 0; i < 5; i++)
+        if (M[seed0_dst[i]] != seed0_shadow[i]) {
+            if (!g_seed0Mismatch) { g_seed0BadIdx = i; g_seed0BadWant = seed0_shadow[i]; g_seed0BadGot = M[seed0_dst[i]]; }
+            g_seed0Mismatch++;
+        }
+    seed0_have = 0;
+}
+#define SD_SEED0_SHADOW(obj) rof_seed0_shadow(obj)
+#define SD_SEED0_CHECK()     rof_seed0_check()
+#else
+#define SD_SEED0_SHADOW(obj) ((void)0)
+#define SD_SEED0_CHECK()     ((void)0)
+#endif
+
+#else
+#define SD_SEED0(obj) ((void)0)
+#define SD_SEED0_SHADOW(obj) ((void)0)
+#define SD_SEED0_CHECK()     ((void)0)
+#endif
+
 /* Returns the final recursion depth (the 6502 left it in X); callers that care put it in cpu.X.
  * This clean-C body is the SDL/validate oracle; on the Amiga the hand-asm twin
  * (TerrainSubdivideAssembler.s) replaces it via the ROF_SUBDIV_ASM seam below. */
@@ -7768,10 +7835,14 @@ static inline uint8_t terrain_subdivide_column_obj_c(uint8_t startDepth, uint8_t
  * The flag is tied to RASTER_SPAN_ABI, which is exactly the condition that kills rasterEntryDepth.
  * The oracle keeps all three parameters — it IS the general routine — and is handed the two
  * constants. */
-#ifdef ROF_SUBDIV_OBJ1ARG
-#define SUBDIV_OBJ(startDepth, rasEnt, obj0) terrain_subdivide_column_obj(obj0)
+/* ⚠ ROF_SUBDIV_OBJ_SEED0 adds obj1 — see SD_SEED0 above.  The oracle needs no such argument:
+ * it reads the far endpoint from slot 0, which the harness (or, off-Amiga, the caller) seeds. */
+#ifdef ROF_SUBDIV_OBJ_SEED0
+#define SUBDIV_OBJ(startDepth, rasEnt, obj0, obj1) terrain_subdivide_column_obj(obj0, obj1)
+#elif defined(ROF_SUBDIV_OBJ1ARG)
+#define SUBDIV_OBJ(startDepth, rasEnt, obj0, obj1) terrain_subdivide_column_obj(obj0)
 #else
-#define SUBDIV_OBJ(startDepth, rasEnt, obj0) terrain_subdivide_column_obj(startDepth, rasEnt, obj0)
+#define SUBDIV_OBJ(startDepth, rasEnt, obj0, obj1) terrain_subdivide_column_obj(startDepth, rasEnt, obj0)
 #endif
 
 #if defined(ROF_SUBDIV_ASM) && defined(ROF_SUBDIV_VERIFY)
@@ -7780,7 +7851,28 @@ static inline uint8_t terrain_subdivide_column_obj_c(uint8_t startDepth, uint8_t
  * nested rasterize calls through the C dispatcher, i.e. not this routine's fast path.  That
  * build also has no RASTER_SPAN_ABI, hence no OBJ1ARG, so each VERIFY config exercises the same
  * ABI its shipping counterpart would.) */
-#ifdef ROF_SUBDIV_OBJ1ARG
+#ifdef ROF_SUBDIV_OBJ_SEED0
+extern uint8_t terrain_subdivide_column_obj_asm(uint8_t obj0, uint8_t obj1);
+uint8_t terrain_subdivide_column_obj(uint8_t obj0, uint8_t obj1) {
+    g_subdivCalls++;
+    subv_snapshot();
+    /* ⚠ The shipping caller no longer seeds slot 0, so the harness must — for BOTH arms, not
+       just the oracle's.  Narrowing the compare window instead is exactly the blindness that
+       let a previous residue attempt read 0 mismatch over 5104 calls while breaking three live
+       consumers (§17.3).  With the seed here, all 16 entries of all 5 stacks stay compared AND
+       the differential is testing the thing that actually changed: that reading the far endpoint
+       out of obj1's arrays gives what reading slot 0 gave. */
+    SD_SEED0(obj1);
+    uint8_t asmRet;
+    FP_TIME(asmRet = terrain_subdivide_column_obj_asm(obj0, obj1), g_subdivAsmTicks);
+    subv_capture_and_restore();
+    SD_SEED0(obj1);
+    uint8_t cRet;
+    FP_TIME(cRet = terrain_subdivide_column_obj_c(0x00, 0x00, obj0), g_subdivCTicks);
+    subv_compare(asmRet, cRet);
+    return cRet;
+}
+#elif defined(ROF_SUBDIV_OBJ1ARG)
 extern uint8_t terrain_subdivide_column_obj_asm(uint8_t obj0);
 uint8_t terrain_subdivide_column_obj(uint8_t obj0) {
     g_subdivCalls++;
@@ -7809,7 +7901,9 @@ uint8_t terrain_subdivide_column_obj(uint8_t startDepth, uint8_t rasterEntryDept
 }
 #endif
 #elif defined(ROF_SUBDIV_OBJ_ABI)
-#ifdef ROF_SUBDIV_OBJ1ARG
+#ifdef ROF_SUBDIV_OBJ_SEED0
+extern uint8_t terrain_subdivide_column_obj(uint8_t obj0, uint8_t obj1); /* TerrainSubdivideAssembler.s */
+#elif defined(ROF_SUBDIV_OBJ1ARG)
 extern uint8_t terrain_subdivide_column_obj(uint8_t obj0);            /* TerrainSubdivideAssembler.s */
 #else
 extern uint8_t terrain_subdivide_column_obj(uint8_t startDepth, uint8_t rasterEntryDepth,
@@ -8436,6 +8530,17 @@ __attribute__((noinline)) static void terrain_draw_objects(void) {
        mem[$8D-$91] on every call; seed it here so a pass whose calls all bail (or compute no
        midpoint) still publishes what mem[] already held, then write it through after the loop. */
     SD_RESIDUE_SEED();
+#ifdef ROF_SUBDIV_OBJ_SEED0
+    /* Same deal one level up for SubPt slot 0 (SD_SEED0): the twin reads the far endpoint out of
+       obj1's arrays, so the five per-pair copies are gone and only the LAST visible pair's value
+       is observable.  -1 = no visible pair this pass, in which case slot 0 keeps what it held.
+       ⚠ Re-reading obj1's vector after the loop is sound because it cannot move in between: the
+       only writers of $2400/$242D/$245A/$2487+obj are project_terrain_points (which the $24B4
+       bit-4 "already projected" flag stops from running twice for one object in a pass) and
+       terrain_frame_setup (long returned); $23B5+obj is written only by frame setup.  Everything
+       else in the loop's closure — plot_object, the rasterizer — only reads them. */
+    int lastO1 = -1;
+#endif
     for (;;) {
         TDPAIR(g_tdPairs);
         obj0 = order[order_idx++];                   /* primary endpoint of the next pair */
@@ -8452,13 +8557,20 @@ __attribute__((noinline)) static void terrain_draw_objects(void) {
             uint8_t cls1 = cls[obj1];                /* companion visibility class (read once) */
             M[0x272E] = (uint8_t)order_idx;          /* scratch-save the index across the calls */
             if (!(cls1 & 0xC0)) {                    /* companion on-screen and not culled */
+#ifndef ROF_SUBDIV_OBJ_SEED0
                 ROF_MEM_VIEW const uint8_t *o1 = M + obj1; /* base for obj1's per-object arrays */
+#endif
                 TDPAIR(g_tdVisPairs);
                 if (!(cls1 & 0x10))                  /* project the companion unless already projected */
                     { TDPAIR(g_tdProjCount); PB(_pp1); project_terrain_points_core(obj1); cpu.X = obj1; OP_TIME(terrain_plot_object()); PE(_pp1, g_tdProjPlot); }
+#ifdef ROF_SUBDIV_OBJ_SEED0
+                lastO1 = obj1;                       /* subdivide reads far@0 from obj1 itself */
+                SD_SEED0_SHADOW(obj1);               /* SEED0_VERIFY only — see rof_seed0_shadow */
+#else
                 /* seed subdivide sub-point [0] with the companion's projected vector */
                 M[0x25B4]=o1[0x2400]; M[0x25D2]=o1[0x242D]; M[0x25F0]=o1[0x245A];
                 M[0x24E2]=o1[0x2487]; M[0x23E2]=o1[0x23B5];
+#endif
                 if (!(cls[obj0] & 0x10))             /* project the primary unless already projected */
                     { TDPAIR(g_tdProjCount); PB(_pp2); project_terrain_points_core(obj0); cpu.X = obj0; OP_TIME(terrain_plot_object()); PE(_pp2, g_tdProjPlot); }
                 /* Subdivide, with the primary's projected vector as the running span endpoint.
@@ -8466,7 +8578,7 @@ __attribute__((noinline)) static void terrain_draw_objects(void) {
                    prologue to load back out; terrain_subdivide_column_obj takes the object id
                    and loads them itself (see the ABI note at its definition). */
                 CL_CNT(g_clSubCalls);                /* tree entries: a pure COUNT, no bracket */
-                PB(_sd); SEGPRE(); SUBDIV_OBJ(0x00, (uint8_t)order_idx, obj0); SEGPOST(); PE(_sd, g_tdSubdiv);
+                PB(_sd); SEGPRE(); SUBDIV_OBJ(0x00, (uint8_t)order_idx, obj0, obj1); SEGPOST(); PE(_sd, g_tdSubdiv);
                 /* The oracle reloads the index from $272E here, and re-increments it when the
                    reload reads 0 — the 6502 shares that INY with the primary-culled path.  Both
                    are dropped: no callee writes $272E (it is this routine's private scratch),
@@ -8477,6 +8589,10 @@ __attribute__((noinline)) static void terrain_draw_objects(void) {
         if (order_idx == 0x90) break;
     }
     M[0x28DB] = obj0;                                /* the $28DB residue the oracle leaves */
+#ifdef ROF_SUBDIV_OBJ_SEED0
+    if (lastO1 >= 0) SD_SEED0((uint8_t)lastO1);      /* the deferred SubPt slot-0 residue */
+    SD_SEED0_CHECK();                                /* SEED0_VERIFY only */
+#endif
     SD_RESIDUE_PUBLISH();                            /* the deferred $82-$86 / $8D-$91 residue */
 }
 

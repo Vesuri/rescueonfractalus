@@ -167,6 +167,25 @@ obj/TerrainSubdivideAssembler.o : VASMFLAGS += -DROF_RASTER_SPAN_ABI
 # build routes the rasterize through the C dispatcher, where rasterEntryDepth is still passed.
 EXTRA_DEFINES += -DROF_SUBDIV_OBJ1ARG
 obj/TerrainSubdivideAssembler.o : VASMFLAGS += -DROF_SUBDIV_OBJ1ARG
+# ...and the same argument one level up: terrain_draw_objects used to copy obj1's projected vector
+# into SubPt slot 0 on EVERY visible pair (5 memory-to-memory MOVE.B, 20 cycles each, 68.1 pairs
+# an iteration = 1.2% of wall) purely so the twin could read it back.  Under OBJ_SEED0 the twin
+# takes obj1 as a second argument, its depth-0 arm reads the far endpoint out of the object arrays
+# directly, and slot 0 is materialised only when the recursion descends past depth 0 (~0.21 pushes
+# a call) plus once per pass by the caller.  Sound because NOTHING else in the linked image reads
+# those five cells — reader survey in docs/flight-perf-log.md §24.2 and the SEED note in the .s.
+# Tied to OBJ1ARG because the depth-0 arm assumes startDepth == 0, which is what OBJ1ARG means.
+# `make SUBDIV_EAGER0=1` restores the per-pair seed (for an A/B or if a new reader appears).
+ifndef SUBDIV_EAGER0
+EXTRA_DEFINES += -DROF_SUBDIV_OBJ_SEED0
+obj/TerrainSubdivideAssembler.o : VASMFLAGS += -DROF_SUBDIV_OBJ_SEED0
+# `make SEED0_VERIFY=1 PROBES=1` + amiga/seed0_verify.gdb: shadows obj1's vector at each visible
+# pair and checks the once-per-pass publish against it.  The ONLY instrument that can see a wrong
+# publish — nothing reads those cells, so no differential and no cross-build run can.
+ifdef SEED0_VERIFY
+EXTRA_DEFINES += -DROF_SEED0_VERIFY
+endif
+endif
 endif
 endif
 

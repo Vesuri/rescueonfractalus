@@ -108,21 +108,41 @@
 ;   Joins: sd_inner_hgt (enter with far.col live in d0) and sd_p2body (enter having proved
 ;   span.col < 0).  subdiv_verify: 0 mismatch / 5147 calls, and 0 / 5136 on a pinned re-run.
 ;
-; ⭐ SEED — the caller's five-byte SubPt slot 0 write, PRICED AND NOT TAKEN (log §24.1-24.2).
-; terrain_draw_objects copies obj1's projected vector into slot 0 (5 x 20 cyc mem-to-mem, 68.1
-; visible pairs an iteration = 1.2% of wall) purely for this file to read back.  It looks like the
-; §10.1 span handoff one level up.  It is NOT: $82-$86 was a register round trip, but slot 0 is a
-; stack the recursion INDEXES BY DEPTH — sd_inner, SUBMID and sd_doras all go back to memory for
-; it — so a callee that "loads the seed itself" still has to STORE it, and the transfer nets −8
-; cycles a call.  ⭐ When a "move it into the callee" candidate targets memory the callee INDEXES
-; rather than memory it READS ONCE, price the STORE, not the load.
-; The formulation that does win (~0.48%, filed not closed): duplicate the depth-0 arm against
-; a0 = mem+obj1 with the object displacements, write slot 0 LAZILY at the two descents from depth 0
-; (~0.21 pushes a call, not 100 cycles every call), and let terrain_draw_objects publish slot 0
-; once per pass.  The reader survey that licenses it came back CLEAN: across the whole linked
-; image only this file and that seed touch $25B4-$25C3 / $25D2-$25E1 / $25F0-$25FF / $24E2-$24F1 /
-; $23E2-$23F1; no lea targets within $100 below any base (so no indexed base reaches them) and
-; nothing reads a word spanning in from $25B3/$25D1/$25EF/$24E1/$23E1.
+; ⭐ SEED — the caller's five-byte SubPt slot 0 write, now the callee's job
+; (ROF_SUBDIV_OBJ_SEED0, 2026-08-12, log §24).  terrain_draw_objects used to copy obj1's projected
+; vector into slot 0 on EVERY visible pair — 5 memory-to-memory MOVE.B at 20 cycles, 68.1 pairs an
+; iteration = 1.2% of wall — purely for this file to read back.
+; ⚠ It looks like the §10.1 span handoff one level up.  It is NOT, and that distinction is the
+; whole design: $82-$86 was a register round trip, but slot 0 is a stack the recursion INDEXES BY
+; DEPTH (sd_inner, SUBMID and sd_doras all go back to memory for it).  So a callee that merely
+; "loads the seed itself" still has to STORE it and the transfer nets −8 cycles a call.
+; ⭐ When a "move it into the callee" candidate targets memory the callee INDEXES rather than
+; memory it READS ONCE, price the STORE, not the load.
+; What actually wins, and what is implemented here:
+;   * obj1 becomes a second argument, and a0 = mem + obj1 for the whole call.
+;   * a DUPLICATE depth-0 arm (sd0_*, past sd_dosub) reads the far endpoint out of the object
+;     arrays instead of slot 0.  Same instruction costs — (d16,a0) and (d16,a1) are both 12.
+;   * slot 0 is materialised LAZILY, by SEED0, on the two edges that leave depth 0 (~0.21 pushes
+;     a call instead of 1.0), and terrain_draw_objects publishes it once per pass for the last
+;     visible pair.  See THE INVARIANT at sd0_phase2.
+; Net −51.5 cycles a call ≈ −0.62% of wall (caller −96, callee +44).  `make SUBDIV_EAGER0=1`
+; restores the per-pair seed for an A/B.
+; The reader survey that licenses it: across the WHOLE linked image only this file and that seed
+; touch $25B4-$25C3 / $25D2-$25E1 / $25F0-$25FF / $24E2-$24F1 / $23E2-$23F1; no `lea` targets
+; within $100 below any base, so no indexed base can reach them; and nothing reads a word spanning
+; in from $25B3/$25D1/$25EF/$24E1/$23E1.
+; ⚠ Three instruments, because no single one covers it:
+;   * subdiv_verify — 0 mismatch / 5105 calls.  The harness seeds slot 0 around BOTH arms
+;     (SD_SEED0 in rof_native.c) so the oracle keeps its slot-0 view and all 16 entries of all 5
+;     stacks stay compared: §17.3's rule, relocate the ORACLE'S VIEW rather than narrow the compare.
+;   * make validate FN=terrain_draw_frame — 0 mem mismatch / 2000 cases.  ⚠ The HOST keeps the
+;     eager per-pair seed (its C oracle subdivide reads slot 0), so this proves the #ifdef split,
+;     not the new path.
+;   * make SEED0_VERIFY=1 + amiga/seed0_verify.gdb — 150 passes, 0 mismatch.  The ONLY instrument
+;     that can see a wrong once-per-pass publish: nothing reads those cells, so no differential
+;     can, and two builds of differing render speed fly different ground within frames (§19) so a
+;     cross-build dump cannot either.  It shadows obj1's vector AT THE TIME OF EACH PAIR and
+;     compares that to what the publish left — re-reading it at the end would be vacuous.
 
 	xdef	terrain_subdivide_column_core_asm
 	ifnd	ROF_SUBDIV_VERIFY
@@ -145,6 +165,15 @@ SDHGT_LO	equ	$25F0
 SDHGT_HI	equ	$24E2
 SDFRAC		equ	$23E2
 
+; The per-object projected-vector arrays (indexed by object id).  Slot 0 of each SubPt stack is
+; a COPY of obj1's entry in these — see SEED below.  Under ROF_SUBDIV_OBJ_SEED0 the depth-0 arm
+; reads the far endpoint from here (base a0 = mem + obj1) and the copy is materialised lazily.
+OCOL_LO		equ	$2400
+OCOL_HI		equ	$242D
+OHGT_LO		equ	$245A
+OHGT_HI		equ	$2487
+OFRAC		equ	$23B5
+
 ; ---------------------------------------------------------------------------
 ; The three helpers below used to be `bsr`-called subroutines.  Every one of them is short,
 ; leaf, and called from at most two places, so the `bsr`+`rts` pair (18 + 16 = 34 cycles) was a
@@ -157,28 +186,32 @@ SDFRAC		equ	$23E2
 ; ⚠ Local labels inside a macro MUST carry `\@` (vasm's per-expansion counter) or the second
 ; expansion redefines the first's.
 
-; SUBMID — mid = subdiv_midpoint(span, far@depth).  Reads span (d2/d3/d4), loads far from
-; (a1)[depth], writes mid (d5/d6/d7) and (on roughness) $B5/$B6.  Clobbers d0/d1.
+; SUBMID <base>,<colLo>,<colHi>,<hgtLo>,<hgtHi>,<frac> — mid = subdiv_midpoint(span, far).
+; Reads span (d2/d3/d4), loads the far endpoint from (base) at the given displacements, writes
+; mid (d5/d6/d7) and (on roughness) $B5/$B6.  Clobbers d0/d1.
 ; midCol = signed-avg = asr.w of (span.col+far.col+1); likewise midHgt; fracSum 9-bit.
+; ⚠ The base is a PARAMETER because the depth-0 arm reads far out of obj1's object arrays
+; (a0 + OCOL_*) while every deeper level reads slot `depth` of the stacks (a1 + SD*).  Same
+; instruction costs either way — (d16,An) is 12 cycles for both — so this is pure plumbing.
 SUBMID	macro
 	moveq	#0,d0
-	move.b	(SDCOL_HI,a1),d0
+	move.b	(\3,\1),d0
 	lsl.w	#8,d0
-	move.b	(SDCOL_LO,a1),d0	; d0 = far.col
+	move.b	(\2,\1),d0		; d0 = far.col
 	move.w	d2,d5
 	add.w	d0,d5
 	addq.w	#1,d5
 	asr.w	#1,d5			; d5 = mid.col
 	moveq	#0,d0
-	move.b	(SDHGT_HI,a1),d0
+	move.b	(\5,\1),d0
 	lsl.w	#8,d0
-	move.b	(SDHGT_LO,a1),d0	; d0 = far.hgt
+	move.b	(\4,\1),d0		; d0 = far.hgt
 	move.w	d3,d6
 	add.w	d0,d6
 	addq.w	#1,d6
 	asr.w	#1,d6			; d6 = mid.hgt (pre-roughness)
 	moveq	#0,d0
-	move.b	(SDFRAC,a1),d0		; far.frac
+	move.b	(\6,\1),d0		; far.frac
 	move.w	d4,d1
 	and.w	#$FF,d1			; span.frac byte
 	add.w	d0,d1
@@ -217,6 +250,20 @@ PUSHMID	macro
 	move.b	d7,(SDFRAC+1,a1)
 	endm
 
+	ifd	ROF_SUBDIV_OBJ_SEED0
+; SEED0 — materialise SubPt slot 0 from obj1's projected vector (a0 = mem + obj1, a1 = mem
+; because this only ever runs at depth 0).  These are the five memory-to-memory MOVE.B the
+; CALLER used to run on every visible pair; here they run only when the recursion is about to
+; leave depth 0, which the shape says is ~0.21 pushes a call rather than 1.0.  See SEED above.
+SEED0	macro
+	move.b	(OCOL_LO,a0),(SDCOL_LO,a1)
+	move.b	(OCOL_HI,a0),(SDCOL_HI,a1)
+	move.b	(OHGT_LO,a0),(SDHGT_LO,a1)
+	move.b	(OHGT_HI,a0),(SDHGT_HI,a1)
+	move.b	(OFRAC,a0),(SDFRAC,a1)
+	endm
+	endc
+
 ; LOADSPAN — span (d2/d3/d4) = subpt_load(depth) from slot depth (a1).  One call site (the pop).
 LOADSPAN	macro
 	moveq	#0,d2
@@ -245,10 +292,17 @@ ARG_RASENT	equ	11+FRM		; rasterEntryDepth
 ; Under ROF_SUBDIV_OBJ1ARG the object entry takes obj0 ALONE (see its header): startDepth is
 ; the literal 0 at its one call site and rasterEntryDepth is dead, so obj0 is the first arg.
 	ifd	ROF_SUBDIV_OBJ1ARG
-ARG_OBJ0	equ	7+FRM		; obj0 (the only argument)
+ARG_OBJ0	equ	7+FRM		; obj0 (the first argument)
 	else
 ARG_OBJ0	equ	15+FRM		; obj0 (the object-indexed entry only)
 	endc
+; ROF_SUBDIV_OBJ_SEED0 appends obj1.  Read as a WORD from the int-promoted slot's low half:
+; the arg is 4 big-endian bytes 00 00 00 obj1, so a `movea.w` of the last two lands obj1 in the
+; register already zero-extended (and obj1 <= $8E, so the sign extension is a no-op).
+; obj1's BYTE sits at ARG_OBJ0+4 (the next int-promoted slot's last byte); the word that holds
+; it in its low half therefore starts one lower, at ARG_OBJ0+3 — which is EVEN whenever
+; ARG_OBJ0 is 7+FRM, as it must be for a word read not to take an address error.
+ARG_OBJ1	equ	ARG_OBJ0+3	; low word of the next int-promoted slot
 
 	section	code
 
@@ -312,7 +366,7 @@ sd_p2body:				; entry for a caller that has ALREADY proved span.col < 0
 	subq.l	#1,a3			; budget--
 	cmpa.w	#-1,a3
 	beq	sd_out			; budget was 0 -> exhausted
-	SUBMID				; mid = midpoint(span, far@depth)
+	SUBMID	a1,SDCOL_LO,SDCOL_HI,SDHGT_LO,SDHGT_HI,SDFRAC  ; mid = midpoint(span, far@depth)
 	cmp.w	#$28,d5			; (int16)mid.col < $28 ?
 	bge	sd_p2push
 	move.w	d5,d2			; adopt mid as span (near midpoint)
@@ -438,6 +492,7 @@ sd_wtFarH:				; useSpanHeight = 0 (hgt = far.hgt, already in d1)
 	bpl.s	sd_doras		; shallow -> rasterize
 	bra	sd_dosub		; steep -> subdivide
 
+
 sd_doras:
 	; clamp span.hgt to a byte if >$FF (keep hi byte; lo = $00 neg / $FF pos)
 	cmp.w	#$FF,d3
@@ -456,6 +511,31 @@ sd_r_noclamp:
 	move.b	(SDHGT_HI,a1),d0
 	lsl.w	#8,d0
 	move.b	(SDHGT_LO,a1),d0	; d0 = leaf.hgt
+	ifd	ROF_SUBDIV_OBJ_SEED0
+	bra.s	sd_lh_clamp		; the depth-0 copy of the four loads sits between us and it
+	endc
+	ifd	ROF_SUBDIV_OBJ_SEED0
+	; ---- sd_doras for depth 0: the same four control-point loads, out of obj1's arrays.
+	; It sits HERE, immediately above the shared tail, so the COMMON (depth-0) path falls
+	; through and the rarer generic one pays the 10-cycle `bra.s sd_lh_clamp` above.
+sd0_doras:
+	cmp.w	#$FF,d3			; clamp span.hgt to a byte if >$FF
+	bls.s	sd0_r_noclamp
+	tst.w	d3
+	bmi.s	sd0_r_neg
+	or.w	#$00FF,d3
+	bra.s	sd0_r_noclamp
+sd0_r_neg:
+	and.w	#$FF00,d3
+sd0_r_noclamp:
+	move.b	(OCOL_LO,a0),mem+$95
+	move.b	(OFRAC,a0),mem+$F4
+	moveq	#0,d0
+	move.b	(OHGT_HI,a0),d0
+	lsl.w	#8,d0
+	move.b	(OHGT_LO,a0),d0		; d0 = leaf.hgt  -> falls into the shared tail
+	endc
+sd_lh_clamp:				; SHARED tail: clamp leaf.hgt into $EA, then rasterize
 	moveq	#0,d1
 	move.w	d0,d1			; d1 = leaf.hgt (upper word 0)
 	cmp.w	#$FF,d1
@@ -607,13 +687,119 @@ sd_dosub:
 	subq.l	#1,a3			; budget--
 	cmpa.w	#-1,a3
 	beq	sd_out
-	SUBMID				; mid = midpoint(span, far@depth)
+	SUBMID	a1,SDCOL_LO,SDCOL_HI,SDHGT_LO,SDHGT_HI,SDFRAC  ; mid = midpoint(span, far@depth)
 	PUSHMID				; store mid at depth+1
 	addq.l	#1,a2			; depth++
 	addq.l	#1,a1
 	cmpa.w	#$0F,a2
 	bcc	sd_out			; depth >= $0F
 	bra	sd_inner		; continue inner loop
+
+	ifd	ROF_SUBDIV_OBJ_SEED0
+; ===========================================================================================
+; ============ THE DEPTH-0 ARM (ROF_SUBDIV_OBJ_SEED0) =======================================
+; A second copy of phase 2 + the leaf pass whose ONLY difference is where the far endpoint
+; comes from: obj1's object arrays via a0 (= mem + obj1) instead of slot 0 of the stacks via
+; a1.  See SEED in the file header for why this exists — it lets terrain_draw_objects stop
+; copying those five bytes into slot 0 on every visible pair (5 x 20 cyc, 68.1 pairs an
+; iteration).  Per-instruction cost is identical: (d16,a0) and (d16,a1) are both 12 cycles.
+;
+; ⚠ THE INVARIANT: slot 0 is STALE (it holds the previous visible pair's obj1) for as long as
+; control is inside this arm.  Every edge that LEAVES depth 0 therefore runs SEED0 first, and
+; from then on the generic a1-based code is correct — including the pop back to depth 0, which
+; finds slot 0 already materialised.  There are exactly two such edges, sd0_p2push and
+; sd0_dosub, and both are just `SEED0` + a branch into their generic counterpart.
+;
+; ⚠ a0 must survive the whole arm.  It does without touching the movem, because a0 is
+; caller-saved in the m68k C ABI and the only call in here is the rasterize at the tail of
+; sd0_doras — after which depth is still 0, so sd_pop exits immediately and nothing reads a0.
+; SUBMID/PUSHMID clobber only d0/d1.
+;
+; ⚠ It lives past sd_dosub, not next to the generic cascade: dropping 340 bytes in front of
+; sd_doras put it out of `.s` reach of all three of the generic width test's exits (vasm's
+; "branch destination out of range" is the normal feedback for a code-size change under
+; -no-opt).  The price is that this copy's own three branches to sd0_doras — which has to sit
+; immediately above the shared tail so the COMMON depth-0 path falls through — are word-sized,
+; ~2 cycles a call.
+; Nothing here may fall through into the generic blocks: every exit is explicit.
+; ===========================================================================================
+sd0_phase2:
+	tst.w	d2			; span.col & $8000 ?
+	bpl	sd0_phase3		; non-negative -> start leaf pass
+sd0_p2body:				; entry for a caller that has ALREADY proved span.col < 0
+	subq.l	#1,a3			; budget--
+	cmpa.w	#-1,a3
+	beq	sd_out			; budget was 0 -> exhausted (slot 0 never needed)
+	SUBMID	a0,OCOL_LO,OCOL_HI,OHGT_LO,OHGT_HI,OFRAC
+	cmp.w	#$28,d5			; (int16)mid.col < $28 ?
+	bge	sd0_p2push
+	move.w	d5,d2			; adopt mid as span (near midpoint) — still depth 0
+	move.w	d6,d3
+	move.b	d7,d4
+	bra	sd0_phase2
+sd0_p2push:
+	SEED0				; leaving depth 0 -> materialise slot 0, then go generic
+	bra	sd_p2push
+sd0_dosubT:
+	bra	sd0_dosub
+
+	; ---- cold: far.hgt's high byte is non-zero.  Placed before sd0_inner for the same
+	; `.s`-reach reason the generic sd_fhWide is (see there). ----
+sd0_fhWide:
+	bmi.s	sd0_fhNeg
+	tst.w	d3			; span.hgt & $8000 ?
+	bmi	sd0_wtSpanH		; spanLOW -> width test (span height)
+	cmp.w	#$6C,d3
+	bcs	sd0_wtSpanH		; spanLOW -> width test (span height)
+	bra	sd0_doras		; spanHIGH -> rasterize
+sd0_fhNeg:
+	tst.w	d3			; span.hgt & $8000 ?
+	bmi	sd_pop			; spanLOW -> skip (depth 0 => sd_pop exits)
+	cmp.w	#$6C,d3
+	bcs	sd_pop			; spanLOW -> skip
+	lsl.w	#8,d1
+	move.b	(OHGT_LO,a0),d1		; d1 = far.hgt, assembled at last
+	bra	sd0_wtFarH		; -> width test (far height)
+
+sd0_phase3:
+	cmp.w	#$D8,d2			; span.col >= $D8 ? (unsigned — subsumes the sign test)
+	bcc	sd_out
+sd0_inner:
+	moveq	#0,d0
+	move.b	(OCOL_HI,a0),d0		; far.col hi
+	bne.s	sd0_dosubT		; far.col > $FF -> subdivide (SUBMID reloads it there)
+	move.b	(OCOL_LO,a0),d0		; d0 = far.col (high byte known 0)
+sd0_inner_hgt:				; entry with d0.w = far.col ALREADY loaded, high byte 0
+	moveq	#0,d1
+	move.b	(OHGT_HI,a0),d1		; far.hgt hi.  Z = (hi == 0), N = (far.hgt < 0)
+	bne.s	sd0_fhWide		; > $FF or negative -> the cold block
+	move.b	(OHGT_LO,a0),d1		; d1 = far.hgt, known 0..$FF (hi is 0, so no shift)
+	tst.w	d3			; span.hgt & $8000 ?
+	bmi.s	sd0_fhLoSpanLow
+	cmp.w	#$6C,d3			; span.hgt < $6C ?
+	bcs.s	sd0_fhLoSpanLow
+	cmp.w	#$6C,d1			; spanHIGH: default rasterize
+	bcs.s	sd0_wtFarH		; far.hgt < $6C -> width test (far height)
+	bra	sd0_doras		; else rasterize (word: sd0_doras sits up by the shared tail)
+sd0_fhLoSpanLow:
+	cmp.w	#$6C,d1			; spanLOW: default skip
+	bcs	sd_pop			; far.hgt < $6C -> skip
+sd0_wtSpanH:				; useSpanHeight = 1
+	move.w	d3,d1			; hgt = span.hgt
+sd0_wtFarH:				; useSpanHeight = 0 (hgt = far.hgt, already in d1)
+	sub.w	d2,d0			; far.col - span.col (d0 was far.col)
+	and.w	#$FF,d0			; width (byte)
+	cmp.w	#$14,d0
+	bcs	sd0_doras		; width < $14 -> rasterize
+	lsr.w	#2,d0			; q = width>>2
+	move.b	d0,mem+$B5
+	sub.w	d0,d1			; hgt - q
+	tst.w	d1
+	bpl	sd0_doras		; shallow -> rasterize
+sd0_dosub:
+	SEED0				; leaving depth 0 -> materialise slot 0, then go generic
+	bra	sd_dosub
+	endc
 
 ; ---------------------------------------------------------------------------
 ; terrain_subdivide_column_obj — the OBJECT-INDEXED entry.
@@ -644,6 +830,12 @@ sd_dosub:
 ; subdivide calls the bail fires on 137 = 1.1%, so it costs ~1 cycle/call amortised.
 ;
 ; a0 is free here (the m68k C ABI's scratch set is d0/d1/a0/a1) and is dead after the guard.
+;
+; ⭐ ROF_SUBDIV_OBJ_SEED0 (2026-08-12, log §24.2) adds a SECOND argument, obj1 — the companion
+; endpoint, i.e. whose projected vector the caller used to copy into SubPt slot 0.  a0 is
+; repointed at `mem + obj1` once the span is loaded and stays there for the whole call, which is
+; what lets the depth-0 arm read the far endpoint without slot 0 existing yet.  See SEED in the
+; file header, and THE INVARIANT at sd0_phase2.
 	ifd	ROF_SUBDIV_VERIFY
 	xdef	terrain_subdivide_column_obj_asm
 	else
@@ -695,6 +887,26 @@ terrain_subdivide_column_obj_asm:
 	move.b	($23B5,a0),d4
 	; mid ($8D-$91) deliberately NOT loaded — same reason as the core entry (see there).
 
+	ifd	ROF_SUBDIV_OBJ_SEED0
+	; obj0's span is in registers now, so a0 is free: repoint it at obj1's arrays, where the
+	; depth-0 far endpoint lives.  20 cycles, and it replaces the caller's 12-cycle `lea` for
+	; the same pointer as well as its five 20-cycle copies.
+	movea.w	(ARG_OBJ1,sp),a0	; obj1, zero-extended by the word read
+	adda.l	a1,a0			; a0 = mem + obj1   (a1 == mem: depth is 0 here)
+
+	; --- entry guard: $B5 = (far0.col>>8)^$80; bail if span.col >= far0.col
+	; far0.col comes out of obj1's arrays, not slot 0.  The core entry's `move.w` trick is not
+	; available here — OCOL_HI is odd, so `mem + $242D + obj1` is only even for odd obj1 and a
+	; word read would fault on half the objects — but the branch on `hi == 0` is CHEAPER than
+	; the trick anyway on the 85% where it holds (sd_inner measures far.col hi != 0 at 14.5%):
+	; 52 cycles against 56, and $B5 is then the constant $80.
+	moveq	#0,d0
+	move.b	(OCOL_HI,a0),d0		; far0.col hi.  Z = (hi == 0)
+	bne.s	sd_obj_hiNZ		; (out of line past sd_obj_slow, so the 85% falls through)
+	move.b	(OCOL_LO,a0),d0		; d0.w = far0.col (hi is 0)
+	move.b	#$80,($B5,a1)		; $B5 = hi ^ $80 = $80
+sd_obj_guarded:
+	else
 	; --- entry guard: $B5 = (far0.col>>8)^$80; bail if span.col >= far0.col
 	; (word read for the high byte instead of `lsl.w #8` — see the core entry's guard)
 	ifd	ROF_SUBDIV_OBJ1ARG
@@ -712,6 +924,7 @@ terrain_subdivide_column_obj_asm:
 	move.b	d1,mem+$B5
 	move.w	mem+SDCOL_HI,d0		; d0 bits 8-15 = far0.col hi
 	move.b	mem+SDCOL_LO,d0		; d0.w = far0.col
+	endc
 	endc
 	cmp.w	d0,d2			; span.col - far0.col (signed)
 	blt.s	sd_obj_go		; span.col < far0.col -> subdivide
@@ -742,15 +955,38 @@ sd_obj_go:
 	; already in d0.  46 cycles against 80, on the ~80% of calls that never enter phase 2.
 	; ⚠ d0's upper WORD is dirty (the guard's `move.w`); every consumer past sd_inner_hgt
 	; reads it as .w or .b only — same precondition the guard already documents.
+	; ⚠ Under ROF_SUBDIV_OBJ_SEED0 all three targets are the DEPTH-0 arm's: slot 0 does not
+	; hold obj1 yet, so the generic blocks would read the previous pair's far endpoint.
 	cmp.w	#$D8,d2			; span.col < $D8 UNSIGNED ?
 	bcc.s	sd_obj_slow		; no -> negative, or phase 3's own exit
 	cmp.w	#$FF,d0			; far.col > $FF ?  (== sd_inner's `far.col hi != 0`)
+	ifd	ROF_SUBDIV_OBJ_SEED0
+	bhi	sd0_dosub		; yes -> subdivide (SEED0 there, then generic)
+	bra	sd0_inner_hgt		; d0.w = far.col, high byte known 0
+	else
 	bhi	sd_dosub		; yes -> subdivide (SUBMID reloads far there)
 	bra	sd_inner_hgt		; d0.w = far.col, high byte known 0
+	endc
 sd_obj_slow:
 	tst.w	d2			; span.col & $8000 ?
+	ifd	ROF_SUBDIV_OBJ_SEED0
+	bmi	sd0_p2body		; negative -> the depth-0 descend loop (past its own re-test)
+	else
 	bmi	sd_p2body		; negative -> phase 2's descend loop (past its own re-test)
+	endc
 	bra	sd_out			; >= $D8 and positive -> phase 3's exit
+
+	ifd	ROF_SUBDIV_OBJ_SEED0
+	; far0.col's high byte is non-zero — 14.5% by sd_inner's count.  Out of line so the common
+	; path falls straight through the guard instead of paying a 10-cycle `bra` over this.
+sd_obj_hiNZ:
+	move.b	d0,d1
+	eori.b	#$80,d1
+	move.b	d1,($B5,a1)
+	lsl.w	#8,d0
+	move.b	(OCOL_LO,a0),d0		; d0.w = far0.col
+	bra	sd_obj_guarded
+	endc
 
 ; (load_far, submid, push_mid and load_span are all gone as CALLABLE routines: each was inlined
 ; at its call sites — load_far directly into sd_inner, the other three as the SUBMID / PUSHMID /

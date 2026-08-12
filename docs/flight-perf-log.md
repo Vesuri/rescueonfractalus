@@ -2315,9 +2315,11 @@ method, widened for this range):
   them** (the hole a displacement grep leaves — §17.1's lesson 1).
 - No word/long access at `$25B3 / $25D1 / $25EF / $24E1 / $23E1` spans in from below.
 
-So the job is legal. It is filed, not closed: **~0.48%, a duplicated leaf arm in the most
-layout-sensitive asm file in the tree, plus the `subv_verify` seed/publish surgery §17.3
-describes.** Left for the user to schedule.
+So the job is legal. **SHIPPED the same day (user's call) — §24.5.** It re-priced UP once it was
+written, to **−51.5 cyc/call ≈ −0.62% of wall**, because two of §24.1's costs turned out not to
+exist: the caller also loses the 12-cycle `lea` for the `o1` base it no longer needs, and the
+guard's `hi == 0` fast path is 4 cycles CHEAPER than the word-read trick it replaces (85% of
+calls), where the naive `lsl.w #8` would have been 10 dearer.
 
 ### 24.3 What DID ship — the object entry's guard (38 cyc/call, ~0.45%)
 
@@ -2389,3 +2391,81 @@ sub-1% change.
 in the same direction, for the same documented reason. **At this point in the project a real win of
 this size is unfalsifiable by every end-to-end instrument, and the disassembly is the instrument.**
 Do not chase the FPS row for changes under ~2%; count the cycles and prove correctness.
+
+### 24.5 The seed change as built (ROF_SUBDIV_OBJ_SEED0)
+
+`terrain_subdivide_column_obj` takes obj1 as a second argument and keeps `a0 = mem + obj1` for the
+whole call; a duplicated **depth-0 arm** (`sd0_*`, parked past `sd_dosub`) reads the far endpoint
+out of `$2400/$242D/$245A/$2487/$23B5` instead of slot 0. `(d16,a0)` and `(d16,a1)` are both 12
+cycles, so the copy is pure plumbing — the win is that slot 0 need not exist yet.
+
+**THE INVARIANT that makes it small:** slot 0 is stale for as long as control is inside the arm, so
+every edge that LEAVES depth 0 runs `SEED0` first and then branches into the generic a1-based code.
+There are exactly two (`sd0_p2push`, `sd0_dosub`), and the pop back to depth 0 needs nothing because
+it finds slot 0 already materialised. Measured shape says **0.21 pushes a call**, so the five copies
+run about a fifth as often as before instead of once per pair. `terrain_draw_objects` publishes slot
+0 once per pass for the last visible pair.
+
+| | cyc/call | |
+|---|---|---|
+| caller: 5 mem-to-mem `MOVE.B` gone | −100 | |
+| caller: the `lea (0,a3,dN.l)` for the `o1` base gone with them | −12 | it existed only to address the copies |
+| caller: `lastO1 = obj1` | +4 | GCC keeps it a register move |
+| caller: obj1 pushed (`addq.l #8,sp` costs the same as `#4`) | +12 | |
+| callee: `movea.w (ARG_OBJ1,sp),a0` + `adda.l a1,a0` | +20 | no `movem` change — a0 is ABI scratch and dead after `sd0_doras`' loads |
+| callee: guard, mixed 85/15 | +2 | the `hi == 0` arm is 52 cyc against the old 56; the cold one 94 |
+| callee: `SEED0` × 0.21 pushes | +21 | |
+| callee: three word branches to `sd0_doras` | +1 | it must sit above the shared tail so the COMMON path falls through |
+| **net** | **−51.5** | **× 68.1 calls/it = −3507 cyc/it = −0.62% of wall** |
+
+Two things worth keeping:
+
+- ⭐ **a0 needs no `movem` slot.** It is caller-saved in the m68k C ABI, and the only call inside the
+  arm is the rasterize at the tail of `sd0_doras` — after which depth is still 0, so `sd_pop` exits
+  immediately and nothing reads a0 again. Adding a4 to the `movem` pair would have cost 16 cyc/call,
+  a third of the win.
+- ⚠ **`movea.w (ARG_OBJ1,sp)` needs the arg's ODD byte offset minus one.** obj1's byte sits at
+  `ARG_OBJ0+4`; the word holding it in its low half starts at `ARG_OBJ0+3` = 42, which is even. The
+  first version used +4 and would have taken an address error on the first call — caught by reading
+  the disassembly, not by any test.
+
+**Layout:** dropping ~340 bytes of new arm in front of `sd_doras` put it out of `.s` reach of all
+three of the generic width test's exits. vasm's "branch destination out of range" is the normal
+feedback for a code-size change under `-no-opt` (not a mistake), and the fix was to park the arm past
+`sd_dosub` where this file already keeps its big blocks, paying ~2 cyc/call in word branches.
+
+### 24.6 Proof — and the third instrument the change forced into existence
+
+- **`make VERIFY=1 NO_RASTER_VERIFY=1 PROBES=1` + `subdiv_verify.gdb`: 0 mismatch / 5105 calls.**
+  ⭐ The harness now runs `SD_SEED0(obj1)` around BOTH arms, so the C oracle keeps the slot-0 view it
+  reads from and all 16 entries of all 5 stacks stay in the compare window. That is §17.3's rule
+  again — **relocate the ORACLE'S VIEW of moved state, never narrow the comparison** — and here it
+  also makes the differential test exactly what changed: that reading the far endpoint out of obj1's
+  arrays gives what reading slot 0 gave.
+- **`make validate FN=terrain_draw_frame`: 0 mem mismatch / 2000 cases.** ⚠ The host keeps the eager
+  per-pair seed (its C oracle subdivide reads slot 0), so this proves the `#ifdef` split is clean,
+  **not** the new path. Worth being explicit about: the host harness cannot see this change at all.
+- ⭐⭐ **`make SEED0_VERIFY=1 PROBES=1` + `amiga/seed0_verify.gdb`: 150 passes, 0 mismatch.** The
+  once-per-pass publish had NO instrument, and three obvious ones are all invalid:
+  - a differential cannot see it — **nothing in the image reads those five cells** (§24.2's survey),
+    which is precisely why the deferral is legal;
+  - a cross-build dump of the cells cannot either — tried it, and the two builds' vbi stamps
+    diverge by the third flight frame, so the cells differ *legitimately* (§19);
+  - re-reading obj1's vector at the end and comparing would be **vacuous** — that is what the
+    publish itself does ([[feedback-native-twin-validation-gaps]] §6).
+
+  What works is shadowing the vector **at the time of each pair** — which is what the eager seed
+  captured — and comparing the shadow to what the publish left. That tests the actual claim: that
+  obj1's projected vector cannot move between its pair and the end of the pass, because its only
+  writers are `project_terrain_points` (gated by the `$24B4` bit-4 already-projected flag, so it
+  cannot run twice for one object in a pass) and `terrain_frame_setup` (long returned); everything
+  else in the loop's closure only reads them.
+  ⭐ **Generalises: when you defer a write to once-per-pass, the thing to test is not the value but
+  the STABILITY ARGUMENT — and only a shadow taken at the original write site can test that.**
+
+**Framerate**, in-session A/B, both arms rebuilt, 15/15 segments valid, standard window:
+**24.633 (ad980d5) → 24.842 (+0.85%)**. Right sign, right rough size against the −0.62% static
+count — but still inside the ±1.2% flight-neutral band, so the static count remains the claim.
+⚠ And ad980d5 itself read 24.683 as the previous A/B's arm B and 24.633 as this one's baseline:
+**0.2% of wander on the same commit and flags**, which is why only same-session arms are ever
+compared here.
