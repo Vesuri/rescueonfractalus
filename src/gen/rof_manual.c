@@ -4,6 +4,7 @@
 #include "../cpu/bus.h"
 #include "../platform/platform_c.h"
 #include "rof_decl.h"
+#include "rof_manual.h"
 #include <string.h>
 
 /* ------------------------------------------------------------------ */
@@ -260,6 +261,19 @@ void screen_page_swap(void) {
 /* stripes, the $2603 channel table) the renderer already reads.        */
 /* ------------------------------------------------------------------ */
 
+/* Station-image dirty rectangles — see the block comment in rof_manual.h. */
+RofStationDirty g_stationDirty[ROF_STATION_DIRTY_MAX];
+unsigned char   g_stationDirtyCount = 0;
+unsigned char   g_stationDirtyFull  = 0;
+
+void rof_station_dirty(unsigned short addr, unsigned char cols, unsigned char rows) {
+    if (g_stationDirtyCount >= ROF_STATION_DIRTY_MAX) { g_stationDirtyFull = 1; return; }
+    g_stationDirty[g_stationDirtyCount].addr = addr;
+    g_stationDirty[g_stationDirtyCount].cols = cols;
+    g_stationDirty[g_stationDirtyCount].rows = rows;
+    g_stationDirtyCount++;
+}
+
 /* display_scroll ($1CF7): one step of the station cinematic's scroll — advance the
    display list's moving window and paint the two PMG elements that ride it.
    Folded in as a private helper — its only caller is station_anim_frame.
@@ -374,6 +388,7 @@ void station_sub_1EB4(void) {
         idx = mem[0x009F]; dest = 0x077A;
     }
     uint16_t src = (uint16_t)mem[0x231B + idx] | ((uint16_t)mem[0x2313 + idx] << 8);
+    rof_station_dirty(dest, 1, 0x66);           /* one byte per row, 102 rows, stride 40 */
     int i;
     for (i = 0; i < 0x66; i++, dest += 0x28) mem[dest] = mem[src + i];
 }
@@ -401,6 +416,7 @@ static uint8_t station_chan_step(uint8_t x) {
     uint16_t dest    = (uint16_t)mem[0x2610 + x] | ((uint16_t)mem[0x2611 + x] << 8);
     uint8_t  rowSize  = mem[0x2607 + x];
     uint8_t  rowCount = mem[0x2608 + x];
+    rof_station_dirty(dest, rowSize, rowCount);  /* rowSize bytes x rowCount rows, stride 40 */
     uint8_t  row, b;
     for (row = 0; row < rowCount; row++) {
         for (b = 0; b < rowSize; b++) mem[dest + b] = mem[src + b];

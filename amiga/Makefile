@@ -50,6 +50,7 @@ CXX_SRCS := \
     $(AMIGA_SRC)/EmptyCopperList.cpp \
     $(AMIGA_SRC)/FlightCopperList.cpp \
     $(AMIGA_SRC)/GCCRuntime.cpp \
+    $(AMIGA_SRC)/Gtia9CopperList.cpp \
     $(AMIGA_SRC)/PlanetCopperList.cpp \
     $(AMIGA_SRC)/PlatformAmiga.cpp \
     $(AMIGA_SRC)/RescueOnFractalus.cpp \

@@ -10,6 +10,7 @@
 #include "TunnelCopperList.h"
 #include "EmptyCopperList.h"
 #include "TitleScreenCopperList.h"
+#include "Gtia9CopperList.h"
 
 // 2-bitplane attract screen: one BPLCON0 mode for the whole frame, Copper
 // switches the 4-colour palette (and bitmap pointer) at each region boundary,
@@ -47,6 +48,11 @@ public:
     // vblank wait and the next terrain compute overlaps the pending flip's vblank.
     bool consumeDeferredFlip() { bool d = flightFlipDeferred; flightFlipDeferred = false; return d; }
     void starVblankUpdate();     // run from the INTB_VERTB ISR at vblank: zero-copy starfield scroll
+    void stationVblankUpdate();  // run from the INTB_VERTB ISR at vblank (scene 2, the station
+                                 // cinematic): move the tall field bitmap's four bitplane pointers to
+                                 // the display list's current window row, and refresh the PMG sprites.
+                                 // ⚠ MUST be the VBI, not render(): a torn bitplane pointer garbages
+                                 // the whole frame.  No-op unless the station copper is live.
     void doorScrollVblankUpdate(); // run from the INTB_VERTB ISR at vblank: level-select "elevator"
                                  // door scroll (post-mother-ship SELECT).  While dl_src_index ($008B)
                                  // is non-zero (boot_standby_launch_driver's level-select scroll spins
@@ -90,6 +96,7 @@ private:
     bool rsFlight   = false;   // $004A != 0           — in-game flight (palette/probe/profiler)
     bool rsViewport = false;   // stars || flight      — mode-D viewport band active
     bool rsTitle    = false;   // VVBLKI $53CC && title active — attract/level-select Title Screen
+    bool rsStation  = false;   // boot scene 2 (VVBLKI $1B30 + g_bootScene) — station cinematic
     bool rsLaunched = false;   // doors armed || viewport — door-gap g2 (doors..flight)
     bool rsBoostReturn   = false;  // $52D7 && $003A==$FF && boostCineLatch — BOOSTERS return reverse cinematic
     bool rsBoostViewport = false;  // rsBoostReturn && (reverse-ring active || pre-ring) — boost stars/tunnel
@@ -378,6 +385,34 @@ private:
     bool titleScreenCopperInstalled = false;
     void updateTitleScreenCopper(bool force);  // poke color01-04 = COLPF0-3 (cycling)
     uint16_t tsPf0 = 0xFFFF, tsPf1 = 0xFFFF, tsPf2 = 0xFFFF, tsPf3 = 0xFFFF;  // last-poked
+    // ---- the two BOOT scenes: Logo (INITAD $5000) and Station cinematic (INITAD $1A97) --------
+    // Both are ANTIC mode F under GTIA mode 9 = 4 bitplanes of one hue's 16 luminances, so they
+    // share one field bitmap, one copper-list class and one decoder (see Gtia9CopperList).  The
+    // bitmap is sized for the STATION, the larger of the two: the Atari scrolls by walking its
+    // display list's JMP operand down 340 mode-F entries, and we decode ALL of them ONCE into one
+    // tall 320x340 bitmap (54 KB chip) and scroll by moving the four bitplane pointers, which
+    // makes the scroll free.  The logo uses rows 0..61 of the same buffer.
+    // Per frame only the animated bytes come back: the dirty rectangles station_sub_1EB4 /
+    // station_chan_step record (< 200 bytes, rof_manual.h) and, while station_star_fade_in is
+    // still running, the ~30 star rows it brightens.  Allocated in initialize() and freed in
+    // shutdown() like every other buffer — but only when the boot scenes are actually built in,
+    // so `make SKIPBOOT=1` (which PROBES/FPSCOUNT imply) keeps its chip footprint unchanged.
+    Bitmap*          bootFieldBitmap = nullptr;
+    Gtia9CopperList* bootFieldCopper = nullptr;
+    bool             bootFieldCopperInstalled = false;   // is it the live list? (stationVblankUpdate's gate)
+    unsigned char    bootFieldScene = 0;                 // which scene the live LAYOUT was built for
+    void renderBootScene();                        // the whole per-frame render for scenes 1 and 2
+    void decodeStationField();                     // all 340 display-list rows (once, at entry)
+    void decodeStationDirty();                     // consume the recorded dirty rectangles
+    void decodeStationStars();                     // re-decode the star rows (during the fade-in)
+    // Which bitmap rows are STAR rows — i.e. whose display-list LMS lands in the range
+    // station_star_fade_in walks ($2CB8..$3168; it seeds $90/$91 = $2CB8 and stops at $3168).
+    // Collected during decodeStationField so the fade-in re-decode touches nothing else.
+    // display_list_build caps them at 30 (encounter_count = $1E); sized with headroom.
+    unsigned short stationStarRow[40] = {};
+    unsigned char  stationStarRows = 0;
+    unsigned short stationWindowRow = 0xFFFF;      // last row published to the copper
+
     // Blank black list shown until g_standbyRevealReady latches (boot/standby build in
     // progress) — switched to the real lists in renderFrame once ready.
     EmptyCopperList* emptyCopper = nullptr;

@@ -2265,6 +2265,13 @@ static uint32_t vbiHandler()
     // so ordering between them is free.)
     if (s_scene) s_scene->starVblankUpdate();
 
+    // Boot scene 2 (the station cinematic): move the tall GTIA-9 field's four bitplane pointers to
+    // the display list's current window row — the whole scroll.  Same reason it lives at the top of
+    // the vblank ISR as the two above: the copper reads BPLxPT for the first display line, so a
+    // pointer written from the main loop can be torn and garbage the entire frame.  No-op unless
+    // the station copper is live.
+    if (s_scene) s_scene->stationVblankUpdate();
+
     if (s_scene) s_scene->flightVblankSwap();
 
     // Level-select "elevator" door scroll (post-mother-ship SELECT): repoint the standby terrain

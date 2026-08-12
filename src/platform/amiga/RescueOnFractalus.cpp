@@ -30,6 +30,7 @@
 #include "framework/Sprite.h"
 #include "RescueOnFractalus.h"
 #include "../../rof_boot.h"       // staged INITAD boot chain (Logo / Station) + g_bootScene
+#include "../../gen/rof_manual.h" // g_stationDirty — the station image's dirty rectangles
 #include "PlatformAmiga.h"
 #include "../../gen/mem.h"           // MEM_<name> named Atari memory offsets
 #include "FlightProf.h"   // per-frame VBI-count profiler (g_flightProf / flight_vbi_tick)
@@ -812,6 +813,32 @@ static const uint8_t kNibbleColour[16] = {
     0,                   // 8   → COLBK  → pen0 (green background = color00)
     0, 0, 0, 0, 0, 0, 0  // 9-15 → bg
 };
+//   GTIA mode-9 (the boot scenes: Logo $60A3 and Station $0600 — ANTIC mode F under
+//   PRIOR bits 7:6 = 01): byte = 2 nibbles, each nibble a 4-bit LUMINANCE of the COLBK hue
+//   covering 4 lores px.  Unlike the mode-10 tables above there is no colour remap at all —
+//   nibble n IS pen n — so it needs four planes, and the palette carries the whole mapping
+//   (StationCopperList's kGtia9Pal0).  One source byte → one byte in each plane.
+static uint8_t kGtia9P[4][256];
+
+// ---- boot scene 2 (the station cinematic) — the Atari addresses its decode walks -------------
+// The display list display_list_build ($1C40) builds at $B800: 340 three-byte mode-F entries —
+// 122 image rows (LMS $0600 + 40n) then 218 star/blank rows (LMS $2CB8 + 40k, or the shared
+// blank row $2C90 — 1 in 8 by RANDOM, capped at 30 by encounter_count = $1E).
+static const uint16_t kStationDL      = 0xB800u;
+static const uint16_t kStationDLRows  = 340u;
+static const uint16_t kStationImg     = 0x0600u;   // the 122-row image, stride 40
+static const uint16_t kStationImgEnd  = (uint16_t)(kStationImg + 122u * 40u);   // $1930
+// The star rows station_star_fade_in ($1E79) brightens: it seeds its pointer $90/$91 = $2CB8 and
+// walks byte by byte until it reaches $3168 (its `CMP #$68` / `CMP #$31` exit).
+static const uint16_t kStationStarLo  = 0x2CB8u;
+static const uint16_t kStationStarHi  = 0x3168u;
+// Screen geometry of each boot scene's display list: leading blank scanlines (its `$70` entries)
+// and mode-F row count.  Station: one $70 + 192 displayed rows ($0240/3, the window the moving
+// JVB holds).  Logo: eight $70 + all 62 of its rows.
+static const uint16_t kStationTopLines = 8;
+static const uint16_t kStationRows     = 192;
+static const uint16_t kLogoTopLines    = 64;
+static const uint16_t kLogoRows        = 62;
 
 #include "assets/terrain_pal.h"
 #include "assets/atari_pal.h"
@@ -2485,6 +2512,18 @@ void RescueOnFractalus::initialize()
     if (titleScreenCopper && titleScreenCopper->data())
         titleScreenCopper->buildLayout(*titleScreenBitmap, *nullSprite);
 
+#ifndef ROF_SKIP_BOOT_SCENES
+    // Boot scenes 1 + 2 (Logo, Station cinematic): one tall 320x340 4bp GTIA-9 field bitmap
+    // (54 KB chip) and one copper list, shared — the station decodes its whole 340-entry display
+    // list into it and scrolls by moving the bitplane pointers; the logo uses rows 0..61.  The
+    // layout is (re)built at each scene's entry in renderFrame, since the two differ in leading
+    // blank lines, row count and palette hue.  Compiled out entirely by `make SKIPBOOT=1` (which
+    // PROBES/FPSCOUNT imply), so the perf builds' chip footprint is unchanged.
+    bootFieldBitmap = Bitmap::allocate(kW, kStationDLRows, 4, /*interleaved*/true);
+    bootFieldCopper = new Gtia9CopperList();
+    if (bootFieldCopper && !bootFieldCopper->data()) { delete bootFieldCopper; bootFieldCopper = nullptr; }
+#endif
+
 #ifdef ROF_FLIGHT_PROBE
     // BPLCON2 audit.  BPLCON2 (sprite-vs-playfield priority) is WRITE-ONLY hardware that persists
     // across copper lists, so a list that emits none inherits whatever ran before it — which is how
@@ -2583,6 +2622,10 @@ void RescueOnFractalus::initialize()
         uint8_t ch = kNibbleColour[ph], cl = kNibbleColour[pl];
         kDoorP1[s] = (uint8_t)(((ch & 1) ? 0xF0u : 0u) | ((cl & 1) ? 0x0Fu : 0u));
         kDoorP2[s] = (uint8_t)(((ch & 2) ? 0xF0u : 0u) | ((cl & 2) ? 0x0Fu : 0u));
+        // GTIA-9 (the boot scenes): nibble IS the pen, so plane k simply takes bit k of each
+        // nibble, spread over that nibble's 4 lores px.  No remap — see kGtia9P.
+        for (int p = 0; p < 4; p++)
+            kGtia9P[p][s] = (uint8_t)(((ph >> p) & 1 ? 0xF0u : 0u) | ((pl >> p) & 1 ? 0x0Fu : 0u));
     }
 
     PlatformAmiga::audioInit();   // init Paula audio DMA (mem[] already loaded by run())
@@ -4111,6 +4154,20 @@ void RescueOnFractalus::renderFrame()
     extern volatile unsigned long g_renderFrameCount; g_renderFrameCount++;
 #endif
     updateBoostCinematicLatch();   // must precede every rsBoostReturn / boostReturnRF read below
+
+    // ---- boot scenes 1 + 2 (Logo, Station cinematic) ------------------------------------------
+    // FIRST, ahead of the black-until-ready hold below: these play while g_standbyRevealReady is
+    // still 0 (it only latches when boot_standby_launch_driver has built the Standby), so the hold
+    // would paint both of them solid black.  They are also completely self-contained — one GTIA-9
+    // field bitmap and one copper list, no cockpit/title/viewport machinery — so they return
+    // straight from here rather than falling through the whole per-frame body.
+    if (g_bootScene != ROF_BOOTSCENE_NONE) { renderBootScene(); return; }
+    // Past the boot scenes: this frame belongs to some other list (the black hold below installs
+    // the EmptyCopperList, since the boot install cleared emptyCopperInstalled), so drop the boot
+    // field's claim on the display — which is also stationVblankUpdate's guard.
+    bootFieldCopperInstalled = false;
+    bootFieldScene = ROF_BOOTSCENE_NONE;
+
     // Black-until-ready: while the boot/standby build is still in progress, keep the blank
     // EmptyCopperList on screen and do no rendering — the bitmaps are mid-build and the real
     // lists would show garbage.  When g_standbyRevealReady latches, fall through and the copper
@@ -5298,6 +5355,166 @@ void RescueOnFractalus::updateTunnelCopper(TunnelCopperList* tunnelCopper)
     }
 }
 
+// ============================================================================
+//  BOOT SCENES 1 + 2 — the GTIA-9 field decode (Logo / Station cinematic)
+// ============================================================================
+// Both scenes are ANTIC mode F under GTIA mode 9: a 40-byte row is 80 fat pixels, each a 4-bit
+// LUMINANCE of the one COLBK hue.  On the Amiga that is 4 bitplanes; nibble n IS pen n, so the
+// whole mapping lives in the palette (Gtia9CopperList) and the decode is four table lookups per
+// source byte (kGtia9P).  One field bitmap and one copper list serve both scenes — the station
+// is the larger, at 340 rows (it decodes its whole display list once and scrolls by moving the
+// bitplane pointers); the logo uses rows 0..61.  See docs/logo-station-plan.md.
+
+// gtia9Row(): decode `cols` GTIA-9 source bytes into ONE interleaved bitmap row, given a pointer
+// to that row's plane-1 byte.  Pure pointer walk — one source read plus four d16(An) stores per
+// byte, no index arithmetic and no per-byte multiply (the row-offset mul-tables are for
+// NON-sequential row access; a sequential loop walks a pointer instead).  The four plane bytes of
+// one interleaved row sit 40 apart, which is exactly d16(An)'s 12-cycle form.
+static inline void gtia9Row(uint8_t* dst, const volatile uint8_t* src, unsigned cols)
+{
+    const uint8_t* t0 = kGtia9P[0];
+    const uint8_t* t1 = kGtia9P[1];
+    const uint8_t* t2 = kGtia9P[2];
+    const uint8_t* t3 = kGtia9P[3];
+    while (cols--) {
+        const uint8_t b = *src++;
+        dst[0]   = t0[b];
+        dst[40]  = t1[b];
+        dst[80]  = t2[b];
+        dst[120] = t3[b];
+        dst++;
+    }
+}
+
+// decodeStationField(): decode ALL 340 display-list rows once, and note which of them are STAR
+// rows (their LMS points into the range station_star_fade_in walks) so the fade-in's per-frame
+// re-decode touches nothing else.  ~14k source bytes ≈ 70 ms — a one-off, and it runs during
+// station_init's own one-frame sync spin ($19CD) with the screen still black.
+// Both the display-list cursor (+3 per entry) and the destination row (+160) are walked.
+void RescueOnFractalus::decodeStationField()
+{
+    if (!bootFieldBitmap) return;
+    stationStarRows = 0;
+    const volatile uint8_t* e = mem + kStationDL;              // display-list cursor
+    uint8_t*              dst = (uint8_t*)bootFieldBitmap->data;
+    for (unsigned r = 0; r < kStationDLRows; r++, e += 3, dst += 160) {
+        if (e[0] != 0x4Fu) break;      // not an LMS mode-F entry: the JVB, or not built yet
+        const uint16_t lms = (uint16_t)(e[1] | (e[2] << 8));
+        gtia9Row(dst, mem + lms, 40);
+        if (lms >= kStationStarLo && lms < kStationStarHi && stationStarRows < 40)
+            stationStarRow[stationStarRows++] = (unsigned short)r;
+    }
+    g_stationDirtyCount = 0; g_stationDirtyFull = 0;   // the full decode captured everything
+}
+
+// decodeStationStars(): re-decode just the star rows.  station_star_fade_in brightens every
+// non-zero nibble in $2CB8-$3167 once per frame for 14 frames, so those ~30 rows are the only
+// thing moving before the scroll starts.  ~1200 bytes ≈ 6 ms, for 14 frames only.
+// These rows are SCATTERED through the display list (1-in-8 by RANDOM), so each one does need
+// its own row offset — via rof_mulu16 (mulu.w), never a 32-bit multiply the 68000 lacks.
+void RescueOnFractalus::decodeStationStars()
+{
+    if (!bootFieldBitmap) return;
+    uint8_t* const base = (uint8_t*)bootFieldBitmap->data;
+    for (unsigned i = 0; i < stationStarRows; i++) {
+        const uint16_t r = stationStarRow[i];
+        const volatile uint8_t* e = mem + (uint16_t)(kStationDL + rof_mulu16(r, 3));
+        gtia9Row(base + rof_mulu16(r, 160), mem + (uint16_t)(e[1] | (e[2] << 8)), 40);
+    }
+}
+
+// decodeStationDirty(): consume the rectangles station_sub_1EB4 / station_chan_step recorded
+// (rof_manual.h).  Under 200 bytes a frame, versus ~14k for a full re-decode — which is the
+// whole reason those hooks exist.  A row of the 122-row image at $0600 is bitmap row (a-$0600)/40,
+// since display_list_build gives image row n the LMS $0600 + 40n and puts it at DL entry n.
+// A rectangle's rows ARE sequential, so one divide + one multiply per rectangle sets up the two
+// cursors and the row loop then just walks them (+40 source, +160 destination).
+void RescueOnFractalus::decodeStationDirty()
+{
+    if (g_stationDirtyFull) { decodeStationField(); return; }   // also clears the list
+    if (!bootFieldBitmap) { g_stationDirtyCount = 0; return; }
+    for (unsigned i = 0; i < g_stationDirtyCount; i++) {
+        const uint16_t addr = g_stationDirty[i].addr;
+        unsigned       cols = g_stationDirty[i].cols;
+        unsigned       nrow = g_stationDirty[i].rows;
+        if (addr < kStationImg || addr >= kStationImgEnd) continue;   // not in the image
+        const uint16_t off = (uint16_t)(addr - kStationImg);
+        const uint16_t row = rof_divu16(off, 40);                    // divu.w, never __udivsi3
+        const uint16_t col = (uint16_t)(off - rof_mulu16(row, 40));
+        if (col + cols > 40u) cols = 40u - col;                      // clip a rect at the row end
+        if (row + nrow > 122u) nrow = 122u - row;                    // ...and at the image end
+        const volatile uint8_t* src = mem + addr;
+        uint8_t*                dst = (uint8_t*)bootFieldBitmap->data + rof_mulu16(row, 160) + col;
+        while (nrow--) { gtia9Row(dst, src, cols); src += 40; dst += 160; }
+    }
+    g_stationDirtyCount = 0;
+}
+
+// renderBootScene(): the whole per-frame render for scenes 1 and 2, called from the top of
+// renderFrame while g_bootScene is set.  Nothing else in the per-frame body applies — there is no
+// cockpit, title bar, viewport or sprite HUD in either scene — so this is the entire pass.
+//
+// The scroll itself is NOT here: it is four bitplane-pointer writes that must happen at vblank
+// (stationVblankUpdate, from the VBI ISR), because a pointer torn between the CPU write and the
+// copper's read garbages the whole frame.  What is left is the field decode, and the field only
+// changes in three ways: everything at scene entry, the ~30 star rows while station_star_fade_in
+// is brightening them, and the animation's dirty rectangles thereafter.
+void RescueOnFractalus::renderBootScene()
+{
+    if (!bootFieldCopper || !bootFieldBitmap) return;   // SKIPBOOT build, or an allocation failed
+
+    // Keyed on WHICH scene the live layout was built for, not on a plain "is it installed" flag:
+    // the Logo ends and the Station begins with the stage-2 segment load in between and NO
+    // renderFrame call anywhere in that gap, so a bool would still read "installed" and the
+    // station would inherit the logo's geometry and gold palette.
+    if (bootFieldScene != g_bootScene) {
+        // Scene entry.  Build the layout for THIS scene (the two differ in leading blank lines,
+        // row count and palette hue), decode the field, publish the first window row, install.
+        deriveRenderSignals();
+        if (g_bootScene == ROF_BOOTSCENE_STATION) {
+            bootFieldCopper->buildLayout(*bootFieldBitmap, kStationTopLines, kStationRows,
+                                         kGtia9Pal0, *nullSprite);
+            decodeStationField();
+            stationWindowRow = 0xFFFF;   // force stationVblankUpdate to publish the real row
+        } else {
+            bootFieldCopper->buildLayout(*bootFieldBitmap, kLogoTopLines, kLogoRows,
+                                         kGtia9Pal1, *nullSprite);
+        }
+        AmigaHardware::setCopperList(*bootFieldCopper, false);   // latches at the next vblank
+        bootFieldCopperInstalled = true;
+        bootFieldScene = g_bootScene;
+        emptyCopperInstalled = false;   standbyCopperInstalled = false;
+        planetCopperInstalled = false;  flightCopperInstalled = false;
+        tunnelCopperInstalled = false;  titleScreenCopperInstalled = false;
+        return;
+    }
+
+    if (g_bootScene != ROF_BOOTSCENE_STATION) return;   // the logo's field never changes
+
+    // station_star_fade_in runs BEFORE the scroll loop, so the phase counter $008B is still 0 for
+    // exactly the frames it is brightening the starfield.  ⚠ If the stars look black, this is the
+    // routine (an earlier native list dropped it as "PMG only" — it is not, it is the fade-in).
+    if (mem[0x008B] == 0) decodeStationStars();
+    decodeStationDirty();
+}
+
+// stationVblankUpdate(): the scroll.  The display list's moving JMP operand ($1C39/$1C3A) walks
+// from $B9BC down to $B800, 3 bytes (one entry) per step, so the window's first row is simply
+// (ptr - $B800) / 3 and the whole scroll is four bitplane-pointer writes.
+// ⚠ VBI ISR ONLY — a bitplane pointer torn between the CPU write and the copper's read garbages
+// the entire frame (amiga-copper-lessons).  Called from PlatformAmiga::vbiHandler.
+void RescueOnFractalus::stationVblankUpdate()
+{
+    if (!bootFieldCopperInstalled || !bootFieldCopper) return;
+    if (g_bootScene != ROF_BOOTSCENE_STATION) return;
+    const uint16_t ptr = (uint16_t)(mem[0x1C39] | (mem[0x1C3A] << 8));
+    if (ptr < kStationDL) return;                                    // half-written / not started
+    const unsigned row = rof_divu16((uint16_t)(ptr - kStationDL), 3); // divu.w
+    if (row == stationWindowRow) return;
+    stationWindowRow = (unsigned short)row;
+    bootFieldCopper->setWindowRow((uint16_t)row);
+}
+
 // deriveRenderSignals(): recompute the renderer's phase-gating signals from mem[]
 // hardware state, once per frame.  These replace the C++ launchPhase enum as the
 // renderer's source of truth, so the copper-list selection/render/perFrameWork keep
@@ -5351,6 +5568,12 @@ void RescueOnFractalus::deriveRenderSignals()
     extern volatile unsigned char g_forceTitleScreen;   // ROF_FORCE_TITLE visual-test override
     rsTitle    = ((vvblki == 0x53CCu) && (mem[0x365B] == 0x72u)) || g_forceTitleScreen;
     rsStars    = standbyVbi && (mem[0x060B] == 0x23u) && (mem[0x0200] == 0xC2u);
+    // Boot scene 2, the station cinematic.  Keyed on the boot chain's own g_bootScene rather than
+    // on VVBLKI alone, because $1B30 SURVIVES station_exit: it hands the vector back with SETVBV,
+    // whose os_setvbv is a no-op stub here — and that is deliberate, since the $1B30 body is what
+    // keeps advancing the RTCLOK that init_B800's 32-frame wait spins on right afterwards.  The
+    // vector is still required, so a half-written $0222/$0223 can never select this branch.
+    rsStation  = (g_bootScene == ROF_BOOTSCENE_STATION) && (vvblki == 0x1B30u);
     rsViewport = rsStars || rsFlight;
     rsEnergyIndicator    = (mem[0x060B] != 0);
 
@@ -6181,8 +6404,10 @@ void RescueOnFractalus::shutdown()
     for (int i = 0; i < 2; i++) { delete doorsCopper[i]; doorsCopper[i] = nullptr; }
     for (int i = 0; i < 2; i++) { delete tunnelCopper[i]; tunnelCopper[i] = nullptr; }
     delete titleScreenCopper; titleScreenCopper = nullptr;
+    delete bootFieldCopper; bootFieldCopper = nullptr;   // boot scenes 1+2 (null under SKIPBOOT)
     delete emptyCopper;   emptyCopper   = nullptr;
     PlatformAmiga::audioShutdown();
+    delete bootFieldBitmap; bootFieldBitmap = nullptr;   // the shared 54 KB GTIA-9 field
     delete titleBitmap;   titleBitmap   = nullptr;
     delete terrainBitmap; terrainBitmap = nullptr;
     delete terrainBitmapBack; terrainBitmapBack = nullptr;
