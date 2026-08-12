@@ -229,13 +229,24 @@ Total mutated image bytes per frame: **< 200**.
   (`B8 B4 B0 AC A8 A4 A0 9C`), `COLPM2 = COLPM3 ← $1F40[i]` (`48 38 28 18 F8 E8 D8 C8`).
   Two coloured dots converging from the sides. (The `symbols.csv` description says `COLPF3`;
   it is `COLPM2/3`.)
-* `display_scroll` PMG paints (currently **dropped** by the native twin in `rof_manual.c`):
-  * while `$008B ∈ [$39,$59)`: writes `$C0` to `$3600+X … $3602+X` and `$3700+X … $3702+X`
-    (X = `$008B-$39`, 0..31) and clears row X-1 → a **3-scanline, 2-px blob on P2 and P3 that
-    walks down one scanline per scroll step**.
+* `display_scroll` PMG paints — **RESTORED 2026-08-12** (they were dropped by the native twin
+  in `rof_manual.c`; both are confirmed on screen in the SDL render).  ⚠ The scanline ranges in
+  the first version of this section were wrong — the guards are `BMI` then `CMP #$20 / BCC`, so
+  each element is live while its index is in **`[$20,$7F]`**, not `< $20`:
+  * X = `$008B - $39` (the 6502 does `SEC/SBC #$94` then `CLC/ADC #$5B`); while X ∈ `[$20,$7F]`
+    — i.e. **steps 89..148, scanlines 32..91** — writes `$C0` to `$3600+X … $3602+X` and
+    `$3700+X … $3702+X` and clears row X-1 → a **3-scanline, 2-px blob on P2 and P3 that walks
+    down one scanline per scroll step**.
   * for `Y = 7..0`: `X = $008B - $94 + $1D8A[Y]` (offsets `4D 69 57 62 3A 5C 7C 6D`); if
-    `0 ≤ X < $20`, writes `$1D92[Y]` (`C3 03 0C 0C 30 30 30 C0`) to `$3300+X` → **eight
-    single-scanline missile dots** (the 5th player, `COLPF3 = $34`) sweeping down the top 32 lines.
+    X ∈ `[$20,$7F]`, writes `$1D92[Y]` (`C3 03 0C 0C 30 30 30 C0`) to `$3300+X` and clears
+    `$32FF+X` → **eight single-scanline missile dots** (the 5th player, `COLPF3 = $34`) at
+    scanlines ~58..124, each with its own phase offset.  The pattern byte picks WHICH missiles
+    (2 bits each), hence which `HPOSMn` column the dot appears in.
+* `display_scroll`'s **DL-ring JVB move** ($1D19-$1D3C) is restored too: while `ptr < $B9BC` it
+  stages `ptr + $0240` in ZP `$81/$82` and copies the 3-byte JVB (`$1C3B-$1C3D` = `41 35 1C`)
+  there, holding the window at exactly 192 rows.  It always lands one row BELOW the new window,
+  so it never overwrites a row that is still displayed — which is why the Amiga's decode-once
+  bitmap does not have to care about it.
 
 ### 2.5 What already exists in the port
 

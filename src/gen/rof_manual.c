@@ -260,10 +260,21 @@ void screen_page_swap(void) {
 /* stripes, the $2603 channel table) the renderer already reads.        */
 /* ------------------------------------------------------------------ */
 
-/* display_scroll ($1CF7): advance the title-text scroll pointer + phase
-   counter.  Atari DLIST-LMS / character-screen writes are intentionally
-   skipped (the Amiga renders from this mem[] state, not Atari screen RAM).
-   Folded in as a private helper — its only caller is station_anim_frame. */
+/* display_scroll ($1CF7): one step of the station cinematic's scroll — advance the
+   display list's moving window and paint the two PMG elements that ride it.
+   Folded in as a private helper — its only caller is station_anim_frame.
+
+   FAITHFUL to all four parts of the 6502 ($1CF7-$1D89); an earlier version kept only
+   the first two and dropped the DL-ring JVB move and both PMG paints (which are real
+   content, and this is a SHARED file, so the SDL build was missing them too):
+     1. $1CF7  stop once the pointer reaches $B800 (the 148th and last step).
+     2. $1D06  INC the phase counter $008B, then ptr -= 3 — one new mode-F row is
+               revealed at the top, so the whole picture slides down.
+     3. $1D19  move the 3-byte JVB ($1C3B-$1C3D = `41 35 1C`) down to ptr + $0240,
+               keeping the visible window at exactly 192 rows ($240 / 3).  It always
+               lands one row BELOW the new window, so it never overwrites a row that
+               is still displayed.
+     4. $1D3E  the P2/P3 blob and the eight missile dots (below). */
 static void station_display_scroll(void) {
     if (mem[0x1C39] == 0 && mem[0x1C3A] == 0xB8) return;
     mem[0x008B]++;
@@ -271,6 +282,46 @@ static void station_display_scroll(void) {
     ptr -= 3;
     mem[0x1C39] = (uint8_t)ptr;
     mem[0x1C3A] = (uint8_t)(ptr >> 8);
+
+    /* $1D19-$1D3C: 16-bit `ptr >= $B9BC ?` (the pointer's start value) — below it,
+       stage ptr+$0240 in ZP $81/$82 (dl_ptr_lo/hi, as the 6502 does: the copy is an
+       indirect-Y store through it) and copy the JVB there. */
+    if (ptr < 0xB9BCu) {
+        const uint16_t dest = (uint16_t)(ptr + 0x0240u);
+        mem[0x0081] = (uint8_t)dest;
+        mem[0x0082] = (uint8_t)(dest >> 8);
+        int y;
+        for (y = 2; y >= 0; y--) mem[(uint16_t)(dest + y)] = mem[0x1C3B + y];
+    }
+
+    /* $1D3E-$1D68: a 3-scanline, 2-px blob on BOTH P2 ($3600) and P3 ($3700) that
+       walks down one scanline per scroll step, with the row above it cleared behind
+       it.  Live while ($008B - $39) is in [$20,$7F] — i.e. steps 89..148, scanlines
+       32..91.  The 6502 computes it as SEC/SBC #$94 then CLC/ADC #$5B, so the two
+       guards are BMI (drop the wrap-around below) and BCC #$20. */
+    {
+        const uint8_t x = (uint8_t)(mem[0x008B] - 0x94 + 0x5B);
+        if (!(x & 0x80u) && x >= 0x20u) {
+            mem[0x3600 + x] = 0xC0;  mem[0x3700 + x] = 0xC0;
+            mem[0x3601 + x] = 0xC0;  mem[0x3701 + x] = 0xC0;
+            mem[0x3602 + x] = 0xC0;  mem[0x3702 + x] = 0xC0;
+            mem[0x35FF + x] = 0x00;  mem[0x36FF + x] = 0x00;   /* clear scanline x-1 */
+        }
+    }
+
+    /* $1D69-$1D87: eight single-scanline missile dots (the 5th player, COLPF3=$34)
+       sweeping down the top 32 lines of the missile DMA buffer $3300.  Each has its
+       own phase offset $1D8A[y] and bit pattern $1D92[y] (the pattern picks WHICH
+       missiles, hence which HPOSMn column, the dot appears in). */
+    {
+        int y;
+        for (y = 7; y >= 0; y--) {
+            const uint8_t x = (uint8_t)(mem[0x008B] - 0x94 + mem[0x1D8A + y]);
+            if ((x & 0x80u) || x < 0x20u) continue;
+            mem[0x3300 + x] = mem[0x1D92 + y];
+            mem[0x32FF + x] = 0x00;                            /* clear scanline x-1 */
+        }
+    }
 }
 
 /* station_anim_frame ($1D9A): title-text scroll state machine — countdown
