@@ -102,7 +102,7 @@ truth for names** (the transpiler reads it; never hand-rename in generated files
 | `tools/transpile.py` | The transpiler. Reads `disasm/listing.txt` + `symbols.csv` (functions + named-memory var rows) |
 | `src/gen/rof_gen.c` | Generated 6502→C transliteration (regenerated; do NOT edit by hand) |
 | `src/gen/rof_decl.h` | Generated forward decls + mid-function entry wrappers |
-| `src/gen/mem.h` | Generated `MEM_<name>` offset macros (305) for named Atari RAM/shadow addresses, usable in C and C++, plus an opt-in `ROF_MEM_ALIASES` block of bare lvalue aliases (`rof_gen.c` enables it). Built from `symbols.csv` var rows |
+| `src/gen/mem.h` | Generated `MEM_<name>` offset macros (477) for named Atari RAM/shadow addresses, usable in C and C++, plus an opt-in `ROF_MEM_ALIASES` block of bare lvalue aliases (`rof_gen.c` enables it). Built from `symbols.csv` var rows |
 | `src/gen/rof_manual.c` | Hand-written stubs for self-modifying routines (DLI handlers etc.) |
 | `src/gen/rof_native.c` | Hand-written native twins (idiomatic C `_core` + 6502-ABI shim) |
 | `tools/validate_native.c` | The `make validate` harness |

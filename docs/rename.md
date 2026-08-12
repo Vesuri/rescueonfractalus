@@ -7,104 +7,131 @@ regenerate (`make gen`). Hand-written twins (`rof_native.c`, `rof_native_amiga.c
 `validate_native.c`, the Amiga platform layer, `transpile.py` comments) reference the names
 directly and must be updated in the same pass.
 
-⚠ **Whole-word replace misses the generated suffixes AND the `MEM_` prefix.** A `\bOLD\b` sweep
+> ## ✅ THE BACKLOG IS EMPTY (cleared 2026-08-12)
+>
+> Every entry filed on 2026-08-03, -08-10 and -08-12 has been **applied** — see
+> §"Applied 2026-08-12" for the list, including the **two proposals that were deliberately
+> declined** and why. Previous clearings: 2026-08-02.
+>
+> **When you find a misnamed function, append a new section here** (address, current name, actual
+> behaviour, suggested name) — per `CLAUDE.md` §Working conventions, file it the moment you find
+> it, don't defer.
+
+## How to apply a rename safely (the two traps that have actually bitten)
+
+⚠ **1. Whole-word replace misses the generated suffixes AND the `MEM_` prefix.** A `\bOLD\b` sweep
 will NOT touch `OLD__t6502` / `OLD_core` / `test_OLD` (trailing `_`) **nor `MEM_OLD`** (leading
 `_` — `\b` doesn't match between `_` and a letter). Sweep the **bare token without `\b`**
 (`s/OLD/NEW/g`) so both `MEM_OLD` and the bare lvalue alias `OLD` are caught, then verify with
 `grep -rn 'MEM_OLD\|\bOLD\b'`. (This bit the 2026-08-02 `player_lives`→`flight_mode_state` pass.)
 
-> The backlog is otherwise **empty** (cleared 2026-08-02): every prior entry was investigated
-> against the disasm and either renamed, had its `symbols.csv` comment corrected, or — for a
-> genuinely dual-/multi-used cell — had **both roles documented directly in its `symbols.csv`
-> description** (the source of truth), so the knowledge no longer needs a floating backlog.
+⚠⚠ **2. A bare-token sweep is ORDER-DEPENDENT when one old name is a PREFIX of another.**
+`dl_index_dec` is a prefix of `dl_index_dec_or_reset`, so sweeping the short one first turns
+`dl_index_dec_or_reset` into `dl_lms_scroll_step_or_reset` — a plausible-looking name that exists
+nowhere. **Substitute the LONGEST old name first**, and assert up front that no *new* name contains
+any *old* name as a substring (or a later rule re-substitutes inside a name the pass just wrote).
+The 2026-08-12 pass automated both checks in its sweep script.
 
-## Backlog — found during the idiomatic-C rewrites (2026-08-03)
+⚠⚠ **3. The sweep rewrites the `(was OLD)` provenance notes you just wrote.** If step 2 puts
+"`… NOT an init (was pmg_missile_init)`" into a `symbols.csv` description and step 4 then sweeps
+`symbols.csv` as well, the note becomes "`(was station_missile_drift)`" — a tautology that reads as
+if nothing changed. This bit the 2026-08-12 pass on **all ten** renamed rows. Either write the
+provenance notes *after* the sweep, or exclude `symbols.csv` from it. Cheap detector:
 
-Surfaced while rewriting `game_state_update`, `setup_projection_params`, and the `ring_push*`
-family into idiomatic C. Not yet renamed (needs a `symbols.csv` edit + `make gen` + twin sweep).
+```
+# any row whose name equals its own "(was …)" note
+python3 -c 'import re,pathlib
+for l in pathlib.Path("disasm/symbols.csv").read_text().splitlines():
+    m,w = re.match(r"\$[0-9A-F]+,([a-z0-9_]+),",l), re.search(r"\(was ([A-Za-z0-9_]+)\)",l)
+    if m and w and m.group(1)==w.group(1): print(l[:90])'
+```
 
-**Enemy-fire / target-blip state machine (`game_state_update` $A99C) — UNNAMED cells.**
-The whole bolt line-plot working set is nameless. Suggested names:
-- `$28EB` / `$28EC` — fire target cell (column / row) that seeds the bolt start → `fire_target_col` / `fire_target_row`.
-- `$28F0` / `$28F2` — bolt plot start point (X / Y), seeded from the target cell → `fire_plot_x` / `fire_plot_y`.
-- `$28EF` / `$28F1` / `$28F3` — `$80`-midpoint sub-pixel accumulators → `fire_plot_xfrac` / `fire_plot_yfrac` / `fire_plot_wfrac`.
-- `$28F4` — bolt width seed (=1) → `fire_plot_width`.
-- `$28F7` — random vertical step → `fire_plot_vstep`.
-- `$28F8` — bolt row counter (seeded $FF) → `fire_plot_rowcount`.
-- `$28F9` — bolt end row → `fire_plot_endrow`.
-- `$28ED` — "shot queued" flag gating the fire → `fire_queued`.
-- `$0624` — random mask AND-ed with RANDOM to reseed the fire countdown ($28EE) → `fire_delay_mask`.
+**The order of operations that worked** (2026-08-12, 198 substitutions across 21 files):
+1. Verify each proposed name against `disasm/listing.txt` **before** applying it — several
+   2026-08-03 proposals were right, but two were not (below), and one existing description
+   asserted the exact opposite of the truth (`$00CD`).
+2. Edit `disasm/symbols.csv` with exact full-line replacements that **assert a unique match**, so a
+   stale expectation fails loudly instead of silently doing nothing.
+3. `make gen` — this regenerates `rof_gen.c` / `rof_decl.h` / `mem.h`, so those need no sweep.
+   ⚠ Adding a *var* row is not cosmetic: it changes how the transpiler emits **every** access to
+   that address (to `mem[MEM_<name> + i]` or a bare lvalue alias), so re-run the **full**
+   `make validate`, not just `FN=<the renamed thing>`.
+4. Sweep the hand-written files (twins, probes, `.s`, `.gdb`, `transpile.py`, `docs/`).
+5. `make validate` + a full `make clean` Amiga build.
 
-**Misnamed / multi-role cells reused by the projection setup (`setup_projection_params` $AC93).**
-These carry projection inputs here that have nothing to do with their `symbols.csv` names (classic
-6502 ZP scratch sharing, like the `$0080-$008D` note below). Best fixed by documenting BOTH roles
-in `symbols.csv` rather than renaming:
-- `$0087`/`$0088` (`vbi_phase`/`vbi_flags`) — here = world-X fixed-point >> 4.
-- `$0089`/`$008A` (`terrain_state`/`terrain_scroll_counter`) — here = world-Z >> 4.
-- `$008B`/`$008C` (`dl_src_index`/`terrain_scroll_reload`) — here = pitch-depth delta << 2.
-- `$0092` (`draw_row`) — here = heading_hi << 2.
-- `$00A0-$00A3` (`draw_iter_count`/`scroll_accum_b0..b2`) — here = the sin/cos view vector.
-- `$00A4`/`$00A5` (`scroll_accum_b3`/`scroll_accum_prev`) — here = the signed-pitch >> 1 per-row step.
-- `$00A6` (`horizon_row_index`) — here = the horizon screen row (this one's name fits).
-- `$28EE` (`lock_on_indicator_complete`) — in `game_state_update` it's the enemy-fire countdown
-  timer, unrelated to lock-on completion. Dual role → document both in `symbols.csv`.
-- `$0041` (`game_state`) — in `game_state_update` it's specifically the explosion/fire-frame counter.
+## The multi-role convention (why some cells keep a "wrong" name)
 
-**Genericly-named function.**
-- `game_sub_55FC` ($55FC) — pushes entry Y (unmarked) into the $0719 event ring → `ring_push_y`
-  or `ring_push_unmarked` (mirrors `ring_push_marked`).
+6502 zero page is shared scratch: one cell routinely carries unrelated meanings in unrelated
+routines. **A cell used by more than ~2 subsystems keeps its generic/first name and documents the
+other roles in its `symbols.csv` description** — renaming it to fit one caller mislabels all the
+others, and the description is where a reader actually looks. Only rename a cell that is genuinely
+single-purpose.
 
-**Door/viewport DL LMS vertical-scroll family (the Standby level-select "elevator" scroll + the
-launch doors-open scroll).** These names describe an "index" / generic "terrain" op but actually
-manipulate the launch DL's per-scanline mode-F LMS entries ($300A+) to scroll the $2000 door field
-(or $1070 flight field) vertically. Found while implementing the post-mother-ship in-place level
-scroll (2026-08-04).
-- `dl_lms_fill` ($69F1) — writes the viewport DL's per-scanline LMS pointer words ($300A+, 3 bytes/
-  scanline) from the row-address tables `$073D`/`$0793` (`row_base_lo`/`row_base_hi`), for row index
-  X=`$008B`(`dl_src_index`) up to `$0086`(`row_count`). Not a generic "fill" — it's the LMS-window
-  writer. → `dl_write_lms_window` (and `row_count` → `dl_lms_end_index`).
-- `dl_lms_build` ($69E5) — set dest ptr $300A + end index $56, tail `dl_lms_fill`; i.e. rebuild the
-  whole viewport LMS window from the current start index. → `dl_rebuild_lms_window`.
-- `dl_index_dec` ($69E3) — DEC `$008B` then rebuild → scroll the viewport window DOWN one row (one
-  smooth LMS scroll step). Name says "index dec" but the effect is a scroll step. → `dl_lms_scroll_step`.
-- `dl_index_dec_or_reset` ($69DD) — reset `$008B`=0 then rebuild (no-scroll full window). → `dl_lms_reset_window`.
-- `dl_src_index` (`$008B`) — the LMS-window START row index the above scroll through. → `dl_lms_start_row`.
-- `scroll_terrain_dl` ($6953) — NOT generic terrain: the launch doors-OPEN split scroll (top half
-  LMS entries shift up, bottom half shift down, splitting apart) via `dl_lms_scroll_up`/`_down` +
-  `dl_lms_push_top`/`_bottom`. → `dl_doors_open_split_step`.
+## Applied 2026-08-12
 
-**Trig lookup tables + scratch (`sine_table_lookup` $9C55 / `trig_interp_lookup` $9BDB) — UNNAMED.**
-- `$0077` / `$0078` — mid / hi bytes of the signed 24-bit trig result (`$0076` is `trig_result_lo`)
-  → `trig_result_mid` / `trig_result_hi`.
-- `$280E` — quadrant (angle >> 6) written by `sine_table_lookup` → `trig_quadrant`.
-- `$280F` — the octant-fraction working copy consumed by `trig_interp_lookup` → `trig_octant_work`.
-- `$2813-$2815` / `$2816-$2818` — the 24-bit angle / angle+1 samples, doubled per blend step
-  → `trig_sample_angle` / `trig_sample_angle1`.
-- `$9B98` / `$9B9C` — per-quadrant sign flag / index-reflect mask → `trig_quad_sign` / `trig_quad_reflect`.
-- `$4EB9` / `$4EFA` — quarter-wave sine table hi / lo bytes → `trig_table_hi` / `trig_table_lo`.
+**Renamed — functions** (all verified against `listing.txt` first):
 
-## Backlog — found during the open-item triage (2026-08-10)
+| Addr | Was | Now |
+|---|---|---|
+| `$55FC` | `game_sub_55FC` | `ring_push_unmarked` |
+| `$6953` | `scroll_terrain_dl` | `dl_doors_open_split_step` |
+| `$69DD` | `dl_index_dec_or_reset` | `dl_lms_reset_window` |
+| `$69E3` | `dl_index_dec` | `dl_lms_scroll_step` |
+| `$69E5` | `dl_lms_build` | `dl_rebuild_lms_window` |
+| `$69F1` | `dl_lms_fill` | `dl_write_lms_window` |
+| `$1910` | `pmg_missile_init` | `station_missile_drift` |
+| `$1E01` | `dli_handler_station` | `station_pm_shape_tick` |
+| `$1E79` | `pmg_update_station` | `station_star_fade_in` |
 
-**`$00CD` `grafm_shadow` is NOT GRAFM — it is the SIZEP2 shadow.** `symbols.csv` describes it as
-"GRAFM ($D00A) shadow pushed in the flight missile block", but **$D00A is SIZEP2** (GTIA: $D008-$D00B
-= SIZEP0-3, $D00C = SIZEM, $D00D-$D010 = GRAFP0-3, $D011 = GRAFM). Both writers agree with SIZEP2 and
-not with GRAFM:
-- `build_player2_sprite $8C58` stores only `$00`/`$01`/`$03` into it (`$8da7`/`$8d9a`) — exactly the
-  SIZEP2 encoding 1×/2×/4×, not an 8-bit missile bitmap.
-- The flight VBI's `$5011-$5030` block is the **player-2** block (COLPM2 `$D014`, HPOSP2 `$D002`,
-  `$D00A`, HPOSP3 `$D003`), not a missile block.
-Suggested: `$00CD` → `sizep2_shadow`, and fix the description. Also correct the two stale comments in
-`rof_native.c` `build_player2_sprite_core` (`bus_write(0xD014, …)` is labelled `SIZEP2` but is COLPM2;
-`bus_write(0xD00A, …)` is labelled `GRAFP2` but is SIZEP2) and `rof_manual.c:61`'s `SIZEP2` label,
-which happens to be right, on `$D00A`. This is the register the flight open item "laser-impact
-explosion renders at 1× width" needs (`docs/flight-scene.md` / the `flight-scene` memory).
+`$55FC` takes the **Y** register and pushes it **unmarked**; `ring_push_marked $5815` takes **X**
+and sets bit 7. Both fall into the shared tail `ring_push_0719 $55FF`. `ring_push_unmarked` was
+chosen over the also-proposed `ring_push_y` to mirror the existing family name; the register is in
+the description.
 
-**ACTED ON 2026-08-11** (the widening is implemented; the rename itself is still pending): the
-Amiga burst/P3 widening reads `mem[$00CD]` as SIZEP2 via `sizepScale()` in
-`src/platform/amiga/RescueOnFractalus.cpp`, masking bits 1-0 exactly as GTIA does. ⚠ Do NOT compare
-the shadow to `0`/`1`/`3` — `a800dumps/saucerbigpause.a8s` has `$00CD = $62` with no shot active
-(stale zero page; `build_player2_sprite` is its only writer and had not run since the last shot).
-Value `2` is also a second encoding of "normal", so only the masked pair is meaningful.
+**Renamed — one variable.** `$00CD` `grafm_shadow` → **`sizep2_shadow`**. `$D00A` **is** SIZEP2
+(`$D008-$D00B` = SIZEP0-3; GRAFM is `$D011`), so both the old name and its explicit "NOT SIZEP2"
+claim were backwards. Its only writer is `build_player2_sprite` (storing the `$00`/`$01`/`$03`
+width encoding) and its only publishers are `vbi_handler_flight $5028` and `$8D1A`, both to
+`$D00A`. The stale `SIZEP2`/`GRAFP2` labels in `rof_native.c` were corrected in the same pass
+(`$D014` is COLPM2, `$D00A` is SIZEP2), as was a third mislabel found next to them: `$D008`/`$D009`
+are SIZEP0/SIZEP1, not "P2/P3 horizontal pos". `rof_manual.c:61`'s `SIZEP2` label on `$D00A` was
+already right.
+
+**Named — 23 previously-unnamed cells** (new dated section at the tail of `symbols.csv`): the
+13-cell enemy-fire / bolt line-plot working set (`fire_target_col/row`, `fire_queued`,
+`fire_plot_x/y/xfrac/yfrac/wfrac/width/vstep/rowcount/endrow`, `fire_delay_mask`) and the 10 trig
+lookup entries (`trig_result_mid/hi`, `trig_quadrant`, `trig_octant_work`,
+`trig_sample_angle`/`_angle1`, `trig_quad_sign`/`_reflect`, `trig_table_hi`/`_lo`). Each was
+confirmed single-subsystem before naming: the bolt set is touched only by `terrain_sub_A822`
+(latches the target), `game_state_update` (the state machine), `plot_scanline_down` (the plotter,
+called from nowhere else) and `terrain_gen_2` (clears the flag); the trig cells only by
+`sine_table_lookup` / `trig_interp_lookup`.
+
+**Descriptions corrected, name kept** — `$1F0B pmg_colors_station` (writes COLPM2/COLPM3
+`$D014`/`$D015` + HPOSP2/3 on a 7-frame cadence, **not** COLPF3), and the 13 multi-role cells per
+the convention above: `$0041`, `$0086`, `$0087`, `$0088`, `$0089`, `$008A`, `$008B`, `$008C`,
+`$0092`, `$00A4`, `$00A5`, `$28EE`. All nine projection roles were re-derived from
+`setup_projection_params $AC93` before being written down — which turned up a further error in the
+*existing* text: `$00A4`/`$00A5` are fed by **pitch** (`pitch_shadow_hi/lo $0024`/`$0023`), not by
+heading.
+
+**⛔ Two 2026-08-03 proposals DECLINED — do not re-apply:**
+- `row_count $0086` → ~~`dl_lms_end_index`~~. It is a **generic row/loop counter shared by ~8
+  routines** (`display_list_build`'s 218-row loop, the terrain fns at `$77A8`/`$801D`/`$A41F`/
+  `$B1D4-$B515`) that *also* happens to hold the LMS window end index. A `dl_lms_*` name would
+  mislead every other caller.
+- `dl_src_index $008B` → ~~`dl_lms_start_row`~~. Same reason, ~8 other users (`display_scroll`
+  `$1CF0-$1D9A`, `$537C`, `$624E-$62C7`, `$77A4`, `$8077`) — **and the 2026-08-03 entry contradicted
+  itself**, listing `$008B` in its own projection group as a document-both-roles case one paragraph
+  above proposing the rename. Both cells now document the LMS role in their descriptions instead.
+
+**`$5000 stage_5000`** — nothing to rename: it has **no `symbols.csv` row**, the name comes from
+`ghidra_scripts/entrypoints.csv` and correctly describes the *game* routine at `$5000` in the
+**final** image. The error was the *attribution* of the boot `INITAD $5000`, which is the Lucasfilm
+Games logo (XEX segment 5, overwritten by segment 16 — so not in `listing.txt` and not transpiled).
+Corrected in `docs/startup-flow.md` §1/§4 and commented in `entrypoints.csv`. **General trap:
+`listing.txt` is the FINAL image, so a boot-phase routine at an address may not be the routine at
+that address** — check `tools/xex_map.py` for a later segment covering it first.
 
 ## Investigated → intentionally left UNNAMED (do not re-litigate)
 
@@ -130,33 +157,3 @@ mislead the other callers. Listed so they aren't re-flagged as "unnamed → need
 The `$0080-$008D` display/VBI/terrain ZP cells are additionally reused by the alien-creature
 composer (documented in `docs/alien-jumpscare.md` + the twin comments); they keep their
 primary-use names — the composer reuse is inherent 6502 ZP sharing, not a misnomer.
-
-## Backlog — found investigating the Logo + Station scenes (2026-08-12)
-
-All five verified against `a800dumps/station.a8s`, `a800dumps/logo.a8s`, `disasm/listing.txt` and
-the raw `rof.xex` segment payloads. Full derivation: `docs/logo-station-plan.md`.
-
-- **`$1E79 pmg_update_station` → `station_star_fade_in`.** It touches no PMG RAM at all. It walks
-  the mode-F **star rows** `$2CB8-$3167` (the DL's per-row star buffers) and brightens each
-  non-zero GTIA-9 nibble by one luminance step — 14 passes, one frame apart (`JSR $3CC3`), run
-  once from `station_init $19F4`. Seeds `$1C3E/$1C3F = $10/$01` reach `$F0/$0F` (full brightness),
-  which the `station.a8s` dump confirms. ⚠ `rof_native_amiga.cpp`'s dead station block calls it
-  "only modifies PMG RAM ($B82C area), not displayed" — that comment is wrong; drop it with the
-  block.
-- **`$1E01 dli_handler_station` → `station_pm_shape_tick`.** **Not a DLI.** During the Station
-  scene `VDSLST` is the OS default (`$C0CE` in the dump) and no DL byte has bit 7 set, so no DLI
-  ever fires. `$1E01` is reached by a tail `JMP` from `station_audio ($1BD7)` and animates the
-  **P0/P1 shapes** at `$3400`/`$3500` from the `$272C/$2739/$2746/$2753/$2760/$276D/$277A` table
-  set. (Nothing to add to `ghidra_scripts/entrypoints.csv` — there is no DLI to find here.)
-- **`$1F0B pmg_colors_station`** — name is fine, **description is wrong**: it writes
-  `COLPM2`/`COLPM3` (`$D014`/`$D015`), not `COLPF3`, plus `HPOSP2`/`HPOSP3`, on a 7-frame cadence
-  from the 8-entry tables `$1F30`/`$1F38`/`$1F40`.
-- **`$5000 stage_5000`** — the name and description describe the *game* routine that occupies
-  `$5000` in the **final** image. The boot `INITAD $5000` runs **the Lucasfilm Games logo**, from
-  XEX segment 5 (`$5000-$536F`), which segment 16 (`$3CDE-$B7FF`) later overwrites — so the logo
-  code is **not in `listing.txt` and is not transpiled**. Final image at `$5000` is
-  `04 8D 09 D4 …`; segment 5 is `A2 FF 86 90 …`. ⚠ `docs/startup-flow.md` §2 item 1 ("primes GTIA
-  from page-2 shadows") is the same misattribution and needs the same fix.
-- **`$1910 pmg_missile_init` → `station_missile_drift`.** Not an init: it is a per-frame missile
-  *position* update (`HPOSM0-3` = `$D004-$D007`, via a 16-bit accumulator in `$008D-$008F`),
-  called from `station_audio`, and it only reseeds when `$008C == 6`.
