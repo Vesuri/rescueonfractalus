@@ -2093,10 +2093,15 @@ and no one has separated the two.
 
 ## §23 — The two codegen taxes, generalised; and the edge plot (2026-08-12)
 
-**Result: 24.09 → 24.78 FPS on the quiet arm (+2.87%), measured as an IN-SESSION A/B —
-baseline and arm built and run back to back on the same flags, script and window, 15/15
-segments valid both times.** (Before the last shave; see §23.4.) The gap to the 25 FPS target
-went from ~+3.8% to ~+0.9%.
+**Result: 24.09 → 24.88 FPS on the quiet arm (+3.25%), measured as an IN-SESSION A/B —
+baseline and arms built and run back to back on the same flags, script and window, 15/15
+segments valid every time.** The gap to the 25 FPS target went from ~+3.8% to **~+0.5%**.
+
+| build | FPS | painted / vbi |
+|---|---|---|
+| f561a93 baseline, **rebuilt and re-run in this session** | 24.091 | 1445 / 2999 |
+| + both codegen taxes (7d55281) + edge sentinel & register masks (d486234) | 24.783 | 1487 / 3000 |
+| + the edge plot's loop deleted (33f0663) | **24.875** | 1492 / 2999 |
 
 ⚠ **Read the baseline number, not the ledger.** The standing row said 24.38; re-measuring the
 SAME commit in this session read **24.09**. That is a 1.2% wander, exactly the size of the
@@ -2187,13 +2192,15 @@ distinct rows per group: [1] 13457  [2] 9862  [3] 8233  [4] 8158
   scheme whose bookkeeping is a compare plus a branch is spending 12-14 to save 18-22, and it
   needs a hit rate well above 50% to break even.**
 
-### 23.4 What DID survive in the edge plot: deleting the loop
+### 23.4 What DID survive in the edge plot: deleting the loop (33f0663, +0.4% end to end)
 
 `addq.l #1,a2` + `dbra` was 18 cycles of bookkeeping per group against 224 of work — but the
 plane-1 byte index *is* the group number 0..39, and `(d8,An,Xn)`'s displacement is an 8-bit
 signed field. So all 40 groups are reachable from one unmoved `a2` at **no extra cycles and no
 extra bytes**, and a `rept` unroll deletes the pointer walk and the counter outright:
-**−720 cycles a call for 2594 bytes of code.** ⭐ Generalises: *before optimising a loop's body,
+**−720 cycles a call for 2594 bytes of code** (image 419152 → 421572). Statically that is ~0.19%
+of wall; the lean `fps_seg` read 24.783 → 24.875, i.e. +0.37% — the right direction, and inside the
+instrument's noise, so quote the static count. ⭐ Generalises: *before optimising a loop's body,
 check whether the addressing mode makes the loop itself free to delete.*
 
 ### 23.5 Also measured and closed

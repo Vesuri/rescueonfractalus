@@ -8,9 +8,16 @@
 > TODO and per-change history).
 
 **⭐ TARGET (user decision, 2026-08-08): 25 FPS = 40 ms/frame, judged on the BEST-CASE baseline
-(`COMBAT=1 COMBAT_QUIET=1 FIXED_RNG=1`, **23.91 FPS after the 2026-08-12 ISR pass ⇒ ~+4.6% of throughput to go**).
+(`COMBAT=1 COMBAT_QUIET=1 FIXED_RNG=1`, **24.88 FPS after the 2026-08-12 codegen-tax + edge-plot
+pass ⇒ ~+0.5% of throughput to go**; `docs/flight-perf-log.md` §23).
 Combat-load slowdown is expected and does NOT have to reach 25.** 50 FPS remains the ideal, not
-the bar. Spending 10 ms on *anything* is HALF the budget. The A500 (7 MHz 68000)
+the bar.
+
+⚠⚠ **That 24.88 is an ABSOLUTE reading and the absolute wanders ~1.2% between builds.** §23
+re-measured the previous standing commit and got **24.09 where the ledger said 24.38** — same
+commit, same flags, same script. So the claim that survives is the **in-session A/B, +3.25%**, and
+"are we at 25 yet?" cannot be answered by one reading. **Rebuild and re-run the baseline in the
+same session before diffing anything against it.** Spending 10 ms on *anything* is HALF the budget. The A500 (7 MHz 68000)
 is slow — there is no room for half measures; be conscious of absolute milliseconds, always.
 
 Units: 1 probe "tick" = 1 raster scanline = 63.56 µs; a PAL frame = 313 ticks = 20 ms. The flight

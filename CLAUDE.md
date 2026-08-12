@@ -42,6 +42,7 @@ these are the derived facts we must not re-derive or contradict.
 | `docs/flight-perf-log.md` | The perf investigation archive: what was tried, what it measured, what closed |
 | `docs/sfx-events.md` | Audio: the 33 SFX events, the voice engine, captured POKEY streams |
 | `docs/rename.md` | A function's name contradicts its behaviour (append to it — see conventions) |
+| `docs/logo-station-plan.md` | Scenes 1 (Logo) + 2 (Station): screen composition, the routines, and the Amiga port plan. ⚠ Also carries the correction that boot `INITAD $5000` is the LOGO, not `stage_5000` |
 | `docs/startup-flow.md`, `docs/phases.md`, `docs/boost-cinematic-plan.md`, `docs/boost-tunnel-direct-handoff.md`, `docs/alien-jumpscare.md`, `docs/cockpit-render-plan.md`, `docs/terrain-render-plan.md`, `docs/terrain-draw-plan.md`, `docs/rescue-figure-render.md`, `docs/sprite-multiplex-plan.md`, `docs/amiga-attract-plan.md` | Per-area plans/records — check for one before designing |
 | `docs/memory-map.md`, `docs/atari-hardware.md`, `docs/hw-access.md`, `docs/hw-techniques.md`, `docs/toolchain.md` | Atari/Amiga hardware + toolchain reference |
 
@@ -143,9 +144,11 @@ to hardware is largely ignored on Amiga.
 ## Performance — the headline
 
 **⭐ TARGET (user decision, 2026-08-08): 25 FPS = 40 ms/frame on the BEST-CASE baseline**
-(`COMBAT=1 COMBAT_QUIET=1 FIXED_RNG=1`). Standing measurement: **24.38 FPS best case**
-(2026-08-12, 038786d) ⇒ **~+2.5% of throughput to go**; combat 16.00 (stale, 4d25815). Combat may sit
-lower; it is not the bar. 50 FPS is the ideal, not the target. The A500 is a 7 MHz 68000 — spending 10 ms on *anything*
+(`COMBAT=1 COMBAT_QUIET=1 FIXED_RNG=1`). Standing measurement: **24.88 FPS best case**
+(2026-08-12, 33f0663) ⇒ **~+0.5% of throughput to go**; combat 16.00 (stale, 4d25815). Combat may sit
+lower; it is not the bar. ⚠ **The absolute reading wanders ~1.2%** — the same commit re-measured
+24.38 then 24.09 — so **rebuild and re-run the baseline in the SAME session** before diffing
+anything against it, and quote the A/B (§23's was +3.25%), not the absolute. 50 FPS is the ideal, not the target. The A500 is a 7 MHz 68000 — spending 10 ms on *anything*
 is half the budget; be conscious of absolute milliseconds always. The profile is FLAT (nothing
 >32%), so no single function closes the gap — five or six honest 5-point wins do. Surface numbers
 honestly.
@@ -161,10 +164,14 @@ Three rules that must survive without opening the doc:
   shifts the RNG read count and flies a *different level*). `make FIXED_RNG=1` for every perf run.
   ⭐ And **before costing a twin at all, check whether GCC is merely addressing `mem[]` absolutely**
   — `abs.l` is 16 cycles against `d16(An)`'s 12, and it picks the former even for a plain constant
-  subscript. A function-local laundered base (`__asm__("" : "=a"(m) : "0"(mem))` + `#define mem m`
-  over the body) folded 288 operands in `flight_control_integrate` for three lines, and left the
-  twin only a ~0.2-0.4%-of-wall residual. Recipe + the host-side proof:
-  `docs/asm-migration-plan.md` §Phase 12.
+  subscript. `ROF_MEMBASE_DECL(mb)` + `#define mem mb` over the body (rof_native.c) folds them all
+  for three lines; it is in 13 flight routines now. ⚠ **Fold at the CALLEE, not at a giant caller**
+  (all of `game_main_loop_body` was +36 bytes; `terrain_draw_frame_core`, which GCC inlines into it,
+  was −222 there and −510 inside it), and **keep a fold only when the function's own `.text` drops
+  in a WHOLE-TU size diff** — one fold shrank itself by 38 bytes and grew its two inline sites by
+  280. Same for a local `volatile` VIEW of `mem[]`: it puts the whole §20.2 tax back on that one
+  routine (use `ROF_MEM_VIEW`). Host proof: `make validate MEMBASE=1 MEMVIEW=1`. Recipe:
+  `docs/asm-migration-plan.md` §Phase 12 + `docs/flight-perf-log.md` §23.
 - **Every framerate figure in an older note or commit is wrong — re-measure, don't quote.**
 
 Everything else — the per-phase budget, the RAM budget, the closed candidates (do not re-open),
