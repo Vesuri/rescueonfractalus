@@ -2108,6 +2108,28 @@ SAME commit in this session read **24.09**. That is a 1.2% wander, exactly the s
 flight-neutral control in §19.8, and it is why the honest headline is the A/B delta and not the
 absolute. Quoting 24.38 as the baseline would have turned +2.87% into +1.6%.
 
+### ⭐⭐ 23.0 The `fps_seg` WINDOW is worth ±5%, so "have we hit 25?" has no window-free answer
+
+Measured directly at the end of this session, because the gap had shrunk below the point where the
+question mattered. The **same binary** (33f0663), the same script, only the segment list moved:
+
+| window | FPS | painted / vbi |
+|---|---|---|
+| vbi 1900–4900 — `fps_seg.gdb`'s standard window, i.e. every number in this file | **24.875** | 1492 / 2999 |
+| vbi 4900–7900 — the next 3000 vblanks of the same flight | **23.567** | 1414 / 3000 |
+
+**5.3% apart, same code.** The ship simply flies over more expensive ground later. This does NOT
+touch any A/B in this document — both arms of every comparison use the standard window — but it
+does mean:
+
+- **An absolute FPS reading is a property of (build × window), and only the window is under our
+  control.** "24.88 vs the 25 target" is a statement about vbi 1900–4900, not about the port.
+- The ~1.2% figure §19.8 quotes is the noise of a *flight-neutral code change on a fixed window*.
+  It is not the spread of the metric itself. **Never compare two readings taken on different
+  segment lists**, and say which window a number came from.
+- Corollary for the target: 25 FPS was set against this harness's standard window and should stay
+  pinned to it, or it is not a fixed bar at all.
+
 ### 23.1 The base fold generalises — but only where the register is free
 
 038786d folded `mem` onto a base register in `flight_control_integrate` and left the technique

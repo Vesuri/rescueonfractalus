@@ -13,11 +13,14 @@ pass ⇒ ~+0.5% of throughput to go**; `docs/flight-perf-log.md` §23).
 Combat-load slowdown is expected and does NOT have to reach 25.** 50 FPS remains the ideal, not
 the bar.
 
-⚠⚠ **That 24.88 is an ABSOLUTE reading and the absolute wanders ~1.2% between builds.** §23
-re-measured the previous standing commit and got **24.09 where the ledger said 24.38** — same
-commit, same flags, same script. So the claim that survives is the **in-session A/B, +3.25%**, and
-"are we at 25 yet?" cannot be answered by one reading. **Rebuild and re-run the baseline in the
-same session before diffing anything against it.** Spending 10 ms on *anything* is HALF the budget. The A500 (7 MHz 68000)
+⚠⚠ **That 24.88 is an ABSOLUTE reading, and an absolute reading is a property of (build × WINDOW),
+not of the port.** Same binary, same script, only `fps_seg.gdb`'s segment list moved: **vbi
+1900-4900 = 24.875, vbi 4900-7900 = 23.567** — 5.3% apart, because the ship flies over more
+expensive ground later (§23.0). And across sessions the same commit read 24.38 then 24.09. So the
+claim that survives is the **in-session, same-window A/B (+3.25% in §23)**; "are we at 25 yet?" is
+a question about the standard window specifically and cannot be answered by one reading.
+**Never move the segment list, and rebuild + re-run the baseline in the same session before
+diffing anything against it.** Spending 10 ms on *anything* is HALF the budget. The A500 (7 MHz 68000)
 is slow — there is no room for half measures; be conscious of absolute milliseconds, always.
 
 Units: 1 probe "tick" = 1 raster scanline = 63.56 µs; a PAL frame = 313 ticks = 20 ms. The flight

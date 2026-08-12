@@ -146,9 +146,11 @@ to hardware is largely ignored on Amiga.
 **⭐ TARGET (user decision, 2026-08-08): 25 FPS = 40 ms/frame on the BEST-CASE baseline**
 (`COMBAT=1 COMBAT_QUIET=1 FIXED_RNG=1`). Standing measurement: **24.88 FPS best case**
 (2026-08-12, 33f0663) ⇒ **~+0.5% of throughput to go**; combat 16.00 (stale, 4d25815). Combat may sit
-lower; it is not the bar. ⚠ **The absolute reading wanders ~1.2%** — the same commit re-measured
-24.38 then 24.09 — so **rebuild and re-run the baseline in the SAME session** before diffing
-anything against it, and quote the A/B (§23's was +3.25%), not the absolute. 50 FPS is the ideal, not the target. The A500 is a 7 MHz 68000 — spending 10 ms on *anything*
+lower; it is not the bar. ⚠⚠ **That figure is a property of (build × WINDOW).** The same binary
+reads **24.88 on `fps_seg.gdb`'s standard vbi 1900-4900 and 23.57 on vbi 4900-7900** (log §23.0),
+and the same commit re-measured 24.38 then 24.09 across sessions. So: **never move the segment
+list, rebuild and re-run the baseline in the SAME session, and quote the A/B** (§23's was +3.25%),
+never the absolute. 50 FPS is the ideal, not the target. The A500 is a 7 MHz 68000 — spending 10 ms on *anything*
 is half the budget; be conscious of absolute milliseconds always. The profile is FLAT (nothing
 >32%), so no single function closes the gap — five or six honest 5-point wins do. Surface numbers
 honestly.
