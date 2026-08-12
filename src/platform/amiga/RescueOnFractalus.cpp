@@ -628,6 +628,15 @@ static void buildHeightRowOff() {
         if (scan < 0) scan = 0; else if (scan > 46) scan = 46;
         kHeightRowOff[h] = kRow120[scan];
     }
+    // $FF (off-top: the column is all terrain body, so it plots NOTHING) gets the same negative
+    // SENTINEL treatment as kDrawDotRowOff above, so the asm rejects it with the `bmi` that the
+    // table read's own flags already set instead of a per-column `cmp.b #$FF / beq` — 16 cycles
+    // on every one of the 160 columns, and `make EDGE_SHAPE=1` + amiga/edge_shape.gdb measured
+    // $FF at only 3% of columns (5622/164160), so the trade is 8 cycles saved on 97% against 14
+    // paid on 3%.  Real offsets are kRow120[0..46] = 0..5520, so they never collide with it.
+    // ⚠ Both C readers (edgePlotCore, edgeShapeProbe) test h != $FF FIRST and so never index
+    // this entry — which is what keeps edgePlotCore usable as the differential's oracle.
+    kHeightRowOff[0xFF] = 0xFFFF;
     kHeightRowOffBuilt = true;
 }
 // Dot-plot row-offset table for the rasterizer's inner DRAW/draw_dot (TerrainRasterizeAssembler.s):

@@ -1033,58 +1033,80 @@ done_raw:
 ; flight_edge_plot_asm(uint8_t* bp) — RescueOnFractalus::renderFlightDirect's
 ; plane-1 skyline edge plot: one bit per column at its skyline scanline, 160
 ; columns = 40 plane-1 bytes (4 cols/byte).  Structured after the user's
-; hypothetical-renderer asm: 4 columns unrolled with IMMEDIATE column masks
+; hypothetical-renderer asm: 4 columns unrolled with the column masks
 ; ($C0/$30/$0C/$03 = kColMask4), the plane-1 byte pointer (a2) walked +1 per 4
 ; columns (no c>>2), and the height->row-byte-offset folded through the
 ; kHeightRowOff[256] table = kRow120[clamp(150-h,0,46)] (no per-column 150-h /
-; clamp branches).  The one residual per-column branch is h==$FF (off-top: the
-; column is all terrain body, so it must plot NOTHING — no safe table sentinel
-; without an extra buffer row).  Reads heights from mem[$260E+48..].  d0's high
-; byte stays 0 (only move.b writes it; the *2 index is taken in d1), so no
-; per-column re-clear is needed.
+; clamp branches).  Reads heights from mem[$260E+48..].  d0's high byte stays 0
+; (only move.b writes it; the *2 index is taken in d1), so no per-column
+; re-clear is needed.
 ;   a0 = height source (mem+$260E+48)   a1 = kHeightRowOff
 ;   a2 = plane-1 byte base (bp), advanced +1 per 4-column group
+;   d3-d6 = the four column masks, held in registers (see 2. below)
+;
+; 2026-08-12 shave, −12 of 68 cycles per column (~−1920/call, two calls an
+; iteration ≈ −0.6% of flight wall clock).  Both come from measurement, not
+; inspection — `make EDGE_SHAPE=1 PROBES=1` + amiga/edge_shape.gdb over 1026
+; frames (164160 columns) is what priced them:
+;   1. THE OFF-TOP TEST IS A TABLE SENTINEL NOW.  h==$FF means the column is all
+;      terrain body and must plot NOTHING; that was a per-column
+;      `cmp.b #$FF,d0 / beq` = 16 cycles paid by EVERY column.  The header used
+;      to say there was "no safe table sentinel without an extra buffer row" —
+;      true of a sentinel OFFSET, false of a sentinel VALUE: kHeightRowOff[$FF]
+;      is $FFFF, so the `move.w` that fetches the offset already sets N and one
+;      not-taken `bmi` (8) replaces the pair.  Real offsets are kRow120[0..46] =
+;      0..5520 and can never be negative, exactly as kDrawDotRowOff does it.
+;      The trade is −8 cycles on a non-$FF column against +14 on an $FF one, and
+;      the probe measured $FF at 3% of columns (5622/164160) — the break-even is
+;      38%, so this is not close.
+;   2. THE MASKS MOVED INTO REGISTERS.  `or.b #imm,(a2,d1.w)` is ORI to memory =
+;      12+10 = 22 cycles; `or.b dN,(a2,d1.w)` is 8+10 = 18.  −4 a column for
+;      four moveqs in the prologue.  (moveq sign-extends, so d3 holds $FFFFFFC0
+;      — or.b only reads the low byte.)
+; ⚠ The C oracle edgePlotCore keeps its explicit `h != $FF` test and therefore
+; never indexes the sentinel entry, which is what keeps it a valid oracle for
+; the `make VERIFY=1` differential that byte-compares the whole 47x120 plane.
 flight_edge_plot_asm:
-	movem.l	d7/a2,-(sp)		; 2 callee-saved longs = 8 bytes; arg shifts +8
-	movea.l	12(sp),a2		; bp  (4 + 8)
+	movem.l	d3-d7/a2,-(sp)		; 6 callee-saved longs = 24 bytes; arg shifts +24
+	movea.l	28(sp),a2		; bp  (4 + 24)
 	lea	mem+$260E+48,a0		; per-column max-height ($260E[48..])
 	lea	kHeightRowOff,a1
 	moveq	#0,d0			; d0 high stays 0 for the whole loop
+	moveq	#$C0-256,d3		; the four column masks (kColMask4), low byte only
+	moveq	#$30,d4
+	moveq	#$0C,d5
+	moveq	#$03,d6
 	move.w	#40-1,d7
 ep_loop:
 	move.b	(a0)+,d0		; col 4k
-	cmp.b	#$FF,d0
-	beq.s	ep_c1
 	move.w	d0,d1
 	add.w	d1,d1
-	move.w	(a1,d1.w),d1		; kHeightRowOff[h] = scanline byte offset
-	or.b	#$C0,(a2,d1.w)
+	move.w	(a1,d1.w),d1		; kHeightRowOff[h]; $FFFF = off-top ($FF) -> skip
+	bmi.s	ep_c1
+	or.b	d3,(a2,d1.w)
 ep_c1:
 	move.b	(a0)+,d0		; col 4k+1
-	cmp.b	#$FF,d0
-	beq.s	ep_c2
 	move.w	d0,d1
 	add.w	d1,d1
 	move.w	(a1,d1.w),d1
-	or.b	#$30,(a2,d1.w)
+	bmi.s	ep_c2
+	or.b	d4,(a2,d1.w)
 ep_c2:
 	move.b	(a0)+,d0		; col 4k+2
-	cmp.b	#$FF,d0
-	beq.s	ep_c3
 	move.w	d0,d1
 	add.w	d1,d1
 	move.w	(a1,d1.w),d1
-	or.b	#$0C,(a2,d1.w)
+	bmi.s	ep_c3
+	or.b	d5,(a2,d1.w)
 ep_c3:
 	move.b	(a0)+,d0		; col 4k+3
-	cmp.b	#$FF,d0
-	beq.s	ep_next
 	move.w	d0,d1
 	add.w	d1,d1
 	move.w	(a1,d1.w),d1
-	or.b	#$03,(a2,d1.w)
+	bmi.s	ep_next
+	or.b	d6,(a2,d1.w)
 ep_next:
 	addq.l	#1,a2			; next 4-column plane-1 byte
 	dbra	d7,ep_loop
-	movem.l	(sp)+,d7/a2
+	movem.l	(sp)+,d3-d7/a2
 	rts
