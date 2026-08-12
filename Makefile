@@ -29,6 +29,21 @@ ifdef FCIBASE
   EXTRA_DEFINES += -DROF_FCI_BASE_HOSTTEST
 endif
 
+# `make validate FN=terrain_draw_frame MEMVIEW=1` — the HOST arm of the Amiga local-mem-view
+# de-volatiling (rof_native.c ROF_MEM_VIEW).  Same idea and the same ⚠ as FCIBASE above: the
+# change only exists on the Amiga, so this compiles its shape here to prove it byte-identical.
+ifdef MEMVIEW
+  EXTRA_DEFINES += -DROF_MEM_VIEW_HOSTTEST
+endif
+
+# `make validate MEMBASE=1` — the HOST arm of the GENERALISED mem[] base fold (rof_native.c
+# ROF_MEMBASE, applied to a dozen flight routines).  FCIBASE covers only flight_control_integrate;
+# this one turns the fold on everywhere it is used, which is what proves the `#define mem`
+# rescan reached every access in each body.  Same ⚠ as above — TEST ONLY.
+ifdef MEMBASE
+  EXTRA_DEFINES += -DROF_MEMBASE_HOSTTEST
+endif
+
 CFLAGS   := -std=c11   -g $(OPT) -Wall -Wno-unused-label -fsigned-char \
              $(EXTRA_DEFINES) \
              -Isrc -Isrc/cpu -Isrc/platform -Isrc/gen

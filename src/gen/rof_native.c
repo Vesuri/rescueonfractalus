@@ -21,6 +21,77 @@
 #define ROF_MEM_ALIASES /* bare lvalue aliases: flight_mode_state == mem[MEM_flight_mode_state] */
 #include "mem.h"        /* MEM_<name> offsets + bare aliases (symbols.csv var rows) */
 
+/* ROF_MEM_VIEW — the qualifier for a LOCAL POINTER VIEW of mem[] inside a hot routine.
+ *
+ * Several routines here hoist `mem`-derived base pointers into locals so the 68000 gets
+ * (d16,An) instead of absolute-long.  They were written when mem[] was still `volatile`
+ * everywhere and so declared the views `volatile` too.  Since ROF_MEM_NONVOLATILE
+ * (docs/flight-perf-log.md §20.2) mem[] itself is plain on the Amiga, and a volatile VIEW
+ * puts the whole tax back on exactly the hottest loop: GCC must re-materialise every table
+ * lookup as `lea (0,An,Dn.l),aM` + `move.b (aM),Dn` (20 cycles) instead of the single
+ * `move.b (0,An,Dn.l),Dn` (14), cannot walk a pointer over a sequential table, and cannot
+ * emit the memory-to-memory `move.b d16(An),d16(Am)` form for a mem[]->mem[] copy.
+ *
+ * The soundness argument is mem[]'s own (§20.2): nothing preempts these routines on the
+ * Amiga, and every callee is an opaque call, i.e. already a reload barrier — so a plain view
+ * performs exactly the same accesses in the same order.  The SDL host keeps `volatile`,
+ * matching its own mem[] declaration, because there the VBI really is another thread.
+ *
+ * `make validate FN=<fn> MEMVIEW=1` compiles the Amiga shape on the HOST so the oracle can
+ * prove it byte-identical (⚠ TEST ONLY — sound in the single-threaded validate harness,
+ * NOT in the threaded SDL game).  Same pattern as FCIBASE. */
+#if defined(ROF_PLATFORM_AMIGA) || defined(ROF_MEM_VIEW_HOSTTEST)
+#define ROF_MEM_VIEW
+#else
+#define ROF_MEM_VIEW volatile
+#endif
+
+/* ROF_MEMBASE — the mem[] BASE-REGISTER fold, generalised.
+ *
+ * Dropping `volatile` (ROF_MEM_NONVOLATILE) only ALLOWS GCC to use a base register; it still
+ * emits absolute-long for a plain constant subscript (`move.b (mem+$25).l,d3` = 16 cyc / 6
+ * bytes where `move.b $25(An),d3` is 12 / 4) because its m68k cost model prices the two modes
+ * alike.  Laundering `mem` through an empty asm emits no instruction but makes GCC lose the
+ * knowledge that the pointer IS `mem`, so it must keep it in a callee-saved address register
+ * and every access folds to (d16,An).  First proven on flight_control_integrate (038786d,
+ * 4678 -> 4102 bytes, integ -5.7%); see the long note there for the full argument, including
+ * why `&mem` escaping into the asm is what keeps the alias oracle honest for helpers GCC
+ * inlines into the body.
+ *
+ * Usage — the `#define mem` has to be textual, so it cannot hide inside the macro:
+ *     static void f(void) {
+ *         ROF_MEMBASE_DECL(mb);
+ *     #ifdef ROF_MEMBASE
+ *     #define mem mb
+ *     #endif
+ *         ... body ...
+ *     #ifdef ROF_MEMBASE
+ *     #undef mem
+ *     #endif
+ *     }
+ * Every `mem[...]` and every symbols.csv lvalue alias folds, because the alias expands to
+ * `mem[...]` and is rescanned.
+ *
+ * ⚠ Only worth it where the body makes MANY mem[] accesses: the base costs one callee-saved
+ * address register, and in a register-starved function that buys a spill instead.  Check the
+ * .text size both ways before keeping one.
+ * ⚠ Displacements are signed 16-bit, so this is free only for addresses below $8000.  Above
+ * that GCC just picks another mode — correct, not free.
+ * `make validate FN=<fn> MEMBASE=1` compiles the same transformation on the host (portable "r"
+ * instead of m68k's "a") so the oracle can prove the macro rescan reached every use. */
+#if defined(ROF_PLATFORM_AMIGA) && !defined(ROF_NO_MEMBASE)
+#define ROF_MEMBASE 1
+#define ROF_MEMBASE_REG "a"          /* m68k: force an ADDRESS register */
+#elif defined(ROF_MEMBASE_HOSTTEST)
+#define ROF_MEMBASE 1
+#define ROF_MEMBASE_REG "r"          /* host equivalence test: any register */
+#endif
+#ifdef ROF_MEMBASE
+#define ROF_MEMBASE_DECL(nm) uint8_t* nm; __asm__ ("" : "=" ROF_MEMBASE_REG (nm) : "0"((uint8_t*)mem))
+#else
+#define ROF_MEMBASE_DECL(nm) ((void)0)
+#endif
+
 /* Display hardware register writes (ANTIC/GTIA/PMG, $D000-$D4xx) are DEAD on the Amiga — the
  * copper owns the display and bus_write already skips non-POKEY hardware there — but LIVE on
  * SDL, whose hwWrite() feeds the reference renderer (displayListPtr / colHW[] / hposP[] / ...).
@@ -4792,6 +4863,10 @@ void draw_dial_bar_column(void) {
  * which CMP #$8B branch was taken (the $8C clamp path carries C=1, the fall-through C=0).
  * Contract: mem[] (exit regs dead); the entry PHA/PLA scribble at $01FF is masked. */
 void draw_player3_object(void) {
+    ROF_MEMBASE_DECL(mb);   /* fold mem[] onto a base register (see ROF_MEMBASE) */
+#ifdef ROF_MEMBASE
+#define mem mb
+#endif
     uint8_t entryA = cpu.A;                 /* PHA */
     uint8_t a, x, y = 0;
 
@@ -4886,6 +4961,9 @@ void draw_player3_object(void) {
         else if (s < bar_col_threshold) s = bar_col_threshold;   /* CMP $BF; BCS skip; LDA $BF */
         player3_bottom_y = s;
     }
+#ifdef ROF_MEMBASE
+#undef mem
+#endif
 }
 
 /* dl_lms_build @ $69E5 — set the DL-fill dest pointer ($C5/$C6=$300A) and end index
@@ -5945,6 +6023,10 @@ static uint8_t asr16_4(uint8_t hi, uint16_t lo) {
  * height map, derive the horizon row, and on a change cache it ($2841/$2842) and
  * repaint via game_sub_451d.  All callees native; bounded loops -> random mem safe. */
 void update_terrain_horizon_lr(void) {
+    ROF_MEMBASE_DECL(mb);   /* fold mem[] onto a base register (see ROF_MEMBASE) */
+#ifdef ROF_MEMBASE
+#define mem mb
+#endif
     /* $992D: $2834 every-other gate */
     uint8_t v = horizon_phase_toggle, c = (uint8_t)(v & 1);
     horizon_phase_toggle = (uint8_t)(v >> 1);
@@ -6006,6 +6088,9 @@ void update_terrain_horizon_lr(void) {
         cpu.A = (uint8_t)(0x38 - horizon_right);            /* SEC; LDA #$38; SBC $282F */
         game_sub_451d();                                  /* JMP $451D */
     }
+#ifdef ROF_MEMBASE
+#undef mem
+#endif
 }
 
 /* update_terrain_scanline_proj @ $9833 — top of the in-flight terrain projection subtree.
@@ -6019,6 +6104,10 @@ void update_terrain_horizon_lr(void) {
  * All callees are native; the function reads no entry registers and writes only memory
  * (validated byte-for-byte against the $9833 oracle). No hardware is touched. */
 static void update_terrain_scanline_proj_impl(void) {
+    ROF_MEMBASE_DECL(mb);                     /* 89 absolute-long mem[] operands folded to (d16,An) */
+#ifdef ROF_MEMBASE
+#define mem mb
+#endif
     /* Map cell coords = world position >> 4.  Stored to the bilinear-sampler inputs
      * (map_x/map_z), plus a scratch pair and a mirror pair the horizon code reads. */
     uint16_t mx = (uint16_t)(((world_x_hi << 8) | world_x_lo) >> 4);
@@ -6089,6 +6178,9 @@ static void update_terrain_scanline_proj_impl(void) {
     if (phase >= 0x04) return;
     mem[0x2879] = 0;
     game_state = 0;
+#ifdef ROF_MEMBASE
+#undef mem
+#endif
 }
 #ifdef ROF_FLIGHT_PROBE
 extern volatile unsigned long g_pProj, g_pInteg;
@@ -6246,6 +6338,10 @@ void trig_interp_lookup(void) {
  * caller reloads A immediately; the exit X=$FF is dead).
  */
 void compute_row_xspans(void) {
+    ROF_MEMBASE_DECL(mb);   /* fold mem[] onto a base register (see ROF_MEMBASE) */
+#ifdef ROF_MEMBASE
+#define mem mb
+#endif
     row_span_seed = horizon_row_index;                 /* AD2B: centre seed */
 
     uint8_t b5 = 0x00; mem[0x00B5] = 0x00;     /* AD30-AD32 */
@@ -6264,6 +6360,9 @@ void compute_row_xspans(void) {
         t = (uint16_t)mem[0x270F + x] + (uint8_t)~scroll_accum_b3 + c;  /* (270F+X) - A4 - borrow */
         mem[0x270E + x] = (uint8_t)t;
     }
+#ifdef ROF_MEMBASE
+#undef mem
+#endif
 }
 
 /* check_target_in_window @ $AC42 — latch a target index after 2 consecutive hits.
@@ -6484,6 +6583,10 @@ void build_view_transform_matrix(void) { build_view_transform_matrix_core_c(); }
  * __t6502 oracle (make validate FN=setup_projection_params).
  */
 void setup_projection_params(void) {
+    ROF_MEMBASE_DECL(mb);   /* fold mem[] onto a base register (see ROF_MEMBASE) */
+#ifdef ROF_MEMBASE
+#define mem mb
+#endif
     /* World X/Z scaled into projection units (16-bit logical >> 4). */
     uint16_t wx = (uint16_t)(world_x_lo | (world_x_hi << 8)) >> 4;
     vbi_phase = (uint8_t)wx; vbi_flags = (uint8_t)(wx >> 8);
@@ -6532,6 +6635,9 @@ void setup_projection_params(void) {
     if (idx & 0x80)      idx = 0x00;
     else if (idx >= 0x09) idx = 0x08;
     player3_xbase = idx;
+#ifdef ROF_MEMBASE
+#undef mem
+#endif
 }
 
 /* set_plot_mask_and_halve_step @ $AB7B — pick a plot base ptr + quarter the step.
@@ -6904,6 +7010,10 @@ void terrain_plot_object_a(void) {
  * Contract: memory; exit X=$28E1; other regs dead.
  */
 void terrain_plot_object_b(void) {
+    ROF_MEMBASE_DECL(mb);   /* fold mem[] onto a base register (see ROF_MEMBASE) */
+#ifdef ROF_MEMBASE
+#define mem mb
+#endif
     if (mem[0x2487 + cpu.X] != 0) { terrain_distance_clamp_return(); return; }   /* A90A */
     if (mem[0x242D + cpu.X] != 0) { terrain_distance_clamp_return(); return; }   /* A90F */
     plot_base_ptr_lo = 0xF1; plot_base_ptr_hi = 0xA7;
@@ -6942,6 +7052,9 @@ void terrain_plot_object_b(void) {
     }
     /* L_a998 */
     cpu.X = terrain_cur_obj_idx;
+#ifdef ROF_MEMBASE
+#undef mem
+#endif
 }
 
 /* terrain_plot_object @ $A63B — per-object terrain raster dispatch.
@@ -8295,9 +8408,14 @@ extern unsigned long g_tdPairs, g_tdCulled, g_tdVisPairs, g_tdProjCount;
  *   - $28DB and the $272E reload are 6502 register-save residue — see below.
  * Counted off the disassembly, see the log. */
 __attribute__((noinline)) static void terrain_draw_objects(void) {
-    volatile uint8_t *M = mem;                       /* one base register for the whole loop */
-    volatile const uint8_t *order = mem + 0xB67C;    /* draw-order table base */
-    volatile const uint8_t *cls = mem + 0x24B4;      /* per-object visibility class, own base */
+    /* ROF_MEM_VIEW, not a hard `volatile` — see its definition at the top of this file.  With
+       the views volatile GCC re-materialises each table lookup as `lea (0,An,Dn.l),aM` +
+       `move.b (aM),Dn` (20 cyc) instead of `move.b (0,An,Dn.l),Dn` (14), cannot walk `order`
+       as a pointer, and splits each of the five per-pair vector copies into a load + a store
+       (24 cyc) instead of one `move.b d16(An),d16(Am)` (20). */
+    ROF_MEM_VIEW uint8_t *M = (ROF_MEM_VIEW uint8_t *)mem;              /* one base register for the whole loop */
+    ROF_MEM_VIEW const uint8_t *order = (ROF_MEM_VIEW const uint8_t *)mem + 0xB67C; /* draw-order table base */
+    ROF_MEM_VIEW const uint8_t *cls = (ROF_MEM_VIEW const uint8_t *)mem + 0x24B4;   /* per-object visibility class, own base */
 #ifdef __mc68000__
     /* Hide the bases from the optimiser.  Left as plain initialisers GCC knows they are the
        address of a symbol and constant-folds every use back into an absolute-long address
@@ -8334,7 +8452,7 @@ __attribute__((noinline)) static void terrain_draw_objects(void) {
             uint8_t cls1 = cls[obj1];                /* companion visibility class (read once) */
             M[0x272E] = (uint8_t)order_idx;          /* scratch-save the index across the calls */
             if (!(cls1 & 0xC0)) {                    /* companion on-screen and not culled */
-                volatile const uint8_t *o1 = M + obj1;   /* base for obj1's per-object arrays */
+                ROF_MEM_VIEW const uint8_t *o1 = M + obj1; /* base for obj1's per-object arrays */
                 TDPAIR(g_tdVisPairs);
                 if (!(cls1 & 0x10))                  /* project the companion unless already projected */
                     { TDPAIR(g_tdProjCount); PB(_pp1); project_terrain_points_core(obj1); cpu.X = obj1; OP_TIME(terrain_plot_object()); PE(_pp1, g_tdProjPlot); }
@@ -8380,6 +8498,10 @@ __attribute__((noinline)) static void terrain_draw_objects(void) {
  * (harness seeds it identically per run).
  */
 void terrain_draw_frame_core(uint8_t entryX) {
+    ROF_MEMBASE_DECL(mb);   /* 146 absolute-long mem[] operands folded to (d16,An) */
+#ifdef ROF_MEMBASE
+#define mem mb
+#endif
     CL_SUB_BEG();                                        /* DRAW sub-split: start the head segment */
     mem[0x00A7] = entryX;                                /* remember which double-buffer half we're drawing */
 #ifdef ROF_PLATFORM_AMIGA
@@ -8587,6 +8709,9 @@ void terrain_draw_frame_core(uint8_t entryX) {
     indicator_pos = 0x01;
     mem[0x282D] = terrain_depth_step;
     CL_CNT(g_clSaucer);                                  /* combat-load: a saucer spawned */
+#ifdef ROF_MEMBASE
+#undef mem
+#endif
 }
 void terrain_draw_frame(void) { terrain_draw_frame_core(cpu.X); }
 
@@ -8706,6 +8831,10 @@ void enqueue_indicator_event(void) {
  * heading table $93F3[$0063] (arith >>1 gated by $282D) + $0066, and $2824 from $0064;
  * else $2824 = 0.  mem-only contract (starts SEC; X/Y loaded from mem; no RANDOM). */
 void object_integrate_position(void) {
+    ROF_MEMBASE_DECL(mb);   /* fold mem[] onto a base register (see ROF_MEMBASE) */
+#ifdef ROF_MEMBASE
+#define mem mb
+#endif
     /* Each axis is a 24-bit accumulator {hi:mid:lo}; each block adds/subtracts a
      * sign-extended 16-bit operand.  The 6502 does this as a 2-byte add/subtract
      * plus a carry-conditional INC/DEC of the high byte = ordinary signed modular
@@ -8734,6 +8863,9 @@ void object_integrate_position(void) {
     if (ang >= 0x20) a = (int8_t)(a >> 1);                       /* arithmetic >>1 */
     player3_xpos = (uint8_t)((uint8_t)a + object_pos_y_lo);
     player3_ytop = object_pos_x_lo;
+#ifdef ROF_MEMBASE
+#undef mem
+#endif
 }
 
 /* jitter_roll_pitch @ $AA95 — per-frame random walk of the pitch ($0029) and roll
@@ -9877,6 +10009,10 @@ void plot_scanline_down(void) {
  * $28FA pixels up each column via terrain_plot_pixel (native).  Bounds: X in
  * [$2C,$D4), Y >= $6C.  Contract: memory; exit cpu dead.  plot_line_done absorbed. */
 void plot_scanline_up(void) {
+    ROF_MEMBASE_DECL(mb);   /* fold mem[] onto a base register (see ROF_MEMBASE) */
+#ifdef ROF_MEMBASE
+#define mem mb
+#endif
     cpu.X = mem[0x28F0];                          /* LDX $28F0 */
     cpu.Y = mem[0x28F2];                          /* LDY $28F2 */
     for (;;) {                                    /* L_ab2d */
@@ -9923,6 +10059,9 @@ void plot_scanline_up(void) {
         if (plot_x_step_hi & 0x80) cpu.X--;          /* DEX (X drift) */
         else                    cpu.X++;          /* INX */
     }
+#ifdef ROF_MEMBASE
+#undef mem
+#endif
 }
 
 /* plot_scanline_rand_dir @ $AACF — RANDOM picks the walk direction. */
@@ -9940,6 +10079,10 @@ void plot_scanline_rand_dir(void) {
  * (Several cells here are unnamed — see docs/rename.md: $28EB/$28EC target cell, $28EF-$28F9
  * bolt line-plot state, $0624 fire-delay mask, $28ED shot-queued flag.) */
 void game_state_update(void) {
+    ROF_MEMBASE_DECL(mb);                     /* 89 absolute-long mem[] operands folded to (d16,An) */
+#ifdef ROF_MEMBASE
+#define mem mb
+#endif
     /* Pace the next fire.  When the countdown underflows, pick a fresh random delay
        ($0624 & RANDOM), clear the fire/queue state, and (unless crashed) reset the blip colour. */
     uint8_t timer = (uint8_t)(lock_on_indicator_complete - 1);
@@ -10007,6 +10150,9 @@ void game_state_update(void) {
     if (game_state == 0) anim_counter_2 = 0x28;
     game_state++;
     ring_push_marked_core(0x07); ring_push_marked_core(0x02);
+#ifdef ROF_MEMBASE
+#undef mem
+#endif
 }
 
 /* alien_attack_tick @ $7AB8 — per-frame enemy PMG update.  When RANDOM is negative,
@@ -10670,6 +10816,10 @@ static void ring_push_marked_core(uint8_t id) { mem[0x0100 | cpu.S] = id; ring_p
  * Entry: anim_frame = the 6502 entry X (stored to $2867).  All state is mem[]; the 3 HW writes
  * (HPOSP2/SIZEP2/GRAFP2) go through bus_write to mirror the oracle (ignored on the Amiga). */
 static void build_player2_sprite_core(uint8_t anim_frame) {
+    ROF_MEMBASE_DECL(mb);   /* fold mem[] onto a base register (see ROF_MEMBASE) */
+#ifdef ROF_MEMBASE
+#define mem mb
+#endif
     uint8_t a, x, y;
 
     /* 8c58: erase the previous strip region ($0E32+$2865, for $2866 rows). */
@@ -10797,6 +10947,9 @@ L_8dae:
     y = a;                                          /* 8dae TAY */
     a = mem[0x8E32 + y];                            /* 8daf */
     goto L_8ce5;                                    /* 8db2 */
+#ifdef ROF_MEMBASE
+#undef mem
+#endif
 }
 void build_player2_sprite(void) { build_player2_sprite_core(cpu.X); }   /* 6502-ABI shim (entry X) */
 
@@ -10912,6 +11065,10 @@ void lock_on_indicator_phase_advance(void) { lock_on_indicator_phase_advance_cor
 
 /* $4229 lock_on_indicator_tick — the indicator state machine (dispatch on $007E). */
 void lock_on_indicator_tick(void) {
+    ROF_MEMBASE_DECL(mb);   /* fold mem[] onto a base register (see ROF_MEMBASE) */
+#ifdef ROF_MEMBASE
+#define mem mb
+#endif
     uint8_t state = mem[MEM_lock_on_indicator_state];
     if (state >= 0x80u) {
         if (state >= 0x81u) { lock_on_indicator_phase_advance_core(state); return; }
@@ -10931,6 +11088,9 @@ void lock_on_indicator_tick(void) {
     mem[MEM_lock_on_indicator_state]++;                      /* -> state 1 */
     mem[MEM_anim_step_timer] = mem[MEM_lockon_step_reload];
     lock_on_indicator_fill_cells();                                         /* light all six glyphs */
+#ifdef ROF_MEMBASE
+#undef mem
+#endif
 }
 
 /* $4225 lock_on_indicator_dispatch — the flight/standby entry point.  While an event owns the
@@ -10984,6 +11144,10 @@ extern volatile unsigned long g_pDrawBr, g_pSimHead, g_pAtmo, g_pHud, g_pScore, 
  * isolates exactly this handler's orchestration + inline state updates.
  */
 void vbi_handler_flight(void) {
+    ROF_MEMBASE_DECL(mb);                     /* 178 absolute-long mem[] operands folded to (d16,An) */
+#ifdef ROF_MEMBASE
+#define mem mb
+#endif
     mem[0x00C7] = 0x00;                       /* reset the DLI dispatch index for this frame ($00C7) */
 
 #ifdef ROF_PLATFORM_AMIGA
@@ -11295,6 +11459,9 @@ void vbi_handler_flight(void) {
     zp_flag_05 = 0x00;                        /* clear the re-entrancy guard (SDL only; see above) */
 #endif
     os_xitvbv();
+#ifdef ROF_MEMBASE
+#undef mem
+#endif
 }
 
 /* wait_frames_core — busy-wait `frames` vertical-blank periods, driving one real
