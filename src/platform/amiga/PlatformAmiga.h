@@ -9,7 +9,7 @@
  * It implements the Platform interface the C-compiled 6502 transliteration reaches
  * through the shared platform_cbridge.cpp (hwRead/hwWrite/renderFrame/tickVBI/...).
  */
-#include "Platform.h"           // the abstract base (src/platform, on the build -I path)
+#include "platform.h"           // the abstract base (src/platform, on the build -I path)
 #include "platform_c.h"         // the extern "C" bridge decls (platform_hw_write etc.)
 #include "framework/Util.h"  // uint8_t, uint16_t, uint32_t
 

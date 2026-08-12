@@ -6,7 +6,7 @@
 #define PlatformClass PlatformSDL
 
 #include <SDL.h>
-#include "../Platform.h"
+#include "../platform.h"
 
 /* Screen geometry.
    ROF_NATIVE_W = 384: the full WIDE (DMACTL bits=11) ANTIC playfield output.

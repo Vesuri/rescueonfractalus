@@ -1,9 +1,9 @@
 /* C bridge — implements the C-callable interface declared in platform_c.h
    by forwarding to the Platform C++ singleton.  Compiled as C++ so it can
-   see Platform.h; the symbols are exported with C linkage so the generated
+   see platform.h; the symbols are exported with C linkage so the generated
    C translation units can link against them without name-mangling. */
 
-#include "Platform.h"
+#include "platform.h"
 #include "platform_c.h"
 
 extern "C" {

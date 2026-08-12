@@ -1,4 +1,4 @@
-#include "Platform.h"
+#include "platform.h"
 
 extern volatile uint8_t mem[65536];
 
