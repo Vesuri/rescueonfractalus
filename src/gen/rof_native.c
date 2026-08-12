@@ -9291,7 +9291,55 @@ void compute_obj_rel_angle_scale(void) {
  *
  * No bus_write() here is a no-op on the Amiga — the only hardware touched is the two
  * bus_read()s (PORTA joystick + POKEY RANDOM), both of which are real reads on Amiga. */
+/* ⭐ PRICING STEP FOR THE ASM TWIN (2026-08-12) — read this before writing one.
+ *
+ * The disassembly of this function at -O2 is 4678 bytes / 1245 instructions, and **362 of those
+ * instructions carry an absolute-LONG operand** (`move.b 656b1 <mem+0x25>,d3`) against only 19
+ * that use a base register.  GCC even emits `lea mem,a2` and `lea cpu,a3` in the prologue and
+ * then addresses almost everything absolutely anyway.  On the 68000 `move.b (xxx).L,Dn` is 16
+ * cycles / 6 bytes where `move.b d16(An),Dn` is 12 / 4 — so the function is paying 4 cycles and
+ * 2 bytes per access for nothing.  That is the single biggest thing a hand-asm twin would fix,
+ * and it needs no asm at all: `mem` only has to be laundered through an address register so GCC
+ * cannot constant-fold it back to an absolute.
+ *
+ * The empty asm below does exactly that and nothing else — no instruction is emitted, GCC simply
+ * loses the knowledge that `mbase == mem` and is forced to keep it in a (callee-saved) address
+ * register across the whole body.  Every `mem[...]` and every `symbols.csv` lvalue alias
+ * (`pitch_pos_lo` -> `mem[0x25]` -> `mbase[0x25]`) then becomes `d16(An)`.  This is safe by
+ * construction: same array, same accesses, same order, and `make validate FN=flight_control`
+ * still byte-compares the whole thing against the $8E5B transliteration.
+ *
+ * ⚠ Every address this function touches is below $8000 (highest is $291E), so the signed 16-bit
+ * displacement reaches all of them from a single base.  A future edit that reaches above $7FFF
+ * is still CORRECT (GCC picks another mode), just not free.
+ *
+ * ⛔ NOT the same thing as the closed `register uint8_t* m asm("a5")` global-register idea
+ * ([[feedback-volatile-codegen-tax]]): this base is function-local and callee-saved, so the hand
+ * written .s files and the VBI are unaffected.
+ *
+ * `make FCI_NOBASE=1` reverts to plain absolute addressing for an A/B.
+ *
+ * ⭐ AND IT IS PROVEN, not argued.  `make validate FN=flight_control_integrate FCIBASE=1` compiles
+ * this same source transformation on the HOST (portable "r" constraint instead of m68k's "a") and
+ * byte-compares the result against the $8E5B transliteration over 8000 cases: **0 mem mismatch**.
+ * That is what closes the real risk here, which is not a GCC bug — it is the macro rescan quietly
+ * failing to reach some use (every access in the body is a subscript, and every symbols.csv alias
+ * expands to `mem[...]`, but "I checked" is not a measurement).  ⚠ The host arm casts `volatile`
+ * off `mem`, which is only sound because the validate harness is single-threaded; it is a TEST
+ * configuration, never a host shipping one. */
+#if defined(ROF_PLATFORM_AMIGA) && !defined(ROF_FCI_NOBASE)
+#define ROF_FCI_BASE 1
+#define ROF_FCI_BASE_REG "a"          /* m68k: force an ADDRESS register */
+#elif defined(ROF_FCI_BASE_HOSTTEST)
+#define ROF_FCI_BASE 1
+#define ROF_FCI_BASE_REG "r"          /* host equivalence test: any register */
+#endif
 static void flight_control_integrate_impl(void) {
+#ifdef ROF_FCI_BASE
+    uint8_t* mbase;
+    __asm__ ("" : "=" ROF_FCI_BASE_REG (mbase) : "0"((uint8_t*)mem));
+#define mem mbase
+#endif
     IN_DECL(); IN_START();
     /* ---- Steering: derive the roll rate (and a dial-based pitch trim) from the stick ----
      * Only while joystick_saved==2 (active flight) and no colour-clear sweep in progress. */
@@ -9665,6 +9713,9 @@ static void flight_control_integrate_impl(void) {
     }
     IN_LAP(g_inTail);
     IN_LAP(g_inNop);          /* empty lap = the per-bucket floor; subtract it from each bucket */
+#ifdef ROF_FCI_BASE
+#undef mem
+#endif
 }
 #ifdef ROF_FLIGHT_PROBE
 void flight_control_integrate(void) { unsigned long _p = rof_subclock(); flight_control_integrate_impl(); g_pInteg += rof_subclock() - _p; }

@@ -491,6 +491,15 @@ ifdef FIRE_ONCE
 EXTRA_DEFINES += -DROF_FIRE_ONCE=$(FIRE_ONCE)
 endif
 
+# `make FCI_NOBASE=1` — A/B control for the mem[] base-register fold in
+# flight_control_integrate_impl (rof_native.c ROF_FCI_BASE).  Default ON: an empty asm launders
+# mem's address through an address register so GCC stops emitting 16-cycle absolute-long operands
+# for every access.  This flag restores the plain absolute addressing so the two can be compared
+# (statically with objdump, or on target with amiga/isr_full.gdb's integ row).
+ifdef FCI_NOBASE
+EXTRA_DEFINES += -DROF_FCI_NOBASE
+endif
+
 # Profiling aid: `make FORCE_SAUCER=1` (implies PROBES) injects a static flying-saucer P3
 # object into the PMG buffer each flight VBI frame (rof_native.c ROF_FORCE_SAUCER) so the
 # Amiga per-frame P3 sprite mirror (buildViewportP3Sprite/buildScopeP3Sprite) runs under

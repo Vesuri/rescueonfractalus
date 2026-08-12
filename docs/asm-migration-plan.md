@@ -1096,3 +1096,106 @@ design records:
 
 Also folded in: the two width-test variants (`sd_wtSpanH` / `sd_wtFarH`) differed in ONE instruction,
 so `useSpanHeight` is an extra entry point above a shared body rather than a duplicated block.
+
+## Phase 12 — `flight_control_integrate`: PRICED, the addressing half SHIPPED without asm (2026-08-12)
+
+`flight_control_integrate` ($8E5B) is the last sized item in the flight VBI and the only one the
+`flight-pc-profiler` menu still names as an asm-twin candidate ("8.4 t/firing — an asm twin is the
+only lever, 400 faithful lines"). This phase is the mandatory pricing step in front of that twin —
+the same discipline `SfxMixerAssembler.s`'s header preaches, and for the same reason: **that twin's
+first attempt came out 5% SLOWER than GCC.**
+
+### 12.1 What the disassembly actually said
+
+At `-O2` the function is **4678 bytes / 1245 instructions**, and:
+
+| | count |
+|---|---|
+| instructions with an absolute-LONG `<mem+…>` operand | **321** |
+| ...with an absolute-LONG `<cpu+…>` operand | 41 |
+| instructions using the `a2`/`a3` base registers | **19** |
+
+GCC emits `lea mem,a2` and `lea cpu,a3` in the prologue **and then addresses almost everything
+absolutely anyway.** On the 68000 `move.b (xxx).L,Dn` is 16 cycles / 6 bytes against
+`move.b d16(An),Dn`'s 12 / 4 — so ~290 sites were paying 4 cycles and 2 bytes for nothing. That is
+the single biggest thing a hand-asm twin of this function would have fixed, and it is also the one
+thing that needs no asm at all.
+
+⚠ This is NOT the `volatile` tax ([[feedback-volatile-codegen-tax]]) — `mem[]` is already
+non-volatile in the Amiga C core. GCC simply prices `abs.l` and `d16(An)` alike in its m68k cost
+model and picks whichever the RTL happened to produce.
+
+### 12.2 The fix that shipped — launder the base through an empty asm
+
+```c
+uint8_t* mbase;
+__asm__ ("" : "=a"(mbase) : "0"((uint8_t*)mem));
+#define mem mbase        /* …body…  #undef mem at the end */
+```
+
+No instruction is emitted. GCC just loses the knowledge that `mbase == mem`, so it must keep the
+value in a callee-saved address register for the whole body, and every `mem[…]` — including every
+`symbols.csv` lvalue alias, since `pitch_pos_lo` → `mem[0x25]` → `mbase[0x25]` on macro rescan —
+becomes `d16(An)`.
+
+Sound because `&mem` escapes into the asm, so GCC's alias oracle must treat `*mbase` as possibly
+aliasing `mem` (the standard `RELOC_HIDE`/`OPTIMIZER_HIDE_VAR` idiom). That matters: the helpers
+GCC inlines into this function (`game_sub_55FC`, `refresh_hud_field_0d_entry`, …) still reference
+`mem` directly, and a compiler that thought the two could not alias would be free to reorder
+across them.
+
+⛔ Not the closed `register uint8_t* m asm("a5")` global-register idea — this base is
+function-local and callee-saved, so the hand-written `.s` files and the VBI are untouched.
+
+`make FCI_NOBASE=1` restores absolute addressing for the A/B.
+
+**Measured** (`amiga/fire_once.gdb` PRE window, `COMBAT=1 COMBAT_QUIET=1 FIXED_RNG=1 PROBES=1`,
+t/firing — the one flight metric that is cross-build-legitimate):
+
+| | no base | base fold | delta |
+|---|---|---|---|
+| `integ` | 8.532 | **8.045** | **−5.7%** |
+| whole flight VBI | 59.949 | **59.072** | −0.88 t/firing = **−1.5%** |
+| function size | 4678 B | **4102 B** | −576 B (288 operands folded) |
+
+−0.88 t/firing × 50 firings/s ÷ 15650 = **−0.28% of ALL wall clock**, for three lines and no
+faithfulness surface. The handler row moves −0.66 and `integ` accounts for −0.49 of it, which is
+the internal consistency check (`integ` is inside the handler).
+
+### 12.3 What is LEFT for an actual `.s`, and why it was not written
+
+After the fold, `integ` is 8.05 t/firing = 16.1 t/CALL (it runs on half the firings, `$00C8`
+parity) ≈ 2.6% of all wall clock. An asm twin has to beat GCC on what remains, and the remainder is
+harder than it looks:
+
+- **~55% of the call is callees**, which the twin would `jsr` exactly as GCC does — no win there.
+  The ones actually reached in quiet flight are `rof_pokey_random` (×1-2),
+  `compute_obj_rel_angle_scale`, `object_integrate_position`. `object_step_and_collide` /
+  `load_velocity_from_param_block` are gated on `$0036 != 0`, which is **2 of 216 flight vblanks**
+  in the quiet arm — i.e. essentially never, and NOT a cost to design around.
+- ⚠⚠ **GCC INLINES several helpers into this function** (`game_sub_55FC` ×5, `store_676_init`,
+  `refresh_hud_field_0d_entry`, `reset_flags_ff`, `mul_u8_lookup`, `terrain_jitter_column`).
+  A twin that `bsr`s them instead LOSES to GCC on call overhead, so it has to re-implement each in
+  asm too. `game_sub_55FC` alone is 152 bytes × 5 sites. **This, not the 400 lines of arithmetic,
+  is what makes the twin big** — and it is invisible from the C.
+- The genuinely asm-shaped wins left are the register allocation (GCC spends 7 registers on a
+  `movem` and still reloads) and the 6502 16-bit carry idioms (`lsl.l #8 / or.b / ror.w #8` to
+  assemble a pair of bytes; `moveq #0,dN / not.b / and.l / sub.l` for a masked subtract).
+
+Realistic residual: **~0.2-0.4% of all wall clock**, against a ~4 KB hand-written `.s` on the
+routine that integrates the ship's position — where a byte-level divergence is not a glitch, it is
+a different flight. Priced and left for the user to schedule; the fold above took the free half.
+
+**If it is scheduled, the design is fixed already:**
+- Seam `ROF_INTEG_ASM` + `make INTEG_C=1` fallback, mirroring `ROF_SFXMIX_ASM`.
+- `a2 = mem`, `a3 = cpu` (every address this function touches is below $8000 — highest is $291E —
+  so one base reaches all of them through a signed d16).
+- Verification is an in-process differential like `sfxmix_verify`, NOT `make validate`: the fold
+  and the twin are both Amiga-only, and `make validate` cannot see either. The compare window is
+  wide — this function writes ZP $20-$3E plus $2871/$2873/$2883/$2884/$2885-$288A/$28D6/$0686/$0687
+  /$0677/$0685/$2850-$2853/$2829/$282C/$0068/$0069/$284E/$284F/$0039/$005D/$2917/$2919-$291E and
+  the five $2893/$289A/$28A1/$28A8/$28AF ring rows — so snapshot ZP $00-$FF plus $2820-$2930 plus
+  $0670-$0690 and `cpu`.
+- ⚠ The callees are NOT pure (they push the SFX event ring, read POKEY RANDOM), so the differential
+  must alternate the order and restore between halves, exactly as `sfxmix_verify` does and for the
+  same reason.

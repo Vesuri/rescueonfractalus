@@ -19,7 +19,18 @@ else
   OPT := -O0
 endif
 
+# `make validate FN=flight_control_integrate FCIBASE=1` — the HOST arm of the Amiga mem[] base
+# fold (rof_native.c ROF_FCI_BASE, docs/asm-migration-plan.md §Phase 12).  The fold itself is
+# Amiga-only, so make validate cannot normally see it at all; this compiles the SAME source
+# transformation here (portable "r" constraint instead of m68k's "a") so the oracle can prove the
+# macro rescan is byte-identical.  ⚠ TEST ONLY — it casts volatile off mem[], which is sound in
+# the single-threaded validate harness and NOT in the threaded SDL game.
+ifdef FCIBASE
+  EXTRA_DEFINES += -DROF_FCI_BASE_HOSTTEST
+endif
+
 CFLAGS   := -std=c11   -g $(OPT) -Wall -Wno-unused-label -fsigned-char \
+             $(EXTRA_DEFINES) \
              -Isrc -Isrc/cpu -Isrc/platform -Isrc/gen
 CXXFLAGS := -std=c++11 -g $(OPT) -Wall -Wno-reorder -fsigned-char \
              -Isrc -Isrc/cpu -Isrc/platform -Isrc/gen \
