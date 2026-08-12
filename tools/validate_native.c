@@ -1326,12 +1326,17 @@ static int test_hud_draws(void) {
         int mem_fail = 0, cpu_diff = 0, printed = 0;
         for (int t = 0; t < 20000; t++) {
             memcpy(pre, snap, sizeof pre);
-            /* draw_ah_ground_fill_p2 inputs + caches */
-            pre[0x291C] = (uint8_t)(xs() & 0xFF); pre[0x291D] = (uint8_t)(xs() & 0x3F);
-            pre[0x2872] = (uint8_t)(xs() & 0xFF); pre[0x2874] = (uint8_t)(xs() & 0x3F);
-            /* draw_altimeter_bars inputs + caches */
-            pre[0x281A] = (uint8_t)(xs() & 0x3F); pre[0x281B] = (uint8_t)(xs() & 0x3F);
-            pre[0x2875] = (uint8_t)(xs() & 0x3F); pre[0x2876] = (uint8_t)(xs() & 0x3F);
+            /* draw_ah_ground_fill_p2 inputs + caches (full 8-bit — same reason as below: the
+             * pointer-walk fast path is only taken when the 21-byte run cannot wrap). */
+            pre[0x291C] = (uint8_t)(xs() & 0xFF); pre[0x291D] = (uint8_t)(xs() & 0xFF);
+            pre[0x2872] = (uint8_t)(xs() & 0xFF); pre[0x2874] = (uint8_t)(xs() & 0xFF);
+            /* draw_altimeter_bars inputs + caches.  ⚠ FULL 8-bit range on purpose (2026-08-12):
+             * the twin's fast paths assume the run is contiguous, which only holds while the
+             * 8-bit row index does not wrap, and a $3F mask can never produce a wrap.  Live
+             * flight only ever passes < $38 — the point of the wide fixture is to prove the
+             * fallback branch, not to model the game. */
+            pre[0x281A] = (uint8_t)(xs() & 0xFF); pre[0x281B] = (uint8_t)(xs() & 0xFF);
+            pre[0x2875] = (uint8_t)(xs() & 0xFF); pre[0x2876] = (uint8_t)(xs() & 0xFF);
             /* dispatch_43cb_half_70: terrain_clearance + draw_dial_bar_column gate $062E */
             pre[0x0070] = (uint8_t)(xs() & 0xFF); pre[0x062E] = (uint8_t)(xs() & 0x0F);
             /* update_altitude_digit_display inputs */

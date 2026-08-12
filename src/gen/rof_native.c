@@ -4664,8 +4664,20 @@ void draw_ah_ground_fill_p2(void) {
     x = mem[0x455B + x];                       /* X = table[$455B + ring_cur_3] */
     canopy_pillar_y_cache = y;
     mem[0x0E87 + y] = 0x00;
+    /* ⭐ Same treatment as draw_altimeter_bars: the 21-byte copy is contiguous on BOTH sides,
+     * but the 6502 indices are 8-bit, so GCC masks and re-adds a base for each of the two
+     * accesses every step (~2x58 cycles a byte).  Walk two pointers instead (20 cycles a byte)
+     * whenever neither index wraps inside the 21 steps — which is every live frame.  The
+     * wrapping case keeps the exact indexed shape (there the address is not monotonic). */
     uint8_t n = 0x15;                          /* dl_y3 loop count */
-    do { y++; mem[0x0E87 + y] = mem[0x4B57 + x]; x++; } while (--n != 0);
+    if (y <= (uint8_t)(0xFF - 0x15) && x <= (uint8_t)(0xFF - 0x15)) {
+        uint8_t *d = (uint8_t *)&mem[0x0E87 + y + 1];
+        const uint8_t *s = (const uint8_t *)&mem[0x4B57 + x];
+        do { *d++ = *s++; } while (--n != 0);
+        y = (uint8_t)(y + 0x15); x = (uint8_t)(x + 0x15);   /* the loop's exit values */
+    } else {
+        do { y++; mem[0x0E87 + y] = mem[0x4B57 + x]; x++; } while (--n != 0);
+    }
     dl_y3 = 0x00;                              /* oracle DEC_M($dl_y3) leaves it 0 */
     mem[0x0E88 + y] = 0xFF;
 }
@@ -4678,10 +4690,32 @@ void draw_altimeter_bars(void) {
     uint8_t y = viewport_top_row;
     if (y != altimeter_terrain_cache) {
         altimeter_terrain_cache = y;
-        uint8_t yy = y;                        /* DEY;BPL clear: writes y..0 */
-        do { mem[0x0C97 + yy] = 0x00; yy--; } while ((yy & 0x80) == 0);
-        yy = altimeter_terrain_cache;          /* INY;CPY#$38;BCC fill (write-then-check) */
-        do { mem[0x0C98 + yy] = 0xFF; yy++; } while (yy < 0x38);
+        /* ⭐ Both runs are CONTIGUOUS, so walk a pointer instead of re-deriving mem[base+yy]
+         * per byte.  The 6502 index is 8-bit, which is what forced the old shape: GCC has to
+         * mask every step, and at -O3 it unrolls the fill x8 into five instructions a byte —
+         *     move.b d1,d2 / addq.b #k,d2 / andi.l #255,d2 / addi.l #3224,d2 / move.b #-1,(a0,d2.l)
+         * = ~58 cycles to store ONE byte, up to 56 of them, twice.  Measured 2026-08-12: the
+         * five HUD draws were 5.2 t of the flight VBI's 54 and this pair is most of it.
+         * A `*p-- = 0` / `*p++ = $FF` walk is 12 cycles a byte, ~5x less, byte-identical. */
+        {   /* DEY;BPL clear: writes $0C97+y down to $0C97+0.  yy and p step together, so the
+             * 8-bit wrap that ENDS the loop needs no mask, and 0x0C97+yy never wraps 16 bits. */
+            uint8_t yy = y;
+            uint8_t *p = (uint8_t *)&mem[0x0C97 + yy];
+            do { *p-- = 0x00; } while (((--yy) & 0x80) == 0);
+        }
+        {   /* INY;CPY#$38;BCC fill (write-then-check).  ⚠ Here the 8-bit wrap is INSIDE the
+             * loop: a start >= $38 writes one byte and stops, but a start of $FF wraps to $00
+             * and fills $0C98..$0CCF as well — the address is NOT monotonic there.  So the
+             * pointer walk takes only the non-wrapping case; the tail keeps the exact 6502
+             * shape.  (Live flight only ever passes yy < $38; the fixture proves the rest.) */
+            uint8_t yy = altimeter_terrain_cache;
+            if (yy < 0x38) {
+                uint8_t *p = (uint8_t *)&mem[0x0C98 + yy];
+                do { *p++ = 0xFF; } while (++yy < 0x38);
+            } else {
+                do { mem[0x0C98 + yy] = 0xFF; yy++; } while (yy < 0x38);
+            }
+        }
     }
     y = viewport_bottom_row;
     if (y != altimeter_ship_cache) {
@@ -5822,6 +5856,21 @@ void game_sub_451d(void) {
     A = (uint8_t)(Y | dl_y1);                    /* $4530 TYA; ORA $BB */
     dl_y1 = A;                                   /* $4533 STA $BB */
     bar_col_threshold = 0x0E;                                /* $4535 loop count 14 */
+    /* ⭐ Both destinations advance by one per step, so walk pointers instead of re-deriving
+     * mem[base+Y] from an 8-bit index each time (see draw_altimeter_bars for the cycle count
+     * this shape costs).  Only the non-wrapping case, which is every real call — the two
+     * callers pass Y = 0 and Y = $10 — since a wrap makes the address non-monotonic. */
+    if (Y <= (uint8_t)(0xFF - 0x0E)) {
+        uint8_t *d1 = (uint8_t *)&mem[0x2159 + Y];
+        uint8_t *d2 = (uint8_t *)&mem[0x2189 + Y];
+        do {
+            if (Y >= dl_y1) { X = dl_y3; dl_y3 = (uint8_t)(X & 0x04); }
+            uint8_t v = mem[0x4553 + X];
+            *d1++ = v; *d2++ = v;
+            Y = (uint8_t)(Y + 1);
+            bar_col_threshold = (uint8_t)(bar_col_threshold - 1);
+        } while (bar_col_threshold != 0);
+    } else
     do {
         if (Y >= dl_y1) {                        /* $4539 CPY $BB; BCC skip */
             X = dl_y3;                           /* $453D LDX $BD */
@@ -10443,33 +10492,45 @@ static void sfx_voice_envelope_tick_impl(void) {
     g_pSfxEng += rof_subclock() - _e0; unsigned long _l0 = rof_subclock();
 #endif
 
+    /* ⭐ ADDRESSING, not work.  All eleven per-slot arrays live in $066B..$06F7 — a 140-byte
+     * window — so ONE pointer at $06DB+y reaches every one of them with a 16-bit displacement
+     * in [-112,+28].  Written as mem[BASE + y] instead, GCC has to materialise each address
+     * from the 8-bit slot index every time (with `volatile mem[]` that was
+     * `lea off(a0),a1 / move.b (0,a2,a1.l),d` = 22 cycles a byte), and the loop runs 14 times
+     * a firing whether or not any envelope is active.  The skip path — both step bytes zero,
+     * which is the common case — becomes two 12-cycle displacement loads and a branch.
+     * `s` is a plain (non-volatile) view: nothing preempts the flight VBI, so the only thing
+     * the qualifier was buying here was worse code.  mem[] semantics are unchanged. */
     uint8_t expired = 0;
-    for (uint8_t y = 0x0E; y != 0; y--) {
+    uint8_t *s = (uint8_t *)&mem[0x06DB + 0x0E];     /* slot 14; walks down with y */
+    for (uint8_t y = 0x0E; y != 0; y--, s--) {
         expired = 0;                     /* per-slot "an envelope finished" flag ($0718) */
 
-        /* Frequency envelope. */
-        if (mem[0x06DB + y] != 0) {       /* nonzero step = active */
+        /* Frequency envelope.  Offsets from $06DB: phase +14, delta -28, target -14,
+         * value ($0679) -98, event id +28. */
+        if (s[0] != 0) {                  /* nonzero step = active */
             SX_CNT(g_sxActFreq);
-            uint8_t ph = sfx_phase_wrap(mem[0x06DB + y], mem[0x06E9 + y]);
-            mem[0x06E9 + y] = ph;
+            uint8_t ph = sfx_phase_wrap(s[0], s[14]);
+            s[14] = ph;
             if (mem[0x5406 + ph] == 0) SX_CNT(g_sxEnvGated);
             if (mem[0x5406 + ph] != 0) {  /* gate table: zero entry pauses the step */
-                uint8_t f = (uint8_t)(mem[MEM_sfx_env_freq_val + y] + mem[0x06BF + y]);
-                mem[MEM_sfx_env_freq_val + y] = f;
-                if (f == mem[0x06CD + y]) { mem[0x06DB + y] = 0; expired++; }  /* hit target */
+                uint8_t f = (uint8_t)(s[-98] + s[-28]);
+                s[-98] = f;
+                if (f == s[-14]) { s[0] = 0; expired++; }  /* hit target */
                 cpu.Y = y; sfx_voice_write_freq();
             }
         }
 
-        /* Duration / priority envelope (priority field kept to 4 bits). */
-        if (mem[0x06A3 + y] != 0) {
+        /* Duration / priority envelope (priority field kept to 4 bits).  Offsets from $06DB:
+         * step -56, phase -42, delta -84, target -70, value ($066B) -112. */
+        if (s[-56] != 0) {
             SX_CNT(g_sxActDur);
-            uint8_t ph = sfx_phase_wrap(mem[0x06A3 + y], mem[0x06B1 + y]);
-            mem[0x06B1 + y] = ph;
+            uint8_t ph = sfx_phase_wrap(s[-56], s[-42]);
+            s[-42] = ph;
             if (mem[0x5406 + ph] != 0) {
-                uint8_t p = (uint8_t)((mem[MEM_sfx_env_prio_val + y] + mem[0x0687 + y]) & 0x0F);
-                mem[MEM_sfx_env_prio_val + y] = p;
-                if (p == mem[0x0695 + y]) { mem[0x06A3 + y] = 0; expired++; }
+                uint8_t p = (uint8_t)((s[-112] + s[-84]) & 0x0F);
+                s[-112] = p;
+                if (p == s[-70]) { s[-56] = 0; expired++; }
                 cpu.Y = y; game_sub_55FC();
             }
         }
@@ -10477,9 +10538,9 @@ static void sfx_voice_envelope_tick_impl(void) {
         /* Either envelope finished -> re-queue this slot's event id (bit7-marked) on the ring. */
         if (expired != 0) {
             SX_CNT(g_sxExpired);
-            cpu.X = mem[0x06F7 + y];
+            cpu.X = s[28];
 #ifdef ROF_BEEP_CAP
-            { extern void rof_bc_requeue_log(unsigned char, unsigned char); rof_bc_requeue_log(y, mem[0x06F7 + y]); }
+            { extern void rof_bc_requeue_log(unsigned char, unsigned char); rof_bc_requeue_log(y, s[28]); }
 #endif
             ring_push_marked();
         }
