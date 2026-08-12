@@ -86,13 +86,16 @@ void Gtia9CopperList::buildLayout(const Bitmap& field, uint16_t topLines, uint16
                  /*hires*/false, /*interlace*/false, /*dualPlayfield*/false,
                  /*holdAndModify*/false, kCenterY);
 
-    // Both scenes run at Atari priority 1, where the players sit in front of PF2/PF3 — and in
-    // GTIA mode 9 every playfield pixel IS the background register, so all four sprite pairs
-    // belong in front.  BPLCON2 = 0 (PF1P = PF2P = 0) says exactly that.  Emitted as a MOVE
-    // rather than left to a CPU write because BPLCON2 is write-only hardware that persists
-    // across copper lists, so a MOVE-less list silently inherits the previous scene's value
-    // (see the amiga-copper-lessons memory).
-    d[INDEX_BPLCON2] = copperMove(bplcon2, 0x0000);
+    // Both scenes run at Atari priority 1 (PRIOR $41 / $71), where the players sit in front of
+    // PF2/PF3 — and in GTIA mode 9 every playfield pixel IS the background register, so all four
+    // sprite pairs belong IN FRONT.  ⚠ That is PFxP = 4, not 0: a PFxP of n puts the playfield
+    // BEHIND sprite groups 0..n-1 and IN FRONT OF groups n..3, so 0 means "playfield in front of
+    // everything" — which drew the launching spacecraft behind the station hull (user-observed).
+    // 4 puts the playfield behind all four groups.  (FlightCopperList uses the same (4<<3)|4 for
+    // its viewport.)  Emitted as a MOVE rather than left to a CPU write because BPLCON2 is
+    // write-only hardware that persists across copper lists, so a MOVE-less list silently
+    // inherits the previous scene's value (see the amiga-copper-lessons memory).
+    d[INDEX_BPLCON2] = copperMove(bplcon2, (uint16_t)((4u << 3) | 4u));
 
     // The scene's 16 luminances.  color00 is also what the blank regions and the border show,
     // and pen 0 == COLBK's luminance 0, so one table covers all of it.
