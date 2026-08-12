@@ -481,6 +481,16 @@ ifdef AUTO_FIRE
 EXTRA_DEFINES += -DROF_AUTO_FIRE
 endif
 
+# `make FIRE_ONCE=N` — press the trigger EXACTLY ONCE, N vblanks after the flight VBI goes live,
+# then release it forever (PlatformAmiga.cpp ROF_FIRE_ONCE).  Answers a different question from
+# AUTO_FIRE's held trigger: does anything stay switched on AFTER a shot is over?  `FIRE_ONCE=1`
+# means "1 vbl after flight starts", so pass a real offset — 400 puts it comfortably inside
+# steady-state flight.  Read with `GDBSCRIPT=fire_once.gdb`.  Combine with PROBES=1 for the ISR
+# brackets, and with COMBAT=1 COMBAT_QUIET=1 FIXED_RNG=1 for the standard quiet arm.
+ifdef FIRE_ONCE
+EXTRA_DEFINES += -DROF_FIRE_ONCE=$(FIRE_ONCE)
+endif
+
 # Profiling aid: `make FORCE_SAUCER=1` (implies PROBES) injects a static flying-saucer P3
 # object into the PMG buffer each flight VBI frame (rof_native.c ROF_FORCE_SAUCER) so the
 # Amiga per-frame P3 sprite mirror (buildViewportP3Sprite/buildScopeP3Sprite) runs under

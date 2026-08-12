@@ -895,6 +895,23 @@ extern "C" unsigned short rof_beam_line(void);
 // hwRead — defined above the keyboard section — can see them.
 static volatile uint8_t s_portaState = 0xFFu;   // joystick directions, active-low (neutral)
 static volatile uint8_t s_trig0State = 0x01u;   // fire button, active-low ($00 = pressed)
+#ifdef ROF_FIRE_ONCE
+// `make FIRE_ONCE=1` readouts (amiga/fire_once.gdb).  g_foFireVbi = the vbl the single trigger
+// press landed on; g_foEndVbi = the last vbl object_anim_frame ($0036) was still non-zero, i.e.
+// when the shot machinery actually went quiet; g_foActiveFirings = how many flight vblanks it was
+// live for in total.  See the FIRE_ONCE block in the VBI below.
+extern "C" volatile unsigned long g_foFireVbi = 0, g_foEndVbi = 0, g_foActiveFirings = 0;
+// ...and the follow-up readouts, once the first run showed $0036 never returns to 0.
+// g_foRearms = how many times it went 0 -> non-zero AFTER the press had been released (a re-arm
+// can only come from the $5178 RESET path, so a non-zero count means something is re-firing the
+// shot); the three traces are consecutive flight vblanks long after the press, which is what
+// separates "stuck at one value" from "cycling through the animation forever".
+extern "C" volatile unsigned long g_foRearms = 0, g_foTraceN = 0;
+extern "C" volatile unsigned char g_foTrace36[96] = {0};  // $0036 object_anim_frame
+extern "C" volatile unsigned char g_foTrace6A[96] = {0};  // $286A explosion zoom accumulator
+extern "C" volatile unsigned char g_foTrace6B[96] = {0};  // $286B its step (+1 grow / $FF shrink)
+extern "C" volatile unsigned char g_foSnap[8] = {0};      // $0004 $286C $286D $284A $2867 $0037 $006A $003D
+#endif
 // CONSOL ($D01F) console keys (START/SELECT/OPTION), active-low; idle $07.  Kept in a DEDICATED
 // state var (like s_portaState/s_trig0State) — NOT read from mem[$D01F] — so a stray/aliased RAM
 // write to the $D000 hardware-mirror page can't corrupt this hardware INPUT register.  (It used to
@@ -2278,6 +2295,63 @@ static uint32_t vbiHandler()
     // of an FPSCOUNT build — i.e. `make FPSCOUNT=1 AUTO_FIRE=1` did not actually fire.  It is
     // outside now so the honest-framerate build can measure a COMBAT=1 run.
     if ((mem[0x0222] | (mem[0x0223] << 8)) == 0x4FF5u) s_trig0State = 0x00u;
+#endif
+
+#ifdef ROF_FIRE_ONCE
+    // `make FIRE_ONCE=1` — press the trigger EXACTLY ONCE, a fixed number of vblanks after the
+    // flight VBI goes live, then release it forever.  AUTO_FIRE holds the trigger down (which
+    // auto-repeats), so it can only answer "what does continuous firing cost"; this exists for
+    // the different question "does anything stay switched on AFTER a shot is over?".
+    //
+    // Read with amiga/fire_once.gdb, which windows the run into pre-shot / shot / long-after and
+    // compares them.  ⚠ The comparison that is legitimate here is WITHIN this one binary and on
+    // ISR t/firing (which the ISR pays 50x/s regardless of frame rate); a FIRE_ONCE-vs-no-fire
+    // framerate A/B is NOT, because firing shifts the $D20A read count and the build then flies a
+    // different path (see the flight-measurement-rules memory).
+    {
+        static uint16_t s_foFlightVbi = 0;
+        if ((mem[0x0222] | (mem[0x0223] << 8)) == 0x4FF5u) {
+            if (s_foFlightVbi == 0) s_foFlightVbi = g_vbiCount ? g_vbiCount : 1;
+            const uint16_t d = (uint16_t)(g_vbiCount - s_foFlightVbi);
+            // Hold for 4 vblanks so the once-per-2-frames ($00C8 parity) fire poll cannot miss it,
+            // but far too short to re-arm: the $5178 path only re-fires when $0036 has returned
+            // to 0, which takes the whole $01..$1A animation (~26 draw frames).
+            // ⚠⚠ THE RELEASE IS THE WHOLE POINT — and getting it wrong is how this probe lied the
+            // first time.  s_trig0State has no auto-release (nothing but the keyboard handler
+            // writes it), so pressing without an explicit release turns FIRE_ONCE into AUTO_FIRE
+            // with a delay: $0036 then cycles $01..$1A, 00, $01.. forever and the run "proves" a
+            // permanent post-shot tax that is really just a stuck trigger.  Latch the phase.
+            static uint8_t s_foPhase = 0;               // 0 waiting · 1 pressed · 2 released
+            if (s_foPhase == 0 && d >= ROF_FIRE_ONCE) {
+                s_trig0State = 0x00u; g_foFireVbi = g_vbiCount; s_foPhase = 1;
+            } else if (s_foPhase == 1 && d >= (ROF_FIRE_ONCE + 4)) {
+                s_trig0State = 0x01u; s_foPhase = 2;
+            }
+            // object_anim_frame ($0036) drives every piece of shot machinery — the P2 strip
+            // rebuild in the VBI, buildShotSprite's active path, and the wide-object segments.
+            // Counting the firings it is non-zero for, and stamping the vbl it last went back to
+            // 0, is what turns "is it over?" from a guess into a reading.
+            const uint8_t af = mem[0x0036];
+            if (af) { g_foActiveFirings++; if (g_foFireVbi) g_foEndVbi = g_vbiCount; }
+            // Re-arm detector: 0 -> non-zero once the trigger is long released.  $0036 is only
+            // set to 1 by the $5178 RESET path (fire pressed, or a latched target), so a count
+            // here says something is re-firing rather than one animation running long.
+            { static uint8_t s_prev36 = 0;
+              if (g_foFireVbi && d > (ROF_FIRE_ONCE + 50) && !s_prev36 && af) g_foRearms++;
+              s_prev36 = af; }
+            // Trace 96 consecutive flight vblanks, long after the press.
+            if (g_foFireVbi && g_vbiCount >= g_foFireVbi + 800 && g_foTraceN < 96) {
+                const unsigned i = (unsigned)g_foTraceN++;
+                g_foTrace36[i] = af;
+                g_foTrace6A[i] = mem[0x286A];
+                g_foTrace6B[i] = mem[0x286B];
+            }
+            g_foSnap[0] = mem[0x0004];  g_foSnap[1] = mem[0x286C];
+            g_foSnap[2] = mem[0x286D];  g_foSnap[3] = mem[0x284A];
+            g_foSnap[4] = mem[0x2867];  g_foSnap[5] = mem[0x0037];
+            g_foSnap[6] = mem[0x006A];  g_foSnap[7] = mem[0x003D];
+        }
+    }
 #endif
 
 #if defined(ROF_FLIGHT_PROBE) || defined(ROF_FPSCOUNT)

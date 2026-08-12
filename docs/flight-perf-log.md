@@ -2018,3 +2018,75 @@ Lean `fps_seg`, `COMBAT=1 COMBAT_QUIET=1 FIXED_RNG=1`, 3000-vbl window, all 15 s
 **24.30 FPS (1458/3000)** against the 23.91 standing row. That is +1.6% on an instrument whose
 flight-neutral control moves 1.2% — so read it as **no regression**, plausibly the ~0.3% of wall the
 move is worth, and NOT as a demonstrated +1.6%.
+
+## §22 — Firing costs 2× the ISR for five seconds, and it is AUDIO (2026-08-12)
+
+User report: *"I feel like framerate drops after firing for the first time. When the shot is active
+this is expected since we have to rebuild the sprites; after the bullet is gone there should be no
+performance penalty."* — with the disclaimer that they might be imagining it.
+
+They were not. It does recover — but the worst of it lands **after** the bolt has gone.
+
+### 22.1 The instrument — `make FIRE_ONCE=<vbl>` + `amiga/fire_once.gdb`
+
+`AUTO_FIRE` holds the trigger down, so it can only answer "what does continuous firing cost".
+`FIRE_ONCE` presses it once, `<vbl>` vblanks after the flight VBI goes live, and releases it; the
+script then windows the run into PRE / 50-vbl slices / a long POST and prints each window's ISR
+t/firing — **the one flight metric that is legitimate across differently-paced windows**, because
+the ISR fires 50×/s whatever the frame rate is. It also counts the vblanks `object_anim_frame`
+($0036, which gates every piece of shot machinery) is non-zero, and traces it for 96 consecutive
+vblanks long after the press.
+
+⚠⚠ **The first version of this probe lied, and the way it lied is worth keeping.** `s_trig0State`
+has no auto-release — nothing but the keyboard handler writes it — so pressing without an explicit
+release turns `FIRE_ONCE` into `AUTO_FIRE` with a delay. That run "showed" a permanent +34% ISR tax
+that survived 1250 vblanks, and the $0036 trace showed it cycling `01..1A, 00, 01..` forever with
+25 re-arms. Completely convincing, completely wrong. **The trace is what caught it** — a stuck
+counter and a cycling one look identical in an aggregate. [[feedback-native-twin-validation-gaps]]
+§6's rule generalises: *if a probe's result looks like a permanent pathology, suspect the stimulus.*
+
+A second, smaller trap in the same script: `slice` must `snap` AFTER printing, or every window runs
+from the press and you get cumulative running means. The real 116 t/firing peak read as 93.
+
+### 22.2 The curve (`COMBAT=1 COMBAT_QUIET=1 FIXED_RNG=1 PROBES=1 SPRITE_SHAPE=1`, level 40)
+
+| slice (vbl after the press) | whole flight VBI | handler | sprites | **audio** | `$0036` live | FPS |
+|---|---|---|---|---|---|---|
+| PRE (220 vbl) | 59.07 | 52.19 | 4.65 | 2.24 | 3 / 220 | 12.2 |
+| 0–50 | 76.06 | 62.08 | **11.81** | 2.17 | 34 / 48 | 11.4 |
+| 50–100 | 87.44 | 65.44 | 4.52 | **17.48** | 0 / 52 | 9.6 |
+| **100–150** | **116.08** | 74.04 | 4.98 | **37.06** | 0 / 48 | **8.3** |
+| 150–200 | 71.38 | 58.38 | 6.02 | 6.98 | 0 / 50 | 13.0 |
+| 200–250 | 62.04 | 53.10 | 5.14 | 3.80 | 0 / 49 | 14.2 |
+| 250–300 | 55.88 | 49.82 | 4.59 | 1.47 | 0 / 49 | 14.2 |
+| POST (701 vbl) | **58.63** | 51.72 | 4.71 | 2.20 | **0 / 701** | 14.3 |
+
+Read it in three parts:
+
+1. **Nothing is permanent.** POST 58.63 against PRE 59.07, `$0036` non-zero on 0 of 701 vblanks,
+   0 re-arms, and the 96-vblank trace at press+800 is flat `00`. `buildShotSprite` is on its idle
+   path 701/701. The shot machinery shuts down 38 vblanks after the press and stays down.
+2. **The sprite cost is real but short and small** — sprites 4.65 → 11.81 t/firing for the first
+   50 vblanks (1 s), i.e. exactly while the bolt is on screen, then straight back to baseline.
+   This is the part the user already expected to pay.
+3. ⭐ **The part nobody had priced is AUDIO, it is 16× baseline, and it PEAKS 2–3 SECONDS AFTER THE
+   BOLT IS GONE.** The audio bracket (`flush_paula`) goes 2.24 → 37.06 t/firing at press+100–150 —
+   **32% of the entire flight VBI at peak** — while the whole ISR hits 116.08, **1.96× the 59.07
+   baseline**, and the framerate dips 12.2 → 8.3. Fully recovered by press+250 vbl (~5 s).
+
+So the perception "it stays slow after the bullet is gone" is *accurate*, and the reason it reads
+as permanent is that the peak arrives after the visual cause has disappeared.
+
+### 22.3 What this makes it — a new, sized, un-attacked item
+
+`flush_paula` is already documented as able to "busy-wait 7..110 rasterlines on a waveform restart".
+The laser SFX sweeps its frequency, so a new Paula period (and on the noise voices a
+`build_poly_dist` rebuild) is latched every frame for the length of the sound — and the cost is
+paid at 50 Hz regardless of frame rate. **NOT yet investigated**; the obvious questions in order:
+is the restart busy-wait needed at all, can it be deferred out of the ISR the way the noise refill
+just was (§21.4), and is `build_poly_dist` being rebuilt on every AUDF step of the sweep (its own
+header already flags that as the prime suspect for `update_paula_channel`'s cost).
+
+⚠ This also reframes the **combat** arm. The standing combat penalty (22.3% of throughput at
+4d25815) was attributed to object work; a sustained-fire fight pays this audio spike continuously,
+and no one has separated the two.
