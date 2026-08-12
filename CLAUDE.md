@@ -143,9 +143,8 @@ to hardware is largely ignored on Amiga.
 ## Performance — the headline
 
 **⭐ TARGET (user decision, 2026-08-08): 25 FPS = 40 ms/frame on the BEST-CASE baseline**
-(`COMBAT=1 COMBAT_QUIET=1 FIXED_RNG=1`). Standing measurement: **23.91 FPS best case**
-(2026-08-12, after the flight-VBI pass; in-session control 22.25 ⇒ +7.5%) ⇒ **~+4.6% of throughput
-to go**; combat 16.00 (stale, 4d25815). Combat may sit
+(`COMBAT=1 COMBAT_QUIET=1 FIXED_RNG=1`). Standing measurement: **24.38 FPS best case**
+(2026-08-12, 038786d) ⇒ **~+2.5% of throughput to go**; combat 16.00 (stale, 4d25815). Combat may sit
 lower; it is not the bar. 50 FPS is the ideal, not the target. The A500 is a 7 MHz 68000 — spending 10 ms on *anything*
 is half the budget; be conscious of absolute milliseconds always. The profile is FLAT (nothing
 >32%), so no single function closes the gap — five or six honest 5-point wins do. Surface numbers
@@ -160,6 +159,12 @@ Three rules that must survive without opening the doc:
   moved DRAW +111 t/it). Use the phase budget for SHARES, `fps_seg` for progress.
 - **Measure an asm twin with the in-process differential**, never cross-run (a render-speed change
   shifts the RNG read count and flies a *different level*). `make FIXED_RNG=1` for every perf run.
+  ⭐ And **before costing a twin at all, check whether GCC is merely addressing `mem[]` absolutely**
+  — `abs.l` is 16 cycles against `d16(An)`'s 12, and it picks the former even for a plain constant
+  subscript. A function-local laundered base (`__asm__("" : "=a"(m) : "0"(mem))` + `#define mem m`
+  over the body) folded 288 operands in `flight_control_integrate` for three lines, and left the
+  twin only a ~0.2-0.4%-of-wall residual. Recipe + the host-side proof:
+  `docs/asm-migration-plan.md` §Phase 12.
 - **Every framerate figure in an older note or commit is wrong — re-measure, don't quote.**
 
 Everything else — the per-phase budget, the RAM budget, the closed candidates (do not re-open),
