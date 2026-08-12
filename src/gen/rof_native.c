@@ -2564,11 +2564,19 @@ void copy_bytes_to_dst(void) {
  * lookup uses an 8-bit Y, so the source addresses span $4B0B..$4C0A. */
 void draw_compass_heading(void) {
     uint8_t y = (uint8_t)(terrain_index + mem[0x3FF6 + terrain_sub_index]);
+    /* The dirty hook used to fire unconditionally, so renderFrame re-decoded the 4 mode-4
+     * cells (4 x 8 scanlines x 2 planes) EVERY frame — ~0.4% of all wall clock — although the
+     * heading glyphs only move when the terrain index does, i.e. while turning.  Flag on
+     * CHANGE instead.  Safe to narrow because the cells have exactly two writers and both are
+     * hooked: this one and game_sub_4606 (the housing init).  The mem[] writes themselves are
+     * unchanged, so the twin stays byte-identical to the $3FDE oracle. */
+    uint8_t changed = 0;
     for (int x = 3; x >= 0; x--) {
-        mem[0x32E3 + x] = mem[0x4B0B + y];
+        uint8_t v = mem[0x4B0B + y];
+        if (mem[0x32E3 + x] != v) { mem[0x32E3 + x] = v; changed = 1; }
         y = (uint8_t)(y - 1);
     }
-    platform_compass_changed();   /* hook: compass heading cells $32E3-$32E6 rewritten */
+    if (changed) platform_compass_changed();   /* hook: compass cells $32E3-$32E6 rewritten */
 }
 
 /* fill_buffer2_region_ff @ $45A1 — fill 8 runs of 32 bytes ($FF) starting at $2098
