@@ -1,0 +1,439 @@
+# Scenes 1 (Logo) + 2 (Station) — what they are, and what it takes to run them on the Amiga
+
+**Status: investigation only (2026-08-12). Nothing implemented.**
+The port currently skips both scenes: `RescueOnFractalus::run()` enters at `game_entry ($3CDE)`
+and the comment there calls them "deferred". This document is the derived fact base for building
+them, so it does not have to be re-derived.
+
+Ground truth used:
+* `a800dumps/station.a8s` — live atari800 savestate, 5 frames into the Station cinematic
+  (`RTCLOK_LOW $0014 = 5`, `VVBLKI $0222/3 = $1B30`, scroll pointer `$1C39/$1C3A = $B9B9`, i.e.
+  exactly one scroll step done). **RAM base in the gunzipped `.a8s` is `0x86`**, but
+  `tools/extract_a8s_ram.py` REFUSES it — its anchor is `sfx_seq_step $7148`, which is in the
+  main block and is *not loaded yet* at Station time. Anchor on `station_init $195D` instead
+  (`A9 00 8D 1D D0 8D 0E D4 8D 00 D4 8D 1A D0`, unique) and cross-check `$1B30`
+  (`A9 35 A2 1C 8D 02 D4 8E 03 D4`).
+* `a800dumps/logo.a8s` — same, mid-Logo (`RTCLOK_LOW = $6A`, `VVBLKI = $51EF`). Anchor on
+  `stage_5000` (`A2 FF 86 90 E8 8E`), also base `0x86`.
+* `rof.xex` segment payloads (`tools/xex_map.py`), and `disasm/listing.txt` for the code that
+  survives into the final image.
+
+> **The `docs/*-scene*.png` renders below are LOCAL artefacts** — the repo `.gitignore` covers
+> `*.png`, like the `atari0NN.png` reference shots, so they are not committed and a fresh
+> checkout will show broken image links. Regenerate them (or any GTIA-9 field) with: extract
+> mem[] using the anchors above, then for each row emit `40` bytes as pairs of nibbles, each
+> nibble `n` → Atari colour `hue | n` through `PlatformSDL.cpp`'s YIQ palette formula
+> (`HUE_ANGLES`, `Y = 1.5·l² + 20.5·l + 4`, chroma 49). Station: base `$0600`, 122 rows,
+> hue `$00`. Logo: base `$60A3`, 62 rows, hue `$10`.
+
+---
+
+## 0. The one structural fact that governs everything
+
+`rof.xex` is a 20-segment load file and **the later segments overwrite the earlier ones.**
+`disasm/listing.txt` (and therefore `rof_gen.c`) is a disassembly of the *final* image, so:
+
+| Scene | Its code | Its data | In `listing.txt` / transpiled? |
+|---|---|---|---|
+| **Logo** | seg 5 `$5000-$536F` | inside that segment (stroke lists) + `$6000-$6A52` scratch | ❌ **No** — seg 16 (`$3CDE-$B7FF`) overwrites both `$5000` and `$6000` |
+| **Station** | seg 8 `$195D-$1AA6` + seg 9 `$1B30-$283D` | seg 9 tables + the 122-row image | ✅ **Yes, fully** — nothing overwrites `$0B00-$283D` |
+
+⚠ **`startup-flow.md` §2 item 1 is wrong** and so is `symbols.csv`'s `stage_5000` description.
+INITAD `$5000` does **not** "prime GTIA from page-2 shadows" — that is the *game* routine that
+later occupies `$5000`. The INITAD that runs at boot is **the Lucasfilm logo**, from segment 5.
+Final image at `$5000` = `04 8D 09 D4 A5 D4 …`; segment 5 at `$5000` = `A2 FF 86 90 E8 8E …`.
+
+Consequence: **the Station is ~90% already ported** (its transpiled routines are linked and the
+$1B30 VBI is already dispatched); the **Logo needs new hand-written code**, because there is no
+transpilation of it and there never will be from the current single-listing pipeline.
+
+Both scenes are **ANTIC mode F under GTIA mode 9** — 80 fat pixels per line, 16 *luminance*
+levels of one hue taken from `COLBK`. So on the Amiga both are **4 bitplanes, 320 px wide
+(each GTIA pixel = 4 lores px), palette = 16 shades of one hue**. One decoder serves both.
+
+---
+
+## 1. Scene 1 — the Lucasfilm Games logo
+
+![Lucasfilm Games logo, decoded from logo.a8s](logo-scene.png)
+
+*(decoded from `a800dumps/logo.a8s` `$60A3`, 80×62 GTIA-9 pixels, hue 1 — 4× horizontal /
+2× vertical for legibility)*
+
+### 1.1 Screen
+
+| | |
+|---|---|
+| Display list | `$6000`: 8 × `$70` (blank 8) = **64 blank lines**, then **62 × mode F** (`4F` LMS `$60A3`, then 61 × `$0F`), then `41 00 60` = JVB → `$6000` |
+| Screen RAM | `$60A3`, 40 bytes/row, 62 rows = 2480 bytes |
+| GTIA | `PRIOR $D01B = $41` → **GTIA mode 9** (16 luminances), priority 1 |
+| Hue | `COLBK $D01A = $10` and `COLPF2 $D018 = $10` → **hue 1, gold** |
+| DMACTL | `$D400 = $3A` → normal playfield + **player DMA**, one-line res, **no missile DMA** |
+| PMBASE | `$D407 = $08` → `$0800`; P0 = `$0C00`. `GRACTL $D01D = $02` (players only) |
+| DLI | none (no DL byte has bit 7; `VDSLST` is the OS default `$C055`) |
+| VBI | `VVBLKI = $51EF` |
+
+### 1.2 The code (segment 5, disassembled from the XEX)
+
+* **`$5000` — the whole scene, as one blocking routine.** It:
+  1. RLE-expands `$52E7` → `$6000` (`JSR $3C3D`). The RLE is only 11 bytes
+     (`C8 70 / 4F A3 60 / FD 0F / 41 00 60 / C0`) and produces **only the display list** — the
+     bitmap is *drawn*, not unpacked. (`$52F2-$536F` is dead filler: a stale copy of the routine's
+     own code.)
+  2. `DLISTL/H = $6000`, `DMACTL = $20` (**DL DMA only — playfield off, screen blank**).
+  3. `VVBLKI = $51EF`.
+  4. Builds a 64-entry row-pointer table in ZP `$007F`/`$00BF` = `$6053 + 40n`
+     (so row index 2 = `$60A3` = screen row 0).
+  5. Draws **"LUCASFILM"** — three passes of `JSR $5111` (stroke data at `$525F`, `Y=0`).
+  6. `PMBASE = $08`, `PRIOR = $41`, `JSR $3C7B` (wait `VCOUNT ≥ $7A`), `COLBK = COLPF2 = $10`,
+     **`DMACTL = $3A` → the finished logo is revealed all at once**, `IRQEN = $40`, `GRACTL = $02`.
+  7. Copies 10 bytes `$5254-$525D` → ZP `$90-$99` (the VBI's state), builds the P0 sparkle shape
+     (`$0C40-$0C4E = $10`, `$0C45-$0C49 = $38` → a 15-scanline "✦"), then **blocks on `$90`**.
+  8. When `$90` hits 0, draws **"GAMES"** — two passes of `JSR $5117` (same stroke engine,
+     `Y=$66`, row `$7B=$36`) — then **blocks until `$91` goes negative**.
+  9. The sparkle: `HPOSP0 = $C1`, `COLPM0 = $08`, then `COLPM0 = $0F…$00` with `JSR $3CCA`
+     (wait 2 frames) between each, while progressively zeroing/masking the P0 shape rows.
+     16 steps × 2 frames = 32 frames. Then `HPOSP0 = 0`, **RTS** → the loader resumes.
+* **`$5111`/`$5117` — the stroke plotter.** Reads a run-encoded stroke list at `$525F`, a
+  pattern table at `$52DF`, and pokes **4-bit nibbles** into the mode-F rows through the
+  `$007F`/`$00BF` pointer table (`$51C0-$51EE` is the read-modify-write nibble poke; the carry
+  out of `LSR` picks high vs low nibble). Shading (`$76`) is a function of the row.
+* **`$51EF` — the VBI.** `INC $14`; then a two-phase audio sweep:
+  * while `$90 != 0`: `JSR $523C` (writes `AUDC1-4` from `$92>>3 | $A0`), `INC $92`, then for
+    `X = 6,4,2,0`: `AUDF(x) = mem[$93+x]`, `mem[$93+x] += mem[$5258+x]`, `DEC $90`.
+    Seeds: `$93/$95/$97/$99 = $2A/$22/$00/$87`, steps `$01/$02/$03/$00`.
+  * when `$90 == 0`: count `$91` down from `$7F`; at 0 set `AUDCTL = $60`, `AUDF1 = $FA`,
+    `AUDF3 = $FF`, `$92 = $24`; thereafter `JSR $523C` + `DEC $92`, and `DEC $90` when `$92` wraps.
+  * `JMP $E462` (XITVBV).
+* Timing: **≈86 + 128 + 32 ≈ 250 frames ≈ 4-5 s.**
+
+### 1.3 Amiga plan for the Logo
+
+**✅ DECIDED (user, 2026-08-12): bake the bitmap, hand-write the sequencer + VBI.**
+The stroke plotter is NOT ported.
+
+The plotter runs with **playfield DMA off** — the drawing process is *never visible*. So a baked
+bitmap is not an approximation, it is bit-identical to what the player sees. Take the finished
+2480 bytes from `logo.a8s` `$60A3-$6A52`, ship as `amiga/assets/logo.raw` (incbin), decode with
+the shared GTIA-9 → 4-bitplane routine at scene init (~10 KB chip, ~15 ms one-off).
+*(Rejected alternative, recorded so it isn't re-litigated: port the `$5111` stroke plotter. It
+would be ~180 lines with the same 2480 bytes as a byte-exact oracle, but it buys nothing the
+player can see. `make validate` cannot reach it either way — the transpiler cannot see segment 5.)*
+
+**How to produce `logo.raw`:** extract mem[] from `a800dumps/logo.a8s` (anchor on
+`A2 FF 86 90 E8 8E` at `$5000`, RAM base `0x86` — see §0), take `$60A3 .. $60A3+2479`, write it
+out verbatim. Keep it as the raw GTIA-9 nibble field rather than pre-converted bitplanes so the
+one shared decoder (§1.3 table) handles both scenes and the asset stays inspectable.
+⚠ Do **not** regenerate it from a screenshot — the dump is the byte-exact source.
+
+New pieces:
+
+| Piece | Size | Notes |
+|---|---|---|
+| `assets/logo.raw` | 2480 B ROM | GTIA-9 nibble field, 62 rows × 40 B |
+| `LogoCopperList` | ~60 lines | Clone of `TitleScreenCopperList` with **4** bitplanes and a 16-entry palette; bitmap placed 64 display lines down |
+| GTIA-9 nibble → 4-plane decoder | ~40 lines | **Shared with the Station.** `t0..t3[256]` byte→plane-byte tables, built in `initialize()` |
+| `logo_vbi_native()` | ~30 lines | The `$51EF` body; POKEY writes go through the existing `bus_write` → Paula path |
+| `logo_run()` | ~60 lines | The `$5000` flow, using `platform_tick_vbi(); platform_render_frame();` for each blocking wait — same idiom as the SPINWAIT hooks |
+| 1 hardware sprite | — | P0 sparkle: 8 Atari player bits = 8 colour clocks = **16 lores px**, fits one sprite exactly. X = `0x81 + (0xC1 - 0x32) * 2` (the established mapping) |
+| Palette | — | `atariToOCS(0x10 \| lum)` for lum 0..15; pen 0 = `COLBK` = `$10` |
+
+Scene routing: set `mem[$0222/$0223] = $51EF` on entry so `game_vbi_isr` can dispatch it and
+`deriveRenderSignals()` can raise an `rsLogo` flag, exactly like `$1B30`/`$52D7`/`$4FF5` today.
+No per-frame decode at all — the bitmap is static; only the sprite and palette move.
+
+---
+
+## 2. Scene 2 — the space-station cinematic
+
+| the 122-row station image (`$0600`, stride 40) | the composed frame at the END of the scroll (`ptr = $B800`, 192 rows) |
+|---|---|
+| ![station image](station-scene.png) | ![final frame](station-scene-final-frame.png) |
+
+*(both decoded from `a800dumps/station.a8s` as GTIA-9, hue 0)*
+
+### 2.1 Screen
+
+| | |
+|---|---|
+| Display list | starts at **`$1C35`**: one `$70` (blank 8), then `01 xx xx` = **JMP to the moving window start** (`mem[$1C39/$1C3A]`) |
+| DL body | built at **`$B800`**: **122** mode-F entries LMS `$0600 + 40n` (the station image) followed by **218** mode-F entries that are *mostly* the shared blank row **`$2C90`**, with up to 30 of them (1-in-8, `RANDOM`) pointing at their own row `$2CB8 + 40k` — **the stars** |
+| Terminator | a `41 35 1C` (JVB → `$1C35`) that is **moved down 3 bytes per scroll step**, so the visible window is always exactly **192 mode-F rows** (`$0240 / 3`) |
+| GTIA | `PRIOR $D01B = $71` → **GTIA mode 9**, priority 1, multi-colour players, **5th player** (missiles = `COLPF3`) |
+| Hue | the `$1B30` VBI writes `COLBK $D01A = 0` every frame → **hue 0, greyscale** |
+| DMACTL | `$D400 = $3E` → normal playfield, **player + missile DMA**, one-line res |
+| PMBASE | `$D407 = $30` → `$3000`; missiles `$3300`, P0 `$3400`, P1 `$3500`, P2 `$3600`, P3 `$3700` |
+| Fixed colours | `COLPF3 $D019 = $34`, `COLPM0 $D012 = $06`, `COLPM1 $D013 = $0A`, `HPOSP0 = HPOSP1 = $7F` |
+| DLI | **none** — no DL byte has bit 7 set and `VDSLST` is the OS default `$C0CE`. ⚠ `$1E01` is named `dli_handler_station` but is **not a DLI** (see §4) |
+| VBI | `VVBLKI = $1B30` — writes `DLISTL/H = $1C35`, `COLBK = 0`, `INC $0080`, `INC RTCLOK` |
+
+### 2.2 The scroll — the heart of the scene
+
+`mem[$1C39/$1C3A]` is the operand of the DL's `JMP`. It starts at **`$B9BC`** (26 rows into the
+star section) and `display_scroll ($1CF7)` **decrements it by 3 per step**, so one *new row* is
+revealed at the top each step and the whole picture slides down. It stops at **`$B800`** —
+exactly **148 steps** (`$B9BC - $B800 = $1BC = 148 × 3`), which is why the phase counter
+`$008B` terminates at `$94 = 148`.
+
+At the same time it writes the 3-byte JVB (`$1C3B-$1C3D`) to `ptr + $0240`, keeping the window
+at 192 rows. So: **the station image scrolls down out of the starfield and ends up occupying the
+top 122 rows.**
+
+Pacing (`station_anim_frame $1D9A` + hold-time table `$1DE2` = `06 04 03 03 02 02 01 02 01 02 01
+01 02 01 01 01 01 02`):
+* steps 0-17 — ease **in** (table forwards),
+* steps 18-129 — 1 frame/step (constant),
+* steps 130-147 (`$008B ≥ $82`) — ease **out** (table backwards).
+≈ 36 + 112 + 36 = **≈184 frames ≈ 3.7 s**, then it idles.
+
+Exit (`station_loop $1A01`): `RTCLOK_MID $0013 ≥ 4` (≈17 s NTSC), or `CH $02FC != $FF`
+(any key), or `CONSOL $D01F == $06` (START). `station_exit $1A2F` then tail-calls
+`screen_page_swap` and returns.
+
+### 2.3 The moving parts, per frame
+
+| Routine | What it really does |
+|---|---|
+| `station_audio $1B5B` | 4-channel POKEY sweep, phase-gated on `RTCLOK_MID`; at phase 3 it plays an `AUDF3` envelope from the RLE-expanded table at **`$283E`** (228 bytes, unpacked from `$1BF4` by `station_init`) and tail-jumps to `$1E01` |
+| `$1E01` (+`$1E2A`) | animates the **P0/P1 shapes** at `$3400`/`$3500` from the table set `$272C/$2739/$2746/$2753/$2760/$277A/$276D` — a 13-frame shape cycle. Not a DLI |
+| `$1910` | drifts `HPOSM0-3` (`$D004-$D007`); called from `station_audio` |
+| `station_anim_frame $1D9A` | the scroll pacer (above) → `display_scroll` |
+| `display_scroll $1CF7` | scroll pointer, JVB move, **plus** the two PMG paints below |
+| `station_sub_1EB4 $1EB4` | every 3rd frame: copies a **102-byte vertical stripe** (one byte per row, stride 40) from one of 8 frames at `$1FE3 + 0x66·k` (tables `$2313` hi / `$231B` lo) into the image at **`$077A`** (fwd) or **`$077C`** (rev) — column 18 / 20, rows 9-110. An 8-frame animation of two 2-pixel-wide vertical strips |
+| `station_sub_1F48 $1F48` → `$1F51` | walks a **6-entry linked list of animation channels** at `$2603` (15-byte records). Measured chain: |
+
+```
+ ch  X    reload cyc  bytes×rows  src(reset→cur)   dest      image row,col
+  0  $00    04    07     7 × 12   $2323 → $2377   $0C36      row 39 col 30
+  1  $0F    04    07     7 × 12   $2323 → $2377   $110E      row 70 col 30
+  2  $1E    03    05     2 ×  7   $256F → $257D   $111E      row 71 col  6
+  3  $2D    06    04     1 ×  7   $25B5 → $25B5   $09C6      row 24 col  6
+  4  $3C    09    05     2 ×  1   $25D1 → $25D1   $1505      row 96 col  5
+  5  $4B    09    05     2 ×  4   $25DB → $25DB   $0D86      row 48 col  6
+```
+
+(dest stride is 40 bytes/row; `$260B < 0` means "reload the timer from POKEY `RANDOM`".)
+Total mutated image bytes per frame: **< 200**.
+
+### 2.4 PMG
+
+* **`pmg_update_station $1E79` is NOT a PMG routine** — see §4. It walks `$2CB8-$3167`
+  (the *star rows*) and brightens each non-zero nibble by one luminance step, **14 times, one
+  frame apart** (`JSR $3CC3` per pass). Star seeds are `$1C3E/$1C3F = $10` and `$01`
+  → after 14 passes they are `$F0`/`$0F` = full brightness. **It is the starfield fade-in**, run
+  once from `station_init $19F4` before the loop. The current Amiga native list drops it as
+  "only modifies PMG RAM, not displayed" — that is wrong, and without it the stars stay at
+  luminance 1 (nearly invisible).
+* `pmg_colors_station $1F0B` — every 7 frames, steps an 8-entry cycle:
+  `HPOSP2 ← $1F30[i]` (`42 46 4A 4E 52 56 5A 5E`), `HPOSP3 ← $1F38[i]`
+  (`B8 B4 B0 AC A8 A4 A0 9C`), `COLPM2 = COLPM3 ← $1F40[i]` (`48 38 28 18 F8 E8 D8 C8`).
+  Two coloured dots converging from the sides. (The `symbols.csv` description says `COLPF3`;
+  it is `COLPM2/3`.)
+* `display_scroll` PMG paints (currently **dropped** by the native twin in `rof_manual.c`):
+  * while `$008B ∈ [$39,$59)`: writes `$C0` to `$3600+X … $3602+X` and `$3700+X … $3702+X`
+    (X = `$008B-$39`, 0..31) and clears row X-1 → a **3-scanline, 2-px blob on P2 and P3 that
+    walks down one scanline per scroll step**.
+  * for `Y = 7..0`: `X = $008B - $94 + $1D8A[Y]` (offsets `4D 69 57 62 3A 5C 7C 6D`); if
+    `0 ≤ X < $20`, writes `$1D92[Y]` (`C3 03 0C 0C 30 30 30 C0`) to `$3300+X` → **eight
+    single-scanline missile dots** (the 5th player, `COLPF3 = $34`) sweeping down the top 32 lines.
+
+### 2.5 What already exists in the port
+
+Good news — most of it:
+
+* `station_init ($195D)`, `display_list_build ($1C40)`, `station_audio ($1B5B)`,
+  `pmg_update_station ($1E79)`, `pmg_colors_station ($1F0B)`, `vbi_handler_station ($1B30)`,
+  `initad_1A97`, `rle_decompress ($3C3D)`, `wait_timer_4c_frames ($3CB2)` are all **transpiled**
+  in `src/gen/rof_gen.c`.
+* `screen_page_swap ($1A62)` is hand-written in `rof_manual.c` (the 6502 is self-modifying).
+* `station_anim_frame`, `station_sub_1EB4`, `station_sub_1F48` have **native twins** in
+  `rof_manual.c` (moved there from the old `station_native.cpp`).
+* **`SPINWAIT_HOOKS[0x1A18]`** already drives a real Amiga frame per loop iteration, and
+  `[0x3CB8]` covers the fade-in's frame waits.
+* `game_vbi_isr` **already dispatches `VVBLKI == $1B30` to `vbi_handler_station()`**.
+* `os_setvbv`/`os_xitvbv` are no-op stubs.
+
+So `initad_1A97()` is a **single, faithful entry point for the whole cinematic**; it returns when
+the player presses START (F1) or the ~17 s timeout expires.
+
+Two defects to fix first:
+
+1. **`rof_manual.c`'s `station_display_scroll()` drops the DL-ring JVB move and both PMG paints.**
+   The JVB move is only needed if the renderer walks the Atari DL (it can instead derive
+   "192 rows from `mem[$1C39/$1C3A]`"), but the P2/P3 + missile paints are real content. This is a
+   **shared** file, so the SDL build is missing them too.
+2. **`rof_native_amiga.cpp`'s dead `station_*_native` block** (lines ~52-322) is stale: it is
+   unreferenced, it duplicates the twins now in `rof_manual.c`, and `station_setup()` contains a
+   hack that force-writes `$2313`/`$231B` to all-`$88`. That hack was for the old flat
+   `rof_mem.bin` snapshot; in the pristine XEX those tables are already correct
+   (`$1FE3, $2049, $20AF, $2115, $217B, $21E1, $2247, $22AD`). **Delete the block**, don't revive it.
+
+### 2.6 Amiga render plan for the Station
+
+**Tall-bitmap + pointer scroll.** The Atari scrolls by moving a DL pointer; the Amiga can scroll
+by moving bitplane pointers, which makes the scroll free.
+
+* **One 4bp bitmap, 320 × 340 rows** = 340 × 40 × 4 = **54,400 bytes chip**.
+  (Current runtime chip use is ~158 KB of 1 MB — comfortable; see `docs/perf-budget.md`.)
+  Row *i* of the bitmap = DL entry *i* at `$B800 + 3i`; decode 40 bytes from that entry's LMS.
+  Blank rows are simply left cleared.
+* **Decode once** after `display_list_build` (~54 k table lookups ≈ 70 ms, one-off, invisible).
+* **Per frame**: re-decode only what changed —
+  * the 24-ish star rows while the fade-in runs (24 × 40 B; diff in longs = 240 compares),
+  * the dirty station-image rows (< 200 bytes) — cheapest via dirty-range hooks in the two
+    twins we already own (`station_sub_1EB4`, `station_chan_step`).
+  Total per-frame cost ≈ 1 ms. This scene is nowhere near the flight budget.
+* **Scroll**: `startRow = (mem[$1C39] | mem[$1C3A]<<8) - $B800) / 3`; set the four plane pointers
+  to `data + startRow*160 + plane*40`. ⚠ **In the VBI ISR only** — copper bitplane-pointer swaps
+  mid-frame garbage the frame (`amiga-copper-lessons`).
+* **Palette**: 16 greys, `atariToOCS(lum)`; pen 0 = `COLBK` = 0.
+* **Sprites**:
+  * P2 + P3 blobs → 2 Amiga sprites. `COLPM2/3` and `HPOSP2/3` are written straight to GTIA
+    (`bus_write` drops them on Amiga), so read them from the source tables:
+    `i = mem[$0097] & 7`, `x = 0x81 + (mem[$1F30 + i] - 0x32) * 2`, colour
+    `atariToOCS(mem[$1F40 + i])`.
+  * P0/P1 (the `$1E2A` shape cycle at `$3400`/`$3500`, `HPOS = $7F`, `COLPM0 = $06`,
+    `COLPM1 = $0A`) → 2 more sprites.
+  * The 8 missile dots (5th player, `COLPF3 = $34`) → 1-2 more sprites, or defer as polish.
+* **Audio**: `station_audio` already routes POKEY → Paula. ⚠ Check that the standby SFX tick
+  (`sfx_voice_tick`, driven from the VBI body) is inert while `VVBLKI == $1B30`, or it will
+  fight `station_audio` for the Paula channels.
+* **Input**: F1 = START already maps to `CONSOL $D01F` bit 0. `CH $02FC` is never written on the
+  Amiga, so the "any key exits" branch simply never fires — acceptable (START + timeout remain).
+* **Scene routing**: `deriveRenderSignals()` gains `rsStation = (vvblki == 0x1B30)`;
+  `renderFrame()` gains a `staticStation` branch alongside `staticTitle`.
+
+---
+
+## 3. Boot-chain integration — where the two scenes hook in
+
+The real Atari runs them from the loader's INITAD chain, interleaved with segment loading.
+`rof.xex` is already embedded whole in `.rodata` (`incbin.s` → `rof_xex`), and
+`load_xex_image()` walks it with `xex_parse()`.
+
+### ✅ DECIDED (user, 2026-08-12): staged load
+
+Split `load_xex_image()` into three calls that stop at the INITAD segments:
+
+```
+zero mem[]; overlay OS ROM
+xex_parse(segments 1..7)      →  logo_run()          // INITAD $5000
+xex_parse(segments 8..11)     →  initad_1A97()       // INITAD $1A97  (= page swap + station)
+xex_parse(segments 12..20)    →  game_entry()        // INITAD $3CDE
+```
+
+Each phase then sees exactly the memory the Atari sees, with no save/restore anywhere: segment 10
+(`$4000-$44FF`) *is* the station image at the moment `screen_page_swap` moves it to
+`$0600-$0AFF`, and segment 16 naturally overwrites `$4000` afterwards. `game_entry` ends up with
+a byte-identical image to today's, except for the scratch the scenes legitimately leave behind
+(`$283E-$37FF`, `$B800+`) — which the real machine also leaves behind, so leaving it is the
+faithful choice. Note `$0600-$0AFF` comes out **clean** by construction: the exit
+`screen_page_swap` swaps the (zero) `$4000-$44FF` back into it.
+
+Suggested shape: `xex_parse()` in `src/xex_load.h` gains a segment-index window (or a
+"stop after the segment that writes INITAD" callback) so the three calls share one walk; the
+platform TUs keep supplying their own `RofMemWrite`. Zero-RAM and the OS-ROM overlay stay
+one-shot, before stage 1.
+
+### Option B — mem[] injection (the "swap content at will" route) — NOT TAKEN
+
+Keep the single full load, and around the Station do:
+
+```
+save   S = mem[$4000..$44FF]                    // 1280 B
+inject mem[$4000..$44FF] = xex segment-10 payload
+initad_1A97()                                   // its two screen_page_swaps cancel out
+restore mem[$4000..$44FF] = S
+```
+
+This works exactly because the entry and exit page swaps are symmetric. It is 1280 bytes of
+save + 1280 of inject and needs no loader change — but it is a *second* code path that has to be
+kept in sync with the real boot order, and it does not help the Logo at all (which additionally
+needs `$5000-$536F` restored and `$6000-$6A52` saved/restored — 3.5 KB of windows). If the Logo
+bitmap is baked (§1.3) the Logo needs no mem[] at all, and Option B becomes viable for the
+Station alone.
+
+Kept only as a record of why it was rejected: it is a *second* boot path to keep in sync with the
+real load order, and (unlike A) it gives SDL nothing.
+
+### 3.1 Dev skip ✅ DECIDED (user, 2026-08-12) — required, not optional
+
+Both scenes must be skippable, because **every existing probe/harness assumes boot reaches
+Standby quickly**. `amiga/diag_run.sh [delay]` and the `GDBSCRIPT=fps_seg.gdb ./diag_run.sh 200`
+perf recipe are calibrated in wall-clock seconds; the Logo (~4-5 s) plus the Station (~4 s of
+scroll and up to a 17 s idle) would silently invalidate every one of them — including the
+standing 22.49 FPS baseline, which must stay comparable.
+
+* **Amiga:** `make SKIPBOOT=1` → `-DROF_SKIP_BOOT_SCENES`. With it defined, `run()` does the whole
+  load in one `xex_parse()` and calls `game_entry()` — i.e. **byte-for-byte today's behaviour**.
+* **⚠ Propose (confirm before building): `PROBES=1` / `FPSCOUNT=1` should imply `SKIPBOOT=1`**
+  unless `SKIPBOOT=0` is passed. Otherwise every calibrated delay in `amiga/*.gdb` and every
+  `docs/flight-perf-log.md` comparison silently shifts, and the first symptom is a mystery perf
+  "regression" — precisely the class of confound `docs/flight-perf-log.md` §19 already burned a
+  session on.
+* **SDL:** no new flag needed — extend the existing `ROF_START` env var (`PlatformSDL.cpp`
+  `rofStartStage()`) with `logo` and `station` stages. **`standby` stays the default**, so the
+  boot scenes are opt-in on SDL and no existing SDL workflow changes.
+* Faithful skips remain in addition to the flag: START (F1) already exits the Station
+  immediately, and the ~17 s `RTCLOK_MID ≥ 4` timeout still applies. Making START *also* abort
+  the Logo would be convenient but is NOT faithful (the Atari's logo is an unconditional blocking
+  routine) — decide separately if it turns out to be wanted.
+
+---
+
+## 4. Corrections to record (→ `docs/rename.md`)
+
+* **`pmg_update_station $1E79`** — not a PMG routine. It is the **starfield luminance fade-in**:
+  14 passes over the mode-F star rows `$2CB8-$3167`, one frame apart, brightening each non-zero
+  nibble. Suggested `station_star_fade_in`.
+* **`dli_handler_station $1E01`** — **not a DLI**. `VDSLST` is never installed during the Station
+  scene and no DL entry sets bit 7; `$1E01` is tail-jumped to from `station_audio` (`$1BD7`) and
+  drives the P0/P1 shape cycle at `$3400`/`$3500`. Suggested `station_pm_shape_tick`.
+* **`pmg_colors_station $1F0B`** — description says `COLPF3`; it writes **`COLPM2`/`COLPM3`**
+  (`$D014`/`$D015`) and `HPOSP2/3`.
+* **`stage_5000 $5000`** — the name/description belong to the *game* routine at that address in
+  the final image. The boot INITAD `$5000` is the **Lucasfilm logo** (segment 5, overwritten
+  later). `startup-flow.md` §2 item 1 needs the same correction.
+* **`pmg_missile_init $1910`** — it is a per-frame missile *drift* (`HPOSM0-3`), called from
+  `station_audio`, not an init.
+
+## 5. Build order (the plan of record)
+
+All three design decisions are settled (§1.3, §3, §3.1). Work the list top-down; each step is one
+commit with a green build.
+
+0. **`SKIPBOOT` first**, before either scene exists — add `-DROF_SKIP_BOOT_SCENES` and the
+   `ROF_START=logo|station` SDL stages, wired so the *current* behaviour is what the flag
+   selects. Then every later step can be A/B'd against a known-good boot, and the perf harness
+   never breaks. (Also settle the `PROBES ⇒ SKIPBOOT` question here — §3.1.)
+1. **Split the loader** (staged `xex_parse`) and run the **Station on SDL** — everything it needs
+   is already transpiled, so this should be close to free, and it gives the `atari800` parity
+   oracle before any copper code exists.
+2. **Restore the two dropped `display_scroll` writes** in `rof_manual.c` (the DL-ring JVB move and
+   the P2/P3 + missile paints). Shared file — fixes SDL and Amiga together. Verify on SDL against
+   `station.a8s`.
+3. **Amiga Station, part 1:** the shared GTIA-9 → 4-plane decoder + `StationCopperList` + the tall
+   340-row bitmap + the VBI pointer scroll. Station image, stars and scroll only — no sprites.
+4. **Amiga Station, part 2:** P2/P3 + P0/P1 sprites, then the eight missile dots.
+5. **Logo:** bake `assets/logo.raw`, `LogoCopperList`, `logo_run()` + `logo_vbi_native()`, sparkle
+   sprite.
+6. **Cleanup:** delete the dead `station_*_native` block in `rof_native_amiga.cpp` (§2.5 defect 2)
+   and apply the five `docs/rename.md` entries (§4) in one `symbols.csv` + `make gen` + twin sweep.
+
+Things to watch, in the order they will bite:
+
+* The tall bitmap's plane pointers move **in the VBI ISR only** (`amiga-copper-lessons`).
+* `sfx_voice_tick` must be inert while `VVBLKI == $1B30`, or it fights `station_audio` for Paula.
+* `make clean` before any `PROBES=1` build and after touching a shared header (`CLAUDE.md`).
+* `pmg_update_station` is the **star fade-in** — if the stars look black, that is the routine.
+
+## 6. Decisions taken (2026-08-12, user)
+
+| Question | Decision |
+|---|---|
+| Boot-chain integration | **Staged XEX load** (§3 Option A). Option B is recorded as rejected. |
+| Logo bitmap | **Bake** from `logo.a8s` (§1.3). The stroke plotter is not ported. |
+| Dev skip | **Required** (§3.1): `make SKIPBOOT=1` on Amiga, `ROF_START=logo\|station` on SDL with `standby` still the default. |
+
+One sub-question deliberately left for the implementing session: whether `PROBES=1`/`FPSCOUNT=1`
+should imply `SKIPBOOT=1` (§3.1). Recommend yes.

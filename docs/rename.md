@@ -130,3 +130,33 @@ mislead the other callers. Listed so they aren't re-flagged as "unnamed → need
 The `$0080-$008D` display/VBI/terrain ZP cells are additionally reused by the alien-creature
 composer (documented in `docs/alien-jumpscare.md` + the twin comments); they keep their
 primary-use names — the composer reuse is inherent 6502 ZP sharing, not a misnomer.
+
+## Backlog — found investigating the Logo + Station scenes (2026-08-12)
+
+All five verified against `a800dumps/station.a8s`, `a800dumps/logo.a8s`, `disasm/listing.txt` and
+the raw `rof.xex` segment payloads. Full derivation: `docs/logo-station-plan.md`.
+
+- **`$1E79 pmg_update_station` → `station_star_fade_in`.** It touches no PMG RAM at all. It walks
+  the mode-F **star rows** `$2CB8-$3167` (the DL's per-row star buffers) and brightens each
+  non-zero GTIA-9 nibble by one luminance step — 14 passes, one frame apart (`JSR $3CC3`), run
+  once from `station_init $19F4`. Seeds `$1C3E/$1C3F = $10/$01` reach `$F0/$0F` (full brightness),
+  which the `station.a8s` dump confirms. ⚠ `rof_native_amiga.cpp`'s dead station block calls it
+  "only modifies PMG RAM ($B82C area), not displayed" — that comment is wrong; drop it with the
+  block.
+- **`$1E01 dli_handler_station` → `station_pm_shape_tick`.** **Not a DLI.** During the Station
+  scene `VDSLST` is the OS default (`$C0CE` in the dump) and no DL byte has bit 7 set, so no DLI
+  ever fires. `$1E01` is reached by a tail `JMP` from `station_audio ($1BD7)` and animates the
+  **P0/P1 shapes** at `$3400`/`$3500` from the `$272C/$2739/$2746/$2753/$2760/$276D/$277A` table
+  set. (Nothing to add to `ghidra_scripts/entrypoints.csv` — there is no DLI to find here.)
+- **`$1F0B pmg_colors_station`** — name is fine, **description is wrong**: it writes
+  `COLPM2`/`COLPM3` (`$D014`/`$D015`), not `COLPF3`, plus `HPOSP2`/`HPOSP3`, on a 7-frame cadence
+  from the 8-entry tables `$1F30`/`$1F38`/`$1F40`.
+- **`$5000 stage_5000`** — the name and description describe the *game* routine that occupies
+  `$5000` in the **final** image. The boot `INITAD $5000` runs **the Lucasfilm Games logo**, from
+  XEX segment 5 (`$5000-$536F`), which segment 16 (`$3CDE-$B7FF`) later overwrites — so the logo
+  code is **not in `listing.txt` and is not transpiled**. Final image at `$5000` is
+  `04 8D 09 D4 …`; segment 5 is `A2 FF 86 90 …`. ⚠ `docs/startup-flow.md` §2 item 1 ("primes GTIA
+  from page-2 shadows") is the same misattribution and needs the same fix.
+- **`$1910 pmg_missile_init` → `station_missile_drift`.** Not an init: it is a per-frame missile
+  *position* update (`HPOSM0-3` = `$D004-$D007`, via a 16-bit accumulator in `$008D-$008F`),
+  called from `station_audio`, and it only reseeds when `$008C == 6`.
