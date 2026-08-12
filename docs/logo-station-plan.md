@@ -164,7 +164,7 @@ No per-frame decode at all — the bitmap is static; only the sprite and palette
 | DMACTL | `$D400 = $3E` → normal playfield, **player + missile DMA**, one-line res |
 | PMBASE | `$D407 = $30` → `$3000`; missiles `$3300`, P0 `$3400`, P1 `$3500`, P2 `$3600`, P3 `$3700` |
 | Fixed colours | `COLPF3 $D019 = $34`, `COLPM0 $D012 = $06`, `COLPM1 $D013 = $0A`, `HPOSP0 = HPOSP1 = $7F` |
-| DLI | **none** — no DL byte has bit 7 set and `VDSLST` is the OS default `$C0CE`. ⚠ `$1E01` is named `dli_handler_station` but is **not a DLI** (see §4) |
+| DLI | **none** — no DL byte has bit 7 set and `VDSLST` is the OS default `$C0CE`. ⚠ `$1E01` is named `station_pm_shape_tick` but is **not a DLI** (see §4) |
 | VBI | `VVBLKI = $1B30` — writes `DLISTL/H = $1C35`, `COLBK = 0`, `INC $0080`, `INC RTCLOK` |
 
 ### 2.2 The scroll — the heart of the scene
@@ -217,7 +217,7 @@ Total mutated image bytes per frame: **< 200**.
 
 ### 2.4 PMG
 
-* **`pmg_update_station $1E79` is NOT a PMG routine** — see §4. It walks `$2CB8-$3167`
+* **`station_star_fade_in $1E79` is NOT a PMG routine** — see §4. It walks `$2CB8-$3167`
   (the *star rows*) and brightens each non-zero nibble by one luminance step, **14 times, one
   frame apart** (`JSR $3CC3` per pass). Star seeds are `$1C3E/$1C3F = $10` and `$01`
   → after 14 passes they are `$F0`/`$0F` = full brightness. **It is the starfield fade-in**, run
@@ -242,7 +242,7 @@ Total mutated image bytes per frame: **< 200**.
 Good news — most of it:
 
 * `station_init ($195D)`, `display_list_build ($1C40)`, `station_audio ($1B5B)`,
-  `pmg_update_station ($1E79)`, `pmg_colors_station ($1F0B)`, `vbi_handler_station ($1B30)`,
+  `station_star_fade_in ($1E79)`, `pmg_colors_station ($1F0B)`, `vbi_handler_station ($1B30)`,
   `initad_1A97`, `rle_decompress ($3C3D)`, `wait_timer_4c_frames ($3CB2)` are all **transpiled**
   in `src/gen/rof_gen.c`.
 * `screen_page_swap ($1A62)` is hand-written in `rof_manual.c` (the 6502 is self-modifying).
@@ -381,21 +381,26 @@ standing 22.49 FPS baseline, which must stay comparable.
 
 ---
 
-## 4. Corrections to record (→ `docs/rename.md`)
+## 4. Corrections to record — ✅ ALL APPLIED 2026-08-12
 
-* **`pmg_update_station $1E79`** — not a PMG routine. It is the **starfield luminance fade-in**:
-  14 passes over the mode-F star rows `$2CB8-$3167`, one frame apart, brightening each non-zero
-  nibble. Suggested `station_star_fade_in`.
-* **`dli_handler_station $1E01`** — **not a DLI**. `VDSLST` is never installed during the Station
-  scene and no DL entry sets bit 7; `$1E01` is tail-jumped to from `station_audio` (`$1BD7`) and
-  drives the P0/P1 shape cycle at `$3400`/`$3500`. Suggested `station_pm_shape_tick`.
-* **`pmg_colors_station $1F0B`** — description says `COLPF3`; it writes **`COLPM2`/`COLPM3`**
-  (`$D014`/`$D015`) and `HPOSP2/3`.
+The three renames below are **done** in `disasm/symbols.csv` (and swept through every hand-written
+twin, probe and doc); the two description-only fixes are in as well. Names here are the NEW ones.
+
+* **`station_star_fade_in $1E79`** (was `pmg_update_station`) — not a PMG routine. It is the
+  **starfield luminance fade-in**: 14 passes over the mode-F star rows `$2CB8-$3167`, one frame
+  apart, brightening each non-zero nibble.
+* **`station_pm_shape_tick $1E01`** (was `dli_handler_station`) — **not a DLI**. `VDSLST` is never
+  installed during the Station scene and no DL entry sets bit 7; `$1E01` is tail-jumped to from
+  `station_audio` (`$1BD7`) and drives the P0/P1 shape cycle at `$3400`/`$3500`.
+* **`station_missile_drift $1910`** (was `pmg_missile_init`) — it is a per-frame missile *drift*
+  (`HPOSM0-3`), called from `station_audio`, not an init.
+* **`pmg_colors_station $1F0B`** — name kept, description fixed: it writes **`COLPM2`/`COLPM3`**
+  (`$D014`/`$D015`) and `HPOSP2/3`, not `COLPF3`.
 * **`stage_5000 $5000`** — the name/description belong to the *game* routine at that address in
   the final image. The boot INITAD `$5000` is the **Lucasfilm logo** (segment 5, overwritten
-  later). `startup-flow.md` §2 item 1 needs the same correction.
-* **`pmg_missile_init $1910`** — it is a per-frame missile *drift* (`HPOSM0-3`), called from
-  `station_audio`, not an init.
+  later). It has no `symbols.csv` row to fix (the name lives in
+  `ghidra_scripts/entrypoints.csv`), so the correction went into `docs/startup-flow.md` §2/§4 and
+  that entrypoints comment.
 
 ## 5. Build order (the plan of record)
 
@@ -425,7 +430,7 @@ Things to watch, in the order they will bite:
 * The tall bitmap's plane pointers move **in the VBI ISR only** (`amiga-copper-lessons`).
 * `sfx_voice_tick` must be inert while `VVBLKI == $1B30`, or it fights `station_audio` for Paula.
 * `make clean` before any `PROBES=1` build and after touching a shared header (`CLAUDE.md`).
-* `pmg_update_station` is the **star fade-in** — if the stars look black, that is the routine.
+* `station_star_fade_in` is the **star fade-in** — if the stars look black, that is the routine.
 
 ## 6. Decisions taken (2026-08-12, user)
 

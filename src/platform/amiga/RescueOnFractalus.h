@@ -341,7 +341,7 @@ private:
     // Level-select "elevator" door scroll (post-mother-ship SELECT).  A TALL door bitmap (the 85
     // $2000 field rows + a viewport-height green-door pad below) that the door-scroll ISR points the
     // standby terrain BPLxPT into, offset by dl_src_index ($008B) rows, to reproduce the Atari's
-    // dl_index_dec DL-LMS window scroll.  Decoded per active scroll frame in doorScrollVblankUpdate;
+    // dl_lms_scroll_step DL-LMS window scroll.  Decoded per active scroll frame in doorScrollVblankUpdate;
     // doorScrollActive tracks whether we've repointed away from viewportBitmap (to restore on rest).
     Bitmap*     doorScrollBitmap  = nullptr;
     bool        doorScrollActive  = false;

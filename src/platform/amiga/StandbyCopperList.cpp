@@ -42,7 +42,7 @@ static const uint16_t kGaugeBottomLine = 0x2c + 144 + 56;             // = 244
 #define INDEX_COMPASS_COL     (INDEX_COMPASS_WAIT + 1) // 41: color01 = compass COLPF0 (1)
 // Terrain (door) region — per-scanline-LMS "runs" for the level-select "elevator" scroll.  The
 // Atari launch DL gives each mode-F scanline its own LMS ($300A, stride 3); during the digit roll
-// dl_lms_fill leaves stale entries so the viewport shows several RUNS of consecutive field rows
+// dl_write_lms_window leaves stale entries so the viewport shows several RUNS of consecutive field rows
 // (measured).  setTerrainRuns emits: a fixed prologue (WAIT + bplcon0 + modulo + palette) + run 0's
 // BPLxPT, then runs 1.. (each WAIT + 6 BPLxPT), then the CONSTANT cockpit region IMMEDIATELY after
 // the last run (emitCockpitRegion) — NO no-op padding, so the copper never churns into / delays the

@@ -1518,7 +1518,7 @@ Result: 17 functions in the whole image read `$82-$86`. In the closure of `terra
 (104 functions, including `terrain_column_rasterize_span` and all its `ras_*` blocks,
 `project_terrain_points_core`, `terrain_plot_object`, `rof_pokey_random`) — **none**, and none reads
 `$8D-$91` either. In the closure of `vbi_handler_flight` (74 functions) — **none**. The full Amiga
-VBI closure has exactly two (`scroll_terrain_dl` reads `$82/$83`, `dl_lms_fill` reads `$84/$86`) and
+VBI closure has exactly two (`dl_doors_open_split_step` reads `$82/$83`, `dl_write_lms_window` reads `$84/$86`) and
 both hang off `standby_vbi_native → launch_anim_dispatch_native`, the door-scroll cinematic, which
 cannot run while the flight VBI is installed.
 
@@ -1739,7 +1739,7 @@ The ledger's two endpoints reproduce to the digit, and the step is *already comp
   `terrain_draw_objects`, `terrain_plot_object{,_a,_b}`, `raster_scaled_object`,
   `compute_row_xspans`, `sample_terrain_height_bilerp`, `terrain_point_distance`,
   `terrain_clip_row_top`, `setup_projection_params`, `update_terrain_horizon_lr`,
-  `update_terrain_scanline_proj`, `scroll_terrain_dl`.
+  `update_terrain_scanline_proj`, `dl_doors_open_split_step`.
 - Exactly **13 functions in the whole binary changed size**, every one tunnel / boost /
   `renderFrame`. `rof_native.c`'s diff is confined to the tunnel/ring/door span writers;
   `RescueOnFractalus.cpp`'s adds `!rsBoostViewport` guards to `render()`/`perFrameWork()`.

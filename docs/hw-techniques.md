@@ -83,7 +83,7 @@ list** in mode D:
   `terrain_collision_and_silhouette`). The fractal terrain is re-projected into that buffer each
   frame (`terrain_gen_1/2/3`, run twice per frame), and the per-row LMS operands
   position each scanline — this *is* the "scroll the pointers" LMS technique
-  (`dl_lms_build/fill $69E5/$69F1`, `scroll_terrain_dl $6953`, base tables
+  (`dl_rebuild_lms_window/fill $69E5/$69F1`, `dl_doors_open_split_step $6953`, base tables
   `$073D/$0793` from `game_setup_7460`).
 - The terrain colours are **one constant mode-D palette** set by a single DLI at
   the top of the terrain (slot 1, `$4A1F`): COLBK=`$14` (brown ground),
@@ -169,7 +169,7 @@ set to `$C0` to enable both VBI and DLI NMIs.
   (`$D01D`) and `DMACTL/SDMCTL` (`$D400`/`$022F`=`$22`) enable P/M DMA.
 - The four players + missiles are used for moving sprites over the terrain
   playfield: the ship's gunsight/reticle, enemy saucers/gun emplacements, and
-  the rescued pilot. `pmg_missile_init $1910` sets missile X positions;
+  the rescued pilot. `station_missile_drift $1910` sets missile X positions;
   `pmg_colors_station $1F0B` and the `boot_standby_launch_driver` block set `HPOSPx`,
   `SIZEPx`, `COLPMx`/`PCOLRx`.
 - Horizontal position is set directly via `HPOSP0-3` / `HPOSM0-3`

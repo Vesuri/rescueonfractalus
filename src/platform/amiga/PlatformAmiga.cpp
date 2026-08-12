@@ -514,7 +514,7 @@ extern "C" void rof_bc_requeue_log(unsigned char y, unsigned char id) {  // hook
 }
 // Ring-drain EVENT log: every bit7-set entry the drain feeds to sfx_event_load, with the ring index
 // it came from.  Catches (a) event $01 ($81), (b) OUT-OF-RANGE event ids (>33=$21) that make
-// sfx_event_load read $56D4+i out of bounds -> a garbage slot y (possibly bit7-set) -> game_sub_55FC
+// sfx_event_load read $56D4+i out of bounds -> a garbage slot y (possibly bit7-set) -> ring_push_unmarked
 // pushes $8x -> the $81 cascade.  g_drainOOR counts out-of-range events; g_drain81 counts $81.
 extern "C" volatile unsigned short g_drainN = 0, g_drainOOR = 0, g_drain81 = 0, g_drainIdx = 0;
 extern "C" volatile unsigned char  g_drainEvt[BCE_N] = {};   // full entry byte (wrap ring)
@@ -543,7 +543,7 @@ extern "C" void rof_bc_drain_evt(unsigned char entry, unsigned char tail) {
 }
 // $81 (event $01) push capture: the exact caller chain at the moment a $81 is written to the
 // ring, recorded in CODE (no gdb breakpoint => full-speed flight => keyboard key-ups still
-// register).  g_push81Ra0 = ring_push_0719's caller (ring_push_marked vs game_sub_55FC =
+// register).  g_push81Ra0 = ring_push_0719's caller (ring_push_marked vs ring_push_unmarked =
 // distinguishes an X=1 event push from a Y=$81 slot push); Ra1/Ra2 = up the chain to the real
 // culprit.  Resolve with `info symbol` in gdb after a normal flight to a range-1 pilot.
 extern "C" volatile unsigned short g_push81N = 0;
@@ -1125,7 +1125,7 @@ extern "C" volatile unsigned long g_rsBktCells[5] = {};
 extern "C" volatile unsigned long g_rsBktTicks[5] = {};
 #endif
 #endif
-// Door-scroll liveness: total dl_index_dec calls via the $008B branch (level-select elevator scroll).
+// Door-scroll liveness: total dl_lms_scroll_step calls via the $008B branch (level-select elevator scroll).
 extern "C" volatile unsigned short g_dlScrollCount = 0;
 // Door-scroll render-side probe: BPLxPT repoints + the row range the ISR scrolled through.
 extern "C" volatile unsigned short g_dsRepoints = 0;
@@ -1499,7 +1499,7 @@ extern "C" volatile unsigned long g_sxTopScan  = 0;  // sfx_pick_top_voice   (12
 extern "C" volatile unsigned long g_sxNextScan = 0;  // sfx_pick_next_voice  (12-slot scan)
 extern "C" volatile unsigned long g_sxWrCtrl = 0;    // sfx_voice_write_freq_ctrl (AUDF+AUDC)
 extern "C" volatile unsigned long g_sxWrFreq = 0;    // sfx_voice_write_freq      (AUDF only)
-extern "C" volatile unsigned long g_sxRingPush = 0;  // game_sub_55FC -> ring_push_0719_core
+extern "C" volatile unsigned long g_sxRingPush = 0;  // ring_push_unmarked -> ring_push_0719_core
 extern "C" volatile unsigned long g_sxExpired = 0;   // envelope expiries (each RE-PUSHES an entry)
 extern "C" volatile unsigned long g_sxActFreq = 0;   // active frequency envelopes visited
 extern "C" volatile unsigned long g_sxActDur  = 0;   // active duration envelopes visited

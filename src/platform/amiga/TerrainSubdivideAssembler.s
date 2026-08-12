@@ -44,7 +44,7 @@
 ;   $B5   — TerrainFrameSetupAssembler.s reads the OLD $B5 to build $B4 ("reads OLD $B5, before
 ;           the loop overwrites it").  terrain_frame_setup runs TWICE PER ITERATION, right after
 ;           a pass's subdivide calls, so subdivide is normally its last writer.  IN FLIGHT.
-;   $82/$83 — dl_lms_push_bottom_core (inlined into scroll_terrain_dl) read-modify-writes them
+;   $82/$83 — dl_lms_push_bottom_core (inlined into dl_doors_open_split_step) read-modify-writes them
 ;           as the door-scroll cinematic's persistent bottom-LMS pointer, +$2E a step.
 ;   $84   — alien_field0_fill seeds its bit-packing accumulator from it and its caller does not
 ;           write it; that is the jump-scare creature overlay, also IN FLIGHT.
@@ -52,7 +52,7 @@
 ;   $90/$91 — read by boot_standby_launch_driver / standby_level_select_loop.
 ;   $9F   — read by draw_ring_frame_step / draw_symmetric_span_loop as a span coordinate their
 ;           callers do not set.
-; Only $86 survived the survey (both readers — dl_lms_fill and alien_field0_fill — are written
+; Only $86 survived the survey (both readers — dl_write_lms_window and alien_field0_fill — are written
 ; by their callers immediately before the call), and one byte store is 16 cycles = 0.16% of
 ; wall, not worth an asymmetric residue contract.
 ; ⭐ Two lessons.  (1) A C-only grep is NOT the survey: three of the consumers are in hand-asm
@@ -73,7 +73,7 @@
 ;     ras_* blocks, project_terrain_points_core, terrain_plot_object, rof_pokey_random):
 ;     ZERO readers of $82-$86, and zero of $8D-$91.
 ;   * closure of vbi_handler_flight = 74 functions: ZERO readers of either range.  (The whole
-;     Amiga VBI closure has two — scroll_terrain_dl reads $82/$83 and dl_lms_fill reads
+;     Amiga VBI closure has two — dl_doors_open_split_step reads $82/$83 and dl_write_lms_window reads
 ;     $84/$86 — but both are reached only via standby_vbi_native -> launch_anim_dispatch_native,
 ;     the door-scroll cinematic, which cannot run while the flight VBI is installed.)
 ;   * no indexed, (d16,An) or wide access anywhere in the image can reach either range outside

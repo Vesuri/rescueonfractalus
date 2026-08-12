@@ -8,11 +8,11 @@
 #   - it is NOT the Paula recompute, and build_poly_dist (the 1022-byte rebuild that looked like
 #     the obvious suspect) is called ZERO times — do not "optimise" it.
 #   - the reorder storm is driven by the envelope loop: every active DURATION envelope
-#     (~2.1/firing) pushes a ring entry via game_sub_55FC, which the drain turns into a full
+#     (~2.1/firing) pushes a ring entry via ring_push_unmarked, which the drain turns into a full
 #     priority-mixer pass.  Envelope EXPIRIES are only 0.11/firing, so they are not the driver.
 # The two branches:
 #   entry bit7 SET   -> sfx_event_load        (load a voice from the $56D4.. tables, then
-#                                              game_sub_55FC RE-PUSHES the slot => >=2 iterations
+#                                              ring_push_unmarked RE-PUSHES the slot => >=2 iterations
 #                                              per event)
 #   entry bit7 CLEAR -> sfx_reorder_voice_slot (the priority mixer: sfx_pick_top_voice /
 #                                              sfx_pick_next_voice, each a 12-slot volatile scan,
@@ -165,7 +165,7 @@ per (g_sxTopScan-$s_top)   "sfx_pick_top_voice (12-slot)"
 per (g_sxNextScan-$s_next) "sfx_pick_next_voice (12-slot)"
 per (g_sxWrCtrl-$s_wrc)    "voice_write_freq_ctrl"
 per (g_sxWrFreq-$s_wrf)    "voice_write_freq"
-per (g_sxRingPush-$s_push) "game_sub_55FC ring pushes"
+per (g_sxRingPush-$s_push) "ring_push_unmarked ring pushes"
 per (g_sxExpired-$s_exp)   "envelope expiries (re-push)"
 per (g_sxActFreq-$s_af)    "active freq envelopes"
 per (g_sxActDur-$s_ad)     "active duration envelopes"

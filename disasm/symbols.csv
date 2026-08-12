@@ -83,7 +83,7 @@ $0013,RTCLOK_MID,var,0,Jiffy clock middle byte
 $0014,RTCLOK_LOW,var,0,Jiffy clock low byte (fastest; used for timing waits)
 #
 # --- Functions (deduced from control flow analysis, 2026-05-29) ---
-$1910,pmg_missile_init,func,0,Initialises missile horizontal positions (HPOSM0-3)
+$1910,station_missile_drift,func,0,Station scene per-frame MISSILE POSITION update (HPOSM0-3 $D004-$D007) from a 16-bit accumulator in $008D-$008F; called from station_audio and only reseeds when $008C==6. NOT an init (was pmg_missile_init)
 $195D,station_init,func,0,Main attract mode init + loop; zeros all HW; sets VVBLKI to vbi_1B30; calls display_list_build; loops polling RTCLOK/CH/CONSOL until START pressed
 $1A01,station_loop,func,0,Attract mode main loop (inside station_init); spins until key/START; inner body calls station_audio + attract animation subs
 $1A2F,station_exit,func,0,Exit attract → reset: zeros GRACTL/DMA/POKEY, calls OS $E45C, does page_swap, restarts
@@ -96,11 +96,11 @@ $1C40,display_list_build,func,0,Builds attract-mode display list at $B800 (122 L
 $1CF7,display_scroll,func,0,Likely vertical scroll or DL update (reads/modifies addresses in display_list_build range — self-referential)
 $1D9A,station_anim_frame,func,0,Attract mode animation frame: calls $1CF7
 $1DF5,station_init_small,func,0,Small init called at start of station_init
-$1E01,dli_handler_station,func,0,Suspected DLI handler in attract mode (0 callers; 41 bytes; 1 callee)
-$1E2A,station_sub_1E2A,func,0,Attract mode sub (called from dli_handler_station)
-$1E79,pmg_update_station,func,0,PMG position/graphic update during attract mode
+$1E01,station_pm_shape_tick,func,0,Animates the Station P0/P1 SHAPES at $3400/$3500 from the $272C/$2739/$2746/$2753/$2760/$276D/$277A table set; reached by a tail JMP from station_audio $1BD7. NOT a DLI — during Station VDSLST is the OS default ($C0CE) and no DL byte has bit7 set (was dli_handler_station)
+$1E2A,station_sub_1E2A,func,0,Attract mode sub (called from station_pm_shape_tick)
+$1E79,station_star_fade_in,func,0,Station star fade-in: walks the mode-F star rows $2CB8-$3167 and brightens each non-zero GTIA-9 nibble by one luminance step; 14 passes one frame apart (JSR $3CC3) run once from station_init $19F4; seeds $1C3E/$1C3F=$10/$01 reach $F0/$0F. Touches NO PMG RAM (was pmg_update_station)
 $1EB4,station_sub_1EB4,func,0,Attract mode sub (called in station_loop)
-$1F0B,pmg_colors_station,func,0,Sets COLPM2/3, COLPF3, HPOSP2/3 (player 2/3 during attract)
+$1F0B,pmg_colors_station,func,0,Writes COLPM2/COLPM3 ($D014/$D015) plus HPOSP2/HPOSP3 on a 7-frame cadence from the 8-entry tables $1F30/$1F38/$1F40. NOT COLPF3 (description corrected 2026-08-12)
 $1F48,station_sub_1F48,func,0,Attract mode sub (called in station_loop); calls station_sub_1f51
 $1F51,station_sub_1f51,func,0,Attract mode sub; reads RANDOM once (random visual effect)
 $3C00,loader_util,func,0,Loader utility (XEX segment loader helper); called from game_entry at $3D92
@@ -127,10 +127,10 @@ $4FF5,vbi_handler_flight,func,0,In-flight VBI handler (VVBLKI=$4FF5 set at $3E50
 $5433,sfx_engine_reset,func,0,Zeroes SFX voice slots 1..$e: vol $066b + channel $0705 + all envelope params $0687-$06f7; LEAVES dist $065d + freq $0679 stale (hence a silenced voice keeps its poly/freq leftovers). Callers: game_entry $3d35, crash cinematic $4f3f, level/scene setup $6118
 $53CC,vbi_handler_1,func,0,First in-game VBI handler (VVBLKI=$53CC set at $3D63 in game_entry)
 $52D7,vbi_handler_standby,func,0,Standby + launch-cinematic VBI handler (VVBLKI=$52D7 set in boot_standby_launch_driver $5F50); active from the Standby screen through the doors/tunnel/stars/planet cinematic, until flight init swaps in vbi_handler_flight ($4FF5). Per-frame: attract timer, attract input poll ($5398), launch_anim_dispatch ($5367), lock_on_indicator_tick every other frame, SFX/music tick, sfx_voice_envelope_tick. Was vbi_handler_standby.
-$5815,ring_push_marked,func,0,TXA;ORA #$80;JMP ring_push_0719 — push object index X marked with bit7 ($80=active) into the $0719 event ring
-$581C,sfx_event_load,func,0,SFX event loader (NOT input init): X=event id (1-based; 0=no-op); DEX->table index i; loads voice slot Y=mem[$56D4+i] from the 12 param tables ($56d4..$57f4); tail game_sub_55FC pushes the slot to the ring. Called from the $548d ring-drain + directly at $3df5/$3df9/$61aa/$63a9/$63d2
+$5815,ring_push_marked,func,0,TXA;ORA #$80;JMP ring_push_0719 — push object index X marked with bit7 ($80=active) into the $0719 event ring. Mirror of ring_push_unmarked ($55FC) which pushes Y unmarked
+$581C,sfx_event_load,func,0,SFX event loader (NOT input init): X=event id (1-based; 0=no-op); DEX->table index i; loads voice slot Y=mem[$56D4+i] from the 12 param tables ($56d4..$57f4); tail ring_push_unmarked pushes the slot to the ring. Called from the $548d ring-drain + directly at $3df5/$3df9/$61aa/$63a9/$63d2
 $587B,standby_scoreboard_render,func,0,Renders the Standby/Title-Screen scoreboard (blits a 120-byte template into Title RAM $365B; draws current-score/high-score/level/initials BCD digits) then tail-calls the idle input loop. Does NOT draw the in-flight cockpit. Called if $060B≠0. Was cockpit_display.
-$55FC,game_sub_55FC,func,0,Called at end of each main game loop iteration before JMP $3E0F
+$55FC,ring_push_unmarked,func,0,Pushes event id Y UNMARKED (no bit7) into the $0719 event ring: saves X on the stack, TYA, falls into ring_push_0719 ($55FF), restores X. Mirror of ring_push_marked ($5815) which pushes X with bit7 set (was game_sub_55FC)
 $5D0D,validate_save_state,func,0,Compares save-state blocks ($3700/$3714 vs $28/$EE, 39 bytes $7BDA vs $37C7); returns Z=1 if all match; called early in game_entry
 $5D29,display_list_init,func,0,Display list initial setup; writes DLISTL/H (called in game_entry at $3D6B)
 $5D50,game_init_5D50,func,0,Called with Y=$52 param; sets VIMIRQ twice (attract and game IRQ vectors)
@@ -179,7 +179,7 @@ $0005,zp_flag_05,var,0,Zeroed in game_entry
 $0009,initad_signal,var,0,XEX INITAD signal flag — set to $01 by an XEX segment to mark init-address dispatch
 $000C,zp_entry_lo,var,0,XEX final entry vector low ($DE=$3CDE low byte) — game entry point
 $000D,zp_entry_hi,var,0,XEX final entry vector high ($3C)
-$0041,game_state,var,0,Global game state flag (written 11 times across many subs; key control variable)
+$0041,game_state,var,0,Global game state flag (written 11 times across many subs; key control variable). MULTI-ROLE: in game_state_update $A99C it is specifically the explosion/enemy-fire FRAME COUNTER (INC'd at $AA3F/$AA6C per bolt frame, cleared at $A9BD alongside fire_queued)
 $0042,game_phase,var,0,Game phase (0=init 1=active 2=post-level); set to 1 or 2 at various points
 $0044,timer_or_counter,var,0,Countdown (set to $54 or $0E); used in game pacing
 $0049,joystick_raw,var,0,Joystick/input raw value (saved to $061D at game_entry start)
@@ -195,9 +195,9 @@ $0082,dl_ptr_hi,var,0,DL/LMS pointer high (dl_lms ring; terrain column base); lo
 $0083,screen_ptr_lo,var,0,Screen data pointer low (used by display_list_build)
 $0084,screen_ptr_hi,var,0,General ZP pointer/scratch (X-coord $6805; table index $669C; pointer hi); in update_object_distance/draw_vline_pair holds the fill-pattern byte $FF/$AA/$55 plotted via ($80),Y. Name is generic - not exclusively a screen pointer
 $0085,encounter_count,var,0,Encounter placement counter ($1E->0 in display_list_build); reused as the object-distance subtrahend hi in update_object_distance and as the plot column (X>>1)+2 in draw_vline_pair
-$0086,row_count,var,0,Row loop counter in display_list_build ($DA=218 rows)
-$0087,vbi_phase,var,0,VBI phase counter (0 or 1)
-$0088,vbi_flags,var,0,VBI display flags
+$0086,row_count,var,0,Generic row/loop counter, shared by ~8 routines — display_list_build ($DA=218 rows), the terrain fns at $77A8/$801D/$A41F/$B1D4-$B515, AND the LMS window END INDEX ($56) set by dl_rebuild_lms_window and compared by dl_write_lms_window. Deliberately kept generic: a dl_lms_* name would mislead every other caller
+$0087,vbi_phase,var,0,VBI phase counter (0 or 1). MULTI-ROLE: in setup_projection_params $AC93 the pair {$0088:$0087} is world-X fixed-point >> 4 (from $2887/$2888) — classic 6502 ZP scratch sharing, not a misnomer
+$0088,vbi_flags,var,0,VBI display flags. MULTI-ROLE: in setup_projection_params $AC93 it is the HIGH byte of world-X fixed-point >> 4 (pair with vbi_phase $0087)
 $00B7,frame_counter,var,0,VBI/timing frame counter (zeroed by station_init); reused as object-distance lo and the draw row-counter scratch in update_object_distance/draw_vline_pair
 $00BB,dl_y1,var,0,MISNOMER (not a DL Y coord): general ZP scratch = 16-bit pointer LOW byte ($BB/$BC) in draw_object_column (tbl $4581) / station_init ($1BF4) / boot_standby ($6E59); multi-byte math accum in flight_control_integrate/FUN_9552/9680/b70c
 $00BC,dl_y2,var,0,MISNOMER: pointer HIGH byte paired with $00BB (draw_object_column $43F3 etc); also a math-accumulator byte. Not a DL Y coord
@@ -353,14 +353,14 @@ $4E1C,obj_table_scan_replace,func,0,Scans obj table $0900/$0A00 (stride $43) for
 $4E58,obj_table_set_active,func,0,Find $0A00,X slot==1 not in $2276[] table, set $0A00,X=$80 (stride $43, $281F=index)
 $4E84,bin_to_bcd,func,0,Convert A (0-99) to packed BCD: Y=A/10, units A%10 in $C1, return (Y<<4)|units
 $4E98,reset_flags_ff,func,0,Set $006A, $0063, $2826 all to $FF
-$4EA2,store_676_init,func,0,Store A to $0676, tail-call set_hud_fields_678_679 init chain (zeros $0678/$0679, calls game_sub_55FC)
-$4EA5,set_hud_fields_678_679,func,0,Stores A into HUD slots $0678/$0679, then tail-chains to refresh chain (game_sub_55FC); entry from $4ea2
-$4EAB,refresh_hud_field_0b,func,0,LDY #$0B; game_sub_55FC then chains to $4eb0 — refreshes HUD/display field index $0B
-$4EB0,refresh_hud_field_0d_entry,func,0,LDY #$0D; falls into $4eb2 to refresh display fields $0D and $0E via game_sub_55FC
-$4EB2,refresh_hud_fields_0d_0e,func,0,game_sub_55FC at Y=$0D, INY, game_sub_55FC at Y=$0E — refreshes two adjacent display fields
+$4EA2,store_676_init,func,0,Store A to $0676, tail-call set_hud_fields_678_679 init chain (zeros $0678/$0679, calls ring_push_unmarked)
+$4EA5,set_hud_fields_678_679,func,0,Stores A into HUD slots $0678/$0679, then tail-chains to refresh chain (ring_push_unmarked); entry from $4ea2
+$4EAB,refresh_hud_field_0b,func,0,LDY #$0B; ring_push_unmarked then chains to $4eb0 — refreshes HUD/display field index $0B
+$4EB0,refresh_hud_field_0d_entry,func,0,LDY #$0D; falls into $4eb2 to refresh display fields $0D and $0E via ring_push_unmarked
+$4EB2,refresh_hud_fields_0d_0e,func,0,ring_push_unmarked at Y=$0D, INY, ring_push_unmarked at Y=$0E — refreshes two adjacent display fields
 $4F76,intro_teardown_fade_loop,func,0,DMACTL($D400)=0 to kill ANTIC DMA, wait_frames_save_a, loop dec $0678 & X from $00D4 down to $1F, wait_frames_2/init_game_vars_attract_timer
 $4F9F,intro_sound_and_tick,func,0,$2892 underflow: RANDOM($D20A) seeds sfx via ring_push_marked (X=$0E,$0F); sets AUDC shadows $00DA-DD; dec $2891, clear game_state at 0
-$4FCE,intro_reset_score_slots,func,0,Clears $066A/$0686, sets $0678=$0C and refreshes display field Y=$0D via game_sub_55FC
+$4FCE,intro_reset_score_slots,func,0,Clears $066A/$0686, sets $0678=$0C and refreshes display field Y=$0D via ring_push_unmarked
 $4FE0,intro_fill_display_params,func,0,Copies $4DF1 table low nibbles OR player_speed($00C2) into display_param $00CF-D6, writes COLPF3($D019), INC $00C2
 $52BE,game_loop_reset_trampoline,func,0,Sets vec $0222/3=$52B4, pushes ret $3D1F+P, sets game_var_E4=$060B(cockpit_flag)=4, PLP; reentry from $5398
 $534D,vbi_deferred_dispatch,func,0,VBI tail: if $00E7 & BIT $062D z->sfx_voice_tick; if $0655->music_player_tick; then sfx_voice_envelope_tick (gauges) + os_xitvbv
@@ -368,7 +368,7 @@ $5367,launch_anim_dispatch,func,0,Per-frame launch-cinematic priority dispatcher
 $5398,check_collision_sync,func,0,X=$FF, CLI/SEI; if !=$80 set $0002/0003/E2; else reads collision regs $D01F,$D010,$D300, may run reset trampoline
 $548D,sfx_voice_envelope_tick,func,0,Loops Y=$0E..1 over digit arrays $06DB/E9/0679/06BF/CD/A3/B1/066B; BCD-step wrap $2D, calls 55FC/5815; sorts $0073/74 ring
 $5553,sfx_engine_step,func,0,POKEY sound engine: writes AUDF/AUDC $D200/201/204/205/208 from state $0634-$063A and table $55DC
-$55FF,ring_push_0719,func,0,Tail of game_sub_55FC: store A into ring buf $0719+X via head $0073, dec+wrap head mod $20, restore X
+$55FF,ring_push_0719,func,0,Shared tail of ring_push_unmarked/ring_push_marked: store A into ring buf $0719+X via head $0073, dec+wrap head mod $20, restore X
 $5614,sfx_reorder_voice_slot,func,0,Swaps/moves entries in $0705 array by Y vs priority $0714/0715/0717,$066B; calls 5673/56af/568a
 $5667,sfx_voice_write_freq,func,0,Write AUDF freq ($0679+Y) to POKEY AUDFn at $D1FE+X for voice Y; X=reg index from $0705+Y; skip if 0/inactive
 $5673,sfx_voice_write_freq_ctrl,func,0,For voice Y write AUDF ($D1FE+X) freq and AUDC ($D1FF+X) = ($066B+Y &$0F vol/prio) | ($065D+Y distortion); skip if $0705+Y=0
@@ -417,15 +417,15 @@ $6899,fill_four_bufs_ff,func,0,Write A=$FF to $0C87/$0D87/$0E87/$0F87 +Y (Y=8..1
 $68AD,init_terrain_dl,func,0,Fill $2F75..$2FA3 with $88; seed display-list pairs $74/$2F into $300A/$308B strands (3-byte stride)
 $68CF,emit_dl_coord_pairs,func,0,Copy $073D/$0793 coord-pair tables into $300A/$300B fwd & $308B/$308C rev DL strands; advance ptrs $C1/$C3 by 3x step from $6E0F[Y]
 $692A,plot_terrain_span,func,0,Loops fill_vertical_span $0096 times (count from $6E0F[Y], +2 if Y=0) advancing $009C/$009D; shrinks window $009E/$009F by $0085
-$6953,scroll_terrain_dl,func,0,Dec $008A; if !=0 scroll DL halves via dl_lms_scroll_down/dl_lms_scroll_up else $008C=8; emit ship coords via dl_lms_push_bottom($0098)/dl_lms_push_top($0097)
+$6953,dl_doors_open_split_step,func,0,ONE step of the launch doors-OPEN split scroll (top LMS entries shift up, bottom shift down, splitting apart): dec $008A; if !=0 scroll the DL halves via dl_lms_scroll_down/dl_lms_scroll_up else $008C=8; emit ship coords via dl_lms_push_bottom($0098)/dl_lms_push_top($0097). NOT generic terrain scrolling (was scroll_terrain_dl)
 $6973,dl_lms_push_top,func,0,Writes 16-bit ptr $80/$81 into top LMS entry at $300A,X (X-=3), then ptr -= $2E (46-byte row stride)
 $698E,dl_lms_push_bottom,func,0,Writes 16-bit ptr $82/$83 into bottom LMS entry at $3089,Y (Y+=3), then ptr += $2E (46-byte row stride)
 $69A9,dl_lms_scroll_up,func,0,Shifts 3-byte LMS entries from $300C,X to $3009,X (up one slot) until X==$0097 (top index)
 $69C3,dl_lms_scroll_down,func,0,Shifts 3-byte LMS entries from $3087,Y to $308A,Y (down one slot) until Y==$0098 (bottom index)
-$69DD,dl_index_dec_or_reset,func,0,Clears $008B; if was 0 tail-calls dl_lms_build(69e5), else dl_index_dec(69e3) then rebuild
-$69E3,dl_index_dec,func,0,Decrements $008B (source-table index) then tail-calls dl_lms_build (69e5)
-$69E5,dl_lms_build,func,0,Inits indirect ptr $C5/$C6=$300A and count row_count($86)=$56, then dl_lms_fill(69f1)
-$69F1,dl_lms_fill,func,0,Fills LMS table via ($C5)=$300A from src tables $073D(lo)/$0793(hi) at index $008B, stride 3, until X==row_count$86
+$69DD,dl_lms_reset_window,func,0,Resets the LMS window to the top: clears $008B, then rebuilds the whole window — if $008B was already 0 tail-calls dl_rebuild_lms_window($69E5), else dl_lms_scroll_step($69E3) (was dl_index_dec_or_reset)
+$69E3,dl_lms_scroll_step,func,0,ONE smooth LMS scroll step DOWN: decrements the window start row $008B then tail-calls dl_rebuild_lms_window($69E5). The name-visible effect is a scroll step, not an index decrement (was dl_index_dec)
+$69E5,dl_rebuild_lms_window,func,0,Rebuilds the whole viewport LMS window from the current start row: inits dest ptr $C5/$C6=$300A and end index row_count($0086)=$56, then dl_write_lms_window($69F1) (was dl_lms_build)
+$69F1,dl_write_lms_window,func,0,Writes the viewport DL's per-scanline mode-F LMS pointer words ($300A+, 3 bytes/scanline) from the row-address tables row_base_lo $073D/row_base_hi $0793, for row index X=$008B up to end index row_count($0086). Not a generic fill — it is THE LMS-window writer (was dl_lms_fill)
 $6A0F,shift_object_table_up,func,0,Shifts a stride-3 record array up one slot: copies $3007/$3008 -> $300A/$300B for $0084 records (Y from $FF, DEY x3)
 $6A26,ret_stub_6a26,func,0,Empty routine, immediate RTS; tail-call target/no-op stub
 $6A27,clear_slot_0c87_0d87,func,0,DEC $008C, index Y=8-$008C, zeroes $0C87[Y] and $0D87[Y] in two parallel arrays
@@ -474,7 +474,7 @@ $7B74,mark_grid_slot_active,func,0,X=$28E6 (slot index); mem[$0A00+X]=1; marks d
 $7B7D,mark_slot_and_inc_count,func,0,Wrapper: mark_grid_slot_active (mark $0A00 slot) then set_place_params_inc_count (set params + BCD inc $0641)
 $7B80,set_place_params_inc_count,func,0,$0045=0, $0046=1 (placement params) then bcd_inc_counter_0641 (BCD inc $0641)
 $7B88,bcd_inc_counter_0641,func,0,SED; $0641 = $0641 + 1 (BCD); increments a placed-item/count BCD counter
-$7B94,level_clear_fx_loop,func,0,INC $283C; 15x game_sub_55FC pairs + wait_frames_1; then $3C-iter loop reading RANDOM $D20A|=4 -> $DB, wait_frames_1
+$7B94,level_clear_fx_loop,func,0,INC $283C; 15x ring_push_unmarked pairs + wait_frames_1; then $3C-iter loop reading RANDOM $D20A|=4 -> $DB, wait_frames_1
 $7BC6,setup_level_clear_state,func,0,sets $3A=$FF; if level_or_state($04) set lives($72)=2; timer($44)=$52; X=$1D; tail ring_push_marked
 $7C01,animate_zoom_sequence,func,0,8-frame loop: wait RTCLOK_LOW($14)>=3; per-phase($291F) table $7D8D/95/9D; 16-bit accum $59/$5A,$3F/$40; calls draw_shape_7c9a
 $7C9A,draw_scaled_shape,func,0,computes $C1/$C2 origin via $50/$51 subtract; row loop $53/$4E w/ tables $7DA9/7DBB/7DD3/7DA5; plots via plot_clipped_pixel
@@ -504,8 +504,8 @@ $9821,mul_u8,func,0,Unsigned shift-add multiply: multiplicand $006B, multiplier 
 $9833,update_terrain_scanline_proj,func,0,Builds 16-bit map coords $27FD-$2800 from $2887-$288A>>4 and depth $0034/$0033 into $2275/$2274; samples height via $9a36; advances depth, calls $992d
 $992D,update_terrain_horizon_lr,func,0,Alternates odd/even ($2834); offsets map coords by $2805-$2808 deltas, samples $9a36, computes L/R horizon $282E/$282F vs cached $2841/$2842, calls game_sub_451d
 $9A36,sample_terrain_height_bilerp,func,0,Bilinear-samples height map at $0900 using hi-nibbles of $27FD-$2800 as 16x16 index; shift-add interpolates; height result in $0062
-$9B0D,enter_terrain_special_state,func,0,Sets bit6 of $002D into $2877, gated by $062F; writes flags $0688/$0689/$0696/$06A4 + $3355=$34, calls game_sub_55FC twice; decrements $002E
-$9B4C,exit_terrain_special_state,func,0,Inverse of $9b0d gated by $066C/$06A4/$0696; clears $2877/$0696/$0697, $0688/$0689=$FF, $06A4/$06A5=1, $3355=$B4, calls game_sub_55FC
+$9B0D,enter_terrain_special_state,func,0,Sets bit6 of $002D into $2877, gated by $062F; writes flags $0688/$0689/$0696/$06A4 + $3355=$34, calls ring_push_unmarked twice; decrements $002E
+$9B4C,exit_terrain_special_state,func,0,Inverse of $9b0d gated by $066C/$06A4/$0696; clears $2877/$0696/$0697, $0688/$0689=$FF, $06A4/$06A5=1, $3355=$B4, calls ring_push_unmarked
 $9B87,init_proj_scratch_pointers,func,0,Sets game_state($0041)=1; writes $3C->$DD, $38->$DC, $34->$DA (init ZP scratch/ptr bytes)
 $9BA0,compute_heading_sincos,func,0,From 16-bit heading $2885/$2886 builds octant $280D; calls trig at angle and angle+$40(90deg); stores sin/cos pair to $2809-$280C
 $9BDB,trig_interp_lookup,func,0,Interpolates sine table: sine_table_lookup at angle+1/-1 into $2816-$2818/$2813-$2815, blends per octant bits $280F over 3 steps
@@ -533,7 +533,7 @@ $AD2B,compute_row_xspans,func,0,Fills 271F.. (15 entries) by adding A4/A5 step t
 $B2CC,terrain_midpoint_displace,func,0,16-bit fixed-pt midpoint averaging of segment endpoints ($0082-86 + tables $25B4/$25D2/$25F0/$24E2/$23E2) via CMP #$80/ROR, then sign-aware SBC/ADC perturbation -> $008D-$0091; fractal midpoint step
 $B33D,terrain_column_rasterize,func,0,Walks columns $0082..$D4 interpolating heights $00EA[]/$00F4[], clamps to $97, tracks max-height array $260E, OR-plots bitmap via ($80),Y using $BC00/$BD00 bit tables + $28CA/$28FA addr tables; fractal terrain fill
 $B70C,compute_indicator_pos,func,0,Gated by flight_mode_state($0072)!=2 & $0063>=0: builds gauge/indicator pos in $0035 from coords $0064/65,$0066/67 (via b76f) & $0063; jiffy-paced via $0014; tail-calls b756
-$B756,enqueue_indicator_event,func,0,Writes indicator params $0673=$0035(pos), $0665=$A0(char), $0681=($0014&5)+2(jiffy), Y=8, then game_sub_55FC enqueues event id 8
+$B756,enqueue_indicator_event,func,0,Writes indicator params $0673=$0035(pos), $0665=$A0(char), $0681=($0014&5)+2(jiffy), Y=8, then ring_push_unmarked enqueues event id 8
 $B76F,abs_scaled_hi_nibble,func,0,Shifts 16-bit $00BD:A right 4 (>>4), SBC #$08, returns absolute value (EOR $FF/ADC #1 if negative); scaled-distance helper for b70c
 $B786,reset_indicator_event,func,0,Sets $0035=0 then tail-calls b756 to enqueue indicator event 8 at position 0; called from gameplay pickup logic ($93dd)
 $E45C,os_setvbv,func,0,Atari OS ROM vector SETVBV (set VBLANK timer/handler vector). Disassembles as BRK because our flat image has no OS ROM at $E000+; in the C port VBI dispatch is handled by the platform layer so this is a no-op. Called from station_exit ($1A2F)
@@ -590,19 +590,19 @@ $0075,trig_angle,var,0,Angle accumulator for sine_table_lookup/trig_interp_looku
 $0076,trig_result_lo,var,0,Low byte of 24-bit signed sine result from sine_table_lookup ($0076-$0078)
 $007B,anim_counter_007B,var,0,Animation step counter decremented in animate_clear_colors_timed sweep loops
 $007D,clear_color_count_007D,var,0,X loop count for wait_frames_1 in animate_clear_colors_timed/clear_colors_sweep_5x (clamped min $14); incremented +2 per step
-$0089,terrain_state,var,0,Terrain scroll-phase gate; in scroll_field_columns 0=idle/<4=scroll every frame/>=4=distance-accum-paced (reset 2 at distance 100 = the stars/planet vertical star-scroll pacing); set $7F then counted toward $04 in $6500
-$008A,terrain_scroll_counter,var,0,Per-call countdown in scroll_terrain_dl (scroll_terrain_dl); at 0 resets $008C=8
-$008B,dl_src_index,var,0,Index into LMS source tables $073D/$0793 used by dl_lms_fill; reset/dec by 69dd/69e3
-$008C,terrain_scroll_reload,var,0,Reload value (8) set when $008A expires in scroll_terrain_dl
+$0089,terrain_state,var,0,Terrain scroll-phase gate; in scroll_field_columns 0=idle/<4=scroll every frame/>=4=distance-accum-paced (reset 2 at distance 100 = the stars/planet vertical star-scroll pacing); set $7F then counted toward $04 in $6500. MULTI-ROLE: in setup_projection_params $AC93 the pair {$008A:$0089} is world-Z >> 4 (from $2889/$288A)
+$008A,terrain_scroll_counter,var,0,Per-call countdown in dl_doors_open_split_step; at 0 resets $008C=8. MULTI-ROLE: in setup_projection_params $AC93 it is the HIGH byte of world-Z >> 4 (pair with terrain_state $0089)
+$008B,dl_src_index,var,0,Index into LMS source tables row_base_lo $073D/row_base_hi $0793 used by dl_write_lms_window — i.e. the LMS window START ROW; reset/dec by dl_lms_reset_window/dl_lms_scroll_step. MULTI-ROLE (~8 other users: display_scroll $1CF0-$1D9A, $537C, $624E-$62C7, $77A4, $8077): in setup_projection_params $AC93 the pair {$008C:$008B} is the pitch-depth delta << 2 (from $0033/$0034). Deliberately kept generic: a dl_lms_start_row name would mislead every other caller
+$008C,terrain_scroll_reload,var,0,Reload value (8) set when $008A expires in dl_doors_open_split_step. MULTI-ROLE: in setup_projection_params $AC93 it is the HIGH byte of the pitch-depth delta << 2 (pair with dl_src_index $008B), saturated to $FF when $0034 >= $40; ALSO the station_missile_drift reseed gate (reseeds only when ==6)
 $008D,step_mode_flag,var,0,Selects step routine in launch_anim_dispatch (nonzero->step_accum_sub_7e); set/tested by step_accum_sub_7e and advance_history_6a4d
 $008F,sfx_toggle_8F,var,0,Alternating flag in launch_anim_dispatch: LSR then INC gates every-other-frame sfx ($008C/$008A)
 $0091,altitude_threshold,var,0,General ZP scratch (~10 fns); meaningful only in copy_title_text_block_to_screen (compared to $C0/$E0 to pick the 20-byte graphic block for $32B6). In sfx_seq_step $7156 it is a dead spill of the voice-param cmd byte
-$0092,draw_row,var,0,Current row counter for the draw loop: init 0x55 (85) in draw_frame_guide_columns, used as index into the row_base tables via set_row_ptr_from_count; also stepped by 8 as the glyph blitter pixel-column ($54/$2E/$38) in blit_message_block.
+$0092,draw_row,var,0,Current row counter for the draw loop: init 0x55 (85) in draw_frame_guide_columns, used as index into the row_base tables via set_row_ptr_from_count; also stepped by 8 as the glyph blitter pixel-column ($54/$2E/$38) in blit_message_block. MULTI-ROLE: in setup_projection_params $AC93 it is heading_hi << 2 (LDA $2886 + 2x ROL)
 $0093,blit_pixel_x,var,0,per-pixel X within row, passed to plot_pixel_masked (LSR->plane index), INC each shifted bit in blit_glyph_8rows
 $0094,draw_color_idx,var,0,2-bit pixel colour/pattern selector in draw_frame_pattern_seq/draw_symmetric_span_loop/plot_pixel_masked/plot_masked_pixel: cycled 1..6, ORed with mask table $66E9 (into $00B9), and used to pick the AND/OR mask masked into the screen byte.
 $0095,blit_color_src,var,0,source color copied to $94 at start of blit_glyph_8rows ($95->$94)
 $0096,span_row_count,var,0,Inner span/plot loop counter (rows for the current shape segment), decremented to zero in draw_symmetric_span_loop/emit_dl_coord_pairs/plot_terrain_span/game_sub_6811; also the glyph code for the current message column in draw_ring_frame_step.
-$0097,blit_row_counter,var,0,Glyph row counter $07..0 in the blit_glyph_8rows 8-row loop (indexes glyph byte via ($84),Y); also the top-end byte index of the $300A LMS ring used as a loop terminator (CPX $97) and X index in scroll_terrain_dl/dl_lms_push_top.
+$0097,blit_row_counter,var,0,Glyph row counter $07..0 in the blit_glyph_8rows 8-row loop (indexes glyph byte via ($84),Y); also the top-end byte index of the $300A LMS ring used as a loop terminator (CPX $97) and X index in dl_doors_open_split_step/dl_lms_push_top.
 $0098,dl_bottom_index,var,0,Byte index of the bottom/low end of the $3089 LMS ring, loop terminator (CPY $98) in dl_lms_scroll_down and Y index in dl_lms_push_bottom (writes $0082/$0083 into $3089); also the flood-fill cell-stack index at $2500 (init 1).
 $009A,grid_offset_a,var,0,First neighbor cell offset added to $009C when indexing grid at $0900 (test_marked_neighbor/scan_grid_neighbors)
 $009B,grid_offset_b,var,0,Second neighbor cell offset for grid $0900 indexing in test_marked_neighbor
@@ -614,8 +614,8 @@ $00A0,draw_iter_count,var,0,Cinematic outer iteration count (draw_frame_pattern_
 $00A1,scroll_accum_b0,var,0,Byte 0 of the multi-byte scroll/distance accumulator (add/sub_multibyte_a1). OVERLAID in flight as view rotation vector rot_a low ($2809+1->$A1 $ACEA); pair {rot_a=$A1:$A0 rot_b=$A3:$A2}
 $00A2,scroll_accum_b1,var,0,Byte 1 of the multi-byte accumulator; OVERLAID as rot_b low in flight ($ACEF) for terrain_frame_setup/build_view_transform_matrix
 $00A3,scroll_accum_b2,var,0,Byte 2 of the multi-byte accumulator; OVERLAID as rot_b high in flight ($ACF4)
-$00A4,scroll_accum_b3,var,0,Top byte (byte 3) of the multi-byte scroll/distance accumulator; result of step_accum_add_75/sub_7e; also the per-row X-span increment high byte (from heading $24) used by ad2b.
-$00A5,scroll_accum_prev,var,0,Previous top byte of the scroll accumulator, compared against $00A4 to detect a column step in scroll_field_columns/6a38/6a8f; also the per-row X-span increment low byte (from heading $23) used by ad2b.
+$00A4,scroll_accum_b3,var,0,Top byte (byte 3) of the multi-byte scroll/distance accumulator; result of step_accum_add_75/sub_7e. MULTI-ROLE: also the per-row X-span increment HIGH byte used by ad2b, written by setup_projection_params $AD09 as the signed PITCH >> 1 (from pitch_shadow_hi $0024, sign-preserving CMP #$80/ROR) — NOT from heading, which the old description got wrong.
+$00A5,scroll_accum_prev,var,0,Previous top byte of the scroll accumulator, compared against $00A4 to detect a column step in scroll_field_columns/6a38/6a8f. MULTI-ROLE: also the per-row X-span increment LOW byte used by ad2b, written by setup_projection_params $AD11 as the low half of the signed PITCH >> 1 (from pitch_shadow_lo $0023) — NOT from heading, which the old description got wrong.
 $00A6,horizon_row_index,var,0,Horizon/center row index = 6 - (signextend $28<<2); seeds 271E span table in ad2b
 $00AC,mul_div_frac,var,0,Fractional/carry byte in signed_mul_8x16 rotated through ROR during shift-add
 $00AD,mul_sign,var,0,Saved sign of multiplicand in signed_mul_8x16; used to negate $00AA/$00AB and result
@@ -625,8 +625,8 @@ $00B9,draw_pattern_byte,var,0,Pattern/colour byte stored across a horizontal spa
 $00BA,obj_pos_hi,var,0,Current object position high byte loaded from $08A5[X], clamped to <=$2E (row)
 $00BF,bar_col_threshold,var,0,Column/fill threshold compared via CPX in draw_player3_object/draw_object_column (set by setup_dial_bar_draw) to pick top/bottom sprite byte, set bit7, and choose filled vs empty bar glyph; also used as an OR mask ($80) on glyph bytes in draw_glyph_2rows ($4099).
 $00C0,object_col_flag,var,0,Two-byte-tall flag for column draw: nonzero adds a second PMG byte ($38/$B8) (draw_object_column)
-$00C5,digit_dst_ptr_lo,var,0,Low byte of 16-bit screen-destination pointer ($C5/$C6) for BCD digit / label-glyph writes via ($C5),Y; set to $32C5 by render_bcd_counter and to $0A (ptr=$300A) for dl_lms_fill.
-$00C6,digit_dst_ptr_hi,var,0,High byte paired with $C5 (digit_dst_ptr_lo): set to $30 so the dest pointer = $300A for dl_lms_fill; also the countdown of glyphs to blit (init 5) in the blit_label_row label loop.
+$00C5,digit_dst_ptr_lo,var,0,Low byte of 16-bit screen-destination pointer ($C5/$C6) for BCD digit / label-glyph writes via ($C5),Y; set to $32C5 by render_bcd_counter and to $0A (ptr=$300A) for dl_write_lms_window.
+$00C6,digit_dst_ptr_hi,var,0,High byte paired with $C5 (digit_dst_ptr_lo): set to $30 so the dest pointer = $300A for dl_write_lms_window; also the countdown of glyphs to blit (init 5) in the blit_label_row label loop.
 $00C7,dli_dispatch_index,var,0,DLI/NMI display-list-interrupt chain index; reset to 0 at the top of every VBI (vbi_handler_flight/standby) and INC'd by each DLI to step the per-region colour-change table.
 $00CC,player3_bottom_y,var,0,Player-3 object bottom-Y clamp result (draw_player3_object $43c4) from $2870 vs $8D/$00BF; intro_cinematic_loop also sets it from $2847 (in [$6C,$8D) else 0) paired with the SIZEP3 $D00B write.
 $00CE,altitude_color_or_glyph,var,0,update_altitude_digit_display sets from $28D9+$AB clamped to [$A3,$B4) else $B5
@@ -669,10 +669,10 @@ $0657,music_stream_ptr_lo,var,0,Music command-stream pointer low; copied to $009
 $0658,music_stream_ptr_hi,var,0,Music command-stream pointer high; copied to $009A in music_player_tick($7253), incremented on carry
 $065D,sfx_voice_distortion,var,0,Per-voice POKEY AUDC distortion bits; ORed with vol nibble into AUDCn $D1FF+X in 5673
 $0665,indicator_evt_char,var,0,Event param array entry set to $A0 by b756 (indicator glyph/char code)
-$0673,indicator_evt_pos,var,0,Event param array entry written =$0035 by b756 before enqueueing event 8 via game_sub_55FC
-$0676,timer_676,var,0,Countdown/display field byte set from A by store_676_init before the game_sub_55FC refresh chain; DEC'd at $8035 and compared at $14932/$15231.
+$0673,indicator_evt_pos,var,0,Event param array entry written =$0035 by b756 before enqueueing event 8 via ring_push_unmarked
+$0676,timer_676,var,0,Countdown/display field byte set from A by store_676_init before the ring_push_unmarked refresh chain; DEC'd at $8035 and compared at $14932/$15231.
 $0678,hud_field_678,var,0,HUD/display field value byte; set from A ($4ea5) and to $0C ($4fce); decremented in intro fade loop $4f7e
-$0679,sfx_env_freq_val,var,0,SFX frequency envelope VALUE column base mem[$0679+Y]; pushed to AUDF via sfx_voice_write_freq. Was misnamed hud_field_679. SEAM: $0679 = prio_target[$0E] ($0695+$0E); also a standalone $4EA5 write before a game_sub_55FC gauge refresh
+$0679,sfx_env_freq_val,var,0,SFX frequency envelope VALUE column base mem[$0679+Y]; pushed to AUDF via sfx_voice_write_freq. Was misnamed hud_field_679. SEAM: $0679 = prio_target[$0E] ($0695+$0E); also a standalone $4EA5 write before a ring_push_unmarked gauge refresh
 $0681,indicator_evt_phase,var,0,Event param set to ($0014&$05)+2 by b756; jiffy-clock-derived phase/blink value
 $0705,sfx_voice_reg_idx,var,0,Per-voice POKEY AUDF reg index table (base, +X/Y); 0=inactive; idx 2->AUDF1 $D200; voices 1..12 scanned in 568a/56af
 $0714,sfx_top_prio_val,var,0,Selected top voice priority nibble value from sfx_pick_top_voice ($568a)
@@ -684,8 +684,8 @@ $0719,event_ring_0719,var,0,32-entry ($20) circular buffer; pushed by ring_push_
 $073A,sfx_note_timer,var,0,SFX note/duration countdown; decremented each tick in sfx_voice_tick($70F9), reloaded from table $71D2 by sfx_seq_step
 $073B,sfx_voice_mute,var,0,SFX play/mute selector; nonzero -> write Y(=0) to AUDC1/2/3 silencing; set from note high-nibble in sfx_seq_step ($718D)
 $073C,sfx_seq_ptr,var,0,SFX sequence index into table $71DB; advanced by sfx_seq_step($7148), init 0 in reset_audctl_flags
-$073D,row_base_lo,var,0,85-entry (0x55) per-scanline screen base-address LOW table, built by game_setup_7460 from $C3 + $C1 stride; also serves as the source of LMS-operand low bytes indexed in dl_lms_fill.
-$0793,row_base_hi,var,0,85-entry per-scanline screen base-address HIGH table (paired with row_base_lo), built by game_setup_7460 from $C4; also the source of LMS-operand high bytes indexed in dl_lms_fill.
+$073D,row_base_lo,var,0,85-entry (0x55) per-scanline screen base-address LOW table, built by game_setup_7460 from $C3 + $C1 stride; also serves as the source of LMS-operand low bytes indexed in dl_write_lms_window.
+$0793,row_base_hi,var,0,85-entry per-scanline screen base-address HIGH table (paired with row_base_lo), built by game_setup_7460 from $C4; also the source of LMS-operand high bytes indexed in dl_write_lms_window.
 $08A4,obj_pos_table,var,0,22-entry 16-bit object position array (lo=$08A4,hi=$08A5); inited from $6E2D+$2EE0, advanced by advance_object_positions/6bed
 $08D1,obj_anim_frame,var,0,Object-approach frame counter, INC'd each advance_object_positions call (advance_object_positions)
 $08D2,obj_advance_lo,var,0,16-bit per-call object advance offset low; += $18 each advance_object_positions call
@@ -747,7 +747,7 @@ $28E1,terrain_cur_obj_idx,var,0,saved X (object index) in terrain_plot_object $A
 $28E2,terrain_plot_row,var,0,saved Y (raster row) across pixel write in terrain_plot_pixel $A6D3 ($A6D7 store, $A6F5 reload)
 $28E6,grid_slot_index,var,0,Index into $0A00 active-slot table; $7B74 writes mem[$0A00+X]=1
 $28EA,terrain_span_max,var,0,running max span/extent compared+updated in terrain_plot_object $A690/$A695
-$28EE,lock_on_indicator_complete,var,0,Set to 1 alongside $0048 when lock-on indicator animation completes (lock_on_indicator_step $427a)
+$28EE,lock_on_indicator_complete,var,0,Set to 1 alongside $0048 when lock-on indicator animation completes (lock_on_indicator_step $427a). MULTI-ROLE: in game_state_update $A99C it is the ENEMY-FIRE COUNTDOWN timer — DEC'd at $A99C and on underflow reseeded from fire_delay_mask $0624 AND RANDOM ($A9A1-$A9A7); also set $02 by trigger_object_explosion $96D9. Unrelated to lock-on completion there
 $290D,terrain_distance_acc,var,0,Manhattan distance accumulator in terrain_point_distance $A8AF (|dx|+|dy|)
 $291F,anim_phase,var,0,animation phase/frame counter in animate_zoom_sequence; reset 0, INC then AND #7 to wrap 8 frames; indexes tables $7D8D/$7D95/$7D9D
 $2924,sound_table_idx,var,0,index into table $81E8 in alien_creature_animate_draw; INC'd each call (stepped sound/random sequence)
@@ -777,7 +777,7 @@ $0625,dial_base_offset,var,0,cockpit_dial_update: per-dial base index ADC'd to t
 $4457,dial_bar_value_table,data,0,cockpit_dial_update: bar-value lookup table (Y = dial value + dial_base_offset) mapping a dial value to its drawn bar fill
 $4581,dial_column_ptr_table,data,0,draw_object_column: per-column 16-bit target cockpit-cell pointer table (indexed by 2*column)
 $00CB,hposp2_shadow,var,0,vbi_handler_flight: shadow pushed to HPOSP2 ($D002) — the laser-shot HPOSP2 (see CLAUDE.md flight-pmg correction)
-$00CD,grafm_shadow,var,0,GRAFM ($D00A) shadow pushed in the flight missile block ($5028/$502A and $8D1A/$8D1C); set $03/$01 at $8D9C/$8DA9. Drives the flight missile graphics (crosshair/altimeter) NOT the wing-clearance bars (a mode-D bitmap) and NOT SIZEP2
+$00CD,sizep2_shadow,var,0,SIZEP2 ($D00A) shadow — the player-2 WIDTH (1x/2x/4x = $00/$01/$03), written by build_player2_sprite ($8C6F/$8D9C/$8DA9) and pushed to $D00A by vbi_handler_flight $5028 and $8D1A. $D00A IS SIZEP2 ($D008-$D00B = SIZEP0-3; GRAFM is $D011), so the old grafm_shadow name and its NOT SIZEP2 claim were both backwards (corrected 2026-08-12). The Amiga burst/P3 widening reads it via sizepScale() masking bits 1-0 as GTIA does. WARNING do NOT compare it to 0/1/3 — value 2 is a second encoding of normal and the cell holds stale ZP between shots (saucerbigpause.a8s has $62 with no shot active)
 $08A1,atmo_fade_countdown,var,0,vbi_handler_flight atmosphere fade: counts down then bumps atmo_fade_phase
 $08A2,atmo_fade_phase,var,0,vbi_handler_flight atmosphere fade: phase counter indexing atmo_fade_step_table into atmo_band_base
 $08A3,atmo_band_base,var,0,vbi_handler_flight atmosphere fade: depth-band base offset into the atmo_* lookup tables
@@ -928,3 +928,30 @@ $0F32,player_col_buf3,var,0,P3 89-byte column buffer; flight = terrain column; s
 $28D9,altimeter_color_base,var,0,Altimeter colour source; $28D9+$AB -> altitude glyph/colour $CE ($450A clamped); snapshot from $28E7 ($A436); reset $80 at init $789F and level-clear handoff $3F5E
 $28DA,altimeter_alt_ref,var,0,Altitude reference; $1C-$28DA = altimeter digit/bar row in update_altitude_digit_display ($44DB); snapshot from $28E8 ($A43C); reset $80 at init $78A2 and level-clear handoff $3F61
 $003A,mission_event_flag,var,0,Mission/event state flag: init $FF (bit7 set) by setup_level_clear_state $7BC8; INC'd on a random draw $7459; bit7-gated (BPL/BMI) to gate cockpit-cell $3356/57 ($50FA) the message path ($493D) and random object spawn ($7B54); when ==1 game_main_loop $3EEC raises level_cleared_flag $2849
+# --- Applied from docs/rename.md backlog 2026-08-12 (the enemy-fire/bolt working set + the trig tables) ---
+# Enemy-fire / bolt line-plot working set — seeded by terrain_sub_A822 ($A891-$A89E), run by
+# game_state_update ($A99C) and plotted by plot_scanline_down ($AAD4); all previously unnamed.
+$28EB,fire_target_col,var,0,Enemy-fire target cell COLUMN latched from X by terrain_sub_A822 $A896 when RANDOM says fire and fire_queued is clear; seeds fire_plot_x at $A9CA
+$28EC,fire_target_row,var,0,Enemy-fire target cell ROW latched from Y by terrain_sub_A822 $A899; seeds fire_plot_y at $A9D0 and the $AA5F end-row branch
+$28ED,fire_queued,var,0,Shot-queued flag gating the enemy fire: set from $0051 at $A89E (only when already clear), tested at $A9C5, cleared at $A9BF on completion and by terrain_gen_2 $A399 on terrain regen
+$28EF,fire_plot_xfrac,var,0,Bolt line-plot X sub-pixel accumulator, seeded to the $80 midpoint at $A9DD; stepped by plot_scanline_down
+$28F0,fire_plot_x,var,0,Bolt line-plot start/current X, seeded from fire_target_col at $A9CD
+$28F1,fire_plot_yfrac,var,0,Bolt line-plot Y sub-pixel accumulator, seeded to the $80 midpoint at $A9E0
+$28F2,fire_plot_y,var,0,Bolt line-plot start/current Y, seeded from fire_target_row at $A9D3
+$28F3,fire_plot_wfrac,var,0,Bolt line-plot WIDTH sub-pixel accumulator, seeded to the $80 midpoint at $A9E3
+$28F4,fire_plot_width,var,0,Bolt line-plot width, seeded to 1 at $A9D8 and widened per plotted row
+$28F7,fire_plot_vstep,var,0,Bolt line-plot random vertical step = RANDOM($D20A) << 1, taken at $AA13-$AA17
+$28F8,fire_plot_rowcount,var,0,Bolt line-plot row counter: zeroed at $A9EE then DEC'd to $FF at $AA1A (so it is seeded $FF), counted down by the plot loop
+$28F9,fire_plot_endrow,var,0,Bolt line-plot END row: either ((~$004D >> 3) + $0C) at $AA2D or ($6B - fire_target_row) at $AA62 depending on the $007E==7 branch
+$0624,fire_delay_mask,var,0,Enemy-fire delay MASK ANDed with RANDOM to reseed the fire countdown $28EE ($A9A1-$A9A7); derived from the level by compute_stage_display_geometry ($7662 = ($2C - $00C1) >> 1) so it is $14 at level 4 and $02 at level 40 — i.e. the level's rate-of-fire knob
+# Trig lookup scratch + tables — sine_table_lookup ($9C55) / trig_interp_lookup ($9BDB) only.
+$0077,trig_result_mid,var,0,MID byte of the signed 24-bit trig result $0076-$0078 (with trig_result_lo $0076); written/blended only within $9BBC-$9C94
+$0078,trig_result_hi,var,0,HIGH byte of the signed 24-bit trig result $0076-$0078; carries the sign
+$280E,trig_quadrant,var,0,Quadrant index (angle >> 6) written by sine_table_lookup $9C57-$9C66; selects the trig_quad_sign/trig_quad_reflect entries
+$280F,trig_octant_work,var,0,Working copy of the octant fraction (from trig_octant $280D) consumed by trig_interp_lookup's 3 blend steps ($9C06/$9C0B)
+$2813,trig_sample_angle,data,0,24-bit ($2813-$2815) sine sample at the base angle, doubled per blend step in trig_interp_lookup
+$2816,trig_sample_angle1,data,0,24-bit ($2816-$2818) sine sample at angle+1, doubled per blend step in trig_interp_lookup
+$9B98,trig_quad_sign,data,0,Per-quadrant SIGN flag table indexed by trig_quadrant in sine_table_lookup
+$9B9C,trig_quad_reflect,data,0,Per-quadrant index-REFLECT mask table indexed by trig_quadrant in sine_table_lookup
+$4EB9,trig_table_hi,data,0,Quarter-wave sine table HIGH bytes, indexed by the reflected angle in sine_table_lookup
+$4EFA,trig_table_lo,data,0,Quarter-wave sine table LOW bytes, paired with trig_table_hi

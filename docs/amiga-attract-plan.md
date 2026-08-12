@@ -18,7 +18,7 @@ working, committed build**.
 >   - **Amiga VBI interrupt** does only what `vbi_handler_station $1B30` does:
 >     increment timers (`$0080`, `$0014`/`$0013`). Lightweight, no rendering.
 >   - **Amiga main loop** calls every attract animation function in the same order
->     as the Atari attract loop: `pmg_update_station`, `station_audio`,
+>     as the Atari attract loop: `station_star_fade_in`, `station_audio`,
 >     `station_anim_frame`, `station_sub_1EB4`, `pmg_colors_station`,
 >     `station_sub_1F48`. These update `mem[]`.
 >   - **After each frame**, the Amiga renderer reads from `mem[]` to produce
@@ -45,7 +45,7 @@ working, committed build**.
 > the element-by-element anatomy and `startup-flow.md` §6 for the cinematic.
 >
 > **⚠️ PARTIALLY SUPERSEDED — see "CRITICAL REVISION (2026-06-08c)" immediately
-> below.** The per-frame function list above (`pmg_update_station`, `station_audio`,
+> below.** The per-frame function list above (`station_star_fade_in`, `station_audio`,
 > `station_anim_frame`, `station_sub_1EB4`, `pmg_colors_station`, `station_sub_1F48`)
 > is the **`station_init $195D` loop — which is the SPACE-STATION CINEMATIC,
 > not the target attract screen.** The target ("RESCUE ON FRACTALUS!" + LEVEL-04
@@ -143,7 +143,7 @@ analysis in the `rof-project` memory; immediate visual confirmation).
 | `dA JoRMaS/Productions/JRm-bS75/Source` (`GameCopperList`, `GamePart` sprite code) | the **serious copper + sprite pattern**: subclass `CopperList` → `GameCopperList` with a `writeCopperlist(...)` that **rebuilds the per-scanline copper every frame** (`showScroller`/`showHorizonBack`/`showObjects`/`showHorizonParallax`/`showRoad`/`showSprites`), per-scanline `WAIT` colour/mode changes, **all 8 hardware sprites** driven together (`showSprites(s0..s7)`, grouped as `BikeSprite`; `setBikeSpritePosition`/`showCurrentBikeSprite`), double-buffered copperlists | the racing-game logic (road geometry, bike physics) |
 | `tmp/attackofthepetsciirobots` (`Platform.h`, `PlatformAmiga.cpp`, `petrobots.cpp` main loop) | the **app skeleton**: `main()` → system setup → install VBI int server (`AddIntServer(INTB_VERTB,…)`) → game-style state-machine loop; non-blocking `readKeyboard`/`readJoystick`; `renderFrame(waitForNextFrame)` = `WaitTOF`; chip-RAM alloc + interleaved bitplane bitmap; blitter tile/rect ops | its tile/map engine, gzip/Bin2Hunk specifics (we use `incbin`) |
 | `dA JoRMaS/Utilities/WHDLoadMenu` (`WHDLoadMenuAnimated.cpp`, `AmigaView`, `AmigaCopperList`, `MenuView` loop, `Joystick`/`Keyboard`) | the **animated-copperlist idioms**: double-buffered copper lists swapped per frame (`LOFlist = copperList->data()`), per-frame copper edits (`setFade`/`setColor`/sprite-pointer swap/`setXOffset`), palette-fade infra, `WaitTOF`+poll loop, sprite-frame animation (the bouncing-ball pattern) | the WHDLoad menu logic itself |
-| RoF repo: `src/gen/rof_gen.c` attract + audio routines + `cpu`/`bus`/`mem[]`, `PlatformSDL.cpp` POKEY synth | **attract state machine**: `vbi_handler_station`, `station_anim_frame`, `station_sub_1EB4`, `pmg_update_station`, `pmg_colors_station`, `station_sub_1F48` compiled for m68k — these update `mem[]` each frame; **audio**: `station_audio` + song/SFX data → Paula via POKEY→Paula backend; `PlatformSDL`'s `audioCallback` algorithm as the spec | the rendering/terrain core (native instead); the full game loop (game routines only added when needed) |
+| RoF repo: `src/gen/rof_gen.c` attract + audio routines + `cpu`/`bus`/`mem[]`, `PlatformSDL.cpp` POKEY synth | **attract state machine**: `vbi_handler_station`, `station_anim_frame`, `station_sub_1EB4`, `station_star_fade_in`, `pmg_colors_station`, `station_sub_1F48` compiled for m68k — these update `mem[]` each frame; **audio**: `station_audio` + song/SFX data → Paula via POKEY→Paula backend; `PlatformSDL`'s `audioCallback` algorithm as the spec | the rendering/terrain core (native instead); the full game loop (game routines only added when needed) |
 | RoF repo (`atari000.png`, `tools/compare.py`, docs) | the **parity oracle** + the per-element Amiga technique map (`hw-techniques.md` §11.8) | running the 6502 rendering core on Amiga |
 
 > **One skeleton, OS-friendly vs takeover — decide at M0.** PETSCII is
@@ -592,7 +592,7 @@ subsequent rendering accurate.
       `mem[0x0080]`, `mem[0x0014]` + carry into `mem[0x0013]`. DLIST/COLBK
       writes from the Atari VBI skipped — Copper owns those.
 - [x] **Main loop (expanded `StandbyScene::update`)**: calls in order:
-      `pmg_update_station()`, `station_audio()`, `station_anim_frame()`,
+      `station_star_fade_in()`, `station_audio()`, `station_anim_frame()`,
       `station_sub_1EB4()`, `pmg_colors_station()`, `station_sub_1F48()`.
 - [x] Removed manual timer increment from `update()` and standalone
       `station_audio()` call (subsumed into the ordered sequence).
@@ -605,8 +605,12 @@ subsequent rendering accurate.
 
 **Gotchas:** `station_sub_1EB4` accesses tables at `$2313`/`$231B` — these must
 be loaded into `mem[]` from the XEX. Verify the XEX loader populates them.
-`pmg_update_station` / `pmg_colors_station` write PMG RAM at `$3400–$3500` and
+`station_pm_shape_tick` / `pmg_colors_station` write PMG RAM at `$3400–$3500` and
 POKEY/GTIA registers — stub those bus writes; we drive sprite positions separately.
+⚠ **Corrected 2026-08-12:** `station_star_fade_in` (`$1E79`, was `pmg_update_station`) is NOT one
+of them — it touches no PMG RAM at all, it brightens the mode-F **star rows** `$2CB8-$3167`. The
+PMG shape writer is `station_pm_shape_tick` (`$1E01`, was `dli_handler_station`).
+See `docs/logo-station-plan.md` §4.
 
 ### M6c — Bitmap region: blit `mem[$0600]` to title+terrain bitplane
 > **⚠️ SUPERSEDED by CRITICAL REVISION (2026-06-08c).** Two errors: (1) the terrain
@@ -785,7 +789,7 @@ All from `music_playing.a8s` being mid-animation vs the correct standby state:
    and `vbi_deferred_dispatch` ($534D) each VBI — not called. Needed for cockpit
    digit updates, instrument animation. update() should call all standby-loop
    functions as named native functions.
-2. **Title alternation**: Static. $0091 only incremented by `pmg_update_station`
+2. **Title alternation**: Static. $0091 only incremented by `station_star_fade_in`
    ($1E79, Screen-2 function). Screen-3 standby is always static.
 3. **R3b music timing**: sfx runs at 50Hz VBI, not POKEY timer rate.
 4. **Scene 3b Scoreboard**: `attract_timer $00E2` → hi-score screen. Not analysed.
@@ -814,7 +818,7 @@ on `main`; verified in FS-UAE. (Open item 5 "Descent / door-open sequence" above
 DONE; items 1–4 superseded by the 2026-06-09 sessions.)
 
 Done & committed:
-- **Doors + Tunnel** reveal — native `scroll_terrain_dl` + ring palette cycle via the
+- **Doors + Tunnel** reveal — native `dl_doors_open_split_step` + ring palette cycle via the
   `$5367` dispatcher; tunnel rings drawn in code (`draw_frame_pattern_seq`).
 - **Launch effects 1–4** — STAND BY + score, throttle-gauge fill (vobj→sprite), left
   indicator lights — faithful ports calling the linked transpile.

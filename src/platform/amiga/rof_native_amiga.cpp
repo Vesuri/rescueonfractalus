@@ -59,7 +59,7 @@ extern "C" void flush_paula(void);
 // do the same mem[] mutations in plain C with no emulation overhead.
 //
 // Functions dropped entirely (Amiga doesn't need them):
-//   pmg_update_station  — only modifies PMG RAM ($B82C area), not displayed
+//   station_star_fade_in  — only modifies PMG RAM ($B82C area), not displayed
 //   pmg_colors_station  — only writes GTIA player-colour registers (all stubbed)
 //
 // station_audio is NOT replaced here; it is complex and already working via
@@ -493,12 +493,12 @@ extern "C" void update_indicator_blink_native(void)
 //     if   $008D != 0  -> step_accum_sub_7e   (DL-construction step)
 //     elif $0088 != 0  -> step_accum_add_75   (tunnel ring cycle)
 //     elif $0089 != 0  -> scroll_field_columns (stars/planet column scroll)
-//     elif $008B != 0  -> dl_index_dec         (unused in Standby)
-//     else (via $008F toggle) $008C reveal / $008A != 0 -> scroll_terrain_dl (doors)
+//     elif $008B != 0  -> dl_lms_scroll_step         (unused in Standby)
+//     else (via $008F toggle) $008C reveal / $008A != 0 -> dl_doors_open_split_step (doors)
 // launch_anim_dispatch_native (below) is the Amiga per-frame dispatch entry.
 //
 // The helper 6502 routines it drives (step_accum_add_75/$6A38, draw_ring_frame_step/
-// $670D, add_multibyte_a1/$6AB5, advance_history_6a4d/$6A4D, scroll_terrain_dl/$6953,
+// $670D, add_multibyte_a1/$6AB5, advance_history_6a4d/$6A4D, dl_doors_open_split_step/$6953,
 // dl_lms_*) are pure mem[] 6502 logic, not Amiga-specific, so they now live as faithful
 // native twins in src/gen/rof_native.c (VALIDATE_FUNCS).  draw_ring_frame_step's Amiga
 // tunnel dirty-band publish (the g_tun* globals, formerly defined here) is guarded there
@@ -519,8 +519,8 @@ extern "C" { typedef struct { uint8_t A, X, Y, S, N, V, Z, C, I, D; } Cpu6502; e
 extern "C" void scroll_field_columns(void);  // $6AEE transpiled (entered with A = $0089)
 extern "C" void step_accum_sub_7e(void);      // $6A8F transpiled — the $008D DL-construction step
 extern "C" void step_accum_add_75(void);      // $6A38 native twin (rof_native.c) — tunnel ring cycle
-extern "C" void scroll_terrain_dl(void);      // $6953 native twin (rof_native.c) — one door-open step
-extern "C" void dl_index_dec(void);           // $69E3 native twin (rof_native.c) — level-select DL scroll step
+extern "C" void dl_doors_open_split_step(void);      // $6953 native twin (rof_native.c) — one door-open step
+extern "C" void dl_lms_scroll_step(void);           // $69E3 native twin (rof_native.c) — level-select DL scroll step
 extern "C" void launch_anim_dispatch_native(void)
 {
     // $008D (step_mode_flag): the DL-CONSTRUCTION step, NOT a "reverse ring" — the Atari
@@ -536,7 +536,7 @@ extern "C" void launch_anim_dispatch_native(void)
         return;
     }
     // $008B (dl_src_index): the level-select door "elevator" scroll.  The Atari $5367 does
-    // `if ($008B) JMP $69E3` (dl_index_dec) — run EVERY frame, ahead of the $008F gate — which
+    // `if ($008B) JMP $69E3` (dl_lms_scroll_step) — run EVERY frame, ahead of the $008F gate — which
     // DECs $008B and rebuilds the whole per-scanline DL LMS window (a uniform vertical scroll of
     // the $2000 door field).  The post-mother-ship SELECT in-place level cycle
     // (boot_standby_launch_driver L_622d..L_628f) busy-spins waiting for this ISR-driven decrement
@@ -544,7 +544,7 @@ extern "C" void launch_anim_dispatch_native(void)
     // real INTB_VERTB ISR decrements $008B during the main-thread spin, and the render side
     // (RescueOnFractalus door-scroll copper) repoints the viewport BPLxPT from $008B each frame.
     if (mem[MEM_dl_src_index]) {
-        dl_index_dec();                                      // $008B: JMP $69E3
+        dl_lms_scroll_step();                                      // $008B: JMP $69E3
 #ifdef ROF_FLIGHT_PROBE
         { extern volatile unsigned short g_dlScrollCount; g_dlScrollCount++; }   // liveness (scroll active)
 #endif
@@ -556,7 +556,7 @@ extern "C" void launch_anim_dispatch_native(void)
     mem[MEM_sfx_toggle_8F]++;                           // INC $008F
     // $008C: windscreen-corner reveal.  clear_slot_0c87_0d87 ($6A27) recedes the green
     // canopy-post quad-player wedge one scanline per (every-other) frame so the tunnel
-    // shows through top-down.  scroll_terrain_dl arms $008C=8 when the doors finish; this
+    // shows through top-down.  dl_doors_open_split_step arms $008C=8 when the doors finish; this
     // branch was missing from the native dispatch, so the wedge never receded on the Amiga.
     if (mem[MEM_terrain_scroll_reload]) {                      // LDA $008C; BEQ skip
         uint8_t h = --mem[MEM_terrain_scroll_reload];          // DEC $008C (8 -> 0)
@@ -565,7 +565,7 @@ extern "C" void launch_anim_dispatch_native(void)
         mem[0x0D87 + y] = 0;                                 // clear right canopy-post player line ($0D88..)
     }
     if (mem[MEM_terrain_scroll_counter] == 0) return;          // $008A: doors already fully open
-    scroll_terrain_dl();
+    dl_doors_open_split_step();
 }
 
 // ---- procedural tunnel rings ------------------------------------------------

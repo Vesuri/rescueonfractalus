@@ -19,7 +19,7 @@ Atari 6502 addresses.
 
 ```mermaid
 flowchart TD
-    A["XEX loader<br/>(segments load in order)"] --> B["INITAD $5000<br/>stage_5000: prime GTIA<br/>from page-2 shadows"]
+    A["XEX loader<br/>(segments load in order)"] --> B["INITAD $5000<br/>the Lucasfilm Games LOGO<br/>(segment 5 — NOT stage_5000)"]
     B --> C["more segments load"]
     C --> D["INITAD $1A97<br/>initad_1A97 → station_init"]
     D --> E{"Attract loop<br/>$1A01"}
@@ -35,7 +35,7 @@ flowchart TD
     K --> L["game_main_loop $3D48<br/>per-life full init"]
     L --> M["outer reset L_3e0f<br/>calls boot_standby_launch_driver $5F1D"]
     M --> T["title screen @ $5A78<br/>1985 LUCASFILM LTD<br/>wait for START"]
-    T -->|START| D1["STAND BY + doors<br/>unpack_bitmap_4d3e<br/>+ scroll_terrain_dl"]
+    T -->|START| D1["STAND BY + doors<br/>unpack_bitmap_4d3e<br/>+ dl_doors_open_split_step"]
     D1 --> D2["tunnel<br/>unpack_bitmap_4d3e<br/>+ step_accum_add_75"]
     D2 --> D3["stars / space<br/>draw_symmetric_span_loop<br/>+ scroll_field_columns"]
     D3 --> D4["planet<br/>gen_terrain_column +<br/>draw_vline_pair + P3 obj"]
@@ -67,8 +67,8 @@ Segment order and the resulting `INITAD` calls (`tools/xex_map.py rof.xex`):
 | Load step | Segment(s) | What loads | INITAD fired after |
 |---|---|---|---|
 | pre | `$D301`,`$03F8`,`$0244` | PIA PORTB = $FF (enable RAM under OS ROM), loader flags | — |
-| 1 | `$3C00–$3CE4`, `$5000–$536F` | loader helper + `stage_5000` block | — |
-| 2 | `$0041`, INITAD=`$5000` | zero-page seed | **`$5000` `stage_5000`** |
+| 1 | `$3C00–$3CE4`, `$5000–$536F` | loader helper + **the Lucasfilm logo** block | — |
+| 2 | `$0041`, INITAD=`$5000` | zero-page seed | **`$5000` the LOGO** (⚠ not `stage_5000`) |
 | 3 | `$0B00–$1AA6`, `$1B30–$283D`, `$4000–$44FF` | attract code/data + game subsystems | — |
 | 4 | INITAD=`$1A97` | (vector only) | **`$1A97` `initad_1A97` → attract** |
 | 5 | `$0400–$05FF`, `$B800–$B8AB` | screen RAM + display-list stub | — |
@@ -78,11 +78,19 @@ Segment order and the resulting `INITAD` calls (`tools/xex_map.py rof.xex`):
 
 The four `INITAD` stages:
 
-1. **`stage_5000` (`$5000`)** — pushes the page-2 color/position **shadow
-   registers** (`$00CB`,`$00CD`,`$00D7–D9`, `$026F`, …) out to GTIA
-   (`HPOSx`/`COLPMx`/`COLPFx`) and ticks `RTCLOK_LOW`. As an INITAD it primes
-   the hardware to a known state. (The same routine doubles as a display-refresh
-   helper later.)
+1. **`$5000` — the Lucasfilm Games LOGO.** ⚠⚠ **CORRECTED 2026-08-12: this is
+   NOT `stage_5000`.** The routine `listing.txt` and `symbols.csv` call
+   `stage_5000` (pushes the page-2 colour/position shadow registers `$00CB`,
+   `$00CD`, `$00D7–D9`, `$026F`, … out to `HPOSx`/`COLPMx`/`COLPFx` and ticks
+   `RTCLOK_LOW`) is the *game* routine that occupies `$5000` in the **final**
+   image — it does not exist yet when this INITAD fires. What runs here is XEX
+   **segment 5** (`$5000–$536F`, `A2 FF 86 90 E8 8E …`), the boot logo, which
+   segment 16 (`$3CDE–$B7FF`) later overwrites. It is therefore **not in
+   `listing.txt` and not transpiled**; the logo's stroke plotter is at `$5111`.
+   Derivation + the Amiga plan (bake the bitmap, don't port the plotter):
+   `docs/logo-station-plan.md`. **General trap: `listing.txt` is the FINAL
+   image, so a boot-phase routine at an address may not be the routine at that
+   address** — check `tools/xex_map.py` for a later segment covering it first.
 2. **`initad_1A97` (`$1A97`)** — `screen_page_swap()`, silences POKEY
    `AUDF3/AUDF4`, then **jumps into `station_init`** (§3). This call does
    **not return until the player dismisses the attract screen.**
@@ -221,7 +229,7 @@ L_3eba:                         // frame top (tick VBI + render)
 Reached when `flight_mode_state ($0072)` hits 2. Advances state, waits for the
 ship-position settle (`$0034 ≥ $40`, then `$283B` sign), clears the
 `$0F1D/$0E8F` buffers, fixes up shape pointers, `game_sub_4606`,
-`game_sub_55FC`, then **`goto L_3e0f`** — back to the outer reset for the next
+`ring_push_unmarked`, then **`goto L_3e0f`** — back to the outer reset for the next
 segment/life.
 
 ---
@@ -284,7 +292,7 @@ Recovered by reconstructing the **6502 call stack** from each phase savestate
 | Phase | `boot_standby_launch_driver` position | Render routines on the stack (innermost → out) | DLI (`VDSLST`) |
 |---|---|---|---|
 | **Title** | waits for START at `$5A78` (`LDA $D01F` CONSOL poll) | static title; `dli_handler_game`/`vbi_deferred_dispatch` hold the image | `$6CAD` |
-| **STAND BY / doors** | `+$501` (`$641E`) | **`unpack_bitmap_4d3e $74D7`** (RLE-expand the door bitmap) → **`scroll_terrain_dl $6953`** (animate the LMS ring) → `audf2_sweep_clear_colors`; `wait_timer_4c_frames` | `$6CAD` |
+| **STAND BY / doors** | `+$501` (`$641E`) | **`unpack_bitmap_4d3e $74D7`** (RLE-expand the door bitmap) → **`dl_doors_open_split_step $6953`** (animate the LMS ring) → `audf2_sweep_clear_colors`; `wait_timer_4c_frames` | `$6CAD` |
 | **Tunnel** | `+$596` (`$64B3`) | **`unpack_bitmap_4d3e`** → `step_accum_add_75` → `copy_bytes_to_dst` → `terrain_sub_B172`; `wait_timer_4c_frames` | `$6CAD` |
 | **Stars / space** | `+$652` (`$656F`) | **`draw_symmetric_span_loop $6642`** → **`fill_vertical_span`** → **`scroll_field_columns`** → `game_sub_4f3f` | `$6CC2` |
 | **Planet** | `+$668` (`$6585`) | **`gen_terrain_column`** + **`draw_vline_pair $6C4D`** + **`draw_player3_object $42A7`** + `advance_object_positions`/`update_object_distance` (planet as a scaled object) | `$6CC2` |

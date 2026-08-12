@@ -6,8 +6,8 @@
 #include "mem.h"   /* MEM_<name> offsets + bare aliases for named RAM/state */
 #include "../platform/platform_c.h"
 
-/* pmg_missile_init @ $1910: Initialises missile horizontal positions (HPOSM0-3) */
-void pmg_missile_init(void) {
+/* station_missile_drift @ $1910: Station scene per-frame MISSILE POSITION update (HPOSM0-3 $D004-$D007) from a 16-bit accumulator in $008D-$008F; called from station_audio and only reseeds when $008C==6. NOT an init (was pmg_missile_init) */
+void station_missile_drift(void) {
     /* 1910 */
     LDA(terrain_scroll_reload);
     /* 1912 */
@@ -179,7 +179,7 @@ L_19cd:;
     /* 19f1 */
     bus_write(0xD001, cpu.A);
     /* 19f4 */
-    pmg_update_station();
+    station_star_fade_in();
     /* 19f9 */
     bus_write(0x02FC, 0xFF);
     /* 19fe */
@@ -347,7 +347,7 @@ void station_audio(void) {
     if (!cpu.N) goto L_1b74;
 L_1b63:;
     /* 1b63 */
-    pmg_missile_init();
+    station_missile_drift();
     /* 1b66 */
     LDX(terrain_scroll_reload);
     /* 1b68 */
@@ -469,7 +469,7 @@ L_1bc4:;
     /* 1bd4 */
     bus_write(0xD203, cpu.A);
     /* 1bd7 */
-    dli_handler_station(); return;
+    station_pm_shape_tick(); return;
 L_1bda:;
     /* 1bda */
     LDA(0xFC);
@@ -827,8 +827,8 @@ void station_init_small(void) {
     return;
 }
 
-/* dli_handler_station @ $1E01: Suspected DLI handler in attract mode (0 callers; 41 bytes; 1 callee) */
-void dli_handler_station(void) {
+/* station_pm_shape_tick @ $1E01: Animates the Station P0/P1 SHAPES at $3400/$3500 from the $272C/$2739/$2746/$2753/$2760/$276D/$277A table set; reached by a tail JMP from station_audio $1BD7. NOT a DLI — during Station VDSLST is the OS default ($C0CE) and no DL byte has bit7 set (was dli_handler_station) */
+void station_pm_shape_tick(void) {
     /* 1e01 */
     LDA(draw_x_left);
     /* 1e03 */
@@ -872,7 +872,7 @@ L_1e29:;
     return;
 }
 
-/* station_sub_1E2A @ $1E2A: Attract mode sub (called from dli_handler_station) */
+/* station_sub_1E2A @ $1E2A: Attract mode sub (called from station_pm_shape_tick) */
 void station_sub_1E2A(void) {
     /* 1e2a */
     LDY(grid_offset_a);
@@ -937,8 +937,8 @@ L_1e70:;
     return;
 }
 
-/* pmg_update_station @ $1E79: PMG position/graphic update during attract mode */
-void pmg_update_station(void) {
+/* station_star_fade_in @ $1E79: Station star fade-in: walks the mode-F star rows $2CB8-$3167 and brightens each non-zero GTIA-9 nibble by one luminance step; 14 passes one frame apart (JSR $3CC3) run once from station_init $19F4; seeds $1C3E/$1C3F=$10/$01 reach $F0/$0F. Touches NO PMG RAM (was pmg_update_station) */
+void station_star_fade_in(void) {
     /* 1e79 */
     LDY(0x00);
     /* 1e7b */
@@ -1010,7 +1010,7 @@ L_1eb2:;
 }
 
 /* station_sub_1EB4 @ $1EB4: manual implementation in rof_manual.c */
-/* pmg_colors_station @ $1F0B: Sets COLPM2/3, COLPF3, HPOSP2/3 (player 2/3 during attract) */
+/* pmg_colors_station @ $1F0B: Writes COLPM2/COLPM3 ($D014/$D015) plus HPOSP2/HPOSP3 on a 7-frame cadence from the 8-entry tables $1F30/$1F38/$1F40. NOT COLPF3 (description corrected 2026-08-12) */
 void pmg_colors_station(void) {
     /* 1f0b */
     DEC_M(MEM_span_row_count);
@@ -3754,7 +3754,7 @@ void reset_flags_ff__t6502(void) {
     return;
 }
 
-/* store_676_init @ $4EA2: Store A to $0676, tail-call set_hud_fields_678_679 init chain (zeros $0678/$0679, calls game_sub_55FC) */
+/* store_676_init @ $4EA2: Store A to $0676, tail-call set_hud_fields_678_679 init chain (zeros $0678/$0679, calls ring_push_unmarked) */
 /* faithful transliteration kept as the validation oracle; native store_676_init() lives in rof_native.c (see VALIDATE_FUNCS) */
 void store_676_init__t6502(void) {
     /* 4ea2 */
@@ -3762,7 +3762,7 @@ void store_676_init__t6502(void) {
     set_hud_fields_678_679(); return;
 }
 
-/* set_hud_fields_678_679 @ $4EA5: Stores A into HUD slots $0678/$0679, then tail-chains to refresh chain (game_sub_55FC); entry from $4ea2 */
+/* set_hud_fields_678_679 @ $4EA5: Stores A into HUD slots $0678/$0679, then tail-chains to refresh chain (ring_push_unmarked); entry from $4ea2 */
 /* faithful transliteration kept as the validation oracle; native set_hud_fields_678_679() lives in rof_native.c (see VALIDATE_FUNCS) */
 void set_hud_fields_678_679__t6502(void) {
     /* 4ea5 */
@@ -3772,17 +3772,17 @@ void set_hud_fields_678_679__t6502(void) {
     refresh_hud_field_0b(); return;
 }
 
-/* refresh_hud_field_0b @ $4EAB: LDY #$0B; game_sub_55FC then chains to $4eb0 — refreshes HUD/display field index $0B */
+/* refresh_hud_field_0b @ $4EAB: LDY #$0B; ring_push_unmarked then chains to $4eb0 — refreshes HUD/display field index $0B */
 /* faithful transliteration kept as the validation oracle; native refresh_hud_field_0b() lives in rof_native.c (see VALIDATE_FUNCS) */
 void refresh_hud_field_0b__t6502(void) {
     /* 4eab */
     LDY(0x0B);
     /* 4ead */
-    game_sub_55FC();
+    ring_push_unmarked();
     refresh_hud_field_0d_entry(); return;
 }
 
-/* refresh_hud_field_0d_entry @ $4EB0: LDY #$0D; falls into $4eb2 to refresh display fields $0D and $0E via game_sub_55FC */
+/* refresh_hud_field_0d_entry @ $4EB0: LDY #$0D; falls into $4eb2 to refresh display fields $0D and $0E via ring_push_unmarked */
 /* faithful transliteration kept as the validation oracle; native refresh_hud_field_0d_entry() lives in rof_native.c (see VALIDATE_FUNCS) */
 void refresh_hud_field_0d_entry__t6502(void) {
     /* 4eb0 */
@@ -3790,15 +3790,15 @@ void refresh_hud_field_0d_entry__t6502(void) {
     refresh_hud_fields_0d_0e(); return;
 }
 
-/* refresh_hud_fields_0d_0e @ $4EB2: game_sub_55FC at Y=$0D, INY, game_sub_55FC at Y=$0E — refreshes two adjacent display fields */
+/* refresh_hud_fields_0d_0e @ $4EB2: ring_push_unmarked at Y=$0D, INY, ring_push_unmarked at Y=$0E — refreshes two adjacent display fields */
 /* faithful transliteration kept as the validation oracle; native refresh_hud_fields_0d_0e() lives in rof_native.c (see VALIDATE_FUNCS) */
 void refresh_hud_fields_0d_0e__t6502(void) {
     /* 4eb2 */
-    game_sub_55FC();
+    ring_push_unmarked();
     /* 4eb5 */
     INY();
     /* 4eb6 */
-    game_sub_55FC(); return;
+    ring_push_unmarked(); return;
 }
 
 /* intro_cinematic_loop @ $4F3F: Intro/cinematic blocking loop (spins on $2891 via tick_vbi/render, runs intro then flight); reached from enemy_check when $063D≠0 */
@@ -3897,7 +3897,7 @@ L_4fcb:;
     return;
 }
 
-/* intro_reset_score_slots @ $4FCE: Clears $066A/$0686, sets $0678=$0C and refreshes display field Y=$0D via game_sub_55FC */
+/* intro_reset_score_slots @ $4FCE: Clears $066A/$0686, sets $0678=$0C and refreshes display field Y=$0D via ring_push_unmarked */
 /* faithful transliteration kept as the validation oracle; native intro_reset_score_slots() lives in rof_native.c (see VALIDATE_FUNCS) */
 void intro_reset_score_slots__t6502(void) {
     /* 4fd0 */
@@ -3911,7 +3911,7 @@ void intro_reset_score_slots__t6502(void) {
     /* 4fdb */
     LDY(0x0D);
     /* 4fdd */
-    game_sub_55FC(); return;
+    ring_push_unmarked(); return;
 }
 
 /* intro_fill_display_params @ $4FE0: Copies $4DF1 table low nibbles OR player_speed($00C2) into display_param $00CF-D6, writes COLPF3($D019), INC $00C2 */
@@ -3970,7 +3970,7 @@ void vbi_handler_flight__t6502(void) {
     /* 5025 */
     bus_write(0xD002, hposp2_shadow);
     /* 502a */
-    bus_write(0xD00A, grafm_shadow);
+    bus_write(0xD00A, sizep2_shadow);
     /* 5030 */
     bus_write(0xD003, player3_hpos);
     /* 5036 */
@@ -4656,7 +4656,7 @@ L_537c:;
     /* 537e */
     if (cpu.Z) goto L_5383;
     /* 5380 */
-    dl_index_dec(); return;
+    dl_lms_scroll_step(); return;
 L_5383:;
     /* 5383 */
     LSR_M(MEM_sfx_toggle_8F);
@@ -4676,7 +4676,7 @@ L_5390:;
     /* 5392 */
     if (cpu.Z) goto L_5397;
     /* 5394 */
-    scroll_terrain_dl(); return;
+    dl_doors_open_split_step(); return;
 L_5397:;
     /* 5397 */
     return;
@@ -4994,7 +4994,7 @@ L_54eb:;
     INC_M(MEM_sfx_voice_expired_flag);
 L_550d:;
     /* 550d */
-    game_sub_55FC();
+    ring_push_unmarked();
 L_5510:;
     /* 5510 */
     LDA(sfx_voice_expired_flag);
@@ -5200,9 +5200,9 @@ L_55d3:;
     return;
 }
 
-/* game_sub_55FC @ $55FC: Called at end of each main game loop iteration before JMP $3E0F */
-/* faithful transliteration kept as the validation oracle; native game_sub_55FC() lives in rof_native.c (see VALIDATE_FUNCS) */
-void game_sub_55FC__t6502(void) {
+/* ring_push_unmarked @ $55FC: Pushes event id Y UNMARKED (no bit7) into the $0719 event ring: saves X on the stack, TYA, falls into ring_push_0719 ($55FF), restores X. Mirror of ring_push_marked ($5815) which pushes X with bit7 set (was game_sub_55FC) */
+/* faithful transliteration kept as the validation oracle; native ring_push_unmarked() lives in rof_native.c (see VALIDATE_FUNCS) */
+void ring_push_unmarked__t6502(void) {
     /* 55fc */
     TXA();
     /* 55fd */
@@ -5402,7 +5402,7 @@ L_56cf:;
     return;
 }
 
-/* ring_push_marked @ $5815: TXA;ORA #$80;JMP ring_push_0719 — push object index X marked with bit7 ($80=active) into the $0719 event ring */
+/* ring_push_marked @ $5815: TXA;ORA #$80;JMP ring_push_0719 — push object index X marked with bit7 ($80=active) into the $0719 event ring. Mirror of ring_push_unmarked ($55FC) which pushes Y unmarked */
 /* faithful transliteration kept as the validation oracle; native ring_push_marked() lives in rof_native.c (see VALIDATE_FUNCS) */
 void ring_push_marked__t6502(void) {
     /* 5815 */
@@ -5415,7 +5415,7 @@ void ring_push_marked__t6502(void) {
     ring_push_0719(); return;
 }
 
-/* sfx_event_load @ $581C: SFX event loader (NOT input init): X=event id (1-based; 0=no-op); DEX->table index i; loads voice slot Y=mem[$56D4+i] from the 12 param tables ($56d4..$57f4); tail game_sub_55FC pushes the slot to the ring. Called from the $548d ring-drain + directly at $3df5/$3df9/$61aa/$63a9/$63d2 */
+/* sfx_event_load @ $581C: SFX event loader (NOT input init): X=event id (1-based; 0=no-op); DEX->table index i; loads voice slot Y=mem[$56D4+i] from the 12 param tables ($56d4..$57f4); tail ring_push_unmarked pushes the slot to the ring. Called from the $548d ring-drain + directly at $3df5/$3df9/$61aa/$63a9/$63d2 */
 /* faithful transliteration kept as the validation oracle; native sfx_event_load() lives in rof_native.c (see VALIDATE_FUNCS) */
 void sfx_event_load__t6502(void) {
     /* 581c */
@@ -5474,7 +5474,7 @@ L_586d:;
     /* 5870 */
     mem[MEM_sfx_env_event_id+cpu.Y] = cpu.A;
     /* 5873 */
-    game_sub_55FC();
+    ring_push_unmarked();
 L_5876:;
     /* 5876 */
     PLA();
@@ -6412,7 +6412,7 @@ void boot_standby_launch_driver__t6502(void) {
     /* 5f22 */
     build_line_addr_table_2000();
     /* 5f25 */
-    dl_index_dec_or_reset();
+    dl_lms_reset_window();
     /* 5f28 */
     LDA(0x00);
     /* 5f2a */
@@ -6838,7 +6838,7 @@ L_6118:;
     /* 612c */
     blit_numeric_readout();
     /* 612f */
-    dl_index_dec_or_reset();
+    dl_lms_reset_window();
     /* 6132 */
     delay_loop_c2_to_c9();
     /* 6137 */
@@ -7094,7 +7094,7 @@ L_6244:;
     /* 624e */
     dl_src_index = cpu.A;
     /* 6250 */
-    dl_index_dec();
+    dl_lms_scroll_step();
     /* 6253 */
     LDA(0x00);
     /* 6255 */
@@ -7200,7 +7200,7 @@ L_62b9:;
     /* 62c0 */
     dl_src_index = cpu.Y;
     /* 62c2 */
-    dl_index_dec();
+    dl_lms_scroll_step();
     /* 62c5 */
     LDA(0x00);
     /* 62c7 */
@@ -7224,7 +7224,7 @@ L_62b9:;
     /* 62dc */
     wait_frames();
     /* 62df */
-    dl_index_dec_or_reset();
+    dl_lms_reset_window();
     /* 62e4 */
     bus_write(0xD203, 0x00);
 L_62e7:;
@@ -8755,9 +8755,9 @@ L_6939:;
     return;
 }
 
-/* scroll_terrain_dl @ $6953: Dec $008A; if !=0 scroll DL halves via dl_lms_scroll_down/dl_lms_scroll_up else $008C=8; emit ship coords via dl_lms_push_bottom($0098)/dl_lms_push_top($0097) */
-/* faithful transliteration kept as the validation oracle; native scroll_terrain_dl() lives in rof_native.c (see VALIDATE_FUNCS) */
-void scroll_terrain_dl__t6502(void) {
+/* dl_doors_open_split_step @ $6953: ONE step of the launch doors-OPEN split scroll (top LMS entries shift up, bottom shift down, splitting apart): dec $008A; if !=0 scroll the DL halves via dl_lms_scroll_down/dl_lms_scroll_up else $008C=8; emit ship coords via dl_lms_push_bottom($0098)/dl_lms_push_top($0097). NOT generic terrain scrolling (was scroll_terrain_dl) */
+/* faithful transliteration kept as the validation oracle; native dl_doors_open_split_step() lives in rof_native.c (see VALIDATE_FUNCS) */
+void dl_doors_open_split_step__t6502(void) {
     /* 6953 */
     DEC_M(MEM_terrain_scroll_counter);
     /* 6955 */
@@ -8918,29 +8918,29 @@ L_69dc:;
     return;
 }
 
-/* dl_index_dec_or_reset @ $69DD: Clears $008B; if was 0 tail-calls dl_lms_build(69e5), else dl_index_dec(69e3) then rebuild */
-/* faithful transliteration kept as the validation oracle; native dl_index_dec_or_reset() lives in rof_native.c (see VALIDATE_FUNCS) */
-void dl_index_dec_or_reset__t6502(void) {
+/* dl_lms_reset_window @ $69DD: Resets the LMS window to the top: clears $008B, then rebuilds the whole window — if $008B was already 0 tail-calls dl_rebuild_lms_window($69E5), else dl_lms_scroll_step($69E3) (was dl_index_dec_or_reset) */
+/* faithful transliteration kept as the validation oracle; native dl_lms_reset_window() lives in rof_native.c (see VALIDATE_FUNCS) */
+void dl_lms_reset_window__t6502(void) {
     /* 69dd */
     LDA(0x00);
     /* 69df */
     dl_src_index = cpu.A;
     /* 69e1 */
-    if (cpu.Z) { dl_lms_build(); return; }
-    dl_index_dec(); return;
+    if (cpu.Z) { dl_rebuild_lms_window(); return; }
+    dl_lms_scroll_step(); return;
 }
 
-/* dl_index_dec @ $69E3: Decrements $008B (source-table index) then tail-calls dl_lms_build (69e5) */
-/* faithful transliteration kept as the validation oracle; native dl_index_dec() lives in rof_native.c (see VALIDATE_FUNCS) */
-void dl_index_dec__t6502(void) {
+/* dl_lms_scroll_step @ $69E3: ONE smooth LMS scroll step DOWN: decrements the window start row $008B then tail-calls dl_rebuild_lms_window($69E5). The name-visible effect is a scroll step, not an index decrement (was dl_index_dec) */
+/* faithful transliteration kept as the validation oracle; native dl_lms_scroll_step() lives in rof_native.c (see VALIDATE_FUNCS) */
+void dl_lms_scroll_step__t6502(void) {
     /* 69e3 */
     DEC_M(MEM_dl_src_index);
-    dl_lms_build(); return;
+    dl_rebuild_lms_window(); return;
 }
 
-/* dl_lms_fill @ $69F1: Fills LMS table via ($C5)=$300A from src tables $073D(lo)/$0793(hi) at index $008B, stride 3, until X==row_count$86 */
-/* faithful transliteration kept as the validation oracle; native dl_lms_fill() lives in rof_native.c (see VALIDATE_FUNCS) */
-void dl_lms_fill__t6502(void) {
+/* dl_write_lms_window @ $69F1: Writes the viewport DL's per-scanline mode-F LMS pointer words ($300A+, 3 bytes/scanline) from the row-address tables row_base_lo $073D/row_base_hi $0793, for row index X=$008B up to end index row_count($0086). Not a generic fill — it is THE LMS-window writer (was dl_lms_fill) */
+/* faithful transliteration kept as the validation oracle; native dl_write_lms_window() lives in rof_native.c (see VALIDATE_FUNCS) */
+void dl_write_lms_window__t6502(void) {
     /* 69f1 */
     LDX(dl_src_index);
     /* 69f3 */
@@ -11299,7 +11299,7 @@ L_765a:;
     /* 7661 */
     LSR_A();
     /* 7662 */
-    mem[0x0624] = cpu.A;
+    fire_delay_mask = cpu.A;
     /* 7665 */
     row_table_stride = cpu.X;
     /* 7667 */
@@ -11579,7 +11579,7 @@ L_772b:;
     /* 77a8 */
     row_count = cpu.A;
     /* 77aa */
-    dl_lms_fill();
+    dl_write_lms_window();
     /* 77af */
     row_table_base_lo = 0xA0;
     /* 77b1 */
@@ -11595,7 +11595,7 @@ L_772b:;
     /* 77be */
     digit_dst_ptr_hi = cpu.A;
     /* 77c0 */
-    dl_lms_fill(); return;
+    dl_write_lms_window(); return;
 }
 
 /* game_init_77DF @ $77DF: Game init (called in game_entry setup sequence) */
@@ -12622,7 +12622,7 @@ void bcd_inc_counter_0641__t6502(void) {
     return;
 }
 
-/* level_clear_fx_loop @ $7B94: INC $283C; 15x game_sub_55FC pairs + wait_frames_1; then $3C-iter loop reading RANDOM $D20A|=4 -> $DB, wait_frames_1 */
+/* level_clear_fx_loop @ $7B94: INC $283C; 15x ring_push_unmarked pairs + wait_frames_1; then $3C-iter loop reading RANDOM $D20A|=4 -> $DB, wait_frames_1 */
 /* faithful transliteration kept as the validation oracle; native level_clear_fx_loop() lives in rof_native.c (see VALIDATE_FUNCS) */
 void level_clear_fx_loop__t6502(void) {
     /* 7b94 */
@@ -12637,11 +12637,11 @@ L_7b99:;
     /* 7b9f */
     LDY(0x01);
     /* 7ba1 */
-    game_sub_55FC();
+    ring_push_unmarked();
     /* 7ba4 */
     INY();
     /* 7ba5 */
-    game_sub_55FC();
+    ring_push_unmarked();
     /* 7ba8 */
     wait_frames_1();
     /* 7bab */
@@ -13926,7 +13926,7 @@ L_8c6c:;
     /* 8c6c */
     mem[0x286E] = cpu.A;
     /* 8c6f */
-    grafm_shadow = cpu.A;
+    sizep2_shadow = cpu.A;
     /* 8c73 */
     dl_y3 = 0x01;
     /* 8c75 */
@@ -14103,7 +14103,7 @@ L_8d00:;
     /* 8d17 */
     bus_write(0xD014, colpm2_shadow);
     /* 8d1a */
-    LDA(grafm_shadow);
+    LDA(sizep2_shadow);
     /* 8d1c */
     bus_write(0xD00A, cpu.A);
     /* 8d1f */
@@ -14221,7 +14221,7 @@ L_8d8c:;
     /* 8d9a */
     LDY(0x03);
     /* 8d9c */
-    grafm_shadow = cpu.Y;
+    sizep2_shadow = cpu.Y;
     /* 8d9e */
     INY();
     /* 8d9f */
@@ -14234,7 +14234,7 @@ L_8da2:;
     /* 8da7 */
     LDY(0x01);
     /* 8da9 */
-    grafm_shadow = cpu.Y;
+    sizep2_shadow = cpu.Y;
     /* 8dab */
     INY();
 L_8dac:;
@@ -14439,11 +14439,11 @@ L_8f03:;
     /* 8f12 */
     LDY(0x01);
     /* 8f14 */
-    game_sub_55FC();
+    ring_push_unmarked();
     /* 8f17 */
     INY();
     /* 8f18 */
-    game_sub_55FC();
+    ring_push_unmarked();
     /* 8f1b */
     LDA(0x01);
     /* 8f1d */
@@ -14474,11 +14474,11 @@ L_8f2b:;
     /* 8f3a */
     mem[0x066D] = cpu.Y;
     /* 8f3d */
-    game_sub_55FC();
+    ring_push_unmarked();
     /* 8f40 */
     INY();
     /* 8f41 */
-    game_sub_55FC();
+    ring_push_unmarked();
     /* 8f46 */
     special_state_color = 0x34;
 L_8f49:;
@@ -14499,11 +14499,11 @@ L_8f49:;
     /* 8f5a */
     LDY(0x01);
     /* 8f5c */
-    game_sub_55FC();
+    ring_push_unmarked();
     /* 8f5f */
     INY();
     /* 8f60 */
-    game_sub_55FC();
+    ring_push_unmarked();
     /* 8f63 */
     LDA(0xB4);
     /* 8f65 */
@@ -15176,7 +15176,7 @@ L_91ed:;
     /* 91ed */
     mem[MEM_sfx_env_freq_val+cpu.Y] = cpu.A;
     /* 91f0 */
-    game_sub_55FC();
+    ring_push_unmarked();
     /* 91f6 */
     obj_vel_x_lo = ring_cur_0;
     /* 91f9 */
@@ -17239,7 +17239,7 @@ L_9afa:;
     return;
 }
 
-/* enter_terrain_special_state @ $9B0D: Sets bit6 of $002D into $2877, gated by $062F; writes flags $0688/$0689/$0696/$06A4 + $3355=$34, calls game_sub_55FC twice; decrements $002E */
+/* enter_terrain_special_state @ $9B0D: Sets bit6 of $002D into $2877, gated by $062F; writes flags $0688/$0689/$0696/$06A4 + $3355=$34, calls ring_push_unmarked twice; decrements $002E */
 /* faithful transliteration kept as the validation oracle; native enter_terrain_special_state() lives in rof_native.c (see VALIDATE_FUNCS) */
 void enter_terrain_special_state__t6502(void) {
     /* 9b0d */
@@ -17280,11 +17280,11 @@ L_9b1a:;
     /* 9b37 */
     mem[0x06A5] = cpu.Y;
     /* 9b3a */
-    game_sub_55FC();
+    ring_push_unmarked();
     /* 9b3d */
     INY();
     /* 9b3e */
-    game_sub_55FC();
+    ring_push_unmarked();
 L_9b41:;
     /* 9b41 */
     LDA(throttle_accum_hi);
@@ -17299,7 +17299,7 @@ L_9b47:;
     ring_push_marked(); return;
 }
 
-/* exit_terrain_special_state @ $9B4C: Inverse of $9b0d gated by $066C/$06A4/$0696; clears $2877/$0696/$0697, $0688/$0689=$FF, $06A4/$06A5=1, $3355=$B4, calls game_sub_55FC */
+/* exit_terrain_special_state @ $9B4C: Inverse of $9b0d gated by $066C/$06A4/$0696; clears $2877/$0696/$0697, $0688/$0689=$FF, $06A4/$06A5=1, $3355=$B4, calls ring_push_unmarked */
 /* faithful transliteration kept as the validation oracle; native exit_terrain_special_state() lives in rof_native.c (see VALIDATE_FUNCS) */
 void exit_terrain_special_state__t6502(void) {
     /* 9b4c */
@@ -17342,11 +17342,11 @@ L_9b5f:;
     /* 9b7c */
     mem[0x06A5] = cpu.Y;
     /* 9b7f */
-    game_sub_55FC();
+    ring_push_unmarked();
     /* 9b82 */
     INY();
     /* 9b83 */
-    game_sub_55FC(); return;
+    ring_push_unmarked(); return;
 L_9b86:;
     /* 9b86 */
     return;
@@ -17399,9 +17399,9 @@ void compute_heading_sincos__t6502(void) {
     /* 9bb9 */
     trig_interp_lookup();
     /* 9bbe */
-    mem[0x2809] = mem[0x0077];
+    mem[0x2809] = trig_result_mid;
     /* 9bc3 */
-    mem[0x280A] = mem[0x0078];
+    mem[0x280A] = trig_result_hi;
     /* 9bc6 */
     CLC();
     /* 9bc7 */
@@ -17413,9 +17413,9 @@ void compute_heading_sincos__t6502(void) {
     /* 9bcd */
     trig_interp_lookup();
     /* 9bd2 */
-    mem[0x280B] = mem[0x0077];
+    mem[0x280B] = trig_result_mid;
     /* 9bd5 */
-    LDA(mem[0x0078]);
+    LDA(trig_result_hi);
     /* 9bd7 */
     mem[0x280C] = cpu.A;
     /* 9bda */
@@ -17432,9 +17432,9 @@ void trig_interp_lookup__t6502(void) {
     /* 9be2 */
     mem[0x2816] = trig_result_lo;
     /* 9be7 */
-    mem[0x2817] = mem[0x0077];
+    mem[0x2817] = trig_result_mid;
     /* 9bea */
-    LDA(mem[0x0078]);
+    LDA(trig_result_hi);
     /* 9bec */
     mem[0x2818] = cpu.A;
     /* 9bef */
@@ -17444,16 +17444,16 @@ void trig_interp_lookup__t6502(void) {
     /* 9bf6 */
     mem[0x2813] = trig_result_lo;
     /* 9bfb */
-    mem[0x2814] = mem[0x0077];
+    mem[0x2814] = trig_result_mid;
     /* 9c00 */
-    mem[0x2815] = mem[0x0078];
+    mem[0x2815] = trig_result_hi;
     /* 9c06 */
-    mem[0x280F] = trig_octant;
+    trig_octant_work = trig_octant;
     /* 9c09 */
     LDY(0x03);
 L_9c0b:;
     /* 9c0b */
-    LSR_M(0x280F);
+    LSR_M(MEM_trig_octant_work);
     /* 9c0e */
     if (!cpu.C) goto L_9c29;
     /* 9c10 */
@@ -17465,17 +17465,17 @@ L_9c0b:;
     /* 9c16 */
     trig_result_lo = cpu.A;
     /* 9c18 */
-    LDA(mem[0x0077]);
+    LDA(trig_result_mid);
     /* 9c1a */
     ADC(mem[0x2817]);
     /* 9c1d */
-    mem[0x0077] = cpu.A;
+    trig_result_mid = cpu.A;
     /* 9c1f */
-    LDA(mem[0x0078]);
+    LDA(trig_result_hi);
     /* 9c21 */
     ADC(mem[0x2818]);
     /* 9c24 */
-    mem[0x0078] = cpu.A;
+    trig_result_hi = cpu.A;
     /* 9c26 */
     goto L_9c3f;
 L_9c29:;
@@ -17488,17 +17488,17 @@ L_9c29:;
     /* 9c2f */
     trig_result_lo = cpu.A;
     /* 9c31 */
-    LDA(mem[0x0077]);
+    LDA(trig_result_mid);
     /* 9c33 */
     ADC(mem[0x2814]);
     /* 9c36 */
-    mem[0x0077] = cpu.A;
+    trig_result_mid = cpu.A;
     /* 9c38 */
-    LDA(mem[0x0078]);
+    LDA(trig_result_hi);
     /* 9c3a */
     ADC(mem[0x2815]);
     /* 9c3d */
-    mem[0x0078] = cpu.A;
+    trig_result_hi = cpu.A;
 L_9c3f:;
     /* 9c3f */
     ASL_M(0x2813);
@@ -17524,23 +17524,23 @@ L_9c3f:;
 /* faithful transliteration kept as the validation oracle; native sine_table_lookup() lives in rof_native.c (see VALIDATE_FUNCS) */
 void sine_table_lookup__t6502(void) {
     /* 9c57 */
-    mem[0x280E] = 0x00;
+    trig_quadrant = 0x00;
     /* 9c5a */
     LDA(trig_angle);
     /* 9c5c */
     ASL_A();
     /* 9c5d */
-    ROL_M(0x280E);
+    ROL_M(MEM_trig_quadrant);
     /* 9c60 */
     ASL_A();
     /* 9c61 */
-    ROL_M(0x280E);
+    ROL_M(MEM_trig_quadrant);
     /* 9c64 */
     LSR_A();
     /* 9c65 */
     LSR_A();
     /* 9c66 */
-    LDX(mem[0x280E]);
+    LDX(trig_quadrant);
     /* 9c69 */
     EOR(mem[(0x9B9C)+cpu.X]);
     /* 9c6c */
@@ -17550,9 +17550,9 @@ void sine_table_lookup__t6502(void) {
     /* 9c70 */
     if (!cpu.Z) goto L_9c81;
     /* 9c72 */
-    mem[0x0078] = cpu.A;
+    trig_result_hi = cpu.A;
     /* 9c77 */
-    mem[0x0077] = mem[(0x4EB9)+cpu.Y];
+    trig_result_mid = mem[(0x4EB9)+cpu.Y];
     /* 9c79 */
     LDA(mem[(0x4EFA)+cpu.Y]);
     /* 9c7c */
@@ -17573,13 +17573,13 @@ L_9c81:;
     /* 9c8b */
     SBC(mem[(0x4EB9)+cpu.Y]);
     /* 9c8e */
-    mem[0x0077] = cpu.A;
+    trig_result_mid = cpu.A;
     /* 9c90 */
     LDA(0x00);
     /* 9c92 */
     SBC(0x00);
     /* 9c94 */
-    mem[0x0078] = cpu.A;
+    trig_result_hi = cpu.A;
 L_9c96:;
     /* 9c96 */
     return;
@@ -19354,7 +19354,7 @@ L_a397:;
     /* a397 */
     LDA(0x00);
     /* a399 */
-    mem[0x28ED] = cpu.A;
+    fire_queued = cpu.A;
     /* a39c */
     mem[0x28FB] = cpu.A;
     /* a39f */
@@ -20164,15 +20164,15 @@ L_a86c:;
     /* a88f */
     if (!cpu.N) goto L_a8a1;
     /* a891 */
-    LDA(mem[0x28ED]);
+    LDA(fire_queued);
     /* a894 */
     if (!cpu.Z) goto L_a8a1;
     /* a896 */
-    mem[0x28EB] = cpu.X;
+    fire_target_col = cpu.X;
     /* a899 */
-    mem[0x28EC] = cpu.Y;
+    fire_target_row = cpu.Y;
     /* a89e */
-    mem[0x28ED] = plot_step_hi;
+    fire_queued = plot_step_hi;
 L_a8a1:;
     /* a8a1 */
     LDA(plot_step_hi);
@@ -20392,7 +20392,7 @@ void game_state_update__t6502(void) {
     /* a99f */
     if (!cpu.N) goto L_a9c3;
     /* a9a1 */
-    LDA(mem[0x0624]);
+    LDA(fire_delay_mask);
     /* a9a4 */
     AND(bus_read(0xD20A));
     /* a9a7 */
@@ -20416,7 +20416,7 @@ L_a9bb:;
     /* a9bd */
     game_state = cpu.A;
     /* a9bf */
-    mem[0x28ED] = cpu.A;
+    fire_queued = cpu.A;
 L_a9c2:;
     /* a9c2 */
     return;
@@ -20424,27 +20424,27 @@ L_a9c3:;
     /* a9c3 */
     if (!cpu.Z) goto L_a9c2;
     /* a9c5 */
-    LDA(mem[0x28ED]);
+    LDA(fire_queued);
     /* a9c8 */
     if (cpu.Z) goto L_a9c2;
     /* a9cd */
-    mem[0x28F0] = mem[0x28EB];
+    fire_plot_x = fire_target_col;
     /* a9d3 */
-    mem[0x28F2] = mem[0x28EC];
+    fire_plot_y = fire_target_row;
     /* a9d8 */
-    mem[0x28F4] = 0x01;
+    fire_plot_width = 0x01;
     /* a9dd */
-    mem[0x28EF] = 0x80;
+    fire_plot_xfrac = 0x80;
     /* a9e0 */
-    mem[0x28F1] = 0x80;
+    fire_plot_yfrac = 0x80;
     /* a9e3 */
-    mem[0x28F3] = 0x80;
+    fire_plot_wfrac = 0x80;
     /* a9e8 */
     plot_pixel_mask = 0xFF;
     /* a9ec */
     plot_x_step_hi = 0x00;
     /* a9ee */
-    mem[0x28F8] = 0x00;
+    fire_plot_rowcount = 0x00;
     /* a9f1 */
     LDA(bus_read(0xD20A));
     /* a9f4 */
@@ -20482,9 +20482,9 @@ L_aa13:;
     /* aa16 */
     ASL_A();
     /* aa17 */
-    mem[0x28F7] = cpu.A;
+    fire_plot_vstep = cpu.A;
     /* aa1a */
-    DEC_M(0x28F8);
+    DEC_M(MEM_fire_plot_rowcount);
     /* aa1d */
     LDA(lock_on_indicator_state);
     /* aa1f */
@@ -20506,7 +20506,7 @@ L_aa13:;
     /* aa2b */
     ADC(0x0C);
     /* aa2d */
-    mem[0x28F9] = cpu.A;
+    fire_plot_endrow = cpu.A;
     /* aa30 */
     plot_scanline_rand_dir();
     /* aa35 */
@@ -20540,7 +20540,7 @@ L_aa4b:;
     /* aa50 */
     LDA(0x67);
     /* aa52 */
-    SBC(mem[0x28EB]);
+    SBC(fire_target_col);
     /* aa55 */
     ASL_A();
     /* aa56 */
@@ -20555,9 +20555,9 @@ L_aa5c:;
     /* aa5d */
     LDA(0x6B);
     /* aa5f */
-    SBC(mem[0x28EC]);
+    SBC(fire_target_row);
     /* aa62 */
-    mem[0x28F9] = cpu.A;
+    fire_plot_endrow = cpu.A;
     /* aa65 */
     plot_scanline_down();
     /* aa6a */
@@ -23835,7 +23835,7 @@ L_3fab:;
     /* 3fb6 */
     mem[MEM_sfx_env_prio_val+cpu.Y] = cpu.A;
     /* 3fb9 */
-    game_sub_55FC();
+    ring_push_unmarked();
     /* 3fbc */
     goto L_3e0f;
 }
@@ -24344,7 +24344,7 @@ L_4f7e:;
     /* 4f84 */
     PHA();
     /* 4f85 */
-    game_sub_55FC();
+    ring_push_unmarked();
     /* 4f88 */
     PLA();
     /* 4f89 */
@@ -24423,7 +24423,7 @@ L_5361:;
     os_xitvbv(); return;
 }
 
-/* ring_push_0719 @ $55FF: Tail of game_sub_55FC: store A into ring buf $0719+X via head $0073, dec+wrap head mod $20, restore X */
+/* ring_push_0719 @ $55FF: Shared tail of ring_push_unmarked/ring_push_marked: store A into ring buf $0719+X via head $0073, dec+wrap head mod $20, restore X */
 /* faithful transliteration kept as the validation oracle; native ring_push_0719() lives in rof_native.c (see VALIDATE_FUNCS) */
 void ring_push_0719__t6502(void) {
     /* 55ff */
@@ -24739,9 +24739,9 @@ L_67a5:;
     return;
 }
 
-/* dl_lms_build @ $69E5: Inits indirect ptr $C5/$C6=$300A and count row_count($86)=$56, then dl_lms_fill(69f1) */
-/* faithful transliteration kept as the validation oracle; native dl_lms_build() lives in rof_native.c (see VALIDATE_FUNCS) */
-void dl_lms_build__t6502(void) {
+/* dl_rebuild_lms_window @ $69E5: Rebuilds the whole viewport LMS window from the current start row: inits dest ptr $C5/$C6=$300A and end index row_count($0086)=$56, then dl_write_lms_window($69F1) (was dl_lms_build) */
+/* faithful transliteration kept as the validation oracle; native dl_rebuild_lms_window() lives in rof_native.c (see VALIDATE_FUNCS) */
+void dl_rebuild_lms_window__t6502(void) {
     /* 69e7 */
     digit_dst_ptr_lo = 0x0A;
     /* 69eb */
@@ -24750,7 +24750,7 @@ void dl_lms_build__t6502(void) {
     LDA(0x56);
     /* 69ef */
     row_count = cpu.A;
-    dl_lms_fill(); return;
+    dl_write_lms_window(); return;
 }
 
 /* ret_stub_6a26 @ $6A26: Empty routine, immediate RTS; tail-call target/no-op stub */
@@ -24912,16 +24912,16 @@ void plot_scanline_down__t6502(void) {
     DEC_M(MEM_plot_x_step_hi);
 L_aadf:;
     /* aadf */
-    LDX(mem[0x28F0]);
+    LDX(fire_plot_x);
     /* aae2 */
-    LDY(mem[0x28F2]);
+    LDY(fire_plot_y);
     /* aae5 */
     CPY(0x6C);
     /* aae7 */
     if (!cpu.C) { plot_line_done(); return; }
 L_aae9:;
     /* aae9 */
-    LDA(mem[0x28F4]);
+    LDA(fire_plot_width);
     /* aaec */
     mem[0x28FA] = cpu.A;
 L_aaef:;
@@ -24945,30 +24945,30 @@ L_aafa:;
     /* ab00 */
     CLC();
     /* ab01 */
-    LDA(mem[0x28F3]);
+    LDA(fire_plot_wfrac);
     /* ab04 */
-    ADC(mem[0x28F9]);
+    ADC(fire_plot_endrow);
     /* ab07 */
-    mem[0x28F3] = cpu.A;
+    fire_plot_wfrac = cpu.A;
     /* ab0a */
     if (!cpu.C) goto L_ab10;
     /* ab0c */
-    INC_M(0x28F4);
+    INC_M(MEM_fire_plot_width);
     /* ab0f */
     CLC();
 L_ab10:;
     /* ab10 */
-    LDA(mem[0x28EF]);
+    LDA(fire_plot_xfrac);
     /* ab13 */
     ADC(plot_x_step_lo);
     /* ab15 */
-    mem[0x28EF] = cpu.A;
+    fire_plot_xfrac = cpu.A;
     /* ab18 */
-    LDA(mem[0x28F0]);
+    LDA(fire_plot_x);
     /* ab1b */
     ADC(plot_x_step_hi);
     /* ab1d */
-    mem[0x28F0] = cpu.A;
+    fire_plot_x = cpu.A;
     /* ab20 */
     TAX();
     /* ab21 */
@@ -24993,9 +24993,9 @@ L_ab26:;
 /* faithful transliteration kept as the validation oracle; native plot_scanline_up() lives in rof_native.c (see VALIDATE_FUNCS) */
 void plot_scanline_up__t6502(void) {
     /* ab27 */
-    LDX(mem[0x28F0]);
+    LDX(fire_plot_x);
     /* ab2a */
-    LDY(mem[0x28F2]);
+    LDY(fire_plot_y);
 L_ab2d:;
     /* ab2d */
     CPX(0x2C);
@@ -25010,7 +25010,7 @@ L_ab2d:;
     /* ab37 */
     if (!cpu.C) { plot_line_done(); return; }
     /* ab39 */
-    LDA(mem[0x28F4]);
+    LDA(fire_plot_width);
     /* ab3c */
     mem[0x28FA] = cpu.A;
 L_ab3f:;
@@ -25030,30 +25030,30 @@ L_ab4c:;
     /* ab4c */
     CLC();
     /* ab4d */
-    LDA(mem[0x28F3]);
+    LDA(fire_plot_wfrac);
     /* ab50 */
-    ADC(mem[0x28F9]);
+    ADC(fire_plot_endrow);
     /* ab53 */
-    mem[0x28F3] = cpu.A;
+    fire_plot_wfrac = cpu.A;
     /* ab56 */
     if (!cpu.C) goto L_ab5c;
     /* ab58 */
-    INC_M(0x28F4);
+    INC_M(MEM_fire_plot_width);
     /* ab5b */
     CLC();
 L_ab5c:;
     /* ab5c */
-    LDA(mem[0x28F1]);
+    LDA(fire_plot_yfrac);
     /* ab5f */
-    ADC(mem[0x28F7]);
+    ADC(fire_plot_vstep);
     /* ab62 */
-    mem[0x28F1] = cpu.A;
+    fire_plot_yfrac = cpu.A;
     /* ab65 */
-    LDA(mem[0x28F2]);
+    LDA(fire_plot_y);
     /* ab68 */
-    ADC(mem[0x28F8]);
+    ADC(fire_plot_rowcount);
     /* ab6b */
-    mem[0x28F2] = cpu.A;
+    fire_plot_y = cpu.A;
     /* ab6e */
     TAY();
     /* ab6f */
@@ -25071,7 +25071,7 @@ L_ab77:;
     goto L_ab2d;
 }
 
-/* enqueue_indicator_event @ $B756: Writes indicator params $0673=$0035(pos), $0665=$A0(char), $0681=($0014&5)+2(jiffy), Y=8, then game_sub_55FC enqueues event id 8 */
+/* enqueue_indicator_event @ $B756: Writes indicator params $0673=$0035(pos), $0665=$A0(char), $0681=($0014&5)+2(jiffy), Y=8, then ring_push_unmarked enqueues event id 8 */
 /* faithful transliteration kept as the validation oracle; native enqueue_indicator_event() lives in rof_native.c (see VALIDATE_FUNCS) */
 void enqueue_indicator_event__t6502(void) {
     /* b758 */
@@ -25091,6 +25091,6 @@ void enqueue_indicator_event__t6502(void) {
     /* b76a */
     LDY(0x08);
     /* b76c */
-    game_sub_55FC(); return;
+    ring_push_unmarked(); return;
 }
 

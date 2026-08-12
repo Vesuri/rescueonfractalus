@@ -52,7 +52,7 @@ printf "g_drain81 count=%u  first at ring tail=%02x  head=%02x  ABS ADDR=0x%04x 
 printf "ring $0719..$0738 at the first $81 read:\n"
 p/x g_drain81Ring
 printf "=== event-$01 ($81) PUSH caller (first occurrence, vbi=%u, count=%u) ===\n", g_push81Vbi, g_push81N
-printf "ra0 = ring_push_0719's caller (ring_push_marked[X=1 event] vs game_sub_55FC[Y=$81 slot], or an inlined pusher):\n"
+printf "ra0 = ring_push_0719's caller (ring_push_marked[X=1 event] vs ring_push_unmarked[Y=$81 slot], or an inlined pusher):\n"
 info symbol g_push81Ra0
 p/x g_push81Ra0
 printf "envelope RE-QUEUE (sfx_voice_envelope_tick $548d line ~8568): total=%u; re-queues of event $01 by originating slot:\n", g_rqN

@@ -222,7 +222,7 @@ static int test_render_bcd_counter(void) {
     return mem_fail;
 }
 
-/* --- stack-aware push helpers (ring_push_marked $5815, game_sub_55FC $55FC). ---
+/* --- stack-aware push helpers (ring_push_marked $5815, ring_push_unmarked $55FC). ---
  * Like ring_push_0719, the contract includes cpu.A/X/S (the 6502 PHAs the index
  * and ring_push_0719's PLA;TAX hands it back).  Randomize entry A/X/Y/S + ring
  * head $0073.  Both runs use the real 6502 stack ops, so the $01xx stack byte
@@ -1041,12 +1041,12 @@ static int test_compute_stage_display_geometry(void) {
     return mem_fail;
 }
 
-/* --- dl_lms_fill @ $69F1: writes pairs into ($C5/$C6)+Y, so seed the dest ptr to safe
+/* --- dl_write_lms_window @ $69F1: writes pairs into ($C5/$C6)+Y, so seed the dest ptr to safe
  * DL RAM ($3000) and bound the X span ($008B..$0086, small forward count) so Y/dest stay
  * within $3000+ and the loop is short.  $073D/$0793 source random; $008B is 0 in some
  * cases (-> the ret_stub tail) and nonzero in others (-> native shift_object_table_up). */
-static int test_dl_lms_fill(void) {
-    if (!want("dl_lms_fill")) return 0;
+static int test_dl_write_lms_window(void) {
+    if (!want("dl_write_lms_window")) return 0;
     enum { N = 20000 };
     static uint8_t pre[65536];
     int mem_fail = 0, cpu_diff = 0, printed = 0;
@@ -1057,10 +1057,10 @@ static int test_dl_lms_fill(void) {
         uint8_t count = (uint8_t)(1 + (xs() % 0x20));       /* 1..32 X-iterations */
         pre[0x008B] = start;
         pre[0x0086] = (uint8_t)(start + count);             /* forward end (no wrap) */
-        mem_fail += diff_run("dl_lms_fill", pre, zero_cpu(),
-                             dl_lms_fill, dl_lms_fill__t6502, t, &printed, &cpu_diff);
+        mem_fail += diff_run("dl_write_lms_window", pre, zero_cpu(),
+                             dl_write_lms_window, dl_write_lms_window__t6502, t, &printed, &cpu_diff);
     }
-    printf("dl_lms_fill: %d cases, %d mem mismatch (must be 0), %d cpu diffs\n", N, mem_fail, cpu_diff);
+    printf("dl_write_lms_window: %d cases, %d mem mismatch (must be 0), %d cpu diffs\n", N, mem_fail, cpu_diff);
     return mem_fail;
 }
 
@@ -1147,21 +1147,21 @@ static int test_cockpit_dial_update(void) {
     return mem_fail;
 }
 
-/* --- dl_lms_build @ $69E5: sets the DL dest ptr/end ($C5/$C6=$300A, $0086=$56) itself,
- * then dl_lms_fill, so only the X start $008B needs bounding -> seed it just below $56 so
+/* --- dl_rebuild_lms_window @ $69E5: sets the DL dest ptr/end ($C5/$C6=$300A, $0086=$56) itself,
+ * then dl_write_lms_window, so only the X start $008B needs bounding -> seed it just below $56 so
  * the fill is a short forward run into safe DL RAM (and nonzero -> the shift tail). --- */
-static int test_dl_lms_build(void) {
-    if (!want("dl_lms_build")) return 0;
+static int test_dl_rebuild_lms_window(void) {
+    if (!want("dl_rebuild_lms_window")) return 0;
     enum { N = 20000 };
     static uint8_t pre[65536];
     int mem_fail = 0, cpu_diff = 0, printed = 0;
     for (int t = 0; t < N; t++) {
         fill_random(pre);
         pre[0x008B] = (uint8_t)(0x56 - (1 + (xs() % 0x20)));   /* forward run, 1..32 iters */
-        mem_fail += diff_run("dl_lms_build", pre, zero_cpu(),
-                             dl_lms_build, dl_lms_build__t6502, t, &printed, &cpu_diff);
+        mem_fail += diff_run("dl_rebuild_lms_window", pre, zero_cpu(),
+                             dl_rebuild_lms_window, dl_rebuild_lms_window__t6502, t, &printed, &cpu_diff);
     }
-    printf("dl_lms_build: %d cases, %d mem mismatch (must be 0), %d cpu diffs\n", N, mem_fail, cpu_diff);
+    printf("dl_rebuild_lms_window: %d cases, %d mem mismatch (must be 0), %d cpu diffs\n", N, mem_fail, cpu_diff);
     return mem_fail;
 }
 
@@ -2199,7 +2199,7 @@ static int test_sfx_voice(const char *name, void (*nat)(void), void (*t6502)(voi
 /* sfx_voice_envelope_tick @ $548D — the apex.  The ring drain ($0719, head $0073 /
  * tail $0074, both decremented & wrapped at $1F) only terminates when the SFX
  * event-table $56D4 holds VALID voice-slot indices (1..14, bit7 clear): a bit7-set
- * ring entry runs sfx_event_load, whose tail game_sub_55FC re-pushes mem[$56D4+i] — if
+ * ring entry runs sfx_event_load, whose tail ring_push_unmarked re-pushes mem[$56D4+i] — if
  * that were bit7-set garbage it would re-dispatch sfx_event_load forever (the __t6502
  * twin hangs identically, so timeout can't diff it).  Seed $56D4 valid, the voice
  * register indices, and head/tail in 0..$1F; mask the POKEY range. */
@@ -2338,7 +2338,7 @@ static int test_vbi_handler_flight(void) {
 
 /* --- standby/launch tunnel-ring + door-scroll cinematic twins (2026-07-11). ---
  * add_multibyte_a1 / dl_lms_push_top / dl_lms_push_bottom take an entry register (operand /
- * X index / Y index) -> test_mem_contract_regs.  dl_lms_scroll_up/down / scroll_terrain_dl are
+ * X index / Y index) -> test_mem_contract_regs.  dl_lms_scroll_up/down / dl_doors_open_split_step are
  * mem-only -> test_mem_contract (the DL area $3000+ and indices $0097/$0098 are randomized;
  * the scroll loops step by 3 and always terminate mod 256).  draw_ring_frame_step and
  * step_accum_add_75 can reach draw_symmetric_span_loop, so they use the same safe drawing
@@ -2629,7 +2629,7 @@ int main(int argc, char **argv) {
     fails += test_render_bcd_counter();
     fails += test_mem_contract("init_proj_scratch_pointers", init_proj_scratch_pointers, init_proj_scratch_pointers__t6502);
     fails += test_stack_push("ring_push_marked", ring_push_marked, ring_push_marked__t6502);
-    fails += test_stack_push("game_sub_55FC", game_sub_55FC, game_sub_55FC__t6502);
+    fails += test_stack_push("ring_push_unmarked", ring_push_unmarked, ring_push_unmarked__t6502);
     fails += test_mem_contract("sample_terrain_height_bilerp", sample_terrain_height_bilerp, sample_terrain_height_bilerp__t6502);
     fails += test_mem_contract_regs("game_sub_451d", game_sub_451d, game_sub_451d__t6502);
     fails += test_mem_contract_regs("enter_terrain_special_state", enter_terrain_special_state, enter_terrain_special_state__t6502);
@@ -2782,7 +2782,7 @@ int main(int argc, char **argv) {
     fails += test_game_init_7588();
     fails += test_emit_chain("render_bcd_digits_supp_all", render_bcd_digits_supp_all, render_bcd_digits_supp_all__t6502);
     fails += test_blit_chain("blit_numeric_readout", blit_numeric_readout, blit_numeric_readout__t6502);
-    fails += test_dl_lms_fill();
+    fails += test_dl_write_lms_window();
     /* standby/launch tunnel-ring + door-scroll cinematic twins (moved out of rof_native_amiga.cpp) */
     fails += test_mem_contract_regs("add_multibyte_a1", add_multibyte_a1, add_multibyte_a1__t6502);
     fails += test_advance_history_6a4d();
@@ -2793,7 +2793,7 @@ int main(int argc, char **argv) {
     fails += test_mem_contract("dl_lms_scroll_down", dl_lms_scroll_down, dl_lms_scroll_down__t6502);
     fails += test_mem_contract_regs("dl_lms_push_top", dl_lms_push_top, dl_lms_push_top__t6502);
     fails += test_mem_contract_regs("dl_lms_push_bottom", dl_lms_push_bottom, dl_lms_push_bottom__t6502);
-    fails += test_mem_contract("scroll_terrain_dl", scroll_terrain_dl, scroll_terrain_dl__t6502);
+    fails += test_mem_contract("dl_doors_open_split_step", dl_doors_open_split_step, dl_doors_open_split_step__t6502);
     /* pilot-rescue state-machine cluster (batch 1: leaves).  clear_pilot_rescue_state reads
        entry A; set_colpf0_from_flag reads entry Y (message id) -> _regs.  reset_pilot_state_if_no_2830
        and copy_display_params_to_buffer are mem-only. */
@@ -2843,12 +2843,12 @@ int main(int argc, char **argv) {
     fails += test_build_player2_sprite();
     fails += test_update_p3_indicator_stripe();
     fails += test_hud_draws();
-    fails += test_dl_lms_build();
+    fails += test_dl_rebuild_lms_window();
     fails += test_mem_contract("game_init_76CB", game_init_76CB, game_init_76CB__t6502);
     fails += test_emit_chain("setup_initials_ptr", setup_initials_ptr, setup_initials_ptr__t6502);
     fails += test_mem_contract("startup_init", startup_init, startup_init__t6502);
-    fails += test_mem_contract("dl_index_dec", dl_index_dec, dl_index_dec__t6502);
-    fails += test_mem_contract("dl_index_dec_or_reset", dl_index_dec_or_reset, dl_index_dec_or_reset__t6502);
+    fails += test_mem_contract("dl_lms_scroll_step", dl_lms_scroll_step, dl_lms_scroll_step__t6502);
+    fails += test_mem_contract("dl_lms_reset_window", dl_lms_reset_window, dl_lms_reset_window__t6502);
     fails += test_draw_scaled_shape();
     fails += test_ret_a("reorder_cell_bits", reorder_cell_bits, reorder_cell_bits__t6502);
     fails += test_ret_a("read_console_trig_delta", read_console_trig_delta, read_console_trig_delta__t6502);

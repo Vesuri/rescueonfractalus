@@ -15,6 +15,11 @@
 # ---- loader / init entry points (XEX INITAD vectors) ----
 3CDE,game_entry
 3C00,loader_3C00
+# ⚠ 5000 names the GAME routine that occupies $5000 in the FINAL image, which is what Ghidra
+# disassembles.  The boot INITAD $5000 is a DIFFERENT routine — the Lucasfilm Games LOGO, XEX
+# segment 5 ($5000-$536F), overwritten by segment 16 ($3CDE-$B7FF) before the image Ghidra sees.
+# So the logo is NOT in listing.txt and NOT transpiled; do not read stage_5000 as the boot logo.
+# See docs/logo-station-plan.md and docs/startup-flow.md §4 item 1.
 5000,stage_5000
 1B30,vbi_handler_attract
 1A97,init_1A97

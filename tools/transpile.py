@@ -101,11 +101,11 @@ VALIDATE_FUNCS = {
     # update_terrain_scanline_proj subtree, leaves first:
     0x9B87,  # init_proj_scratch_pointers — set game_state + 3 ZP ptr bytes (trivial leaf)
     0x5815,  # ring_push_marked — push X|$80 to the $0719 event ring (tail to ring_push_0719)
-    0x55FC,  # game_sub_55FC — push Y to the $0719 event ring (falls into ring_push_0719)
+    0x55FC,  # ring_push_unmarked — push Y to the $0719 event ring (falls into ring_push_0719)
     0x9A36,  # sample_terrain_height_bilerp — bilinear height sample over the $0900 map (leaf)
     0x451D,  # game_sub_451d — 14-iter table-fill into $2159/$2189 (leaf; called by update_terrain_horizon_lr)
-    0x9B0D,  # enter_terrain_special_state — set flags + ring events (calls game_sub_55FC/ring_push_marked)
-    0x9B4C,  # exit_terrain_special_state — inverse of enter (calls game_sub_55FC)
+    0x9B0D,  # enter_terrain_special_state — set flags + ring events (calls ring_push_unmarked/ring_push_marked)
+    0x9B4C,  # exit_terrain_special_state — inverse of enter (calls ring_push_unmarked)
     0x992D,  # update_terrain_horizon_lr — L/R horizon update (calls sample_terrain_height_bilerp + game_sub_451d)
     0x9833,  # update_terrain_scanline_proj — TOP of subtree: map coords + depth + horizon (calls all the above)
     # --- flight_control_integrate subtree (2026-06-12): the last transpiled code on
@@ -116,7 +116,7 @@ VALIDATE_FUNCS = {
     0x7B80,  # set_place_params_inc_count — $0045=0,$0046=1, tail bcd_inc_counter_0641
     0x96D9,  # trigger_object_explosion — set explosion sprite ptrs + INC $0041, tail ring_push_marked X=$0F
     0x9677,  # reset_object_slot — $0036=$80, tail ring_push_marked X=$0E
-    0xB756,  # enqueue_indicator_event — write indicator HUD params, tail game_sub_55FC Y=$08
+    0xB756,  # enqueue_indicator_event — write indicator HUD params, tail ring_push_unmarked Y=$08
     0x930E,  # object_integrate_position — 24-bit world-pos integrate + blip $2821/$2824 (mem-only)
     0xAA95,  # jitter_roll_pitch — random-walk pitch/roll accums $0029/$0026 + decay $002E (RANDOM, mem-only)
     0x9821,  # mul_u8 — shift-add multiply, result in cpu.A (consumes $006B/$28D6)
@@ -127,9 +127,9 @@ VALIDATE_FUNCS = {
     0x4E1A,  # obj_table_scan_a_c8 — set A=$C8, tail obj_table_scan_replace
     0x4EA2,  # store_676_init — $0676=A, tail set_hud_fields_678_679
     0x4EA5,  # set_hud_fields_678_679 — $0678/$0679=A, tail refresh_hud_field_0b
-    0x4EAB,  # refresh_hud_field_0b — Y=$0B game_sub_55FC, tail refresh_hud_field_0d_entry
+    0x4EAB,  # refresh_hud_field_0b — Y=$0B ring_push_unmarked, tail refresh_hud_field_0d_entry
     0x4EB0,  # refresh_hud_field_0d_entry — Y=$0D, tail refresh_hud_fields_0d_0e
-    0x4EB2,  # refresh_hud_fields_0d_0e — game_sub_55FC at Y, INY, game_sub_55FC
+    0x4EB2,  # refresh_hud_fields_0d_0e — ring_push_unmarked at Y, INY, ring_push_unmarked
     0x9473,  # step_object_along_axes — step $0023/$0024 by $14, depth dec / tail reset_flags_ff (mem-only)
     0xB786,  # reset_indicator_event — $0035=0, tail enqueue_indicator_event
     0x97A0,  # compute_obj_rel_angle_scale — 10-bit angle build + 2x mul_u8 -> $002B/$2881 (reads ENTRY CARRY)
@@ -165,7 +165,7 @@ VALIDATE_FUNCS = {
     0x56AF,  # sfx_pick_next_voice — scan for next-best priority excluding $0715 -> $0716/0717
     0x5553,  # sfx_engine_step — explosion/noise engine (RANDOM x2, descending-pitch via $55DC); entry A=$0634
     0x5614,  # reorder_sprite_slot — voice-priority mixer (calls 5673/568a/56af); entry X/Y, Y restored
-    0x581C,  # sfx_event_load — load a new voice from event tables $56D4..$57F4 (stack-aware; tail game_sub_55FC)
+    0x581C,  # sfx_event_load — load a new voice from event tables $56D4..$57F4 (stack-aware; tail ring_push_unmarked)
     0x548D,  # sfx_voice_envelope_tick — APEX: per-frame voice/gauge envelope engine + ring drain (Atari VBI tail)
     # --- startup/cinematic de-transpile (2026-06-15): the boot_standby_launch_driver ($5F1D)
     #     subtree that drives the Standby + Doors/Tunnel/Planet cinematic — the
@@ -259,7 +259,7 @@ VALIDATE_FUNCS = {
     0xAB26,  # plot_line_done — bare RTS (no-op)
     # batch — grid-neighbor scan, ring-push drivers, RLE run fill:
     0x7069,  # scan_grid_neighbors — 4 diagonal test_marked_neighbor probes + push_grid_cell
-    0x4FCE,  # intro_reset_score_slots — clear $066A/$0686, $0678=$0C, tail game_sub_55FC (Y=$0D)
+    0x4FCE,  # intro_reset_score_slots — clear $066A/$0686, $0678=$0C, tail ring_push_unmarked (Y=$0D)
     0x7AA8,  # init_event_state_5815_x16 — seed $0044/$3388/$003C, tail ring_push_marked (X=$16, entry A)
     0x3C58,  # rle_run_fill — bump src $BB/$BC, read run byte ($BB)+Y, tail copy_bytes_to_dst (entry A/Y)
     0x678B,  # blit_glyph_8rows — blit 8-row glyph; row ptr walks up $2E/row, bits -> plot_pixel_col93
@@ -309,21 +309,21 @@ VALIDATE_FUNCS = {
     0x49BA,  # render_bcd_digits_supp_all — Y=7,X=0 -> set_zsupp_pos_clear_delta (LDX#0 makes BEQ unconditional)
     0x67C3,  # blit_numeric_readout — $0004!=0: 4 glyphs from $060D-$0610; else BCD of $006D (clamp $63) as 2 glyphs
     # batch — DL LMS fill + cockpit dial-bar column (boot_standby_launch_driver front):
-    0x69F1,  # dl_lms_fill — copy $073D/$0793[X=$8B..$0086] pairs into ($C5)+Y (Y+=3), tail shift_object_table_up/ret_stub
+    0x69F1,  # dl_write_lms_window — copy $073D/$0793[X=$8B..$0086] pairs into ($C5)+Y (Y+=3), tail shift_object_table_up/ret_stub
     0x43CB,  # draw_dial_bar_column — gate on Y vs $062E/8, set bar params, tail draw_object_column (entry Y)
     # batch — the big lock-on indicator sprite drawer (boot_standby_launch_driver front, 311 bytes):
     0x42A7,  # draw_player3_object — player-3 lock-on sprite: HPOS/size via bus_write, mask blit $0F1E/$0F71, RANDOM
     0x8C58,  # build_player2_sprite — depth-scaled object/explosion P2 sprite builder (per-frame while object_anim_frame != 0)
     0x4467,  # update_p3_indicator_stripe — rewrites the P3 scope-indicator PM buffer ($0F98) 50Hz when a P3 object/target is active
-    # batch — DL-build wrappers + initials BCD (now unblocked by dl_lms_fill/render_bcd_digits_supp_all):
-    0x69E5,  # dl_lms_build — set $C5/$C6=$300A, $0086=$56, tail dl_lms_fill
-    0x76CB,  # game_init_76CB — build the flight display list ($30xx-$32xx) + 2x build_row_addr_table/dl_lms_fill
+    # batch — DL-build wrappers + initials BCD (now unblocked by dl_write_lms_window/render_bcd_digits_supp_all):
+    0x69E5,  # dl_rebuild_lms_window — set $C5/$C6=$300A, $0086=$56, tail dl_write_lms_window
+    0x76CB,  # game_init_76CB — build the flight display list ($30xx-$32xx) + 2x build_row_addr_table/dl_write_lms_window
     0x5A63,  # setup_initials_ptr — $C5/$C6=$3694, BCD of $006D, $3694=0, tail render_bcd_digits_supp_all
     # batch — the score/level HUD refresh driver:
     0x3FFA,  # startup_init — refresh level/score/lives HUD digits (draw_digit_low_nibble/draw_2digit_value, ring_push)
-    # batch — DL index wrappers (now unblocked by dl_lms_build):
-    0x69E3,  # dl_index_dec — DEC $8B, tail dl_lms_build
-    0x69DD,  # dl_index_dec_or_reset — $8B=0 (LDA#0 makes BEQ unconditional), tail dl_lms_build
+    # batch — DL index wrappers (now unblocked by dl_rebuild_lms_window):
+    0x69E3,  # dl_lms_scroll_step — DEC $8B, tail dl_rebuild_lms_window
+    0x69DD,  # dl_lms_reset_window — $8B=0 (LDA#0 makes BEQ unconditional), tail dl_rebuild_lms_window
     # batch — the 2D scaled-shape blitter (last portable boot_standby_launch_driver-front leaf):
     0x7C9A,  # draw_scaled_shape — scale/blit a shape: div-by-subtraction count, nested row/col accum, mask bits -> plot_clipped_pixel
     # batch — empty the front: the deferred/HW leaves (faithfulness, little/no speedup):
@@ -384,7 +384,7 @@ VALIDATE_FUNCS = {
     0x69C3,  # dl_lms_scroll_down — shift bottom-half DL LMS entries down one slot
     0x6973,  # dl_lms_push_top — push a fresh top-edge LMS row pointer (X-=3)
     0x698E,  # dl_lms_push_bottom — push a fresh bottom-edge LMS row pointer (Y+=3)
-    0x6953,  # scroll_terrain_dl — one door-open step: scroll both DL halves + push edges
+    0x6953,  # dl_doors_open_split_step — one door-open step: scroll both DL halves + push edges
     # --- pilot-rescue state machine (2026-07-11): native-ize the cluster around
     #     pilot_render ($7854) to understand + fix the Systems-off/rescue FREEZE
     #     (the L_78d6<->L_792e hold loop stuck on $003D/$003E). Leaves-first. ---

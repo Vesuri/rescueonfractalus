@@ -44,4 +44,4 @@ skipped Atari HW tail) or `#ifndef ROF_PLATFORM_AMIGA` (Atari-faithful behavior 
 build keeps so the twin still matches its oracle). Amiga-only globals a twin writes go in that twin's TU
 (the writer's TU), also under `#ifdef ROF_PLATFORM_AMIGA` (cf. `g_planetRowLo/Hi`, `g_tun*`). Precedent:
 the tunnel-ring/door-scroll standby cinematic (`draw_ring_frame_step`, `step_accum_add_75`,
-`advance_history_6a4d`, `dl_lms_*`, `scroll_terrain_dl`, …) lives entirely in `rof_native.c` this way.
+`advance_history_6a4d`, `dl_lms_*`, `dl_doors_open_split_step`, …) lives entirely in `rof_native.c` this way.

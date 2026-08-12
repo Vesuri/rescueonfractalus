@@ -1015,7 +1015,7 @@ void RescueOnFractalus::buildAHSprite()
 // The sprite lives on the otherwise-idle ch4, as SEGMENT 0 of a wide object: at 2×/4× the burst
 // is 32/64 lores px and spills onto the shared extension channels (see RescueOnFractalus.h).
 //
-// ⚠ `size` is the real meaning of mem[$00CD], whose symbols.csv name `grafm_shadow` is WRONG —
+// ⚠ `size` is the real meaning of mem[$00CD], whose symbols.csv name `sizep2_shadow` is WRONG —
 // $D00A is SIZEP2, not GRAFM (docs/rename.md, backlog 2026-08-10).  build_player2_sprite stores
 // only $00/$01/$03 there, which is the SIZEP2 encoding, and pairs each with an HPOSP2 shift of
 // 0/4/12 colour clocks ($286E) — exactly what re-centres a player 8/16/32 colour clocks wide.
@@ -2097,7 +2097,7 @@ void RescueOnFractalus::decodeDoorScrollDirty()
 // doorScrollVblankUpdate(): the level-select "elevator" door scroll, driven from the INTB_VERTB
 // ISR at vblank start (the main thread is spinning in boot_standby_launch_driver's L_626a/L_628f
 // level-select loops, so renderFrame never runs during the scroll — only this ISR does).  The
-// Atari scrolls by DECrementing dl_src_index ($008B) per frame (dl_index_dec), which rebuilds the
+// Atari scrolls by DECrementing dl_src_index ($008B) per frame (dl_lms_scroll_step), which rebuilds the
 // per-scanline DL LMS window so the viewport top shows field row $008B (measured 2026-08-04).
 // Reproduce it with a single BPLxPT offset: point the standby terrain region at doorScrollBitmap
 // offset by $008B rows.  Repoint at vblank ONLY (a torn BPLxPT garbles the whole viewport).

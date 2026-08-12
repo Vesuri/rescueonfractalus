@@ -1140,7 +1140,7 @@ becomes `d16(An)`.
 
 Sound because `&mem` escapes into the asm, so GCC's alias oracle must treat `*mbase` as possibly
 aliasing `mem` (the standard `RELOC_HIDE`/`OPTIMIZER_HIDE_VAR` idiom). That matters: the helpers
-GCC inlines into this function (`game_sub_55FC`, `refresh_hud_field_0d_entry`, …) still reference
+GCC inlines into this function (`ring_push_unmarked`, `refresh_hud_field_0d_entry`, …) still reference
 `mem` directly, and a compiler that thought the two could not alias would be free to reorder
 across them.
 
@@ -1173,10 +1173,10 @@ harder than it looks:
   `compute_obj_rel_angle_scale`, `object_integrate_position`. `object_step_and_collide` /
   `load_velocity_from_param_block` are gated on `$0036 != 0`, which is **2 of 216 flight vblanks**
   in the quiet arm — i.e. essentially never, and NOT a cost to design around.
-- ⚠⚠ **GCC INLINES several helpers into this function** (`game_sub_55FC` ×5, `store_676_init`,
+- ⚠⚠ **GCC INLINES several helpers into this function** (`ring_push_unmarked` ×5, `store_676_init`,
   `refresh_hud_field_0d_entry`, `reset_flags_ff`, `mul_u8_lookup`, `terrain_jitter_column`).
   A twin that `bsr`s them instead LOSES to GCC on call overhead, so it has to re-implement each in
-  asm too. `game_sub_55FC` alone is 152 bytes × 5 sites. **This, not the 400 lines of arithmetic,
+  asm too. `ring_push_unmarked` alone is 152 bytes × 5 sites. **This, not the 400 lines of arithmetic,
   is what makes the twin big** — and it is invisible from the C.
 - The genuinely asm-shaped wins left are the register allocation (GCC spends 7 registers on a
   `movem` and still reloads) and the 6502 16-bit carry idioms (`lsl.l #8 / or.b / ror.w #8` to

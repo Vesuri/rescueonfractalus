@@ -2118,10 +2118,10 @@ uint8_t dl_lms_push_bottom_core(uint8_t y) {
 }
 void dl_lms_push_bottom(void) { cpu.Y = dl_lms_push_bottom_core(cpu.Y); }
 
-/* scroll_terrain_dl @ $6953 — one door-open step: DEC $008A (terrain_scroll_counter); while it
+/* dl_doors_open_split_step @ $6953 — one door-open step: DEC $008A (terrain_scroll_counter); while it
  * is still non-zero, scroll both DL halves apart; on the step that reaches 0, arm the reveal
  * reload $008C=8 instead.  Then push a fresh leading LMS row into each half. */
-void scroll_terrain_dl(void) {
+void dl_doors_open_split_step(void) {
     if (--terrain_scroll_counter != 0) {
         dl_lms_scroll_down();
         dl_lms_scroll_up();
@@ -3191,11 +3191,11 @@ void scan_grid_neighbors(void) {
 }
 
 /* intro_reset_score_slots @ $4FCE — clear two score slots ($066A/$0686 = 0), set $0678
- * = $0C, and enqueue event Y=$0D via the (native) game_sub_55FC. */
+ * = $0C, and enqueue event Y=$0D via the (native) ring_push_unmarked. */
 void intro_reset_score_slots(void) {
     sfx_voice_distort_0d = 0x00; mem[0x0686] = 0x00; hud_field_678 = 0x0C;
     cpu.Y = 0x0D;
-    game_sub_55FC();
+    ring_push_unmarked();
 }
 
 /* init_event_state_5815_x16 @ $7AA8 — seed event state ($0044 = entry A, $3388 = $B4,
@@ -3487,15 +3487,15 @@ void show_ace_or_message(void) {
 
 /* level_clear_fx_loop @ $7B94 — the level-cleared visual/audio flourish.  Sets the
  * landing-inhibit flag ($283C), then runs 15 frames each queuing a pair of ring events
- * (ids 1 and 2 via game_sub_55FC) with $066C/$066D holding the frame counter, then a
+ * (ids 1 and 2 via ring_push_unmarked) with $066C/$066D holding the frame counter, then a
  * 60-frame screen-flash loop poking terrain_pen1_fade ($00DB) with RANDOM|4.  Finally
  * clears $283C.  Frame-driven (wait_frames_1). */
 void level_clear_fx_loop(void) {
     landing_inhibit_flag = (uint8_t)(landing_inhibit_flag + 1);   /* INC $283C */
     for (uint8_t x = 1; x < 0x10; x++) {        /* X = 1..15 */
         mem[0x066C] = x; mem[0x066D] = x;
-        cpu.Y = 0x01; game_sub_55FC();          /* queue ring event id 1 */
-        cpu.Y = 0x02; game_sub_55FC();          /* queue ring event id 2 */
+        cpu.Y = 0x01; ring_push_unmarked();          /* queue ring event id 1 */
+        cpu.Y = 0x02; ring_push_unmarked();          /* queue ring event id 2 */
         wait_frames_1();
     }
     for (uint8_t x = 0x3C; x != 0; x--) {       /* 60-frame flash */
@@ -4708,13 +4708,13 @@ void blit_numeric_readout(void) {
     ROF_DOOR_FIELD_DIRTY();
 }
 
-/* dl_lms_fill @ $69F1 — build display-list LMS coordinate words.  For X=$008B up to
+/* dl_write_lms_window @ $69F1 — build display-list LMS coordinate words.  For X=$008B up to
  * (but excluding) $0086, copy the pair ($073D[X], $0793[X]) into ($C5/$C6)+Y with Y
  * advancing by 3 per X-step; only the first INY's wrap bumps the high byte $00C6 (the
  * faithful 6502 quirk — the trailing INY INY is unchecked).  Then if $008B!=0 shift the
  * object table up, else no-op.  Dest is RAM (DL region $30xx) so a plain mem[] store
  * matches the 6502's STA ($C5),Y (rendered bus_write, non-HW -> mem[]). */
-void dl_lms_fill(void) {
+void dl_write_lms_window(void) {
     uint8_t x = dl_src_index;
     uint8_t y = 0x00;
     do {
@@ -4966,18 +4966,18 @@ void draw_player3_object(void) {
 #endif
 }
 
-/* dl_lms_build @ $69E5 — set the DL-fill dest pointer ($C5/$C6=$300A) and end index
- * ($0086=$56), then tail dl_lms_fill. */
-void dl_lms_build(void) {
+/* dl_rebuild_lms_window @ $69E5 — set the DL-fill dest pointer ($C5/$C6=$300A) and end index
+ * ($0086=$56), then tail dl_write_lms_window. */
+void dl_rebuild_lms_window(void) {
     digit_dst_ptr_lo = 0x0A; digit_dst_ptr_hi = 0x30;
     row_count = 0x56;
-    dl_lms_fill();
+    dl_write_lms_window();
 }
 
 /* game_init_76CB @ $76CB — build the flight-mode display list and LMS tables in $30xx-$32xx.
  * Copies header bytes from $77C3/$77C9/$77D2 into the DL mirrors, fills mode lines/blanks,
  * pokes the fixed LMS/scroll constants, then builds two row-address tables (stride $60 from
- * $1070 / $10A0) and emits them into the DL via dl_lms_fill.  All-native callees, all writes
+ * $1070 / $10A0) and emits them into the DL via dl_write_lms_window.  All-native callees, all writes
  * land in safe RAM. */
 void game_init_76CB(void) {
     uint8_t a, y;
@@ -5025,11 +5025,11 @@ void game_init_76CB(void) {
     build_row_addr_table();
     digit_dst_ptr_lo = 0x75; digit_dst_ptr_hi = 0x31;      /* dest $3175 */
     dl_src_index = 0x00; row_count = 0x2F;
-    dl_lms_fill();
+    dl_write_lms_window();
     row_table_base_lo = 0xA0; row_table_base_hi = 0x10;      /* base $10A0 */
     build_row_addr_table();
     digit_dst_ptr_lo = 0x1A; digit_dst_ptr_hi = 0x32;      /* dest $321A */
-    dl_lms_fill();
+    dl_write_lms_window();
 }
 
 /* setup_initials_ptr @ $5A63 — point the digit dest at $3694, render $006D as zero-suppressed
@@ -5123,18 +5123,18 @@ void startup_init(void) {
     digit_block_dirty(0x3472); digit_block_dirty(0x34A4);       /* #19 Pilot Quota/Rescued */
 }
 
-/* dl_index_dec @ $69E3 — DEC $008B, then tail dl_lms_build (rebuild the DL from the
+/* dl_lms_scroll_step @ $69E3 — DEC $008B, then tail dl_rebuild_lms_window (rebuild the DL from the
  * decremented index). */
-void dl_index_dec(void) {
+void dl_lms_scroll_step(void) {
     dl_src_index = (uint8_t)(dl_src_index - 1);
-    dl_lms_build();
+    dl_rebuild_lms_window();
 }
 
-/* dl_index_dec_or_reset @ $69DD — reset $008B=0, then dl_lms_build.  The 6502 does LDA #0
- * then BEQ, so the branch is unconditional (the dl_index_dec tail is dead). */
-void dl_index_dec_or_reset(void) {
+/* dl_lms_reset_window @ $69DD — reset $008B=0, then dl_rebuild_lms_window.  The 6502 does LDA #0
+ * then BEQ, so the branch is unconditional (the dl_lms_scroll_step tail is dead). */
+void dl_lms_reset_window(void) {
     dl_src_index = 0x00;
-    dl_lms_build();
+    dl_rebuild_lms_window();
 }
 
 /* draw_scaled_shape @ $7C9A — scale and blit a 2-bit shape into the HUD via the clipped
@@ -5781,7 +5781,7 @@ static void ring_push_0719_core(uint8_t ev) {
 
 /* ring_push_marked @ $5815 — push (entry X)|$80 into the $0719 event ring ($80 = the "marked"
  * bit the SFX engine keys on); X preserved.
- * game_sub_55FC @ $55FC — push entry Y into the ring; X preserved.
+ * ring_push_unmarked @ $55FC — push entry Y into the ring; X preserved.
  * Both are 6502-ABI entries (for the transpiled callers + the validation oracle).  The 6502
  * PHA'd the saved index and ring_push_0719's PLA;TAX handed it back, so cpu.A/X AND the lone
  * $01xx stack-page byte are part of the contract; reproduce them (net cpu.S unchanged). */
@@ -5792,7 +5792,7 @@ void ring_push_marked(void) {
     cpu.A = id; cpu.X = id;                        /* PLA;TAX -> index handed back */
     cpu.N = (id >> 7) & 1; cpu.Z = (id == 0) ? 1 : 0;
 }
-void game_sub_55FC(void) {
+void ring_push_unmarked(void) {
     SX_CNT(g_sxRingPush);
     uint8_t id = cpu.X;
     mem[0x0100 | cpu.S] = id;                     /* PHA X */
@@ -5973,7 +5973,7 @@ void game_sub_451d(void) {
 /* enter_terrain_special_state @ $9B0D — set $2877/$3355 + (gated on $062F/$066C)
  * seed flags $0688/$0689/$0696/$0697/$06A4/$06A5 and push 2 ring events, then
  * tail ring_push_marked(X=$13).  exit_terrain_special_state @ $9B4C is the inverse.
- * Both call the native game_sub_55FC/ring_push_marked (cpu.X preserved across them,
+ * Both call the native ring_push_unmarked/ring_push_marked (cpu.X preserved across them,
  * ring content = cpu.Y).  Memory contract; validated with random entry regs + mem. */
 void enter_terrain_special_state(void) {
     vobj_speed_frac = (uint8_t)(throttle_accum_lo | 0x40);          /* $9B0D */
@@ -5983,8 +5983,8 @@ void enter_terrain_special_state(void) {
         mem[0x0696] = 0x0A; mem[0x0697] = 0x0A;           /* $9B26 */
         mem[0x0688] = 1; mem[0x0689] = 1;                 /* $9B2E */
         mem[0x06A4] = 1; mem[0x06A5] = 1;                 /* $9B34 */
-        cpu.Y = 1; game_sub_55FC();                       /* $9B3A push Y=1 */
-        cpu.Y = (uint8_t)(cpu.Y + 1); game_sub_55FC();    /* $9B3D INY; $9B3E push Y=2 */
+        cpu.Y = 1; ring_push_unmarked();                       /* $9B3A push Y=1 */
+        cpu.Y = (uint8_t)(cpu.Y + 1); ring_push_unmarked();    /* $9B3D INY; $9B3E push Y=2 */
     }
     if (throttle_accum_hi != 0) throttle_accum_hi = (uint8_t)(throttle_accum_hi - 1);  /* $9B41 */
     cpu.X = 0x13; ring_push_marked();                     /* $9B47 LDX #$13; JMP $5815 */
@@ -6000,8 +6000,8 @@ void exit_terrain_special_state(void) {
     vobj_speed_frac = 0; mem[0x0696] = 0; mem[0x0697] = 0;    /* $9B64 */
     mem[0x0688] = 0xFF; mem[0x0689] = 0xFF;               /* $9B6F */
     mem[0x06A4] = 1; mem[0x06A5] = 1;                     /* $9B77 */
-    cpu.Y = 1; game_sub_55FC();                           /* $9B7F push Y=1 */
-    cpu.Y = (uint8_t)(cpu.Y + 1); game_sub_55FC();        /* $9B82 INY; $9B83 push Y=2 */
+    cpu.Y = 1; ring_push_unmarked();                           /* $9B7F push Y=1 */
+    cpu.Y = (uint8_t)(cpu.Y + 1); ring_push_unmarked();        /* $9B82 INY; $9B83 push Y=2 */
 }
 
 /* {hi:mem[lo]} = signed({hi:mem[lo]}) >> 4 (arithmetic), via 4x (CMP #$80; ROR A;
@@ -6431,7 +6431,7 @@ void obj_table_set_active(void) {
 }
 
 /* ring_push_0719 @ $55FF — 6502-ABI entry: push cpu.A into the ring (via ring_push_0719_core),
- * then PLA;TAX hands the caller's saved index back in A and X.  Callers (game_sub_55FC /
+ * then PLA;TAX hands the caller's saved index back in A and X.  Callers (ring_push_unmarked /
  * ring_push_marked) PHA'd that index first, so the pulled value IS part of the contract — the
  * harness checks cpu.A/X/S here, not just mem[].  (Body is ring_push_0719_core, defined above.) */
 void ring_push_0719(void) {
@@ -8936,7 +8936,7 @@ void enqueue_indicator_event(void) {
     indicator_evt_char = 0xA0;                        /* b75b-b75d */
     indicator_evt_phase = (uint8_t)((RTCLOK_LOW & 0x05) + 0x02);  /* b760-b767 (AND#5 max 5, +2 no carry) */
     cpu.Y = 0x08;                              /* b76a LDY #$08 */
-    game_sub_55FC();                           /* b76c (native; reads cpu.Y) */
+    ring_push_unmarked();                           /* b76c (native; reads cpu.Y) */
 }
 
 /* object_integrate_position @ $930E — integrate an object's 24-bit world position.
@@ -9186,12 +9186,12 @@ void obj_table_scan_y1_c8(void) {
 }
 
 /* HUD display-field refresh chain ($4EA2-$4EB7).  Each link stores the entry value
- * and/or sets the field index Y, then tail-chains; game_sub_55FC (native) pushes the
+ * and/or sets the field index Y, then tail-chains; ring_push_unmarked (native) pushes the
  * indexed field to the display.  store_676_init/set_hud_fields read entry cpu.A. */
 void refresh_hud_fields_0d_0e(void) {            /* $4EB2 (Y set by caller) */
-    game_sub_55FC();                             /* 4eb2 */
+    ring_push_unmarked();                             /* 4eb2 */
     cpu.Y++;                                     /* 4eb5 INY */
-    game_sub_55FC();                             /* 4eb6 */
+    ring_push_unmarked();                             /* 4eb6 */
 }
 void refresh_hud_field_0d_entry(void) {          /* $4EB0 */
     cpu.Y = 0x0D;                                /* 4eb0 */
@@ -9199,7 +9199,7 @@ void refresh_hud_field_0d_entry(void) {          /* $4EB0 */
 }
 void refresh_hud_field_0b(void) {                /* $4EAB */
     cpu.Y = 0x0B;                                /* 4eab */
-    game_sub_55FC();                             /* 4ead */
+    ring_push_unmarked();                             /* 4ead */
     refresh_hud_field_0d_entry();
 }
 void set_hud_fields_678_679(void) {              /* $4EA5 */
@@ -9629,8 +9629,8 @@ static void flight_control_integrate_impl(void) {
         /* Landing sequence: enter the $3355 special state once (engine_state $066C latch). */
         if (mem[0x283C] == 0 && mem[0x066C] != 0x01) {
             mem[0x066C] = 0x01; mem[0x066D] = 0x01;
-            cpu.Y = 0x01; game_sub_55FC();
-            cpu.Y = 0x02; game_sub_55FC();
+            cpu.Y = 0x01; ring_push_unmarked();
+            cpu.Y = 0x02; ring_push_unmarked();
             special_state_color = 0x34;
         }
     } else if (flight_mode_state == 0) {
@@ -9639,8 +9639,8 @@ static void flight_control_integrate_impl(void) {
         /* Active flight: arm the HUD once (timer_676), then shadow the pitch angle. */
         if (timer_676 != 0x01) {
             mem[0x066C] = 0x00; mem[0x066D] = 0x00;
-            cpu.Y = 0x01; game_sub_55FC();
-            cpu.Y = 0x02; game_sub_55FC();
+            cpu.Y = 0x01; ring_push_unmarked();
+            cpu.Y = 0x02; ring_push_unmarked();
             cpu.A = 0x01; store_676_init();
         }
         mem[0x0023] = pitch_pos_lo;
@@ -9652,8 +9652,8 @@ static void flight_control_integrate_impl(void) {
     if (clear_colors_done_003E != 0) {
         if (mem[0x066C] != 0x00) {
             mem[0x066C] = 0x00; mem[0x066D] = 0x00;
-            cpu.Y = 0x01; game_sub_55FC();
-            cpu.Y = 0x02; game_sub_55FC();
+            cpu.Y = 0x01; ring_push_unmarked();
+            cpu.Y = 0x02; ring_push_unmarked();
             special_state_color = 0xB4;
         }
         return;
@@ -9874,7 +9874,7 @@ static void flight_control_integrate_impl(void) {
         uint8_t fld = (uint8_t)(~((throttle_accum_hi << 1) | (throttle_accum_lo >> 7)));
         if (fld < 0x0C) fld = 0x0C;
         mem[MEM_sfx_env_freq_val + 0x0C] = fld;            /* $0685 */
-        cpu.Y = 0x0C; game_sub_55FC();
+        cpu.Y = 0x0C; ring_push_unmarked();
     }
     IN_LAP(g_inLock);
 
@@ -10478,7 +10478,7 @@ void sfx_engine_step(void) {
 /* sfx_event_load_core @ $581C — load a new voice into slot mem[$56D4+(event_id-1)] from the
  * SFX event parameter tables.  event_id is 1-based; 0 (or any value whose -1 goes negative)
  * is a no-op.  Populates the voice's distortion/vol/freq/envelope/follow-on fields, then pushes
- * the slot to the event ring via game_sub_55FC (which leaves cpu.Y = the slot).  Idiomatic
+ * the slot to the event ring via ring_push_unmarked (which leaves cpu.Y = the slot).  Idiomatic
  * entry — the 6502-ABI shim sfx_event_load() below marshals cpu.X into event_id. */
 static void sfx_event_load_core(uint8_t event_id) {
     uint8_t i = (uint8_t)(event_id - 1);                 /* DEX */
@@ -10504,7 +10504,7 @@ static void sfx_event_load_core(uint8_t event_id) {
     }
     mem[0x06F7 + y] = mem[0x57F4 + i];               /* L_586d */
     cpu.Y = y;
-    game_sub_55FC();                                 /* push slot Y to the ring */
+    ring_push_unmarked();                                 /* push slot Y to the ring */
 }
 /* sfx_event_load @ $581C — 6502-ABI shim: event id in cpu.X, saves/restores X/Y (PHA/PLA),
  * exit cpu.A = the (pulled) event id, exactly like the transliterated oracle. */
@@ -10792,7 +10792,7 @@ static uint8_t sfx_phase_wrap(uint8_t step, uint8_t phase) {
  *      - frequency: step its phase; while the phase indexes a live entry in the $5406 gate
  *        table, add the per-step delta to the frequency field and emit it (sfx_voice_write_freq);
  *        expire the slot when the field reaches its target;
- *      - duration/priority: same, on the 4-bit priority field, re-queuing via game_sub_55FC.
+ *      - duration/priority: same, on the 4-bit priority field, re-queuing via ring_push_unmarked.
  *    A slot that finished either envelope re-queues its event id (bit7-marked) on the ring.
  * 3. Drain the $0719 event ring (tail $0074 -> head $0073, wrapping at $1F): bit7-set entries
  *    start a new voice (sfx_event_load), the rest reorder a sprite slot.
@@ -10852,7 +10852,7 @@ static void sfx_voice_envelope_tick_impl(void) {
                 uint8_t p = (uint8_t)((s[-112] + s[-84]) & 0x0F);
                 s[-112] = p;
                 if (p == s[-70]) { s[-56] = 0; expired++; }
-                cpu.Y = y; game_sub_55FC();
+                cpu.Y = y; ring_push_unmarked();
             }
         }
 
@@ -10930,7 +10930,7 @@ static void ring_push_marked_core(uint8_t id) { mem[0x0100 | cpu.S] = id; ring_p
  * form recomputed 6502 N/Z/C flags + a bus dispatch on every op in its erase / accumulate / draw
  * loops — this native form drops all of that (the win) while writing byte-identical mem[].
  * Entry: anim_frame = the 6502 entry X (stored to $2867).  All state is mem[]; the 3 HW writes
- * (HPOSP2/SIZEP2/GRAFP2) go through bus_write to mirror the oracle (ignored on the Amiga). */
+ * (HPOSP2/COLPM2/SIZEP2) go through bus_write to mirror the oracle (ignored on the Amiga). */
 static void build_player2_sprite_core(uint8_t anim_frame) {
     ROF_MEMBASE_DECL(mb);   /* fold mem[] onto a base register (see ROF_MEMBASE) */
 #ifdef ROF_MEMBASE
@@ -10946,7 +10946,7 @@ static void build_player2_sprite_core(uint8_t anim_frame) {
     }
     /* L_8c6c */
     mem[0x286E] = 0x00;
-    grafm_shadow = 0x00;
+    sizep2_shadow = 0x00;
     dl_y3 = 0x01;
     mem[0x2867] = anim_frame;                       /* 8c75 STX $2867 */
 
@@ -11007,8 +11007,8 @@ L_8d00:
     a = (uint8_t)(vobj_row_count - mem[0x286E]);    /* 8d0a-8d0d SEC;LDA $0038;SBC $286E */
     hposp2_shadow = a;                              /* 8d10 */
     bus_write(0xD002, a);                           /* 8d12 HPOSP2 */
-    bus_write(0xD014, mem[0x0037]);                 /* 8d17 SIZEP2 */
-    bus_write(0xD00A, grafm_shadow);                /* 8d1a-8d1c GRAFP2 */
+    bus_write(0xD014, mem[0x0037]);                 /* 8d17 COLPM2 */
+    bus_write(0xD00A, sizep2_shadow);                /* 8d1a-8d1c SIZEP2 (P2 width 1x/2x/4x) */
     return;
 L_8d20:
     if (x < 0x56) { mem[0x0E32 + x] = a; x++; }     /* 8d20-8d27 */
@@ -11052,11 +11052,11 @@ L_8d8c:
     if (a < 0x07) goto L_8dae;                      /* 8d8d/8d8f BCC L_8dae */
     if (a < 0x0A) {                                 /* 8d91/8d93 BCC L_8da2 (7<=a<$0A) */
         mem[0x286E] = 0x04;                         /* 8da2/8da4 */
-        grafm_shadow = 0x01;                        /* 8da7/8da9 */
+        sizep2_shadow = 0x01;                        /* 8da7/8da9 */
         dl_y3 = 0x02;                               /* 8dab INY(=2); 8dac STY $BD */
     } else {                                        /* a>=$0A: 8d97 fall-through */
         mem[0x286E] = 0x0C;                         /* 8d97 */
-        grafm_shadow = 0x03;                        /* 8d9a/8d9c */
+        sizep2_shadow = 0x03;                        /* 8d9a/8d9c */
         dl_y3 = 0x04;                               /* 8d9e INY(=4); 8dac STY $BD */
     }
 L_8dae:
@@ -11299,7 +11299,7 @@ void vbi_handler_flight(void) {
 #ifndef ROF_PLATFORM_AMIGA
     /* Per-frame GTIA/ANTIC shadow push — SDL display only (dead on Amiga). */
     uint8_t dp5 = display_param_5;
-    bus_write(0xD008, 0x00); bus_write(0xD009, 0x00);   /* P2/P3 horizontal pos (cleared) */
+    bus_write(0xD008, 0x00); bus_write(0xD009, 0x00);   /* SIZEP0/SIZEP1 — P0/P1 widths (cleared) */
     bus_write(0xD409, 0x04);                            /* CHBASE */
     bus_write(0xD01A, dp5); bus_write(0xD012, dp5); bus_write(0xD013, dp5);
     bus_write(0xD014, mem[0x0037]);
@@ -11892,7 +11892,7 @@ void boot_standby_launch_driver(void) {
     g_standbyRevealReady = 0;
     bus_write(0x02C7, 0x06);
     build_line_addr_table_2000();
-    dl_index_dec_or_reset();
+    dl_lms_reset_window();
     frame_counter = 0;
     mem[0x08A2] = 0;
     mem[0x062C] = 0;
@@ -12060,7 +12060,7 @@ L_6118:
        the first render() after this decodes the finished bitmaps in one frame (the initial
        terrainDirty/cockpitForceFull/g_titleToRender signals are still set — render never ran). */
     g_standbyRevealReady = 1;
-    dl_index_dec_or_reset();
+    dl_lms_reset_window();
     delay_loop_c2_to_c9();
 #ifdef ROF_PLATFORM_AMIGA
     /* Build the tunnel rings into $1000 (and paint them into tunnelBitmap) off the launch hot
@@ -12182,11 +12182,11 @@ L_622d:
     audf2_sweep_val = 0x52;
     audf2_sweep_step = 0x01;
 L_6244:
-    cpu.Y = frame_counter;                /* $6595,Y and $8B fed to dl_index_dec */
+    cpu.Y = frame_counter;                /* $6595,Y and $8B fed to dl_lms_scroll_step */
     frame_wait_count = mem[0x6595 + frame_counter];
     audf2_sweep_clear_colors();
     dl_src_index = draw_pattern_byte;
-    dl_index_dec();
+    dl_lms_scroll_step();
     dl_src_index = 0;
     draw_pattern_byte--;                  /* $B9 */
     if (++frame_counter != 0x13) goto L_6244;   /* $B7 */
@@ -12221,10 +12221,10 @@ L_62a9:
 L_62b4:
     audf2_sweep_step = 0xFF;
 L_62b9:
-    cpu.Y = draw_pattern_byte;            /* $6598,Y and $8B fed to dl_index_dec */
+    cpu.Y = draw_pattern_byte;            /* $6598,Y and $8B fed to dl_lms_scroll_step */
     frame_wait_count = mem[0x6598 + draw_pattern_byte];
     dl_src_index = draw_pattern_byte;
-    dl_index_dec();
+    dl_lms_scroll_step();
     dl_src_index = 0;
     audf2_sweep_clear_colors();
     if (--draw_pattern_byte != 0) goto L_62b9;   /* $B9 */
@@ -12234,7 +12234,7 @@ L_62b9:
     shift_object_table_up();
     frame_wait_count = (uint8_t)(frame_wait_count << 1);  /* ASL $4C */
     wait_frames();
-    dl_index_dec_or_reset();
+    dl_lms_reset_window();
     bus_write(0xD203, 0);                /* POKEY */
 L_62e7:
     if (sfx_reinit_gate == 0) goto L_62ee;
@@ -12908,7 +12908,7 @@ static void game_main_loop_body(void) {
       clear_pm_state_core(a);             /* clear_pm_state consumes A = the clamped value */
     }
     mem[0x066E] = 0;
-    game_sub_55FC();
+    ring_push_unmarked();
     break;                               /* restart the outer loop (re-run boot_standby_launch_driver) */
     }   /* end inner in-game flight loop (L_3eba) */
     }   /* end outer game / attract loop (L_3e0f) */
