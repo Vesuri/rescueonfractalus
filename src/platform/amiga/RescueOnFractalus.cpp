@@ -839,6 +839,12 @@ static const uint16_t kStationTopLines = 8;
 static const uint16_t kStationRows     = 192;
 static const uint16_t kLogoTopLines    = 64;
 static const uint16_t kLogoRows        = 62;
+// Sprite sizes for the station's PMG mirror.  The P0/P1 shape run is `$2760[i] + 1` rows, whose
+// table maxes at $10 -> 17; the display_scroll dot blob is 3; and the eight $1D92 patterns yield
+// at most 9 dots (pattern $C3 lights two missiles), spread over two chains.
+static const unsigned kStationShapeRows = 24;
+static const unsigned kStationDotRows   = 8;
+static const unsigned kStationMslDots   = 6;
 
 #include "assets/terrain_pal.h"
 #include "assets/atari_pal.h"
@@ -2522,6 +2528,17 @@ void RescueOnFractalus::initialize()
     bootFieldBitmap = Bitmap::allocate(kW, kStationDLRows, 4, /*interleaved*/true);
     bootFieldCopper = new Gtia9CopperList();
     if (bootFieldCopper && !bootFieldCopper->data()) { delete bootFieldCopper; bootFieldCopper = nullptr; }
+    // The station's PMG mirror (see the channel map in the header).  The two missile CHAINS are
+    // allocated as sprites of 2x the dot count: Sprite::allocate(n) reserves 2 control words +
+    // 2n data words + a 2-word terminator, which is exactly the room 6 chained single-line dots
+    // (6 x 4 words + terminator) need — their control words are written by hand, so the Sprite is
+    // only being used for its correctly-sized, correctly-freed chip allocation.
+    stationSpr[0] = Sprite::allocate(kStationShapeRows);   // P0 shape
+    stationSpr[1] = Sprite::allocate(kStationShapeRows);   // P1 shape
+    stationSpr[2] = Sprite::allocate(kStationDotRows);     // P2 dot
+    stationSpr[3] = Sprite::allocate(kStationDotRows);     // P3 dot
+    stationMsl[0] = Sprite::allocate(kStationMslDots * 2); // missile chain A
+    stationMsl[1] = Sprite::allocate(kStationMslDots * 2); // missile chain B
 #endif
 
 #ifdef ROF_FLIGHT_PROBE
@@ -5474,8 +5491,21 @@ void RescueOnFractalus::renderBootScene()
         if (g_bootScene == ROF_BOOTSCENE_STATION) {
             bootFieldCopper->buildLayout(*bootFieldBitmap, kStationTopLines, kStationRows,
                                          kGtia9Pal0, *nullSprite);
+            // Point the PMG channels at their mirrors (see the channel map in the header).  The
+            // operands are constant from here on — buildStationSprites only rewrites the buffers —
+            // so nothing has to hit the copper's scanline-16 SPRxPT read deadline again.
+            if (stationSpr[0]) {
+                bootFieldCopper->setSpriteOperand(0, stationSpr[0]->data());   // P0 shape
+                bootFieldCopper->setSpriteOperand(2, stationSpr[1]->data());   // P1 shape
+                bootFieldCopper->setSpriteOperand(4, stationSpr[2]->data());   // P2 dot
+                bootFieldCopper->setSpriteOperand(5, stationSpr[3]->data());   // P3 dot
+                bootFieldCopper->setSpriteOperand(6, stationMsl[0]->data());   // missile chain A
+                bootFieldCopper->setSpriteOperand(7, stationMsl[1]->data());   // missile chain B
+            }
             decodeStationField();
             stationWindowRow = 0xFFFF;   // force stationVblankUpdate to publish the real row
+            stationDotCol    = 0xFFFF;
+            buildStationSprites();       // so the first displayed frame already has them
         } else {
             bootFieldCopper->buildLayout(*bootFieldBitmap, kLogoTopLines, kLogoRows,
                                          kGtia9Pal1, *nullSprite);
@@ -5498,6 +5528,136 @@ void RescueOnFractalus::renderBootScene()
     decodeStationDirty();
 }
 
+// ---- the station's PMG, mirrored to Amiga sprites ------------------------------------------
+// Amiga raster line of an Atari PM-buffer offset.  The station runs one-line PMG resolution, so
+// the buffer is indexed by scanline; the port's established alignment is displayLine = offset - 8
+// (the flight energy gauge at $0D98 lands on line 144, the altimeter likewise), and this scene's
+// own SDL render agrees — its P2/P3 blob sits at buffer offset $5B and display line 83.
+static inline uint16_t pmLine(unsigned off) { return (uint16_t)(kDisplayTop + off - 8u); }
+// Amiga sprite X of an Atari HPOS.  An unwidened player is 8 bits over 8 colour clocks = 16 lores
+// px, so 2 px per clock, with the playfield's left edge ($81) at HPOS $32.  HPOS below the left
+// edge means "parked off screen" (station_missile_drift clears HPOSM0-3 to 0 to hide the dots).
+static const unsigned kPmXMin = 0x32u;
+static inline uint16_t pmX(unsigned h) { return (uint16_t)(0x81u + (h - kPmXMin) * 2u); }
+
+// Write one chained sprite's two control words at `p` for a `h`-line sprite at raster (x, y).
+// Sprite::setY is not used: it never sets SV8, which is fine for the framework's own sprites but
+// not a property to rely on here, and the chained dots have no Sprite object at all.
+static inline void spriteCtl(uint16_t* p, uint16_t x, uint16_t y, uint16_t h)
+{
+    const uint16_t ey = (uint16_t)(y + h);
+    p[0] = (uint16_t)(((y & 0xFFu) << 8) | ((x >> 1) & 0xFFu));
+    p[1] = (uint16_t)(((ey & 0xFFu) << 8) | ((y & 0x100u) >> 6) | ((ey & 0x100u) >> 7) | (x & 1u));
+}
+
+// Find the single non-zero run in one 256-byte PM page.  Reading the real buffer back — rather
+// than recomputing each element's position from the tables the 6502 indexes — is what keeps the
+// mirror from drifting: the writers' "clear the row behind me" then falls out for free.
+static unsigned pmRun(const volatile uint8_t* page, unsigned* first)
+{
+    unsigned i = 0;
+    while (i < 256u && page[i] == 0) i++;
+    if (i >= 256u) return 0;
+    *first = i;
+    unsigned n = 0;
+    while (i + n < 256u && page[i + n] != 0) n++;
+    return n;
+}
+
+// buildStationSprites(): mirror all five PMG elements into their sprite channels.  See the
+// channel map in RescueOnFractalus.h.  Runs in the VBI ISR (from stationVblankUpdate): the beam
+// is parked at the top there, and every element sits at line 60 or below, so a single-buffered
+// write cannot be overtaken by the sprite DMA.
+void RescueOnFractalus::buildStationSprites()
+{
+    if (!bootFieldCopper || !stationSpr[0]) return;
+
+    // --- P0 / P1: the animating shapes at $3400 / $3500, both at the fixed HPOS $7F -----------
+    // station_pm_shape_tick ($1E01 -> $1E2A) walks a 13-frame table set, writing a run of up to
+    // 17 rows and clearing the four above it.  Colours are constants station_init writes once.
+    static const uint16_t kShapePage[2] = { 0x3400u, 0x3500u };
+    static const uint8_t  kShapeCol[2]  = { 0x06u,   0x0Au   };
+    for (int s = 0; s < 2; s++) {
+        bootFieldCopper->setPairColor((uint16_t)s, atariToOCS(kShapeCol[s]));
+        uint16_t* d = stationSpr[s]->data();
+        unsigned  first = 0;
+        unsigned  rows  = pmRun(mem + kShapePage[s], &first);
+        if (rows > kStationShapeRows) rows = kStationShapeRows;
+        // Empty page: disarm the channel.  station_pm_shape_tick fills P0 and P1 from separate
+        // table pointers and P1's source is legitimately blank for stretches of the animation.
+        if (!rows) { d[0] = 0; d[1] = 0; continue; }
+        spriteCtl(d, pmX(0x7Fu), pmLine(first), (uint16_t)rows);
+        const volatile uint8_t* src = mem + kShapePage[s] + first;
+        uint16_t* px = d + 2;
+        for (unsigned r = 0; r < rows; r++) { *px++ = kDoubleGlyph[*src++]; *px++ = 0; }
+        for (unsigned r = rows; r < kStationShapeRows; r++) { *px++ = 0; *px++ = 0; }
+    }
+
+    // --- P2 / P3: the two converging dots -----------------------------------------------------
+    // pmg_colors_station ($1F0B) steps an 8-entry cycle every 7 frames: HPOSP2 <- $1F30[i],
+    // HPOSP3 <- $1F38[i], COLPM2 = COLPM3 <- $1F40[i].  Those go straight to GTIA, which the
+    // Amiga drops, so read the source tables through the same index it uses (blit_row_counter
+    // $0097 & 7).  The dot SHAPE is the 3-scanline blob display_scroll paints into both pages.
+    {
+        const unsigned i = mem[0x0097] & 7u;
+        const uint16_t col = atariToOCS(mem[0x1F40 + i]);
+        if (col != stationDotCol) { bootFieldCopper->setPairColor(2, col); stationDotCol = col; }
+        static const uint16_t kDotPage[2] = { 0x3600u, 0x3700u };
+        const uint16_t kDotHpos[2] = { mem[0x1F30 + i], mem[0x1F38 + i] };
+        for (int s = 0; s < 2; s++) {
+            uint16_t* d = stationSpr[2 + s]->data();
+            unsigned  first = 0;
+            unsigned  rows  = pmRun(mem + kDotPage[s], &first);
+            if (rows > kStationDotRows) rows = kStationDotRows;
+            const unsigned h = kDotHpos[s];
+            if (!rows || h < kPmXMin) { d[0] = 0; d[1] = 0; continue; }   // parked / nothing to show
+            spriteCtl(d, pmX(h), pmLine(first), (uint16_t)rows);
+            const volatile uint8_t* src = mem + kDotPage[s] + first;
+            uint16_t* px = d + 2;
+            for (unsigned r = 0; r < rows; r++) { *px++ = kDoubleGlyph[*src++]; *px++ = 0; }
+            for (unsigned r = rows; r < kStationDotRows; r++) { *px++ = 0; *px++ = 0; }
+        }
+    }
+
+    // --- the eight missile dots (the 5th player, COLPF3) --------------------------------------
+    // Two CHAINS rather than two plain sprites: the dots are single scanlines scattered down the
+    // screen at four different X (one per missile, HPOSM0-3), and a sprite channel re-fetches its
+    // control words right after each VSTOP — so one channel can show many of them.  Chain A takes
+    // the first dot on each scanline and chain B the second (only pattern $C3 has two, M0 + M3).
+    {
+        uint16_t* ch[2] = { stationMsl[0]->data(), stationMsl[1]->data() };
+        unsigned  n[2]  = { 0, 0 };
+        uint16_t  lastY[2] = { 0, 0 };
+        for (unsigned i = 0; i < 256u; i++) {
+            const uint8_t b = mem[0x3300 + i];
+            if (!b) continue;
+            for (unsigned m = 0; m < 4u; m++) {
+                const unsigned bits = (unsigned)(b >> (m * 2)) & 3u;
+                if (!bits) continue;
+                const unsigned h = mem[0xD004 + m];   // HPOSM shadow (see bus.h); 0 = parked
+                if (h < kPmXMin) continue;
+                const uint16_t y = pmLine(i);
+                // Pick a chain whose previous entry has already STOPPED: a channel re-fetches its
+                // control words ON the VSTOP line, so the next VSTART must be strictly greater.
+                unsigned c;
+                if      (n[0] == 0 || lastY[0] < y) c = 0;
+                else if (n[1] == 0 || lastY[1] < y) c = 1;
+                else continue;                            // a third dot on one scanline: drop it
+                if (n[c] >= kStationMslDots) continue;     // out of slots (9 dots max, 6 per chain)
+                uint16_t* p = ch[c] + n[c] * 4u;
+                spriteCtl(p, pmX(h), y, 1);
+                // A missile is 2 bits = 2 Atari px = 4 lores px, high bit leftmost.
+                p[2] = (uint16_t)(((bits & 2u) ? 0xC000u : 0u) | ((bits & 1u) ? 0x3000u : 0u));
+                p[3] = 0;
+                lastY[c] = y;
+                n[c]++;
+            }
+        }
+        for (int c = 0; c < 2; c++) { ch[c][n[c] * 4u] = 0; ch[c][n[c] * 4u + 1] = 0; }   // terminator
+        bootFieldCopper->setPairColor(3, atariToOCS(0x34u));   // COLPF3, station_init $19DF
+    }
+}
+
 // stationVblankUpdate(): the scroll.  The display list's moving JMP operand ($1C39/$1C3A) walks
 // from $B9BC down to $B800, 3 bytes (one entry) per step, so the window's first row is simply
 // (ptr - $B800) / 3 and the whole scroll is four bitplane-pointer writes.
@@ -5508,11 +5668,16 @@ void RescueOnFractalus::stationVblankUpdate()
     if (!bootFieldCopperInstalled || !bootFieldCopper) return;
     if (g_bootScene != ROF_BOOTSCENE_STATION) return;
     const uint16_t ptr = (uint16_t)(mem[0x1C39] | (mem[0x1C3A] << 8));
-    if (ptr < kStationDL) return;                                    // half-written / not started
-    const unsigned row = rof_divu16((uint16_t)(ptr - kStationDL), 3); // divu.w
-    if (row == stationWindowRow) return;
-    stationWindowRow = (unsigned short)row;
-    bootFieldCopper->setWindowRow((uint16_t)row);
+    if (ptr >= kStationDL) {                                          // else half-written/not started
+        const unsigned row = rof_divu16((uint16_t)(ptr - kStationDL), 3); // divu.w
+        if (row != stationWindowRow) {
+            stationWindowRow = (unsigned short)row;
+            bootFieldCopper->setWindowRow((uint16_t)row);
+        }
+    }
+    // ...then the PMG.  After the bitplane pointer, which has the earlier deadline (the copper
+    // executes the window's BPLxPT MOVEs at scanline 51, the topmost sprite starts at ~60).
+    buildStationSprites();
 }
 
 // deriveRenderSignals(): recompute the renderer's phase-gating signals from mem[]
@@ -6419,6 +6584,8 @@ void RescueOnFractalus::shutdown()
     delete leftPost;      leftPost      = nullptr;
     delete rightPost;     rightPost     = nullptr;
     delete nullSprite;    nullSprite    = nullptr;
+    for (int i = 0; i < 4; i++) { delete stationSpr[i]; stationSpr[i] = nullptr; }   // station PMG
+    for (int i = 0; i < 2; i++) { delete stationMsl[i]; stationMsl[i] = nullptr; }   // ...its chains
     // ⚠ energy / altimeter-terrain / left band triangle are ALIASES of wideLow[0..2][0] — non-owning
     // views into the wide-object sprite chains.  Just drop the aliases; the wideLow loop below is
     // what deletes them (deleting here too would be a double free).

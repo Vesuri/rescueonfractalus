@@ -1034,7 +1034,15 @@ extern "C" void game_vbi_isr(void)
                             }
     else if (vbi == 0x1B30) vbi_handler_station();   // $1B30 attract VBI (sets $0080 + RTCLOK)
     else if (vbi == 0x53CC) vbi_handler_1_native();  // $53CC attract/Title/game-over card VBI
-    else                    standby_vbi_native();    // $52D7 standby/launch VBI (and fallback)
+    // $52D7 standby/launch VBI — and the fallback for an unknown or half-written vector, which is
+    // harmless DURING THE GAME (the odd frame of a two-byte vector update) but NOT during a boot
+    // scene.  The staged loader zeroes mem[], so VVBLKI reads 0 from the stage load until
+    // station_init's $198D installs $1B30 — and in that window the fallback ran a whole standby
+    // VBI over the station's fresh memory.  Measured, with a watchpoint: its lock-on indicator
+    // tick wrote glyph bytes into the station's P0 player page ($3492), which the Amiga PMG
+    // mirror then faithfully drew as a phantom 6-row sprite.  So during a boot scene, dispatch
+    // ONLY that scene's own vector and otherwise stay inert.
+    else if (g_bootScene == ROF_BOOTSCENE_NONE) standby_vbi_native();
     cpu = saved;                                    // == XITVBV PLA;TAY;PLA;TAX;PLA
     // Apply this frame's batched POKEY→Paula writes — from the CIA-B music tick
     // (sfx_voice_tick) AND the in-game SFX engine (sfx_voice_envelope_tick, run in the VBI

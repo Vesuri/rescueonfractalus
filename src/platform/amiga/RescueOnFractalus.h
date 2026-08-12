@@ -413,6 +413,24 @@ private:
     unsigned char  stationStarRows = 0;
     unsigned short stationWindowRow = 0xFFFF;      // last row published to the copper
 
+    // The station's PMG, mirrored to Amiga sprites (buildStationSprites, run in the VBI ISR
+    // alongside the scroll — PMG that animates every frame must update from the VBI).
+    // CHANNEL MAP.  OCS gives one colour per sprite PAIR (0/1 -> COLOR17, 2/3 -> COLOR21,
+    // 4/5 -> COLOR25, 6/7 -> COLOR29) and the Atari elements have four different colours, so each
+    // takes its own pair — except the two that genuinely share one:
+    //   ch0  P0 shape   pair 0   COLPM0 = $06        the animating station lights ($3400)
+    //   ch2  P1 shape   pair 1   COLPM1 = $0A        ...and its second colour ($3500)
+    //   ch4  P2 dot     pair 2   COLPM2 = $1F40[i]   left converging dot  ($3600)
+    //   ch5  P3 dot     pair 2   COLPM3 == COLPM2    right converging dot ($3700) — free pairing
+    //   ch6  missiles   pair 3   COLPF3 = $34        the 5th player's dots ($3300)
+    //   ch7  missiles   pair 3   ...a second chain, for the scanline that carries two dots
+    // Each element is read back out of its real PM buffer rather than recomputed, so the mirror
+    // cannot drift from the 6502 (and the writers' clear-behind falls out for free).
+    Sprite*  stationSpr[4] = { nullptr, nullptr, nullptr, nullptr };   // P0, P1, P2, P3
+    Sprite*  stationMsl[2] = { nullptr, nullptr };   // the two missile-dot CHAINS (ch6/ch7)
+    void     buildStationSprites();
+    uint16_t stationDotCol   = 0xFFFF;   // last COLPM2/3 published (poke only on change)
+
     // Blank black list shown until g_standbyRevealReady latches (boot/standby build in
     // progress) — switched to the real lists in renderFrame once ready.
     EmptyCopperList* emptyCopper = nullptr;

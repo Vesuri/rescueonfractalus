@@ -67,6 +67,14 @@ static inline void bus_write(uint16_t addr, uint8_t val) {
            off the hot path) still takes the virtual platform call. */
         if (addr >= 0xD200 && addr < 0xD210) { rof_pokey_write((uint8_t)(addr - 0xD200), val); return; }
         if (addr == 0xD00B) { g_sizep3_shadow = val; return; }   /* SIZEP3 — see the note above */
+        /* HPOSP0-3 / HPOSM0-3 ($D000-$D007) shadow.  A deliberate exception to "the $D000-$D7FF
+           range is not backed by mem[]": these eight are write-only on the Atari and the game
+           relies on that, so nothing reads them back and the shadow is invisible to the 6502 —
+           but the Amiga sprite mirrors need to know where a player/missile was put.  Written for
+           the station cinematic, whose missile-dot X comes from station_missile_drift ($1910)
+           writing HPOSM0-3 to GTIA (which the Amiga otherwise drops); the routine's own "park
+           them" path ALREADY stores mem[$D004+Y] = 0 directly, so this just makes the two agree. */
+        if (addr <= 0xD007) { mem[addr] = val; return; }
         if (addr == 0xD400) platform_hw_write(addr, val);
         return;
 #else
