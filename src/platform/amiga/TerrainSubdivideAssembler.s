@@ -91,6 +91,38 @@
 ; DEADZP fell into.  It does not here: the differential runs the same seed/publish pair around
 ; each call (see subv_snapshot / subv_capture_and_restore), so all sixteen ZP bytes are still
 ; compared.  `make SUBDIV_EAGER=1` restores the per-call flush for an A/B.
+;
+; ⭐ 2026-08-12 — the object entry's GUARD, 38 cycles a call (log §24.3).  Two things, both found
+; while pricing the caller's five-byte SubPt-slot-0 seed (see SEED below):
+;   (a) under ROF_SUBDIV_OBJ1ARG `depth` is the literal 0, so a1 IS mem — yet the guard addressed
+;       mem+SDCOL_HI / mem+$B5 / mem+SDCOL_LO ABSOLUTELY.  abs.l is 16 cycles against (d16,An)'s
+;       12; four operands = 16 cycles a call, three lines.  ⭐ The §23 "GCC addresses mem[]
+;       absolutely" tax has a hand-asm cousin, and nobody looks for it inside a .s.
+;   (b) the guard PROVES things three later blocks re-derive: phase 2 re-tests span.col's sign,
+;       phase 3 range-tests it again, and sd_inner RELOADS the two bytes of far0.col the guard
+;       left in d0.  sd_obj_go now goes straight to sd_inner_hgt.  ⭐ The two range tests collapse
+;       into ONE because the UNSIGNED `span.col < $D8` already implies non-negative (bit 15 set =>
+;       >= $8000 > $D8), so the common case is a single CMP/BCS and the out-of-range arms split on
+;       the sign at sd_obj_slow.  46 cycles against 80 on the ~80% of calls that skip phase 2;
+;       worst case over any mix is still −10 a call, so it cannot be a regression.
+;   Joins: sd_inner_hgt (enter with far.col live in d0) and sd_p2body (enter having proved
+;   span.col < 0).  subdiv_verify: 0 mismatch / 5147 calls, and 0 / 5136 on a pinned re-run.
+;
+; ⭐ SEED — the caller's five-byte SubPt slot 0 write, PRICED AND NOT TAKEN (log §24.1-24.2).
+; terrain_draw_objects copies obj1's projected vector into slot 0 (5 x 20 cyc mem-to-mem, 68.1
+; visible pairs an iteration = 1.2% of wall) purely for this file to read back.  It looks like the
+; §10.1 span handoff one level up.  It is NOT: $82-$86 was a register round trip, but slot 0 is a
+; stack the recursion INDEXES BY DEPTH — sd_inner, SUBMID and sd_doras all go back to memory for
+; it — so a callee that "loads the seed itself" still has to STORE it, and the transfer nets −8
+; cycles a call.  ⭐ When a "move it into the callee" candidate targets memory the callee INDEXES
+; rather than memory it READS ONCE, price the STORE, not the load.
+; The formulation that does win (~0.48%, filed not closed): duplicate the depth-0 arm against
+; a0 = mem+obj1 with the object displacements, write slot 0 LAZILY at the two descents from depth 0
+; (~0.21 pushes a call, not 100 cycles every call), and let terrain_draw_objects publish slot 0
+; once per pass.  The reader survey that licenses it came back CLEAN: across the whole linked
+; image only this file and that seed touch $25B4-$25C3 / $25D2-$25E1 / $25F0-$25FF / $24E2-$24F1 /
+; $23E2-$23F1; no lea targets within $100 below any base (so no indexed base reaches them) and
+; nothing reads a word spanning in from $25B3/$25D1/$25EF/$24E1/$23E1.
 
 	xdef	terrain_subdivide_column_core_asm
 	ifnd	ROF_SUBDIV_VERIFY
@@ -276,6 +308,7 @@ terrain_subdivide_column_core_asm:
 sd_phase2:
 	tst.w	d2			; span.col & $8000 ?
 	bpl	sd_phase3		; non-negative -> start leaf pass
+sd_p2body:				; entry for a caller that has ALREADY proved span.col < 0
 	subq.l	#1,a3			; budget--
 	cmpa.w	#-1,a3
 	beq	sd_out			; budget was 0 -> exhausted
@@ -350,6 +383,7 @@ sd_inner:
 	move.b	(SDCOL_HI,a1),d0	; far.col hi
 	bne.s	sd_dosubT		; far.col > $FF -> subdivide (SUBMID reloads it there)
 	move.b	(SDCOL_LO,a1),d0	; d0 = far.col (high byte known 0)
+sd_inner_hgt:				; entry with d0.w = far.col ALREADY loaded, high byte 0
 	; far.hgt gets the SAME high-byte-first treatment, and here it pays three times over: all
 	; THREE tests the cascade makes on far.hgt are answered by the high byte alone —
 	; negative <=> hi & $80,  > $FF <=> hi != 0 (and not negative),  < $6C <=> hi == 0 &&
@@ -663,11 +697,22 @@ terrain_subdivide_column_obj_asm:
 
 	; --- entry guard: $B5 = (far0.col>>8)^$80; bail if span.col >= far0.col
 	; (word read for the high byte instead of `lsl.w #8` — see the core entry's guard)
+	ifd	ROF_SUBDIV_OBJ1ARG
+	; Under the 1-arg ABI `depth` is the literal 0, so a1 IS mem and every operand here folds
+	; from absolute-long (16 cycles) to (d16,a1) (12) — four of them, 16 cycles a call.  The
+	; core entry above cannot do this: there a1 = mem + startDepth.
+	move.b	(SDCOL_HI,a1),d1	; far0.col hi (slot 0)
+	eori.b	#$80,d1
+	move.b	d1,($B5,a1)
+	move.w	(SDCOL_HI,a1),d0	; d0 bits 8-15 = far0.col hi
+	move.b	(SDCOL_LO,a1),d0	; d0.w = far0.col
+	else
 	move.b	mem+SDCOL_HI,d1		; far0.col hi (slot 0)
 	eori.b	#$80,d1
 	move.b	d1,mem+$B5
 	move.w	mem+SDCOL_HI,d0		; d0 bits 8-15 = far0.col hi
 	move.b	mem+SDCOL_LO,d0		; d0.w = far0.col
+	endc
 	cmp.w	d0,d2			; span.col - far0.col (signed)
 	blt.s	sd_obj_go		; span.col < far0.col -> subdivide
 	; bail: publish the span, i.e. exactly the 5 bytes the caller used to write
@@ -685,7 +730,27 @@ terrain_subdivide_column_obj_asm:
 	bra	sd_ret
 sd_obj_go:
 	movea.w	#$14,a3			; budget = $14
-	bra	sd_phase2
+	; ⭐ Straight into the leaf pass, with far0.col carried over in d0.
+	; The old `bra sd_phase2` walked three blocks that between them re-derive what the guard
+	; just proved: phase 2 re-tests span.col's sign, phase 3 range-tests it again, and
+	; sd_inner RELOADS the very two bytes of far0.col the guard has sitting in d0.
+	; The two range tests collapse into one: `span.col < $D8` UNSIGNED already implies
+	; non-negative (anything with bit 15 set is >= $8000 > $D8), so the common case —
+	; span.col in [0,$D7], i.e. exactly what phase 2 forwards to phase 3 and phase 3 accepts —
+	; is a single CMP/BCS pair, and the two out-of-range arms split on the sign afterwards.
+	; sd_inner's far.col escape (`far.col hi != 0`) is `far.col > $FF` unsigned on the value
+	; already in d0.  46 cycles against 80, on the ~80% of calls that never enter phase 2.
+	; ⚠ d0's upper WORD is dirty (the guard's `move.w`); every consumer past sd_inner_hgt
+	; reads it as .w or .b only — same precondition the guard already documents.
+	cmp.w	#$D8,d2			; span.col < $D8 UNSIGNED ?
+	bcc.s	sd_obj_slow		; no -> negative, or phase 3's own exit
+	cmp.w	#$FF,d0			; far.col > $FF ?  (== sd_inner's `far.col hi != 0`)
+	bhi	sd_dosub		; yes -> subdivide (SUBMID reloads far there)
+	bra	sd_inner_hgt		; d0.w = far.col, high byte known 0
+sd_obj_slow:
+	tst.w	d2			; span.col & $8000 ?
+	bmi	sd_p2body		; negative -> phase 2's descend loop (past its own re-test)
+	bra	sd_out			; >= $D8 and positive -> phase 3's exit
 
 ; (load_far, submid, push_mid and load_span are all gone as CALLABLE routines: each was inlined
 ; at its call sites — load_far directly into sd_inner, the other three as the SUBMID / PUSHMID /

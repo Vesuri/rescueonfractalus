@@ -2245,3 +2245,147 @@ check whether the addressing mode makes the loop itself free to delete.*
   run into separate scratch planes from the same `$260E` and all 47×120 bytes are compared:
   **EDGE mismatch=0**. The oracle keeps its explicit `h != $FF` test and so never indexes the
   sentinel entry, which is what keeps it a valid oracle.
+
+## §24 — The five-byte subdivide seed, RE-PRICED and declined; and the guard it exposed (2026-08-12)
+
+The ⭐⭐ top item on the ranked remainder was **"~1.3% — `terrain_draw_objects`' five-byte
+subdivide seed"**: the caller copies obj1's projected vector into SubPt slot 0
+(`M[$25B4]=o1[$2400]` …, five memory-to-memory `MOVE.B` at 20 cycles) purely so
+`terrain_subdivide_column_obj` can read it back out, and the filed route was to extend the object
+ABI so the callee loads it itself — the §10.1 trick one level up.
+
+**The 1.3% is real and is the GROSS. The NET is ~0.5%, and it costs a duplicated depth-0 arm
+inside the subdivide asm.** What shipped instead is a 38-cycle-a-call win the pricing exposed in
+the same entry guard, worth ~0.45% on its own for ~30 lines.
+
+### 24.1 Why the filed route is a wash on its own
+
+Confirmed off the linked disassembly: the five copies are exactly
+`move.b d16(a1),d16(a3)` × 5 = **100 cycles**, plus a 12-cycle `lea` for the `o1` base, on 68.1
+visible pairs an iteration ⇒ **6810 cyc/it = 1.20% of wall** (an iteration is ~570k cycles at the
+standing 24.88 FPS). That much is right.
+
+But **`$25B4`/`$25D2`/`$25F0`/`$24E2`/`$23E2` are slot 0 of a stack the recursion indexes by
+depth**, not a value the callee wants in a register. Every far-endpoint read at depth 0 —
+`sd_inner` (1.11/call), `SUBMID` (0.397), `sd_doras` (0.61) — goes back to memory. So a callee that
+"loads the seed itself" still has to *store* it, and the transfer nets nothing:
+
+| | cyc/call |
+|---|---|
+| caller drops the 5 copies + the `o1` lea | **−112** |
+| caller pushes obj1 as a second argument | +12 |
+| callee rebuilds `a0 = mem + obj1` (`movea.w (ARG,sp),a0` + `adda.l a1,a0`) | +20 |
+| callee does the same 5 stores | +100 |
+| minus what fusing them with the guard recovers (2 of the 5 bytes pass through d0/d1 anyway, and the guard's four absolute-long operands become `(d16,a1)`) | −28 |
+| **net** | **−8** |
+
+⭐ **This is §17.2's lesson one level up: when a "move it into the callee" candidate targets
+memory the callee INDEXES rather than memory it READS ONCE, price the store, not the load.** §10.1
+worked because `$82-$86` was a pure register round trip; slot 0 is not.
+
+### 24.2 What the real route costs, and the survey that licenses it
+
+The only formulation that wins is the one the item's ⚠ hints at: **subdivide reads far@0 straight
+out of obj1's object arrays and never touches slot 0 until it has to.**
+
+- Duplicate the depth-0 arm (`sd_phase2`'s `SUBMID`, `sd_inner`'s far loads, `sd_fhNeg`'s reload,
+  `sd_doras`'s four control-point loads) against `a0 = mem + obj1` with the object displacements
+  `$2400/$242D/$245A/$2487/$23B5`. Per-instruction cost is identical — `(d16,a0)` and `(d16,a1)`
+  are both 12 — so this is pure code duplication, ~70 instructions, best done as a
+  base-parameterised vasm macro expanded twice.
+- **Write slot 0 lazily, at the two points where the recursion descends from depth 0**
+  (`sd_p2push`, `sd_dosub`), then fall into the existing generic (a1-based) code. Correct because
+  everything at depth > 0 reads slots ≥ 1, and a pop back to depth 0 finds slot 0 already written.
+  Shape says only ~0.21 pushes a call, so this costs ~20 cyc/call amortised, not 100.
+- `terrain_draw_objects` publishes slot 0 **once per pass** from the last visible pair's obj1
+  (sentinel-skipped when no pair was visible), exactly the shape of the `g_sdResidue` defer.
+- Amiga-only: the removal must sit behind a define, because `terrain_draw_objects` is the
+  FAITHFUL shared file and the host's C oracle subdivide still reads slot 0.
+
+Net **≈ −40 cyc/call ≈ 2720 cyc/it ≈ 0.48% of wall**, i.e. **40% of the filed 1.3%**.
+
+**The reader survey — the hard gate — came back CLEAN** (objdump of the linked image, the §17.1
+method, widened for this range):
+
+- Exact hits on `$25B4-$25C3 / $25D2-$25E1 / $25F0-$25FF / $24E2-$24F1 / $23E2-$23F1` in the WHOLE
+  image: `terrain_subdivide_column_{core,obj}` and its `sd_*` blocks, plus
+  `terrain_draw_objects`' seed. **Nothing else — not the rasterizer, not project, not
+  plot_object, not the flight VBI, not another scene.**
+- No `lea` anywhere targets within `$100` below any stack base, so **no indexed base can reach
+  them** (the hole a displacement grep leaves — §17.1's lesson 1).
+- No word/long access at `$25B3 / $25D1 / $25EF / $24E1 / $23E1` spans in from below.
+
+So the job is legal. It is filed, not closed: **~0.48%, a duplicated leaf arm in the most
+layout-sensitive asm file in the tree, plus the `subv_verify` seed/publish surgery §17.3
+describes.** Left for the user to schedule.
+
+### 24.3 What DID ship — the object entry's guard (38 cyc/call, ~0.45%)
+
+Pricing 24.1 meant hand-counting the guard, and it had two things in it.
+
+**(a) Four absolute-long operands that are `(d16,a1)`.** Under `ROF_SUBDIV_OBJ1ARG` startDepth is
+the literal 0, so `a1` *is* `mem` — yet the guard still addressed `mem+SDCOL_HI`, `mem+$B5` and
+`mem+SDCOL_LO` absolutely. `abs.l` is 16 cycles against `(d16,An)`'s 12, four times = **16 cycles
+a call**, three lines. (The core entry above cannot: there `a1 = mem + startDepth`.) Same family as
+the base fold in §23.1 — *this one had been sitting inside hand-written asm, where nobody thinks to
+look for a GCC addressing tax.*
+
+**(b) The guard proves things three more blocks re-derive.** `bra sd_phase2` walked into phase 2
+re-testing span.col's sign, phase 3 range-testing it again, and `sd_inner` **reloading the very two
+bytes of far0.col the guard had just left in d0**. The direct route:
+
+```
+	cmp.w	#$D8,d2		; span.col < $D8 UNSIGNED ?  (implies non-negative: bit 15 => >= $8000)
+	bcc.s	sd_obj_slow
+	cmp.w	#$FF,d0		; far.col > $FF ?  (== sd_inner's `far.col hi != 0`)
+	bhi	sd_dosub
+	bra	sd_inner_hgt	; d0.w = far.col, high byte known 0
+```
+
+⭐ **The two range tests collapse into one because the UNSIGNED compare subsumes the sign test** —
+anything with bit 15 set is `>= $8000 > $D8` — so phase 2's `tst.w`/`bpl` and phase 3's
+`cmp`/`bcc` become a single CMP/BCS pair, and the two out-of-range arms split on the sign
+afterwards (`sd_obj_slow`). Two new labels carry the joins: `sd_inner_hgt` (enter with far.col
+already in d0) and `sd_p2body` (enter having already proved span.col < 0).
+
+| path | old | new | |
+|---|---|---|---|
+| common: span.col in [0,$D7], far.col <= $FF | 80 | **46** | −34 |
+| `far.col > $FF` escape (14.5% of inner iterations) | 80 | **34** | −46 |
+| span.col < 0 -> phase 2 (<= 20% of calls) | 26 | 32 | +6 |
+| phase-3 exit (span.col >= $D8, positive) | 42 | 44 | +2 |
+
+Mixing at the measured shape: **≈ −38 cycles a call × 68.1 = −2615 cyc/it ≈ −0.45% of wall.**
+
+⚠ **d0's upper word is dirty** on the new edge (the guard's `move.w` trick). Every consumer past
+`sd_inner_hgt` reads it `.w` or `.b` — the same precondition the guard already documented, and the
+reason `cmp.w #$FF,d0` is a legal stand-in for `move.b (SDCOL_HI,a1),d0 / bne`.
+
+### 24.4 Proof, and three instruments that cannot see 0.45%
+
+**Correctness.** `make VERIFY=1 NO_RASTER_VERIFY=1 PROBES=1` + `amiga/subdiv_verify.gdb` — the only
+build that puts the shipping obj entry and its private register handoff under a differential:
+**mismatch=0 over 5147 calls**, and again **0 over 5136** on the pinned re-run. That compares the
+return value, all 16 entries of each of the 5 SubPt stacks, and the ZP residue. ~1000 phase-2
+entries in that sample, so `sd_obj_slow`'s two arms are exercised, not just the fast one. No C
+changed, so `make validate` is untouched.
+
+**Speed: the static count is the claim.** Nothing here can measure 38 cyc/call ≈ 7 t/it.
+
+| instrument | reading | why it cannot settle this |
+|---|---|---|
+| `fps_seg`, in-session A/B, both arms rebuilt, standard window | base **24.875** (1492/2999) → new **24.683** (1481/3000) = **−0.8%** | Cross-build. The `alt` column already differs at vbi 2700 (`80` vs `fc`) — the two builds fly different ground (§19). |
+| `subdiv_verify`'s in-process bracket, pinned arm | asm 10.040 → 9.790 t/call (**−2.50%**) | …but the **unchanged C oracle running alongside moved −1.62% on the same runs**, and the call counts differ 0.77%. Net −0.89%, inside the control's own drift. |
+| static count off both disassemblies | **−38 cyc/call** | The only one with the resolution. Bounded: the change is `−16` always, plus one of `−34 / −46 / +6 / +2`, so **the worst case over any mix is −10 cyc/call — it cannot be a regression.** |
+
+⚠ **The baseline REPLICATED the standing 33f0663 row to the frame** — 1492/2999, the same
+`fps_seg` numbers a different session recorded. So the harness is exactly reproducible for a FIXED
+binary; all of its variance is *across* binaries, i.e. trajectory. That is worth more than the A/B
+itself: it means a rebuilt-baseline A/B is honest about the window and still says nothing about a
+sub-1% change.
+
+⭐ **Precedent, and the rule this confirms:** the ledger already contains **91fa5ec — a proven
+−9 t/it WIN that `fps_seg` read 0.9% LOWER.** This is −7 t/it reading 0.8% lower: the same shape,
+in the same direction, for the same documented reason. **At this point in the project a real win of
+this size is unfalsifiable by every end-to-end instrument, and the disassembly is the instrument.**
+Do not chase the FPS row for changes under ~2%; count the cycles and prove correctness.
