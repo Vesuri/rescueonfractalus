@@ -2000,3 +2000,21 @@ asm twin is the only lever and it is a 400-line faithful function), `proj` (5.0)
 envelope loop (3.7). ~11 t/firing of the handler is unaccounted, and most of that is the probe's
 own `VP_T0`/`VP_ACC` brackets plus the `COMBAT=1` map top-up — i.e. the SHIPPING ISR is several
 ticks cheaper than any number in this table.
+## §21 — The noise refill leaves the 50 Hz ISR (2026-08-12)
+
+`PlatformAmiga::noiseTick` (the poly17 noise-sample refill) ran in `game_vbi_isr`. It is main-loop
+work: no beam-timing requirement, no opportunism, and the property that makes it safe at all
+(overwriting bytes Paula is mid-DMA on is inaudible when both old and new bytes are noise) holds
+just as well from the main loop. Moved to `PlatformAmiga::renderFrame`, placed after
+`flightKickBackClear()` so the fill overlaps the blitter's back-buffer clear. Same work, ~56% fewer
+executions in flight (50 Hz ISR vs ~22 Hz main loop), and out of the vblank budget entirely.
+
+Consequence stated honestly: the slice is unchanged at 4 longwords, so in flight the refill rate
+falls 800 → ~350 B/s and a full pass through the 8 KB buffer takes ~23 s against the engine drone's
+~13 s read pass. Only the buffer's own ~13 s LOOP PERIOD is audible, and that is unchanged.
+Outside flight `renderFrame` is the per-frame spin-wait hook, so the rate there is still ~50 Hz.
+
+Lean `fps_seg`, `COMBAT=1 COMBAT_QUIET=1 FIXED_RNG=1`, 3000-vbl window, all 15 segments valid:
+**24.30 FPS (1458/3000)** against the 23.91 standing row. That is +1.6% on an instrument whose
+flight-neutral control moves 1.2% — so read it as **no regression**, plausibly the ~0.3% of wall the
+move is worth, and NOT as a demonstrated +1.6%.

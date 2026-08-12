@@ -57,8 +57,12 @@ printf "\n  handler = %lu.%03lu   sprites = %lu.%03lu   audio = %lu.%03lu   t/fi
   ($n ? $il/$n : 0), ($n ? ((1000*$il)/$n)%1000 : 0), \
   ($vfc ? $vsp/$vfc : 0), ($vfc ? ((1000*$vsp)/$vfc)%1000 : 0), \
   ($vfc ? $vau/$vfc : 0), ($vfc ? ((1000*$vau)/$vfc)%1000 : 0)
-printf "     audio split: flush_paula %lu.%03lu   noiseTick %lu.%03lu\n", \
-  ($vfc ? (g_vbiFlushLines-$s_vfl)/$vfc : 0), ($vfc ? ((1000*(g_vbiFlushLines-$s_vfl))/$vfc)%1000 : 0), \
+printf "     audio bracket IS flush_paula %lu.%03lu  (noiseTick left the ISR)\n", \
+  ($vfc ? (g_vbiFlushLines-$s_vfl)/$vfc : 0), ($vfc ? ((1000*(g_vbiFlushLines-$s_vfl))/$vfc)%1000 : 0)
+# noiseTick now runs in the MAIN LOOP (PlatformAmiga::renderFrame), so it is NOT part of the VBI
+# total above.  Still divided by VBI FIRINGS so the row stays directly comparable to the old
+# in-ISR t/firing figure — the move shows up as the drop it is, not as a units change.
+printf "     noiseTick (main loop, /firing for comparability) %lu.%03lu\n", \
   ($vfc ? (g_vbiNoiseLines-$s_vno)/$vfc : 0), ($vfc ? ((1000*(g_vbiNoiseLines-$s_vno))/$vfc)%1000 : 0)
 printf "  *** WHOLE flight VBI = %lu.%03lu t/firing = %lu.%lu%% of ALL wall clock  <-- THE A/B NUMBER ***\n", \
   ($vfc ? ($il+$vsp+$vau)/$vfc : 0), ($vfc ? ((1000*($il+$vsp+$vau))/$vfc)%1000 : 0), \

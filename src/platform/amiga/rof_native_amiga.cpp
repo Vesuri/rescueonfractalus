@@ -990,13 +990,16 @@ extern "C" void vbi_handler_station(void);
 // (that audit is bracketed out separately there) — these are clean, real-VBI spans:
 //   g_vbiHandlerLines = vbi_handler_flight (== g_flightProf.isrLines, mirrored here for the sum)
 //   g_vbiSpriteLines  = flightShotTick + flightScannerTick (laser + LR-scanner blink)
-//   g_vbiAudioLines   = flush_paula + noiseTick (Paula channel flush + noise-sample refresh)
+//   g_vbiAudioLines   = flush_paula (Paula channel flush) — the whole audio bracket since the
+//                       noise refill left the ISR (see PlatformAmiga::renderFrame)
 // Per-firing scanlines = lines/calls; time = scanlines * 63.56 us; PAL frame = 313 lines.
 extern "C" volatile unsigned long g_vbiSpriteLines = 0, g_vbiAudioLines = 0, g_vbiFullCalls = 0;
 // Split of the audio bracket (2026-08-12): flush_paula alone vs PlatformAmiga::noiseTick alone.
-// The bracket reads 8.0 t/firing on the quiet arm = 12% of the WHOLE flight VBI, and the two
-// halves are completely different animals — flush_paula can busy-wait 7..110 rasterlines on a
-// waveform restart, noiseTick runs a 16-step 32-bit xorshift.  Attribute before optimising.
+// The bracket read 8.0 t/firing on the quiet arm = 12% of the WHOLE flight VBI, and the two halves
+// were completely different animals — flush_paula can busy-wait 7..110 rasterlines on a waveform
+// restart, noiseTick runs a 16-step 32-bit xorshift.  That split is why noiseTick was moved OUT of
+// the ISR entirely; g_vbiFlushLines now duplicates g_vbiAudioLines and g_vbiNoiseLines is written
+// from the main loop (still divided by VBI firings, so it stays comparable to the old t/firing).
 extern "C" volatile unsigned long g_vbiFlushLines = 0, g_vbiNoiseLines = 0;
 #endif
 
@@ -1036,18 +1039,18 @@ extern "C" void game_vbi_isr(void)
     unsigned short _a0 = (vbi == 0x4FF5) ? rof_beam_line() : 0;
 #endif
     flush_paula();
-#ifdef ROF_FLIGHT_PROBE
-    unsigned short _af = (vbi == 0x4FF5) ? rof_beam_line() : 0;
-#endif
-    PlatformAmiga::noiseTick();                     // refresh a slice of the noise sample (cheap)
+    // NOTE: the noise-sample refill (PlatformAmiga::noiseTick) used to run here.  It is main-loop
+    // work that had no business in a 50 Hz interrupt: the ISR fires 50x/s no matter how slow the
+    // frame is, so the refill was paying ~2.3x the rate the game actually renders at.  Moved to
+    // PlatformAmiga::renderFrame — the property that makes the refill safe at all (overwriting
+    // bytes Paula is mid-DMA on is inaudible when both old and new bytes are noise) holds exactly
+    // as well from the main loop, and there it is no longer competing for the vblank budget.
 #ifdef ROF_FLIGHT_PROBE
     if (vbi == 0x4FF5) { unsigned short _a1 = rof_beam_line();
         g_vbiAudioLines += (_a1 >= _a0) ? (unsigned short)(_a1 - _a0)
                                         : (unsigned short)(_a1 + 313 - _a0);
-        g_vbiFlushLines += (_af >= _a0) ? (unsigned short)(_af - _a0)
-                                        : (unsigned short)(_af + 313 - _a0);
-        g_vbiNoiseLines += (_a1 >= _af) ? (unsigned short)(_a1 - _af)
-                                        : (unsigned short)(_a1 + 313 - _af); }
+        g_vbiFlushLines += (_a1 >= _a0) ? (unsigned short)(_a1 - _a0)
+                                        : (unsigned short)(_a1 + 313 - _a0); }
 #endif
 }
 

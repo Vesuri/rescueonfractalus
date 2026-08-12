@@ -170,12 +170,13 @@ static void fill_noise_words(int off, int words)
 // Refill the whole buffer (init / channel-start prime).
 static void fill_noise_buf(void) { fill_noise_words(0, NOISE_LEN / 4); }
 
-// Called once per VBI: while any channel is in noise mode, refill a small slice round-robin
-// through the buffer so the noise texture keeps evolving instead of statically repeating.
-// The buffer LENGTH (not the refill) is what keeps the DMA loop sub-audible, so this is cheap
-// insurance, not a per-frame full regeneration — that full regen in the VBI ISR overran the
-// 20 ms vblank budget and dropped the launch cinematic to 25 Hz.  Overwriting bytes Paula is
-// mid-DMA on is inaudible for noise (random over random).
+// Called once per RENDERED FRAME from the main loop (PlatformAmiga::renderFrame): while any
+// channel is in noise mode, refill a small slice round-robin through the buffer so the noise
+// texture keeps evolving instead of statically repeating.  The buffer LENGTH (not the refill) is
+// what keeps the DMA loop sub-audible, so this is cheap insurance, not a per-frame full
+// regeneration — that full regen in the VBI ISR overran the 20 ms vblank budget and dropped the
+// launch cinematic to 25 Hz.  Overwriting bytes Paula is mid-DMA on is inaudible for noise
+// (random over random) — and that is what makes the main loop just as safe a home as the ISR.
 //
 // ⭐ SIZED 2026-08-12 (amiga/isr_full.gdb): at 16 longwords/VBI this was **5.71 t/firing —
 // 8.5% of the WHOLE flight VBI and 1.8% of ALL wall clock**, the single largest Amiga-side
@@ -183,14 +184,23 @@ static void fill_noise_buf(void) { fill_noise_words(0, NOISE_LEN / 4); }
 // the rate Paula READS the buffer, and the old 64 B/VBI = 3200 B/s was ~5x faster than that:
 // the engine drone (the only steady noise voice in flight) runs AUDF ~$65 => Paula period
 // ~5666 => a playback rate of ~626 B/s, i.e. one pass through the 8 KB buffer every ~13 s.
-// 4 longwords = 16 B/VBI = 800 B/s still re-randomises the buffer FASTER than the drone reads
-// it (full cycle ~10 s), and for the only faster consumer — a short, loud explosion tail — no
-// loop structure is audible at all.  Cost drops to ~1.4 t/firing.
+//
+// ⭐ MOVED OUT OF THE 50 Hz ISR 2026-08-12.  This is main-loop work: it has no beam-timing
+// requirement, no opportunism, and no reason to be charged to the vblank budget.  The ISR fires
+// 50x/s no matter how slow the frame is, so running it there meant paying for it ~2.3x per
+// rendered frame in flight (50 Hz ISR vs ~22 Hz main loop) — the SAME work at 56% fewer
+// executions once it moved.  Consequence, stated honestly: the slice is unchanged at 4 longwords,
+// so in flight the byte rate falls 800 -> ~350 B/s and a full pass through the buffer takes ~23 s
+// against the drone's ~13 s read pass.  That only means the drone may re-hear a region before it
+// has been rewritten; the LOOP PERIOD it can actually hear is the 8 KB buffer's ~13 s either way,
+// which is unchanged.  Bump the 4 below if a future noise voice ever reads faster.  Outside
+// flight (cinematics, standby) renderFrame is the per-frame spin-wait hook, so the rate there is
+// still ~50 Hz.
 void PlatformAmiga::noiseTick()
 {
     if (!(noiseOn[0] || noiseOn[1] || noiseOn[2] || noiseOn[3])) return;
     static int off = 0;
-    fill_noise_words(off, 4);           // 16 bytes / VBI = 800 B/s (see the sizing above)
+    fill_noise_words(off, 4);           // 16 bytes / rendered frame (see the sizing above)
     off += 16;
     if (off >= NOISE_LEN) off = 0;
 }
@@ -1510,6 +1520,9 @@ extern "C" volatile unsigned long g_fdClear=0, g_fdEdge=0, g_fdFill=0, g_fdScan=
 // sprites) / g_rRenderFn (render(): renderFlightDirect=g_fDirect + cockpit + title/compass) /
 // g_rCopper (updateFlightCopper poke).
 extern "C" volatile unsigned long g_isrBeamLines;  // defined in rof_native_amiga.cpp
+// Noise-refill cost, accumulated in renderFrame now that noiseTick is main-loop work (still
+// normalised by VBI firings in isr_full.gdb — see the note at the call site).
+extern "C" volatile unsigned long g_vbiNoiseLines;  // defined in rof_native_amiga.cpp
 extern "C" volatile unsigned long g_rRenderCompute=0, g_rRenderWall=0, g_rIdleWall=0, g_rCalls=0;
 // INTEGER frame counters for the two flight pacing waits — immune to the beam-read race that
 // poisons the tick accumulators above (g_fDraw et al. can run BACKWARDS).  g_idleFrames = VBI
@@ -1695,6 +1708,23 @@ void PlatformAmiga::renderFrame() {
     // screen).  Kick the blitter clear of the OTHER (now off-screen) buffer so it overlaps the
     // upcoming terrain draw instead of running serially inside the next convert.  No-op off flight.
     if (s_scene) s_scene->flightKickBackClear();
+    // Noise-sample refill — MAIN-LOOP work (see PlatformAmiga::noiseTick).  Deliberately placed
+    // straight after the blitter kick above so the 4-longword fill runs while the blitter is
+    // clearing the back buffer, and deliberately NOT in the 50 Hz VBI ISR, where the same work was
+    // charged to the vblank budget ~2.3x per rendered frame.
+#ifdef ROF_FLIGHT_PROBE
+    const unsigned short _n0 = rof_beam_line();
+#endif
+    noiseTick();
+#ifdef ROF_FLIGHT_PROBE
+    // Still accumulated into g_vbiNoiseLines and still divided by VBI FIRINGS by isr_full.gdb, so
+    // the row stays directly comparable to the old in-ISR t/firing figure — the move shows up as
+    // the drop it is, not as a units change.
+    if (_rFlight) {
+        const unsigned short _n1 = rof_beam_line();
+        g_vbiNoiseLines += (_n1 >= _n0) ? (unsigned short)(_n1 - _n0)
+                                        : (unsigned short)(_n1 + 313 - _n0); }
+#endif
     uint16_t vbiVec = (uint16_t)(mem[0x0222] | (mem[0x0223] << 8));
 #ifdef ROF_FLIGHT_PROBE
     // Did a VBI body advance RTCLOK during the wait?  (flight/attract bodies do; $52D7 doesn't)
