@@ -155,7 +155,7 @@ void station_init(void) {
     LDX(0x00);
     /* 19cb */
     sync_flag = cpu.X;
-L_19cd:;
+L_19cd:; platform_tick_vbi(); platform_render_frame();
     /* 19cd */
     LDA(sync_flag);
     /* 19cf */
@@ -23249,7 +23249,7 @@ void init_B800(void) {
     LDA(RTCLOK_LOW);
     /* b828 */
     ADC(0x20);
-L_b82a:;
+L_b82a:; if (mem[0x0014] != cpu.A) { if ((uint8_t)(cpu.A - mem[0x0014]) < 0x80u) { platform_tick_vbi(); platform_render_frame(); } else cpu.A = mem[0x0014]; }
     /* b82a */
     CMP(RTCLOK_LOW);
     /* b82c */

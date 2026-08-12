@@ -55,6 +55,8 @@ LDFLAGS  := $(SDL_LDFLAGS) $(PNG_LDFLAGS)
 # C sources (generated 6502 transliteration + CPU model)
 C_SRCS := \
     src/cpu/cpu.c \
+    src/rof_boot.c \
+    src/rof_logo.c \
     src/gen/rof_gen.c \
     src/gen/rof_manual.c \
     src/gen/rof_vbi.c \

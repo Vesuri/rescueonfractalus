@@ -1,6 +1,7 @@
 #include "PlatformSDL.h"
 #include "../../cpu/cpu.h"
 #include "../../xex_load.h"   /* shared XEX-format walk (xex_parse / xex_overlay_osrom) */
+#include "../../rof_boot.h"   /* staged INITAD boot chain (Logo / Station) */
 #include <cstdio>
 #include <cstdlib>      /* getenv, atoi */
 #include <csignal>      /* signal, SIGINT, SIGTERM (Ctrl-C handling in run()) */
@@ -19,49 +20,60 @@ static const double POKEY_DIV   = 28.0;   /* ÷28 = ~63.9 kHz channel clock */
 /* Launch stage selection (ROF_START)                                  */
 /* ------------------------------------------------------------------ */
 
-/* Stages reachable from game_entry() ($3CDE), in the order the game flows
-   through them. The Lucasfilm logo and the space-station animation are NOT
-   here: they are drawn by rof.xex's XEX loader (INIT segments) which run
-   before game_entry(). This port loads a flat post-loader memory snapshot
-   and jumps straight to game_entry(), so it always begins at the attract
-   screen and those two loader sequences have no code to jump to.          */
+/* Stages the boot chain can be entered at, IN THE ORDER the game flows through
+   them — so the ordering comparisons below (`> ROF_STAGE_STANDBY` = "auto-press
+   START") stay meaningful as stages are added.
+
+   The first two are the boot INITAD scenes rof.xex's own loader runs BEFORE
+   game_entry() ($5000 = the Lucasfilm logo, $1A97 = the space station).  They are
+   reachable now that the loader walk is staged (rof_boot.c) instead of loading the
+   whole image at once; before that this port jumped straight to game_entry() and
+   they had no code to jump to.  standby STAYS THE DEFAULT, so the boot scenes are
+   opt-in and no existing SDL workflow changes.                                    */
 enum RofStage {
-    ROF_STAGE_STANDBY = 0,   /* cockpit "STAND BY" + title (default)        */
-    ROF_STAGE_LAUNCH,        /* launch/descent sequence (after START)       */
-    ROF_STAGE_FLIGHT       /* terrain flight — fast-forward past the launch */
+    ROF_STAGE_LOGO = 0,      /* Lucasfilm logo -> station -> standby              */
+    ROF_STAGE_STATION,       /* space-station cinematic -> standby                */
+    ROF_STAGE_STANDBY,       /* cockpit "STAND BY" + title (default)              */
+    ROF_STAGE_LAUNCH,        /* launch/descent sequence (after START)             */
+    ROF_STAGE_FLIGHT       /* terrain flight — fast-forward past the launch       */
 };
 
 /* Parse ROF_START once and cache it. Canonical values (case-insensitive):
-   standby | launch | flight. Legacy aliases kept so nothing breaks:
-   attract->standby, tunnel->launch, gameplay/game->flight. The legacy
+   logo | station | standby | launch | flight. Legacy aliases kept so nothing
+   breaks: attract->standby, tunnel->launch, gameplay/game->flight. The legacy
    ROF_AUTOSTART=1 toggle still works as an alias for flight.
-   - standby (default) : no input injected; stays on the Standby screen
-                         (cockpit "STAND BY" + RESCUE ON FRACTALUS title).
+   - logo    : the whole faithful boot chain — Lucasfilm logo, then the station
+               cinematic, then Standby (~9 s before Standby appears).
+   - station : skip the logo; play the station cinematic, then Standby.
+   - standby (default) : skip both boot scenes; no input injected; stays on the
+                         Standby screen (cockpit "STAND BY" + title).
    - launch  : auto-presses START and runs at normal speed, so the ~30s
                Launch sequence (Doors -> Tunnel -> Planet) plays out visibly.
    - flight  : auto-presses START and FAST-FORWARDS (unthrottled) through the
                Launch sequence, dropping straight into terrain Flight (~1s).
-   (See docs/amiga-attract-plan.md "CRITICAL REVISION" for the 7-scene vocab:
-    Logo, Station, Standby, Doors, Tunnel, Planet, Flight.)                   */
+   (docs/logo-station-plan.md covers the two boot scenes; CLAUDE.md has the
+    7-scene vocab: Logo, Station, Standby, Doors, Tunnel, Planet, Flight.)         */
 static RofStage rofStartStage() {
     static int cached = -1;
     if (cached < 0) {
         cached = ROF_STAGE_STANDBY;
         const char* s = getenv("ROF_START");
         if (s && *s) {
-            if      (!strcasecmp(s, "standby") ||
+            if      (!strcasecmp(s, "logo"))     cached = ROF_STAGE_LOGO;
+            else if (!strcasecmp(s, "station"))  cached = ROF_STAGE_STATION;
+            else if (!strcasecmp(s, "standby") ||
                      !strcasecmp(s, "attract"))  cached = ROF_STAGE_STANDBY;
             else if (!strcasecmp(s, "launch")  ||
                      !strcasecmp(s, "tunnel"))   cached = ROF_STAGE_LAUNCH;
             else if (!strcasecmp(s, "flight")   ||
                      !strcasecmp(s, "gameplay") ||
                      !strcasecmp(s, "game"))      cached = ROF_STAGE_FLIGHT;
-            else fprintf(stderr, "[rof] ROF_START='%s' unrecognised; using "
-                         "standby (valid: standby, launch, flight)\n", s);
+            else fprintf(stderr, "[rof] ROF_START='%s' unrecognised; using standby "
+                         "(valid: logo, station, standby, launch, flight)\n", s);
         } else if (getenv("ROF_AUTOSTART")) {
             cached = ROF_STAGE_FLIGHT;   /* legacy alias */
         }
-        const char* names[] = { "standby", "launch", "flight" };
+        const char* names[] = { "logo", "station", "standby", "launch", "flight" };
         fprintf(stderr, "[rof] launch stage: %s\n", names[cached]);
     }
     return (RofStage)cached;
@@ -192,6 +204,14 @@ void PlatformSDL::run() {
        can fire the right handler when the game installs it. */
     rof_register_vbi_handlers();
 
+    /* ROF_START=logo|station: replay the genuine staged INITAD boot chain (rof_boot.c),
+       which reloads the XEX one stage at a time so the Logo and Station see the memory
+       they were written for, and plays them.  Every other stage (standby, the default,
+       and launch/flight) keeps the one-shot full image loadImage() already placed and
+       drops straight into game_entry, byte-for-byte as before. */
+    if (rofStartStage() <= ROF_STAGE_STATION)
+        rof_boot_chain(rofStartStage() == ROF_STAGE_LOGO ? ROF_BOOT_LOGO : ROF_BOOT_STATION);
+
     /* Run the game — loops forever (or until ESC / window close). */
     game_entry();
 }
@@ -214,9 +234,29 @@ static void sdl_mem_write(uint16_t s, const uint8_t* src, uint32_t cnt) {
     for (uint32_t k = 0; k < cnt; k++) mem[(uint16_t)(s + k)] = src[k];
 }
 
-int PlatformSDL::loadImage(const char* path) {
-    memset((uint8_t*)mem, 0, 65536);
+/* The loaded image + OS ROM, kept for the STAGED boot walk (rof_boot.c) — which redoes
+   the load one INITAD stage at a time so the Logo and Station see the memory they were
+   written for (see xex_load.h xex_parse_stage).  File-static rather than local to
+   loadImage() for exactly that reason. */
+static uint8_t  s_xex[65536];
+static uint32_t s_xexLen = 0;
+static uint8_t  s_rom[0x3800];
+static uint32_t s_romLen = 0;
 
+/* rof_load_stage_reset(): power-on RAM — zero mem[], then overlay the OS ROM.  Mirrors
+   the Amiga XexImage.cpp pair of the same names; rof_boot.c calls both. */
+extern "C" void rof_load_stage_reset(void) {
+    memset((uint8_t*)mem, 0, 65536);
+    if (s_romLen) xex_overlay_osrom(s_rom, s_romLen, sdl_mem_write);
+}
+
+/* rof_load_stage(): place the next stage's segments (up to and including the one that
+   sets INITAD) and return the offset to resume from; == len when the file is placed. */
+extern "C" uint32_t rof_load_stage(uint32_t from) {
+    return xex_parse_stage(s_xex, s_xexLen, from, sdl_mem_write);
+}
+
+int PlatformSDL::loadImage(const char* path) {
     /* Pristine boot: load the genuine Atari segmented load file (.xex) the SAME way
        the Amiga does (XexImage.cpp load_xex_image) — zero RAM, place each XEX segment
        at its load address, then overlay the Atari OS ROM — so the SDL build runs the
@@ -224,14 +264,10 @@ int PlatformSDL::loadImage(const char* path) {
        RAM-snapshot boot was retired; SDL now boots only .xex, like the Amiga.) */
     FILE* f = fopen(path, "rb");
     if (!f) { fprintf(stderr, "cannot open %s\n", path); return -1; }
-    static uint8_t xex[65536];
-    size_t len = fread(xex, 1, sizeof(xex), f);
+    s_xexLen = (uint32_t)fread(s_xex, 1, sizeof(s_xex), f);
     fclose(f);
 
-    /* Place each XEX segment via the shared format walk (see xex_load.h). */
-    xex_parse(xex, (uint32_t)len, sdl_mem_write);
-
-    /* Overlay the Atari OS ROM (same asset + layout as the Amiga, applied by the
+    /* Read the Atari OS ROM (same asset + layout as the Amiga, applied by the
        shared xex_overlay_osrom: [0..$1000)->$C000, [$1000..$3800)->$D800; the
        $D000-$D7FF hardware range is skipped so hwRead/hwWrite stay authoritative). */
     const char* romPaths[] = { "amiga/assets/atari_osrom.bin", "assets/atari_osrom.bin" };
@@ -239,15 +275,21 @@ int PlatformSDL::loadImage(const char* path) {
     for (size_t p = 0; p < sizeof(romPaths)/sizeof(romPaths[0]) && !r; p++)
         r = fopen(romPaths[p], "rb");
     if (r) {
-        static uint8_t rom[0x3800];
-        size_t rn = fread(rom, 1, sizeof(rom), r);
+        s_romLen = (uint32_t)fread(s_rom, 1, sizeof(s_rom), r);
         fclose(r);
-        xex_overlay_osrom(rom, (uint32_t)rn, sdl_mem_write);
-        printf("[rof] loaded pristine XEX %s + OS ROM (%zu bytes)\n", path, rn);
     } else {
+        s_romLen = 0;
         fprintf(stderr, "[rof] WARNING: atari_osrom.bin not found; $E000 charset (LEVEL text) will be blank\n");
-        printf("[rof] loaded pristine XEX %s (no OS ROM)\n", path);
     }
+
+    /* Zero RAM + OS ROM, then place every segment (the one-shot full load).  ROF_START=
+       logo|station redoes this in stages from run(); every other stage runs on this image,
+       byte-for-byte as before. */
+    rof_load_stage_reset();
+    xex_parse(s_xex, s_xexLen, sdl_mem_write);
+    if (s_romLen) xex_overlay_osrom(s_rom, s_romLen, sdl_mem_write);
+    printf("[rof] loaded pristine XEX %s (%u bytes) + OS ROM (%u bytes)\n",
+           path, (unsigned)s_xexLen, (unsigned)s_romLen);
 
     /* Sync cached registers from OS shadow values in the loaded image (0 on a
        pristine XEX — game_entry sets them as it runs, re-read per frame). */
@@ -466,17 +508,29 @@ void PlatformSDL::tickVBI() {
        attract-mode EOR/AND in vbi_handler_1), and writes the result to
        the hardware registers via bus_write → hwWrite → colHW[].
        Doing this AFTER the handler (in renderAtariDisplay) would clobber
-       exactly those transforms and cause the 50 Hz blue/black flash.     */
-    colHW[0] = mem[0x02C0];  /* COLPM0 */
-    colHW[1] = mem[0x02C1];  /* COLPM1 */
-    colHW[2] = mem[0x02C2];  /* COLPM2 */
-    colHW[3] = mem[0x02C3];  /* COLPM3 */
-    colHW[4] = mem[0x02C4];  /* COLPF0 */
-    colHW[5] = mem[0x02C5];  /* COLPF1 */
-    colHW[6] = mem[0x02C6];  /* COLPF2 */
-    colHW[7] = mem[0x02C7];  /* COLPF3 */
-    colHW[8] = mem[0x02C8];  /* COLBK  */
-    gprior   = mem[0x026F];  /* GPRIOR shadow → seed PRIOR for this frame */
+       exactly those transforms and cause the 50 Hz blue/black flash.
+
+       ...EXCEPT during the two boot scenes.  This re-seed stands in for the Atari OS
+       vblank's stage-2 shadow→hardware copy — and the Logo ($51EF) and Station ($1B30)
+       handlers REPLACE the OS vblank wholesale: VVBLKI is called before any OS stage-1/2
+       processing, and both return with an RTI-equivalent rather than chaining onward
+       (which is exactly why each increments RTCLOK itself).  So no shadow copy happens on
+       real hardware there, and both scenes program GTIA directly.  Re-seeding would undo
+       every PRIOR/COLPF/COLPM they write: with GPRIOR forced back to 0 the station's
+       PRIOR=$71 GTIA-mode-9 field was reinterpreted as mono hi-res ANTIC F against an
+       all-zero palette — a completely BLACK screen.                                   */
+    if (!g_bootScene) {
+        colHW[0] = mem[0x02C0];  /* COLPM0 */
+        colHW[1] = mem[0x02C1];  /* COLPM1 */
+        colHW[2] = mem[0x02C2];  /* COLPM2 */
+        colHW[3] = mem[0x02C3];  /* COLPM3 */
+        colHW[4] = mem[0x02C4];  /* COLPF0 */
+        colHW[5] = mem[0x02C5];  /* COLPF1 */
+        colHW[6] = mem[0x02C6];  /* COLPF2 */
+        colHW[7] = mem[0x02C7];  /* COLPF3 */
+        colHW[8] = mem[0x02C8];  /* COLBK  */
+        gprior   = mem[0x026F];  /* GPRIOR shadow → seed PRIOR for this frame */
+    }
 
     /* Do NOT increment RTCLOK here — the game's own VBI handler does it.
        Save/restore CPU registers across the VBI call: on real hardware the
@@ -598,8 +652,11 @@ uint8_t PlatformSDL::readConsol() {
        it flies the tunnel and then transitions into gameplay on its own. The
        window releases START before gameplay so it isn't held down. The upper
        bound is configurable via ROF_AUTOSTART_HI=<ms>. ROF_START=attract (the
-       default) injects nothing and the game stays on the attract screen.      */
-    if (rofStartStage() != ROF_STAGE_STANDBY) {
+       default) injects nothing and the game stays on the attract screen.
+       ORDER-BASED test: only the stages AFTER standby want START injected — the
+       two boot stages (logo/station) must not, or the injected START would exit
+       the station cinematic the moment it appeared.                            */
+    if (rofStartStage() > ROF_STAGE_STANDBY) {
         uint32_t t = SDL_GetTicks();
         uint32_t lo = 800, hi = 1200;
         if (getenv("ROF_AUTOSTART_HI")) hi = (uint32_t)atoi(getenv("ROF_AUTOSTART_HI"));

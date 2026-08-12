@@ -420,10 +420,23 @@ HW_BASE, HW_END = 0xD000, 0xD800   # bus_read/bus_write range
 # these, tight C spin-wait loops starve the platform and VBI never fires.
 # Key: 6502 address of the loop-back label. Value: C statement(s) to inject.
 SPINWAIT_HOOKS = {
+    # L_19CD: station_init's ONE-frame sync before it turns the playfield on — spins on the
+    # same $0080 flag as L_1A18 below, then writes DMACTL/GRACTL/PRIOR/COLPM/HPOS.  Needs the
+    # hook for the same two reasons every other mem[] spin does: mem[] is NOT volatile in the
+    # Amiga C core (ROF_MEM_NONVOLATILE), so with no opaque call in the body GCC is free to
+    # hoist the load and spin forever; and on SDL nothing advances $0080 unless we tick.
+    0x19CD: 'platform_tick_vbi(); platform_render_frame();',
     # L_1A18: station_init attract loop — spins on the $0080 sync flag set by the
     # attract VBI ($1B30).  Drive a frame each iteration so the attract animates and
     # the VBI fires (sets $0080 + RTCLOK); without it the loop is a frozen tight spin.
     0x1A18: 'platform_tick_vbi(); platform_render_frame();',
+    # L_B82A: init_B800's ~32-frame RTCLOK wait before it re-enables DMACTL (the boot INITAD
+    # $B800 display init, reached only via the staged boot chain — src/rof_boot.c).  Same
+    # EXACT-equality hazard as $3CB8 below: one spin iteration drives a render that can span
+    # several real VBIs, so $14 steps OVER the target and the CMP/BNE then waits a full
+    # 256-tick lap.  cpu.A holds the target and is dead after the loop ($B82E writes X), so
+    # clobbering it to force the match is safe; $14 itself is left monotonic.
+    0xB82A: 'if (mem[0x0014] != cpu.A) { if ((uint8_t)(cpu.A - mem[0x0014]) < 0x80u) { platform_tick_vbi(); platform_render_frame(); } else cpu.A = mem[0x0014]; }',
     # VCOUNT position wait (wait_vcount_eq $3C75): spin until ANTIC VCOUNT $D40B == A (an EXACT-
     # equality beam sync before a DL-pointer / VDSLST / hardware-register write).  Safe on the
     # Atari (the 6502 polls VCOUNT thousands of times/frame under a SHORT VBI, so it never skips the

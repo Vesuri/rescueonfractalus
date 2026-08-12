@@ -29,6 +29,7 @@
 #include "framework/Palette.h"
 #include "framework/Sprite.h"
 #include "RescueOnFractalus.h"
+#include "../../rof_boot.h"       // staged INITAD boot chain (Logo / Station) + g_bootScene
 #include "PlatformAmiga.h"
 #include "../../gen/mem.h"           // MEM_<name> named Atari memory offsets
 #include "FlightProf.h"   // per-frame VBI-count profiler (g_flightProf / flight_vbi_tick)
@@ -3934,12 +3935,15 @@ void RescueOnFractalus::run()
     // the OS loader: $5000 (Logo) -> $1A97 (Station cinematic) -> $B800 (display setup)
     // -> $3CDE (game_entry, the final INITAD = the real program entry).
     //
-    // FOUNDATION SCOPE (parts 1+2): our port begins at Standby (the hangar), so we skip
-    // the Logo + Station-cinematic INITADs ($5000/$1A97 — deferred: they need their own
-    // screenmodes + native twins for the heavy transpiled animation) and enter directly
-    // at game_entry ($3CDE).  game_entry's 737-byte mega-init establishes the genuine
-    // game state itself — including calling $70E7 to start the Standby music (setting
-    // $00E7) at the right moment — instead of inheriting it from a hand-crafted snapshot.
+    // Both boot INITADs now RUN (rof_boot_chain, src/rof_boot.c): it redoes the XEX load one
+    // INITAD stage at a time, because rof.xex's later segments overwrite the earlier ones and
+    // neither boot scene's data exists in a fully-loaded image (segment 16 buries the logo
+    // code at $5000 and the station image staged at $4000).  `make SKIPBOOT=1` skips both and
+    // enters straight at game_entry — byte-for-byte the pre-boot-scenes behaviour, which every
+    // wall-clock-calibrated probe in amiga/ depends on (PROBES/FPSCOUNT imply it).
+    // game_entry's 737-byte mega-init then establishes the genuine game state itself —
+    // including calling $70E7 to start the Standby music (setting $00E7) at the right moment —
+    // instead of inheriting it from a hand-crafted snapshot.
     //
     // game_main_loop's flight loop never returns; the user-quit path unwinds the whole
     // transpiled call stack back here via __builtin_longjmp (armed below).  Each frame-
@@ -4018,6 +4022,14 @@ void RescueOnFractalus::run()
         game_main_loop();                                       // $3D48: never returns
     }
 
+#ifndef ROF_SKIP_BOOT_SCENES
+    // The genuine staged INITAD chain: place segments 1..7 -> Logo ($5000), 8..11 -> Station
+    // ($1A97), 12..14 -> display init ($B800), 15..20 -> and return, leaving mem[] exactly as
+    // the Atari's loader leaves it the instant before it calls INITAD $3CDE.  Blocks for the
+    // duration of both scenes; each of their frame waits is a SPINWAIT hook driving one real
+    // Amiga frame, so the display and audio animate throughout.
+    rof_boot_chain(ROF_BOOT_LOGO);
+#endif
     game_entry();     // $3CDE: mega-init -> game_main_loop (Standby -> cinematic -> flight); never returns
 }
 

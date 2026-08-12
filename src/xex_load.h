@@ -44,6 +44,42 @@ static inline void xex_parse(const uint8_t* data, uint32_t len, RofMemWrite writ
     }
 }
 
+/* Walk ONE STAGE of the same file: place segments starting at byte offset `from`
+ * and stop after the segment that writes INITAD ($02E2-$02E3), returning the offset
+ * to resume from.  That is exactly what the Atari OS loader does — it places
+ * segments until one sets INITAD, JSRs through it, then carries on — and it is the
+ * only way the boot scenes can see the memory they were written for: rof.xex's later
+ * segments OVERWRITE the earlier ones (segment 16, $3CDE-$B7FF, buries both the logo
+ * code at $5000 and the station image staged at $4000), so a single full load leaves
+ * NO instant at which either scene's data is in RAM.  See docs/logo-station-plan.md §3.
+ *
+ * rof.xex has four INITAD segments and therefore four stages:
+ *   1..7   -> INITAD $5000  the Lucasfilm logo
+ *   8..11  -> INITAD $1A97  screen page swap + the station cinematic
+ *   12..14 -> INITAD $B800  display init (CHBAS/SDLSTL/colours/DMACTL)
+ *   15..20 -> INITAD $3CDE  game_entry — the real program entry
+ * Returns `len` once the walk is done, so `while (off < len)` terminates.
+ * Pass from = 0 for the first stage (the leading $FFFF magic is skipped here).      */
+static inline uint32_t xex_parse_stage(const uint8_t* data, uint32_t len,
+                                       uint32_t from, RofMemWrite write)
+{
+    uint32_t i = from;
+    if (i == 0 && i + 1 < len && data[i] == 0xFF && data[i + 1] == 0xFF) i += 2;
+    while (i + 4 <= len) {
+        if (data[i] == 0xFF && data[i + 1] == 0xFF) { i += 2; continue; } /* seg marker */
+        uint16_t s = (uint16_t)(data[i] | (data[i + 1] << 8));
+        uint16_t e = (uint16_t)(data[i + 2] | (data[i + 3] << 8));
+        i += 4;
+        uint32_t cnt = (uint32_t)e - (uint32_t)s + 1u;
+        if (cnt > len - i) cnt = len - i;                  /* truncated segment guard */
+        write(s, data + i, cnt);
+        i += cnt;
+        /* INITAD is $02E2-$02E3; a segment covering either byte ends the stage. */
+        if (s <= 0x02E3u && e >= 0x02E2u) return i;
+    }
+    return len;
+}
+
 /* Overlay the Atari OS ROM asset (the platform ROM the game reads — e.g. the
  * $E000 character set the "LEVEL nn" text renderer uses).  Layout in the asset:
  * [0..$1000) -> $C000-$CFFF, [$1000..$3800) -> $D800-$FFFF.  The $D000-$D7FF

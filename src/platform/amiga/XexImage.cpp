@@ -50,9 +50,10 @@ extern "C" uint8_t rof_xex_end[];
 extern "C" uint8_t atari_osrom[];
 extern "C" uint8_t atari_osrom_end[];
 
-// (XEX format + OS-ROM layout documented in xex_load.h.)  The entry point is
-// invoked from C (RescueOnFractalus::run -> game_entry), not honoured here.
-extern "C" void load_xex_image(void)
+// rof_load_stage_reset(): power-on RAM — zero mem[], then overlay the OS ROM.  Shared by
+// the one-shot full load below and by the STAGED boot walk (rof_boot.c), which redoes it
+// so the Logo stage starts from exactly the RAM the Atari's loader starts from.
+extern "C" void rof_load_stage_reset(void)
 {
     // Zero RAM.  mem[] is even-aligned (see RoF.map) so 32-bit writes are legal on the
     // 68000 (only ODD addresses fault) — clear by longs, 4x fewer iterations than the old
@@ -62,9 +63,26 @@ extern "C" void load_xex_image(void)
         volatile uint32_t* m32 = (volatile uint32_t*)mem;
         for (uint32_t i = 0; i < 65536u / 4u; i++) m32[i] = 0u;
     }
+    xex_overlay_osrom(atari_osrom, (uint32_t)(atari_osrom_end - atari_osrom), amiga_mem_write);
+}
 
-    // Place each XEX segment, then overlay the OS ROM — both via the shared walk in
-    // xex_load.h, with amiga_mem_write doing the 68000 block stores.
+// rof_load_stage(): place the next stage's segments (up to and including the one that sets
+// INITAD) and return the offset to resume from; == len when the whole file is placed.
+extern "C" uint32_t rof_load_stage(uint32_t from)
+{
+    return xex_parse_stage(rof_xex, (uint32_t)(rof_xex_end - rof_xex), from, amiga_mem_write);
+}
+
+// (XEX format + OS-ROM layout documented in xex_load.h.)  The entry point is
+// invoked from C (RescueOnFractalus::run -> game_entry), not honoured here.
+//
+// NOTE the ROM overlay comes AFTER the segments here (it did before this split too), so a
+// segment landing in $C000-$CFFF / $D800-$FFFF loses to the ROM.  rof_load_stage_reset does
+// it FIRST because the staged walk has no single "after all segments" moment — no rof.xex
+// segment touches either range (tools/xex_map.py), so the two orders agree.
+extern "C" void load_xex_image(void)
+{
+    rof_load_stage_reset();
     xex_parse(rof_xex, (uint32_t)(rof_xex_end - rof_xex), amiga_mem_write);
     xex_overlay_osrom(atari_osrom, (uint32_t)(atari_osrom_end - atari_osrom), amiga_mem_write);
 }

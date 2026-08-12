@@ -20,6 +20,7 @@
 #include "../../gen/mem.h"                     // MEM_<name> named Atari mem[] offsets
 #include "FlightProf.h"             // per-frame VBI-count profiler (g_flightProf)
 #include "../../gen/rof_native.h"   // typed C cores (clear_terrain_column_core, ...)
+#include "../../rof_boot.h"         // g_bootScene / g_bootLoadBusy (staged INITAD boot chain)
 
 extern "C" volatile uint8_t mem[65536];
 
@@ -1006,6 +1007,10 @@ extern "C" volatile unsigned long g_vbiFlushLines = 0, g_vbiNoiseLines = 0;
 extern "C" void game_vbi_isr(void)
 {
     if (!g_activeVbi) return;                        // scene still initialising — stay inert
+    // ...and inert while the STAGED boot loader (rof_boot.c) is placing a stage's segments:
+    // mem[] is inconsistent then and the VVBLKI in it is stale or zero, which the `else`
+    // fallback below would turn into a whole standby VBI body run over half-loaded RAM.
+    if (g_bootLoadBusy) return;
     // Dispatch on the LIVE VVBLKI vector ($0222/$0223), exactly as the Atari OS VBLANK
     // jumps through it.  The genuine station_init/boot_standby_launch_driver/game_main_loop install
     // $1B30 (attract) / $52D7 (standby+cinematic) / $4FF5 (flight) in turn, so the right

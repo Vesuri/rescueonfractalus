@@ -67,6 +67,8 @@ CXX_SRCS := \
 # for self-modifying routines (rof_manual).  --gc-sections drops the unused funcs.
 CORE_C_SRCS := \
     $(REPO)/src/cpu/cpu.c \
+    $(REPO)/src/rof_boot.c \
+    $(REPO)/src/rof_logo.c \
     $(REPO)/src/gen/rof_gen.c \
     $(REPO)/src/gen/rof_native.c \
     $(REPO)/src/gen/rof_manual.c
@@ -633,7 +635,7 @@ OBJECTS := $(CXX_OBJS) $(CORE_C_OBJS) $(SUPPORT_C_OBJS) $(ASM_OBJS) $(FRAMEWORK_
 # Locate sources for the pattern rules.  (gcc8_c_support.c is deliberately NOT on
 # vpath %.c — it has its own explicit rule so it builds with CCFLAGS, not CORE_CFLAGS.)
 vpath %.cpp $(AMIGA_SRC)/framework $(AMIGA_SRC) $(REPO)/src/platform $(REPO)/src
-vpath %.c   $(REPO)/src/cpu $(REPO)/src/gen
+vpath %.c   $(REPO)/src/cpu $(REPO)/src/gen $(REPO)/src
 vpath %.s   $(AMIGA_SRC)/framework $(AMIGA_SRC)
 
 # ---------------------------------------------------------------------------
@@ -702,6 +704,38 @@ endif
 # Run: . ./env.sh && GDBSCRIPT=fps_seg.gdb ./diag_run.sh 200
 ifdef FPSCOUNT
 EXTRA_DEFINES += -DROF_FPSCOUNT
+endif
+# `make SKIPBOOT=1` — SKIP THE TWO BOOT INITAD SCENES (Logo $5000 + Station $1A97) and enter
+# straight at game_entry ($3CDE), i.e. byte-for-byte the behaviour the port had before those
+# scenes existed.  Not a faithfulness switch — a MEASUREMENT switch.  Every probe/harness in
+# amiga/ is calibrated in wall-clock seconds (`./diag_run.sh [delay]`, `GDBSCRIPT=fps_seg.gdb
+# ./diag_run.sh 400`), and the two scenes add ~4-5 s of Logo plus up to ~4 s of Station scroll
+# before Standby is reached — enough to silently shift every calibrated delay and every
+# docs/flight-perf-log.md comparison, whose first symptom is a mystery perf "regression".
+#
+# So PROBES=1 and FPSCOUNT=1 IMPLY SKIPBOOT (user decision, 2026-08-12).  Pass SKIPBOOT=0
+# explicitly to run a probe build THROUGH the boot scenes (e.g. to instrument them) — and then
+# re-derive the delays, don't compare them to anything.
+# ⚠ This changes a -D flag, which the Makefile does not track: `make clean` when toggling it.
+SKIPBOOT_IMPLIED :=
+ifdef PROBES
+SKIPBOOT_IMPLIED := 1
+endif
+ifdef FPSCOUNT
+SKIPBOOT_IMPLIED := 1
+endif
+SKIPBOOT ?= $(SKIPBOOT_IMPLIED)
+ifneq ($(SKIPBOOT),)
+ifneq ($(SKIPBOOT),0)
+EXTRA_DEFINES += -DROF_SKIP_BOOT_SCENES
+endif
+endif
+# `make LOGO_START=1` — let START (F1) abort the Lucasfilm logo, the way it already exits the
+# Station.  A DELIBERATE DIVERGENCE: the Atari's $5000 logo is an unconditional blocking routine
+# with no exit check, so this is OFF by default and the shipped binary stays faithful (user
+# decision, 2026-08-12: wanted, but behind a flag).
+ifdef LOGO_START
+EXTRA_DEFINES += -DROF_LOGO_START_ABORT
 endif
 # `make PROBES=1 BLIT_SHAPE=1` + amiga/blit_shape.gdb — WHERE the flight frame stalls.
 # The PC profile puts ~4-5% in bW_waitUntilBlitterNotBusy/processBlitterQueue/blitterDrain and
