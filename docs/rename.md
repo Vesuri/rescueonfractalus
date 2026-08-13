@@ -157,3 +157,26 @@ mislead the other callers. Listed so they aren't re-flagged as "unnamed → need
 The `$0080-$008D` display/VBI/terrain ZP cells are additionally reused by the alien-creature
 composer (documented in `docs/alien-jumpscare.md` + the twin comments); they keep their
 primary-use names — the composer reuse is inherent 6502 ZP sharing, not a misnomer.
+
+## Station cinematic (scene 2) ZP roles — recorded 2026-08-13 while making `$1E79`/`$1C40` native
+
+Every one of these cells has a name from a *different* subsystem, and in the attract scene it means
+something else entirely. Verified against `disasm/listing.txt` `$1910-$1F2F` (not guessed). None is
+worth renaming on its own — like `$0086` they are genuinely polysemous 6502 ZP scratch — but a
+reader of the station routines needs the mapping, and a future batch rename must not pick a
+station-specific name for any of them.
+
+| cell | current name | its STATION role |
+|---|---|---|
+| `$0089` | `terrain_state` | the animation's phase INDEX into the hold table `$1DE2` |
+| `$008A` | `terrain_scroll_counter` | the per-phase hold TIMER (counts down to the next scroll step) |
+| `$008B` | `dl_src_index` | the animation's phase COUNTER, 0..`$94` — also the render-side gate for the star re-decode |
+| `$008C` | `terrain_scroll_reload` | `station_audio`'s melody step index, and `== 6` is `station_missile_drift`'s reseed trigger |
+| `$008D` | `step_mode_flag` | the missile drift's `+2`/frame accumulator |
+| `$008E`/`$008F` | (unnamed) / `sfx_toggle_8F` | the missiles' second, 16-bit `+$CB`/frame drift accumulator |
+| `$0090`/`$0091` | `sfx_reinit_gate` / `altitude_threshold` | **two different station uses:** `station_star_fade_in`'s 16-bit walk pointer over `$2CB8-$3168`, and `station_sub_1E2A`'s P0 shape SOURCE pointer (with `$0092`/`$0093` the P1 one) |
+| `$0094`/`$0095` | (unnamed) | the spacecraft shape's destination scanline, and its row count |
+| `$0096`/`$0097` | `span_row_count` / `blit_row_counter` | `pmg_colors_station`'s 7-frame divider and its 8-entry table index |
+| `$0098` | `dl_bottom_index` | the spacecraft animation's frame counter (stops at `$B4`) |
+| `$009A`/`$009B` | `grid_offset_a` / `grid_offset_b` | the spacecraft's shape index (clamped to `$0C`) and its per-shape hold count |
+| `$009C` | `draw_x_left` | the shape animation's ENABLE gate — `station_audio` sets it to 2 in RTCLOK phase 2, `station_pm_shape_tick` clears it when the animation ends |

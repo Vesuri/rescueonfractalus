@@ -13,6 +13,7 @@
 | 5b. Logo→Station handover | ✅ **DONE** — the entry now blanks before rebuilding the shared list/bitmap (§1.6) |
 | 6. Cleanup + docs | ✅ **DONE** — the dead `station_*_native` block is deleted (§2.5 defect 2); the §4 renames were already in |
 | 6b. Station PMG placement + spacecraft colour | ✅ **DONE** — three real bugs, all §2.4a |
+| 6c. **Star fade-in speed** | ✅ **DONE 2026-08-13** — 162 vblanks → **29**, fade steps now 1 vblank each like the Atari (§7) |
 
 Deviations from the plan as written, all deliberate:
 * **One `Gtia9CopperList` serves BOTH scenes** instead of separate Station/Logo lists — they are
@@ -756,3 +757,68 @@ Things to watch, in the order they will bite:
 
 One sub-question deliberately left for the implementing session: whether `PROBES=1`/`FPSCOUNT=1`
 should imply `SKIPBOOT=1` (§3.1). Recommend yes.
+
+---
+
+## 7. Star fade-in speed — the 10× slowdown, measured and fixed (2026-08-13)
+
+**Report:** "the stars fade in way slower than on the Atari", with the suspicion that the port was
+re-decoding the whole GTIA-9 screen every frame.
+
+**Measured first, with `amiga/star_fade.gdb`** (breaks `station_star_fade_in` / `station_audio` /
+the decode entry points and stamps `g_vbiCount` at each; needs a plain `make` build, because
+`PROBES=1`/`FPSCOUNT=1` imply `SKIPBOOT` and skip the scene):
+
+| | vblanks for the whole fade | per brightening step |
+|---|---|---|
+| Atari (`$1E79`: 14 passes, `JSR $3CC3` between) | **15** | 1 |
+| Amiga, before | **162** (3.24 s) | ~10.5 |
+| after the two native twins | 53 | ~2.4 |
+| after narrowing the per-frame decode | 35 | **1** |
+| after narrowing the one-off field decode | **29** (580 ms) | **1** |
+
+**It was not the decode.** Per frame the port re-decoded only the ~17 star ROWS (680 source bytes,
+~12 ms) — about one vblank of the eleven. The other ~8 were the **transliterated `$1E79` itself**:
+sampling its ZP walk pointer `$90/$91` once per vblank showed it advancing **~135 bytes per
+vblank** through its 1200-byte pass, i.e. **~1000 68000 cycles per emulated byte** (every 6502 op
+stores one to three `cpu` flag bytes through `abs.l` moves, and `LDA ($90),Y` re-derives its
+address out of `mem[]` every iteration — ~75 cycles per emulated instruction, a useful rule of
+thumb for any other bulk-memory 6502 routine).
+
+**What shipped, in the order the numbers demanded:**
+1. **`station_star_fade_in` ($1E79) and `display_list_build` ($1C40) as native twins**
+   (`VALIDATE_FUNCS` → `rof_native.c`), 20000 cases each, **0 mem mismatch and 0 cpu diffs**.
+   The two 6502 quirks the fade twin must keep: `AND #$F0 / ADC #$10` DISCARDS the low nibble, and
+   the walk pointer is re-seeded *before* the pass counter is tested (so `$90/$91` read `$2CB8`,
+   not `$3168`, at the return). `display_list_build` must also read RANDOM exactly as often as the
+   6502 does — it is a read-clocked LFSR.
+2. **The per-frame star decode narrowed from 40 bytes a row to the bytes that can change** (17
+   against 680). Sound because `display_list_build` gives each star row exactly ONE non-zero byte
+   and the fade can only ever clear a byte, never light a new one — so the non-zero span recorded
+   at entry is a superset of everything the fade will touch. Offsets are pre-baked, so the
+   per-frame path has no multiply and no display-list read. **This is what made a step fit in one
+   vblank.**
+3. **The one-off 340-row field decode: a two-slot source cache.** `display_list_build` points every
+   non-star sky row at the SAME blank row `$2C90`, so 218 of the 340 entries decode to identical
+   bytes; they become a 40-longword copy. Two slots, not one, because the star rows are interleaved
+   among the blanks and would otherwise evict the blank row every time.
+
+**What was deliberately NOT converted, on measurement:** the scene's per-frame routines
+(`station_audio` → `station_missile_drift` / `station_pm_shape_tick` / `station_sub_1E2A`,
+`pmg_colors_station`) and the `station_init` spin-wait apex. The attract loop already runs **one
+iteration per vblank — the Atari's own rate — in every RTCLOK phase**, including the late phases
+that drive the spacecraft shape animation, so a twin buys nothing. Their misleading ZP names are
+recorded in `docs/rename.md` instead. ⚠ And their POKEY/HPOS/COLPM `bus_write`s are **not** dead on
+the Amiga: `bus.h` shadows `$D000-$D007` and the PMG mirror reads those back (see its comment).
+
+**The residual 29 vs 15 is entirely the one-off scene entry**, which lands inside the fade's FIRST
+step: `renderBootScene` needs two frames to enter (blank the shared list, then rebuild) and
+`station_init`'s `$19CD` sync spin only runs one, so the ~10-vblank field build happens with the
+fade already counting. Everything after it is frame-exact. Shaving it further means a cheaper
+`gtia9Row` (a word-at-a-time variant is worth maybe 20%) or restructuring the two-frame entry —
+which would trade a real invariant (blank before rebuilding a SHARED copper list, 792f638) for
+moving the same total time earlier. Left alone deliberately.
+
+⚠ **Verify the BITMAP, not `mem[]`.** The narrowing's risk is writing the wrong place in the field,
+which a `mem[]` check cannot see (that is the vacuous-probe trap). `star_fade.gdb` therefore reads
+the four plane bytes at each recorded star offset and asserts pen 15: **17/17, bad=0**.
