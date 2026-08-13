@@ -827,7 +827,7 @@ static uint8_t kGtia9P[4][256];
 static const uint16_t kStationDL      = 0xB800u;
 static const uint16_t kStationDLRows  = 340u;
 static const uint16_t kStationImg     = 0x0600u;   // the 122-row image, stride 40
-static const uint16_t kStationImgEnd  = (uint16_t)(kStationImg + 122u * 40u);   // $1930
+static const uint16_t kStationImgEnd  = (uint16_t)(kStationImg + 122u * 40u);   // $1910
 // The star rows station_star_fade_in ($1E79) brightens: it seeds its pointer $90/$91 = $2CB8 and
 // walks byte by byte until it reaches $3168 (its `CMP #$68` / `CMP #$31` exit).
 static const uint16_t kStationStarLo  = 0x2CB8u;
@@ -5447,39 +5447,73 @@ void RescueOnFractalus::decodeLogoField()
 
 // decodeStationField(): decode ALL 340 display-list rows once, and note which of them are STAR
 // rows (their LMS points into the range station_star_fade_in walks) so the fade-in's per-frame
-// re-decode touches nothing else.  ~14k source bytes ≈ 70 ms — a one-off, and it runs during
-// station_init's own one-frame sync spin ($19CD) with the screen still black.
+// re-decode touches nothing else.  A one-off, but a big one: it is the whole 54 KB field, and it
+// lands inside the star fade's FIRST step (station_init's $19CD sync spin only runs one frame and
+// renderBootScene's entry needs two: blank the shared list, then rebuild), so its cost is a stall
+// before the first brightening step.
+//
+// Most of the display list does not need decoding at all: display_list_build points every
+// non-star sky row at the SAME blank row $2C90, so 218 of the 340 entries share one source and
+// decode to identical bytes.  A two-slot cache of the most recent distinct sources turns those
+// into a 40-longword copy — the two slots (rather than one) because the star rows are interleaved
+// among the blanks, and with a single slot every star would evict the blank row and force a
+// re-decode.  Only the 122 picture rows and ~30 star rows are really decoded.
+//
 // Both the display-list cursor (+3 per entry) and the destination row (+160) are walked.
 void RescueOnFractalus::decodeStationField()
 {
     if (!bootFieldBitmap) return;
     stationStarRows = 0;
     const volatile uint8_t* e = mem + kStationDL;              // display-list cursor
-    uint8_t*              dst = (uint8_t*)bootFieldBitmap->data;
+    uint8_t* const       base = (uint8_t*)bootFieldBitmap->data;
+    uint8_t*              dst = base;
+    uint16_t       cacheLms[2] = { 0xFFFFu, 0xFFFFu };         // recent sources, newest first
+    const uint8_t* cacheDst[2] = { 0, 0 };                     // where each was decoded to
     for (unsigned r = 0; r < kStationDLRows; r++, e += 3, dst += 160) {
         if (e[0] != 0x4Fu) break;      // not an LMS mode-F entry: the JVB, or not built yet
         const uint16_t lms = (uint16_t)(e[1] | (e[2] << 8));
-        gtia9Row(dst, mem + lms, 40);
-        if (lms >= kStationStarLo && lms < kStationStarHi && stationStarRows < 40)
-            stationStarRow[stationStarRows++] = (unsigned short)r;
+        const uint8_t* hit = (lms == cacheLms[0]) ? cacheDst[0]
+                           : (lms == cacheLms[1]) ? cacheDst[1] : 0;
+        if (hit) {                                             // same source: copy the row
+            const uint32_t* s = (const uint32_t*)hit;          // 160 B = one interleaved row,
+            uint32_t*       d = (uint32_t*)dst;                // 4-aligned (chip alloc + 160)
+            for (int i = 0; i < 40; i++) *d++ = *s++;
+        } else {
+            gtia9Row(dst, mem + lms, 40);
+            cacheLms[1] = cacheLms[0]; cacheDst[1] = cacheDst[0];
+            cacheLms[0] = lms;         cacheDst[0] = dst;
+        }
+        if (lms >= kStationStarLo && lms < kStationStarHi && stationStarRows < 40) {
+            // A star row: note the span of bytes the fade can still change — see the header.
+            // Normally one byte; if the row is somehow blank here (the fade re-decode would then
+            // have nothing to do) fall back to the whole row rather than silently freezing it.
+            unsigned lo = 0, hi = 0, seen = 0;
+            for (unsigned c = 0; c < 40; c++)
+                if (mem[lms + c] != 0) { if (!seen) { lo = c; seen = 1; } hi = c; }
+            if (!seen) { lo = 0; hi = 39; }
+            stationStarSrc[stationStarRows] = (unsigned short)(lms + lo);
+            // dst already walks the row, so the destination offset needs no multiply (which at
+            // this width would be a 32-bit one the 68000 does not have).
+            stationStarDst[stationStarRows] = (unsigned short)((dst - base) + lo);
+            stationStarLen[stationStarRows] = (unsigned char)(hi - lo + 1);
+            stationStarRows++;
+        }
     }
     g_stationDirtyCount = 0; g_stationDirtyFull = 0;   // the full decode captured everything
 }
 
-// decodeStationStars(): re-decode just the star rows.  station_star_fade_in brightens every
-// non-zero nibble in $2CB8-$3167 once per frame for 14 frames, so those ~30 rows are the only
-// thing moving before the scroll starts.  ~1200 bytes ≈ 6 ms, for 14 frames only.
-// These rows are SCATTERED through the display list (1-in-8 by RANDOM), so each one does need
-// its own row offset — via rof_mulu16 (mulu.w), never a 32-bit multiply the 68000 lacks.
+// decodeStationStars(): re-decode the star PIXELS.  station_star_fade_in brightens every non-zero
+// nibble in $2CB8-$3167 once per frame for 14 frames, so they are the only thing moving before the
+// scroll starts — and one byte per row is all that can move (the header explains why the span
+// recorded at entry is exact).  ~17 source bytes a frame, against 680 for the whole rows: it is
+// what lets a fade step fit in ONE vblank, which is the Atari's rate.  Both offsets are pre-baked,
+// so there is no multiply and no display-list read left in here.
 void RescueOnFractalus::decodeStationStars()
 {
     if (!bootFieldBitmap) return;
     uint8_t* const base = (uint8_t*)bootFieldBitmap->data;
-    for (unsigned i = 0; i < stationStarRows; i++) {
-        const uint16_t r = stationStarRow[i];
-        const volatile uint8_t* e = mem + (uint16_t)(kStationDL + rof_mulu16(r, 3));
-        gtia9Row(base + rof_mulu16(r, 160), mem + (uint16_t)(e[1] | (e[2] << 8)), 40);
-    }
+    for (unsigned i = 0; i < stationStarRows; i++)
+        gtia9Row(base + stationStarDst[i], mem + stationStarSrc[i], stationStarLen[i]);
 }
 
 // decodeStationDirty(): consume the rectangles station_sub_1EB4 / station_chan_step recorded

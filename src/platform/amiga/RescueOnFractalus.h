@@ -411,11 +411,22 @@ private:
     void decodeStationField();                     // all 340 display-list rows (once, at entry)
     void decodeStationDirty();                     // consume the recorded dirty rectangles
     void decodeStationStars();                     // re-decode the star rows (during the fade-in)
-    // Which bitmap rows are STAR rows — i.e. whose display-list LMS lands in the range
-    // station_star_fade_in walks ($2CB8..$3168; it seeds $90/$91 = $2CB8 and stops at $3168).
-    // Collected during decodeStationField so the fade-in re-decode touches nothing else.
-    // display_list_build caps them at 30 (encounter_count = $1E); sized with headroom.
-    unsigned short stationStarRow[40] = {};
+    // The STAR rows — those whose display-list LMS lands in the range station_star_fade_in walks
+    // ($2CB8..$3168; it seeds $90/$91 = $2CB8 and stops at $3168).  Collected during
+    // decodeStationField so the fade-in re-decode touches nothing else.  display_list_build caps
+    // them at 30 (encounter_count = $1E); sized with headroom.
+    //
+    // Only the BYTES THAT CAN CHANGE are recorded, not whole rows: display_list_build gives each
+    // star row exactly one non-zero byte (one pixel, at a random column), and the fade can only
+    // ever clear a byte, never light a new one — `v & $F0 ? (v & $F0) + $10 : v + 1` leaves a zero
+    // byte zero.  So the non-zero set at scene entry is a superset of every byte the fade will
+    // touch, and re-decoding just that span is exact.  That is 17 source bytes a frame instead of
+    // 680 (~12 ms), which is what kept each fade step from fitting in one vblank.
+    // Both offsets are pre-baked so the per-frame path has no multiply and no display-list read:
+    // src = LMS + first changeable column, dst = field row * 160 + that column.
+    unsigned short stationStarSrc[40] = {};
+    unsigned short stationStarDst[40] = {};
+    unsigned char  stationStarLen[40] = {};
     unsigned char  stationStarRows = 0;
     unsigned short stationWindowRow = 0xFFFF;      // last row published to the copper
 
