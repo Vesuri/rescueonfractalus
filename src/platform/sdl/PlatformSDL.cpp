@@ -242,12 +242,23 @@ static uint8_t  s_xex[65536];
 static uint32_t s_xexLen = 0;
 static uint8_t  s_rom[0x3800];
 static uint32_t s_romLen = 0;
+/* true = s_rom holds the lean 1 KB charset (place at $E000, what the Amiga ships);
+   false = a full 14 KB OS ROM image (place via the wider two-range overlay). */
+static bool     s_romIsCharset = false;
 
-/* rof_load_stage_reset(): power-on RAM — zero mem[], then overlay the OS ROM.  Mirrors
-   the Amiga XexImage.cpp pair of the same names; rof_boot.c calls both. */
+/* rof_overlay_rom(): place whichever ROM asset was loaded.  One helper so the two call
+   sites (power-on reset + the one-shot full load) cannot drift apart. */
+static void rof_overlay_rom(void) {
+    if (!s_romLen) return;
+    if (s_romIsCharset) xex_overlay_charset(s_rom, s_romLen, sdl_mem_write);
+    else                xex_overlay_osrom(s_rom, s_romLen, sdl_mem_write);
+}
+
+/* rof_load_stage_reset(): power-on RAM — zero mem[], then overlay the charset/OS ROM.
+   Mirrors the Amiga XexImage.cpp pair of the same names; rof_boot.c calls both. */
 extern "C" void rof_load_stage_reset(void) {
     memset((uint8_t*)mem, 0, 65536);
-    if (s_romLen) xex_overlay_osrom(s_rom, s_romLen, sdl_mem_write);
+    rof_overlay_rom();
 }
 
 /* rof_load_stage(): place the next stage's segments (up to and including the one that
@@ -267,11 +278,20 @@ int PlatformSDL::loadImage(const char* path) {
     s_xexLen = (uint32_t)fread(s_xex, 1, sizeof(s_xex), f);
     fclose(f);
 
-    /* Read the Atari OS ROM (same asset + layout as the Amiga, applied by the
-       shared xex_overlay_osrom: [0..$1000)->$C000, [$1000..$3800)->$D800; the
-       $D000-$D7FF hardware range is skipped so hwRead/hwWrite stay authoritative). */
-    const char* romPaths[] = { "amiga/assets/atari_osrom.bin", "assets/atari_osrom.bin" };
+    /* Read the Atari charset — the same 1 KB asset the Amiga embeds, placed at $E000 by
+       the shared xex_overlay_charset.  It is the only ROM data the port reads (see
+       xex_load.h).  A full 14 KB atari_osrom.bin is still accepted if one is lying around,
+       via the wider xex_overlay_osrom ([0..$1000)->$C000, [$1000..$3800)->$D800, skipping
+       the $D000-$D7FF hardware range so hwRead/hwWrite stay authoritative): it places the
+       ranges the charset-only asset cannot, which keeps it usable as a divergence detector
+       if a build is ever suspected of reading ROM outside the charset.  Charset first, so
+       the lean asset is what a normal dev tree exercises — matching the Amiga. */
+    const char* csPaths[]  = { "amiga/assets/atari_charset.bin", "assets/atari_charset.bin" };
+    const char* romPaths[] = { "amiga/assets/atari_osrom.bin",   "assets/atari_osrom.bin"   };
     FILE* r = 0;
+    for (size_t p = 0; p < sizeof(csPaths)/sizeof(csPaths[0]) && !r; p++)
+        r = fopen(csPaths[p], "rb");
+    s_romIsCharset = (r != 0);
     for (size_t p = 0; p < sizeof(romPaths)/sizeof(romPaths[0]) && !r; p++)
         r = fopen(romPaths[p], "rb");
     if (r) {
@@ -279,7 +299,8 @@ int PlatformSDL::loadImage(const char* path) {
         fclose(r);
     } else {
         s_romLen = 0;
-        fprintf(stderr, "[rof] WARNING: atari_osrom.bin not found; $E000 charset (LEVEL text) will be blank\n");
+        fprintf(stderr, "[rof] WARNING: neither atari_charset.bin nor atari_osrom.bin found; "
+                        "$E000 charset (LEVEL text) will be blank\n");
     }
 
     /* Zero RAM + OS ROM, then place every segment (the one-shot full load).  ROF_START=
@@ -287,9 +308,10 @@ int PlatformSDL::loadImage(const char* path) {
        byte-for-byte as before. */
     rof_load_stage_reset();
     xex_parse(s_xex, s_xexLen, sdl_mem_write);
-    if (s_romLen) xex_overlay_osrom(s_rom, s_romLen, sdl_mem_write);
-    printf("[rof] loaded pristine XEX %s (%u bytes) + OS ROM (%u bytes)\n",
-           path, (unsigned)s_xexLen, (unsigned)s_romLen);
+    rof_overlay_rom();
+    printf("[rof] loaded pristine XEX %s (%u bytes) + %s (%u bytes)\n",
+           path, (unsigned)s_xexLen,
+           s_romIsCharset ? "charset @ $E000" : "full OS ROM", (unsigned)s_romLen);
 
     /* Sync cached registers from OS shadow values in the loaded image (0 on a
        pristine XEX — game_entry sets them as it runs, re-read per frame). */

@@ -80,11 +80,33 @@ static inline uint32_t xex_parse_stage(const uint8_t* data, uint32_t len,
     return len;
 }
 
-/* Overlay the Atari OS ROM asset (the platform ROM the game reads — e.g. the
- * $E000 character set the "LEVEL nn" text renderer uses).  Layout in the asset:
- * [0..$1000) -> $C000-$CFFF, [$1000..$3800) -> $D800-$FFFF.  The $D000-$D7FF
- * hardware range is intentionally skipped, so it never overwrites mem[$D01F] (the
- * keyboard-maintained CONSOL) or other HW shadows.  `romlen` bounds short assets. */
+/* Overlay JUST the Atari internal character set at $E000-$E3FF (1 KB, 128 glyphs x 8
+ * rows).  This is the ONLY thing the port ever reads out of the Atari OS ROM, so it is
+ * what the Amiga build ships instead of the whole 14 KB ROM.  Two readers, both of which
+ * build the pointer $0084/$0085 and blit through it via blit_glyph_8rows:
+ *   glyph_ptr_from_index $6773  $E000 + (code<<3), codes from the $6E23 table ("LEVEL",
+ *                               "DROID") -> $E120-$E1B7
+ *   set_coord_y_e0       $6805  $0084 = X+$80, $0085 = $E0            -> $E080-$E106
+ * Neither can leave this page: the pointer is built with three ASLs and a SINGLE ROL to
+ * capture the last carry, so the high byte is $E0 or $E1 and never $E2+ — $E000-$E1FF
+ * bounds every reachable glyph, and one 1 KB page is a strict superset of that.
+ * The rest of the ROM is not needed at all: the only two non-charset ROM references in the
+ * whole binary are JSR $E45C (SETVBV) and JMP $E462 (XITVBV), which are OS *calls*, and the
+ * port implements both as no-op stubs (os_setvbv / os_xitvbv in rof_gen.c) because VBI
+ * dispatch belongs to the platform layer.  `len` bounds short assets. */
+static inline void xex_overlay_charset(const uint8_t* cs, uint32_t len, RofMemWrite write)
+{
+    if (len > 0x400u) len = 0x400u;
+    write(0xE000u, cs, len);
+}
+
+/* Overlay a WHOLE Atari OS ROM asset instead.  Kept for the SDL dev backend, which will
+ * use a full ROM if one is lying around: it places the ranges the charset-only asset
+ * cannot, so it stays available as a divergence detector if a build is ever suspected of
+ * reading ROM outside the charset (the port would then behave differently under the two
+ * assets).  Layout: [0..$1000) -> $C000-$CFFF, [$1000..$3800) -> $D800-$FFFF.  The
+ * $D000-$D7FF hardware range is intentionally skipped, so it never overwrites mem[$D01F]
+ * (the keyboard-maintained CONSOL) or other HW shadows.  `romlen` bounds short assets. */
 static inline void xex_overlay_osrom(const uint8_t* rom, uint32_t romlen, RofMemWrite write)
 {
     uint32_t n0 = romlen < 0x1000u ? romlen : 0x1000u;

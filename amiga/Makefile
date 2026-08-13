@@ -939,7 +939,7 @@ obj/gcc8_a_support.o : $(SUPPORT)/gcc8_a_support.s
 # incbin.s lives in the unified tree ($(AMIGA_SRC)) but its .incbin paths are resolved
 # relative to this amiga/ build dir (where assets/ and ../rof.xex live) via ASFLAGS
 # -I"$(CURDIR)"; INCBIN_DEPS are likewise listed relative to amiga/.
-INCBIN_DEPS := ../rof.xex assets/atari_osrom.bin
+INCBIN_DEPS := ../rof.xex assets/atari_charset.bin
 obj/incbin.o : $(AMIGA_SRC)/incbin.s $(INCBIN_DEPS)
 	$(info ASM  $<)
 	@$(AS) $(ASFLAGS) -o $@ "$(abspath $(AMIGA_SRC)/incbin.s)"

@@ -44,11 +44,11 @@ static void amiga_mem_write(uint16_t s, const uint8_t* src, uint32_t cnt)
 extern "C" uint8_t rof_xex[];
 extern "C" uint8_t rof_xex_end[];
 
-// The Atari OS ROM (platform ROM), embedded by incbin.s: $C000-$CFFF (4 KB) then
-// $D800-$FFFF (10 KB) — the $D000-$D7FF hardware range is skipped.  Includes the
-// internal character set at $E000 the game's text renderer reads.
-extern "C" uint8_t atari_osrom[];
-extern "C" uint8_t atari_osrom_end[];
+// The Atari internal CHARACTER SET at $E000-$E3FF (1 KB), embedded by incbin.s — the only
+// part of the Atari OS ROM the port ever reads.  It replaced the whole 14 KB ROM: see
+// xex_overlay_charset in xex_load.h for the two readers and why neither can leave the page.
+extern "C" uint8_t atari_charset[];
+extern "C" uint8_t atari_charset_end[];
 
 // rof_load_stage_reset(): power-on RAM — zero mem[], then overlay the OS ROM.  Shared by
 // the one-shot full load below and by the STAGED boot walk (rof_boot.c), which redoes it
@@ -63,7 +63,8 @@ extern "C" void rof_load_stage_reset(void)
         volatile uint32_t* m32 = (volatile uint32_t*)mem;
         for (uint32_t i = 0; i < 65536u / 4u; i++) m32[i] = 0u;
     }
-    xex_overlay_osrom(atari_osrom, (uint32_t)(atari_osrom_end - atari_osrom), amiga_mem_write);
+    xex_overlay_charset(atari_charset, (uint32_t)(atari_charset_end - atari_charset),
+                        amiga_mem_write);
 }
 
 // rof_load_stage(): place the next stage's segments (up to and including the one that sets
@@ -73,16 +74,17 @@ extern "C" uint32_t rof_load_stage(uint32_t from)
     return xex_parse_stage(rof_xex, (uint32_t)(rof_xex_end - rof_xex), from, amiga_mem_write);
 }
 
-// (XEX format + OS-ROM layout documented in xex_load.h.)  The entry point is
+// (XEX format + charset layout documented in xex_load.h.)  The entry point is
 // invoked from C (RescueOnFractalus::run -> game_entry), not honoured here.
 //
-// NOTE the ROM overlay comes AFTER the segments here (it did before this split too), so a
-// segment landing in $C000-$CFFF / $D800-$FFFF loses to the ROM.  rof_load_stage_reset does
+// NOTE the charset overlay comes AFTER the segments here (as the ROM overlay did before it),
+// so a segment landing in $E000-$E3FF would lose to the charset.  rof_load_stage_reset does
 // it FIRST because the staged walk has no single "after all segments" moment — no rof.xex
-// segment touches either range (tools/xex_map.py), so the two orders agree.
+// segment touches that range (tools/xex_map.py), so the two orders agree.
 extern "C" void load_xex_image(void)
 {
     rof_load_stage_reset();
     xex_parse(rof_xex, (uint32_t)(rof_xex_end - rof_xex), amiga_mem_write);
-    xex_overlay_osrom(atari_osrom, (uint32_t)(atari_osrom_end - atari_osrom), amiga_mem_write);
+    xex_overlay_charset(atari_charset, (uint32_t)(atari_charset_end - atari_charset),
+                        amiga_mem_write);
 }
