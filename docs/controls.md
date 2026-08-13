@@ -26,7 +26,7 @@ restart must longjmp from main-loop context (`rof_check_restart`).
 | Atari control | Action | Atari KBCODE | Amiga key (rawkey) | Path |
 |---|---|---|---|---|
 | START | Start the game | — (CONSOL) | **F1 ($50)** | CONSOL $D01F bit0 |
-| BREAK | Restart (score lost, highs kept) → `game_loop_reset` | $80 | **Backspace ($41)** | kbd cmd $519c |
+| BREAK | Restart (score lost, highs kept) → `game_loop_reset` | $80 | **Help ($5F)** | kbd cmd $519c |
 | ESC | Freeze/pause mission (toggle) | $1c | Esc ($45) | kbd cmd |
 | CURSOR RIGHT | Increase Thrust (Y4) | $07 (Ctrl-`*`, masked) | **`=`/`+` ($0C)** | kbd cmd |
 | CURSOR LEFT | Decrease Thrust (Y5) | $06 (Ctrl-`+`, masked) | **`-` ($0B)** | kbd cmd |
@@ -79,7 +79,7 @@ probes; all logic is the faithful transpiled binary):
   genuine boot→flight→boosters→standby path; the standby dispatch is measured by the
   `g_ipDispatch/g_ipInPlace/g_ipDoorScroll/g_ipIntroWrap` `ROF_FLIGHT_PROBE` counters).
 
-## BREAK (Backspace) — restart via `__builtin_setjmp`/`longjmp` (like the quit path)
+## BREAK (Help) — restart via `__builtin_setjmp`/`longjmp` (like the quit path)
 
 `game_loop_reset` restarts through a 6502 RTS stack trick C can't reproduce, and it fires from the
 VBI ISR where longjmp is unsafe.  Instead: the trampoline ($52BE) leaves its observable side-effect

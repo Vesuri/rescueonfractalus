@@ -1616,7 +1616,7 @@ extern "C" void rof_check_restart(void)
 {
     if (AmigaHardware::isLeftMouseButtonPressed()) g_pumpQuit = 1;
     if (g_pumpQuit) __builtin_longjmp(g_quitJmp, 1);
-    // BREAK (Backspace = Atari BREAK $80) OUTSIDE flight: only the flight VBI's $519c CLI window
+    // BREAK (Help = Atari BREAK $80) OUTSIDE flight: only the flight VBI's $519c CLI window
     // consumes s_pendingFlightKey and runs game_loop_reset (the trampoline that leaves VVBLKI=$52B4).
     // In Standby / the doors-tunnel-stars launch cinematic nothing consumes it, so BREAK would do
     // nothing there — yet the Atari processes BREAK from its keyboard IRQ in ANY scene.  Model that
@@ -1892,7 +1892,7 @@ uint8_t PlatformAmiga::flightIrqKey() {
 // opens the separate level-selector card ($53CC); inside it joystick up/down cycles the starting
 // level.  In the POST-mother-ship Standby ($003A==$FF), SELECT cycles the level in place (cockpit
 // door-scroll).  All faithful to the transpiled binary.
-// (BREAK/Restart = Backspace is handled below, not via CONSOL.  SYSTEM RESET is a hardware reset,
+// (BREAK/Restart = Help is handled below, not via CONSOL.  SYSTEM RESET is a hardware reset,
 // not an application key — deliberately not mapped.)
 static const uint16_t kConsol      = 0xD01F;
 static const uint8_t  kConsolIdle  = 0x07;
@@ -1925,7 +1925,7 @@ static const FlightKeyMap kFlightKeys[] = {
     { 0x0C, 0x07 },   // Amiga '='/'+' -> Atari * $07  Increase Thrust
     { 0x0B, 0x06 },   // Amiga '-'   -> Atari +   $06  Decrease Thrust
     { 0x45, 0x1C },   // Amiga 'Esc' -> Atari ESC $1c  Freeze/pause
-    { 0x41, 0x80 },   // Amiga 'Backspace' -> Atari BREAK $80 Restart
+    { 0x5F, 0x80 },   // Amiga 'Help' -> Atari BREAK $80 Restart
 };
 
 // Amiga rawkeys for the held joystick/fire inputs (driven into s_portaState/s_trig0State).
