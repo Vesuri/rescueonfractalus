@@ -12613,6 +12613,158 @@ L_63a7:
     return;
 }
 
+/* ===========================================================================================
+ * STATION CINEMATIC (scene 2) — the two BULK-MEMORY routines.
+ *
+ * The rest of the attract scene stays transliterated on purpose: measured on target with
+ * amiga/star_fade.gdb, its per-frame path (station_audio -> station_missile_drift /
+ * station_pm_shape_tick, pmg_colors_station, and the rof_manual.c animation subs) already runs
+ * one iteration per vblank — the Atari's own rate — so a twin would buy nothing.  These two are
+ * the exceptions, because they move BULK memory through the 6502 emulation: 1200 bytes x 14
+ * passes for the fade, 340 display-list entries plus 122 rows for the build.
+ *
+ * Transliterated, the fade alone took **162 vblanks against the Atari's 15** (~1000 68000
+ * cycles per emulated byte — every 6502 op stores one to three `cpu` flag bytes through abs.l
+ * moves, and `LDA ($90),Y` re-derives its address out of mem[] on every iteration).
+ * =========================================================================================== */
+
+/* station_star_fade_in @ $1E79 — the starfield's fade-in, run once from station_init ($19F4),
+ * before the attract loop starts scrolling the picture in.
+ *
+ * Fourteen passes ONE FRAME APART, each brightening every non-zero GTIA-9 nibble in the star
+ * rows $2CB8-$3167 by one luminance step.  display_list_build seeds up to 30 of those rows with
+ * a single pixel of value 1 ($10 or $01, the pair at $1C3E), so every star climbs 1 -> 15 in
+ * lockstep and ends at $F0/$0F, full brightness.  In GTIA mode 9 the nibble IS the pen, so that
+ * is the entire effect: 14 frames, one luminance step each.
+ *
+ * Two 6502 quirks here are load-bearing, not cleanups:
+ *   - `AND #$F0` then `ADC #$10` DISCARDS the low nibble whenever the high one is non-zero, so a
+ *     byte holding two pixels loses its right-hand one on the first pass.  The real starfield
+ *     never has both nibbles set in one byte (one pixel per row), but the fixture's random mem[]
+ *     does, and byte-identity means reproducing it.
+ *   - the walk pointer is re-seeded BEFORE the pass counter is tested, so the fifteenth and last
+ *     wait has no pass after it — which is why $0090/$0091 read $2CB8, not $3168, at the return.
+ * The transliteration's tail call to station_sub_1EB4 is DEAD code: $1EB2's `BNE $1E8C` is only
+ * ever reached with Z clear (from a CMP that just mismatched), so it always branches back into
+ * the walk and never falls through. */
+void station_star_fade_in(void) {
+    /* $0090/$0091 is this routine's walk pointer; its sfx_reinit_gate / altitude_threshold
+       names belong to other users of those cells (see docs/rename.md).  Held in mem[] at every
+       point the 6502 could be observed from: seeded before each frame wait, and left at the
+       walk's end address after each pass. */
+    uint8_t adcIn = 0, adcOp = 0;   /* the last brightening ADC's operands — see the exit flags */
+    for (int pass = 14; pass >= 0; pass--) {
+        mem[0x0090] = 0xB8;                                    /* 1e7d  pointer = $2CB8 */
+        mem[0x0091] = 0x2C;
+        cpu.A = 0x2C;                       /* 1e81's LDA #$2C — the byte wait_frames_1 PHA's */
+        wait_frames_1();                                       /* 1e85  one frame per step */
+        if (pass == 0) break;               /* 1e88  DEX/BPL: X wraps to $FF after the 15th seed */
+        for (uint16_t a = 0x2CB8; a != 0x3168; a++) {          /* 1e8c  the 1200-byte walk */
+            const uint8_t v = mem[a];
+            if (v == 0) continue;                              /* 1e8e  blank cell */
+            /* The accumulator going into the ADD is the ANDed high nibble, or — down the
+               low-nibble arm, which RELOADS the cell at $1E9A — the whole byte. */
+            adcIn = (uint8_t)((v & 0xF0) ? (v & 0xF0) : v);
+            adcOp = (uint8_t)((v & 0xF0) ? 0x10 : 0x01);
+            mem[a] = (uint8_t)(adcIn + adcOp);                 /* 1e95 / 1e9c  one step brighter */
+        }
+        mem[0x0090] = 0x68;                 /* 1ea6  the walk ends with the pointer at $3168 */
+        mem[0x0091] = 0x31;
+    }
+    /* Exit registers and flags.  All seven are DEAD at the one call site — $19F7 is `LDA #$FF`
+       and the attract loop opens `LDA $13 / CMP #$04` — but matching them keeps the harness's
+       cpu-diff count at 0, so a future REAL divergence is visible instead of buried in noise
+       (the trap in the native-twin-validation-gaps note).
+         A   = $2C, restored by the last wait's closing PLA.
+         X   = $FF and N/Z from the DEX that fell through to the RTS.
+         C   = 1 from the `CMP #$31` that ended pass 14's walk (equal ⇒ carry set).
+         V   = the signed overflow of the LAST brightening ADD, the only V-setting op here. */
+    cpu.X = 0xFF;
+    cpu.N = 1; cpu.Z = 0;
+    cpu.C = 1;
+    cpu.V = (uint8_t)((((uint8_t)~(adcIn ^ adcOp) & (adcIn ^ (uint8_t)(adcIn + adcOp))) >> 7) & 1);
+    cpu.Y = 0;                              /* 1e79  LDY #0, never touched again */
+}
+
+/* display_list_build @ $1C40 — build the attract scene's 340-entry ANTIC display list at $B800
+ * and seed the starfield it shows.  Run once from station_init ($19B9).
+ *
+ * Two runs of mode-F LMS entries (`4F lo hi` = one mode-F row, load this address):
+ *   1. 122 entries walking the station picture at $0600 in 40-byte rows — the image the scroll
+ *      later slides down into view.
+ *   2. 218 entries of sky.  Each points at the SHARED blank row $2C90 unless a RANDOM draw picks
+ *      it as one of up to 30 "encounter" rows (1 in 8, while $0085 lasts), in which case it gets
+ *      a 40-byte row of its own from $2CB8 up, holding ONE pixel: a random column < 40
+ *      (rejection-sampled from RANDOM & $3F) set to $10 or $01 from the pair at $1C3E — value 1,
+ *      the dimmest luminance, which station_star_fade_in then brightens to 15.
+ * Then the 3-byte JVB at $1C3B is copied in after the last entry (display_scroll walks it down
+ * the list to keep the window 192 rows), and the animation state is reset.
+ *
+ * ⚠ RANDOM ($D20A) is a READ-CLOCKED LFSR, so the twin has to read it exactly as often as the
+ * 6502 does and in the same order: one draw per candidate row (skipped entirely once the
+ * encounter budget is spent — C's && short-circuit is doing that job), then the rejection loop
+ * plus one index draw for each row that becomes a star. */
+void display_list_build(void) {
+    uint16_t dl  = 0xB800;                            /* 1c40  $0081/$0082 display-list cursor */
+    uint16_t src = 0x0600;                            /* 1c48  $0083/$0084 the row pointed at */
+
+    for (int row = 0x7A; row != 0; row--) {           /* 1c50  122 picture rows */
+        mem[dl]     = 0x4F;                           /* 1c54  mode F + LMS */
+        mem[dl + 1] = (uint8_t)src;                   /* 1c5b  the LMS address, pre-increment */
+        mem[dl + 2] = (uint8_t)(src >> 8);            /* 1c65 */
+        src += 40;                                    /* 1c5e/1c67  16-bit, via the ADC carry */
+        dl  += 3;                                     /* 1c6b */
+    }
+
+    uint8_t encounters = 0x1E;                        /* 1c79  $0085 — at most 30 star rows */
+    uint8_t x          = 0xDA;                        /* 1c85  LDX #$DA, live in X until a star */
+    src = 0x2CB8;                                     /* 1c7d  the first star row */
+    for (int row = 0xDA; row != 0; row--) {           /* 1c85  218 sky rows */
+        mem[dl] = 0x4F;                               /* 1c8d */
+        if (encounters != 0 && (bus_read(0xD20A) & 0x07) == 0) {   /* 1c8f  1 in 8 */
+            mem[dl + 1] = (uint8_t)src;               /* 1ca8  a row of its own */
+            mem[dl + 2] = (uint8_t)(src >> 8);        /* 1cad */
+            uint8_t col;                              /* 1cb1  reject until the column is < 40 */
+            do { col = (uint8_t)(bus_read(0xD20A) & 0x3F); } while (col >= 0x28);
+            x = (uint8_t)(bus_read(0xD20A) & 0x01);   /* 1cbb  which of the two seed values */
+            mem[src + col] = mem[0x1C3E + x];         /* 1cc1  $10 or $01 = luminance 1 */
+            encounters--;                             /* 1cc6 */
+            src += 40;                                /* 1cc8  next star row */
+        } else {
+            mem[dl + 1] = 0x90;                       /* 1c9b  the shared blank row $2C90 */
+            mem[dl + 2] = 0x2C;                       /* 1ca0 */
+        }
+        dl += 3;                                      /* 1cd3 */
+    }
+
+    for (int y = 2; y >= 0; y--)                      /* 1ce2  the 3-byte JVB, high byte first */
+        mem[dl + y] = mem[0x1C3B + y];
+
+    terrain_state          = 0;   /* 1cec  $0089 — here the animation's phase INDEX */
+    dl_src_index           = 0;   /* 1cf0  $008B — here the animation's phase COUNTER */
+    terrain_scroll_counter = 4;   /* 1cf4  $008A — here the per-phase hold TIMER */
+
+    /* The ZP cursors are part of the mem contract, so publish their exit values once (nothing
+       reads them mid-build: the routine makes no call that can yield, and the station VBI —
+       already installed by $198D — only touches DLISTL/H, COLBK and RTCLOK). */
+    mem[0x0081] = (uint8_t)dl;    mem[0x0082] = (uint8_t)(dl >> 8);
+    mem[0x0083] = (uint8_t)src;   mem[0x0084] = (uint8_t)(src >> 8);
+    mem[0x0085] = encounters;
+    mem[0x0086] = 0;                                  /* 1cde  DEC'd to zero by the row loop */
+
+    /* Exit registers and flags, matched so the harness reports 0 cpu diffs (they are all dead at
+       the one call site — $19BC reloads A immediately — but see station_star_fade_in's note).
+         A/N/Z come from the closing `LDA #$04`, not from the JVB copy's DEY.
+         Y   = $FF, that copy's DEY/BPL exit.
+         X   = the last star's RANDOM & 1, or still $DA if no row became a star.
+         C/V = the carry and overflow of the LAST `ADC #$03` display-list advance, which is
+               $F9 + 3 on the 340th entry ⇒ both clear, whatever the RANDOM draws did. */
+    cpu.A = 4;
+    cpu.X = x;
+    cpu.Y = 0xFF;
+    cpu.N = 0; cpu.Z = 0; cpu.C = 0; cpu.V = 0;
+}
+
 /* game_main_loop @ $3D48 — the second half of the orchestration apex.  game_entry
  * (-> init_game_vars_attract_timer) chains here; it does the one-time game init
  * (display list, sound, PMG, player, cockpit gated on $060B), then loops:

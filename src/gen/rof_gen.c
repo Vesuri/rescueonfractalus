@@ -484,7 +484,8 @@ L_1bda:;
 }
 
 /* display_list_build @ $1C40: Builds attract-mode display list at $B800 (122 LMS entries for 40-byte rows from $0600); uses RANDOM to place up to 30 enemies/pilots randomly on screen rows (1-in-8 chance per row) */
-void display_list_build(void) {
+/* faithful transliteration kept as the validation oracle; native display_list_build() lives in rof_native.c (see VALIDATE_FUNCS) */
+void display_list_build__t6502(void) {
     /* 1c40 */
     LDA(0x00);
     /* 1c42 */
@@ -938,7 +939,8 @@ L_1e70:;
 }
 
 /* station_star_fade_in @ $1E79: Station star fade-in: walks the mode-F star rows $2CB8-$3167 and brightens each non-zero GTIA-9 nibble by one luminance step; 14 passes one frame apart (JSR $3CC3) run once from station_init $19F4; seeds $1C3E/$1C3F=$10/$01 reach $F0/$0F. Touches NO PMG RAM (was pmg_update_station) */
-void station_star_fade_in(void) {
+/* faithful transliteration kept as the validation oracle; native station_star_fade_in() lives in rof_native.c (see VALIDATE_FUNCS) */
+void station_star_fade_in__t6502(void) {
     /* 1e79 */
     LDY(0x00);
     /* 1e7b */

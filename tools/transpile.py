@@ -335,6 +335,13 @@ VALIDATE_FUNCS = {
     0x8105,  # alien_field0_fill — pack 5 bytes ($85)+Y via reorder_cell_bits into $8F-$93 (or INC $0080)
     0x8138,  # alien_field2_fill — copy/pack ($89)+Y into $8F-$9A per $292D flag (or INC $0082)
     0x80C5,  # alien_shape_blit — clear $8F-$9F, fill 4 fields, compose cells via $BE00 + ($8B)/($8D), advance ptrs
+    # --- Station cinematic (scene 2), the BULK-MEMORY routines (2026-08-13).  Measured with
+    #     amiga/star_fade.gdb: transliterated, the star fade-in took 162 vblanks against the
+    #     Atari's 15 (~1000 68000 cycles per emulated byte), because each of its 14 passes walks
+    #     1200 bytes through the 6502 emulation.  The scene's per-frame routines already hold
+    #     50 Hz and stay transliterated; only these two move bulk memory. ---
+    0x1E79,  # station_star_fade_in — 14 passes brightening every non-zero GTIA-9 nibble in $2CB8-$3167
+    0x1C40,  # display_list_build — build the 340-entry attract display list + RANDOM-place the star rows
     # --- NATIVE APEX (2026-06-15): the orchestration apex, hand-written in rof_native.c.
     #     NOT validated by `make validate` (spin-waits on VBI state / live input would hang
     #     the harness) — verified on FS-UAE by behaviour.  Its __t6502 oracle is kept for

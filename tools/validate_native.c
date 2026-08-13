@@ -2821,6 +2821,22 @@ int main(int argc, char **argv) {
         fails += test_mem_contract("clear_colors_sweep_5x", clear_colors_sweep_5x, clear_colors_sweep_5x__t6502);
         platform_test_tick_rtclok(0);
     }
+    /* Station cinematic (scene 2), the two bulk-memory twins.
+       station_star_fade_in is frame-driven (wait_frames_1 x15) -> enable the RTCLOK-advancing
+       tick so both runs' waits terminate.  Random mem[] is exactly the fixture this one wants:
+       it puts BOTH nibbles of many bytes in $2CB8-$3167 non-zero, which is the only way to
+       exercise the `AND #$F0 / ADC #$10` low-nibble discard (the real starfield has one pixel
+       per row).  No stack ignore: the twin sets cpu.A = $2C before each wait, so the byte
+       wait_frames_1 PHA's matches the oracle's.
+       display_list_build needs no tick (it makes no call that waits) but does read RANDOM
+       once to three times per row — diff_run seeds both runs identically, so the star rows and
+       columns it picks match. */
+    {
+        platform_test_tick_rtclok(1);
+        fails += test_mem_contract("station_star_fade_in", station_star_fade_in, station_star_fade_in__t6502);
+        platform_test_tick_rtclok(0);
+        fails += test_mem_contract("display_list_build", display_list_build, display_list_build__t6502);
+    }
     fails += test_animate_clear_colors_timed();
     fails += test_alien_knock_setup_loop();
     fails += test_alien_creature_animate_draw();
