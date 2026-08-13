@@ -5,12 +5,15 @@ measured, and why each candidate closed. This file is deliberately NOT in the ag
 it is the archive you grep when you want the reasoning behind a verdict.
 
 **Live state lives elsewhere:**
-- current numbers, ranked TODO, one-line closed list → the `flight-pc-profiler` memory
+- current numbers + the ranked OPEN todo → the `flight-pc-profiler` memory
 - measurement rules + harness traps → the `flight-measurement-rules` memory
 - asm twin design/phases → `docs/asm-migration-plan.md`
 - scene composition + instrument map → the `flight-scene` memory, CLAUDE.md
 
-Rule of thumb when adding here: a verdict and its number belong in memory; the *story* belongs here.
+Rule of thumb when adding here: an OPEN item's number belongs in memory; the *story*, and
+**everything already shipped or closed**, belongs here. The compact rosters moved out of memory
+into this file on 2026-08-13 (§1.1 shipped, §2.0 closed) — memory now keeps only open work, so
+**this file is the place to check before re-opening anything.**
 
 ---
 
@@ -50,7 +53,175 @@ Rule of thumb when adding here: a verdict and its number belong in memory; the *
 | 2026-08-06 | 611e856, a2f331f | SFX voice-priority mixer: pointer-walked scans, then a hand-asm twin | ISR 95.5 → 89.8 t/firing |
 | 2026-08-06 | 538e811 | **`buildShotSprite`'s 94-byte scan deleted** — `mem[$2865/$2866]` already held it (§4.3) | sprite bracket 28.01 → 5.74 t/firing |
 
+### 1.1 Shipped and SPENT, by area (moved out of memory 2026-08-13)
+
+Each area below has had its pass and has **nothing sized left in it**. Kept as a roster so a future
+session can see at a glance that the ground is already turned over.
+
+- **Rasterizer, four passes** — restructure (c636951, −36%) · span-5..8 fusion (b71a405, −8.0%,
+  `docs/asm-migration-plan.md` §Phase 7) · loop-top jump table + short exits (b0ecce3, −3.1%, §Phase 9)
+  · the two per-column taxes (08ef7c3 + 7604664, −6.8%, §Phase 10). Share 34.5% → 20.0%.
+- **Subdivide** — Phase 8 marshalling (962fd79, −245 cyc/call) · 1-arg object ABI (ea8edc0, −0.85%) ·
+  the exit-residue defer (4cb3e3f, −8 t/it, §17) · helper inlining + the `far.hgt` high-byte split
+  (c2a90e5, −12 t/it) · the object entry's GUARD (ad980d5, −38 cyc/call, §24.3) · the five-byte slot-0
+  SEED (93377bc, −51.5 cyc/call, §24.5-24.6). ⛔ Its old "biggest un-attacked bucket" framing is
+  **retired** (§16.2): the 45%-of-calls skip path is ~742 cyc, ~75% marshalling, and every marshalling
+  block is closed or at the 68000's floor. Three durable lessons came out of it:
+  - **Price a branch WIDENING by its NOT-TAKEN frequency** — `Bcc.w` not-taken is 12 vs `Bcc.s`'s 8,
+    so a trampoline costing 10 on the rare taken path beat widening a branch every iteration pays
+    for (121 cyc/it vs 286). And vasm's "branch destination out of range" is the *normal* feedback
+    for a code-size change under `-no-opt`, not a mistake.
+  - **Hand-asm carries the §23 absolute-addressing tax too** — under OBJ1ARG `depth` is the literal 0
+    so `a1` IS `mem`, yet four guard operands were `abs.l` (16 cyc) where `(d16,a1)` (12) works.
+    Nobody looks for a GCC-shaped tax inside a `.s`.
+  - **An UNSIGNED range compare can subsume a sign test**, and **when a "move it into the callee"
+    candidate targets memory the callee INDEXES rather than memory it READS ONCE, price the STORE,
+    not the load** (that is why the seed's gross 1.2% netted to a wash before it was redesigned).
+- **FRAME, five commits** — PMG run-scans long-strided (3af3d0a) · band cache into the sky-fill shadow
+  (ef8ce68) · lock-on per-cell + digits per-block (b9258cb + 368affe) · band paint RMW (304f7bf) ·
+  change-detect scan (91fa5ec). **375 → 291 t/it.**
+- **The flight VBI, six changes (§20-§21)** — `volatile` off mem[] in the Amiga C core (7b70a84) ·
+  noiseTick's rate + the 68000-cheapest xorshift triple (fd64e3e) · four contiguous 8-bit-indexed runs
+  pointer-walked (9da3ceb) · the compass dirty flag narrowed (b311719) · the instrument that found it
+  all (89bbac5) · then the **noise refill leaving the ISR entirely** for `renderFrame` (866b905) —
+  main-loop work with no beam-timing requirement was paying the 50 Hz rate for a ~22 Hz job.
+  **66.95 → 57.09 t/firing.** ⚠⚠ The old "there is no 5-point win in it" filing was right about every
+  individual item and wrong about the total: five changes, none over 4 t/firing, summed to a sixth.
+- **The object draw-order walk** (5a626b3, §11, then the §23 de-volatiling) — was 4.4% of wall (not
+  the profile's 8.3%), 3.6% after §11, and §23 took another ~12 cyc off a culled pair / ~42 off a
+  visible one. The rest has no cheap route out and **no possible in-process differential** (the loop
+  reads POKEY RANDOM and mutates the bitmap) — price of re-opening = an RNG-replay harness.
+- **The edge plot** (d486234 + 33f0663, §23) — 68 → 56 cyc/column (a `$FFFF` sentinel in
+  `kHeightRowOff[$FF]` replacing the per-column `cmp.b #$FF/beq`; masks into d3-d6), then **the loop
+  deleted entirely** because `(d8,An,Xn)`'s 8-bit displacement reaches all 40 groups from one a2
+  (−720 cyc/call). Only a pairwise (0,1)/(2,3) merge (~0.2%) survives the arithmetic.
+- **The two mem[] codegen taxes, generalised** (7d55281, §23) — `ROF_MEMBASE` in 13 routines
+  (`vbi_handler_flight` 2392→2076 B, `terrain_draw_frame_core` 2202→1980 and −510 more in its two
+  inline sites, `build_player2_sprite_core` 2010→1506) + `ROF_MEM_VIEW` de-volatiling
+  `terrain_draw_objects`' three local mem views. Host proof: `make validate MEMBASE=1 MEMVIEW=1`,
+  0 mismatch. Rules it cost: the `feedback-volatile-codegen-tax` memory §Generalised.
+- **`flight_control_integrate`'s mem[] base fold** (038786d, §Phase 12) — the asm twin's addressing
+  half taken *without* asm: GCC emitted 321 absolute-long `<mem+…>` operands against 19 base-register
+  uses, and laundering the base folded 288 of them. 4678 → 4102 bytes, integ 8.53 → 8.05 t/firing.
+- **`sample_terrain_height_bilerp`'s blend loop** → two nibble tables (20983e0, §9). −1.67% of ALL
+  wall clock. `make BLEND_LOOP=1` restores the loop.
+- **`project_terrain_points`' redundant divisor / dead AND / oversized movem / word branches**
+  (24ee76d, ~140 cyc/call) · **the 2026-08-08 sweep** — sprite builders into blitter shadows +
+  `$82-$86` span copy + the 132-byte `$6B` fill + the pattern-decode jump table (§10, ~2.5% of wall).
+
+### 1.2 The historical ladders (moved out of memory 2026-08-13)
+
+Both tables are **history, not baselines.** The `flight-pc-profiler` memory keeps only the standing
+row and the in-session arm it was A/B'd against; everything older lives here so nobody quotes it.
+⚠⚠ **Never diff two rows of either table across builds** — see §19: each row is "the frame as that
+build happened to fly it", and the flown path is coupled to the render rate.
+
+**Framerate ladder** — `make FPSCOUNT=1` + `GDBSCRIPT=fps_seg.gdb ./diag_run.sh 400`,
+FPS = 50 · `g_fpsFrames` / `g_vbiCount`, ~3000-vbi window, all 15 segments valid, lean harness
+(`FPSCOUNT=1` + `FIXED_RNG=1` only). Arm = `COMBAT=1 COMBAT_QUIET=1 FIXED_RNG=1` unless noted.
+
+| commit | arm / note | FPS | painted / vbi | per-segment |
+|---|---|---|---|---|
+| 93377bc | the slot-0 seed — **standing row, kept in memory** | 24.842 | 1491 / 3001 | 20.1 – 28.2 |
+| ad980d5 | the obj-entry guard — the §24 in-session BASELINE for it | 24.633 | 1478 / 3000 | 20.0 – 28.0 |
+| ad980d5 | same commit, measured one session EARLIER — **0.2% apart** | 24.683 | 1481 / 3000 | 20.1 – 28.1 |
+| 33f0663 | §23's standing row. ⚠ NOT comparable with the rows above | 24.875 | 1492 / 2999 | 22.0 – 28.0 |
+| d486234 | the codegen taxes + the edge sentinel/masks | 24.783 | 1487 / 3000 | 20.0 – 28.0 |
+| f561a93 | the §23 baseline, REBUILT and RE-RUN in that session | 24.091 | 1445 / 2999 | 19.6 – 26.8 |
+| f561a93 | same commit, as recorded the session before — **1.2% higher** | 24.38 | 1463 / 3000 | 19.5 – 27.3 |
+| 866b905 | the noise-refill move | 24.30 | 1458 / 3000 | 19.6 – 27.5 |
+| bbae89e | after the §20 ISR pass | 23.91 | 1435 / 3001 | 19.5 – 26.8 |
+| 86ba855 | the in-session CONTROL for that row, so +7.5% is a real A/B | 22.25 | 1335 / 3000 | 18.1 – 24.5 |
+| eabdeab | one session earlier | 22.49 | 1349 / 2999 | 18.0 – 25.1 |
+| eabdeab | auto-launch +120 frames — the flight-neutral CONTROL | 22.21 | 1332 / 2999 | 17.5 – 24.6 |
+| 304f7bf | the then-standing best case | 22.12 | 1327 / 3000 | 17.7 – 24.6 |
+| 91fa5ec | reads 21.92, i.e. **−0.9% for a −9 t/it WIN** | 21.92 | 1315 / 3000 | 18.0 – 24.6 |
+| e35d904 | ten changes ago | 18.41 | 1105 / 3001 | 15.0 – 20.5 |
+| 4d25815 | **`COMBAT=1 FIXED_RNG=1`** (level 40, combat load) — stale | 16.00 | 959 / 2997 | 12.2 – 18.7 |
+| e35d904 | same combat arm | 14.32 | 859 / 2999 | 10.3 – 16.2 |
+
+- The combat row predates six 2026-08-09 commits. **Re-run `COMBAT=1 FIXED_RNG=1` before quoting any
+  combat figure or penalty.** At 4d25815 the penalty was 22.3% of throughput / +28.8% frame time, and
+  both arms had moved by the same % over the preceding seven changes (the consistency check).
+- ⚠ Re-running a row is not replication: two `fps_seg` runs of the same `FIXED_RNG` binary are
+  bit-identical (n=1). Use `fps_multi.gdb`'s disjoint windows for real variance.
+- No row exists for 91fa5ec→4cb3e3f: below the harness's resolution by construction.
+
+**t/it ledger** — `amiga/phase_budget.gdb`, lean probe build
+(`PROBES=1 PROFILE_NORING=1 NO_TDRAW_PROF=1 FIXED_RNG=1 COMBAT=1 COMBAT_QUIET=1`), ~471 iterations,
+`covered 100%`, `./diag_run.sh 700`+.
+
+| phase | e35d904 | 4d25815 | ef8ce68 | 368affe | 304f7bf | 91fa5ec | 4cb3e3f | 098eb5c | c2a90e5 |
+|---|---|---|---|---|---|---|---|---|---|
+| **DRAW** (terrain+objects ×2) | 1150 | 985 | 970 | 964 | 971 | 971 | 963 | 1064 | 1052 |
+| **VBI ISR** (all 3 brackets) | 65 | 64 | 64 | 64 | 64 | 64 | 64 | 65 | 65 |
+| **FRAME** (ds_frame ×2) | 380 | 375 | 329 | 320 | 299 | 291 | 292 | 311 | 310 |
+| SETUP (frame_setup ×2) | 141 | 142 | 141 | 141 | 140 | 142 | 143 | 142 | 144 |
+| CLEAR + BOLT + ENEMY | 13 | 12 | 14 | 14 | 14 | 13 | 14 | 13 | 13 |
+
+The ±3 t/it noise floor is **same-binary only** (bit-identical from the 2nd run on); cross-build it is
+~±10%. The discipline that makes a row credible *within* a run: the phase the change touches moves,
+and the three it cannot touch hold (4cb3e3f: −8 against +1/+1/+1, ISR flat). Rows are cross-build, so
+the ISR's per-ITERATION share moves whenever iterations/window moves (it fires 50×/s regardless) — to
+separate a real change from that, solve `wall = N × X + ISR_total` for X.
+
+`renderFlightDirect` internals at 91fa5ec (t/it): clear/copy 34 · edge+fillup 70 · late sprite 45 ·
+fill wait 1 · band+overlay 20 · SUM 171 vs `g_fDirect` 189. Cockpit scan 22 (lock-on 10 · dial 3 ·
+digits 1 · ~8 bracket/ISR-straddle) · copper 12 · perFrameWork 9.
+
 ## 2. Closed candidates — the reasoning
+
+### 2.0 The roster — closed on DATA, one line each (moved out of memory 2026-08-13)
+
+⛔ **Do not re-open any of these without new numbers.** Reasoning for each is in the subsection
+cited, or in `docs/asm-migration-plan.md` at the named phase.
+
+- **Occlusion culling at all three scales** (leaf group / rasterize call / segment) — ~2% at best; a
+  check costs what it skips. **The rule: the reject path is at the floor.** §2.1
+- **DRAWDOT per-plot micro-opts, "incremental dot column", the Phase-5 plotCol tables** — only 12% of
+  draws write a dot ⇒ DRAWDOT is ~23% of the rasterizer; measured 0.9%. §2.2
+- **Subdivide far-endpoint reload elisions** — recursion too shallow (1.23 inner iters, 0.40
+  midpoints/call); 0 ± 0.5%.
+- **The sfx reorder storm** — the input-dirty gate is UNSOUND (the mixer's inputs are rewritten from
+  live flight state every integ firing). Both follow-ups built/priced and FAILED: dead-`pick_top`
+  elimination measured **slower** (the C fast path bypasses the hand-asm mixer); the AUDF/AUDC shadow
+  was dead on arrival (`rof_pokey_write` already change-detects). ⚠ Don't confuse an output-stability
+  statistic for an input-stability one. Write-up + the `$0705+e` aliasing trap:
+  `docs/asm-migration-plan.md`.
+- **A hand-asm `terrain_draw_objects`** (~0.8% recoverable) · **memoizing `sfx_pick_top_voice`** ·
+  **POKEY→Paula deferral** (0.05%, §2.3) · **hoisting `terrain_plot_object`'s depth test** (every
+  pre-gate step has a required side effect, §2.4) · **`compute_row_xspans`** (~0.09%) ·
+  **`build_poly_dist`** (0 calls) · **running `COL_MAX` pointer** · **`$97` saturation table**.
+- **The frame-sync vblank spin** — 0.1% of wall, not the 32% `idle_probe.gdb` claimed (that was the
+  death cinematic). **The whole FRAME phase is attributed 100%.**
+- **The OS-interrupt class** (exhausted by the VERTB takeover + BLIT masking, cd56e0c) · **PORTS
+  interrupt takeover** (an FS-UAE artifact that resets the machine) · **re-baselining on a stock
+  no-fast-RAM map** (user: on an A500 fast memory makes hardly any difference) · **bitplane
+  alternation instead of the 2nd CPU render** (already at the 2-convert/iteration floor).
+- **"1 terrain pass instead of 2"** — user declined (it halves the displayed framerate).
+- **"DRAW's unexplained +474 t/it in combat"** — settled §8: real object work (~215 t/it) plus ~15%
+  harness inflation from the ISR-subtraction bias.
+- **The close-explosion spike** — one close blit is still ~723 t (384 distinct cells), but only
+  0.5-0.8% of the average combat frame.
+- **The span-9..16 fusion family** — priced and closed (`docs/asm-migration-plan.md` §Phase 11); the
+  cheap third shipped (4d25815). **Fused to infinity it is 465 cyc/call = 1.1% of wall.**
+- **Subdivide's exit ZP residue as a DELETION** — nine of twelve cells have a live reader, and
+  `subdiv_verify` was GREEN while the drop broke three. Only the *defer* was legal. ⭐ **Deferring is
+  not removing:** subdivide can't know which call is last, so every call must still RECORD; price
+  `flush − record` (§16.3's "1.0-1.5%" was the gross; net was 0.56%). §17
+- **The "+101 t/it DRAW regression" between 4cb3e3f and 098eb5c** — investigated and **disproven**
+  (f8d4e63, §19). The DRAW-path code is byte-identical across the range; a provably flight-neutral
+  control (the probe's START press moved 120 frames) reproduces the whole step, because the flown
+  path is coupled to the render rate. ⛔ **Do not bisect it.**
+- **`project_terrain_points`' two `DIVU.W`s (~7% of wall)** — re-derived §23 and treated as the
+  floor: an 8-step shift-subtract is ~200 cyc (worse), a 64K reciprocal table does not fit, and both
+  axes need different numerators. Only a fourth idea re-opens this.
+- **Closed on arithmetic in §23:** the edge plot's in-group same-row merge (238 cyc/group vs 242) ·
+  its prev-row cache (+1.6 cyc/col) · `-O3` on the flight C++ TU (+14 KB against ~7 KB of image
+  headroom) · `unsigned obj0/obj1` in the object loop (byte-identical codegen).
+- ⭐ **The rule those two loop-body closures share:** at a ~56-cycle loop body, any scheme whose
+  bookkeeping is a compare plus a branch spends 12-14 to save 18-22, so it needs a hit rate well
+  above 50% just to break even. **Cost the bookkeeping BEFORE the shape probe tempts you.**
 
 ### 2.1 Occlusion culling — dead at every scale (24346f9, cff080d)
 
