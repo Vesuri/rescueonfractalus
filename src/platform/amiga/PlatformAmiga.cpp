@@ -1883,7 +1883,7 @@ uint8_t PlatformAmiga::flightIrqKey() {
 // This handler IS the Atari console-switch hardware abstraction: it maps the Amiga
 // function keys onto the CONSOL switches ($D01F / 53279), which read active-low in
 // bits 0-2 (START/SELECT/OPTION); idle = $07, a switch down clears its bit.
-//   F1 -> START  (bit0)  — the value the attract poll station_poll_start_native tests
+//   F1 -> START  (bit0)  — what station_init's $1A0E exit poll tests ($D01F == $06)
 //   F2 -> SELECT (bit1)  — Standby starting-level select
 //   F3 -> OPTION (bit2)  — attract DEMO DROID
 // SELECT/OPTION are read by the Standby driver's idle loop (boot_standby_launch_driver $5F1D:

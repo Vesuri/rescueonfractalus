@@ -11,7 +11,7 @@
 | 4. Amiga Station: sprites | ✅ **DONE** (27a24ae, +ad10385) — **user-confirmed on screen** |
 | 5. **Logo** | ✅ **DONE** — `src/rof_logo.c` written, verified headlessly (see §1.5), **user-confirmed on screen** |
 | 5b. Logo→Station handover | ✅ **DONE** — the entry now blanks before rebuilding the shared list/bitmap (§1.6) |
-| 6. Cleanup + docs | ⬜ TODO — the dead `station_*_native` block (§2.5 defect 2) is still there |
+| 6. Cleanup + docs | ✅ **DONE** — the dead `station_*_native` block is deleted (§2.5 defect 2); the §4 renames were already in |
 
 Deviations from the plan as written, all deliberate:
 * **One `Gtia9CopperList` serves BOTH scenes** instead of separate Station/Logo lists — they are
@@ -502,11 +502,14 @@ Two defects to fix first:
    The JVB move is only needed if the renderer walks the Atari DL (it can instead derive
    "192 rows from `mem[$1C39/$1C3A]`"), but the P2/P3 + missile paints are real content. This is a
    **shared** file, so the SDL build is missing them too.
-2. **`rof_native_amiga.cpp`'s dead `station_*_native` block** (lines ~52-322) is stale: it is
-   unreferenced, it duplicates the twins now in `rof_manual.c`, and `station_setup()` contains a
-   hack that force-writes `$2313`/`$231B` to all-`$88`. That hack was for the old flat
+2. ✅ **DONE 2026-08-13** — `rof_native_amiga.cpp`'s dead `station_*_native` block was stale:
+   unreferenced, duplicating the twins now in `rof_manual.c`, and `station_setup()` contained a
+   hack that force-wrote `$2313`/`$231B` to all-`$88`. That hack was for the old flat
    `rof_mem.bin` snapshot; in the pristine XEX those tables are already correct
-   (`$1FE3, $2049, $20AF, $2115, $217B, $21E1, $2247, $22AD`). **Delete the block**, don't revive it.
+   (`$1FE3, $2049, $20AF, $2115, $217B, $21E1, $2247, $22AD`). **Deleted, not revived** — the
+   file now carries only a note in its place. `rof_native.h` went with it (nothing left used it),
+   and `PlatformAmiga.cpp`'s comment now names `station_init`'s `$1A0E` poll rather than the
+   deleted `station_poll_start_native`.
 
 ### 2.6 Amiga render plan for the Station
 
@@ -662,8 +665,9 @@ commit with a green build.
 4. **Amiga Station, part 2:** P2/P3 + P0/P1 sprites, then the eight missile dots.
 5. **Logo:** bake `assets/logo.raw`, `LogoCopperList`, `logo_run()` + `logo_vbi_native()`, sparkle
    sprite.
-6. **Cleanup:** delete the dead `station_*_native` block in `rof_native_amiga.cpp` (§2.5 defect 2)
-   and apply the five `docs/rename.md` entries (§4) in one `symbols.csv` + `make gen` + twin sweep.
+6. ✅ **Cleanup (DONE):** the dead `station_*_native` block in `rof_native_amiga.cpp` is deleted
+   (§2.5 defect 2); the five renames (§4) were already applied on 2026-08-12.
+   Followed by 6b, the three on-screen PMG bugs in §2.4a.
 
 Things to watch, in the order they will bite:
 
