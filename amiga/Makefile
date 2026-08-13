@@ -901,9 +901,15 @@ LDFLAGS   = -Wl,--emit-relocs,--gc-sections,-Ttext=0,-Map=$(OUT).map
 # ---------------------------------------------------------------------------
 all: $(OUT).exe
 
+# elf2hunk -s strips the HUNK_SYMBOL tables from the executable: 42,520 B of the 384,176 B
+# PROBES build (11%) was a debug symbol table nothing reads.  Debugging is unaffected —
+# debug.sh and every amiga/*.gdb script resolve symbols from $(OUT).elf, which still has
+# them (plus the full .debug_* sections), and the FS-UAE stub is pointed at the ELF too.
+# `make SYMS=1` keeps them in the .exe if a tool ever needs them there.
+ELF2HUNK_FLAGS := $(if $(SYMS),,-s)
 $(OUT).exe: $(OUT).elf
 	$(info Elf2Hunk $@)
-	@elf2hunk $(OUT).elf $(OUT).exe
+	@elf2hunk $(OUT).elf $(OUT).exe $(ELF2HUNK_FLAGS)
 
 $(OUT).elf: $(OBJECTS)
 	$(info Linking $@)
