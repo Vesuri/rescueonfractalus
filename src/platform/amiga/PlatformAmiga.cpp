@@ -4,7 +4,7 @@
 //   1. the POKEY->Paula audio backend (the bulk of the file),
 //   2. the platform_c.h bridge the C-compiled 6502 transliteration calls,
 //   3. the launch-cinematic frame pump + quit handling,
-//   4. the CIA-A serial-port keyboard (RETURN -> Atari START switch),
+//   4. the CIA-A serial-port keyboard (F1 -> Atari START switch),
 //   5. the real INTB_VERTB VBI server (runs the per-frame game VBI body),
 //   6. PlatformAmiga::run() — display takeover, install (1)/(4)/(5), run the scene,
 //      then restore the system.
@@ -938,7 +938,7 @@ uint8_t PlatformAmiga::hwRead(uint16_t addr)
     if (addr == 0xD300u) return s_portaState;
     // CONSOL ($D01F): console keys (START/SELECT/OPTION), ACTIVE-LOW (bit clear =
     // pressed).  The Amiga keyboard handler maintains it in mem[$D01F] (idle $07;
-    // RETURN clears a bit for START).  Reflect that — falling through to 0 reads as
+    // F1 clears bit0 for START).  Reflect that — falling through to 0 reads as
     // "all console keys held", so the genuine attract idle loop sees START/launch
     // pressed and auto-starts the DEMO DROID demo within seconds.  ($D01F writes go
     // through platform_hw_write, which drops non-POKEY addresses, so the keyboard's
@@ -1872,7 +1872,7 @@ uint8_t PlatformAmiga::flightIrqKey() {
 }
 
 // ============================================================================
-//  CIA-A serial-port keyboard — RETURN -> Atari START switch (CONSOL $D01F)
+//  CIA-A serial-port keyboard — F1 -> Atari START switch (CONSOL $D01F)
 // ============================================================================
 // The Amiga keyboard shifts each keycode into CIA-A's serial data register, raising
 // the CIA-A SP interrupt (CIAICRB_SP, via INTB_PORTS).  We hang a handler on that
@@ -2371,7 +2371,7 @@ static uint32_t vbiHandler()
 #endif
 
 #if defined(ROF_FLIGHT_PROBE) || defined(ROF_FPSCOUNT)
-    // Auto-launch: replicate a RETURN/START press once Standby's idle loop is actually
+    // Auto-launch: replicate an F1/START press once Standby's idle loop is actually
     // polling CONSOL.  A fixed vbi==350 fired before boot_standby_launch_driver's standby poll was live
     // (g_standbyRevealReady latches at boot_standby_launch_driver entry, when the idle loop starts), so the
     // press was never seen.  Gate on the reveal latch + a settle delay, and HOLD START for a
@@ -3136,7 +3136,7 @@ void PlatformAmiga::run()
     // copper never runs again, so BPLCON3 (and the rest of setPlayfield) persists.
     *dmaconPointer = (uint16_t)(DMAF_SETCLR | DMAF_MASTER | DMAF_COPPER | DMAF_RASTER | DMAF_SPRITE);
 
-    keyboardInit();       // RETURN = START for the launch cinematic (also arms SP in CIA-A's ICR mask)
+    keyboardInit();       // F1 = START for the launch cinematic (also arms SP in CIA-A's ICR mask)
 #ifdef ROF_PORTS_TAKEOVER
     portsTakeover();      // opt-in, measured NOT worth it — see the portsHandler comment
 #endif

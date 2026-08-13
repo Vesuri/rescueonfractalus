@@ -3,7 +3,7 @@
  *
  * Owns everything Amiga-hardware-specific below the RescueOnFractalus scene: the
  * display takeover (LoadView/DMACON/display window), the real INTB_VERTB VBI server,
- * the CIA-B Timer A music tick, the CIA-A serial-port keyboard (RETURN -> Atari START),
+ * the CIA-B Timer A music tick, the CIA-A serial-port keyboard (F1 -> Atari START),
  * the POKEY->Paula audio backend, and the launch-cinematic frame pump.
  *
  * It implements the Platform interface the C-compiled 6502 transliteration reaches
