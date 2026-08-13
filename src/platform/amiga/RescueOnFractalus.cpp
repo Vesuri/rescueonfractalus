@@ -5513,6 +5513,31 @@ void RescueOnFractalus::renderBootScene()
     // renderFrame call anywhere in that gap, so a bool would still read "installed" and the
     // station would inherit the logo's geometry and gold palette.
     if (bootFieldScene != g_bootScene) {
+        // ⚠ BLANK FIRST if a boot scene is already on screen.  Both scenes share ONE
+        // Gtia9CopperList and ONE field bitmap, so a scene entry REWRITES the very list the copper
+        // is executing (geometry, palette, all four bitplane pointers, every sprite operand) and
+        // then overwrites the very bitmap it is fetching.  Measured at the Logo->Station handover
+        // (amiga/boot_gap.gdb): buildLayout ran with bootFieldCopperInstalled=1, and the ~70 ms
+        // decodeStationField that follows spans several displayed frames — so the station's picture
+        // painted itself into the logo's geometry, in the station's greys, on top of the Lucasfilm
+        // logo (user-reported).  It is also exactly the mid-frame bitplane-pointer swap CLAUDE.md's
+        // copper rule forbids.  Nothing else covers this window: the black-until-ready hold in
+        // renderFrame is BELOW the boot-scene branch, and rof_boot_chain's stage loads render no
+        // frames at all, so whatever list was last installed simply stays live across the gap.
+        //
+        // So install the black EmptyCopperList and come back next frame.  PlatformAmiga::renderFrame
+        // waits for a real VBI on its way out of this call, which is where COP1LC latches, so the
+        // rebuild below is guaranteed to run on a list and a bitmap that nothing is displaying.
+        // Faithful, too: station_init ($195D) opens by writing DMACTL = 0, i.e. the Atari blanks
+        // this window as well, and does not reveal the field until it is built.
+        if (emptyCopper && !emptyCopperInstalled) {
+            emptyCopper->setColor00(atariToOCS(0));            // pure black
+            AmigaHardware::setCopperList(*emptyCopper, false);  // latches at the next vblank
+            emptyCopperInstalled     = true;
+            bootFieldCopperInstalled = false;   // also parks the VBI-side scroll / PMG mirrors, so
+            return;                             // the ISR cannot poke the list we are about to rebuild
+        }
+
         // Scene entry.  Build the layout for THIS scene (the two differ in leading blank lines,
         // row count and palette hue), decode the field, publish the first window row, install.
         deriveRenderSignals();

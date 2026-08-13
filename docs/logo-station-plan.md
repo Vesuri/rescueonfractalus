@@ -9,7 +9,8 @@
 | 2. Restore `display_scroll`'s dropped writes | ✅ **DONE** (61b5613) — both PMG paints confirmed on screen |
 | 3. Amiga Station: decoder, copper list, tall bitmap, scroll | ✅ **DONE** (120719e) |
 | 4. Amiga Station: sprites | ✅ **DONE** (27a24ae, +ad10385) — **user-confirmed on screen** |
-| 5. **Logo** | ✅ **DONE** — `src/rof_logo.c` written, verified headlessly (see §1.5). Awaiting the user's on-screen look |
+| 5. **Logo** | ✅ **DONE** — `src/rof_logo.c` written, verified headlessly (see §1.5), **user-confirmed on screen** |
+| 5b. Logo→Station handover | ✅ **DONE** — the entry now blanks before rebuilding the shared list/bitmap (§1.6) |
 | 6. Cleanup + docs | ⬜ TODO — the dead `station_*_native` block (§2.5 defect 2) is still there |
 
 Deviations from the plan as written, all deliberate:
@@ -325,6 +326,47 @@ that exclusion list. Nothing else in the scene noticed, because the two long hol
 Still eyeball-only: the sparkle's **placement** relative to the artwork. `pmX`/`pmLine` are the
 station's constants, which transfer exactly — `$3A` and the station's `$3E` differ only in missile
 DMA, so the playfield width bits (normal, 40 bytes) are identical — but nobody has looked at it.
+
+### 1.6 The Logo→Station handover — blank before rebuilding the shared list (fixed 2026-08-13)
+
+**Symptom (user):** the station's initial render appeared *on top of* the Lucasfilm logo.
+
+**Cause.** Both scenes share ONE `Gtia9CopperList` and ONE field bitmap (the deviation recorded at
+the top of this file). `renderBootScene`'s scene-entry branch therefore **rewrote the very list the
+copper was executing** — geometry, palette, all four bitplane pointers, every sprite operand — and
+then `decodeStationField` overwrote the very bitmap it was fetching. Nothing else covered that
+window: renderFrame's black-until-ready hold sits *below* the boot-scene branch, and
+`rof_boot_chain`'s stage loads render no frames at all, so the logo's list simply stayed live across
+the gap. Measured with **`amiga/boot_gap.gdb`** (breakpoint-driven — a wall-clock delay cannot hit
+this window):
+
+```
+buildLayout  vbi= 73  bootScene=1 prevScene=0 bootInst=0 emptyInst=1 top=64 rows=62   logo: safe
+install bootField vbi=76                                                             (decode was behind black)
+buildLayout  vbi=337  bootScene=2 prevScene=1 bootInst=1 emptyInst=0 top= 8 rows=192  ⚠ LIVE list
+decodeStation IN  vbi=338                                                            ~70 ms, on screen
+```
+
+`bootInst=1` is the whole bug: the list being rewritten was the live one. Geometry jumped 64→8
+leading lines and the palette gold→grey while the bitmap still held the logo, and the station's
+picture then painted itself in over ~4 displayed frames. It is also exactly the mid-frame
+bitplane-pointer swap `CLAUDE.md`'s copper rule forbids.
+
+**Fix.** The entry branch installs the black `EmptyCopperList` and returns; the rebuild happens on
+the *next* call, when nothing is displaying either resource. `PlatformAmiga::renderFrame` waits for a
+real VBI on its way out, which is where `COP1LC` latches, so one frame is all the handshake needs —
+no explicit beam wait. `bootFieldCopperInstalled` is cleared with it, which also parks
+`stationVblankUpdate`/`logoVblankUpdate` so the ISR cannot poke a half-rebuilt list. The Logo's own
+entry skips the step (the `EmptyCopperList` from `initialize()` is already live), so it costs the
+Logo nothing. Same run after the fix:
+
+```
+install empty(pre) vbi=337  bootScene=2 prevScene=1
+buildLayout        vbi=338  bootScene=2 prevScene=1 bootInst=0 emptyInst=1 top=8 rows=192
+```
+
+≈5 frames (~110 ms) of black now separate the two scenes — which is also the **faithful** answer:
+`station_init` ($195D) opens by writing `DMACTL = 0` and does not reveal the field until it is built.
 
 ---
 
