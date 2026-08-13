@@ -2,18 +2,33 @@
 | Each asset: .global + .incbin.  Chip-RAM assets (.MEMF_CHIP) go into a chip
 | hunk so DMA hardware (bitplanes, copper) can reach them.
 
-| rof.xex — the original Atari 8-bit segmented load file (read-only).  This is the
-|   faithful initial memory image: load_xex_image() (XexImage.cpp) zeroes mem[] and
-|   places each XEX segment at its load address, so $00E7 (music gate) and all runtime
-|   state start at genuine power-on values and the original setup code (game_entry
-|   $3CDE) establishes them — instead of booting from a mid-Standby snapshot.
+| rof_boot_image.bin — the SPARSE boot memory image (tools/make_xex_sparse.py), generated
+|   from ../rof.xex + ../disasm/listing.txt.  Produces the same faithful initial mem[] the
+|   original Atari loader does — $00E7 (music gate) and all runtime state at genuine power-on
+|   values, established by the original setup code via the INITAD chain ending at game_entry
+|   $3CDE — but omits 15,467 of the 6502 INSTRUCTION bytes.  The port transliterates the code
+|   to C, so nothing is ever executed out of mem[]; the image is only a DATA source.
+|   43,066 B -> 27,872 B (-35%).  Format + the stage rule: xex_load.h (xex_sparse_stage).
+|   Which bytes go is decided by STATIC reachability (tools/xex_deadset.py reachable_map),
+|   not by play-testing: every byte any absolute, indexed or immediate-built-pointer read
+|   could touch is KEPT.  Path coverage cannot gate this — the combat path is not
+|   run-to-run deterministic (two runs of ONE binary differ in 1024 bytes).
+|   ⚠ Do NOT hand-edit or "optimise" the blob: its zero runs are load-bearing CLOBBERS of
+|     earlier segments (segment 16 buries the logo staged at $5000 and the station image at
+|     $4000), which is why the generator simulates mem[] rather than filtering dead bytes.
+|   `make FULLXEX=1` embeds the original ../rof.xex instead and switches the loader back to
+|   the segment walk — the A/B to reach for if the sparse image is ever suspected.
 	.section .rodata
 	.balign 4
-	.global rof_xex
-	.global rof_xex_end
-rof_xex:
+	.global rof_boot_image
+	.global rof_boot_image_end
+rof_boot_image:
+.ifdef ROF_FULL_XEX
 	.incbin "../rof.xex"
-rof_xex_end:
+.else
+	.incbin "assets/rof_boot_image.bin"
+.endif
+rof_boot_image_end:
 
 | atari_charset.bin — the Atari internal CHARACTER SET, $E000-$E3FF (1 KB, 128 glyphs x
 |   8 rows).  This is the ONLY thing the port reads out of the Atari OS ROM: the

@@ -7,7 +7,8 @@
 // values and the original setup code (the INITAD chain ending at game_entry $3CDE)
 // establishes everything itself.
 //
-// rof.xex is embedded in .rodata by incbin.s (rof_xex / rof_xex_end).
+// The boot image is embedded in .rodata by incbin.s (rof_boot_image / _end); see below
+// for the sparse-vs-full-xex choice.
 //
 // Integer types come from the project's force-included framework/SASCCompat.h
 // (CPPFLAGS -include), like the other Amiga TUs — no <stdint.h> here.
@@ -40,9 +41,22 @@ static void amiga_mem_write(uint16_t s, const uint8_t* src, uint32_t cnt)
     }
 }
 
-// The original Atari 8-bit segmented load file, embedded by incbin.s.
-extern "C" uint8_t rof_xex[];
-extern "C" uint8_t rof_xex_end[];
+// The boot memory image, embedded by incbin.s.  By default this is the SPARSE image
+// (assets/rof_boot_image.bin, 27,872 B) — the same mem[] the original loader produces with
+// 15,467 never-read 6502 instruction bytes omitted.  `make FULLXEX=1` embeds the original
+// 43,066-byte rof.xex here instead and takes the segment-walk branch below, which is the A/B
+// to reach for if the sparse image is ever suspected.  Both loaders are proven equivalent on
+// the host by tools/test_xex_sparse.c (all four stage boundaries + the full load).
+extern "C" uint8_t rof_boot_image[];
+extern "C" uint8_t rof_boot_image_end[];
+
+#ifdef ROF_FULL_XEX
+#define ROF_BOOT_STAGE(d, l, f, w) xex_parse_stage((d), (l), (f), (w))
+#define ROF_BOOT_ALL(d, l, w)      xex_parse((d), (l), (w))
+#else
+#define ROF_BOOT_STAGE(d, l, f, w) xex_sparse_stage((d), (l), (f), (w))
+#define ROF_BOOT_ALL(d, l, w)      xex_sparse_all((d), (l), (w))
+#endif
 
 // The Atari internal CHARACTER SET at $E000-$E3FF (1 KB), embedded by incbin.s — the only
 // part of the Atari OS ROM the port ever reads.  It replaced the whole 14 KB ROM: see
@@ -71,7 +85,8 @@ extern "C" void rof_load_stage_reset(void)
 // INITAD) and return the offset to resume from; == len when the whole file is placed.
 extern "C" uint32_t rof_load_stage(uint32_t from)
 {
-    return xex_parse_stage(rof_xex, (uint32_t)(rof_xex_end - rof_xex), from, amiga_mem_write);
+    return ROF_BOOT_STAGE(rof_boot_image, (uint32_t)(rof_boot_image_end - rof_boot_image),
+                          from, amiga_mem_write);
 }
 
 // (XEX format + charset layout documented in xex_load.h.)  The entry point is
@@ -84,7 +99,8 @@ extern "C" uint32_t rof_load_stage(uint32_t from)
 extern "C" void load_xex_image(void)
 {
     rof_load_stage_reset();
-    xex_parse(rof_xex, (uint32_t)(rof_xex_end - rof_xex), amiga_mem_write);
+    ROF_BOOT_ALL(rof_boot_image, (uint32_t)(rof_boot_image_end - rof_boot_image),
+                 amiga_mem_write);
     xex_overlay_charset(atari_charset, (uint32_t)(atari_charset_end - atari_charset),
                         amiga_mem_write);
 }

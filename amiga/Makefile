@@ -890,6 +890,13 @@ CPPFLAGS  = $(CCFLAGS) -fno-rtti -fno-exceptions -fno-use-cxa-atexit -std=gnu++1
             -I"$(REPO)/src/platform" \
             -I"$(CURDIR)"
 ASFLAGS   = -mcpu=68000 -g --register-prefix-optional -I"$(SDKDIR)" -I"$(CURDIR)"
+# `make FULLXEX=1` embeds the original ../rof.xex instead of the sparse boot image and
+# switches XexImage.cpp back to the segment walk — the A/B for suspecting the sparse image.
+# The define has to reach BOTH the assembler (.ifdef in incbin.s) and the C++ side.
+ifdef FULLXEX
+ASFLAGS   += --defsym ROF_FULL_XEX=1
+EXTRA_DEFINES += -DROF_FULL_XEX
+endif
 # vasm (Motorola syntax) for the framework *Assembler.s.  -m68010: the only >68000
 # instruction is `movec vbr,d0` in getVBR (the C++ getVBR already emits movec via raw
 # bytes through Supervisor(), so this is behaviour-neutral on the A500 68000 target).
@@ -945,7 +952,18 @@ obj/gcc8_a_support.o : $(SUPPORT)/gcc8_a_support.s
 # incbin.s lives in the unified tree ($(AMIGA_SRC)) but its .incbin paths are resolved
 # relative to this amiga/ build dir (where assets/ and ../rof.xex live) via ASFLAGS
 # -I"$(CURDIR)"; INCBIN_DEPS are likewise listed relative to amiga/.
+INCBIN_DEPS := assets/rof_boot_image.bin assets/atari_charset.bin
+ifdef FULLXEX
 INCBIN_DEPS := ../rof.xex assets/atari_charset.bin
+endif
+
+# assets/rof_boot_image.bin — the SPARSE boot image that replaced the embedded rof.xex
+# (43,066 -> 27,872 B).  Regenerated whenever the xex, the disassembly it derives the
+# instruction map from, or either tool changes.  docs/asset-extraction.md.
+assets/rof_boot_image.bin: ../rof.xex ../disasm/listing.txt \
+                           ../tools/make_xex_sparse.py ../tools/xex_deadset.py
+	$(info GEN  $@)
+	@python3 ../tools/make_xex_sparse.py $@
 obj/incbin.o : $(AMIGA_SRC)/incbin.s $(INCBIN_DEPS)
 	$(info ASM  $<)
 	@$(AS) $(ASFLAGS) -o $@ "$(abspath $(AMIGA_SRC)/incbin.s)"

@@ -80,6 +80,53 @@ static inline uint32_t xex_parse_stage(const uint8_t* data, uint32_t len,
     return len;
 }
 
+/* ---------------------------------------------------------------------------------------
+ * The SPARSE boot image (tools/make_xex_sparse.py) — what the Amiga embeds instead of the
+ * whole rof.xex.  The port transliterates the 6502 to C, so the image's instruction bytes
+ * are never executed from mem[]; omitting the ~23 KB that no data read ever touches takes
+ * the asset from 43,066 B to 20,051 B.
+ *
+ *   chunk  := u16 load_addr, u16 len, len bytes      (big-endian, 68000-native)
+ *   stream := chunk*
+ *
+ * There is deliberately no stage marker: a stage ends at the chunk covering INITAD
+ * ($02E2-$02E3), the SAME rule xex_parse_stage uses for segments.  That keeps this function
+ * a structural twin of it and means rof_boot.c's stage walk is unchanged.  Bytes not
+ * mentioned by any chunk stay at whatever rof_load_stage_reset left, i.e. 0 — which is
+ * exactly the state the removal was validated against.
+ *
+ * ⚠ The generator emits a write wherever its SIMULATED mem[] disagrees with the target, not
+ * merely where a byte is live.  That is load-bearing: segment 16 buries the logo staged at
+ * $5000 and the station image at $4000, so a dead byte there must still be written (as 0) to
+ * CLOBBER the earlier data.  Do not "optimise" the asset by dropping zero runs.            */
+static inline uint32_t xex_sparse_stage(const uint8_t* data, uint32_t len,
+                                        uint32_t from, RofMemWrite write)
+{
+    uint32_t i = from;
+    while (i + 4 <= len) {
+        uint16_t a = (uint16_t)(((uint16_t)data[i] << 8) | data[i + 1]);
+        uint32_t n = (uint32_t)(((uint16_t)data[i + 2] << 8) | data[i + 3]);
+        i += 4;
+        if (n > len - i) n = len - i;                  /* truncated-asset guard */
+        write(a, data + i, n);
+        i += n;
+        /* INITAD is $02E2-$02E3; a chunk covering either byte ends the stage. */
+        if (a <= 0x02E3u && (uint32_t)a + n > 0x02E2u) return i;
+    }
+    return len;
+}
+
+/* Place the WHOLE sparse image in one go (the non-staged path). */
+static inline void xex_sparse_all(const uint8_t* data, uint32_t len, RofMemWrite write)
+{
+    uint32_t i = 0;
+    while (i < len) {
+        uint32_t next = xex_sparse_stage(data, len, i, write);
+        if (next <= i) break;                          /* never spin on a malformed asset */
+        i = next;
+    }
+}
+
 /* Overlay JUST the Atari internal character set at $E000-$E3FF (1 KB, 128 glyphs x 8
  * rows).  This is the ONLY thing the port ever reads out of the Atari OS ROM, so it is
  * what the Amiga build ships instead of the whole 14 KB ROM.  Two readers, both of which
