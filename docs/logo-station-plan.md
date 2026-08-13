@@ -1,6 +1,6 @@
 # Scenes 1 (Logo) + 2 (Station) — what they are, and what it takes to run them on the Amiga
 
-## ⭐ STATUS 2026-08-12 (read this first)
+## ⭐ STATUS 2026-08-13 (read this first)
 
 | Build-order step (§5) | State |
 |---|---|
@@ -9,7 +9,7 @@
 | 2. Restore `display_scroll`'s dropped writes | ✅ **DONE** (61b5613) — both PMG paints confirmed on screen |
 | 3. Amiga Station: decoder, copper list, tall bitmap, scroll | ✅ **DONE** (120719e) |
 | 4. Amiga Station: sprites | ✅ **DONE** (27a24ae, +ad10385) — **user-confirmed on screen** |
-| 5. **Logo** | 🚧 **IN PROGRESS** — all facts derived, the asset is baked and committed, the sequencer is not written. **See §1.4 for the complete hand-off.** |
+| 5. **Logo** | ✅ **DONE** — `src/rof_logo.c` written, verified headlessly (see §1.5). Awaiting the user's on-screen look |
 | 6. Cleanup + docs | ⬜ TODO — the dead `station_*_native` block (§2.5 defect 2) is still there |
 
 Deviations from the plan as written, all deliberate:
@@ -133,10 +133,50 @@ levels of one hue taken from `COLBK`. So on the Amiga both are **4 bitplanes, 32
   9. The sparkle: `HPOSP0 = $C1`, `COLPM0 = $08`, then `COLPM0 = $0F…$00` with `JSR $3CCA`
      (wait 2 frames) between each, while progressively zeroing/masking the P0 shape rows.
      16 steps × 2 frames = 32 frames. Then `HPOSP0 = 0`, **RTS** → the loader resumes.
-* **`$5111`/`$5117` — the stroke plotter.** Reads a run-encoded stroke list at `$525F`, a
-  pattern table at `$52DF`, and pokes **4-bit nibbles** into the mode-F rows through the
-  `$007F`/`$00BF` pointer table (`$51C0-$51EE` is the read-modify-write nibble poke; the carry
-  out of `LSR` picks high vs low nibble). Shading (`$76`) is a function of the row.
+* **`$5111`/`$5117` — the stroke plotter.** ⭐ Fully decoded 2026-08-13, and **verified**: a
+  Python re-implementation of it reproduces `src/rof_logo_field.h` byte for byte (0 mismatches in
+  2480 + 143). Kept as `tools/plot_logo_ref.py`, which is now the bake's reproducible oracle.
+
+  **There is no bitmap in the file.** The picture is generated from **130 bytes** at
+  `$525F-$52E0` plus a 7-entry pattern table — ~18× compression, which is why they plotted it.
+
+  *Stroke list `$525F-$52E0`.* A stream of items, each one byte `PPPCCCCC`: `CCCCC` (1-31) is a
+  repeat count; `PPP` = 1..7 selects `mem[$52DF + PPP]` as the pattern; `PPP` = 0 means **the next
+  byte is a literal 8-bit pattern**; a whole byte of `$00` ends the strip. The table is
+  `$52DF: EF 00 0C 78 8C C0 C4 FC` — slot 0 (`$EF`) is unreachable *as a table entry* (`PPP`=0
+  means literal), and it isn't wasted: **the stroke list deliberately overruns into the table**,
+  taking GAMES' last literal from `$52DF` and its terminator from `$52E0` (= pattern 1 = `$00`).
+
+  *Geometry.* Each pattern byte is one **cell**: 8 px wide (LSB = rightmost), **2 scanlines
+  tall**, and it advances the row cursor by 2 (`$51A3 INY INY`) — so a repeat count draws a
+  vertical stroke. `$5111` is **9 strips of 8 columns** (cols 4-76), each exactly **30 cells = 60
+  scanlines**; `$5117` is **4 strips × 5 cells** at cols 19-51, rows 49-60. The stroke index runs
+  *continuously* across strips, so the `$00` terminators ARE the strip boundaries.
+  ⚠ Two fall-throughs decide the whole shape and are easy to misread as `RTS`-terminated:
+  **`$51BB` falls into `$51C0`**, so it plots rows Y-1 AND Y; and **`$51A8`'s `DEX` falls into
+  `$51BB`**, making the "fat" brush a full 2-column × 4-row block. Read either as ending in `RTS`
+  and you get a logo with every other scanline blank.
+
+  *The emboss — three passes, three shade formulas.* `$7D` counts 2→1→0 across the three
+  `JSR $5111` calls and selects the luminance ($51C0-$51EE is the read-modify-write nibble poke;
+  the carry out of `LSR` picks high vs low nibble):
+
+  | pass | `$7D` | origin | brush | shade at row index `i` |
+  |---|---|---|---|---|
+  | 1 | 2 | col 5, row 4 | fat 2×4 | constant **2** → drop shadow, offset +1px/+1row |
+  | 2 | 1 | col 4, row 3 | fat 2×4 | `i>>2` (band 8 forced to 7) → outline |
+  | 3 | 0 | col 4, row 3 | thin 2×1 | `((i-2)>>2) ^ 15` → the bright core |
+
+  Passes 2 and 3 are *complementary* ramps — that is what makes it read as chrome: at the top the
+  glyph is `$F` with a near-black outline, at the bottom `$3` with a bright `$D` outline. The
+  `==8 → 7` special case is exactly the crossover band where the two ramps meet; forcing it makes
+  outline equal core there and hides the seam. GAMES gets only two passes (both thin, `$78` is 1
+  by then): shade 2 shadow, then `i>>2` = luminance 13→15.
+
+  *One detail worth keeping:* the `$7F`/`$BF` pointer table's base is `$6053` = the screen minus
+  two rows. That slack is deliberate — the fat brush reaches 3 scanlines above its cell, and on
+  the first cell that lands in the harmless gap between the display list (`$6000-$604A`) and the
+  screen.
 * **`$51EF` — the VBI.** `INC $14`; then a two-phase audio sweep:
   * while `$90 != 0`: `JSR $523C` (writes `AUDC1-4` from `$92>>3 | $A0`), `INC $92`, then for
     `X = 6,4,2,0`: `AUDF(x) = mem[$93+x]`, `mem[$93+x] += mem[$5258+x]`, `DEC $90`.
@@ -246,6 +286,45 @@ ZP `$90..$99` ← `$5254..$525D` = `56 7F 00 2A 01 22 02 00 03 87`
 
 Total timing: **86 + 127 + 36-ish + 32 ≈ 280 frames ≈ 5.6 s** (the plan's earlier ≈250 estimate
 missed that phase 2 is 127 frames of silence, not 128 of sound).
+
+### 1.5 SHIPPED 2026-08-13 — what was written, and how it was verified
+
+`src/rof_logo.c` is the whole scene: `rof_logo_run()` (the `$5000` sequencer) and
+`rof_logo_vbi()` (the `$51EF` VBI), both hand-written from the segment-5 disassembly with the
+`$5000`-page address on every step. It reads its seeds/steps out of **mem[] at `$5254`/`$5258`**
+rather than transcribing them — segment 5 is resident while the logo runs — and calls the genuine
+`rle_decompress()` / `wait_vcount_ge_7a()` / `wait_frames_2()`. Only the two plot passes are
+replaced (by pasting `kLogoField` / `kLogoGames`); §1.4's steps 1-12 are otherwise all there,
+including the `$5037` pointer table (dead here, but it is `$5000`'s own work and ZP survives into
+the next stage) and the sparkle's write to `$0D3F` on its first erosion pass.
+
+Supporting changes: `g_logoFieldGen` / `g_logoSparkleCol` (rof_boot.h) · a `$51EF` case in
+`game_vbi_isr` · `decodeLogoField()` + `buildLogoSparkle()` + `logoVblankUpdate()` and a
+`logoSparkle` sprite in the renderer · `platform_register_vbi(0x51EF, …)` for SDL.
+
+**One real bug, found by measuring:** `PlatformAmiga::renderFrame` owns RTCLOK for every VVBLKI
+whose own body does not advance it — a list that had `$1B30` and `$4FF5` on it. `$51EF` advances
+its own (faithfully: VVBLKI *replaces* the OS stage-1), so RTCLOK ran at **2 per vblank** and the
+sparkle's `wait_frames_2` pacing came out at 2× — the whole 32-frame fade in 16. `$51EF` is now on
+that exclusion list. Nothing else in the scene noticed, because the two long holds spin on ZP
+`$90`/`$91`, which only the ISR moves.
+
+**Verified headlessly** (`amiga/logo_probe.gdb` + `amiga/logo_sparkle.gdb`, both usable on a plain
+`make` build — ⚠ `PROBES=1` would imply `SKIPBOOT=1` and skip the scene under test):
+
+| Checked | Result |
+|---|---|
+| Display list unpacked from `$52E7` | `70×8 / 4F A3 60 / 0F×61 / 41 00 60` ✓ |
+| Field pasted, both phases | row 0 = `00 00 ff ff f0 2f ff f0 …` and the GAMES rect rows 50/55/60 all byte-exact vs `rof_logo_field.h` ✓ |
+| GTIA-9 decode + row stride | source nibble → pen across 4 planes, checked at rows 0, 60 and the last row 61 ✓ |
+| Copper geometry | WIN_WAIT line 107, BOT_WAIT line 169 (64 blank + 62 rows) ✓ |
+| The `$51EF` sweep's arithmetic | at 39 frames in, `$93/$95/$97/$99` = seed + 39×(1/2/3/0) exactly ✓ |
+| The sparkle | 2 frames/step ✓, COLPM0 `$0F`→`$00` ✓, shape eroded from both ends with the `$0C45-$0C49` mask closing in ✓, sprite at x=415 y=100, VSTART/VSTOP shrinking one row per end per step, disarmed when the page empties ✓ |
+| Whole chain | Logo → Station → game, `g_bootScene` 1 → 2 → 0 ✓ |
+
+Still eyeball-only: the sparkle's **placement** relative to the artwork. `pmX`/`pmLine` are the
+station's constants, which transfer exactly — `$3A` and the station's `$3E` differ only in missile
+DMA, so the playfield width bits (normal, 40 bytes) are identical — but nobody has looked at it.
 
 ---
 

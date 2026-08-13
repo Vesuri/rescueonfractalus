@@ -1763,10 +1763,13 @@ void PlatformAmiga::renderFrame() {
         if (d > 1) g_rtJumpGt1Count++;
     }
 #endif
-    // RTCLOK ownership: the ATTRACT ($1B30) and full flight ($4FF5) VBIs advance RTCLOK
-    // ($0014) in their own transpiled bodies, so skip here to avoid double-counting.  The
+    // RTCLOK ownership: the ATTRACT ($1B30), full flight ($4FF5) and boot-logo ($51EF) VBIs
+    // advance RTCLOK ($0014) in their own bodies, so skip here to avoid double-counting.  The
     // standby/cinematic ($52D7) body does not, so renderFrame owns it there.
-    if (vbiVec != 0x1B30u && vbiVec != 0x4FF5u) {
+    // ⚠ $51EF is not optional: the logo's sparkle paces on wait_frames_2 ($3CCA), which zeroes
+    // RTCLOK and waits for it to reach 2 — so double-counting ran the whole 32-frame fade at 2x
+    // (measured: g_vbiCount advanced ONE per two-frame wait, amiga/logo_sparkle.gdb).
+    if (vbiVec != 0x1B30u && vbiVec != 0x4FF5u && vbiVec != 0x51EFu) {
         mem[0x0014]++;
         if (!mem[0x0014]) mem[0x0013]++;
     }
@@ -2271,6 +2274,12 @@ static uint32_t vbiHandler()
     // pointer written from the main loop can be torn and garbage the entire frame.  No-op unless
     // the station copper is live.
     if (s_scene) s_scene->stationVblankUpdate();
+
+    // Boot scene 1 (the Lucasfilm logo): its one PMG element, the sparkle.  Nothing to scroll —
+    // the logo's display list never moves — but the shape is eaten away and the colour faded every
+    // two frames, and animating PMG must be mirrored from the VBI like the station's.  No-op
+    // unless the logo copper is live.
+    if (s_scene) s_scene->logoVblankUpdate();
 
     if (s_scene) s_scene->flightVblankSwap();
 

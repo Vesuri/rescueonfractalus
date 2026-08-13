@@ -42,6 +42,22 @@ void rof_boot_chain(int firstScene);
  * there is no listing.txt for it and never will be from the single-listing pipeline. */
 void rof_logo_run(void);
 
+/* The logo's own vertical-blank body ($51EF): RTCLOK + the four-channel POKEY sweep that
+ * paces the whole scene.  Registered for SDL by rof_logo_run(); on the Amiga it is one more
+ * case in game_vbi_isr's live-VVBLKI dispatch. */
+void rof_logo_vbi(void);
+
+/* Two signals the Amiga renderer cannot read out of mem[], both written by rof_logo.c:
+ *
+ *  g_logoFieldGen   — bumped every time the logo's mode-F field at $60A3 changes.  It changes
+ *                     exactly twice (the "LUCASFILM" paste, then "GAMES" 86 frames later), so
+ *                     the renderer re-decodes on a generation change instead of every frame.
+ *  g_logoSparkleCol — the sparkle player's colour.  The Atari writes COLPM0 ($D012), which is
+ *                     NOT one of bus.h's mem[] shadows (only HPOSP0-3/HPOSM0-3 $D000-$D007
+ *                     are), so the sprite mirror reads the value from here. */
+extern volatile unsigned char g_logoFieldGen;
+extern volatile unsigned char g_logoSparkleCol;
+
 /* Supplied by the platform TU (XexImage.cpp / PlatformSDL.cpp): power-on RAM (zero mem[]
  * + overlay the OS ROM), and "place the next stage's segments, return the resume offset". */
 void     rof_load_stage_reset(void);

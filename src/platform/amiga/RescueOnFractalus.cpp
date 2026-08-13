@@ -839,6 +839,17 @@ static const uint16_t kStationTopLines = 8;
 static const uint16_t kStationRows     = 192;
 static const uint16_t kLogoTopLines    = 64;
 static const uint16_t kLogoRows        = 62;
+// ---- boot scene 1 (the Lucasfilm Games logo) — the Atari addresses its decode walks ---------
+// rof_logo.c unpacks the display list at $6000 from the 11-byte RLE at $52E7: eight $70 (the 64
+// blank scanlines), then ONE `4F <lms>` mode-F entry and 61 bare $0F, then the JVB.  One LMS for
+// the whole picture — so unlike the station's 340 scattered entries the source is a single flat
+// 40-byte-stride block, and the decode only needs to read that one operand back.
+static const uint16_t kLogoDL       = 0x6000u;
+static const uint16_t kLogoDLLms    = (uint16_t)(kLogoDL + 8u);   // the `4F lo hi` entry
+// The sparkle: player 0's buffer (PMBASE $0800, one-line resolution) and its shape run —
+// $5000 fills $0C40-$0C4E and then $0C47, i.e. 16 scanlines of headroom.
+static const uint16_t kLogoPmP0        = 0x0C00u;
+static const unsigned kLogoSparkleRows = 16;
 // Sprite sizes for the station's PMG mirror.  The P0/P1 shape run is `$2760[i] + 1` rows, whose
 // table maxes at $10 -> 17; the display_scroll dot blob is 3; and the eight $1D92 patterns yield
 // at most 9 dots (pattern $C3 lights two missiles), spread over two chains.
@@ -2539,6 +2550,7 @@ void RescueOnFractalus::initialize()
     stationSpr[3] = Sprite::allocate(kStationDotRows);     // P3 dot
     stationMsl[0] = Sprite::allocate(kStationMslDots * 2); // missile chain A
     stationMsl[1] = Sprite::allocate(kStationMslDots * 2); // missile chain B
+    logoSparkle   = Sprite::allocate(kLogoSparkleRows);    // scene 1's one PMG element
 #endif
 
 #ifdef ROF_FLIGHT_PROBE
@@ -5403,6 +5415,22 @@ static inline void gtia9Row(uint8_t* dst, const volatile uint8_t* src, unsigned 
     }
 }
 
+// decodeLogoField(): decode the logo's 62 mode-F rows into bitmap rows 0..61.  ONE LMS for the
+// whole picture (see kLogoDLLms), so this is a flat two-cursor walk — +40 source, +160
+// destination — with no per-row display-list read at all.  ~2.5 KB ≈ 12 ms, and it runs exactly
+// TWICE per boot: at scene entry, and again when the "GAMES" paste lands 86 frames later.  The
+// second one is worth no more cleverness than this: the two events are 1.7 s apart.
+void RescueOnFractalus::decodeLogoField()
+{
+    if (!bootFieldBitmap) return;
+    if (mem[kLogoDLLms] != 0x4Fu) return;      // display list not unpacked yet: nothing to show
+    const volatile uint8_t* src = mem + (uint16_t)(mem[kLogoDLLms + 1] | (mem[kLogoDLLms + 2] << 8));
+    uint8_t*                dst = (uint8_t*)bootFieldBitmap->data;
+    for (unsigned r = 0; r < kLogoRows; r++, src += 40, dst += 160)
+        gtia9Row(dst, src, 40);
+    logoFieldGen = g_logoFieldGen;
+}
+
 // decodeStationField(): decode ALL 340 display-list rows once, and note which of them are STAR
 // rows (their LMS points into the range station_star_fade_in walks) so the fade-in's per-frame
 // re-decode touches nothing else.  ~14k source bytes ≈ 70 ms — a one-off, and it runs during
@@ -5509,6 +5537,13 @@ void RescueOnFractalus::renderBootScene()
         } else {
             bootFieldCopper->buildLayout(*bootFieldBitmap, kLogoTopLines, kLogoRows,
                                          kGtia9Pal1, *nullSprite);
+            // The sparkle is one sprite on channel 0; like the station's, the OPERAND is constant
+            // from here on (only the buffer's contents move), so it never has to meet the copper's
+            // scanline-16 SPRxPT read deadline again.
+            if (logoSparkle) bootFieldCopper->setSpriteOperand(0, logoSparkle->data());
+            decodeLogoField();
+            logoSparkleCol = 0xFFFF;     // force the first colour publish
+            buildLogoSparkle();          // so the first displayed frame already has it
         }
         AmigaHardware::setCopperList(*bootFieldCopper, false);   // latches at the next vblank
         bootFieldCopperInstalled = true;
@@ -5519,7 +5554,13 @@ void RescueOnFractalus::renderBootScene()
         return;
     }
 
-    if (g_bootScene != ROF_BOOTSCENE_STATION) return;   // the logo's field never changes
+    if (g_bootScene != ROF_BOOTSCENE_STATION) {
+        // Scene 1.  Its field changes exactly once after the reveal — the "GAMES" paste, 86
+        // frames in — so re-decode on a generation change rather than every frame.  The sparkle
+        // is NOT here: it animates, so it belongs in the VBI (logoVblankUpdate).
+        if (logoFieldGen != g_logoFieldGen) decodeLogoField();
+        return;
+    }
 
     // station_star_fade_in runs BEFORE the scroll loop, so the phase counter $008B is still 0 for
     // exactly the frames it is brightening the starfield.  ⚠ If the stars look black, this is the
@@ -5562,6 +5603,43 @@ static unsigned pmRun(const volatile uint8_t* page, unsigned* first)
     unsigned n = 0;
     while (i + n < 256u && page[i + n] != 0) n++;
     return n;
+}
+
+// buildLogoSparkle(): scene 1's one PMG element.  Player 0's buffer at $0C00 holds a 16-scanline
+// "✦" that $5000 erases from both ends over 32 frames; read it back the same way the station's
+// players are read, so the erosion needs no model here at all — whatever is in the page is what
+// gets drawn.  Runs in the VBI ISR (logoVblankUpdate): the beam is parked at the top there and
+// the shape sits at line 100+, so a single-buffered write cannot be overtaken by the sprite DMA.
+void RescueOnFractalus::buildLogoSparkle()
+{
+    if (!bootFieldCopper || !logoSparkle) return;
+
+    // COLPM0 via rof_logo.c's global — $D012 is not one of bus.h's mem[] shadows.
+    const uint16_t col = atariToOCS(g_logoSparkleCol);
+    if (col != logoSparkleCol) { bootFieldCopper->setPairColor(0, col); logoSparkleCol = col; }
+
+    uint16_t* d     = logoSparkle->data();
+    unsigned  first = 0;
+    unsigned  rows  = pmRun(mem + kLogoPmP0, &first);
+    const unsigned h = mem[0xD000];              // HPOSP0 shadow (bus.h); 0 until $50CF writes it
+    if (rows > kLogoSparkleRows) rows = kLogoSparkleRows;
+    // Nothing to show: before the shape is built, and again after the fade has eaten all of it.
+    if (!rows || h < kPmXMin) { d[0] = 0; d[1] = 0; return; }
+    spriteCtl(d, pmX(h), pmLine(first), (uint16_t)rows);
+    const volatile uint8_t* src = mem + kLogoPmP0 + first;
+    uint16_t* px = d + 2;
+    for (unsigned r = 0; r < rows; r++) { *px++ = kDoubleGlyph[*src++]; *px++ = 0; }
+    for (unsigned r = rows; r < kLogoSparkleRows; r++) { *px++ = 0; *px++ = 0; }
+}
+
+// logoVblankUpdate(): scene 1's whole vblank-side job — the sparkle.  There is no scroll and no
+// window row: the logo's display list never moves, so its bitplane pointers are set once by
+// buildLayout and never touched again.  Called from PlatformAmiga::vbiHandler.
+void RescueOnFractalus::logoVblankUpdate()
+{
+    if (!bootFieldCopperInstalled || !bootFieldCopper) return;
+    if (g_bootScene != ROF_BOOTSCENE_LOGO) return;
+    buildLogoSparkle();
 }
 
 // buildStationSprites(): mirror all five PMG elements into their sprite channels.  See the
@@ -6586,6 +6664,7 @@ void RescueOnFractalus::shutdown()
     delete nullSprite;    nullSprite    = nullptr;
     for (int i = 0; i < 4; i++) { delete stationSpr[i]; stationSpr[i] = nullptr; }   // station PMG
     for (int i = 0; i < 2; i++) { delete stationMsl[i]; stationMsl[i] = nullptr; }   // ...its chains
+    delete logoSparkle; logoSparkle = nullptr;                                       // the logo's
     // ⚠ energy / altimeter-terrain / left band triangle are ALIASES of wideLow[0..2][0] — non-owning
     // views into the wide-object sprite chains.  Just drop the aliases; the wideLow loop below is
     // what deletes them (deleting here too would be a double free).

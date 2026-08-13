@@ -53,6 +53,11 @@ public:
                                  // the display list's current window row, and refresh the PMG sprites.
                                  // ⚠ MUST be the VBI, not render(): a torn bitplane pointer garbages
                                  // the whole frame.  No-op unless the station copper is live.
+    void logoVblankUpdate();     // run from the INTB_VERTB ISR at vblank (scene 1, the Lucasfilm
+                                 // logo): mirror player 0's eroding "✦" into its Amiga sprite.
+                                 // Nothing to scroll — the logo's display list never moves — but
+                                 // animating PMG belongs in the VBI all the same.  No-op unless
+                                 // the logo copper is live.
     void doorScrollVblankUpdate(); // run from the INTB_VERTB ISR at vblank: level-select "elevator"
                                  // door scroll (post-mother-ship SELECT).  While dl_src_index ($008B)
                                  // is non-zero (boot_standby_launch_driver's level-select scroll spins
@@ -402,6 +407,7 @@ private:
     bool             bootFieldCopperInstalled = false;   // is it the live list? (stationVblankUpdate's gate)
     unsigned char    bootFieldScene = 0;                 // which scene the live LAYOUT was built for
     void renderBootScene();                        // the whole per-frame render for scenes 1 and 2
+    void decodeLogoField();                        // scene 1: its 62 rows (at entry, then at "GAMES")
     void decodeStationField();                     // all 340 display-list rows (once, at entry)
     void decodeStationDirty();                     // consume the recorded dirty rectangles
     void decodeStationStars();                     // re-decode the star rows (during the fade-in)
@@ -430,6 +436,19 @@ private:
     Sprite*  stationMsl[2] = { nullptr, nullptr };   // the two missile-dot CHAINS (ch6/ch7)
     void     buildStationSprites();
     uint16_t stationDotCol   = 0xFFFF;   // last COLPM2/3 published (poke only on change)
+
+    // Scene 1's single PMG element: the sparkle.  $5000 builds a 15-scanline "✦" in player 0's
+    // buffer ($0C00, PMBASE $0800) at the fixed HPOSP0 $C1, then fades COLPM0 $0F->$00 over 16
+    // two-frame steps while eating the shape away from both ends.  One Amiga sprite on channel 0
+    // (pair 0 -> COLOR17), read back out of the real PM page by the same pmRun() + kDoubleGlyph
+    // mirror the station's players use.  Its COLOUR cannot come from mem[]: the Atari writes
+    // COLPM0 ($D012), which bus.h does not shadow (only HPOSP0-3/HPOSM0-3 $D000-$D007 are) — so
+    // rof_logo.c publishes it as g_logoSparkleCol.  Updated from the VBI ISR like every other
+    // animating PMG mirror in the port (the feedback-vbi-driven-pmg-sprites memory).
+    Sprite*  logoSparkle    = nullptr;
+    void     buildLogoSparkle();
+    uint16_t logoSparkleCol = 0xFFFF;    // last COLOR17 published (poke only on change)
+    unsigned char logoFieldGen = 0;      // g_logoFieldGen value the decoded field is from
 
     // Blank black list shown until g_standbyRevealReady latches (boot/standby build in
     // progress) — switched to the real lists in renderFrame once ready.

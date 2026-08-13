@@ -20,6 +20,10 @@ tools/extract_a8s_ram.py cannot read these, its anchor is not loaded yet at boot
 Both are cross-checked here against the $51EF VBI model before anything is emitted.
 
   python3 tools/gen_logo_field.py > src/rof_logo_field.h
+
+The bake is NOT a magic blob: tools/plot_logo_ref.py re-runs the Atari's own $5111 stroke
+plotter over the ~130 bytes at $525F and reproduces what this script emits, byte for byte.
+Run it if the header is ever regenerated or doubted.
 """
 import gzip
 import sys

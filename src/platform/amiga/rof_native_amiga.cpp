@@ -1033,6 +1033,11 @@ extern "C" void game_vbi_isr(void)
 #endif
                             }
     else if (vbi == 0x1B30) vbi_handler_station();   // $1B30 attract VBI (sets $0080 + RTCLOK)
+    else if (vbi == 0x51EF) rof_logo_vbi();          // $51EF boot scene 1 (the Lucasfilm logo):
+                                                     // RTCLOK + the POKEY sweep that PACES the
+                                                     // scene — rof_logo_run's two waits spin on
+                                                     // the ZP cells only this body moves, so
+                                                     // without the case the logo never ends
     else if (vbi == 0x53CC) vbi_handler_1_native();  // $53CC attract/Title/game-over card VBI
     // $52D7 standby/launch VBI — and the fallback for an unknown or half-written vector, which is
     // harmless DURING THE GAME (the odd frame of a two-byte vector update) but NOT during a boot
