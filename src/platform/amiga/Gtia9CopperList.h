@@ -52,10 +52,13 @@ public:
     // Per-frame (VBI ISR ONLY): show the window starting at field row `row` — the scroll.
     void setWindowRow(uint16_t row);
 
-    // Per-frame: colour 1 of one sprite PAIR (0..3 -> COLOR17/21/25/29).  Atari players map to
-    // Amiga sprite channels, and OCS gives one palette entry per pair per colour, so each Atari
-    // element that shares a colour is put on its own pair.
-    void setPairColor(uint16_t pair, uint16_t c);
+    // Per-frame: one colour of one sprite PAIR (pair 0..3 -> COLOR17/21/25/29 + (which-1)*2).
+    // Atari players map to Amiga sprite channels, and OCS gives one palette entry per pair per
+    // colour, so each Atari element that shares a colour is put on its own pair.  `which` is 1
+    // for a sprite that only fills plane A (every mirror here but one); the station's spacecraft
+    // fills BOTH planes of one sprite, so its pen is DATB<<1 | DATA and it uses 2 and 3 as well —
+    // that is how GTIA's multi-colour-player OR of COLPM0/COLPM1 is reproduced.
+    void setPairColor(uint16_t pair, uint16_t c, uint16_t which = 1);
 
     // Re-point one sprite channel (VBI ISR only, same reason as setWindowRow).
     void setSpriteOperand(uint16_t channel, const uint16_t* data);

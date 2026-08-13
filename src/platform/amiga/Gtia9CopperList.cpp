@@ -102,9 +102,11 @@ void Gtia9CopperList::buildLayout(const Bitmap& field, uint16_t topLines, uint16
     for (int i = 0; i < 16; i++)
         d[INDEX_PAL + i] = copperMove((uint16_t)(color00 + (i << 1)), pal16[i]);
 
-    // Sprite colour registers: colour 1 of each pair is set per frame (setPairColor); colours
-    // 2 and 3 are unused here (no attached / multi-colour sprite pairs) but are emitted black
-    // so the list never inherits a foreign scene's value.
+    // Sprite colour registers, all set per frame by setPairColor.  Colour 1 is the only one a
+    // plane-A-only mirror uses; pair 0 in the station scene carries the spacecraft, which fills
+    // BOTH bitplanes of its sprite (P0/P1, whose overlap GTIA's multi-colour-player bit paints
+    // COLPM0|COLPM1), so it uses 2 and 3 as well.  Emitted black up front regardless, so the list
+    // never inherits a foreign scene's value.
     for (int pair = 0; pair < 4; pair++) {
         const uint16_t base = (uint16_t)(color17 + (pair << 3));   // COLOR17/21/25/29
         d[INDEX_SPRCOL + pair * 3 + 0] = copperMove(base,     0x000);
@@ -143,9 +145,10 @@ void Gtia9CopperList::setWindowRow(uint16_t row)
                (uint32_t)field_->data + (uint32_t)row * (uint32_t)kRowBytes, kLineBytes);
 }
 
-void Gtia9CopperList::setPairColor(uint16_t pair, uint16_t c)
+void Gtia9CopperList::setPairColor(uint16_t pair, uint16_t c, uint16_t which)
 {
-    data_[INDEX_SPRCOL + pair * 3] = copperMove((uint16_t)(color17 + (pair << 3)), c);
+    const uint16_t reg = (uint16_t)(color17 + (pair << 3) + ((which - 1) << 1));
+    data_[INDEX_SPRCOL + pair * 3 + (which - 1)] = copperMove(reg, c);
 }
 
 void Gtia9CopperList::setSpriteOperand(uint16_t channel, const uint16_t* data)

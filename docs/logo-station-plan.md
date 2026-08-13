@@ -12,6 +12,7 @@
 | 5. **Logo** | ✅ **DONE** — `src/rof_logo.c` written, verified headlessly (see §1.5), **user-confirmed on screen** |
 | 5b. Logo→Station handover | ✅ **DONE** — the entry now blanks before rebuilding the shared list/bitmap (§1.6) |
 | 6. Cleanup + docs | ✅ **DONE** — the dead `station_*_native` block is deleted (§2.5 defect 2); the §4 renames were already in |
+| 6b. Station PMG placement + spacecraft colour | ✅ **DONE** — three real bugs, all §2.4a |
 
 Deviations from the plan as written, all deliberate:
 * **One `Gtia9CopperList` serves BOTH scenes** instead of separate Station/Logo lists — they are
@@ -477,6 +478,73 @@ Total mutated image bytes per frame: **< 200**.
   so it never overwrites a row that is still displayed — which is why the Amiga's decode-once
   bitmap does not have to care about it.
 
+### 2.4a The three PMG bugs found on screen 2026-08-13 (all fixed)
+
+The scene had been signed off, and then three separate things showed up next to each other.
+
+**1. Every element 3 lores px left of where it belongs.** A flat trim, and the *logo's* sparkle
+wanted exactly the same 3 px, so it is not an element's constant but the shared HPOS→Amiga-X
+mapping: the port's playfield left edge sits 3 px off the `$81` `pmX()` assumes. Folded into
+`pmX()` in `RescueOnFractalus.cpp` and the logo's old `kLogoSparkleXAdj` deleted (net effect on the
+sparkle: nil, it keeps the +3 the user already confirmed).
+
+**2. Every station element 16 scanlines too low — and the cause is the display-list table above.**
+`$1C35` is `70 60 70`, i.e. **23** leading blank scanlines, but `kStationTopLines` is 8, so the
+station's *picture* is drawn 15 lines higher than its PMG. The anchor that proves which of the two
+is wrong is the **logo**: its DL genuinely is `8 × $70` = 64, `kLogoTopLines` = 64 agrees, and the
+sparkle's line is confirmed on screen — so `pmLine()`'s `off - 8` is right and the station's layout
+is what disagrees. (That anchor also pins ANTIC's display-list start at absolute scanline 8:
+64 + 8 = the 72 `pmLine()` implies.) Fixed with `kStationPmYAdj`, subtracted from every station
+element by `pmLineStation()`, rather than by raising `kStationTopLines` to 23 — which would move
+the whole already-accepted composition down and push region C's copper `WAIT` to line 258, past the
+8-bit vertical compare. The constant is **16**, the value measured on screen; the derivation gives
+15 and the odd line is inside the uncertainty of the PM-buffer-index-vs-scanline offset.
+⚠ It is scene-wide, so it moves the spacecraft too — user-confirmed separately, and unavoidable
+since that element is placed through the same `$277A` → `pmLine()` path.
+
+**3. The spacecraft's fuselage was dark grey where atari800 shows near-white** (`#4f4f4f` vs
+`#d3d3d3`). **`station_init` writes PRIOR `$71` and bit 5 is GTIA's multi-colour-player enable**:
+where P0 and P1 overlap the output is `COLPM0 | COLPM1` = `$06 | $0A` = **`$0E`**, brighter than
+either. The ship's centre column is set in *both* pages — that column IS the fuselage — so
+mirroring P0 and P1 onto two separate sprite channels painted it in the higher-priority channel's
+`$06`.
+
+⭐ **The fix is that an Amiga sprite is ALREADY two bitplanes** — the two words per line are
+`SPRxDATA` and `SPRxDATB`, and the pen is `DATB<<1 | DATA` → COLOR17/18/19 for pair 0. Every other
+PMG mirror in the port writes `glyph, 0`, i.e. plane A only, which is why each gets one colour and
+why `setPairColor` only ever set colour 1. Put **P0 in plane A and P1 in plane B of ONE sprite** and
+the three pens are COLPM0 / COLPM1 / their OR — the multi-colour player exactly, on channel 0
+alone. `stationSpr[]` therefore shrank to 3 (ship, P2 dot, P3 dot) and channel 1 is a null sprite.
+
+⚠ **Do NOT reach for an attached pair.** That was tried first and is wrong: ATT makes the two
+channels **four** planes, so P1 alone lands on pen 4 = COLOR20 (which nothing in this list sets) and
+the overlap on pen 5 = COLOR21 — which *is* set, to the converging dots' cycling colour. The
+headless probe could not see it: the control words, the ATT bit and COLOR17/18/19 were all exactly
+as intended, and only the on-screen colours said otherwise. The reference the user supplied (a
+14×17 px capture = 7 Atari px × 17 scanlines, i.e. the frame-12 shape at 2× horizontal) decoded to
+`#4f4f4f` / `#898989` / `#d3d3d3` = `$06` / `$0A` / `$0E`, matching the `$272C` table decode row for
+row — which is what pinned the pen assignment.
+
+One sprite now carrying both players forces the run to be taken over **P0 | P1**, not P0 alone,
+which fixed a latent bug: `pmRun()` stops at the first zero byte, and **8 of the 13 shape frames
+have an interior P0-only zero row** (frame 12's row 14) — those were silently truncating the ship —
+while frames 3 and 4 *start* with a P1-only row, so the shape was also drawn one scanline high. The
+union has no interior hole in any frame.
+
+Verified headlessly with `amiga/station_sprites.gdb` at 31 s (the ship only launches in
+`station_audio`'s RTCLOK_MID phase 3, the last ~2 s of the scene — a 15 s or 20 s sample shows
+empty PM pages and reads as "no ship"):
+
+```
+ship ch0 POS=338f CTL=3500  ATT=0
+ship  y=51  x=286  rows=2      p0: [1f]=10   p1: [1e]=10 [1f]=38   <- union starts at $1E, P0 at $1F
+  row00  A=0000 B=0300  overlap=0000   P1 alone   -> pen 2 = COLOR18 $0A
+  row01  A=0300 B=0fc0  overlap=0300   fuselage   -> pen 3 = COLOR19 $0E, pen 2 either side
+pair0 col1/2/3: 0555 0888 0ddd    = atariToOCS($06 / $0A / $0E)
+dot[2] y=111 x=204   dot[3] y=111 x=360        (phase $94 -> pmLineStation($5B) = 111)
+msl y=78,97,112,129,144  x=140/432             (HPOSM0/1 parked at 0, M2 $C8, M3 $36)
+```
+
 ### 2.5 What already exists in the port
 
 Good news — most of it:
@@ -536,7 +604,9 @@ by moving bitplane pointers, which makes the scroll free.
     `i = mem[$0097] & 7`, `x = 0x81 + (mem[$1F30 + i] - 0x32) * 2`, colour
     `atariToOCS(mem[$1F40 + i])`.
   * P0/P1 (the `$1E2A` shape cycle at `$3400`/`$3500`, `HPOS = $7F`, `COLPM0 = $06`,
-    `COLPM1 = $0A`) → 2 more sprites.
+    `COLPM1 = $0A`) → **ONE sprite, one player per bitplane** (P0 in `SPRxDATA`, P1 in `SPRxDATB`),
+    not 2 separate sprites and not an attached pair: PRIOR `$71` enables multi-colour players, so
+    the overlap must come out `COLPM0 | COLPM1` (§2.4a).
   * The 8 missile dots (5th player, `COLPF3 = $34`) → 1-2 more sprites, or defer as polish.
 * **Audio**: `station_audio` already routes POKEY → Paula. ⚠ Check that the standby SFX tick
   (`sfx_voice_tick`, driven from the VBI body) is inert while `VVBLKI == $1B30`, or it will

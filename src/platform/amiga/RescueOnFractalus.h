@@ -424,15 +424,22 @@ private:
     // CHANNEL MAP.  OCS gives one colour per sprite PAIR (0/1 -> COLOR17, 2/3 -> COLOR21,
     // 4/5 -> COLOR25, 6/7 -> COLOR29) and the Atari elements have four different colours, so each
     // takes its own pair — except the two that genuinely share one:
-    //   ch0  P0 shape   pair 0   COLPM0 = $06        the animating station lights ($3400)
-    //   ch2  P1 shape   pair 1   COLPM1 = $0A        ...and its second colour ($3500)
+    //   ch0  spacecraft pair 0   COLOR17 = COLPM0 $06   P0 ($3400) in the sprite's plane A and
+    //                            COLOR18 = COLPM1 $0A   P1 ($3500) in plane B, so the pen DATB<<1|
+    //                            COLOR19 = $06|$0A=$0E  DATA reproduces PRIOR $71's multi-colour
+    //                                                   player: the overlap (the fuselage) is the
+    //                                                   OR.  ⚠ NOT an attached pair — that would
+    //                                                   be 4 planes and land on COLOR20/21.
     //   ch4  P2 dot     pair 2   COLPM2 = $1F40[i]   left converging dot  ($3600)
     //   ch5  P3 dot     pair 2   COLPM3 == COLPM2    right converging dot ($3700) — free pairing
     //   ch6  missiles   pair 3   COLPF3 = $34        the 5th player's dots ($3300)
     //   ch7  missiles   pair 3   ...a second chain, for the scanline that carries two dots
+    // Channel order also gets the Atari's priority right: PRIOR $71 is priority mode 1, where the
+    // players sit in front of PF2/PF3 and rank P0 > P1 > P2 > P3 with the 5th player (missiles as
+    // COLPF3) behind them all — which is exactly SPR0 > ... > SPR7 with the missiles last.
     // Each element is read back out of its real PM buffer rather than recomputed, so the mirror
     // cannot drift from the 6502 (and the writers' clear-behind falls out for free).
-    Sprite*  stationSpr[4] = { nullptr, nullptr, nullptr, nullptr };   // P0, P1, P2, P3
+    Sprite*  stationSpr[3] = { nullptr, nullptr, nullptr };   // spacecraft (P0+P1), P2 dot, P3 dot
     Sprite*  stationMsl[2] = { nullptr, nullptr };   // the two missile-dot CHAINS (ch6/ch7)
     void     buildStationSprites();
     uint16_t stationDotCol   = 0xFFFF;   // last COLPM2/3 published (poke only on change)

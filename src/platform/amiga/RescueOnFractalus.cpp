@@ -2559,10 +2559,9 @@ void RescueOnFractalus::initialize()
     // 2n data words + a 2-word terminator, which is exactly the room 6 chained single-line dots
     // (6 x 4 words + terminator) need — their control words are written by hand, so the Sprite is
     // only being used for its correctly-sized, correctly-freed chip allocation.
-    stationSpr[0] = Sprite::allocate(kStationShapeRows);   // P0 shape
-    stationSpr[1] = Sprite::allocate(kStationShapeRows);   // P1 shape
-    stationSpr[2] = Sprite::allocate(kStationDotRows);     // P2 dot
-    stationSpr[3] = Sprite::allocate(kStationDotRows);     // P3 dot
+    stationSpr[0] = Sprite::allocate(kStationShapeRows);   // the spacecraft: P0 in plane A, P1 in B
+    stationSpr[1] = Sprite::allocate(kStationDotRows);     // P2 dot
+    stationSpr[2] = Sprite::allocate(kStationDotRows);     // P3 dot
     stationMsl[0] = Sprite::allocate(kStationMslDots * 2); // missile chain A
     stationMsl[1] = Sprite::allocate(kStationMslDots * 2); // missile chain B
     logoSparkle   = Sprite::allocate(kLogoSparkleRows);    // scene 1's one PMG element
@@ -5563,10 +5562,9 @@ void RescueOnFractalus::renderBootScene()
             // operands are constant from here on — buildStationSprites only rewrites the buffers —
             // so nothing has to hit the copper's scanline-16 SPRxPT read deadline again.
             if (stationSpr[0]) {
-                bootFieldCopper->setSpriteOperand(0, stationSpr[0]->data());   // P0 shape
-                bootFieldCopper->setSpriteOperand(2, stationSpr[1]->data());   // P1 shape
-                bootFieldCopper->setSpriteOperand(4, stationSpr[2]->data());   // P2 dot
-                bootFieldCopper->setSpriteOperand(5, stationSpr[3]->data());   // P3 dot
+                bootFieldCopper->setSpriteOperand(0, stationSpr[0]->data());   // the spacecraft
+                bootFieldCopper->setSpriteOperand(4, stationSpr[1]->data());   // P2 dot
+                bootFieldCopper->setSpriteOperand(5, stationSpr[2]->data());   // P3 dot
                 bootFieldCopper->setSpriteOperand(6, stationMsl[0]->data());   // missile chain A
                 bootFieldCopper->setSpriteOperand(7, stationMsl[1]->data());   // missile chain B
             }
@@ -5704,25 +5702,55 @@ void RescueOnFractalus::buildStationSprites()
 {
     if (!bootFieldCopper || !stationSpr[0]) return;
 
-    // --- P0 / P1: the animating shapes at $3400 / $3500, both at the fixed HPOS $7F -----------
-    // station_pm_shape_tick ($1E01 -> $1E2A) walks a 13-frame table set, writing a run of up to
-    // 17 rows and clearing the four above it.  Colours are constants station_init writes once.
-    static const uint16_t kShapePage[2] = { 0x3400u, 0x3500u };
-    static const uint8_t  kShapeCol[2]  = { 0x06u,   0x0Au   };
-    for (int s = 0; s < 2; s++) {
-        bootFieldCopper->setPairColor((uint16_t)s, atariToOCS(kShapeCol[s]));
-        uint16_t* d = stationSpr[s]->data();
-        unsigned  first = 0;
-        unsigned  rows  = pmRun(mem + kShapePage[s], &first);
+    // --- P0 / P1: the launching spacecraft at $3400 / $3500, both at the fixed HPOS $7F --------
+    // station_pm_shape_tick ($1E01 -> $1E2A) walks a 13-frame table set ($272C/$2739/$2746/$2753/
+    // $2760), writing a run of up to 17 rows into BOTH pages at the same $277A offset and clearing
+    // the four above it.  The 13 frames are the ship growing as it climbs, with the exhaust plume
+    // trailing below.  Colours are the constants station_init writes once.
+    //
+    // ⭐ P0 AND P1 SHARE ONE SPRITE, one player per BITPLANE, because station_init's PRIOR is $71
+    // and bit 5 is GTIA's MULTI-COLOUR PLAYER enable: where P0 and P1 overlap the Atari outputs
+    // COLPM0 | COLPM1 = $06 | $0A = $0E, much brighter than either.  That overlap is the ship's
+    // fuselage (the shape data's centre column is set in both pages), so putting P0 and P1 on two
+    // sprite channels painted the fuselage in the higher-priority channel's $06 — dark grey where
+    // atari800 shows near-white (user, 2026-08-13).
+    //
+    // An Amiga sprite is ALREADY two bitplanes: the two words per line are SPRxDATA and SPRxDATB,
+    // and the pen is DATB<<1 | DATA -> COLOR17/18/19 for this pair.  Every other mirror in the port
+    // writes `glyph, 0`, i.e. plane A only, so it gets one colour; here P0 goes in A and P1 in B and
+    // the three pens land on COLPM0 / COLPM1 / their OR — the multi-colour player exactly, on ONE
+    // channel.  ⚠ NOT an attached pair: ATT makes the two channels FOUR planes, which puts P1 alone
+    // on pen 4 (COLOR20, which nothing sets) and the overlap on pen 5 (COLOR21 — the converging
+    // dots' cycling colour).  That was tried first and is what "the colours are still off" was.
+    //
+    // The run is taken over P0 | P1, since one sprite now carries both: it must not break on a row
+    // that only one page fills, and more than half the frames have an interior P0-only zero row
+    // (frame 12's row 14) that would otherwise truncate the ship, plus two whose FIRST row is
+    // P1-only (frames 3 and 4) that would start it a scanline low.
+    {
+        bootFieldCopper->setPairColor(0, atariToOCS(0x06u), 1);          // COLPM0, P0 alone
+        bootFieldCopper->setPairColor(0, atariToOCS(0x0Au), 2);          // COLPM1, P1 alone
+        bootFieldCopper->setPairColor(0, atariToOCS(0x0Eu), 3);          // COLPM0|COLPM1, both
+        const volatile uint8_t* p0 = mem + 0x3400u;
+        const volatile uint8_t* p1 = mem + 0x3500u;
+        uint16_t* d = stationSpr[0]->data();
+        unsigned first = 0;
+        while (first < 256u && (p0[first] | p1[first]) == 0) first++;
+        unsigned rows = 0;
+        while (first + rows < 256u && (p0[first + rows] | p1[first + rows]) != 0) rows++;
         if (rows > kStationShapeRows) rows = kStationShapeRows;
-        // Empty page: disarm the channel.  station_pm_shape_tick fills P0 and P1 from separate
-        // table pointers and P1's source is legitimately blank for stretches of the animation.
-        if (!rows) { d[0] = 0; d[1] = 0; continue; }
-        spriteCtl(d, pmX(0x7Fu), pmLine(first), (uint16_t)rows);
-        const volatile uint8_t* src = mem + kShapePage[s] + first;
-        uint16_t* px = d + 2;
-        for (unsigned r = 0; r < rows; r++) { *px++ = kDoubleGlyph[*src++]; *px++ = 0; }
-        for (unsigned r = rows; r < kStationShapeRows; r++) { *px++ = 0; *px++ = 0; }
+        // Both pages empty: disarm the channel (they stay empty until the first $1E2A tick, which
+        // station_audio only reaches in its RTCLOK_MID phase 3 — the last ~2 s of the scene).
+        if (!rows) { d[0] = 0; d[1] = 0; }
+        else {
+            spriteCtl(d, pmX(0x7Fu), pmLineStation(first), (uint16_t)rows);
+            uint16_t* px = d + 2;
+            for (unsigned r = 0; r < rows; r++) {
+                *px++ = kDoubleGlyph[p0[first + r]];      // SPRxDATA — pen bit 0
+                *px++ = kDoubleGlyph[p1[first + r]];      // SPRxDATB — pen bit 1
+            }
+            for (unsigned r = rows; r < kStationShapeRows; r++) { *px++ = 0; *px++ = 0; }
+        }
     }
 
     // --- P2 / P3: the two converging dots -----------------------------------------------------
@@ -5737,7 +5765,7 @@ void RescueOnFractalus::buildStationSprites()
         static const uint16_t kDotPage[2] = { 0x3600u, 0x3700u };
         const uint16_t kDotHpos[2] = { mem[0x1F30 + i], mem[0x1F38 + i] };
         for (int s = 0; s < 2; s++) {
-            uint16_t* d = stationSpr[2 + s]->data();
+            uint16_t* d = stationSpr[1 + s]->data();
             unsigned  first = 0;
             unsigned  rows  = pmRun(mem + kDotPage[s], &first);
             if (rows > kStationDotRows) rows = kStationDotRows;
@@ -6716,7 +6744,7 @@ void RescueOnFractalus::shutdown()
     delete leftPost;      leftPost      = nullptr;
     delete rightPost;     rightPost     = nullptr;
     delete nullSprite;    nullSprite    = nullptr;
-    for (int i = 0; i < 4; i++) { delete stationSpr[i]; stationSpr[i] = nullptr; }   // station PMG
+    for (int i = 0; i < 3; i++) { delete stationSpr[i]; stationSpr[i] = nullptr; }   // station PMG
     for (int i = 0; i < 2; i++) { delete stationMsl[i]; stationMsl[i] = nullptr; }   // ...its chains
     delete logoSparkle; logoSparkle = nullptr;                                       // the logo's
     // ⚠ energy / altimeter-terrain / left band triangle are ALIASES of wideLow[0..2][0] — non-owning
