@@ -127,3 +127,51 @@ So on the Amiga the poly4 is either (a) a **stale slot-5 voice** left from a pri
 load (e.g. the level-start chirp) that the priority mixer re-promotes when the range beep
 competes for a channel, or (b) an Amiga-specific mis-load. It is **not** a fresh push from the
 approach path. See [[pilot-proximity-beep]] for the open investigation + capture harness.
+
+## The saucer tone's noise waveform — CLOSED 2026-08-13 (user's call, not reproduced since)
+
+Reported 2026-08-06 while ear-checking the SFX mixer asm twin: the high-pitched tone that plays
+the whole time a flying saucer is present (that part is *correct*) **sometimes used the noise
+waveform**. Never heard again in a week of flying; closed on the user's instruction. Reopen only
+on a fresh report — these are the leads it was closed with, so nobody re-derives them.
+
+**Cleared of the mixer asm twin (a2f331f) — do not re-litigate that part:** `make FUZZ=1` +
+`amiga/sfxmix_fuzz.gdb` ran 7458 randomised on-target cases with **0 mismatch across all six
+paths** (incl. the `$5628` priority tie-break), comparing `pokey[0..15]` — i.e. the AUDF/AUDC
+distortion and volume nibbles themselves. `make validate FN=sfx` ties the C twin to the `$5614`
+oracle (11 fixtures). The user also A/B'd `RoF-asm.exe` against a `make SFXMIX_C=1` build by ear:
+no audible difference.
+
+**The four live suspects, in cost order, if it ever comes back:**
+1. **A wrong event id pushed** — the cheapest explanation, and it has a precedent of exactly this
+   shape: the range-1 "wrong sound" was an Amiga twin (`startup_init_native`) open-coding a ring
+   push with a live register as the event id, pushing `$01` (poly4) instead of `$14` (pure).
+2. **A stale `$00DF`.** `$51ab` (the flight-VBI keyboard-command window) pushes a *variable* as an
+   event id — `LDX mem[$00DF]; BNE; JSR $5815`. Faithful, but it means whatever glyph the keyboard
+   dispatcher last left in `$00DF` becomes a sound event.
+3. **Voice slot 3 is shared by pure AND noise events** — `$14`/`$21`/`$0a`/`$0c`/`$10`/`$12`/`$1d`/
+   `$1e` are pure; **`$13` is noise** (slot 3, dist `$00`, vol 8, freq `$ff`). A stray `$13` into
+   slot 3 would sound exactly like the report.
+4. **An Amiga-only DMA-phase hazard, i.e. no wrong byte at all.** `update_paula_channel`'s own
+   comment documents a note's onset playing as noise instead of a square *intermittently, depending
+   on the DMA phase*, because Paula latches PTR/LEN only at the next DMA loop wrap. ⚠ This is why a
+   timing-only change (a faster ISR, say) can alter how OFTEN this is audible without changing a
+   single POKEY write — so an A/B by ear cannot exonerate a timing change here.
+
+⚠ **Nobody ever identified which event the saucer tone actually is.** The saucer spawn itself
+(`terrain_draw_frame_core`'s spawn branch) pushes **no** sound event, so the push is elsewhere —
+look for a per-frame one keyed on object presence / target-visible (`$28FB`/`$28FC`,
+`mem[$006A]==$7F`).
+
+**The method that would settle it** (it is what settled range-1): capture the POKEY stream on both
+sides with a saucer on screen and diff AUDC — `atari800 -pokeyrec -pokeyrec-ascii
+-pokeyrec-interval 312` for ground truth vs `ROF_BEEP_CAP` on the Amiga. Build
+`make COMBAT=1 COMBAT_SAUCER=<small>` so saucers appear constantly; the boot default is level 4,
+where they are sparse enough to cost minutes of flying.
+
+**Also closed, as FAITHFUL: the thrust beep going quieter while a saucer is active.** In this
+engine the **priority nibble IS the volume nibble** (`$066B+Y` → AUDC low nibble) and there are
+only 4 POKEY channels, so `sfx_reorder_voice_slot` demoting a loser genuinely makes another voice
+quieter. Related data point from the game's own tables: the thrust key's beep is event **`$21`**
+(slot 3, pure, vol 4) and its follow-on is event **`$06` = a noise burst, vol 15** — so *some*
+noise after a command beep is correct.
