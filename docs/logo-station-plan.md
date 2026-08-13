@@ -385,7 +385,7 @@ buildLayout        vbi=338  bootScene=2 prevScene=1 bootInst=0 emptyInst=1 top=8
 
 | | |
 |---|---|
-| Display list | starts at **`$1C35`**: one `$70` (blank 8), then `01 xx xx` = **JMP to the moving window start** (`mem[$1C39/$1C3A]`) |
+| Display list | starts at **`$1C35`**: `70 60 70` = **23 blank scanlines** (blank-8 + blank-**7** + blank-8), then `01 xx xx` = **JMP to the moving window start** (`mem[$1C39/$1C3A]`). ⚠ An earlier version of this table said "one `$70`" — that cost 15 lines of PMG misalignment, see §2.4a |
 | DL body | built at **`$B800`**: **122** mode-F entries LMS `$0600 + 40n` (the station image) followed by **218** mode-F entries that are *mostly* the shared blank row **`$2C90`**, with up to 30 of them (1-in-8, `RANDOM`) pointing at their own row `$2CB8 + 40k` — **the stars** |
 | Terminator | a `41 35 1C` (JVB → `$1C35`) that is **moved down 3 bytes per scroll step**, so the visible window is always exactly **192 mode-F rows** (`$0240 / 3`) |
 | GTIA | `PRIOR $D01B = $71` → **GTIA mode 9**, priority 1, multi-colour players, **5th player** (missiles = `COLPF3`) |

@@ -850,17 +850,27 @@ static const uint16_t kLogoDLLms    = (uint16_t)(kLogoDL + 8u);   // the `4F lo 
 // $5000 fills $0C40-$0C4E and then $0C47, i.e. 16 scanlines of headroom.
 static const uint16_t kLogoPmP0        = 0x0C00u;
 static const unsigned kLogoSparkleRows = 16;
-// Horizontal trim, in lores pixels, on top of the pmX(HPOSP0) mapping the station established.
-// The sparkle is the one boot-scene element whose placement is judged against baked artwork
-// rather than against another mem[]-derived element, and on screen it wanted 3 px right of
-// where HPOSP0 $C1 alone puts it (user, 2026-08-13).
-static const int      kLogoSparkleXAdj  = 3;
 // Sprite sizes for the station's PMG mirror.  The P0/P1 shape run is `$2760[i] + 1` rows, whose
 // table maxes at $10 -> 17; the display_scroll dot blob is 3; and the eight $1D92 patterns yield
 // at most 9 dots (pattern $C3 lights two missiles), spread over two chains.
 static const unsigned kStationShapeRows = 24;
 static const unsigned kStationDotRows   = 8;
 static const unsigned kStationMslDots   = 6;
+// Vertical trim, in scanlines, subtracted from pmLine() for EVERY station PMG element.
+//
+// The station's display list does NOT open with one `$70` the way this file's kStationTopLines
+// says: $1C35 reads `70 60 70 01 B9 B9`, i.e. blank-8 + blank-7 + blank-8 = **23** leading
+// scanlines before the JMP into the moving window.  pmLine() is anchored on the LOGO, whose DL
+// really is 8 x $70 = 64 and whose sparkle line is confirmed on screen — so that anchor is right
+// and it is the station's picture that is drawn 15 lines too high relative to its PMG.  Shifting
+// the sprites is the cheaper half of that fix (raising kStationTopLines to 23 would move the whole
+// accepted composition down and push the bottom region's copper WAIT past line 255).
+// 16 rather than the derived 15 is the value measured on screen (user, 2026-08-13); the odd line is
+// inside the uncertainty of "which absolute scanline does ANTIC start the display list on".
+// ⚠ Scene-wide, so it moves the launching spacecraft too — that element is placed by the same
+// $277A -> pmLine() path as the two the misalignment was spotted on, it just has no image feature
+// next to it to judge against.
+static const uint16_t kStationPmYAdj    = 16;
 
 #include "assets/terrain_pal.h"
 #include "assets/atari_pal.h"
@@ -5605,11 +5615,25 @@ void RescueOnFractalus::renderBootScene()
 // (the flight energy gauge at $0D98 lands on line 144, the altimeter likewise), and this scene's
 // own SDL render agrees — its P2/P3 blob sits at buffer offset $5B and display line 83.
 static inline uint16_t pmLine(unsigned off) { return (uint16_t)(kDisplayTop + off - 8u); }
+// ...and the station's own, which additionally takes out the 15-line error in that scene's
+// leading-blank count — see kStationPmYAdj, which is where the whole derivation lives.
+static inline uint16_t pmLineStation(unsigned off)
+{
+    return (uint16_t)(pmLine(off) - kStationPmYAdj);
+}
 // Amiga sprite X of an Atari HPOS.  An unwidened player is 8 bits over 8 colour clocks = 16 lores
 // px, so 2 px per clock, with the playfield's left edge ($81) at HPOS $32.  HPOS below the left
 // edge means "parked off screen" (station_missile_drift clears HPOSM0-3 to 0 to hide the dots).
+// kPmXAdj is a systematic 3-px trim measured on screen (user, 2026-08-13): every PMG element of
+// both boot scenes wanted the same 3 lores px to the right of where HPOS alone puts it, which is
+// the port's playfield left edge sitting that far off $81 — so it belongs in the shared mapping
+// rather than in one element's constant (it started life as the logo sparkle's kLogoSparkleXAdj).
 static const unsigned kPmXMin = 0x32u;
-static inline uint16_t pmX(unsigned h) { return (uint16_t)(0x81u + (h - kPmXMin) * 2u); }
+static const int      kPmXAdj = 3;
+static inline uint16_t pmX(unsigned h)
+{
+    return (uint16_t)(0x81u + (h - kPmXMin) * 2u + kPmXAdj);
+}
 
 // Write one chained sprite's two control words at `p` for a `h`-line sprite at raster (x, y).
 // Sprite::setY is not used: it never sets SV8, which is fine for the framework's own sprites but
@@ -5655,7 +5679,7 @@ void RescueOnFractalus::buildLogoSparkle()
     if (rows > kLogoSparkleRows) rows = kLogoSparkleRows;
     // Nothing to show: before the shape is built, and again after the fade has eaten all of it.
     if (!rows || h < kPmXMin) { d[0] = 0; d[1] = 0; return; }
-    spriteCtl(d, (uint16_t)(pmX(h) + kLogoSparkleXAdj), pmLine(first), (uint16_t)rows);
+    spriteCtl(d, pmX(h), pmLine(first), (uint16_t)rows);
     const volatile uint8_t* src = mem + kLogoPmP0 + first;
     uint16_t* px = d + 2;
     for (unsigned r = 0; r < rows; r++) { *px++ = kDoubleGlyph[*src++]; *px++ = 0; }
@@ -5719,7 +5743,7 @@ void RescueOnFractalus::buildStationSprites()
             if (rows > kStationDotRows) rows = kStationDotRows;
             const unsigned h = kDotHpos[s];
             if (!rows || h < kPmXMin) { d[0] = 0; d[1] = 0; continue; }   // parked / nothing to show
-            spriteCtl(d, pmX(h), pmLine(first), (uint16_t)rows);
+            spriteCtl(d, pmX(h), pmLineStation(first), (uint16_t)rows);
             const volatile uint8_t* src = mem + kDotPage[s] + first;
             uint16_t* px = d + 2;
             for (unsigned r = 0; r < rows; r++) { *px++ = kDoubleGlyph[*src++]; *px++ = 0; }
@@ -5744,7 +5768,7 @@ void RescueOnFractalus::buildStationSprites()
                 if (!bits) continue;
                 const unsigned h = mem[0xD004 + m];   // HPOSM shadow (see bus.h); 0 = parked
                 if (h < kPmXMin) continue;
-                const uint16_t y = pmLine(i);
+                const uint16_t y = pmLineStation(i);
                 // Pick a chain whose previous entry has already STOPPED: a channel re-fetches its
                 // control words ON the VSTOP line, so the next VSTART must be strictly greater.
                 unsigned c;
