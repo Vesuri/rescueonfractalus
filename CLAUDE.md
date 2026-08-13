@@ -66,8 +66,15 @@ make validate FN="name"    # only tests whose name contains a substring — pref
 . env.sh        # put the ~/.local Amiga toolchain on PATH (source it first, SAME command)
 make            # build out/RoF.exe (+ RoF.elf for debug)
 ./run.sh        # boot in FS-UAE (Kickstart 3.1; left mouse button quits)
-./debug.sh      # source-level debug via FS-UAE GDB stub (m68k-amiga-elf-gdb, port 2345)
+./debug.sh      # source-level debug via FS-UAE GDB stub (m68k-amiga-elf-gdb; prints its $DEBUG_PORT)
 ```
+**Never `pkill fs-uae` / `pkill gdb`** in these scripts or by hand: several Amiga projects run
+their own emulator at the same time.  The run/debug/probe scripts source
+`~/.local/share/amiga/fsuae_common.sh` (shared, outside every repo; `$FSUAE_COMMON` overrides the
+path), which kills only the pid this directory's previous run recorded in `.run/fsuae.pid` and
+gives each project its own gdb-stub `$DEBUG_PORT`.  Stop a stranger's emulator by pid, or not at
+all.
+
 Toolchain lives at `~/.local`. `OPT=-O2`/`NATIVE_OPT=-O3` by default; override for debug
 backtraces with `make OPT='-O0' NATIVE_OPT='-O0'`.
 

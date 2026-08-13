@@ -10,6 +10,7 @@
 #   ROF_EXE=RoF-asm.exe ./run.sh      vs      ROF_EXE=RoF-cmixer.exe ./run.sh
 set -euo pipefail
 cd "$(dirname "$0")"
+. "${FSUAE_COMMON:-$HOME/.local/share/amiga/fsuae_common.sh}"
 
 FSUAE="${FSUAE:-fs-uae}"
 ROM="${1:-${KICKSTART:-$HOME/Documents/RetroPie/BIOS/kick31.rom}}"
@@ -40,7 +41,9 @@ SHOTS="${FSEMU_SCREENSHOTS_DIR:-$HOME/Pictures/Screenshots}"
 mkdir -p "$SHOTS"
 export FSEMU_SCREENSHOTS_DIR="$SHOTS"
 
-pkill -9 fs-uae 2>/dev/null || true; sleep 1
+fsuae_stop_previous
+# After the exec this shell IS fs-uae, so record $$ as the emulator pid.
+fsuae_track_self
 exec "$FSUAE" \
   --amiga_model="$MODEL" \
   --chip_memory=1024 --fast_memory=8192 \

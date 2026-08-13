@@ -12,6 +12,7 @@
 # See the pilot-proximity-beep memory for the analysis recipe.
 set -uo pipefail
 cd "$(dirname "$0")"
+. "${FSUAE_COMMON:-$HOME/.local/share/amiga/fsuae_common.sh}"
 FSUAE="${FSUAE:-fs-uae}"; GDB="${GDB:-m68k-amiga-elf-gdb}"
 ROM="${1:-${KICKSTART:-$HOME/Documents/RetroPie/BIOS/kick31.rom}}"
 [ -f "$ROM" ] || { echo "Kickstart ROM not found: $ROM (pass \$1 or set \$KICKSTART)"; exit 1; }
@@ -21,21 +22,23 @@ mkdir -p "$DH0/s" "$DH1" "$RUN/state" "$GDBHOME"
 printf 'cd dh1:\nRoF\n' > "$DH0/s/startup-sequence"
 cp -f out/RoF.exe "$DH1/RoF"
 rm -f "$RUN/state/"*.uss    # cold boot (wipe stale savestate)
-pkill -9 fs-uae 2>/dev/null || true; pkill -9 m68k-amiga-elf-gdb 2>/dev/null || true; sleep 1
+fsuae_claim_port
+fsuae_kill_recorded "$RUN/flightbeep.gdbpid" gdb || true
 "$FSUAE" --amiga_model=A500+ --chip_memory=1024 --fast_memory=8192 \
   --kickstart_file="$ROM" --hard_drive_0="$DH0" --hard_drive_1="$DH1" \
   --automatic_input_grab=0 --fullscreen=0 --window_width=720 --window_height=568 \
-  --remote_debugger=20 --remote_debugger_port=2345 --remote_debugger_trigger=RoF \
+  --remote_debugger=20 --remote_debugger_port="$DEBUG_PORT" --remote_debugger_trigger=RoF \
   --ntsc_mode=0 --state_dir="$RUN/state" > "$RUN/fsuae-flightbeep.log" 2>&1 &
 FSPID=$!
+fsuae_track "$FSPID"
 for i in $(seq 1 60); do
   kill -0 "$FSPID" 2>/dev/null || { echo "FS-UAE exited early"; cat "$RUN/fsuae-flightbeep.log"; exit 1; }
-  lsof -nP -iTCP:2345 -sTCP:LISTEN >/dev/null 2>&1 && break
+  lsof -nP -iTCP:"$DEBUG_PORT" -sTCP:LISTEN >/dev/null 2>&1 && break
   sleep 1
 done
 echo ">>> FS-UAE up (pid=$FSPID). Fly to a pilot; then: kill -INT \$(cat $RUN/flightbeep.gdbpid) <<<"
-env HOME="$GDBHOME" XDG_CACHE_HOME="$GDBHOME" "$GDB" -q -l 10 -x "${BEEPGDB:-flight_beep.gdb}" out/RoF.elf > "$RUN/flightbeep-gdb.out" 2>&1 &
+env HOME="$GDBHOME" XDG_CACHE_HOME="$GDBHOME" "$GDB" -q -l 10 -x "$(fsuae_gdb_script "${BEEPGDB:-flight_beep.gdb}")" out/RoF.elf > "$RUN/flightbeep-gdb.out" 2>&1 &
 GDBPID=$!; echo "$GDBPID" > "$RUN/flightbeep.gdbpid"
 echo ">>> gdb pid=$GDBPID; dump lands in $RUN/flightbeep-gdb.out <<<"
 wait "$GDBPID"
-pkill -9 fs-uae 2>/dev/null || true
+fsuae_stop
