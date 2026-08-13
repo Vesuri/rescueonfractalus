@@ -323,9 +323,12 @@ that exclusion list. Nothing else in the scene noticed, because the two long hol
 | The sparkle | 2 frames/step ✓, COLPM0 `$0F`→`$00` ✓, shape eroded from both ends with the `$0C45-$0C49` mask closing in ✓, sprite at x=415 y=100, VSTART/VSTOP shrinking one row per end per step, disarmed when the page empties ✓ |
 | Whole chain | Logo → Station → game, `g_bootScene` 1 → 2 → 0 ✓ |
 
-Still eyeball-only: the sparkle's **placement** relative to the artwork. `pmX`/`pmLine` are the
-station's constants, which transfer exactly — `$3A` and the station's `$3E` differ only in missile
-DMA, so the playfield width bits (normal, 40 bytes) are identical — but nobody has looked at it.
+The sparkle's **placement** was the one thing headless verification could not settle (`pmX`/`pmLine`
+are the station's constants, which transfer exactly — `$3A` and the station's `$3E` differ only in
+missile DMA, so the playfield width bits are identical). Looked at on screen 2026-08-13: the line is
+right, and the column wanted **+3 lores px** — `kLogoSparkleXAdj`, applied on top of `pmX(HPOSP0)` in
+`buildLogoSparkle`. It is the only boot-scene element whose position is judged against *baked
+artwork* rather than against another mem[]-derived element, so it is the only one with a trim.
 
 ### 1.6 The Logo→Station handover — blank before rebuilding the shared list (fixed 2026-08-13)
 

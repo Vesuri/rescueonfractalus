@@ -850,6 +850,11 @@ static const uint16_t kLogoDLLms    = (uint16_t)(kLogoDL + 8u);   // the `4F lo 
 // $5000 fills $0C40-$0C4E and then $0C47, i.e. 16 scanlines of headroom.
 static const uint16_t kLogoPmP0        = 0x0C00u;
 static const unsigned kLogoSparkleRows = 16;
+// Horizontal trim, in lores pixels, on top of the pmX(HPOSP0) mapping the station established.
+// The sparkle is the one boot-scene element whose placement is judged against baked artwork
+// rather than against another mem[]-derived element, and on screen it wanted 3 px right of
+// where HPOSP0 $C1 alone puts it (user, 2026-08-13).
+static const int      kLogoSparkleXAdj  = 3;
 // Sprite sizes for the station's PMG mirror.  The P0/P1 shape run is `$2760[i] + 1` rows, whose
 // table maxes at $10 -> 17; the display_scroll dot blob is 3; and the eight $1D92 patterns yield
 // at most 9 dots (pattern $C3 lights two missiles), spread over two chains.
@@ -5650,7 +5655,7 @@ void RescueOnFractalus::buildLogoSparkle()
     if (rows > kLogoSparkleRows) rows = kLogoSparkleRows;
     // Nothing to show: before the shape is built, and again after the fade has eaten all of it.
     if (!rows || h < kPmXMin) { d[0] = 0; d[1] = 0; return; }
-    spriteCtl(d, pmX(h), pmLine(first), (uint16_t)rows);
+    spriteCtl(d, (uint16_t)(pmX(h) + kLogoSparkleXAdj), pmLine(first), (uint16_t)rows);
     const volatile uint8_t* src = mem + kLogoPmP0 + first;
     uint16_t* px = d + 2;
     for (unsigned r = 0; r < rows; r++) { *px++ = kDoubleGlyph[*src++]; *px++ = 0; }
