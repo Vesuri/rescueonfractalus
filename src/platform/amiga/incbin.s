@@ -2,26 +2,6 @@
 | Each asset: .global + .incbin.  Chip-RAM assets (.MEMF_CHIP) go into a chip
 | hunk so DMA hardware (bitplanes, copper) can reach them.
 
-| cockpit.raw — interleaved 2-bitplane 320x104 cockpit panel (rows 136-240)
-|   palette: 0=dark, 1=panel grey, 2=medium grey, 3=orange-red lights
-	.section .MEMF_CHIP,"a"
-	.balign 4
-	.global cockpit_raw
-cockpit_raw:
-	.incbin "assets/cockpit.raw"
-
-| screen3_mem.bin — flat 64 KB RAM from a800dumps/music_playing.a8s (R1 Option-B).
-|   Standby screen (scene 3: RESCUE ON FRACTALUS title + LEVEL 04 doors-closed +
-|   cockpit; DL $3000).  Music ISR active at capture time ($54C0/$54EA).
-|   Doors-closed: $2000 terrain = $88 GTIA-10 fill (decoded as nibble 8 = COLPM3).
-	.section .rodata
-	.balign 4
-	.global rof_mem_bin
-	.global rof_mem_bin_end
-rof_mem_bin:
-	.incbin "../disasm/screen3_mem.bin"
-rof_mem_bin_end:
-
 | rof.xex — the original Atari 8-bit segmented load file (read-only).  This is the
 |   faithful initial memory image: load_xex_image() (XexImage.cpp) zeroes mem[] and
 |   places each XEX segment at its load address, so $00E7 (music gate) and all runtime
@@ -48,6 +28,17 @@ atari_osrom:
 	.incbin "assets/atari_osrom.bin"
 atari_osrom_end:
 
-| (tunnel.raw removed: the concentric tunnel rings are now drawn procedurally by
-|  draw_frame_pattern_seq ($65FB, src/gen/rof_native.c) at scene init, then
-|  decoded — no pre-baked bitmap.)
+| Removed embeds (kept as notes so nobody re-adds one "because incbin.s mentions it"):
+|  - tunnel.raw: the concentric tunnel rings are drawn procedurally by
+|    draw_frame_pattern_seq ($65FB, src/gen/rof_native.c) at scene init, then decoded.
+|  - cockpit.raw (8,960 B): the cockpit panel is decoded from the Atari cockpit bitmap in
+|    mem[] with a fully dynamic palette, so the pre-baked 2-bitplane image had no reader
+|    left.  --gc-sections was already dropping it (its own .MEMF_CHIP section), so this
+|    costs the binary nothing — it only stops shipping a dead asset.
+|  - screen3_mem.bin (65,536 B): the flat 64 KB Standby RAM snapshot the port booted from
+|    before the STAGED rof.xex load (XexImage.cpp) replaced it.  It had NO reader in C, but
+|    unlike cockpit.raw it was still LINKED IN: .rodata is one section that rof_xex anchors,
+|    so --gc-sections could not drop it.  Deleting the embed cut 64 KB off RoF.exe.
+|
+| ⚠ The lesson: a dead .rodata blob does NOT get collected the way a dead chip-hunk one does.
+|   Check `objdump -r out/RoF.elf | grep <sym>` for a reloc count of 0, not just C references.
