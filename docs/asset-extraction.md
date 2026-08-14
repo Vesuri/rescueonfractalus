@@ -5,7 +5,8 @@ item 1). Read this before touching `src/xex_load.h`, `src/platform/amiga/XexImag
 `src/platform/amiga/incbin.s` or `tools/make_xex_sparse.py`.
 
 **Status: SHIPPED.** `assets/rof_boot_image.bin` (27,872 B) replaced the embedded `rof.xex`
-(43,066 B); `RoF.exe` 334,100 → 318,764 B. The removal is gated on **static reachability**
+(43,066 B); `RoF.exe` 334,100 → 318,764 B (and **306,364 B** after the 2026-08-14 relocation-table
+pass — see the size ledger at the end). The removal is gated on **static reachability**
 (§5), not on play-testing — because the combat path turned out not to be run-to-run
 deterministic, so no A/B can ever clear it. `make FULLXEX=1` restores the original.
 
@@ -233,8 +234,22 @@ Cumulative for the release-packaging pass: **446,224 → 318,764 B (−28.6%)**.
 | drop two dead incbin blobs (`screen3_mem.bin`, `cockpit.raw`) | `70704ed` | 380,636 |
 | 14 KB OS ROM → 1 KB charset | `1a614d1` | 367,204 |
 | `elf2hunk -s` (strip `HUNK_SYMBOL`) | `a0dff0e` | 334,100 |
-| `rof.xex` → sparse boot image | this | **318,764** |
+| `rof.xex` → sparse boot image | `0b03c33` | 318,764 |
+| *(the 2026-08-14 perf work put ~1.9 KB back — joystick, edge-plot merge)* | | 320,716 |
+| **`ROF_MEMBASE` fold ×20 + `ROF_PAIR16` ×7** | this | **306,364** |
 
-What is left, in order of size: 222,732 B of code (the transliterated 6502 dominates),
-45,560 B of relocations (the `abs.l` tax — shrinks as the base-fold work spreads), and the
-27,872 B boot image.
+Cumulative for the release-packaging pass: **446,224 → 306,364 B (−31.3%)**.
+
+⭐ **The relocation table was the second-biggest thing in the file, and the base fold is what
+shrinks it.** The 2026-08-14 pass folded 20 more functions (`ROF_MEMBASE`, `rof_native.c`), taking
+`abs.l` mem[] operands **5,540 → 3,988** and RELOC32 entries **11,355 → 9,632 — i.e. 45,420 →
+38,528 B of pure relocation table**, for −14,352 B of `RoF.exe` overall. Two lessons that make this
+repeatable live in `docs/m68k-optimisation.md` §ROF_MEMBASE: the size test is **`RoF.exe`, not
+`.text`** (a fold can grow a function's code and still shrink the file, because each folded operand
+also deletes a 4-byte reloc — `boot_standby_launch_driver` is exactly that case), and a `.part.0`
+split must be read as one function.
+
+What is left, in order of size: ~208 KB of code (the transliterated 6502 dominates), **38,528 B of
+relocations** (still the `abs.l` tax — ~3,988 operands remain, and the unfolded ones are mostly in
+`rof_gen.c`, which would need transpiler support rather than a hand edit), and the 27,872 B boot
+image.

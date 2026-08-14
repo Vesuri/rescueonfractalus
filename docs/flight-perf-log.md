@@ -4,8 +4,13 @@ The **narrative record** of the flight-scene (scene 7) performance work: what wa
 measured, and why each candidate closed. This file is deliberately NOT in the agent's recall path —
 it is the archive you grep when you want the reasoning behind a verdict.
 
+⛔ **The optimisation roster is CLOSED (user decision, 2026-08-14) and 24.84 FPS against the 25 bar
+is where it stays.** §2.0 is the do-not-re-open list; §26.1 closes the pair-load sweep with the
+measurement that says the *remaining* sites cost more than they save.
+
 **Live state lives elsewhere:**
-- current numbers + the ranked OPEN todo → the `flight-pc-profiler` memory
+- current numbers + which harness answers what → the `flight-pc-profiler` memory (a REFERENCE now,
+  **not** a ranked todo — do not reconstruct one from it)
 - measurement rules + harness traps → the `flight-measurement-rules` memory
 - asm twin design/phases → `docs/asm-migration-plan.md`
 - scene composition + instrument map → the `flight-scene` memory, CLAUDE.md
@@ -2795,3 +2800,102 @@ count is the claim and no framerate run was spent on it.** Proof of correctness 
 routine that integrates the ship's position.** §12.3's other two "asm-shaped" items (GCC's register
 allocation, and it inlining five helpers a twin would have to re-implement) are unchanged and remain
 the reason the twin is a bad trade.
+
+--------------------------------------------------------------------------------
+## §26 — The pair-load sweep is FINISHED: the remaining 89 sites are the ones that don't pay; and the base fold turns out to be a SIZE lever with a different acceptance test (2026-08-14, second pass)
+
+⛔ **Not perf work, and it did not re-open the roster** — this pass was requested as *hygiene*: spread
+two under-applied methods that the 2026-08-14 inventory had flagged as unfinished. Both had a
+surprise in them, and one of the two surprises is the reason the other became worthwhile.
+
+### 26.1 ⛔ CLOSED: converting the REMAINING pair-load sites costs more than it saves
+
+§25.5 swept 45 sites across 8 flight routines for ~0.22% of wall and left 89. The natural reading is
+"89 to go". That reading is wrong: **the profitable sites were taken because they were profitable,
+and what remains is the residue.** Two measurements, both on a clean `make clean` build, baseline
+`a56206b` (`RoF.exe` 320,716 B, 108 `ror.w #8`, 62,747 instructions):
+
+| what | swaps | instructions | `RoF.exe` | verdict |
+|---|---|---|---|---|
+| all 64 remaining hand-written 16-bit sites | **−52** | **+699** | +1,816 B | ⛔ reverted |
+| `ZP_IND_Y` + `ZP_IND_X` in `src/cpu/cpu.h` | **−57** | **+517** | +808 B | ⛔ reverted |
+| the 7 sites that actually pay | −9 | **−22** | −76 B | ✅ kept |
+
+**The 64-site run is the definitive negative result.** Of ~50 affected functions, exactly **three**
+improved. The rest paid GCC re-allocation churn for nothing — over a dozen grew by +1..+8
+instructions while removing **zero** swaps, and the tail was brutal: `alien_shape_blit` **+231**,
+`fill_buffer2_region_ff` **+156**, `boot_standby_launch_driver` **+56 for zero swaps removed**,
+`blit_glyph_8rows` +46. ⭐ Strong confirmation that the measurement reproduces:
+`compute_obj_rel_angle_scale` came in at **exactly +11 instructions**, the same figure §25.2 recorded
+before reverting it — the blanket script had re-introduced a site already known to be bad.
+
+**The `ZP_IND_Y` finding is the more interesting half, because the biggest concentration of the tax
+was never hand-written code at all.** `objdump -dl` maps each `ror.w #8` to a source line, and the
+top entries were not pair-loads: 28 at one `bus_write(ZP_IND_Y(...))` call, 13 more inside
+`plot_masked_pixel_core`, 12 attributed to `bus.h` (those are inlined *arguments*, credited to the
+callee's line). All of them were `ZP_IND_Y`/`ZP_IND_X` in `cpu.h` — two macros, `~50` expansions, one
+per emulated `(zp),Y` access. Fixing two lines therefore looked like the biggest single win available.
+It measured **+517 instructions for −57 swaps** and was reverted. Why: in the bulk-memory 6502
+routines where those macros cluster, the more complex expression pushed GCC past its inlining
+threshold — `fill_buffer2_region_ff` stopped inlining `bus_write`'s cold hardware branch and emitted
+**14 indirect `jsr (a2)/(a3)` calls** instead. The +165 instructions there are a *shape* change, not
+the +1/site the idiom predicts.
+
+⭐⭐ **The transferable rule: a macro-level fix multiplies the CHURN as well as the win.** A
+per-site method whose acceptance test is per-function cannot be applied at a shared macro, because
+there is no way to opt a losing function out. Check the leverage point's blast radius before
+celebrating it.
+
+⇒ **Do not re-run this sweep.** Spell new pair-loads `ROF_PAIR16` from the start (free); do not
+convert existing ones. Kept: 2 sites in `dl_write_lms_window` (−13 ins), 1 in `memset_or_copy` (−5),
+4 in `rof_subdiv_residue_seed` (−4, inlined into `terrain_draw_objects`). Skipped deliberately:
+`rof_native.c:3132`, which helps `setup_initials_ptr` but is inlined into `emit_bcd_byte_digits` and
+`blit_message_block`, both losers.
+
+### 26.2 ⭐⭐ `ROF_MEMBASE`: the same fold, judged by BYTES instead of cycles, and it pays 20×
+
+The inventory called this one "outside flight it is a BINARY-SIZE lever, ~2 B + a reloc each". That
+was right, and the "+ a reloc" is the part that changes the decision — because **the established
+acceptance test cannot see it.** §23's rule is *keep a fold only when the function's own `.text`
+drops in a whole-TU diff*, which is correct for cycles. But each folded `abs.l` operand also deletes
+a **4-byte HUNK RELOC32 entry**, and relocations were the second-largest thing in the file (45,420 B).
+
+20 folds applied to unfolded functions with ≥40 `abs.l` operands each:
+
+| | `RoF.exe` | RELOC32 | `abs.l` mem ops | `ror.w #8` |
+|---|---|---|---|---|
+| baseline `a56206b` | 320,716 | 11,355 (45,420 B) | 5,540 | 108 |
+| + the 7 kept pair-loads | 320,640 | 11,352 | 5,540 | 99 |
+| **+ 20 `ROF_MEMBASE` folds** | **306,364** | **9,632 (38,528 B)** | **3,988** | **76** |
+
+**−14,352 B (−4.48%)**, of which −6,892 B is pure relocation table. (The extra 23 byte-swaps that
+vanished are a side effect of the folds changing codegen, not a second sweep.) 18 of the 20 folds
+also passed the `.text` cycle test; total `.text` fell 208,622 → 201,228 B, and `game_main_loop`
+alone dropped **−3,624 B** because the folded callees GCC inlines into it carry the fold inside —
+the same effect §23 saw with `terrain_draw_frame_core`.
+
+**The two tests disagree, and that is the finding.** `boot_standby_launch_driver` (956 operands, a
+13.7 KB body) **grew its `.text` by 794 B** — the textbook §23 "giant caller" failure, GCC cannot
+hold a base across it — and I reverted it on that rule, which made `RoF.exe` **1,600 B BIGGER**.
+−299 operands is −299 relocations, and that dominates. It is boot/standby code where cycles are
+irrelevant, so for a size goal it is a clear keep. Same for `alien_shape_blit` (+12 B `.text`,
+−38 operands). ⚠ And `animate_clear_colors_timed` was not the +1,086 B regression it appeared to be:
+GCC moved the body out of `…​.part.0` (1254→0 B) into the main symbol (0→1086 B), a net −168 B —
+**sum a base name with its `.part.N` siblings before judging a fold.**
+
+Both rules now live in `docs/m68k-optimisation.md`; the size ledger is in `docs/asset-extraction.md`.
+
+### 26.3 What this was validated with — and what still has no oracle
+
+`make validate` full suite **PASS, 0 mem mismatch** on all 28 fixtures, twice (pair-loads alone, then
+with the folds present), plus `make validate MEMBASE=1` for the fold-active host arm. `make hostproof`
+green. The 32-bit softmul/div audit is empty. Headless `boot_chain.gdb` on a **plain** build (the one
+build that does *not* imply `SKIPBOOT`) carried the folded binary through Logo → Station → Standby:
+`bootScene=0`, `VVBLKI=52d7`, `state=03`, `doorRdy=1 revealRdy=1`.
+
+⚠ **Stated honestly: most of the 20 folded functions have no 6502 oracle** (`pilot_render`,
+`boot_standby_launch_driver`, `game_init_76CB`, … are plain native twins), so `validate MEMBASE=1`
+does not reach them. What licenses the fold there is that it is *provably* value-identical — `mb` and
+`mem` are the same pointer, the launder emits no instruction, and a `#define mem mb` rescan that
+MISSES a use is a lost optimisation, not a wrong address. The residual risks are a capture bug or a
+misplaced `#undef`, and both are compile errors. The runtime smoke test above covers the rest.

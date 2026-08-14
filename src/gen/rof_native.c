@@ -2168,12 +2168,19 @@ void draw_ring_frame_step(void) {
  * $6A38 the CMP #$90 branch falls THROUGH into the rotation — the two are additive, so the
  * palette keeps cycling while the tunnel clears. */
 void step_accum_add_75(void) {
+    ROF_MEMBASE_DECL(mb);   /* 50 absolute-long mem[] operands folded to (d16,An) */
+#ifdef ROF_MEMBASE
+#define mem mb
+#endif
     uint8_t a = add_multibyte_a1_core(0x75);
     scroll_accum_b3 = a;
     if (a == scroll_accum_prev) return;                   /* top byte unchanged */
     scroll_accum_prev = a;
     if (a >= 0x90) draw_ring_frame_step();
     advance_history_6a4d();
+#ifdef ROF_MEMBASE
+#undef mem
+#endif
 }
 
 /* step_accum_sub_7e @ $6A8F — the BOOST reverse ring-step (the $008D branch of
@@ -2616,6 +2623,10 @@ void memset_or_copy(void) {
  * (post-incremented), X times (entry cpu.X, 0 => 256), at offset cpu.Y; then bump the
  * source pointer $00BB/$00BC once. */
 void copy_bytes_to_dst(void) {
+    ROF_MEMBASE_DECL(mb);   /* 53 absolute-long mem[] operands folded to (d16,An) */
+#ifdef ROF_MEMBASE
+#define mem mb
+#endif
     uint8_t a = cpu.A;
     uint8_t x = cpu.X;
     do {
@@ -2626,6 +2637,9 @@ void copy_bytes_to_dst(void) {
     } while (x != 0);                                         /* BNE */
     dl_y1 = (uint8_t)(dl_y1 + 1);                 /* INC $BB */
     if (dl_y1 == 0x00) dl_y2 = (uint8_t)(dl_y2 + 1);  /* INC $BC on carry */
+#ifdef ROF_MEMBASE
+#undef mem
+#endif
 }
 
 /* --- boot_standby_launch_driver-subtree leaves (batch 2026-06-15): pure mem-effect leaves. --- */
@@ -2843,6 +2857,10 @@ void music_init_state(void) {
  * A note-on also loads the attack slope ($065B) and writes the voice's AUDF.
  * A $00 stream byte marks end-of-song and stops playback via audio_timer_setup. */
 void music_player_tick(void) {
+    ROF_MEMBASE_DECL(mb);   /* 72 absolute-long mem[] operands folded to (d16,An) */
+#ifdef ROF_MEMBASE
+#define mem mb
+#endif
     if (music_note_timer != 0) {
         /* Note still sounding: integrate only.  When the note timer expires this
          * tick, flip every voice to the release slope so the note decays. */
@@ -2911,6 +2929,9 @@ void music_player_tick(void) {
         uint8_t audc = (uint8_t)((level >> 3) ^ mem[0x73C1 + x]);
         bus_write(0xD201 + x, audc);               /* AUDC = volume | distortion (POKEY) */
     }
+#ifdef ROF_MEMBASE
+#undef mem
+#endif
 }
 
 /* count_up_to_level @ $75B8 — bump $0604 (binary, via INC) and a parallel BCD counter
@@ -3225,6 +3246,10 @@ void rle_run_fill(void) {
  * Finally the column base $009C advances by 8.  The 6502 PHA/PLA preserves the shifted
  * byte across the plot call — reproduced here with a local. */
 void blit_glyph_8rows(void) {
+    ROF_MEMBASE_DECL(mb);   /* 70 absolute-long mem[] operands folded to (d16,An) */
+#ifdef ROF_MEMBASE
+#define mem mb
+#endif
     draw_color_idx = blit_color_src;
     set_row_ptr_from_count();                       /* $80/$81 = table[$0092] */
     blit_row_counter = 0x07;
@@ -3248,6 +3273,9 @@ void blit_glyph_8rows(void) {
      * only those instead of all 85 (see ROF_DOOR_FIELD_TOUCH_ROWS).  No-op unless the row table
      * is the $2000 one. */
     ROF_DOOR_FIELD_TOUCH_ROWS(draw_row);
+#ifdef ROF_MEMBASE
+#undef mem
+#endif
 }
 
 /* intro_seed_object_map @ $7498 — seed the intro object map.  Clear $0A00[0..255], place
@@ -3324,6 +3352,10 @@ void sfx_engine_reset(void) {
  * also sets the colour $00D8=$38.  A glyph with bit7 set is the end marker: stored masked,
  * and if nonzero terminates the string. */
 void show_cockpit_message(void) {
+    ROF_MEMBASE_DECL(mb);   /* 103 absolute-long mem[] operands folded to (d16,An) */
+#ifdef ROF_MEMBASE
+#define mem mb
+#endif
     uint8_t y = cpu.Y;
     if (y & 0x80) y = (uint8_t)(y & 0x7F);          /* bit7: skip clear */
     else clear_message_buffer();
@@ -3350,6 +3382,9 @@ void show_cockpit_message(void) {
         if (pos == 0x0E) break;
     }
     platform_title_changed();   /* hook: HUD message rendered into $32B7 -> flag title dirty */
+#ifdef ROF_MEMBASE
+#undef mem
+#endif
 }
 
 /* game_sub_6811 @ $6811 — scatter random dots (6 outer passes, growing mask $0082 and
@@ -3515,6 +3550,10 @@ static void cockpit_dial_update_core(uint8_t v);   /* defined below ($8371); use
  * transpiler models as PLP;return, and a PLA x8 unwind — both stack-only, so the fixture ignores
  * the stack page and cpu diffs are incidental.  All callees are native/transpiled twins. */
 void event_sequence_dispatcher(void) {
+    ROF_MEMBASE_DECL(mb);   /* 136 absolute-long mem[] operands folded to (d16,An) */
+#ifdef ROF_MEMBASE
+#define mem mb
+#endif
     /* Consume the pending-event flag; if it was negative, restore the saved display params. */
     uint8_t pending = event_pending_flag;               /* $063B */
     event_pending_flag = 0x00;
@@ -3649,6 +3688,9 @@ void event_sequence_dispatcher(void) {
     /* slot == 6 */
     flight_mode_state = (uint8_t)slot;                        /* $0072 = Y (= 6) */
     cpu.Y = (uint8_t)slot; set_colpf0_from_flag();
+#ifdef ROF_MEMBASE
+#undef mem
+#endif
 }
 
 /* ===========================================================================
@@ -3751,6 +3793,10 @@ void clear_colors_sweep_5x(void) {
  * (6502 note: the $7B==0 path's 7a2e branch is ALWAYS taken because ring_push_marked exits with
  * Z=0 from its TAX of X=$19 — not from the ASL — so it never falls into the $7B-sign branch.) */
 void animate_clear_colors_timed(void) {
+    ROF_MEMBASE_DECL(mb);   /* 71 absolute-long mem[] operands folded to (d16,An) */
+#ifdef ROF_MEMBASE
+#define mem mb
+#endif
     if (RTCLOK_LOW != 0) return;                         /* 7a17/7a19 */
 
     uint8_t y = anim_counter_007B;                       /* 7a1b LDY $7B */
@@ -3810,6 +3856,9 @@ void animate_clear_colors_timed(void) {
         if (y == 0) break;                               /* 7a82 BNE L_7a58 */
     }
     RTCLOK_LOW = mem[0x007C];                            /* 7a84/7a86 */
+#ifdef ROF_MEMBASE
+#undef mem
+#endif
 }
 
 #ifdef ROF_PLATFORM_AMIGA
@@ -3970,6 +4019,10 @@ void rof_alien_crwrite(unsigned int addr, unsigned char val) {
  * $793d/$797f arithmetic there is inspection-only).  $004D/$0079/$281E/$005A/$28E5/$28E9/$003F/$0040
  * are unnamed scratch — see docs/rename.md. */
 void pilot_render(void) {
+    ROF_MEMBASE_DECL(mb);   /* 190 absolute-long mem[] operands folded to (d16,An) */
+#ifdef ROF_MEMBASE
+#define mem mb
+#endif
     lock_on_indicator_state = 0x80;                      /* 7856 $7E */
     mem[0x004D] = 0x80;
     mem[0x2830] = 0x80;
@@ -4155,6 +4208,9 @@ L_79d9:
     init_event_state_5815_x16();                         /* 7a01 (entry A) */
     landing_seq_flag = (uint8_t)(landing_seq_flag + 1);  /* 7a04 INC $003D */
     goto L_78d6;                                         /* 7a06 -> L_7a0c -> L_7a14 */
+#ifdef ROF_MEMBASE
+#undef mem
+#endif
 }
 
 /* shift_object_table_up @ $6A0F — shift the display-list LMS address pairs up by 3 bytes
@@ -4214,12 +4270,19 @@ void draw_glyph_2rows(void) {
  * (count,value) pair is expanded into the dest via the (native) rle_run_fill; a count of 0
  * terminates. */
 void rle_expand_list(void) {
+    ROF_MEMBASE_DECL(mb);   /* 61 absolute-long mem[] operands folded to (d16,An) */
+#ifdef ROF_MEMBASE
+#define mem mb
+#endif
     cpu.Y = 0x00;
     for (;;) {
         cpu.A = bus_read(ZP_IND_Y(0x00BB));   /* ($BB)+0 = run length */
         if (cpu.A == 0x00) return;
         rle_run_fill();
     }
+#ifdef ROF_MEMBASE
+#undef mem
+#endif
 }
 
 /* rle_decompress @ $3C3D — decompress an RLE stream from the source pointer $00BB into the
@@ -4473,6 +4536,10 @@ void emit_dl_coord_pairs(void) {
  * regs are dead at the boot_standby_launch_driver call site; the PHA/PLA byte at $01FF that
  * the 6502 leaves behind (S=$FF in the harness) is masked in validate_native.c. */
 void compute_stage_display_geometry(void) {
+    ROF_MEMBASE_DECL(mb);   /* 61 absolute-long mem[] operands folded to (d16,An) */
+#ifdef ROF_MEMBASE
+#define mem mb
+#endif
     uint8_t x = level_stage;
 
     /* $75F5-$7600: P = min((X>>1)+2, $14) */
@@ -4566,6 +4633,9 @@ void compute_stage_display_geometry(void) {
     } else {
         stage_geom_0617 = x;
     }
+#ifdef ROF_MEMBASE
+#undef mem
+#endif
 }
 
 /* blit_label_row @ $6750 — blit a 5-glyph label row.  Index base = (mem[$0004]!=0)
@@ -4980,6 +5050,10 @@ void dl_rebuild_lms_window(void) {
  * $1070 / $10A0) and emits them into the DL via dl_write_lms_window.  All-native callees, all writes
  * land in safe RAM. */
 void game_init_76CB(void) {
+    ROF_MEMBASE_DECL(mb);   /* 182 absolute-long mem[] operands folded to (d16,An) */
+#ifdef ROF_MEMBASE
+#define mem mb
+#endif
     uint8_t a, y;
     for (y = 0x08; ; y--) {                      /* L_76cd */
         a = mem[0x77C9 + y];
@@ -5030,6 +5104,9 @@ void game_init_76CB(void) {
     build_row_addr_table();
     digit_dst_ptr_lo = 0x1A; digit_dst_ptr_hi = 0x32;      /* dest $321A */
     dl_write_lms_window();
+#ifdef ROF_MEMBASE
+#undef mem
+#endif
 }
 
 /* setup_initials_ptr @ $5A63 — point the digit dest at $3694, render $006D as zero-suppressed
@@ -5073,6 +5150,10 @@ static inline void digit_block_dirty(uint16_t dest) {
 }
 
 void startup_init(void) {
+    ROF_MEMBASE_DECL(mb);   /* 44 absolute-long mem[] operands folded to (d16,An) */
+#ifdef ROF_MEMBASE
+#define mem mb
+#endif
     bar_col_threshold = 0x00;
     cpu.Y = 0x1E;
     LDA(range_to_pilot);
@@ -5121,6 +5202,9 @@ void startup_init(void) {
     dl_y1 = 0x72; dl_y2 = 0x34;
     draw_2digit_value();
     digit_block_dirty(0x3472); digit_block_dirty(0x34A4);       /* #19 Pilot Quota/Rescued */
+#ifdef ROF_MEMBASE
+#undef mem
+#endif
 }
 
 /* dl_lms_scroll_step @ $69E3 — DEC $008B, then tail dl_rebuild_lms_window (rebuild the DL from the
@@ -5147,6 +5231,10 @@ void dl_lms_reset_window(void) {
  * through $7DA5 and plots it.  plot_clipped_pixel is native (clips OOB).  HW-free except the
  * mask read through ($C3) routed via bus_read.  Step must be nonzero or the loops never end. */
 void draw_scaled_shape(void) {
+    ROF_MEMBASE_DECL(mb);   /* 48 absolute-long mem[] operands folded to (d16,An) */
+#ifdef ROF_MEMBASE
+#define mem mb
+#endif
     ROF_ALIEN_DRAWSHAPE();   /* diag: count zoom-shape draws + latch shape ptr during the alien attack */
     ROF_CLEAR_FIG();      /* Amiga: reset the rescue-figure overlay for this frame's shape (no-op on SDL) */
     player_speed = 0x06;
@@ -5203,6 +5291,9 @@ void draw_scaled_shape(void) {
         mem[0x0054] = (uint8_t)u;
         mem[0x0055] = (uint8_t)((unsigned)mem[0x0055] + plot_step_hi + (u > 0xFF ? 1 : 0));
     } while (mem[0x0055] < 0x12);
+#ifdef ROF_MEMBASE
+#undef mem
+#endif
 }
 
 /* reorder_cell_bits @ $8181 — reorder a source byte into a mode-D cell byte and fold
@@ -5490,6 +5581,10 @@ void rof_alien_bench(void) {
 #endif /* ROF_ALIEN_BENCH */
 
 void alien_shape_blit(void) {
+    ROF_MEMBASE_DECL(mb);   /* 46 absolute-long mem[] operands folded to (d16,An) */
+#ifdef ROF_MEMBASE
+#define mem mb
+#endif
 #if defined(ROF_PLATFORM_AMIGA) && defined(ROF_FLIGHT_PROBE) && !defined(ROF_ALIEN_BENCH)
     unsigned long _thud = 0;
     if (mem[0x0632]) { g_alHudCalls++; _thud = rof_subclock(); }
@@ -5608,6 +5703,9 @@ void alien_shape_blit(void) {
 #if defined(ROF_PLATFORM_AMIGA) && defined(ROF_FLIGHT_PROBE) && !defined(ROF_ALIEN_BENCH)
     if (_thud) g_alTHud += rof_subclock() - _thud;
 #endif
+#ifdef ROF_MEMBASE
+#undef mem
+#endif
 }
 
 /* Advance one voice of the alien_creature_animate_draw frame sequencer (voices A and B share this shape).
@@ -5640,6 +5738,10 @@ static uint8_t seq_voice_step(unsigned posAddr, unsigned loopAddr) {
  * The tail retires the SFX step: while the sustain counter $292E holds it queues two ring markers
  * ($1A/$1B); when it underflows it silences audio and hands off to the audio IRQ. */
 void alien_creature_animate_draw(void) {
+    ROF_MEMBASE_DECL(mb);   /* 74 absolute-long mem[] operands folded to (d16,An) */
+#ifdef ROF_MEMBASE
+#define mem mb
+#endif
     /* --- Voice A / B: table-walked frame values --- */
     uint8_t frameA = seq_voice_step(0x2924, 0x005E);   /* $2924 pos, $005E link */
     mem[0x292A] = frameA;
@@ -5715,6 +5817,9 @@ void alien_creature_animate_draw(void) {
             cpu.X = (uint8_t)(cpu.X + 1); ring_push_marked();
         }
     }
+#ifdef ROF_MEMBASE
+#undef mem
+#endif
 }
 
 /* render_bcd_counter @ $49A0 — render the 3-byte packed-BCD score ($0601-$0603,
@@ -9317,6 +9422,10 @@ void draw_cockpit_dial_bar(void) { draw_cockpit_dial_bar_core(cpu.A); }
  * trigger_object_explosion -> ring_push consumes it; the same native chain runs in both
  * the native and oracle paths, so it stays equivalent.  mem-only contract. */
 void object_step_and_collide(void) {
+    ROF_MEMBASE_DECL(mb);   /* 78 absolute-long mem[] operands folded to (d16,An) */
+#ifdef ROF_MEMBASE
+#define mem mb
+#endif
     O2_DECL(); O2_START(g_osCalls); O2_LAP(g_osNop);   /* empty lap = this level's floor */
     /* Integrate the three position accumulators by their velocities.  X and Z are 24-bit
      * with the high byte masked to 12-bit map coords (mirrored to $27FD-$2800); altitude
@@ -9404,6 +9513,9 @@ void object_step_and_collide(void) {
     lock_on_indicator_state = (uint8_t)(lock_on_indicator_state | 0x80);
     reset_object_slot();
     O2_LAP(g_osTail);
+#ifdef ROF_MEMBASE
+#undef mem
+#endif
 }
 
 /* reset_indicator_event @ $B786 — clear $0035, then enqueue the indicator event. */
@@ -9447,6 +9559,10 @@ void check_object_in_target_box(void) {
  * threshold $96F5[$0036].  On a hit: clear $2826 and fire the pickup/explosion chain.
  * Reads ENTRY CARRY ($9682 ADC #$04).  mem-only contract. */
 void check_player_proximity_hit(void) {
+    ROF_MEMBASE_DECL(mb);   /* 67 absolute-long mem[] operands folded to (d16,An) */
+#ifdef ROF_MEMBASE
+#define mem mb
+#endif
     /* Reject unless object slot $0036 is within hit range of the player ship index:
      * |($006A + 4 + entryC) - $0036| < 4.  (The +4 ADC rotates in the entry carry.) */
     uint8_t near = (uint8_t)(mem[0x006A] + 0x04 + (cpu.C & 1));      /* 9680: entry carry */
@@ -9478,6 +9594,9 @@ void check_player_proximity_hit(void) {
     bcd_delta_hi = 0x02;
     bcd_inc_counter_0641();
     terrain_jitter_column();
+#ifdef ROF_MEMBASE
+#undef mem
+#endif
 }
 
 /* compute_obj_rel_angle_scale @ $97A0 — build a 10-bit relative angle from $2885/$2886,
@@ -11633,6 +11752,10 @@ void wait_frames(void) {
  * Faithful 1:1 with the $73C8 disasm; mem[$004C] (set once to $1E here, never
  * re-written) is the wait target for all four waits, and A round-trips PHA/PLA. */
 void init_gameplay_state(void) {
+    ROF_MEMBASE_DECL(mb);   /* 94 absolute-long mem[] operands folded to (d16,An) */
+#ifdef ROF_MEMBASE
+#define mem mb
+#endif
     terrain_index = 0x0E;                                /* 73c8 */
     heading_hi = 0x02;                                /* 73cf */
     lock_on_indicator_tick_parity = 0x02;                                /* 73d2 */
@@ -11673,6 +11796,9 @@ void init_gameplay_state(void) {
     if ((uint8_t)bus_read(0xD20A) < 0x1F)              /* 7452 CMP#$1F; BCS skip */
         mem[0x003A] = (uint8_t)(mem[0x003A] + 1);      /* 7459 INC $3A (when A < $1F) */
     cockpit_dial_update_core(0x07);                    /* 745b-745d tail call */
+#ifdef ROF_MEMBASE
+#undef mem
+#endif
 }
 
 /* boot_standby_launch_driver @ $5F1D — the orchestration APEX: main game display setup + the
@@ -11772,6 +11898,10 @@ static void tunnel_prebuild_replay_exit(void) {
  * cpu.A/cpu.Y are set only at the callee boundaries whose 6502 entry actually reads them
  * (bin_to_bcd / render_bcd_* / emit_bcd_byte_digits consume A; music_init_state consumes Y). */
 void standby_scoreboard_render(void) {
+    ROF_MEMBASE_DECL(mb);   /* 99 absolute-long mem[] operands folded to (d16,An) */
+#ifdef ROF_MEMBASE
+#define mem mb
+#endif
     /* Blit the 120-byte Standby template ($5A9F..$5B16) into Title-Screen RAM ($365B..$36D2).
      * (The 6502 copies offsets $78..$01 downward; offset 0 is deliberately left untouched.) */
     for (int y = 0x78; y >= 1; y--)
@@ -11862,9 +11992,16 @@ void standby_scoreboard_render(void) {
     name_entry_loop();
     attract_timer = 0x64;
     standby_level_select_loop();
+#ifdef ROF_MEMBASE
+#undef mem
+#endif
 }
 
 void boot_standby_launch_driver(void) {
+    ROF_MEMBASE_DECL(mb);   /* 956 absolute-long mem[] operands folded to (d16,An) */
+#ifdef ROF_MEMBASE
+#define mem mb
+#endif
     /* 5f1d */
 #ifdef ROF_BEEP_CAP
     { extern void rof_bc_ds_entry(void); rof_bc_ds_entry(); }   /* count boot_standby_launch_driver entries (range-1 poly4 probe) */
@@ -12611,6 +12748,9 @@ L_63a7:
     } while (terrain_state != 0);
     DS_MILE(8);                          /* $6578 stars-approach done -> flight */
     return;
+#ifdef ROF_MEMBASE
+#undef mem
+#endif
 }
 
 /* ===========================================================================================

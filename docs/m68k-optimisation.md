@@ -146,3 +146,27 @@ Rewrite hot functions in idiomatic C:
   reverted). Audit with
   `objdump -d out/RoF.elf | awk '/^[0-9a-f]+ <.*>:/{f=$2} /ror\.w #8/{c[f]++} END{for(k in c) print c[k],k}' | sort -rn`
   — 134 sites tree-wide before the 2026-08-14 sweep, 89 after (`docs/flight-perf-log.md` §25.2).
+  ⛔⛔ **The sweep is FINISHED — the remaining sites are the ones that DON'T pay** (2026-08-14 second
+  pass, log §26). Converting all 64 remaining hand-written sites at once cost **+699 instructions for
+  −52 swaps**; only 3 functions of ~50 improved. And the biggest concentration is not hand-written at
+  all: `ZP_IND_Y`/`ZP_IND_X` (`src/cpu/cpu.h`) expand at ~50 sites, and converting those two macros
+  was **+517 instructions / +808 bytes for −57 swaps** — reverted. **Do not re-run this sweep**; if
+  you add a NEW pair-load, spell it `ROF_PAIR16` from the start, which costs nothing.
+- **⭐⭐ `ROF_MEMBASE` has TWO different acceptance tests, and they DISAGREE — pick by your goal**
+  (2026-08-14). The fold turns `abs.l` mem[] operands into `(d16,An)`: 16→12 cycles AND 6→4 bytes of
+  `.text` **AND it kills one 4-byte HUNK RELOC32 entry per operand**, which no `.text` measurement can
+  see.
+  - **Chasing CYCLES?** The test is the function's own `.text` in a whole-TU diff (the established
+    rule — a fold that spills, or that grows two inline sites, loses).
+  - **Chasing BYTES?** The test is **`RoF.exe`**, and the reloc term usually dominates. Worked
+    example: folding `boot_standby_launch_driver` (956 operands, a 13.7 KB body) **grew its `.text`
+    by 794 B** — the classic "giant caller" failure, GCC cannot hold a base across it — yet it
+    **shrank `RoF.exe` by ~1.6 KB**, because −299 operands is −299 relocations. Reverting it on the
+    `.text` rule made the binary BIGGER. So a function can fail the cycle test and pass the size test
+    at the same time; for boot/standby/bulk code, where cycles are irrelevant, keep it.
+  - ⚠ **Read a `.part.0` split as one function.** `animate_clear_colors_timed` looked like +1086 B
+    because GCC moved the body out of `animate_clear_colors_timed.part.0` (1254→0 B) into the main
+    symbol (0→1086 B). Net −168 B. Sum the base name and its `.part.N` siblings before judging.
+  - Measure with: `objdump -d out/RoF.elf | grep -oE '<mem\+0x[0-9a-f]+>' | wc -l` for operands, and
+    count RELOC32 entries in the HUNK (not the ELF — `elf2hunk` adds them itself; see
+    `docs/asset-extraction.md`).
