@@ -3,7 +3,7 @@
 #include <graphics/display.h>
 #include <proto/exec.h>
 #include <exec/memory.h>
-#include "Copperlist.h"
+#include "CopperList.h"
 #include "Palette.h"
 #include "AmigaHardware.h"
 #include "Sprite.h"

@@ -38,9 +38,8 @@ end
 # POWER-ON, and vbi_shared_tail ($534D) runs sfx_voice_envelope_tick on every standby/cinematic
 # vblank too — while g_flightProf.isrCalls counts FLIGHT firings only.  Dividing one by the other
 # mixes a whole-run numerator with a flight-only denominator and overstates the flight sfx cost by
-# ~40% (there are ~1550 pre-flight vblanks in a 240 s run).  flight_prof_reset() exists but is
-# never called and would not reset these anyway, so take the delta over a window that is entirely
-# in flight instead.  This is the mirror image of the documented "divide by isrCalls, not
+# ~40% (there are ~1550 pre-flight vblanks in a 240 s run).  Nothing resets these counters, so
+# take the delta over a window that is entirely in flight instead.  This is the mirror image of the documented "divide by isrCalls, not
 # g_vbiCount" rule — the same mistake, made on the numerator.
 seg 2600
 set $s_isrn = g_flightProf.isrCalls

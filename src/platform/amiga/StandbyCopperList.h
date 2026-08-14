@@ -38,7 +38,6 @@ public:
     // (door field decodes COLBK→pen0; see kNibbleColour).  color00 carries the green into
     // the windscreen band, so there is no separate band-bg setter.
     void setTerrainPalette(uint16_t p0, uint16_t p1, uint16_t p2, uint16_t p3);
-    void setTerrainBgColor(uint16_t c);                            // terrain color03 only
     // Rewrite the terrain (door) region as up to MAX_TERRAIN_RUNS per-scanline-LMS "runs" — the
     // level-select "elevator" door scroll (post-mother-ship SELECT).  Reproduces the Atari launch
     // DL's per-scanline mode-F LMS: each run is a maximal block of consecutive field rows the DL

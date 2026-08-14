@@ -575,14 +575,6 @@ extern "C" unsigned long g_tdPairs = 0, g_tdCulled = 0, g_tdVisPairs = 0, g_tdPr
 extern "C" unsigned short flight_vbi_tick(void) {
     return (unsigned short)((mem[0x0013] << 8) | mem[0x0014]);  // RTCLOK $0013:$0014
 }
-extern "C" void flight_prof_reset(void) {
-    g_flightProf.terrain = g_flightProf.stateEnemy = g_flightProf.render =
-        g_flightProf.copper = g_flightProf.frames = g_flightProf.updateTot =
-        g_flightProf.renderTot = g_flightProf.isrLines = g_flightProf.isrCalls = 0;
-    g_flightProf.tFrameSetup = g_flightProf.tClear = g_flightProf.tDraw =
-        g_flightProf.tCollision = 0;
-    g_tdSubdiv = g_tdProjPlot = 0;
-}
 // Raster-beam line counter (0..~312 PAL), ~63.56us/line — a sub-frame clock the
 // VBI ISR can use (RTCLOK is frozen for the whole ISR).  VPOSR bit0 = line bit 8.
 static inline unsigned short beam_line(void) {

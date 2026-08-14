@@ -46,7 +46,6 @@ public:
     // Viewport (terrain) pens.  pen0 = terrain body (the salmon→brown fade target),
     // pen1 = sky, pen2 = dots, pen3 = highlight — driven per-frame by the native code.
     void setTerrainPalette(uint16_t pen0, uint16_t pen1, uint16_t pen2, uint16_t pen3);
-    void setTerrainPen0(uint16_t pen0);                            // the fade-only fast path
     void setBandPalette(uint16_t grey);   // wing-band: color04 = frame grey (plane3); color00-03 inherit from terrain
     // Cockpit dashboard palette (color00-07) + dashboard background (color00 on the blue band).
     // Baked constant at fade 16 in buildLayout; poked live only during the death cinematic so the

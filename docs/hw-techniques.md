@@ -9,7 +9,7 @@ docs:
 - `hw-access.md` — the raw, generated table of *every* register access site.
 - **this doc** — the techniques: how those accesses combine into the rendering,
   input, sound and memory tricks the game relies on. Names/addresses match
-  `disasm/symbols.csv`; this is what `platform.h` has to reproduce *behaviourally*.
+  `disasm/symbols.csv`; this is what `Platform.h` has to reproduce *behaviourally*.
 
 > Cross-ref: `startup-flow.md` covers *when* these are set up (the INITAD chain,
 > `game_entry`, the main loop). This doc covers *how* they work.

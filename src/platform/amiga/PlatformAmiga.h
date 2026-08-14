@@ -9,7 +9,7 @@
  * It implements the Platform interface the C-compiled 6502 transliteration reaches
  * through the shared platform_cbridge.cpp (hwRead/hwWrite/renderFrame/tickVBI/...).
  */
-#include "platform.h"           // the abstract base (src/platform, on the build -I path)
+#include "Platform.h"           // the abstract base (src/platform, on the build -I path)
 #include "platform_c.h"         // the extern "C" bridge decls (platform_hw_write etc.)
 #include "framework/Util.h"  // uint8_t, uint16_t, uint32_t
 
@@ -50,14 +50,12 @@ public:
     // POKEY->Paula audio backend (static — no instance state; the 6502-converted
     // station_audio writes POKEY registers via hwWrite, these route them to Paula DMA).
     //   audioInit/audioShutdown : bracket Paula audio DMA (called by RescueOnFractalus).
-    //   pokeyRandom             : advance + return one POKEY LFSR byte (attract/noise/stars).
     //   noiseTick               : per-RENDERED-FRAME refresh of the continuous poly17 noise
     //                             sample.  Called from renderFrame (the main loop), NOT the
     //                             50 Hz VBI ISR — it has no beam-timing requirement and the
     //                             ISR fires 50x/s regardless of how slow the frame is.
     static void audioInit();
     static void audioShutdown();
-    static uint8_t pokeyRandom();
     static void noiseTick();
     static void flightShotTick();   // build the player laser sprite from the VBI (50Hz), via s_scene
     static void flightScannerTick(); // decode the LR-scanner close-range blink cells from the VBI (50Hz), via s_scene

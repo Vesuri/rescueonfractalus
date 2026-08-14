@@ -253,7 +253,7 @@ Rect::Rect(const Point2D& topLeft, const Point2D& bottomRight) :
 
 Polygon::Polygon() :
     points(0),
-    size(size)
+    size(0)
 {
 }
 

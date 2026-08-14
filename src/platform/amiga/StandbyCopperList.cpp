@@ -207,8 +207,3 @@ void StandbyCopperList::setTerrainPalette(uint16_t p0, uint16_t p1, uint16_t p2,
     data_[INDEX_TERRAIN_PAL + 2] = copperMove(color02, p2);
     data_[INDEX_TERRAIN_PAL + 3] = copperMove(color03, p3);
 }
-
-void StandbyCopperList::setTerrainBgColor(uint16_t c)
-{
-    data_[INDEX_TERRAIN_PAL + 3] = copperMove(color03, c);
-}

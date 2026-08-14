@@ -1,9 +1,9 @@
 /* C bridge — implements the C-callable interface declared in platform_c.h
    by forwarding to the Platform C++ singleton.  Compiled as C++ so it can
-   see platform.h; the symbols are exported with C linkage so the generated
+   see Platform.h; the symbols are exported with C linkage so the generated
    C translation units can link against them without name-mangling. */
 
-#include "platform.h"
+#include "Platform.h"
 #include "platform_c.h"
 
 extern "C" {
@@ -114,7 +114,6 @@ void platform_test_init_headless(void) {
 }
 
 void     platform_test_seed_rng(uint32_t s) { if (platform) platform->rngSeed(s); }
-uint32_t platform_test_get_rng(void)        { return platform ? platform->rngGet() : 0; }
 
 /* Enable/disable the RTCLOK-advancing tick for frame-wait twin validation (see above). */
 void     platform_test_tick_rtclok(int on)  { g_headlessTickRtclok = on ? 1 : 0; }

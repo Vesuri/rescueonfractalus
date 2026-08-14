@@ -8,8 +8,8 @@
  *
  * Accumulated across all flight frames into g_flightProf; per-frame value =
  * field / frames.  isrLines is in raster lines (×63.56 us = time); isr per frame
- * = isrLines * 63.56us / frames.  flight_prof_reset() (call when entering flight)
- * zeroes it.  Read from the gdb stub: `x/9wu &g_flightProf`.
+ * = isrLines * 63.56us / frames.  Never zeroed at run time: take the delta over a
+ * window that is entirely in flight.  Read from the gdb stub: `x/9wu &g_flightProf`.
  *
  * No <stdint.h> (clashes with the framework's SASCCompat.h); C linkage for C++.
  */
@@ -40,7 +40,6 @@ struct FlightProf {
 extern volatile struct FlightProf g_flightProf;
 
 unsigned short flight_vbi_tick(void);  /* current 16-bit VBI count (RTCLOK $0013:$0014) */
-void           flight_prof_reset(void);
 
 #ifdef __cplusplus
 }

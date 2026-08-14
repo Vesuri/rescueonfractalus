@@ -535,11 +535,6 @@ void FlightCopperList::setTerrainPalette(uint16_t pen0, uint16_t pen1, uint16_t 
     data_[INDEX_VP_PAL + 3] = copperMove(color03, pen3);
 }
 
-void FlightCopperList::setTerrainPen0(uint16_t pen0)
-{
-    data_[INDEX_VP_PAL + 0] = copperMove(color00, pen0);
-}
-
 void FlightCopperList::setHudSprite(int slot, const Sprite& s)
 {
     showSprite(INDEX_SPRITES + slot * 2, slot, s);

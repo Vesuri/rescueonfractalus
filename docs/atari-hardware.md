@@ -3,7 +3,7 @@
 A field guide for someone coming from the C64/Amiga. It covers just enough of
 the Atari 400/800/XL/XE architecture to recognize what the game's code is doing
 when it touches hardware, and maps each feature to its SDL and Amiga equivalent.
-These are the things `platform.h` must abstract.
+These are the things `Platform.h` must abstract.
 
 > For what the game *actually does* with these chips (the display-list ring, the
 > sequenced DLI, software collision, RANDOM as the fractal seed, …) see
@@ -135,7 +135,7 @@ the chip. The ones to watch (all in `$0200–$02FF`):
 *meaningful*, not plain RAM — many are the real control surface the game uses.
 The Phase 1 hardware-access map will list exactly which ones this game touches.
 
-## Summary: what `platform.h` must expose
+## Summary: what `Platform.h` must expose
 
 1. **Video** — framebuffer + palette; display-list regions; DLI (raster) hooks;
    VBI (frame) tick; `WSYNC`-style scanline sync if needed.

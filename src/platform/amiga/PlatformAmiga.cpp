@@ -320,8 +320,6 @@ static uint8_t pokey_random_step(void)
     return (uint8_t)rof_lfsr_state;
 }
 
-uint8_t PlatformAmiga::pokeyRandom() { return pokey_random_step(); }
-
 // Direct POKEY RANDOM accessor for bus_read($D20A) — bypasses the platform_hw_read C bridge
 // + virtual hwRead dispatch (see bus.h).  Same lfsr_state hwRead($D20A) steps, so the RANDOM
 // sequence is identical to the generic path.

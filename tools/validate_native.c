@@ -55,7 +55,6 @@ static void set_ignore(const uint16_t *addrs, int n) { g_ignore = addrs; g_ignor
    terrain routines diff deterministically. */
 void     platform_test_init_headless(void);
 void     platform_test_seed_rng(uint32_t s);
-uint32_t platform_test_get_rng(void);
 /* When on, the headless tickVBI advances RTCLOK ($0014) by 1 — lets frame-wait twins
    (and their oracles) terminate so the whole function can be diffed.  See platform_cbridge.c. */
 void     platform_test_tick_rtclok(int on);
