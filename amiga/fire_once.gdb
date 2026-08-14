@@ -38,6 +38,13 @@ define snap
   set $s_spA  = (long)g_spActive
   set $s_spI  = (long)g_spIdle
   set $s_integ= (long)g_pInteg
+  set $s_fpr  = (long)g_fpChRestarts
+  set $s_fprf = (long)g_fpRestartFlushes
+  set $s_fpws = (long)g_fpWaitSum
+  set $s_fpps = (long)g_fpPerSum
+  set $s_pdc  = (long)g_polyDistCalls
+  set $s_upcd = (long)g_upcDistinct
+  set $s_upcr = (long)g_upcRedund
 end
 
 # Print one window's deltas.  $arg0 = label.
@@ -70,6 +77,30 @@ define win
   printf "  frame:  painted %4ld  FPS %2ld.%ld   render compute %5ld t/call over %ld calls\n", \
     $d_fd, ($d_vbi ? (50*$d_fd)/$d_vbi : 0), ($d_vbi ? ((500*$d_fd)/$d_vbi)%10 : 0), \
     ($d_rc ? $d_rcmp/$d_rc : 0), $d_rc
+  # The audio row above IS flush_paula, and flush_paula IS the DMA-restart busy-wait.  These
+  # decompose it: how many flushes had to restart a channel, the wait each asked for, and the
+  # outgoing period that sized it.  wl/flush pinned at 7 = the period floor reached every restart.
+  set $d_fpr  = (long)g_fpChRestarts      - $s_fpr
+  set $d_fprf = (long)g_fpRestartFlushes  - $s_fprf
+  set $d_fpws = (long)g_fpWaitSum         - $s_fpws
+  set $d_fpps = (long)g_fpPerSum          - $s_fpps
+  printf "  flush_paula: %4ld restarting flushes (%ld%% of %ld firings), %ld ch-restarts;", \
+    $d_fprf, ($d_vfc ? (100*$d_fprf)/$d_vfc : 0), $d_vfc, $d_fpr
+  printf "  wait %ld.%ld lines/flush (max %ld), outgoing per avg %ld\n", \
+    ($d_fprf ? $d_fpws/$d_fprf : 0), ($d_fprf ? ((10*$d_fpws)/$d_fprf)%10 : 0), \
+    (long)g_fpWaitMax, ($d_fpr ? $d_fpps/$d_fpr : 0)
+  # ...and the OTHER half of the firing spike.  §22.2's handler row also jumps +21.9 t/firing at
+  # the peak and was never attributed.  update_paula_channel runs from rof_pokey_write INSIDE the
+  # VBI body (so it lands in `handler`, not `audio`), and its poly9 path rebuilds a 1022-byte
+  # waveform whenever the AUDF divider changes — which is every frame of a frequency sweep.
+  set $d_pdc  = (long)g_polyDistCalls - $s_pdc
+  set $d_upcd = (long)g_upcDistinct   - $s_upcd
+  set $d_upcr = (long)g_upcRedund     - $s_upcr
+  printf "  update_paula_channel: %ld distinct + %ld redundant;  build_poly_dist %ld calls", \
+    $d_upcd, $d_upcr, $d_pdc
+  printf " (%ld.%02ld/firing = ~%ld t/firing at ~215 t a rebuild)\n", \
+    ($d_vfc ? $d_pdc/$d_vfc : 0), ($d_vfc ? ((100*$d_pdc)/$d_vfc)%100 : 0), \
+    ($d_vfc ? (215*$d_pdc)/$d_vfc : 0)
 end
 
 # PRE: open once flight has settled.
@@ -110,6 +141,17 @@ printf "  (shot machinery last live at vbi %lu = press + %ld)\n", \
 tbreak RescueOnFractalus::renderFrame if g_vbiCount >= $fire + 1000
 continue
 win "POST"
+
+printf "\n=== flush_paula restarts, whole run ===\n"
+printf "  ch-restarts %lu over %lu flushes; total wait %lu lines (max single %lu)\n", \
+  (long)g_fpChRestarts, (long)g_upcFlushes, (long)g_fpWaitSum, (long)g_fpWaitMax
+# Which waveform each restart switched AWAY from.  The restart's only job is to make Paula latch
+# PTR/LEN before the current DMA loop wraps on its own; a loop of `words` wraps in words*per ticks
+# (227/rasterline).  So pure/poly4/poly5 restarts are on loops that wrap in ~ms, while
+# poly_dist/noise wrap in ~0.5-4 s and genuinely need forcing.
+printf "  outgoing loop length: pure(1w) %lu  poly4(15w) %lu  poly5(31w) %lu  polydist(511w) %lu  noise(4096w) %lu\n", \
+  (long)g_fpLenHist[0], (long)g_fpLenHist[1], (long)g_fpLenHist[2], \
+  (long)g_fpLenHist[3], (long)g_fpLenHist[4]
 
 printf "\n=== verdict inputs ===\n"
 printf "  total flight vbl the shot machinery was live: %lu\n", (long)g_foActiveFirings

@@ -175,3 +175,44 @@ only 4 POKEY channels, so `sfx_reorder_voice_slot` demoting a loser genuinely ma
 quieter. Related data point from the game's own tables: the thrust key's beep is event **`$21`**
 (slot 3, pure, vol 4) and its follow-on is event **`$06` = a noise burst, vol 15** — so *some*
 noise after a command beep is correct.
+
+## ⭐ The Paula DMA-restart wait — floor the PERIOD, not the wait (2026-08-14)
+
+`flush_paula` batches the frame's waveform changes through one DMA off → wait → on, because Paula
+latches AUDxLC/LEN only at a loop wrap and a restart needs the channel held OFF for **>2 sample
+periods of the period STILL LOADED** (HW manual §5-2-7). The wait used to be sized from the slowest
+**outgoing** period, `wl = 2*max_per/227 + 4` clamped to [7,110] rasterlines.
+
+**Why that was expensive in flight:** `update_paula_channel` selects a poly4/poly5 waveform by stride
+residue (`poly4_wave[stride%15]`), so any voice that *sweeps* AUDF — the laser, an explosion — changes
+its waveform POINTER every 50 Hz firing, and therefore restarts every frame for the length of the
+sound. Measured: 32% of firings restarting, outgoing period averaging 13785, `wl` pinned at the **110
+clamp** = 7 ms of busy-wait, **39.4 t/firing = the entire audio bracket and 32% of the whole flight
+VBI**.
+
+**The fix is one observation: the period still loaded is ours to choose.** AUDxPER takes effect
+immediately, so writing `kPaulaMinPer` (124) to each restarting channel *before* the off-window makes
+2 sample periods ≈ 1.1 rasterlines, and the unchanged formula lands on its 7-line floor every time —
+still ~12 sample periods of headroom. Per-restart wait **48.4 → 6.7 lines**; firing's ISR cost
+**+96% → +39%**. `make FLUSHWAIT_OLD=1` restores the old sizing for an A/B; the probe rows are in
+`amiga/fire_once.gdb`. Record: `docs/flight-perf-log.md` §25.1-25.2.
+
+⚠ **The clamp was hiding a correctness bug, not just a cost.** At per > 12031 the old formula wanted
+more than 110 lines and got clamped, so the shipping code was already under-waiting the rule it was
+written to satisfy — for every slow outgoing note. Flooring the period is what makes the rule actually
+hold.
+
+⚠ **`build_poly_dist` measures 0 calls in flight and in the first ~13 s of standby** —
+`g_polyDistCalls` is 0 in every window before/during/after a shot, and 0 over 2130 vblanks of a
+`SKIPBOOT=0` logo → station → standby run. So it is **not** a flight cost; do not re-open it as one.
+⛔⛔ **It is NOT dead code and must not be deleted.** `a800dumps/music_playing_ram.bin` (Standby tune
+playing) has `AUDCTL=$E3` — POLY9 set — with **ch1 `AUDC=$07` vol 7 and ch2 `AUDC=$8E` vol 14 both in
+the noise distortion**, which is precisely this path and precisely the user-confirmed d401d7d fix.
+The zero count means the attract THEME had not armed yet (timeout is minutes; the window was ~13 s),
+not that the path is unreachable. **A zero call-count proves "not taken in this window", never "dead".** It was the
+filed prime suspect for `update_paula_channel`'s cost (§22.3). Do not re-open it as a *flight* item.
+Its inner loop does have a proven-free simplification if the MUSIC path is ever profiled (a 1022-byte
+rebuild is ~215 rasterlines): `if (kBit9[p9] == (out^1)) out ^= 1;` is unconditionally
+`out = kBit9[p9]`, so a level table collapses it to one indexed load, and the `gateAlways` arm never
+reads `kBit5` so its `p5` step hoists out. Byte-identical over all 31682 reachable (s5,s9,gate)
+triples on the host; not shipped.

@@ -513,6 +513,17 @@ ifdef FIRE_ONCE
 EXTRA_DEFINES += -DROF_FIRE_ONCE=$(FIRE_ONCE)
 endif
 
+# `make FLUSHWAIT_OLD=1` — A/B control for flush_paula's DMA-restart wait (PlatformAmiga.cpp
+# ROF_FLUSHWAIT_OLD).  Default OFF: the restart drops each channel to the Paula minimum period
+# BEFORE the off-window, so "hold off >2 sample periods" is ~1.1 rasterlines and the wait is the
+# constant 7-line floor.  This flag restores sizing the wait from the OUTGOING note's period, i.e.
+# the 7..110 line wait that made this the most expensive thing in the flight VBI while a laser or
+# explosion swept its frequency (docs/flight-perf-log.md §22/§25).  Read the A/B with
+# `GDBSCRIPT=fire_once.gdb` — its audio row is exactly this wait.
+ifdef FLUSHWAIT_OLD
+EXTRA_DEFINES += -DROF_FLUSHWAIT_OLD
+endif
+
 # `make FCI_NOBASE=1` — A/B control for the mem[] base-register fold in
 # flight_control_integrate_impl (rof_native.c ROF_FCI_BASE).  Default ON: an empty asm launders
 # mem's address through an address register so GCC stops emitting 16-cycle absolute-long operands

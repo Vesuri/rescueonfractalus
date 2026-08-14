@@ -329,6 +329,10 @@ extern "C" uint8_t rof_pokey_random(void) { return pokey_random_step(); }
 static const uint32_t kAudioBase[4] = {
     0xDFF0A0u, 0xDFF0B0u, 0xDFF0C0u, 0xDFF0D0u
 };
+// Paula's shortest legal period (~28.6 kHz playback); pokey_period_compute clamps to it too.
+// Also the period flush_paula loads before a DMA-restart off-window, because "2 sample periods"
+// is measured in THIS period — see the restart block.
+#define kPaulaMinPer 124u
 #define AUD_PER(ch) (*(volatile uint16_t*)(kAudioBase[ch] + 6))
 #define AUD_VOL(ch) (*(volatile uint16_t*)(kAudioBase[ch] + 8))
 #define AUD_PTR(ch) (*(volatile uint32_t*)(kAudioBase[ch] + 0))
@@ -367,6 +371,20 @@ static uint8_t  want_valid = 0;               // bitmask of channels written thi
 // probes further down) because flush_paula, which resets the mask, is defined above them.
 extern "C" volatile unsigned long g_upcRedund = 0, g_upcDistinct = 0, g_upcFlushes = 0;
 static uint8_t s_upcSeen = 0;
+
+// Sizing the restart busy-wait — the WHOLE audio bracket is that wait (§22.3).  Two facts settle
+// what to do about it, and only one of them is visible from the C:
+//   g_fpRestartFlushes / g_fpWaitSum / g_fpWaitMax — how often a restart happens and how long the
+//     wait it asks for is.  wl/flush is what the fix moves; a constant 7 means the period floor
+//     reached every restart.
+//   g_fpLenHist[] — the DMA loop LENGTH, in words, of the waveform each channel is switching AWAY
+//     from, bucketed by waveform: [0] wave_pure (1) [1] poly4 (15) [2] poly5 (31) [3] poly_dist
+//     (511) [4] noise_buf (4096).  This says whether the restart is needed at all: its only job is
+//     to make Paula latch PTR/LEN before the current loop wraps by itself, and a 15-word loop wraps
+//     in len*per ticks — so a table full of [1]/[2] means the restarts are all on short loops.
+extern "C" volatile unsigned long g_fpRestartFlushes = 0, g_fpWaitSum = 0, g_fpWaitMax = 0;
+extern "C" volatile unsigned long g_fpChRestarts = 0, g_fpLenHist[5] = { 0, 0, 0, 0, 0 };
+extern "C" volatile unsigned long g_fpPerSum = 0;      // sum of the OLD periods (what sized the wait)
 #endif
 
 // Record a channel's desired Paula state; applied by flush_paula().
@@ -618,8 +636,16 @@ extern "C" void flush_paula(void)
         // Split into "restart" (waveform changed) and "live" (same waveform → just VOL/PER).
         for (uint8_t ch = 0; ch < 4; ch++) {
             if (!(valid & (1u << ch))) continue;
-            if (want_ptr[ch] != cur_ptr[ch] || want_len[ch] != cur_len[ch])
+            if (want_ptr[ch] != cur_ptr[ch] || want_len[ch] != cur_len[ch]) {
                 restart |= (uint8_t)(1u << ch);
+#ifdef ROF_FLIGHT_PROBE
+                // Sized here, where cur_len/cur_per are still the OLD (outgoing) waveform's.
+                g_fpChRestarts++;
+                g_fpPerSum += cur_per[ch];
+                g_fpLenHist[cur_len[ch] >= 4096u ? 4 : cur_len[ch] >= 511u ? 3
+                          : cur_len[ch] >= 31u   ? 2 : cur_len[ch] >= 15u  ? 1 : 0]++;
+#endif
+            }
             else { AUD_PER(ch) = want_per[ch]; AUD_VOL(ch) = want_vol[ch];     // live, no click
                    cur_per[ch] = want_per[ch];
 #ifdef ROF_BEEP_CAP
@@ -634,15 +660,46 @@ extern "C" void flush_paula(void)
             // ticks, so size the wait from the slowest old period among the restarting channels:
             // 2*per/227 lines, plus margin.  Fast old notes wait the ~7-line floor; a slow old bass
             // note (per~6011) needs ~53 lines (~3.4 ms) — fine on the title screen.
+            //
+            // ⭐ …except THE PERIOD STILL LOADED IS OURS TO CHOOSE, and that is the whole game in
+            // flight (docs/flight-perf-log.md §22/§25).  A laser/explosion sweeps AUDF every 50 Hz
+            // firing, and the poly4/poly5 waveform POINTER is a function of the stride residue
+            // (update_paula_channel: poly4_wave[stride%15]), so a sweep changes the waveform —
+            // hence restarts — on EVERY frame for the length of the sound.  With the wait sized
+            // from the old note's period that was the single most expensive thing in the flight
+            // VBI: measured 37.06 t/firing, 32% of the whole ISR, ~2-3 s after the shot.
+            //
+            // A write to AUDxPER takes effect immediately, so dropping every restarting channel to
+            // the Paula minimum FIRST makes "2 sample periods" 248 ticks ≈ 1.1 rasterlines instead
+            // of up to 2*32000, and the wait becomes the constant 7-line floor.  The formula, its
+            // +4 margin and both clamps are untouched — only its INPUT changes, and the floor is
+            // still ~12 sample periods of headroom against the 2 the hardware asks for.
+            //
+            // What the old waveform does during the off-window is unchanged in kind: the channel
+            // holds its last-fetched word at its old volume either way.  This only makes that
+            // window 7 lines instead of 7..110.
             uint16_t max_per = 0;
-            for (uint8_t ch = 0; ch < 4; ch++)
-                if ((restart & (1u << ch)) && cur_per[ch] > max_per) max_per = cur_per[ch];
+            for (uint8_t ch = 0; ch < 4; ch++) {
+                if (!(restart & (1u << ch))) continue;
+#ifdef ROF_FLUSHWAIT_OLD
+                if (cur_per[ch] > max_per) max_per = cur_per[ch];   // A/B control: size off the old note
+#else
+                AUD_PER(ch) = kPaulaMinPer;    // …then 2 sample periods is ~1.1 rasterlines
+                cur_per[ch] = kPaulaMinPer;    // keep the shadow honest for the rest of this flush
+                max_per = kPaulaMinPer;
+#endif
+            }
             // wl clamps to [7,110]; wl>=110 once max_per>=12031, so clamp max_per to 32000 (keeps
             // 2*max_per<65536) and use a 16-bit DIVU.W — byte-identical wl for every input.
             uint16_t mp = max_per > 32000u ? 32000u : max_per;
             uint16_t wl = rof_divu16(2u * (uint32_t)mp, 227u) + 4u;
             if (wl < 7u)  wl = 7u;
             if (wl > 110u) wl = 110u;
+#ifdef ROF_FLIGHT_PROBE
+            g_fpRestartFlushes++;
+            g_fpWaitSum += wl;
+            if ((unsigned long)wl > g_fpWaitMax) g_fpWaitMax = wl;
+#endif
 
             *dmaconPointer = (uint16_t)restart;            // AUDxEN off for all changed channels
             wait_rasterlines((uint8_t)wl);                 // hold off >2 OLD sample periods → resets
