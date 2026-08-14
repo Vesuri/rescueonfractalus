@@ -65,8 +65,8 @@
 ; them properly, build the TUNE slave (`make RoFTune.slave`), play through, and read
 ; the low-water marks -- see docs/whdload-slave.md.
 
-CHIPMEMSIZE	= $60000	;384 KB
-FASTMEMSIZE	= $90000	;576 KB
+CHIPMEMSIZE	= $4c000	;384 KB
+FASTMEMSIZE	= $78000	;480 KB
 NUMDRIVES	= 1		;NOT 0: only 3.1 survives a driveless boot, 1.2/1.3 crash
 WPDRIVES	= %0000		;all emulated drives write protected
 
@@ -75,7 +75,7 @@ BOOTDOS				;_bootdos below runs as a real CLI process
 CACHECHIP			;instruction cache on (chip write-through) for accelerated machines
 HDINIT				;mount slv_CurrentDir as DH0: -- BOOTDOS requires it
 SEGTRACKER			;so a WHDLoad crash report names our hunk + offset
-STACKSIZE	= 16384		;V33's initial CLI default is 4000 bytes
+STACKSIZE	= 4096		;V33's initial CLI default is 4000 bytes
 
 	IFD TUNE
 DEBUG				;extra internal checks in the OS emulation
