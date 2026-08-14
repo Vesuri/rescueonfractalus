@@ -15,7 +15,7 @@ This is a faithful 1:1 reimplementation, rebuilt from the original game rather t
 ## Requirements
 
 - An Amiga with **1 MB of RAM** — it does **not** fit an unexpanded 512 KB A500
-- Developed and tested on an **A500+** under **Kickstart 3.1**
+- Developed and tested on an **A500+** under **Kickstart 3.1**; also runs on **Kickstart 1.3**
 - PAL
 
 ## How to run
@@ -26,10 +26,18 @@ Copy `RoF` to your Amiga and start it — from Workbench, or from a Shell:
 RoF
 ```
 
-Nothing else is needed; all game data is inside the executable. There is no installer or
-WHDLoad slave yet.
+Nothing else is needed; all game data is inside the executable.
 
 On an emulator, point a hard drive at the folder containing `RoF` and run it from there.
+
+### WHDLoad
+
+There is also a WHDLoad install, which runs the same unmodified executable. It needs more
+than the plain version does: **2 MB of RAM**, and an A500 **Kickstart 1.3 image**
+(`kick34005.A500` plus its `.RTB`) in `Devs:Kickstarts` — the game uses the operating system
+to take the display over, and WHDLoad leaves none, so the slave boots a real Kickstart and
+runs the game inside it. Full details are in the install's own ReadMe; the design record is
+[`docs/whdload-slave.md`](docs/whdload-slave.md).
 
 ## Controls
 
@@ -47,6 +55,7 @@ On an emulator, point a hard drive at the folder containing `RoF` and run it fro
 | **F2** | Level select |
 | **F3** | Demo mode |
 | **Help** | Abort mission and restart (score lost, high scores kept) |
+| **Left mouse button** | Quit the game — ⚠ immediately, with no confirmation, at any point |
 
 Thrust is on the two keys just right of `0`, because those are the physical positions of the
 Atari 800's `< -` and `> =` thrust keys.
