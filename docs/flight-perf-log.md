@@ -2814,9 +2814,9 @@ surprise in them, and one of the two surprises is the reason the other became wo
 §25.5 swept 45 sites across 8 flight routines for ~0.22% of wall and left 89. The natural reading is
 "89 to go". That reading is wrong: **the profitable sites were taken because they were profitable,
 and what remains is the residue.** Two measurements, both on a clean `make clean` build, baseline
-`a56206b` (`RoF.exe` 320,716 B, 108 `ror.w #8`, 62,747 instructions):
+`a56206b` (`out/RoF` 320,716 B, 108 `ror.w #8`, 62,747 instructions):
 
-| what | swaps | instructions | `RoF.exe` | verdict |
+| what | swaps | instructions | `out/RoF` | verdict |
 |---|---|---|---|---|
 | all 64 remaining hand-written 16-bit sites | **−52** | **+699** | +1,816 B | ⛔ reverted |
 | `ZP_IND_Y` + `ZP_IND_X` in `src/cpu/cpu.h` | **−57** | **+517** | +808 B | ⛔ reverted |
@@ -2863,7 +2863,7 @@ a **4-byte HUNK RELOC32 entry**, and relocations were the second-largest thing i
 
 20 folds applied to unfolded functions with ≥40 `abs.l` operands each:
 
-| | `RoF.exe` | RELOC32 | `abs.l` mem ops | `ror.w #8` |
+| | `out/RoF` | RELOC32 | `abs.l` mem ops | `ror.w #8` |
 |---|---|---|---|---|
 | baseline `a56206b` | 320,716 | 11,355 (45,420 B) | 5,540 | 108 |
 | + the 7 kept pair-loads | 320,640 | 11,352 | 5,540 | 99 |
@@ -2877,7 +2877,7 @@ the same effect §23 saw with `terrain_draw_frame_core`.
 
 **The two tests disagree, and that is the finding.** `boot_standby_launch_driver` (956 operands, a
 13.7 KB body) **grew its `.text` by 794 B** — the textbook §23 "giant caller" failure, GCC cannot
-hold a base across it — and I reverted it on that rule, which made `RoF.exe` **1,600 B BIGGER**.
+hold a base across it — and I reverted it on that rule, which made `out/RoF` **1,600 B BIGGER**.
 −299 operands is −299 relocations, and that dominates. It is boot/standby code where cycles are
 irrelevant, so for a size goal it is a clear keep. Same for `alien_shape_blit` (+12 B `.text`,
 −38 operands). ⚠ And `animate_clear_colors_timed` was not the +1,086 B regression it appeared to be:

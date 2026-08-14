@@ -1,4 +1,4 @@
-# Range-1 poly4 probe — slot-5 lifecycle dump.  Requires out/RoF.exe built with
+# Range-1 poly4 probe — slot-5 lifecycle dump.  Requires out/RoF built with
 #   make PROBES=1 BEEP_CAP=1
 # Run:  . ./env.sh && GDBSCRIPT=beep_slot5.gdb ./diag_run.sh 20
 #

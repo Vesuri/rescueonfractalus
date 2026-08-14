@@ -3,7 +3,7 @@
 # and runs $GDBSCRIPT (default raster_verify.gdb = the in-process asm-vs-C-oracle
 # differential; build with `make VERIFY=1 PROBES=1`).  Usage:
 #   GDBSCRIPT=raster_verify.gdb ./raster_diff.sh verify 420
-# Source ../env.sh first (fs-uae + gdb on PATH).  Needs out/RoF.exe built PROBES=1.
+# Source ../env.sh first (fs-uae + gdb on PATH).  Needs out/RoF built PROBES=1.
 set -uo pipefail
 cd "$(dirname "$0")"
 . "${FSUAE_COMMON:-$HOME/.local/share/amiga/fsuae_common.sh}"
@@ -13,7 +13,7 @@ LABEL="${1:-verify}"; DELAY="${2:-90}"; GDBSCRIPT="${GDBSCRIPT:-raster_verify.gd
 RUN=.run; DH0="$RUN/dh0"; DH1="$RUN/dh1"; GDBHOME="$RUN/gdbhome"
 mkdir -p "$DH0/s" "$DH1" "$RUN/state" "$GDBHOME"
 printf 'cd dh1:\nRoF\n' > "$DH0/s/startup-sequence"
-cp -f out/RoF.exe "$DH1/RoF"
+cp -f out/RoF "$DH1/RoF"
 fsuae_claim_port
 "$FSUAE" --amiga_model=A500+ --chip_memory=1024 --fast_memory=8192 \
   --kickstart_file="$ROM" --hard_drive_0="$DH0" --hard_drive_1="$DH1" \

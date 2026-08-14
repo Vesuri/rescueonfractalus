@@ -4,7 +4,7 @@
  * buffers behind SASCCompat.h's `__chip` (noise_buf, poly_dist_buf, poly5_wave,
  * poly4_wave, wave_pure) -- is FILLED AT RUNTIME by PlatformAmiga::audioInit().  GCC
  * still emits a section-attributed variable into a PROGBITS section whether or not it
- * has an initialiser, so those 14,654 bytes shipped in RoF.exe as literal zeros:
+ * has an initialiser, so those 14,654 bytes shipped in RoF as literal zeros:
  * measured 100.0% zero (14,652 of 14,654), i.e. 4.8% of the whole executable spent
  * storing nothing.
  *

@@ -53,7 +53,7 @@ render-diff).
 - The `*Assembler.s` files are **Motorola/vasm syntax** (`xdef`, `equ`, `;` comments, `$` hex,
   register-prefix-optional), NOT GNU `gas`. The project's `m68k-amiga-elf-as` is GNU `gas` (see
   `incbin.s`/`gcc8_a_support.s`). **`vasmm68k_mot` is installed at `~/.local/vasmm68k_mot`** (not yet
-  on PATH). The build links ELF (`m68k-amiga-elf-ld` → `out/RoF.elf`) then `Elf2Hunk` → `RoF.exe`, so
+  on PATH). The build links ELF (`m68k-amiga-elf-ld` → `out/RoF.elf`) then `Elf2Hunk` → `out/RoF`, so
   vasm must emit ELF: `vasmm68k_mot -Felf -m68000`.
 - Source `.s` available to vendor:
   `amiga-spike/examples/hC74/src/{AmigaHardware,Bitmap,CopperList,Util}Assembler.s`,

@@ -5,7 +5,7 @@ item 1). Read this before touching `src/xex_load.h`, `src/platform/amiga/XexImag
 `src/platform/amiga/incbin.s` or `tools/make_xex_sparse.py`.
 
 **Status: SHIPPED.** `assets/rof_boot_image.bin` (27,872 B) replaced the embedded `rof.xex`
-(43,066 B); `RoF.exe` 334,100 → 318,764 B (and **291,480 B** after the 2026-08-14 relocation-table
+(43,066 B); `out/RoF` 334,100 → 318,764 B (and **291,480 B** after the 2026-08-14 relocation-table
 pass — see the size ledger at the end). The removal is gated on **static reachability**
 (§5), not on play-testing — because the combat path turned out not to be run-to-run
 deterministic, so no A/B can ever clear it. `make FULLXEX=1` restores the original.
@@ -25,7 +25,7 @@ instruction bytes are candidates for removal, and the only way one can still mat
 something reads it as data.
 
 ⚠ **This does not stop shipping the original game's code.** `src/gen/rof_gen.c` *is* that
-code, transliterated, and it is compiled into `RoF.exe` regardless. What removal buys is
+code, transliterated, and it is compiled into `out/RoF` regardless. What removal buys is
 bytes, plus no directly-extractable copy of the original file. Do not re-argue the
 redistribution point on this basis.
 
@@ -90,7 +90,7 @@ two computed the mask separately they could drift, and a mask wider than the byt
 zeroed would swallow a real difference and report a false "0 unexpected".
 
 Driver: `amiga/xex_dead_ab.sh <label> <vbi> <seconds> [make flags…]` — builds both arms,
-asserts the two `RoF.exe` sizes match, dumps at the same frame, diffs. Adds `FIXED_RNG=1`
+asserts the two `out/RoF` sizes match, dumps at the same frame, diffs. Adds `FIXED_RNG=1`
 unless given.
 
 ## 4. The sparse format
@@ -212,7 +212,7 @@ reach a dropped byte. What backs that gap up:
 ⚠ If a scene ever misbehaves in a way that smells like corrupt data, **`make FULLXEX=1` is the
 first thing to try** — it is a one-flag A/B against the original image.
 
-## 6. Where the rest of `RoF.exe` goes
+## 6. Where the rest of `out/RoF` goes
 
 Accounting for the 384,176 B `PROBES` build by parsing its **hunk** structure (ELF section
 sizes do not show it — Elf2Hunk adds the symbol and relocation hunks itself, which is how
@@ -246,8 +246,8 @@ Cumulative for the release-packaging pass: **446,224 → 291,480 B (−34.7%)**.
 ⭐ **The relocation table was the second-biggest thing in the file, and the base fold is what
 shrinks it.** The 2026-08-14 pass folded 20 more functions (`ROF_MEMBASE`, `rof_native.c`), taking
 `abs.l` mem[] operands **5,540 → 3,988** and RELOC32 entries **11,355 → 9,632 — i.e. 45,420 →
-38,528 B of pure relocation table**, for −14,352 B of `RoF.exe` overall. Two lessons that make this
-repeatable live in `docs/m68k-optimisation.md` §ROF_MEMBASE: the size test is **`RoF.exe`, not
+38,528 B of pure relocation table**, for −14,352 B of `out/RoF` overall. Two lessons that make this
+repeatable live in `docs/m68k-optimisation.md` §ROF_MEMBASE: the size test is **`out/RoF`, not
 `.text`** (a fold can grow a function's code and still shrink the file, because each folded operand
 also deletes a 4-byte reloc — `boot_standby_launch_driver` is exactly that case), and a `.part.0`
 split must be read as one function.
@@ -289,7 +289,7 @@ as the perf work, and `cpu` has no equivalent fold yet). The unfolded `mem` oper
 `rof_gen.c`, which needs transpiler support rather than a hand edit.
 
 Everything else that was checked and found not worth doing:
-* **Debug symbols: already gone.** `elf2hunk -s` strips `HUNK_SYMBOL`; the release `.exe` has no
+* **Debug symbols: already gone.** `elf2hunk -s` strips `HUNK_SYMBOL`; the release executable has no
   `HUNK_SYMBOL` and no `HUNK_DEBUG` block at all. `-g` in `CFLAGS` costs the file **zero** bytes —
   `.debug_*` and `.comment` are non-`SHF_ALLOC`, so Elf2Hunk never sees them, and `RoF.elf` keeps
   the full DWARF for `debug.sh` and every `amiga/*.gdb`.

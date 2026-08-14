@@ -16,7 +16,7 @@ ROM="${1:-${KICKSTART:-$HOME/Documents/RetroPie/BIOS/kick31.rom}}"
 RUN=.run; DH0="$RUN/dh0"; DH1="$RUN/dh1"; GDBHOME="$RUN/gdbhome"
 mkdir -p "$DH0/s" "$DH1" "$RUN/state" "$GDBHOME"
 printf 'cd dh1:\nRoF\n' > "$DH0/s/startup-sequence"
-cp -f out/RoF.exe "$DH1/RoF"
+cp -f out/RoF "$DH1/RoF"
 
 fsuae_claim_port
 "$FSUAE" \

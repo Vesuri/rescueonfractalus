@@ -1,7 +1,7 @@
 # Verify the chip-BSS conversion of `.MEMF_CHIP` (amiga/memf_chip_bss.ld).
 #   build: make PROBES=1     drive: GDBSCRIPT=chipbss_verify.gdb ./diag_run.sh 40
 #
-# The five __chip waveform buffers no longer ship their contents in RoF.exe — the hunk is
+# The five __chip waveform buffers no longer ship their contents in RoF — the hunk is
 # HUNK_BSS with the MEMF_CHIP flag, so AmigaDOS allocates it from chip RAM and LoadSeg
 # clears it, and PlatformAmiga::audioInit() fills it.  Three things have to hold, and none
 # of them can be seen in a host-side size diff:

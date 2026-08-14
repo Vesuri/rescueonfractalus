@@ -1,7 +1,7 @@
 # Rescue on Fractalus — Amiga cross-build (m68k-amiga-elf-gcc)
 #
 # Usage (from amiga/ with toolchain on PATH via `. env.sh`):
-#   make          — build out/RoF.exe
+#   make          — build out/RoF
 #   make clean    — remove obj/ and out/
 #   ./run.sh      — boot in FS-UAE (OCS A500)
 #   ./debug.sh    — source-level debug via FS-UAE GDB stub
@@ -18,6 +18,9 @@
 # the source trees) and the sources are located via vpath.
 
 OUT      = out/RoF
+# The AmigaOS executable itself is extension-less (`out/RoF`); OUT is only the stem
+# for the build by-products that sit next to it (.elf/.map/.s).
+EXE      = $(OUT)
 CC       = m68k-amiga-elf-gcc
 AS       = m68k-amiga-elf-as
 VASM     = vasmm68k_mot
@@ -806,7 +809,7 @@ endif
 # ship "present" ($003A=$FF + HUD indicator) at that instant, so B always triggers the return-to-
 # mother-ship cinematic WITHOUT having rescued the pilot quota.  Lets you test the return + the
 # post-mother-ship Standby level select by hand.  Normal flight is untouched until you press B.
-# Needs NO PROBES/auto-launch — builds a normal playable RoF.exe; boot with run.sh, press START to
+# Needs NO PROBES/auto-launch — builds a normal playable out/RoF; boot with run.sh, press START to
 # launch, fly a moment, then press B to return.  B also halves energy $062F, for the same reason
 # FORCE_RETURN does: a full bar fills its dial exactly and hides any gauge overflow/priority bug.
 ifdef FORCE_MOTHERSHIP
@@ -926,7 +929,7 @@ endif
 # bytes through Supervisor(), so this is behaviour-neutral on the A500 68000 target).
 VASMFLAGS = -m68010 -Felf -quiet -x -no-opt -nowarn=62 $(EXTRA_VASMDEFS)
 # memf_chip_bss.ld: link `.MEMF_CHIP` as an uninitialised (chip BSS) hunk rather than a data
-# hunk — those 14,654 bytes were 100.0% zeros in the file (4.8% of RoF.exe).  It SUPPLEMENTS
+# hunk — those 14,654 bytes were 100.0% zeros in the file (4.8% of out/RoF).  It SUPPLEMENTS
 # the default script (INSERT AFTER), so -Ttext=0 still applies.  Read that file before
 # touching anything `__chip`: it makes a static initialiser on a __chip variable a silent
 # zero, which is why CHIP_BSS_CHECK below gates the link.
@@ -937,18 +940,18 @@ LDFLAGS   = -Wl,--emit-relocs,--gc-sections,-Ttext=0,-Map=$(OUT).map -Wl,-T,$(CH
 # ---------------------------------------------------------------------------
 # Rules
 # ---------------------------------------------------------------------------
-all: $(OUT).exe
+all: $(EXE)
 
 # elf2hunk -s strips the HUNK_SYMBOL tables from the executable: 42,520 B of the 384,176 B
 # PROBES build (11%) was a debug symbol table nothing reads.  Debugging is unaffected —
 # debug.sh and every amiga/*.gdb script resolve symbols from $(OUT).elf, which still has
 # them (plus the full .debug_* sections), and the FS-UAE stub is pointed at the ELF too.
-# `make SYMS=1` keeps them in the .exe if a tool ever needs them there.
+# `make SYMS=1` keeps them in the executable if a tool ever needs them there.
 ELF2HUNK_FLAGS := $(if $(SYMS),,-s)
-$(OUT).exe: $(OUT).elf
+$(EXE): $(OUT).elf
 	$(info Elf2Hunk $@)
-	@elf2hunk $(OUT).elf $(OUT).exe $(ELF2HUNK_FLAGS)
-	@grep -qa '$$VER: Rescue on Fractalus! ' $(OUT).exe || { \
+	@elf2hunk $(OUT).elf $(EXE) $(ELF2HUNK_FLAGS)
+	@grep -qa '$$VER: Rescue on Fractalus! ' $(EXE) || { \
 	  echo "error: the AmigaOS \$$VER: string is missing from $@."; \
 	  echo "       Nothing references it, so --gc-sections/elf2hunk can drop it silently;"; \
 	  echo "       see src/platform/amiga/version.s (SHF_GNU_RETAIN)."; \
@@ -984,7 +987,7 @@ obj/gcc8_a_support.o : $(SUPPORT)/gcc8_a_support.s
 
 # The AmigaOS $VER: string.  Nothing references it (see version.s) — it survives
 # --gc-sections only through its section's SHF_GNU_RETAIN flag, which is why the link
-# rule below asserts it is still in the .exe rather than trusting that.
+# rule below asserts it is still in the executable rather than trusting that.
 obj/version.o : $(AMIGA_SRC)/version.s
 	$(info ASM  $<)
 	@$(AS) $(ASFLAGS) -o $@ "$(abspath $<)"

@@ -1,4 +1,4 @@
-# Pilot-rescue resume-frame dot-dropout ring dump.  Requires out/RoF.exe built with
+# Pilot-rescue resume-frame dot-dropout ring dump.  Requires out/RoF built with
 # `make PROBES=1` (ROF_FLIGHT_PROBE) — these globals only exist in that build.
 #
 # WORKFLOW (interactive — a rescue can't be reached headlessly):

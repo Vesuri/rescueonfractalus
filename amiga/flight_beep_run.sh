@@ -16,11 +16,11 @@ cd "$(dirname "$0")"
 FSUAE="${FSUAE:-fs-uae}"; GDB="${GDB:-m68k-amiga-elf-gdb}"
 ROM="${1:-${KICKSTART:-$HOME/Documents/RetroPie/BIOS/kick31.rom}}"
 [ -f "$ROM" ] || { echo "Kickstart ROM not found: $ROM (pass \$1 or set \$KICKSTART)"; exit 1; }
-[ -f out/RoF.exe ] || { echo "build first: make PROBES=1 BEEP_CAP=1"; exit 1; }
+[ -f out/RoF ] || { echo "build first: make PROBES=1 BEEP_CAP=1"; exit 1; }
 RUN=.run; DH0="$RUN/dh0"; DH1="$RUN/dh1"; GDBHOME="$RUN/gdbhome"
 mkdir -p "$DH0/s" "$DH1" "$RUN/state" "$GDBHOME"
 printf 'cd dh1:\nRoF\n' > "$DH0/s/startup-sequence"
-cp -f out/RoF.exe "$DH1/RoF"
+cp -f out/RoF "$DH1/RoF"
 rm -f "$RUN/state/"*.uss    # cold boot (wipe stale savestate)
 fsuae_claim_port
 fsuae_kill_recorded "$RUN/flightbeep.gdbpid" gdb || true

@@ -5,9 +5,9 @@
 # Use KS 3.1 (auto-boots directory HDs). Left mouse button quits.
 # Override ROM via $1 or $KICKSTART.
 #
-# Run a DIFFERENT binary than out/RoF.exe with $ROF_EXE — handy for A/B-ing two builds by
+# Run a DIFFERENT binary than out/RoF with $ROF_EXE — handy for A/B-ing two builds by
 # eye or ear without rebuilding between each look, e.g.
-#   ROF_EXE=RoF-asm.exe ./run.sh      vs      ROF_EXE=RoF-cmixer.exe ./run.sh
+#   ROF_EXE=RoF-asm ./run.sh          vs      ROF_EXE=RoF-cmixer ./run.sh
 set -euo pipefail
 cd "$(dirname "$0")"
 . "${FSUAE_COMMON:-$HOME/.local/share/amiga/fsuae_common.sh}"
@@ -15,7 +15,7 @@ cd "$(dirname "$0")"
 FSUAE="${FSUAE:-fs-uae}"
 ROM="${1:-${KICKSTART:-$HOME/Documents/RetroPie/BIOS/kick31.rom}}"
 [ -f "$ROM" ] || { echo "Kickstart ROM not found: $ROM  (pass as \$1 or set \$KICKSTART)"; exit 1; }
-EXE="${ROF_EXE:-out/RoF.exe}"
+EXE="${ROF_EXE:-out/RoF}"
 # Emulated machine: A500+ by default (the target; ECS Denise for BPLCON3 border-blanking).
 # `AMIGA_MODEL=A1200 ./run.sh` checks the port on a faster CPU — beam-timing races that the
 # slow A500 happens to land safely show up there.

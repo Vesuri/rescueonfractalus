@@ -1,4 +1,4 @@
-# Default flight/init timing dump for diag_run.sh.  Requires an out/RoF.exe built with
+# Default flight/init timing dump for diag_run.sh.  Requires an out/RoF built with
 # `make PROBES=1` (ROF_FLIGHT_PROBE) — the globals below only exist in that build.
 # Edit freely to print whatever globals / mem[0xNNNN] a given investigation needs.
 continue

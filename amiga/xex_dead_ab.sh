@@ -53,8 +53,8 @@ for ARM in intact zeroed; do
   fi
   # NOT `stat -f%z`: env.sh puts GNU coreutils on PATH, where -f means --file-system, so the
   # BSD form fails and SIZE would be EMPTY — making the equality check below pass vacuously.
-  SIZE[$ARM]=$(wc -c < out/RoF.exe | tr -d ' ')
-  echo "    RoF.exe = ${SIZE[$ARM]} B"
+  SIZE[$ARM]=$(wc -c < out/RoF | tr -d ' ')
+  echo "    RoF = ${SIZE[$ARM]} B"
   rm -f /tmp/rof_mem.bin
   GDBSCRIPT="$PROBE" ./diag_run.sh "$SECS" 2>&1 | sed -n '/==== FRAME-LOCKED/,/==== end/p'
   if [ ! -s /tmp/rof_mem.bin ]; then

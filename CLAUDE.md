@@ -43,7 +43,7 @@ these are the derived facts we must not re-derive or contradict.
 | `docs/sfx-events.md` | Audio: the 33 SFX events, the voice engine, captured POKEY streams |
 | `docs/rename.md` | A function's name contradicts its behaviour (append to it — see conventions) |
 | `docs/whdload-slave.md` | Touching the WHDLoad install (`whdload/`) — the slave, the install package, or its memory sizes. Carries WHY it is a `kick13.s` kickemu rather than a plain loader (the port needs the OS), the measured RAM budget + how to re-tune it, and the Install-Template edits |
-| `docs/asset-extraction.md` | Touching the embedded boot image (`incbin.s`, `XexImage.cpp`, `xex_load.h`, `tools/make_xex_sparse.py`), **anything `__chip`**, or judging `RoF.exe`'s size. Carries the sparse-image format, the COVERAGE table the removal is gated on, three A/B traps (same-length assets, dump-don't-checksum, ISR frame-lock), and §6 the full size ledger — incl. **`.MEMF_CHIP` is a BSS hunk, so a `__chip` static initialiser is silently discarded** and what the remaining levers cost |
+| `docs/asset-extraction.md` | Touching the embedded boot image (`incbin.s`, `XexImage.cpp`, `xex_load.h`, `tools/make_xex_sparse.py`), **anything `__chip`**, or judging `out/RoF`'s size. Carries the sparse-image format, the COVERAGE table the removal is gated on, three A/B traps (same-length assets, dump-don't-checksum, ISR frame-lock), and §6 the full size ledger — incl. **`.MEMF_CHIP` is a BSS hunk, so a `__chip` static initialiser is silently discarded** and what the remaining levers cost |
 | `docs/logo-station-plan.md` | Scenes 1 (Logo) + 2 (Station): screen composition, the routines, and the Amiga port plan. ⚠ Also carries the correction that boot `INITAD $5000` is the LOGO, not `stage_5000` |
 | `docs/startup-flow.md`, `docs/phases.md`, `docs/boost-cinematic-plan.md`, `docs/boost-tunnel-direct-handoff.md`, `docs/alien-jumpscare.md`, `docs/cockpit-render-plan.md`, `docs/terrain-render-plan.md`, `docs/terrain-draw-plan.md`, `docs/rescue-figure-render.md`, `docs/sprite-multiplex-plan.md`, `docs/amiga-attract-plan.md` | Per-area plans/records — check for one before designing |
 | `docs/memory-map.md`, `docs/atari-hardware.md`, `docs/hw-access.md`, `docs/hw-techniques.md`, `docs/toolchain.md` | Atari/Amiga hardware + toolchain reference |
@@ -73,7 +73,7 @@ the snapshot". Rationale + the caveat in full: the `hostproof` block in `Makefil
 ### Amiga cross-build (m68k-amiga-elf-gcc) — from `amiga/`
 ```
 . env.sh        # put the ~/.local Amiga toolchain on PATH (source it first, SAME command)
-make            # build out/RoF.exe (+ RoF.elf for debug)
+make            # build out/RoF (+ RoF.elf for debug)
 ./run.sh        # boot in FS-UAE (Kickstart 3.1; left mouse button quits)
 ./debug.sh      # source-level debug via FS-UAE GDB stub (m68k-amiga-elf-gdb; prints its $DEBUG_PORT)
 ```

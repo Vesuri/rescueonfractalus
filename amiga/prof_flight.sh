@@ -11,12 +11,12 @@
 # Usage:
 #   . ./env.sh                       # fs-uae + m68k-amiga-elf-gdb on PATH (REQUIRED)
 #   ./prof_flight.sh [--build] [warmup=55] [interval=0.4] [count=300]
-#     --build   rebuild out/RoF.exe with PROBES=1 PROFILE_NORING=1 NO_TDRAW_PROF=1 first
+#     --build   rebuild out/RoF with PROBES=1 PROFILE_NORING=1 NO_TDRAW_PROF=1 first
 #               (PROBES = headless auto-launch; PROFILE_NORING = drop the RF_RING
 #                rescue-debug ring whose rfPlaneSum scans otherwise eat ~half the
 #                samples; NO_TDRAW_PROF = drop the terrain-draw sub-phase brackets,
 #                which put ~6 live-beam chip reads per visible pair ON the object
-#                loop's own source lines).  Skip it if out/RoF.exe is already such a
+#                loop's own source lines).  Skip it if out/RoF is already such a
 #                build — but note a plain `PROBES=1` build is NOT (it inflates the
 #                object-loop bucket).
 #
@@ -56,7 +56,7 @@ for f in COMBAT COMBAT_QUIET COMBAT_LEVEL COMBAT_SAUCER COMBAT_JITTER INVULNERAB
 done
 
 if [ "$BUILD" = 1 ]; then
-  echo "=== building out/RoF.exe (PROBES=1 PROFILE_NORING=1 NO_TDRAW_PROF=1$PASSTHRU) ==="
+  echo "=== building out/RoF (PROBES=1 PROFILE_NORING=1 NO_TDRAW_PROF=1$PASSTHRU) ==="
   # shellcheck disable=SC2086
   make clean >/dev/null && make -j4 PROBES=1 PROFILE_NORING=1 NO_TDRAW_PROF=1 $PASSTHRU \
     || { echo "build failed" >&2; exit 1; }

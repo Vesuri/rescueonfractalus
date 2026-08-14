@@ -27,7 +27,7 @@ mkdir -p "$DH0/s" "$DH1" "$RUN/state" "$GDBHOME"
 # from 2.0 on — a KS 1.3 boot dies here with "Unknown command cd".  The game itself is
 # 1.3-clean; the WHDLoad install boots 1.3 through its own slave, not through this script.)
 printf 'cd dh1:\nRoF\n' > "$DH0/s/startup-sequence"
-cp -f out/RoF.exe "$DH1/RoF"
+cp -f out/RoF "$DH1/RoF"
 
 fsuae_claim_port
 "$FSUAE" \

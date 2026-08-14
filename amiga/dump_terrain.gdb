@@ -1,5 +1,5 @@
 # Stage-1 verifier: dump the flight terrainBitmap chip RAM so the decoder can
-# reconstruct/diff the displayed bitplanes headlessly.  Requires out/RoF.exe built
+# reconstruct/diff the displayed bitplanes headlessly.  Requires out/RoF built
 # with PROBES=1 (g_terrainBmpAddr only exists there).  Driven by dump_terrain.sh,
 # which SIGINTs the `continue` once flight has been reached.
 continue

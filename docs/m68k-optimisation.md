@@ -158,10 +158,10 @@ Rewrite hot functions in idiomatic C:
   see.
   - **Chasing CYCLES?** The test is the function's own `.text` in a whole-TU diff (the established
     rule — a fold that spills, or that grows two inline sites, loses).
-  - **Chasing BYTES?** The test is **`RoF.exe`**, and the reloc term usually dominates. Worked
+  - **Chasing BYTES?** The test is **`out/RoF`**, and the reloc term usually dominates. Worked
     example: folding `boot_standby_launch_driver` (956 operands, a 13.7 KB body) **grew its `.text`
     by 794 B** — the classic "giant caller" failure, GCC cannot hold a base across it — yet it
-    **shrank `RoF.exe` by ~1.6 KB**, because −299 operands is −299 relocations. Reverting it on the
+    **shrank `out/RoF` by ~1.6 KB**, because −299 operands is −299 relocations. Reverting it on the
     `.text` rule made the binary BIGGER. So a function can fail the cycle test and pass the size test
     at the same time; for boot/standby/bulk code, where cycles are irrelevant, keep it.
   - ⚠ **Read a `.part.0` split as one function.** `animate_clear_colors_timed` looked like +1086 B

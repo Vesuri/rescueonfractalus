@@ -59,7 +59,7 @@ atari_charset_end:
 |  - screen3_mem.bin (65,536 B): the flat 64 KB Standby RAM snapshot the port booted from
 |    before the STAGED rof.xex load (XexImage.cpp) replaced it.  It had NO reader in C, but
 |    unlike cockpit.raw it was still LINKED IN: .rodata is one section that rof_xex anchors,
-|    so --gc-sections could not drop it.  Deleting the embed cut 64 KB off RoF.exe.
+|    so --gc-sections could not drop it.  Deleting the embed cut 64 KB off RoF.
 |
 | ⚠ The lesson: a dead .rodata blob does NOT get collected the way a dead chip-hunk one does.
 |   Check `objdump -r out/RoF.elf | grep <sym>` for a reloc count of 0, not just C references.

@@ -1,4 +1,4 @@
-| AmigaOS version string for RoF.exe.
+| AmigaOS version string for RoF.
 |
 | Format (https://wiki.amigaos.net/wiki/Version_Strings):
 |     $VER: <name> <version>.<revision> (<dd>.<mm>.<yyyy>)
@@ -16,12 +16,12 @@
 | sharing a section with incbin.s's anchored blobs — see the collection lesson at the foot
 | of incbin.s), and would silently vanish the day that anchor moved.
 | Re-verify after ANY change to LDFLAGS, elf2hunk flags or this file:
-|     strings out/RoF.exe | grep '\$VER:'      # must print the line below
+|     strings out/RoF | grep '\$VER:'      # must print the line below
 |
 | ⚠ The version number lives in THREE places — keep them in step:
 |     src/platform/amiga/version.s           this file (the executable)
 |     whdload/RoFSlave.s                     slv_info + the slave's own $VER:
-|     whdload/install/RoF Install/ReadMe     the History section
+|     whdload/RoF Install/ReadMe             the History section
 |
 | The date is deliberately HARDCODED rather than stamped at build time (Stunt Car Racer's
 | `incbin "T:date"` idiom).  A build-time date would make every rebuild of an unchanged
