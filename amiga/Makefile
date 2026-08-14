@@ -925,7 +925,14 @@ endif
 # instruction is `movec vbr,d0` in getVBR (the C++ getVBR already emits movec via raw
 # bytes through Supervisor(), so this is behaviour-neutral on the A500 68000 target).
 VASMFLAGS = -m68010 -Felf -quiet -x -no-opt -nowarn=62 $(EXTRA_VASMDEFS)
-LDFLAGS   = -Wl,--emit-relocs,--gc-sections,-Ttext=0,-Map=$(OUT).map
+# memf_chip_bss.ld: link `.MEMF_CHIP` as an uninitialised (chip BSS) hunk rather than a data
+# hunk — those 14,654 bytes were 100.0% zeros in the file (4.8% of RoF.exe).  It SUPPLEMENTS
+# the default script (INSERT AFTER), so -Ttext=0 still applies.  Read that file before
+# touching anything `__chip`: it makes a static initialiser on a __chip variable a silent
+# zero, which is why CHIP_BSS_CHECK below gates the link.
+CHIP_BSS_LD    = memf_chip_bss.ld
+CHIP_BSS_CHECK = tools/check_chip_bss.py
+LDFLAGS   = -Wl,--emit-relocs,--gc-sections,-Ttext=0,-Map=$(OUT).map -Wl,-T,$(CHIP_BSS_LD)
 
 # ---------------------------------------------------------------------------
 # Rules
@@ -947,7 +954,8 @@ $(OUT).exe: $(OUT).elf
 	  echo "       see src/platform/amiga/version.s (SHF_GNU_RETAIN)."; \
 	  $(RM) $@; exit 1; }
 
-$(OUT).elf: $(OBJECTS)
+$(OUT).elf: $(OBJECTS) $(CHIP_BSS_LD) $(CHIP_BSS_CHECK)
+	@python3 $(CHIP_BSS_CHECK) $(OBJECTS)
 	$(info Linking $@)
 	@$(CC) $(CCFLAGS) $(LDFLAGS) $(OBJECTS) -o $@
 	@$(OBJDUMP) --disassemble --no-show-raw-ins -S $@ > $(OUT).s 2>/dev/null || true

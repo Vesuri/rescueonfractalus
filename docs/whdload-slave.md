@@ -103,7 +103,7 @@ What has to fit:
 | | Bytes | Source |
 |---|---|---|
 | chip: runtime `AllocMem(MEMF_CHIP)` | 217,408 | **measured** — `amiga/memreport.gdb`, KS 3.1 / A500+ |
-| chip: `.MEMF_CHIP` hunk | 14,654 | `objdump -h out/RoF.elf` |
+| chip: `.MEMF_CHIP` hunk | 14,654 | `objdump -h out/RoF.elf`. Since 2026-08-14 a **BSS** hunk (`amiga/memf_chip_bss.ld`) — 14,632 B smaller in the *file*, identical chip RAM **requirement**, so `CHIPMEMSIZE` is unaffected |
 | chip: the 1.3 boot's own use | ? | CLI screen bitmap, copper, fonts |
 | fast: non-chip hunks | 436,321 | `.text` 200,386 + `code` 16,666 + `.rodata` 33,048 + `.init_array` 4 + `.data` 2,777 + `.bss` 183,440 |
 | fast: `operator new` | 1,272 | **measured**, same run |

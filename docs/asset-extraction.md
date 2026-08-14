@@ -5,7 +5,7 @@ item 1). Read this before touching `src/xex_load.h`, `src/platform/amiga/XexImag
 `src/platform/amiga/incbin.s` or `tools/make_xex_sparse.py`.
 
 **Status: SHIPPED.** `assets/rof_boot_image.bin` (27,872 B) replaced the embedded `rof.xex`
-(43,066 B); `RoF.exe` 334,100 → 318,764 B (and **306,364 B** after the 2026-08-14 relocation-table
+(43,066 B); `RoF.exe` 334,100 → 318,764 B (and **291,480 B** after the 2026-08-14 relocation-table
 pass — see the size ledger at the end). The removal is gated on **static reachability**
 (§5), not on play-testing — because the combat path turned out not to be run-to-run
 deterministic, so no A/B can ever clear it. `make FULLXEX=1` restores the original.
@@ -236,9 +236,12 @@ Cumulative for the release-packaging pass: **446,224 → 318,764 B (−28.6%)**.
 | `elf2hunk -s` (strip `HUNK_SYMBOL`) | `a0dff0e` | 334,100 |
 | `rof.xex` → sparse boot image | `0b03c33` | 318,764 |
 | *(the 2026-08-14 perf work put ~1.9 KB back — joystick, edge-plot merge)* | | 320,716 |
-| **`ROF_MEMBASE` fold ×20 + `ROF_PAIR16` ×7** | this | **306,364** |
+| `ROF_MEMBASE` fold ×20 + `ROF_PAIR16` ×7 | `882b5e2` | 306,364 |
+| *(the `$VER:` version string — 44 B, `src/platform/amiga/version.s`)* | | 306,408 |
+| gate the unconditional flight-VBI profiler (§6.2) | | 306,112 |
+| **`.MEMF_CHIP` → chip BSS hunk** | this | **291,480** |
 
-Cumulative for the release-packaging pass: **446,224 → 306,364 B (−31.3%)**.
+Cumulative for the release-packaging pass: **446,224 → 291,480 B (−34.7%)**.
 
 ⭐ **The relocation table was the second-biggest thing in the file, and the base fold is what
 shrinks it.** The 2026-08-14 pass folded 20 more functions (`ROF_MEMBASE`, `rof_native.c`), taking
@@ -249,7 +252,69 @@ repeatable live in `docs/m68k-optimisation.md` §ROF_MEMBASE: the size test is *
 also deletes a 4-byte reloc — `boot_standby_launch_driver` is exactly that case), and a `.part.0`
 split must be read as one function.
 
-What is left, in order of size: ~208 KB of code (the transliterated 6502 dominates), **38,528 B of
-relocations** (still the `abs.l` tax — ~3,988 operands remain, and the unfolded ones are mostly in
-`rof_gen.c`, which would need transpiler support rather than a hand edit), and the 27,872 B boot
-image.
+### 6.1 ⭐ `.MEMF_CHIP` was 14,654 bytes of literal zeros (2026-08-14)
+
+The five `__chip` POKEY→Paula waveform buffers (`noise_buf` 8 KB, `poly_dist_buf` 4 KB,
+`poly5_wave`, `poly4_wave`, `wave_pure`) are all **filled at runtime** by
+`PlatformAmiga::audioInit()` — but GCC emits a section-attributed variable into a PROGBITS
+section whether or not it has an initialiser, so all 14,654 bytes shipped in the file. Measured
+**100.0 % zero** (14,652 of 14,654). `amiga/memf_chip_bss.ld` re-links `.MEMF_CHIP` as
+`(NOLOAD)`, i.e. `SHT_NOBITS`, and Elf2Hunk turns that into **`HUNK_BSS` with the `MEMF_CHIP`
+flag** — chip RAM is still allocated and still cleared (LoadSeg zeroes a BSS hunk), it just is
+not stored. The chip RAM *requirement* is unchanged, so the WHDLoad `CHIPMEMSIZE` needs no
+retune. **−14,632 B for zero runtime cost.**
+
+Two things this brought with it:
+* ⚠ **A static initialiser on a `__chip` variable is now silently discarded.** `wave_pure` was
+  `= { 0x7F, 0x81 }` and would have come up as two zero bytes — i.e. the default waveform for
+  every channel would have been silence, presenting as an audio bug with no bad arithmetic
+  anywhere. Guarded: `amiga/tools/check_chip_bss.py` fails the link if any object contributes a
+  nonzero byte, and the guard was transition-tested by re-adding the initialiser.
+* A host-side size diff cannot see whether the buffers are still *correct* at runtime, and no
+  differential can either (nothing reads them but Paula's DMA). `amiga/chipbss_verify.gdb` is the
+  instrument: it checks the addresses are below `$200000` (really chip), that `wave_pure` reads
+  `7f 81`, and that each table has a nonzero byte (a BSS hunk starts as zeros, so "the generator
+  ran" and "the hunk was cleared" look identical unless you sum the contents).
+
+### 6.2 What is left
+
+Release build, 291,480 B — `HUNK_CODE` 216,848 · `HUNK_RELOC32` 38,632 · `HUNK_DATA` 35,908
+(27,872 of it the boot image) · `HUNK_BSS` 16 (198,100 B declared).
+
+**The relocation table is still the second-biggest thing in the file** — 13.3 % of it, 9,620
+fixups, of which **4,347 point at `mem` and 2,148 at `cpu`**, i.e. 67 % are the `abs.l` addressing
+tax. Each operand folded to `d16(An)` deletes 2 code bytes *and* a 4-byte reloc, so this is the
+one remaining large lever that costs no performance (it is the same `ROF_MEMBASE` transformation
+as the perf work, and `cpu` has no equivalent fold yet). The unfolded `mem` operands are mostly in
+`rof_gen.c`, which needs transpiler support rather than a hand edit.
+
+Everything else that was checked and found not worth doing:
+* **Debug symbols: already gone.** `elf2hunk -s` strips `HUNK_SYMBOL`; the release `.exe` has no
+  `HUNK_SYMBOL` and no `HUNK_DEBUG` block at all. `-g` in `CFLAGS` costs the file **zero** bytes —
+  `.debug_*` and `.comment` are non-`SHF_ALLOC`, so Elf2Hunk never sees them, and `RoF.elf` keeps
+  the full DWARF for `debug.sh` and every `amiga/*.gdb`.
+* **No verify/oracle code survives `--gc-sections`** in a default build: no `*_core_c` oracle, no
+  `*_verify` wrapper. Checked by symbol sweep, not by reading the `#ifdef`s.
+* **Unreferenced vendored framework asm: 48 bytes.** vasm emits one `code` section per file so
+  `--gc-sections` cannot split it, but the only unreferenced routines are three `Bitmap` stubs and
+  `getVBR`, together 48 B of the 16,668 B `code` hunk. Measured, then dropped as noise.
+* **`.data` is 93 % zeros** (2,591 of 2,777) but it is essentially one object — the
+  `static RescueOnFractalus scene` inside `PlatformAmiga::run()`, 2,628 B, with a handful of
+  nonzero members that legitimately keep it out of `.bss`. Nothing cheap here.
+
+And one lever that is real but **costs frame rate, so it is the user's call, not a free win**
+(clean-build A/B, same tree, 2026-08-14):
+
+| build | exe | Δ |
+|---|---|---|
+| shipping (`OPT=-O2 -fomit-frame-pointer`, `NATIVE_OPT=-O3 -funroll-loops`) | 291,480 | — |
+| `NATIVE_OPT='-O3'` (drop `-funroll-loops` only) | 262,420 | −29,356 (−10.1 %) |
+| `NATIVE_OPT='-O2'` | 236,020 | −55,756 (−19.1 %) |
+| `OPT='-Os -fomit-frame-pointer'` (`rof_native.c` still `-O3 -funroll-loops`) | 275,180 | −16,596 (−5.7 %) |
+| both `-Os` | 198,856 | −92,920 (−31.9 %) |
+
+`rof_native.c` is 115,266 B of the 216,848 B code hunk and holds the hot flight twins, which is
+exactly why it gets `-O3 -funroll-loops` — but it also holds a lot of cold one-shot drivers
+(`boot_standby_launch_driver` alone is 14,564 B), and those pay the unrolling for nothing. A
+per-function `__attribute__((optimize("Os")))` on the cold set would take most of that 56 KB
+without touching flight; it needs a hot/cold classification, which the PC profiler can supply.

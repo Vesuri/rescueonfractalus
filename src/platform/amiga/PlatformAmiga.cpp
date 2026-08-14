@@ -86,7 +86,11 @@ extern "C" void game_vbi_isr(void);
 // rule with the correct stride into a per-channel scratch buffer.  One captured
 // byte = one channel fire, played by the same pokey_period() as the pure-tone
 // path; bipolar ±127, AUDC volume scales amplitude via AUDxVOL.
-static __chip uint8_t wave_pure[2]      = { 0x7F, 0x81 }; // pure tone (square)
+// ⚠ Filled by audioInit(), NOT by a static initialiser: `.MEMF_CHIP` is linked as a chip
+// BSS hunk (amiga/memf_chip_bss.ld), so an initialiser here would be silently DROPPED and
+// every channel's default waveform would be two zero bytes = silence.  The build fails if
+// any __chip variable carries one — see the CHIP-BSS guard in amiga/Makefile.
+static __chip uint8_t wave_pure[2];                       // pure tone (square) = { $7F, $81 }
 // Precomputed POKEY poly distortion waveforms.  A poly waveform's SHAPE depends only
 // on the stride residue through the poly counter (s4 = stride%15 for the poly4 buzz,
 // s5 = stride%31 for the poly5-gated tone) and the distortion mode — NOT on the channel
@@ -900,6 +904,10 @@ void PlatformAmiga::audioInit()
     // Clear POKEY shadow and LFSR
     for (int i = 0; i < 16; i++) pokey[i] = 0;
     rof_lfsr_state = 0x1FFFFu;
+    // The pure-tone square every channel defaults to.  Filled here rather than statically:
+    // `.MEMF_CHIP` is a chip BSS hunk, so a static initialiser would be dropped (see the
+    // declaration of wave_pure).  Must precede the AUD_PTR(ch) = wave_pure loop below.
+    wave_pure[0] = 0x7Fu; wave_pure[1] = 0x81u;
     fill_noise_buf();   // pre-render the poly17 noise sample for noise-distortion voices
     build_poly_tables(); // pre-render every distinct poly distortion waveform (immutable)
     build_period_table(); // pre-render AUDF->Paula-period (kills the per-frame 32-bit soft divide)

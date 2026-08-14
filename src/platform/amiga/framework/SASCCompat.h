@@ -27,7 +27,10 @@ typedef unsigned long  uint32_t;
 // the headers' #ifdef ASSEMBLER branches, which GCC never compiles.
 //
 // SAS/C storage qualifiers / keywords:
-//   __chip  -> chip RAM section (the linker maps .MEMF_CHIP to a chip hunk)
+//   __chip  -> chip RAM section (the linker maps .MEMF_CHIP to a chip hunk).
+//              ⚠ It is an UNINITIALISED (BSS) hunk — amiga/memf_chip_bss.ld — so a
+//              __chip variable must be filled at RUNTIME; a static initialiser is
+//              discarded.  The build stops if you write one (check_chip_bss.py).
 //   __far   -> 32-bit absolute (gcc already absolute) -> no-op
 //   __saveds-> reload small-data base (no baserel here) -> no-op
 //   __inline-> nothing (the framework declares accessors __inline in headers but
