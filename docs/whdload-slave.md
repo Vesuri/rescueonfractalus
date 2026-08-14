@@ -75,6 +75,19 @@ why `_bootdos` aborts unconditionally instead of returning to the CLI: WHDLoad's
 `_bootdos` examples make that a choice (their `QUIT_AFTER_PROGRAM_EXIT` switch), but here
 returning would strand a 68000 user with no exit at all.
 
+### `slv_Version = 16`, and why not 17
+
+The splash window shows a checkbox for every item in `ws_config`, and `ws_config` exists —
+and *must* be initialised — from `ws_Version 17` on. The only items it can hold are
+`ButtonWait` and `Custom1-5`; this slave implements none of them, and **WHDLoad leaves
+ButtonWait entirely to the slave** (`WHDLTAG_BUTTONWAIT_GET`, `PL_IFBW`), so the `"BW;"`
+the slave first declared put a checkbox in the splash window that did nothing when ticked
+(user, 2026-08-14). An empty string is not the alternative — the `ws_config` grammar wants
+at least one option. Declaring 16 drops the field, and with it the gadget; WHDLoad's own
+`Src/slave-examples/kick13.asm` is 16 for the same reason. `kick13.s` itself only requires
+16, so nothing is lost. The `IFGE slv_Version-17` block is kept, unassembled, so a real
+option can be added later by raising the number.
+
 ### The left-mouse quit stays as it is (user decision, 2026-08-14)
 
 `rof_check_restart()` (`PlatformAmiga.cpp:1694`) quits on a bare

@@ -3,7 +3,7 @@
 ;  :Contents.	WHDLoad slave for the Amiga port of "Rescue on Fractalus!"
 ;  :Author.	Vesuri
 ;  :History.	14.08.26 started
-;  :Requires.	WHDLoad 17+, whdload/kick13.s, an installed Kickstart 1.3 image
+;  :Requires.	WHDLoad 16+, whdload/kick13.s, an installed Kickstart 1.3 image
 ;  :Copyright.	Public Domain
 ;  :Language.	68000 Assembler
 ;  :Translator.	BASM 2.16
@@ -82,7 +82,11 @@ DEBUG				;extra internal checks in the OS emulation
 MEMFREE		= $200		;record the low-water mark of free chip/fast memory
 	ENDC
 
-slv_Version	= 17
+slv_Version	= 16		;16, not 17, ON PURPOSE: ws_config exists only from 17 on
+				;and MUST then be initialised, which puts a gadget in the
+				;splash window.  There is nothing here to configure -- see
+				;slv_config below.  WHDLoad's own kick13.asm example slave
+				;is 16 for the same reason.
 slv_Flags	= WHDLF_NoError	;kick13.s ORs in EmulPriv (needed by exec.Supervisor)
 				;and, because HDINIT is set, Examine
 slv_keyexit	= $59		;F10.  Note WHDLoad can only read this via the moved VBR,
@@ -105,13 +109,15 @@ slv_info	dc.b	"Amiga port by Vesuri",10
 		dc.b	"Left mouse button quits.",10
 		dc.b	"F10 also quits, on a 68010 or better.",0
 	IFGE slv_Version-17
-		;One gadget in the splash window.  There is nothing game-specific to
-		;configure (no trainer, no intro to skip, nothing to load), so this is
-		;WHDLoad's own ButtonWait.  It must not be an EMPTY string: ws_config's
-		;grammar is "Config = ConfigOption { ';' ConfigOption }", i.e. at least
-		;one option -- see the ws_config autodoc.
-slv_config	dc.b	"BW;"
-		dc.b	0
+		;NOT ASSEMBLED at slv_Version 16 -- kept only so a real option can be
+		;added later by raising the version.  Every ws_config item is a gadget in
+		;the splash window, and each one has to MEAN something: the options are
+		;ButtonWait and Custom1-5, and this slave implements none of them.  It
+		;used to declare "BW;" -- a ButtonWait checkbox the slave never reads (
+		;WHDLoad leaves ButtonWait to the slave, see WHDLTAG_BUTTONWAIT_GET and
+		;PL_IFBW), so the box did nothing when ticked.  An empty string is not
+		;the fix either: ws_config's grammar wants at least one option.
+slv_config	dc.b	"C1:B:Example",0
 	ENDC
 		dc.b	"$VER: RoF.slave 0.9 (14.08.2026)",0
 	EVEN
