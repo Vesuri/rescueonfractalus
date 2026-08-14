@@ -1,5 +1,5 @@
 /* ras_fused_midpoint_test.c — exhaustive host proof for the constants the rasterizer's
- * FUSED span-5..8 blocks (TerrainRasterizeAssembler.s ras_s5/s6/s7/s8, 2026-08-08) bake in.
+ * FUSED span-5..8 blocks (TerrainRasterizeAssembler.s ras_s5/s6/s7/s8) bake in.
  *
  * Those blocks inline a far-bisect whose child span c = S>>1 is a COMPILE-TIME constant
  * (2/3/3/4), so the roughness displacement stops being computed from the span and becomes

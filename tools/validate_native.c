@@ -1329,7 +1329,7 @@ static int test_hud_draws(void) {
              * pointer-walk fast path is only taken when the 21-byte run cannot wrap). */
             pre[0x291C] = (uint8_t)(xs() & 0xFF); pre[0x291D] = (uint8_t)(xs() & 0xFF);
             pre[0x2872] = (uint8_t)(xs() & 0xFF); pre[0x2874] = (uint8_t)(xs() & 0xFF);
-            /* draw_altimeter_bars inputs + caches.  ⚠ FULL 8-bit range on purpose (2026-08-12):
+            /* draw_altimeter_bars inputs + caches.  ⚠ FULL 8-bit range on purpose:
              * the twin's fast paths assume the run is contiguous, which only holds while the
              * 8-bit row index does not wrap, and a $3F mask can never produce a wrap.  Live
              * flight only ever passes < $38 — the point of the wide fixture is to prove the
@@ -2335,7 +2335,7 @@ static int test_vbi_handler_flight(void) {
     return mem_fail;
 }
 
-/* --- standby/launch tunnel-ring + door-scroll cinematic twins (2026-07-11). ---
+/* --- standby/launch tunnel-ring + door-scroll cinematic twins. ---
  * add_multibyte_a1 / dl_lms_push_top / dl_lms_push_bottom take an entry register (operand /
  * X index / Y index) -> test_mem_contract_regs.  dl_lms_scroll_up/down / dl_doors_open_split_step are
  * mem-only -> test_mem_contract (the DL area $3000+ and indices $0097/$0098 are randomized;

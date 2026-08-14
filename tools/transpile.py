@@ -94,7 +94,7 @@ VALIDATE_FUNCS = {
     0xAE53,  # fill_terrain_silhouette — per-column surface scan + sky/body fill (NOT collision; flight top #4)
     0xA31E,  # terrain_draw_frame — main per-frame terrain driver (flight top #5, the last)
     0x4FF5,  # vbi_handler_flight — the in-flight VBI handler itself (orchestrates the whole flight frame)
-    # --- flight ISR de-transpile (2026-06-11): eliminate transpiled code on the
+    # --- flight ISR de-transpile: eliminate transpiled code on the
     #     per-frame VBI path.  Small subtrees first; the flight_control_integrate
     #     tree (~27 fns) is deferred. ---
     0x49A0,  # render_bcd_counter — score BCD render (self-contained $49A0-$49ED fall-through chain)
@@ -108,7 +108,7 @@ VALIDATE_FUNCS = {
     0x9B4C,  # exit_terrain_special_state — inverse of enter (calls ring_push_unmarked)
     0x992D,  # update_terrain_horizon_lr — L/R horizon update (calls sample_terrain_height_bilerp + game_sub_451d)
     0x9833,  # update_terrain_scanline_proj — TOP of subtree: map coords + depth + horizon (calls all the above)
-    # --- flight_control_integrate subtree (2026-06-12): the last transpiled code on
+    # --- flight_control_integrate subtree: the last transpiled code on
     #     the flight VBI path (~31 fns). Leaves-first. ---
     0x4E98,  # reset_flags_ff — set $006A/$0063/$2826 = $FF (leaf, mem-only)
     0x94BF,  # load_velocity_from_param_block — seed vel accums $2854-$2863 from param block (tail ring_push_marked)
@@ -143,7 +143,7 @@ VALIDATE_FUNCS = {
     # batch 4 — apex:
     0x9552,  # object_step_and_collide — integrate pos + terrain/obj collision + pickup dispatch (PHA/PLA stack)
     0x8E5B,  # flight_control_integrate — THE flight VBI root: joystick+throttle integrate, HUD, ring rotate
-    # --- flight main-loop de-transpile (2026-06-12): the last transpiled code on
+    # --- flight main-loop de-transpile: the last transpiled code on
     #     the flight per-frame path (game_state_update + enemy_check, called by
     #     flight_frame_native).  Leaves-first.  plot_line_done $AB26 is a bare RTS
     #     and is ABSORBED (native callers just return); game_sub_4f3f $4F3F is the
@@ -155,7 +155,7 @@ VALIDATE_FUNCS = {
     0xA99C,  # game_state_update — flight state machine (scanline plots + ring events)
     0x7AB8,  # alien_attack_tick — enemy PMG update (RANDOM; tail ring_push_marked + jitter_roll_pitch)
     0x3FCD,  # enemy_check — event dispatch ($063D->game_sub_4f3f [transpiled] / $0633->alien_attack_tick)
-    # --- in-game SFX engine (2026-06-12): the $548D voice/gauge engine, run each
+    # --- in-game SFX engine: the $548D voice/gauge engine, run each
     #     flight VBI (Atari VBI tail $534D), drains the $0719 event ring the native
     #     flight code already fills.  Leaves-first.  POKEY writes via bus_write ->
     #     Paula on Amiga (the indexed $D1FE+X writes are masked in validation). ---
@@ -167,7 +167,7 @@ VALIDATE_FUNCS = {
     0x5614,  # reorder_sprite_slot — voice-priority mixer (calls 5673/568a/56af); entry X/Y, Y restored
     0x581C,  # sfx_event_load — load a new voice from event tables $56D4..$57F4 (stack-aware; tail ring_push_unmarked)
     0x548D,  # sfx_voice_envelope_tick — APEX: per-frame voice/gauge envelope engine + ring drain (Atari VBI tail)
-    # --- startup/cinematic de-transpile (2026-06-15): the boot_standby_launch_driver ($5F1D)
+    # --- startup/cinematic de-transpile: the boot_standby_launch_driver ($5F1D)
     #     subtree that drives the Standby + Doors/Tunnel/Planet cinematic — the
     #     slow part of boot (the flight loop is already native).  Leaves-first. ---
     0x4E84,  # bin_to_bcd — A(0-99)->packed BCD; units->$00C1, tens->Y, BCD->A (pure leaf)
@@ -335,21 +335,21 @@ VALIDATE_FUNCS = {
     0x8105,  # alien_field0_fill — pack 5 bytes ($85)+Y via reorder_cell_bits into $8F-$93 (or INC $0080)
     0x8138,  # alien_field2_fill — copy/pack ($89)+Y into $8F-$9A per $292D flag (or INC $0082)
     0x80C5,  # alien_shape_blit — clear $8F-$9F, fill 4 fields, compose cells via $BE00 + ($8B)/($8D), advance ptrs
-    # --- Station cinematic (scene 2), the BULK-MEMORY routines (2026-08-13).  Measured with
+    # --- Station cinematic (scene 2), the BULK-MEMORY routines.  Measured with
     #     amiga/star_fade.gdb: transliterated, the star fade-in took 162 vblanks against the
     #     Atari's 15 (~1000 68000 cycles per emulated byte), because each of its 14 passes walks
     #     1200 bytes through the 6502 emulation.  The scene's per-frame routines already hold
     #     50 Hz and stay transliterated; only these two move bulk memory. ---
     0x1E79,  # station_star_fade_in — 14 passes brightening every non-zero GTIA-9 nibble in $2CB8-$3167
     0x1C40,  # display_list_build — build the 340-entry attract display list + RANDOM-place the star rows
-    # --- NATIVE APEX (2026-06-15): the orchestration apex, hand-written in rof_native.c.
+    # --- NATIVE APEX: the orchestration apex, hand-written in rof_native.c.
     #     NOT validated by `make validate` (spin-waits on VBI state / live input would hang
     #     the harness) — verified on FS-UAE by behaviour.  Its __t6502 oracle is kept for
     #     reference; the native twin replaces the spin-wait SPINWAIT-hooks with ds_frame().
     0x5F1D,  # boot_standby_launch_driver — main display setup + Standby/attract idle loop + launch cinematic driver
     0x3D48,  # game_main_loop — one-time game init + L_3e0f boot_standby_launch_driver + the in-game flight loop (never returns)
     0x587B,  # standby_scoreboard_render — Standby/Title scoreboard render + input dispatch; tail-calls the live-input standby_level_select_loop / sound_retrigger_random loops + spins on $00E5 (would hang the harness)
-    # --- flight-init de-transpile (2026-06-22): the last transpiled orchestrator on the
+    # --- flight-init de-transpile: the last transpiled orchestrator on the
     #     game/level-init path.  Every leaf it calls is already native; this just sheds the
     #     $73C8 body itself.  Like the apex it calls the wait_timer_4c_frames spin-pacer
     #     (wait_frames) so it is NOT in `make validate` — verified on FS-UAE. ---
@@ -358,13 +358,13 @@ VALIDATE_FUNCS = {
     #     the live ANTIC VCOUNT / real Amiga beam, which the headless harness can't reproduce);
     #     its __t6502 oracle is kept for reference only. ---
     0x3C7B,  # wait_vcount_ge_7a — spin until VCOUNT ($D40B) >= $7A (beam-sync a DL/colour swap)
-    # --- frame-wait spin-pacers, hand-written in rof_native.c (2026-07-05).  NOT in
+    # --- frame-wait spin-pacers, hand-written in rof_native.c.  NOT in
     #     `make validate` (they busy-wait on RTCLOK, advanced async by the $4FF5 ISR, which
     #     the headless harness can't reproduce); __t6502 oracles kept for reference only.
     #     The clean twins fold the 0x3CB8 SPINWAIT-hook overshoot mitigation into plain C. ---
     0x3CB1,  # wait_frames — PHA, wait frame_wait_count ($4C) frames, PLA (accumulator preserved)
     0x3CB2,  # wait_timer_4c_frames — wait the caller-set frame_wait_count ($4C) count of vertical-blank periods
-    # --- enemy lock-on indicator animation cluster (2026-07-06): the 6-light targeting
+    # --- enemy lock-on indicator animation cluster: the 6-light targeting
     #     indicator (#11, cells $3491-$3497).  Driven by both the standby VBI (planet
     #     descent) and the flight VBI (via lock_on_indicator_dispatch); the native twins
     #     raise platform_lockon_changed() at each cell write so the Amiga re-decodes them
@@ -376,7 +376,7 @@ VALIDATE_FUNCS = {
     0x4285,  # lock_on_indicator_write_cell — write a glyph to $3491+Y, then ring_push_marked X=$12
     0x428D,  # lock_on_indicator_return — empty RTS landing pad (shared exit)
     0x428E,  # lock_on_indicator_phase_advance — reverse-fill phase driver ($007E >= $81)
-    # --- standby/launch tunnel-ring + door-scroll cinematic driver (2026-07-11):
+    # --- standby/launch tunnel-ring + door-scroll cinematic driver:
     #     these are pure mem[] 6502 logic (not Amiga-specific), so they move out of
     #     rof_native_amiga.cpp into rof_native.c as faithful native twins.  The Amiga
     #     dirty-band glue (g_tun*) draw_ring_frame_step publishes lives under
@@ -392,7 +392,7 @@ VALIDATE_FUNCS = {
     0x6973,  # dl_lms_push_top — push a fresh top-edge LMS row pointer (X-=3)
     0x698E,  # dl_lms_push_bottom — push a fresh bottom-edge LMS row pointer (Y+=3)
     0x6953,  # dl_doors_open_split_step — one door-open step: scroll both DL halves + push edges
-    # --- pilot-rescue state machine (2026-07-11): native-ize the cluster around
+    # --- pilot-rescue state machine: native-ize the cluster around
     #     pilot_render ($7854) to understand + fix the Systems-off/rescue FREEZE
     #     (the L_78d6<->L_792e hold loop stuck on $003D/$003E). Leaves-first. ---
     0x4968,  # clear_pilot_rescue_state — clears $003E + pilot_visible/pilot_prev (entry A)
@@ -500,7 +500,7 @@ SPINWAIT_HOOKS = {
     # ($003E != 0) — with systems on, L_78f2 falls through to L_78fd and the function RETURNS
     # instead of looping.  So systems-off during a rescue runs this loop (advancing the landing
     # sequence $003D, playing knock SFX, colour sweeps) and is FAITHFUL: the real Atari does the
-    # same (measured 2026-07-12; at $003D==2 it even hard-hold-loops there too).  But unlike the
+    # same (measured; at $003D==2 it even hard-hold-loops there too).  But unlike the
     # $06FF sound-wait below (which HAS a yield), this loop had none, so on the Amiga renderFrame
     # is never called for most of it and the display/cockpit freeze except during a knock sound.
     # The Atari stays alive because ANTIC shows the persistent field + the VBI updates the cockpit.
@@ -532,7 +532,7 @@ SPINWAIT_HOOKS = {
     # spin had NO yield, so on the Amiga renderFrame never ran during it: the Title-screen value
     # cells (marked dirty by the digit writers) were never decoded into titleScreenBitmap until
     # the spin exited and standby resumed rendering -> the score/level appeared only once the
-    # standby music started (measured 2026-07-13, PC frozen at rof_gen.c:5693, g_renderFrameCount
+    # standby music started (measured, PC frozen at rof_gen.c:5693, g_renderFrameCount
     # stuck, cellLo/Hi=57/119 unconsumed).  Drive one frame per iteration so the game-over screen
     # renders (and decodeTitleCells consumes the dirty range) immediately; the VBI advance also
     # keeps decrementing $00E5 so the spin still exits.
