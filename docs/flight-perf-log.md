@@ -4,9 +4,9 @@ The **narrative record** of the flight-scene (scene 7) performance work: what wa
 measured, and why each candidate closed. This file is deliberately NOT in the agent's recall path —
 it is the archive you grep when you want the reasoning behind a verdict.
 
-⛔ **The optimisation roster is CLOSED (user decision, 2026-08-14) and 24.84 FPS against the 25 bar
-is where it stays.** §2.0 is the do-not-re-open list; §26.1 closes the pair-load sweep with the
-measurement that says the *remaining* sites cost more than they save.
+✅⛔ **The 25 FPS bar was REACHED — 25.42 at `898177a` (2026-08-14) — and perf work is CLOSED by the
+user's decision the same day.** §2.0 is the do-not-re-open list; §26.1 closes the pair-load sweep with
+the measurement that says the *remaining* sites cost more than they save.
 
 **Live state lives elsewhere:**
 - current numbers + which harness answers what → the `flight-pc-profiler` memory (a REFERENCE now,
@@ -127,7 +127,8 @@ FPS = 50 · `g_fpsFrames` / `g_vbiCount`, ~3000-vbi window, all 15 segments vali
 
 | commit | arm / note | FPS | painted / vbi | per-segment |
 |---|---|---|---|---|
-| 93377bc | the slot-0 seed — **standing row, kept in memory** | 24.842 | 1491 / 3001 | 20.1 – 28.2 |
+| 898177a | ✅ **the 25-bar row, standing** — first FPS read after `4e4ac80` gated the ISR instrumentation out of the `FPSCOUNT` build too, so ⚠ **not comparable with any row below it** | **25.417** | 1525 / 3000 | 20.8 – 28.8 |
+| 93377bc | the slot-0 seed — the previous standing row | 24.842 | 1491 / 3001 | 20.1 – 28.2 |
 | ad980d5 | the obj-entry guard — the §24 in-session BASELINE for it | 24.633 | 1478 / 3000 | 20.0 – 28.0 |
 | ad980d5 | same commit, measured one session EARLIER — **0.2% apart** | 24.683 | 1481 / 3000 | 20.1 – 28.1 |
 | 33f0663 | §23's standing row. ⚠ NOT comparable with the rows above | 24.875 | 1492 / 2999 | 22.0 – 28.0 |

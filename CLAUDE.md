@@ -159,13 +159,14 @@ to hardware is largely ignored on Amiga.
 
 ## Performance — the headline
 
-**⛔⛔ THE OPTIMISATION ROSTER IS CLOSED (user decision, 2026-08-14). Do NOT start flight-perf work,
-and do NOT re-open a closed candidate on the strength of the unmet target.** The 25 FPS bar
-(user, 2026-08-08; best case = `COMBAT=1 COMBAT_QUIET=1 FIXED_RNG=1`) was never formally reached —
-last measured **24.84** — and that is where it stays: every remaining candidate was shipped, closed
-on data, or explicitly declined ("the terrain pipeline at large" — the user's own words:
-*we're not going to do anything about it*). The roster and its outcomes:
-`flight-pc-profiler` memory; the reasoning: `docs/flight-perf-log.md` §2.0 + §25.
+**✅ TARGET MET, ⛔⛔ AND FLIGHT PERF IS CLOSED (user, 2026-08-14). Do NOT start flight-perf work, and
+do NOT re-open a closed candidate for a bigger margin.** The 25 FPS bar (user, 2026-08-08; best case =
+`COMBAT=1 COMBAT_QUIET=1 FIXED_RNG=1`) was reached on 2026-08-14: **25.42** at `898177a` (lean
+`fps_seg`, 1525/3000, all 15 segs valid), and the user's verdict is *"the performance is now where it
+needs to be."* Every remaining candidate was already shipped, closed on data, or explicitly declined
+("the terrain pipeline at large" — the user's own words: *we're not going to do anything about it*).
+The roster and its outcomes: `flight-pc-profiler` memory; the reasoning: `docs/flight-perf-log.md`
+§2.0 + §25.
 
 ⚠⚠ **If you still need to QUOTE a framerate, it is a property of (build × WINDOW), not of the port.**
 The same binary reads **24.88 on `fps_seg.gdb`'s standard vbi 1900-4900 and 23.57 on vbi 4900-7900**
