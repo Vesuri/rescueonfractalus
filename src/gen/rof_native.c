@@ -2583,7 +2583,7 @@ void memset_or_copy(void) {
        fill_region_2000, init_terrain_render_buffers, boot_standby_launch_driver) target plain RAM, so
        fill mem[] directly there and fall back to the faithful loop only when the region
        overlaps those ranges (or wraps $FFFF).  Leaves $C1-$C4/Y exactly as the loop would. */
-    uint16_t start = (uint16_t)(row_table_stride | (player_speed << 8));
+    uint16_t start = (uint16_t)(ROF_PAIR16(row_table_stride, player_speed));
     uint32_t count = (uint32_t)(((uint32_t)row_table_base_hi << 8) | row_table_base_lo) + 1u;
     uint32_t end   = (uint32_t)start + count;                 /* unwrapped, for overlap test */
     int hw     = (start < 0xD800u) && (end > 0xD000u);
@@ -4718,11 +4718,11 @@ void dl_write_lms_window(void) {
     uint8_t x = dl_src_index;
     uint8_t y = 0x00;
     do {
-        uint16_t base = (uint16_t)(digit_dst_ptr_lo | (digit_dst_ptr_hi << 8));
+        uint16_t base = (uint16_t)(ROF_PAIR16(digit_dst_ptr_lo, digit_dst_ptr_hi));
         mem[(uint16_t)(base + y)] = mem[MEM_row_base_lo + x];
         y++;                                       /* INY */
         if (y == 0x00) digit_dst_ptr_hi++;              /* BNE skip; INC $C6 on wrap */
-        base = (uint16_t)(digit_dst_ptr_lo | (digit_dst_ptr_hi << 8));
+        base = (uint16_t)(ROF_PAIR16(digit_dst_ptr_lo, digit_dst_ptr_hi));
         mem[(uint16_t)(base + y)] = mem[MEM_row_base_hi + x];
         y = (uint8_t)(y + 2);                      /* INY INY (unchecked) */
         x++;                                       /* INX */
@@ -7470,11 +7470,11 @@ static inline SubPt subdiv_midpoint(SubPt span, SubPt far, uint8_t *M) {
  * See the DEFER note in TerrainSubdivideAssembler.s for the reader survey that licenses this. */
 uint16_t g_sdResidue[6] __attribute__((aligned(4)));
 void rof_subdiv_residue_seed(void) {
-    g_sdResidue[0] = (uint16_t)(dl_ptr_hi     | (screen_ptr_lo   << 8));
-    g_sdResidue[1] = (uint16_t)(screen_ptr_hi | (encounter_count << 8));
+    g_sdResidue[0] = (uint16_t)(ROF_PAIR16(dl_ptr_hi, screen_ptr_lo));
+    g_sdResidue[1] = (uint16_t)(ROF_PAIR16(screen_ptr_hi, encounter_count));
     g_sdResidue[2] = row_count;
-    g_sdResidue[3] = (uint16_t)(step_mode_flag | (mem[0x008E]     << 8));
-    g_sdResidue[4] = (uint16_t)(sfx_toggle_8F  | (sfx_reinit_gate << 8));
+    g_sdResidue[3] = (uint16_t)(ROF_PAIR16(step_mode_flag, mem[0x008E]));
+    g_sdResidue[4] = (uint16_t)(ROF_PAIR16(sfx_toggle_8F, sfx_reinit_gate));
     g_sdResidue[5] = altitude_threshold;
 }
 void rof_subdiv_residue_publish(void) {
