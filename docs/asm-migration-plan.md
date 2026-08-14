@@ -1199,3 +1199,37 @@ a different flight. Priced and left for the user to schedule; the fold above too
 - ⚠ The callees are NOT pure (they push the SFX event ring, read POKEY RANDOM), so the differential
   must alternate the order and restore between halves, exactly as `sfxmix_verify` does and for the
   same reason.
+
+### 12.4 SCHEDULED by the user (2026-08-14), and STILL not written — the residual went into C instead
+
+The user cleared the block ("I'm not sure why flight_control_integrate is gated on me — if you get it
+working, that's just great"). Before writing the `.s`, §12.3's own list of "genuinely asm-shaped wins
+left" was re-read, and its **first entry turned out not to need asm at all.**
+
+The opcode histogram of the shipping `flight_control_integrate_impl` (1245 instructions) is the tell:
+**377 `move.b`, 23 `lsl.l`, 19 `ror.w`, 21 `lsr.w`, 26 `or.b`.** The shift traffic is the "6502 16-bit
+carry idiom" §12.3 named — and it is not the 6502's fault, it is one C spelling. `((uint16_t)hi << 8)
+| lo` forces GCC to build the BIG-endian word (because `or.b` reaches only bits 0..7) and byte-swap it
+back: `moveq#0 / move.b LO / lsl.l #8 / or.b HI / ror.w #8` = **74 cycles, 46 of them shifting**.
+`lo + 256*hi` is byte-identical for byte operands and compiles to **58 (−16)**; a pair-ADD goes
+**152 → 98 (−54)** because GCC factors the two `lsl.w #8` into one. Now `ROF_PAIR16` in
+`src/cpu/m68k_math.h`; rule + audit command in `docs/m68k-optimisation.md`, full record in
+`docs/flight-perf-log.md` §25.5.
+
+**All 19 of this function's pair loads are gone for +10 instructions**, and 26 more across seven other
+shipping flight routines (134 sites tree-wide → 89). Static win ≈ **0.22% of all wall clock**, of which
+~0.08% is this function — i.e. **the same order as the whole twin's filed 0.2-0.4% residual**, for a
+mechanical C edit gated by `make validate` instead of 4 KB of hand asm on the routine that integrates
+the ship's position.
+
+**So the twin is still NOT written, and the recommendation is now stronger than "priced":** the two
+remaining asm-shaped items are GCC's register allocation and the five helpers it INLINES
+(`ring_push_unmarked` ×5 at 152 bytes, `store_676_init`, `refresh_hud_field_0d_entry`,
+`reset_flags_ff`, `mul_u8_lookup`) which a twin would have to re-implement in asm to avoid losing on
+call overhead. That is the bulk of the work for what is now a *smaller* residual than before. The
+design in §12.3 stands if it is ever wanted; nothing about it has been invalidated.
+
+⚠ Generalises past this function: **before costing an asm twin, check whether the "asm-shaped" items
+on your own list are actually C spellings.** Two of the three levers this twin was justified by
+(absolute addressing in §12.2, the carry idioms here) were compiler-output problems with C fixes, and
+between them they account for most of what the twin was ever worth.

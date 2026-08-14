@@ -4937,7 +4937,7 @@ void draw_player3_object(void) {
     y = 0x00;
     for (;;) {                               /* L_437c */
         uint8_t aa = (player3_dither_flag != 0) ? player3_dither_flag : bus_read(0xD20A);
-        uint16_t bb = (uint16_t)(dl_y1 | (dl_y2 << 8));
+        uint16_t bb = ROF_PAIR16(dl_y1, dl_y2);
         aa &= bus_read((uint16_t)(bb + y));
         if (aa == 0x00) break;               /* BEQ L_43a5 */
         if (x >= 0x14) {
@@ -6042,10 +6042,10 @@ void update_terrain_horizon_lr(void) {
     int second = c2;
     if (!second) mem[0x2833] = (uint8_t)(mem[0x2833] + 1);
 
-    uint16_t c2801 = (uint16_t)(mem[0x2801] | (mem[0x2802] << 8));
-    uint16_t c2803 = (uint16_t)(mem[0x2803] | (mem[0x2804] << 8));
-    uint16_t d05   = (uint16_t)(mem[0x2805] | (mem[0x2806] << 8));
-    uint16_t d07   = (uint16_t)(mem[0x2807] | (mem[0x2808] << 8));
+    uint16_t c2801 = ROF_PAIR16(mem[0x2801], mem[0x2802]);
+    uint16_t c2803 = ROF_PAIR16(mem[0x2803], mem[0x2804]);
+    uint16_t d05   = ROF_PAIR16(mem[0x2805], mem[0x2806]);
+    uint16_t d07   = ROF_PAIR16(mem[0x2807], mem[0x2808]);
 
     if (!second) {
         /* $996C: coords = {2801}-{d07}, {2803}+{d05} */
@@ -6110,17 +6110,17 @@ static void update_terrain_scanline_proj_impl(void) {
 #endif
     /* Map cell coords = world position >> 4.  Stored to the bilinear-sampler inputs
      * (map_x/map_z), plus a scratch pair and a mirror pair the horizon code reads. */
-    uint16_t mx = (uint16_t)(((world_x_hi << 8) | world_x_lo) >> 4);
+    uint16_t mx = (uint16_t)(ROF_PAIR16(world_x_lo, world_x_hi) >> 4);
     mem[0x2270] = (uint8_t)mx; map_x_lo = (uint8_t)mx; mem[0x2801] = (uint8_t)mx;
     mem[0x2271] = (uint8_t)(mx >> 8); map_x_hi = (uint8_t)(mx >> 8); mem[0x2802] = (uint8_t)(mx >> 8);
-    uint16_t mz = (uint16_t)(((world_z_hi << 8) | world_z_lo) >> 4);
+    uint16_t mz = (uint16_t)(ROF_PAIR16(world_z_lo, world_z_hi) >> 4);
     mem[0x2272] = (uint8_t)mz; map_z_lo = (uint8_t)mz; mem[0x2803] = (uint8_t)mz;
     mem[0x2273] = (uint8_t)(mz >> 8); map_z_hi = (uint8_t)(mz >> 8); mem[0x2804] = (uint8_t)(mz >> 8);
 
     /* Sub-cell depth fixed-point = (clamp(depth_step,$3F) : depth_frac) << 2. */
     uint8_t step = terrain_depth_step;
     if (step >= 0x40) step = 0x3F;
-    uint16_t depth = (uint16_t)((((step << 8) | terrain_depth_frac)) << 2);
+    uint16_t depth = (uint16_t)(ROF_PAIR16(terrain_depth_frac, step) << 2);
     scaled_depth_hi = (uint8_t)(depth >> 8);   /* $2275 */
     mem[0x2274]     = (uint8_t)depth;          /* $2274: depth fraction low byte */
 
@@ -6271,7 +6271,7 @@ void sine_table_lookup(void) {
 
     /* Reflect the index for the descending quadrants, then read the 16-bit magnitude. */
     uint8_t  y = (uint8_t)(idx ^ mem[0x9B9C + quad]);            /* $9B9C = per-quadrant reflect mask */
-    uint16_t v = (uint16_t)((mem[0x4EB9 + y] << 8) | mem[0x4EFA + y]);  /* $4EB9/$4EFA = sine table hi/lo */
+    uint16_t v = ROF_PAIR16(mem[0x4EFA + y], mem[0x4EB9 + y]);  /* $4EB9/$4EFA = sine table hi/lo */
 
     /* Store the signed 24-bit result in {$0078:$0077:$0076}; negate it in the negative quadrants. */
     uint32_t r = (mem[0x9B98 + quad] == 0) ? v                  /* $9B98 = sign: 0 = positive */
@@ -6588,9 +6588,9 @@ void setup_projection_params(void) {
 #define mem mb
 #endif
     /* World X/Z scaled into projection units (16-bit logical >> 4). */
-    uint16_t wx = (uint16_t)(world_x_lo | (world_x_hi << 8)) >> 4;
+    uint16_t wx = ROF_PAIR16(world_x_lo, world_x_hi) >> 4;
     vbi_phase = (uint8_t)wx; vbi_flags = (uint8_t)(wx >> 8);
-    uint16_t wz = (uint16_t)(world_z_lo | (world_z_hi << 8)) >> 4;
+    uint16_t wz = ROF_PAIR16(world_z_lo, world_z_hi) >> 4;
     terrain_state = (uint8_t)wz; terrain_scroll_counter = (uint8_t)(wz >> 8);
 
     /* Pitch-depth delta << 2.  A steep delta (hi byte >= $40) saturates to a negative ($FFxx)
@@ -6601,7 +6601,7 @@ void setup_projection_params(void) {
         dl_src_index = terrain_depth_frac;              /* $008B unchanged */
         terrain_scroll_reload = 0xFF;
     } else {
-        uint16_t d = (uint16_t)(terrain_depth_frac | (terrain_depth_step << 8)) << 2;
+        uint16_t d = (uint16_t)(ROF_PAIR16(terrain_depth_frac, terrain_depth_step) << 2);
         dl_src_index = (uint8_t)d;
         terrain_scroll_reload = (uint8_t)(d >> 8);
     }
@@ -6616,11 +6616,11 @@ void setup_projection_params(void) {
     scroll_accum_b1 = mem[0x280B]; scroll_accum_b2 = mem[0x280C];
 
     /* Horizon screen row = 6 - hi(roll << 2). */
-    uint16_t roll = (uint16_t)(roll_pos_lo | (roll_pos_hi << 8)) << 2;
+    uint16_t roll = (uint16_t)(ROF_PAIR16(roll_pos_lo, roll_pos_hi) << 2);
     horizon_row_index = (uint8_t)(0x06 - (uint8_t)(roll >> 8));
 
     /* Per-row pitch step = signed pitch >> 1 (arithmetic), split hi/lo. */
-    int16_t pitch     = (int16_t)(uint16_t)(mem[0x0023] | (mem[0x0024] << 8));  /* {pitch_shadow_hi:_lo} */
+    int16_t pitch     = (int16_t)ROF_PAIR16(mem[0x0023], mem[0x0024]);  /* {pitch_shadow_hi:_lo} */
     int16_t pitchHalf = (int16_t)(pitch >> 1);
     scroll_accum_b3   = (uint8_t)((uint16_t)pitchHalf >> 8);
     scroll_accum_prev = (uint8_t)pitchHalf;
@@ -6876,8 +6876,8 @@ void raster_scaled_object(void) {
 
     /* Loop invariants, read ONCE.  The transliteration re-read every one of these out of
        volatile mem[] on every cell. */
-    const uint16_t step     = (uint16_t)(plot_step_lo | (plot_step_hi << 8));          /* {$51:$50} */
-    const uint16_t plotBase = (uint16_t)(plot_base_ptr_lo | (plot_base_ptr_hi << 8));  /* shape source */
+    const uint16_t step     = ROF_PAIR16(plot_step_lo, plot_step_hi);          /* {$51:$50} */
+    const uint16_t plotBase = ROF_PAIR16(plot_base_ptr_lo, plot_base_ptr_hi);  /* shape source */
     const uint8_t  reflect  = shape_col_base;                                          /* $28DF */
 
     /* ABAD start-row search: subtract the step from $1000 until it borrows, counting $4F down
@@ -8758,8 +8758,8 @@ void terrain_draw_frame_core(uint8_t entryX) {
         v = 0x00; carryIn = 0;
     } else {                                             /* otherwise v = |Δpitch| + |Δroll| in scaled units */
         #define SAR1(x) ((uint8_t)(((uint8_t)(x) >> 1) | ((uint8_t)(x) & 0x80)))  /* arithmetic >>1 */
-        uint16_t pitch16 = (uint16_t)(pitch_pos_lo | (pitch_pos_hi << 8));
-        uint16_t v2919   = (uint16_t)(mem[0x2919] | (mem[0x291A] << 8));
+        uint16_t pitch16 = ROF_PAIR16(pitch_pos_lo, pitch_pos_hi);
+        uint16_t v2919   = ROF_PAIR16(mem[0x2919], mem[0x291A]);
         /* pitch delta: high byte of each 16-bit value scaled by 8 (<<3), then differenced + abs */
         uint8_t base = (uint8_t)((uint16_t)(pitch16 << 3) >> 8);
         uint8_t dx   = (uint8_t)((uint16_t)(v2919  << 3) >> 8);
@@ -8958,10 +8958,10 @@ void object_integrate_position(void) {
     int32_t x = mem[0x2827] | (object_pos_x_lo << 8) | (object_pos_x_hi << 16);
     int32_t y = mem[0x2828] | (object_pos_y_lo << 8) | (object_pos_y_hi << 16);
 
-    x -= (int16_t)(uint16_t)(mem[0x2850] | (mem[0x2851] << 8));   /* 930e: -= velocity */
-    y += (int16_t)(uint16_t)(mem[0x2852] | (mem[0x2853] << 8));   /* 932f: += velocity */
-    x -= (int16_t)(uint16_t)(mem[0x2829] | (mem[0x0068] << 8));   /* 9350: -= decel    */
-    y += (int16_t)(uint16_t)(mem[0x282C] | (mem[0x0069] << 8));   /* 936f: += accel    */
+    x -= (int16_t)ROF_PAIR16(mem[0x2850], mem[0x2851]);   /* 930e: -= velocity */
+    y += (int16_t)ROF_PAIR16(mem[0x2852], mem[0x2853]);   /* 932f: += velocity */
+    x -= (int16_t)ROF_PAIR16(mem[0x2829], mem[0x0068]);   /* 9350: -= decel    */
+    y += (int16_t)ROF_PAIR16(mem[0x282C], mem[0x0069]);   /* 936f: += accel    */
 
     mem[0x2827]    = (uint8_t)x;  object_pos_x_lo = (uint8_t)(x >> 8);  object_pos_x_hi = (uint8_t)(x >> 16);
     mem[0x2828]    = (uint8_t)y;  object_pos_y_lo = (uint8_t)(y >> 8);  object_pos_y_hi = (uint8_t)(y >> 16);
@@ -9267,7 +9267,7 @@ static void draw_object_column_core(uint8_t startCol) {
     uint16_t ptr = 0;
     int odd = 0;
     for (;;) {
-        ptr = (uint16_t)(mem[0x4581 + col * 2] | (mem[0x4582 + col * 2] << 8));
+        ptr = ROF_PAIR16(mem[0x4581 + col * 2], mem[0x4582 + col * 2]);
         odd = col & 1;                             /* odd columns are 2 cells tall */
         const int lit = col < threshold;
         uint8_t glyph = odd ? 0xB7 : 0xB4;         /* lit glyph (odd / even column) */
@@ -9621,7 +9621,7 @@ static void flight_control_integrate_impl(void) {
     if (flight_mode_state == 0x02) {
         /* Crash/landing auto-attitude: force roll, set pitch trim = -(pitch_pos >> 6). */
         roll_velocity = 0x30;
-        uint8_t v = (uint8_t)((((uint16_t)pitch_pos_hi << 8) | pitch_pos_lo) >> 6);
+        uint8_t v = (uint8_t)(ROF_PAIR16(pitch_pos_lo, pitch_pos_hi) >> 6);
         pitch_velocity = (uint8_t)(0u - v);
         dial_draw_index = 0xF0;
         draw_cockpit_dial_bar_core(0x00);
@@ -9662,7 +9662,7 @@ static void flight_control_integrate_impl(void) {
     /* ---- Pitch auto-level: when no pitch input, bleed pitch_pos toward 0 by ~(pos*32>>8) ---- */
     if (pitch_velocity == 0) {
         IN_CNT(g_inAutoP);
-        uint16_t pp  = ((uint16_t)pitch_pos_hi << 8) | pitch_pos_lo;
+        uint16_t pp  = ROF_PAIR16(pitch_pos_lo, pitch_pos_hi);
         uint8_t  sub = (uint8_t)((pp << 5) >> 8);
         if ((pp >> 11) & 1) {                           /* shift carry set */
             int diff = (int)pitch_pos_lo - sub;
@@ -9679,7 +9679,7 @@ static void flight_control_integrate_impl(void) {
     /* ---- Roll auto-level: same idea, ~(pos*4>>8), only when no roll input and not landing ---- */
     if (mem[0x003D] == 0 && roll_velocity == 0) {
         IN_CNT(g_inAutoR);
-        uint16_t rp  = ((uint16_t)roll_pos_hi << 8) | roll_pos_lo;
+        uint16_t rp  = ROF_PAIR16(roll_pos_lo, roll_pos_hi);
         uint8_t  sub = (uint8_t)((rp << 2) >> 8);
         if ((rp >> 14) & 1) {
             int diff = (int)roll_pos_lo - sub;
@@ -9765,7 +9765,7 @@ static void flight_control_integrate_impl(void) {
 
     /* ---- Roll-derived magnitudes: |roll<<3| -> $28D6, and (throttle_hi * that)<<3 -> fwd step ---- */
     {
-        uint16_t rp = ((uint16_t)roll_pos_hi << 8) | roll_pos_lo;
+        uint16_t rp = ROF_PAIR16(roll_pos_lo, roll_pos_hi);
         uint8_t  hi = (uint8_t)((rp << 3) >> 8);
         mem[0x0020] = hi;                               /* sign source for the multiply below */
         mem[0x28D6] = ((rp >> 13) & 1) ? (uint8_t)(0u - hi) : hi;
@@ -9782,7 +9782,7 @@ static void flight_control_integrate_impl(void) {
 
     /* ---- Heading: heading += (signed pitch_pos >> 4); carry feeds the angle-scale call ---- */
     {
-        int16_t step    = (int16_t)((int16_t)(((uint16_t)pitch_pos_hi << 8) | pitch_pos_lo) >> 4);
+        int16_t step    = (int16_t)((int16_t)ROF_PAIR16(pitch_pos_lo, pitch_pos_hi) >> 4);
         uint8_t step_lo = (uint8_t)step, step_hi = (uint8_t)(step >> 8);
         dl_y1 = step_lo; dl_y2 = step_hi;               /* scratch the 6502 left behind */
         uint16_t hlo = (uint16_t)heading_lo + step_lo;
@@ -9796,16 +9796,16 @@ static void flight_control_integrate_impl(void) {
 
     /* ---- Integrate world position + depth accumulator ---- */
     {
-        uint16_t x = (uint16_t)(((world_x_hi << 8) | world_x_lo)
-                              + ((mem[0x002C] << 8) | mem[0x002B]));
+        uint16_t x = (uint16_t)(ROF_PAIR16(world_x_lo, world_x_hi)
+                              + ROF_PAIR16(mem[0x002B], mem[0x002C]));
         world_x_lo = (uint8_t)x; world_x_hi = (uint8_t)(x >> 8);
 
-        uint16_t z = (uint16_t)(((world_z_hi << 8) | world_z_lo)
-                              + ((mem[0x2882] << 8) | mem[0x2881]));
+        uint16_t z = (uint16_t)(ROF_PAIR16(world_z_lo, world_z_hi)
+                              + ROF_PAIR16(mem[0x2881], mem[0x2882]));
         world_z_lo = (uint8_t)z; world_z_hi = (uint8_t)(z >> 8);
 
-        uint16_t d = (uint16_t)(((terrain_depth_step << 8) | terrain_depth_frac)
-                              + ((mem[0x2884] << 8) | mem[0x2883]));
+        uint16_t d = (uint16_t)(ROF_PAIR16(terrain_depth_frac, terrain_depth_step)
+                              + ROF_PAIR16(mem[0x2883], mem[0x2884]));
         terrain_depth_frac = (uint8_t)d;
         uint8_t step = (uint8_t)(d >> 8);
         if (step == 0xFF) step = 0x00;
@@ -9880,7 +9880,7 @@ static void flight_control_integrate_impl(void) {
 
     /* ---- Object velocity from the delayed history ring ($2919/$291A/$291B) ---- */
     {
-        int16_t vx = (int16_t)(((uint16_t)mem[0x291A] << 8) | mem[0x2919]);
+        int16_t vx = (int16_t)ROF_PAIR16(mem[0x2919], mem[0x291A]);
         int16_t hx = (int16_t)(vx >> 1);
         mem[0x2850] = (uint8_t)hx; mem[0x2851] = (uint8_t)(hx >> 8);
 

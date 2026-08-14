@@ -59,4 +59,35 @@ static inline int16_t  rof_divs16(int32_t num, int16_t den)   { return (int16_t)
 static inline int16_t  rof_mods16(int32_t num, int16_t den)   { return (int16_t)(num % den); }
 
 #endif
+
+/* ⭐ ROF_PAIR16(lo, hi) — assemble a 6502 little-endian 16-bit pair from its two bytes.
+ *
+ * Write this instead of `((uint16_t)hi << 8) | lo`.  The two are byte-identical for byte
+ * operands (256*hi has a zero low byte, so `+` and `|` cannot differ), but their m68k
+ * codegen is not close.  From `((uint16_t)hi << 8) | lo` GCC builds the BIG-endian word
+ * first — because `or.b` can only reach bits 0..7 — and then byte-swaps it back:
+ *
+ *      moveq #0,d0 / move.b LO,d0 / lsl.l #8,d0 / or.b HI,d0 / ror.w #8,d0     74 cyc
+ *
+ * i.e. 46 cycles of shifting (lsl.l #8 = 24, ror.w #8 = 22) to place one byte.  The `+`
+ * form loads HI first and shifts it as a WORD, so no swap is needed:
+ *
+ *      clr.w d0 / move.b HI,d0 / lsl.w #8,d0 / clr.w d1 / move.b LO,d1 / add.w d1,d0
+ *                                                                        58 cyc  (−16)
+ *
+ * and when two pairs are ADDED, GCC factors the two `lsl.w #8` into one — (lo_a+lo_b) +
+ * 256*(hi_a+hi_b), correct mod 2^16 because the shift discards the carry out of bit 15 —
+ * which takes a pair-add site from 152 to 98 cycles (**−54**).
+ *
+ * Measured on m68k-amiga-elf-gcc 15.1, -O2 -m68000.  ⚠ Flipping the `|` operands, going
+ * through `__builtin_bswap16`, or splitting into two locals all canonicalize to the SAME
+ * expensive form — `+ 256*hi` is the only reformulation that escapes it.  ⚠ Each site costs
+ * ~2 bytes of .text for its −16..−54 cycles, so `.text` size is NOT the acceptance test
+ * here (cf. flight-perf-log §23.1): the test is that the site's `ror.w #8` is gone.
+ *
+ * Portable and unchanged on the host, so `make validate` proves each converted twin
+ * byte-identical against its 6502 oracle. */
+#define ROF_PAIR16(lo, hi) \
+    ((uint16_t)((uint16_t)(uint8_t)(lo) + 256u * (uint16_t)(uint8_t)(hi)))
+
 #endif /* M68K_MATH_H */

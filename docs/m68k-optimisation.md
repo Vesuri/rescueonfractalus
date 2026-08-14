@@ -129,3 +129,20 @@ Rewrite hot functions in idiomatic C:
   loop with compare-subtract (`if (x>=m) x-=m`); clamp an input so `2·x` stays <2^16. **Audit after
   any perf/math change:** `m68k-amiga-elf-objdump -d out/RoF.elf | grep -E '__(u?div|u?mod|mul)si3'`
   must be empty (bodies unreferenced → not even linked). The whole codebase was swept clean 2026-08-02.
+- **⭐ NEVER write a 6502 16-bit pair as `((uint16_t)hi << 8) | lo` — use `ROF_PAIR16(lo, hi)`**
+  (`src/cpu/m68k_math.h`). `or.b` can only reach bits 0..7, so from the `|` form GCC assembles the
+  **big-endian** word and then byte-swaps it back:
+  `moveq#0 / move.b LO,d0 / lsl.l #8,d0 / or.b HI,d0 / ror.w #8,d0` — **74 cycles, 46 of them
+  shifting** (`lsl.l #8` = 24, `ror.w #8` = 22) to place one byte. `lo + 256*hi` is byte-identical
+  for byte operands (256·hi has a zero low byte, so `+` and `|` cannot differ) and makes GCC load HI
+  first and shift it as a WORD, so no swap is needed: **58 cycles (−16)**. And when two pairs are
+  ADDED, GCC factors the two `lsl.w #8` into one — `(lo_a+lo_b) + 256*(hi_a+hi_b)`, correct mod 2^16
+  because the shift discards the carry out of bit 15 — taking a pair-add site from 152 to **98
+  (−54)**. ⚠ Flipping the `|` operands, `__builtin_bswap16`, and splitting into two locals ALL
+  canonicalize to the same expensive form; `+ 256*hi` is the only reformulation that escapes it.
+  ⚠ Each site costs ~2 bytes and up to ~10 instructions of re-allocation in the containing function,
+  so **`.text` size is not the acceptance test — the test is that the site's `ror.w #8` is gone AND
+  the function's instruction mix improved** (2026-08-14: 2 of 10 functions got worse and were
+  reverted). Audit with
+  `objdump -d out/RoF.elf | awk '/^[0-9a-f]+ <.*>:/{f=$2} /ror\.w #8/{c[f]++} END{for(k in c) print c[k],k}' | sort -rn`
+  — 134 sites tree-wide before the 2026-08-14 sweep, 89 after (`docs/flight-perf-log.md` §25.2).
