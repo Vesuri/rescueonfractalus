@@ -2640,3 +2640,158 @@ count — but still inside the ±1.2% flight-neutral band, so the static count r
 ⚠ And ad980d5 itself read 24.683 as the previous A/B's arm B and 24.633 as this one's baseline:
 **0.2% of wander on the same commit and flags**, which is why only same-session arms are ever
 compared here.
+
+## §25 — Firing's 2× ISR spike was a 110-line busy-wait; and the 6502 pair-load idiom (2026-08-14)
+
+Two of the four items on the ranked remainder. Both closed **without** an asm twin.
+
+### 25.1 ⭐⭐ `flush_paula`'s restart wait: sized off the OLD note's period, and it hit the clamp
+
+§22 measured the firing spike and named `flush_paula` as ~0.6% of real-play wall, "NOT yet
+investigated". It is worse than that, and the mechanism is one line.
+
+A Paula waveform change needs the channel held OFF for **>2 sample periods of the period STILL
+LOADED** or it "stays on and continues" (HW manual §5-2-7), so the code sized the wait from the
+slowest outgoing period among the restarting channels: `wl = 2*max_per/227 + 4`, clamped to [7,110].
+Meanwhile `update_paula_channel` picks a poly4/poly5 waveform by **stride residue**
+(`poly4_wave[stride%15]`), and a laser or explosion sweeps AUDF every 50 Hz firing — so the pointer,
+and hence the restart, changes on **every frame for the length of the sound**.
+
+New probe rows in `amiga/fire_once.gdb` (restarting flushes, `wl`/flush, outgoing period, and the
+outgoing waveform's loop length) measured the control arm, `make FLUSHWAIT_OLD=1`:
+
+| slice | restarting flushes | wl/flush | outgoing per (avg) | audio t/firing | whole VBI |
+|---|---|---|---|---|---|
+| PRE | 4 / 210 (1%) | 19.0 | 1749 | 1.92 | 58.21 |
+| **50–100** | **19 / 58 (32%)** | **110.0** | **13785** | **39.41** | **115.71** |
+| 100–150 | 2 / 42 (4%) | 110.0 | 14244 | 7.57 | 74.40 |
+
+**That is the entire audio bracket**: 19 × 110 lines over 58 firings = 36 t/firing against a measured
+39.41. ⭐ And read the clamp: at per > 12031 the formula wants more than 110 lines, so **the shipping
+code was already under-waiting the hardware rule it was written to satisfy** — silently, for every
+slow outgoing note.
+
+### 25.2 The fix — the period still loaded is OURS TO CHOOSE
+
+A write to AUDxPER takes effect immediately. So drop every restarting channel to the Paula minimum
+(124) *before* the off-window and "2 sample periods" becomes 248 ticks ≈ **1.1 rasterlines**; the
+formula, its `+4` margin and both clamps are untouched, and the 7-line floor it now always lands on
+is ~12 sample periods of headroom against the 2 the hardware asks for. The old waveform holds its
+last-fetched word at its old volume during the window either way — this only makes that window 7
+lines instead of 7..110. **Strictly more correct than the clamped version, and 15× cheaper.**
+
+In-session A/B, `COMBAT=1 COMBAT_QUIET=1 FIXED_RNG=1 PROBES=1 SPRITE_SHAPE=1 FIRE_ONCE=600`:
+
+| | control (`FLUSHWAIT_OLD=1`) | fix |
+|---|---|---|
+| **wait per restart** | 3536 lines / 73 = **48.4** | 721 / 107 = **6.7** (−86%) |
+| `wl`/flush, every window | 19 … **110** | **7.0 (max 7)** |
+| peak-slice audio | **39.41** t/firing | **5.21** |
+| peak-slice whole flight VBI | **115.71** | **80.40** |
+| firing's cost over baseline | **+96%** | **+39%** |
+| FPS trough during the sound | 7.7 | **10.4** |
+| quiet arm (PRE / POST) | 58.21 / 57.54 | 57.73 / 58.41 — unchanged, as filed |
+
+⚠ The slices do not align across arms (a cheaper ISR re-paces the flight, so the sound lands in
+slightly different slices). **The cross-arm claims are the per-restart wait and the whole-run total**
+— 107 restarts for 721 lines against 73 for 3536 — not a slice-to-slice diff.
+
+⚠⚠ **Every arm above is `PROBES=1`, which IMPLIES `SKIPBOOT=1` — so none of them entered the boot
+scenes, and the boot/standby MUSIC is exactly what the old 7..110-line wait was written for** (the
+comment's own worst case is a slow bass note at per~6011 wanting ~53 lines). Checked separately with
+a `PROBES=1 SKIPBOOT=0` run: logo → station (`VVBLKI=$1b30`) → standby (`$52d7`) all advance with no
+hang, **36 restarts at 6.6 lines each, max 7**, and one of them had an outgoing period of **11543** —
+i.e. precisely the slow-bass case, which the old code would have given ~105 lines.
+
+⚠ **Audio fidelity cannot be judged headlessly** and was not. The perf claim is measured; the
+"still sounds right" claim needs ears — most of all on the boot/standby music's note transitions,
+which is where the restart dance exists to prevent an audible squelch. Headless corroboration only:
+FS-UAE's own `Audio N DMA wait hack DISABLED` line appears in both arms and never flips to ENABLED,
+i.e. the emulator's restart heuristic does not consider the shorter hold inadequate.
+
+### 25.3 ⛔ CLOSED by measurement: `build_poly_dist` never runs in flight
+
+§22.3's third question ("is `build_poly_dist` rebuilt on every AUDF step of the sweep?" — flagged
+there as the prime suspect for `update_paula_channel`'s cost) is **answered: no. `g_polyDistCalls`
+is 0 in every window of both arms**, before, during and after the shot — and 0 again over 2130
+vblanks of a `SKIPBOOT=0` run through logo → station → standby with the music playing (36 restarts,
+28 of them outgoing-poly4). The poly9 path needs AUDCTL bit 7 and nothing on these paths sets it.
+Do not re-open it as a flight item.
+
+⛔⛔ **But do NOT delete `build_poly_dist` either — it is load-bearing, and "0 calls" is a property of
+the WINDOW, not of the code.** The Atari ground truth settles it offline, with no emulator:
+`a800dumps/music_playing_ram.bin` (a full 64K dump taken with the Standby tune playing) has
+**`AUDCTL=$E3`, i.e. POLY9 set, and TWO channels in the noise distortion with volume** — ch1
+`AUDC=$07` vol 7 and ch2 `AUDC=$8E` vol 14, both PURETONE-clear and POLY4-clear. That is exactly the
+`build_poly_dist` path, and it is the user-confirmed 2026-07-10 fidelity fix (d401d7d, "distortion-0
+bass rendered as white noise → no punch"). The 0 calls simply mean the **attract theme had not started
+yet**: the probe reached standby at vbi 1470 and ran to 2130, i.e. ~13 s, while the attract timeout is
+minutes (see the `title-pen-cycle` memory). Deleting it would silently revert a confirmed fix.
+
+⭐ **The transferable rule: a zero call-count proves the path was not TAKEN, never that it is dead —
+and the cheapest disproof is often a captured register dump, not another run.** One offline read of a
+64K dump answered what a long emulator run would have had to wait minutes for.
+
+The simplification it would have wanted is nonetheless proven and recorded, should the *music* path
+ever be profiled (a 1022-byte rebuild is ~215 rasterlines, squarely in the "heavy work in a vblank
+ISR drops a displayed frame" class): the inner loop's `if (kBit9[p9] == (out^1)) out ^= 1;` is
+**unconditionally `out = kBit9[p9]`** in both branches, so a level table (`kLev9[p9]` holding
+`0x7F`/`0x81`) collapses the compare/xor/ternary to one indexed load, and the `gateAlways` arm never
+consults `kBit5` so its `p5` step can be hoisted out into a second loop. Byte-identical over **all
+31682 reachable (s5, s9, gate) triples** on the host. Not shipped — 0 calls in flight.
+
+### 25.4 The other half of the firing spike is real work, not a bug
+
+§22.2's handler row also jumps (51.3 → 71.4 t/firing) and had never been attributed. It is not
+`build_poly_dist` (§25.3) and not the sprite rebuild (that is the separate 4.6 → 11.8 bump, over
+within 50 vbl). `update_paula_channel` goes **0.34 → 1.67 calls/firing** (a 5× rise, ~4.3 t/firing at
+its ~2.55 t/call) and the rest is the SFX engine's own event-ring/envelope/voice work for an active
+sound. 29% of those recomputes are redundant — which is the already-CLOSED "POKEY→Paula deferral,
+0.05% win" item (§2.0), and the 29% figure reproduced exactly. **No cheap win here.**
+
+### 25.5 ⭐ The 6502 pair-load idiom: 45 sites, ~0.22% of wall, no asm
+
+`flight_control_integrate`'s asm twin was scheduled by the user. Before writing 4 KB of asm,
+`asm-migration-plan.md` §12.3's own list of "genuinely asm-shaped wins left" was re-read, and the
+first entry — the 6502 16-bit carry idioms — turned out **not to need asm at all.**
+
+The disassembly's opcode histogram is the tell: 23 `lsl.l`, 19 `ror.w`, 21 `lsr.w`, 26 `or.b`. Every
+`((uint16_t)hi << 8) | lo` costs GCC a byte-swap, because `or.b` reaches only bits 0..7, so it builds
+the big-endian word and rotates it back — **74 cycles, 46 of them shifting.** `lo + 256*hi` is
+byte-identical and compiles to 58 (−16); a pair-ADD goes 152 → 98 (−54) because GCC factors the two
+`lsl.w #8` into one. Full rule, cycle counts and the audit command:
+`docs/m68k-optimisation.md`; the macro is `ROF_PAIR16` in `src/cpu/m68k_math.h`.
+
+⚠ **The three obvious alternatives do not work** — flipping the `|` operands, `__builtin_bswap16`,
+and splitting into two locals all canonicalize to the identical expensive form. Only `+ 256*hi` does.
+
+**134 sites tree-wide → 89.** Converted, all shipping flight code (`pairs` = `ror.w #8` in that
+function, `instrs` = its instruction count):
+
+| function | pairs | instrs |
+|---|---|---|
+| `flight_control_integrate_impl` | 19 → 0 | 1202 → 1212 |
+| `setup_projection_params` | 7 → 0 | 196 → 201 |
+| `update_terrain_horizon_lr` | 6 → 0 | 232 → **221** |
+| `game_main_loop` (= `terrain_draw_frame_core`, inlined ×2) | 4 → 0 | 2774 → 2778 |
+| `raster_scaled_object` | 3 → 0 | 525 → 526 |
+| `update_terrain_scanline_proj` · `object_integrate_position` · `draw_player3_object` | 2 → 0 each | +4 / +3 / +2 |
+
+⚠ **Two were REVERTED, on §23.1's rule** (keep a codegen tweak only where the function it lands in
+actually improves): `compute_obj_rel_angle_scale` grew **+11 instructions for one site removed** —
+new `slt`/`tst.w`/`andi.w`/`or.w` and `move.l` 6 → 10, i.e. GCC re-allocated the whole small body —
+and `step_object_along_axes` +5 for two. Both are tiny, both had an unclear sign, and guessing at
+±20 cycles is exactly what that rule exists to stop. Reverting restored their instruction counts to
++0 exactly, which is also the proof the revert was clean.
+
+**Static win: ~0.22% of all wall clock** — ~0.08% from the integrate twin (19 sites, of which 3 are
+pair-ADDs, ≈ −370 cycles per full pass at 25 calls/s) and ~0.15% from the 26 per-frame prologue
+sites. Well under the ~2% floor where any end-to-end instrument here has a reliable sign, so **that
+count is the claim and no framerate run was spent on it.** Proof of correctness is `make validate`
+(full suite) — the conversion is portable, so every twin is byte-compared against its 6502 oracle.
+
+⭐ **The transferable part: that is the same order as the entire hand-asm twin's filed residual
+(0.2–0.4%), for a mechanical C edit with a `make validate` gate instead of 4 KB of hand asm on the
+routine that integrates the ship's position.** §12.3's other two "asm-shaped" items (GCC's register
+allocation, and it inlining five helpers a twin would have to re-implement) are unchanged and remain
+the reason the twin is a bad trade.
