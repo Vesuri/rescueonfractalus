@@ -742,11 +742,15 @@ ifneq ($(SKIPBOOT),0)
 EXTRA_DEFINES += -DROF_SKIP_BOOT_SCENES
 endif
 endif
-# `make LOGO_START=1` — let START (F1) abort the Lucasfilm logo, the way it already exits the
-# Station.  A DELIBERATE DIVERGENCE: the Atari's $5000 logo is an unconditional blocking routine
-# with no exit check, so this is OFF by default and the shipped binary stays faithful (user
-# decision, 2026-08-12: wanted, but behind a flag).
-ifdef LOGO_START
+# LOGO_START — let START (F1) *or the joystick FIRE button* abort the Lucasfilm logo, the way both
+# already exit the Station.  A DELIBERATE DIVERGENCE: the Atari's $5000 logo is an unconditional
+# blocking routine with no exit check anywhere.
+# ⚠ **ON by default since 2026-08-14** (user decision — it was behind an opt-in flag from
+# 2026-08-12 to keep the shipped binary faithful; the quality-of-life win won).  Pass
+# `make LOGO_START=0` to restore the faithful unconditional logo.
+# ⚠ This changes a -D flag, which the Makefile does not track: `make clean` when toggling it.
+LOGO_START ?= 1
+ifneq ($(LOGO_START),0)
 EXTRA_DEFINES += -DROF_LOGO_START_ABORT
 endif
 # `make PROBES=1 BLIT_SHAPE=1` + amiga/blit_shape.gdb — WHERE the flight frame stalls.
@@ -788,6 +792,14 @@ endif
 # cockpit rendering bug (user, 2026-08-11).
 ifdef FORCE_RETURN
 EXTRA_DEFINES += -DROF_FORCE_RETURN
+endif
+# `make PROBES=1 SKIPBOOT=0 FORCE_BOOT_FIRE=1`: hold the joystick FIRE button over vbi 100..160 —
+# mid-Logo and on into the Station — to verify headlessly that fire advances Logo -> Station ->
+# Standby (the 2026-08-14 QoL divergence) with no physical joystick, then release so Standby is
+# reached rather than launched through.  ⚠ SKIPBOOT=0 is REQUIRED: PROBES implies SKIPBOOT, which
+# skips the very scenes under test.  Readout: amiga/boot_fire.gdb.
+ifdef FORCE_BOOT_FIRE
+EXTRA_DEFINES += -DROF_FORCE_BOOT_FIRE
 endif
 # `make FORCE_MOTHERSHIP=1`: INTERACTIVE — makes pressing BOOSTERS (B) in flight force the mother
 # ship "present" ($003A=$FF + HUD indicator) at that instant, so B always triggers the return-to-

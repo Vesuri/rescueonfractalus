@@ -83,8 +83,40 @@ second-stick path and nothing to choose.
   `boot_standby_launch_driver` respectively, both already faithful.
 - **Verified headlessly with nothing plugged in** (`make PROBES=1` + `amiga/joy_probe.gdb`): 2722
   polls over 2722 vblanks, no direction bit ever low, no Land injection, no fire. That is the
-  regression that mattered; **the probe proves quietness, never that a real stick steers correctly** —
-  that needs a physical joystick (or an FS-UAE-mapped pad) and a human at the controls.
+  regression that mattered; **the probe proves quietness, never that a real stick steers correctly**.
+- **A real stick IS now confirmed** (user, 2026-08-14): the axes behave as an aircraft — stick back
+  raises the nose, stick forward lowers it, matching the manual's Forward = Dive / Back = Climb.
+
+## Skipping the two boot cinematics — START *or* fire (divergence, ON by default)
+
+**User decision, 2026-08-14 (quality of life, knowingly unfaithful).** The Atari runs both boot
+cinematics to their own end; the Logo's `$5000` is an unconditional blocking routine with no exit
+check anywhere. Both are now skippable:
+
+| scene | skips on | mechanism |
+|---|---|---|
+| 1 Logo | START (F1) **or** joystick fire | `logo_aborted()` in `src/rof_logo.c` — reads CONSOL bit0 and TRIG0 directly, so it is platform-neutral (SDL serves TRIG0 from SPACE/Z) |
+| 2 Station | START (F1), any keyboard key, fire, or its RTCLOK timeout | START/key/timeout are the **faithful** checks at `$1a01`; fire is added by `PlatformAmiga::hwRead` |
+
+- ⚠ **`make LOGO_START=0` restores the faithful unconditional Logo**, and deliberately disables
+  *both* of its exits, not just START. (It was the opposite until 2026-08-14 — opt-in via
+  `LOGO_START=1`, faithfulness winning. The flag is a `-D` the Makefile does not track: **`make
+  clean` when toggling it.**)
+- ⚠ **The Station's exit check is TRANSLITERATED code** (`$1a01`: RTCLOK `$0013 >= 4`, any key
+  `$02FC != $FF`, or `CONSOL == $06`) and **never reads TRIG0** — so it cannot be hand-edited to add
+  fire. Instead `hwRead($D01F)` reports **fire AS START**, scoped to `VVBLKI == $1B30`, the Station's
+  own VBI vector (installed by `station_init` at `$198d`: `LDA #$30 / LDX #$1B`). That scoping is
+  what keeps the fold invisible everywhere else — the Logo has its own TRIG0 check, and Standby
+  already responds to TRIG0 through `read_console_trig_delta $5A78`.
+- A **held** fire therefore runs Logo → Station → Standby → launch, since `$5A78` reads TRIG0 as a
+  level. Each *tap* advances one step. Both are wanted.
+- **Verified headlessly**, `make PROBES=1 SKIPBOOT=0 FORCE_BOOT_FIRE=1` + `amiga/boot_fire.gdb`
+  (fire held vbi 100-160): the Logo handed off at **vbi 107** and the Station at **vbi 178**, against
+  a measured no-press control of **~280** and **~1300+**. ⚠ `SKIPBOOT=0` is required — `PROBES`
+  implies `SKIPBOOT`, which skips the very scenes under test.
+- ⚠ **Inject the button from C, not gdb.** A `set var` on the force flag from the gdb script did not
+  stick: the FS-UAE stub serves memory *reads* but drops writes (measured 2026-08-14). That is why
+  every `FORCE_*` harness in `PlatformAmiga.cpp` drives its input from C.
 
 ## Standby SELECT — two contexts
 

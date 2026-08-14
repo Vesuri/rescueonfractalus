@@ -320,6 +320,10 @@ extern "C" volatile unsigned short g_seSprCalls = 0;
 extern "C" volatile unsigned char  g_joyPortaStuck = 0, g_joyPortaLast = 0xFF;
 extern "C" volatile unsigned long  g_joyB2Edges = 0, g_joyTrigLow = 0, g_joyPolls = 0;
 extern "C" volatile unsigned short g_joyRawJoy = 0, g_joyRawPot = 0;
+// Boot-cinematic skip verification (amiga/boot_fire.gdb; needs PROBES=1 SKIPBOOT=0, since PROBES
+// alone would skip the very scenes under test).  The vbl each cinematic HANDED OFF at, stamped off
+// the live VVBLKI so the skips are measured, not inferred from where a sample landed.
+extern "C" volatile unsigned short g_bfLogoEnd = 0, g_bfStationEnd = 0;
 extern "C" volatile unsigned long  g_seWall    = 0;     // whole frame, entry -> planet copper installed
 extern "C" volatile unsigned char  g_seArmed   = 0;     // 1 while that first stars frame is in flight
 // starVblankUpdate beam-deadline probes.  The star update has three of them, all policed here

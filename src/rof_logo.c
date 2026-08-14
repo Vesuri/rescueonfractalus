@@ -108,10 +108,21 @@ static void logo_frame(void)
 }
 
 #ifdef ROF_LOGO_START_ABORT
-/* `make LOGO_START=1` — let START end the logo early, the way it already exits the Station.
- * A DELIBERATE DIVERGENCE, off by default: the Atari's $5000 is unconditional and has no exit
- * check anywhere (user decision, 2026-08-12 — wanted, but behind a flag). */
-static int logo_aborted(void) { return (bus_read(0xD01F) & 0x01u) == 0u; }   /* CONSOL, active-low */
+/* Let START — or the joystick FIRE button — end the logo early, the way both already exit the
+ * Station.  A DELIBERATE DIVERGENCE: the Atari's $5000 is unconditional and has no exit check
+ * anywhere.  **ON by default since 2026-08-14** (user decision; it was opt-in from 2026-08-12,
+ * when faithfulness won — the quality-of-life win won this time).  `make LOGO_START=0` restores
+ * the faithful blocking logo, and deliberately disables BOTH exits, not just START.
+ *
+ * Fire is read as TRIG0 rather than folded into CONSOL so this stays platform-neutral: SDL's
+ * hwRead serves $D010 from readTrigger(0) and the Amiga's from the real port-1 button.  (The
+ * Station needs the opposite treatment — its exit check is transliterated code that never reads
+ * TRIG0 at all, so PlatformAmiga::hwRead reports fire AS START there.  See that comment.) */
+static int logo_aborted(void)
+{
+    if ((bus_read(0xD01F) & 0x01u) == 0u) return 1;   /* CONSOL bit0 = START, active-low */
+    return bus_read(0xD010) == 0u;                    /* TRIG0 = fire, active-low ($00 = pressed) */
+}
 #else
 static int logo_aborted(void) { return 0; }
 #endif

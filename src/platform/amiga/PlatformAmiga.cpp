@@ -1007,7 +1007,20 @@ uint8_t PlatformAmiga::hwRead(uint16_t addr)
     // pressed and auto-starts the DEMO DROID demo within seconds.  ($D01F writes go
     // through platform_hw_write, which drops non-POKEY addresses, so the keyboard's
     // mem[$D01F] is never clobbered by genuine code.)
-    if (addr == 0xD01Fu) return s_consolState;   // dedicated input state, isolated from mem[] corruption
+    if (addr == 0xD01Fu) {
+        // QoL divergence (user decision, 2026-08-14): the joystick FIRE button also advances the
+        // two boot cinematics, alongside START.  The Station's attract loop ($1a01) exits on an
+        // RTCLOK timeout, any keyboard key ($02FC != $FF), or `CONSOL == $06` = START — it never
+        // reads TRIG0.  That loop is TRANSLITERATED code we must not hand-edit, so report fire AS
+        // START while the Station's own VBI vector ($1B30, installed by station_init at $198d) is
+        // the live VVBLKI.  Scoping it to that vector is what keeps the fold invisible everywhere
+        // else: the Logo does its own platform-neutral TRIG0 check (rof_logo.c) and Standby already
+        // responds to TRIG0 through read_console_trig_delta $5A78.
+        uint8_t c = s_consolState;
+        if (s_joyTrig0 == 0x00u && (uint16_t)(mem[0x0222] | (mem[0x0223] << 8)) == 0x1B30u)
+            c &= (uint8_t)~0x01u;                // clear bit0 -> $07 becomes $06, which $1a11 wants
+        return c;                                // dedicated input state, isolated from mem[] corruption
+    }
     // TRIG0-3 ($D010-$D013): joystick fire buttons, ACTIVE-LOW ($01 = released,
     // $00 = pressed).  TRIG0 is driven by the keyboard ISR from the Control key; the
     // others stay released.  (Default $01 also matters at Standby: read_console_trig_delta
@@ -2044,7 +2057,26 @@ static void pollJoystick()
     const bool edge = b2 && !s_joyBtn2Prev;
     if (edge) s_pendingFlightKey = 0x00u;                   // Atari KBCODE L -> dispatcher Y0 = Land
     s_joyBtn2Prev = b2;
+#ifdef ROF_FORCE_BOOT_FIRE
+    // `make PROBES=1 SKIPBOOT=0 FORCE_BOOT_FIRE=1` + amiga/boot_fire.gdb: hold the fire button over
+    // vbi 100..160 — mid-Logo (it runs ~280 frames) and on into the Station — so both boot-cinematic
+    // skips are exercised with no physical joystick, then RELEASED so Standby is reached cleanly
+    // rather than launched straight through.  Overrides the sampled level, so it reaches both
+    // readers: the Logo's own TRIG0 check and the Station's fire-as-START fold in hwRead($D01F).
+    // ⚠ Injected from C, not gdb.  A `set var` on this from the gdb script did NOT stick — the
+    // FS-UAE stub serves memory reads but dropped the write (measured 2026-08-14), which is why
+    // every other FORCE_* harness in this file drives its input from C too.
+    if (g_vbiCount >= 100u && g_vbiCount <= 160u) s_joyTrig0 = 0x00u;
+#endif
 #ifdef ROF_FLIGHT_PROBE
+    // Stamp the two boot-cinematic transitions off the live VVBLKI, so the skips are MEASURED
+    // rather than inferred from where a sample happened to land: the Station's vector appearing
+    // means the Logo is done, and anything after it means the Station is done.
+    { extern volatile unsigned short g_bfLogoEnd, g_bfStationEnd;
+      const uint16_t vv = (uint16_t)(mem[0x0222] | (mem[0x0223] << 8));
+      if (vv == 0x1B30u) { if (!g_bfLogoEnd) g_bfLogoEnd = (unsigned short)g_vbiCount; }
+      else if (g_bfLogoEnd && !g_bfStationEnd && vv != 0x51EFu)
+          g_bfStationEnd = (unsigned short)g_vbiCount; }
     // With NOTHING plugged into port 1 this must stay perfectly quiet, or it breaks keyboard play:
     // g_joyPortaStuck accumulates every direction bit ever seen low, g_joyB2Edges counts Land
     // injections, g_joyTrigLow counts frames with fire held.  All three should read 0 on an
