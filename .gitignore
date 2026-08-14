@@ -1,3 +1,6 @@
+# UAE
+*.uaem
+
 # Large / regenerable artifacts
 # (gitignore has no inline-comment syntax -- a trailing "# ..." on a pattern line
 # is taken as literal glob text and matches nothing, so comments go on their own line)
