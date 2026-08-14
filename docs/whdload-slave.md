@@ -190,8 +190,13 @@ something that round-trips latin-1, or the accented bytes get mangled.
   of `Install`).
 * **`slv_info` credits "Amiga port by Vesuri"**, matching the Stunt Car Racer slave. Change
   it in `RoFSlave.s` if the release should read differently.
-* The version/date string is literal in `RoFSlave.s` (`$VER: RoF.slave 1.0 (14.08.2026)`).
-  Stunt Car Racer stamps it from `WDate >T:date`; this one is bumped by hand.
+* The version/date string is literal in `RoFSlave.s` (`$VER: RoF.slave 0.9 (14.08.2026)`).
+  Stunt Car Racer stamps it from `WDate >T:date`; this one is bumped by hand — deliberately,
+  so an unchanged tree rebuilds byte-identically.
+* ⚠ **The version number lives in three files** and nothing checks that they agree:
+  `src/platform/amiga/version.s` (the executable's own `$VER: Rescue on Fractalus! 0.9`),
+  `RoFSlave.s` (`slv_info` *and* the slave's `$VER:`), and `install/RoF Install/ReadMe`
+  (the History section). Bump all three together.
 * **There is nothing to save, so there is no `resload_SaveFile` path** — and that is
   faithful, not an omission: the Atari original keeps HIGH SCORE in RAM only and loses it at
   power-off. If a persistent high score is ever wanted it would be an *addition* to the game,

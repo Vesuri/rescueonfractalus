@@ -74,11 +74,12 @@ CORE_C_SRCS := \
     $(REPO)/src/gen/rof_native.c \
     $(REPO)/src/gen/rof_manual.c
 
-# Support runtime (freestanding CRT: program entry, memset…) + incbin'd assets.
-# These need bespoke flags, so they keep explicit rules below rather than the
-# CXX/CORE pattern rules.
+# Support runtime (freestanding CRT: program entry, memset…) + incbin'd assets + the
+# AmigaOS $VER: string.  These need bespoke flags, so they keep explicit rules below
+# rather than the CXX/CORE pattern rules.
 SUPPORT_C_SRCS := $(SUPPORT)/gcc8_c_support.c
-ASM_SRCS       := $(SUPPORT)/gcc8_a_support.s $(AMIGA_SRC)/incbin.s
+ASM_SRCS       := $(SUPPORT)/gcc8_a_support.s $(AMIGA_SRC)/incbin.s \
+                  $(AMIGA_SRC)/version.s
 
 # Framework hand-written m68k asm (Motorola syntax, assembled by vasm -> ELF).  These
 # are the dA JoRMaS framework's *Assembler.s routines, vendored + dotted-label-sanitised
@@ -940,6 +941,11 @@ ELF2HUNK_FLAGS := $(if $(SYMS),,-s)
 $(OUT).exe: $(OUT).elf
 	$(info Elf2Hunk $@)
 	@elf2hunk $(OUT).elf $(OUT).exe $(ELF2HUNK_FLAGS)
+	@grep -qa '$$VER: Rescue on Fractalus! ' $(OUT).exe || { \
+	  echo "error: the AmigaOS \$$VER: string is missing from $@."; \
+	  echo "       Nothing references it, so --gc-sections/elf2hunk can drop it silently;"; \
+	  echo "       see src/platform/amiga/version.s (SHF_GNU_RETAIN)."; \
+	  $(RM) $@; exit 1; }
 
 $(OUT).elf: $(OBJECTS)
 	$(info Linking $@)
@@ -967,6 +973,13 @@ obj/gcc8_c_support.o : $(SUPPORT)/gcc8_c_support.c
 obj/gcc8_a_support.o : $(SUPPORT)/gcc8_a_support.s
 	$(info ASM  $<)
 	@$(AS) $(ASFLAGS) -o $@ "$<"
+
+# The AmigaOS $VER: string.  Nothing references it (see version.s) — it survives
+# --gc-sections only through its section's SHF_GNU_RETAIN flag, which is why the link
+# rule below asserts it is still in the .exe rather than trusting that.
+obj/version.o : $(AMIGA_SRC)/version.s
+	$(info ASM  $<)
+	@$(AS) $(ASFLAGS) -o $@ "$(abspath $<)"
 
 # NOTE: .incbin dependencies are invisible to gcc -MMD, so list them explicitly.
 # Without this, editing/regenerating an embedded dump leaves a stale blob in the

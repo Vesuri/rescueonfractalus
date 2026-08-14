@@ -100,7 +100,7 @@ slv_name	dc.b	"Rescue on Fractalus!",0
 slv_copy	dc.b	"1985 Lucasfilm Games",0
 		;-1 = line feed plus a half-font vertical skip, so it ends a section
 slv_info	dc.b	"Amiga port by Vesuri",10
-		dc.b	"version 1.0 (14.08.2026)",-1
+		dc.b	"version 0.9 (14.08.2026)",-1
 		dc.b	"An unofficial, non-commercial fan project,",10
 		dc.b	"not affiliated with or endorsed by Lucasfilm.",-1
 		dc.b	"Left mouse button quits.",10
@@ -114,7 +114,7 @@ slv_info	dc.b	"Amiga port by Vesuri",10
 slv_config	dc.b	"BW;"
 		dc.b	0
 	ENDC
-		dc.b	"$VER: RoF.slave 1.0 (14.08.2026)",0
+		dc.b	"$VER: RoF.slave 0.9 (14.08.2026)",0
 	EVEN
 
 ;============================================================================
