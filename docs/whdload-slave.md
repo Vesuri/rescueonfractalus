@@ -9,7 +9,8 @@ Files:
 |---|---|
 | `whdload/RoFSlave.s` | the slave source — assembled **on the Amiga** with `basm` |
 | `whdload/makefile` | Amiga-side build (`basm`), mirrors the Stunt Car Racer arrangement |
-| `whdload/install/RoF Install/` | the install package, derived from WHDLoad's Install Template |
+| `whdload/RoF Install/` | the install package, derived from WHDLoad's Install Template |
+| `whdload/RoF Install/Manual` | the Lucasfilm manual as plain text — **generated**, `python3 tools/make_whdload_manual.py` from `docs/manual.md`; checked in, and `Manual.info` (a copy of the template's MultiView icon) gives it a Workbench icon |
 | `whdload/create_release.sh` | host-side: collects exe + slave + package into `whdload/dist/RoF.lha` |
 
 ## 0. Why this is a kickemu slave and not a 20-line loader
@@ -147,7 +148,7 @@ make
 Then, on the host:
 
 ```
-cd amiga && . env.sh && make          # the game -> amiga/out/RoF.exe
+cd amiga && . env.sh && make          # the game -> amiga/out/RoF
 cd ../whdload && ./create_release.sh  # -> whdload/dist/RoF.lha
 ```
 
@@ -160,11 +161,16 @@ every repo, the same convention as `fsuae_common.sh`. That is where the Install 
 The package is WHDLoad's stock `Install Template` with the smallest possible set of edits
 (the template's own ReadMe insists on that — variables, not deletions):
 
-* `Install.info` tooltypes: `APPNAME=Example` → `APPNAME=RoF`, and
+* `Install.info` tooltypes: `APPNAME=Example` → `APPNAME=Rescue on Fractalus!`, and
   `MINUSER=AVERAGE` → `MINUSER=NOVICE`. Average exists to make the installer ask the
   expert-mode questions that DIC/RawDIC/Patcher need; this install runs none of them.
   ⚠ These are length-prefixed Amiga icon strings — the 4-byte big-endian length before each
   one must be fixed too, not just the bytes.
+* `(set #prefix "RoF")`, pinned, where the template has `(set #prefix @app-name)`. The two
+  are deliberately split: `@app-name` is the TITLE the prompts show ("Rescue on
+  Fractalus!"), while `#prefix` is a FILE name — the installed drawer, `RoF.slave` and the
+  icon `RoF.inf` — and it must stay `RoF`, which is what the executable is called too.
+  Leaving them equal would make the install look for `Rescue on Fractalus!.slave`.
 * `(set #sub-dir "data")` — matches `ws_CurrentDir` in the slave, so `HDINIT` mounts the
   drawer the executable is actually in.
 * The `RawDIC` / `Patcher` / `DIC` `P_ChkRun` calls were removed. They abort the install if
@@ -195,7 +201,7 @@ something that round-trips latin-1, or the accented bytes get mangled.
   so an unchanged tree rebuilds byte-identically.
 * ⚠ **The version number lives in three files** and nothing checks that they agree:
   `src/platform/amiga/version.s` (the executable's own `$VER: Rescue on Fractalus! 0.9`),
-  `RoFSlave.s` (`slv_info` *and* the slave's `$VER:`), and `install/RoF Install/ReadMe`
+  `RoFSlave.s` (`slv_info` *and* the slave's `$VER:`), and `RoF Install/ReadMe`
   (the History section). Bump all three together.
 * **There is nothing to save, so there is no `resload_SaveFile` path** — and that is
   faithful, not an omission: the Atari original keeps HIGH SCORE in RAM only and loses it at

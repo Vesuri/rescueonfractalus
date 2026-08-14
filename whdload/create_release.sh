@@ -2,9 +2,9 @@
 # Assemble the WHDLoad install archive in whdload/dist/.
 #
 # Runs on the HOST.  It collects three things that are built elsewhere:
-#   * the game executable   ../amiga/out/RoF.exe   (`cd ../amiga && . env.sh && make`)
+#   * the game executable   ../amiga/out/RoF       (`cd ../amiga && . env.sh && make`)
 #   * the slave             ./RoF.slave            (`make` on the Amiga -- see makefile)
-#   * the install package   ./install/             (in the repo)
+#   * the install package   ./RoF Install/         (in the repo)
 #
 # Result: whdload/dist/RoF.lha, the archive to hand to a player, plus the unpacked
 # tree beside it so you can inspect or test it without unpacking.
@@ -13,7 +13,7 @@ cd "$(dirname "$0")"
 
 DIST=dist
 PKG="RoF Install"
-EXE=../amiga/out/RoF.exe
+EXE=../amiga/out/RoF
 SLAVE=RoF.slave
 
 [ -f "$EXE" ] || {
@@ -30,17 +30,16 @@ SLAVE=RoF.slave
 rm -rf "$DIST"
 mkdir -p "$DIST/$PKG"
 
-# The install package as checked in (Install, its icon, the ReadMe, the game icon).
-cp -p "install/$PKG"/* "$DIST/$PKG/"
-cp -p "install/$PKG.info" "$DIST/"
+# The install package as checked in (Install, the ReadMe, the Manual, their icons,
+# and the game icon).  The Manual is generated from docs/manual.md by
+# tools/make_whdload_manual.py and checked in -- not rendered here.
+cp -p "$PKG"/* "$DIST/$PKG/"
+cp -p "$PKG.info" "$DIST/"
 
 # ...plus the two build artifacts.  The Install script copies "RoF" into <dest>/data,
 # which is what the slave's ws_CurrentDir points at.
 cp -p "$EXE"   "$DIST/$PKG/RoF"
 cp -p "$SLAVE" "$DIST/$PKG/$SLAVE"
-
-# The player-facing docs from the repo root, so the archive stands on its own.
-cp -p ../docs/manual.md "$DIST/$PKG/Manual"
 
 if command -v lha >/dev/null 2>&1; then
   ( cd "$DIST" && lha a RoF.lha "$PKG" "$PKG.info" >/dev/null )

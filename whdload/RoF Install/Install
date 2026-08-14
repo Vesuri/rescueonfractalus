@@ -12,8 +12,12 @@
 (set #extra-file "Extra")		;name of extra file
 (set #extra2-file "Extra2")		;name of second extra file
 (set #extra3-file "Extra3")		;name of third extra file
-(set #prefix @app-name)			;name of slave, directory
+(set #prefix "RoF")			;name of slave, directory
 (set #prefix-slave "")
+;@app-name (the icon's APPNAME tooltype) is the TITLE, "Rescue on Fractalus!", and it is
+;what every prompt says.  #prefix is deliberately NOT @app-name here: it is a FILE name
+;â€” the installed drawer, "RoF.slave" and the icon "RoF.inf" â€” and it has to stay "RoF",
+;which is also what the game executable is called.
 
 (set #ico_suffix_00 "inf")		;Icon suffixes (not all of these must exist)
 (set #ico_suffix_01 "magicwb")
@@ -104,7 +108,7 @@
 		"Alternate version (Patcher)"
 		"Budget re-release (DIC)"
 		"Hit-Squad version (Files)"
-		"CD/CDTV/CD³² version (Files)"
+		"CD/CDTV/CDï¿½ï¿½ version (Files)"
 		"Defjam compact (Single File)"
 	  )
           (help @askchoice-help)
@@ -117,7 +121,7 @@
       ; and icon. If you set #prefix-slave it only changes the slave name.
       ; You may also set the #sub-dir here if this is not required with all
       ; versions
-      ;                                                                         §
+      ;                                                                         ï¿½
       (select #version
 	; 0 = RawDIC
         ("")

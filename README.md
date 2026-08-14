@@ -36,8 +36,8 @@ There is also a WHDLoad install, which runs the same unmodified executable. It n
 than the plain version does: **2 MB of RAM**, and an A500 **Kickstart 1.3 image**
 (`kick34005.A500` plus its `.RTB`) in `Devs:Kickstarts` — the game uses the operating system
 to take the display over, and WHDLoad leaves none, so the slave boots a real Kickstart and
-runs the game inside it. Full details are in the install's own ReadMe; the design record is
-[`docs/whdload-slave.md`](docs/whdload-slave.md).
+runs the game inside it. The install's ReadMe states the requirements; the design record — why
+a kickemu and not a plain loader — is [`docs/whdload-slave.md`](docs/whdload-slave.md).
 
 ## Controls
 
