@@ -8,7 +8,7 @@ Files:
 | Path | What |
 |---|---|
 | `whdload/RoFSlave.s` | the slave source — assembled **on the Amiga** with `basm` |
-| `whdload/makefile` | Amiga-side build (`basm`), mirrors the Stunt Car Racer arrangement |
+| `whdload/makefile` | Amiga-side build (`basm`) |
 | `whdload/RoF Install/` | the install package, derived from WHDLoad's Install Template |
 | `whdload/RoF Install/Manual` | the Lucasfilm manual as plain text — **generated**, `python3 tools/make_whdload_manual.py` from `docs/manual.md`; checked in, and `Manual.info` (a copy of the template's MultiView icon) gives it a Workbench icon |
 | `whdload/create_release.sh` | host-side: collects exe + slave + package into `whdload/dist/RoF.lha` |
@@ -199,7 +199,7 @@ host, because a real 1.3 ROM is what the kickemu boots anyway:
 
 The slave is **not** part of the host cross-build. It `INCLUDE`s WHDLoad's `kick13.s`,
 which is written for BASM / ASM-One / Asm-Pro / PhxAss — vasm is not in its translator list
-— so it is assembled on the Amiga exactly like the Stunt Car Racer slave:
+— so it is assembled on the Amiga:
 
 ```
 ; on the Amiga, with Includes: and Sources: assigned (see whdload/makefile)
@@ -267,10 +267,10 @@ something that round-trips latin-1, or the accented bytes get mangled.
   `RoF.newicon` / `RoF.colicon` — the install picks up any suffix it finds and offers the
   user a choice, no script change needed (`P_SelectIcon`, and the suffix table at the top
   of `Install`).
-* **`slv_info` credits "Amiga port by Vesuri"**, matching the Stunt Car Racer slave. Change
-  it in `RoFSlave.s` if the release should read differently.
+* **`slv_info` credits "Amiga port by Vesuri"**. Change it in `RoFSlave.s` if the release
+  should read differently.
 * The version/date string is literal in `RoFSlave.s` (`$VER: RoF.slave 0.9 (14.08.2026)`).
-  Stunt Car Racer stamps it from `WDate >T:date`; this one is bumped by hand — deliberately,
+  It is bumped by hand rather than stamped from `WDate >T:date` at build time — deliberately,
   so an unchanged tree rebuilds byte-identically.
 * ⚠ **The version number lives in three files** and nothing checks that they agree:
   `src/platform/amiga/version.s` (the executable's own `$VER: Rescue on Fractalus! 0.9`),

@@ -13,8 +13,8 @@
 #include "platform_c.h"         // the extern "C" bridge decls (platform_hw_write etc.)
 #include "framework/Util.h"  // uint8_t, uint16_t, uint32_t
 
-// PETSCIIRobots-SDL convention: main.cpp instantiates PlatformClass(image) without
-// knowing the concrete type; the build define selects which header is included.
+// main.cpp instantiates PlatformClass(image) without knowing the concrete type;
+// the build define selects which header is included.
 #define PlatformClass PlatformAmiga
 
 class RescueOnFractalus;

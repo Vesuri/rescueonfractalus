@@ -22,7 +22,7 @@ spawn. `amiga/env.sh` resolves symlinks with `pwd -P` so gcc only ever sees
 space-free paths.
 
 > **2026-08-12:** `tools/ghidra` is now a symlink to a shared install at
-> `~/.local/share/ghidra`, also used by the Revs repo, rather than its own copy — saves
+> `~/.local/share/ghidra`, shared with other binary-only-port work rather than its own copy — saves
 > ~900 MB of duplication between binary-only-port repos. No trailing slash on the
 > `tools/ghidra` gitignore entry, since a trailing-slash pattern doesn't match a symlink
 > to a directory. The extracted copy that had been here was found to be missing
@@ -84,9 +84,9 @@ Re-run a script against the **already-imported** program (no re-analysis):
 4. Run an `ApplyNames` script → names/comments persist into `tools/ghidra-proj`.
 5. Re-export and continue, subsystem by subsystem.
 
-`tools/ghidra-proj` is the durable annotation database. The repo holds the
-text exports, `symbols.csv`, and the generated C. **Do not** open the project in
-the Ghidra GUI and headless at the same time (Ghidra locks projects).
+`tools/ghidra-proj` is the durable annotation database; `symbols.csv` is what the
+repo keeps of it. **Do not** open the project in the Ghidra GUI and headless at
+the same time (Ghidra locks projects).
 
 ## Ghidra scripts (`ghidra_scripts/`)
 

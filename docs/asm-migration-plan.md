@@ -2,7 +2,7 @@
 
 Two goals, in order:
 1. **Phase 1** — stop forcing `-DNO_ASSEMBLER` and bring the framework's hand-written m68k
-   assembler routines into use (they were shipped with the dA JoRMaS framework but replaced by
+   assembler routines into use (they shipped with the framework but were replaced by
    portable C++ bodies early on "to keep things simple / make everything build").
 2. **Phase 2** — write an optimized hand-asm `terrain_column_rasterize_core` (the flight terrain
    rasterizer — ~61% of the draw; four C/GCC restructurings all regressed because the 68000 is
@@ -55,18 +55,17 @@ render-diff).
   `incbin.s`/`gcc8_a_support.s`). **`vasmm68k_mot` is installed at `~/.local/vasmm68k_mot`** (not yet
   on PATH). The build links ELF (`m68k-amiga-elf-ld` → `out/RoF.elf`) then `Elf2Hunk` → `out/RoF`, so
   vasm must emit ELF: `vasmm68k_mot -Felf -m68000`.
-- Source `.s` available to vendor:
-  `amiga-spike/examples/hC74/src/{AmigaHardware,Bitmap,CopperList,Util}Assembler.s`,
-  `tmp/attackofthepetsciirobots/PlatformAmigaAssembler.s` (+ check upstream for Palette/Sprite).
-  The hC74 example only actually asm's `sqrt` (`UtilAssembler_sqrt.s` via vasm + a `shim.cpp` wrapper)
-  and uses C++ bodies for the rest — so "enable everything" is genuinely per-routine work, not a flip.
+- Source `.s` available to vendor: the framework's upstream
+  `{AmigaHardware,Bitmap,CopperList,Util}Assembler.s` (Palette/Sprite have none).  Upstream only
+  ever selected `sqrt` in asm and used C++ bodies for the rest — so "enable everything" is
+  genuinely per-routine work, not a flip.
 
 ## Phase 0 — scrub the `NO_ASSEMBLER` references (do as each is no longer load-bearing)
 
 `CLAUDE.md:150` already reworded. Remaining (remove/adjust as the flag goes away — do NOT remove the
 `Makefile:131` flag or the `Util.h:11` gate until Phase 1 actually links the asm, or the build breaks):
 - `amiga/Makefile:1, 9, 95` (comments) and `:131` (the `-DNO_ASSEMBLER` flag itself — remove in P1).
-- `amiga/ARCH.md:34, 43`; `src/platform/amiga/framework/UPSTREAM.md:12, 15`.
+- `amiga/ARCH.md:34, 43`.
 - `src/platform/amiga/framework/Util.h:6` (comment); keep the `:11` gate (it auto-enables `ASSEMBLER`
   once the flag is gone — harmless, leave it).
 - `docs/amiga-attract-plan.md:298, 356, 387, 403` — historical plan; annotate "superseded by
@@ -76,7 +75,8 @@ render-diff).
 
 Implemented in one pass (the whole framework, not class-by-class, since the `ASSEMBLER`
 gate is global): all four `*Assembler.s` (`Util`, `AmigaHardware`, `Bitmap`, `CopperList`)
-vendored into `src/platform/amiga/framework/` (dotted-label sanitised — see `UPSTREAM.md`),
+vendored into `src/platform/amiga/framework/` (dotted-label sanitised — the `sed` and the
+`-m68010` reason are in `amiga/Makefile`'s FRAMEWORK_ASM_SRCS comment),
 vasm rule added (`vasmm68k_mot -m68010 -Felf`), `-DNO_ASSEMBLER` removed, and the
 `AmigaHardware` blitter-queue statics aliased to their SAS/C mangled names via
 `ROF_SASC_ALIAS` (`AmigaHardware.h`) so the asm `xref`s resolve.  `blitterFillUp` (a
@@ -100,8 +100,8 @@ vasm→ELF→link→GCC-bridge pipeline end-to-end**, which de-risks Phase 2.
    `INCLUDE` the .s use; match the SDK paths the example used). Add the vendored `*Assembler.o` to
    `OBJECTS`. **Remove `-DNO_ASSEMBLER`** from `CCFLAGS` (and confirm it's not also in `CPPFLAGS`
    separately) so `Util.h` defines `ASSEMBLER`.
-3. **Vendor** the chosen `*Assembler.s` into `src/platform/amiga/framework/` (record provenance in
-   `UPSTREAM.md`).
+3. **Vendor** the chosen `*Assembler.s` into `src/platform/amiga/framework/` (record provenance
+   next to the vasm rule in `amiga/Makefile`).
 4. **GCC bridge audit**: for every asm routine now selected, confirm a `#if defined(ASSEMBLER) &&
    !defined(__SASC)` wrapper exists in the `.cpp` (pattern: `register T r __asm("dN"); __asm volatile("jsr
    _mangled" : "=r"(r) : inputs : clobbers);`). `AmigaHardware` has several; `Bitmap`/`CopperList`/`Util`

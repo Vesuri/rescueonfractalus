@@ -1,4 +1,4 @@
-| Asset embedding for RoF Amiga build (equivalent of Bin2Hunk).
+| Asset embedding for the RoF Amiga build.
 | Each asset: .global + .incbin.  Chip-RAM assets (.MEMF_CHIP) go into a chip
 | hunk so DMA hardware (bitplanes, copper) can reach them.
 

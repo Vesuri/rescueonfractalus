@@ -1,8 +1,8 @@
 #ifndef PLATFORMSDL_H
 #define PLATFORMSDL_H
 
-/* Following the PETSCIIRobots-SDL convention: define PlatformClass so that
-   main.cpp can instantiate PlatformClass() without knowing the concrete type. */
+/* Define PlatformClass so that main.cpp can instantiate PlatformClass()
+   without knowing the concrete type. */
 #define PlatformClass PlatformSDL
 
 #include <SDL.h>

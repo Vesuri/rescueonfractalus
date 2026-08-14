@@ -6,7 +6,7 @@
 #   ./run.sh      — boot in FS-UAE (OCS A500)
 #   ./debug.sh    — source-level debug via FS-UAE GDB stub
 #
-# The dA JoRMaS framework's hand-written m68k *Assembler.s routines are vendored
+# The framework's hand-written m68k *Assembler.s routines are vendored
 # (framework/*Assembler.s, vasm-assembled) and reached from GCC via register-
 # marshalling bridges (the `#if defined(ASSEMBLER) && !defined(__SASC)` sections in
 # the framework .cpp).  ASSEMBLER is enabled by default (Util.h); pass -DNO_ASSEMBLER
@@ -84,10 +84,15 @@ SUPPORT_C_SRCS := $(SUPPORT)/gcc8_c_support.c
 ASM_SRCS       := $(SUPPORT)/gcc8_a_support.s $(AMIGA_SRC)/incbin.s \
                   $(AMIGA_SRC)/version.s
 
-# Framework hand-written m68k asm (Motorola syntax, assembled by vasm -> ELF).  These
-# are the dA JoRMaS framework's *Assembler.s routines, vendored + dotted-label-sanitised
-# (see framework/UPSTREAM.md).  The matching GCC register-marshalling bridges live under
-# `#if defined(ASSEMBLER) && !defined(__SASC)` in the corresponding framework .cpp.
+# Framework hand-written m68k asm (Motorola syntax, assembled by vasm -> ELF).  These are
+# the framework's *Assembler.s routines, vendored with
+# their dotted-in-middle local labels sanitised — `sed -E 's/([A-Za-z0-9])\.([A-Za-z_][A-Za-z0-9_]+)/\1_\2/g'`,
+# e.g. cl.cpu->cl_cpu — because vasm mot reads a leading `.` as a local-label marker.
+# Assembled -m68010, not -m68000, for ONE instruction: `movec vbr,d0` in Util's getVBR.
+# The matching GCC register-marshalling bridges live under
+# `#if defined(ASSEMBLER) && !defined(__SASC)` in the corresponding framework .cpp;
+# AmigaHardware.h aliases the blitter-queue statics to their SAS/C mangled names
+# (ROF_SASC_ALIAS) so the asm's xrefs resolve.  Palette/Sprite have no asm twin.
 FRAMEWORK_ASM_SRCS := \
     $(AMIGA_SRC)/framework/UtilAssembler.s \
     $(AMIGA_SRC)/framework/AmigaHardwareAssembler.s \
@@ -444,7 +449,7 @@ EXTRA_DEFINES += -DROF_VERTB_SERVER
 endif
 
 # A/B fallback: `make BLIT_IRQ=1` goes back to ARMING the blit-done interrupt after every blit
-# (INTENA bit 6), as the dA JoRMaS framework did for its blit-done queue ISR.  This port has no
+# (INTENA bit 6), as the framework originally did for its blit-done queue ISR.  This port has no
 # such ISR — blitterWait() polls DMACONR BLTBUSY and blitterDrain() spin-drains the queue — so by
 # default blit-done stays masked: every armed one was a level-3 autovector dispatch into
 # graphics.library's queue handler ($F901C0) doing nothing for us, measured at 6 per flight

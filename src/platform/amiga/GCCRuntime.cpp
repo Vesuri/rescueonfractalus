@@ -1,6 +1,6 @@
 // Runtime shims for building RoF with m68k-amiga-elf-gcc (-nostdlib).
-// Derived from dA JoRMaS Template/C++/GCCRuntime.cpp, modified:
-//   - No ProductionRunner dependency (VBI via exec AddIntServer instead).
+// Derived from the vendored framework's GCC runtime, modified:
+//   - No demo-timeline dependency (VBI via exec AddIntServer instead).
 //   - No level-3 autovector installation (exec handles it).
 
 #include <proto/exec.h>

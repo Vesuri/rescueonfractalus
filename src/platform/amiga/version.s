@@ -2,10 +2,9 @@
 |
 | Format (https://wiki.amigaos.net/wiki/Version_Strings):
 |     $VER: <name> <version>.<revision> (<dd>.<mm>.<yyyy>)
-| <name> is the game's TITLE, matching how Stunt Car Racer names its executable
-| ("$VER: Stunt Car Racer Unleashed 1.0 ").  The WHDLoad slave uses its own FILE name
-| instead ("$VER: RoF.slave", whdload/RoFSlave.s) — a slave is a component, the
-| executable is the product.
+| <name> is the game's TITLE, not the file name — that is the convention for a product.
+| The WHDLoad slave uses its own FILE name instead ("$VER: RoF.slave",
+| whdload/RoFSlave.s) — a slave is a component, the executable is the product.
 |
 | NOTHING REFERENCES THIS STRING, AND NOTHING MAY.  AmigaDOS `Version`, WHDLoad's crash
 | report and every archive-inspection tool find a program's version by SCANNING the file
@@ -23,7 +22,7 @@
 |     whdload/RoFSlave.s                     slv_info + the slave's own $VER:
 |     whdload/RoF Install/ReadMe             the History section
 |
-| The date is deliberately HARDCODED rather than stamped at build time (Stunt Car Racer's
+| The date is deliberately HARDCODED rather than stamped at build time (the usual
 | `incbin "T:date"` idiom).  A build-time date would make every rebuild of an unchanged
 | tree differ, and byte-comparing two builds is a standard tool in this repo — the
 | cross-build image A/B in docs/asset-extraction.md and the "is this a stale build?"

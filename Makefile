@@ -1,6 +1,5 @@
 ## Rescue on Fractalus! — build system
-## Mirrors PETSCIIRobots-SDL/Makefile structure: C and C++ sources compiled
-## separately, linked with SDL2 via pkg-config.
+## C and C++ sources are compiled separately, then linked with SDL2 via pkg-config.
 
 CC      := clang
 CXX     := clang++

@@ -133,7 +133,7 @@ PlatformSDL::PlatformSDL(const char* imagePath) :
     interruptIntervalInSamples = audioSpec.freq / framesPerSecond_;
     samplesSinceInterrupt      = interruptIntervalInSamples; /* fire on first fill */
 
-    /* Window + surfaces (same dual-surface pattern as PETSCIIRobots-SDL). */
+    /* Window + surfaces (dual-surface: 8-bit paletted render target, blitted out). */
     window = SDL_CreateWindow("Rescue on Fractalus!",
                               SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
                               ROF_WINDOW_W, ROF_WINDOW_H, 0);
@@ -156,7 +156,7 @@ PlatformSDL::PlatformSDL(const char* imagePath) :
     /* Seed VBI wall-clock timer now that SDL_GetTicks() is available.    */
     lastVBITicks = SDL_GetTicks();
 
-    /* Start audio (unpaused — same idiom as PETSCII Robots). */
+    /* Start audio (unpaused). */
     SDL_PauseAudioDevice(audioDeviceID, 0);
 
     platform = this;

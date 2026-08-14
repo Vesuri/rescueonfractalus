@@ -25,18 +25,16 @@ working, committed build**.
 >     display output (blitter copies, character rendering, colour splits).
 > - **Audio** runs the 6502-converted player. The transpiled POKEY-poking routines
 >   + custom song/SFX data compile for m68k; POKEY register writes are translated
->   to **Paula** output. **No ModulePlayer, no TrackerPacker, no MOD.**
+>   to **Paula** output. **No tracker replay, no MOD.**
 > - **Two-layer reuse, deliberately split:**
->   - **Hardware layer = dA JoRMaS classes** (`AmigaHardware`, `Bitmap`,
->     `CopperList`, `Sprite`, `Palette` — *not* `ModulePlayer`). The well-factored
+>   - **Hardware layer = the vendored framework classes** (`AmigaHardware`,
+>     `Bitmap`, `CopperList`, `Sprite`, `Palette`). The well-factored
 >     chip-banging primitives.
->   - **Application skeleton = PETSCII-Robots / WHDLoadMenuAnimated style**, *not*
->     the dA JoRMaS demo `Production`/`Part`/`Script`/`ProductionRunner` timeline.
->     A game wants an explicit `main()` + VBI interrupt server + a real
+>   - **Application skeleton = a game loop, not a demo timeline.** A game wants an
+>     explicit `main()` + VBI interrupt server + a real
 >     `while (!quit) { poll input; update; render; WaitTOF }` loop with a small
 >     state machine — which is exactly what RoF's **own** `Platform.h`/
->     `PlatformSDL` already is (the "PETSCIIRobots-SDL pattern" — same author,
->     same C64→Amiga lineage). The Amiga app is the sibling of that, kept native.
+>     `PlatformSDL` already is. The Amiga app is the sibling of that, kept native.
 > - Code lives in a new top-level **`amiga/`** tree, committed to `main`.
 >
 > Target scene: the iconic **"RESCUE ON FRACTALUS!" title / cockpit attract**
@@ -140,29 +138,33 @@ analysis in the `rof-project` memory; immediate visual confirmation).
 
 ## Source-material roles (what we take from where)
 
+The Amiga hardware layer is the **vendored framework** (`AmigaHardware`/`Bitmap`/
+`CopperList`/`Sprite`/`Palette`/`Util`, plus its GCC build: `GCCRuntime.cpp` +
+L3 int trampoline, `SASCCompat.h`, `incbin.s`, `compat-include/`, `run.sh`,
+`debug.sh`).  Its demo-timeline and tracker-replay layers are not used.  The
+copper/sprite idioms it comes with are the ones this plan leans on: subclass
+`CopperList`, rebuild the whole per-scanline list every frame, double-buffer two
+instances and flip, and drive all 8 hardware sprites together with per-frame
+pointer swaps.  Everything above that line is RoF's own:
+
 | Source | What we reuse | What we DON'T take |
 |---|---|---|
-| `dA JoRMaS/Template/C++` | the hardware classes `AmigaHardware`/`Bitmap`/`CopperList`/`Sprite`/`Palette`; the proven **GCC build** (`Makefile`, `GCCRuntime.cpp` runtime + L3 int trampoline, `SASCCompat.h`, `incbin.s`, `compat-include/`, `run.sh`/`debug.sh`) | `ModulePlayer`/`TrackerPackerReplayV3.1.s` (we don't do tracker audio), `Production`/`Part`/`Script`/`ProductionRunner` (demo timeline), `ExampleProduction`/`ExamplePart`, `main.cpp` |
-| `dA JoRMaS/Productions/JRm-bS75/Source` (`GameCopperList`, `GamePart` sprite code) | the **serious copper + sprite pattern**: subclass `CopperList` → `GameCopperList` with a `writeCopperlist(...)` that **rebuilds the per-scanline copper every frame** (`showScroller`/`showHorizonBack`/`showObjects`/`showHorizonParallax`/`showRoad`/`showSprites`), per-scanline `WAIT` colour/mode changes, **all 8 hardware sprites** driven together (`showSprites(s0..s7)`, grouped as `BikeSprite`; `setBikeSpritePosition`/`showCurrentBikeSprite`), double-buffered copperlists | the racing-game logic (road geometry, bike physics) |
-| `tmp/attackofthepetsciirobots` (`Platform.h`, `PlatformAmiga.cpp`, `petrobots.cpp` main loop) | the **app skeleton**: `main()` → system setup → install VBI int server (`AddIntServer(INTB_VERTB,…)`) → game-style state-machine loop; non-blocking `readKeyboard`/`readJoystick`; `renderFrame(waitForNextFrame)` = `WaitTOF`; chip-RAM alloc + interleaved bitplane bitmap; blitter tile/rect ops | its tile/map engine, gzip/Bin2Hunk specifics (we use `incbin`) |
-| `dA JoRMaS/Utilities/WHDLoadMenu` (`WHDLoadMenuAnimated.cpp`, `AmigaView`, `AmigaCopperList`, `MenuView` loop, `Joystick`/`Keyboard`) | the **animated-copperlist idioms**: double-buffered copper lists swapped per frame (`LOFlist = copperList->data()`), per-frame copper edits (`setFade`/`setColor`/sprite-pointer swap/`setXOffset`), palette-fade infra, `WaitTOF`+poll loop, sprite-frame animation (the bouncing-ball pattern) | the WHDLoad menu logic itself |
 | RoF repo: `src/gen/rof_gen.c` attract + audio routines + `cpu`/`bus`/`mem[]`, `PlatformSDL.cpp` POKEY synth | **attract state machine**: `vbi_handler_station`, `station_anim_frame`, `station_sub_1EB4`, `station_star_fade_in`, `pmg_colors_station`, `station_sub_1F48` compiled for m68k — these update `mem[]` each frame; **audio**: `station_audio` + song/SFX data → Paula via POKEY→Paula backend; `PlatformSDL`'s `audioCallback` algorithm as the spec | the rendering/terrain core (native instead); the full game loop (game routines only added when needed) |
 | RoF repo (`atari000.png`, `tools/compare.py`, docs) | the **parity oracle** + the per-element Amiga technique map (`hw-techniques.md` §11.8) | running the 6502 rendering core on Amiga |
 
-> **One skeleton, OS-friendly vs takeover — decide at M0.** PETSCII is
-> *OS-friendly* (`OpenScreen` CUSTOMBITMAP + `AddIntServer`, multitasking-safe,
-> WHDLoad-able). WHDLoadMenuAnimated / dA JoRMaS lean *takeover* (`LoadView`,
-> direct `dmacon`, own copperlist) for full Copper freedom. For a Copper-heavy
-> attract that becomes a game, **lean takeover** (own copperlist, raw Paula
-> registers written by the POKEY→Paula audio backend) but keep the explicit
-> PETSCII-style loop. Note the choice in `amiga/ARCH.md`; it only affects M0 setup
+> **One skeleton, OS-friendly vs takeover — decide at M0.** OS-friendly means
+> `OpenScreen` CUSTOMBITMAP + `AddIntServer`: multitasking-safe and WHDLoad-able.
+> Takeover (`LoadView`, direct `dmacon`, own copperlist) buys full Copper freedom.
+> For a Copper-heavy attract that becomes a game, **lean takeover** (own
+> copperlist, raw Paula registers written by the POKEY→Paula audio backend) but
+> keep the explicit game-loop skeleton. Note the choice in `amiga/ARCH.md`; it only affects M0 setup
 > + how the audio backend pokes Paula, not the milestones.
 
 ---
 
 ## Foundations (already established — don't re-litigate)
 
-- **Toolchain** (`toolchain.md`, `Template/C++/GCC-PORT.md`): BartmanAbyss
+- **Toolchain** (`toolchain.md`): BartmanAbyss
   `vscode-amiga-debug` v1.8.2, installed at **`~/.local`**
   (`~/.local/opt/bin/m68k-amiga-elf-gcc` 15.1.0 + gdb/as/objdump,
   `~/.local/{elf2hunk,vasmm68k_mot,fs-uae}`, `~/.local/support/`). **Not on
@@ -375,38 +377,36 @@ Don't start the next milestone until the current one runs and is committed.
 **Goal:** the build produces a HUNK exe whose **own `main()`** sets up the system,
 installs a VBI interrupt server, and runs a `while (!quit)` loop showing a
 solid Copper-driven background colour. Proves toolchain + build + run + the
-PETSCII-style skeleton (no demo `ProductionRunner`).
+game-loop skeleton (no demo timeline).
 
-- [x] `mkdir amiga/`. Vendor the **hardware layer + GCC build** from
-      `dA JoRMaS/Template/C++` into `amiga/framework/`: `AmigaHardware`,
-      `Bitmap`, `CopperList`, `Sprite`, `Palette`, `Util`, plus `GCCRuntime.cpp`,
-      `SASCCompat.h`, `incbin.s`, `compat-include/`, `Makefile`, `run.sh`,
-      `debug.sh`. **Omit** `ModulePlayer`/`TrackerPackerReplayV3.1.{h,s}` (no
-      tracker audio — see M5), `Production*`, `Part*`, `Script*`,
-      `ProductionRunner*`, `ExampleProduction*`, `ExamplePart*`, `main.cpp`. Drop
-      SAS/C cruft (`smakefile`, `*.info`, `SCoptions`, `Debug/`). Record upstream
-      version in `amiga/framework/UPSTREAM.md`. (The RoF audio-core slice —
+- [x] `mkdir amiga/`. Vendor the **hardware layer + GCC build** into
+      `amiga/framework/`: `AmigaHardware`, `Bitmap`, `CopperList`, `Sprite`,
+      `Palette`, `Util`, plus `GCCRuntime.cpp`, `SASCCompat.h`, `incbin.s`,
+      `compat-include/`, `Makefile`, `run.sh`, `debug.sh`. **Omit** the tracker
+      replay (no tracker audio — see M5), the demo-timeline classes and their
+      examples, and the upstream `main.cpp`. Drop SAS/C cruft (`smakefile`,
+      `*.info`, `SCoptions`, `Debug/`). (The RoF audio-core slice —
       `cpu`/`bus`/`mem[]` + the converted audio routines — is added at M5, not now.)
       With no framework `.s`, **`make NO_ASSEMBLER=1` is the build for the whole
       plan** (no vasm step needed).
 - [x] Write `amiga/ARCH.md` recording the takeover-vs-OS-friendly choice and the
-      two-layer split (hw classes + PETSCII-style skeleton).
+      two-layer split (hw classes + game-loop skeleton).
 - [x] Add `amiga/env.sh` exporting the `~/.local` toolchain onto `PATH`
       (`opt/bin`, root, `fs-uae`) + a default `KICKSTART`. Verify the link
-      succeeds from inside the space-containing repo path (Template avoids LTO,
-      so it should; if not, symlink to a space-free path à la the spike).
-- [x] Write the skeleton (model: `petrobots.cpp` `main()` + `PlatformAmiga`):
+      succeeds from inside the space-containing repo path (this build avoids LTO,
+      so it should; if not, symlink to a space-free path).
+- [x] Write the skeleton:
       `amiga/src/main.cpp` → system setup (own copperlist / `LoadView`; or
       OS-friendly `OpenScreen` per ARCH.md), `AddIntServer(INTB_VERTB, …)` for a
       VBI server that ticks a frame counter, then
       `while (!quit) { pollInput(); update(); render(); WaitTOF(); }`. A tiny
       `StandbyScene` object owns the per-frame `update()`/`render()`. Exit on left
-      mouse / joystick fire (WHDLoadMenu `Joystick`/`Keyboard` polling pattern).
+      mouse / joystick fire (non-blocking `Joystick`/`Keyboard` polling).
 - [x] Build the `CopperList` to set background `COLOR00` to a recognisable blue.
 - [x] `make NO_ASSEMBLER=1`; `./run.sh`. Confirm the blue screen + clean exit.
-- [ ] **Commit:** `feat(amiga): scaffold app skeleton (PETSCII-style loop + dA JoRMaS hw layer); blank screen boots`.
+- [ ] **Commit:** `feat(amiga): scaffold app skeleton (game loop + vendored hw layer); blank screen boots`.
 
-**Gotchas:** no spaces on the build path (LTO — Template avoids it, verify);
+**Gotchas:** no spaces on the build path (LTO — this build avoids it, verify);
 `HOME` must be set for the gdb path (debug only); `127.0.0.1` not `localhost`;
 restore system state on exit (the skeleton's teardown).
 
@@ -415,11 +415,8 @@ restore system state on exit (the skeleton's teardown).
 palette, shown via `CopperList::showBitmap`. "RESCUE ON FRACTALUS!" + cockpit
 silhouette + terrain block visible (colours approximate; refined in M2).
 
-- [ ] Stand up the asset converter. **Option A (preferred):** build
-      `dA JoRMaS/Utilities/RAWConverter` (Qt) → interleaved bitplanes + 12-bit
-      palette, the exact format `Bitmap`/`showBitmap` expect. **Option B
-      (fallback):** a small `amiga/tools/png2raw.py` (PIL) emitting interleaved
-      planes + OCS palette. *Pick A; fall back to B only if Qt fights us.*
+- [ ] Stand up the asset converter: PNG → interleaved bitplanes + 12-bit palette,
+      the exact format `Bitmap`/`showBitmap` expect.
 - [ ] Source art: capture a clean attract frame from the SDL build (or crop the
       committed `atari000.png`) to **320×256** (PAL lores), quantise to ≤16
       colours (4 bitplanes). Convert → `amiga/assets/attract.raw`.
@@ -438,11 +435,10 @@ word-align width to 16; DDFSTRT/DDFSTOP/DIWSTRT come from `setPlayfield`.
 at the region boundaries**, reproducing the Atari DLI register schedule. The
 idiomatic "more colours than registers" technique and the heart of the look.
 
-> **Reference pattern — `JRm-bS75/GameCopperList`.** Subclass the base
-> `CopperList` into an `AttractCopperList` with a `writeCopperlist()` that emits
-> the whole list (region colour splits, later sprite pointers) and is **rebuilt
-> per frame** for animation — exactly how bS75 rebuilds its per-scanline road
-> copper each frame. Double-buffer two instances and flip (bS75 + WHDLoadMenu).
+> **Reference pattern.** Subclass the base `CopperList` into an
+> `AttractCopperList` with a `writeCopperlist()` that emits the whole list (region
+> colour splits, later sprite pointers) and is **rebuilt per frame** for
+> animation. Double-buffer two instances and flip.
 
 - [ ] Transcribe the DLI schedule. Sources: `hw-techniques.md` §2.1 (the
       sequenced `dli_handler_game $49EE` slots) + the hand-authored handlers in
@@ -454,10 +450,9 @@ idiomatic "more colours than registers" technique and the heart of the look.
       COLPF1=$10, COLPF0=$2A per §11.2 → Amiga COLORxx), title-line colours up
       top, grey/teal cockpit-panel colours below the terrain, throttle fill band.
       Use `CopperList::setColor`/`setPalette` at a raster-line `listIndex`.
-- [ ] **Animated** attract colour cycle (WHDLoadMenu `AmigaCopperList` idiom):
-      double-buffer two copper lists and rewrite the palette MOVEs per frame in
-      the VBI/`update()` (Atari sweeps `$08D4–$08D9` over ~90 frames). Swap
-      `LOFlist` each frame like `MenuView`.
+- [ ] **Animated** attract colour cycle: double-buffer two copper lists and
+      rewrite the palette MOVEs per frame in the VBI/`update()` (Atari sweeps
+      `$08D4–$08D9` over ~90 frames), swapping `LOFlist` each frame.
 - [ ] Build, run, compare. **Commit:**
       `feat(amiga): copper colour splits reproduce DLI register schedule`.
 
@@ -495,19 +490,16 @@ generation is a separate later phase — Tier 3).
       or small blits into the dashboard bitmap, positioned via Copper sprite
       pointers. Static positions are fine for the attract.
 - [ ] `Sprite` + `CopperList::showSprite`; colours from §11.3 PCOLR (~$2A green).
-- [ ] **Reference pattern — `JRm-bS75`** drives all 8 hardware sprites together
-      (`GameCopperList::showSprites(s0..s7)`, grouped as a `BikeSprite` with
-      `setBikeSpritePosition`/`showCurrentBikeSprite`) and **WHDLoadMenu
-      `AmigaView`** swaps sprite pointers per frame (`setSprites`) for animation —
-      use these for laying the canopy posts + gauges into the copper list and any
-      per-frame sprite motion.
+- [ ] **Reference pattern:** drive all 8 hardware sprites together from the
+      copper list and swap their pointers per frame for animation — that is the
+      shape for laying the canopy posts + gauges in, and for any sprite motion.
 - [ ] Build, run, compare. **Commit:**
       `feat(amiga): cockpit frame + gauges as hardware sprites`.
 
 ### M5 — Audio: 6502-converted player → Paula
 **Goal:** run the game's **own** audio player (the transpiled POKEY-poking
 routines + the game's custom song/SFX data) and translate its POKEY register
-writes to Paula. No tracker, no MOD, no `ModulePlayer` — this *is* the real
+writes to Paula. No tracker, no MOD — this *is* the real
 player, so the attract jingle is bit-faithful by construction.
 
 - [ ] **Compile the RoF audio-core slice for m68k.** Bring `cpu`/`bus`/`mem[]`

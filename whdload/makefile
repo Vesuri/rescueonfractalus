@@ -2,9 +2,8 @@
 #
 # ⚠ This makefile runs ON THE AMIGA (or in an emulated Amiga), not on the host: the
 # slave is assembled with basm, and it INCLUDEs WHDLoad's own kick13.s, which is
-# written for BASM / ASM-One / Asm-Pro / PhxAss.  Same arrangement as the Stunt Car
-# Racer slave.  The host cross-build in ../amiga builds the game; this builds only
-# the slave.  See ../docs/whdload-slave.md.
+# written for BASM / ASM-One / Asm-Pro / PhxAss.  The host cross-build in ../amiga
+# builds the game; this builds only the slave.  See ../docs/whdload-slave.md.
 #
 # Assigns it expects:
 #   Includes:  the Amiga asm includes + WHDLoad's Include drawer (whdload.i,

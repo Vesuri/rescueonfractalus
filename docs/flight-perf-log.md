@@ -479,7 +479,7 @@ servers off the vblank the benchmark became **bit-reproducible**. Implementation
 job**. `make VERTB_SERVER=1` restores the old chain for bisecting.
 
 **OS interrupt audit (cd56e0c) — class exhausted.** EXTER: 0 firings. **BLIT: 6 per iteration, pure
-waste — masked** (the dA JoRMaS framework re-arms `INTF_BLIT` after every blit for a blit-done ISR
+waste — masked** (the vendored framework re-arms `INTF_BLIT` after every blit for a blit-done ISR
 this port doesn't have; every armed blit-done was a dispatch into graphics.library's handler).
 843 → 0. Multitasking: `DispCount +0` (the VERTB takeover already removed exec's scheduling
 heartbeat). COPER/AUD0-3/RBF/DSKSYN/TBE/DSKBLK: disabled in INTENAR. Leftovers total <0.1% on real

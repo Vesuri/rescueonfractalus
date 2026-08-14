@@ -6,8 +6,7 @@
                         integer types from the force-included framework/SASCCompat.h. */
 #endif
 
-/* Abstract platform base — mirrors the pattern from PETSCIIRobots-SDL/Platform.h.
-   Each supported target (SDL, Amiga) provides a concrete subclass.
+/* Abstract platform base.  Each supported target (SDL, Amiga) provides a concrete subclass.
    The global singleton pointer is used by the C bridge layer so that the
    C-compiled 6502 transliteration can reach hardware emulation. */
 
@@ -34,7 +33,7 @@ public:
 
     /* Register the VBI handler to be fired at framesPerSecond() rate.
        The audio callback advances a sample counter and invokes fn() when
-       the interval elapses — same mechanism as PETSCIIRobots-SDL.        */
+       the interval elapses.                                             */
     virtual void setInterrupt(void (*fn)(void)) = 0;
 
     virtual int  framesPerSecond() = 0;

@@ -300,7 +300,7 @@ Rect Polygon::boundingRect() const
 // Util::sqrt — integer square root. ASSEMBLER off: portable C++ (both compilers).
 // GCC + ASSEMBLER: reach the SAS/C register-arg asm (_sqrt__4UtilFUl in
 // UtilAssembler.s) via a register-marshalling wrapper — GCC has no register-param
-// syntax, so this is the bridge for any *Assembler.s routine (see GCC-PORT.md §4).
+// syntax, so this is the bridge pattern for any *Assembler.s routine.
 // SAS/C + ASSEMBLER: provided directly by UtilAssembler.s, so no body here.
 #if defined(ASSEMBLER) && !defined(__SASC)
 uint32_t Util::sqrt(uint32_t x)

@@ -23,20 +23,19 @@ also lets us write Paula registers directly without going through the audio devi
 
 Even in takeover mode we use exec's `AddIntServer(INTB_VERTB, …)`. This keeps
 exec's level-3 handler intact (CIA timers, exec task scheduling on the BLIT/VERTB
-chain), avoids the `installLevel3Interrupt` / VBR plumbing from
-`ProductionRunnerAssembler.s`, and is WHDLoad-safe. The overhead (~dozen 68000
-cycles per VBI to walk the server list) is negligible at 50 Hz.
+chain), avoids hand-installing a level-3 handler and the VBR plumbing that goes
+with it, and is WHDLoad-safe. The overhead (~dozen 68000 cycles per VBI to walk
+the server list) is negligible at 50 Hz.
 
 ## Two-layer split
 
-| Layer | Source | What we take |
-|-------|--------|--------------|
-| **Hardware** | `dA JoRMaS / Template / C++` | `AmigaHardware`, `Bitmap`, `CopperList`, `Sprite`, `Palette`, `Util` (hand-written m68k asm via vasm + GCC bridges; `Sprite`/`Palette` C++) |
-| **App skeleton** | PETSCII-Robots / WHDLoadMenuAnimated pattern | `main()` + `AddIntServer` VBI server + `while(!quit){poll;update;render;waitVBI}` state machine |
+| Layer | What it is |
+|-------|------------|
+| **Hardware** | the vendored framework classes `AmigaHardware`, `Bitmap`, `CopperList`, `Sprite`, `Palette`, `Util` (hand-written m68k asm via vasm + GCC bridges; `Sprite`/`Palette` are C++ everywhere) |
+| **App skeleton** | `main()` + `AddIntServer` VBI server + `while(!quit){poll;update;render;waitVBI}` state machine |
 
-The dA JoRMaS demo `Production`/`Part`/`Script`/`ProductionRunner` timeline and
-`ModulePlayer` / TrackerPacker replay are **not used**. The audio approach (M5)
-runs the 6502-converted POKEY player and translates writes to Paula directly.
+There is no demo-style timeline layer and no tracker/MOD replay: audio runs the
+6502-converted POKEY player and translates its writes to Paula directly.
 
 ## Build
 
