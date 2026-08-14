@@ -65,11 +65,14 @@ There are **three distinct screens**, not one:
 | 1 | Lucasfilm Games logo | `$6000` | mode-F bitmap `$60A3` | — | — | (boot) |
 | 2 | **Space-station cinematic** | `$1C35`→`$B800` | ~190 mode-F rows from **`$0600`** stride 40 | **mode 9** | `station_audio` (dual-oscillator fade) | **`station_init $195D`** (PC caught at `$1A18`) |
 | 3 | **TARGET attract** ("RESCUE ON FRACTALUS!", LEVEL 04, cockpit) | **`$3000`** | mode-6 title `$32B5` + ~86 mode-F `$2000` stride **46** + modeD `$350D` + mode4 `$332D` | **mode 10** | timer-IRQ music (`$54C0`/`$54EA`) | game/standby loop (PC `~$5A7E`) |
-| 3b | **Scoreboard** (⚠ not yet investigated) | TBD | TBD | TBD | TBD | black high-score/stats text screen after a long idle on Standby: title + ©1985 + STARTING/RANKING LEVEL + LAST/HIGH SCORE (all caps); likely via `attract_timer $00E2` |
+| 3b | **Title Screen** (analysed + ported; was called "Scoreboard" here) | **`$5A82`** | mode-7 "RESCUE ON FRACTALUS!" + mode-6 rows on black, screen RAM **`$365B`**, charset **`$0400`** | — | timer-IRQ music | `$53CC` (text pens cycle) |
 
-> **Note (2026-06-08, user):** scenes 1–3 are NOT a simple auto-cycle. Standby is
-> the resting screen; a long idle (no START) brings up the **Scoreboard (3b)** —
-> an unexamined black stats screen. The exact idle/attract cycle order is TBD.
+> **Note (2026-06-08, user; 3b resolved 2026-08-03):** scenes 1–3 are NOT a simple
+> auto-cycle. Standby is the resting screen; the **Title Screen (3b)** comes up on a
+> long idle (attract timeout), on **SELECT or joystick-up from the initial Standby**
+> (both faithful — the same dispatch branch), or after a crash. Its pen cycle is a
+> ~11-minute attract effect, so a static card in short testing is not a bug —
+> see the `title-pen-cycle` memory. Canonical vocabulary lives in `CLAUDE.md`.
 
 **What was wrong in this plan:**
 - The architecture decision + **M6b** run screen-2's functions (`station_audio`,
@@ -783,7 +786,7 @@ All from `music_playing.a8s` being mid-animation vs the correct standby state:
 - `mem[$02C0]=$00` — terrain COLPM0 (black dots)
 - `$32B7-$32CA` = Block1 — "RESCUE ON FRACTALUS!" title text
 
-### Open items
+### Open items (⚠ HISTORICAL — all five are closed; see the 2026-06-10 status below)
 
 1. **Standby animation**: `vbi_handler_2` ($4FF5) calls `startup_init` ($3FFA)
    and `vbi_deferred_dispatch` ($534D) each VBI — not called. Needed for cockpit
@@ -829,10 +832,19 @@ Done & committed:
   tables; stars setup + native scroll; planet zoom via `advance_object_positions`
   (`$6BA8`); per-byte incremental decodes for the `$1000`/`$2000` fields.
 
-Open (tracked in memory `rof-stars-planet-phase`):
-1. Tunnel-clear/palette **sync drift** near the very end of the tunnel exit.
-2. **Star sprites** — the dots are event-queue/PMG-driven (`$5614`/`$548D`/`$5667`);
-   that system isn't ported yet, so the stars beat is currently black space + planet.
-3. **Flight hand-off** (`$6594` RTS → gameplay) — the flight terrain renderer is not
-   yet on the Amiga, so the cinematic currently ends on the risen planet.
-4. **Scene 3b Scoreboard** — still not analysed.
+### Status of that session's open list — reviewed 2026-08-14
+
+⚠ **This list was tracked in a memory file (`rof-stars-planet-phase`) that no longer exists, and
+three of its four items shipped long ago.** Corrected here so the tracker stops lying:
+
+| item | status |
+|---|---|
+| 1. Tunnel-clear/palette **sync drift** at the very end of the tunnel exit | ⏳ **still unaccounted for** — the only survivor. Related and also open-by-choice: the stars→tunnel transition is whole-buffer on `$008D` where the Atari sweeps row-by-row via DL-LMS (`docs/boost-cinematic-plan.md` §1), so the handoff may snap rather than sweep |
+| 2. **Star sprites** (event-queue/PMG-driven, `$5614`/`$548D`/`$5667`) | ✅ **done** — `buildStarSprites()` in `RescueOnFractalus.cpp` builds them into the sprite ring; the stars beat is no longer black space |
+| 3. **Flight hand-off** (`$6594` RTS → gameplay) | ✅ **done** — the flight terrain renderer has been on the Amiga since; the cinematic hands off to gameplay |
+| 4. **Scene 3b** | ✅ **analysed and ported** 2026-08-03, and **renamed Title Screen** — see the corrected screen table at the top of this file and `CLAUDE.md`'s phase vocabulary |
+
+**Where live notes go now:** cross-session in-progress state lives in the auto-memory index
+(`MEMORY.md`), and this file is the per-area *plan/record*. ⚠ Do not re-add an "open" list here that
+points at a memory file — memory gets pruned, and the pointer rots into a false TODO exactly as this
+one did.

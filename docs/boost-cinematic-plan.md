@@ -399,9 +399,13 @@ $1000` before `decodeTunnelRect`; forward-tunnel path resets it to `$1000`.  Ver
 starfield.  (The `$3000` DL is NOT maintained in Amiga `mem[]` — it renders via copper — so the
 switch keys on the faithful game flag `$008D`, not the DL LMS bytes.)
 
-OPEN: the stars→tunnel transition on the Atari is a row-by-row DL-LMS rewrite (rows flip `$2000`→
-`$1000` as `$008E` counts); the Amiga switch is whole-buffer on `$008D`, so the transition may snap
-rather than sweep.  Acceptable for now; revisit if the handoff looks abrupt.
+**⏳ OPEN (deferred by choice, still true 2026-08-14):** the stars→tunnel transition on the Atari is
+a row-by-row DL-LMS rewrite (rows flip `$2000`→`$1000` as `$008E` counts); the Amiga switch is
+whole-buffer on `$008D`, so the transition may **snap rather than sweep**.  Acceptable for now;
+revisit if the handoff looks abrupt.  ⚠ Same area as the one surviving item in
+`docs/amiga-attract-plan.md`'s 2026-06-10 list (tunnel-exit clear/palette **sync drift**) — if
+either is ever picked up, look at both together, and get a user eyes-on verdict first: neither has
+been confirmed as visible.
 
 --------------------------------------------------------------------------------
 ## 2. ROOT-CAUSE MAP (broken Amiga frame → conversion bug)

@@ -157,7 +157,10 @@ restructure is **complementary** to that, not a substitute.
 
 ---
 
-## 6. Open items to resolve before coding
+## 6. Open items to resolve before coding (⚠ HISTORICAL — the plan shipped; see the header)
+
+> All four were answered by the renderer that actually shipped (`renderFlightDirect` +
+> `blitterFillUp`/`blitterClear`). Kept as the original design intent — **not a TODO.**
 
 1. **Full `$260E` clear + bitmap clear owner** — the current solid sky/terrain
    fill must come from an upstream pass (not in `terrain_draw_frame`). Locate it;

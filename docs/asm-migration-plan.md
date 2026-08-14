@@ -12,10 +12,16 @@ Two goals, in order:
 > **There is NO `NO_ASSEMBLER` constraint.** It was an early simplification, now being removed.
 > The shipping build should use hand-written asm for hot paths.
 
+> **⛔⛔ THE FLIGHT-PERF ROSTER IS CLOSED (user decision, 2026-08-14).** Every "still on the table" /
+> "priced, not done" item below is a **historical record, not a TODO** — do not start flight-perf
+> work and do not re-open a closed candidate on the strength of the unmet 25 FPS target (it stands at
+> 24.84 and stays there). Reasoning: `docs/flight-perf-log.md` §2.0 + §25.
+
 > **Companion docs:** `docs/flight-perf-log.md` holds the flight-perf investigation archive — the
 > closed candidates with their numbers (§2), the 68000 codegen lessons harvested from these twins
-> (§3), and the retracted conclusions (§5). Current numbers and the ranked TODO are in the
-> `flight-pc-profiler` memory; measurement rules in `flight-measurement-rules`.
+> (§3), and the retracted conclusions (§5). The `flight-pc-profiler` memory is now a **reference**
+> (shipping shares + which-harness-answers-what), **not** a ranked TODO; measurement rules in
+> `flight-measurement-rules`.
 
 ## Current asm roster (moved verbatim from CLAUDE.md 2026-08-10)
 
@@ -768,7 +774,7 @@ Making the two prologue `movem`s conditional without the epilogue popped 9 longs
 slow. Confirming it against a **stashed baseline build** is what separated "my change" from
 "this harness config never worked" in one run.
 
-### Still on the table here (measured, not taken)
+### Measured, not taken (⛔ CLOSED with the roster 2026-08-14 — a record, not a queue)
 - **`$95`/`$F4`/`$EA` are a third mem[] handoff between these same two asm twins.** `sd_doras`
   writes them (24+24+16) purely for `terrain_column_rasterize_span`'s prologue to read back
   (~52). Passing `a1` and letting the rasterizer read the SubPt slot itself is worth
