@@ -10,11 +10,9 @@
 // platform_hw_write -> Paula.  They are therefore Amiga-only and NOT run through
 // `make validate`.
 //
-// Consolidated 2026-06-17 from four single-purpose files (history under those
-// names): SfxPlayer.cpp, station_native.cpp, NativeHandlers.cpp, flight_native.cpp.
-// Kept as one file so the Amiga implementations are easy to find — the matching
-// validated twins likewise live in one file (src/gen/rof_native.c).  The original
-// per-file banner comments are preserved as the section headers below.
+// One file so the Amiga implementations are easy to find, mirroring the validated
+// twins in src/gen/rof_native.c.  The section headers below split it by subsystem:
+// SFX engine, Station/attract, standby VBI + cinematic drivers, in-game flight.
 
 #include "PlatformAmiga.h"          // PlatformAmiga::flightShotTick / noiseTick + uint types
 #include "../../gen/mem.h"                     // MEM_<name> named Atari mem[] offsets
@@ -57,7 +55,7 @@ extern "C" void flush_paula(void);
 // it needs is either transpiled in rof_gen.c or a faithful twin in rof_manual.c
 // (station_anim_frame, station_sub_1EB4, station_sub_1F48, screen_page_swap), so
 // this file's old station_*_native copies were unreferenced duplicates.  Deleted
-// 2026-08-13 (build-order step 6) rather than revived: station_setup() in
+// (build-order step 6) rather than revived: station_setup() in
 // particular carried a hack that force-wrote $2313/$231B to all-$88, which was
 // only correct for the old flat rof_mem.bin snapshot — in the staged XEX load
 // those tables already hold the real frame pointers ($1FE3, $2049, ... $22AD),
@@ -121,7 +119,7 @@ extern "C" void vbi_attract_timer_native(void)
 // when mem[$0642] is 1 or 2 and mem[$004B] passes the BIT test; otherwise $1E/$1D.
 #ifdef ROF_FLIGHT_PROBE
 // How many of the five 2×2 digit blocks actually change per g_ckDigits fire, and how often the
-// $33DF/$33E0 stride pair alone raises the flag.  Measured 2026-08-09: exactly ONE block per fire,
+// $33DF/$33E0 stride pair alone raises the flag.  Measured: exactly ONE block per fire,
 // zero stride flips — which is why render() now decodes per block instead of all five.
 extern "C" { volatile unsigned long g_ckWdigCalls = 0, g_ckStrideFlips = 0, g_ckSiNative = 0; }
 #endif
@@ -319,12 +317,10 @@ extern "C" void launch_anim_dispatch_native(void)
 // draw_symmetric_span_loop $6642, draw_frame_guide_columns $6620, init_row_coords_9c
 // $6DDF) and the one-shot ring drawer (draw_frame_pattern_seq $65FB) all live as
 // faithful shared native twins in src/gen/rof_native.c (declared in rof_decl.h).
-// They are pure mem[] 6502 logic — not Amiga-specific — so the duplicate copies
-// that used to live here were removed.  The Amiga standby builds the rings once via
-// rof_native.c's boot_standby_launch_driver (the g_tunnelPrebuilt path); draw_ring_frame_step
-// (above) drives the per-frame ring-clear and calls draw_symmetric_span_loop from
-// rof_native.c.  The former Amiga-only entry points draw_tunnel_rings_native and
-// tunnel_ring_arm_native were dead (no callers) and are gone with them.
+// They are pure mem[] 6502 logic — not Amiga-specific — so they belong there, not here.
+// The Amiga standby builds the rings once via rof_native.c's boot_standby_launch_driver
+// (the g_tunnelPrebuilt path); draw_ring_frame_step (above) drives the per-frame ring-clear
+// and calls draw_symmetric_span_loop from rof_native.c.
 
 // standby_vbi_native: the faithful per-frame body of vbi_handler_standby ($52D7),
 // run from the real INTB_VERTB interrupt via game_vbi_isr() during the Standby
@@ -367,12 +363,12 @@ extern "C" uint8_t platform_hw_read(uint16_t addr);  // $D01F/$D010/$D300 live i
 // event_sequence_dispatcher ($4644) — out of flight a command key does nothing but reset the
 // attract timeout.
 //
-// This port previously omitted the window on the reasoning that "X is loaded #$FF and never
-// becomes $80".  That is only true if no IRQ can fire in the window, which is exactly backwards:
-// the window exists to let one fire.  The consequence was that a command key pressed OUTSIDE
-// flight stayed latched in s_pendingFlightKey across the whole launch cinematic and was consumed
-// by the FIRST flight VBI $519C window instead — so pressing ESC on the Standby screen
-// dispatched the freeze takeover ($0043) the instant flight began, parking the main loop in its
+// ⚠ The window must be here even though "X is loaded #$FF and never becomes $80" reads like it
+// is dead: that is only true if no IRQ can fire inside it, and the window exists precisely to let
+// one fire.  Omit it and a command key pressed OUTSIDE flight stays latched in s_pendingFlightKey
+// across the whole launch cinematic, to be consumed by the FIRST flight VBI $519C window instead
+// — pressing ESC on the Standby screen then dispatches the freeze takeover ($0043) the instant
+// flight begins, parking the main loop in its
 // `while (event_active_flag)` spin: measured as VVBLKI=$4FF5 with $0043=01 and the painted-frame
 // counter frozen (amiga/esc_standby.gdb).  Consuming the key here is what the Atari does.
 extern "C" uint8_t rof_attract_poll_key(void);   // PlatformAmiga.cpp — leaves a pending $80
@@ -417,8 +413,7 @@ static void vbi_shared_tail(void)
     // $5359: the note-stream tune player (level-start, game-over/results jingles), gated on
     // the music-active flag $0655 (set by music_init_state $7238) so the game-over tune plays.
     if (mem[0x0655]) music_player_tick();
-    // $5361: SFX voice engine + $0719 ring drain.  UNCONDITIONAL on the Atari (2026-07-24:
-    // made faithful; the old `if (mem[$060B])` Amiga gate was removed).
+    // $5361: SFX voice engine + $0719 ring drain.  UNCONDITIONAL on the Atari — no $060B gate.
     sfx_voice_envelope_tick();
 }
 
@@ -601,13 +596,11 @@ extern "C" { volatile unsigned long g_vbiZpFirings = 0; }
 #endif
 extern "C" void flight_vbi_native(void)
 {
-    // ⚠ ALL FOUR beam_line() reads below are PROFILING, and they are gated — they used to be
-    // unconditional, so the SHIPPING binary paid 8 chip-register reads ($DFF004/$DFF006) plus
-    // two volatile 32-bit accumulator updates on every one of the 50 firings a second, for two
-    // globals nothing outside the gdb probe scripts ever reads.  They cannot be optimised away
-    // (volatile hardware reads), so only an #ifdef removes them.  ~0.2% of wall clock — small,
-    // but it is instrumentation, and `make FPSCOUNT=1` claims to be "an otherwise shipping
-    // binary" (see the Makefile), which was not quite true while these were unconditional.
+    // ⚠ ALL FOUR beam_line() reads below are PROFILING and MUST stay gated.  Unconditional, the
+    // shipping binary pays 8 chip-register reads ($DFF004/$DFF006) plus two volatile 32-bit
+    // accumulator updates on every one of the 50 firings a second, for two globals only the gdb
+    // probe scripts read — ~0.2% of wall clock, and they cannot be optimised away (volatile
+    // hardware reads), so only an #ifdef removes them.
 #ifdef ROF_FLIGHT_PROBE
     unsigned short a = beam_line();      // sub-frame profiler timer (FULL probe-ISR span)
     // ZP write-set audit (rasterizer-alias safety, see CLAUDE.md): snapshot ZP before the
@@ -686,7 +679,7 @@ extern "C" void vbi_handler_station(void);
 //                       noise refill left the ISR (see PlatformAmiga::renderFrame)
 // Per-firing scanlines = lines/calls; time = scanlines * 63.56 us; PAL frame = 313 lines.
 extern "C" { volatile unsigned long g_vbiSpriteLines = 0, g_vbiAudioLines = 0, g_vbiFullCalls = 0; }
-// Split of the audio bracket (2026-08-12): flush_paula alone vs PlatformAmiga::noiseTick alone.
+// Split of the audio bracket: flush_paula alone vs PlatformAmiga::noiseTick alone.
 // The bracket read 8.0 t/firing on the quiet arm = 12% of the WHOLE flight VBI, and the two halves
 // were completely different animals — flush_paula can busy-wait 7..110 rasterlines on a waveform
 // restart, noiseTick runs a 16-step 32-bit xorshift.  That split is why noiseTick was moved OUT of

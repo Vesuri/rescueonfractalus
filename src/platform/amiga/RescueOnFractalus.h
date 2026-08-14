@@ -529,7 +529,7 @@ private:
     // They are pure CPU on sprite buffers and touch neither the terrain bitmap nor the dot side
     // buffer, so they have no dependency on any of the terrain blits — yet they used to run in
     // perFrameWork(), i.e. BEFORE renderFlightDirect kicked those blits, leaving the CPU to stall
-    // on them afterwards (measured, blit_shape.gdb: 12 ticks/painted frame on the plane1 clear +
+    // on them afterwards (measured: 12 ticks/painted frame on the plane1 clear +
     // 17 on the sky fill = ~1.2% of all flight wall clock).  Now perFrameWork only marks them
     // owed and renderFlightDirect runs them in the two blits' shadows.
     // ⚠ renderFlightDirect has three early-return paths (no bitmaps / the rescue-figure pause / a

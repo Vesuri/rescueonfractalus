@@ -23,18 +23,18 @@
 ; The 5 SubPt stacks + all ZP live in mem[] (main-RAM scratch the flight VBI never writes),
 ; addressed absolutely (mem+$xx) or via a1; a signed 16-bit displacement covers each base.
 ;
-; 2026-08-08: this twin's cost is ~50% per-call MARSHALLING (prologue, span load, entry
+; this twin's cost is ~50% per-call MARSHALLING (prologue, span load, entry
 ; guard, flush, epilogue) for a body that averages 1.21 inner iterations and 0.55
-; rasterize calls (amiga/ras_shape.gdb, quiet baseline, 16342 calls / 239 iterations =
+; rasterize calls (quiet baseline, 16342 calls / 239 iterations =
 ; 68.4 calls per flight iteration).  Five dead or over-priced things removed — see the
 ; comments at FRM, sd_phase3, sd_inner, sd_pop and sd_out.
-; 2026-08-11 re-measure (332 iterations, quiet best-case arm): 68.1 calls/iteration, 1.23
+; re-measure (332 iterations, quiet best-case arm): 68.1 calls/iteration, 1.23
 ; inner iterations, 0.397 midpoints and 0.61 rasterize calls a call — the same shape.  Two
 ; things came out of what was left: the three `bsr` helpers became the SUBMID / PUSHMID /
 ; LOADSPAN macros below, and the cascade's far.hgt classification moved onto the HIGH byte
 ; (see sd_inner).  Together ~4.3k cycles an iteration.
 ;
-; ⛔ DEADZP — CLOSED 2026-08-09, do NOT re-open without new evidence.  The exit residue
+; ⛔ DEADZP — CLOSED, do NOT re-open without new evidence.  The exit residue
 ; (sd_out's $82-$86 span flush + $8D-$91 mid flush + $9F, and the $B5/$B6 writes at the entry
 ; guard, both width tests and submid's roughness tail) is ~200 of the ~1000 cycles a call,
 ; ~2% of the quiet frame, and it LOOKS like pure 6502 bookkeeping no Amiga code consumes.
@@ -60,7 +60,7 @@
 ; disassembly too.  (2) "6502 scratch nothing reads" is a hypothesis about a HEAVILY REUSED
 ; address, and these cells are reused as persistent pointers/toggles by other scenes.
 ;
-; ⭐ DEFER (ROF_SUBDIV_DEFER_RESIDUE, 2026-08-09) — what DEADZP could not do, done the other way.
+; ⭐ DEFER (ROF_SUBDIV_DEFER_RESIDUE) — what DEADZP could not do, done the other way.
 ; DEADZP is about DROPPING the residue and stays closed.  But the nine live consumers it found
 ; are all OUTSIDE the terrain draw loop, so the residue does not have to be published on every
 ; call: sd_out and the object entry's guard bail park the span (and, when one ran, the midpoint)
@@ -92,7 +92,7 @@
 ; each call (see subv_snapshot / subv_capture_and_restore), so all sixteen ZP bytes are still
 ; compared.  `make SUBDIV_EAGER=1` restores the per-call flush for an A/B.
 ;
-; ⭐ 2026-08-12 — the object entry's GUARD, 38 cycles a call (log §24.3).  Two things, both found
+; ⭐ — the object entry's GUARD, 38 cycles a call (log §24.3).  Two things, both found
 ; while pricing the caller's five-byte SubPt-slot-0 seed (see SEED below):
 ;   (a) under ROF_SUBDIV_OBJ1ARG `depth` is the literal 0, so a1 IS mem — yet the guard addressed
 ;       mem+SDCOL_HI / mem+$B5 / mem+SDCOL_LO ABSOLUTELY.  abs.l is 16 cycles against (d16,An)'s
@@ -109,7 +109,7 @@
 ;   span.col < 0).  subdiv_verify: 0 mismatch / 5147 calls, and 0 / 5136 on a pinned re-run.
 ;
 ; ⭐ SEED — the caller's five-byte SubPt slot 0 write, now the callee's job
-; (ROF_SUBDIV_OBJ_SEED0, 2026-08-12, log §24).  terrain_draw_objects used to copy obj1's projected
+; (ROF_SUBDIV_OBJ_SEED0, log §24).  terrain_draw_objects used to copy obj1's projected
 ; vector into slot 0 on EVERY visible pair — 5 memory-to-memory MOVE.B at 20 cycles, 68.1 pairs an
 ; iteration = 1.2% of wall — purely for this file to read back.
 ; ⚠ It looks like the §10.1 span handoff one level up.  It is NOT, and that distinction is the
@@ -179,7 +179,7 @@ OFRAC		equ	$23B5
 ; leaf, and called from at most two places, so the `bsr`+`rts` pair (18 + 16 = 34 cycles) was a
 ; third of what some of them did.  They are MACROS now, expanded at their call sites — one
 ; source copy each, so there is still exactly one place to change the arithmetic.
-; Shape (amiga/ras_shape.gdb, 2026-08-11, quiet best-case arm, 332 iterations): 27.0 SUBMID and
+; Shape (quiet best-case arm, 332 iterations): 27.0 SUBMID and
 ; 14.4 PUSHMID expansions an iteration (0.397 midpoints/call over 68.1 calls/it, and only 53% of
 ; midpoints are pushed — the rest are adopted as the near endpoint in phase 2), plus 8.1 for the
 ; pop's span load ⇒ 49.5 x 34 = ~1.7k cycles an iteration of pure call overhead removed.
@@ -445,7 +445,7 @@ sd_inner_hgt:				; entry with d0.w = far.col ALREADY loaded, high byte 0
 	; > $FF tests disappear with it, leaving one compare.  The assembled 16-bit value is
 	; needed by exactly one consumer, sd_wtFarH's `far.hgt - q`, reached only when far.hgt is
 	; negative — so that assembly moves into the cold block below.
-	; Shape (amiga/ras_shape.gdb, 2026-08-11, quiet best-case arm, 23261 leaf cascades):
+	; Shape (quiet best-case arm, 23261 leaf cascades):
 	; far.hgt has hi == 0 on 21328 = 91.7%, is negative on 1933 = 8.3%, and is > $FF positive
 	; on ZERO — that arm survives for byte-identity, not for the profile.  Of the 8.3%, 90%
 	; (spanLOW) need only the SIGN and never assemble the value at all.
@@ -807,7 +807,7 @@ sd0_dosub:
 ;   uint8_t terrain_subdivide_column_obj(uint8_t startDepth, uint8_t rasterEntryDepth,
 ;                                        uint8_t obj0)                 [otherwise]
 ;
-; ⚠ The 1-argument form is the SHIPPING ABI (2026-08-09).  Of the three arguments this entry
+; ⚠ The 1-argument form is the SHIPPING ABI.  Of the three arguments this entry
 ; used to take, two were never live: `rasterEntryDepth` is dead the moment the rasterizer's
 ; register ABI exists (terrain_column_rasterize_core_c assigns it to `depth` and then does
 ; `depth = 0` before any read — and 5172 differential calls agree), and `startDepth` is the
@@ -831,7 +831,7 @@ sd0_dosub:
 ;
 ; a0 is free here (the m68k C ABI's scratch set is d0/d1/a0/a1) and is dead after the guard.
 ;
-; ⭐ ROF_SUBDIV_OBJ_SEED0 (2026-08-12, log §24.2) adds a SECOND argument, obj1 — the companion
+; ⭐ ROF_SUBDIV_OBJ_SEED0 (log §24.2) adds a SECOND argument, obj1 — the companion
 ; endpoint, i.e. whose projected vector the caller used to copy into SubPt slot 0.  a0 is
 ; repointed at `mem + obj1` once the span is loaded and stays there for the whole call, which is
 ; what lets the depth-0 arm read the far endpoint without slot 0 existing yet.  See SEED in the

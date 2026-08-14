@@ -13,7 +13,7 @@
 ; (PC-relative 16-bit).  Under the GCC/Elf2Hunk build the twins and the blitter primitives
 ; land in different input sections, so a `bsr` leaves an R_68K_PC16 relocation in the ELF and
 ; Elf2Hunk rejects it ("Unsupported relocation type R_68K_PC16") — which is why these Bitmap
-; methods were unusable from the app until 2026-07-26.  `jsr` emits R_68K_32, which Elf2Hunk
+; methods were unusable from the app.  `jsr` emits R_68K_32, which Elf2Hunk
 ; supports.  Do NOT "optimise" these back to bsr.
 
 ; Offsets to various C++ structures. These MUST match the C++ structures!

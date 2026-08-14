@@ -26,7 +26,7 @@
 ;   d3 = the shared depth divisor, loaded ONCE (see below)
 ;   d6 = neg (per-axis)  d5 = count (per-axis)  d0/d1/d2 = scratch
 ;
-; 2026-08-08 shave (~140 cycles/call, ~10% of this function; counts are 68000 cycles):
+; shave (~140 cycles/call, ~10% of this function; counts are 68000 cycles):
 ;   - THE DEPTH DIVISOR IS THE SAME FOR BOTH AXES and neither axis writes it (axis 1 stores
 ;     only to $2400/$242D), yet PAXIS re-assembled it from its two bytes each time: moveq 4
 ;     + 2 * move.b (d16,a0) 12 + lsl.w #8 22 = 50.  Now loaded ONCE into d3, and each axis

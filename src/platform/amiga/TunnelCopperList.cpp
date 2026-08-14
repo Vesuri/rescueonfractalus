@@ -136,9 +136,9 @@ void TunnelCopperList::buildLayout(const Bitmap& title, const Bitmap& tunnel, co
     // MUST be set explicitly: the boost reverse cinematic reaches this list straight from the
     // FlightCopperList, whose dashboard band leaves BPLCON2 at PFxP=0 (ALL sprites behind the
     // playfield, for the HUD gauges) and never restores it — so without this the rings/starfield
-    // would draw over the pillars.  It was PFxP=4 (all sprites in front) until 2026-08-11, which
-    // bought the pillars nothing they don't already get at 1 and put the energy gauge on top of the
-    // dashboard for the whole reverse cinematic (user-reported).  ⚠ This value is also what the
+    // would draw over the pillars.  ⚠ Do NOT raise it to PFxP=4 (all sprites in front): that buys
+    // the pillars nothing they don't already get at 1 and puts the energy gauge on top of the
+    // dashboard for the whole reverse cinematic.  ⚠ This value is also what the
     // NEXT scene inherits — BPLCON2 persists across copper lists; see setSpritePriority().
     // (CopperList::setPlayfield sets only bitplane geometry, not BPLCON2.)
     d[INDEX_BPLCON2] = copperMove(bplcon2, (uint16_t)((1u << 3) | 1u));

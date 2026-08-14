@@ -53,8 +53,8 @@
  * bytes where `move.b $25(An),d3` is 12 / 4) because its m68k cost model prices the two modes
  * alike.  Laundering `mem` through an empty asm emits no instruction but makes GCC lose the
  * knowledge that the pointer IS `mem`, so it must keep it in a callee-saved address register
- * and every access folds to (d16,An).  First proven on flight_control_integrate (038786d,
- * 4678 -> 4102 bytes, integ -5.7%); see the long note there for the full argument, including
+ * and every access folds to (d16,An).  First proven on flight_control_integrate (4678 -> 4102
+ * bytes, integ -5.7%); see the long note there for the full argument, including
  * why `&mem` escaping into the asm is what keeps the alias oracle honest for helpers GCC
  * inlines into the body.
  *
@@ -172,39 +172,6 @@ extern unsigned short rof_beam_line(void);
 #define TDSPAN(stmt, acc) do { stmt; } while (0)
 #endif
 
-/* ── SFX SHAPE PROBE (`make COMBAT=1 PROBES=1 SFX_SHAPE=1` + amiga/sfx_shape.gdb) ────────────
- * The combat re-attribution put ~47% of the flight VBI in sfx_voice_envelope_tick, with the
- * event-ring drain alone at ~24 t/firing = ~8% of ALL wall clock (the ISR runs at a fixed 50 Hz,
- * so a slower frame does not dilute it).  The drain does 3.39 entries/firing at ~7.2 t (~3200
- * cycles) each, and it is NOT the Paula recompute (update_paula_channel is only 5.8 t/firing).
- * This splits the two drain branches and counts the mixer scans they drive, so the fix is chosen
- * from the shape rather than guessed.
- *
- * ⚠ Deliberately NOT FP_TIME: that bracket costs ~2.2 t/call (2 rof_subclock + 2 volatile reads),
- * which on a 24 t/firing bucket sampled 3.4x per firing would be ~30% distortion — the exact
- * mistake that made the object plotter look 5x its real size.  These use a single beam-line read
- * per side (SX_SPAN, ~10x cheaper) and no ISR subtraction, which is right because we are already
- * INSIDE the ISR.  Counts are plain increments and cost nothing measurable. */
-#define SX_CNT(c) ((void)0)
-#define SX_SPAN(stmt, acc) do { stmt; } while (0)
-#define SX_LEAF(stmt, acc) do { stmt; } while (0)
-#define SX_NOP() ((void)0)
-
-/* INTEG SHAPE PROBE (`make COMBAT=1 PROBES=1 INTEG_SHAPE=1`; read via amiga/integ_shape.gdb).
- * flight_control_integrate is 15.3 t/firing = 17% of the flight VBI = ~4.8% of ALL wall clock,
- * and nothing has ever measured INSIDE it.  This laps its 13 straight-line regions off ONE
- * running beam stamp — a single rof_beam_line() per boundary rather than an SX_SPAN's two —
- * so the per-bucket floor is one read, sampled as the empty lap g_inNop.  Subtract that floor
- * per bucket and read the rest as SHARES (the lap points block GCC reordering, so the probed
- * total exceeds the unprobed 15.3).  Counters say which branches the firing took. */
-#define IN_DECL()    ((void)0)
-#define IN_START()   ((void)0)
-#define IN_LAP(acc)  ((void)0)
-#define IN_CNT(c)    ((void)0)
-#define O2_DECL()    ((void)0)
-#define O2_START(c)  ((void)0)
-#define O2_LAP(acc)  ((void)0)
-
 /* ===========================================================================================
  * COMBAT-LOAD BENCHMARK  (`make COMBAT=1`, -DROF_COMBAT_LOAD; Amiga profiling aid, NOT faithful)
  *
@@ -218,7 +185,7 @@ extern unsigned short rof_beam_line(void);
  * At level 4 those are $10 / $50 / $14 = only 6.2% of peaks armed, a saucer spawn OPPORTUNITY
  * every 80 terrain-draw passes (half of them thrown away by a RANDOM gate, more by the
  * must-be-above-terrain gate), and enemy fire paced 10x slower than at level 40.  SPARSE, not
- * absent — which is why `make AUTO_FIRE=1` alone measured IDENTICAL FPS in 2026-07-31: in a short
+ * absent — which is why `make AUTO_FIRE=1` alone measured IDENTICAL FPS: in a short
  * window the shot statistically hit nothing.
  *
  * WHAT THIS DOES: forces level_stage to ROF_COMBAT_LEVEL before the launch, so the ENTIRE combat
@@ -259,7 +226,7 @@ extern volatile unsigned short g_clObjFrame;   /* ground objects drawn since the
  *
  * Two reasons the pre-existing g_fSetup/g_fClear/g_fDraw could never answer this:
  *  1. rof_subclock() raced the VERTB ISR and could run BACKWARDS -> unsigned underflow poisoned
- *     whole accumulators.  Fixed 2026-08-06 in PlatformAmiga.cpp (retry until the vbi count
+ *     whole accumulators.  Fixed in PlatformAmiga.cpp (retry until the vbi count
  *     agrees either side of the beam read).
  *  2. **They only ever bracketed PASS 1.**  The flight loop renders the terrain field TWICE per
  *     iteration and pass 2 (`terrain_frame_setup(); clear_terrain_column_core(0x03);
@@ -288,16 +255,15 @@ extern volatile unsigned char g_clPhState;      /* latched once per iteration */
 /* Latch the state for the whole iteration, so every phase of one frame lands in one bucket, AND
  * accumulate the iteration's RAW wall time (no ISR subtraction) so the budget can be closed:
  *     wall = ISR + sum(phases) + unbracketed
- * Without that total there is no way to tell a complete decomposition from a partial one — and
- * the first run of this probe covered under half the iteration, which would have been invisible.
+ * Without that total there is no way to tell a complete decomposition from a partial one.
  *
  * ⚠ The explosion classifier is STICKY-over-the-previous-iteration, not "state at this instant".
  * A flight iteration is ~0.5-1 s of emulated time at these frame rates, so `$0041 != 0` sampled
- * once at the top says almost nothing about the iteration as a whole — the first version of this
- * probe latched instantaneously and duly reported a ~0 explosion effect, contradicting the
- * per-vblank split. The VBI sets g_clExplSeen whenever an explosion/bolt is live; this consumes
- * it. Still imperfect (it lags by one iteration) — treat the split as indicative and prefer the
- * per-phase totals, which need no classifier at all. */
+ * once at the top says almost nothing about the iteration as a whole — an instantaneous latch
+ * reports a ~0 explosion effect, contradicting the per-vblank split.  The VBI sets g_clExplSeen
+ * whenever an explosion/bolt is live; this consumes it.  Still imperfect (it lags by one
+ * iteration) — treat the split as indicative and prefer the per-phase totals, which need no
+ * classifier at all. */
 #define CL_PH_ITER() do { \
     unsigned long _now = rof_subclock(); \
     if (g_clIterPrev) g_clIterWall[g_clPhState] += _now - g_clIterPrev; \
@@ -345,41 +311,22 @@ extern volatile unsigned long g_clSubCalls;
     stmt; unsigned long _d = rof_subclock() - _p, _id = g_isrBeamLines - _i; \
     g_clDrawSub[2] += (_d > _id) ? (_d - _id) : 0; ++g_clAgeScans; } while (0)
 
-/* ── THE CALIBRATION LOAD: how a phase bracket lies about combat ─────────────────────────────
- * WHY IT EXISTS.  Every phase of a combat iteration measures slower than the quiet control,
- * including ones whose work cannot vary with combat — terrain_frame_setup's fixed 45-cell loop
- * read +12%, ds_frame +18%.  Nothing in the harness could say whether that was a slower MACHINE
- * (DMA stolen by sprites/audio/blitter is indistinguishable from computation inside a bracket) or
- * the harness itself.  So: run a load whose cost CANNOT vary — fixed trip count, data-independent
- * — once per flight iteration, and measure it five different ways.
- *
- * WHAT IT FOUND (2026-08-07, COMBAT vs COMBAT_QUIET at level 40, FIXED_RNG, five paired runs):
- * the machine is NOT slower in combat, and the ordinary phase bracket says it is by ~15%.
- *
- *   row                                        combat   quiet   ratio
- *   MEM      1024 reads, ONE bracket            272.7   236.2   1.155   <- the lie
- *   MEM      the same 1024 reads, 8 ISR-FREE
- *            sub-windows (no subtraction)       226     224     1.010   <- the truth
- *   MEM x128 beam-locked to scanline 200         18.08   18.05  1.002   <- and again
- *   MEM      1024 reads, AUD+SPRITE DMA masked  269.1   237.8   1.132   (so not audio/sprite DMA)
- *   CPU      1024-step LFSR, one bracket         96.1    93.4   1.029
- *
- * ⚠ THE LESSON, and it applies to every bracket in this tree: `elapsed - g_isrBeamLines` is not a
- * safe estimator when the two builds have DIFFERENT ISR rates.  g_isrBeamLines is credited at ISR
- * EXIT, so an ISR straddling the bracket's start is over-subtracted and one straddling its end is
- * under-subtracted.  Those cancel only if the two ends are independent — and for a window near
- * the 313 t ISR period they are not, because start and end land at nearly the same phase of the
- * ISR cycle.  Combat's window sat at 87% of the period and the control's at 75%, so the bias did
- * not cancel between the builds either.  Short ISR-FREE windows need no subtraction and agree
- * with each other; trust those.
- *
- * The loads:
- *   MEM = 1024 scattered volatile byte reads out of mem[] — the traffic the terrain code is built
+/* ── THE CALIBRATION LOAD (`make CALIBRATE=1` + amiga/calibrate.gdb) ─────────────────────────
+ * A load whose cost CANNOT vary — fixed trip count, data-independent — run once per flight
+ * iteration and measured five ways, so a phase bracket can be checked against a known constant.
+ *   MEM = 1024 scattered volatile byte reads out of mem[], the traffic the terrain code is built
  *         from, so it feels chip-RAM contention the same way.
- *   CPU = a 1024-step 16-bit LFSR in registers (no 32-bit multiply — see m68k_math.h).  Still
- *         fetches its instructions, so it is not contention-free, just far less memory-hungry.
- * ⚠ This runs OUTSIDE the phase brackets, so it lands in the budget check's `unbracketed` line —
- * `covered` will read below 100% on a CALIBRATE build.  That is expected, not a broken budget. */
+ *   CPU = a 1024-step 16-bit LFSR in registers (no 32-bit multiply — see m68k_math.h).
+ *
+ * ⚠ THE LESSON IT PRODUCED, and it applies to every bracket in this tree: `elapsed -
+ * g_isrBeamLines` is NOT a safe estimator across builds with different ISR rates — it exaggerated
+ * combat by ~15% while two subtraction-free estimators put the machine at 1.00.  g_isrBeamLines is
+ * credited at ISR EXIT, so an ISR straddling the bracket's start is over-subtracted and one
+ * straddling its end under-subtracted, and the two cancel only if the ends are independent — which
+ * they are not for a window near the 313 t ISR period.  Trust short ISR-FREE windows, which need no
+ * subtraction.  Full table + reasoning: docs/flight-perf-log.md §8.3.
+ * ⚠ This runs OUTSIDE the phase brackets, so it lands in the budget check's `unbracketed` line and
+ * `covered` reads below 100% on a CALIBRATE build.  Expected, not a broken budget. */
 extern volatile unsigned long g_clCalMem, g_clCalCpu, g_clCalN, g_clCalSink, g_clCalNoDma,
     g_clCalIsrFree, g_clCalIsrFreeN, g_clCalLocked, g_clCalLockedN,
     g_clCalSplit, g_clCalSplitN;
@@ -455,11 +402,7 @@ extern unsigned short rof_beam_line(void);
 #endif
 
 /* ── OBJECT-PLOTTER SHAPE PROBE (`make COMBAT=1 PROBES=1 OBJ_SHAPE=1`) ───────────────────────
- * The combat attribution said DRAW carries 69% of combat's extra frame time and that ~25
- * occupied cells enter terrain_plot_object per iteration while only ONE reaches
- * raster_scaled_object, and concluded the cost must be the per-visit plotter overhead.  That
- * step was an INFERENCE from a count ("25 x ~50 ticks ~= the +1161 t/it delta") — and 50 ticks
- * is ~22000 68000 cycles, which a visit that bails on a table compare cannot spend.  So measure:
+ * Measures the per-object chain instead of inferring it from a visit count:
  *   OP_TIME   brackets the whole per-object chain at its two call sites in the draw-order loop.
  *   RS_SHAPE  is flushed once per scaled blit with that call's own ISR-corrected tick span,
  *             BUCKETED BY CELL COUNT — the blit's cost is quadratic in 1/step (0x2000/step
@@ -518,12 +461,10 @@ extern volatile unsigned long g_rsBktCalls[5], g_rsBktCells[5], g_rsBktTicks[5];
 #define CL_PH_FRAME 5
 #endif
 
-/* Rasterizer SHAPE probe (`make RASTER_C=1 RAS_SHAPE=1 PROBES=1`, read via
- * amiga/ras_shape.gdb).  Answers "where does terrain_column_rasterize_core's time actually
- * go" structurally rather than by PC sampling: the phase-2 entry-span and far-bisect-span
- * histograms plus the leaf / phase-1 mix.  This is what sized the 2026-08-05 phase-2
- * restructure (span 3 = 31.2% and span 4 = 16.5% of all far-bisects -> worth straight-lining;
- * 36.8% of DRAWs actually plot -> the hidden-surface reject path is the common one).
+/* Rasterizer SHAPE counters (the probe that read them is retired — docs/perf-budget.md).
+ * They sized the phase-2 restructure: span 3 = 31.2% and span 4 = 16.5% of all far-bisects
+ * -> worth straight-lining; 36.8% of DRAWs actually plot -> the hidden-surface reject path
+ * is the common one.
  *
  * Deliberately OFF even under PROBES: these are volatile counters inside the C ORACLE, so
  * leaving them on would inflate the oracle's beam-ticks and wreck the asm-vs-C in-process
@@ -718,7 +659,7 @@ extern volatile unsigned long g_alHudCalls;      /* # alien_shape_blit calls dur
  * the third field writer.  It runs twice in the reverse cinematic and both matter: once with colour
  * 8 straight after the static pre-draw (the pass that ERASES that image back to background), and
  * then once per revealed row as emit_dl_coord_pairs tail-calls it with the cycling ring colour.
- * Measured 2026-08-10: without this the painted bitmap carried the erased pre-draw as 6% stale ink.
+ * Measured: without this the painted bitmap carried the erased pre-draw as 6% stale ink.
  *
  * Nothing here needs the field's previous contents: the 6502's two mask tables ($66E9/$66FB) are
  * exactly "set this nibble to colour, preserve the other", so every write is prev-independent.
@@ -1763,7 +1704,7 @@ void draw_frame_pattern_seq(void) {
 }
 
 /* ============================================================================
- * Standby/launch tunnel-ring + door-scroll cinematic driver (2026-07-11)
+ * Standby/launch tunnel-ring + door-scroll cinematic driver
  *
  * These were hand-ported in rof_native_amiga.cpp, but they are pure mem[] 6502
  * logic — not Amiga-specific — so they belong here as faithful native twins.
@@ -2372,7 +2313,7 @@ void copy_bytes_to_dst(void) {
 #endif
 }
 
-/* --- boot_standby_launch_driver-subtree leaves (batch 2026-06-15): pure mem-effect leaves. --- */
+/* --- boot_standby_launch_driver-subtree leaves (batch): pure mem-effect leaves. --- */
 
 /* draw_compass_heading @ $3FDE — copy 4 bytes from the table $4B0B (descending) into
  * $32E3[3..0].  The base index is ($281C + $3FF6[$2836]) & $FF; the 6502 $4B0B,Y
@@ -3621,7 +3562,7 @@ volatile uint8_t g_forcePilotR1 = 0;
 #endif
 
 #if defined(ROF_PLATFORM_AMIGA) && defined(ROF_FLIGHT_PROBE)
-/* Alien-attack render diagnosis probe (2026-07-25).  Latches, while the alien is active
+/* Alien-attack render diagnosis probe.  Latches, while the alien is active
  * ($0633 alien_trigger != 0 during a FORCE_ALIEN rescue), whether/how the creature is drawn.
  * Read from gdb after playing to a rescue.  g_alPlotCalls>0 ⇒ the alien IS drawn as a bitmap
  * via plot_clipped_pixel (so the fix is in the Amiga composite path); ==0 ⇒ it's drawn some
@@ -3784,7 +3725,7 @@ void pilot_render(void) {
          * to $80 → alien_trigger $0633 set), anything else = a real pilot that boards ($281E
          * DEC'd to 0).  (Validated: a800dumps/rescue_pilot.a8s has marker $C8 and is a real
          * pilot.)  Whether a figure is designated alien is normally decided at spawn ($4E58).
-         * ⚠ 2026-07-25: forcing the marker here does NOT reproduce the real alien jump-scare —
+         * ⚠ forcing the marker here does NOT reproduce the real alien jump-scare —
          * the probe (g_al*) shows the rescue stalls at the phase-4 knock ($003D never passes 4,
          * $0633 never sets, no shake, no creature); the real alien is designated at SPAWN and
          * auto-jumps at the knock via a timing-gated path this late render-time force can't reach.
@@ -4570,7 +4511,7 @@ void draw_altimeter_bars(void) {
          * per byte.  The 6502 index is 8-bit, which is what forced the old shape: GCC has to
          * mask every step, and at -O3 it unrolls the fill x8 into five instructions a byte —
          *     move.b d1,d2 / addq.b #k,d2 / andi.l #255,d2 / addi.l #3224,d2 / move.b #-1,(a0,d2.l)
-         * = ~58 cycles to store ONE byte, up to 56 of them, twice.  Measured 2026-08-12: the
+         * = ~58 cycles to store ONE byte, up to 56 of them, twice.  Measured: the
          * five HUD draws were 5.2 t of the flight VBI's 54 and this pair is most of it.
          * A `*p-- = 0` / `*p++ = $FF` walk is 12 cycles a byte, ~5x less, byte-identical. */
         {   /* DEY;BPL clear: writes $0C97+y down to $0C97+0.  yy and p step together, so the
@@ -5542,7 +5483,6 @@ void ring_push_marked(void) {
     cpu.N = (id >> 7) & 1; cpu.Z = (id == 0) ? 1 : 0;
 }
 void ring_push_unmarked(void) {
-    SX_CNT(g_sxRingPush);
     uint8_t id = cpu.X;
     mem[0x0100 | cpu.S] = id;                     /* PHA X */
     ring_push_0719_core(cpu.Y);                    /* push Y (unmarked) */
@@ -5562,7 +5502,7 @@ void ring_push_unmarked(void) {
  * out (rounding) — reproduced exactly. */
 /* ---- terr_blend's 8-iteration bit-serial loop as two 4 KB tables -------------------------
  *
- * SHAPE (amiga/integ_shape.gdb, 2026-08-07): sample_terrain_height_bilerp is ~79% of the flight
+ * SHAPE: sample_terrain_height_bilerp is ~79% of the flight
  * VBI's `proj` bucket AND 78% of the `obj` bucket inside `integ` — together ~11 t per ISR firing
  * = ~10% of the whole flight VBI = ~3.5% of ALL wall clock — and 82% of the bilerp is these
  * three blends.  It is the single biggest block in the 50 Hz ISR after the sfx engine.
@@ -5579,8 +5519,8 @@ void ring_push_unmarked(void) {
  *       A = Bhi[H][f>>4] + Blo[H][f&15] + Bhi[L][15-(f>>4)] + Blo[L][15-(f&15)]   (mod 256)
  *
  * 8 KB total.  (The one-table 64 KB form works too and needs only 2 lookups, but the non-chip
- * load image is already 490 KB against a 512 KB slow bank on a 512+512 A500 — see the RAM
- * budget in amiga/memreport.gdb — and the two forms measured the same speed.)
+ * load image is already 490 KB against a 512 KB slow bank on a 512+512 A500 — amiga/memreport.gdb
+ * — and the two forms measure the same speed.)
  *
  * EXACTNESS: tools/terr_blend_table_test.c checks the identity over ALL 2^24 (f,L,H) triples —
  * 0 mismatches, for both the 8 KB and 64 KB forms.  The mem[] contract is unchanged and is the
@@ -5645,7 +5585,6 @@ static uint8_t terr_blend(uint16_t fa, uint16_t lo, uint16_t hi) {
     return A;
 }
 void sample_terrain_height_bilerp(void) {
-    O2_DECL(); O2_START(g_blCalls); O2_LAP(g_blNop);   /* empty lap = this level's floor */
     if (!g_blendTableReady) rof_blend_table_init();    /* safety net if init was skipped */
     uint8_t row = (uint8_t)(map_z_hi << 4);                       /* $9A36: $0061 */
     terrain_lerp_index = row;
@@ -5659,20 +5598,15 @@ void sample_terrain_height_bilerp(void) {
     y = (uint8_t)(((uint8_t)(y + 1) & 0x0F) | row);
     mem[0x27F3] = mem[0x0900 + y];
 
-    O2_LAP(g_blFetch);
     mem[0x27FA] = map_x_lo; mem[0x27F4] = terr_blend(0x27FA, 0x27F0, 0x27F1);
-    O2_LAP(g_blB1);
     mem[0x27FA] = map_x_lo; mem[0x27F5] = terr_blend(0x27FA, 0x27F2, 0x27F3);
-    O2_LAP(g_blB2);
     mem[0x27FB] = map_z_lo; uint8_t R = terr_blend(0x27FB, 0x27F4, 0x27F5);
-    O2_LAP(g_blB3);
 
     terrain_height_sample = R;                                                 /* $9AFA */
     uint8_t hi4 = (uint8_t)(R >> 4);                                 /* LSRx4 / TAY */
     terrain_height_sample = (uint8_t)(hi4 + terrain_height_sample);                      /* CLC; ADC $0062 */
     uint8_t c = (uint8_t)(hi4 & 1);                                  /* TYA; LSR -> carry */
     terrain_height_sample = (uint8_t)((hi4 >> 1) + terrain_height_sample + c);           /* ADC $0062 */
-    O2_LAP(g_blTail);
 }
 
 /* game_sub_451d @ $451D — fill 14 cells of $2159+Y / $2189+Y from table $4553[X],
@@ -8174,13 +8108,12 @@ extern unsigned long g_tdPairs, g_tdCulled, g_tdVisPairs, g_tdProjCount;
 /* Object draw-order pass of terrain_draw_frame_core (below), split out into its own function
  * PURELY FOR CODEGEN — the behaviour is unchanged.
  *
- * Inlined into terrain_draw_frame_core, which is itself inlined into the enormous
- * game_main_loop, GCC ran out of registers and spilled the loop's entire working set
- * (order_idx, obj0, obj1 and BOTH per-object base pointers) to the frame, reloading them —
- * and re-materialising `lea mem,aN` — every iteration.  The PC profile showed that spill
- * traffic, not the work: the bucket stayed at 11.2% even with the ROF_TDRAW_PROF
- * instrumentation compiled out (measured 2026-08-04).  On its own, with `noinline` to stop
- * GCC folding it straight back in, the loop has registers to spare.
+ * ⚠ Keep the `noinline`.  Inlined into terrain_draw_frame_core — itself inlined into the
+ * enormous game_main_loop — GCC runs out of registers and spills the loop's entire working set
+ * (order_idx, obj0, obj1 and BOTH per-object base pointers) to the frame, reloading them, and
+ * re-materialising `lea mem,aN`, every iteration.  The PC profile shows that spill traffic, not
+ * the work: the bucket stays at 11.2% even with the instrumentation compiled out.  On its own the
+ * loop has registers to spare.
  *
  * Two hints beyond that, both worth keeping: the draw-order table and the mem base are hoisted
  * into locals so they stay in address registers (instead of a 32-bit `addi.l #0xB67C` + `lea
@@ -8190,7 +8123,7 @@ extern unsigned long g_tdPairs, g_tdCulled, g_tdVisPairs, g_tdProjCount;
  *
  * The loop itself is pure BOOKKEEPING — it does no drawing (its callees do), yet with zero
  * objects on the map it still costs ~4.5% of flight wall clock, over exactly 72 pairs per pass.
- * Three pieces of that were the 6502's, not ours, and are gone (2026-08-08):
+ * Three pieces of that were the 6502's, not ours, and are gone:
  *   - the $24B4 visibility class gets its OWN base register, so a cull test is one
  *     `move.b (0,a5,dn.l)` instead of `lea (0,a2,dn.l),aN` + `move.b (9396,aN)`;
  *   - the draw-order index is an `unsigned`, not a `uint8_t` — see below;
@@ -9016,7 +8949,6 @@ void object_step_and_collide(void) {
 #ifdef ROF_MEMBASE
 #define mem mb
 #endif
-    O2_DECL(); O2_START(g_osCalls); O2_LAP(g_osNop);   /* empty lap = this level's floor */
     /* Integrate the three position accumulators by their velocities.  X and Z are 24-bit
      * with the high byte masked to 12-bit map coords (mirrored to $27FD-$2800); altitude
      * is 16-bit with a signed saturating clamp. */
@@ -9048,12 +8980,10 @@ void object_step_and_collide(void) {
         vel_z_clamp_hi = a;
     }
 
-    O2_LAP(g_osAcc);
 
     /* The player hit-test reads the altitude add's carry-out as its entry carry. */
     cpu.C = altCarry;
-    if (!(object_index_signed & 0x80)) { IN_CNT(g_osHitCalls); check_player_proximity_hit(); }
-    O2_LAP(g_osHit);
+    if (!(object_index_signed & 0x80)) { check_player_proximity_hit(); }
 
     /* Map cell index $2864 = (Z high-nibble << 4) | X high-nibble. */
     uint8_t zHi = (uint8_t)((mem[0x2859] + (mem[0x2858] >> 7)) << 4);
@@ -9072,37 +9002,32 @@ void object_step_and_collide(void) {
                   !(mem[0x2855] >= 0x30 && mem[0x2855] < 0xD0) &&
                   !(mem[0x2858] >= 0x30 && mem[0x2858] < 0xD0);
     }
-    if (explode) IN_CNT(g_osExplode);
-    O2_LAP(g_osCell);
     if (!explode) {
-        IN_CNT(g_osLerpCalls);
         sample_terrain_height_bilerp();
-        O2_LAP(g_osLerp);
-        if (terrain_height_sample < vel_z_clamp_hi) { IN_CNT(g_osEarlyRet); return; }
-        if (mem[0x2855] >= 0x30 && mem[0x2855] < 0xD0) { reset_object_slot(); O2_LAP(g_osTail); return; }
-        if (mem[0x2858] >= 0x30 && mem[0x2858] < 0xD0) { reset_object_slot(); O2_LAP(g_osTail); return; }
+        if (terrain_height_sample < vel_z_clamp_hi) { return; }
+        if (mem[0x2855] >= 0x30 && mem[0x2855] < 0xD0) { reset_object_slot(); return; }
+        if (mem[0x2858] >= 0x30 && mem[0x2858] < 0xD0) { reset_object_slot(); return; }
     }
 
     /* $9635: explode the occupant, then dispatch by its pickup type. */
     uint8_t occ = mem[0x0A00 + cell];
-    if (occ == 0 || occ >= 0xF8) { reset_object_slot(); O2_LAP(g_osTail); return; }
+    if (occ == 0 || occ >= 0xF8) { reset_object_slot(); return; }
     mem[0x0100 | cpu.S] = occ; cpu.S--;          /* PHA: preserve occ across the explosion (mem-equivalent) */
     CL_CNT(g_clShotHit);                         /* combat-load: our shot destroyed an occupant */
     mem[0x0A00 + cell] = 0xFC;
     map_cell_hit_marker = 0xFC;
     trigger_object_explosion();
     cpu.S++; occ = mem[0x0100 | cpu.S];          /* PLA */
-    if (occ < 0x64) { reset_object_slot(); O2_LAP(g_osTail); return; }
+    if (occ < 0x64) { reset_object_slot(); return; }
     if (occ != 0x64) {
         if (occ == 0x80) { set_place_params_inc_count(); timer_or_counter = 0x40; }
         else             { countdown_show_char_0620(); timer_or_counter = 0x49; }
-        reset_object_slot(); O2_LAP(g_osTail); return;
+        reset_object_slot(); return;
     }
     set_place_params_inc_count();                /* occ == $64 (pilot pickup) */
     mem[0x004D] = 0x28;
     lock_on_indicator_state = (uint8_t)(lock_on_indicator_state | 0x80);
     reset_object_slot();
-    O2_LAP(g_osTail);
 #ifdef ROF_MEMBASE
 #undef mem
 #endif
@@ -9248,7 +9173,7 @@ void compute_obj_rel_angle_scale(void) {
  *
  * No bus_write() here is a no-op on the Amiga — the only hardware touched is the two
  * bus_read()s (PORTA joystick + POKEY RANDOM), both of which are real reads on Amiga. */
-/* ⭐ PRICING STEP FOR THE ASM TWIN (2026-08-12) — read this before writing one.
+/* ⭐ PRICING STEP FOR THE ASM TWIN — read this before writing one.
  *
  * The disassembly of this function at -O2 is 4678 bytes / 1245 instructions, and **362 of those
  * instructions carry an absolute-LONG operand** (`move.b 656b1 <mem+0x25>,d3`) against only 19
@@ -9297,7 +9222,7 @@ static void flight_control_integrate_impl(void) {
     __asm__ ("" : "=" ROF_FCI_BASE_REG (mbase) : "0"((uint8_t*)mem));
 #define mem mbase
 #endif
-    IN_DECL(); IN_START();
+
     /* ---- Steering: derive the roll rate (and a dial-based pitch trim) from the stick ----
      * Only while joystick_saved==2 (active flight) and no colour-clear sweep in progress. */
     if (joystick_saved == 0x02 && clear_colors_done_003E == 0) {
@@ -9323,8 +9248,7 @@ static void flight_control_integrate_impl(void) {
     }
 
     /* Targeting blip position (skipped during level 0 / intro). */
-    if (level_or_state != 0) { IN_CNT(g_inBlipCalls); compute_target_blip_position(); }
-    IN_LAP(g_inHead);
+    if (level_or_state != 0) { compute_target_blip_position(); }
 
     /* ---- Per-state dispatch; every branch falls through to the $3E shutdown check ---- */
     if (flight_mode_state == 0x02) {
@@ -9355,7 +9279,6 @@ static void flight_control_integrate_impl(void) {
         mem[0x0023] = pitch_pos_lo;
         mem[0x0024] = pitch_pos_hi;
     }
-    IN_LAP(g_inDisp);
 
     /* ---- Colour-clear shutdown: tear the special state back down and bail ---- */
     if (clear_colors_done_003E != 0) {
@@ -9370,7 +9293,6 @@ static void flight_control_integrate_impl(void) {
 
     /* ---- Pitch auto-level: when no pitch input, bleed pitch_pos toward 0 by ~(pos*32>>8) ---- */
     if (pitch_velocity == 0) {
-        IN_CNT(g_inAutoP);
         uint16_t pp  = ROF_PAIR16(pitch_pos_lo, pitch_pos_hi);
         uint8_t  sub = (uint8_t)((pp << 5) >> 8);
         if ((pp >> 11) & 1) {                           /* shift carry set */
@@ -9387,7 +9309,6 @@ static void flight_control_integrate_impl(void) {
 
     /* ---- Roll auto-level: same idea, ~(pos*4>>8), only when no roll input and not landing ---- */
     if (mem[0x003D] == 0 && roll_velocity == 0) {
-        IN_CNT(g_inAutoR);
         uint16_t rp  = ROF_PAIR16(roll_pos_lo, roll_pos_hi);
         uint8_t  sub = (uint8_t)((rp << 2) >> 8);
         if ((rp >> 14) & 1) {
@@ -9402,7 +9323,6 @@ static void flight_control_integrate_impl(void) {
         }
     }
 
-    IN_LAP(g_inLevel);
 
     /* ---- Throttle: add a RANDOM-modulated kick, scaled by the dial index ----
      * loops_y also picks the shift count for the throttle clamp below. */
@@ -9410,7 +9330,6 @@ static void flight_control_integrate_impl(void) {
     if (dial_draw_index == 0) {
         loops_y = 3;
     } else {
-        IN_CNT(g_inThrKick);
         loops_y = 1;
         /* base = dial - 2*roll_pos_hi (two chained 6502 subtracts preserve the borrow) */
         int t = (int)dial_draw_index - roll_pos_hi;
@@ -9426,7 +9345,6 @@ static void flight_control_integrate_impl(void) {
 
     /* ---- Throttle clamp (near-ground only): cap the throttle to (hi+2)<<loops_y ---- */
     if (mem[0x005D] != 0) {
-        IN_CNT(g_inThrClamp);
         uint16_t hi2 = (uint16_t)throttle_accum_hi + 2;
         uint32_t v = ((uint32_t)(uint8_t)(hi2 >> 8) << 16)
                    | ((uint32_t)(uint8_t)hi2 << 8) | throttle_accum_lo;
@@ -9442,7 +9360,6 @@ static void flight_control_integrate_impl(void) {
         }
     }
 
-    IN_LAP(g_inThr);
 
     /* ---- Integrate + clamp pitch angle ($25/$26) to [-5 .. +4] = [$FB .. $04] ---- */
     {
@@ -9487,7 +9404,6 @@ static void flight_control_integrate_impl(void) {
         mem[0x2883] = (uint8_t)shifted;                 /* forward/depth step lo */
         mem[0x2884] = (uint8_t)(shifted >> 8);          /* forward/depth step hi */
     }
-    IN_LAP(g_inAttc);
 
     /* ---- Heading: heading += (signed pitch_pos >> 4); carry feeds the angle-scale call ---- */
     {
@@ -9501,7 +9417,6 @@ static void flight_control_integrate_impl(void) {
         cpu.C = (uint8_t)(hhi >> 8);                    /* entry carry for the call */
         compute_obj_rel_angle_scale();                  /* -> world velocity $2B/$2C, $2881/$2882 */
     }
-    IN_LAP(g_inAng);
 
     /* ---- Integrate world position + depth accumulator ---- */
     {
@@ -9547,10 +9462,8 @@ static void flight_control_integrate_impl(void) {
         mem[0x0686] = v;
         mem[0x0687] = (uint8_t)(v - 0x04);
     }
-    IN_LAP(g_inPos);
 
     refresh_hud_field_0d_entry();
-    IN_LAP(g_inHud);
 
     /* ---- Near-ground flag $5D + lock-on RANDOM countdown $2917 ---- */
     if (dial_draw_index == 0xF0) {
@@ -9585,7 +9498,6 @@ static void flight_control_integrate_impl(void) {
         mem[MEM_sfx_env_freq_val + 0x0C] = fld;            /* $0685 */
         cpu.Y = 0x0C; ring_push_unmarked();
     }
-    IN_LAP(g_inLock);
 
     /* ---- Object velocity from the delayed history ring ($2919/$291A/$291B) ---- */
     {
@@ -9610,15 +9522,14 @@ static void flight_control_integrate_impl(void) {
         mem[0x282C] = (uint8_t)s;
         mem[0x0069] = (uint8_t)(mem[0x0069] + (a < 0 ? 0xFF : 0x00) + (uint8_t)(s >> 8));
     }
-    IN_LAP(g_inObjv);
 
     /* ---- Step the active world object, then integrate its position by the ring velocity ---- */
     {
         uint8_t af = object_anim_frame;
         if (af != 0) {
             if (!(af & 0x80)) {
-                if (af == 0x01) { IN_CNT(g_inObjLoad); load_velocity_from_param_block(); }
-                else            { IN_CNT(g_inObjStep); object_step_and_collide(); }
+                if (af == 0x01) { load_velocity_from_param_block(); }
+                else            { object_step_and_collide(); }
             }
             int lo = (int)mem[0x284E] - mem[0x2850];
             mem[0x284E]    = (uint8_t)lo;
@@ -9628,7 +9539,6 @@ static void flight_control_integrate_impl(void) {
             mem[0x0039] = (uint8_t)(mem[0x0039] + mem[0x2853] + (uint8_t)(s >> 8));
         }
     }
-    IN_LAP(g_inObj);
 
     /* ---- Decrement the object slot index; dispatch its per-frame work ---- */
     {
@@ -9638,7 +9548,7 @@ static void flight_control_integrate_impl(void) {
             object_index_signed = y;
             if (y & 0x80) {                             /* slot ran out */
                 reset_flags_ff();
-                if (player3_dither_flag != 0) { IN_CNT(g_inObjBox); check_object_in_target_box(); }
+                if (player3_dither_flag != 0) { check_object_in_target_box(); }
             } else {
                 mem[0x006A] = y >> 2;
                 int jitter;
@@ -9647,15 +9557,12 @@ static void flight_control_integrate_impl(void) {
                 else if (y == 0x3C)           jitter = 1;
                 else if (level_stage < 0x3D)  jitter = 0;
                 else                          jitter = (y == 0x28);
-                if (jitter) { IN_CNT(g_inJitter); terrain_jitter_column(); }
-                IN_CNT(g_inObjPos);
+                if (jitter) { terrain_jitter_column(); }
                 object_integrate_position();
             }
         } else {
-            IN_CNT(g_inSlotIdle);
         }
     }
-    IN_LAP(g_inSlot);
 
     /* ---- Roll the 7-frame attitude history ring (delays the canopy/horizon geometry) ---- */
     {
@@ -9668,8 +9575,6 @@ static void flight_control_integrate_impl(void) {
         mem[0x291C] = mem[0x28A8 + y]; mem[0x28A8 + y] = mem[0x2871];
         mem[0x291D] = mem[0x28AF + y]; mem[0x28AF + y] = mem[0x2873];
     }
-    IN_LAP(g_inTail);
-    IN_LAP(g_inNop);          /* empty lap = the per-bucket floor; subtract it from each bucket */
 #ifdef ROF_FCI_BASE
 #undef mem
 #endif
@@ -9681,7 +9586,7 @@ void flight_control_integrate(void) { flight_control_integrate_impl(); }
 #endif
 
 /* ===========================================================================
- * Flight main-loop de-transpile (2026-06-12): game_state_update + enemy_check
+ * Flight main-loop de-transpile: game_state_update + enemy_check
  * and their callees — the last transpiled code on the flight per-frame path
  * (flight_frame_native).  Leaves first.
  * ------------------------------------------------------------------------- */
@@ -10042,7 +9947,6 @@ void enemy_check(void) {
 /* sfx_voice_write_freq @ $5667 — write AUDF for voice (cpu.Y) to POKEY $D1FE+X,
  * where X = the POKEY register index mem[$0705+Y]; skip if 0 (inactive slot). */
 void sfx_voice_write_freq(void) {
-    SX_CNT(g_sxWrFreq);
     uint8_t y = cpu.Y;
     uint8_t x = mem[MEM_sfx_voice_reg_idx + y];
     cpu.X = x;
@@ -10054,7 +9958,6 @@ void sfx_voice_write_freq(void) {
 /* sfx_voice_write_freq_ctrl @ $5673 — write AUDF ($D1FE+X) freq AND AUDC ($D1FF+X)
  * = (prio/vol nibble $066B+Y & $0F) | (distortion $065D+Y) for voice cpu.Y. */
 void sfx_voice_write_freq_ctrl(void) {
-    SX_CNT(g_sxWrCtrl);
     uint8_t y = cpu.Y;
     uint8_t x = mem[MEM_sfx_voice_reg_idx + y];
     cpu.X = x;
@@ -10062,16 +9965,15 @@ void sfx_voice_write_freq_ctrl(void) {
     /* Shape probe: the two POKEY writes are the bulk of this leaf (each is a rof_pokey_write
      * call + a change-detect + possibly a whole update_paula_channel recompute), so they are
      * bracketed separately from the mem[] loads — an asm twin of the MIXER cannot touch them. */
-    SX_LEAF(bus_write((uint16_t)(0xD1FE + x), mem[MEM_sfx_env_freq_val + y]), g_sxPokeyT); /* AUDFn */
+    bus_write((uint16_t)(0xD1FE + x), mem[MEM_sfx_env_freq_val + y]); /* AUDFn */
     cpu.A = (uint8_t)((mem[MEM_sfx_env_prio_val + y] & 0x0F) | mem[MEM_sfx_voice_distortion + y]);
-    SX_LEAF(bus_write((uint16_t)(0xD1FF + x), cpu.A), g_sxPokeyT);   /* AUDCn ctrl */
+    bus_write((uint16_t)(0xD1FF + x), cpu.A);   /* AUDCn ctrl */
 }
 
 /* sfx_pick_top_voice @ $568A — scan slots X=1..12; latch the active slot
  * ($0705+X != 0) with the smallest priority nibble below $10 into
  * $0716 (running min) / $0714 (value) / $0715 (index). */
 void sfx_pick_top_voice(void) {
-    SX_CNT(g_sxTopScan);
     /* Hot: ~2.4 calls per 50 Hz VBI firing, inside sfx_reorder_voice_slot (measured 24% of the
        whole flight VBI in combat).  Two changes, both byte-identical: walk the two slot arrays
        with autoincrement pointers instead of recomputing mem[base+x] every step (12 indexed
@@ -10105,7 +10007,6 @@ void sfx_pick_top_voice(void) {
  * excluded slot $0715, latch the largest priority nibble into $0716 / index
  * $0717.  (Faithful to the code: BEQ considers empty slots, else only X==$0715.) */
 void sfx_pick_next_voice(void) {
-    SX_CNT(g_sxNextScan);
     /* Same treatment as sfx_pick_top_voice above: autoincrement pointer walk, the running
        max ($0716) and the excluded-slot index ($0715, loop-invariant — nothing in the loop
        writes it) held in registers.  Note the compare is >=, so the LAST maximum wins; that
@@ -10229,9 +10130,8 @@ void sfx_event_load(void) {
  * path (sfx_pick_next_voice, then move the top's register to the next-best slot).  Either way
  * the moved voice is re-emitted (sfx_voice_write_freq_ctrl) and the top voice re-latched
  * (sfx_pick_top_voice).  Y is saved/restored (PHA/PLA); X is clobbered.
- * (The old comment here called cpu.X "a selector (0 -> ... ; !=0 -> ...)" — wrong about WHERE
- * the value comes from, though the code below has always read it in the right place.  Building
- * the asm twin from that comment produced a first-call mismatch; see SfxMixerAssembler.s.)
+ * ⚠ Do not read cpu.X as a caller-supplied selector: it is whatever the JSR at 5616 left, and an
+ * asm twin written on that misreading mismatches on its first call (see SfxMixerAssembler.s).
  *
  * HOT: the biggest single item inside the 50 Hz flight VBI (3.32 calls/firing at 6.70 t =
  * 22.4 t/firing = ~7% of ALL wall clock in combat — the ISR fires 50x/s regardless of frame
@@ -10240,8 +10140,7 @@ void sfx_event_load(void) {
  * via the ROF_SFXMIX_ASM seam below; this stays the SDL/validate oracle. */
 void sfx_reorder_voice_slot_c(void) {
     uint8_t savedY = cpu.Y;                              /* TYA; PHA */
-    SX_NOP();                                            /* empty-bracket floor, 1 per call */
-    SX_LEAF(sfx_voice_write_freq_ctrl(), g_sxWrCtrlT);    /* 5616 (writes voice cpu.Y) */
+    sfx_voice_write_freq_ctrl();    /* 5616 (writes voice cpu.Y) */
     cpu.Y = savedY;
     int do_pick_top = 1;
     if (cpu.X == 0) {                                    /* TXA; BNE L_5641 -> here X==0 */
@@ -10255,24 +10154,24 @@ void sfx_reorder_voice_slot_c(void) {
                 uint8_t tx = sfx_top_voice_idx;
                 mem[MEM_sfx_voice_reg_idx + cpu.Y] = mem[MEM_sfx_voice_reg_idx + tx];
                 mem[MEM_sfx_voice_reg_idx + tx] = 0x00;
-                SX_LEAF(sfx_voice_write_freq_ctrl(), g_sxWrCtrlT);   /* 563b (re-uses cpu.Y) */
+                sfx_voice_write_freq_ctrl();   /* 563b (re-uses cpu.Y) */
             } else {
                 do_pick_top = 0;                         /* a==top && Y<topidx -> L_5664 */
             }
         }
     } else {                                             /* L_5641: X!=0 */
         if (cpu.Y < 0x0D) {                              /* CPY #$0D; BCS L_5661 */
-            SX_LEAF(sfx_pick_next_voice(), g_sxNextScanT);
+            sfx_pick_next_voice();
             uint8_t tx = sfx_top_voice_idx;
             if (tx != sfx_next_voice_idx) {                     /* LDX $0715; CPX $0717; BEQ L_5661 */
                 cpu.Y = sfx_next_voice_idx;                     /* LDY $0717 */
                 mem[MEM_sfx_voice_reg_idx + cpu.Y] = mem[MEM_sfx_voice_reg_idx + tx];
                 mem[MEM_sfx_voice_reg_idx + tx] = 0x00;
-                SX_LEAF(sfx_voice_write_freq_ctrl(), g_sxWrCtrlT);  /* 565e */
+                sfx_voice_write_freq_ctrl();  /* 565e */
             }
         }
     }
-    if (do_pick_top) SX_LEAF(sfx_pick_top_voice(), g_sxTopScanT);  /* L_5661 */
+    if (do_pick_top) sfx_pick_top_voice();  /* L_5661 */
     cpu.Y = savedY;                                      /* L_5664: PLA; TAY */
     cpu.A = savedY;
 }
@@ -10536,10 +10435,8 @@ static void sfx_voice_envelope_tick_impl(void) {
         /* Frequency envelope.  Offsets from $06DB: phase +14, delta -28, target -14,
          * value ($0679) -98, event id +28. */
         if (s[0] != 0) {                  /* nonzero step = active */
-            SX_CNT(g_sxActFreq);
             uint8_t ph = sfx_phase_wrap(s[0], s[14]);
             s[14] = ph;
-            if (mem[0x5406 + ph] == 0) SX_CNT(g_sxEnvGated);
             if (mem[0x5406 + ph] != 0) {  /* gate table: zero entry pauses the step */
                 uint8_t f = (uint8_t)(s[-98] + s[-28]);
                 s[-98] = f;
@@ -10551,7 +10448,6 @@ static void sfx_voice_envelope_tick_impl(void) {
         /* Duration / priority envelope (priority field kept to 4 bits).  Offsets from $06DB:
          * step -56, phase -42, delta -84, target -70, value ($066B) -112. */
         if (s[-56] != 0) {
-            SX_CNT(g_sxActDur);
             uint8_t ph = sfx_phase_wrap(s[-56], s[-42]);
             s[-42] = ph;
             if (mem[0x5406 + ph] != 0) {
@@ -10564,7 +10460,6 @@ static void sfx_voice_envelope_tick_impl(void) {
 
         /* Either envelope finished -> re-queue this slot's event id (bit7-marked) on the ring. */
         if (expired != 0) {
-            SX_CNT(g_sxExpired);
             cpu.X = s[28];
             ring_push_marked();
         }
@@ -10585,10 +10480,10 @@ static void sfx_voice_envelope_tick_impl(void) {
         cpu.A = entry;                    /* preserve the 6502 register state the callees see */
         if (entry & 0x80) {               /* new-voice request */
             cpu.X = (uint8_t)(entry & 0x7F);
-            SX_CNT(g_sxEvLoad); SX_SPAN(sfx_event_load(), g_sxEvLoadT);
+            sfx_event_load();
         } else {                          /* sprite-slot reorder request */
             cpu.Y = entry;
-            SX_CNT(g_sxReord); SX_SPAN(sfx_reorder_voice_slot(), g_sxReordT);
+            sfx_reorder_voice_slot();
         }
         uint8_t t = (uint8_t)(ring_tail_0719 - 1);
         ring_tail_0719 = (t & 0x80) ? 0x1F : t;
@@ -10975,7 +10870,7 @@ void vbi_handler_flight(void) {
      * no dirty flag, so the Amiga never re-decoded them and the lights stayed frozen.  A change-detect
      * here (every flight VBI frame) flags each cell for re-decode when it flips — robust to whichever
      * writer changed it.  All four are in the $332D-$355D mode-4 range, so platform_cockpit_dirty routes
-     * through the g_ckDial registry.  (Measured 2026-07-13: shields.a8s $3355=$34 ON; airlock.a8s
+     * through the g_ckDial registry.  (Measured: shields.a8s $3355=$34 ON; airlock.a8s
      * $3388=$34 ON; both OFF = $B4 elsewhere.)  Amiga-only. */
     {
         static const uint16_t kStatusCells[4] = { 0x3355u, 0x3356u, 0x3357u, 0x3388u };
@@ -11401,7 +11296,7 @@ void init_gameplay_state(void) {
 static inline void ds_frame(void) { platform_tick_vbi(); platform_render_frame(); }
 
 #ifdef ROF_PLATFORM_AMIGA
-/* Tunnel-ring pre-build (user-directed 2026-07-03): the launch-time draw_frame_pattern_seq
+/* Tunnel-ring pre-build (user-directed): the launch-time draw_frame_pattern_seq
  * (the L_635f site below) plots ~5900 pixels into mem[$1000] on a no-render stretch = the
  * standby->doors freeze.  Build the identical ring field HERE instead, off the launch path,
  * and snapshot the ZP scratch the draw leaves; at the launch site we replay that scratch
@@ -11412,7 +11307,7 @@ static inline void ds_frame(void) { platform_tick_vbi(); platform_render_frame()
  * the rest of construction is unaffected.
  *
  * ⚠ THE HACK IS NOT DELETABLE, and direct bitplane painting did not make it so (measured
- * 2026-08-10, PROBES=1 with the prebuild forced off): the cost it dodges is the 6502's OWN
+ *, PROBES=1 with the prebuild forced off): the cost it dodges is the 6502's OWN
  * mem[$1000] plot — SA_TIMED bucket `framepat` = 1378 beam ticks = 86 ms — not the decode that
  * painting removed.  Forcing the launch-site draw took the standby->doors render gap from 1
  * frame to 5 (~100 ms).  So keep it, and keep the Amiga painter's claim/prime paired with it.
@@ -11597,7 +11492,7 @@ void boot_standby_launch_driver(void) {
        crash / post-BREAK restart / START-from-the-$53CC-card) would otherwise arrive with it already
        1 and the half-built standby — including a STALE, not-yet-decoded viewportBitmap under the
        doors copper — would show for the ~30 build frames (the doors' TOP HALF black until the
-       g_doorFieldReady 0→1 edge re-decodes it: bug 3).  On first boot it starts 0 so this is a no-op;
+       g_doorFieldReady 0→1 edge re-decodes it).  On first boot it starts 0 so this is a no-op;
        resetting it makes EVERY fresh Standby build masked, matching first-boot.  Must NOT be set to 1
        here (that reveals the half-built screen + forces a full render() per construction frame).
        (No-op on SDL, which never reads it.) */
@@ -12488,7 +12383,7 @@ void display_list_build(void) {
  * frames internally and are called as-is.  No leaf exit-register is consumed here
  * (every post-call read reloads from mem), so no fidelity fix-ups are needed.
  *
- * ⚠ RESTART TRAMPOLINE (2026-07-13): on the Atari the game-over / attract restart is a tail
+ * ⚠ RESTART TRAMPOLINE: on the Atari the game-over / attract restart is a tail
  * JMP to game_main_loop ($3D48) — it never grows the stack.  But game_main_loop CALLS
  * enemy_check NON-tail (code follows at L_3ef5), so the base frame is still live when a death
  * re-enters game_main_loop (enemy_check -> intro_cinematic_loop -> intro_teardown_fade_loop ->
@@ -12692,10 +12587,9 @@ static void game_main_loop_body(void) {
     /* L_3ef5 */
     /* --- PASS 2: render terrain field DISPLAY half (draw col-base $00; clear/collision $03). ---
        This offset-0 half is what the Amiga port currently shows every frame. ---
-       ⚠ These three carried NO timing brackets until 2026-08-06, so every historical
-       "terrain = N% of the frame" figure from g_fSetup/g_fClear/g_fDraw was taken over PASS 1
-       ONLY — i.e. roughly half the real terrain work.  They accumulate into the same buckets as
-       pass 1 now, so the phase totals finally cover the whole iteration. */
+       ⚠ Both passes accumulate into the same g_fSetup/g_fClear/g_fDraw buckets: pass 2 used to
+       carry no brackets at all, so any older "terrain = N% of the frame" figure covered PASS 1
+       only, i.e. about half the real terrain work. */
     CL_PH(CL_PH_SETUP, terrain_frame_setup(), g_fSetup);
     CL_PH(CL_PH_CLEAR, clear_terrain_column_core(0x03), g_fClear);
     CL_PH(CL_PH_DRAW,  terrain_draw_frame_core(0x00), g_fDraw);

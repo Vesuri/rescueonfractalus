@@ -11,13 +11,13 @@
 ; single `move.b (d16,a0)` (signed 16-bit displacement covers the whole cluster).  All loop
 ; INPUTS ($92/$8A/$88/$A0-$A3/$8B/$8C/$22A3.. vectors/$0900 heights) are VBI-stable.
 ;
-; ⭐ The per-cell column vectors are CARRIED IN REGISTERS across cells (2026-08-05).  The output
+; ⭐ The per-cell column vectors are CARRIED IN REGISTERS across cells.  The output
 ; arrays ARE the input arrays shifted by one — $22A4+Y == $22A3+(Y+1) and $232E+Y == $232D+(Y+1) —
 ; so cell Y+1's in_u/in_v is exactly the u/v cell Y just stored, and the per-cell reassembly of it
 ; from memory (4 indexed byte loads + 2 `lsl.w #8` at 22 cycles each + 2 moveq ~= 100 cycles) was
 ; pure redundancy: representation, not work.  Proven twice before it was written: statically, only
 ; 1 of the 180 pattern-table cells is non-storing ($B622[0]) and at runtime the recurrence held on
-; 18072/18072 claimable cells (make TFSETUP_C=1 TFS_SHAPE=1, amiga/shape_probe.gdb, g_tfsRecurBad).
+; 18072/18072 claimable cells (a shape probe on g_tfsRecurBad, since retired).
 ; The one non-storing cell re-syncs from memory at tf_resync, so this is exact for ANY table.
 ; Same class of find as the rasterizer's phase-2 restructure — see docs/asm-migration-plan.md.
 ;
@@ -148,7 +148,7 @@ tf_l1:
 	; the only register left, and adda/suba.w serve it exactly as add/sub.w serve d1; only the
 	; low word is ever read back, so their sign-extension to 32 bits is harmless. ----
 	;
-	; ⭐ JUMP TABLE, not the oracle's nested btst chain (2026-08-07).  The decode is a pure
+	; ⭐ JUMP TABLE, not the oracle's nested btst chain.  The decode is a pure
 	; function of pat's TOP NIBBLE — the low nibble is never tested on any path, and every
 	; branch outcome collapses to two independent signs:
 	;       u += sA*rot_a + sB*rot_b        v += -sA*rot_b + sB*rot_a

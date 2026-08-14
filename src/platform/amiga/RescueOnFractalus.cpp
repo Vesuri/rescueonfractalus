@@ -35,7 +35,7 @@
 #include "../../gen/mem.h"           // MEM_<name> named Atari memory offsets
 #include "FlightProf.h"   // per-frame VBI-count profiler (g_flightProf / flight_vbi_tick)
 
-// Native handler functions — see NativeHandlers.cpp and SfxPlayer.cpp.
+// Native handler bodies (rof_native_amiga.cpp).
 extern "C" void vbi_attract_timer_native(void);                  // $52D7: timer cascade
 extern "C" void update_indicator_blink_native(void);           // $4131: cockpit blink
 extern "C" void startup_init_native(void);                      // $3FFA: cockpit digit update
@@ -112,16 +112,16 @@ extern "C" void rof_title_screen_dirty(unsigned short addr, unsigned char nCells
 // so each writer raises ONE boolean and render() decodes just that instrument's cells — no array,
 // no scan/walk.  Idle frames (the common case) cost three boolean reads.  Flags are single bytes
 // (atomic on the 68000) so writers on the main thread (digits) and the VBI ISR (lock-on, dials)
-// need no Disable() (an early Disable()/Enable()-in-ISR version wedged interrupt delivery — incl.
-// the keyboard ISR that starts the game).  render() clears-then-decodes; a write racing the clear
-// is caught next frame.  Other instruments (status lights, scope, scanner) are static after the
+// need no Disable() — ⚠ and must not take one: an Enable() from inside the ISR wedges interrupt
+// delivery, the keyboard ISR that starts the game included.  render() clears-then-decodes; a write
+// racing the clear is caught next frame.  Other instruments (status lights, scope, scanner) are static after the
 // scene-entry full paint until a writer is hooked — see docs/cockpit-render-plan.md "TODO".
 extern "C" { volatile unsigned char g_ckDigits = 0; }   // score/kills/quota digits + DL-stride (startup_init)
 extern "C" { volatile unsigned char g_ckLockon = 0; }   // lock-on indicator $3491-$3497 (any cell)
 extern "C" { volatile unsigned char g_ckDial   = 0; }   // thrust/danger-alt dial bars (draw_object_column)
 // The lock-on indicator is the ONE cockpit instrument that changes continuously in flight: its
 // random-blink state ($007E == $80) flips bit7 of a SINGLE cell about 9x/second, and the strip-wide
-// flag then re-decoded all 7 ($3491-$3497) — measured 2026-08-09 at 24 of the cockpit scan's 39
+// flag then re-decoded all 7 ($3491-$3497) — measured at 24 of the cockpit scan's 39
 // t/iteration, ~1.7% of the whole flight frame, for ~1.9 cells of real work.  So the strip keeps
 // per-cell flags like the dial, but over 8 bytes (7 cells + pad) so the walk is two long tests.
 // Byte stores are atomic on the 68000 and each cell owns its byte, so the VBI-ISR writer cannot
@@ -236,7 +236,7 @@ extern "C" { volatile unsigned char  g_trRunSrc[TR_RUNS] = {0}, g_trRunPhase[TR_
 // §2 fidelity differential (`make TUNDIFF=1`): decode the live $1000 field through the CURRENT
 // OWNER's LUT (forward or boost) and diff it against what the direct painter actually left in
 // tunnelBitmap, over the band the copper shows from it, [K, 85-K].  This
-// is the check that makes the rewrite verifiable — it caught both wrong turns of the 2026-08-10
+// is the check that makes the rewrite verifiable — it caught both wrong turns of the
 // session before either was visible on screen.  Race-aware by construction: the VBI writes the
 // field while this reads it, so a small transient count is expected (~2% observed floor).
 //   EXTRA   = the bitmap has ink where the field is pure background ($88) -> the painter drew
@@ -249,8 +249,8 @@ extern "C" { volatile unsigned char g_dpSrc42[40] = {0}, g_dpB1[40] = {0}; }
 extern "C" { volatile unsigned char  g_trRun8D[TR_RUNS] = {0}, g_trRun8E[TR_RUNS] = {0}; }
 extern "C" { volatile unsigned short g_trRunVbi0[TR_RUNS] = {0}, g_trRunVbi1[TR_RUNS] = {0}; }
 extern "C" { volatile unsigned short g_trRunCnt[TR_RUNS] = {0}; }
-// Ring paint vs the BEAM — the "multi-coloured rectangle edges on single reveal frames" report
-// (2026-08-10).  A pen is three PLANES, so a pixel only carries the new colour once all three are
+// Ring paint vs the BEAM — the "multi-coloured rectangle edges on single reveal frames" report.
+// A pen is three PLANES, so a pixel only carries the new colour once all three are
 // written; while a paint is in flight the pixel shows a mix of the old and the new pen, i.e. a
 // colour that is in NEITHER image.  That is the difference from the Atari, where a field byte is
 // one store and a pixel can only ever be old-or-new.  This probe measures the two halves of the
@@ -265,7 +265,7 @@ extern "C" { volatile unsigned short g_tbEntryMin = 0xFFFF, g_tbEntryMax = 0; }
 extern "C" { volatile unsigned short g_tbN = 0; }
 extern "C" { volatile unsigned short g_tbIn[TB_SAMP] = {0}, g_tbOut[TB_SAMP] = {0}; }
 extern "C" { volatile unsigned short g_tbY0[TB_SAMP] = {0}, g_tbY1[TB_SAMP] = {0}; }
-// Reverse-reveal K timeline (user report 2026-08-11: "the top and bottom of the viewport stayed
+// Reverse-reveal K timeline (user report "the top and bottom of the viewport stayed
 // black, the rectangles were only drawn to the vertically middle part").  K is the first viewport
 // row the copper takes from tunnelBitmap; outside [K, 85-K] it shows the STARFIELD, which is black
 // by this point in the cinematic.  So "black top and bottom" == the reveal never reached K = 0.
@@ -416,17 +416,13 @@ static uint8_t kBandP3[256];
 static uint8_t kBandOW[256];   // = kBandP1[s] | kBandP2[s]: the terrain-overwriting (bar|marker)
                                // pixels.  ow==0 for pure grey-frame / L-R-edge bytes (the band
                                // majority) -> the plane1/2 RMW is a no-op there and can be skipped.
-// Row -> byte offset within the flight bitmap (120 bytes/scanline = plane1 40 + plane2 40 +
-// plane3 40).  The 68000 has no fast multiply, so the per-column horizon plotter (and the
-// direct-to-plane2 terrain rasterizer in rof_native.c) index this instead of computing scan*120.
-// Covers terrain rows 0-42 + the windscreen band rows 43-47.  extern "C" so rof_native.c can use it.
-// Row-offset (row × width) lookup tables — the 68000 has no cheap multiply, so a `row * stride`
-// with a NON-sequential row (e.g. the flight plot macros, where the row is computed from x/y) is
-// a __mulsi3 soft-multiply; these replace it with an index.  (For a SEQUENTIAL loop, walk a
-// pointer by the stride instead — cheaper still than a table read.)  kRow120 is the interleaved-
-// terrain scanline stride (3bp × 40 B); kRow40 / kRow80 are one / two mode-D planes (the rescue-
-// figure overlay: mask stride 40, interleaved figure planes stride 80).  Used by the flight
-// terrain plot macros (rof_native.c) and a few viewport/composite/HUD paths here.  [0..47].
+// Row -> byte offset lookup, rows 0..47 (terrain 0-42 + windscreen band 43-47).  The 68000 has no
+// cheap multiply, so a `row * stride` on a NON-sequential row (the flight plot macros compute the
+// row from x/y) would be a __mulsi3 soft-multiply; these replace it with an index.  In a SEQUENTIAL
+// loop walk a pointer by the stride instead — cheaper still than a table read.  kRow120 = the
+// interleaved terrain scanline (3bp × 40 B); kRow40 / kRow80 = one / two mode-D planes (the
+// rescue-figure overlay's mask and its interleaved planes).  extern "C": rof_native.c's plot
+// macros use them too.
 extern "C" const uint16_t kRow120[48] = {
        0,  120,  240,  360,  480,  600,  720,  840,  960, 1080, 1200, 1320,
     1440, 1560, 1680, 1800, 1920, 2040, 2160, 2280, 2400, 2520, 2640, 2760,
@@ -473,8 +469,8 @@ extern "C" { uint8_t* g_flightObjP1 = nullptr; }      // = s_flightObjP1 during 
 extern "C" { int g_objRowLo = 47, g_objRowHi = -1; }  // dirty scanline range in s_flightObjP1 (empty)
 // Windscreen-band composite cache (see the band overlay at the end of renderFlightDirect).  The
 // band is re-composited every frame because the whole 47-row buffer is cleared and the terrain
-// repainted under it — but the SOURCE it decodes barely moves: measured (BAND_SHAPE probe,
-// 2026-08-05, 420 frames) only ~0.9 of 160 field bytes change per frame, all of them in row 45
+// repainted under it — but the SOURCE it decodes barely moves: measured over 420 frames, only
+// ~0.9 of 160 field bytes change per frame, all of them in row 45
 // (the wing-clearance bar); rows 43/44/46 changed exactly twice = the flight-entry transient.
 // So cache the DECODED bytes and refresh only what changed:
 //   * change detection = 40 long compares of the field against a per-half shadow (writer-agnostic,
@@ -501,7 +497,7 @@ static signed char s_bandOwHi[2][4] = {{-1,-1,-1,-1},{-1,-1,-1,-1}};
 // plane3 rows 43-46, so once a display buffer holds a given decoded band it keeps holding it.  Per
 // FIELD HALF, version each of the 4 rows' decoded plane3 (bumped whenever the decode cache changes);
 // per DISPLAY BUFFER, remember which half and which versions are actually painted in it.  Measured
-// shape (BAND_SHAPE, 1cab6f4): rows 43/44/46 changed exactly twice in 420 frames and row 45 carries
+// shape: rows 43/44/46 changed exactly twice in 420 frames and row 45 carries
 // the wing-clearance bar — so this normally skips 30 of the 40 long copies, and all 40 when the bar
 // is steady.  s_bandP3SeenHalf = -1 means "unknown, repaint": the initial state, and what the
 // one-shot plane3 clear re-arms (that clear wipes rows 43-46 along with the rest of the plane).
@@ -514,20 +510,17 @@ extern "C" volatile unsigned long g_bandCalls = 0, g_bandMismatch = 0, g_bandFir
 #endif
 // ...and the dirty BYTE-COLUMN range (0..39) of the same scratch.  Ground objects / enemy fire are
 // narrow, so the row range alone left the apply loop scanning all 40 bytes of each dirty row to find
-// them: measured 577 nonzero of 31840 bytes scanned = 1.8% (BAND_SHAPE probe, 2026-08-05).  Tracked
+// them: measured 577 nonzero of 31840 bytes scanned = 1.8% (BAND_SHAPE probe).  Tracked
 // as a bounding box by the same three writers that set the bytes (ROF_PLOT_DOT_P1, laser_dot_column,
 // laser_dot_run), so every nonzero byte is inside it and the narrowed apply still clears them all.
 extern "C" { int g_objColLo = 40, g_objColHi = -1; }
-// ...and, better still, the exact byte OFFSETS.  The box narrowed the walk but did not change its
-// nature: it is still a search.  Measured (a shape probe, COMBAT+FIXED_RNG, 358 painted frames)
-// the box is 447 bytes/frame of which 2.2% -- about ten -- are nonzero, and the COMBAT PC profile
-// put 20/300 samples on the inner test.  But every one of those bytes is written by a writer that
-// already computed its offset, so the reader never needs to search at all: each writer appends the
-// offset the first time it makes a byte nonzero (0->nonzero transition, so no duplicates), and the
-// apply walks that list instead of the box.  Capacity is generous next to the ~10/frame measured;
-// on overflow the flag makes the apply fall back to the box walk, which is still correct because
-// the writers keep maintaining the box too.  g_objLeak (BAND_VERIFY) is the invariant check: after
-// the apply NO nonzero byte may remain anywhere in the scratch.
+// ...and, better still, the exact byte OFFSETS, so the reader does not search at all.  The dirty
+// box still made the apply a scan of ~447 bytes/frame to find the ~10 that are nonzero; but every
+// one of those bytes is written by a writer that already computed its offset, so each writer
+// appends it on the 0->nonzero transition (no duplicates) and the apply walks the list.  Capacity
+// is generous against the ~10/frame measured; on overflow the flag falls the apply back to the box
+// walk, still correct because the writers keep the box up to date too.  g_objLeak (BAND_VERIFY) is
+// the invariant: after the apply NO nonzero byte may remain anywhere in the scratch.
 #define ROF_OBJ_TOUCH_CAP 256
 extern "C" uint16_t g_objTouch[ROF_OBJ_TOUCH_CAP];
 extern "C" { int g_objTouchN = 0; }      // entries in use
@@ -574,7 +567,7 @@ static int     s_boxColLo[2] = { 20, 20 }, s_boxColHi[2] = { -1, -1 };
 static bool    s_flightRescuePause = false;
 // Resume-frame terrain-dot recovery, keyed on the $3E (clear_colors_done) latch — NOT on
 // rescueFigure.  $3E is set ONCE when the rescue starts and cleared ONCE when it ends (measured
-// clean 01->00 single edge, diag_rescue.gdb 2026-07-21), whereas rescueFigure ($3E && $3D>=3) also
+// clean 01->00 single edge, diag_rescue.gdb), whereas rescueFigure ($3E && $3D>=3) also
 // goes false on the mid-zoom frames where pilot_render drops $3D to 2 ($7a37) — firing a
 // rescueFigure-keyed recovery DURING the zoom, which corrupts it (user-observed).  So we detect the
 // true rescue END as the $3E nonzero->zero edge and latch a one-shot restore that runs on the first
@@ -627,8 +620,8 @@ static void buildHeightRowOff() {
     // $FF (off-top: the column is all terrain body, so it plots NOTHING) gets the same negative
     // SENTINEL treatment as kDrawDotRowOff above, so the asm rejects it with the `bmi` that the
     // table read's own flags already set instead of a per-column `cmp.b #$FF / beq` — 16 cycles
-    // on every one of the 160 columns, and `make EDGE_SHAPE=1` + amiga/edge_shape.gdb measured
-    // $FF at only 3% of columns (5622/164160), so the trade is 8 cycles saved on 97% against 14
+    // on every one of the 160 columns, and $FF measured at only 3% of columns (5622/164160),
+    // so the trade is 8 cycles saved on 97% against 14
     // paid on 3%.  Real offsets are kRow120[0..46] = 0..5520, so they never collide with it.
     // ⚠ Both C readers (edgePlotCore, edgeShapeProbe) test h != $FF FIRST and so never index
     // this entry — which is what keeps edgePlotCore usable as the differential's oracle.
@@ -781,7 +774,7 @@ static const unsigned kStationMslDots   = 6;
 // and it is the station's picture that is drawn 15 lines too high relative to its PMG.  Shifting
 // the sprites is the cheaper half of that fix (raising kStationTopLines to 23 would move the whole
 // accepted composition down and push the bottom region's copper WAIT past line 255).
-// 16 rather than the derived 15 is the value measured on screen (user, 2026-08-13); the odd line is
+// 16 rather than the derived 15 is the value measured on screen; the odd line is
 // inside the uncertainty of "which absolute scanline does ANTIC start the display list on".
 // ⚠ Scene-wide, so it moves the launching spacecraft too — that element is placed by the same
 // $277A -> pmLine() path as the two the misalignment was spotted on, it just has no image feature
@@ -834,7 +827,7 @@ static const uint16_t kSprXRight = 0x81 + 285;
 // the game_entry mega-init) spans a couple of seconds during which the screen would
 // otherwise show a piecemeal, janky build.  We hold an EmptyCopperList (black, no
 // playfield/sprites) on screen until g_standbyRevealReady latches, then switch to the real
-// lists — see renderFrame.  (Previously this was a palette fade-to-black; the fade is gone.)
+// lists — see renderFrame.
 //
 // g_standbyRevealReady LATCHES on at boot_standby_launch_driver entry (rof_native.c) — by then
 // game_main_loop has drawn the cockpit/top bar and scene.initialize has set up the sprites.
@@ -977,8 +970,7 @@ void RescueOnFractalus::buildAHSprite()
 }
 
 // ---- player laser shot sprite (instrument-free gameplay PMG) ------------------
-// The player's laser is Atari player P2, drawn by build_player2_sprite ($8C58 — symbols.csv's
-// name; earlier comments here called it "draw_player_shot", which is not a symbol) into the P2
+// The player's laser is Atari player P2, drawn by build_player2_sprite ($8C58) into the P2
 // buffer's UPPER region (mem[$0E32+], separate from the AH ground fill at $0E87+).  $8C58 already
 // fills mem[] on the Amiga every flight frame (only its $D0xx writes are ignored), and it also
 // latches $00CB (HPOSP2) and the strip's extent, so we mirror it into a sprite like buildAHSprite:
@@ -992,7 +984,7 @@ void RescueOnFractalus::buildAHSprite()
 // is 32/64 lores px and spills onto the shared extension channels (see RescueOnFractalus.h).
 //
 // ⚠ `size` is the real meaning of mem[$00CD], whose symbols.csv name `sizep2_shadow` is WRONG —
-// $D00A is SIZEP2, not GRAFM (docs/rename.md, backlog 2026-08-10).  build_player2_sprite stores
+// $D00A is SIZEP2, not GRAFM (docs/rename.md, backlog).  build_player2_sprite stores
 // only $00/$01/$03 there, which is the SIZEP2 encoding, and pairs each with an HPOSP2 shift of
 // 0/4/12 colour clocks ($286E) — exactly what re-centres a player 8/16/32 colour clocks wide.
 //
@@ -1112,7 +1104,7 @@ bool RescueOnFractalus::wideExtAcquire(uint8_t owner)
 // screen right now is the one built LAST frame — still the wide one on the frame the burst narrows.
 // Blanking the DISPLAYED extension chain here therefore takes the right-hand segments away one
 // frame BEFORE segment 0 stops being wide, and that single frame is visible: the 2×→1× step near
-// the end of the explosion showed the left half only (user-observed, 2026-08-11).  A release is a
+// the end of the explosion showed the left half only.  A release is a
 // build of blank rows and has to be latched on the same boundary as one — so for the burst we
 // clear the OFF-SCREEN chain and re-point SPR5/6/1PT, exactly as buildWideObject does.  The
 // displayed chain keeps its wide segments for the one frame its segment 0 still needs them; the
@@ -1315,14 +1307,11 @@ void RescueOnFractalus::buildShotSprite()
     // The strip's extent is ALREADY in mem[]: build_player2_sprite ($8C58, which draws it) records
     // the start row in $2865 and the length in $2866 precisely so it can erase exactly that region
     // on its NEXT call, and every drawing path sets both ($8ce6 STX $2865, $8d00 $2866 = end-start).
-    // Nothing else in the binary writes either byte.  So the 94-byte volatile scan that used to
-    // re-derive them was pure waste — and expensive waste: GCC compiled it as a 32-bit loop counter
-    // with a `.l`-indexed load and a 32-bit immediate compare, ~72 cycles/iteration x 94 with no
-    // early exit.  Measured (SPRITE_SHAPE): 53% of this function, and this function is 88% of the
-    // flight VBI's whole sprite bracket, which the ISR pays 50x/s regardless of frame rate.
-    // The scan was also NOT strictly correct: draw_ah_ground_fill_p2 ($40B0) writes as low as
-    // $0E87, inside the scanned window, so the artificial-horizon fill could extend the run it
-    // found.  Reading the extent is immune to that.
+    // Nothing else in the binary writes either byte, so reading them beats re-deriving the extent
+    // with a 94-byte scan — which cost 53% of this function (itself 88% of the flight VBI's sprite
+    // bracket, paid 50x/s regardless of frame rate) and was not even strictly correct:
+    // draw_ah_ground_fill_p2 ($40B0) writes as low as $0E87, inside the scanned window, so the
+    // artificial-horizon fill could extend the run it found.
     // $8C58 is skipped on some frames (the $00C8 parity gate / event_active_flag) — but then the
     // buffer and $2865/$2866 are BOTH unchanged, so they still describe it.
     // The $34 lower bound is the old scan's window: a strip starting at $32/$33 was clipped to $34
@@ -1416,7 +1405,7 @@ void RescueOnFractalus::buildShotSprite()
 // each byte test into `move.l d,d1 / addi.l #base,d1 / move.b (0,a2,d1.l),d1 / ... /
 // cmpi.l #hi,d / bne`: 78-84 cycles PER BYTE TESTED, essentially all of it addressing.  Over the
 // three windows (84 + 33 + 49 bytes) that is ~13.2k cycles a frame — measured 58 t/it, ~3.9% of
-// ALL wall clock (phase_budget, 2026-08-09), for three loops that normally find nothing at all.
+// ALL wall clock, for three loops that normally find nothing at all.
 //
 // These helpers walk a POINTER and test FOUR BYTES AT A TIME.  A test against a mask replicated
 // into all four lanes is BYTE-ORDER INDEPENDENT (nonzero iff some byte matches, whichever end the
@@ -1497,9 +1486,9 @@ static void pmgScanBounds(unsigned lo, unsigned hi, uint8_t mask, int* firstOut,
 // written by the flight VBI ISR (draw_player3_object clears and redraws the strip, $44E0 moves
 // the scanner blob), so an ISR landing between the two passes makes them read different bytes —
 // a harness artifact, not a logic difference, and the same one band_verify freezes its source to
-// avoid.  Without this the first run reported 24 "mismatches" in 2244 calls, every one of them a
-// run whose top or bottom had moved by a single row.  Sandwiching the oracle proves which it is
-// instead of assuming: a genuine helper bug cannot depend on the buffer changing.
+// avoid (unsandwiched, it reported 24 "mismatches" in 2244 calls, every one a run whose top or
+// bottom had moved by one row).  Sandwiching proves which it is: a genuine helper bug cannot
+// depend on the buffer changing.
 extern "C" volatile unsigned long g_scanCalls = 0, g_scanBad = 0, g_scanHit = 0, g_scanRaced = 0,
                                   g_scanLastBadTop = 0, g_scanLastBadBot = 0;
 // The oracle: the original per-byte loop, verbatim.  `contiguous` = the two P3 mirrors' early
@@ -1818,9 +1807,10 @@ static const int       kStarRingSlots = kStarMaxScroll + kViewportFullHeight + 2
 //          starVblankUpdate only ever writes the ONE new bottom row per advance, so those slots
 //          must already read zero when the window reaches them — and on a re-entry they still
 //          hold the previous pass's rows.
-// The CPU loop that used to clear all 8832 words of the 6 rings cost ~1180 beam ticks ≈ 75 ms —
-// on its own the whole of the tunnel->stars freeze (measured 185 ticks after this change).  Because head and tail are disjoint, the conversion below runs
-// while the blit is in flight and nothing has to wait for it until the closing drain.
+// Clearing all 8832 words of the 6 rings on the CPU cost ~1180 beam ticks ≈ 75 ms — on its own the
+// whole of the tunnel->stars freeze; blitted and sized, the entry costs 185.  Head and tail are
+// disjoint, so the conversion below runs while the blit is in flight and only the closing drain
+// waits for it.
 //
 // ⭐ The tail wipe is SIZED to the previous pass rather than blanket: starVblankUpdate writes
 // exactly two slots per advance — the control slot at the window head (nw) and the one new bottom
@@ -1897,18 +1887,14 @@ void RescueOnFractalus::buildStarSprites()
 //              d[0] = copperWait(16,0)), so the operand must be final by then;
 //   control  — the sprite's control-word DMA fetch is at ~scanline 25;
 //   pixels   — a row is fetched at VSTART+row, i.e. scanline 44 and below.
-// The pointer half used to live in perFrameWork "a frame ahead", which held only because the A500
-// render is slow enough to land it late in the frame (measured beam line 78..307).  On a faster
-// CPU the main loop resumes from the frame-sync wait much earlier: A1200 measured 18..307, and a
-// 68040 published 31 of 32 advances at line <= 16 — the copper then latched the NEW window in the
-// SAME frame while the control words still sat at the OLD slot, so the sprite fetched star PIXELS
-// as its control words (garbage VSTART/VSTOP).  That dropped the star sprites AND, because
-// channel 2's mid-screen re-point to the throttle gauge depends on the star sprite's VSTOP
-// landing at the cockpit line, the gauge with them = the reported A1200 star+instrument flicker.
-// At vblank the beam is above every one of those deadlines, so the four steps are one atomic
-// update.  (Bonus: the window now advances once per real vblank instead of once per render pass,
-// so the field scrolls at a steady 50 Hz — what the Atari VBI does — instead of in render-rate
-// bursts.)
+// ⚠ Do NOT move any of them back into the main loop "a frame ahead": that only holds while the
+// render is slow enough to land late in the frame (A500 beam line 78..307).  A faster CPU resumes
+// from the frame-sync wait much earlier (A1200 18..307; a 68040 published 31 of 32 advances at
+// line <= 16), the copper then latches the NEW window in the SAME frame while the control words
+// still sit at the OLD slot, and the sprite fetches star PIXELS as its control words — garbage
+// VSTART/VSTOP, which drops the stars and, with them, channel 2's mid-screen re-point to the
+// throttle gauge.  At vblank the beam is above every one of those deadlines, so the four steps are
+// one atomic update, and the field scrolls at a steady 50 Hz like the Atari VBI.
 void RescueOnFractalus::starVblankUpdate()
 {
     if (!starPhaseActive) return;
@@ -2063,7 +2049,7 @@ void RescueOnFractalus::decodeDoorScrollDirty()
 // ISR at vblank start (the main thread is spinning in boot_standby_launch_driver's L_626a/L_628f
 // level-select loops, so renderFrame never runs during the scroll — only this ISR does).  The
 // Atari scrolls by DECrementing dl_src_index ($008B) per frame (dl_lms_scroll_step), which rebuilds the
-// per-scanline DL LMS window so the viewport top shows field row $008B (measured 2026-08-04).
+// per-scanline DL LMS window so the viewport top shows field row $008B (measured).
 // Reproduce it with a single BPLxPT offset: point the standby terrain region at doorScrollBitmap
 // offset by $008B rows.  Repoint at vblank ONLY (a torn BPLxPT garbles the whole viewport).
 void RescueOnFractalus::doorScrollVblankUpdate()
@@ -2648,8 +2634,8 @@ void RescueOnFractalus::tunnelPaintBegin()
     // The one thing that can go wrong here is repainting a bitmap that is ON SCREEN — the post-boost
     // pre-build fires ~40 frames after the reverse ring ends, and the T6 handoff hold displays
     // tunnelBitmap for part of that window.  Record whether the tunnel copper was still installed
-    // at each claim; every row must read tunInst=0.  (Measured, not reasoned: this is the trap
-    // commit 8339175 fixed for the decode and the paint cannot be deferred the way the decode was.)
+    // at each claim; every row must read tunInst=0.  (Measured, not reasoned: the decode hit this
+    // same trap, and the paint cannot be deferred the way the decode was.)
     { extern volatile unsigned char g_tpbN, g_tpbTunInst[4], g_tpbCopper[4];
       extern volatile unsigned short g_tpbVbi[4];
       extern volatile unsigned char g_liveCopper;
@@ -2663,7 +2649,7 @@ void RescueOnFractalus::tunnelPaintBegin()
     // the whole pre-build is one straight-line block with no ds_frame, so by the next render the 43
     // rectangles + 3 guide columns are all in.  Both claims land on the standby idle, which is the
     // one place a ~40ms frame is harmless.  This is what covers the POST-BOOST pre-build — the
-    // image the 2nd launch's doors open onto, and the exact thing commit 8339175 had to fix.
+    // image the 2nd launch's doors open onto, and the case that broke the decode.
     tunnelDiffPending = true;
 #endif
     tunnelOwner = kTunnelOwnerForward;
@@ -2704,7 +2690,7 @@ void RescueOnFractalus::drawTunnelColumns(uint16_t rowBase, uint8_t colL, uint8_
 // one (step_accum_sub_7e) share that loop.
 //
 // A rectangle is four solid runs of ONE pen.  Nothing here needs the field's previous contents:
-// the 6502's two mask tables ($66E9/$66FB, dumped 2026-08-10) are exactly "set this nibble to
+// the 6502's two mask tables ($66E9/$66FB, dumped) are exactly "set this nibble to
 // colour, preserve the other" — OR = colour<<4 / AND = (colour<<4)|$0F for an even column, OR =
 // colour / AND = $F0|colour for an odd one — so every write is prev-independent.
 //
@@ -2768,7 +2754,7 @@ void RescueOnFractalus::drawTunnelRect(uint16_t rowBase, uint8_t rowTop, uint8_t
           if (i < TR_RUNS) { g_trRunVbi1[i] = vbi; g_trRunCnt[i]++; } }
     }
 #endif
-    // Ring rectangles are emitted at four points in a session (measured 2026-08-10, the run
+    // Ring rectangles are emitted at four points in a session (measured, the run
     // timeline in §0a of docs/boost-tunnel-direct-handoff.md) and BOTH directions are painted
     // now: the forward pre-build + descent under kTunnelOwnerForward, the boost's L_6047 pre-draw
     // + reverse groups under kTunnelOwnerBoost.  The owner is re-armed (and the bitmap re-primed)
@@ -3386,10 +3372,10 @@ void RescueOnFractalus::renderFlightDirect()
     // side-buffer (the rasterizer ORed this frame's dots into terrainDotBuffer's plane2, NOT a display
     // buffer, during the upstream compute, so they survived the flip).
     //
-    // That used to be one whole-buffer 3-plane clear + the copy, both drained before continuing — 43
-    // beam-ticks of pure CPU stall per painted frame (2.7% of flight, BLIT_SHAPE probe 835c942).  But
-    // the only thing the CPU needs next is the edge plot, and that touches plane1 ALONE.  So the work
-    // is split by plane and only plane1 is awaited:
+    // A whole-buffer 3-plane clear + the copy, both drained before continuing, cost 43 beam-ticks of
+    // pure CPU stall per painted frame (2.7% of flight).  The only thing the CPU needs next is the
+    // edge plot, and that touches plane1 ALONE — so the work is split by plane and only plane1 is
+    // awaited:
     //   plane1 (+0)  clear — the edge plot ORs the skyline into it, so it must be zero first: awaited.
     //   plane2 (+40) copy  — a straight A->D copy covering all 20 words x 47 rows, so it needs no
     //                        clear at all (the old code cleared those words, then overwrote them).
@@ -3417,7 +3403,7 @@ void RescueOnFractalus::renderFlightDirect()
     // Resume-frame terrain-dot recovery.  On the single normal frame that ends a rescue-figure
     // pause the off-screen buffer was NEVER pre-cleared (flightKickBackClear suppressed the clear
     // for the whole pause), so the terrain rasterizer ORed this frame's fresh dots into the
-    // un-cleared buffer and the safety clear/copy just above replaced BOTH planes — measured: the painted
+    // un-cleared buffer and the safety clear/copy just above replaced BOTH planes: the painted
     // buffer's plane2 byte-sum collapses ~10209->1290 for exactly one displayed frame, then
     // self-corrects once flightKickBackClear re-arms the pre-clear.  The fresh dots are
     // unrecoverable (ORed on top of stale content, inseparable), but the ship is stationary across
@@ -3426,7 +3412,7 @@ void RescueOnFractalus::renderFlightDirect()
     // windscreen band (43-46) is repainted from mem[$2098] by the band overlay below.  s_clean is
     // the pre-figure snapshot (no figure pixels) so this leaves no ghost.  Touches ONLY the normal
     // path — the dirty-rect clear/flip/seed state machine is untouched, and there is no flip-skip
-    // (attempt #1's shear) nor pause-flow change (attempt #2's shear).  Keyed on the $3E-end latch
+    // no pause-flow change — both of those shear the picture.  Keyed on the $3E-end latch
     // (s_resumeRestorePend), so it fires exactly once at the true resume and never during the zoom.
     if (s_resumeRestorePend) {
         s_resumeRestorePend = false;
@@ -3501,10 +3487,10 @@ void RescueOnFractalus::renderFlightDirect()
     // field in mem[] and the per-half decode caches and writes ONLY those caches — it never touches
     // the terrain bitmap the blit is filling, so it has no dependency on the fill.  Step 2 (the
     // paint) does, and stays below.
-    // ⚠ Why now: the three PMG run-scans that used to fill this shadow got ~11x cheaper, and the
-    // measurement showed 13 of those saved t/it handed straight back as blitter stall (g_fdFill
-    // 2 -> 15 t/it).  Cheapening CPU work inside a blit's shadow only pays for the part that
-    // exceeded the blit; the rest has to be repaid by moving other independent work in.
+    // ⚠ Why here: the three PMG run-scans that used to fill this shadow got ~11x cheaper and 13 of
+    // the saved t/it came straight back as blitter stall (g_fdFill 2 -> 15 t/it).  Cheapening CPU
+    // work inside a blit's shadow only pays for the part that exceeded the blit; the rest has to be
+    // repaid by moving other independent work in.
     // Sampling the field a few hundred cycles earlier in the frame adds no exposure: the field is
     // ISR-written and a torn read was already documented as harmless and self-correcting (the
     // shadow holds exactly the bytes read, so the next frame re-decodes).
@@ -3549,8 +3535,7 @@ void RescueOnFractalus::renderFlightDirect()
                 const volatile uint32_t* f = f4;
                 const uint32_t* s = sh;
                 const uint32_t* const sEnd = sh + 10;
-                // Three things had to line up to get 46 cycles a long out of this, and each was
-                // worth reading the disassembly for:
+                // Three things had to line up to get 46 cycles a long out of this:
                 //  * POST-increment BOTH pointers and make the exit test a pointer compare.
                 //    Incrementing `s` in the while condition instead (the obvious spelling) kept
                 //    GCC on `move.l (a0),d0` + two `addq.l #4` = 70.
@@ -3600,7 +3585,7 @@ void RescueOnFractalus::renderFlightDirect()
     // scratch is ready for the next frame.  (Objects are sparse, so this is a few rows x 40 bytes.)
     // Walk only the dirty bounding BOX (rows AND byte-columns).  The row range alone left this
     // scanning all 40 bytes of each dirty row for the handful of object bytes actually in it —
-    // 1.8% of bytes scanned were nonzero (BAND_SHAPE probe).  Every nonzero byte is inside the box
+    // 1.8% of bytes scanned were nonzero.  Every nonzero byte is inside the box
     // (the three writers maintain both ranges together), so the narrowed walk still clears them all.
     if (g_objRowHi >= g_objRowLo) {
         if (!g_objTouchOvf) {
@@ -3698,7 +3683,7 @@ void RescueOnFractalus::renderFlightDirect()
             // p1==p2==0 and (d & ~0)|0 == d.  Every lane's AND/OR/NOT is independent of the others,
             // so the uint32_t alias is byte-order neutral — the safe case of the endianness rule in
             // CLAUDE.md, like the plane3 long copy above.  No per-long zero test: the measured ow
-            // map (BAND_SHAPE, amiga/band_shape.gdb) has no all-zero group inside any row's range
+            // map has no all-zero group inside any row's range
             // — row 44 `...11...`, row 45 `.111 1111 ... 111.`, row 46 `...11...` — so the test
             // would be pure cost.  Alignment: vrow = bp (AllocMem, 8-aligned) + 120*row, the plane
             // stride is 40, the cache row bases are multiples of 40 and g0 of 4.
@@ -3902,8 +3887,8 @@ void RescueOnFractalus::run()
 #ifdef ROF_FLIGHT_PROBE
         extern volatile unsigned char g_restartCount; g_restartCount++;
 #endif
-        // "Bug 2": keep the screen black across the WHOLE restart so no stale/mid-swap scene flashes.
-        // The real flash was the flight case: the trampoline sets VVBLKI=$52B4 from inside the VBI
+        // Keep the screen black across the WHOLE restart so no stale/mid-swap scene flashes.
+        // The flash to beat is the flight case: the trampoline sets VVBLKI=$52B4 from inside the VBI
         // ISR, but the main loop doesn't reach the rof_check_restart at the top of renderFlightDirect
         // (→ this longjmp) for ~4 frames, because a flight terrain-compute iteration spans that long;
         // across those frames the old FlightCopperList stays live and the flight loop keeps computing
@@ -3977,17 +3962,16 @@ void RescueOnFractalus::run()
 // BOOSTERS return-to-mother-ship reverse cinematic.  Called once at the top of renderFrame(),
 // before anything reads rsBoostReturn / the inline boostReturnRF copy.
 //
-// The gate used to be mission_event_flag $003A == $FF alone.  That flag is set when the mother
+// ⚠ mission_event_flag $003A == $FF is NOT a sufficient gate on its own.  That flag is set when the mother
 // ship arrives and STAYS $FF into the next level (see the rsBoostReturn comment in
 // deriveRenderSignals), and the reverse cinematic is not a scene of its own — it IS
 // boot_standby_launch_driver's paced construction, played with the boost LUT and shown instead of
-// black-held.  So every LATER construction under the same $003A was also rendered as a reverse
-// cinematic: the Title Screen (attract timeout / SELECT) re-enters game_main_loop, which calls
-// boot_standby_launch_driver afresh, and that rebuild came up through the boost branch — reverse
-// ring palette, and the $2000 starfield decode reading the LEVEL-NN door field instead (measured
-// 2026-08-11: 33 consecutive frames at copper id 11 with $008D==0 && $008E==0, i.e. rsBoostViewport
-// held true by its pre-ring clause).  That is the "post-mother-ship Standby -> Title -> START =
-// broken cockpit / wrong tunnel / white rectangle in the stars viewport" bug.
+// black-held — so on $003A alone every LATER construction renders as a reverse cinematic too.  The
+// Title Screen (attract timeout / SELECT) re-enters game_main_loop, which calls
+// boot_standby_launch_driver afresh, and that rebuild comes up through the boost branch: reverse
+// ring palette, and the $2000 starfield decode reading the LEVEL-NN door field instead.  That is
+// the "post-mother-ship Standby -> Title -> START = broken cockpit / wrong tunnel / white
+// rectangle in the stars viewport" bug.
 //
 // The cinematic is exactly the construction that FOLLOWS the ascent, so latch that:
 //   ARM    in flight ($4FF5) once the mother ship has arrived ($003A==$FF) — the ascent is still
@@ -4009,11 +3993,10 @@ void RescueOnFractalus::updateBoostCinematicLatch()
 // setSpritePriority(): one-off CPU write of BPLCON2 (sprite-vs-playfield priority) at a scene
 // transition.  BPLCON2 is write-only hardware that PERSISTS across copper lists, and the Standby /
 // Doors lists deliberately emit no MOVE for it — so whichever list ran last owned it.  After any
-// launch that is TunnelCopperList's PFxP=4 (all sprites in front of the playfield), which put the
-// throttle/energy gauge (sprite 2) ON TOP of the cockpit dashboard instead of behind it, on every
-// Standby entered after a launch (user-reported 2026-08-11 on the post-mother-ship Standby → Title
-// → START path).  It looked right only on a fresh boot, because initialize() had just written the
-// Standby value by hand a moment earlier.
+// launch that is TunnelCopperList's PFxP=4 (all sprites in front of the playfield), which puts the
+// throttle/energy gauge (sprite 2) ON TOP of the cockpit dashboard instead of behind it on every
+// Standby entered after a launch.  A fresh boot hides it: initialize() writes the Standby value by
+// hand a moment earlier.
 //
 // It is called only at scene ENTRY (the copper-list install), so this is one write per transition,
 // not per frame.  ⚠ Deliberately NOT cached against a "last value we wrote" shadow: the copper also
@@ -4084,14 +4067,12 @@ void RescueOnFractalus::renderFrame()
     const bool boostReturnRF = (vvblkiRF == 0x52D7u) && (mem[0x003A] == 0xFFu) && boostCineLatch;
     const bool boostViewportCine = boostReturnRF && (mem[0x008D] != 0u || mem[0x008E] == 0u);
     // ...and NEITHER may the handoff window that follows the reverse tunnel ($008D==0 && $008E!=0,
-    // the final next-level door build).  b61791e left that one black-holding on the grounds that it
-    // IS the piecemeal door build the hold exists to mask — but render()'s T6 handoff hold (added
-    // by d8d7c18 for exactly this transition) already covers it, and covers it better: it freezes
-    // the last reverse-ring tunnel frame on screen, decodes nothing, and animates only the band
-    // recede, until staticStandby takes over on the g_doorFieldReady 0->1 edge with the finished
-    // LEVEL-NN field.  Black-holding here pre-empts it entirely — measured, the handoff hold ran
-    // ZERO frames and 13 frames of EmptyCopperList (~0.26 s, vbi 2658-2670) flashed between the
-    // reverse tunnel and the standby.  Holding the tunnel image is also the faithful choice: on the
+    // the final next-level door build).  It IS a piecemeal door build, but render()'s T6 handoff
+    // hold already covers it and covers it better: it freezes the last reverse-ring tunnel frame on
+    // screen, decodes nothing, and animates only the band recede, until staticStandby takes over on
+    // the g_doorFieldReady 0->1 edge with the finished LEVEL-NN field.  Black-holding here pre-empts
+    // it entirely — the handoff hold then runs ZERO frames and 13 frames of EmptyCopperList
+    // (~0.26 s) flash between the reverse tunnel and the standby.  Holding the tunnel image is also the faithful choice: on the
     // Atari, ANTIC keeps displaying the ring field through this window.  Nothing is black there.
     // ⚠ Gated on the tunnel copper actually being LIVE.  With no reverse-tunnel frame to freeze
     // there is nothing seamless to show, and falling through would put a stale list on screen — so
@@ -4105,8 +4086,8 @@ void RescueOnFractalus::renderFrame()
         // until render() runs (skipped while held), so they survive to the reveal frame's decode.
         // Without this, a REBUILD (post-crash / post-BREAK / START-from-the-card) leaves the screen
         // black through the build but then reveals a STALE viewportBitmap (doors' top half black/
-        // wrong until something else redraws it) — the reason bug 3 survived the earlier fixes.  On
-        // first boot terrainDirty starts true so it worked by luck; this makes every build correct.
+        // wrong until something else redraws it).  On first boot terrainDirty starts true, so that
+        // case works by luck; this makes every build correct.
         deriveRenderSignals();
 #ifdef ROF_FLIGHT_PROBE
         { extern volatile unsigned char g_liveCopper; g_liveCopper = 9;   // 9 = black EmptyCopperList
@@ -4136,7 +4117,7 @@ void RescueOnFractalus::renderFrame()
     }
     emptyCopperInstalled = false;
 
-    // BREAK/Restart black hold (bugs 2 & 3): from the instant a restart is taken (g_restartJmp
+    // BREAK/Restart black hold: from the instant a restart is taken (g_restartJmp
     // handler in run()) keep the screen black until the fresh resting scene is genuinely rebuilt,
     // so the STALE flight/launch copper + bitplanes (garbage / black+brown) never flash, and
     // rsLaunched (stale terrain-scroll/vbi flags in mem[]) can't install the doors/tunnel copper
@@ -4152,7 +4133,7 @@ void RescueOnFractalus::renderFrame()
         // into the one-time door-field decode (terrainDirty) + full cockpit repaint (cockpitForceFull,
         // rising-edge on prevDoorFieldReady).  If we returned BEFORE deriveRenderSignals during the
         // hold, prevDoorFieldReady would never see the 0, the edge would be missed, and the doors
-        // would come up half-decoded on release (bug 3).  Those flags aren't consumed until render()
+        // would come up half-decoded on release.  Those flags aren't consumed until render()
         // runs (skipped while holding), so they persist to the release frame's decode.
         deriveRenderSignals();
         const uint16_t vv = (uint16_t)(mem[0x0222] | (mem[0x0223] << 8));
@@ -4182,12 +4163,11 @@ void RescueOnFractalus::renderFrame()
     // the frames before the knock), so recomputing them per knock frame is the dominant render cost.
     // Gate == renderFlightDirect's own rescueFigure branch ($3E!=0 && $3D>=3) AND the knock flag.
     //
-    // ...but the COLOURS are NOT stable across the pause and must keep tracking mem[].  The creature
-    // is a mode-D BITMAP drawn into the viewport field, so on the Atari it is painted in the viewport
-    // pens — and DLI $4A1F reloads those from $00DA/$00DB/$00DC/$00DD (COLPF1/COLPF2/COLBK/COLPF0)
-    // on EVERY frame of the knock, exactly as in normal flight.  Skipping updateFlightCopper here
-    // froze the whole flight palette at whatever the last pre-knock frame published, so any pen the
-    // rescue/knock moves was simply not shown — the creature kept the pre-knock terrain palette.
+    // ⚠ ...but the COLOURS are NOT stable across the pause and must keep tracking mem[], so
+    // updateFlightCopper stays in this path.  The creature is a mode-D BITMAP drawn into the
+    // viewport field, so on the Atari it is painted in the viewport pens — and DLI $4A1F reloads
+    // those from $00DA/$00DB/$00DC/$00DD (COLPF1/COLPF2/COLBK/COLPF0) on EVERY frame of the knock,
+    // exactly as in normal flight.  Skip it and the creature keeps the pre-knock palette.
     // (This is also where the "$0047 attack colour" actually lands: $0047 is colpf0_value, which
     // set_colpf0_from_flag $47A3 stores into $00D8 = the top-bar/message text colour, read below as
     // titlePf0.  It never reaches the viewport pens on the Atari — the DLI overwrites COLPF0 from
@@ -4255,10 +4235,8 @@ void RescueOnFractalus::renderFrame()
     // The guard is exactly "no branch below can pre-empt render()'s staticPlanet this frame":
     // staticTitle needs VVBLKI $53CC (rsStars needs $52D7) and staticStandby needs !rsViewport
     // (rsStars implies it), so only the two boost branches can — the reverse-tunnel viewport and
-    // the T6 handoff hold.  (Historically this could not be a plain !rsBoostReturn, because
-    // mission_event_flag $003A stays $FF into the NEXT level and would switch the fix off for every
-    // launch after a mother-ship return.  boostCineLatch now scopes rsBoostReturn to the one
-    // cinematic, so the two forms agree — the explicit pair is kept as documentation of the intent.)
+    // the T6 handoff hold.  Spelling those two out (rather than a plain !rsBoostReturn) documents
+    // the intent; boostCineLatch scopes rsBoostReturn to the one cinematic, so the forms agree.
     const bool boostOwnsDisplay = rsBoostViewport || (rsBoostReturn && !g_doorFieldReady);
     if (rsStars && !boostOwnsDisplay && !planetCopperInstalled && planetCopper && viewportBitmap) {
         // Kick the viewport clear on the blitter now, and ONLY when renderViewportModeD is going
@@ -4420,8 +4398,8 @@ void RescueOnFractalus::renderFrame()
     //     bg + sparse dots).  $1000 is empty/being-built here.
     //   $008D!=0 (reverse tunnel): emit_dl_coord_pairs has rewritten the DL LMS to the $1000 ring
     //     field (the concentric rings).
-    // (The committed code always decoded $1000 → stars showed the empty/bowtie ring field instead
-    // of the starfield.  See docs/boost-cinematic-plan.md §1b.)  Placed before staticStandby so it
+    // (Decoding $1000 unconditionally shows the empty/bowtie ring field where the starfield belongs
+    // — docs/boost-cinematic-plan.md §1b.)  Placed before staticStandby so it
     // wins over the (mispositioned) Standby door copper the forward gates would otherwise select.
     if (rsBoostViewport && tunnelCopper[0]) {
         // The rings and the stars live in SEPARATE bitmaps and the copper picks between them per
@@ -4452,7 +4430,7 @@ void RescueOnFractalus::renderFrame()
             // only rectangles; the decode it replaces also wrote everything BETWEEN them, which is
             // the untouched field value $88 = GTIA value 8.  Priming to 0 left ~6% of the revealed
             // band wrong and read on screen as teal "gates opening" instead of a rectangle growing
-            // from the centre (measured 2026-08-10).  Derive the pen from the LUT so it follows the
+            // from the centre (measured).  Derive the pen from the LUT so it follows the
             // boost's value-8 -> color02 remap instead of hardcoding it.  (Take the owner first —
             // tunnelPen() reads it to pick the LUT.)
             tunnelOwner = kTunnelOwnerBoost;   // from here every ring rectangle takes the boost LUT
@@ -4491,7 +4469,7 @@ void RescueOnFractalus::renderFrame()
     // is false (so we've left the boost branch above) but g_doorFieldReady is still 0 (so
     // staticStandby below can't fire yet) — so control would fall through to the forward-launch
     // doors/tunnel fallthrough (~line 2046) and paint the stale/partial $2000 field for those
-    // frames (the "black-top + green-doors '04', then re-render as LEVEL NN" glitch, bug 6).
+    // frames (the "black-top + green-doors '04', then re-render as LEVEL NN" glitch).
     // Hold instead: keep whatever copper is live (the last reverse-ring frame) and skip re-decode
     // until the door field is ready; staticStandby then takes over cleanly on the g_doorFieldReady
     // 0->1 edge with the finished LEVEL-NN field.
@@ -4507,15 +4485,13 @@ void RescueOnFractalus::renderFrame()
     // BREAK/crash rebuild, or the boost reverse-tunnel handoff below (all of which have
     // g_standbyRevealReady == 0) — it is exactly the in-place cycle.
     //
-    // The gate USED to be `rsBoostReturn && ... && standbyCopperInstalled && !tunnelCopperInstalled`,
-    // borrowing the mother-ship flag $003A==$FF as a "we came back from a launch" proxy.  97a6b70
-    // then correctly narrowed rsBoostReturn with boostCineLatch to the ONE construction after the
-    // ascent — which silently switched this branch OFF, since the SELECT cycle runs long after the
-    // latch releases.  Every in-place level change then fell through to the forward-launch DOORS
-    // copper below, which clears standbyCopperInstalled — the gate on doorScrollVblankUpdate — so
-    // the elevator scroll stopped happening at all (measured: 18 in-place cycles, ONE setTerrainRuns
-    // rewrite, live copper id 6 = doors).  Derive the window from the state that DEFINES it, never
-    // from a flag that merely co-occurs with it.
+    // ⚠ Do NOT gate this on rsBoostReturn (the mother-ship flag $003A as a "we came back from a
+    // launch" proxy): boostCineLatch scopes that to the ONE construction after the ascent, and the
+    // SELECT cycle runs long after the latch releases, so the branch switches off, every in-place
+    // level change falls through to the forward-launch DOORS copper below, that clears
+    // standbyCopperInstalled — the gate on doorScrollVblankUpdate — and the elevator scroll stops
+    // happening at all.  Derive the window from the state that DEFINES it, never from a flag that
+    // merely co-occurs with it.
     //
     // Keep the standby copper live and ANIMATE it rather than freezing: poke the per-frame colours
     // so the WRAP's $0071 dark-green fade shows, and re-decode the door bitmap when the LEVEL digit
@@ -4694,7 +4670,7 @@ void RescueOnFractalus::renderFrame()
         // actually stepping ($0088 = vbi_flags, the descent gate).  ⚠ It costs ~10k volatile
         // mem[] reads a frame, which pushes render past one vblank; left running through the
         // door-open sweep the main loop's `while (mem[$0684] != $64)` polls step OVER their target
-        // and spin forever (measured 2026-08-10 — looked exactly like a broken descent, was the
+        // and spin forever (measured — looked exactly like a broken descent, was the
         // probe).  Hence `make TUNDIFF=1`, off even under PROBES.
         if (mem[0x0088] != 0u) tunnelPaintDiff(0);
 #endif
@@ -4871,13 +4847,12 @@ void RescueOnFractalus::updateFlightCopper(bool force)
     //         COLPM1 ($D013) <- $00D4   = right canopy pillar
     //   $5014 COLPF0 ($D016) <- $00D8   = top-bar / message text
     //   $5019 COLPF1 ($D017) <- $00D7   = top-bar pf1 (blue)
-    // so all three track mem[] live, not just during the death cinematic.  This used to read the
-    // $02C8 COLOR4 shadow for the background and bake pf1 at $78, which is indistinguishable in
-    // normal flight — the game's OWN base table $4DF1 (which intro_fill_display_params $4FE0 loads
-    // into $00CF+y) is $04 $26 $2C $90 $00 $06 $44 $9A $78, so $00D4 == $06 == $02C8 and $00D7 == $78
-    // — but it froze the top bar and the pillars during the ESC pause: the $5039 strobe rewrites ALL
-    // of $00CF-$00DD (VBI $504F-$5058) and $02C8 is outside that range, so they never moved.  Sourcing
-    // them the way the VBI does fixes the pause and the cinematic with one rule.  ($00DE, the energy
+    // so all three track mem[] live, not just during the death cinematic.  ⚠ Source them from these
+    // bytes, NOT from the $02C8 COLOR4 shadow with pf1 baked at $78: the two are indistinguishable
+    // in normal flight (the game's own base table $4DF1, loaded into $00CF+y by
+    // intro_fill_display_params $4FE0, is $04 $26 $2C $90 $00 $06 $44 $9A $78, so $00D4 == $06 ==
+    // $02C8 and $00D7 == $78) but $02C8 is outside the $00CF-$00DD range the ESC-pause strobe $5039
+    // rewrites, so the top bar and pillars freeze for the whole pause.  ($00DE, the energy
     // bar, sits one byte past the strobe's `LDY #$0E` top and correctly does NOT cycle.)
     const uint16_t titleBg  = atariToOCS(mem[MEM_display_param_5]);  // COLBK = top-bar bg / canopy posts
     const uint16_t titlePf0 = atariToOCS(mem[MEM_text_color_pf0]);   // COLPF0 = top-bar text ($00D8)
@@ -5033,11 +5008,10 @@ void RescueOnFractalus::updateFlightCopper(bool force)
     // whatever writes those bytes, with no gating flag anywhere.  Mapping mirrors the buildLayout bake:
     // color00/04<-$D3, 01/05<-$CF, 02/06<-$D4, 03<-$D1, 07<-$D0 (COLPM2, the AH ground), dash<-$D2.
     //
-    // This used to run ONLY during the death cinematic (event_trigger $063D != 0), which is one of the
-    // two things that move these params — intro_fill_display_params $4FE0 ramps $00CF-$00D6 to salmon.
-    // The other is the ESC-pause strobe ($5039: `LDA $07E9,Y EOR $0012 AND #$F6 STA $CF,Y`, Y=$0E..0),
-    // which the gate excluded, so the cockpit body stayed frozen while the terrain cycled.  Driving it
-    // live with no gate matches the DLI and covers both.  Each baked constant equals its param's base
+    // ⚠ Ungated on purpose.  TWO things move these params: the death cinematic's
+    // intro_fill_display_params $4FE0 ramp of $00CF-$00D6 to salmon, and the ESC-pause strobe
+    // ($5039: `LDA $07E9,Y EOR $0012 AND #$F6 STA $CF,Y`, Y=$0E..0).  Gating on the cinematic
+    // (event_trigger $063D != 0) freezes the cockpit body while the terrain cycles.  Each baked constant equals its param's base
     // value in the game's own $4DF1 table — $D3=$00, $CF=$04, $D4=$06, $D1=$2C, $D0=$26, $D2=$90 — so
     // normal flight is byte-identical to the bake and, the params being constant there, pokes nothing.
     const uint8_t ckD3 = mem[MEM_display_param_4], ckCF = mem[MEM_display_param_0];
@@ -5080,13 +5054,10 @@ void RescueOnFractalus::updateDoorsCopper(DoorsCopperList* dc)
     const uint16_t g2   = rsLaunched ? (uint16_t)(0x2Bu - mem[MEM_terrain_scroll_counter]) : 0;
     // Door halves come from the TALL doorScrollBitmap — the ONLY bitmap the door field is decoded
     // into (decodeDoorScrollField: rows 0..84 = the live $2000 field, 85..171 = green pad).  This
-    // used to read viewportBitmap, from the era when the standby decoded the doors there; the
-    // level-select elevator scroll moved that decode to doorScrollBitmap and render() now states
-    // outright that "the door field no longer touches viewportBitmap".  Nothing repointed this, so
-    // the moment the doors began to part the copper started reading a bitmap holding no door
-    // content at all and both halves came out flat green — the LEVEL NN text and dots vanished on
-    // the first opening frame (user-observed 2026-08-10; bisect put it before 39f4d8a, i.e. it
-    // arrived with the scroll work, not with this session).  Same geometry either way (kW wide,
+    // ⚠ NOT viewportBitmap — the door field does not touch it any more (the level-select elevator
+    // scroll moved the decode here).  Read it and both halves come out flat green the moment the
+    // doors part, because that bitmap holds no door content: the LEVEL NN text and dots vanish on
+    // the first opening frame.  Same geometry either way (kW wide,
     // 3 interleaved planes, 120-byte rows, field row 0 = the resting doors), and the 172-row
     // height means the sliding g2 offset cannot run off the end the way an 86-row bitmap could.
     const uint32_t ta   = (uint32_t)doorScrollBitmap->data;
@@ -5202,21 +5173,20 @@ void RescueOnFractalus::updateTunnelCopper(TunnelCopperList* tunnelCopper)
         // WAIT flips it to the green door colour from the topmost still-set canopy-wedge row down.
         // Wedge empty (the whole reverse tunnel) -> greenLine 8 -> the band shows the ring.
         //
-        // ⚠ This REPLACES a phase latch (boostRingRevealed: absolute-poke color00 black at the band
-        // top until $008D went negative = "the outermost ring has been drawn").  That latch was
-        // sampled by the main loop from a byte the VBI animates, so whether it ever saw the negative
-        // window depended on the render cadence — the corner came out black for the whole cinematic
-        // on some runs and correct on others (user-observed 2026-08-10, and the odds moved when the
-        // decode got 4.5x faster).  Nothing here is sampled: the split is re-derived from the live
-        // wedge buffer every frame, which is why the forward path has never shown this class of bug.
+        // ⚠ Do NOT go back to a phase latch here (poke color00 black at the band top until $008D
+        // goes negative = "the outermost ring has been drawn").  The main loop would be sampling a
+        // byte the VBI animates, so whether it ever sees that window depends on the render cadence
+        // — the corner comes out black for the whole cinematic on some runs and correct on others.
+        // Nothing here is sampled: the split is re-derived from the live wedge buffer every frame,
+        // which is why the forward path has never shown this class of bug.
         uint16_t bGreenLine = 8;                            // first still-green band scanline
         for (uint16_t i = 0; i < 8; i++) { if (mem[0x0C88 + i]) { bGreenLine = i; break; } }
         if (bGreenLine == 0) {
             // Whole band takes the door colour (the wedge is still up), so the moving WAIT has no
             // work to do — and at greenLine 0 it sits at kCockpitLine-1, the slot the cockpit
             // bitplane-pointer moves OVERRUN by ~16px into the band's first line, leaving the
-            // carried ring colour showing there (user-observed teal stripe over black, 2026-08-10;
-            // the same artifact commit 8481ec0 fixed for the old boost path).  Flip color00 EARLY
+            // carried ring colour showing there (a teal stripe over black;
+            // the same artifact the boost path had to fix).  Flip color00 EARLY
             // instead, before those moves — the pairing the T6 recede branch above already uses.
             tunnelCopper->setBandTopColor00(true, atariToOCS(mem[0x0071]));
             tunnelCopper->disableBandReveal();
@@ -5418,12 +5388,10 @@ void RescueOnFractalus::renderBootScene()
         // ⚠ BLANK FIRST if a boot scene is already on screen.  Both scenes share ONE
         // Gtia9CopperList and ONE field bitmap, so a scene entry REWRITES the very list the copper
         // is executing (geometry, palette, all four bitplane pointers, every sprite operand) and
-        // then overwrites the very bitmap it is fetching.  Measured at the Logo->Station handover
-        // (amiga/boot_gap.gdb): buildLayout ran with bootFieldCopperInstalled=1, and the ~70 ms
-        // decodeStationField that follows spans several displayed frames — so the station's picture
-        // painted itself into the logo's geometry, in the station's greys, on top of the Lucasfilm
-        // logo (user-reported).  It is also exactly the mid-frame bitplane-pointer swap CLAUDE.md's
-        // copper rule forbids.  Nothing else covers this window: the black-until-ready hold in
+        // then overwrites the very bitmap it is fetching.  At the Logo->Station handover the ~70 ms
+        // decodeStationField spans several displayed frames, so the station's picture paints itself
+        // into the logo's geometry, in the station's greys, on top of the Lucasfilm logo — and it is
+        // exactly the mid-frame bitplane-pointer swap CLAUDE.md's copper rule forbids.  Nothing else covers this window: the black-until-ready hold in
         // renderFrame is BELOW the boot-scene branch, and rof_boot_chain's stage loads render no
         // frames at all, so whatever list was last installed simply stays live across the gap.
         //
@@ -5510,7 +5478,7 @@ static inline uint16_t pmLineStation(unsigned off)
 // Amiga sprite X of an Atari HPOS.  An unwidened player is 8 bits over 8 colour clocks = 16 lores
 // px, so 2 px per clock, with the playfield's left edge ($81) at HPOS $32.  HPOS below the left
 // edge means "parked off screen" (station_missile_drift clears HPOSM0-3 to 0 to hide the dots).
-// kPmXAdj is a systematic 3-px trim measured on screen (user, 2026-08-13): every PMG element of
+// kPmXAdj is a systematic 3-px trim measured on screen: every PMG element of
 // both boot scenes wanted the same 3 lores px to the right of where HPOS alone puts it, which is
 // the port's playfield left edge sitting that far off $81 — so it belongs in the shared mapping
 // rather than in one element's constant (it started life as the logo sparkle's kLogoSparkleXAdj).
@@ -5599,9 +5567,9 @@ void RescueOnFractalus::buildStationSprites()
     // ⭐ P0 AND P1 SHARE ONE SPRITE, one player per BITPLANE, because station_init's PRIOR is $71
     // and bit 5 is GTIA's MULTI-COLOUR PLAYER enable: where P0 and P1 overlap the Atari outputs
     // COLPM0 | COLPM1 = $06 | $0A = $0E, much brighter than either.  That overlap is the ship's
-    // fuselage (the shape data's centre column is set in both pages), so putting P0 and P1 on two
-    // sprite channels painted the fuselage in the higher-priority channel's $06 — dark grey where
-    // atari800 shows near-white (user, 2026-08-13).
+    // fuselage (the shape data's centre column is set in both pages), so P0 and P1 on two sprite
+    // channels paint the fuselage in the higher-priority channel's $06 — dark grey where atari800
+    // shows near-white.
     //
     // An Amiga sprite is ALREADY two bitplanes: the two words per line are SPRxDATA and SPRxDATB,
     // and the pen is DATB<<1 | DATA -> COLOR17/18/19 for this pair.  Every other mirror in the port
@@ -5609,7 +5577,7 @@ void RescueOnFractalus::buildStationSprites()
     // the three pens land on COLPM0 / COLPM1 / their OR — the multi-colour player exactly, on ONE
     // channel.  ⚠ NOT an attached pair: ATT makes the two channels FOUR planes, which puts P1 alone
     // on pen 4 (COLOR20, which nothing sets) and the overlap on pen 5 (COLOR21 — the converging
-    // dots' cycling colour).  That was tried first and is what "the colours are still off" was.
+    // dots' cycling colour).
     //
     // The run is taken over P0 | P1, since one sprite now carries both: it must not break on a row
     // that only one page fills, and more than half the frames have an interior P0-only zero row
@@ -5734,10 +5702,10 @@ void RescueOnFractalus::stationVblankUpdate()
 // working as the transpiled game_entry/game_main_loop/boot_standby_launch_driver drive the program.
 //
 // Scene identity comes from the LIVE VVBLKI vector ($0222/$0223) the genuine flow
-// installs per scene — NOT the raw DLI byte $0200.  game_main_loop loops over
-// boot_standby_launch_driver; while boot_standby_launch_driver BUILDS the Standby display it sets $0200 to many
-// DLI handlers in turn (including the $6CC2 mode-D one), so the old `$0200==$C2` test
-// faked "stars" during Standby and drew an empty mode-D viewport (the black-middle bug).
+// installs per scene — ⚠ NOT the raw DLI byte $0200.  game_main_loop loops over
+// boot_standby_launch_driver, and while that BUILDS the Standby display it sets $0200 to many DLI
+// handlers in turn (the $6CC2 mode-D one included), so a `$0200==$C2` test fakes "stars" during
+// Standby and draws an empty mode-D viewport (the black-middle bug).
 //   $53CC  game_main_loop init / transitional (screen rebuilding)
 //   $52D7  Standby + the launch cinematic (Doors/Tunnel/Planet)
 //   $4FF5  in-flight
@@ -5749,8 +5717,7 @@ void RescueOnFractalus::stationVblankUpdate()
 //   stars    : VVBLKI == $52D7 && $060B == $23 (launch) && $0200 == $C2 (mode-D DLI
 //              installed) — i.e. the genuine stars/planet viewport phase.  Gating on
 //              $060B==$23 (not !=0) rejects the transient $6CC2 the Standby build sets
-//              while $060B is 0/1 (the old $0200==$C2 test drew an empty viewport then —
-//              the black-middle bug).
+//              while $060B is 0/1.
 //   viewport : stars || flight                      — the mode-D viewport band is active
 //   gauge    : $060B != 0                            — cinematic/cockpit active (gauge strip)
 // NOTE: the $060B==$23 stars gate is verified to fix Standby (where $060B is 0/1/4);
@@ -5803,8 +5770,8 @@ void RescueOnFractalus::deriveRenderSignals()
     // level-clear MODE (NOT a lives count) that also matches the forward launch and mis-fires there.
     // ...AND on boostCineLatch, because $003A alone is not enough: it stays $FF into the next level,
     // so every later boot_standby_launch_driver construction (notably the one the Title Screen's
-    // START re-enters game_main_loop to run) was rendered as a second reverse cinematic.  The latch
-    // picks out the ONE construction that follows the ascent — see updateBoostCinematicLatch().
+    // START re-enters game_main_loop to run) renders as a second reverse cinematic.  The latch picks
+    // out the ONE construction that follows the ascent — see updateBoostCinematicLatch().
     // Sub-phase by the reverse-ring flags (measured live, FORCE_RETURN):
     //   stars   : $008D==0 && $008E==0   reverse ring not started — starfield in the $1000 field
     //   tunnel  : $008D!=0               reverse ring active      — concentric rings in $1000
@@ -5881,9 +5848,8 @@ void RescueOnFractalus::deriveRenderSignals()
     // persistent cockpitBitmap shared by every copper list (never cleared on a scene switch), and
     // standby_scoreboard_render ($587B) is an input handler that writes NO cockpit cells — so the decoded
     // dashboard survives Standby->Doors->Tunnel->Stars->Flight unchanged, with dial/digit deltas
-    // caught incrementally by the g_ck* writer registry.  So the old stars-/flight-ENTRY repaints
-    // were redundant; they cost a ~580ms tunnel->stars freeze and a ~700ms flight-entry freeze.
-    // Repaint on the build edge only.
+    // caught incrementally by the g_ck* writer registry.  ⚠ Repaint on the build edge ONLY: a
+    // stars- or flight-ENTRY repaint is redundant and costs a ~580 ms / ~700 ms entry freeze.
     if (g_doorFieldReady != 0u && prevDoorFieldReady == 0u)
         cockpitForceFull = true;
     prevRsStars         = rsStars;
@@ -6099,7 +6065,7 @@ void RescueOnFractalus::decodeCockpitSpan(uint16_t addr, uint8_t nCells)
 // The check brackets the WHOLE cockpit block (snap the source bytes before it, verify after it),
 // for two reasons: a group's cells may legitimately be decoded by a LATER group's registry, and
 // snapshotting the source before the decode is what makes the race filter sound — a write landing
-// between the decode and the snapshot would otherwise read as a coverage hole (it did: 1 in 284).
+// between the decode and the snapshot otherwise reads as a coverage hole (1 in 284 did).
 // Any group whose source moved during the bracket, or whose two full passes disagree, is discarded
 // as `raced` (the sandwich rule in flight-measurement-rules).
 extern "C" volatile unsigned long g_ckVerCalls = 0, g_ckVerBad = 0, g_ckVerRaced = 0;
@@ -6388,8 +6354,8 @@ void RescueOnFractalus::render()
         // blit_message_block/blit_numeric_readout draw the doors into $2000, BEFORE the
         // green fade delay_loop_c2_to_c9) is that "$2000 is built" signal — decode once
         // here, BEFORE the fade, so the live color03 (= mem[$0071]) ramp animates the
-        // dark->bright green build on the real door pixels (was gated on $00E7 = the
-        // music/build-END gate, AFTER the fade, so the doors popped in already-green).
+        // dark->bright green build on the real door pixels.  ⚠ Not $00E7: that is the
+        // music/build-END gate, AFTER the fade, so the doors pop in already-green.
         // Clear terrainDirty and do no per-frame work on the static Standby.
         // deriveRenderSignals re-arms terrainDirty when the scene leaves Standby, so
         // re-entering it re-captures the doors once.
@@ -6400,9 +6366,10 @@ void RescueOnFractalus::render()
 #endif
         // GTIA mode-10 nibble field → 3bp interleaved bitplanes via the precomputed
         // kDoorP1/kDoorP2 tables (one lookup per byte, no per-byte nibble math).  Read the
-        // source through a non-volatile pointer — boot_standby_launch_driver has finished writing $2000 by
-        // now ($00E7 is set), so the volatile per-byte reloads the old loop forced were pure
-        // overhead.  plane3 is always 0 for the doors, so clear it once per row by longs.
+        // source through a non-volatile pointer — boot_standby_launch_driver has finished writing
+        // $2000 by now ($00E7 is set), so nothing can change it under the loop and the per-byte
+        // volatile reloads are pure overhead.  plane3 is always 0 for the doors, so clear it once
+        // per row by longs.
         // The plane bytes go to CHIP RAM (DMA-contended), so throughput is dominated by the
         // number of stores, not the arithmetic.  Pack 4 source bytes into one 32-bit store
         // per plane (10 longs/plane/row instead of 40 byte writes) and use *p++ post-increment
@@ -6420,12 +6387,12 @@ void RescueOnFractalus::render()
         // NOTE: deliberately do NOT reset g_doorDirtyRow0/1 here.  A pending "whole field" mark is
         // left by fill_region_2000/blit_message_block BEFORE the rebuild finishes, and it has to
         // survive until the blit_numeric_readout that ends the rebuild raises the flag.  Clearing
-        // it here narrowed that decode to the 8 digit rows, so the wiped LEVEL text kept its stale
-        // pixels across the level-04->01 wrap while only the digits changed.
+        // it here narrows that decode to the 8 digit rows, and the wiped LEVEL text then keeps its
+        // stale pixels across the level-04->01 wrap while only the digits change.
         // The stars/planet renderer decodes $1000 into viewportBitmap via renderViewportModeD; the
         // door field no longer touches viewportBitmap, but a re-launch after the BOOSTERS return
-        // must still force a full planet clear (the door "LEVEL NN"/band remnants used to bleed
-        // through the sparse starfield — bug 3).  Stamp viewportLastBase to $2000 so the NEXT
+        // must still force a full planet clear or the door "LEVEL NN"/band remnants bleed through
+        // the sparse starfield.  Stamp viewportLastBase to $2000 so the NEXT
         // renderViewportModeD($1000) sees a base mismatch and blitter-clears first.
         viewportLastBase = 0x2000u;
     }

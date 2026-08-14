@@ -466,7 +466,7 @@ void Bitmap::fill(uint16_t x, uint16_t y, uint16_t fillWidth, uint16_t fillHeigh
 // mother-ship) tunnel one vertical-edge paint spans a mean of 33 raster lines (max 74), with the
 // beam sweeping through the rows being painted on 20% of them — so 4-5 consecutive rows of a ring
 // edge came out in colours the tunnel palette does not contain.  That was the "multi-coloured
-// rectangle edges on single reveal frames" bug, filed 2026-08-10.
+// rectangle edges on single reveal frames" bug.
 //
 // Finishing a row before starting the next bounds the damage to the ONE row the paint front is on
 // when it crosses the beam: the front moves ~12x faster than the beam, so it crosses at most once.

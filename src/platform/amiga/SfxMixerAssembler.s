@@ -4,7 +4,7 @@
 ;
 ; WHY THIS FUNCTION.  It is not a rendering routine — it is the biggest single item inside the
 ; 50 Hz flight VBI, which fires 50x/s regardless of frame rate and is therefore a flat tax on
-; ALL wall clock (~31% of it).  Measured under `make COMBAT=1` (sfx_shape.gdb): the ISR is
+; ALL wall clock (~31% of it).  Measured under `make COMBAT=1`: the ISR is
 ; ~96 t/firing, its sfx block 43 t, the event-ring drain 27.7 t, and sfx_reorder_voice_slot
 ; alone 22.4 t/firing = 3.32 calls x 6.70 t.  The drain calls it once per active duration
 ; envelope, and each call genuinely re-decides voice priority (the intermediate $0714/$0715

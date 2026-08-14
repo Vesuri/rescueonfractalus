@@ -97,10 +97,10 @@ static __chip uint8_t wave_pure[2];                       // pure tone (square) 
 // or absolute pitch (pitch is carried separately by AUD_PER).  So there are only 15
 // distinct poly4 waveforms and 31 distinct poly5-tone waveforms; build_poly_tables()
 // builds all of them once at init and update_paula_channel just re-points Paula at the
-// matching immutable buffer per note.  Generating on the fly (the old per-note ping-pong)
-// glitched at note onset: the engine writes AUDF before AUDC, so a note's first repoint
-// could land on a half-built or wrong-mode buffer that Paula then latched at the next DMA
-// loop wrap.  Selecting from a static table removes that hazard.
+// matching immutable buffer per note.  ⚠ Do NOT generate them on the fly (a per-note
+// ping-pong buffer): the engine writes AUDF before AUDC, so a note's first repoint can land on
+// a half-built or wrong-mode buffer that Paula then latches at the next DMA loop wrap — an
+// audible glitch at note onset.  An immutable table cannot have that hazard.
 // poly4 = 30 bytes (15 words); poly5tone = 62 bytes (31 words).
 static __chip uint8_t poly4_wave[15][30];
 static __chip uint8_t poly5_wave[31][62];
@@ -178,28 +178,20 @@ static void fill_noise_buf(void) { fill_noise_words(0, NOISE_LEN / 4); }
 // channel is in noise mode, refill a small slice round-robin through the buffer so the noise
 // texture keeps evolving instead of statically repeating.  The buffer LENGTH (not the refill) is
 // what keeps the DMA loop sub-audible, so this is cheap insurance, not a per-frame full
-// regeneration — that full regen in the VBI ISR overran the 20 ms vblank budget and dropped the
-// launch cinematic to 25 Hz.  Overwriting bytes Paula is mid-DMA on is inaudible for noise
-// (random over random) — and that is what makes the main loop just as safe a home as the ISR.
+// regeneration (a full regen in the VBI ISR overruns the 20 ms vblank budget and drops the launch
+// cinematic to 25 Hz).  Overwriting bytes Paula is mid-DMA on is inaudible for noise — random
+// over random — which is what makes the main loop as safe a home as the ISR.
 //
-// ⭐ SIZED 2026-08-12 (amiga/isr_full.gdb): at 16 longwords/VBI this was **5.71 t/firing —
-// 8.5% of the WHOLE flight VBI and 1.8% of ALL wall clock**, the single largest Amiga-side
-// item in the ISR, for a texture nobody can hear.  The refresh rate only has to keep up with
-// the rate Paula READS the buffer, and the old 64 B/VBI = 3200 B/s was ~5x faster than that:
-// the engine drone (the only steady noise voice in flight) runs AUDF ~$65 => Paula period
-// ~5666 => a playback rate of ~626 B/s, i.e. one pass through the 8 KB buffer every ~13 s.
+// ⚠ Do NOT move it back into the 50 Hz ISR.  It has no beam-timing requirement, and the ISR fires
+// 50x/s no matter how slow the frame is, so there the SAME work costs ~2.3x per rendered frame in
+// flight — measured at 16 longwords/VBI it was 5.71 t/firing = 8.5% of the whole flight VBI and
+// 1.8% of ALL wall clock, for a texture nobody can hear.
 //
-// ⭐ MOVED OUT OF THE 50 Hz ISR 2026-08-12.  This is main-loop work: it has no beam-timing
-// requirement, no opportunism, and no reason to be charged to the vblank budget.  The ISR fires
-// 50x/s no matter how slow the frame is, so running it there meant paying for it ~2.3x per
-// rendered frame in flight (50 Hz ISR vs ~22 Hz main loop) — the SAME work at 56% fewer
-// executions once it moved.  Consequence, stated honestly: the slice is unchanged at 4 longwords,
-// so in flight the byte rate falls 800 -> ~350 B/s and a full pass through the buffer takes ~23 s
-// against the drone's ~13 s read pass.  That only means the drone may re-hear a region before it
-// has been rewritten; the LOOP PERIOD it can actually hear is the 8 KB buffer's ~13 s either way,
-// which is unchanged.  Bump the 4 below if a future noise voice ever reads faster.  Outside
-// flight (cinematics, standby) renderFrame is the per-frame spin-wait hook, so the rate there is
-// still ~50 Hz.
+// Sizing: the refill only has to keep up with the rate Paula READS the buffer.  The engine drone
+// (the only steady noise voice in flight) runs AUDF ~$65 => Paula period ~5666 => ~626 B/s, one
+// pass through the 8 KB buffer every ~13 s; 4 longwords per rendered frame is ~350 B/s in flight,
+// so the drone may re-hear a region before it is rewritten — but the loop period it can actually
+// hear is the buffer's ~13 s either way.  Bump the 4 below if a noise voice ever reads faster.
 void PlatformAmiga::noiseTick()
 {
     if (!(noiseOn[0] || noiseOn[1] || noiseOn[2] || noiseOn[3])) return;
@@ -450,9 +442,9 @@ extern "C" void flush_paula(void)
             // flight (docs/flight-perf-log.md §22/§25).  A laser/explosion sweeps AUDF every 50 Hz
             // firing, and the poly4/poly5 waveform POINTER is a function of the stride residue
             // (update_paula_channel: poly4_wave[stride%15]), so a sweep changes the waveform —
-            // hence restarts — on EVERY frame for the length of the sound.  With the wait sized
-            // from the old note's period that was the single most expensive thing in the flight
-            // VBI: measured 37.06 t/firing, 32% of the whole ISR, ~2-3 s after the shot.
+            // hence restarts — on EVERY frame for the length of the sound.  Sizing the wait from
+            // the old note's period makes that the single most expensive thing in the flight VBI:
+            // 37.06 t/firing, 32% of the whole ISR, for the ~2-3 s after a shot.
             //
             // A write to AUDxPER takes effect immediately, so dropping every restarting channel to
             // the Paula minimum FIRST makes "2 sample periods" 248 ticks ≈ 1.1 rasterlines instead
@@ -753,7 +745,7 @@ uint8_t PlatformAmiga::hwRead(uint16_t addr)
     // through platform_hw_write, which drops non-POKEY addresses, so the keyboard's
     // mem[$D01F] is never clobbered by genuine code.)
     if (addr == 0xD01Fu) {
-        // QoL divergence (user decision, 2026-08-14): the joystick FIRE button also advances the
+        // QoL divergence (user decision): the joystick FIRE button also advances the
         // two boot cinematics, alongside START.  The Station's attract loop ($1a01) exits on an
         // RTCLOK timeout, any keyboard key ($02FC != $FF), or `CONSOL == $06` = START — it never
         // reads TRIG0.  That loop is TRANSLITERATED code we must not hand-edit, so report fire AS
@@ -814,7 +806,7 @@ extern "C" { volatile unsigned short g_ipIntroWrap  = 0; }   // level>=max → i
 #ifdef ROF_COMBAT_LOAD
 // COMBAT-LOAD benchmark counters (`make COMBAT=1 PROBES=1`, read via amiga/combat_probe.gdb).
 // They exist to PROVE the combat load is real before any timing is quoted from it — a run
-// with g_clExplode==0 is the 2026-07-31 "firing into the void" mistake all over again.
+// with g_clExplode==0 is the "firing into the void" mistake all over again.
 extern "C" { volatile unsigned short g_clExplode   = 0; }  // trigger_object_explosion calls
 extern "C" { volatile unsigned short g_clShotHit   = 0; }  // our shot destroyed a map occupant
 extern "C" { volatile unsigned short g_clEnemyFire = 0; }  // emplacement queued a bolt at us
@@ -910,10 +902,7 @@ extern "C" { volatile unsigned long g_clCalSplit  = 0; }
 extern "C" { volatile unsigned long g_clCalSplitN = 0; }
 #ifdef ROF_OBJ_SHAPE
 // OBJECT-PLOTTER SHAPE PROBE (`make COMBAT=1 PROBES=1 OBJ_SHAPE=1` + amiga/obj_shape.gdb).
-// The combat attribution INFERRED the object plotter's cost from a visit count ("25 visits x
-// ~50 ticks ~= the +1161 t/it DRAW delta") — but 50 ticks is ~22000 cycles, orders of magnitude
-// more than the handful of table loads a bailing visit runs, so the arithmetic was numerology.
-// These measure it: two brackets (the whole plotter chain at its call sites, and the scaled
+// Measures the object plotter instead of inferring it from a visit count: two brackets (the whole plotter chain at its call sites, and the scaled
 // blit nested inside it) plus the shape of every early-out.  The per-cell counts accumulate in
 // LOCALS inside raster_scaled_object and are flushed once per call, so the hot loops carry no
 // volatile traffic.
@@ -1127,17 +1116,14 @@ extern "C" void platform_tunnel_vspan(uint16_t rowBase, uint8_t r0, uint8_t r1, 
 // stub (amiga/diag_timing.gdb).  Compiled out by default so the SDL/release builds don't carry
 // (or need to link) any of these symbols.
 #ifdef ROF_FLIGHT_PROBE
-// ⚠ RACE-FREE, and it MUST be.  This used to be a plain
-//     g_vbiCount * 313 + rof_beam_line()
-// which reads the two halves of the clock non-atomically.  The VERTB ISR bumps g_vbiCount at
-// beam line 0, so an ISR landing BETWEEN the two reads pairs the OLD frame number with a beam
-// line that has already wrapped to ~0 — the clock jumps ~313 ticks BACKWARD.  Every FP_TIME
-// bracket then computes `rof_subclock() - start` on unsigned longs and underflows to ~4.29e9,
-// so one unlucky sample poisons a whole accumulator.  That is the "g_fDraw/g_fDirect are
-// poisoned" note in the flight-pc-profiler memory, and it is why the phase decomposition had to
-// be distrusted for months.  A vbi-count read on either side, retried until they agree, proves
-// no VBI fired between the two halves and makes the pairing consistent.  Cost: two extra
-// volatile short reads, i.e. nothing next to the CHIP register read it already does.
+// ⚠ RACE-FREE, and it MUST be.  A plain `g_vbiCount * 313 + rof_beam_line()` reads the two
+// halves of the clock non-atomically: the VERTB ISR bumps g_vbiCount at beam line 0, so an ISR
+// landing BETWEEN the two reads pairs the OLD frame number with a beam line that has already
+// wrapped to ~0 and the clock jumps ~313 ticks BACKWARD.  Every FP_TIME bracket then computes
+// `rof_subclock() - start` on unsigned longs, underflows to ~4.29e9, and one unlucky sample
+// poisons a whole accumulator.  A vbi-count read on either side, retried until they agree, proves
+// no VBI fired between the two halves.  Cost: two volatile short reads, nothing next to the CHIP
+// register read it already does.
 extern "C" unsigned long rof_subclock(void) {
     for (;;) {
         const unsigned short v0 = g_vbiCount;
@@ -1214,7 +1200,7 @@ extern "C" { volatile unsigned long g_iterMax = 0, g_iterLast = 0, g_iterPostDs 
 extern "C" { volatile unsigned short g_iterCount = 0, g_iterMaxAt = 0; }
 extern "C" { volatile unsigned long g_fSetup=0,g_fClear=0,g_fDraw=0,g_fColl=0,g_fState=0,g_fEnemy=0; }
 // ds_frame() total (both displayed halves per iteration) = renderFlightDirect + sprite builds +
-// copper update + the audio flush.  Never bracketed before 2026-08-06, so the phase sum used to
+// copper update + the audio flush.  Never bracketed earlier, so the phase sum used to
 // miss the entire render side of the frame as well as all of terrain pass 2.
 extern "C" { volatile unsigned long g_clFrameTicks = 0; }
 // Stage-0 convert-pass cost (flight renderViewportModeD), beam-based, ISR-decontaminated.
@@ -1586,7 +1572,7 @@ void PlatformAmiga::lockonChanged(uint8_t cellIdx) {
     // rof_native.c, driven by both the standby and flight VBIs).  Flag just that cell so the next
     // renderFrame re-decodes it — this keeps the indicator randomly blinking through the planet
     // descent and into flight.  (The blink rewrites a single cell ~9x/second and the old
-    // strip-wide flag re-decoded all 7 = ~1.2% of the whole flight frame; measured 2026-08-09.)
+    // strip-wide flag re-decoded all 7 = ~1.2% of the whole flight frame; measured.)
     rof_cockpit_lockon_dirty(cellIdx);
 }
 
@@ -1641,7 +1627,7 @@ uint8_t PlatformAmiga::flightIrqKey() {
 //   F3 -> OPTION (bit2)  — attract DEMO DROID
 // SELECT/OPTION are read by the Standby driver's idle loop (boot_standby_launch_driver $5F1D:
 // $D01F&$02 / &$04) and the level selector (standby_level_select_loop $5978).  Measured
-// behaviour (2026-08-03): from the INITIAL cockpit Standby, SELECT (or joystick-up — faithful)
+// behaviour: from the INITIAL cockpit Standby, SELECT (or joystick-up — faithful)
 // opens the separate level-selector card ($53CC); inside it joystick up/down cycles the starting
 // level.  In the POST-mother-ship Standby ($003A==$FF), SELECT cycles the level in place (cockpit
 // door-scroll).  All faithful to the transpiled binary.
@@ -1740,7 +1726,7 @@ static void pollJoystick()
     // rather than launched straight through.  Overrides the sampled level, so it reaches both
     // readers: the Logo's own TRIG0 check and the Station's fire-as-START fold in hwRead($D01F).
     // ⚠ Injected from C, not gdb.  A `set var` on this from the gdb script did NOT stick — the
-    // FS-UAE stub serves memory reads but dropped the write (measured 2026-08-14), which is why
+    // FS-UAE stub serves memory reads but dropped the write (measured), which is why
     // every other FORCE_* harness in this file drives its input from C too.
     if (g_vbiCount >= 100u && g_vbiCount <= 160u) s_joyTrig0 = 0x00u;
 #endif
@@ -1806,7 +1792,7 @@ static uint32_t keyboardHandler()
     // level-select spin (boot_standby_launch_driver `while ($008B != 0x3E)`), which relies on the
     // faithful Atari invariant that the main loop re-checks $008B every frame: the VBI kept
     // decrementing $008B past the 0x3E target into 0 (where the VBI stops touching it) → deadlock
-    // (measured 2026-08-04: held/repeated F2 jammed the scroll).  ~200 iters (~270 us) keeps a
+    // (measured held/repeated F2 jammed the scroll).  ~200 iters (~270 us) keeps a
     // comfortable ~3x margin over the 85 us minimum while cutting the per-event ISR cost ~7x.
     *ciaacraPointer |= CIACRAF_SPMODE;
     for (volatile uint16_t d = 0; d < 200; d++) { /* >=85us KDAT-low handshake pulse */ }
@@ -1871,8 +1857,8 @@ static uint32_t keyboardHandler()
                 // unaffected until you actually press B.  (make FORCE_MOTHERSHIP=1)
                 // ...and knock energy $062F down to half at the same edge: pressing B early
                 // leaves it FULL, and a full bar exactly fills its dial, so nothing hangs below
-                // the gauge and every gauge-vs-cockpit priority bug stays invisible (user,
-                // 2026-08-11).  $DC = full (bar-top index ($DC-$062F)>>2 = 0); $6E = index 27.
+                // the gauge and every gauge-vs-cockpit priority bug stays invisible.
+                // $DC = full (bar-top index ($DC-$062F)>>2 = 0); $6E = index 27.
                 if (kFlightKeys[i].kbcode == 0x15u) { mem[0x003Au] = 0xFFu; mem[0x0676u] = 0x01u;
                                                       mem[0x062Fu] = 0x6Eu; }
 #endif
@@ -1898,9 +1884,9 @@ static uint32_t keyboardHandler()
 //     artifact.  A bare A500 (floppy / WHDLoad) has no such server and no ~11 Hz CIA-A source,
 //     so on the real target this reclaims ~nothing.
 //  2. Taking the vector starves that trap server, and FS-UAE responds by RESETTING the machine:
-//     with the takeover on, the session reboots before flight every time (2/2 runs), while the
-//     same tree with it off runs clean (bisected 2026-08-05).  It would also break the harness
-//     every measurement depends on, since diag_run.sh boots from a host directory.
+//     with the takeover on the session reboots before flight every time (2/2 runs), while the
+//     same tree with it off runs clean — which also breaks the headless harness, since
+//     diag_run.sh boots from a host directory.
 //
 // If it is ever re-enabled: the handler does what ciaa.resource did for us — read CIA-A's ICR
 // (that is what releases the CIA's IRQ line, so it MUST come before clearing Paula's INTREQ, or
@@ -2431,7 +2417,7 @@ static uint32_t vbiHandler()
             // HALF ENERGY at the boost.  The forced return fires before the ship has taken any
             // damage, so energy $062F is still FULL — and a full bar is exactly 56 rows tall,
             // filling its dial with nothing hanging below it.  Every gauge-vs-cockpit priority
-            // bug is invisible in that state (user, 2026-08-11): the overflow only exists when
+            // bug is invisible in that state: the overflow only exists when
             // the bar top has moved down.  $DC = full (bar top index ($DC-$062F)>>2 = 0), so
             // $6E parks the top mid-dial (index 27) and leaves 27 rows hanging below it.
             mem[0x062Fu] = 0x6E;
@@ -2470,7 +2456,7 @@ static uint32_t vbiHandler()
 #endif
 
 #ifdef ROF_FORCE_BREAK_EARLY
-    // Headless BREAK-outside-flight verification (bug 1): inject BREAK ($80) while still in the
+    // Headless BREAK-outside-flight verification: inject BREAK ($80) while still in the
     // Standby / launch cinematic ($52D7), i.e. BEFORE flight, and confirm the restart fires from a
     // non-flight scene (nothing consumes s_pendingFlightKey there — rof_check_restart must).  Fires
     // once, before the vbi==350 auto-START.  After it we should reach the $53CC selector card.
@@ -2478,7 +2464,7 @@ static uint32_t vbiHandler()
         static uint8_t s_fbeDone = 0;
         if (!s_fbeDone && g_vbiCount >= 240) { s_pendingFlightKey = 0x80; s_fbeDone = 1; }  // BREAK in Standby
         // After the restart lands on the rebuilt Standby ($52D7), hold START (CONSOL bit0) to launch
-        // the doors so bug 3 (doors top-half missing post-restart) is reproducible headlessly.  Gate
+        // the doors so the doors-top-half-missing-post-restart case is reproducible headlessly.  Gate
         // on the restart having happened + the door field rebuilt; hold until launched ($060B==$23).
         extern volatile unsigned char g_restartCount, g_doorFieldReady;
         const uint16_t vv2 = (uint16_t)(mem[0x0222u] | (mem[0x0223u] << 8));

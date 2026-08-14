@@ -93,7 +93,7 @@ public:
        0..6) was rewritten by the lock-on animation.  A bitplane-mirroring platform flags
        just that cell for re-decode; no-op on direct-mem[] platforms (SDL / headless).
        The random blink rewrites a SINGLE cell ~9x/second, so decoding the whole 7-cell
-       strip on each write was ~6x the necessary work (measured 2026-08-09).            */
+       strip on each write was ~6x the necessary work (measured).            */
     virtual void lockonChanged(uint8_t /*cellIdx*/) {}
 
     /* Notification that an instrument writer changed a span of nCells cockpit cells

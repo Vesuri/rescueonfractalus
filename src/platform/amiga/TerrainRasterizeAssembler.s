@@ -1,5 +1,5 @@
 ; TerrainRasterizeAssembler.s — hand-written m68k twin of terrain_column_rasterize_core
-; (asm-migration-plan Phase 2 / the 2026-08-05 phase-2 RESTRUCTURE).  Plain C linkage:
+; (asm-migration-plan Phase 2 / the phase-2 RESTRUCTURE).  Plain C linkage:
 ;   void terrain_column_rasterize_core(uint8_t entryDepth, uint8_t colBase)
 ; GCC m68k passes both args int-promoted ON THE STACK; at entry (before any push)
 ; entryDepth's byte is at 7(sp), colBase's at 11(sp), return address at 0(sp).
@@ -16,7 +16,7 @@
 ; entryDepth is dead (the C assigns it to `depth` then overwrites with 0).
 ;
 ; ---------------------------------------------------------------------------------------
-; STRUCTURE (2026-08-05).  Five changes, together ~2x fewer cycles than the previous asm.
+; STRUCTURE.  Five changes, together ~2x fewer cycles than the previous asm.
 ; Proven byte-identical to the oracle over 1.6M randomised host cases (including a fully
 ; adversarial pass) by tools/ras_restructure_test.c, then on-target by the in-process
 ; differential (make VERIFY=1 PROBES=1 + amiga/raster_verify.gdb).
@@ -49,11 +49,11 @@
 ;     a real deep flight (6013 calls, 84842 far-bisects): span 3 = 31.2% and span 4 = 16.5%
 ;     of all far-bisects, and they subsume 98.6% of the ff leaves and 86% of the fe leaves.
 ;     Loop-top dispatches drop 174820 -> 93986 for the same picture.
-;  7. THE LOOP-TOP DISPATCH IS A 256-ENTRY PC-RELATIVE JUMP TABLE (2026-08-08).  After 6. the
+;  7. THE LOOP-TOP DISPATCH IS A 256-ENTRY PC-RELATIVE JUMP TABLE.  After 6. the
 ;     loop top was a chain of up to five compares whose WEIGHTED cost was 49.5 cycles (span >= 9
 ;     44% / 5-8 49.5% / 4 5.5% / 1 1%, i.e. essentially a binary choice with a long tail); the
 ;     table is a flat 36 (move/add/add/jmp/bra.w) for EVERY span.  ~99 cycles a call.
-;  6. SPANS 5-8 ARE FUSED BLOCKS (ras_s5/s6/s7/s8, 2026-08-08).  Such a node bisects into a
+;  6. SPANS 5-8 ARE FUSED BLOCKS (ras_s5/s6/s7/s8).  Such a node bisects into a
 ;     child of span S>>1 (2/3/3/4) and a parent remainder of S-(S>>1) (3/3/4/4), so BOTH
 ;     halves are leaf blocks: the push spill, the pop, the child's underflow test and exit
 ;     sequence, and two loop-top dispatches are all removable, and the block simply falls
@@ -61,7 +61,7 @@
 ;     (9102 calls): spans 5-8 are 27.5% of all far-bisects and 53% of the ones 5. does not
 ;     already absorb = 3.6 per call.  ~160 cycles a node, ~8% of this function.
 ;
-;  8. plotCol IS BIASED BY -$D4 THROUGHOUT PHASE 2 (2026-08-08), so the right-edge bound
+;  8. plotCol IS BIASED BY -$D4 THROUGHOUT PHASE 2, so the right-edge bound
 ;     test is a bare `bpl` on the flags the column step already set.  `plotCol >= $D4` runs
 ;     ~14 times a call and was `cmp.b #$D4,d5` + `bcc` = 16 cycles not-taken, for a branch
 ;     that fires exactly once per call.  In [$2C,$D4) the biased column is -168..-1, which
@@ -72,7 +72,7 @@
 ;     for a `frac = CTL_FRAC(depth+1)` the oracle genuinely does BEFORE the bound test, so
 ;     they get `tst.w d5` (-4 each).  ~-110 cycles a call against +12 to un-bias `col` once.
 ;
-;  9. SPANS 9..16 GET THEIR OWN ph2_far STUBS (2026-08-08, ras_f9..ras_f16 + the FARFUSE
+;  9. SPANS 9..16 GET THEIR OWN ph2_far STUBS (ras_f9..ras_f16 + the FARFUSE
 ;     macro).  Such a node's child span c = S>>1 and parent remainder p = S-c are constants,
 ;     so the span arithmetic and the roughness displacement become immediates and the stub
 ;     branches STRAIGHT into the child block instead of `bra ph2_loop` + a 36-cycle dispatch.
@@ -134,7 +134,7 @@ CPBUF	equ	96		; 32 control-point slots * 3 bytes (depth stays < ~16)
 ; 2-bit mask has — so the SAME `move.b` that fetches the mask is also the range gate.
 ; That is 6 instructions (~62 cycles) in place of 13 (~104, one a variable-count LSR).
 ;
-; ⭐ oldMax is read into d7, NOT d1, so the head needs no `moveq #0` (2026-08-08).  The read
+; ⭐ oldMax is read into d7, NOT d1, so the head needs no `moveq #0`.  The read
 ; has to land in a register whose bits 8-15 are already 0, because the accepted path uses it
 ; as a WORD index into kDrawDotRowOff — and d1 cannot be that register: DRAWDOT itself leaves
 ; the row byte-offset (up to 5640) in d1, so back-to-back DRAWs inside one leaf block would
@@ -418,7 +418,7 @@ ph2_enter:
 	sub.w	#$D4,d5			; ...biased; N = "still on screen" from here on
 	bpl	done_raw
 	; Dispatch on span, through a 256-entry PC-relative jump table.  The mix POST-FUSION
-	; (derived from the amiga/ras_shape.gdb far-bisect histogram, quiet baseline 2026-08-08:
+	; (derived from the far-bisect histogram, quiet baseline:
 	; the fused blocks absorb 5.86 of the 6.27 span-3/4 nodes a call) is span >= 9 44% /
 	; spans 5-8 49.5% / span 4 5.5% / span 1 1% / spans 2-3 ~0, over ~7.3 dispatches a call.
 	; That is essentially a binary choice with a long tail, and the compare chain it replaces
@@ -708,7 +708,7 @@ rdn_sp4:	bra	done
 	; loop-top dispatch, its whole exit sequence (cmpa/beq/RASPOP/bra) and the parent's
 	; dispatch are all dead weight: the entire 5-to-8-column group runs as one block
 	; that falls into ras_sp3 / ras_sp4 for its parent half.  Shape (quiet baseline,
-	; 2026-08-08, 9102 calls): spans 5/6/7/8 = 12404/9147/6494/4855 far-bisects = 27.5%
+	; 9102 calls): spans 5/6/7/8 = 12404/9147/6494/4855 far-bisects = 27.5%
 	; of all of them and 53% of those the sp3/sp4 blocks do not already absorb, i.e.
 	; 3.6 per rasterize call.  ~160 cycles saved per node, ~8% of this function.
 	;
@@ -1044,10 +1044,9 @@ done_raw:
 ;   a2 = plane-1 byte base (bp), advanced +1 per 4-column group
 ;   d3-d6 = the four column masks, held in registers (see 2. below)
 ;
-; 2026-08-12 shave, −12 of 68 cycles per column (~−1920/call, two calls an
+; shave, −12 of 68 cycles per column (~−1920/call, two calls an
 ; iteration ≈ −0.6% of flight wall clock).  Both come from measurement, not
-; inspection — `make EDGE_SHAPE=1 PROBES=1` + amiga/edge_shape.gdb over 1026
-; frames (164160 columns) is what priced them:
+; inspection — a shape probe over 1026 frames (164160 columns) priced them:
 ;   1. THE OFF-TOP TEST IS A TABLE SENTINEL NOW.  h==$FF means the column is all
 ;      terrain body and must plot NOTHING; that was a per-column
 ;      `cmp.b #$FF,d0 / beq` = 16 cycles paid by EVERY column.  The header used
@@ -1076,14 +1075,13 @@ done_raw:
 ;      call for ~3.4 KB of code.  d7 is now unused but stays in the movem list —
 ;      it costs 8 cycles once a call and keeps the frame size (and hence the
 ;      28(sp) argument offset) in one place.
-;   4. THE PAIRWISE MERGE (2026-08-14).  Two columns of a pair share the plane-1
+;   4. THE PAIRWISE MERGE.  Two columns of a pair share the plane-1
 ;      BYTE, so if they also share the ROW they need ONE lookup and ONE OR with
 ;      the two masks combined.  The test is the two RAW HEIGHTS: equal h means
 ;      equal row (kHeightRowOff is a function of h), and $FF==$FF merges too —
 ;      both then skip on the same sentinel.  Filed in flight-perf-log §23.3 as
 ;      "survives arithmetic at only -3.6 a column" on a PROXY hit rate (52%
-;      same-row over ALL adjacent columns).  `amiga/edge_shape.gdb` now counts
-;      the exact pairing: **55% (40421/72480 over 906 frames), of which 5pp is
+;      same-row over ALL adjacent columns).  The exact pairing measured: **55% (40421/72480 over 906 frames), of which 5pp is
 ;      $FF==$FF** -- against a break-even of 40%, so it is 15 points clear.
 ;        hit  78 cycles vs 112 for the two columns   -> -34   (50pp)
 ;        hit, both $FF          62 vs 80             -> -18   ( 5pp)

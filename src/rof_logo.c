@@ -110,8 +110,8 @@ static void logo_frame(void)
 #ifdef ROF_LOGO_START_ABORT
 /* Let START — or the joystick FIRE button — end the logo early, the way both already exit the
  * Station.  A DELIBERATE DIVERGENCE: the Atari's $5000 is unconditional and has no exit check
- * anywhere.  **ON by default since 2026-08-14** (user decision; it was opt-in from 2026-08-12,
- * when faithfulness won — the quality-of-life win won this time).  `make LOGO_START=0` restores
+ * anywhere, and it was opt-in at first; the user's call was that the quality-of-life win
+ * outweighs faithfulness here, so it is ON by default.  `make LOGO_START=0` restores
  * the faithful blocking logo, and deliberately disables BOTH exits, not just START.
  *
  * Fire is read as TRIG0 rather than folded into CONSOL so this stays platform-neutral: SDL's
