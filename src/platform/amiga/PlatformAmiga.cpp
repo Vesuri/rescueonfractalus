@@ -952,6 +952,13 @@ extern "C" unsigned short rof_beam_line(void);
 // hwRead — defined above the keyboard section — can see them.
 static volatile uint8_t s_portaState = 0xFFu;   // joystick directions, active-low (neutral)
 static volatile uint8_t s_trig0State = 0x01u;   // fire button, active-low ($00 = pressed)
+// ...and the same two levels as sampled from the REAL Amiga joystick (port 1) by pollJoystick(),
+// kept SEPARATE from the keyboard's copies above.  hwRead returns the AND of the two: both are
+// active-low, so ANDing means "either the key or the stick is pressed", and a centred stick /
+// unplugged port ($FF / $01) leaves the keyboard behaviour exactly as it was.  The keyboard
+// mappings are NOT a fallback to be removed — they stay supported alongside the stick.
+static volatile uint8_t s_joyPorta   = 0xFFu;
+static volatile uint8_t s_joyTrig0   = 0x01u;
 #ifdef ROF_FIRE_ONCE
 // `make FIRE_ONCE=1` readouts (amiga/fire_once.gdb).  g_foFireVbi = the vbl the single trigger
 // press landed on; g_foEndVbi = the last vbl object_anim_frame ($0036) was still non-zero, i.e.
@@ -992,7 +999,7 @@ uint8_t PlatformAmiga::hwRead(uint16_t addr)
     if (addr >= 0xD200u && addr < 0xD210u) return pokey[addr - 0xD200u];
     // PIA PORTA ($D300): Atari joysticks are ACTIVE-LOW (1 = open/neutral).  Driven by the
     // keyboard ISR from the Amiga arrow keys (stick-0 bits 0-3); neutral $FF = stick centred.
-    if (addr == 0xD300u) return s_portaState;
+    if (addr == 0xD300u) return (uint8_t)(s_portaState & s_joyPorta);
     // CONSOL ($D01F): console keys (START/SELECT/OPTION), ACTIVE-LOW (bit clear =
     // pressed).  The Amiga keyboard handler maintains it in mem[$D01F] (idle $07;
     // F1 clears bit0 for START).  Reflect that — falling through to 0 reads as
@@ -1005,7 +1012,7 @@ uint8_t PlatformAmiga::hwRead(uint16_t addr)
     // $00 = pressed).  TRIG0 is driven by the keyboard ISR from the Control key; the
     // others stay released.  (Default $01 also matters at Standby: read_console_trig_delta
     // $5A78 computes (CONSOL&$01) - TRIG0, so a stuck TRIG0=0 would auto-launch the game.)
-    if (addr == 0xD010u) return s_trig0State;
+    if (addr == 0xD010u) return (uint8_t)(s_trig0State & s_joyTrig0);
     if (addr >= 0xD011u && addr <= 0xD013u) return 0x01u;
     // ANTIC VCOUNT ($D40B): the transpiled init code busy-waits on the beam position
     // (wait_vcount_eq $3C75, wait_vcount_ge_7a $3C7B) — spin until VCOUNT == a target or
@@ -1992,6 +1999,68 @@ static const uint8_t kRawRight     = 0x4E;
 static const uint8_t kRawLeft      = 0x4F;
 static const uint8_t kRawFire      = 0x60;   // Left Shift = fire button (TRIG0)
 
+// ---- Real Amiga joystick, port 1 ------------------------------------------------------------
+// The manual's "plug your joystick into the second port" lands exactly right here: on the Amiga
+// port 0 is the mouse and port 1 (the second connector) is the joystick, and port 1 is also what
+// the 6502 binary polls — PORTA $D300 bits 0-3 + TRIG0 $D010.  ($D011/TRIG1 and PORTA bits 4-7 are
+// never read anywhere in the game, so there is no second-stick path to feed.)
+//
+// Sampled once per vblank from vbiHandler: that is the rate the Atari's own VBI polled the stick
+// at, and an edge-triggered button needs a fixed sampling rate (the main loop runs well under
+// 50 Hz in flight and would drop short presses).  The cost is four register reads.
+//
+// Manual mapping, all of it faithful to what the binary already does with these bits:
+//   directions -> the SAME PORTA bits the arrow keys drive (forward/back = dive/climb,
+//                 left/right = bank), so stick and keyboard are indistinguishable downstream;
+//   button 1   -> TRIG0 = Launch AMB Torpedo, and ALSO "start the game" before the game begins,
+//                 free of charge: read_console_trig_delta $5A78 computes (CONSOL & $01) - TRIG0;
+//   button 2   -> "the second fire button will land or launch the ship" = the L command key.
+static volatile bool s_joyBtn2Prev = false;
+
+static void pollJoystick()
+{
+    // JOY1DAT is a pair of QUADRATURE COUNTERS, not four direction bits: each axis' two switches
+    // land on a (bit, bit^bit) pair (Hardware Reference Manual, "Reading the joystick").  Note the
+    // crosswise layout — the Y counter carries forward+left, the X counter back+right.
+    const uint16_t j = *joy1datPointer;
+    const uint16_t y1 = (j >> 9) & 1u, y0 = (j >> 8) & 1u;
+    const uint16_t x1 = (j >> 1) & 1u, x0 =  j       & 1u;
+    uint8_t porta = 0xFFu;                          // active-low; $FF = centred
+    if (y0 ^ y1) porta &= (uint8_t)~0x01u;          // forward -> bit 0 (what arrow-UP drives)
+    if (x0 ^ x1) porta &= (uint8_t)~0x02u;          // back    -> bit 1 (arrow-DOWN)
+    if (y1)      porta &= (uint8_t)~0x04u;          // left    -> bit 2 (arrow-LEFT)
+    if (x1)      porta &= (uint8_t)~0x08u;          // right   -> bit 3 (arrow-RIGHT)
+    s_joyPorta = porta;
+    // Button 1: CIA-A PRA bit 7 = port 1 fire, active-low (bit 6 is port 0, which
+    // AmigaHardware::isLeftMouseButtonPressed already uses for the mouse).
+    s_joyTrig0 = (*ciaapraPointer & CIAF_GAMEPORT1) ? 0x01u : 0x00u;
+    // Button 2: POTINP bit 14 (DATRY) = port 1 pin 9, active-low — the same technique
+    // isRightMouseButtonPressed uses on port 0's bit 10, so no POTGO setup is introduced here.
+    // ⚠ PRESS EDGE, not level: event_sequence_dispatcher takes a ONE-SHOT event id, so a held
+    // button would re-issue Land every single frame.  Delivered through the same
+    // s_pendingFlightKey path the L key uses (the $519c CLI window consumes it in flight; out of
+    // flight the $5398 window consumes it harmlessly as an attract-timeout reset).
+    const bool b2   = !(*potinpPointer & (1u << 14));
+    const bool edge = b2 && !s_joyBtn2Prev;
+    if (edge) s_pendingFlightKey = 0x00u;                   // Atari KBCODE L -> dispatcher Y0 = Land
+    s_joyBtn2Prev = b2;
+#ifdef ROF_FLIGHT_PROBE
+    // With NOTHING plugged into port 1 this must stay perfectly quiet, or it breaks keyboard play:
+    // g_joyPortaStuck accumulates every direction bit ever seen low, g_joyB2Edges counts Land
+    // injections, g_joyTrigLow counts frames with fire held.  All three should read 0 on an
+    // untouched headless run.  g_joyRaw keeps the last JOY1DAT/POTINP words for eyeballing.
+    { extern volatile unsigned char g_joyPortaStuck, g_joyPortaLast;
+      extern volatile unsigned long g_joyB2Edges, g_joyTrigLow, g_joyPolls;
+      extern volatile unsigned short g_joyRawJoy, g_joyRawPot;
+      g_joyPolls++;
+      g_joyPortaLast = porta;
+      g_joyPortaStuck |= (unsigned char)(~porta & 0x0Fu);
+      if (s_joyTrig0 == 0x00u) g_joyTrigLow++;
+      if (edge) g_joyB2Edges++;
+      g_joyRawJoy = j; g_joyRawPot = *potinpPointer; }
+#endif
+}
+
 static struct Library*   s_ciaaBase    = 0;
 static struct Interrupt  s_kbInterrupt;
 static struct Interrupt* s_savedVector = 0;   // keyboard.device's vector, restored on exit
@@ -2886,6 +2955,10 @@ static uint32_t vbiHandler()
         }
     }
 #endif
+
+    // Sample the real joystick (port 1) immediately before the game body reads PORTA/TRIG0, which
+    // is where the Atari's own VBI polled it.  Four register reads; no beam deadline of its own.
+    pollJoystick();
 
     game_vbi_isr();
 #ifdef ROF_FLIGHT_PROBE

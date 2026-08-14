@@ -314,6 +314,12 @@ extern "C" volatile unsigned long  g_seSprKick = 0, g_seSprConv = 0, g_seSprDrai
 // MUST report W > 0, else the sizing is vacuously "correct" while wiping nothing that needed it.
 extern "C" volatile unsigned short g_seSprTail[4] = { 0, 0, 0, 0 };
 extern "C" volatile unsigned short g_seSprCalls = 0;
+// Joystick (port 1) quiet-when-unplugged check — see PlatformAmiga::pollJoystick.  With nothing in
+// port 1 all three of Stuck/B2Edges/TrigLow must read 0, else the poll is inventing input and would
+// break keyboard play.  g_joyRaw* keep the last raw words for eyeballing.
+extern "C" volatile unsigned char  g_joyPortaStuck = 0, g_joyPortaLast = 0xFF;
+extern "C" volatile unsigned long  g_joyB2Edges = 0, g_joyTrigLow = 0, g_joyPolls = 0;
+extern "C" volatile unsigned short g_joyRawJoy = 0, g_joyRawPot = 0;
 extern "C" volatile unsigned long  g_seWall    = 0;     // whole frame, entry -> planet copper installed
 extern "C" volatile unsigned char  g_seArmed   = 0;     // 1 while that first stars frame is in flight
 // starVblankUpdate beam-deadline probes.  The star update has three of them, all policed here

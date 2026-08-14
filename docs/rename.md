@@ -180,3 +180,34 @@ station-specific name for any of them.
 | `$0098` | `dl_bottom_index` | the spacecraft animation's frame counter (stops at `$B4`) |
 | `$009A`/`$009B` | `grid_offset_a` / `grid_offset_b` | the spacecraft's shape index (clamped to `$0C`) and its per-shape hold count |
 | `$009C` | `draw_x_left` | the shape animation's ENABLE gate — `station_audio` sets it to 2 in RTCLOK phase 2, `station_pm_shape_tick` clears it when the animation ends |
+
+## ⚠ UNRESOLVED: are `pitch_*` and `roll_*` swapped? — raised 2026-08-14 while wiring the joystick
+
+Not a rename request yet, because the evidence **conflicts** and nobody has measured it. Recorded so
+the next person does not have to rediscover the conflict. The two axes at issue are
+`$0021 pitch_velocity` / `$0025-$0026 pitch_pos` versus `$0027 roll_velocity` /
+`$0028-$0029 roll_pos`.
+
+`flight_control_integrate` reads the stick like this (`rof_native.c`, steering block):
+
+| PORTA bit | physical stick | writes |
+|---|---|---|
+| 2 / 3 | left / right | `pitch_velocity $0021` |
+| 0 / 1 | up / down (forward / back) | `roll_velocity $0027` |
+
+- **The manual says** forward/back = **dive/climb** (pitch) and left/right = **bank** (roll). Taken
+  with the table above, that makes `$0027` the PITCH rate and `$0021` the ROLL rate — i.e. both
+  names are **swapped**.
+- **`amiga/diag_timing.gdb` agrees with the manual**, and it was written during a real nose-dive
+  investigation: its header calls `$0027` "pitch-rate: 00=level at neutral; $D0=nose-dive bug" and it
+  prints `pitch(28/29)` / `roll(25/26)` — the opposite assignment to `symbols.csv`.
+- **But `$0023`/`$0024 pitch_shadow` (a snapshot of `pitch_pos $0025/$0026`) feeds the canopy-pillar
+  Y**, per this file's own earlier `$00A4`/`$00A5` note — and the pillars move vertically with PITCH,
+  which argues `$0025/$0026` really is pitch and the names are RIGHT.
+- The **bit assignment itself is not in doubt**: PORTA stick-0 bits 0/1/2/3 = up/down/left/right,
+  verified against `$8e74-$8eac` (comment in `PlatformAmiga.cpp`).
+
+So one of the two readings of `$0025-$0029` is wrong and the tie-breaker is cheap: hold one axis in
+flight and watch which accumulator moves. **Do that before any batch rename touches these five
+cells.** Nothing depends on the answer today — the joystick deliberately drives the same bits the
+arrow keys already drive, so both inputs behave identically whichever way the naming falls.
