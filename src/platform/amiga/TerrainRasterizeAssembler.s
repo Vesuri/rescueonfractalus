@@ -1076,35 +1076,58 @@ done_raw:
 ;      call for ~3.4 KB of code.  d7 is now unused but stays in the movem list —
 ;      it costs 8 cycles once a call and keeps the frame size (and hence the
 ;      28(sp) argument offset) in one place.
-EPGRP	macro				; \1 = group number 0..39 = the plane-1 byte index
-	move.b	(a0)+,d0		; col 4k
-	move.w	d0,d1
+;   4. THE PAIRWISE MERGE (2026-08-14).  Two columns of a pair share the plane-1
+;      BYTE, so if they also share the ROW they need ONE lookup and ONE OR with
+;      the two masks combined.  The test is the two RAW HEIGHTS: equal h means
+;      equal row (kHeightRowOff is a function of h), and $FF==$FF merges too —
+;      both then skip on the same sentinel.  Filed in flight-perf-log §23.3 as
+;      "survives arithmetic at only -3.6 a column" on a PROXY hit rate (52%
+;      same-row over ALL adjacent columns).  `amiga/edge_shape.gdb` now counts
+;      the exact pairing: **55% (40421/72480 over 906 frames), of which 5pp is
+;      $FF==$FF** -- against a break-even of 40%, so it is 15 points clear.
+;        hit  78 cycles vs 112 for the two columns   -> -34   (50pp)
+;        hit, both $FF          62 vs 80             -> -18   ( 5pp)
+;        miss 134 vs 112 (the extra cmp + the bra)   -> +22   (45pp)
+;      = -8.0 a pair, or -5.8 for the (2,3) pair whose merged mask has to be an
+;      ORI immediate (22 cyc) because only ONE register was free for a merged
+;      mask (d7, previously dead-but-saved).  **-3.45 cycles a column** = ~-1100
+;      a call, two calls an iteration ~= 0.19% of flight wall clock, for ~2 KB.
+;      ⚠ The MISS path must stay cheap: at a ~50/50 split, anything that moves
+;      work out of the hit path and into the split path gives the whole win back
+;      (measured variants: reading hB with `cmp.b (a0)+,d0` and reloading it as
+;      `-1(a0)` on the miss is -6.6 a pair, WORSE, because it taxes the 45%).
+;      ⚠ d2 needs its high byte cleared ONCE, exactly like d0 — `move.w d2,d1`
+;      indexes with the full word.
+EPPAIR	macro				; \1 = group (plane-1 byte index), \2/\3 = the two
+					; column masks, \4 = the two ORed together
+	move.b	(a0)+,d0		; even column
+	move.b	(a0)+,d2		; odd column
+	cmp.b	d0,d2
+	beq.s	.m\@			; same height -> same row -> one lookup, one OR
+	move.w	d0,d1			; --- split (45%): two rows, two ORs ---
 	add.w	d1,d1
 	move.w	(a1,d1.w),d1		; kHeightRowOff[h]; $FFFF = off-top ($FF) -> skip
-	bmi.s	.c1\@
-	or.b	d3,(\1,a2,d1.w)
-.c1\@:
-	move.b	(a0)+,d0		; col 4k+1
-	move.w	d0,d1
-	add.w	d1,d1
-	move.w	(a1,d1.w),d1
-	bmi.s	.c2\@
-	or.b	d4,(\1,a2,d1.w)
-.c2\@:
-	move.b	(a0)+,d0		; col 4k+2
-	move.w	d0,d1
-	add.w	d1,d1
-	move.w	(a1,d1.w),d1
-	bmi.s	.c3\@
-	or.b	d5,(\1,a2,d1.w)
-.c3\@:
-	move.b	(a0)+,d0		; col 4k+3
-	move.w	d0,d1
+	bmi.s	.b\@
+	or.b	\2,(\1,a2,d1.w)
+.b\@:
+	move.w	d2,d1
 	add.w	d1,d1
 	move.w	(a1,d1.w),d1
 	bmi.s	.d\@
-	or.b	d6,(\1,a2,d1.w)
+	or.b	\3,(\1,a2,d1.w)
+	bra.s	.d\@
+.m\@:					; --- merged (55%) ---
+	move.w	d0,d1
+	add.w	d1,d1
+	move.w	(a1,d1.w),d1
+	bmi.s	.d\@			; both columns off-top -> plot nothing, as before
+	or.b	\4,(\1,a2,d1.w)
 .d\@:
+	endm
+
+EPGRP	macro				; \1 = group number 0..39 = the plane-1 byte index
+	EPPAIR	\1,d3,d4,d7		; cols 4k, 4k+1   ($C0,$30 -> $F0 in d7)
+	EPPAIR	\1,d5,d6,#$0F		; cols 4k+2, 4k+3 ($0C,$03 -> ORI #$0F)
 	endm
 
 flight_edge_plot_asm:
@@ -1113,10 +1136,15 @@ flight_edge_plot_asm:
 	lea	mem+$260E+48,a0		; per-column max-height ($260E[48..])
 	lea	kHeightRowOff,a1
 	moveq	#0,d0			; d0 high stays 0 for the whole run
+	moveq	#0,d2			; ...and d2's, for the pair's odd column
 	moveq	#$C0-256,d3		; the four column masks (kColMask4), low byte only
 	moveq	#$30,d4
 	moveq	#$0C,d5
 	moveq	#$03,d6
+	moveq	#$F0-256,d7		; d3|d4, for a merged (0,1) pair — moveq sign-extends,
+					; or.b reads the low byte only.  d7 was already in the
+					; movem list but unused; the (2,3) merge has no register
+					; left and pays ORI's 4 extra cycles instead.
 ep_loop:				; kept as a label so prof_flight.py still buckets this
 EPG	set	0
 	rept	40

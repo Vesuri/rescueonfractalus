@@ -740,10 +740,18 @@ static unsigned long s_bsT = 0, s_bsI = 0;
 //   * a whole group at one row is a single `or.b #$FF`; two adjacent such groups at the same row
 //     would be a single `or.w #$FFFF` (g_epWordSame) — only if the runs are that long AND aligned.
 // Off by default: the scan itself costs more than the loop it measures.
+//
+// ⭐ g_epPairSame is the ONE number the filed "pairwise (0,1)/(2,3) merge" hangs on, and the
+// existing rows do not contain it.  The merge tests the two columns' raw HEIGHTS (equal h ⇒ equal
+// row, and $FF==$FF merges correctly too since both then skip on the sentinel), then issues ONE
+// byte-OR with a combined mask.  Hand-counted off the shipping EPGRP: −36 cycles on a hit, +24 on
+// a miss with the split path out of line ⇒ **break-even at p=40%**.  g_epSameRow's 52% is a proxy
+// over ALL adjacent columns; this counts exactly the two sub-pairs the merge would actually use.
 extern "C" volatile unsigned long
     g_epFrames = 0, g_epFF = 0, g_epSameH = 0, g_epSameRow = 0, g_epLookups = 0, g_epORs = 0,
     g_epRow0 = 0, g_epRow46 = 0, g_epGroupAllSame = 0, g_epWordSame = 0,
-    g_epGroupDistinct[5] = {0,0,0,0,0}, g_epRunHist[9] = {0,0,0,0,0,0,0,0,0};
+    g_epGroupDistinct[5] = {0,0,0,0,0}, g_epRunHist[9] = {0,0,0,0,0,0,0,0,0},
+    g_epPairs = 0, g_epPairSame = 0, g_epPairSameFF = 0;
 static void edgeShapeProbe() {
     const uint8_t* y = (const uint8_t*)mem + 0x260E + 48;
     g_epFrames++;
@@ -771,6 +779,14 @@ static void edgeShapeProbe() {
         }
         g_epGroupDistinct[distinct]++;
         g_epORs += distinct;                                  // byte-ORs a merged loop would issue
+        // The two sub-pairs the (0,1)/(2,3) merge would test, counted on RAW HEIGHT exactly as the
+        // merge would.  gr[k] < 0 marks $FF; a matching $FF pair is still a merge hit (one lookup,
+        // one not-taken sentinel branch, no OR), so count it — separately, so it can be discounted.
+        for (int p = 0; p < 4; p += 2) {
+            const uint8_t ha = y[g * 4 + p], hb = y[g * 4 + p + 1];
+            g_epPairs++;
+            if (ha == hb) { g_epPairSame++; if (ha == 0xFFu) g_epPairSameFF++; }
+        }
         const int uniform = (distinct == 1 && gr[0] >= 0 && gr[1] >= 0 && gr[2] >= 0 && gr[3] >= 0);
         if (uniform) {
             g_epGroupAllSame++;

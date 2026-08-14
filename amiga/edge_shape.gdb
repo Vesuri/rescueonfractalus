@@ -47,6 +47,13 @@ while $i < 5
   set $i = $i + 1
 end
 printf "\n"
+# ⭐ THE decision number for the filed "pairwise (0,1)/(2,3) merge": it is −36 cycles on a hit and
+# +24 on a miss with the split path out of line, so it needs p > 40% to pay at all.  g_epSameRow's
+# 52% is a proxy over every adjacent column; this is the exact pairing the merge would use.
+printf "pairwise (0,1)/(2,3) same-height: %lu/%lu (%lu%%)  of which $FF==$FF: %lu (%lu%%)", \
+  g_epPairSame, g_epPairs, (g_epPairs ? 100*g_epPairSame/g_epPairs : 0), \
+  g_epPairSameFF, (g_epPairs ? 100*g_epPairSameFF/g_epPairs : 0)
+printf "   [break-even 40%%]\n"
 echo same-row RUN length histogram (1..7 exact, 8=8+):\n
 set $i = 1
 while $i < 9
