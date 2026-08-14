@@ -38,6 +38,24 @@ where static reasoning kept failing — **measure, don't theorize.**
   removed `g_tsRingB2` (fixed 020e045). **When you delete or rename a probe global, grep `amiga/*.gdb`
   for it**, and treat "the trace stopped after the header" as a stale script, not a dead probe.
 
+## ⚠ The gdb stub takes READS, not WRITES — inject every input from C
+
+**`set var <a probe global> = 1` from a `.gdb` script does not stick.** Measured 2026-08-14: a script
+set a force-fire flag, printed it back on the very next line, and got `0` — while `printf` of other
+globals in the same script returned correct live values. So the FS-UAE remote-debugger stub serves
+memory *reads* fine and silently drops *writes*: no error, no warning, just a probe that never fires.
+
+That is the reason **every `FORCE_*` harness in `PlatformAmiga.cpp` drives its input from C** — a
+build flag plus a `g_vbiCount` window (`FORCE_RETURN`, `FORCE_SELECT`, `FORCE_BOOT_FIRE`, …) — rather
+than the more obvious "just poke it from gdb". Follow that pattern: gate the injection on a
+`-D` flag, pick the window by vbl, and let the `.gdb` script only *read* the outcome.
+
+Corollary for the readout: **stamp the transition you care about from C, every vblank**, instead of
+inferring it from the state at whichever moment the SIGINT lands. `FORCE_BOOT_FIRE`'s
+`g_bfLogoEnd`/`g_bfStationEnd` (the vbl each boot cinematic handed off, taken off the live VVBLKI)
+are the pattern — they turn "the sample happened to show Standby" into "the hand-off was at vbi 107,
+against a no-press control of ~280".
+
 ## ⚠ The stale-build trap (full text)
 
 **Always `make clean && make -j4 PROBES=1` before a headless probe run** (a plain `make`
