@@ -17,6 +17,15 @@ EXTRA_ARGS="${EXTRA_ARGS:-}"
 
 RUN=.run; DH0="$RUN/dh0"; DH1="$RUN/dh1"; GDBHOME="$RUN/gdbhome"
 mkdir -p "$DH0/s" "$DH1" "$RUN/state" "$GDBHOME"
+# ⚠ Do NOT "simplify" this to a single `dh1:RoF` line.  Tried 2026-08-14 and reverted: with
+# the path form, gdb resolves this file's symbols against base $7500 instead of the usual
+# ~$21f8e0 and then NO breakpoint is ever hit, so every run looks like a hang.  ($7500 is
+# also what you get when the program never loads at all, so the likeliest reading is that
+# --remote_debugger_trigger=RoF stops matching and no segment base is ever reported — but
+# only the symptom was confirmed, not the mechanism.)  The `cd` is load-bearing; leave it.
+# (Consequence: this harness needs KS 2.0+, since `cd` is only a ROM-resident Shell builtin
+# from 2.0 on — a KS 1.3 boot dies here with "Unknown command cd".  The game itself is
+# 1.3-clean; the WHDLoad install boots 1.3 through its own slave, not through this script.)
 printf 'cd dh1:\nRoF\n' > "$DH0/s/startup-sequence"
 cp -f out/RoF.exe "$DH1/RoF"
 

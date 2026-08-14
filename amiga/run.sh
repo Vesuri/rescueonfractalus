@@ -24,6 +24,10 @@ MODEL="${AMIGA_MODEL:-A500+}"
 
 RUN=.run; DH0="$RUN/dh0"; DH1="$RUN/dh1"
 mkdir -p "$DH0/s" "$DH1" "$RUN/state"
+# Kept as two lines to match diag_run.sh, where the `cd` form is load-bearing — see the
+# warning there before changing this.  Note it makes the script KS 2.0+: `cd` is a
+# ROM-resident Shell builtin only from 2.0 on, so `KICKSTART=.../kick13.rom ./run.sh` dies
+# with "Unknown command cd".  The game itself is 1.3-clean (user-confirmed 2026-08-14).
 printf 'cd dh1:\nRoF\n' > "$DH0/s/startup-sequence"
 cp -f "$EXE" "$DH1/RoF"
 echo "running $EXE"
