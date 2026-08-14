@@ -45,3 +45,26 @@ build keeps so the twin still matches its oracle). Amiga-only globals a twin wri
 (the writer's TU), also under `#ifdef ROF_PLATFORM_AMIGA` (cf. `g_planetRowLo/Hi`, `g_tun*`). Precedent:
 the tunnel-ring/door-scroll standby cinematic (`draw_ring_frame_step`, `step_accum_add_75`,
 `advance_history_6a4d`, `dl_lms_*`, `dl_doors_open_split_step`, …) lives entirely in `rof_native.c` this way.
+
+## What `make validate` cannot see — and `make hostproof`, which can
+
+`make validate` proves a twin against its `__t6502` oracle through the `mem[]` contract. Three whole
+classes of change therefore have **no** coverage from it, and every one of them has shipped:
+
+| blind spot | why validate can't see it |
+|---|---|
+| Amiga-only code (`rof_native_amiga.cpp`, `RescueOnFractalus.cpp` — ~516 `mem[]`-touching lines) | there is no 6502 oracle to diff against; that code is deliberately lossy |
+| a pure **reordering** or **table-fold** inside a routine whose caller has been shed | the `VALIDATE_FUNCS` entry (and with it the oracle) was dropped when the twin went plain |
+| a variation under `#ifdef ROF_PLATFORM_AMIGA` | the validate build compiles the *other* arm |
+
+The proof for all three is the same and takes seconds: **compile the OLD and NEW bodies side by side
+on the host and diff them over the whole input domain** (or a large randomized sample). ⚠ Note this is
+the same method as the `MEMBASE`/`MEMVIEW`/`FCIBASE` flags, but a different mechanism — those compile
+an Amiga-only *transformation* into the real validate harness; a hostproof compiles two *snapshots*
+against each other in a standalone program, which is what lets it cover code the harness never links.
+
+`make hostproof` runs the seven that exist (`FN=<substr>` for one). Adding one is the price of any
+change in the table above. ⚠ **A green hostproof means "the transformation is sound", not "the
+shipping source still matches" —** each proof holds a verbatim snapshot that drifts silently as the
+real routine is edited. Re-read the snapshot against its source before leaning on an old proof.
+⚠ `tools/xorshift_triple_test.c` is deliberately excluded: it is a design search, not a proof.

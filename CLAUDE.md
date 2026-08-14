@@ -60,7 +60,14 @@ make RELEASE=1  # release (-O2 -g)
 make gen        # regenerate transliterated C from Ghidra disasm (tools/transpile.py)
 make validate              # run the native-vs-transpiled equivalence suite (~7 min)
 make validate FN="name"    # only tests whose name contains a substring — prefer this
+make hostproof             # the 7 host-side equivalence proofs (~5 s) — run these too
+make hostproof FN="name"   # just one
 ```
+`hostproof` is the **only** validation that reaches what `make validate` is structurally blind to:
+Amiga-only code (no 6502 oracle to diff against), pure reorderings/table-folds whose oracle was
+shed, and `#ifdef ROF_PLATFORM_AMIGA` variations. ⚠ Each proof holds a *verbatim snapshot* of its
+routine, so green means "the transformation is sound", **not** "the shipping source still matches
+the snapshot". Rationale + the caveat in full: the `hostproof` block in `Makefile`.
 
 ### Amiga cross-build (m68k-amiga-elf-gcc) — from `amiga/`
 ```
