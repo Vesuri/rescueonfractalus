@@ -1905,8 +1905,7 @@ void RescueOnFractalus::starVblankUpdate()
 #endif
     // ---- 1. advance the ring window by the rows scrolled since the last vblank ----
     // g_starScrollGen is bumped by scroll_field_columns ($6AEE) inside game_vbi_isr, which runs
-    // LATER in this same ISR — so the delta seen here is the previous frame's scroll, exactly the
-    // one-frame relationship the old perFrameWork placement had.
+    // LATER in this same ISR — so the delta seen here is the previous frame's scroll.
     extern volatile unsigned short g_starScrollGen;
     const unsigned short gen = g_starScrollGen;
     int N = (int)(unsigned short)(gen - starLastGen);
@@ -2577,10 +2576,6 @@ void RescueOnFractalus::initialize()
     // mem[$00D8] is the title TEXT colour (COLPF0); snapshot has $78 (blue). Leave as-is.
     // mem[$02C8] is the title BACKGROUND (COLBK); snapshot has $06 (grey). Leave as-is.
 
-    // (Removed: $0044/$063E patches that used to placate vbi_handler_flight's FUN_47A3 /
-    // $480B paths — neither handler is ported on the Amiga, so nothing reads those
-    // bytes here; the writes were dead.)
-
     // Initial render: populate all three bitmaps from mem[] once so that
     // render() called from the main loop has nothing to do until data changes.
     // This captures the closed-door terrain image from $2000 into terrainBitmap.
@@ -3124,7 +3119,7 @@ static unsigned long rfPlaneSum(const uint8_t* base, int planeOff)
 // 150 - height (the $28CA/$28FA row table is linear); $FF = off-top (all body).  plane1 =
 // sky (filled above the skyline via ONE descending blitter fill), plane2 = dots (TODO).
 // Terrain rows 0-42; the windscreen-bottom band (rows 43-46, from mem[$2098]) is still
-// converted (4 rows) so it isn't lost.  Verified: plane1 byte-exact vs the old convert
+// converted (4 rows) so it isn't lost.  Verified: plane1 byte-exact vs the unsplit convert
 // (0/13760); ~2.8x cheaper per frame (fDirect 120 vs fConvert 339 beam ticks).
 void RescueOnFractalus::renderFlightDirect()
 {
@@ -3316,8 +3311,8 @@ void RescueOnFractalus::renderFlightDirect()
     //  2. Clear the figure OVERLAY (s_figBmp/mask) + reset the extents and per-buffer erase boxes.
     //     After a knock the overlay still holds the alien silhouette (ROF_CLEAR_FIG only clears at the
     //     START of the next draw), and the next rescue's first composite can run BEFORE that draw
-    //     populates it — compositing the stale alien for one frame.  This was the actual flash (part 1
-    //     alone did NOT fix it — measured).  Keyed on the true systems-back-on edge (s_resumeClearPend)
+    //     populates it — compositing the stale alien for one frame.  This, not part 1, is what the
+    //     flash actually was.  Keyed on the true systems-back-on edge (s_resumeClearPend)
     //     so the pilot approach's mid-zoom $3D dips never trigger it.
     if (s_resumeClearPend) {
         s_resumeClearPend = false;
@@ -3782,7 +3777,7 @@ void RescueOnFractalus::renderFlightDirect()
 
     // Kick the dot side-buffer plane2 clear for the NEXT frame's rasterize (it ORs into it, so it must
     // start clean).  Kicked here and awaited later by the rasterizer's rof_flight_wait_dotclear —
-    // exactly the old flightKickBackClear "kick a clear now, wait at the next draw" idiom, but on the
+    // the same "kick a clear now, wait at the next draw" idiom as flightKickBackClear, but on the
     // off-display scratch instead of a display buffer.  Runs concurrently with the game compute.
     AmigaHardware::blitterClear((uint16_t*)((uint8_t*)terrainDotBuffer->data + 40),
                                 20 /*words*/, 47 /*rows*/, 80 /*mod bytes = 120-40*/);
@@ -3925,8 +3920,8 @@ void RescueOnFractalus::run()
         // $0004==0 so this is skipped and the trampoline's cockpit_flag/game_var_E4 = 4 + the high score
         // survive (→ the results/level-select card).  A DEMO DROID break leaves $0004 != 0, so the real
         // game runs $3D0C — clearing $0600-$060C (incl. cockpit_flag + high score) and $0004/$37F4/$00E4/
-        // level_stage — then re-checks with $0004==0 and falls through.  My handler previously omitted
-        // this, so the demo state persisted and the demo re-ran; replicate it faithfully.
+        // level_stage — then re-checks with $0004==0 and falls through.  ⚠ Omit this and the demo
+        // state persists, so the demo simply re-runs.
         if (mem[0x0004] != 0) {                                 // $3D23-25 (taken on a DEMO DROID break)
 #ifdef ROF_FLIGHT_PROBE
             { extern volatile unsigned char g_l3d0cFired; g_l3d0cFired++; }
@@ -4266,13 +4261,10 @@ void RescueOnFractalus::renderFrame()
       if (mem[0x0632]) { g_alRF++; g_alVV = (unsigned short)(mem[0x0222] | (mem[0x0223] << 8));
                          g_alRFfl = rsFlight ? 1 : 0; g_alRFvw = rsViewport ? 1 : 0; } }
 #endif
-    // (No tunnel decode here any more.  BOTH tunnel directions are painted straight into
-    // tunnelBitmap as the 6502 draws them — drawTunnelRect / drawTunnelColumns / drawTunnelVSpan —
-    // so the $1000 GTIA ring field is never read back and there is no dirty flag to service.
-    // What used to live here: a full-field decode at the standby reveal plus a four-strip band
-    // decode per descent step, both gated by a boostOwnsTunnel test that existed only to keep the
-    // forward decode off the bitmap the boost was displaying.  Ownership is now explicit
-    // (tunnelOwner), set at each direction's entry point, so the gate went with the decode.)
+    // No tunnel decode here: BOTH directions are painted straight into tunnelBitmap as the 6502
+    // draws them (drawTunnelRect / drawTunnelColumns / drawTunnelVSpan), so the $1000 GTIA ring
+    // field is never read back and there is no dirty flag to service.  Which direction owns the
+    // bitmap is explicit (tunnelOwner), set at each direction's entry point.
 #ifdef ROF_FLIGHT_PROBE
     extern volatile unsigned long g_rPerFrame, g_rRenderFn;
     const bool _profR = rsFlight;
@@ -4506,7 +4498,7 @@ void RescueOnFractalus::renderFrame()
         decodeDoorScrollDirty();
         // Normally already live (the cycle starts from the settled standby), so this is the poke
         // path.  Installing when it is NOT makes the branch self-healing instead of self-latching:
-        // one frame that ever slips past it used to clear standbyCopperInstalled and kill the
+        // a single frame slipping past it would otherwise clear standbyCopperInstalled and kill the
         // scroll for the rest of the cycle.
         if (!standbyCopperInstalled) {
             setSpritePriority(kSpritePriorityCockpit);
@@ -5830,7 +5822,7 @@ void RescueOnFractalus::deriveRenderSignals()
     // hooked writer) builds the cockpit: while the scene is transitional (boot/building), and
     // ONCE on entry to the stars/planet viewport or to flight.  The cockpit is otherwise
     // WRITER-DRIVEN (the g_ck* span registry) — in flight the instrument writers register the
-    // exact cells they change, so re-scanning ~580 cells EVERY frame is gone (it was the #1
+    // exact cells they change, so nothing re-scans ~580 cells per frame (which was the #1
     // flight cost).  Title still uses g_titleToRender via the $782A copy hook.
     // Title just repaints its 20 cells, so forcing it every transitional frame is fine.
     if (g_doorFieldReady == 0u || (rsStars && !prevRsStars) || (rsFlight && !prevRsFlight))
@@ -5857,9 +5849,9 @@ void RescueOnFractalus::deriveRenderSignals()
     prevDoorFieldReady  = g_doorFieldReady;
 }
 
-// perFrameWork(): per-frame non-phase work (the tail of the old update()).  These
-// ran every frame regardless of cinematic phase, driven by the standby/flight VBI
-// body + the main loop on the Atari; here they run once per renderFrame.
+// perFrameWork(): per-frame non-phase work.  On the Atari these run every frame regardless of
+// cinematic phase, driven by the standby/flight VBI body + the main loop; here they run once
+// per renderFrame.
 void RescueOnFractalus::perFrameWork()
 {
     update_indicator_blink_native();    // $4131: cockpit blink lights (flight-VBI routine)
@@ -5902,9 +5894,9 @@ void RescueOnFractalus::perFrameWork()
     // Starfield zero-copy scroll — the main loop only does the ONE-TIME full build here; the whole
     // per-frame update (window advance, copper SPRxPT re-point, control words, new-row conversion)
     // belongs to the VBI ISR (starVblankUpdate), which is the only place the beam is guaranteed to
-    // be above all three of its deadlines.  Publishing the copper operand from here instead used to
-    // work only by the grace of the A500's slow render landing it late in the frame; see the beam
-    // deadlines in the starVblankUpdate header comment.
+    // be above all three of its deadlines.  ⚠ Publishing the copper operand from here works only by
+    // the grace of the A500's slow render landing it late in the frame — see the beam deadlines in
+    // the starVblankUpdate header comment.
     if (rsStars) {
         if (!starSpritesValid) {
             extern volatile unsigned short g_starScrollGen;
@@ -6010,7 +6002,7 @@ static inline void decode2bppByte(uint8_t src, uint8_t* p1out, uint8_t* p2out)
 // the same DL row) into cockpitBitmap.  Handles both the modeD raster band ($350D, 4 entries
 // × 2 identical scan lines, raw 2bpp) and the mode4 dashboard ($332D, 10 entries × 8 scan
 // lines, charset $3800, bit-7 → plane3).  Cells outside the visible 40-byte window (the
-// 4-byte wide-field crop) are skipped.  Layout matches the old full scan exactly.
+// 4-byte wide-field crop) are skipped.
 void RescueOnFractalus::decodeCockpitSpan(uint16_t addr, uint8_t nCells)
 {
     static const int kStride   = 48;    // wide-playfield bytes per DL row
@@ -6020,9 +6012,9 @@ void RescueOnFractalus::decodeCockpitSpan(uint16_t addr, uint8_t nCells)
 
     // All callers pass a span within ONE region (mode4 $332D / modeD $350D) and ONE 48-byte DL
     // row, so region + entry are constant across the span.  Compute the destination row base
-    // ONCE (a single divide) and walk the columns — the old code recomputed entry=off/48 and
-    // col=off%48 PER CELL as SIGNED int, which GCC lowered to __divsi3/__modsi3 subroutine
-    // CALLS on every cell (2/cell x 560 cells in a full repaint).
+    // ONCE (a single divide) and walk the columns.  ⚠ Do NOT recompute entry=off/48 and col=off%48
+    // per cell as SIGNED int: GCC lowers that to __divsi3/__modsi3 subroutine calls, two per cell,
+    // 560 cells in a full repaint.
     if (addr >= 0x350Du) {                          // modeD raster band (2 identical scan lines)
         unsigned off   = (unsigned)(addr - 0x350Du);
         unsigned entry = rof_divu16(off, (uint16_t)kStride);

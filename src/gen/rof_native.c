@@ -1804,10 +1804,9 @@ void dl_doors_open_split_step(void) {
 }
 
 #ifdef ROF_PLATFORM_AMIGA
-/* (The tunnel dirty-band publish that used to live here is gone.  Both ring directions are now
- * painted straight into the Amiga bitmap by the ROF_TUNNEL_* hooks as the spans are drawn, so
- * there is no $1000 decode left to bound and nothing to flag.  See docs/boost-tunnel-direct-
- * handoff.md.) */
+/* No dirty-band publish here: both ring directions are painted straight into the Amiga bitmap by
+ * the ROF_TUNNEL_* hooks as the spans are drawn, so there is no $1000 decode left to bound and
+ * nothing to flag.  See docs/boost-tunnel-direct-handoff.md. */
 /* Boost stars viewport ($2000) dirty flag — set by fill_region_2000 (the sole $2000 writer),
  * consumed by the boost stars render branch so it decodes only when the field content actually
  * changes (measured: twice per boost) instead of every frame.  See fill_region_2000. */
