@@ -56,6 +56,28 @@ inferring it from the state at whichever moment the SIGINT lands. `FORCE_BOOT_FI
 are the pattern — they turn "the sample happened to show Standby" into "the hand-off was at vbi 107,
 against a no-press control of ~280".
 
+## ⚠ Don't touch the startup-sequence form — and re-verify the harness if you do
+
+`run.sh` / `diag_run.sh` write **two** lines, `cd dh1:` then `RoF`. That looks like it could be
+one `dh1:RoF` line. It cannot: tried 2026-08-14 and reverted, because with the path form gdb
+resolves this build's symbols against base **`$7500`** instead of the usual **`~$21f8e0`**, and
+then **no breakpoint is ever hit** — so every run reads as a hang, in both scripts, for any probe.
+Only the symptom is established, not the mechanism: `$7500` is also what appears when the program
+never loads at all, so `--remote_debugger_trigger=RoF` most likely stops matching and no segment
+base is reported.
+
+Consequence worth knowing: **this harness therefore requires KS 2.0+**, because `cd` is a
+ROM-resident Shell builtin only from 2.0 on — a KS 1.3 boot dies with `Unknown command cd` before
+loading the game. That is a *harness* limit, not the game's: the game is 1.3-clean, and the
+WHDLoad install boots 1.3 through its own slave (`docs/whdload-slave.md`).
+
+The general rule this cost a session to learn: **after editing a shared harness script, re-run a
+known-good control on an unchanged binary in the same session.** The tell here was two probe legs
+failing at once — including a KS 3.1 *control* that had passed twenty minutes earlier. Had only
+the leg under test failed, the edit would have looked innocent and the "1.3 doesn't work"
+conclusion would have shipped. And do not widen a load-bearing shared script for a one-off
+capability nothing needs.
+
 ## ⚠ The stale-build trap (full text)
 
 **Always `make clean && make -j4 PROBES=1` before a headless probe run** (a plain `make`
