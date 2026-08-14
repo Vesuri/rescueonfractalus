@@ -152,6 +152,31 @@ what makes the figure usable at all.
 ⚠ Do not tune from the numbers in §2's table alone: they are host-side measurements of the
 game under the *real* OS, and say nothing about what the emulated 1.3 needs beside it.
 
+### The stack — `STACKSIZE` is 16384 and nothing measured asked for it
+
+`kick13.s` does implement `STACKSIZE` (`IFD STACKSIZE` → `PL_L $387be,STACKSIZE/4`, patching the
+initial CLI structure), so the 16 KB is real and comes out of `FASTMEMSIZE`. What the game actually
+needs, from a call-graph scan of the shipping `out/RoF.elf` (`objdump -d`, frames summed from
+`link`/`lea -N(sp),sp`/`sub #N,sp`/`movem…-(sp)` plus 4 B per return address):
+
+* **No recursion anywhere.** The terrain subdivide only looks recursive — the asm twin walks
+  depth-indexed `SubPt` slots in `mem[]` (`TerrainSubdivideAssembler.s`), so its depth is free of
+  the stack. Zero self-recursive functions in the whole image.
+* **Deepest direct chain from `_start`: 1260 B, 9 frames** — `main` → `PlatformAmiga::run` →
+  `RescueOnFractalus::initialize` (444) → `render` → `renderFlightDirect` (296) → `buildViewport` →
+  `buildWideObject` → `wideExtRelease`.
+* **Worst realistic composite ≈ 2 KB:** a `SPINWAIT` hook firing inside deep transpiled code, i.e.
+  the transpiled nest (`game_main_loop` 92 + `boot_standby_launch_driver` 260 + small
+  `void f(void)` frames) on top of `PlatformAmiga::renderFrame` and below (1080 B). Over-estimated:
+  frames were summed per function, not along one path.
+
+Which matches the field evidence — neither the CLI nor the Workbench icon ever set a stack, so the
+plain executable has always run on the **4000-byte** V33/V34 default (4096 on V40). So `STACKSIZE`
+can go to 8192, or away entirely; the caution against "away" is that overflow here is silent (no
+MMU, and what is below the stack is whatever `AllocMem` handed out). ⚠ `STACKSIZE` sizes the **CLI
+process** stack only: the VBI bodies (`game_vbi_isr` → `flightShotTick` → `buildShotSprite` → … =
+428 B) run in the interrupt server on exec's **system** stack, which this knob does not touch.
+
 ### What can be measured without the Amiga assembler
 
 The `?` rows are "the emulated 1.3 beside the game", and most of that can be cornered on the
@@ -225,7 +250,18 @@ something that round-trips latin-1, or the accented bytes get mangled.
 ## 5. Not done / open
 
 * **The sizes in §2 are untuned** — see §2's re-tuning recipe. This is the one thing that
-  should happen before a public release.
+  should happen before a public release. The first attempt (2026-08-14) read **nonsense** at
+  `$200`/`$204`; unchecked links in that chain are whether the run used `RoFTune.slave` at all
+  (`MEMFREE` is inside `IFD TUNE`) and whether `MEMFREE = $200`, which lives in the exception-vector
+  table, survives (`kick.readme`'s own `$100` example is equally inside it).
+* **`STACKSIZE` is unjustified at 16384** — §2's stack subsection puts the real worst case at ~2 KB
+  against a 4000-byte default that has years of mileage. 8192 or nothing; the user has not decided.
+* ⚠ **`slv_CurrentDir` and the installer disagree.** `0af7bc2` changed it from `"data",0` to an
+  empty string, so `HDINIT` mounts the slave's own drawer and `LoadSeg("RoF")` wants the executable
+  *beside* the slave — while `Install` still sets `#sub-dir "data"` and copies `RoF` into
+  `<dest>/data`. An installed copy would fail with `_program_err`. Fix one side (`#sub-dir ""`, plus
+  the `create_release.sh` comment and §1 above, which still say `data` — or restore `"data"`), and
+  establish first *why* it was changed: if WHDLoad objected to the subdrawer, that settles it.
 * **The icon is the template's placeholder** (`RoF.inf`, a plain 36×22 icon). A real one,
   and optional NewIcon / OS3.5 colour variants, would be dropped in as
   `RoF.newicon` / `RoF.colicon` — the install picks up any suffix it finds and offers the
