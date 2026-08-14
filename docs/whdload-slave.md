@@ -143,8 +143,32 @@ a margin, and put the results back into `RoFSlave.s`. `MEMFREE` also traps a tra
 list (its `AvailMem(LARGEST)` walks every free block), which makes the TUNE slave the right
 one to reach for if the install misbehaves.
 
+⚠ Two things `MEMFREE` is not. It is the largest free **chunk**, not the total free — under
+fragmentation it under-reports what is available, so tuning to it is conservative (safe, but
+it can leave RAM on the table). And it samples **only at `exec.AllocMem` calls**, so a peak
+that happens between two allocations is invisible; the game allocates throughout, which is
+what makes the figure usable at all.
+
 ⚠ Do not tune from the numbers in §2's table alone: they are host-side measurements of the
 game under the *real* OS, and say nothing about what the emulated 1.3 needs beside it.
+
+### What can be measured without the Amiga assembler
+
+The `?` rows are "the emulated 1.3 beside the game", and most of that can be cornered on the
+host, because a real 1.3 ROM is what the kickemu boots anyway:
+
+* `amiga/memreport.gdb` gives the **game's** own chip/fast use exactly (that is where the
+  measured rows come from) — but under KS 3.1, so it says nothing about 1.3's own footprint.
+* Booting `run.sh` with a **Kickstart 1.3 ROM** (`./run.sh ~/Documents/RetroPie/BIOS/kick13.rom`,
+  `AMIGA_MODEL=A500`) would run the game under the same OS version the slave boots, from a
+  real CLI; then shrink `--chip_memory` / `--fast_memory` (`EXTRA_ARGS=`) until it stops
+  working to bracket the requirement, with nothing assembled. ⚠ **Untested** — `run.sh` uses
+  KS 3.1 precisely because 3.1 auto-boots a directory hard drive, and whether FS-UAE will
+  boot one under 1.3 at all has not been checked. Verify that first, or the whole route is
+  moot.
+* What that still cannot see: WHDLoad's own overhead, and the fact that the kickemu's 1.3
+  lives inside WHDLoad's ExpMem rather than in real memory. So treat it as a bound on the
+  `?` rows, not as a replacement for `MEMFREE`.
 
 ## 3. Building it
 
