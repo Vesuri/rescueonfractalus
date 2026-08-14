@@ -601,33 +601,12 @@ static bool    s_resumeClearPend    = false;
 static bool    s_p3Clean[2]         = { false, false };
 // Called by the terrain draw (rof_native.c) before its first dot write, to ensure the kicked
 // off-screen-buffer clear has finished (the dots OR into freshly-zeroed plane2).
-#ifdef ROF_BLIT_SHAPE
-// ---- blitter-STALL attribution probe (`make PROBES=1 BLIT_SHAPE=1`, amiga/blit_shape.gdb) ----
-// The PC profile puts ~5% of the flight frame inside bW_waitUntilBlitterNotBusy /
-// processBlitterQueue / blitterDrain, but a PC sample cannot say WHICH call site is stalling —
-// and that is the only thing that matters, because the fix for a stall is to give the CPU work
-// to do during it (or to split the blit), which is a per-site decision.  So: bracket each wait
-// in the flight path and tally its beam-ticks separately.  ISR beam-lines are subtracted (a
-// blitter wait very often spans a VBI firing, which would otherwise be counted as stall).
-extern "C" volatile unsigned long g_bwDotClear = 0, g_bwClearCopy = 0, g_bwSkyFill = 0,
-                                  g_bwPendClear = 0, g_bwFlip = 0, g_bwCalls = 0,
-                                  g_bwP3Clear = 0;
-#define BW_AT(acc, stmt) do { unsigned long _t = rof_subclock(), _i = g_isrBeamLines; \
-    stmt; unsigned long _d = rof_subclock() - _t, _di = g_isrBeamLines - _i; \
-    (acc) += (_d > _di) ? (_d - _di) : 0; } while (0)
-#else
 #define BW_AT(acc, stmt) do { stmt; } while (0)
-#endif
 
 // Waits for the dot-side-buffer clear kicked at the end of the previous renderFlightDirect.
 // Called from terrain_draw_frame_core BEFORE the first rasterizer dot lands.
 extern "C" void rof_flight_wait_dotclear(void) {
-#ifdef ROF_BLIT_SHAPE
-    BW_AT(g_bwDotClear, AmigaHardware::blitterWait());
-    g_bwCalls++;
-#else
     AmigaHardware::blitterWait();
-#endif
 }
 // Edge-plot height->plane1-row-byte-offset table: kHeightRowOff[h] = kRow120[clamp(150-h,0,46)].
 // Folds the per-column "scanline = 150-h, clamp to the terrain rows" arithmetic out of the
@@ -717,100 +696,6 @@ extern "C" void flight_edge_plot_asm(uint8_t* bp);           // TerrainRasterize
 #if defined(ROF_RASTERIZE_ASM) && defined(ROF_RASTERIZE_VERIFY)
 extern "C" volatile unsigned long g_edgeCalls = 0, g_edgeMismatch = 0, g_edgeAsmTicks = 0, g_edgeCTicks = 0;
 // rof_subclock / g_isrBeamLines come from the ROF_FLIGHT_PROBE block above (VERIFY pairs with PROBES).
-#endif
-#ifdef ROF_BAND_SHAPE
-// ---- Band-block STRUCTURAL shape probe (make BAND_SHAPE=1 + amiga/shape_probe.gdb) ----------
-// The g_fdBand bucket is the BIGGEST CPU part of renderFlightDirect (59 ticks/call = 1.97% of
-// flight, measured 2026-08-05) but it is THREE loops, not one: the object plane-1 overlay, the
-// crosshair, and the windscreen-band composite.  Split them, and measure the one thing that
-// decides whether the band composite can be replaced by a pre-built masked blit: how much of the
-// mode-D band field actually CHANGES from frame to frame (shadowed per double-buffer half, since
-// the two halves alternate).  Off by default — the shadow compare costs more than the loop.
-extern "C" volatile unsigned long
-    g_bsPre = 0, g_bsObj = 0, g_bsCross = 0, g_bsBand = 0,
-    g_bsObjFrames = 0, g_bsObjRows = 0, g_bsObjBytes = 0, g_bsObjBox = 0,
-    g_bsBandFrames = 0, g_bsBandChanged = 0, g_bsBandClean = 0, g_bsBandMaxChg = 0,
-    g_bsBandOwNz = 0, g_bsChgLate = 0;
-extern "C" volatile unsigned short g_bsChgPos[160] = {0}, g_bsOwPos[160] = {0};
-static uint8_t s_bsShadow[2][4 * 40];
-// Lap timer.  rof_beam_line() races the ISR's g_vbiCount++ between its VPOSR and VHPOSR reads, so
-// a single bad sample can make the ISR-corrected delta negative and poison an unsigned accumulator
-// for the whole run (the known g_fDraw/g_fDirect failure).  Compute signed and drop absurd laps.
-static unsigned long s_bsT = 0, s_bsI = 0;
-#define BS_RESET()  do { s_bsT = rof_subclock(); s_bsI = g_isrBeamLines; } while (0)
-#define BS_LAP(acc) do { unsigned long _n = rof_subclock(), _ni = g_isrBeamLines; \
-        long _d = (long)(_n - s_bsT) - (long)(_ni - s_bsI); \
-        if (_d >= 0 && _d < 1000) (acc) += (unsigned long)_d; \
-        s_bsT = _n; s_bsI = _ni; } while (0)
-#endif
-#ifdef ROF_EDGE_SHAPE
-// ---- Edge-plot STRUCTURAL shape probe (make EDGE_SHAPE=1 + amiga/shape_probe.gdb) -----------
-// The edge plot is a 160-column scatter-OR: per column, one table lookup (kHeightRowOff[h]) and
-// one indexed byte-OR of a 2-bit mask into the plane-1 row.  Whether that can be restructured
-// depends entirely on the SHAPE of the skyline it is fed (mem[$260E+48..]), which the PC profile
-// cannot see:
-//   * consecutive columns landing on the SAME row can share ONE lookup, and — when they also fall
-//     in the same 4-column plane-1 byte — merge their masks into ONE byte-OR.  So the achievable
-//     access count is "distinct rows per group", not 4 per group; g_epORs sums exactly that.
-//   * a whole group at one row is a single `or.b #$FF`; two adjacent such groups at the same row
-//     would be a single `or.w #$FFFF` (g_epWordSame) — only if the runs are that long AND aligned.
-// Off by default: the scan itself costs more than the loop it measures.
-//
-// ⭐ g_epPairSame is the ONE number the filed "pairwise (0,1)/(2,3) merge" hangs on, and the
-// existing rows do not contain it.  The merge tests the two columns' raw HEIGHTS (equal h ⇒ equal
-// row, and $FF==$FF merges correctly too since both then skip on the sentinel), then issues ONE
-// byte-OR with a combined mask.  Hand-counted off the shipping EPGRP: −36 cycles on a hit, +24 on
-// a miss with the split path out of line ⇒ **break-even at p=40%**.  g_epSameRow's 52% is a proxy
-// over ALL adjacent columns; this counts exactly the two sub-pairs the merge would actually use.
-extern "C" volatile unsigned long
-    g_epFrames = 0, g_epFF = 0, g_epSameH = 0, g_epSameRow = 0, g_epLookups = 0, g_epORs = 0,
-    g_epRow0 = 0, g_epRow46 = 0, g_epGroupAllSame = 0, g_epWordSame = 0,
-    g_epGroupDistinct[5] = {0,0,0,0,0}, g_epRunHist[9] = {0,0,0,0,0,0,0,0,0},
-    g_epPairs = 0, g_epPairSame = 0, g_epPairSameFF = 0;
-static void edgeShapeProbe() {
-    const uint8_t* y = (const uint8_t*)mem + 0x260E + 48;
-    g_epFrames++;
-    int  prevH = -1;             // previous column's raw height (-1 = none/$FF)
-    long prevRow = -1;           // previous column's row offset (-1 = none/$FF)
-    int  run = 0;                // current run length of equal row offsets
-    long prevGroupRow = -2;      // the row a fully-uniform previous group sat at (-2 = not uniform)
-    for (int g = 0; g < 40; g++) {
-        long gr[4]; int distinct = 0; long seen[4];
-        for (int k = 0; k < 4; k++) {
-            const uint8_t h = y[g * 4 + k];
-            if (h == 0xFFu) { gr[k] = -1; g_epFF++; prevH = -1; prevRow = -1;
-                              if (run) { g_epRunHist[run > 8 ? 8 : run]++; run = 0; } continue; }
-            const long row = kHeightRowOff[h];
-            gr[k] = row;
-            if (row == kRow120[0])  g_epRow0++;
-            if (row == kRow120[46]) g_epRow46++;
-            if ((int)h == prevH) g_epSameH++; else g_epLookups++;   // lookups needed if h is cached
-            if (row == prevRow) { g_epSameRow++; run++; }
-            else { if (run) g_epRunHist[run > 8 ? 8 : run]++; run = 1; }
-            prevH = h; prevRow = row;
-            int dup = 0;
-            for (int j = 0; j < distinct; j++) if (seen[j] == row) { dup = 1; break; }
-            if (!dup) seen[distinct++] = row;
-        }
-        g_epGroupDistinct[distinct]++;
-        g_epORs += distinct;                                  // byte-ORs a merged loop would issue
-        // The two sub-pairs the (0,1)/(2,3) merge would test, counted on RAW HEIGHT exactly as the
-        // merge would.  gr[k] < 0 marks $FF; a matching $FF pair is still a merge hit (one lookup,
-        // one not-taken sentinel branch, no OR), so count it — separately, so it can be discounted.
-        for (int p = 0; p < 4; p += 2) {
-            const uint8_t ha = y[g * 4 + p], hb = y[g * 4 + p + 1];
-            g_epPairs++;
-            if (ha == hb) { g_epPairSame++; if (ha == 0xFFu) g_epPairSameFF++; }
-        }
-        const int uniform = (distinct == 1 && gr[0] >= 0 && gr[1] >= 0 && gr[2] >= 0 && gr[3] >= 0);
-        if (uniform) {
-            g_epGroupAllSame++;
-            if ((g & 1) && prevGroupRow == gr[0]) g_epWordSame++;   // even+odd pair, same row -> or.w
-        }
-        prevGroupRow = uniform ? gr[0] : -2;
-    }
-    if (run) g_epRunHist[run > 8 ? 8 : run]++;
-}
 #endif
 //   GTIA mode-10 (tunnel field at $2000): byte = 2 nibbles; nibble bit k → 4px.
 static uint8_t kGtia10P1[256];   // nibble bit0
@@ -1134,37 +1019,10 @@ static const int kShotYOff = 0;    // + = down  (Amiga scan lines)
 // (the 1× player→viewport scale, 2 Amiga lores px per Atari colour clock).  The per-call bit
 // loop cost 8 variable-shift iterations (no 68000 barrel shifter); a 256-entry LUT filled once
 // by buildShotExpandLut() replaces it for the per-frame shot / scope-P3 / viewport-P3 mirrors.
-#ifdef ROF_SPRITE_SHAPE
-// ---- Flight-VBI sprite bracket shape probe (make SPRITE_SHAPE=1 + amiga/sprite_shape.gdb) -----
-// game_vbi_isr brackets buildShotSprite + decodeScannerBlinkCells TOGETHER as g_vbiSpriteLines,
-// and that bracket measures 29 t/firing = ~9% of ALL wall clock (the ISR fires 50x/s regardless of
-// frame rate) — with neither function ever profiled.  ~13000 cycles is far more than either looks
-// like it should cost, so split it: WHICH of the two, which PATH inside buildShotSprite, and how
-// the active path divides between the 94-byte no-early-exit run scan / the whole-sprite clear /
-// the row decode / the copper + Sprite-header pokes.
-// g_spNop is one EMPTY lap sampled per call = the lap's own floor; subtract one floor per lap or a
-// cheap part reads as ~the bracket (the SFX_SHAPE lesson: use the split as SHARES, not absolutes).
-extern "C" unsigned short rof_beam_line(void);
-extern "C" volatile unsigned long
-    g_spShotCalls = 0, g_spScanCalls = 0,                          // entries
-    g_spIdle = 0, g_spBlank = 0, g_spActive = 0, g_spNoRun = 0,    // which buildShotSprite path
-    g_spIdleT = 0, g_spRunT = 0, g_spClearT = 0, g_spDecT = 0, g_spCopT = 0,
-    g_spScanT = 0, g_spScanDecodes = 0,
-    g_spRows = 0, g_spRowsMax = 0, g_spTopSum = 0, g_spBotSum = 0,
-    g_spNop = 0, g_spNopT = 0;
-static unsigned short s_spB = 0;
-#define SP_RESET()  (s_spB = rof_beam_line())
-#define SP_LAP(acc) do { unsigned short _n = rof_beam_line(); \
-    (acc) += (_n >= s_spB) ? (unsigned long)(_n - s_spB) : (unsigned long)(_n + 313 - s_spB); \
-    s_spB = _n; } while (0)
-#define SP_NOP()    do { ++g_spNop; SP_RESET(); SP_LAP(g_spNopT); } while (0)
-#define SP_CNT(c)   (++(c))
-#else
 #define SP_RESET()  ((void)0)
 #define SP_LAP(acc) ((void)0)
 #define SP_NOP()    ((void)0)
 #define SP_CNT(c)   ((void)0)
-#endif
 
 #ifdef ROF_SHOT_VERIFY
 // ---- buildShotSprite extent differential (make SHOT_VERIFY=1 + amiga/shot_verify.gdb) ----------
@@ -1527,11 +1385,6 @@ void RescueOnFractalus::buildShotSprite()
     // want this frame's COLPM2, or the two halves of the same burst differ by a luminance step.
     const bool heldWideExt = (wideOwner == kWideShot);
     if (rows > 0) {
-#ifdef ROF_SPRITE_SHAPE
-        g_spRows += (unsigned long)rows; g_spTopSum += (unsigned long)top;
-        g_spBotSum += (unsigned long)(top + rows - 1);
-        if ((unsigned long)rows > g_spRowsMax) g_spRowsMax = (unsigned long)rows;
-#endif
         // SIZEP2 (mem[$00CD]) widens the impact burst to 2×/4× as it peaks — 32/64 lores px, i.e.
         // 2 or 4 sprite segments.  The Atari has already shifted HPOSP2 left by $286E (4 or 12
         // colour clocks) so mem[$00CB] is the widened player's LEFT edge; segment n sits 16 px on.
@@ -3594,9 +3447,6 @@ void RescueOnFractalus::renderFlightDirect()
     // The crest row IS the silhouette top; the rasterizer lags its plane2 dots by one so it never
     // plots at COL_MAX, so plane1 sky safely covers down to and INCLUDING the crest with no overlap.
     if (!kHeightRowOffBuilt) buildHeightRowOff();
-#ifdef ROF_EDGE_SHAPE
-    edgeShapeProbe();          // structural shape of the skyline this loop is fed (off by default)
-#endif
 #if defined(ROF_RASTERIZE_ASM) && defined(ROF_RASTERIZE_VERIFY)
     // Differential verify (same run, deterministic): C reference and asm into fresh scratch planes
     // from the same $260E, byte-compare; perf timed back-to-back.  Live plane uses the proven C.
@@ -3667,30 +3517,6 @@ void RescueOnFractalus::renderFlightDirect()
     for (int r = 0; r < 4; r++)
         for (int b = 0; b < 40; b++) bvField[r * 96 + b] = srow[r * 96 + b];
     srow = bvField;
-#endif
-#ifdef ROF_BAND_SHAPE
-    // Is the band field worth re-compositing every frame?  Compare it against a per-HALF shadow
-    // (the two double-buffer halves alternate, so one shadow would read as "all changed" every
-    // frame) and tally changed bytes + how many take the rare overwrite (ow != 0) path.
-    {
-        const unsigned hi = g_flightRenderHalf ? 1u : 0u;
-        unsigned long changed = 0, ow_nz = 0;
-        for (int row = 0; row < 4; row++)
-            for (int b = 0; b < 40; b++) {
-                const uint8_t v = srow[row * 96 + b];
-                const int p = row * 40 + b;
-                if (kBandOW[v]) { ow_nz++; g_bsOwPos[p]++; }   // where the bars/marker live
-                if (s_bsShadow[hi][p] != v) {                  // WHICH positions are dynamic
-                    changed++; g_bsChgPos[p]++; s_bsShadow[hi][p] = v;
-                    if (g_bsBandFrames > 8) g_bsChgLate++;     // ...after the entry transient
-                }
-            }
-        g_bsBandFrames++;
-        g_bsBandChanged += changed;
-        g_bsBandOwNz    += ow_nz;
-        if (!changed) g_bsBandClean++;
-        if (changed > g_bsBandMaxChg) g_bsBandMaxChg = changed;
-    }
 #endif
     // Every per-half base is hoisted to a running pointer and every walk is an autoincrement: the
     // first cut of this indexed the caches as s_bandXc[hf][row*40+b], which put a 2D address
@@ -3772,18 +3598,6 @@ void RescueOnFractalus::renderFlightDirect()
     // here because a plane1 bit present during blitterFillUp would seed a spurious sky-coloured
     // vertical streak.  Walk only the dirty scanline range; clear each byte as it is applied so the
     // scratch is ready for the next frame.  (Objects are sparse, so this is a few rows x 40 bytes.)
-#ifdef ROF_BAND_SHAPE
-    BS_RESET();            // start of the g_fdBand window (object overlay + crosshair + band)
-    if (g_objRowHi >= g_objRowLo) {
-        g_bsObjFrames++;
-        g_bsObjRows += (unsigned long)(g_objRowHi - g_objRowLo + 1);
-        g_bsObjBox  += (unsigned long)(g_objRowHi - g_objRowLo + 1)
-                     * (unsigned long)(g_objColHi - g_objColLo + 1);   // bytes the box walk visits
-        const uint8_t* sp = s_flightObjP1 + kRow120[g_objRowLo];
-        for (int sc = g_objRowLo; sc <= g_objRowHi; sc++, sp += 120)
-            for (int b = 0; b < 40; b++) if (sp[b]) g_bsObjBytes++;   // nonzero = real work
-    }
-#endif
     // Walk only the dirty bounding BOX (rows AND byte-columns).  The row range alone left this
     // scanning all 40 bytes of each dirty row for the handful of object bytes actually in it —
     // 1.8% of bytes scanned were nonzero (BAND_SHAPE probe).  Every nonzero byte is inside the box
@@ -3809,9 +3623,6 @@ void RescueOnFractalus::renderFlightDirect()
         g_objColLo = 40; g_objColHi = -1;
         g_objTouchN = 0; g_objTouchOvf = 0;
     }
-#ifdef ROF_BAND_SHAPE
-    BS_LAP(g_bsObj);
-#endif
 
     // Targeting crosshair (#10): the Atari's "+" reticle rendered into the otherwise-empty plane3
     // of the terrain body (plane3 is 0 across rows 0-42; only the band below uses it).  Drawn ONCE
@@ -3842,9 +3653,6 @@ void RescueOnFractalus::renderFlightDirect()
         for (int c = 68; c <= 75; c++) h[c >> 2] |= kColMask4[c & 3];   // left arm (M3)
         for (int c = 85; c <= 92; c++) h[c >> 2] |= kColMask4[c & 3];   // right arm (M1)
     }
-#ifdef ROF_BAND_SHAPE
-    BS_LAP(g_bsCross);
-#endif
 
     // Windscreen-bottom band overlay (rows 43-46 = scanlines 172-179): the cockpit frame + the
     // wing-clearance bars, punched OVER the now-rendered terrain.  Source = the mode-D band field
@@ -3867,9 +3675,6 @@ void RescueOnFractalus::renderFlightDirect()
         // identical bytes now happens up in step 1, where srow is set — see there.)
         static uint8_t bvSnap[4 * 120], bvNew[4 * 120];
         for (int i = 0; i < 4 * 120; i++) bvSnap[i] = vrow[i];
-#endif
-#ifdef ROF_BAND_SHAPE
-        BS_RESET();     // exclude step 1 (hoisted above the fill wait) from the paint's own lap
 #endif
         // 2. Paint: plane3 = a straight long copy of the cached grey frame, but ONLY into a buffer
         //    that isn't already showing this half's current version of that row (see s_bandP3Ver —
@@ -3939,9 +3744,6 @@ void RescueOnFractalus::renderFlightDirect()
         // anywhere in the scratch — that is exactly the claim that every nonzero byte was inside
         // the tracked bounding box.  A leak here would show as a stale object pixel next frame.
         for (int i = 0; i < 47 * 120; i++) if (s_flightObjP1[i]) { g_objLeak++; break; }
-#endif
-#ifdef ROF_BAND_SHAPE
-        BS_LAP(g_bsBand);
 #endif
     }
     FD_LAP(g_fdBand);

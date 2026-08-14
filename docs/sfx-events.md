@@ -165,7 +165,8 @@ look for a per-frame one keyed on object presence / target-visible (`$28FB`/`$28
 
 **The method that would settle it** (it is what settled range-1): capture the POKEY stream on both
 sides with a saucer on screen and diff AUDC — `atari800 -pokeyrec -pokeyrec-ascii
--pokeyrec-interval 312` for ground truth vs `ROF_BEEP_CAP` on the Amiga. Build
+-pokeyrec-interval 312` for ground truth vs `ROF_BEEP_CAP` on the Amiga (retired 2026-08-15 —
+recover it from git history). Build
 `make COMBAT=1 COMBAT_SAUCER=<small>` so saucers appear constantly; the boot default is level 4,
 where they are sparse enough to cost minutes of flying.
 

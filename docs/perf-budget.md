@@ -70,7 +70,7 @@ before adding another table.**
 byte-identical.** It did NOT need fewer subdivisions — it dropped the control-point COLUMN representation for
 a tracked `span` (so the ccol load / `gap` subtract / midpoint store all vanish), put the TOS control-point
 height in a register, and straight-lined spans 3+4 (47.7% of all far-bisects, found by shape-probing the
-algorithm's input distribution — `make RASTER_C=1 RAS_SHAPE=1 PROBES=1` + `amiga/ras_shape.gdb` — not by PC
+algorithm's input distribution — `RAS_SHAPE` + `amiga/ras_shape.gdb`, since retired — not by PC
 sampling). Design, the shape data and the evaluated-and-rejected follow-ups: `docs/asm-migration-plan.md`
 §Phase 4. **Recipe worth reusing: shape-probe the algorithm → prove the algebra on the HOST
 (`tools/ras_restructure_test.c`, 1.6M randomised cases) → then write the asm → then the on-target
@@ -187,6 +187,19 @@ entirely different `$0900`/`$0A00` maps, 23 vs 25 pilots).
 
 **Target: A500, 25 FPS on the BEST-CASE baseline (user decision 2026-08-08); combat may sit lower.**
 Surface the numbers honestly.
+
+## ⚠ Retired shape probes — the records stay, the code is gone
+
+The one-off shape/capture probes are **no longer in the tree** (removed 2026-08-15 with the flight-perf
+investigation closed): `RAS_SHAPE`, `EDGE_SHAPE`, `BAND_SHAPE`, `TFS_SHAPE`, `SPRITE_SHAPE`,
+`BLIT_SHAPE`, `INTEG_SHAPE`, `SFX_SHAPE`, `BEEP_CAP`, `ALIEN_BENCH`(`_SPLIT`), `FIRE_ONCE`, and their
+`amiga/*_shape.gdb` / `shape_probe.gdb` / `alien_bench.gdb` / `fire_once.gdb` / `beep_cap.gdb` /
+`sfx_shape.gdb` / `integ_shape.gdb` / `blit_shape.gdb` scripts.  Every measurement they produced is
+still recorded here and in `docs/flight-perf-log.md` / `docs/asm-migration-plan.md`, so those sections
+read as archives, not as instructions.  **Kept**: `FLIGHT_PROBE`, `FPSCOUNT`, `COMBAT*`, `OBJ_SHAPE`,
+`TDRAW_PROF`, every `*_VERIFY`, every `FORCE_*`.  To ask one of the retired questions again, recover
+the probe from git history (`git log --diff-filter=D -- amiga/ras_shape.gdb`) rather than writing a new
+one — the old one already knew which floor to subtract.
 
 ## Correctness + measurement
 

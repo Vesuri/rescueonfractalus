@@ -309,7 +309,7 @@ calls**; `make validate FN=terrain_column_rasterize` green (4000 cases, 0 mem mi
 PC profile share went **34.5% → 29.8%** of the flight frame.
 
 ### Measure first — the shape data that sized it
-Added a permanent shape probe (`make RASTER_C=1 RAS_SHAPE=1 PROBES=1` + `amiga/ras_shape.gdb`;
+Added a shape probe (`make RASTER_C=1 RAS_SHAPE=1 PROBES=1` + `amiga/ras_shape.gdb`, retired 2026-08-15;
 off by default because its volatile counters live in the C oracle and would wreck the
 differential's perf reading). Deep flight, 263 half-frames / 6013 calls:
 
@@ -714,7 +714,7 @@ Size this one from the disassembly, not from the differential.
 
 The #2 flight bucket (PC profile 8.3% + 2.8% for the obj entry, ISR-corrected ⇒ ~11% of wall)
 and the one hot twin nobody had revisited since its Phase-3 asm was written. **Measure the
-shape first** — `amiga/ras_shape.gdb` already prints it, on the quiet baseline (16342 calls /
+shape first** — `amiga/ras_shape.gdb` (since retired) printed it, on the quiet baseline (16342 calls /
 239 iterations, i.e. **68.4 calls per flight iteration**):
 
 | per call | value |

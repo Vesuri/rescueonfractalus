@@ -257,23 +257,11 @@ static void build_poly_tables(void)
 // same bipolar ±127 as wave_pure so AUDxVOL scales them identically.
 #ifdef ROF_FLIGHT_PROBE
 extern "C" volatile unsigned long g_polyDistCalls = 0;
-#ifdef ROF_SFX_SHAPE
-// build_poly_dist writes 1022 bytes per call.  Its cache key is (divider, base_div, gate), and an
-// explosion / engine pitch sweep changes AUDF on every 50 Hz firing, so a poly9 noise voice can
-// force a FULL REBUILD EVERY FRAME.  Time it: this is the prime suspect for
-// update_paula_channel's ~2.55 t/call, which the shape probe put at 6.4 t/firing inside
-// sfx_reorder_voice_slot (itself 23.2 t/firing = 24% of the whole flight VBI).
-extern "C" unsigned short rof_beam_line(void);   // declared again: the one below is further down
-extern "C" volatile unsigned long g_polyDistTicks = 0;
-#endif
 #endif
 static void build_poly_dist(uint8_t ch, uint32_t divider, uint16_t bd, bool gateAlways)
 {
 #ifdef ROF_FLIGHT_PROBE
     g_polyDistCalls++;
-#endif
-#ifdef ROF_SFX_SHAPE
-    const unsigned short _pd0 = rof_beam_line();
 #endif
     // s5 = (divider*bd) % 31, s9 = (divider*bd) % 511 — via (a*b)%m = ((a%m)*(b%m))%m so every
     // op is a 16-bit hardware DIVU.W/MULU.W (divider≤65536 → quotient fits 16 bits), no 32-bit
@@ -295,11 +283,6 @@ static void build_poly_dist(uint8_t ch, uint32_t divider, uint16_t bd, bool gate
         }
         dst[i] = out ? 0x7Fu : 0x81u;
     }
-#ifdef ROF_SFX_SHAPE
-    { const unsigned short _pd1 = rof_beam_line();
-      g_polyDistTicks += (_pd1 >= _pd0) ? (unsigned long)(_pd1 - _pd0)
-                                        : (unsigned long)(_pd1 + 313 - _pd0); }
-#endif
 }
 
 // Shadow of POKEY registers $D200..$D20F (bus_write doesn't update mem[] for
@@ -423,203 +406,6 @@ static volatile uint16_t g_vbiCount = 0;
 extern "C" volatile unsigned long g_fpsFrames = 0;
 #endif
 
-#ifdef ROF_BEEP_CAP
-// ---- pilot-proximity-beep capture (make PROBES=1 BEEP_CAP=1) ------------------------
-// Records, each flush_paula, the POKEY shadow + per-channel Paula waveform class / period /
-// volume + the restart bitmask into a ring, so amiga/beep_cap.gdb can read how ch3 (the beep
-// channel) behaves under the fast every-2-frame range-1 re-push forced in vbiHandler().  This
-// isolates whether the distortion is the flush restart dance, a stuck voice, or a ring/order race.
-#define BC_N 640
-extern "C" volatile unsigned short g_bcVbi[BC_N] = {};
-extern "C" volatile unsigned char  g_bcPokey[BC_N][9] = {};   // AUDF1,AUDC1,..,AUDF4,AUDC4,AUDCTL
-extern "C" volatile unsigned char  g_bcKind[BC_N][4] = {};    // 0 silent/other 1 pure 2 poly4 3 poly5 4 noise 5 polydist
-extern "C" volatile unsigned short g_bcPer[BC_N][4] = {};
-extern "C" volatile unsigned char  g_bcVol[BC_N][4] = {};
-extern "C" volatile unsigned char  g_bcRestart[BC_N] = {};    // channels that restarted this flush
-// aux[]: slot-5 lifecycle per frame (see the flush_paula population for the exact bytes) —
-//  slot5 dist/vol/freq/chan + mixer top-prio/top-voice + slot5 freq-env phase + range digit.
-extern "C" volatile unsigned char  g_bcAux[BC_N][8] = {};
-extern "C" volatile unsigned short g_bcIdx = 0;          // write cursor (mod BC_N)
-extern "C" volatile unsigned char  g_bcOn  = 0;          // armed once flight VBI is live
-// break-hook: gdb `break rof_bc_done` fires when the ring is full.  Must have a UNIQUE,
-// non-empty body or identical-code-folding merges it into another empty fn (e.g. a blitter
-// helper) → the breakpoint fires at boot.  The volatile bump defeats ICF.
-extern "C" volatile unsigned long g_bcDoneTick = 0;
-extern "C" void rof_bc_done(void) { g_bcDoneTick++; }
-// SFX-event-push log: rof_bc_push() records every ring_push_0719 (event id | $80) with the
-// frame it fired on, so we can see WHICH events drive the range-1 "wrong sound" and when.
-#define BCP_N 256
-extern "C" volatile unsigned char  g_bcPushId[BCP_N] = {};   // FULL pushed byte (bit7 = marked/event)
-extern "C" volatile unsigned short g_bcPushVbi[BCP_N] = {};  // g_vbiCount at push
-extern "C" volatile unsigned short g_bcPushIdx = 0;          // WRAP cursor (keeps last BCP_N)
-extern "C" volatile unsigned short g_bcPushN   = 0;          // total pushes ever
-extern "C" volatile unsigned short g_bcPush01N = 0;          // pushes whose low-7-bits == 1 (event $01)
-extern "C" void rof_bc_push(unsigned char v) {
-    // Log EVERY push (not gated on g_bcOn) into a wrap ring so the range-1 window is always
-    // present; store the FULL byte so a marked event $01 ($81) is distinguishable from a raw $01.
-    unsigned i = g_bcPushIdx;
-    g_bcPushId[i] = v; g_bcPushVbi[i] = g_vbiCount;
-    g_bcPushIdx = (unsigned short)((i + 1u) % BCP_N);
-    g_bcPushN = (unsigned short)(g_bcPushN + 1u);
-    if ((v & 0x7Fu) == 1u) g_bcPush01N = (unsigned short)(g_bcPush01N + 1u);   // caught the $81 pusher
-}
-// slot-5 lifecycle logs (range-1 poly4 bug): does slot-5 volume ever get cleared on the Amiga?
-// On the Atari sfx_engine_reset ($5433) zeroes slot-5 vol (+ envelopes), leaving a SILENT poly4/$1f
-// leftover; the bug is the Amiga leaving slot-5 vol nonzero → audible poly4 warble.  These two logs
-// (UNGATED — they must catch the level-start reset/push that precedes flight arming) record the
-// g_vbiCount of every sfx_engine_reset call and every event-$01 load so we can see the ORDER.
-#define BCE_N 256
-extern "C" volatile unsigned short g_bcResetVbi[BCE_N] = {};
-extern "C" volatile unsigned short g_bcResetN = 0;
-extern "C" volatile unsigned short g_bc01Vbi[BCE_N] = {};
-extern "C" volatile unsigned short g_bc01N = 0;
-// event $01 lives in boot_standby_launch_driver's standby_level_select_loop block L_634f, reachable by THREE
-// paths: (1) $6150 when $006c(sound_active_flag)==0 && $0644(sound_event_flag)==0; (2) $62f4 when
-// $0004(level_or_state)!=0; (3) the $5a78 (CONSOL/TRIG) fall-through.  g_l634fPath is set to 1/2/3
-// at each entry (rof_native.c, under ROF_BEEP_CAP) so we see WHICH fires during flight.  Ctx per
-// load: [0]=$0004 [1]=$006d(level_stage) [2]=$006c [3]=$0644 [4]=$0642 range [5]=mem[$D01F]
-// [6]=$0627(fresh_start_flag) [7]=g_l634fPath.  Plus count boot_standby_launch_driver ($5f1d) entries to see if
-// it's being re-invoked every game_main_loop iteration during flight.
-extern "C" volatile unsigned char  g_bc01Ctx[BCE_N][8] = {};
-extern "C" volatile unsigned char  g_l634fPath = 0;      // set at each L_634f entry (1/2/3)
-// $5a78 evaluation at the last PATH-3 (fall-through) entry: a=result A ($01-TRIG0), d01f/d010 =
-// what bus_read actually returned for CONSOL/TRIG0.  If d010==0 while s_trig0State is live=$01,
-// the trigger read is wrong (the poly4 root cause); if d010==1 the flag logic is.
-extern "C" volatile unsigned char  g_p3_a = 0, g_p3_d01f = 0, g_p3_d010 = 0, g_p3_memd01f = 0;
-extern "C" void rof_bc_p3(unsigned char a, unsigned char d01f, unsigned char d010, unsigned char memd01f) {
-    g_p3_a = a; g_p3_d01f = d01f; g_p3_d010 = d010; g_p3_memd01f = memd01f;
-}
-extern "C" volatile unsigned short g_dsEntryN = 0;       // boot_standby_launch_driver ($5f1d) invocation count
-extern "C" volatile unsigned short g_dsEntryVbi = 0;     // g_vbiCount of the most recent entry
-extern "C" void rof_bc_ds_entry(void) { g_dsEntryN++; g_dsEntryVbi = g_vbiCount; }  // hooked at $5f1d
-extern "C" void rof_bc_reset_log(void) {   // hooked at sfx_engine_reset $5433
-    unsigned i = g_bcResetN; if (i < BCE_N) { g_bcResetVbi[i] = g_vbiCount; g_bcResetN = (unsigned short)(i + 1u); }
-}
-// setup_level_clear_state ($7BC6) is the SOLE writer of flight_mode_state($0072)=2 = the ONLY cause
-// of a game_main_loop_body flight-loop break -> outer-loop -> boot_standby_launch_driver re-invocation ->
-// event $01 reload.  If this fires during a range-1 pilot PASS (not a genuine level advance),
-// that's the range-1 bug: a spurious level-clear.  Ctx: [0]=$0004(level_or_state) [1]=$0642(range)
-// [2]=$008F?level_cleared_flag  [3]=$0072 before  [4]=$003A.  g_lclN counts, ring holds vbis.
-extern "C" volatile unsigned short g_lclN = 0;
-extern "C" volatile unsigned short g_lclVbi[BCE_N] = {};
-extern "C" volatile unsigned char  g_lclCtx[BCE_N][5] = {};
-extern "C" void rof_bc_lcl_log(void) {     // hooked at setup_level_clear_state call ($5223x/9175)
-    unsigned i = g_lclN; if (i < BCE_N) {
-        g_lclVbi[i] = g_vbiCount;
-        g_lclCtx[i][0] = mem[0x0004]; g_lclCtx[i][1] = mem[0x0642];
-        g_lclCtx[i][2] = mem[0x2849]; g_lclCtx[i][3] = mem[0x0072];  // $2849 = level_cleared_flag
-        g_lclCtx[i][4] = mem[0x003A];
-        g_lclN = (unsigned short)(i + 1u);
-    }
-}
-// Envelope-expiry RE-QUEUE log (sfx_voice_envelope_tick line ~8568): whenever a voice slot's
-// envelope expires it re-queues that slot's FOLLOW-ON event id ($06F7+y) via ring_push_marked.
-// This is the self-sustaining chain that reloads event $01 (poly4, slot 5) during flight at
-// range 1 — and it is NOT captured by the existing ring_push_0719 push-log.  We log every
-// re-queue: [slot y, follow-on id $06F7+y, vbi] + slot-5 envelope state at the moment, so we
-// see WHICH slot re-arms event $01 and why it keeps expiring.  Ring wraps (last BCE_N).
-extern "C" volatile unsigned short g_rqN = 0;              // total re-queues seen (may exceed ring)
-extern "C" volatile unsigned short g_rqIdx = 0;            // write cursor into the wrap ring
-extern "C" volatile unsigned short g_rqVbi[BCE_N] = {};
-extern "C" volatile unsigned char  g_rqSlot[BCE_N] = {};
-extern "C" volatile unsigned char  g_rqId[BCE_N] = {};
-// count re-queues whose follow-on id == 1 (event $01) specifically, by originating slot
-extern "C" volatile unsigned short g_rq01BySlot[16] = {};
-extern "C" void rof_bc_requeue_log(unsigned char y, unsigned char id) {  // hooked at line ~8568
-    unsigned i = g_rqIdx;
-    g_rqVbi[i] = g_vbiCount; g_rqSlot[i] = y; g_rqId[i] = id;
-    g_rqIdx = (unsigned short)((i + 1u) % BCE_N);
-    g_rqN = (unsigned short)(g_rqN + 1u);
-    if (id == 1u && y < 16u) g_rq01BySlot[y] = (unsigned short)(g_rq01BySlot[y] + 1u);
-}
-// Ring-drain EVENT log: every bit7-set entry the drain feeds to sfx_event_load, with the ring index
-// it came from.  Catches (a) event $01 ($81), (b) OUT-OF-RANGE event ids (>33=$21) that make
-// sfx_event_load read $56D4+i out of bounds -> a garbage slot y (possibly bit7-set) -> ring_push_unmarked
-// pushes $8x -> the $81 cascade.  g_drainOOR counts out-of-range events; g_drain81 counts $81.
-extern "C" volatile unsigned short g_drainN = 0, g_drainOOR = 0, g_drain81 = 0, g_drainIdx = 0;
-extern "C" volatile unsigned char  g_drainEvt[BCE_N] = {};   // full entry byte (wrap ring)
-extern "C" volatile unsigned char  g_drainTail[BCE_N] = {};  // ring index it was read from
-extern "C" volatile unsigned short g_drainVbi[BCE_N] = {};
-// FIRST $81 snapshot: the ring index + absolute address (for a HW watchpoint) + head/tail geometry
-// + a full 32-byte ring copy, so ONE full-speed flight pins where the stale $81 sits and what
-// surrounds it (nothing pushes $81, so it must be written OOB by a non-ring writer).
-extern "C" volatile unsigned char  g_drain81Tail = 0xFF, g_drain81Head = 0;
-extern "C" volatile unsigned short g_drain81Addr = 0;              // $0719 + tail (watch this)
-extern "C" volatile unsigned char  g_drain81Ring[32] = {};
-extern "C" void rof_bc_drain_evt(unsigned char entry, unsigned char tail) {
-    unsigned i = g_drainIdx;
-    g_drainEvt[i] = entry; g_drainTail[i] = tail; g_drainVbi[i] = g_vbiCount;
-    g_drainIdx = (unsigned short)((i + 1u) % BCE_N);
-    g_drainN = (unsigned short)(g_drainN + 1u);
-    if ((entry & 0x7Fu) > 0x21u) g_drainOOR = (unsigned short)(g_drainOOR + 1u);  // out-of-range id
-    if (entry == 0x81u) {
-        if (g_drain81 == 0) {   // snapshot the FIRST occurrence
-            g_drain81Tail = tail; g_drain81Head = mem[0x0073];
-            g_drain81Addr = (unsigned short)(0x0719u + tail);
-            for (int k = 0; k < 32; k++) g_drain81Ring[k] = mem[0x0719u + k];
-        }
-        g_drain81 = (unsigned short)(g_drain81 + 1u);  // event $01
-    }
-}
-// $81 (event $01) push capture: the exact caller chain at the moment a $81 is written to the
-// ring, recorded in CODE (no gdb breakpoint => full-speed flight => keyboard key-ups still
-// register).  g_push81Ra0 = ring_push_0719's caller (ring_push_marked vs ring_push_unmarked =
-// distinguishes an X=1 event push from a Y=$81 slot push); Ra1/Ra2 = up the chain to the real
-// culprit.  Resolve with `info symbol` in gdb after a normal flight to a range-1 pilot.
-extern "C" volatile unsigned short g_push81N = 0;
-extern "C" volatile void *g_push81Ra0 = 0;
-extern "C" volatile unsigned short g_push81Vbi = 0;
-extern "C" void rof_bc_push81(void *ra0) {
-    if (g_push81N == 0) { g_push81Ra0 = ra0; g_push81Vbi = g_vbiCount; }
-    g_push81N++;   // keep the FIRST caller (later ones may be re-entrant cascades)
-}
-extern "C" void rof_bc_ev01_log(void) {    // hooked in sfx_event_load/sfx_event_load when event id==1
-    unsigned i = g_bc01N; if (i < BCE_N) {
-        g_bc01Vbi[i] = g_vbiCount;
-        g_bc01Ctx[i][0] = mem[0x0004]; g_bc01Ctx[i][1] = mem[0x006D];
-        g_bc01Ctx[i][2] = mem[0x006C]; g_bc01Ctx[i][3] = mem[0x0644];
-        g_bc01Ctx[i][4] = mem[0x0642]; g_bc01Ctx[i][5] = g_p3_d01f;    // [5]=CONSOL $5a78 read
-        g_bc01Ctx[i][6] = g_p3_d010; g_bc01Ctx[i][7] = g_l634fPath;    // [6]=TRIG0 $5a78 read
-        g_bc01N = (unsigned short)(i + 1u);
-    }
-}
-// Keyboard event log (from boot): every decoded (raw,down) the CIA-A keyboard ISR sees, to catch
-// the PHANTOM Left Shift ($60)-down that stalls s_trig0State at 0 without the user firing.  The
-// ring wraps (holds the last BCK_N events); g_bcKeyFireN counts ALL $60 events ever (down or up)
-// so a boot-time phantom is caught even if the ring later wraps past it.
-#define BCK_N 512
-extern "C" volatile unsigned short g_bcKeyVbi[BCK_N] = {};
-extern "C" volatile unsigned char  g_bcKeyRaw[BCK_N] = {};
-extern "C" volatile unsigned char  g_bcKeyDown[BCK_N] = {};
-extern "C" volatile unsigned short g_bcKeyIdx = 0;       // wraps mod BCK_N
-extern "C" volatile unsigned short g_bcKeyFireN = 0;     // count of raw==$60 events (any edge)
-extern "C" volatile unsigned char  g_bcKeyFireLastDown = 0xFF;  // last $60 edge seen (1=down 0=up)
-extern "C" void rof_bc_key(unsigned char raw, unsigned char down) {   // hooked in keyboardHandler
-    unsigned k = g_bcKeyIdx % BCK_N; g_bcKeyIdx = (unsigned short)(g_bcKeyIdx + 1u);
-    g_bcKeyVbi[k] = g_vbiCount; g_bcKeyRaw[k] = raw; g_bcKeyDown[k] = down;
-    if (raw == 0x60u) { g_bcKeyFireN++; g_bcKeyFireLastDown = down; }
-}
-// EDGE-LOG of mem[$D01F] (CONSOL): store (vbi,value) only when it CHANGES, from boot.  This shows
-// exactly when/how CONSOL becomes $06 (START held) — the value $5a78 reads as launch.  Non-wrapping.
-#define BCD_N 128
-extern "C" volatile unsigned short g_bcD01FVbi[BCD_N] = {};
-extern "C" volatile unsigned char  g_bcD01FVal[BCD_N] = {};
-extern "C" volatile unsigned short g_bcD01FN = 0;
-extern "C" void rof_bc_d01f(void) {   // called every vbi
-    static unsigned char last = 0xAA;
-    unsigned char v = mem[0xD01Fu];
-    if (v != last) { last = v; unsigned k = g_bcD01FN; if (k < BCD_N) { g_bcD01FVbi[k] = g_vbiCount; g_bcD01FVal[k] = v; g_bcD01FN = (unsigned short)(k + 1u); } }
-}
-static unsigned char cur_vol_cap[4] = { 0, 0, 0, 0 };    // last VOL applied per channel
-static unsigned char bc_classify(uint32_t p) {
-    if (p == (uint32_t)wave_pure) return 1;
-    if (p >= (uint32_t)noise_buf     && p < (uint32_t)noise_buf     + sizeof(noise_buf))     return 4;
-    if (p >= (uint32_t)poly4_wave    && p < (uint32_t)poly4_wave    + sizeof(poly4_wave))    return 2;
-    if (p >= (uint32_t)poly5_wave    && p < (uint32_t)poly5_wave    + sizeof(poly5_wave))    return 3;
-    if (p >= (uint32_t)poly_dist_buf && p < (uint32_t)poly_dist_buf + sizeof(poly_dist_buf)) return 5;
-    return 0;
-}
-#endif
 
 // Apply all channels recorded since the last flush.  Waveform changes are batched through a
 // single DMA off → wait → on so the rasterline wait is paid once.  Called once per frame from
@@ -650,9 +436,6 @@ extern "C" void flush_paula(void)
             }
             else { AUD_PER(ch) = want_per[ch]; AUD_VOL(ch) = want_vol[ch];     // live, no click
                    cur_per[ch] = want_per[ch];
-#ifdef ROF_BEEP_CAP
-                   cur_vol_cap[ch] = want_vol[ch];
-#endif
             }
         }
 
@@ -714,38 +497,11 @@ extern "C" void flush_paula(void)
                 cur_ptr[ch] = want_ptr[ch];
                 cur_len[ch] = want_len[ch];
                 cur_per[ch] = want_per[ch];
-#ifdef ROF_BEEP_CAP
-                cur_vol_cap[ch] = want_vol[ch];
-#endif
             }
             *dmaconPointer = (uint16_t)(0x8000u | restart); // AUDxEN on — all at once, one wait paid
         }
     }
 
-#ifdef ROF_BEEP_CAP
-    if (g_bcOn) {
-        unsigned s = g_bcIdx; unsigned ni = (s + 1u) % BC_N; g_bcIdx = (unsigned short)ni;
-        g_bcVbi[s]     = g_vbiCount;
-        g_bcRestart[s] = restart;
-        for (int i = 0; i < 9; i++) g_bcPokey[s][i] = pokey[i];
-        // slot-5 lifecycle (the range-1 poly4 = a stale event-$01 voice in slot 5):
-        //  [0]=$0662 slot5 distortion  [1]=$0670 slot5 vol(&0f)  [2]=$067e slot5 freq
-        //  [3]=$070a slot5 POKEY-channel idx (0=unassigned)  [4]=$0714 mixer top-prio-val
-        //  [5]=$0715 mixer top-voice-idx  [6]=$06e0 slot5 freq-env phase  [7]=$0642 range digit
-        // Atari-correct in flight: dist=$40 freq=$1f but vol=0, chan=0 (silent leftover).
-        g_bcAux[s][0] = mem[0x0662]; g_bcAux[s][1] = (unsigned char)(mem[0x0670] & 0x0F);
-        g_bcAux[s][2] = mem[0x067E]; g_bcAux[s][3] = mem[0x070A];
-        g_bcAux[s][4] = mem[0x0714]; g_bcAux[s][5] = mem[0x0715];
-        g_bcAux[s][6] = mem[0x06E0]; g_bcAux[s][7] = mem[0x0642];
-        for (int ch = 0; ch < 4; ch++) {
-            g_bcKind[s][ch] = bc_classify(cur_ptr[ch]);   // waveform Paula is playing after this flush
-            g_bcPer[s][ch]  = cur_per[ch];
-            g_bcVol[s][ch]  = cur_vol_cap[ch];
-        }
-        if (ni == 0u) rof_bc_done();   // full ring: keep WRAPPING (hold the last 320 frames so
-                                       // SIGINT catches the stuck poly4), just tick the break-hook
-    }
-#endif
 }
 
 // ---- POKEY→Paula frequency conversion ----------------------------------------
@@ -965,23 +721,6 @@ static volatile uint8_t s_trig0State = 0x01u;   // fire button, active-low ($00 
 // mappings are NOT a fallback to be removed — they stay supported alongside the stick.
 static volatile uint8_t s_joyPorta   = 0xFFu;
 static volatile uint8_t s_joyTrig0   = 0x01u;
-#ifdef ROF_FIRE_ONCE
-// `make FIRE_ONCE=1` readouts (amiga/fire_once.gdb).  g_foFireVbi = the vbl the single trigger
-// press landed on; g_foEndVbi = the last vbl object_anim_frame ($0036) was still non-zero, i.e.
-// when the shot machinery actually went quiet; g_foActiveFirings = how many flight vblanks it was
-// live for in total.  See the FIRE_ONCE block in the VBI below.
-extern "C" volatile unsigned long g_foFireVbi = 0, g_foEndVbi = 0, g_foActiveFirings = 0;
-// ...and the follow-up readouts, once the first run showed $0036 never returns to 0.
-// g_foRearms = how many times it went 0 -> non-zero AFTER the press had been released (a re-arm
-// can only come from the $5178 RESET path, so a non-zero count means something is re-firing the
-// shot); the three traces are consecutive flight vblanks long after the press, which is what
-// separates "stuck at one value" from "cycling through the animation forever".
-extern "C" volatile unsigned long g_foRearms = 0, g_foTraceN = 0;
-extern "C" volatile unsigned char g_foTrace36[96] = {0};  // $0036 object_anim_frame
-extern "C" volatile unsigned char g_foTrace6A[96] = {0};  // $286A explosion zoom accumulator
-extern "C" volatile unsigned char g_foTrace6B[96] = {0};  // $286B its step (+1 grow / $FF shrink)
-extern "C" volatile unsigned char g_foSnap[8] = {0};      // $0004 $286C $286D $284A $2867 $0037 $006A $003D
-#endif
 // CONSOL ($D01F) console keys (START/SELECT/OPTION), active-low; idle $07.  Kept in a DEDICATED
 // state var (like s_portaState/s_trig0State) — NOT read from mem[$D01F] — so a stray/aliased RAM
 // write to the $D000 hardware-mirror page can't corrupt this hardware INPUT register.  (It used to
@@ -1381,13 +1120,6 @@ extern "C" void platform_tunnel_vspan(uint16_t rowBase, uint8_t r0, uint8_t r1, 
     if (s_scene) s_scene->drawTunnelVSpan(rowBase, r0, r1, colL, colR, colour);
 }
 
-#ifdef ROF_ALIEN_BENCH
-// Headless alien-knock creature-draw bench (`make ALIEN_BENCH=1 PROBES=1`), driven once from
-// renderFrame below.  Defined in rof_native.c next to the code it times.
-extern "C" void rof_alien_bench(void);
-extern "C" volatile unsigned char g_abDone;
-extern "C" uint8_t* g_figP1;
-#endif
 
 // Flight/init timing probes (enable with `make PROBES=1` → -DROF_FLIGHT_PROBE).  Sub-frame
 // clock rof_subclock() = g_vbiCount*313 + beam_line, plus the accumulators that rof_native.c's
@@ -1539,63 +1271,6 @@ extern "C" volatile unsigned long g_portsIrqCnt = 0;
 extern "C" volatile unsigned long g_pProj=0, g_pInteg=0, g_pSfx=0;
 extern "C" volatile unsigned long g_pSfxEng=0, g_pSfxLoop=0, g_pSfxRing=0;
 extern "C" volatile unsigned long g_sfxRingIters=0;   // ring entries drained; /isrCalls = per-firing
-#ifdef ROF_INTEG_SHAPE
-// INTEG SHAPE PROBE (`make COMBAT=1 PROBES=1 INTEG_SHAPE=1`, read via amiga/integ_shape.gdb).
-// Splits flight_control_integrate's 15.3 t/firing (17% of the flight VBI = ~4.8% of ALL wall
-// clock, and never examined) into its 13 straight-line regions + the callees each one makes.
-// The regions LAP off a single running beam stamp — one rof_beam_line() per boundary, not two —
-// so the floor is one read per bucket; g_inNop is an EMPTY lap sampled once per firing and is
-// exactly that floor.  Subtract it from every bucket, and read the result as SHARES: the lap
-// points also inhibit GCC's reordering across them, so the sum runs above the unprobed 15.3.
-extern "C" volatile unsigned long g_inHead=0, g_inDisp=0, g_inLevel=0, g_inThr=0, g_inAttc=0,
-                                  g_inAng=0,  g_inPos=0,  g_inHud=0,   g_inLock=0, g_inObjv=0,
-                                  g_inObj=0,  g_inSlot=0, g_inTail=0,  g_inNop=0;
-// Path counters (plain increments, no measurable cost): which branches each firing took.
-extern "C" volatile unsigned long g_inCalls=0;      // firings of flight_control_integrate
-extern "C" volatile unsigned long g_inBlipCalls=0;  // compute_target_blip_position
-extern "C" volatile unsigned long g_inAutoP=0, g_inAutoR=0;   // pitch / roll auto-level taken
-extern "C" volatile unsigned long g_inThrKick=0, g_inThrClamp=0;
-extern "C" volatile unsigned long g_inObjStep=0;    // object_step_and_collide (the bilerp caller)
-extern "C" volatile unsigned long g_inObjLoad=0;    // load_velocity_from_param_block
-extern "C" volatile unsigned long g_inObjPos=0;     // object_integrate_position
-extern "C" volatile unsigned long g_inObjBox=0;     // check_object_in_target_box
-extern "C" volatile unsigned long g_inJitter=0;     // terrain_jitter_column
-extern "C" volatile unsigned long g_inSlotIdle=0;   // slot index already negative -> nothing to do
-// Level 2: inside object_step_and_collide (the `obj` bucket = 37% of integ, its one big block),
-// and inside sample_terrain_height_bilerp (called from BOTH object_step_and_collide and
-// update_terrain_scanline_proj, so g_blCalls counts every caller).  Same lap-and-floor rules.
-extern "C" volatile unsigned long g_osAcc=0, g_osHit=0, g_osCell=0, g_osLerp=0, g_osTail=0,
-                                  g_osNop=0, g_osCalls=0, g_osHitCalls=0, g_osLerpCalls=0,
-                                  g_osExplode=0, g_osEarlyRet=0;
-extern "C" volatile unsigned long g_blFetch=0, g_blB1=0, g_blB2=0, g_blB3=0, g_blTail=0,
-                                  g_blNop=0, g_blCalls=0;
-#endif
-#ifdef ROF_SFX_SHAPE
-// SFX SHAPE PROBE (`make COMBAT=1 PROBES=1 SFX_SHAPE=1`, read via amiga/sfx_shape.gdb).  Splits
-// the event-ring drain's two branches and counts the 12-slot mixer scans + voice writes they
-// drive.  The ticks use a single beam-line read per side (SX_SPAN), NOT FP_TIME: an FP_TIME
-// bracket costs ~2.2 t/call, which sampled 3.4x per firing would be ~30% of the very 24 t/firing
-// bucket being measured.
-extern "C" volatile unsigned long g_sxEvLoad = 0, g_sxEvLoadT = 0;   // sfx_event_load calls/ticks
-extern "C" volatile unsigned long g_sxReord  = 0, g_sxReordT  = 0;   // sfx_reorder_voice_slot
-extern "C" volatile unsigned long g_sxTopScan  = 0;  // sfx_pick_top_voice   (12-slot scan)
-extern "C" volatile unsigned long g_sxNextScan = 0;  // sfx_pick_next_voice  (12-slot scan)
-extern "C" volatile unsigned long g_sxWrCtrl = 0;    // sfx_voice_write_freq_ctrl (AUDF+AUDC)
-extern "C" volatile unsigned long g_sxWrFreq = 0;    // sfx_voice_write_freq      (AUDF only)
-extern "C" volatile unsigned long g_sxRingPush = 0;  // ring_push_unmarked -> ring_push_0719_core
-extern "C" volatile unsigned long g_sxExpired = 0;   // envelope expiries (each RE-PUSHES an entry)
-extern "C" volatile unsigned long g_sxActFreq = 0;   // active frequency envelopes visited
-extern "C" volatile unsigned long g_sxActDur  = 0;   // active duration envelopes visited
-extern "C" volatile unsigned long g_sxEnvGated = 0;  // ...of the freq ones, paused by the $5406 gate
-// Leaf split of sfx_reorder_voice_slot's 6.7 t/call, to size an asm twin BEFORE writing one.
-// g_sxNop/g_sxNopT is an EMPTY SX_SPAN sampled once per reorder call = the bracket's own floor;
-// every leaf total must have it subtracted per call or the probe measures itself.
-extern "C" volatile unsigned long g_sxTopScanT = 0, g_sxNextScanT = 0, g_sxWrCtrlT = 0;
-extern "C" volatile unsigned long g_sxNop = 0, g_sxNopT = 0, g_sxLeafCalls = 0;
-// ...and inside voice_write_freq_ctrl: the two rof_pokey_write calls, bracketed apart from
-// its mem[] loads.  This is the part an asm MIXER twin cannot touch.
-extern "C" volatile unsigned long g_sxPokeyT = 0;
-#endif
 // VBI handler section partition (the chunks NOT covered by integ/proj/sfx; see rof_native.c
 // vbi_handler_flight).  Per-call = acc/isrCalls; sum(all sections)+integ+proj ≈ isrLines.
 extern "C" volatile unsigned long g_pDrawBr=0, g_pSimHead=0, g_pAtmo=0, g_pHud=0, g_pScore=0, g_pTail=0;
@@ -1722,11 +1397,6 @@ extern "C" void rof_check_restart(void)
 // per iteration regardless of how long rendering takes.
 // Exception: ATTRACT VBI ($1B30) bumps RTCLOK in its own transpiled body; skip here.
 void PlatformAmiga::renderFrame() {
-#ifdef ROF_ALIEN_BENCH
-    // Headless alien-knock draw bench (rof_native.c rof_alien_bench).  Main-loop context, once,
-    // after boot has settled so the figure-overlay chip Bitmaps exist.  Read with amiga/alien_bench.gdb.
-    if (!g_abDone && g_vbiCount > 400 && g_figP1) rof_alien_bench();
-#endif
 #ifdef ROF_FLIGHT_PROBE
     // Probe: track the largest gap (in real VBI frames) between successive renderFrame
     // calls — a long gap = a no-yield compute stretch where the display (and blink lights)
@@ -2150,9 +1820,6 @@ static uint32_t keyboardHandler()
     uint8_t raw  = (uint8_t)(code & 0x7Fu);
     bool    down = (code & 0x80u) == 0u;
 
-#ifdef ROF_BEEP_CAP
-    { extern void rof_bc_key(unsigned char, unsigned char); rof_bc_key(raw, down ? 1u : 0u); }
-#endif
 
     // Drive the CONSOL console switches from their keys' down/up edges, so the register
     // continuously reflects each key's level — just like the real GTIA switches.  CONSOL is
@@ -2397,9 +2064,6 @@ static uint32_t vbiHandler()
     // Exception: ATTRACT VBI ($1B30) bumps RTCLOK in its own transpiled body.
     // (Do NOT touch $0080 — sync_flag, reused as the $80/$81 zp pointer.)
     g_vbiCount++;
-#ifdef ROF_BEEP_CAP
-    { extern void rof_bc_d01f(void); rof_bc_d01f(); }   // edge-log CONSOL ($D01F) transitions
-#endif
 
     // BREAK/Restart flash blank — do it here, at vblank (beam parked at top), so a COPJMP to the black
     // EmptyCopperList is safe (its sprite MOVEs at the top of the list run before the beam reaches the
@@ -2477,62 +2141,6 @@ static uint32_t vbiHandler()
     if ((mem[0x0222] | (mem[0x0223] << 8)) == 0x4FF5u) s_trig0State = 0x00u;
 #endif
 
-#ifdef ROF_FIRE_ONCE
-    // `make FIRE_ONCE=1` — press the trigger EXACTLY ONCE, a fixed number of vblanks after the
-    // flight VBI goes live, then release it forever.  AUTO_FIRE holds the trigger down (which
-    // auto-repeats), so it can only answer "what does continuous firing cost"; this exists for
-    // the different question "does anything stay switched on AFTER a shot is over?".
-    //
-    // Read with amiga/fire_once.gdb, which windows the run into pre-shot / shot / long-after and
-    // compares them.  ⚠ The comparison that is legitimate here is WITHIN this one binary and on
-    // ISR t/firing (which the ISR pays 50x/s regardless of frame rate); a FIRE_ONCE-vs-no-fire
-    // framerate A/B is NOT, because firing shifts the $D20A read count and the build then flies a
-    // different path (see the flight-measurement-rules memory).
-    {
-        static uint16_t s_foFlightVbi = 0;
-        if ((mem[0x0222] | (mem[0x0223] << 8)) == 0x4FF5u) {
-            if (s_foFlightVbi == 0) s_foFlightVbi = g_vbiCount ? g_vbiCount : 1;
-            const uint16_t d = (uint16_t)(g_vbiCount - s_foFlightVbi);
-            // Hold for 4 vblanks so the once-per-2-frames ($00C8 parity) fire poll cannot miss it,
-            // but far too short to re-arm: the $5178 path only re-fires when $0036 has returned
-            // to 0, which takes the whole $01..$1A animation (~26 draw frames).
-            // ⚠⚠ THE RELEASE IS THE WHOLE POINT — and getting it wrong is how this probe lied the
-            // first time.  s_trig0State has no auto-release (nothing but the keyboard handler
-            // writes it), so pressing without an explicit release turns FIRE_ONCE into AUTO_FIRE
-            // with a delay: $0036 then cycles $01..$1A, 00, $01.. forever and the run "proves" a
-            // permanent post-shot tax that is really just a stuck trigger.  Latch the phase.
-            static uint8_t s_foPhase = 0;               // 0 waiting · 1 pressed · 2 released
-            if (s_foPhase == 0 && d >= ROF_FIRE_ONCE) {
-                s_trig0State = 0x00u; g_foFireVbi = g_vbiCount; s_foPhase = 1;
-            } else if (s_foPhase == 1 && d >= (ROF_FIRE_ONCE + 4)) {
-                s_trig0State = 0x01u; s_foPhase = 2;
-            }
-            // object_anim_frame ($0036) drives every piece of shot machinery — the P2 strip
-            // rebuild in the VBI, buildShotSprite's active path, and the wide-object segments.
-            // Counting the firings it is non-zero for, and stamping the vbl it last went back to
-            // 0, is what turns "is it over?" from a guess into a reading.
-            const uint8_t af = mem[0x0036];
-            if (af) { g_foActiveFirings++; if (g_foFireVbi) g_foEndVbi = g_vbiCount; }
-            // Re-arm detector: 0 -> non-zero once the trigger is long released.  $0036 is only
-            // set to 1 by the $5178 RESET path (fire pressed, or a latched target), so a count
-            // here says something is re-firing rather than one animation running long.
-            { static uint8_t s_prev36 = 0;
-              if (g_foFireVbi && d > (ROF_FIRE_ONCE + 50) && !s_prev36 && af) g_foRearms++;
-              s_prev36 = af; }
-            // Trace 96 consecutive flight vblanks, long after the press.
-            if (g_foFireVbi && g_vbiCount >= g_foFireVbi + 800 && g_foTraceN < 96) {
-                const unsigned i = (unsigned)g_foTraceN++;
-                g_foTrace36[i] = af;
-                g_foTrace6A[i] = mem[0x286A];
-                g_foTrace6B[i] = mem[0x286B];
-            }
-            g_foSnap[0] = mem[0x0004];  g_foSnap[1] = mem[0x286C];
-            g_foSnap[2] = mem[0x286D];  g_foSnap[3] = mem[0x284A];
-            g_foSnap[4] = mem[0x2867];  g_foSnap[5] = mem[0x0037];
-            g_foSnap[6] = mem[0x006A];  g_foSnap[7] = mem[0x003D];
-        }
-    }
-#endif
 
 #if defined(ROF_FLIGHT_PROBE) || defined(ROF_FPSCOUNT)
     // Auto-launch: replicate an F1/START press once Standby's idle loop is actually
@@ -2965,34 +2573,6 @@ static uint32_t vbiHandler()
     }
 #endif
 
-#ifdef ROF_BEEP_CAP
-    // Force the pilot-proximity beep (SFX event $14) at the range-1 rate so the fast-beep
-    // distortion reproduces headlessly.  Once the flight VBI ($4FF5) has been live a moment,
-    // arm the flush_paula capture and, every 2 frames (= range-1 blink rate), replicate what
-    // startup_init $3FFA does at $4016: ring_push_marked(X=$14) into the SFX event ring $0719
-    // (head $0073, ring_push_0719 $55FF) — the in-flight SFX engine (sfx_voice_envelope_tick,
-    // inside game_vbi_isr just below) then plays it.  Nothing else pushes $14 (no pilot in the
-    // headless run), so ch3 sees exactly the fast beep.
-    {
-        // FLIGHT range-1 pilot-beep capture (interactive): arm the ring once the flight VBI
-        // ($4FF5) is live AND the range-to-pilot digit $0642 has ticked down to 1 or 2 (the
-        // user flies toward a downed pilot in the FS-UAE window).  The ring records 320 frames
-        // of all 4 Paula channels + POKEY shadow, then freezes (g_bcOn=0), catching the range
-        // 2→1→0 beep transition.  On the Atari (lrscanner.a8s) that beep is a PURE tone on ch3
-        // pulsing faster as range drops; if the Amiga shows NOISE distortion there, that's the bug.
-        // Arm the per-frame slot-5 ring at the range-1/2 pilot approach (needs interactive
-        // flying to a downed pilot; the headless auto-launch never gets there, and a headless
-        // no-pilot run already CONFIRMED slot 5 is correctly vol=0 through standby + flight).
-        // The reset/ev01 logs above are ungated so they catch the level-start reset+push
-        // regardless.  On the Atari (lrscanner) slot 5 stays vol=0 at range 1..2; if the Amiga
-        // shows slot-5 vol nonzero (audible poly4) here, that's the bug — and whether event $01
-        // is re-loaded (g_bc01N ticks up) or slot-5 vol is bumped in place tells us the cause.
-        static unsigned char s_bcArmed = 0;
-        if (!s_bcArmed && g_probeFlightVbi && mem[0x0642u] >= 1u && mem[0x0642u] <= 2u) {
-            g_bcOn = 1; s_bcArmed = 1;   // one-shot; freeze in flush_paula sticks
-        }
-    }
-#endif
 
     // Sample the real joystick (port 1) immediately before the game body reads PORTA/TRIG0, which
     // is where the Atari's own VBI polled it.  Four register reads; no beam deadline of its own.

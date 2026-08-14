@@ -267,14 +267,9 @@ endif
 # plus its three leaves $5673/$568A/$56AF, all inlined into one routine).  Not a rendering
 # path: it is the biggest single item inside the 50 Hz flight VBI, which fires 50x/s regardless
 # of frame rate, so it taxes ALL wall clock (measured 22.4 t/firing = ~7% of it in combat).
-# ON by default; `make SFXMIX_C=1` falls back to the clean-C twin — REQUIRED for the SFX_SHAPE
-# probe, whose SX_LEAF brackets live inside the C bodies this asm replaces, so SFX_SHAPE=1
-# forces the fallback rather than silently reporting zeros.  Same VERIFY
+# ON by default; `make SFXMIX_C=1` falls back to the clean-C twin.  Same VERIFY
 # pattern as the others: `make VERIFY=1 PROBES=1` runs the asm + the C twin back-to-back on
 # identical state each call (rof_native.c, ROF_SFXMIX_VERIFY), read via amiga/sfxmix_verify.gdb.
-ifdef SFX_SHAPE
-SFXMIX_C := 1
-endif
 ifndef SFXMIX_C
 FRAMEWORK_ASM_SRCS += $(AMIGA_SRC)/SfxMixerAssembler.s
 EXTRA_DEFINES += -DROF_SFXMIX_ASM
@@ -291,17 +286,6 @@ EXTRA_DEFINES += -DROF_SFXMIX_FUZZ
 endif
 endif
 
-# Profiling aid: `make COMBAT=1 PROBES=1 INTEG_SHAPE=1` + amiga/integ_shape.gdb — splits
-# flight_control_integrate's 15.3 t/firing (17% of the flight VBI = ~4.8% of ALL wall clock,
-# never examined before 2026-08-07) into its 13 straight-line regions, with path counters for
-# every conditional callee.  The regions LAP off one running beam stamp (a single
-# rof_beam_line() per boundary, not an SX_SPAN's two); g_inNop is an empty lap = the per-bucket
-# floor to subtract.  Read the result as SHARES: the lap points also block GCC's reordering, so
-# the probed total runs above the unprobed 15.3.  OFF by default.
-ifdef INTEG_SHAPE
-EXTRA_DEFINES += -DROF_INTEG_SHAPE
-endif
-
 # A/B baseline: `make BLEND_LOOP=1` restores terr_blend's ORIGINAL 8-iteration bit-serial loop
 # in place of the two 4 KB nibble tables (rof_native.c), so the win can be re-measured in one
 # tree: GDBSCRIPT=isr_ab.gdb on this build vs the default.  The metric is the WHOLE-VBI
@@ -309,47 +293,6 @@ endif
 # frame rate.  Both forms are byte-identical (tools/terr_blend_table_test.c, all 2^24 inputs).
 ifdef BLEND_LOOP
 EXTRA_DEFINES += -DROF_BLEND_LOOP
-endif
-
-# Profiling aid: `make RASTER_C=1 RAS_SHAPE=1 PROBES=1` + amiga/ras_shape.gdb — the flight
-# rasterizer's STRUCTURAL shape counters (phase-2 entry-span and far-bisect-span histograms,
-# fe/ff leaf mix, phase-1 advance/push counts, hidden-surface accept rate).  These live inside
-# the C ORACLE, so RASTER_C=1 is required to reach them, and they are OFF even under PROBES
-# because their volatile increments would inflate the oracle's beam-ticks and wreck the
-# asm-vs-C in-process differential's perf reading.  This is what sized the 2026-08-05 phase-2
-# restructure — re-run it before any further rasterizer algorithm change.
-ifdef RAS_SHAPE
-EXTRA_DEFINES += -DROF_RAS_SHAPE
-endif
-
-# Profiling aid: `make TFSETUP_C=1 TFS_SHAPE=1 PROBES=1` + amiga/shape_probe.gdb — the
-# terrain_frame_setup loop-1 STRUCTURAL shape counters (per-cell pattern-decode branch mix,
-# classify mix, and the u/v RECURRENCE test: is cell Y+1's input vector exactly the vector cell Y
-# just stored?  If so the per-cell re-assembly of it from memory — 4 byte loads + 2 `lsl.w #8` —
-# is redundant).  Same rules as RAS_SHAPE: the counters live in the C ORACLE so TFSETUP_C=1 is
-# mandatory, and they stay off by default so they can never inflate the asm-vs-C differential.
-ifdef TFS_SHAPE
-EXTRA_DEFINES += -DROF_TFS_SHAPE
-endif
-
-# Profiling aid: `make EDGE_SHAPE=1 PROBES=1` + amiga/shape_probe.gdb — the SHAPE of the skyline
-# fed to renderFlightDirect's 160-column plane-1 scatter-OR edge plot (mem[$260E+48..]): how often
-# consecutive columns land on the SAME plane-1 row (one shared table lookup), how many DISTINCT
-# rows a 4-column plane-1 byte spans (= the byte-ORs a mask-merging loop would issue instead of 4),
-# and whether runs are long/aligned enough for word-wide ORs.  The probe scans all 160 heights, so
-# it costs more than the loop it measures — off by default.
-ifdef EDGE_SHAPE
-EXTRA_DEFINES += -DROF_EDGE_SHAPE
-endif
-
-# Profiling aid: `make BAND_SHAPE=1 PROBES=1` + amiga/shape_probe.gdb — splits the g_fdBand
-# bucket (the BIGGEST CPU part of renderFlightDirect, 59 ticks/call) into its THREE loops (object
-# plane-1 overlay / crosshair / windscreen-band composite) and measures how much of the mode-D
-# band field actually CHANGES per frame, shadowed per double-buffer half.  A field that is mostly
-# static means the composite can become a pre-built masked blitter pass instead of 160 per-byte
-# read-modify-writes.  Off by default (the shadow compare costs more than the loop it measures).
-ifdef BAND_SHAPE
-EXTRA_DEFINES += -DROF_BAND_SHAPE
 endif
 
 # Correctness aid: `make BAND_VERIFY=1 PROBES=1` + amiga/band_verify.gdb — in-process differential
@@ -383,17 +326,6 @@ endif
 # flight-measurement-rules) rather than reported as a mismatch.
 ifdef CK_VERIFY
 EXTRA_DEFINES += -DROF_CK_VERIFY
-endif
-
-# Profiling aid: `make SPRITE_SHAPE=1 PROBES=1` + amiga/sprite_shape.gdb — splits the flight VBI's
-# g_vbiSpriteLines bracket (29 t/firing = ~9% of ALL wall clock, and never examined) into its two
-# callees, buildShotSprite and decodeScannerBlinkCells, and then buildShotSprite into its four
-# internal parts (the 94-byte run scan / the whole-sprite clear / the row decode / the copper+
-# Sprite header pokes) plus the shape counters that say which path each firing took.  Includes an
-# empty-bracket floor sample (g_spNop) — subtract one floor per bracketed part or a cheap part
-# reads as ~the bracket.  Off by default (the brackets are ~0.3 t each on a 29 t population).
-ifdef SPRITE_SHAPE
-EXTRA_DEFINES += -DROF_SPRITE_SHAPE
 endif
 
 # Correctness aid: `make SHOT_VERIFY=1 PROBES=1` + amiga/shot_verify.gdb — in-process differential
@@ -489,37 +421,11 @@ ifdef FORCE_AIRLOCK
 EXTRA_DEFINES += -DROF_FORCE_AIRLOCK_OPEN
 endif
 
-# Measurement aid: `make ALIEN_BENCH=1 PROBES=1` times ONE synthetic 43-row alien-creature draw
-# from main-loop context at boot (rof_native.c rof_alien_bench, called once from renderFrame), so
-# the knock's cost can be A/B'd HEADLESSLY.  The knock itself needs a fly->land->systems-off, which
-# is why every figure for it used to cost a human a flight.  Read with amiga/alien_bench.gdb.
-# ⚠ It is a bench, not the game: it proves cost, never appearance.
-ifdef ALIEN_BENCH
-EXTRA_DEFINES += -DROF_ALIEN_BENCH
-endif
-
-# `make ALIEN_BENCH=1 ALIEN_BENCH_SPLIT=1 PROBES=1` additionally brackets the clear / the four
-# field fills / the 17-cell loop inside each row.  Six rof_subclock calls per row = ~19% of the
-# step, so read the SPLIT for proportions and a plain ALIEN_BENCH run for the absolute.
-ifdef ALIEN_BENCH_SPLIT
-EXTRA_DEFINES += -DROF_ALIEN_BENCH_SPLIT
-endif
-
 # Profiling aid: `make AUTO_FIRE=1` (implies PROBES) holds the trigger down in flight
 # (PlatformAmiga.cpp ROF_AUTO_FIRE) so the player laser fires continuously — used to
 # profile the viewport-PMG sprite path (shot/explosion build) under load.  OFF by default.
 ifdef AUTO_FIRE
 EXTRA_DEFINES += -DROF_AUTO_FIRE
-endif
-
-# `make FIRE_ONCE=N` — press the trigger EXACTLY ONCE, N vblanks after the flight VBI goes live,
-# then release it forever (PlatformAmiga.cpp ROF_FIRE_ONCE).  Answers a different question from
-# AUTO_FIRE's held trigger: does anything stay switched on AFTER a shot is over?  `FIRE_ONCE=1`
-# means "1 vbl after flight starts", so pass a real offset — 400 puts it comfortably inside
-# steady-state flight.  Read with `GDBSCRIPT=fire_once.gdb`.  Combine with PROBES=1 for the ISR
-# brackets, and with COMBAT=1 COMBAT_QUIET=1 FIXED_RNG=1 for the standard quiet arm.
-ifdef FIRE_ONCE
-EXTRA_DEFINES += -DROF_FIRE_ONCE=$(FIRE_ONCE)
 endif
 
 # `make FLUSHWAIT_OLD=1` — A/B control for flush_paula's DMA-restart wait (PlatformAmiga.cpp
@@ -617,15 +523,6 @@ endif
 # the per-cell loops carry no volatile traffic.
 ifdef OBJ_SHAPE
 EXTRA_DEFINES += -DROF_OBJ_SHAPE
-endif
-
-# `make COMBAT=1 PROBES=1 SFX_SHAPE=1` + amiga/sfx_shape.gdb — SHAPE-PROBE THE SFX ENGINE.
-# The combat re-attribution (f1c3633) found the flight VBI's sfx block is ~47% of the handler and
-# the event-ring drain alone ~24 t/firing = ~8% of ALL wall clock (the ISR is a fixed 50 Hz tax).
-# This splits the drain's two branches (sfx_event_load vs sfx_reorder_voice_slot) and counts the
-# 12-slot mixer scans, voice writes, ring pushes and envelope expiries that drive them.
-ifdef SFX_SHAPE
-EXTRA_DEFINES += -DROF_SFX_SHAPE
 endif
 
 # Debug / benchmark toggle: `make INVULNERABLE=1` — never die in flight.  Tops the energy bar
@@ -762,15 +659,6 @@ LOGO_START ?= 1
 ifneq ($(LOGO_START),0)
 EXTRA_DEFINES += -DROF_LOGO_START_ABORT
 endif
-# `make PROBES=1 BLIT_SHAPE=1` + amiga/blit_shape.gdb — WHERE the flight frame stalls.
-# The PC profile puts ~4-5% in bW_waitUntilBlitterNotBusy/processBlitterQueue/blitterDrain and
-# ~7% on the frame-sync vblank spin, but a PC sample cannot name the CALL SITE — and that is the
-# only thing that matters, because the fix for a stall is to give the CPU work during it (or to
-# split the blit), which is a per-site decision.  This brackets each wait in the flight path with
-# ISR-corrected beam ticks.  Needs PROBES=1 (it uses rof_subclock/g_isrBeamLines).
-ifdef BLIT_SHAPE
-EXTRA_DEFINES += -DROF_BLIT_SHAPE
-endif
 # `make PROBES=1 AUTOFIRE=1`: hold the trigger once in flight so the player laser fires
 # continuously — a capture path for the shot PMG (dump mem[$0E00 page] + shadows via gdb).
 ifdef AUTOFIRE
@@ -819,13 +707,6 @@ endif
 # FORCE_RETURN does: a full bar fills its dial exactly and hides any gauge overflow/priority bug.
 ifdef FORCE_MOTHERSHIP
 EXTRA_DEFINES += -DROF_FORCE_MOTHERSHIP
-endif
-# `make PROBES=1 BEEP_CAP=1`: once flight is running, force the pilot-proximity beep (SFX event
-# $14) at the range-1 rate (re-push into the SFX ring every 2 frames, as startup_init $3FFA does),
-# and capture the 4 Paula channels + pokey shadow each flush_paula into a ring, dumped via
-# amiga/beep_cap.gdb.  Diagnoses why the fast beep distorts on Paula.  Requires PROBES.
-ifdef BEEP_CAP
-EXTRA_DEFINES += -DROF_BEEP_CAP
 endif
 # `make PROBES=1 TITLE=1`: force-enter the Title Screen (inject its screen RAM + palette and
 # pin rsTitle) instead of auto-launching to flight — a visual test path for the Title Screen

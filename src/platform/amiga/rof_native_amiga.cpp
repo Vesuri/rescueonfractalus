@@ -515,58 +515,6 @@ extern "C" unsigned long g_tdMidpoints = 0, g_tdPlots = 0, g_tdRasterCalls = 0, 
 extern "C" unsigned long g_tdRaster = 0;
 // terrain_column_rasterize shape split: phase-2 bisect-push steps vs. DRAW() attempts.
 extern "C" unsigned long g_tdRasBisect = 0, g_tdRasDraw = 0;
-#ifdef ROF_RAS_SHAPE
-// Rasterizer SHAPE probe (`make RASTER_C=1 RAS_SHAPE=1 PROBES=1`, read via amiga/ras_shape.gdb)
-// — the structural counters that sized the 2026-08-05 phase-2 restructure.  See the header
-// comment on ROF_RAS_SHAPE in rof_native.c for why this is off even under PROBES.
-// Buckets: [1..8] exact span, 9=9-12, 10=13-16, 11=17-24, 12=25-32, 13=33-64, 14=65-128, 15=129+.
-extern "C" volatile unsigned long g_rasSpanHist[16] = { 0 };
-extern "C" volatile unsigned long g_rasFarHist[16] = { 0 };
-extern "C" volatile unsigned long g_rasFe = 0, g_rasFf = 0, g_rasPh1Adv = 0,
-                                 g_rasPh1Push = 0, g_rasSat = 0, g_rasBail = 0;
-// Draws that actually WROTE a plane2 dot — strictly fewer than the accepted draws (g_tdPlots),
-// because the dot is plotted at the column's PREVIOUS top and the per-frame $6B reset floor
-// lands on the one excluded scanline.  This is the denominator for any per-plotted-dot estimate.
-extern "C" volatile unsigned long g_rasDots = 0;
-// Whole-subtree occlusion-culling sizing (span-3 / span-4 straight-line DRAW groups): groups
-// seen, groups where every draw is EXACTLY rejected, groups the asm truncates at the right
-// edge, and the cheap bound-vs-COL_MAX test's early-out profile (Cons[k] = k columns passed
-// before the first failure; Cons[N] = the cheap test culls it).  See ras_occl_probe().
-extern "C" volatile unsigned long g_rasSp3Grp = 0, g_rasSp3Occl = 0, g_rasSp3Edge = 0;
-extern "C" volatile unsigned long g_rasSp4Grp = 0, g_rasSp4Occl = 0, g_rasSp4Edge = 0;
-extern "C" volatile unsigned long g_rasSp3Cons[4] = { 0 };
-extern "C" volatile unsigned long g_rasSp4Cons[5] = { 0 };
-// terrain_subdivide_column shape: the per-call helper mix that sizes TerrainSubdivideAssembler.s.
-// FarKnown/P2Known count the far-endpoint reloads that are provably redundant (the slot was just
-// written from `mid`, which is still in registers) — the twin's 2x `lsl.w #8` per load is 44
-// cycles before the four byte loads.
-extern "C" volatile unsigned long g_sdCalls = 0, g_sdBail = 0, g_sdP2Adopt = 0,
-                                  g_sdP2Push = 0, g_sdP2Known = 0;
-extern "C" volatile unsigned long g_sdInner = 0, g_sdInnerFarKnown = 0, g_sdFarEsc = 0,
-                                  g_sdSteep = 0;
-extern "C" volatile unsigned long g_sdRas = 0, g_sdSkip = 0, g_sdPop = 0, g_sdMid = 0,
-                                  g_sdRough = 0;
-extern "C" volatile unsigned long g_sdDepthHist[16] = { 0 };
-// The cascade's joint span-height x far-height classification (see SDCLASS in rof_native.c):
-// sizes whether far.hgt can be classified on its HIGH byte alone, skipping the 22-cycle
-// `lsl.w #8` on every path that never needs the assembled 16-bit value.
-extern "C" volatile unsigned long g_sdFhClass[9] = { 0 };
-// Per-SEGMENT occlusion-cull sizing (one subdivide call from the object draw-order loop):
-// NoDraw = the ceiling (segments that accepted no draw at all), Sound = the derived
-// max(ends)+W/2 bound's hit rate, Naive = the leaf version's unsound max(ends) bound,
-// *Bad = a bound that culled a segment which DID draw (Sound must stay 0), Scan* = the
-// test's own cost in COL_MAX compares.  See seg_occl_pre() in rof_native.c for the bound.
-extern "C" volatile unsigned long g_segCalls = 0, g_segNoDraw = 0, g_segOffscr = 0,
-                                  g_segSound = 0, g_segSoundBad = 0, g_segNaive = 0,
-                                  g_segNaiveBad = 0, g_segScanCull = 0, g_segScanMiss = 0,
-                                  g_segMisses = 0;
-extern "C" volatile unsigned long g_segWidthHist[16] = { 0 };
-extern "C" volatile unsigned long g_segDrawsCull = 0, g_segRasCull = 0;
-// Same occlusion test one level down: cull a whole terrain_column_rasterize_core CALL.
-extern "C" volatile unsigned long g_rcCalls = 0, g_rcNoAccept = 0, g_rcSound = 0,
-                                  g_rcSoundBad = 0, g_rcScanHit = 0, g_rcScanMiss = 0,
-                                  g_rcMisses = 0, g_rcDrawsCull = 0;
-#endif
 // object draw-order loop shape (-DROF_TDRAW_PROF): total pairs scanned, pairs culled at the
 // primary gate (cheap skip), visible pairs reaching the companion/subdivide path, and total
 // project_terrain_points calls.  Divide by g_tdFrames.  Tells whether the loop cost is the

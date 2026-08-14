@@ -185,36 +185,10 @@ extern unsigned short rof_beam_line(void);
  * mistake that made the object plotter look 5x its real size.  These use a single beam-line read
  * per side (SX_SPAN, ~10x cheaper) and no ISR subtraction, which is right because we are already
  * INSIDE the ISR.  Counts are plain increments and cost nothing measurable. */
-#if defined(ROF_SFX_SHAPE) && defined(ROF_FLIGHT_PROBE)
-#ifndef ROF_TDRAW_PROF
-extern unsigned short rof_beam_line(void);   /* ROF_TDRAW_PROF normally declares this */
-#endif
-extern volatile unsigned long g_sxEvLoad, g_sxEvLoadT, g_sxReord, g_sxReordT;
-extern volatile unsigned long g_sxTopScan, g_sxNextScan, g_sxWrCtrl, g_sxWrFreq, g_sxRingPush;
-extern volatile unsigned long g_sxExpired, g_sxActFreq, g_sxActDur, g_sxEnvGated;
-/* Leaf split of sfx_reorder_voice_slot's 6.7 t/call (added 2026-08-06, to SIZE an asm twin before
- * writing it): per-leaf tick accumulators, plus g_sxNopT/g_sxNop = an EMPTY bracket sampled once
- * per reorder call.  The empty bracket is the whole point — subtract its floor from every leaf
- * total or the probe reads as the thing being probed (the mistake that oversized the object
- * plotter 5x).  The three leaf totals sum to the ticks reorder spends in its callees, so
- * reorder's OWN logic = g_sxReordT - that sum + (g_sxLeafCalls-1)/g_sxNop worth of floor —
- * every figure is measured with the SAME bracket, so the floors cancel where they nest. */
-extern volatile unsigned long g_sxTopScanT, g_sxNextScanT, g_sxWrCtrlT;
-extern volatile unsigned long g_sxNop, g_sxNopT, g_sxLeafCalls;
-extern volatile unsigned long g_sxPokeyT;
-#define SX_CNT(c) (++(c))
-#define SX_SPAN(stmt, acc) do { unsigned short _b0 = rof_beam_line(); stmt; \
-    unsigned short _b1 = rof_beam_line(); \
-    (acc) += (_b1 >= _b0) ? (unsigned long)(_b1 - _b0) : (unsigned long)(_b1 + 313 - _b0); } while (0)
-/* A leaf call inside reorder: same bracket, plus a call tally so the floor can be subtracted. */
-#define SX_LEAF(stmt, acc) do { ++g_sxLeafCalls; SX_SPAN(stmt, acc); } while (0)
-#define SX_NOP() do { ++g_sxNop; SX_SPAN((void)0, g_sxNopT); } while (0)
-#else
 #define SX_CNT(c) ((void)0)
 #define SX_SPAN(stmt, acc) do { stmt; } while (0)
 #define SX_LEAF(stmt, acc) do { stmt; } while (0)
 #define SX_NOP() ((void)0)
-#endif
 
 /* INTEG SHAPE PROBE (`make COMBAT=1 PROBES=1 INTEG_SHAPE=1`; read via amiga/integ_shape.gdb).
  * flight_control_integrate is 15.3 t/firing = 17% of the flight VBI = ~4.8% of ALL wall clock,
@@ -223,32 +197,6 @@ extern volatile unsigned long g_sxPokeyT;
  * so the per-bucket floor is one read, sampled as the empty lap g_inNop.  Subtract that floor
  * per bucket and read the rest as SHARES (the lap points block GCC reordering, so the probed
  * total exceeds the unprobed 15.3).  Counters say which branches the firing took. */
-#if defined(ROF_INTEG_SHAPE) && defined(ROF_FLIGHT_PROBE)
-#if !defined(ROF_TDRAW_PROF) && !defined(ROF_SFX_SHAPE)
-extern unsigned short rof_beam_line(void);   /* ROF_TDRAW_PROF normally declares this */
-#endif
-extern volatile unsigned long g_inHead, g_inDisp, g_inLevel, g_inThr, g_inAttc, g_inAng,
-                              g_inPos, g_inHud, g_inLock, g_inObjv, g_inObj, g_inSlot,
-                              g_inTail, g_inNop;
-extern volatile unsigned long g_inCalls, g_inBlipCalls, g_inAutoP, g_inAutoR, g_inThrKick,
-                              g_inThrClamp, g_inObjStep, g_inObjLoad, g_inObjPos, g_inObjBox,
-                              g_inJitter, g_inSlotIdle;
-extern volatile unsigned long g_osAcc, g_osHit, g_osCell, g_osLerp, g_osTail, g_osNop,
-                              g_osCalls, g_osHitCalls, g_osLerpCalls, g_osExplode, g_osEarlyRet;
-extern volatile unsigned long g_blFetch, g_blB1, g_blB2, g_blB3, g_blTail, g_blNop, g_blCalls;
-#define IN_DECL()    unsigned short _inPrev = 0
-#define IN_START()   do { ++g_inCalls; _inPrev = rof_beam_line(); } while (0)
-#define IN_LAP(acc)  do { unsigned short _n = rof_beam_line(); \
-    (acc) += (_n >= _inPrev) ? (unsigned long)(_n - _inPrev) \
-                             : (unsigned long)(_n + 313 - _inPrev); _inPrev = _n; } while (0)
-#define IN_CNT(c)    (++(c))
-/* Level-2 laps use their own running stamp so they can nest inside an IN_LAP region. */
-#define O2_DECL()    unsigned short _o2Prev = 0
-#define O2_START(c)  do { ++(c); _o2Prev = rof_beam_line(); } while (0)
-#define O2_LAP(acc)  do { unsigned short _n = rof_beam_line(); \
-    (acc) += (_n >= _o2Prev) ? (unsigned long)(_n - _o2Prev) \
-                             : (unsigned long)(_n + 313 - _o2Prev); _o2Prev = _n; } while (0)
-#else
 #define IN_DECL()    ((void)0)
 #define IN_START()   ((void)0)
 #define IN_LAP(acc)  ((void)0)
@@ -256,7 +204,6 @@ extern volatile unsigned long g_blFetch, g_blB1, g_blB2, g_blB3, g_blTail, g_blN
 #define O2_DECL()    ((void)0)
 #define O2_START(c)  ((void)0)
 #define O2_LAP(acc)  ((void)0)
-#endif
 
 /* ===========================================================================================
  * COMBAT-LOAD BENCHMARK  (`make COMBAT=1`, -DROF_COMBAT_LOAD; Amiga profiling aid, NOT faithful)
@@ -581,222 +528,6 @@ extern volatile unsigned long g_rsBktCalls[5], g_rsBktCells[5], g_rsBktTicks[5];
  * Deliberately OFF even under PROBES: these are volatile counters inside the C ORACLE, so
  * leaving them on would inflate the oracle's beam-ticks and wreck the asm-vs-C in-process
  * differential's perf reading (measured: C 41 vs 15 ticks/call with them on, 20 vs 15 off). */
-#ifdef ROF_RAS_SHAPE
-extern volatile unsigned long g_rasSpanHist[16];   /* phase-2 entry span (bucketed)           */
-extern volatile unsigned long g_rasFarHist[16];    /* far-bisect span at each push (bucketed)  */
-extern volatile unsigned long g_rasFe, g_rasFf, g_rasPh1Adv, g_rasPh1Push, g_rasSat, g_rasBail;
-extern volatile unsigned long g_rasDots;           /* DRAWs that actually WROTE a plane2 dot   */
-/* buckets: [1..8] exact, 9=9-12, 10=13-16, 11=17-24, 12=25-32, 13=33-64, 14=65-128, 15=129+ */
-static inline int ras_bucket(unsigned s) {
-    if (s <= 8)   return (int)s;
-    if (s <= 12)  return 9;
-    if (s <= 16)  return 10;
-    if (s <= 24)  return 11;
-    if (s <= 32)  return 12;
-    if (s <= 64)  return 13;
-    if (s <= 128) return 14;
-    return 15;
-}
-#define RSCNT(c)      (++(c))
-#define RSSAT(h)      do { if ((h) >= 0x97) ++g_rasSat; } while (0)
-#define RSHIST(a, s)  (++(a)[ras_bucket(s)])
-/* An ACCEPTED draw (g_tdPlots) is not the same thing as a DOT: ROF_PLOT_DOT plots at the
- * column's PREVIOUS top, and the per-frame reset floor puts that at $6B -> _sc == 43, the one
- * scanline the gate excludes.  So a column's first accepted draw never writes, and only the
- * later ones do.  This counts the draws that actually reach the plane2 write — the real
- * denominator for any "cycles saved per plotted dot" estimate. */
-#define RSDOT(col, h) do { int _rc = (int)(col) - 48, _rs = 150 - (int)(h); \
-    if ((unsigned)_rc < 160u && (unsigned)_rs < 47u && _rs != 43) ++g_rasDots; } while (0)
-
-/* --- whole-subtree OCCLUSION-CULLING sizing probe (2026-08-05) --------------------------
- * A far-bisect of span 3 or 4 expands into a straight-line group of 3 / 4 DRAWs at
- * consecutive columns (the asm's ras_sp3 / ras_sp4 blocks), and the group's exit state
- * (plotCol+N, height = chgt, frac = fsum) does NOT depend on the midpoint.  Every height it
- * draws is bounded by
- *     span 3: bound = max(mh, chgt)                 heights mh, (chgt+mh+1)>>1, chgt
- *     span 4: bound = max(mh, chgt, height)         heights (mh+height+1)>>1, mh,
- *                                                            (chgt+mh+1)>>1, chgt
- * so `bound <= COL_MAX(c)` for every column c in the group proves the whole group is hidden
- * and can be skipped outright.  This probe measures whether that is worth any cycles:
- *   Grp     groups seen
- *   Occl    groups where all N draws are EXACTLY rejected — the ceiling for ANY cull test
- *   Cons[k] the cheap bound-vs-COL_MAX test's early-out profile: k = columns that passed
- *           before the first failure, so Cons[N] = the cheap test culls the group, and
- *           Cons[0] = it bails on the very first compare (the cheapest miss).
- *   Edge    groups the asm truncates at the right edge ($D4) mid-block — not cullable as-is.
- * The cost model needs the WHOLE distribution, not just P: the test loses cycles on a miss,
- * and how much it loses depends on which compare failed. */
-extern volatile unsigned long g_rasSp3Grp, g_rasSp3Occl, g_rasSp3Edge, g_rasSp3Cons[4];
-extern volatile unsigned long g_rasSp4Grp, g_rasSp4Occl, g_rasSp4Edge, g_rasSp4Cons[5];
-static inline void ras_occl_probe(unsigned span, unsigned mh, unsigned chgt, unsigned hgt,
-                                  unsigned plotCol, const uint8_t *cm) {
-    unsigned h[4], bound, n, k, all = 1u;
-    if (span == 3u) {
-        h[0] = mh;                    h[1] = (chgt + mh + 1u) >> 1;  h[2] = chgt;
-        bound = (mh > chgt) ? mh : chgt;
-        n = 3u; ++g_rasSp3Grp;
-        if (plotCol + 1u >= 0xD4u) ++g_rasSp3Edge;   /* ras_sp3 checks $D4 after DRAW #1 */
-    } else if (span == 4u) {
-        h[0] = (mh + hgt + 1u) >> 1;  h[1] = mh;
-        h[2] = (chgt + mh + 1u) >> 1; h[3] = chgt;
-        bound = (mh > chgt) ? mh : chgt;  if (hgt > bound) bound = hgt;
-        n = 4u; ++g_rasSp4Grp;
-        if (plotCol + 2u >= 0xD4u) ++g_rasSp4Edge;   /* ras_sp4 checks $D4 after DRAW #2 */
-    } else return;
-    /* exact: would every one of the N draws be rejected?  (the columns are distinct, so the
-       draws do not interact — each is just `_h > COL_MAX(c)`) */
-    for (k = 0; k < n; ++k) if (h[k] > cm[k]) { all = 0u; break; }
-    /* cheap: the single `bound` compared against each column, stopping at the first failure */
-    for (k = 0; k < n; ++k) if (bound > cm[k]) break;
-    if (span == 3u) { g_rasSp3Occl += all; ++g_rasSp3Cons[k]; }
-    else            { g_rasSp4Occl += all; ++g_rasSp4Cons[k]; }
-}
-#define RSOCCL(span, mh, chgt, hgt, pc, cm) ras_occl_probe((span), (mh), (chgt), (hgt), (pc), (cm))
-
-/* --- terrain_subdivide_column SHAPE probe (2026-08-05) -----------------------------------
- * Same flag/build/readout as the rasterizer probe above (the counters live in the C ORACLE,
- * so SUBDIV_C=1 is required as well as RASTER_C=1).  Sizes the asm twin's per-call helper
- * mix, because TerrainSubdivideAssembler.s pays for its 16-bit points in `lsl.w #8` /
- * `lsr.w #8` byte-pair<->word conversions at 22 cycles each (the terrain_frame_setup lesson):
- * load_far and load_span cost 2 apiece, push_mid 2, submid 2 (+1 on roughness).
- * The counter that matters is FarKnown: after ANY push the far endpoint at the new depth IS
- * the midpoint we just wrote, so the reload at the top of the next inner iteration (and
- * submid's own far load in phase 2) is provably redundant. */
-extern volatile unsigned long g_sdCalls, g_sdBail, g_sdP2Adopt, g_sdP2Push, g_sdP2Known;
-extern volatile unsigned long g_sdInner, g_sdInnerFarKnown, g_sdFarEsc, g_sdSteep;
-extern volatile unsigned long g_sdRas, g_sdSkip, g_sdPop, g_sdMid, g_sdRough;
-extern volatile unsigned long g_sdDepthHist[16];
-#define SDCNT(c) (++(c))
-/* The cascade's two 16-bit classifications, jointly (2026-08-11).  The twin assembles far.hgt
- * from its byte pair with a 22-cycle `lsl.w #8` BEFORE classifying it, but the classification
- * only needs the high byte: negative <=> hi & $80, > $FF <=> hi != 0, < $6C <=> hi == 0 && lo <
- * $6C.  Only the paths that reach the width test on the FAR height need the assembled value, so
- * whether splitting on the high byte first wins depends on this joint distribution.
- *   span class: 0 = high (>= $6C, positive)  1 = negative  2 = positive but < $6C
- *   far class:  0 = hi == 0 (i.e. <= $FF, non-negative)  1 = negative  2 = > $FF positive     */
-extern volatile unsigned long g_sdFhClass[9];
-#define SDCLASS(sh, fh) (++(g_sdFhClass[(((sh) & 0x8000u) ? 1 : ((sh) < 0x6Cu ? 2 : 0)) * 3 \
-                                      + (((fh) & 0x8000u) ? 1 : ((fh) > 0xFFu ? 2 : 0))]))
-
-/* --- per-SEGMENT occlusion-cull sizing probe (2026-08-06) --------------------------------
- * The LEAF-level cull (a span-3/4 DRAW group) was measured and closed at ~2% of the
- * rasterizer, because a rejected DRAWDOT already costs only 32 cycles and the cull test has
- * to re-read the same COL_MAX byte.  A whole SEGMENT — one terrain_subdivide_column_core
- * call from the object draw-order loop — is three orders of magnitude bigger, so the same
- * test amortises far better IF a segment is ever entirely hidden.  This probe measures that
- * at the call site, on the state the real cull would see.
- *
- * THE HEIGHT BOUND, DERIVED (this is the part that had to be checked before any asm).
- * Both roughness sites displace a midpoint by half the remaining COLUMN span:
- *     subdivide  subdiv_midpoint():        disp = (uint16)(mid.col - span.col) >> 1
- *     rasterizer phase-2 far bisect:       disp = (uint8 )(mid     - col     ) >> 1
- * and in both the pre-displacement height is ceil((a+b)/2), which never exceeds max(a,b)
- * (the `+1` / `hsum&1` rounding rounds the AVERAGE up, it cannot pass the larger endpoint).
- * So the only way a subtree rises above its two endpoints is the displacement chain.  With
- * f(W) = floor(ceil(W/2)/2) the worst-case cumulative rise over a width-W segment is
- *     S(W) = f(W) + S(ceil(W/2)),  S(1) = 0
- *     S(4)=1  S(8)=3  S(16)=7  S(32)=15  S(64)=31   =>   S(W) <= W/2, exactly.
- * Hence NO height the segment can draw exceeds  max(h_span, h_far) + W/2, and that bound is
- * TIGHT enough to be worth testing — but the bare max(ends) the leaf version used is
- * **UNSOUND** at this scale (a 40-column segment can legally rise 20 above both ends).
- * g_segNaiveBad counts the segments that prove it; g_segSoundBad must stay 0.
- *
- * Counters (all per subdivide call from the object draw-order loop):
- *   Calls    segments seen                Offscr  segments whose clipped range is empty
- *   NoDraw   segments that accepted ZERO draws — the CEILING for any cull test
- *   Sound    the +W/2 bound culls it      SoundBad  it culled one that DID draw (must be 0)
- *   Naive    the max(ends) bound culls it NaiveBad  ditto (expected > 0 = the proof)
- *   ScanCull columns compared on a hit    ScanMiss  columns compared before the first miss
- *   WidthHist  clipped column width, ras_bucket()ed — the test's cost distribution
- */
-extern volatile unsigned long g_segCalls, g_segNoDraw, g_segOffscr, g_segSound,
-    g_segSoundBad, g_segNaive, g_segNaiveBad, g_segScanCull, g_segScanMiss,
-    g_segMisses, g_segWidthHist[16];
-/* What a cull would actually REMOVE, measured rather than modelled: the DRAW attempts and
- * rasterize calls that happen inside the segments the sound bound culls. */
-extern volatile unsigned long g_segDrawsCull, g_segRasCull;
-extern unsigned long g_tdPlots;            /* accepted draws — the oracle for "drew nothing" */
-extern unsigned long g_tdRasDraw, g_tdRasterCalls;
-static unsigned long seg_plots0, seg_draws0, seg_ras0;
-static int seg_firedSound, seg_firedNaive;
-/* Scan [lo,hi] for the first column the bound does NOT clear; returns the count compared. */
-static inline int seg_scan(const uint8_t *cm, int lo, int hi, int h) {
-    int c = lo;
-    while (c <= hi && h <= (int)cm[c]) ++c;
-    return c - lo + (c <= hi);          /* columns actually compared (incl. the failing one) */
-}
-static inline void seg_occl_pre(void) {
-    const uint8_t *M = (const uint8_t *)mem;
-    const uint8_t *cm = M + MEM_terrain_height_max;
-    ++g_segCalls;
-    seg_firedSound = seg_firedNaive = 0;
-    seg_plots0 = g_tdPlots; seg_draws0 = g_tdRasDraw; seg_ras0 = g_tdRasterCalls;
-    /* span = $82:$83 col / $84:$85 hgt ; far = SubPt slot 0 (the segment's other endpoint) */
-    int sc = (int)(int16_t)(uint16_t)(M[0x82] | (M[0x83] << 8));
-    int fc = (int)(int16_t)(uint16_t)(M[0x25B4] | (M[0x25D2] << 8));
-    int sh = (int)(int16_t)(uint16_t)(M[0x84] | (M[0x85] << 8));
-    int fh = (int)(int16_t)(uint16_t)(M[0x25F0] | (M[0x24E2] << 8));
-    if (sc >= fc) return;                              /* the entry guard bails: nothing drawn */
-    /* Clipped column range.  LEFT: phase 1 fast-forwards the cursor to $2C, and the
-       one-column fast path bails below $2D, so nothing is drawn left of $2C.  RIGHT: the
-       loop-top guard is `plotCol >= $D4`, but the gap==$FE leaf draws TWO columns per guard
-       (so $D4 is reachable) and the `endCol == col` fast path has no guard at all — its only
-       limit is the subdivide leaf's `span.col < $D8`.  Hence $D7, not $D3: scanning to $D3
-       let 12 of 15833 segments draw past the end of the test (measured 2026-08-06). */
-    int lo = sc < 0x2C ? 0x2C : sc;
-    int hi = fc > 0xD7 ? 0xD7 : fc;
-    if (lo > hi) { ++g_segOffscr; return; }
-    ++g_segWidthHist[ras_bucket((unsigned)(hi - lo + 1))];
-    int hmax = sh > fh ? sh : fh;
-    int hs = hmax + ((fc - sc) >> 1);                  /* SOUND bound: + S(W) = W/2            */
-    if (hs > 0xFF) hs = 0xFF; if (hs < 0) hs = 0;      /* the drawn height is a clamped byte   */
-    int hn = hmax > 0xFF ? 0xFF : (hmax < 0 ? 0 : hmax);   /* NAIVE bound (unsound, for A/B)   */
-    int n = seg_scan(cm, lo, hi, hs);
-    if (n == hi - lo + 1) { ++g_segSound; seg_firedSound = 1; g_segScanCull += (unsigned)n; }
-    else                  { ++g_segMisses; g_segScanMiss += (unsigned)n; }
-    if (seg_scan(cm, lo, hi, hn) == hi - lo + 1) { ++g_segNaive; seg_firedNaive = 1; }
-}
-static inline void seg_occl_post(void) {
-    int drew = (g_tdPlots != seg_plots0);
-    if (!drew) ++g_segNoDraw;
-    if (seg_firedSound) {
-        if (drew) ++g_segSoundBad;
-        g_segDrawsCull += g_tdRasDraw - seg_draws0;        /* the work a cull would remove */
-        g_segRasCull   += g_tdRasterCalls - seg_ras0;
-    }
-    if (seg_firedNaive && drew) ++g_segNaiveBad;
-}
-#define SEGPRE()  seg_occl_pre()
-#define SEGPOST() seg_occl_post()
-
-/* Same test one level DOWN: cull a whole terrain_column_rasterize_core CALL.  Between the
- * segment (too coarse — see the result) and the span-3/4 group (too fine — closed at ~2%).
- * Here both endpoints are already bytes: span = (col, height) at entry, far = CTL[0].
- * Bound and scan range are derived exactly as in seg_occl_pre(). */
-extern volatile unsigned long g_rcCalls, g_rcNoAccept, g_rcSound, g_rcSoundBad,
-    g_rcScanHit, g_rcScanMiss, g_rcMisses, g_rcDrawsCull;
-static unsigned long rc_plots0, rc_draws0;
-static int rc_fired;
-static inline void rc_occl_pre(int col, int height, int endCol, int ctlHgt) {
-    const uint8_t *cm = (const uint8_t *)mem + MEM_terrain_height_max;
-    ++g_rcCalls; rc_fired = 0; rc_plots0 = g_tdPlots; rc_draws0 = g_tdRasDraw;
-    int lo = col < 0x2C ? 0x2C : col;
-    int hi = endCol > 0xD7 ? 0xD7 : endCol;
-    if (lo > hi) return;
-    int h = (height > ctlHgt ? height : ctlHgt) + ((endCol - col) >> 1);
-    if (h > 0xFF) h = 0xFF;
-    int n = seg_scan(cm, lo, hi, h);
-    if (n == hi - lo + 1) { ++g_rcSound; rc_fired = 1; g_rcScanHit += (unsigned)n; }
-    else                  { ++g_rcMisses; g_rcScanMiss += (unsigned)n; }
-}
-static inline void rc_occl_post(void) {
-    int drew = (g_tdPlots != rc_plots0);
-    if (!drew) ++g_rcNoAccept;
-    if (rc_fired) { if (drew) ++g_rcSoundBad; g_rcDrawsCull += g_tdRasDraw - rc_draws0; }
-}
-#define RCPRE(c, h, e, ch) rc_occl_pre((c), (h), (e), (ch))
-#define RCPOST()           rc_occl_post()
-#else
 #define RSCNT(c)      ((void)0)
 #define RSSAT(h)      ((void)0)
 #define RSHIST(a, s)  ((void)0)
@@ -808,7 +539,6 @@ static inline void rc_occl_post(void) {
 #define SEGPOST()     ((void)0)
 #define RCPRE(c, h, e, ch) ((void)0)
 #define RCPOST()      ((void)0)
-#endif
 
 /* Direct-to-plane2 terrain dots (Amiga).  Instead of OR-ing each surface pixel into the mode-D
  * field and letting renderFlightDirect decode-scan it, terrain_column_rasterize writes the dots
@@ -3326,9 +3056,6 @@ void intro_unmark_random_cells(void) {
  * seed the voice-priority slots ($0705[2..8] / POKEY AUDF via $D1FF+X) and the music
  * timer fields $0712/$0713 = 2/6, AUDCTL ($D208) = $60.  Pure init (POKEY via bus_write). */
 void sfx_engine_reset(void) {
-#ifdef ROF_BEEP_CAP
-    { extern void rof_bc_reset_log(void); rof_bc_reset_log(); }  /* log slot-vol clears (range-1 poly4 probe) */
-#endif
     alt_ring_head = 0x00; ring_tail_0719 = 0x00;
     static const uint16_t cols[11] = { 0x066B, 0x0705, 0x0687, 0x0695, 0x06A3, 0x06B1,
                                         0x06BF, 0x06CD, 0x06DB, 0x06E9, 0x06F7 };
@@ -5522,88 +5249,21 @@ static void alien_mirror_flush(const struct alien_mirror_win *w, const uint8_t *
 }
 #endif /* ROF_PLATFORM_AMIGA */
 
-#if defined(ROF_PLATFORM_AMIGA) && defined(ROF_ALIEN_BENCH)
-/* --- Headless bench for the alien-knock creature draw (`make ALIEN_BENCH=1 PROBES=1`) --------
- * The knock can only be reached by flying to a pilot, landing and switching systems off, so every
- * perf figure for it has cost a human a flight.  But alien_shape_blit's cost barely depends on the
- * game state: it always clears 17 cells, runs the four field fills and walks the same 17-cell loop.
- * So drive it directly on SEEDED state from main-loop context and time one synthetic 43-row
- * creature "step" — the same shape alien_creature_animate_draw drives (43 rows = $2C - $2930).
- *
- * The seed uses the game's OWN frame tables ($81A1/$81A9/$81B1/$81B9 field 0/1, $81C1/$81C9/
- * $81D1/$81D9 field 2) so the sources, cursors and limits are the real ones, and $0083 = $E7
- * (field 3 idle) exactly as alien_creature_animate_draw leaves it.  dstRow is placed at
- * $10A4 + 96*20 so figB0 = 0 and all 17 cells fall inside the overlay, matching the real knock
- * (measured: 752 mirrored cells per 43-row step = every cell of every row).
- *
- * ⚠ VALIDATE THE BENCH BEFORE TRUSTING A DELTA: a real user-flown knock at 1dea72e measured
- * 3725 ticks/step for this work.  If g_abTicks lands near that, the bench is representative.
- * It is a BENCH, not the game — it proves nothing about what the creature looks like. */
-volatile unsigned long g_abTicks = 0;    /* ISR-corrected beam ticks for the last 43-row step */
-volatile unsigned long g_abRaw   = 0;    /* ...and uncorrected, for reference */
-volatile unsigned long g_abRows  = 0;    /* rows actually blitted (want 43) */
-/* Where a row's time goes — `make ALIEN_BENCH=1 ALIEN_BENCH_SPLIT=1 PROBES=1`.  Six rof_subclock
- * calls per row cost ~19% of the step, so a SPLIT build's total is NOT the headline: take the
- * proportions from a split run and the absolute from a plain ALIEN_BENCH run. */
-volatile unsigned long g_abTClear = 0, g_abTFills = 0, g_abTLoop = 0, g_abTFlush = 0;
-volatile unsigned char g_abDone  = 0;
-
-void rof_alien_bench(void) {
-    const uint8_t frameA = 1, frameB = 2, idxC = 1;   /* representative animation frames */
-    unsigned long t0, i0, d, id;
-
-    mem[0x0632] = 0x01;                               /* alien_knock_active: take the mirror path */
-    screen_ptr_hi = 0x00;                             /* $0084 packing accumulator */
-    encounter_count = mem[0x81A1 + frameA];  row_count = mem[0x81A9 + frameA];   /* field 0 src */
-    sync_flag       = mem[0x81B1 + frameA];  mem[0x2927] = mem[0x81B9 + frameA];
-    vbi_phase       = mem[0x81A1 + frameB];  vbi_flags = mem[0x81A9 + frameB];   /* field 1 src */
-    dl_ptr_lo       = mem[0x81B1 + frameB];  mem[0x2928] = mem[0x81B9 + frameB];
-    terrain_state   = mem[0x81C1 + idxC];    terrain_scroll_counter = mem[0x81C9 + idxC];
-    dl_ptr_hi       = mem[0x81D1 + idxC];    mem[0x2929] = mem[0x81D9 + idxC];
-    mem[0x292D]     = 0x01;                           /* field 2 packed (the glyph-set path) */
-    screen_ptr_lo   = 0xE7;                           /* $0083: field 3 idle, as the animator sets it */
-
-    {   /* dstRow = $10A4 + 96*20 -> figB0 = 0, figR0 = 20: every cell inside the overlay */
-        uint16_t dstRow = (uint16_t)(0x10A4 + 96 * 20), srcRow = (uint16_t)(dstRow - 0x30);
-        dl_src_index = (uint8_t)srcRow; terrain_scroll_reload = (uint8_t)(srcRow >> 8);
-        step_mode_flag = (uint8_t)dstRow; mem[0x008E] = (uint8_t)(dstRow >> 8);
-    }
-
-    g_abRows = 0;
-    t0 = rof_subclock(); i0 = g_isrBeamLines;
-    for (int r = 0; r < 43; r++) { alien_shape_blit(); g_abRows++; }   /* one creature step */
-    d = rof_subclock() - t0; id = g_isrBeamLines - i0;
-    g_abRaw   = d;
-    g_abTicks = (d > id) ? (d - id) : 0;
-    mem[0x0632] = 0x00;                               /* leave the knock flag as we found it */
-    g_abDone  = 1;
-}
-#endif /* ROF_ALIEN_BENCH */
 
 void alien_shape_blit(void) {
     ROF_MEMBASE_DECL(mb);   /* 46 absolute-long mem[] operands folded to (d16,An) */
 #ifdef ROF_MEMBASE
 #define mem mb
 #endif
-#if defined(ROF_PLATFORM_AMIGA) && defined(ROF_FLIGHT_PROBE) && !defined(ROF_ALIEN_BENCH)
+#if defined(ROF_PLATFORM_AMIGA) && defined(ROF_FLIGHT_PROBE)
     unsigned long _thud = 0;
     if (mem[0x0632]) { g_alHudCalls++; _thud = rof_subclock(); }
 #endif
-#ifdef ROF_ALIEN_BENCH_SPLIT
-    { unsigned long _t0 = rof_subclock();
-#endif
     for (uint8_t cell = 0x8F; cell <= 0x9F; cell++) mem[cell] = 0x00;   /* clear cell buffer */
-#ifdef ROF_ALIEN_BENCH_SPLIT
-      g_abTClear += rof_subclock() - _t0; }
-    { unsigned long _t1 = rof_subclock();
-#endif
     alien_field0_fill();
     alien_field1_fill();
     alien_field2_fill();
     alien_field3_fill();
-#ifdef ROF_ALIEN_BENCH_SPLIT
-      g_abTFills += rof_subclock() - _t1; }
-#endif
 
     uint16_t srcRow = (uint16_t)(dl_src_index | (terrain_scroll_reload << 8));  /* $8B/$8C mask row */
     uint16_t dstRow = (uint16_t)(step_mode_flag | (mem[0x008E] << 8));          /* $8D/$8E dest row */
@@ -5619,9 +5279,6 @@ void alien_shape_blit(void) {
     int winTopY = 0x10;                  /* highest y the live window has covered */
     if (alienKnock) alien_mirror_window(dstRow, &w);
     else { w.lo = 1; w.hi = 0; w.row = w.off = 0; w.mask = w.p1 = w.p2 = (uint8_t *)0; }
-#endif
-#ifdef ROF_ALIEN_BENCH_SPLIT
-    { unsigned long _t2 = rof_subclock();
 #endif
     for (uint8_t y = 0x10; ; y--) {                          /* 17 cells, high offset first */
         uint8_t cell = mem[0x8F + y];
@@ -5651,7 +5308,7 @@ void alien_shape_blit(void) {
          * call; the gate is a guard for the validation harness / any future non-knock use.) */
         if (alienKnock) {
             vals[y] = v;                    /* pass 2 (alien_mirror_flush) does the overlay work */
-#if defined(ROF_FLIGHT_PROBE) && !defined(ROF_ALIEN_BENCH)
+#if defined(ROF_FLIGHT_PROBE)
             rof_alien_crwrite(dst, v);      /* capture probe: NOT in the bench, it is per-CELL
                                              * and the shipping build has no such call */
 #endif
@@ -5677,19 +5334,10 @@ void alien_shape_blit(void) {
         }
         if (y == 0x00) break;
     }
-#ifdef ROF_ALIEN_BENCH_SPLIT
-      g_abTLoop += rof_subclock() - _t2; }
-#endif
 #ifdef ROF_PLATFORM_AMIGA
     /* PASS 2: mirror the whole row's window in one tight walk and publish its extents once
      * (min/max is order-independent, so the result is identical to updating it cell by cell). */
-#ifdef ROF_ALIEN_BENCH_SPLIT
-    { unsigned long _t3 = rof_subclock();
-      if (alienKnock) alien_mirror_flush(&w, vals, 0, winTopY);
-      g_abTFlush += rof_subclock() - _t3; }
-#else
     if (alienKnock) alien_mirror_flush(&w, vals, 0, winTopY);
-#endif
 #endif
 
     /* advance $8B/$8C += $60, then $8D/$8E = $8B/$8C + $30 (both 16-bit).  Read the pointer cells
@@ -5700,7 +5348,7 @@ void alien_shape_blit(void) {
     uint16_t nextDst = (uint16_t)(nextSrc + 0x30);
     step_mode_flag = (uint8_t)nextDst;
     mem[0x008E]    = (uint8_t)(nextDst >> 8);
-#if defined(ROF_PLATFORM_AMIGA) && defined(ROF_FLIGHT_PROBE) && !defined(ROF_ALIEN_BENCH)
+#if defined(ROF_PLATFORM_AMIGA) && defined(ROF_FLIGHT_PROBE)
     if (_thud) g_alTHud += rof_subclock() - _thud;
 #endif
 #ifdef ROF_MEMBASE
@@ -5877,10 +5525,6 @@ static void ring_push_0719_core(uint8_t ev) {
     uint8_t head = alt_ring_head;
     if (head >= 0x20) head = 0x1F;
     mem[MEM_event_ring_0719 + head] = ev;
-#ifdef ROF_BEEP_CAP
-    { extern void rof_bc_push(unsigned char v); rof_bc_push(ev); }      /* log every SFX event push */
-    if (ev == 0x81) { extern void rof_bc_push81(void *ra0); rof_bc_push81(__builtin_return_address(0)); }
-#endif
     alt_ring_head = (head == 0x00) ? 0x1F : (uint8_t)(head - 1);
 }
 
@@ -8075,31 +7719,6 @@ void terrain_jitter_column(void) {
  * terrain_scroll_counter $8A, vbi_flags $88, rot $A0-$A3, alt $8B/$8C, the $22A3/$22D1/$22FF/$232D
  * input vectors, $0900 heights) are all VBI-stable, so the differential need only snapshot the
  * loop outputs. */
-#ifdef ROF_TFS_SHAPE
-/* ---- terrain_frame_setup loop-1 STRUCTURAL shape probe -------------------------------------
- * Build: make TFSETUP_C=1 TFS_SHAPE=1 PROBES=1  (the counters live in the C oracle, so the C
- * fallback is mandatory — same rule as ROF_RAS_SHAPE); read with amiga/shape_probe.gdb.  Kept
- * OFF by default so the volatile increments can never inflate the asm-vs-C differential.
- *
- * What it answers, which the PC profile cannot:
- *  1. g_tfsRecurBad — does the per-cell u/v RECURRENCE hold on live data?  The output arrays are
- *     the input arrays shifted by one ($22A4+Y == $22A3+(Y+1), $232E+Y == $232D+(Y+1)), so cell
- *     Y+1's in_u/in_v should be exactly the u/v cell Y just stored — meaning the 4 byte loads and
- *     2 `lsl.w #8` per cell that re-assemble them from memory are redundant.  The static pattern
- *     tables say the chain only breaks on a non-storing (empty) cell, of which there is exactly
- *     one in 180 ($B622[0], the dr==00 table's cell 0 — which is why that branch pre-seeds col 0).
- *  2. g_tfsPat[] — the pattern-decode branch mix, i.e. how deep the btst chain runs per cell.
- *  3. g_tfsCls[]/g_tfsUneg — the classify mix, for branch ordering.
- *  4. g_tfsDr[] — which of the 4 pattern tables flight actually uses (does the empty cell occur?).
- */
-volatile unsigned long g_tfsFrames = 0, g_tfsRecurOK = 0, g_tfsRecurBad = 0, g_tfsCells = 0,
-                       g_tfsUneg = 0, g_tfsDiffNeg = 0, g_tfsY0Empty = 0;
-volatile unsigned long g_tfsDr[4]  = {0,0,0,0};
-/* pattern classes: 0=$80 only 1=$80+$40 2=$80+$20 3=$40 only 4=$40+$20 5=$40+$10 6=$20 7=$10 8=empty */
-volatile unsigned long g_tfsPat[9] = {0,0,0,0,0,0,0,0,0};
-/* classify classes: 0=$00 visible 1=$20 behind-right 2=$40 behind-left 3=$80 off-screen */
-volatile unsigned long g_tfsCls[4] = {0,0,0,0};
-#endif
 
 void terrain_frame_setup_core_c(void) {
     /* draw_row's top two bits pick the cell-pattern source table ($B5xx/$B6xx) and the
@@ -8135,12 +7754,6 @@ void terrain_frame_setup_core_c(void) {
 
     uint8_t b5 = 0;                               /* loop-1 cell-pattern / low-byte scratch */
     uint8_t Y = 0;
-#ifdef ROF_TFS_SHAPE
-    g_tfsFrames++;
-    g_tfsDr[(dr >> 6) & 3]++;
-    uint16_t sh_prev_u = 0, sh_prev_v = 0;        /* u/v cell Y-1 stored (the recurrence claim) */
-    int      sh_have_prev = 0;
-#endif
     do {
         /* Decode the cell's rotation pattern (MSB first) into a rotate/translate of this
          * column's vectors u = {$22D2:$22A4}, v = {$232E:$2300}, and a ±1 column-index step. */
@@ -8166,25 +7779,6 @@ void terrain_frame_setup_core_c(void) {
         } else {
             fired = 0;                            /* pattern empty: leave column unchanged */
         }
-#ifdef ROF_TFS_SHAPE
-        {   /* pattern-decode branch mix (pure function of pat, so recomputed rather than
-             * threaded through the branches above) */
-            const int cls_pat = (pat & 0x80) ? ((pat & 0x40) ? 1 : ((pat & 0x20) ? 2 : 0))
-                              : (pat & 0x40) ? ((pat & 0x20) ? 4 : ((pat & 0x10) ? 5 : 3))
-                              : (pat & 0x20) ? 6 : (pat & 0x10) ? 7 : 8;
-            g_tfsPat[cls_pat]++;
-            g_tfsCells++;
-            if (cls_pat == 8 && Y == 0) g_tfsY0Empty++;
-            /* THE recurrence test: is this cell's in_u/in_v exactly what cell Y-1 stored? */
-            if (sh_have_prev) {
-                if (in_u == sh_prev_u && in_v == sh_prev_v) g_tfsRecurOK++; else g_tfsRecurBad++;
-            }
-            sh_prev_u = fired ? u : in_u;   /* not-fired leaves the (stale) output in place, so the
-                                             * claim for the next cell is whatever is in memory */
-            sh_prev_v = fired ? v : in_v;
-            sh_have_prev = fired;           /* only claim the chain across a storing cell */
-        }
-#endif
         if (fired) {
             mem[0x22A4 + Y] = (uint8_t)u; mem[0x22D2 + Y] = (uint8_t)(u >> 8);
             mem[0x2300 + Y] = (uint8_t)v; mem[0x232E + Y] = (uint8_t)(v >> 8);
@@ -8230,11 +7824,6 @@ void terrain_frame_setup_core_c(void) {
             }
         }
         mem[0x24B4 + Y] = cls;
-#ifdef ROF_TFS_SHAPE
-        g_tfsCls[cls == 0x00 ? 0 : cls == 0x20 ? 1 : cls == 0x40 ? 2 : 3]++;
-        if (diff < 0) g_tfsDiffNeg++;
-        if (mem[0x22D2 + Y] & 0x80) g_tfsUneg++;
-#endif
         Y++;
     } while (Y != 0x2D);
 
@@ -10603,9 +10192,6 @@ static void sfx_event_load_core(uint8_t event_id) {
     uint8_t i = (uint8_t)(event_id - 1);                 /* DEX */
     if (i & 0x80) return;                                /* BMI L_5876: event_id 0 -> no-op */
     uint8_t y = mem[0x56D4 + i];                         /* voice slot */
-#ifdef ROF_BEEP_CAP
-    if (i == 0) { extern void rof_bc_ev01_log(void); rof_bc_ev01_log(); }  /* event $01 load (range-1 probe) */
-#endif
     uint8_t ctl = mem[0x56F5 + i];
     mem[MEM_sfx_voice_distortion + y] = (uint8_t)(ctl & 0xF0);         /* distortion */
     mem[MEM_sfx_env_prio_val + y] = (uint8_t)(ctl & 0x0F);         /* prio/vol */
@@ -10979,9 +10565,6 @@ static void sfx_voice_envelope_tick_impl(void) {
         if (expired != 0) {
             SX_CNT(g_sxExpired);
             cpu.X = s[28];
-#ifdef ROF_BEEP_CAP
-            { extern void rof_bc_requeue_log(unsigned char, unsigned char); rof_bc_requeue_log(y, s[28]); }
-#endif
             ring_push_marked();
         }
     }
@@ -11001,9 +10584,6 @@ static void sfx_voice_envelope_tick_impl(void) {
         cpu.A = entry;                    /* preserve the 6502 register state the callees see */
         if (entry & 0x80) {               /* new-voice request */
             cpu.X = (uint8_t)(entry & 0x7F);
-#ifdef ROF_BEEP_CAP
-            { extern void rof_bc_drain_evt(unsigned char, unsigned char); rof_bc_drain_evt(entry, ring_tail_0719); }
-#endif
             SX_CNT(g_sxEvLoad); SX_SPAN(sfx_event_load(), g_sxEvLoadT);
         } else {                          /* sprite-slot reorder request */
             cpu.Y = entry;
@@ -11645,9 +11225,6 @@ void vbi_handler_flight(void) {
             { VP_T0();
             if ((uint8_t)(--mem[MEM_sfx_voice_distortion]) == 0) {
                 if (level_cleared_flag != 0 && (uint8_t)(--mem[MEM_level_cleared_flag]) == 0) {
-#ifdef ROF_BEEP_CAP
-                    { extern void rof_bc_lcl_log(void); rof_bc_lcl_log(); }
-#endif
                     setup_level_clear_state();
                 }
                 if (mem[0x0070] != 0) { mem[MEM_bcd_delta_lo]++; add_and_show_bcd_counter(); }
@@ -12003,9 +11580,6 @@ void boot_standby_launch_driver(void) {
 #define mem mb
 #endif
     /* 5f1d */
-#ifdef ROF_BEEP_CAP
-    { extern void rof_bc_ds_entry(void); rof_bc_ds_entry(); }   /* count boot_standby_launch_driver entries (range-1 poly4 probe) */
-#endif
     if (!plot2bpp_lut_ready) build_plot2bpp_lut();   /* eager: keep the LUT build off the planet hot path */
     /* Amiga: arm the one-shot door-field ($2000) decode for THIS Standby build.  The renderer
        decodes the door "LEVEL NN" bitmap once on the g_doorFieldReady 0→1 edge (set at L_6118,
@@ -12222,9 +11796,6 @@ L_6141:
     goto L_6332;
 L_614d:
     wait_frames_save_a();
-#ifdef ROF_BEEP_CAP
-    { extern volatile unsigned char g_l634fPath; g_l634fPath = 1; }  /* $6150: $006c==0 && $0644==0 */
-#endif
     goto L_634f;
 L_6153:
     if (osc_step_counter == 0) goto L_61f8;
@@ -12380,11 +11951,7 @@ L_62eb:
     reset_audctl_flags();
 L_62ee:
     attract_timer = 0x64;
-#ifdef ROF_BEEP_CAP
-    if (level_or_state != 0) { extern volatile unsigned char g_l634fPath; g_l634fPath = 2; goto L_634f; }  /* $62f4: $0004!=0 */
-#else
     if (level_or_state != 0) goto L_634f;
-#endif
 L_62f6:
     /* Amiga: idle-loop top = the convergence point after both in-place level-rebuild branches
        (L_622d door-scroll and intro_screen_build_seq).  Re-latch the door-field-ready gate that
@@ -12446,11 +12013,6 @@ L_634a:
     platform_poll_events();
     read_console_trig_delta();
     if (cpu.Z) goto L_62f6;
-#ifdef ROF_BEEP_CAP
-    { extern volatile unsigned char g_l634fPath; g_l634fPath = 3;      /* $5a78 (CONSOL/TRIG) fall-through */
-      extern void rof_bc_p3(unsigned char, unsigned char, unsigned char, unsigned char);
-      rof_bc_p3(cpu.A, bus_read(0xD01F), bus_read(0xD010), mem[0xD01F]); }
-#endif
 L_634f:
     DS_MILE(0);
     SA_TIMED(0, audio_timer_setup());

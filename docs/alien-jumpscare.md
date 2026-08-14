@@ -277,7 +277,7 @@ read with `amiga/diag_alien.gdb`.  Beam ticks; 313 t = 1 frame = 20 ms; faithful
 independently on a real user-flown knock (−23.2% per row).  Two changes: the window mirror (§3,
 −21.7%) and the two-pass row (§4, −1.3%).  **The per-cell shaving is now spent — see §6.**
 
-### 1. The bench — `make ALIEN_BENCH=1 PROBES=1` + `amiga/alien_bench.gdb` (⭐ use this, not a flight)
+### 1. The bench — `ALIEN_BENCH=1` + `amiga/alien_bench.gdb` (RETIRED 2026-08-15 — recover from git history)
 Times ONE synthetic 43-row creature step (`rof_alien_bench`, rof_native.c) from main-loop context
 at boot, seeded from the game's own frame tables.  **50 seconds headless, and it repeats to the
 EXACT tick** (1638/1638/1638, 1283/1283) — a precision instrument, unlike anything else in this
