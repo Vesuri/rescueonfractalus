@@ -63,6 +63,36 @@ the same method as the `MEMBASE`/`MEMVIEW`/`FCIBASE` flags, but a different mech
 an Amiga-only *transformation* into the real validate harness; a hostproof compiles two *snapshots*
 against each other in a standalone program, which is what lets it cover code the harness never links.
 
+### ⚠⚠ The flag guard — why `make validate MEMBASE=1` used to be a vacuous green
+
+`FCIBASE` / `MEMVIEW` / `MEMBASE` / `RELEASE` change only `CFLAGS`, and `%.o: %.c` never depended on
+them. So `make validate MEMBASE=1` immediately after a plain `make validate` **relinked the stale
+objects and re-ran all 28 fixtures against the code with the fold switched OFF** — a full PASS that
+proved nothing. Caught 2026-08-14 by noticing `rof_native.o` was 15 minutes older than the
+`validate_native` it had just been linked into. Exactly the class of trap CLAUDE.md already records
+for the Amiga Makefile's `make clean` before `PROBES=1`.
+
+Fixed by a **parse-time guard** in the root `Makefile`: a `$(shell …)` that compares the flag set
+against `build/.flags` and, on a mismatch, *deletes* the objects before make builds its dependency
+graph — so make simply sees them missing. No timestamps, no stamp prerequisite.
+
+⚠ **Two tidier designs were built and both silently failed on 3 of 10 transitions** — Apple ships
+**GNU Make 3.81 (2006)**: (a) one stamp file compared by *contents* under a `FORCE` rule (make caches
+its stat of the stamp, so rewriting it inside its own recipe does not reliably mark dependents out of
+date); (b) the flag set hashed into the stamp's *filename*, tried both as a `%.o` prerequisite and on
+the concrete object list (still stale — the failing transitions just moved). **Half a guard is worse
+than none**, because it makes a vacuous green look verified. If you touch it, re-run this matrix and
+require 10/10:
+
+| from → to | expected |
+|---|---|
+| (clean) → default | compiles |
+| default → default | **unchanged** |
+| default → `MEMVIEW=1` → `FCIBASE=1` → `MEMBASE=1` | recompiles each time |
+| `MEMBASE=1` → `MEMBASE=1` | **unchanged** |
+| `MEMBASE=1` → `MEMVIEW=1` → `RELEASE=1` → default | recompiles each time |
+| `RELEASE=1` → `RELEASE=1`, default → default | **unchanged** |
+
 `make hostproof` runs the seven that exist (`FN=<substr>` for one). Adding one is the price of any
 change in the table above. ⚠ **A green hostproof means "the transformation is sound", not "the
 shipping source still matches" —** each proof holds a verbatim snapshot that drifts silently as the

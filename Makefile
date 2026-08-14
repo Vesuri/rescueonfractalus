@@ -44,6 +44,8 @@ ifdef MEMBASE
   EXTRA_DEFINES += -DROF_MEMBASE_HOSTTEST
 endif
 
+BUILD_FLAGS := $(OPT) $(EXTRA_DEFINES)
+
 CFLAGS   := -std=c11   -g $(OPT) -Wall -Wno-unused-label -fsigned-char \
              $(EXTRA_DEFINES) \
              -Isrc -Isrc/cpu -Isrc/platform -Isrc/gen
@@ -73,6 +75,34 @@ C_OBJS   := $(C_SRCS:.c=.o)
 CXX_OBJS := $(CXX_SRCS:.cpp=.o)
 OBJS     := $(C_OBJS) $(CXX_OBJS)
 TARGET   := build/rof
+
+# ⚠⚠ THE FLAG GUARD — do not remove, and do not "simplify" it into a stamp file.
+# FCIBASE/MEMVIEW/MEMBASE/RELEASE change only CFLAGS, and `%.o: %.c` has no dependency on them, so
+# `make validate MEMBASE=1` straight after a plain `make validate` RELINKED stale objects and re-ran
+# the whole suite against the code with the fold switched OFF — a vacuous green indistinguishable
+# from a real pass (caught 2026-08-14: rof_native.o was 15 minutes older than the validate_native it
+# was linked into).  Same class as the Amiga Makefile's `make clean` before PROBES=1 (CLAUDE.md).
+#
+# This runs at PARSE time, before make builds its dependency graph: if the recorded flag set differs
+# it deletes the affected objects, so make simply sees them as missing.  No timestamps, no stamp
+# prerequisite, no pattern-rule interaction.
+# ⚠ Two tidier-looking versions were built and BOTH silently failed on 3 of 10 flag transitions,
+# because Apple ships GNU Make 3.81 (2006): (a) one fixed stamp file compared by CONTENTS under a
+# FORCE rule — make caches its stat of the stamp, so rewriting it in its own recipe does not reliably
+# mark dependents out of date; (b) the flag set hashed into the stamp's FILENAME, as a prerequisite
+# of `%.o` and then of the concrete object list — still stale, the failing transitions merely moved.
+# If you change this, re-run the 10-step transition matrix (docs/transpiler.md §flag guard); a
+# half-working guard is worse than none, because it makes a vacuous green look verified.
+FLAGS_FILE := build/.flags
+FLAG_GUARD := $(shell mkdir -p build; \
+    if [ "$$(cat $(FLAGS_FILE) 2>/dev/null)" != "$(BUILD_FLAGS)" ]; then \
+        rm -f $(OBJS) tools/validate_native.o; \
+        printf '%s' "$(BUILD_FLAGS)" > $(FLAGS_FILE); \
+        echo "flags-changed"; \
+    fi)
+ifeq ($(FLAG_GUARD),flags-changed)
+  $(info FLAGS [$(BUILD_FLAGS)] changed — objects dropped, rebuilding)
+endif
 
 .PHONY: all clean gen validate hostproof
 
@@ -190,4 +220,5 @@ gen:
 
 clean:
 	rm -f $(OBJS) $(TARGET) tools/validate_native.o build/validate_native
+	rm -f $(FLAGS_FILE)
 	rm -rf $(HOSTPROOF_DIR)
