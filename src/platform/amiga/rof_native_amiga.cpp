@@ -26,7 +26,7 @@ extern "C" volatile uint8_t mem[65536];
 // SIZEP3 ($D00B) latched out of bus_write (src/cpu/bus.h) — the player-3 width has no shadow in
 // the game's own RAM the way SIZEP2 does in $00CD, so this is where the Amiga Main-Window sprite
 // mirror learns that the object is 2×/4× wide.  Written in the flight VBI, read at render rate.
-extern "C" volatile uint8_t g_sizep3_shadow = 0;
+extern "C" { volatile uint8_t g_sizep3_shadow = 0; }
 
 
 // ============================================================================
@@ -123,7 +123,7 @@ extern "C" void vbi_attract_timer_native(void)
 // How many of the five 2×2 digit blocks actually change per g_ckDigits fire, and how often the
 // $33DF/$33E0 stride pair alone raises the flag.  Measured 2026-08-09: exactly ONE block per fire,
 // zero stride flips — which is why render() now decodes per block instead of all five.
-extern "C" volatile unsigned long g_ckWdigCalls = 0, g_ckStrideFlips = 0, g_ckSiNative = 0;
+extern "C" { volatile unsigned long g_ckWdigCalls = 0, g_ckStrideFlips = 0, g_ckSiNative = 0; }
 #endif
 // Which of the six digit groups changed (0-4 = the 2×2 blocks $33B4/$3413/$3445/$3472/$34A4,
 // 5 = the $33DF/$33E0 DL-stride pair).  Defined in RescueOnFractalus.cpp next to the decoder.
@@ -506,20 +506,20 @@ extern "C" void vbi_handler_1_native(void)
 volatile struct FlightProf g_flightProf = { 0 };
 // terrain_draw_frame object-loop sub-phase probe (rof_native.c, -DROF_TDRAW_PROF):
 // beam lines spent in the fractal subdivision vs the projection+object-plot.
-extern "C" unsigned long g_tdSubdiv = 0, g_tdProjPlot = 0, g_tdFrames = 0;
+extern "C" { unsigned long g_tdSubdiv = 0, g_tdProjPlot = 0, g_tdFrames = 0; }
 // terrain-draw shape counters (-DROF_TDRAW_PROF): how many times the hot inner ops run
 // per flight (cumulative; divide by g_tdFrames).  Tells where the subdiv cost actually is.
-extern "C" unsigned long g_tdMidpoints = 0, g_tdPlots = 0, g_tdRasterCalls = 0, g_tdSubdivCalls = 0;
+extern "C" { unsigned long g_tdMidpoints = 0, g_tdPlots = 0, g_tdRasterCalls = 0, g_tdSubdivCalls = 0; }
 // beam ticks spent inside terrain_column_rasterize (a subset of g_tdSubdiv) — splits the
 // fractal recursion cost from the leaf-rasterization cost.
-extern "C" unsigned long g_tdRaster = 0;
+extern "C" { unsigned long g_tdRaster = 0; }
 // terrain_column_rasterize shape split: phase-2 bisect-push steps vs. DRAW() attempts.
-extern "C" unsigned long g_tdRasBisect = 0, g_tdRasDraw = 0;
+extern "C" { unsigned long g_tdRasBisect = 0, g_tdRasDraw = 0; }
 // object draw-order loop shape (-DROF_TDRAW_PROF): total pairs scanned, pairs culled at the
 // primary gate (cheap skip), visible pairs reaching the companion/subdivide path, and total
 // project_terrain_points calls.  Divide by g_tdFrames.  Tells whether the loop cost is the
 // cull scan (many culled pairs) or the visible-pair work.
-extern "C" unsigned long g_tdPairs = 0, g_tdCulled = 0, g_tdVisPairs = 0, g_tdProjCount = 0;
+extern "C" { unsigned long g_tdPairs = 0, g_tdCulled = 0, g_tdVisPairs = 0, g_tdProjCount = 0; }
 extern "C" unsigned short flight_vbi_tick(void) {
     return (unsigned short)((mem[0x0013] << 8) | mem[0x0014]);  // RTCLOK $0013:$0014
 }
@@ -589,15 +589,15 @@ void sfx_reorder_voice_slot(void);          // $5614: voice-priority mixer — a
 #ifdef ROF_FLIGHT_PROBE
 // Cumulative flight-VBI ISR beam-lines, subtracted by rof_native.c's FP_TIME so the main-loop
 // phase buckets (clear/setup/collision/draw) exclude ISR firings that land in their windows.
-extern "C" volatile unsigned long g_isrBeamLines = 0;
+extern "C" { volatile unsigned long g_isrBeamLines = 0; }
 #endif
 #ifdef ROF_FLIGHT_PROBE
 // ZP write-set audit: which of $00-$FF does the flight VBI ($4FF5) change?  Snapshot ZP
 // before each firing, OR the diff into g_vbiZpTouched so the gdb harness can read the union
 // over the whole run.  (Catches net changes; a write-then-restore within one firing is
 // invisible here — cross-check those statically.)  g_vbiZpFirings = firing count.
-extern "C" volatile unsigned char g_vbiZpTouched[256] = {0};
-extern "C" volatile unsigned long g_vbiZpFirings = 0;
+extern "C" { volatile unsigned char g_vbiZpTouched[256] = {0}; }
+extern "C" { volatile unsigned long g_vbiZpFirings = 0; }
 #endif
 extern "C" void flight_vbi_native(void)
 {
@@ -655,7 +655,7 @@ extern "C" void flight_vbi_native(void)
 // nothing — the snapshot's VVBLKI may be stale; nonzero = ready, dispatch on VVBLKI).
 // The genuine transpiled chain swaps the real VVBLKI vector ($0222/$0223) per phase, and
 // game_vbi_isr dispatches on THAT (see below), so this no longer selects the body.
-extern "C" volatile uint8_t g_activeVbi = 0;
+extern "C" { volatile uint8_t g_activeVbi = 0; }
 
 // standby_vbi_native: the faithful $52D7 per-frame body (defined above).
 extern "C" void standby_vbi_native(void);
@@ -685,14 +685,14 @@ extern "C" void vbi_handler_station(void);
 //   g_vbiAudioLines   = flush_paula (Paula channel flush) — the whole audio bracket since the
 //                       noise refill left the ISR (see PlatformAmiga::renderFrame)
 // Per-firing scanlines = lines/calls; time = scanlines * 63.56 us; PAL frame = 313 lines.
-extern "C" volatile unsigned long g_vbiSpriteLines = 0, g_vbiAudioLines = 0, g_vbiFullCalls = 0;
+extern "C" { volatile unsigned long g_vbiSpriteLines = 0, g_vbiAudioLines = 0, g_vbiFullCalls = 0; }
 // Split of the audio bracket (2026-08-12): flush_paula alone vs PlatformAmiga::noiseTick alone.
 // The bracket read 8.0 t/firing on the quiet arm = 12% of the WHOLE flight VBI, and the two halves
 // were completely different animals — flush_paula can busy-wait 7..110 rasterlines on a waveform
 // restart, noiseTick runs a 16-step 32-bit xorshift.  That split is why noiseTick was moved OUT of
 // the ISR entirely; g_vbiFlushLines now duplicates g_vbiAudioLines and g_vbiNoiseLines is written
 // from the main loop (still divided by VBI firings, so it stays comparable to the old t/firing).
-extern "C" volatile unsigned long g_vbiFlushLines = 0, g_vbiNoiseLines = 0;
+extern "C" { volatile unsigned long g_vbiFlushLines = 0, g_vbiNoiseLines = 0; }
 #endif
 
 extern "C" void game_vbi_isr(void)

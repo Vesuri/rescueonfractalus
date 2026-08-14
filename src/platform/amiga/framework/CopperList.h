@@ -4,7 +4,7 @@
 #include "Util.h"
 
 #define copperWait(y, x) (((y) << 24) | ((x) << 16) | 0x0001fffe)
-#define copperMove(register, data) ((register << 16) | (uint16_t)(data))
+#define copperMove(register, data) (((register) << 16) | (uint16_t)(data))
 
 class Sprite;
 class Bitmap;

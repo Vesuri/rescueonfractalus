@@ -6942,6 +6942,7 @@ void terrain_column_rasterize_core_c(uint8_t entryDepth, uint8_t colBase) {
             ROF_FIELD_PLOT(_h); /* SDL/validate: OR value-2 into the mode-D field (the dots source) */ \
             RSSAT(_h); RSDOT(plotCol, _oldMax); \
             ROF_PLOT_DOT(plotCol, _oldMax); /* Amiga: lag-plot the PREVIOUS top into plane2 (see below) */ \
+            (void)_oldMax;                  /* both readers are no-ops on the host */ \
         } } while(0)
 
     mem[0x0060] = colBase;                   /* save the caller's column base ($60) */

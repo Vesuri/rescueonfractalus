@@ -44,7 +44,7 @@ extern "C" volatile uint8_t mem[65536];
 // Title Screen visual-test override: when set (only by the ROF_FORCE_TITLE probe path),
 // deriveRenderSignals pins rsTitle true.  Defined unconditionally (default 0) so the normal
 // build references a real symbol with zero effect.
-extern "C" volatile unsigned char g_forceTitleScreen = 0;
+extern "C" { volatile unsigned char g_forceTitleScreen = 0; }
 
 #if defined(ROF_TITLE_START) && defined(ROF_FLIGHT_PROBE)
 // Title-Screen -> START -> launch scene-routing trace (make PROBES=1 TITLE_START=1).  Filled from
@@ -256,7 +256,7 @@ static void build_poly_tables(void)
 // `gateAlways`) the 2-level output flips toward the current poly9 bit.  Output bytes are the
 // same bipolar ±127 as wave_pure so AUDxVOL scales them identically.
 #ifdef ROF_FLIGHT_PROBE
-extern "C" volatile unsigned long g_polyDistCalls = 0;
+extern "C" { volatile unsigned long g_polyDistCalls = 0; }
 #endif
 static void build_poly_dist(uint8_t ch, uint32_t divider, uint16_t bd, bool gateAlways)
 {
@@ -294,7 +294,7 @@ static uint8_t pokey[16];   // [0]=AUDF1 [1]=AUDC1 ... [8]=AUDCTL ...
 // state in a register for its whole run and step the LFSR inline, instead of paying a
 // cross-TU rof_pokey_random() call per read.  It's our own RNG (not POKEY-cycle-accurate),
 // so an ISR RANDOM read interleaving with such a loop only reshuffles cosmetic output.
-extern "C" uint32_t rof_lfsr_state = 0x1FFFFu;
+extern "C" { uint32_t rof_lfsr_state = 0x1FFFFu; }
 
 static uint8_t pokey_random_step(void)
 {
@@ -354,7 +354,7 @@ static uint8_t  want_valid = 0;               // bitmask of channels written thi
 // last flush; g_upcRedund counts the recomputes a per-channel dirty bit would have collapsed,
 // g_upcDistinct the ones it would still have to do.  Declared here (not with the other g_p*
 // probes further down) because flush_paula, which resets the mask, is defined above them.
-extern "C" volatile unsigned long g_upcRedund = 0, g_upcDistinct = 0, g_upcFlushes = 0;
+extern "C" { volatile unsigned long g_upcRedund = 0, g_upcDistinct = 0, g_upcFlushes = 0; }
 static uint8_t s_upcSeen = 0;
 
 // Sizing the restart busy-wait — the WHOLE audio bracket is that wait (§22.3).  Two facts settle
@@ -367,9 +367,9 @@ static uint8_t s_upcSeen = 0;
 //     (511) [4] noise_buf (4096).  This says whether the restart is needed at all: its only job is
 //     to make Paula latch PTR/LEN before the current loop wraps by itself, and a 15-word loop wraps
 //     in len*per ticks — so a table full of [1]/[2] means the restarts are all on short loops.
-extern "C" volatile unsigned long g_fpRestartFlushes = 0, g_fpWaitSum = 0, g_fpWaitMax = 0;
-extern "C" volatile unsigned long g_fpChRestarts = 0, g_fpLenHist[5] = { 0, 0, 0, 0, 0 };
-extern "C" volatile unsigned long g_fpPerSum = 0;      // sum of the OLD periods (what sized the wait)
+extern "C" { volatile unsigned long g_fpRestartFlushes = 0, g_fpWaitSum = 0, g_fpWaitMax = 0; }
+extern "C" { volatile unsigned long g_fpChRestarts = 0, g_fpLenHist[5] = { 0, 0, 0, 0, 0 }; }
+extern "C" { volatile unsigned long g_fpPerSum = 0; }      // sum of the OLD periods (what sized the wait)
 #endif
 
 // Record a channel's desired Paula state; applied by flush_paula().
@@ -403,7 +403,7 @@ static volatile uint16_t g_vbiCount = 0;
 // Painted terrain frames, bumped once in renderFlightDirect (`make FPSCOUNT=1`).  The whole
 // point of this build is that it carries NO other instrumentation, so the framerate it
 // reports is the shipping build's.  FPS = 50 * g_fpsFrames / g_vbiCount.
-extern "C" volatile unsigned long g_fpsFrames = 0;
+extern "C" { volatile unsigned long g_fpsFrames = 0; }
 #endif
 
 
@@ -791,43 +791,43 @@ uint8_t PlatformAmiga::hwRead(uint16_t addr)
 // solid full-screen colour faded from mem[$00D4] (mirroring "DMA off, only COLBK shows").
 // Set on a 0 write during flight, cleared on any nonzero DMACTL write (and by renderFrame
 // when the scene leaves flight).  See the death-cinematic memory.
-extern "C" volatile unsigned char g_flightBlank = 0;
+extern "C" { volatile unsigned char g_flightBlank = 0; }
 
 #ifdef ROF_FLIGHT_PROBE
 // FORCE_PAUSE probe: how many ESC presses the harness had to inject before the freeze took
 // ($0043 != 0), and the g_vbiCount at which it did.  g_fpFreezeVbi == 0 = the pause never engaged,
 // so any "the strobe didn't reach X" reading from that run is vacuous.
-extern "C" volatile unsigned short g_fpTries     = 0;
-extern "C" volatile unsigned short g_fpFreezeVbi = 0;
+extern "C" { volatile unsigned short g_fpTries     = 0; }
+extern "C" { volatile unsigned short g_fpFreezeVbi = 0; }
 // BREAK/Restart probe: bumped by the g_restartJmp handler in run() each time a restart is taken.
 // Lets the headless FORCE_BREAK / FORCE_BREAK_EARLY runs confirm the longjmp actually fired.
-extern "C" volatile unsigned char g_restartCount = 0;
+extern "C" { volatile unsigned char g_restartCount = 0; }
 // Standby door-field decode probe: bumped each time the $2000->viewportBitmap door decode runs;
 // g_doorDecodeVbi stamps the last one.  Lets the restart runs confirm the doors were (re)decoded.
-extern "C" volatile unsigned char  g_doorDecodeCount = 0;
-extern "C" volatile unsigned short g_doorDecodeVbi   = 0;
+extern "C" { volatile unsigned char  g_doorDecodeCount = 0; }
+extern "C" { volatile unsigned short g_doorDecodeVbi   = 0; }
 // In-place SELECT level-cycle dispatch probes (post-mother-ship standby; read via FORCE_RETURN).
-extern "C" volatile unsigned short g_ipDispatch   = 0;   // L_6324 idle dispatch reached
-extern "C" volatile unsigned short g_ipInPlace    = 0;   // L_6332 in-place branch taken
-extern "C" volatile unsigned short g_ipDoorScroll = 0;   // level<max → door-scroll rebuild
-extern "C" volatile unsigned short g_ipIntroWrap  = 0;   // level>=max → intro_screen_build_seq wrap
+extern "C" { volatile unsigned short g_ipDispatch   = 0; }   // L_6324 idle dispatch reached
+extern "C" { volatile unsigned short g_ipInPlace    = 0; }   // L_6332 in-place branch taken
+extern "C" { volatile unsigned short g_ipDoorScroll = 0; }   // level<max → door-scroll rebuild
+extern "C" { volatile unsigned short g_ipIntroWrap  = 0; }   // level>=max → intro_screen_build_seq wrap
 #ifdef ROF_COMBAT_LOAD
 // COMBAT-LOAD benchmark counters (`make COMBAT=1 PROBES=1`, read via amiga/combat_probe.gdb).
 // They exist to PROVE the combat load is real before any timing is quoted from it — a run
 // with g_clExplode==0 is the 2026-07-31 "firing into the void" mistake all over again.
-extern "C" volatile unsigned short g_clExplode   = 0;  // trigger_object_explosion calls
-extern "C" volatile unsigned short g_clShotHit   = 0;  // our shot destroyed a map occupant
-extern "C" volatile unsigned short g_clEnemyFire = 0;  // emplacement queued a bolt at us
-extern "C" volatile unsigned short g_clImpact    = 0;  // bolt HIT us (near-camera wedge)
-extern "C" volatile unsigned short g_clSaucer    = 0;  // flying saucers spawned
-extern "C" volatile unsigned short g_clObjDraw   = 0;  // ground objects rastered
-extern "C" volatile unsigned short g_clObjNear   = 0;  // ...of those, depth < 4 (biggest)
-extern "C" volatile unsigned short g_clReseed    = 0;  // VBI top-ups of aged-out emplacements
-extern "C" volatile unsigned long  g_clObjEnter  = 0;  // cells with an occupant = ALL object work
+extern "C" { volatile unsigned short g_clExplode   = 0; }  // trigger_object_explosion calls
+extern "C" { volatile unsigned short g_clShotHit   = 0; }  // our shot destroyed a map occupant
+extern "C" { volatile unsigned short g_clEnemyFire = 0; }  // emplacement queued a bolt at us
+extern "C" { volatile unsigned short g_clImpact    = 0; }  // bolt HIT us (near-camera wedge)
+extern "C" { volatile unsigned short g_clSaucer    = 0; }  // flying saucers spawned
+extern "C" { volatile unsigned short g_clObjDraw   = 0; }  // ground objects rastered
+extern "C" { volatile unsigned short g_clObjNear   = 0; }  // ...of those, depth < 4 (biggest)
+extern "C" { volatile unsigned short g_clReseed    = 0; }  // VBI top-ups of aged-out emplacements
+extern "C" { volatile unsigned long  g_clObjEnter  = 0; }  // cells with an occupant = ALL object work
                                                        // (g_clObjDraw only counts the ones that
                                                        //  reached raster_scaled_object, depth<$0D)
-extern "C" volatile unsigned short g_clObjDist[13] = {0};  // draws by $0051 depth (0 = closest)
-extern "C" volatile unsigned char  g_clLevel = 0, g_cl0621 = 0, g_cl0623 = 0, g_cl0624 = 0;
+extern "C" { volatile unsigned short g_clObjDist[13] = {0}; }  // draws by $0051 depth (0 = closest)
+extern "C" { volatile unsigned char  g_clLevel = 0, g_cl0621 = 0, g_cl0623 = 0, g_cl0624 = 0; }
 // COMBAT-STATE FRAMERATE SPLIT — the only honest way this harness can price combat.
 // Cross-BUILD end-to-end is invalid (a combat build and a quiet build fly different
 // trajectories, so their bucket shares are not comparable), but splitting ONE run's frames by
@@ -839,75 +839,75 @@ extern "C" volatile unsigned char  g_clLevel = 0, g_cl0621 = 0, g_cl0623 = 0, g_
 //   2 = SHOT       (our own laser is in flight: $0036 object slot != $80 = reset_object_slot's
 //                   idle marker) — separates the PLAYER's weapon from the enemies'
 //   3 = QUIET      (none of the above; note emplacements are still drawn in this state)
-extern "C" volatile unsigned long g_clFrames = 0;          // painted terrain frames (all states)
-extern "C" volatile unsigned long g_clVbi[4] = {0,0,0,0};  // flight vblanks per state
-extern "C" volatile unsigned long g_clFrm[4] = {0,0,0,0};  // painted frames per state
+extern "C" { volatile unsigned long g_clFrames = 0; }          // painted terrain frames (all states)
+extern "C" { volatile unsigned long g_clVbi[4] = {0,0,0,0}; }  // flight vblanks per state
+extern "C" { volatile unsigned long g_clFrm[4] = {0,0,0,0}; }  // painted frames per state
 // Same idea, but split by HOW MANY ground objects (gun emplacements / bases / pilots) the last
 // painted frame actually rastered: 0 / 1-2 / 3-5 / 6+.  The explosion split above only priced
 // the animation; this prices the PERSISTENT load — objects on screen every frame — which is
 // where most of the combat cost turned out to live.  Again one binary, one trajectory.
-extern "C" volatile unsigned short g_clObjFrame  = 0;      // objects drawn since the last frame
-extern "C" volatile unsigned char  g_clObjBucket = 0;      // that count, bucketed
-extern "C" volatile unsigned long  g_clVbiObj[4] = {0,0,0,0};
-extern "C" volatile unsigned long  g_clFrmObj[4] = {0,0,0,0};
+extern "C" { volatile unsigned short g_clObjFrame  = 0; }      // objects drawn since the last frame
+extern "C" { volatile unsigned char  g_clObjBucket = 0; }      // that count, bucketed
+extern "C" { volatile unsigned long  g_clVbiObj[4] = {0,0,0,0}; }
+extern "C" { volatile unsigned long  g_clFrmObj[4] = {0,0,0,0}; }
 // PER-PHASE FRAME DECOMPOSITION, split by combat state (see the CL_PH block in rof_native.c).
 // [phase][state], state 0 = an explosion/bolt is live this iteration, 1 = not.
 // Phases: 0 SETUP, 1 CLEAR, 2 DRAW (terrain+objects), 3 BOLT (game_state_update),
 //         4 ENEMY (enemy_check), 5 FRAME (ds_frame = renderFlightDirect+sprites+copper+audio).
 // Both terrain passes are bracketed now — they were not before, which is why every historical
 // "terrain is N% of the frame" figure was taken over half the work.
-extern "C" volatile unsigned long g_clPh[6][2]  = {};
-extern "C" volatile unsigned long g_clPhIter[2] = {0,0};
-extern "C" volatile unsigned char g_clPhState   = 1;
+extern "C" { volatile unsigned long g_clPh[6][2]  = {}; }
+extern "C" { volatile unsigned long g_clPhIter[2] = {0,0}; }
+extern "C" { volatile unsigned char g_clPhState   = 1; }
 // RAW iteration wall time (no ISR subtraction) so the budget can be closed:
 //     wall = ISR (g_isrBeamLines) + sum(phases) + unbracketed
-extern "C" volatile unsigned long g_clIterWall[2] = {0,0};
-extern "C" volatile unsigned long g_clIterPrev    = 0;
+extern "C" { volatile unsigned long g_clIterWall[2] = {0,0}; }
+extern "C" { volatile unsigned long g_clIterPrev    = 0; }
 // Sticky "an explosion/bolt was live at some point during this iteration", set by the VBI and
 // consumed by CL_PH_ITER.  A flight iteration spans many vblanks at these frame rates, so an
 // instantaneous sample of $0041 at the top of the iteration is a near-useless classifier.
-extern "C" volatile unsigned char g_clExplSeen = 0;
+extern "C" { volatile unsigned char g_clExplSeen = 0; }
 // REAL flight-VBI handler ticks + firings, split by combat state (accumulated in
 // rof_native_amiga.cpp's flight_vbi_native from dHandler, which excludes the ZP-audit probe).
-extern "C" volatile unsigned long g_clIsr[2]  = {0,0};
-extern "C" volatile unsigned long g_clIsrN[2] = {0,0};
+extern "C" { volatile unsigned long g_clIsr[2]  = {0,0}; }
+extern "C" { volatile unsigned long g_clIsrN[2] = {0,0}; }
 // DRAW ticks + iterations bucketed by ship altitude ($28DA >> 5).  Lets the combat and quiet runs
 // be compared at MATCHED altitude — a per-call comparison, immune to the cross-build objection.
-extern "C" volatile unsigned long g_clAltDraw[8] = {};
-extern "C" volatile unsigned long g_clAltIter[8] = {};
-extern "C" volatile unsigned char g_clAltBucket  = 0;
+extern "C" { volatile unsigned long g_clAltDraw[8] = {}; }
+extern "C" { volatile unsigned long g_clAltIter[8] = {}; }
+extern "C" { volatile unsigned char g_clAltBucket  = 0; }
 // DRAW SUB-SPLIT (see the CL_SUB block in rof_native.c).  Localises combat's +474 t/it inside the
 // DRAW phase without any cross-build reasoning:
 //   [0] head = per-frame table fills + compute_row_xspans   [1] obj = terrain_draw_objects
 //   [2] age  = the $0A00 near-max cell aging scan (256 volatile reads, only impacts arm it)
 // tail = DRAW_total - head - obj, computed in combat_probe.gdb so the four early returns in the
 // function's tail need no bracket.  g_clDrawSubN = bracketed calls, for the bracket-floor subtraction.
-extern "C" volatile unsigned long g_clDrawSub[3] = {};
-extern "C" volatile unsigned long g_clAgeScans   = 0;
-extern "C" volatile unsigned long g_clDrawSubN   = 0;
+extern "C" { volatile unsigned long g_clDrawSub[3] = {}; }
+extern "C" { volatile unsigned long g_clAgeScans   = 0; }
+extern "C" { volatile unsigned long g_clDrawSubN   = 0; }
 // Terrain tree entries (one subdivide call per visible pair).  A count, so no bracket floor.
-extern "C" volatile unsigned long g_clSubCalls   = 0;
+extern "C" { volatile unsigned long g_clSubCalls   = 0; }
 // CALIBRATION LOAD (`make CALIBRATE=1`, see the CL_CAL block in rof_native.c).  Two fixed-trip,
 // data-independent loops run once per flight iteration, so their cost prices the MACHINE rather
 // than the work: if they inflate in combat, so does every phase, and that part of the combat
 // delta is DMA contention rather than computation.
-extern "C" volatile unsigned long g_clCalMem  = 0;   // 1024 scattered volatile mem[] byte reads
-extern "C" volatile unsigned long g_clCalCpu  = 0;   // 1024-step 16-bit LFSR, registers only
-extern "C" volatile unsigned long g_clCalN    = 0;   // iterations calibrated
-extern "C" volatile unsigned long g_clCalSink = 0;   // keeps the loops alive against DCE
-extern "C" volatile unsigned long g_clCalNoDma = 0;  // the MEM loop again, AUD+SPRITE DMA masked
+extern "C" { volatile unsigned long g_clCalMem  = 0; }   // 1024 scattered volatile mem[] byte reads
+extern "C" { volatile unsigned long g_clCalCpu  = 0; }   // 1024-step 16-bit LFSR, registers only
+extern "C" { volatile unsigned long g_clCalN    = 0; }   // iterations calibrated
+extern "C" { volatile unsigned long g_clCalSink = 0; }   // keeps the loops alive against DCE
+extern "C" { volatile unsigned long g_clCalNoDma = 0; }  // the MEM loop again, AUD+SPRITE DMA masked
 // A 128-read window counted only when NO ISR fired inside it — the one calibration that needs
 // no ISR subtraction, so it tells a slower machine apart from a subtraction artifact.
-extern "C" volatile unsigned long g_clCalIsrFree  = 0;
-extern "C" volatile unsigned long g_clCalIsrFreeN = 0;
+extern "C" { volatile unsigned long g_clCalIsrFree  = 0; }
+extern "C" { volatile unsigned long g_clCalIsrFreeN = 0; }
 // Same window again but BEAM-LOCKED to scanline 200, so both builds measure the same slice of
 // the same frame — bitplane DMA only steals CPU slots inside the display window.
-extern "C" volatile unsigned long g_clCalLocked  = 0;
-extern "C" volatile unsigned long g_clCalLockedN = 0;
+extern "C" { volatile unsigned long g_clCalLocked  = 0; }
+extern "C" { volatile unsigned long g_clCalLockedN = 0; }
 // The 1024-read load again, measured as 8 short ISR-free sub-windows: the row that tells a
 // slower machine apart from the long bracket's ISR-subtraction bias.
-extern "C" volatile unsigned long g_clCalSplit  = 0;
-extern "C" volatile unsigned long g_clCalSplitN = 0;
+extern "C" { volatile unsigned long g_clCalSplit  = 0; }
+extern "C" { volatile unsigned long g_clCalSplitN = 0; }
 #ifdef ROF_OBJ_SHAPE
 // OBJECT-PLOTTER SHAPE PROBE (`make COMBAT=1 PROBES=1 OBJ_SHAPE=1` + amiga/obj_shape.gdb).
 // The combat attribution INFERRED the object plotter's cost from a visit count ("25 visits x
@@ -917,83 +917,83 @@ extern "C" volatile unsigned long g_clCalSplitN = 0;
 // blit nested inside it) plus the shape of every early-out.  The per-cell counts accumulate in
 // LOCALS inside raster_scaled_object and are flushed once per call, so the hot loops carry no
 // volatile traffic.
-extern "C" volatile unsigned long g_opTicks = 0;   // ISR-corrected ticks in project+plot_object
-extern "C" volatile unsigned long g_opCalls = 0;   // plotter-chain calls (incl. the empty bail)
-extern "C" volatile unsigned long g_opEmpty = 0;   // $0A00 occupant == 0 -> immediate return
-extern "C" volatile unsigned long g_opStep  = 0;   // $232E==0 && $2300<$22 -> return
-extern "C" volatile unsigned long g_opPathA = 0;   // $0900 peak (emplacement) -> A822 plotter
-extern "C" volatile unsigned long g_opPathB = 0;   // -> A90A plotter
-extern "C" volatile unsigned long g_opaBusy  = 0;  // A822: $2487/$242D busy -> return
-extern "C" volatile unsigned long g_opaMask  = 0;  // A822: occupant >= $FA (dying) -> step/4
-extern "C" volatile unsigned long g_opaBelow = 0;  // A822: below the column clip -> return
-extern "C" volatile unsigned long g_opaDist  = 0;  // A822: ran point_distance + clip_row_top
-extern "C" volatile unsigned long g_opaFire  = 0;  // A822: reached the RANDOM fire-queue gate
-extern "C" volatile unsigned long g_opaDepth = 0;  // A822: step_hi >= $0D -> no scaled blit
-extern "C" volatile unsigned long g_opbCross = 0;  // A90A: the trailing 4-pixel cross ran
-extern "C" volatile unsigned long g_rsCalls  = 0;  // raster_scaled_object calls
-extern "C" volatile unsigned long g_rsTicks  = 0;  // ...ticks inside it (NESTED in g_opTicks)
-extern "C" volatile unsigned long g_rsRows   = 0;  // outer-loop rows walked
-extern "C" volatile unsigned long g_rsCells  = 0;  // inner-loop cells visited
-extern "C" volatile unsigned long g_rsPlots  = 0;  // ...of those, shape bit set -> clip_row_top
-extern "C" volatile unsigned long g_rsCellMax = 0; // worst single call (cap is 12 rows x 32 = 384)
-extern "C" volatile unsigned long g_rsCellsByStep[14] = {};  // cells, by entry depth $0051 (13=other)
-extern "C" volatile unsigned short g_rsCallsByStep[14] = {}; // calls, same buckets
+extern "C" { volatile unsigned long g_opTicks = 0; }   // ISR-corrected ticks in project+plot_object
+extern "C" { volatile unsigned long g_opCalls = 0; }   // plotter-chain calls (incl. the empty bail)
+extern "C" { volatile unsigned long g_opEmpty = 0; }   // $0A00 occupant == 0 -> immediate return
+extern "C" { volatile unsigned long g_opStep  = 0; }   // $232E==0 && $2300<$22 -> return
+extern "C" { volatile unsigned long g_opPathA = 0; }   // $0900 peak (emplacement) -> A822 plotter
+extern "C" { volatile unsigned long g_opPathB = 0; }   // -> A90A plotter
+extern "C" { volatile unsigned long g_opaBusy  = 0; }  // A822: $2487/$242D busy -> return
+extern "C" { volatile unsigned long g_opaMask  = 0; }  // A822: occupant >= $FA (dying) -> step/4
+extern "C" { volatile unsigned long g_opaBelow = 0; }  // A822: below the column clip -> return
+extern "C" { volatile unsigned long g_opaDist  = 0; }  // A822: ran point_distance + clip_row_top
+extern "C" { volatile unsigned long g_opaFire  = 0; }  // A822: reached the RANDOM fire-queue gate
+extern "C" { volatile unsigned long g_opaDepth = 0; }  // A822: step_hi >= $0D -> no scaled blit
+extern "C" { volatile unsigned long g_opbCross = 0; }  // A90A: the trailing 4-pixel cross ran
+extern "C" { volatile unsigned long g_rsCalls  = 0; }  // raster_scaled_object calls
+extern "C" { volatile unsigned long g_rsTicks  = 0; }  // ...ticks inside it (NESTED in g_opTicks)
+extern "C" { volatile unsigned long g_rsRows   = 0; }  // outer-loop rows walked
+extern "C" { volatile unsigned long g_rsCells  = 0; }  // inner-loop cells visited
+extern "C" { volatile unsigned long g_rsPlots  = 0; }  // ...of those, shape bit set -> clip_row_top
+extern "C" { volatile unsigned long g_rsCellMax = 0; } // worst single call (cap is 12 rows x 32 = 384)
+extern "C" { volatile unsigned long g_rsCellsByStep[14] = {}; }  // cells, by entry depth $0051 (13=other)
+extern "C" { volatile unsigned short g_rsCallsByStep[14] = {}; } // calls, same buckets
 // ...and by CALL SIZE (<16 / 16-63 / 64-127 / 128-255 / 256+ cells).  The blit's mean call is 15
 // cells and its worst is the 384-cell cap, so a mean is useless for judging a change aimed at the
 // near/exploding-object calls.  Comparing the SAME size bucket across two builds keeps this a
 // per-call metric rather than an end-to-end one.
-extern "C" volatile unsigned long g_rsBktCalls[5] = {};
-extern "C" volatile unsigned long g_rsBktCells[5] = {};
-extern "C" volatile unsigned long g_rsBktTicks[5] = {};
+extern "C" { volatile unsigned long g_rsBktCalls[5] = {}; }
+extern "C" { volatile unsigned long g_rsBktCells[5] = {}; }
+extern "C" { volatile unsigned long g_rsBktTicks[5] = {}; }
 #endif
 #endif
 // Door-scroll liveness: total dl_lms_scroll_step calls via the $008B branch (level-select elevator scroll).
-extern "C" volatile unsigned short g_dlScrollCount = 0;
+extern "C" { volatile unsigned short g_dlScrollCount = 0; }
 // Door-scroll render-side probe: BPLxPT repoints + the row range the ISR scrolled through.
-extern "C" volatile unsigned short g_dsRepoints = 0;
-extern "C" volatile unsigned short g_dsMaxRow   = 0;
-extern "C" volatile unsigned short g_dsMinRow   = 0xFFFF;
-extern "C" volatile unsigned short g_dsDecodes  = 0;   // full-field decodes (should be few: dirty-gated)
+extern "C" { volatile unsigned short g_dsRepoints = 0; }
+extern "C" { volatile unsigned short g_dsMaxRow   = 0; }
+extern "C" { volatile unsigned short g_dsMinRow   = 0xFFFF; }
+extern "C" { volatile unsigned short g_dsDecodes  = 0; }   // full-field decodes (should be few: dirty-gated)
 // Door-scroll copper-rewrite TIMING probe (the "one misaligned-cockpit frame between levels" bug):
 // the raster line the ISR has reached when it rewrites the live standby copper's terrain runs.  The
 // cockpit region's WAIT is kCockpitLine-1 = 171; a rewrite that lands at/after that line writes the
 // cockpit BPLxPT moves behind the beam -> the already-satisfied WAIT fires mid-line and the cockpit
 // bitplanes shift horizontally for that frame.
-extern "C" volatile unsigned short g_dsRunLine[24]  = {};   // ring: beam line AT the setTerrainRuns call
-extern "C" volatile unsigned char  g_dsRunDec[24]   = {};   // ring: did the full-field decode run first?
-extern "C" volatile unsigned char  g_dsRunN[24]     = {};   // ring: run count written
-extern "C" volatile unsigned char  g_dsRunIdx   = 0;
-extern "C" volatile unsigned short g_dsRunWrites = 0;  // total setTerrainRuns calls from the ISR
-extern "C" volatile unsigned short g_dsRunLate   = 0;  // ...of which landed at/after line 171
-extern "C" volatile unsigned short g_dsRunMaxLn  = 0;  // worst beam line seen at a rewrite
+extern "C" { volatile unsigned short g_dsRunLine[24]  = {}; }   // ring: beam line AT the setTerrainRuns call
+extern "C" { volatile unsigned char  g_dsRunDec[24]   = {}; }   // ring: did the full-field decode run first?
+extern "C" { volatile unsigned char  g_dsRunN[24]     = {}; }   // ring: run count written
+extern "C" { volatile unsigned char  g_dsRunIdx   = 0; }
+extern "C" { volatile unsigned short g_dsRunWrites = 0; }  // total setTerrainRuns calls from the ISR
+extern "C" { volatile unsigned short g_dsRunLate   = 0; }  // ...of which landed at/after line 171
+extern "C" { volatile unsigned short g_dsRunMaxLn  = 0; }  // worst beam line seen at a rewrite
 // ...and the cost of the thing that makes it late: the full-field decode, in raster lines
 // (PAL frame = 312, so >312 means the decode alone outlasts a whole frame).
-extern "C" volatile unsigned short g_dsDecLines    = 0;  // last decode's cost in raster lines
-extern "C" volatile unsigned short g_dsDecLinesMax = 0;
-extern "C" volatile unsigned short g_dsDecEntryLn  = 0;  // beam line when the decode started (last)
-extern "C" volatile unsigned short g_dsDecRows     = 0;  // field rows the last decode covered
-extern "C" volatile unsigned char  g_dsDecRing[24] = {}; // ...and the last 24 decodes' row counts
-extern "C" volatile unsigned char  g_dsDecRingIdx  = 0;
+extern "C" { volatile unsigned short g_dsDecLines    = 0; }  // last decode's cost in raster lines
+extern "C" { volatile unsigned short g_dsDecLinesMax = 0; }
+extern "C" { volatile unsigned short g_dsDecEntryLn  = 0; }  // beam line when the decode started (last)
+extern "C" { volatile unsigned short g_dsDecRows     = 0; }  // field rows the last decode covered
+extern "C" { volatile unsigned char  g_dsDecRing[24] = {}; } // ...and the last 24 decodes' row counts
+extern "C" { volatile unsigned char  g_dsDecRingIdx  = 0; }
 // why each decode ran: 1 = dirty flag with no marked range, 2 = dirty flag with a marked range,
 // 3 = renderFrame's terrainDirty full re-decode.
-extern "C" volatile unsigned char  g_dsDecWhy = 0, g_dsDecWhyRing[24] = {};
+extern "C" { volatile unsigned char  g_dsDecWhy = 0, g_dsDecWhyRing[24] = {}; }
 // Whole-VBI-ISR cost while the standby body ($52D7) is live, in raster lines (PAL frame = 312).
-extern "C" volatile unsigned short g_isrEntryLine = 0, g_isrStbyLines = 0, g_isrStbyMax = 0;
-extern "C" volatile unsigned short g_isrStbyOver = 0;    // ISRs that outlasted ~a whole frame
-extern "C" volatile unsigned long  g_isrStbyCnt  = 0;
-extern "C" volatile unsigned long  g_blackHoldFrames = 0;  // frames the EmptyCopperList (black) was held
+extern "C" { volatile unsigned short g_isrEntryLine = 0, g_isrStbyLines = 0, g_isrStbyMax = 0; }
+extern "C" { volatile unsigned short g_isrStbyOver = 0; }    // ISRs that outlasted ~a whole frame
+extern "C" { volatile unsigned long  g_isrStbyCnt  = 0; }
+extern "C" { volatile unsigned long  g_blackHoldFrames = 0; }  // frames the EmptyCopperList (black) was held
 // Bug-3 probe: whether the top door band was black at the earliest (smallest-g2) doors frame.
-extern "C" volatile unsigned char  g_doorTopBlack = 0;
-extern "C" volatile unsigned char  g_doorTopBlackVp = 0;   // same sample taken from viewportBitmap (the pre-fix door source)
-extern "C" volatile unsigned char  g_doorTopG2    = 0xFF;
-extern "C" volatile unsigned char  g_doorTopSeen  = 0;
+extern "C" { volatile unsigned char  g_doorTopBlack = 0; }
+extern "C" { volatile unsigned char  g_doorTopBlackVp = 0; }   // same sample taken from viewportBitmap (the pre-fix door source)
+extern "C" { volatile unsigned char  g_doorTopG2    = 0xFF; }
+extern "C" { volatile unsigned char  g_doorTopSeen  = 0; }
 // Restart-flash ring: per-vblank VVBLKI + hold flag, armed at the trampoline/restart.
-extern "C" volatile unsigned short g_vvRing[32] = {};
-extern "C" volatile unsigned char  g_vvHold[32] = {};
-extern "C" volatile unsigned char  g_vvIdx  = 0;
-extern "C" volatile unsigned char  g_vvArmed = 0;
-extern "C" volatile unsigned char  g_blankForRestartCount = 0;
-extern "C" volatile unsigned char  g_l3d0cFired = 0;   // $3D23 level_or_state!=0 clear branch fired
+extern "C" { volatile unsigned short g_vvRing[32] = {}; }
+extern "C" { volatile unsigned char  g_vvHold[32] = {}; }
+extern "C" { volatile unsigned char  g_vvIdx  = 0; }
+extern "C" { volatile unsigned char  g_vvArmed = 0; }
+extern "C" { volatile unsigned char  g_blankForRestartCount = 0; }
+extern "C" { volatile unsigned char  g_l3d0cFired = 0; }   // $3D23 level_or_state!=0 clear branch fired
 #endif
 
 // rof_pokey_write: the direct, non-virtual POKEY write fast-path (bus.h routes $D200-$D20F
@@ -1002,7 +1002,7 @@ extern "C" volatile unsigned char  g_l3d0cFired = 0;   // $3D23 level_or_state!=
 // Paula channel (period divide + waveform select) for an unchanged register is pure waste.
 #ifdef ROF_FLIGHT_PROBE
 extern "C" unsigned short rof_beam_line(void);
-extern "C" volatile unsigned long g_pUPC = 0, g_upcCalls = 0, g_pokeyWrites = 0, g_pokeyChanged = 0;
+extern "C" { volatile unsigned long g_pUPC = 0, g_upcCalls = 0, g_pokeyWrites = 0, g_pokeyChanged = 0; }
 static inline void upc_timed(uint8_t ch) {
     if (s_upcSeen & (1u << ch)) g_upcRedund++;                  // a dirty bit would collapse this one
     else { g_upcDistinct++; s_upcSeen |= (uint8_t)(1u << ch); }  // ...this one it would still do
@@ -1146,84 +1146,84 @@ extern "C" unsigned long rof_subclock(void) {
         if (v0 == v1) return (unsigned long)v0 * 313u + (unsigned long)ln;
     }
 }
-extern "C" volatile unsigned long g_renderFrameCount = 0;
-extern "C" volatile unsigned long g_probeDispSetup = 0, g_probeGameInit = 0,
-    g_probeIntro = 0, g_probeRowAddr = 0, g_probeInitTotal = 0;
-extern "C" volatile unsigned short g_probeFlightVbi = 0;  // g_vbiCount at flight VBI install
+extern "C" { volatile unsigned long g_renderFrameCount = 0; }
+extern "C" { volatile unsigned long g_probeDispSetup = 0, g_probeGameInit = 0,
+    g_probeIntro = 0, g_probeRowAddr = 0, g_probeInitTotal = 0; }
+extern "C" { volatile unsigned short g_probeFlightVbi = 0; }  // g_vbiCount at flight VBI install
 // Flight-entry -> terrain-fade-start window decomposition (VBI frames vs game-loop iters).
-extern "C" volatile unsigned short g_fadeLoopVbi = 0;   // vbi when flight loop (iterCount>=1) starts
-extern "C" volatile unsigned short g_fadeEntryVbi = 0, g_fadeStartVbi = 0;
-extern "C" volatile unsigned short g_fadeEntryIter = 0, g_fadeStartIter = 0;
-extern "C" volatile unsigned short g_fadeEntryFd = 0, g_fadeStartFd = 0;
-extern "C" volatile unsigned char g_fadeEntryDC = 0, g_fadeDone = 0;
-extern "C" volatile unsigned char g_fadeEntryState = 0, g_fadeStartState = 0;   // mem[0x41]
-extern "C" volatile unsigned char g_fadeEntry66C = 0, g_fadeStart66C = 0;       // mem[0x66C]
-extern "C" volatile unsigned char g_fadeEntryAlt = 0, g_fadeStartAlt = 0;       // mem[0x34]
+extern "C" { volatile unsigned short g_fadeLoopVbi = 0; }   // vbi when flight loop (iterCount>=1) starts
+extern "C" { volatile unsigned short g_fadeEntryVbi = 0, g_fadeStartVbi = 0; }
+extern "C" { volatile unsigned short g_fadeEntryIter = 0, g_fadeStartIter = 0; }
+extern "C" { volatile unsigned short g_fadeEntryFd = 0, g_fadeStartFd = 0; }
+extern "C" { volatile unsigned char g_fadeEntryDC = 0, g_fadeDone = 0; }
+extern "C" { volatile unsigned char g_fadeEntryState = 0, g_fadeStartState = 0; }   // mem[0x41]
+extern "C" { volatile unsigned char g_fadeEntry66C = 0, g_fadeStart66C = 0; }       // mem[0x66C]
+extern "C" { volatile unsigned char g_fadeEntryAlt = 0, g_fadeStartAlt = 0; }       // mem[0x34]
 // renderFrame() no-yield-gap probe:
-extern "C" volatile unsigned short g_maxRenderGap = 0, g_maxGapAtVbi = 0, g_maxGapVvblki = 0;
-extern "C" volatile unsigned char g_maxGap060B = 0, g_maxGap004A = 0;
+extern "C" { volatile unsigned short g_maxRenderGap = 0, g_maxGapAtVbi = 0, g_maxGapVvblki = 0; }
+extern "C" { volatile unsigned char g_maxGap060B = 0, g_maxGap004A = 0; }
 // Cinematic-only render-gap probe (launch VBI $52D7 active): isolates a tunnel->stars freeze.
-extern "C" volatile unsigned short g_maxCineGap = 0, g_maxCineGapAtVbi = 0;
-extern "C" volatile unsigned char g_maxCineGap060B = 0;
-extern "C" volatile unsigned short g_csGap = 0, g_csGapAtVbi = 0;   // tunnel->stars window only
+extern "C" { volatile unsigned short g_maxCineGap = 0, g_maxCineGapAtVbi = 0; }
+extern "C" { volatile unsigned char g_maxCineGap060B = 0; }
+extern "C" { volatile unsigned short g_csGap = 0, g_csGapAtVbi = 0; }   // tunnel->stars window only
 // standby->doors window render-gap probe (no vbi>360 gate, so it catches the early launch burst)
-extern "C" volatile unsigned short g_doorGap = 0, g_doorGapAtVbi = 0;
-extern "C" volatile unsigned char g_doorGap060B = 0;
+extern "C" { volatile unsigned short g_doorGap = 0, g_doorGapAtVbi = 0; }
+extern "C" { volatile unsigned char g_doorGap060B = 0; }
 // stretch-A per-function one-shot subclock deltas (ticks): find the standby->doors freeze.
-extern "C" volatile unsigned long g_saTicks[16] = {0};
+extern "C" { volatile unsigned long g_saTicks[16] = {0}; }
 // door-frame draw pixel-volume counters (span calls + total bytes/edges written).
-extern "C" volatile unsigned long g_dfVCalls = 0, g_dfVRows = 0, g_dfHCalls = 0, g_dfHCols = 0;
+extern "C" { volatile unsigned long g_dfVCalls = 0, g_dfVRows = 0, g_dfHCalls = 0, g_dfHCols = 0; }
 // decodeCockpitFull one-shot timing (chip-vs-fast-RAM experiment).
-extern "C" volatile unsigned long g_ckFullTicks = 0, g_ckFullCount = 0;
+extern "C" { volatile unsigned long g_ckFullTicks = 0, g_ckFullCount = 0; }
 // fill_terrain_columns one-shot timing (tunnel->stars setup gap).
-extern "C" volatile unsigned long g_fillTerrTicks = 0, g_fillTerrIsr = 0;
+extern "C" { volatile unsigned long g_fillTerrTicks = 0, g_fillTerrIsr = 0; }
 // boot_standby_launch_driver launch-tail milestone stamps: rof_ds_mile(i) records g_vbiCount at milestone i,
 // so a big jump between consecutive stamps localises the ~580ms cinematic freeze to one stretch.
-extern "C" volatile unsigned short g_dsMile[16] = {0};
-extern "C" volatile unsigned long g_burstClrTicks = 0, g_burstClrIsr = 0;   // L_650b field-clear cost
-extern "C" volatile unsigned long g_burstMidTicks = 0, g_burstMidIsr = 0;
-extern "C" volatile unsigned long g_sbATicks = 0, g_sbAIsr = 0, g_sbCTicks = 0, g_sbCIsr = 0;
+extern "C" { volatile unsigned short g_dsMile[16] = {0}; }
+extern "C" { volatile unsigned long g_burstClrTicks = 0, g_burstClrIsr = 0; }   // L_650b field-clear cost
+extern "C" { volatile unsigned long g_burstMidTicks = 0, g_burstMidIsr = 0; }
+extern "C" { volatile unsigned long g_sbATicks = 0, g_sbAIsr = 0, g_sbCTicks = 0, g_sbCIsr = 0; }
 extern "C" void rof_ds_mile(int i) { if (i >= 0 && i < 16) g_dsMile[i] = g_vbiCount; }
 // tunnel-prebuild probe: does the standby-construction ring draw (7262) run, and does its
 // mem[$1000] ring field survive to the launch-time redraw (7601)?  (checksums + run flags)
 // planet-approach spike probe (L_6578 loop): max advance_object_positions cost + max
 // renderViewportModeD dirty-band decode (rows + ticks), each with the vbi it peaked at.
-extern "C" volatile unsigned long g_aopMax = 0, g_aopMaxVbi = 0;
-extern "C" volatile unsigned long g_vpDecMax = 0, g_vpDecMaxVbi = 0, g_vpDecMaxRows = 0;
+extern "C" { volatile unsigned long g_aopMax = 0, g_aopMaxVbi = 0; }
+extern "C" { volatile unsigned long g_vpDecMax = 0, g_vpDecMaxVbi = 0, g_vpDecMaxRows = 0; }
 // standby->doors gap localizer: stretch-A code sets g_saPhase as it progresses; renderFrame
 // snapshots it (g_doorGapPhase) at the worst door-window gap so we know which phase preceded it.
-extern "C" volatile unsigned char g_saPhase = 0, g_doorGapPhase = 0;
-extern "C" volatile unsigned long g_rbMax = 0; extern "C" volatile unsigned short g_rbMaxVbi = 0;
+extern "C" { volatile unsigned char g_saPhase = 0, g_doorGapPhase = 0; }
+extern "C" { volatile unsigned long g_rbMax = 0; extern "C" volatile unsigned short g_rbMaxVbi = 0; }
 // RTCLOK ownership-race probe: catch frames where RTCLOK ($0014) is advanced by BOTH the VBI
 // body AND renderFrame (double-count -> equality spin-waits overshoot -> ~256-frame wrap), and
 // frames where renderFrame read a "torn"/unexpected VVBLKI vector during the $52D7<->$4FF5 swap.
-extern "C" volatile unsigned short g_rtDoubleCount = 0, g_rtDoubleAtVbi = 0;
-extern "C" volatile unsigned short g_rtZeroCount = 0, g_rtZeroAtVbi = 0;
-extern "C" volatile unsigned short g_rtTornCount = 0, g_rtLastTornVec = 0, g_rtTornAtVbi = 0;
+extern "C" { volatile unsigned short g_rtDoubleCount = 0, g_rtDoubleAtVbi = 0; }
+extern "C" { volatile unsigned short g_rtZeroCount = 0, g_rtZeroAtVbi = 0; }
+extern "C" { volatile unsigned short g_rtTornCount = 0, g_rtLastTornVec = 0, g_rtTornAtVbi = 0; }
 // RTCLOK SKIP probe: while $4FF5 is active, renderFrame does NOT advance RTCLOK — the ISR does,
 // once per REAL VBI.  If a single renderFrame spans >1 real VBI (slow render), RTCLOK jumps by
 // >1 across one equality-spin iteration ($3CB8 push_a_thunk), which can step OVER the target and
 // wrap 256 ticks.  Track the max single-iteration RTCLOK delta + how many iterations jumped >1.
-extern "C" volatile unsigned short g_rtJumpMax = 0, g_rtJumpGt1Count = 0, g_rtJumpAtVbi = 0;
+extern "C" { volatile unsigned short g_rtJumpMax = 0, g_rtJumpGt1Count = 0, g_rtJumpAtVbi = 0; }
 // VCOUNT busy-wait span probe (see pollEvents): longest run of frames a non-frame-pacing
 // spin (wait_vcount_eq etc.) holds without a renderFrame — a big value = the equality miss.
-extern "C" volatile unsigned short g_maxPollSpinFrames = 0, g_maxPollSpinAtVbi = 0, g_pollSpinStartVbi = 0;
+extern "C" { volatile unsigned short g_maxPollSpinFrames = 0, g_maxPollSpinAtVbi = 0, g_pollSpinStartVbi = 0; }
 static bool g_pollAfterRender = false;
 // game_main_loop per-iteration + flight phase split (written by rof_native.c FP_* macros):
-extern "C" volatile unsigned long g_iterMax = 0, g_iterLast = 0, g_iterPostDs = 0;
-extern "C" volatile unsigned short g_iterCount = 0, g_iterMaxAt = 0;
-extern "C" volatile unsigned long g_fSetup=0,g_fClear=0,g_fDraw=0,g_fColl=0,g_fState=0,g_fEnemy=0;
+extern "C" { volatile unsigned long g_iterMax = 0, g_iterLast = 0, g_iterPostDs = 0; }
+extern "C" { volatile unsigned short g_iterCount = 0, g_iterMaxAt = 0; }
+extern "C" { volatile unsigned long g_fSetup=0,g_fClear=0,g_fDraw=0,g_fColl=0,g_fState=0,g_fEnemy=0; }
 // ds_frame() total (both displayed halves per iteration) = renderFlightDirect + sprite builds +
 // copper update + the audio flush.  Never bracketed before 2026-08-06, so the phase sum used to
 // miss the entire render side of the frame as well as all of terrain pass 2.
-extern "C" volatile unsigned long g_clFrameTicks = 0;
+extern "C" { volatile unsigned long g_clFrameTicks = 0; }
 // Stage-0 convert-pass cost (flight renderViewportModeD), beam-based, ISR-decontaminated.
-extern "C" volatile unsigned long g_fConvert=0;
+extern "C" { volatile unsigned long g_fConvert=0; }
 // atmosphere terrain-pen range during flight ($00DC/$00DD salmon→brown fade):
-extern "C" volatile unsigned char g_dcMin=0xFF, g_dcMax=0, g_ddMin=0xFF, g_ddMax=0;
+extern "C" { volatile unsigned char g_dcMin=0xFF, g_dcMax=0, g_ddMin=0xFF, g_ddMax=0; }
 // Cockpit-decode probe (beam sub-frame ticks): g_fCockpit accumulates the time spent in the
 // render() cockpit scan/decode block; g_fCockpitScans counts the frames it actually ran.
-extern "C" volatile unsigned long g_fCockpit=0, g_fCockpitScans=0;
+extern "C" { volatile unsigned long g_fCockpit=0, g_fCockpitScans=0; }
 // OS interrupt-dispatch overhead probe ("the 8% unresolved/ROM bucket").  The flight PC
 // profiler puts ~8% of its samples at Kickstart $F811F8 — the level-3 autovector entry
 // (`movem.l d0-d1/a0-a1/a5-a6,-(sp)`, which then btsts INTREQR for BLIT/VERTB/COPER and
@@ -1234,11 +1234,11 @@ extern "C" volatile unsigned long g_fCockpit=0, g_fCockpitScans=0;
 // server ahead of us — i.e. exactly the cost a raw autovector takeover could remove.
 // Recorded as separate vpos/hpos sums so the target never needs a 32-bit multiply;
 // irq_probe.gdb folds them into colour-clocks (1 line = 227 cc = 63.56us).
-extern "C" volatile unsigned long g_irqLatVsum=0, g_irqLatHsum=0, g_irqLatCnt=0;
-extern "C" volatile unsigned short g_irqLatVmax=0, g_irqLatHmax=0;
+extern "C" { volatile unsigned long g_irqLatVsum=0, g_irqLatHsum=0, g_irqLatCnt=0; }
+extern "C" { volatile unsigned short g_irqLatVmax=0, g_irqLatHmax=0; }
 // INTENAR/INTREQR snapshot at VBI entry: which level-3 sources (bit4 COPER, bit5 VERTB,
 // bit6 BLIT) are actually enabled decides the level-3 interrupt RATE — 50/s if only VERTB.
-extern "C" volatile unsigned short g_irqIntena=0, g_irqIntreq=0;
+extern "C" { volatile unsigned short g_irqIntena=0, g_irqIntreq=0; }
 // ---------------------------------------------------------------------------------------
 // OS interrupt-chain taps — how OFTEN does an interrupt we do NOT own fire, and how long
 // does its whole exec server chain run?  Each tap is a PAIR of servers on one chain: a
@@ -1256,35 +1256,35 @@ extern "C" volatile unsigned short g_irqIntena=0, g_irqIntreq=0;
 // Slots: [0] EXTER whole chain, [1] PORTS whole chain, [2] PORTS up to pri 50 (= time in
 // ciaa.resource), [3] PORTS up to pri 10 (= ciaa.resource + FS-UAE's "UAE fs" server).  Slots
 // 2/3 are cumulative-from-the-head splits of slot 1, so subtracting them attributes the chain.
-extern "C" volatile unsigned long g_tapHeadCnt[4] = {0,0,0,0}, g_tapTailCnt[4] = {0,0,0,0};
-extern "C" volatile unsigned long g_tapVsum[4]    = {0,0,0,0};
-extern "C" volatile long          g_tapHsum[4]    = {0,0,0,0};
+extern "C" { volatile unsigned long g_tapHeadCnt[4] = {0,0,0,0}, g_tapTailCnt[4] = {0,0,0,0}; }
+extern "C" { volatile unsigned long g_tapVsum[4]    = {0,0,0,0}; }
+extern "C" { volatile long          g_tapHsum[4]    = {0,0,0,0}; }
 static   volatile unsigned short  s_tapV0[4]      = {0,0,0,0}, s_tapH0[4] = {0,0,0,0};
 // Firings of OUR OWN level-2 handler in the PORTS-takeover build.  In that build the tap slots
 // above read 0 — the taps are exec chain servers and exec's walker is no longer in the vector —
 // so this is the PORTS rate, and a storm check on it (see portsHandler).
-extern "C" volatile unsigned long g_portsIrqCnt = 0;
+extern "C" { volatile unsigned long g_portsIrqCnt = 0; }
 // VBI-body sub-profiling (beam-line deltas inside the flight VBI; normalize by isrCalls).
 // integ/proj/sfx wrap individual native twins (rof_native.c).  The whole handler is timed by
 // flight_vbi_native (g_flightProf.isrLines).  (The old top/atmo/hud/score/tail PRE_INSN_HOOK
 // partition was retired when vbi_handler_flight went native — it had done its diagnostic job.)
-extern "C" volatile unsigned long g_pProj=0, g_pInteg=0, g_pSfx=0;
-extern "C" volatile unsigned long g_pSfxEng=0, g_pSfxLoop=0, g_pSfxRing=0;
-extern "C" volatile unsigned long g_sfxRingIters=0;   // ring entries drained; /isrCalls = per-firing
+extern "C" { volatile unsigned long g_pProj=0, g_pInteg=0, g_pSfx=0; }
+extern "C" { volatile unsigned long g_pSfxEng=0, g_pSfxLoop=0, g_pSfxRing=0; }
+extern "C" { volatile unsigned long g_sfxRingIters=0; }   // ring entries drained; /isrCalls = per-firing
 // VBI handler section partition (the chunks NOT covered by integ/proj/sfx; see rof_native.c
 // vbi_handler_flight).  Per-call = acc/isrCalls; sum(all sections)+integ+proj ≈ isrLines.
-extern "C" volatile unsigned long g_pDrawBr=0, g_pSimHead=0, g_pAtmo=0, g_pHud=0, g_pScore=0, g_pTail=0;
+extern "C" { volatile unsigned long g_pDrawBr=0, g_pSimHead=0, g_pAtmo=0, g_pHud=0, g_pScore=0, g_pTail=0; }
 // Stage-1 verifier: chip addr of terrainBitmap->data, so the gdb harness can dump the
 // flight bitplanes and decode/diff them headlessly (no display needed).
-extern "C" volatile uint32_t g_terrainBmpAddr=0;
+extern "C" { volatile uint32_t g_terrainBmpAddr=0; }
 // Stage-1 direct renderer's parallel bitmap (for pixel-diff vs the convert).
-extern "C" volatile uint32_t g_flightDirectAddr=0;
+extern "C" { volatile uint32_t g_flightDirectAddr=0; }
 // Stage-1 direct-render beam cost (same units as g_fConvert) for the head-to-head.
-extern "C" volatile unsigned long g_fDirect=0;
+extern "C" { volatile unsigned long g_fDirect=0; }
 // renderFlightDirect internal breakdown (beam ticks, accumulated over g_fdCalls):
 // clear+wait / edge plot / fill+wait / plane2 scan / band convert / scanned-row count.
-extern "C" volatile unsigned long g_fdClear=0, g_fdEdge=0, g_fdFill=0, g_fdScan=0,
-                                   g_fdBand=0, g_fdCalls=0, g_fdScanRows=0;
+extern "C" { volatile unsigned long g_fdClear=0, g_fdEdge=0, g_fdFill=0, g_fdScan=0,
+                                   g_fdBand=0, g_fdCalls=0, g_fdScanRows=0; }
 // Render/glue-gap probe: attribute the per-iteration ds_frame() (= platform_tick_vbi +
 // platform_render_frame) cost, which the phase buckets above do NOT cover.  ds_frame runs
 // once per game-loop iteration, then ~300ms of two-pass terrain compute runs with the display
@@ -1298,55 +1298,55 @@ extern "C" volatile unsigned long g_isrBeamLines;  // defined in rof_native_amig
 // Noise-refill cost, accumulated in renderFrame now that noiseTick is main-loop work (still
 // normalised by VBI firings in isr_full.gdb — see the note at the call site).
 extern "C" volatile unsigned long g_vbiNoiseLines;  // defined in rof_native_amiga.cpp
-extern "C" volatile unsigned long g_rRenderCompute=0, g_rRenderWall=0, g_rIdleWall=0, g_rCalls=0;
+extern "C" { volatile unsigned long g_rRenderCompute=0, g_rRenderWall=0, g_rIdleWall=0, g_rCalls=0; }
 // INTEGER frame counters for the two flight pacing waits — immune to the beam-read race that
 // poisons the tick accumulators above (g_fDraw et al. can run BACKWARDS).  g_idleFrames = VBI
 // frames burned in renderFrame's "wait for the next real VBI" spin; g_flipWaitFrames = frames
 // burned draining a deferred buffer flip at the top of renderFlightDirect.  Frames-per-iteration
 // MINUS these is the compute, so an A/B can tell "this build does more work" from "this build
 // lost a frame to vblank quantisation" — which a throughput number alone cannot.
-extern "C" volatile unsigned long g_idleFrames=0, g_flipWaitFrames=0, g_flipWaitCalls=0;
-extern "C" volatile unsigned long g_rPerFrame=0, g_rRenderFn=0, g_rCopper=0;
+extern "C" { volatile unsigned long g_idleFrames=0, g_flipWaitFrames=0, g_flipWaitCalls=0; }
+extern "C" { volatile unsigned long g_rPerFrame=0, g_rRenderFn=0, g_rCopper=0; }
 // Knock-gated ($0632) split of platform_render_frame: g_alTRScene = scene->renderFrame() (the
 // dirty-rect composite + the renderFlightDirect while(flightSwapPending) flip wait); g_alTRIdle =
 // the PlatformAmiga while(g_vbiCount==last) frame-sync wait after it.  Pinpoints the ~204ms.
-extern "C" volatile unsigned long g_alTRScene=0, g_alTRIdle=0;
+extern "C" { volatile unsigned long g_alTRScene=0, g_alTRIdle=0; }
 // Of g_alTRScene, the time specifically in renderFlightDirect's while(flightSwapPending) flip wait.
-extern "C" volatile unsigned long g_alTFlipWait=0;
+extern "C" { volatile unsigned long g_alTFlipWait=0; }
 // flightVblankSwap during the knock: g_alVSwapRun = ISR firings that ran it; g_alVSwapCleared = of
 // those, how many found flightSwapPending set (i.e. actually did the flip).  If Run >> Cleared, the
 // ISR fires often but a flip is rarely pending -> the flip wait isn't ISR-starved; if Run ~ steps,
 // the ISR itself is being throttled during the knock.
-extern "C" volatile unsigned long g_alVSwapRun=0, g_alVSwapCleared=0;
+extern "C" { volatile unsigned long g_alVSwapRun=0, g_alVSwapCleared=0; }
 // Altimeter sprite chip addresses (set in initialize) so the gdb harness can read their VSTART/
 // VSTOP control words and confirm the bar Y vs mem[$281A]/$281B.
-extern "C" volatile uint32_t g_altimSprAddr=0, g_altimShipSprAddr=0, g_energySprAddr=0;
-extern "C" volatile uint32_t g_viewportP3SprAddr=0, g_scopeP3SprAddr=0, g_flightCopperAddr=0;
+extern "C" { volatile uint32_t g_altimSprAddr=0, g_altimShipSprAddr=0, g_energySprAddr=0; }
+extern "C" { volatile uint32_t g_viewportP3SprAddr=0, g_scopeP3SprAddr=0, g_flightCopperAddr=0; }
 // Wide-object extension chain heads (segments 1-3 on ch5/ch6/ch1).  Each buffer holds TWO chained
 // sprites, so amiga/wide_probe.gdb can read the extension's VSTART/VSTOP and then the chained
 // element's control words right behind its data — the check that the energy bar / altimeter /
 // left band triangle still arm now that they hang off the extension rather than SPRxPT directly.
-extern "C" volatile uint32_t g_wideExtAddr[3] = { 0, 0, 0 };
+extern "C" { volatile uint32_t g_wideExtAddr[3] = { 0, 0, 0 }; }
 // Cockpit bitmap base (set in initialize) — lets amiga/b2_probe.gdb read the dashboard PEN under
 // the energy-gauge column, which decides whether sprite priority can hide the bar's overflow at
 // all (pen 0 = COLOR00 background, which every sprite beats regardless of BPLCON2).
-extern "C" volatile uint32_t g_cockpitBmpAddr=0;
+extern "C" { volatile uint32_t g_cockpitBmpAddr=0; }
 // Wide-object histograms: how often each SIZEPn scale was actually rendered (index 0/1/2 = 1×/2×/4×)
 // and the widest burst seen.  A headless COMBAT run must show non-zero 2×/4× buckets, or the
 // widening path never ran and a visual check would prove nothing.
-extern "C" volatile unsigned long g_wideShotScale[3] = { 0, 0, 0 };
-extern "C" volatile unsigned long g_wideP3Scale[3]   = { 0, 0, 0 };
-extern "C" volatile unsigned long g_wideMaxRows = 0, g_wideDenied = 0;
+extern "C" { volatile unsigned long g_wideShotScale[3] = { 0, 0, 0 }; }
+extern "C" { volatile unsigned long g_wideP3Scale[3]   = { 0, 0, 0 }; }
+extern "C" { volatile unsigned long g_wideMaxRows = 0, g_wideDenied = 0; }
 // Burst releases that found pixels still live in the DISPLAYED extension chain — i.e. the 2×→1×
 // (or 4×→1×) step, where the wide segment 0 is still on screen because it is double buffered.
 // Each is one frame the old immediate both-chain blank showed with its right half missing.
-extern "C" volatile unsigned long g_wideLateBlank = 0;
+extern "C" { volatile unsigned long g_wideLateBlank = 0; }
 #endif
 
 // g_quitJmp: the __builtin_setjmp buffer armed by RescueOnFractalus::run() so we can
 // unwind the never-returning transpiled chain on quit (5 words per the GCC builtin;
 // initializer forces the definition).  extern "C" — RescueOnFractalus.cpp references it.
-extern "C" void* g_quitJmp[5] = { 0, 0, 0, 0, 0 };
+extern "C" { void* g_quitJmp[5] = { 0, 0, 0, 0, 0 }; }
 
 // g_restartJmp: the __builtin_setjmp buffer for the BREAK/Restart path (game_loop_reset).  The
 // Atari trampoline ($52BE) restarts via a 6502 RTS stack trick that C control flow can't
@@ -1354,7 +1354,7 @@ extern "C" void* g_quitJmp[5] = { 0, 0, 0, 0, 0 };
 // observable side-effect in mem[]: VVBLKI ($0222/3) = $52B4.  renderFrame/pollEvents (main-loop
 // context) detect that and longjmp here; run() then re-enters game_main_loop with the faithful
 // $3D1F init (which preserves the high score $0605-0608, unlike a full game_entry re-run).
-extern "C" void* g_restartJmp[5] = { 0, 0, 0, 0, 0 };
+extern "C" { void* g_restartJmp[5] = { 0, 0, 0, 0, 0 }; }
 // The trampoline's persistent Amiga side-effect — VVBLKI left at this value = "restart requested".
 static const uint16_t kRestartVvblki = 0x52B4u;
 
@@ -1782,9 +1782,9 @@ static struct Interrupt* s_savedVector = 0;   // keyboard.device's vector, resto
 // own handshake spin.  g_kbCalls counts entries here; g_kbRing keeps the last 16 raw codes
 // (bit7 = key-up) so the source is identifiable.  If g_kbCalls << the PORTS firing count, the
 // interrupts are some other CIA-A source (timer A/B, TOD, FLG) and never reach us.
-extern "C" volatile unsigned long  g_kbCalls = 0;
-extern "C" volatile unsigned char  g_kbRing[16] = {0};
-extern "C" volatile unsigned char  g_kbRingIdx = 0;
+extern "C" { volatile unsigned long  g_kbCalls = 0; }
+extern "C" { volatile unsigned char  g_kbRing[16] = {0}; }
+extern "C" { volatile unsigned char  g_kbRingIdx = 0; }
 #endif
 
 static uint32_t keyboardHandler()
@@ -2122,8 +2122,10 @@ static uint32_t vbiHandler()
         extern volatile unsigned char g_dcMin, g_dcMax, g_ddMin, g_ddMax;
         if ((mem[0x0222] | (mem[0x0223] << 8)) == 0x4FF5u) {
             uint8_t dc = mem[0x00DC], dd = mem[0x00DD];
-            if (dc < g_dcMin) g_dcMin = dc; if (dc > g_dcMax) g_dcMax = dc;
-            if (dd < g_ddMin) g_ddMin = dd; if (dd > g_ddMax) g_ddMax = dd;
+            if (dc < g_dcMin) g_dcMin = dc;
+            if (dc > g_dcMax) g_dcMax = dc;
+            if (dd < g_ddMin) g_ddMin = dd;
+            if (dd > g_ddMax) g_ddMax = dd;
         }
     }
 
@@ -2673,7 +2675,7 @@ static const unsigned char kTapChain[2] = { INTB_EXTER, INTB_PORTS };
 // many level-3 interrupts our blits raise — the framework's blitter* helpers re-enable
 // INTF_BLIT right after starting each blit, even though nothing in this port needs it
 // (blitterWait polls DMACONR BLTBUSY and blitterDrain spin-drains the queue itself).
-extern "C" volatile unsigned long g_blitIrqCnt = 0;
+extern "C" { volatile unsigned long g_blitIrqCnt = 0; }
 static struct IntVector s_savedBlitVec;
 static struct Interrupt s_blitCntInt;
 static bool             s_blitVecTaken = false;
@@ -2781,9 +2783,9 @@ PlatformAmiga::~PlatformAmiga()
 // sprite and audio buffer in CHIP.  These snapshot exec's free pools before and after the
 // scene's constructor + display takeover, so "how much RAM does the game need" is a measurement
 // rather than a sum of guesses.  Read with amiga/memreport.gdb.
-extern "C" volatile unsigned long g_memChipBefore = 0, g_memFastBefore = 0, g_memAnyBefore = 0;
-extern "C" volatile unsigned long g_memChipAfter  = 0, g_memFastAfter  = 0, g_memAnyAfter  = 0;
-extern "C" volatile unsigned long g_memChipLargest = 0;
+extern "C" { volatile unsigned long g_memChipBefore = 0, g_memFastBefore = 0, g_memAnyBefore = 0; }
+extern "C" { volatile unsigned long g_memChipAfter  = 0, g_memFastAfter  = 0, g_memAnyAfter  = 0; }
+extern "C" { volatile unsigned long g_memChipLargest = 0; }
 
 void PlatformAmiga::run()
 {
