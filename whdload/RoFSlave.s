@@ -34,10 +34,10 @@
 ;
 ;---------------------------------------------------------------------------*
 
-	INCDIR	Includes:
+	INCDIR	Include:
 	INCLUDE	whdload.i
 	INCLUDE	whdmacros.i
-	INCLUDE	lvo/dos.i
+;	INCLUDE	lvo/dos_lib.i
 
 ;============================================================================
 ; kick13.s configuration
@@ -90,12 +90,11 @@ slv_keyexit	= $59		;F10.  Note WHDLoad can only read this via the moved VBR,
 				;out is the game's own quit (left mouse button), which
 				;returns here and aborts cleanly.
 
-	INCDIR	Sources:
 	INCLUDE	whdload/kick13.s
 
 ;============================================================================
 
-slv_CurrentDir	dc.b	"data",0
+slv_CurrentDir	dc.b	0
 slv_name	dc.b	"Rescue on Fractalus!",0
 slv_copy	dc.b	"1985 Lucasfilm Games",0
 		;-1 = line feed plus a half-font vertical skip, so it ends a section
