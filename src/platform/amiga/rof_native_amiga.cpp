@@ -661,8 +661,15 @@ extern "C" volatile unsigned long g_vbiZpFirings = 0;
 #endif
 extern "C" void flight_vbi_native(void)
 {
-    unsigned short a = beam_line();      // sub-frame profiler timer (FULL probe-ISR span)
+    // ⚠ ALL FOUR beam_line() reads below are PROFILING, and they are gated — they used to be
+    // unconditional, so the SHIPPING binary paid 8 chip-register reads ($DFF004/$DFF006) plus
+    // two volatile 32-bit accumulator updates on every one of the 50 firings a second, for two
+    // globals nothing outside the gdb probe scripts ever reads.  They cannot be optimised away
+    // (volatile hardware reads), so only an #ifdef removes them.  ~0.2% of wall clock — small,
+    // but it is instrumentation, and `make FPSCOUNT=1` claims to be "an otherwise shipping
+    // binary" (see the Makefile), which was not quite true while these were unconditional.
 #ifdef ROF_FLIGHT_PROBE
+    unsigned short a = beam_line();      // sub-frame profiler timer (FULL probe-ISR span)
     // ZP write-set audit (rasterizer-alias safety, see CLAUDE.md): snapshot ZP before the
     // handler, diff after.  These two 256-iter loops are PROBE-ONLY overhead (~70 beam
     // lines/firing of volatile mem[] traffic) — absent from the real probe-off build.  So
@@ -672,19 +679,19 @@ extern "C" void flight_vbi_native(void)
     // FP_TIME buckets (draw/setup/clear) match the real game's pure main-loop compute.
     unsigned char zpSnap[256];
     for (int i = 0; i < 256; i++) zpSnap[i] = mem[i];
-#endif
     unsigned short a2 = beam_line();     // HANDLER-only span start
+#endif
     vbi_handler_flight();                // $4FF5 — the whole handler
-    unsigned short b2 = beam_line();     // HANDLER-only span end
 #ifdef ROF_FLIGHT_PROBE
+    unsigned short b2 = beam_line();     // HANDLER-only span end
     for (int i = 0; i < 256; i++) if (mem[i] != zpSnap[i]) g_vbiZpTouched[i] = 1;
     g_vbiZpFirings++;
-#endif
     unsigned short b = beam_line();
     unsigned short dHandler = (b2 >= a2) ? (unsigned short)(b2 - a2)
                                          : (unsigned short)(b2 + 313 - a2);  // PAL wrap
     g_flightProf.isrLines += dHandler;   // report the real handler cost (excludes the ZP audit)
     g_flightProf.isrCalls++;
+#endif
 #if defined(ROF_COMBAT_LOAD) && defined(ROF_FLIGHT_PROBE)
     // Split the REAL handler cost by combat state.  This is the measurement that finished the
     // combat attribution: the flight VBI carries the faithful 50 Hz sim + all of the audio, it

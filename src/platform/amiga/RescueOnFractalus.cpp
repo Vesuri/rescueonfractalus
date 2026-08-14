@@ -6517,7 +6517,9 @@ void RescueOnFractalus::decodeTitleScreen()
 
 void RescueOnFractalus::render()
 {
+#ifdef ROF_FLIGHT_PROBE
     unsigned short profR0 = flight_vbi_tick();   // whole-render() timer (flight only)
+#endif
     // ---- terrain / door view ------------------------------------------------
     // Only re-render when terrainDirty (set in initialize(); cleared here).
     // During static Standby the terrain is constant ($88 = closed door).
@@ -6544,7 +6546,9 @@ void RescueOnFractalus::render()
         // displayed offset-0 half).  Content changes every frame, so re-decode each
         // render(); the per-byte shadow keeps it cheap.
         if (rsFlight) {
+#ifdef ROF_FLIGHT_PROBE
             unsigned short r0 = flight_vbi_tick();
+#endif
             // Direct $260E->bitplane terrain render (replaces the renderViewportModeD convert):
             // no mem[$1070] round-trip / buffer scan / shadow.  ~2.8x cheaper, plane1 byte-exact.
 #ifdef ROF_FLIGHT_PROBE
@@ -6558,7 +6562,9 @@ void RescueOnFractalus::render()
 #ifdef ROF_FLIGHT_PROBE
             g_fDirect += (rof_subclock() - _dv0) - (g_isrBeamLines - _dvi);
 #endif
+#ifdef ROF_FLIGHT_PROBE
             g_flightProf.render += (unsigned short)(flight_vbi_tick() - r0);
+#endif
         }
         else {
 #ifdef ROF_FLIGHT_PROBE
@@ -6804,7 +6810,9 @@ void RescueOnFractalus::render()
 #else
     (void)any;
 #endif
+#ifdef ROF_FLIGHT_PROBE
     if (rsFlight) g_flightProf.renderTot += (unsigned short)(flight_vbi_tick() - profR0);
+#endif
 }
 
 void RescueOnFractalus::shutdown()
