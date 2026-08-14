@@ -309,6 +309,11 @@ extern "C" volatile unsigned long  g_seTail    = 0;     // the copper-install ta
 // install vbi) frames.  1 = the Atari's behaviour.
 extern "C" volatile unsigned short g_tunLastVbi = 0, g_planetInstVbi = 0;
 extern "C" volatile unsigned long  g_seSprKick = 0, g_seSprConv = 0, g_seSprDrain = 0;  // buildStarSprites split
+// Slots the tail wipe actually cleared, per buildStarSprites entry = that entry's inherited star
+// window W.  Entry 0 is a FIRST entry and legitimately reports 0 (MEMF_CLEAR rings); a RE-entry
+// MUST report W > 0, else the sizing is vacuously "correct" while wiping nothing that needed it.
+extern "C" volatile unsigned short g_seSprTail[4] = { 0, 0, 0, 0 };
+extern "C" volatile unsigned short g_seSprCalls = 0;
 extern "C" volatile unsigned long  g_seWall    = 0;     // whole frame, entry -> planet copper installed
 extern "C" volatile unsigned char  g_seArmed   = 0;     // 1 while that first stars frame is in flight
 // starVblankUpdate beam-deadline probes.  The star update has three of them, all policed here
@@ -1943,22 +1948,42 @@ static const int       kStarRingSlots = kStarMaxScroll + kViewportFullHeight + 2
 // re-seeds the window-0 control slot, then converts the 89 visible rows into slots [1..89].
 // Each set star bit becomes a 4-px dot at its faithful 0/8/20/28-cc offset via kStarGlyphLo/Hi.
 //
-// The clear is BLITTED, and only over the TAIL.  Two disjoint regions:
+// The clear is BLITTED, and only over the DIRTY PART of the TAIL.  Two disjoint regions:
 //   head — slot 0 (control words) + slots 1..89 (the converted strip): fully overwritten below,
 //          so pre-zeroing it would be wasted work;
-//   tail — slots 90..kStarRingSlots-1: the padding rows and terminator the window scrolls into.
+//   tail — slots 90 and up: the padding rows and terminator the window scrolls into.
 //          starVblankUpdate only ever writes the ONE new bottom row per advance, so those slots
 //          must already read zero when the window reaches them — and on a re-entry they still
 //          hold the previous pass's rows.
 // The CPU loop that used to clear all 8832 words of the 6 rings cost ~1180 beam ticks ≈ 75 ms —
 // on its own the whole of the tunnel->stars freeze (measured 185 ticks after this change).  Because head and tail are disjoint, the conversion below runs
 // while the blit is in flight and nothing has to wait for it until the closing drain.
+//
+// ⭐ The tail wipe is SIZED to the previous pass rather than blanket: starVblankUpdate writes
+// exactly two slots per advance — the control slot at the window head (nw) and the one new bottom
+// row (nw + kStarRows) — so a pass that reached window W dirtied slots 0..W+kStarRows and NOTHING
+// above.  The rebuild below rewrites 0..kStarRows itself, leaving exactly slots
+// kHeadSlots..W+kStarRows = **W slots** to re-zero.  (The window's DMA also READS the 5 padding
+// rows + the terminator fetch at nw+kViewportFullHeight+1, i.e. up to W+95, but never writes
+// them, so they are still zero from the previous wipe.)  The invariant is inductive: every entry
+// leaves all slots >= kHeadSlots zero, so each pass's dirt is bounded by its own window.
+// starWindow still holds W at this point — starPhaseActive is false on the entry frame (it is
+// perFrameWork's else branch clearing it, via starSpritesValid, that forces this rebuild), so
+// starVblankUpdate returns immediately and cannot advance the window under us.
+// ⚠ W == 0 on a FIRST entry, and then there is nothing to wipe at all (Sprite::allocate uses
+// MEMF_CHIP|MEMF_CLEAR).  The skip is REQUIRED, not an optimisation: blitterClear pokes
+// (height << 6) | width straight into BLTSIZE, where height 0 means 1024 rows — a 2048-word wild
+// wipe past the end of a 736-slot ring.
 void RescueOnFractalus::buildStarSprites()
 {
     static const int kHeadSlots = kStarRows + 1;                    // control slot + the 89 rows
     static const int kTailSlots = kStarRingSlots - kHeadSlots;
+    int tailSlots = starWindow;                                     // = W: the dirty tail, in slots
+    if (tailSlots > kTailSlots) tailSlots = kTailSlots;              // geometry guard (W <= kStarMaxScroll)
 #ifdef ROF_FLIGHT_PROBE
     g_seSprKick = 0; g_seSprConv = 0;
+    if (g_seSprCalls < 4) g_seSprTail[g_seSprCalls] = (unsigned short)tailSlots;
+    g_seSprCalls++;
 #endif
     for (int i = 0; i < 6; i++) {
         uint16_t* ring = starRing[i];
@@ -1966,8 +1991,9 @@ void RescueOnFractalus::buildStarSprites()
 #ifdef ROF_FLIGHT_PROBE
         const unsigned long _k0 = rof_subclock();
 #endif
-        // 2 words per slot, no modulo → one contiguous kTailSlots*2-word wipe.
-        AmigaHardware::blitterClear(ring + kHeadSlots * 2, 2, (uint16_t)kTailSlots, 0);
+        // 2 words per slot, no modulo → one contiguous tailSlots*2-word wipe.
+        if (tailSlots > 0)
+            AmigaHardware::blitterClear(ring + kHeadSlots * 2, 2, (uint16_t)tailSlots, 0);
 #ifdef ROF_FLIGHT_PROBE
         const unsigned long _k1 = rof_subclock(); g_seSprKick += _k1 - _k0;
 #endif
