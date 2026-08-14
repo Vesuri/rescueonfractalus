@@ -519,7 +519,7 @@ extern "C" volatile unsigned long g_bandCalls = 0, g_bandMismatch = 0, g_bandFir
 // laser_dot_run), so every nonzero byte is inside it and the narrowed apply still clears them all.
 extern "C" int g_objColLo = 40, g_objColHi = -1;
 // ...and, better still, the exact byte OFFSETS.  The box narrowed the walk but did not change its
-// nature: it is still a search.  Measured (objp1_shape.gdb, COMBAT+FIXED_RNG, 358 painted frames)
+// nature: it is still a search.  Measured (a shape probe, COMBAT+FIXED_RNG, 358 painted frames)
 // the box is 447 bytes/frame of which 2.2% -- about ten -- are nonzero, and the COMBAT PC profile
 // put 20/300 samples on the inner test.  But every one of those bytes is written by a writer that
 // already computed its offset, so the reader never needs to search at all: each writer appends the

@@ -2,7 +2,7 @@
 #
 # For A/Bs where the thing under test lives INSIDE mem[] (e.g. "are these xex bytes dead?").
 # A checksum probe cannot answer that: the blocks being summed CONTAIN the very bytes that
-# were changed, so they differ trivially and the comparison is vacuous (charset_ab.gdb read
+# were changed, so they differ trivially and the comparison is vacuous (the charset A/B read
 # $3000-$BFFF as "changed" when all that changed was the zeroed code bytes themselves).
 # Dump instead, then diff offline with the changed set MASKED OUT.
 #

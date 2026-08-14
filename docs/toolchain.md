@@ -10,11 +10,16 @@ macOS (Apple Silicon).
 | OpenJDK 21 | `/opt/homebrew/opt/openjdk@21` (keg-only) | Ghidra runtime |
 | Ghidra 12.1 | `tools/ghidra/ghidra_12.1_PUBLIC` | disassembly + analysis (headless) |
 | Python 3.11 | `python3` (pyenv) | XEX tools, transpiler |
-| clang / make | system | building the C reimplementation |
+| clang / make | system | building the SDL host port (`make` at the repo root) |
+| SDL2 | homebrew | the macOS dev/profiling backend |
+| `m68k-amiga-elf-*` + `vasmm68k_mot` + `elf2hunk` + patched FS-UAE | `~/.local` (on `PATH` via `. amiga/env.sh`) | the Amiga cross-build, from BartmanAbyss `vscode-amiga-debug` — its gcc/gdb/elf2hunk/FS-UAE are mutually matched, which is what makes source-level debugging work |
+| `atari800` | homebrew | the Atari ground-truth emulator (FIFO monitor mode) |
 
-Not yet installed (later phases): SDL2/SDL3 (Phase 3), an Amiga cross-compiler
-+ FS-UAE/WinUAE (Phase 6), optionally `cc65`/`da65` (round-trip checks) and
-Altirra via CrossOver or Atari800MacX (reference emulator, Phase 4).
+⚠ **The Amiga toolchain must live at a space-free path** (hence `~/.local`, not
+this repo). GCC's LTO link bakes the install path into `COLLECT_LTO_WRAPPER` and
+`posix_spawnp`s it, and a space — as in `…/Rescue on Fractalus/…` — breaks the
+spawn. `amiga/env.sh` resolves symlinks with `pwd -P` so gcc only ever sees
+space-free paths.
 
 > **2026-08-12:** `tools/ghidra` is now a symlink to a shared install at
 > `~/.local/share/ghidra`, also used by the Revs repo, rather than its own copy — saves
@@ -85,16 +90,18 @@ the Ghidra GUI and headless at the same time (Ghidra locks projects).
 
 ## Ghidra scripts (`ghidra_scripts/`)
 
-| Script | Status | Purpose |
-|---|---|---|
-| `MarkEntries.java` | ✔ | mark XEX entry points (`$3CDE` etc.) + disassemble |
-| `ExportListing.java` | ✔ | dump listing.txt (functions + instructions + comments) |
-| `DumpHwAccesses.*` | Phase 1 | xref dump of `$D000–$D7FF` + page-2 shadow accesses |
-| `MarkData.*` | Phase 1 | mark data ranges so tables aren't disassembled as code |
-| `ApplyNames.*` | Phase 1 | apply `symbols.csv` names/comments to the project |
+| Script | Purpose |
+|---|---|
+| `MarkEntries.java` | mark XEX entry points + every address in `entrypoints.csv` (DLIs are reachable only through indirect-jump tables, so Ghidra never finds them itself), then disassemble |
+| `ExportListing.java` | dump `listing.txt` (functions + instructions + comments) — the transpiler's input |
+| `ApplyNames.java` | apply `symbols.csv` names/comments to the project |
+| `DumpHwAccesses.java` | xref dump of `$D000–$D7FF` + page-2 shadow accesses → `docs/hw-access.md` |
+| `DumpCallGraph.java` | per-function caller/callee/indirect-jump summary → `disasm/callgraph.txt` |
+| `DumpZeroPage.java` | per-address zero-page read/write census → `disasm/zeropage.csv` |
 
-## .gitignore note
+## What is tracked under `disasm/`
 
-`tools/ghidra/` (the ~2 GB extracted Ghidra) and `tools/ghidra-proj/` should be
-git-ignored; keep `rof.xex`, the `tools/*.py`, `ghidra_scripts/`, `docs/`, the
-generated text under `disasm/` you want tracked, and `src/`.
+Only **`symbols.csv`** — the curated name source of truth. Everything else there
+(`rof_mem.bin`, `listing.txt`, `rof_blocks.txt`, `callgraph.txt`, `zeropage.csv`)
+is regenerable by the commands above and is git-ignored, as are `tools/ghidra`
+(a symlink to the shared install) and `tools/ghidra-proj/`.

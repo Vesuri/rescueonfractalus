@@ -17,7 +17,7 @@
  * ⚠ THE TRAP THIS CREATES, AND WHY THERE IS A GUARD: a static initialiser on a `__chip`
  *   variable is now silently DISCARDED -- the linker drops the contents and the variable
  *   comes up zero at runtime.  wave_pure used to be `= { 0x7F, 0x81 }` and would have gone
- *   silently silent.  So amiga/Makefile runs tools/check_chip_bss.py over the objects
+ *   silently silent.  So amiga/Makefile runs ../tools/check_chip_bss.py over the objects
  *   before the link and fails the build if any object contributes a nonzero byte here.
  *
  * INSERT AFTER .data supplements the default linker script rather than replacing it, so

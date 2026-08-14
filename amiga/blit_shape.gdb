@@ -5,7 +5,7 @@
 # cannot name the CALL SITE, and the fix for a stall is per-site (give the CPU work to do during
 # it, or split the blit so only the part the CPU needs is awaited).  So bracket every wait.
 #
-# ⚠ The frame-sync spin is the interesting one: `pace_ab.gdb` reports g_idleFrames = 0.00
+# ⚠ The frame-sync spin is the interesting one: the pacing A/B probe reported g_idleFrames = 0.00
 # frames/iteration, which was read as "flight is 100% compute-bound, there is no wait".  That
 # counter is INTEGER FRAMES (g_vbiCount delta across the spin) and the deferred-flip scheme
 # normally SKIPS the spin entirely — so it can read 0 while sub-frame stalls elsewhere are real.

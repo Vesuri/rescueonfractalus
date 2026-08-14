@@ -162,7 +162,7 @@ analysis in the `rof-project` memory; immediate visual confirmation).
 
 ## Foundations (already established — don't re-litigate)
 
-- **Toolchain** (`amiga-spike.md`, `Template/C++/GCC-PORT.md`): BartmanAbyss
+- **Toolchain** (`toolchain.md`, `Template/C++/GCC-PORT.md`): BartmanAbyss
   `vscode-amiga-debug` v1.8.2, installed at **`~/.local`**
   (`~/.local/opt/bin/m68k-amiga-elf-gcc` 15.1.0 + gdb/as/objdump,
   `~/.local/{elf2hunk,vasmm68k_mot,fs-uae}`, `~/.local/support/`). **Not on

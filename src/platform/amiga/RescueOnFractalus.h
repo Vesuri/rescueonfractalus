@@ -12,14 +12,12 @@
 #include "TitleScreenCopperList.h"
 #include "Gtia9CopperList.h"
 
-// 2-bitplane attract screen: one BPLCON0 mode for the whole frame, Copper
-// switches the 4-colour palette (and bitmap pointer) at each region boundary,
-// mirroring the Atari DLI schedule exactly.
-//
-// Regions:
-//   Title   (lines 0..kTerrainLine-1) : title.raw  + kTitlePalette
-//   Terrain (lines kTerrainLine..kCockpitLine-1) : terrain.raw + kTerrainPalette
-//   Cockpit (lines kCockpitLine..end) : cockpit.raw + kCockpitPalette (+ blink)
+// One BPLCON0 mode for the whole frame; the Copper switches palette (and bitmap
+// pointer) at each region boundary, mirroring the Atari DLI schedule exactly.
+// Every region's bitmap is DECODED at runtime from the Atari image in mem[] —
+// there are no pre-baked .raw screen assets (see incbin.s for why they went).
+// Per-scene region tables live in the *CopperList classes; the composition of
+// each of the 7 scenes is documented in docs/scene-composition.md.
 class RescueOnFractalus {
 public:
     void initialize();

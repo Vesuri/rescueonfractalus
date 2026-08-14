@@ -3258,7 +3258,7 @@ void PlatformAmiga::run()
     // ln_Pri only matters in the VERTB_SERVER fallback (the takeover has no chain): 127 puts
     // us at the HEAD, ahead of graphics.library (pri 10) / gameport.device / timer.device.
     // Measured, pinned level, vbi-gated 60 s window: head-of-chain is +9.4% flight throughput
-    // over the original pri 0 (0.0409 -> 0.0447 iterations/frame).  See amiga/fps_ab.gdb.
+    // over the original pri 0 (0.0409 -> 0.0447 iterations/frame).
     vbiServer.is_Node.ln_Pri  = 127;
     vbiServer.is_Node.ln_Name = (char*)"RoF VBI";
     vbiServer.is_Data = 0;

@@ -1,58 +1,50 @@
-# UAE
-*.uaem
+# NOTE: gitignore has no inline-comment syntax — a trailing "# ..." on a pattern
+# line is taken as literal glob text and matches nothing.  Comments go on their
+# own line.
 
-# Large / regenerable artifacts
-# (gitignore has no inline-comment syntax -- a trailing "# ..." on a pattern line
-# is taken as literal glob text and matches nothing, so comments go on their own line)
-*.zip
+# --- OS / local tooling state ------------------------------------------------
+.DS_Store
+.claude/*.lock
 
-# Game ROM and image artifacts — kept LOCAL only, never committed.
-# rof.xex is the copyrighted source binary; PNGs are screenshots / comparison
-# captures. Purged from history 2026-06-02; keep them out of the repo for good.
+# --- Copyrighted / captured material: kept LOCAL only, never committed -------
+# rof.xex is the original Atari binary (purged from history 2026-06-02); the PNGs
+# are game screenshots and comparison captures.  This also covers docs/*.png, so
+# a documentation image has to live outside the repo too.
 *.xex
 *.png
 
-# Generated, regenerable from rof.xex via the tools
-disasm/rof_mem.bin
-disasm/listing.txt
-
-# Build output
+# --- Build output ------------------------------------------------------------
 build/
 *.o
-*.rep
-*.lock
 
-# Generated C (regenerate with: make gen)
+# --- Generated: regenerable from rof.xex ------------------------------------
+# ...by tools/ (xex_load.py, transpile.py) or a headless Ghidra pass (the
+# Dump*.java scripts).  Only the CURATED disasm file is tracked: symbols.csv,
+# the name source of truth.
+disasm/rof_mem.bin
+disasm/listing.txt
+disasm/rof_blocks.txt
+disasm/callgraph.txt
+disasm/zeropage.csv
 src/gen/rof_gen.c
 src/gen/rof_decl.h
 
-# OS
-.DS_Store
-src/**/*.o
-
-# Ghidra install + project and local probe scratch under tools/ (never commit)
-# tools/ghidra has no trailing slash: it's a symlink to a shared install
-# (~/.local/share/ghidra), and a trailing-slash gitignore pattern only matches a
-# real directory, not a symlink to one.
+# --- Ghidra install + annotation project (never commit) ----------------------
+# tools/ghidra has no trailing slash: it is a SYMLINK to a shared install
+# (~/.local/share/ghidra), and a trailing-slash pattern only matches a real
+# directory, not a symlink to one.
 tools/ghidra
 tools/ghidra-proj/
 tools/__pycache__/
-tools/live_*.sh
 
-# Local probe/debug scratch — savestates, RAM dumps, ad-hoc probe scripts, spike
-# experiments. Kept LOCAL only (never committed); regenerable / disposable.
+# --- Local scratch: atari800 savestates + RAM dumps --------------------------
+# Atari ground-truth captures and scratch working dirs.  Not regenerable from
+# anything in the repo (they come from atari800 runs), so they are kept locally
+# but never committed.  Ad-hoc probe scripts belong here too — anything worth
+# keeping gets committed under amiga/ with a comment saying what it answers.
 /tmp/
 /a800dumps/
-/amiga-spike/
 *.a8s
 *.dat
 *bars_active.bin*
 amiga/*_probe.sh
-amiga/sample.sh
-amiga/trace_blit*.sh
-amiga/wing_run.sh
-amiga/wing_probe.gdb
-amiga/assets/attract.raw
-amiga/assets/attract_pal.h
-amiga/RoF-asm.exe
-amiga/RoF-cmixer.exe

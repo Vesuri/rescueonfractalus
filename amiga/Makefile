@@ -934,7 +934,7 @@ VASMFLAGS = -m68010 -Felf -quiet -x -no-opt -nowarn=62 $(EXTRA_VASMDEFS)
 # touching anything `__chip`: it makes a static initialiser on a __chip variable a silent
 # zero, which is why CHIP_BSS_CHECK below gates the link.
 CHIP_BSS_LD    = memf_chip_bss.ld
-CHIP_BSS_CHECK = tools/check_chip_bss.py
+CHIP_BSS_CHECK = $(REPO)/tools/check_chip_bss.py
 LDFLAGS   = -Wl,--emit-relocs,--gc-sections,-Ttext=0,-Map=$(OUT).map -Wl,-T,$(CHIP_BSS_LD)
 
 # ---------------------------------------------------------------------------

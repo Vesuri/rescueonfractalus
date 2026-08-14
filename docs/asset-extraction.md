@@ -268,7 +268,7 @@ Two things this brought with it:
 * ⚠ **A static initialiser on a `__chip` variable is now silently discarded.** `wave_pure` was
   `= { 0x7F, 0x81 }` and would have come up as two zero bytes — i.e. the default waveform for
   every channel would have been silence, presenting as an audio bug with no bad arithmetic
-  anywhere. Guarded: `amiga/tools/check_chip_bss.py` fails the link if any object contributes a
+  anywhere. Guarded: `tools/check_chip_bss.py` fails the link if any object contributes a
   nonzero byte, and the guard was transition-tested by re-adding the initialiser.
 * A host-side size diff cannot see whether the buffers are still *correct* at runtime, and no
   differential can either (nothing reads them but Paula's DMA). `amiga/chipbss_verify.gdb` is the
