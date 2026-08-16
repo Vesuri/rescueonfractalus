@@ -74,6 +74,20 @@ where arrow up/down chooses a starting level.
 story, the mission briefing, what every cockpit instrument does, and the pilot rankings. Read
 it if you want to actually understand the dashboard.
 
+## How it was done
+
+The Atari 6502 binary was disassembled in Ghidra. A custom transpiler transliterated it to C.
+Hot functions were rewritten as native C twins, each proven byte-identical against the 6502
+original. The hottest ones were rewritten again in 68000 assembler.
+
+Atari hardware accesses were rewritten in matching Amiga concepts. Display lists became copper
+lists, DLIs became copper MOVEs. PMG became sprites. Atari screen modes became bitplanes, with
+the blitter used where it wins. POKEY audio is reproduced on Paula. Keyboard and joystick come
+from the CIA and `JOY1DAT`.
+
+Everything was validated against the 6502 code and `atari800`, never against the SDL development
+build. Performance was tuned with headless FS-UAE and gdb probes.
+
 ## Credits
 
 *Rescue on Fractalus!* was created by the Lucasfilm Games Division. David Fox directed the
