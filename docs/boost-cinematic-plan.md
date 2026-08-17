@@ -599,3 +599,51 @@ Already-native callees (reuse as-is): `boot_standby_launch_driver $5F1D`, `draw_
 - **FIXED (logic, 1-frame, not visually confirmable):** issue-1 stale-`$2000` garbage frame → clear-on-install.
 - **FIXED + screencapture-confirmed (2026-07-16, commit 792e6d0):** issue-3 the stars→tunnel row-by-row REVEAL (the bowtie flash). `decodeBoostViewport()` decodes each viewport row from its per-row mode-F LMS in the LIVE `$3000` launch DL (`mem[$300A+3r]|mem[$300B+3r]<<8`) — `emit_dl_coord_pairs` (native twin, driven by `boot_standby_launch_driver`) maintains those DL bytes faithfully on the Amiga. LMS in `[$1000,$2000)` = revealed rings (decode straight from that LMS → also gets the rev strand's mirrored bottom-half addresses); else stars from `$2000+row*46` (NOT the raw `$2f74` leftover, which points one row past the stars field). The reverse-ring emit converts rows from the CENTRE (42/57) outward over 20 VBI steps, so the rings grow from the centre — a mid-reveal frame shows the innermost rings emerging over black. **⚠ KEY: the `$3000` DL bytes ARE maintained on the Amiga** (the earlier "uniform `$2f74` / DL not maintained in mem[]" note was just step-0 before any emit; mid-reveal shows the exact sweep matching an offline simulation of the emit pointer math). No T4 twin was needed for this. Do NOT use `$073D/$0793` (plotter target).
 - **OPEN:** Reverse-ring perf (full-decode/frame; T4 native `$6A8F` twin + dirty band). Standby handoff / band-triangle clear (`$6A27`; T6). Pink-vs-teal ring cycle to verify.
+
+---
+
+## Level COMPLETE: the tally, the jingle and the LIFT (and the hang that lived there)
+
+The mother-ship return above is only half the arrival.  Whether the level counts as **completed**
+is decided at the top of `boot_standby_launch_driver`, from two bytes:
+
+| byte | meaning |
+|---|---|
+| `$0629` (`osc_step_counter`, misnamed) | pilots rescued this level — `INC`'d per rescue by `$7AF4`; `>= $061F = ($062A/2)+1` is what summons the mother ship (`game_sub_7B54` seeds the arrival countdown `$2849`) |
+| `$062A` (`stage_geom_height_062A`) | the level's QUOTA, `clamp(level/2+2,$14)` from `compute_stage_display_geometry` |
+
+`L_615b` computes `$00E3 = $0629 - $062A`, and everything downstream hangs off its sign:
+
+- `$0629 == 0` (no pilots): straight to `L_61f8` — no tally at all.
+- **bit7 set** (under quota): the BONUS POINTS tally runs (`min(pilots,quota)` × 500, message id
+  `$0C`), then `L_61f2` — **no LEVEL COMPLETE, no jingle, no level advance**; `L_61f8` sets
+  `$0609 = 4` (or the level) and the run ends without a lift.
+- **bit7 clear** (quota MET): the tally, then 1000 a piece for every pilot over quota (`sfx_event_load
+  X=$10`), message id `$83 & $7F = 3` = **LEVEL COMPLETE**, the jingle (`music_init_state Y=$0B` sets
+  `$0655`; the main loop `ds_frame()`s until the VBI clears it), the RANKING LEVEL max
+  (`$060A`), `count_up_to_level` and the level × 200 tally — then `L_6219`: `$0609 =
+  min(level+4,$63)` and into the **LIFT**.
+
+The lift is `L_622d`→`L_6268`: a 19-step LMS scroll, then one pass per level — each pass waits for
+`$008B` to reach `$3E`, re-blits the readout and **`level_stage++`** on its 3rd sub-step, then waits
+for `$008B` to reach `$0F` — repeating while `level_stage < $0609`, with joystick-up/SELECT as the
+early-out.  `$008B` is driven by the standby VBI, which decrements it by one per frame
+(`launch_anim_dispatch` → `dl_lms_scroll_step`).  This is the elevator the player rides to the level
+they pick, and it is also what the post-mother-ship SELECT in-place level cycle re-enters.
+
+### ⚠ The hang (EAB thread 123489, fixed 2026-08-17)
+Reported as: after completing a level the lift gets stuck part way to the next level, the cockpit
+lights still blink, the music is stuck, and it never returns to the main loop; rebooting doesn't
+help.  Cause: **neither lift spin body contains a call**, and `mem[]` is not `volatile` in the Amiga
+C core (`ROF_MEM_NONVOLATILE`) — so GCC proved `while (mem[$008B] != N)` invariant, hoisted the
+load and emitted **`bra.s .`**, and dead-code-eliminated the whole tail of the function (the SELECT
+early-out, the `L_62b9` settle scroll, `dl_lms_reset_window`).  The hang was therefore
+unconditional, not a race: reaching the lift meant hanging.  Fix: `ROF_SPIN_MEM()` in
+`rof_native.c` forces the re-read.  Audit for the class with
+`m68k-amiga-elf-objdump -d out/RoF.elf | grep 60fe` (a `bra.s` to itself).
+
+### Reaching it headlessly
+`make clean && make -j4 PROBES=1 FORCE_RETURN=1 LEVEL_DONE=1 [LEVEL_DONE_LEVEL=n]` +
+`GDBSCRIPT=level_done.gdb ./diag_run.sh 150`.  `LEVEL_DONE` pins `$0629` to `$062A` at the arrival —
+plain `FORCE_RETURN` (and `FORCE_MOTHERSHIP`) leave it at 0, which is why the tally, the LEVEL
+COMPLETE message, the jingle and the lift had never run on the Amiga at all.
