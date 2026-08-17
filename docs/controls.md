@@ -40,6 +40,7 @@ restart must longjmp from main-loop context (`rof_check_restart`).
 | Joystick up / down | Starting level up / down (inside the level-selector card only) | — | **joystick forward/back**, or **arrow up/down** ($4C/$4D) | PORTA $D300 bits 0/1 |
 | (trigger, pre-game) | Start the game | — | **joystick button 1** | TRIG0, via `read_console_trig_delta $5A78` = `(CONSOL & $01) - TRIG0` |
 | SELECT | Open the level-selector card (initial Standby) / cycle level in place (post-mother-ship Standby) | — | **F2 ($51)** | CONSOL $D01F bit1 |
+| SHIFT+SELECT | *Lower* the starting level instead of raising it (selector card) | — | **either Shift ($60/$61) + F2** | SKSTAT $D20F bit3 |
 | OPTION | Demo (DEMO DROID) | — | **F3 ($52)** | CONSOL $D01F bit2 |
 | SYSTEM RESET | Reboot disk | — | not mapped (hardware reset, not application-controlled) | — |
 
@@ -102,6 +103,33 @@ second-stick path and nothing to choose.
   regression that mattered; **the probe proves quietness, never that a real stick steers correctly**.
 - **A real stick IS now confirmed** (user, 2026-08-14): the axes behave as an aircraft — stick back
   raises the nose, stick forward lowers it, matching the manual's Forward = Dive / Back = Climb.
+
+## SHIFT — SKSTAT $D20F bit3, the level-selector's decrement
+
+`standby_level_select_loop $5978` picks its direction at `$59be`, and SHIFT is half of that decision:
+
+```
+LDA $D300 / AND #$02   ; joystick DOWN?   -> decrement
+LDA $D20F / AND #$08   ; else SHIFT held? -> decrement   (ACTIVE-LOW: bit3 clear = held)
+                       ; else             -> increment
+```
+
+`hwRead` used to hardwire SKSTAT to a flat idle `$FF`, so bit3 always read "not pressed" and
+**Shift+F2 raised the level like a bare F2**. (That flat `$FF` was itself a fix: returning the POKEY
+write-shadow read as permanently shift-HELD, so every press decremented.) Both Amiga shift keys now
+drive `s_shiftMask` — one bit each, so releasing one while the other is held stays held — and
+`hwRead($D20F)` clears bit3 from it. Ungated, unlike the stick emulation: SHIFT is a real key the
+Atari reads in any scene, `$59c5` is the binary's ONLY `$D20F` read, and in flight Left Shift doubles
+as the trigger with no reader to conflict.
+
+⚠ **Joystick-down decrements on the same branch**, which is why this was invisible with a stick
+plugged in. Since the arrow keys are flight-only, arrow-down does NOT decrement here — on the
+keyboard the level comes down with Shift+F2.
+
+**Measured A/B** (`FORCE_SELECT` pulsing joystick-up on the card): the level's own SEQUENCE is the
+signal, because both branches wrap — `DEC`, and on 0 reload the max; `INC`, and at the cap reset to
+1 — so a single end value cannot show direction. bit3=1 gave `4 5 6 7 8 9 10 11`; bit3=0 gave
+`4 5 4 3 2 1 16 15`.
 
 ## Skipping the two boot cinematics — START *or* fire (divergence, ON by default)
 

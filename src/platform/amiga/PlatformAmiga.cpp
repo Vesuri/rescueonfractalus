@@ -724,6 +724,13 @@ static inline bool keyboardStickLive()
 {
     return (uint16_t)(mem[0x0222] | (mem[0x0223] << 8)) == 0x4FF5u;   // VVBLKI = the flight VBI
 }
+// SHIFT, as POKEY SKSTAT ($D20F) bit3 sees it — active-LOW, like every other Atari key register.
+// The ONLY reader in the binary is standby_level_select_loop $5978 at $59c5: joystick-down OR shift
+// held picks the level-DECREMENT branch, anything else increments.  Both Amiga shift keys feed it,
+// one bit each, so releasing one while the other is held stays "held".  Ungated (unlike the stick
+// emulation above) because SHIFT is a real key the Atari can read in any scene, and no other code
+// reads SKSTAT — in flight Left Shift doubles as the trigger, which nothing conflicts with.
+static volatile uint8_t s_shiftMask = 0x00u;    // bit0 = left shift, bit1 = right shift
 #ifdef ROF_FORCE_SELECT
 // Synthetic stick for the headless SELECT probe, ANDed into PORTA *ungated*: the probe drives
 // joystick-up on the selector CARD, which is exactly what the gate above shuts out.  Every other
@@ -749,8 +756,11 @@ uint8_t PlatformAmiga::hwRead(uint16_t addr)
     // the level-INCREMENT path (joystick-up / SELECT raise the starting level), shift held →
     // decrement.  Returning the POKEY write-shadow (pokey[$F], bit3=0) reads as "shift held",
     // so the code always decremented → joystick-up appeared to do nothing / wrong direction.
-    // Emit a proper idle SKSTAT (nothing pressed) so up=raise, down=lower, matching the Atari.
-    if (addr == 0xD20Fu) return 0xFFu;                // SKSTAT: idle (bit3=1 = shift not pressed)
+    // Emit a proper idle SKSTAT (nothing pressed) so up=raise, down=lower, matching the Atari —
+    // with bit3 driven by the live Amiga shift keys, which is what makes Shift+SELECT lower the
+    // level the way SHIFT+SELECT does on the Atari.  Every other bit stays idle: nothing in the
+    // binary reads them (this is the only $D20F read, at $59c5).
+    if (addr == 0xD20Fu) return s_shiftMask ? (uint8_t)(0xFFu & ~0x08u) : 0xFFu;   // bit3 = SHIFT
     if (addr >= 0xD200u && addr < 0xD210u) return pokey[addr - 0xD200u];
     // PIA PORTA ($D300): Atari joysticks are ACTIVE-LOW (1 = open/neutral).  Driven by the real
     // port-1 stick in every scene, and by the Amiga arrow keys (stick-0 bits 0-3) in FLIGHT only;
@@ -1700,6 +1710,11 @@ static const uint8_t kRawDown      = 0x4D;
 static const uint8_t kRawRight     = 0x4E;
 static const uint8_t kRawLeft      = 0x4F;
 static const uint8_t kRawFire      = 0x60;   // Left Shift = fire button (TRIG0)
+// Both shift keys feed SKSTAT bit3 (see s_shiftMask).  kRawLShift aliases kRawFire on purpose:
+// in flight that key is the trigger, at the level-selector card it is SHIFT, and the two readers
+// never overlap.
+static const uint8_t kRawLShift    = 0x60;
+static const uint8_t kRawRShift    = 0x61;
 
 // ---- Real Amiga joystick, port 1 ------------------------------------------------------------
 // The manual's "plug your joystick into the second port" lands exactly right here: on the Amiga
@@ -1854,6 +1869,11 @@ static uint32_t keyboardHandler()
         default:
             break;
     }
+
+    // SHIFT level for SKSTAT bit3 — tracked before the joystick switch below and deliberately
+    // NOT returning, because Left Shift is also the trigger and must reach that case too.
+    if (raw == kRawLShift) { if (down) s_shiftMask |= 0x01u; else s_shiftMask &= (uint8_t)~0x01u; }
+    if (raw == kRawRShift) { if (down) s_shiftMask |= 0x02u; else s_shiftMask &= (uint8_t)~0x02u; }
 
     // Held joystick/fire inputs — track the active-low PORTA/TRIG0 level across down/up
     // edges (pressed = clear the bit).  Arrows = stick-0 directions; Left Shift = fire.  Tracked
