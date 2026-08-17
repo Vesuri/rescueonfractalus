@@ -53,10 +53,7 @@ offset  0 1 2 3 4 5 6 7   8   9 10  11   12 .. 19
   `+0..+7`. Then the player types the name, `render_text_cell $5CA7` blitting each glyph into
   `$3700+X`.
 
-Default block to synthesize (`rof_hiscore_default()`): heading `"HIGH SCORES"` colour 0, column
-header starting `'N'` colour 3, 8 rows with a blank name/level and a `"00000000"` score field, and
-**the signature copied at runtime from `mem[$7BDA]`** — never a second literal copy of the string,
-so it cannot drift out of match. `$37EE = $10`.
+The factory contents of all of that are in `src/rof_hiscore_factory.h` — see W3.
 
 ## 2. Work items
 
