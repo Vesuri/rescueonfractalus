@@ -713,6 +713,24 @@ static volatile uint8_t s_trig0State = 0x01u;   // fire button, active-low ($00 
 // mappings are NOT a fallback to be removed — they stay supported alongside the stick.
 static volatile uint8_t s_joyPorta   = 0xFFu;
 static volatile uint8_t s_joyTrig0   = 0x01u;
+// The keyboard's two levels are IN-FLIGHT ONLY; the real stick's are live in every scene.  The
+// arrow keys and Left Shift stand in for a stick that isn't plugged in, and a stick is a flight
+// control — but PORTA/TRIG0 are read outside flight too (Standby's read_console_trig_delta $5A78
+// launches the game on the trigger, and the level-selector card cycles the starting level on
+// up/down), so an ungated keyboard put Left Shift on "launch" and the arrows on "change level" in
+// the selector.  Gate on the flight VBI vector being live rather than on the key edges, so a key
+// still held across a scene boundary cannot strand an active-low bit in the new scene.
+static inline bool keyboardStickLive()
+{
+    return (uint16_t)(mem[0x0222] | (mem[0x0223] << 8)) == 0x4FF5u;   // VVBLKI = the flight VBI
+}
+#ifdef ROF_FORCE_SELECT
+// Synthetic stick for the headless SELECT probe, ANDed into PORTA *ungated*: the probe drives
+// joystick-up on the selector CARD, which is exactly what the gate above shuts out.  Every other
+// FORCE_* harness injects on the real-stick side (s_joyPorta/s_joyTrig0) and so is unaffected,
+// but pollJoystick() overwrites those every vblank AFTER the probe blocks run, hence a third var.
+static volatile uint8_t s_probePorta = 0xFFu;
+#endif
 // CONSOL ($D01F) console keys (START/SELECT/OPTION), active-low; idle $07.  Kept in a DEDICATED
 // state var (like s_portaState/s_trig0State) — NOT read from mem[$D01F] — so a stray/aliased RAM
 // write to the $D000 hardware-mirror page can't corrupt this hardware INPUT register.  (It used to
@@ -734,9 +752,16 @@ uint8_t PlatformAmiga::hwRead(uint16_t addr)
     // Emit a proper idle SKSTAT (nothing pressed) so up=raise, down=lower, matching the Atari.
     if (addr == 0xD20Fu) return 0xFFu;                // SKSTAT: idle (bit3=1 = shift not pressed)
     if (addr >= 0xD200u && addr < 0xD210u) return pokey[addr - 0xD200u];
-    // PIA PORTA ($D300): Atari joysticks are ACTIVE-LOW (1 = open/neutral).  Driven by the
-    // keyboard ISR from the Amiga arrow keys (stick-0 bits 0-3); neutral $FF = stick centred.
-    if (addr == 0xD300u) return (uint8_t)(s_portaState & s_joyPorta);
+    // PIA PORTA ($D300): Atari joysticks are ACTIVE-LOW (1 = open/neutral).  Driven by the real
+    // port-1 stick in every scene, and by the Amiga arrow keys (stick-0 bits 0-3) in FLIGHT only;
+    // neutral $FF = stick centred.
+    if (addr == 0xD300u) {
+        uint8_t p = (uint8_t)((keyboardStickLive() ? s_portaState : 0xFFu) & s_joyPorta);
+#ifdef ROF_FORCE_SELECT
+        p &= s_probePorta;
+#endif
+        return p;
+    }
     // CONSOL ($D01F): console keys (START/SELECT/OPTION), ACTIVE-LOW (bit clear =
     // pressed).  The Amiga keyboard handler maintains it in mem[$D01F] (idle $07;
     // F1 clears bit0 for START).  Reflect that — falling through to 0 reads as
@@ -759,10 +784,11 @@ uint8_t PlatformAmiga::hwRead(uint16_t addr)
         return c;                                // dedicated input state, isolated from mem[] corruption
     }
     // TRIG0-3 ($D010-$D013): joystick fire buttons, ACTIVE-LOW ($01 = released,
-    // $00 = pressed).  TRIG0 is driven by the keyboard ISR from the Control key; the
-    // others stay released.  (Default $01 also matters at Standby: read_console_trig_delta
-    // $5A78 computes (CONSOL&$01) - TRIG0, so a stuck TRIG0=0 would auto-launch the game.)
-    if (addr == 0xD010u) return (uint8_t)(s_trig0State & s_joyTrig0);
+    // $00 = pressed).  TRIG0 = the real port-1 button in every scene, plus Left Shift in FLIGHT
+    // only; the others stay released.  (Released-by-default matters outside flight:
+    // read_console_trig_delta $5A78 computes (CONSOL&$01) - TRIG0, so a trigger that reads pressed
+    // at Standby launches the game — which is exactly why the keyboard's copy is gated.)
+    if (addr == 0xD010u) return (uint8_t)((keyboardStickLive() ? s_trig0State : 0x01u) & s_joyTrig0);
     if (addr >= 0xD011u && addr <= 0xD013u) return 0x01u;
     // ANTIC VCOUNT ($D40B): the transpiled init code busy-waits on the beam position
     // (wait_vcount_eq $3C75, wait_vcount_ge_7a $3C7B) — spin until VCOUNT == a target or
@@ -1667,7 +1693,8 @@ static const FlightKeyMap kFlightKeys[] = {
     { 0x5F, 0x80 },   // Amiga 'Help' -> Atari BREAK $80 Restart
 };
 
-// Amiga rawkeys for the held joystick/fire inputs (driven into s_portaState/s_trig0State).
+// Amiga rawkeys for the held joystick/fire inputs (driven into s_portaState/s_trig0State, which
+// hwRead honours in FLIGHT only — see keyboardStickLive).
 static const uint8_t kRawUp        = 0x4C;
 static const uint8_t kRawDown      = 0x4D;
 static const uint8_t kRawRight     = 0x4E;
@@ -1829,7 +1856,9 @@ static uint32_t keyboardHandler()
     }
 
     // Held joystick/fire inputs — track the active-low PORTA/TRIG0 level across down/up
-    // edges (pressed = clear the bit).  Arrows = stick-0 directions; Control = fire.
+    // edges (pressed = clear the bit).  Arrows = stick-0 directions; Left Shift = fire.  Tracked
+    // in every scene but only READ during flight (keyboardStickLive), so that a key held across a
+    // scene boundary is released here rather than stranded active-low on the far side.
     switch (raw) {
         case kRawUp:    if (down) s_portaState &= (uint8_t)~0x01u; else s_portaState |= 0x01u; return 0;
         case kRawDown:  if (down) s_portaState &= (uint8_t)~0x02u; else s_portaState |= 0x02u; return 0;
@@ -2202,12 +2231,14 @@ static uint32_t vbiHandler()
             // Once the selector card is up ($53CC), pulse joystick-UP (PORTA bit0) every
             // ~40 frames to confirm the in-selector up/down toggle re-renders the STARTING
             // LEVEL digit (level_stage $006D + $3694/5).
+            // Drives s_probePorta, NOT the keyboard's s_portaState: that one is gated to the
+            // flight VBI (keyboardStickLive), and the card this probe tests is not flight.
             if (vv == 0x53CCu) {
                 uint16_t ph = (uint16_t)(d2 % 40u);
-                if (ph < 8u) s_portaState &= (uint8_t)~0x01u;   // up pressed
-                else         s_portaState |= 0x01u;             // released
+                if (ph < 8u) s_probePorta &= (uint8_t)~0x01u;   // up pressed
+                else         s_probePorta |= 0x01u;             // released
             } else {
-                s_portaState |= 0x01u;
+                s_probePorta |= 0x01u;
             }
         }
     }

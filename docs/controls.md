@@ -34,8 +34,8 @@ restart must longjmp from main-loop context (`rof_check_restart`).
 | S | Systems | $3e | S ($21) | kbd cmd |
 | A | Air Lock | $3f | A ($20) | kbd cmd |
 | B | Boosters | $15 | B ($35) | kbd cmd |
-| (joystick) | Steer — forward/back = dive/climb, left/right = bank | — | **real joystick in port 1**, or **arrow keys** ($4C/$4D/$4F/$4E) | PORTA $D300 bits 0/1/2/3 = up/down/left/right |
-| (trigger) | Fire (Launch AMB Torpedo) | — | **joystick button 1**, or **Left Shift ($60)** | TRIG0 $D010 |
+| (joystick) | Steer — forward/back = dive/climb, left/right = bank | — | **real joystick in port 1**, or **arrow keys** ($4C/$4D/$4F/$4E) — the keys **in flight only** | PORTA $D300 bits 0/1/2/3 = up/down/left/right |
+| (trigger) | Fire (Launch AMB Torpedo) | — | **joystick button 1**, or **Left Shift ($60)** — the key **in flight only** | TRIG0 $D010 |
 | (2nd trigger) | **Land / Launch the ship** (manual: "the Apple's second fire button will land or launch") | $00 (as L) | **joystick button 2** | POTINP bit 14 → the L command key, kbd cmd $519c |
 | Joystick up / down | Starting level up / down (inside the level-selector card only) | — | **joystick forward/back**, or **arrow up/down** ($4C/$4D) | PORTA $D300 bits 0/1 |
 | (trigger, pre-game) | Start the game | — | **joystick button 1** | TRIG0, via `read_console_trig_delta $5A78` = `(CONSOL & $01) - TRIG0` |
@@ -63,6 +63,22 @@ second-stick path and nothing to choose.
 - Sampled **once per vblank** from `vbiHandler`, just ahead of `game_vbi_isr` — the rate the Atari's
   own VBI polled at, and the rate an edge-triggered button needs (the main loop runs well under
   50 Hz in flight and would drop short presses). Four register reads.
+- ⚠ **The keyboard's stick emulation (arrow keys + Left Shift) is read in FLIGHT ONLY; the real
+  stick is live in every scene.** PORTA/TRIG0 are polled outside flight too — Standby's
+  `read_console_trig_delta $5A78` launches the game on the trigger, and the selector card cycles the
+  starting level on up/down — so an ungated keyboard put Left Shift on "launch" and the arrows on
+  "change level" in the selector. `hwRead` gates the keyboard levels on `keyboardStickLive()`
+  (VVBLKI == `$4FF5`, the flight VBI); the gate is on the READ, not on the key edges, so a key still
+  held across a scene boundary cannot strand an active-low bit in the new scene. **Measured A/B**
+  (Left Shift + arrow-up held from vbi 150, `NOAUTO=1`): ungated → VVBLKI `$4FF5` with 7 flight
+  iterations by vbi 1975, gated → still `$52D7` with 0. Consequences, both accepted:
+  Left Shift no longer skips the Logo/Station cinematics (F1, any key, the timeout and the real
+  stick's fire still do), and in the selector card the level is cycled by F2 or a real stick, not by
+  the arrow keys.
+- The `FORCE_SELECT` probe drives its synthetic joystick-up through a THIRD level, `s_probePorta`,
+  ANDed into PORTA ungated: it tests the selector card, which is exactly what the gate shuts out.
+  Every other `FORCE_*` harness injects on the real-stick side (`s_joyPorta`/`s_joyTrig0`) and is
+  unaffected — but `pollJoystick()` overwrites those every vblank *after* the probe blocks run.
 - **The stick drives the SAME PORTA bits as the arrow keys**, so stick and keyboard are
   indistinguishable downstream. Kept in separate `s_joyPorta`/`s_joyTrig0` levels and merged in
   `hwRead` by **AND** — both are active-low, so either source pressing wins, and a centred or
@@ -95,7 +111,7 @@ check anywhere. Both are now skippable:
 
 | scene | skips on | mechanism |
 |---|---|---|
-| 1 Logo | START (F1) **or** joystick fire | `logo_aborted()` in `src/rof_logo.c` — reads CONSOL bit0 and TRIG0 directly, so it is platform-neutral (SDL serves TRIG0 from SPACE/Z) |
+| 1 Logo | START (F1) **or** the REAL joystick's fire (Left Shift is flight-only, see above) | `logo_aborted()` in `src/rof_logo.c` — reads CONSOL bit0 and TRIG0 directly, so it is platform-neutral (SDL serves TRIG0 from SPACE/Z) |
 | 2 Station | START (F1), any keyboard key, fire, or its RTCLOK timeout | START/key/timeout are the **faithful** checks at `$1a01`; fire is added by `PlatformAmiga::hwRead` |
 
 - ⚠ **`make LOGO_START=0` restores the faithful unconditional Logo**, and deliberately disables
