@@ -8,8 +8,9 @@ dead since the disk-to-executable conversion. Restoring it is **restoration, not
 display list, and keyboard delivery.
 
 User decisions already taken (2026-08-17):
-- **Default table content: synthesize now, swap in real sectors later.** Keep it in ONE embeddable
-  256-byte block so a genuine dump of sectors 718/719 replaces it with no code changes.
+- **Default table content: the ORIGINAL bytes, extracted — see W3.** (This started as "synthesize
+  now, swap real sectors in later"; the user produced a cartridge ROM and a disk image, and the real
+  table came out of them, so the synthesis step is cancelled.)
 - **Persistence: a file next to the executable, created on first save.** Missing file ⇒ the
   embedded default; read-only medium ⇒ keep it in RAM for the session.
 
@@ -104,11 +105,36 @@ so it cannot drift out of match. `$37EE = $10`.
 - Also note `docs/whdload-slave.md:125`: dos/filesystem structures are an untuned `?` in the RAM
   budget — opening dos.library adds FASTMEMSIZE pressure that needs re-measuring.
 
-### W3 — the default block
-- `rof_hiscore_default(uint8_t blk[256])` in `src/rof_hiscore.c`, built from a small
-  `{text, colour}` row table + an ATASCII→internal conversion, so editing it is editing text.
-- Used when the file is absent. Structured so a real sector dump can be dropped in as a plain
-  256-byte array instead — keep the "where the bytes come from" decision in one function.
+### W3 — the default block — ✅ **the ORIGINAL bytes, already extracted**
+No synthesis needed after all (2026-08-17): **`src/rof_hiscore_factory.h`** holds the real
+factory-fresh table, 200 bytes for `$3700-$37C7`:
+
+```
+HIGHEST SCORING ACES        (mode 7, colour 0 — first byte $28, which is what validate_save_state wants)
+NAME    LEVEL  SCORE        (colour 3 — first byte $EE, likewise)
+FOX       6    35000        DRAGON    4    10000        JSL       2      421
+LOREN     5    17000        PSL       3     2037        DL        1      327
+                            GARY      3     1138
+                            CROCK     3      525
+```
+
+Provenance, two independent dumps agreeing byte for byte: lifted from the **Atari 8-bit 64 KB
+cartridge release (v5.0)** at cart-image offset `$6200` — a cart has no disk, so it carries the
+table in ROM — and cross-checked against a **v4.1 disk image** whose factory block sits at ATR file
+offset `$03218` (sector 101, with the signature immediately after it at `$032E0`, confirming the
+layout). The heading row, the column-header row and every entry row that that disk's owner had not
+played over (FOX / LOREN / DRAGON) are identical; the disk copy had COLBEAR/LARRY/LORD in it, so the
+cart copy is the pristine one. The row format the header shows also confirms the offsets derived
+from the insert code: name 0-7, level 9-10, score right-aligned 12-19.
+
+⚠⚠ **Do not hardcode the signature, and do not take the disk block wholesale.** The two v4.1 builds
+disagree: the disk block's own signature reads `"Copyright (c) 1985 Lucasfilm Ltd. v4.1"`, while our
+`rof.xex` compares against `$7BDA` = `"XCopyright (c) 1987 Lucasfilm Ltd. v4.1"`. Copy 38 bytes from
+`mem[$7BDA + 1]` at load time (the `+1` is why `$37C7` is the never-compared byte) so the block
+always matches whatever binary it is running under. Then `$37EE` (`level_progress`) `= $10`.
+
+So `rof_hiscore_default(uint8_t blk[256])` = `memcpy` the 200 bytes, copy the signature out of
+`mem[]`, set `$37EE`, zero the rest.
 
 ### W4 — draw the entry screen (the visible half)
 Today the game installs DL `$5E2E` and the Amiga ignores DLIST writes, so the Title card stays on
