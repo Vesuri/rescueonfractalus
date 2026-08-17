@@ -14,9 +14,11 @@
 # --- Copyrighted / captured material: kept LOCAL only, never committed -------
 # rof.xex is the original Atari binary (purged from history 2026-06-02); the PNGs
 # are game screenshots and comparison captures.  This also covers docs/*.png, so
-# a documentation image has to live outside the repo too.
+# a documentation image has to live outside the repo too.  *.rom covers Atari OS /
+# Amiga Kickstart images, which land at the repo root as easily as a savestate does.
 *.xex
 *.png
+*.rom
 
 # --- Build output ------------------------------------------------------------
 build/
