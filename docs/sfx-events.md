@@ -5,6 +5,22 @@ the in-flight / cinematic sound-effect system so we don't re-derive it every ses
 addresses are Atari 6502. The corresponding Amiga twins live in `rof_native.c` /
 `PlatformAmiga.cpp` (POKEY→Paula in [[amiga-pokey-audio]]).
 
+⚠ **"SFX" covers three unrelated things in this binary — know which one you are looking at.**
+Confusing them has cost a session already.
+
+| What | Driver | Where |
+|---|---|---|
+| The 33 envelope-driven **effects** (lasers, explosions, beeps) | `sfx_event_load $581C` + `sfx_voice_envelope_tick $548D` | this file, below |
+| The **Standby attract theme** — a real composed tune | `sfx_voice_tick $70F9` + `sfx_seq_step $7148` | §The Standby theme |
+| The two **jingles** (game over; level complete / high score) | `music_init_state $7238` + `music_player_tick $7253` | §The two jingles |
+
+`station_audio $1B5B` is a fourth thing and is **not** music at all: it is clock-modulated
+AUDC/AUDF sweeps keyed on the jiffy clock, with no pitched content anywhere. Don't go looking
+for a melody in it.
+
+All three players are transcribed to General MIDI by **`tools/export_midi.py`** (stdlib only,
+`--out build/midi`), which is also the executable record of every decode detail below.
+
 ## The model
 
 Sounds are **data-driven "events"**, identified by an event id (1..$21). Pushing an event
@@ -100,6 +116,120 @@ Push/load sites of note (`JSR/JMP $5815` = ring push; `JSR $581c` = direct load)
 `$4016`→$14, `$a469`→$14, `$63d2`→**$01** (direct, only site), `$63a9`→$1d, `$61aa`→$10,
 `$3df5/$3df9`→$1f/$20, `$7a23`→$19, `$7a5e`→$1b, `$7a9d`/`$7aec`→$1a, `$7af0`→$1b (INX),
 `$7ab5`→$16, `$7bd8`→$1d.
+
+## ⭐ A poly-distortion voice does NOT sound at its AUDF frequency
+
+Applies to every voice in this file whose `dist` is poly4 / poly5 / poly5tone, and it is the
+difference between a coherent transcription and nonsense. POKEY's polynomial counters run
+continuously off the master clock and are only **sampled** at each frequency-divider underflow.
+So between samples the counter advances by `stride = (AUDF+1) * base_div` (28 with AUDCTL bit0
+clear), the visible bit sequence is the poly stream stepped by `stride % len`, and the
+waveform's repetition period is therefore **a function of AUDF**:
+
+```
+audible fundamental = freq(AUDF) * 2 / period      period = repetition length in output samples
+freq(AUDF)          = 1789790 / (56 * (AUDF+1))    pure tone: period 2, so it sounds at freq()
+```
+
+`PlatformAmiga.cpp` already models exactly this — `poly4_wave[stride % 15]` /
+`poly5_wave[stride % 31]`, one pre-rendered shape per stride residue — which is why the port
+plays these voices correctly. `tools/export_midi.py:wave_period()` is the same computation.
+
+**How far off it gets, from the two real cases:**
+
+| Voice | dist | period | Offset | Read as AUDF pitch | Read correctly |
+|---|---|---|---|---|---|
+| Jingle voice 6 (bass, both songs) | `$C0` poly4 | 5 for **every** note | ÷2.5, −15.9 semitones | `C3 G3 G#3 …` — wrong key | `G#1 D#2 E2 …` — the tonic |
+| Theme channel 4 (drone) | `$22`/`$C2` | 62 / 15 / 5 | up to −5 octaves | `F#7 D3 B4 C4` — incoherent | root or fifth of all 13 chords |
+
+Two things worth keeping from that: the offset is **constant per voice only by luck** (the
+jingle bass happens to hit `stride % 15` ∈ {3,6,9,12}, all period 5, so its intervals survive a
+naive reading and only the octave is wrong — the theme drone's period genuinely varies per
+chord), and **landing on chord roots is the cheap self-check** that the correction is right, with
+no emulator round trip.
+
+## The Standby theme (`sfx_voice_tick $70F9` / `sfx_seq_step $7148`)
+
+The attract tune, and the reason it resists being read as a note list: **no channel carries the
+melody.** Score stream at `$71DB` (93 bytes, `$00`-terminated), scanned via `$073C`:
+
+- **bit7 SET = a chord preset**, index `byte & $1F` (13 presets). Writes all four AUDF at once
+  from four *parallel* tables — AUDF1 `$71AB`, AUDF2 `$719E`, AUDF3 `$7191`, AUDF4 `$71B8` —
+  plus AUDC4 from `$71C5`, then keeps scanning. Harmony moves in blocks, independently of the
+  notes. (A `$71C5` entry of 0 would fall through as a rest; none is 0.)
+- **bit7 CLEAR = a note.** Low 5 bits index the duration table `$71D2` (9 entries) into `$073A`;
+  the **high nibble** goes to `$073B` and selects which register is emphasised via
+  `STA $D1FF,Y` → Y = 2/4/6 = AUDC1/AUDC2/AUDC3. High nibble 0 mutes all three (a rest).
+- Channels 1–3 sound **together, at the same volume**, for the whole tune; the melody is
+  whichever one is 2 louder. Channel 4 is never touched by the tick — a drone whose pitch and
+  waveform change only on a chord preset.
+- `$00` terminates and the player restarts at index 0 (`TAX`/`BEQ` back into the fetch), so the
+  theme loops.
+- Volume per tick: `v = min($073A>>1, 2)`, forced to 3 while the timer is high (the `CMP #3`
+  carry feeds the `ADC #$A0`) — so a note holds at 3 and decays 2,2,1,1,0,0 over its last six
+  ticks. The emphasised channel gets `v+2`.
+
+The presets decode to clean triads in **F# major** (`C#-F#-A#`, `F-A-C`, `G#-C-D#`, `F#-B-D#`…)
+with the drone on each chord's root or fifth, and the melody opens `F# C# F# A# F# | A# F# A# C#`
+over a 17/3/4-tick figure.
+
+⚠ **The theme ticks every OTHER frame.** Its only call site is `$5356`, gated by
+`LDA $00E7 / BIT $062D / BNE`: `$00E7` is 1 while the theme plays (confirmed in
+`a800dumps/music_playing.a8s`) and `$062D` is bumped once per frame, so the call happens only
+when bit0 of the counter is clear. Miss this and the tune plays at **double speed**. The
+**jingles are not gated** (`$5359`-`$535E`) and do run every frame.
+
+That savestate is also the cheap way to check any theory about this driver without an emulator
+round trip — its live `$073A`/`$073B`/`$073C` must agree with your model (seq ptr `$11` → score
+byte `$23` → duration table[3] = 11 and sel 2, which is what the dump holds).
+
+## ⚠ TV system sets the tempo AND the pitch — and the answer here is PAL
+
+Both players are driven from the VBI, so **the field rate IS the tempo**, and the same master
+clock divides down to the tone frequency. Getting this wrong makes every piece play 20% off, and
+it is invisible to any amount of static reading of the 6502.
+
+| | Field rate | Theme tick | Theme tempo | One pass |
+|---|---|---|---|---|
+| **PAL** (1773447 Hz, 312 lines) | 49.8607 Hz | 24.9304 Hz | **31.2 BPM** | 30.81 s |
+| NTSC (1789790 Hz, 262 lines) | 59.9233 Hz | 29.9617 Hz | 37.5 BPM | 25.63 s |
+
+**PAL is what both of our references run** — the project's atari800 ground truth
+(`~/.atari800.cfg`: `DEFAULT_TV_MODE=PAL`) and the Amiga target (`amiga/run.sh` passes
+`--ntsc_mode=0` to an A500+). So PAL is `tools/export_midi.py`'s default; `--tv ntsc` is there
+for comparison. ⚠ The game is a US NTSC original, so **"faithful to the 1985 machine" and
+"matches what we can hear" disagree by 20% here** — say which one you mean.
+
+Pitch is barely affected: PAL's clock is 0.9% flat = 0.16 semitones, and it changes **0 of 252**
+notes across all three pieces after rounding. Only the tempo matters.
+
+## The two jingles (`music_init_state $7238` / `music_player_tick $7253`)
+
+Song table at `$731E`: two 6-byte headers = `(stream_lo, stream_hi, level_loud, level_soft,
+attack_delta, release_delta)`. Song 0's stream is `$7346` (game over, `LDY #5` at `$5896`);
+song 1's is `$732A` (level complete / LIFT at `$61C3`, and the high-score entry at `$5BED` —
+**the same tune**, per [[high-score-initials]]). Voices are indexed `X = 0/2/4/6`, so voice 6
+writes AUDF4/AUDC4; distortion comes from `$73C1+X` = `$A0 $A0 $A0 $C0` — the top three are
+pure, **voice 6 is poly4** (see the pitch rule above).
+
+- Stream = `(duration, voice-command)` pairs, interleaved with instrument selects (`>= $C0`,
+  table `$7375 + ((~cmd)*4)`, four AUDF bytes **voice 6 first**). The pointer advance at
+  `$72BB`-`$72BF` skips **both** bytes of the pair — advancing past only the duration byte
+  re-reads each command byte as the next event's leader and misaligns everything after event 1.
+- The voice command packs four 2-bit codes, voice 6 in the top bits: `00` off, `01` hold/tie
+  (nothing touched), `10` soft retrigger, `11` loud retrigger.
+- Envelope: a new event gives every voice 4 attack ticks, then **all** voices switch to
+  `release_delta` for the remaining `duration` ticks — so an event lasts `4 + duration` ticks.
+  Per tick `accum += delta` as an 8-bit `ADC`, clamped to 0 if the result looks negative
+  (`$7309 BPL`), and `AUDC = (accum >> 3) ^ dist` — the volume nibble **is** the envelope.
+- `music_init_state` leaves `$0651`(attack)=0, AUDCTL=0, `$0653`(duration)=`$0655`(playing)=1,
+  so the first tick immediately loads event 1. **AUDCTL = 0 for both players**, so every channel
+  is 8-bit on the 64 kHz clock — no 16-bit joins, no 15 kHz base.
+
+⚠ **The game-over jingle has a ritardando** and the player has no tempo: an event only names a
+length in ticks, so the slowdown appears as the lengths `49,49,49,57,65,73,81,81` — musically one
+repeated note value getting slower. Anything that treats those as literal durations at a fixed
+tempo (a transcription, an A/B against a capture) will read the tail as meaningless tuplets.
 
 ## Atari ground truth — pilot-approach POKEY streams (captured 2026-07-31)
 

@@ -40,7 +40,7 @@ these are the derived facts we must not re-derive or contradict.
 | `docs/transpiler.md` | Working on `tools/transpile.py`, or when generated-code shape surprises you |
 | `docs/asm-migration-plan.md` | Any asm twin work — the per-phase design record |
 | `docs/flight-perf-log.md` | The perf investigation archive: what was tried, what it measured, what closed |
-| `docs/sfx-events.md` | Audio: the 33 SFX events, the voice engine, captured POKEY streams |
+| `docs/sfx-events.md` | Audio: the 33 SFX events, the voice engine, captured POKEY streams — **and the three music players** (Standby theme `$70F9`, the two jingles `$7253`, vs non-musical `station_audio`), the poly-distortion pitch rule, and `tools/export_midi.py` |
 | `docs/rename.md` | A function's name contradicts its behaviour (append to it — see conventions) |
 | `docs/high-score-initials.md` | The high-score INITIALS entry (`name_entry_loop`) — why it never appears (a DISK save-state check whose sector reads are NOPped out of `rof.xex`), and `make NAME_ENTRY=1` to test it anyway |
 | `docs/high-score-restore-plan.md` | **RESTORING** that feature (planned, not implemented): the block layout + row format, the SIO seam, the `PROGDIR:RoF.hi` save file, the entry screen's own DL `$5E2E`, and the missing `$539A` keyboard hook (which also gates the AUTHOR easter egg) |

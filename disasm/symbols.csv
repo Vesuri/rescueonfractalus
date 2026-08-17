@@ -91,7 +91,7 @@ $1A62,screen_page_swap,func,0,Self-modifying! Swaps 5 × 256-byte pages between 
 $1A97,initad_1A97,func,0,INITAD stub (segment 11): calls screen_page_swap, silences AUDF3/4, JMPs station_init
 $1B30,vbi_handler_station,func,0,VBI handler active during attract mode (VVBLKI=$1B30 set in station_init; writes DLISTL/H + COLBK + RTCLOK)
 $1B50,station_audio_ch1_init,func,0,Sets AUDF1 initial frequency (called once in station_init)
-$1B5B,station_audio,func,0,Attract-mode audio: writes AUDF/AUDC channels 1-4 with melody/effects
+$1B5B,station_audio,func,0,Station-scene audio: NOT a melody - dispatches on the jiffy clock ($0013/$0014) into 4 clock-modulated cases (AUDC table $1BE5 stepped per ~4.27s wrap; AUDC from RTCLOK>>5; a linear AUDF sweep; table $283E indexed by RTCLOK_LOW feeding AUDC only with AUDF forced 0). No discrete pitched content anywhere
 $1C40,display_list_build,func,0,Builds attract-mode display list at $B800 (122 LMS entries for 40-byte rows from $0600); uses RANDOM to place up to 30 enemies/pilots randomly on screen rows (1-in-8 chance per row)
 $1CF7,display_scroll,func,0,Likely vertical scroll or DL update (reads/modifies addresses in display_list_build range — self-referential)
 $1D9A,station_anim_frame,func,0,Attract mode animation frame: calls $1CF7
@@ -448,9 +448,9 @@ $7047,test_marked_neighbor,func,0,Reads grid cell $0900[$009C+$009A]; if bit7 se
 $7069,scan_grid_neighbors,func,0,Sets 4 offset pairs in $009A/$009B (+1/+16,-1/-16,+16/-1,-16/+1), calls test_marked_neighbor each, pushes matches via push_grid_cell
 $70A9,push_grid_cell,func,0,Pushes current cell $009C onto stack at $2500[$0098], increments stack index $0098 (flood-fill queue push)
 $70E7,reset_audctl_flags,func,0,X=1->$00E7; clears AUDCTL ($D208)=0, $073A=0, $0090=0; sets $073C=$FF (audio/flag reset)
-$70F9,sfx_voice_tick,func,0,Decrements duration timer $073A (calls sfx_seq_step on underflow), derives note, writes AUDC1/2/3 ($D201/$D203/$D205); $073B gates mute
-$7148,sfx_seq_step,func,0,Advances SFX sequence ptr $073C through table $71DB; loads AUDF/AUDC from tables $7191-$71C5 to POKEY $D200-$D207; sets $073A/$073B
-$7238,music_init_state,func,0,Copies 6-byte song header from table $731E into $0657-$065C, sets $0651=1, AUDCTL($D208)=1, $0653=$0655=2
+$70F9,sfx_voice_tick,func,0,STANDBY THEME tick (the attract tune - a different driver from the music_player_tick jingles). Decrements $073A (calls sfx_seq_step on underflow), derives a decaying volume v=min($073A>>1,2) clamped to 3, writes it to AUDC1/2/3 ($D201/$D203/$D205) so all three sound together, then v+2 to $D1FF+$073B - i.e. the MELODY is which one channel is emphasised. $073B=0 mutes all three. Called ONLY from $5356, gated by BIT $062D so it runs every OTHER frame (24.93Hz on PAL) - the tempo is the field rate, so miss the gate and the tune is 2x too fast
+$7148,sfx_seq_step,func,0,Advances the standby-theme score ptr $073C through the stream $71DB. A byte with bit7 SET is a CHORD preset (index=byte&$1F, 13 entries): writes all four AUDF at once from the parallel tables $71AB/$719E/$7191/$71B8 plus AUDC4 from $71C5, then keeps scanning (a $71C5 entry of 0 would fall through as a rest). A byte with bit7 CLEAR is a note: low 5 bits index the duration table $71D2 into $073A, high nibble into $073B selects the emphasised register. $00 terminates and restarts at index 0 (the theme loops)
+$7238,music_init_state,func,0,Copies 6-byte song header from table $731E into $0657-$065C, then sets $0651(attack_ctr)=0 and AUDCTL($D208)=0 with X=0, and $0653(dur_ctr)=$0655(playing)=1 with X=1 - so the first tick immediately loads event 1. AUDCTL 0 = every channel 8-bit at 64kHz
 $7253,music_player_tick,func,0,Music engine tick: counts down $0651/$0653, reads cmd stream via ptr $0099/$009A, writes AUDF $D200+X and AUDC via EOR table $73C1
 $74D7,unpack_bitmap_4d3e,func,0,Bit-serial expand: src ptr $C1/$C2 from table $4D3E, shifts 8 bits via $0085 accumulator to dest $C3/$C4; nested loops $0080/$0081/$0082/$00DF
 $757B,rle_expand_list,func,0,Walks bytes via ZP ptr $BB/$BC, calling rle_run_fill per non-zero byte until terminating $00 (used by unpack_terrain_seed_cols)
