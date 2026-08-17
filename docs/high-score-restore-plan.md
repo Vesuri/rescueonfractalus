@@ -73,17 +73,36 @@ so it cannot drift out of match. `$37EE = $10`.
 ### W2 — persistence
 - `platform_c.h`: `int platform_hiscore_read(uint16_t sector, uint8_t *dst128);` and
   `int platform_hiscore_write(uint16_t sector, const uint8_t *src128);` (1 = success).
-- Amiga: `PROGDIR:RoF.hi`, 256 bytes, offset `(sector - 0x02CE) * 128`; dos.library
-  Open/Seek/Read/Write/Close. Create on first write. A missing/short file ⇒ read returns 0 ⇒ W3's
-  default; a failed write is swallowed (read-only medium = the table lives for the session only).
-  ⚠ Check whether dos.library is already open at startup (see W4/scout notes) — if the port only
-  ever consumed the embedded xex image, this is the first real file I/O and needs library init +
-  teardown on the quit path.
-- ⚠ WHDLoad: `slv_CurrentDir` is empty while the installer uses `#sub-dir "data"`
-  (`docs/whdload-slave.md`, open loose end). `PROGDIR:` sidesteps the current directory, but the
-  install must still be writable — verify on the WHDLoad install, not only from the CLI.
 - SDL host: the same two functions against a file in the working directory, so the feature is
-  testable natively.
+  testable natively. Trivial — `PlatformSDL.cpp` already does file I/O.
+- ⚠⚠ **The Amiga side is NOT trivial, and this is the one item whose design is still open.** Scouted
+  facts: the port opens exactly two libraries — `SysBase` (`GCCRuntime.cpp:10-11`) and
+  `graphics.library` (`PlatformAmiga.cpp:2858-2871`) — has **no dos.library, no `proto/dos.h`, no
+  file I/O at all** (its only input is the incbin'd boot image), and builds `-nostdlib` with no `-l`
+  at all (the proto headers inline the LVO jumps, so that part is not an obstacle). Worse, the write
+  the game performs happens MID-RUN (`name_entry_loop $5C54`), and `run()` executes the game
+  between `Forbid()`/`Permit()` with the OS display and the INTB_VERTB/PORTS/BLIT vectors hijacked
+  (`PlatformAmiga.cpp:2897-3004`, which carries its own ⚠ about what may run there). A DOS call
+  Wait()s on a packet — it breaks the Forbid and can raise a filesystem requester. So pick one:
+  - **(a) RAM shadow + flush on exit.** The hook writes into a 256-byte shadow and sets a dirty
+    flag; the actual file write happens in the dtor / after the view is restored. Safe, no Forbid
+    violation, no requester. Cost: a hard reset or power-off loses the session's scores.
+  - **(b) Mid-run DOS I/O**, bracketed to leave the Forbid and restore it. Matches the original's
+    timing exactly. Needs care with our ISRs and is the riskiest.
+  - **(c) WHDLoad-idiomatic**: `resload_SaveFile` (+ the installer's `#highs-file`, currently left
+    at the default `highs` with nothing shipped — `docs/whdload-slave.md:278-283`), with (a) or (b)
+    for the plain CLI run.
+  Recommendation: **(a) now**, keeping the platform functions' shape so (b)/(c) can replace the
+  backend later.
+- ⚠ "Next to the executable" is not expressible as `PROGDIR:` under WHDLoad: `PROGDIR:` is set up by
+  the Shell/Workbench, and the slave `LoadSeg()`s the game directly (`whdload/RoFSlave.s:143-168`),
+  so it does not exist there. A plain relative filename resolves against the slave's
+  `slv_CurrentDir`, which is `"data"` in the checked-in slave — and that is exactly the
+  `slv_CurrentDir` vs `#sub-dir "data"` inconsistency already flagged in
+  `docs/whdload-slave.md:259-265`. Decide that loose end before choosing the path, and write down
+  where the file lands for each launch method (CLI run, `run.sh`, WHDLoad install).
+- Also note `docs/whdload-slave.md:125`: dos/filesystem structures are an untuned `?` in the RAM
+  budget — opening dos.library adds FASTMEMSIZE pressure that needs re-measuring.
 
 ### W3 — the default block
 - `rof_hiscore_default(uint8_t blk[256])` in `src/rof_hiscore.c`, built from a small
@@ -95,18 +114,47 @@ so it cannot drift out of match. `$37EE = $10`.
 Today the game installs DL `$5E2E` and the Amiga ignores DLIST writes, so the Title card stays on
 screen while the entry runs behind it — the user's screenshot: right palette, right jingle, stale
 content. Needed:
-- A render signal for "the entry screen is up". The honest source is the DLIST write itself:
-  capture `$D402/$D403` in `bus_write` into a global (the SDL backend already feeds its renderer
-  from those writes) and derive `rsInitials = (dlist == 0x5E2E)` in `deriveRenderSignals`.
-- Decode + copper for a mode-7 row at `$3700` plus nine mode-6 rows at `$3714 + n*20`. This is the
-  *same shape* as the Title screen (mode-7 row + five mode-6 rows from `$365B`), so the intended
-  route is to give the existing Title cell decoder a base address + row count instead of writing a
-  second decoder, and to reuse/clone its copper list with the entry palette.
-- The entry writes cells continuously (`render_text_cell`), so the dirty-cell path has to cover the
-  `$3700` window too — the Title dirty range is expressed in `$365B`-relative cells today.
-- ⚠ Colour registers: the entry screen's palette comes from the same `mem[]` colour cells the
-  jingle/entry code pokes (the user already sees them change), so the copper must MOVE exactly the
-  registers the Atari DL/DLI writes and no others (the CLAUDE.md rule).
+- **The render signal must come from the DLIST write, not from VVBLKI.** `rsTitle` is
+  `(vvblki == $53CC) && (mem[$365B] == $72)` (`RescueOnFractalus.cpp:5736-5741`) and the entry runs
+  under that same `$53CC` VBI with `$365B` still `'R'` — so VVBLKI cannot tell the entry screen from
+  the Title card. The discriminator is the display list itself (`$5E2E` vs `$5A82`): capture the
+  `$D402/$D403` writes in `bus_write` into a global (the SDL backend already feeds its renderer from
+  them) and derive `rsHiScore = (dlist == 0x5E2E)` next to the `rsTitle` line. `rsTitle` must then
+  exclude it, or the Title branch will keep winning.
+- The decode is nearly free — the Title decoder is already general over the colour bits and over
+  mode 7 (`kTitleRowVdup[0] == 2`, i.e. mode 7 = write each glyph scanline twice; horizontal
+  doubling to 16 px/char is the same for both modes). Three things are hardcoded and need
+  parameterising (`RescueOnFractalus.cpp`):
+  1. `decodeTitleCells(cellLo, cellHi)` at `:6234` — the base `0x365B` (`:6238`), and the file-scope
+     `kTitleRowY[6]` / `kTitleRowVdup[6]` (`:6222-6223`). Target shape:
+     `decodeTextCells(Bitmap*, uint16_t base, const short* rowY, const uint8_t* rowVdup, int lo, int hi)`.
+     20 columns/row is baked into the walk (`:6241`, `:6265`) and the entry screen is also 20 wide.
+  2. `decodeTitleScreen()` at `:6269` — hardcodes the clear size and `decodeTitleCells(0,119)`;
+     needs `nCells = rows*20` (the entry screen is 10 rows = 200 cells).
+  3. `rof_title_screen_dirty()` at `:98` — hardcodes `0x365B` and the `119` clamp. Add a sibling
+     `rof_hiscore_screen_dirty()` with its own `g_hsCellLo/g_hsCellHi`, plus the
+     `PlatformAmiga::` hook + `platform_c.h` + `platform_cbridge.cpp` entries mirroring
+     `PlatformAmiga.cpp:1602` / `platform_c.h:85` / `platform_cbridge.cpp:67`.
+     ⚠ The entry writes cells continuously (`render_text_cell` → `$3700+X`) and **nothing marks them
+     dirty today**, so the new writer needs its own dirty call — cheapest at the `$3700` write site,
+     the choke point, not at the callers (the `standby-level-scroll` lesson).
+  4. ⚠ `kTitleRowY[]` for the new screen must be **derived from DL `$5E2E`'s blank-line counts**, not
+     transcribed by eye — the existing table is literals and the entry DL has a different blank
+     pattern (`70 70 70 70 70 70 | 47 mode7 | 70 70 70 70 | 06 | 70 | 06 | 20 06 ×7`).
+- Copper: `TitleScreenCopperList` (`TitleScreenCopperList.cpp`) is a geometry-fixed full-screen 3bp
+  playfield with `color00` black and four text pens — exactly what this screen needs, so either
+  instantiate a second one over a second bitmap (**⚠ `Bitmap::allocate(320,216,3,true)` is ~25.9 KB
+  of CHIP** — see `docs/asset-extraction.md` before spending it) or reuse the same bitmap + copper
+  and re-decode on entry. Reuse is the better default; ⚠ a scene entry that rebuilds a SHARED
+  copper list or bitmap must **blank first** (`amiga-copper-lessons`).
+- Whichever way: a new `hiScoreCopperInstalled` flag has to be force-cleared at every other scene's
+  install site, the way `titleScreenCopperInstalled` is at ~12 sites (`RescueOnFractalus.cpp:3913,
+  4144, 4250, 4311, 4344, 4449, 4509, 4563, 4588, 4645, 4713, 5439`) — miss one and the screen
+  silently stops re-decoding.
+- ⚠ Colour registers: the entry palette comes from the same `mem[]` colour cells the entry/jingle
+  code pokes (the user can already see them change), and `updateTitleScreenCopper()`
+  (`RescueOnFractalus.cpp:4761-4785`) already reproduces the `$53ED` pen cycle from `$02C4+X` /
+  `$0002` / `$0013`. Emit only the MOVEs the Atari actually makes (the CLAUDE.md DLI rule).
 
 ### W5 — deliver keystrokes outside flight
 `check_collision_sync $5398` is the standby/title VBI's console sampler and uses the same
@@ -124,12 +172,14 @@ flight.** That is why the initials entry ignores the keyboard.
   same missing-hook reason, and those two lines are already rendered by the Amiga, so it should
   light up with W5 alone, before W4 exists.
 
-### W6 — the entry's own VBI
-`name_entry_loop` runs under VVBLKI `$5E0E` (set by `game_init_5D50`). Hand-disassembled: it
-decrements CDTMV1 `$0218/$0219` and, when it expires, `JMP ($0226)`, else `JMP $E462` (XITVBV).
-**Nothing in the binary ever writes `$0218/$0219/$0226`** (raw-binary scan), so it is a no-op VBI.
-So there is nothing to port — but `game_vbi_isr` must be checked to confirm an unrecognised VVBLKI
-runs NO body (in particular not the standby `$52D7` one) while `$5E0E` is installed.
+### W6 — the `$5E0E` VBI (a check, not code)
+`game_init_5D50` installs VVBLKI `$5E0E` **only for the duration of the disk access** — it pushes
+`$0222/$0223` at `$5D50-$5D57` and pops them back at `$5DA3-$5DA8`. Hand-disassembled, `$5E0E`
+decrements CDTMV1 `$0218/$0219` and, when it expires, `JMP ($0226)`, else `JMP $E462` (XITVBV) —
+and **nothing in the binary ever writes `$0218/$0219/$0226`** (raw-binary scan), so it is a quiet
+no-op VBI held over the SIO call. With the hook doing the I/O synchronously the window is a few
+microseconds. Nothing to port; just confirm `game_vbi_isr` runs NO body for an unrecognised VVBLKI
+(in particular not the standby `$52D7` one).
 `$5E0E` is absent from `disasm/listing.txt` (vector-only, so Ghidra never found it): add it to
 `ghidra_scripts/entrypoints.csv` per the project convention.
 
