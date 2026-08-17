@@ -846,6 +846,12 @@ extern "C" { volatile unsigned short g_liftClear  = 0; }     // L_6219 quota-met
 extern "C" { volatile unsigned short g_liftScroll = 0; }     // L_622d a lift scroll started
 extern "C" { volatile unsigned short g_liftPass   = 0; }     // L_6268 one level step of the lift
 extern "C" { volatile unsigned short g_liftSpinB  = 0; }     // L_628f entered the "$008B == $0F" spin
+// HIGH-SCORE INITIALS-entry probes (`make PROBES=1 NAME_ENTRY=1`, amiga/name_entry.gdb).  Bumped
+// from PRE_INSN_HOOKS in the transpiled name_entry_loop / render_text_cell.
+extern "C" { volatile unsigned short g_neEnter = 0; }        // $5B6C name_entry_loop called
+extern "C" { volatile unsigned short g_nePass  = 0; }        // $5B81 past validate_save_state
+extern "C" { volatile unsigned short g_neWait  = 0; }        // $5C6E in the input wait
+extern "C" { volatile unsigned short g_neGlyph = 0; }        // $5CB2 rendering a glyph cell
 #ifdef ROF_COMBAT_LOAD
 // COMBAT-LOAD benchmark counters (`make COMBAT=1 PROBES=1`, read via amiga/combat_probe.gdb).
 // They exist to PROVE the combat load is real before any timing is quoted from it — a run
@@ -2391,6 +2397,40 @@ static uint32_t vbiHandler()
         if (vv == 0x4FF5u && s_flightVbi == 0) s_flightVbi = g_vbiCount;
         if (s_flightVbi && !s_forcedDeath && (uint16_t)(g_vbiCount - s_flightVbi) >= 120) {
             mem[0x063Du] = 1; s_forcedDeath = 1;
+        }
+    }
+#endif
+
+#ifdef ROF_NAME_ENTRY
+    // `make NAME_ENTRY=1` — reach the HIGH-SCORE INITIALS entry (`name_entry_loop $5B6C`), which
+    // nothing else does: it is reachable only by DYING, and only after the game-over tune has run
+    // out.  ~4 s after flight starts, arm the energy-out death cinematic (event_trigger $063D —
+    // the same byte an empty energy bar writes) and seed a current score, so the results card has
+    // digits to show and the (zero) high score is beaten.  From there the faithful binary does the
+    // rest: the death teardown sets $00E5=5, standby_scoreboard_render copies the score over the
+    // high score, spins at L_596d until the tune ends, then calls name_entry_loop.
+    // Interactive (no PROBES needed): joystick/keys pick the letters, exactly as on the Atari.
+    // Headless readout: amiga/name_entry.gdb.
+    {
+        const uint16_t vv = (uint16_t)(mem[0x0222u] | (mem[0x0223u] << 8));
+        static uint16_t s_neFlightVbi = 0; static uint8_t s_neArmed = 0;
+        if (vv == 0x4FF5u && s_neFlightVbi == 0) s_neFlightVbi = g_vbiCount;
+        if (s_neFlightVbi && !s_neArmed && (uint16_t)(g_vbiCount - s_neFlightVbi) >= 240) {
+            mem[0x0600u] = 0x00; mem[0x0601u] = 0x12;   // current score, BCD, MSB first
+            mem[0x0602u] = 0x34; mem[0x0603u] = 0x50;
+            // FAKE THE SAVE-STATE SECTOR.  name_entry_loop's first act is validate_save_state
+            // ($5D0D), which requires mem[$3700]==$28, mem[$3714]==$EE and 38 bytes at $37C7
+            // equal to the copyright string at $7BDA ("XCopyright (c) 1987 Lucasfilm Ltd. v4.1").
+            // That block came off DISK: game_init_5D50 sets DBUFLO/DBUFHI + DAUX1/DAUX2 for
+            // sectors $02CE→$3700 and $02CF→$3780 — but BOTH SIO calls are three NOPs in
+            // rof.xex ($5D86 and $5D9D), patched out when the disk game was converted.  So the
+            // block is always zero, the check always fails, and the entry bails at L_5b7e — on
+            // the original binary too (all 51 a800dumps have $3700/$3714/$37C7 = 0).  Writing
+            // what the removed read would have delivered is the only way to see this screen.
+            mem[0x3700u] = 0x28; mem[0x3714u] = 0xEE;
+            for (int i = 0; i < 0x27; i++) mem[0x37C7u + i] = mem[0x7BDAu + i];
+            mem[0x063Du] = 1;                            // energy-out death cinematic
+            s_neArmed = 1;
         }
     }
 #endif

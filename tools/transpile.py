@@ -537,6 +537,25 @@ SPINWAIT_HOOKS = {
     # renders (and decodeTitleCells consumes the dirty range) immediately; the VBI advance also
     # keeps decrementing $00E5 so the spin still exits.
     0x596D: 'platform_tick_vbi(); platform_render_frame();',
+    # The HIGH-SCORE INITIALS-ENTRY spins.  Same class of bug as the level-complete lift
+    # (docs/boost-cinematic-plan.md, last section): each waits on a cell only the VBI writes,
+    # none had a yield, and on the Amiga — where mem[] is not volatile (ROF_MEM_NONVOLATILE) —
+    # GCC proved the condition invariant, hoisted the load and emitted `bra.s .`, so the main
+    # loop hung with the screen still animating.  One frame per iteration is both the reload
+    # barrier the Amiga needs and the VBI advance SDL needs.  `make NAME_ENTRY=1` reaches all
+    # three; the audit is `objdump -d out/RoF.elf | grep 60fe`.
+    #   L_5A21: sound_retrigger_random's wait for the tune to END — "LDA $00E5; BNE L_5A21".
+    #     $00E5 is cleared by audio_timer_setup, which the VBI reaches through
+    #     music_player_tick at end-of-song, so only a ticked frame can ever release it.
+    0x5A21: 'platform_tick_vbi(); platform_render_frame();',
+    #   L_5C6E: name_entry_loop's input wait — exits on $0003 (set to $64 by
+    #     check_collision_sync, the VBI's console/stick sampler, on any input) or on the attract
+    #     banner reaching $0091 == $C0.  Neither can advance without a frame.
+    0x5C6E: 'platform_tick_vbi(); platform_render_frame();',
+    #   L_5CB2: render_text_cell's per-glyph wait for a printable code in $0049 — the same
+    #     check_collision_sync sample.  The label is also the fall-through entry, so a glyph that
+    #     is already valid costs one extra frame; the loop it guards spans many frames anyway.
+    0x5CB2: 'platform_tick_vbi(); platform_render_frame();',
 }
 
 # Pre-instruction hook injection.
@@ -557,6 +576,14 @@ PRE_INSN_HOOKS = {
     # returns+clears it (or $FF if none) — exactly mimicking the handler clobbering
     # X.  No-op everywhere it returns $FF (SDL / validate headless): X stays $FF.
     0x519c: '{ unsigned char _k = platform_flight_irq_key(); if (_k != 0xFFu) cpu.X = _k; }',
+    # HIGH-SCORE INITIALS probes (`make PROBES=1 NAME_ENTRY=1`, read with amiga/name_entry.gdb).
+    # This path is otherwise invisible: name_entry_loop is CALLED on every game over, but
+    # validate_save_state fails on the un-loaded disk save block and it returns at once — so
+    # "entered" and "past the gate" have to be counted separately to tell the two apart.
+    0x5B6C: '#ifdef ROF_FLIGHT_PROBE\n    { extern volatile unsigned short g_neEnter; g_neEnter++; }\n#endif',
+    0x5B81: '#ifdef ROF_FLIGHT_PROBE\n    { extern volatile unsigned short g_nePass; g_nePass++; }\n#endif',
+    0x5C6E: '#ifdef ROF_FLIGHT_PROBE\n    { extern volatile unsigned short g_neWait; g_neWait++; }\n#endif',
+    0x5CB2: '#ifdef ROF_FLIGHT_PROBE\n    { extern volatile unsigned short g_neGlyph; g_neGlyph++; }\n#endif',
     # (The creature-blit capture is NOT a hook here: $80C5 is a native twin (alien_shape_blit),
     #  so the running game never executes the transpiled oracle — the capture lives in the native
     #  twin in rof_native.c instead, gated on $0632 alien_knock_active.)

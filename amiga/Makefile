@@ -670,6 +670,15 @@ endif
 ifdef FORCE_DEATH
 EXTRA_DEFINES += -DROF_FORCE_DEATH
 endif
+# `make NAME_ENTRY=1`: reach the HIGH-SCORE INITIALS entry (name_entry_loop $5B6C) — the only way
+# in is to DIE, so ~4 s into flight this arms the energy-out death cinematic ($063D) and seeds a
+# current score that beats the (zero) high score.  The faithful binary then runs the death
+# teardown, the results card, the game-over tune, and the initials entry.  Needs NO PROBES:
+# builds a normal playable out/RoF, so the entry can be driven by hand (also on real hardware).
+# Headless: add PROBES=1 and read it with `GDBSCRIPT=name_entry.gdb ./diag_run.sh 90`.
+ifdef NAME_ENTRY
+EXTRA_DEFINES += -DROF_NAME_ENTRY
+endif
 # `make PROBES=1 TUNDIFF=1`: run the tunnel direct-painter fidelity differential — decode the live
 # $1000 GTIA field through the owner's LUT and diff it against what the painter left in
 # tunnelBitmap (docs/boost-tunnel-direct-handoff.md §3, read with amiga/boost_probe.gdb).
