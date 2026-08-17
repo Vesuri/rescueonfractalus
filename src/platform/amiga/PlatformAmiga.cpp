@@ -839,6 +839,13 @@ extern "C" { volatile unsigned short g_ipDispatch   = 0; }   // L_6324 idle disp
 extern "C" { volatile unsigned short g_ipInPlace    = 0; }   // L_6332 in-place branch taken
 extern "C" { volatile unsigned short g_ipDoorScroll = 0; }   // level<max → door-scroll rebuild
 extern "C" { volatile unsigned short g_ipIntroWrap  = 0; }   // level>=max → intro_screen_build_seq wrap
+// Level-complete LIFT probes (`make PROBES=1 FORCE_RETURN=1 LEVEL_DONE=1`, amiga/level_done.gdb).
+// The lift is the elevator that scrolls the LEVEL doors up after a completed level; it is entered
+// only when the pilot quota was met, which no other harness arranges.
+extern "C" { volatile unsigned short g_liftClear  = 0; }     // L_6219 quota-met branch taken
+extern "C" { volatile unsigned short g_liftScroll = 0; }     // L_622d a lift scroll started
+extern "C" { volatile unsigned short g_liftPass   = 0; }     // L_6268 one level step of the lift
+extern "C" { volatile unsigned short g_liftSpinB  = 0; }     // L_628f entered the "$008B == $0F" spin
 #ifdef ROF_COMBAT_LOAD
 // COMBAT-LOAD benchmark counters (`make COMBAT=1 PROBES=1`, read via amiga/combat_probe.gdb).
 // They exist to PROVE the combat load is real before any timing is quoted from it — a run
@@ -2461,6 +2468,16 @@ static uint32_t vbiHandler()
             mem[0x003Au] = 0xFF;          // level-clear / mother-ship-arrived gate (what $7BC6 sets)
             mem[0x0676u] = 1;             // mother-ship HUD light on
             mem[0x2849u] = 1;             // level_cleared_flag → $5223 chain also fires $7BC6 (MOTHER SHIP! msg)
+#ifdef ROF_FORCE_LEVEL_DONE
+            // LEVEL_DONE: make this a COMPLETED level.  $0629 is the rescued-pilot count (INC'd per
+            // rescue by $7AF4) and $062A the level's quota; boot_standby_launch_driver's L_615b
+            // subtracts them, and quota met is what runs the BONUS POINTS tally, the LEVEL COMPLETE
+            // message, the $0655 jingle and the lift.  Pinning it here — at the arrival, where real
+            // play would already have the pilots aboard — leaves the whole sequence to the faithful
+            // binary.  ($0629 >= $061F also makes $7AF4 call game_sub_7B54 for the rest of the
+            // flight, exactly as a real quota-met flight does.)
+            mem[0x0629u] = mem[0x062Au];
+#endif
             s_retPhase = 1;
         }
         if (s_retPhase == 1 && dt >= 340) {
@@ -2480,7 +2497,10 @@ static uint32_t vbiHandler()
         // selector card.  Pulsed (down ~8f / up) so each press is a distinct edge.
         // ⚠ Suppressed under ATTRACT_NOW: that harness wants the post-mother-ship Standby to sit
         // IDLE until the attract timeout fires, and a SELECT press refreshes the idle state.
-#ifndef ROF_ATTRACT_NOW
+        // ⚠ Also suppressed under LEVEL_DONE: SELECT is the lift's early-out (L_628f reads CONSOL
+        // and jumps to L_62b4), so a pulse would cut the lift short instead of letting it run its
+        // level+1..min(level+4,$63) range — which is the sequence under test there.
+#if !defined(ROF_ATTRACT_NOW) && !defined(ROF_FORCE_LEVEL_DONE)
         if (s_retPhase >= 2 && vv == 0x52D7u && mem[0x003Au] == 0xFFu) {
             if (s_retSelVbi == 0) s_retSelVbi = g_vbiCount;
             uint16_t ds = (uint16_t)(g_vbiCount - s_retSelVbi);

@@ -690,6 +690,20 @@ endif
 ifdef FORCE_RETURN
 EXTRA_DEFINES += -DROF_FORCE_RETURN
 endif
+# `make PROBES=1 FORCE_RETURN=1 LEVEL_DONE=1`: make that forced return a COMPLETED level.  The
+# rescued-pilot count $0629 is pinned to the level quota $062A when the mother ship arrives, which
+# is the condition boot_standby_launch_driver tests at L_615b ($00E3 = $0629-$062A): quota met runs
+# the level-clear sequence — per-pilot bonus scoring, the jingle, the count-up-to-level readout —
+# and then the LIFT (L_622d/L_6268: the elevator scrolling the LEVEL doors from level+1 to
+# min(level+4,$63), stopped early by SELECT).  Plain FORCE_RETURN leaves $0629 at 0, so it takes
+# the not-completed branch and NEVER reaches the lift; this flag is the only headless path to it.
+# The phase-3 SELECT pulse is suppressed here so the lift runs its full range.
+# Readout: amiga/level_done.gdb.  Requires PROBES + FORCE_RETURN.
+# LEVEL_DONE_LEVEL=n also pins the flown level (default 1), to reach the lift from level n.
+LEVEL_DONE_LEVEL ?= 1
+ifdef LEVEL_DONE
+EXTRA_DEFINES += -DROF_FORCE_LEVEL_DONE -DROF_LEVEL_DONE_LEVEL=$(LEVEL_DONE_LEVEL)
+endif
 # `make PROBES=1 SKIPBOOT=0 FORCE_BOOT_FIRE=1`: hold the joystick FIRE button over vbi 100..160 —
 # mid-Logo and on into the Station — to verify headlessly that fire advances Logo -> Station ->
 # Standby (the 2026-08-14 QoL divergence) with no physical joystick, then release so Standby is
