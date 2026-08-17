@@ -46,6 +46,16 @@
 #define ROF_MEM_VIEW volatile
 #endif
 
+/* ROF_SPIN_MEM(a) — read a mem[] cell that ANOTHER execution context writes, from inside a spin
+ * whose body contains no call.  mem[] is not volatile in the Amiga C core (ROF_MEM_NONVOLATILE)
+ * and the flag is advanced by the real INTB_VERTB ISR, so a plain `while (mem[a] != N);` is a
+ * loop GCC can prove never changes: it hoists the load and emits `bra.s .`, hanging the main loop
+ * forever while the ISR keeps animating the screen.  Every OTHER mem[] spin in the tree has an
+ * opaque call in its body (ds_frame / platform_tick_vbi) which is already a reload barrier — see
+ * the SPINWAIT_HOOKS block in tools/transpile.py; these hand-written ones do not, so they must
+ * force the re-read themselves. */
+#define ROF_SPIN_MEM(a) (*(volatile const uint8_t *)&mem[(a)])
+
 /* ROF_MEMBASE — the mem[] BASE-REGISTER fold, generalised.
  *
  * Dropping `volatile` (ROF_MEM_NONVOLATILE) only ALLOWS GCC to use a base register; it still
@@ -11770,6 +11780,11 @@ L_620e:
 L_6216:
     goto L_62e7;
 L_6219:
+#ifdef ROF_FLIGHT_PROBE
+    /* Quota met — the LEVEL-COMPLETE branch, and the only way into the lift below.
+       (`make PROBES=1 FORCE_RETURN=1 LEVEL_DONE=1`, read with amiga/level_done.gdb.) */
+    { extern volatile unsigned short g_liftClear; g_liftClear++; }
+#endif
     grid_offset_b = (uint8_t)(level_stage + 1);   /* STA $9B; INC $9B */
     {
         uint8_t a = (uint8_t)(level_stage + 0x04);  /* clamp level+4 to $63 */
@@ -11778,6 +11793,9 @@ L_6219:
         sfx_reinit_gate = a;
     }
 L_622d:
+#ifdef ROF_FLIGHT_PROBE
+    { extern volatile unsigned short g_liftScroll; g_liftScroll++; }   /* one lift scroll started */
+#endif
     cpu.Y = 0x00;                         /* Y feeds the L_6244 loop's mem[$6595+Y] */
     frame_counter = 0;
     draw_pattern_byte = 0x4F;
@@ -11796,9 +11814,13 @@ L_6244:
     wait_frames();
     dl_src_index = 0x53;
 L_6268:
+#ifdef ROF_FLIGHT_PROBE
+    { extern volatile unsigned short g_liftPass; g_liftPass++; }        /* one level step of the lift */
+#endif
     cpu.X = 0x05;
 L_626a:
-    if (dl_src_index != 0x3E) { cpu.Z = 0; goto L_6289; }   /* spin: wait for the VBI to reach $3E */
+    /* spin: wait for the VBI to reach $3E (ROF_SPIN_MEM — the ISR is the writer) */
+    if (ROF_SPIN_MEM(MEM_dl_src_index) != 0x3E) { cpu.Z = 0; goto L_6289; }
     dl_src_index = 0x56;
     if (cpu.X != 0x03) goto L_6288;
     blit_color_src = 0x08;               /* on the 3rd pass: re-blit the score readout, bump level */
@@ -11812,8 +11834,11 @@ L_6288:
 L_6289:
     if (!cpu.Z) goto L_626a;
     dl_src_index = 0x56;
+#ifdef ROF_FLIGHT_PROBE
+    { extern volatile unsigned short g_liftSpinB; g_liftSpinB++; }      /* about to enter the $0F spin */
+#endif
 L_628f:
-    if (dl_src_index != 0x0F) goto L_628f;   /* spin: wait for the VBI to reach $0F */
+    if (ROF_SPIN_MEM(MEM_dl_src_index) != 0x0F) goto L_628f;   /* spin: wait for the VBI to reach $0F */
     draw_pattern_byte = 0x0F;            /* A == dl_src_index == $0F at spin exit */
     dl_src_index = 0;
     if ((bus_read(0xD300) & 0x01) == 0) goto L_62a9;   /* PORTA joystick (live on Amiga) */
@@ -11931,6 +11956,15 @@ L_634f:
      * terrain roughness — then comes out of the faithful binary logic.  The headless
      * auto-launch would otherwise fly level 1, which has none of the three. */
     level_stage = (uint8_t)ROF_COMBAT_LEVEL;
+#endif
+#ifdef ROF_FORCE_LEVEL_DONE
+    /* LEVEL_DONE harness: fly the requested level, so the level-complete lift can be entered from
+     * a chosen level (its range is level+1 .. min(level+4,$63)).  Set BEFORE
+     * compute_stage_display_geometry below, which derives the pilot quota $062A from it.
+     * ONE-SHOT: the level the lift just picked must survive into the next flight, so only the
+     * FIRST launch is pinned. */
+    { static uint8_t s_ldPinned = 0;
+      if (!s_ldPinned) { s_ldPinned = 1; level_stage = (uint8_t)ROF_LEVEL_DONE_LEVEL; } }
 #endif
     if (level_or_state == 0) {
         uint8_t prev = mem[0x0626];

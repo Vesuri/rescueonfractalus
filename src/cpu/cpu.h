@@ -23,9 +23,14 @@ extern Cpu6502 cpu;
  * It is needed on the SDL host, where a real audio THREAD shares mem[] with the game loop and
  * spin-wait conditions like `while (mem[$8E]==0)` would fold to infinite loops.  On the Amiga
  * there is no second thread: the flight VBI is a level-3 interrupt that HALTS the main loop
- * for its whole duration (and cannot itself be preempted — CIA-A keyboard is level 2), and
- * every mem[] spin in the tree has an opaque call (ds_frame / platform_tick_vbi) in its body,
- * which is already a reload barrier.  See docs/perf-budget.md.
+ * for its whole duration (and cannot itself be preempted — CIA-A keyboard is level 2), so a spin
+ * only needs a RELOAD BARRIER in its body, which an opaque call (ds_frame / platform_tick_vbi)
+ * already is.  See docs/perf-budget.md.
+ * ⚠ "every mem[] spin in the tree has one" is NOT true and must not be assumed: the two spins in
+ * the level-complete LIFT had no call at all, GCC proved their condition invariant and emitted
+ * `bra.s .`, and the main loop hung forever with the ISR still animating the screen (the EAB
+ * "stuck in the lift" report).  A spin on a cell the ISR writes uses ROF_SPIN_MEM (rof_native.c);
+ * AUDIT any new one — `objdump -d out/RoF.elf | grep 60fe` lists every self-branch.
  * Scope: this only reaches the C core (cpu.c / rof_gen.c / rof_native.c / rof_manual.c).  The
  * Amiga C++ TUs declare `extern volatile uint8_t mem[65536]` themselves and keep the
  * conservative view — volatility is a property of the ACCESS, not of the object, so the two
