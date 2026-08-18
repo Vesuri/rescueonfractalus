@@ -456,9 +456,13 @@ frequency envelope, so its stride never changes: one build, then five cache hits
 
 ### Still open: a voice occasionally sounds the NOISE waveform at onset
 
-Reported 2026-08-18: sometimes one of the first two airlock footsteps, the mothership bonus-points
-sound, and (once, historically) the saucer tone come out as noise. All three are **onset**
-artifacts, which is the shape of a one-frame wrong `want_ptr`. Two candidates are already
+Reported 2026-08-18: sometimes one of the first two airlock footsteps comes out as noise, and
+(once, historically) the saucer tone did. ⚠ **The mothership bonus-points counter was reported
+alongside these and is NOT part of the evidence — the user's later reading is that it is SUPPOSED
+to be the noise waveform**, which the event data supports (the scoring family's `$13` is dist `$00`
+noise vol 8, next to the pure-tone `$12`/`$1D`/`$1E`). Do not re-open it as a symptom.
+
+What remains has the shape of a one-frame wrong `want_ptr` at onset. Two candidates are already
 eliminated, so do not re-derive them:
 
 * **Not `noiseTick` starvation.** It only refreshes `noise_buf`'s *contents*; Paula loops the
@@ -474,8 +478,9 @@ repro) rather than another static theory — the same offline-capture route that
 squeal.
 
 ⚠ **Do not close this on a quiet session.** A play-through right after the `$40` fix showed no wrong
-waveforms, but neither of the two 2026-08-18 POKEY commits contains a mechanism that could explain a
-fix: the chain resolver is a no-op unless AUDCTL sets bits 3-6 (nothing live does), and the `$40`
-work changed how a voice is *rendered*, never which waveform it is *selected* to play (`is_noise` is
-a function of AUDC alone). The saucer instance was already closed once on exactly this evidence
-("not reproduced since", 2026-08-13) and came back as the mothership report.
+waveforms, but the chain resolver is a no-op unless AUDCTL sets bits 3-6 (nothing live does), and
+the `$40` work changed how a voice is *rendered*, never which waveform it is *selected* to play
+(`is_noise` is a function of AUDC alone). The saucer instance was already closed once on exactly
+this evidence ("not reproduced since", 2026-08-13). What WOULD be real progress: the airlock
+footsteps share **slot 8** with the noise events `$16`/`$17`/`$18`, so a mis-ordered priority-mixer
+handover there is the first thing to look at — with a capture, not a theory.
