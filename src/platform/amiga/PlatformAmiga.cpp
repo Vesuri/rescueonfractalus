@@ -540,25 +540,78 @@ static uint16_t s_perTable[3][256];
 static void build_period_table(void)
 {
     for (int a = 0; a < 256; a++) {
-        uint32_t divider = (uint32_t)a + 1u;
-        s_perTable[0][a] = pokey_period_compute(divider, true,  28u);   // use_179 (base_div unused)
-        s_perTable[1][a] = pokey_period_compute(divider, false, 28u);
-        s_perTable[2][a] = pokey_period_compute(divider, false, 114u);
+        // Divided-clock channels count AUDF+1; a channel clocked straight off 1.79 MHz counts
+        // AUDF+4 (the extra pipeline delay POKEY only exposes at full rate — Atari HW ref,
+        // atari800 pokeysnd.c Update_pokey_sound_rf).
+        s_perTable[0][a] = pokey_period_compute((uint32_t)a + 4u, true,  28u);  // base_div unused
+        s_perTable[1][a] = pokey_period_compute((uint32_t)a + 1u, false, 28u);
+        s_perTable[2][a] = pokey_period_compute((uint32_t)a + 1u, false, 114u);
     }
+}
+
+// AUDCTL bit→channel (atari800 pokey.h).  The four audio channels pair up as (ch0,ch1) and
+// (ch2,ch3); each pair's clock select and 16-bit-join bit belong to the pair, not the channel:
+//   CH1_179 $40 = 1.79 MHz for the ch0+ch1 pair    CH3_179 $20 = 1.79 MHz for the ch2+ch3 pair
+//   CH1_CH2 $10 = join ch0(lo)+ch1(hi)             CH3_CH4 $08 = join ch2(lo)+ch3(hi)
+#define POKEY_PAIR_179(ch)    ((ch) & 2u ? 0x20u : 0x40u)
+#define POKEY_PAIR_CHAIN(ch)  ((ch) & 2u ? 0x08u : 0x10u)
+
+// Resolve one channel's frequency divider, honouring the 16-bit chain.  Returns the counter
+// reload value in base-clock counts and, via the out-params, the master-clock ticks per base
+// count (`*out_bd`, 1 when the channel runs straight off 1.79 MHz) and that same 1.79 flag.
+// The single source of truth for chaining: period, poly-distortion stride and poly4/poly5
+// stride all go through it, so they cannot disagree.  `out_179` may be NULL.
+//
+// ⚠ The joined 16-bit counter lives on the HIGH channel of the pair (ch1 / ch3), NOT the low
+// one — AUDF_lo is only the low byte of its reload value (atari800 mzpokeysnd.c
+// Update_c1divstart / Update_c3divstart).  The LOW channel keeps sounding, but its counter no
+// longer reloads from AUDF: it free-runs the full 256-count byte wrap, an unpitched buzz
+// (Update_c0divstart: c0divstart = 256 * mdivk).  Software conventionally sets the low half's
+// AUDC volume to 0.  (Real POKEY reloads the low half with AUDF_lo on the one cycle the pair
+// itself reloads; that once-per-16-bit-period jitter is below what a wavetable can carry.)
+static uint32_t pokey_divider(uint8_t ch, uint8_t audf, uint8_t audctl,
+                              uint16_t* out_bd, bool* out_179)
+{
+    const uint8_t lo_ch  = (uint8_t)(ch & 2u);            // 0 for the ch0+ch1 pair, 2 for ch2+ch3
+    const bool    hi_half = (ch & 1u) != 0u;
+    const bool    chained = (audctl & POKEY_PAIR_CHAIN(ch)) != 0u;
+    bool     use_179;
+    uint32_t divider;
+
+    if (chained) {
+        use_179 = (audctl & POKEY_PAIR_179(ch)) != 0u;    // the pair's clock is the low half's
+        // 16-bit reload = AUDF_lo + 256*AUDF_hi, +7 at 1.79 MHz / +1 on a divided clock.
+        divider = hi_half ? ((uint32_t)pokey[lo_ch * 2] + 256u * (uint32_t)audf + (use_179 ? 7u : 1u))
+                          : 256u;                          // low half: free-running byte wrap
+    } else {
+        use_179 = !hi_half && (audctl & POKEY_PAIR_179(ch)) != 0u;   // only ch0/ch2 take 1.79 MHz
+        divider = (uint32_t)audf + (use_179 ? 4u : 1u);
+    }
+    if (out_179) *out_179 = use_179;
+    *out_bd  = use_179 ? 1u : ((audctl & 0x01u) ? 114u : 28u);
+    return divider;
+}
+
+// (divider * base_div) % m — the poly stride residue — without overflowing MULU.W.  Unchained
+// the product is at most 259*114 = 29526 and this is the one MULU.W + one DIVU.W it always was;
+// only a 16-bit chain (divider up to 65543) needs the reduce-each-factor-first identity
+// (a*b)%m = ((a%m)*(b%m))%m, which costs two more DIVU.W on that rare path.
+static inline uint16_t poly_stride_mod(uint32_t divider, uint16_t bd, uint16_t m)
+{
+    if (divider <= 574u)                        // 574*114 = 65436, still 16-bit
+        return rof_modu16(rof_mulu16((uint16_t)divider, bd), m);
+    return rof_modu16(rof_mulu16(rof_modu16(divider, m), rof_modu16(bd, m)), m);
 }
 
 static uint16_t pokey_period(uint8_t ch, uint8_t audf, uint8_t audctl)
 {
-    uint32_t base_div = (audctl & 0x01u) ? 114u : 28u;
-    // AUDCTL bit→channel (atari800 pokey.h): CH1_179 $40 = 1.79MHz for Ch1 (0-indexed ch0),
-    // CH3_179 $20 = Ch3 (ch2); CH1_CH2 $10 joins Ch1+Ch2 (lo=ch0), CH3_CH4 $08 joins Ch3+Ch4.
-    bool use_179  = ((ch == 0) && (audctl & 0x40u)) || ((ch == 2) && (audctl & 0x20u));
-    bool chain_lo = ((ch == 0) && (audctl & 0x10u)) || ((ch == 2) && (audctl & 0x08u));
-    if (chain_lo) {   // rare 16-bit chain (AUDF lo + 256*hi + 1) — compute directly (not tabled)
-        uint8_t audf_hi = pokey[(ch + 1) * 2];
-        return pokey_period_compute((uint32_t)audf + 256u * audf_hi + 1u, use_179, base_div);
+    if (!(audctl & POKEY_PAIR_CHAIN(ch))) {   // common case: the period is a pure function of AUDF
+        bool use_179 = !(ch & 1u) && (audctl & POKEY_PAIR_179(ch));
+        return s_perTable[use_179 ? 0 : ((audctl & 0x01u) ? 2 : 1)][audf];
     }
-    return s_perTable[use_179 ? 0 : (base_div == 114u ? 2 : 1)][audf];   // common case: table lookup
+    uint16_t bd; bool use_179;                // rare 16-bit chain — compute directly (not tabled)
+    uint32_t divider = pokey_divider(ch, audf, audctl, &bd, &use_179);
+    return pokey_period_compute(divider, use_179, bd);
 }
 
 static void update_paula_channel(uint8_t ch)
@@ -606,16 +659,11 @@ static void update_paula_channel(uint8_t ch)
         // pitched, punchy buzz — instead of the flat white noise.  Regenerate only when the
         // poly stride or gate mode changes (volume changes don't alter the shape).
         if (audctl & 0x80u) {
-            bool     use_179   = ((ch == 0) && (audctl & 0x40u)) ||   // CH1_179 $40 → ch0
-                                 ((ch == 2) && (audctl & 0x20u));     // CH3_179 $20 → ch2
-            bool     chain_lo  = (ch == 0 && (audctl & 0x10u)) ||     // CH1_CH2 $10 → ch0 lo
-                                 (ch == 2 && (audctl & 0x08u));       // CH3_CH4 $08 → ch2 lo
             // Cache key = (divider, base_div, gate) instead of the full stride product, so no
             // 32-bit multiply is needed even for the 16-bit chain (stride = divider*base_div is
             // only ever used mod 31 / mod 511 inside build_poly_dist, computed there in 16-bit).
-            uint32_t divider = chain_lo ? ((uint32_t)audf + 256u * pokey[(ch + 1) * 2] + 1u)
-                                        : ((uint32_t)audf + 1u);
-            uint16_t bd = use_179 ? 1u : ((audctl & 0x01u) ? 114u : 28u);
+            uint16_t bd;
+            uint32_t divider = pokey_divider(ch, audf, audctl, &bd, nullptr);
             uint8_t  g  = (uint8_t)((audc & POKEY_NOTPOLY5) != 0u ? 2u : 1u);   // $80 = ungated poly9
             if (poly_dist_divider[ch] != divider || poly_dist_bd[ch] != bd || poly_dist_gate[ch] != g) {
                 build_poly_dist(ch, divider, bd, g == 2u);
@@ -645,12 +693,15 @@ static void update_paula_channel(uint8_t ch)
     if (!poly5tone && !poly4) {
         sel_ptr = (uint32_t)wave_pure; sel_len = 1u;       // pure tone / unmodelled
     } else {
-        uint16_t baseDiv = (audctl & 0x01u) ? 114u : 28u;
-        uint32_t stride  = rof_mulu16((uint16_t)(audf + 1u), baseDiv);     // ≤29184, MULU.W
+        // The shape depends only on the poly stride = divider*base_div (master-clock ticks per
+        // underflow) taken mod 15 / mod 31 — so it must see the chain and the 1.79 MHz clock,
+        // which is why the divider comes from the same resolver as the period.
+        uint16_t bd;
+        uint32_t divider = pokey_divider(ch, audf, audctl, &bd, nullptr);
         if (poly4) {
-            sel_ptr = (uint32_t)poly4_wave[rof_modu16(stride, 15u)]; sel_len = 15u;   // 30 bytes
+            sel_ptr = (uint32_t)poly4_wave[poly_stride_mod(divider, bd, 15u)]; sel_len = 15u; // 30 B
         } else {
-            sel_ptr = (uint32_t)poly5_wave[rof_modu16(stride, 31u)]; sel_len = 31u;   // 62 bytes
+            sel_ptr = (uint32_t)poly5_wave[poly_stride_mod(divider, bd, 31u)]; sel_len = 31u; // 62 B
         }
     }
     want_set(ch, sel_ptr, sel_len, per ? per : 124u, vol);
@@ -1082,6 +1133,10 @@ extern "C" void rof_pokey_write(uint8_t reg, uint8_t val)
     if (reg <= 7u) {
         uint8_t ch = reg >> 1u;             // AUDF or AUDC write — update the affected channel
         upc_timed(ch);
+        // A 16-bit pair's joined divider lives on the HIGH channel and includes the LOW half's
+        // AUDF, so an AUDF1/AUDF3 write must re-derive ch1/ch3 too (atari800's chan_mask).
+        if ((reg == 0u && (pokey[8] & 0x10u)) || (reg == 4u && (pokey[8] & 0x08u)))
+            upc_timed((uint8_t)(ch + 1u));
     } else if (reg == 8u) {
         for (uint8_t ch = 0; ch < 4; ch++) upc_timed(ch);   // AUDCTL — all channels
     }

@@ -258,12 +258,13 @@ Station ZP block down one byte to make room (4.1 `$9C`→cart `$9B` … 4.1 `$A2
 (`g_stationAudc3Mask`, `src/rof_boot.c`) rather than a stolen Atari RAM byte. Two port-specific
 reasons this was worth doing beyond "5.0 sounds better":
 
-* **4.1's AUDCTL made CH3 a squeal on the Amiga.** Our POKEY→Paula model computes the joined 16-bit
-  divider but still sounds it on the *low* channel instead of muting it, so `AUDF3=$28`
-  (`initad_1A97 $1A9C`) + CH3@1.79 MHz asked for 21826 Hz, clamped to Paula's minimum period 124 —
-  a piercing tone on every blip, the last of which lands just before the Standby hand-off. 5.0's
-  `$01` + `$0A` turns the same writes into the 713 Hz blip they are meant to be. (The underlying
-  model bug — a joined pair must output on the HIGH channel — is still there for any other caller.)
+* **4.1's AUDCTL made CH3 a squeal on the Amiga.** Our POKEY→Paula model computed the joined 16-bit
+  divider but sounded it on the *low* channel, so `AUDF3=$28` (`initad_1A97 $1A9C`) + CH3@1.79 MHz
+  asked for 21826 Hz, clamped to Paula's minimum period 124 — a piercing tone on every blip, the
+  last of which lands just before the Standby hand-off. 5.0's `$01` + `$0A` turns the same writes
+  into the 713 Hz blip they are meant to be. (That model bug has since been fixed properly — a
+  joined pair now sounds on the HIGH channel; see `docs/sfx-events.md` §POKEY 16-bit chain. The
+  adoption stands on its own: 5.0's values are what the console version plays.)
 * **4.1's hard cut never reached Paula.** `STA $D200,Y` is an *indexed* store, which the
   transliteration emits as a plain `mem[]` write; only `bus_write` routes to `rof_pokey_write`. So
   the drones were not silenced at all at station exit — they rang on until Standby's own audio init.

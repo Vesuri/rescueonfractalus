@@ -385,6 +385,10 @@ void PlatformSDL::hwWrite(uint16_t addr, uint8_t val) {
         int ch = (addr - 0xD200) >> 1;   /* 0-3 */
         if ((addr & 1) == 0) {             /* AUDFn */
             if (ch < 4) updateChannelFreq(ch, val);
+            /* A 16-bit pair's divider lives on the HIGH channel and includes the LOW half's
+               AUDF, so an AUDF1/AUDF3 write must re-derive ch1/ch3 too. */
+            if ((ch == 0 && (audctl & 0x10)) || (ch == 2 && (audctl & 0x08)))
+                updateChannelFreq(ch + 1, audctlAutf(ch + 1));
         } else if (addr == 0xD208) {       /* AUDCTL */
             audctl = val;
             for (int i = 0; i < 4; i++) updateChannelFreq(i, audctlAutf(i));
@@ -606,38 +610,33 @@ void PlatformSDL::updateChannelFreq(int ch, uint8_t audf) {
     /* Cache AUDF in mem[] for audctlAutf() to read back. */
     mem[0xD200 + ch * 2] = audf;  /* not real HW mem, but convenient */
 
-    /* AUDCTL clock source per channel (Atari Hardware Reference Manual):
-       Bit 5 ($20): CH1 (ch0) → 1.79 MHz.  Bit 6 ($40): CH3 (ch2) → 1.79 MHz.
-       Bit 3 ($08): CH1+CH2 (ch0+ch1) 16-bit counter.
-       Bit 4 ($10): CH3+CH4 (ch2+ch3) 16-bit counter.
+    /* AUDCTL (atari800 pokey.h; the two channels of a pair share these bits):
+       Bit 6 ($40) CH1_179: 1.79 MHz for the ch0+ch1 pair.
+       Bit 5 ($20) CH3_179: 1.79 MHz for the ch2+ch3 pair.
+       Bit 4 ($10) CH1_CH2: join ch0 (low byte) + ch1 (high byte) into one 16-bit counter.
+       Bit 3 ($08) CH3_CH4: join ch2 (low byte) + ch3 (high byte).
        Bit 0 ($01): base clock = 15 kHz (÷114) instead of 64 kHz (÷28).    */
-    bool use179MHz = (ch == 0 && (audctl & 0x20)) ||
-                     (ch == 2 && (audctl & 0x40));
-    double baseDiv  = (audctl & 0x01) ? 114.0 : POKEY_DIV;
+    const uint8_t pair179   = (ch & 2) ? 0x20 : 0x40;
+    const uint8_t pairChain = (ch & 2) ? 0x08 : 0x10;
+    const bool    chained   = (audctl & pairChain) != 0;
+    const bool    hiHalf    = (ch & 1) != 0;
 
-    /* 16-bit chaining: ch0+ch1 linked when AUDCTL bit 3 set.
-       ch2+ch3 linked when AUDCTL bit 4 set.
-       The "high" channel (ch1 or ch3) becomes the MSB of the divider and
-       is silenced; the "low" channel plays the combined frequency.         */
-    bool chain01 = (audctl & 0x08) != 0;  /* ch0 (low) + ch1 (high) */
-    bool chain23 = (audctl & 0x10) != 0;  /* ch2 (low) + ch3 (high) */
-
-    if ((ch == 1 && chain01) || (ch == 3 && chain23)) {
-        /* This is the MSB channel — silent in 16-bit mode. */
-        channels[ch].period = 0.0f;
-        return;
-    }
+    /* The joined 16-bit counter lives on the HIGH channel of the pair (ch1 / ch3); the low
+       half only supplies the low byte of its reload value.  The low half keeps sounding but
+       free-runs its full 256-count byte wrap (software normally mutes it).  Mirrors
+       PlatformAmiga::pokey_divider — see the comment there. */
+    bool   use179MHz = chained ? ((audctl & pair179) != 0)
+                               : (!hiHalf && (audctl & pair179) != 0);
+    double baseDiv   = (audctl & 0x01) ? 114.0 : POKEY_DIV;
 
     double clockHz = use179MHz ? POKEY_CLOCK : POKEY_CLOCK / baseDiv;
     double divider;
-    if (ch == 0 && chain01) {
-        /* 16-bit: divider = AUDF0 + AUDF1*256 + 1 */
-        divider = (double)audf + (double)audctlAutf(1) * 256.0 + 1.0;
-    } else if (ch == 2 && chain23) {
-        /* 16-bit: divider = AUDF2 + AUDF3*256 + 1 */
-        divider = (double)audf + (double)audctlAutf(3) * 256.0 + 1.0;
+    if (chained) {
+        divider = hiHalf ? (double)audctlAutf(ch - 1) + (double)audf * 256.0 + (use179MHz ? 7.0 : 1.0)
+                         : 256.0;
     } else {
-        divider = (double)audf + 1.0;
+        /* A channel clocked straight off 1.79 MHz counts AUDF+4, not AUDF+1. */
+        divider = (double)audf + (use179MHz ? 4.0 : 1.0);
     }
 
     // POKEY's output flip-flop halves the counted rate: f = clock / (2 * divider).

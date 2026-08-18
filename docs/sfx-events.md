@@ -349,3 +349,59 @@ rebuild is ~215 rasterlines): `if (kBit9[p9] == (out^1)) out ^= 1;` is unconditi
 `out = kBit9[p9]`, so a level table collapses it to one indexed load, and the `gateAlways` arm never
 reads `kBit5` so its `p5` step hoists out. Byte-identical over all 31682 reachable (s5,s9,gate)
 triples on the host; not shipped.
+
+## POKEY 16-bit chain — the joined pair sounds on the HIGH channel (fixed 2026-08-18)
+
+`AUDCTL` bit4 `CH1_CH2` ($10) joins ch0+ch1 and bit3 `CH3_CH4` ($08) joins ch2+ch3 into one 16-bit
+counter. The port's POKEY→Paula model computed the joined divider but sounded it on the **low**
+channel and left the high one running independently — backwards on both halves. Symptom of record:
+the Station's 4.1 `AUDCTL=$29` + `AUDF3=$28` asked the low half for 21826 Hz, clamped to Paula's
+minimum period 124, a squeal on every missile blip (`docs/rom-v50-diff.md` §4.8; that scene now
+adopts 5.0's un-chained `$01` for its own reasons, so the two fixes are independent).
+
+What real POKEY does — atari800's accurate model, `tmp/atari800/src/mzpokeysnd.c`
+`Update_c0divstart` … `Update_c3divstart`:
+
+| | divider (base-clock counts) |
+|---|---|
+| unchained, divided clock | `AUDF + 1`, times `mdivk` (28, or 114 with AUDCTL bit0) |
+| unchained, 1.79 MHz (ch0/ch2 only) | `AUDF + 4` master-clock ticks — the base divider is bypassed |
+| chained, **HIGH** half (ch1/ch3) | `AUDF_lo + 256*AUDF_hi + 1` times `mdivk`; `+ 7` at 1.79 MHz |
+| chained, **LOW** half (ch0/ch2) | `256` — the counter no longer reloads from AUDF, it free-runs the full byte wrap. It keeps sounding (an unpitched buzz); software conventionally sets its AUDC volume to 0. |
+
+The clock select and the join bit belong to the **pair**, not the channel: `CH1_179` ($40) and
+`CH1_CH2` ($10) govern ch0+ch1; `CH3_179` ($20) and `CH3_CH4` ($08) govern ch2+ch3. So a chained
+high half takes its clock from the *low* half's 1.79 bit, which the old code — testing `ch == 0 ||
+ch == 2` — could never see.
+
+**In the port** (`src/platform/amiga/PlatformAmiga.cpp`): one resolver, `pokey_divider()`, is the
+single source of truth. It returns the divider plus the master-clock ticks per base count (1 when
+the channel runs off 1.79 MHz), and *all three* consumers go through it — the Paula period, the
+poly9 distortion stride, and the poly4/poly5 waveform-table stride — so they cannot disagree. They
+previously each re-derived the chain, and the two stride sites got it wrong in a third way (they
+ignored the chain and the 1.79 clock entirely). `PlatformSDL::updateChannelFreq` had the same
+inversion *and* had `CH1_179`/`CH3_179` and `CH1_CH2`/`CH3_CH4` swapped; both fixed to match.
+
+Two consequences worth knowing:
+
+* **`AUDF1`/`AUDF3` writes now update the high half too.** A chained pair's divider contains the
+  low half's AUDF, so `rof_pokey_write` re-derives ch1/ch3 on a `$D200`/`$D204` write when the
+  matching join bit is set (this is atari800's `chan_mask`). Without it the pitch only moved when
+  the *high* byte was written.
+* **The `+4` at 1.79 MHz is a behaviour change outside the chain.** The unchained 1.79 path counted
+  `AUDF+1`. Live callers: the Standby theme's `AUDCTL=$E3` puts ch0 and ch2 on 1.79 MHz — ch0
+  (`AUDF1=$06`) is far above the audible cap and silent either way, and ch2 (`AUDF3=$7C`) moves
+  7159 → 6991 Hz, a 2.4% shift on a noise-distortion voice. Nothing else sets $40/$20 with a
+  sounding voice.
+
+**Proof:** `make hostproof FN=pokey` — `tools/pokey_divider_test.c` checks the resolver's
+divider × base_div against the mzpokeysnd rules transcribed independently, exhaustively over all
+256 AUDCTL × 4 channels × 65536 AUDF pairs (67108864 cases), and checks `poly_stride_mod`'s two
+branches (it keeps the unchained stride at the one MULU.W + one DIVU.W it always cost, and only
+the chain pays the reduce-first identity) against the exact 64-bit product on both sides of its
+cutoff. It is not vacuous: the pre-fix model fails it at `audctl=$08 ch=2`. ⚠ The proof holds a verbatim *snapshot* of `pokey_divider()` — green
+means the resolver is right, not that the shipping source still matches the copy.
+
+Not modelled, deliberately: mzpokeysnd reloads the low half with `AUDF_lo` on the single cycle the
+16-bit pair itself reloads (`c0divstart_p`), a once-per-16-bit-period jitter that a fixed-period
+Paula wavetable cannot carry.
