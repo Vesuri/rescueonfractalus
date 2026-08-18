@@ -72,6 +72,7 @@ CXX_SRCS := \
 CORE_C_SRCS := \
     $(REPO)/src/cpu/cpu.c \
     $(REPO)/src/rof_boot.c \
+    $(REPO)/src/rof_hiscore.c \
     $(REPO)/src/rof_logo.c \
     $(REPO)/src/gen/rof_gen.c \
     $(REPO)/src/gen/rof_native.c \
@@ -670,12 +671,17 @@ endif
 ifdef FORCE_DEATH
 EXTRA_DEFINES += -DROF_FORCE_DEATH
 endif
-# `make NAME_ENTRY=1`: reach the HIGH-SCORE INITIALS entry (name_entry_loop $5B6C) — the only way
-# in is to DIE, so ~4 s into flight this arms the energy-out death cinematic ($063D) and seeds a
-# current score that beats the (zero) high score.  The faithful binary then runs the death
-# teardown, the results card, the game-over tune, and the initials entry.  Needs NO PROBES:
-# builds a normal playable out/RoF, so the entry can be driven by hand (also on real hardware).
-# Headless: add PROBES=1 and read it with `GDBSCRIPT=name_entry.gdb ./diag_run.sh 90`.
+# `make NAME_ENTRY=1`: go straight to the HIGH-SCORE TABLE + INITIALS entry (name_entry_loop
+# $5B6C).  The only way in is to DIE, so this build presses START for you once Standby's idle loop
+# is polling (the same auto-launch FPSCOUNT/PROBES use), then ~4 s into flight arms the energy-out
+# death cinematic ($063D) and seeds a current score that beats the table's top row.  The faithful
+# binary does the rest: death teardown, results card, game-over tune, the entry.  Hands-off apart
+# from typing your initials.
+# Needs NO PROBES: a normal playable out/RoF, so the letters can be picked by hand (real hardware
+# included).  Pair with SKIPBOOT=1 to skip the ~30 s of Logo + Station on the way.
+# ⚠ Under PROBES it additionally TYPES the initials (A-C-E-RETURN) and then QUITS, so that the
+# deferred save actually reaches RoF.hi — great headless, useless for looking at the screen.
+# Headless: `make clean && make PROBES=1 NAME_ENTRY=1` + `GDBSCRIPT=name_entry.gdb ./diag_run.sh 150`.
 ifdef NAME_ENTRY
 EXTRA_DEFINES += -DROF_NAME_ENTRY
 endif

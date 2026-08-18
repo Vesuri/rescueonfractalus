@@ -108,6 +108,15 @@ public:
        repaint / flash).  No-op on direct-mem[] platforms (SDL / headless).            */
     virtual void titleScreenDirty(uint16_t /*addr*/, uint8_t /*nCells*/) {}
 
+    /* High-score persistence.  hiscoreLoad() fills blk[] with a previously saved
+       256-byte save block and returns true; false leaves the caller's factory contents.
+       hiscoreSave() is called at the instant the GAME writes the block (inside
+       name_entry_loop) and returns true only if it is now safely stored — a platform that
+       cannot write at that moment returns false and the block is flushed later.
+       Default: no storage, so the factory table every run.                          */
+    virtual bool hiscoreLoad(uint8_t* /*blk*/)       { return false; }
+    virtual bool hiscoreSave(const uint8_t* /*blk*/) { return false; }
+
     /* Poll+consume a pending in-flight keyboard-command keycode (Atari KBCODE&$3F,
        or $80 for BREAK); $FF = none pending.  The flight VBI's CLI window ($519c)
        calls this to feed event_sequence_dispatcher ($4644), replacing the POKEY

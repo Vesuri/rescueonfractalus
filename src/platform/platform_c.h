@@ -84,6 +84,22 @@ void platform_cockpit_dirty(uint16_t addr, uint8_t nCells);
    mem[] directly (SDL / validate headless). */
 void platform_title_screen_dirty(uint16_t addr, uint8_t nCells);
 
+/* High-score persistence (docs/high-score-restore-plan.md W2).  The 256-byte save block the
+   disk game read over SIO is supplied by rof_hiscore.c; these two move it to and from
+   whatever storage the platform has.
+
+   platform_hiscore_load() overwrites blk[] with a previously saved block and returns 1; it
+   returns 0 (leaving the factory contents alone) when there is nothing saved or no storage.
+
+   platform_hiscore_save() is called at the moment the GAME writes the block, from inside
+   name_entry_loop.  Return 1 only if the block is now safely stored.  Return 0 to decline —
+   the plain Amiga build does, because that instant is mid-Forbid with the display and the
+   interrupt vectors hijacked, where a dos.library packet Wait() does not belong; it keeps
+   the block in RAM and flushes it (rof_hiscore_flush) once the OS is back.  A WHDLoad build
+   saves here for real, via resload_SaveFile, which is safe in that context. */
+int platform_hiscore_load(uint8_t blk[256]);
+int platform_hiscore_save(const uint8_t blk[256]);
+
 /* Poll for a pending in-flight keyboard-command keycode (an Atari KBCODE&$3F, or
    $80 for BREAK), consuming it.  Returns $FF when no command is pending.  Called
    from the flight VBI's CLI window ($519c) to replicate the POKEY keyboard IRQ

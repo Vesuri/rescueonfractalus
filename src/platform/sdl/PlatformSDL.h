@@ -45,6 +45,12 @@ public:
     virtual void    shadowWrite(uint16_t addr, uint8_t val) override;
     virtual int     loadImage(const char* path)    override;
 
+    /* High-score persistence — a plain 256-byte file, RoF.hi, in the working directory.
+       The host has none of the Amiga's constraints, so both directions are real file I/O
+       at the moment the game asks: the feature is fully testable natively. */
+    virtual bool    hiscoreLoad(uint8_t* blk)       override;
+    virtual bool    hiscoreSave(const uint8_t* blk) override;
+
     virtual void registerVBI(uint16_t addr, void (*fn)(void)) override;
     virtual void indirectJmp(uint16_t addr) override;
 

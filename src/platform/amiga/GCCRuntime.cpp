@@ -13,6 +13,11 @@ __attribute__((constructor)) static void initSysBase() { SysBase = *(struct Exec
 // Set by main() after OpenLibrary("graphics.library").
 struct GfxBase* GfxBase = 0;
 
+// Set by PlatformAmiga's ctor after OpenLibrary("dos.library"), and NULL if that failed.
+// Used for exactly one thing: reading and writing the high-score file (PlatformAmiga's
+// hiscoreLoad/hiscoreSave).  Everything else here is bare hardware.
+struct DosLibrary* DOSBase = 0;
+
 // ---- C++ heap via AllocMem --------------------------------------------------
 void* operator new(unsigned long n)   { unsigned long* p = (unsigned long*)AllocMem(n + sizeof(unsigned long), MEMF_ANY | MEMF_CLEAR); if (!p) return 0; *p = n + sizeof(unsigned long); return p + 1; }
 void* operator new[](unsigned long n) { return operator new(n); }

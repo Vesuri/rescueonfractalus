@@ -43,6 +43,21 @@ restart must longjmp from main-loop context (`rof_check_restart`).
 | SHIFT+SELECT | *Lower* the starting level instead of raising it (selector card) | — | **either Shift ($60/$61) + F2** | SKSTAT $D20F bit3 |
 | OPTION | Demo (DEMO DROID) | — | **F3 ($52)** | CONSOL $D01F bit2 |
 | SYSTEM RESET | Reboot disk | — | not mapped (hardware reset, not application-controlled) | — |
+| A-Z 0-9, RETURN, BACKSPACE, space, `,` `.` `/` `;` | Type your initials on the high-score screen | the `$5E50` table's codes | the matching Amiga key | kbd → `$539A` window → `$0049` → `render_text_cell $5CA7` |
+
+**The whole Atari keyboard is mapped, not just the command keys** (`kAtariKeys`,
+`PlatformAmiga.cpp`). It has to be: the high-score INITIALS entry reads `$0049` and translates the
+KBCODE through the game's own table at `$5E50`, so every letter and digit has to arrive as its real
+Atari code. The eight command keys needed no special case — they ARE ordinary letters (`L`=$00,
+`A`=$3f, `B`=$15, `S`=$3e), matched by keycode downstream, and the flight dispatcher ignores
+everything else. ⚠ Two codes are deliberately NOT mapped: Atari `-` ($0e) and `=` ($0f), because
+those two Amiga keys are the thrust pair below — so on the initials screen they type `+` and `*`.
+
+⚠ **Outside flight the keycode is delivered by the OTHER window, `$539A`**, and on the Amiga that
+is the native twin `vbi_attract_poll` (`rof_native_amiga.cpp`), not a `PRE_INSN_HOOKS` entry —
+`$5398` has no transpiled caller left there. It stores the code to `$0049` and consumes it, except
+for a pending BREAK ($80), which it leaves for `rof_check_restart` to act on from main-loop
+context.
 
 Thrust sits on the two keys immediately **right of `0`** (`-` and `=`/`+`) because those are the
 physical positions carrying the Atari 800's `< -` / `> =` legends, i.e. the keys the original uses

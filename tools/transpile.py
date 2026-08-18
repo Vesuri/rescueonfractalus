@@ -565,6 +565,27 @@ SPINWAIT_HOOKS = {
 # where no branch label exists (so a forced label would be unreferenced and
 # trip -Wunused-label).
 # Key: 6502 address of the instruction to inject before.  Value: C statement(s).
+# The body of $5DBC (STY $E9 / #$03 -> $E8 / DCOMND / DUNIT), then the missing SIO call.
+ROF_SIO_HOOK = ('{ mem[0x00E9] = cpu.Y; mem[0x00E8] = 0x03; '
+                'mem[0x0302] = cpu.Y; mem[0x0301] = 0x01; cpu.A = 0x01; rof_sio_block(); }')
+
+# The ten `STA $37xx,X` sites that write the high-score screen ($3700-$37C7).  They are the
+# choke point for marking the Amiga's text bitmap dirty: everything that changes on that screen
+# goes through one of these.  Hooking here rather than at the callers is the standby-level-scroll
+# lesson, and marking rather than re-scanning is the "RAM is uniformly slow" rule — a per-frame
+# 200-byte shadow compare is 400 memory accesses a frame to learn nothing on a static screen.
+#   render_text_cell $5CA7: $5CC6 blank-on-RETURN, $5CDA rub-out, $5CE7 the typed glyph,
+#                           $5CF4 the cursor cell
+#   name_entry_loop:        $5C06 the 20-byte row shift, $5C18/$5C1B the level digits,
+#                           $5C26 the score, $5C2B the blanked name, $5C44 the highlight pass
+def _hs_dirty(base):
+    return f'rof_hiscore_screen_dirty((unsigned short)(0x{base:04X} + cpu.X), 1);'
+
+ROF_HS_DIRTY_SITES = {
+    0x5CC6: 0x3700, 0x5CDA: 0x3700, 0x5CE7: 0x3700, 0x5CF4: 0x3700, 0x5C44: 0x3700,
+    0x5C06: 0x3714, 0x5C18: 0x3709, 0x5C1B: 0x370A, 0x5C26: 0x3713, 0x5C2B: 0x3707,
+}
+
 PRE_INSN_HOOKS = {
     # $519c — the flight VBI's 1-instruction CLI window (vbi_handler_flight).
     # The 6502 does `LDX #$FF` ($519a) then `CLI`($519c)/`SEI`($519d): if a POKEY
@@ -576,6 +597,16 @@ PRE_INSN_HOOKS = {
     # returns+clears it (or $FF if none) — exactly mimicking the handler clobbering
     # X.  No-op everywhere it returns $FF (SDL / validate headless): X stays $FF.
     0x519c: '{ unsigned char _k = platform_flight_irq_key(); if (_k != 0xFFu) cpu.X = _k; }',
+    # $5D86 / $5D9D — the two SIO calls that filled the high-score save block $3700-$37FF.
+    # Both are `JSR $5DBC` NOPped out when the disk game became rof.xex, which is why the block
+    # is all zeros and validate_save_state $5D0D has never passed (docs/high-score-initials.md).
+    # The hook restores the call: $5DBC's own body — STY DCOMND, DUNIT=1, then the SIO — is
+    # unreachable code Ghidra never disassembled, so its four DCB stores are reproduced here and
+    # rof_sio_block() (src/rof_hiscore.c) performs the transfer the removed `JSR SIOV` would have.
+    # cpu.Y holds the command ('R' at boot from game_entry, 'W' from name_entry_loop $5C54); A is
+    # dead at both return points, and is left as $5DBC left it.
+    0x5D86: ROF_SIO_HOOK,
+    0x5D9D: ROF_SIO_HOOK,
     # HIGH-SCORE INITIALS probes (`make PROBES=1 NAME_ENTRY=1`, read with amiga/name_entry.gdb).
     # This path is otherwise invisible: name_entry_loop is CALLED on every game over, but
     # validate_save_state fails on the un-loaded disk save block and it returns at once — so
@@ -594,6 +625,8 @@ PRE_INSN_HOOKS = {
     # went native; the native is timed as a whole by flight_vbi_native (g_flightProf.isrLines)
     # with integ/proj/sfx still sub-measured by their wrappers.
 }
+
+PRE_INSN_HOOKS.update({a: _hs_dirty(b) for a, b in ROF_HS_DIRTY_SITES.items()})
 
 # ---------------------------------------------------------------------------
 # Parse symbols.csv → addr_int → name
@@ -1645,6 +1678,7 @@ def main():
         '#define ROF_MEM_ALIASES  /* enable bare lvalue aliases (level_stage = ...) */',
         '#include "mem.h"   /* MEM_<name> offsets + bare aliases for named RAM/state */',
         '#include "../platform/platform_c.h"',
+        '#include "../rof_hiscore.h"',
         '',
     ]
     body = []

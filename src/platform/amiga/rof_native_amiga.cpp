@@ -25,6 +25,7 @@ extern "C" volatile uint8_t mem[65536];
 // the game's own RAM the way SIZEP2 does in $00CD, so this is where the Amiga Main-Window sprite
 // mirror learns that the object is 2×/4× wide.  Written in the flight VBI, read at render rate.
 extern "C" { volatile uint8_t g_sizep3_shadow = 0; }
+extern "C" { volatile uint16_t g_atariDlist = 0; }   // DLISTL/DLISTH latch (see bus.h)
 
 
 // ============================================================================
@@ -723,6 +724,14 @@ extern "C" void game_vbi_isr(void)
                                                      // the ZP cells only this body moves, so
                                                      // without the case the logo never ends
     else if (vbi == 0x53CC) vbi_handler_1_native();  // $53CC attract/Title/game-over card VBI
+    // $5E0E — the VBI game_init_5D50 installs FOR THE DURATION OF THE HIGH-SCORE SIO CALL
+    // ($5D5D installs it, $5DA3 pops the previous one back).  Hand-disassembled it decrements
+    // CDTMV1 $0218/$0219 and JMPs XITVBV, and NOTHING in the binary ever writes $0218/$0219/$0226
+    // (raw-binary scan) — so it is a deliberate no-op held over the transfer, and the faithful
+    // body here is nothing at all.  It must still be a CASE: the window contains a
+    // wait_vcount_30 spin ($5DA0) that can span a whole frame, and without this the `else`
+    // below would run a full STANDBY VBI body under it.
+    else if (vbi == 0x5E0E) { /* no-op VBI — see above */ }
     // $52D7 standby/launch VBI — and the fallback for an unknown or half-written vector, which is
     // harmless DURING THE GAME (the odd frame of a two-byte vector update) but NOT during a boot
     // scene.  The staged loader zeroes mem[], so VVBLKI reads 0 from the stage load until

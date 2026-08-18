@@ -40,15 +40,18 @@ Confirmed against the original, not inferred: **all 51 `a800dumps/*.a8s` have `$
 `$37C7..$37ED` = 0.** `rof_mem.bin` (the loaded image) has them zero too — nothing in the binary
 writes them (raw-binary scan for `STA $37C7,Y` / `LDA $7BDA,Y`: only the compare at `$5D1D`).
 
-Consequence for the port: skipping the entry is **faithful**, and the only faithful behaviour
-available — there is no disk to read. Reproducing the sector contents would be an addition to the
-game, not a port fix; it is the user's call, not a bug to close.
+Consequence for the port, as of the discovery: skipping the entry was **faithful**, and the only
+faithful behaviour available — there was no disk to read.
 
-## Testing it anyway: `make NAME_ENTRY=1`
+**⭐ That is history now. The feature is RESTORED (2026-08-18)** — the port supplies the block the
+disk used to, from the extracted factory table plus a `RoF.hi` save file, through the game's own
+(un-NOPped) SIO call. What, how and what is still open: `docs/high-score-restore-plan.md`. Read the
+rest of this file as the derivation of WHY it was dead, not as a description of current behaviour.
 
-Reaches the screen by writing what the removed read would have delivered. ~4 s into flight it seeds
-a current score, writes `$28`/`$EE`/the `$7BDA` signature into the save block, and arms the
-energy-out death cinematic `$063D`; the faithful binary then runs the death teardown, the results
+## Reaching the screen: `make NAME_ENTRY=1`
+
+The entry is reachable only by DYING, so this arms the death cinematic for you. ~4 s into flight it
+seeds a current score and arms the energy-out death cinematic `$063D`; the faithful binary then runs the death teardown, the results
 card, the game-over tune, and the entry. Needs no `PROBES`, so `out/RoF` stays playable and the
 letters can be picked by hand (also on real hardware). Headless:
 `make PROBES=1 NAME_ENTRY=1` + `GDBSCRIPT=name_entry.gdb ./diag_run.sh 120`, whose probe counters
@@ -59,7 +62,10 @@ probes: enter=1 pass=1 wait=0 glyph=2818
         ^ called   ^ past the gate      ^ render_text_cell's per-glyph input wait, iterating
 ```
 
-`enter=1 pass=0` = the gate rejected the block (the normal, un-seeded behaviour).
+`enter=1 pass=0` = the gate rejected the block. That was the normal reading before the restore;
+now it means the LOADER is broken, which is why the harness no longer fakes the block.
+Under `PROBES=1` the initials are typed for you too (A, C, E, RETURN) — a headless run cannot press
+a key, and without that the insert and the save would go unmeasured.
 
 ## ⚠ The three spins in this path were hangs
 

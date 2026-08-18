@@ -30,6 +30,7 @@
 #include "framework/Sprite.h"
 #include "RescueOnFractalus.h"
 #include "../../rof_boot.h"       // staged INITAD boot chain (Logo / Station) + g_bootScene
+#include "../../rof_hiscore.h"    // the high-score save block the disk game read over SIO
 #include "../../gen/rof_manual.h" // g_stationDirty — the station image's dirty rectangles
 #include "PlatformAmiga.h"
 #include "../../gen/mem.h"           // MEM_<name> named Atari memory offsets
@@ -104,6 +105,31 @@ extern "C" void rof_title_screen_dirty(unsigned short addr, unsigned char nCells
     if (lo > hi) return;                       // span entirely outside the $365B window
     if (lo < g_titleCellLo) g_titleCellLo = lo;
     if (hi > g_titleCellHi) g_titleCellHi = hi;
+}
+
+// High-score / initials screen (DL $5E2E) dirty range, the exact twin of the Title Screen's
+// above.  Cell index = Atari screen addr - $3700 (0..199).  Reported by the ten transliterated
+// `STA $37xx,X` sites through rof_hiscore_screen_dirty (tools/transpile.py PRE_INSN_HOOKS) —
+// marking at the write, not re-scanning at the read: this screen is up for as long as the player
+// takes to type, and on a 7 MHz 68000 a 200-byte shadow compare every frame is 400 memory
+// accesses to discover that nothing moved.
+//
+// ⚠ It is also a CORRECTNESS mechanism, not just a saving.  decodeTextCells clears a cell's own
+// 2-byte column in all three planes before OR-ing the glyph in, and there is one bitmap with no
+// double buffer — so any cell it touches is BLANK for a moment and flashes black if the beam is
+// over it.  Redrawing untouched cells therefore makes static text flicker (measured: re-decoding
+// all 200 every frame put random black bytes across the screen).  Empty range = lo > hi.
+extern "C" { volatile int g_hsCellLo = 200, g_hsCellHi = -1; }
+
+extern "C" void rof_hiscore_screen_dirty(unsigned short addr, unsigned char nCells)
+{
+    int lo = (int)addr - 0x3700;
+    int hi = lo + (int)nCells - 1;
+    if (lo < 0) lo = 0;
+    if (hi > 199) hi = 199;
+    if (lo > hi) return;                       // span entirely outside the $3700 window
+    if (lo < g_hsCellLo) g_hsCellLo = lo;
+    if (hi > g_hsCellHi) g_hsCellHi = hi;
 }
 
 // ---- cockpit per-instrument dirty flags -------------------------------------
@@ -366,6 +392,7 @@ extern "C" volatile uint8_t mem[65536];
 // Main-Window sprite mirror learns the object is 2×/4× wide.  Declared rather than #including
 // bus.h: that header pulls in cpu.h, whose `mem` declaration has a different language linkage.
 extern "C" volatile uint8_t g_sizep3_shadow;
+extern "C" volatile uint16_t g_atariDlist;   // DLISTL/DLISTH latch (bus.h) — picks the text screen
 // Defined with the wide-object machinery below; used earlier by buildFlightFrameSprites.
 static void mirrorSprite(Sprite* dst, const Sprite* src, int rows);
 // Which terrain field half renderFlightDirect displays (defined in rof_native.c, set by
@@ -3950,6 +3977,10 @@ void RescueOnFractalus::run()
     // Amiga frame, so the display and audio animate throughout.
     rof_boot_chain(ROF_BOOT_LOGO);
 #endif
+    // Supply the high-score save block the disk game read over SIO (src/rof_hiscore.c) before
+    // game_entry's game_init_5D50 asks for it.  Must follow the image load: the copyright
+    // signature validate_save_state checks is copied out of mem[$7BDA].
+    rof_hiscore_init();
     game_entry();     // $3CDE: mega-init -> game_main_loop (Standby -> cinematic -> flight); never returns
 }
 
@@ -4322,6 +4353,29 @@ void RescueOnFractalus::renderFrame()
     // Title Screen (attract / level-select / results): a fixed full-screen text bitmap on
     // black, with 4 text pens that cycle.  Decode the text once on entry (it is static while
     // displayed); poke the cycling pens each frame.  Runs under the $53CC VBI (see rsTitle).
+    // ---- the high-score table + initials entry (DL $5E2E) -------------------
+    // Shares titleScreenBitmap and TitleScreenCopperList with the Title card: identical geometry
+    // (full-screen 3bp, black COLBK, the four COLPF0-3 text pens, which the entry loads from its
+    // own table at $5B99 and vbi_handler_1 keeps cycling).  textScreenKind is what makes the
+    // switch between the two force a fresh decode, since the copper itself is the same object.
+    if (titleScreenCopper && rsHiScore) {
+        const bool entering = !titleScreenCopperInstalled || textScreenKind != kTextHiScore;
+        decodeHiScoreScreen(entering);
+        updateTitleScreenCopper(entering);
+        if (entering) {
+            AmigaHardware::setCopperList(*titleScreenCopper, false);
+            titleScreenCopperInstalled = true;
+            textScreenKind = kTextHiScore;
+            g_titleCellLo = 120; g_titleCellHi = -1;   // the Title card's pending range is moot now
+        }
+        standbyCopperInstalled = false; planetCopperInstalled = false;
+        flightCopperInstalled = false; tunnelCopperInstalled = false;
+#ifdef ROF_FLIGHT_PROBE
+        { extern volatile unsigned char g_liveCopper; g_liveCopper = 1; }
+#endif
+        return;
+    }
+
     const bool staticTitle = titleScreenCopper && rsTitle;
     if (staticTitle) {
         // Atari game-over black: the Title screen comes up while ANTIC DMA is still OFF (the
@@ -4348,14 +4402,16 @@ void RescueOnFractalus::renderFrame()
             return;
         }
         titleBlankInstalled = false;
-        if (!titleScreenCopperInstalled) {
+        if (!titleScreenCopperInstalled || textScreenKind != kTextTitle) {
             // Entry: decode the whole screen once, and drop any pending value-cell
-            // dirty range (the full decode already captured everything).
+            // dirty range (the full decode already captured everything).  Also the path back
+            // from the high-score/initials screen, which left ITS content in the shared bitmap.
             decodeTitleScreen();
             g_titleCellLo = 120; g_titleCellHi = -1;
             updateTitleScreenCopper(true);
             AmigaHardware::setCopperList(*titleScreenCopper, false);
             titleScreenCopperInstalled = true;
+            textScreenKind = kTextTitle;
         } else {
             // Thereafter only the VALUES change, and we know exactly when: the STARTING
             // LEVEL digit as joystick up/down selects the level (setup_initials_ptr $5A63)
@@ -5738,7 +5794,17 @@ void RescueOnFractalus::deriveRenderSignals()
     // be present in its screen RAM ($365B holds 'R' of "RESCUE" = internal $32 | COLPF1<<6 =
     // $72).  display_list_init ($5D29) builds it there; standby/flight don't use $365B.
     extern volatile unsigned char g_forceTitleScreen;   // ROF_FORCE_TITLE visual-test override
-    rsTitle    = ((vvblki == 0x53CCu) && (mem[0x365B] == 0x72u)) || g_forceTitleScreen;
+    // The high-score table + initials entry (name_entry_loop $5B6C) runs under the SAME $53CC VBI
+    // with $365B still holding 'R', so VVBLKI cannot tell it from the Title card.  The
+    // discriminator is the DISPLAY LIST: name_entry_loop installs its own, $5E2E ($5B8F-$5B96),
+    // and display_list_init $5D29 puts the Title's $5A82 back on the way out.  g_atariDlist
+    // latches those writes (bus.h).  rsTitle must exclude it or the Title branch keeps winning.
+    // ⚠ Gated on the $53CC VBI as well as the display list.  Several of name_entry_loop's exits
+    // ($5BA2 and $5C8B/$5C92) return WITHOUT calling display_list_init $5D29, so the latch can
+    // still read $5E2E after the screen is gone — on the Atari that is harmless because whatever
+    // runs next installs its own DL, and the VBI vector is the equivalent signal here.
+    rsHiScore  = (vvblki == 0x53CCu) && (g_atariDlist == 0x5E2Eu);
+    rsTitle    = (((vvblki == 0x53CCu) && (mem[0x365B] == 0x72u)) || g_forceTitleScreen) && !rsHiScore;
     rsStars    = standbyVbi && (mem[0x060B] == 0x23u) && (mem[0x0200] == 0xC2u);
     // Boot scene 2, the station cinematic.  Keyed on the boot chain's own g_bootScene rather than
     // on VVBLKI alone, because $1B30 SURVIVES station_exit: it hands the vector back with SETVBV,
@@ -6221,6 +6287,17 @@ namespace {
     // double-height banner; rows 1-5 are single-height mode-6 lines.)
     constexpr short kTitleRowY[6]    = { 56, 96, 136, 146, 170, 180 };
     constexpr uint8_t kTitleRowVdup[6] = { 2, 1, 1, 1, 1, 1 };
+    // The high-score table + initials entry (DL $5E2E, screen RAM $3700, same charset $0400):
+    // 10 rows of 20 — a double-height mode-7 heading, the mode-6 column header, and the 8 entry
+    // rows.  DERIVED from the display list's own blank-line counts, not measured by eye:
+    //   6x $70 = 48 blanks, mode 7 (16 scanlines), 4x $70 = 32, mode 6, $70, mode 6,
+    //   then 7x ($20 = 3 blanks, mode 6).
+    // The entry-row bases are exactly the game's own position table $5CFA
+    // ($28,$3C,$50,$64,$78,$8C,$A0,$B4 from $3700), i.e. the rows are contiguous 20-byte spans.
+    constexpr short   kHiScoreRowY[10]    = { 48, 96, 112, 123, 134, 145, 156, 167, 178, 189 };
+    constexpr uint8_t kHiScoreRowVdup[10] = {  2,  1,   1,   1,   1,   1,   1,   1,   1,   1 };
+    constexpr uint16_t kHiScoreBase       = 0x3700;
+    constexpr int      kHiScoreCells      = 200;   // 10 rows x 20 columns
 }
 
 // Decode Title Screen cells [cellLo..cellHi] (flat 0..119 = row*20+col) from screen RAM
@@ -6233,9 +6310,18 @@ namespace {
 // glyph bit-doubling is a precomputed table (kDoubleGlyph).
 void RescueOnFractalus::decodeTitleCells(int cellLo, int cellHi)
 {
+    decodeTextCells(0x365B, kTitleRowY, kTitleRowVdup, cellLo, cellHi);
+}
+
+// The decoder both text screens share.  `base` is the screen RAM the display list points at and
+// rowY/rowVdup that screen's row geometry; everything else (20 columns, charset $0400, mode 6/7
+// double width, pen = colour-select + 1) is common to the two.
+void RescueOnFractalus::decodeTextCells(uint16_t base, const short* rowY, const uint8_t* rowVdup,
+                                        int cellLo, int cellHi)
+{
     if (!titleScreenBitmap) return;
     uint8_t* bmp = (uint8_t*)titleScreenBitmap->data;
-    const uint8_t* src = (const uint8_t*)mem + 0x365B + cellLo;
+    const uint8_t* src = (const uint8_t*)mem + base + cellLo;
     // Walk to the starting (row,col) with subtract-compares — no div/mod.
     int r = 0;
     while (cellLo >= 20) { cellLo -= 20; r++; }
@@ -6245,8 +6331,8 @@ void RescueOnFractalus::decodeTitleCells(int cellLo, int cellHi)
         const uint8_t pen   = (uint8_t)((byte >> 6) + 1);            // COLPF0-3 -> pen1-4
         const uint8_t* glyph = (const uint8_t*)mem + kTitleCharset + (byte & 0x3Fu) * 8u;
         const int   bx   = c * 2;                                    // 16px char = 2 bytes/plane
-        const int   y0   = kTitleRowY[r];
-        const int   vdup = kTitleRowVdup[r];
+        const int   y0   = rowY[r];
+        const int   vdup = rowVdup[r];
         uint8_t* rowp = bmp + y0 * kTitleStride + bx;                // top-left of this cell's column
         for (int gr = 0; gr < 8; gr++) {
             const uint16_t dbl = kDoubleGlyph[glyph[gr]];            // bit-double table
@@ -6273,6 +6359,29 @@ void RescueOnFractalus::decodeTitleScreen()
     // Blank = pen 0 (black): clear the whole bitmap once, then decode every cell.
     for (int i = 0; i < kTitleStride * (int)kH; i++) bmp[i] = 0;
     decodeTitleCells(0, 119);
+}
+
+// decodeHiScoreScreen(): the high-score table + initials entry, $3700 -> titleScreenBitmap.
+//
+// `full` decodes all 200 cells after blanking the bitmap, and is for ENTRY only — the bitmap is
+// shared with the Title card and still holds its content.  Otherwise ONLY the cells the game
+// actually wrote are redrawn, from the [g_hsCellLo..g_hsCellHi] range the writers report.  See
+// the note above rof_hiscore_screen_dirty for why redrawing more than that is wrong, not merely
+// wasteful.
+void RescueOnFractalus::decodeHiScoreScreen(bool full)
+{
+    if (!titleScreenBitmap) return;
+    if (full) {
+        uint8_t* bmp = (uint8_t*)titleScreenBitmap->data;
+        for (int i = 0; i < kTitleStride * (int)kH; i++) bmp[i] = 0;
+        decodeTextCells(kHiScoreBase, kHiScoreRowY, kHiScoreRowVdup, 0, kHiScoreCells - 1);
+        g_hsCellLo = kHiScoreCells; g_hsCellHi = -1;   // the full decode captured everything
+        return;
+    }
+    if (g_hsCellHi >= g_hsCellLo) {
+        decodeTextCells(kHiScoreBase, kHiScoreRowY, kHiScoreRowVdup, g_hsCellLo, g_hsCellHi);
+        g_hsCellLo = kHiScoreCells; g_hsCellHi = -1;
+    }
 }
 
 void RescueOnFractalus::render()

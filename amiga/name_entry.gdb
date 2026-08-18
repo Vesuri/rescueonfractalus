@@ -10,6 +10,8 @@
 #   37F0  the initials cursor;  36B7..36BD = the score/initials line in Title RAM
 # Three of the loops in this path used to compile to `bra.s .` on the Amiga (mem[] is not
 # volatile there): if the two PC samples below are identical, one of them is back.
+# ⚠ Without this, long printf rows WRAP and the earlier ones are lost from the capture.
+set width 0
 continue
 echo \n==== SIGINT ====\n
 printf "vbi=%u  VV=%04x  cop=%u  0004=%02x 060B=%02x 00E4=%02x\n", \
@@ -21,10 +23,37 @@ printf "score=%02x%02x%02x%02x  high=%02x%02x%02x%02x  cursor 37F0=%02x\n", \
   mem[0x0600], mem[0x0601], mem[0x0602], mem[0x0603], \
   mem[0x0605], mem[0x0606], mem[0x0607], mem[0x0608], mem[0x37F0]
 # The save-state block validate_save_state ($5D0D) gates the entry on: $3700==$28, $3714==$EE,
-# and 38 bytes at $37C7 equal to the copyright string at $7BDA.  NAME_ENTRY seeds all three.
-printf "savestate: 3700=%02x (want 28)  3714=%02x (want ee)  37C7=%02x%02x%02x (want %02x%02x%02x)\n", \
-  mem[0x3700], mem[0x3714], mem[0x37C7], mem[0x37C8], mem[0x37C9], \
-  mem[0x7BDA], mem[0x7BDB], mem[0x7BDC]
+# and 38 bytes at $37C7 equal to the copyright string at $7BDA.  NOTHING FAKES THESE any more —
+# they arrive through the restored $5D86 SIO call (rof_sio_block, src/rof_hiscore.c), so a
+# mismatch here means the loader is broken, not that the feature is absent.
+# NB the compare runs $37C7+Y for Y=$26..1, so $37C8 is the first byte that must match $7BDB.
+printf "savestate: 3700=%02x (want 28)  3714=%02x (want ee)  37C8=%02x%02x%02x (want %02x%02x%02x)\n", \
+  mem[0x3700], mem[0x3714], mem[0x37C8], mem[0x37C9], mem[0x37CA], \
+  mem[0x7BDB], mem[0x7BDC], mem[0x7BDD]
+# SIO + persistence outcome: DSTATS $0303 (1 = the last transfer succeeded), the DCB's last
+# sector $030A/$030B, and whether the block is still waiting to be written to RoF.hi.
+printf "sio: DSTATS=%02x DCOMND=%02x sector=%02x%02x  reads=%u writes=%u err=%u\n", \
+  mem[0x0303], mem[0x0302], mem[0x030B], mem[0x030A], \
+  g_hsSioRead, g_hsSioWrite, g_hsSioErr
+printf "persist: fromFile=%u dirty=%u written=%u   (fromFile=0 = the FACTORY table, which is fine on a first run)\n", \
+  g_hsFromFile, g_hsDirty, g_hsWritten
+# The table itself, decoded: row 0's name cells are (byte & $3F) + $20 in ATASCII.
+printf "table row0:"
+set $i = 0
+while $i < 20
+  printf " %02x", mem[0x3728 + $i]
+  set $i = $i + 1
+end
+printf "\nheading:"
+set $i = 0
+while $i < 20
+  printf " %02x", mem[0x3700 + $i]
+  set $i = $i + 1
+end
+printf "\n"
+# Which text screen the renderer picked: the entry screen is DL $5E2E, the Title card $5A82.
+printf "dlist=%04x (5e2e = the entry screen, 5a82 = the Title card)  hs dirty=[%d..%d] (lo>hi = idle)\n", \
+  g_atariDlist, g_hsCellLo, g_hsCellHi
 printf "37EE=%02x 37F3=%02x 37F4=%02x  attract 00E2=%02x\n", \
   mem[0x37EE], mem[0x37F3], mem[0x37F4], mem[0x00E2]
 printf "initials line 36B7:"

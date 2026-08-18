@@ -2,6 +2,7 @@
 #include "../../cpu/cpu.h"
 #include "../../xex_load.h"   /* shared XEX-format walk (xex_parse / xex_overlay_osrom) */
 #include "../../rof_boot.h"   /* staged INITAD boot chain (Logo / Station) */
+#include "../../rof_hiscore.h" /* the high-score save block the disk game read over SIO */
 #include <cstdio>
 #include <cstdlib>      /* getenv, atoi */
 #include <csignal>      /* signal, SIGINT, SIGTERM (Ctrl-C handling in run()) */
@@ -212,6 +213,11 @@ void PlatformSDL::run() {
     if (rofStartStage() <= ROF_STAGE_STATION)
         rof_boot_chain(rofStartStage() == ROF_STAGE_LOGO ? ROF_BOOT_LOGO : ROF_BOOT_STATION);
 
+    /* Supply the high-score save block the disk game read over SIO (rof_hiscore.c): the
+       factory table, the running binary's own copyright signature, then any saved block.
+       Must follow the image load — the signature is copied out of mem[$7BDA]. */
+    rof_hiscore_init();
+
     /* Run the game — loops forever (or until ESC / window close). */
     game_entry();
 }
@@ -219,6 +225,29 @@ void PlatformSDL::run() {
 /* ------------------------------------------------------------------ */
 /* Platform virtual methods                                            */
 /* ------------------------------------------------------------------ */
+
+/* High-score save block <-> RoF.hi in the working directory.  A missing or short file
+   leaves the caller's factory contents in place (load returns false). */
+static const char* kHiScorePath = "RoF.hi";
+
+bool PlatformSDL::hiscoreLoad(uint8_t* blk)
+{
+    FILE* f = fopen(kHiScorePath, "rb");
+    if (!f) return false;
+    size_t n = fread(blk, 1, 256, f);
+    fclose(f);
+    return n == 256;
+}
+
+bool PlatformSDL::hiscoreSave(const uint8_t* blk)
+{
+    FILE* f = fopen(kHiScorePath, "wb");
+    if (!f) return false;
+    size_t n = fwrite(blk, 1, 256, f);
+    fclose(f);
+    return n == 256;
+}
+
 
 void PlatformSDL::setInterrupt(void (*fn)(void)) {
     interruptFn = fn;

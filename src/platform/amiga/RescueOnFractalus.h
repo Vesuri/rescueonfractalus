@@ -99,6 +99,7 @@ private:
     bool rsFlight   = false;   // $004A != 0           — in-game flight (palette/probe/profiler)
     bool rsViewport = false;   // stars || flight      — mode-D viewport band active
     bool rsTitle    = false;   // VVBLKI $53CC && title active — attract/level-select Title Screen
+    bool rsHiScore  = false;   // DLIST $5E2E          — high-score table + initials entry (shares $53CC with rsTitle)
     bool rsStation  = false;   // boot scene 2 (VVBLKI $1B30 + g_bootScene) — station cinematic
     bool rsLaunched = false;   // doors armed || viewport — door-gap g2 (doors..flight)
     bool rsBoostReturn   = false;  // $52D7 && $003A==$FF && boostCineLatch — BOOSTERS return reverse cinematic
@@ -243,6 +244,12 @@ private:
 #endif
     void decodeTitleScreen();  // decode the whole Title Screen text ($365B/charset $0400) -> titleScreenBitmap
     void decodeTitleCells(int cellLo, int cellHi);  // (re)decode Title Screen cells [lo..hi] (clears+ORs); targeted value updates
+    // The shared mode-6/7 text decoder both text screens run on.  20 columns per row (baked in:
+    // the Title card and the high-score screen are both 20 wide); rowY/rowVdup give each row's
+    // bitmap-y and vertical doubling, derived from that screen's own display list.
+    void decodeTextCells(uint16_t base, const short* rowY, const uint8_t* rowVdup,
+                         int cellLo, int cellHi);
+    void decodeHiScoreScreen(bool full);        // the $5E2E high-score/initials screen ($3700) -> titleScreenBitmap; full = entry, else the dirty range
     void decodeBoostStars();                       // boost cinematic: the $2000 starfield -> viewportBitmap (the rings are painted, not decoded)
     // Who owns tunnelBitmap right now — nobody, the FORWARD launch tunnel, or the BOOST reverse
     // cinematic.  The two directions share every field writer (draw_symmetric_span_loop /
@@ -386,6 +393,14 @@ private:
     // bitmap, black COLBK, 4 cycling text pens.  Same build-once + poke scheme as standbyCopper.
     TitleScreenCopperList* titleScreenCopper = nullptr;
     bool titleScreenCopperInstalled = false;
+    // WHICH text screen the installed copper + bitmap currently hold.  The high-score/initials
+    // screen reuses both (identical geometry: full-screen 3bp, black COLBK, the same four text
+    // pens — and a second Bitmap::allocate(320,216,3,true) would cost ~25.9 KB of CHIP), so the
+    // "installed" flag alone is not enough: switching between the two must force a fresh decode.
+    // No new clear sites are needed for it: every scene that clears titleScreenCopperInstalled
+    // already forces the next text screen through its full-decode entry path regardless of kind.
+    enum TextScreen : uint8_t { kTextNone = 0, kTextTitle = 1, kTextHiScore = 2 };
+    uint8_t textScreenKind = kTextNone;
     void updateTitleScreenCopper(bool force);  // poke color01-04 = COLPF0-3 (cycling)
     uint16_t tsPf0 = 0xFFFF, tsPf1 = 0xFFFF, tsPf2 = 0xFFFF, tsPf3 = 0xFFFF;  // last-poked
     // ---- the two BOOT scenes: Logo (INITAD $5000) and Station cinematic (INITAD $1A97) --------

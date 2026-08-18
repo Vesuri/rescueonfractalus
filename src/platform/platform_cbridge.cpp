@@ -72,6 +72,14 @@ uint8_t platform_flight_irq_key(void) {
     return platform ? platform->flightIrqKey() : 0xFF;
 }
 
+int platform_hiscore_load(uint8_t blk[256]) {
+    return (platform && platform->hiscoreLoad(blk)) ? 1 : 0;
+}
+
+int platform_hiscore_save(const uint8_t blk[256]) {
+    return (platform && platform->hiscoreSave(blk)) ? 1 : 0;
+}
+
 } /* extern "C" */
 
 /* ---------------------------------------------------------------------------

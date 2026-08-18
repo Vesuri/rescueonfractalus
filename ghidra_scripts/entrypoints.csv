@@ -64,3 +64,12 @@ B800,init_B800
 4A1F,dli_flight_viewport_pens_4a1f
 4A40,dli_flight_band_frame_4a40
 4A78,dli_flight_dashboard_hpos_4a78
+
+# ---- High-score save-block SIO (docs/high-score-restore-plan.md) ----
+# Both are unreachable in rof.xex, so Ghidra cannot find them and they are absent from
+# listing.txt.  $5DBC is the per-sector op (STY DCOMND / DUNIT=1 / the SIO call, itself
+# NOPped out); its two `JSR $5DBC` call sites at $5D86/$5D9D are three NOPs each, and the
+# port hooks rof_sio_block() in there instead.  $5E0E is the no-op VBI game_init_5D50
+# installs for the duration of that call (vector-only, like the DLIs above).
+5DBC,sio_block_op
+5E0E,vbi_handler_sio_noop

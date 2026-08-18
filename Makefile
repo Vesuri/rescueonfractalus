@@ -57,6 +57,7 @@ LDFLAGS  := $(SDL_LDFLAGS) $(PNG_LDFLAGS)
 C_SRCS := \
     src/cpu/cpu.c \
     src/rof_boot.c \
+    src/rof_hiscore.c \
     src/rof_logo.c \
     src/gen/rof_gen.c \
     src/gen/rof_manual.c \
@@ -156,6 +157,7 @@ HOSTPROOF_SELF := \
     alien_mirror_test \
     dot_table_test \
     ras_fused_midpoint_test \
+    hiscore_block_test \
     ras_restructure_test \
     terr_blend_table_test \
     terr_blend_test

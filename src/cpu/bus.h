@@ -30,7 +30,14 @@
    how wide to draw the Main-Window object — a 4× P3 is 64 lores px, four sprite segments — so
    latch the value at the one seam every writer passes through.  Call sites with a CONSTANT
    address (all of them, in the generated code) fold the test away at compile time. */
+/* DLISTL/DLISTH ($D402/$D403) shadow.  The Amiga copper owns the display, so these writes are
+   otherwise dropped — but the display list is the ONLY thing that distinguishes two scenes that
+   share a VBI vector AND a screen-RAM signature: the Title card ($5A82) and the high-score
+   initials entry ($5E2E), which both run under $53CC with $365B still holding 'R'.  Latch the
+   pointer here, at the one seam every writer passes through, and derive the render signal from
+   it (deriveRenderSignals / rsHiScore).  Constant-address call sites fold the test away. */
 #ifdef __cplusplus
+extern "C" volatile uint16_t g_atariDlist;
 extern "C" volatile uint8_t g_sizep3_shadow;
 extern "C" uint8_t rof_pokey_random(void);
 /* Direct, non-virtual POKEY register write ($D200-$D20F → Paula).  Same rationale as
@@ -40,6 +47,7 @@ extern "C" uint8_t rof_pokey_random(void);
    shadow + Paula update here; the change-detect (skip unchanged) lives inside. */
 extern "C" void rof_pokey_write(uint8_t reg, uint8_t val);
 #else
+extern volatile uint16_t g_atariDlist;
 extern volatile uint8_t g_sizep3_shadow;
 extern uint8_t rof_pokey_random(void);
 extern void rof_pokey_write(uint8_t reg, uint8_t val);
@@ -67,6 +75,9 @@ static inline void bus_write(uint16_t addr, uint8_t val) {
            off the hot path) still takes the virtual platform call. */
         if (addr >= 0xD200 && addr < 0xD210) { rof_pokey_write((uint8_t)(addr - 0xD200), val); return; }
         if (addr == 0xD00B) { g_sizep3_shadow = val; return; }   /* SIZEP3 — see the note above */
+        /* DLISTL/DLISTH — see the note above the declaration. */
+        if (addr == 0xD402) { g_atariDlist = (uint16_t)((g_atariDlist & 0xFF00u) | val); return; }
+        if (addr == 0xD403) { g_atariDlist = (uint16_t)((g_atariDlist & 0x00FFu) | ((uint16_t)val << 8)); return; }
         /* HPOSP0-3 / HPOSM0-3 ($D000-$D007) shadow.  A deliberate exception to "the $D000-$D7FF
            range is not backed by mem[]": these eight are write-only on the Atari and the game
            relies on that, so nothing reads them back and the shadow is invisible to the 6502 —

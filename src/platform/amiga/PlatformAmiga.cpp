@@ -23,6 +23,7 @@
 #include <proto/exec.h>
 #include <proto/graphics.h>
 #include <proto/cia.h>
+#include <proto/dos.h>   // the ONLY OS file I/O in the port: the high-score file (hiscoreLoad/Save)
 #include <exec/interrupts.h>
 #include <exec/execbase.h>
 #include "../../cpu/m68k_math.h"
@@ -37,6 +38,8 @@
 #include "framework/AmigaHardware.h"
 #include "PlatformAmiga.h"
 #include "RescueOnFractalus.h"
+#include "../../rof_hiscore.h"   // rof_hiscore_flush — the deferred save, after the OS is back
+extern "C" volatile uint16_t g_atariDlist;   // DLISTL/DLISTH latch (bus.h) — which screen is up
 
 // mem[] and cpu are defined in src/cpu/cpu.c (compiled for m68k as audio/cpu.o)
 extern "C" volatile uint8_t mem[65536];
@@ -247,6 +250,16 @@ static void build_poly_tables(void)
 // (the divide-by-N count in master-clock ticks), and while the poly5 gate is open (always, if
 // `gateAlways`) the 2-level output flips toward the current poly9 bit.  Output bytes are the
 // same bipolar ±127 as wave_pure so AUDxVOL scales them identically.
+// High-score save-block outcome counters (amiga/name_entry.gdb).  ⚠ Deliberately OUTSIDE the
+// ROF_FLIGHT_PROBE guard below — src/rof_hiscore.c is shared, non-probe code and references them
+// unconditionally on the Amiga, so guarding them fails the plain shipping link.  Six words.
+extern "C" { volatile unsigned short g_hsSioRead  = 0; }     // sectors READ into mem[]
+extern "C" { volatile unsigned short g_hsSioWrite = 0; }     // sectors WRITTEN back by the game
+extern "C" { volatile unsigned short g_hsSioErr   = 0; }     // refused sector / command
+extern "C" { volatile unsigned short g_hsFromFile = 0; }     // 1 = RoF.hi supplied the block
+extern "C" { volatile unsigned short g_hsWritten  = 0; }     // RoF.hi writes that succeeded
+extern "C" { volatile unsigned short g_hsDirty    = 0; }     // block waiting for the exit flush
+
 #ifdef ROF_FLIGHT_PROBE
 extern "C" { volatile unsigned long g_polyDistCalls = 0; }
 #endif
@@ -1704,8 +1717,16 @@ static const uint8_t  kRawF3       = 0x52;   // F3 -> CONSOL OPTION (bit2)
 //    because on an Atari 800 keyboard those same two positions carry the '< -' / '> =' legends
 //    the game uses for thrust down/up.  Raw keycodes, so '=' fires unshifted as well as as '+'.
 //    The Amiga arrow keys stay free for the joystick directions.)
-struct FlightKeyMap { uint8_t rawkey; uint8_t kbcode; };
-static const FlightKeyMap kFlightKeys[] = {
+// ⚠ NOT only flight.  The SAME one-shot feeds the out-of-flight CLI window $539A
+// (vbi_attract_poll, rof_native_amiga.cpp), which drops the code into $0049 — and $0049 is
+// what the HIGH-SCORE INITIALS entry types from: render_text_cell $5CA7 waits on it and
+// translates the KBCODE through the game's own table $5E50 into the screen cell.  So the map
+// below is the whole Atari keyboard, not just the eight command keys; the flight dispatcher
+// filters everything it does not know, and out of flight an unrecognised key is just an
+// attract-timeout reset.  (It also feeds match_code_sequence $5B45's AUTHOR easter egg.)
+struct AtariKeyMap { uint8_t rawkey; uint8_t kbcode; };
+static const AtariKeyMap kAtariKeys[] = {
+    // -- the command keys (all of them ordinary letters; the dispatcher matches the KBCODE) --
     { 0x28, 0x00 },   // Amiga 'L'   -> Atari L   $00  Land
     { 0x20, 0x3F },   // Amiga 'A'   -> Atari A   $3f  Air Lock
     { 0x35, 0x15 },   // Amiga 'B'   -> Atari B   $15  Boosters
@@ -1714,6 +1735,51 @@ static const FlightKeyMap kFlightKeys[] = {
     { 0x0B, 0x06 },   // Amiga '-'   -> Atari +   $06  Decrease Thrust
     { 0x45, 0x1C },   // Amiga 'Esc' -> Atari ESC $1c  Freeze/pause
     { 0x5F, 0x80 },   // Amiga 'Help' -> Atari BREAK $80 Restart
+    // -- the rest of the alphabet, so initials can be typed --
+    { 0x33, 0x12 },   // C
+    { 0x22, 0x3A },   // D
+    { 0x12, 0x2A },   // E
+    { 0x23, 0x38 },   // F
+    { 0x24, 0x3D },   // G
+    { 0x25, 0x39 },   // H
+    { 0x17, 0x0D },   // I
+    { 0x26, 0x01 },   // J
+    { 0x27, 0x05 },   // K
+    { 0x37, 0x25 },   // M
+    { 0x36, 0x23 },   // N
+    { 0x18, 0x08 },   // O
+    { 0x19, 0x0A },   // P
+    { 0x10, 0x2F },   // Q
+    { 0x13, 0x28 },   // R
+    { 0x14, 0x2D },   // T
+    { 0x16, 0x0B },   // U
+    { 0x34, 0x10 },   // V
+    { 0x11, 0x2E },   // W
+    { 0x32, 0x16 },   // X
+    { 0x15, 0x2B },   // Y
+    { 0x31, 0x17 },   // Z
+    // -- digits (the Atari's are scattered, hence the table) --
+    { 0x0A, 0x32 },   // 0
+    { 0x01, 0x1F },   // 1
+    { 0x02, 0x1E },   // 2
+    { 0x03, 0x1A },   // 3
+    { 0x04, 0x18 },   // 4
+    { 0x05, 0x1D },   // 5
+    { 0x06, 0x1B },   // 6
+    { 0x07, 0x33 },   // 7
+    { 0x08, 0x35 },   // 8
+    { 0x09, 0x30 },   // 9
+    // -- editing + punctuation the entry accepts.  RETURN ends the name, BACKSPACE rubs one
+    //    out ($5CC0 / $5CCA); the rest simply type.  Atari '-' ($0e) and '=' ($0f) are NOT
+    //    here on purpose: those two Amiga keys are the thrust pair above (docs/controls.md).
+    { 0x44, 0x0C },   // Return    -> Atari RETURN $0c  (end of name)
+    { 0x43, 0x0C },   // keypad Enter, same
+    { 0x41, 0x34 },   // Backspace -> Atari BACK S $34  (rub out)
+    { 0x40, 0x21 },   // Space
+    { 0x38, 0x20 },   // ,
+    { 0x39, 0x22 },   // .
+    { 0x3A, 0x26 },   // /
+    { 0x29, 0x02 },   // ;
 };
 
 // Amiga rawkeys for the held joystick/fire inputs (driven into s_portaState/s_trig0State, which
@@ -1905,9 +1971,9 @@ static uint32_t keyboardHandler()
     // VBI to pick up (mirrors the POKEY keyboard IRQ leaving the id in X).  One-shot — the
     // dispatcher consumes the last code, exactly as X holds the most recent KBCODE.
     if (down) {
-        for (unsigned i = 0; i < sizeof(kFlightKeys) / sizeof(kFlightKeys[0]); i++)
-            if (kFlightKeys[i].rawkey == raw) {
-                s_pendingFlightKey = kFlightKeys[i].kbcode;
+        for (unsigned i = 0; i < sizeof(kAtariKeys) / sizeof(kAtariKeys[0]); i++)
+            if (kAtariKeys[i].rawkey == raw) {
+                s_pendingFlightKey = kAtariKeys[i].kbcode;
 #ifdef ROF_FORCE_MOTHERSHIP
                 // Debug: make the mother ship "present" the instant BOOSTERS (B, KBCODE $15) is
                 // pressed, so you can test the return cinematic + post-mother-ship Standby without
@@ -1921,7 +1987,7 @@ static uint32_t keyboardHandler()
                 // leaves it FULL, and a full bar exactly fills its dial, so nothing hangs below
                 // the gauge and every gauge-vs-cockpit priority bug stays invisible.
                 // $DC = full (bar-top index ($DC-$062F)>>2 = 0); $6E = index 27.
-                if (kFlightKeys[i].kbcode == 0x15u) { mem[0x003Au] = 0xFFu; mem[0x0676u] = 0x01u;
+                if (kAtariKeys[i].kbcode == 0x15u) { mem[0x003Au] = 0xFFu; mem[0x0676u] = 0x01u;
                                                       mem[0x062Fu] = 0x6Eu; }
 #endif
                 break;
@@ -2192,9 +2258,15 @@ static uint32_t vbiHandler()
 #endif
 
 
-#if defined(ROF_FLIGHT_PROBE) || defined(ROF_FPSCOUNT)
+#if defined(ROF_FLIGHT_PROBE) || defined(ROF_FPSCOUNT) || defined(ROF_NAME_ENTRY)
     // Auto-launch: replicate an F1/START press once Standby's idle loop is actually
-    // polling CONSOL.  A fixed vbi==350 fired before boot_standby_launch_driver's standby poll was live
+    // polling CONSOL.
+    //
+    // ROF_NAME_ENTRY is in the list because that build exists to REACH THE HIGH-SCORE SCREEN and
+    // nothing else: it already arranges the death and the qualifying score, so leaving the launch
+    // to a manual F1 would be the one hand-operated step in an otherwise hands-off path.  It is
+    // the only one of the three that is not a measurement build, and it needs the auto-launch
+    // WITHOUT the probe machinery (which types the initials for you and then quits).  A fixed vbi==350 fired before boot_standby_launch_driver's standby poll was live
     // (g_standbyRevealReady latches at boot_standby_launch_driver entry, when the idle loop starts), so the
     // press was never seen.  Gate on the reveal latch + a settle delay, and HOLD START for a
     // wide window so the once-per-frame poll catches it.
@@ -2418,21 +2490,46 @@ static uint32_t vbiHandler()
         if (s_neFlightVbi && !s_neArmed && (uint16_t)(g_vbiCount - s_neFlightVbi) >= 240) {
             mem[0x0600u] = 0x00; mem[0x0601u] = 0x12;   // current score, BCD, MSB first
             mem[0x0602u] = 0x34; mem[0x0603u] = 0x50;
-            // FAKE THE SAVE-STATE SECTOR.  name_entry_loop's first act is validate_save_state
-            // ($5D0D), which requires mem[$3700]==$28, mem[$3714]==$EE and 38 bytes at $37C7
-            // equal to the copyright string at $7BDA ("XCopyright (c) 1987 Lucasfilm Ltd. v4.1").
-            // That block came off DISK: game_init_5D50 sets DBUFLO/DBUFHI + DAUX1/DAUX2 for
-            // sectors $02CE→$3700 and $02CF→$3780 — but BOTH SIO calls are three NOPs in
-            // rof.xex ($5D86 and $5D9D), patched out when the disk game was converted.  So the
-            // block is always zero, the check always fails, and the entry bails at L_5b7e — on
-            // the original binary too (all 51 a800dumps have $3700/$3714/$37C7 = 0).  Writing
-            // what the removed read would have delivered is the only way to see this screen.
-            mem[0x3700u] = 0x28; mem[0x3714u] = 0xEE;
-            for (int i = 0; i < 0x27; i++) mem[0x37C7u + i] = mem[0x7BDAu + i];
+            // ⚠ NOTHING ELSE IS FAKED HERE, deliberately.  This used to also write the
+            // save-state block ($3700=$28, $3714=$EE, the $7BDA signature at $37C7) by hand,
+            // because both SIO reads that filled it are NOPs in rof.xex and validate_save_state
+            // $5D0D therefore always failed.  The block is now supplied for real by
+            // src/rof_hiscore.c through the restored $5D86/$5D9D calls, so seeding it here would
+            // hide a broken loader behind a passing gate — the whole point of the probe split
+            // (g_neEnter "called" vs g_nePass "past the gate") is to catch exactly that.
             mem[0x063Du] = 1;                            // energy-out death cinematic
             s_neArmed = 1;
         }
     }
+#ifdef ROF_FLIGHT_PROBE
+    // Headless only: TYPE THE INITIALS.  Without this the probe run can only ever show the entry
+    // waiting for a key, which leaves the second half of the feature — the insert, the game's own
+    // save call ($5C54) and the deferred write — completely unmeasured.  Injected through
+    // s_pendingFlightKey, the same one-shot a real keypress uses, so the whole delivery chain
+    // (the $539A CLI window -> vbi_attract_poll -> $0049 -> render_text_cell's $5E50 lookup) is
+    // exercised rather than bypassed.  The plain interactive `make NAME_ENTRY=1` build has no
+    // PROBES and still lets the letters be picked by hand, on real hardware included.
+    {
+        static const uint8_t kType[] = { 0x3Fu, 0x12u, 0x2Au, 0x0Cu };   // A, C, E, RETURN
+        static uint8_t  s_typeIdx = 0;
+        static uint16_t s_typeLast = 0;
+        extern volatile unsigned short g_nePass;
+        if (g_nePass && s_typeIdx < sizeof kType && g_atariDlist == 0x5E2Eu
+            && (uint16_t)(g_vbiCount - s_typeLast) >= 12u && s_pendingFlightKey == 0xFFu) {
+            s_pendingFlightKey = kType[s_typeIdx++];
+            s_typeLast = g_vbiCount;
+        }
+        // ...then QUIT cleanly, a few seconds after the game has written the block.  This is the
+        // only way to reach the half of persistence a killed emulator can never show: the write
+        // itself declines mid-run by design, so the file is only created by rof_hiscore_flush()
+        // after run() has Permit()ed and restored the view.  Quitting through g_pumpQuit is the
+        // same path the left mouse button takes, so nothing about the shutdown is special-cased.
+        extern volatile unsigned short g_hsSioWrite;
+        static uint16_t s_quitAt = 0;
+        if (g_hsSioWrite >= 2u && s_quitAt == 0u) s_quitAt = (uint16_t)(g_vbiCount + 150u);
+        if (s_quitAt && (int16_t)(g_vbiCount - s_quitAt) >= 0) g_pumpQuit = 1;
+    }
+#endif
 #endif
 
 #ifdef ROF_INVULNERABLE
@@ -2853,6 +2950,73 @@ static void intTapsRemove(void)
 #endif  // ROF_FLIGHT_PROBE
 
 // ============================================================================
+//  High-score persistence — the ONE file this port touches
+// ============================================================================
+// The block the game saves (name_entry_loop $5C54 -> rof_sio_block) is written MID-RUN, inside
+// run()'s Forbid() with the OS display gone and the VERTB/PORTS vectors hijacked.  A dos.library
+// call Wait()s on a filesystem packet, which is exactly what must not happen there: it breaks the
+// Forbid, and a missing/unwritable volume can pop a requester onto a screen the OS no longer owns.
+//
+// So the file I/O is moved to the two moments the OS is fully ours to use:
+//   read   in the constructor, before run() takes anything over;
+//   write  after run() has Permit()ed and given the display back (s_hiscoreWritable).
+// In between, hiscoreSave() DECLINES (returns false) and rof_hiscore.c keeps the block and its
+// dirty flag in RAM for the exit flush.  The cost is that a hard reset or power-off loses the
+// session's scores; the benefit is that nothing about the takeover has to change.
+//
+// ⚠ This is the same under WHDLoad.  resload_SaveFile would be the idiomatic mid-run answer
+// there, but it is not reachable from here: the slave is a kick13 kickemu that LoadSeg()s the
+// game as an ordinary CLI program (whdload/RoFSlave.s), so resload lives in the slave and the
+// game never sees the pointer.  dos.library is fully up under that kickemu, so this same path
+// works — the file simply lands in the slave's slv_CurrentDir (see docs/whdload-slave.md).
+//
+// The name is relative on purpose.  "Next to the executable" cannot be spelled PROGDIR: under
+// WHDLoad (the Shell/Workbench sets PROGDIR: up, and the slave's LoadSeg does not), so a plain
+// relative name is the one spelling that resolves sensibly under every launch method: it lands
+// in the CLI's current directory for a Shell run, and in slv_CurrentDir under WHDLoad.
+static const char kHiScoreFile[] = "RoF.hi";
+
+static uint8_t s_hiscoreFile[256];
+static bool    s_hiscoreFileValid = false;   // the ctor read a full 256-byte block
+static bool    s_hiscoreWritable  = false;   // the OS is ours again — writes may go out
+
+// Read the saved block, before the display/interrupt takeover.  A missing or short file is not
+// an error: rof_hiscore_init keeps the factory table in that case.
+static void hiscoreFileRead()
+{
+    if (!DOSBase) return;
+    BPTR fh = Open((STRPTR)kHiScoreFile, MODE_OLDFILE);
+    if (!fh) return;
+    LONG n = Read(fh, s_hiscoreFile, 256);
+    Close(fh);
+    s_hiscoreFileValid = (n == 256);
+}
+
+bool PlatformAmiga::hiscoreLoad(uint8_t* blk)
+{
+    extern volatile unsigned short g_hsFromFile;
+    if (!s_hiscoreFileValid) return false;
+    for (int i = 0; i < 256; i++) blk[i] = s_hiscoreFile[i];
+    g_hsFromFile = 1;
+    return true;
+}
+
+bool PlatformAmiga::hiscoreSave(const uint8_t* blk)
+{
+    // Always keep the newest block, whether or not it can go out yet — this is the RAM shadow
+    // the exit flush writes.
+    for (int i = 0; i < 256; i++) s_hiscoreFile[i] = blk[i];
+    s_hiscoreFileValid = true;
+    if (!s_hiscoreWritable || !DOSBase) return false;   // mid-run: decline, stay dirty
+    BPTR fh = Open((STRPTR)kHiScoreFile, MODE_NEWFILE);
+    if (!fh) return false;                              // read-only medium: keep it in RAM
+    LONG n = Write(fh, (APTR)s_hiscoreFile, 256);
+    Close(fh);
+    if (n == 256) { extern volatile unsigned short g_hsWritten; g_hsWritten++; return true; }
+    return false;
+}
+
+// ============================================================================
 //  PlatformAmiga construction + run — takeover, install interrupts, run scene, restore
 // ============================================================================
 PlatformAmiga::PlatformAmiga(const char* /*imagePath*/)
@@ -2865,13 +3029,21 @@ PlatformAmiga::PlatformAmiga(const char* /*imagePath*/)
     GfxBase = (struct GfxBase*)OpenLibrary((UBYTE*)"graphics.library", 33);
     quit = (GfxBase == 0);
 
+    // dos.library, for the high-score file only — opened HERE so the read happens while the OS
+    // still owns the machine, and so the open itself (which can Wait()) is outside run()'s
+    // Forbid().  Its absence is not fatal: the game then runs on the factory table and saves
+    // nothing.  V33 (1.2) is enough for Open/Read/Write/Close.
+    DOSBase = (struct DosLibrary*)OpenLibrary((UBYTE*)"dos.library", 33);
+    hiscoreFileRead();
+
     // Publish the global Platform* the C bridge (platform_cbridge.cpp) dispatches through.
     platform = this;
 }
 
 PlatformAmiga::~PlatformAmiga()
 {
-    if (GfxBase) { CloseLibrary((struct Library*)GfxBase); GfxBase = 0; }
+    if (DOSBase)  { CloseLibrary((struct Library*)DOSBase);  DOSBase  = 0; }
+    if (GfxBase)  { CloseLibrary((struct Library*)GfxBase);  GfxBase  = 0; }
 }
 
 // RAM budget readout (always built — 6 longs and 6 AvailMem calls at startup).  The load image
@@ -3054,4 +3226,9 @@ void PlatformAmiga::run()
     LoadView(savedView);
     WaitTOF();
     WaitTOF();
+
+    // The OS owns the machine again, so the deferred high-score write may finally go out.  Only
+    // does anything if the player actually beat a score this session (rof_hiscore.c's dirty flag).
+    s_hiscoreWritable = true;
+    rof_hiscore_flush();
 }
