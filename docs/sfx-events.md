@@ -484,3 +484,48 @@ the `$40` work changed how a voice is *rendered*, never which waveform it is *se
 this evidence ("not reproduced since", 2026-08-13). What WOULD be real progress: the airlock
 footsteps share **slot 8** with the noise events `$16`/`$17`/`$18`, so a mis-ordered priority-mixer
 handover there is the first thing to look at — with a capture, not a theory.
+
+## ⛔ CORRECTION: `a800dumps/*.bin` $D200-$D20F is STALE RAM, not POKEY (2026-08-18)
+
+**Any statement derived from reading POKEY registers out of an `a800dumps` RAM image is void.**
+The proof is one line and needs no emulator: the window is **byte-identical in every dump** —
+`attract`, `standby`, `flight1/2/3`, `doors`, `tunnel`, `descent1/2`, `launch_*`, `plane_only`,
+`music_playing_ram` all read `06 7C 3B 07 7C 8E 07 7B E3`, and two others read `E4 E4 … 00`. POKEY
+registers cannot be the same during the attract tune and during flight. `tools/extract_a8s_ram.py`
+extracts the 64 KB **RAM array**; on an XL/XE, $D000-$D7FF in that array is the RAM *under* the I/O
+area, which this game never maps in — so it holds whatever the loader left there.
+
+RAM inside the game's own blob ($3CDE-$B7FF) is real and every other derivation from these dumps
+stands. Only the $D000-$D7FF window is junk. **To capture POKEY state, break on `rof_pokey_write`
+(or read atari800's POKEY state, not its RAM array).**
+
+### What this invalidates: AUDCTL bit7 is never set, so the poly9 path is DEAD CODE
+
+The 2026-07-10 "distortion-0 bass rendered as white noise" fix was justified by *"the Standby tune's
+`AUDCTL=$E3` has bit7 set → poly9"*. That `$E3` is the stale-RAM byte above. Two independent checks
+say AUDCTL bit7 can never be set in 4.1:
+
+* **Exhaustive binary scan.** `rof.xex` contains exactly **8** stores to $D208 (`8D 08 D2`). Their
+  values are `$60` (×4), `$29`, `$04`, `$00`, and one register-sourced store at `$1A5A` whose
+  register is `$00` (`LDA #$00` at `$1A4D`). None has bit7.
+* **The one indirect path is out of range.** `sfx_voice_tick`'s fourth-voice write
+  `bus_write(0xD1FF + sfx_voice_mute, audc + 2)` looks like it could scribble into AUDCTL, but
+  `sfx_voice_mute = note >> 4` and a NOTE byte has bit7 clear, so the gate is 0..7 and the write
+  spans **$D200-$D206 only**. It can never reach $D208.
+
+So `build_poly_dist`'s `POLY_DIST_P9_*` arms are unreachable, and the earlier session's note that
+"the Standby *theme* needs it" is wrong on both counts — the theme has **no distortion-$00/$80
+voice at all** (voices 1-3 take `$A0`-`$A3` pure from `sfx_voice_tick`; AUDC4 is only `$22`
+poly5tone or `$C2` ungated poly4, from table `$71C5`). ⚠ Do not delete the poly9 code on this note
+alone — 5.0 or a later revision may set bit7 — but do not treat it as live either.
+
+### What this means is actually wrong: poly17 is a 2-LEVEL square, we play full-range white noise
+
+With bit7 never set, **all 9 noise-distortion events take the `noise_buf` fallback**: `$06 $09 $0E
+$11 $13 $16 $17 $18 $19` — the engine drone, explosions, the descent beep, the slot-8 sounds that
+share a channel with the airlock footsteps. Real POKEY's poly17 output is the same 2-level ±square
+as poly4/poly9, gated by poly5; `noise_buf` is full-range uniform bytes. The code's own comment
+already concedes the trade ("smoother hiss vs POKEY's harsher buzz"). **This is the standing
+candidate for every "that voice sounds like noise when it shouldn't" report**, and the fix is the
+same shape as the `$40` one: render the 2-level poly5-gated poly17 square at the voice's stride
+instead of uniform noise. Not yet attempted.
