@@ -224,13 +224,55 @@ runaway height becomes a *low* column, not a correctly-tall one.
   **1987**. (The 4.1 *disk* image's own copy of the block says 1985 — see
   `docs/high-score-restore-plan.md`.)
 
+### 4.8 Station audio — the CH3 blip is unmuted, and the exit fades ✅ ADOPTED
+
+The Station sequence is otherwise the same program in both builds: `station_audio` (4.1 `$1B5B`,
+cart `$8482`) has the same four RTCLOK-gated phases, the same `$A7 A6 A5 A4 A3 A2 A2 A1 A1 A1 A1 A1
+A1 A0 A0` AUDC3 decay table (4.1 `$1BE5`, cart `$8510`, byte-identical), the same phase-2 AUDF2
+sweep and the same phase-3 envelope. `station_missile_drift` is byte-identical, and the **Logo**
+VBI's four-channel sweep (4.1 `$51EF`, cart `$8204`) is byte-identical too. Four things differ, and
+they are all audio:
+
+| | 4.1 | 5.0 |
+|---|---|---|
+| AUDCTL `$D208` in `station_init` | `$29` — 15 kHz base **+ CH3+CH4 joined 16-bit + CH3 @1.79 MHz** | `$01` — 15 kHz base only |
+| `audio_ch1_init` (4.1 `$1B50`, cart `$846E`) | AUDF1=`$FF`, AUDF2=`$FC` | + **AUDF3=`$0A`**, + **mask=`$C0`** |
+| the AUDC3 decay-table write | `STA AUDC3` | **`AND mask`** then `STA AUDC3` |
+| `station_exit` silencing | zero `$D200-$D207` in one `STA $D200,Y` loop — a hard cut | **AUDC3=0, then AUDC1+AUDC2 walk `$A7`→`$A0`, one step per frame** (8 frames, `JSR $A0D1` = wait 1 jiffy) |
+
+What they add up to: the AUDC3 decay table is the **missile-relaunch blip**. It replays every time
+`station_missile_drift` reseeds `$008C` (its `$8E/$8F` accumulator adds `$CB` a frame, so ~every 6.5 s
+— three times in the ~20 s scene). In 4.1 it is **inaudible**: AUDCTL `$29` joins CH3+CH4 into one
+16-bit voice, and a joined pair outputs on CH4 only, whose AUDC4 is 0 for the whole scene. 5.0 drops
+the join, gives CH3 a pitch of its own (AUDF3 `$0A` ≈ 715 Hz at the 15 kHz base) and gates the
+envelope behind a mask byte so it stays silent until the CH2 drone has faded in: the mask starts at
+`$C0` (AND-ing the `$Axx` table down to volume 0) and is then tracked to the live CH2 AUDC value
+while RTCLOK_MID == 1.
+
+⚠ The mask lives in zero page at cart `$A2`, which is **not free in 4.1** — 5.0 shifted its whole
+Station ZP block down one byte to make room (4.1 `$9C`→cart `$9B` … 4.1 `$A2`→cart `$A1`; this is
+§4.7's "the Station code uses `$A1` where 4.1 uses `$A2`", seen from the other end).
+
+**Adopted in the port** (2026-08-18) as four `PRE_INSN_HOOKS` in `tools/transpile.py`, keyed to the
+4.1 addresses `$19AB` / `$1B6F` / `$1BA2` / `$1A4D`; the mask byte is a C global
+(`g_stationAudc3Mask`, `src/rof_boot.c`) rather than a stolen Atari RAM byte. Two port-specific
+reasons this was worth doing beyond "5.0 sounds better":
+
+* **4.1's AUDCTL made CH3 a squeal on the Amiga.** Our POKEY→Paula model computes the joined 16-bit
+  divider but still sounds it on the *low* channel instead of muting it, so `AUDF3=$28`
+  (`initad_1A97 $1A9C`) + CH3@1.79 MHz asked for 21826 Hz, clamped to Paula's minimum period 124 —
+  a piercing tone on every blip, the last of which lands just before the Standby hand-off. 5.0's
+  `$01` + `$0A` turns the same writes into the 713 Hz blip they are meant to be. (The underlying
+  model bug — a joined pair must output on the HIGH channel — is still there for any other caller.)
+* **4.1's hard cut never reached Paula.** `STA $D200,Y` is an *indexed* store, which the
+  transliteration emits as a plain `mem[]` write; only `bus_write` routes to `rof_pokey_write`. So
+  the drones were not silenced at all at station exit — they rang on until Standby's own audio init.
+  5.0's fade writes each register absolutely, so every write goes through the bus.
+
 ## 5. Open items
 
 Recorded, not scheduled.
 
-- **Station audio.** The Station sequence sounds different between the two builds, and in particular
-  **a wrong note plays on the Station → Standby transition**. 5.0 is the reference for this, since
-  the transition itself is cart-authoritative (§3). Not investigated.
 - **Is §4.6 the fix for the terrain spike?** A viewport-height column that gets flat-topped by the
   window edge has been seen in the Amiga build. Before adopting the clamp, settle two things:
   (a) does `atari800` on `rof.xex` show the same spike — if yes it is faithful and the clamp is a 5.0

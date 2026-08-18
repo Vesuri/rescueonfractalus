@@ -586,7 +586,49 @@ ROF_HS_DIRTY_SITES = {
     0x5C06: 0x3714, 0x5C18: 0x3709, 0x5C1B: 0x370A, 0x5C26: 0x3713, 0x5C2B: 0x3707,
 }
 
+# ---------------------------------------------------------------------------
+# Station-scene audio: the v5.0 cartridge fixes, adopted (docs/rom-v50-diff.md §4.8).
+# Four deltas, each injected at the 6502 address where 5.0's bank-4 station code differs.
+# Nothing else in the two station audio paths differs; the Logo VBI ($51EF/cart $8204) is
+# byte-identical.
+ROF_STATION_V50_AUDIO_INIT = (
+    '{ /* v5.0 $D208=$01 / AUDF3=$0A (cart station_init $83A2 + audio_ch1_init $8477) */\n'
+    '      bus_write(0xD208, 0x01);   /* AUDCTL: drop 4.1\'s CH3+CH4 16-bit join + CH3@1.79MHz */\n'
+    '      bus_write(0xD204, 0x0A);   /* AUDF3 ~715 Hz: gives the CH3 envelope a pitch to sound at */\n'
+    '      g_stationAudc3Mask = 0xC0; }')
+
+ROF_STATION_V50_BLIP  = 'cpu.A &= g_stationAudc3Mask;   /* v5.0 `AND $A2` (cart $8496) */'
+ROF_STATION_V50_TRACK = 'g_stationAudc3Mask = cpu.A;    /* v5.0 `STA $A2` (cart $84CE) */'
+
+# station_exit's fade-out, replacing 4.1's hard cut.  4.1 silences POKEY with
+# `STA $D200,Y` (Y=7..0) at $1A51 — an INDEXED store, which the transliteration emits as a
+# plain mem[] write, so on the Amiga it never reaches Paula at all and the drones ring on
+# into Standby.  5.0 ($8439) instead walks AUDC1+AUDC2 from $A7 down to $A0, one step per
+# frame, after zeroing AUDC3 — 8 frames, and every write goes through the bus.
+ROF_STATION_V50_FADE = (
+    '{ /* v5.0 station_exit drone fade (cart $842E-$8447) */\n'
+    '      int _fv;\n'
+    '      bus_write(0xD205, 0x00);\n'
+    '      for (_fv = 7; _fv >= 0; --_fv) {\n'
+    '          bus_write(0xD201, (unsigned char)(0xA0 | _fv));\n'
+    '          bus_write(0xD203, (unsigned char)(0xA0 | _fv));\n'
+    '          platform_tick_vbi(); platform_render_frame();   /* cart: JSR $A0D1, wait 1 jiffy */\n'
+    '      } }')
+
 PRE_INSN_HOOKS = {
+    # --- station audio, v5.0 (see above) ---
+    # $19AB station_init's `JSR audio_ch1_init`: 5.0's AUDCTL + AUDF3 + mask arming.
+    0x19AB: ROF_STATION_V50_AUDIO_INIT,
+    # $1B6F station_audio's `STA AUDC3` from the $1BE5 decay table: mask it.  Keying a hook
+    # here also blocks the peephole that folded the $1B6C load into this store, so cpu.A
+    # holds the table byte and the AND has something to modify.
+    0x1B6F: ROF_STATION_V50_BLIP,
+    # $1BA2 station_audio's `STA AUDC2` (RTCLOK_MID==1 drone ramp): track it into the mask.
+    # Hooked BEFORE the store rather than after (where 5.0 puts its `STA $A2`) because
+    # $1BA5 is also the branch target taken when RTCLOK_MID != 1, where cpu.A is unrelated.
+    0x1BA2: ROF_STATION_V50_TRACK,
+    # $1A4D station_exit, immediately before the (Paula-invisible) POKEY/GTIA zero loop.
+    0x1A4D: ROF_STATION_V50_FADE,
     # $519c — the flight VBI's 1-instruction CLI window (vbi_handler_flight).
     # The 6502 does `LDX #$FF` ($519a) then `CLI`($519c)/`SEI`($519d): if a POKEY
     # KEYBOARD/BREAK IRQ ($D20E IRQEN=$C0, vector irq_handler $462A) fires inside
@@ -1679,6 +1721,7 @@ def main():
         '#include "mem.h"   /* MEM_<name> offsets + bare aliases for named RAM/state */',
         '#include "../platform/platform_c.h"',
         '#include "../rof_hiscore.h"',
+        '#include "../rof_boot.h"',
         '',
     ]
     body = []

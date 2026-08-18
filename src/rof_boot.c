@@ -33,6 +33,9 @@
 volatile unsigned char g_bootScene    = ROF_BOOTSCENE_NONE;
 volatile unsigned char g_bootLoadBusy = 0;
 
+/* v5.0 station AUDC3 gate — see rof_boot.h.  $C0 = muted; station_init's hook re-arms it. */
+unsigned char g_stationAudc3Mask = 0xC0;
+
 /* Place one stage with the real VBI held inert (mem[] is inconsistent while it runs). */
 static uint32_t boot_stage(uint32_t from)
 {

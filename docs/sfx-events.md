@@ -16,7 +16,9 @@ Confusing them has cost a session already.
 
 `station_audio $1B5B` is a fourth thing and is **not** music at all: it is clock-modulated
 AUDC/AUDF sweeps keyed on the jiffy clock, with no pitched content anywhere. Don't go looking
-for a melody in it.
+for a melody in it. Its CH3 envelope is the **missile-relaunch blip**, and the
+port sounds it (plus a fade-out at the Standby hand-off) per the v5.0 cartridge — see
+`docs/rom-v50-diff.md` §4.8, which is also where the four `PRE_INSN_HOOKS` that do it are named.
 
 All three players are transcribed to General MIDI by **`tools/export_midi.py`** (stdlib only,
 `--out build/midi`), which is also the executable record of every decode detail below.

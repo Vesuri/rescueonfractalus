@@ -79,6 +79,23 @@ extern volatile unsigned char g_bootScene;      /* 0 | 1 = Logo | 2 = Station */
  * RAM.  Inert on SDL, whose VBI only fires from the main thread's tickVBI(). */
 extern volatile unsigned char g_bootLoadBusy;
 
+/* Station-scene AUDC3 mask — the v5.0 cartridge's station-audio fix, adopted here.
+ *
+ * 4.1 sets AUDCTL=$29 during the station, which joins CH3+CH4 into one 16-bit voice and
+ * clocks it at 1.79 MHz.  On real POKEY the joined pair outputs on CH4 only (AUDC4 = 0 all
+ * scene), so 4.1's whole CH3 envelope — the 15-step $A7..$A0 decay at $1BE5, retriggered
+ * every ~6.5 s when station_missile_drift reseeds $008C — is INAUDIBLE.  5.0 sets AUDCTL=$01
+ * and AUDF3=$0A instead, turning that envelope into an audible ~715 Hz blip on each missile
+ * relaunch, and gates it with a mask byte so it stays silent until the CH2 drone has faded
+ * in: the mask starts at $C0 (AND'ing the $Axx table down to volume 0) and is then tracked
+ * to the live CH2 AUDC value while RTCLOK_MID == 1.
+ *
+ * 5.0 keeps the mask in zero page at $A2; 4.1's station code already uses $A2 for something
+ * else (5.0 shifted its whole station ZP block down one byte to make room), so the port
+ * holds it here rather than stealing an Atari RAM byte.  Written and read only by the
+ * station_audio PRE_INSN_HOOKS in tools/transpile.py.  docs/rom-v50-diff.md §4.8. */
+extern unsigned char g_stationAudc3Mask;
+
 #ifdef __cplusplus
 }
 #endif

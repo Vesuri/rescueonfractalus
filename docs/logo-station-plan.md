@@ -425,7 +425,7 @@ Exit (`station_loop $1A01`): `RTCLOK_MID $0013 ≥ 4` (≈17 s NTSC), or `CH $02
 
 | Routine | What it really does |
 |---|---|
-| `station_audio $1B5B` | 4-channel POKEY sweep, phase-gated on `RTCLOK_MID`; at phase 3 it plays an `AUDF3` envelope from the RLE-expanded table at **`$283E`** (228 bytes, unpacked from `$1BF4` by `station_init`) and tail-jumps to `$1E01` |
+| `station_audio $1B5B` | 4-channel POKEY sweep, phase-gated on `RTCLOK_MID`; at phase 3 it forces `AUDF2` to 0 and plays an **`AUDC2`** envelope from the RLE-expanded table at **`$283E`** (228 bytes, unpacked from `$1BF4` by `station_init`), then tail-jumps to `$1E01`. ⚠ Four v5.0 audio fixes are grafted onto this routine and onto `station_init`/`station_exit` — `docs/rom-v50-diff.md` §4.8 |
 | `$1E01` (+`$1E2A`) | animates the **P0/P1 shapes** at `$3400`/`$3500` from the table set `$272C/$2739/$2746/$2753/$2760/$277A/$276D` — a 13-frame shape cycle. Not a DLI |
 | `$1910` | drifts `HPOSM0-3` (`$D004-$D007`); called from `station_audio` |
 | `station_anim_frame $1D9A` | the scroll pacer (above) → `display_scroll` |
