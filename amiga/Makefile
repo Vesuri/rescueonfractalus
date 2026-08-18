@@ -51,6 +51,7 @@ CXX_SRCS := \
     $(AMIGA_SRC)/framework/Util.cpp \
     $(AMIGA_SRC)/DoorsCopperList.cpp \
     $(AMIGA_SRC)/EmptyCopperList.cpp \
+    $(AMIGA_SRC)/ExternalHooks.cpp \
     $(AMIGA_SRC)/FlightCopperList.cpp \
     $(AMIGA_SRC)/GCCRuntime.cpp \
     $(AMIGA_SRC)/Gtia9CopperList.cpp \

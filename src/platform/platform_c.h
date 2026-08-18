@@ -95,8 +95,9 @@ void platform_title_screen_dirty(uint16_t addr, uint8_t nCells);
    name_entry_loop.  Return 1 only if the block is now safely stored.  Return 0 to decline —
    the plain Amiga build does, because that instant is mid-Forbid with the display and the
    interrupt vectors hijacked, where a dos.library packet Wait() does not belong; it keeps
-   the block in RAM and flushes it (rof_hiscore_flush) once the OS is back.  A WHDLoad build
-   saves here for real, via resload_SaveFile, which is safe in that context. */
+   the block in RAM and flushes it (rof_hiscore_flush) once the OS is back.  When a launcher
+   has filled in the ExternalHooks save hook (the WHDLoad slave does, with resload_SaveFile,
+   which IS safe in that context) the Amiga build saves here for real and returns 1. */
 int platform_hiscore_load(uint8_t blk[256]);
 int platform_hiscore_save(const uint8_t blk[256]);
 

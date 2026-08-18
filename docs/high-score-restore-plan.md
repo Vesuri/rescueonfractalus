@@ -271,12 +271,16 @@ i.e. the insert, the row shift, the signature and `level_progress` all round-tri
 ## 4. Where this diverged from the plan, and what is still open
 
 - W5's premise was stale (see W5) and W6 was code, not a check (see W6).
-- **`resload_SaveFile` is unreachable from the game**, so the WHDLoad save is the same deferred
-  dos.library write as a Shell run (see W2). If a mid-run WHDLoad save is wanted, the slave would
-  have to publish `resload` to the game somehow — a new design, not a tweak.
-- **Where `RoF.hi` lands under WHDLoad depends on the unresolved `slv_CurrentDir` vs
-  `#sub-dir "data"` inconsistency** (`docs/whdload-slave.md:259-265`). That loose end now has a
-  second consumer.
+- ✅ **`resload_SaveFile` is now reached — by the SLAVE patching the game, not by the game learning
+  about resload.** The game exports `g_rofExternalHooks` (`src/platform/amiga/ExternalHooks.h`),
+  two null function pointers the slave finds by scanning the loaded hunks for a magic and fills in
+  (`_patch_hooks` in `whdload/RoFSlave.s`). With the hook set, `PlatformAmiga::hiscoreSave` writes
+  through it at the instant the game writes the block, so nothing is deferred and a score survives a
+  hard reset or F10; with it null — every non-WHDLoad launch — the deferred `dos.library` `RoF.hi`
+  path of W2 is unchanged. Design record: `docs/whdload-slave.md` §6.
+- **Where `RoF.hi` lands under WHDLoad no longer depends on the `slv_CurrentDir` vs `#sub-dir
+  "data"` question** (`docs/whdload-slave.md` §5): resload names are relative to the data directory
+  beside the slave. That loose end is back to having one consumer.
 - **Holding `dos.library` open costs untuned FASTMEMSIZE** (`docs/whdload-slave.md:125`).
 - Not yet confirmed by eye: the entry screen's appearance in a real `run.sh` session, and the
   AUTHOR easter egg.

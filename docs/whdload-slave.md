@@ -276,11 +276,54 @@ something that round-trips latin-1, or the accented bytes get mangled.
   `src/platform/amiga/version.s` (the executable's own `$VER: Rescue on Fractalus! 0.9`),
   `RoFSlave.s` (`slv_info` *and* the slave's `$VER:`), and `RoF Install/ReadMe`
   (the History section). Bump all three together.
-* **There is nothing to save, so there is no `resload_SaveFile` path** — and that is
-  faithful, not an omission: the Atari original keeps HIGH SCORE in RAM only and loses it at
-  power-off. If a persistent high score is ever wanted it would be an *addition* to the game,
-  not a slave feature. The install template's `#highs-file` is left at its default `highs`;
-  no such file ships, and `P_CopyFile` skips what does not exist.
+* The install template's `#highs-file` is left at its default `highs`; the file the slave
+  actually writes is `RoF.hi` (see §6), and `P_CopyFile` skips a `highs` that does not exist.
+
+## 6. Saving the high scores — `_patch_hooks` and the two trampolines
+
+The game restores the disk version's high-score table (`docs/high-score-restore-plan.md`), so
+there IS something to save, and the slave is where it is saved properly.
+
+From a Shell the game persists the 256-byte block itself with `dos.library`, but only on the way
+out: the game writes the block mid-takeover (inside `run()`'s `Forbid()`, OS display gone, VERTB
+and PORTS hijacked), and a filesystem packet must not be waited on there. `resload_SaveFile` has
+no such restriction — WHDLoad switches to the OS and back around the access itself — so under the
+slave the score reaches the disk the instant the player types the initials, and survives a hard
+reset or the F10 quit key.
+
+**The game knows nothing about WHDLoad or resload, and is not rebuilt for it.** It exports a block
+of function pointers, `g_rofExternalHooks` (`src/platform/amiga/ExternalHooks.h`), which are 0 in
+the shipped executable; a 0 pointer means "no external storage" and the platform falls back to its
+own `RoF.hi` file. `_patch_hooks`, called between `LoadSeg` and the game's entry, fills two of them
+in with `_hook_save` / `_hook_load`, which are thin `resload_SaveFile` / `resload_LoadFile` wrappers
+in the slave. The very same `RoF` binary runs from Workbench, a Shell and WHDLoad.
+
+Three things make that patch survive a game rebuild, which moves every offset:
+
+* **The block is FOUND, not addressed.** `_patch_hooks` walks the seglist and scans every hunk on
+  longword boundaries for the 8-byte magic `RoF!HOOK`. That magic exists nowhere else in the image
+  (it is built by the block's initialiser and by nothing else) and there is exactly one block, so
+  the first match ends the search. Reading the ~290 KB load image costs roughly half a second of
+  68000, once, behind the splash window.
+* **`version` must match and `size` must be at least the layout the slave knows.** A future game
+  may only APPEND fields and must bump `ROF_HOOKS_VERSION` when it changes the existing ones; an
+  old slave then patches *nothing* rather than writing pointers into a layout it misreads.
+* **Finding no block at all is not an error** — an older game simply saves its own way.
+
+The hooks use the ordinary GCC m68k C convention (arguments on the stack, each a longword, result
+in D0, `D2-D7/A2-A6` callee-saved), which is why the trampolines are three instructions of
+register shuffling. Verify the call shape after a game change with
+`m68k-amiga-elf-objdump -d out/RoF.elf --disassemble=...hiscoreSave...`: the arguments must arrive
+as `4(sp)=buffer, 8(sp)=length`.
+
+⚠ `slv_Flags` has `WHDLF_NoError`, so `resload_SaveFile`/`LoadFile` only *return* on success — a
+full or write-protected data directory ends in WHDLoad's error requester instead of a `FALSE` the
+game could shrug off. `resload_GetFileSize` is the exception, and is why the load path asks the
+size first: a first run has no `RoF.hi`, and that must read as "nothing saved", not as a failure.
+
+`resload` file names are relative to the first data directory — the drawer holding the slave — so
+`RoF.hi` lands there regardless of how the `slv_CurrentDir` / `#sub-dir "data"` question in §5 is
+settled.
 
 ## Related
 

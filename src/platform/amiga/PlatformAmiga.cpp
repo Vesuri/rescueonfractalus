@@ -38,6 +38,7 @@
 #include "framework/AmigaHardware.h"
 #include "PlatformAmiga.h"
 #include "RescueOnFractalus.h"
+#include "ExternalHooks.h"       // the launcher-patchable hiscore save/load hooks
 #include "../../rof_hiscore.h"   // rof_hiscore_flush — the deferred save, after the OS is back
 extern "C" volatile uint16_t g_atariDlist;   // DLISTL/DLISTH latch (bus.h) — which screen is up
 
@@ -2964,16 +2965,19 @@ static void intTapsRemove(void)
 // dirty flag in RAM for the exit flush.  The cost is that a hard reset or power-off loses the
 // session's scores; the benefit is that nothing about the takeover has to change.
 //
-// ⚠ This is the same under WHDLoad.  resload_SaveFile would be the idiomatic mid-run answer
-// there, but it is not reachable from here: the slave is a kick13 kickemu that LoadSeg()s the
-// game as an ordinary CLI program (whdload/RoFSlave.s), so resload lives in the slave and the
-// game never sees the pointer.  dos.library is fully up under that kickemu, so this same path
-// works — the file simply lands in the slave's slv_CurrentDir (see docs/whdload-slave.md).
+// That is the FALLBACK path, and it is what a Shell or Workbench launch uses.  A launcher that
+// can persist a buffer at any moment says so instead, by filling in the ExternalHooks block
+// (ExternalHooks.h) before the game's first instruction: hiscoreSave() then hands the block
+// straight to the hook the moment the game writes it, and nothing is deferred.  The WHDLoad
+// slave does exactly that, with resload_SaveFile — which is safe mid-takeover, unlike a dos
+// packet — so under WHDLoad a score survives a hard reset or the F10 quit key too.  The game
+// itself knows nothing about WHDLoad or resload; it only knows a pointer was, or was not, set.
 //
-// The name is relative on purpose.  "Next to the executable" cannot be spelled PROGDIR: under
-// WHDLoad (the Shell/Workbench sets PROGDIR: up, and the slave's LoadSeg does not), so a plain
-// relative name is the one spelling that resolves sensibly under every launch method: it lands
-// in the CLI's current directory for a Shell run, and in slv_CurrentDir under WHDLoad.
+// The fallback file name is relative on purpose.  "Next to the executable" cannot be spelled
+// PROGDIR: under WHDLoad (the Shell/Workbench sets PROGDIR: up, and a LoadSeg does not), so a
+// plain relative name is the one spelling that resolves sensibly under every launch method.
+// (Under WHDLoad the hook takes over anyway, and resload puts the file in the data directory
+// beside the slave.)
 static const char kHiScoreFile[] = "RoF.hi";
 
 static uint8_t s_hiscoreFile[256];
@@ -2984,6 +2988,12 @@ static bool    s_hiscoreWritable  = false;   // the OS is ours again — writes 
 // an error: rof_hiscore_init keeps the factory table in that case.
 static void hiscoreFileRead()
 {
+    // An external launcher that supplied a load hook owns the storage entirely — do not also
+    // go looking for a file of our own next to whatever directory it happened to start us in.
+    if (g_rofExternalHooks.hiscoreLoad) {
+        s_hiscoreFileValid = (g_rofExternalHooks.hiscoreLoad(s_hiscoreFile, 256) != 0);
+        return;
+    }
     if (!DOSBase) return;
     BPTR fh = Open((STRPTR)kHiScoreFile, MODE_OLDFILE);
     if (!fh) return;
@@ -3007,6 +3017,14 @@ bool PlatformAmiga::hiscoreSave(const uint8_t* blk)
     // the exit flush writes.
     for (int i = 0; i < 256; i++) s_hiscoreFile[i] = blk[i];
     s_hiscoreFileValid = true;
+
+    // A hooked launcher can write from here, mid-run, and reports whether it did.
+    if (g_rofExternalHooks.hiscoreSave) {
+        if (g_rofExternalHooks.hiscoreSave(s_hiscoreFile, 256) == 0) return false;
+        extern volatile unsigned short g_hsWritten; g_hsWritten++;
+        return true;
+    }
+
     if (!s_hiscoreWritable || !DOSBase) return false;   // mid-run: decline, stay dirty
     BPTR fh = Open((STRPTR)kHiScoreFile, MODE_NEWFILE);
     if (!fh) return false;                              // read-only medium: keep it in RAM
