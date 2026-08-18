@@ -36,6 +36,12 @@
 
  History:
  --------
+ version 0.91 (18.08.2026):
+ - high score table restored, and saved
+ - sound fixes
+ - fixed getting stuck in the lift
+ - fixed Shift+F2 not lowering the level
+
  version 0.9 (14.08.2026):
  - initial release
 

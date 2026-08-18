@@ -269,7 +269,7 @@ something that round-trips latin-1, or the accented bytes get mangled.
   of `Install`).
 * **`slv_info` credits "Amiga port by Vesuri"**. Change it in `RoFSlave.s` if the release
   should read differently.
-* The version/date string is literal in `RoFSlave.s` (`$VER: RoF.slave 0.9 (14.08.2026)`).
+* The version/date string is literal in `RoFSlave.s` (`$VER: RoF.slave 0.91 (18.08.2026)`).
   It is bumped by hand rather than stamped from `WDate >T:date` at build time — deliberately,
   so an unchanged tree rebuilds byte-identically.
 * ⚠ **The version number lives in three files** and nothing checks that they agree:
