@@ -472,3 +472,10 @@ eliminated, so do not re-derive them:
 Next step is a captured POKEY write log (reg/val/frame ring, dumped over gdb on a user-triggered
 repro) rather than another static theory — the same offline-capture route that settled the Station
 squeal.
+
+⚠ **Do not close this on a quiet session.** A play-through right after the `$40` fix showed no wrong
+waveforms, but neither of the two 2026-08-18 POKEY commits contains a mechanism that could explain a
+fix: the chain resolver is a no-op unless AUDCTL sets bits 3-6 (nothing live does), and the `$40`
+work changed how a voice is *rendered*, never which waveform it is *selected* to play (`is_noise` is
+a function of AUDC alone). The saucer instance was already closed once on exactly this evidence
+("not reproduced since", 2026-08-13) and came back as the mothership report.
