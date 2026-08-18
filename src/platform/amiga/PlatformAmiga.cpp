@@ -122,11 +122,22 @@ static __chip uint8_t poly5_wave[31][62];
 // poly17 (AUDCTL bit7 clear) has no short loop and stays on the noise_buf fallback below.
 #define POLY9_SIZE     511
 #define POLY_DIST_LEN  1022
+// Distortion $40 = poly4 GATED BY POLY5 shares the same per-channel buffer.  Its state is
+// (p4, p5, out) — 15*31*2 = 930 — so 930 bytes is both a guaranteed full period and an exact
+// bound, and it fits inside POLY_DIST_LEN.  465 words: odd is fine, only the byte count must be
+// even.  (This is why it cannot be a per-stride table like poly4/poly5tone: it depends on BOTH
+// phases, so the table would need 15*31 = 465 shapes of 930 bytes = 432 KB.)
+#define POLY4G_LEN     930
+#define POLY4G_SKIP      6   // transient before the state machine reaches its cycle
+// Render modes for build_poly_dist, and the third component of the per-channel cache key.
+#define POLY_DIST_P9_GATED   1u   // $00: poly9, poly5-gated
+#define POLY_DIST_P9_UNGATED 2u   // $80: poly9, ungated
+#define POLY_DIST_P4_GATED   3u   // $40: poly4, poly5-gated
 static uint8_t        kBit9[POLY9_SIZE];              // poly9 bit stream (filled at init)
 static __chip uint8_t poly_dist_buf[4][POLY_DIST_LEN];
 static uint32_t       poly_dist_divider[4] = { 0, 0, 0, 0 }; // cache key: last AUDF divider built
 static uint16_t       poly_dist_bd[4]      = { 0, 0, 0, 0 };  // cache key: last base_div (1/28/114)
-static uint8_t        poly_dist_gate[4]    = { 0, 0, 0, 0 };  // cache key: last gate mode (+1=valid)
+static uint8_t        poly_dist_mode[4]    = { 0, 0, 0, 0 };  // cache key: last render mode (0=none)
 
 // POKEY "noise" distortion (AUDC with PURE clear AND POLY4 clear: $80 ungated,
 // $00 poly5-gated) is pseudo-random noise, which Paula cannot synthesise.  We DMA a
@@ -215,8 +226,8 @@ static const uint8_t kBit5[31] = { 1,1,1,1,0,1,1,0,1,0,0,1,1,0,0,0,0,0,1,1,1,0,0
 // Build one poly waveform of `lenBytes` bytes into dst.  poly4: flip output per kBit4
 // vs the current output; poly5tone: poly5-gated pure-tone flip.  Phase starts at p4=p5=0.
 // Captures 2x the poly period (30 or 62 bytes) — a clean, even-length loop regardless of
-// stride.  ($40 poly5-gated poly4 is rendered as ungated poly4 — the full poly5×poly4
-// period 465 won't fit — a close-enough raspy buzz for the launch-door swoosh.)
+// stride.  These two shapes depend on ONE poly phase each, so a per-stride table covers them;
+// $40 (poly5-gated poly4) depends on both and is rendered per channel by build_poly_dist.
 static void build_poly_one(uint8_t* dst, bool poly4, uint8_t s4, uint8_t s5, uint16_t lenBytes)
 {
     uint8_t out = 0, p4 = 0, p5 = 0;
@@ -246,11 +257,12 @@ static void build_poly_tables(void)
     }
 }
 
-// Render one channel's poly5-gated poly9 distortion waveform for the given per-underflow
-// poly stride.  Mirrors atari800 pokeysnd.c: at each underflow the polys advance by `stride`
-// (the divide-by-N count in master-clock ticks), and while the poly5 gate is open (always, if
-// `gateAlways`) the 2-level output flips toward the current poly9 bit.  Output bytes are the
-// same bipolar ±127 as wave_pure so AUDxVOL scales them identically.
+// Render one channel's two-phase distortion waveform for the given per-underflow poly stride.
+// Mirrors atari800 pokeysnd.c: at each underflow the polys advance by `stride` (the divide-by-N
+// count in master-clock ticks); the poly5 gate decides whether the output may change at all
+// (`if ((audc & NOTPOLY5) || bit5[P5])`), and inside the gate the 2-level output flips TOWARD
+// the current poly9 or poly4 bit.  Output bytes are the same bipolar ±127 as wave_pure so
+// AUDxVOL scales them identically.  Returns the length in bytes (mode-dependent).
 // High-score save-block outcome counters (amiga/name_entry.gdb).  ⚠ Deliberately OUTSIDE the
 // ROF_FLIGHT_PROBE guard below — src/rof_hiscore.c is shared, non-probe code and references them
 // unconditionally on the Amiga, so guarding them fails the plain shipping link.  Six words.
@@ -264,19 +276,45 @@ extern "C" { volatile unsigned short g_hsDirty    = 0; }     // block waiting fo
 #ifdef ROF_FLIGHT_PROBE
 extern "C" { volatile unsigned long g_polyDistCalls = 0; }
 #endif
-static void build_poly_dist(uint8_t ch, uint32_t divider, uint16_t bd, bool gateAlways)
+static uint16_t build_poly_dist(uint8_t ch, uint32_t divider, uint16_t bd, uint8_t mode)
 {
 #ifdef ROF_FLIGHT_PROBE
     g_polyDistCalls++;
 #endif
-    // s5 = (divider*bd) % 31, s9 = (divider*bd) % 511 — via (a*b)%m = ((a%m)*(b%m))%m so every
-    // op is a 16-bit hardware DIVU.W/MULU.W (divider≤65536 → quotient fits 16 bits), no 32-bit
-    // software mul/div even for the chain case.  bd<511 so bd%511==bd.
-    uint16_t s5 = rof_modu16(rof_mulu16(rof_modu16(divider, 31u), rof_modu16(bd, 31u)), 31u);
-    uint16_t s9 = rof_modu16(rof_mulu16(rof_modu16(divider, POLY9_SIZE), bd), POLY9_SIZE);
-    uint16_t p5 = 0, p9 = 0;
+    // s5 = (divider*bd) % 31, s9 = (divider*bd) % 511, s4 = (divider*bd) % 15 — via
+    // (a*b)%m = ((a%m)*(b%m))%m so every op is a 16-bit hardware DIVU.W/MULU.W (divider≤65536 →
+    // quotient fits 16 bits), no 32-bit software mul/div even for the chain case.  bd<511 so
+    // bd%511==bd.
+    uint16_t s5  = rof_modu16(rof_mulu16(rof_modu16(divider, 31u), rof_modu16(bd, 31u)), 31u);
+    uint16_t p5 = 0;
     uint8_t  out = 0;
     uint8_t* dst = poly_dist_buf[ch];
+
+    if (mode == POLY_DIST_P4_GATED) {
+        uint16_t s4 = rof_modu16(rof_mulu16(rof_modu16(divider, 15u), rof_modu16(bd, 15u)), 15u);
+        uint16_t p4 = 0;
+        // ⚠ SKIP THE TRANSIENT FIRST, or the buffer does not loop cleanly.  Inside the gate the
+        // output is FORCED to the poly4 bit, so the state map (p4,p5,out) is not invertible and
+        // (0,0,0) need not lie on its own cycle: 240 of the 465 strides then have dst[0] != the
+        // sample that truly follows dst[929], i.e. a click at every DMA wrap (~7.6/s at the
+        // footsteps' pitch).  The transient is at most 6 samples over all strides, and every
+        // reachable cycle length (1,3,5,15,31,93,155,465) divides 930 — so skipping 6 and then
+        // emitting 930 is always a whole number of cycles.  Proven exhaustively:
+        // tools/poly_dist_test.c.
+        for (int i = 0; i < POLY4G_SKIP + POLY4G_LEN; i++) {
+            p4 = (uint16_t)(p4 + s4); if (p4 >= 15u) p4 = (uint16_t)(p4 - 15u);
+            p5 = (uint16_t)(p5 + s5); if (p5 >= 31u) p5 = (uint16_t)(p5 - 31u);
+            if (kBit5[p5]) {
+                if (kBit4[p4] == (out ^ 1u)) out ^= 1u;   // output follows the poly4 bit
+            }
+            if (i >= POLY4G_SKIP) dst[i - POLY4G_SKIP] = out ? 0x7Fu : 0x81u;
+        }
+        return POLY4G_LEN;
+    }
+
+    uint16_t s9 = rof_modu16(rof_mulu16(rof_modu16(divider, POLY9_SIZE), bd), POLY9_SIZE);
+    uint16_t p9 = 0;
+    const bool gateAlways = (mode == POLY_DIST_P9_UNGATED);
     /* p5,s5 < 31 so p5+s5 < 62 → the phase wrap is a compare-subtract, NOT a modulo; same
      * for p9,s9 < 511.  This kills 2 DIVU/byte (~2044 divides over the 1022-byte buffer,
      * ~40ms) that fired on every poly9-voice stride change (SFX freq sweeps / explosions) —
@@ -289,6 +327,7 @@ static void build_poly_dist(uint8_t ch, uint32_t divider, uint16_t bd, bool gate
         }
         dst[i] = out ? 0x7Fu : 0x81u;
     }
+    return POLY_DIST_LEN;
 }
 
 // Shadow of POKEY registers $D200..$D20F (bus_write doesn't update mem[] for
@@ -614,6 +653,22 @@ static uint16_t pokey_period(uint8_t ch, uint8_t audf, uint8_t audctl)
     return pokey_period_compute(divider, use_179, bd);
 }
 
+// Point channel `ch` at its per-channel two-phase distortion waveform, rebuilding it only when
+// the stride or the mode changes (volume changes don't reshape it).  Cache key = (divider,
+// base_div, mode) rather than the stride product, so no 32-bit multiply is needed even for a
+// 16-bit chain — build_poly_dist reduces the factors itself.
+static void want_poly_dist(uint8_t ch, uint32_t divider, uint16_t bd, uint8_t mode,
+                           uint16_t per, uint8_t vol)
+{
+    static uint16_t poly_dist_len[4] = { 0, 0, 0, 0 };
+    if (poly_dist_divider[ch] != divider || poly_dist_bd[ch] != bd || poly_dist_mode[ch] != mode) {
+        poly_dist_len[ch] = build_poly_dist(ch, divider, bd, mode);
+        poly_dist_divider[ch] = divider; poly_dist_bd[ch] = bd; poly_dist_mode[ch] = mode;
+    }
+    noiseOn[ch] = false;   // a deterministic loop, not the evolving noise_buf
+    want_set(ch, (uint32_t)poly_dist_buf[ch], (uint16_t)(poly_dist_len[ch] / 2), per, vol);
+}
+
 static void update_paula_channel(uint8_t ch)
 {
     uint8_t audf   = pokey[ch * 2];
@@ -659,18 +714,11 @@ static void update_paula_channel(uint8_t ch)
         // pitched, punchy buzz — instead of the flat white noise.  Regenerate only when the
         // poly stride or gate mode changes (volume changes don't alter the shape).
         if (audctl & 0x80u) {
-            // Cache key = (divider, base_div, gate) instead of the full stride product, so no
-            // 32-bit multiply is needed even for the 16-bit chain (stride = divider*base_div is
-            // only ever used mod 31 / mod 511 inside build_poly_dist, computed there in 16-bit).
             uint16_t bd;
             uint32_t divider = pokey_divider(ch, audf, audctl, &bd, nullptr);
-            uint8_t  g  = (uint8_t)((audc & POKEY_NOTPOLY5) != 0u ? 2u : 1u);   // $80 = ungated poly9
-            if (poly_dist_divider[ch] != divider || poly_dist_bd[ch] != bd || poly_dist_gate[ch] != g) {
-                build_poly_dist(ch, divider, bd, g == 2u);
-                poly_dist_divider[ch] = divider; poly_dist_bd[ch] = bd; poly_dist_gate[ch] = g;
-            }
-            noiseOn[ch] = false;   // deterministic loop, not the evolving noise_buf
-            want_set(ch, (uint32_t)poly_dist_buf[ch], (uint16_t)(POLY_DIST_LEN / 2), per, vol);
+            want_poly_dist(ch, divider, bd,
+                           (audc & POKEY_NOTPOLY5) ? POLY_DIST_P9_UNGATED : POLY_DIST_P9_GATED,
+                           per, vol);
             return;
         }
         // poly17 source: no short clean loop — fall back to the long white-noise sample.
@@ -687,22 +735,33 @@ static void update_paula_channel(uint8_t ch)
     // Point the channel at the precomputed waveform for its distortion mode + stride
     // residue (shapes built once at init; Paula latches PTR/LEN at the next DMA loop
     // wrap, so the change takes effect promptly).
-    bool poly5tone = (audc & POKEY_PURETONE) && !(audc & POKEY_NOTPOLY5);   // $20
+    // POKEY's poly5 gate wraps ALL THREE distortion families, not just the noise one
+    // (atari800 pokeysnd.c: `if ((audc & NOTPOLY5) || bit5[P5])` encloses the pure/poly4/poly9
+    // cases alike).  So $C0 is ungated poly4 but $40 is poly4 GATED BY POLY5 — a different,
+    // rougher waveform that depends on both poly phases and therefore cannot come from the
+    // per-stride table.  Rendering $40 as ungated poly4 turned the airlock footsteps
+    // (SFX event $1A, AUDC $46) into a clean square bleep: at their AUDF $08 the ungated poly4
+    // orbit is only 5 samples long, i.e. a pure tone, where the gated one runs the full 930.
+    bool poly5tone = (audc & POKEY_PURETONE) && !(audc & POKEY_NOTPOLY5);   // $20, $60
     bool poly4     = !(audc & POKEY_PURETONE) && (audc & POKEY_POLY4);      // $C0, $40
-    uint32_t sel_ptr; uint16_t sel_len;
     if (!poly5tone && !poly4) {
-        sel_ptr = (uint32_t)wave_pure; sel_len = 1u;       // pure tone / unmodelled
+        want_set(ch, (uint32_t)wave_pure, 1u, per ? per : 124u, vol);       // $A0/$E0 pure tone
+        return;
+    }
+    // The shape depends only on the poly stride = divider*base_div (master-clock ticks per
+    // underflow) taken mod 15 / mod 31 — so it must see the chain and the 1.79 MHz clock,
+    // which is why the divider comes from the same resolver as the period.
+    uint16_t bd;
+    uint32_t divider = pokey_divider(ch, audf, audctl, &bd, nullptr);
+    if (poly4 && !(audc & POKEY_NOTPOLY5)) {                                // $40
+        want_poly_dist(ch, divider, bd, POLY_DIST_P4_GATED, per ? per : 124u, vol);
+        return;
+    }
+    uint32_t sel_ptr; uint16_t sel_len;
+    if (poly4) {
+        sel_ptr = (uint32_t)poly4_wave[poly_stride_mod(divider, bd, 15u)]; sel_len = 15u;  // 30 B
     } else {
-        // The shape depends only on the poly stride = divider*base_div (master-clock ticks per
-        // underflow) taken mod 15 / mod 31 — so it must see the chain and the 1.79 MHz clock,
-        // which is why the divider comes from the same resolver as the period.
-        uint16_t bd;
-        uint32_t divider = pokey_divider(ch, audf, audctl, &bd, nullptr);
-        if (poly4) {
-            sel_ptr = (uint32_t)poly4_wave[poly_stride_mod(divider, bd, 15u)]; sel_len = 15u; // 30 B
-        } else {
-            sel_ptr = (uint32_t)poly5_wave[poly_stride_mod(divider, bd, 31u)]; sel_len = 31u; // 62 B
-        }
+        sel_ptr = (uint32_t)poly5_wave[poly_stride_mod(divider, bd, 31u)]; sel_len = 31u;  // 62 B
     }
     want_set(ch, sel_ptr, sel_len, per ? per : 124u, vol);
 }

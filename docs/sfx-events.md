@@ -405,3 +405,70 @@ means the resolver is right, not that the shipping source still matches the copy
 Not modelled, deliberately: mzpokeysnd reloads the low half with `AUDF_lo` on the single cycle the
 16-bit pair itself reloads (`c0divstart_p`), a once-per-16-bit-period jitter that a fixed-period
 Paula wavetable cannot carry.
+
+## The poly5 gate wraps poly4 too — AUDC $40 (fixed 2026-08-18)
+
+The airlock footsteps (the six the pilot takes *inside* the lock, after it opens) sounded like
+clean square bleeps on the Amiga where the Atari has a distorted quality. They are **event `$1A`**,
+pushed six times by `clear_colors_sweep_5x $7A89`, one per pass, ≥20 frames apart. Its parameters,
+read from the event tables rather than inferred: **AUDC `$46`, AUDF `$08`** — distortion `$40`.
+
+`$40` is poly4 **gated by poly5**. POKEY's poly5 gate encloses *all three* distortion families,
+not just the noise one — atari800 `pokeysnd.c:797`:
+
+```c
+if ((audc & POKEY_NOTPOLY5) || bit5[P5]) {       /* <- the gate */
+    if (audc & POKEY_PURETONE)   toggle = TRUE;
+    else if (audc & POKEY_POLY4) toggle = (bit4[P4] == !(*out_ptr));
+    else                         /* poly9 / poly17 */ ;
+}
+```
+
+so `$C0` is ungated poly4 but `$40` is a different, rougher waveform. The port rendered `$40` as
+ungated poly4 (an approximation `build_poly_one` carried as "close-enough raspy buzz"). At AUDF
+`$08` the stride is `9*28 = 252`, so `s4 = 12` and the ungated poly4 phase orbit is `{0,3,6,9,12}`
+— **period 5 samples, i.e. a pure tone**. That is the square bleep.
+
+Why it can't be a per-stride table like the other two: `$40`'s shape depends on BOTH poly phases,
+so the table would need `15*31 = 465` shapes. It is rendered per channel instead, into the
+existing `poly_dist_buf` — `build_poly_dist` now takes a mode (`POLY_DIST_P9_GATED` /
+`P9_UNGATED` / `P4_GATED`) and `want_poly_dist` owns the cache-key/repoint logic for all three.
+Length **930 bytes = 15*31*2**, the exact `(p4, p5, out)` state-space bound, which fits the
+1022-byte buffer.
+
+⚠ **Skip the transient or the buffer clicks.** Inside the gate the output is *forced* to the poly4
+bit, so the state map is not invertible and `(0,0,0)` need not lie on its own cycle: start emitting
+there and **240 of the 465 strides** have `dst[0]` ≠ the sample that truly follows `dst[929]` — a
+click at every DMA wrap, ~7.6/s at the footsteps' pitch. The transient is at most **6** samples
+over all strides, and every reachable cycle length (1, 3, 5, 15, 31, 93, 155, 465) divides 930, so
+skipping 6 and then emitting 930 is always a whole number of cycles. (The two per-stride tables,
+`poly4_wave` 30 B and `poly5_wave` 62 B, were checked for the same defect and are clean.)
+
+**Proof:** `make hostproof FN=poly` — `tools/poly_dist_test.c` renders all 465 strides and walks
+the atari800 rule alongside for 3× the buffer length (1297350 samples, 0 mismatches), asserts the
+transient bound and the cycle-divides-length property, and *reports* the 240/465 figure so the skip
+is not mistaken for superstition later. ⚠ Snapshot caveat as always.
+
+**Cost.** The rebuild is ~936 VBI iterations, the same order as the poly9 path. Only two events use
+`$40` — `$1A` and `$01` (the level-start chirp) — and **neither runs during flight**. `$1A` has no
+frequency envelope, so its stride never changes: one build, then five cache hits. `$01` sweeps
+`$3a→$1f`, so it rebuilds once per frame for ~27 frames in a non-terrain scene.
+
+### Still open: a voice occasionally sounds the NOISE waveform at onset
+
+Reported 2026-08-18: sometimes one of the first two airlock footsteps, the mothership bonus-points
+sound, and (once, historically) the saucer tone come out as noise. All three are **onset**
+artifacts, which is the shape of a one-frame wrong `want_ptr`. Two candidates are already
+eliminated, so do not re-derive them:
+
+* **Not `noiseTick` starvation.** It only refreshes `noise_buf`'s *contents*; Paula loops the
+  buffer regardless, and waveform selection plus the pointer switch (`flush_paula`) are both VBI
+  work. It also cannot touch the distortion buffers — `poly4_wave`/`poly5_wave` are immutable after
+  init and `poly_dist_buf` is built in the VBI.
+* **Not AUDF-written-before-AUDC against a stale AUDC shadow.** `sfx_voice_write_freq_ctrl $5673`
+  writes AUDF and AUDC back-to-back in the same tick, so the AUDC write's `want_set` always
+  overrides the AUDF write's before the frame's `flush_paula`.
+
+Next step is a captured POKEY write log (reg/val/frame ring, dumped over gdb on a user-triggered
+repro) rather than another static theory — the same offline-capture route that settled the Station
+squeal.

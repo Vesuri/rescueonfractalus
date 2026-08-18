@@ -159,6 +159,7 @@ HOSTPROOF_SELF := \
     ras_fused_midpoint_test \
     hiscore_block_test \
     pokey_divider_test \
+    poly_dist_test \
     ras_restructure_test \
     terr_blend_table_test \
     terr_blend_test
