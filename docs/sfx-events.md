@@ -525,7 +525,35 @@ With bit7 never set, **all 9 noise-distortion events take the `noise_buf` fallba
 $11 $13 $16 $17 $18 $19` — the engine drone, explosions, the descent beep, the slot-8 sounds that
 share a channel with the airlock footsteps. Real POKEY's poly17 output is the same 2-level ±square
 as poly4/poly9, gated by poly5; `noise_buf` is full-range uniform bytes. The code's own comment
-already concedes the trade ("smoother hiss vs POKEY's harsher buzz"). **This is the standing
-candidate for every "that voice sounds like noise when it shouldn't" report**, and the fix is the
-same shape as the `$40` one: render the 2-level poly5-gated poly17 square at the voice's stride
-instead of uniform noise. Not yet attempted.
+concedes the trade ("smoother hiss vs POKEY's harsher buzz").
+
+### ⛔ Rendering it faithfully was TRIED and is WORSE — reverted 2026-08-18, do not retry as-is
+
+The obvious fix — render the 2-level poly5-gated poly17 square instead of uniform noise — was built
+and proven correct (the LFSR verified against atari800 step for step, maximal length 131071, the
+shared-buffer decimation argument checked for every reachable stride, the incremental refill proven
+seamless). It still sounded **worse**, and the user's verdict was to revert. The reason is not a bug
+in the rendering; it is a defect the old approximation was *hiding*:
+
+* **Our buffer is 8192 samples; poly17's real period is 131071 underflows.** We loop **16× faster
+  than the hardware**. Full-range uniform noise MASKS that repeat — one random-looking block sounds
+  like the next. A 2-level ±square does not: the repeating pattern reads as a distinct pitched,
+  rhythmic artifact. Making the waveform more faithful made a pre-existing inaudible defect
+  audible.
+* **`noiseTick` refills 16 bytes per RENDERED frame, not per unit time.** In a scene that is still
+  largely transpiled (the Station is the reported case) the frame rate collapses while Paula's read
+  rate does not, so the refill stops masking the loop at all and it is fully exposed. This half is
+  worth fixing on its own terms whatever the waveform is.
+
+**So the loop, not the waveform, is the thing to attack first.** Any retry must eliminate the
+repeat, not just improve the timbre. A full-period buffer is 131071 bytes — impossible in chip RAM.
+Continuous double-buffered regeneration at Paula's read rate is the real answer, and its cost scales
+with that rate: the engine drone alone reads ~626 B/s (~22k cycles/s, ~0.3% CPU — affordable), but
+the worst case is a short burst at the Paula floor, ~28.6 kB/s (~1M cycles/s, ~14% — not affordable
+in flight). An adaptive refill driven by the fastest active noise voice, on a fixed time base rather
+than per rendered frame, is the shape that could work.
+
+⭐ **The transferable lesson: a more faithful waveform can be worse when the surrounding
+approximation was load-bearing.** Full-range noise was not just "less accurate timbre" — it was
+also concealing a 16×-too-short DMA loop. Check what an approximation is *hiding* before replacing
+it.
