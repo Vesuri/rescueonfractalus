@@ -221,3 +221,32 @@ The tie-breaker was exactly as cheap as it looked — **fly one axis and see** �
 manual + `diag_timing.gdb` reading (see the resolution at the top of this section). Note the method:
 the answer came from a **user flight report**, not from more static reasoning about the disassembly,
 which had already produced two confident and mutually contradictory answers.
+
+## `$44D6 update_altitude_digit_display` — writes the LR-Scanner's M2 blob, not a digit display
+
+**Address:** `$44D6` (twin: `update_altitude_digit_display`, `src/gen/rof_native.c`)
+**Suggested:** `move_scanner_dot_row` (or `move_m2_dashboard_blob` if the instrument stays in doubt)
+
+Nothing in it draws a digit. It clamps an index to `[0,$1C]∪{$1E}`, and when that index *changed*
+since its last call it moves a 3-row blob of **missile-M2 bit pairs** inside the dashboard band of
+the missile DMA buffer — clearing 3 cells at the old row (`&$CF`) and setting 3 at the new
+(`|$30`) — then derives one colour/glyph byte into `altitude_color_or_glyph`. It is the **only**
+`$30`-mask writer in `$0B88-$0BB8` (grep of all three generated files), and that blob is what the
+Amiga port mirrors as the Long Range Scanner (#13) guide dot.
+
+**Resolved which way it goes:** the index is derived from `altimeter_alt_ref` (`$1C -
+altimeter_alt_ref`), an ALTITUDE-sounding source, whereas the scanner's range-to-pilot lives in
+`$0642` — so either the blob was an altimeter pointer the port had mis-mapped to the scanner dot, or
+`altimeter_alt_ref` is misnamed. A user flight report settled it: **the dot tracks bearing and range
+to the pilot**, so the instrument mapping is right and the suspect name is the SOURCE.
+
+⚠ Therefore also suspect: **`$28DA altimeter_alt_ref`** (`symbols.csv:927`, "Altitude reference;
+`$1C-$28DA` = altimeter digit/bar row"; snapshot from `$28E8` at `$A43C`, reset `$80` at init
+`$78A2`). If `$1C - $28DA` positions the scanner dot, `$28DA` is a pilot-RANGE quantity, not an
+altitude — needs its own derivation before renaming, since the same byte may well feed the real
+altimeter too. Same method note as the `$0021`/`$0027` entry below: the tie-breaker was flying it,
+not more static reasoning about the disassembly.
+
+Also note the blob is only ever **moved, never cleared**, so the dot cannot blink by its M2 bits
+going away (the proximity blink is the `$33DF/$33E0` pen swap). A comment in
+`buildScannerDotSprite` claiming otherwise was corrected.
