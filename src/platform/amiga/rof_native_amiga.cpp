@@ -675,7 +675,7 @@ extern "C" void vbi_handler_station(void);
 // per-firing scanline cost.  All three EXCLUDE the ZP-write-set audit inside flight_vbi_native
 // (that audit is bracketed out separately there) — these are clean, real-VBI spans:
 //   g_vbiHandlerLines = vbi_handler_flight (== g_flightProf.isrLines, mirrored here for the sum)
-//   g_vbiSpriteLines  = flightShotTick + flightScannerTick (laser + LR-scanner blink)
+//   g_vbiSpriteLines  = flightShotTick + flightScannerTick (laser + LR-scanner dot & blink)
 //   g_vbiAudioLines   = flush_paula (Paula channel flush) — the whole audio bracket since the
 //                       noise refill left the ISR (see PlatformAmiga::renderFrame)
 // Per-firing scanlines = lines/calls; time = scanlines * 63.56 us; PAL frame = 313 lines.

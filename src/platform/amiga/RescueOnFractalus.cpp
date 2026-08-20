@@ -1509,15 +1509,21 @@ static void pmgScanBounds(unsigned lo, unsigned hi, uint8_t mask, int* firstOut,
 // live, so a surviving mismatch is the helper's fault.  g_scanBad must stay 0.
 //
 // ⚠ The oracle is run TWICE, once either side of the helper, and a call where the two oracle
-// passes disagree is discarded as RACED rather than counted bad.  The P3/missile buffers are
-// written by the flight VBI ISR (draw_player3_object clears and redraws the strip, $44E0 moves
-// the scanner blob), so an ISR landing between the two passes makes them read different bytes —
-// a harness artifact, not a logic difference, and the same one band_verify freezes its source to
-// avoid (unsandwiched, it reported 24 "mismatches" in 2244 calls, every one a run whose top or
-// bottom had moved by one row).  Sandwiching proves which it is: a genuine helper bug cannot
-// depend on the buffer changing.
+// passes disagree is discarded as RACED rather than counted bad.  The P3 buffers are written by the
+// flight VBI ISR (draw_player3_object clears and redraws the strip), so an ISR landing between the
+// two passes makes them read different bytes — a harness artifact, not a logic difference, and the
+// same one band_verify freezes its source to avoid (unsandwiched, it reported 24 "mismatches" in
+// 2244 calls, every one a run whose top or bottom had moved by one row).  Sandwiching proves which
+// it is: a genuine helper bug cannot depend on the buffer changing.
+// Only the two P3 mirrors can report RACED now: the scanner dot reads the missile blob $44E0 moves,
+// and it runs INSIDE that ISR (see buildScannerDotSprite) — where the same race was not a harness
+// artifact but a dropped dot, which is why it lives there.
 extern "C" volatile unsigned long g_scanCalls = 0, g_scanBad = 0, g_scanHit = 0, g_scanRaced = 0,
                                   g_scanLastBadTop = 0, g_scanLastBadBot = 0;
+// The counters above are shared by all three mirrors, so a zero g_scanBad says nothing about any ONE
+// of them.  This splits out the scanner dot, whose check fires only on a change-gate miss: if it
+// reads 0 the dot was never actually compared and its green is vacuous.
+extern "C" volatile unsigned long g_scanDotCalls = 0;
 // The oracle: the original per-byte loop, verbatim.  `contiguous` = the two P3 mirrors' early
 // break at the end of the first run; the scanner dot takes first/last over the whole window.
 static void scanOracle(unsigned base, int lo, int hi, uint8_t mask, int contiguous,
@@ -1673,33 +1679,68 @@ void RescueOnFractalus::buildViewportP3Sprite()
 // (the flight dashboard DLI $4AC7 loads it into HPOSM2); its colour is COLPM2 $26 (red-brown).
 // The native flight VBI writes all of that into mem[], so this is a READ-ONLY mirror (like the
 // scope/AH copies) onto sprite ch2 (right A-pillar, idle+armed in the dashboard) via SPR2PT.
-// Blink: when the game clears the M2 bits, the scan finds no run → the sprite goes transparent.
+//
+// ⚠ RUNS IN THE FLIGHT VBI (PlatformAmiga::flightScannerTick), NOT the main-loop render, and must
+// stay there.  $44D6 moves the blob as clear-3-rows-then-set-3-rows, and that write pair lives in
+// vbi_handler_flight — indivisible against the main loop, but a READ of the blob is several bytes
+// and the main loop is interruptible, so a main-loop read the VBI lands inside sees the cleared
+// state and finds no blob at all: the dot silently vanishes for that frame.  Called right after the
+// handler, the read can no longer overlap the write.  A faster CPU makes a main-loop read MORE
+// exposed, not less — more reads per VBI tick, same write window.  50Hz here is also the faithful
+// rate: on the Atari the missile's position is a VBI write the hardware displays every frame.
+//
+// The blob's ROW comes from its writer ($44D6 publishes g_scannerBlobRow) rather than from a scan
+// of the 49-byte window: $44D6 is the only $30-mask writer in the band, and it only writes when the
+// blob moved, so the latch is authoritative and the whole mirror reduces to 5 byte reads and a
+// change-gate.  ⚠ Do NOT "simplify" this to reading draw_pattern_byte ($00B9) — that is $44D6's own
+// previous-row scratch, shared with fill_horizontal_span and the object-position code, so later
+// routines in the same VBI overwrite it.  Under `make SCAN_VERIFY=1` the full window scan runs as
+// the oracle and must agree (g_scanBad stays 0); the gate needs no separate proof because the build
+// is a pure function of exactly the 5 bytes the gate compares.
 static const int kScannerDotRows = 8;   // the M2 blob is ~3 rows; a few spare for safety
+// Written by update_altitude_digit_display ($44D6, rof_native.c) whenever it moves the blob; 0xFF
+// until it first does, which is why the sprite starts empty rather than pointing at row 0.
+extern "C" { volatile uint8_t g_scannerBlobRow = 0xFFu; }
 void RescueOnFractalus::buildScannerDotSprite()
 {
-    // Scan the DASHBOARD band of the missile buffer for M2 (bits 5:4).  The crosshair M2 lives
-    // higher ($0B4D-71, viewport) so start at $0B88; M1/M3 (other bits) don't trip the M2 mask.
-    // Per-frame position + incremental clear: the dot moves (bearing X $00CE, range Y) and blinks
-    // (M2 bits cleared) every frame, so run every frame; only clear the few rows written last frame
-    // (p3ScopePrev-style scannerPrevRows) rather than the whole sprite.
-    // Unlike the two P3 mirrors this one takes the first AND last hit over the whole window (the
-    // blob may in principle have gaps), so it cannot stop at the end of a run — which is why it was
-    // the only one of the three scanning its window unconditionally, every frame.  One long-striding
-    // pass now does both bounds.  Mask $30 = the M2 bit pair; replicated per lane it stays
-    // byte-order independent.
+    const uint8_t row = g_scannerBlobRow;            // $44D6's latch: blob at $0B91+row, 3 rows
+    const uint8_t bearing = mem[0x00CE];
+    if (row == 0xFFu) {                              // no blob placed yet — nothing to mirror
+        if (scannerPrevRows) {
+            uint16_t* d0 = scannerDotSprite->data() + 2;
+            for (int i = 0; i < scannerPrevRows; i++) { d0[i * 2] = 0; d0[i * 2 + 1] = 0; }
+            scannerPrevRows = 0;
+        }
+        return;
+    }
+    const unsigned base = 0x0B91u + row;             // the 3 M2 cells, in mem[] address space
+    const uint8_t m0 = (uint8_t)(mem[base]     & 0x30u);
+    const uint8_t m1 = (uint8_t)(mem[base + 1] & 0x30u);
+    const uint8_t m2b = (uint8_t)(mem[base + 2] & 0x30u);
+    // Change-gate: the whole build below reads only (row, bearing, m0, m1, m2b), so equal inputs
+    // mean an unchanged sprite and there is nothing to do.  This is the frequent case at 50Hz.
+    const uint32_t sig = ((uint32_t)row << 24) | ((uint32_t)bearing << 16)
+                       | ((uint32_t)m0 << 8) | (uint32_t)(m1 | (uint8_t)(m2b >> 2));
+    if (scannerBuilt && sig == scannerSig) return;
+    scannerSig = sig; scannerBuilt = true;
+#ifdef ROF_SCAN_VERIFY
+    g_scanDotCalls++;                                // prove the check below is not vacuous
+#endif
     SCAN_PRE(0x0B00, 0x88, 0xB8, 0x30, 0);
+    // first/last set cell of the 3 (the scan this replaces allowed gaps, so keep that shape)
+    const uint8_t mm[3] = { m0, m1, m2b };
+    int first = -1, last = -1;
+    for (int i = 0; i < 3; i++) if (mm[i]) { if (first < 0) first = i; last = i; }
     int top = -1, bot = -1;
-    pmgScanBounds(0x0B88u, 0x0BB8u, 0x30u, &top, &bot);
-    if (top >= 0) { top -= 0x0B00; bot -= 0x0B00; }   // back to the buffer-offset space used below
+    if (first >= 0) { top = (int)(base - 0x0B00u) + first; bot = (int)(base - 0x0B00u) + last; }
     SCAN_CHK(top, bot, 0x0B00, 0x88, 0xB8, 0x30, 0);
     uint16_t* d = scannerDotSprite->data() + 2;       // skip the 2 control words
     for (int i = 0; i < scannerPrevRows; i++) { d[i * 2] = 0; d[i * 2 + 1] = 0; }   // clear last frame's rows
     if (top >= 0) {
-        int rows = bot - top + 1;
-        if (rows > kScannerDotRows) rows = kScannerDotRows;
+        const int rows = bot - top + 1;               // <= 3, so the kScannerDotRows cap cannot trip
         for (int i = 0; i < rows; i++) {
-            uint8_t m2 = (uint8_t)((mem[0x0B00 + top + i] >> 4) & 3);   // the 2 M2 pixels
-            uint16_t w = (uint16_t)((m2 & 2 ? 0x8000u : 0u) | (m2 & 1 ? 0x4000u : 0u));
+            uint8_t px = (uint8_t)(mm[first + i] >> 4);                  // the 2 M2 pixels
+            uint16_t w = (uint16_t)((px & 2 ? 0x8000u : 0u) | (px & 1 ? 0x4000u : 0u));
             d[i * 2] = 0; d[i * 2 + 1] = w;          // plane B only → pen 10 → COLOR22 (red)
         }
         // buffer row → Amiga line (same PMG single-line mapping as the AH/scope copies; +0 =
@@ -1707,10 +1748,10 @@ void RescueOnFractalus::buildScannerDotSprite()
         scannerDotSprite->setY((uint16_t)(kTerrainLine + (top - 0x32)));
         // bearing X = mem[$00CE] (the HPOSM2 source the dashboard DLI $4AC7 loads); same Atari-HPOS
         // → Amiga hardware-X transform as the scope/viewport-P3 copies (+4 user-calibrated on FS-UAE).
-        scannerDotSprite->setX((uint16_t)(0x85 + ((int)mem[0x00CE] - 0x32) * 2));
+        scannerDotSprite->setX((uint16_t)(0x85 + ((int)bearing - 0x32) * 2));
         scannerPrevRows = rows;
     } else {
-        scannerPrevRows = 0;                          // inactive: nothing to clear next frame ("off" blink)
+        scannerPrevRows = 0;                          // blob cells not set (yet): draw nothing
     }
 }
 
@@ -6011,10 +6052,8 @@ void RescueOnFractalus::buildFlightSpritesEarly()
     buildAltimeterSprite();          // one-shot solid fill, then a setY
     buildAltimeterShipSprite();      // setY
     buildAHSprite();                 // artificial-horizon ground fill
-    // Those three together are only ~2 ticks — not enough to cover the plane1 clear (~12), so the
-    // scanner dot joins them.  It is the independent one of the three "late" builders (M2 scanner
-    // dot; the two P3 builders share the target/saucer state), so it is the safe one to move.
-    buildScannerDotSprite();
+    // The scanner dot is NOT built here: it moved to the flight VBI (PlatformAmiga::flightScannerTick)
+    // because its source blob is rewritten by $44E0 inside that same VBI — see buildScannerDotSprite.
 }
 
 // Slot B — runs between the sky-fill KICK (blitterFillUp) and the wait before the band overlay.

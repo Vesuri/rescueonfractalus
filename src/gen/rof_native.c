@@ -113,6 +113,14 @@
 #define HW_WRITE(addr, val) bus_write((addr), (val))
 #endif
 
+#ifdef ROF_PLATFORM_AMIGA
+/* Row of the 3-row M2 blob that IS the LR-Scanner guide dot: published by its only writer,
+ * update_altitude_digit_display ($44D6), and consumed by the Amiga sprite mirror
+ * (RescueOnFractalus::buildScannerDotSprite, which defines it).  0xFF = no blob placed yet, so the
+ * mirror draws nothing until $44D6 first moves it — matching a scan of the cleared buffer. */
+extern volatile uint8_t g_scannerBlobRow;
+#endif
+
 /* game_main_loop's restart trampoline (see the RESTART TRAMPOLINE note below) needs setjmp/
  * longjmp.  The Amiga m68k-gcc toolchain provides __builtin_setjmp; Apple clang 21 (arm64)
  * dropped it ("not supported for the current target"), which breaks every host rebuild of this
@@ -4563,7 +4571,15 @@ void dispatch_43cb_half_70(void) {
 /* update_altitude_digit_display @ $44D6 — flight HUD altitude readout.
  * Clamp a digit index (0x1C-altimeter_alt_ref, else 0x1E), and if it changed vs the previous
  * (draw_pattern_byte) rewrite 3 glyph cells $0B91+ (&$CF old, |$30 new).  Then derive the
- * altitude colour/glyph ($062x+$AB, clamped to $B5 outside [$A3,$B4)).  Faithful $44D6 twin. */
+ * altitude colour/glyph ($062x+$AB, clamped to $B5 outside [$A3,$B4)).  Faithful $44D6 twin.
+ *
+ * The 3 cells it moves are the M2 bit pairs the LR-Scanner guide dot is made of, and this is
+ * their ONLY writer ($30-mask) in the dashboard band — so it also PUBLISHES the new row for the
+ * Amiga sprite mirror (g_scannerBlobRow, read by buildScannerDotSprite).  Publishing beats having
+ * the mirror re-derive it: the row is not recoverable from draw_pattern_byte ($00B9 is shared
+ * scratch that later routines in the same VBI overwrite), and scanning the buffer for it costs a
+ * 49-byte pass per frame.  Amiga-only: nothing else needs the latch, and `make validate` diffs
+ * mem[] only, so the publish must not perturb it. */
 void update_altitude_digit_display(void) {
     uint8_t oldP = draw_pattern_byte;
     uint8_t a = (uint8_t)(0x1C - altimeter_alt_ref);     /* SEC;SBC */
@@ -4574,6 +4590,9 @@ void update_altitude_digit_display(void) {
         for (uint8_t k = 3; k != 0; k--) { mem[0x0B91 + y] &= 0xCF; y++; }
         y = a;
         for (uint8_t k = 3; k != 0; k--) { mem[0x0B91 + y] |= 0x30; y++; }
+#ifdef ROF_PLATFORM_AMIGA
+        g_scannerBlobRow = a;                            /* blob now at $0B91+a, 3 rows */
+#endif
     }
     uint8_t c = (uint8_t)(altimeter_color_base + 0xAB);  /* CLC;ADC#$AB */
     if (c < 0xA3 || c >= 0xB4) c = 0xB5;                 /* keep only if $A3<=c<$B4 */

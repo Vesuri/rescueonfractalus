@@ -60,6 +60,8 @@ public:
     static void audioShutdown();
     static void noiseTick();
     static void flightShotTick();   // build the player laser sprite from the VBI (50Hz), via s_scene
-    static void flightScannerTick(); // decode the LR-scanner close-range blink cells from the VBI (50Hz), via s_scene
+    static void flightScannerTick(); // LR-scanner mirror from the VBI (50Hz), via s_scene: the M2 guide
+                                    // dot sprite (must be here — it scans a buffer the VBI rewrites)
+                                    // plus the close-range blink cells
 };
 

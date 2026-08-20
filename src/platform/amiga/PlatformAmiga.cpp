@@ -1247,15 +1247,27 @@ void PlatformAmiga::flightShotTick()
     if (s_scene) s_scene->buildShotSprite();
 }
 
-// flightScannerTick: decode the Long Range Scanner (#13) close-range blink cells $33DF/$33E0
-// straight into the cockpit bitmap, from the flight VBI (50Hz) — like flightShotTick, this is
-// the faithful home for it: startup_init() ($3FFA, run in vbi_handler_flight just above) toggles
-// their bit7 at 50Hz (a two-speed proximity blink), so decoding here at 50Hz makes the blink run
-// at full rate instead of the ~5-6fps main-loop render() cadence (which made it far too slow and
-// range 1 vs 2 indistinguishable).  s_scene decodes only on a bit7 flip (cheap: 2 cells).
+// flightScannerTick: the whole Long Range Scanner (#13) mirror, from the flight VBI (50Hz) — like
+// flightShotTick this is the faithful home for both halves, and for the dot it is also the only
+// race-free one:
+//   * the GUIDE DOT (Atari missile M2) — buildScannerDotSprite scans the missile buffer $0B88-$0BB8
+//     that $44E0 clears-then-sets in vbi_handler_flight just above.  A main-loop scan of that window
+//     can be interrupted between the clear and the set and then finds no blob at all, dropping the
+//     dot for that frame (worse on a faster CPU: more scans per VBI tick).  Here the scan cannot
+//     overlap the write, and the dot tracks range/bearing at the Atari's own 50Hz rather than the
+//     terrain-render rate.
+//   * the CLOSE-RANGE BLINK cells $33DF/$33E0 — startup_init() ($3FFA, likewise run in the handler
+//     above) toggles their bit7 at 50Hz (a two-speed proximity blink), so decoding here makes the
+//     blink run at full rate instead of the ~5-6fps main-loop render() cadence (which made it far
+//     too slow and range 1 vs 2 indistinguishable).  s_scene decodes only on a bit7 flip (2 cells).
+// Both write sprite/bitmap data the copper only reaches at line 179+ (the dashboard band), well
+// past where this ISR ends, so the writes are safe unbuffered.
 void PlatformAmiga::flightScannerTick()
 {
-    if (s_scene) s_scene->decodeScannerBlinkCells();
+    if (s_scene) {
+        s_scene->buildScannerDotSprite();
+        s_scene->decodeScannerBlinkCells();
+    }
 }
 
 // ROF_TUNNEL_RECT bridge: draw_symmetric_span_loop (rof_native.c) emits one concentric-rectangle

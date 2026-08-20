@@ -75,6 +75,11 @@ public:
                                  // bitmap; PUBLIC because it runs in the flight VBI (via PlatformAmiga::
                                  // flightScannerTick) at 50Hz so the blink animates at full rate, not
                                  // the ~5-6fps main-loop render() cadence.  Decodes only on a bit7 flip.
+    void buildScannerDotSprite();   // LR-scanner (#13) guide dot: missile buffer $0B00 + $CE ->
+                                 // scannerDotSprite.  PUBLIC for the same reason, and it MUST stay in
+                                 // the VBI: the blob it scans is moved by $44E0 (clear 3 rows, set 3
+                                 // rows) inside the very handler this runs after, so a main-loop scan
+                                 // can be interrupted mid-window and see the cleared state = no dot.
     void shutdown();
 
     // run(): the whole game as a faithful straight-line transcription of the
@@ -538,7 +543,8 @@ private:
     //   VBI already writes the buffer + $CE into mem[], so no writer port / dirty hook is needed.
     Sprite*     scannerDotSprite = nullptr;
     int         scannerPrevRows = 0;  // rows written last frame (clear only those, not the whole sprite)
-    void buildScannerDotSprite(); // mirror the M2 scanner dot (missile buf $0B00 + $CE) -> scannerDotSprite
+    uint32_t    scannerSig = 0;       // (row, bearing, the 3 M2 cells) of the last build = the whole
+    bool        scannerBuilt = false; // input set, so an equal signature means "nothing to redo"
 
     // ---- the six flight sprite builders, DEFERRED into renderFlightDirect's blitter shadows ----
     // They are pure CPU on sprite buffers and touch neither the terrain bitmap nor the dot side
