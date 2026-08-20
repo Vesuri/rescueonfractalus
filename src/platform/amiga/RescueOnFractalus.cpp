@@ -1711,18 +1711,26 @@ void RescueOnFractalus::buildScannerDotSprite()
             for (int i = 0; i < scannerPrevRows; i++) { d0[i * 2] = 0; d0[i * 2 + 1] = 0; }
             scannerPrevRows = 0;
         }
+        scannerBuilt = false;                        // force a full rebuild when the blob reappears
         return;
     }
+    // Change-gate on (row, bearing) ONLY.  The 3 M2 cells the body reads are set to $30 by $44D6 —
+    // the sole $30-mask writer in the band — whenever it publishes `row`, so they change iff `row`
+    // does; keying the gate on them too would be 3 redundant mem[] reads on the ~89% no-change frame.
+    // And a change is usually bearing-only (the dot slides horizontally as the ship turns): the
+    // pixels are unchanged and Y depends only on `row`, so all it needs is a setX — skip the rebuild.
+    if (scannerBuilt && row == scannerRow) {
+        if (bearing != scannerBearing) {
+            scannerBearing = bearing;
+            scannerDotSprite->setX((uint16_t)(0x85 + ((int)bearing - 0x32) * 2));
+        }
+        return;
+    }
+    scannerRow = row; scannerBearing = bearing; scannerBuilt = true;
     const unsigned base = 0x0B91u + row;             // the 3 M2 cells, in mem[] address space
     const uint8_t m0 = (uint8_t)(mem[base]     & 0x30u);
     const uint8_t m1 = (uint8_t)(mem[base + 1] & 0x30u);
     const uint8_t m2b = (uint8_t)(mem[base + 2] & 0x30u);
-    // Change-gate: the whole build below reads only (row, bearing, m0, m1, m2b), so equal inputs
-    // mean an unchanged sprite and there is nothing to do.  This is the frequent case at 50Hz.
-    const uint32_t sig = ((uint32_t)row << 24) | ((uint32_t)bearing << 16)
-                       | ((uint32_t)m0 << 8) | (uint32_t)(m1 | (uint8_t)(m2b >> 2));
-    if (scannerBuilt && sig == scannerSig) return;
-    scannerSig = sig; scannerBuilt = true;
 #ifdef ROF_SCAN_VERIFY
     g_scanDotCalls++;                                // prove the check below is not vacuous
 #endif

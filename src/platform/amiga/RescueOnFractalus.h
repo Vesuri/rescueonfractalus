@@ -543,8 +543,9 @@ private:
     //   VBI already writes the buffer + $CE into mem[], so no writer port / dirty hook is needed.
     Sprite*     scannerDotSprite = nullptr;
     int         scannerPrevRows = 0;  // rows written last frame (clear only those, not the whole sprite)
-    uint32_t    scannerSig = 0;       // (row, bearing, the 3 M2 cells) of the last build = the whole
-    bool        scannerBuilt = false; // input set, so an equal signature means "nothing to redo"
+    uint8_t     scannerRow = 0;       // g_scannerBlobRow of the last build; a change ⇒ rebuild pixels+Y
+    uint8_t     scannerBearing = 0;   // mem[$CE] of the last build; a change alone ⇒ just setX
+    bool        scannerBuilt = false; // both latched, so equal (row,bearing) means "nothing to redo"
 
     // ---- the six flight sprite builders, DEFERRED into renderFlightDirect's blitter shadows ----
     // They are pure CPU on sprite buffers and touch neither the terrain bitmap nor the dot side
