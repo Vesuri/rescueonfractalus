@@ -11730,6 +11730,7 @@ L_6185:
     if (--span_row_count != 0) goto L_6185;
     if (mem[0x00E3] & 0x80) goto L_61f2;
     if (mem[0x00E3] == 0)   goto L_61b7;
+    cpu.A = mem[0x00E3];                  /* LDA(mem[0x00E3]) at $6194 in the oracle */
     wait_frames_save_a();
     set_0628_bcd_redisplay();
     text_color_pf0 = 0x7C;
