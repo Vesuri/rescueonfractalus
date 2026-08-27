@@ -3371,7 +3371,8 @@ void PlatformAmiga::run()
     }
 #endif
 
-    // Disable our display DMA before handing back.
+    // Disable our display DMA before handing back, so our (about-to-be-abandoned) bitplanes and
+    // sprites don't leak through while the copper list is being swapped back to the OS view.
     *dmaconPointer = (uint16_t)(DMAF_COPPER | DMAF_RASTER | DMAF_SPRITE);
 
     // Put the interrupt enables back as the OS had them: INTF_BLIT is the only bit we masked for
@@ -3381,7 +3382,14 @@ void PlatformAmiga::run()
     *intreqPointer = (uint16_t)INTF_BLIT;
     *intenaPointer = (uint16_t)(INTF_SETCLR | (s_savedIntena & 0x7FFFu));
 
+    // Point the copper back at the OS view, THEN re-enable display DMA (SETCLR) so the OS display
+    // actually restarts.  LoadView only writes COP1LC — it does NOT touch DMACON — so without this
+    // the copper stays disabled after LoadView and the screen is left blank: a hard "freeze" on the
+    // plain-exe exit path.  (WHDLoad masks it by rebooting the machine on exit, which is why it only
+    // bit standalone runs.)  Enabling copper only AFTER LoadView means COP1LC already holds the OS
+    // list, so this resumes the OS display, not ours.  Mirrors DanceDiverse3's clean-exit sequence.
     LoadView(savedView);
+    *dmaconPointer = (uint16_t)(DMAF_SETCLR | DMAF_COPPER | DMAF_RASTER | DMAF_SPRITE);
     WaitTOF();
     WaitTOF();
 
