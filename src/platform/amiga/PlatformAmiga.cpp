@@ -204,16 +204,34 @@ static void fill_noise_buf(void) { fill_noise_words(0, NOISE_LEN / 4); }
 //
 // Sizing: the refill only has to keep up with the rate Paula READS the buffer.  The engine drone
 // (the only steady noise voice in flight) runs AUDF ~$65 => Paula period ~5666 => ~626 B/s, one
-// pass through the 8 KB buffer every ~13 s; 4 longwords per rendered frame is ~350 B/s in flight,
-// so the drone may re-hear a region before it is rewritten — but the loop period it can actually
-// hear is the buffer's ~13 s either way.  Bump the 4 below if a noise voice ever reads faster.
+// pass through the 8 KB buffer every ~13 s.  Pace the refill by WALL CLOCK (g_vbiCount, bumped in
+// the real 50 Hz vblank ISR), NOT by how often the throttled main loop happens to call us: on a
+// fast CPU / Fast-RAM machine the render rate soars well past 50 Hz, and refilling per rendered
+// frame then churns the buffer several times faster than Paula reads it, so the steady noise turns
+// harsh/distorted (reported on 25 MHz+ accelerators — the mother-ship launch engine).  ~2 longwords
+// per VBI (~400 B/s) matches the A500 flight rate that sounds correct, stays below Paula's read
+// rate so the write pointer never laps it, and is now identical on every CPU and every scene.
+
+// g_vbiCount: bumped once per REAL vertical-blank interrupt (vbiHandler); read here to pace the
+// noise refill, and below so flush_paula's beep capture can timestamp frames.
+static volatile uint16_t g_vbiCount = 0;
+
 void PlatformAmiga::noiseTick()
 {
     if (!(noiseOn[0] || noiseOn[1] || noiseOn[2] || noiseOn[3])) return;
+
+    static uint16_t lastVbi = 0;
+    uint16_t elapsed = (uint16_t)(g_vbiCount - lastVbi);   // 16-bit wrap-safe
+    if (elapsed == 0) return;                              // already refilled for this VBI
+    lastVbi = g_vbiCount;
+    if (elapsed > 8) elapsed = 8;                          // cap catch-up after a slow/stalled frame
+
     static int off = 0;
-    fill_noise_words(off, 4);           // 16 bytes / rendered frame (see the sizing above)
-    off += 16;
-    if (off >= NOISE_LEN) off = 0;
+    for (uint16_t k = 0; k < elapsed; k++) {
+        fill_noise_words(off, 2);       // 2 longwords (8 bytes) per VBI  ->  ~400 B/s (see above)
+        off += 8;
+        if (off >= NOISE_LEN) off = 0;
+    }
 }
 
 // POKEY poly patterns (1 bit/entry) and AUDC distortion bits (atari800 pokeysnd.c/pokey.h)
@@ -439,10 +457,6 @@ static void wait_rasterlines(uint8_t lines)
         if (++guard > 200000u) break;   // ~hundreds of lines worth — escape hatch, never hang
     }
 }
-
-// g_vbiCount: bumped once per REAL vertical-blank interrupt (vbiHandler).  Defined here (ahead
-// of its main use below) so flush_paula's beep capture can timestamp frames.
-static volatile uint16_t g_vbiCount = 0;
 
 #ifdef ROF_FPSCOUNT
 // Painted terrain frames, bumped once in renderFlightDirect (`make FPSCOUNT=1`).  The whole
