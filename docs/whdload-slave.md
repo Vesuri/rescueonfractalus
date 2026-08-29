@@ -269,13 +269,13 @@ something that round-trips latin-1, or the accented bytes get mangled.
   of `Install`).
 * **`slv_info` credits "Amiga port by Vesuri"**. Change it in `RoFSlave.s` if the release
   should read differently.
-* The version/date string is literal in `RoFSlave.s` (`$VER: RoF.slave 0.91 (18.08.2026)`).
+* The version/date string is a literal `$VER: RoF.slave <ver> (<dd.mm.yyyy>)` in `RoFSlave.s`.
   It is bumped by hand rather than stamped from `WDate >T:date` at build time — deliberately,
   so an unchanged tree rebuilds byte-identically.
 * ⚠ **The version number lives in three files** and nothing checks that they agree:
-  `src/platform/amiga/version.s` (the executable's own `$VER: Rescue on Fractalus! 0.9`),
+  `src/platform/amiga/version.s` (the executable's own `$VER: Rescue on Fractalus!`),
   `RoFSlave.s` (`slv_info` *and* the slave's `$VER:`), and `RoF Install/ReadMe`
-  (the History section). Bump all three together.
+  (the History section). Bump all three together, and add the History entry in the same pass.
 * The install template's `#highs-file` is left at its default `highs`; the file the slave
   actually writes is `RoF.hi` (see §6), and `P_CopyFile` skips a `highs` that does not exist.
 

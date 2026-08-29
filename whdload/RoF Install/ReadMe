@@ -36,6 +36,12 @@
 
  History:
  --------
+ version 0.92 (29.08.2026):
+ - fixed the LR-scanner guide dot vanishing during flight
+ - fixed the over-quota pilot bonus counting down from the wrong number
+ - fixed a freeze when quitting the game outside WHDLoad
+ - sound fixes
+
  version 0.91 (18.08.2026):
  - high score table restored, and saved
  - sound fixes
