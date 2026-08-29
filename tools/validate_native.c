@@ -1297,14 +1297,14 @@ static int test_update_p3_indicator_stripe(void) {
 }
 
 /* --- flight HUD draws (draw_ah_ground_fill_p2 $40B0 / draw_altimeter_bars $40E5 /
- * dispatch_43cb_half_70 $43C7 / update_altitude_digit_display $44D6): all cache-gated column
+ * dispatch_43cb_half_70 $43C7 / move_scanner_dot_row $44D6): all cache-gated column
  * draws with no entry registers (dispatch_43cb reads terrain_clearance then tail-calls the
  * already-native draw_dial_bar_column, which gates on $062E).  Randomize the input rows +
  * caches so each covers both the skip and the redraw path. --- */
 void draw_ah_ground_fill_p2__t6502(void);
 void draw_altimeter_bars__t6502(void);
 void dispatch_43cb_half_70__t6502(void);
-void update_altitude_digit_display__t6502(void);
+void move_scanner_dot_row__t6502(void);
 static int test_hud_draws(void) {
     static uint8_t snap[65536], pre[65536];
     const char *path = "a800dumps/flight_ram_0000_BFFF.bin";
@@ -1317,7 +1317,7 @@ static int test_hud_draws(void) {
         { "draw_ah_ground_fill_p2",       draw_ah_ground_fill_p2,       draw_ah_ground_fill_p2__t6502 },
         { "draw_altimeter_bars",          draw_altimeter_bars,          draw_altimeter_bars__t6502 },
         { "dispatch_43cb_half_70",        dispatch_43cb_half_70,        dispatch_43cb_half_70__t6502 },
-        { "update_altitude_digit_display",update_altitude_digit_display,update_altitude_digit_display__t6502 },
+        { "move_scanner_dot_row",          move_scanner_dot_row,          move_scanner_dot_row__t6502 },
     };
     int total_fail = 0;
     for (int fi = 0; fi < 4; fi++) {
@@ -1338,7 +1338,7 @@ static int test_hud_draws(void) {
             pre[0x2875] = (uint8_t)(xs() & 0xFF); pre[0x2876] = (uint8_t)(xs() & 0xFF);
             /* dispatch_43cb_half_70: terrain_clearance + draw_dial_bar_column gate $062E */
             pre[0x0070] = (uint8_t)(xs() & 0xFF); pre[0x062E] = (uint8_t)(xs() & 0x0F);
-            /* update_altitude_digit_display inputs */
+            /* move_scanner_dot_row inputs */
             pre[0x00B9] = (uint8_t)(xs() & 0xFF); pre[0x28DA] = (uint8_t)(xs() & 0xFF);
             pre[0x28D9] = (uint8_t)(xs() & 0xFF);
             Cpu6502 c = zero_cpu();

@@ -324,7 +324,7 @@ $442D,draw_bar_loop_end,func,0,Bare RTS; tail/exit target of draw_dial_bar loop 
 $442E,redraw_dial_from_6f,func,0,Loads dial value $6F then falls into cockpit_dial_update to recompute $22 and redraw cockpit dial
 $444A,setup_dial_bar_draw,func,0,Sets bar params $BF=A(limit),$BE=7,$BD=$0F then calls draw loop draw_object_column (writes via $BB ptr)
 $4467,update_p3_indicator_stripe,func,0,Clears/rewrites PM buffer $0F98 by cursor $2845/$2846, copies 5 bytes from tbl $44C7 sel by $2839/$283A, sets $CC + SIZEP3 $D00B
-$44D6,update_altitude_digit_display,func,0,Computes $B9 from $1C-$28DA clamped, AND $CF/ORA $30 nibble-toggles digits in $0B91 buf, sets $CE from $28D9+$AB
+$44D6,move_scanner_dot_row,func,0,Moves the LR-Scanner (#13) guide dot: row = clamp($1C-$28DA) and when it CHANGED clears 3 missile-M2 cells (AND $CF) at the old row in the $0B91 dashboard band and sets 3 (ORA $30) at the new; $CE = HPOSM2 from $28D9+$AB. Draws no digit.
 $4644,event_sequence_dispatcher,func,0,Matches event id vs tbl $4816, dispatches by mode $0072(0-5); drives POKEY AUDF $D201, flags $43/$4A/$3C-$3E, throttle cockpit_dial_update
 $47A3,set_colpf0_from_flag,func,0,If Y bit5 set A=$CA else A=$0047, writes COLPF0 $D016, falls into save_color_clear_y_bit5
 $47B2,save_color_clear_y_bit5,func,0,Stores A->$D8, clears bit5 of Y (AND $DF), falls into show_cockpit_message
@@ -541,13 +541,13 @@ $E462,os_xitvbv,func,0,Atari OS ROM vector XITVBV (exit VBLANK / return from def
 # --- Variables and data tables ---
 $00E0,dli_jmp_ptr_lo,var,0,Low byte of the DLI/dispatch indirect-jump pointer. Handler dispatchers store a table address here ($49F8 STA $E0 from $4AD9; $6CCD STA $E0 from $6DCF) then JMP ($E0); emitted as platform_indirect_jmp. Not a function
 $00E1,dli_jmp_ptr_hi,var,0,High byte of the DLI/dispatch indirect-jump pointer paired with $00E0; set by STA $E1 just before JMP ($E0)
-$0021,pitch_velocity,var,0,Flight pitch delta/velocity; also reused as the vertical blip delta from the L/R range difference in compute_target_blip_position (combined with $2912 parallax).
+$0021,roll_velocity,var,0,Flight ROLL delta/velocity, integrated into roll_pos $0025/$0026 in flight_control_integrate (stick left/right, PORTA bits 2/3); also reused as the vertical blip delta from the L/R range difference in compute_target_blip_position (combined with $2912 parallax).
 $0022,dial_draw_index,var,0,cockpit_dial_update stores table $4457[Y] (Y=A+$0625) here; consumed by dial bar draw setup
-$0025,pitch_pos_lo,var,0,Pitch angle accumulator low byte; clamped $00..$FB/$04..$FF in flight_control_integrate
-$0026,pitch_pos_hi,var,0,Pitch angle accumulator high byte; clamped to $04/$FB range in flight_control_integrate
-$0027,roll_velocity,var,0,Roll-axis velocity/delta integrated into roll $0028/$0029 in flight_control_integrate; also reused as the horizontal blip position computed in compute_target_blip_position (from masks/$0070 and $2913 parallax).
-$0028,roll_pos_lo,var,0,Roll/heading accumulator low byte in flight_control_integrate
-$0029,roll_pos_hi,var,0,Roll/heading accumulator high byte; clamped $0B/$F4 range; mirrored to $0020 in flight_control_integrate
+$0025,roll_pos_lo,var,0,Roll angle accumulator low byte; clamped $00..$FB/$04..$FF in flight_control_integrate
+$0026,roll_pos_hi,var,0,Roll angle accumulator high byte; clamped to $04/$FB range in flight_control_integrate
+$0027,pitch_velocity,var,0,Flight PITCH delta/velocity, integrated into pitch_pos $0028/$0029 in flight_control_integrate (stick fwd/back, PORTA bits 0/1); also reused as the horizontal blip position computed in compute_target_blip_position (from masks/$0070 and $2913 parallax).
+$0028,pitch_pos_lo,var,0,Pitch angle accumulator low byte in flight_control_integrate
+$0029,pitch_pos_hi,var,0,Pitch angle accumulator high byte; clamped $0B/$F4 range; mirrored to $0020 in flight_control_integrate; setup_projection_params derives horizon_row_index $00A6 = 6 - hi(<<2) from it
 $002D,throttle_accum_lo,var,0,Throttle/forward-velocity accumulator low; integrated each frame in flight_control_integrate
 $002E,throttle_accum_hi,var,0,Throttle/forward-velocity accumulator high; copied to $006B in flight_control_integrate
 $0033,terrain_depth_frac,var,0,Sub-step fraction; ASL'd twice into $2275:$2274 at 9894-989e, cleared to 0 at 98de in update_terrain_scanline_proj
@@ -612,8 +612,8 @@ $00A0,draw_iter_count,var,0,Cinematic outer iteration count (draw_frame_pattern_
 $00A1,scroll_accum_b0,var,0,Byte 0 of the multi-byte scroll/distance accumulator (add/sub_multibyte_a1). OVERLAID in flight as view rotation vector rot_a low ($2809+1->$A1 $ACEA); pair {rot_a=$A1:$A0 rot_b=$A3:$A2}
 $00A2,scroll_accum_b1,var,0,Byte 1 of the multi-byte accumulator; OVERLAID as rot_b low in flight ($ACEF) for terrain_frame_setup/build_view_transform_matrix
 $00A3,scroll_accum_b2,var,0,Byte 2 of the multi-byte accumulator; OVERLAID as rot_b high in flight ($ACF4)
-$00A4,scroll_accum_b3,var,0,Top byte (byte 3) of the multi-byte scroll/distance accumulator; result of step_accum_add_75/sub_7e. MULTI-ROLE: also the per-row X-span increment HIGH byte used by ad2b, written by setup_projection_params $AD09 as the signed PITCH >> 1 (from pitch_shadow_hi $0024, sign-preserving CMP #$80/ROR) — NOT from heading, which the old description got wrong.
-$00A5,scroll_accum_prev,var,0,Previous top byte of the scroll accumulator, compared against $00A4 to detect a column step in scroll_field_columns/6a38/6a8f. MULTI-ROLE: also the per-row X-span increment LOW byte used by ad2b, written by setup_projection_params $AD11 as the low half of the signed PITCH >> 1 (from pitch_shadow_lo $0023) — NOT from heading, which the old description got wrong.
+$00A4,scroll_accum_b3,var,0,Top byte (byte 3) of the multi-byte scroll/distance accumulator; result of step_accum_add_75/sub_7e. MULTI-ROLE: also the per-row X-span increment HIGH byte used by ad2b, written by setup_projection_params $AD09 as the signed ROLL >> 1 (from roll_shadow_hi $0024, sign-preserving CMP #$80/ROR) — a per-row X shear, i.e. bank; NOT from heading.
+$00A5,scroll_accum_prev,var,0,Previous top byte of the scroll accumulator, compared against $00A4 to detect a column step in scroll_field_columns/6a38/6a8f. MULTI-ROLE: also the per-row X-span increment LOW byte used by ad2b, written by setup_projection_params $AD11 as the low half of the signed ROLL >> 1 (from roll_shadow_lo $0023) — NOT from heading.
 $00A6,horizon_row_index,var,0,Horizon/center row index = 6 - (signextend $28<<2); seeds 271E span table in ad2b
 $00AC,mul_div_frac,var,0,Fractional/carry byte in signed_mul_8x16 rotated through ROR during shift-add
 $00AD,mul_sign,var,0,Saved sign of multiplicand in signed_mul_8x16; used to negate $00AA/$00AB and result
@@ -627,7 +627,7 @@ $00C5,digit_dst_ptr_lo,var,0,Low byte of 16-bit screen-destination pointer ($C5/
 $00C6,digit_dst_ptr_hi,var,0,High byte paired with $C5 (digit_dst_ptr_lo): set to $30 so the dest pointer = $300A for dl_write_lms_window; also the countdown of glyphs to blit (init 5) in the blit_label_row label loop.
 $00C7,dli_dispatch_index,var,0,DLI/NMI display-list-interrupt chain index; reset to 0 at the top of every VBI (vbi_handler_flight/standby) and INC'd by each DLI to step the per-region colour-change table.
 $00CC,player3_bottom_y,var,0,Player-3 object bottom-Y clamp result (draw_player3_object $43c4) from $2870 vs $8D/$00BF; intro_cinematic_loop also sets it from $2847 (in [$6C,$8D) else 0) paired with the SIZEP3 $D00B write.
-$00CE,altitude_color_or_glyph,var,0,update_altitude_digit_display sets from $28D9+$AB clamped to [$A3,$B4) else $B5
+$00CE,scanner_dot_hpos,var,0,LR-Scanner guide dot HPOSM2 (target BEARING), not a colour or glyph: move_scanner_dot_row sets it to $28D9+$AB when that lands in [$A3,$B4), else the PARK value $B5 which hides the dot behind the cockpit (dashboard copper sets PFxP=0)
 $00D9,lockon_flash_color,var,0,Enemy/lock-on flash colour (P3 altimeter bar COLPM3); colour-cycled in the vbi_handler_flight draw frame via LSR/SBC/ADC/ROL toggling through $4B..$4E, then pushed to $D015.
 $00DA,audc_shadow_0,var,0,RANDOM($D20A)|4 written to $00DA-$00DD in $4f9f; staged POKEY audio control bytes
 $00DC,terrain_pen0_fade,var,0,Salmon->brown terrain pen 0 fade colour; copied from the atmosphere altitude-band table $0823+y in vbi_handler_flight, drives the FlightCopperList terrain fade.
@@ -793,15 +793,15 @@ $3357,cockpit_shields_cell_hi,var,0,second byte of the Shields-On cockpit cell p
 $062C,static_dither_threshold,var,0,windscreen-static POKEY-RANDOM dither threshold (SDL-only raster effect; dead on Amiga)
 $005D,ground_proximity_flag,var,0,flight_control_integrate: gates auto-level pitch rate + throttle braking; set $F0/$FF/$00 near ground (landing)
 $003D,landing_seq_flag,var,0,flight_control_integrate: nonzero runs the in-box/$3355 special-state path and suppresses pitch/roll auto-level
-$0023,pitch_shadow_lo,var,0,flight_control_integrate: snapshot of pitch_pos low byte; feeds canopy-pillar Y
-$0024,pitch_shadow_hi,var,0,flight_control_integrate: snapshot of pitch_pos high byte
+$0023,roll_shadow_lo,var,0,flight_control_integrate: snapshot of roll_pos $0025 low byte; feeds the per-row X-span step $00A5 and the left canopy-pillar Y
+$0024,roll_shadow_hi,var,0,flight_control_integrate: snapshot of roll_pos $0026 high byte; feeds the per-row X-span step $00A4 and player3_xbase $2822
 $002B,world_dx_lo,var,0,per-frame world-X velocity low byte added to world_x
 $002C,world_dx_hi,var,0,per-frame world-X velocity high byte added to world_x
 $2881,world_dz_lo,var,0,per-frame world-Z velocity low byte added to world_z
 $2882,world_dz_hi,var,0,per-frame world-Z velocity high byte added to world_z
 $2883,fwd_step_lo,var,0,signed forward/depth step low byte = (throttle_hi*roll)<<3
 $2884,fwd_step_hi,var,0,signed forward/depth step high byte
-$28D6,roll_mag_scaled,var,0,|(roll_pos<<3)>>8| multiplier fed to mul_u8 for fwd_step
+$28D6,pitch_mag_scaled,var,0,|(pitch_pos<<3)>>8| multiplier fed to mul_u8 for fwd_step (climb/dive shortens the horizontal step)
 $283C,landing_inhibit_flag,var,0,when set blocks the $3355 special-state entry (flight_control_integrate); when 0 allows exit_terrain_special_state (update_terrain_scanline_proj)
 $283D,heading_freeze_flag,var,0,selects terrain index angle source: RTCLOK_LOW if set else heading_hi
 $2917,lockon_rand_countdown,var,0,DEC'd and compared to RANDOM to latch ground_proximity_flag=$FF
@@ -817,9 +817,9 @@ $291B,ring_cur_2,var,0,delayed attitude history-ring field 2 (roll vel)
 $291C,ring_cur_3,var,0,delayed attitude history-ring field 3 (pillar L)
 $291D,ring_cur_4,var,0,delayed attitude history-ring field 4 (pillar R)
 $291E,ring_head,var,0,0..6 rotating index of the 7-entry attitude history ring
-$2893,ring_pitch_lo,var,0,7-entry attitude history ring: pitch low bytes
-$289A,ring_pitch_hi,var,0,7-entry attitude history ring: pitch high bytes
-$28A1,ring_roll_vel,var,0,7-entry attitude history ring: roll velocities
+$2893,ring_roll_lo,var,0,7-entry attitude history ring: roll_pos $0025 low bytes
+$289A,ring_roll_hi,var,0,7-entry attitude history ring: roll_pos $0026 high bytes
+$28A1,ring_pitch_vel,var,0,7-entry attitude history ring: pitch_velocity $0027 values
 $28A8,ring_pillar_l,var,0,7-entry attitude history ring: left pillar Y
 $28AF,ring_pillar_r,var,0,7-entry attitude history ring: right pillar Y
 $2270,map_x_scratch_lo,var,0,update_terrain_scanline_proj: LSR working byte for world>>4 (into map_x)
@@ -923,8 +923,8 @@ $0C32,player_col_buf0,var,0,P0 89-byte column buffer; flight = scrolling terrain
 $0D32,player_col_buf1,var,0,P1 89-byte column buffer; flight = terrain column; launch = right canopy A-pillar (RLE $4E09)
 $0E32,player_col_buf2,var,0,P2 89-byte column buffer; flight = terrain column + depth-scaled object/explosion sprite (build_player2_sprite $8C58); stars = starfield player; cleared by clear_terrain_lo_buffers $6B63
 $0F32,player_col_buf3,var,0,P3 89-byte column buffer; flight = terrain column; stars = starfield player; cleared by clear_terrain_lo_buffers $6B63
-$28D9,altimeter_color_base,var,0,Altimeter colour source; $28D9+$AB -> altitude glyph/colour $CE ($450A clamped); snapshot from $28E7 ($A436); reset $80 at init $789F and level-clear handoff $3F5E
-$28DA,altimeter_alt_ref,var,0,Altitude reference; $1C-$28DA = altimeter digit/bar row in update_altitude_digit_display ($44DB); snapshot from $28E8 ($A43C); reset $80 at init $78A2 and level-clear handoff $3F61
+$28D9,scanner_target_bearing,var,0,LR-Scanner target bearing: $28D9+$AB -> the guide dot HPOSM2 $CE ($450A clamped); snapshot from $28E7 ($A436) = the nearest scanned object half-width $0059; reset $80 at init $789F and level-clear handoff $3F5E. NOT an altimeter colour.
+$28DA,scanner_target_range,var,0,LR-Scanner target range: $1C-$28DA = the guide dot ROW in move_scanner_dot_row ($44DB); snapshot from $28E8 ($A43C), the nearest depth-passing object published per terrain pass; reset $80 at init $78A2 and level-clear handoff $3F61, and the per-frame $80<->valid swing IS the dot blink. NOT an altitude.
 $003A,mission_event_flag,var,0,Mission/event state flag: init $FF (bit7 set) by setup_level_clear_state $7BC8; INC'd on a random draw $7459; bit7-gated (BPL/BMI) to gate cockpit-cell $3356/57 ($50FA) the message path ($493D) and random object spawn ($7B54); when ==1 game_main_loop $3EEC raises level_cleared_flag $2849
 # --- Enemy-fire / bolt line-plot working set ---
 # Seeded by terrain_plot_object_a ($A891-$A89E), run by game_state_update ($A99C),

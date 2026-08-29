@@ -1050,8 +1050,9 @@ extern "C" { volatile unsigned char g_clExplSeen = 0; }
 // rof_native_amiga.cpp's flight_vbi_native from dHandler, which excludes the ZP-audit probe).
 extern "C" { volatile unsigned long g_clIsr[2]  = {0,0}; }
 extern "C" { volatile unsigned long g_clIsrN[2] = {0,0}; }
-// DRAW ticks + iterations bucketed by ship altitude ($28DA >> 5).  Lets the combat and quiet runs
-// be compared at MATCHED altitude — a per-call comparison, immune to the cross-build objection.
+// DRAW ticks + iterations bucketed by $28DA scanner_target_range (>>5) — a proxy for how disturbed
+// the attitude is, NOT altitude.  Lets the combat and quiet runs be compared at a MATCHED bucket —
+// a per-call comparison, immune to the cross-build objection.
 extern "C" { volatile unsigned long g_clAltDraw[8] = {}; }
 extern "C" { volatile unsigned long g_clAltIter[8] = {}; }
 extern "C" { volatile unsigned char g_clAltBucket  = 0; }

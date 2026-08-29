@@ -25,15 +25,15 @@
 #define MEM_RTCLOK                        0x0012  // $0012 Jiffy clock high byte (incremented each VBI)
 #define MEM_RTCLOK_MID                    0x0013  // $0013 Jiffy clock middle byte
 #define MEM_RTCLOK_LOW                    0x0014  // $0014 Jiffy clock low byte (fastest; used for timing waits)
-#define MEM_pitch_velocity                0x0021  // $0021 Flight pitch delta/velocity; also reused as the vertical blip...
+#define MEM_roll_velocity                 0x0021  // $0021 Flight ROLL delta/velocity, integrated into roll_pos $0025/$0...
 #define MEM_dial_draw_index               0x0022  // $0022 cockpit_dial_update stores table $4457[Y] (Y=A+$0625) here; c...
-#define MEM_pitch_shadow_lo               0x0023  // $0023 flight_control_integrate: snapshot of pitch_pos low byte; fee...
-#define MEM_pitch_shadow_hi               0x0024  // $0024 flight_control_integrate: snapshot of pitch_pos high byte
-#define MEM_pitch_pos_lo                  0x0025  // $0025 Pitch angle accumulator low byte; clamped $00..$FB/$04..$FF i...
-#define MEM_pitch_pos_hi                  0x0026  // $0026 Pitch angle accumulator high byte; clamped to $04/$FB range i...
-#define MEM_roll_velocity                 0x0027  // $0027 Roll-axis velocity/delta integrated into roll $0028/$0029 in ...
-#define MEM_roll_pos_lo                   0x0028  // $0028 Roll/heading accumulator low byte in flight_control_integrate
-#define MEM_roll_pos_hi                   0x0029  // $0029 Roll/heading accumulator high byte; clamped $0B/$F4 range; mi...
+#define MEM_roll_shadow_lo                0x0023  // $0023 flight_control_integrate: snapshot of roll_pos $0025 low byte...
+#define MEM_roll_shadow_hi                0x0024  // $0024 flight_control_integrate: snapshot of roll_pos $0026 high byt...
+#define MEM_roll_pos_lo                   0x0025  // $0025 Roll angle accumulator low byte; clamped $00..$FB/$04..$FF in...
+#define MEM_roll_pos_hi                   0x0026  // $0026 Roll angle accumulator high byte; clamped to $04/$FB range in...
+#define MEM_pitch_velocity                0x0027  // $0027 Flight PITCH delta/velocity, integrated into pitch_pos $0028/...
+#define MEM_pitch_pos_lo                  0x0028  // $0028 Pitch angle accumulator low byte in flight_control_integrate
+#define MEM_pitch_pos_hi                  0x0029  // $0029 Pitch angle accumulator high byte; clamped $0B/$F4 range; mir...
 #define MEM_world_dx_lo                   0x002B  // $002B per-frame world-X velocity low byte added to world_x
 #define MEM_world_dx_hi                   0x002C  // $002C per-frame world-X velocity high byte added to world_x
 #define MEM_throttle_accum_lo             0x002D  // $002D Throttle/forward-velocity accumulator low; integrated each fr...
@@ -159,7 +159,7 @@
 #define MEM_hposp2_shadow                 0x00CB  // $00CB vbi_handler_flight: shadow pushed to HPOSP2 ($D002) — the las...
 #define MEM_player3_bottom_y              0x00CC  // $00CC Player-3 object bottom-Y clamp result (draw_player3_object $4...
 #define MEM_sizep2_shadow                 0x00CD  // $00CD SIZEP2 ($D00A) shadow — the player-2 WIDTH (1x/2x/4x = $00/$0...
-#define MEM_altitude_color_or_glyph       0x00CE  // $00CE update_altitude_digit_display sets from $28D9+$AB clamped to ...
+#define MEM_scanner_dot_hpos              0x00CE  // $00CE LR-Scanner guide dot HPOSM2 (target BEARING), not a colour or...
 #define MEM_display_param_0               0x00CF  // $00CF Display parameter 0 — loaded from $4DF1+0 table ($04)
 #define MEM_display_param_1               0x00D0  // $00D0 Display parameter 1 — from $4DF1+1 ($26)
 #define MEM_display_param_2               0x00D1  // $00D1 Display parameter 2 — from $4DF1+2 ($2C)
@@ -405,14 +405,14 @@
 #define MEM_pilot_state                   0x288F  // $288F Pilot rescue state ($game_entry uses to store $0041)
 #define MEM_intro_phase_counter           0x2891  // $2891 Intro step counter: init $42 at $4f59, gated at $4f43, DEC at...
 #define MEM_intro_sfx_delay               0x2892  // $2892 Down-counter for intro sound timing; underflow at $4f9f resee...
-#define MEM_ring_pitch_lo                 0x2893  // $2893 7-entry attitude history ring: pitch low bytes
-#define MEM_ring_pitch_hi                 0x289A  // $289A 7-entry attitude history ring: pitch high bytes
-#define MEM_ring_roll_vel                 0x28A1  // $28A1 7-entry attitude history ring: roll velocities
+#define MEM_ring_roll_lo                  0x2893  // $2893 7-entry attitude history ring: roll_pos $0025 low bytes
+#define MEM_ring_roll_hi                  0x289A  // $289A 7-entry attitude history ring: roll_pos $0026 high bytes
+#define MEM_ring_pitch_vel                0x28A1  // $28A1 7-entry attitude history ring: pitch_velocity $0027 values
 #define MEM_ring_pillar_l                 0x28A8  // $28A8 7-entry attitude history ring: left pillar Y
 #define MEM_ring_pillar_r                 0x28AF  // $28AF 7-entry attitude history ring: right pillar Y
-#define MEM_roll_mag_scaled               0x28D6  // $28D6 |(roll_pos<<3)>>8| multiplier fed to mul_u8 for fwd_step
-#define MEM_altimeter_color_base          0x28D9  // $28D9 Altimeter colour source; $28D9+$AB -> altitude glyph/colour $...
-#define MEM_altimeter_alt_ref             0x28DA  // $28DA Altitude reference; $1C-$28DA = altimeter digit/bar row in up...
+#define MEM_pitch_mag_scaled              0x28D6  // $28D6 |(pitch_pos<<3)>>8| multiplier fed to mul_u8 for fwd_step (cl...
+#define MEM_scanner_target_bearing        0x28D9  // $28D9 LR-Scanner target bearing: $28D9+$AB -> the guide dot HPOSM2 ...
+#define MEM_scanner_target_range          0x28DA  // $28DA LR-Scanner target range: $1C-$28DA = the guide dot ROW in mov...
 #define MEM_collapse_cur_obj              0x28DB  // $28DB terrain_frame_setup: current object index saved across the pa...
 #define MEM_plot_base_ptr_lo              0x28DC  // $28DC Plot fill base pointer low, selected from A7E9 table by ab7b;...
 #define MEM_plot_base_ptr_hi              0x28DD  // $28DD Plot fill base pointer high, from A7ED table by ab7b
@@ -505,15 +505,15 @@
 #define RTCLOK                        mem[MEM_RTCLOK]
 #define RTCLOK_MID                    mem[MEM_RTCLOK_MID]
 #define RTCLOK_LOW                    mem[MEM_RTCLOK_LOW]
-#define pitch_velocity                mem[MEM_pitch_velocity]
-#define dial_draw_index               mem[MEM_dial_draw_index]
-#define pitch_shadow_lo               mem[MEM_pitch_shadow_lo]
-#define pitch_shadow_hi               mem[MEM_pitch_shadow_hi]
-#define pitch_pos_lo                  mem[MEM_pitch_pos_lo]
-#define pitch_pos_hi                  mem[MEM_pitch_pos_hi]
 #define roll_velocity                 mem[MEM_roll_velocity]
+#define dial_draw_index               mem[MEM_dial_draw_index]
+#define roll_shadow_lo                mem[MEM_roll_shadow_lo]
+#define roll_shadow_hi                mem[MEM_roll_shadow_hi]
 #define roll_pos_lo                   mem[MEM_roll_pos_lo]
 #define roll_pos_hi                   mem[MEM_roll_pos_hi]
+#define pitch_velocity                mem[MEM_pitch_velocity]
+#define pitch_pos_lo                  mem[MEM_pitch_pos_lo]
+#define pitch_pos_hi                  mem[MEM_pitch_pos_hi]
 #define world_dx_lo                   mem[MEM_world_dx_lo]
 #define world_dx_hi                   mem[MEM_world_dx_hi]
 #define throttle_accum_lo             mem[MEM_throttle_accum_lo]
@@ -639,7 +639,7 @@
 #define hposp2_shadow                 mem[MEM_hposp2_shadow]
 #define player3_bottom_y              mem[MEM_player3_bottom_y]
 #define sizep2_shadow                 mem[MEM_sizep2_shadow]
-#define altitude_color_or_glyph       mem[MEM_altitude_color_or_glyph]
+#define scanner_dot_hpos              mem[MEM_scanner_dot_hpos]
 #define display_param_0               mem[MEM_display_param_0]
 #define display_param_1               mem[MEM_display_param_1]
 #define display_param_2               mem[MEM_display_param_2]
@@ -885,14 +885,14 @@
 #define pilot_state                   mem[MEM_pilot_state]
 #define intro_phase_counter           mem[MEM_intro_phase_counter]
 #define intro_sfx_delay               mem[MEM_intro_sfx_delay]
-#define ring_pitch_lo                 mem[MEM_ring_pitch_lo]
-#define ring_pitch_hi                 mem[MEM_ring_pitch_hi]
-#define ring_roll_vel                 mem[MEM_ring_roll_vel]
+#define ring_roll_lo                  mem[MEM_ring_roll_lo]
+#define ring_roll_hi                  mem[MEM_ring_roll_hi]
+#define ring_pitch_vel                mem[MEM_ring_pitch_vel]
 #define ring_pillar_l                 mem[MEM_ring_pillar_l]
 #define ring_pillar_r                 mem[MEM_ring_pillar_r]
-#define roll_mag_scaled               mem[MEM_roll_mag_scaled]
-#define altimeter_color_base          mem[MEM_altimeter_color_base]
-#define altimeter_alt_ref             mem[MEM_altimeter_alt_ref]
+#define pitch_mag_scaled              mem[MEM_pitch_mag_scaled]
+#define scanner_target_bearing        mem[MEM_scanner_target_bearing]
+#define scanner_target_range          mem[MEM_scanner_target_range]
 #define collapse_cur_obj              mem[MEM_collapse_cur_obj]
 #define plot_base_ptr_lo              mem[MEM_plot_base_ptr_lo]
 #define plot_base_ptr_hi              mem[MEM_plot_base_ptr_hi]

@@ -29,7 +29,7 @@ define seg
   continue
   set $dv = (int)g_vbiCount   - (int)$pv
   set $df = (int)g_fpsFrames  - (int)$pf
-  printf "vbi %5u  +%4d vbi  +%4d painted  fd/vbi=0.%03d  FPS=%2d.%d   VVBLKI=$%02x%02x $3D=%02x alt=%02x\n", \
+  printf "vbi %5u  +%4d vbi  +%4d painted  fd/vbi=0.%03d  FPS=%2d.%d   VVBLKI=$%02x%02x $3D=%02x bear=%02x\n", \
     g_vbiCount, $dv, $df, ($df*1000)/$dv, (50*$df)/$dv, ((500*$df)/$dv)%10, \
     mem[0x223], mem[0x222], mem[0x3D], mem[0x28D9]
   set $pv = (int)g_vbiCount

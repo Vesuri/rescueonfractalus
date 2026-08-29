@@ -171,11 +171,11 @@ printf "  cells WITH an occupant (all object work) : %lu  = %lu per iteration\n"
   g_clObjEnter, ($it ? g_clObjEnter/$it : 0)
 printf "  ...of those, reached raster_scaled_object: %u  = %lu per iteration\n", \
   g_clObjDraw, ($it ? g_clObjDraw/$it : 0)
-printf "\n=== DRAW (terrain+obj x2) vs ship altitude ($28DA>>5) ===\n"
+printf "\n=== DRAW (terrain+obj x2) vs scanner_target_range ($28DA>>5, an attitude proxy) ===\n"
 set $b = 0
 while $b < 8
   if g_clAltIter[$b] > 0
-    printf "  alt bucket %d ($%02x-$%02x): %5lu iters  DRAW %5lu t/it (%3lu.%01lu ms)\n", \
+    printf "  rng bucket %d ($%02x-$%02x): %5lu iters  DRAW %5lu t/it (%3lu.%01lu ms)\n", \
       $b, $b*32, $b*32+31, g_clAltIter[$b], g_clAltDraw[$b]/g_clAltIter[$b], \
       (g_clAltDraw[$b]*20)/(g_clAltIter[$b]*313), ((g_clAltDraw[$b]*200)/(g_clAltIter[$b]*313))%10
   end

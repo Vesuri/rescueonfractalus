@@ -34,7 +34,7 @@ printf "=== level=%u  $0623 emplace=%02x  $0621 saucer=%02x  $0624 fire=%02x  (s
 define seg
   tbreak RescueOnFractalus::renderFrame if g_vbiCount >= $arg0
   continue
-  printf "vbi %5u painted %4u | expl %3u hit %3u fire %4u impact %3u | obj %4u draw %3u | head=%02x%02x oct=%02x alt=%02x roll=%02x%02x | VVBLKI=$%02x%02x $3D=%02x\n", \
+  printf "vbi %5u painted %4u | expl %3u hit %3u fire %4u impact %3u | obj %4u draw %3u | head=%02x%02x oct=%02x rng=%02x pitch=%02x%02x | VVBLKI=$%02x%02x $3D=%02x\n", \
     g_vbiCount, g_fdCalls, g_clExplode, g_clShotHit, g_clEnemyFire, g_clImpact, \
     g_clObjEnter, g_clObjDraw, \
     mem[0x2886], mem[0x2885], mem[0x280D], mem[0x28DA], mem[0x0029], mem[0x0028], \

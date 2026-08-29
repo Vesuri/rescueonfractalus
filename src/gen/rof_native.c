@@ -293,7 +293,8 @@ extern volatile unsigned char g_clPhState;      /* latched once per iteration */
     g_clAltIter[g_clAltBucket]++; } while (0)
 extern volatile unsigned long g_clIterWall[2], g_clIterPrev;
 extern volatile unsigned char g_clExplSeen;
-/* DRAW ticks + iterations bucketed by ship altitude ($28DA altimeter_alt_ref, >>5 = 8 buckets).
+/* DRAW ticks + iterations bucketed by $28DA scanner_target_range (>>5 = 8 buckets) — a proxy for
+ * how disturbed the attitude is.
  * The point: the attribution showed DRAW (terrain + objects, both passes) is where combat's extra
  * frame time goes, but the object-COUNT split says objects are nearly free — so the suspicion is
  * that combat's ~30 bolt impacts (jitter_roll_pitch) throw the ship around and a disturbed
@@ -3338,7 +3339,7 @@ void event_sequence_dispatcher(void) {
         if (landing_seq_flag != 0) {                     /* $003D */
             if (pilot_prev == 0) timer_or_counter = 0x00;    /* $0044 = $288E (== 0) */
             reset_pilot_state_if_no_2830();              /* leaves A = 0 */
-            pitch_pos_lo = 0x00; pitch_pos_hi = 0x00;    /* $0025/$0026 = A(0) */
+            roll_pos_lo = 0x00; roll_pos_hi = 0x00;    /* $0025/$0026 = A(0) */
             cockpit_dial_update_core(0x07);
         } else if (dial_value != 0) {                    /* $006F: nudge dial down */
             dial_value = (uint8_t)(dial_value - 1);
@@ -3788,7 +3789,7 @@ L_78d6:
         mem[0x2830] = 0x00;
         landing_seq_flag = 0x00;
         game_state = 0x00;
-        pitch_pos_lo = 0x00; pitch_pos_hi = 0x00;
+        roll_pos_lo = 0x00; roll_pos_hi = 0x00;
         if (phase != 0x04 && phase != 0x03) return;      /* 790c-7914: only phases 3/4 continue */
     }
     /* L_7915 */
@@ -4569,18 +4570,20 @@ void dispatch_43cb_half_70(void) {
     draw_dial_bar_column();
 }
 
-/* update_altitude_digit_display @ $44D6 — flight HUD altitude readout.
- * Clamp a digit index (0x1C-altimeter_alt_ref, else 0x1E), and if it changed vs the previous
- * (draw_pattern_byte) rewrite 3 glyph cells $0B91+ (&$CF old, |$30 new).  Then derive the
- * altitude colour/glyph ($062x+$AB, clamped to $B5 outside [$A3,$B4)).  Faithful $44D6 twin.
+/* move_scanner_dot_row @ $44D6 — move the LR-Scanner (#13) guide dot.  Draws no digit.
+ * Row = clamp(0x1C - scanner_target_range) (else 0x1E), and when it changed vs the previous row
+ * (draw_pattern_byte) the 3 missile-M2 cells at $0B91+ are cleared at the old row (&$CF) and set
+ * at the new (|$30) — the dot is only ever MOVED, never cleared, so its blink is the $33DF/$33E0
+ * pen swap, not the M2 bits going away.  Then the dot's HPOSM2 = scanner_target_bearing + $AB,
+ * kept only inside [$A3,$B4) and otherwise the PARK value $B5, which hides it behind the cockpit
+ * (the dashboard copper sets PFxP=0).  Faithful $44D6 twin.
  *
- * The 3 cells it moves are the M2 bit pairs the LR-Scanner guide dot is made of.  On the Amiga the
- * dot is a sprite mirror instead: buildScannerDotSprite (RescueOnFractalus.cpp, flight VBI) reads the
- * same range sample (altimeter_alt_ref, mem[$28DA]) and generates the flash itself — this routine keeps
- * the faithful cell rewrite for mem[] parity but publishes nothing for the mirror. */
-void update_altitude_digit_display(void) {
+ * On the Amiga the dot is a sprite mirror instead: buildScannerDotSprite (RescueOnFractalus.cpp,
+ * flight VBI) reads the same samples and generates the flash itself — this routine keeps the
+ * faithful cell rewrite for mem[] parity but publishes nothing for the mirror. */
+void move_scanner_dot_row(void) {
     uint8_t oldP = draw_pattern_byte;
-    uint8_t a = (uint8_t)(0x1C - altimeter_alt_ref);     /* SEC;SBC */
+    uint8_t a = (uint8_t)(0x1C - scanner_target_range);     /* SEC;SBC */
     if ((a & 0x80) || a >= 0x1D) a = 0x1E;               /* BMI / CMP#$1D BCS -> 0x1E */
     draw_pattern_byte = a;
     if (oldP != a) {
@@ -4589,9 +4592,9 @@ void update_altitude_digit_display(void) {
         y = a;
         for (uint8_t k = 3; k != 0; k--) { mem[0x0B91 + y] |= 0x30; y++; }
     }
-    uint8_t c = (uint8_t)(altimeter_color_base + 0xAB);  /* CLC;ADC#$AB */
+    uint8_t c = (uint8_t)(scanner_target_bearing + 0xAB);  /* CLC;ADC#$AB */
     if (c < 0xA3 || c >= 0xB4) c = 0xB5;                 /* keep only if $A3<=c<$B4 */
-    altitude_color_or_glyph = c;
+    scanner_dot_hpos = c;
 }
 
 /* draw_dial_bar_column @ $43CB — update one cockpit dial-bar column to value Y.
@@ -5851,9 +5854,9 @@ static void update_terrain_scanline_proj_impl(void) {
         terrain_depth_step++;
         terrain_depth_frac = 0;
         mem[0x0070] = 0;
-        if (roll_pos_hi & 0x80) {              /* roll below level -> nudge back up */
-            roll_pos_hi++;
-            roll_pos_lo = 0;
+        if (pitch_pos_hi & 0x80) {              /* roll below level -> nudge back up */
+            pitch_pos_hi++;
+            pitch_pos_lo = 0;
         }
     }
 
@@ -6275,11 +6278,11 @@ void build_view_transform_matrix(void) { build_view_transform_matrix_core_c(); }
  *   • draw_row ($0092)                                   = heading_hi ($2886) << 2.
  *   • the sin/cos view vector $00A0-$00A3                = $2809-$280C, latched after
  *       compute_heading_sincos() rebuilds it for the current heading.
- *   • horizon_row_index ($00A6)                          = 6 - hi(roll {roll_pos_hi:roll_pos_lo} << 2)
+ *   • horizon_row_index ($00A6)                          = 6 - hi(pitch {pitch_pos_hi:pitch_pos_lo} << 2)
  *       — the screen row the horizon sits on.
- *   • {scroll_accum_b3:scroll_accum_prev} ($00A4:$00A5)  = signed pitch
- *       {pitch_shadow_hi:pitch_shadow_lo} >> 1 (arithmetic) — the per-row pitch step.
- *   • player3_xbase ($2822)                              = clamp(pitch_shadow_hi + 4, 0..8)
+ *   • {scroll_accum_b3:scroll_accum_prev} ($00A4:$00A5)  = signed roll
+ *       {roll_shadow_hi:roll_shadow_lo} >> 1 (arithmetic) — the per-row X shear, i.e. bank.
+ *   • player3_xbase ($2822)                              = clamp(roll_shadow_hi + 4, 0..8)
  *       — an altitude/attitude index.
  *
  * Two faithfulness details preserved from the 6502 original: the pitch-delta << 2 uses ROL, so
@@ -6321,22 +6324,22 @@ void setup_projection_params(void) {
     draw_iter_count = mem[0x2809]; scroll_accum_b0 = mem[0x280A];   /* $00A0-$00A3 = $2809-$280C */
     scroll_accum_b1 = mem[0x280B]; scroll_accum_b2 = mem[0x280C];
 
-    /* Horizon screen row = 6 - hi(roll << 2). */
-    uint16_t roll = (uint16_t)(ROF_PAIR16(roll_pos_lo, roll_pos_hi) << 2);
-    horizon_row_index = (uint8_t)(0x06 - (uint8_t)(roll >> 8));
+    /* Horizon screen row = 6 - hi(pitch << 2). */
+    uint16_t pitch = (uint16_t)(ROF_PAIR16(pitch_pos_lo, pitch_pos_hi) << 2);
+    horizon_row_index = (uint8_t)(0x06 - (uint8_t)(pitch >> 8));
 
-    /* Per-row pitch step = signed pitch >> 1 (arithmetic), split hi/lo. */
-    int16_t pitch     = (int16_t)ROF_PAIR16(mem[0x0023], mem[0x0024]);  /* {pitch_shadow_hi:_lo} */
-    int16_t pitchHalf = (int16_t)(pitch >> 1);
-    scroll_accum_b3   = (uint8_t)((uint16_t)pitchHalf >> 8);
-    scroll_accum_prev = (uint8_t)pitchHalf;
+    /* Per-row X shear = signed roll >> 1 (arithmetic), split hi/lo. */
+    int16_t roll     = (int16_t)ROF_PAIR16(mem[0x0023], mem[0x0024]);  /* {roll_shadow_hi:_lo} */
+    int16_t rollHalf = (int16_t)(roll >> 1);
+    scroll_accum_b3   = (uint8_t)((uint16_t)rollHalf >> 8);
+    scroll_accum_prev = (uint8_t)rollHalf;
 
-    /* The 6502 preserved pitch_shadow_hi across the shift with PHA/PLA; we use a local, but the
+    /* The 6502 preserved roll_shadow_hi across the shift with PHA/PLA; we use a local, but the
        PHA still deposits that byte on the stack page — reproduce that lone side-effect so the
        twin stays byte-identical to the oracle (net cpu.S is unchanged). */
     mem[0x0100 | cpu.S] = mem[0x0024];
 
-    /* Altitude/attitude index = clamp(pitch_shadow_hi + 4, 0..8): negative -> 0, >= 9 -> 8. */
+    /* Altitude/attitude index = clamp(roll_shadow_hi + 4, 0..8): negative -> 0, >= 9 -> 8. */
     uint8_t idx = (uint8_t)(mem[0x0024] + 0x04);
     if (idx & 0x80)      idx = 0x00;
     else if (idx >= 0x09) idx = 0x08;
@@ -8096,7 +8099,7 @@ void fill_terrain_silhouette(void) { fill_terrain_silhouette_core(cpu.X); }
  * Input: entryX = the draw base / double-buffer half ($00 display, $30 back).  Phases:
  *  1. INIT: build terrain_col_byte_offset (col -> row byte offset) for this frame, plus the
  *     per-column work arrays that seed each column's starting row at the horizon ($67/$6B).
- *  2. SETUP: stash the roll position, compute_row_xspans (the per-row L/R extents that form
+ *  2. SETUP: stash the pitch position, compute_row_xspans (the per-row L/R extents that form
  *     the perspective viewport trapezoid), seed the span/parallax accumulators to centre.
  *  3. DRAW LOOP ($A3AB, walks the $B67C back-to-front draw order until $90): for each active
  *     object, project_terrain_points (world->screen) + terrain_plot_object, then
@@ -8336,8 +8339,8 @@ void terrain_draw_frame_core(uint8_t entryX) {
         for (int i = 0; i < 33; i++) p[i] = 0x6B6B6B6Bu;
     }
 
-    mem[0x2907] = roll_pos_lo;                           /* stash the current roll into the param block */
-    mem[0x2908] = roll_pos_hi;
+    mem[0x2907] = pitch_pos_lo;                           /* stash the current pitch into the param block */
+    mem[0x2908] = pitch_pos_hi;
     compute_row_xspans();
     /* reset this frame's span extents to the neutral $80 midpoint (terrain_span_max + $0079
        only on the display pass, so the back pass inherits the display pass's max). */
@@ -8389,7 +8392,7 @@ void terrain_draw_frame_core(uint8_t entryX) {
     mem[0x283A] = mem[0x2911];
     if (level_or_state != 0) check_target_in_window();
     mem[0x2840] = mem[0x28FC] ? 0x74 : 0x00;             /* light the target marker if any object was visible */
-    /* Stage the per-frame parameter block (object positions, depth, roll) consumed downstream. */
+    /* Stage the per-frame parameter block (object positions, depth, pitch) consumed downstream. */
     mem[0x28FD]=mem[0x2270]; mem[0x28FE]=mem[0x2271]; mem[0x28FF]=mem[0x2272];
     mem[0x2900]=mem[0x2273]; mem[0x2901]=mem[0x2274]; mem[0x2902]=scaled_depth_hi;
     mem[0x2903]=mem[0x2809]; mem[0x2904]=mem[0x280A]; mem[0x2905]=mem[0x280B]; mem[0x2906]=mem[0x280C];
@@ -8409,15 +8412,15 @@ void terrain_draw_frame_core(uint8_t entryX) {
         v = 0x00; carryIn = 0;
     } else {                                             /* otherwise v = |Δpitch| + |Δroll| in scaled units */
         #define SAR1(x) ((uint8_t)(((uint8_t)(x) >> 1) | ((uint8_t)(x) & 0x80)))  /* arithmetic >>1 */
-        uint16_t pitch16 = ROF_PAIR16(pitch_pos_lo, pitch_pos_hi);
-        uint16_t v2919   = ROF_PAIR16(mem[0x2919], mem[0x291A]);
-        /* pitch delta: high byte of each 16-bit value scaled by 8 (<<3), then differenced + abs */
-        uint8_t base = (uint8_t)((uint16_t)(pitch16 << 3) >> 8);
+        uint16_t roll16 = ROF_PAIR16(roll_pos_lo, roll_pos_hi);
+        uint16_t v2919  = ROF_PAIR16(mem[0x2919], mem[0x291A]);
+        /* roll delta: high byte of each 16-bit value scaled by 8 (<<3), then differenced + abs */
+        uint8_t base = (uint8_t)((uint16_t)(roll16 << 3) >> 8);
         uint8_t dx   = (uint8_t)((uint16_t)(v2919  << 3) >> 8);
         dx = (uint8_t)(dx - base);
         if (dx & 0x80) dx = (uint8_t)(0u - dx);
-        /* roll delta: roll_velocity vs $291B, each arithmetic >>2, then differenced + abs */
-        uint8_t c4 = SAR1(SAR1(roll_velocity));
+        /* pitch delta: pitch_velocity vs $291B, each arithmetic >>2, then differenced + abs */
+        uint8_t c4 = SAR1(SAR1(pitch_velocity));
         uint8_t dy = SAR1(SAR1(mem[0x291B]));
         dy = (uint8_t)(dy - c4);
         if (dy & 0x80) dy = (uint8_t)(0u - dy);
@@ -8657,14 +8660,14 @@ void jitter_roll_pitch(void) {
     (void)Y;
     return;
 #endif
-    Y = roll_pos_hi;                                   /* aa95 */
+    Y = pitch_pos_hi;                                   /* aa95 */
     if (Y != 0xF4) { Y--; if (Y != 0xF4) Y--; }        /* aa97-aaa0 */
-    roll_pos_hi = Y;                                   /* aaa1 */
-    Y = pitch_pos_hi;                                   /* aaa3 */
+    pitch_pos_hi = Y;                                   /* aaa1 */
+    Y = roll_pos_hi;                                   /* aaa3 */
     A = bus_read(0xD20A);                              /* aaa5 LDA $D20A */
     if (A & 0x80) { if (Y != 0xFB) { Y--; if (Y != 0xFB) Y--; } }  /* aaa8 BPL -> neg: toward $FB */
     else          { if (Y != 0x05) { Y++; if (Y != 0x05) Y++; } }  /*           pos: toward $05 */
-    pitch_pos_hi = Y;                                   /* aac1 */
+    roll_pos_hi = Y;                                   /* aac1 */
     A = throttle_accum_hi;                                   /* aac4 SEC; SBC #$08; clamp 0 */
     throttle_accum_hi = (A >= 0x08) ? (uint8_t)(A - 0x08) : 0x00;
 }
@@ -8757,43 +8760,43 @@ static uint8_t mul_u8_lookup(uint8_t M, uint8_t N) {
 void compute_target_blip_position(void) {
     /* Blip X ($0021) = signed half-difference of the range latch $27F7/$27F8; near
      * targets with a tiny delta clear it. */
-    pitch_velocity = (uint8_t)(mem[0x27F7] - mem[0x27F8]);           /* 9713: range delta */
+    roll_velocity = (uint8_t)(mem[0x27F7] - mem[0x27F8]);           /* 9713: range delta */
     uint8_t avg = (uint8_t)(mem[0x27F7] + mem[0x27F8]) >> 1;         /* 971c: range midpoint */
     if (avg < terrain_depth_step) {
-        uint8_t mag = pitch_velocity;
+        uint8_t mag = roll_velocity;
         if (mag & 0x80) mag = (uint8_t)-mag;                        /* |delta| */
-        if (mag < 0x10) pitch_velocity = 0x00;
+        if (mag < 0x10) roll_velocity = 0x00;
     }
 
-    if (mem[0x005D] == 0) { roll_velocity = 0xC8; return; }         /* 9738: no ground proximity */
+    if (mem[0x005D] == 0) { pitch_velocity = 0xC8; return; }         /* 9738: no ground proximity */
 
     /* Blip Y ($0027) base: $38, or $00 when both sensor masks are clear AND the
      * clearance $0070 has reached $2A. */
     uint8_t base = 0x38;
     if ((mem[0x1027] & 0xAA) == 0 && (mem[0x1057] & 0xAA) == 0 && mem[0x0070] >= 0x2A)
         base = 0x00;
-    roll_velocity = base;
+    pitch_velocity = base;
 
     /* Depth term added to the base: $C8 when deep ($0034 >= $2A) and not pitched down;
      * otherwise ($20 - depth, with a path-dependent borrow) arith-halved, negatives kept. */
     uint8_t term;
-    if (terrain_depth_step >= 0x2A && !(roll_pos_hi & 0x80)) {
+    if (terrain_depth_step >= 0x2A && !(pitch_pos_hi & 0x80)) {
         term = 0xC8;                                                /* 9765 */
     } else {
         int carry = (terrain_depth_step >= 0x2A);                   /* 0 via BCC(975f), 1 via BMI(9763) */
         uint8_t a = (uint8_t)((int8_t)(uint8_t)(0x20 - terrain_depth_step - (1 - carry)) >> 1);
         term = (a & 0x80) ? a : 0x00;                               /* 9770 BMI keep else 0 */
     }
-    roll_velocity = (uint8_t)(term + roll_velocity);                /* 9774 */
+    pitch_velocity = (uint8_t)(term + pitch_velocity);                /* 9774 */
 
     /* Parallax samples nudge the blips when out of their dead-bands. */
     uint8_t px = mem[0x2912];                                       /* 9779 */
     if (px >= 0x30 && px < 0xD1) return;
-    pitch_velocity = (uint8_t)((uint8_t)(px << 1) + pitch_velocity);
+    roll_velocity = (uint8_t)((uint8_t)(px << 1) + roll_velocity);
 
     uint8_t py = mem[0x2913];                                       /* 978b */
     if (py >= 0x20 && py < 0xE1) return;
-    roll_velocity = (uint8_t)((uint8_t)((py << 1) ^ 0xFF) + roll_velocity);
+    pitch_velocity = (uint8_t)((uint8_t)((py << 1) ^ 0xFF) + pitch_velocity);
 }
 
 /* obj_table_scan_replace @ $4E1C — place the entry value (cpu.A) into a free object
@@ -9184,7 +9187,7 @@ void compute_obj_rel_angle_scale(void) {
 /* flight_control_integrate @ $8E5B — the master per-frame flight step (called from the
  * in-flight VBI at $51B9).  In one pass it:
  *   - reads the joystick (PORTA $D300) and derives this frame's pitch/roll rates;
- *   - integrates the ship's pitch angle ($25/$26), roll/heading angle ($28/$29),
+ *   - integrates the ship's roll angle ($25/$26), pitch angle ($28/$29),
  *     throttle ($2D/$2E), compass heading ($2885/$2886) and 24-bit world position
  *     (world_x $2887, world_z $2889, depth $33/$34), clamping each to its legal range;
  *   - refreshes the cockpit HUD / engine-sound fields;
@@ -9210,7 +9213,7 @@ void compute_obj_rel_angle_scale(void) {
  * The empty asm below does exactly that and nothing else — no instruction is emitted, GCC simply
  * loses the knowledge that `mbase == mem` and is forced to keep it in a (callee-saved) address
  * register across the whole body.  Every `mem[...]` and every `symbols.csv` lvalue alias
- * (`pitch_pos_lo` -> `mem[0x25]` -> `mbase[0x25]`) then becomes `d16(An)`.  This is safe by
+ * (`roll_pos_lo` -> `mem[0x25]` -> `mbase[0x25]`) then becomes `d16(An)`.  This is safe by
  * construction: same array, same accesses, same order, and `make validate FN=flight_control`
  * still byte-compares the whole thing against the $8E5B transliteration.
  *
@@ -9246,28 +9249,28 @@ static void flight_control_integrate_impl(void) {
 #define mem mbase
 #endif
 
-    /* ---- Steering: derive the roll rate (and a dial-based pitch trim) from the stick ----
+    /* ---- Steering: derive the pitch rate (and a dial-based roll trim) from the stick ----
      * Only while joystick_saved==2 (active flight) and no colour-clear sweep in progress. */
     if (joystick_saved == 0x02 && clear_colors_done_003E == 0) {
         /* base trim from the cockpit dial index (carries dial bit1 into the +$20 add) */
-        pitch_velocity = (uint8_t)((dial_draw_index >> 2) + 0x20 + ((dial_draw_index >> 1) & 1));
+        roll_velocity = (uint8_t)((dial_draw_index >> 2) + 0x20 + ((dial_draw_index >> 1) & 1));
         uint8_t joy = bus_read(0xD300);                 /* PORTA, active-low direction bits */
-        if (!(joy & 0x04))      pitch_velocity ^= 0xFF; /* bit2 released -> invert trim */
-        else if (joy & 0x08)    pitch_velocity = 0x00;  /* bit3 -> zero trim */
+        if (!(joy & 0x04))      roll_velocity ^= 0xFF; /* bit2 released -> invert trim */
+        else if (joy & 0x08)    roll_velocity = 0x00;  /* bit3 -> zero trim */
 
-        uint8_t roll_rate;
+        uint8_t pitch_rate;
         if (mem[0x005D] == 0) {
-            roll_rate = 0xD0;                           /* near-ground: forced auto-level */
+            pitch_rate = 0xD0;                          /* near-ground: forced auto-level */
         } else if (!(joy & 0x01)) {                     /* stick up */
-            roll_rate = 0xD0;
-            if (roll_pos_hi == 0xF4 && roll_pos_lo == 0x00) roll_rate = 0xFF;  /* at -limit */
+            pitch_rate = 0xD0;
+            if (pitch_pos_hi == 0xF4 && pitch_pos_lo == 0x00) pitch_rate = 0xFF; /* at -limit */
         } else if (!(joy & 0x02)) {                     /* stick down */
-            roll_rate = 0x30;
-            if (roll_pos_hi == 0x0B && roll_pos_lo == 0xFF) roll_rate = 0x01;  /* at +limit */
+            pitch_rate = 0x30;
+            if (pitch_pos_hi == 0x0B && pitch_pos_lo == 0xFF) pitch_rate = 0x01; /* at +limit */
         } else {
-            roll_rate = 0x00;                           /* neutral */
+            pitch_rate = 0x00;                          /* neutral */
         }
-        roll_velocity = roll_rate;
+        pitch_velocity = pitch_rate;
     }
 
     /* Targeting blip position (skipped during level 0 / intro). */
@@ -9275,10 +9278,10 @@ static void flight_control_integrate_impl(void) {
 
     /* ---- Per-state dispatch; every branch falls through to the $3E shutdown check ---- */
     if (flight_mode_state == 0x02) {
-        /* Crash/landing auto-attitude: force roll, set pitch trim = -(pitch_pos >> 6). */
-        roll_velocity = 0x30;
-        uint8_t v = (uint8_t)(ROF_PAIR16(pitch_pos_lo, pitch_pos_hi) >> 6);
-        pitch_velocity = (uint8_t)(0u - v);
+        /* Crash/landing auto-attitude: force pitch, set roll trim = -(roll_pos >> 6). */
+        pitch_velocity = 0x30;
+        uint8_t v = (uint8_t)(ROF_PAIR16(roll_pos_lo, roll_pos_hi) >> 6);
+        roll_velocity = (uint8_t)(0u - v);
         dial_draw_index = 0xF0;
         draw_cockpit_dial_bar_core(0x00);
     } else if (mem[0x003D] != 0) {
@@ -9292,15 +9295,15 @@ static void flight_control_integrate_impl(void) {
     } else if (flight_mode_state == 0) {
         step_object_along_axes();
     } else {
-        /* Active flight: arm the HUD once (timer_676), then shadow the pitch angle. */
+        /* Active flight: arm the HUD once (timer_676), then shadow the roll angle. */
         if (timer_676 != 0x01) {
             mem[0x066C] = 0x00; mem[0x066D] = 0x00;
             cpu.Y = 0x01; ring_push_unmarked();
             cpu.Y = 0x02; ring_push_unmarked();
             cpu.A = 0x01; store_676_init();
         }
-        mem[0x0023] = pitch_pos_lo;
-        mem[0x0024] = pitch_pos_hi;
+        mem[0x0023] = roll_pos_lo;
+        mem[0x0024] = roll_pos_hi;
     }
 
     /* ---- Colour-clear shutdown: tear the special state back down and bail ---- */
@@ -9314,35 +9317,35 @@ static void flight_control_integrate_impl(void) {
         return;
     }
 
-    /* ---- Pitch auto-level: when no pitch input, bleed pitch_pos toward 0 by ~(pos*32>>8) ---- */
-    if (pitch_velocity == 0) {
-        uint16_t pp  = ROF_PAIR16(pitch_pos_lo, pitch_pos_hi);
-        uint8_t  sub = (uint8_t)((pp << 5) >> 8);
-        if ((pp >> 11) & 1) {                           /* shift carry set */
-            int diff = (int)pitch_pos_lo - sub;
-            pitch_pos_lo = (uint8_t)diff;
-            if (diff >= 0) pitch_pos_hi++;
-        } else {
-            int diff = (int)pitch_pos_lo - sub - 1;
-            if (diff >= 0)                              pitch_pos_lo = (uint8_t)diff;
-            else if ((uint8_t)(pitch_pos_hi - 1) & 0x80) { pitch_pos_hi = 0; pitch_pos_lo = 0; }
-            else                                        { pitch_pos_hi--; pitch_pos_lo = (uint8_t)diff; }
-        }
-    }
-
-    /* ---- Roll auto-level: same idea, ~(pos*4>>8), only when no roll input and not landing ---- */
-    if (mem[0x003D] == 0 && roll_velocity == 0) {
+    /* ---- Roll auto-level: when no roll input, bleed roll_pos toward 0 by ~(pos*32>>8) ---- */
+    if (roll_velocity == 0) {
         uint16_t rp  = ROF_PAIR16(roll_pos_lo, roll_pos_hi);
-        uint8_t  sub = (uint8_t)((rp << 2) >> 8);
-        if ((rp >> 14) & 1) {
+        uint8_t  sub = (uint8_t)((rp << 5) >> 8);
+        if ((rp >> 11) & 1) {                           /* shift carry set */
             int diff = (int)roll_pos_lo - sub;
             roll_pos_lo = (uint8_t)diff;
             if (diff >= 0) roll_pos_hi++;
         } else {
             int diff = (int)roll_pos_lo - sub - 1;
-            if (diff >= 0)                             roll_pos_lo = (uint8_t)diff;
+            if (diff >= 0)                              roll_pos_lo = (uint8_t)diff;
             else if ((uint8_t)(roll_pos_hi - 1) & 0x80) { roll_pos_hi = 0; roll_pos_lo = 0; }
-            else                                       { roll_pos_hi--; roll_pos_lo = (uint8_t)diff; }
+            else                                        { roll_pos_hi--; roll_pos_lo = (uint8_t)diff; }
+        }
+    }
+
+    /* ---- Pitch auto-level: same idea, ~(pos*4>>8), only when no pitch input and not landing ---- */
+    if (mem[0x003D] == 0 && pitch_velocity == 0) {
+        uint16_t pp  = ROF_PAIR16(pitch_pos_lo, pitch_pos_hi);
+        uint8_t  sub = (uint8_t)((pp << 2) >> 8);
+        if ((pp >> 14) & 1) {
+            int diff = (int)pitch_pos_lo - sub;
+            pitch_pos_lo = (uint8_t)diff;
+            if (diff >= 0) pitch_pos_hi++;
+        } else {
+            int diff = (int)pitch_pos_lo - sub - 1;
+            if (diff >= 0)                             pitch_pos_lo = (uint8_t)diff;
+            else if ((uint8_t)(pitch_pos_hi - 1) & 0x80) { pitch_pos_hi = 0; pitch_pos_lo = 0; }
+            else                                       { pitch_pos_hi--; pitch_pos_lo = (uint8_t)diff; }
         }
     }
 
@@ -9354,10 +9357,10 @@ static void flight_control_integrate_impl(void) {
         loops_y = 3;
     } else {
         loops_y = 1;
-        /* base = dial - 2*roll_pos_hi (two chained 6502 subtracts preserve the borrow) */
-        int t = (int)dial_draw_index - roll_pos_hi;
+        /* base = dial - 2*pitch_pos_hi (two chained 6502 subtracts preserve the borrow) */
+        int t = (int)dial_draw_index - pitch_pos_hi;
         int borrow = (t < 0) ? 1 : 0;
-        uint8_t base = (uint8_t)((t & 0xFF) - roll_pos_hi - borrow);
+        uint8_t base = (uint8_t)((t & 0xFF) - pitch_pos_hi - borrow);
         uint16_t kick = (uint16_t)((((dial_draw_index >> 1) | 0x07) & bus_read(0xD20A))
                                    + base + (dial_draw_index & 1));
         if (kick > 0xFF) kick = 0xFF;
@@ -9384,21 +9387,7 @@ static void flight_control_integrate_impl(void) {
     }
 
 
-    /* ---- Integrate + clamp pitch angle ($25/$26) to [-5 .. +4] = [$FB .. $04] ---- */
-    {
-        int8_t   dv  = (int8_t)pitch_velocity;
-        uint16_t sum = (uint16_t)pitch_pos_lo + (uint8_t)pitch_velocity;
-        pitch_pos_lo = (uint8_t)sum;
-        if (dv < 0) { if (!(sum >> 8)) pitch_pos_hi--; }
-        else        { if ( (sum >> 8)) pitch_pos_hi++; }
-        if (!(pitch_pos_hi & 0x80)) {
-            if (pitch_pos_hi >= 0x05) { pitch_pos_lo = 0xFF; pitch_pos_hi = 0x04; }
-        } else {
-            if (pitch_pos_hi <  0xFB) { pitch_pos_lo = 0x00; pitch_pos_hi = 0xFB; }
-        }
-    }
-
-    /* ---- Integrate + clamp roll/heading angle ($28/$29) to [$F4 .. $0B] ---- */
+    /* ---- Integrate + clamp roll angle ($25/$26) to [-5 .. +4] = [$FB .. $04] ---- */
     {
         int8_t   dv  = (int8_t)roll_velocity;
         uint16_t sum = (uint16_t)roll_pos_lo + (uint8_t)roll_velocity;
@@ -9406,18 +9395,32 @@ static void flight_control_integrate_impl(void) {
         if (dv < 0) { if (!(sum >> 8)) roll_pos_hi--; }
         else        { if ( (sum >> 8)) roll_pos_hi++; }
         if (!(roll_pos_hi & 0x80)) {
-            if (roll_pos_hi >= 0x0C) { roll_pos_lo = 0xFF; roll_pos_hi = 0x0B; }
+            if (roll_pos_hi >= 0x05) { roll_pos_lo = 0xFF; roll_pos_hi = 0x04; }
         } else {
-            if (roll_pos_hi <  0xF4) { roll_pos_lo = 0x00; roll_pos_hi = 0xF4; }
+            if (roll_pos_hi <  0xFB) { roll_pos_lo = 0x00; roll_pos_hi = 0xFB; }
         }
     }
 
-    /* ---- Roll-derived magnitudes: |roll<<3| -> $28D6, and (throttle_hi * that)<<3 -> fwd step ---- */
+    /* ---- Integrate + clamp pitch angle ($28/$29) to [$F4 .. $0B] ---- */
     {
-        uint16_t rp = ROF_PAIR16(roll_pos_lo, roll_pos_hi);
-        uint8_t  hi = (uint8_t)((rp << 3) >> 8);
+        int8_t   dv  = (int8_t)pitch_velocity;
+        uint16_t sum = (uint16_t)pitch_pos_lo + (uint8_t)pitch_velocity;
+        pitch_pos_lo = (uint8_t)sum;
+        if (dv < 0) { if (!(sum >> 8)) pitch_pos_hi--; }
+        else        { if ( (sum >> 8)) pitch_pos_hi++; }
+        if (!(pitch_pos_hi & 0x80)) {
+            if (pitch_pos_hi >= 0x0C) { pitch_pos_lo = 0xFF; pitch_pos_hi = 0x0B; }
+        } else {
+            if (pitch_pos_hi <  0xF4) { pitch_pos_lo = 0x00; pitch_pos_hi = 0xF4; }
+        }
+    }
+
+    /* ---- Pitch-derived magnitudes: |pitch<<3| -> $28D6, and (throttle_hi * that)<<3 -> fwd step ---- */
+    {
+        uint16_t pp = ROF_PAIR16(pitch_pos_lo, pitch_pos_hi);
+        uint8_t  hi = (uint8_t)((pp << 3) >> 8);
         mem[0x0020] = hi;                               /* sign source for the multiply below */
-        mem[0x28D6] = ((rp >> 13) & 1) ? (uint8_t)(0u - hi) : hi;
+        mem[0x28D6] = ((pp >> 13) & 1) ? (uint8_t)(0u - hi) : hi;
     }
     {
         mul_multiplicand = throttle_accum_hi;
@@ -9430,7 +9433,7 @@ static void flight_control_integrate_impl(void) {
 
     /* ---- Heading: heading += (signed pitch_pos >> 4); carry feeds the angle-scale call ---- */
     {
-        int16_t step    = (int16_t)((int16_t)ROF_PAIR16(pitch_pos_lo, pitch_pos_hi) >> 4);
+        int16_t step    = (int16_t)((int16_t)ROF_PAIR16(roll_pos_lo, roll_pos_hi) >> 4);
         uint8_t step_lo = (uint8_t)step, step_hi = (uint8_t)(step >> 8);
         dl_y1 = step_lo; dl_y2 = step_hi;               /* scratch the 6502 left behind */
         uint16_t hlo = (uint16_t)heading_lo + step_lo;
@@ -9467,7 +9470,7 @@ static void flight_control_integrate_impl(void) {
     }
 
     /* ---- Canopy-pillar Y pair (each = angle_hi + offset + sign-of-lo) ---- */
-    mem[0x2873] = (uint8_t)(roll_pos_hi  + 0x0C + (roll_pos_lo  >> 7));
+    mem[0x2873] = (uint8_t)(pitch_pos_hi  + 0x0C + (pitch_pos_lo  >> 7));
     mem[0x2871] = (uint8_t)(mem[0x0024]  + 0x05 + (mem[0x0023]  >> 7));
 
     /* ---- Terrain table index from heading (or RTCLOK when heading is frozen) ---- */
@@ -9592,9 +9595,9 @@ static void flight_control_integrate_impl(void) {
         uint8_t y = mem[0x291E] + 1;
         if (y >= 0x07) y = 0x00;
         mem[0x291E] = y;
-        mem[0x2919] = mem[0x2893 + y]; mem[0x2893 + y] = pitch_pos_lo;
-        mem[0x291A] = mem[0x289A + y]; mem[0x289A + y] = pitch_pos_hi;
-        mem[0x291B] = mem[0x28A1 + y]; mem[0x28A1 + y] = roll_velocity;
+        mem[0x2919] = mem[0x2893 + y]; mem[0x2893 + y] = roll_pos_lo;
+        mem[0x291A] = mem[0x289A + y]; mem[0x289A + y] = roll_pos_hi;
+        mem[0x291B] = mem[0x28A1 + y]; mem[0x28A1 + y] = pitch_velocity;
         mem[0x291C] = mem[0x28A8 + y]; mem[0x28A8 + y] = mem[0x2871];
         mem[0x291D] = mem[0x28AF + y]; mem[0x28AF + y] = mem[0x2873];
     }
@@ -9865,7 +9868,7 @@ void game_state_update(void) {
         plot_x_step_lo = (uint8_t)(r << 1);
         plot_x_step_hi = (r & 0x80) ? 0xFF : 0x00;        /* sign of the doubled random */
     }
-    /* Override the drift direction from the delayed pitch-history field (ring_cur_1 $291A):
+    /* Override the drift direction from the delayed roll-history field (ring_cur_1 $291A):
        steeply negative -> leftward (hi=0); positive and >= 2 -> rightward (hi=$FF). */
     {
         uint8_t p = ring_cur_1;
@@ -11137,7 +11140,7 @@ void vbi_handler_flight(void) {
             draw_altimeter_bars();
             draw_compass_heading();
             dispatch_43cb_half_70();
-            update_altitude_digit_display();
+            move_scanner_dot_row();
             VP_ACC(g_pHud); }
 
             /* Score: every ~30 frames ($00DF countdown) fold the pending delta + redraw. */
@@ -11286,7 +11289,7 @@ void init_gameplay_state(void) {
     cpu.A = 0x00; cpu.X = 0x00; cpu.Y = 0x00; game_sub_451d();   /* 7433-7437 */
     cpu.A = 0x38; cpu.X = 0x04; cpu.Y = 0x10; game_sub_451d();   /* 743a-7440 */
     wait_frames();                               /* 7443 */
-    roll_pos_hi = 0xF4;                                /* 7446 */
+    pitch_pos_hi = 0xF4;                                /* 7446 */
     draw_pattern_byte = 0x91;                                /* 744a */
     obj_pos_hi = 0x0B;                                /* 744e */
     if ((uint8_t)bus_read(0xD20A) < 0x1F)              /* 7452 CMP#$1F; BCS skip */
@@ -12644,7 +12647,7 @@ static void game_main_loop_body(void) {
 #ifdef ROF_PLATFORM_AMIGA
     /* The display half's range + bearing samples are now final: push them to the guide-dot mirror
        (see the decl above).  Must be HERE, not in the VBI or the render — this is the publish point. */
-    rof_note_scanner_dot(altimeter_alt_ref, altimeter_color_base);
+    rof_note_scanner_dot(scanner_target_range, scanner_target_bearing);
 #endif
 #ifndef ROF_PLATFORM_AMIGA
     fill_terrain_silhouette_core(0x03);   /* Amiga: skipped — see PASS 1 note */

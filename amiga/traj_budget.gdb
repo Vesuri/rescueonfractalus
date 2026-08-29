@@ -27,7 +27,7 @@ set $sF0 = g_clPh[5][0] + g_clPh[5][1]
 set $sI0 = g_clPhIter[0] + g_clPhIter[1]
 set $sP0 = g_fdCalls
 
-printf "\n offset | world_x | world_z | pitchv | span | iters | painted\n"
+printf "\n offset | world_x | world_z | rollv  | rng  | iters | painted\n"
 define seg
   tbreak RescueOnFractalus::renderFrame if g_vbiCount >= $sEntry + $arg0
   continue

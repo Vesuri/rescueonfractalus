@@ -1141,7 +1141,7 @@ __asm__ ("" : "=a"(mbase) : "0"((uint8_t*)mem));
 
 No instruction is emitted. GCC just loses the knowledge that `mbase == mem`, so it must keep the
 value in a callee-saved address register for the whole body, and every `mem[…]` — including every
-`symbols.csv` lvalue alias, since `pitch_pos_lo` → `mem[0x25]` → `mbase[0x25]` on macro rescan —
+`symbols.csv` lvalue alias, since `roll_pos_lo` → `mem[0x25]` → `mbase[0x25]` on macro rescan —
 becomes `d16(An)`.
 
 Sound because `&mem` escapes into the asm, so GCC's alias oracle must treat `*mbase` as possibly

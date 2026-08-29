@@ -52,7 +52,7 @@ continue
 set $n  = g_flightProf.isrCalls - $s_isrn
 set $il = g_flightProf.isrLines - $s_isrl
 printf "\n=== window vbi %u -> %u : %lu firings ===\n", $s_vbi, g_vbiCount, $n
-printf "  ACTIVITY  ring/firing=%lu.%02lu  expl=%u fire=%u impact=%u  painted=%u  head=%02x%02x roll=%02x%02x\n", \
+printf "  ACTIVITY  ring/firing=%lu.%02lu  expl=%u fire=%u impact=%u  painted=%u  head=%02x%02x pitch=%02x%02x\n", \
   ($n ? (g_sfxRingIters-$s_iters)/$n : 0), ($n ? ((100*(g_sfxRingIters-$s_iters))/$n)%100 : 0), \
   g_clExplode, g_clEnemyFire, g_clImpact, (g_fdCalls-$s_fd), \
   mem[0x2886], mem[0x2885], mem[0x0029], mem[0x0028]
