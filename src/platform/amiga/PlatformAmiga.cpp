@@ -1264,12 +1264,11 @@ void PlatformAmiga::flightShotTick()
 // flightScannerTick: the whole Long Range Scanner (#13) mirror, from the flight VBI (50Hz) — like
 // flightShotTick this is the faithful home for both halves, and for the dot it is also the only
 // race-free one:
-//   * the GUIDE DOT (Atari missile M2) — buildScannerDotSprite scans the missile buffer $0B88-$0BB8
-//     that $44E0 clears-then-sets in vbi_handler_flight just above.  A main-loop scan of that window
-//     can be interrupted between the clear and the set and then finds no blob at all, dropping the
-//     dot for that frame (worse on a faster CPU: more scans per VBI tick).  Here the scan cannot
-//     overlap the write, and the dot tracks range/bearing at the Atari's own 50Hz rather than the
-//     terrain-render rate.
+//   * the GUIDE DOT (Atari missile M2) — buildScannerDotSprite consumes the range+bearing sighting the
+//     flight loop PUSHED from the terrain display pass, and draws + BLINKS the dot from it.  Doing it
+//     here (50Hz), not from the terrain render, is what makes the blink CPU-independent: the render
+//     rate scales with the CPU, this ISR does not.  ⚠ It must not read mem[$28DA]/mem[$00CE] itself —
+//     those are per-pass samples that alias against the free-running loop (see buildScannerDotSprite).
 //   * the CLOSE-RANGE BLINK cells $33DF/$33E0 — startup_init() ($3FFA, likewise run in the handler
 //     above) toggles their bit7 at 50Hz (a two-speed proximity blink), so decoding here makes the
 //     blink run at full rate instead of the ~5-6fps main-loop render() cadence (which made it far

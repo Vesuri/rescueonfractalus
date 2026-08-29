@@ -240,13 +240,38 @@ altimeter_alt_ref`), an ALTITUDE-sounding source, whereas the scanner's range-to
 `altimeter_alt_ref` is misnamed. A user flight report settled it: **the dot tracks bearing and range
 to the pilot**, so the instrument mapping is right and the suspect name is the SOURCE.
 
-⚠ Therefore also suspect: **`$28DA altimeter_alt_ref`** (`symbols.csv:927`, "Altitude reference;
-`$1C-$28DA` = altimeter digit/bar row"; snapshot from `$28E8` at `$A43C`, reset `$80` at init
-`$78A2`). If `$1C - $28DA` positions the scanner dot, `$28DA` is a pilot-RANGE quantity, not an
-altitude — needs its own derivation before renaming, since the same byte may well feed the real
-altimeter too. Same method note as the `$0021`/`$0027` entry below: the tie-breaker was flying it,
-not more static reasoning about the disassembly.
+⚠ Therefore also **`$28DA altimeter_alt_ref`** — derivation now DONE, it is confirmed misnamed and
+does NOT double as an altitude. Its ONLY reader is `$44D6` (`$1C - $28DA` → the scanner-dot row);
+nothing reads it as an altitude, and the real altimeter bar is driven by `terrain_clearance`
+(`dispatch_43cb_half_70`), not this. Its value is a NEAREST-scanned-object quantity:
+`terrain_plot_object` (`$A683`) stashes each object's `$232E` byte in `$28E4` and, for the closest one
+to pass the depth test, copies it to `$28E8` (`rof_native.c:6803/6812`); `terrain_draw_frame` resets
+`$28E8=$80` every frame and publishes `$28DA=$28E8` (`8335/8358`); init/death/level-clear reset it to
+`$80` (`3727`, `12666`). So the per-frame `$80`↔valid swing (instrumented live this session) IS the
+guide-dot blink, and `$28DA` is a pilot/nearest-object RANGE quantity. **Suggested:**
+`scanner_target_range` (or `nearest_object_row`). Its sibling **`$28D9 altimeter_color_base`** is the
+same story — a snapshot of `$28E7 = $0059` (the object half-width) — so `altitude_color_or_glyph`
+(derived from it in `$44D6`) is suspect too. Not yet renamed in `symbols.csv` (batch-rename via the
+transpiler, per CLAUDE.md). Same method note as the `$0021`/`$0027` entry below: the original
+which-way tie-breaker was flying it, not static reasoning about the disassembly.
 
 Also note the blob is only ever **moved, never cleared**, so the dot cannot blink by its M2 bits
 going away (the proximity blink is the `$33DF/$33E0` pen swap). A comment in
 `buildScannerDotSprite` claiming otherwise was corrected.
+
+⚠⚠ **`$00CE altitude_color_or_glyph` — CONFIRMED misnamed: it is the guide dot's HPOSM2 (horizontal
+position / target BEARING), not a colour or a glyph.** `$44D6` derives it as `$28D9 + $AB`, keeping the
+result only when it lands in `[$A3,$B4)` and substituting **`$B5`** otherwise. Measured on the Amiga
+mirror, that window maps to hardware sprite X `359..389` — inside the LR-scanner disc's transparent
+window — while the `$B5` substitute maps to X `395`, i.e. a PARK position outside it. Because the
+dashboard copper sets `PFxP=0` (all sprites BEHIND the playfield), a parked dot is not merely
+mispositioned but completely **hidden** behind the opaque cockpit bitmap. So `$B5` is how the original
+hides the dot horizontally, and the name should say position, not colour. **Suggested:**
+`scanner_dot_hpos` (and `$28D9` → `scanner_target_bearing`, superseding the "suspect" note above).
+Not yet renamed in `symbols.csv` (batch-rename via the transpiler, per CLAUDE.md).
+
+Consequence for the port, recorded because it cost several wrong fixes: the dot has TWO aliased inputs,
+not one. `$28DA` (range → row) and `$28D9` (bearing → X) are BOTH republished per terrain pass, and
+`$44D6` samples both in the 50 Hz VBI while the flight loop free-runs — so on a fast CPU either can
+alias to its off-disc/parked sentinel. Fixing only the row leaves the dot drawn, correctly coloured,
+and invisible. Both coordinates must be pushed together from the display pass's publish point.

@@ -75,11 +75,11 @@ public:
                                  // bitmap; PUBLIC because it runs in the flight VBI (via PlatformAmiga::
                                  // flightScannerTick) at 50Hz so the blink animates at full rate, not
                                  // the ~5-6fps main-loop render() cadence.  Decodes only on a bit7 flip.
-    void buildScannerDotSprite();   // LR-scanner (#13) guide dot: missile buffer $0B00 + $CE ->
-                                 // scannerDotSprite.  PUBLIC for the same reason, and it MUST stay in
-                                 // the VBI: the blob it scans is moved by $44E0 (clear 3 rows, set 3
-                                 // rows) inside the very handler this runs after, so a main-loop scan
-                                 // can be interrupted mid-window and see the cleared state = no dot.
+    void buildScannerDotSprite();   // LR-scanner (#13) guide dot -> scannerDotSprite.  PUBLIC for the
+                                 // same reason, and it MUST stay in the VBI: it owns the dot's blink
+                                 // cadence, which has to be CPU-independent.  It consumes the range+
+                                 // bearing PUSHED from the terrain display pass and must never sample
+                                 // mem[$28DA]/mem[$00CE] itself — see the .cpp for why.
     void shutdown();
 
     // run(): the whole game as a faithful straight-line transcription of the
@@ -539,13 +539,15 @@ private:
     //   position (RANGE to the downed pilot) = the M2 bits in the missile DMA buffer $0B00
     //   (dashboard band); horizontal position (BEARING) = mem[$00CE] (the flight dashboard DLI
     //   $4AC7 loads it into HPOSM2); colour = COLPM2 $26 (red).  Reuses ch2 (right A-pillar, runs
-    //   to VSTOP 180 → arms) via the copper SPR2PT re-point.  Read-only mirror: the native flight
-    //   VBI already writes the buffer + $CE into mem[], so no writer port / dirty hook is needed.
-    Sprite*     scannerDotSprite = nullptr;
-    int         scannerPrevRows = 0;  // rows written last frame (clear only those, not the whole sprite)
-    uint8_t     scannerRow = 0;       // g_scannerBlobRow of the last build; a change ⇒ rebuild pixels+Y
-    uint8_t     scannerBearing = 0;   // mem[$CE] of the last build; a change alone ⇒ just setX
-    bool        scannerBuilt = false; // both latched, so equal (row,bearing) means "nothing to redo"
+    //   to VSTOP 180 → arms) via the copper SPR2PT re-point.
+    Sprite*        scannerDotSprite = nullptr;
+    int            scannerPrevRows = 0;  // rows written last frame (clear only those, not the whole sprite)
+    uint8_t        scannerRow = 0;       // the blob row of the last build; a change ⇒ rebuild pixels+Y
+    uint8_t        scannerBearing = 0;   // the bearing of the last build; a change alone ⇒ just setX
+    bool           scannerBuilt = false; // both latched, so equal (row,bearing) means "nothing to redo"
+    // Both coordinates are PUSHED to the flight VBI from the terrain display pass (rof_note_scanner_dot),
+    // never sampled by the VBI itself, and the VBI generates the blink at a fixed cadence — so the dot is
+    // identical on any CPU speed.  Why that is mandatory: see buildScannerDotSprite.
 
     // ---- the six flight sprite builders, DEFERRED into renderFlightDirect's blitter shadows ----
     // They are pure CPU on sprite buffers and touch neither the terrain bitmap nor the dot side

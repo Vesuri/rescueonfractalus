@@ -41,8 +41,7 @@ printf "  found a run  %lu  (%lu%% — must be well above 0 or the test proved n
   g_scanHit, (g_scanCalls ? (100*g_scanHit)/g_scanCalls : 0)
 printf "  raced (ISR rewrote the buffer mid-check, discarded) %lu  (%lu%%)\n", \
   g_scanRaced, (g_scanCalls ? (100*g_scanRaced)/g_scanCalls : 0)
-printf "  of which the SCANNER DOT %lu  (its check fires only on a change-gate miss; 0 = the\n", g_scanDotCalls
-printf "                              dot was never compared and the zero below is vacuous)\n"
+printf "  (users: targeting scope + altimeter-height P3 mirrors; the scanner dot no longer scans)\n"
 printf "  MISMATCHES   %lu   <-- must be 0\n", g_scanBad
 printf "  last bad top oracle=%d helper=%d\n", \
   (short)(g_scanLastBadTop >> 16), (short)(g_scanLastBadTop & 0xFFFF)
