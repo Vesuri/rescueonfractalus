@@ -1710,7 +1710,14 @@ void RescueOnFractalus::buildViewportP3Sprite()
 // early-out can skip — and it sets a STICKY flag this ISR CONSUMES AND CLEARS.  That cannot be defeated
 // by phase, aliasing or CPU speed: if a pass since the last VBI saw a target, the flag is set.  The ISR
 // then owns the flash cadence, so the appearance is identical on any CPU.
-static const int     kScannerDotRows   = 8;   // the M2 blob is ~3 rows; a few spare for safety
+static const int     kScannerDotRows   = 3;   // the M2 blob is EXACTLY 3 rows ($44D6 writes 3 cells)
+// $44D6's OWN park sentinels: with no target it moves the blob to row $1E and puts $B5 in the HPOSM2
+// byte.  Both land outside the scanner disc's window, and the dashboard copper sets PFxP=0 (sprites
+// BEHIND the playfield), so a parked dot is hidden by the opaque cockpit bitmap — that is how the
+// ORIGINAL makes the dot disappear.  Reusing it verbatim means the blink never touches a pixel: it is
+// a MOVE between the on-position and this park, exactly like the missile it mirrors.
+static const uint8_t kDotParkRow  = 0x1Eu;
+static const uint8_t kDotParkBear = 0xB5u;
 static const uint8_t kDotBlinkHalfVbis = 6;   // VBIs per on (or off) flash half → full flash ≈ 4.2Hz
 static const uint8_t kDotGraceVbis     = 12;  // keep a target "present" this many VBIs after the last
                                               // sighting, to bridge the range sample's strobing
@@ -1748,14 +1755,14 @@ void RescueOnFractalus::buildScannerDotSprite()
 {
     // Runs every flight VBI (50Hz).  Consume the render's pushed sighting, and hold the dot "present"
     // for a grace window so the gaps between sightings cannot drop it.
-    static uint8_t heldRow  = 0x1Eu;
-    static uint8_t heldBear = 0xA3u;
+    static uint8_t heldRow  = kDotParkRow;
+    static uint8_t heldBear = kDotParkBear;
     static uint8_t grace    = 0;
     // The pushed (row, bearing) pair is the ONLY sighting source: the ISR must not read mem[$28DA] or
-    // mem[$00CE] itself — both are the aliased per-pass samples this fix exists to stop trusting.
+    // mem[$00CE] itself — both are the aliased per-pass samples this design exists to stop trusting.
     if (g_dotSighted) {
         heldRow = g_dotSightRow; heldBear = g_dotSightBear;
-        g_dotSighted = 0;                            // consume
+        g_dotSighted = 0;                             // consume
         grace = kDotGraceVbis;
     }
     else if (grace) grace--;
@@ -1765,41 +1772,26 @@ void RescueOnFractalus::buildScannerDotSprite()
     static uint8_t blinkOn  = 1;
     if (++blinkCtr >= kDotBlinkHalfVbis) { blinkCtr = 0; blinkOn ^= 1; }
 
-    uint16_t* d = scannerDotSprite->data() + 2;       // skip the 2 control words
-    if (!(grace && blinkOn)) {                         // off half of the flash, or no target present
-        if (scannerPrevRows) {
-            for (int i = 0; i < scannerPrevRows; i++) { d[i * 2] = 0; d[i * 2 + 1] = 0; }
-            scannerPrevRows = 0;
-        }
-        scannerBuilt = false;                         // force a full rebuild when the dot returns
-        return;
+    // Show, or park.  This ISR writes NO pixels, ever — the blob was written at initialisation and the
+    // dot's whole appearance is its position.  An off half is deliberately INDISTINGUISHABLE from
+    // "no target": both use $44D6's sentinels, so the dot is hidden the way the original hides it.
+    const bool    show = (grace && blinkOn);
+    const uint8_t row  = show ? heldRow  : kDotParkRow;
+    const uint8_t bear = show ? heldBear : kDotParkBear;
+    if (row != scannerRow) {
+        scannerRow = row;
+        // blob row -> Amiga line (same PMG single-line mapping as the AH/scope copies; +0 = no extra
+        // offset — user-calibrated for the scanner disc on FS-UAE, higher than the scope's +7).
+        const int top = 0x0091 + row;                 // buffer row of the blob's first cell ($0B91+row - $0B00)
+        scannerDotSprite->setY((uint16_t)(kTerrainLine + (top - 0x32)));
     }
-    // On half.  The bearing (X) tracks live at 50Hz as the ship turns — faithful, and cheap: a
-    // no-row-change frame is just a setX.  Only a committed-row change rebuilds pixels + Y.
-    const uint8_t bearing = heldBear;                 // the PUSHED bearing, never mem[$00CE] (see above)
-    if (scannerBuilt && heldRow == scannerRow) {
-        if (bearing != scannerBearing) {
-            scannerBearing = bearing;
-            scannerDotSprite->setX((uint16_t)(0x85 + ((int)bearing - 0x32) * 2));
-        }
-        return;
+    if (bear != scannerBearing) {                     // usually the only write: the dot slides as the ship turns
+        scannerBearing = bear;
+        // bearing X = the pushed HPOSM2 byte (what $44D6 puts in mem[$00CE], but taken from the publish
+        // point); same Atari-HPOS -> Amiga hardware-X transform as the scope/viewport-P3 copies (+4
+        // user-calibrated on FS-UAE).  X must land in the disc's window or the cockpit hides it.
+        scannerDotSprite->setX((uint16_t)(0x85 + ((int)bear - 0x32) * 2));
     }
-    scannerRow = heldRow; scannerBearing = bearing; scannerBuilt = true;
-    // Draw the blob directly rather than reading the $0B91 cells: $44D6 clears those cells whenever it
-    // moves the blob, so a live read can catch them empty and drop the dot for a frame.  The blob is
-    // invariant — $44D6 always writes exactly 3 contiguous cells with BOTH M2 pixels ($30 → 0xC000) —
-    // so a fixed 3-row blob at the committed row reproduces it.
-    for (int i = 0; i < scannerPrevRows; i++) { d[i * 2] = 0; d[i * 2 + 1] = 0; }   // clear last frame's rows
-    for (int i = 0; i < 3; i++) { d[i * 2] = 0; d[i * 2 + 1] = 0xC000u; }            // plane B → pen 10 → COLOR22 (red)
-    scannerPrevRows = 3;
-    const int top = 0x0091 + scannerRow;              // buffer row of the blob's first cell ($0B91+row − $0B00)
-    // buffer row → Amiga line (same PMG single-line mapping as the AH/scope copies; +0 =
-    // no extra offset — user-calibrated for the scanner disc on FS-UAE, higher than the scope's +7).
-    scannerDotSprite->setY((uint16_t)(kTerrainLine + (top - 0x32)));
-    // bearing X = the pushed HPOSM2 byte (what $44D6 puts in mem[$00CE], but taken from the publish
-    // point); same Atari-HPOS → Amiga hardware-X transform as the scope/viewport-P3 copies (+4
-    // user-calibrated on FS-UAE).  X must land in the scanner disc's window or the cockpit hides it.
-    scannerDotSprite->setX((uint16_t)(0x85 + ((int)bearing - 0x32) * 2));
 }
 
 // ---- throttle gauge sprite ---------------------------------------------------
@@ -2383,6 +2375,13 @@ void RescueOnFractalus::initialize()
         || !altimeterShipSprite || !flLeftPost || !flRightPost || !flLeftTri || !flRightTri
         || !ahLeft || !ahRight || !shotSprite || !shotSpriteBack || !scopeP3Sprite
         || !viewportP3Sprite || !scannerDotSprite) return;
+    // The guide dot's pixels are CONSTANT, so they are initialisation data: write the 3-row M2 blob
+    // once, here, and never again.  $44D6 always sets exactly 3 contiguous cells with BOTH M2 pixels
+    // ($30 -> plane B 0xC000 -> pen 10 -> COLOR22), and on the Amiga the blob's vertical position is
+    // VSTART/VSTOP rather than which rows carry the bits — so the pattern never changes and the whole
+    // mirror, blink included, reduces to moving the sprite.  See buildScannerDotSprite.
+    { uint16_t* d = scannerDotSprite->data() + 2;      // skip the 2 control words
+      for (int i = 0; i < kScannerDotRows; i++) { d[i * 2] = 0; d[i * 2 + 1] = 0xC000u; } }
     // Starfield sprites: each Atari player P0/P2/P3 is a 32-cc quad, drawn as a pair of strips —
     // starSprite[2c] (low, at kStarX[c]) + starSprite[2c+1] (high, +16 px) — both at the windscreen
     // top (player scanline $32 → Amiga Y = kTerrainLine).  Height = kViewportFullHeight so VSTOP

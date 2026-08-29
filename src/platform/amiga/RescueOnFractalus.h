@@ -541,13 +541,14 @@ private:
     //   $4AC7 loads it into HPOSM2); colour = COLPM2 $26 (red).  Reuses ch2 (right A-pillar, runs
     //   to VSTOP 180 → arms) via the copper SPR2PT re-point.
     Sprite*        scannerDotSprite = nullptr;
-    int            scannerPrevRows = 0;  // rows written last frame (clear only those, not the whole sprite)
-    uint8_t        scannerRow = 0;       // the blob row of the last build; a change ⇒ rebuild pixels+Y
-    uint8_t        scannerBearing = 0;   // the bearing of the last build; a change alone ⇒ just setX
-    bool           scannerBuilt = false; // both latched, so equal (row,bearing) means "nothing to redo"
+    uint8_t        scannerRow = 0xFFu;   // blob row the sprite is AT; a change ⇒ setY.  $FF = no row yet
+    uint8_t        scannerBearing = 0;   // bearing the sprite is AT; a change ⇒ setX
     // Both coordinates are PUSHED to the flight VBI from the terrain display pass (rof_note_scanner_dot),
     // never sampled by the VBI itself, and the VBI generates the blink at a fixed cadence — so the dot is
     // identical on any CPU speed.  Why that is mandatory: see buildScannerDotSprite.
+    // The blink is POSITIONAL, as on the Atari: the pixels are written ONCE at initialisation (next to
+    // the allocation) and the dot is MOVED to $44D6's park (row $1E / $B5, behind the cockpit bitmap)
+    // to hide it.  The flight VBI never writes a pixel — nothing is ever redrawn.
 
     // ---- the six flight sprite builders, DEFERRED into renderFlightDirect's blitter shadows ----
     // They are pure CPU on sprite buffers and touch neither the terrain bitmap nor the dot side
