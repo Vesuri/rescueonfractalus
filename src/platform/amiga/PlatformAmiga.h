@@ -52,10 +52,11 @@ public:
     // POKEY->Paula audio backend (static — no instance state; the 6502-converted
     // station_audio writes POKEY registers via hwWrite, these route them to Paula DMA).
     //   audioInit/audioShutdown : bracket Paula audio DMA (called by RescueOnFractalus).
-    //   noiseTick               : per-RENDERED-FRAME refresh of the continuous poly17 noise
-    //                             sample.  Called from renderFrame (the main loop), NOT the
-    //                             50 Hz VBI ISR — it has no beam-timing requirement and the
-    //                             ISR fires 50x/s regardless of how slow the frame is.
+    //   noiseTick               : refresh of the continuous poly17 noise sample.  Called from
+    //                             renderFrame (the main loop), NOT the 50 Hz VBI ISR — it has no
+    //                             beam-timing requirement and the ISR fires 50x/s regardless of
+    //                             how slow the frame is.  Its RATE is paced by wall clock
+    //                             (g_vbiCount), not by the call rate; see PlatformAmiga.cpp.
     static void audioInit();
     static void audioShutdown();
     static void noiseTick();

@@ -627,18 +627,22 @@ in the rendering; it is a defect the old approximation was *hiding*:
   like the next. A 2-level ±square does not: the repeating pattern reads as a distinct pitched,
   rhythmic artifact. Making the waveform more faithful made a pre-existing inaudible defect
   audible.
-* **`noiseTick` refills 16 bytes per RENDERED frame, not per unit time.** In a scene that is still
-  largely transpiled (the Station is the reported case) the frame rate collapses while Paula's read
-  rate does not, so the refill stops masking the loop at all and it is fully exposed. This half is
-  worth fixing on its own terms whatever the waveform is.
+* ✅ **`noiseTick` refilled per RENDERED frame, not per unit time — FIXED.** The refill is now paced
+  off `g_vbiCount` (bumped in the real 50 Hz vblank ISR): 2 longwords per VBI, ~400 B/s, capped at
+  8 VBIs of catch-up after a stall. It is the same rate on every CPU and in every scene, and it
+  stays below the drone's ~626 B/s read rate so the write pointer never laps Paula. The bug cut
+  both ways: a still-largely-transpiled scene (the Station) starved the refill and exposed the loop,
+  while a 25 MHz+ accelerator churned the buffer several times past 50 Hz and made the mother-ship
+  launch engine harsh — that accelerator report is what closed it. **The loop itself is untouched.**
 
 **So the loop, not the waveform, is the thing to attack first.** Any retry must eliminate the
 repeat, not just improve the timbre. A full-period buffer is 131071 bytes — impossible in chip RAM.
 Continuous double-buffered regeneration at Paula's read rate is the real answer, and its cost scales
 with that rate: the engine drone alone reads ~626 B/s (~22k cycles/s, ~0.3% CPU — affordable), but
 the worst case is a short burst at the Paula floor, ~28.6 kB/s (~1M cycles/s, ~14% — not affordable
-in flight). An adaptive refill driven by the fastest active noise voice, on a fixed time base rather
-than per rendered frame, is the shape that could work.
+in flight). The fixed time base is now in place (above), so what a retry still has to add is the
+*adaptive* half: drive the refill rate from the fastest active noise voice rather than the flat
+2 longwords/VBI.
 
 ⭐ **The transferable lesson: a more faithful waveform can be worse when the surrounding
 approximation was load-bearing.** Full-range noise was not just "less accurate timbre" — it was
