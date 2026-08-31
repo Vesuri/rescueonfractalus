@@ -260,12 +260,17 @@ load (e.g. the level-start chirp) that the priority mixer re-promotes when the r
 competes for a channel, or (b) an Amiga-specific mis-load. It is **not** a fresh push from the
 approach path. See [[pilot-proximity-beep]] for the open investigation + capture harness.
 
-## The saucer tone's noise waveform — CLOSED 2026-08-13 (user's call, not reproduced since)
+## The saucer tone's noise waveform — CLOSED 2026-08-31 (the DMA-restart off-window)
 
 Reported 2026-08-06 while ear-checking the SFX mixer asm twin: the high-pitched tone that plays
 the whole time a flying saucer is present (that part is *correct*) **sometimes used the noise
-waveform**. Never heard again in a week of flying; closed on the user's instruction. Reopen only
-on a fresh report — these are the leads it was closed with, so nobody re-derives them.
+waveform**. Provisionally closed 2026-08-13 as not-reproduced; **attributed 2026-08-31 to the
+DMA-restart off-window** (§…flooring the period was NOT sufficient) — the saucer tone is a pitched
+voice, so a channel arriving from the engine drone's `noise_buf` played noise at its onset until
+the 4096-word loop wrapped, and "sometimes" is the DMA phase. ⚠ Attributed, not *proven*: it was
+never reproduced after the report, so there was nothing left to A/B. It matches the mechanism and
+all four confirmed siblings; the four suspect leads below are kept only in case a saucer-specific
+symptom outlives the fix.
 
 **Cleared of the mixer asm twin (a2f331f) — do not re-litigate that part:** `make FUZZ=1` +
 `amiga/sfxmix_fuzz.gdb` ran 7458 randomised on-target cases with **0 mismatch across all six
@@ -323,17 +328,82 @@ sound. Measured: 32% of firings restarting, outgoing period averaging 13785, `wl
 clamp** = 7 ms of busy-wait, **39.4 t/firing = the entire audio bracket and 32% of the whole flight
 VBI**.
 
-**The fix is one observation: the period still loaded is ours to choose.** AUDxPER takes effect
-immediately, so writing `kPaulaMinPer` (124) to each restarting channel *before* the off-window makes
-2 sample periods ≈ 1.1 rasterlines, and the unchanged formula lands on its 7-line floor every time —
-still ~12 sample periods of headroom. Per-restart wait **48.4 → 6.7 lines**; firing's ISR cost
-**+96% → +39%**. `make FLUSHWAIT_OLD=1` restores the old sizing for an A/B; the probe rows are in
-`amiga/fire_once.gdb`. Record: `docs/flight-perf-log.md` §25.1-25.2.
+**The fix was one observation: the period still loaded is ours to choose.** Writing `kPaulaMinPer`
+(124) to each restarting channel *before* the off-window makes the post-reset sample period ~0.5
+rasterlines, and the formula lands on its 7-line floor every time. Per-restart wait **48.4 → 6.7
+lines**; firing's ISR cost **+96% → +39%**. `make FLUSHWAIT_OLD=1` restores the old sizing for an
+A/B. Record: `docs/flight-perf-log.md` §25.1-25.2.
 
 ⚠ **The clamp was hiding a correctness bug, not just a cost.** At per > 12031 the old formula wanted
 more than 110 lines and got clamped, so the shipping code was already under-waiting the rule it was
-written to satisfy — for every slow outgoing note. Flooring the period is what makes the rule actually
-hold.
+written to satisfy — for every slow outgoing note.
+
+### ⛔⭐ …and flooring the period was NOT sufficient — the premise "AUDxPER takes effect immediately" is wrong (fixed 2026-08-31)
+
+**A write to AUDxPER changes only the RELOAD value. The countdown already in flight keeps its old
+duration**, and the channel reaches idle only after that countdown expires *and then* one more
+sample at the new period. Verified in `tmp/fs-uae/audio.cpp`: `AUDxPER` sets `cdp->per` and
+deliberately does **not** touch `cdp->evtime`; `audio_state_channel2` leaves state 2/3 for
+`zerostate` only via state 3's period event. So the honest window is **`outgoing_per +
+kPaulaMinPer` ticks**, and the 7-line floor (1589 ticks) covers it only while the outgoing period
+is under ~1465 — i.e. above ~1200 Hz. Every drone, bass and explosion tail is below that.
+
+⭐⭐ **FS-UAE reports this failure out loud, and that is the cheapest instrument in the box.** Its
+audio log line
+
+```
+Audio 3 DMA wait hack DISABLED. OFF=0021d686, ON=0021d740, PER=9392
+```
+
+means *the channel was still in state 2/3 when DMA was re-enabled* — the reset never happened —
+and `PER=` is the countdown still in flight. `OFF`/`ON` are the two `dmacon` writes: their
+difference (0xBA) matches `flush_paula`'s own two stores in `objdump`, which is how you prove the
+lines are yours. A `FORCE_DEATH` run produced **59 of them, all from that one off→on pair.** The
+hack that would have papered over it needs `usehacks()` = `cpu_model >= 68020 || m68k_speed != 0`,
+so it is **off for a cycle-exact 68000** — as is real hardware. It appears in `.run/gdb-out.log`,
+not `fsuae-dbg.log`.
+
+**A missed reset is not silent failure**, and that is what decides how much it costs: Paula still
+latches the new AUDxLC/LEN at the **outgoing loop's own wrap**, `cur_len` samples later.
+
+| outgoing waveform | words | wrap after | missed reset is |
+|---|---|---|---|
+| `wave_pure` | 1 | 2 samples | invisible |
+| `poly4_wave` / `poly5_wave` | 15 / 31 | ≤31 samples | <1 frame of stale timbre on a sweeping sound |
+| `poly_dist_buf` | 511 | 511 samples | up to seconds of the WRONG waveform |
+| `noise_buf` | 4096 | 4096 samples | 0.14 s at per 124, far worse at a drone period |
+
+So the shipping rule is: **size the wait from the outgoing period only for channels whose outgoing
+loop is longer than 31 words** (`wl = max_per/227 + 3`, clamped [7,160]). Where nothing is wrong the
+behaviour is byte-identical: `max_per` stays 0, so `wl` clamps to the same 7-line floor as before.
+
+**Measured cost** (`make PROBES=1 FORCE_RETURN=1 FORCE_RELAUNCH=1 AUDIO_TRACE=1` +
+`amiga/audio_restart.gdb`, two boot → launch → flight → mother ship → relaunch → flight runs of
+~14720 vblanks, 470-511 restarts each): long-loop restarts still under-waited **0** in both. Only
+**37 / 43** restarts wait more than the floor, for **1607 / 1901 extra rasterlines in total =
+0.04-0.06% of the run's beam time**. Worst single ISR spike **66 lines (1.3 ms, 21% of a frame)**,
+from a drone at per 14301. So this is not a re-opening of §25 — quote the rasterline count, not
+FPS: 0.05% is an order of magnitude below what `fps_seg` can resolve (⭐ a change this small is a
+coin flip on SIGN there, so measuring it by FPS would produce a confidently wrong number in either
+direction).
+
+⚠ **`g_fpLenHist` is the wrong instrument for the flight-safety question**, even though it buckets
+by exactly this length: `poly_dist_buf`'s live length is `poly_dist_len/2` — **465** words for the
+gated-poly4 mode — so it lands in the histogram's `>=31` poly5 bucket, not its `>=511` one. Use the
+per-restart rows.
+
+**The lever not taken** (recorded so it is not re-derived): parking a silent channel's period at
+`kPaulaMinPer` in `update_paula_channel`'s `vol == 0` arm would make every release→attack restart
+land on the floor, since a silent channel's period is inaudible. It would remove most of the 37.
+Not shipped — the measured cost did not justify a second behaviour change in the same fix.
+
+⭐ **This is why "the first launch is always right".** Out of boot every channel sits on
+`wave_pure`, where a missed reset is 2 samples long. After a flight they are parked on `noise_buf`
+and `poly_dist_buf`, and the next note onset inherits up to a second of the old waveform at the new
+volume. That is the whole family of reports: the post-mother-ship relaunch's three-note bleep
+arriving as noise, the tunnel drone louder and buzzier, the game-over jingle's first notes as noise
+on every channel — and the long-standing §Still open "a voice occasionally sounds the NOISE waveform
+at onset".
 
 ⚠ **`build_poly_dist` measures 0 calls in flight and in the first ~13 s of standby** —
 `g_polyDistCalls` is 0 in every window before/during/after a shot, and 0 over 2130 vblanks of a
@@ -454,7 +524,21 @@ is not mistaken for superstition later. ⚠ Snapshot caveat as always.
 frequency envelope, so its stride never changes: one build, then five cache hits. `$01` sweeps
 `$3a→$1f`, so it rebuilds once per frame for ~27 frames in a non-terrain scene.
 
-### Still open: a voice occasionally sounds the NOISE waveform at onset
+### A voice occasionally sounds the NOISE waveform at onset — CLOSED 2026-08-31 (user-confirmed)
+
+⭐ **It was the DMA-restart off-window, above** (§…flooring the period was NOT sufficient). The
+airlock footsteps are event `$1A`, AUDC `$46` = gated poly4 → `poly_dist_buf`; the voice they
+follow on slot 8 is one of the noise events `$16`/`$17`/`$18` → `noise_buf`, 4096 words. A
+long→long restart under a 7-line window never reset the channel, so the footstep's onset played
+the **outgoing noise buffer** until it wrapped. Fixed by sizing the window from the outgoing
+period whenever the outgoing loop is long; user-confirmed by ear ("works great now").
+
+⭐ **One cause, one fix, five reports** — this is the whole family, and none of them was a wrong
+POKEY byte: the post-mother-ship relaunch bleep, the tunnel drone "louder/more distorted", the
+game-over jingle's first notes on every channel, these footsteps, and §The saucer tone. Every
+"the port picked the wrong waveform" theory chased for weeks was looking at *selection* when the
+defect was in *when Paula latches it*. **If a wrong onset waveform is ever reported again**, the
+two candidates below stay eliminated — go to the slot-8 priority-mixer handover.
 
 Reported 2026-08-18: sometimes one of the first two airlock footsteps comes out as noise, and
 (once, historically) the saucer tone did. ⚠ **The mothership bonus-points counter was reported
@@ -473,9 +557,12 @@ eliminated, so do not re-derive them:
   writes AUDF and AUDC back-to-back in the same tick, so the AUDC write's `want_set` always
   overrides the AUDF write's before the frame's `flush_paula`.
 
-Next step is a captured POKEY write log (reg/val/frame ring, dumped over gdb on a user-triggered
-repro) rather than another static theory — the same offline-capture route that settled the Station
-squeal.
+⭐⭐ **What actually settled it was neither a capture nor a theory: the emulator was already
+reporting the bug in its own log.** `.run/gdb-out.log` carried 59 `Audio 3 DMA wait hack DISABLED
+… PER=9392` lines, each one FS-UAE saying "this channel was still mid-sample when you re-enabled
+its DMA". **Read the emulator's log before building an instrument** — and read the emulator's
+SOURCE (`tmp/fs-uae/audio.cpp`) before trusting a hardware-manual paraphrase: "AUDxPER takes effect
+immediately" was the paraphrase that cost this bug, and `AUDxPER`'s six lines disprove it.
 
 ⚠ **Do not close this on a quiet session.** A play-through right after the `$40` fix showed no wrong
 waveforms, but the chain resolver is a no-op unless AUDCTL sets bits 3-6 (nothing live does), and

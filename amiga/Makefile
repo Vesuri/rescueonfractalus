@@ -821,6 +821,21 @@ endif
 ifdef TITLE_START
 EXTRA_DEFINES += -DROF_TITLE_START
 endif
+# `make PROBES=1 FORCE_RETURN=1 FORCE_RELAUNCH=1`: after the return-to-mother-ship cinematic has
+# landed back in the post-mother-ship Standby, HOLD START again so the SECOND launch cinematic runs
+# headlessly.  The A/B for "the second launch sounds different": pair with AUDIO_TRACE=1 to capture
+# the POKEY stream of both launches in one run.  Requires PROBES + FORCE_RETURN.
+ifdef FORCE_RELAUNCH
+EXTRA_DEFINES += -DROF_FORCE_RELAUNCH
+endif
+# `make PROBES=1 AUDIO_TRACE=1`: log every Paula DMA-restart done by flush_paula — the OUTGOING
+# waveform's period and loop length, and the rasterlines actually waited.  That is the pair that
+# decides whether the off-window was long enough for Paula to reach idle and latch the new
+# AUDxLC/LEN; under-waiting on a LONG outgoing loop is the "a note's onset plays as noise" family
+# of bugs.  Also marks which vbi each launch began at.  Readout: amiga/audio_restart.gdb.
+ifdef AUDIO_TRACE
+EXTRA_DEFINES += -DROF_AUDIO_TRACE
+endif
 CORE_CFLAGS   = -g -MP -MMD -m68000 -msoft-float $(OPT) -nostdlib \
                 -fno-tree-loop-distribution -ffunction-sections -fdata-sections \
                 -Wno-unused-function -Wno-unused-parameter -Wno-unused-variable \
