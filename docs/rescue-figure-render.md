@@ -103,10 +103,53 @@ passes, the shape byte read from `mem[]` instead of through `bus_read`, and the 
 accumulators kept in 16-bit locals with one write-back instead of per-iteration `mem[]` traffic.
 
 ⇒ **After the rewrite the draw is ~100 % plot cost** (276 plots x 901 cycles ~= the whole 553 t), so
-`plot_clipped_pixel` is the only remaining lever. At ~901 cycles for one 2-bit pixel the candidates
-are the three chip-RAM read-modify-writes in `ROF_PLOT_FIG` (mask + 2 planes) and the per-pixel call
-itself — i.e. plotting a whole row's worth of cells per call rather than one pixel. Not attempted;
-the budget is met.
+`plot_clipped_pixel` is the only remaining lever.
+
+### ⏳ FUTURE WORK — 35 ms for a small figure is still far too much (user, 2026-08-31)
+
+Deferred, not closed: the user's verdict is *"35 ms is still a rather massive amount of time to
+render a small figure on screen but let's mark this as future work."* At the `$0100` floor the
+figure is ~17 rows x 12 pixels — call it ~204 cells — so **35 ms is ~170 us, about 1,200 68000
+cycles, per 2-bit pixel.** The 80 ms budget is met and the reported slowdown is gone, so there is
+no correctness or pacing pressure; this is purely "the number is absurd".
+
+⚠ **This is NOT the closed flight-perf effort** (`CLAUDE.md` §Performance). The zoom is a cold,
+once-per-animation-step routine that runs while the terrain is FROZEN and the flight loop is parked
+inside `animate_zoom_sequence` — it shares no code with the terrain pipeline. Working on it does not
+reopen anything.
+
+**Candidate 1 (largest, and provably faithful): hoist the y-derived work out of the per-pixel call.**
+Everything `plot_clipped_pixel` derives from y is **constant for a whole row** — y changes only in
+`draw_scaled_shape`'s outer loop, never in the column loop, and the 14 leading / 2 trailing
+transparent plots share the row's y too. Per pixel it currently redoes:
+* the `$97 - y` row index and both `row_base_lo/row_base_hi` table reads,
+* the 16-bit `readPtr + $30`,
+* **four `mem[]` stores** (`$0080/$0081/$00C1/$00C2`) that write the *same value* 12-15 times a row,
+* the `y < $6C || y >= $97` half of the window test.
+
+A row-batched plotter would do all of that **once per row instead of ~15 times**, and it is
+byte-identical by construction: the stores are last-write-wins with an identical value, so the
+final memory state cannot change. ⚠ What must stay per pixel: the x cursor advances on every call
+including clipped ones, and both the `x` window test and the `col >= $00B3` test depend on x. So the
+split is "y-derived work per row, x-derived work per pixel" — not "clip per row".
+
+**Candidate 2: the three chip-RAM read-modify-writes in `ROF_PLOT_FIG`** (mask + plane1 + plane2),
+i.e. 6 chip accesses per pixel, contending with display DMA. Accumulating a row's mask/plane words
+in registers and writing whole words per row-span would cut this to ~3 word writes per byte column.
+Naturally falls out of Candidate 1's restructure.
+
+**Candidate 3: pre-rendered figure frames.** The same idea already filed for the jump-scare creature
+(`docs/alien-jumpscare.md` §6.3): the animation draws from a bounded set of (phase, step)
+combinations, so each distinct frame could be composed once into a chip `Bitmap` and blitted
+thereafter, removing the per-pixel CPU work rather than shaving it. ⚠ Same design risk as there —
+the set must be *proven* bounded first. `step` walks $10 at a time to a floor and phase is 0..7, so
+the set is finite but not small; count it before believing in it.
+
+**How to work on it:** `make PILOT_BENCH=1 PROBES=1 PROFILE_NORING=1` + `amiga/pilot_bench.gdb` is
+the instrument (reproduces to ~1 %), `make validate FN=plot_clipped_pixel` / `FN=draw_scaled_shape`
+is the faithfulness gate, and the bench's `figHash` column is the ONLY check on the Amiga-only
+`ROF_PLOT_FIG` arm — `make validate` runs the host build and never reaches it. Record the before/
+after in the table above.
 
 ⚠ The user's original hypothesis — "the figure is drawn to `mem[]` and then converted to bitplanes"
 — is **not** what costs: `plot_clipped_pixel`'s Amiga arm already drops the `($80),Y` read and the
