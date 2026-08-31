@@ -450,6 +450,20 @@ ifdef FCI_NOBASE
 EXTRA_DEFINES += -DROF_FCI_NOBASE
 endif
 
+# `make PILOT_BENCH=1 PROBES=1 PROFILE_NORING=1` + amiga/pilot_bench.gdb — TIME THE PILOT-WALK
+# ZOOM DRAW.  The rescue walk has no headless harness (docs/rescue-figure-render.md), so this
+# times ONE synthetic draw_scaled_shape at each of 6 zoom step sizes from flight main-loop
+# context (rof_pilot_bench, rof_native.c), at flight iteration 40.  The figure's size is the
+# 16-bit step $0051:$0050 and the draw runs $1200/step rows x $0C00/step cols, so the cost grows
+# as 1/step^2 -- which is exactly the "slower as the pilot gets closer" report.  Under this flag
+# ROF_ALIEN_PLOT/ROF_ALIEN_DRAWSHAPE compile out, so the bench times the SHIPPING shape rather
+# than a probe build (docs/alien-jumpscare.md §8.2: a per-plot probe on a per-plot loop inflated
+# every jump-scare figure by ~35%).  PROFILE_NORING is recommended -- the rescue debug ring's
+# rfPlaneSum walks otherwise dominate the frames around the bench.
+ifdef PILOT_BENCH
+EXTRA_DEFINES += -DROF_PILOT_BENCH
+endif
+
 # Profiling aid: `make FORCE_SAUCER=1` (implies PROBES) injects a static flying-saucer P3
 # object into the PMG buffer each flight VBI frame (rof_native.c ROF_FORCE_SAUCER) so the
 # Amiga per-frame P3 sprite mirror (buildViewportP3Sprite/buildScopeP3Sprite) runs under

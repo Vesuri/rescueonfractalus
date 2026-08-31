@@ -38,6 +38,92 @@ at rescue start, cleared once at end — measured `01→00` one edge), so the ed
 real resume. Also hardened: `s_clean` is now `alignas(4)` (the existing snapshot casts it to `uint32_t*`
 and long-accesses it — a 68000 bus error if a BSS-layout change pushes the byte-array to an odd address).
 
+## ⭐ The walk animation SLOWS DOWN as the pilot approaches — measured 2026-08-31
+
+**User report:** the run animation visibly slows on the 68000 as the pilot gets closer (larger on
+screen); it does not on the Atari. This was real, it is a cost-scaling problem, and the first two
+explanations offered for it (PAL-vs-NTSC's 20 %, and RTCLOK wait quantisation) were both wrong —
+they predict a *constant* factor, not one that tracks the figure's size.
+
+### Why the cost scales with the figure's area
+
+`draw_scaled_shape`'s loop bounds are not constant: it draws `$1200/step` rows x `$0C00/step`
+columns, where `step` = `$0051:$0050` is an INVERSE scale. `animate_zoom_sequence` walks `step` down
+by `$10` per zoom frame to a `$0100` floor, so the plotted cell count grows as 1/step^2 —
+**29 plots at the far end, 284 at the floor, ~10x.**
+
+### The budget, and why it tips over
+
+Each animation step is `wait until RTCLOK_LOW reaches 4` (= 4 frames = 80 ms at 50 Hz) and *then*
+the draw. RTCLOK keeps running during the draw, so a draw shorter than the wait is **absorbed and
+invisible**; one longer than it makes the step draw-bound. Hence a slowdown that appears only as the
+figure grows past the point where the draw exceeds 80 ms.
+
+### The instrument: `make PILOT_BENCH=1 PROBES=1 PROFILE_NORING=1` + `amiga/pilot_bench.gdb`
+
+The pilot path still has **no headless harness** (see the section below), so `rof_pilot_bench`
+(`rof_native.c`) times ONE synthetic `draw_scaled_shape` per step size from flight main-loop context
+at iteration 40, plus the bare per-plot cost amortised over 1000 calls under a single bracket. It
+reproduces to ~1 % at the near end. Under the flag `ROF_ALIEN_PLOT`/`ROF_ALIEN_DRAWSHAPE` compile
+out, so it measures the shipping shape — a per-plot probe on a per-plot loop is exactly what
+inflated every jump-scare figure by ~35 % (`docs/alien-jumpscare.md` §8.2).
+
+⚠ **What it does NOT do:** it never reaches a rescue, so nothing appears on screen and it proves
+COST, never APPEARANCE. Its seeded inputs were cross-checked against the live values in
+`a800dumps/rescue_pilot.a8s` ($0050/$0051 = `$03D0`, `$00B3` = `$5C`, shape ptr `$7E5B`, x/y in
+window) — worth doing, because a shape pointer that landed in `$D000-$D7FF` would have routed every
+cell through a hardware `bus_read` and faked the whole result.
+⚠ The harness machine is `A500+` **with `--fast_memory=8192`**, so `mem[]` and code sit in
+uncontended fast RAM while the overlay is chip. On a bare A500 these figures get worse.
+
+### Measured, before -> after the clean-C rewrite of both routines
+
+Ticks are ISR-subtracted raster lines; 313 t = 1 frame = 20 ms. `raw` includes the ISR firings that
+land inside the draw, which is what the RTCLOK budget actually competes with.
+
+| step | figure | draw before | draw after | raw before | raw after |
+|---|---|---|---|---|---|
+| `$0600` far | 2 rows | 91 t (6 ms) | **37 t (2 ms)** | 241 t | 37 t |
+| `$0300` | 4 rows | 180 t (11 ms) | **79 t (5 ms)** | 264 t | 79 t |
+| `$0200` | 8 rows | 317 t (20 ms) | **178 t (11 ms)** | 449 t | 262 t |
+| `$0180` | 11 rows | 504 t (32 ms) | **259 t (16 ms)** | 728 t | 343 t |
+| `$0100` near | 17 rows | 1059 t (**67 ms**) | **553 t (35 ms)** | 1656 t (**105 ms**) | 861 t (**55 ms**) |
+
+**The near-figure draw halved, and its wall time went from 132 % of the 80 ms budget to 69 %** — so
+it is now absorbed by the wait at every scale, which is the condition for a constant step rate.
+Binary: 294,464 -> 293,904 B; the two routines 2,240 -> 1,682 B (`plot_clipped_pixel` 806 -> 110 B,
+GCC specialises it now that the source value is a parameter rather than `cpu.A`).
+
+### What the win came from (and what is left)
+
+Per-plot cost barely moved: **984 -> 901 cycles per figure pixel** (-8 %). Essentially the whole
+win is in `draw_scaled_shape`'s per-cell body: the row offset hoisted out of the column loop (the
+6502 re-read it per cell), the `$7DD3` field selector as a closed form instead of three DEX/LSR/LSR
+passes, the shape byte read from `mem[]` instead of through `bus_read`, and the two loop
+accumulators kept in 16-bit locals with one write-back instead of per-iteration `mem[]` traffic.
+
+⇒ **After the rewrite the draw is ~100 % plot cost** (276 plots x 901 cycles ~= the whole 553 t), so
+`plot_clipped_pixel` is the only remaining lever. At ~901 cycles for one 2-bit pixel the candidates
+are the three chip-RAM read-modify-writes in `ROF_PLOT_FIG` (mask + 2 planes) and the per-pixel call
+itself — i.e. plotting a whole row's worth of cells per call rather than one pixel. Not attempted;
+the budget is met.
+
+⚠ The user's original hypothesis — "the figure is drawn to `mem[]` and then converted to bitplanes"
+— is **not** what costs: `plot_clipped_pixel`'s Amiga arm already drops the `($80),Y` read and the
+`($C1),Y` read-modify-write entirely and mirrors straight into the overlay planes. The cost was the
+6502-ABI scaffolding around each pixel.
+
+### The faithfulness gate
+
+Both routines are `make validate`d twins with real fixtures. `plot_clipped_pixel`'s fixture only ever
+generated **in-window** coordinates with a high `$00B3`, so all three clip paths were untested — it
+now runs half its 50,000 cases fully random to cover them, because those paths still advance the x
+cursor and still publish the row pointers, which `draw_scaled_shape` depends on for a fully-clipped
+row. Both: **0 mem mismatch.** The cpu diffs are total and expected: the clean versions no longer
+compute 6502 flags. Verified safe — all five `JSR $7D38` sites are inside `draw_scaled_shape` and
+each overwrites Y or A before reading either, and `animate_zoom_sequence` reads neither after the
+call, so even the `TAY` at `$7D71` publishes nothing (the `cpu.Y` store was therefore dropped).
+
 ## Scene / trigger
 
 - Rescue figure = the approaching pilot/alien drawn as a **bitmap** into the mode-D flight field by

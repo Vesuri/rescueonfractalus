@@ -3654,10 +3654,19 @@ static void rof_alshape_note(unsigned short p) {
     if (g_alShapeCount < 12) g_alShapes[g_alShapeCount++] = p;
 }
 #define ROF_ALIEN_PROBE()       rof_alien_probe()
+#ifdef ROF_PILOT_BENCH
+/* The pilot bench times draw_scaled_shape/plot_clipped_pixel, so these two per-item diag hooks
+ * must not run inside it: a per-plot probe on a per-plot loop is exactly what inflated every
+ * jump-scare figure by ~35% (docs/alien-jumpscare.md §8.2).  Bench builds measure the shipping
+ * shape; they lose the alien plot counters, which the bench does not use. */
+#define ROF_ALIEN_PLOT()        ((void)0)
+#define ROF_ALIEN_DRAWSHAPE()   ((void)0)
+#else
 #define ROF_ALIEN_PLOT()        do { if (mem[0x003E]) g_alRescuePlot++; if (mem[0x0633]) g_alPlotCalls++; } while (0)
 #define ROF_ALIEN_DRAWSHAPE()   do { unsigned short _p = (unsigned short)(mem[0x00C3] | (mem[0x00C4] << 8)); \
     if (mem[0x003E] || mem[0x0633]) rof_alshape_note(_p); \
     if (mem[0x0633]) { g_alDrawShape++; g_alShapePtr = _p; } } while (0)
+#endif
 
 /* Creature-blit capture (alien_creature_animate_draw -> $80C5 `STA ($8D),Y`, hooked at $80E9 via a
  * PRE_INSN_HOOK).  The jump-scare creature is drawn ONLY here (airlock-closed knock), into the
@@ -3690,7 +3699,112 @@ volatile unsigned long  g_alHudCalls = 0;         /* # alien_shape_blit calls du
 #define ROF_ALIEN_DRAWSHAPE()   ((void)0)
 #endif
 
+#if defined(ROF_PLATFORM_AMIGA) && defined(ROF_PILOT_BENCH)
+/* ---- Pilot-walk zoom bench (`make PILOT_BENCH=1`, readout amiga/pilot_bench.gdb) ------------
+ * Times ONE synthetic draw_scaled_shape at each of PB_N zoom step sizes, from flight main-loop
+ * context, so the walk's cost curve can be measured without flying to a rescue (the pilot path
+ * has no headless harness -- docs/rescue-figure-render.md).
+ *
+ * WHY a sweep and not one number: the figure's on-screen size is set by the 16-bit step
+ * $0051:$0050, which animate_zoom_sequence decrements by $10 per zoom frame down to a $0100
+ * floor.  draw_scaled_shape's loops run $1200/step rows x $0C00/step columns, so the plotted
+ * cell count -- and hence the draw's cost -- grows as 1/step^2: ~10x from the far figure to the
+ * near one.  A single measurement cannot show that, and the slowdown is reported as a function
+ * of the pilot getting CLOSER.
+ *
+ * Each step is drawn TWICE and the SECOND draw timed, so ROF_CLEAR_FIG has a real previous
+ * figure box to clear (as it always does mid-walk) rather than the skipped empty-box path.
+ * ISR beam-lines are subtracted (FP_TIME's rule) so the 50 Hz VBI does not land in the sample.
+ * ticks are raster lines: 313 t = 1 frame = 20 ms, 1 t = 63.56 us. */
+#define PB_N 6
+static const unsigned short kPbSteps[PB_N] = { 0x0600, 0x0400, 0x0300, 0x0200, 0x0180, 0x0100 };
+volatile unsigned short g_pbStep[PB_N];
+volatile unsigned long  g_pbTicks[PB_N];    /* ISR-subtracted raster lines for one draw */
+volatile unsigned long  g_pbRaw[PB_N];      /* uncorrected, for reference */
+volatile short          g_pbFigLo[PB_N], g_pbFigHi[PB_N];   /* row extent the draw dirtied */
+volatile short          g_pbFigCL[PB_N], g_pbFigCH[PB_N];   /* byte-column extent */
+volatile unsigned char  g_pbHaveBmp = 0;    /* 0 => overlay unallocated, the mirror was skipped */
+volatile unsigned long  g_pbFigHash[PB_N];  /* overlay fingerprint: the Amiga arm's only check */
+volatile unsigned long  g_pbPlotTicks = 0;  /* ticks for PB_PLOTS bare plot_clipped_pixel calls */
+volatile unsigned long  g_pbPlotN = 0;
+volatile unsigned char  g_pbDone = 0;
+#define PB_PLOTS 1000
 
+void rof_pilot_bench(void) {
+    /* Save every cell draw_scaled_shape scribbles on; flight must continue unperturbed. */
+    const uint8_t s4E = mem[0x004E], s4F = mem[0x004F], s50 = mem[0x0050], s51 = mem[0x0051];
+    const uint8_t s52 = mem[0x0052], s53 = mem[0x0053], s54 = mem[0x0054], s55 = mem[0x0055];
+    const uint8_t sB3 = mem[0x00B3], sC3 = mem[0x00C3], sC4 = mem[0x00C4];
+    const uint8_t s28DE = mem[0x28DE], s28DF = mem[0x28DF];
+    const uint8_t sPS = player_speed, sRTS = row_table_stride;
+    const int fl = g_figRowLo, fh = g_figRowHi, fcl = g_figColLo, fch = g_figColHi;
+
+    g_pbHaveBmp = (g_figP1 && g_figM) ? 1 : 0;
+
+    for (unsigned i = 0; i < PB_N; i++) {
+        const unsigned short step = kPbSteps[i];
+        for (unsigned pass = 0; pass < 2; pass++) {
+            /* Phase-0 shape source, seeded from the same tables animate_zoom_sequence uses. */
+            mem[0x00C3] = mem[0x7D8D]; mem[0x00C4] = mem[0x7D95]; mem[0x28DF] = mem[0x7D9D];
+            mem[0x0050] = (uint8_t)step; mem[0x0051] = (uint8_t)(step >> 8);
+            mem[0x00B3] = 0x28;    /* full field width: nothing clipped by the column limit */
+            mem[0x004E] = 0x96;    /* top of the plot window ($6C..$96); rows walk DOWN */
+            mem[0x004F] = 0x80;    /* x near centre (the divide DECs it a few counts first) */
+            if (pass == 0) {       /* untimed priming draw -> leaves a real box for CLEAR_FIG */
+                draw_scaled_shape();
+                continue;
+            }
+            { const unsigned long t0 = rof_subclock(), i0 = g_isrBeamLines;
+              draw_scaled_shape();   /* via the shim: exercises the real zero-page entry */
+              const unsigned long d = rof_subclock() - t0, id = g_isrBeamLines - i0;
+              g_pbRaw[i]   = d;
+              g_pbTicks[i] = (d > id) ? (d - id) : 0; }
+        }
+        g_pbStep[i]  = step;
+        g_pbFigLo[i] = (short)g_figRowLo; g_pbFigHi[i] = (short)g_figRowHi;
+        g_pbFigCL[i] = (short)g_figColLo; g_pbFigCH[i] = (short)g_figColHi;
+        /* Fingerprint the overlay this draw produced.  `make validate` runs the HOST build, so
+         * the ROF_PLOT_FIG arm of plot_clipped_pixel has no oracle at all — this checksum is the
+         * only check that the Amiga arm still mirrors the SAME pixels after a rewrite.  Order
+         * matters (position-weighted), so a shifted figure cannot collide. */
+        { unsigned long h = 0;
+          if (g_figP1 && g_figM) {
+              for (int r = 0; r < 43; r++)
+                  for (int b = 0; b < 40; b++) {
+                      const unsigned long w = (unsigned long)(r * 40 + b + 1);
+                      h += w * (unsigned long)g_figM[kRow40[r] + b];
+                      h += w * 3u * (unsigned long)g_figP1[kRow80[r] + b];
+                      h += w * 7u * (unsigned long)g_figP2[kRow80[r] + b];
+                  }
+          }
+          g_pbFigHash[i] = h; }
+    }
+
+    /* Per-plot cost on its own, amortized over PB_PLOTS calls under ONE bracket -- a per-plot
+     * bracket would outweigh the plot itself (docs/alien-jumpscare.md §8.2).  Each iteration
+     * also restores x (plot_clipped_pixel increments it, and ~95 calls would walk it out of the
+     * window); that one store is inside the sample, ~16 cycles of the total per call.
+     * $00B3 = $5C and y/x in-window are the live values measured in a800dumps/rescue_pilot.a8s,
+     * so every call takes the full in-window mirror path the real walk takes. */
+    mem[0x004E] = 0x80; mem[0x00B3] = 0x5C;
+    { const unsigned long t0 = rof_subclock(), i0 = g_isrBeamLines;
+      for (unsigned k = 0; k < PB_PLOTS; k++) {
+          mem[0x004F] = 0x80;
+          plot_clipped_pixel_core(0x55);   /* opaque source -> takes the ROF_PLOT_FIG mirror path */
+      }
+      const unsigned long d = rof_subclock() - t0, id = g_isrBeamLines - i0;
+      g_pbPlotTicks = (d > id) ? (d - id) : 0; }
+    g_pbPlotN = PB_PLOTS;
+
+    mem[0x004E] = s4E; mem[0x004F] = s4F; mem[0x0050] = s50; mem[0x0051] = s51;
+    mem[0x0052] = s52; mem[0x0053] = s53; mem[0x0054] = s54; mem[0x0055] = s55;
+    mem[0x00B3] = sB3; mem[0x00C3] = sC3; mem[0x00C4] = sC4;
+    mem[0x28DE] = s28DE; mem[0x28DF] = s28DF;
+    player_speed = sPS; row_table_stride = sRTS;
+    g_figRowLo = fl; g_figRowHi = fh; g_figColLo = fcl; g_figColHi = fch;
+    g_pbDone = 1;
+}
+#endif /* ROF_PILOT_BENCH */
 
 /* Creature-blit write hook (PRE_INSN_HOOK at $80E9, emitted into rof_gen.c in ALL builds, so this
  * must exist everywhere; the body is probe/Amiga-only).  addr = ($8D)+Y target, val = byte stored. */
@@ -12667,6 +12781,10 @@ static void game_main_loop_body(void) {
     }
     for (;;) {                           /* L_3eba: in-game flight loop (one frame/iteration) */
     FP_ITER();
+#if defined(ROF_PLATFORM_AMIGA) && defined(ROF_PILOT_BENCH)
+    { extern void rof_pilot_bench(void);
+      if (!g_pbDone && g_iterCount == 40) rof_pilot_bench(); }   /* flight stable, overlay allocated */
+#endif
 #ifdef ROF_PLATFORM_AMIGA
     /* ESC freeze/pause ($0043 event_active_flag): on the Atari the dispatcher's slot-7 takeover
        does a faked RTI to $52BB (`JMP $52BB` self-loop), abandoning the whole main-loop context so
