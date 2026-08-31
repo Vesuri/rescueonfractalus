@@ -75,7 +75,24 @@ perf could be better but they're visible).** `renderFlightDirect` no longer conv
 terrain body (rows 0–42) — the rasterizer writes plane2 dots straight to `g_flightDotPlane`, and the field is
 read only for the windscreen band — so object pixels written into the field were being DROPPED; fixed by
 hooking `terrain_plot_pixel` to also OR the object pixel into `g_flightDotPlane` (mirror `ROF_PLOT_DOT`, same
-kRow120/kColMask4 geometry). See [[flight-pmg-map]]. (Flying saucers ARE fine — they're P3 PMG sprites, ported.) The **downed-pilot "blink" is a COLOUR-REGISTER CYCLE on `$00D9`** (hue 9, luminance
+kRow120/kColMask4 geometry).
+
+⚠ **An object pixel must never inherit the sky's plane1 bit — the Amiga has to PUNCH it out.** The two
+platforms build the sky in the opposite ORDER. Atari: clear the field → plot objects → *then*
+`fill_terrain_silhouette` waterfalls `$55` into the rows **above each byte column's topmost pixel** and
+rasters the body below it, so an object pixel is never OR'd with sky and a value-2 body stays value-2.
+Amiga: plane1 is an independent `blitterFillUp` from `$260E`, which covers everything above the final
+crest — so a value-2 object pixel left over filled sky reads plane1|plane2 = **value-3, the bright COLPF2
+tan**, not COLPF1's dark dot brown. `terrain_plot_object_b`'s BODIES (downed ships, bases) are value-2
+(`plot_pixel_mask = $AA`); variant A's whole body and variant B's 2×2 cross are value-3 (`$FF`). So the
+plane1 overlay carries two slots — bits to SET (value-3) and bits to CLEAR (value-2) — and the post-fill
+apply is `plane1 = (plane1 & ~punch) | set`, which also reproduces the Atari's OR semantics where two
+objects share a pixel (once value-3, always value-3, whatever the plot order). Ground truth:
+`a800dumps/shipcloseagainstsky.a8s`, field byte column 14 = `55 55 5a 5a 5a 52` down the ship — sky above,
+`5a` = two sky pixels beside two clean value-2 ship pixels, sky again below. Measured on target: **87% of
+value-2 object bytes (2258 of 2608) land on a plane1 bit the sky fill had set**, i.e. nearly every such
+pixel showed the wrong colour. Only variant-B bodies at close range (`plot_step_hi < $0D`) take this path,
+so a straight level flight never enters it — a headless combat run measures ZERO value-2 object pixels. See [[flight-pmg-map]]. (Flying saucers ARE fine — they're P3 PMG sprites, ported.) The **downed-pilot "blink" is a COLOUR-REGISTER CYCLE on `$00D9`** (hue 9, luminance
 pulsing `$4`↔`$B`), NOT a graphics toggle → animated with a per-frame pen poke, don't redraw. **Flying saucer
 P3 + scope mirror + altimeter multiplex are DONE (user-confirmed 2026-07-09); the M2/M1/M3 crosshair "+"
 is DONE too (plane3 overlay, `$26` salmon, mem[$2840] visibility gate — user-confirmed 2026-07-09); the

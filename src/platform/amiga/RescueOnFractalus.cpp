@@ -483,14 +483,24 @@ extern "C" { uint8_t* g_flightDotPlane = nullptr; }
 // buffer each yielded frame would drop the dots (renderFlightDirect only ever refills plane2
 // from the rasterizer's live draw).  Init 1 so the first flight frame paints.  See renderFlightDirect.
 extern "C" { volatile int g_flightTerrainFresh = 1; }
-// Object plane1 overlay (post-fill).  Ground objects (gun emplacement / downed pilot / enemy
-// fire) are drawn value-3 (COLPF2) = plane1+plane2 for their highlight pixels (terrain_plot_object
-// variant A whole-body + variant B's 2x2 cross; variant B bodies stay value-2 = plane2 only).  We
-// can't set plane1 during the draw: the sky-fill blit (blitterFillUp) would treat a stray plane1
-// bit in the terrain body as a fill seed and paint a vertical sky-coloured streak above it.  So
-// terrain_plot_pixel records the value-3 LOW bit here (a separate plane1-shaped scratch); after the
-// sky fill, renderFlightDirect ORs it into the back buffer's plane1 over the dirty scanline range,
-// clearing as it applies.  Sized like one plane (47 rows x 120 stride) so the plot reuses kRow120.
+// Object plane1 overlay (post-fill).  Ground objects (gun emplacement / downed pilot / downed ship
+// / base / enemy fire) are drawn value-3 (COLPF2) = plane1+plane2 for their highlight pixels
+// (terrain_plot_object variant A whole-body + variant B's 2x2 cross), while variant B BODIES —
+// the downed ships and bases — are value-2 = plane2 only.  We can't touch plane1 during the draw:
+// the sky-fill blit (blitterFillUp) would treat a stray plane1 bit in the terrain body as a fill
+// seed and paint a vertical sky-coloured streak above it.  So terrain_plot_pixel records the
+// plane1 EDIT here (a separate plane1-shaped scratch) and renderFlightDirect applies it to the
+// back buffer after the sky fill, clearing as it applies.  Two bit slots per byte, both in this
+// one scratch: [off] = bits to SET (a value-3 pixel), [off+ROF_OBJ_P1_PUNCH] = bits to CLEAR (a
+// value-2 pixel — the sky fill has already set plane1 above the skyline, and leaving it set under
+// a value-2 object pixel reads plane1|plane2 = value-3, the bright tan; that is what made a downed
+// ship standing against the sky white instead of dark brown).  Apply is (plane1 & ~punch) | set.
+// Sized like one plane (47 rows x 120 stride) so the plot reuses kRow120 and its offsets equal the
+// bitmap's; only bytes 0-39 of each scanline carry a plane, so the punch slot rides in 40-79 for
+// free.  See ROF_PLOT_OBJ_P1 in rof_native.c.
+// ⚠ Must match the definition in rof_native.c (same define-in-both-files pattern as
+// ROF_OBJ_TOUCH_CAP below): the plotter writes the punch slot at this offset.
+#define ROF_OBJ_P1_PUNCH 40
 static uint8_t s_flightObjP1[47 * 120];
 extern "C" { uint8_t* g_flightObjP1 = nullptr; }      // = s_flightObjP1 during flight; null otherwise
 extern "C" { int g_objRowLo = 47, g_objRowHi = -1; }  // dirty scanline range in s_flightObjP1 (empty)
@@ -3686,11 +3696,14 @@ void RescueOnFractalus::renderFlightDirect()
     BW_AT(g_bwSkyFill, AmigaHardware::blitterWait());                            // sky fill must finish before the band overlay + flip
     FD_LAP(g_fdFill);
 
-    // Object plane1 overlay: OR the value-3 ground-object low bits (recorded by terrain_plot_pixel
-    // during the draw) into plane1 NOW — AFTER the sky fill — so those objects show value-3 (COLPF2,
-    // the distinct object colour) instead of value-2 (COLPF1, the terrain-dot colour).  Deferred to
+    // Object plane1 overlay: apply the ground objects' plane1 edits (recorded by terrain_plot_pixel
+    // during the draw) NOW — AFTER the sky fill — so a value-3 object shows COLPF2 (the distinct
+    // object colour) and a value-2 object body shows COLPF1 (the terrain-dot brown) rather than
+    // COLPF2, which is what filled sky under it would otherwise make of it.  plane1 =
+    // (plane1 & ~punch) | set, the two slots of s_flightObjP1 (see its declaration).  Deferred to
     // here because a plane1 bit present during blitterFillUp would seed a spurious sky-coloured
-    // vertical streak.  Walk only the dirty scanline range; clear each byte as it is applied so the
+    // vertical streak, and the punch must land on a FINISHED fill — the blitterWait above is what
+    // guarantees both.  Walk only the dirty scanline range; clear each byte as it is applied so the
     // scratch is ready for the next frame.  (Objects are sparse, so this is a few rows x 40 bytes.)
     // Walk only the dirty bounding BOX (rows AND byte-columns).  The row range alone left this
     // scanning all 40 bytes of each dirty row for the handful of object bytes actually in it —
@@ -3701,8 +3714,10 @@ void RescueOnFractalus::renderFlightDirect()
             // Normal path: apply exactly the bytes the writers reported (~10/frame), no search.
             for (int i = 0; i < g_objTouchN; i++) {
                 const unsigned off = g_objTouch[i];
-                bp[off] |= s_flightObjP1[off];
-                s_flightObjP1[off] = 0;
+                uint8_t* const s = s_flightObjP1 + off;
+                const uint8_t set = s[0], punch = s[ROF_OBJ_P1_PUNCH];
+                bp[off] = (uint8_t)((bp[off] & (uint8_t)~punch) | set);
+                s[0] = 0; s[ROF_OBJ_P1_PUNCH] = 0;
             }
         } else {
             // Overflow fallback: the writers kept the bounding box up to date, so walk that.
@@ -3710,7 +3725,13 @@ void RescueOnFractalus::renderFlightDirect()
             uint8_t* d = bp            + kRow120[g_objRowLo] + cl;  // plane1, walked +120/scanline
             uint8_t* s = s_flightObjP1 + kRow120[g_objRowLo] + cl;  // scratch (same base offset)
             for (int sc = g_objRowLo; sc <= g_objRowHi; sc++, d += 120, s += 120) {
-                for (int b = 0; b < n; b++) { if (s[b]) { d[b] |= s[b]; s[b] = 0; } }
+                for (int b = 0; b < n; b++) {
+                    const uint8_t set = s[b], punch = s[b + ROF_OBJ_P1_PUNCH];
+                    if (set | punch) {
+                        d[b] = (uint8_t)((d[b] & (uint8_t)~punch) | set);
+                        s[b] = 0; s[b + ROF_OBJ_P1_PUNCH] = 0;
+                    }
+                }
             }
         }
         g_objRowLo = 47; g_objRowHi = -1;                       // range consumed

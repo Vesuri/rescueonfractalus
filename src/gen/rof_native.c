@@ -551,23 +551,43 @@ extern void rof_flight_wait_dotclear(void);
         if ((unsigned)_ac < 160u && (unsigned)_sc < 47u && _sc != 43) {  /* rows 0..46 except the $6b floor at 43 */ \
             g_flightDotPlane[kRow120[_sc] + (_ac >> 2)] |= kColMask4[_ac & 3]; \
         } } } while (0)
-/* Object value-3 low bit -> plane1 overlay (deferred to AFTER the sky fill; see g_flightObjP1 in
- * RescueOnFractalus.cpp).  Same geometry as ROF_PLOT_DOT; tracks the dirty scanline range so the
- * post-fill apply only walks the touched rows. */
-#define ROF_PLOT_DOT_P1(col, h) do { \
+/* Object plane1 overlay, applied AFTER the sky fill (see g_flightObjP1 in RescueOnFractalus.cpp).
+ * The overlay carries TWO bit slots per plane byte, both in the same scratch plane: the byte at
+ * _of holds the plane1 bits to SET, the byte at _of+ROF_OBJ_P1_PUNCH holds the bits to CLEAR.
+ * A value-3 pixel needs the SET slot (plane1|plane2 = COLPF2); a value-2 pixel needs the PUNCH
+ * slot, because the sky fill has already set plane1 across everything above the skyline and an
+ * object pixel left over filled sky would read plane1|plane2 = value-3 (the bright COLPF2 tan)
+ * instead of value-2's dark dot brown.  On the Atari there is nothing to undo: the field is
+ * cleared, the objects are plotted into it, and only THEN does fill_terrain_silhouette waterfall
+ * sky into the rows above each column's topmost pixel — so an object pixel is never OR'd with sky.
+ * Apply is plane1 = (plane1 & ~punch) | set, which also reproduces the Atari's OR semantics where
+ * two objects overlap in one pixel (once value-3, always value-3, whatever the plot order).
+ *
+ * Same geometry as ROF_PLOT_DOT.  `ofs` picks the slot — the caller chooses it per pixel, and the
+ * body is one RMW either way.  Tracks the dirty scanline/byte-column box and appends the touched
+ * offset (0->nonzero of ITS OWN slot, so a byte reached through both slots is listed twice — the
+ * apply zeroes as it goes, so a repeat visit is an idempotent no-op). */
+#define ROF_OBJ_P1_PUNCH 40      /* slot offset of the plane1 CLEAR mask; the scratch is 120 bytes
+                                    per scanline (the terrain bitmap's stride, so its offsets equal
+                                    the bitmap's) of which only bytes 0-39 carry a plane, leaving
+                                    40-79 free for the second slot at no RAM cost */
+#define ROF_PLOT_OBJ_P1(col, h, ofs) do { \
     if (g_flightObjP1) { \
         int _ac = (int)(col) - 48; \
         int _sc = 150 - (int)(h); \
         if ((unsigned)_ac < 160u && (unsigned)_sc < 47u && _sc != 43) { \
             int _bc = _ac >> 2; \
             int _of = kRow120[_sc] + _bc; \
-            if (!g_flightObjP1[_of]) ROF_OBJ_TOUCH(_of); \
-            g_flightObjP1[_of] |= kColMask4[_ac & 3]; \
+            uint8_t* _p1 = g_flightObjP1 + _of + (ofs); \
+            if (!*_p1) ROF_OBJ_TOUCH(_of); \
+            *_p1 |= kColMask4[_ac & 3]; \
             if (_sc < g_objRowLo) g_objRowLo = _sc; \
             if (_sc > g_objRowHi) g_objRowHi = _sc; \
             if (_bc < g_objColLo) g_objColLo = _bc; \
             if (_bc > g_objColHi) g_objColHi = _bc; \
         } } } while (0)
+#define ROF_PLOT_DOT_P1(col, h)  ROF_PLOT_OBJ_P1(col, h, 0)   /* set-only shorthand (the value-3
+                                                                 enemy-bolt batchers below) */
 /* Amiga sheds the mode-D field entirely: the dots come from ROF_PLOT_DOT (plane2) and the sky
  * from $260E (blitterFillUp), so nothing reads the field — fill_terrain_silhouette is skipped and
  * the windscreen band is blanked (see game_main_loop + renderFlightDirect).  So the rasterizer's
@@ -6519,9 +6539,21 @@ static inline void terrain_plot_pixel_core(uint8_t row, uint8_t col, uint8_t val
          value bit1 (set for value-2 AND value-3) -> plane2  (ROF_PLOT_DOT, rows 0-46)
          value bit0 (set only for value-3)         -> plane1  (ROF_PLOT_DOT_P1, post-fill overlay,
                                                                so value-3 shows COLPF2 not COLPF1)
+         value bit0 CLEAR with bit1 set (value-2)  -> plane1 PUNCH (the ROF_OBJ_P1_PUNCH slot), so a
+                                                     value-2 pixel over sky-filled plane1 reads
+                                                     COLPF1 (the dark dot brown) and not the
+                                                     bright value-3 tan.  Downed ships and bases
+                                                     are value-2 bodies (terrain_plot_object_b's
+                                                     $AA mask), and against the sky they are
+                                                     exactly this case.
        Mirroring plane1 directly here would seed spurious blitterFillUp sky streaks -> deferred. */
-    if (valueMask & himask)                  ROF_PLOT_DOT(col, row);       /* -> plane2 */
-    if (valueMask & (uint8_t)(himask >> 1))  ROF_PLOT_DOT_P1(col, row);    /* -> plane1 (post-fill) */
+    const uint8_t vHi = (uint8_t)(valueMask & himask);              /* the pixel's value bit1 */
+    const uint8_t vLo = (uint8_t)(valueMask & (uint8_t)(himask >> 1)); /* ...and its value bit0 */
+    if (vHi)       ROF_PLOT_DOT(col, row);                                    /* -> plane2 */
+    /* plane1 edit, ONE macro expansion with the slot picked at runtime: two expansions (a set and
+       a punch arm) cost ~750 bytes of .text and grew this function past the point where GCC keeps
+       inlining it into its three callers — an outlined jsr on the per-object-cell path. */
+    if (vHi | vLo) ROF_PLOT_OBJ_P1(col, row, vLo ? 0 : ROF_OBJ_P1_PUNCH);     /* -> plane1 */
 #endif
 }
 
