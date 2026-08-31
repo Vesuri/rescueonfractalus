@@ -70,7 +70,7 @@ inflated every jump-scare figure by ~35 % (`docs/alien-jumpscare.md` §8.2).
 
 ⚠ **What it does NOT do:** it never reaches a rescue, so nothing appears on screen and it proves
 COST, never APPEARANCE. Its seeded inputs were cross-checked against the live values in
-`a800dumps/rescue_pilot.a8s` ($0050/$0051 = `$03D0`, `$00B3` = `$5C`, shape ptr `$7E5B`, x/y in
+`a800dumps/rescue_pilot.a8s` (`plot_step` = `$03D0`, `plot_col_limit` = `$5C`, shape ptr `$7E5B`, x/y in
 window) — worth doing, because a shape pointer that landed in `$D000-$D7FF` would have routed every
 cell through a hardware `bus_read` and faked the whole result.
 ⚠ The harness machine is `A500+` **with `--fast_memory=8192`**, so `mem[]` and code sit in
@@ -106,7 +106,7 @@ GCC specialises it now that the source value is a parameter rather than `cpu.A`)
 
 Per-plot cost barely moved: **984 -> 901 cycles per figure pixel** (-8 %). Essentially the whole
 win is in `draw_scaled_shape`'s per-cell body: the row offset hoisted out of the column loop (the
-6502 re-read it per cell), the `$7DD3` field selector as a closed form instead of three DEX/LSR/LSR
+6502 re-read it per cell), the `shape_field_select` ($7DD3) lookup as a closed form instead of three DEX/LSR/LSR
 passes, the shape byte read from `mem[]` instead of through `bus_read`, and the two loop
 accumulators kept in 16-bit locals with one write-back instead of per-iteration `mem[]` traffic.
 
@@ -138,7 +138,7 @@ transparent plots share the row's y too. Per pixel it currently redoes:
 A row-batched plotter would do all of that **once per row instead of ~15 times**, and it is
 byte-identical by construction: the stores are last-write-wins with an identical value, so the
 final memory state cannot change. ⚠ What must stay per pixel: the x cursor advances on every call
-including clipped ones, and both the `x` window test and the `col >= $00B3` test depend on x. So the
+including clipped ones, and both the `x` window test and the `col >= plot_col_limit` test depend on x. So the
 split is "y-derived work per row, x-derived work per pixel" — not "clip per row".
 
 **Candidate 2: the three chip-RAM read-modify-writes in `ROF_PLOT_FIG`** (mask + plane1 + plane2),
@@ -167,7 +167,7 @@ after in the table above.
 ### The faithfulness gate
 
 Both routines are `make validate`d twins with real fixtures. `plot_clipped_pixel`'s fixture only ever
-generated **in-window** coordinates with a high `$00B3`, so all three clip paths were untested — it
+generated **in-window** coordinates with a high `plot_col_limit`, so all three clip paths were untested — it
 now runs half its 50,000 cases fully random to cover them, because those paths still advance the x
 cursor and still publish the row pointers, which `draw_scaled_shape` depends on for a fully-clipped
 row. Both: **0 mem mismatch.** The cpu diffs are total and expected: the clean versions no longer

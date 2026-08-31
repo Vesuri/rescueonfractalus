@@ -1020,8 +1020,7 @@ void RescueOnFractalus::buildAHSprite()
 // The sprite lives on the otherwise-idle ch4, as SEGMENT 0 of a wide object: at 2×/4× the burst
 // is 32/64 lores px and spills onto the shared extension channels (see RescueOnFractalus.h).
 //
-// ⚠ `size` is the real meaning of mem[$00CD], whose symbols.csv name `sizep2_shadow` is WRONG —
-// $D00A is SIZEP2, not GRAFM (docs/rename.md, backlog).  build_player2_sprite stores
+// ⚠ mem[$00CD] is the SIZEP2 shadow — $D00A is SIZEP2, GRAFM is $D011.  build_player2_sprite stores
 // only $00/$01/$03 there, which is the SIZEP2 encoding, and pairs each with an HPOSP2 shift of
 // 0/4/12 colour clocks ($286E) — exactly what re-centres a player 8/16/32 colour clocks wide.
 //

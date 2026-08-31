@@ -203,8 +203,8 @@ $00BB,dl_y1,var,0,MISNOMER (not a DL Y coord): general ZP scratch = 16-bit point
 $00BC,dl_y2,var,0,MISNOMER: pointer HIGH byte paired with $00BB (draw_object_column $43F3 etc); also a math-accumulator byte. Not a DL Y coord
 $00BD,dl_y3,var,0,MISNOMER: loop counter in draw_object_column ($43E6 init 7/$4425 DEC/$4429 CMP $BE) + setup_dial_bar_draw; general math scratch ($8C5F/$B76F). Not a DL Y coord
 $00BE,dl_y4,var,0,Display region Y4
-$00C1,row_table_stride,var,0,Per-scanline screen base-address table STRIDE used by game_setup_7460 to build $073D/$0793 (=$60=96 in flight; $00 in boot_standby_launch_driver). Was misnamed player_x.
-$00C2,player_speed,var,0,Player speed (set $10 in boot_standby_launch_driver)
+$00C1,row_table_stride,var,0,Per-scanline screen base-address table STRIDE used by game_setup_7460 to build $073D/$0793 (=$60=96 in flight; $00 in boot_standby_launch_driver). Was misnamed player_x. MULTI-ROLE, the name fits game_setup_7460 only: in plot_clipped_pixel {$00C2:$00C1} is the plot's DESTINATION row pointer (row_base_lo/hi entry + $30, i.e. the other display half), and draw_scaled_shape leaves the low byte of its $0600/step remainder there beforehand
+$00C2,player_speed,var,0,Player speed (set $10 in boot_standby_launch_driver). MULTI-ROLE, the name fits boot_standby_launch_driver only: paired with $00C1 it is plot_clipped_pixel's destination row-pointer HIGH byte and draw_scaled_shape's $0600/step remainder high byte — nothing to do with speed there
 $00C3,row_table_base_lo,var,0,Row base-address table BASE low byte for game_setup_7460 (=$10 flight base $1010; $0F boot_standby). REUSED as transient scratch: 4-count level-select repeat ctr in standby ($5940/$59A4 DEC/$59BC); parallel BCD accum in count_up_to_level ($75BA); arith scratch $A518+. Was misnamed player_y
 $00C4,row_table_base_hi,var,0,Row base-address table BASE high byte for game_setup_7460 (=$10 flight -> base $1010; $08 boot_standby_launch_driver). Was misnamed altitude_limit.
 $00CF,display_param_0,var,0,Display parameter 0 — loaded from $4DF1+0 table ($04)
@@ -563,10 +563,10 @@ $0045,bcd_delta_lo,var,0,16-bit BCD increment low byte added to bcd_counter $060
 $0046,bcd_delta_hi,var,0,16-bit BCD increment high byte added to bcd_counter $0602; cleared by set_zsupp_pos_clear_delta
 $0047,colpf0_value,var,0,Cockpit playfield colour loaded into COLPF0 $D016 by set_colpf0_from_flag: when Y bit5 CLEAR A=$CA else (bit5 SET) A=$0047 ($47A6 BNE $47AD)
 $0048,lock_on_indicator_active,var,0,Set to 1 (also $28EE=1) when lock-on indicator animation reaches count 7 (lock_on_indicator_step); seeded by A in lock_on_indicator_tick
-$004E,terrain_pt_coord_b,var,0,coord component used in terrain_point_distance $A8AF (abs(0x80-$004E)); set from $245A[X] in terrain_plot_object_a
-$004F,terrain_pt_coord_a,var,0,coord component in terrain_point_distance $A8AF (abs($004F-0x80)); set from $2400[X], also index into $260E[X]
-$0050,plot_step_lo,var,0,Fixed-point plot/scan step low byte; halved by ab7b, used as X/Y increment in ab9a fill loop
-$0051,plot_step_hi,var,0,Fixed-point plot/scan step high byte; paired with $0050, incremented if zero in ab9a
+$004E,terrain_pt_coord_b,var,0,coord component used in terrain_point_distance $A8AF (abs(0x80-$004E)); set from $245A[X] in terrain_plot_object_a. MULTI-ROLE: also plot_clipped_pixel's Y pixel cursor, DECremented once per row by the scaled-shape plotters
+$004F,terrain_pt_coord_a,var,0,coord component in terrain_point_distance $A8AF (abs($004F-0x80)); set from $2400[X], also index into $260E[X]. MULTI-ROLE: also plot_clipped_pixel's X pixel cursor, INCremented by EVERY plot whether the pixel survives the clips or not, and reloaded per row from plot_row_start_x $28DE
+$0050,plot_step_lo,var,0,Low byte of the 8.8 fixed-point plot step {$0051:$0050} shared by both scaled-shape plotters. It is an INVERSE scale (smaller step = bigger object) and it sets BOTH loop counts, so plotted cells and cost grow as 1/step^2 — draw_scaled_shape plots $1200/step rows x $0C00/step columns. Shifted right twice (divided by 4) by set_plot_mask_and_halve_step; must be nonzero or the divide and both loops never end.
+$0051,plot_step_hi,var,0,High byte of the plot step (paired with plot_step_lo $0050); raster_scaled_object forces the pair nonzero by INCing it. Also the ground-object DISTANCE band: terrain_plot_object_a/b load the pair from $2300[X]/$232E[X] and draw the object only while this byte is < $0D. Deliberately generic — the approach-figure zoom and the terrain object rasteriser share the cell, so a figure_* name would mislabel the object path.
 $0058,plot_pixel_mask,var,0,Value/mask byte for plot_clipped_pixel (plot_clipped_pixel / a6d3): passed in A (if 0, source is read via the $80 ptr), AND-masked into the PMG/terrain bit pattern before OR into the buffer; set $FF by ab7b index 0.
 $005B,plot_x_step_lo,var,0,Per-scanline X drift accumulator low (aad4 subtracts $40; added to 28EF in step), with $005C hi
 $005C,plot_x_step_hi,var,0,X drift high byte; its sign selects INX vs DEX direction in ab27 plot loop
@@ -739,7 +739,7 @@ $2891,intro_phase_counter,var,0,Intro step counter: init $42 at $4f59, gated at 
 $2892,intro_sfx_delay,var,0,Down-counter for intro sound timing; underflow at $4f9f reseeds from RANDOM&7|1 and triggers sfx via ring_push_marked
 $28DC,plot_base_ptr_lo,var,0,Plot fill base pointer low, selected from A7E9 table by ab7b; used as ADC base in ab9a
 $28DD,plot_base_ptr_hi,var,0,Plot fill base pointer high, from A7ED table by ab7b
-$28DE,shape_row_width,var,0,Saved copy of $4F (row width / inner-loop count) in draw_scaled_shape (draw_scaled_shape), reloaded each row for the ab9a row fill.
+$28DE,plot_row_start_x,var,0,Per-row STARTING x cursor for both scaled-shape plotters, NOT a row width: what is left of the x cursor $004F after dividing $0600 (draw_scaled_shape) or $1000 (raster_scaled_object) by the plot_step step by repeated subtraction. Reloaded into $004F at the top of every row, which is what keeps the scaled figure/object centred as it grows.
 $28DF,shape_col_base,var,0,column base for plot offset in draw_scaled_shape/7d38; loaded from table $7D9D[phase] in animate_zoom_sequence
 $28E1,terrain_cur_obj_idx,var,0,saved X (object index) in terrain_plot_object $A64F; restored at $A868 in caller chain
 $28E2,terrain_plot_row,var,0,saved Y (raster row) across pixel write in terrain_plot_pixel $A6D3 ($A6D7 store, $A6F5 reload)
@@ -953,3 +953,14 @@ $9B98,trig_quad_sign,data,0,Per-quadrant SIGN flag table indexed by trig_quadran
 $9B9C,trig_quad_reflect,data,0,Per-quadrant index-REFLECT mask table indexed by trig_quadrant in sine_table_lookup
 $4EB9,trig_table_hi,data,0,Quarter-wave sine table HIGH bytes, indexed by the reflected angle in sine_table_lookup
 $4EFA,trig_table_lo,data,0,Quarter-wave sine table LOW bytes, paired with trig_table_hi
+
+# --- Approach-figure / scaled-object plotter (draw_scaled_shape $7C9A, plot_clipped_pixel $7D38) ---
+# The step {$0051:$0050}, the per-row start x $28DE and the x/y cursor $004F/$004E are shared with
+# the terrain object rasteriser raster_scaled_object $AB9A and are named above.
+$00B3,plot_col_limit,var,0,Byte-COLUMN clip limit for plot_clipped_pixel: a pixel whose column ((x>>2)+$F8, wrapping at 8 bits as the 6502 ADC does) is >= this is dropped. Set once per terrain frame by terrain_draw_frame ($A34B) to half*$30 + $5C as it fills terrain_col_byte_offset $BD00, so $5C for display half 0 and $8C for half 1. No other reader
+$4F3B,plot_pixel_keep_mask,data,0,4-entry AND mask KEEPING only pixel (x&3)'s two bits of a mode-D byte ($C0/$30/$0C/$03); plot_clipped_pixel masks the incoming source value through it
+$7DEB,plot_pixel_clear_mask,data,0,4-entry complement of plot_pixel_keep_mask ($3F/$CF/$F3/$FC): CLEARS pixel (x&3)'s two bits of the destination byte before the masked source is ORed in
+$7DA5,shape_field_pen_byte,data,0,4-entry map from an extracted 2-bit shape field to the byte plot_clipped_pixel paints: $00/$FF/$AA/$55, i.e. the pen replicated across all four pixels of the byte with pens 1 and 3 swapped. Entry 0 is $00 = TRANSPARENT (take the pixel from the field's read half)
+$7DD3,shape_field_select,data,0,Selects WHICH 2-bit field of a shape byte a column of draw_scaled_shape samples, indexed by column + shape_col_base $28DF: 0 (or >= $81) = the low field, else that many fields up, capped at 3. Two 12-entry orderings, descending then ascending, so $28DF = $00/$0C draws the figure unmirrored/MIRRORED
+$7DA9,shape_row_byte_offset,data,0,Per-row byte offset into a figure shape (row*3), indexed by draw_scaled_shape's row accumulator high byte $0055; added to shape_col_byte_offset to reach the cell's source byte
+$7DBB,shape_col_byte_offset,data,0,Per-column byte offset within a shape row (0/1/2 — three bytes, twelve 2-bit pixels), indexed by column + shape_col_base $28DF; like shape_field_select it holds two 12-entry orderings so $28DF picks the mirrored one

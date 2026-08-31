@@ -1179,13 +1179,13 @@ void audio_timer_setup(void) {
     cpu.Y = 0x60;   /* faithful exit Y */
 }
 
-/* Four preset terrain-height samples ($6B5F, 4 bytes): the non-flat heights the
- * generator picks from.  (Unnamed in symbols.csv — see docs/rename.md.) */
+/* Four preset terrain-height samples (terrain_height_table $6B5F, 4 bytes): the non-flat
+ * heights the generator picks from. */
 #define TERRAIN_HEIGHT_TABLE 0x6B5Fu
 
 /* Base of the four parallel terrain-height column buffers ($0C32/$0D32/$0E32/$0F32,
- * 0x100 apart), one per starfield/terrain layer, indexed by column.  (Unnamed in
- * symbols.csv — see docs/rename.md.) */
+ * 0x100 apart), one per starfield/terrain layer, indexed by column.  player_col_buf0
+ * names the first. */
 #define TERRAIN_COL_BUF(layer, col) mem[0x0C32u + (layer) * 0x100u + (col)]
 
 /* The 17-bit POKEY RANDOM LFSR state (x^17+x^5+1), defined (extern "C") in PlatformAmiga.cpp.
@@ -1727,7 +1727,7 @@ void draw_frame_guide_columns(void) {
 void draw_frame_pattern_seq(void) {
     init_row_coords_9c();                                 /* seed the four edge coords $9C-$9F */
     draw_color_idx = 0x01;
-    /* $6E0F = the door-frame span-thickness table (unnamed ROM table — see docs/rename.md):
+    /* frame_span_thickness_tbl $6E0F = the door-frame span-thickness table:
      * one entry per concentric rectangle, index $13 down to 0 (20 rectangles).  Walk it with a
      * descending pointer; each entry is that rectangle's row count. */
     const uint8_t* thick = (const uint8_t*)mem + 0x6E0F + 0x13;
@@ -4175,7 +4175,7 @@ void game_init_77DF(void) {
  * pixel from the field's read half rather than painting a new value.
  *
  * Three clips drop the pixel: y outside [$6C,$97), x outside [$28,$D8), or its byte column at
- * or beyond the row's byte limit ($00B3).  ⚠ The x cursor advances on EVERY path, dropped
+ * or beyond the byte-column limit (plot_col_limit).  ⚠ The x cursor advances on EVERY path, dropped
  * pixels included — that is what walks a caller's span across the clip edge, so the early
  * returns below must stay after the increment.
  *
@@ -4212,7 +4212,7 @@ void plot_clipped_pixel_core(uint8_t source) {
     /* Byte column in the row (the +$F8 wraps at 8 bits, as the 6502's ADC does), and which of
      * the byte's four pixels this x selects. */
     const uint8_t col = (uint8_t)((x >> 2) + 0xF8);
-    if (col >= mem[0x00B3]) return;
+    if (col >= plot_col_limit) return;
     const uint8_t pix = (uint8_t)(x & 3);
     /* The 6502 left col in Y here (TAY at $7D71).  Provably dead: all five callers are inside
      * draw_scaled_shape and each overwrites Y or A before reading either, and its own caller
@@ -4222,10 +4222,10 @@ void plot_clipped_pixel_core(uint8_t source) {
     /* Composite into the field: a transparent source keeps the read half's pixel, then mask to
      * this pixel's two bits and merge over the destination byte. */
     uint8_t value = source ? source : mem[(uint16_t)(readPtr + col)];
-    value &= mem[0x4F3B + pix];
+    value &= mem[0x4F3B + pix];                       /* plot_pixel_keep_mask */
     blit_color_src = value;
     const uint16_t dst = (uint16_t)(writePtr + col);
-    mem[dst] = (uint8_t)((mem[dst] & mem[0x7DEB + pix]) | value);
+    mem[dst] = (uint8_t)((mem[dst] & mem[0x7DEB + pix]) | value);   /* plot_pixel_clear_mask */
 #else
     /* A transparent pixel is a copy of the terrain, not part of the figure, so it contributes
      * nothing to the overlay. */
@@ -5084,11 +5084,12 @@ void dl_lms_reset_window(void) {
  * down by $10 per zoom frame to a $0100 floor, so the near figure costs ~10x the far one
  * (29 -> 284 plots).  Measured cost curve: docs/rescue-figure-render.md.
  *
- * Each row reloads the x cursor from shape_row_width ($28DE) — the count left over from dividing
+ * Each row reloads the x cursor from plot_row_start_x ($28DE) — the count left over from dividing
  * $0600 by step by repeated subtraction — which is what keeps the figure centred as it scales.
- * A cell picks its byte out of the shape by adding the row offset ($7DA9) to the column offset
- * ($7DBB), selects one of that byte's four 2-bit fields via $7DD3, and maps the field through
- * $7DA5 into the value plot_clipped_pixel paints.
+ * A cell picks its byte out of the shape by adding shape_row_byte_offset ($7DA9) to
+ * shape_col_byte_offset ($7DBB), selects one of that byte's four 2-bit fields via
+ * shape_field_select ($7DD3), and maps the field through shape_field_pen_byte ($7DA5) into the
+ * value plot_clipped_pixel paints.
  *
  * The 14 leading and 2-per-row trailing TRANSPARENT plots are not decoration: a transparent plot
  * still advances the x cursor (and nothing else), so they place the row's left edge and pad its
@@ -5123,14 +5124,14 @@ void draw_scaled_shape_core(uint16_t step, uint16_t shapeBase, uint8_t colBase) 
     terrain_pt_coord_a = cursorX;
     row_table_stride   = (uint8_t)remainder;          /* $00C1 */
     player_speed       = (uint8_t)(remainder >> 8);   /* $00C2 */
-    shape_row_width    = cursorX;
+    plot_row_start_x   = cursorX;
 
     for (unsigned i = 0; i < 14; i++) plot_clipped_pixel_core(0x00);
     terrain_pt_coord_b--;
 
     uint16_t rowAccum = 0, colAccum = 0;
     do {
-        terrain_pt_coord_a = shape_row_width;
+        terrain_pt_coord_a = plot_row_start_x;
         colAccum = 0;
         plot_clipped_pixel_core(0x00);
         /* Constant for the whole row: the 6502 re-read it per cell (LDY $55 at $7CDB). */
@@ -5141,7 +5142,7 @@ void draw_scaled_shape_core(uint16_t step, uint16_t shapeBase, uint8_t colBase) 
             const uint8_t  byteOff = (uint8_t)((uint16_t)rowOffset + mem[0x7DBB + colIdx]
                                                + (colSel >> 8));   /* carry chain, as the 6502 */
             uint8_t shapeByte = mem[(uint16_t)(shapeBase + byteOff)];
-            /* $7DD3 picks the 2-bit field: 0 (or >= $81) means the low one, otherwise `sel`
+            /* shape_field_select picks the 2-bit field: 0 (or >= $81) means the low one, else `sel`
              * fields up, capped at 3.  The 6502 spelled it as up to three DEX/LSR/LSR passes. */
             const uint8_t sel = mem[0x7DD3 + colIdx];
             if (sel != 0 && sel < 0x81) shapeByte >>= 2 * (sel > 3 ? 3 : sel);
@@ -6157,7 +6158,7 @@ void sine_table_lookup(void) {
     uint8_t angle = trig_angle;                       /* $0075: 0..255 = full circle */
     uint8_t quad  = (uint8_t)(angle >> 6);            /* top 2 bits = quadrant */
     uint8_t idx   = (uint8_t)(angle & 0x3F);          /* low 6 bits = quarter-wave index */
-    mem[0x280E] = quad;                               /* $280E = quadrant (see docs/rename.md) */
+    trig_quadrant = quad;                             /* $280E */
 
     /* Reflect the index for the descending quadrants, then read the 16-bit magnitude. */
     uint8_t  y = (uint8_t)(idx ^ mem[0x9B9C + quad]);            /* $9B9C = per-quadrant reflect mask */
@@ -6797,7 +6798,7 @@ void raster_scaled_object(void) {
             if (borrow) break;                                    /* BCS: fall through on no-borrow */
         }
     }
-    shape_row_width = col;                                        /* ABBD */
+    plot_row_start_x = col;                                       /* ABBD */
 
     uint8_t  row     = terrain_pt_coord_b;   /* $4E, one step down per row */
     uint16_t outer   = 0x0000;               /* {$55:$54} row accumulator */
@@ -6807,7 +6808,7 @@ void raster_scaled_object(void) {
     do {                                                          /* ABC8 outer (<= 12 rows) */
         /* {$C4:A} = $55 << 2, then + the shape source pointer (one 16-bit add, wrapping). */
         rowBase = (uint16_t)(plotBase + (uint16_t)((outer >> 8) << 2));
-        col     = shape_row_width;                                /* faithful re-read of $28DE */
+        col     = plot_row_start_x;                               /* faithful re-read of $28DE */
         inner   = 0x0000;
 
         do {                                                      /* ABEA inner (<= 32 cols) */
@@ -8496,7 +8497,7 @@ void terrain_draw_frame_core(uint8_t entryX) {
         uint32_t *p   = (uint32_t *)(mem + MEM_terrain_col_byte_offset + 0x20);
         uint32_t *end = (uint32_t *)(mem + MEM_terrain_col_byte_offset + 0xD8);
         while (p < end) { *p++ = grp; grp += 0x01010101u; }
-        mem[0x00B3] = (uint8_t)(entryX + 0x5C);          /* $00B3 = far column id (entryX + $5C) */
+        plot_col_limit = (uint8_t)(entryX + 0x5C);       /* the plotters' byte-column clip limit */
     }
     {   /* L_a351: $263A/$26CE[0..$13] = $67 (20 bytes, 2-aligned) -> uniform word stores.
            ⚠ GCC actually splits these back into 40 individual byte stores (checked in the
@@ -9102,7 +9103,7 @@ static void dial_cell_write(uint16_t addr, uint8_t val) {
  * threshold (bar_col_threshold) is drawn "lit" (glyph bit7 set), otherwise "empty".  Odd
  * columns are two cells tall (a lower cell is written as well).  Shared by the dial bars
  * (setup_dial_bar_draw), the left-indicator bar (draw_dial_bar_column) and player-3 lock-on.
- * ($4581 = per-column cell-pointer table, still unnamed — see docs/rename.md.) */
+ * ($4581 = dial_column_ptr_table, the per-column cell-pointer table.) */
 static void draw_object_column_core(uint8_t startCol) {
     const uint8_t threshold = bar_col_threshold;   /* $BF: columns below this are lit */
     const uint8_t stop      = dl_y4;               /* $BE: loop ends when the counter reaches this */
@@ -10952,8 +10953,7 @@ void lock_on_indicator_write_cell(void) {   /* 6502 ABI: A = glyph, Y = cell ind
 }
 
 /* $4258 lock_on_indicator_fill_cells — light all six indicator glyphs ($A9) at once: the fill sweep's
- * opening frame, also used to (re)initialise the strip at game start.
- * (Misnamed "lock_on_indicator_fill_cells" — really lock_on_indicator_fill_cells; see docs/rename.md.) */
+ * opening frame, also used to (re)initialise the strip at game start. */
 void lock_on_indicator_fill_cells(void) {
     for (uint8_t i = 0; i <= 5; i++) lockon_write((uint16_t)(0x3492u + i), 0xA9);
 }

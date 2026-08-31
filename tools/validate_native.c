@@ -1410,7 +1410,7 @@ static int test_plot_clipped_pixel(void) {
         if (t & 1) {
             pre[0x004E] = (uint8_t)(0x6C + (xs() % 0x2B));   /* Y in [$6C,$97) */
             pre[0x004F] = (uint8_t)(0x28 + (xs() % 0xB0));   /* X in [$28,$D8) */
-            pre[0x00B3] = 0x80;                              /* high limit so col passes */
+            pre[0x00B3] = 0x80;                  /* plot_col_limit: high, so col passes */
         } else {
             pre[0x004E] = (uint8_t)(xs() & 0xFF);
             pre[0x004F] = (uint8_t)(xs() & 0xFF);
