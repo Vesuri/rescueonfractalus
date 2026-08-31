@@ -76,6 +76,14 @@ cell through a hardware `bus_read` and faked the whole result.
 ⚠ The harness machine is `A500+` **with `--fast_memory=8192`**, so `mem[]` and code sit in
 uncontended fast RAM while the overlay is chip. On a bare A500 these figures get worse.
 
+✅ **APPEARANCE CONFIRMED (user, 2026-08-31): both the pilot AND the alien look correct** after the
+rewrite. The alien is the load-bearing half of that check — `FORCE_ALIEN` makes the rescued figure
+the alien, so it drives the *same* `draw_scaled_shape` with a different shape source, and it
+exercises the overlay composite the creature and the walk share
+(`docs/alien-jumpscare.md`). Together with the identical overlay fingerprints below, the Amiga-only
+`ROF_PLOT_FIG` arm — which `make validate` cannot reach — is covered by both a mechanical and a
+visual check.
+
 ### Measured, before -> after the clean-C rewrite of both routines
 
 Ticks are ISR-subtracted raster lines; 313 t = 1 frame = 20 ms. `raw` includes the ISR firings that
