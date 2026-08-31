@@ -45,6 +45,15 @@ Rewrite hot functions in idiomatic C:
   emitted BEFORE designing the asm** — if it already inlined and unrolled, you must beat
   straight-line code, and the headroom is small. Watch the prologue too: a 10-register `movem`
   costs ~180 cycles against GCC's 3-register ~68, which can exceed the whole win.
+  ⚠ **A SECOND inlined expansion of the same macro at one site can outline the WHOLE function.**
+  Adding a value-2 arm beside the value-3 arm of the object plane1 overlay — two expansions of one
+  ~20-line plot macro — added **~750 B of `.text`** and pushed `terrain_plot_pixel_core` past the
+  threshold at which GCC keeps inlining it into its three callers, so it became a `.part.0` behind a
+  `jsr` on the per-object-cell path. **Fix: keep ONE expansion and pass the difference as a runtime
+  parameter** (here a slot offset, `vLo ? 0 : 40`) — +248 B, no outlining, and the common arm pays
+  only the select. Same family as the `ZP_IND_Y` macro-level failure in
+  the `feedback-volatile-codegen-tax` memory. **Tell: a new `*.part.0` symbol in `objdump -t`,** so
+  diff the symbol table across the change rather than trusting the total size.
   ⚠⚠ **GCC UNDOES this rule when a loop walks 3+ pointers — and the exit test is the one-line fix.**
   ivopts strength-reduces N pointer IVs into ONE index register plus N invariant bases, so every
   access becomes `(0,An,Dn.L)`: **14 cycles of EA for a long against `(An)+`'s 8**, on top of losing
