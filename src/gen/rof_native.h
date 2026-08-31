@@ -55,6 +55,18 @@ uint8_t bin_to_bcd_core(uint8_t a, uint8_t *units, uint8_t *tens);
  * former also setting $00D8=$44) into the title line $32B7..$32CA. */
 void copy_title_text_block_to_screen_core(uint8_t entryY);
 
+/* plot_clipped_pixel @ $7D38 core — plot one 2-bit pixel of the approach figure into the
+ * mode-D field at (terrain_pt_coord_a, terrain_pt_coord_b), clipped to the viewport window.
+ * `source` is the 2-bit value replicated across a byte; 0 = transparent (keep the terrain).
+ * ⚠ Advances the x cursor on every path, clipped pixels included. */
+void plot_clipped_pixel_core(uint8_t source);
+
+/* draw_scaled_shape @ $7C9A core — draw one frame of the pilot/alien approach figure at the
+ * scale set by `step` (an inverse scale: SMALLER step = BIGGER figure; it drives both loop
+ * counts, so the plotted cell count grows as 1/step^2).  `shapeBase` is the 2-bit shape source
+ * ($00C3/$00C4, seeded per animation phase) and `colBase` the column offset ($28DF). */
+void draw_scaled_shape_core(uint16_t step, uint16_t shapeBase, uint8_t colBase);
+
 #ifdef __cplusplus
 }
 #endif

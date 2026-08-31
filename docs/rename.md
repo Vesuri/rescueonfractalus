@@ -7,14 +7,44 @@ regenerate (`make gen`). Hand-written twins (`rof_native.c`, `rof_native_amiga.c
 `validate_native.c`, the Amiga platform layer, `transpile.py` comments) reference the names
 directly and must be updated in the same pass.
 
-> ## ✅ THE BACKLOG IS EMPTY
->
 > **When you find a misnamed function, append a new section here** (address, current name, actual
 > behaviour, suggested name) — per `CLAUDE.md` §Working conventions, file it the moment you find
 > it, don't defer.
 >
 > This file is the *pending* list plus the durable rules below. Applied renames are **not** logged
 > here — they are in `git log`.
+
+## Approach-figure zoom (`draw_scaled_shape` / `plot_clipped_pixel`) — cells and 4 tables
+
+Found while rewriting both routines into clean C. The figure plotter borrows heavily-reused ZP
+scratch, and two of the borrowed cells carry names from a *different* path that are outright
+wrong here.
+
+| cell | current name | its role in the figure plotter | suggested |
+|---|---|---|---|
+| `$00C1` | `row_table_stride` | the plot's **destination row pointer LOW** (`$073D[row] + $30`), and, before that, the low byte of `draw_scaled_shape`'s `$0600 / step` remainder | leave, but see below |
+| `$00C2` | `player_speed` | the same pointer's **HIGH** byte / the remainder's high byte. Nothing to do with player speed | leave, but see below |
+| `$0050`/`$0051` | `plot_step_lo`/`plot_step_hi` | correct, but understates it: this is the figure's **inverse scale** — it sets both loop counts, so cell count grows as 1/step² | `figure_scale_lo`/`_hi` |
+| `$28DE` | `shape_row_width` | not a width: the **per-row starting x** (what is left of the x cursor after the divide) | `figure_row_start_x` |
+| `$004E`/`$004F` | `terrain_pt_coord_b`/`_a` | the plotter's **y/x cursor**; `$004F` is auto-incremented by every plot, clipped or not | leave (genuinely shared with the terrain point path) |
+
+⚠ **`$00C1`/`$00C2` are the multi-role case, not a rename candidate** — `row_table_stride` is
+right for `game_setup_7460`, which is what named it, and `player_speed` is right for
+`boot_standby_launch_driver`. Per the §multi-role convention they keep those names; recorded here
+so a reader of the figure plotter is not misled, and **so a future batch rename does not pick a
+figure-specific name for either.**
+
+**Four unnamed tables**, all in the `$7Dxx` block next to the routines that use them:
+
+| address | size | what it is |
+|---|---|---|
+| `$4F3B` | 4 | AND mask keeping only pixel `x&3`'s two bits of a source byte |
+| `$7DEB` | 4 | the complement — clears pixel `x&3`'s two bits of the destination byte |
+| `$7DA5` | 4 | maps an extracted 2-bit shape field to the byte value the plotter paints |
+| `$7DD3` | ≥`$0C` | selects WHICH 2-bit field of a shape byte a column samples (0 or ≥`$81` = the low field, else that many fields up, capped at 3) |
+
+Also unnamed: **`$00B3`**, the per-row **byte-column limit** the plotter clips against (`$5C` in
+flight, measured in `a800dumps/rescue_pilot.a8s`). Suggested `plot_col_limit`.
 
 ## How to apply a rename safely (the traps that have actually bitten)
 

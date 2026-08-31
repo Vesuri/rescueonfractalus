@@ -3690,6 +3690,8 @@ volatile unsigned long  g_alHudCalls = 0;         /* # alien_shape_blit calls du
 #define ROF_ALIEN_DRAWSHAPE()   ((void)0)
 #endif
 
+
+
 /* Creature-blit write hook (PRE_INSN_HOOK at $80E9, emitted into rof_gen.c in ALL builds, so this
  * must exist everywhere; the body is probe/Amiga-only).  addr = ($8D)+Y target, val = byte stored. */
 void rof_alien_crwrite(unsigned int addr, unsigned char val) {
@@ -4050,58 +4052,81 @@ void game_init_77DF(void) {
     } while (x != 0x00);
 }
 
-/* plot_clipped_pixel @ $7D38 — plot one clipped HUD/radar pixel.  Entry A = source value
- * ($0058; 0 means "read the existing screen byte").  The pixel at ($004F,$004E) is plotted
- * only inside the window Y∈[$6C,$97) and X∈[$28,$D8) and when its packed column index stays
- * below $00B3.  The screen row pointers $0080 / $00C1 come from the row-addr table indexed by
- * $97-$004E; the pixel is masked into ($00C1)+col via $4F3B[X&3]/$7DEB[X&3].  $004F is always
- * incremented. */
-void plot_clipped_pixel(void) {
-    ROF_ALIEN_PLOT();                       /* diag: count bitmap-figure plots during the alien attack */
-    plot_pixel_mask = cpu.A;
-    uint8_t x = terrain_pt_coord_a;
-    uint8_t y = terrain_pt_coord_b;
-    if (y >= 0x6C && y < 0x97 && x >= 0x28 && x < 0xD8) {
-        uint8_t ry = (uint8_t)(0x97 - terrain_pt_coord_b);
-        cpu.C = 0;
-        cpu.A = mem[MEM_row_base_lo + ry]; sync_flag = cpu.A; ADC(0x30); row_table_stride = cpu.A;
-        cpu.A = mem[MEM_row_base_hi + ry]; dl_ptr_lo = cpu.A; ADC(0x00); player_speed = cpu.A;
-        cpu.A = x;
-        LSR_A(); LSR_A();
-        cpu.C = 0; ADC(0xF8);
-        uint8_t col = cpu.A;
-        CMP(mem[0x00B3]);
-        if (!cpu.C) {                               /* BCS skip => plot when col < $00B3 */
-            cpu.Y = col;                            /* exit-Y contract (kept on both paths) */
-            uint8_t mx = (uint8_t)(x & 0x03);
-#ifndef ROF_PLATFORM_AMIGA
-            /* SDL/validate: composite the figure pixel into the mode-D field — read the current
-             * terrain (a transparent source keeps it), mask, OR the figure colour in, write back.
-             * On the Amiga this whole ($80),Y-read + ($C1),Y-RMW is DEAD: during the paused
-             * pilot-zoom nothing reads the mode-D field (renderFlightDirect composites the frozen
-             * terrain + the g_fig* overlay) — which is precisely why the overlay exists.  So drop
-             * it (up to 3 indirect bus accesses per figure pixel) and feed the overlay instead. */
-            uint8_t a = plot_pixel_mask;
-            if (a == 0x00) a = bus_read(ZP_IND_Y(0x0080));
-            a &= mem[0x4F3B + mx];
-            blit_color_src = a;
-            uint8_t b = bus_read(ZP_IND_Y(0x00C1));
-            b &= mem[0x7DEB + mx];
-            b |= blit_color_src;
-            bus_write(ZP_IND_Y(0x00C1), b);
-#else
-            /* Amiga: mirror opaque figure pixels into the rescue-figure overlay (see ROF_PLOT_FIG).
-             * plot_pixel_mask==0 = a transparent (value-0) copy of the terrain — not part of the
-             * figure, so skip it. */
-            if (plot_pixel_mask != 0) {
-                uint8_t v2 = (uint8_t)((plot_pixel_mask >> (6 - 2 * mx)) & 3u);
-                if (v2) ROF_PLOT_FIG(x, y, v2);
-            }
+/* plot_clipped_pixel @ $7D38 — plot one 2-bit pixel into the mode-D field, clipped to the
+ * viewport window, then advance the x cursor.
+ *
+ * The pixel is (x, y) = (terrain_pt_coord_a, terrain_pt_coord_b) in GTIA pixel coordinates:
+ * 4 pixels to a field byte, y measured DOWNWARDS from the window's bottom edge ($97).  `source`
+ * is the 2-bit value already replicated across a byte; source == 0 means TRANSPARENT — take the
+ * pixel from the field's read half rather than painting a new value.
+ *
+ * Three clips drop the pixel: y outside [$6C,$97), x outside [$28,$D8), or its byte column at
+ * or beyond the row's byte limit ($00B3).  ⚠ The x cursor advances on EVERY path, dropped
+ * pixels included — that is what walks a caller's span across the clip edge, so the early
+ * returns below must stay after the increment.
+ *
+ * Addressing: the per-scanline base table row_base_lo/row_base_hi ($073D/$0793), indexed by
+ * ($97 - y), holds the row's field address.  That base is the READ pointer ($0080/$0081) and
+ * base + $30 is the WRITE pointer ($00C1/$00C2) — the other display half.  Both are published
+ * to mem[] before the column clip, because they outlive the call: draw_scaled_shape relies on a
+ * fully-clipped row still leaving them behind.
+ *
+ * On the Amiga the mode-D field is dead — during the paused pilot zoom nothing reads it
+ * (renderFlightDirect composites the frozen terrain plus the g_fig* overlay) — so the read and
+ * the read-modify-write through those pointers are skipped and the pixel is mirrored into the
+ * overlay instead.  That is precisely why the overlay exists. */
+void plot_clipped_pixel_core(uint8_t source) {
+    ROF_MEMBASE_DECL(mb);   /* fold mem[] operands to (d16,An) — this is a per-pixel callee */
+#ifdef ROF_MEMBASE
+#define mem mb
 #endif
-        }
+    ROF_ALIEN_PLOT();       /* diag: count bitmap-figure plots during the alien attack */
+    plot_pixel_mask = source;
+
+    const uint8_t x = terrain_pt_coord_a;
+    const uint8_t y = terrain_pt_coord_b;
+    terrain_pt_coord_a = (uint8_t)(x + 1);
+
+    if (y < 0x6C || y >= 0x97 || x < 0x28 || x >= 0xD8) return;
+
+    const uint8_t  row      = (uint8_t)(0x97 - y);
+    const uint16_t readPtr  = ROF_PAIR16(mem[MEM_row_base_lo + row], mem[MEM_row_base_hi + row]);
+    const uint16_t writePtr = (uint16_t)(readPtr + 0x30);
+    sync_flag        = (uint8_t)readPtr;   dl_ptr_lo    = (uint8_t)(readPtr >> 8);
+    row_table_stride = (uint8_t)writePtr;  player_speed = (uint8_t)(writePtr >> 8);
+
+    /* Byte column in the row (the +$F8 wraps at 8 bits, as the 6502's ADC does), and which of
+     * the byte's four pixels this x selects. */
+    const uint8_t col = (uint8_t)((x >> 2) + 0xF8);
+    if (col >= mem[0x00B3]) return;
+    const uint8_t pix = (uint8_t)(x & 3);
+    /* The 6502 left col in Y here (TAY at $7D71).  Provably dead: all five callers are inside
+     * draw_scaled_shape and each overwrites Y or A before reading either, and its own caller
+     * (animate_zoom_sequence, $7C88) reads neither — so no Y is published. */
+
+#ifndef ROF_PLATFORM_AMIGA
+    /* Composite into the field: a transparent source keeps the read half's pixel, then mask to
+     * this pixel's two bits and merge over the destination byte. */
+    uint8_t value = source ? source : mem[(uint16_t)(readPtr + col)];
+    value &= mem[0x4F3B + pix];
+    blit_color_src = value;
+    const uint16_t dst = (uint16_t)(writePtr + col);
+    mem[dst] = (uint8_t)((mem[dst] & mem[0x7DEB + pix]) | value);
+#else
+    /* A transparent pixel is a copy of the terrain, not part of the figure, so it contributes
+     * nothing to the overlay. */
+    if (source) {
+        const uint8_t v2 = (uint8_t)((source >> (6 - 2 * pix)) & 3u);
+        if (v2) ROF_PLOT_FIG(x, y, v2);
     }
-    terrain_pt_coord_a = (uint8_t)(terrain_pt_coord_a + 1);
+#endif
+#ifdef ROF_MEMBASE
+#undef mem
+#endif
 }
+
+/* 6502-ABI shim: the source byte arrives in A. */
+void plot_clipped_pixel(void) { plot_clipped_pixel_core(cpu.A); }
 
 /* unpack_bitmap_4d3e @ $74D7 — unpack a bitmap by bit-reversing bytes between buffers whose
  * pointers come from the $4D3E word table.  Outer 8 passes x middle 4 passes: src ptr $00C1 =
@@ -4935,79 +4960,101 @@ void dl_lms_reset_window(void) {
     dl_rebuild_lms_window();
 }
 
-/* draw_scaled_shape @ $7C9A — scale and blit a 2-bit shape into the HUD via the clipped
- * plotter.  First a divide-by-repeated-subtraction: $C2:$C1=$0600, subtract the step
- * $0051:$0050 until it borrows, decrementing $004F each pass; the leftover $004F (->$28DE)
- * is the per-row inner count reload.  Then 14 blank plots, and the nested row(outer,$0055
- * accum to $12)/col(inner,$0053 accum to $0C) loop: each cell derives a mask-byte offset via
- * the $7DA9/$7DBB/$7DD3 tables + the ($C3) mask pointer, extracts a 2-bit field (X from
- * $7DD3 selects how many >>2 steps — DEX/BMI: 0 for X==0 or X>=$81, else min(X,3)), maps it
- * through $7DA5 and plots it.  plot_clipped_pixel is native (clips OOB).  HW-free except the
- * mask read through ($C3) routed via bus_read.  Step must be nonzero or the loops never end. */
-void draw_scaled_shape(void) {
-    ROF_MEMBASE_DECL(mb);   /* 48 absolute-long mem[] operands folded to (d16,An) */
+/* draw_scaled_shape @ $7C9A — draw one frame of the pilot/alien approach figure, scaled, into
+ * the mode-D field through plot_clipped_pixel.
+ *
+ * `step` is an INVERSE scale in 8.8 fixed point — smaller step, bigger figure.  It drives both
+ * loop counts and the source-sampling stride, so one call plots
+ *     rows = $1200/step   x   cols = $0C00/step
+ * cells, i.e. the cell count and the cost grow as 1/step^2.  animate_zoom_sequence walks step
+ * down by $10 per zoom frame to a $0100 floor, so the near figure costs ~10x the far one
+ * (29 -> 284 plots).  Measured cost curve: docs/rescue-figure-render.md.
+ *
+ * Each row reloads the x cursor from shape_row_width ($28DE) — the count left over from dividing
+ * $0600 by step by repeated subtraction — which is what keeps the figure centred as it scales.
+ * A cell picks its byte out of the shape by adding the row offset ($7DA9) to the column offset
+ * ($7DBB), selects one of that byte's four 2-bit fields via $7DD3, and maps the field through
+ * $7DA5 into the value plot_clipped_pixel paints.
+ *
+ * The 14 leading and 2-per-row trailing TRANSPARENT plots are not decoration: a transparent plot
+ * still advances the x cursor (and nothing else), so they place the row's left edge and pad its
+ * right edge.
+ *
+ * The shape is read straight out of mem[] rather than through bus_read: the only caller,
+ * animate_zoom_sequence, re-seeds $00C3/$00C4 from the per-phase tables $7D8D/$7D95 immediately
+ * before every call, and those hold only $7DEF/$7E25/$7E5B/$7E91 — inside the game blob, never
+ * the $D000-$D7FF hardware window.
+ *
+ * ⚠ step must be nonzero: the divide and both loops are driven by it and would never end. */
+void draw_scaled_shape_core(uint16_t step, uint16_t shapeBase, uint8_t colBase) {
+    ROF_MEMBASE_DECL(mb);   /* fold mem[] operands to (d16,An) */
 #ifdef ROF_MEMBASE
 #define mem mb
 #endif
-    ROF_ALIEN_DRAWSHAPE();   /* diag: count zoom-shape draws + latch shape ptr during the alien attack */
-    ROF_CLEAR_FIG();      /* Amiga: reset the rescue-figure overlay for this frame's shape (no-op on SDL) */
-    player_speed = 0x06;
-    row_table_stride = 0x00;
-    {
-        uint8_t carry = 1;                              /* SEC */
-        do {
-            int r = (int)row_table_stride - plot_step_lo - (1 - carry);
-            row_table_stride = (uint8_t)r; carry = (r >= 0);
-            r = (int)player_speed - plot_step_hi - (1 - carry);
-            player_speed = (uint8_t)r; carry = (r >= 0);
-            terrain_pt_coord_a = (uint8_t)(terrain_pt_coord_a - 1);   /* DEC (carry unaffected) */
-        } while (carry);
+    ROF_ALIEN_DRAWSHAPE();  /* diag: count zoom-shape draws + latch shape ptr during the attack */
+    ROF_CLEAR_FIG();        /* Amiga: reset the figure overlay for this frame's shape */
+
+    /* $0600 / step by repeated subtraction.  The x cursor loses one count per subtraction, and
+     * what is left of it becomes every row's starting x.  The remainder is published to
+     * $00C1/$00C2 because plot_clipped_pixel only overwrites those for a pixel that survives its
+     * window test — a fully-clipped figure would otherwise leave them stale. */
+    uint16_t remainder = 0x0600;
+    uint8_t  cursorX   = terrain_pt_coord_a;
+    for (;;) {
+        const int borrow = (remainder < step);
+        remainder = (uint16_t)(remainder - step);
+        cursorX--;
+        if (borrow) break;
     }
-    shape_row_width = terrain_pt_coord_a;
+    terrain_pt_coord_a = cursorX;
+    row_table_stride   = (uint8_t)remainder;          /* $00C1 */
+    player_speed       = (uint8_t)(remainder >> 8);   /* $00C2 */
+    shape_row_width    = cursorX;
 
-    mem[0x0054] = 0x00; mem[0x0055] = 0x00;
-    mem[0x0053] = 0x0E;
-    do {                                                /* L_7cc2: 14 blank plots */
-        cpu.A = 0x00; plot_clipped_pixel();
-        mem[0x0053] = (uint8_t)(mem[0x0053] - 1);
-    } while (mem[0x0053] != 0x00);
-    terrain_pt_coord_b = (uint8_t)(terrain_pt_coord_b - 1);
+    for (unsigned i = 0; i < 14; i++) plot_clipped_pixel_core(0x00);
+    terrain_pt_coord_b--;
 
-    do {                                                /* L_7ccd (rows) */
+    uint16_t rowAccum = 0, colAccum = 0;
+    do {
         terrain_pt_coord_a = shape_row_width;
-        mem[0x0052] = 0x00; mem[0x0053] = 0x00;
-        cpu.A = 0x00; plot_clipped_pixel();
-        do {                                            /* L_7cdb (cols) */
-            uint8_t y = mem[0x0055];
-            unsigned t = (unsigned)mem[0x0053] + shape_col_base;   /* CLC; ADC $28DF */
-            uint8_t x = (uint8_t)t;
-            unsigned t2 = (unsigned)mem[0x7DA9 + y] + mem[0x7DBB + x] + (t > 0xFF ? 1 : 0);
-            y = (uint8_t)t2;
-            x = mem[0x7DD3 + x];
-            uint16_t c3 = (uint16_t)(row_table_base_lo | (row_table_base_hi << 8));
-            uint8_t a = bus_read((uint16_t)(c3 + y));
-            for (int i = 0; i < 3; i++) {               /* DEX; BMI; LSR;LSR */
-                x = (uint8_t)(x - 1);
-                if (x & 0x80) break;
-                a = (uint8_t)(a >> 2);
-            }
-            a &= 0x03;
-            cpu.A = mem[0x7DA5 + a];
-            plot_clipped_pixel();
-            unsigned s = (unsigned)mem[0x0052] + plot_step_lo;
-            mem[0x0052] = (uint8_t)s;
-            mem[0x0053] = (uint8_t)((unsigned)mem[0x0053] + plot_step_hi + (s > 0xFF ? 1 : 0));
-        } while (mem[0x0053] < 0x0C);
-        cpu.A = 0x00; plot_clipped_pixel();
-        cpu.A = 0x00; plot_clipped_pixel();
-        terrain_pt_coord_b = (uint8_t)(terrain_pt_coord_b - 1);
-        unsigned u = (unsigned)mem[0x0054] + plot_step_lo;
-        mem[0x0054] = (uint8_t)u;
-        mem[0x0055] = (uint8_t)((unsigned)mem[0x0055] + plot_step_hi + (u > 0xFF ? 1 : 0));
-    } while (mem[0x0055] < 0x12);
+        colAccum = 0;
+        plot_clipped_pixel_core(0x00);
+        /* Constant for the whole row: the 6502 re-read it per cell (LDY $55 at $7CDB). */
+        const uint8_t rowOffset = mem[0x7DA9 + (uint8_t)(rowAccum >> 8)];
+        do {
+            const uint16_t colSel  = (uint16_t)(uint8_t)(colAccum >> 8) + colBase;
+            const uint8_t  colIdx  = (uint8_t)colSel;
+            const uint8_t  byteOff = (uint8_t)((uint16_t)rowOffset + mem[0x7DBB + colIdx]
+                                               + (colSel >> 8));   /* carry chain, as the 6502 */
+            uint8_t shapeByte = mem[(uint16_t)(shapeBase + byteOff)];
+            /* $7DD3 picks the 2-bit field: 0 (or >= $81) means the low one, otherwise `sel`
+             * fields up, capped at 3.  The 6502 spelled it as up to three DEX/LSR/LSR passes. */
+            const uint8_t sel = mem[0x7DD3 + colIdx];
+            if (sel != 0 && sel < 0x81) shapeByte >>= 2 * (sel > 3 ? 3 : sel);
+            plot_clipped_pixel_core(mem[0x7DA5 + (shapeByte & 3)]);
+            colAccum = (uint16_t)(colAccum + step);
+        } while ((colAccum >> 8) < 0x0C);
+        plot_clipped_pixel_core(0x00);
+        plot_clipped_pixel_core(0x00);
+        terrain_pt_coord_b--;
+        rowAccum = (uint16_t)(rowAccum + step);
+    } while ((rowAccum >> 8) < 0x12);
+
+    /* Contract: both loop accumulators live in ZP scratch and outlive the call.  Only their
+     * final values are ever observed (nothing this function calls reads $0052-$0055), so they
+     * are written once here instead of per iteration. */
+    mem[0x0052] = (uint8_t)colAccum; mem[0x0053] = (uint8_t)(colAccum >> 8);
+    mem[0x0054] = (uint8_t)rowAccum; mem[0x0055] = (uint8_t)(rowAccum >> 8);
 #ifdef ROF_MEMBASE
 #undef mem
 #endif
+}
+
+/* 6502-ABI shim: step, shape pointer and column base all arrive in zero page. */
+void draw_scaled_shape(void) {
+    draw_scaled_shape_core(ROF_PAIR16(plot_step_lo, plot_step_hi),
+                           ROF_PAIR16(row_table_base_lo, row_table_base_hi),
+                           shape_col_base);
 }
 
 /* reorder_cell_bits @ $8181 — reorder a source byte into a mode-D cell byte and fold

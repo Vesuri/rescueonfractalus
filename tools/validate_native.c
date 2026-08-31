@@ -1402,9 +1402,20 @@ static int test_plot_clipped_pixel(void) {
             uint16_t a = (uint16_t)(0x2000 + i * 0x28);
             pre[0x073D + i] = (uint8_t)a; pre[0x0793 + i] = (uint8_t)(a >> 8);
         }
-        pre[0x004E] = (uint8_t)(0x6C + (xs() % 0x2B));   /* Y in [$6C,$97) */
-        pre[0x004F] = (uint8_t)(0x28 + (xs() % 0xB0));   /* X in [$28,$D8) */
-        pre[0x00B3] = 0x80;                              /* high limit so col passes */
+        /* Half the cases sit inside the clip window with a high column limit, so the plotting
+         * path runs; the other half are fully random, so all three CLIP paths (y out of range,
+         * x out of range, byte column at/beyond the limit) are exercised too.  The clip paths
+         * are not decoration: they still advance the x cursor, and they still publish the row
+         * pointers, which is what draw_scaled_shape depends on for a fully-clipped row. */
+        if (t & 1) {
+            pre[0x004E] = (uint8_t)(0x6C + (xs() % 0x2B));   /* Y in [$6C,$97) */
+            pre[0x004F] = (uint8_t)(0x28 + (xs() % 0xB0));   /* X in [$28,$D8) */
+            pre[0x00B3] = 0x80;                              /* high limit so col passes */
+        } else {
+            pre[0x004E] = (uint8_t)(xs() & 0xFF);
+            pre[0x004F] = (uint8_t)(xs() & 0xFF);
+            pre[0x00B3] = (uint8_t)(xs() & 0xFF);
+        }
         Cpu6502 c = zero_cpu();
         c.A = (uint8_t)(xs() & 0xFF);                    /* source value $0058 */
         mem_fail += diff_run("plot_clipped_pixel", pre, c,
