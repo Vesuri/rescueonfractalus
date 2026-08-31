@@ -36,6 +36,7 @@
 #include <resources/cia.h>
 #include <hardware/cia.h>
 #include "framework/AmigaHardware.h"
+#include "framework/CopperList.h"   // wraps GfxBase->copinit for the exit-time COP1LC restore
 #include "PlatformAmiga.h"
 #include "RescueOnFractalus.h"
 #include "ExternalHooks.h"       // the launcher-patchable hiscore save/load hooks
@@ -1561,6 +1562,14 @@ static volatile uint8_t s_pendingFlightKey = 0xFF;
 // setjmp buffers is safe.
 extern "C" void rof_check_restart(void)
 {
+#ifdef ROF_FORCE_QUIT
+    // `make FORCE_QUIT=<vbl>` + amiga/exit_restore.gdb: press the quit button from C at the given
+    // vertical blank.  The system-restore tail of PlatformAmiga::run() is otherwise unreachable
+    // headlessly — the only trigger is a physical mouse click, and the gdb stub drops memory
+    // writes, so poking g_pumpQuit from a script silently does nothing (docs/headless-fsuae.md).
+    // Goes through g_pumpQuit exactly as the mouse does, so nothing about the shutdown differs.
+    if (g_vbiCount >= (uint16_t)ROF_FORCE_QUIT) g_pumpQuit = 1;
+#endif
     if (AmigaHardware::isLeftMouseButtonPressed()) g_pumpQuit = 1;
     if (g_pumpQuit) __builtin_longjmp(g_quitJmp, 1);
     // BREAK (Help = Atari BREAK $80) OUTSIDE flight: only the flight VBI's $519c CLI window
@@ -2264,7 +2273,11 @@ static void keyboardShutdown()
 // it.  The original IntVector is saved verbatim and put back on the way out.
 // `make VERTB_SERVER=1` falls back to the old AddIntServer chain for A/B testing.
 static struct Interrupt vbiServer;
-static uint16_t         s_savedIntena = 0;   // INTENAR at takeover, restored verbatim on exit
+// DMACONR/INTENAR as the OS had them at takeover; both are restored verbatim on the way out.
+// Read BEFORE the first write to either (see the takeover block in run()), so the handover gives
+// the OS back the set it actually had rather than a hardcoded guess at it.
+static uint16_t         s_savedDmacon = 0;
+static uint16_t         s_savedIntena = 0;
 #ifndef ROF_VERTB_SERVER
 static struct IntVector s_savedVertb;      // exec's original VERTB IntVector, restored on exit
 static bool             s_vertbTaken = false;
@@ -3225,14 +3238,35 @@ void PlatformAmiga::run()
     static RescueOnFractalus scene;
 
     // --- takeover: save system state, disable OS display ---------------------
+    // Four pieces of system state have to come back on the way out, and all four are captured
+    // HERE, before the first write to any of them; the restore at the end of run() undoes them in
+    // reverse order.
+    //
+    //   savedView     the OS View — reinstalled with LoadView().
+    //   osCopperList  GfxBase->copinit, the OS's copper START-UP list.  This, not the View's own
+    //                 list, is what COP1LC holds while the OS owns the display: it reinitialises
+    //                 the display registers (FMODE, DIWSTRT/STOP, DDFSTRT/STOP, BPLCON0/2 and all
+    //                 eight sprite pointers) at the top of every frame, then chains via a COPJMP2
+    //                 strobe to the View's list in COP2LC.  graphics.library's VERTB server
+    //                 rewrites COP2LC every frame, so COP1LC is the ONE copper register a takeover
+    //                 has to put back — and LoadView() does NOT do it: LoadView only publishes the
+    //                 View's lists for COP2LC.  Leave COP1LC pointing at our list and the OS runs
+    //                 with our display setup forever — the machine is up, but the copper list is
+    //                 wrong.  Same save/restore as the dA JoRMaS ProductionRunner.
+    //   s_savedDmacon DMACONR — read before we clear a single channel.
+    //   s_savedIntena INTENAR — likewise.
     struct View* savedView = GfxBase->ActiView;
+    const CopperList osCopperList((uint32_t*)GfxBase->copinit);   // non-owning: never freed
+    s_savedDmacon = AmigaHardware::enabledDMAChannels();
+    s_savedIntena = AmigaHardware::enabledInterrupts();
+
     LoadView(NULL);
     WaitTOF();
     WaitTOF();
 
     // Disable raster (bitplane) and sprite DMA so old state doesn't leak through.  Keep
     // exec's disk/blitter/audio DMA as-is; copper DMA gets re-enabled below.
-    *dmaconPointer = (uint16_t)(DMAF_RASTER | DMAF_SPRITE | DMAF_COPPER);
+    AmigaHardware::setDMAChannels(DMAF_RASTER | DMAF_SPRITE | DMAF_COPPER, false);
 
     // --- interrupt sources: keep only what we actually service --------------------
     // Measured in flight (amiga/int_probe.gdb) with everything the OS left enabled: EXTER
@@ -3242,12 +3276,11 @@ void PlatformAmiga::run()
     // blitIrqArm in AmigaHardware.cpp).  So mask INTF_BLIT for the whole takeover window —
     // belt-and-braces alongside blitIrqArm, since something may have armed it before we ran —
     // and clear any request already latched so re-enabling it on the way out can't fire a
-    // stale one into graphics.library.  INTENA is saved here and restored verbatim at the end
+    // stale one into graphics.library.  The INTENAR saved above is restored verbatim at the end
     // (the OS needs its blit interrupt back for QBlit once we hand the machine over).
-    s_savedIntena = (uint16_t)(*intenarPointer);
 #ifndef ROF_BLIT_IRQ
-    *intenaPointer = (uint16_t)INTF_BLIT;        // no SETCLR = disable
-    *intreqPointer = (uint16_t)INTF_BLIT;        // drop any latched blit-done request
+    AmigaHardware::setInterrupts(INTF_BLIT, false);      // no SETCLR = disable
+    AmigaHardware::clearInterruptRequests(INTF_BLIT);    // drop any latched blit-done request
 #endif
 
     // Display window — standard PAL lores 320x200 visible area.  No bitplanes (bplcon0=0):
@@ -3347,7 +3380,14 @@ void PlatformAmiga::run()
     scene.run();
 
     // --- restore system ------------------------------------------------------
-    Permit();
+    // The order below is the dA JoRMaS ProductionRunner teardown order, and every step of it is
+    // load-bearing: stop OUR display, hand the copper back to the OS, and only THEN free the
+    // memory the display was reading.  Freeing first leaves the copper executing a list that exec
+    // is simultaneously relinking into its free pool, with the bitplane pointers aimed at bitmaps
+    // going the same way.  Free-list bookkeeping assembles into copper instructions, and a
+    // CDANG-less copper can still write everything from $080 up — COP1LC ($080) and DMACON ($096)
+    // included.  That is how the machine ends up running but with the copper list not set
+    // properly, instead of back on the Workbench.
 #ifdef ROF_FLIGHT_PROBE
     intTapsRemove();
 #endif
@@ -3355,11 +3395,37 @@ void PlatformAmiga::run()
     portsRestore();       // hand level 2 back to ciaa.resource before the OS needs it again
 #endif
     keyboardShutdown();
-    scene.shutdown();     // calls PlatformAmiga::audioShutdown
 
-    // Hand VERTB back BEFORE the LoadView/WaitTOF restore below — WaitTOF() is signalled
-    // by graphics.library's VERTB server, which only runs again once exec's chain walker
-    // is back in the vector.
+    // 1. Our VBI off first: its scene bodies write COP1LC (setCopperList) and the live copper
+    //    list's bitplane/sprite pointers, so every step below would otherwise be racing it.
+    AmigaHardware::setInterrupts(INTF_VERTB, false);
+    AmigaHardware::clearInterruptRequests(INTF_VERTB);
+
+    // 2. Our display off: no copper, no bitplane fetch, no sprite fetch.
+    AmigaHardware::setDMAChannels(DMAF_COPPER | DMAF_RASTER | DMAF_SPRITE, false);
+
+    // 3. Copper back onto the OS's start-up list and RUN it — COP1LC = copinit plus an immediate
+    //    COPJMP1 strobe, then copper DMA back on.  EXECUTING copinit is what undoes our display
+    //    setup: FMODE, DIWSTRT/STOP (which also drops the ECS DIWHIGH extension setPlayfield
+    //    wrote), DDFSTRT/STOP, BPLCON0/2, and all eight sprite pointers back to the OS's null
+    //    sprite.  BPLCON3 is the one display register copinit does not carry, so undo
+    //    setPlayfield's border blanking by hand — 0x0C00 is graphics.library's own
+    //    OCS-compatible value, and without it the Workbench inherits our blanked borders on an
+    //    ECS/AGA Denise.  Raster and sprite DMA stay off until step 6: the OS's View list has not
+    //    been republished yet.
+    AmigaHardware::setCopperList(osCopperList, true);
+    *bplcon3Pointer = 0x0c00;
+    AmigaHardware::setDMAChannels(DMAF_COPPER, true);
+
+    // 4. Nothing reads our memory any more — the copper is on the OS's list, and the blitter
+    //    queue is drained rather than left mid-blit into a bitmap about to go back to exec.  Only
+    //    now is it safe to free it all.
+    AmigaHardware::blitterDrain();
+    scene.shutdown();     // frees every copper list / bitmap / sprite; calls audioShutdown
+
+    // 5. VERTB vector back to exec's server-chain walker: before step 6 re-enables the interrupt,
+    //    and before the WaitTOF()s below — those are signalled by graphics.library's VERTB server,
+    //    which only runs again once the walker is back in the vector.
 #ifdef ROF_VERTB_SERVER
     RemIntServer(INTB_VERTB, &vbiServer);
 #else
@@ -3371,25 +3437,24 @@ void PlatformAmiga::run()
     }
 #endif
 
-    // Disable our display DMA before handing back, so our (about-to-be-abandoned) bitplanes and
-    // sprites don't leak through while the copper list is being swapped back to the OS view.
-    *dmaconPointer = (uint16_t)(DMAF_COPPER | DMAF_RASTER | DMAF_SPRITE);
+    // 6. DMA channels and interrupt enables exactly as they were at takeover.  SETCLR alone is a
+    //    complete restore here: every bit we turned on (MASTER, COPPER, RASTER, SPRITE, and the
+    //    audio channels audioShutdown has already cleared) is one the OS had on too.  Mask to the
+    //    writable DMACON bits — DMACONR's 13/14 are the read-only BZERO/BBUSY status flags, not
+    //    channels.  Drop a latched blit request first so re-enabling INTF_BLIT cannot fire a
+    //    stale one straight into graphics.library's QBlit handler.
+    AmigaHardware::clearInterruptRequests(INTF_BLIT);
+    AmigaHardware::setDMAChannels((uint16_t)(s_savedDmacon & (DMAF_ALL | DMAF_MASTER | DMAF_BLITHOG)), true);
+    AmigaHardware::setInterrupts((uint16_t)((s_savedIntena & (uint16_t)~INTF_SETCLR) | INTF_INTEN), true);
 
-    // Put the interrupt enables back as the OS had them: INTF_BLIT is the only bit we masked for
-    // the window, and we never enabled anything the OS had off, so re-setting the saved set is a
-    // complete restore (graphics.library needs blit-done again for QBlit).  Drop a latched blit
-    // request first so re-enabling can't immediately fire a stale one into its handler.
-    *intreqPointer = (uint16_t)INTF_BLIT;
-    *intenaPointer = (uint16_t)(INTF_SETCLR | (s_savedIntena & 0x7FFFu));
-
-    // Point the copper back at the OS view, THEN re-enable display DMA (SETCLR) so the OS display
-    // actually restarts.  LoadView only writes COP1LC — it does NOT touch DMACON — so without this
-    // the copper stays disabled after LoadView and the screen is left blank: a hard "freeze" on the
-    // plain-exe exit path.  (WHDLoad masks it by rebooting the machine on exit, which is why it only
-    // bit standalone runs.)  Enabling copper only AFTER LoadView means COP1LC already holds the OS
-    // list, so this resumes the OS display, not ours.  Mirrors DanceDiverse3's clean-exit sequence.
+    // 7. Multitasking and the OS View back.  Permit() belongs here, not at the top of the
+    //    restore: everything above is Wait()-free, and the WaitTOF() pair below is not — a Wait()
+    //    inside Forbid() breaks the forbidden state, and until step 5 there was no VERTB server
+    //    to signal it anyway.  LoadView() republishes the View's copper lists for COP2LC, which
+    //    copinit (running again from COP1LC) chains to; the two WaitTOF()s let that reach the
+    //    screen before we return to DOS.
+    Permit();
     LoadView(savedView);
-    *dmaconPointer = (uint16_t)(DMAF_SETCLR | DMAF_COPPER | DMAF_RASTER | DMAF_SPRITE);
     WaitTOF();
     WaitTOF();
 

@@ -728,6 +728,13 @@ endif
 ifdef FORCE_BOOT_FIRE
 EXTRA_DEFINES += -DROF_FORCE_BOOT_FIRE
 endif
+# `make FORCE_QUIT=<vbl>`: quit the game at that vertical blank, as if the left mouse button had
+# been clicked, so the system-restore tail of PlatformAmiga::run() can be exercised headlessly.
+# Needs no PROBES (and so leaves the boot cinematic in, which is what allocates the most to free
+# again).  Readout: amiga/exit_restore.gdb.
+ifdef FORCE_QUIT
+EXTRA_DEFINES += -DROF_FORCE_QUIT=$(FORCE_QUIT)
+endif
 # `make FORCE_MOTHERSHIP=1`: INTERACTIVE — makes pressing BOOSTERS (B) in flight force the mother
 # ship "present" ($003A=$FF + HUD indicator) at that instant, so B always triggers the return-to-
 # mother-ship cinematic WITHOUT having rescued the pilot quota.  Lets you test the return + the
