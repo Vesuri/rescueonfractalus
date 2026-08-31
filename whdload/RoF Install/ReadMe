@@ -36,6 +36,12 @@
 
  History:
  --------
+ version 0.93 (31.08.2026):
+ - fixed the pilot's approach animation slowing down as he gets nearer
+ - fixed downed ships and bases turning white against the sky
+ - fixed sounds starting with the previous sound's waveform
+ - fixed the display being left broken after quitting outside WHDLoad
+
  version 0.92 (29.08.2026):
  - fixed the LR-scanner guide dot vanishing during flight
  - fixed the over-quota pilot bonus counting down from the wrong number

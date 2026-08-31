@@ -118,7 +118,7 @@ slv_name	dc.b	"Rescue on Fractalus!",0
 slv_copy	dc.b	"1985 Lucasfilm Games",0
 		;-1 = line feed plus a half-font vertical skip, so it ends a section
 slv_info	dc.b	"Amiga port by Vesuri",10
-		dc.b	"version 0.92 (29.08.2026)",-1
+		dc.b	"version 0.93 (31.08.2026)",-1
 		dc.b	"An unofficial, non-commercial fan project,",10
 		dc.b	"not affiliated with or endorsed by Lucasfilm.",-1
 		dc.b	"Left mouse button quits.",10
@@ -134,7 +134,7 @@ slv_info	dc.b	"Amiga port by Vesuri",10
 		;the fix either: ws_config's grammar wants at least one option.
 slv_config	dc.b	"C1:B:Example",0
 	ENDC
-		dc.b	"$VER: RoF.slave 0.92 (29.08.2026)",0
+		dc.b	"$VER: RoF.slave 0.93 (31.08.2026)",0
 	EVEN
 
 ;============================================================================
