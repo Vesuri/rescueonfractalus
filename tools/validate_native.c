@@ -1083,11 +1083,35 @@ static int test_draw_scaled_shape(void) {
         memcpy(pre, snap, sizeof pre);
         pre[0x0050] = (uint8_t)(xs() & 0xFF);
         pre[0x0051] = (uint8_t)(1 + (xs() % 4));        /* nonzero step -> bounded loops */
+        if (t & 1) {
+        /* ⚠ The snapshot's own $004F = $FB puts EVERY plotted pixel outside the x window, so
+         * seeding coordinates from it alone exercises the clipped bookkeeping and never the
+         * composite.  These force coordinates that DO plot: a y start whose row walk sometimes
+         * runs off the window bottom, an x start inside the window, and a byte-column limit that
+         * half the time cuts the row short. */
+        pre[0x004E] = (uint8_t)(0x70 + (xs() % 0x28));
+        pre[0x004F] = (uint8_t)(0x28 + (xs() % 0xA0));
+        pre[0x00B3] = (uint8_t)((xs() & 1) ? 0x80 : (0x02 + (xs() % 0x30)));
+        }
         mem_fail += diff_run("draw_scaled_shape", pre, zero_cpu(),
                              draw_scaled_shape, draw_scaled_shape__t6502, t, &printed, &cpu_diff);
     }
-    printf("draw_scaled_shape: %d cases (flight snapshot), %d mem mismatch (must be 0), %d cpu diffs\n",
-           8000, mem_fail, cpu_diff);
+    /* A step of $0100 or more — the whole range animate_zoom_sequence walks, and all the loop
+     * above generates — gives at most 12 columns, so it only ever exercises the row-invariant
+     * column-table path.  These cases force a step BELOW $00C0, i.e. more columns than that
+     * table holds, which is the only way to reach the generic per-cell fallback loop. */
+    for (int t = 0; t < 300; t++) {
+        memcpy(pre, snap, sizeof pre);
+        pre[0x0050] = (uint8_t)(0x80 + (xs() % 0x40));   /* step $0080..$00BF -> 17..24 columns */
+        pre[0x0051] = 0x00;
+        pre[0x004E] = (uint8_t)(0x8C + (xs() % 0x0C));   /* 36 rows of walk, most in-window */
+        pre[0x004F] = (uint8_t)(0x30 + (xs() % 0x70));
+        pre[0x00B3] = (uint8_t)((xs() & 1) ? 0x80 : (0x02 + (xs() % 0x30)));
+        mem_fail += diff_run("draw_scaled_shape", pre, zero_cpu(),
+                             draw_scaled_shape, draw_scaled_shape__t6502, 8000 + t, &printed, &cpu_diff);
+    }
+    printf("draw_scaled_shape: %d cases (flight snapshot, %d of them wide-row), %d mem mismatch "
+           "(must be 0), %d cpu diffs\n", 8300, 300, mem_fail, cpu_diff);
     return mem_fail;
 }
 
