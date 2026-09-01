@@ -1350,16 +1350,15 @@ void PlatformAmiga::flightScannerTick()
     }
 }
 
-// ROF_TUNNEL_RECT bridge: draw_symmetric_span_loop (rof_native.c) emits one concentric-rectangle
-// group member per call and we paint it straight into the tunnel bitmap.  Deliberately a plain
-// extern "C" call rather than a Platform virtual through platform_cbridge — this fires several
-// times per ring group from inside the 50 Hz VBI ISR, where the indirection is not free and the
-// work is Amiga-only rendering with no host counterpart.
-extern "C" void platform_tunnel_rect(uint16_t rowBase, uint8_t rowTop, uint8_t rowBot,
-                                     uint8_t xL, uint8_t xR, uint8_t byteLo, uint8_t byteHi,
-                                     uint8_t colour)
+// ROF_TUNNEL_GROUP bridge: draw_symmetric_span_loop (rof_native.c) emits one whole ring group —
+// the `count` nested outlines it just drew, in one colour — and we paint their union straight into
+// the tunnel bitmap.  Deliberately a plain extern "C" call rather than a Platform virtual through
+// platform_cbridge — this fires from inside the 50 Hz VBI ISR, where the indirection is not free
+// and the work is Amiga-only rendering with no host counterpart.
+extern "C" void platform_tunnel_group(uint16_t rowBase, uint8_t rowTop, uint8_t rowBot,
+                                      uint8_t xL, uint8_t xR, uint8_t count, uint8_t colour)
 {
-    if (s_scene) s_scene->drawTunnelRect(rowBase, rowTop, rowBot, xL, xR, byteLo, byteHi, colour);
+    if (s_scene) s_scene->drawTunnelGroup(rowBase, rowTop, rowBot, xL, xR, count, colour);
 }
 
 // ROF_TUNNEL_COLS bridge: the pre-draw's three full-height guide columns, which are plotted
@@ -1370,12 +1369,12 @@ extern "C" void platform_tunnel_columns(uint16_t rowBase, uint8_t colL, uint8_t 
     if (s_scene) s_scene->drawTunnelColumns(rowBase, colL, colR, colR1, colour);
 }
 
-// ROF_TUNNEL_VSPAN bridge: plot_terrain_span's vertical pairs (the pre-draw erase + the reveal's
-// per-row coloured spans), which also bypass the rectangle hook.
-extern "C" void platform_tunnel_vspan(uint16_t rowBase, uint8_t r0, uint8_t r1, uint8_t colL,
-                                      uint8_t colR, uint8_t colour)
+// ROF_TUNNEL_SPANRUN bridge: one whole plot_terrain_span run (the pre-draw erase + the reveal's
+// per-row coloured spans), which bypasses the group hook.
+extern "C" void platform_tunnel_span_run(uint16_t rowBase, uint8_t r0, uint8_t r1, uint8_t xL,
+                                         uint8_t xR, uint8_t count, uint8_t colour)
 {
-    if (s_scene) s_scene->drawTunnelVSpan(rowBase, r0, r1, colL, colR, colour);
+    if (s_scene) s_scene->drawTunnelSpanRun(rowBase, r0, r1, xL, xR, count, colour);
 }
 
 
@@ -1428,6 +1427,59 @@ extern "C" { volatile unsigned char g_doorGap060B = 0; }
 extern "C" { volatile unsigned long g_saTicks[16] = {0}; }
 // door-frame draw pixel-volume counters (span calls + total bytes/edges written).
 extern "C" { volatile unsigned long g_dfVCalls = 0, g_dfVRows = 0, g_dfHCalls = 0, g_dfHCols = 0; }
+// TUNNEL-GROUP cost probe (the "the outermost ring's drawing is clearly visible" report).  One
+// draw_symmetric_span_loop call draws ONE ring group = $6E0F[i] nested rectangles in ONE colour,
+// and it runs in the 50 Hz VBI ISR, so a group that costs more than 313 ticks drops a frame.  Per
+// call: the site tag, the rectangle count, the vbi, and the subclock ticks (1 tick = 1 raster
+// line = 63.56us).  Sites: 1/4 = the static pre-draws, 2 = the forward descent, 3 = the boost
+// reverse ring.  The ring keeps the FIRST TG_N calls of sites 2+3 (the two the report is about);
+// every site also gets a running aggregate, so the pre-draws stay accounted for.
+// PLOT vs PAINT: `plotT` is the time inside the faithful 6502 mem[$1000] plot
+// (fill_horizontal_span_core + fill_vertical_span_core), which is the floor no rendering change
+// can move; total - plot is the Amiga paint, which is the part the batching attacks.
+#define TG_N 40
+extern "C" { volatile unsigned long  g_tgN = 0; }
+extern "C" { volatile unsigned char  g_tgSite[TG_N] = {0}, g_tgRects[TG_N] = {0}; }
+extern "C" { volatile unsigned short g_tgVbi[TG_N] = {0}; }
+extern "C" { volatile unsigned long  g_tgTot[TG_N] = {0}, g_tgPlot[TG_N] = {0},
+                                     g_tgPaint[TG_N] = {0}; }
+extern "C" { volatile unsigned long  g_tgSiteCalls[5] = {0}, g_tgSiteRects[5] = {0},
+                                     g_tgSiteTot[5] = {0}, g_tgSiteMax[5] = {0},
+                                     g_tgSitePlot[5] = {0}, g_tgSitePaint[5] = {0}; }
+// The reveal's OTHER span source: plot_terrain_span (emit_dl_coord_pairs tail-calls it once per
+// revealed row), which paints through the same fillColor and is invisible to the group counters.
+extern "C" { volatile unsigned long  g_tpCalls = 0, g_tpTot = 0, g_tpMax = 0, g_tpPlot = 0,
+                                     g_tpPaint = 0; }
+
+extern "C" void rof_tunnel_group(unsigned char site, unsigned char rects, unsigned long ticks,
+                                 unsigned long plotTicks, unsigned long paintTicks)
+{
+    const unsigned s = (site < 5u) ? site : 0u;
+    g_tgSiteCalls[s]++;
+    g_tgSiteRects[s] += rects;
+    g_tgSiteTot[s] += ticks;
+    g_tgSitePlot[s] += plotTicks;
+    g_tgSitePaint[s] += paintTicks;
+    if (ticks > g_tgSiteMax[s]) g_tgSiteMax[s] = ticks;
+    if (site != 2u && site != 3u) return;
+    const unsigned long n = g_tgN;
+    if (n < TG_N) {
+        g_tgSite[n] = site; g_tgRects[n] = rects;
+        g_tgVbi[n] = g_vbiCount;
+        g_tgTot[n] = ticks; g_tgPlot[n] = plotTicks; g_tgPaint[n] = paintTicks;
+    }
+    g_tgN = n + 1;
+}
+
+extern "C" void rof_tunnel_span_cost(unsigned long ticks, unsigned long plotTicks,
+                                     unsigned long paintTicks)
+{
+    g_tpCalls++;
+    g_tpTot += ticks;
+    g_tpPlot += plotTicks;
+    g_tpPaint += paintTicks;
+    if (ticks > g_tpMax) g_tpMax = ticks;
+}
 // decodeCockpitFull one-shot timing (chip-vs-fast-RAM experiment).
 extern "C" { volatile unsigned long g_ckFullTicks = 0, g_ckFullCount = 0; }
 // fill_terrain_columns one-shot timing (tunnel->stars setup gap).

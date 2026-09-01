@@ -711,6 +711,15 @@ endif
 ifdef TUNDIFF
 EXTRA_DEFINES += -DROF_TUNNEL_DIFF
 endif
+# `make TUNBATCH_OFF=1`: force the tunnel ring painter back to ONE ITEM PER HOOK CALL — an outline
+# at a time out of drawTunnelGroup, a span pair at a time out of drawTunnelSpanRun.  That is the
+# painter as it was before the groups/runs were batched into solid boxes, and it is the A/B baseline
+# the batching's win is quoted against (amiga/tunnel_group.gdb).  Both painters are proven
+# byte-identical on the host by `make hostproof FN=tunnel_batch` — this flag only changes HOW LONG
+# the same pixels take, so a run with it on is a timing baseline, never a rendering reference.
+ifdef TUNBATCH_OFF
+EXTRA_DEFINES += -DROF_TUNNEL_BATCH_OFF
+endif
 # `make PROBES=1 FORCE_RETURN=1`: once flight has been running a while, replicate the B/boosters
 # handler (level-clear gate $003A + player_lives $0072=2) once — headless verification of the
 # return-to-mother-ship ascent + flight→launch-cinematic handoff.  Requires PROBES.

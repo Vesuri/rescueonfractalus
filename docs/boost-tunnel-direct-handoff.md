@@ -430,3 +430,115 @@ The first-stars frame still costs 1.92 frames of compute (`perFrameWork` 196 + `
 with 2 standby-VBI ISR firings of 79-153 raster lines inside that).  It no longer matters — the
 copper has already switched — and the remaining cost is the viewport decode (269 ticks, of which
 ~101 is the clear + the 470-long shadow zero), which is real work on real content.
+
+---
+
+## 9. Batching the paint — groups and runs as BOXES, not edges (2026-09-01)
+
+**Symptom (user, on a 68000):** at the end of the launch tunnel the viewport fills with black from
+the middle out, and at the end of the return-to-mother-ship it fills with green — and both "take
+longer than one frame", the return being "noticeably jerky", with the **outermost ring's drawing
+clearly visible**.
+
+### What the measurement said
+
+New probe: `ROF_TG_*` in `rof_native.c` brackets each `draw_symmetric_span_loop` / `plot_terrain_span`
+call and splits it into the FAITHFUL 6502 plot (`fill_*_span_core`) and the Amiga paint; read with
+`amiga/tunnel_group.gdb`.  `make clean && make -j4 PROBES=1 FORCE_RETURN=1`, then
+`GDBSCRIPT=tunnel_group.gdb ./diag_run.sh 140`.  1 tick = 1 raster line; **313 ticks = one PAL frame**.
+
+The ring-thickness table `$6E0F[0..19]` = `11,6,4,3,2,2,2,1x13` (sum 43), walked index 19 -> 0, so the
+LAST group is 11 outlines and it is also the OUTERMOST = the tallest.  One group is one ISR call:
+
+| boost reverse group | outlines | plot | total, per-item | total, batched |
+|---|---|---|---|---|
+| 16 | 3 | 53 | 186 | 153 |
+| 17 | 4 | 81 | 274 | 245 |
+| 18 | 6 | 144 | 467 (1.49 fr) | 361 (1.15 fr) |
+| **19 (outermost)** | **11** | **331** | **860 (2.74 fr)** | **626 (2.00 fr)** |
+
+⚠ **The forward descent was never the slow one** — 14 groups, max 68 ticks (0.2 frame), because it
+only draws the INNER 15 of the 43 nesting positions (`$00A0` runs 19 -> 6) and the rest of the tunnel
+goes black by PALETTE (`$08D8 = 0` propagating through the ring).  Its jerkiness is not the draw.
+
+### The two shape identities the batching rests on
+
+- **A GROUP IS AN ANNULUS.**  `draw_symmetric_span_loop`'s `count` outlines are nested exactly one
+  unit apart on all four sides and share ONE colour, so their union is a solid rectangular annulus:
+  outer edge = the last outline, hole = the interior of the first.  Proof for a corner point
+  (row `rowTop+i`, column `xL-j`), `0 <= i,j <= count-1`: outline `j`'s vertical edge spans rows
+  `rowBot-j..rowTop+j`, covering it when `i <= j`; outline `i`'s horizontal edge spans columns
+  `xL-i..xR+i`, covering it when `j <= i`.  One always holds.  (And each outline's own row is covered
+  edge to edge: the horizontal edge lays the whole bytes, its two vertical edges the 4-px nibbles the
+  odd/even nudge left out.)  So a group is **four boxes**, not `2*count` one-row spans plus
+  `2*count` 4-px columns.
+- **A RUN IS TWO BOXES.**  `plot_terrain_span` holds its row window and its colour fixed and only
+  steps `xL--`/`xR++`, so its `count` left nibbles are contiguous and so are its right ones.
+  (Needs `xL` and `xR` to share a parity — they are seeded 46/48 and step oppositely, so they always
+  do; `fill_vertical_span_core` picks the nibble mask from `xL`'s parity and applies it at BOTH
+  columns, so a parity mismatch would make the right run full of holes.  Checked, with a per-pair
+  fallback.)
+
+The hooks changed shape to match: `ROF_TUNNEL_RECT` -> `ROF_TUNNEL_GROUP` (emitted once after the
+loop, from LOCALS snapshotted at entry — the ring VBI can preempt the main-loop pre-draw and its own
+span-loop call leaves `$0096 = 0`), and `ROF_TUNNEL_VSPAN` moved off the `fill_vertical_span` shim up
+to `plot_terrain_span` as `ROF_TUNNEL_SPANRUN`.  That shim's only live Amiga caller is that loop;
+`draw_symmetric_span_loop` calls `fill_vertical_span_`**`core`** directly and the two callers left in
+`rof_gen.c` are `__t6502` oracles.
+
+### Result (A/B in one session, `make TUNBATCH_OFF=1` vs default; PAINT ticks, which is what changed)
+
+| | per-item | batched |
+|---|---|---|
+| boost reverse, 20 groups | 1683 | **1215** (-28%) |
+| ...its outermost group | 505 | **271** (-46%) |
+| forward descent, 14 groups | 404 | **372** |
+| pre-draw `L_6047`, 20 groups | 1797 | **1407** (-22%) |
+| forward pre-build x2 | 4312 | **2970** (-31%) |
+| `plot_terrain_span`, 40 runs | 2325 | **1826** (-21%) |
+| ...its worst run | 633 | **469** (-26%) |
+
+Outermost group end to end: **2.74 -> 2.00 frames**.
+
+### ⚠ A ONE-OUTLINE GROUP MUST STAY AN OUTLINE
+
+The annulus form is a REGRESSION for `count == 1`: four boxes where the outline is three fills, and
+its top/bottom bands carry the full OUTER width because they absorb the two 4-px nibbles the
+outline's horizontal edge leaves to its vertical edges.  Measured 36 -> 42 ticks per group — and
+`$6E0F[19..7]` are ALL 1, i.e. **13 of each cinematic's 20 groups**, which showed up as a **33%
+regression on the whole forward descent** while the worst case improved.  The crossover is at
+`count == 2` (113 -> 86), so `drawTunnelGroup` dispatches `count == 1` to `paintTunnelOutline`.
+*Generalisable:* when a batching win scales with the batch, check the size-1 case separately — the
+aggregate can move the wrong way while the number you were chasing improves.
+
+### Verification
+
+- **`make hostproof FN=tunnel_batch`** (`tools/tunnel_batch_test.c`) — the OLD per-item painter and
+  the NEW batched one compiled side by side over identical bitmaps: **128,285 cases, 0 mismatching
+  bytes**.  Coverage is both cinematics' REAL sequences (the `$6E0F` table, the 46/48/43/42 seed, the
+  forward 19->6 walk, the reverse 19->0 walk, the pre-draw's colour cycle, both 20-call
+  `plot_terrain_span` sequences) plus 44,000 randomized shapes, including the out-of-domain ones that
+  must take the fallback.  It also ASSERTS that no real shape takes the fallback — otherwise the
+  batching would be a no-op on target while still passing the equivalence check.
+- `make validate` — 0 mem mismatch on all 9 touched twins (the `mem[]` side is untouched).
+- `make TUNBATCH_OFF=1` keeps the per-item painter as the timing baseline.  It changes only HOW LONG
+  the same pixels take, so a run with it on is never a rendering reference.
+
+### ⚠⚠ TWO CLOCKS THAT LIED, both worth remembering
+
+- **`rof_subclock()` is NOT MONOTONIC INSIDE THE ISR.**  It is `g_vbiCount * 313 + beam_line`, and
+  the VERTB handler cannot re-enter to bump `g_vbiCount` while its own body is running — so every
+  time the beam wraps mid-group the clock jumps ~313 ticks BACKWARD and the unsigned subtraction
+  turns a 4-frame group into 4.29e9.  That is exactly the range this work is about.  Fix: accumulate
+  wrap-aware BEAM deltas, one per rectangle.
+- **A wrap-aware delta still cannot measure a segment LONGER than a frame** — it reads 349 as 36.
+  The per-item painter's whole-group paint is one such segment, and it read `paint = 36` for a
+  6-outline group whose real cost was 310.  Fix: measure the paint INSIDE the painter, per box
+  (`g_tunPaintT`, accumulated in `ROF_TEAR_LEAVE`); one box always fits in a frame.
+  *Generalisable:* if a duration can exceed one frame, it must be summed from pieces that cannot.
+
+### What is left
+
+The **331-tick (1.06-frame) faithful 6502 plot** into `mem[$1000]` — `fill_horizontal_span_core` +
+`fill_vertical_span_core`, 53% of the outermost group's remaining cost.  Nothing reads that field
+back during either tunnel phase.  The user's call, 2026-09-01: **take it out.**

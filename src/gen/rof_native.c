@@ -678,42 +678,45 @@ extern volatile unsigned long g_alHudCalls;      /* # alien_shape_blit calls dur
  * copper shows inside the reveal band.  So these are part of the shipped Amiga build, not a probe
  * or a build flag — the rings would simply be missing without them.
  *
- * ROF_TUNNEL_RECT: one rectangle.  Coordinates are the loop's own, in FIELD units: rowTop/rowBot
- * index the $073D/$0793 row-address table, xL/xR are GTIA pixel columns (2 per byte), byteLo/byteHi
- * are the horizontal edge's inclusive byte columns after the odd/even nudge.  rowBase identifies
- * the target field ($1000 rings vs $2000 doors) — the same table entry the loop already loaded, so
- * the hook costs an argument rather than a lookup.  colour is the GTIA nibble the fills use.
+ * ROF_TUNNEL_GROUP: one whole GROUP — the $0096 nested rectangles the loop just drew, all in one
+ * colour.  Coordinates are the FIRST (innermost) rectangle's, in FIELD units: rowTop/rowBot index
+ * the $073D/$0793 row-address table, xL/xR are GTIA pixel columns (2 per byte); each further
+ * rectangle is one unit larger on all four sides, so their union is a solid annulus and the
+ * renderer paints four boxes instead of 4*count edges.  rowBase identifies the target field ($1000
+ * rings vs $2000 doors) — the row-table entry the loop already loaded, so the hook costs an
+ * argument rather than a lookup.  colour is the GTIA nibble the fills use.
  * ROF_TUNNEL_COLS: the pre-draw's tail (draw_frame_guide_columns) plots three FULL-HEIGHT columns
  * through plot_pixel_masked_core, i.e. a field writer OUTSIDE the span loop that the rectangle hook
  * cannot see.  They land at the vanishing point, so a painter that skips them leaves the middle of
  * the tunnel empty.
- * ROF_TUNNEL_VSPAN: one vertical span PAIR from the fill_vertical_span shim — i.e. plot_terrain_span,
- * the third field writer.  It runs twice in the reverse cinematic and both matter: once with colour
- * 8 straight after the static pre-draw (the pass that ERASES that image back to background), and
- * then once per revealed row as emit_dl_coord_pairs tail-calls it with the cycling ring colour.
- * Measured: without this the painted bitmap carried the erased pre-draw as 6% stale ink.
+ * ROF_TUNNEL_SPANRUN: one whole RUN of vertical span pairs from plot_terrain_span, the third field
+ * writer.  It runs twice in the reverse cinematic and both matter: once with colour 8 straight
+ * after the static pre-draw (the pass that ERASES that image back to background), and then once
+ * per revealed row as emit_dl_coord_pairs tail-calls it with the cycling ring colour.  Measured:
+ * without this the painted bitmap carried the erased pre-draw as 6% stale ink.  A run holds its row
+ * window and its colour fixed and only steps the columns, so the renderer paints its `count` left
+ * nibbles as ONE box and the `count` right ones as another.
  *
  * Nothing here needs the field's previous contents: the 6502's two mask tables ($66E9/$66FB) are
  * exactly "set this nibble to colour, preserve the other", so every write is prev-independent.
  * That is the fact the whole no-decode design rests on. */
 #ifdef ROF_PLATFORM_AMIGA
-extern void platform_tunnel_rect(uint16_t rowBase, uint8_t rowTop, uint8_t rowBot,
-                                 uint8_t xL, uint8_t xR, uint8_t byteLo, uint8_t byteHi,
-                                 uint8_t colour);
+extern void platform_tunnel_group(uint16_t rowBase, uint8_t rowTop, uint8_t rowBot,
+                                  uint8_t xL, uint8_t xR, uint8_t count, uint8_t colour);
 extern void platform_tunnel_columns(uint16_t rowBase, uint8_t colL, uint8_t colR, uint8_t colR1,
                                     uint8_t colour);
-extern void platform_tunnel_vspan(uint16_t rowBase, uint8_t r0, uint8_t r1, uint8_t colL,
-                                  uint8_t colR, uint8_t colour);
-#define ROF_TUNNEL_RECT(rowBase, rowTop, rowBot, xL, xR, byteLo, byteHi, colour) \
-    platform_tunnel_rect((rowBase), (rowTop), (rowBot), (xL), (xR), (byteLo), (byteHi), (colour))
+extern void platform_tunnel_span_run(uint16_t rowBase, uint8_t r0, uint8_t r1, uint8_t xL,
+                                     uint8_t xR, uint8_t count, uint8_t colour);
+#define ROF_TUNNEL_GROUP(rowBase, rowTop, rowBot, xL, xR, count, colour) \
+    platform_tunnel_group((rowBase), (rowTop), (rowBot), (xL), (xR), (count), (colour))
 #define ROF_TUNNEL_COLS(rowBase, colL, colR, colR1, colour) \
     platform_tunnel_columns((rowBase), (colL), (colR), (colR1), (colour))
-#define ROF_TUNNEL_VSPAN(rowBase, r0, r1, colL, colR, colour) \
-    platform_tunnel_vspan((rowBase), (r0), (r1), (colL), (colR), (colour))
+#define ROF_TUNNEL_SPANRUN(rowBase, r0, r1, xL, xR, count, colour) \
+    platform_tunnel_span_run((rowBase), (r0), (r1), (xL), (xR), (count), (colour))
 #else
-#define ROF_TUNNEL_RECT(rowBase, rowTop, rowBot, xL, xR, byteLo, byteHi, colour) ((void)0)
+#define ROF_TUNNEL_GROUP(rowBase, rowTop, rowBot, xL, xR, count, colour) ((void)0)
 #define ROF_TUNNEL_COLS(rowBase, colL, colR, colR1, colour) ((void)0)
-#define ROF_TUNNEL_VSPAN(rowBase, r0, r1, colL, colR, colour) ((void)0)
+#define ROF_TUNNEL_SPANRUN(rowBase, r0, r1, xL, xR, count, colour) ((void)0)
 #endif
 
 /* Which CALL SITE produced the rectangle the hook is about to emit — a measurement aid, so the
@@ -730,11 +733,52 @@ extern volatile unsigned char g_trPreSite;
 #define ROF_TR_SRC_SET(n)     g_trSrc = (unsigned char)(n)
 #define ROF_TR_SRC_RESTORE(v) g_trSrc = (v)
 #define ROF_TR_PRESITE(n)     g_trPreSite = (unsigned char)(n)
+/* Per-GROUP cost of the ring draw+paint: a draw_symmetric_span_loop call is ONE group of $6E0F[i]
+ * nested rectangles in one colour, run from the 50 Hz VBI ISR, so a group over 313 ticks drops a
+ * displayed frame.
+ * ⚠ NOT rof_subclock(): these groups run INSIDE the ISR, where the VERTB handler cannot re-enter
+ * to bump g_vbiCount, so the subclock runs BACKWARD every time the beam wraps and one unsigned
+ * subtraction turns a 4-frame group into 4.29e9.  That is exactly the range worth measuring here.
+ * Accumulate wrap-aware BEAM deltas instead, one per rectangle (each is well under a frame — the
+ * tallest single outline is ~90 ticks), so the total is a true duration however long it runs. */
+extern unsigned short rof_beam_line(void);
+extern void rof_tunnel_group(unsigned char site, unsigned char rects, unsigned long ticks,
+                             unsigned long plotTicks, unsigned long paintTicks);
+extern void rof_tunnel_span_cost(unsigned long ticks, unsigned long plotTicks,
+                                 unsigned long paintTicks);
+/* The AMIGA PAINT's own running total, accumulated per BOX/edge inside the painter
+ * (RescueOnFractalus.cpp, ROF_TEAR_LEAVE).  ⚠ It has to be measured there, not bracketed from
+ * here: a whole group's paint can last MORE than one frame, and a wrap-aware delta between two
+ * beam reads cannot tell 349 ticks from 36.  One box always fits in a frame, so summing boxes is
+ * the only reading that stays honest across the range worth measuring. */
+extern volatile unsigned long g_tunPaintT;
+#define ROF_TG_ENTER(v)       unsigned short v##_ln = rof_beam_line(); \
+                              unsigned long v##_t = 0, v##_p = 0; \
+                              const unsigned long v##_q = g_tunPaintT
+#define ROF_TG_SEG(v, into)   do { const unsigned short _n = rof_beam_line(); \
+    const unsigned long _d = (unsigned long)((_n >= v##_ln) ? (_n - v##_ln) \
+                                                            : (_n + 313u - v##_ln)); \
+    v##_t += _d; into; v##_ln = _n; } while (0)
+#define ROF_TG_TICK(v)        ROF_TG_SEG(v, (void)0)
+/* The segment just closed was the FAITHFUL 6502 plot into mem[$1000] — the floor no rendering
+ * change can move — so it lands in both accumulators. */
+#define ROF_TG_PLOT(v)        ROF_TG_SEG(v, v##_p += _d)
+/* Total = the segments ticked here (loop overhead + plot) + the painter's own boxes.  Deliberately
+ * NOT one closing tick: that segment holds the paint and would wrap. */
+#define ROF_TG_LEAVE(v, n)    do { const unsigned long _q = g_tunPaintT - v##_q; \
+    rof_tunnel_group(g_trSrc, (unsigned char)(n), v##_t + _q, v##_p, _q); } while (0)
+#define ROF_TP_LEAVE(v)       do { const unsigned long _q = g_tunPaintT - v##_q; \
+    rof_tunnel_span_cost(v##_t + _q, v##_p, _q); } while (0)
 #else
 #define ROF_TR_SRC_SAVE(v)    ((void)0)
 #define ROF_TR_SRC_SET(n)     ((void)0)
 #define ROF_TR_SRC_RESTORE(v) ((void)0)
 #define ROF_TR_PRESITE(n)     ((void)0)
+#define ROF_TG_ENTER(v)       ((void)0)
+#define ROF_TG_TICK(v)        ((void)0)
+#define ROF_TG_PLOT(v)        ((void)0)
+#define ROF_TG_LEAVE(v, n)    ((void)0)
+#define ROF_TP_LEAVE(v)       ((void)0)
 #endif
 
 /* Flight terrain double-buffer: which field half renderFlightDirect should display.
@@ -1402,11 +1446,12 @@ void fill_vertical_span(void) {
     uint8_t r0 = draw_row_bottom, r1 = draw_row_top;
     uint8_t colL = draw_x_left, colR = draw_x_right, maskSel = draw_color_idx;
     fill_vertical_span_core(r0, r1, colL, colR, maskSel);
-    /* Hand the pair to the platform painter.  draw_symmetric_span_loop deliberately calls
-     * fill_vertical_span_CORE directly, so this shim is exactly plot_terrain_span's writes and
-     * there is no double-paint.  Row r1's table entry identifies the field, as elsewhere. */
-    ROF_TUNNEL_VSPAN((uint16_t)(mem[MEM_row_base_lo + r1] | (mem[MEM_row_base_hi + r1] << 8)),
-                     r0, r1, colL, colR, maskSel);
+    /* No platform paint hook here: the Amiga painter takes plot_terrain_span's whole RUN in one
+     * call (ROF_TUNNEL_SPANRUN, emitted there) because a run holds its row window and its colour
+     * fixed and only steps the columns, so its pairs are two contiguous boxes rather than 2*count
+     * separate 4-px ones.  This shim's only live caller is that loop — draw_symmetric_span_loop
+     * calls fill_vertical_span_CORE directly, and the two remaining callers in rof_gen.c are
+     * __t6502 oracles that never run on the Amiga. */
     /* Faithful exit state: $0084 = last row + 1; $80/$81 = addr table[last row];
      * $00DF = $FF; cpu.X = mask index, cpu.Y = colR>>1 (cpu state is incidental). */
     screen_ptr_hi = (uint8_t)(r1 + 1);
@@ -1469,6 +1514,15 @@ void draw_symmetric_span_loop(void) {
     uint8_t xL = draw_x_left, xR = draw_x_right, top = draw_row_top, bot = draw_row_bottom;
     uint8_t count = span_row_count;
     uint8_t lxL = xL, lxR = xR, ltop = top, lbot = bot;   /* last-drawn coords, for the exit scratch */
+#ifdef ROF_PLATFORM_AMIGA
+    /* The platform painter takes the group as ONE call (see ROF_TUNNEL_GROUP above), so snapshot
+     * the innermost rectangle's geometry here, in LOCALS.  Not re-read from zero page after the
+     * loop: the pre-draw runs in main-loop context and the ring VBI can preempt it, and its own
+     * span-loop call leaves $0096 = 0 and the four coords stepped. */
+    const uint8_t g0top = top, g0bot = bot, g0xL = xL, g0xR = xR, g0n = count;
+    const uint16_t groupBase = (uint16_t)(mem[MEM_row_base_lo + top] | (mem[MEM_row_base_hi + top] << 8));
+#endif
+    ROF_TG_ENTER(_tg0);
     for (;;) {
         uint16_t baseTop = (uint16_t)(mem[MEM_row_base_lo + top] | (mem[MEM_row_base_hi + top] << 8));
         uint16_t baseBot = (uint16_t)(mem[MEM_row_base_lo + bot] | (mem[MEM_row_base_hi + bot] << 8));
@@ -1481,18 +1535,23 @@ void draw_symmetric_span_loop(void) {
           g_dfHCalls++; g_dfHCols += (unsigned)(uint8_t)(hi - lo) + 1u;
           g_dfVCalls++; g_dfVRows += (unsigned)(uint8_t)(top - bot) + 1u; }
 #endif
+        ROF_TG_TICK(_tg0);                                /* close the loop-overhead segment */
         fill_horizontal_span_core(baseTop, baseBot, hi, (uint8_t)(hi - lo), pat);
         fill_vertical_span_core(bot, top, xL, xR, colour);
-        /* Hand this rectangle to the platform so it can paint the ring straight into its bitmap.
-         * Emitted HERE because this is the only point that knows a rectangle and its colour for
-         * both the forward ring (draw_ring_frame_step) and the reverse one (step_accum_sub_7e).
-         * baseTop identifies which field the row table currently points at. */
-        ROF_TUNNEL_RECT(baseTop, top, bot, xL, xR, lo, hi, colour);
+        ROF_TG_PLOT(_tg0);                                /* ...that segment was the 6502 plot */
         lxL = xL; lxR = xR; ltop = top; lbot = bot;
         xL = (uint8_t)(xL - 1); xR = (uint8_t)(xR + 1);
         top = (uint8_t)(top + 1); bot = (uint8_t)(bot - 1);
         if ((uint8_t)(--count) == 0) break;           /* DEC $0096; BNE */
     }
+    /* Hand the whole group to the platform so it can paint the ring straight into its bitmap.
+     * Emitted HERE because this is the only point that knows a group's geometry and its colour for
+     * both the forward ring (draw_ring_frame_step) and the reverse one (step_accum_sub_7e) — and
+     * as ONE call, because the group's nested outlines share a colour and so their union is a
+     * solid annulus the renderer can lay down in four boxes.  The plots above are unchanged and
+     * still run rectangle by rectangle: only the Amiga paint is batched. */
+    ROF_TUNNEL_GROUP(groupBase, g0top, g0bot, g0xL, g0xR, g0n, colour);
+    ROF_TG_LEAVE(_tg0, g0n);
     draw_x_left = xL; draw_x_right = xR; draw_row_top = top; draw_row_bottom = bot;
     span_row_count = 0;
     /* Reproduce the ZP scratch the fill_horizontal_span + fill_vertical_span shims left on the
@@ -3130,6 +3189,7 @@ void game_sub_6811(void) {
  * and steps the column pair $009C--/$009D++.  Afterwards the row window is shifted by the
  * span value $0085 (=$6E0F[Y]): $009E += $0085, $009F -= $0085. */
 void plot_terrain_span(void) {
+    ROF_TG_ENTER(_tp0);
     uint8_t a = mem[0x6E0F + cpu.Y];
     span_row_count = a;
     if (cpu.Y == 0x00) {
@@ -3137,14 +3197,28 @@ void plot_terrain_span(void) {
         span_row_count = (uint8_t)(span_row_count + 1);
     }
     encounter_count = a;
+#ifdef ROF_PLATFORM_AMIGA
+    /* Snapshot the run's geometry for the platform painter (ROF_TUNNEL_SPANRUN below): the row
+     * window and the colour are fixed for the whole run and only the columns step, so the run is
+     * two contiguous boxes.  In LOCALS, because the ring VBI can preempt this loop and it steps
+     * the very same four zero-page coords. */
+    const uint8_t p0r0 = draw_row_bottom, p0r1 = draw_row_top;
+    const uint8_t p0xL = draw_x_left, p0xR = draw_x_right;
+    const uint8_t p0n = span_row_count, p0col = draw_color_idx;
+    const uint16_t p0base = (uint16_t)(mem[MEM_row_base_lo + p0r1] | (mem[MEM_row_base_hi + p0r1] << 8));
+#endif
     do {
+        ROF_TG_TICK(_tp0);
         fill_vertical_span();
+        ROF_TG_PLOT(_tp0);
         draw_x_left = (uint8_t)(draw_x_left - 1);
         draw_x_right = (uint8_t)(draw_x_right + 1);
         span_row_count = (uint8_t)(span_row_count - 1);
     } while (span_row_count != 0x00);
+    ROF_TUNNEL_SPANRUN(p0base, p0r0, p0r1, p0xL, p0xR, p0n, p0col);
     draw_row_top = (uint8_t)(draw_row_top + encounter_count);
     draw_row_bottom = (uint8_t)(draw_row_bottom - encounter_count);
+    ROF_TP_LEAVE(_tp0);
 }
 
 /* trigger_effect_4a @ $7AA6 — fire event effect $4A via init_event_state_5815_x16. */

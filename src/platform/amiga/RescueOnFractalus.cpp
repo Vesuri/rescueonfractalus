@@ -2801,46 +2801,112 @@ void RescueOnFractalus::drawTunnelColumns(uint16_t rowBase, uint8_t colL, uint8_
     }
 }
 
-// ---- direct tunnel-ring painting (the ROF_TUNNEL_RECT hook) --------------------------------
-// draw_symmetric_span_loop hands us each concentric rectangle it draws, so the rings are painted
-// straight into tunnelBitmap instead of being decoded back out of the mem[] GTIA field afterwards.
-// This is one hook for BOTH directions — the forward ring (draw_ring_frame_step) and the reverse
-// one (step_accum_sub_7e) share that loop.
+// Beam race on ONE tunnel paint (the g_tb* block up top, read by amiga/tunnel_tear.gdb).  A pen is
+// three PLANES, so while a paint is in flight its pixels carry a mix of the old and the new pen —
+// a colour in neither image — and this measures both halves of that: how long one paint lasts, and
+// whether the beam swept through the rows it was painting.  Only meaningful while the copper is
+// showing tunnelBitmap; a paint into an off-screen bitmap cannot tear.
+// ⚠ It brackets every paint the shipping path takes — paintTunnelBox for a batched group or run,
+// paintVSpan for the per-pair fallback — because a probe that only fires on a path the build does
+// not use reads 0 and looks like "no tearing".
+#ifdef ROF_FLIGHT_PROBE
+// ...and the paint's own running tick total, which is ALSO measured here rather than bracketed
+// around the hook in rof_native.c.  A whole group's paint can last more than one frame, and a
+// wrap-aware delta between two beam reads cannot tell 349 ticks from 36; one box always fits in a
+// frame, so summing boxes is the only reading that stays honest across the interesting range.
+// Unconditional (not gated on the copper being live) — it is a COST, not a tear.
+extern "C" { volatile unsigned long g_tunPaintT = 0; }
+#define ROF_TEAR_ENTER()                                                                       \
+    const bool _tbOn = tunnelCopperInstalled;                                                  \
+    const unsigned short _tbIn = rof_beam_line()
+#define ROF_TEAR_LEAVE(row0, nrows)  rofTearSample(_tbIn, (row0), (nrows), _tbOn)
+static void rofTearSample(unsigned short in, int row0, int nrows, bool onScreen)
+{
+    const unsigned short out = rof_beam_line();
+    const unsigned short d = (unsigned short)((out >= in) ? (out - in) : (out + 313u - in));
+    g_tunPaintT += d;
+    if (!onScreen) return;              // the rest is the TEAR question, which needs a live copper
+    // Painted rows row0..row0+nrows-1 are Amiga scanlines kTerrainLine+row0 upward.
+    const unsigned short y0 = (unsigned short)(kTerrainLine + row0);
+    const unsigned short y1 = (unsigned short)(kTerrainLine + row0 + nrows - 1);
+    g_tbCalls++;
+    g_tbLinesSum += d;
+    if (d > g_tbLinesMax) g_tbLinesMax = d;
+    if (in < g_tbEntryMin) g_tbEntryMin = in;
+    if (in > g_tbEntryMax) g_tbEntryMax = in;
+    // Did the beam sweep through the painted rows while the paint was in flight?  O(1) on purpose:
+    // this runs in the VBI ISR on the very path being measured, so a scan loop here would be a
+    // probe that changes its own answer.  The beam covers lines [in, in+d] mod 313; walking l up
+    // through the contiguous range [y0,y1] makes (l - in) mod 313 increase by one a step and wrap
+    // at most once, so the closest the beam gets is 0 when it started inside the range and
+    // (y0 - in) mod 313 otherwise.
+    // (subtract-or-add-313 rather than a modulo: the 68000 has no 32-bit divide)
+    const unsigned short reach = (unsigned short)((y0 >= in) ? (y0 - in) : (y0 + 313u - in));
+    const bool hit = (in >= y0 && in <= y1) || reach <= d;
+    if (hit) {
+        g_tbBeamIn++;
+        if (g_tbN < TB_SAMP) {
+            g_tbIn[g_tbN] = in; g_tbOut[g_tbN] = out;
+            g_tbY0[g_tbN] = y0; g_tbY1[g_tbN] = y1;  g_tbN++;
+        }
+    }
+}
+#else
+#define ROF_TEAR_ENTER()             ((void)0)
+#define ROF_TEAR_LEAVE(row0, nrows)  ((void)0)
+#endif
+
+// ---- direct tunnel-ring painting (the ROF_TUNNEL_GROUP hook) -------------------------------
+// draw_symmetric_span_loop hands us a whole ring GROUP — the $6E0F[i] concentric rectangle
+// outlines it is about to draw, all in ONE colour — so the rings are painted straight into
+// tunnelBitmap instead of being decoded back out of the mem[] GTIA field afterwards.  One hook for
+// BOTH directions: the forward ring (draw_ring_frame_step) and the reverse one (step_accum_sub_7e)
+// share that loop.
 //
-// A rectangle is four solid runs of ONE pen.  Nothing here needs the field's previous contents:
-// the 6502's two mask tables ($66E9/$66FB, dumped) are exactly "set this nibble to
-// colour, preserve the other" — OR = colour<<4 / AND = (colour<<4)|$0F for an even column, OR =
-// colour / AND = $F0|colour for an odd one — so every write is prev-independent.
+// Nothing here needs the field's previous contents: the 6502's two mask tables ($66E9/$66FB,
+// dumped) are exactly "set this nibble to colour, preserve the other" — OR = colour<<4 /
+// AND = (colour<<4)|$0F for an even column, OR = colour / AND = $F0|colour for an odd one — so
+// every write is prev-independent.  That is the fact the whole no-decode design rests on.
+//
+// ⭐ WHY A GROUP AND NOT ONE RECTANGLE AT A TIME.  A group's `count` outlines are nested exactly
+// one unit apart on all four sides and share one colour, so their UNION is a solid rectangular
+// ANNULUS: outer edge = the last outline, hole = the interior of the first.  Take the corner point
+// (row rowTop+i, column xL-j), 0 <= i,j <= count-1: outline j's vertical edge spans rows
+// rowBot-j..rowTop+j, so it covers the point whenever i <= j; outline i's horizontal edge spans
+// columns xL-i..xR+i, so it covers it whenever j <= i.  One of the two always holds, so there are
+// no gaps.  (Each outline's own row is covered edge to edge as well: the horizontal edge lays down
+// the whole bytes and its two vertical edges the 4-px nibbles the odd/even nudge left out.)
+// So a whole group is FOUR solid boxes instead of 2*count one-row spans plus 2*count 4-px columns.
+// That is what makes the outermost group affordable: it is 11 outlines up to 86 rows tall = ~5000
+// masked word read-modify-writes, measured at ~4 PAL frames of the 50 Hz VBI ISR on a 68000, which
+// is the whole of the "when drawing the outermost tunnel ring the drawing is clearly visible"
+// report.  Same pixels, ~4x fewer writes, and one contiguous burst instead of 33 scattered ones.
 //
 // Geometry.  A field byte is 2 GTIA pixels and 8 Amiga pixels; the displayed window is field bytes
-// 4..43 (the wide-field crop).  So field pixel column p -> Amiga x = ((p>>1) - 4) * 8 + (p&1)*4,
-// and a field row is one bitmap row (the copper line-doubles the viewport).
-//   horizontal edges: whole bytes [byteLo..byteHi], on rows rowTop AND rowBot
-//   vertical edges:   one nibble (4 px) at columns xL and xR, rows rowBot..rowTop inclusive
+// 4..43 (the wide-field crop).  So field pixel column p -> Amiga x = ((p>>1) - 4) * 8 + (p&1)*4
+// = 4p - 32, every edge is one nibble = 4 Amiga pixels, and a field row is one bitmap row (the
+// copper line-doubles the viewport).  Clipping to bytes [4..43] is therefore exactly clipping x to
+// [0, kW), which is what paintTunnelBox does.
 // ⚠ rowBot ($009F) is the SMALL row index (screen top) and rowTop ($009E) the large one — the
 // 6502's names are inverted with respect to the screen, and the span loop grows the rectangle by
 // stepping rowTop up and rowBot down.
-// ⚠ FAITHFUL QUIRK, do not "fix": fill_vertical_span_core picks its nibble mask from xL's parity
-// and applies that SAME mask at both columns, so when xL and xR have different parity the right
-// edge lands in the nibble xL selected, not its own.  Mirrored here.
-void RescueOnFractalus::drawTunnelRect(uint16_t rowBase, uint8_t rowTop, uint8_t rowBot,
-                                       uint8_t xL, uint8_t xR, uint8_t byteLo, uint8_t byteHi,
-                                       uint8_t colour)
+void RescueOnFractalus::drawTunnelGroup(uint16_t rowBase, uint8_t rowTop, uint8_t rowBot,
+                                        uint8_t xL, uint8_t xR, uint8_t count, uint8_t colour)
 {
     // NOTE: the probes below run BEFORE the tunnelBitmap null check deliberately — a probe that
     // silently drops the very calls it is meant to account for is worse than no probe.
 #ifdef ROF_FLIGHT_PROBE
     // Plumbing probe: does the hook fire, from which field, and with what geometry?
     { extern volatile unsigned long g_trCalls, g_trDoors, g_trRows[8], g_trCols[8], g_trPen[8];
-      if (rowBase >= 0x2000u) g_trDoors++;
+      if (rowBase >= 0x2000u) g_trDoors += count;
       else { if (g_trCalls < 8) {
                  g_trRows[g_trCalls] = ((unsigned long)rowTop << 8) | rowBot;
                  g_trCols[g_trCalls] = ((unsigned long)xL << 24) | ((unsigned long)xR << 16) |
-                                       ((unsigned long)byteLo << 8) | byteHi;
+                                       count;
                  g_trPen[g_trCalls]  = colour; }
-             g_trCalls++; } }
+             g_trCalls += count; } }
     // §0a: call site x render phase, measured, plus the run timeline.  A "run" ends when the call
-    // site changes or more than 8 vbi pass, so each pre-draw shows up as its own 43-rectangle burst
+    // site changes or more than 8 vbi pass, so each pre-draw shows up as its own 20-group burst
     // with the sub-phase state ($008D/$008E) it ran under.
     if (rowBase < 0x2000u) {
         extern volatile unsigned char g_trSrc;
@@ -2851,8 +2917,8 @@ void RescueOnFractalus::drawTunnelRect(uint16_t rowBase, uint8_t rowTop, uint8_t
         const unsigned src = (g_trSrc < 5u) ? g_trSrc : 0u;
         const unsigned phase = rsBoostViewport ? 2u : (rsBoostReturn ? 1u : 0u);
         const unsigned short vbi = platform_frame_count();
-        g_trBySrc[src]++;
-        g_trPhase[src * 3u + phase]++;
+        g_trBySrc[src] += count;
+        g_trPhase[src * 3u + phase] += count;
         const unsigned long r = g_trRunN;              // index of the run in progress (r-1)
         const bool sameRun = r != 0 && r <= TR_RUNS &&
                              g_trRunSrc[r - 1] == (unsigned char)src &&
@@ -2869,30 +2935,102 @@ void RescueOnFractalus::drawTunnelRect(uint16_t rowBase, uint8_t rowTop, uint8_t
             }
         }
         { const unsigned long i = g_trRunN - 1u;
-          if (i < TR_RUNS) { g_trRunVbi1[i] = vbi; g_trRunCnt[i]++; } }
+          if (i < TR_RUNS) { g_trRunVbi1[i] = vbi; g_trRunCnt[i] = (unsigned short)(g_trRunCnt[i] + count); } }
     }
 #endif
-    // Ring rectangles are emitted at four points in a session (measured, the run
-    // timeline in §0a of docs/boost-tunnel-direct-handoff.md) and BOTH directions are painted
-    // now: the forward pre-build + descent under kTunnelOwnerForward, the boost's L_6047 pre-draw
-    // + reverse groups under kTunnelOwnerBoost.  The owner is re-armed (and the bitmap re-primed)
-    // at each direction's entry point, so a rectangle is only ever painted with the LUT of the
-    // cinematic that is about to display it.
+    // Ring groups are emitted at four points in a session (measured, the run timeline in §0a of
+    // docs/boost-tunnel-direct-handoff.md) and BOTH directions are painted now: the forward
+    // pre-build + descent under kTunnelOwnerForward, the boost's L_6047 pre-draw + reverse groups
+    // under kTunnelOwnerBoost.  The owner is re-armed (and the bitmap re-primed) at each
+    // direction's entry point, so an outline is only ever painted with the LUT of the cinematic
+    // that is about to display it.
     if (tunnelOwner == kTunnelOwnerNone) return;
     if (!tunnelBitmap) return;
     if (rowBase >= 0x2000u) return;         // the $2000 door field keeps its own decode path
+    if (count == 0 || rowTop < rowBot) return;   // rowTop >= rowBot always holds (see below)
 
     const uint16_t pen = tunnelPen(colour);
-    const int kRows = (int)kTerrainHeight;
-    // Horizontal edges — whole bytes, clipped to the displayed window [4..43].
-    int bLo = (int)byteLo, bHi = (int)byteHi;
+    const int n = (int)count - 1;           // steps from the innermost outline to the outermost
+    // A ONE-outline group is not worth the annulus form: it is four boxes where the outline is
+    // three fills, and its top/bottom bands carry the full OUTER width because they absorb the two
+    // 4-px nibbles the outline's horizontal edge leaves to its vertical edges.  Measured, per
+    // group: 36 -> 42 ticks.  $6E0F[19..7] are all 1, so that is 13 of each cinematic's 20 groups
+    // and it showed up as a 33% REGRESSION on the whole forward descent.  The crossover is at
+    // count 2 (113 -> 86), so dispatch on it.  Both shapes paint the same pixels — the outline path
+    // IS what the equivalence proof compares the annulus against (make hostproof FN=tunnel_batch).
+    if (count == 1) { paintTunnelOutline(rowTop, rowBot, xL, xR, pen); return; }
+    // ⚠ The annulus form needs the outermost outline's four coordinates to be the innermost ones
+    // stepped by n WITHOUT the 6502's uint8 wrap.  Both cinematics are seeded 46/48/43/42 by
+    // init_row_coords_9c and take exactly 43 nesting steps, landing on 4/90/85/0, so no coordinate
+    // ever wraps — but the check is one compare, and a wrapped group would paint in a completely
+    // different place, so drop to the exact per-outline painter rather than trust the geometry.
+#ifdef ROF_TUNNEL_BATCH_OFF
+    if (true) {                             // `make TUNBATCH_OFF=1`: the per-outline A/B baseline
+#else
+    if ((int)xL - n < 0 || (int)xR + n > 255 || (int)rowBot - n < 0 || (int)rowTop + n > 255) {
+#endif
+        uint8_t oTop = rowTop, oBot = rowBot, oL = xL, oR = xR;
+        for (int k = 0; k <= n; k++) {
+            paintTunnelOutline(oTop, oBot, oL, oR, pen);
+            oL--; oR++; oTop++; oBot--;
+        }
+        return;
+    }
+    const int rTopIn = (int)rowTop,        rTopOut = (int)rowTop + n;   // top band rows, inclusive
+    const int rBotIn = (int)rowBot,        rBotOut = (int)rowBot - n;   // bottom band rows
+    const int xInL   = 4 * (int)xL - 32,   xInR    = 4 * (int)xR - 32 + 3;   // innermost outline
+    const int xOutL  = xInL - 4 * n,       xOutR   = xInR + 4 * n;           // outermost outline
+
+    paintTunnelBox(xOutL, xOutR, rTopIn,     rTopOut, pen);   // top band, full outer width
+    paintTunnelBox(xOutL, xOutR, rBotOut,    rBotIn,  pen);   // bottom band, ditto
+    if (rTopIn - 1 >= rBotIn + 1) {                           // the hole's rows, if it has any
+        paintTunnelBox(xOutL,     xInL + 3, rBotIn + 1, rTopIn - 1, pen);   // left band
+        paintTunnelBox(xInR - 3,  xOutR,    rBotIn + 1, rTopIn - 1, pen);   // right band
+    }
+}
+
+// paintTunnelBox: one solid box of `pen` into tunnelBitmap, x1/y1 INCLUSIVE, clipped to the
+// displayed window.  Clipping x to [0, kW) is exactly the byte-[4..43] clip the per-edge painter
+// did, because every tunnel coordinate is 4-px granular (x = 4p - 32, so x >= 0 <=> p >= 8 <=>
+// byte >= 4, and x <= kW-4 <=> byte <= 43).
+void RescueOnFractalus::paintTunnelBox(int x0, int x1, int y0, int y1, uint16_t pen)
+{
+    if (y0 < 0) y0 = 0;
+    if (y1 > (int)kTerrainHeight - 1) y1 = (int)kTerrainHeight - 1;
+    if (x0 < 0) x0 = 0;
+    if (x1 > (int)kW - 1) x1 = (int)kW - 1;
+    if (y1 < y0 || x1 < x0) return;
+    ROF_TEAR_ENTER();
+    tunnelBitmap->fillColor((uint16_t)x0, (uint16_t)y0,
+                            (uint16_t)(x1 - x0 + 1), (uint16_t)(y1 - y0 + 1), pen);
+    ROF_TEAR_LEAVE(y0, y1 - y0 + 1);
+}
+
+// paintTunnelOutline: ONE concentric rectangle the way the 6502 draws it — two whole-byte
+// horizontal edges plus two 4-px vertical edges.  This is the reference shape the annulus above
+// is the union of, and the fallback for the (unreachable) wrapped-coordinate case.  The byteLo/
+// byteHi nudge is fill_horizontal_span's: an odd right edge pulls the left byte in, an even one
+// pushes the right byte in, leaving those two nibbles to the vertical edges.
+void RescueOnFractalus::paintTunnelOutline(uint8_t rowTop, uint8_t rowBot, uint8_t xL, uint8_t xR,
+                                           uint16_t pen)
+{
+    int bLo = (int)(xL >> 1), bHi = (int)(xR >> 1);
+    if (xR & 1) bLo++; else bHi--;
     if (bLo < 4) bLo = 4;
     if (bHi > 43) bHi = 43;
     if (bLo <= bHi) {
         const uint16_t hx = (uint16_t)((bLo - 4) * 8);
         const uint16_t hw = (uint16_t)((bHi - bLo + 1) * 8);
-        if ((int)rowTop < kRows) tunnelBitmap->fillColor(hx, rowTop, hw, 1, pen);
-        if ((int)rowBot < kRows) tunnelBitmap->fillColor(hx, rowBot, hw, 1, pen);
+        if ((int)rowTop < (int)kTerrainHeight) {
+            ROF_TEAR_ENTER();
+            tunnelBitmap->fillColor(hx, rowTop, hw, 1, pen);
+            ROF_TEAR_LEAVE(rowTop, 1);
+        }
+        if ((int)rowBot < (int)kTerrainHeight) {
+            ROF_TEAR_ENTER();
+            tunnelBitmap->fillColor(hx, rowBot, hw, 1, pen);
+            ROF_TEAR_LEAVE(rowBot, 1);
+        }
     }
     paintVSpan(rowBot, rowTop, xL, xR, pen);   // vertical edges
 }
@@ -2911,58 +3049,48 @@ void RescueOnFractalus::paintVSpan(uint8_t rowBot, uint8_t rowTop, uint8_t xL, u
     if (vy + vh > kRows) vh = kRows - vy;
     const int nib = (xL & 1) ? 4 : 0;             // the quirk: xL's parity picks BOTH nibbles
     const int cL = (int)(xL >> 1), cR = (int)(xR >> 1);
-#ifdef ROF_FLIGHT_PROBE
-    // Beam race on the tall edges (see the g_tb* block up top).  Only meaningful while the copper
-    // is showing tunnelBitmap — a paint into an off-screen bitmap cannot tear.
-    const bool _tbOn = tunnelCopperInstalled;
-    const unsigned short _tbIn = _tbOn ? rof_beam_line() : 0;
-#endif
+    ROF_TEAR_ENTER();
     if (cL >= 4 && cL <= 43)
         tunnelBitmap->fillColor((uint16_t)((cL - 4) * 8 + nib), (uint16_t)vy, 4, (uint16_t)vh, pen);
     if (cR >= 4 && cR <= 43)
         tunnelBitmap->fillColor((uint16_t)((cR - 4) * 8 + nib), (uint16_t)vy, 4, (uint16_t)vh, pen);
-#ifdef ROF_FLIGHT_PROBE
-    if (_tbOn) {
-        const unsigned short out = rof_beam_line();
-        const unsigned short d = (unsigned short)((out >= _tbIn) ? (out - _tbIn) : (out + 313u - _tbIn));
-        // Painted rows vy..vy+vh-1 are Amiga scanlines kTerrainLine+vy .. kTerrainLine+vy+vh-1.
-        const unsigned short y0 = (unsigned short)(kTerrainLine + vy);
-        const unsigned short y1 = (unsigned short)(kTerrainLine + vy + vh - 1);
-        g_tbCalls++;
-        g_tbLinesSum += d;
-        if (d > g_tbLinesMax) g_tbLinesMax = d;
-        if (_tbIn < g_tbEntryMin) g_tbEntryMin = _tbIn;
-        if (_tbIn > g_tbEntryMax) g_tbEntryMax = _tbIn;
-        // Did the beam sweep through the painted rows while the paint was in flight?  O(1) on
-        // purpose: this runs in the VBI ISR on the very path being measured, so a scan loop here
-        // would be a probe that changes its own answer.  The beam covers lines [_tbIn, _tbIn+d]
-        // mod 313; walking l up through the contiguous range [y0,y1] makes (l - _tbIn) mod 313
-        // increase by one a step and wrap at most once, so the closest the beam gets is 0 when it
-        // started inside the range and (y0 - _tbIn) mod 313 otherwise.
-        // (subtract-or-add-313 rather than a modulo: the 68000 has no 32-bit divide)
-        const unsigned short reach = (unsigned short)((y0 >= _tbIn) ? (y0 - _tbIn)
-                                                                    : (y0 + 313u - _tbIn));
-        const bool hit = (_tbIn >= y0 && _tbIn <= y1) || reach <= d;
-        if (hit) {
-            g_tbBeamIn++;
-            if (g_tbN < TB_SAMP) {
-                g_tbIn[g_tbN] = _tbIn; g_tbOut[g_tbN] = out;
-                g_tbY0[g_tbN] = y0;    g_tbY1[g_tbN] = y1;  g_tbN++;
-            }
-        }
-    }
-#endif
+    ROF_TEAR_LEAVE(vy, vh);
 }
 
-// drawTunnelVSpan: the ROF_TUNNEL_VSPAN hook — one vertical span pair from plot_terrain_span, the
-// third $1000 writer.  It both ERASES the static pre-draw (colour 8, straight after it) and draws
-// one coloured pair per revealed row (emit_dl_coord_pairs tail-calls it during the reveal), so the
+// drawTunnelSpanRun: the ROF_TUNNEL_SPANRUN hook — one whole plot_terrain_span RUN, the third
+// $1000 writer.  It both ERASES the static pre-draw (colour 8, straight after it) and draws one
+// coloured run per revealed row (emit_dl_coord_pairs tail-calls it during the reveal), so the
 // painter is wrong in both directions without it.
-void RescueOnFractalus::drawTunnelVSpan(uint16_t rowBase, uint8_t r0, uint8_t r1, uint8_t colL,
-                                        uint8_t colR, uint8_t colour)
+//
+// A run is `count` vertical span PAIRS at a CONSTANT row window: the loop only steps xL-- / xR++
+// between them, and neither the window nor the colour moves.  So the left nibbles are `count`
+// CONTIGUOUS 4-px columns and so are the right ones — two solid boxes, not 2*count thin columns.
+// The last reveal run is 13 pairs over a 66-row window = ~6700 masked word writes, measured at 705
+// ticks = 2.25 PAL frames, which is the other half of the end-of-tunnel stutter.
+void RescueOnFractalus::drawTunnelSpanRun(uint16_t rowBase, uint8_t r0, uint8_t r1, uint8_t xL,
+                                          uint8_t xR, uint8_t count, uint8_t colour)
 {
     if (tunnelOwner == kTunnelOwnerNone || !tunnelBitmap || rowBase >= 0x2000u) return;
-    paintVSpan(r0, r1, colL, colR, tunnelPen(colour));
+    if (count == 0 || r0 > r1) return;
+    const uint16_t pen = tunnelPen(colour);
+    const int n = (int)count - 1;
+    // ⚠ FAITHFUL QUIRK, do not "fix": fill_vertical_span_core picks its nibble mask from xL's
+    // PARITY and applies that same mask at BOTH columns (paintVSpan mirrors it).  While xL and xR
+    // share a parity the right column lands in its OWN nibble and the right run is contiguous —
+    // and they always do share one, since init_row_coords_9c seeds 46/48 and they step in opposite
+    // directions.  If they ever differed the right run would be full of holes, and a uint8 wrap
+    // would move a column somewhere else entirely, so fall back to the exact per-pair painter.
+#ifdef ROF_TUNNEL_BATCH_OFF
+    if (true) {                             // `make TUNBATCH_OFF=1`: the per-pair A/B baseline
+#else
+    if (((xL ^ xR) & 1u) != 0u || (int)xL - n < 0 || (int)xR + n > 255) {
+#endif
+        uint8_t l = xL, r = xR;
+        for (int k = 0; k <= n; k++) { paintVSpan(r0, r1, l, r, pen); l--; r++; }
+        return;
+    }
+    paintTunnelBox(4 * ((int)xL - n) - 32, 4 * (int)xL - 32 + 3,        r0, r1, pen);  // left run
+    paintTunnelBox(4 * (int)xR - 32,       4 * ((int)xR + n) - 32 + 3,  r0, r1, pen);  // right run
 }
 
 #ifdef ROF_TUNNEL_DIFF

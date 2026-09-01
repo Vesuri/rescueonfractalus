@@ -62,12 +62,14 @@ public:
                                  // on the ISR-driven decrement), repoint the standby terrain BPLxPT to
                                  // the tall door bitmap offset by dl_src_index rows — the uniform DL-LMS
                                  // window scroll.  No-op unless the settled standby is live.
-    void drawTunnelRect(uint16_t rowBase, uint8_t rowTop, uint8_t rowBot, uint8_t xL, uint8_t xR,
-                        uint8_t byteLo, uint8_t byteHi, uint8_t colour);  // ROF_TUNNEL_RECT hook: paint one ring rectangle straight into tunnelBitmap
+    void drawTunnelGroup(uint16_t rowBase, uint8_t rowTop, uint8_t rowBot, uint8_t xL, uint8_t xR,
+                         uint8_t count, uint8_t colour);   // ROF_TUNNEL_GROUP hook: one whole ring group (count nested outlines, one colour)
     void drawTunnelColumns(uint16_t rowBase, uint8_t colL, uint8_t colR, uint8_t colR1,
                            uint8_t colour);   // ROF_TUNNEL_COLS hook: the pre-draw's three full-height guide columns
-    void drawTunnelVSpan(uint16_t rowBase, uint8_t r0, uint8_t r1, uint8_t colL, uint8_t colR,
-                         uint8_t colour);   // ROF_TUNNEL_VSPAN hook: one plot_terrain_span vertical pair
+    void drawTunnelSpanRun(uint16_t rowBase, uint8_t r0, uint8_t r1, uint8_t xL, uint8_t xR,
+                           uint8_t count, uint8_t colour);   // ROF_TUNNEL_SPANRUN hook: one whole plot_terrain_span run
+    void paintTunnelBox(int x0, int x1, int y0, int y1, uint16_t pen);  // one clipped solid box into tunnelBitmap (x1/y1 inclusive)
+    void paintTunnelOutline(uint8_t rowTop, uint8_t rowBot, uint8_t xL, uint8_t xR, uint16_t pen);  // ONE concentric rectangle (the annulus' reference shape / wrap fallback)
     void paintVSpan(uint8_t rowBot, uint8_t rowTop, uint8_t xL, uint8_t xR, uint16_t pen);
     uint16_t tunnelPen(uint8_t colour) const;  // GTIA nibble -> Amiga pen through the live owner's LUT
     void tunnelPaintBegin();     // arm the FORWARD ring painter + prime tunnelBitmap (before the pre-draw)
