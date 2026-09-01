@@ -2718,6 +2718,18 @@ void RescueOnFractalus::initialize()
     g_activeVbi = 1;
 }
 
+// The ring painter's ownership of tunnelBitmap, published for the transpiled core: while it is set,
+// rof_native.c SKIPS the 6502's own mem[$1000] GTIA-field plot, because the rings go straight to
+// the bitplanes and nothing reads that field back (the reader audit is at ROF_TUNNEL_FIELD_DEAD).
+// Kept in step with tunnelOwner at every write — hence setTunnelOwner() rather than a bare store.
+extern "C" { volatile unsigned char g_tunnelPaintOwns = 0; }
+
+void RescueOnFractalus::setTunnelOwner(uint8_t owner)
+{
+    tunnelOwner = owner;
+    g_tunnelPaintOwns = (owner != kTunnelOwnerNone) ? 1u : 0u;
+}
+
 // GTIA nibble -> Amiga pen, read back out of the live owner's LUT rather than re-deriving the
 // remap: the LUT is what the copper palette is wired to (plane k's byte carries pen bit k), so
 // this cannot drift from it, and it follows the boost's value-2/value-8 moves automatically.
@@ -2770,7 +2782,7 @@ void RescueOnFractalus::tunnelPaintBegin()
     // image the 2nd launch's doors open onto, and the case that broke the decode.
     tunnelDiffPending = true;
 #endif
-    tunnelOwner = kTunnelOwnerForward;
+    setTunnelOwner(kTunnelOwnerForward);
     if (!tunnelBitmap) return;
     const uint16_t bgPen = tunnelPen(8);
     if (bgPen == 0) {
@@ -2816,6 +2828,9 @@ void RescueOnFractalus::drawTunnelColumns(uint16_t rowBase, uint8_t colL, uint8_
 // frame, so summing boxes is the only reading that stays honest across the interesting range.
 // Unconditional (not gated on the copper being live) — it is a COST, not a tear.
 extern "C" { volatile unsigned long g_tunPaintT = 0; }
+// The reserved-window snapshots (see renderViewportModeD).
+extern "C" { volatile unsigned char g_tkWin[2][16] = {{0}}, g_tkN = 0; }
+extern "C" { volatile unsigned short g_tkVbi[2] = {0, 0}; }
 #define ROF_TEAR_ENTER()                                                                       \
     const bool _tbOn = tunnelCopperInstalled;                                                  \
     const unsigned short _tbIn = rof_beam_line()
@@ -3185,6 +3200,18 @@ void RescueOnFractalus::decodeBoostStars()
 // the displayed 40 of 48 either way.
 void RescueOnFractalus::renderViewportModeD(uint16_t srcBase, int stride, int rows)
 {
+#ifdef ROF_FLIGHT_PROBE
+    // RESERVED-WINDOW check for the skipped mem[$1000] plot (ROF_TUNNEL_FIELD_DEAD in
+    // rof_native.c).  $18C0-$18CF is the only part of THIS decode's read range that nothing
+    // overwrites first, so it is the only place the tunnel's field residue can still be seen.  Snap
+    // it on the first two $1000 decodes (first launch, and the launch after a boost return) — they
+    // must match a `make TUNPLOT=1` run byte for byte, or the reservation is in the wrong place.
+    { extern volatile unsigned char g_tkWin[2][16], g_tkN; extern volatile unsigned short g_tkVbi[2];
+      if (srcBase == 0x1000u && g_tkN < 2u) {
+          for (int i = 0; i < 16; i++) g_tkWin[g_tkN][i] = mem[0x18C0u + i];
+          g_tkVbi[g_tkN] = platform_frame_count();
+          g_tkN++; } }
+#endif
     if (!viewportBitmap) return;
     static const int kCrop   = 4;    // central 40 of 48 (centres content)
 
@@ -4716,7 +4743,7 @@ void RescueOnFractalus::renderFrame()
             // from the centre (measured).  Derive the pen from the LUT so it follows the
             // boost's value-8 -> color02 remap instead of hardcoding it.  (Take the owner first —
             // tunnelPen() reads it to pick the LUT.)
-            tunnelOwner = kTunnelOwnerBoost;   // from here every ring rectangle takes the boost LUT
+            setTunnelOwner(kTunnelOwnerBoost); // from here every ring rectangle takes the boost LUT
             const uint16_t bgPen = tunnelPen(8);
             AmigaHardware::blitterWait();
             tunnelBitmap->fillColor(0, 0, kW, kTerrainHeight, bgPen);
@@ -6080,7 +6107,7 @@ void RescueOnFractalus::deriveRenderSignals()
     // and a forward re-prime (tunnelPaintBegin), not the boost's.  Drop to NONE rather than to
     // FORWARD: nothing may paint until that pre-build explicitly claims the bitmap, because the T6
     // handoff hold is still displaying the last reverse-ring frame at this point.
-    if (!rsBoostViewport && tunnelOwner == kTunnelOwnerBoost) tunnelOwner = kTunnelOwnerNone;
+    if (!rsBoostViewport && tunnelOwner == kTunnelOwnerBoost) setTunnelOwner(kTunnelOwnerNone);
 #ifdef ROF_FLIGHT_PROBE
     { extern volatile unsigned char g_boostRet, g_boostVp;
       g_boostRet = rsBoostReturn ? 1 : 0; g_boostVp = rsBoostViewport ? 1 : 0; }

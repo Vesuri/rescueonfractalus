@@ -44,3 +44,18 @@ while $i < 48 && $i < g_rkN
   printf "    vbi %5u  K=%2u  held %3u frames\n", g_rkVbi[$i], g_rkK[$i], g_rkHold[$i]
   set $i = $i + 1
 end
+printf "=== reserved window $18C0-$18CF at the first two $1000 viewport decodes ===\n"
+printf "(the ONLY part of the stars/planet read range nothing overwrites first, so the only place\n"
+printf " the tunnel field's residue is observable.  MUST be identical to a make TUNPLOT=1 run.)\n"
+printf "snaps=%u\n", g_tkN
+set $j = 0
+while $j < 2 && $j < g_tkN
+  printf "  vbi %5u :", g_tkVbi[$j]
+  set $i = 0
+  while $i < 16
+    printf " %02x", g_tkWin[$j][$i]
+    set $i = $i + 1
+  end
+  printf "\n"
+  set $j = $j + 1
+end

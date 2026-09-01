@@ -264,6 +264,9 @@ private:
     // owner is what tunnelPen() and the prime pen select on.  NONE = the hooks don't paint.
     enum : uint8_t { kTunnelOwnerNone = 0, kTunnelOwnerForward = 1, kTunnelOwnerBoost = 2 };
     uint8_t tunnelOwner = kTunnelOwnerNone;
+    void setTunnelOwner(uint8_t owner);   // ...and publish it as g_tunnelPaintOwns, which gates the
+                                          // 6502's now-dead mem[$1000] plot in rof_native.c
+
 #ifdef ROF_TUNNEL_DIFF
     void tunnelPaintDiff(uint16_t K);   // painted bitmap vs a decode of the live $1000 field, rows [K, 85-K]
     bool tunnelDiffPending = false;     // check the finished forward pre-draw on the next render

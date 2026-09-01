@@ -699,7 +699,32 @@ extern volatile unsigned long g_alHudCalls;      /* # alien_shape_blit calls dur
  *
  * Nothing here needs the field's previous contents: the 6502's two mask tables ($66E9/$66FB) are
  * exactly "set this nibble to colour, preserve the other", so every write is prev-independent.
- * That is the fact the whole no-decode design rests on. */
+ * That is the fact the whole no-decode design rests on.
+ *
+ * ⭐⭐ AND THE 6502'S OWN mem[$1000] PLOT IS SKIPPED ON THE AMIGA WHILE A TUNNEL OWNS THE FIELD
+ * (user decision, 2026-09-01: "there's no point in being faithful if nothing ever reads this
+ * memory").  The rings go straight to the bitplanes, so the GTIA field they used to be decoded out
+ * of is write-only for the whole of both cinematics — measured 331 of the outermost ring group's
+ * 626 ISR ticks, i.e. 1.06 PAL frames of dead work on the group whose draw the user could SEE.
+ *
+ * WHO READS $1000, in full — the audit the skip rests on, so re-derive it before widening this:
+ *   * renderViewportModeD($1000, 48, 47) — the stars/planet viewport.  Its window is
+ *     $1000..$18CF; the launch wipes $1000..$1815 (zero_run) and $1800..$18BF (copy_192_to_1800)
+ *     before the stars phase, so all but 16 bytes of it is overwritten anyway.
+ *   * draw_vline_pair_core ($6C4D), the stars/planet field's own WRITER, which is prev-DEPENDENT
+ *     over its rows >= $2B: those go through plot_pixel_2bpp, which reads the cell and transforms
+ *     it.  Rows 43-46 are $1810..$18CF — and after the two wipes above that is the SAME 16 bytes.
+ *   * NOT the windscreen band — during a tunnel that is the cockpit bitmap's mode-D $350D frame,
+ *     with the corner colour carried in copper color00 (TunnelCopperList).
+ *   * NOT the reveal split K — boostRevealK() reads the $3000 DL's LMS words, not the field.
+ *   * NOT the boost starfield — that is $2000, and fill_region_2000 keeps its own decode.
+ * The 16 bytes nothing overwrites ($18C0..$18CF) fall in tunnel row 48, whose byte columns 26..45
+ * the outermost outlines' right vertical edges do write, and the stars decode reads $18C0..$18CB as
+ * the right-hand end of its LAST band row.  So that window stays RESERVED: it is plotted even when
+ * the rest is skipped (ROF_TUNNEL_KEEP_LO/HI), which costs a compare per span and keeps the one
+ * place the residue is actually observable byte-exact.
+ * `make TUNPLOT=1` restores the full faithful plot — the A/B baseline, and the first thing to try
+ * if a tunnel-adjacent rendering regression ever appears. */
 #ifdef ROF_PLATFORM_AMIGA
 extern void platform_tunnel_group(uint16_t rowBase, uint8_t rowTop, uint8_t rowBot,
                                   uint8_t xL, uint8_t xR, uint8_t count, uint8_t colour);
@@ -717,6 +742,36 @@ extern void platform_tunnel_span_run(uint16_t rowBase, uint8_t r0, uint8_t r1, u
 #define ROF_TUNNEL_GROUP(rowBase, rowTop, rowBot, xL, xR, count, colour) ((void)0)
 #define ROF_TUNNEL_COLS(rowBase, colL, colR, colR1, colour) ((void)0)
 #define ROF_TUNNEL_SPANRUN(rowBase, r0, r1, xL, xR, count, colour) ((void)0)
+#endif
+
+/* Is the mem[$1000] GTIA field dead for this write?  Yes when the Amiga ring painter owns the
+ * tunnel bitmap (g_tunnelPaintOwns, set with tunnelOwner in RescueOnFractalus.cpp) and the row base
+ * is the tunnel field rather than the $2000 door field — the doors keep their decode, so they keep
+ * their plot.  `make TUNPLOT=1` (and TUNDIFF, which diffs the bitmap AGAINST the field) forces it
+ * live.  The RESERVED window is the 16 bytes of the stars/planet viewport that nothing overwrites
+ * before that decode reads them; see the audit above. */
+#if defined(ROF_PLATFORM_AMIGA) && !defined(ROF_TUNNEL_PLOT)
+extern volatile unsigned char g_tunnelPaintOwns;
+/* Is this row base in the (Amiga-)DEAD tunnel field?  Dead = the ring painter owns tunnelBitmap and
+ * the row belongs to the $1000 tunnel field, not the $2000 door field (the doors keep their decode,
+ * so they keep their plot). */
+#define ROF_TUNNEL_FIELD_DEAD(base) (g_tunnelPaintOwns && (uint16_t)(base) < 0x2000u)
+/* ...except the RESERVED window: the 16 bytes of the stars/planet viewport's read range that
+ * nothing overwrites before that decode reads them.  A row spans base+2..base+45, so it reaches the
+ * window iff base+45 >= LO and base <= HI — which for the tunnel field (base $1000, stride 46) is
+ * rows 48 and 49 alone, i.e. 2 rows of 86.  ROW_KEEP is the address test (the horizontal edges are
+ * addressed by base); KEEP_R0/R1 are the same two rows as indices, for clipping a vertical span's
+ * row range.  Both are used, and the range clip re-checks ROW_KEEP per row so a row table that is
+ * NOT the $1000/stride-46 one cannot silently reserve the wrong rows. */
+#define ROF_TUNNEL_KEEP_LO 0x18C0u
+#define ROF_TUNNEL_KEEP_HI 0x18CFu
+#define ROF_TUNNEL_KEEP_R0 48u
+#define ROF_TUNNEL_KEEP_R1 49u
+#define ROF_TUNNEL_ROW_KEEP(base) \
+    ((uint16_t)(base) + 45u >= ROF_TUNNEL_KEEP_LO && (uint16_t)(base) <= ROF_TUNNEL_KEEP_HI)
+#else
+#define ROF_TUNNEL_FIELD_DEAD(base) 0
+#define ROF_TUNNEL_ROW_KEEP(base)   1
 #endif
 
 /* Which CALL SITE produced the rectangle the hook is about to emit — a measurement aid, so the
@@ -1442,10 +1497,39 @@ static void fill_vertical_span_core(uint8_t r0, uint8_t r1, uint8_t colL, uint8_
 }
 #endif
 
+/* fill_vertical_span_keep: plot ONLY the RESERVED rows of a vertical span pair whose field is
+ * otherwise dead (see ROF_TUNNEL_FIELD_DEAD).  A vertical span writes the whole range bot..top, so
+ * the reserved rows have to be clipped OUT of it — an address test on the span's top row would skip
+ * them whenever they fall mid-span, which is most outlines.  The masks fill_vertical_span_core
+ * derives are row-independent, so a one-row call writes that row byte-identically to the full one.
+ * Defined here rather than with the macros because it needs the core's dispatcher seam above. */
+#if defined(ROF_PLATFORM_AMIGA) && !defined(ROF_TUNNEL_PLOT)
+static void fill_vertical_span_keep(uint8_t bot, uint8_t top, uint8_t xL, uint8_t xR, uint8_t colour)
+{
+    for (uint8_t r = ROF_TUNNEL_KEEP_R0; r <= ROF_TUNNEL_KEEP_R1; r++) {
+        if (r < bot || r > top) continue;
+        const uint16_t b = (uint16_t)(mem[MEM_row_base_lo + r] | (mem[MEM_row_base_hi + r] << 8));
+        if (!ROF_TUNNEL_ROW_KEEP(b)) continue;
+        fill_vertical_span_core(r, r, xL, xR, colour);
+    }
+}
+#else
+/* Never reached off-Amiga (the field is never dead there); present so the branch compiles. */
+static inline void fill_vertical_span_keep(uint8_t bot, uint8_t top, uint8_t xL, uint8_t xR,
+                                           uint8_t colour)
+{ (void)bot; (void)top; (void)xL; (void)xR; (void)colour; }
+#endif
+
 void fill_vertical_span(void) {
     uint8_t r0 = draw_row_bottom, r1 = draw_row_top;
     uint8_t colL = draw_x_left, colR = draw_x_right, maskSel = draw_color_idx;
-    fill_vertical_span_core(r0, r1, colL, colR, maskSel);
+    /* Row r1's table entry, read once: it is both the field test for the (Amiga-)dead mem[$1000]
+     * plot and the $80/$81 exit scratch below. */
+    const uint8_t rbLo = mem[MEM_row_base_lo + r1], rbHi = mem[MEM_row_base_hi + r1];
+    if (!ROF_TUNNEL_FIELD_DEAD((uint16_t)(rbLo | (rbHi << 8))))
+        fill_vertical_span_core(r0, r1, colL, colR, maskSel);
+    else
+        fill_vertical_span_keep(r0, r1, colL, colR, maskSel);
     /* No platform paint hook here: the Amiga painter takes plot_terrain_span's whole RUN in one
      * call (ROF_TUNNEL_SPANRUN, emitted there) because a run holds its row window and its colour
      * fixed and only steps the columns, so its pairs are two contiguous boxes rather than 2*count
@@ -1455,8 +1539,8 @@ void fill_vertical_span(void) {
     /* Faithful exit state: $0084 = last row + 1; $80/$81 = addr table[last row];
      * $00DF = $FF; cpu.X = mask index, cpu.Y = colR>>1 (cpu state is incidental). */
     screen_ptr_hi = (uint8_t)(r1 + 1);
-    sync_flag = mem[MEM_row_base_lo + r1];
-    dl_ptr_lo = mem[MEM_row_base_hi + r1];
+    sync_flag = rbLo;
+    dl_ptr_lo = rbHi;
     span_pixel_count = 0xFF;
     cpu.X = (colL & 1u) ? (uint8_t)(maskSel + 9u) : maskSel;
     cpu.Y = (uint8_t)(colR >> 1);
@@ -1536,8 +1620,18 @@ void draw_symmetric_span_loop(void) {
           g_dfVCalls++; g_dfVRows += (unsigned)(uint8_t)(top - bot) + 1u; }
 #endif
         ROF_TG_TICK(_tg0);                                /* close the loop-overhead segment */
-        fill_horizontal_span_core(baseTop, baseBot, hi, (uint8_t)(hi - lo), pat);
-        fill_vertical_span_core(bot, top, xL, xR, colour);
+        /* The mem[$1000] plot is dead work while the Amiga paints the rings (see the audit at
+         * ROF_TUNNEL_FIELD_DEAD) — except over the reserved rows.  A horizontal edge writes exactly
+         * rows baseTop and baseBot, so one address test each; a vertical span writes the whole range
+         * bot..top, so it needs the range clipped to the reserved rows, not a test on its top row. */
+        if (!ROF_TUNNEL_FIELD_DEAD(baseTop)) {
+            fill_horizontal_span_core(baseTop, baseBot, hi, (uint8_t)(hi - lo), pat);
+            fill_vertical_span_core(bot, top, xL, xR, colour);
+        } else {
+            if (ROF_TUNNEL_ROW_KEEP(baseTop) || ROF_TUNNEL_ROW_KEEP(baseBot))
+                fill_horizontal_span_core(baseTop, baseBot, hi, (uint8_t)(hi - lo), pat);
+            fill_vertical_span_keep(bot, top, xL, xR, colour);
+        }
         ROF_TG_PLOT(_tg0);                                /* ...that segment was the 6502 plot */
         lxL = xL; lxR = xR; ltop = top; lbot = bot;
         xL = (uint8_t)(xL - 1); xR = (uint8_t)(xR + 1);
@@ -1756,6 +1850,8 @@ void draw_frame_guide_columns(void) {
     const uint8_t* hip = (const uint8_t*)mem + MEM_row_base_hi + 0x55;
     for (int8_t row = 0x55; row >= 0; row--, lop--, hip--) {
         uint16_t rowBase = (uint16_t)(*lop | (*hip << 8));
+        /* Amiga: the rings are painted, not decoded — plot only the reserved rows. */
+        if (ROF_TUNNEL_FIELD_DEAD(rowBase) && !ROF_TUNNEL_ROW_KEEP(rowBase)) continue;
         plot_pixel_masked_core(rowBase, colL,  colour);
         plot_pixel_masked_core(rowBase, colR,  colour);
         plot_pixel_masked_core(rowBase, colR1, colour);

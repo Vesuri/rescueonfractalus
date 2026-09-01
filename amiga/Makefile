@@ -720,6 +720,20 @@ endif
 ifdef TUNBATCH_OFF
 EXTRA_DEFINES += -DROF_TUNNEL_BATCH_OFF
 endif
+# `make TUNPLOT=1`: restore the 6502's own mem[$1000] GTIA-field plot during the two tunnel
+# cinematics.  It is SKIPPED by default (user decision, 2026-09-01) because the rings are painted
+# straight to the bitplanes and nothing reads that field back — measured 331 of the outermost ring
+# group's 626 ISR ticks, 1.06 PAL frames of dead work.  The reader audit the skip rests on, and the
+# 16-byte window that stays RESERVED even so, are at ROF_TUNNEL_FIELD_DEAD in rof_native.c.
+# This is the A/B baseline, and the FIRST thing to try if a tunnel-adjacent rendering regression
+# ever turns up.  TUNDIFF implies it: that differential diffs the painted bitmap AGAINST the field,
+# so with the plot gone it would be comparing against nothing.
+ifdef TUNDIFF
+TUNPLOT := 1
+endif
+ifdef TUNPLOT
+EXTRA_DEFINES += -DROF_TUNNEL_PLOT
+endif
 # `make PROBES=1 FORCE_RETURN=1`: once flight has been running a while, replicate the B/boosters
 # handler (level-clear gate $003A + player_lives $0072=2) once — headless verification of the
 # return-to-mother-ship ascent + flight→launch-cinematic handoff.  Requires PROBES.

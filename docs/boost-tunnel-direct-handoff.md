@@ -8,9 +8,13 @@ delete the decode, not to memoize it faster.  §1-§4 are the reverse (boost) tu
 first; §5 is the forward launch tunnel, which reused all of it.
 
 **STATUS: DONE, both directions user-confirmed on screen — reverse 2026-08-10 (fd28b05), forward
-2026-08-11 (§5).  Neither direction reads `$1000` back any more.** The reverse cinematic no longer
-decodes its ring field at all. Boost decode cost went from ~65900 beam ticks per cinematic (324 full
-ring decodes + 2 star decodes) to **1621** — the two starfield decodes, nothing else. The visual
+2026-08-11 (§5).  Neither direction reads `$1000` back any more — and since 2026-09-01 neither
+WRITES it either (§10), because a field nothing decodes is dead work; §9 is the painter's own
+shape optimisation.  ⚠ The two tunnel sections to read before touching anything here are §9 and
+§10; they carry the current cost model and the reader audit the skip rests on.**
+The reverse cinematic no longer decodes its ring field at all. Boost decode cost went from ~65900
+beam ticks per cinematic (324 full ring decodes + 2 star decodes) to **1621** — the two starfield
+decodes, nothing else. The visual
 check also covers the one change the §3 differential cannot see: the `!rsBoostViewport` guard on
 `render()`'s terrain-view branch (without it the brief in-boost `rsStars` window decodes the $1000
 RING field as a mode-D field straight over the starfield).
@@ -542,3 +546,95 @@ aggregate can move the wrong way while the number you were chasing improves.
 The **331-tick (1.06-frame) faithful 6502 plot** into `mem[$1000]` — `fill_horizontal_span_core` +
 `fill_vertical_span_core`, 53% of the outermost group's remaining cost.  Nothing reads that field
 back during either tunnel phase.  The user's call, 2026-09-01: **take it out.**
+
+---
+
+## 10. The 6502's `mem[$1000]` plot is GONE from both tunnels (2026-09-01)
+
+**User decision, on seeing §9's split:** *"Why are the rectangles drawn to mem[] at all? ... There's
+no point in being 'faithful' if nothing ever reads this memory. If some part of the tunnel atari
+bitmap is used for game logic that part needs to be reserved but otherwise it can and should just
+go."*
+
+§9 got the outermost ring group from 2.74 to 2.00 frames and then hit a floor: **331 of its
+remaining 626 ISR ticks (53%) were the transliterated 6502 plot** — `fill_horizontal_span_core` +
+`fill_vertical_span_core` writing GTIA nibbles into a field that, since the 2026-08-10/11 direct
+painter, nothing decodes.  1.06 PAL frames of write-only work on the one group whose drawing the
+user could SEE.
+
+Gate: `ROF_TUNNEL_FIELD_DEAD(base)` = `g_tunnelPaintOwns && base < $2000` — the ring painter owns
+`tunnelBitmap`, and the row is the `$1000` tunnel field rather than the `$2000` door field (the doors
+keep their decode, so they keep their plot).  `g_tunnelPaintOwns` is published by
+`setTunnelOwner()`, which exists so it cannot drift from `tunnelOwner`.
+**`make TUNPLOT=1` restores the full faithful plot** — the A/B baseline, and the first thing to try
+if a tunnel-adjacent rendering regression ever appears.  `TUNDIFF` implies it (that differential
+diffs the painted bitmap AGAINST the field, so with the plot gone it compares against nothing).
+
+### The reader audit — re-derive this before widening the skip
+
+| candidate | reads `$1000` while a tunnel owns it? |
+|---|---|
+| `renderViewportModeD($1000, 48, 47)` — stars/planet viewport | **YES.** Window `$1000..$18CF` |
+| `draw_vline_pair_core` `$6C4D` — the stars/planet field's own WRITER | **YES, prev-dependent** for rows >= `$2B`: those go through `plot_pixel_2bpp`, which reads the cell and transforms it.  Rows 43-46 = `$1810..$18CF` |
+| the windscreen band | no — during a tunnel that is the COCKPIT bitmap's mode-D `$350D` frame, corner colour carried in copper `color00` |
+| the reveal split `K` | no — `boostRevealK()` reads the `$3000` DL's LMS *words* (addresses, not content) |
+| the boost starfield | no — that is `$2000`, and `fill_region_2000` keeps its own decode |
+| the flight/alien field | shares the memory (`$10A4`, stride 96) but only in FLIGHT, where the flag is clear and terrain goes straight to bitplanes |
+
+Both real readers are almost entirely overwritten first, and **they land on the same 16 bytes**:
+
+```
+zero_run(mem+$1000, 45*$2E)   ->  $1000..$1815
+copy_192_to_1800()            ->  $1800..$18BF
+union                         ->  $1000..$18BF
+both readers' range           ->  $1000..$18CF
+UNCOVERED                     ->  $18C0..$18CF      16 bytes
+```
+
+### The reserved window: `$18C0..$18CF` = tunnel rows 48-49
+
+For the tunnel field (base `$1000`, stride 46) a row spans `base+2..base+45`, so it reaches the
+window iff `base+45 >= $18C0 && base <= $18CF` — rows 48 and 49 alone, **2 rows of 86**.  Those keep
+their plot.  In stars-field terms the window is the right-hand end (byte columns 32-43) of the LAST
+band row, and the tunnel really does write it: the outermost outlines' RIGHT vertical edges cover
+byte columns 26-45 of row 48.  Measured, `make TUNPLOT=1`:
+`$18C0..$18CF = aa aa aa aa aa aa aa a5 55 55 55 50 00 00 00 00` — real ring nibbles, not zeros.
+
+⚠ **A vertical span writes a row RANGE, so an address test on its top row is WRONG.**  The first cut
+tested `baseTop` and would have dropped rows 48-49 for every outline that spans them — which is most
+of them.  `fill_vertical_span_keep()` clips `[bot,top]` to the reserved rows instead and re-checks
+`ROF_TUNNEL_ROW_KEEP` per row, so a row table that is not the `$1000`/stride-46 one cannot silently
+reserve the wrong rows.  (A horizontal edge writes exactly its two named rows, so there one address
+test each is right.)
+
+### Result — A/B in one session, `make TUNPLOT=1` vs default
+
+| | plot on | plot skipped |
+|---|---|---|
+| boost reverse, outermost group | 626 (2.00 fr), plot 331 | **350 (1.11 fr)**, plot 55 |
+| ...its 6-outline group | 361 (1.15 fr) | **250 (0.79 fr)** |
+| boost reverse, 20 groups | 2115, plot 791 | **1521**, plot 197 |
+| forward descent, 14 groups | 527, plot 124 | **457**, plot 57 |
+| pre-draw `L_6047` | 2333, max 683 | **1663, max 374** |
+| forward pre-build x2 | 5239, max 746 | **3707, max 407** |
+| `plot_terrain_span`, 40 runs | 3073, max 469 | **2377, max 301** |
+
+**Correctness check:** `$18C0..$18CF` is byte-identical between the two builds at both `$1000`
+viewport decodes (`g_tkWin`, printed by `amiga/tunnel_group.gdb`) — which is the only place the
+field's residue is observable at all, so it is the whole of the risk surface.
+
+The residual plot is not zero (55 ticks on the outermost group): every outline whose row range
+covers rows 48-49 still pays a `fill_vertical_span_core` setup for those 2 rows, plus the per-span
+gate compares.  4x down is what that buys.
+
+### Where the two cinematics stand now
+
+Outermost ring group, end to end this session: **860 ticks (2.74 frames) -> 350 (1.11)**, 2.46x.
+`plot_terrain_span`'s worst run: **633 -> 301**, i.e. **under one frame**.  What is left over a frame
+is the last group alone, and it is now within 12% of one.
+
+⛔ **Do NOT restore the plot to "be faithful".**  Faithfulness is about what the player can observe;
+this field is write-only for the whole of both cinematics except the 16 reserved bytes, which are
+kept byte-exact.  `make validate` still passes on every twin because it builds the HOST arm, where
+the skip does not exist — so the skip's evidence is the reader audit plus the `g_tkWin` check, not
+the oracle diff.
