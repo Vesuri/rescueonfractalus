@@ -118,6 +118,105 @@ second-stick path and nothing to choose.
   regression that mattered; **the probe proves quietness, never that a real stick steers correctly**.
 - **A real stick IS now confirmed** (user, 2026-08-14): the axes behave as an aircraft — stick back
   raises the nose, stick forward lowers it, matching the manual's Forward = Dive / Back = Climb.
+## TODO — CD32 controller support (NOT implemented)
+
+Deferred deliberately. A 7-button CD32 pad would put every in-flight command on a button, but its
+read is a **bit-banged shift register on the fire pin**: flimsy, timing-sensitive, and it takes over
+both pins `pollJoystick()` currently reads as buttons. Recorded here so it gets designed once
+instead of re-derived.
+
+**Reference implementation:** *Attack of the PETSCII Robots* (open-source Amiga port) —
+`PlatformAmigaAssembler.s` `readCD32Pad` (the whole protocol, ~40 lines of asm) and
+`PlatformAmiga.cpp` `readJoystick(bool gamepad)` (bit→button decode, presence check,
+`Disable()`/`Enable()` bracket), behind its own `GAMEPAD_CD32` build define plus a "cd32 pad" entry
+in its control menu. Not vendored here (it was read from a gitignored `tmp/`), hence the protocol
+written out below.
+
+### The protocol (port 1 — the connector we already poll)
+
+Three pins, none of them the direction lines:
+
+| Pin | Amiga register | Role in the pad read |
+|---|---|---|
+| 6 (FIR1) | CIA-A PRA bit 7 (`$BFE001`), direction in DDRA (`$BFE201`) | **CLOCK** — flipped to an OUTPUT and pulsed by us |
+| 5 (POTX) | POTGO `$DFF034` bits 13/12 = OUTRX/DATRX | **LATCH / mode** — driven LOW to put the pad in shift mode |
+| 9 (POTY) | POTGOR `$DFF016` bit 14 = DATRY (the read side of POTGO — our `potinpPointer`) | **serial DATA** out of the pad, active-low |
+
+Sequence: save the POTGOR word; `bset #7,$BFE201` (fire pin → output) + `bclr #7,$BFE001` (clock
+low); write POTGO with bits 12/13 masked out and bit 13 set (OUTRX=1, DATRX=0 → pin 5 driven low);
+then **10 times** — delay, read POTGOR, record bit 14 (low = pressed) into result bit 9…0, pulse the
+clock (`bset #7,$BFE001` then immediately `bclr`); finally `bclr #7,$BFE201` (pin back to input) and
+write the saved word back to POTGO.
+
+The pad shifts out **MSB first in this order**, so the result word (bit set = pressed) is:
+
+| Bit | `$0200` | `$0100` | `$0080` | `$0040` | `$0020` | `$0010` | `$0008` | `$0004`…`$0001` |
+|---|---|---|---|---|---|---|---|---|
+| | BLUE | RED | YELLOW | GREEN | FORWARD | REVERSE | PLAY | pad marker bits |
+
+**Presence check** — `(w & $0003) == $0003 && (w & $03F8) != $03F8`: the two marker bits must have
+shifted in low, *and* all seven buttons must not read pressed at once, which is exactly what an empty
+port or a plain joystick produces. Without it a non-CD32 port reads as "everything held".
+
+### Why it is flimsy, and what it collides with here
+
+- ⚠ **The delays ARE the protocol.** The reference's `tst.b (a0)` reads between bits (eight per bit,
+  six before the first) are not padding to taste: a CIA byte access is synchronised to the ~716 kHz
+  E clock, so each one buys ~1.4 µs of settle time for the pad's shift register. Any "cleanup" that
+  replaces them with a counter — or a compiler that reorders them — breaks the read on some pads
+  only. This wants to be **asm, kept verbatim**, not C.
+- ⚠ **Cost must be measured, not assumed.** ~12 CIA accesses × 10 bits is order **100–200 µs** with
+  interrupts disabled, i.e. ~1% of a PAL frame — probably affordable once per vblank, but bracket it
+  with VPOSR/VHPOSR and quote the measurement, because it lands inside the vblank ISR where overrun
+  silently drops a displayed frame.
+- ⚠ **It steals both buttons we already read.** `pollJoystick()` takes fire from CIA-A PRA bit 7 —
+  the pin the pad read turns into an output — and button 2 from POTINP bit 14, which *is* the pad's
+  data line. With a pad attached, fire has to come from **RED** and Land/Launch from **BLUE**, and
+  the plain-joystick path must stay bit-for-bit unchanged when no pad is detected.
+- The **directions are unaffected**: a CD32 pad's stick reads through `JOY1DAT` exactly like a
+  joystick, so the crosswise quadrature decode above is reused as-is.
+- **CIA-A is both the OS's chip and ours** — the keyboard ISR lives on its SP interrupt, and the port
+  runs under a `kick13.s` kickemu with the OS present. Save and restore DDRA bit 7 exactly as the
+  reference does, and keep the read where the keyboard ISR cannot interleave: `pollJoystick()`
+  already runs at level 3 (VERTB), which masks the level-2 PORTS interrupt, so the reference's
+  `Disable()`/`Enable()` may be unnecessary there — verify, don't assume. **Never move the read into
+  the main loop.**
+- ⚠ Electrically, driving the fire pin high while a *plain* joystick holds its button grounds an
+  output; that is why the reference only ever pulses it high briefly. Prefer an explicit opt-in (or
+  detect once at boot) over probing every frame on a port that may hold an ordinary stick.
+
+### The button map — DECIDED (user, 2026-09-01)
+
+| CD32 button | Typical pad legend | Action | Existing path to drive |
+|---|---|---|---|
+| **RED** | A / primary | Fire (Launch AMB Torpedo) | TRIG0 `$D010` — replaces the CIA-A PRA bit 7 read, which the pad read owns |
+| **BLUE** | B | **Land / Launch** | the `L` command key ($00) — the same `s_pendingFlightKey` edge button 2 uses today |
+| **GREEN** | | **Systems** | the `S` command key ($3e) |
+| **YELLOW** | | **Air Lock** | the `A` command key ($3f) |
+| **FORWARD** | R1 (right shoulder) | **Increase Thrust** (Y4) | the `=`/`+` command key ($07) |
+| **REVERSE** | L1 (left shoulder) | **Decrease Thrust** (Y5) | the `-` command key ($06) |
+| **PLAY** | Start | **Boosters** in flight; **START / launch the ship** on Standby | the `B` command key ($15) / CONSOL `$D01F` bit 0 |
+
+Notes that follow from it:
+
+- **PLAY is the one context-dependent button**: Boosters in flight, START outside it. That split
+  already exists in the port — `keyboardStickLive()` (VVBLKI == `$4FF5`, the flight VBI) is the same
+  gate the keyboard's stick emulation uses, so PLAY drives `s_consolState` bit 0 out of flight and
+  the `B` keycode in flight. It costs nothing extra: `read_console_trig_delta $5A78` already turns
+  CONSOL bit 0 into "start the game".
+- The five command-key buttons are **one-shot EDGES**, not levels, for the reason button 2 is today:
+  `event_sequence_dispatcher` takes a one-shot event id, so a held button would re-issue its command
+  every frame. Thrust ± included — the Atari's own thrust keys are per-press steps.
+- ESC (pause), BREAK, SELECT and OPTION stay **keyboard-only** — nothing left to put them on, and
+  none of them belongs on a pad mid-flight.
+
+### Still open
+
+- **Opt-in or auto-detect?** A build flag / in-game option like the reference's `GAMEPAD_CD32`, a
+  detect-once-at-boot, or the presence check run every frame — ask before building.
+- Constraint, not a choice: this is a **QoL divergence, not faithfulness** — same class as the
+  `LOGO_START` cinematic skip — so it stays gated, and the keyboard and plain-joystick mappings stay
+  (they are not a fallback to be removed).
 
 ## SHIFT — SKSTAT $D20F bit3, the level-selector's decrement
 
