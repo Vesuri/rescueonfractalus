@@ -608,28 +608,21 @@ extern int g_figColLo, g_figColHi;   /* dirty byte-column extent (0..39) — for
 /* The figure planes g_figP1/g_figP2 live in a 2-plane INTERLEAVED chip Bitmap (row stride 80 =
  * plane1[40]+plane2[40]) so renderFlightDirect can composite it with the blitter; the mask g_figM
  * is a separate 1-plane bitmap (row stride 40).  So mask uses _im (stride 40), planes use _ip (80). */
-#define ROF_PLOT_FIG(x, y, v2) do { \
-    if (g_figP1) { \
-        int _r = 0x96 - (int)(y); int _b = ((int)(x) >> 2) - 12; \
-        if ((unsigned)_r < 43u && (unsigned)_b < 40u) { \
-            uint8_t _m = kColMask4[(int)(x) & 3]; int _im = kRow40[_r] + _b, _ip = kRow80[_r] + _b; \
-            g_figM[_im] |= _m; \
-            if ((v2) & 1u) g_figP1[_ip] |= _m; \
-            if ((v2) & 2u) g_figP2[_ip] |= _m; \
-            if (_r < g_figRowLo) g_figRowLo = _r; \
-            if (_r > g_figRowHi) g_figRowHi = _r; \
-            if (_b < g_figColLo) g_figColLo = _b; \
-            if (_b > g_figColHi) g_figColHi = _b; \
-        } } } while (0)
+/* The plot itself is rof_plotrun_pixel's ROF_PLATFORM_AMIGA arm, which hoists these four
+ * pointers and the four extents into registers for a whole shape draw. */
 /* Clear the scratch (dirty range only) at the START of each shape draw so it holds exactly the
  * current frame's figure — during the multi-frame RTCLOK wait renderFlightDirect keeps compositing
  * the same figure (no flicker); the next draw clears + refills it. */
+/* The three plane pointers are read into locals first: they are uint8_t*, so a store through
+ * any one of them may alias the other two and GCC would otherwise re-read all three from
+ * absolute-long memory for every byte cleared. */
 #define ROF_CLEAR_FIG() do { \
-    if (g_figM && g_figRowHi >= g_figRowLo) { \
-        int _cl = g_figColLo, _ch = g_figColHi; \
-        for (int _r = g_figRowLo; _r <= g_figRowHi; _r++) { \
-            int _om = kRow40[_r], _op = kRow80[_r]; \
-            for (int _b = _cl; _b <= _ch; _b++) { g_figM[_om + _b] = 0; g_figP1[_op + _b] = 0; g_figP2[_op + _b] = 0; } } \
+    uint8_t *_cm = g_figM, *_c1 = g_figP1, *_c2 = g_figP2; \
+    const int _rl = g_figRowLo, _rh = g_figRowHi, _cl = g_figColLo, _cn = g_figColHi - _cl + 1; \
+    if (_cm && _rh >= _rl) { \
+        for (int _r = _rl; _r <= _rh; _r++) { \
+            uint8_t *_qm = _cm + kRow40[_r] + _cl, *_q1 = _c1 + kRow80[_r] + _cl, *_q2 = _c2 + kRow80[_r] + _cl; \
+            for (int _b = 0; _b < _cn; _b++) { _qm[_b] = 0; _q1[_b] = 0; _q2[_b] = 0; } } \
         g_figRowLo = 99; g_figRowHi = -1; g_figColLo = 40; g_figColHi = -1; \
     } } while (0)
 /* Alien jump-scare creature overlay.  The creature (alien_creature_animate_draw -> alien_shape_blit $80C5,
@@ -668,7 +661,6 @@ extern volatile unsigned long g_alHudCalls;      /* # alien_shape_blit calls dur
 #else
 #define ROF_PLOT_DOT(col, h) ((void)0)
 #define ROF_PLOT_DOT_P1(col, h) ((void)0)
-#define ROF_PLOT_FIG(x, y, v2) ((void)0)
 #define ROF_CLEAR_FIG() ((void)0)
 #define ROF_PLOT_ALIEN(addr, V) ((void)0)
 /* SDL/validate: OR the value-2 pixel into the mode-D field (the dots source SDL decodes, and the
@@ -3764,7 +3756,7 @@ void rof_pilot_bench(void) {
         g_pbFigLo[i] = (short)g_figRowLo; g_pbFigHi[i] = (short)g_figRowHi;
         g_pbFigCL[i] = (short)g_figColLo; g_pbFigCH[i] = (short)g_figColHi;
         /* Fingerprint the overlay this draw produced.  `make validate` runs the HOST build, so
-         * the ROF_PLOT_FIG arm of plot_clipped_pixel has no oracle at all — this checksum is the
+         * the Amiga overlay arm of plot_clipped_pixel has no oracle at all — this checksum is the
          * only check that the Amiga arm still mirrors the SAME pixels after a rewrite.  Order
          * matters (position-weighted), so a shifted figure cannot collide. */
         { unsigned long h = 0;
@@ -3790,7 +3782,7 @@ void rof_pilot_bench(void) {
     { const unsigned long t0 = rof_subclock(), i0 = g_isrBeamLines;
       for (unsigned k = 0; k < PB_PLOTS; k++) {
           mem[0x004F] = 0x80;
-          plot_clipped_pixel_core(0x55);   /* opaque source -> takes the ROF_PLOT_FIG mirror path */
+          plot_clipped_pixel_core(0x55);   /* opaque source -> takes the overlay mirror path */
       }
       const unsigned long d = rof_subclock() - t0, id = g_isrBeamLines - i0;
       g_pbPlotTicks = (d > id) ? (d - id) : 0; }
@@ -4181,37 +4173,134 @@ void game_init_77DF(void) {
  *
  * Addressing: the per-scanline base table row_base_lo/row_base_hi ($073D/$0793), indexed by
  * ($97 - y), holds the row's field address.  That base is the READ pointer ($0080/$0081) and
- * base + $30 is the WRITE pointer ($00C1/$00C2) — the other display half.  Both are published
- * to mem[] before the column clip, because they outlive the call: draw_scaled_shape relies on a
- * fully-clipped row still leaving them behind.
+ * base + $30 is the WRITE pointer ($00C1/$00C2) — the other display half.  Both outlive the
+ * call: draw_scaled_shape relies on a fully-clipped row still leaving them behind.
  *
  * On the Amiga the mode-D field is dead — during the paused pilot zoom nothing reads it
  * (renderFlightDirect composites the frozen terrain plus the g_fig* overlay) — so the read and
  * the read-modify-write through those pointers are skipped and the pixel is mirrored into the
- * overlay instead.  That is precisely why the overlay exists. */
-void plot_clipped_pixel_core(uint8_t source) {
-    ROF_MEMBASE_DECL(mb);   /* fold mem[] operands to (d16,An) — this is a per-pixel callee */
-#ifdef ROF_MEMBASE
-#define mem mb
+ * overlay instead.  That is precisely why the overlay exists.
+ *
+ * ---- Split into a per-RUN, per-ROW and per-PIXEL half ---------------------------------------
+ * The only caller is draw_scaled_shape, which plots a whole row at one y: y changes in its OUTER
+ * loop only.  So everything the plot derives from y is computed once per row by rof_plotrun_row
+ * instead of ~15 times, and the state that merely has to be LEFT BEHIND is carried in registers
+ * and published once by rof_plotrun_close.  Each hoist is last-write-wins with a value that
+ * cannot change inside its run, so the final memory state is identical:
+ *   - the row index, both row-table reads and the row's field pointers (per row);
+ *   - the four published pointer bytes $0080/$0081/$00C1/$00C2 — the last row that had an
+ *     in-window pixel wins, which is exactly what the per-pixel stores left;
+ *   - plot_pixel_mask ($0058) — the last source byte;
+ *   - the x cursor ($004F) and, in draw_scaled_shape, the y cursor ($004E);
+ *   - on the Amiga the g_fig* overlay pointers and dirty extents, which GCC must otherwise
+ *     re-read through absolute-long on every pixel (a uint8_t store may alias any of them).
+ * ⚠ The precondition for hoisting the cursors and the published bytes is that the pixel body
+ * never writes zero page: it writes only the display field (row bases $1074+) or the overlay. */
+typedef struct {
+    uint8_t  x;         /* live x cursor (terrain_pt_coord_a) */
+    uint8_t  yOk;       /* this row's y passed the [$6C,$97) window test */
+    uint8_t  source;    /* last source byte plotted -> plot_pixel_mask */
+    uint8_t  pubValid;  /* some pixel was in-window, so the row pointers must be published */
+    uint16_t readPtr;   /* this row's field address */
+    uint16_t pubRead;   /* the field address to publish */
+#ifdef ROF_PLATFORM_AMIGA
+    uint8_t *figM, *figP1, *figP2;   /* overlay ROW bases; figM == 0 => nothing to mirror into */
+    int      figRow;                 /* $96 - y */
+    int      rowLo, rowHi, colLo, colHi;   /* g_fig* dirty extents, folded back by _close */
+    /* Deferred byte-column accumulator.  Four pixels share an overlay byte and x walks the row
+     * one pixel at a time, so the three chip-RAM read-modify-writes and the extent update run
+     * once per BYTE instead of once per pixel.  The overlay is OR-accumulated and nothing reads
+     * it until the draw returns, so reordering the ORs cannot change a byte. */
+    int      accB;                   /* byte column held in accP1/accP2; -1 = none */
+    uint8_t  accP1, accP2;           /* the mask byte is their OR, so it is not accumulated */
 #endif
+} rof_plotrun;
+
+#define ROF_PLOTRUN_INLINE static inline __attribute__((always_inline))
+
+ROF_PLOTRUN_INLINE void rof_plotrun_open(rof_plotrun* rc) {
+    rc->x        = terrain_pt_coord_a;
+    rc->source   = plot_pixel_mask;
+    rc->pubValid = 0;
+    rc->pubRead  = 0;
+    rc->yOk      = 0;
+#ifdef ROF_PLATFORM_AMIGA
+    rc->figM  = 0;
+    rc->accB  = -1;
+    rc->rowLo = g_figRowLo; rc->rowHi = g_figRowHi;
+    rc->colLo = g_figColLo; rc->colHi = g_figColHi;
+#endif
+}
+
+/* Commit the held byte column to the overlay.  Must run before figM/figP1/figP2/figRow move on
+ * to the next row, so both rof_plotrun_row and rof_plotrun_close call it first. */
+ROF_PLOTRUN_INLINE void rof_plotrun_flush(rof_plotrun* rc) {
+#ifdef ROF_PLATFORM_AMIGA
+    const int b = rc->accB;
+    if (b < 0) return;
+    rc->accB = -1;
+    rc->figM[b] |= (uint8_t)(rc->accP1 | rc->accP2);
+    if (rc->accP1) rc->figP1[b] |= rc->accP1;
+    if (rc->accP2) rc->figP2[b] |= rc->accP2;
+    if (rc->figRow < rc->rowLo) rc->rowLo = rc->figRow;
+    if (rc->figRow > rc->rowHi) rc->rowHi = rc->figRow;
+    if (b < rc->colLo) rc->colLo = b;
+    if (b > rc->colHi) rc->colHi = b;
+#else
+    (void)rc;
+#endif
+}
+
+ROF_PLOTRUN_INLINE void rof_plotrun_close(rof_plotrun* rc) {
+    rof_plotrun_flush(rc);
+    terrain_pt_coord_a = rc->x;
+    plot_pixel_mask    = rc->source;
+    if (rc->pubValid) {
+        const uint16_t rp = rc->pubRead, wp = (uint16_t)(rp + 0x30);
+        sync_flag        = (uint8_t)rp;   dl_ptr_lo    = (uint8_t)(rp >> 8);
+        row_table_stride = (uint8_t)wp;   player_speed = (uint8_t)(wp >> 8);
+    }
+#ifdef ROF_PLATFORM_AMIGA
+    g_figRowLo = rc->rowLo; g_figRowHi = rc->rowHi;
+    g_figColLo = rc->colLo; g_figColHi = rc->colHi;
+#endif
+}
+
+/* Enter the row at `y`.  Everything below here is constant until the next row. */
+ROF_PLOTRUN_INLINE void rof_plotrun_row(rof_plotrun* rc, uint8_t y) {
+    rof_plotrun_flush(rc);
+    if (y < 0x6C || y >= 0x97) { rc->yOk = 0; return; }
+    rc->yOk = 1;
+    const uint8_t row = (uint8_t)(0x97 - y);
+    rc->readPtr = ROF_PAIR16(mem[MEM_row_base_lo + row], mem[MEM_row_base_hi + row]);
+#ifdef ROF_PLATFORM_AMIGA
+    /* $96 - y is 0..42 for every y the window test admits, so the overlay's ROW guard is
+     * subsumed by yOk and only its byte-column guard is left per pixel. */
+    const int r = 0x96 - (int)y;
+    rc->figRow = r;
+    if (g_figP1) {
+        rc->figM  = g_figM  + kRow40[r];
+        rc->figP1 = g_figP1 + kRow80[r];
+        rc->figP2 = g_figP2 + kRow80[r];
+    } else {
+        rc->figM = 0;
+    }
+#endif
+}
+
+/* Plot one pixel at the live cursor and advance it. */
+ROF_PLOTRUN_INLINE void rof_plotrun_pixel(rof_plotrun* rc, uint8_t source) {
     ROF_ALIEN_PLOT();       /* diag: count bitmap-figure plots during the alien attack */
-    plot_pixel_mask = source;
-
-    const uint8_t x = terrain_pt_coord_a;
-    const uint8_t y = terrain_pt_coord_b;
-    terrain_pt_coord_a = (uint8_t)(x + 1);
-
-    if (y < 0x6C || y >= 0x97 || x < 0x28 || x >= 0xD8) return;
-
-    const uint8_t  row      = (uint8_t)(0x97 - y);
-    const uint16_t readPtr  = ROF_PAIR16(mem[MEM_row_base_lo + row], mem[MEM_row_base_hi + row]);
-    const uint16_t writePtr = (uint16_t)(readPtr + 0x30);
-    sync_flag        = (uint8_t)readPtr;   dl_ptr_lo    = (uint8_t)(readPtr >> 8);
-    row_table_stride = (uint8_t)writePtr;  player_speed = (uint8_t)(writePtr >> 8);
+    const uint8_t x = rc->x;
+    rc->x      = (uint8_t)(x + 1);
+    rc->source = source;
+    if (!rc->yOk || x < 0x28 || x >= 0xD8) return;
+    rc->pubRead = rc->readPtr; rc->pubValid = 1;
 
     /* Byte column in the row (the +$F8 wraps at 8 bits, as the 6502's ADC does), and which of
      * the byte's four pixels this x selects. */
-    const uint8_t col = (uint8_t)((x >> 2) + 0xF8);
+    const int     q   = (int)(x >> 2);
+    const uint8_t col = (uint8_t)(q + 0xF8);
     if (col >= plot_col_limit) return;
     const uint8_t pix = (uint8_t)(x & 3);
     /* The 6502 left col in Y here (TAY at $7D71).  Provably dead: all five callers are inside
@@ -4221,22 +4310,166 @@ void plot_clipped_pixel_core(uint8_t source) {
 #ifndef ROF_PLATFORM_AMIGA
     /* Composite into the field: a transparent source keeps the read half's pixel, then mask to
      * this pixel's two bits and merge over the destination byte. */
-    uint8_t value = source ? source : mem[(uint16_t)(readPtr + col)];
+    uint8_t value = source ? source : mem[(uint16_t)(rc->readPtr + col)];
     value &= mem[0x4F3B + pix];                       /* plot_pixel_keep_mask */
     blit_color_src = value;
-    const uint16_t dst = (uint16_t)(writePtr + col);
+    const uint16_t dst = (uint16_t)(rc->readPtr + 0x30 + col);
     mem[dst] = (uint8_t)((mem[dst] & mem[0x7DEB + pix]) | value);   /* plot_pixel_clear_mask */
 #else
     /* A transparent pixel is a copy of the terrain, not part of the figure, so it contributes
-     * nothing to the overlay. */
-    if (source) {
-        const uint8_t v2 = (uint8_t)((source >> (6 - 2 * pix)) & 3u);
-        if (v2) ROF_PLOT_FIG(x, y, v2);
+     * nothing to the overlay.  Geometry: see the g_fig* block at the top of this file. */
+    if (!source || !rc->figM) return;
+    /* kModeDP1/kModeDP2 decode a mode-D byte straight into its two plane bytes using exactly
+     * kColMask4's per-pixel masks, so masking them with THIS pixel's mask is "extract the 2-bit
+     * field at pix, then OR the mask into the planes that value selects" — the same result
+     * without either variable shift, and the two plane bits fall out already separated. */
+    const uint8_t m  = kColMask4[pix];
+    const uint8_t p1 = (uint8_t)(m & kModeDP1[source]);
+    const uint8_t p2 = (uint8_t)(m & kModeDP2[source]);
+    const uint8_t mB = (uint8_t)(p1 | p2);
+    if (!mB) return;                             /* a value-0 pixel paints nothing */
+    const int b = q - 12;
+    if ((unsigned)b >= 40u) return;
+    if (b != rc->accB) {
+        rof_plotrun_flush(rc);
+        rc->accB = b; rc->accP1 = 0; rc->accP2 = 0;
     }
+    rc->accP1 |= p1;
+    rc->accP2 |= p2;
 #endif
+}
+
+/* Per-column constants of a figure row.  Every row of one draw plots the SAME column sequence
+ * at the SAME x positions — x is plot_row_start_x + 1 + c, reloaded identically per row — and
+ * samples the same shape column, so the clip tests, the pixel mask and both shape-table lookups
+ * are row-invariant.  Hoisting them here is where the zoom's cost went: what is left per cell is
+ * one shape byte, one pen byte and the plane merge.
+ * ⚠ Preconditions, all held because the pixel body writes only the display field (row bases
+ * $1074+) or the Amiga overlay: plot_row_start_x, plot_col_limit and the $7DBB/$7DD3 tables do
+ * not change during a draw. */
+typedef struct {
+    uint8_t off;    /* this column's share of the shape byte offset; + rowOffset, 8-bit wrap */
+    uint8_t sh;     /* shape_field_select's shift for this column (0/2/4/6) */
+    uint8_t live;   /* the pixel survives the x window test AND the byte-column limit */
+    uint8_t pix;    /* x & 3 */
+    uint8_t col;    /* byte column in the field row */
+    uint8_t m;      /* Amiga overlay pixel mask; 0 when the pixel misses the overlay entirely */
+    uint8_t b;      /* Amiga overlay byte column (meaningful only when m != 0) */
+    uint8_t pad;    /* ⚠ keeps sizeof == 8: at 7 the cell loop's pointer difference / sizeof
+                     * becomes a divide by 7, which on the 68000 is a __mulsi3 call (forbidden —
+                     * see the objdump audit in CLAUDE.md). */
+} rof_figcol;
+/* Enough for every step >= $00C0; animate_zoom_sequence floors step at $0100, which gives 12
+ * columns, and the validate fixture's step range gives at most 12 too.  A wider row (a tiny
+ * step) falls back to the generic per-cell loop in draw_scaled_shape. */
+#define ROF_FIGCOL_MAX 16
+
+/* A run of TRANSPARENT plots (the 14 leading and the 3 per-row padding ones).  On the Amiga a
+ * transparent plot has no effect beyond the x cursor, the source byte and the row-pointer
+ * publish, and all three are row-invariant, so the whole run folds into a few instructions.  On
+ * the host each one still composites the read half into the write half, so each must run. */
+ROF_PLOTRUN_INLINE void rof_plotrun_pad(rof_plotrun* rc, unsigned n) {
+    if (!n) return;
+#ifndef ROF_PLATFORM_AMIGA
+    do { rof_plotrun_pixel(rc, 0x00); } while (--n);
+#else
+    if (rc->yOk) {
+        /* The publish is the same value for every pixel of the row, so the first in-window x in
+         * the run settles it. */
+        for (unsigned i = 0; i < n; i++) {
+            const uint8_t xi = (uint8_t)(rc->x + i);
+            if (xi >= 0x28 && xi < 0xD8) { rc->pubRead = rc->readPtr; rc->pubValid = 1; break; }
+        }
+    }
+    rc->x      = (uint8_t)(rc->x + n);
+    rc->source = 0x00;
+#endif
+}
+
+/* One row's worth of shape cells, driven off the column table.  Written against locals for the
+ * hot state, so that a store through the overlay pointers cannot force GCC
+ * to re-read any of it.  It flushes its own held byte column before returning, so rc->accB is
+ * untouched here. */
+ROF_PLOTRUN_INLINE void rof_plotrun_cells(rof_plotrun* rc, const rof_figcol* tab, unsigned n,
+                              uint16_t shapeBase, uint8_t rowOffset) {
+    ROF_MEMBASE_DECL(mb);   /* fold the per-cell mem[] operands to (d16,An) */
+#ifdef ROF_MEMBASE
+#define mem mb
+#endif
+    const uint8_t xEnd = (uint8_t)(rc->x + n);
+    if (!rc->yOk) {
+        /* A row outside the y window leaves only the cursor and the last source byte behind, and
+         * the decode has no side effects — so decode the last column only. */
+        const rof_figcol* t = &tab[n - 1];
+        const uint8_t sb = mem[(uint16_t)(shapeBase + (uint8_t)(rowOffset + t->off))];
+        rc->source = mem[0x7DA5 + ((sb >> t->sh) & 3)];
+        rc->x = xEnd;
+        return;
+    }
+#ifndef ROF_PLATFORM_AMIGA
+    const uint16_t readPtr = rc->readPtr;
+#else
+    uint8_t* const figM  = rc->figM;
+    uint8_t* const figP1 = rc->figP1;
+    uint8_t* const figP2 = rc->figP2;
+    const int figRow = rc->figRow;
+    int     accB  = -1;
+    int     rowLo = rc->rowLo, rowHi = rc->rowHi, colLo = rc->colLo, colHi = rc->colHi;
+    uint8_t accP1 = 0, accP2 = 0;
+#define ROF_FIG_FLUSH() do { if (accB >= 0) { \
+        figM[accB] |= (uint8_t)(accP1 | accP2); \
+        if (accP1) figP1[accB] |= accP1; \
+        if (accP2) figP2[accB] |= accP2; \
+        if (figRow < rowLo) rowLo = figRow; \
+        if (figRow > rowHi) rowHi = figRow; \
+        if (accB < colLo) colLo = accB; \
+        if (accB > colHi) colHi = accB; \
+    } } while (0)
+#endif
+    uint8_t src = 0;
+    for (unsigned c = 0; c < n; c++) {
+        const rof_figcol* t = &tab[c];
+        const uint8_t sb = mem[(uint16_t)(shapeBase + (uint8_t)(rowOffset + t->off))];
+        src = mem[0x7DA5 + ((sb >> t->sh) & 3)];
+        if (!t->live) continue;
+#ifndef ROF_PLATFORM_AMIGA
+        /* Composite into the field: a transparent source keeps the read half's pixel, then mask
+         * to this pixel's two bits and merge over the destination byte. */
+        uint8_t value = src ? src : mem[(uint16_t)(readPtr + t->col)];
+        value &= mem[0x4F3B + t->pix];                     /* plot_pixel_keep_mask */
+        blit_color_src = value;
+        const uint16_t dst = (uint16_t)(readPtr + 0x30 + t->col);
+        mem[dst] = (uint8_t)((mem[dst] & mem[0x7DEB + t->pix]) | value);  /* plot_pixel_clear_mask */
+#else
+        const uint8_t m = t->m;
+        if (!src || !m || !figM) continue;
+        const uint8_t p1 = (uint8_t)(m & kModeDP1[src]);
+        const uint8_t p2 = (uint8_t)(m & kModeDP2[src]);
+        if (!(p1 | p2)) continue;                          /* a value-0 pixel paints nothing */
+        const int b = t->b;
+        if (b != accB) { ROF_FIG_FLUSH(); accB = b; accP1 = 0; accP2 = 0; }
+        accP1 |= p1;
+        accP2 |= p2;
+#endif
+    }
+#ifdef ROF_PLATFORM_AMIGA
+    ROF_FIG_FLUSH();
+    rc->rowLo = rowLo; rc->rowHi = rowHi; rc->colLo = colLo; rc->colHi = colHi;
+#undef ROF_FIG_FLUSH
+#endif
+    rc->source = src;
+    rc->x      = xEnd;
 #ifdef ROF_MEMBASE
 #undef mem
 #endif
+}
+
+void plot_clipped_pixel_core(uint8_t source) {
+    rof_plotrun rc;
+    rof_plotrun_open(&rc);
+    rof_plotrun_row(&rc, terrain_pt_coord_b);
+    rof_plotrun_pixel(&rc, source);
+    rof_plotrun_close(&rc);
 }
 
 /* 6502-ABI shim: the source byte arrives in A. */
@@ -5095,6 +5328,10 @@ void dl_lms_reset_window(void) {
  * still advances the x cursor (and nothing else), so they place the row's left edge and pad its
  * right edge.
  *
+ * The plot itself is the rof_plotrun_* split of plot_clipped_pixel (see there): a row enters it
+ * once via rof_plotrun_row, and only the x-derived half runs per cell.  The x and y cursors
+ * ($004F/$004E) live in registers for the whole draw and are published by rof_plotrun_close.
+ *
  * The shape is read straight out of mem[] rather than through bus_read: the only caller,
  * animate_zoom_sequence, re-seeds $00C3/$00C4 from the per-phase tables $7D8D/$7D95 immediately
  * before every call, and those hold only $7DEF/$7E25/$7E5B/$7E91 — inside the game blob, never
@@ -5126,17 +5363,64 @@ void draw_scaled_shape_core(uint16_t step, uint16_t shapeBase, uint8_t colBase) 
     player_speed       = (uint8_t)(remainder >> 8);   /* $00C2 */
     plot_row_start_x   = cursorX;
 
-    for (unsigned i = 0; i < 14; i++) plot_clipped_pixel_core(0x00);
-    terrain_pt_coord_b--;
+    /* Build the row-invariant column table once (see rof_figcol).  `wide` = the row needs more
+     * columns than the table holds, in which case the generic per-cell loop below runs instead. */
+    rof_figcol tab[ROF_FIGCOL_MAX];
+    unsigned  nc = 0;
+    uint16_t  ca = 0;
+    uint8_t   anyWin = 0;       /* some cell x is inside the window -> the row publishes */
+    {
+        const uint8_t startX = plot_row_start_x;
+        const uint8_t limit  = plot_col_limit;
+        while ((ca >> 8) < 0x0C && nc < ROF_FIGCOL_MAX) {
+            rof_figcol*    t      = &tab[nc];
+            const uint16_t colSel = (uint16_t)(uint8_t)(ca >> 8) + colBase;
+            const uint8_t  colIdx = (uint8_t)colSel;
+            t->off = (uint8_t)(mem[0x7DBB + colIdx] + (colSel >> 8));   /* carry, as the 6502 */
+            const uint8_t sel = mem[0x7DD3 + colIdx];
+            t->sh  = (sel != 0 && sel < 0x81) ? (uint8_t)(2 * (sel > 3 ? 3 : sel)) : 0;
+            const uint8_t x     = (uint8_t)(startX + 1 + nc);
+            const int     inWin = (x >= 0x28 && x < 0xD8);
+            const int     q     = (int)(x >> 2);
+            t->col  = (uint8_t)(q + 0xF8);       /* the +$F8 wraps at 8 bits, as ADC does */
+            t->pix  = (uint8_t)(x & 3);
+            t->live = (uint8_t)(inWin && t->col < limit);
+#ifdef ROF_PLATFORM_AMIGA
+            const int b = q - 12;
+            t->b = (uint8_t)b;
+            t->m = (t->live && (unsigned)b < 40u) ? kColMask4[t->pix] : 0;
+#else
+            t->b = 0; t->m = 0;
+#endif
+            anyWin |= (uint8_t)inWin;
+            nc++;
+            ca = (uint16_t)(ca + step);
+        }
+    }
+    const int wide = ((ca >> 8) < 0x0C);
+
+    rof_plotrun rc;
+    rof_plotrun_open(&rc);
+    uint8_t y = terrain_pt_coord_b;
+    rof_plotrun_row(&rc, y);
+    rof_plotrun_pad(&rc, 14);
+    y--;
 
     uint16_t rowAccum = 0, colAccum = 0;
     do {
-        terrain_pt_coord_a = plot_row_start_x;
+        rc.x = plot_row_start_x;
+        rof_plotrun_row(&rc, y);
         colAccum = 0;
-        plot_clipped_pixel_core(0x00);
+        rof_plotrun_pad(&rc, 1);
         /* Constant for the whole row: the 6502 re-read it per cell (LDY $55 at $7CDB). */
         const uint8_t rowOffset = mem[0x7DA9 + (uint8_t)(rowAccum >> 8)];
-        do {
+        if (!wide) {
+            /* The pointer publish is row-constant and happens for any in-window x REGARDLESS of
+             * the byte-column limit, so it folds out of the cell loop entirely. */
+            if (rc.yOk && anyWin) { rc.pubRead = rc.readPtr; rc.pubValid = 1; }
+            rof_plotrun_cells(&rc, tab, nc, shapeBase, rowOffset);
+            colAccum = ca;
+        } else do {
             const uint16_t colSel  = (uint16_t)(uint8_t)(colAccum >> 8) + colBase;
             const uint8_t  colIdx  = (uint8_t)colSel;
             const uint8_t  byteOff = (uint8_t)((uint16_t)rowOffset + mem[0x7DBB + colIdx]
@@ -5146,14 +5430,15 @@ void draw_scaled_shape_core(uint16_t step, uint16_t shapeBase, uint8_t colBase) 
              * fields up, capped at 3.  The 6502 spelled it as up to three DEX/LSR/LSR passes. */
             const uint8_t sel = mem[0x7DD3 + colIdx];
             if (sel != 0 && sel < 0x81) shapeByte >>= 2 * (sel > 3 ? 3 : sel);
-            plot_clipped_pixel_core(mem[0x7DA5 + (shapeByte & 3)]);
+            rof_plotrun_pixel(&rc, mem[0x7DA5 + (shapeByte & 3)]);
             colAccum = (uint16_t)(colAccum + step);
         } while ((colAccum >> 8) < 0x0C);
-        plot_clipped_pixel_core(0x00);
-        plot_clipped_pixel_core(0x00);
-        terrain_pt_coord_b--;
+        rof_plotrun_pad(&rc, 2);
+        y--;
         rowAccum = (uint16_t)(rowAccum + step);
     } while ((rowAccum >> 8) < 0x12);
+    terrain_pt_coord_b = y;
+    rof_plotrun_close(&rc);
 
     /* Contract: both loop accumulators live in ZP scratch and outlive the call.  Only their
      * final values are ever observed (nothing this function calls reads $0052-$0055), so they
