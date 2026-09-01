@@ -1377,6 +1377,14 @@ extern "C" void platform_tunnel_span_run(uint16_t rowBase, uint8_t r0, uint8_t r
     if (s_scene) s_scene->drawTunnelSpanRun(rowBase, r0, r1, xL, xR, count, colour);
 }
 
+// Ring-rotation bridge: the ring VBI calls this on every tick that is about to rotate the colour
+// ring, just BEFORE it draws the new group, so the LIVE copper list can take the rotation on the
+// same frame the pixels appear.  See RescueOnFractalus::pokeTunnelRingAdvance().
+extern "C" void platform_tunnel_ring_advance(void)
+{
+    if (s_scene) s_scene->pokeTunnelRingAdvance();
+}
+
 
 // Flight/init timing probes (enable with `make PROBES=1` → -DROF_FLIGHT_PROBE).  Sub-frame
 // clock rof_subclock() = g_vbiCount*313 + beam_line, plus the accumulators that rof_native.c's

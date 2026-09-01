@@ -730,6 +730,7 @@ extern void platform_tunnel_group(uint16_t rowBase, uint8_t rowTop, uint8_t rowB
                                   uint8_t xL, uint8_t xR, uint8_t count, uint8_t colour);
 extern void platform_tunnel_columns(uint16_t rowBase, uint8_t colL, uint8_t colR, uint8_t colR1,
                                     uint8_t colour);
+extern void platform_tunnel_ring_advance(void);
 extern void platform_tunnel_span_run(uint16_t rowBase, uint8_t r0, uint8_t r1, uint8_t xL,
                                      uint8_t xR, uint8_t count, uint8_t colour);
 #define ROF_TUNNEL_GROUP(rowBase, rowTop, rowBot, xL, xR, count, colour) \
@@ -2055,6 +2056,16 @@ void step_accum_sub_7e(void) {
     scroll_accum_b3 = a;                                   /* $00A4 */
     if (a == scroll_accum_prev) return;                   /* CMP $00A5; BEQ -> return */
     scroll_accum_prev = a;                                /* $00A5 = A */
+#ifdef ROF_PLATFORM_AMIGA
+    /* The tail below rotates the colour ring whenever $008D ends up non-zero, and the Amiga paints
+     * the new group straight into a SINGLE-buffered bitmap — so the pixels are on screen this frame
+     * while a freshly published copper list only goes live at the next vblank, and the growing edge
+     * flickers through the previous rotation for a frame.  Hand the rotation to the LIVE list here,
+     * before the draw: colour-only moves are safe mid-frame, but the draw can outrun the terrain
+     * region, so after it the beam is already past the palette.  (Display only — no mem[] effect,
+     * so the __t6502 oracle is untouched.) */
+    if ((a < 0x14) ? (a != 0) : (step_mode_flag != 0)) platform_tunnel_ring_advance();
+#endif
     if (a < 0x14) {                                        /* CMP #$14; BCC -> draw a ring group */
         step_mode_flag = a;                               /* $008D = A (TAY; STA) */
         span_row_count = mem[0x6E0F + a];                 /* $0096 = ring thickness */

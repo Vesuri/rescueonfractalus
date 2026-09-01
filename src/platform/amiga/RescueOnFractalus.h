@@ -350,6 +350,10 @@ private:
     bool tunnelCopperInstalled = false;
     void updateTunnelCopper(TunnelCopperList* tc);  // fully populate one buffer (colours + reveal bands)
     void showTunnelCopper();      // populate the back buffer and swap it in at the next vblank
+    void setTunnelRingPalette(TunnelCopperList* tc, bool ahead);  // the 8 terrain colour registers
+public:
+    void pokeTunnelRingAdvance();   // ISR: poke the LIVE list one ring rotation ahead
+private:
     uint16_t boostRevealK() const;  // first viewport row showing rings (43 = nothing revealed yet)
 
     Bitmap*     titleBitmap    = nullptr;

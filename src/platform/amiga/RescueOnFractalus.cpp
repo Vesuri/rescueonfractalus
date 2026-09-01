@@ -5474,19 +5474,11 @@ void RescueOnFractalus::updateTunnelCopper(TunnelCopperList* tunnelCopper)
                                      (uint32_t)viewportBitmap->data);
     } else
         tunnelCopper->setRevealBands(0, (uint32_t)tunnelBitmap->data, (uint32_t)tunnelBitmap->data);
-    // Windscreen-band corner + tunnel palette.  FORWARD and BOOST share the copper but use DIFFERENT
-    // GTIA->pen mappings (kGtia10P vs kGtia10BoostP), so their palette wiring differs.  Shared bits:
-    uint16_t ring[6];
-    for (int i = 0; i < 6; i++) ring[i] = atariToOCS(mem[MEM_color_ring + i]);
-    const uint16_t black = atariToOCS(mem[0x02C0]);          // color07 = value-0 (COLPM0), both paths
-
+    // Windscreen-band corner split.  The colour registers themselves are setTunnelRingPalette's job.
     if (rsBoostViewport) {
         // BOOST reverse cinematic (kGtia10BoostP): value-2 (outermost ring) -> color00, value-8
         // (background) -> color02.  So the band-corner triangle (mode-D value-0 -> color00) IS the
         // outermost ring, and the star / unrevealed background keeps its own COLBK register.
-        //   color00 = the outermost ring $08D8 during the tunnel; the COLBK fade $0071 during stars.
-        const uint16_t col00 = (mem[0x008D] == 0u) ? atariToOCS(mem[0x0071]) : atariToOCS(mem[0x08D8]);
-        const uint16_t colBK = atariToOCS(mem[0x0071]);     // color02 = value-8 background (COLBK)
         // Band corner triangle: the FORWARD tunnel's mechanism, verbatim (see the else-branch below).
         // color00 already holds the colour the corner should show — in the boost LUT that is value-2,
         // the outermost ring — and it carries from the viewport into the band untouched; one moving
@@ -5521,10 +5513,6 @@ void RescueOnFractalus::updateTunnelCopper(TunnelCopperList* tunnelCopper)
         { extern volatile unsigned long g_bwLine[9], g_bwLineStars[9];
           if (mem[0x008D] != 0u) g_bwLine[bGreenLine]++; else g_bwLineStars[bGreenLine]++; }
 #endif
-
-        // pen0=color00 (value-2 outermost ring); pen1/3=ring[3]/ring[5] (COLPM1/3); pen2=color02
-        // (value-8 COLBK); pen4/5/6=ring[0..2] (COLPF0/1/2); pen7=value-0 black.
-        tunnelCopper->setTunnelColors(col00, ring[3], colBK, ring[5], ring[0], ring[1], ring[2], black);
     } else {
         // FORWARD tunnel (kGtia10P) — the long-working mapping, UNCHANGED.  The corner triangle is the
         // quad-width canopy-post player ($0C88-$0C8F), green (COLPM0/1 = mem[$0071]); the launch clears
@@ -5535,11 +5523,58 @@ void RescueOnFractalus::updateTunnelCopper(TunnelCopperList* tunnelCopper)
         uint16_t greenLine = 8;                                   // first still-green band scanline
         for (uint16_t i = 0; i < 8; i++) { if (mem[0x0C88 + i]) { greenLine = i; break; } }
         tunnelCopper->setBandReveal(greenLine, atariToOCS(mem[0x0071]));
-
-        const uint16_t corner = atariToOCS(mem[0x08D8]);    // color00 = value-8 = the tunnel corner
-        // pen0/color00 = corner ($08D8); pens 1-3 = ring[3..5]; pens 4-6 = ring[0..2]; pen7 = black.
-        tunnelCopper->setTunnelColors(corner, ring[3], ring[4], ring[5], ring[0], ring[1], ring[2], black);
     }
+    setTunnelRingPalette(tunnelCopper, /*ahead*/false);
+}
+
+// setTunnelRingPalette(): write ONE list's 8 terrain-region colour registers from the colour ring
+// $08D4-$08D9.  The FORWARD descent and the BOOST reverse cinematic share the copper list but use
+// DIFFERENT GTIA->pen mappings (kGtia10P vs kGtia10BoostP), so the wiring differs:
+//   FORWARD: pen0 = value-8 = the tunnel corner ($08D8, which carries into the band); pen1-3 =
+//            ring[3..5]; pen4-6 = ring[0..2]; pen7 = value-0 black.
+//   BOOST:   pen0 = value-2 = the outermost ring ($08D8 during the tunnel, the COLBK fade $0071
+//            once the ring cycle has stopped); pen2 = value-8 = COLBK; the rest as above.
+//
+// `ahead` asks for the ring AS advance_history_6a4d WILL leave it on this VBI's rotation, which is
+// what pokeTunnelRingAdvance() needs; see there for why.
+void RescueOnFractalus::setTunnelRingPalette(TunnelCopperList* cl, bool ahead)
+{
+    uint8_t r[6];
+    for (int i = 0; i < 6; i++) r[i] = mem[MEM_color_ring + i];
+    uint8_t bk = mem[0x0071];
+    if (ahead) {
+        // advance_history_6a4d verbatim: new[i] = old[i-1], new[0] = old[5]; and $0071 <- the new
+        // $08D8 (= old $08D7) when $008D is negative.
+        const uint8_t top = r[5];
+        r[5] = r[4]; r[4] = r[3]; r[3] = r[2]; r[2] = r[1]; r[1] = r[0]; r[0] = top;
+        if ((int8_t)mem[0x008D] < 0) bk = r[4];
+    }
+    uint16_t ring[6];
+    for (int i = 0; i < 6; i++) ring[i] = atariToOCS(r[i]);
+    const uint16_t black  = atariToOCS(mem[0x02C0]);        // pen7 = value-0 (COLPM0), both paths
+    const uint16_t colBK  = atariToOCS(bk);
+    const uint16_t corner = rsBoostViewport && mem[0x008D] == 0u ? colBK : ring[4];
+    cl->setTunnelColors(corner, ring[3], rsBoostViewport ? colBK : ring[4],
+                        ring[5], ring[0], ring[1], ring[2], black);
+}
+
+// pokeTunnelRingAdvance(): called from the ring VBI (step_accum_sub_7e) on every tick that is about
+// to rotate the colour ring, BEFORE it draws the new ring group.
+//
+// The rings are painted straight into the single-buffered tunnel bitmap by that ISR, so a new group
+// is on screen the same frame it is drawn — but a list handed to setCopperList only goes live at the
+// NEXT vblank, so the rotation that belongs with it arrives one frame late and the growing edge
+// shows for a frame in the previous rotation's colour (the seam flicker).  The Atari has no such
+// lag: its DLI re-reads $08D4-$08D9 during the very frame the group is drawn.  So poke the LIVE
+// list one rotation ahead here.  Colour-only moves are what the copper hard rule permits mid-frame
+// (a torn colour is invisible for a frame; only POINTER and WAIT moves need the buffer swap), and
+// this must run BEFORE the draw: the draw itself can take longer than the terrain region is tall,
+// so afterwards the beam is already past the palette moves.
+void RescueOnFractalus::pokeTunnelRingAdvance()
+{
+    if (!tunnelCopperInstalled) return;
+    TunnelCopperList* live = tunnelCopper[g_tunLiveIdx];
+    if (live) setTunnelRingPalette(live, /*ahead*/true);
 }
 
 // ============================================================================
