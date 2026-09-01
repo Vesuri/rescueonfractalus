@@ -210,13 +210,28 @@ Notes that follow from it:
 - ESC (pause), BREAK, SELECT and OPTION stay **keyboard-only** — nothing left to put them on, and
   none of them belongs on a pad mid-flight.
 
-### Still open
+### Detection — DECIDED (user, 2026-09-01): once at boot
 
-- **Opt-in or auto-detect?** A build flag / in-game option like the reference's `GAMEPAD_CD32`, a
-  detect-once-at-boot, or the presence check run every frame — ask before building.
+**Probe the port once during init and latch the answer for the session** — not the reference's
+per-frame presence check, and not a build flag. Consequences to build to:
+
+- The per-frame cost disappears from the vblank ISR entirely: with no pad, `pollJoystick()` stays
+  exactly the four register reads it is today, and the ~100–200 µs interrupts-off read only happens
+  in the pad branch. The electrical caution above (driving the fire pin high against a plain
+  joystick's held button) also becomes a one-off rather than 50×/second.
+- ⚠ **A single 10-bit read decides the whole session, so one bad read mis-detects permanently.**
+  Require **N consecutive agreeing reads** (3 is cheap at boot) before latching, and treat any
+  disagreement as "no pad". Failure is silent and total, which is exactly the case a one-shot probe
+  cannot recover from.
+- ⚠ **Fire may legitimately be HELD while the probe runs** — `LOGO_START` invites the player to hold
+  the trigger through the boot cinematics — and a plain joystick's held button grounds the pin we
+  drive as the clock. So probe **before** the cinematics begin, and make sure a held-button plain
+  stick fails the presence check into the joystick path rather than into a garbage "pad".
+- A pad plugged in *after* boot won't be seen until a restart. Accepted.
 - Constraint, not a choice: this is a **QoL divergence, not faithfulness** — same class as the
-  `LOGO_START` cinematic skip — so it stays gated, and the keyboard and plain-joystick mappings stay
-  (they are not a fallback to be removed).
+  `LOGO_START` cinematic skip — so the keyboard and plain-joystick mappings stay (they are not a
+  fallback to be removed), and a detected pad must not change anything downstream of
+  PORTA/TRIG0/CONSOL.
 
 ## SHIFT — SKSTAT $D20F bit3, the level-selector's decrement
 
