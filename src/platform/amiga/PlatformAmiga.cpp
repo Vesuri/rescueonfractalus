@@ -2416,6 +2416,14 @@ static uint32_t vbiHandler()
     // this and level 3 re-triggers forever.  No SETCLR bit = clear.  Harmless in the
     // VERTB_SERVER fallback build, where exec clears it as well.
     *(volatile unsigned short*)0xDFF09Cu = (unsigned short)INTF_VERTB;
+
+    // The copper re-read COP1LC at the top of this vertical blank, so the buffer last handed to
+    // setCopperList is now the one it is EXECUTING.  Latch that here — showTunnelCopper() needs it
+    // to pick a back buffer, and it cannot use its own "last published" index: render() runs more
+    // than once per displayed frame (each spin-wait hook drives one), and the second publish would
+    // otherwise rewrite the live list's WAITs and bitplane pointers under the beam.
+    { extern volatile unsigned char g_tunLiveIdx, g_tunPubIdx; g_tunLiveIdx = g_tunPubIdx; }
+
 #ifdef ROF_FLIGHT_PROBE
     // FIRST statement in the server: how far has the beam travelled since VERTB was
     // raised at line 0?  That delta IS exec's interrupt-dispatch overhead (see the

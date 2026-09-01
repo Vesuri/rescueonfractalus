@@ -5409,17 +5409,27 @@ uint16_t RescueOnFractalus::boostRevealK() const
     return 43;
 }
 
+// g_tunLiveIdx: which tunnelCopper[] buffer the copper is EXECUTING, latched in the vblank ISR —
+// the moment the copper actually picks COP1LC up.  It is NOT tunnelActive: setCopperList only
+// writes COP1LC, so a publish takes effect one vblank later, and render() can run more than once
+// per displayed frame (the main loop's spin-wait hooks each drive one).  Flipping off tunnelActive
+// would hand the second publish of a frame the LIVE list and rewrite its WAITs and bitplane
+// pointers under the beam — the one thing the double buffer exists to prevent.
+volatile unsigned char g_tunLiveIdx = 0;   // latched from g_tunPubIdx by the vblank ISR
+volatile unsigned char g_tunPubIdx  = 0;   // buffer COP1LC currently points at
+
 // showTunnelCopper(): populate the BACK tunnel buffer and swap it in.  setCopperList only writes
 // COP1LC, which the copper re-reads at the next vblank, so the swap is atomic with respect to the
 // beam — which is the whole point: the reveal moves bitplane POINTERS, and poking one on the live
 // list can be read half-written (a torn pointer garbages the entire viewport for a frame).
 void RescueOnFractalus::showTunnelCopper()
 {
-    const uint8_t back = (uint8_t)(1 - tunnelActive);
+    const uint8_t back = (uint8_t)(1 - g_tunLiveIdx);   // never the buffer the copper is running
     if (!tunnelCopper[back]) return;
     updateTunnelCopper(tunnelCopper[back]);
     AmigaHardware::setCopperList(*tunnelCopper[back], false);
     tunnelActive = back;
+    g_tunPubIdx  = back;
 #ifdef ROF_FLIGHT_PROBE
     g_tunLastVbi = platform_frame_count();
 #endif
