@@ -638,3 +638,90 @@ this field is write-only for the whole of both cinematics except the 16 reserved
 kept byte-exact.  `make validate` still passes on every twin because it builds the HOST arm, where
 the skip does not exist — so the skip's evidence is the reader audit plus the `g_tkWin` check, not
 the oracle diff.
+
+## 11. The palette-vs-draw SYNC half — CLOSED 2026-09-01
+
+The other half of the user's report: *"the palette animation is not in sync with the drawing"* on the
+return-to-mothership end-fill, plus three still-images.  Four defects were separated; **two were
+real** (fixed, user-confirmed) and **two are faithful** (measured, not guessed).
+
+### The physics both fixes turn on
+
+The tunnel bitmap is **single-buffered and painted inside the vblank ISR**, so a pixel written during
+vblank N is on screen for frame N.  A copper list is **double-buffered**: `setCopperList(..., false)`
+only writes `COP1LC`, so a palette published during vblank N goes live at vblank **N+1**.  The Atari
+has no such split — the ring DLI re-reads `$08D4-$08D9` on the very frame the group is drawn.  Every
+seam artefact in this area is that one-frame skew, in one direction or the other.
+
+### Fix A — pick the back buffer by what the copper is EXECUTING (`af8e243`)
+
+*Symptom: a bright teal rectangle on the reverse tunnel's entry frame.*
+
+`showTunnelCopper()` chose `back = 1 - tunnelActive`, but `tunnelActive` is *what `COP1LC` points at*,
+not *what the copper is running*.  `render()` runs **more than once per displayed frame** — each
+spin-wait hook drives one — so a second publish inside one frame handed itself the LIVE list and
+rewrote its WAITs and bitplane pointers under the beam: exactly what the double buffer exists to
+prevent.
+
+The vblank ISR now latches the handover at the only moment it is observable:
+
+```c
+/* PlatformAmiga.cpp, vbiHandler(), right after acknowledging INTF_VERTB */
+{ extern volatile unsigned char g_tunLiveIdx, g_tunPubIdx; g_tunLiveIdx = g_tunPubIdx; }
+```
+
+and `showTunnelCopper()` picks `back = 1 - g_tunLiveIdx`.  ⭐ Generalises: **any double-buffered
+copper list whose publisher can run twice in a frame needs the live index latched by the ISR** — a
+"last published" index is one publish ahead of the hardware.
+
+### Fix B — hand the ring rotation to the LIVE list, one rotation ahead (`265e49f`)
+
+*Symptom: at the reverse exit, a lighter ring is drawn in dark green and the next frame's cycle makes
+the ring after it lighter again — a flickering seam.*
+
+The group being painted this vblank belongs to the *next* rotation of `$08D4-$08D9`, but the copper
+carrying that rotation is a frame behind it.  So the ISR now pokes the **live** list's 8 terrain
+colour registers one rotation ahead, **before** the group is drawn — a group can run ~350 raster
+lines, well past the line-86 palette MOVEs, so the poke lands ahead of the beam.
+
+`updateTunnelCopper()`'s colour half was split out into `setTunnelRingPalette(cl, ahead)`; `ahead`
+applies `advance_history_6a4d`'s rotation (`new[i] = old[i-1]`, `new[0] = old[5]`, and
+`$0071 = $08D8` when `(int8_t)$008D < 0`) to a local copy.  `pokeTunnelRingAdvance()` calls it on
+`tunnelCopper[g_tunLiveIdx]`; the bridge is `platform_tunnel_ring_advance()`, hooked in
+`step_accum_sub_7e` under `#ifdef ROF_PLATFORM_AMIGA` with that routine's own rotate condition:
+
+```c
+if ((a < 0x14) ? (a != 0) : (step_mode_flag != 0)) platform_tunnel_ring_advance();
+```
+
+The hook is display-only — it writes no `mem[]`, so the `__t6502` oracle is untouched.
+
+Rejected on the way: an unconditional "one ahead" from `render()` (the ring rotates on ~every other
+tick, so pause frames would flash the whole field); simulating `sub_multibyte_a1(0x7E)`;
+double-buffering the ring bitmap; deferring the paint by a frame.  And per the user, **no `copjmp()`
+to make a list go live mid-frame.**
+
+⚠ **Scoped to the BOOST path only.**  The forward descent has the same skew, but
+`draw_ring_frame_step` also clears `$08D8` inside the same tick, so predicting its next palette needs
+more than the rotation.  Offered to the user, not requested — do not add it speculatively.
+
+### The two that are FAITHFUL (do not "fix" these)
+
+**Black rectangles on the reverse tunnel's entry.**  In `a800dumps/boost_tunnel.a8s` the field is
+`0x00` (GTIA value 0 -> COLPM0 `$02C0` = `$00`) and `$0071 = $C0`, luma 0.  Everything outside the
+revealed band *is* black on the Atari; the dark teal the eye expects is the ring field's own value-2
+(`$08D8`), which exists only inside the revealed band.
+
+**The cockpit top band going black on the forward tunnel's last frame.**  Two independent proofs:
+- *Atari:* over the band rows P0/P1 are cleared but **P2/P3 are still `$FF`**, and DLIs `$6CD7`/`$6D4F`
+  set COLPM2/COLPM3 from **`$08D8`** — so the band corner is the tunnel colour there too, and
+  `draw_ring_frame_step`'s `mem[0x08D8] = 0` blacks it out on the Atari exactly as it does here.
+- *Ours:* a headless probe showed the last tunnel frame is **not** black (`$08D8 = $38`) and is
+  displayed for **exactly one vblank** (tunnel list published vbi 834, stars list vbi 835) — the whole
+  exit block fits inside it.  The photographed all-black image is therefore the **first stars frame**,
+  whose band DLI `$6D67` writes only COLPF0/1/3 and leaves COLBK = `$00DC` at 0 while the corner
+  players take COLPM2/3 from the `$02C0-$02C3` fade shadows, which start at 0.  Black on both machines.
+
+⚠ The first probe for this was a **vacuous zero** — it gated on `mem[0x08D8] == 0`, which
+`advance_history_6a4d` rotates out of ring index 4 inside the same VBI.  Re-gating on "all six ring
+slots zero" is what produced the numbers above.
