@@ -272,6 +272,7 @@ private:
     bool tunnelDiffPending = false;     // check the finished forward pre-draw on the next render
 #endif
     void renderViewportModeD(uint16_t srcBase, int stride, int rows); // decode CHANGED mode-D bytes -> viewportBitmap (stars/planet: $1000/48/47)
+    void decodeViewportRows(uint16_t srcBase, int stride, int rStart, int rEnd, bool countGroups); // the row-range half of renderViewportModeD (also seeds the band at the stars entry)
     void renderFlightDirect();   // flight terrain: plot sky straight to bitplanes from $260E (replaces the convert)
 
     // Static-Standby fixed copper list (built once, poked in place — see

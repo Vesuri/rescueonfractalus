@@ -712,16 +712,109 @@ more than the rotation.  Offered to the user, not requested — do not add it sp
 revealed band *is* black on the Atari; the dark teal the eye expects is the ring field's own value-2
 (`$08D8`), which exists only inside the revealed band.
 
-**The cockpit top band going black on the forward tunnel's last frame.**  Two independent proofs:
+**The band's CORNER TRIANGLES going black on the forward tunnel's last frame.**  Two independent
+proofs:
 - *Atari:* over the band rows P0/P1 are cleared but **P2/P3 are still `$FF`**, and DLIs `$6CD7`/`$6D4F`
   set COLPM2/COLPM3 from **`$08D8`** — so the band corner is the tunnel colour there too, and
   `draw_ring_frame_step`'s `mem[0x08D8] = 0` blacks it out on the Atari exactly as it does here.
 - *Ours:* a headless probe showed the last tunnel frame is **not** black (`$08D8 = $38`) and is
   displayed for **exactly one vblank** (tunnel list published vbi 834, stars list vbi 835) — the whole
-  exit block fits inside it.  The photographed all-black image is therefore the **first stars frame**,
-  whose band DLI `$6D67` writes only COLPF0/1/3 and leaves COLBK = `$00DC` at 0 while the corner
-  players take COLPM2/3 from the `$02C0-$02C3` fade shadows, which start at 0.  Black on both machines.
+  exit block fits inside it.  The all-black corners are therefore the **first stars frame**, whose
+  band DLI `$6D67` writes only COLPF0/1/3 and leaves COLBK = `$00DC` at 0 while the corner players
+  take COLPM2/3 from the `$02C0-$02C3` fade shadows, which start at 0.  Black on both machines.
+
+⚠⚠ **Scoped to the CORNERS only — §12 corrects this.**  As first written this block claimed the
+photographed all-black image was the whole first stars frame's band, faithfully.  It is not: COLBK
+governs only the band's **value-0 corner triangles**.  The band's frame proper is value 1/2, which
+DLI `$6D67` paints `$04`/`$06` grey on the Atari's very first stars frame.  A whole-width black band
+there is a PORT bug — the pixels were missing, not the colours.  The lesson: *a colour-register
+proof bounds only the pens that register drives.*  Before calling a black region faithful, check
+that the region's PIXELS exist.
 
 ⚠ The first probe for this was a **vacuous zero** — it gated on `mem[0x08D8] == 0`, which
 `advance_history_6a4d` rotates out of ring index 4 inside the same VBI.  Re-gating on "all six ring
 slots zero" is what produced the numbers above.
+
+---
+
+## 12. The windscreen band went BLACK for the first stars frame — CLOSED 2026-09-01
+
+**Symptom (user, on a 68000):** on the first frame of the stars phase a black rectangle covers the
+whole top of the cockpit — the band region, full 320 px. Correct on the next frame; correct
+throughout on the A1200 setup. *"This used to work so it regressed at some point; I think at the
+point when we modified which bitplane buffers this region is displayed from in different
+copperlists."* — which is exactly right.
+
+### Why the two lists take the band from different bitmaps (this asymmetry is FAITHFUL)
+
+There is only ONE mode-D display list, `$3120`, shared by tunnel, stars and planet. Its band entry
+is an **LMS at `$3156` whose operand `$3157`/`$3158` is patched** (`dl_param_lo`/`dl_param_hi` in
+`symbols.csv`):
+
+| Phase | `$3156` LMS target | Our copper list reads |
+|---|---|---|
+| Tunnel | `$350D` (the cockpit windscreen band) | `cockpitBitmap` rows 0-7 |
+| Stars / planet | `$1810` (rows 43-46 of the `$1000` field) | `viewportBitmap` rows 43-46 |
+
+And the handoff is *meant* to be pixel-identical: `boot_standby_launch_driver`'s stretch-C burst
+calls **`copy_192_to_1800` (`$75A5`), which copies `$350D` → `$1810` verbatim (192 bytes = 4 × 48)**
+immediately before it patches the LMS and switches DLIST. Confirmed against the savestates: in
+`launch_4_stars.a8s` the 40 displayed bytes of all four band rows at `$1810` are **byte-identical**
+to `$350D`. (They diverge later — in `launch_5_planet.a8s` the outer corners become `$FF` = pen 3
+where stars had `$00` — so the planet copper must keep reading `$1810`; taking the band from
+`cockpitBitmap` for both lists is NOT a valid simplification.)
+
+### The race
+
+§8b moved the planet-copper install to the HEAD of the stars-entry frame (to stop the tunnel's last
+ring image freezing for 6 frames) and kicks the `viewportBitmap` blitter clear there. But
+`setCopperList(..., false)` only writes COP1LC, so the list goes live at the **next vblank** — while
+the ~1.9-frame entry work is still running on a 68000. The band rows are the **last four**
+`renderViewportModeD` decodes, so the copper displayed the freshly-cleared bitmap there. A 68020
+finishes the decode inside the frame and hides it.
+
+§11 had filed this as faithful on a colour-register argument. That argument is sound but bounded: it
+proves the band's **value-0 corner triangles** are black on both machines. The band's frame proper
+is value 1/2, painted `$04`/`$06` grey by DLI `$6D67` on the Atari's first stars frame — so a
+whole-width black band is ours alone.
+
+### The fix
+
+Decode **only the 4 band rows** in the stars-entry block, after draining the clear that would wipe
+them, and before `setCopperList`. `render()`'s full pass re-decodes them from the same source into
+the same bytes a moment later, so nothing downstream changes and the shadow needs no special case.
+`renderViewportModeD`'s row loop is split out as `decodeViewportRows(srcBase, stride, rStart, rEnd,
+countGroups)` so both callers share one decoder.
+
+Cheap by construction: 4 rows × 10 longs × 2 planes. The `blitterDrain()` is the only new stall on
+the entry frame, and that frame already costs ~1.9 frames.
+
+### Verification — a one-off `band_seed` probe, since RETIRED
+
+⚠ The probe and its `amiga/band_seed.gdb` are **gone** (retired with the fix, once the user had
+confirmed it visually across setups) — the numbers below are an archive, not a re-runnable recipe.
+It summed plane1+plane2 of `viewportBitmap` rows 43-46 in the vblank ISR at each of the first 8
+vblanks after the planet copper was published, `[0]` being what the first stars frame displays.
+
+| Arm | `[0]` | `[1]` | `[2]`… |
+|---|---|---|---|
+| A500+ (68000), seed disabled | **0** | **4095** | 36720 |
+| A500+ (68000), seed | **36720** | 36720 | 36720 |
+| A1200 (68020), seed | 36720 | 36720 | 36720 |
+
+So it was **two** bad frames on a 68000, not one — fully black, then partially decoded — and the
+seed lands the final content before the list ever executes. `g_starGroups = 40` in every arm:
+at the stars entry the band is the ONLY non-zero content in the whole 47-row field, which is
+`zero_run`'s doing and independently confirms the field is legitimately black there.
+
+### Method notes worth keeping
+
+- **The DL's own patched LMS operand settled the design question** (which bitmap may feed the band,
+  and whether the two lists could be unified) straight from the binary + two savestates — no
+  emulator round trip. `symbols.csv` had already named `$3157`/`$3158`; the phase table above is
+  just those two bytes read in three states.
+- **A colour-register proof bounds only the pens that register drives.** §11's COLBK argument was
+  correct and still concluded the wrong thing about the region as a whole.
+- **`setCopperList(..., false)` + a >1-frame render is a standing hazard**, not a one-off: any
+  region whose content is produced LATE in the frame will show one frame of whatever the buffer
+  held. Seed the late region before publishing, or publish after it.

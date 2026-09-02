@@ -3213,7 +3213,6 @@ void RescueOnFractalus::renderViewportModeD(uint16_t srcBase, int stride, int ro
           g_tkN++; } }
 #endif
     if (!viewportBitmap) return;
-    static const int kCrop   = 4;    // central 40 of 48 (centres content)
 
     // Write each mode-D row to ONE interleaved scanline; the copper line-doubles the
     // region vertically (the Planet/Flight viewport band toggles the bitplane modulo
@@ -3279,6 +3278,18 @@ void RescueOnFractalus::renderViewportModeD(uint16_t srcBase, int stride, int ro
         if (rEnd >= rows) rEnd = rows - 1;
     }
 
+    decodeViewportRows(srcBase, stride, rStart, rEnd, clearedFull);
+}
+
+// decodeViewportRows: the row-range half of renderViewportModeD — decode mode-D rows
+// [rStart,rEnd] of the field at srcBase into viewportBitmap, skipping 4-byte groups the
+// long-granular shadow says are unchanged.  Split out so the stars ENTRY can decode the
+// windscreen-band rows on their own, BEFORE the planet copper is published (see renderFrame).
+void RescueOnFractalus::decodeViewportRows(uint16_t srcBase, int stride, int rStart, int rEnd,
+                                           bool countGroups)
+{
+    static const int kCrop = 4;    // central 40 of 48 (centres content)
+    (void)countGroups;
     const uint8_t* src = (const uint8_t*)&mem[srcBase + kCrop] + rof_mulu16((uint16_t)rStart, (uint16_t)stride);
     uint8_t* vdest    = (uint8_t*)viewportBitmap->data + rof_mulu16((uint16_t)rStart, 120u);
     uint32_t* shadow  = viewportShadow + rof_mulu16((uint16_t)rStart, 10u);
@@ -3306,7 +3317,7 @@ void RescueOnFractalus::renderViewportModeD(uint16_t srcBase, int stride, int ro
             *q2 = ((uint32_t)kModeDP2[s0] << 24) | ((uint32_t)kModeDP2[s1] << 16) |
                   ((uint32_t)kModeDP2[s2] <<  8) |  (uint32_t)kModeDP2[s3];
 #ifdef ROF_FLIGHT_PROBE
-            extern volatile unsigned long g_starGroups; if (clearedFull) g_starGroups++;
+            extern volatile unsigned long g_starGroups; if (countGroups) g_starGroups++;
 #endif
         }
         vdest += 120;                                        // one interleaved scanline
@@ -4531,12 +4542,34 @@ void RescueOnFractalus::renderFrame()
         // to take its full-redecode path — its `full` test, evaluated here.  If it were to take
         // the incremental path instead it would never consume viewportClearKicked, and the clear
         // would wipe content nothing repaints.
-        if ((viewportForceFull || viewportLastBase != 0x1000u) && !viewportClearKicked) {
+        const bool vpEntryClear = (viewportForceFull || viewportLastBase != 0x1000u);
+        if (vpEntryClear && !viewportClearKicked) {
             AmigaHardware::blitterClear((uint16_t*)viewportBitmap->data, 60, 47, 0);
             viewportClearKicked = true;
         }
         for (int i = 0; i < 6; i++) planetCopper->setStarOperand(i, starRing[i]);
         updatePlanetCopper(true);
+        // ---- seed the windscreen-bottom BAND before the list goes live -----------------------
+        // The band (Amiga scanlines 172-179) is the ONE part of the viewport that must already
+        // hold pixels when the planet copper starts executing, because the two lists take it from
+        // DIFFERENT bitmaps — faithfully so: the shared mode-D DL $3120 has an LMS at $3156 whose
+        // operand ($3157/$3158 = dl_param_lo/hi) is the tunnel's $350D cockpit band, patched to
+        // $1810 for stars/planet.  So TunnelCopperList draws it from cockpitBitmap rows 0-7 and
+        // PlanetCopperList from viewportBitmap rows 43-46.  Everything else in the viewport is
+        // legitimately black here (the same 6502 burst zero_run's $1000..$1815), but the band is
+        // not: copy_192_to_1800 ($75A5) has just copied $350D->$1810 verbatim, so the tunnel's
+        // last band image and the stars' first are the SAME 192 bytes and the handoff is meant to
+        // be pixel-identical.  Leaving it to render()'s decode loses that: setCopperList only
+        // writes COP1LC, so the list goes live at the next vblank, while the ~2-frame stars-entry
+        // work is still running on a 68000 — and the band rows are the LAST four it decodes, so
+        // the band showed one frame of the cleared bitmap (a black bar across the cockpit top;
+        // a 68020 finishes in time and hides it).  Decode just those 4 rows here, after draining
+        // the clear that would otherwise wipe them.  render()'s full pass re-decodes them from
+        // the same source into the same bytes, so nothing downstream changes.
+        if (vpEntryClear) {
+            AmigaHardware::blitterDrain();        // the entry clear covers the band rows too
+            decodeViewportRows(0x1000, 48, 43, 46, false);
+        }
         AmigaHardware::setCopperList(*planetCopper, false);
         planetCopperInstalled = true;
         standbyCopperInstalled = false; flightCopperInstalled = false;
