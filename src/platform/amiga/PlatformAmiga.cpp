@@ -1551,6 +1551,17 @@ static bool g_pollAfterRender = false;
 // game_main_loop per-iteration + flight phase split (written by rof_native.c FP_* macros):
 extern "C" { volatile unsigned long g_iterMax = 0, g_iterLast = 0, g_iterPostDs = 0; }
 extern "C" { volatile unsigned short g_iterCount = 0, g_iterMaxAt = 0; }
+#ifdef ROF_FORCE_ALIEN_ABOARD
+// ALIEN_ABOARD ascent sampler (vbiHandler): the boosters climb with $0633 set.
+extern "C" {
+volatile unsigned short g_abVbi = 0, g_abIter0 = 0, g_abIterN = 0, g_abNSamp = 0;
+volatile unsigned char  g_ab34First = 0, g_ab34Last = 0, g_ab34Max = 0;
+volatile unsigned char  g_ab29Last = 0, g_ab2ALast = 0, g_ab26Last = 0, g_ab2ELast = 0;
+volatile unsigned char  g_ab4ALast = 0, g_ab04Last = 0, g_abKeyPend = 0;
+volatile unsigned char  g_abSamp34[32], g_abSamp29[32], g_abSamp2E[32];
+volatile unsigned short g_abKeyWin = 0, g_abBreakVbi = 0, g_ab52B4 = 0;
+}
+#endif
 extern "C" { volatile unsigned long g_fSetup=0,g_fClear=0,g_fDraw=0,g_fColl=0,g_fState=0,g_fEnemy=0; }
 // ds_frame() total (both displayed halves per iteration) = renderFlightDirect + sprite builds +
 // copper update + the audio flush.  Never bracketed earlier, so the phase sum used to
@@ -1963,6 +1974,9 @@ extern "C" uint8_t rof_attract_poll_key(void) {
 }
 
 uint8_t PlatformAmiga::flightIrqKey() {
+#ifdef ROF_FORCE_ALIEN_ABOARD
+    { extern volatile unsigned short g_abKeyWin; g_abKeyWin++; }
+#endif
     // Consume the keycode the keyboard ISR stashed (if any) and reset to "none".  The flight
     // VBI's CLI window ($519c) calls this once per frame; returning the code here is exactly
     // the Atari IRQ leaving KBCODE&$3F (or $80=BREAK) in X for event_sequence_dispatcher.
@@ -2492,18 +2506,25 @@ static uint32_t vbiHandler()
 
     // BREAK/Restart flash blank — do it here, at vblank (beam parked at top), so a COPJMP to the black
     // EmptyCopperList is safe (its sprite MOVEs at the top of the list run before the beam reaches the
-    // sprites; a mid-frame COPJMP would smear them).  Two cases, both showing stale/mid-swap flight
-    // otherwise (the "brown rectangle"):
-    //   (a) VVBLKI==$52B4: the trampoline armed the restart on a PREVIOUS frame and the main loop
-    //       hasn't reached the rof_check_restart longjmp yet (a flight compute iteration spans ~4
-    //       frames), so $52B4 persists — blank every such frame.
-    //   (b) in flight ($4FF5) with a BREAK ($80) still pending: the trampoline will set $52B4 LATER
-    //       THIS frame, inside game_vbi_isr below — too late for (a) to catch it at beam-top — so blank
-    //       pre-emptively now.  (This is the fast case: the loop longjmps next frame, one $52B4 frame.)
+    // sprites; a mid-frame COPJMP would smear them).  It blanks on ONE condition: VVBLKI==$52B4, i.e.
+    // the trampoline has ARMED the restart and the main loop hasn't reached the rof_check_restart
+    // longjmp yet — which persists for several vblanks (a flight compute iteration spans ~4 frames),
+    // and across them the old FlightCopperList stays live and keeps swapping buffers: the stale /
+    // mid-swap "brown rectangle".
+    //
+    // ⚠ It must NOT blank merely because a BREAK ($80) is pending in flight.  A pending key is not an
+    // armed restart: the ONLY thing that consumes it in flight is the flight VBI's $519c CLI window,
+    // and that window is reached only from the RESET/BLINK/KEYWIN arms of the $4FF5 dispatch — the
+    // JOIN arm skips it.  During the BOOSTERS ascent ($0072 = 2) the dispatch takes JOIN every single
+    // frame (measured: 0 window calls in 868 frames), so the key stays pending for the whole climb.
+    // Blanking on it turned that into a permanently black screen with the simulation running
+    // underneath.  The Atari behaves the same way — its $462A keyboard IRQ only leaves the code in X,
+    // so a BREAK pressed there is likewise inert until the launch cinematic's own $539A window picks
+    // it up — it just doesn't blank anything meanwhile.  Cost of waiting for $52B4: one frame of live
+    // flight between the keypress and the trampoline arming the restart.
     {
         const uint16_t _vv = (uint16_t)(mem[0x0222] | (mem[0x0223] << 8));
-        if (s_scene && (_vv == 0x52B4u || (_vv == 0x4FF5u && s_pendingFlightKey == 0x80u)))
-            s_scene->blankForRestart();
+        if (s_scene && _vv == 0x52B4u) s_scene->blankForRestart();
     }
 
     // Flight terrain double-buffer swap — do this FIRST, while the beam is still in vertical
@@ -2898,6 +2919,46 @@ static uint32_t vbiHandler()
     // or flight ($4FF5) body — as the Atari swaps VVBLKI — bracketing the work in a
     // save/restore of the shared 6502 register file (the main loop may be mid-instruction
     // using `cpu` when this interrupt preempts it).
+#ifdef ROF_FORCE_ALIEN_ABOARD
+    // Headless "alien aboard" repro (make PROBES=1 FORCE_RETURN=1 ALIEN_ABOARD=1).
+    // Reproduces the state a boarded alien leaves behind — alien_trigger $0633 set — which
+    // otherwise needs a landed, systems-off, airlock-open rescue.  $0633 is a plain
+    // sticky flag (set at the reveal in pilot_render, cleared only by the launch cinematic), so
+    // setting it in flight IS the state under test: enemy_check $3FCD then runs alien_attack_tick
+    // every main-loop iteration, exactly as it does after a real boarding.
+    // Sampled here too: how the ascent physics move once BOOSTERS has set $0072 = 2.
+    {
+        const uint16_t vv = (uint16_t)(mem[0x0222u] | (mem[0x0223u] << 8));
+        static uint16_t s_abVbi = 0;
+        if (vv == 0x4FF5u && s_abVbi == 0) s_abVbi = g_vbiCount;
+        if (s_abVbi && (uint16_t)(g_vbiCount - s_abVbi) >= 120) mem[0x0633u] = 1;
+        if (vv == 0x52B4u) g_ab52B4++;
+        // Ascent sampler: everything the climb depends on, per VBI, while $0072 == 2.
+        if (vv == 0x4FF5u && mem[0x0072u] == 0x02u) {
+            if (g_abVbi == 0) { g_abIter0 = g_iterCount; g_ab34First = mem[0x0034u]; }
+            g_abVbi += 1;
+            g_abIterN = g_iterCount;
+            const unsigned char d34 = mem[0x0034u];
+            g_ab34Last = d34;
+            if (d34 > g_ab34Max) g_ab34Max = d34;
+            g_ab29Last = mem[0x0029u]; g_ab2ALast = mem[0x002Au];
+            g_ab26Last = mem[0x0026u]; g_ab2ELast = mem[0x002Eu];
+            g_ab4ALast = mem[0x004Au]; g_ab04Last = mem[0x0004u];
+            g_abKeyPend = s_pendingFlightKey;
+            if (g_abVbi == 200u && g_abBreakVbi == 0) {   // soft-reset mid-ascent, as the user did
+                s_pendingFlightKey = 0x80u;                // Atari BREAK (Help)
+                g_abBreakVbi = g_vbiCount;
+            }
+            if ((g_abVbi % 25u) == 1u && g_abNSamp < 32u) {
+                g_abSamp34[g_abNSamp] = d34;
+                g_abSamp29[g_abNSamp] = mem[0x0029u];
+                g_abSamp2E[g_abNSamp] = mem[0x002Eu];
+                g_abNSamp += 1;
+            }
+        }
+    }
+#endif
+
 #ifdef ROF_FORCE_RETURN
     // Headless return-to-mother-ship verification — drive the REAL gameplay path, not a $0072
     // poke (which skipped the arrival setup and gave an unfaithful repro).  Two phases:

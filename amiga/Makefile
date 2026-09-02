@@ -782,6 +782,12 @@ endif
 ifdef FORCE_MOTHERSHIP
 EXTRA_DEFINES += -DROF_FORCE_MOTHERSHIP
 endif
+# `make PROBES=1 FORCE_RETURN=1 ALIEN_ABOARD=1`: set alien_trigger $0633 in flight (vbi+120), the
+# state a boarded alien leaves behind, and sample the boosters ascent physics per VBI.  Headless
+# repro of "alien aboard + BOOSTERS never reaches space".  Readout: amiga/alien_boost.gdb.
+ifdef ALIEN_ABOARD
+EXTRA_DEFINES += -DROF_FORCE_ALIEN_ABOARD
+endif
 # `make PROBES=1 TITLE=1`: force-enter the Title Screen (inject its screen RAM + palette and
 # pin rsTitle) instead of auto-launching to flight — a visual test path for the Title Screen
 # render before its real attract-mode entry is wired.  Requires PROBES.

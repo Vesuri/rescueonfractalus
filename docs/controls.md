@@ -330,3 +330,24 @@ viewport) detects it and longjmps `g_restartJmp`.  run() then replicates the fai
 init (skips the `$3D0C` clear, so the **high score `$0605-$0608` is kept**) and calls `game_main_loop`
 → the `$53CC` level-selector card + standby music (measured on the Atari: BREAK from ANY scene → that
 card).  SYSTEM RESET is a hardware reset, not an application key — deliberately not mapped.
+
+### BREAK is INERT during the boosters ascent — and the blank must not outlive the arming
+
+The only in-flight consumer of a pending BREAK is the `$519c` CLI window, and that window is reached
+only from the RESET/BLINK/KEYWIN arms of the `$4FF5` dispatch — the JOIN arm skips it.  The `else`
+(gameplay, `$0004 == 0`) branch selects JOIN whenever `$004A != 2` (6502 `$5161 CMP $004a / BNE
+$51b2`).  Through the whole BOOSTERS ascent (`$0072 = 2`) `$004A` is 0, so the window runs **zero**
+times (measured: 0 calls in 868 frames) and BREAK simply stays latched until the ascent ends and the
+launch cinematic's own `$539a` window picks it up.  **This is faithful** — the Atari's `$462A`
+keyboard IRQ only leaves the code in X, so it behaves identically (confirmed on atari800: BREAK does
+nothing during the ascent, alien aboard or not).
+
+What was NOT faithful was the Amiga blank.  `vbiHandler` used to call `blankForRestart()` on the mere
+presence of `s_pendingFlightKey == 0x80` while in flight, as a one-frame head start on the trampoline.
+With the window unreachable the key never cleared, so the blank fired every frame forever: a black
+screen with the simulation still running underneath — the state a player reaches by pressing HELP
+while the alien-aboard ship is pinned to the terrain by `jitter_roll_pitch`.  The blank is now armed
+by `VVBLKI == $52B4` **only**, i.e. by an actual restart, at the cost of the single frame between the
+keypress and the trampoline.  Headless repro: `make PROBES=1 FORCE_RETURN=1 ALIEN_ABOARD=1` +
+`amiga/alien_boost.gdb` (`ALIEN_ABOARD` sets `$0633` in flight and injects BREAK 200 frames into the
+ascent; `blanks` must read 0 while `pendingFlightKey` stays `80`).

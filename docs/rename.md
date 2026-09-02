@@ -173,3 +173,11 @@ Two cheaper disproofs worth trying before that: look for the **original's own co
 (if it equals what your model implies, the model is confirmed from the binary alone — see
 `flight-scene` §Wide objects), and read a **captured register dump offline** rather than doing
 another emulator run.
+
+## `event_sequence_dispatcher` ($4644) — the header comment's slot map is wrong
+
+The command-key table at `$4816` is `00 3F 15 3E 07 06 80 1C`, i.e. slot 0 = L (Land), 1 = A (Air
+Lock), 2 = **B (Boosters)**, 3 = S (Systems), 4/5 = cursor right/left (thrust), 6 = BREAK (`$80`),
+7 = ESC (`$1C`).  The native twin's behaviour follows the table correctly; only the comment block
+above it mislabels the slots.  Fix the comment, not the code.
+
