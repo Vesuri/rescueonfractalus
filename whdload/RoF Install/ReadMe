@@ -36,6 +36,13 @@
 
  History:
  --------
+ version 0.94 (02.09.2026):
+ - fixed colour seams and stale rings in the tunnel cinematic
+ - faster tunnel and pilot approach rendering
+ - fixed a stray screen blank when pressing Help
+ - fixed noise and leaked memory when quitting outside WHDLoad
+ - the game can now be started from Workbench
+
  version 0.93 (31.08.2026):
  - fixed the pilot's approach animation slowing down as he gets nearer
  - fixed downed ships and bases turning white against the sky
