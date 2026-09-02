@@ -834,6 +834,10 @@ static void update_paula_channel(uint8_t ch)
 // ---- public interface --------------------------------------------------------
 // mem[] has already been populated (load_xex_image, called from main before the scene
 // initialises); this only sets up the Paula side.
+// CIA-A PRA bit 1 (Paula low-pass filter / power LED) as we found it -- audioInit turns the
+// filter off, audioShutdown puts this back.  Machine state, same class as DMACON/INTENA.
+static uint8_t s_savedCiaaPra = 0x02u;
+
 void PlatformAmiga::audioInit()
 {
     // Clear POKEY shadow and LFSR
@@ -851,6 +855,12 @@ void PlatformAmiga::audioInit()
     // the snapshot has $0090=1, so the first update() call resets $073C/$073A
     // to start the sequence from note 0 — no replay needed here.
 
+    // Take the four channels down BEFORE programming them (the takeover in run() deliberately
+    // leaves exec's audio DMA alone), so whatever the OS had running cannot keep fetching out of
+    // its own buffers while we re-point them.  Same reason the dA JoRMaS runner clears DMAF_ALL.
+    *dmaconPointer = 0x000Fu;                                  // clear AUD0..3 (no SETCLR)
+    for (int ch = 0; ch < 4; ch++) AUD_VOL(ch) = 0u;
+
     // Point all Paula channels at the pure-tone wave, start silent.
     // update_paula_channel() re-points each channel per its AUDC distortion.
     for (int ch = 0; ch < 4; ch++) {
@@ -864,17 +874,31 @@ void PlatformAmiga::audioInit()
     // ($BFE001, 0x02) HIGH = LED dim + filter OFF; LOW = LED bright + filter ON (~5-6 kHz RC).
     // Kickstart leaves it ON after boot, which rolls off the highs.  The Atari POKEY has no such
     // filter, so switching it off is the faithful choice (and keeps the SFX bright).
+    // Saved first: it is machine state like DMACON/INTENA, and audioShutdown puts it back --
+    // otherwise the power LED stays dim and the OS's audio stays unfiltered after we exit.
+    s_savedCiaaPra = (uint8_t)(*ciaapraPointer & 0x02u);
     *ciaapraPointer |= 0x02u;
 
     // Enable audio DMA for all 4 channels (DMAF_AUD0..3 = bits 0..3)
     *dmaconPointer = (uint16_t)(DMAF_SETCLR | 0x000Fu);
 }
 
+// Paula channel hand-back: the exact counterpart of audioInit.  Volumes first (Paula applies
+// AUDxVOL at the next sample boundary, so the channel is silent before it stops feeding), then
+// audio DMA off, then the one piece of MACHINE state audioInit changed -- CIA-A PRA bit 1, the
+// low-pass filter / power LED -- back as we found it.  Nothing else: repointing AUDxLC at an
+// in-image "silent" buffer buys nothing, because DOS unloads the hunks right after we return and
+// that chip RAM goes back to exec like any other.  Same reason the latched AUDx interrupt
+// requests are left alone: with DMA off, a channel that has been started sits in Paula's
+// programmed-transfer mode re-raising AUDxIRQ to ask the CPU for the next word, so the bits
+// cannot be handed back down (measured: the AUDx bits read clear right after this function and
+// are latched again by the time run() returns, amiga/memaudit.gdb).  Harmless -- the restored INTENA has no AUDx bit, and
+// audio.device clears INTREQ itself when it opens a channel.
 void PlatformAmiga::audioShutdown()
 {
-    // Silence and disable audio DMA
     for (int ch = 0; ch < 4; ch++) AUD_VOL(ch) = 0u;
     *dmaconPointer = 0x000Fu;  // clear AUD0..3 (no SETCLR = clear)
+    *ciaapraPointer = (uint8_t)((*ciaapraPointer & (uint8_t)~0x02u) | s_savedCiaaPra);
 }
 
 // ============================================================================
@@ -3550,6 +3574,13 @@ void PlatformAmiga::run()
     portsRestore();       // hand level 2 back to ciaa.resource before the OS needs it again
 #endif
     keyboardShutdown();
+
+    // 0. Audio off BEFORE anything hands the machine back.  Nothing after the game loop makes a
+    //    sound, and steps 2-3 below give the DISPLAY back to the OS — so silencing any later than
+    //    this leaves Paula running while the Workbench is already on screen, for however long the
+    //    rest of the teardown takes (the scene's ~30 FreeMem calls, LoadView, two WaitTOFs).  That
+    //    is audible as the engine drone continuing after the game has visibly exited.
+    audioShutdown();
 
     // 1. Our VBI off first: its scene bodies write COP1LC (setCopperList) and the live copper
     //    list's bitplane/sprite pointers, so every step below would otherwise be racing it.

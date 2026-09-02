@@ -7033,7 +7033,9 @@ void RescueOnFractalus::shutdown()
     delete titleScreenCopper; titleScreenCopper = nullptr;
     delete bootFieldCopper; bootFieldCopper = nullptr;   // boot scenes 1+2 (null under SKIPBOOT)
     delete emptyCopper;   emptyCopper   = nullptr;
-    PlatformAmiga::audioShutdown();
+    // (Audio is NOT silenced here any more: PlatformAmiga::run() does it as the FIRST step of the
+    // teardown, before the display goes back to the OS.  Doing it here left Paula running through
+    // the copper-list frees above.)
     delete bootFieldBitmap; bootFieldBitmap = nullptr;   // the shared 54 KB GTIA-9 field
     delete titleBitmap;   titleBitmap   = nullptr;
     delete terrainBitmap; terrainBitmap = nullptr;
