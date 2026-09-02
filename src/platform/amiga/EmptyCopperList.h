@@ -14,6 +14,7 @@ class Sprite;
 class EmptyCopperList : public CopperList {
 public:
     EmptyCopperList();
+    ~EmptyCopperList();
     void buildLayout(const Sprite& nullSprite);   // one-time: 1 plane (both pens equal), BRDNBLNK, null sprites
     // Poke the full-screen colour — sets BOTH pens (color00 AND color01) so the single-bitplane
     // display window reads one uniform colour.  Drives the death-cinematic salmon-hold → black

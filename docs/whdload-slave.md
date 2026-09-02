@@ -184,6 +184,14 @@ host, because a real 1.3 ROM is what the kickemu boots anyway:
 
 * `amiga/memreport.gdb` gives the **game's** own chip/fast use exactly (that is where the
   measured rows come from) — but under KS 3.1, so it says nothing about 1.3's own footprint.
+* `amiga/memaudit.gdb` answers the other half — **does the exit give it all back?** It walks
+  exec's real `MemHeader` → `mc_Next` free-chunk chains (not just `AvailMem`) at the top of
+  `PlatformAmiga::run()` and again after the whole restore, so a leak shows as a chunk that
+  shrank or vanished and pure fragmentation (same total, more chunks) is distinguishable from
+  one. Needs `make FORCE_QUIT=<vbl>`; the pass condition is the two dumps being identical
+  chunk for chunk. It is what found the 38,712-byte chip + 240-byte fast leak fixed on
+  2026-09-02, and it covers every allocation regardless of how far the run gets, because all
+  of them live in `RescueOnFractalus::initialize()`.
 * Booting `run.sh` with a **Kickstart 1.3 ROM** (`./run.sh ~/Documents/RetroPie/BIOS/kick13.rom`,
   `AMIGA_MODEL=A500`) would run the game under the same OS version the slave boots, from a
   real CLI; then shrink `--chip_memory` / `--fast_memory` (`EXTRA_ARGS=`) until it stops

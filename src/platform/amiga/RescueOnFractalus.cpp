@@ -7039,10 +7039,18 @@ void RescueOnFractalus::shutdown()
     delete terrainBitmap; terrainBitmap = nullptr;
     delete terrainBitmapBack; terrainBitmapBack = nullptr;
     delete terrainDotBuffer; terrainDotBuffer = nullptr;
+    g_flightDotPlane = nullptr;                          // pointed into terrainDotBuffer
     delete viewportBitmap;  viewportBitmap  = nullptr;
+    delete doorScrollBitmap; doorScrollBitmap = nullptr; // 20 KB: the level-select door scroll
     delete cockpitBitmap; cockpitBitmap = nullptr;
     delete tunnelBitmap;  tunnelBitmap  = nullptr;
     delete titleScreenBitmap; titleScreenBitmap = nullptr;
+    // Rescue-figure composite trio (file statics, allocated in initialize()).  g_figP1/P2/M are
+    // raw views into two of them, so they go with the bitmaps.
+    delete s_cleanBmp;   s_cleanBmp   = nullptr;
+    delete s_figBmp;     s_figBmp     = nullptr;
+    delete s_figMaskBmp; s_figMaskBmp = nullptr;
+    g_figP1 = nullptr; g_figP2 = nullptr; g_figM = nullptr;
     delete leftPost;      leftPost      = nullptr;
     delete rightPost;     rightPost     = nullptr;
     delete nullSprite;    nullSprite    = nullptr;
@@ -7059,6 +7067,13 @@ void RescueOnFractalus::shutdown()
     delete flLeftPost;  flLeftPost  = nullptr;
     delete flRightPost; flRightPost = nullptr;
     delete flRightTri;  flRightTri  = nullptr;
+    delete ahLeft;      ahLeft      = nullptr;       // AH ground fill (ch0/1 below the frame)
+    delete ahRight;     ahRight     = nullptr;
+    delete shotSprite;     shotSprite     = nullptr; // player laser, double-buffered
+    delete shotSpriteBack; shotSpriteBack = nullptr;
+    delete scopeP3Sprite;    scopeP3Sprite    = nullptr;   // Targeting-Scope P3 (ch3)
+    delete viewportP3Sprite; viewportP3Sprite = nullptr;   // Main-Window P3 (ch7)
+    delete scannerDotSprite; scannerDotSprite = nullptr;   // LR-scanner guide dot (ch2)
     { static const int kLowRows[3] = { kEnergyRows, kAltimRows, 8 };
       for (int s = 0; s < 3; s++)
           for (int b = 0; b < 2; b++) {
@@ -7069,5 +7084,5 @@ void RescueOnFractalus::shutdown()
                                 (uint16_t)kLowRows[s]);
               wideChain[s][b] = nullptr;
           } }
-    for (int c = 0; c < 6; c++) { delete starSprite[c]; starSprite[c] = nullptr; }
+    for (int c = 0; c < 6; c++) { delete starSprite[c]; starSprite[c] = nullptr; starRing[c] = nullptr; }
 }

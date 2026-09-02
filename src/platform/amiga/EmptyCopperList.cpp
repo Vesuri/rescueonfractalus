@@ -34,6 +34,13 @@ EmptyCopperList::EmptyCopperList()
     filler_ = (uint16_t*)AllocMem(64, MEMF_CHIP | MEMF_CLEAR);
 }
 
+// ~CopperList frees the list itself (it owns it); filler_ is a second allocation of ours, so
+// this destructor is what returns it.  Without it the 64 bytes leak for the whole session.
+EmptyCopperList::~EmptyCopperList()
+{
+    if (filler_) { FreeMem(filler_, 64); filler_ = 0; }
+}
+
 void EmptyCopperList::buildLayout(const Sprite& nullSprite)
 {
     uint32_t* d = data_;
