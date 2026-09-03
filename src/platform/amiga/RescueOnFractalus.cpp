@@ -6261,14 +6261,13 @@ void RescueOnFractalus::deriveRenderSignals()
 void RescueOnFractalus::perFrameWork()
 {
     update_indicator_blink_native();    // $4131: cockpit blink lights (flight-VBI routine)
-    // sfx_voice_tick() is driven by CIA-B Timer A at 25 Hz (main.cpp).
 
-    // $62E7 SFX-reinit gate: when $0090 is non-zero the loop reinits the SFX sequence.
-    if (mem[MEM_sfx_reinit_gate]) {
-        mem[0x073Au] = 0u;    // immediate underflow → next CIA tick loads note[0]
-        mem[0x073Cu] = 0xFFu; // sequence ptr before index 0
-        mem[MEM_sfx_reinit_gate] = 0u;    // clear flag (as $70E7 does via STX $0090)
-    }
+    // NOTE: the $62E7 SFX-reinit gate ($0090) is NOT serviced here.  The faithful
+    // boot_standby_launch_driver twin already does it at L_62e7 (reset_audctl_flags $70E7),
+    // which — unlike a partial mirror here — also sets the theme gate $00E7=1 and does it
+    // AFTER the level-complete lift scroll finishes.  A copy in this per-rendered-frame path
+    // consumed $0090 during the lift scroll (before L_62e7 saw it) WITHOUT re-enabling $00E7,
+    // so the Standby theme never restarted after returning to the mother ship with quota met.
 
     // Title text ("RESCUE ON FRACTALUS!" / copyright): the genuine standby loop
     // ($62FB) drives it — copy_title_text_block_to_screen ($782A) copies the block
