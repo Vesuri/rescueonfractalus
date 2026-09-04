@@ -457,6 +457,32 @@ static void aud_restart_log(uint8_t ch, uint16_t oldPer, uint16_t oldLen, uint8_
     g_arCh[i] = ch; g_arWl[i] = wl;
     g_arIdx = (unsigned short)(i + 1u);
 }
+
+// Per-FRAME snapshot of the LIVE Paula state of all four channels.  This is the exact input an
+// offline DAC model needs to reproduce what the hardware emits: period, volume and loop length
+// (= waveform identity: 1 pure / 15 poly4 / 31 poly5 / 465-511 poly_dist / 4096 noise) per frame.
+// AUDxVOL is write-only, so the volume is shadowed at the two sites that write it.
+#define AUD_TRACE_FRAMES 600u
+extern "C" {
+    volatile unsigned short g_asVbi[AUD_TRACE_FRAMES];
+    volatile unsigned short g_asPer[AUD_TRACE_FRAMES][4];
+    volatile unsigned short g_asLen[AUD_TRACE_FRAMES][4];
+    volatile unsigned char  g_asVol[AUD_TRACE_FRAMES][4];
+    volatile unsigned short g_asIdx = 0;
+}
+static uint8_t trace_vol[4] = { 0, 0, 0, 0 };
+static void aud_state_snapshot(void)
+{
+    unsigned short i = g_asIdx;
+    if (i >= AUD_TRACE_FRAMES) return;
+    g_asVbi[i] = g_vbiCount;
+    for (uint8_t ch = 0; ch < 4; ch++) {
+        g_asPer[i][ch] = cur_per[ch];
+        g_asLen[i][ch] = cur_len[ch];
+        g_asVol[i][ch] = trace_vol[ch];
+    }
+    g_asIdx = (unsigned short)(i + 1u);
+}
 #endif
 
 // Record a channel's desired Paula state; applied by flush_paula().
@@ -519,6 +545,9 @@ extern "C" void flush_paula(void)
             }
             else { AUD_PER(ch) = want_per[ch]; AUD_VOL(ch) = want_vol[ch];     // live, no click
                    cur_per[ch] = want_per[ch];
+#ifdef ROF_AUDIO_TRACE
+                   trace_vol[ch] = want_vol[ch];
+#endif
             }
         }
 
@@ -607,6 +636,9 @@ extern "C" void flush_paula(void)
                 cur_ptr[ch] = want_ptr[ch];
                 cur_len[ch] = want_len[ch];
                 cur_per[ch] = want_per[ch];
+#ifdef ROF_AUDIO_TRACE
+                trace_vol[ch] = want_vol[ch];
+#endif
             }
             *dmaconPointer = (uint16_t)(0x8000u | restart); // AUDxEN on — all at once, one wait paid
         }
@@ -2516,6 +2548,11 @@ static uint32_t vbiHandler()
     // Exception: ATTRACT VBI ($1B30) bumps RTCLOK in its own transpiled body.
     // (Do NOT touch $0080 — sync_flag, reused as the $80/$81 zp pointer.)
     g_vbiCount++;
+
+#ifdef ROF_AUDIO_TRACE
+    // One row per frame of the live Paula state, from the launch onward (window 0 = 1st launch).
+    if (g_atStart[0]) aud_state_snapshot();
+#endif
 
     // BREAK/Restart flash blank — do it here, at vblank (beam parked at top), so a COPJMP to the black
     // EmptyCopperList is safe (its sprite MOVEs at the top of the list run before the beam reaches the
