@@ -648,3 +648,57 @@ in flight). The fixed time base is now in place (above), so what a retry still h
 approximation was load-bearing.** Full-range noise was not just "less accurate timbre" — it was
 also concealing a 16×-too-short DMA loop. Check what an approximation is *hiding* before replacing
 it.
+
+## ⭐ Paula resamples in HARDWARE at any volume below 64 (fixed 2026-09-04; artefact still OPEN)
+
+`AUDxVOL` 64 is the only level at which Paula emits a plain sample-and-hold at the channel's own
+rate. At **every level 1…63** it switches to a PWM-like approximation on a **fixed 64-tick raster**
+(3546895/64 = **55420 Hz**): one impulse per cycle, cancelled after `v` ticks. Source: Henryk
+Richter, *Amiga Paula vs. System Theory* §2.1/§2.4.
+
+The raster is faster than any channel rate (Paula's floor period 124 = 28604 Hz), so it does **not**
+alias the channel's samples. What it does is **re-quantise every waveform edge onto the 64-tick
+grid**. A channel period that is not a multiple of 64 has its edges snapped alternately, and that
+periodic edge jitter appears as **sidebands inside the audio band**. They move erratically as the
+period sweeps — `per % 64` walks, so the sideband wanders up *and down* across the spectrum:
+
+| tone | period | `per%64` | edge rate | jitter sideband |
+|---|---|---|---|---|
+| 5100 Hz | 348 | 28 | 10192 Hz | 4459 / 5733 Hz |
+| 6149 Hz | 288 | 32 | 12316 Hz | 6158 Hz |
+| 7198 Hz | 246 | 54 | 14418 Hz | 12165 / 2253 Hz |
+| 8596 Hz | 206 | 14 | 17218 Hz | 3766 / 13452 Hz |
+
+⚠ **A low-pass filter cannot remove this.** These are not ultrasonic images — they are generated
+*in the passband*, inside the chip, upstream of the LED filter. That is the diagnostic signature:
+an artefact that survives the LED filter is in-band by construction.
+
+**Fixed here:** the mapping was `vol = (audc & 0x0F) * 4` → 0…**60**, so *every voice in the game,
+always* ran in the rastered mode and POKEY full scale reached Paula at 93.75%. Now a 16-entry table
+maps 0…15 → 0…**64** (uniform ×64/60, so relative balance is unchanged; +0.56 dB overall). No
+divide, and the top entry is exact.
+
+⚠ **This did NOT fix the reported engine-start whine** (user, real A1200, 2026-09-04) — it is a
+correctness fix, kept on its own merits. Only volume 64 escapes the raster, so any voice below full
+scale, and every volume **envelope ramp**, still rasters. The next place to look is the engine
+voices' *actual* per-frame volumes: `make PROBES=1 AUDIO_TRACE=1` + `amiga/audio_state.gdb` dumps
+period/volume/loop-length per channel per frame for exactly that.
+
+### ⛔ Falsified — do NOT re-derive these
+
+The whine was chased for a session on a wrong model. All three were disproved **on real hardware**:
+
+1. **"Near-Nyquist ZOH imaging of the 2-sample square."** Predicted the artefact sits at 25–43 kHz.
+   Disproved: a real ~5 kHz analog low-pass (the LED filter) left it untouched, and the user's path
+   is pure analog with no resampling to fold it down.
+2. **"Oversample the tone — 4 samples instead of 2."** No audible improvement on hardware. At
+   8.6 kHz a 4-sample square needs 34.4 kHz > Paula's 28.6 kHz ceiling, so the top of the sweep
+   cannot be oversampled at all.
+3. **"Enable the LED filter."** Muffles everything and does not remove the artefact — see above for
+   why it structurally cannot.
+
+⭐ The transferable lesson: **the emulator and the hardware disagreed because UAE's interpolation
+setting was hiding a *different* mechanism that sounded the same.** Point-resampling to 44.1 kHz
+with interpolation OFF folds the 5th image down as a descending whine — a genuine artefact, but the
+emulator's, not the Amiga's. Two artefacts with the same perceptual signature, and matching the
+emulator's was what kept the wrong model alive.

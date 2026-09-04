@@ -744,7 +744,20 @@ static void update_paula_channel(uint8_t ch)
     if (audc & 0x10u) {
         vol = 0;  // VOL_ONLY = DC = treat as silence
     } else {
-        vol = (audc & 0x0Fu) * 4u;  // map 0..15 → 0..60
+        // POKEY 0..15 → Paula 0..64, and the top of the range MUST land exactly on 64.
+        // Below 64 Paula abandons the plain sample-and-hold and approximates the level with a
+        // PWM-like cycle on a FIXED 64-tick raster (3546895/64 = 55420 Hz), which re-quantises
+        // every waveform edge to that grid.  A channel period that is not a multiple of 64 then
+        // gets its edges snapped alternately, and the periodic edge jitter lands as sidebands
+        // INSIDE the audio band — audible on a pure tone, and impossible to filter out because
+        // they are in the passband, not ultrasonic images.  Volume 64 disables the raster.
+        // (Henryk Richter, "Amiga Paula vs. System Theory" §2.4; docs/sfx-events.md.)
+        // A table, not v*64/15: no divide, and the top entry is exact.
+        static const uint8_t kPokeyToPaulaVol[16] = {
+             0,  4,  9, 13, 17, 21, 26, 30,
+            34, 38, 43, 47, 51, 55, 60, 64,
+        };
+        vol = kPokeyToPaulaVol[audc & 0x0Fu];
     }
 
     uint16_t per = pokey_period(ch, audf, audctl);
