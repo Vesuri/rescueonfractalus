@@ -678,11 +678,61 @@ always* ran in the rastered mode and POKEY full scale reached Paula at 93.75%. N
 maps 0…15 → 0…**64** (uniform ×64/60, so relative balance is unchanged; +0.56 dB overall). No
 divide, and the top entry is exact.
 
-⚠ **This did NOT fix the reported engine-start whine** (user, real A1200, 2026-09-04) — it is a
-correctness fix, kept on its own merits. Only volume 64 escapes the raster, so any voice below full
-scale, and every volume **envelope ramp**, still rasters. The next place to look is the engine
-voices' *actual* per-frame volumes: `make PROBES=1 AUDIO_TRACE=1` + `amiga/audio_state.gdb` dumps
-period/volume/loop-length per channel per frame for exactly that.
+⚠ **The volume-15 mapping fix did NOT cure the engine-start whine** — it is a correctness fix, kept
+on its own merits. It could not have: the engine voices never ask for POKEY level 15. Their measured
+Paula volumes ramp 4, 9, 13, 17, 21, 26 and then settle at **4**, so they are below 64 — deep in the
+rastered mode — at every instant of the spool.
+
+### ✅ CONFIRMED ON HARDWARE: the raster IS the engine-start whine's cause
+
+Proved by moving one variable. `make FULLVOL=1` forces every sounding voice to AUDxVOL 64, the only
+level that escapes the raster, leaving pitch and waveform untouched; on a real A500 **the artefact
+is gone**. It is not a candidate fix (all envelopes flattened, +24 dB, mix balance destroyed) — it
+is the diagnostic that isolates the raster. `make PER64=1` is its complement: it snaps periods to a
+multiple of 64 so edges land ON the grid with the volume untouched.
+
+⚠ **Verify a diagnostic flag at RUNTIME before trusting a listening test done with it.** A static
+`objdump` grep for FULLVOL's `moveq #64` proved nothing — that pattern occurs 11 times in the
+baseline anyway. What proved it was `PROBES=1 AUDIO_TRACE=1` + `amiga/audio_state.gdb`: across 600
+frames x 4 channels the build sends Paula only 0 or 64, never a level between. (PER64's `and #-64`
+*is* absent from the baseline, so that one's static check was valid — the asymmetry is the lesson.)
+
+**The fix: bake the amplitude into the samples** (`make BAKEVOL=1`). Every waveform we emit is
+two-level ±127, so scaling the *sample bytes* instead of AUDxVOL is lossless in shape: the voice runs
+at volume 64, off the raster, with pitch AND loudness preserved. Cost is amplitude granularity — 16
+levels, one per POKEY level, which is exactly what the game already asks for. Implemented for pure
+tones only (`wave_pure`, loop length 1 — which is where the engine voices live), via a per-channel
+2-byte `wave_pure_baked` written with one aligned word store so Paula cannot fetch a torn square.
+Extending it to poly4/poly5/poly_dist/noise needs per-channel COPIES of shared, per-stride tables
+(15/31/465/**4096** words) — 8 KB of CHIP RAM for the noise buffer alone. Do that only for a voice
+whose artefact is actually still audible.
+
+### ⚠ fs-uae reproduces a LOOK-ALIKE — do not A/B the raster in the emulator
+
+`EXTRA_ARGS="--uae_sound_interpol=none" ./run.sh` does reproduce an audible descending engine whine
+(user-confirmed), which makes it a fine way to *hear* the bug — and a trap for testing a fix:
+
+* **fs-uae does not model the raster at all** by default: `sound_volcnt=false`. A FULLVOL or BAKEVOL
+  A/B run there tests nothing. `--uae_sound_volcnt=true` switches the model on.
+* **What `interpol=none` actually produces is fs-uae's own artefact**, measured: a partial descending
+  12.3 kHz → 2.4 kHz across the spool, sitting at |5·f0 − 44100| to within one FFT bin, settling at
+  2.41 kHz / 797 Hz at engine idle. Its level below f0 is **8.8 dB (`none`) / 31.3 (`anti`) /
+  47.7 (`sinc`)** while f0 itself moves under 0.4 dB — a component that loses 39 dB when only the
+  output resampler changes is made by the resampler. 44100 is hardcoded (`fsemu-audio.c:74`, no
+  config option), so no game-side change can remove it: under `none` *every* build still whines.
+* Both folds descend as f0 rises (the emulator's onto 44100, Paula's onto its 55420 Hz raster), which
+  is why they sound alike. To A/B a fix in the emulator use **`--uae_sound_interpol=sinc
+  --uae_sound_volcnt=true`**: clean output stage, raster modelled.
+
+⭐ The transferable lesson: **an emulator artefact and a hardware artefact of the same CLASS
+(fixed-rate fold) have the same perceptual signature at different frequencies.** Matching the
+emulator kept a wrong model alive for a session; the pitch it settles at is what tells them apart.
+
+**Method note — headless captures.** fs-uae's audio can be recorded without a sound card via SDL's
+disk driver: `SDL_AUDIODRIVER=disk SDL_DISKAUDIOFILE=<path>` writes raw 44100/S16LSB/stereo PCM, so
+an artefact can be measured as a spectrum instead of judged by ear. ⚠ A plain build never launches
+by itself, so a capture needs a `PROBES` build's auto-launch, and captures are NOT time-aligned
+across runs — align each on its own engine signature, never on wall-clock timestamps.
 
 ### ⛔ Falsified — do NOT re-derive these
 
@@ -702,3 +752,9 @@ setting was hiding a *different* mechanism that sounded the same.** Point-resamp
 with interpolation OFF folds the 5th image down as a descending whine — a genuine artefact, but the
 emulator's, not the Amiga's. Two artefacts with the same perceptual signature, and matching the
 emulator's was what kept the wrong model alive.
+
+⚠ **These three stay falsified, but the "sub-64 volume raster" was NOT one of them** — it was
+written off as "debunked in practice" on the strength of the volume-15 mapping fix not curing the
+whine, which never tested it (the engine voices never reach level 15). It is now CONFIRMED on
+hardware — see the FULLVOL result above. ⭐ **"Debunked in practice" is only as strong as the
+variable the practice actually moved.**
