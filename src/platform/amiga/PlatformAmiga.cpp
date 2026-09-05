@@ -96,6 +96,15 @@ extern "C" void game_vbi_isr(void);
 // every channel's default waveform would be two zero bytes = silence.  The build fails if
 // any __chip variable carries one — see the CHIP-BSS guard in amiga/Makefile.
 static __chip uint8_t wave_pure[2];                       // pure tone (square) = { $7F, $81 }
+// Per-channel pure-tone square with the VOLUME BAKED INTO THE SAMPLES, so the channel can run at
+// AUDxVOL 64.  Paula emits a plain sample-and-hold only at volume 64; every level 1..63 switches to
+// a PWM approximation on a fixed 64-tick raster, which re-quantises the waveform edges and puts
+// sidebands INSIDE the audio band (no filter can remove them -- they are generated upstream of the
+// LED filter).  A pure tone is two-level, so scaling its samples instead of its volume is lossless
+// in shape: only amplitude granularity is lost (16 POKEY levels -> 16 amplitudes).  Word-aligned
+// because Paula fetches words.  Filled at runtime -- a __chip initialiser lands in BSS and is
+// silently dropped.
+static __chip __attribute__((aligned(2))) uint8_t wave_pure_baked[4][2];
 // Precomputed POKEY poly distortion waveforms.  A poly waveform's SHAPE depends only
 // on the stride residue through the poly counter (s4 = stride%15 for the poly4 buzz,
 // s5 = stride%31 for the poly5-gated tone) and the distortion mode — NOT on the channel
@@ -485,9 +494,50 @@ static void aud_state_snapshot(void)
 }
 #endif
 
+// Debug aid: isolate a subset of the four Paula channels, to hear ONE voice of a mix on its own.
+// `make CHMASK=0x5` keeps channels 0 and 2 and silences the rest; the default keeps all four.
+// Silences by volume only — periods, pointers and loop restarts stay exactly as they were, so the
+// kept channels behave bit-identically to a full run (nothing is re-timed by the muting).
+#ifndef ROF_AUDIO_CHMASK
+#define ROF_AUDIO_CHMASK 0xFu
+#endif
+
+// Debug aids for the in-band-artefact hunt.  Paula emits a plain sample-and-hold only at volume
+// 64; every level below that runs a PWM raster on a fixed 64-tick grid, which re-quantises each
+// waveform edge.  These two flags separate the raster's two variables so a listening test can
+// move one at a time:
+//   make PER64=1    snap the period to a multiple of 64 -> edges land ON the grid, volume unchanged
+//   make FULLVOL=1  force every sounding voice to 64    -> the raster is bypassed, pitch unchanged
+// Both change the audio deliberately and belong to neither shipping backend.
+#ifndef ROF_AUDIO_PER64
+#define ROF_AUDIO_PER64 0
+#endif
+#ifndef ROF_AUDIO_FULLVOL
+#define ROF_AUDIO_FULLVOL 0
+#endif
+// Pure tones run at AUDxVOL 64 with the amplitude baked into their two sample bytes, which keeps
+// them off Paula's sub-64 volume raster (the cause of the in-band engine whine) without changing
+// pitch or loudness.  ON by default; `make BAKEVOL_OFF=1` restores the volume-register path.
+#ifndef ROF_AUDIO_BAKEVOL
+#define ROF_AUDIO_BAKEVOL 1
+#endif
+
 // Record a channel's desired Paula state; applied by flush_paula().
 static void want_set(uint8_t ch, uint32_t ptr, uint16_t len, uint16_t per, uint8_t vol)
 {
+#if (ROF_AUDIO_CHMASK) != 0xF
+    if (!((ROF_AUDIO_CHMASK) & (1u << ch))) vol = 0u;
+#endif
+#if ROF_AUDIO_PER64
+    // Nearest multiple of 64, never below the Paula floor (which is not itself a multiple of 64).
+    if (per) {
+        uint16_t snapped = (uint16_t)(((uint32_t)per + 32u) & ~63u);
+        per = snapped < 128u ? 128u : snapped;
+    }
+#endif
+#if ROF_AUDIO_FULLVOL
+    if (vol) vol = 64u;
+#endif
     want_ptr[ch] = ptr; want_len[ch] = len; want_per[ch] = per; want_vol[ch] = vol;
     want_valid |= (uint8_t)(1u << ch);
 }
@@ -855,6 +905,18 @@ static void update_paula_channel(uint8_t ch)
     bool poly5tone = (audc & POKEY_PURETONE) && !(audc & POKEY_NOTPOLY5);   // $20, $60
     bool poly4     = !(audc & POKEY_PURETONE) && (audc & POKEY_POLY4);      // $C0, $40
     if (!poly5tone && !poly4) {
+#if ROF_AUDIO_BAKEVOL
+        if (vol) {
+            // vol is already the 0..64 Paula level, so amplitude = vol*2 clamped to +127 (the
+            // 0..15 POKEY table maps linearly to 0..64, so this stays linear in POKEY level).
+            uint8_t  amp = (vol >= 64u) ? 0x7Fu : (uint8_t)(vol << 1);
+            // One aligned word store, so Paula can never fetch a half-updated square.
+            *(volatile uint16_t *)wave_pure_baked[ch] =
+                (uint16_t)(((uint16_t)amp << 8) | (uint8_t)(-(int8_t)amp));
+            want_set(ch, (uint32_t)wave_pure_baked[ch], 1u, per ? per : 124u, 64u);
+            return;
+        }
+#endif
         want_set(ch, (uint32_t)wave_pure, 1u, per ? per : 124u, vol);       // $A0/$E0 pure tone
         return;
     }

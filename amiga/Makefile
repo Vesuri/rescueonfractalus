@@ -879,6 +879,34 @@ endif
 ifdef AUDIO_TRACE
 EXTRA_DEFINES += -DROF_AUDIO_TRACE
 endif
+
+# `make CHMASK=0x5`: keep only the named Paula channels audible (bit N = channel N), to hear one
+# voice of a mix on its own.  Volume-only muting, so the kept channels are timed exactly as in a
+# full run.  Needs no PROBES.  Default (unset) keeps all four.
+ifdef CHMASK
+EXTRA_DEFINES += -DROF_AUDIO_CHMASK=$(CHMASK)
+endif
+
+# Two listening-test flags that isolate the two variables of Paula's sub-64 volume raster (which
+# re-quantises waveform edges onto a fixed 64-tick grid).  `make PER64=1` snaps every channel
+# period to a multiple of 64, so the edges land on the grid with the volume untouched; `make
+# FULLVOL=1` forces every sounding voice to 64, bypassing the raster with the pitch untouched.
+# Both alter the audio on purpose -- debug only, never in a shipping build.
+ifdef PER64
+EXTRA_DEFINES += -DROF_AUDIO_PER64=1
+endif
+ifdef FULLVOL
+EXTRA_DEFINES += -DROF_AUDIO_FULLVOL=1
+endif
+
+# Pure tones play at AUDxVOL 64 with the amplitude baked into their two sample bytes.  A pure tone
+# is a two-level square, so scaling the samples instead of the volume register is lossless in shape
+# and keeps the voice off Paula's sub-64 volume raster -- which is what put in-band sidebands on the
+# engine tones (confirmed on a real A500).  Unlike FULLVOL it preserves pitch AND loudness, so it is
+# the shipping path, not a diagnostic.  `make BAKEVOL_OFF=1` reverts to the volume register.
+ifdef BAKEVOL_OFF
+EXTRA_DEFINES += -DROF_AUDIO_BAKEVOL=0
+endif
 CORE_CFLAGS   = -g -MP -MMD -m68000 -msoft-float $(OPT) -nostdlib \
                 -fno-tree-loop-distribution -ffunction-sections -fdata-sections \
                 -Wno-unused-function -Wno-unused-parameter -Wno-unused-variable \
