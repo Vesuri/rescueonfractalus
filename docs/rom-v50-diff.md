@@ -270,6 +270,16 @@ reasons this was worth doing beyond "5.0 sounds better":
   the drones were not silenced at all at station exit — they rang on until Standby's own audio init.
   5.0's fade writes each register absolutely, so every write goes through the bus.
 
+⚠ **One deliberate deviation: the fade starts from each channel's LIVE volume, not from `$A7`.**
+`station_audio` ramps the drones *up* over the scene (AUDC1's volume nibble 0..8 while
+`RTCLOK_MID >= $80` at `$1B7E`, AUDC2's 0..7 in phase 1 at `$1B93`), and START (`$D01F == 6`,
+`$1A0E`) branches straight to `attract_exit` — so a press before the ramp finishes found 5.0's fade
+opening LOUDER than what was playing, and the drone jumped UP before it faded. The port ramps each
+channel down from its own live AUDC (read back from `mem[$D201]`/`mem[$D203]`, which both backends
+mirror on every POKEY write) and carries its distortion nibble through unchanged — phase 3 plays
+AUDC2 at distortion 8, so forcing `$A0` would re-timbre it mid-fade. Identical to 5.0 once the drone
+has reached full volume.
+
 ## 5. Open items
 
 Recorded, not scheduled.
