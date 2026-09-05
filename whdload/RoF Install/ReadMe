@@ -36,6 +36,11 @@
 
  History:
  --------
+ version 0.95 (05.09.2026):
+ - fixed the whine heard while the engines spool up after launch
+ - fixed the loudest sounds playing slightly quiet
+ - fixed the title theme not restarting after a completed level
+
  version 0.94 (02.09.2026):
  - fixed colour seams and stale rings in the tunnel cinematic
  - faster tunnel and pilot approach rendering
