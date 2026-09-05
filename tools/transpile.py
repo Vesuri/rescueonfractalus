@@ -605,13 +605,24 @@ ROF_STATION_V50_TRACK = 'g_stationAudc3Mask = cpu.A;    /* v5.0 `STA $A2` (cart 
 # plain mem[] write, so on the Amiga it never reaches Paula at all and the drones ring on
 # into Standby.  5.0 ($8439) instead walks AUDC1+AUDC2 from $A7 down to $A0, one step per
 # frame, after zeroing AUDC3 — 8 frames, and every write goes through the bus.
+#
+# ⚠ The starting level is each channel's LIVE volume, not 5.0's fixed $A7.  The scene's
+# drones FADE IN (`station_audio` ramps AUDC1's volume 0..8 while RTCLOK_MID >= $80, then
+# AUDC2's 0..7 in phase 1), so a START press early in the scene still finds them quiet, and
+# a fade that opens at 7 makes the drone jump UP before it fades.  Ramping each channel down
+# from where it actually is keeps the fade monotonic and is identical to 5.0 once the drone
+# has reached full volume.  The distortion nibble is carried through unchanged for the same
+# reason: phase 3 plays AUDC2 at distortion 8, and forcing $A0 would re-timbre it mid-fade.
+# The live values come from mem[$D201]/mem[$D203] — bus_write mirrors every POKEY write there.
 ROF_STATION_V50_FADE = (
-    '{ /* v5.0 station_exit drone fade (cart $842E-$8447) */\n'
-    '      int _fv;\n'
+    '{ /* v5.0 station_exit drone fade (cart $842E-$8447), from the LIVE volumes */\n'
+    '      unsigned char _c1 = mem[0xD201], _c2 = mem[0xD203];\n'
     '      bus_write(0xD205, 0x00);\n'
-    '      for (_fv = 7; _fv >= 0; --_fv) {\n'
-    '          bus_write(0xD201, (unsigned char)(0xA0 | _fv));\n'
-    '          bus_write(0xD203, (unsigned char)(0xA0 | _fv));\n'
+    '      while ((_c1 & 0x0F) | (_c2 & 0x0F)) {\n'
+    '          if (_c1 & 0x0F) --_c1;\n'
+    '          if (_c2 & 0x0F) --_c2;\n'
+    '          bus_write(0xD201, _c1);\n'
+    '          bus_write(0xD203, _c2);\n'
     '          platform_tick_vbi(); platform_render_frame();   /* cart: JSR $A0D1, wait 1 jiffy */\n'
     '      } }')
 
