@@ -8,6 +8,14 @@
 # Run a DIFFERENT binary than out/RoF with $ROF_EXE — handy for A/B-ing two builds by
 # eye or ear without rebuilding between each look, e.g.
 #   ROF_EXE=RoF-asm ./run.sh          vs      ROF_EXE=RoF-cmixer ./run.sh
+#
+# Optional extra fs-uae args via $EXTRA_ARGS (same convention as diag_run.sh).  Raw WinUAE core
+# options take a `uae_` prefix and are passed straight to cfgfile_parse_option, which logs
+# `Set option <name> = "<value>"` — grep ~/.local/share/fs-uae/fs-uae.log to prove one took.
+# Audio knobs that matter here (fs-uae's A500 defaults hide artefacts):
+#   --uae_sound_interpol=none   default `anti`; `none` = the raw non-interpolated path
+#   --uae_sound_volcnt=true     default false; emulate Paula's volume-PWM raster
+#   --uae_sound_frequency=96000 default 44100
 set -euo pipefail
 cd "$(dirname "$0")"
 . "${FSUAE_COMMON:-$HOME/.local/share/amiga/fsuae_common.sh}"
@@ -20,6 +28,7 @@ EXE="${ROF_EXE:-out/RoF}"
 # `AMIGA_MODEL=A1200 ./run.sh` checks the port on a faster CPU — beam-timing races that the
 # slow A500 happens to land safely show up there.
 MODEL="${AMIGA_MODEL:-A500+}"
+EXTRA_ARGS="${EXTRA_ARGS:-}"
 [ -f "$EXE" ] || { echo "not found: $EXE  (build first: make, or set \$ROF_EXE)"; exit 1; }
 
 RUN=.run; DH0="$RUN/dh0"; DH1="$RUN/dh1"
@@ -56,4 +65,5 @@ exec "$FSUAE" \
   --joystick_port_0=none --joystick_port_1=none \
   --automatic_input_grab=0 --fullscreen=0 --window_width=720 --window_height=568 \
   --ntsc_mode=0 --state_dir="$RUN/state" \
-  --screenshots_output_dir="$SHOTS"
+  --screenshots_output_dir="$SHOTS" \
+  $EXTRA_ARGS
