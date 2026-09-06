@@ -14,7 +14,8 @@
 #        a fraction that moves with CPU speed (the user-reported "no sound / erratic / continuous").
 #
 # The same run also reports startup_init ($3FFA), the OTHER routine perFrameWork used to
-# double-drive: its per-rendered-frame mirror re-pushes the event-$14 range beep.
+# double-drive (its mirror re-pushed the event-$14 range beep).  Only the faithful driver is left,
+# so those two numbers are informational — they exist to catch a mirror being re-introduced.
 set width 0
 continue
 echo \n==== SIGINT ====\n
@@ -24,10 +25,8 @@ printf "sim ($5197)   ticks=%lu  reloads=%lu  -> ticks/blink=%lu (MUST be 15)\n"
   g_blinkTickSim, g_blinkRelSim, (g_blinkRelSim ? g_blinkTickSim/g_blinkRelSim : 0)
 printf "rendered frames that saw an ARMED timer=%lu (what a second driver would steal)\n", \
   g_blinkArmedFrames
-printf "startup_init ($3FFA) calls: faithful=%lu  perFrameWork mirror=%lu (want 0)\n", \
-  g_siFaith, g_ckSiNative
-printf "  event-$14 range-beep pushes: faithful=%lu  mirror=%lu (want 0)\n", \
-  g_siFaithPush, g_siNativePush
+printf "startup_init ($3FFA): faithful calls=%lu, event-$14 range-beep pushes=%lu\n", \
+  g_siFaith, g_siFaithPush
 printf "vbi=%u\n", g_vbiCount
 detach
 quit

@@ -20,19 +20,23 @@ mode4/modeD cells, run ~3×/game-frame in flight — the #1 flight cost) is GONE
 instrument's cells. Idle frames cost three byte reads. Flight-only cost: **~1662 → ~65 ticks/frame
 (~23×)**; ~15–30 of ~180 flight frames decode anything.
 
-Single-byte flags are atomic on the 68000, so writers on the VBI ISR (lock-on, dials) and the main
-thread (digits) need no `Disable()`/`Enable()` — an early Disable-in-ISR version WEDGED interrupt
+Single-byte flags are atomic on the 68000, so writers on the VBI ISR (lock-on, dials, digits) need
+no `Disable()`/`Enable()` — an early Disable-in-ISR version WEDGED interrupt
 delivery (game never auto-started); **do NOT reintroduce it**.
 
 Files: registry + decode in `RescueOnFractalus.cpp` (`decodeCockpitSpan`/`decodeCockpitFull`,
 `g_ck*` flags, `cockpitForceFull` one-time full repaint on scene entry). Writers in
-`rof_native_amiga.cpp` (digits/lock-on set `g_ckDigits`/`g_ckLockon` directly) and `rof_native.c`
+`rof_native_amiga.cpp` (lock-on sets `g_ckLockon` directly) and `rof_native.c`
 (dials via `platform_cockpit_dirty` → `PlatformAmiga::cockpitDirty` → `rof_cockpit_dial_dirty`,
 range-guarded $332D-$355D). `make validate FN=draw_object_column` passes (hook is a no-op on SDL).
 
 ## HOOKED writers (confirmed converted)
-- **Digits** `startup_init_native`: set `g_ckDigits`; render decodes the five 2×2 blocks
-  $33B4 / $3413 / $3445 / $3472 / $34A4 (+ bottom row at +$30) and the DL-stride pair $33DF/$33E0.
+- **Digits** `startup_init` (`rof_native.c`, flight VBI): `digit_block_dirty()` →
+  `platform_cockpit_dirty` → the per-cell dial registry, for the five 2×2 blocks
+  $33B4 / $3413 / $3445 / $3472 / $34A4 (+ bottom row at +$30); the DL-stride pair $33DF/$33E0 is
+  decoded at 50 Hz in the VBI by `flightScannerTick`.  ⚠ There is no digit registry and no
+  `startup_init_native` any more: a per-rendered-frame mirror in `perFrameWork` used to own both,
+  and it double-drove a routine that pushes the event-$14 range beep.
 - **Lock-on** `lock_on_indicator_tick_native`: set `g_ckLockon`; render decodes $3491-$3497.
 - **Dials (thrust #4 / dangerous-alt #5)** `draw_object_column`: bar cells come from the $4581
   column table (NOT a fixed span) → the dial keeps per-cell precision (`g_ckDialFlag[addr-$332D]`,

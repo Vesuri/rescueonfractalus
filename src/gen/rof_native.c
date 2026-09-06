@@ -5404,9 +5404,9 @@ void setup_initials_ptr(void) {
  * PLA reads the byte this PHA pushed — eliminating the PHA would diverge mem[$01FF] and the
  * pulled index).  Digit dests are fixed safe screen RAM.  Contract: mem[].
  *
- * ⚠ This runs in the flight VBI and shares the $0645/$0646/$0647 change caches with the Amiga's
- * startup_init_native (perFrameWork), so it is usually the one that CONSUMES a digit change — and
- * it writes the glyph cells through draw_glyph_2rows, which raises no dirty flag.  On the Amiga
+ * ⚠ On the Amiga this is the ONLY driver: it runs in the flight VBI at 50 Hz, and the routine is
+ * not idempotent (it pushes the event-$14 range beep), so nothing may call it a second time per
+ * frame.  It writes the glyph cells through draw_glyph_2rows, which raises no dirty flag.  On the Amiga
  * those cells only reach the display through the cockpit decode, so an unflagged write showed a
  * STALE digit (user-reported: the pilot-range readout #17 sometimes kept an old value) until some
  * unrelated writer happened to repaint the block.  digit_block_dirty() closes that: each rewritten

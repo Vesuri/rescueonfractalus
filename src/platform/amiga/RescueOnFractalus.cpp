@@ -38,7 +38,6 @@
 
 // Native handler bodies (rof_native_amiga.cpp).
 extern "C" void vbi_attract_timer_native(void);                  // $52D7: timer cascade
-extern "C" void startup_init_native(void);                      // $3FFA: cockpit digit update
 extern "C" void launch_anim_dispatch_native(void);              // $5367: ring ($0088) vs door scroll ($008A)
 extern "C" volatile uint8_t g_boostStarsDirty;                 // set by fill_region_2000; boost stars decode-on-change gate
 extern "C" volatile unsigned short g_starScrollGen;            // rof_native.c: bumped per scrolled star row
@@ -141,7 +140,6 @@ extern "C" void rof_hiscore_screen_dirty(unsigned short addr, unsigned char nCel
 // delivery, the keyboard ISR that starts the game included.  render() clears-then-decodes; a write
 // racing the clear is caught next frame.  Other instruments (status lights, scope, scanner) are static after the
 // scene-entry full paint until a writer is hooked — see docs/cockpit-render-plan.md "TODO".
-extern "C" { volatile unsigned char g_ckDigits = 0; }   // score/kills/quota digits + DL-stride (startup_init)
 extern "C" { volatile unsigned char g_ckLockon = 0; }   // lock-on indicator $3491-$3497 (any cell)
 extern "C" { volatile unsigned char g_ckDial   = 0; }   // thrust/danger-alt dial bars (draw_object_column)
 // The lock-on indicator is the ONE cockpit instrument that changes continuously in flight: its
@@ -162,18 +160,11 @@ extern "C" void rof_cockpit_lockon_dirty(unsigned char cellIdx)
     g_ckLockon = 1u;
 }
 
-// The five digit 2×2 blocks + the DL-stride pair, one flag each — the writer (startup_init_native)
-// knows exactly which block it rewrote, and measurement says exactly ONE changes per fire, so
-// decoding all 22 cells was ~5x the work.  Main-thread writer (perFrameWork) and main-thread
-// consumer (render), so no ISR race here; kept as bytes to match the lock-on/dial registries.
-static const int CK_DIGIT_N = 6;                      // 0-4 = the 2x2 blocks, 5 = $33DF/$33E0
-static volatile unsigned char g_ckDigitFlag[8] __attribute__((aligned(4))) = {};
-extern "C" void rof_cockpit_digit_dirty(unsigned char slot)
-{
-    if (slot >= (unsigned char)CK_DIGIT_N) return;
-    g_ckDigitFlag[slot] = 1u;
-    g_ckDigits = 1u;
-}
+// There is NO digit dirty registry any more.  The five cockpit digit 2×2 blocks used to be
+// flagged per block by a per-rendered-frame mirror of $3FFA in perFrameWork; that mirror is gone
+// (it double-drove the routine and re-pushed its range beep — see perFrameWork), and the faithful
+// startup_init() twin reports its rewritten cells through digit_block_dirty() ->
+// platform_cockpit_dirty -> the per-cell dial registry below, which decodes exactly those cells.
 // The two dial bars are the one instrument without a fixed cell span — their cells come from the
 // $4581 column table — so the dial alone needs per-cell precision (a fixed-box decode re-paints
 // dozens of static cells every time one bar cell moves, which measured ~4x worse).  Per-cell
@@ -199,10 +190,9 @@ extern "C" volatile unsigned long g_ckFullTicks, g_ckFullCount;  // decodeCockpi
 // Per-GROUP split of the cockpit scan (g_fCockpit lumps all three together, so "something decoded
 // on ~0.9 of iterations" cannot tell the 22-cell digit block from a 1-cell dial cell).  Counts =
 // how often each group fired; T = ticks inside it; g_ckDialCells = dial cells actually decoded.
-extern "C" { volatile unsigned long g_ckDigitFires = 0, g_ckLockFires = 0, g_ckDialFires = 0; }
-extern "C" { volatile unsigned long g_ckDigitT = 0, g_ckLockT = 0, g_ckDialT = 0, g_ckDialCells = 0; }
+extern "C" { volatile unsigned long g_ckLockFires = 0, g_ckDialFires = 0; }
+extern "C" { volatile unsigned long g_ckLockT = 0, g_ckDialT = 0, g_ckDialCells = 0; }
 extern "C" { volatile unsigned long g_ckLockCells = 0; }   // lock-on cells actually decoded (was always 7)
-extern "C" { volatile unsigned long g_ckDigitBlocks = 0; }  // digit blocks actually decoded (was always 6)
 extern "C" { volatile unsigned short g_ckFullVbi[4] = {0,0,0,0}; }       // g_vbiCount at each ckFull call
 // Boost-return probe: last-installed copper id (1=title 2=standby 3=planet 4=flight
 // 5=forward tunnel 6=doors 8=boost-handoff-hold 9=black EmptyCopperList 10=in-place wrap fade
@@ -353,6 +343,10 @@ extern "C" { volatile unsigned short g_joyRawJoy = 0, g_joyRawPot = 0; }
 //   reloaded to $0F (= one blink; only the $5197 driver also beeps).
 extern "C" { volatile unsigned long g_blinkTickSim = 0, g_blinkRelSim = 0; }
 extern "C" { volatile unsigned long g_blinkArmedFrames = 0; }
+// startup_init ($3FFA), the other routine perFrameWork used to double-drive: calls made by the one
+// remaining (faithful, flight-VBI) driver, and the event-$14 range-beep pushes they produced.  Both
+// exist to catch a per-rendered-frame mirror being re-introduced — the routine is NOT idempotent.
+extern "C" { volatile unsigned long g_siFaith = 0, g_siFaithPush = 0; }
 // Boot-cinematic skip verification (amiga/boot_fire.gdb; needs PROBES=1 SKIPBOOT=0, since PROBES
 // alone would skip the very scenes under test).  The vbl each cinematic HANDED OFF at, stamped off
 // the live VVBLKI so the skips are measured, not inferred from where a sample landed.
@@ -6295,8 +6289,18 @@ void RescueOnFractalus::perFrameWork()
     // the SFX sequencer selects (via $0091) into screen RAM $32B7 every frame.  We
     // don't re-copy it here; render() picks up the change by shadow-comparing $32B7.
 
-    if (mem[MEM_joystick_saved] != 0)            // $004A set when the game starts
-        startup_init_native();          // $3FFA: cockpit digit update
+    // ⚠ The cockpit digit refresh ($3FFA / startup_init) is NOT driven from here either, for the
+    // same reason as the blink above: the faithful twin runs from the flight VBI body ($4FF5),
+    // under the very same $004A gate, at 50 Hz.  A second call per RENDERED frame re-ran the whole
+    // routine at a CPU-speed-dependent rate, and $3FFA is not idempotent — it pushes the event-$14
+    // range-to-pilot beep whenever the range digit $0642 is 1 or 2 and ($0642 & $004B)==0, so the
+    // mirror re-pushed that beep inside a single $004B value ($004B is decremented once per VBI,
+    // right before the faithful call).  Measured: 787 mirror calls against 3531 faithful ones.
+    // The digit cells the twin rewrites reach the display through digit_block_dirty()
+    // (rof_native.c) -> platform_cockpit_dirty -> the per-cell dial registry, and the close-range
+    // blink cells $33DF/$33E0 are decoded at 50 Hz by flightScannerTick, so nothing here is owed a
+    // repaint.  Verified before removal: 0 rendered frames in a whole boot->flight run had the
+    // $004A gate set while the $4FF5 body was not the installed VVBLKI vector (blink_probe.gdb).
 
     if (rsEnergyIndicator) buildEnergyIndicatorSprite();
     // Canopy posts: constant graphic, decoded once from the real RLE source tables — shown
@@ -6949,42 +6953,18 @@ void RescueOnFractalus::render()
         g_ckFullCount++;
 #endif
         // The full paint covers every cell — drop all instrument flags + the per-cell registries.
-        g_ckDigits = g_ckLockon = g_ckDial = 0u;
+        g_ckLockon = g_ckDial = 0u;
         for (int i = 0; i < CK_DIAL_N; i++) g_ckDialFlag[i] = 0u;
-        for (int i = 0; i < 8; i++) g_ckLockFlag[i] = g_ckDigitFlag[i] = 0u;
+        for (int i = 0; i < 8; i++) g_ckLockFlag[i] = 0u;
 #ifdef ROF_FLIGHT_PROBE
         if (rsFlight) g_fCockpitScans++;
 #endif
     } else {
-        // Digits (#17-19) + DL-stride: 5 two-tall 2×2 blocks + the $33DF/$33E0 stride pair, one
-        // registry slot each — exactly one block changes per fire (measured), so decode only it.
-        if (g_ckDigits) {
-            g_ckDigits = 0u;
-#ifdef ROF_FLIGHT_PROBE
-            unsigned long _ckd0 = rof_subclock();
-#endif
-            static const uint16_t kDigit[5] = { 0x33B4u, 0x3413u, 0x3445u, 0x3472u, 0x34A4u };
-            for (int i = 0; i < 5; i++) {
-                if (!g_ckDigitFlag[i]) continue;
-                g_ckDigitFlag[i] = 0u;
-                decodeCockpitSpan(kDigit[i], 2u);                 // top row
-                decodeCockpitSpan((uint16_t)(kDigit[i] + 0x30u), 2u);  // bottom row (one DL row down)
-#ifdef ROF_FLIGHT_PROBE
-                g_ckDigitBlocks++;
-#endif
-            }
-            if (g_ckDigitFlag[5]) {
-                g_ckDigitFlag[5] = 0u;
-                decodeCockpitSpan(0x33DFu, 2u);                   // DL-stride control bytes
-#ifdef ROF_FLIGHT_PROBE
-                g_ckDigitBlocks++;
-#endif
-            }
-            any = true;
-#ifdef ROF_FLIGHT_PROBE
-            if (rsFlight) { g_ckDigitT += rof_subclock() - _ckd0; g_ckDigitFires++; }
-#endif
-        }
+        // Digits (#17-19) are decoded through the per-cell dial registry below: the faithful
+        // startup_init() twin flags each rewritten 2×2 block's four cells (digit_block_dirty), and
+        // the $33DF/$33E0 close-range blink pair is decoded at 50 Hz in the VBI by
+        // flightScannerTick.  The old per-block digit registry served the per-rendered-frame $3FFA
+        // mirror that no longer exists.
         // Lock-on indicator (#11): the 7 cells $3491-$3497.
         if (g_ckLockon) {
             g_ckLockon = 0u;

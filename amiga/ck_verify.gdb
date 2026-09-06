@@ -27,9 +27,9 @@ printf "=== level=%u  VVBLKI=$%02x%02x $3D=%02x  (start vbi=%u) ===\n", \
 define seg
   tbreak RescueOnFractalus::renderFrame if g_vbiCount >= $arg0
   continue
-  printf "vbi %5u painted %4u | ckVer %6lu BAD %4lu (lock %lu / digit %lu) raced %5lu | lockFires %5lu cells %6lu | digitFires %4lu blocks %5lu | $3D=%02x\n", \
+  printf "vbi %5u painted %4u | ckVer %6lu BAD %4lu (lock %lu / digit %lu) raced %5lu | lockFires %5lu cells %6lu | $3D=%02x\n", \
     g_vbiCount, g_fdCalls, g_ckVerCalls, g_ckVerBad, g_ckVerBadG[0], g_ckVerBadG[1], g_ckVerRaced, \
-    g_ckLockFires, g_ckLockCells, g_ckDigitFires, g_ckDigitBlocks, mem[0x3D]
+    g_ckLockFires, g_ckLockCells, mem[0x3D]
 end
 
 seg 2700
@@ -48,9 +48,8 @@ printf "  lock-on: %lu fires, %lu cells decoded (%lu.%02lu/fire, was 7 every fir
   g_ckLockFires, g_ckLockCells, \
   (g_ckLockFires ? g_ckLockCells/g_ckLockFires : 0), \
   (g_ckLockFires ? ((100*g_ckLockCells)/g_ckLockFires)%100 : 0)
-printf "  digits : %lu fires, %lu blocks decoded (%lu.%02lu/fire, was 6 every fire)\n", \
-  g_ckDigitFires, g_ckDigitBlocks, \
-  (g_ckDigitFires ? g_ckDigitBlocks/g_ckDigitFires : 0), \
-  (g_ckDigitFires ? ((100*g_ckDigitBlocks)/g_ckDigitFires)%100 : 0)
+# The digit group has no registry of its own any more (the $3FFA mirror that owned it is gone);
+# its cells ride the dial registry, and the group-1 BAD count above is what proves they are not
+# left stale.
 detach
 quit

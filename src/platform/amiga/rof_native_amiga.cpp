@@ -82,7 +82,6 @@ extern "C" void flush_paula(void);
 
 // Cockpit per-instrument dirty flags (defined in RescueOnFractalus.cpp): a writer raises the
 // flag for the instrument it changed and render() decodes only that instrument's cells (no scan).
-extern "C" volatile unsigned char g_ckDigits;   // score/kills/quota digits + DL-stride
 extern "C" volatile unsigned char g_ckLockon;   // lock-on indicator $3491-$3497
 
 // vbi_attract_timer_native: fragment of vbi_handler_standby @ $52D7 relevant to
@@ -102,112 +101,12 @@ extern "C" void vbi_attract_timer_native(void)
 // src/gen/rof_native.c), copying the SFX-selected block ($0091 → $5A9F/$5AB3) into screen
 // RAM $32B7-$32CA every frame.  render() picks up the alternation by shadow-comparing $32B7.
 
-// startup_init_native: direct translation of startup_init @ $3FFA.
-// Updates three cockpit digit displays based on mem[$0642], mem[$0641], mem[$0628].
-// Each digit is a 2×2 block of mode-4 chars from the $4AE3 glyph table (10 entries,
-// 4 bytes each: top-left, top-right, bottom-left, bottom-right).  Writes go to
-// (dest+0), (dest+1), (dest+$30), (dest+$31) — the +$30 skips one mode-4 row
-// (40 bytes) plus 8 column positions.  Only called when mem[$004A] != 0 (active game).
-//
-// Digit 1: mem[$0642] lower nibble   → dest = $33B4
-// Digit 2: mem[$0641] upper nibble   → dest = $3413 (tens)
-//           mem[$0641] lower nibble  → dest = $3445 (units)
-// Digit 3: mem[$0628] upper nibble   → dest = $3472 (tens)
-//           mem[$0628] lower nibble  → dest = $34A4 (units)
-//           mem[$0628] is OR'd with $80 when mem[$062B]!=0 and !(0x0C&mem[$004B])
-//
-// Additionally writes mem[$33DF]/$33E0 (display-list stride control) as $9E/$9D
-// when mem[$0642] is 1 or 2 and mem[$004B] passes the BIT test; otherwise $1E/$1D.
-#ifdef ROF_FLIGHT_PROBE
-// How many of the five 2×2 digit blocks actually change per g_ckDigits fire, and how often the
-// $33DF/$33E0 stride pair alone raises the flag.  Measured: exactly ONE block per fire,
-// zero stride flips — which is why render() now decodes per block instead of all five.
-extern "C" { volatile unsigned long g_ckWdigCalls = 0, g_ckStrideFlips = 0, g_ckSiNative = 0; }
-extern "C" { volatile unsigned long g_siFaith = 0, g_siFaithPush = 0, g_siNativePush = 0; }
-#endif
-// Which of the six digit groups changed (0-4 = the 2×2 blocks $33B4/$3413/$3445/$3472/$34A4,
-// 5 = the $33DF/$33E0 DL-stride pair).  Defined in RescueOnFractalus.cpp next to the decoder.
-extern "C" void rof_cockpit_digit_dirty(unsigned char slot);
-
-extern "C" void startup_init_native(void)
-{
-#ifdef ROF_FLIGHT_PROBE
-    g_ckSiNative++;
-#endif
-    // helper: write a 2×2 digit block from table $4AE3[idx*4] to dest, OR'ing flag.  `slot` is the
-    // block's index in the decoder's registry — only the block that changed gets re-decoded.
-    auto writeDigit = [](uint16_t dest, uint8_t idx, uint8_t flag, uint8_t slot) {
-#ifdef ROF_FLIGHT_PROBE
-        g_ckWdigCalls++;
-#endif
-        uint16_t t = (uint16_t)(0x4AE3u + (uint16_t)(idx << 2u));
-        mem[dest + 0u]     = mem[t + 0u] | flag;
-        mem[dest + 1u]     = mem[t + 1u] | flag;
-        mem[dest + 0x30u]  = mem[t + 2u] | flag;
-        mem[dest + 0x31u]  = mem[t + 3u] | flag;
-        rof_cockpit_digit_dirty(slot);   // this block changed → render decodes its 4 cells
-    };
-
-    mem[MEM_bar_col_threshold] = 0u;
-    uint8_t y = 0x1Eu;
-    uint8_t a = mem[MEM_range_to_pilot];
-
-    if (a >= 1u && a < 3u && (a & mem[MEM_collision_flags]) == 0u) {
-        if (mem[MEM_flight_mode_state] != 0u) {
-            // ring_push_marked(X=$14): push (a|$80) into altitude ring buffer at $0719
-            uint8_t ptr = mem[MEM_alt_ring_head];
-            if (ptr >= 0x20u) ptr = 0x1Fu;
-            // $4016 LDX #$14; $4018 JSR $5815 (ring_push_marked): push X|$80 = $94 = event
-            // $14 (range-to-pilot beep) — a CONSTANT, NOT the range value `a`.  The old
-            // `a | 0x80` used the $0642 range digit as the event id, so range 1 pushed $81
-            // (event $01, poly4 = the "wrong sound") and range 2 pushed $82.
-#ifdef ROF_FLIGHT_PROBE
-            g_siNativePush++;
-#endif
-            mem[0x0719u + ptr] = 0x14u | 0x80u;
-            mem[MEM_alt_ring_head] = (ptr == 0u) ? 0x1Fu : (uint8_t)(ptr - 1u);
-        }
-        y = 0x9Eu;
-    }
-    // $33DF/$33E0 are in the scanned mode-4 region; only dirty when the value actually
-    // changes (this runs every call, so an unconditional dirty would defeat the skip).
-    if (mem[0x33DFu] != y) {
-        mem[0x33DFu] = y; mem[0x33E0u] = (uint8_t)(y - 1u); rof_cockpit_digit_dirty(5u);
-#ifdef ROF_FLIGHT_PROBE
-        g_ckStrideFlips++;
-#endif
-    }
-
-    // Digit 1: lower nibble of mem[$0642], change-detected against mem[$0647]
-    if (a != mem[MEM_digit_cache_647]) {
-        mem[MEM_digit_cache_647] = a;
-        writeDigit(0x33B4u, (uint8_t)(a & 0x0Fu), 0u, 0u);
-    }
-
-    // Digit 2: BCD byte mem[$0641], upper nibble → $3413, lower nibble → $3445
-    a = mem[MEM_placed_item_count_bcd];
-    if (a != mem[MEM_shield_or_damage]) {
-        mem[MEM_shield_or_damage] = a;
-        uint8_t hi = (uint8_t)(a >> 4u);  // upper nibble (BCD tens)
-        uint8_t lo = (uint8_t)(a & 0x0Fu);                   // lower nibble (BCD units)
-        writeDigit(0x3413u, hi, 0u, 1u);
-        writeDigit(0x3445u, lo, 0u, 2u);
-    }
-
-    // Digit 3: BCD byte mem[$0628] with optional $80 flag
-    uint8_t bf = 0u;
-    if (mem[0x062Bu] != 0u && (0x0Cu & mem[MEM_collision_flags]) == 0u)
-        bf = 0x80u;
-    mem[MEM_bar_col_threshold] = bf;
-    a = mem[MEM_score_bcd];
-    if ((a | bf) != mem[MEM_digit_cache_646]) {
-        mem[MEM_digit_cache_646] = a | bf;
-        uint8_t hi = (uint8_t)(((a >> 2u) & 0x3Cu) >> 2u);
-        uint8_t lo = (uint8_t)(a & 0x0Fu);
-        writeDigit(0x3472u, hi, bf, 3u);
-        writeDigit(0x34A4u, lo, bf, 4u);
-    }
-}
+// startup_init ($3FFA, the cockpit digit refresh) has NO Amiga-side copy on purpose.  The faithful
+// twin in rof_native.c runs it from the flight VBI body ($4FF5) at 50 Hz under the $004A gate.  A
+// second call per RENDERED frame (there used to be one, from perFrameWork) re-ran a routine that is
+// NOT idempotent: it pushes the event-$14 range-to-pilot beep whenever the range digit $0642 is 1
+// or 2 and ($0642 & $004B)==0, and $004B only changes once per VBI, so every extra call inside one
+// $004B value re-pushed the beep.  Don't add one back.
 
 // The lock-on indicator animation ($4229 and its cluster) is now a validated native twin
 // in rof_native.c (lock_on_indicator_dispatch / lock_on_indicator_tick / _step / _write_cell /
