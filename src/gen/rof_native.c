@@ -5426,10 +5426,16 @@ void startup_init(void) {
     LDA(range_to_pilot);
     uint8_t v = cpu.A;
     int skip = (v < 0x01) || (v >= 0x03) || ((v & collision_flags) != 0);
+#if defined(ROF_PLATFORM_AMIGA) && defined(ROF_FLIGHT_PROBE)
+    { extern volatile unsigned long g_siFaith; g_siFaith++; }
+#endif
     if (!skip) {
         PHA();
         if (flight_mode_state != 0x00) {            /* LDA $0072; CMP #0; BEQ skips ring_push */
             cpu.X = 0x14;
+#if defined(ROF_PLATFORM_AMIGA) && defined(ROF_FLIGHT_PROBE)
+            { extern volatile unsigned long g_siFaithPush; g_siFaithPush++; }
+#endif
             ring_push_marked();
         }
         PLA();
@@ -11754,7 +11760,16 @@ void vbi_handler_flight(void) {
             }
             at = BLINK;
         }
-        if (at == BLINK) { update_blink_timer_006e(); at = KEYWIN; }
+        if (at == BLINK) {
+#if defined(ROF_PLATFORM_AMIGA) && defined(ROF_FLIGHT_PROBE)
+            { extern volatile unsigned long g_blinkTickSim, g_blinkRelSim;
+              const uint8_t t0 = blink_timer;
+              update_blink_timer_006e();
+              if (t0) { g_blinkTickSim++; if (blink_timer == 0x0F) g_blinkRelSim++; } }
+#else
+            update_blink_timer_006e();
+#endif
+            at = KEYWIN; }
         if (at == KEYWIN) {
             /* The in-flight keyboard-command window: on the Atari a POKEY keyboard/BREAK IRQ
              * fires in the 1-instruction CLI gap and leaves the keycode (or $80=BREAK) in X;

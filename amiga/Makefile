@@ -546,6 +546,13 @@ endif
 # so a headless run keeps flying instead of ending in the game-over sequence.  Implied by
 # COMBAT=1, which would otherwise be shot down in ~30 s of emulated time.  Also useful on its
 # own for any long headless flight measurement.  OFF by default.
+# `make LOW_ENERGY=1 PROBES=1` + amiga/blink_probe.gdb — pin the energy bar inside the critical
+# band so the low-energy warning (flash + beep) is armed for a whole headless run.  Diagnostic
+# only; it also disarms the energy-out death cinematic.
+ifdef LOW_ENERGY
+EXTRA_DEFINES += -DROF_LOW_ENERGY
+endif
+
 ifdef INVULNERABLE
 EXTRA_DEFINES += -DROF_INVULNERABLE
 endif

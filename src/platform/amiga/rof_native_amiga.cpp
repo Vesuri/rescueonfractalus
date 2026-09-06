@@ -123,6 +123,7 @@ extern "C" void vbi_attract_timer_native(void)
 // $33DF/$33E0 stride pair alone raises the flag.  Measured: exactly ONE block per fire,
 // zero stride flips — which is why render() now decodes per block instead of all five.
 extern "C" { volatile unsigned long g_ckWdigCalls = 0, g_ckStrideFlips = 0, g_ckSiNative = 0; }
+extern "C" { volatile unsigned long g_siFaith = 0, g_siFaithPush = 0, g_siNativePush = 0; }
 #endif
 // Which of the six digit groups changed (0-4 = the 2×2 blocks $33B4/$3413/$3445/$3472/$34A4,
 // 5 = the $33DF/$33E0 DL-stride pair).  Defined in RescueOnFractalus.cpp next to the decoder.
@@ -160,6 +161,9 @@ extern "C" void startup_init_native(void)
             // $14 (range-to-pilot beep) — a CONSTANT, NOT the range value `a`.  The old
             // `a | 0x80` used the $0642 range digit as the event id, so range 1 pushed $81
             // (event $01, poly4 = the "wrong sound") and range 2 pushed $82.
+#ifdef ROF_FLIGHT_PROBE
+            g_siNativePush++;
+#endif
             mem[0x0719u + ptr] = 0x14u | 0x80u;
             mem[MEM_alt_ring_head] = (ptr == 0u) ? 0x1Fu : (uint8_t)(ptr - 1u);
         }
@@ -213,22 +217,12 @@ extern "C" void startup_init_native(void)
 // paths); standby now calls the shared native lock_on_indicator_tick() below.
 extern "C" void lock_on_indicator_tick(void);   // $4229 (rof_native.c)
 
-// update_indicator_blink_native: direct translation of update_blink_timer_006e
-// @ $4131, called via vbi_handler_flight ($4FF5) during Standby.
-// Counts down mem[$006E]; on expiry reloads to $0F and sets mem[$00DE]=$4E (ON);
-// when counter drops below $0A sets mem[$00DE]=$46 (OFF).
-// Tail calls to vobj_* (in-game object animation) are skipped for Standby.
-extern "C" void update_indicator_blink_native(void)
-{
-    if (mem[MEM_blink_timer] < 1) return;   // CMP #1 / BCC: skip if already 0
-    mem[MEM_blink_timer]--;
-    if (mem[MEM_blink_timer] == 0) {
-        mem[MEM_blink_timer] = 0x0F;        // reload timer
-        mem[MEM_indicator_light_state] = 0x4E;        // lights ON
-    } else if (mem[MEM_blink_timer] < 0x0A) {
-        mem[MEM_indicator_light_state] = 0x46;        // lights OFF (last 9 ticks of cycle)
-    }
-}
+// $4131 (update_blink_timer_006e) has NO Amiga-side copy on purpose.  It is the low-energy
+// warning: one tick both toggles the gauge colour $00DE and pushes the warning beep (event $1C),
+// and the binary calls it from exactly one place — the flight main loop's BLINK point ($5197),
+// which the faithful twin in rof_native.c already runs.  A second driver at the rendered-frame
+// rate (there used to be one, called from perFrameWork) steals ticks from blink_timer $006E and
+// silently desynchronises the flash from the beep, worse the faster the CPU.  Don't add one back.
 
 // --- Tunnel-ring cycle + door scroll: the $5367 dispatcher body -------------
 //

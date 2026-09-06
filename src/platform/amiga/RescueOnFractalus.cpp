@@ -38,7 +38,6 @@
 
 // Native handler bodies (rof_native_amiga.cpp).
 extern "C" void vbi_attract_timer_native(void);                  // $52D7: timer cascade
-extern "C" void update_indicator_blink_native(void);           // $4131: cockpit blink
 extern "C" void startup_init_native(void);                      // $3FFA: cockpit digit update
 extern "C" void launch_anim_dispatch_native(void);              // $5367: ring ($0088) vs door scroll ($008A)
 extern "C" volatile uint8_t g_boostStarsDirty;                 // set by fill_region_2000; boost stars decode-on-change gate
@@ -346,6 +345,14 @@ extern "C" { volatile unsigned short g_seSprCalls = 0; }
 extern "C" { volatile unsigned char  g_joyPortaStuck = 0, g_joyPortaLast = 0xFF; }
 extern "C" { volatile unsigned long  g_joyB2Edges = 0, g_joyTrigLow = 0, g_joyPolls = 0; }
 extern "C" { volatile unsigned short g_joyRawJoy = 0, g_joyRawPot = 0; }
+// Low-energy warning ($4131 / update_blink_timer_006e): who is DRIVING blink_timer $006E?
+// It must be exactly one driver — the flight main loop's BLINK point ($5197) — because that same
+// tick both toggles the gauge colour $00DE and pushes the warning beep (event $1C).  A second
+// consumer at a different rate steals ticks, so the flash and the beep drift apart.
+//   *Tick*  = a call that decremented an ARMED timer;  *Rel* = a call that saw it reach 0 and
+//   reloaded to $0F (= one blink; only the $5197 driver also beeps).
+extern "C" { volatile unsigned long g_blinkTickSim = 0, g_blinkRelSim = 0; }
+extern "C" { volatile unsigned long g_blinkArmedFrames = 0; }
 // Boot-cinematic skip verification (amiga/boot_fire.gdb; needs PROBES=1 SKIPBOOT=0, since PROBES
 // alone would skip the very scenes under test).  The vbl each cinematic HANDED OFF at, stamped off
 // the live VVBLKI so the skips are measured, not inferred from where a sample landed.
@@ -6260,7 +6267,21 @@ void RescueOnFractalus::deriveRenderSignals()
 // per renderFrame.
 void RescueOnFractalus::perFrameWork()
 {
-    update_indicator_blink_native();    // $4131: cockpit blink lights (flight-VBI routine)
+    // ⚠ The low-energy warning ($4131 / update_blink_timer_006e) is NOT driven from here.
+    // $4131 has exactly ONE caller in the binary — the flight main loop's BLINK point ($5197) —
+    // and that single tick does two things at once: it toggles the gauge colour $00DE ($4E/$46)
+    // AND pushes the warning beep (event $1C).  A second consumer of blink_timer $006E at the
+    // per-rendered-frame rate steals ticks, so the flash runs at the render rate while only the
+    // blinks the $5197 driver happens to win are audible — the flash and the beep drift apart by
+    // a ratio that moves with CPU speed.  The timer is armed only by the energy bar's own
+    // vobj_advance ($41C1), i.e. only in flight, where $5197 already runs, so there is nothing
+    // for a per-frame driver to do.  amiga/blink_probe.gdb is the regression check.
+#ifdef ROF_FLIGHT_PROBE
+    // Observation only, never a driver: how many rendered frames saw an ARMED timer = how many
+    // ticks a re-introduced per-frame driver would steal.  Keeps blink_probe.gdb honest about
+    // whether its window actually covered armed flight.
+    if (mem[MEM_blink_timer]) g_blinkArmedFrames++;
+#endif
 
     // NOTE: the $62E7 SFX-reinit gate ($0090) is NOT serviced here.  The faithful
     // boot_standby_launch_driver twin already does it at L_62e7 (reset_audctl_flags $70E7),

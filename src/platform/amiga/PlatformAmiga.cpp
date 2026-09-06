@@ -2979,6 +2979,19 @@ static uint32_t vbiHandler()
 #endif
 #endif
 
+#ifdef ROF_LOW_ENERGY
+    // `make LOW_ENERGY=1 PROBES=1` — pin the energy gauge just inside the CRITICAL band so the
+    // low-energy warning (the $00DE flash + its event-$1C beep, both driven by $4131) is armed for
+    // the whole run.  Index into the bar is ($DC - $062F) >> 5, and vobj_advance ($41C1) only arms
+    // blink_timer $006E when that index steps onto 6, so the bar must sit at $062F <= $1C.  The
+    // death cinematic ($063D, armed the moment the bar hits 0) is disarmed alongside, exactly as
+    // ROF_INVULNERABLE does it.
+    if ((mem[0x0222u] | (mem[0x0223u] << 8)) == 0x4FF5u) {
+        if (mem[0x062Fu] < 0x18u || mem[0x062Fu] > 0x1Cu) mem[0x062Fu] = 0x1Cu;
+        mem[0x063Du] = 0;
+    }
+#endif
+
 #ifdef ROF_INVULNERABLE
     // Debug / benchmark toggle (`make INVULNERABLE=1`): never die in flight.
     //
