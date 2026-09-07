@@ -371,6 +371,23 @@
 	Back: Climb
 
 
+ Gamepad:
+
+ A CD32 controller in port 1 puts every flight command on a button, so you
+ need not reach for the keyboard while you fly. Its stick works exactly like
+ the joystick above, and the pad must be plugged in before you start the
+ game.
+
+ Red Button = Launch AMB Torpedo
+
+	Blue: Land / Launch
+	Green: Air Lock
+	Yellow: Systems
+	Forward (right shoulder): Increase Thrust
+	Reverse (left shoulder): Decrease Thrust
+	Play/Pause: Boosters in flight, starts the game before it
+
+
  The Good Stuff
  --------------
 
