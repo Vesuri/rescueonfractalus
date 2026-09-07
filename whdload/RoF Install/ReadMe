@@ -36,6 +36,15 @@
 
  History:
  --------
+ version 0.96 (07.09.2026):
+ - CD32 controller support: every flight command is on a pad button
+ - fixed the low energy warning beep drifting out of sync with the blinking
+   gauge, and going silent for a while
+ - fixed the pilot in range beep repeating erratically, more so on fast CPUs
+ - the high score file is no longer written to a write protected disk, and a
+   read only disk no longer pops up a system requester
+ - fixed the space station sounds jumping in volume as the scene fades out
+
  version 0.95 (05.09.2026):
  - fixed the whine heard while the engines spool up after launch
  - fixed the loudest sounds playing slightly quiet
