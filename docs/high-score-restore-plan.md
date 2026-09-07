@@ -99,6 +99,12 @@ The factory contents of all of that are in `src/rof_hiscore_factory.h` — see W
   spelling that resolves sensibly everywhere: the CLI's current directory for a Shell run,
   `slv_CurrentDir` under WHDLoad. Where that lands is still the unresolved `slv_CurrentDir` vs
   `#sub-dir "data"` loose end — `docs/whdload-slave.md:259-265`.
+- **Both file paths run with requesters OFF** (`NoRequesters` in `PlatformAmiga.cpp`: `pr_WindowPtr
+  = -1` for the duration, restored after). dos.library otherwise pops "Volume … is write protected"
+  / "Please insert volume …" and `Wait()`s there — on a bootable, write-protected floppy the exit
+  flush did exactly that, on the screen the player had just been handed back (user-reported). With
+  the bracket, an unwritable medium simply fails the `Open()` and the block stays in RAM, which is
+  already what `hiscoreSave` returning false means everywhere else.
 - Still untested: the FASTMEMSIZE cost of holding `dos.library` open (`docs/whdload-slave.md:125`
   lists dos/filesystem structures as an untuned `?`).
 

@@ -24,6 +24,7 @@
 #include <proto/graphics.h>
 #include <proto/cia.h>
 #include <proto/dos.h>   // the ONLY OS file I/O in the port: the high-score file (hiscoreLoad/Save)
+#include <dos/dosextens.h>       // struct Process, for pr_WindowPtr (requester suppression)
 #include <exec/interrupts.h>
 #include <exec/execbase.h>
 #include "../../cpu/m68k_math.h"
@@ -3502,6 +3503,29 @@ static uint8_t s_hiscoreFile[256];
 static bool    s_hiscoreFileValid = false;   // the ctor read a full 256-byte block
 static bool    s_hiscoreWritable  = false;   // the OS is ours again — writes may go out
 
+// dos.library pops a system requester ("Volume ... is write protected", "Please insert volume ...")
+// when a file operation fails on removable or read-only media, and it Wait()s there until someone
+// answers.  This port has exactly one reason to touch a file and no reason at all to ask the player
+// about it: a high-score file that cannot be read or written is simply a session that keeps the
+// factory table / loses its scores.  A Process' pr_WindowPtr of -1 turns every such requester into
+// an immediate failure return, which is precisely the behaviour we want — so both file paths run
+// inside this bracket.  (Reported: a bootable, write-protected floppy made the game try the write
+// anyway and put a requester on a screen the player had just come back from.)
+struct NoRequesters {
+    struct Process* pr;
+    APTR            saved;
+    NoRequesters() : pr(0), saved(0) {
+        struct Task* t = FindTask(0);
+        // Only a Process has pr_WindowPtr; a plain Task (nothing DOS started) must be left alone.
+        if (t && t->tc_Node.ln_Type == NT_PROCESS) {
+            pr = (struct Process*)t;
+            saved = pr->pr_WindowPtr;
+            pr->pr_WindowPtr = (APTR)-1;
+        }
+    }
+    ~NoRequesters() { if (pr) pr->pr_WindowPtr = saved; }
+};
+
 // Read the saved block, before the display/interrupt takeover.  A missing or short file is not
 // an error: rof_hiscore_init keeps the factory table in that case.
 static void hiscoreFileRead()
@@ -3513,6 +3537,7 @@ static void hiscoreFileRead()
         return;
     }
     if (!DOSBase) return;
+    NoRequesters noReq;                 // a missing file/volume must fail, not ask
     BPTR fh = Open((STRPTR)kHiScoreFile, MODE_OLDFILE);
     if (!fh) return;
     LONG n = Read(fh, s_hiscoreFile, 256);
@@ -3544,6 +3569,7 @@ bool PlatformAmiga::hiscoreSave(const uint8_t* blk)
     }
 
     if (!s_hiscoreWritable || !DOSBase) return false;   // mid-run: decline, stay dirty
+    NoRequesters noReq;                                 // write-protected medium: fail, don't ask
     BPTR fh = Open((STRPTR)kHiScoreFile, MODE_NEWFILE);
     if (!fh) return false;                              // read-only medium: keep it in RAM
     LONG n = Write(fh, (APTR)s_hiscoreFile, 256);
