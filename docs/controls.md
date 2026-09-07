@@ -196,8 +196,8 @@ port or a plain joystick produces. Without it a non-CD32 port reads as "everythi
 |---|---|---|---|
 | **RED** | RED — *Select* on a CD32 | Fire (Launch AMB Torpedo) | TRIG0 `$D010`, a LEVEL like the fire button |
 | **BLUE** | BLUE — *Stop* | **Land / Launch** | the `L` command key ($00) — the `s_pendingFlightKey` edge button 2 uses |
-| **GREEN** | GREEN — *Shuffle* | **Systems** | the `S` command key ($3e) |
-| **YELLOW** | YELLOW — *Repeat* | **Air Lock** | the `A` command key ($3f) |
+| **GREEN** | GREEN — *Shuffle* | **Air Lock** | the `A` command key ($3f) |
+| **YELLOW** | YELLOW — *Repeat* | **Systems** | the `S` command key ($3e) |
 | **FORWARD** | charcoal FORWARD (right shoulder) | **Increase Thrust** (Y4) | the `=`/`+` command key ($07) |
 | **REVERSE** | charcoal REVERSE (left shoulder) | **Decrease Thrust** (Y5) | the `-` command key ($06) |
 | **PLAY** | grey PLAY/Pause | **Boosters** in flight; **START / launch the ship** outside it | the `B` command key ($15) / CONSOL `$D01F` bit 0 |

@@ -2243,7 +2243,7 @@ static volatile bool s_joyBtn2Prev = false;
 extern "C" unsigned short rof_cd32_read(void);
 
 // Button bits as the read returns them (bit SET = pressed).  The map is docs/controls.md's:
-// RED = the trigger, BLUE = Land/Launch, GREEN = Systems, YELLOW = Air Lock, the shoulders =
+// RED = the trigger, BLUE = Land/Launch, GREEN = Air Lock, YELLOW = Systems, the shoulders =
 // thrust +/-, PLAY = Boosters in flight and START outside it.
 static const uint16_t kPadBlue    = 0x0200u;
 static const uint16_t kPadRed     = 0x0100u;
@@ -2305,8 +2305,8 @@ static void pollCd32Pad()
     s_joyTrig0 = (w & kPadRed) ? 0x00u : 0x01u;                // RED = TRIG0, a LEVEL like fire
 
     if (pressed & kPadBlue)    s_pendingFlightKey = 0x00u;     // Atari KBCODE L -> Land / Launch
-    if (pressed & kPadGreen)   s_pendingFlightKey = 0x3Eu;     // S -> Systems
-    if (pressed & kPadYellow)  s_pendingFlightKey = 0x3Fu;     // A -> Air Lock
+    if (pressed & kPadGreen)   s_pendingFlightKey = 0x3Fu;     // A -> Air Lock
+    if (pressed & kPadYellow)  s_pendingFlightKey = 0x3Eu;     // S -> Systems
     if (pressed & kPadForward) s_pendingFlightKey = 0x07u;     // = -> Increase Thrust
     if (pressed & kPadReverse) s_pendingFlightKey = 0x06u;     // - -> Decrease Thrust
 
