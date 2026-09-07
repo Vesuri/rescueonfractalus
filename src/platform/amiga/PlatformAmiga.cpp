@@ -2234,6 +2234,160 @@ static const uint8_t kRawRShift    = 0x61;
 //   button 2   -> "the second fire button will land or launch the ship" = the L command key.
 static volatile bool s_joyBtn2Prev = false;
 
+// ---- CD32 gamepad, port 1 (QoL divergence, same class as the LOGO_START cinematic skip) -----
+// A 7-button CD32 pad puts every in-flight command on a button.  Its stick is an ordinary
+// joystick (JOY1DAT, decoded above), but the buttons come off a bit-banged shift register that
+// takes over BOTH pins the plain-joystick path reads as buttons — pin 6 (fire) becomes our clock
+// and pin 9 (button 2) the pad's serial data — so the two paths are mutually exclusive, chosen by
+// s_cd32Present.  The protocol, and why it must stay asm, is in Cd32PadAssembler.s.
+extern "C" unsigned short rof_cd32_read(void);
+
+// Button bits as the read returns them (bit SET = pressed).  The map is docs/controls.md's:
+// RED = the trigger, BLUE = Land/Launch, GREEN = Systems, YELLOW = Air Lock, the shoulders =
+// thrust +/-, PLAY = Boosters in flight and START outside it.
+static const uint16_t kPadBlue    = 0x0200u;
+static const uint16_t kPadRed     = 0x0100u;
+static const uint16_t kPadYellow  = 0x0080u;
+static const uint16_t kPadGreen   = 0x0040u;
+static const uint16_t kPadForward = 0x0020u;
+static const uint16_t kPadReverse = 0x0010u;
+static const uint16_t kPadPlay    = 0x0008u;
+
+// Presence: the two marker bits must have shifted in LOW, and the seven buttons must not all read
+// pressed at once.  An empty port and a plain joystick both produce exactly the rejected patterns
+// (a plain stick leaves DATRY high throughout, so the whole word reads 0 and fails the markers) —
+// without this check a non-CD32 port reads as "everything held".
+static inline bool cd32Valid(uint16_t w)
+{
+    return (w & 0x0003u) == 0x0003u && (w & 0x03F8u) != 0x03F8u;
+}
+
+// Latched ONCE, early, and never re-probed after that: the read costs 8 raster lines with
+// interrupts off, and it lands inside the vblank ISR where overrun silently drops a displayed
+// frame — so with no pad attached pollJoystick() must stay the four register reads it has always
+// been.  A pad plugged in after boot is not seen until a restart (accepted).
+static volatile bool     s_cd32Present = false;
+static volatile uint16_t s_cd32Prev    = 0;      // last button word, for the press EDGES
+// The detection WINDOW, in vblanks, and its state.  Detection is spread over frames rather than
+// taken from one burst at boot because Commodore's own CD32 developer notes (ADCD 2.1,
+// CD32_SUPPORT/NOTES/CATS_CD32_NOTES, "First ReadJoyPort - may miss special buttons") report that
+// the first reads of a game controller can come back wrong, and recommend a couple of reads with a
+// Delay(10) — 200 ms — between them before the state is trusted.  A burst of three back-to-back
+// reads could therefore agree on garbage, or all fail, and latch the wrong answer for the whole
+// session.  Sampling every 8th vblank puts 160 ms between reads, close to that Delay(10), and the
+// window keeps retrying so a pad that only answers once warm is still found.
+static const uint16_t    kCd32Window  = 128;     // ~2.5 s, and the Logo alone runs ~280 frames
+static volatile uint16_t s_cd32Probes = 0;       // vblanks of detection window left
+static volatile uint16_t s_cd32Last   = 0;       // previous accepted sample's button bits
+static volatile uint8_t  s_cd32Streak = 0;       // agreeing valid samples so far
+
+// The five command buttons are one-shot EDGES, not levels, for the same reason button 2 is:
+// event_sequence_dispatcher takes a one-shot event id, so a held button would re-issue its command
+// every frame.  Thrust +/- included — the Atari's own thrust keys are per-press steps.  Delivered
+// through s_pendingFlightKey, the very path the matching command KEY uses.
+static void pollCd32Pad()
+{
+    // Interrupts OFF across the read.  Being in the VERTB ISR (level 3) already masks the level-2
+    // keyboard interrupt, but NOT levels 4-6 (audio/EXTER), and one of those landing mid-read would
+    // stretch a bit gap far past the ~1.4 us the delays are calibrated for — the pad's shift
+    // register can reload on a long enough gap, which would corrupt the rest of the word.
+    Disable();
+    const uint16_t pad = rof_cd32_read();
+    Enable();
+    // A garbage read (pad unplugged mid-session, or a marginal one) reports everything released
+    // rather than un-latching: detection is a boot decision, and a stuck-pressed frame would fire
+    // a command.  Keep s_cd32Prev in step so the next good read still sees true edges.
+    const uint16_t w = cd32Valid(pad) ? pad : 0u;
+    const uint16_t pressed = (uint16_t)(w & ~s_cd32Prev);      // this frame's press edges
+    const uint16_t released = (uint16_t)(~w & s_cd32Prev);
+    s_cd32Prev = w;
+
+    s_joyTrig0 = (w & kPadRed) ? 0x00u : 0x01u;                // RED = TRIG0, a LEVEL like fire
+
+    if (pressed & kPadBlue)    s_pendingFlightKey = 0x00u;     // Atari KBCODE L -> Land / Launch
+    if (pressed & kPadGreen)   s_pendingFlightKey = 0x3Eu;     // S -> Systems
+    if (pressed & kPadYellow)  s_pendingFlightKey = 0x3Fu;     // A -> Air Lock
+    if (pressed & kPadForward) s_pendingFlightKey = 0x07u;     // = -> Increase Thrust
+    if (pressed & kPadReverse) s_pendingFlightKey = 0x06u;     // - -> Decrease Thrust
+
+    // PLAY is the one context-dependent button: Boosters in flight, START everywhere else.  The
+    // split already exists in the port — keyboardStickLive() (VVBLKI == the flight VBI $4FF5) is
+    // the same gate the keyboard's stick emulation uses.  Outside flight it drives CONSOL bit0 on
+    // its own EDGES, not as a level, so a held PLAY cannot fight a held F1 every frame; there
+    // read_console_trig_delta $5A78 already turns CONSOL bit0 into "start the game".
+    if (keyboardStickLive()) {
+        if (pressed & kPadPlay) s_pendingFlightKey = 0x15u;    // B -> Boosters
+    } else {
+        if (pressed & kPadPlay)  { s_consolState &= (uint8_t)~0x01u; mem[kConsol] = s_consolState; }
+        if (released & kPadPlay) { s_consolState |= 0x01u;           mem[kConsol] = s_consolState; }
+    }
+#ifdef ROF_FLIGHT_PROBE
+    { extern volatile unsigned short g_cd32Word; extern volatile unsigned long g_cd32Reads, g_cd32Bad;
+      g_cd32Word = (unsigned short)pad; g_cd32Reads++; if (!cd32Valid(pad)) g_cd32Bad++; }
+#endif
+}
+
+// Detection, in two parts.  The boot half runs before the cinematics: it takes ONE read and
+// throws it away, which is exactly what the CATS note above says the early reads are good for,
+// and opens the window that the per-vblank half then samples.  Three hazards it handles:
+//   - ⚠ one bad read must not decide the session.  Latching needs three spaced samples that are
+//     valid AND agree on the button bits; anything else resets the streak, and the window keeps
+//     trying, so the failure mode is "found late", never "mis-detected forever".
+//   - ⚠ fire may legitimately be HELD here (LOGO_START invites holding the trigger through the
+//     boot cinematics), and a plain joystick's held button grounds the pin we drive as the clock.
+//     The presence check rejects that into the joystick path: a plain stick leaves DATRY high
+//     throughout, so the word reads 0 and the marker bits fail.
+//   - the read must not be interleaved (pollCd32Pad's Disable() bracket, same reason).
+static void cd32Detect()
+{
+    Disable();
+    (void)rof_cd32_read();          // warm-up read, deliberately discarded
+    Enable();
+    s_cd32Probes = kCd32Window;
+    s_cd32Streak = 0;
+#ifdef ROF_CD32_FORCE
+    s_cd32Present = true;           // make CD32_FORCE=1 — cost the read headlessly (no emulated pad)
+    s_cd32Probes  = 0;
+#endif
+#ifdef ROF_FLIGHT_PROBE
+    { extern volatile unsigned char g_cd32Present;   // so a FORCEd latch reports as one
+      g_cd32Present = (unsigned char)s_cd32Present; }
+#endif
+}
+
+// One step of the detection window, from the vblank ISR.  Runs at most 16 times, only while no pad
+// has been found, and never again once one has — so this costs nothing in a keyboard/joystick
+// session beyond the first ~2.5 s.
+static void cd32DetectStep()
+{
+    --s_cd32Probes;
+    if (g_vbiCount & 7u) return;                 // one sample per 8 vblanks = ~160 ms apart
+    Disable();
+    const uint16_t w = rof_cd32_read();
+    Enable();
+    const uint16_t b = (uint16_t)(w & 0x03F8u);  // the seven button bits, markers excluded
+    if (!cd32Valid(w)) {
+        s_cd32Streak = 0;
+    } else if (s_cd32Streak && b == s_cd32Last) {
+        if (++s_cd32Streak >= 3) {
+            s_cd32Prev    = b;                   // a button already held is not a press EDGE
+            s_cd32Present = true;
+            s_cd32Probes  = 0;
+        }
+    } else {
+        s_cd32Streak = 1;
+        s_cd32Last   = b;
+    }
+#ifdef ROF_FLIGHT_PROBE
+    { extern volatile unsigned char g_cd32Present, g_cd32Streak;
+      extern volatile unsigned short g_cd32Probe[3], g_cd32Latch;
+      g_cd32Probe[0] = g_cd32Probe[1]; g_cd32Probe[1] = g_cd32Probe[2];
+      g_cd32Probe[2] = (unsigned short)w;        // rolling: the last three samples
+      g_cd32Streak = (unsigned char)s_cd32Streak;
+      if (s_cd32Present && !g_cd32Present) { g_cd32Present = 1; g_cd32Latch = (unsigned short)g_vbiCount; } }
+#endif
+}
+
 static void pollJoystick()
 {
     // JOY1DAT is a pair of QUADRATURE COUNTERS, not four direction bits: each axis' two switches
@@ -2248,19 +2402,41 @@ static void pollJoystick()
     if (y1)      porta &= (uint8_t)~0x04u;          // left    -> bit 2 (arrow-LEFT)
     if (x1)      porta &= (uint8_t)~0x08u;          // right   -> bit 3 (arrow-RIGHT)
     s_joyPorta = porta;
-    // Button 1: CIA-A PRA bit 7 = port 1 fire, active-low (bit 6 is port 0, which
-    // AmigaHardware::isLeftMouseButtonPressed already uses for the mouse).
-    s_joyTrig0 = (*ciaapraPointer & CIAF_GAMEPORT1) ? 0x01u : 0x00u;
-    // Button 2: POTINP bit 14 (DATRY) = port 1 pin 9, active-low — the same technique
-    // isRightMouseButtonPressed uses on port 0's bit 10, so no POTGO setup is introduced here.
-    // ⚠ PRESS EDGE, not level: event_sequence_dispatcher takes a ONE-SHOT event id, so a held
-    // button would re-issue Land every single frame.  Delivered through the same
-    // s_pendingFlightKey path the L key uses (the $519c CLI window consumes it in flight; out of
-    // flight the $5398 window consumes it harmlessly as an attract-timeout reset).
-    const bool b2   = !(*potinpPointer & (1u << 14));
-    const bool edge = b2 && !s_joyBtn2Prev;
-    if (edge) s_pendingFlightKey = 0x00u;                   // Atari KBCODE L -> dispatcher Y0 = Land
-    s_joyBtn2Prev = b2;
+    // The buttons come from ONE of two mutually exclusive paths.  A detected CD32 pad owns both
+    // button pins (it clocks on pin 6 and reads its data off pin 9), so the plain-joystick reads
+    // below would only see the protocol's own signalling; with no pad the pad read never happens
+    // and this stays exactly the four register reads it always was.
+    bool edge = false;
+    if (!s_cd32Present && s_cd32Probes) cd32DetectStep();   // the first ~2.5 s only
+    if (s_cd32Present) {
+#ifdef ROF_FLIGHT_PROBE
+        // The read is ~10 bits x ~12 CIA accesses with interrupts masked, and it lands INSIDE the
+        // vblank ISR, where going over one frame silently drops a displayed frame.  Bracket it with
+        // the real beam so the cost is measured in raster lines, never assumed (cd32_probe.gdb).
+        { extern volatile unsigned short g_cd32Lines, g_cd32LinesMax;   // rof_beam_line: declared above
+          const unsigned short l0 = rof_beam_line();
+          pollCd32Pad();
+          const unsigned short l1 = rof_beam_line();
+          g_cd32Lines = (unsigned short)(l1 - l0);
+          if (g_cd32Lines > g_cd32LinesMax) g_cd32LinesMax = g_cd32Lines; }
+#else
+        pollCd32Pad();
+#endif
+    } else {
+        // Button 1: CIA-A PRA bit 7 = port 1 fire, active-low (bit 6 is port 0, which
+        // AmigaHardware::isLeftMouseButtonPressed already uses for the mouse).
+        s_joyTrig0 = (*ciaapraPointer & CIAF_GAMEPORT1) ? 0x01u : 0x00u;
+        // Button 2: POTINP bit 14 (DATRY) = port 1 pin 9, active-low — the same technique
+        // isRightMouseButtonPressed uses on port 0's bit 10, so no POTGO setup is introduced here.
+        // ⚠ PRESS EDGE, not level: event_sequence_dispatcher takes a ONE-SHOT event id, so a held
+        // button would re-issue Land every single frame.  Delivered through the same
+        // s_pendingFlightKey path the L key uses (the $519c CLI window consumes it in flight; out of
+        // flight the $5398 window consumes it harmlessly as an attract-timeout reset).
+        const bool b2 = !(*potinpPointer & (1u << 14));
+        edge = b2 && !s_joyBtn2Prev;
+        if (edge) s_pendingFlightKey = 0x00u;               // Atari KBCODE L -> dispatcher Y0 = Land
+        s_joyBtn2Prev = b2;
+    }
 #ifdef ROF_FORCE_BOOT_FIRE
     // `make PROBES=1 SKIPBOOT=0 FORCE_BOOT_FIRE=1` + amiga/boot_fire.gdb: hold the fire button over
     // vbi 100..160 — mid-Logo (it runs ~280 frames) and on into the Station — so both boot-cinematic
@@ -3738,6 +3914,7 @@ void PlatformAmiga::run()
     *dmaconPointer = (uint16_t)(DMAF_SETCLR | DMAF_MASTER | DMAF_COPPER | DMAF_RASTER | DMAF_SPRITE);
 
     keyboardInit();       // F1 = START for the launch cinematic (also arms SP in CIA-A's ICR mask)
+    cd32Detect();         // latch "CD32 pad in port 1?" for the session, BEFORE the cinematics
 #ifdef ROF_PORTS_TAKEOVER
     portsTakeover();      // opt-in, measured NOT worth it — see the portsHandler comment
 #endif

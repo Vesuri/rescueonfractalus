@@ -347,6 +347,16 @@ extern "C" { volatile unsigned long g_blinkArmedFrames = 0; }
 // remaining (faithful, flight-VBI) driver, and the event-$14 range-beep pushes they produced.  Both
 // exist to catch a per-rendered-frame mirror being re-introduced — the routine is NOT idempotent.
 extern "C" { volatile unsigned long g_siFaith = 0, g_siFaithPush = 0; }
+// CD32 pad (amiga/cd32_probe.gdb).  Present/Latch = whether detection latched and on which vbl,
+// Probe[] the last three detection samples and Streak how many agreed — the answer stands for the
+// whole session, so a mis-detect must be visible.  Word is the last per-frame read, Bad counts the
+// ones that failed the presence check mid-session.  Lines/LinesMax cost the read in raster lines:
+// it runs inside the vblank ISR, where overrunning the frame silently drops a DISPLAYED frame, so
+// the cost is measured and never assumed.
+extern "C" { volatile unsigned char  g_cd32Present = 0, g_cd32Streak = 0; }
+extern "C" { volatile unsigned short g_cd32Probe[3] = { 0, 0, 0 }, g_cd32Latch = 0; }
+extern "C" { volatile unsigned short g_cd32Word = 0, g_cd32Lines = 0, g_cd32LinesMax = 0; }
+extern "C" { volatile unsigned long  g_cd32Reads = 0, g_cd32Bad = 0; }
 // Boot-cinematic skip verification (amiga/boot_fire.gdb; needs PROBES=1 SKIPBOOT=0, since PROBES
 // alone would skip the very scenes under test).  The vbl each cinematic HANDED OFF at, stamped off
 // the live VVBLKI so the skips are measured, not inferred from where a sample landed.

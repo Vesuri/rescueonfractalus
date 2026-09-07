@@ -101,6 +101,20 @@ FRAMEWORK_ASM_SRCS := \
     $(AMIGA_SRC)/framework/BitmapAssembler.s \
     $(AMIGA_SRC)/framework/CopperListAssembler.s
 
+# The CD32 gamepad's 7-button serial read (port 1).  Not a perf twin and not optional: the
+# protocol IS its inter-bit CIA delays, which only asm can be trusted to keep (see the file's
+# header).  Compiled unconditionally — the pad is DETECTED once at boot, so with no pad attached
+# this code never runs and pollJoystick() stays the four register reads it always was.
+FRAMEWORK_ASM_SRCS += $(AMIGA_SRC)/Cd32PadAssembler.s
+
+# `make CD32_FORCE=1 PROBES=1` + amiga/cd32_probe.gdb — pretend a pad was detected even when the
+# boot probe says otherwise, and time the read inside the vblank ISR in raster lines.  This is the
+# only way to cost the read headlessly (FS-UAE without a configured CD32 pad fails the presence
+# check), and the cost matters because it lands in the ISR, where overrun silently drops a frame.
+ifdef CD32_FORCE
+EXTRA_DEFINES += -DROF_CD32_FORCE
+endif
+
 # Hand-written m68k twin of the flight terrain rasterizer (asm-migration-plan Phase 2).
 # ON by default; build with `make RASTER_C=1` to fall back to the clean-C oracle
 # (terrain_column_rasterize_core_c) — used for the headless render-diff A/B.
