@@ -46,7 +46,8 @@ range-guarded $332D-$355D). `make validate FN=draw_object_column` passes (hook i
 ## Status lights #14/#15/#16 — HOOKED 2026-07-13 (commits 9b5ece3, 0358cf6)
 The four cockpit status-light cells (init'd by `game_sub_4606` to the OFF glyphs $B4/$B5/$B6/$B4) toggle
 $34/$35/$36 (ON — lit pixel COLPF2 light $2C) <-> $B4/$B5/$B6 (OFF — same glyph, bit7 set → COLPF3 dark $26);
-`decodeCockpitSpan` maps bit7→plane3 so ON=pen3=$2C, OFF=pen7=$26:
+`decodeCockpitSpan` maps that value-3 pixel to PF1 code 2 for ON and code 3 when bit7 is set, so
+ON uses COLOR02=$2C and OFF uses COLOR03=$26:
 - **$3355 = Shields (#14)** — confirmed (shields.a8s $34).
 - **$3388 = Air Lock (#16)** — confirmed (airlock.a8s $34; row1 col43, NON-adjacent to shields).
 - **$3356/$3357 = Mother Ship (#15)** pair — hooked, UNVERIFIED (never seen ON; verify by flying near it,

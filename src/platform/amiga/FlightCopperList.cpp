@@ -27,6 +27,8 @@ static const uint16_t kBandLine     = kTerrainLine + kTerrainHeight;  // = 172 (
 static const uint16_t kCockpitLine  = kTerrainLine + kViewportHeight; // = 180 (dashboard start)
 static const uint16_t kCenterY      = kDisplayTop + kH / 2;           // = 0x98
 static const uint16_t kBPLCON0_3P   = (uint16_t)((3 << PLNCNTSHFT) | USE_BPLCON3);
+static const uint16_t kBPLCON0_3P_DUAL = (uint16_t)(kBPLCON0_3P | DBLPF);
+static const uint16_t kBPLCON2_COCKPIT = 0x0044; // PF2 stencil > sprites > PF1, PF2 > PF1
 
 // Sprite colour-register addresses (custom-chip offsets).  Flight sprite layout:
 //   pair 0/1 (ch0 leftPost, ch1 leftTriangle)   -> COLOR17 pen01 (windscreen-frame grey)
@@ -124,16 +126,11 @@ static const uint16_t kColor26 = 0x1B4;   // pair 4/5 pen 10 (wide-object segmen
 // its init value 0x09 (sprites behind the playfield) throughout — no per-band flip needed.
 #define BAND_BLOCK_WORDS      4
 #define INDEX_BAND_BLOCK      (INDEX_VP_LINEDOUBLE + 3 * (kTerrainHeight - 1) + 1)  // band color04-07 (4)
-// ONE WAIT at the viewport→dashboard boundary: line 179, hpos 0xC0 (measured on FS-UAE — the sweet
-// spot).  The moves after it are ordered: the 8 dashboard sprite re-points (AH ch0/1, scope ch3,
-// ship ch7) FIRST, then the 6 cockpit bitmap pointers.  0xC0 lands the sprite re-points in line
-// 179's tail (safe: SPRxPT pokes don't touch bitplanes, and each reused channel's line-179 DATA was
-// already fetched at the line start, so this only affects the next (line-180) post-VSTOP CONTROL
-// re-fetch = the arming fetch — which MUST read the new pointer; a re-point after it never arms,
-// the altimeter-ship/scope disappearing bug when they sat at line 181).  The 8 sprite moves then
-// carry the bitmap-ptr moves into their window: after the band's DDFSTOP (so re-pointing BPLxPT
-// can't corrupt line 179's right edge = garbage bitplane) yet before line 180's DDFSTRT (so no
-// left-edge glitch).  0xB0 was too early (bitmaps before DDFSTOP), 0xE0 too late (overrun DDFSTRT).
+// ONE WAIT at the viewport→dashboard boundary: line 179, hpos 0xC0 (measured on FS-UAE — the
+// sweet spot).  Dashboard sprite re-points MUST come first: besides meeting their line-180 arming
+// deadline, those MOVEs delay the six cockpit BPLxPT writes until after line 179's DDFSTOP but still
+// before line 180's DDFSTRT.  Starting BPLxPT directly at 0xC0 corrupts the dashboard horizontally;
+// a separate later WAIT misses the fetch deadline.  Keep this sequence contiguous.
 #define INDEX_COCKPIT_WAIT    (INDEX_VP_LINEDOUBLE + 3 * (kViewportHeight - 1) + BAND_BLOCK_WORDS)
 #define INDEX_AH_SPR          (INDEX_COCKPIT_WAIT + 1)      // SPR0PT/SPR1PT -> ahLeft/ahRight (4)
 #define INDEX_SCOPE_SPR       (INDEX_AH_SPR + 4)            // SPR3PT -> Targeting-Scope image (2)
@@ -144,15 +141,15 @@ static const uint16_t kColor26 = 0x1B4;   // pair 4/5 pen 10 (wide-object segmen
 // INDEX_SCANNER_COL) — red-brown $26 (COLPM2), independent of the scope's pen11 (COLOR23) on ch3.
 #define INDEX_SCANNER_SPR     (INDEX_ALTIM_SHIP_SPR + 2)    // SPR2PT -> Long-Range-Scanner dot (2)
 #define INDEX_COCKPIT_BPL     (INDEX_SCANNER_SPR + 2)       // cockpit 3bp ptrs, yOffset 8 (6)
-#define INDEX_COCKPIT_BPLCON0 (INDEX_COCKPIT_BPL + 6)      // bplcon0 3P (1)
+#define INDEX_COCKPIT_BPLCON0 (INDEX_COCKPIT_BPL + 6)       // bplcon0 3P dual-PF (1)
 #define INDEX_COCKPIT_MOD     (INDEX_COCKPIT_BPLCON0 + 1)  // bpl1mod,bpl2mod (2)
-#define INDEX_COCKPIT_PAL     (INDEX_COCKPIT_MOD + 2)      // color00..07 (8)
-// AH colour + priority (line 180, AFTER the frame's last line 179 → safe; COLOR17 is unused on
-// the band rows 172-179, which use COLOR18).  COLOR17 = $26 brown (AH pen01); BPLCON2 PFxP=0
-// puts sprite pair 0 (ch0/1 = AH) BEHIND the playfield so the bitmap dial frame shows in front
-// and the brown shows only through the dial's value-0 centre (mirrors the Atari PRIOR=$04).
-#define INDEX_AH_COL          (INDEX_COCKPIT_PAL + 8)      // COLOR17 = $26 brown (1)
-#define INDEX_AH_BPLCON2      (INDEX_AH_COL + 1)           // BPLCON2 PFxP=0 (sprites behind playfield) (1)
+#define INDEX_COCKPIT_PAL     (INDEX_COCKPIT_MOD + 2)      // color00..03 + color09 (5)
+// AH colours + dashboard dual-playfield priority.  Sprite word A is the moving brown fill
+// (COLOR17); word B contains the cockpit's static salmon details, so COLOR18 and COLOR19 are both
+// salmon and remain visible whether word A is clear or set.  PF2's light-grey stencil stays above.
+#define INDEX_AH_COL          (INDEX_COCKPIT_PAL + 5)      // COLOR17 = $26 brown (1)
+#define INDEX_AH_DETAIL_COL   (INDEX_AH_COL + 1)           // COLOR18/19 = salmon detail (2)
+#define INDEX_AH_BPLCON2      (INDEX_AH_DETAIL_COL + 2)    // BPLCON2 PF2 > sprites > PF1 (1)
 // Long Range Scanner dot colour: COLOR22 (pair 2/3 pen10) = red-brown $26.  COLOR22 is the band
 // TRIANGLE grey (set near the top, INDEX_SPRITE_COL+4) for scanlines 172-179; re-point it to red
 // here (line 180, after the band) so the ch2 scanner dot in the dashboard reads red.  Nothing else
@@ -164,18 +161,18 @@ static const uint16_t kColor26 = 0x1B4;   // pair 4/5 pen 10 (wide-object segmen
 // uses pen 01 above line 180, and the altimeter starts at 188, so the handover is unconstrained
 // (unlike an SPRxPT re-point it is a plain colour poke, with no arming deadline).
 #define INDEX_ALTIM_COL_DASH  (INDEX_SCANNER_COL + 1)      // COLOR29 = altimeter terrain bar (1)
-// Cockpit bitmap starts at kCockpitLine=180 (yOffset 8 skips the $350D band).  COLBK splits
-// match the launch cockpit: baked color00=$00 covers the black divider strip (180-188); then
-// dark-blue $90 dashboard instrument backgrounds (182-251); then black floor (252+).
+// Cockpit bitmap starts at kCockpitLine=180 (yOffset 8 skips the $350D band).  PF1 COLOR01
+// carries the Atari COLBK splits: black divider, dark-blue dashboard, then black floor.
+// COLOR00 remains the dashboard's dark grey throughout, including the unblanked OCS border.
 #define INDEX_DASH_BLUE_WAIT  (INDEX_ALTIM_COL_DASH + 1)   // WAIT(kCockpitLine+2-1 = 181) (1)
-#define INDEX_DASH_BLUE       (INDEX_DASH_BLUE_WAIT + 1)   // color00 = $90 dark blue (dashboard) (1)
+#define INDEX_DASH_BLUE       (INDEX_DASH_BLUE_WAIT + 1)   // color01 = $90 dark blue (dashboard) (1)
 #define INDEX_FLOOR_WAIT_BASE (INDEX_DASH_BLUE + 1)
 // The gauge sprites (altimeter pair 6/7, energy pair 4/5) are fixed 56-row SOLID sprites whose Y
 // tracks the bar value (setY), so a short/high bar overflows below the dial into the black floor.
-// On the one line color00 switches to black (the floor), also switch the gauge bar colours
+// On the one line PF1's COLBK pen switches to black (the floor), also switch the gauge bar colours
 // (COLOR25 energy, COLOR29/30 altimeter) to black, so the overflow vanishes into the floor.
 #define INDEX_FLOOR_WAIT      (INDEX_FLOOR_WAIT_BASE)      // WAIT(kCockpitLine+72-1 = 251) (1)
-#define INDEX_FLOOR           (INDEX_FLOOR_WAIT + 1)       // color00 = black (floor) (1)
+#define INDEX_FLOOR           (INDEX_FLOOR_WAIT + 1)       // color01 = bottom COLBK (1)
 #define INDEX_FLOOR_ALTIM     (INDEX_FLOOR + 1)            // COLOR29 = black (altimeter terrain overflow) (1)
 #define INDEX_FLOOR_SHIP      (INDEX_FLOOR_ALTIM + 1)      // COLOR30 = black (altimeter ship overflow) (1)
 #define INDEX_FLOOR_ENERGY    (INDEX_FLOOR_SHIP + 1)       // COLOR25 = black (energy bar overflow) (1)
@@ -222,7 +219,8 @@ static const uint16_t kColor26 = 0x1B4;   // pair 4/5 pen 10 (wide-object segmen
 // ch5/ch6 have 8 lines of slack (180 -> 188); ch1's triangle must land exactly on 172, so its
 // extension stops at VSTOP 171 and seg 3 simply loses the viewport's last scanline.
 // ch1 keeps flLeftTri, so the left pylon (pair 0 pen 01) and the left corner triangle (pen 10)
-// still share pair 0's palette — the extension only borrows the pair's unused pen 11 (COLOR19).
+// still share pair 0's palette — the extension borrows pen 11 (COLOR19) in the viewport; the AH
+// detail overlay reuses that pen after the line-180 dashboard colour split.
 //
 // The dashboard re-points (channels reused viewport→dashboard) are table-driven — setDashboardSprite()
 // looks the channel up here, so adding an element (e.g. the crosshair on ch5/6) is a one-row change.
@@ -256,9 +254,9 @@ void FlightCopperList::buildLayout(const Bitmap& title, const Bitmap& terrain, c
                  /*holdAndModify*/false, kCenterY);
     // PFxP=4: ALL sprites in front of the playfield in the viewport — the windscreen frame
     // (pairs 0/1 = ch0-3) AND the player laser shot (pair 2 = ch4) sit over the terrain.  (The
-    // gauges on ch5/6/7 live in the dashboard, where INDEX_AH_BPLCON2 flips PFxP=0 = all sprites
-    // BEHIND the playfield, so the dial-frame bitmaps show in front of the bars.)  Was PFxP=2,
-    // which left pair 2 (the laser) behind the terrain.
+    // gauges on ch5/6/7 live in the dashboard, where INDEX_AH_BPLCON2 instead sandwiches every
+    // sprite between PF2's bezel stencil and PF1's fills.)  Was PFxP=2, which left pair 2
+    // (the laser) behind the terrain.
     d[INDEX_BPLCON2] = copperMove(bplcon2, (uint16_t)((4u << 3) | 4u));
     setTitlePalette(0, 0, 0);                  // seeded; caller refreshes
     showBitmap(INDEX_TITLE_BPL, title);        // 2bp interleaved = 4 ptr moves
@@ -333,8 +331,7 @@ void FlightCopperList::buildLayout(const Bitmap& title, const Bitmap& terrain, c
         d[idx++] = copperMove(bpl2mod, v);
     }
 
-    // ---- cockpit region: one WAIT on line 179 @ hpos 0xC0 (see the INDEX_COCKPIT_WAIT comment) ----
-    // sprite re-points FIRST, then the cockpit bitmap ptrs (skip the 8 modeD frame scanlines via yOffset=8).
+    // ---- cockpit region: one contiguous line-179 handoff (see INDEX_COCKPIT_WAIT comment) ----
     d[INDEX_COCKPIT_WAIT] = copperWait(kCockpitLine - 1, 0xC0);
     setDashboardSprite(0, ahLeft);              // SPR0PT -> ahLeft  (left 16px of the 32px dial)
     setDashboardSprite(1, ahRight);             // SPR1PT -> ahRight (right 16px)
@@ -343,33 +340,31 @@ void FlightCopperList::buildLayout(const Bitmap& title, const Bitmap& terrain, c
     setDashboardSprite(2, nullSprite);          // SPR2PT -> Long-Range-Scanner dot (real ptr set on force)
     d[INDEX_SCANNER_COL] = copperMove(kColor22, atariToOCS(0x26));  // scanner dot red-brown (COLPM2 $26)
     showBitmap(INDEX_COCKPIT_BPL, cockpit, 1, 1, 0, 8);   // yOffset 8 scanlines: skip the $350D band rows
-    d[INDEX_COCKPIT_BPLCON0] = copperMove(bplcon0, kBPLCON0_3P);
+    d[INDEX_COCKPIT_BPLCON0] = copperMove(bplcon0, kBPLCON0_3P_DUAL);
     d[INDEX_COCKPIT_MOD]     = copperMove(bpl1mod, 80);
     d[INDEX_COCKPIT_MOD + 1] = copperMove(bpl2mod, 80);
-    // Cockpit palette: cockpit DLIs reload hardcoded immediates; constant at fade 16.
-    d[INDEX_COCKPIT_PAL + 0] = copperMove(color00, atariToOCS(0x00));
-    d[INDEX_COCKPIT_PAL + 1] = copperMove(color01, atariToOCS(0x04));
-    d[INDEX_COCKPIT_PAL + 2] = copperMove(color02, atariToOCS(0x06));
-    d[INDEX_COCKPIT_PAL + 3] = copperMove(color03, atariToOCS(0x2C));
-    d[INDEX_COCKPIT_PAL + 4] = copperMove(color04, atariToOCS(0x00));
-    d[INDEX_COCKPIT_PAL + 5] = copperMove(color05, atariToOCS(0x04));
-    d[INDEX_COCKPIT_PAL + 6] = copperMove(color06, atariToOCS(0x06));
-    d[INDEX_COCKPIT_PAL + 7] = copperMove(color07, atariToOCS(0x26));
+    // Dual-PF dashboard palette.  PF1 (COLOR01-03) is behind the sprites; PF2's sole
+    // visible pen (COLOR09) is the light-grey stencil in front.  COLOR00 is dark grey.
+    d[INDEX_COCKPIT_PAL + 0] = copperMove(color00, atariToOCS(0x04));
+    d[INDEX_COCKPIT_PAL + 1] = copperMove(color01, atariToOCS(0x00)); // divider/bottom COLBK
+    d[INDEX_COCKPIT_PAL + 2] = copperMove(color02, atariToOCS(0x2C));
+    d[INDEX_COCKPIT_PAL + 3] = copperMove(color03, atariToOCS(0x26));
+    d[INDEX_COCKPIT_PAL + 4] = copperMove(color09, atariToOCS(0x06));
 
-    // AH ground-fill colour + priority (line 180, after the frame): COLOR17 = $26 red-brown
-    // (the AH sprites use pen 01), and BPLCON2 PFxP=0 so sprite pair 0 (ch0/1 = AH) sits BEHIND
-    // the playfield — the bitmap dial frame stays in front, brown shows through the value-0 centre.
-    d[INDEX_AH_COL]     = copperMove(color17, atariToOCS(0x26));
-    d[INDEX_AH_BPLCON2] = copperMove(bplcon2, (uint16_t)((0u << 3) | 0u));
+    // AH ground-fill + baked detail colours, then dual-PF priority (line 180, after the frame).
+    d[INDEX_AH_COL]            = copperMove(color17, atariToOCS(0x26));
+    d[INDEX_AH_DETAIL_COL]     = copperMove(kColor18, atariToOCS(0x2C));
+    d[INDEX_AH_DETAIL_COL + 1] = copperMove(kColor19, atariToOCS(0x2C));
+    d[INDEX_AH_BPLCON2] = copperMove(bplcon2, kBPLCON2_COCKPIT);
 
     // Dashboard instrument backgrounds = dark blue COLBK $90 (Amiga 182-251); floor black (252+).
-    // Only COLBK (color00) changes; baked color00=$00 above covers the divider strip (180-188).
+    // COLBK is PF1 COLOR01 here; COLOR00 stays dark grey for the dashboard and OCS border.
     d[INDEX_DASH_BLUE_WAIT] = copperWait(kCockpitLine + 2 - 1, 0xE0);
-    d[INDEX_DASH_BLUE]      = copperMove(color00, atariToOCS(0x90));
+    d[INDEX_DASH_BLUE]      = copperMove(color01, atariToOCS(0x90));
     // (ch3 scope + ch7 altimeter-ship SPR re-points now live in the line-180 boundary group above,
     // with the AH re-points — deferring them to line 181 here disarmed the channels.  See INDEX_AH_SPR.)
     d[INDEX_FLOOR_WAIT]  = copperWait(kCockpitLine + 72 - 1, 0xE0);
-    d[INDEX_FLOOR]        = copperMove(color00, atariToOCS(0x00));  // floor background → black
+    d[INDEX_FLOOR]        = copperMove(color01, atariToOCS(0x00));  // PF1 background → black
     d[INDEX_FLOOR_ALTIM]  = copperMove(kColor29, 0x000);   // altimeter terrain pen01 → black (hide overflow)
     d[INDEX_FLOOR_SHIP]   = copperMove(kColor30, 0x000);   // altimeter ship   pen10 → black (hide overflow)
     d[INDEX_FLOOR_ENERGY] = copperMove(kColor25, 0x000);   // energy bar       pen01 → black (hide overflow)
@@ -390,22 +385,23 @@ void FlightCopperList::setBandPalette(uint16_t grey)
     data_[INDEX_BAND_BLOCK + 3] = copperMove(color07, grey);
 }
 
-void FlightCopperList::setCockpitPalette(uint16_t c0, uint16_t c1, uint16_t c2, uint16_t c3,
-                                         uint16_t c4, uint16_t c5, uint16_t c6, uint16_t c7)
+void FlightCopperList::setCockpitPalette(uint16_t darkGrey, uint16_t bottomBg,
+                                         uint16_t brightDetail, uint16_t darkDetail,
+                                         uint16_t lightGrey)
 {
-    data_[INDEX_COCKPIT_PAL + 0] = copperMove(color00, c0);
-    data_[INDEX_COCKPIT_PAL + 1] = copperMove(color01, c1);
-    data_[INDEX_COCKPIT_PAL + 2] = copperMove(color02, c2);
-    data_[INDEX_COCKPIT_PAL + 3] = copperMove(color03, c3);
-    data_[INDEX_COCKPIT_PAL + 4] = copperMove(color04, c4);
-    data_[INDEX_COCKPIT_PAL + 5] = copperMove(color05, c5);
-    data_[INDEX_COCKPIT_PAL + 6] = copperMove(color06, c6);
-    data_[INDEX_COCKPIT_PAL + 7] = copperMove(color07, c7);
+    data_[INDEX_COCKPIT_PAL + 0] = copperMove(color00, darkGrey);
+    data_[INDEX_COCKPIT_PAL + 1] = copperMove(color01, bottomBg);
+    data_[INDEX_COCKPIT_PAL + 2] = copperMove(color02, brightDetail);
+    data_[INDEX_COCKPIT_PAL + 3] = copperMove(color03, darkDetail);
+    data_[INDEX_COCKPIT_PAL + 4] = copperMove(color09, lightGrey);
+    data_[INDEX_AH_DETAIL_COL]     = copperMove(kColor18, brightDetail);
+    data_[INDEX_AH_DETAIL_COL + 1] = copperMove(kColor19, brightDetail);
+    data_[INDEX_FLOOR]            = copperMove(color01, bottomBg);
 }
 
 void FlightCopperList::setDashBg(uint16_t c)
 {
-    data_[INDEX_DASH_BLUE] = copperMove(color00, c);
+    data_[INDEX_DASH_BLUE] = copperMove(color01, c);
 }
 
 // Crosshair plane3 palette (viewport color04-07).  See the header: visible → salmon ($26) ×4,

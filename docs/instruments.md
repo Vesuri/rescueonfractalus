@@ -23,7 +23,7 @@ mode-4·mode-D cockpit cell range).
 | 10 | **Cross Hairs** | 136,69 | 50×37 | **a "+" of PMG missiles**: M2 = vertical stem @ HPOS `$80` (centre), two segments (`$0B4D-5A`+`$64-71`) w/ a horizon gap; M3 @ `$74` + M1 @ `$85` (quad-width, `SIZEM=$CC`) = horizontal arms, lit only at the gap-centre line (`$0B5F`). Set in flight VBI `$505F-$5071`. Colour = Atari `$26` salmon (NOT grey). Visibility = the HPOS gate: `$A49A` sets `mem[$2840]=($28FC==0)?$00:$74` (`$00`=off-screen/hidden). **✓ PORTED 2026-07-09 as a plane3 overlay** (NOT a sprite — plane3 is free in the terrain body; `color04-07`=`$26` when visible, =terrain pens `color00-03` when hidden). See [[flight-pmg-map]] §3. |
 | 11 | **Enemy Lock-On Indicator** | 136,193 | 48×6 | mode-4 cells `$3492-$3496` (`lock_on_indicator_tick $4229`, state `$007E`) ✓ |
 | 12 | **Energy Level Indicator** | 204,144 | 8×56 | **P1 strip `$0D98`** gauge sprite, HPOSP1=`$00B5` (the working "right gauge") ✓ |
-| 13 | **Long Range Scanner** | 232,138 | 32×28 | disc + housing = mode-4 cells (x≈232); the close-range proximity blink is the `$33DF/$33E0` pen swap (bit7 toggled at 50Hz by `startup_init $3FFA`, decoded by `decodeScannerBlinkCells`). **The flashing GUIDE DOT inside it is Atari missile M2, not a cell** — vertical = RANGE (`row = $1C - $28DA`, parked at `$1E`), horizontal = BEARING (HPOSM2 `$00CE`, which `$44D6` derives as `$28D9 + $AB` and clamps to `$B5`); colour COLPM2 `$26` ← `$00D0`. Amiga = sprite ch2 pen10 (COLOR22) via the SPR2PT dashboard re-point, `buildScannerDotSprite`. ⚠⚠ Two traps, both of which cost days — see [[feedback-vbi-driven-pmg-sprites]] and `docs/rename.md`: (a) the dashboard copper sets **PFxP=0, so every sprite is BEHIND the playfield** — the dot shows ONLY through the disc's transparent window, so `$1E`/`$B5` do not merely mis-place it, they HIDE it (that is how the original blinks it, and why our blink is now purely positional: pixels written once at init, never redrawn); (b) **both** coordinates must be PUSHED from the terrain DISPLAY pass (`rof_note_scanner_dot`), never sampled in the VBI — the two-pass render republishes each per pass and the free-running loop makes a VBI poll alias by CPU speed (invisible on a Fast-RAM A1200, fine on A500). ✓ |
+| 13 | **Long Range Scanner** | 232,138 | 32×28 | disc + housing = mode-4 cells (x≈232); the close-range proximity blink is the `$33DF/$33E0` pen swap (bit7 toggled at 50Hz by `startup_init $3FFA`, decoded by `decodeScannerBlinkCells`). **The flashing GUIDE DOT inside it is Atari missile M2, not a cell** — vertical = RANGE (`row = $1C - $28DA`, parked at `$1E`), horizontal = BEARING (HPOSM2 `$00CE`, which `$44D6` derives as `$28D9 + $AB` and clamps to `$B5`); colour COLPM2 `$26` ← `$00D0`. Amiga = sprite ch2 pen10 (COLOR22) via the SPR2PT dashboard re-point, `buildScannerDotSprite`. ⚠⚠ Two traps, both of which cost days — see [[feedback-vbi-driven-pmg-sprites]] and `docs/rename.md`: (a) the dashboard runs 3-plane dual-playfield: the dot is above rear PF1 but below PF2's light-grey stencil, so it shows only through the disc aperture and an out-of-range `$1E`/`$B5` position hides it; (b) **both** coordinates must be PUSHED from the terrain DISPLAY pass (`rof_note_scanner_dot`), never sampled in the VBI — the two-pass render republishes each per pass and the free-running loop makes a VBI poll alias by CPU speed (invisible on a Fast-RAM A1200, fine on A500). ✓ |
 | 14 | **Shields On** | 288,136 | 6×4 | tiny status light |
 | 15 | **Mother Ship** | 300,140 | 6×4 | tiny status light |
 | 16 | **Air Lock Open** | 312,144 | 6×4 | tiny status light |
@@ -43,20 +43,20 @@ instead of 56 row decodes), so below the full value its bottom overhangs the dia
 cockpit copper list must therefore blank that pen at the dial bottom, `kGaugeBottomLine = 0x2c+144+56 =
 line 244` — NOT at the floor line 252, which leaves 8 rows showing (user-reported in the reverse tunnel
 and the post-mother-ship Standby, fixed 2026-08-11 in Standby/Doors/Tunnel/Planet; Flight already
-blanks its three pens and additionally runs the dashboard at BPLCON2 PFxP=0).
+blanks its three pens). The dashboard now sandwiches sprites between its two playfields, but the
+explicit colour blank remains necessary for the fixed-height sprite data below each dial.
 
 Measured geometry of the energy column (gdb dump of `cockpitBitmap`, matching the screen pixel for
 pixel — sprite hardware X `0x81+203` lands on screen x204):
 
 | Amiga line | bitmap row | playfield at x204-211 |
 |---|---|---|
-| 188-243 | 16-71 | the dial slot: pen **0** = COLOR00 `$90` — the only rows where the bar belongs |
-| 244-251 | 72-79 | dashboard closes over it: pen **2** = `$06` grey |
-| 252-259 | 80-87 | floor: pen **0** = COLOR00 black |
+| 188-243 | 16-71 | the dial slot: rear-PF COLBK = COLOR01 `$90` — the only rows where the bar belongs |
+| 244-251 | 72-79 | PF2 light-grey stencil closes over it |
+| 252-259 | 80-87 | floor: rear-PF COLBK = COLOR01 black |
 
-**Sprite priority cannot substitute for the pen blank**: over a pen-0 playfield a sprite wins at every
-BPLCON2 value, so the floor rows are only ever hidden by blanking the pen (see
-`amiga/framework` notes + the `amiga-copper-lessons` memory). A bar at its FULL value fills the dial
+**The PF2 stencil cannot substitute for the pen blank below the dial**: those floor pixels belong to
+the rear playfield, where the sprite intentionally wins. A bar at its FULL value fills the dial
 exactly, so it hides this whole class of bug — set the value mid-range before judging one
 (`make FORCE_MOTHERSHIP=1` halves energy at the B press).
 

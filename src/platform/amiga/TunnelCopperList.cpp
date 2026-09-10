@@ -22,6 +22,8 @@ static const uint16_t kTerrainLine  = kDisplayTop + kTitleHeight;     // = 0x56
 static const uint16_t kCockpitLine  = kTerrainLine + kTerrainHeight;  // = 172
 static const uint16_t kCenterY      = kDisplayTop + kH / 2;           // = 0x98
 static const uint16_t kBPLCON0_3P   = (uint16_t)((3 << PLNCNTSHFT) | USE_BPLCON3);
+static const uint16_t kBPLCON0_3P_DUAL = (uint16_t)(kBPLCON0_3P | DBLPF);
+static const uint16_t kBPLCON2_COCKPIT = 0x0044; // PF2 stencil > sprites > PF1, PF2 > PF1
 // First scanline BELOW the energy-gauge dial (see StandbyCopperList's kGaugeBottomLine).
 static const uint16_t kGaugeBottomLine = 0x2c + 144 + 56;             // = 244
 // Park lines for a collapsed reveal band — mid-region, so its NOPs run in a harmless H-blank
@@ -81,17 +83,19 @@ static const uint16_t kBand2ParkLine = kTerrainLine + 57;
 #define INDEX_BAND_GREEN_WAIT (INDEX_COCKPIT_PAL + 7)  // WAIT(boundary) (1)
 #define INDEX_BAND_GREEN      (INDEX_BAND_GREEN_WAIT + 1) // color00 = green door (1)
 #define INDEX_DASH_BG_WAIT    (INDEX_BAND_GREEN + 1)   // WAIT(kCockpitLine+8-1) (1)
-#define INDEX_DASH_BG         (INDEX_DASH_BG_WAIT + 1) // color00 = black (divider strip 180-188) (1)
+#define INDEX_DASH_MODE       (INDEX_DASH_BG_WAIT + 1) // BPLCON0 dual-PF (1)
+#define INDEX_DASH_PRIORITY   (INDEX_DASH_MODE + 1)    // BPLCON2 PF2 > sprites > PF1 (1)
+#define INDEX_DASH_PAL        (INDEX_DASH_PRIORITY + 1)// COLOR00..03 + COLOR09 (5)
 // Dashboard instrument backgrounds = dark blue COLBK $90 (Amiga 182-251); floor black (252+).
-#define INDEX_DASH_BLUE_WAIT  (INDEX_DASH_BG + 1)      // WAIT(kCockpitLine+10-1 = 181) (1)
-#define INDEX_DASH_BLUE       (INDEX_DASH_BLUE_WAIT + 1) // color00 = $90 dark blue (dashboard) (1)
+#define INDEX_DASH_BLUE_WAIT  (INDEX_DASH_PAL + 5)      // WAIT(kCockpitLine+10-1 = 181) (1)
+#define INDEX_DASH_BLUE       (INDEX_DASH_BLUE_WAIT + 1) // color01 = $90 dark blue (dashboard) (1)
 // Energy bar (ch2 / COLOR21) → black below the gauge DIAL, not at the floor: the Amiga bar is one
 // solid 56-row sprite whose VSTART tracks the fuel, so below full fuel its bottom hangs past the
 // dial, where the Atari's per-row P1 strip just stops.  See the same block in StandbyCopperList.
 #define INDEX_GAUGE_BOT_WAIT  (INDEX_DASH_BLUE + 1)     // WAIT(kGaugeBottomLine-1 = 243) (1)
 #define INDEX_GAUGE_BOT       (INDEX_GAUGE_BOT_WAIT + 1)// COLOR21 = black (1)
 #define INDEX_FLOOR_WAIT      (INDEX_GAUGE_BOT + 1)     // WAIT(kCockpitLine+80-1 = 251) (1)
-#define INDEX_FLOOR           (INDEX_FLOOR_WAIT + 1)    // color00 = black (floor) (1)
+#define INDEX_FLOOR           (INDEX_FLOOR_WAIT + 1)    // color01 = black (floor) (1)
 #define INDEX_TERMINATOR      (INDEX_FLOOR + 1)         // copperWait(255,254)
 #define LIST_LENGTH           (INDEX_TERMINATOR + 1)
 
@@ -134,9 +138,9 @@ void TunnelCopperList::buildLayout(const Bitmap& title, const Bitmap& tunnel, co
     // 1+ (the throttle gauge on ch2) BEHIND it — the game's GPRIOR=$14 priority, same value as
     // PlanetCopperList and the Standby's CPU write.
     // MUST be set explicitly: the boost reverse cinematic reaches this list straight from the
-    // FlightCopperList, whose dashboard band leaves BPLCON2 at PFxP=0 (ALL sprites behind the
-    // playfield, for the HUD gauges) and never restores it — so without this the rings/starfield
-    // would draw over the pillars.  ⚠ Do NOT raise it to PFxP=4 (all sprites in front): that buys
+    // FlightCopperList, whose dashboard leaves BPLCON2 in the dual-PF stencil arrangement and never
+    // restores it — so without this the rings/starfield would inherit the wrong priority.  ⚠ Do
+    // NOT raise it to PFxP=4 (all sprites in front): that buys
     // the pillars nothing they don't already get at 1 and puts the energy gauge on top of the
     // dashboard for the whole reverse cinematic.  ⚠ This value is also what the
     // NEXT scene inherits — BPLCON2 persists across copper lists; see setSpritePriority().
@@ -204,16 +208,23 @@ void TunnelCopperList::buildLayout(const Bitmap& title, const Bitmap& tunnel, co
     // Band reveal split (seeded all-green = reveal not started; setBandReveal moves it).
     setBandReveal(0, atariToOCS(0xC8));
 
-    // Below the 8-row band: black divider strip (Amiga 180-188), dark-blue $90 dashboard
-    // instrument backgrounds (182-251), then black floor (252+).  Only COLBK (color00) changes.
-    d[INDEX_DASH_BG_WAIT] = copperWait(kCockpitLine + 8 - 1, 0xE0);
-    d[INDEX_DASH_BG]      = copperMove(color00, atariToOCS(0x00));
+    // At line 180 switch only the dashboard to dual playfield.  PF2 is the light-grey front
+    // stencil; sprites sit over PF1's changing COLBK and under PF2.  COLOR00 stays dark grey.
+    // Match the Standby timing: earlier waits let COLOR01=black touch the final band row.
+    d[INDEX_DASH_BG_WAIT]  = copperWait(kCockpitLine + 8 - 1, 0xE0);
+    d[INDEX_DASH_MODE]     = copperMove(bplcon0, kBPLCON0_3P_DUAL);
+    d[INDEX_DASH_PRIORITY] = copperMove(bplcon2, kBPLCON2_COCKPIT);
+    d[INDEX_DASH_PAL + 0]  = copperMove(color00, atariToOCS(0x04));
+    d[INDEX_DASH_PAL + 1]  = copperMove(color01, atariToOCS(0x00));
+    d[INDEX_DASH_PAL + 2]  = copperMove(color02, atariToOCS(0x2C));
+    d[INDEX_DASH_PAL + 3]  = copperMove(color03, atariToOCS(0x26));
+    d[INDEX_DASH_PAL + 4]  = copperMove(color09, atariToOCS(0x06));
     d[INDEX_DASH_BLUE_WAIT] = copperWait(kCockpitLine + 10 - 1, 0xE0);
-    d[INDEX_DASH_BLUE]      = copperMove(color00, atariToOCS(0x90));
+    d[INDEX_DASH_BLUE]      = copperMove(color01, atariToOCS(0x90));
     d[INDEX_GAUGE_BOT_WAIT] = copperWait(kGaugeBottomLine - 1, 0xE0);
     d[INDEX_GAUGE_BOT]      = copperMove(color21, 0x000);   // clip the bar at its dial
     d[INDEX_FLOOR_WAIT] = copperWait(kCockpitLine + 80 - 1, 0xE0);
-    d[INDEX_FLOOR]      = copperMove(color00, atariToOCS(0x00));
+    d[INDEX_FLOOR]      = copperMove(color01, atariToOCS(0x00));
 
     d[INDEX_TERMINATOR] = copperWait(255, 254);
 }
@@ -251,6 +262,13 @@ void TunnelCopperList::setCompassColor(uint16_t c)
 void TunnelCopperList::setBandReveal(uint16_t greenLine, uint16_t greenColor)
 {
     if (greenLine > 8) greenLine = 8;
+    if (greenLine == 8) {
+        // No green remains in the band.  Park this slot one line earlier so the following
+        // line-179 dashboard-mode WAIT has the full horizontal blanking interval available.
+        data_[INDEX_BAND_GREEN_WAIT] = copperWait(kCockpitLine + 7 - 1, 0xE0);
+        data_[INDEX_BAND_GREEN]      = copperMove(color31, 0);
+        return;
+    }
     data_[INDEX_BAND_GREEN_WAIT] = copperWait((uint16_t)(kCockpitLine + greenLine - 1), 0xE0);
     data_[INDEX_BAND_GREEN]      = copperMove(color00, greenColor);
 }

@@ -25,6 +25,8 @@ static const uint16_t kTerrainLine  = kDisplayTop + kTitleHeight;     // = 0x56
 static const uint16_t kCockpitLine  = kTerrainLine + kViewportHeight; // = 180 (dashboard start)
 static const uint16_t kCenterY      = kDisplayTop + kH / 2;           // = 0x98
 static const uint16_t kBPLCON0_3P   = (uint16_t)((3 << PLNCNTSHFT) | USE_BPLCON3);
+static const uint16_t kBPLCON0_3P_DUAL = (uint16_t)(kBPLCON0_3P | DBLPF);
+static const uint16_t kBPLCON2_COCKPIT = 0x0044; // PF2 stencil > sprites > PF1, PF2 > PF1
 // First scanline BELOW the energy-gauge dial (see StandbyCopperList's kGaugeBottomLine).
 static const uint16_t kGaugeBottomLine = 0x2c + 144 + 56;             // = 244
 
@@ -67,21 +69,22 @@ static const uint16_t kColor29 = 0x1BA;   // sprite pair 6/7 pen 01 (starfield)
 #define INDEX_GAUGE_PTR       (INDEX_COCKPIT_WAIT + 1)     // SPR2PTH,SPR2PTL -> gauge (2)
 #define INDEX_GAUGE_COL       (INDEX_GAUGE_PTR + 2)        // COLOR21 = gauge bar (1)
 #define INDEX_COCKPIT_BPL     (INDEX_GAUGE_COL + 1)        // cockpit 3bp ptrs, yOffset 8 (6)
-#define INDEX_COCKPIT_BPLCON0 (INDEX_COCKPIT_BPL + 6)      // bplcon0 3P (1)
-#define INDEX_COCKPIT_MOD     (INDEX_COCKPIT_BPLCON0 + 1)  // bpl1mod,bpl2mod (2)
-#define INDEX_COCKPIT_PAL     (INDEX_COCKPIT_MOD + 2)      // color00..07 (8)
-// Cockpit bitmap starts at kCockpitLine=180 (yOffset 8 skips the $350D band).  COLBK splits
-// match the launch cockpit: baked color00=$00 covers the black divider strip (180-188); then
-// dark-blue $90 dashboard instrument backgrounds (182-251); then black floor (252+).
-#define INDEX_DASH_BLUE_WAIT  (INDEX_COCKPIT_PAL + 8)      // WAIT(kCockpitLine+2-1 = 181) (1)
-#define INDEX_DASH_BLUE       (INDEX_DASH_BLUE_WAIT + 1)   // color00 = $90 dark blue (dashboard) (1)
+#define INDEX_COCKPIT_BPLCON0 (INDEX_COCKPIT_BPL + 6)      // bplcon0 3P dual-PF (1)
+#define INDEX_COCKPIT_BPLCON2 (INDEX_COCKPIT_BPLCON0 + 1)  // PF2 stencil > sprites > PF1 (1)
+#define INDEX_COCKPIT_MOD     (INDEX_COCKPIT_BPLCON2 + 1)  // bpl1mod,bpl2mod (2)
+#define INDEX_COCKPIT_PAL     (INDEX_COCKPIT_MOD + 2)      // color00..03 + color09 (5)
+// Cockpit bitmap starts at kCockpitLine=180 (yOffset 8 skips the $350D band).  PF1 COLOR01
+// carries the Atari COLBK splits: black divider, dark-blue dashboard, then black floor.
+// COLOR00 remains the dashboard's dark grey throughout, including the unblanked OCS border.
+#define INDEX_DASH_BLUE_WAIT  (INDEX_COCKPIT_PAL + 5)      // WAIT(kCockpitLine+2-1 = 181) (1)
+#define INDEX_DASH_BLUE       (INDEX_DASH_BLUE_WAIT + 1)   // color01 = $90 dark blue (dashboard) (1)
 // Energy bar (ch2 / COLOR21) -> black below the gauge DIAL, not at the floor: the Amiga bar is
 // one solid 56-row sprite whose VSTART tracks the fuel, so below full fuel its bottom hangs past
 // the dial, where the Atari's per-row P1 strip just stops.  Same block as StandbyCopperList.
 #define INDEX_GAUGE_BOT_WAIT  (INDEX_DASH_BLUE + 1)        // WAIT(kGaugeBottomLine-1 = 243) (1)
 #define INDEX_GAUGE_BOT       (INDEX_GAUGE_BOT_WAIT + 1)   // COLOR21 = black (1)
 #define INDEX_FLOOR_WAIT      (INDEX_GAUGE_BOT + 1)        // WAIT(kCockpitLine+72-1 = 251) (1)
-#define INDEX_FLOOR           (INDEX_FLOOR_WAIT + 1)       // color00 = black (floor) (1)
+#define INDEX_FLOOR           (INDEX_FLOOR_WAIT + 1)       // color01 = black (floor) (1)
 #define INDEX_TERMINATOR      (INDEX_FLOOR + 1)            // copperWait(255,254)
 #define LIST_LENGTH           (INDEX_TERMINATOR + 1)
 
@@ -174,27 +177,26 @@ void PlanetCopperList::buildLayout(const Bitmap& title, const Bitmap& terrain, c
     showSprite(INDEX_GAUGE_PTR, 2, gauge);   // re-point channel 2 (P0-low -> throttle gauge)
     setEnergyIndicatorColor(0);              // COLOR21 = gauge bar (setter, at INDEX_GAUGE_COL)
     showBitmap(INDEX_COCKPIT_BPL, cockpit, 1, 1, 0, 8);   // yOffset 8 scanlines: skip the $350D band rows
-    d[INDEX_COCKPIT_BPLCON0] = copperMove(bplcon0, kBPLCON0_3P);
+    d[INDEX_COCKPIT_BPLCON0] = copperMove(bplcon0, kBPLCON0_3P_DUAL);
+    d[INDEX_COCKPIT_BPLCON2] = copperMove(bplcon2, kBPLCON2_COCKPIT);
     d[INDEX_COCKPIT_MOD]     = copperMove(bpl1mod, 80);
     d[INDEX_COCKPIT_MOD + 1] = copperMove(bpl2mod, 80);
-    // Cockpit palette: cockpit DLIs reload hardcoded immediates; constant at fade 16.
-    d[INDEX_COCKPIT_PAL + 0] = copperMove(color00, atariToOCS(0x00));
-    d[INDEX_COCKPIT_PAL + 1] = copperMove(color01, atariToOCS(0x04));
-    d[INDEX_COCKPIT_PAL + 2] = copperMove(color02, atariToOCS(0x06));
-    d[INDEX_COCKPIT_PAL + 3] = copperMove(color03, atariToOCS(0x2C));
-    d[INDEX_COCKPIT_PAL + 4] = copperMove(color04, atariToOCS(0x00));
-    d[INDEX_COCKPIT_PAL + 5] = copperMove(color05, atariToOCS(0x04));
-    d[INDEX_COCKPIT_PAL + 6] = copperMove(color06, atariToOCS(0x06));
-    d[INDEX_COCKPIT_PAL + 7] = copperMove(color07, atariToOCS(0x26));
+    // Dual-PF dashboard palette.  PF1 (COLOR01-03) is behind the sprites; PF2's sole
+    // visible pen (COLOR09) is the light-grey stencil in front.  COLOR00 stays dark grey.
+    d[INDEX_COCKPIT_PAL + 0] = copperMove(color00, atariToOCS(0x04));
+    d[INDEX_COCKPIT_PAL + 1] = copperMove(color01, atariToOCS(0x00)); // divider COLBK
+    d[INDEX_COCKPIT_PAL + 2] = copperMove(color02, atariToOCS(0x2C));
+    d[INDEX_COCKPIT_PAL + 3] = copperMove(color03, atariToOCS(0x26));
+    d[INDEX_COCKPIT_PAL + 4] = copperMove(color09, atariToOCS(0x06));
 
     // Dashboard instrument backgrounds = dark blue COLBK $90 (Amiga 182-251); floor black (252+).
-    // Only COLBK (color00) changes; baked color00=$00 above covers the divider strip (180-188).
+    // COLBK is PF1 COLOR01 here; COLOR00 stays dark grey for the dashboard and OCS border.
     d[INDEX_DASH_BLUE_WAIT] = copperWait(kCockpitLine + 2 - 1, 0xE0);
-    d[INDEX_DASH_BLUE]      = copperMove(color00, atariToOCS(0x90));
+    d[INDEX_DASH_BLUE]      = copperMove(color01, atariToOCS(0x90));
     d[INDEX_GAUGE_BOT_WAIT] = copperWait(kGaugeBottomLine - 1, 0xE0);
     d[INDEX_GAUGE_BOT]      = copperMove(color21, 0x000);   // clip the bar at its dial
     d[INDEX_FLOOR_WAIT] = copperWait(kCockpitLine + 72 - 1, 0xE0);
-    d[INDEX_FLOOR]      = copperMove(color00, atariToOCS(0x00));
+    d[INDEX_FLOOR]      = copperMove(color01, atariToOCS(0x00));
 
     d[INDEX_TERMINATOR] = copperWait(255, 254);
 }

@@ -520,12 +520,14 @@ private:
     // Artificial Horizon (#6): the brown ground-fill is the Atari player P2 (COLPM2=$26),
     // multiplexed below the windscreen frame.  ch0/ch1 are reused (copper re-points SPR0PT/
     // SPR1PT in the gap below the frame's VSTOP) for two 16px sprites = the 32px-wide dial
-    // fill.  Decoded each flight frame from the live P2 buffer (mem[$0E92..], = GRAFP2 per
-    // scanline) so the horizon tracks pitch.  Shown BEHIND the playfield so the bitmap dial
-    // frame (value-1/2 glyphs) stays in front and the brown shows through the value-0 centre.
+    // fill.  Decoded on pitch changes from the live P2 buffer (mem[$0E92..], = GRAFP2 per
+    // scanline) so the horizon tracks pitch.  Sprite word B is initialized once from the
+    // cockpit's BPL3 detail pixels; PF2 remains the light-grey front stencil.
     Sprite*     ahLeft         = nullptr;
     Sprite*     ahRight        = nullptr;
     uint8_t     ahLastIdx = 0xFF, ahLastSub = 0xFF;   // AH ground-fill change-detect (pitch index $291C/$291D)
+    bool        ahDetailBuilt = false;                 // static sprite word-B pixels copied once after cockpit decode
+    void initializeAHDetailPlanes();
     void buildAHSprite();  // mirror the live P2 fill ($0E92..) -> ahLeft/ahRight (flight AH ground)
 
     // The targeted object (gun emplacement / flying saucer) is a single generic Atari player-3

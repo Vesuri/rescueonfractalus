@@ -22,6 +22,8 @@ static const uint16_t kTerrainLine  = kDisplayTop + kTitleHeight;     // = 0x56
 static const uint16_t kCockpitLine  = kTerrainLine + kTerrainHeight;  // = 172
 static const uint16_t kCenterY      = kDisplayTop + kH / 2;           // = 0x98
 static const uint16_t kBPLCON0_3P   = (uint16_t)((3 << PLNCNTSHFT) | USE_BPLCON3);
+static const uint16_t kBPLCON0_3P_DUAL = (uint16_t)(kBPLCON0_3P | DBLPF);
+static const uint16_t kBPLCON2_COCKPIT = 0x0044; // PF2 stencil > sprites > PF1, PF2 > PF1
 // First scanline BELOW the energy-gauge dial = the gauge sprite's base line + its row count
 // (RescueOnFractalus.cpp: setY base 0x2c+144, kEnergyRows 56 — instrument #12, 8x56 at y=144).
 // Measured in the cockpit bitmap: the dial slot (pen 0, x204-211) is open on rows 16..71 and
@@ -33,7 +35,8 @@ static const uint16_t kGaugeBottomLine = 0x2c + 144 + 56;             // = 244
 // (BPLCON0 + BPL1MOD/BPL2MOD — the per-region-varying regs); the constant playfield
 // registers are set once by AmigaHardware::setPlayfield (see RescueOnFractalus::initialize).
 #define INDEX_PLAYFIELD       1
-#define INDEX_TITLE_PAL       (INDEX_PLAYFIELD + 3)    // color00..03 (4)
+#define INDEX_BPLCON2         (INDEX_PLAYFIELD + 3)    // restore normal title/viewport priority each frame
+#define INDEX_TITLE_PAL       (INDEX_BPLCON2 + 1)      // color00..03 (4)
 #define INDEX_TITLE_BPL       (INDEX_TITLE_PAL + 4)    // 17: title bitmap ptrs (2bp = 4)
 #define INDEX_SPRITE_COL      (INDEX_TITLE_BPL + 4)    // 21: color16,color17 (2)
 #define INDEX_SPRITES         (INDEX_SPRITE_COL + 2)   // 23: 8 sprite ptrs (16)
@@ -55,9 +58,9 @@ static const uint16_t kGaugeBottomLine = 0x2c + 144 + 56;             // = 244
 #define INDEX_TERRAIN_BPL0    (INDEX_TERRAIN_PAL + 4)     // run-0 bitmap ptrs (3bp = 6)
 #define INDEX_TERRAIN_RUNS    (INDEX_TERRAIN_BPL0 + 6)    // FLOATING: runs 1.. (WAIT+6) then cockpit region
 // Cockpit region (re-emitted after the last run): WAIT(1) + BPLxPT(6) + bplcon0(1) + mod(2) +
-// color01..07(7) + 3×(WAIT+color00 band/dash/floor splits)(6) + WAIT+GAUGE_BOTTOM COLOR21(2) +
-// terminator(1) = 26.
-#define COCKPIT_REGION_LEN    26
+// color01..07(7) + dashboard dual-PF entry (WAIT + mode/priority + five colours)(8) +
+// two (WAIT+PF1-background) splits (4) + WAIT+GAUGE_BOTTOM COLOR21(2) + terminator(1) = 32.
+#define COCKPIT_REGION_LEN    32
 #define LIST_LENGTH           (INDEX_TERRAIN_RUNS + (MAX_TERRAIN_RUNS - 1) * 7 + COCKPIT_REGION_LEN)
 
 StandbyCopperList::StandbyCopperList()
@@ -76,6 +79,9 @@ void StandbyCopperList::buildLayout(const Bitmap& title, const Bitmap& terrain, 
     setPlayfield(INDEX_PLAYFIELD, kW, kH, kBP2, /*interleaved*/true,
                  /*hires*/false, /*interlace*/false, /*dualPlayfield*/false,
                  /*holdAndModify*/false, kCenterY);
+    // The dashboard changes BPLCON2 later in this same list, so restore the normal single-PF
+    // priority at the top of every frame rather than relying on the old one-shot CPU write.
+    d[INDEX_BPLCON2] = copperMove(bplcon2, (uint16_t)((1u << 3) | 1u));
 
     // Title palette + bitmap pointers (palette refreshed each frame via setters).
     setTitlePalette(0, 0, 0);                  // seeded; caller refreshes
@@ -117,7 +123,7 @@ void StandbyCopperList::buildLayout(const Bitmap& title, const Bitmap& terrain, 
 // after the last terrain run — so no no-op padding sits between the runs and the cockpit WAIT (that
 // churn used to delay/garble the cockpit).  The cockpit content never varies during Standby (the
 // cockpit DLIs reload hardcoded immediates; updateStandbyCopper never touches it), so re-emitting it
-// per frame is just ~25 constant writes.  Returns the next free index.
+// per frame is just 32 constant writes.  Returns the next free index.
 uint32_t StandbyCopperList::emitCockpitRegion(uint32_t idx)
 {
     uint32_t* d = data_;
@@ -134,19 +140,30 @@ uint32_t StandbyCopperList::emitCockpitRegion(uint32_t idx)
     d[idx++] = copperMove(color05, atariToOCS(0x04));
     d[idx++] = copperMove(color06, atariToOCS(0x06));
     d[idx++] = copperMove(color07, atariToOCS(0x26));
-    // Windscreen-band / dash / floor COLBK splits (see the atari-scanline map above).
-    d[idx++] = copperWait(kCockpitLine + 8 - 1, 0xE0);   d[idx++] = copperMove(color00, atariToOCS(0x00));
-    d[idx++] = copperWait(kCockpitLine + 10 - 1, 0xE0);  d[idx++] = copperMove(color00, atariToOCS(0x90));
+    // Dashboard: PF2's one visible colour is the light-grey sprite stencil; PF1 carries COLBK
+    // plus the two red detail colours behind the sprites.  Both transparent selects COLOR00,
+    // the dark grey that also fills an unblanked OCS border.
+    // 0xC0..0xD8 let the following palette MOVEs catch the last fetched pixels of the
+    // final mode-D row.  At 0xE0 the group safely finishes in line 180's early H-blank.
+    d[idx++] = copperWait(kCockpitLine + 8 - 1, 0xE0);
+    d[idx++] = copperMove(bplcon0, kBPLCON0_3P_DUAL);
+    d[idx++] = copperMove(bplcon2, kBPLCON2_COCKPIT);
+    d[idx++] = copperMove(color00, atariToOCS(0x04)); // common background + border: dark grey
+    d[idx++] = copperMove(color01, atariToOCS(0x00)); // PF1 code 1: divider COLBK
+    d[idx++] = copperMove(color02, atariToOCS(0x2C)); // PF1 code 2: COLPF2
+    d[idx++] = copperMove(color03, atariToOCS(0x26)); // PF1 code 3: bit-7 COLPF3
+    d[idx++] = copperMove(color09, atariToOCS(0x06)); // PF2 code 1: light-grey stencil
+    d[idx++] = copperWait(kCockpitLine + 10 - 1, 0xE0);  d[idx++] = copperMove(color01, atariToOCS(0x90));
     // Energy bar (sprite 2 / COLOR21) → black at the DIAL BOTTOM, not at the floor.  The Amiga bar
     // is one SOLID kEnergyRows sprite whose VSTART tracks the fuel (buildEnergyIndicatorSprite),
     // so at anything below full fuel its bottom hangs `top` rows past the dial — where the Atari's
     // per-row P1 strip simply stops.  Clipping the pen at the dial bottom reproduces the strip
-    // exactly and does it independently of BPLCON2: below the dial the dashboard is playfield pen 2
-    // for 8 rows and then COLOR00 for the floor, and NO sprite/playfield priority can hide a sprite
-    // over COLOR00.  (Also covers the fuel==0 park at line 252.)  COLOR21 is pair 1 pen 01 = this
+    // exactly and does it independently of BPLCON2: below the dial PF2 closes the stencil for 8
+    // rows, then the floor is rear PF1, where the sprite wins.  (Also covers the fuel==0 park at
+    // line 252.)  COLOR21 is pair 1 pen 01 = this
     // bar alone here — ch3 is the null sprite.
     d[idx++] = copperWait(kGaugeBottomLine - 1, 0xE0);   d[idx++] = copperMove(color21, 0x000);
-    d[idx++] = copperWait(kCockpitLine + 80 - 1, 0xE0);  d[idx++] = copperMove(color00, atariToOCS(0x00));
+    d[idx++] = copperWait(kCockpitLine + 80 - 1, 0xE0);  d[idx++] = copperMove(color01, atariToOCS(0x00));
     d[idx++] = copperWait(255, 254);       // terminator
     return idx;
 }

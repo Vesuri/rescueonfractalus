@@ -983,13 +983,15 @@ void RescueOnFractalus::buildFlightFrameSprites()
 // The AH's brown ground is the Atari player P2 (COLPM2=$26), multiplexed below the
 // windscreen frame onto sprite channels 0/1 (copper re-points SPR0PT/SPR1PT in the gap).
 // Its GRAFP2 per scanline lives in the P2 player buffer: mem[$0E00 + O], where
-// O = $32 + (Amiga_line - kTerrainLine).  The dial spans Amiga lines 182-214 (offsets
-// $92-$B2) — $00 above the horizon (empty sky), $FF below (solid ground), the boundary
+// O = $32 + (Amiga_line - kTerrainLine).  The 32×28 dial spans Amiga lines 182-209
+// (offsets $92-$AD) — $00 above the horizon (empty sky), $FF below (solid ground), the boundary
 // moving with pitch.  Each Atari player byte is DOUBLE-WIDTH (8 bits -> 32 lores px), so it
 // expands across BOTH 16px sprites: bits 7-4 -> ahLeft, bits 3-0 -> ahRight, each bit -> 4 px.
 // Brown is pen 01 (plane A -> COLOR17, which the copper sets to $26 over the AH rows).
-static const int      kAHRows    = 33;        // Amiga lines 182..214 (the dial extent)
+static const int      kAHRows    = 28;        // Amiga lines 182..209 (the 32×28 dial extent)
 static const uint16_t kAHBufBase = 0x0E92;    // P2 player buffer offset for Amiga line 182
+static const int      kAHScreenX = 55;        // sprite begins 1px left of the nominal x=56 dial
+static const int      kAHBitmapRow = 10;      // cockpit row shown at line 182 (dashboard skips rows 0..7)
 
 // Each GRAFP2 nibble (4 bits) expands to 16 px — each bit → 4 Amiga px.  Precomputed so the
 // per-row decode is two table lookups instead of expandNibble16's 8 conditional branches.
@@ -1003,18 +1005,54 @@ void RescueOnFractalus::buildAHSprite()
     // Change-detect: the ground-fill source ($0E92..) is rewritten IN FLIGHT only by
     // draw_ah_ground_fill_p2 ($40B0), which is itself gated on the pitch index $291C/$291D (the
     // other writers of this range — fill_four_bufs_ff, init_gameplay_state — are gameplay-init
-    // only).  So skip the 33-row rebuild when pitch is unchanged; cockpitForceFull (scene entry,
+    // only).  So skip the 28-row rebuild when pitch is unchanged; cockpitForceFull (scene entry,
     // where the init writers ran) forces a rebuild so the post-init state is captured.
     uint8_t idx = mem[0x291C], sub = mem[0x291D];
     if (!cockpitForceFull && idx == ahLastIdx && sub == ahLastSub) return;
     ahLastIdx = idx; ahLastSub = sub;
+    const uint8_t* src = (const uint8_t*)mem + kAHBufBase;
     uint16_t* l = ahLeft->data()  + 2;         // skip the 2 control words
     uint16_t* r = ahRight->data() + 2;
-    for (int i = 0; i < kAHRows; i++) {
-        uint8_t b = mem[kAHBufBase + i];                 // GRAFP2 ($00 sky / $FF ground)
-        l[i * 2] = kAHExpand[b >> 4];   l[i * 2 + 1] = 0x0000;   // bits 7-4 → left 16px (plane A = pen01)
-        r[i * 2] = kAHExpand[b & 0x0F]; r[i * 2 + 1] = 0x0000;   // bits 3-0 → right 16px
+    for (int rows = kAHRows; rows; rows--, src++, l += 2, r += 2) {
+        const uint8_t b = *src;                           // GRAFP2 ($00 sky / $FF ground)
+        *l = kAHExpand[b >> 4];                           // bits 7-4 → left 16px, word A
+        *r = kAHExpand[b & 0x0F];                         // bits 3-0 → right 16px, word A
     }
+}
+
+// Copy the static red-detail pixels under the 32×28 AH sprite pair into sprite word B once the
+// initial full cockpit decode has populated BPL3.  BPL3 is exactly the dual-PF dashboard's red
+// detail selector.  COLOR18 and COLOR19 are both set to the bright detail colour below line 180,
+// so these pixels stay salmon with either value of the moving brown word-A fill.
+void RescueOnFractalus::initializeAHDetailPlanes()
+{
+    // cockpitForceFull starts true, so decodeCockpitFull also runs once during the blank boot
+    // phase, before boot_standby_launch_driver has constructed the real cockpit.  Do not latch
+    // that empty BPL3 image as the supposedly permanent AH detail plane.  g_doorFieldReady rises
+    // only after the valid Standby cockpit/door build and triggers another full decode.
+    if (ahDetailBuilt || !g_doorFieldReady || !cockpitBitmap || !ahLeft || !ahRight) return;
+
+    static const int kCockpitRowBytes = 120;              // 3 × 40-byte interleaved planes
+    const uint8_t* src = (const uint8_t*)cockpitBitmap->data
+                       + kAHBitmapRow * kCockpitRowBytes + 80 + (kAHScreenX >> 3);
+    uint16_t* l = ahLeft->data() + 3;                     // first row, word B
+    uint16_t* r = ahRight->data() + 3;
+    for (int rows = kAHRows; rows; rows--, src += kCockpitRowBytes, l += 2, r += 2) {
+        // kAHScreenX=55 starts at bit 0 of src[0].  Pack that bit, three whole bytes, and the
+        // upper seven bits of src[4] into the two 16-bit sprite words.
+        const uint32_t sourceDetail = ((uint32_t)(src[0] & 1u) << 31)
+                                    | ((uint32_t)src[1] << 23)
+                                    | ((uint32_t)src[2] << 15)
+                                    | ((uint32_t)src[3] << 7)
+                                    | ((uint32_t)src[4] >> 1);
+        // The hardware sprite's word-B pixels land one screen pixel right of the corresponding
+        // playfield pixels at this calibrated X.  Shift only the static detail overlay left;
+        // word A remains aligned with the Atari AH ground fill.
+        const uint32_t detail = sourceDetail << 1;
+        *l = (uint16_t)(detail >> 16);
+        *r = (uint16_t)detail;
+    }
+    ahDetailBuilt = true;
 }
 
 // ---- player laser shot sprite (instrument-free gameplay PMG) ------------------
@@ -1732,10 +1770,10 @@ void RescueOnFractalus::buildViewportP3Sprite()
 // then owns the flash cadence, so the appearance is identical on any CPU.
 static const int     kScannerDotRows   = 3;   // the M2 blob is EXACTLY 3 rows ($44D6 writes 3 cells)
 // $44D6's OWN park sentinels: with no target it moves the blob to row $1E and puts $B5 in the HPOSM2
-// byte.  Both land outside the scanner disc's window, and the dashboard copper sets PFxP=0 (sprites
-// BEHIND the playfield), so a parked dot is hidden by the opaque cockpit bitmap — that is how the
-// ORIGINAL makes the dot disappear.  Reusing it verbatim means the blink never touches a pixel: it is
-// a MOVE between the on-position and this park, exactly like the missile it mirrors.
+// byte.  Both land outside the scanner disc's window, and the dashboard's front PF2 stencil hides
+// the sprite outside the aperture — that is how the ORIGINAL makes the dot disappear.  Reusing it
+// verbatim means the blink never touches a pixel: it is a MOVE between the on-position and this park,
+// exactly like the missile it mirrors.
 static const uint8_t kDotParkRow  = 0x1Eu;
 static const uint8_t kDotParkBear = 0xB5u;
 static const uint8_t kDotBlinkHalfVbis = 6;   // VBIs per on (or off) flash half → full flash ≈ 4.2Hz
@@ -1754,9 +1792,9 @@ static volatile uint8_t g_dotSightBear = 0xA3u;  // its HPOSM2 byte ($00CE-equiv
 // BOTH coordinates must come from here.  range ($28DA) gives the row; bearing ($28D9) gives the X the
 // same way $44D6 does (+$AB, valid only in [$A3,$B4) — outside that $44D6 clamps to $B5, which PARKS
 // the dot horizontally).  Reading the clamped byte back out of mem[$00CE] in the ISR reintroduces the
-// exact aliasing this fix exists to kill, and a parked X is INVISIBLE rather than merely wrong: in the
-// dashboard the copper sets PFxP=0, so every sprite is BEHIND the playfield and the dot only shows
-// through the scanner disc's transparent window.  A clamped bearing therefore hides it completely —
+// exact aliasing this fix exists to kill, and a parked X is INVISIBLE rather than merely wrong: the
+// dashboard dot sits behind PF2's light-grey stencil and only shows through the scanner aperture.
+// A clamped bearing therefore hides it completely —
 // which is why fixing the row alone changed nothing on a fast CPU.
 //
 // A sighting needs range AND bearing valid, and latches them together so the two can never be mixed
@@ -1810,7 +1848,9 @@ void RescueOnFractalus::buildScannerDotSprite()
         // bearing X = the pushed HPOSM2 byte (what $44D6 puts in mem[$00CE], but taken from the publish
         // point); same Atari-HPOS -> Amiga hardware-X transform as the scope/viewport-P3 copies (+4
         // user-calibrated on FS-UAE).  X must land in the disc's window or the cockpit hides it.
-        scannerDotSprite->setX((uint16_t)(0x85 + ((int)bear - 0x32) * 2));
+        // This sprite-to-playfield calibration is one Amiga pixel left of the other PMG mirrors;
+        // use the same corrected origin for both live bearings and the parked sentinel.
+        scannerDotSprite->setX((uint16_t)(0x84 + ((int)bear - 0x32) * 2));
     }
 }
 
@@ -1856,8 +1896,9 @@ static const int      kAltimRows    = 56;             // 8×56 rectangle ($0C98.
 static const uint16_t kAltimTopLine = 0x2c + 144;     // buffer offset 0 → Amiga line 188 (matches setY below)
 
 // ---- altimeter bars (flight) -------------------------------------------------
-// The terrain-height (P0 $0C98) and ship-height (M3 $0B98) bars are fixed 8×56 solid rectangles
-// whose TOP edge tracks the value (bar offsets $281A / $281B).  On the Atari, draw_altimeter_bars
+// The terrain-height (P0 $0C98) bar is an 8×56 solid rectangle; the overlapping ship-height
+// indication comes from M3 $0B98.  Their TOP edges track the values at $281A / $281B.  On the
+// Atari, draw_altimeter_bars
 // ($40E5) redraws the GRAFP fill because players have no per-line start register; the Amiga sprite
 // does (VSTART), so we keep a SOLID 56-row sprite and just move its Y each frame.  The 56-row bar
 // overflows past the dial bottom, but sprite<playfield priority hides the overflow behind the
@@ -1871,8 +1912,10 @@ void RescueOnFractalus::buildAltimeterSprite()
         uint16_t* at = altimeterSprite->data() + 2;       // skip the 2 control words
         uint16_t* sh = altimeterShipSprite->data() + 2;
         for (int i = 0; i < kAltimRows; i++) {
-            at[i * 2] = 0xFFFFu; at[i * 2 + 1] = 0x0000u; // terrain bar: plane A (pen 01 / COLOR29)
-            sh[i * 2] = 0x0000u; sh[i * 2 + 1] = 0xFFFFu; // ship bar:    plane B (pen 10 / COLOR30)
+            // P0's filled nibble is eight Amiga pixels wide.  Using all 16 hardware-sprite bits
+            // let the purple bar cover the scale markings immediately to the right of the slot.
+            at[i * 2] = 0xFF00u; at[i * 2 + 1] = 0x0000u; // terrain bar: plane A (pen 01 / COLOR29)
+            sh[i * 2] = 0x0000u; sh[i * 2 + 1] = 0xFF00u; // ship bar:    plane B (pen 10 / COLOR30)
         }
         altimSolidBuilt = true; filled = true;
     }
@@ -2282,6 +2325,11 @@ void RescueOnFractalus::doorScrollVblankUpdate()
 // 2bpp→Amiga plane-pair decode LUT (filled by buildDecode2bppLut below; used by the
 // cockpit/title/compass decoders).
 static uint8_t s_dec2bppP1[256], s_dec2bppP2[256];
+// Mode-4 dashboard in 3-plane dual-playfield form:
+//   PF1 (BPL1+BPL3) = background + bright/dark red details, behind sprites
+//   PF2 (BPL2)      = light-grey bezel stencil, in front of sprites.
+// Three LUTs keep the writer-driven dirty decode at three indexed loads + three stores.
+static uint8_t s_decCockpitP1[2][256], s_decCockpitP2[256], s_decCockpitP3[256];
 static bool s_dec2bppReady = false;
 static void buildDecode2bppLut();
 #ifdef ROF_FLIGHT_PROBE
@@ -2484,8 +2532,8 @@ void RescueOnFractalus::initialize()
     // Amiga line 182).  ch0/1's frame use ends at VSTOP=180; the copper re-points SPR0PT/
     // SPR1PT to these in the gap (FlightCopperList).  X/Y constant; the FILL is refreshed
     // each frame by buildAHSprite.
-    ahLeft->setX(0x81 + 55);        ahLeft->setY(0x2c + 138);    // x55 (1px left of the dial bitmap); line 182
-    ahRight->setX(0x81 + 55 + 16);  ahRight->setY(0x2c + 138);   // gap below frame VSTOP 180
+    ahLeft->setX(0x81 + kAHScreenX);        ahLeft->setY(0x2c + 138);    // line 182
+    ahRight->setX(0x81 + kAHScreenX + 16);  ahRight->setY(0x2c + 138);   // gap below frame VSTOP 180
 
     // One-time playfield setup: the constant display registers (FMODE, BPLCON3/2/1,
     // DIWSTRT/STOP/HIGH, DDFSTRT/STOP) never change, so set them ONCE here via the CPU
@@ -4301,12 +4349,9 @@ void RescueOnFractalus::updateBoostCinematicLatch()
 }
 
 // setSpritePriority(): one-off CPU write of BPLCON2 (sprite-vs-playfield priority) at a scene
-// transition.  BPLCON2 is write-only hardware that PERSISTS across copper lists, and the Standby /
-// Doors lists deliberately emit no MOVE for it — so whichever list ran last owned it.  After any
-// launch that is TunnelCopperList's PFxP=4 (all sprites in front of the playfield), which puts the
-// throttle/energy gauge (sprite 2) ON TOP of the cockpit dashboard instead of behind it on every
-// Standby entered after a launch.  A fresh boot hides it: initialize() writes the Standby value by
-// hand a moment earlier.
+// transition.  BPLCON2 is write-only hardware that PERSISTS across copper lists.  The scene lists
+// now reassert their top-of-frame value and the dashboard later selects its dual-PF sandwich, but
+// this write still closes the interval between installing a list and its first copper execution.
 //
 // It is called only at scene ENTRY (the copper-list install), so this is one write per transition,
 // not per frame.  ⚠ Deliberately NOT cached against a "last value we wrote" shadow: the copper also
@@ -5359,8 +5404,9 @@ void RescueOnFractalus::updateFlightCopper(bool force)
     // Cockpit body pens.  The Atari dashboard DLI $4A78 reloads them from the display params on EVERY
     // frame — COLPF0 <- $00CF ($4A88), COLPF1 <- $00D4 ($4A8B), COLPF2 <- $00D1 ($4A8E), COLBK <- $00D2
     // ($4A93); the bottom DLI $4ACD then puts $00D3 in COLBK ($4ACF) — so the whole dashboard follows
-    // whatever writes those bytes, with no gating flag anywhere.  Mapping mirrors the buildLayout bake:
-    // color00/04<-$D3, 01/05<-$CF, 02/06<-$D4, 03<-$D1, 07<-$D0 (COLPM2, the AH ground), dash<-$D2.
+    // whatever writes those bytes, with no gating flag anywhere.  The dual-PF remap is:
+    // COLOR00<-$CF (common dark grey), PF1 COLOR01<-$D3 (COLBK), COLOR02<-$D1,
+    // COLOR03<-$D0 (bit-7 alternative), PF2 COLOR09<-$D4 (light-grey stencil), dash<-$D2.
     //
     // ⚠ Ungated on purpose.  TWO things move these params: the death cinematic's
     // intro_fill_display_params $4FE0 ramp of $00CF-$00D6 to salmon, and the ESC-pause strobe
@@ -5373,9 +5419,9 @@ void RescueOnFractalus::updateFlightCopper(bool force)
     const uint8_t ckD0 = mem[MEM_display_param_1], ckD2 = mem[MEM_display_param_3];
     if (force || ckD3 != flCkD3 || ckCF != flCkCF || ckD4 != flCkD4
               || ckD1 != flCkD1 || ckD0 != flCkD0) {
-        const uint16_t c0 = atariToOCS(ckD3), c1 = atariToOCS(ckCF), c2 = atariToOCS(ckD4);
-        flightCopper->setCockpitPalette(c0, c1, c2, atariToOCS(ckD1),
-                                        c0, c1, c2, atariToOCS(ckD0));
+        flightCopper->setCockpitPalette(atariToOCS(ckCF), atariToOCS(ckD3),
+                                        atariToOCS(ckD1), atariToOCS(ckD0),
+                                        atariToOCS(ckD4));
         flCkD3 = ckD3; flCkCF = ckCF; flCkD4 = ckD4; flCkD1 = ckD1; flCkD0 = ckD0;
     }
     if (force || ckD2 != flCkD2) {
@@ -6419,14 +6465,33 @@ static void buildDecode2bppLut()
 {
     for (int src = 0; src < 256; src++) {
         uint8_t p1 = 0, p2 = 0;
+        uint8_t cockpitP1 = 0, cockpitP1Alt = 0, cockpitP2 = 0, cockpitP3 = 0;
         for (int i = 0; i < 4; i++) {
             uint8_t pixel = (uint8_t)((src >> (6 - i*2)) & 3u);
             uint8_t mask  = (uint8_t)(0xC0u >> (i*2));  // 0xC0, 0x30, 0x0C, 0x03
             if (pixel & 1u) p1 |= mask;   // plane1 = bit 0 of colour index
             if (pixel & 2u) p2 |= mask;   // plane2 = bit 1 of colour index
+
+            // Dual-playfield dashboard encoding.  PF1 code 0 falls through to COLOR00
+            // (dark grey); code 1 is COLBK, code 2 is COLPF2, and code 3 is COLPF3.
+            // PF2's sole non-zero code is the light-grey COLPF1 stencil.  ANTIC mode 4's
+            // character bit 7 changes only value 3 (COLPF2 -> COLPF3), not the whole cell.
+            if (pixel == 0u) {
+                cockpitP1 |= mask;                 // PF1 code 1: COLBK
+                cockpitP1Alt |= mask;
+            } else if (pixel == 2u) {
+                cockpitP2 |= mask;                 // PF2 code 1: light-grey stencil
+            } else if (pixel == 3u) {
+                cockpitP3 |= mask;                 // PF1 code 2 (BPL3 only)
+                cockpitP1Alt |= mask;              // PF1 code 3 when character bit 7 is set
+            }
         }
         s_dec2bppP1[src] = p1;
         s_dec2bppP2[src] = p2;
+        s_decCockpitP1[0][src] = cockpitP1;
+        s_decCockpitP1[1][src] = cockpitP1Alt;
+        s_decCockpitP2[src] = cockpitP2;
+        s_decCockpitP3[src] = cockpitP3;
     }
     s_dec2bppReady = true;
 }
@@ -6439,7 +6504,8 @@ static inline void decode2bppByte(uint8_t src, uint8_t* p1out, uint8_t* p2out)
 // Decode a run of nCells cockpit cells starting at Atari screen-RAM address `addr` (cells in
 // the same DL row) into cockpitBitmap.  Handles both the modeD raster band ($350D, 4 entries
 // × 2 identical scan lines, raw 2bpp) and the mode4 dashboard ($332D, 10 entries × 8 scan
-// lines, charset $3800, bit-7 → plane3).  Cells outside the visible 40-byte window (the
+// lines, charset $3800, encoded as PF2 light-grey stencil over PF1 cockpit colours).  Cells
+// outside the visible 40-byte window (the
 // 4-byte wide-field crop) are skipped.
 void RescueOnFractalus::decodeCockpitSpan(uint16_t addr, uint8_t nCells)
 {
@@ -6475,12 +6541,14 @@ void RescueOnFractalus::decodeCockpitSpan(uint16_t addr, uint8_t nCells)
         for (uint8_t i = 0; i < nCells; i++, col++) {
             if (col < 0 || col >= 40) continue;
             uint8_t ch = mem[(uint16_t)(addr + i)];
-            uint8_t plane3 = (ch & 0x80u) ? 0xFFu : 0x00u;
+            const uint8_t alt = (uint8_t)(ch >> 7);
             const uint8_t* glyph = (const uint8_t*)mem + 0x3800u + (uint16_t)(ch & 0x7Fu) * 8u;
             uint8_t* p = base + col;
             for (int scan = 0; scan < 8; scan++, p += kRowBytes) {
-                uint8_t p1v, p2v; decode2bppByte(*glyph++, &p1v, &p2v);
-                p[0] = p1v; p[40] = p2v; p[80] = plane3;
+                const uint8_t src = *glyph++;
+                p[0] = s_decCockpitP1[alt][src];
+                p[40] = s_decCockpitP2[src];
+                p[80] = s_decCockpitP3[src];
             }
         }
     }
@@ -6607,6 +6675,7 @@ void RescueOnFractalus::decodeCockpitFull()
 {
     for (int e = 0; e < 4;  e++) decodeCockpitSpan((uint16_t)(0x350Du + e * 48 + 4), 40);
     for (int e = 0; e < 10; e++) decodeCockpitSpan((uint16_t)(0x332Du + e * 48 + 4), 40);
+    initializeAHDetailPlanes();    // cockpit BPL3 is now valid; bake AH sprite word B once
 }
 
 // Compass (#2): the heading indicator is 4 mode-4 cells $32E3-$32E6 on the mode-4 line at

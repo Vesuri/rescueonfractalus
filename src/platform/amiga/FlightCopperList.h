@@ -47,12 +47,15 @@ public:
     // pen1 = sky, pen2 = dots, pen3 = highlight — driven per-frame by the native code.
     void setTerrainPalette(uint16_t pen0, uint16_t pen1, uint16_t pen2, uint16_t pen3);
     void setBandPalette(uint16_t grey);   // wing-band: color04 = frame grey (plane3); color00-03 inherit from terrain
-    // Cockpit dashboard palette (color00-07) + dashboard background (color00 on the blue band).
+    // Three-plane dual-PF dashboard palette: COLOR00 dark grey, PF1 COLOR01-03 behind sprites,
+    // and PF2 COLOR09 light-grey stencil in front.  The dashboard background changes COLOR01;
+    // brightDetail also drives the AH sprites' baked word-B detail pens COLOR18/19.
     // Baked constant at fade 16 in buildLayout; poked live only during the death cinematic so the
     // whole cockpit tints gray→salmon with the frame (the Atari cockpit DLI's $00CF-$00D6 source).
-    void setCockpitPalette(uint16_t c0, uint16_t c1, uint16_t c2, uint16_t c3,
-                           uint16_t c4, uint16_t c5, uint16_t c6, uint16_t c7);
-    void setDashBg(uint16_t c);           // dashboard blue band color00 (INDEX_DASH_BLUE)
+    void setCockpitPalette(uint16_t darkGrey, uint16_t bottomBg,
+                           uint16_t brightDetail, uint16_t darkDetail,
+                           uint16_t lightGrey);
+    void setDashBg(uint16_t c);           // dashboard blue band PF1 color01 (INDEX_DASH_BLUE)
     // Crosshair (#10) plane3 palette (color04-07).  Visible = all four = the reticle salmon ($26);
     // hidden = the four terrain pens (= color00-03) so the plane3 "+" reads identical to the terrain
     // beneath it.  Gated on the Atari missile HPOS (mem[$2840]==0 ⇒ reticle pushed off-screen).
