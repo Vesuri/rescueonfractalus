@@ -59,8 +59,9 @@ static const uint16_t kGaugeBottomLine = 0x2c + 144 + 56;             // = 244
 #define INDEX_TERRAIN_RUNS    (INDEX_TERRAIN_BPL0 + 6)    // FLOATING: runs 1.. (WAIT+6) then cockpit region
 // Cockpit region (re-emitted after the last run): WAIT(1) + BPLxPT(6) + bplcon0(1) + mod(2) +
 // color01..07(7) + dashboard dual-PF entry (WAIT + mode/priority + five colours)(8) +
-// two (WAIT+PF1-background) splits (4) + WAIT+GAUGE_BOTTOM COLOR21(2) + terminator(1) = 32.
-#define COCKPIT_REGION_LEN    32
+// two (WAIT+PF1-background) splits (4) + WAIT+GAUGE_BOTTOM COLOR21(2) + bottom-border
+// wrap WAIT/WAIT/COLOR00 (3) + terminator(1) = 35.
+#define COCKPIT_REGION_LEN    35
 #define LIST_LENGTH           (INDEX_TERRAIN_RUNS + (MAX_TERRAIN_RUNS - 1) * 7 + COCKPIT_REGION_LEN)
 
 StandbyCopperList::StandbyCopperList()
@@ -164,6 +165,12 @@ uint32_t StandbyCopperList::emitCockpitRegion(uint32_t idx)
     // bar alone here — ch3 is the null sprite.
     d[idx++] = copperWait(kGaugeBottomLine - 1, 0xE0);   d[idx++] = copperMove(color21, 0x000);
     d[idx++] = copperWait(kCockpitLine + 80 - 1, 0xE0);  d[idx++] = copperMove(color01, atariToOCS(0x00));
+    // DIWSTOP is line 260.  Cross the Copper's 8-bit vertical comparator at line 255,
+    // then change COLOR00 at the start of line 260, below the display window, for a black
+    // lower OCS border.
+    d[idx++] = copperWait(255, 0xE0);
+    d[idx++] = copperWait((kDisplayTop + kH) & 0xFF, 0x00);
+    d[idx++] = copperMove(color00, 0x000);
     d[idx++] = copperWait(255, 254);       // terminator
     return idx;
 }

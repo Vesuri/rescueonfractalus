@@ -176,7 +176,10 @@ static const uint16_t kColor26 = 0x1B4;   // pair 4/5 pen 10 (wide-object segmen
 #define INDEX_FLOOR_ALTIM     (INDEX_FLOOR + 1)            // COLOR29 = black (altimeter terrain overflow) (1)
 #define INDEX_FLOOR_SHIP      (INDEX_FLOOR_ALTIM + 1)      // COLOR30 = black (altimeter ship overflow) (1)
 #define INDEX_FLOOR_ENERGY    (INDEX_FLOOR_SHIP + 1)       // COLOR25 = black (energy bar overflow) (1)
-#define INDEX_TERMINATOR      (INDEX_FLOOR_ENERGY + 1)     // copperWait(255,254)
+#define INDEX_BORDER_WRAP     (INDEX_FLOOR_ENERGY + 1)     // WAIT line 255 to cross VPOS wrap (1)
+#define INDEX_BORDER_WAIT     (INDEX_BORDER_WRAP + 1)      // WAIT line 260, hpos 0 (1)
+#define INDEX_BORDER_BLACK    (INDEX_BORDER_WAIT + 1)      // color00 = black below DIWSTOP (1)
+#define INDEX_TERMINATOR      (INDEX_BORDER_BLACK + 1)     // copperWait(255,254)
 #define LIST_LENGTH           (INDEX_TERMINATOR + 1)
 
 // ---- Sprite channel × region plan (the single source of truth; see docs/sprite-multiplex-plan.md) ----
@@ -368,6 +371,10 @@ void FlightCopperList::buildLayout(const Bitmap& title, const Bitmap& terrain, c
     d[INDEX_FLOOR_ALTIM]  = copperMove(kColor29, 0x000);   // altimeter terrain pen01 → black (hide overflow)
     d[INDEX_FLOOR_SHIP]   = copperMove(kColor30, 0x000);   // altimeter ship   pen10 → black (hide overflow)
     d[INDEX_FLOOR_ENERGY] = copperMove(kColor25, 0x000);   // energy bar       pen01 → black (hide overflow)
+
+    d[INDEX_BORDER_WRAP]  = copperWait(255, 0xE0);
+    d[INDEX_BORDER_WAIT]  = copperWait((kDisplayTop + kH) & 0xFF, 0x00);
+    d[INDEX_BORDER_BLACK] = copperMove(color00, 0x000);
 
     d[INDEX_TERMINATOR] = copperWait(255, 254);
 }

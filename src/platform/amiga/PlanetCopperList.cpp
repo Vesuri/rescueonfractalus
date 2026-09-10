@@ -85,7 +85,10 @@ static const uint16_t kColor29 = 0x1BA;   // sprite pair 6/7 pen 01 (starfield)
 #define INDEX_GAUGE_BOT       (INDEX_GAUGE_BOT_WAIT + 1)   // COLOR21 = black (1)
 #define INDEX_FLOOR_WAIT      (INDEX_GAUGE_BOT + 1)        // WAIT(kCockpitLine+72-1 = 251) (1)
 #define INDEX_FLOOR           (INDEX_FLOOR_WAIT + 1)       // color01 = black (floor) (1)
-#define INDEX_TERMINATOR      (INDEX_FLOOR + 1)            // copperWait(255,254)
+#define INDEX_BORDER_WRAP     (INDEX_FLOOR + 1)            // WAIT line 255 to cross VPOS wrap (1)
+#define INDEX_BORDER_WAIT     (INDEX_BORDER_WRAP + 1)      // WAIT line 260, hpos 0 (1)
+#define INDEX_BORDER_BLACK    (INDEX_BORDER_WAIT + 1)      // color00 = black below DIWSTOP (1)
+#define INDEX_TERMINATOR      (INDEX_BORDER_BLACK + 1)     // copperWait(255,254)
 #define LIST_LENGTH           (INDEX_TERMINATOR + 1)
 
 PlanetCopperList::PlanetCopperList()
@@ -197,6 +200,10 @@ void PlanetCopperList::buildLayout(const Bitmap& title, const Bitmap& terrain, c
     d[INDEX_GAUGE_BOT]      = copperMove(color21, 0x000);   // clip the bar at its dial
     d[INDEX_FLOOR_WAIT] = copperWait(kCockpitLine + 72 - 1, 0xE0);
     d[INDEX_FLOOR]      = copperMove(color01, atariToOCS(0x00));
+
+    d[INDEX_BORDER_WRAP]  = copperWait(255, 0xE0);
+    d[INDEX_BORDER_WAIT]  = copperWait((kDisplayTop + kH) & 0xFF, 0x00);
+    d[INDEX_BORDER_BLACK] = copperMove(color00, 0x000);
 
     d[INDEX_TERMINATOR] = copperWait(255, 254);
 }
