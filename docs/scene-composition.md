@@ -24,6 +24,30 @@ source colours while keeping COLOR00 dark grey from line 180 to the bottom, elim
 border bands on OCS machines without border blanking. The preceding 8-line mode-D windscreen band
 remains a normal three-plane region with its scene-specific edge colour.
 
+**The windscreen band changes SOURCE at the tunnel→planet handover, and that is where it breaks.**
+The shared `$3000` mode-D DL has an LMS at `$3156` whose operand is the tunnel's `$350D` cockpit
+band, patched to `$1810` for stars/planet — so `TunnelCopperList` draws the band from
+`cockpitBitmap` rows 0-7 and `PlanetCopperList` from `viewportBitmap` rows 43-46, and
+`copy_192_to_1800` (`$75A5`) makes the two images the same 192 bytes so the handoff is meant to be
+pixel-identical. Its wide light-grey area is **pen 2 = COLOR02 = `$06`** (the band block at
+scanline 172 bakes COLOR01=`$04`/COLOR02=`$06`, mirroring band DLI `$6D67`); the sloped corner is
+pen 1. An all-zero band row therefore reads as COLOR00 — black — which is the "black bar across
+the cockpit top" symptom. ⚠ Two traps, both of which have produced that bar:
+- The planet copper goes live one vblank after `setCopperList`, while the 47-row entry decode is
+  still running on a 68000 and does the band rows LAST — so `renderFrame` must seed rows 43-46
+  before publishing the list. A fast CPU finishes in time and hides the bug.
+- **That seed is a MEMOIZING decode.** `decodeViewportRows` skips every 4-byte group matching
+  `viewportShadow`, which describes the last decode's output, not the bitmap's current content —
+  and the entry's blitter clear zeroes the bitmap without touching the shadow. Since the band
+  image is byte-identical from launch to launch, the shadow from the previous launch made the
+  seed a silent no-op: measured `mid` (the band's middle columns) `00` after the clear, still
+  `00` after the seed, non-zero only once the shadow was invalidated first. **First launch fine,
+  every launch after the mother-ship return black.** A skip-if-unchanged decode cannot implement
+  "write these rows now" — invalidate its shadow for those rows first.
+  Guard: `make PROBES=1 FORCE_RETURN=1 FORCE_RELAUNCH=1` + `amiga/band_seed.gdb`; `mid` must be
+  non-zero at EVERY planet entry. Sample the MIDDLE columns, not the whole row — the corner wedge
+  alone sets bits in every plane, which is what made a whole-row OR look healthy.
+
 **Launch DLI chain** (`VDSLST=$6CAD`): dispatch on index `$C7` through word table **`$6DBB`** =
 `[$4A0C, $6CD7, $6CF1, $6D28, $6D42, $6D4F, $6D7C, $6D99]`; tail `$4A05` does `INC $C7`; `$4ACD`
 resets `$C7`. Key: `$6CD7` PMG colours `COLPM1/2/3=mem[$08D7/8/9]`+`PRIOR=$94`; `$6CF1`

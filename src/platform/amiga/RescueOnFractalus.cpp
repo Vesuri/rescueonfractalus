@@ -294,6 +294,15 @@ extern "C" { volatile unsigned short g_rkVbi[RK_STEPS] = {0}, g_rkHold[RK_STEPS]
 // seam between the reverse tunnel ending and the standby appearing.  Must be 0: render()'s T6
 // handoff hold is supposed to own that window, freezing the last reverse-ring frame on screen.
 extern "C" { volatile unsigned long  g_brBlackFrames = 0; }
+// Planet-entry windscreen-band seed check (the "black band for one frame" report).  The seed must
+// leave the band's WIDE middle area (pen2 = COLOR02 light grey) populated before the planet copper
+// goes live; g_pbMid is that area's OR and MUST be non-zero at every entry.  A whole-row OR would
+// not do — the corner wedge alone sets bits in every plane, which is what hid this for a while.
+extern "C" { volatile unsigned char  g_pbN = 0, g_pbFlags[4] = {0}; }
+extern "C" { volatile unsigned short g_pbVbi[4] = {0}, g_pbLastBase[4] = {0}; }
+extern "C" { volatile unsigned long  g_pbSrc[4] = {0}, g_pbBmp[4] = {0}, g_pbShd[4] = {0}; }
+extern "C" { volatile unsigned char  g_pbMid[4] = {0}; }
+
 #define BC_FRAMES 240
 extern "C" { volatile unsigned long  g_bcTot = 0; }
 extern "C" { volatile unsigned short g_bcIdx = 0, g_bcPost = 0; }
@@ -4714,8 +4723,41 @@ void RescueOnFractalus::renderFrame()
         // the same source into the same bytes, so nothing downstream changes.
         if (vpEntryClear) {
             AmigaHardware::blitterDrain();        // the entry clear covers the band rows too
+            // ⚠ Invalidate the change shadow for these rows FIRST.  decodeViewportRows is a
+            // memoizing decode: it skips every 4-byte group whose source matches viewportShadow,
+            // and that shadow describes the LAST decode's output, not the bitmap's current
+            // content.  The blitter clear above just zeroed the bitmap without touching it, so a
+            // shadow left over from an earlier decode of the same band image makes this seed a
+            // silent no-op — which is exactly the black band it exists to prevent.
+            // renderViewportModeD's own full path zeroes the whole shadow for the same reason;
+            // this seed bypasses that path, so it has to do it for its own rows.
+            for (int i = 43 * 10; i < 47 * 10; i++) viewportShadow[i] = 0u;
             decodeViewportRows(0x1000, 48, 43, 46, false);
         }
+#ifdef ROF_FLIGHT_PROBE
+        // Does the band seed actually put pixels in rows 43-46 before the list goes live?
+        { extern volatile unsigned char g_pbN;
+          extern volatile unsigned short g_pbVbi[4];
+          extern volatile unsigned long  g_pbSrc[4], g_pbBmp[4], g_pbShd[4];
+          extern volatile unsigned char  g_pbFlags[4]; extern volatile unsigned short g_pbLastBase[4];
+          if (g_pbN < 4) {
+              const unsigned i = g_pbN++;
+              unsigned long src = 0, bmp = 0, shd = 0;
+              for (int r = 43; r <= 46; r++) {
+                  const uint8_t* sp = (const uint8_t*)&mem[0x1000u + r * 48 + 4];
+                  for (int b = 0; b < 40; b++) src |= sp[b];
+                  const uint8_t* bp = (const uint8_t*)viewportBitmap->data + r * 120;
+                  for (int b = 0; b < 120; b++) bmp |= bp[b];
+                  for (int w = 0; w < 10; w++) shd |= viewportShadow[r * 10 + w];
+              }
+              g_pbVbi[i] = platform_frame_count();
+              g_pbSrc[i] = src; g_pbBmp[i] = bmp; g_pbShd[i] = shd;
+              g_pbMid[i] = bandMiddleOr();
+              g_pbLastBase[i] = viewportLastBase;
+              g_pbFlags[i] = (unsigned char)((vpEntryClear ? 1u : 0u)
+                            | (viewportClearKicked ? 2u : 0u) | (viewportForceFull ? 4u : 0u));
+          } }
+#endif
         AmigaHardware::setCopperList(*planetCopper, false);
         planetCopperInstalled = true;
         standbyCopperInstalled = false; flightCopperInstalled = false;
@@ -7270,3 +7312,18 @@ void RescueOnFractalus::shutdown()
     for (int c = 0; c < 6; c++) { delete starSprite[c]; starSprite[c] = nullptr; starRing[c] = nullptr; }
 }
 
+
+#ifdef ROF_FLIGHT_PROBE
+// OR of viewportBitmap rows 43-46, columns 16-23, over all three planes: non-zero iff the
+// windscreen band's wide light-grey area actually holds pixels.  (A whole-row OR is useless —
+// the corner wedge alone sets bits in every plane.)
+unsigned char RescueOnFractalus::bandMiddleOr() const
+{
+    unsigned v = 0;
+    if (viewportBitmap) for (int r = 43; r <= 46; r++) {
+        const uint8_t* b = (const uint8_t*)viewportBitmap->data + r * 120;
+        for (int k = 16; k < 24; k++) v |= b[k] | b[40 + k] | b[80 + k];
+    }
+    return (unsigned char)v;
+}
+#endif
