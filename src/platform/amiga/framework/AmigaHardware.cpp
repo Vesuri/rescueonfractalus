@@ -57,12 +57,12 @@ void AmigaHardware::setPlayfield(uint16_t width, uint16_t height, uint8_t bitpla
     uint16_t bitplaneWidth = width >> 3;
     uint16_t alignedWidth = hasAGAChipSet ? (bitplaneWidth & 0xfffc) : bitplaneWidth;
     *fmodePointer = (uint16_t)(hasAGAChipSet ? 3 : 0);
-    *bplcon3Pointer = 0x0c00 | BPLCON3_BRDNBLNK | BPLCON3_BRDNTRAN;
+    *bplcon3Pointer = 0x0c00 | BPLCON3_BRDNTRAN;
     *bplcon2Pointer = 0x0024;
     *bplcon1Pointer = 0;
     *bplcon0Pointer = (uint16_t)((bitplaneCount << PLNCNTSHFT) | (hires ? MODE_640 : 0) | (dualPlayfield ? DBLPF : 0) | (holdAndModify ? HOLDNMODIFY : 0) | USE_BPLCON3);
     // DIW bounds the 320px lores fetch (DDFSTRT=0x38/DDFSTOP=0xD0 → hpos
-    // 0x81..0x1C1); matched so BPLCON3 BRDNBLNK can blank both borders.
+    // 0x81..0x1C1); COLOR00 remains visible in the surrounding border.
     *diwstrtPointer = (uint16_t)(((centerY - halfHeight) << 8) | 0x81);
     *diwstopPointer = (uint16_t)(((centerY + halfHeight) << 8) | 0xc1);
     *diwhighPointer = 0x2100;

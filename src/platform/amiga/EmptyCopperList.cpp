@@ -1,6 +1,6 @@
 #define ECS_SPECIFIC
 #include <hardware/custom.h>
-#include <graphics/display.h>          // USE_BPLCON3 (ECSENA bit — keeps BPLCON3 BRDNBLNK live)
+#include <graphics/display.h>          // USE_BPLCON3 (ECSENA bit)
 #include <proto/exec.h>
 #include <exec/memory.h>
 #include "EmptyCopperList.h"
@@ -19,7 +19,7 @@ static const int kLineBytes = 40;
 #define INDEX_COLOR00     1                     // color00 (1)
 #define INDEX_COLOR01     (INDEX_COLOR00 + 1)   // 2: color01 — same colour as color00 (uniform)
 #define INDEX_BPLCON0     (INDEX_COLOR01 + 1)   // 3: BPLCON0 = 1 plane + ECSENA (1)
-#define INDEX_BPLCON3     (INDEX_BPLCON0 + 1)   // 4: BPLCON3 = border-blank (1)
+#define INDEX_BPLCON3     (INDEX_BPLCON0 + 1)   // 4: BPLCON3 (1)
 #define INDEX_BPL1PT      (INDEX_BPLCON3 + 1)   // 5: BPL1PTH/BPL1PTL (2)
 #define INDEX_BPL1MOD     (INDEX_BPL1PT + 2)    // 7: BPL1MOD = -kLineBytes (1)
 #define INDEX_SPRITES     (INDEX_BPL1MOD + 1)   // 8: 8 sprite ptrs (16)
@@ -47,10 +47,9 @@ void EmptyCopperList::buildLayout(const Sprite& nullSprite)
     d[INDEX_COLOR00] = copperMove(color00, 0x000);   // both pens black initially
     d[INDEX_COLOR01] = copperMove(color01, 0x000);
     // ONE bitplane + ECSENA (USE_BPLCON3): an active playfield in the display window (so it shows
-    // color00/01) with BPLCON3 BRDNBLNK blanking the border.  0 bitplanes + BRDNBLNK would blank
-    // the WHOLE raster to black (user-observed); with color00==color01 the plane reads uniform.
+    // color00/01).  With color00==color01 the plane and the unblanked border read uniformly.
     d[INDEX_BPLCON0] = copperMove(bplcon0, (uint16_t)((1u << PLNCNTSHFT) | USE_BPLCON3));
-    d[INDEX_BPLCON3] = copperMove(bplcon3, 0x0c00 | BPLCON3_BRDNBLNK | BPLCON3_BRDNTRAN);  // blank both borders
+    d[INDEX_BPLCON3] = copperMove(bplcon3, 0x0c00 | BPLCON3_BRDNTRAN);
     d[INDEX_BPL1PT + 0] = copperMove(bpl1pth, (uint16_t)(((uint32_t)filler_) >> 16));
     d[INDEX_BPL1PT + 1] = copperMove(bpl1ptl, (uint16_t)(((uint32_t)filler_) & 0xFFFF));
     d[INDEX_BPL1MOD]    = copperMove(bpl1mod, (uint16_t)(-kLineBytes));   // re-read the same line each scanline
