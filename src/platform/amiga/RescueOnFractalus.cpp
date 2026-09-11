@@ -5463,9 +5463,9 @@ void RescueOnFractalus::updateDoorsCopper(DoorsCopperList* dc)
     const uint32_t ta   = (uint32_t)doorScrollBitmap->data;
     // pen0 = COLBK green ($0071), pen3 = road-dot dark ($02C0): the door field decodes
     // COLBK (value 8)→pen0 and the dark dots (value 0)→pen3 (see kNibbleColour).  color00
-    // green then flows unbroken through all three terrain bands AND the tunnel reveal into
-    // the windscreen band (the Atari keeps COLBK green across the whole viewport+band — see
-    // doors_mid, COLBK=$C8 y50-136), so the band corners inherit it: no setBandBgColor.
+    // green is used by the door halves.  The tunnel bitmap's pen0 is its outer corner colour
+    // ($08D8), so DoorsCopperList switches COLOR00 to that within the moving reveal and restores
+    // green for the lower door; this also makes the unblanked OCS border follow the gap.
     dc->update(g2,
                         ta + (uint32_t)g2 * 120u,
                         (uint32_t)tunnelBitmap->data + (uint32_t)(half - g2) * 120u,

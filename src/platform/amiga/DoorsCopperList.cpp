@@ -51,13 +51,15 @@ static const uint16_t kGaugeBottomLine = 0x2c + 144 + 56;             // = 244
 #define INDEX_B0_BPLCON0      (INDEX_B0_BPL + 6)        // 1
 #define INDEX_B0_MOD          (INDEX_B0_BPLCON0 + 1)    // 2
 #define INDEX_B0_COL          (INDEX_B0_MOD + 2)        // color00..06 (7)
-// Band 1 (tunnel reveal): WAIT, 6 bpl ptrs, color01..03 (3).
+// Band 1 (tunnel reveal): WAIT, color00 (tunnel corner), 6 bpl ptrs, color01..03 (3).
 #define INDEX_B1_WAIT         (INDEX_B0_COL + 7)
-#define INDEX_B1_BPL          (INDEX_B1_WAIT + 1)       // 6
+#define INDEX_B1_BG           (INDEX_B1_WAIT + 1)       // color00 = tunnel corner (1)
+#define INDEX_B1_BPL          (INDEX_B1_BG + 1)         // 6
 #define INDEX_B1_COL          (INDEX_B1_BPL + 6)        // color01..03 (3)
-// Band 2 (bottom terrain): WAIT, 6 bpl ptrs, color01..03 (3).
+// Band 2 (bottom terrain): WAIT, color00 (green), 6 bpl ptrs, color01..03 (3).
 #define INDEX_B2_WAIT         (INDEX_B1_COL + 3)
-#define INDEX_B2_BPL          (INDEX_B2_WAIT + 1)       // 6
+#define INDEX_B2_BG           (INDEX_B2_WAIT + 1)       // color00 = door green (1)
+#define INDEX_B2_BPL          (INDEX_B2_BG + 1)         // 6
 #define INDEX_B2_COL          (INDEX_B2_BPL + 6)        // color01..03 (3)
 // Cockpit region (constant).
 #define INDEX_COCKPIT_WAIT    (INDEX_B2_COL + 3)
@@ -153,9 +155,7 @@ void DoorsCopperList::buildLayout(const Bitmap& title, const Bitmap& cockpit,
     d[INDEX_COCKPIT_BPLCON0] = copperMove(bplcon0, kBPLCON0_3P);
     d[INDEX_COCKPIT_MOD]     = copperMove(bpl1mod, 80);
     d[INDEX_COCKPIT_MOD + 1] = copperMove(bpl2mod, 80);
-    // color00 (COLBK) is NOT set here: it carries the windscreen-band green forward from the
-    // terrain bands (band0 sets color00 = green; the door field decodes COLBK→pen0), exactly
-    // as the Atari's COLBK stays green across the viewport/band boundary.  The dashboard entry
+    // color00 is inherited from the final moving door/tunnel band.  The dashboard entry below
     // then changes COLOR00 to dark grey and moves COLBK to PF1 COLOR01.
     d[INDEX_COCKPIT_PAL + 0] = copperMove(color01, atariToOCS(0x04));
     d[INDEX_COCKPIT_PAL + 1] = copperMove(color02, atariToOCS(0x06));
@@ -245,12 +245,14 @@ void DoorsCopperList::update(uint16_t g2,
     // ---- band 1: tunnel reveal (the widening gap) ----
     if (door && topH > 0) {
         d[INDEX_B1_WAIT] = copperWait((uint16_t)(kTerrainLine + topH - 1), 0xE0);
+        d[INDEX_B1_BG] = copperMove(color00, ring4);         // tunnel corner ($08D8), including OCS border
         emitBpl(d, INDEX_B1_BPL, tunBase);
         d[INDEX_B1_COL + 0] = copperMove(color01, ring3);     // tunnel pens 1-3 ($08D7-$08D9)
         d[INDEX_B1_COL + 1] = copperMove(color02, ring4);
         d[INDEX_B1_COL + 2] = copperMove(color03, ring5);
     } else {
         d[INDEX_B1_WAIT] = copperWait(kBand1ParkLine, 0xE0);
+        d[INDEX_B1_BG] = COPPER_NOP;
         for (int i = 0; i < 6; i++) d[INDEX_B1_BPL + i] = COPPER_NOP;
         d[INDEX_B1_COL + 0] = COPPER_NOP;
         d[INDEX_B1_COL + 1] = COPPER_NOP;
@@ -258,17 +260,28 @@ void DoorsCopperList::update(uint16_t g2,
     }
 
     // ---- band 2: bottom terrain (slides down) ----
-    // Emit only while its WAIT clears the cockpit WAIT by a margin; otherwise the
-    // tunnel band above simply extends over the last 1-2 rows (imperceptible).
+    // Emit the bitmap switch only while its WAIT clears the cockpit WAIT by a margin.  On the
+    // final nearly-open frame the tunnel bitmap still extends over the last row, but COLOR00 must
+    // nevertheless switch back at the real lower-door boundary so the border and cockpit band
+    // remain green.
     const uint16_t botWaitY = (uint16_t)(kTerrainLine + half + g2 - 1);
     if (door && topH > 0 && botWaitY + 2 <= (uint16_t)(kCockpitLine - 1)) {
         d[INDEX_B2_WAIT] = copperWait(botWaitY, 0xE0);
+        d[INDEX_B2_BG] = copperMove(color00, bandBg);         // lower door resumes: border back to green
         emitBpl(d, INDEX_B2_BPL, botBase);
-        d[INDEX_B2_COL + 0] = copperMove(color01, terr1);     // pens 1-2 + pen3 (color00 green inherited)
+        d[INDEX_B2_COL + 0] = copperMove(color01, terr1);
         d[INDEX_B2_COL + 1] = copperMove(color02, terr2);
         d[INDEX_B2_COL + 2] = copperMove(color03, terrDots);
+    } else if (door && topH > 0) {
+        d[INDEX_B2_WAIT] = copperWait(botWaitY, 0xE0);
+        d[INDEX_B2_BG] = copperMove(color00, bandBg);
+        for (int i = 0; i < 6; i++) d[INDEX_B2_BPL + i] = COPPER_NOP;
+        d[INDEX_B2_COL + 0] = COPPER_NOP;
+        d[INDEX_B2_COL + 1] = COPPER_NOP;
+        d[INDEX_B2_COL + 2] = COPPER_NOP;
     } else {
         d[INDEX_B2_WAIT] = copperWait(kBand2ParkLine, 0xE0);
+        d[INDEX_B2_BG] = COPPER_NOP;
         for (int i = 0; i < 6; i++) d[INDEX_B2_BPL + i] = COPPER_NOP;
         d[INDEX_B2_COL + 0] = COPPER_NOP;
         d[INDEX_B2_COL + 1] = COPPER_NOP;
