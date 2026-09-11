@@ -731,6 +731,7 @@ extern void platform_tunnel_group(uint16_t rowBase, uint8_t rowTop, uint8_t rowB
 extern void platform_tunnel_columns(uint16_t rowBase, uint8_t colL, uint8_t colR, uint8_t colR1,
                                     uint8_t colour);
 extern void platform_tunnel_ring_advance(void);
+extern void platform_tunnel_outer_ring(void);
 extern void platform_tunnel_span_run(uint16_t rowBase, uint8_t r0, uint8_t r1, uint8_t xL,
                                      uint8_t xR, uint8_t count, uint8_t colour);
 #define ROF_TUNNEL_GROUP(rowBase, rowTop, rowBot, xL, xR, count, colour) \
@@ -2068,6 +2069,11 @@ void step_accum_sub_7e(void) {
 #endif
     if (a < 0x14) {                                        /* CMP #$14; BCC -> draw a ring group */
         step_mode_flag = a;                               /* $008D = A (TAY; STA) */
+#ifdef ROF_PLATFORM_AMIGA
+        /* a==0 selects the 11-outline final group: measured outer geometry is rows 0..85 and
+         * columns 4..90, i.e. the first frame whose dark-green background touches every edge. */
+        if (a == 0) platform_tunnel_outer_ring();
+#endif
         span_row_count = mem[0x6E0F + a];                 /* $0096 = ring thickness */
         ROF_TR_SRC_SAVE(trSave);                          /* ISR site: restore, we may have preempted the pre-draw */
         ROF_TR_SRC_SET(3);

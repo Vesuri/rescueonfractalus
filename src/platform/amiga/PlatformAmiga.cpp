@@ -1517,6 +1517,11 @@ extern "C" void platform_tunnel_ring_advance(void)
     if (s_scene) s_scene->pokeTunnelRingAdvance();
 }
 
+extern "C" void platform_tunnel_outer_ring(void)
+{
+    if (s_scene) s_scene->pokeTunnelOuterRing();
+}
+
 
 // Flight/init timing probes (enable with `make PROBES=1` → -DROF_FLIGHT_PROBE).  Sub-frame
 // clock rof_subclock() = g_vbiCount*313 + beam_line, plus the accumulators that rof_native.c's

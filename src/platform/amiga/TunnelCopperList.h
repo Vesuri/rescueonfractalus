@@ -60,4 +60,5 @@ public:
     // pen7 = color07 = the field's exit-clear black ($02C0, value-0 remapped to pen7).
     void setTunnelColors(uint16_t pen0, uint16_t pen1, uint16_t pen2, uint16_t pen3,
                          uint16_t pen4, uint16_t pen5, uint16_t pen6, uint16_t pen7);
+    void setTunnelColor00(uint16_t color);  // ISR: final reverse group reaches the OCS border
 };

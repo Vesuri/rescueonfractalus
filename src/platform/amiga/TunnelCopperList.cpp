@@ -340,3 +340,8 @@ void TunnelCopperList::setTunnelColors(uint16_t pen0, uint16_t pen1, uint16_t pe
     data_[INDEX_TERRAIN_PAL + 6] = copperMove(color06, pen6);
     data_[INDEX_TERRAIN_PAL + 7] = copperMove(color07, pen7);
 }
+
+void TunnelCopperList::setTunnelColor00(uint16_t color)
+{
+    data_[INDEX_TERRAIN_PAL] = copperMove(color00, color);
+}

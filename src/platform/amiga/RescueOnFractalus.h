@@ -354,6 +354,7 @@ private:
     void setTunnelRingPalette(TunnelCopperList* tc, bool ahead);  // the 8 terrain colour registers
 public:
     void pokeTunnelRingAdvance();   // ISR: poke the LIVE list one ring rotation ahead
+    void pokeTunnelOuterRing();     // ISR: final reverse group reaches the viewport edges
 private:
     uint16_t boostRevealK() const;  // first viewport row showing rings (43 = nothing revealed yet)
 

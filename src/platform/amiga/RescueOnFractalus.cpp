@@ -5667,6 +5667,24 @@ void RescueOnFractalus::pokeTunnelRingAdvance()
     if (live) setTunnelRingPalette(live, /*ahead*/true);
 }
 
+// The final reverse group is special: it is the first (and only) group whose outer edge reaches
+// all four viewport boundaries.  Its accumulator value is zero, so step_accum_sub_7e neither
+// rotates the colour ring nor calls pokeTunnelRingAdvance(), and rsBoostViewport becomes false
+// before the main loop can publish another TunnelCopperList.  Update the executing list here,
+// while still in the VBI that paints that group, so OCS color00 changes from the old teal ring
+// colour to the dark-green background at exactly the same frame as the outermost pixels.  Since
+// terrain color00 normally carries into the cockpit band, also activate the existing band-top
+// restore slot with the old ring colour; otherwise the corner triangle flashes green for this
+// one live-list frame before the normally published list restores the intended teal split.
+void RescueOnFractalus::pokeTunnelOuterRing()
+{
+    TunnelCopperList* live = tunnelCopper[g_tunLiveIdx];
+    if (live) {
+        live->setTunnelColor00(atariToOCS(mem[0x0071]));
+        live->setBandTopColor00(true, atariToOCS(mem[MEM_color_ring + 4]));
+    }
+}
+
 // ============================================================================
 //  BOOT SCENES 1 + 2 — the GTIA-9 field decode (Logo / Station cinematic)
 // ============================================================================
