@@ -2071,7 +2071,9 @@ void step_accum_sub_7e(void) {
         step_mode_flag = a;                               /* $008D = A (TAY; STA) */
 #ifdef ROF_PLATFORM_AMIGA
         /* a==0 selects the 11-outline final group: measured outer geometry is rows 0..85 and
-         * columns 4..90, i.e. the first frame whose dark-green background touches every edge. */
+         * columns 4..90, i.e. the first frame whose dark-green background touches every edge.
+         * The accumulator top byte passes through zero exactly ONCE per cinematic (measured),
+         * so this is the wipe's last group and nothing else. */
         if (a == 0) platform_tunnel_outer_ring();
 #endif
         span_row_count = mem[0x6E0F + a];                 /* $0096 = ring thickness */

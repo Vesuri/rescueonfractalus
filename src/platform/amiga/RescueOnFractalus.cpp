@@ -218,9 +218,6 @@ extern "C" { volatile unsigned long g_boostHandoffHoldFrames = 0; }
 // any more: the rings are PAINTED (drawTunnelRect), never decoded.
 extern "C" { volatile unsigned long g_bStarDec = 0; }
 extern "C" { volatile unsigned long g_bStarTicks = 0; }
-// Boost band-corner split histogram: how many frames of each sub-phase derived each greenLine
-// (0 = whole band the door colour / wedge still full, 8 = whole band the carried ring colour).
-extern "C" { volatile unsigned long g_bwLine[9] = {0}, g_bwLineStars[9] = {0}; }
 #ifdef ROF_FLIGHT_PROBE
 // ROF_TUNNEL_RECT plumbing probe: g_trCalls = ring rectangles handed to the direct painter,
 // g_trDoors = rectangles that belonged to the $2000 door field (skipped).  The first 8 ring
@@ -297,6 +294,19 @@ extern "C" { volatile unsigned short g_rkVbi[RK_STEPS] = {0}, g_rkHold[RK_STEPS]
 // seam between the reverse tunnel ending and the standby appearing.  Must be 0: render()'s T6
 // handoff hold is supposed to own that window, freezing the last reverse-ring frame on screen.
 extern "C" { volatile unsigned long  g_brBlackFrames = 0; }
+#define BC_FRAMES 240
+extern "C" { volatile unsigned long  g_bcTot = 0; }
+extern "C" { volatile unsigned short g_bcIdx = 0, g_bcPost = 0; }
+extern "C" { volatile unsigned short g_bcVbi[BC_FRAMES] = {0}, g_bcCol0[BC_FRAMES] = {0},
+                                     g_bcPen2[BC_FRAMES] = {0}, g_bcBTop[BC_FRAMES] = {0}; }
+extern "C" { volatile unsigned char  g_bcKdisp[BC_FRAMES] = {0}, g_bcKpub[BC_FRAMES] = {0},
+                                     g_bcEdge[BC_FRAMES] = {0}, g_bc8D[BC_FRAMES] = {0},
+                                     g_bc8E[BC_FRAMES] = {0}, g_bc94[BC_FRAMES] = {0},
+                                     g_bc71[BC_FRAMES] = {0}, g_bcD8[BC_FRAMES] = {0},
+                                     g_bc88[BC_FRAMES] = {0}, g_bcBr[BC_FRAMES] = {0}; }
+extern "C" { volatile unsigned char g_tunPubK[2] = {43, 43}; }
+extern "C" { volatile unsigned char  g_borN = 0; }
+extern "C" { volatile unsigned long  g_borW[8] = {0}; }
 extern "C" { volatile unsigned short g_brBlackFirstVbi = 0, g_brBlackLastVbi = 0; }
 extern "C" { volatile unsigned char  g_brBlack8D = 0, g_brBlack8E = 0; }   // the gating flags at entry
 extern "C" { volatile unsigned char  g_brBlackDoorRdy = 0, g_brBlackTunInst = 0; }
@@ -2722,13 +2732,13 @@ void RescueOnFractalus::initialize()
         kGtia10P1[s] = (uint8_t)(((gh & 1) ? 0xF0u : 0u) | ((gl & 1) ? 0x0Fu : 0u));
         kGtia10P2[s] = (uint8_t)(((gh & 2) ? 0xF0u : 0u) | ((gl & 2) ? 0x0Fu : 0u));
         kGtia10P3[s] = (uint8_t)(((gh & 4) ? 0xF0u : 0u) | ((gl & 4) ? 0x0Fu : 0u));
-        // BOOST reverse tunnel (kGtia10BoostP*, the boost cinematic only) — additionally move value-2
-        // (the outermost ring, COLPM2) -> pen0 (color00) so the ring is DRAWN in the same register as
-        // the windscreen-band corner triangle (mode-D value-0 -> color00), and value-8 (COLBK
-        // background: star field + unrevealed rows) -> the freed pen2 (color02) so the background keeps
-        // its own register and does not inherit the outermost-ring colour (which caused teal edges).
-        uint8_t bh = (ph == 0) ? 7 : (ph == 2) ? 0 : (ph == 8) ? 2 : ph;
-        uint8_t bl = (pl == 0) ? 7 : (pl == 2) ? 0 : (pl == 8) ? 2 : pl;
+        // BOOST reverse tunnel (kGtia10BoostP*, the boost cinematic only): value-8 starts on
+        // pen0, so during the reveal the surround the viewport's sides actually show is the
+        // register the OCS border takes.  On the reveal's last step remapBoostOuterRing swaps
+        // bitmap pens 0 and 2, handing color00 to value-2 (the outer ring, which by then reaches
+        // those sides) and leaving value-8 its own register for the wipe.
+        uint8_t bh = (ph == 0) ? 7 : ph;
+        uint8_t bl = (pl == 0) ? 7 : pl;
         kGtia10BoostP1[s] = (uint8_t)(((bh & 1) ? 0xF0u : 0u) | ((bl & 1) ? 0x0Fu : 0u));
         kGtia10BoostP2[s] = (uint8_t)(((bh & 2) ? 0xF0u : 0u) | ((bl & 2) ? 0x0Fu : 0u));
         kGtia10BoostP3[s] = (uint8_t)(((bh & 4) ? 0xF0u : 0u) | ((bl & 4) ? 0x0Fu : 0u));
@@ -2785,6 +2795,9 @@ extern "C" { volatile unsigned char g_tunnelPaintOwns = 0; }
 
 void RescueOnFractalus::setTunnelOwner(uint8_t owner)
 {
+    if (owner == kTunnelOwnerBoost && tunnelOwner != kTunnelOwnerBoost) {
+        boostOuterOnPen0 = false;
+    }
     tunnelOwner = owner;
     g_tunnelPaintOwns = (owner != kTunnelOwnerNone) ? 1u : 0u;
 }
@@ -2796,6 +2809,10 @@ void RescueOnFractalus::setTunnelOwner(uint8_t owner)
 // prev-independent masks — so the whole direction split is this table choice.
 uint16_t RescueOnFractalus::tunnelPen(uint8_t colour) const
 {
+    if (tunnelOwner == kTunnelOwnerBoost && boostOuterOnPen0) {
+        if (colour == 2) return 0;
+        if (colour == 8) return 2;
+    }
     const uint8_t pat = (uint8_t)((colour << 4) | colour);
     const uint8_t* t1 = (tunnelOwner == kTunnelOwnerBoost) ? kGtia10BoostP1 : kGtia10P1;
     const uint8_t* t2 = (tunnelOwner == kTunnelOwnerBoost) ? kGtia10BoostP2 : kGtia10P2;
@@ -2803,6 +2820,41 @@ uint16_t RescueOnFractalus::tunnelPen(uint8_t colour) const
     return (uint16_t)(((t1[pat] & 0x80u) ? 1u : 0u) |
                       ((t2[pat] & 0x80u) ? 2u : 0u) |
                       ((t3[pat] & 0x80u) ? 4u : 0u));
+}
+
+// Exchange physical pens 0 and 2 in the ring bitmap, in place, so that from here on the OUTER
+// ring (GTIA value 2) owns color00 — the register the unblanked OCS border and the windscreen
+// band's corner triangle take — while the background (value 8) keeps its own register for the
+// wipe that follows.  Pen 0 = 000 and pen 2 = 010 differ only in plane 1, and both have plane 0
+// and plane 2 clear, so `plane1 ^= ~(plane0 | plane2)` swaps exactly those two and leaves the
+// six ring pens untouched.
+//
+// ⚠ WHEN this runs is the whole correctness argument, and it is why no double buffer is needed.
+// It must land in the window where $008D is negative: that is the reveal's LAST step, and there
+// the original itself holds $0071 (the background COLBK) equal to $08D8 (the outer ring) —
+// advance_history_6a4d copies one to the other while $008D < 0.  Both pens therefore carry the
+// SAME colour across the swap, so neither the in-place bitmap edit (which the raster can catch
+// half-done) nor the one-vblank lag of the matching palette change is observable.
+//
+// Doing it later — at full reveal, which is the frame the ring's outer edge first reaches the
+// viewport sides — puts the swap AFTER boot_standby_launch_driver has set $0071 = $C0 for the
+// wipe.  pen0 then still means "background", so color00 reads dark green for the one frame
+// before the remapped list goes live, and the border/corner stop continuing the viewport.
+void RescueOnFractalus::remapBoostOuterRing()
+{
+    if (boostOuterOnPen0 || !tunnelBitmap) return;
+    AmigaHardware::blitterDrain();
+    const uint16_t planeWords = tunnelBitmap->widthInWords();
+    const uint16_t rowWords   = tunnelBitmap->rowSizeInWords();
+    uint16_t* row = (uint16_t*)tunnelBitmap->data;
+    for (uint16_t y = 0; y < tunnelBitmap->height; y++, row += rowWords) {
+        const uint16_t* p0 = row;
+        uint16_t*       p1 = row + planeWords;
+        const uint16_t* p2 = row + 2 * planeWords;
+        for (uint16_t x = 0; x < planeWords; x++)
+            p1[x] = (uint16_t)(p1[x] ^ (uint16_t)~(p0[x] | p2[x]));
+    }
+    boostOuterOnPen0 = true;
 }
 
 // tunnelPaintBegin: arm the direct painter for the FORWARD launch tunnel and prime the bitmap.
@@ -4433,6 +4485,44 @@ void RescueOnFractalus::renderFrame()
     // there is nothing seamless to show, and falling through would put a stale list on screen — so
     // a return that somehow reaches here without one still black-holds.
     const bool boostReturnHandoff = boostReturnRF && tunnelCopperInstalled && !g_doorFieldReady;
+#ifdef ROF_FLIGHT_PROBE
+    extern volatile unsigned char g_tunLiveIdx;
+    // Record the frames that decide the border colour: every reveal frame, the first 60 after the
+    // reveal completes (the pen-handover window), and everything from $008D == 0 (the wipe's end).
+    // The long constant-K middle of the wipe would otherwise flush the whole window out of the ring.
+    extern volatile unsigned short g_bcPost;
+    bool bcWant = false;
+    if (boostViewportCine || boostReturnHandoff) {
+        if (mem[0x008D] != 0u || mem[0x008E] != 0u) {          // not the pure stars sub-phase
+            const unsigned k = boostRevealK();
+            if (k != 0u) g_bcPost = 0; else if (g_bcPost < 61u) g_bcPost++;
+            bcWant = (k != 0u) || (g_bcPost <= 60u) || (mem[0x008D] == 0u);
+        }
+    }
+    if (bcWant) {
+        extern volatile unsigned short g_bcIdx;
+        const unsigned i = g_bcIdx;
+        g_bcIdx = (unsigned short)((i + 1u < BC_FRAMES) ? i + 1u : 0u);
+        g_bcTot++;
+        TunnelCopperList* live = tunnelCopper[g_tunLiveIdx];
+        g_bcVbi[i]  = platform_frame_count();
+        g_bcCol0[i] = live ? (unsigned short)(live->probeTerrainPal0() & 0xFFFFu) : 0xFFFFu;
+        g_bcPen2[i] = live ? (unsigned short)(live->probeTerrainPal2() & 0xFFFFu) : 0xFFFFu;
+        g_bcBTop[i] = live ? (unsigned short)(live->probeBandTopWord() >> 16) : 0u;
+        g_bcKdisp[i] = g_tunPubK[g_tunLiveIdx];
+        g_bcKpub[i]  = (unsigned char)boostRevealK();
+        unsigned eR = 0, eS = 0;
+        if (tunnelBitmap) { const unsigned char* r = (const unsigned char*)tunnelBitmap->data + 43u * 120u;
+            eR = ((r[0] >> 7) & 1u) | (((r[40] >> 7) & 1u) << 1) | (((r[80] >> 7) & 1u) << 2); }
+        if (viewportBitmap) { const unsigned char* r = (const unsigned char*)viewportBitmap->data + 5u * 120u;
+            eS = ((r[0] >> 7) & 1u) | (((r[40] >> 7) & 1u) << 1) | (((r[80] >> 7) & 1u) << 2); }
+        g_bcEdge[i] = (unsigned char)((eR << 4) | eS);
+        g_bc8D[i] = mem[0x008D]; g_bc8E[i] = mem[0x008E]; g_bc94[i] = mem[0x0094];
+        g_bc71[i] = mem[0x0071]; g_bcD8[i] = mem[0x08D8]; g_bc88[i] = mem[0x0088];
+        g_bcBr[i] = (unsigned char)((boostViewportCine ? 1u : 0u) | (boostReturnHandoff ? 2u : 0u)
+                                    | (g_tunLiveIdx ? 4u : 0u) | (boostOuterOnPen0 ? 8u : 0u));
+    }
+#endif
     if (emptyCopper && !g_standbyRevealReady && !boostViewportCine && !boostReturnHandoff) {
         // Track the render signals EVERY held frame so the g_doorFieldReady 0->1 edge that fires
         // mid-build (boot_standby_launch_driver clears it at entry, re-sets it at construction-done)
@@ -4830,8 +4920,8 @@ void RescueOnFractalus::renderFrame()
             // the untouched field value $88 = GTIA value 8.  Priming to 0 left ~6% of the revealed
             // band wrong and read on screen as teal "gates opening" instead of a rectangle growing
             // from the centre (measured).  Derive the pen from the LUT so it follows the
-            // boost's value-8 -> color02 remap instead of hardcoding it.  (Take the owner first —
-            // tunnelPen() reads it to pick the LUT.)
+            // active boost mapping instead of hardcoding it.  (Take the owner first — tunnelPen()
+            // reads it to pick the LUT.)
             setTunnelOwner(kTunnelOwnerBoost); // from here every ring rectangle takes the boost LUT
             const uint16_t bgPen = tunnelPen(8);
             AmigaHardware::blitterWait();
@@ -5516,10 +5606,22 @@ void RescueOnFractalus::showTunnelCopper()
 {
     const uint8_t back = (uint8_t)(1 - g_tunLiveIdx);   // never the buffer the copper is running
     if (!tunnelCopper[back]) return;
+    // Hand color00 over from the reveal surround to the outer ring, once, before this list is
+    // populated — so the pen encoding and the palette that reads it are published together.
+    // $008D < 0 is the reveal's last step, the one window where both pens hold the same colour
+    // (see remapBoostOuterRing).  boostRevealK() == 0 is only a backstop for a cinematic that
+    // renders no frame inside that window: late, but better than never handing it over at all.
+    if (rsBoostViewport && !boostOuterOnPen0 &&
+        ((int8_t)mem[0x008D] < 0 || boostRevealK() == 0))
+        remapBoostOuterRing();
     updateTunnelCopper(tunnelCopper[back]);
     AmigaHardware::setCopperList(*tunnelCopper[back], false);
     tunnelActive = back;
     g_tunPubIdx  = back;
+#ifdef ROF_FLIGHT_PROBE
+    { extern volatile unsigned char g_tunPubK[2];
+      g_tunPubK[back] = rsBoostViewport ? (unsigned char)boostRevealK() : 0u; }
+#endif
 #ifdef ROF_FLIGHT_PROBE
     g_tunLastVbi = platform_frame_count();
 #endif
@@ -5566,43 +5668,12 @@ void RescueOnFractalus::updateTunnelCopper(TunnelCopperList* tunnelCopper)
         tunnelCopper->setRevealBands(0, (uint32_t)tunnelBitmap->data, (uint32_t)tunnelBitmap->data);
     // Windscreen-band corner split.  The colour registers themselves are setTunnelRingPalette's job.
     if (rsBoostViewport) {
-        // BOOST reverse cinematic (kGtia10BoostP): value-2 (outermost ring) -> color00, value-8
-        // (background) -> color02.  So the band-corner triangle (mode-D value-0 -> color00) IS the
-        // outermost ring, and the star / unrevealed background keeps its own COLBK register.
-        // Band corner triangle: the FORWARD tunnel's mechanism, verbatim (see the else-branch below).
-        // color00 already holds the colour the corner should show — in the boost LUT that is value-2,
-        // the outermost ring — and it carries from the viewport into the band untouched; one moving
-        // WAIT flips it to the green door colour from the topmost still-set canopy-wedge row down.
-        // Wedge empty (the whole reverse tunnel) -> greenLine 8 -> the band shows the ring.
-        //
-        // ⚠ Do NOT go back to a phase latch here (poke color00 black at the band top until $008D
-        // goes negative = "the outermost ring has been drawn").  The main loop would be sampling a
-        // byte the VBI animates, so whether it ever sees that window depends on the render cadence
-        // — the corner comes out black for the whole cinematic on some runs and correct on others.
-        // Nothing here is sampled: the split is re-derived from the live wedge buffer every frame,
-        // which is why the forward path has never shown this class of bug.
-        uint16_t bGreenLine = 8;                            // first still-green band scanline
-        for (uint16_t i = 0; i < 8; i++) { if (mem[0x0C88 + i]) { bGreenLine = i; break; } }
-        if (bGreenLine == 0) {
-            // Whole band takes the door colour (the wedge is still up), so the moving WAIT has no
-            // work to do — and at greenLine 0 it sits at kCockpitLine-1, the slot the cockpit
-            // bitplane-pointer moves OVERRUN by ~16px into the band's first line, leaving the
-            // carried ring colour showing there (a teal stripe over black;
-            // the same artifact the boost path had to fix).  Flip color00 EARLY
-            // instead, before those moves — the pairing the T6 recede branch above already uses.
-            tunnelCopper->setBandTopColor00(true, atariToOCS(mem[0x0071]));
-            tunnelCopper->disableBandReveal();
-        } else {
-            tunnelCopper->setBandTopColor00(false, 0);      // no absolute band-top poke
-            tunnelCopper->setBandReveal(bGreenLine, atariToOCS(mem[0x0071]));
-        }
-#ifdef ROF_FLIGHT_PROBE
-        // Does the canopy wedge actually CLEAR during the boost?  In flight $0C88-$0C8F is all $FF
-        // (the corner-triangle players), which would pin bGreenLine at 0 = the corner never shows
-        // the ring.  Tally the derived split per sub-phase so that is a measurement, not a guess.
-        { extern volatile unsigned long g_bwLine[9], g_bwLineStars[9];
-          if (mem[0x008D] != 0u) g_bwLine[bGreenLine]++; else g_bwLineStars[bGreenLine]++; }
-#endif
+        // The reverse tunnel has no independent green-wedge phase: its corner must always inherit
+        // the same color00 as the OCS border.  Initially that is the value-8 reveal surround;
+        // after the pen swap it is the cycling value-2 outer ring.  The explicit end-of-sequence
+        // hook is the sole exception, restoring teal in the band when the border turns green.
+        tunnelCopper->setBandTopColor00(false, 0);
+        tunnelCopper->disableBandReveal();
     } else {
         // FORWARD tunnel (kGtia10P) — the long-working mapping, UNCHANGED.  The corner triangle is the
         // quad-width canopy-post player ($0C88-$0C8F), green (COLPM0/1 = mem[$0071]); the launch clears
@@ -5622,8 +5693,9 @@ void RescueOnFractalus::updateTunnelCopper(TunnelCopperList* tunnelCopper)
 // DIFFERENT GTIA->pen mappings (kGtia10P vs kGtia10BoostP), so the wiring differs:
 //   FORWARD: pen0 = value-8 = the tunnel corner ($08D8, which carries into the band); pen1-3 =
 //            ring[3..5]; pen4-6 = ring[0..2]; pen7 = value-0 black.
-//   BOOST:   pen0 = value-2 = the outermost ring ($08D8 during the tunnel, the COLBK fade $0071
-//            once the ring cycle has stopped); pen2 = value-8 = COLBK; the rest as above.
+//   BOOST:   before the one-time pen swap, pen0 = value-8 (the reveal surround) and pen2 =
+//            value-2; after it, pen0 = value-2 (the outer ring) and pen2 = value-8 (COLBK, which
+//            the wipe then paints over everything).  All other pens stay unchanged.
 //
 // `ahead` asks for the ring AS advance_history_6a4d WILL leave it on this VBI's rotation, which is
 // what pokeTunnelRingAdvance() needs; see there for why.
@@ -5641,11 +5713,16 @@ void RescueOnFractalus::setTunnelRingPalette(TunnelCopperList* cl, bool ahead)
     }
     uint16_t ring[6];
     for (int i = 0; i < 6; i++) ring[i] = atariToOCS(r[i]);
-    const uint16_t black  = atariToOCS(mem[0x02C0]);        // pen7 = value-0 (COLPM0), both paths
+    const uint16_t black  = atariToOCS(mem[0x02C0]);
     const uint16_t colBK  = atariToOCS(bk);
-    const uint16_t corner = rsBoostViewport && mem[0x008D] == 0u ? colBK : ring[4];
-    cl->setTunnelColors(corner, ring[3], rsBoostViewport ? colBK : ring[4],
-                        ring[5], ring[0], ring[1], ring[2], black);
+    if (rsBoostViewport) {
+        cl->setTunnelColors(boostOuterOnPen0 ? ring[4] : colBK,
+                            ring[3], boostOuterOnPen0 ? colBK : ring[4], ring[5],
+                            ring[0], ring[1], ring[2], black);
+    } else {
+        cl->setTunnelColors(ring[4], ring[3], ring[4], ring[5],
+                            ring[0], ring[1], ring[2], black);
+    }
 }
 
 // pokeTunnelRingAdvance(): called from the ring VBI (step_accum_sub_7e) on every tick that is about
@@ -5671,7 +5748,7 @@ void RescueOnFractalus::pokeTunnelRingAdvance()
 // all four viewport boundaries.  Its accumulator value is zero, so step_accum_sub_7e neither
 // rotates the colour ring nor calls pokeTunnelRingAdvance(), and rsBoostViewport becomes false
 // before the main loop can publish another TunnelCopperList.  Update the executing list here,
-// while still in the VBI that paints that group, so OCS color00 changes from the old teal ring
+// while still in the VBI that paints that group, so OCS color00 changes from the outer ring's
 // colour to the dark-green background at exactly the same frame as the outermost pixels.  Since
 // terrain color00 normally carries into the cockpit band, also activate the existing band-top
 // restore slot with the old ring colour; otherwise the corner triangle flashes green for this
@@ -5679,6 +5756,13 @@ void RescueOnFractalus::pokeTunnelRingAdvance()
 void RescueOnFractalus::pokeTunnelOuterRing()
 {
     TunnelCopperList* live = tunnelCopper[g_tunLiveIdx];
+#ifdef ROF_FLIGHT_PROBE
+    if (g_borN < 8) {
+        g_borW[g_borN] = ((unsigned long)platform_frame_count() << 16)
+                       | ((unsigned long)mem[0x0094] << 8) | (unsigned long)mem[0x0071];
+        g_borN++;
+    }
+#endif
     if (live) {
         live->setTunnelColor00(atariToOCS(mem[0x0071]));
         live->setBandTopColor00(true, atariToOCS(mem[MEM_color_ring + 4]));
@@ -7185,3 +7269,4 @@ void RescueOnFractalus::shutdown()
           } }
     for (int c = 0; c < 6; c++) { delete starSprite[c]; starSprite[c] = nullptr; starRing[c] = nullptr; }
 }
+

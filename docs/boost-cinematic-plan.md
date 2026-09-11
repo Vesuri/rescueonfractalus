@@ -27,12 +27,12 @@ Render bugs fixed through 2026-07-17 (commits 792e6d0, c347749, 6abc6cd, 53f4d86
   publish (b7ea184; `make validate FN=step_accum_sub_7e` = 4000 cases, 0 mem mismatch).
 - **Boost tunnel COLOURS re-derived from the 6502 DLIs (ground truth, not screenshots)** (31d9bd8):
   the copper mirrors dli_sub_6cf1/6cd7 (GTIA mode-10) — see the colour model in the durable lessons
-  below. Fixes the teal edges / wrong clear. A **boost-only** GTIA→pen LUT (`kGtia10BoostP`) maps the
-  outermost ring (value-2) → color00 and the background (value-8) → color02, so the windscreen-band
-  corner triangle (mode-D value-0 → color00) is the SAME register as the outermost ring. Latch
-  `boostRingRevealed` ($008D<0) keeps the triangle black until the outer rows are drawn, then follows
-  the ring. FORWARD tunnel keeps its own `kGtia10P` LUT (value-8→color00), untouched — the paths
-  branch on `rsBoostViewport`.
+  below. Fixes the teal edges / wrong clear. A **boost-only** GTIA→pen LUT (`kGtia10BoostP`) keeps
+  value-8 (the reveal surround) and value-2 (the outer ring) on registers of their own, and
+  `remapBoostOuterRing()` hands color00 from the first to the second once, on the reveal's last
+  step — **§1d is the current account of which register color00 holds when, and why that timing is
+  the whole correctness argument.** FORWARD tunnel keeps its own `kGtia10P` LUT (value-8→color00),
+  untouched — the paths branch on `rsBoostViewport`.
 - **Band-triangle teal stripe** (8481ec0): the late band color00 flip landed ~16px into the band's
   first line (the cockpit bitplane-pointer moves overrun (kCockpitLine-1,0xE0)). Fixed with an EARLY
   band-top color00 copper slot (`INDEX_BANDTOP_COL00`, before the bitplane moves) + `disableBandReveal()`
@@ -408,6 +408,43 @@ either is ever picked up, look at both together, and get a user eyes-on verdict 
 been confirmed as visible.
 
 --------------------------------------------------------------------------------
+## 1d. THE $008D HANDSHAKE HAS TWO SUB-PHASES — and the OCS border hangs on which one you are in
+
+`boot_standby_launch_driver` runs the reverse tunnel as **two** passes over the same `$008D`/`$008E`
+handshake, and they are not interchangeable.  Measured with `PROBES=1 FORCE_RETURN=1` +
+`amiga/boost_col00.gdb`:
+
+| pass | driver code | `$008D` | `$0094` | `$0071` | what it does |
+|---|---|---|---|---|---|
+| **A — the REVEAL** | the 20-iteration `emit_dl_coord_pairs` loop | `$01`, then `$FF` on the last row | cycles 1..6 | `$00`, then `= $08D8` while `$008D < 0` | rewrites the `$3000` DL's mode-F LMS `$2000`→`$1000`, a group of rows per accumulator tick, so the pre-drawn ring field appears from the centre out (`K` 43 → 0).  Draws **no** ring group: the accumulator top byte stays >= `$14` throughout. |
+| **B — the WIPE** | `$008D = 1`, `$0094 = 8`, `$0071 = $C0`, then `while (step_mode_flag) ds_frame()` | `$01`, `$00` at the end | `$08` | `$C0` | as the accumulator top byte falls `$13`→`$00` the VBI draws the 20 groups in **value 8** (the background), erasing the rings outward to the dark green the Standby fades up from. |
+
+Two consequences, each of which has cost a session:
+
+- **The accumulator top byte passes through zero exactly ONCE per cinematic** (`g_borN == 1`,
+  measured).  It cannot happen in pass A: `$008D = 0` there stops the VBI INCing `$008E`, and pass
+  A's `while ($008E == 0) ds_frame()` would never be released — `launch_anim_dispatch`'s
+  `$008D == 0` fall-through (`$0088`/`$0089`) does not touch `$008E`, so the cinematic would hang.
+  So `step_accum_sub_7e`'s `a == 0` IS the wipe's last group and nothing else, which is why
+  `platform_tunnel_outer_ring()` belongs there — in the VBI that paints it, where its color00 poke
+  lands on the same frame as the outermost pixels — and not after the driver's spin.
+
+- **The OCS border's pen hand-over must land inside pass A's `$008D < 0` window.**  On OCS the
+  border is `color00`, so color00 has to carry whatever the viewport's *sides* show.  During the
+  reveal that is the value-8 surround (COLBK, black); from full reveal on it is the value-2 outer
+  ring, which by then reaches those sides.  One register cannot be both, so
+  `remapBoostOuterRing()` exchanges bitmap pens 0 and 2 once (`plane1 ^= ~(plane0 | plane2)`,
+  in place).  It must do so while `$008D` is negative, because that is the one window where the
+  original itself holds `$0071 == $08D8` — `advance_history_6a4d` copies one to the other there.
+  Both pens then carry the same colour across the swap, which makes the in-place bitmap edit (a
+  raster can catch it half-done) and the one-vblank lag of the matching palette change alike
+  invisible, and is why no second bitmap is needed.
+  Swapping at full reveal instead (`boostRevealK() == 0`) is one frame too late: pass B's
+  `$0071 = $C0` has already landed, `pen0` still means "background", and the border plus the
+  windscreen corner triangle read **dark green** for that one frame while the viewport's sides are
+  still teal.  That was the 2026-09-11 report; `boostRevealK() == 0` survives only as a backstop
+  for a cinematic that renders no frame at all inside the `$008D < 0` window.
+
 ## 2. ROOT-CAUSE MAP (broken Amiga frame → conversion bug)
 
 | Amiga frame | Symptom | Conversion bug |

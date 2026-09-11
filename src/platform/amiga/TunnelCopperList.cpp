@@ -324,10 +324,9 @@ void TunnelCopperList::setBandTopColor00(bool active, uint16_t color)
     data_[INDEX_BANDTOP_COL00] = active ? copperMove(color00, color) : copperMove(color31, 0);
 }
 
-// pen0 = color00 = the windscreen-band corner colour (tunnel purple mem[$08D8]); it is unused
-// by the ring field (value-0 was remapped to pen7) and carries into the band.  pen7 = color07 =
-// the field's exit-clear black (mem[$02C0]); the cockpit palette restores color07=$26 at the
-// band top for the dashboard.
+// pen0 = color00 = the forward tunnel's corner colour; in boost it changes from the initial
+// value-8 surround to the value-2 outer ring at the full-reveal transition.  It carries into the
+// band and unblanked OCS border.  The cockpit palette restores color07=$26 at the band top.
 void TunnelCopperList::setTunnelColors(uint16_t pen0, uint16_t pen1, uint16_t pen2, uint16_t pen3,
                                        uint16_t pen4, uint16_t pen5, uint16_t pen6, uint16_t pen7)
 {
@@ -345,3 +344,10 @@ void TunnelCopperList::setTunnelColor00(uint16_t color)
 {
     data_[INDEX_TERRAIN_PAL] = copperMove(color00, color);
 }
+
+#ifdef ROF_FLIGHT_PROBE
+unsigned long TunnelCopperList::probeTerrainPal0() const  { return data_[INDEX_TERRAIN_PAL]; }
+unsigned long TunnelCopperList::probeTerrainPal2() const  { return data_[INDEX_TERRAIN_PAL + 2]; }
+unsigned long TunnelCopperList::probeBandTopWord() const  { return data_[INDEX_BANDTOP_COL00]; }
+unsigned long TunnelCopperList::probeBandGreenWord() const{ return data_[INDEX_BAND_GREEN]; }
+#endif

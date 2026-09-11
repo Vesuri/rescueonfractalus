@@ -54,11 +54,17 @@ public:
     // ⚠ This moves band WAIT lines AND bitplane pointers, so it must only ever be written into
     // the BACK buffer of a double-buffered list (a torn pointer garbages the whole viewport).
     void setRevealBands(uint16_t K, uint32_t ringBase, uint32_t starBase);
-    // Tunnel band colours: pen0 = color00 = the band corner (tunnel purple mem[$08D8], carried
-    // into the band); pens 1-3 = ring[3..5] ($08D7-$08D9); pens 4-6 = ring[0..2] ($08D4-$08D6)
+    // Tunnel band colours: pen0 = color00 = the forward band corner or boost surround/outer ring;
+    // pens 1-3 = ring[3..5] ($08D7-$08D9); pens 4-6 = ring[0..2] ($08D4-$08D6)
     // — the GTIA mode-10 pixel→ring +3 rotation the Atari tunnel DLI ($6CD7/$6CF1) applies;
-    // pen7 = color07 = the field's exit-clear black ($02C0, value-0 remapped to pen7).
+    // pen7 = color07 = the field's value-0 black.
     void setTunnelColors(uint16_t pen0, uint16_t pen1, uint16_t pen2, uint16_t pen3,
                          uint16_t pen4, uint16_t pen5, uint16_t pen6, uint16_t pen7);
     void setTunnelColor00(uint16_t color);  // ISR: final reverse group reaches the OCS border
+#ifdef ROF_FLIGHT_PROBE
+    unsigned long probeTerrainPal0() const;
+    unsigned long probeTerrainPal2() const;
+    unsigned long probeBandTopWord() const;
+    unsigned long probeBandGreenWord() const;
+#endif
 };

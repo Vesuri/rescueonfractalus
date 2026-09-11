@@ -15,12 +15,6 @@ printf "stars decodes      : %lu  (%lu ticks)\n", g_bStarDec, g_bStarTicks
 if g_bStarDec > 0
   printf "  stars ticks/dec  : %lu  (= %lu us)\n", g_bStarTicks / g_bStarDec, (g_bStarTicks / g_bStarDec) * 64
 end
-printf "=== band-corner split (greenLine: 0 = door colour whole band, 8 = carried ring colour) ===\n"
-set $i = 0
-while $i < 9
-  printf "  greenLine %d : tunnel %lu  stars %lu\n", $i, g_bwLine[$i], g_bwLineStars[$i]
-  set $i = $i + 1
-end
 printf "wedge $0C88-8F now: %02x %02x %02x %02x %02x %02x %02x %02x\n", \
   mem[0xC88], mem[0xC89], mem[0xC8A], mem[0xC8B], mem[0xC8C], mem[0xC8D], mem[0xC8E], mem[0xC8F]
 printf "=== phase routing ===\n"
