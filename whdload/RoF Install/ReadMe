@@ -36,6 +36,10 @@
 
  History:
  --------
+ version 0.97 (11.09.2026):
+ - screen borders now match the adjacent graphics on OCS systems
+ - fixed a black bar appearing across the cockpit on repeated launches
+
  version 0.96 (07.09.2026):
  - CD32 controller support: every flight command is on a pad button
  - fixed the low energy warning beep drifting out of sync with the blinking
