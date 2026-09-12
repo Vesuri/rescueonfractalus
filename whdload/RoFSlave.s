@@ -3,7 +3,7 @@
 ;  :Contents.	WHDLoad slave for the Amiga port of "Rescue on Fractalus!"
 ;  :Author.	Vesuri
 ;  :History.	14.08.26 started
-;  :Requires.	WHDLoad 16+, whdload/kick13.s, an installed Kickstart 1.3 image
+;  :Requires.	WHDLoad 17+, whdload/kick13.s, an installed Kickstart 1.3 image
 ;  :Copyright.	Public Domain
 ;  :Language.	68000 Assembler
 ;  :Translator.	BASM 2.16
@@ -25,8 +25,9 @@
 ;
 ; So instead of emulating a dozen entry points, the slave boots a real Kickstart
 ; into WHDLoad's memory (WHDLoad's own kick13.s does all of that) and runs the game
-; inside it as a normal CLI program.  The game binary is used completely unmodified
-; -- byte for byte the same `RoF` that runs from Workbench or a Shell.
+; inside it as a normal CLI program.  The installed file is byte for byte the same
+; `RoF` that runs from Workbench or a Shell; the loader only patches its explicit
+; magic-tagged hook/configuration blocks in memory before entry.
 ;
 ; 1.3 rather than 3.1 for two reasons: the game is 1.3-clean (it asks for
 ; graphics.library v33 and touches nothing newer), and the 1.3 ROM image is 256 KB
@@ -97,11 +98,7 @@ DEBUG				;extra internal checks in the OS emulation
 MEMFREE		= $200		;record the low-water mark of free chip/fast memory
 	ENDC
 
-slv_Version	= 16		;16, not 17, ON PURPOSE: ws_config exists only from 17 on
-				;and MUST then be initialised, which puts a gadget in the
-				;splash window.  There is nothing here to configure -- see
-				;slv_config below.  WHDLoad's own kick13.asm example slave
-				;is 16 for the same reason.
+slv_Version	= 17		;ws_config/Custom1: optional ECS/AGA border blanking
 slv_Flags	= WHDLF_NoError	;kick13.s ORs in EmulPriv (needed by exec.Supervisor)
 				;and, because HDINIT is set, Examine
 slv_keyexit	= $59		;F10.  Note WHDLoad can only read this via the moved VBR,
@@ -123,17 +120,7 @@ slv_info	dc.b	"Amiga port by Vesuri",10
 		dc.b	"not affiliated with or endorsed by Lucasfilm.",-1
 		dc.b	"Left mouse button quits.",10
 		dc.b	"F10 also quits, on a 68010 or better.",0
-	IFGE slv_Version-17
-		;NOT ASSEMBLED at slv_Version 16 -- kept only so a real option can be
-		;added later by raising the version.  Every ws_config item is a gadget in
-		;the splash window, and each one has to MEAN something: the options are
-		;ButtonWait and Custom1-5, and this slave implements none of them.  It
-		;used to declare "BW;" -- a ButtonWait checkbox the slave never reads (
-		;WHDLoad leaves ButtonWait to the slave, see WHDLTAG_BUTTONWAIT_GET and
-		;PL_IFBW), so the box did nothing when ticked.  An empty string is not
-		;the fix either: ws_config's grammar wants at least one option.
-slv_config	dc.b	"C1:B:Example",0
-	ENDC
+slv_config	dc.b	"C1:B:Border Blanking (ECS/AGA only);",0
 		dc.b	"$VER: RoF.slave 0.97 (11.09.2026)",0
 	EVEN
 
@@ -156,6 +143,10 @@ _args_end
 
 _bootdos	move.l	(_resload,pc),a2	;A2 = resload
 
+	;read the version-17 Custom1 checkbox before loading/patching the game
+		lea	(_rof_tags,pc),a0
+		jsr	(resload_Control,a2)
+
 	;open dos.library.  OldOpenLibrary, not TaggedOpenLibrary: V33 has no
 	;TaggedOpenLibrary.  _dosname comes from kickfs.s (present because HDINIT).
 		lea	(_dosname,pc),a1
@@ -175,6 +166,9 @@ _bootdos	move.l	(_resload,pc),a2	;A2 = resload
 
 	;give the game somewhere to save its high scores (see _patch_hooks)
 		bsr	_patch_hooks
+
+	;optionally patch the executable-side BPLCON3 configuration word
+		bsr	_patch_bplcon3
 
 	;call it.  D0/A0 = argument line, as dos would pass them; the game's CRT
 	;ignores both (its main() takes no arguments).
@@ -273,6 +267,54 @@ _patch_hooks	movem.l	d2-d3,-(a7)
 
 
 ;============================================================================
+; Optional ECS/AGA border blanking.
+;
+; The executable contains a retained writable block:
+;   dc.l 'RoF!','BPL3'
+;   dc.w $0c10,0
+; Its word is consumed by every game-side BPLCON3 setup.  Scan the LoadSeg hunks
+; rather than baking in an offset, and only patch the expected default value.
+
+bpl3_MAGIC0	= $526f4621		;'RoF!'
+bpl3_MAGIC1	= $42504c33		;'BPL3'
+bpl3_SIZEOF	= 12
+bpl3_DEFAULT	= $0c10		;$0c00 | BPLCON3_BRDNTRAN
+bpl3_BLANKED	= $0c30		;$0c00 | BPLCON3_BRDNBLNK | BPLCON3_BRDNTRAN
+
+_patch_bplcon3
+		tst.l	(_rof_custom1,pc)
+		beq.s	.done			;default: visible COLOR00 border
+		movem.l	d2-d3,-(a7)
+		move.l	#bpl3_MAGIC0,d2
+		move.l	#bpl3_MAGIC1,d3
+		move.l	d7,d0			;D0 = current segment (BPTR)
+
+.seg		tst.l	d0
+		beq.s	.not_found
+		add.l	d0,d0
+		add.l	d0,d0			;BPTR -> segment header APTR
+		move.l	d0,a0
+		move.l	(-4,a0),d1		;allocated size, incl. the 8-byte header
+		move.l	(a0)+,d0		;next segment; A0 = first data byte
+		sub.l	#8+bpl3_SIZEOF,d1
+		bmi.s	.seg
+		move.l	a0,a1
+		add.l	d1,a1			;last address a whole block can start
+
+.scan		cmpa.l	a1,a0
+		bhi.s	.seg
+		cmp.l	(a0)+,d2		;A0 now points at magic1
+		bne.s	.scan
+		cmp.l	(a0),d3
+		bne.s	.scan
+		cmp.w	#bpl3_DEFAULT,4(a0)
+		bne.s	.scan
+		move.w	#bpl3_BLANKED,4(a0)
+.not_found	movem.l	(a7)+,d2-d3
+.done		rts
+
+
+;============================================================================
 ; The trampolines.
 ;
 ; Called by the game with the ordinary GCC m68k C convention: arguments pushed
@@ -293,6 +335,10 @@ _patch_hooks	movem.l	d2-d3,-(a7)
 
 _hifile		dc.b	"RoF.hi",0
 	EVEN
+
+_rof_tags	dc.l	WHDLTAG_CUSTOM1_GET
+_rof_custom1	dc.l	0
+		dc.l	TAG_DONE
 
 ; int _hook_save(const UBYTE *blk, ULONG len)      4(sp)=blk  8(sp)=len
 _hook_save	move.l	a2,-(a7)

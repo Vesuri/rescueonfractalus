@@ -14,6 +14,10 @@
 #include <proto/exec.h>   // Supervisor(), for getVBR() (GCC build only)
 #endif
 
+// Writable executable-side configuration word.  The WHDLoad slave patches its
+// magic block before entry when Custom1 enables ECS/AGA border blanking.
+extern "C" uint16_t rof_bplcon3_value;
+
 uint16_t AmigaHardware::octants[4] = {
     OCTANT2 | LINEMODE,
     OCTANT1 | LINEMODE,
@@ -57,7 +61,7 @@ void AmigaHardware::setPlayfield(uint16_t width, uint16_t height, uint8_t bitpla
     uint16_t bitplaneWidth = width >> 3;
     uint16_t alignedWidth = hasAGAChipSet ? (bitplaneWidth & 0xfffc) : bitplaneWidth;
     *fmodePointer = (uint16_t)(hasAGAChipSet ? 3 : 0);
-    *bplcon3Pointer = 0x0c00 | BPLCON3_BRDNTRAN;
+    *bplcon3Pointer = rof_bplcon3_value;
     *bplcon2Pointer = 0x0024;
     *bplcon1Pointer = 0;
     *bplcon0Pointer = (uint16_t)((bitplaneCount << PLNCNTSHFT) | (hires ? MODE_640 : 0) | (dualPlayfield ? DBLPF : 0) | (holdAndModify ? HOLDNMODIFY : 0) | USE_BPLCON3);

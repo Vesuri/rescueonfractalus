@@ -31,3 +31,14 @@
 	.balign 2
 	.asciz "$VER: Rescue on Fractalus! 0.97 (11.09.2026)"
 	.balign 2
+
+| WHDLoad-configurable BPLCON3 value.  The slave locates this retained writable
+| block by its two-longword magic; no executable hunk offset is baked in.
+	.section .data.bplcon3,"awR"
+	.balign 4
+	.long 0x526f4621		| 'RoF!'
+	.long 0x42504c33		| 'BPL3'
+	.globl rof_bplcon3_value
+rof_bplcon3_value:
+	.word 0x0c10			| $0c00 | BPLCON3_BRDNTRAN (blanking off)
+	.word 0			| keep the retained block longword-sized

@@ -7,6 +7,8 @@
 #include "framework/AmigaHardware.h"   // colour / bplcon / bitplane register symbols
 #include "framework/Sprite.h"
 
+extern "C" uint16_t rof_bplcon3_value;
+
 // The display is 320px lores → 40 bytes fetched per scanline for one bitplane.  We set
 // bpl1mod = -kLineBytes so BPL1PT returns to the same throwaway line every scanline (Agnus
 // re-reads one small buffer; its content is irrelevant since color00 == color01).
@@ -49,7 +51,7 @@ void EmptyCopperList::buildLayout(const Sprite& nullSprite)
     // ONE bitplane + ECSENA (USE_BPLCON3): an active playfield in the display window (so it shows
     // color00/01).  With color00==color01 the plane and the unblanked border read uniformly.
     d[INDEX_BPLCON0] = copperMove(bplcon0, (uint16_t)((1u << PLNCNTSHFT) | USE_BPLCON3));
-    d[INDEX_BPLCON3] = copperMove(bplcon3, 0x0c00 | BPLCON3_BRDNTRAN);
+    d[INDEX_BPLCON3] = copperMove(bplcon3, rof_bplcon3_value);
     d[INDEX_BPL1PT + 0] = copperMove(bpl1pth, (uint16_t)(((uint32_t)filler_) >> 16));
     d[INDEX_BPL1PT + 1] = copperMove(bpl1ptl, (uint16_t)(((uint32_t)filler_) & 0xFFFF));
     d[INDEX_BPL1MOD]    = copperMove(bpl1mod, (uint16_t)(-kLineBytes));   // re-read the same line each scanline

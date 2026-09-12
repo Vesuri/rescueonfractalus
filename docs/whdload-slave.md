@@ -46,8 +46,9 @@ Three ways to bridge that were weighed (2026-08-14). The user chose the kickemu,
 2. **A fake exec/graphics inside the slave** — keeps the binary byte-identical but moves the
    struct-offset fragility into asm that `make validate` cannot see. **Declined.**
 3. **kickemu (chosen)** — WHDLoad's own answer for OS-heavy programs. `kick13.s` boots a real
-   Kickstart into WHDLoad's space; the game runs inside it as a normal CLI program,
-   **completely unmodified**. Costs a user-supplied ROM image and memory.
+   Kickstart into WHDLoad's space; the same normal executable runs inside it as a CLI program.
+   The slave only patches its explicit magic-tagged hook/configuration blocks in memory before
+   entry. Costs a user-supplied ROM image and memory.
 
 `kick13` rather than `kick31` because the game is 1.3-clean and the 1.3 ROM image is
 `$40000` (256 KB) against 3.1's `$80000` (512 KB) — that difference comes straight off the
@@ -75,18 +76,16 @@ why `_bootdos` aborts unconditionally instead of returning to the CLI: WHDLoad's
 `_bootdos` examples make that a choice (their `QUIT_AFTER_PROGRAM_EXIT` switch), but here
 returning would strand a 68000 user with no exit at all.
 
-### `slv_Version = 16`, and why not 17
+### `slv_Version = 17` and Custom1 border blanking
 
-The splash window shows a checkbox for every item in `ws_config`, and `ws_config` exists —
-and *must* be initialised — from `ws_Version 17` on. The only items it can hold are
-`ButtonWait` and `Custom1-5`; this slave implements none of them, and **WHDLoad leaves
-ButtonWait entirely to the slave** (`WHDLTAG_BUTTONWAIT_GET`, `PL_IFBW`), so the `"BW;"`
-the slave first declared put a checkbox in the splash window that did nothing when ticked
-(user, 2026-08-14). An empty string is not the alternative — the `ws_config` grammar wants
-at least one option. Declaring 16 drops the field, and with it the gadget; WHDLoad's own
-`Src/slave-examples/kick13.asm` is 16 for the same reason. `kick13.s` itself only requires
-16, so nothing is lost. The `IFGE slv_Version-17` block is kept, unassembled, so a real
-option can be added later by raising the number.
+Version 17 exposes `ws_config`. This slave declares
+`C1:B:Border Blanking (ECS/AGA only);` and reads `WHDLTAG_CUSTOM1_GET` before entering the
+game. The executable carries a retained writable `RoF!BPL3` magic block followed by a
+16-bit BPLCON3 value. Its default is `$0c10` (`BRDNTRAN`, border blanking disabled).
+When Custom1 is selected, the slave scans the loaded hunks for that magic and patches the
+word to `$0c30` (`BRDNBLNK|BRDNTRAN`). The game reads this word both for the one-time
+hardware setup and when building `EmptyCopperList`, so the preference applies consistently
+without maintaining a WHDLoad-specific executable.
 
 ### The left-mouse quit stays as it is (user decision, 2026-08-14)
 
