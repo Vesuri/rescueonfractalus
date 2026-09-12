@@ -1320,7 +1320,7 @@ extern "C" { volatile unsigned short g_dsDecodes  = 0; }   // full-field decodes
 // cockpit BPLxPT moves behind the beam -> the already-satisfied WAIT fires mid-line and the cockpit
 // bitplanes shift horizontally for that frame.
 extern "C" { volatile unsigned short g_dsRunLine[24]  = {}; }   // ring: beam line AT the setTerrainRuns call
-extern "C" { volatile unsigned char  g_dsRunDec[24]   = {}; }   // ring: did the full-field decode run first?
+extern "C" { volatile unsigned char  g_dsRunDec[24]   = {}; }   // ring: was a dirty decode pending after this rewrite?
 extern "C" { volatile unsigned char  g_dsRunN[24]     = {}; }   // ring: run count written
 extern "C" { volatile unsigned char  g_dsRunIdx   = 0; }
 extern "C" { volatile unsigned short g_dsRunWrites = 0; }  // total setTerrainRuns calls from the ISR
@@ -2821,7 +2821,15 @@ static uint32_t vbiHandler()
         if (s_scene && _vv == 0x52B4u) s_scene->blankForRestart();
     }
 
-    // Flight terrain double-buffer swap — do this FIRST, while the beam is still in vertical
+    // Level-select "elevator" door scroll: this is the only updater below that rewrites a
+    // variable-length LIVE copper-list section.  Run it first, before even the cheap inactive
+    // guards of the other scene updaters, so its BPLxPT words and relocated cockpit WAIT are final
+    // as early in vertical blank as possible.  On a 512K Chip + 512K Slow machine, putting this
+    // after the bitmap decodes was enough for the copper to see a half-rewritten cockpit for one
+    // frame when the LEVEL digits changed.
+    if (s_scene) s_scene->doorScrollVblankUpdate();
+
+    // Flight terrain double-buffer swap — do this FIRST for flight, while the beam is still in vertical
     // blank (well above the viewport WAIT at scanline 85).  If renderFlightDirect has published a
     // freshly-painted buffer, rewrite the copper's viewport bitplane pointers now so the copper
     // fetches the new buffer this frame with no torn pointer (the brown-flash cause).  No-op unless
@@ -2850,10 +2858,6 @@ static uint32_t vbiHandler()
     if (s_scene) s_scene->logoVblankUpdate();
 
     if (s_scene) s_scene->flightVblankSwap();
-
-    // Level-select "elevator" door scroll (post-mother-ship SELECT): repoint the standby terrain
-    // BPLxPT from dl_src_index ($008B) each vblank while the scroll spins.  No-op unless active.
-    if (s_scene) s_scene->doorScrollVblankUpdate();
 
 #ifdef ROF_FLIGHT_PROBE
     // Probe: track the range of the atmosphere terrain pens ($00DC/$00DD) during flight to

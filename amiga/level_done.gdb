@@ -21,6 +21,8 @@ printf "score: %02x%02x%02x%02x  0628=%02x  music 0655=%02x  msg 00D8=%02x\n", \
   mem[0x0600], mem[0x0601], mem[0x0602], mem[0x0603], mem[0x0628], mem[0x0655], mem[0x00D8]
 printf "lift: clear=%u scroll=%u pass=%u spinB=%u\n", \
   g_liftClear, g_liftScroll, g_liftPass, g_liftSpinB
+printf "lift copper: VBI-entry=%u rewrites=%u late=%u rewriteMaxLine=%u  decodeRows=%u decodeLines(last/max)=%u/%u decodeEntry=%u\n", \
+  g_isrEntryLine, g_dsRunWrites, g_dsRunLate, g_dsRunMaxLn, g_dsDecRows, g_dsDecLines, g_dsDecLinesMax, g_dsDecEntryLn
 # WHERE the main loop is.  Two PC samples with 400 instructions in between: an identical PC is a
 # tight loop the main loop cannot leave (the VBI keeps running regardless, which is why the screen
 # still animates).  `info symbol` names the routine; x/2i shows the loop itself.

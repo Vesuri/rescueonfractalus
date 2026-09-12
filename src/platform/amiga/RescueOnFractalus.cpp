@@ -2257,41 +2257,9 @@ void RescueOnFractalus::doorScrollVblankUpdate()
     unsigned a0 = mem[0x300A] | (mem[0x300B] << 8);
     if (a0 < 0x2000u || a0 >= 0x3000u) return;
 
-    // Re-decode the tall door bitmap only when blit_numeric_readout marked the digit dirty (a couple
-    // of times per scroll).  The pointers below are unchanged by a decode, so the fresh pixels show
-    // automatically.  The digit is rewritten while its rows are off-screen, so the decode is tear-free.
 #ifdef ROF_FLIGHT_PROBE
     const bool didDecode = (g_doorScrollFieldDirty != 0);
-    uint16_t decLn0 = 0;
-    if (didDecode) {
-        extern volatile unsigned short g_dsDecEntryLn;
-        uint16_t vp = *(volatile uint16_t*)0xDFF004u, vh = *(volatile uint16_t*)0xDFF006u;
-        decLn0 = (uint16_t)(((vp & 1) << 8) | (vh >> 8));
-        g_dsDecEntryLn = decLn0;
-    }
 #endif
-    decodeDoorScrollDirty();
-#ifdef ROF_FLIGHT_PROBE
-    if (didDecode) {
-        extern volatile unsigned short g_dsDecLines, g_dsDecLinesMax;
-        uint16_t vp = *(volatile uint16_t*)0xDFF004u, vh = *(volatile uint16_t*)0xDFF006u;
-        uint16_t ln1 = (uint16_t)(((vp & 1) << 8) | (vh >> 8));
-        uint16_t d = (uint16_t)((ln1 >= decLn0) ? (ln1 - decLn0) : (ln1 + 312u - decLn0));
-        g_dsDecLines = d;
-        if (d > g_dsDecLinesMax) g_dsDecLinesMax = d;
-    }
-#endif
-
-    // Lock-on indicator blink (cells $3491-$3497).  The faithful standby VBI keeps running
-    // lock_on_indicator_tick ($4229) throughout the scroll, so it toggles the cell bytes in mem[]
-    // exactly as the Atari does — but on the Amiga those cells only reach the display via the
-    // cockpit decode in renderFrame, and renderFrame is stalled while boot_standby_launch_driver
-    // busy-spins the scroll.  So complete the ISR-side display bridge here: whenever the tick has
-    // flagged the strip dirty, re-decode those 7 cockpit cells straight into cockpitBitmap.  The
-    // cockpit sits at Amiga lines 172+, decoded here at vblank start before the beam reaches it →
-    // tear-free (same discipline as decodeScannerBlinkCells).  Clearing the flag also means the
-    // main-loop renderFrame won't redundantly re-decode when it is running (idle standby).
-    if (g_ckLockon) { g_ckLockon = 0u; decodeLockonDirty(); }
 
     // Parse the DL (86 mode-F LMS entries, stride 3) into runs of consecutive field rows.  Consecutive
     // rows are +46 in the LMS address, so work in ADDRESSES and divide (→ field row) only per run.
@@ -2318,26 +2286,65 @@ void RescueOnFractalus::doorScrollVblankUpdate()
     static uint8_t  sScan[kMaxDoorRuns]; static uint16_t sRow[kMaxDoorRuns]; static int sN = -1;
     bool same = (nRuns == sN);
     for (int i = 0; same && i < nRuns; i++) if (sScan[i] != runScan[i] || sRow[i] != runRow[i]) same = false;
-    if (same) return;
-    for (int i = 0; i < nRuns; i++) { sScan[i] = runScan[i]; sRow[i] = runRow[i]; }
-    sN = nRuns;
+
+    if (!same) {
+        for (int i = 0; i < nRuns; i++) { sScan[i] = runScan[i]; sRow[i] = runRow[i]; }
+        sN = nRuns;
 #ifdef ROF_FLIGHT_PROBE
-    // Where is the beam when we rewrite the LIVE copper list?  (see the g_dsRun* comment)
-    {
-        extern volatile unsigned short g_dsRunLine[24]; extern volatile unsigned char g_dsRunDec[24];
-        extern volatile unsigned char g_dsRunN[24]; extern volatile unsigned char g_dsRunIdx;
-        extern volatile unsigned short g_dsRunWrites, g_dsRunLate, g_dsRunMaxLn;
+        // Where is the beam when we rewrite the LIVE copper list?  (see the g_dsRun* comment)
+        {
+            extern volatile unsigned short g_dsRunLine[24]; extern volatile unsigned char g_dsRunDec[24];
+            extern volatile unsigned char g_dsRunN[24]; extern volatile unsigned char g_dsRunIdx;
+            extern volatile unsigned short g_dsRunWrites, g_dsRunLate, g_dsRunMaxLn;
+            uint16_t vp = *(volatile uint16_t*)0xDFF004u, vh = *(volatile uint16_t*)0xDFF006u;
+            uint16_t ln = (uint16_t)(((vp & 1) << 8) | (vh >> 8));
+            unsigned char i = g_dsRunIdx;
+            g_dsRunLine[i] = ln; g_dsRunDec[i] = didDecode; g_dsRunN[i] = (unsigned char)nRuns;
+            g_dsRunIdx = (unsigned char)((i + 1u >= 24u) ? 0u : i + 1u);   // no 32-bit modulo on 68000
+            g_dsRunWrites++;
+            if (ln >= kCockpitLine - 1) g_dsRunLate++;
+            if (ln > g_dsRunMaxLn) g_dsRunMaxLn = ln;
+        }
+#endif
+        // Deadline-critical structural publication comes before either bitmap decode below.
+        standbyCopper->setTerrainRuns(*doorScrollBitmap, runScan, runRow, nRuns);
+    }
+
+    // With no structural or pixel work pending, keep the idle path cheap.
+    if (same && !g_doorScrollFieldDirty && !g_ckLockon) return;
+
+    // Re-decode the tall door bitmap only when blit_numeric_readout marked the digit dirty (a couple
+    // of times per scroll).  The LEVEL glyph is off-screen while it is rewritten, so this may safely
+    // follow the copper publication; doing it first delayed the BPLxPT/cockpit-layout writes by the
+    // exact one frame that flashed on Slow RAM configurations.
+#ifdef ROF_FLIGHT_PROBE
+    uint16_t decLn0 = 0;
+    if (didDecode) {
+        extern volatile unsigned short g_dsDecEntryLn;
         uint16_t vp = *(volatile uint16_t*)0xDFF004u, vh = *(volatile uint16_t*)0xDFF006u;
-        uint16_t ln = (uint16_t)(((vp & 1) << 8) | (vh >> 8));
-        unsigned char i = g_dsRunIdx;
-        g_dsRunLine[i] = ln; g_dsRunDec[i] = didDecode; g_dsRunN[i] = (unsigned char)nRuns;
-        g_dsRunIdx = (unsigned char)((i + 1u >= 24u) ? 0u : i + 1u);   // no 32-bit modulo on 68000
-        g_dsRunWrites++;
-        if (ln >= kCockpitLine - 1) g_dsRunLate++;
-        if (ln > g_dsRunMaxLn) g_dsRunMaxLn = ln;
+        decLn0 = (uint16_t)(((vp & 1) << 8) | (vh >> 8));
+        g_dsDecEntryLn = decLn0;
     }
 #endif
-    standbyCopper->setTerrainRuns(*doorScrollBitmap, runScan, runRow, nRuns);
+    decodeDoorScrollDirty();
+#ifdef ROF_FLIGHT_PROBE
+    if (didDecode) {
+        extern volatile unsigned short g_dsDecLines, g_dsDecLinesMax;
+        uint16_t vp = *(volatile uint16_t*)0xDFF004u, vh = *(volatile uint16_t*)0xDFF006u;
+        uint16_t ln1 = (uint16_t)(((vp & 1) << 8) | (vh >> 8));
+        uint16_t d = (uint16_t)((ln1 >= decLn0) ? (ln1 - decLn0) : (ln1 + 312u - decLn0));
+        g_dsDecLines = d;
+        if (d > g_dsDecLinesMax) g_dsDecLinesMax = d;
+    }
+#endif
+
+    // Lock-on indicator blink (cells $3491-$3497).  The faithful standby VBI keeps running
+    // lock_on_indicator_tick ($4229) throughout the scroll, so it toggles the cell bytes in mem[]
+    // exactly as the Atari does — but on the Amiga those cells only reach the display via the
+    // cockpit decode in renderFrame, and renderFrame is stalled while boot_standby_launch_driver
+    // busy-spins the scroll.  Decode it only after the structural copper words have met their
+    // deadline; the cockpit itself is not displayed until line 172.
+    if (g_ckLockon) { g_ckLockon = 0u; decodeLockonDirty(); }
 }
 
 // ---- public interface --------------------------------------------------------
