@@ -282,7 +282,8 @@ bpl3_DEFAULT	= $0c10		;$0c00 | BPLCON3_BRDNTRAN
 bpl3_BLANKED	= $0c30		;$0c00 | BPLCON3_BRDNBLNK | BPLCON3_BRDNTRAN
 
 _patch_bplcon3
-		tst.l	(_rof_custom1,pc)
+		lea	(_rof_custom1,pc),a0	;tst has no PC-relative mode
+		tst.l	(a0)
 		beq.s	.done			;default: visible COLOR00 border
 		movem.l	d2-d3,-(a7)
 		move.l	#bpl3_MAGIC0,d2
@@ -307,9 +308,9 @@ _patch_bplcon3
 		bne.s	.scan
 		cmp.l	(a0),d3
 		bne.s	.scan
-		cmp.w	#bpl3_DEFAULT,4(a0)
+		cmp.w	#bpl3_DEFAULT,(4,a0)
 		bne.s	.scan
-		move.w	#bpl3_BLANKED,4(a0)
+		move.w	#bpl3_BLANKED,(4,a0)
 .not_found	movem.l	(a7)+,d2-d3
 .done		rts
 
