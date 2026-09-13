@@ -34,8 +34,20 @@
  "util/boot/skick346.lha" on aminet.
 
 
+ Features:
+ ---------
+ The screen borders show the graphics next to them. On ECS and AGA systems they
+ can be blanked instead by ticking "Border Blanking" in WHDLoad's configuration
+ window, or with the Tooltype "Custom1=1".
+
+
  History:
  --------
+ version 1.0 (13.09.2026):
+ - optional blanked screen borders on ECS and AGA systems (see Features)
+ - fixed the cockpit jumping sideways for a frame while the level number
+   changes in the lift
+
  version 0.97 (11.09.2026):
  - screen borders now match the adjacent graphics on OCS systems
  - fixed a black bar appearing across the cockpit on repeated launches
