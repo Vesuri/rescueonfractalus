@@ -5491,7 +5491,11 @@ void RescueOnFractalus::updateStandbyCopper(bool force)
     const uint16_t terr0    = atariToOCS(mem[0x02C0]);             // terrain pen0 (road dots)
     const uint16_t terr1    = atariToOCS(mem[0x02C7]);             // terrain pen1 (LEVEL text)
     const uint16_t terr2    = atariToOCS(mem[MEM_color_ring]);      // terrain pen2 ($08D4)
-    const uint16_t terr3    = atariToOCS(mem[MEM_display_flags]);   // terrain pen3 (green bg, $0071)
+    // $0071 is the closed-door green: the initial reveal walks $C2..$C8 and
+    // the in-place level-wrap rebuild walks $C8..$C0 then back up.  Static and
+    // door-opening endpoints are even, so selecting the enhanced lookup here
+    // changes only the odd frames of those explicit ramps.
+    const uint16_t terr3    = enhancedFadeToOCS(mem[MEM_display_flags]); // terrain pen3 (green bg, $0071)
     const int8_t   gauge    = (int8_t)(rsEnergyIndicator ? 1 : 0);
 
     if (force || titleBg != sbTitleBg || titlePf0 != sbTitlePf0) {
