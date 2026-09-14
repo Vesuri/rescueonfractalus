@@ -556,7 +556,7 @@ extern void rof_flight_wait_dotclear(void);
         int _ac = (int)(col) - 48; \
         int _sc = 150 - (int)(h);    /* source height -> logical scanline */ \
         if ((unsigned)_ac < 160u && (unsigned)_sc < 47u && _sc != 43) { \
-            int _pr = _sc * g_flightTerrainYScale; \
+            int _pr = ROF_FLIGHT_SCALE_Y(_sc); \
             int _of = kRow120[_pr] + (_ac >> 2); \
             uint8_t _m = kColMask4[_ac & 3]; \
             int _dy; \
@@ -605,7 +605,7 @@ extern void rof_flight_wait_dotclear(void);
         int _sc = 150 - (int)(h); \
         if ((unsigned)_ac < 160u && (unsigned)_sc < 47u && _sc != 43) { \
             int _bc = _ac >> 2; \
-            int _pr = _sc * g_flightTerrainYScale; \
+            int _pr = ROF_FLIGHT_SCALE_Y(_sc); \
             int _of = kRow120[_pr] + _bc; \
             int _dy; \
             for (_dy = 0; _dy < g_flightTerrainYScale; ++_dy) { \
@@ -682,7 +682,7 @@ extern volatile unsigned long g_alHudCalls;      /* # alien_shape_blit calls dur
         int _rel = (int)(addr) - 0x10A4; \
         if (_rel >= 0) { int _r = _rel / 96, _b = _rel % 96; \
             if ((unsigned)_r < 43u && (unsigned)_b < 40u) { \
-                int _pr = _r * g_flightTerrainYScale, _im = _pr * 40 + _b, _ip = _pr * 80 + _b; \
+                int _pr = ROF_FLIGHT_SCALE_Y(_r), _im = _pr * 40 + _b, _ip = _pr * 80 + _b; \
                 uint8_t _ap1 = kModeDP1[(unsigned char)(V)], _ap2 = kModeDP2[(unsigned char)(V)]; \
                 int _dy; \
                 for (_dy = 0; _dy < g_flightTerrainYScale; ++_dy) { \
@@ -4508,7 +4508,7 @@ ROF_PLOTRUN_INLINE void rof_plotrun_row(rof_plotrun* rc, uint8_t y) {
 #ifdef ROF_PLATFORM_AMIGA
     /* $96 - y is 0..42 for every y the window test admits, so the overlay's ROW guard is
      * subsumed by yOk and only its byte-column guard is left per pixel. */
-    const int r = g_flightTerrainYScale * (0x96 - (int)y);
+    const int r = ROF_FLIGHT_SCALE_Y(0x96 - (int)y);
     rc->figRow = r;
     if (g_figP1) {
         rc->figM  = g_figM  + r * 40;
@@ -5868,7 +5868,7 @@ static void alien_mirror_window(uint16_t dstRow, struct alien_mirror_win *w) {
     }
     if ((unsigned)w->row >= 43u) { w->lo = 1; w->hi = 0; }   /* source row off-bitmap => draw nothing */
     if (w->lo <= w->hi) {
-        w->row *= g_flightTerrainYScale;
+        w->row = ROF_FLIGHT_SCALE_Y(w->row);
         /* Bases carry `off`, which is negative when the row starts below the field base; the
          * window guarantees every y actually used lands back inside the buffer. */
         w->mask = g_figM  + w->row * 40 + w->off;
@@ -10390,7 +10390,7 @@ static void laser_dot_column(int rowStart, unsigned col, unsigned count) {
     if (lo == 43) lo++;                                 /* the $6b floor scanline is never plotted */
     if (hi == 43) hi--;
     if (lo > hi) return;
-    unsigned b = (ac >> 2) + kRow120[lo * g_flightTerrainYScale];
+    unsigned b = (ac >> 2) + kRow120[ROF_FLIGHT_SCALE_Y(lo)];
     uint8_t* p2 = g_flightDotPlane + b;
     uint8_t* p1 = g_flightObjP1 ? g_flightObjP1 + b : (uint8_t*)0;
     int n = hi - lo + 1;
@@ -10408,12 +10408,12 @@ static void laser_dot_column(int rowStart, unsigned col, unsigned count) {
                     *pd |= m;
                 }
             }
-            p2 += g_flightTerrainYScale * ROF_FLIGHT_ROW_STRIDE;
-            p1 += g_flightTerrainYScale * ROF_FLIGHT_ROW_STRIDE;
+            p2 += ROF_FLIGHT_SCALE_Y(ROF_FLIGHT_ROW_STRIDE);
+            p1 += ROF_FLIGHT_SCALE_Y(ROF_FLIGHT_ROW_STRIDE);
         }
-        if (lo * g_flightTerrainYScale < g_objRowLo) g_objRowLo = lo * g_flightTerrainYScale;
-        if ((hi + 1) * g_flightTerrainYScale - 1 > g_objRowHi)
-            g_objRowHi = (hi + 1) * g_flightTerrainYScale - 1;
+        if (ROF_FLIGHT_SCALE_Y(lo) < g_objRowLo) g_objRowLo = ROF_FLIGHT_SCALE_Y(lo);
+        if (ROF_FLIGHT_SCALE_Y(hi + 1) - 1 > g_objRowHi)
+            g_objRowHi = ROF_FLIGHT_SCALE_Y(hi + 1) - 1;
         {   const int bc = (int)(ac >> 2);              /* one fixed column for the whole run */
             if (bc < g_objColLo) g_objColLo = bc;
             if (bc > g_objColHi) g_objColHi = bc; }
@@ -10424,7 +10424,7 @@ static void laser_dot_column(int rowStart, unsigned col, unsigned count) {
                 for (int dy = 1; dy < g_flightTerrainYScale; ++dy)
                     p2[dy * ROF_FLIGHT_ROW_STRIDE] |= m;
             }
-            p2 += g_flightTerrainYScale * ROF_FLIGHT_ROW_STRIDE;
+            p2 += ROF_FLIGHT_SCALE_Y(ROF_FLIGHT_ROW_STRIDE);
         }
     }
 }
@@ -10432,7 +10432,7 @@ static void laser_dot_span(uint8_t row, unsigned xstart, unsigned width) {
     if (!g_flightDotPlane || width == 0u) return;
     int sc = 150 - (int)row;                            /* height/row -> dot scanline (as ROF_PLOT_DOT) */
     if ((unsigned)sc >= 47u || sc == 43) return;        /* row outside the dot band / the $6b floor */
-    int rb = kRow120[sc * g_flightTerrainYScale];
+    int rb = kRow120[ROF_FLIGHT_SCALE_Y(sc)];
     uint8_t* p2 = g_flightDotPlane + rb;
     uint8_t* p1 = g_flightObjP1 ? g_flightObjP1 + rb : (uint8_t*)0;
     unsigned end = xstart + width;                      /* columns visited: X, X+1, ... (uint8 wrap) */
@@ -10448,9 +10448,9 @@ static void laser_dot_span(uint8_t row, unsigned xstart, unsigned width) {
                                 0u, end - 256u);
     }
     if (p1 && plotted) {                                /* ROF_PLOT_DOT_P1 dirty scanline range */
-        if (sc * g_flightTerrainYScale < g_objRowLo) g_objRowLo = sc * g_flightTerrainYScale;
-        if ((sc + 1) * g_flightTerrainYScale - 1 > g_objRowHi)
-            g_objRowHi = (sc + 1) * g_flightTerrainYScale - 1;
+        if (ROF_FLIGHT_SCALE_Y(sc) < g_objRowLo) g_objRowLo = ROF_FLIGHT_SCALE_Y(sc);
+        if (ROF_FLIGHT_SCALE_Y(sc + 1) - 1 > g_objRowHi)
+            g_objRowHi = ROF_FLIGHT_SCALE_Y(sc + 1) - 1;
     }
 }
 #endif

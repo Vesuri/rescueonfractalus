@@ -44,6 +44,12 @@ extern "C" {
 #endif
 extern int g_flightEnhancedTerrain;
 extern int g_flightTerrainYScale;
+// The vertical scale is always a power of two, so `g_flightTerrainYShift` is its log2 and every
+// SCALING is a shift.  Multiplying by the scale variable instead would be a 32-bit int*int, which
+// the 68000 cannot do in hardware: GCC would call __mulsi3 in the hot plotting paths.  Scale and
+// shift are set together, from the one renderer setting, in RescueOnFractalus::initialize().
+extern int g_flightTerrainYShift;
+#define ROF_FLIGHT_SCALE_Y(v)   ((v) << g_flightTerrainYShift)
 extern int g_flightPhysicalTerrainRows;
 extern int g_flightPhysicalRows;
 #ifdef __cplusplus

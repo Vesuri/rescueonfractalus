@@ -68,6 +68,7 @@ extern "C" { volatile unsigned char g_restartHoldBlack = 0; }
 extern "C" {
 int g_flightEnhancedTerrain = 0;
 int g_flightTerrainYScale = 1;
+int g_flightTerrainYShift = 0;
 int g_flightPhysicalTerrainRows = ROF_FLIGHT_SOURCE_TERRAIN_ROWS;
 int g_flightPhysicalRows = ROF_FLIGHT_SOURCE_ROWS;
 }
@@ -705,7 +706,7 @@ static void buildHeightRowOff() {
     for (int h = 0; h < 256; h++) {
         int scan = 150 - h;
         if (scan < 0) scan = 0; else if (scan > 46) scan = 46;
-        const int physical = scan * g_flightTerrainYScale;
+        const int physical = ROF_FLIGHT_SCALE_Y(scan);
         kHeightPhysicalRow[h] = (uint8_t)physical;
         kHeightRowOff[h] = kRow120[physical];
     }
@@ -742,7 +743,7 @@ static void buildDrawDotRowOff() {
     for (int m = 0; m < 256; m++) {          // m = oldMax (the previous column top)
         int sc = 150 - m;
         if ((unsigned)sc < 47u && sc != 43)  // matches ROF_PLOT_DOT's _sc gate exactly
-            kDrawDotRowOff[m] = kRow120[sc * g_flightTerrainYScale];
+            kDrawDotRowOff[m] = kRow120[ROF_FLIGHT_SCALE_Y(sc)];
         else
             kDrawDotRowOff[m] = 0xFFFF;       // off-display / reset-floor -> skip
     }
@@ -2467,9 +2468,10 @@ void RescueOnFractalus::initialize()
 {
     g_flightEnhancedTerrain =
         configuredFlightTerrainRenderer() == kFlightTerrainEnhanced;
-    g_flightTerrainYScale = g_flightEnhancedTerrain ? 2 : 1;
-    g_flightPhysicalTerrainRows = ROF_FLIGHT_SOURCE_TERRAIN_ROWS * g_flightTerrainYScale;
-    g_flightPhysicalRows = ROF_FLIGHT_SOURCE_ROWS * g_flightTerrainYScale;
+    g_flightTerrainYShift = g_flightEnhancedTerrain ? 1 : 0;
+    g_flightTerrainYScale = 1 << g_flightTerrainYShift;
+    g_flightPhysicalTerrainRows = ROF_FLIGHT_SCALE_Y(ROF_FLIGHT_SOURCE_TERRAIN_ROWS);
+    g_flightPhysicalRows = ROF_FLIGHT_SCALE_Y(ROF_FLIGHT_SOURCE_ROWS);
 
     titleBitmap   = Bitmap::allocate(kW, kTitleHeight,   kBP2, true);
     terrainBitmap = Bitmap::allocate(kW, kViewportFullHeight, kBP3, true);  // FLIGHT-ONLY (double-buffered); 94 physical rows incl. wing band
@@ -4150,12 +4152,12 @@ void RescueOnFractalus::renderFlightDirect()
         uint8_t* const p3 = bp + 80;
         for (int sr = 13; sr <= 20; ++sr)
             for (int dy = 0; dy < g_flightTerrainYScale; ++dy)
-                p3[kRow120[sr * g_flightTerrainYScale + dy] + 20] |= 0xC0u;
+                p3[kRow120[ROF_FLIGHT_SCALE_Y(sr) + dy] + 20] |= 0xC0u;
         for (int sr = 25; sr <= 31; ++sr)
             for (int dy = 0; dy < g_flightTerrainYScale; ++dy)
-                p3[kRow120[sr * g_flightTerrainYScale + dy] + 20] |= 0xC0u;
+                p3[kRow120[ROF_FLIGHT_SCALE_Y(sr) + dy] + 20] |= 0xC0u;
         for (int dy = 0; dy < g_flightTerrainYScale; ++dy) {
-            uint8_t* const h = p3 + kRow120[22 * g_flightTerrainYScale + dy];
+            uint8_t* const h = p3 + kRow120[ROF_FLIGHT_SCALE_Y(22) + dy];
             for (int c = 68; c <= 75; c++) h[c >> 2] |= kColMask4[c & 3];
             for (int c = 85; c <= 92; c++) h[c >> 2] |= kColMask4[c & 3];
         }
@@ -4181,14 +4183,14 @@ void RescueOnFractalus::renderFlightDirect()
         // then compare.  g_bandMismatch must be 0.  (The SOURCE freeze that keeps both passes on
         // identical bytes now happens up in step 1, where srow is set — see there.)
         static uint8_t bvSnap[8 * 120], bvNew[8 * 120];
-        for (int i = 0; i < 4 * g_flightTerrainYScale * 120; i++) bvSnap[i] = vrow[i];
+        for (int i = 0; i < ROF_FLIGHT_SCALE_Y(4 * 120); i++) bvSnap[i] = vrow[i];
 #endif
         // 2. Paint: plane3 = a straight long copy of the cached grey frame, but ONLY into a buffer
         //    that isn't already showing this half's current version of that row (see s_bandP3Ver —
         //    normally just row 45, the wing-clearance bar); planes 1&2 RMW every frame over each
         //    row's ow!=0 range (the bar / centre marker punching through the live terrain).
         const bool p3HalfChanged = (s_bandP3SeenHalf[p3i] != (signed char)hf);
-        for (int row = 0; row < 4; row++, vrow += 120 * g_flightTerrainYScale,
+        for (int row = 0; row < 4; row++, vrow += ROF_FLIGHT_SCALE_Y(120),
                                              p3c += 10, p1c += 40, p2c += 40, owc += 40) {
             if (p3HalfChanged || s_bandP3Seen[p3i][row] != s_bandP3Ver[hf][row]) {
                 const uint32_t* p3s = p3c;
@@ -4234,10 +4236,10 @@ void RescueOnFractalus::renderFlightDirect()
         {   // stash the cache path's output, restore the pre-composite state, run the ORIGINAL
             // per-byte composite live, and compare (see the snapshot above).
             uint8_t* const v0 = bp + g_flightPhysicalTerrainRows * ROF_FLIGHT_ROW_STRIDE;
-            for (int i = 0; i < 4 * g_flightTerrainYScale * 120; i++) { bvNew[i] = v0[i]; v0[i] = bvSnap[i]; }
+            for (int i = 0; i < ROF_FLIGHT_SCALE_Y(4 * 120); i++) { bvNew[i] = v0[i]; v0[i] = bvSnap[i]; }
             const uint8_t* s_ = srow;
             uint8_t* v_ = v0;
-            for (int row = 0; row < 4; row++, s_ += 96, v_ += 120 * g_flightTerrainYScale) {
+            for (int row = 0; row < 4; row++, s_ += 96, v_ += ROF_FLIGHT_SCALE_Y(120)) {
                 for (int dup = 0; dup < g_flightTerrainYScale; ++dup) {
                     const uint8_t* s = s_;
                     uint8_t* d1 = v_ + dup * 120; uint8_t* d2 = d1 + 40; uint8_t* d3 = d1 + 80;
@@ -4253,7 +4255,7 @@ void RescueOnFractalus::renderFlightDirect()
                 }
             }
             g_bandCalls++;
-            for (int i = 0; i < 4 * g_flightTerrainYScale * 120; i++)
+            for (int i = 0; i < ROF_FLIGHT_SCALE_Y(4 * 120); i++)
                 if (bvNew[i] != v0[i]) { g_bandMismatch++; if (!g_bandFirstBad) g_bandFirstBad = (unsigned long)i + 1; break; }
         }
         // Object-overlay invariant: after the box-narrowed apply, NO nonzero byte may remain
