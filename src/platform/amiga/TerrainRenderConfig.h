@@ -1,6 +1,6 @@
 #pragma once
 
-// Retained startup configuration in version.s.  Loaders may patch this word before
+// Retained startup configuration in StartupConfig.s.  Loaders may patch this word before
 // entering the executable; the scene copies it once during initialize().
 extern "C" unsigned short rof_enhanced_terrain_value;
 

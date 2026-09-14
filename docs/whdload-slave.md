@@ -80,8 +80,9 @@ returning would strand a 68000 user with no exit at all.
 
 Version 17 exposes `ws_config`. This slave declares
 `C1:B:Border Blanking (ECS/AGA only);` and reads `WHDLTAG_CUSTOM1_GET` before entering the
-game. The executable carries a retained writable `RoF!BPL3` magic block followed by a
-16-bit BPLCON3 value. Its default is `$0c10` (`BRDNTRAN`, border blanking disabled).
+game. The executable carries a retained writable `RoF!BPL3` magic block (defined in
+`src/platform/amiga/StartupConfig.s`) followed by a 16-bit BPLCON3 value. Its default is
+`$0c10` (`BRDNTRAN`, border blanking disabled).
 When Custom1 is selected, the slave scans the loaded hunks for that magic and patches the
 word to `$0c30` (`BRDNBLNK|BRDNTRAN`). The game reads this word both for the one-time
 hardware setup and when building `EmptyCopperList`, so the preference applies consistently

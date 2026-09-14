@@ -79,12 +79,12 @@ CORE_C_SRCS := \
     $(REPO)/src/gen/rof_native.c \
     $(REPO)/src/gen/rof_manual.c
 
-# Support runtime (freestanding CRT: program entry, memset…) + incbin'd assets + the
-# AmigaOS $VER: string.  These need bespoke flags, so they keep explicit rules below
-# rather than the CXX/CORE pattern rules.
+# Support runtime (freestanding CRT: program entry, memset…), incbin'd assets, the
+# AmigaOS $VER: string and loader-patchable startup configuration.  These need bespoke
+# flags, so they keep explicit rules below rather than the CXX/CORE pattern rules.
 SUPPORT_C_SRCS := $(SUPPORT)/gcc8_c_support.c
 ASM_SRCS       := $(SUPPORT)/gcc8_a_support.s $(AMIGA_SRC)/incbin.s \
-                  $(AMIGA_SRC)/version.s
+                  $(AMIGA_SRC)/version.s $(AMIGA_SRC)/StartupConfig.s
 
 # Framework hand-written m68k asm (Motorola syntax, assembled by vasm -> ELF).  These are
 # the framework's *Assembler.s routines, vendored with
@@ -1029,6 +1029,11 @@ obj/gcc8_a_support.o : $(SUPPORT)/gcc8_a_support.s
 # --gc-sections only through its section's SHF_GNU_RETAIN flag, which is why the link
 # rule below asserts it is still in the executable rather than trusting that.
 obj/version.o : $(AMIGA_SRC)/version.s
+	$(info ASM  $<)
+	@$(AS) $(ASFLAGS) -o $@ "$(abspath $<)"
+
+# Retained startup settings that loaders locate by magic and patch before entry.
+obj/StartupConfig.o : $(AMIGA_SRC)/StartupConfig.s
 	$(info ASM  $<)
 	@$(AS) $(ASFLAGS) -o $@ "$(abspath $<)"
 
