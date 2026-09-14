@@ -5558,7 +5558,9 @@ void RescueOnFractalus::updatePlanetCopper(bool force)
     const uint16_t titleBg  = atariToOCS(mem[0x02C8]);             // COLBK = title bg / canopy posts
     const uint16_t titlePf0 = atariToOCS(mem[MEM_text_color_pf0]);   // COLPF0 = title text ($00D8)
     const uint16_t energyCol = atariToOCS(mem[0x00DE]);             // gauge bar colour ramp
-    const uint16_t starCol  = atariToOCS(mem[0x02C0]);             // starfield grey ($02C0)
+    // The launch sequencer walks $02C0-$02C3 through every value $00..$0C.
+    // This slot is used only by those launch stars; the settled endpoint is even.
+    const uint16_t starCol  = enhancedFadeToOCS(mem[0x02C0]);      // starfield grey ($02C0)
     const uint16_t bgCol    = atariToOCS(mem[0x00DC]);             // viewport COLBK (space, $00DC)
 
     if (force || titleBg != plTitleBg || titlePf0 != plTitlePf0) {
