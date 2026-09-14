@@ -12,6 +12,24 @@ static inline uint8_t atmosphereBlendStep(uint8_t phase, uint8_t countdown)
     return (uint8_t)(interval >> 6);       // 0..15, denominator 16
 }
 
+// The original atmosphere selector discards the low byte of the 16-bit flight
+// depth and changes palette row only once per two high-byte units.  Preserve its
+// seven row endpoints, but expose sixteen display-only positions on the way to
+// the next row.  Below the first row and at/above the last row there is no
+// neighbouring endpoint to blend towards.
+static inline uint8_t atmosphereAltitudeBand(uint8_t depthStep)
+{
+    if (depthStep < 0x32u) return 0u;
+    const uint8_t band = (uint8_t)((depthStep - 0x32u) >> 1);
+    return band > 6u ? 6u : band;
+}
+
+static inline uint8_t atmosphereAltitudeBlendStep(uint8_t depthStep, uint8_t depthFrac)
+{
+    if (depthStep < 0x32u || depthStep >= 0x3Eu) return 0u;
+    return (uint8_t)((((depthStep - 0x32u) & 1u) << 3) | (depthFrac >> 5));
+}
+
 static inline uint8_t lerpOCSNibble(uint8_t from, uint8_t to, uint8_t step)
 {
     if (to >= from)

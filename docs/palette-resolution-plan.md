@@ -77,7 +77,7 @@ unused Atari colour-register values.
 | Launch/boost teal buildup | `$08D9 = $90..$9A` | 11 programmed, 6 distinct | Good half-step candidate |
 | Ship-death palette convergence | `$00CF..$00D6` rebuilt while phase `$20..$2A` advances | repeated/irregular holds from ignored bit 0 | Good targeted candidate |
 | Ship-death full-screen fade | DMA off; `$00D4` decrements through salmon to black | odd/even pairs repeat | Excellent half-step candidate |
-| Flight-entry terrain and later time of day | four table-driven terrain pens | discrete table transitions | Excellent candidate, but needs temporal RGB interpolation |
+| Flight-entry terrain, altitude haze and later time of day | four table-driven terrain pens | seven altitude bands plus discrete time transitions | Excellent candidate; blend in RGB between both altitude and time endpoints |
 
 There are two different effects which can be called "stars fading in":
 
@@ -180,7 +180,7 @@ Be mindful of the Copper publication model:
 The enhanced conversion belongs before those existing setters; it must not alter
 their pointer, WAIT, buffering or publication rules.
 
-### 3.4 Time-of-day interpolation is a separate feature
+### 3.4 Atmosphere interpolation is a separate feature
 
 The atmosphere block in `vbi_handler_flight` selects an altitude band, then reads
 four colours from `$07F9`, `$0823`, `$084D` and `$0877`. `$08A1` is the slow
@@ -188,13 +188,17 @@ countdown, `$08A2` is the phase, and `$08A3` is selected from the 16-entry step
 table at `$364B`.
 
 Those table colours are mostly even. A half-luminance lookup alone will not
-improve their transitions. The Amiga renderer should instead synthesize the four
-terrain pens between the current and next atmosphere-table states:
+improve their transitions. The original also selects one of only seven altitude
+rows from the high byte of a 16-bit flight-depth accumulator, despite retaining
+eight fractional bits. The Amiga renderer should synthesize the four terrain
+pens between both adjacent altitude rows and adjacent atmosphere-table states:
 
-1. Derive the current altitude sub-band exactly as the flight VBI does.
-2. Resolve current and next atmosphere base entries from the live phase.
-3. Convert both four-pen endpoints with the faithful lookup.
-4. Interpolate the OCS R/G/B nibbles using a small precomputed fraction table.
+1. Derive the current and next altitude sub-bands exactly as the flight VBI does.
+2. Derive a 0..15 altitude fraction from `$0034:$0033` across each original
+   two-unit band, arriving at the next authored row on its original boundary.
+3. Resolve current and next atmosphere base entries from the live phase.
+4. Convert the four corner palettes with the faithful lookup and interpolate the
+   OCS R/G/B nibbles first across altitude, then across time.
 5. Publish one coherent four-pen result to `FlightCopperList`.
 6. Use that same result for the windscreen colours which inherit terrain pens and
    for the hidden-crosshair palette, so masking remains exact.
@@ -206,9 +210,10 @@ and whether blending anticipates or follows an Atari table boundary should be
 settled from an A/B video; anticipating the next endpoint can arrive exactly at
 the original boundary without extending the day/night cycle.
 
-Altitude-driven palette changes must not be accidentally lag-filtered. Interpolate
-the two time-of-day palettes at the *current* altitude sub-band each frame rather
-than smoothing the final published colour blindly.
+This is bilinear interpolation between authored table entries, not a lag filter:
+it follows the live flight-depth fraction each frame, reacts immediately when
+the ship changes altitude, and does not alter physics or palette state. Fixed
+time-of-day levels still receive altitude interpolation within their fixed table.
 
 ### 3.5 Station mode-9 stars: defer
 
@@ -247,11 +252,11 @@ These are isolated and make the visual premise easy to judge.
 - Keep the preceding RANDOM flash unchanged.
 - Make an explicit decision on the locked-reticle fidelity issue.
 
-### Stage 4 — continuous atmosphere/time of day
+### Stage 4 — continuous atmosphere by altitude and time of day
 
-- Implement the four-pen phase interpolator in the Amiga renderer.
+- Implement the four-pen altitude/time interpolator in the Amiga renderer.
 - Add endpoint and wraparound tests for the `$364B` cycle.
-- Check every altitude sub-band and phase transition.
+- Check every altitude sub-band, fractional boundary and phase transition.
 - Measure its per-frame cost on the A500; use table lookups and 16-bit operations.
 
 ### Stage 5 — decide defaults
@@ -262,8 +267,8 @@ Keep a faithful build available regardless.
 
 The implementation keeps faithful mode as the default. The Logo sparkle, launch
 stars, mothership-door ramps, Boost palette ramps, ship-death convergence/fade,
-and continuous atmosphere transition are independently routed at their display
-consumers. Station mode-9 stars remain unchanged as planned.
+and continuous atmosphere transitions by both altitude and time are independently
+routed at their display consumers. Station mode-9 stars remain unchanged as planned.
 
 ## 5. Verification
 
@@ -280,6 +285,8 @@ needs both invariants and visual captures.
 - No enhanced conversion is used by lock-on direction state, RANDOM flashes,
   Title cycling, pause strobing, or settled static palettes.
 - All four time-of-day terrain pens share one interpolation fraction.
+- All four terrain pens share one altitude fraction and reach each authored band
+  on the same boundary as faithful mode.
 - No 32-bit software multiply/divide helper appears in the Amiga binary.
 
 Add a focused host proof for the generated table/interpolator. Existing native
@@ -295,7 +302,8 @@ Capture the source byte and displayed OCS word once per vblank for:
 - door `$C8..$C0` and `$C2..$C8` paths;
 - boost background, six pen fades and teal buildup;
 - death pre-blank tint and post-blank `$00D4` ramp;
-- one complete dusk or dawn atmosphere boundary at several altitudes.
+- one complete dusk or dawn atmosphere boundary at several altitudes;
+- a steady climb and descent across every altitude-palette boundary.
 
 For the short fades, assert that odd frames now carry a distinct in-between OCS
 word while even frames and endpoints are unchanged. Also inspect video rather
@@ -308,6 +316,6 @@ perceptual transition.
 1. Logo sparkle and launch stars — clearest benefit, least coupling.
 2. Door and boost fades — strong benefit, but more Copper phase/buffering care.
 3. Ship-death ramps — coherent multi-region update required.
-4. Time of day — largest qualitative gain and largest design surface.
+4. Altitude haze and time of day — largest qualitative gain and largest design surface.
 5. Station mode-9 stars — no change unless direct comparison justifies departing
    from the current calibrated, frame-exact implementation.
