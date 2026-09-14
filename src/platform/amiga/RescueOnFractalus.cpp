@@ -516,9 +516,9 @@ extern "C" const uint16_t kRow80[48] = {
 // Authored 2px intra-byte column mask (4 source columns/byte), used for objects, rescue figures,
 // and band content.  A value-2/3 mode-D pixel decodes (kModeDP2) to exactly these bits.
 extern "C" const uint8_t kColMask4[4] = { 0xC0u, 0x30u, 0x0Cu, 0x03u };
-// Native 1px masks.  kTerrainDotMask4 addresses the EVEN physical pixel belonging to each
-// faithful source column; the four source columns still share one byte.  kPixelMask8 is used
-// by the 320-column skyline, including its interpolated odd columns.
+// Native 1px masks.  kTerrainDotMask4 addresses the first physical pixel belonging to each
+// faithful source column; the rasterizer shifts it one bit for the retained horizontal phase.
+// kPixelMask8 addresses the independently stored 320-column skyline.
 extern "C" const uint8_t kTerrainDotMask4[4] = { 0x80u, 0x20u, 0x08u, 0x02u };
 static const uint8_t kPixelMask8[8] = { 0x80u, 0x40u, 0x20u, 0x10u,
                                         0x08u, 0x04u, 0x02u, 0x01u };
@@ -699,7 +699,7 @@ extern "C" void rof_flight_wait_dotclear(void) {
 extern "C" uint16_t kHeightRowOff[256];
 uint16_t kHeightRowOff[256];
 static uint8_t kHeightPhysicalRow[256];
-static uint8_t s_nativeSkylineRow[ROF_FLIGHT_SOURCE_WIDTH];
+static uint8_t s_nativeSkylineRow[ROF_FLIGHT_PHYSICAL_WIDTH];
 static bool kHeightRowOffBuilt = false;
 static void buildHeightRowOff() {
     for (int h = 0; h < 256; h++) {
@@ -754,9 +754,11 @@ static void buildDrawDotRowOff() {
 extern "C" uint8_t kDotColMask[256];
 extern "C" uint8_t kDotColOff[256];
 extern "C" uint8_t kDotYPhaseOff[256];
+extern "C" uint8_t kDotXShift[256];
 uint8_t kDotColMask[256];
 uint8_t kDotColOff[256];
 uint8_t kDotYPhaseOff[256];
+uint8_t kDotXShift[256];
 static void buildDotColTables() {
     for (int c = 0; c < 256; c++) {
         const int ac = c - 48;
@@ -770,20 +772,53 @@ static void buildDotColTables() {
             kDotColOff[c]  = 0;
         }
     }
-    for (int phase = 0; phase < 256; ++phase)
-        kDotYPhaseOff[phase] = g_flightEnhancedTerrain
-            ? (uint8_t)(((unsigned)phase >> 6) & 1u) * ROF_FLIGHT_ROW_STRIDE
+    for (int oldMax = 0; oldMax < 256; ++oldMax) {
+        kDotYPhaseOff[oldMax] = g_flightEnhancedTerrain
+            ? (uint8_t)(((unsigned)oldMax >> 1) & 1u) * ROF_FLIGHT_ROW_STRIDE
             : 0;
+        kDotXShift[oldMax] = g_flightEnhancedTerrain ? (uint8_t)(oldMax & 1) : 0;
+    }
 }
-// Native 320-column skyline.  Faithful source sample c lands at physical x=2c; the odd pixel
-// between c and c+1 uses their exact physical-row midpoint.  Since source rows map to EVEN
-// physical rows, `300-h0-h1` retains the otherwise-discarded half-row on a slope.  $FF means a
-// full/off-top terrain column; an interval touching it remains body and gets no sky seed.
+// Add one midpoint-displacement level when expanding the faithful 160-column ridge to the native
+// 320-column field.  The displacement magnitude comes from local terrain variation, while this
+// stable mix chooses its direction.  Flat runs remain flat; rugged runs acquire a real new sample
+// rather than the straight-line interpolation that gave the horizon a filtered appearance.
+static int nativeSkylineMidpoint(int c, const uint8_t* y, int r0, int r1) {
+    const int cp = c ? c - 1 : c;
+    const int cn = c + 1 < ROF_FLIGHT_SOURCE_WIDTH ? c + 1 : c;
+    const int cnn = cn + 1 < ROF_FLIGHT_SOURCE_WIDTH ? cn + 1 : cn;
+    const uint8_t hp = y[cp], hn = y[cnn];
+    int row = (r0 + r1 + 1) >> 1;
+    if (hp != 0xFFu && hn != 0xFFu) {
+        int d0 = (int)y[c] - (int)hp;
+        int d1 = (int)y[cn] - (int)hn;
+        int dr = r0 - r1;
+        if (d0 < 0) d0 = -d0;
+        if (d1 < 0) d1 = -d1;
+        if (dr < 0) dr = -dr;
+        unsigned rough = (unsigned)(d0 + d1 + dr);
+        if (rough >= 3u) {
+            unsigned phase = (unsigned)(c + 48) * 0x9E37u;
+            phase ^= (unsigned)y[c] * 0x45D9u;
+            phase ^= (unsigned)y[cn] * 0x119Du;
+            phase ^= phase >> 7;
+            row += (phase & 1u) ? 1 : -1;
+        }
+    }
+    if (row < 0) row = 0;
+    if (row >= ROF_FLIGHT_PHYSICAL_ROWS) row = ROF_FLIGHT_PHYSICAL_ROWS - 1;
+    return row;
+}
+
+// Native 320-column skyline.  Even and odd X positions are first-class entries in
+// s_nativeSkylineRow; edge plotting merely consumes that field and performs no interpolation.
+// $FF means a full/off-top terrain column; an interval touching it remains body with no sky seed.
 static void edgePlotEnhanced(uint8_t* bp) {
     const uint8_t* y = (const uint8_t*)mem + 0x260E + 48;
     for (int c = 0; c < ROF_FLIGHT_SOURCE_WIDTH; ++c) {
         const uint8_t h = y[c];
-        if (h == 0xFFu) s_nativeSkylineRow[c] = 0xFFu;
+        const int x = c * 2;
+        if (h == 0xFFu) s_nativeSkylineRow[x] = 0xFFu;
         else {
             unsigned row = kHeightPhysicalRow[h];
             const uint8_t hp = y[c ? c - 1 : c];
@@ -793,20 +828,20 @@ static void edgePlotEnhanced(uint8_t* bp) {
              * flat integer spans stay exactly flat instead of acquiring a checkerboard phase. */
             if (hp != 0xFFu && hn != 0xFFu && row + 1u < ROF_FLIGHT_PHYSICAL_ROWS &&
                 (((unsigned)hp + hn) & 1u)) ++row;
-            s_nativeSkylineRow[c] = (uint8_t)row;
+            s_nativeSkylineRow[x] = (uint8_t)row;
         }
     }
     for (int c = 0; c < ROF_FLIGHT_SOURCE_WIDTH; ++c) {
-        const uint8_t r0 = s_nativeSkylineRow[c];
-        const int x0 = c * 2;
-        if (r0 != 0xFFu)
-            bp[kRow120[r0] + (x0 >> 3)] |= kPixelMask8[x0 & 7];
-        const uint8_t r1 = s_nativeSkylineRow[(c + 1 < ROF_FLIGHT_SOURCE_WIDTH) ? c + 1 : c];
-        if (r0 != 0xFFu && r1 != 0xFFu) {
-            const int row = ((int)r0 + r1) >> 1;
-            const int x1 = x0 + 1;
-            bp[kRow120[row] + (x1 >> 3)] |= kPixelMask8[x1 & 7];
-        }
+        const int x = c * 2;
+        const int nx = (c + 1 < ROF_FLIGHT_SOURCE_WIDTH) ? x + 2 : x;
+        const uint8_t r0 = s_nativeSkylineRow[x], r1 = s_nativeSkylineRow[nx];
+        s_nativeSkylineRow[x + 1] = (r0 == 0xFFu || r1 == 0xFFu)
+            ? 0xFFu : (uint8_t)nativeSkylineMidpoint(c, y, r0, r1);
+    }
+    for (int x = 0; x < ROF_FLIGHT_PHYSICAL_WIDTH; ++x) {
+        const uint8_t row = s_nativeSkylineRow[x];
+        if (row != 0xFFu)
+            bp[kRow120[row] + (x >> 3)] |= kPixelMask8[x & 7];
     }
 }
 // Original 160-column skyline: one 2px mask per source column.  The original
@@ -3605,8 +3640,8 @@ static unsigned long rfPlaneSum(const uint8_t* base, int planeOff)
 // NO full-buffer LUT scan, NO shadow (the heavy parts of renderViewportModeD).  Mapping
 // pinned empirically: source column c (0..159) <- $260E[c+48]; source skyline row =
 // 150 - height (the $28CA/$28FA row table is linear); $FF = off-top (all body).  Each source
-// column becomes physical x=2c, with x=2c+1 interpolated between adjacent skyline rows; this
-// yields a 320x94 1x1 procedural surface.  plane1 = sky (filled above the skyline via ONE
+// column becomes physical x=2c; a midpoint-displacement refinement generates and stores x=2c+1,
+// yielding a 320x94 1x1 procedural surface with no renderer interpolation.  plane1 = sky (filled above the skyline via ONE
 // descending blitter fill), plane2 = direct native texture dots.  Authored objects and the four
 // source windscreen-band rows deliberately retain their 2x2 display footprint.
 void RescueOnFractalus::renderFlightDirect()

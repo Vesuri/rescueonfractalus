@@ -11,10 +11,11 @@
 > pixels instead of displaying a 160×47 image as 2×2 blocks. The enhanced path was deliberately
 > staged: shared geometry constants; native 94-row Copper fetch; native vertical writers/fill;
 > native 320-column skyline and 1×1 procedural dots; authored-overlay 2×2 preservation; redundant
-> Copper line-step removal. `$260E` remains the faithful 160-sample gameplay height field. Even
-> physical X uses those samples directly and odd X interpolates adjacent clamped skyline rows,
-> keeping simulation and validation semantics unchanged. The original renderer remains available
-> beside it and is selected by the same immutable startup configuration.
+> Copper line-step removal. `$260E` remains the faithful 160-sample gameplay height field; a further
+> midpoint-displacement level materializes the 160 missing X samples into a 320-entry skyline, while
+> procedural dots derive independent X/Y phase bits from their pre-update height. This keeps gameplay
+> semantics unchanged. The original renderer remains available beside it and is selected by the same
+> immutable startup configuration.
 
 Goal: cut `terrain_draw_frame $A31E` (≈82 ms/frame, the single biggest flight cost) **and**
 eliminate the separate `mem[$1070]`→bitplane convert pass. User-chosen scope (2026-06-24):

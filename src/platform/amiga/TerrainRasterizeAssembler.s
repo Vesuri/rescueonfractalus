@@ -162,13 +162,21 @@ DRAWDOT	macro
 	move.w	(a6,d1.w),d1		; kDrawDotRowOff[oldMax], or $FFFF
 	bmi.s	.dend\@			; sentinel -> off display / $6b reset-floor -> skip
 	tst.l	g_flightEnhancedTerrain	; immutable startup selector
-	beq.s	.dyready\@		; original renderer keeps its logical row
-	btst	#6,d4			; enhanced renderer retains a vertical subpixel bit
+	beq.s	.dxeven\@		; original renderer: no Y phase and its 2-bit mask
+	btst	#1,d7			; retain a stable vertical subpixel bit from oldMax
 	beq.s	.dyready\@
 	add.w	#120,d1			; odd physical row; table supplied the even row
 .dyready\@:
+	btst	#0,d7			; oldMax also supplies the independent horizontal phase
+	beq.s	.dxeven\@
 	move.b	(a1,d5.w),d7		; kDotColMask[plotCol]  (0 <=> off viewport)
 	beq.s	.dend\@
+	lsr.b	#1,d7			; even source pixels are 0/2/4/6, so this stays in-byte
+	bra.s	.dxready\@
+.dxeven\@:
+	move.b	(a1,d5.w),d7
+	beq.s	.dend\@
+.dxready\@:
 	moveq	#0,d0			; (d0/_h is dead from here; clear for the byte index)
 	move.b	(a4,d5.w),d0		; kDotColOff[plotCol] = (plotCol-48)>>2
 	add.w	d0,d1			; byte offset = rowoff + colOff
@@ -590,7 +598,7 @@ ph2_fe:
 	beq.s	rdn_fe
 	RASPOP				; clobbers the step's N (see ph2_ff)
 	tst.w	d5
-	bpl.s	rdn_fe
+	bpl	rdn_fe
 	bra	ph2_loop
 rdn_fe:	bra	done
 
@@ -624,7 +632,7 @@ ras_sp3_go:
 	move.l	d0,d3			; height = mh
 	DRAWDOT
 	addq.w	#1,d5
-	bpl.s	rdn_fe
+	bpl	rdn_fe
 	; parent (span 2) fe
 	move.w	d5,a0
 	move.w	d6,d0
@@ -1071,8 +1079,8 @@ done_raw:
 ;      four moveqs in the prologue.  (moveq sign-extends, so d3 holds $FFFFFFC0
 ;      — or.b only reads the low byte.)
 ; The enhanced 320-column renderer uses a separate C edge plot with individual physical pixels
-; and interpolated odd X columns.  This body remains exported for startup-selected original mode
-; and keeps that path's measured implementation unchanged.
+; and an independently stored midpoint-displaced sample at every odd X column.  This body remains
+; exported for startup-selected original mode and keeps that measured implementation unchanged.
 
 ;   3. THE LOOP IS GONE.  `addq.l #1,a2` + `dbra` was 18 cycles of pure
 ;      bookkeeping per 4-column group against 224 of work — but the plane-1 byte
