@@ -1020,6 +1020,13 @@ static const uint16_t kStationPmYAdj    = 16;
 // cockpit_pal.h and cockpit_raw removed: cockpit palette is now fully dynamic
 // from mem[] via atariToOCS(), cockpit bitmap decoded each frame in render().
 
+// Use only at positively identified fade call sites.  A global replacement would
+// turn GTIA's unused/control bit 0 into visible brightness noise.
+static inline uint16_t enhancedFadeToOCS(uint8_t c)
+{
+    return g_enhancedPalette ? atariToOCSHalfLuma(c) : atariToOCS(c);
+}
+
 static const uint16_t kW   = ROF_FLIGHT_PHYSICAL_WIDTH;
 static const uint16_t kH   = 216;   // Atari attract = 216 visible scanlines
 static const uint16_t kHT  = 86;    // terrain sprite/bitmap height (placeholder; M6a audit may revise)
@@ -6331,7 +6338,9 @@ void RescueOnFractalus::buildLogoSparkle()
     if (!bootFieldCopper || !logoSparkle) return;
 
     // COLPM0 via rof_logo.c's global — $D012 is not one of bus.h's mem[] shadows.
-    const uint16_t col = atariToOCS(g_logoSparkleCol);
+    // The sparkle explicitly walks every raw luminance $0F..$00, so odd values are
+    // real temporal half steps in Enhanced Palette mode rather than GTIA state noise.
+    const uint16_t col = enhancedFadeToOCS(g_logoSparkleCol);
     if (col != logoSparkleCol) { bootFieldCopper->setPairColor(0, col); logoSparkleCol = col; }
 
     uint16_t* d     = logoSparkle->data();
