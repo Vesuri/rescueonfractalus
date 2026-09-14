@@ -120,7 +120,8 @@ slv_info	dc.b	"Amiga port by Vesuri",10
 		dc.b	"not affiliated with or endorsed by Lucasfilm.",-1
 		dc.b	"Left mouse button quits.",10
 		dc.b	"F10 also quits, on a 68010 or better.",0
-slv_config	dc.b	"C1:B:Border Blanking (ECS/AGA only);",0
+slv_config	dc.b	"C1:B:Border Blanking (ECS/AGA only);"
+		dc.b	"C2:B:Enhanced Terrain Rendering;",0
 		dc.b	"$VER: RoF.slave 1.0 (13.09.2026)",0
 	EVEN
 
@@ -168,7 +169,10 @@ _bootdos	move.l	(_resload,pc),a2	;A2 = resload
 		bsr	_patch_hooks
 
 	;optionally patch the executable-side BPLCON3 configuration word
-		bsr	_patch_bplcon3
+	bsr	_patch_bplcon3
+
+	;optionally select the executable's enhanced flight terrain renderer
+	bsr	_patch_terrain_renderer
 
 	;call it.  D0/A0 = argument line, as dos would pass them; the game's CRT
 	;ignores both (its main() takes no arguments).
@@ -285,9 +289,35 @@ _patch_bplcon3
 		lea	(_rof_custom1,pc),a0	;tst has no PC-relative mode
 		tst.l	(a0)
 		beq.s	.done			;default: visible COLOR00 border
-		movem.l	d2-d3,-(a7)
+		movem.l	d2-d5,-(a7)
 		move.l	#bpl3_MAGIC0,d2
 		move.l	#bpl3_MAGIC1,d3
+		move.w	#bpl3_DEFAULT,d4
+		move.w	#bpl3_BLANKED,d5
+		bsr.s	_patch_config_word
+		movem.l	(a7)+,d2-d5
+.done		rts
+
+terr_MAGIC0	= $526f4621		;'RoF!'
+terr_MAGIC1	= $54455252		;'TERR'
+terr_DEFAULT	= 0
+terr_ENHANCED	= 1
+
+_patch_terrain_renderer
+		lea	(_rof_custom2,pc),a0
+		tst.l	(a0)
+		beq.s	.done			;default: original 2x2 renderer
+		movem.l	d2-d5,-(a7)
+		move.l	#terr_MAGIC0,d2
+		move.l	#terr_MAGIC1,d3
+		move.w	#terr_DEFAULT,d4
+		move.w	#terr_ENHANCED,d5
+		bsr.s	_patch_config_word
+		movem.l	(a7)+,d2-d5
+.done		rts
+
+; D2/D3 = block magic, D4 = expected word, D5 = replacement word.
+_patch_config_word
 		move.l	d7,d0			;D0 = current segment (BPTR)
 
 .seg		tst.l	d0
@@ -297,7 +327,7 @@ _patch_bplcon3
 		move.l	d0,a0
 		move.l	(-4,a0),d1		;allocated size, incl. the 8-byte header
 		move.l	(a0)+,d0		;next segment; A0 = first data byte
-		sub.l	#8+bpl3_SIZEOF,d1
+		sub.l	#8+bpl3_SIZEOF,d1	;both retained blocks are 12 bytes
 		bmi.s	.seg
 		move.l	a0,a1
 		add.l	d1,a1			;last address a whole block can start
@@ -308,11 +338,10 @@ _patch_bplcon3
 		bne.s	.scan
 		cmp.l	(a0),d3
 		bne.s	.scan
-		cmp.w	#bpl3_DEFAULT,(4,a0)
+		cmp.w	(4,a0),d4
 		bne.s	.scan
-		move.w	#bpl3_BLANKED,(4,a0)
-.not_found	movem.l	(a7)+,d2-d3
-.done		rts
+		move.w	d5,(4,a0)
+.not_found	rts
 
 
 ;============================================================================
@@ -339,6 +368,8 @@ _hifile		dc.b	"RoF.hi",0
 
 _rof_tags	dc.l	WHDLTAG_CUSTOM1_GET
 _rof_custom1	dc.l	0
+		dc.l	WHDLTAG_CUSTOM2_GET
+_rof_custom2	dc.l	0
 		dc.l	TAG_DONE
 
 ; int _hook_save(const UBYTE *blk, ULONG len)      4(sp)=blk  8(sp)=len

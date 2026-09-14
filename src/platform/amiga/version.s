@@ -42,3 +42,16 @@
 rof_bplcon3_value:
 	.word 0x0c10			| $0c00 | BPLCON3_BRDNTRAN (blanking off)
 	.word 0			| keep the retained block longword-sized
+
+| Startup-selected flight terrain renderer.  Like the BPLCON3 block above, this is
+| retained and writable so a loader can locate it by magic without knowing hunk
+| offsets.  The scene snapshots it during initialize(); changing it afterwards is
+| deliberately unsupported.
+	.section .data.terrain_renderer,"awR"
+	.balign 4
+	.long 0x526f4621		| 'RoF!'
+	.long 0x54455252		| 'TERR'
+	.globl rof_enhanced_terrain_value
+rof_enhanced_terrain_value:
+	.word 0			| 0 = original 2x2, nonzero = enhanced native rendering
+	.word 0			| keep the retained block longword-sized

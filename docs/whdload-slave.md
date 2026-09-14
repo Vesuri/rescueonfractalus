@@ -87,6 +87,12 @@ word to `$0c30` (`BRDNBLNK|BRDNTRAN`). The game reads this word both for the one
 hardware setup and when building `EmptyCopperList`, so the preference applies consistently
 without maintaining a WHDLoad-specific executable.
 
+Custom2 applies the same mechanism to flight terrain rendering. The executable's retained
+`RoF!TERR` block contains `rof_enhanced_terrain_value`, which defaults to zero for the
+original 2×2 renderer. `C2:B:Enhanced Terrain Rendering;` patches the word to one before
+entry. `RescueOnFractalus::initialize()` snapshots it once, so no live mode switch or
+per-pixel configuration branch is required.
+
 ### The left-mouse quit stays as it is (user decision, 2026-08-14)
 
 `rof_check_restart()` (`PlatformAmiga.cpp:1694`) quits on a bare
