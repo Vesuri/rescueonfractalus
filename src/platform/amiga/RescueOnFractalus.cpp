@@ -867,7 +867,10 @@ static void edgePlotOriginal(uint8_t* bp) {
 }
 extern "C" void flight_edge_plot_asm(uint8_t* bp);
 // Tallies for the edge-plot differential (make VERIFY=1 PROBES=1 + amiga/raster_verify*.gdb).
-extern "C" { volatile unsigned long g_edgeCalls = 0, g_edgeMismatch = 0, g_edgeAsmTicks = 0, g_edgeCTicks = 0; }
+// g_edgeLaps counts only the timed pairs where neither lap was disturbed: FD_LAP's ISR-line
+// subtraction can overshoot a lap shorter than the ISR that lands in it, and one wrapped
+// unsigned lap would swamp the whole accumulator.  Divide the ticks by the laps, not the calls.
+extern "C" { volatile unsigned long g_edgeCalls = 0, g_edgeMismatch = 0, g_edgeAsmTicks = 0, g_edgeCTicks = 0, g_edgeLaps = 0; }
 //   GTIA mode-10 (tunnel field at $2000): byte = 2 nibbles; nibble bit k → 4px.
 static uint8_t kGtia10P1[256];   // nibble bit0
 static uint8_t kGtia10P2[256];   // nibble bit1
@@ -3973,9 +3976,10 @@ void RescueOnFractalus::renderFlightDirect()
         edgePlotOriginal(bp);
         { static uint8_t eScrC[47*120], eScrA[47*120];
           for (int i = 0; i < 47*120; i++) { eScrC[i] = 0; eScrA[i] = 0; }
-          unsigned long p, ib;
-          p = rof_subclock(); ib = g_isrBeamLines; edgePlotOriginal(eScrC);  g_edgeCTicks   += (rof_subclock()-p) - (g_isrBeamLines-ib);
-          p = rof_subclock(); ib = g_isrBeamLines; flight_edge_plot_asm(eScrA); g_edgeAsmTicks += (rof_subclock()-p) - (g_isrBeamLines-ib);
+          unsigned long p, ib; long lc, la;
+          p = rof_subclock(); ib = g_isrBeamLines; edgePlotOriginal(eScrC);   lc = (long)(rof_subclock()-p) - (long)(g_isrBeamLines-ib);
+          p = rof_subclock(); ib = g_isrBeamLines; flight_edge_plot_asm(eScrA); la = (long)(rof_subclock()-p) - (long)(g_isrBeamLines-ib);
+          if (lc >= 0 && la >= 0) { g_edgeCTicks += lc; g_edgeAsmTicks += la; g_edgeLaps++; }
           g_edgeCalls++;
           for (int i = 0; i < 47*120; i++) if (eScrC[i] != eScrA[i]) { g_edgeMismatch++; break; }
         }
