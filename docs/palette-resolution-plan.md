@@ -2,7 +2,7 @@
 
 ## 0. Status and scope
 
-**Implementation plan, 2026-09-13. Runtime configuration landed 2026-09-14.**
+**Implemented 2026-09-14 behind the runtime Enhanced Palette option.**
 
 The port currently reproduces the Atari colour bytes faithfully, including the
 Atari's limited luminance resolution. That is the correct parity baseline, but it
@@ -259,6 +259,11 @@ These are isolated and make the visual premise easy to judge.
 Compare faithful and enhanced captures on real/representative OCS output. Decide
 whether Enhanced Palette remains optional or becomes the default Amiga look.
 Keep a faithful build available regardless.
+
+The implementation keeps faithful mode as the default. The Logo sparkle, launch
+stars, mothership-door ramps, Boost palette ramps, ship-death convergence/fade,
+and continuous atmosphere transition are independently routed at their display
+consumers. Station mode-9 stars remain unchanged as planned.
 
 ## 5. Verification
 

@@ -32,6 +32,7 @@
 #include "FlightTerrainGeometry.h"
 #include "TerrainRenderConfig.h"
 #include "PaletteResolutionConfig.h"
+#include "PaletteInterpolation.h"
 #include "../../rof_boot.h"       // staged INITAD boot chain (Logo / Station) + g_bootScene
 #include "../../rof_hiscore.h"    // the high-score save block the disk game read over SIO
 #include "../../gen/rof_manual.h" // g_stationDirty — the station image's dirty rectangles
@@ -5732,10 +5733,32 @@ void RescueOnFractalus::updateFlightCopper(bool force)
     // Poke them all as they ramp (the "native computes, callback updates the copper" model).
     // The plane-2 dots ($00DA) start salmon at flight entry and fade in WITH the terrain,
     // just like the body/sky — so pen2 must track $00DA, not a baked constant.
-    const uint16_t terr0 = atariToOCS(mem[0x00DC]);
-    const uint16_t terr1 = atariToOCS(mem[0x00DD]);
-    const uint16_t terr2 = atariToOCS(mem[0x00DA]);
-    const uint16_t terr3 = atariToOCS(mem[0x00DB]);
+    uint16_t terr0 = atariToOCS(mem[0x00DC]);
+    uint16_t terr1 = atariToOCS(mem[0x00DD]);
+    uint16_t terr2 = atariToOCS(mem[0x00DA]);
+    uint16_t terr3 = atariToOCS(mem[0x00DB]);
+    // On levels where the atmosphere clock runs, blend from the current
+    // seven-altitude-band palette to the next day/night state.  The original
+    // VBI still owns all state and endpoint timing; this only replaces the
+    // displayed OCS words between its table changes.  Event/death colours and
+    // levels with a fixed stage palette continue to use the live faithful bytes.
+    if (g_enhancedPalette && mem[MEM_game_state] == 0u &&
+        !(mem[MEM_event_pending_flag] & 0x80u) && mem[MEM_stage_geom_0617] == 0u) {
+        const uint8_t depth = mem[MEM_terrain_depth_step];
+        const uint8_t altitude = depth < 0x32u ? 0u
+            : (uint8_t)(((depth - 0x32u) >> 1) > 6u ? 6u : ((depth - 0x32u) >> 1));
+        const uint8_t phase = mem[MEM_atmo_fade_phase];
+        const uint8_t currentBase = mem[MEM_atmo_band_base];
+        const uint8_t nextBase = mem[0x364B + ((((unsigned)phase >> 2) + 1u) & 0x0Fu)];
+        const uint8_t step = atmosphereBlendStep(phase, mem[MEM_atmo_fade_countdown]);
+#define ATMO_LERP(table) lerpOCS(atariToOCS(mem[(table) + currentBase + altitude]), \
+                                 atariToOCS(mem[(table) + nextBase + altitude]), step)
+        terr0 = ATMO_LERP(0x0823u);       // body / COLBK
+        terr1 = ATMO_LERP(0x0877u);       // sky / COLPF0
+        terr2 = ATMO_LERP(0x07F9u);       // dots / COLPF1
+        terr3 = ATMO_LERP(0x084Du);       // highlight / COLPF2
+#undef ATMO_LERP
+    }
     if (force || terr0 != flTerr0 || terr1 != flTerr1 || terr2 != flTerr2 || terr3 != flTerr3) {
         flightCopper->setTerrainPalette(terr0, terr1, terr2, terr3);
         flTerr0 = terr0; flTerr1 = terr1; flTerr2 = terr2; flTerr3 = terr3;

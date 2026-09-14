@@ -157,6 +157,7 @@ HOSTPROOF_SELF := \
     alien_mirror_test \
     dot_table_test \
     native_resolution_test \
+    palette_interpolation_test \
     palette_resolution_test \
     native_skyline_test \
     tunnel_batch_test \
