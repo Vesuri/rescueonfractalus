@@ -858,6 +858,8 @@ static void edgePlotOriginal(uint8_t* bp) {
     }
 }
 extern "C" void flight_edge_plot_asm(uint8_t* bp);
+// Tallies for the edge-plot differential (make VERIFY=1 PROBES=1 + amiga/raster_verify*.gdb).
+extern "C" { volatile unsigned long g_edgeCalls = 0, g_edgeMismatch = 0, g_edgeAsmTicks = 0, g_edgeCTicks = 0; }
 //   GTIA mode-10 (tunnel field at $2000): byte = 2 nibbles; nibble bit k → 4px.
 static uint8_t kGtia10P1[256];   // nibble bit0
 static uint8_t kGtia10P2[256];   // nibble bit1
@@ -3952,9 +3954,24 @@ void RescueOnFractalus::renderFlightDirect()
     // plots at COL_MAX, so plane1 sky safely covers down to and INCLUDING the crest with no overlap.
     if (!kHeightRowOffBuilt) buildHeightRowOff();
     if (g_flightEnhancedTerrain) {
+        // No asm twin for the enhanced path, so there is nothing to differentiate against here.
         edgePlotEnhanced(bp);
     } else {
-#if defined(ROF_RASTERIZE_ASM)
+#if defined(ROF_RASTERIZE_ASM) && defined(ROF_RASTERIZE_VERIFY)
+        // Differential verify (same run, deterministic): C reference and asm into fresh scratch
+        // planes from the same $260E, byte-compare; perf timed back-to-back.  Live plane uses the
+        // proven C.  edgePlotOriginal is the oracle the asm twin was written against, so this only
+        // runs on the original renderer.
+        edgePlotOriginal(bp);
+        { static uint8_t eScrC[47*120], eScrA[47*120];
+          for (int i = 0; i < 47*120; i++) { eScrC[i] = 0; eScrA[i] = 0; }
+          unsigned long p, ib;
+          p = rof_subclock(); ib = g_isrBeamLines; edgePlotOriginal(eScrC);  g_edgeCTicks   += (rof_subclock()-p) - (g_isrBeamLines-ib);
+          p = rof_subclock(); ib = g_isrBeamLines; flight_edge_plot_asm(eScrA); g_edgeAsmTicks += (rof_subclock()-p) - (g_isrBeamLines-ib);
+          g_edgeCalls++;
+          for (int i = 0; i < 47*120; i++) if (eScrC[i] != eScrA[i]) { g_edgeMismatch++; break; }
+        }
+#elif defined(ROF_RASTERIZE_ASM)
         flight_edge_plot_asm(bp);
 #else
         edgePlotOriginal(bp);
