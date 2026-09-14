@@ -34,5 +34,8 @@ printf "  PERF beam-ticks: asm=%lu C=%lu  (per-call asm=%lu C=%lu, lower=faster)
 printf "EDGE calls=%lu mismatch=%lu  laps=%lu ticks asm=%lu C=%lu (per-call asm=%lu C=%lu)\n", \
   g_edgeCalls, g_edgeMismatch, g_edgeLaps, g_edgeAsmTicks, g_edgeCTicks, \
   (g_edgeLaps? g_edgeAsmTicks/g_edgeLaps:0), (g_edgeLaps? g_edgeCTicks/g_edgeLaps:0)
+printf "SKY  calls=%lu mismatch=%lu  laps=%lu ticks asm=%lu C=%lu (per-call asm=%lu C=%lu)\n", \
+  g_skyCalls, g_skyMismatch, g_skyLaps, g_skyAsmTicks, g_skyCTicks, \
+  (g_skyLaps? g_skyAsmTicks/g_skyLaps:0), (g_skyLaps? g_skyCTicks/g_skyLaps:0)
 detach
 quit

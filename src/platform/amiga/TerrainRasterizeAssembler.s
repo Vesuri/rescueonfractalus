@@ -105,11 +105,16 @@
 	xdef	terrain_column_rasterize_core		; ships as the core symbol directly
 	endif
 	xdef	flight_edge_plot_asm			; original 160-column skyline path
+	xdef	flight_edge_plot_enhanced_asm		; native 320-column skyline path
 	xref	mem
 	xref	kDrawDotRowOff
 	xref	kDotColMask
 	xref	kDotColOff
 	xref	kHeightRowOff
+	xref	kSkyParBlock
+	xref	kSkyHashH
+	xref	kSkyHashN
+	xref	kSkyHashC
 	xref	g_flightDotPlane
 
 CPBUF	equ	96		; 32 control-point slots * 3 bytes (depth stays < ~16)
@@ -1155,4 +1160,227 @@ EPG	set	0
 EPG	set	EPG+1
 	endr
 	movem.l	(sp)+,d3-d7/a2
+	rts
+
+; ---------------------------------------------------------------------------
+; flight_edge_plot_enhanced_asm(uint8_t* bp) — the NATIVE 320-column skyline plot,
+; twin of edgePlotEnhanced (RescueOnFractalus.cpp).  One plane-1 bit per physical
+; column at its skyline scanline: even X is the faithful height sample's own row, odd
+; X the midpoint-displaced row between two even neighbours.  160 source columns, 4 to
+; a plane-1 byte.
+;
+; EVERY INTERMEDIATE IS A BYTE OFFSET (row * 120), never a row number, because that is
+; what the 68000 indexes with.  Three restatements make the offset domain cheaper than
+; the row domain rather than merely equivalent; all three are proven against the C body
+; over 8632 height rows by tools/native_skyline_test.c, which carries a third
+; implementation written to this shape for exactly that purpose.
+;
+;   1. NO NUMERIC ROW IS EVER FORMED, so kHeightRowOff is the only row table and the
+;      column costs ONE table read.  The row's only consumer was the roughness gate's
+;      dr = |r0-r1|; but the gate is d0+d1+dr >= 3, so d0+d1 >= 3 passes outright and
+;      otherwise the test is |off0-off1| >= 120*(3-d0-d1) — a compare against the three
+;      words at -6/-4/-2(a3), no division.  Index 6-2*(d0+d1) lands on them directly.
+;   2. THE MIDPOINT'S HALF-ROW IS BIT 3 OF THE OFFSET SUM.  offMid = ((r0+r1+1)>>1)*120,
+;      and with u = off0+off1 = S*120 the shift u>>1 is already right for even S and
+;      short by 60 for odd S.  Since u = S*8*15, bit3(u) = bit0(S*15) = S&1 — so the
+;      rounding is `btst #3` plus (u+120)>>1, and no row parity crosses a column.
+;   3. THE HASH IS TWO TABLE READS AND A PER-COLUMN CONSTANT.  Its result is bit0 ^ bit7
+;      of a three-way XOR of products; that function distributes over XOR, and bits 0-7
+;      of a product depend only on bits 0-7 of the operands, so each term collapses to a
+;      one-bit table.  The three multiplies the C spells out never reach the loop — and
+;      the 68000, having no 32-bit multiply, could not have afforded them.
+;
+; The $FF (full/off-top) column plots nothing and suppresses its midpoint.  It is a
+; SENTINEL VALUE in both tables, never a compare: kHeightRowOff[$FF] is $FFFF so the
+; fetch's own N flag rejects it, and kSkyPar[$FF] is $80 so the bump test (a BYTE add,
+; in which $80+$80 wraps to 0 and no sum involving an $FF can be 1) and the midpoint's
+; neither-neighbour-is-off-top test (an OR whose N flag is the answer) are both free.
+;
+;   a0 = height source, walked +8 a turn          a1 = kHeightRowOff
+;   a2 = plane-1 byte column, walked +2 a turn
+;   a3 = kSkyPar (= kSkyParBlock+8; the roughness thresholds are the words at -6/-4/-2)
+;   a4 = kSkyHashH   a5 = kSkyHashN   a6 = kSkyHashC, walked +8 a turn
+;   d0 = this column's even offset   d1 = the next column's, computed once and carried
+;   d2/d3/d4/d5 = the hp/h/hn/hnn sliding window; their high bytes stay 0 for indexing,
+;                 since only move.b writes them and the slide is move.w
+;   d6 = scratch; d2 doubles as the second scratch once the gate has consumed hp
+;   d7 = 120
+;
+; UNROLLED 8 COLUMNS (2 plane bytes) A TURN, 19 turns, with the last 8 columns peeled.
+; The peel is not about the loop count: the window saturates at c >= 157 (y[c+3] repeats
+; y[159]) and the final column has no successor, so its far endpoint is its own offset.
+; Both are straight-line facts about the tail, not conditions worth testing 160 times.
+; Full unrolling was costed and declined: ~1.3% for ~13 KB of .text.  All seven address
+; registers are spoken for, so the loop closes on a pointer compare rather than a dbra;
+; that is 14 cycles a turn against keeping the 120 constant in d7, which is worth more.
+; ---------------------------------------------------------------------------
+
+SKYMAX	equ	93*120		; the midpoint clamp (physical row 93), in byte offsets
+SKYEND	equ	mem+$260E+48+152
+
+; One source column.  \1 = plane-1 byte displacement off a2 (0 or 1), \2/\3/\4 = the even,
+; odd and merged pixel masks, \5 = where this column's new window sample y[c+3] lives,
+; \6 = the column's hash term, \7 = "L" on the final column, which has no successor and
+; whose far endpoint the caller has already put in d1.
+; On entry d0 = this column's even offset; on exit d0 is the next column's.
+SKYCOL	macro
+	ifc	'\7',''
+	; --- the next column's even offset: kHeightRowOff[hn], plus a row when the two
+	;     samples straddling it disagree in parity (par[h] + par[hnn] == 1) ---
+	move.w	d4,d6
+	add.w	d6,d6
+	move.w	(a1,d6.w),d1		; $FFFF = off-top: N set, and the bump below is skipped
+	bmi.s	.nb\@			; so the sentinel can never be corrupted into a real row
+	move.b	(a3,d3.w),d6
+	add.b	(a3,d5.w),d6		; byte-wide, so $80 entries can never sum to 1
+	subq.b	#1,d6
+	bne.s	.nb\@
+	add.w	d7,d1
+.nb\@:
+	endc
+	tst.w	d0
+	bmi	.slide\@		; this column is off-top: it plots nothing at all
+	tst.w	d1
+	bmi	.evenonly\@		; no successor row -> no midpoint, even pixel only
+
+	; --- roughness gate: |h-hp| + |hn-hnn| + |off0-off1|/120 >= 3 ---
+	move.b	(a3,d2.w),d6
+	or.b	(a3,d5.w),d6
+	bmi	.nogate\@		; hp or hnn off-top -> the C skips the whole gate
+	move.w	d3,d6
+	sub.w	d2,d6
+	bpl.s	.a0\@
+	neg.w	d6
+.a0\@:					; d6 = |h-hp|; hp is dead now, so d2 becomes scratch
+	move.w	d4,d2
+	sub.w	d5,d2
+	bpl.s	.a1\@
+	neg.w	d2
+.a1\@:
+	add.w	d2,d6
+	cmpi.w	#3,d6
+	bge.s	.pass\@
+	add.w	d6,d6			; 6-2*(d0+d1) indexes the threshold word directly
+	neg.w	d6
+	addq.w	#6,d6
+	move.w	-8(a3,d6.w),d6		; 120, 240 or 360
+	move.w	d0,d2
+	sub.w	d1,d2
+	bpl.s	.a2\@
+	neg.w	d2
+.a2\@:
+	cmp.w	d6,d2
+	blt.s	.nogate\@
+
+.pass\@:				; --- displaced midpoint ---
+	move.w	d0,d6
+	add.w	d1,d6
+	btst	#3,d6			; bit 3 of the sum IS the half-row: round before halving
+	beq.s	.h0\@
+	add.w	d7,d6
+.h0\@:
+	lsr.w	#1,d6
+	move.b	(a4,d3.w),d2		; direction = (hashH[h] + hashN[hn] + hashC[c]) & 1
+	add.b	(a5,d4.w),d2
+	add.b	\6,d2
+	lsr.b	#1,d2			; bit 0 into C
+	bcc.s	.down\@
+	add.w	d7,d6
+	cmpi.w	#SKYMAX,d6
+	bls.s	.plot\@
+	move.w	#SKYMAX,d6
+	bra.s	.plot\@
+.down\@:
+	sub.w	d7,d6
+	bpl.s	.plot\@
+	moveq	#0,d6
+	bra.s	.plot\@
+
+.nogate\@:				; --- plain midpoint, no displacement ---
+	move.w	d0,d6
+	add.w	d1,d6
+	btst	#3,d6
+	beq.s	.h1\@
+	add.w	d7,d6
+.h1\@:
+	lsr.w	#1,d6
+
+.plot\@:
+	cmp.w	d0,d6
+	beq.s	.pair\@			; both physical pixels on one row -> one read-modify-write
+	or.b	#\2,(\1,a2,d0.w)
+	or.b	#\3,(\1,a2,d6.w)
+	bra.s	.slide\@
+.pair\@:
+	or.b	#\4,(\1,a2,d0.w)
+	bra.s	.slide\@
+.evenonly\@:
+	or.b	#\2,(\1,a2,d0.w)
+
+.slide\@:
+	move.w	d3,d2			; hp <- h; this also restores d2 from its scratch use
+	move.w	d4,d3
+	move.w	d5,d4
+	move.b	\5,d5
+	move.w	d1,d0
+	endm
+
+flight_edge_plot_enhanced_asm:
+	movem.l	d2-d7/a2-a6,-(sp)	; 11 callee-saved longs = 44 bytes; arg shifts +44
+	movea.l	48(sp),a2		; bp  (4 + 44)
+	lea	mem+$260E+48,a0
+	lea	kHeightRowOff,a1
+	lea	kSkyParBlock+8,a3
+	lea	kSkyHashH,a4
+	lea	kSkyHashN,a5
+	lea	kSkyHashC,a6
+	moveq	#0,d2
+	moveq	#0,d3
+	moveq	#0,d4
+	moveq	#0,d5
+	moveq	#120,d7
+	move.b	(a0),d2			; the first column has no predecessor: hp = h = y[0]
+	move.b	(a0),d3
+	move.b	1(a0),d4
+	move.b	2(a0),d5
+	move.w	d3,d6			; column 0's own even offset, by the rule the macro
+	add.w	d6,d6			; applies to every successor
+	move.w	(a1,d6.w),d0
+	bmi.s	sky_c0
+	move.b	(a3,d2.w),d6
+	add.b	(a3,d4.w),d6
+	subq.b	#1,d6
+	bne.s	sky_c0
+	add.w	d7,d0
+sky_c0:
+
+sky_loop:				; 19 turns of 8 columns = c 0..151
+	SKYCOL	0,$80,$40,$C0,3(a0),0(a6)
+	SKYCOL	0,$20,$10,$30,4(a0),1(a6)
+	SKYCOL	0,$08,$04,$0C,5(a0),2(a6)
+	SKYCOL	0,$02,$01,$03,6(a0),3(a6)
+	SKYCOL	1,$80,$40,$C0,7(a0),4(a6)
+	SKYCOL	1,$20,$10,$30,8(a0),5(a6)
+	SKYCOL	1,$08,$04,$0C,9(a0),6(a6)
+	SKYCOL	1,$02,$01,$03,10(a0),7(a6)
+	addq.l	#2,a2
+	lea	8(a0),a0
+	lea	8(a6),a6
+	cmpa.l	#SKYEND,a0
+	bne	sky_loop
+
+	; --- the peeled last 8 columns (152..159) ---------------------------------
+	; y[c+3] saturates at y[159] = 7(a0) from column 157 on, and column 159 has no
+	; successor at all, so its far endpoint is its own offset.
+	SKYCOL	0,$80,$40,$C0,3(a0),0(a6)
+	SKYCOL	0,$20,$10,$30,4(a0),1(a6)
+	SKYCOL	0,$08,$04,$0C,5(a0),2(a6)
+	SKYCOL	0,$02,$01,$03,6(a0),3(a6)
+	SKYCOL	1,$80,$40,$C0,7(a0),4(a6)
+	SKYCOL	1,$20,$10,$30,7(a0),5(a6)
+	SKYCOL	1,$08,$04,$0C,7(a0),6(a6)
+	move.w	d0,d1			; column 159: its own offset is its far endpoint
+	SKYCOL	1,$02,$01,$03,7(a0),7(a6),L
+
+	movem.l	(sp)+,d2-d7/a2-a6
 	rts

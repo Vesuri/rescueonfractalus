@@ -127,6 +127,16 @@ EXTRA_DEFINES += -DROF_RASTERIZE_ASM
 # has to go through the C dispatcher or raster_verify.gdb sees none of them).  Cleared below in
 # that case; the subdivide .s then keeps its old stack+mem[] call.
 RASTER_SPAN_ABI := 1
+# Both skyline edge plotters live in that same .s but are separate twins, so each keeps its own
+# C-fallback flag: `make EDGE_C=1` (original 2x2, oracle edgePlotOriginal) and
+# `make SKYLINE_C=1` (enhanced native resolution, oracle edgePlotEnhanced) plot with the C
+# instead while the rest of the rasterizer stays asm.
+ifndef EDGE_C
+EXTRA_DEFINES += -DROF_EDGE_ASM
+endif
+ifndef SKYLINE_C
+EXTRA_DEFINES += -DROF_SKYLINE_ASM
+endif
 # `make VERIFY=1` (implies PROBES): on-target differential check of the asm twin vs
 # the C oracle each call (rof_native.c), read via amiga/raster_verify.gdb.  The define
 # goes to BOTH the C (the diff wrapper) and the raster .s (drops its plain xdef so the

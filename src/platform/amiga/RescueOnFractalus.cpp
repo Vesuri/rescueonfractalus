@@ -692,6 +692,53 @@ extern "C" void rof_flight_wait_dotclear(void) {
     AmigaHardware::blitterWait();
 }
 // Edge-plot height->plane1-row-byte-offset table: kHeightRowOff[h] = kRow120[clamp(150-h,0,46)].
+// Tables for the native skyline plot's assembler twin (flight_edge_plot_enhanced_asm).  Each one
+// folds work the 68000 cannot do cheaply into a load; the offset-domain restatements they encode
+// are proven against the C body in tools/native_skyline_test.c.
+//
+// kSkyParBlock is ONE block so that a single address register serves both halves: a3 points at the
+// +8 byte, the parity table runs forward from there, and the three roughness thresholds sit at
+// -6/-4/-2(a3) as words.  The gate is d0+d1+dr >= 3 with dr = |off0-off1|/120, so a small
+// d0+d1 turns into a compare of |off0-off1| against 120*(3-d0-d1) and no division is needed.
+//
+// The parity entries carry the $FF sentinel in bit 7, which serves both readers of the table:
+//   - the even-row half-row bump is par[h] + par[hnn] == 1 BYTE-WIDE ($80+$80 wraps to 0, and no
+//     sum involving an $FF can be 1), so no column is compared against $FF;
+//   - the midpoint's "neither neighbour is off-top" test is par[hp] | par[hnn], whose sign flag
+//     the OR itself sets.
+#define ROF_SKY_T120_BYTES 8
+extern "C" uint8_t kSkyParBlock[ROF_SKY_T120_BYTES + 256];
+extern "C" uint8_t kSkyHashH[256];
+extern "C" uint8_t kSkyHashN[256];
+extern "C" uint8_t kSkyHashC[ROF_FLIGHT_SOURCE_WIDTH];
+uint8_t kSkyParBlock[ROF_SKY_T120_BYTES + 256];
+uint8_t kSkyHashH[256];
+uint8_t kSkyHashN[256];
+uint8_t kSkyHashC[ROF_FLIGHT_SOURCE_WIDTH];
+
+// The midpoint's direction is bit0 of (phase ^ phase >> 7) over a three-way XOR of products.  That
+// function distributes across the XOR, and bits 0-7 of a product depend only on bits 0-7 of the
+// operands, so each term collapses to a one-bit table (a per-column constant for the column term)
+// and the three multiplies never reach the plot -- which the 68000, having no 32-bit multiply,
+// could not afford anyway.
+static inline uint8_t skyHashBit(unsigned v) { return (uint8_t)((v ^ (v >> 7)) & 1u); }
+
+static void buildSkyPlotTables() {
+    uint16_t* t120 = (uint16_t*)kSkyParBlock;
+    t120[0] = 0;                                  // unused: the index is 6-2*(d0+d1), never 0
+    t120[1] = ROF_FLIGHT_ROW_STRIDE;              // d0+d1 == 2 -> one row of separation needed
+    t120[2] = 2 * ROF_FLIGHT_ROW_STRIDE;
+    t120[3] = 3 * ROF_FLIGHT_ROW_STRIDE;
+    uint8_t* par = kSkyParBlock + ROF_SKY_T120_BYTES;
+    for (int h = 0; h < 256; h++) {
+        par[h]       = (uint8_t)(h & 1);
+        kSkyHashH[h] = skyHashBit((unsigned)h * 0x45D9u);
+        kSkyHashN[h] = skyHashBit((unsigned)h * 0x119Du);
+    }
+    par[0xFF] = 0x80u;
+    for (int c = 0; c < ROF_FLIGHT_SOURCE_WIDTH; c++)
+        kSkyHashC[c] = skyHashBit((unsigned)(c + 48) * 0x9E37u);
+}
 // Folds the per-column "scanline = 150-h, clamp to the terrain rows" arithmetic out of the
 // skyline plot loop (a pure table index), so the loop has no per-column clamp branches.  Built
 // once (it depends only on kRow120, not on per-frame state).  The physical clamp is row 92
@@ -719,6 +766,7 @@ static void buildHeightRowOff() {
     // this entry — which is what keeps edgePlotCore usable as the differential's oracle.
     kHeightRowOff[0xFF] = 0xFFFF;
     kHeightPhysicalRow[0xFF] = 0xFF;
+    buildSkyPlotTables();
     kHeightRowOffBuilt = true;
 }
 // Dot-plot row-offset table for the rasterizer's inner DRAW/draw_dot (TerrainRasterizeAssembler.s):
@@ -866,11 +914,14 @@ static void edgePlotOriginal(uint8_t* bp) {
     }
 }
 extern "C" void flight_edge_plot_asm(uint8_t* bp);
-// Tallies for the edge-plot differential (make VERIFY=1 PROBES=1 + amiga/raster_verify*.gdb).
-// g_edgeLaps counts only the timed pairs where neither lap was disturbed: FD_LAP's ISR-line
+extern "C" void flight_edge_plot_enhanced_asm(uint8_t* bp);
+// Tallies for the edge-plot differentials (make VERIFY=1 PROBES=1 + amiga/raster_verify*.gdb).
+// The two renderers have separate twins and separate oracles, so they tally separately.
+// *Laps counts only the timed pairs where neither lap was disturbed: FD_LAP's ISR-line
 // subtraction can overshoot a lap shorter than the ISR that lands in it, and one wrapped
-// unsigned lap would swamp the whole accumulator.  Divide the ticks by the laps, not the calls.
+// unsigned lap would swamp the whole accumulator.  Divide the ticks by *Laps, not by *Calls.
 extern "C" { volatile unsigned long g_edgeCalls = 0, g_edgeMismatch = 0, g_edgeAsmTicks = 0, g_edgeCTicks = 0, g_edgeLaps = 0; }
+extern "C" { volatile unsigned long g_skyCalls = 0, g_skyMismatch = 0, g_skyAsmTicks = 0, g_skyCTicks = 0, g_skyLaps = 0; }
 //   GTIA mode-10 (tunnel field at $2000): byte = 2 nibbles; nibble bit k → 4px.
 static uint8_t kGtia10P1[256];   // nibble bit0
 static uint8_t kGtia10P2[256];   // nibble bit1
@@ -3965,10 +4016,25 @@ void RescueOnFractalus::renderFlightDirect()
     // plots at COL_MAX, so plane1 sky safely covers down to and INCLUDING the crest with no overlap.
     if (!kHeightRowOffBuilt) buildHeightRowOff();
     if (g_flightEnhancedTerrain) {
-        // No asm twin for the enhanced path, so there is nothing to differentiate against here.
+#if defined(ROF_SKYLINE_ASM) && defined(ROF_RASTERIZE_VERIFY)
+        // Same differential as the original path below, against the enhanced twin's own oracle.
         edgePlotEnhanced(bp);
+        { static uint8_t sScrC[94*120], sScrA[94*120];
+          for (int i = 0; i < 94*120; i++) { sScrC[i] = 0; sScrA[i] = 0; }
+          unsigned long p, ib; long lc, la;
+          p = rof_subclock(); ib = g_isrBeamLines; edgePlotEnhanced(sScrC);             lc = (long)(rof_subclock()-p) - (long)(g_isrBeamLines-ib);
+          p = rof_subclock(); ib = g_isrBeamLines; flight_edge_plot_enhanced_asm(sScrA); la = (long)(rof_subclock()-p) - (long)(g_isrBeamLines-ib);
+          if (lc >= 0 && la >= 0) { g_skyCTicks += lc; g_skyAsmTicks += la; g_skyLaps++; }
+          g_skyCalls++;
+          for (int i = 0; i < 94*120; i++) if (sScrC[i] != sScrA[i]) { g_skyMismatch++; break; }
+        }
+#elif defined(ROF_SKYLINE_ASM)
+        flight_edge_plot_enhanced_asm(bp);
+#else
+        edgePlotEnhanced(bp);
+#endif
     } else {
-#if defined(ROF_RASTERIZE_ASM) && defined(ROF_RASTERIZE_VERIFY)
+#if defined(ROF_EDGE_ASM) && defined(ROF_RASTERIZE_VERIFY)
         // Differential verify (same run, deterministic): C reference and asm into fresh scratch
         // planes from the same $260E, byte-compare; perf timed back-to-back.  Live plane uses the
         // proven C.  edgePlotOriginal is the oracle the asm twin was written against, so this only
@@ -3983,7 +4049,7 @@ void RescueOnFractalus::renderFlightDirect()
           g_edgeCalls++;
           for (int i = 0; i < 47*120; i++) if (eScrC[i] != eScrA[i]) { g_edgeMismatch++; break; }
         }
-#elif defined(ROF_RASTERIZE_ASM)
+#elif defined(ROF_EDGE_ASM)
         flight_edge_plot_asm(bp);
 #else
         edgePlotOriginal(bp);
