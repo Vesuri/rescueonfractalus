@@ -26,7 +26,19 @@ int main(void)
         const int second = first + 1;
         if (first < 0 || second >= ROF_FLIGHT_PHYSICAL_ROWS || second != first + 1) ++bad;
     }
-    printf("%s: 320 columns, 65025 height pairs, and 47 authored row pairs, %u mismatches\n",
+    {
+        unsigned even_rows = 0, odd_rows = 0;
+        for (int col = 48; col < 208; ++col) for (int h = 104; h <= 150; ++h) {
+            const int source_row = 150 - h;
+            for (unsigned phase = 0; phase < 256; ++phase) {
+                const int physical_row = source_row * 2 + ((phase >> 6) & 1u);
+                if ((unsigned)physical_row >= ROF_FLIGHT_PHYSICAL_ROWS) ++bad;
+                if (physical_row & 1) ++odd_rows; else ++even_rows;
+            }
+        }
+        if (!even_rows || !odd_rows) ++bad;
+    }
+    printf("%s: 320 columns, 65025 height pairs, 47 authored row pairs, and both terrain Y phases, %u mismatches\n",
            bad ? "FAIL" : "PASS", bad);
     return bad != 0;
 }

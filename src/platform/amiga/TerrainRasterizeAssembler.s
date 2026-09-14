@@ -111,6 +111,7 @@
 	xref	kDotColOff
 	xref	kHeightRowOff
 	xref	g_flightDotPlane
+	xref	g_flightEnhancedTerrain
 
 CPBUF	equ	96		; 32 control-point slots * 3 bytes (depth stays < ~16)
 
@@ -160,6 +161,12 @@ DRAWDOT	macro
 					; break the invariant the head depends on
 	move.w	(a6,d1.w),d1		; kDrawDotRowOff[oldMax], or $FFFF
 	bmi.s	.dend\@			; sentinel -> off display / $6b reset-floor -> skip
+	tst.l	g_flightEnhancedTerrain	; immutable startup selector
+	beq.s	.dyready\@		; original renderer keeps its logical row
+	btst	#6,d4			; enhanced renderer retains a vertical subpixel bit
+	beq.s	.dyready\@
+	add.w	#120,d1			; odd physical row; table supplied the even row
+.dyready\@:
 	move.b	(a1,d5.w),d7		; kDotColMask[plotCol]  (0 <=> off viewport)
 	beq.s	.dend\@
 	moveq	#0,d0			; (d0/_h is dead from here; clear for the byte index)

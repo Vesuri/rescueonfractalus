@@ -550,6 +550,7 @@ extern const uint8_t kTerrainDotMask4[4];
 extern uint16_t kDrawDotRowOff[256];
 extern uint8_t kDotColMask[256];
 extern uint8_t kDotColOff[256];
+extern uint8_t kDotYPhaseOff[256];
 extern void rof_flight_wait_dotclear(void);
 #define ROF_PLOT_DOT(col, h) do { \
     if (g_flightDotPlane) { \
@@ -566,13 +567,13 @@ extern void rof_flight_wait_dotclear(void);
 /* Procedural surface texture is native 1x1: one source column maps to its EVEN physical X,
  * while the skyline renderer supplies the intervening odd columns.  Authored object pixels keep
  * ROF_PLOT_DOT above and therefore retain their original 2x2 display footprint. */
-#define ROF_PLOT_TERRAIN_DOT(col, h) do { \
+#define ROF_PLOT_TERRAIN_DOT(col, h, phase) do { \
     if (g_flightDotPlane) { \
         uint8_t _c = (uint8_t)(col); \
         uint16_t _ro = kDrawDotRowOff[(uint8_t)(h)]; \
         uint8_t _m = kDotColMask[_c]; \
         if (_ro != 0xFFFFu && _m) { \
-            g_flightDotPlane[_ro + kDotColOff[_c]] |= _m; \
+            g_flightDotPlane[_ro + kDotYPhaseOff[(uint8_t)(phase)] + kDotColOff[_c]] |= _m; \
         } } } while (0)
 /* Object plane1 overlay, applied AFTER the sky fill (see g_flightObjP1 in RescueOnFractalus.cpp).
  * The overlay carries TWO bit slots per plane byte, both in the same scratch plane: the byte at
@@ -694,7 +695,7 @@ extern volatile unsigned long g_alHudCalls;      /* # alien_shape_blit calls dur
             } } } } while (0)
 #else
 #define ROF_PLOT_DOT(col, h) ((void)0)
-#define ROF_PLOT_TERRAIN_DOT(col, h) ((void)0)
+#define ROF_PLOT_TERRAIN_DOT(col, h, phase) ((void)0)
 #define ROF_PLOT_DOT_P1(col, h) ((void)0)
 #define ROF_CLEAR_FIG() ((void)0)
 #define ROF_PLOT_ALIEN(addr, V) ((void)0)
@@ -7620,7 +7621,7 @@ void terrain_column_rasterize_core_c(uint8_t entryDepth, uint8_t colBase) {
             TDCNT(g_tdPlots); b5 = depth; \
             ROF_FIELD_PLOT(_h); /* SDL/validate: OR value-2 into the mode-D field (the dots source) */ \
             RSSAT(_h); RSDOT(plotCol, _oldMax); \
-            ROF_PLOT_TERRAIN_DOT(plotCol, _oldMax); /* native 1px surface texture */ \
+            ROF_PLOT_TERRAIN_DOT(plotCol, _oldMax, frac); /* native 1px surface texture */ \
             (void)_oldMax;                  /* both readers are no-ops on the host */ \
         } } while(0)
 

@@ -699,6 +699,7 @@ extern "C" void rof_flight_wait_dotclear(void) {
 extern "C" uint16_t kHeightRowOff[256];
 uint16_t kHeightRowOff[256];
 static uint8_t kHeightPhysicalRow[256];
+static uint8_t s_nativeSkylineRow[ROF_FLIGHT_SOURCE_WIDTH];
 static bool kHeightRowOffBuilt = false;
 static void buildHeightRowOff() {
     for (int h = 0; h < 256; h++) {
@@ -752,8 +753,10 @@ static void buildDrawDotRowOff() {
 // renderFlightDirect, so both must exist by then.
 extern "C" uint8_t kDotColMask[256];
 extern "C" uint8_t kDotColOff[256];
+extern "C" uint8_t kDotYPhaseOff[256];
 uint8_t kDotColMask[256];
 uint8_t kDotColOff[256];
+uint8_t kDotYPhaseOff[256];
 static void buildDotColTables() {
     for (int c = 0; c < 256; c++) {
         const int ac = c - 48;
@@ -767,6 +770,10 @@ static void buildDotColTables() {
             kDotColOff[c]  = 0;
         }
     }
+    for (int phase = 0; phase < 256; ++phase)
+        kDotYPhaseOff[phase] = g_flightEnhancedTerrain
+            ? (uint8_t)(((unsigned)phase >> 6) & 1u) * ROF_FLIGHT_ROW_STRIDE
+            : 0;
 }
 // Native 320-column skyline.  Faithful source sample c lands at physical x=2c; the odd pixel
 // between c and c+1 uses their exact physical-row midpoint.  Since source rows map to EVEN
@@ -775,13 +782,28 @@ static void buildDotColTables() {
 static void edgePlotEnhanced(uint8_t* bp) {
     const uint8_t* y = (const uint8_t*)mem + 0x260E + 48;
     for (int c = 0; c < ROF_FLIGHT_SOURCE_WIDTH; ++c) {
-        const uint8_t h0 = y[c];
+        const uint8_t h = y[c];
+        if (h == 0xFFu) s_nativeSkylineRow[c] = 0xFFu;
+        else {
+            unsigned row = kHeightPhysicalRow[h];
+            const uint8_t hp = y[c ? c - 1 : c];
+            const uint8_t hn = y[c + 1 < ROF_FLIGHT_SOURCE_WIDTH ? c + 1 : c];
+            /* Estimate the half-row retained by the two neighbouring samples.  On a one-unit
+             * slope their parity differs, placing this sample on the intervening physical row;
+             * flat integer spans stay exactly flat instead of acquiring a checkerboard phase. */
+            if (hp != 0xFFu && hn != 0xFFu && row + 1u < ROF_FLIGHT_PHYSICAL_ROWS &&
+                (((unsigned)hp + hn) & 1u)) ++row;
+            s_nativeSkylineRow[c] = (uint8_t)row;
+        }
+    }
+    for (int c = 0; c < ROF_FLIGHT_SOURCE_WIDTH; ++c) {
+        const uint8_t r0 = s_nativeSkylineRow[c];
         const int x0 = c * 2;
-        if (h0 != 0xFFu)
-            bp[kHeightRowOff[h0] + (x0 >> 3)] |= kPixelMask8[x0 & 7];
-        const uint8_t h1 = y[(c + 1 < ROF_FLIGHT_SOURCE_WIDTH) ? c + 1 : c];
-        if (h0 != 0xFFu && h1 != 0xFFu) {
-            const int row = ((int)kHeightPhysicalRow[h0] + kHeightPhysicalRow[h1]) >> 1;
+        if (r0 != 0xFFu)
+            bp[kRow120[r0] + (x0 >> 3)] |= kPixelMask8[x0 & 7];
+        const uint8_t r1 = s_nativeSkylineRow[(c + 1 < ROF_FLIGHT_SOURCE_WIDTH) ? c + 1 : c];
+        if (r0 != 0xFFu && r1 != 0xFFu) {
+            const int row = ((int)r0 + r1) >> 1;
             const int x1 = x0 + 1;
             bp[kRow120[row] + (x1 >> 3)] |= kPixelMask8[x1 & 7];
         }
@@ -3918,11 +3940,10 @@ void RescueOnFractalus::renderFlightDirect()
     // lets the BLIT_SHAPE probe attribute the wait here instead of hiding it inside the fill.
     BW_AT(g_bwP3Clear, AmigaHardware::blitterDrain());
 
-    // Sky fill: propagate each edge bit UP in ONE descending blit (writes physical rows 0-91,
-    // seed row 92).  Full-height so the terrain silhouette continues into the windscreen band —
+    // Sky fill: propagate each edge bit UP in ONE descending blit (writes physical rows 0-92,
+    // seed row 93).  Full-height so the terrain silhouette continues into the windscreen band —
     // the band's L/R edges then show real terrain.
-    AmigaHardware::blitterFillUp((uint16_t*)bp, 20,
-                                 g_flightPhysicalRows - g_flightTerrainYScale, 80);
+    AmigaHardware::blitterFillUp((uint16_t*)bp, 20, g_flightPhysicalRows - 1, 80);
     FD_LAP(g_fdEdge);
 
     // plane2 = terrain dots/detail (mode-D value-2/3).  The rasterizer ORed them into the dot
