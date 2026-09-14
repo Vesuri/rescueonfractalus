@@ -5042,7 +5042,7 @@ void RescueOnFractalus::renderFrame()
     static bool deathBlankInstalled = false;
     if (!rsFlight) g_flightBlank = 0;   // safety: never carry the blank out of flight
     if (rsFlight && g_flightBlank && emptyCopper) {
-        emptyCopper->setColor00(atariToOCS(mem[0x00D4]));   // COLBK fade colour, poked every frame
+        emptyCopper->setColor00(enhancedFadeToOCS(mem[0x00D4])); // death COLBK fade, poked every frame
         if (!deathBlankInstalled) {
             AmigaHardware::setCopperList(*emptyCopper, false);
             deathBlankInstalled    = true;
@@ -5603,6 +5603,16 @@ void RescueOnFractalus::updatePlanetCopper(bool force)
 // colours live.
 void RescueOnFractalus::updateFlightCopper(bool force)
 {
+    // intro_cinematic_loop's convergence phase is uniquely identified by its
+    // low phase counter and $20..$2A colour phase.  Keep the earlier RANDOM
+    // terrain flash and the unrelated pause palette strobe on faithful GTIA
+    // conversion; only $00CF-$00D6 belongs to this fade.
+    const uint8_t deathPhase = mem[MEM_player_speed];
+    const bool enhanceDeathTint = g_enhancedPalette &&
+        mem[MEM_event_trigger] != 0u && mem[MEM_intro_phase_counter] < 0x06u &&
+        deathPhase >= 0x20u && deathPhase <= 0x2Au;
+#define DEATH_TINT_OCS(c) (enhanceDeathTint ? atariToOCSHalfLuma(c) : atariToOCS(c))
+
     // Top-bar region (above the viewport): the flight VBI $4FF5 reloads its three GTIA colours from
     // display params on EVERY frame, before any DLI fires —
     //   $5004 COLBK  ($D01A) <- $00D4   = top-bar background
@@ -5617,7 +5627,7 @@ void RescueOnFractalus::updateFlightCopper(bool force)
     // $02C8 and $00D7 == $78) but $02C8 is outside the $00CF-$00DD range the ESC-pause strobe $5039
     // rewrites, so the top bar and pillars freeze for the whole pause.  ($00DE, the energy
     // bar, sits one byte past the strobe's `LDY #$0E` top and correctly does NOT cycle.)
-    const uint16_t titleBg  = atariToOCS(mem[MEM_display_param_5]);  // COLBK = top-bar bg / canopy posts
+    const uint16_t titleBg  = DEATH_TINT_OCS(mem[MEM_display_param_5]); // COLBK = top-bar bg / canopy posts
     const uint16_t titlePf0 = atariToOCS(mem[MEM_text_color_pf0]);   // COLPF0 = top-bar text ($00D8)
     const uint16_t titlePf1 = atariToOCS(mem[MEM_display_param_8]);  // COLPF1 = top-bar blue ($00D7)
     const uint16_t energyCol = atariToOCS(mem[0x00DE]);             // gauge bar colour
@@ -5670,9 +5680,9 @@ void RescueOnFractalus::updateFlightCopper(bool force)
     // fade gray→salmon WITH the cockpit bitmap + canopy posts (matching the Atari — the DLI
     // reloads COLPM from these shadows every frame).  (Energy P1 ← $00DE is OUTSIDE the ramp, so
     // it correctly does not fade; the ship is empty at energy-out anyway.)
-    const uint16_t altimCol  = atariToOCS(mem[0x00D5]);
-    const uint16_t shipCol   = atariToOCS(mem[0x00D6]);
-    const uint16_t ahGround  = atariToOCS(mem[0x00D0]);
+    const uint16_t altimCol  = DEATH_TINT_OCS(mem[0x00D5]);
+    const uint16_t shipCol   = DEATH_TINT_OCS(mem[0x00D6]);
+    const uint16_t ahGround  = DEATH_TINT_OCS(mem[0x00D0]);
     if (force || altimCol != flAltimCol)     { flightCopper->setAltimeterColor(altimCol);      flAltimCol = altimCol; }
     if (force || shipCol  != flAltimShipCol) { flightCopper->setAltimeterShipColor(shipCol);   flAltimShipCol = shipCol; }
     // $00D0 drives TWO dashboard slots, both COLPM2 via DLI $4A78 ($4A80): the AH ground fill (P2)
@@ -5689,7 +5699,7 @@ void RescueOnFractalus::updateFlightCopper(bool force)
     // Compass band colour: the $49EE slot-0 DLI sets COLPF0 = mem[$00CF] (dark grey) for the
     // mode-4 compass line — poke it into the band's color01 so the housing/heading show in
     // the compass's own colour rather than the title text colour.
-    const uint16_t compassCol = atariToOCS(mem[0x00CF]);
+    const uint16_t compassCol = DEATH_TINT_OCS(mem[0x00CF]);
     if (force || compassCol != flCompassCol) {
         flightCopper->setCompassColor(compassCol);
         // The band windscreen-corner triangles (sprite pen 10) take the same $00CF dark grey
@@ -5708,7 +5718,7 @@ void RescueOnFractalus::updateFlightCopper(bool force)
     // (The Atari shows it one frame late, since the value is last frame's; not worth emulating.)
     const uint8_t needleD1 = mem[MEM_display_param_2];
     if (force || needleD1 != flNeedleD1) {
-        flightCopper->setCompassNeedleColor(atariToOCS(needleD1));
+        flightCopper->setCompassNeedleColor(DEATH_TINT_OCS(needleD1));
         flNeedleD1 = needleD1;
     }
 
@@ -5735,7 +5745,7 @@ void RescueOnFractalus::updateFlightCopper(bool force)
     // grey ($00D4) — color00/01/02 (bg/bars/dots) inherit from the terrain palette above and
     // fade with it (the salmon→brown bug was poking the band only when $00DD/$00D4 changed, so
     // the inherited-bg approach also fixes the stuck-salmon fade).  Poke only color03.
-    const uint16_t band3 = atariToOCS(mem[0x00D4]);
+    const uint16_t band3 = DEATH_TINT_OCS(mem[0x00D4]);
     if (force || band3 != flBand3) {
         flightCopper->setBandPalette(band3);
         flBand3 = band3;
@@ -5783,15 +5793,16 @@ void RescueOnFractalus::updateFlightCopper(bool force)
     const uint8_t ckD0 = mem[MEM_display_param_1], ckD2 = mem[MEM_display_param_3];
     if (force || ckD3 != flCkD3 || ckCF != flCkCF || ckD4 != flCkD4
               || ckD1 != flCkD1 || ckD0 != flCkD0) {
-        flightCopper->setCockpitPalette(atariToOCS(ckCF), atariToOCS(ckD3),
-                                        atariToOCS(ckD1), atariToOCS(ckD0),
-                                        atariToOCS(ckD4));
+        flightCopper->setCockpitPalette(DEATH_TINT_OCS(ckCF), DEATH_TINT_OCS(ckD3),
+                                        DEATH_TINT_OCS(ckD1), DEATH_TINT_OCS(ckD0),
+                                        DEATH_TINT_OCS(ckD4));
         flCkD3 = ckD3; flCkCF = ckCF; flCkD4 = ckD4; flCkD1 = ckD1; flCkD0 = ckD0;
     }
     if (force || ckD2 != flCkD2) {
-        flightCopper->setDashBg(atariToOCS(ckD2));
+        flightCopper->setDashBg(DEATH_TINT_OCS(ckD2));
         flCkD2 = ckD2;
     }
+#undef DEATH_TINT_OCS
 }
 
 // updateDoorsCopper(): fully populate one DoorsCopperList buffer for the hangar-doors-
