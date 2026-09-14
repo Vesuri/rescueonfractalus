@@ -5985,10 +5985,16 @@ void RescueOnFractalus::setTunnelRingPalette(TunnelCopperList* cl, bool ahead)
         r[5] = r[4]; r[4] = r[3]; r[3] = r[2]; r[2] = r[1]; r[1] = r[0]; r[0] = top;
         if ((int8_t)mem[0x008D] < 0) bk = r[4];
     }
+    // Before the reverse ring starts, the boost sequencer is running three
+    // deliberate ramps: salmon background -> black, each star/ring pen -> black,
+    // then teal $90..$9A.  Once $008D arms, these same bytes rotate as discrete
+    // tunnel colours and must return to faithful GTIA interpretation.
+    const bool boostFade = rsBoostViewport && mem[0x008D] == 0u;
     uint16_t ring[6];
-    for (int i = 0; i < 6; i++) ring[i] = atariToOCS(r[i]);
+    for (int i = 0; i < 6; i++)
+        ring[i] = boostFade ? enhancedFadeToOCS(r[i]) : atariToOCS(r[i]);
     const uint16_t black  = atariToOCS(mem[0x02C0]);
-    const uint16_t colBK  = atariToOCS(bk);
+    const uint16_t colBK  = boostFade ? enhancedFadeToOCS(bk) : atariToOCS(bk);
     if (rsBoostViewport) {
         cl->setTunnelColors(boostOuterOnPen0 ? ring[4] : colBK,
                             ring[3], boostOuterOnPen0 ? colBK : ring[4], ring[5],
