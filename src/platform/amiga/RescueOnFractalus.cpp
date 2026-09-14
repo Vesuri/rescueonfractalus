@@ -29,6 +29,8 @@
 #include "framework/Palette.h"
 #include "framework/Sprite.h"
 #include "RescueOnFractalus.h"
+#include "FlightTerrainGeometry.h"
+#include "TerrainRenderConfig.h"
 #include "../../rof_boot.h"       // staged INITAD boot chain (Logo / Station) + g_bootScene
 #include "../../rof_hiscore.h"    // the high-score save block the disk game read over SIO
 #include "../../gen/rof_manual.h" // g_stationDirty — the station image's dirty rectangles
@@ -60,6 +62,15 @@ extern "C" volatile unsigned char g_doorDirtyRow0, g_doorDirtyRow1;
 // sequence, black+brown from flight), and rsLaunched (stale terrain-scroll/vbi flags left in mem[])
 // can even re-install the doors/tunnel copper over old data before the card exists.
 extern "C" { volatile unsigned char g_restartHoldBlack = 0; }
+
+// Snapshotted from the retained startup setting before any flight resource or
+// lookup table is built.  These values remain immutable for the process lifetime.
+extern "C" {
+int g_flightEnhancedTerrain = 0;
+int g_flightTerrainYScale = 1;
+int g_flightPhysicalTerrainRows = ROF_FLIGHT_SOURCE_TERRAIN_ROWS;
+int g_flightPhysicalRows = ROF_FLIGHT_SOURCE_ROWS;
+}
 // Door-field-ready gate, latched on in boot_standby_launch_driver once the doors/dots/LEVEL field has been
 // drawn into $2000 but BEFORE delay_loop_c2_to_c9 ramps the green colour $0071 (rof_native.c).
 // render() decodes $2000 -> viewportBitmap once when this rises, so the door pixels exist before
@@ -458,7 +469,7 @@ extern "C" {
 uint8_t kModeDP1[256];
 uint8_t kModeDP2[256];
 }
-// Windscreen-bottom band (flight rows 43-46) decode.  The band mode-D field (mem[$1074+43*96],
+// Windscreen-bottom band (source rows 43-46 -> physical rows 86-93) decode.  The band mode-D field (mem[$1074+43*96],
 // written per frame by game_sub_451d) holds: value 3 = grey windscreen frame (the dominant
 // "middle"), value 0 = the L/R edge regions (terrain body colour, behind the corner-triangle
 // sprites), value 1 = the salmon wing-clearance bars, value 2 = the centre marker.  Instead of
@@ -473,18 +484,22 @@ static uint8_t kBandP3[256];
 static uint8_t kBandOW[256];   // = kBandP1[s] | kBandP2[s]: the terrain-overwriting (bar|marker)
                                // pixels.  ow==0 for pure grey-frame / L-R-edge bytes (the band
                                // majority) -> the plane1/2 RMW is a no-op there and can be skipped.
-// Row -> byte offset lookup, rows 0..47 (terrain 0-42 + windscreen band 43-47).  The 68000 has no
+// Physical row -> byte offset lookup, rows 0..93 (terrain 0-85 + windscreen band 86-93).  The 68000 has no
 // cheap multiply, so a `row * stride` on a NON-sequential row (the flight plot macros compute the
 // row from x/y) would be a __mulsi3 soft-multiply; these replace it with an index.  In a SEQUENTIAL
 // loop walk a pointer by the stride instead — cheaper still than a table read.  kRow120 = the
 // interleaved terrain scanline (3bp × 40 B); kRow40 / kRow80 = one / two mode-D planes (the
 // rescue-figure overlay's mask and its interleaved planes).  extern "C": rof_native.c's plot
 // macros use them too.
-extern "C" const uint16_t kRow120[48] = {
+extern "C" const uint16_t kRow120[ROF_FLIGHT_PHYSICAL_ROWS] = {
        0,  120,  240,  360,  480,  600,  720,  840,  960, 1080, 1200, 1320,
     1440, 1560, 1680, 1800, 1920, 2040, 2160, 2280, 2400, 2520, 2640, 2760,
     2880, 3000, 3120, 3240, 3360, 3480, 3600, 3720, 3840, 3960, 4080, 4200,
     4320, 4440, 4560, 4680, 4800, 4920, 5040, 5160, 5280, 5400, 5520, 5640,
+    5760, 5880, 6000, 6120, 6240, 6360, 6480, 6600, 6720, 6840, 6960, 7080,
+    7200, 7320, 7440, 7560, 7680, 7800, 7920, 8040, 8160, 8280, 8400, 8520,
+    8640, 8760, 8880, 9000, 9120, 9240, 9360, 9480, 9600, 9720, 9840, 9960,
+   10080,10200,10320,10440,10560,10680,10800,10920,11040,11160,
 };
 extern "C" const uint16_t kRow40[48] = {
        0,   40,   80,  120,  160,  200,  240,  280,  320,  360,  400,  440,
@@ -498,9 +513,15 @@ extern "C" const uint16_t kRow80[48] = {
     1920, 2000, 2080, 2160, 2240, 2320, 2400, 2480, 2560, 2640, 2720, 2800,
     2880, 2960, 3040, 3120, 3200, 3280, 3360, 3440, 3520, 3600, 3680, 3760,
 };
-// 2-bit intra-byte column mask (4 columns/byte): used for both the plane1 skyline edge and the
-// plane2 dot write.  A value-2/3 mode-D pixel decodes (kModeDP2) to exactly these bits.
+// Authored 2px intra-byte column mask (4 source columns/byte), used for objects, rescue figures,
+// and band content.  A value-2/3 mode-D pixel decodes (kModeDP2) to exactly these bits.
 extern "C" const uint8_t kColMask4[4] = { 0xC0u, 0x30u, 0x0Cu, 0x03u };
+// Native 1px masks.  kTerrainDotMask4 addresses the EVEN physical pixel belonging to each
+// faithful source column; the four source columns still share one byte.  kPixelMask8 is used
+// by the 320-column skyline, including its interpolated odd columns.
+extern "C" const uint8_t kTerrainDotMask4[4] = { 0x80u, 0x20u, 0x08u, 0x02u };
+static const uint8_t kPixelMask8[8] = { 0x80u, 0x40u, 0x20u, 0x10u,
+                                        0x08u, 0x04u, 0x02u, 0x01u };
 // Plane2 base of the off-screen buffer the terrain rasterizer should OR its dots into this frame
 // (= back->data + 40).  Set by flightKickBackClear once the buffer + its clear are committed; null
 // on the first flight frame (rasterizer then skips the direct write).  See renderFlightDirect.
@@ -525,17 +546,17 @@ extern "C" { volatile int g_flightTerrainFresh = 1; }
 // value-2 pixel — the sky fill has already set plane1 above the skyline, and leaving it set under
 // a value-2 object pixel reads plane1|plane2 = value-3, the bright tan; that is what made a downed
 // ship standing against the sky white instead of dark brown).  Apply is (plane1 & ~punch) | set.
-// Sized like one plane (47 rows x 120 stride) so the plot reuses kRow120 and its offsets equal the
+// Sized like one physical plane (94 rows x 120 stride) so the plot reuses kRow120 and its offsets equal the
 // bitmap's; only bytes 0-39 of each scanline carry a plane, so the punch slot rides in 40-79 for
 // free.  See ROF_PLOT_OBJ_P1 in rof_native.c.
 // ⚠ Must match the definition in rof_native.c (same define-in-both-files pattern as
 // ROF_OBJ_TOUCH_CAP below): the plotter writes the punch slot at this offset.
 #define ROF_OBJ_P1_PUNCH 40
-static uint8_t s_flightObjP1[47 * 120];
+static uint8_t s_flightObjP1[ROF_FLIGHT_PHYSICAL_ROWS * ROF_FLIGHT_ROW_STRIDE];
 extern "C" { uint8_t* g_flightObjP1 = nullptr; }      // = s_flightObjP1 during flight; null otherwise
-extern "C" { int g_objRowLo = 47, g_objRowHi = -1; }  // dirty scanline range in s_flightObjP1 (empty)
+extern "C" { int g_objRowLo = ROF_FLIGHT_PHYSICAL_ROWS, g_objRowHi = -1; }
 // Windscreen-band composite cache (see the band overlay at the end of renderFlightDirect).  The
-// band is re-composited every frame because the whole 47-row buffer is cleared and the terrain
+// band is re-composited every frame because the whole 94-physical-row buffer is cleared and the terrain
 // repainted under it — but the SOURCE it decodes barely moves: measured over 420 frames, only
 // ~0.9 of 160 field bytes change per frame, all of them in row 45
 // (the wing-clearance bar); rows 43/44/46 changed exactly twice = the flight-entry transient.
@@ -561,13 +582,13 @@ static signed char s_bandOwLo[2][4] = {{40,40,40,40},{40,40,40,40}};
 static signed char s_bandOwHi[2][4] = {{-1,-1,-1,-1},{-1,-1,-1,-1}};
 // ...and the plane3 long copy itself is skipped when the destination already holds the right bytes.
 // Same invariant the crosshair one-shot relies on (see s_p3Clean): nothing else in the frame writes
-// plane3 rows 43-46, so once a display buffer holds a given decoded band it keeps holding it.  Per
+// plane3 physical rows 86-93, so once a display buffer holds a given decoded band it keeps holding it.  Per
 // FIELD HALF, version each of the 4 rows' decoded plane3 (bumped whenever the decode cache changes);
 // per DISPLAY BUFFER, remember which half and which versions are actually painted in it.  Measured
 // shape: rows 43/44/46 changed exactly twice in 420 frames and row 45 carries
 // the wing-clearance bar — so this normally skips 30 of the 40 long copies, and all 40 when the bar
 // is steady.  s_bandP3SeenHalf = -1 means "unknown, repaint": the initial state, and what the
-// one-shot plane3 clear re-arms (that clear wipes rows 43-46 along with the rest of the plane).
+// one-shot plane3 clear re-arms (that clear wipes physical rows 86-93 along with the rest of the plane).
 static uint16_t    s_bandP3Ver[2][4]   = {{0,0,0,0},{0,0,0,0}};   // [half]   content version per row
 static uint16_t    s_bandP3Seen[2][4]  = {{0,0,0,0},{0,0,0,0}};   // [buffer] version painted per row
 static signed char s_bandP3SeenHalf[2] = { -1, -1 };              // [buffer] which half that was
@@ -606,8 +627,8 @@ uint16_t g_objTouch[ROF_OBJ_TOUCH_CAP];
 //  - s_figMaskBmp: 1-plane opaque mask (40-byte rows); g_figM points at it.
 //  - s_cleanBmp: 3-plane interleaved, identical layout to terrainBitmap = the composite background.
 // Allocated in initialize(); the g_fig* pointers stay null until then (the plot macros no-op on null).
-static Bitmap* s_figBmp     = nullptr;   // 320x43, 2bp interleaved (figure planes)
-static Bitmap* s_figMaskBmp = nullptr;   // 320x43, 1bp (opaque mask)
+static Bitmap* s_figBmp     = nullptr;   // 320x86, 2bp interleaved (source rows doubled physically)
+static Bitmap* s_figMaskBmp = nullptr;   // 320x86, 1bp (opaque mask)
 static Bitmap* s_cleanBmp   = nullptr;   // 320x94, 3bp interleaved (clean-terrain snapshot)
 extern "C" { uint8_t* g_figP1 = nullptr; }   // -> s_figBmp plane1 (offset 0)
 extern "C" { uint8_t* g_figP2 = nullptr; }   // -> s_figBmp plane2 (offset 40)
@@ -651,7 +672,7 @@ static bool    s_resumeClearPend    = false;
 // Per terrain buffer (0 = terrainBitmap, 1 = terrainBitmapBack): is its plane3 already the content
 // renderFlightDirect wants?  plane3 has exactly two writers in the terrain region and NEITHER needs
 // a cleared canvas: rows 0-42 hold only the targeting crosshair, whose geometry is a compile-time
-// constant (visibility is a copper palette swap, not a draw skip), and rows 43-46 are overwritten
+// constant (visibility is a copper palette swap, not a draw skip), and physical rows 86-93 are overwritten
 // wholesale by the band composite's plane3 long copy.  So the per-frame plane3 clear was pure cost
 // (11 beam ticks/painted frame of CPU stall) and BOTH it and the crosshair draw are now one-shot per
 // buffer, armed on the flight rising edge in deriveRenderSignals — the one place a foreign scene's
@@ -659,6 +680,7 @@ static bool    s_resumeClearPend    = false;
 // (The rescue paths' 3-plane copies from s_cleanBmp cannot dirty it: that snapshot is itself a live
 // flight buffer, so its plane3 is already crosshair + band and nothing else.)
 static bool    s_p3Clean[2]         = { false, false };
+
 // Called by the terrain draw (rof_native.c) before its first dot write, to ensure the kicked
 // off-screen-buffer clear has finished (the dots OR into freshly-zeroed plane2).
 #define BW_AT(acc, stmt) do { stmt; } while (0)
@@ -670,19 +692,21 @@ extern "C" void rof_flight_wait_dotclear(void) {
 }
 // Edge-plot height->plane1-row-byte-offset table: kHeightRowOff[h] = kRow120[clamp(150-h,0,46)].
 // Folds the per-column "scanline = 150-h, clamp to the terrain rows" arithmetic out of the
-// skyline plot loop (a pure table index), so the loop has no per-column clamp branches — used by
-// both the C reference edgePlotCore and the hand-asm flight_edge_plot_asm.  extern "C" so the asm
-// can xref it; built once (it depends only on kRow120, not on per-frame state).  The clamp is row
-// 46 (not 42) so a low horizon lets the terrain silhouette extend into the windscreen band rows
-// 43-46 — the band's L/R edges then show real terrain (the sky fill writes rows 0-45, seed 46).
+// skyline plot loop (a pure table index), so the loop has no per-column clamp branches.  Built
+// once (it depends only on kRow120, not on per-frame state).  The physical clamp is row 92
+// (source row 46, not 42) so a low horizon extends into the windscreen band — the band's L/R
+// edges then show real terrain (the sky fill writes physical rows 0-91 from seed row 92).
 extern "C" uint16_t kHeightRowOff[256];
 uint16_t kHeightRowOff[256];
+static uint8_t kHeightPhysicalRow[256];
 static bool kHeightRowOffBuilt = false;
 static void buildHeightRowOff() {
     for (int h = 0; h < 256; h++) {
         int scan = 150 - h;
         if (scan < 0) scan = 0; else if (scan > 46) scan = 46;
-        kHeightRowOff[h] = kRow120[scan];
+        const int physical = scan * g_flightTerrainYScale;
+        kHeightPhysicalRow[h] = (uint8_t)physical;
+        kHeightRowOff[h] = kRow120[physical];
     }
     // $FF (off-top: the column is all terrain body, so it plots NOTHING) gets the same negative
     // SENTINEL treatment as kDrawDotRowOff above, so the asm rejects it with the `bmi` that the
@@ -693,6 +717,7 @@ static void buildHeightRowOff() {
     // ⚠ Both C readers (edgePlotCore, edgeShapeProbe) test h != $FF FIRST and so never index
     // this entry — which is what keeps edgePlotCore usable as the differential's oracle.
     kHeightRowOff[0xFF] = 0xFFFF;
+    kHeightPhysicalRow[0xFF] = 0xFF;
     kHeightRowOffBuilt = true;
 }
 // Dot-plot row-offset table for the rasterizer's inner DRAW/draw_dot (TerrainRasterizeAssembler.s):
@@ -709,7 +734,7 @@ static void buildDrawDotRowOff() {
     for (int m = 0; m < 256; m++) {          // m = oldMax (the previous column top)
         int sc = 150 - m;
         if ((unsigned)sc < 47u && sc != 43)  // matches ROF_PLOT_DOT's _sc gate exactly
-            kDrawDotRowOff[m] = kRow120[sc];
+            kDrawDotRowOff[m] = kRow120[sc * g_flightTerrainYScale];
         else
             kDrawDotRowOff[m] = 0xFFFF;       // off-display / reset-floor -> skip
     }
@@ -733,7 +758,9 @@ static void buildDotColTables() {
     for (int c = 0; c < 256; c++) {
         const int ac = c - 48;
         if ((unsigned)ac < 160u) {                  // matches ROF_PLOT_DOT's _ac gate exactly
-            kDotColMask[c] = kColMask4[ac & 3];
+            kDotColMask[c] = g_flightEnhancedTerrain
+                ? kTerrainDotMask4[ac & 3]
+                : kColMask4[ac & 3];
             kDotColOff[c]  = (uint8_t)(ac >> 2);    // 0..39
         } else {
             kDotColMask[c] = 0;                     // off-viewport -> the asm skips the plot
@@ -741,22 +768,38 @@ static void buildDotColTables() {
         }
     }
 }
-// C reference / non-asm fallback for the plane1 skyline edge plot (see renderFlightDirect).
-// One bit per column at its skyline scanline; h==$FF (off-top, all body) plots nothing.
-static void edgePlotCore(uint8_t* bp) {
-    const uint8_t* y = (const uint8_t*)mem + 0x260E + 48;    // col 0 -> $260E[48]
-    uint8_t* colp = bp;
-    for (int c = 0; c < 160; c++) {
-        uint8_t h = *y++;
-        if (h != 0xFFu) colp[kHeightRowOff[h]] |= kColMask4[c & 3];
-        if ((c & 3) == 3) colp++;                            // next 4-column plane1 byte
+// Native 320-column skyline.  Faithful source sample c lands at physical x=2c; the odd pixel
+// between c and c+1 uses their exact physical-row midpoint.  Since source rows map to EVEN
+// physical rows, `300-h0-h1` retains the otherwise-discarded half-row on a slope.  $FF means a
+// full/off-top terrain column; an interval touching it remains body and gets no sky seed.
+static void edgePlotEnhanced(uint8_t* bp) {
+    const uint8_t* y = (const uint8_t*)mem + 0x260E + 48;
+    for (int c = 0; c < ROF_FLIGHT_SOURCE_WIDTH; ++c) {
+        const uint8_t h0 = y[c];
+        const int x0 = c * 2;
+        if (h0 != 0xFFu)
+            bp[kHeightRowOff[h0] + (x0 >> 3)] |= kPixelMask8[x0 & 7];
+        const uint8_t h1 = y[(c + 1 < ROF_FLIGHT_SOURCE_WIDTH) ? c + 1 : c];
+        if (h0 != 0xFFu && h1 != 0xFFu) {
+            const int row = ((int)kHeightPhysicalRow[h0] + kHeightPhysicalRow[h1]) >> 1;
+            const int x1 = x0 + 1;
+            bp[kRow120[row] + (x1 >> 3)] |= kPixelMask8[x1 & 7];
+        }
     }
 }
-extern "C" void flight_edge_plot_asm(uint8_t* bp);           // TerrainRasterizeAssembler.s
-#if defined(ROF_RASTERIZE_ASM) && defined(ROF_RASTERIZE_VERIFY)
-extern "C" { volatile unsigned long g_edgeCalls = 0, g_edgeMismatch = 0, g_edgeAsmTicks = 0, g_edgeCTicks = 0; }
-// rof_subclock / g_isrBeamLines come from the ROF_FLIGHT_PROBE block above (VERIFY pairs with PROBES).
-#endif
+// Original 160-column skyline: one 2px mask per source column.  The original
+// hand-written assembler below is selected in shipping builds; this C twin remains
+// the verifier/non-asm implementation.
+static void edgePlotOriginal(uint8_t* bp) {
+    const uint8_t* y = (const uint8_t*)mem + 0x260E + 48;
+    uint8_t* colp = bp;
+    for (int c = 0; c < ROF_FLIGHT_SOURCE_WIDTH; c++) {
+        const uint8_t h = *y++;
+        if (h != 0xFFu) colp[kHeightRowOff[h]] |= kColMask4[c & 3];
+        if ((c & 3) == 3) colp++;
+    }
+}
+extern "C" void flight_edge_plot_asm(uint8_t* bp);
 //   GTIA mode-10 (tunnel field at $2000): byte = 2 nibbles; nibble bit k → 4px.
 static uint8_t kGtia10P1[256];   // nibble bit0
 static uint8_t kGtia10P2[256];   // nibble bit1
@@ -853,7 +896,7 @@ static const uint16_t kStationPmYAdj    = 16;
 // cockpit_pal.h and cockpit_raw removed: cockpit palette is now fully dynamic
 // from mem[] via atariToOCS(), cockpit bitmap decoded each frame in render().
 
-static const uint16_t kW   = 320;
+static const uint16_t kW   = ROF_FLIGHT_PHYSICAL_WIDTH;
 static const uint16_t kH   = 216;   // Atari attract = 216 visible scanlines
 static const uint16_t kHT  = 86;    // terrain sprite/bitmap height (placeholder; M6a audit may revise)
 static const uint8_t  kBP2 = 2;
@@ -869,12 +912,12 @@ static const uint16_t kCockpitLine   = kTerrainLine + kTerrainHeight; // = 172
 // Cockpit height: 4 modeD DL entries × 2 scan lines + 10 mode4 DL entries × 8 scans
 // (title 42 + terrain 86 + cockpit 88 = 216 = kH).
 static const uint16_t kCockpitH     = 4 * 2 + 10 * 8;               // = 88
-// Flight/planet ($316B mode-D DL) display 47 mode-D rows, not 43: the bottom 4 rows
+// Flight/planet ($316B mode-D DL) provide 47 source rows, not 43: the bottom 4 rows
 // ($2090-$21B0 / $1810-$18A0) are the wing-clearance band (windscreen-bottom frame +
-// the salmon clearance bars).  terrainBitmap must hold all 47 rows × 2 scanlines = 94.
+// the salmon clearance bars).  Flight renders all 94 physical rows; Planet still line-doubles.
 // The other scenes (standby/doors/tunnel) display only the first 86 — the extra rows
 // are allocated but unused there.
-static const uint16_t kViewportFullHeight = 47 * 2;                 // = 94
+static const uint16_t kViewportFullHeight = ROF_FLIGHT_PHYSICAL_ROWS;
 // centerY so that DIWSTRT.y = kDisplayTop: centerY = kDisplayTop + kH/2 = 0x2c + 108 = 0x98
 static const uint16_t kCenterY       = kDisplayTop + kH / 2;
 
@@ -2365,8 +2408,14 @@ extern "C" { volatile uint32_t g_figBmpAddr = 0, g_cleanBmpAddr = 0, g_maskBmpAd
 #endif
 void RescueOnFractalus::initialize()
 {
+    g_flightEnhancedTerrain =
+        configuredFlightTerrainRenderer() == kFlightTerrainEnhanced;
+    g_flightTerrainYScale = g_flightEnhancedTerrain ? 2 : 1;
+    g_flightPhysicalTerrainRows = ROF_FLIGHT_SOURCE_TERRAIN_ROWS * g_flightTerrainYScale;
+    g_flightPhysicalRows = ROF_FLIGHT_SOURCE_ROWS * g_flightTerrainYScale;
+
     titleBitmap   = Bitmap::allocate(kW, kTitleHeight,   kBP2, true);
-    terrainBitmap = Bitmap::allocate(kW, kViewportFullHeight, kBP3, true);  // FLIGHT-ONLY (double-buffered); 47 rows incl. wing band
+    terrainBitmap = Bitmap::allocate(kW, kViewportFullHeight, kBP3, true);  // FLIGHT-ONLY (double-buffered); 94 physical rows incl. wing band
     // Second flight terrain buffer for double-buffering renderFlightDirect (see header).
     terrainBitmapBack = Bitmap::allocate(kW, kViewportFullHeight, kBP3, true);
     // Dot side-buffer (see header): off-display scratch the rasterizer ORs plane2 dots into.
@@ -2398,8 +2447,8 @@ void RescueOnFractalus::initialize()
     // Rescue-figure overlay + clean-terrain snapshot (chip Bitmaps for the blitter composite).
     // s_cleanBmp mirrors terrainBitmap's layout exactly so combineWithMask's per-row modulos line up.
     s_cleanBmp   = Bitmap::allocate(kW, kViewportFullHeight, kBP3, true);   // 3bp interleaved, == terrain
-    s_figBmp     = Bitmap::allocate(kW, 43, 2, true);                       // 2bp interleaved (figure planes)
-    s_figMaskBmp = Bitmap::allocate(kW, 43, 1, true);                       // 1bp opaque mask
+    s_figBmp     = Bitmap::allocate(kW, g_flightPhysicalTerrainRows, 2, true);
+    s_figMaskBmp = Bitmap::allocate(kW, g_flightPhysicalTerrainRows, 1, true);
     g_figP1 = (uint8_t*)s_figBmp->data;          // plane1 base (row stride 80)
     g_figP2 = (uint8_t*)s_figBmp->data + 40;     // plane2 base (offset 40, row stride 80)
     g_figM  = (uint8_t*)s_figMaskBmp->data;      // mask (row stride 40)
@@ -2612,6 +2661,7 @@ void RescueOnFractalus::initialize()
         // flLeftTri in one chip buffer — the channel shows segment 3 across the viewport and
         // then the left band triangle at 172.  (ch3 still points straight at flRightTri.)
         flightCopper->buildLayout(*titleBitmap, *terrainBitmap, *cockpitBitmap,
+                                  g_flightEnhancedTerrain != 0,
                                   *flLeftPost, *wideExt[2][0], *flRightPost, *flRightTri, *nullSprite,
                                   *ahLeft, *ahRight, *scopeP3Sprite);
 #ifdef ROF_FLIGHT_PROBE
@@ -3521,7 +3571,7 @@ static unsigned long rfPlaneSum(const uint8_t* base, int planeOff)
 {
     unsigned long s = 0;
     const uint8_t* p = base + planeOff;                  // walk the plane row-by-row (+120), no per-row multiply
-    for (int r = 0; r < 47; r++, p += 120) {
+    for (int r = 0; r < g_flightPhysicalRows; r++, p += ROF_FLIGHT_ROW_STRIDE) {
         for (int b = 0; b < 40; b++) s += p[b];
     }
     return s;
@@ -3531,12 +3581,12 @@ static unsigned long rfPlaneSum(const uint8_t* base, int planeOff)
 // ── Direct flight terrain renderer (terrain-draw-plan Stages 1-3) ──────────────
 // Plot the terrain sky straight to bitplanes from $260E (yForX) — NO mem[$1070] round-trip,
 // NO full-buffer LUT scan, NO shadow (the heavy parts of renderViewportModeD).  Mapping
-// pinned empirically: Amiga logical column c (0..159) <- $260E[c+48]; skyline scanline =
-// 150 - height (the $28CA/$28FA row table is linear); $FF = off-top (all body).  plane1 =
-// sky (filled above the skyline via ONE descending blitter fill), plane2 = dots (TODO).
-// Terrain rows 0-42; the windscreen-bottom band (rows 43-46, from mem[$2098]) is still
-// converted (4 rows) so it isn't lost.  Verified: plane1 byte-exact vs the unsplit convert
-// (0/13760); ~2.8x cheaper per frame (fDirect 120 vs fConvert 339 beam ticks).
+// pinned empirically: source column c (0..159) <- $260E[c+48]; source skyline row =
+// 150 - height (the $28CA/$28FA row table is linear); $FF = off-top (all body).  Each source
+// column becomes physical x=2c, with x=2c+1 interpolated between adjacent skyline rows; this
+// yields a 320x94 1x1 procedural surface.  plane1 = sky (filled above the skyline via ONE
+// descending blitter fill), plane2 = direct native texture dots.  Authored objects and the four
+// source windscreen-band rows deliberately retain their 2x2 display footprint.
 void RescueOnFractalus::renderFlightDirect()
 {
     // The flight loop renders here and busy-waits on flightSwapPending — it never reaches the
@@ -3629,7 +3679,7 @@ void RescueOnFractalus::renderFlightDirect()
         // seeded (it IS the clean terrain); the other buffer gets seeded on its first use below.
         // Blitter copy (Bitmap::copy) — runs on the blitter, parallel to the CPU.
         if (!s_cleanValid && flightDisplayed) {
-            s_cleanBmp->copy(*flightDisplayed, 0, 0, 0, 0, kW, 47);
+            s_cleanBmp->copy(*flightDisplayed, 0, 0, 0, 0, kW, g_flightPhysicalRows);
             s_cleanValid = true;
             const int di = (flightDisplayed == terrainBitmapBack) ? 1 : 0;
             s_bufSeeded[di] = true;      s_boxLo[di] = 99;      s_boxHi[di] = -1;
@@ -3644,9 +3694,9 @@ void RescueOnFractalus::renderFlightDirect()
             if (flightClearPending == back) { BW_AT(g_bwPendClear, AmigaHardware::blitterWait()); flightClearPending = nullptr; }
             if (!s_bufSeeded[bi]) {
                 // First use of this buffer in the pause — it was cleared blank; seed clean terrain.
-                back->copy(*s_cleanBmp, 0, 0, 0, 0, kW, 47);
+                back->copy(*s_cleanBmp, 0, 0, 0, 0, kW, g_flightPhysicalRows);
                 s_bufSeeded[bi] = true; s_boxLo[bi] = 99; s_boxHi[bi] = -1; s_boxColHi[bi] = -1;
-                // The seed brought in the SNAPSHOT's band plane3 (rows 43-46), which came from the
+                // The seed brought in the SNAPSHOT's band plane3 (physical rows 86-93), which came from the
                 // other buffer and so may be the other field half's — while this buffer's
                 // s_bandP3Seen record still describes what it held before.  Drop the record.
                 s_bandP3SeenHalf[bi] = -1;
@@ -3733,9 +3783,9 @@ void RescueOnFractalus::renderFlightDirect()
     if (s_resumeClearPend) {
         s_resumeClearPend = false;
         if (s_cleanValid) {
-            terrainBitmap->copy(*s_cleanBmp, 0, 0, 0, 0, kW, 47);
-            terrainBitmapBack->copy(*s_cleanBmp, 0, 0, 0, 0, kW, 47);
-            // Both buffers' band plane3 (rows 43-46) now hold the snapshot's, not what their
+            terrainBitmap->copy(*s_cleanBmp, 0, 0, 0, 0, kW, g_flightPhysicalRows);
+            terrainBitmapBack->copy(*s_cleanBmp, 0, 0, 0, 0, kW, g_flightPhysicalRows);
+            // Both buffers' band plane3 (physical rows 86-93) now hold the snapshot's, not what their
             // s_bandP3Seen records claim — drop both records so the next paint re-copies.
             s_bandP3SeenHalf[0] = -1; s_bandP3SeenHalf[1] = -1;
         }
@@ -3778,8 +3828,8 @@ void RescueOnFractalus::renderFlightDirect()
     // depend on the clear (it ORs into freshly-zeroed plane1), so it sits behind a blitterWait.
 
     // Dot side-buffer model: `back` is the freshly-freed off-screen buffer (the flip that freed it was
-    // drained at the top of this function).  It needs 47 rows (0-46) — terrain viewport (0-42) +
-    // windscreen band (43-46) — of fresh content, and the terrain dots (plane2) COPIED in from the dot
+    // drained at the top of this function).  It needs 94 physical rows (terrain 0-85 + windscreen
+    // band 86-93) of fresh content, and the terrain dots (plane2) COPIED in from the dot
     // side-buffer (the rasterizer ORed this frame's dots into terrainDotBuffer's plane2, NOT a display
     // buffer, during the upstream compute, so they survived the flip).
     //
@@ -3788,14 +3838,14 @@ void RescueOnFractalus::renderFlightDirect()
     // edge plot, and that touches plane1 ALONE — so the work is split by plane and only plane1 is
     // awaited:
     //   plane1 (+0)  clear — the edge plot ORs the skyline into it, so it must be zero first: awaited.
-    //   plane2 (+40) copy  — a straight A->D copy covering all 20 words x 47 rows, so it needs no
+    //   plane2 (+40) copy  — a straight A->D copy covering all 20 words x 94 rows, so it needs no
     //                        clear at all (the old code cleared those words, then overwrote them).
     //                        Kicked here; runs UNDER the edge plot.
     //   plane3 (+80) clear — first touched by the CPU far below (crosshair/band), and needed at all
     //                        only on a buffer's first flight frame: moved past the edge plot and
     //                        made one-shot (s_p3Clean).
     // Dropping the redundant plane2 clear also cuts total blitter work here by ~20%.
-    AmigaHardware::blitterClear((uint16_t*)bp, 20, 47, 80);   // plane1 only (mod = 120 stride - 40 row bytes)
+    AmigaHardware::blitterClear((uint16_t*)bp, 20, g_flightPhysicalRows, 80);
     // Fill the clear's shadow with the deferred sprite work (altimeter pair + artificial horizon):
     // pure CPU on sprite buffers, no dependency on this blit, so the drain below drops toward 0.
     buildFlightSpritesEarly();
@@ -3805,7 +3855,7 @@ void RescueOnFractalus::renderFlightDirect()
     // processBlitterQueue() only runs from a wait).  It overlaps the edge plot below.
     AmigaHardware::blitterCopy((uint16_t*)((uint8_t*)terrainDotBuffer->data + 40),  // src plane2
                                (uint16_t*)(bp + 40),                                // dst plane2
-                               20 /*words*/, 47 /*rows*/,
+                               20 /*words*/, g_flightPhysicalRows,
                                80 /*srcMod bytes = 120-40*/, 80 /*dstMod bytes*/,
                                0 /*shift*/, 0xFFFF /*fwm*/, 0xFFFF /*lwm*/, 0xFFFF /*unused (minterm=A)*/);
     flightClearPending = nullptr;
@@ -3831,58 +3881,48 @@ void RescueOnFractalus::renderFlightDirect()
         // settle it before overwriting them by CPU (the copy must land FIRST, then be replaced — the
         // old whole-buffer drain gave that ordering for free).  One-shot per rescue; cost irrelevant.
         AmigaHardware::blitterDrain();
-        const uint8_t* s2 = (const uint8_t*)s_cleanBmp->data + 40;   // plane2 base, walked +120/row
+        const uint8_t* s2 = (const uint8_t*)s_cleanBmp->data + 40;
         uint8_t* d2 = bp + 40;                                       // plane2 in the back buffer
-        for (int r = 0; r <= 42; r++, s2 += 120, d2 += 120) {
+        for (int r = 0; r < g_flightPhysicalTerrainRows; r++, s2 += 120, d2 += 120) {
             for (int b = 0; b < 40; b++) d2[b] = s2[b];
         }
     }
 
-    // Edge plot: ONE plane1 bit per column at its skyline scanline (160 byte-ORs).  Hand-asm twin
-    // (flight_edge_plot_asm, TerrainRasterizeAssembler.s) — 4 columns unrolled with immediate masks,
-    // the plane1 byte pointer walked +1 per 4 cols, the 150-h/clamp folded into kHeightRowOff[].
+    // Edge plot: ONE plane1 bit per physical column at its skyline scanline (320 bit ORs).
     // The crest row IS the silhouette top; the rasterizer lags its plane2 dots by one so it never
     // plots at COL_MAX, so plane1 sky safely covers down to and INCLUDING the crest with no overlap.
     if (!kHeightRowOffBuilt) buildHeightRowOff();
-#if defined(ROF_RASTERIZE_ASM) && defined(ROF_RASTERIZE_VERIFY)
-    // Differential verify (same run, deterministic): C reference and asm into fresh scratch planes
-    // from the same $260E, byte-compare; perf timed back-to-back.  Live plane uses the proven C.
-    edgePlotCore(bp);
-    { static uint8_t eScrC[47*120], eScrA[47*120];
-      for (int i = 0; i < 47*120; i++) { eScrC[i] = 0; eScrA[i] = 0; }
-      unsigned long p, ib;
-      p = rof_subclock(); ib = g_isrBeamLines; edgePlotCore(eScrC);        g_edgeCTicks   += (rof_subclock()-p) - (g_isrBeamLines-ib);
-      p = rof_subclock(); ib = g_isrBeamLines; flight_edge_plot_asm(eScrA); g_edgeAsmTicks += (rof_subclock()-p) - (g_isrBeamLines-ib);
-      g_edgeCalls++;
-      for (int i = 0; i < 47*120; i++) if (eScrC[i] != eScrA[i]) { g_edgeMismatch++; break; }
-    }
-#elif defined(ROF_RASTERIZE_ASM)
-    flight_edge_plot_asm(bp);
+    if (g_flightEnhancedTerrain) {
+        edgePlotEnhanced(bp);
+    } else {
+#if defined(ROF_RASTERIZE_ASM)
+        flight_edge_plot_asm(bp);
 #else
-    edgePlotCore(bp);
+        edgePlotOriginal(bp);
 #endif
+    }
     // plane3: ONE-SHOT clear per buffer, not per frame (see s_p3Clean).  Both of plane3's writers
     // are self-sufficient — the crosshair below ORs the same fixed bytes every frame and the band
-    // composite long-COPIES rows 43-46 — so once a buffer's plane3 is right it stays right, and the
+    // composite long-COPIES physical rows 86-93 — so once a buffer's plane3 is right it stays right, and the
     // clear is only needed where a foreign scene could have left bits in it (flight entry, armed in
     // deriveRenderSignals).  Steady state: no clear at all.
     const int p3i = (back == terrainBitmapBack) ? 1 : 0;
-    const bool p3Fresh = !s_p3Clean[p3i];    // this buffer's plane3 is being rebuilt this frame
+    const bool p3Fresh = !s_p3Clean[p3i];
     if (p3Fresh) {
-        AmigaHardware::blitterClear((uint16_t*)(bp + 80), 20, 47, 80);
+        AmigaHardware::blitterClear((uint16_t*)(bp + 80), 20, g_flightPhysicalRows, 80);
         s_p3Clean[p3i] = true;
-        s_bandP3SeenHalf[p3i] = -1;   // that clear wiped rows 43-46 too: force the band's plane3 copy
+        s_bandP3SeenHalf[p3i] = -1;   // that clear wiped physical rows 86-93 too: force the band's plane3 copy
     }
     // Settle whatever is still in flight (the dot copy, and the clear just above on an entry frame)
     // before the sky fill.  blitterFillUp would drain in its own prologue anyway; spelling it out
     // lets the BLIT_SHAPE probe attribute the wait here instead of hiding it inside the fill.
     BW_AT(g_bwP3Clear, AmigaHardware::blitterDrain());
 
-    // Sky fill: propagate each edge bit UP in ONE descending blit (writes rows 0-45, seed 46).
-    // Full-height (47 rows) so the terrain silhouette continues into the windscreen band — the
-    // band's L/R edges then show real terrain.  (Was 43 rows / seed 42; buildHeightRowOff clamps
-    // the skyline to row 46 to match.)
-    AmigaHardware::blitterFillUp((uint16_t*)bp, 20, 46, 80);
+    // Sky fill: propagate each edge bit UP in ONE descending blit (writes physical rows 0-91,
+    // seed row 92).  Full-height so the terrain silhouette continues into the windscreen band —
+    // the band's L/R edges then show real terrain.
+    AmigaHardware::blitterFillUp((uint16_t*)bp, 20,
+                                 g_flightPhysicalRows - g_flightTerrainYScale, 80);
     FD_LAP(g_fdEdge);
 
     // plane2 = terrain dots/detail (mode-D value-2/3).  The rasterizer ORed them into the dot
@@ -4026,7 +4066,7 @@ void RescueOnFractalus::renderFlightDirect()
                 }
             }
         }
-        g_objRowLo = 47; g_objRowHi = -1;                       // range consumed
+        g_objRowLo = g_flightPhysicalRows; g_objRowHi = -1;
         g_objColLo = 40; g_objColHi = -1;
         g_objTouchN = 0; g_objTouchOvf = 0;
     }
@@ -4044,24 +4084,28 @@ void RescueOnFractalus::renderFlightDirect()
     // that colour over any terrain in planes 1&2.  The "+" is missiles M2/M1/M3 (flight VBI
     // $505F-$5071: HPOSM3=$74, HPOSM2=$80, HPOSM1=$85, SIZEM=$CC → M1/M3 quad-width); measured
     // byte-identical across captures = a static frame element.  Geometry (column = HPOS-$30, one
-    // colour clock = one terrain column = 2 Amiga px = kColMask4[col&3]; row = (missile offset-$32)/2
-    // under the ×2 line-doubling):
+    // colour clock = one authored terrain column = 2 Amiga px = kColMask4[col&3]; source row =
+    // (missile offset-$32)/2, then mapped to its two physical rows):
     //   • VERTICAL (M2 @ $80 = column 80): buffer $0B4D-$5A / $0B64-$71 → rows 13-20 / 25-31, gap at
     //     the horizon (rows 21-24).
     //   • HORIZONTAL arms at the gap-centre line (buffer $0B5F → row 22): M3 @ $74 quad = columns
     //     68-75 (left), M1 @ $85 quad = columns 85-92 (right), leaving the centre gap around col 80.
     if (p3Fresh) {
-        uint8_t* const p3 = bp + 80;                            // plane3 base (offset 80 per 120B scanline)
-        uint8_t* vu = p3 + kRow120[13] + 20;                    // vertical stem, walked +120/row
-        for (int r = 13; r <= 20; r++, vu += 120) *vu |= 0xC0u;        // upper (col 80)
-        uint8_t* vl = p3 + kRow120[25] + 20;
-        for (int r = 25; r <= 31; r++, vl += 120) *vl |= 0xC0u;        // lower
-        uint8_t* const h = p3 + kRow120[22];                    // horizontal arms, row 22
-        for (int c = 68; c <= 75; c++) h[c >> 2] |= kColMask4[c & 3];   // left arm (M3)
-        for (int c = 85; c <= 92; c++) h[c >> 2] |= kColMask4[c & 3];   // right arm (M1)
+        uint8_t* const p3 = bp + 80;
+        for (int sr = 13; sr <= 20; ++sr)
+            for (int dy = 0; dy < g_flightTerrainYScale; ++dy)
+                p3[kRow120[sr * g_flightTerrainYScale + dy] + 20] |= 0xC0u;
+        for (int sr = 25; sr <= 31; ++sr)
+            for (int dy = 0; dy < g_flightTerrainYScale; ++dy)
+                p3[kRow120[sr * g_flightTerrainYScale + dy] + 20] |= 0xC0u;
+        for (int dy = 0; dy < g_flightTerrainYScale; ++dy) {
+            uint8_t* const h = p3 + kRow120[22 * g_flightTerrainYScale + dy];
+            for (int c = 68; c <= 75; c++) h[c >> 2] |= kColMask4[c & 3];
+            for (int c = 85; c <= 92; c++) h[c >> 2] |= kColMask4[c & 3];
+        }
     }
 
-    // Windscreen-bottom band overlay (rows 43-46 = scanlines 172-179): the cockpit frame + the
+    // Windscreen-bottom band overlay (source rows 43-46 -> physical rows 86-93 = scanlines 172-179): the cockpit frame + the
     // wing-clearance bars, punched OVER the now-rendered terrain.  Source = the mode-D band field
     // mem[$1074+43*96] (double-buffer half via g_flightRenderHalf), written per frame by
     // game_sub_451d.  Per pixel: the grey frame (value 3) sets plane3 -> color04-07 (all grey), so
@@ -4071,7 +4115,7 @@ void RescueOnFractalus::renderFlightDirect()
     // the rendered terrain shows there.  (The bars/marker overwrite must clear the terrain bits
     // under them, hence the read-modify-write with the `ow` mask.)
     {
-        uint8_t* vrow = bp + 43 * 120;
+        uint8_t* vrow = bp + g_flightPhysicalTerrainRows * ROF_FLIGHT_ROW_STRIDE;
 #ifdef ROF_BAND_VERIFY
         // In-process differential for the cached band composite (make BAND_VERIFY=1 +
         // amiga/band_verify.gdb).  This is a RENDERING change, and rendering cannot be judged from
@@ -4080,20 +4124,23 @@ void RescueOnFractalus::renderFlightDirect()
         // per-byte composite (which stays LIVE, as the edge-plot verify keeps its C reference live),
         // then compare.  g_bandMismatch must be 0.  (The SOURCE freeze that keeps both passes on
         // identical bytes now happens up in step 1, where srow is set — see there.)
-        static uint8_t bvSnap[4 * 120], bvNew[4 * 120];
-        for (int i = 0; i < 4 * 120; i++) bvSnap[i] = vrow[i];
+        static uint8_t bvSnap[8 * 120], bvNew[8 * 120];
+        for (int i = 0; i < 4 * g_flightTerrainYScale * 120; i++) bvSnap[i] = vrow[i];
 #endif
         // 2. Paint: plane3 = a straight long copy of the cached grey frame, but ONLY into a buffer
         //    that isn't already showing this half's current version of that row (see s_bandP3Ver —
         //    normally just row 45, the wing-clearance bar); planes 1&2 RMW every frame over each
         //    row's ow!=0 range (the bar / centre marker punching through the live terrain).
         const bool p3HalfChanged = (s_bandP3SeenHalf[p3i] != (signed char)hf);
-        for (int row = 0; row < 4; row++, vrow += 120, p3c += 10, p1c += 40, p2c += 40, owc += 40) {
+        for (int row = 0; row < 4; row++, vrow += 120 * g_flightTerrainYScale,
+                                             p3c += 10, p1c += 40, p2c += 40, owc += 40) {
             if (p3HalfChanged || s_bandP3Seen[p3i][row] != s_bandP3Ver[hf][row]) {
-                uint32_t* p3d = (uint32_t*)(vrow + 80);
                 const uint32_t* p3s = p3c;
-                p3d[0] = p3s[0]; p3d[1] = p3s[1]; p3d[2] = p3s[2]; p3d[3] = p3s[3]; p3d[4] = p3s[4];
-                p3d[5] = p3s[5]; p3d[6] = p3s[6]; p3d[7] = p3s[7]; p3d[8] = p3s[8]; p3d[9] = p3s[9];
+                for (int dy = 0; dy < g_flightTerrainYScale; ++dy) {
+                    uint32_t* p3d = (uint32_t*)(vrow + dy * 120 + 80);
+                    p3d[0]=p3s[0]; p3d[1]=p3s[1]; p3d[2]=p3s[2]; p3d[3]=p3s[3]; p3d[4]=p3s[4];
+                    p3d[5]=p3s[5]; p3d[6]=p3s[6]; p3d[7]=p3s[7]; p3d[8]=p3s[8]; p3d[9]=p3s[9];
+                }
                 s_bandP3Seen[p3i][row] = s_bandP3Ver[hf][row];
             }
             const int lo = owLo[row], hi = owHi[row];
@@ -4113,47 +4160,55 @@ void RescueOnFractalus::renderFlightDirect()
             const uint32_t* ow4 = (const uint32_t*)(owc + g0);
             const uint32_t* q1  = (const uint32_t*)(p1c + g0);
             const uint32_t* q2  = (const uint32_t*)(p2c + g0);
-            uint32_t* e1 = (uint32_t*)(vrow + g0);
-            uint32_t* e2 = (uint32_t*)(vrow + 40 + g0);
             const uint32_t* const ow4End = ow4 + gn;
             do {
                 const uint32_t m = *ow4++;
-                *e1 = (*e1 & ~m) | *q1++; e1++;               // salmon bar; terrain kept elsewhere
-                *e2 = (*e2 & ~m) | *q2++; e2++;               // centre marker; terrain kept elsewhere
+                const uint32_t a = *q1++, b = *q2++;
+                const int byteOff = (int)((ow4 - (const uint32_t*)(owc + g0)) - 1) * 4 + g0;
+                for (int dy = 0; dy < g_flightTerrainYScale; ++dy) {
+                    uint32_t* e1 = (uint32_t*)(vrow + dy * 120 + byteOff);
+                    uint32_t* e2 = (uint32_t*)(vrow + dy * 120 + 40 + byteOff);
+                    *e1 = (*e1 & ~m) | a;
+                    *e2 = (*e2 & ~m) | b;
+                }
             } while (ow4 != ow4End);
         }
         s_bandP3SeenHalf[p3i] = (signed char)hf;   // this buffer's band plane3 now holds half `hf`
 #ifdef ROF_BAND_VERIFY
         {   // stash the cache path's output, restore the pre-composite state, run the ORIGINAL
             // per-byte composite live, and compare (see the snapshot above).
-            uint8_t* const v0 = bp + 43 * 120;
-            for (int i = 0; i < 4 * 120; i++) { bvNew[i] = v0[i]; v0[i] = bvSnap[i]; }
+            uint8_t* const v0 = bp + g_flightPhysicalTerrainRows * ROF_FLIGHT_ROW_STRIDE;
+            for (int i = 0; i < 4 * g_flightTerrainYScale * 120; i++) { bvNew[i] = v0[i]; v0[i] = bvSnap[i]; }
             const uint8_t* s_ = srow;
             uint8_t* v_ = v0;
-            for (int row = 0; row < 4; row++, s_ += 96, v_ += 120) {
-                const uint8_t* s = s_;
-                uint8_t* d1 = v_; uint8_t* d2 = v_ + 40; uint8_t* d3 = v_ + 80;
-                for (int b = 0; b < 40; b++, s++, d1++, d2++, d3++) {
-                    uint8_t v = *s;
-                    uint8_t ow = kBandOW[v];
-                    if (ow) {
-                        *d1 = (uint8_t)((*d1 & ~ow) | kBandP1[v]);
-                        *d2 = (uint8_t)((*d2 & ~ow) | kBandP2[v]);
+            for (int row = 0; row < 4; row++, s_ += 96, v_ += 120 * g_flightTerrainYScale) {
+                for (int dup = 0; dup < g_flightTerrainYScale; ++dup) {
+                    const uint8_t* s = s_;
+                    uint8_t* d1 = v_ + dup * 120; uint8_t* d2 = d1 + 40; uint8_t* d3 = d1 + 80;
+                    for (int b = 0; b < 40; b++, s++, d1++, d2++, d3++) {
+                        uint8_t v = *s;
+                        uint8_t ow = kBandOW[v];
+                        if (ow) {
+                            *d1 = (uint8_t)((*d1 & ~ow) | kBandP1[v]);
+                            *d2 = (uint8_t)((*d2 & ~ow) | kBandP2[v]);
+                        }
+                        *d3 = kBandP3[v];
                     }
-                    *d3 = kBandP3[v];
                 }
             }
             g_bandCalls++;
-            for (int i = 0; i < 4 * 120; i++)
+            for (int i = 0; i < 4 * g_flightTerrainYScale * 120; i++)
                 if (bvNew[i] != v0[i]) { g_bandMismatch++; if (!g_bandFirstBad) g_bandFirstBad = (unsigned long)i + 1; break; }
         }
         // Object-overlay invariant: after the box-narrowed apply, NO nonzero byte may remain
         // anywhere in the scratch — that is exactly the claim that every nonzero byte was inside
         // the tracked bounding box.  A leak here would show as a stale object pixel next frame.
-        for (int i = 0; i < 47 * 120; i++) if (s_flightObjP1[i]) { g_objLeak++; break; }
+        for (int i = 0; i < g_flightPhysicalRows * ROF_FLIGHT_ROW_STRIDE; i++)
+            if (s_flightObjP1[i]) { g_objLeak++; break; }
 #endif
     }
     FD_LAP(g_fdBand);
+
 #ifdef ROF_FLIGHT_PROBE
     g_fdCalls++;
 #endif
@@ -4207,7 +4262,7 @@ void RescueOnFractalus::renderFlightDirect()
     // the same "kick a clear now, wait at the next draw" idiom as flightKickBackClear, but on the
     // off-display scratch instead of a display buffer.  Runs concurrently with the game compute.
     AmigaHardware::blitterClear((uint16_t*)((uint8_t*)terrainDotBuffer->data + 40),
-                                20 /*words*/, 47 /*rows*/, 80 /*mod bytes = 120-40*/);
+                                20 /*words*/, g_flightPhysicalRows, 80 /*mod bytes = 120-40*/);
 }
 
 // flightVblankSwap: run from the real INTB_VERTB ISR (PlatformAmiga vbiHandler) at the very start
@@ -5140,7 +5195,7 @@ void RescueOnFractalus::renderFrame()
         return;
     }
 
-    // Static flight: the flight copper layout is FIXED too (same line-doubled mode-D band,
+    // Static flight: the flight copper layout is FIXED too (native-row terrain viewport,
     // flight palette + HUD sprites — see FlightCopperList).  render() refreshes the terrain
     // bitmap content (constant pointer); the ported flight VBI pokes the per-frame colours/
     // sprites via updateFlightCopper.  No full rebuild/flip.

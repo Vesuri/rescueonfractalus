@@ -104,7 +104,7 @@
 	ifnd	ROF_RASTERIZE_VERIFY
 	xdef	terrain_column_rasterize_core		; ships as the core symbol directly
 	endif
-	xdef	flight_edge_plot_asm
+	xdef	flight_edge_plot_asm			; original 160-column skyline path
 	xref	mem
 	xref	kDrawDotRowOff
 	xref	kDotColMask
@@ -129,9 +129,10 @@ CPBUF	equ	96		; 32 control-point slots * 3 bytes (depth stays < ~16)
 ; no per-plot null test.
 ; The COLUMN half is folded the same way, into a1/a4 (RescueOnFractalus.cpp): the plot's
 ; `_ac = plotCol-48`, its (unsigned)_ac < 160 gate, the `_ac>>2` byte offset and the
-; `kColMask4[_ac&3]` pixel mask are all pure functions of plotCol, so they are two table
-; reads indexed by the RAW column.  kDotColMask is 0 outside [48,208) — a value no real
-; 2-bit mask has — so the SAME `move.b` that fetches the mask is also the range gate.
+; one-bit `kDotColMask[plotCol]` mask for the source column's EVEN physical pixel are all pure
+; functions of plotCol, so they are two table
+; reads indexed by the RAW column.  kDotColMask is 0 outside [48,208), so the SAME `move.b`
+; that fetches the mask is also the range gate.
 ; That is 6 instructions (~62 cycles) in place of 13 (~104, one a variable-count LSR).
 ;
 ; ⭐ oldMax is read into d7, NOT d1, so the head needs no `moveq #0`.  The read
@@ -1030,8 +1031,8 @@ done_raw:
 	rts
 
 ; ---------------------------------------------------------------------------
-; flight_edge_plot_asm(uint8_t* bp) — RescueOnFractalus::renderFlightDirect's
-; plane-1 skyline edge plot: one bit per column at its skyline scanline, 160
+; LEGACY PATH: flight_edge_plot_asm(uint8_t* bp) is renderFlightDirect's original
+; 2px-wide plane-1 skyline edge plot: one bit-pair per source column, 160
 ; columns = 40 plane-1 bytes (4 cols/byte).  Structured after the user's
 ; hypothetical-renderer asm: 4 columns unrolled with the column masks
 ; ($C0/$30/$0C/$03 = kColMask4), the plane-1 byte pointer (a2) walked +1 per 4
@@ -1062,9 +1063,9 @@ done_raw:
 ;      12+10 = 22 cycles; `or.b dN,(a2,d1.w)` is 8+10 = 18.  −4 a column for
 ;      four moveqs in the prologue.  (moveq sign-extends, so d3 holds $FFFFFFC0
 ;      — or.b only reads the low byte.)
-; ⚠ The C oracle edgePlotCore keeps its explicit `h != $FF` test and therefore
-; never indexes the sentinel entry, which is what keeps it a valid oracle for
-; the `make VERIFY=1` differential that byte-compares the whole 47x120 plane.
+; The enhanced 320-column renderer uses a separate C edge plot with individual physical pixels
+; and interpolated odd X columns.  This body remains exported for startup-selected original mode
+; and keeps that path's measured implementation unchanged.
 
 ;   3. THE LOOP IS GONE.  `addq.l #1,a2` + `dbra` was 18 cycles of pure
 ;      bookkeeping per 4-column group against 224 of work — but the plane-1 byte

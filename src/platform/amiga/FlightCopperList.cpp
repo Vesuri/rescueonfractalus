@@ -243,6 +243,7 @@ FlightCopperList::FlightCopperList()
 }
 
 void FlightCopperList::buildLayout(const Bitmap& title, const Bitmap& terrain, const Bitmap& cockpit,
+                                   bool enhancedTerrain,
                                    const Sprite& leftPost, const Sprite& leftTri,
                                    const Sprite& rightPost, const Sprite& rightTri,
                                    const Sprite& nullSprite,
@@ -312,9 +313,11 @@ void FlightCopperList::buildLayout(const Bitmap& title, const Bitmap& terrain, c
     d[INDEX_VP_CROSSHAIR + 2] = copperMove(color06, atariToOCS(0x26));
     d[INDEX_VP_CROSSHAIR + 3] = copperMove(color07, atariToOCS(0x26));
     // Line doubling: each 120-byte interleaved row shown on 2 scanlines via bplmod toggle
-    // (-40 rewind to repeat, +80 advance).  Row 0's -40 here; rows 1.. alternate.
-    d[INDEX_VP_MOD0 + 0] = copperMove(bpl1mod, (uint16_t)-40);
-    d[INDEX_VP_MOD0 + 1] = copperMove(bpl2mod, (uint16_t)-40);
+    // Original mode repeats each of the 47 stored rows (-40 rewind, +80 advance).
+    // Enhanced mode consumes one of 94 stored physical rows per scanline (+80).
+    const uint16_t firstModulo = enhancedTerrain ? (uint16_t)80 : (uint16_t)-40;
+    d[INDEX_VP_MOD0 + 0] = copperMove(bpl1mod, firstModulo);
+    d[INDEX_VP_MOD0 + 1] = copperMove(bpl2mod, firstModulo);
     uint32_t idx = INDEX_VP_LINEDOUBLE;
     for (uint16_t k = 1; k < kViewportHeight; k++) {
         d[idx++] = copperWait((uint16_t)(kTerrainLine + k - 1), 0xE0);
@@ -329,7 +332,9 @@ void FlightCopperList::buildLayout(const Bitmap& title, const Bitmap& terrain, c
             d[idx++] = copperMove(color06, 0);
             d[idx++] = copperMove(color07, 0);
         }
-        const uint16_t v = (k & 1) ? (uint16_t)80 : (uint16_t)-40;
+        const uint16_t v = enhancedTerrain
+            ? (uint16_t)80
+            : ((k & 1) ? (uint16_t)80 : (uint16_t)-40);
         d[idx++] = copperMove(bpl1mod, v);
         d[idx++] = copperMove(bpl2mod, v);
     }

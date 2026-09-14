@@ -8,6 +8,13 @@
 > build_view/frame_setup) that this plan called "out of scope / the real floor" is ALSO now
 > hand-asm'd (see `asm-migration-plan.md`). Kept only as a record of the original design intent.
 > Current flight-perf status lives in the `flight-scene` memory + `asm-migration-plan.md` tail.
+>
+> **Optional native-resolution follow-up (2026-09-13):** The enhanced direct renderer produces a distinct
+> 320×94 flight image. It keeps `$260E` as the faithful 160-column simulation output, maps each
+> sample to even physical X, synthesizes odd X with adjacent-height interpolation, and renders
+> procedural dots as single physical pixels. Native vertical rows are stored and fetched directly;
+> only authored overlays retain the original 2×2 footprint. The original renderer and Copper
+> line-doubling program remain available and are selected once at startup.
 
 Plan to replace the current flight-terrain rendering path (per-pixel 6502-style
 silhouette plotting into an Atari ANTIC mode-D bitmap, then a per-byte

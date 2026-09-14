@@ -18,6 +18,9 @@
 #include "rof_native.h" /* typed cores shared with the hand-written Amiga ports */
 #include "../cpu/m68k_math.h" /* rof_mulu16/rof_divu16/... hardware 16-bit mul/div */
 #include "../platform/platform_c.h" /* platform_tick_vbi/render_frame/poll_events for the apex spin-waits */
+#ifdef ROF_PLATFORM_AMIGA
+#include "../platform/amiga/FlightTerrainGeometry.h"
+#endif
 #define ROF_MEM_ALIASES /* bare lvalue aliases: flight_mode_state == mem[MEM_flight_mode_state] */
 #include "mem.h"        /* MEM_<name> offsets + bare aliases (symbols.csv var rows) */
 
@@ -539,17 +542,37 @@ extern int g_objTouchN, g_objTouchOvf;
     if (g_objTouchN < ROF_OBJ_TOUCH_CAP) g_objTouch[g_objTouchN++] = (uint16_t)(off); \
     else g_objTouchOvf = 1; \
 } while (0)
-extern const uint16_t kRow120[48];   /* row*120 (interleaved terrain scanline) */
+extern const uint16_t kRow120[ROF_FLIGHT_PHYSICAL_ROWS];
 extern const uint16_t kRow40[48];    /* row*40  (one mode-D plane / figure mask stride) */
 extern const uint16_t kRow80[48];    /* row*80  (interleaved 2-plane figure stride) */
 extern const uint8_t kColMask4[4];
+extern const uint8_t kTerrainDotMask4[4];
+extern uint16_t kDrawDotRowOff[256];
+extern uint8_t kDotColMask[256];
+extern uint8_t kDotColOff[256];
 extern void rof_flight_wait_dotclear(void);
 #define ROF_PLOT_DOT(col, h) do { \
     if (g_flightDotPlane) { \
         int _ac = (int)(col) - 48; \
-        int _sc = 150 - (int)(h);    /* height -> scanline */ \
-        if ((unsigned)_ac < 160u && (unsigned)_sc < 47u && _sc != 43) {  /* rows 0..46 except the $6b floor at 43 */ \
-            g_flightDotPlane[kRow120[_sc] + (_ac >> 2)] |= kColMask4[_ac & 3]; \
+        int _sc = 150 - (int)(h);    /* source height -> logical scanline */ \
+        if ((unsigned)_ac < 160u && (unsigned)_sc < 47u && _sc != 43) { \
+            int _pr = _sc * g_flightTerrainYScale; \
+            int _of = kRow120[_pr] + (_ac >> 2); \
+            uint8_t _m = kColMask4[_ac & 3]; \
+            int _dy; \
+            for (_dy = 0; _dy < g_flightTerrainYScale; ++_dy) \
+                g_flightDotPlane[_of + _dy * ROF_FLIGHT_ROW_STRIDE] |= _m; \
+        } } } while (0)
+/* Procedural surface texture is native 1x1: one source column maps to its EVEN physical X,
+ * while the skyline renderer supplies the intervening odd columns.  Authored object pixels keep
+ * ROF_PLOT_DOT above and therefore retain their original 2x2 display footprint. */
+#define ROF_PLOT_TERRAIN_DOT(col, h) do { \
+    if (g_flightDotPlane) { \
+        uint8_t _c = (uint8_t)(col); \
+        uint16_t _ro = kDrawDotRowOff[(uint8_t)(h)]; \
+        uint8_t _m = kDotColMask[_c]; \
+        if (_ro != 0xFFFFu && _m) { \
+            g_flightDotPlane[_ro + kDotColOff[_c]] |= _m; \
         } } } while (0)
 /* Object plane1 overlay, applied AFTER the sky fill (see g_flightObjP1 in RescueOnFractalus.cpp).
  * The overlay carries TWO bit slots per plane byte, both in the same scratch plane: the byte at
@@ -564,7 +587,8 @@ extern void rof_flight_wait_dotclear(void);
  * two objects overlap in one pixel (once value-3, always value-3, whatever the plot order).
  *
  * Same geometry as ROF_PLOT_DOT.  `ofs` picks the slot — the caller chooses it per pixel, and the
- * body is one RMW either way.  Tracks the dirty scanline/byte-column box and appends the touched
+ * body writes both physical rows of the authored 2x2 pixel.  Tracks the dirty scanline/byte-column
+ * box and appends the touched
  * offset (0->nonzero of ITS OWN slot, so a byte reached through both slots is listed twice — the
  * apply zeroes as it goes, so a repeat visit is an idempotent no-op). */
 #define ROF_OBJ_P1_PUNCH 40      /* slot offset of the plane1 CLEAR mask; the scratch is 120 bytes
@@ -577,12 +601,18 @@ extern void rof_flight_wait_dotclear(void);
         int _sc = 150 - (int)(h); \
         if ((unsigned)_ac < 160u && (unsigned)_sc < 47u && _sc != 43) { \
             int _bc = _ac >> 2; \
-            int _of = kRow120[_sc] + _bc; \
-            uint8_t* _p1 = g_flightObjP1 + _of + (ofs); \
-            if (!*_p1) ROF_OBJ_TOUCH(_of); \
-            *_p1 |= kColMask4[_ac & 3]; \
-            if (_sc < g_objRowLo) g_objRowLo = _sc; \
-            if (_sc > g_objRowHi) g_objRowHi = _sc; \
+            int _pr = _sc * g_flightTerrainYScale; \
+            int _of = kRow120[_pr] + _bc; \
+            int _dy; \
+            for (_dy = 0; _dy < g_flightTerrainYScale; ++_dy) { \
+                uint8_t* _p1 = g_flightObjP1 + _of + (ofs); \
+                if (!*_p1) ROF_OBJ_TOUCH(_of); \
+                *_p1 |= kColMask4[_ac & 3]; \
+                _of += ROF_FLIGHT_ROW_STRIDE; \
+            } \
+            if (_pr < g_objRowLo) g_objRowLo = _pr; \
+            if (_pr + g_flightTerrainYScale - 1 > g_objRowHi) \
+                g_objRowHi = _pr + g_flightTerrainYScale - 1; \
             if (_bc < g_objColLo) g_objColLo = _bc; \
             if (_bc > g_objColHi) g_objColHi = _bc; \
         } } } while (0)
@@ -621,7 +651,7 @@ extern int g_figColLo, g_figColHi;   /* dirty byte-column extent (0..39) — for
     const int _rl = g_figRowLo, _rh = g_figRowHi, _cl = g_figColLo, _cn = g_figColHi - _cl + 1; \
     if (_cm && _rh >= _rl) { \
         for (int _r = _rl; _r <= _rh; _r++) { \
-            uint8_t *_qm = _cm + kRow40[_r] + _cl, *_q1 = _c1 + kRow80[_r] + _cl, *_q2 = _c2 + kRow80[_r] + _cl; \
+            uint8_t *_qm = _cm + (_r * 40) + _cl, *_q1 = _c1 + (_r * 80) + _cl, *_q2 = _c2 + (_r * 80) + _cl; \
             for (int _b = 0; _b < _cn; _b++) { _qm[_b] = 0; _q1[_b] = 0; _q2[_b] = 0; } } \
         g_figRowLo = 99; g_figRowHi = -1; g_figColLo = 40; g_figColHi = -1; \
     } } while (0)
@@ -648,18 +678,23 @@ extern volatile unsigned long g_alHudCalls;      /* # alien_shape_blit calls dur
         int _rel = (int)(addr) - 0x10A4; \
         if (_rel >= 0) { int _r = _rel / 96, _b = _rel % 96; \
             if ((unsigned)_r < 43u && (unsigned)_b < 40u) { \
-                int _im = kRow40[_r] + _b, _ip = kRow80[_r] + _b; \
+                int _pr = _r * g_flightTerrainYScale, _im = _pr * 40 + _b, _ip = _pr * 80 + _b; \
                 uint8_t _ap1 = kModeDP1[(unsigned char)(V)], _ap2 = kModeDP2[(unsigned char)(V)]; \
-                g_figM[_im]  = (uint8_t)(_ap1 | _ap2); /* silhouette: value-0 pixels transparent -> terrain shows */ \
-                g_figP1[_ip] = _ap1; \
-                g_figP2[_ip] = _ap2; \
+                int _dy; \
+                for (_dy = 0; _dy < g_flightTerrainYScale; ++_dy) { \
+                    g_figM[_im + _dy * 40]  = (uint8_t)(_ap1 | _ap2); \
+                    g_figP1[_ip + _dy * 80] = _ap1; \
+                    g_figP2[_ip + _dy * 80] = _ap2; \
+                } \
                 if (_b < g_figColLo) g_figColLo = _b; \
                 if (_b > g_figColHi) g_figColHi = _b; \
-                if (_r < g_figRowLo) g_figRowLo = _r; \
-                if (_r > g_figRowHi) g_figRowHi = _r; \
+                if (_pr < g_figRowLo) g_figRowLo = _pr; \
+                if (_pr + g_flightTerrainYScale - 1 > g_figRowHi) \
+                    g_figRowHi = _pr + g_flightTerrainYScale - 1; \
             } } } } while (0)
 #else
 #define ROF_PLOT_DOT(col, h) ((void)0)
+#define ROF_PLOT_TERRAIN_DOT(col, h) ((void)0)
 #define ROF_PLOT_DOT_P1(col, h) ((void)0)
 #define ROF_CLEAR_FIG() ((void)0)
 #define ROF_PLOT_ALIEN(addr, V) ((void)0)
@@ -3950,12 +3985,12 @@ void rof_pilot_bench(void) {
          * matters (position-weighted), so a shifted figure cannot collide. */
         { unsigned long h = 0;
           if (g_figP1 && g_figM) {
-              for (int r = 0; r < 43; r++)
+              for (int r = 0; r < g_flightPhysicalTerrainRows; r++)
                   for (int b = 0; b < 40; b++) {
                       const unsigned long w = (unsigned long)(r * 40 + b + 1);
-                      h += w * (unsigned long)g_figM[kRow40[r] + b];
-                      h += w * 3u * (unsigned long)g_figP1[kRow80[r] + b];
-                      h += w * 7u * (unsigned long)g_figP2[kRow80[r] + b];
+                      h += w * (unsigned long)g_figM[r * 40 + b];
+                      h += w * 3u * (unsigned long)g_figP1[r * 80 + b];
+                      h += w * 7u * (unsigned long)g_figP2[r * 80 + b];
                   }
           }
           g_pbFigHash[i] = h; }
@@ -4428,11 +4463,15 @@ ROF_PLOTRUN_INLINE void rof_plotrun_flush(rof_plotrun* rc) {
     const int b = rc->accB;
     if (b < 0) return;
     rc->accB = -1;
-    rc->figM[b] |= (uint8_t)(rc->accP1 | rc->accP2);
-    if (rc->accP1) rc->figP1[b] |= rc->accP1;
-    if (rc->accP2) rc->figP2[b] |= rc->accP2;
+    const uint8_t mask = (uint8_t)(rc->accP1 | rc->accP2);
+    for (int dy = 0; dy < g_flightTerrainYScale; ++dy) {
+        rc->figM[b + dy * 40] |= mask;
+        if (rc->accP1) rc->figP1[b + dy * 80] |= rc->accP1;
+        if (rc->accP2) rc->figP2[b + dy * 80] |= rc->accP2;
+    }
     if (rc->figRow < rc->rowLo) rc->rowLo = rc->figRow;
-    if (rc->figRow > rc->rowHi) rc->rowHi = rc->figRow;
+    if (rc->figRow + g_flightTerrainYScale - 1 > rc->rowHi)
+        rc->rowHi = rc->figRow + g_flightTerrainYScale - 1;
     if (b < rc->colLo) rc->colLo = b;
     if (b > rc->colHi) rc->colHi = b;
 #else
@@ -4465,12 +4504,12 @@ ROF_PLOTRUN_INLINE void rof_plotrun_row(rof_plotrun* rc, uint8_t y) {
 #ifdef ROF_PLATFORM_AMIGA
     /* $96 - y is 0..42 for every y the window test admits, so the overlay's ROW guard is
      * subsumed by yOk and only its byte-column guard is left per pixel. */
-    const int r = 0x96 - (int)y;
+    const int r = g_flightTerrainYScale * (0x96 - (int)y);
     rc->figRow = r;
     if (g_figP1) {
-        rc->figM  = g_figM  + kRow40[r];
-        rc->figP1 = g_figP1 + kRow80[r];
-        rc->figP2 = g_figP2 + kRow80[r];
+        rc->figM  = g_figM  + r * 40;
+        rc->figP1 = g_figP1 + r * 80;
+        rc->figP2 = g_figP2 + r * 80;
     } else {
         rc->figM = 0;
     }
@@ -5823,13 +5862,14 @@ static void alien_mirror_window(uint16_t dstRow, struct alien_mirror_win *w) {
         w->hi  = 39 - figB0;
         if (w->hi > 16) w->hi = 16;
     }
-    if ((unsigned)w->row >= 43u) { w->lo = 1; w->hi = 0; }   /* row off-bitmap => draw nothing */
+    if ((unsigned)w->row >= 43u) { w->lo = 1; w->hi = 0; }   /* source row off-bitmap => draw nothing */
     if (w->lo <= w->hi) {
+        w->row *= g_flightTerrainYScale;
         /* Bases carry `off`, which is negative when the row starts below the field base; the
          * window guarantees every y actually used lands back inside the buffer. */
-        w->mask = g_figM  + kRow40[w->row] + w->off;
-        w->p1   = g_figP1 + kRow80[w->row] + w->off;
-        w->p2   = g_figP2 + kRow80[w->row] + w->off;
+        w->mask = g_figM  + w->row * 40 + w->off;
+        w->p1   = g_figP1 + w->row * 80 + w->off;
+        w->p2   = g_figP2 + w->row * 80 + w->off;
     } else {
         w->mask = w->p1 = w->p2 = (uint8_t *)0;
     }
@@ -5865,13 +5905,17 @@ static void alien_mirror_flush(const struct alien_mirror_win *w, const uint8_t *
              * lets the frozen terrain (s_cleanBmp) show through the value-0 holes. */
             uint8_t s = *v++;
             uint8_t a = kModeDP1[s], b = kModeDP2[s];
-            *m++  = (uint8_t)(a | b);
-            *q1++ = a;
-            *q2++ = b;
+            for (int dy = 0; dy < g_flightTerrainYScale; ++dy) {
+                m[dy * 40] = (uint8_t)(a | b);
+                q1[dy * 80] = a;
+                q2[dy * 80] = b;
+            }
+            m++; q1++; q2++;
         } while (v != vEnd);
     }
     if (w->row < g_figRowLo) g_figRowLo = w->row;
-    if (w->row > g_figRowHi) g_figRowHi = w->row;
+    if (w->row + g_flightTerrainYScale - 1 > g_figRowHi)
+        g_figRowHi = w->row + g_flightTerrainYScale - 1;
     { int bLo = lo + w->off, bHi = hi + w->off;
       if (bLo < g_figColLo) g_figColLo = bLo;
       if (bHi > g_figColHi) g_figColHi = bHi; }
@@ -7178,7 +7222,8 @@ static inline void terrain_plot_pixel_core(uint8_t row, uint8_t col, uint8_t val
        reads the field body (rows 0-42) back, so the field write is dead weight (one scattered
        indirect RMW per object pixel, in the object-plot loop).  The pixel is mirrored to the
        bitplanes instead, exactly matching the field value it would have produced:
-         value bit1 (set for value-2 AND value-3) -> plane2  (ROF_PLOT_DOT, rows 0-46)
+         value bit1 (set for value-2 AND value-3) -> plane2  (ROF_PLOT_DOT, source rows 0-46,
+                                                               each expanded to two physical rows)
          value bit0 (set only for value-3)         -> plane1  (ROF_PLOT_DOT_P1, post-fill overlay,
                                                                so value-3 shows COLPF2 not COLPF1)
          value bit0 CLEAR with bit1 set (value-2)  -> plane1 PUNCH (the ROF_OBJ_P1_PUNCH slot), so a
@@ -7575,7 +7620,7 @@ void terrain_column_rasterize_core_c(uint8_t entryDepth, uint8_t colBase) {
             TDCNT(g_tdPlots); b5 = depth; \
             ROF_FIELD_PLOT(_h); /* SDL/validate: OR value-2 into the mode-D field (the dots source) */ \
             RSSAT(_h); RSDOT(plotCol, _oldMax); \
-            ROF_PLOT_DOT(plotCol, _oldMax); /* Amiga: lag-plot the PREVIOUS top into plane2 (see below) */ \
+            ROF_PLOT_TERRAIN_DOT(plotCol, _oldMax); /* native 1px surface texture */ \
             (void)_oldMax;                  /* both readers are no-ops on the host */ \
         } } while(0)
 
@@ -7721,7 +7766,7 @@ volatile unsigned long g_rasterCalls = 0, g_rasterMismatch = 0, g_rasterFirstBad
  * single run (sidesteps the cross-run VBI/main-loop interleave nondeterminism). */
 volatile unsigned long g_rasAsmTicks = 0, g_rasCTicks = 0;
 #define RAS_HMAP 0xD8          /* $260E[0..0xD7] max-height window (cols + slack) */
-#define RAS_DOT  5120          /* plane2 dot window: kRow120[42]+39 < 5120        */
+#define RAS_DOT  (ROF_FLIGHT_PHYSICAL_ROWS * ROF_FLIGHT_ROW_STRIDE)
 static uint8_t ras_snapH[RAS_HMAP], ras_asmH[RAS_HMAP];
 static uint8_t ras_snapZ[4],        ras_asmZ[4];
 static uint8_t ras_snapD[RAS_DOT],  ras_asmD[RAS_DOT];
@@ -10297,10 +10342,11 @@ void flight_control_integrate(void) { flight_control_integrate_impl(); }
  * buffer (g_flightDotPlane) and the plane1 object overlay (g_flightObjP1) — every column, since
  * $FF & any col mask is set.  The per-pixel path routes each column through terrain_plot_pixel_core
  * -> ROF_PLOT_DOT/ROF_PLOT_DOT_P1 (a scattered single-bit OR + call overhead each).  Batch it: the
- * scanline is fixed (kRow120[sc] base constant), so OR whole bytes ($FF for full 4-col groups,
+ * source scanline is fixed (kRow120[sc*2] base constant), so OR whole bytes ($FF for full 4-col groups,
  * partial masks at the ends) — the same dots, ~4x fewer stores + no per-pixel call.  kColMask4
  * packs 4 cols/byte (2 bits each).  Column window = the ROF_PLOT_DOT gate [48,208) & sc in
- * [0,47)\{43}; uint8 X-wrap reproduced as a second run. */
+ * [0,47)\{43}; uint8 X-wrap reproduced as a second run.  Each authored source row is written to
+ * both physical rows so the bolt keeps its original 2x2 display scale. */
 static int laser_dot_run(uint8_t* p2, uint8_t* p1, unsigned c0, unsigned c1) {
     if (c0 < 48u) c0 = 48u;
     if (c1 > 208u) c1 = 208u;
@@ -10340,7 +10386,7 @@ static void laser_dot_column(int rowStart, unsigned col, unsigned count) {
     if (lo == 43) lo++;                                 /* the $6b floor scanline is never plotted */
     if (hi == 43) hi--;
     if (lo > hi) return;
-    unsigned b = (ac >> 2) + kRow120[lo];
+    unsigned b = (ac >> 2) + kRow120[lo * g_flightTerrainYScale];
     uint8_t* p2 = g_flightDotPlane + b;
     uint8_t* p1 = g_flightObjP1 ? g_flightObjP1 + b : (uint8_t*)0;
     int n = hi - lo + 1;
@@ -10348,20 +10394,33 @@ static void laser_dot_column(int rowStart, unsigned col, unsigned count) {
         for (int sc = lo; n--; sc++) {
             if (sc != 43) {
                 *p2 |= m;
+                for (int dy = 1; dy < g_flightTerrainYScale; ++dy)
+                    p2[dy * ROF_FLIGHT_ROW_STRIDE] |= m;
                 if (!*p1) ROF_OBJ_TOUCH(p1 - g_flightObjP1);
                 *p1 |= m;
+                for (int dy = 1; dy < g_flightTerrainYScale; ++dy) {
+                    uint8_t *pd = p1 + dy * ROF_FLIGHT_ROW_STRIDE;
+                    if (!*pd) ROF_OBJ_TOUCH(pd - g_flightObjP1);
+                    *pd |= m;
+                }
             }
-            p2 += 120; p1 += 120;
+            p2 += g_flightTerrainYScale * ROF_FLIGHT_ROW_STRIDE;
+            p1 += g_flightTerrainYScale * ROF_FLIGHT_ROW_STRIDE;
         }
-        if (lo < g_objRowLo) g_objRowLo = lo;           /* ROF_PLOT_DOT_P1 dirty scanline range */
-        if (hi > g_objRowHi) g_objRowHi = hi;
+        if (lo * g_flightTerrainYScale < g_objRowLo) g_objRowLo = lo * g_flightTerrainYScale;
+        if ((hi + 1) * g_flightTerrainYScale - 1 > g_objRowHi)
+            g_objRowHi = (hi + 1) * g_flightTerrainYScale - 1;
         {   const int bc = (int)(ac >> 2);              /* one fixed column for the whole run */
             if (bc < g_objColLo) g_objColLo = bc;
             if (bc > g_objColHi) g_objColHi = bc; }
     } else {
         for (int sc = lo; n--; sc++) {
-            if (sc != 43) *p2 |= m;
-            p2 += 120;
+            if (sc != 43) {
+                *p2 |= m;
+                for (int dy = 1; dy < g_flightTerrainYScale; ++dy)
+                    p2[dy * ROF_FLIGHT_ROW_STRIDE] |= m;
+            }
+            p2 += g_flightTerrainYScale * ROF_FLIGHT_ROW_STRIDE;
         }
     }
 }
@@ -10369,15 +10428,25 @@ static void laser_dot_span(uint8_t row, unsigned xstart, unsigned width) {
     if (!g_flightDotPlane || width == 0u) return;
     int sc = 150 - (int)row;                            /* height/row -> dot scanline (as ROF_PLOT_DOT) */
     if ((unsigned)sc >= 47u || sc == 43) return;        /* row outside the dot band / the $6b floor */
-    int rb = kRow120[sc];
+    int rb = kRow120[sc * g_flightTerrainYScale];
     uint8_t* p2 = g_flightDotPlane + rb;
     uint8_t* p1 = g_flightObjP1 ? g_flightObjP1 + rb : (uint8_t*)0;
     unsigned end = xstart + width;                      /* columns visited: X, X+1, ... (uint8 wrap) */
     int plotted = laser_dot_run(p2, p1, xstart, end < 256u ? end : 256u);
     if (end > 256u) plotted |= laser_dot_run(p2, p1, 0u, end - 256u);
+    for (int dy = 1; dy < g_flightTerrainYScale; ++dy) {
+        (void)laser_dot_run(p2 + dy * ROF_FLIGHT_ROW_STRIDE,
+                            p1 ? p1 + dy * ROF_FLIGHT_ROW_STRIDE : (uint8_t*)0,
+                            xstart, end < 256u ? end : 256u);
+        if (end > 256u)
+            (void)laser_dot_run(p2 + dy * ROF_FLIGHT_ROW_STRIDE,
+                                p1 ? p1 + dy * ROF_FLIGHT_ROW_STRIDE : (uint8_t*)0,
+                                0u, end - 256u);
+    }
     if (p1 && plotted) {                                /* ROF_PLOT_DOT_P1 dirty scanline range */
-        if (sc < g_objRowLo) g_objRowLo = sc;
-        if (sc > g_objRowHi) g_objRowHi = sc;
+        if (sc * g_flightTerrainYScale < g_objRowLo) g_objRowLo = sc * g_flightTerrainYScale;
+        if ((sc + 1) * g_flightTerrainYScale - 1 > g_objRowHi)
+            g_objRowHi = (sc + 1) * g_flightTerrainYScale - 1;
     }
 }
 #endif

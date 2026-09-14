@@ -6,6 +6,15 @@
 > see `asm-migration-plan.md`). The `≈82 ms` and sub-phase numbers below are pre-asm and no longer
 > current. Kept for the design rationale + the sub-phase decomposition method. Live flight-perf
 > status: the `flight-scene` memory + `asm-migration-plan.md` tail.
+>
+> **Optional native-resolution follow-up (2026-09-13):** Flight can fetch and render 320×94 distinct
+> pixels instead of displaying a 160×47 image as 2×2 blocks. The enhanced path was deliberately
+> staged: shared geometry constants; native 94-row Copper fetch; native vertical writers/fill;
+> native 320-column skyline and 1×1 procedural dots; authored-overlay 2×2 preservation; redundant
+> Copper line-step removal. `$260E` remains the faithful 160-sample gameplay height field. Even
+> physical X uses those samples directly and odd X interpolates adjacent clamped skyline rows,
+> keeping simulation and validation semantics unchanged. The original renderer remains available
+> beside it and is selected by the same immutable startup configuration.
 
 Goal: cut `terrain_draw_frame $A31E` (≈82 ms/frame, the single biggest flight cost) **and**
 eliminate the separate `mem[$1070]`→bitplane convert pass. User-chosen scope (2026-06-24):
@@ -51,8 +60,9 @@ renderViewportModeD(srcBase=$1070, stride=96, rows=47)   ← the convert to ELIM
   Clamped to `$97`; `$FF` = off-top/filled. Produced by `terrain_column_rasterize` interpolation.
 - `$BC00[X]` per-column bit mask (sub-column position in the byte), `$BD00[X]` byte offset,
   `$28CA/$28FA` row→bitmap-address table. (These drive the current `PLOT`.)
-- **Amiga target:** `terrainBitmap` 3bp interleaved, **stride 120**, 43 visible mode-D rows
-  (×2 line-doubled by `FlightCopperList`). The user's `multiplyBy120` = Y→row-byte-offset LUT
+- **Historical Amiga target at the time of this plan:** `terrainBitmap` 3bp interleaved,
+  **stride 120**, 43 visible mode-D rows (then ×2 line-doubled by `FlightCopperList`). The user's
+  `multiplyBy120` = Y→row-byte-offset LUT
   (120 = this stride). `kModeDP1/P2` decode LUTs in `RescueOnFractalus.cpp`.
 - **Blitter infra exists:** `framework/AmigaHardware` — `blitterClear/Copy/Fill/Wait` + async
   queue. Descending OR-row-down fill (BLTCON1 DESC, A=src row, D=dst row+1, minterm OR) feasible.

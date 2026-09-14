@@ -156,6 +156,7 @@ HOSTPROOF_CFLAGS := -std=c11 -O2 -Wall -fsigned-char -Isrc -Isrc/cpu -Isrc/gen
 HOSTPROOF_SELF := \
     alien_mirror_test \
     dot_table_test \
+    native_resolution_test \
     tunnel_batch_test \
     ras_fused_midpoint_test \
     hiscore_block_test \
