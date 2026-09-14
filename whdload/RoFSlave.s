@@ -121,7 +121,8 @@ slv_info	dc.b	"Amiga port by Vesuri",10
 		dc.b	"Left mouse button quits.",10
 		dc.b	"F10 also quits, on a 68010 or better.",0
 slv_config	dc.b	"C1:B:Border Blanking (ECS/AGA only);"
-		dc.b	"C2:B:Enhanced Terrain Rendering;",0
+		dc.b	"C2:B:Enhanced Terrain Rendering;"
+		dc.b	"C3:B:Enhanced Palette;",0
 		dc.b	"$VER: RoF.slave 1.0 (13.09.2026)",0
 	EVEN
 
@@ -173,6 +174,9 @@ _bootdos	move.l	(_resload,pc),a2	;A2 = resload
 
 	;optionally select the executable's enhanced flight terrain renderer
 	bsr	_patch_terrain_renderer
+
+	;optionally select enhanced colour resolution for identified palette fades
+	bsr	_patch_enhanced_palette
 
 	;call it.  D0/A0 = argument line, as dos would pass them; the game's CRT
 	;ignores both (its main() takes no arguments).
@@ -316,6 +320,24 @@ _patch_terrain_renderer
 		movem.l	(a7)+,d2-d5
 .done		rts
 
+epal_MAGIC0	= $526f4621		;'RoF!'
+epal_MAGIC1	= $4550414c		;'EPAL'
+epal_DEFAULT	= 0
+epal_ENHANCED	= 1
+
+_patch_enhanced_palette
+		lea	(_rof_custom3,pc),a0
+		tst.l	(a0)
+		beq.s	.done			;default: faithful Atari colour resolution
+		movem.l	d2-d5,-(a7)
+		move.l	#epal_MAGIC0,d2
+		move.l	#epal_MAGIC1,d3
+		move.w	#epal_DEFAULT,d4
+		move.w	#epal_ENHANCED,d5
+		bsr.s	_patch_config_word
+		movem.l	(a7)+,d2-d5
+.done		rts
+
 ; D2/D3 = block magic, D4 = expected word, D5 = replacement word.
 _patch_config_word
 		move.l	d7,d0			;D0 = current segment (BPTR)
@@ -370,6 +392,8 @@ _rof_tags	dc.l	WHDLTAG_CUSTOM1_GET
 _rof_custom1	dc.l	0
 		dc.l	WHDLTAG_CUSTOM2_GET
 _rof_custom2	dc.l	0
+		dc.l	WHDLTAG_CUSTOM3_GET
+_rof_custom3	dc.l	0
 		dc.l	TAG_DONE
 
 ; int _hook_save(const UBYTE *blk, ULONG len)      4(sp)=blk  8(sp)=len

@@ -2,7 +2,7 @@
 
 ## 0. Status and scope
 
-**Assessment / implementation plan, 2026-09-13. No implementation has landed.**
+**Implementation plan, 2026-09-13. Runtime configuration landed 2026-09-14.**
 
 The port currently reproduces the Atari colour bytes faithfully, including the
 Atari's limited luminance resolution. That is the correct parity baseline, but it
@@ -122,9 +122,11 @@ it as a smoothing improvement.
 
 ### 3.1 Preserve a faithful mode
 
-Introduce the work behind an `ENHANCED_PALETTE` build option initially. The
-faithful path must keep using `atariToOCS()` unchanged. This gives direct A/B
-captures and protects the parity baseline while the desired look is evaluated.
+Introduce the work behind the runtime **Enhanced Palette** startup option in
+`StartupConfig.s`, following Enhanced Terrain. The faithful path must keep using
+`atariToOCS()` unchanged. This gives direct A/B captures and protects the parity
+baseline while the desired look is evaluated. WHDLoad exposes the option as its
+Custom3 checkbox/tooltype.
 
 Do not change `mem[]`, the native/transliterated routines, wait counts, game
 state, audio scheduling, or scene geometry. Enhanced colour is an Amiga display
@@ -255,7 +257,7 @@ These are isolated and make the visual premise easy to judge.
 ### Stage 5 — decide defaults
 
 Compare faithful and enhanced captures on real/representative OCS output. Decide
-whether `ENHANCED_PALETTE` remains optional or becomes the default Amiga look.
+whether Enhanced Palette remains optional or becomes the default Amiga look.
 Keep a faithful build available regardless.
 
 ## 5. Verification

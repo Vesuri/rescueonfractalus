@@ -94,6 +94,12 @@ original 2×2 renderer. `C2:B:Enhanced Terrain Rendering;` patches the word to o
 entry. `RescueOnFractalus::initialize()` snapshots it once, so no live mode switch or
 per-pixel configuration branch is required.
 
+Custom3 selects enhanced palette resolution in the same way. The retained `RoF!EPAL`
+block contains `rof_enhanced_palette_value`, defaulting to zero for faithful Atari colour
+resolution. `C3:B:Enhanced Palette;` patches it to one before entry; the renderer snapshots
+the setting and applies it only to the identified fade and atmosphere paths documented in
+`docs/palette-resolution-plan.md`.
+
 ### The left-mouse quit stays as it is (user decision, 2026-08-14)
 
 `rof_check_restart()` (`PlatformAmiga.cpp:1694`) quits on a bare

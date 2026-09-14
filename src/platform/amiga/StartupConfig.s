@@ -25,3 +25,14 @@ rof_bplcon3_value:
 rof_enhanced_terrain_value:
 	.word 0			| 0 = original 2x2, nonzero = enhanced native rendering
 	.word 0			| keep the retained block longword-sized
+
+| Startup-selected palette interpretation.  The renderer snapshots this during
+| initialize(); only positively identified fades use the enhanced half-luma table.
+	.section .data.enhanced_palette,"awR"
+	.balign 4
+	.long 0x526f4621		| 'RoF!'
+	.long 0x4550414c		| 'EPAL'
+	.globl rof_enhanced_palette_value
+rof_enhanced_palette_value:
+	.word 0			| 0 = faithful Atari colour resolution, nonzero = enhanced fades
+	.word 0			| keep the retained block longword-sized

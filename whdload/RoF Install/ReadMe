@@ -45,6 +45,10 @@
  Terrain Rendering", or with the Tooltype "Custom2=1". The mode remains fixed
  until the game exits.
 
+ The original Atari colour resolution is used by default. Smoother fades and
+ time-of-day transitions can be selected by ticking "Enhanced Palette", or with
+ the Tooltype "Custom3=1". The mode remains fixed until the game exits.
+
 
  History:
  --------

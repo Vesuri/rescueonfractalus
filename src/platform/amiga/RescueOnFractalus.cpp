@@ -31,6 +31,7 @@
 #include "RescueOnFractalus.h"
 #include "FlightTerrainGeometry.h"
 #include "TerrainRenderConfig.h"
+#include "PaletteResolutionConfig.h"
 #include "../../rof_boot.h"       // staged INITAD boot chain (Logo / Station) + g_bootScene
 #include "../../rof_hiscore.h"    // the high-score save block the disk game read over SIO
 #include "../../gen/rof_manual.h" // g_stationDirty — the station image's dirty rectangles
@@ -67,6 +68,7 @@ extern "C" { volatile unsigned char g_restartHoldBlack = 0; }
 // lookup table is built.  These values remain immutable for the process lifetime.
 extern "C" {
 int g_flightEnhancedTerrain = 0;
+int g_enhancedPalette = 0;
 int g_flightTerrainYScale = 1;
 int g_flightTerrainYShift = 0;
 int g_flightPhysicalTerrainRows = ROF_FLIGHT_SOURCE_TERRAIN_ROWS;
@@ -2532,6 +2534,7 @@ void RescueOnFractalus::initialize()
 {
     g_flightEnhancedTerrain =
         configuredFlightTerrainRenderer() == kFlightTerrainEnhanced;
+    g_enhancedPalette = configuredEnhancedPalette();
     g_flightTerrainYShift = g_flightEnhancedTerrain ? 1 : 0;
     g_flightTerrainYScale = 1 << g_flightTerrainYShift;
     g_flightPhysicalTerrainRows = ROF_FLIGHT_SCALE_Y(ROF_FLIGHT_SOURCE_TERRAIN_ROWS);
