@@ -3883,7 +3883,7 @@ void RescueOnFractalus::renderFlightDirect()
 
 #ifdef ROF_FLIGHT_PROBE
     extern volatile unsigned long g_fdClear, g_fdEdge, g_fdFill, g_fdScan,
-                                  g_fdBand, g_fdCalls, g_fdScanRows;
+                                  g_fdBand, g_fdCalls, g_fdScanRows, g_fdSky;
     unsigned long _fi = g_isrBeamLines, _ft = rof_subclock();
   #define FD_LAP(acc) do { unsigned long _n=rof_subclock(), _ni=g_isrBeamLines; \
         (acc) += (_n - _ft) - (_ni - _fi); _ft=_n; _fi=_ni; } while(0)
@@ -3985,6 +3985,7 @@ void RescueOnFractalus::renderFlightDirect()
         edgePlotOriginal(bp);
 #endif
     }
+    FD_LAP(g_fdSky);                                         // = the skyline plot alone
     // plane3: ONE-SHOT clear per buffer, not per frame (see s_p3Clean).  Both of plane3's writers
     // are self-sufficient — the crosshair below ORs the same fixed bytes every frame and the band
     // composite long-COPIES physical rows 86-93 — so once a buffer's plane3 is right it stays right, and the
