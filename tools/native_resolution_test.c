@@ -5,6 +5,15 @@
 
 static const uint8_t masks[8] = { 0x80,0x40,0x20,0x10,0x08,0x04,0x02,0x01 };
 
+static uint8_t terrain_phase(int value)
+{
+    uint8_t p = (uint8_t)((unsigned)value * 73u + 41u);
+    p ^= (uint8_t)(p >> 4);
+    p = (uint8_t)((unsigned)p * 29u);
+    p ^= (uint8_t)(p >> 3);
+    return p;
+}
+
 int main(void)
 {
     unsigned bad = 0;
@@ -31,16 +40,34 @@ int main(void)
         for (int col = 48; col < 208; ++col) for (int h = 104; h <= 150; ++h) {
             const int source_row = 150 - h;
             for (unsigned old_max = 0; old_max < 256; ++old_max) {
-                const int physical_row = source_row * 2 + ((old_max >> 1) & 1u);
+                const int physical_row = source_row * 2 + ((terrain_phase(col) >> 1) & 1u);
                 if ((unsigned)physical_row >= ROF_FLIGHT_PHYSICAL_ROWS) ++bad;
                 if (physical_row & 1) ++odd_rows; else ++even_rows;
-                const int physical_col = (col - 48) * 2 + (old_max & 1u);
+                const int physical_col = (col - 48) * 2 + (terrain_phase(col) & 1u);
                 if ((unsigned)physical_col >= ROF_FLIGHT_PHYSICAL_WIDTH) ++bad;
                 if ((physical_col >> 3) != ((col - 48) >> 2)) ++bad;
                 if (physical_col & 1) ++odd_cols; else ++even_cols;
             }
         }
         if (!even_rows || !odd_rows || !even_cols || !odd_cols) ++bad;
+    }
+    /* Smooth terrain is the failure mode visible in screenshots: raw height bits remain nearly
+     * constant and make a regular lattice.  Require each phase to remain balanced and prevent a
+     * long same-X-phase run on several representative shallow slopes. */
+    {
+        unsigned quadrants[4] = {0,0,0,0};
+        int previous = -1, run = 0, longest = 0;
+        for (int c = 48; c < 208; ++c) {
+            int q = terrain_phase(c) & 3u;
+            ++quadrants[q];
+            int xphase = q & 1;
+            run = (xphase == previous) ? run + 1 : 1;
+            previous = xphase;
+            if (run > longest) longest = run;
+        }
+        for (int q = 0; q < 4; ++q)
+            if (quadrants[q] < 24u || quadrants[q] > 56u) ++bad;
+        if (longest > 8) ++bad;
     }
     printf("%s: 320 columns, 65025 height pairs, 47 authored row pairs, and both terrain X/Y phases, %u mismatches\n",
            bad ? "FAIL" : "PASS", bad);

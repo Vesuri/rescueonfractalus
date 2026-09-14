@@ -111,7 +111,6 @@
 	xref	kDotColOff
 	xref	kHeightRowOff
 	xref	g_flightDotPlane
-	xref	g_flightEnhancedTerrain
 
 CPBUF	equ	96		; 32 control-point slots * 3 bytes (depth stays < ~16)
 
@@ -161,24 +160,14 @@ DRAWDOT	macro
 					; break the invariant the head depends on
 	move.w	(a6,d1.w),d1		; kDrawDotRowOff[oldMax], or $FFFF
 	bmi.s	.dend\@			; sentinel -> off display / $6b reset-floor -> skip
-	tst.l	g_flightEnhancedTerrain	; immutable startup selector
-	beq.s	.dxeven\@		; original renderer: no Y phase and its 2-bit mask
-	btst	#1,d7			; retain a stable vertical subpixel bit from oldMax
-	beq.s	.dyready\@
-	add.w	#120,d1			; odd physical row; table supplied the even row
-.dyready\@:
-	btst	#0,d7			; oldMax also supplies the independent horizontal phase
-	beq.s	.dxeven\@
-	move.b	(a1,d5.w),d7		; kDotColMask[plotCol]  (0 <=> off viewport)
+	move.b	(a1,d5.w),d7		; pre-phased kDotColMask[plotCol] (0 <=> off viewport)
 	beq.s	.dend\@
-	lsr.b	#1,d7			; even source pixels are 0/2/4/6, so this stays in-byte
-	bra.s	.dxready\@
-.dxeven\@:
-	move.b	(a1,d5.w),d7
-	beq.s	.dend\@
-.dxready\@:
 	moveq	#0,d0			; (d0/_h is dead from here; clear for the byte index)
-	move.b	(a4,d5.w),d0		; kDotColOff[plotCol] = (plotCol-48)>>2
+	move.b	(a4,d5.w),d0		; packed kDotColOff: bit7=odd row, low7=byte column
+	bpl.s	.dyready\@
+	andi.w	#$7F,d0
+	add.w	#120,d1
+.dyready\@:
 	add.w	d0,d1			; byte offset = rowoff + colOff
 	or.b	d7,(a5,d1.w)		; g_flightDotPlane[off] |= mask
 .dend\@:

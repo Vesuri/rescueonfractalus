@@ -13,7 +13,7 @@
 > native 320-column skyline and 1×1 procedural dots; authored-overlay 2×2 preservation; redundant
 > Copper line-step removal. `$260E` remains the faithful 160-sample gameplay height field; a further
 > midpoint-displacement level materializes the 160 missing X samples into a 320-entry skyline, while
-> procedural dots derive independent X/Y phase bits from their pre-update height. This keeps gameplay
+> procedural dots derive decorrelated X/Y phase bits from a deterministic column mix. This keeps gameplay
 > semantics unchanged. The original renderer remains available beside it and is selected by the same
 > immutable startup configuration.
 

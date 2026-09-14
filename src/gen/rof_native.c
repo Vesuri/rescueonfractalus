@@ -550,8 +550,6 @@ extern const uint8_t kTerrainDotMask4[4];
 extern uint16_t kDrawDotRowOff[256];
 extern uint8_t kDotColMask[256];
 extern uint8_t kDotColOff[256];
-extern uint8_t kDotYPhaseOff[256];
-extern uint8_t kDotXShift[256];
 extern void rof_flight_wait_dotclear(void);
 #define ROF_PLOT_DOT(col, h) do { \
     if (g_flightDotPlane) { \
@@ -565,18 +563,20 @@ extern void rof_flight_wait_dotclear(void);
             for (_dy = 0; _dy < g_flightTerrainYScale; ++_dy) \
                 g_flightDotPlane[_of + _dy * ROF_FLIGHT_ROW_STRIDE] |= _m; \
         } } } while (0)
-/* Procedural surface texture is native 1x1.  Bits 0 and 1 of the pre-update terrain height retain
- * horizontal and vertical subpixel phases respectively, so a dot can occupy every physical
- * pixel rather than only the upper-left pixel of its former 2x2 cell.  Authored object pixels
- * keep ROF_PLOT_DOT above and therefore retain their original 2x2 display footprint. */
+/* Procedural surface texture is native 1x1.  The precomputed column mask and packed column-offset
+ * tables include decorrelated X/Y subpixel phases; consuming the tables here and in 68000 DRAWDOT makes
+ * their output identical without spending hash arithmetic in the hot loop. */
 #define ROF_PLOT_TERRAIN_DOT(col, h) do { \
     if (g_flightDotPlane) { \
         uint8_t _c = (uint8_t)(col); \
         uint8_t _h = (uint8_t)(h); \
         uint16_t _ro = kDrawDotRowOff[_h]; \
-        uint8_t _m = (uint8_t)(kDotColMask[_c] >> kDotXShift[_h]); \
+        uint8_t _co = kDotColOff[_c]; \
+        uint8_t _m = kDotColMask[_c]; \
         if (_ro != 0xFFFFu && _m) { \
-            g_flightDotPlane[_ro + kDotYPhaseOff[_h] + kDotColOff[_c]] |= _m; \
+            g_flightDotPlane[_ro + (_co & 0x7Fu) + \
+                             ((_co & 0x80u) ? ROF_FLIGHT_ROW_STRIDE : 0)] \
+                |= _m; \
         } } } while (0)
 /* Object plane1 overlay, applied AFTER the sky fill (see g_flightObjP1 in RescueOnFractalus.cpp).
  * The overlay carries TWO bit slots per plane byte, both in the same scratch plane: the byte at

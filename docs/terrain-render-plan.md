@@ -12,10 +12,10 @@
 > **Optional native-resolution follow-up (2026-09-13):** The enhanced direct renderer produces a distinct
 > 320×94 flight image. It keeps `$260E` as the faithful 160-column gameplay output and expands it
 > with another midpoint-displacement level into a stored 320-column skyline rather than interpolating
-> in the renderer. Procedural dots derive independent X/Y subpixel phases from terrain height;
-> native vertical rows are stored and fetched directly; only authored overlays retain the original
-> 2×2 footprint. The original renderer and Copper line-doubling program remain available and are
-> selected once at startup.
+> in the renderer. Procedural dots derive decorrelated X/Y subpixel phases from a deterministic
+> mix of the source column; native vertical rows are stored and fetched directly; only authored
+> overlays retain the original 2×2 footprint. The original renderer and Copper line-doubling program
+> remain available and are selected once at startup.
 
 Plan to replace the current flight-terrain rendering path (per-pixel 6502-style
 silhouette plotting into an Atari ANTIC mode-D bitmap, then a per-byte

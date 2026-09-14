@@ -731,6 +731,13 @@ static void buildHeightRowOff() {
 // so this must exist before the first flight frame (unlike kHeightRowOff, built lazily there).
 extern "C" uint16_t kDrawDotRowOff[256];
 uint16_t kDrawDotRowOff[256];
+static uint8_t nativeDotPhase(unsigned v) {
+    uint8_t p = (uint8_t)(v * 73u + 41u);
+    p ^= (uint8_t)(p >> 4);
+    p = (uint8_t)(p * 29u);
+    p ^= (uint8_t)(p >> 3);
+    return p;
+}
 static void buildDrawDotRowOff() {
     for (int m = 0; m < 256; m++) {          // m = oldMax (the previous column top)
         int sc = 150 - m;
@@ -742,7 +749,8 @@ static void buildDrawDotRowOff() {
 }
 // Dot-plot COLUMN tables for the rasterizer's inlined DRAWDOT (TerrainRasterizeAssembler.s).
 // ROF_PLOT_DOT's per-plot column work is: _ac = col-48, gate (unsigned)_ac < 160, plane byte
-// offset _ac>>2, pixel mask kColMask4[_ac&3].  All three are pure functions of the column, so
+// offset _ac>>2, pixel mask kColMask4[_ac&3].  The offset's spare high bit carries the hashed Y
+// phase; the mask itself carries the hashed X phase.  All are pure functions of the column, so
 // they fold into two tables indexed by the RAW column (48 is a multiple of 4, so no shifting is
 // needed to keep _ac&3 == col&3).  kDotColMask doubles as the range gate: it is 0 outside
 // [48,208), a value no real 2-bit mask can take, so the asm rejects an off-viewport column with
@@ -753,30 +761,22 @@ static void buildDrawDotRowOff() {
 // renderFlightDirect, so both must exist by then.
 extern "C" uint8_t kDotColMask[256];
 extern "C" uint8_t kDotColOff[256];
-extern "C" uint8_t kDotYPhaseOff[256];
-extern "C" uint8_t kDotXShift[256];
 uint8_t kDotColMask[256];
 uint8_t kDotColOff[256];
-uint8_t kDotYPhaseOff[256];
-uint8_t kDotXShift[256];
 static void buildDotColTables() {
     for (int c = 0; c < 256; c++) {
         const int ac = c - 48;
         if ((unsigned)ac < 160u) {                  // matches ROF_PLOT_DOT's _ac gate exactly
+            const uint8_t phase = g_flightEnhancedTerrain ? nativeDotPhase((unsigned)c) : 0;
             kDotColMask[c] = g_flightEnhancedTerrain
-                ? kTerrainDotMask4[ac & 3]
+                ? (uint8_t)(kTerrainDotMask4[ac & 3] >> (phase & 1u))
                 : kColMask4[ac & 3];
-            kDotColOff[c]  = (uint8_t)(ac >> 2);    // 0..39
+            kDotColOff[c]  = (uint8_t)((ac >> 2) |
+                                       ((phase & 2u) ? 0x80u : 0u));
         } else {
             kDotColMask[c] = 0;                     // off-viewport -> the asm skips the plot
             kDotColOff[c]  = 0;
         }
-    }
-    for (int oldMax = 0; oldMax < 256; ++oldMax) {
-        kDotYPhaseOff[oldMax] = g_flightEnhancedTerrain
-            ? (uint8_t)(((unsigned)oldMax >> 1) & 1u) * ROF_FLIGHT_ROW_STRIDE
-            : 0;
-        kDotXShift[oldMax] = g_flightEnhancedTerrain ? (uint8_t)(oldMax & 1) : 0;
     }
 }
 // Add one midpoint-displacement level when expanding the faithful 160-column ridge to the native
