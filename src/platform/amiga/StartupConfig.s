@@ -36,3 +36,18 @@ rof_enhanced_terrain_value:
 rof_enhanced_palette_value:
 	.word 0			| 0 = faithful Atari colour resolution, nonzero = enhanced fades
 	.word 0			| keep the retained block longword-sized
+
+| Startup-selected enhanced artwork/rendering path. WHDLoad Custom4 patches this together with
+| installing the enhanced-logo hook, so one player-facing option owns all enhanced graphics.
+	.section .data.enhanced_graphics,"awR"
+	.balign 4
+	.long 0x526f4621		| 'RoF!'
+	.long 0x45475246		| 'EGRF'
+	.globl rof_enhanced_graphics_value
+rof_enhanced_graphics_value:
+.ifdef ROF_ENHANCED_GRAPHICS
+	.word 1			| enhanced standalone build: logo + cockpit path
+.else
+	.word 0			| faithful graphics unless a loader patches this word
+.endif
+	.word 0			| keep the retained block longword-sized

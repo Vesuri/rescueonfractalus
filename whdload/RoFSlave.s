@@ -180,6 +180,9 @@ _bootdos	move.l	(_resload,pc),a2	;A2 = resload
 	;optionally select enhanced colour resolution for identified palette fades
 	bsr	_patch_enhanced_palette
 
+	;Custom4 selects every enhanced-graphics feature, including the cockpit path
+	bsr	_patch_enhanced_graphics
+
 	;call it.  D0/A0 = argument line, as dos would pass them; the game's CRT
 	;ignores both (its main() takes no arguments).
 		move.l	d7,a1
@@ -342,6 +345,24 @@ _patch_enhanced_palette
 		move.l	#epal_MAGIC1,d3
 		move.w	#epal_DEFAULT,d4
 		move.w	#epal_ENHANCED,d5
+		bsr.s	_patch_config_word
+		movem.l	(a7)+,d2-d5
+.done		rts
+
+egrf_MAGIC0	= $526f4621		;'RoF!'
+egrf_MAGIC1	= $45475246		;'EGRF'
+egrf_DEFAULT	= 0
+egrf_ENHANCED	= 1
+
+_patch_enhanced_graphics
+		lea	(_rof_custom4,pc),a0
+		tst.l	(a0)
+		beq.s	.done			;default: faithful cockpit graphics
+		movem.l	d2-d5,-(a7)
+		move.l	#egrf_MAGIC0,d2
+		move.l	#egrf_MAGIC1,d3
+		move.w	#egrf_DEFAULT,d4
+		move.w	#egrf_ENHANCED,d5
 		bsr.s	_patch_config_word
 		movem.l	(a7)+,d2-d5
 .done		rts

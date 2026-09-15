@@ -32,6 +32,7 @@
 #include "FlightTerrainGeometry.h"
 #include "TerrainRenderConfig.h"
 #include "PaletteResolutionConfig.h"
+#include "EnhancedGraphicsConfig.h"
 #include "PaletteInterpolation.h"
 #include "ExternalHooks.h"       // launcher-provided logo bitmap/palette override
 #include "../../rof_boot.h"       // staged INITAD boot chain (Logo / Station) + g_bootScene
@@ -71,6 +72,7 @@ extern "C" { volatile unsigned char g_restartHoldBlack = 0; }
 extern "C" {
 int g_flightEnhancedTerrain = 0;
 int g_enhancedPalette = 0;
+int g_enhancedGraphics = 0;
 int g_flightTerrainYScale = 1;
 int g_flightTerrainYShift = 0;
 int g_flightPhysicalTerrainRows = ROF_FLIGHT_SOURCE_TERRAIN_ROWS;
@@ -2544,6 +2546,7 @@ void RescueOnFractalus::initialize()
     g_flightEnhancedTerrain =
         configuredFlightTerrainRenderer() == kFlightTerrainEnhanced;
     g_enhancedPalette = configuredEnhancedPalette();
+    g_enhancedGraphics = configuredEnhancedGraphics();
     g_flightTerrainYShift = g_flightEnhancedTerrain ? 1 : 0;
     g_flightTerrainYScale = 1 << g_flightTerrainYShift;
     g_flightPhysicalTerrainRows = ROF_FLIGHT_SCALE_Y(ROF_FLIGHT_SOURCE_TERRAIN_ROWS);
