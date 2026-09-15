@@ -253,6 +253,7 @@ void FlightCopperList::buildLayout(const Bitmap& title, const Bitmap& terrain, c
                                    const Sprite& scopeP3)
 {
     uint32_t* d = data_;
+    normalDashboard_ = cockpit.bitplanes == 4;
 
     // ---- title region: playfield (2bp interleaved) ----
     setPlayfield(INDEX_PLAYFIELD, kW, kH, (uint8_t)title.bitplanes, /*interleaved*/true,
@@ -378,7 +379,8 @@ void FlightCopperList::buildLayout(const Bitmap& title, const Bitmap& terrain, c
     setDashboardSprite(2, nullSprite);          // SPR2PT -> Long-Range-Scanner dot (real ptr set on force)
     d[INDEX_SCANNER_COL] = copperMove(kColor22, atariToOCS(0x26));  // scanner dot red-brown (COLPM2 $26)
     showBitmap(INDEX_COCKPIT_BPL, cockpit, 1, 1, 0, 8, 3); // BPL4 was preloaded at band entry
-    const uint16_t cockpitMode = (uint16_t)((cockpit.bitplanes << PLNCNTSHFT) | USE_BPLCON3 | DBLPF);
+    const uint16_t cockpitMode = (uint16_t)((cockpit.bitplanes << PLNCNTSHFT) | USE_BPLCON3
+                                           | (normalDashboard_ ? 0 : DBLPF));
     const uint16_t cockpitModulo = (uint16_t)((cockpit.bitplanes - 1) * 40);
     d[INDEX_COCKPIT_BPLCON0] = copperMove(bplcon0, cockpitMode);
     d[INDEX_COCKPIT_MOD]     = copperMove(bpl1mod, cockpitModulo);
@@ -387,15 +389,16 @@ void FlightCopperList::buildLayout(const Bitmap& title, const Bitmap& terrain, c
     // visible pen (COLOR09) is the light-grey stencil in front.  COLOR00 is dark grey.
     d[INDEX_COCKPIT_PAL + 0] = copperMove(color00, atariToOCS(0x04));
     d[INDEX_COCKPIT_PAL + 1] = copperMove(color01, atariToOCS(0x00)); // divider/bottom COLBK
-    d[INDEX_COCKPIT_PAL + 2] = copperMove(color02, atariToOCS(0x2C));
+    d[INDEX_COCKPIT_PAL + 2] = copperMove(color02, atariToOCS(normalDashboard_ ? 0x06 : 0x2C));
     d[INDEX_COCKPIT_PAL + 3] = copperMove(color03, atariToOCS(0x26));
-    d[INDEX_COCKPIT_PAL + 4] = copperMove(color09, atariToOCS(0x06));
+    d[INDEX_COCKPIT_PAL + 4] = copperMove(normalDashboard_ ? color04 : color09,
+                                          atariToOCS(normalDashboard_ ? 0x2C : 0x06));
 
     // AH ground-fill + baked detail colours, then dual-PF priority (line 180, after the frame).
     d[INDEX_AH_COL]            = copperMove(color17, atariToOCS(0x26));
     d[INDEX_AH_DETAIL_COL]     = copperMove(kColor18, atariToOCS(0x2C));
     d[INDEX_AH_DETAIL_COL + 1] = copperMove(kColor19, atariToOCS(0x2C));
-    d[INDEX_AH_BPLCON2] = copperMove(bplcon2, kBPLCON2_COCKPIT);
+    d[INDEX_AH_BPLCON2] = copperMove(bplcon2, normalDashboard_ ? 0 : kBPLCON2_COCKPIT);
 
     // Dashboard instrument backgrounds = dark blue COLBK $90 (Amiga 182-251); floor black (252+).
     // COLBK is PF1 COLOR01 here; COLOR00 stays dark grey for the dashboard and OCS border.
@@ -435,9 +438,10 @@ void FlightCopperList::setCockpitPalette(uint16_t darkGrey, uint16_t bottomBg,
 {
     data_[INDEX_COCKPIT_PAL + 0] = copperMove(color00, darkGrey);
     data_[INDEX_COCKPIT_PAL + 1] = copperMove(color01, bottomBg);
-    data_[INDEX_COCKPIT_PAL + 2] = copperMove(color02, brightDetail);
+    data_[INDEX_COCKPIT_PAL + 2] = copperMove(color02, normalDashboard_ ? lightGrey : brightDetail);
     data_[INDEX_COCKPIT_PAL + 3] = copperMove(color03, darkDetail);
-    data_[INDEX_COCKPIT_PAL + 4] = copperMove(color09, lightGrey);
+    data_[INDEX_COCKPIT_PAL + 4] = copperMove(normalDashboard_ ? color04 : color09,
+                                               normalDashboard_ ? brightDetail : lightGrey);
     data_[INDEX_AH_DETAIL_COL]     = copperMove(kColor18, brightDetail);
     data_[INDEX_AH_DETAIL_COL + 1] = copperMove(kColor19, brightDetail);
     data_[INDEX_FLOOR]            = copperMove(color01, bottomBg);

@@ -7102,10 +7102,10 @@ void RescueOnFractalus::copyCockpitPlanarSpan(uint16_t addr, uint8_t nCells)
     uint8_t* base = cdest + (8 + entry * 8) * kRowBytes;
     for (uint8_t i = 0; i < nCells; i++, col++) {
         if (col < 0 || col >= 40) continue;
-        const uint8_t* tile = cockpitMode4Planar(mem[(uint16_t)(addr + i)]);
+        const uint8_t* tile = cockpitMode4NormalPlanar(mem[(uint16_t)(addr + i)]);
         uint8_t* p = base + col;
-        for (int scan = 0; scan < 8; scan++, p += kRowBytes, tile += 3) {
-            p[0] = tile[0]; p[40] = tile[1]; p[80] = tile[2]; p[120] = 0;
+        for (int scan = 0; scan < 8; scan++, p += kRowBytes, tile += 4) {
+            p[0] = tile[0]; p[40] = tile[1]; p[80] = tile[2]; p[120] = tile[3];
         }
     }
 }

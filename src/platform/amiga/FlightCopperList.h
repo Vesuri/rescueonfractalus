@@ -78,4 +78,6 @@ public:
     // arming rule (the channel's viewport sprite must run to VSTOP 180 or the re-point never arms).
     void setDashboardSprite(int ch, const Sprite& s);
     void setTerrainBitplanes(const Bitmap& terrain);               // re-point viewport bpl ptrs (double-buffer flip)
+private:
+    bool normalDashboard_ = false;
 };

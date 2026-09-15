@@ -221,13 +221,15 @@ void TunnelCopperList::buildLayout(const Bitmap& title, const Bitmap& tunnel, co
     // stencil; sprites sit over PF1's changing COLBK and under PF2.  COLOR00 stays dark grey.
     // Match the Standby timing: earlier waits let COLOR01=black touch the final band row.
     d[INDEX_DASH_BG_WAIT]  = copperWait(kCockpitLine + 8 - 1, 0xE0);
-    d[INDEX_DASH_MODE]     = copperMove(bplcon0, (uint16_t)(cockpitMode | DBLPF));
-    d[INDEX_DASH_PRIORITY] = copperMove(bplcon2, kBPLCON2_COCKPIT);
+    const bool normalDashboard = cockpit.bitplanes == 4;
+    d[INDEX_DASH_MODE]     = copperMove(bplcon0, normalDashboard ? cockpitMode : (uint16_t)(cockpitMode | DBLPF));
+    d[INDEX_DASH_PRIORITY] = copperMove(bplcon2, normalDashboard ? 0 : kBPLCON2_COCKPIT);
     d[INDEX_DASH_PAL + 0]  = copperMove(color00, atariToOCS(0x04));
     d[INDEX_DASH_PAL + 1]  = copperMove(color01, atariToOCS(0x00));
-    d[INDEX_DASH_PAL + 2]  = copperMove(color02, atariToOCS(0x2C));
+    d[INDEX_DASH_PAL + 2]  = copperMove(color02, atariToOCS(normalDashboard ? 0x06 : 0x2C));
     d[INDEX_DASH_PAL + 3]  = copperMove(color03, atariToOCS(0x26));
-    d[INDEX_DASH_PAL + 4]  = copperMove(color09, atariToOCS(0x06));
+    d[INDEX_DASH_PAL + 4]  = copperMove(normalDashboard ? color04 : color09,
+                                        atariToOCS(normalDashboard ? 0x2C : 0x06));
     d[INDEX_DASH_BLUE_WAIT] = copperWait(kCockpitLine + 10 - 1, 0xE0);
     d[INDEX_DASH_BLUE]      = copperMove(color01, atariToOCS(0x90));
     d[INDEX_GAUGE_BOT_WAIT] = copperWait(kGaugeBottomLine - 1, 0xE0);

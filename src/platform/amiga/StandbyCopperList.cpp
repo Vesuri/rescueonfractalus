@@ -154,13 +154,15 @@ uint32_t StandbyCopperList::emitCockpitRegion(uint32_t idx)
     // 0xC0..0xD8 let the following palette MOVEs catch the last fetched pixels of the
     // final mode-D row.  At 0xE0 the group safely finishes in line 180's early H-blank.
     d[idx++] = copperWait(kCockpitLine + 8 - 1, 0xE0);
-    d[idx++] = copperMove(bplcon0, (uint16_t)(mode | DBLPF));
-    d[idx++] = copperMove(bplcon2, kBPLCON2_COCKPIT);
+    const bool normalDashboard = planes == 4;
+    d[idx++] = copperMove(bplcon0, normalDashboard ? mode : (uint16_t)(mode | DBLPF));
+    d[idx++] = copperMove(bplcon2, normalDashboard ? 0 : kBPLCON2_COCKPIT);
     d[idx++] = copperMove(color00, atariToOCS(0x04)); // common background + border: dark grey
     d[idx++] = copperMove(color01, atariToOCS(0x00)); // PF1 code 1: divider COLBK
-    d[idx++] = copperMove(color02, atariToOCS(0x2C)); // PF1 code 2: COLPF2
+    d[idx++] = copperMove(color02, atariToOCS(normalDashboard ? 0x06 : 0x2C));
     d[idx++] = copperMove(color03, atariToOCS(0x26)); // PF1 code 3: bit-7 COLPF3
-    d[idx++] = copperMove(color09, atariToOCS(0x06)); // PF2 code 1: light-grey stencil
+    d[idx++] = copperMove(normalDashboard ? color04 : color09,
+                          atariToOCS(normalDashboard ? 0x2C : 0x06));
     d[idx++] = copperWait(kCockpitLine + 10 - 1, 0xE0);  d[idx++] = copperMove(color01, atariToOCS(0x90));
     // Energy bar (sprite 2 / COLOR21) → black at the DIAL BOTTOM, not at the floor.  The Amiga bar
     // is one SOLID kEnergyRows sprite whose VSTART tracks the fuel (buildEnergyIndicatorSprite),

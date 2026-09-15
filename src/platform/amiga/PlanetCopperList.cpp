@@ -211,9 +211,11 @@ void PlanetCopperList::buildLayout(const Bitmap& title, const Bitmap& terrain, c
     showSprite(INDEX_GAUGE_PTR, 2, gauge);   // re-point channel 2 (P0-low -> throttle gauge)
     setEnergyIndicatorColor(0);              // COLOR21 = gauge bar (setter, at INDEX_GAUGE_COL)
     showBitmap(INDEX_COCKPIT_BPL, cockpit, 1, 1, 0, 8, 3); // BPL4 was preloaded at band entry
-    const uint16_t cockpitMode = (uint16_t)((cockpit.bitplanes << PLNCNTSHFT) | USE_BPLCON3 | DBLPF);
+    const bool normalDashboard = cockpit.bitplanes == 4;
+    const uint16_t cockpitMode = (uint16_t)((cockpit.bitplanes << PLNCNTSHFT) | USE_BPLCON3
+                                           | (normalDashboard ? 0 : DBLPF));
     d[INDEX_COCKPIT_BPLCON0] = copperMove(bplcon0, cockpitMode);
-    d[INDEX_COCKPIT_BPLCON2] = copperMove(bplcon2, kBPLCON2_COCKPIT);
+    d[INDEX_COCKPIT_BPLCON2] = copperMove(bplcon2, normalDashboard ? 0 : kBPLCON2_COCKPIT);
     const uint16_t cockpitModulo = (uint16_t)((cockpit.bitplanes - 1) * 40);
     d[INDEX_COCKPIT_MOD]     = copperMove(bpl1mod, cockpitModulo);
     d[INDEX_COCKPIT_MOD + 1] = copperMove(bpl2mod, cockpitModulo);
@@ -221,9 +223,10 @@ void PlanetCopperList::buildLayout(const Bitmap& title, const Bitmap& terrain, c
     // visible pen (COLOR09) is the light-grey stencil in front.  COLOR00 stays dark grey.
     d[INDEX_COCKPIT_PAL + 0] = copperMove(color00, atariToOCS(0x04));
     d[INDEX_COCKPIT_PAL + 1] = copperMove(color01, atariToOCS(0x00)); // divider COLBK
-    d[INDEX_COCKPIT_PAL + 2] = copperMove(color02, atariToOCS(0x2C));
+    d[INDEX_COCKPIT_PAL + 2] = copperMove(color02, atariToOCS(normalDashboard ? 0x06 : 0x2C));
     d[INDEX_COCKPIT_PAL + 3] = copperMove(color03, atariToOCS(0x26));
-    d[INDEX_COCKPIT_PAL + 4] = copperMove(color09, atariToOCS(0x06));
+    d[INDEX_COCKPIT_PAL + 4] = copperMove(normalDashboard ? color04 : color09,
+                                          atariToOCS(normalDashboard ? 0x2C : 0x06));
 
     // Dashboard instrument backgrounds = dark blue COLBK $90 (Amiga 182-251); floor black (252+).
     // COLBK is PF1 COLOR01 here; COLOR00 stays dark grey for the dashboard and OCS border.
