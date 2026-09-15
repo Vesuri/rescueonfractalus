@@ -33,6 +33,7 @@
 #include "TerrainRenderConfig.h"
 #include "PaletteResolutionConfig.h"
 #include "EnhancedGraphicsConfig.h"
+#include "CockpitPlanarAssets.h"
 #include "PaletteInterpolation.h"
 #include "ExternalHooks.h"       // launcher-provided logo bitmap/palette override
 #include "../../rof_boot.h"       // staged INITAD boot chain (Logo / Station) + g_bootScene
@@ -2580,7 +2581,13 @@ void RescueOnFractalus::initialize()
     extern volatile uint32_t g_terrainBmpAddr;   // chip addr of terrainBitmap->data (Stage 1 verifier dump)
     g_terrainBmpAddr = (uint32_t)terrainBitmap->data;
 #endif
-    if (!s_dec2bppReady) buildDecode2bppLut();   // 2bpp→Amiga plane-pair LUT (cockpit/title decode)
+    // Enhanced Graphics reads already-expanded plane bytes from cockpit_planar.bin.  Do not spend
+    // startup time constructing the legacy character/pixel decode LUT unless that path is active.
+#ifdef ROF_CK_VERIFY
+    if (!s_dec2bppReady) buildDecode2bppLut();   // verifier deliberately retains the old oracle
+#else
+    if (!g_enhancedGraphics && !s_dec2bppReady) buildDecode2bppLut();
+#endif
     if (!s_shotExpandReady) buildShotExpandLut(); // 8-bit player row → 16px sprite LUT (shot/P3 mirrors)
     // Rescue-figure overlay + clean-terrain snapshot (chip Bitmaps for the blitter composite).
     // s_cleanBmp mirrors terrainBitmap's layout exactly so combineWithMask's per-row modulos line up.
@@ -7052,6 +7059,55 @@ void RescueOnFractalus::decodeCockpitSpan(uint16_t addr, uint8_t nCells)
     }
 }
 
+// Enhanced Graphics equivalent of decodeCockpitSpan().  The selected source entry is already
+// laid out as Amiga plane bytes by tools/gen_cockpit_planar.py, so this path performs no charset
+// fetch, pixel extraction, masking, or LUT conversion at runtime.  Destination geometry remains
+// deliberately identical during phase 1: the current combined 3-plane cockpit bitmap and every
+// existing Copper list continue to be the byte-exact display oracle.
+void RescueOnFractalus::copyCockpitPlanarSpan(uint16_t addr, uint8_t nCells)
+{
+    static const int kStride   = 48;
+    static const int kCrop     = 4;
+    static const int kRowBytes = 120;
+    uint8_t* cdest = (uint8_t*)cockpitBitmap->data;
+
+    if (addr >= 0x350Du) {
+        const unsigned off   = (unsigned)(addr - 0x350Du);
+        const unsigned entry = rof_divu16(off, (uint16_t)kStride);
+        int col = (int)rof_modu16(off, (uint16_t)kStride) - kCrop;
+        if (entry >= 4u) return;
+        uint8_t* d0 = cdest + (entry * 2) * kRowBytes;
+        uint8_t* d1 = d0 + kRowBytes;
+        for (uint8_t i = 0; i < nCells; i++, col++) {
+            if (col < 0 || col >= 40) continue;
+            const uint8_t* tile = cockpitModeDPlanar(mem[(uint16_t)(addr + i)]);
+            d0[col] = tile[0]; d0[40 + col] = tile[1]; d0[80 + col] = 0;
+            d1[col] = tile[0]; d1[40 + col] = tile[1]; d1[80 + col] = 0;
+        }
+        return;
+    }
+
+    const unsigned off   = (unsigned)(addr - 0x332Du);
+    const unsigned entry = rof_divu16(off, (uint16_t)kStride);
+    int col = (int)rof_modu16(off, (uint16_t)kStride) - kCrop;
+    if (entry >= 10u) return;
+    uint8_t* base = cdest + (8 + entry * 8) * kRowBytes;
+    for (uint8_t i = 0; i < nCells; i++, col++) {
+        if (col < 0 || col >= 40) continue;
+        const uint8_t* tile = cockpitMode4Planar(mem[(uint16_t)(addr + i)]);
+        uint8_t* p = base + col;
+        for (int scan = 0; scan < 8; scan++, p += kRowBytes, tile += 3) {
+            p[0] = tile[0]; p[40] = tile[1]; p[80] = tile[2];
+        }
+    }
+}
+
+void RescueOnFractalus::renderCockpitSpan(uint16_t addr, uint8_t nCells)
+{
+    if (g_enhancedGraphics) copyCockpitPlanarSpan(addr, nCells);
+    else                    decodeCockpitSpan(addr, nCells);
+}
+
 #ifdef ROF_CK_VERIFY
 // Coverage check for the per-cell cockpit registries (see the CK_VERIFY block in amiga/Makefile).
 // The risk of a targeted decode is not arithmetic — decodeCockpitSpan is unchanged — but a MISSED
@@ -7139,7 +7195,7 @@ void RescueOnFractalus::decodeLockonDirty()
         if (!g_ckLockFlag[i]) { i++; continue; }
         int run = 0;
         while (i + run < 7 && g_ckLockFlag[i + run]) { g_ckLockFlag[i + run] = 0u; run++; }
-        decodeCockpitSpan((uint16_t)(0x3491u + i), (uint8_t)run);
+        renderCockpitSpan((uint16_t)(0x3491u + i), (uint8_t)run);
 #ifdef ROF_FLIGHT_PROBE
         g_ckLockCells += (unsigned long)run;
 #endif
@@ -7162,7 +7218,7 @@ void RescueOnFractalus::decodeScannerBlinkCells()
     if (v == last) { SP_LAP(g_spScanT); return; }
     last = v;
     SP_CNT(g_spScanDecodes);
-    decodeCockpitSpan(0x33DFu, 2u);
+    renderCockpitSpan(0x33DFu, 2u);
     SP_LAP(g_spScanT);
 }
 
@@ -7171,8 +7227,8 @@ void RescueOnFractalus::decodeScannerBlinkCells()
 // the cockpit on entry, so the writer-driven registry alone would miss the initial paint.
 void RescueOnFractalus::decodeCockpitFull()
 {
-    for (int e = 0; e < 4;  e++) decodeCockpitSpan((uint16_t)(0x350Du + e * 48 + 4), 40);
-    for (int e = 0; e < 10; e++) decodeCockpitSpan((uint16_t)(0x332Du + e * 48 + 4), 40);
+    for (int e = 0; e < 4;  e++) renderCockpitSpan((uint16_t)(0x350Du + e * 48 + 4), 40);
+    for (int e = 0; e < 10; e++) renderCockpitSpan((uint16_t)(0x332Du + e * 48 + 4), 40);
     initializeAHDetailPlanes();    // cockpit BPL3 is now valid; bake AH sprite word B once
 }
 
@@ -7194,6 +7250,15 @@ void RescueOnFractalus::decodeCompass()
     uint8_t* tbmp = (uint8_t*)titleBitmap->data;
     const uint8_t* src = (const uint8_t*)mem + kCompassRAM;
     for (int cell = 0; cell < 4; cell++) {
+        if (g_enhancedGraphics) {
+            const uint8_t* tile = cockpitCompassPlanar(src[cell]);
+            uint8_t* row = tbmp + kRow80[kCompassRow];
+            for (int s = 0; s < 8; s++, row += 80, tile += 2) {
+                row[kCompassByteX + cell]      = tile[0];
+                row[40 + kCompassByteX + cell] = tile[1];
+            }
+            continue;
+        }
         const uint8_t* glyph = (const uint8_t*)mem + kCompassCharset + (src[cell] & 0x7Fu) * 8u;
         uint8_t* row = tbmp + kRow80[kCompassRow];   // walked +80/scanline (80 = 40 plane1 + 40 plane2)
         for (int s = 0; s < 8; s++, row += 80) {
@@ -7464,6 +7529,19 @@ void RescueOnFractalus::render()
     for (int col = 0; col < want; col++) {
         uint8_t charByte = tsrc[col];
 
+        if (g_enhancedGraphics) {
+            const uint8_t* mask = cockpitTextMaskPlanar(charByte);
+            const bool usePF1 = ((charByte >> 6) & 3u) == 1u;
+            uint8_t* row = titleBase + col * 2;
+            for (int scanline = 0; scanline < 8; scanline++, row += 80, mask += 2) {
+                row[0]  = usePF1 ? 0 : mask[0];
+                row[1]  = usePF1 ? 0 : mask[1];
+                row[40] = usePF1 ? mask[0] : 0;
+                row[41] = usePF1 ? mask[1] : 0;
+            }
+            continue;
+        }
+
         // Re-render this char: mode-6 is 1bpp, but the byte's top 2 bits select
         // the text colour register.  We support the two cases that occur here:
         //   hi2=0 → COLPF0 → col1 (plane1)   — copyright block
@@ -7568,7 +7646,7 @@ void RescueOnFractalus::render()
                 for (int b = 0; b < 4; b++) {
                     if (g_ckDialFlag[base + b]) {
                         g_ckDialFlag[base + b] = 0u;
-                        decodeCockpitSpan((uint16_t)(0x332Du + base + b), 1u);
+                        renderCockpitSpan((uint16_t)(0x332Du + base + b), 1u);
 #ifdef ROF_FLIGHT_PROBE
                         if (rsFlight) g_ckDialCells++;
 #endif

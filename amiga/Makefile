@@ -1053,9 +1053,9 @@ obj/StartupConfig.o : $(AMIGA_SRC)/StartupConfig.s
 # incbin.s lives in the unified tree ($(AMIGA_SRC)) but its .incbin paths are resolved
 # relative to this amiga/ build dir (where assets/ and ../rof.xex live) via ASFLAGS
 # -I"$(CURDIR)"; INCBIN_DEPS are likewise listed relative to amiga/.
-INCBIN_DEPS := assets/rof_boot_image.bin assets/atari_charset.bin
+INCBIN_DEPS := assets/rof_boot_image.bin assets/atari_charset.bin assets/cockpit_planar.bin
 ifdef FULLXEX
-INCBIN_DEPS := ../rof.xex assets/atari_charset.bin
+INCBIN_DEPS := ../rof.xex assets/atari_charset.bin assets/cockpit_planar.bin
 endif
 ifneq ($(strip $(ENHANCED_GRAPHICS)$(ENHANCED_LOGO)),)
 INCBIN_DEPS += ../whdload/assets/enhanced_logo.bin \

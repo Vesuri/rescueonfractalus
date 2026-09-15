@@ -49,6 +49,18 @@ atari_charset:
 	.incbin "assets/atari_charset.bin"
 atari_charset_end:
 
+| Faithful cockpit source in native Amiga plane-byte form.  Unlike the former cockpit.raw,
+| this is not a frozen screen: it contains complete lookup atlases for all mode-D bytes,
+| all mode-4 character/attribute values, the compass, and the cockpit-top text masks.
+| Runtime instrument state still selects the entry, but performs only direct plane copies.
+| Generated and exhaustively checked by tools/gen_cockpit_planar.py.
+	.balign 4
+	.global rof_cockpit_planar
+	.global rof_cockpit_planar_end
+rof_cockpit_planar:
+	.incbin "assets/cockpit_planar.bin"
+rof_cockpit_planar_end:
+
 | Optional standalone-build copy of the WHDLoad enhanced logo assets.  The normal
 | executable does not carry these: the slave owns them and supplies them through the
 | external hook.  `make ENHANCED_LOGO=1` defines ROF_ENHANCED_LOGO for both this file

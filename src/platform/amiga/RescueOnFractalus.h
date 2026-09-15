@@ -242,6 +242,8 @@ private:
     void buildAltimeterShipSprite();   // mirror the live M3 $0B98 ship-height bar -> altimeterShipSprite (flight)
     bool postsBuilt = false;   // canopy posts are constant: decode them a single time
     void decodeCompass();      // decode the 4 compass cells $32E3-$32E6 -> title bitmap (16 longwords)
+    void copyCockpitPlanarSpan(uint16_t addr, uint8_t nCells); // native plane-byte enhanced path
+    void renderCockpitSpan(uint16_t addr, uint8_t nCells); // dispatch faithful decoder/native planes
     void decodeCockpitSpan(uint16_t addr, uint8_t nCells);  // decode nCells cockpit cells from Atari screen addr
     void decodeCockpitFull();  // decode the whole cockpit region (modeD + mode4) once (scene-entry repaint)
     void decodeLockonDirty();  // decode only the lock-on cells ($3491+) a writer actually touched
