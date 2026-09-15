@@ -25,4 +25,14 @@ while $i < 600
   end
   set $i = $i + 1
 end
+echo --- dashboard priority and playfield-gauge colour moves ---\n
+set $i = 1
+while $i < 600
+  set $w = *(unsigned int*)($c + $i*4)
+  set $hi = ($w >> 16) & 0x1ff
+  if $hi == 0x104 || $hi == 0x190 || $hi == 0x192
+    printf "  [%3d] prev=%08x reg=%03x val=%04x\n", $i, *(unsigned int*)($c + ($i-1)*4), $hi, ($w & 0xffff)
+  end
+  set $i = $i + 1
+end
 echo ==== end ====\n

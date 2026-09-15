@@ -2048,7 +2048,11 @@ void RescueOnFractalus::buildScannerDotSprite()
         // user-calibrated on FS-UAE).  X must land in the disc's window or the cockpit hides it.
         // This sprite-to-playfield calibration is one Amiga pixel left of the other PMG mirrors;
         // use the same corrected origin for both live bearings and the parked sentinel.
-        scannerDotSprite->setX((uint16_t)(0x84 + ((int)bear - 0x32) * 2));
+        // The faithful dual-playfield stencil hides the parked dot.  In the enhanced normal
+        // playfield the retained scanner sprite is deliberately in front, so park it completely
+        // off-screen instead of depending on PF2 priority for clipping.
+        scannerDotSprite->setX((!show && g_enhancedGraphics)
+            ? 0u : (uint16_t)(0x84 + ((int)bear - 0x32) * 2));
     }
 }
 

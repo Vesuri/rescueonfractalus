@@ -397,11 +397,14 @@ void FlightCopperList::buildLayout(const Bitmap& title, const Bitmap& terrain, c
     d[INDEX_COCKPIT_PAL + 5] = normalDashboard_ ? copperMove(color08, atariToOCS(0x90)) : copperMove(0x1FE, 0);
     d[INDEX_COCKPIT_PAL + 6] = normalDashboard_ ? copperMove(color09, atariToOCS(0x90)) : copperMove(0x1FE, 0);
 
-    // AH ground-fill + baked detail colours, then dual-PF priority (line 180, after the frame).
+    // AH ground-fill + baked detail colours, then dashboard sprite priority.  The faithful path
+    // sandwiches sprites between PF2 and PF1.  A normal playfield has no such middle layer, so the
+    // retained AH/scope/scanner sprites must be in front; their own data/position clips them to the
+    // instrument apertures.  Only the energy and altimeter sprites are retired in this path.
     d[INDEX_AH_COL]            = copperMove(color17, atariToOCS(0x26));
     d[INDEX_AH_DETAIL_COL]     = copperMove(kColor18, atariToOCS(0x2C));
     d[INDEX_AH_DETAIL_COL + 1] = copperMove(kColor19, atariToOCS(0x2C));
-    d[INDEX_AH_BPLCON2] = copperMove(bplcon2, normalDashboard_ ? 0 : kBPLCON2_COCKPIT);
+    d[INDEX_AH_BPLCON2] = copperMove(bplcon2, normalDashboard_ ? 0x0024 : kBPLCON2_COCKPIT);
 
     // Dashboard instrument backgrounds = dark blue COLBK $90 (Amiga 182-251); floor black (252+).
     // COLBK is PF1 COLOR01 here; COLOR00 stays dark grey for the dashboard and OCS border.

@@ -534,16 +534,18 @@ layout is:
 | 3 | Bright salmon detail |
 | 4 | Dark red/bit-7 detail |
 | 8 | Energy gauge mask |
-| 9 | Altimeter terrain-height mask |
-| 10 | Altimeter ship-height mask |
+| 9 | Shared altimeter mask; Copper transitions select terrain/ship colour with terrain foreground priority |
+| 10 | Reserved for enhanced cockpit artwork |
 | 5-7, 11-15 | Reserved for enhanced cockpit artwork |
 
 Using pens 8-10 for the gauges exercises plane 4 immediately and ensures the new path is tested
 before enhanced graphics depend on it.
 
-Pen 0 is deliberately special. With the remaining dashboard sprites behind the playfield, a zero
-pixel lets a sprite show through; where no sprite is present it displays COLOR00, the cockpit's
-dark-grey background. Every static bezel/detail pixel that must cover a sprite uses a nonzero pen.
+The retained artificial-horizon, targeting-scope, and scanner sprites remain in front of the normal
+playfield. Unlike dual playfield there is no priority level between a front stencil and a rear
+fill, so their sprite data and positions provide the clipping: the AH sprite carries its static
+detail overlay, scope imagery stays within its opening, and an inactive scanner dot is parked
+off-screen. Only the energy and altimeter indicators move into playfield pens.
 
 ### 3.2 Generate newly encoded assets and patches
 
@@ -558,9 +560,10 @@ dark-grey background. Every static bezel/detail pixel that must cover a sprite u
 At the dashboard boundary:
 
 - Clear `DBLPF` in `BPLCON0`.
-- Replace the dual-playfield priority value with a single-playfield `BPLCON2` value that places
-  the remaining cockpit sprites behind nonzero playfield pixels.
-- Keep those sprites visible through pen-0 instrument openings.
+- Replace the dual-playfield priority value with a single-playfield `BPLCON2` value that keeps the
+  remaining cockpit sprites in front.
+- Clip those retained sprites through their bounded data/positions; do not depend on a nonexistent
+  middle priority layer in a normal playfield.
 
 Verify the priority with an isolated on-target test. In particular:
 
@@ -652,7 +655,7 @@ The new playfield pens must continue to follow the original display parameters:
 - With Enhanced Graphics off, the existing dual-playfield and gauge-sprite layout is unchanged.
 - Energy and both altimeter components use playfield pens, not sprites.
 - Every reference gauge height matches the current version scanline-for-scanline.
-- Remaining dashboard sprites are clipped correctly by the normal playfield.
+- Remaining dashboard sprites retain their intended clipping with explicit data/position bounds.
 - Pause, death, return, and relaunch palette behavior remains faithful.
 - No sprite corruption results from shortening the Flight chains.
 - Performance is unchanged or improved relative to phase 2 and relative to the original baseline.
@@ -828,8 +831,8 @@ Keep every step independently buildable and reviewable:
 11. Update the enhanced layouts of all Copper lists to `4 -> 3 -> 4`; verify every scene boundary,
     timing, and performance.
 12. Re-encode the enhanced dashboard for a normal four-plane pen contract.
-13. Put remaining enhanced-dashboard sprites behind the normal playfield and remove enhanced-path
-    AH baked detail.
+13. Keep remaining enhanced-dashboard sprites in front of the normal playfield and explicitly
+    preserve their aperture clipping.
 14. Add the three gauge masks and Copper transition scheduler to the enhanced path.
 15. Remove the gauge sprites, chains, repoints, colors, and clipping workarounds from the enhanced
     path only.
@@ -847,7 +850,7 @@ Keep every step independently buildable and reviewable:
 | Planet's band is blank on entry or relaunch | Seed it before Copper publication and invalidate/avoid stale memoized source state |
 | Gauge Copper WAITs are emitted out of order | Use a fixed three-event ordering implementation and exhaustive value tests |
 | Gauge boundary is one scanline wrong | Compare full/mid/empty masks against the original 56-row Atari strips |
-| Remaining sprites leak over cockpit artwork | Reserve pen 0 for openings and verify the single-playfield `BPLCON2` setting on target |
+| Remaining sprites disappear or leak over cockpit artwork | Put only the retained instrument sprites in front, preserve AH detail masking, park the inactive scanner off-screen, and verify `BPLCON2` on target |
 | Pause/death colors stop following Atari parameters | Preserve the existing live parameter sources and their intentionally different ranges |
 | Fourth-plane DMA reduces CPU time | Limit it to non-terrain regions and enforce the per-phase performance gate |
 | Initializers placed in the project's BSS-only `.MEMF_CHIP` section are discarded | Put hardware-ready assets in a distinct initialized CHIP data hunk such as `.INCBIN.MEMF_CHIP`; allocate/copy only when mutability or conditional residency requires it |

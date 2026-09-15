@@ -29,7 +29,10 @@ remains a normal three-plane region with its scene-specific edge colour.
 8-line windscreen band and 80-line dashboard. The dashboard is a normal single playfield with the
 old appearance re-encoded as pens 0-4. Pen 8 is the energy mask and pen 9 the shared altimeter mask;
 their vertical colour changes are Copper events derived from the same fuel/height state as the old
-sprites. Standby, Doors, Tunnel, Planet/stars, and Flight all use this contract. Their terrain,
+sprites. The artificial horizon, targeting-scope object, and scanner dot remain hardware sprites;
+Flight switches them in front of the normal playfield at the dashboard boundary, with the inactive
+scanner parked off-screen rather than hidden by the old PF2 stencil. Standby, Doors, Tunnel,
+Planet/stars, and Flight all use this contract. Their terrain,
 door, tunnel, planet, and starfield renderers remain three-plane and otherwise unchanged.
 
 **The windscreen band changes SOURCE at the tunnel→planet handover, and that is where it breaks.**
