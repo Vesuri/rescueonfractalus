@@ -473,10 +473,11 @@ void FlightCopperList::setGaugeTransitions(uint16_t energyTop, uint16_t energyCo
         { shipTop, color09, shipColor, 2 }
     };
 
-    // The ship indication is drawn over the terrain indication.  If it starts first, the later
-    // terrain transition must leave the ship colour in force; at equal lines stable ordering puts
-    // the ship MOVE last.  This reproduces the old two-sprite overlap with one playfield pen.
-    if (shipTop < terrainTop) events[1].color = shipColor;
+    // The terrain sprite was in front of the ship sprite.  If terrain starts first (or on the same
+    // line), the later ship transition must therefore leave the terrain colour in force.  If ship
+    // starts first, it remains visible only until the terrain transition.  This reproduces the old
+    // two-sprite overlap with one playfield pen.
+    if (terrainTop <= shipTop) events[2].color = terrainColor;
 
     for (int i = 1; i < 3; i++) {
         Event e = events[i];
