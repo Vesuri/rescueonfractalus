@@ -33,6 +33,7 @@
 #include "TerrainRenderConfig.h"
 #include "PaletteResolutionConfig.h"
 #include "PaletteInterpolation.h"
+#include "ExternalHooks.h"       // launcher-provided logo bitmap/palette override
 #include "../../rof_boot.h"       // staged INITAD boot chain (Logo / Station) + g_bootScene
 #include "../../rof_hiscore.h"    // the high-score save block the disk game read over SIO
 #include "../../gen/rof_manual.h" // g_stationDirty — the station image's dirty rectangles
@@ -6123,6 +6124,48 @@ static inline void gtia9Row(uint8_t* dst, const volatile uint8_t* src, unsigned 
     }
 }
 
+// callLogoOverride(): one callback, two events.  INITIAL lets a launcher replace the complete
+// field and/or palette before the copper list is built.  GAMES fires at the original 86-frame
+// cue with the displayed planar field still in place, so the launcher can overlay its own text
+// directly.  A null hook or a zero return leaves each original path untouched.
+unsigned long RescueOnFractalus::callLogoOverride(unsigned short phase, unsigned short* palette,
+                                                   unsigned short paletteEntries)
+{
+    if (!bootFieldBitmap || !g_rofExternalHooks.logoOverride) return 0;
+
+    RofLogoOverrideContext context;
+    context.version          = ROF_LOGO_OVERRIDE_VERSION;
+    context.size             = (unsigned short)sizeof(context);
+    context.bitmap           = (unsigned char*)bootFieldBitmap->data;
+    context.bitmapBytes      = bootFieldBitmap->dataSize();
+    context.width            = bootFieldBitmap->width;
+    context.height           = bootFieldBitmap->height;
+    context.bitplanes        = bootFieldBitmap->bitplanes;
+    context.planeBytesPerRow = bootFieldBitmap->widthInBytes;
+    context.rowBytes         = bootFieldBitmap->rowSizeInBytes;
+    context.visibleRows      = logoLayoutRows;
+    context.topBlankLines    = logoLayoutTopLines;
+    context.format           = ROF_LOGO_FORMAT_PLANAR4_INTERLEAVED;
+    context.palette          = palette;
+    context.paletteEntries   = paletteEntries;
+    context.reserved         = 0;
+    context.phase            = phase;
+    context.phaseReserved    = 0;
+    unsigned long result = g_rofExternalHooks.logoOverride(&context);
+    if (phase == ROF_LOGO_PHASE_INITIAL && (result & ROF_LOGO_OVERRIDE_GEOMETRY) != 0) {
+        // Keep both WAITs inside the 216-line playfield and the bitmap window inside its
+        // allocation.  An invalid launcher response loses only its geometry claim.
+        if (context.visibleRows != 0 && context.visibleRows <= bootFieldBitmap->height &&
+            context.topBlankLines < kH && context.visibleRows <= kH - context.topBlankLines) {
+            logoLayoutRows = context.visibleRows;
+            logoLayoutTopLines = context.topBlankLines;
+        } else {
+            result &= ~ROF_LOGO_OVERRIDE_GEOMETRY;
+        }
+    }
+    return result;
+}
+
 // decodeLogoField(): decode the logo's 62 mode-F rows into bitmap rows 0..61.  ONE LMS for the
 // whole picture (see kLogoDLLms), so this is a flat two-cursor walk — +40 source, +160
 // destination — with no per-row display-list read at all.  ~2.5 KB ≈ 12 ms, and it runs exactly
@@ -6299,13 +6342,31 @@ void RescueOnFractalus::renderBootScene()
             stationDotCol    = 0xFFFF;
             buildStationSprites();       // so the first displayed frame already has them
         } else {
-            bootFieldCopper->buildLayout(*bootFieldBitmap, kLogoTopLines, kLogoRows,
-                                         kGtia9Pal1, *nullSprite);
+            // Give an external launcher one stable, offset-independent opportunity to replace
+            // the logo.  The palette starts as the faithful gold ramp, so a hook may edit only
+            // the pens it wants.  Bitmap and palette are independently optional: an unclaimed
+            // bitmap still takes the exact decode path below, and an unclaimed palette is reset
+            // in case a probing hook touched it before declining it.
+            uint16_t logoPal[16];
+            for (unsigned i = 0; i < 16; i++) logoPal[i] = kGtia9Pal1[i];
+            logoLayoutRows = kLogoRows;
+            logoLayoutTopLines = kLogoTopLines;
+            const unsigned long logoOverride =
+                callLogoOverride(ROF_LOGO_PHASE_INITIAL, logoPal, 16);
+            if ((logoOverride & ROF_LOGO_OVERRIDE_PALETTE) == 0)
+                for (unsigned i = 0; i < 16; i++) logoPal[i] = kGtia9Pal1[i];
+            logoFieldExternal = (logoOverride & ROF_LOGO_OVERRIDE_BITMAP) != 0;
+
+            bootFieldCopper->buildLayout(*bootFieldBitmap, logoLayoutTopLines, logoLayoutRows,
+                                         logoPal, *nullSprite);
             // The sparkle is one sprite on channel 0; like the station's, the OPERAND is constant
             // from here on (only the buffer's contents move), so it never has to meet the copper's
             // scanline-16 SPRxPT read deadline again.
             if (logoSparkle) bootFieldCopper->setSpriteOperand(0, logoSparkle->data());
-            decodeLogoField();
+            if (logoFieldExternal)
+                logoFieldGen = g_logoFieldGen;   // consume both original paste generations
+            else
+                decodeLogoField();
             logoSparkleCol = 0xFFFF;     // force the first colour publish
             buildLogoSparkle();          // so the first displayed frame already has it
         }
@@ -6322,7 +6383,14 @@ void RescueOnFractalus::renderBootScene()
         // Scene 1.  Its field changes exactly once after the reveal — the "GAMES" paste, 86
         // frames in — so re-decode on a generation change rather than every frame.  The sparkle
         // is NOT here: it animates, so it belongs in the VBI (logoVblankUpdate).
-        if (logoFieldGen != g_logoFieldGen) decodeLogoField();
+        if (logoFieldGen != g_logoFieldGen) {
+            const unsigned long gamesOverride =
+                callLogoOverride(ROF_LOGO_PHASE_GAMES, 0, 0);
+            if ((gamesOverride & ROF_LOGO_OVERRIDE_BITMAP) != 0 || logoFieldExternal)
+                logoFieldGen = g_logoFieldGen;
+            else
+                decodeLogoField();
+        }
         return;
     }
 

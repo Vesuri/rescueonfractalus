@@ -32,10 +32,12 @@ SLAVE_OPTS  = -O+ -OG+ -ODd- -ODe- -w4- -wo- $(COMMON_OPTS)
 
 all : $(SLAVE)
 
-$(SLAVE) : $(SLAVE_SOURCE)
+LOGO_ASSETS = assets/enhanced_logo.bin assets/enhanced_games.bin assets/enhanced_logo.pal
+
+$(SLAVE) : $(SLAVE_SOURCE) $(LOGO_ASSETS)
 	basm $(SLAVE_OPTS) -o$(SLAVE) $(SLAVE_SOURCE)
 
-$(TUNE_SLAVE) : $(SLAVE_SOURCE)
+$(TUNE_SLAVE) : $(SLAVE_SOURCE) $(LOGO_ASSETS)
 	basm $(SLAVE_OPTS) -dTUNE=1 -o$(TUNE_SLAVE) $(SLAVE_SOURCE)
 
 clean:

@@ -314,9 +314,9 @@ reset or the F10 quit key.
 **The game knows nothing about WHDLoad or resload, and is not rebuilt for it.** It exports a block
 of function pointers, `g_rofExternalHooks` (`src/platform/amiga/ExternalHooks.h`), which are 0 in
 the shipped executable; a 0 pointer means "no external storage" and the platform falls back to its
-own `RoF.hi` file. `_patch_hooks`, called between `LoadSeg` and the game's entry, fills two of them
-in with `_hook_save` / `_hook_load`, which are thin `resload_SaveFile` / `resload_LoadFile` wrappers
-in the slave. The very same `RoF` binary runs from Workbench, a Shell and WHDLoad.
+own `RoF.hi` file. `_patch_hooks`, called between `LoadSeg` and the game's entry, fills the storage
+entries with `_hook_save` / `_hook_load`, which are thin `resload_SaveFile` / `resload_LoadFile`
+wrappers in the slave. The very same `RoF` binary runs from Workbench, a Shell and WHDLoad.
 
 Three things make that patch survive a game rebuild, which moves every offset:
 
@@ -344,6 +344,51 @@ size first: a first run has no `RoF.hi`, and that must read as "nothing saved", 
 `resload` file names are relative to the first data directory — the drawer holding the slave — so
 `RoF.hi` lands there regardless of how the `slv_CurrentDir` / `#sub-dir "data"` question in §5 is
 settled.
+
+## 7. Replacing the boot logo — the external logo hook
+
+The same `RoF!HOOK` block has a third callback, `logoOverride`. The stock slave installs
+`_hook_logo`; it returns zero while `Custom4` is disabled, so the shipped image and gold palette
+are unchanged, and supplies the bundled enhanced artwork while `Custom4` is enabled. A customised
+slave only has to replace that routine and embed or otherwise provide its artwork; it never
+searches for or patches game code, bitmap addresses, or copper-list data.
+
+The game calls the same hook twice. The `INITIAL` call occurs while entering the logo scene, after
+allocating the shared CHIP RAM field and while the blank copper list is active. The `GAMES` call
+occurs at the original 86-frame cue, with the displayed planar field available for an in-place
+overlay. It passes one versioned 40-byte context containing:
+
+* the writable **320 x 340 x 4** interleaved planar bitmap (`54,400` bytes);
+* its 40-byte per-plane and 160-byte all-plane row strides;
+* the logo window geometry (initially the first 62 bitmap rows, after 64 blank display lines); and
+* a writable 16-word native Amiga `$0RGB` palette, pre-filled with the normal gold ramp.
+
+The context's `phase` is `ROF_LOGO_PHASE_INITIAL` (1) or `ROF_LOGO_PHASE_GAMES` (2). On `INITIAL`,
+bit 0 says the callback supplied the bitmap and bit 1 says it supplied the palette. On `GAMES`,
+`palette` is null and returning bit 0 says the callback applied its overlay, preventing the original
+GAMES decode. A slave may therefore replace the initial image, the timed overlay, or both through
+one callback. A custom initial bitmap remains unchanged at the GAMES cue if the callback declines
+that phase, preserving the original override API's behaviour. Unclaimed parts otherwise retain the
+original behaviour. Context pointers are valid only for the current call.
+The exact assembly offsets and return bits are documented beside `_hook_logo` in
+`whdload/RoFSlave.s`; the C definition is `RofLogoOverrideContext` in
+`src/platform/amiga/ExternalHooks.h`.
+
+The `ROF_LOGO_OVERRIDE_GEOMETRY` return bit lets the initial callback change `visibleRows` and
+`topBlankLines`, subject to the game validating that the window fits both the allocation and the
+216-line display. The bundled `Custom4=Enhanced Graphics` implementation uses this to show the
+provided 288x100 artwork at native height: it centres the image horizontally in a 320x100 planar
+field, selects 100 rows after 58 blank lines, and installs its own 16-word OCS palette. Its initial
+asset has the central GAMES rectangle cleared; the second asset restores that 88x30 rectangle at
+the timed `GAMES` callback. Both are raw four-plane interleaved data, so the slave's hooks are only
+tight copy loops.
+
+The same path can be tested without WHDLoad. From `amiga/`, run `make clean && make
+ENHANCED_LOGO=1`, then launch `./run.sh` (or the resulting `out/RoF` normally). This define embeds
+the same three generated assets and gives the executable's otherwise-null hook a built-in
+implementation. The ordinary `make` remains unchanged and does not embed the enhanced artwork.
+Because this makefile does not track command-line defines, clean before switching either into or
+out of this build.
 
 ## Related
 

@@ -49,6 +49,24 @@ atari_charset:
 	.incbin "assets/atari_charset.bin"
 atari_charset_end:
 
+| Optional standalone-build copy of the WHDLoad enhanced logo assets.  The normal
+| executable does not carry these: the slave owns them and supplies them through the
+| external hook.  `make ENHANCED_LOGO=1` defines ROF_ENHANCED_LOGO for both this file
+| and ExternalHooks.cpp, which makes that same hook point at the blobs below even when
+| the game is started directly from Workbench/Shell or amiga/run.sh.
+.ifdef ROF_ENHANCED_LOGO
+	.balign 4
+	.global rof_enhanced_logo
+	.global rof_enhanced_games
+	.global rof_enhanced_palette
+rof_enhanced_logo:
+	.incbin "../whdload/assets/enhanced_logo.bin"
+rof_enhanced_games:
+	.incbin "../whdload/assets/enhanced_games.bin"
+rof_enhanced_palette:
+	.incbin "../whdload/assets/enhanced_logo.pal"
+.endif
+
 | Removed embeds (kept as notes so nobody re-adds one "because incbin.s mentions it"):
 |  - tunnel.raw: the concentric tunnel rings are drawn procedurally by
 |    draw_frame_pattern_seq ($65FB, src/gen/rof_native.c) at scene init, then decoded.

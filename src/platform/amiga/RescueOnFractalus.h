@@ -441,6 +441,8 @@ private:
     bool             bootFieldCopperInstalled = false;   // is it the live list? (stationVblankUpdate's gate)
     unsigned char    bootFieldScene = 0;                 // which scene the live LAYOUT was built for
     void renderBootScene();                        // the whole per-frame render for scenes 1 and 2
+    unsigned long callLogoOverride(unsigned short phase, unsigned short* palette,
+                                   unsigned short paletteEntries);
     void decodeLogoField();                        // scene 1: its 62 rows (at entry, then at "GAMES")
     void decodeStationField();                     // all 340 display-list rows (once, at entry)
     void decodeStationDirty();                     // consume the recorded dirty rectangles
@@ -501,6 +503,9 @@ private:
     void     buildLogoSparkle();
     uint16_t logoSparkleCol = 0xFFFF;    // last COLOR17 published (poke only on change)
     unsigned char logoFieldGen = 0;      // g_logoFieldGen value the decoded field is from
+    bool logoFieldExternal = false;      // hook supplied the planar field: never GTIA-decode over it
+    unsigned short logoLayoutRows = 62;  // hook may override these during INITIAL
+    unsigned short logoLayoutTopLines = 64;
 
     // Blank black list shown until g_standbyRevealReady latches (boot/standby build in
     // progress) — switched to the real lists in renderFrame once ready.

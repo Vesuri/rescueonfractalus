@@ -49,6 +49,10 @@
  time-of-day transitions can be selected by ticking "Enhanced Palette", or with
  the Tooltype "Custom3=1". The mode remains fixed until the game exits.
 
+ The Lucasfilm Games boot logo can be replaced with the enhanced 16-colour
+ artwork by ticking "Enhanced Graphics", or with the Tooltype "Custom4=1".
+ The GAMES text retains its original timed appearance.
+
 
  History:
  --------

@@ -44,8 +44,9 @@
 ;
 ; The game does not know what WHDLoad or resload are.  It exports a small block of
 ; function pointers (src/platform/amiga/ExternalHooks.h) which are 0 in the shipped
-; executable, and _patch_hooks below fills two of them in with the trampolines at the
-; end of this file.  The block is located by SCANNING the loaded hunks for its magic,
+; executable, and _patch_hooks below fills them with the trampolines at the end of
+; this file (including the option-controlled logo callback).  The block is located by
+; SCANNING the loaded hunks for its magic,
 ; so the game can be rebuilt -- moving every offset -- without touching this slave.
 ;
 ;---------------------------------------------------------------------------*
@@ -122,7 +123,8 @@ slv_info	dc.b	"Amiga port by Vesuri",10
 		dc.b	"F10 also quits, on a 68010 or better.",0
 slv_config	dc.b	"C1:B:Border Blanking (ECS/AGA only);"
 		dc.b	"C2:B:Enhanced Terrain Rendering;"
-		dc.b	"C3:B:Enhanced Palette;",0
+		dc.b	"C3:B:Enhanced Palette;"
+		dc.b	"C4:B:Enhanced Graphics;",0
 		dc.b	"$VER: RoF.slave 1.0 (13.09.2026)",0
 	EVEN
 
@@ -145,7 +147,7 @@ _args_end
 
 _bootdos	move.l	(_resload,pc),a2	;A2 = resload
 
-	;read the version-17 Custom1 checkbox before loading/patching the game
+	;read the version-17 Custom1..4 options before loading/patching the game
 		lea	(_rof_tags,pc),a0
 		jsr	(resload_Control,a2)
 
@@ -216,10 +218,14 @@ _bootdos	move.l	(_resload,pc),a2	;A2 = resload
 
 hook_MAGIC0	= $526f4621		;'RoF!'
 hook_MAGIC1	= $484f4f4b		;'HOOK'
-hook_VERSION	= 1
+hook_VERSION	= 3
 hook_Save	= 12			;APTR  int (*)(const UBYTE *blk, ULONG len)
 hook_Load	= 16			;APTR  int (*)(UBYTE *blk, ULONG len)
-hook_SIZEOF	= 20
+hook_Logo	= 20			;APTR  ULONG (*)(struct RofLogoOverrideContext *)
+hook_SIZEOF	= 24
+logo_USE_BITMAP = 1
+logo_USE_PALETTE = 2
+logo_USE_GEOMETRY = 4
 
 ; Walk the segment list and patch the block wherever it turns out to be.
 ;
@@ -270,6 +276,8 @@ _patch_hooks	movem.l	d2-d3,-(a7)
 		move.l	a1,(hook_Save-4,a0)
 		lea	(_hook_load,pc),a1
 		move.l	a1,(hook_Load-4,a0)
+		lea	(_hook_logo,pc),a1
+		move.l	a1,(hook_Logo-4,a0)
 .done		movem.l	(a7)+,d2-d3
 		rts
 
@@ -394,6 +402,8 @@ _rof_custom1	dc.l	0
 _rof_custom2	dc.l	0
 		dc.l	WHDLTAG_CUSTOM3_GET
 _rof_custom3	dc.l	0
+		dc.l	WHDLTAG_CUSTOM4_GET
+_rof_custom4	dc.l	0
 		dc.l	TAG_DONE
 
 ; int _hook_save(const UBYTE *blk, ULONG len)      4(sp)=blk  8(sp)=len
@@ -424,6 +434,102 @@ _hook_load	movem.l	d2/a2,-(a7)
 .fail		moveq	#0,d0
 .out		movem.l	(a7)+,d2/a2
 		rts
+
+; ULONG _hook_logo(struct RofLogoOverrideContext *ctx)   4(sp)=ctx
+;
+; Custom4=Enhanced Graphics supplies the bundled 288x100 Lucasfilm image.  The
+; initial phase copies its GAMES-free 320x100 planar field and palette; the GAMES
+; phase copies the extracted centre overlay into the already displayed field.
+;
+; Context v2 is 40 bytes (the first 36 bytes are the old v1 layout):
+;   +0.w version=2       +2.w size=40          +4.l bitmap
+;   +8.l bitmapBytes     +12.w width=320       +14.w height=340
+;   +16.w bitplanes=4    +18.w planeRowBytes=40
+;   +20.w rowBytes=160   +22.w visibleRows=62  +24.w topBlankLines=64
+;   +26.w format=1       +28.l palette         +32.w paletteEntries
+;   +34.w reserved       +36.w phase           +38.w phaseReserved
+;
+; phase=1 is INITIAL: the bitmap is not displayed yet, palette points at 16 native
+; Amiga $0RGB words, and returning bit 0/1/2 claims bitmap/palette/geometry.
+; phase=2 is GAMES, exactly at the original 86-frame cue: bitmap is the live planar
+; field and palette is null.  Overlay it in place and return logo_USE_BITMAP to keep
+; the game from applying its original GAMES update.  Returning zero at either phase
+; selects that phase's original path.
+_hook_logo	lea	(_rof_custom4,pc),a0
+		tst.l	(a0)
+		beq.s	.decline
+		move.l	(4,a7),a0		;context
+		cmp.w	#2,(a0)		;context version
+		bne.s	.decline
+		cmp.w	#40,(2,a0)		;minimum context size
+		blo.s	.decline
+		cmp.w	#1,(26,a0)		;4-plane interleaved format
+		bne.s	.decline
+		cmp.w	#320,(12,a0)
+		bne.s	.decline
+		cmp.w	#340,(14,a0)
+		bne.s	.decline
+		cmp.w	#4,(16,a0)
+		bne.s	.decline
+		cmp.w	#40,(18,a0)
+		bne.s	.decline
+		cmp.w	#160,(20,a0)
+		bne.s	.decline
+
+		cmp.w	#1,(36,a0)		;INITIAL?
+		beq.s	.initial
+		cmp.w	#2,(36,a0)		;GAMES?
+		bne.s	.decline
+
+		;30 rows x 4 planes x 11 bytes.  The source rectangle is image
+		;x=104..191, centred at bitmap x=120; row 65 begins at byte $28a0.
+		move.l	(4,a0),a1
+		lea	($28af,a1),a1
+		lea	(_enhanced_games,pc),a0
+		move.w	#119,d0		;120 plane spans
+.games_copy	move.l	(a0)+,(a1)+
+		move.l	(a0)+,(a1)+
+		move.w	(a0)+,(a1)+
+		move.b	(a0)+,(a1)+
+		lea	(29,a1),a1		;next 40-byte plane row
+		dbf	d0,.games_copy
+		moveq	#logo_USE_BITMAP,d0
+		rts
+
+.initial	cmp.l	#16000,(8,a0)		;100 complete 160-byte rows
+		blo.s	.decline
+		move.l	a0,d1			;keep context in caller-saved D1
+		move.l	(4,a0),a1
+		lea	(_enhanced_logo,pc),a0
+		move.w	#3999,d0		;16,000 bytes / 4
+.logo_copy	move.l	(a0)+,(a1)+
+		dbf	d0,.logo_copy
+		move.l	d1,a0
+		move.l	(28,a0),a1		;palette destination
+		tst.l	a1
+		beq.s	.decline
+		cmp.w	#16,(32,a0)
+		blo.s	.decline
+		lea	(_enhanced_palette,pc),a0
+		moveq	#15,d0
+.pal_copy	move.w	(a0)+,(a1)+
+		dbf	d0,.pal_copy
+		move.l	d1,a0
+		move.w	#100,(22,a0)		;native image height
+		move.w	#58,(24,a0)		;vertically centred in 216 lines
+		moveq	#logo_USE_BITMAP|logo_USE_PALETTE|logo_USE_GEOMETRY,d0
+		rts
+
+.decline	moveq	#0,d0
+		rts
+
+	EVEN
+_enhanced_logo
+	INCBIN	"assets/enhanced_logo.bin"
+_enhanced_games
+	INCBIN	"assets/enhanced_games.bin"
+_enhanced_palette
+	INCBIN	"assets/enhanced_logo.pal"
 
 ;============================================================================
 

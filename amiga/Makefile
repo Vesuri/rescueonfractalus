@@ -938,6 +938,12 @@ endif
 ifdef BAKEVOL_OFF
 EXTRA_DEFINES += -DROF_AUDIO_BAKEVOL=0
 endif
+# `make clean && make ENHANCED_LOGO=1`: embed the WHDLoad enhanced logo assets and
+# install the same phase-aware hook inside the executable.  This is the direct-launch /
+# FS-UAE test path; the normal build contains neither the assets nor the built-in hook.
+ifdef ENHANCED_LOGO
+EXTRA_DEFINES += -DROF_ENHANCED_LOGO
+endif
 CORE_CFLAGS   = -g -MP -MMD -m68000 -msoft-float $(OPT) -nostdlib \
                 -fno-tree-loop-distribution -ffunction-sections -fdata-sections \
                 -Wno-unused-function -Wno-unused-parameter -Wno-unused-variable \
@@ -957,6 +963,9 @@ CPPFLAGS  = $(CCFLAGS) -fno-rtti -fno-exceptions -fno-use-cxa-atexit -std=gnu++1
             -I"$(REPO)/src/platform" \
             -I"$(CURDIR)"
 ASFLAGS   = -mcpu=68000 -g --register-prefix-optional -I"$(SDKDIR)" -I"$(CURDIR)"
+ifdef ENHANCED_LOGO
+ASFLAGS   += --defsym ROF_ENHANCED_LOGO=1
+endif
 # `make FULLXEX=1` embeds the original ../rof.xex instead of the sparse boot image and
 # switches XexImage.cpp back to the segment walk — the A/B for suspecting the sparse image.
 # The define has to reach BOTH the assembler (.ifdef in incbin.s) and the C++ side.
@@ -1047,6 +1056,11 @@ obj/StartupConfig.o : $(AMIGA_SRC)/StartupConfig.s
 INCBIN_DEPS := assets/rof_boot_image.bin assets/atari_charset.bin
 ifdef FULLXEX
 INCBIN_DEPS := ../rof.xex assets/atari_charset.bin
+endif
+ifdef ENHANCED_LOGO
+INCBIN_DEPS += ../whdload/assets/enhanced_logo.bin \
+               ../whdload/assets/enhanced_games.bin \
+               ../whdload/assets/enhanced_logo.pal
 endif
 
 # assets/rof_boot_image.bin — the SPARSE boot image that replaced the embedded rof.xex
