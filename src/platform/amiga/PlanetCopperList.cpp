@@ -41,8 +41,8 @@ static const uint16_t kColor29 = 0x1BA;   // sprite pair 6/7 pen 01 (starfield)
 #define INDEX_PLAYFIELD       1                            // setPlayfield: 3
 #define INDEX_BPLCON2         (INDEX_PLAYFIELD + 3)        // BPLCON2 PFxP=1 (game GPRIOR=$14) (1)
 #define INDEX_TITLE_PAL       (INDEX_BPLCON2 + 1)          // color00..03 (4)
-#define INDEX_TITLE_BPL       (INDEX_TITLE_PAL + 4)        // 8:  title 2bp ptrs (4)
-#define INDEX_SPRITE_COL      (INDEX_TITLE_BPL + 4)        // 12: color16,color17 (2)
+#define INDEX_TITLE_BPL       (INDEX_TITLE_PAL + 4)        // title ptrs; reserve four planes (8)
+#define INDEX_SPRITE_COL      (INDEX_TITLE_BPL + 8)        // color16,color17 (2)
 #define INDEX_SPRITES         (INDEX_SPRITE_COL + 2)       // 14: 8 sprite ptrs (16)
 #define INDEX_STAR_COL        (INDEX_SPRITES + 16)         // 30: COLOR21,COLOR25,COLOR29 star pens (3)
 #define INDEX_COMPASS_WAIT    (INDEX_STAR_COL + 3)         // 33: WAIT(compass scanline) (1)
@@ -103,7 +103,7 @@ void PlanetCopperList::buildLayout(const Bitmap& title, const Bitmap& terrain, c
     uint32_t* d = data_;
 
     // ---- title region: playfield (2bp interleaved) ----
-    setPlayfield(INDEX_PLAYFIELD, kW, kH, kBP2, /*interleaved*/true,
+    setPlayfield(INDEX_PLAYFIELD, kW, kH, (uint8_t)title.bitplanes, /*interleaved*/true,
                  /*hires*/false, /*interlace*/false, /*dualPlayfield*/false,
                  /*holdAndModify*/false, kCenterY);
     // BPLCON2 = the game's GPRIOR=$14 priority (PF1P=PF2P=1): sprite pair 0 (canopy posts) in
@@ -113,7 +113,9 @@ void PlanetCopperList::buildLayout(const Bitmap& title, const Bitmap& terrain, c
     // without this re-assert the star sprites inherit PFxP=4 and render in front of the planet.
     d[INDEX_BPLCON2] = copperMove(bplcon2, (uint16_t)((1u << 3) | 1u));
     setTitlePalette(0, 0, 0);                  // seeded; caller refreshes
-    showBitmap(INDEX_TITLE_BPL, title);        // 2bp interleaved = 4 ptr moves
+    showBitmap(INDEX_TITLE_BPL, title);
+    for (uint16_t i = (uint16_t)(title.bitplanes * 2); i < 8; i++)
+        d[INDEX_TITLE_BPL + i] = copperMove(0x1FE, 0);
 
     // Sprite colour regs + pointers.  COLOR16 const black, COLOR17 = canopy post (setter).
     // Sprites: 0/1 = canopy posts; 2/3,4/5,6/7 = the three quad starfield players (low/high

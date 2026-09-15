@@ -37,8 +37,8 @@ static const uint16_t kGaugeBottomLine = 0x2c + 144 + 56;             // = 244
 #define INDEX_PLAYFIELD       1
 #define INDEX_BPLCON2         (INDEX_PLAYFIELD + 3)    // restore normal title/viewport priority each frame
 #define INDEX_TITLE_PAL       (INDEX_BPLCON2 + 1)      // color00..03 (4)
-#define INDEX_TITLE_BPL       (INDEX_TITLE_PAL + 4)    // 17: title bitmap ptrs (2bp = 4)
-#define INDEX_SPRITE_COL      (INDEX_TITLE_BPL + 4)    // 21: color16,color17 (2)
+#define INDEX_TITLE_BPL       (INDEX_TITLE_PAL + 4)    // title ptrs; reserve four planes (8)
+#define INDEX_SPRITE_COL      (INDEX_TITLE_BPL + 8)    // color16,color17 (2)
 #define INDEX_SPRITES         (INDEX_SPRITE_COL + 2)   // 23: 8 sprite ptrs (16)
 #define INDEX_ENERGY_COL       (INDEX_SPRITES + 16)     // 39: COLOR21 ($1AA) (1)
 #define INDEX_COMPASS_WAIT    (INDEX_ENERGY_COL + 1)    // 40: WAIT(compass scanline) (1)
@@ -77,7 +77,7 @@ void StandbyCopperList::buildLayout(const Bitmap& title, const Bitmap& terrain, 
     // ---- title region: playfield (2bp interleaved) ----
     // Emits BPLCON0 (2bp) + BPL1MOD/BPL2MOD for the title band; the constant playfield
     // registers (incl. BPLCON2 = PF priority) are set once in RescueOnFractalus::initialize.
-    setPlayfield(INDEX_PLAYFIELD, kW, kH, kBP2, /*interleaved*/true,
+    setPlayfield(INDEX_PLAYFIELD, kW, kH, (uint8_t)title.bitplanes, /*interleaved*/true,
                  /*hires*/false, /*interlace*/false, /*dualPlayfield*/false,
                  /*holdAndModify*/false, kCenterY);
     // The dashboard changes BPLCON2 later in this same list, so restore the normal single-PF
@@ -86,7 +86,9 @@ void StandbyCopperList::buildLayout(const Bitmap& title, const Bitmap& terrain, 
 
     // Title palette + bitmap pointers (palette refreshed each frame via setters).
     setTitlePalette(0, 0, 0);                  // seeded; caller refreshes
-    showBitmap(INDEX_TITLE_BPL, title);        // 2bp interleaved = 4 ptr moves
+    showBitmap(INDEX_TITLE_BPL, title);
+    for (uint16_t i = (uint16_t)(title.bitplanes * 2); i < 8; i++)
+        d[INDEX_TITLE_BPL + i] = copperMove(0x1FE, 0);
 
     // Sprite colour regs: COLOR16 = black (const), COLOR17 = canopy-post grey (setter).
     d[INDEX_SPRITE_COL] = copperMove(color16, 0x000);

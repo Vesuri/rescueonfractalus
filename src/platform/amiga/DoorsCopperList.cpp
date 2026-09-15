@@ -39,8 +39,8 @@ static const uint16_t kGaugeBottomLine = 0x2c + 144 + 56;             // = 244
 #define INDEX_PLAYFIELD       1
 #define INDEX_BPLCON2         (INDEX_PLAYFIELD + 3)    // restore single-PF priority each frame
 #define INDEX_TITLE_PAL       (INDEX_BPLCON2 + 1)      // color00..03 (4)
-#define INDEX_TITLE_BPL       (INDEX_TITLE_PAL + 4)    // title bitmap ptrs (2bp = 4)
-#define INDEX_SPRITE_COL      (INDEX_TITLE_BPL + 4)    // color16,color17 (2)
+#define INDEX_TITLE_BPL       (INDEX_TITLE_PAL + 4)    // title ptrs; reserve four planes (8)
+#define INDEX_SPRITE_COL      (INDEX_TITLE_BPL + 8)    // color16,color17 (2)
 #define INDEX_SPRITES         (INDEX_SPRITE_COL + 2)   // 8 sprite ptrs (16)
 #define INDEX_ENERGY_COL       (INDEX_SPRITES + 16)     // COLOR21 ($1AA) (1)
 #define INDEX_COMPASS_WAIT    (INDEX_ENERGY_COL + 1)    // WAIT(compass scanline) (1)
@@ -119,13 +119,15 @@ void DoorsCopperList::buildLayout(const Bitmap& title, const Bitmap& cockpit,
     uint32_t* d = data_;
 
     // ---- title region: playfield (2bp interleaved) ----
-    setPlayfield(INDEX_PLAYFIELD, kW, kH, kBP2, /*interleaved*/true,
+    setPlayfield(INDEX_PLAYFIELD, kW, kH, (uint8_t)title.bitplanes, /*interleaved*/true,
                  /*hires*/false, /*interlace*/false, /*dualPlayfield*/false,
                  /*holdAndModify*/false, kCenterY);
     d[INDEX_BPLCON2] = copperMove(bplcon2, (uint16_t)((1u << 3) | 1u));
 
     setTitlePalette(0, 0, 0);                  // seeded; caller refreshes
-    showBitmap(INDEX_TITLE_BPL, title);        // 2bp interleaved = 4 ptr moves
+    showBitmap(INDEX_TITLE_BPL, title);
+    for (uint16_t i = (uint16_t)(title.bitplanes * 2); i < 8; i++)
+        d[INDEX_TITLE_BPL + i] = COPPER_NOP;
 
     d[INDEX_SPRITE_COL] = copperMove(color16, 0x000);
     setSpritePostColor(0);

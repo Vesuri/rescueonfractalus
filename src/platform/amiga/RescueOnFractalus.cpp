@@ -2553,7 +2553,8 @@ void RescueOnFractalus::initialize()
     g_flightPhysicalTerrainRows = ROF_FLIGHT_SCALE_Y(ROF_FLIGHT_SOURCE_TERRAIN_ROWS);
     g_flightPhysicalRows = ROF_FLIGHT_SCALE_Y(ROF_FLIGHT_SOURCE_ROWS);
 
-    titleBitmap   = Bitmap::allocate(kW, kTitleHeight,   kBP2, true);
+    titleBitmap   = Bitmap::allocate(kW, kTitleHeight,
+                                     g_enhancedGraphics ? 4 : kBP2, true);
     terrainBitmap = Bitmap::allocate(kW, kViewportFullHeight, kBP3, true);  // FLIGHT-ONLY (double-buffered); 94 physical rows incl. wing band
     // Second flight terrain buffer for double-buffering renderFlightDirect (see header).
     terrainBitmapBack = Bitmap::allocate(kW, kViewportFullHeight, kBP3, true);
@@ -7248,20 +7249,21 @@ void RescueOnFractalus::decodeCompass()
     static const int       kCompassRow    = 33;       // title-bitmap row for display y=32
     static const int       kCompassByteX  = 18;       // x=144 → byte 144/8 (plane stride 80)
     uint8_t* tbmp = (uint8_t*)titleBitmap->data;
+    const int titleStride = titleBitmap->rowSizeInBytes;
     const uint8_t* src = (const uint8_t*)mem + kCompassRAM;
     for (int cell = 0; cell < 4; cell++) {
         if (g_enhancedGraphics) {
             const uint8_t* tile = cockpitCompassPlanar(src[cell]);
-            uint8_t* row = tbmp + kRow80[kCompassRow];
-            for (int s = 0; s < 8; s++, row += 80, tile += 2) {
+            uint8_t* row = tbmp + kCompassRow * titleStride;
+            for (int s = 0; s < 8; s++, row += titleStride, tile += 2) {
                 row[kCompassByteX + cell]      = tile[0];
                 row[40 + kCompassByteX + cell] = tile[1];
             }
             continue;
         }
         const uint8_t* glyph = (const uint8_t*)mem + kCompassCharset + (src[cell] & 0x7Fu) * 8u;
-        uint8_t* row = tbmp + kRow80[kCompassRow];   // walked +80/scanline (80 = 40 plane1 + 40 plane2)
-        for (int s = 0; s < 8; s++, row += 80) {
+        uint8_t* row = tbmp + kCompassRow * titleStride;
+        for (int s = 0; s < 8; s++, row += titleStride) {
             uint8_t p1v, p2v;
             decode2bppByte(glyph[s], &p1v, &p2v);
             row[kCompassByteX + cell]      = p1v;
@@ -7524,7 +7526,8 @@ void RescueOnFractalus::render()
     if (g_titleToRender >= 0 || cockpitForceFull) {
     const int want = cockpitForceFull ? 20 : g_titleToRender;
     uint8_t* tbmp = (uint8_t*)titleBitmap->data;
-    uint8_t* const titleBase = tbmp + kTitleTextRow * 80;     // first text scanline row (once)
+    const int titleStride = titleBitmap->rowSizeInBytes;
+    uint8_t* const titleBase = tbmp + kTitleTextRow * titleStride;
     const uint8_t* tsrc    = (const uint8_t*)mem + kScreenRAM;  // non-volatile walk (RAM static this frame)
     for (int col = 0; col < want; col++) {
         uint8_t charByte = tsrc[col];
@@ -7533,7 +7536,7 @@ void RescueOnFractalus::render()
             const uint8_t* mask = cockpitTextMaskPlanar(charByte);
             const bool usePF1 = ((charByte >> 6) & 3u) == 1u;
             uint8_t* row = titleBase + col * 2;
-            for (int scanline = 0; scanline < 8; scanline++, row += 80, mask += 2) {
+            for (int scanline = 0; scanline < 8; scanline++, row += titleStride, mask += 2) {
                 row[0]  = usePF1 ? 0 : mask[0];
                 row[1]  = usePF1 ? 0 : mask[1];
                 row[40] = usePF1 ? mask[0] : 0;
@@ -7550,7 +7553,7 @@ void RescueOnFractalus::render()
         const uint8_t* glyph = (const uint8_t*)mem + kCharsetBase + (charByte & 0x3Fu) * 8u;
         const bool usePF1 = ((charByte >> 6) & 3u) == 1u;     // hi2=1 → COLPF1/blue
         uint8_t* row = titleBase + col * 2;                   // col*2 = shift; titleBase const
-        for (int scanline = 0; scanline < 8; scanline++, row += 80) {
+        for (int scanline = 0; scanline < 8; scanline++, row += titleStride) {
             if (kTitleTextRow + scanline >= (int)kTitleHeight) break;
             uint16_t doubled = kDoubleGlyph[*glyph++];
             uint8_t hb = (uint8_t)(doubled >> 8);
@@ -7565,9 +7568,10 @@ void RescueOnFractalus::render()
     // Shrinking the count blanks the cells that were painted last time but are no longer wanted.
     for (int col = want; col < titleRendered; col++) {
         uint8_t* row = titleBase + col * 2;
-        for (int scanline = 0; scanline < 8; scanline++, row += 80) {
+        for (int scanline = 0; scanline < 8; scanline++, row += titleStride) {
             if (kTitleTextRow + scanline >= (int)kTitleHeight) break;
-            row[0] = row[1] = row[40] = row[41] = 0;
+            for (int plane = 0; plane < (int)titleBitmap->bitplanes; plane++)
+                row[plane * 40] = row[plane * 40 + 1] = 0;
         }
     }
     titleRendered = want;
