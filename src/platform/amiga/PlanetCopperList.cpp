@@ -103,6 +103,7 @@ void PlanetCopperList::buildLayout(const Bitmap& title, const Bitmap& terrain, c
                                      Sprite* const star[6])
 {
     uint32_t* d = data_;
+    normalDashboard_ = cockpit.bitplanes == 4;
 
     // ---- title region: playfield (2bp interleaved) ----
     setPlayfield(INDEX_PLAYFIELD, kW, kH, (uint8_t)title.bitplanes, /*interleaved*/true,
@@ -263,7 +264,13 @@ void PlanetCopperList::setSpritePostColor(uint16_t c)
 void PlanetCopperList::setEnergyIndicatorColor(uint16_t c)
 {
     // COLOR21 (sprite pair 2/3 pen 01) — poked BELOW the starfield, where channel 2 is the gauge.
-    data_[INDEX_GAUGE_COL] = copperMove(color21, c);
+    data_[normalDashboard_ ? INDEX_GAUGE_BOT : INDEX_GAUGE_COL] =
+        copperMove(normalDashboard_ ? color08 : color21, c);
+}
+
+void PlanetCopperList::setEnergyIndicatorTop(uint16_t line)
+{
+    if (normalDashboard_) data_[INDEX_GAUGE_BOT_WAIT] = copperWait(line - 1, 0xE0);
 }
 
 void PlanetCopperList::setStarOperand(int i, const uint16_t* data)

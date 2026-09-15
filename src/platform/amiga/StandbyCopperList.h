@@ -33,6 +33,7 @@ public:
     void setSpritePostColor(uint16_t c);                           // color17 (canopy posts)
     void setSprite2(const Sprite& s);                              // sprite-2 ptr (gauge or null)
     void setEnergyIndicatorColor(uint16_t c);                                // COLOR21 ($1AA) gauge bar
+    void setEnergyIndicatorTop(uint16_t line);
     void setCompassColor(uint16_t c);                              // color01 over the compass band (COLPF0 $00CF)
     // terrain color00..03: color00 = COLBK green ($0071), color03 = road-dot dark ($02C0)
     // (door field decodes COLBK→pen0; see kNibbleColour).  color00 carries the green into
@@ -50,4 +51,8 @@ public:
 private:
     const Bitmap* cockpitBmp_ = nullptr;   // stored by buildLayout; re-emitted after the runs
     uint32_t emitCockpitRegion(uint32_t idx);  // write the constant cockpit region + terminator; returns next idx
+    bool normalDashboard_ = false;
+    uint32_t energyEventIndex_ = 0;
+    uint16_t energyColor_ = 0;
+    uint16_t energyTop_ = 188;
 };

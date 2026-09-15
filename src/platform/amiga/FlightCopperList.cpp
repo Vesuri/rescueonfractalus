@@ -167,7 +167,8 @@ static const uint16_t kColor26 = 0x1B4;   // pair 4/5 pen 10 (wide-object segmen
 // COLOR00 remains the dashboard's dark grey throughout, including the unblanked OCS border.
 #define INDEX_DASH_BLUE_WAIT  (INDEX_ALTIM_COL_DASH + 1)   // WAIT(kCockpitLine+2-1 = 181) (1)
 #define INDEX_DASH_BLUE       (INDEX_DASH_BLUE_WAIT + 1)   // color01 = $90 dark blue (dashboard) (1)
-#define INDEX_FLOOR_WAIT_BASE (INDEX_DASH_BLUE + 1)
+#define INDEX_GAUGE_EVENTS    (INDEX_DASH_BLUE + 1)        // 3 × (WAIT + colour MOVE) (6)
+#define INDEX_FLOOR_WAIT_BASE (INDEX_GAUGE_EVENTS + 6)
 // The gauge sprites (altimeter pair 6/7, energy pair 4/5) are fixed 56-row SOLID sprites whose Y
 // tracks the bar value (setY), so a short/high bar overflows below the dial into the black floor.
 // On the one line PF1's COLBK pen switches to black (the floor), also switch the gauge bar colours
@@ -406,6 +407,8 @@ void FlightCopperList::buildLayout(const Bitmap& title, const Bitmap& terrain, c
     // COLBK is PF1 COLOR01 here; COLOR00 stays dark grey for the dashboard and OCS border.
     d[INDEX_DASH_BLUE_WAIT] = copperWait(kCockpitLine + 2 - 1, 0xE0);
     d[INDEX_DASH_BLUE]      = copperMove(color01, atariToOCS(0x90));
+    for (int i = 0; i < 6; i++)
+        d[INDEX_GAUGE_EVENTS + i] = copperMove(0x1FE, 0);
     // (ch3 scope + ch7 altimeter-ship SPR re-points now live in the line-180 boundary group above,
     // with the AH re-points — deferring them to line 181 here disarmed the channels.  See INDEX_AH_SPR.)
     d[INDEX_FLOOR_WAIT]  = copperWait(kCockpitLine + 72 - 1, 0xE0);
@@ -455,6 +458,39 @@ void FlightCopperList::setDashBg(uint16_t c)
     if (normalDashboard_) {
         data_[INDEX_COCKPIT_PAL + 5] = copperMove(color08, c);
         data_[INDEX_COCKPIT_PAL + 6] = copperMove(color09, c);
+    }
+}
+
+void FlightCopperList::setGaugeTransitions(uint16_t energyTop, uint16_t energyColor,
+                                           uint16_t terrainTop, uint16_t terrainColor,
+                                           uint16_t shipTop, uint16_t shipColor)
+{
+    if (!normalDashboard_) return;
+
+    struct Event { uint16_t line, reg, color, order; } events[3] = {
+        { energyTop, color08, energyColor, 0 },
+        { terrainTop, color09, terrainColor, 1 },
+        { shipTop, color09, shipColor, 2 }
+    };
+
+    // The ship indication is drawn over the terrain indication.  If it starts first, the later
+    // terrain transition must leave the ship colour in force; at equal lines stable ordering puts
+    // the ship MOVE last.  This reproduces the old two-sprite overlap with one playfield pen.
+    if (shipTop < terrainTop) events[1].color = shipColor;
+
+    for (int i = 1; i < 3; i++) {
+        Event e = events[i];
+        int j = i;
+        while (j > 0 && (events[j - 1].line > e.line ||
+               (events[j - 1].line == e.line && events[j - 1].order > e.order))) {
+            events[j] = events[j - 1];
+            --j;
+        }
+        events[j] = e;
+    }
+    for (int i = 0; i < 3; i++) {
+        data_[INDEX_GAUGE_EVENTS + i * 2] = copperWait((uint16_t)(events[i].line - 1), 0xE0);
+        data_[INDEX_GAUGE_EVENTS + i * 2 + 1] = copperMove(events[i].reg, events[i].color);
     }
 }
 

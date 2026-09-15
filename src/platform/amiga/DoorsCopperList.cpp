@@ -117,6 +117,7 @@ void DoorsCopperList::buildLayout(const Bitmap& title, const Bitmap& cockpit,
                                   const Sprite& gauge, const Sprite& nullSprite)
 {
     uint32_t* d = data_;
+    normalDashboard_ = cockpit.bitplanes == 4;
 
     // ---- title region: playfield (2bp interleaved) ----
     setPlayfield(INDEX_PLAYFIELD, kW, kH, (uint8_t)title.bitplanes, /*interleaved*/true,
@@ -216,7 +217,13 @@ void DoorsCopperList::setSpritePostColor(uint16_t c)
 
 void DoorsCopperList::setEnergyIndicatorColor(uint16_t c)
 {
-    data_[INDEX_ENERGY_COL] = copperMove(color21, c);   // sprite pair 1 pen 01 (the gauge bar)
+    data_[normalDashboard_ ? INDEX_GAUGE_BOT : INDEX_ENERGY_COL] =
+        copperMove(normalDashboard_ ? color08 : color21, c);
+}
+
+void DoorsCopperList::setEnergyIndicatorTop(uint16_t line)
+{
+    if (normalDashboard_) data_[INDEX_GAUGE_BOT_WAIT] = copperWait(line - 1, 0xE0);
 }
 
 void DoorsCopperList::setCompassColor(uint16_t c)

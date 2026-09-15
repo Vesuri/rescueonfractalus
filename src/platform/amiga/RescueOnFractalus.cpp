@@ -2057,6 +2057,23 @@ void RescueOnFractalus::buildScannerDotSprite()
 // byte is one Atari player scanline ($F0 = leftmost 4px on); we map a filled row
 // to the leftmost 4 px (colour 01) of an Amiga sprite line.
 static const int kEnergyRows = 56;   // full bar = 56 px, same as the altimeter (NOT 57 — that 1px diff was a bug)
+static const uint16_t kGaugeTopLine = 0x2c + 144;       // first row inside both gauge slots
+
+static uint16_t energyGaugeTopLine(const volatile uint8_t* mem, bool enabled)
+{
+    if (!enabled || mem[0x062F] == 0) return (uint16_t)(kGaugeTopLine + 64u);
+    uint16_t top = (uint16_t)((uint8_t)(0xDC - mem[0x062F]) >> 2);
+    if (top > (uint16_t)kEnergyRows) top = 0;
+    return (uint16_t)(kGaugeTopLine + top);
+}
+
+static uint16_t altimeterGaugeTopLine(const volatile uint8_t* mem, uint16_t address)
+{
+    uint16_t top = mem[address];
+    if (top > (uint16_t)kEnergyRows) top = 0;
+    return (uint16_t)(kGaugeTopLine + top);
+}
+
 void RescueOnFractalus::buildEnergyIndicatorSprite()
 {
     // The energy/fuel bar (Atari P1 strip $0D98, the "right gauge") is a solid 8px bottom-anchored
@@ -2066,7 +2083,6 @@ void RescueOnFractalus::buildEnergyIndicatorSprite()
     // Bar top index = (($DC - fuel) & 0xFF) >> 2, +1 to match the drawn fill (vobj_pos_to_pmstrip_index
     // $41DA).  fuel 0 (empty / out of fuel) parks the bar below the floor (line 252) where the
     // COLOR25 black-out hides it.  Gauge is 8px wide → plane A = 0xFF00 (left half of the 16px sprite).
-    static const uint16_t kBase = 0x2c + 144;            // buffer offset 0 → line 188 (same base as the altimeter)
     bool filled = false;
     if (!energySolidBuilt) {
         uint16_t* d = energyIndicatorSprite->data() + 2; // skip the 2 control words
@@ -2080,9 +2096,9 @@ void RescueOnFractalus::buildEnergyIndicatorSprite()
         top = (uint16_t)((uint8_t)(0xDC - fuel) >> 2);   // bar-top index (vobj_pos_to_pmstrip_index $41DA)
         if (top > (uint16_t)kEnergyRows) top = 0u;       // clamp garbage → full bar
     }
-    energyIndicatorSprite->setY((uint16_t)(kBase + top));
+    energyIndicatorSprite->setY((uint16_t)(kGaugeTopLine + top));
 #ifdef ROF_FLIGHT_PROBE
-    { extern volatile unsigned short g_energySprY; g_energySprY = (unsigned short)(kBase + top); }
+    { extern volatile unsigned short g_energySprY; g_energySprY = (unsigned short)(kGaugeTopLine + top); }
 #endif
     // ch5 carries a wide-object segment ahead of this bar, and that segment is double-buffered, so
     // the bar is chained into BOTH chains — keep the spare copy in step (control words each frame,
@@ -2091,7 +2107,7 @@ void RescueOnFractalus::buildEnergyIndicatorSprite()
 }
 
 static const int      kAltimRows    = 56;             // 8×56 rectangle ($0C98..$0CCF / $0B98..$0BCF)
-static const uint16_t kAltimTopLine = 0x2c + 144;     // buffer offset 0 → Amiga line 188 (matches setY below)
+static const uint16_t kAltimTopLine = kGaugeTopLine;
 
 // ---- altimeter bars (flight) -------------------------------------------------
 // The terrain-height (P0 $0C98) bar is an 8×56 solid rectangle; the overlapping ship-height
@@ -5527,6 +5543,11 @@ void RescueOnFractalus::updateStandbyCopper(bool force)
         standbyCopper->setEnergyIndicatorColor(energyCol);
         sbEnergyCol = energyCol;
     }
+    const uint16_t energyTop = energyGaugeTopLine(mem, rsEnergyIndicator);
+    if (force || energyTop != sbEnergyTop) {
+        standbyCopper->setEnergyIndicatorTop(energyTop);
+        sbEnergyTop = energyTop;
+    }
     const uint16_t compassCol = atariToOCS(mem[0x00CF]);   // compass band COLPF0 (dark grey)
     if (force || compassCol != sbCompassCol) {
         standbyCopper->setCompassColor(compassCol);
@@ -5596,6 +5617,11 @@ void RescueOnFractalus::updatePlanetCopper(bool force)
         planetCopper->setEnergyIndicatorColor(energyCol);
         plEnergyCol = energyCol;
     }
+    const uint16_t energyTop = energyGaugeTopLine(mem, rsEnergyIndicator);
+    if (force || energyTop != plEnergyTop) {
+        planetCopper->setEnergyIndicatorTop(energyTop);
+        plEnergyTop = energyTop;
+    }
     if (force || starCol != plStarCol) {
         planetCopper->setStarColor(starCol);
         plStarCol = starCol;
@@ -5657,7 +5683,7 @@ void RescueOnFractalus::updateFlightCopper(bool force)
         flightCopper->setSpritePostColor(titleBg);
         flTitleBg = titleBg; flTitlePf0 = titlePf0; flTitlePf1 = titlePf1;
     }
-    if (force || energyCol != flEnergyCol) {
+    if (!g_enhancedGraphics && (force || energyCol != flEnergyCol)) {
         flightCopper->setEnergyIndicatorColor(energyCol);
         flEnergyCol = energyCol;
     }
@@ -5703,8 +5729,21 @@ void RescueOnFractalus::updateFlightCopper(bool force)
     const uint16_t altimCol  = DEATH_TINT_OCS(mem[0x00D5]);
     const uint16_t shipCol   = DEATH_TINT_OCS(mem[0x00D6]);
     const uint16_t ahGround  = DEATH_TINT_OCS(mem[0x00D0]);
-    if (force || altimCol != flAltimCol)     { flightCopper->setAltimeterColor(altimCol);      flAltimCol = altimCol; }
-    if (force || shipCol  != flAltimShipCol) { flightCopper->setAltimeterShipColor(shipCol);   flAltimShipCol = shipCol; }
+    if (g_enhancedGraphics) {
+        const uint16_t energyTop = energyGaugeTopLine(mem, true);
+        const uint16_t altimTop = altimeterGaugeTopLine(mem, 0x281A);
+        const uint16_t shipTop = altimeterGaugeTopLine(mem, 0x281B);
+        if (force || energyTop != flEnergyTop || altimTop != flAltimTop || shipTop != flShipTop ||
+            energyCol != flEnergyCol || altimCol != flAltimCol || shipCol != flAltimShipCol) {
+            flightCopper->setGaugeTransitions(energyTop, energyCol,
+                                              altimTop, altimCol, shipTop, shipCol);
+            flEnergyTop = energyTop; flAltimTop = altimTop; flShipTop = shipTop;
+            flEnergyCol = energyCol; flAltimCol = altimCol; flAltimShipCol = shipCol;
+        }
+    } else {
+        if (force || altimCol != flAltimCol)     { flightCopper->setAltimeterColor(altimCol);      flAltimCol = altimCol; }
+        if (force || shipCol  != flAltimShipCol) { flightCopper->setAltimeterShipColor(shipCol);   flAltimShipCol = shipCol; }
+    }
     // $00D0 drives TWO dashboard slots, both COLPM2 via DLI $4A78 ($4A80): the AH ground fill (P2)
     // and the Long-Range-Scanner guide dot (missile M2 — the dashboard's PRIOR=$04 leaves the
     // fifth-player bit clear, so M2 takes its player's colour).  The scanner dot was baked at $26 in
@@ -5872,6 +5911,7 @@ void RescueOnFractalus::updateDoorsCopper(DoorsCopperList* dc)
     dc->setTitlePalette(titleBg, titlePf0, atariToOCS(0x78));     // pf1 = blue (const)
     dc->setSpritePostColor(titleBg);
     dc->setEnergyIndicatorColor(energyCol);
+    dc->setEnergyIndicatorTop(energyGaugeTopLine(mem, rsEnergyIndicator));
     dc->setCompassColor(compassCol);
 
     // Sliding-door geometry.  topBase = terrain row g2 (slides up); tunBase = tunnel row
@@ -5982,6 +6022,7 @@ void RescueOnFractalus::updateTunnelCopper(TunnelCopperList* tunnelCopper)
     tunnelCopper->setTitlePalette(titleBg, titlePf0, atariToOCS(0x78));
     tunnelCopper->setSpritePostColor(postCol);
     tunnelCopper->setEnergyIndicatorColor(energyCol);
+    tunnelCopper->setEnergyIndicatorTop(energyGaugeTopLine(mem, rsEnergyIndicator));
     tunnelCopper->setCompassColor(compassCol);
     // Terrain-region bitmap bands.  FORWARD descent: one full-height band from tunnelBitmap
     // (K = 0).  BOOST: the reverse-tunnel reveal — rings from tunnelBitmap in [K, 85-K], the

@@ -293,6 +293,7 @@ private:
     void updateStandbyCopper(bool force);  // poke changed colour/sprite slots (force = all)
     // Last-poked values, so updateStandbyCopper only writes a MOVE when it changed.
     uint16_t sbTitleBg = 0xFFFF, sbTitlePf0 = 0xFFFF, sbEnergyCol = 0xFFFF, sbCompassCol = 0xFFFF;
+    uint16_t sbEnergyTop = 0xFFFF;
     uint16_t sbTerr0 = 0xFFFF, sbTerr1 = 0xFFFF, sbTerr2 = 0xFFFF, sbTerr3 = 0xFFFF;
     int8_t   sbEnergyIndicator = -1;   // sprite-2 = gauge(1)/null(0); -1 = unset
 
@@ -306,6 +307,7 @@ private:
     // Last-poked values (vp* — separate from sb* so a phase switch always force-refreshes).
     uint16_t plTitleBg = 0xFFFF, plTitlePf0 = 0xFFFF, plEnergyCol = 0xFFFF,
              plStarCol = 0xFFFF, plBg = 0xFFFF, plCompassCol = 0xFFFF;
+    uint16_t plEnergyTop = 0xFFFF;
 
     // Static flight fixed copper list (scene 7 — same line-doubled mode-D band, with the
     // flight terrain palette + HUD sprites).  Same build-once + poke-in-place scheme:
@@ -317,6 +319,7 @@ private:
     // Last-poked values (fl* — separate from sb*/pl* so a phase switch force-refreshes).
     uint16_t flTitleBg = 0xFFFF, flTitlePf0 = 0xFFFF, flTitlePf1 = 0xFFFF;
     uint16_t flEnergyCol = 0xFFFF, flCompassCol = 0xFFFF;
+    uint16_t flEnergyTop = 0xFFFF, flAltimTop = 0xFFFF, flShipTop = 0xFFFF;
     uint16_t flTerr0 = 0xFFFF, flTerr1 = 0xFFFF;   // terrain pen0/pen1 (atmosphere ramp $00DC/$00DD)
     uint16_t flTerr2 = 0xFFFF, flTerr3 = 0xFFFF;   // terrain pen2/pen3 (atmosphere ramp $00DA/$00DB)
     uint16_t flBand3 = 0xFFFF;   // wing-band color03 = COLPF2 frame grey ($00D4); other pens inherit terrain

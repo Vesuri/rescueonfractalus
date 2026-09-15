@@ -73,6 +73,7 @@ void StandbyCopperList::buildLayout(const Bitmap& title, const Bitmap& terrain, 
                                     const Sprite& leftPost, const Sprite& rightPost, const Sprite& nullSprite)
 {
     uint32_t* d = data_;
+    normalDashboard_ = cockpit.bitplanes == 4;
 
     // ---- title region: playfield (2bp interleaved) ----
     // Emits BPLCON0 (2bp) + BPL1MOD/BPL2MOD for the title band; the constant playfield
@@ -154,7 +155,7 @@ uint32_t StandbyCopperList::emitCockpitRegion(uint32_t idx)
     // 0xC0..0xD8 let the following palette MOVEs catch the last fetched pixels of the
     // final mode-D row.  At 0xE0 the group safely finishes in line 180's early H-blank.
     d[idx++] = copperWait(kCockpitLine + 8 - 1, 0xE0);
-    const bool normalDashboard = planes == 4;
+    const bool normalDashboard = normalDashboard_;
     d[idx++] = copperMove(bplcon0, normalDashboard ? mode : (uint16_t)(mode | DBLPF));
     d[idx++] = copperMove(bplcon2, normalDashboard ? 0 : kBPLCON2_COCKPIT);
     d[idx++] = copperMove(color00, atariToOCS(0x04)); // common background + border: dark grey
@@ -174,7 +175,14 @@ uint32_t StandbyCopperList::emitCockpitRegion(uint32_t idx)
     // rows, then the floor is rear PF1, where the sprite wins.  (Also covers the fuel==0 park at
     // line 252.)  COLOR21 is pair 1 pen 01 = this
     // bar alone here — ch3 is the null sprite.
-    d[idx++] = copperWait(kGaugeBottomLine - 1, 0xE0);   d[idx++] = copperMove(color21, 0x000);
+    energyEventIndex_ = idx;
+    if (normalDashboard_) {
+        d[idx++] = copperWait(energyTop_ - 1, 0xE0);
+        d[idx++] = copperMove(color08, energyColor_);
+    } else {
+        d[idx++] = copperWait(kGaugeBottomLine - 1, 0xE0);
+        d[idx++] = copperMove(color21, 0x000);
+    }
     d[idx++] = copperWait(kCockpitLine + 80 - 1, 0xE0);  d[idx++] = copperMove(color01, atariToOCS(0x00));
     // DIWSTOP is line 260.  Cross the Copper's 8-bit vertical comparator at line 255,
     // then change COLOR00 at the start of line 260, below the display window, for a black
@@ -207,7 +215,18 @@ void StandbyCopperList::setSprite2(const Sprite& s)
 
 void StandbyCopperList::setEnergyIndicatorColor(uint16_t c)
 {
-    data_[INDEX_ENERGY_COL] = copperMove(color21, c);   // sprite pair 1 pen 01 (the gauge bar)
+    energyColor_ = c;
+    if (normalDashboard_ && energyEventIndex_)
+        data_[energyEventIndex_ + 1] = copperMove(color08, c);
+    else
+        data_[INDEX_ENERGY_COL] = copperMove(color21, c);
+}
+
+void StandbyCopperList::setEnergyIndicatorTop(uint16_t line)
+{
+    energyTop_ = line;
+    if (normalDashboard_ && energyEventIndex_)
+        data_[energyEventIndex_] = copperWait(line - 1, 0xE0);
 }
 
 void StandbyCopperList::setCompassColor(uint16_t c)

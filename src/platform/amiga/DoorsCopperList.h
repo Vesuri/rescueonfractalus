@@ -31,6 +31,7 @@ public:
     void setTitlePalette(uint16_t bg, uint16_t pf0, uint16_t pf1);  // color00..03 (col0=col3=bg)
     void setSpritePostColor(uint16_t c);                           // color17 (canopy posts)
     void setEnergyIndicatorColor(uint16_t c);                                // COLOR21 ($1AA) gauge bar
+    void setEnergyIndicatorTop(uint16_t line);
     void setCompassColor(uint16_t c);                              // color01 over the compass band
 
     // ---- terrain geometry (the sliding doors) ----
@@ -47,4 +48,6 @@ public:
                 uint16_t bandBg, uint16_t terr1, uint16_t terr2, uint16_t terrDots,
                 uint16_t ring0, uint16_t ring1, uint16_t ring2,
                 uint16_t ring3, uint16_t ring4, uint16_t ring5);
+private:
+    bool normalDashboard_ = false;
 };

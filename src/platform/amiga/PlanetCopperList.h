@@ -40,10 +40,13 @@ public:
     void setTitlePalette(uint16_t bg, uint16_t pf0, uint16_t pf1);  // color00..03 (col0=col3=bg)
     void setSpritePostColor(uint16_t c);                           // color17 (canopy posts)
     void setEnergyIndicatorColor(uint16_t c);                                // COLOR21 ($1AA) gauge bar
+    void setEnergyIndicatorTop(uint16_t line);
     void setStarColor(uint16_t c);                                 // COLOR21/25/29 starfield pens (pairs 2/3,4/5,6/7)
     void setStarOperand(int i, const uint16_t* data);              // point star channel 2+i SPRxPT operand (zero-copy scroll; ⚠ VBI ISR only — copper reads it at scanline 16)
     void setCompassColor(uint16_t c);                              // color01 over the compass band (COLPF0 $00CF)
     void setPlanetBgColor(uint16_t c);                           // viewport color00 (COLBK, space)
     // (The windscreen-bottom band palette is the constant windscreen-FRAME palette set by the
     // launch band DLI $6D67 — black bg / two greys / COLPF2=$2A planet — baked in buildLayout.)
+private:
+    bool normalDashboard_ = false;
 };

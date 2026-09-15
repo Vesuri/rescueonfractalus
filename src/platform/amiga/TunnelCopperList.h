@@ -30,6 +30,7 @@ public:
     void setTitlePalette(uint16_t bg, uint16_t pf0, uint16_t pf1);  // color00..03 (col0=col3=bg)
     void setSpritePostColor(uint16_t c);                           // color17 (canopy posts)
     void setEnergyIndicatorColor(uint16_t c);                                // COLOR21 ($1AA) gauge bar
+    void setEnergyIndicatorTop(uint16_t line);
     void setCompassColor(uint16_t c);                              // color01 over the compass band (COLPF0 $00CF)
     // Moving green->purple corner reveal: greenLine (0..8) = first band scanline still showing
     // the green door (= topmost still-set canopy-post player scanline, mem[$0C88+]).  Above it
@@ -67,4 +68,6 @@ public:
     unsigned long probeBandTopWord() const;
     unsigned long probeBandGreenWord() const;
 #endif
+private:
+    bool normalDashboard_ = false;
 };
