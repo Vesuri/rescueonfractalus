@@ -7237,7 +7237,32 @@ void RescueOnFractalus::decodeCockpitFull()
 {
     for (int e = 0; e < 4;  e++) renderCockpitSpan((uint16_t)(0x350Du + e * 48 + 4), 40);
     for (int e = 0; e < 10; e++) renderCockpitSpan((uint16_t)(0x332Du + e * 48 + 4), 40);
+    if (g_enhancedGraphics) installGaugeMaskPens();
     initializeAHDetailPlanes();    // cockpit BPL3 is now valid; bake AH sprite word B once
+}
+
+// Replace only pen-0 pixels inside the two 8x56 dial openings. Static markings and bezels are
+// non-zero and therefore remain in front exactly as they were when the bars were sprites. Pen 8
+// is energy; pen 9 is the overlaid terrain/ship altimeter column. The Copper initially assigns
+// both the dial background, so installing these masks is visually inert until transition events
+// are enabled. Coordinates are the documented screen positions relative to cockpit line 172.
+void RescueOnFractalus::installGaugeMaskPens()
+{
+    if (!cockpitBitmap || cockpitBitmap->bitplanes != 4) return;
+    static const uint8_t byteColumns[4] = { 13, 14, 25, 26 };
+    static const uint8_t bitMasks[4]    = { 0x0F, 0xF0, 0x0F, 0xF0 };
+    const int stride = cockpitBitmap->rowSizeInBytes;
+    uint8_t* bitmap = (uint8_t*)cockpitBitmap->data;
+    for (int y = 16; y < 72; y++) {
+        uint8_t* row = bitmap + y * stride;
+        for (int part = 0; part < 4; part++) {
+            const int x = byteColumns[part];
+            const uint8_t occupied = (uint8_t)(row[x] | row[40 + x] | row[80 + x] | row[120 + x]);
+            const uint8_t mask = (uint8_t)(bitMasks[part] & (uint8_t)~occupied);
+            row[120 + x] |= mask;              // both pens have bit 3
+            if (part < 2) row[x] |= mask;      // altimeter pen 9 also has bit 0
+        }
+    }
 }
 
 // Compass (#2): the heading indicator is 4 mode-4 cells $32E3-$32E6 on the mode-4 line at

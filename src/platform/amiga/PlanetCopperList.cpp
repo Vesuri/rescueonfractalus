@@ -73,11 +73,11 @@ static const uint16_t kColor29 = 0x1BA;   // sprite pair 6/7 pen 01 (starfield)
 #define INDEX_COCKPIT_BPLCON0 (INDEX_COCKPIT_BPL + 6)      // bplcon0 3P dual-PF (1)
 #define INDEX_COCKPIT_BPLCON2 (INDEX_COCKPIT_BPLCON0 + 1)  // PF2 stencil > sprites > PF1 (1)
 #define INDEX_COCKPIT_MOD     (INDEX_COCKPIT_BPLCON2 + 1)  // bpl1mod,bpl2mod (2)
-#define INDEX_COCKPIT_PAL     (INDEX_COCKPIT_MOD + 2)      // color00..03 + color09 (5)
+#define INDEX_COCKPIT_PAL     (INDEX_COCKPIT_MOD + 2)      // base colours + gauge pens (7)
 // Cockpit bitmap starts at kCockpitLine=180 (yOffset 8 skips the $350D band).  PF1 COLOR01
 // carries the Atari COLBK splits: black divider, dark-blue dashboard, then black floor.
 // COLOR00 remains the dashboard's dark grey throughout, including the unblanked OCS border.
-#define INDEX_DASH_BLUE_WAIT  (INDEX_COCKPIT_PAL + 5)      // WAIT(kCockpitLine+2-1 = 181) (1)
+#define INDEX_DASH_BLUE_WAIT  (INDEX_COCKPIT_PAL + 7)      // WAIT(kCockpitLine+2-1 = 181) (1)
 #define INDEX_DASH_BLUE       (INDEX_DASH_BLUE_WAIT + 1)   // color01 = $90 dark blue (dashboard) (1)
 // Energy bar (ch2 / COLOR21) -> black below the gauge DIAL, not at the floor: the Amiga bar is
 // one solid 56-row sprite whose VSTART tracks the fuel, so below full fuel its bottom hangs past
@@ -227,6 +227,8 @@ void PlanetCopperList::buildLayout(const Bitmap& title, const Bitmap& terrain, c
     d[INDEX_COCKPIT_PAL + 3] = copperMove(color03, atariToOCS(0x26));
     d[INDEX_COCKPIT_PAL + 4] = copperMove(normalDashboard ? color04 : color09,
                                           atariToOCS(normalDashboard ? 0x2C : 0x06));
+    d[INDEX_COCKPIT_PAL + 5] = normalDashboard ? copperMove(color08, atariToOCS(0x90)) : copperMove(0x1FE, 0);
+    d[INDEX_COCKPIT_PAL + 6] = normalDashboard ? copperMove(color09, atariToOCS(0x90)) : copperMove(0x1FE, 0);
 
     // Dashboard instrument backgrounds = dark blue COLBK $90 (Amiga 182-251); floor black (252+).
     // COLBK is PF1 COLOR01 here; COLOR00 stays dark grey for the dashboard and OCS border.

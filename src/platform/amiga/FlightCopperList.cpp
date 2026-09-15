@@ -144,11 +144,11 @@ static const uint16_t kColor26 = 0x1B4;   // pair 4/5 pen 10 (wide-object segmen
 #define INDEX_COCKPIT_BPL     (INDEX_SCANNER_SPR + 2)       // cockpit 3bp ptrs, yOffset 8 (6)
 #define INDEX_COCKPIT_BPLCON0 (INDEX_COCKPIT_BPL + 6)       // bplcon0 3P dual-PF (1)
 #define INDEX_COCKPIT_MOD     (INDEX_COCKPIT_BPLCON0 + 1)  // bpl1mod,bpl2mod (2)
-#define INDEX_COCKPIT_PAL     (INDEX_COCKPIT_MOD + 2)      // color00..03 + color09 (5)
+#define INDEX_COCKPIT_PAL     (INDEX_COCKPIT_MOD + 2)      // base colours + gauge pens (7)
 // AH colours + dashboard dual-playfield priority.  Sprite word A is the moving brown fill
 // (COLOR17); word B contains the cockpit's static salmon details, so COLOR18 and COLOR19 are both
 // salmon and remain visible whether word A is clear or set.  PF2's light-grey stencil stays above.
-#define INDEX_AH_COL          (INDEX_COCKPIT_PAL + 5)      // COLOR17 = $26 brown (1)
+#define INDEX_AH_COL          (INDEX_COCKPIT_PAL + 7)      // COLOR17 = $26 brown (1)
 #define INDEX_AH_DETAIL_COL   (INDEX_AH_COL + 1)           // COLOR18/19 = salmon detail (2)
 #define INDEX_AH_BPLCON2      (INDEX_AH_DETAIL_COL + 2)    // BPLCON2 PF2 > sprites > PF1 (1)
 // Long Range Scanner dot colour: COLOR22 (pair 2/3 pen10) = red-brown $26.  COLOR22 is the band
@@ -393,6 +393,8 @@ void FlightCopperList::buildLayout(const Bitmap& title, const Bitmap& terrain, c
     d[INDEX_COCKPIT_PAL + 3] = copperMove(color03, atariToOCS(0x26));
     d[INDEX_COCKPIT_PAL + 4] = copperMove(normalDashboard_ ? color04 : color09,
                                           atariToOCS(normalDashboard_ ? 0x2C : 0x06));
+    d[INDEX_COCKPIT_PAL + 5] = normalDashboard_ ? copperMove(color08, atariToOCS(0x90)) : copperMove(0x1FE, 0);
+    d[INDEX_COCKPIT_PAL + 6] = normalDashboard_ ? copperMove(color09, atariToOCS(0x90)) : copperMove(0x1FE, 0);
 
     // AH ground-fill + baked detail colours, then dual-PF priority (line 180, after the frame).
     d[INDEX_AH_COL]            = copperMove(color17, atariToOCS(0x26));
@@ -450,6 +452,10 @@ void FlightCopperList::setCockpitPalette(uint16_t darkGrey, uint16_t bottomBg,
 void FlightCopperList::setDashBg(uint16_t c)
 {
     data_[INDEX_DASH_BLUE] = copperMove(color01, c);
+    if (normalDashboard_) {
+        data_[INDEX_COCKPIT_PAL + 5] = copperMove(color08, c);
+        data_[INDEX_COCKPIT_PAL + 6] = copperMove(color09, c);
+    }
 }
 
 // Crosshair plane3 palette (viewport color04-07).  See the header: visible → salmon ($26) ×4,

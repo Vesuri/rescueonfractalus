@@ -85,9 +85,9 @@ static const uint16_t kBand2ParkLine = kTerrainLine + 57;
 #define INDEX_DASH_BG_WAIT    (INDEX_BAND_GREEN + 1)   // WAIT(kCockpitLine+8-1) (1)
 #define INDEX_DASH_MODE       (INDEX_DASH_BG_WAIT + 1) // BPLCON0 dual-PF (1)
 #define INDEX_DASH_PRIORITY   (INDEX_DASH_MODE + 1)    // BPLCON2 PF2 > sprites > PF1 (1)
-#define INDEX_DASH_PAL        (INDEX_DASH_PRIORITY + 1)// COLOR00..03 + COLOR09 (5)
+#define INDEX_DASH_PAL        (INDEX_DASH_PRIORITY + 1)// base colours + gauge pens (7)
 // Dashboard instrument backgrounds = dark blue COLBK $90 (Amiga 182-251); floor black (252+).
-#define INDEX_DASH_BLUE_WAIT  (INDEX_DASH_PAL + 5)      // WAIT(kCockpitLine+10-1 = 181) (1)
+#define INDEX_DASH_BLUE_WAIT  (INDEX_DASH_PAL + 7)      // WAIT(kCockpitLine+10-1 = 181) (1)
 #define INDEX_DASH_BLUE       (INDEX_DASH_BLUE_WAIT + 1) // color01 = $90 dark blue (dashboard) (1)
 // Energy bar (ch2 / COLOR21) → black below the gauge DIAL, not at the floor: the Amiga bar is one
 // solid 56-row sprite whose VSTART tracks the fuel, so below full fuel its bottom hangs past the
@@ -230,6 +230,8 @@ void TunnelCopperList::buildLayout(const Bitmap& title, const Bitmap& tunnel, co
     d[INDEX_DASH_PAL + 3]  = copperMove(color03, atariToOCS(0x26));
     d[INDEX_DASH_PAL + 4]  = copperMove(normalDashboard ? color04 : color09,
                                         atariToOCS(normalDashboard ? 0x2C : 0x06));
+    d[INDEX_DASH_PAL + 5]  = normalDashboard ? copperMove(color08, atariToOCS(0x90)) : COPPER_NOP;
+    d[INDEX_DASH_PAL + 6]  = normalDashboard ? copperMove(color09, atariToOCS(0x90)) : COPPER_NOP;
     d[INDEX_DASH_BLUE_WAIT] = copperWait(kCockpitLine + 10 - 1, 0xE0);
     d[INDEX_DASH_BLUE]      = copperMove(color01, atariToOCS(0x90));
     d[INDEX_GAUGE_BOT_WAIT] = copperWait(kGaugeBottomLine - 1, 0xE0);

@@ -58,10 +58,10 @@ static const uint16_t kGaugeBottomLine = 0x2c + 144 + 56;             // = 244
 #define INDEX_TERRAIN_BPL0    (INDEX_TERRAIN_PAL + 4)     // run-0 bitmap ptrs (3bp = 6)
 #define INDEX_TERRAIN_RUNS    (INDEX_TERRAIN_BPL0 + 6)    // FLOATING: runs 1.. (WAIT+6) then cockpit region
 // Cockpit region (re-emitted after the last run): WAIT(1) + BPLxPT reserve(8) + bplcon0(1) + mod(2) +
-// color01..07(7) + dashboard dual-PF entry (WAIT + mode/priority + five colours)(8) +
+// color01..07(7) + dashboard entry (WAIT + mode/priority + up to seven colours)(10) +
 // two (WAIT+PF1-background) splits (4) + WAIT+GAUGE_BOTTOM COLOR21(2) + bottom-border
-// wrap WAIT/WAIT/COLOR00 (3) + terminator(1) = 37.
-#define COCKPIT_REGION_LEN    37
+// wrap WAIT/WAIT/COLOR00 (3) + terminator(1) = 39.
+#define COCKPIT_REGION_LEN    39
 #define LIST_LENGTH           (INDEX_TERRAIN_RUNS + (MAX_TERRAIN_RUNS - 1) * 7 + COCKPIT_REGION_LEN)
 
 StandbyCopperList::StandbyCopperList()
@@ -163,6 +163,8 @@ uint32_t StandbyCopperList::emitCockpitRegion(uint32_t idx)
     d[idx++] = copperMove(color03, atariToOCS(0x26)); // PF1 code 3: bit-7 COLPF3
     d[idx++] = copperMove(normalDashboard ? color04 : color09,
                           atariToOCS(normalDashboard ? 0x2C : 0x06));
+    d[idx++] = normalDashboard ? copperMove(color08, atariToOCS(0x90)) : copperMove(0x1FE, 0);
+    d[idx++] = normalDashboard ? copperMove(color09, atariToOCS(0x90)) : copperMove(0x1FE, 0);
     d[idx++] = copperWait(kCockpitLine + 10 - 1, 0xE0);  d[idx++] = copperMove(color01, atariToOCS(0x90));
     // Energy bar (sprite 2 / COLOR21) → black at the DIAL BOTTOM, not at the floor.  The Amiga bar
     // is one SOLID kEnergyRows sprite whose VSTART tracks the fuel (buildEnergyIndicatorSprite),

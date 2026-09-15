@@ -246,6 +246,7 @@ private:
     void renderCockpitSpan(uint16_t addr, uint8_t nCells); // dispatch faithful decoder/native planes
     void decodeCockpitSpan(uint16_t addr, uint8_t nCells);  // decode nCells cockpit cells from Atari screen addr
     void decodeCockpitFull();  // decode the whole cockpit region (modeD + mode4) once (scene-entry repaint)
+    void installGaugeMaskPens(); // enhanced normal-playfield energy/altimeter mask pens
     void decodeLockonDirty();  // decode only the lock-on cells ($3491+) a writer actually touched
 #ifdef ROF_CK_VERIFY
     void ckVerifySnap();   // snapshot the verified groups' SOURCE cells before the cockpit block
