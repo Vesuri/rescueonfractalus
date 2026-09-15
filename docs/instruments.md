@@ -17,12 +17,12 @@ mode-4·mode-D cockpit cell range).
 | 4 | **Thrust Level** | 8,152 | 40×60 | mode-4 dial-bar cells (x≈8-16), drawn via `$4581`/`draw_object_column` ✓ |
 | 5 | **Dangerous Altitude** | 24,144 | 40×60 | mode-4 dial-bar cells (x≈24-32, e.g. `$3394`), lights near ground ✓ |
 | 6 | **Artificial Horizon** | 56,138 | 32×28 | **PMG (NOT cells)** — dial frame is static $33xx bitmap; brown ground fill is Atari player P2 (COLPM2=`$26`, SIZEP2 dbl, buffer `$0E92-$0EB2`), boundary moves with pitch. Amiga = 2 sprites (`buildAHSprite`). See [[flight-scene]]. ✓ |
-| 7 | **Altimeter** | 108,144 | 8×56 | **terrain-height bar = player P0** (`$0C98`, COLPM0 purple `$00D5`) + **ship-height bar = missile M3** (`$0B98`, light-blue `$00D6`). (CORRECTED 2026-07-07 from a firing capture — the old "P3 ship / P2 terrain, HPOSP2=`$00CB`" was WRONG: P3 is parked in flight and `$00CB` is the **laser shot**'s HPOSP2. See [[flight-pmg-map]].) |
+| 7 | **Altimeter** | 108,144 | 8×56 | Atari/faithful Amiga: **terrain-height bar = player P0** (`$0C98`, COLPM0 purple `$00D5`) + **ship-height bar = missile M3** (`$0B98`, light-blue `$00D6`). Enhanced Amiga: dashboard pen 9 with sorted Copper colour transitions; ship colour retains the old overlap priority. (CORRECTED 2026-07-07 from a firing capture — the old "P3 ship / P2 terrain, HPOSP2=`$00CB`" was WRONG: P3 is parked in flight and `$00CB` is the **laser shot**'s HPOSP2. See [[flight-pmg-map]].) |
 | 8 | **Targeting Scope** | 136,151 | 50×33 | centre-lower mode-4 **bitmap** cells (x≈136); locked-target blip = cells `$2E-$31` + a generic P3 dome blob (`38 7C FE FE FE`); a flying saucer also mirrors as **P3** here. ✓ blip renders/updates on Amiga (DONE 2026-07-09, user-confirmed — was frozen; fixed via the lock-on dirty-hook pattern). ✓ (2026-07-07) |
 | 9 | **Main Window** | — | — | the terrain viewport |
 | 10 | **Cross Hairs** | 136,69 | 50×37 | **a "+" of PMG missiles**: M2 = vertical stem @ HPOS `$80` (centre), two segments (`$0B4D-5A`+`$64-71`) w/ a horizon gap; M3 @ `$74` + M1 @ `$85` (quad-width, `SIZEM=$CC`) = horizontal arms, lit only at the gap-centre line (`$0B5F`). Set in flight VBI `$505F-$5071`. Colour = Atari `$26` salmon (NOT grey). Visibility = the HPOS gate: `$A49A` sets `mem[$2840]=($28FC==0)?$00:$74` (`$00`=off-screen/hidden). **✓ PORTED 2026-07-09 as a plane3 overlay** (NOT a sprite — plane3 is free in the terrain body; `color04-07`=`$26` when visible, =terrain pens `color00-03` when hidden). See [[flight-pmg-map]] §3. |
 | 11 | **Enemy Lock-On Indicator** | 136,193 | 48×6 | mode-4 cells `$3492-$3496` (`lock_on_indicator_tick $4229`, state `$007E`) ✓ |
-| 12 | **Energy Level Indicator** | 204,144 | 8×56 | **P1 strip `$0D98`** gauge sprite, HPOSP1=`$00B5` (the working "right gauge") ✓ |
+| 12 | **Energy Level Indicator** | 204,144 | 8×56 | Atari/faithful Amiga: **P1 strip `$0D98`** gauge sprite, HPOSP1=`$00B5`. Enhanced Amiga: dashboard pen 8, with the fill top set by a Copper colour transition. ✓ |
 | 13 | **Long Range Scanner** | 232,138 | 32×28 | disc + housing = mode-4 cells (x≈232); the close-range proximity blink is the `$33DF/$33E0` pen swap (bit7 toggled at 50Hz by `startup_init $3FFA`, decoded by `decodeScannerBlinkCells`). **The flashing GUIDE DOT inside it is Atari missile M2, not a cell** — vertical = RANGE (`row = $1C - $28DA`, parked at `$1E`), horizontal = BEARING (HPOSM2 `$00CE`, which `$44D6` derives as `$28D9 + $AB` and clamps to `$B5`); colour COLPM2 `$26` ← `$00D0`. Amiga = sprite ch2 pen10 (COLOR22) via the SPR2PT dashboard re-point, `buildScannerDotSprite`. ⚠⚠ Two traps, both of which cost days — see [[feedback-vbi-driven-pmg-sprites]] and `docs/rename.md`: (a) the dashboard runs 3-plane dual-playfield: the dot is above rear PF1 but below PF2's light-grey stencil, so it shows only through the disc aperture and an out-of-range `$1E`/`$B5` position hides it; (b) **both** coordinates must be PUSHED from the terrain DISPLAY pass (`rof_note_scanner_dot`), never sampled in the VBI — the two-pass render republishes each per pass and the free-running loop makes a VBI poll alias by CPU speed (invisible on a Fast-RAM A1200, fine on A500). ✓ |
 | 14 | **Shields On** | 288,136 | 6×4 | tiny status light |
 | 15 | **Mother Ship** | 300,140 | 6×4 | tiny status light |
@@ -34,7 +34,7 @@ mode-4·mode-D cockpit cell range).
 The **canopy posts** (cockpit window A-pillars) are a separate frame element = Atari players
 P0 (`$0C32`, left) / P1 (`$0D32`, right), RLE-decoded from tables `$4DFA`/`$4E09`.
 
-## ⚠ The bar instruments hang BELOW their dial — clip the pen at `kGaugeBottomLine` (2026-08-11)
+## ⚠ Faithful-mode bar sprites hang below their dial (2026-08-11)
 
 Energy (#12), Altimeter terrain + ship (#7): the Atari **redraws** each player/missile strip every
 frame (`draw_altimeter_bars $40E5`), so its bar is exactly `56 - top` rows and stops at the dial. The
@@ -43,8 +43,11 @@ instead of 56 row decodes), so below the full value its bottom overhangs the dia
 cockpit copper list must therefore blank that pen at the dial bottom, `kGaugeBottomLine = 0x2c+144+56 =
 line 244` — NOT at the floor line 252, which leaves 8 rows showing (user-reported in the reverse tunnel
 and the post-mother-ship Standby, fixed 2026-08-11 in Standby/Doors/Tunnel/Planet; Flight already
-blanks its three pens). The dashboard now sandwiches sprites between its two playfields, but the
-explicit colour blank remains necessary for the fixed-height sprite data below each dial.
+blanks its three pens). The faithful dashboard sandwiches sprites between its two playfields, but
+the explicit colour blank remains necessary for its fixed-height sprite data below each dial.
+Enhanced Graphics uses normal four-plane pens 8 and 9 only inside the 8×56 dial masks. Their
+background colour holds above the fill top and the Copper changes it at the exact first filled
+scanline, so there is no sprite overhang or bottom clipping workaround.
 
 Measured geometry of the energy column (gdb dump of `cockpitBitmap`, matching the screen pixel for
 pixel — sprite hardware X `0x81+203` lands on screen x204):

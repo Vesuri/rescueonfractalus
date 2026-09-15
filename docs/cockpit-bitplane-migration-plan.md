@@ -1,5 +1,23 @@
 # Native four-bitplane cockpit migration plan
 
+## Implementation status (2026-09-15)
+
+Implemented behind the shared Enhanced Graphics/Custom4 switch. The checked-in commits follow the
+sub-phases described below: startup selection, generated/proven planar atlases, direct planar
+rendering, four-plane top and cockpit regions, four-plane live windscreen band, normal-playfield
+dashboard encoding, gauge-mask pens, Copper-controlled gauge heights, and retirement of enhanced
+gauge sprites.
+
+The implementation keeps the band and dashboard in one conditional four-plane `cockpitBitmap`,
+plus a cleared fourth-plane handoff surface for the live band, instead of allocating the three
+conceptual surfaces proposed below. This preserves the existing tightly timed line-179 handoff and
+avoids extra pointers or copies; the externally visible `4 -> 3 -> 4` region contract is unchanged.
+
+Static verification is complete: the generator exhaustively compares every source value and eight
+complete representative cockpit surfaces, and both toggle configurations build successfully. The
+remaining acceptance work is on-target visual capture and A500 timing measurement; it cannot be
+claimed from compilation alone. Enhanced artwork remains deliberately out of scope for this series.
+
 ## Goal
 
 Replace the Amiga cockpit's runtime Atari character/tile-to-bitplane conversion with native

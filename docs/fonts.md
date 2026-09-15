@@ -45,6 +45,12 @@ This set is primarily graphic construction material, not prose text. It builds t
 and instrument faces, the compass, bar-gauge and indicator states, targeting-scope details,
 lock-on lights, and the changing numeric cells across the bottom dashboard.
 
+On Amiga, Enhanced Graphics does not interpret these bytes at runtime. The build-time
+`tools/gen_cockpit_planar.py` generator expands every mode-4 character/attribute combination,
+mode-D byte, compass state, and cockpit-top text mask into `amiga/assets/cockpit_planar.bin`.
+Runtime updates select an entry and copy its already interleaved four-plane bytes. The faithful
+toggle-off renderer retains the original three-plane decoder as its comparison path.
+
 ## Derived cockpit digits
 
 `rof-cockpit-digits.png` shows the visually distinct decimal numerals assembled by the table at
@@ -172,6 +178,7 @@ The Amiga build embeds these through `src/platform/amiga/incbin.s`:
 | RoF text font | `amiga/assets/rof_boot_image.bin` | sparse fragments listed below | `rof.xex` `$2644-$2843` |
 | Cockpit tiles | `amiga/assets/rof_boot_image.bin` | sparse fragments listed below | `rof.xex` `$28FE-$2CFD` |
 | Cockpit digit map | `amiga/assets/rof_boot_image.bin` | `$3558-$357F` | `rof.xex` `$3B07-$3B2E` |
+| Amiga cockpit planar atlas | `amiga/assets/cockpit_planar.bin` | generated from the sources above | generated in both builds; consumed by Enhanced Graphics |
 
 `rof_boot_image.bin` is a sparse load stream rather than a flat memory image. Its four-byte
 chunk headers hold a destination address and length, and zero bytes omitted from the stream are

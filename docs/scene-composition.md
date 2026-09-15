@@ -15,7 +15,7 @@ stride `$2E`) rendered under **GTIA mode 10** (`PRIOR=$94`, 9-colour — pixel v
 COLPM*/COLPF* register, NOT normal 1bpp); y+128..135 **mode D `$350D`** windscreen-bottom band
 (4 rows × 2 = Amiga scanlines 172-179); y+136..215 **mode 4 `$332D`** dashboard.
 
-**Amiga dashboard composition (2026-09-10):** the 80-line mode-4 dashboard uses three bitplanes
+**Faithful Amiga dashboard composition (2026-09-10):** the 80-line mode-4 dashboard uses three bitplanes
 in dual-playfield mode. PF1 is BPL1+BPL3: transparent selects common COLOR00 dark grey, while its
 three non-zero codes carry COLBK and the bright/dark red details. PF2 is BPL2 and uses only code 1,
 COLOR09 light grey. `BPLCON2=$0044` puts PF2 above all sprites and every sprite above PF1, so the
@@ -23,6 +23,14 @@ light-grey bezel pixels are the stencil that clips the instrument sprites. This 
 source colours while keeping COLOR00 dark grey from line 180 to the bottom, eliminating dashboard
 border bands on OCS machines without border blanking. The preceding 8-line mode-D windscreen band
 remains a normal three-plane region with its scene-specific edge colour.
+
+**Enhanced Graphics composition (2026-09-15):** every cockpit-bearing list uses four planes in the
+42-line top, returns to three planes for the live terrain viewport, and enables four again for the
+8-line windscreen band and 80-line dashboard. The dashboard is a normal single playfield with the
+old appearance re-encoded as pens 0-4. Pen 8 is the energy mask and pen 9 the shared altimeter mask;
+their vertical colour changes are Copper events derived from the same fuel/height state as the old
+sprites. Standby, Doors, Tunnel, Planet/stars, and Flight all use this contract. Their terrain,
+door, tunnel, planet, and starfield renderers remain three-plane and otherwise unchanged.
 
 **The windscreen band changes SOURCE at the tunnel→planet handover, and that is where it breaks.**
 The shared `$3000` mode-D DL has an LMS at `$3156` whose operand is the tunnel's `$350D` cockpit
