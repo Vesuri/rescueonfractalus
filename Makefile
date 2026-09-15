@@ -104,7 +104,7 @@ ifeq ($(FLAG_GUARD),flags-changed)
   $(info FLAGS [$(BUILD_FLAGS)] changed — objects dropped, rebuilding)
 endif
 
-.PHONY: all clean gen validate hostproof
+.PHONY: all clean gen validate hostproof cockpit-planar-assets cockpit-planar-check
 
 all: $(TARGET)
 
@@ -184,7 +184,13 @@ $(HOSTPROOF_DIR)/sparse.bin: rof.xex disasm/listing.txt tools/make_xex_sparse.py
 	$(info GEN  $@)
 	@python3 tools/make_xex_sparse.py $@ > $(HOSTPROOF_DIR)/sparse.log
 
-hostproof: $(HOSTPROOF_DIR)/zeroed.xex $(HOSTPROOF_DIR)/sparse.bin | $(HOSTPROOF_DIR)
+cockpit-planar-assets:
+	python3 tools/gen_cockpit_planar.py amiga/assets/cockpit_planar.bin
+
+cockpit-planar-check:
+	@python3 tools/gen_cockpit_planar.py --check amiga/assets/cockpit_planar.bin
+
+hostproof: cockpit-planar-check $(HOSTPROOF_DIR)/zeroed.xex $(HOSTPROOF_DIR)/sparse.bin | $(HOSTPROOF_DIR)
 	@fail=0; ran=0; \
 	for t in $(HOSTPROOF_SELF) $(HOSTPROOF_ASSET); do \
 	  case "$$t" in *$(FN)*) ;; *) continue ;; esac; \

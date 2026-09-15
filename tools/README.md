@@ -29,10 +29,11 @@ scratch.  Grouped by what it is FOR; the file's own docstring/header has the usa
 | `gen_logo_field.py` | `src/rof_logo_field.h` — replays the Atari's own `$5111` stroke plotter, so the baked logo is derived, not a magic blob. |
 | `plot_logo_ref.py` | The proof for the above: re-plots from `rof.xex` and diffs against the committed header (expect 0 mismatches). |
 | `gen_gtia9_pal.py` | The GTIA mode-9 16-luminance OCS palettes used by the boot scenes' copper lists. |
+| `gen_cockpit_planar.py` | `amiga/assets/cockpit_planar.bin` — builds the native Amiga plane-byte tables for the cockpit, compass, and cockpit-top text, then exhaustively proves them against the legacy decoder. `make cockpit-planar-assets` regenerates; `make cockpit-planar-check` verifies. |
 
 ## Host-side equivalence proofs (`make hostproof`)
 
-`alien_mirror_test.c`, `dot_table_test.c`, `ras_fused_midpoint_test.c`, `ras_restructure_test.c`,
+`gen_cockpit_planar.py`, `alien_mirror_test.c`, `dot_table_test.c`, `ras_fused_midpoint_test.c`, `ras_restructure_test.c`,
 `terr_blend_table_test.c`, `terr_blend_test.c`, `test_xex_sparse.c`.
 
 Each compiles the OLD and NEW form of one routine side by side and diffs them over its whole input
@@ -40,6 +41,10 @@ domain (or a large random sample) — the only validation that reaches Amiga-onl
 reorderings and `#ifdef ROF_PLATFORM_AMIGA` arms.  ⚠ Each holds a *verbatim snapshot* of the
 routine it was written against: green means "the transformation is sound", not "the shipping source
 still matches the snapshot".  See the `hostproof` block in the root `Makefile`.
+
+The cockpit proof is Python rather than C: it checks every lookup entry and, when the local
+`a800dumps` archive is present, byte-compares complete top and cockpit surfaces for eight captured
+states spanning all cockpit-bearing scenes. It is also the reproducibility check for its binary.
 
 `xorshift_triple_test.c` sits with them but is NOT one of them: it is the design SEARCH that picked
 the noise PRNG's shift triple (full period over GF(2), ranked by 68000 cycle cost).  It does not
