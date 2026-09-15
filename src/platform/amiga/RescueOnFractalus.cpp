@@ -2635,7 +2635,7 @@ void RescueOnFractalus::initialize()
     leftPost   = Sprite::allocate(kHT);
     rightPost  = Sprite::allocate(kHT);
     nullSprite = Sprite::allocate(0);
-    altimeterShipSprite = Sprite::allocate(kAltimRows);   // M3 $0B98 ship-height bar (flight)
+    altimeterShipSprite = Sprite::allocate(g_enhancedGraphics ? 0 : kAltimRows);
     // Flight windscreen frame: posts span the A-pillar (86 rows) + the 8 band scanlines
     // (= kHT+8 = 94); the triangle outer-half sprites cover only the 8 band scanlines.
     flLeftPost  = Sprite::allocate(kHT + 8);
@@ -2650,13 +2650,16 @@ void RescueOnFractalus::initialize()
     // the preceding VSTOP.  These allocations replace the standalone energy/altimeter/leftTri ones.
     // TWO chains per channel — the double buffer (see RescueOnFractalus.h): the owner writes the
     // off-screen one and re-points SPRxPT so all four segments latch together with segment 0.
+    // Enhanced graphics gives the energy/altimeter chains a zero-height lower element: those
+    // gauges are playfield pens, so the extension sprite terminates without dashboard DMA.
     // The chained element exists in both; wideLow[s][0] is the live Sprite the rest of the code
     // already uses, wideLow[s][1] its mirror (mirrorSprite keeps the control words in step).
     static const int kLowRows[3] = { kEnergyRows, kAltimRows, 8 };
     for (int s = 0; s < 3; s++) {
         const int extRows = (s == 2) ? kWideExtRowsCh1 : kWideExtRows;
+        const int lowRows = (g_enhancedGraphics && s < 2) ? 0 : kLowRows[s];
         for (int b = 0; b < 2; b++) {
-            wideChain[s][b] = Sprite::allocateChain((uint16_t)extRows, (uint16_t)kLowRows[s],
+            wideChain[s][b] = Sprite::allocateChain((uint16_t)extRows, (uint16_t)lowRows,
                                                     wideExt[s][b], wideLow[s][b]);
             if (!wideChain[s][b]) return;
             // FIXED VSTART: the extensions must be armed across the whole viewport whether or not
@@ -2716,24 +2719,28 @@ void RescueOnFractalus::initialize()
         starRing[i][1] = starCtl[i][1];
     }
     starWindow = 0; starSpritesValid = false;
+    // The faithful path retains the old gauge sprites.  Enhanced graphics leaves their zero-height
+    // chain elements disarmed; Copper-controlled playfield pens draw both gauges instead.
     // Player 1 is the throttle gauge: original HPOSP1 = mem[$00B5] = $BE, single-
     // line PMG strip at $0D98 (P1+$98).  The Atari-HPOS / PM-scanline -> Amiga-pixel
     // transform isn't 1:1 (wide-playfield crop + DIWSTRT), so the on-screen XY here
     // is a starting estimate to calibrate visually.
-    energyIndicatorSprite->setX(0x81 + 203);
-    energyIndicatorSprite->setY(0x2c + 144);
+    if (!g_enhancedGraphics) {
+        energyIndicatorSprite->setX(0x81 + 203);
+        energyIndicatorSprite->setY(0x2c + 144);
     // Altimeter terrain-height bar (P0 $0C98): same cockpit scanline band as the energy
     // indicator (both are player strips at buffer offset $98 → Amiga Y 0x2c+144), placed
     // left of it (CLAUDE.md instrument x≈108).  Starting estimate — calibrate visually.
-    altimeterSprite->setX(0x81 + 107);
-    altimeterSprite->setY(0x2c + 144);
+        altimeterSprite->setX(0x81 + 107);
+        altimeterSprite->setY(0x2c + 144);
     // Ship-height bar (M3 missile): the SAME 8px column as the terrain bar (they overlap —
     // the manual's "amount of light blue showing" is the ship bar visible above the purple
     // terrain bar).  The terrain bar is the higher-priority sprite (4 < 6), so it covers the
     // bottom (terrain height) and the light-blue ship bar shows above it (clearance).  Same
     // X and Y; bottoms align ($0B98..$0BCF ↔ $0C98..$0CCF, both at offset $98..$CF).
-    altimeterShipSprite->setX(0x81 + 107);
-    altimeterShipSprite->setY(0x2c + 144);
+        altimeterShipSprite->setX(0x81 + 107);
+        altimeterShipSprite->setY(0x2c + 144);
+    }
 #ifdef ROF_FLIGHT_PROBE
     { extern volatile uint32_t g_altimSprAddr, g_altimShipSprAddr, g_energySprAddr, g_viewportP3SprAddr, g_scopeP3SprAddr;
       g_altimSprAddr     = (uint32_t)altimeterSprite->data();
@@ -2818,7 +2825,8 @@ void RescueOnFractalus::initialize()
     if (planetCopper && planetCopper->data())
         planetCopper->buildLayout(*titleBitmap, *viewportBitmap, *cockpitBitmap,
                                     *(cockpitBandPlane4 ? cockpitBandPlane4 : cockpitBitmap),
-                                    *leftPost, *rightPost, *energyIndicatorSprite, starSprite);
+                                    *leftPost, *rightPost,
+                                    *(g_enhancedGraphics ? nullSprite : energyIndicatorSprite), starSprite);
 
     // Static flight fixed copper list (scene 7), same build-once + poke scheme;
     // renderFrame installs it during rsFlight.  HUD sprites are poked in later by the
@@ -2846,13 +2854,15 @@ void RescueOnFractalus::initialize()
         doorsCopper[i] = new DoorsCopperList();
         if (doorsCopper[i] && doorsCopper[i]->data())
             doorsCopper[i]->buildLayout(*titleBitmap, *cockpitBitmap,
-                                        *leftPost, *rightPost, *energyIndicatorSprite, *nullSprite);
+                                        *leftPost, *rightPost,
+                                        *(g_enhancedGraphics ? nullSprite : energyIndicatorSprite), *nullSprite);
     }
     for (int i = 0; i < 2; i++) {
         tunnelCopper[i] = new TunnelCopperList();
         if (tunnelCopper[i] && tunnelCopper[i]->data())
             tunnelCopper[i]->buildLayout(*titleBitmap, *tunnelBitmap, *cockpitBitmap,
-                                         *leftPost, *rightPost, *energyIndicatorSprite, *nullSprite);
+                                         *leftPost, *rightPost,
+                                         *(g_enhancedGraphics ? nullSprite : energyIndicatorSprite), *nullSprite);
     }
 
     // Title Screen fixed copper list (attract/level-select/results); renderFrame installs it
@@ -5563,7 +5573,7 @@ void RescueOnFractalus::updateStandbyCopper(bool force)
         sbTerr0 = terr0; sbTerr1 = terr1; sbTerr2 = terr2; sbTerr3 = terr3;
     }
     if (force || gauge != sbEnergyIndicator) {
-        standbyCopper->setSprite2(gauge ? *energyIndicatorSprite : *nullSprite);
+        standbyCopper->setSprite2((gauge && !g_enhancedGraphics) ? *energyIndicatorSprite : *nullSprite);
         sbEnergyIndicator = gauge;
     }
 }
@@ -5714,7 +5724,7 @@ void RescueOnFractalus::updateFlightCopper(bool force)
         // SPR7PT via setHudSprite), the DASHBOARD half shows the altimeter-ship gauge (the
         // SPR7PT re-point at the cockpit WAIT, setDashboardSprite(7, ...)).
         flightCopper->setHudSprite(7, *viewportP3Sprite);
-        flightCopper->setDashboardSprite(7, *altimeterShipSprite);
+        flightCopper->setDashboardSprite(7, g_enhancedGraphics ? *nullSprite : *altimeterShipSprite);
         // Long Range Scanner guide dot (Atari M2) on ch2 (idle in the dashboard) via SPR2PT.
         flightCopper->setDashboardSprite(2, *scannerDotSprite);
     }
@@ -6912,7 +6922,7 @@ void RescueOnFractalus::perFrameWork()
     // repaint.  Verified before removal: 0 rendered frames in a whole boot->flight run had the
     // $004A gate set while the $4FF5 body was not the installed VVBLKI vector (blink_probe.gdb).
 
-    if (rsEnergyIndicator) buildEnergyIndicatorSprite();
+    if (rsEnergyIndicator && !g_enhancedGraphics) buildEnergyIndicatorSprite();
     // Canopy posts: constant graphic, decoded once from the real RLE source tables — shown
     // in every screen (independent of the live $0C32/$0D32 buffers, which only hold the
     // frame at gameplay init and are the starfield otherwise).
@@ -6965,8 +6975,8 @@ void RescueOnFractalus::perFrameWork()
         starPhaseActive = false;
         starSpritesValid = false;                       // force a full rebuild on the next stars entry
     }
-    // Flight altimeter bars: mirror the live P0 $0C98 (terrain-height) + M3 $0B98
-    // (ship-height) strips each frame.
+    // The faithful path mirrors the flight altimeter bars into sprites below.  Enhanced graphics
+    // updates their playfield-pen transitions in updateFlightCopper and skips this work.
     // The laser shot (buildShotSprite) is NOT built here — it runs in the flight VBI (50Hz) via
     // PlatformAmiga::flightShotTick, faithful to the Atari (the shot is a VBI op), so it animates
     // at full rate even while the terrain render is much slower.
@@ -6982,8 +6992,10 @@ void RescueOnFractalus::buildFlightSpritesEarly()
 {
     if (!(flightSpritesOwed & 0x01)) return;
     flightSpritesOwed &= (uint8_t)~0x01u;
-    buildAltimeterSprite();          // one-shot solid fill, then a setY
-    buildAltimeterShipSprite();      // setY
+    if (!g_enhancedGraphics) {
+        buildAltimeterSprite();      // one-shot solid fill, then a setY
+        buildAltimeterShipSprite();  // setY
+    }
     buildAHSprite();                 // artificial-horizon ground fill
     // The scanner dot is NOT built here: it moved to the flight VBI (PlatformAmiga::flightScannerTick)
     // because its source blob is rewritten by $44E0 inside that same VBI — see buildScannerDotSprite.
@@ -7816,7 +7828,7 @@ void RescueOnFractalus::shutdown()
               delete wideLow[s][b]; wideLow[s][b] = nullptr;
               Sprite::freeChain(wideChain[s][b],
                                 (uint16_t)((s == 2) ? kWideExtRowsCh1 : kWideExtRows),
-                                (uint16_t)kLowRows[s]);
+                                (uint16_t)((g_enhancedGraphics && s < 2) ? 0 : kLowRows[s]));
               wideChain[s][b] = nullptr;
           } }
     for (int c = 0; c < 6; c++) { delete starSprite[c]; starSprite[c] = nullptr; starRing[c] = nullptr; }
