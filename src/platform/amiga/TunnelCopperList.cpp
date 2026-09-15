@@ -64,8 +64,8 @@ static const uint16_t kBand2ParkLine = kTerrainLine + 57;
 #define INDEX_RB2_BPL         (INDEX_RB2_WAIT + 1)     // star bitmap ptrs at row 86-K (6)
 #define INDEX_COCKPIT_WAIT    (INDEX_RB2_BPL + 6)      // WAIT(kCockpitLine-1) (1)
 #define INDEX_BANDTOP_COL00   (INDEX_COCKPIT_WAIT + 1) // boost band-top color00, BEFORE the bitplane ptrs (1)
-#define INDEX_COCKPIT_BPL     (INDEX_BANDTOP_COL00 + 1)// cockpit bitmap ptrs (3bp = 6)
-#define INDEX_COCKPIT_BPLCON0 (INDEX_COCKPIT_BPL + 6)  // bplcon0 3P (1)
+#define INDEX_COCKPIT_BPL     (INDEX_BANDTOP_COL00 + 1)// cockpit ptrs; reserve 4bp = 8
+#define INDEX_COCKPIT_BPLCON0 (INDEX_COCKPIT_BPL + 8)  // bplcon0 (1)
 #define INDEX_COCKPIT_MOD     (INDEX_COCKPIT_BPLCON0 + 1) // bpl1mod,bpl2mod (2)
 #define INDEX_COCKPIT_PAL     (INDEX_COCKPIT_MOD + 2)  // color01..07 (7; color00 carries in from the viewport)
 // Windscreen-bottom band: cockpit bitmap's top 8 scanlines (mode-D $350D frame).  The L/R
@@ -191,10 +191,14 @@ void TunnelCopperList::buildLayout(const Bitmap& title, const Bitmap& tunnel, co
     // moves that overrun ~16px into the band's first line).  Default = no-op (color00 carries in);
     // setBandTopColor00() activates it for the boost expansion phase.
     d[INDEX_BANDTOP_COL00] = copperMove(color31, 0);
-    showBitmap(INDEX_COCKPIT_BPL, cockpit);    // 3bp interleaved = 6 ptr moves
-    d[INDEX_COCKPIT_BPLCON0] = copperMove(bplcon0, kBPLCON0_3P);
-    d[INDEX_COCKPIT_MOD]     = copperMove(bpl1mod, 80);
-    d[INDEX_COCKPIT_MOD + 1] = copperMove(bpl2mod, 80);
+    showBitmap(INDEX_COCKPIT_BPL, cockpit);
+    for (uint16_t i = (uint16_t)(cockpit.bitplanes * 2); i < 8; i++)
+        d[INDEX_COCKPIT_BPL + i] = COPPER_NOP;
+    const uint16_t cockpitMode = (uint16_t)((cockpit.bitplanes << PLNCNTSHFT) | USE_BPLCON3);
+    const uint16_t cockpitModulo = (uint16_t)((cockpit.bitplanes - 1) * 40);
+    d[INDEX_COCKPIT_BPLCON0] = copperMove(bplcon0, cockpitMode);
+    d[INDEX_COCKPIT_MOD]     = copperMove(bpl1mod, cockpitModulo);
+    d[INDEX_COCKPIT_MOD + 1] = copperMove(bpl2mod, cockpitModulo);
     // Cockpit palette (constant immediates, as in StandbyCopperList).  color00 is NOT set
     // here: it carries the windscreen-band corner colour (tunnel purple mem[$08D8]) forward
     // from the terrain palette across the viewport/band boundary (see the band note above).
@@ -217,7 +221,7 @@ void TunnelCopperList::buildLayout(const Bitmap& title, const Bitmap& tunnel, co
     // stencil; sprites sit over PF1's changing COLBK and under PF2.  COLOR00 stays dark grey.
     // Match the Standby timing: earlier waits let COLOR01=black touch the final band row.
     d[INDEX_DASH_BG_WAIT]  = copperWait(kCockpitLine + 8 - 1, 0xE0);
-    d[INDEX_DASH_MODE]     = copperMove(bplcon0, kBPLCON0_3P_DUAL);
+    d[INDEX_DASH_MODE]     = copperMove(bplcon0, (uint16_t)(cockpitMode | DBLPF));
     d[INDEX_DASH_PRIORITY] = copperMove(bplcon2, kBPLCON2_COCKPIT);
     d[INDEX_DASH_PAL + 0]  = copperMove(color00, atariToOCS(0x04));
     d[INDEX_DASH_PAL + 1]  = copperMove(color01, atariToOCS(0x00));

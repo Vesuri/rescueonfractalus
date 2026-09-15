@@ -63,8 +63,8 @@ static const uint16_t kGaugeBottomLine = 0x2c + 144 + 56;             // = 244
 #define INDEX_B2_COL          (INDEX_B2_BPL + 6)        // color01..03 (3)
 // Cockpit region (constant).
 #define INDEX_COCKPIT_WAIT    (INDEX_B2_COL + 3)
-#define INDEX_COCKPIT_BPL     (INDEX_COCKPIT_WAIT + 1)  // 6
-#define INDEX_COCKPIT_BPLCON0 (INDEX_COCKPIT_BPL + 6)   // 1
+#define INDEX_COCKPIT_BPL     (INDEX_COCKPIT_WAIT + 1)  // reserve 4bp = 8
+#define INDEX_COCKPIT_BPLCON0 (INDEX_COCKPIT_BPL + 8)   // 1
 #define INDEX_COCKPIT_MOD     (INDEX_COCKPIT_BPLCON0 + 1) // 2
 #define INDEX_COCKPIT_PAL     (INDEX_COCKPIT_MOD + 2)   // color01..07 (7; color00 inherited)
 // Windscreen-bottom band: cockpit bitmap's top 8 scanlines (the mode-D $350D frame) — its
@@ -153,10 +153,14 @@ void DoorsCopperList::buildLayout(const Bitmap& title, const Bitmap& cockpit,
 
     // ---- cockpit region: WAIT, pointers, 3bp, modulo, constant palette ----
     d[INDEX_COCKPIT_WAIT] = copperWait(kCockpitLine - 1, 0xE0);
-    showBitmap(INDEX_COCKPIT_BPL, cockpit);    // 3bp interleaved = 6 ptr moves
-    d[INDEX_COCKPIT_BPLCON0] = copperMove(bplcon0, kBPLCON0_3P);
-    d[INDEX_COCKPIT_MOD]     = copperMove(bpl1mod, 80);
-    d[INDEX_COCKPIT_MOD + 1] = copperMove(bpl2mod, 80);
+    showBitmap(INDEX_COCKPIT_BPL, cockpit);
+    for (uint16_t i = (uint16_t)(cockpit.bitplanes * 2); i < 8; i++)
+        d[INDEX_COCKPIT_BPL + i] = COPPER_NOP;
+    const uint16_t cockpitMode = (uint16_t)((cockpit.bitplanes << PLNCNTSHFT) | USE_BPLCON3);
+    const uint16_t cockpitModulo = (uint16_t)((cockpit.bitplanes - 1) * 40);
+    d[INDEX_COCKPIT_BPLCON0] = copperMove(bplcon0, cockpitMode);
+    d[INDEX_COCKPIT_MOD]     = copperMove(bpl1mod, cockpitModulo);
+    d[INDEX_COCKPIT_MOD + 1] = copperMove(bpl2mod, cockpitModulo);
     // color00 is inherited from the final moving door/tunnel band.  The dashboard entry below
     // then changes COLOR00 to dark grey and moves COLBK to PF1 COLOR01.
     d[INDEX_COCKPIT_PAL + 0] = copperMove(color01, atariToOCS(0x04));
@@ -171,7 +175,7 @@ void DoorsCopperList::buildLayout(const Bitmap& title, const Bitmap& cockpit,
     // stencil; sprites sit over PF1's changing COLBK and under PF2.  COLOR00 stays dark grey.
     // Match the Standby timing: earlier waits let COLOR01=black touch the final band row.
     d[INDEX_DASH_BG_WAIT]  = copperWait(kCockpitLine + 8 - 1, 0xE0);
-    d[INDEX_DASH_MODE]     = copperMove(bplcon0, kBPLCON0_3P_DUAL);
+    d[INDEX_DASH_MODE]     = copperMove(bplcon0, (uint16_t)(cockpitMode | DBLPF));
     d[INDEX_DASH_PRIORITY] = copperMove(bplcon2, kBPLCON2_COCKPIT);
     d[INDEX_DASH_PAL + 0]  = copperMove(color00, atariToOCS(0x04));
     d[INDEX_DASH_PAL + 1]  = copperMove(color01, atariToOCS(0x00));

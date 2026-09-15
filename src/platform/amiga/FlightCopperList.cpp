@@ -124,7 +124,7 @@ static const uint16_t kColor26 = 0x1B4;   // pair 4/5 pen 10 (wide-object segmen
 // color00-03 stay the terrain palette (VP_PAL): the salmon clearance bars are plane3 holes that
 // overwrite planes 1&2 to color01, so they fade salmon->brown WITH the terrain.  BPLCON2 stays at
 // its init value 0x09 (sprites behind the playfield) throughout — no per-band flip needed.
-#define BAND_BLOCK_WORDS      4
+#define BAND_BLOCK_WORDS      6   // four palette MOVEs + early BPL4 pointer preload
 #define INDEX_BAND_BLOCK      (INDEX_VP_LINEDOUBLE + 3 * (kTerrainHeight - 1) + 1)  // band color04-07 (4)
 // ONE WAIT at the viewport→dashboard boundary: line 179, hpos 0xC0 (measured on FS-UAE — the
 // sweet spot).  Dashboard sprite re-points MUST come first: besides meeting their line-180 arming
@@ -333,6 +333,11 @@ void FlightCopperList::buildLayout(const Bitmap& title, const Bitmap& terrain, c
             d[idx++] = copperMove(color05, 0);
             d[idx++] = copperMove(color06, 0);
             d[idx++] = copperMove(color07, 0);
+            // Plane 4 is inactive in the band. Preload its dashboard row-8 pointer here; this
+            // keeps the measured line-179 handoff at exactly its former six BPL pointer MOVEs.
+            const uint32_t bpl4 = (uint32_t)cockpit.data + 8u * cockpit.rowSizeInBytes + 120u;
+            d[idx++] = copperMove(bpl4pth, (uint16_t)(bpl4 >> 16));
+            d[idx++] = copperMove(bpl4ptl, (uint16_t)bpl4);
         }
         const uint16_t v = enhancedTerrain
             ? (uint16_t)80
@@ -349,10 +354,12 @@ void FlightCopperList::buildLayout(const Bitmap& title, const Bitmap& terrain, c
     setDashboardSprite(7, nullSprite);          // SPR7PT -> altimeter ship (real ptr set on force)
     setDashboardSprite(2, nullSprite);          // SPR2PT -> Long-Range-Scanner dot (real ptr set on force)
     d[INDEX_SCANNER_COL] = copperMove(kColor22, atariToOCS(0x26));  // scanner dot red-brown (COLPM2 $26)
-    showBitmap(INDEX_COCKPIT_BPL, cockpit, 1, 1, 0, 8);   // yOffset 8 scanlines: skip the $350D band rows
-    d[INDEX_COCKPIT_BPLCON0] = copperMove(bplcon0, kBPLCON0_3P_DUAL);
-    d[INDEX_COCKPIT_MOD]     = copperMove(bpl1mod, 80);
-    d[INDEX_COCKPIT_MOD + 1] = copperMove(bpl2mod, 80);
+    showBitmap(INDEX_COCKPIT_BPL, cockpit, 1, 1, 0, 8, 3); // BPL4 was preloaded at band entry
+    const uint16_t cockpitMode = (uint16_t)((cockpit.bitplanes << PLNCNTSHFT) | USE_BPLCON3 | DBLPF);
+    const uint16_t cockpitModulo = (uint16_t)((cockpit.bitplanes - 1) * 40);
+    d[INDEX_COCKPIT_BPLCON0] = copperMove(bplcon0, cockpitMode);
+    d[INDEX_COCKPIT_MOD]     = copperMove(bpl1mod, cockpitModulo);
+    d[INDEX_COCKPIT_MOD + 1] = copperMove(bpl2mod, cockpitModulo);
     // Dual-PF dashboard palette.  PF1 (COLOR01-03) is behind the sprites; PF2's sole
     // visible pen (COLOR09) is the light-grey stencil in front.  COLOR00 is dark grey.
     d[INDEX_COCKPIT_PAL + 0] = copperMove(color00, atariToOCS(0x04));

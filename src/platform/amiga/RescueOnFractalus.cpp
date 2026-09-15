@@ -1230,7 +1230,7 @@ void RescueOnFractalus::initializeAHDetailPlanes()
     // only after the valid Standby cockpit/door build and triggers another full decode.
     if (ahDetailBuilt || !g_doorFieldReady || !cockpitBitmap || !ahLeft || !ahRight) return;
 
-    static const int kCockpitRowBytes = 120;              // 3 × 40-byte interleaved planes
+    const int kCockpitRowBytes = cockpitBitmap->rowSizeInBytes;
     const uint8_t* src = (const uint8_t*)cockpitBitmap->data
                        + kAHBitmapRow * kCockpitRowBytes + 80 + (kAHScreenX >> 3);
     uint16_t* l = ahLeft->data() + 3;                     // first row, word B
@@ -2602,7 +2602,8 @@ void RescueOnFractalus::initialize()
     g_figBmpAddr = (uint32_t)s_figBmp->data; g_cleanBmpAddr = (uint32_t)s_cleanBmp->data;
     g_maskBmpAddr = (uint32_t)s_figMaskBmp->data;
 #endif
-    cockpitBitmap = Bitmap::allocate(kW, kCockpitH, kBP3, true);  // 3bp: bit-7 chars → red
+    cockpitBitmap = Bitmap::allocate(kW, kCockpitH,
+                                     g_enhancedGraphics ? 4 : kBP3, true);
     tunnelBitmap  = Bitmap::allocate(kW, kTerrainHeight, kBP3, true);  // door-gap reveal
     titleScreenBitmap = Bitmap::allocate(kW, kH, kBP3, true);  // 3bp: black + COLPF0-3 text pens
 
@@ -7069,7 +7070,7 @@ void RescueOnFractalus::copyCockpitPlanarSpan(uint16_t addr, uint8_t nCells)
 {
     static const int kStride   = 48;
     static const int kCrop     = 4;
-    static const int kRowBytes = 120;
+    const int kRowBytes = cockpitBitmap->rowSizeInBytes;
     uint8_t* cdest = (uint8_t*)cockpitBitmap->data;
 
     if (addr >= 0x350Du) {
@@ -7082,8 +7083,8 @@ void RescueOnFractalus::copyCockpitPlanarSpan(uint16_t addr, uint8_t nCells)
         for (uint8_t i = 0; i < nCells; i++, col++) {
             if (col < 0 || col >= 40) continue;
             const uint8_t* tile = cockpitModeDPlanar(mem[(uint16_t)(addr + i)]);
-            d0[col] = tile[0]; d0[40 + col] = tile[1]; d0[80 + col] = 0;
-            d1[col] = tile[0]; d1[40 + col] = tile[1]; d1[80 + col] = 0;
+            d0[col] = tile[0]; d0[40 + col] = tile[1]; d0[80 + col] = 0; d0[120 + col] = 0;
+            d1[col] = tile[0]; d1[40 + col] = tile[1]; d1[80 + col] = 0; d1[120 + col] = 0;
         }
         return;
     }
@@ -7098,7 +7099,7 @@ void RescueOnFractalus::copyCockpitPlanarSpan(uint16_t addr, uint8_t nCells)
         const uint8_t* tile = cockpitMode4Planar(mem[(uint16_t)(addr + i)]);
         uint8_t* p = base + col;
         for (int scan = 0; scan < 8; scan++, p += kRowBytes, tile += 3) {
-            p[0] = tile[0]; p[40] = tile[1]; p[80] = tile[2];
+            p[0] = tile[0]; p[40] = tile[1]; p[80] = tile[2]; p[120] = 0;
         }
     }
 }

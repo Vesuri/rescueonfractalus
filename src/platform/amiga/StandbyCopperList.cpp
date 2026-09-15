@@ -57,11 +57,11 @@ static const uint16_t kGaugeBottomLine = 0x2c + 144 + 56;             // = 244
 #define INDEX_TERRAIN_PAL     (INDEX_TERRAIN_MOD + 2)     // color00..03 (4) — poked by updateStandbyCopper
 #define INDEX_TERRAIN_BPL0    (INDEX_TERRAIN_PAL + 4)     // run-0 bitmap ptrs (3bp = 6)
 #define INDEX_TERRAIN_RUNS    (INDEX_TERRAIN_BPL0 + 6)    // FLOATING: runs 1.. (WAIT+6) then cockpit region
-// Cockpit region (re-emitted after the last run): WAIT(1) + BPLxPT(6) + bplcon0(1) + mod(2) +
+// Cockpit region (re-emitted after the last run): WAIT(1) + BPLxPT reserve(8) + bplcon0(1) + mod(2) +
 // color01..07(7) + dashboard dual-PF entry (WAIT + mode/priority + five colours)(8) +
 // two (WAIT+PF1-background) splits (4) + WAIT+GAUGE_BOTTOM COLOR21(2) + bottom-border
-// wrap WAIT/WAIT/COLOR00 (3) + terminator(1) = 35.
-#define COCKPIT_REGION_LEN    35
+// wrap WAIT/WAIT/COLOR00 (3) + terminator(1) = 37.
+#define COCKPIT_REGION_LEN    37
 #define LIST_LENGTH           (INDEX_TERRAIN_RUNS + (MAX_TERRAIN_RUNS - 1) * 7 + COCKPIT_REGION_LEN)
 
 StandbyCopperList::StandbyCopperList()
@@ -131,10 +131,15 @@ uint32_t StandbyCopperList::emitCockpitRegion(uint32_t idx)
 {
     uint32_t* d = data_;
     d[idx++] = copperWait(kCockpitLine - 1, 0xE0);
-    showBitmap(idx, *cockpitBmp_, 1, 1, 0, 0, 3);  idx += 6;   // 3bp interleaved = 6 ptr moves
-    d[idx++] = copperMove(bplcon0, kBPLCON0_3P);
-    d[idx++] = copperMove(bpl1mod, 80);
-    d[idx++] = copperMove(bpl2mod, 80);
+    const uint16_t planes = cockpitBmp_->bitplanes;
+    showBitmap(idx, *cockpitBmp_, 1, 1, 0, 0, planes);
+    for (uint16_t i = (uint16_t)(planes * 2); i < 8; i++) d[idx + i] = copperMove(0x1FE, 0);
+    idx += 8;
+    const uint16_t mode = (uint16_t)((planes << PLNCNTSHFT) | USE_BPLCON3);
+    const uint16_t modulo = (uint16_t)((planes - 1) * 40);
+    d[idx++] = copperMove(bplcon0, mode);
+    d[idx++] = copperMove(bpl1mod, modulo);
+    d[idx++] = copperMove(bpl2mod, modulo);
     // Cockpit palette (hardcoded immediates the cockpit DLIs reload; color00 inherited from terrain).
     d[idx++] = copperMove(color01, atariToOCS(0x04));
     d[idx++] = copperMove(color02, atariToOCS(0x06));
@@ -149,7 +154,7 @@ uint32_t StandbyCopperList::emitCockpitRegion(uint32_t idx)
     // 0xC0..0xD8 let the following palette MOVEs catch the last fetched pixels of the
     // final mode-D row.  At 0xE0 the group safely finishes in line 180's early H-blank.
     d[idx++] = copperWait(kCockpitLine + 8 - 1, 0xE0);
-    d[idx++] = copperMove(bplcon0, kBPLCON0_3P_DUAL);
+    d[idx++] = copperMove(bplcon0, (uint16_t)(mode | DBLPF));
     d[idx++] = copperMove(bplcon2, kBPLCON2_COCKPIT);
     d[idx++] = copperMove(color00, atariToOCS(0x04)); // common background + border: dark grey
     d[idx++] = copperMove(color01, atariToOCS(0x00)); // PF1 code 1: divider COLBK

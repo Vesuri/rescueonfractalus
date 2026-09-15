@@ -57,7 +57,7 @@ static const uint16_t kColor29 = 0x1BA;   // sprite pair 6/7 pen 01 (starfield)
 // mirrors the band DLI $6D67, which writes ONLY COLPF0/COLPF1 (the two greys) and leaves COLBK
 // and COLPF2 untouched.  So we emit exactly those two MOVEs (color01/color02) and nothing else
 // — color00 (COLBK) and color03 (COLPF2=$2A planet) stay the viewport's values, as on the Atari.
-#define BAND_BLOCK_WORDS      2
+#define BAND_BLOCK_WORDS      4   // two palette MOVEs + early BPL4 pointer preload
 #define INDEX_COCKPIT_WAIT    (INDEX_VP_LINEDOUBLE + 3 * (kViewportHeight - 1) + BAND_BLOCK_WORDS)
 // Throttle-gauge re-point (channel 2).  The P0 starfield low sprite owns channel 2 across the
 // viewport; its VSTOP is at the cockpit line (180), so its post-VSTOP control-word fetch happens
@@ -169,6 +169,11 @@ void PlanetCopperList::buildLayout(const Bitmap& title, const Bitmap& terrain, c
             // set COLPF2=$2C, but those govern the dashboard below the band, not this band.)
             d[idx++] = copperMove(color01, atariToOCS(0x04));   // grey frame (COLPF0, $6D67)
             d[idx++] = copperMove(color02, atariToOCS(0x06));   // grey frame (COLPF1, $6D67)
+            // BPL4 remains disabled throughout the band. Preload its dashboard row-8 pointer
+            // here so the line-179 sprite/pointer handoff does not grow when four planes enable.
+            const uint32_t bpl4 = (uint32_t)cockpit.data + 8u * cockpit.rowSizeInBytes + 120u;
+            d[idx++] = copperMove(bpl4pth, (uint16_t)(bpl4 >> 16));
+            d[idx++] = copperMove(bpl4ptl, (uint16_t)bpl4);
         }
         const uint16_t v = (k & 1) ? (uint16_t)80 : (uint16_t)-40;
         d[idx++] = copperMove(bpl1mod, v);
@@ -181,11 +186,13 @@ void PlanetCopperList::buildLayout(const Bitmap& title, const Bitmap& terrain, c
     d[INDEX_COCKPIT_WAIT] = copperWait(kCockpitLine - 1, 0xE0);
     showSprite(INDEX_GAUGE_PTR, 2, gauge);   // re-point channel 2 (P0-low -> throttle gauge)
     setEnergyIndicatorColor(0);              // COLOR21 = gauge bar (setter, at INDEX_GAUGE_COL)
-    showBitmap(INDEX_COCKPIT_BPL, cockpit, 1, 1, 0, 8);   // yOffset 8 scanlines: skip the $350D band rows
-    d[INDEX_COCKPIT_BPLCON0] = copperMove(bplcon0, kBPLCON0_3P_DUAL);
+    showBitmap(INDEX_COCKPIT_BPL, cockpit, 1, 1, 0, 8, 3); // BPL4 was preloaded at band entry
+    const uint16_t cockpitMode = (uint16_t)((cockpit.bitplanes << PLNCNTSHFT) | USE_BPLCON3 | DBLPF);
+    d[INDEX_COCKPIT_BPLCON0] = copperMove(bplcon0, cockpitMode);
     d[INDEX_COCKPIT_BPLCON2] = copperMove(bplcon2, kBPLCON2_COCKPIT);
-    d[INDEX_COCKPIT_MOD]     = copperMove(bpl1mod, 80);
-    d[INDEX_COCKPIT_MOD + 1] = copperMove(bpl2mod, 80);
+    const uint16_t cockpitModulo = (uint16_t)((cockpit.bitplanes - 1) * 40);
+    d[INDEX_COCKPIT_MOD]     = copperMove(bpl1mod, cockpitModulo);
+    d[INDEX_COCKPIT_MOD + 1] = copperMove(bpl2mod, cockpitModulo);
     // Dual-PF dashboard palette.  PF1 (COLOR01-03) is behind the sprites; PF2's sole
     // visible pen (COLOR09) is the light-grey stencil in front.  COLOR00 stays dark grey.
     d[INDEX_COCKPIT_PAL + 0] = copperMove(color00, atariToOCS(0x04));
