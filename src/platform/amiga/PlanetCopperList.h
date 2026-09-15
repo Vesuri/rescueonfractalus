@@ -32,6 +32,7 @@ public:
     // P2 lo/hi → ch 4/5, P3 lo/hi → ch 6/7).  The throttle gauge shares channel 2: it is
     // re-pointed (SPR2PT) in below the starfield, where the two never overlap vertically.
     void buildLayout(const Bitmap& title, const Bitmap& terrain, const Bitmap& cockpit,
+                     const Bitmap& bandPlane4,
                      const Sprite& leftPost, const Sprite& rightPost, const Sprite& gauge,
                      Sprite* const star[6]);
 

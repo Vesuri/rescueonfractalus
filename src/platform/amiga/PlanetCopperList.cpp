@@ -47,7 +47,8 @@ static const uint16_t kColor29 = 0x1BA;   // sprite pair 6/7 pen 01 (starfield)
 #define INDEX_STAR_COL        (INDEX_SPRITES + 16)         // 30: COLOR21,COLOR25,COLOR29 star pens (3)
 #define INDEX_COMPASS_WAIT    (INDEX_STAR_COL + 3)         // 33: WAIT(compass scanline) (1)
 #define INDEX_COMPASS_COL     (INDEX_COMPASS_WAIT + 1)     // 34: color01 = compass COLPF0 (1)
-#define INDEX_VP_WAIT         (INDEX_COMPASS_COL + 1)      // 35: WAIT(kTerrainLine-1) (1)
+#define INDEX_BAND_BPL4       (INDEX_COMPASS_COL + 1)      // preload zero BPL4 while top P4 is zero (2)
+#define INDEX_VP_WAIT         (INDEX_BAND_BPL4 + 2)        // WAIT(kTerrainLine-1) (1)
 #define INDEX_VP_BPL          (INDEX_VP_WAIT + 1)          // 34: viewport 3bp ptrs (6)
 #define INDEX_VP_BPLCON0      (INDEX_VP_BPL + 6)           // 40: bplcon0 3P (1)
 #define INDEX_VP_PAL          (INDEX_VP_BPLCON0 + 1)       // 41: color00..03 (4)
@@ -57,7 +58,7 @@ static const uint16_t kColor29 = 0x1BA;   // sprite pair 6/7 pen 01 (starfield)
 // mirrors the band DLI $6D67, which writes ONLY COLPF0/COLPF1 (the two greys) and leaves COLBK
 // and COLPF2 untouched.  So we emit exactly those two MOVEs (color01/color02) and nothing else
 // — color00 (COLBK) and color03 (COLPF2=$2A planet) stay the viewport's values, as on the Atari.
-#define BAND_BLOCK_WORDS      4   // two palette MOVEs + early BPL4 pointer preload
+#define BAND_BLOCK_WORDS      5   // band mode MOVE + two palette MOVEs + dashboard BPL4 switch
 #define INDEX_COCKPIT_WAIT    (INDEX_VP_LINEDOUBLE + 3 * (kViewportHeight - 1) + BAND_BLOCK_WORDS)
 // Throttle-gauge re-point (channel 2).  The P0 starfield low sprite owns channel 2 across the
 // viewport; its VSTOP is at the cockpit line (180), so its post-VSTOP control-word fetch happens
@@ -97,6 +98,7 @@ PlanetCopperList::PlanetCopperList()
 }
 
 void PlanetCopperList::buildLayout(const Bitmap& title, const Bitmap& terrain, const Bitmap& cockpit,
+                                     const Bitmap& bandPlane4,
                                      const Sprite& leftPost, const Sprite& rightPost, const Sprite& gauge,
                                      Sprite* const star[6])
 {
@@ -138,6 +140,13 @@ void PlanetCopperList::buildLayout(const Bitmap& title, const Bitmap& terrain, c
     // its value-1 pixels show in the title text colour — the "yellow compass" bug.)
     d[INDEX_COMPASS_WAIT] = copperWait(kDisplayTop + 33 - 1, 0xE0);
     setCompassColor(0);                        // poked from $00CF
+    if (cockpit.bitplanes == 4) {
+        const uint32_t bpl4 = (uint32_t)bandPlane4.data;
+        d[INDEX_BAND_BPL4 + 0] = copperMove(bpl4pth, (uint16_t)(bpl4 >> 16));
+        d[INDEX_BAND_BPL4 + 1] = copperMove(bpl4ptl, (uint16_t)bpl4);
+    } else {
+        d[INDEX_BAND_BPL4 + 0] = d[INDEX_BAND_BPL4 + 1] = copperMove(0x1FE, 0);
+    }
 
     // ---- viewport region: WAIT, pointers, 2bp->3bp, palette, line-doubling band ----
     d[INDEX_VP_WAIT] = copperWait(kTerrainLine - 1, 0xE0);
@@ -157,7 +166,8 @@ void PlanetCopperList::buildLayout(const Bitmap& title, const Bitmap& terrain, c
     d[INDEX_VP_MOD0 + 1] = copperMove(bpl2mod, (uint16_t)-40);
     uint32_t idx = INDEX_VP_LINEDOUBLE;
     for (uint16_t k = 1; k < kViewportHeight; k++) {
-        d[idx++] = copperWait((uint16_t)(kTerrainLine + k - 1), 0xE0);
+        d[idx++] = copperWait((uint16_t)(kTerrainLine + k - 1),
+                              (cockpit.bitplanes == 4 && k == kTerrainHeight) ? 0xC0 : 0xE0);
         if (k == kTerrainHeight) {
             // Crossing into the windscreen-bottom band (scanline 172): mirror the band DLI
             // $6D67, which writes ONLY COLPF0=#$04 / COLPF1=#$06 (the two cockpit-frame greys).
@@ -169,13 +179,27 @@ void PlanetCopperList::buildLayout(const Bitmap& title, const Bitmap& terrain, c
             // set COLPF2=$2C, but those govern the dashboard below the band, not this band.)
             d[idx++] = copperMove(color01, atariToOCS(0x04));   // grey frame (COLPF0, $6D67)
             d[idx++] = copperMove(color02, atariToOCS(0x06));   // grey frame (COLPF1, $6D67)
-            // BPL4 remains disabled throughout the band. Preload its dashboard row-8 pointer
-            // here so the line-179 sprite/pointer handoff does not grow when four planes enable.
-            const uint32_t bpl4 = (uint32_t)cockpit.data + 8u * cockpit.rowSizeInBytes + 120u;
-            d[idx++] = copperMove(bpl4pth, (uint16_t)(bpl4 >> 16));
-            d[idx++] = copperMove(bpl4ptl, (uint16_t)bpl4);
+            d[idx++] = (cockpit.bitplanes == 4)
+                ? copperMove(bplcon0, (uint16_t)((4u << PLNCNTSHFT) | USE_BPLCON3))
+                : copperMove(0x1FE, 0);
         }
-        const uint16_t v = (k & 1) ? (uint16_t)80 : (uint16_t)-40;
+        if (k == kViewportHeight - 1) {
+            // Switch the zero fourth plane to dashboard row 8 one scanline early. Both sources
+            // are zero, so line 179 is unchanged, and the tight line-179 group gains no MOVEs.
+            if (cockpit.bitplanes == 4) {
+                const uint32_t bpl4 = (uint32_t)cockpit.data + 8u * cockpit.rowSizeInBytes + 120u;
+                d[idx++] = copperMove(bpl4pth, (uint16_t)(bpl4 >> 16));
+                d[idx++] = copperMove(bpl4ptl, (uint16_t)bpl4);
+            } else {
+                d[idx++] = copperMove(0x1FE, 0);
+                d[idx++] = copperMove(0x1FE, 0);
+            }
+        }
+        // On the final band line, hold every pointer in place. BPL1-3 are replaced by the
+        // line-179 handoff; holding BPL4 preserves the dashboard-row pointer loaded above.
+        const uint16_t v = (cockpit.bitplanes == 4 && k == kViewportHeight - 1)
+            ? (uint16_t)-40
+            : ((k & 1) ? (uint16_t)80 : (uint16_t)-40);
         d[idx++] = copperMove(bpl1mod, v);
         d[idx++] = copperMove(bpl2mod, v);
     }

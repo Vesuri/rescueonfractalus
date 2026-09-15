@@ -101,7 +101,8 @@ static const uint16_t kColor26 = 0x1B4;   // pair 4/5 pen 10 (wide-object segmen
 #define INDEX_COMPASS_WAIT    (INDEX_EXT_COL + 2)          // WAIT(compass scanline) (1)
 #define INDEX_COMPASS_COL     (INDEX_COMPASS_WAIT + 1)     // 32: color01 = compass COLPF0 (housing) (1)
 #define INDEX_COMPASS_COL3    (INDEX_COMPASS_COL + 1)      // 33: color03 = compass COLPF2 (needle salmon) (1)
-#define INDEX_VP_WAIT         (INDEX_COMPASS_COL3 + 1)     // 34: WAIT(kTerrainLine-1) (1)
+#define INDEX_BAND_BPL4       (INDEX_COMPASS_COL3 + 1)     // preload zero BPL4 while top P4 is zero (2)
+#define INDEX_VP_WAIT         (INDEX_BAND_BPL4 + 2)        // WAIT(kTerrainLine-1) (1)
 #define INDEX_VP_BPL          (INDEX_VP_WAIT + 1)          // 32: viewport 3bp ptrs (6)
 #define INDEX_VP_BPLCON0      (INDEX_VP_BPL + 6)           // 38: bplcon0 3P (1)
 #define INDEX_VP_PAL          (INDEX_VP_BPLCON0 + 1)       // 39: color00..03 (4)
@@ -124,7 +125,7 @@ static const uint16_t kColor26 = 0x1B4;   // pair 4/5 pen 10 (wide-object segmen
 // color00-03 stay the terrain palette (VP_PAL): the salmon clearance bars are plane3 holes that
 // overwrite planes 1&2 to color01, so they fade salmon->brown WITH the terrain.  BPLCON2 stays at
 // its init value 0x09 (sprites behind the playfield) throughout — no per-band flip needed.
-#define BAND_BLOCK_WORDS      6   // four palette MOVEs + early BPL4 pointer preload
+#define BAND_BLOCK_WORDS      7   // band mode + four palette MOVEs + dashboard BPL4 switch
 #define INDEX_BAND_BLOCK      (INDEX_VP_LINEDOUBLE + 3 * (kTerrainHeight - 1) + 1)  // band color04-07 (4)
 // ONE WAIT at the viewport→dashboard boundary: line 179, hpos 0xC0 (measured on FS-UAE — the
 // sweet spot).  Dashboard sprite re-points MUST come first: besides meeting their line-180 arming
@@ -243,6 +244,7 @@ FlightCopperList::FlightCopperList()
 }
 
 void FlightCopperList::buildLayout(const Bitmap& title, const Bitmap& terrain, const Bitmap& cockpit,
+                                   const Bitmap& bandPlane4,
                                    bool enhancedTerrain,
                                    const Sprite& leftPost, const Sprite& leftTri,
                                    const Sprite& rightPost, const Sprite& rightTri,
@@ -299,6 +301,13 @@ void FlightCopperList::buildLayout(const Bitmap& title, const Bitmap& terrain, c
     d[INDEX_COMPASS_WAIT] = copperWait(kDisplayTop + 33 - 1, 0xE0);
     setCompassColor(0);                        // color01 = housing (poked from $00CF)
     setCompassNeedleColor(0);                  // color03 = needle/heading-letter (salmon)
+    if (cockpit.bitplanes == 4) {
+        const uint32_t bpl4 = (uint32_t)bandPlane4.data;
+        d[INDEX_BAND_BPL4 + 0] = copperMove(bpl4pth, (uint16_t)(bpl4 >> 16));
+        d[INDEX_BAND_BPL4 + 1] = copperMove(bpl4ptl, (uint16_t)bpl4);
+    } else {
+        d[INDEX_BAND_BPL4 + 0] = d[INDEX_BAND_BPL4 + 1] = copperMove(0x1FE, 0);
+    }
 
     // ---- viewport region: WAIT, pointers, 2bp->3bp, palette, line-doubling band ----
     d[INDEX_VP_WAIT] = copperWait(kTerrainLine - 1, 0xE0);
@@ -322,7 +331,8 @@ void FlightCopperList::buildLayout(const Bitmap& title, const Bitmap& terrain, c
     d[INDEX_VP_MOD0 + 1] = copperMove(bpl2mod, firstModulo);
     uint32_t idx = INDEX_VP_LINEDOUBLE;
     for (uint16_t k = 1; k < kViewportHeight; k++) {
-        d[idx++] = copperWait((uint16_t)(kTerrainLine + k - 1), 0xE0);
+        d[idx++] = copperWait((uint16_t)(kTerrainLine + k - 1),
+                              (cockpit.bitplanes == 4 && k == kTerrainHeight) ? 0xC0 : 0xE0);
         if (k == kTerrainHeight) {
             // Crossing into the wing-clearance band (scanline kBandLine = 172): the grey windscreen
             // frame is on plane3, over terrain in planes 1&2 -> set ALL of color04-07 = frame grey
@@ -333,15 +343,28 @@ void FlightCopperList::buildLayout(const Bitmap& title, const Bitmap& terrain, c
             d[idx++] = copperMove(color05, 0);
             d[idx++] = copperMove(color06, 0);
             d[idx++] = copperMove(color07, 0);
-            // Plane 4 is inactive in the band. Preload its dashboard row-8 pointer here; this
-            // keeps the measured line-179 handoff at exactly its former six BPL pointer MOVEs.
-            const uint32_t bpl4 = (uint32_t)cockpit.data + 8u * cockpit.rowSizeInBytes + 120u;
-            d[idx++] = copperMove(bpl4pth, (uint16_t)(bpl4 >> 16));
-            d[idx++] = copperMove(bpl4ptl, (uint16_t)bpl4);
+            d[idx++] = (cockpit.bitplanes == 4)
+                ? copperMove(bplcon0, (uint16_t)((4u << PLNCNTSHFT) | USE_BPLCON3))
+                : copperMove(0x1FE, 0);
         }
-        const uint16_t v = enhancedTerrain
-            ? (uint16_t)80
-            : ((k & 1) ? (uint16_t)80 : (uint16_t)-40);
+        if (k == kViewportHeight - 1) {
+            // Change BPL4 to dashboard row 8 after line 178's fetch. The outgoing and incoming
+            // bytes are both zero, keeping the final band line identical and line 179 uncluttered.
+            if (cockpit.bitplanes == 4) {
+                const uint32_t bpl4 = (uint32_t)cockpit.data + 8u * cockpit.rowSizeInBytes + 120u;
+                d[idx++] = copperMove(bpl4pth, (uint16_t)(bpl4 >> 16));
+                d[idx++] = copperMove(bpl4ptl, (uint16_t)bpl4);
+            } else {
+                d[idx++] = copperMove(0x1FE, 0);
+                d[idx++] = copperMove(0x1FE, 0);
+            }
+        }
+        // The final line holds BPL4 on its preloaded dashboard pointer; BPL1-3 are replaced by
+        // the line-179 handoff, so suppressing their post-line advance has no visible effect.
+        const uint16_t v = (cockpit.bitplanes == 4 && k == kViewportHeight - 1)
+            ? (uint16_t)-40
+            : (enhancedTerrain ? (uint16_t)80
+                               : ((k & 1) ? (uint16_t)80 : (uint16_t)-40));
         d[idx++] = copperMove(bpl1mod, v);
         d[idx++] = copperMove(bpl2mod, v);
     }

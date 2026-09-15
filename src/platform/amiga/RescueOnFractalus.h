@@ -410,6 +410,10 @@ private:
     Bitmap*     flightClearPending = nullptr;  // back buffer whose terrain rows a post-vblank blitter
                                                // clear is currently clearing (overlapping the draw)
     Bitmap*     cockpitBitmap  = nullptr;
+    // Zero-filled, 120-byte-pitch source for BPL4 while Planet/Flight keep their live three-plane
+    // windscreen-band pixels in the terrain bitmap. It includes safe padding for an early Copper
+    // preload during the all-zero top; no CPU copy is needed to make the live band 4bp.
+    Bitmap*     cockpitBandPlane4 = nullptr;
     Bitmap*     titleScreenBitmap = nullptr;   // full-screen 3bp text bitmap for the Title Screen
 
     // Title Screen (attract/level-select/results) fixed copper list — full-screen text

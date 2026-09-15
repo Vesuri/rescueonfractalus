@@ -2604,6 +2604,10 @@ void RescueOnFractalus::initialize()
 #endif
     cockpitBitmap = Bitmap::allocate(kW, kCockpitH,
                                      g_enhancedGraphics ? 4 : kBP3, true);
+    if (g_enhancedGraphics)
+        // The Copper preloads this while the zero fourth top plane is still active, so reserve
+        // enough cleared backing for those harmless top fetches plus all eight band fetches.
+        cockpitBandPlane4 = Bitmap::allocate(kW, 24, kBP3, true); // cleared; 120-byte row pitch
     tunnelBitmap  = Bitmap::allocate(kW, kTerrainHeight, kBP3, true);  // door-gap reveal
     titleScreenBitmap = Bitmap::allocate(kW, kH, kBP3, true);  // 3bp: black + COLPF0-3 text pens
 
@@ -2797,6 +2801,7 @@ void RescueOnFractalus::initialize()
     planetCopper = new PlanetCopperList();
     if (planetCopper && planetCopper->data())
         planetCopper->buildLayout(*titleBitmap, *viewportBitmap, *cockpitBitmap,
+                                    *(cockpitBandPlane4 ? cockpitBandPlane4 : cockpitBitmap),
                                     *leftPost, *rightPost, *energyIndicatorSprite, starSprite);
 
     // Static flight fixed copper list (scene 7), same build-once + poke scheme;
@@ -2808,6 +2813,7 @@ void RescueOnFractalus::initialize()
         // flLeftTri in one chip buffer — the channel shows segment 3 across the viewport and
         // then the left band triangle at 172.  (ch3 still points straight at flRightTri.)
         flightCopper->buildLayout(*titleBitmap, *terrainBitmap, *cockpitBitmap,
+                                  *(cockpitBandPlane4 ? cockpitBandPlane4 : cockpitBitmap),
                                   g_flightEnhancedTerrain != 0,
                                   *flLeftPost, *wideExt[2][0], *flRightPost, *flRightTri, *nullSprite,
                                   *ahLeft, *ahRight, *scopeP3Sprite);
@@ -7705,6 +7711,7 @@ void RescueOnFractalus::shutdown()
     delete viewportBitmap;  viewportBitmap  = nullptr;
     delete doorScrollBitmap; doorScrollBitmap = nullptr; // 20 KB: the level-select door scroll
     delete cockpitBitmap; cockpitBitmap = nullptr;
+    delete cockpitBandPlane4; cockpitBandPlane4 = nullptr;
     delete tunnelBitmap;  tunnelBitmap  = nullptr;
     delete titleScreenBitmap; titleScreenBitmap = nullptr;
     // Rescue-figure composite trio (file statics, allocated in initialize()).  g_figP1/P2/M are

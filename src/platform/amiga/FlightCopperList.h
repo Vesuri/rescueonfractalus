@@ -26,6 +26,7 @@ public:
     // (setHudSprite) as the flight VBI port maps the Atari players/missiles to sprites;
     // buildLayout seeds the canopy posts + throttle gauge and nulls the rest.
     void buildLayout(const Bitmap& title, const Bitmap& terrain, const Bitmap& cockpit,
+                     const Bitmap& bandPlane4,
                      bool enhancedTerrain,
                      const Sprite& leftPost, const Sprite& leftTri,
                      const Sprite& rightPost, const Sprite& rightTri,
