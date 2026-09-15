@@ -39,7 +39,9 @@ COMPASS_OFFSET = MODE4_OFFSET + MODE4_SIZE
 COMPASS_SIZE = 128 * 8 * 2
 TEXT_MASK_OFFSET = COMPASS_OFFSET + COMPASS_SIZE
 TEXT_MASK_SIZE = 64 * 8 * 2
-ASSET_SIZE = TEXT_MASK_OFFSET + TEXT_MASK_SIZE
+NORMAL_MODE4_OFFSET = TEXT_MASK_OFFSET + TEXT_MASK_SIZE
+NORMAL_MODE4_SIZE = 256 * 8 * 4
+ASSET_SIZE = NORMAL_MODE4_OFFSET + NORMAL_MODE4_SIZE
 
 COCKPIT_CHARSET_SHA256 = "6f8e858500724a07abc6232f95f4b826037482af6b1bbf26a64a6018368eec9d"
 TEXT_CHARSET_SHA256 = "fdb3eb5435c594b506e7a56560f249212640b403cdbb64ca0660eafd112b426d"
@@ -103,6 +105,20 @@ def decode_mode4(src: int, alternate: int) -> tuple[int, int, int]:
     return p1, p2, p3
 
 
+def decode_mode4_normal(src: int, alternate: int) -> tuple[int, int, int, int]:
+    """Normal-playfield pens preserving the old dual-playfield visible meanings."""
+    planes = [0, 0, 0, 0]
+    for pixel_index in range(4):
+        pixel = (src >> (6 - pixel_index * 2)) & 3
+        # 0=dark grey, 1=region bg, 2=light-grey stencil, 3=bright salmon, 4=dark red.
+        pen = (1, 0, 2, 3 if alternate else 4)[pixel]
+        mask = 0xC0 >> (pixel_index * 2)
+        for plane in range(4):
+            if pen & (1 << plane):
+                planes[plane] |= mask
+    return tuple(planes)
+
+
 def double_bits(src: int) -> tuple[int, int]:
     value = 0
     for bit in range(8):
@@ -120,8 +136,9 @@ def build_asset(mem: bytes) -> bytes:
         raise SystemExit("text charset differs from the audited $0400-$05FF source")
 
     out = bytearray(HEADER_SIZE)
-    struct.pack_into(">4s7H", out, 0, MAGIC, VERSION, HEADER_SIZE, MODED_OFFSET,
-                     MODE4_OFFSET, COMPASS_OFFSET, TEXT_MASK_OFFSET, ASSET_SIZE)
+    struct.pack_into(">4s8H", out, 0, MAGIC, VERSION, HEADER_SIZE, MODED_OFFSET,
+                     MODE4_OFFSET, COMPASS_OFFSET, TEXT_MASK_OFFSET, NORMAL_MODE4_OFFSET,
+                     ASSET_SIZE)
 
     for src in range(256):
         out.extend(decode_2bpp(src))
@@ -140,6 +157,11 @@ def build_asset(mem: bytes) -> bytes:
         glyph = text_charset[char_code * 8:char_code * 8 + 8]
         for src in glyph:
             out.extend(double_bits(src))
+
+    for char_byte in range(256):
+        glyph = cockpit_charset[(char_byte & 0x7F) * 8:(char_byte & 0x7F) * 8 + 8]
+        for src in glyph:
+            out.extend(decode_mode4_normal(src, char_byte >> 7))
 
     if len(out) != ASSET_SIZE:
         raise AssertionError(f"asset size {len(out)} != {ASSET_SIZE}")
@@ -239,6 +261,26 @@ def prove_tables(mem: bytes, asset: bytes) -> None:
         mask = asset[TEXT_MASK_OFFSET + char_code * 16:TEXT_MASK_OFFSET + char_code * 16 + 16]
         glyph = mem[0x0400 + char_code * 8:0x0408 + char_code * 8]
         assert mask == bytes(v for src in glyph for v in double_bits(src)), ("text", char_code)
+    for char_byte in range(256):
+        tile = asset[NORMAL_MODE4_OFFSET + char_byte * 32:
+                     NORMAL_MODE4_OFFSET + char_byte * 32 + 32]
+        glyph = mem[0x3800 + (char_byte & 0x7F) * 8:0x3808 + (char_byte & 0x7F) * 8]
+        expected = bytes(v for src in glyph for v in decode_mode4_normal(src, char_byte >> 7))
+        assert tile == expected, ("normal mode 4", char_byte)
+        # Compare displayed meanings, not representation: dual-PF source combinations map to
+        # the same normal-playfield pen contract for every two-bit source pixel.
+        for src in glyph:
+            old = decode_mode4(src, char_byte >> 7)
+            new = decode_mode4_normal(src, char_byte >> 7)
+            for mask in (0xC0, 0x30, 0x0C, 0x03):
+                old_bits = tuple(bool(p & mask) for p in old)
+                old_pen = {(False, False, False): 0,
+                           (True, False, False): 1,
+                           (False, True, False): 2,
+                           (False, False, True): 4,
+                           (True, False, True): 3}[old_bits]
+                new_pen = sum((1 << p) for p in range(4) if new[p] & mask)
+                assert new_pen == old_pen, ("visible pen", char_byte, src, mask)
 
 
 def prove_captures(asset: bytes) -> int:
@@ -280,7 +322,8 @@ def main() -> int:
     digest = hashlib.sha256(asset).hexdigest()
     verb = "verified" if args.check else "wrote"
     print(f"{verb} {args.output}: {len(asset)} bytes, sha256 {digest}")
-    print(f"exhaustive tables: 256 mode-D bytes, 256 mode-4 cells, 128 compass cells, 64 text glyphs")
+    print("exhaustive tables: 256 mode-D bytes, 256 dual-PF cells, 256 normal-4bp cells, "
+          "128 compass cells, 64 text glyphs")
     print(f"representative captured surfaces: {capture_count} byte-exact")
     return 0
 

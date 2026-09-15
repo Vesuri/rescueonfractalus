@@ -10,7 +10,8 @@ enum CockpitPlanarAssetOffset {
     kCockpitPlanarMode4Offset    = 544,      // 256 x 8 x (P1,P2,P3)
     kCockpitPlanarCompassOffset  = 6688,     // 128 x 8 x (P1,P2)
     kCockpitPlanarTextMaskOffset = 8736,     // 64 x 8 x (high byte, low byte)
-    kCockpitPlanarAssetSize      = 9760
+    kCockpitPlanarNormalMode4Offset = 9760,  // 256 x 8 x (P1,P2,P3,P4), normal playfield
+    kCockpitPlanarAssetSize      = 17952
 };
 
 static inline const unsigned char* cockpitModeDPlanar(unsigned char source)
@@ -32,4 +33,10 @@ static inline const unsigned char* cockpitCompassPlanar(unsigned char character)
 static inline const unsigned char* cockpitTextMaskPlanar(unsigned char character)
 {
     return rof_cockpit_planar + kCockpitPlanarTextMaskOffset + ((unsigned short)(character & 0x3Fu) << 4);
+}
+
+static inline const unsigned char* cockpitMode4NormalPlanar(unsigned char character)
+{
+    const unsigned short index = (unsigned short)character;
+    return rof_cockpit_planar + kCockpitPlanarNormalMode4Offset + (index << 5);
 }
